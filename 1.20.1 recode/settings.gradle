@@ -1,0 +1,31 @@
+// 1.20.1 多加载器构建：共享源码在 src/，加载器外壳在 fabric/ 与 forge/。
+// 这一版用的是 MinecraftForge（1.20.1-47.4.0），不是 NeoForge —— 1.20.1 是 Forge 的最后一个
+// 大版本，社区的 1.20.1 模组生态与整合包也都在 Forge 上；NeoForge 从 1.20.2 才分家。
+pluginManagement {
+    repositories {
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+        }
+        // ModDevGradle（含 legacyforge 插件）在这里；Forge 本体也由它从下面的 Forge 仓库取。
+        maven {
+            name = 'NeoForged'
+            url = 'https://maven.neoforged.net/releases'
+        }
+        maven {
+            name = 'Forge'
+            url = 'https://maven.minecraftforge.net/'
+        }
+        // repo.maven.apache.org 在本机不可用（详见 fabric/build.gradle 的说明），插件解析也走阿里云。
+        maven {
+            name = 'Aliyun'
+            url = 'https://maven.aliyun.com/repository/public'
+        }
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = 'muoniumplayer-1.20.1'
+
+include 'fabric'
+include 'forge'

@@ -1,0 +1,157 @@
+plugins {
+    id 'fabric-loom' version '1.17-SNAPSHOT'
+}
+
+base {
+    // 产物名带上 Minecraft 版本，这样四个版本工程的 8 个 jar 平铺到一个 dist/ 里不会撞名，
+    // 用户下载后也一眼看出这个 jar 是给哪个版本、哪个加载器的：MuoniumPlayer-<mc>-<loader>-<modver>.jar
+    archivesName = "${project.archives_base_name}-${project.minecraft_version}-fabric"
+}
+
+loom {
+    // 客户端专用 mod（原 Forge 侧 clientSideOnly = true）：
+    // 不启用 splitEnvironmentSourceSets，全部代码留在 main，与共享源树目录结构一一对应。
+    accessWidenerPath = file('src/main/resources/muoniumplayer.accesswidener')
+
+    // 移植期验收辅助：设了 MU_QUICKPLAY=<存档文件夹名> 就直接进存档，
+    // 不用在标题界面盲点鼠标（合成按键只在有焦点的窗口生效，标题界面点起来很不稳）。
+    runs {
+        client {
+            def quickPlay = System.getenv('MU_QUICKPLAY')
+            if (quickPlay) {
+                programArgs '--quickPlaySingleplayer', quickPlay
+            }
+        }
+    }
+}
+
+// 共享代码与资源在上一级目录，两个加载器子工程各自挂同一份，绝不复制。
+sourceSets {
+    main {
+        java.srcDirs = [
+                'src/main/java',                                       // Fabric 外壳
+                rootProject.file('src/main/java'),                     // 共享主体
+                rootProject.file('../mpparty-common/src/main/java')    // 一起听共用源码
+        ]
+        resources.srcDirs = [
+                'src/main/resources',                                  // fabric.mod.json / accesswidener / mixins
+                rootProject.file('src/main/resources')                 // assets、字体、纹理
+        ]
+    }
+    test {
+        java.srcDirs = [rootProject.file('src/test/java')]
+    }
+}
+
+// repo.maven.apache.org 在本机既不能直连（connect timeout），走 7890 代理时 Gradle 侧
+// 也会 "Remote host terminated the handshake"（curl 同一 URL 走代理却是 200，原因未查明）。
+// 阿里云公共仓库直连可用且已实测含 org.lwjgl:3.3.1 全部 classifier，故把所有
+// Maven Central 仓库（含 Loom 自己注入的 mavenCentral()）统一改写到阿里云。
+def centralHosts = ['repo.maven.apache.org', 'repo1.maven.org', 'repo.maven.org'] as Set
+def retargetCentral = { repo ->
+    if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository
+            && repo.url != null && centralHosts.contains(repo.url.host)) {
+        repo.url = 'https://maven.aliyun.com/repository/public'
+    }
+}
+repositories.all(retargetCentral)
+buildscript.repositories.all(retargetCentral)
+
+repositories {
+    maven { url = 'https://maven.aliyun.com/repository/public' }
+    maven { url = 'https://maven.aliyun.com/repository/google' }
+    // libs/ 里的三个本地 jar 必须以「模块」形式出现，否则 Loom 的 include（Jar-in-Jar）
+    // 会报 "not a module component and has no capabilities"（file 依赖没有坐标）。
+    // flatDir 按 <name>-<version>.jar 匹配，group 任意。
+    flatDir { dirs rootProject.file('libs') }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    // 共享源码统一用 Mojang 官方名（mojmap），这样同一份 src/ 也能编进 NeoForge 侧。
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    compileOnly 'org.projectlombok:lombok:1.18.30'
+    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+
+    // Loom 的 include（Jar-in-Jar）：Loader 为每个嵌套 jar 建独立的类加载视图，
+    // 天然避免与 MC / 其它 mod 自带库撞版本。NeoForge 侧没有等价机制，
+    // 那边用 shadow 把同一批库直接塞进 jar（见 neoforge/build.gradle）。
+    implementation include('com.google.zxing:core:3.5.3')
+    implementation include('org.mozilla:rhino:1.7.15')
+    implementation include('com.google.javascript:closure-compiler:v20210202')
+    implementation include('com.google.code.gson:gson:2.11.0')
+    implementation include('net.java.dev.jna:jna:5.14.0')
+    implementation include('net.java.dev.jna:jna-platform:5.14.0')
+    implementation include('muoniumplayer.libs:music-api:0.1.1')
+    implementation include('muoniumplayer.libs:zstd-jni:1.5.6-9-forge189')
+    implementation include('muoniumplayer.libs:kotlin-stdlib:2.4.0')
+
+    // ==================== Skija（渲染层）====================
+    implementation include('io.github.humbleui:skija-shared:0.143.17')
+    implementation include('io.github.humbleui:types:0.2.0')
+    implementation include("io.github.humbleui:skija-" + project.skija_natives + ":0.143.17")
+    compileOnly 'org.jetbrains:annotations:20.1.0'
+
+    // 离线探针（不需要 GL / 不需要启动客户端就能跑的断言）。
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'failed', 'skipped'
+        showStandardStreams = false
+    }
+}
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'minecraft_version', project.minecraft_version
+    inputs.property 'loader_version', project.loader_version
+    inputs.property 'loader_min_version', project.loader_min_version
+    filteringCharset 'UTF-8'
+
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version,
+                'minecraft_version': project.minecraft_version,
+                'loader_version': project.loader_version,
+                'loader_min_version': project.loader_min_version
+    }
+}
+
+def targetJavaVersion = 21
+tasks.withType(JavaCompile).configureEach {
+    // 源码含中文注释与字符串字面量，默认 GBK 会破坏 UI/歌词文案。
+    it.options.encoding = 'UTF-8'
+    it.options.release.set(targetJavaVersion)
+    // 移植期间需要一次看到全部错误，javac 默认只报 100 条。
+    it.options.compilerArgs.addAll(['-Xmaxerrs', '5000'])
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    withSourcesJar()
+}
+
+jar {
+    from(rootProject.file('LICENSE.txt')) {
+        rename { "${it}_${project.archives_base_name}" }
+    }
+}
+
+// 移植期辅助：把编译类路径导出到文件，便于用 javap 实测 API 签名（禁止凭记忆写 API）。
+tasks.register('dumpCompileClasspath') {
+    def out = layout.buildDirectory.file('compile-classpath.txt')
+    def cp = sourceSets.main.compileClasspath
+    outputs.file(out)
+    doLast {
+        def f = out.get().asFile
+        f.parentFile.mkdirs()
+        f.text = cp.asPath
+    }
+}

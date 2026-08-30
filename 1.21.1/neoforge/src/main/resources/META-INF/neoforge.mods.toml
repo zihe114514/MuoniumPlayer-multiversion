@@ -1,0 +1,30 @@
+# NeoForge 侧的 mod 元数据，对应 Fabric 的 fabric.mod.json。
+modLoader = "javafml"
+loaderVersion = "[1,)"
+license = "All-Rights-Reserved"
+issueTrackerURL = "https://github.com/zihe114514/MuoniumPlayer/issues"
+
+[[mods]]
+modId = "muonium"
+version = "${version}"
+displayName = "MuoniumPlayer"
+authors = "zihe, eyz2021"
+description = '''
+Music player for Minecraft ${minecraft_version} NeoForge.
+'''
+displayURL = "https://github.com/zihe114514/MuoniumPlayer"
+
+# 客户端专用：装到服务端上不需要、也不应该加载。
+[[dependencies.muonium]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[${neoforge_version},)"
+    ordering = "NONE"
+    side = "CLIENT"
+
+[[dependencies.muonium]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[${minecraft_version},)"
+    ordering = "NONE"
+    side = "CLIENT"

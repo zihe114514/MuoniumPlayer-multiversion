@@ -1,0 +1,32 @@
+# ================= MuoniumPlayer 多版本单仓 =================
+# 规则对根目录下所有版本工程统一生效，各版本工程内不再单独维护 .gitignore。
+
+# ---- 构建产物 / 本地缓存 ----
+build/
+# 各版本 buildAll 汇总产物的统一目录（rootProject/dist，由 collectDist 任务写入）
+dist/
+.gradle/
+out/
+.idea/
+.idea_modules/
+*.iml
+
+# ---- 运行时目录（含账号 cookie、缓存音频、崩溃报告，绝不上传）----
+run/
+logs/
+*.log
+hs_err_pid*
+replay_pid*
+
+# ---- 反编译参考资料（client jar / fabric-api / JDK，约 470 MB，本地生成）----
+_mcref/
+
+# ---- 脚本变量未展开产生的误建目录 ----
+%SystemDrive%/
+
+# ---- 迁移到单仓前的旧单版本 git 仓库备份（见 README「历史」）----
+_legacy-git/
+
+# ---- 系统垃圾 ----
+.DS_Store
+Thumbs.db

@@ -1,0 +1,25 @@
+// 1.21.11 多加载器构建：共享源码在 src/，加载器外壳在 fabric/ 与 neoforge/。
+pluginManagement {
+    repositories {
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+        }
+        // ModDevGradle（NeoForge 官方 Gradle 插件）与 NeoForge 本体都在这里。
+        maven {
+            name = 'NeoForged'
+            url = 'https://maven.neoforged.net/releases'
+        }
+        // repo.maven.apache.org 在本机不可用（详见 fabric/build.gradle 的说明），插件解析也走阿里云。
+        maven {
+            name = 'Aliyun'
+            url = 'https://maven.aliyun.com/repository/public'
+        }
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = 'muoniumplayer-1.21.11'
+
+include 'fabric'
+include 'neoforge'

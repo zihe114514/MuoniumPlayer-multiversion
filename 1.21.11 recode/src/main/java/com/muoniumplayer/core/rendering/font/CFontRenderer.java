@@ -1,0 +1,904 @@
+package com.muoniumplayer.core.rendering.font;
+
+import lombok.Getter;
+import lombok.SneakyThrows;
+import com.muoniumplayer.core.interfaces.SharedConstants;
+import com.muoniumplayer.core.rendering.RGBA;
+import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
+import com.muoniumplayer.core.utils.math.Mth;
+import com.muoniumplayer.core.utils.other.StringUtils;
+import com.muoniumplayer.render.skija.SkijaGfx;
+import com.muoniumplayer.render.skija.SkijaText;
+
+import io.github.humbleui.skija.Canvas;
+import io.github.humbleui.skija.FontEdging;
+import io.github.humbleui.skija.FontHinting;
+import io.github.humbleui.skija.FontMetrics;
+import io.github.humbleui.skija.TextBlob;
+import io.github.humbleui.skija.TextBlobBuilder;
+import io.github.humbleui.skija.Typeface;
+
+import java.awt.Color;
+import java.awt.Font;
+import java.io.Closeable;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 文字渲染器。对外的方法签名、度量口径、换行与截断规则全部保持不变，内部改由 Skia 绘制。
+ *
+ * <h2>旧实现做了什么，为什么要换</h2>
+ * 旧实现自己造了一套字形缓存：用 Java2D 把每个字符单独画进 {@code BufferedImage}，
+ * 异步上传到一张 2048² 的 {@code GL_ALPHA} 图集，绘制时逐字符发两个三角形。
+ * 代价有三条：
+ * <ol>
+ *   <li><b>字形是异步生成的</b>。第一次遇到的字符当帧画不出来，所以整个 UI 层到处都要
+ *       {@code areGlyphsLoaded(...)} 判断「这行字能不能画了」，画不了就推迟一帧重排。
+ *       这是很多首帧跳动问题的根源。</li>
+ *   <li><b>每个字号一张图集</b>。字体梯子上有几十档，几十张 2048² 图集就是上百 MB 显存。</li>
+ *   <li>它依赖 {@code glTexEnvi(GL_MODULATE)}、{@code glBegin/glEnd}、显示列表——
+ *       正是这次要清掉的固定管线。</li>
+ * </ol>
+ * Skia 自己管字形图集，度量是同步的、缓存是全局共享的，上面三条全部消失。
+ * {@code areGlyphsLoaded} 于是恒为 true，调用方的重排分支自然不再触发。
+ *
+ * <h2>度量口径为什么要照抄</h2>
+ * 布局代码（歌词逐字进度、图标居中、滚动区宽度、截断省略号）全部读这里的度量结果。
+ * 只要口径变一点，整个界面都会错位，而这属于业务逻辑，不许改。所以下面三个量原封不动：
+ * <ul>
+ *   <li>{@link #fontHeight} 仍然是<b>2 倍空间</b>里的行盒高度，
+ *       取主字体与所有回退字体中 {@code ascent + descent} 的最大值；</li>
+ *   <li>{@link #getFontHeight()} 仍然是 {@code (fontHeight - 8.5) * .5} 这个经验公式；</li>
+ *   <li>单字宽度仍然是「2 倍空间里的整数像素再除以 2」，也就是量化到 0.5 个 GUI 单位。
+ *       不保留这个量化，图标类控件的居中会整体偏半像素。</li>
+ * </ul>
+ * 唯一刻意去掉的是旧实现给单字宽度额外加的 {@code max(0, -lsb)}：那是为了把字形画进
+ * 一张刚好够大的临时位图而做的左侧留白补偿，被顺手算进了<b>步进</b>里。
+ * Skia 不需要这块留白，把它算进步进反而是错的（会让带负左边距的字形后面多出空隙）。
+ *
+ * <h2>基线位置</h2>
+ * 旧实现把字形位图的<b>左上角</b>放在 {@code (x, y - 2)}，位图内部的基线在
+ * {@code (height + ascent - descent) / 2} 处。Skia 是按<b>基线</b>定位的，
+ * 所以这里把同一个偏移量换算好（见 {@link #baselineOffset}），
+ * 保证同样的 {@code (x, y)} 画出来的字在同一个位置。
+ */
+public class CFontRenderer implements Closeable, SharedConstants {
+
+    /** 主字体（已按字号派生）。{@code GlyphInk} / {@code GlyphInkMetrics} 仍然读它做墨迹度量。 */
+    public Font font;
+    /** 回退字体（已按字号派生）。 */
+    public Font[] fallBackFonts;
+    public float sizePx;
+
+    /** 未派生的原始 AWT Font 实例，用来向 {@link SkijaText} 查 Typeface。 */
+    private Font sourceFont;
+    private Font[] sourceFallbacks;
+
+    private FontKerning fontKerning;
+
+    /** 索引 0 是主字体，之后依次是回退字体。 */
+    private io.github.humbleui.skija.Font[] skFonts = new io.github.humbleui.skija.Font[0];
+    private Typeface[] skTypefaces = new Typeface[0];
+
+    /** 从 {@code y - 2} 到基线的距离，GUI 单位。 */
+    private float baselineOffset;
+
+    /**
+     * Oracle JDK 8 对 CFF（PostScript outline，即 .otf）字体存在 2x 缩放 bug：
+     * deriveFont(size) 报告的 getSize2D() 正确，但实际 ascent/descent/advance 都被放成应有的 2 倍。
+     * 这个修正只作用于 AWT 侧派生出来的 {@link #font}（{@code GlyphInk} 还在用它），
+     * Skia 的光栅化器没有这个 bug，所以 Skia 字号一律用 {@link #sizePx}。
+     */
+    private static final Map<Font, Float> cffScaleFactorCache = new HashMap<>();
+    private static final java.awt.image.BufferedImage cffMetricsImage =
+            new java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+    private static final java.awt.Graphics2D cffMetricsGraphics =
+            (java.awt.Graphics2D) cffMetricsImage.getGraphics();
+
+    private static float cffScaleFactor(Font rawFont) {
+        Float cached = cffScaleFactorCache.get(rawFont);
+        if (cached != null) {
+            return cached;
+        }
+        java.awt.FontMetrics fm = cffMetricsGraphics.getFontMetrics(rawFont.deriveFont(100f));
+        float ratio = (fm.getAscent() + fm.getDescent()) / 100f;
+        // 正常字体 ascent+descent ≈ 1.2~1.5 em；CFF 被 Oracle JDK 放大后 ≈ 2.5 em
+        float factor = ratio > 2.0f ? 0.5f : 1.0f;
+        cffScaleFactorCache.put(rawFont, factor);
+        return factor;
+    }
+
+    public CFontRenderer(Font font, float sizePx) {
+        this.sizePx = sizePx;
+        this.sourceFont = font;
+        this.sourceFallbacks = new Font[0];
+        init(font, sizePx);
+    }
+
+    @SneakyThrows
+    public CFontRenderer(Font font, float sizePx, Font... fallBackFonts) {
+        this(font, sizePx);
+
+        this.sourceFallbacks = fallBackFonts == null ? new Font[0] : fallBackFonts.clone();
+        this.fallBackFonts = new Font[this.sourceFallbacks.length];
+
+        for (int i = 0; i < this.sourceFallbacks.length; i++) {
+            this.fallBackFonts[i] = this.sourceFallbacks[i]
+                    .deriveFont(sizePx * 2 * cffScaleFactor(this.sourceFallbacks[i]));
+        }
+
+        buildSkiaFonts();
+    }
+
+    public CFontRenderer(Font font, float sizePx, FontKerning fontKerning, Font... fallBackFonts) {
+        this(font, sizePx, fallBackFonts);
+        this.fontKerning = fontKerning;
+    }
+
+    private void init(Font font, float sizePx) {
+        this.font = font.deriveFont(sizePx * 2 * cffScaleFactor(font));
+        buildSkiaFonts();
+    }
+
+    /**
+     * 建 Skia 侧的字体对象并算好度量。
+     *
+     * <p>字号直接用 {@link #sizePx}：旧实现是「按 2 倍字号栅格化、绘制时缩 0.5」，
+     * 净效果就是 {@code sizePx} 这么大的字。Skia 自己按设备分辨率决定超采样，
+     * 不需要也不应该再手工放大再缩小——那只会让字发虚。
+     */
+    private void buildSkiaFonts() {
+        List<Typeface> typefaces = new ArrayList<>();
+        List<io.github.humbleui.skija.Font> fonts = new ArrayList<>();
+
+        Typeface main = SkijaText.typefaceFor(this.sourceFont);
+        if (main != null) {
+            typefaces.add(main);
+            fonts.add(newFont(main));
+        }
+        if (this.sourceFallbacks != null) {
+            for (Font fallback : this.sourceFallbacks) {
+                Typeface tf = SkijaText.typefaceFor(fallback);
+                // 图标字体的「回退」就是它自己（见 FontManager.create 的最后一条 return），
+                // 去重避免同一个 typeface 进两次，白白多一轮查表。
+                if (tf != null && !typefaces.contains(tf)) {
+                    typefaces.add(tf);
+                    fonts.add(newFont(tf));
+                }
+            }
+        }
+
+        closeSkiaFonts();
+        this.skTypefaces = typefaces.toArray(new Typeface[0]);
+        this.skFonts = fonts.toArray(new io.github.humbleui.skija.Font[0]);
+        this.glyphBlocks = new GlyphRef[256][];
+        this.stringWidthMapD.clear();
+        computeMetrics();
+    }
+
+    private io.github.humbleui.skija.Font newFont(Typeface typeface) {
+        io.github.humbleui.skija.Font f = new io.github.humbleui.skija.Font(typeface, this.sizePx);
+        // 灰度抗锯齿：内容是画到一张全透明的离屏图层上再合成的，
+        // 子像素 LCD 抗锯齿在透明背景上会渲染出彩色边缘。
+        f.setEdging(FontEdging.ANTI_ALIAS);
+        // 不做字形对齐（hinting），并允许子像素定位：
+        // 旧实现用的是 Java2D 的 FRACTIONALMETRICS_ON，行为一致。
+        f.setHinting(FontHinting.NONE);
+        f.setSubpixel(true);
+        return f;
+    }
+
+    /**
+     * 算 {@link #fontHeight} 与 {@link #baselineOffset}。
+     *
+     * <p>推导：旧实现字形位图高 {@code H = max(ascent + descent)}（2 倍空间），
+     * 位图内基线在 {@code (H + ascent - descent) / 2}，位图左上角画在 {@code (x, y - 2)}，
+     * 然后整体缩 0.5。于是基线的 GUI 坐标是
+     * {@code (y - 2) + (H + ascentMain - descentMain) / 2 * 0.5}。
+     * 把 2 倍空间的量换成 1 倍空间（都除以 2）就得到下面的式子。
+     */
+    private void computeMetrics() {
+        if (this.skFonts.length == 0) {
+            // 字体没解析出来。fontHeight 保持 -1，和旧实现「字形还没生成」时一致，
+            // 调用方原有的兜底分支会接住。
+            this.fontHeight = -1;
+            this.baselineOffset = 0;
+            return;
+        }
+        FontMetrics mainMetrics = this.skFonts[0].getMetrics();
+        int mainAscent = (int) Math.ceil(-mainMetrics.getAscent());
+        int mainDescent = (int) Math.ceil(mainMetrics.getDescent());
+
+        int box = mainAscent + mainDescent;
+        for (int i = 1; i < this.skFonts.length; i++) {
+            FontMetrics m = this.skFonts[i].getMetrics();
+            box = Math.max(box, (int) Math.ceil(-m.getAscent()) + (int) Math.ceil(m.getDescent()));
+        }
+
+        // fontHeight 是 2 倍空间的量：旧实现的 AWT 字体是按 sizePx*2 派生的。
+        this.fontHeight = box * 2.0;
+        this.baselineOffset = (box + mainAscent - mainDescent) * 0.5f;
+    }
+
+    public static String stripControlCodes(String text) {
+        char[] chars = text.toCharArray();
+        StringBuilder f = new StringBuilder();
+        for (int i = 0; i < chars.length; i++) {
+            char c = chars[i];
+            if (c == '\u00a7') {
+                i++;
+                continue;
+            }
+            f.append(c);
+        }
+        return f.toString();
+    }
+
+    public double fontHeight = -1;
+
+    // ------------------------------------------------------------------
+    // 字形解析与缓存
+    // ------------------------------------------------------------------
+
+    /**
+     * 单个字符解析出来的结果：用第几个字体、字形号、以及量化后的步进。
+     * {@code fontIndex < 0} 表示所有字体都没有这个字形。
+     */
+    private static final class GlyphRef {
+        final int fontIndex;
+        final short glyphId;
+        final float advance;
+
+        GlyphRef(int fontIndex, short glyphId, float advance) {
+            this.fontIndex = fontIndex;
+            this.glyphId = glyphId;
+            this.advance = advance;
+        }
+    }
+
+    /**
+     * 按 256 字符一块惰性分配。整块 65536 项的数组每个渲染器要占几百 KB，
+     * 而字体梯子上有几十个渲染器，实测只会用到其中很少几块。
+     */
+    private GlyphRef[][] glyphBlocks = new GlyphRef[256][];
+
+    private GlyphRef glyphRef(char c) {
+        int hi = (c >>> 8) & 0xFF;
+        int lo = c & 0xFF;
+        GlyphRef[] block = glyphBlocks[hi];
+        if (block == null) {
+            block = new GlyphRef[256];
+            glyphBlocks[hi] = block;
+        }
+        GlyphRef ref = block[lo];
+        if (ref == null) {
+            ref = resolve(c);
+            block[lo] = ref;
+        }
+        return ref;
+    }
+
+    private GlyphRef resolve(char c) {
+        for (int i = 0; i < skTypefaces.length; i++) {
+            short glyphId = skTypefaces[i].getUTF32Glyph(c);
+            if (glyphId != 0) {
+                float[] widths = skFonts[i].getWidths(new short[]{glyphId});
+                float raw = widths.length > 0 ? widths[0] : 0f;
+                // 和旧实现同样量化到 0.5 GUI 单位：旧实现在 2 倍空间里取整像素。
+                float advance = (float) (Math.ceil(raw * 2.0) * 0.5);
+                return new GlyphRef(i, glyphId, advance);
+            }
+        }
+        return new GlyphRef(-1, (short) 0, 0f);
+    }
+
+    // ------------------------------------------------------------------
+    // 绘制
+    // ------------------------------------------------------------------
+
+    public float drawString(String s, double x, double y, int color) {
+        float r = ((color >> 16) & 0xff) * RenderSystem.DIVIDE_BY_255;
+        float g = ((color >> 8) & 0xff) * RenderSystem.DIVIDE_BY_255;
+        float b = ((color) & 0xff) * RenderSystem.DIVIDE_BY_255;
+        float a = ((color >> 24) & 0xff) * RenderSystem.DIVIDE_BY_255;
+        drawString(s, x, y, r, g, b, a);
+        return (float) getStringWidthD(s);
+    }
+
+    public int drawStringWithShadow(String text, double x, double y, int color) {
+
+        int a = (color >> 24) & 0xff;
+
+        drawString(stripControlCodes(text), x + 1, y + 1, RGBA.color(0, 0, 0, a));
+        drawString(text, x, y, color);
+
+        return this.getStringWidth(text);
+    }
+
+    public void drawString(String s, double x, double y, Color color) {
+        drawString(s, x, y, color.getRed() * RenderSystem.DIVIDE_BY_255, color.getGreen() * RenderSystem.DIVIDE_BY_255, color.getBlue() * RenderSystem.DIVIDE_BY_255, color.getAlpha());
+    }
+
+    public void drawCenteredStringVertical(String text, double x, double y, int color) {
+        drawString(text, x, y - this.getFontHeight() * .5, color);
+    }
+
+    private int getColorCode(char c) {
+        switch (c) {
+            case '0': return 0x000000;
+            case '1': return 0x0000AA;
+            case '2': return 0x00AA00;
+            case '3': return 0x00AAAA;
+            case '4': return 0xAA0000;
+            case '5': return 0xAA00AA;
+            case '6': return 0xFFAA00;
+            case '7': return 0xAAAAAA;
+            case '8': return 0x555555;
+            case '9': return 0x5555FF;
+            case 'a': return 0x55FF55;
+            case 'b': return 0x55FFFF;
+            case 'c': return 0xFF5555;
+            case 'd': return 0xFF55FF;
+            case 'e': return 0xFFFF55;
+            case 'f': return 0xFFFFFF;
+            default: return Integer.MIN_VALUE; // Default color or throw an exception
+        }
+    }
+
+    /**
+     * @return 旧实现在这里返回「所有字形是否都已就绪」。Skia 的度量与光栅化是同步的，
+     *         不存在「这一帧还画不出来」的状态，所以恒为 true。
+     *         调用方的推迟重排分支因此不再触发——那正是想要的结果。
+     */
+    public boolean drawString(String s, double x, double y, float r, float g, float b, float a) {
+        if (s == null || s.isEmpty()) {
+            return true;
+        }
+        Canvas canvas = SkijaGfx.canvas();
+        if (canvas == null || skFonts.length == 0) {
+            return true;
+        }
+
+        float alpha = a;
+        if (alpha > 1f) alpha = 1f;
+        if (alpha < 0f) alpha = 0f;
+
+        int baseArgb = SkijaGfx.argb(r, g, b, alpha);
+        int argb = baseArgb;
+
+        // 旧实现：translate(x, y - 2) 后按 0.5 缩放，字形位图左上角落在原点。
+        // 这里换算成基线坐标，几何结果相同。
+        double originY = y - 2.0;
+        double lineStep = this.getHeight() + 2.0;  // 旧实现 2 倍空间里的 getHeight()*2 + 4
+
+        RunAccumulator runs = new RunAccumulator();
+        double penX = 0;
+        double lineY = 0;
+        boolean inSel = false;
+
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            char nextChar = i + 1 < s.length() ? s.charAt(i + 1) : '\0';
+
+            if (inSel) {
+                inSel = false;
+                if (c == 'r') {
+                    runs.flushBlob(canvas, x, originY, argb);
+                    argb = baseArgb;
+                } else {
+                    int colorCode = this.getColorCode(c);
+                    if (colorCode != Integer.MIN_VALUE) {
+                        runs.flushBlob(canvas, x, originY, argb);
+                        argb = (Math.round(alpha * 255f) << 24) | (colorCode & 0xFFFFFF);
+                    }
+                }
+                continue;
+            }
+
+            if (c == '\u00a7') {
+                inSel = true;
+                continue;
+            }
+            if (c == '\n') {
+                lineY += lineStep;
+                penX = 0;
+                continue;
+            }
+
+            if (c == '（') c = '(';
+            if (c == '）') c = ')';
+            if (c == '・') c = '·';
+
+            GlyphRef ref = glyphRef(c);
+            if (ref.fontIndex >= 0) {
+                runs.add(ref.fontIndex, ref.glyphId,
+                        (float) penX, (float) (lineY + baselineOffset));
+                penX += ref.advance;
+            }
+
+            // 添加字间距
+            if (fontKerning != null && nextChar != '\0' && nextChar != '\u00a7' && nextChar != '\n') {
+                penX += fontKerning.getKerning(c, nextChar, sizePx);
+            }
+        }
+
+        runs.flushBlob(canvas, x, originY, argb);
+        runs.close();
+
+        return true;
+    }
+
+    /**
+     * 把逐字符的字形累积成 TextBlob。
+     *
+     * <p>为什么要累积而不是逐字符 {@code drawString}：一次绘制调用在 Skia 里要走一遍
+     * 图元合批判断，逐字符发就是几十倍的开销。TextBlob 把「一串字形 + 各自的位置」
+     * 打包成一个绘制图元，是 Skia 里画预排好的文本的标准做法。
+     *
+     * <p>换行（不同的 y）和字体切换（中英混排）都要拆成新的 run，
+     * 但它们仍在同一个 blob 里；只有颜色变化（{@code §} 颜色码）才必须换 blob，
+     * 因为颜色在 Paint 上而不在 blob 里。
+     */
+    private final class RunAccumulator {
+        private final TextBlobBuilder builder = new TextBlobBuilder();
+        private final List<Short> glyphs = new ArrayList<>();
+        private final List<Float> xs = new ArrayList<>();
+        private int runFontIndex = -1;
+        private float runY;
+        private boolean hasContent;
+
+        void add(int fontIndex, short glyphId, float x, float y) {
+            if (runFontIndex != fontIndex || runY != y) {
+                flushRun();
+                runFontIndex = fontIndex;
+                runY = y;
+            }
+            glyphs.add(glyphId);
+            xs.add(x);
+        }
+
+        private void flushRun() {
+            if (glyphs.isEmpty() || runFontIndex < 0) {
+                glyphs.clear();
+                xs.clear();
+                return;
+            }
+            short[] g = new short[glyphs.size()];
+            float[] px = new float[xs.size()];
+            for (int i = 0; i < g.length; i++) {
+                g[i] = glyphs.get(i);
+                px[i] = xs.get(i);
+            }
+            builder.appendRunPosH(skFonts[runFontIndex], g, px, runY);
+            hasContent = true;
+            glyphs.clear();
+            xs.clear();
+        }
+
+        void flushBlob(Canvas canvas, double originX, double originY, int argb) {
+            flushRun();
+            if (!hasContent) {
+                return;
+            }
+            hasContent = false;
+            try (TextBlob blob = builder.build()) {
+                if (blob != null) {
+                    canvas.drawTextBlob(blob, (float) originX, (float) originY, SkijaGfx.fill(argb));
+                }
+            }
+        }
+
+        void close() {
+            builder.close();
+        }
+    }
+
+    public void drawCenteredString(String s, double x, double y, int color) {
+        _drawCenteredString(s, x, y, color);
+    }
+
+    /**
+     * @return true if all the chars in the string are loaded
+     */
+    public boolean _drawCenteredString(String s, double x, double y, int color) {
+        float r = ((color >> 16) & 0xff) * RenderSystem.DIVIDE_BY_255;
+        float g = ((color >> 8) & 0xff) * RenderSystem.DIVIDE_BY_255;
+        float b = ((color) & 0xff) * RenderSystem.DIVIDE_BY_255;
+        float a = ((color >> 24) & 0xff) * RenderSystem.DIVIDE_BY_255;
+
+        return drawString(s, (x - getStringWidthD(s) * .5), y, r, g, b, a);
+    }
+
+    public void drawCenteredStringWithShadow(String s, double x, double y, int color) {
+        drawStringWithShadow(s, (x - getStringWidthD(s) * .5), y, color);
+    }
+
+    public void drawCenteredStringMultiLine(String s, double x, double y, int color) {
+        float r = ((color >> 16) & 0xff) * RenderSystem.DIVIDE_BY_255;
+        float g = ((color >> 8) & 0xff) * RenderSystem.DIVIDE_BY_255;
+        float b = ((color) & 0xff) * RenderSystem.DIVIDE_BY_255;
+        float a = ((color >> 24) & 0xff) * RenderSystem.DIVIDE_BY_255;
+
+        double offsetY = y;
+        for (String string : s.split("\n")) {
+            drawString(string, (x - getStringWidthD(string) / 2.0), offsetY, r, g, b, a);
+            offsetY += this.getFontHeight();
+        }
+
+    }
+
+    public String trim(String text, double width) {
+        String name = text == null ? "" : text;
+
+        // A zero/negative content area can legitimately occur while responsive UI controls
+        // collapse.  There is no valid substring to draw in that case.
+        if (width <= 0.0 || name.isEmpty()) {
+            return "";
+        }
+
+        if (this.getStringWidthD(name) > width) {
+            int idx = name.length();
+            while (idx > 0) {
+                String substring = name.substring(0, idx);
+
+                if (this.getStringWidthD(substring + "...") <= width) {
+                    return substring + "...";
+                }
+
+                idx--;
+            }
+
+            // Even an ellipsis cannot fit; keep the renderer safe and draw nothing rather
+            // than letting the substring index become negative.
+            return "";
+        }
+
+        return name;
+    }
+
+    public int getStringWidth(String text) {
+        return Mth.floor(getStringWidthD(text));
+    }
+
+    /**
+     * 字宽记忆表。
+     *
+     * <p>上限是必须的：键是任意文本，而调用方里有「歌词逐字前缀」这类会随歌曲不断产生新串的用法，
+     * 一局游戏放上百首歌就会稳定地往里堆几万条，且永远不会被回收。超过上限时整表清掉而不是做 LRU：
+     * 这件事罕见到不值得为它维护访问顺序，清掉之后当前这一屏的文本会在同一帧内重新量测填回来。</p>
+     */
+    private static final int STRING_WIDTH_CACHE_LIMIT = 20_000;
+
+    private final Map<String, Double> stringWidthMapD = new HashMap<>();
+
+    /**
+     * 旧实现里这是「字形是否已经异步生成完」的查询。Skia 的字形是同步取用的，
+     * 所以恒为 true。保留方法是因为有十几处调用方拿它决定「这一帧先不排版」，
+     * 恒真正好让那些分支直接走正常路径。
+     */
+    public boolean areGlyphsLoaded(String text) {
+        return true;
+    }
+
+    public double getStringWidthD(String text) {
+        Double f = this.stringWidthMapD.get(text);
+        if (f != null)
+            return f;
+
+        boolean shouldntAdd = false;
+
+        char[] c = stripControlCodes(text).toCharArray();
+        double currentLine = 0;
+        double maxPreviousLines = 0;
+        for (int i = 0; i < c.length; i++) {
+            char c1 = c[i];
+            char c2 = i + 1 < c.length ? c[i + 1] : '\0';
+
+            if (c1 == '\n') {
+                maxPreviousLines = Math.max(currentLine, maxPreviousLines);
+                currentLine = 0;
+                continue;
+            }
+
+            if (c1 == '（')
+                c1 = '(';
+
+            if (c1 == '）')
+                c1 = ')';
+
+            float charWidth = getCharWidth(c1, c2);
+
+            if (!shouldntAdd) {
+                shouldntAdd = charWidth == 0;
+            }
+
+            currentLine += charWidth;
+        }
+
+        if (!shouldntAdd) {
+            if (this.stringWidthMapD.size() >= STRING_WIDTH_CACHE_LIMIT) {
+                this.stringWidthMapD.clear();
+            }
+            this.stringWidthMapD.put(text, Math.max(currentLine, maxPreviousLines));
+        }
+
+        return Math.max(currentLine, maxPreviousLines);
+    }
+
+    public int getHeight() {
+        return (int) this.getFontHeight();
+    }
+
+    public double getFontHeight() {
+        return (this.fontHeight - 8.5) * .5;
+    }
+
+    @Override
+    public void close() {
+        closeSkiaFonts();
+        skTypefaces = new Typeface[0];
+        glyphBlocks = new GlyphRef[256][];
+        stringWidthMapD.clear();
+        fontHeight = -1;
+    }
+
+    private void closeSkiaFonts() {
+        for (io.github.humbleui.skija.Font f : skFonts) {
+            f.close();
+        }
+        skFonts = new io.github.humbleui.skija.Font[0];
+    }
+
+    public static int[] RGBIntToRGB(int in) {
+        int red = in >> 8 * 2 & 0xFF;
+        int green = in >> 8 & 0xFF;
+        int blue = in & 0xFF;
+        return new int[]{red, green, blue};
+    }
+
+    float getCharWidth(char ch) {
+        return getCharWidth(ch, '\0');
+    }
+
+    public float getCharWidth(char ch, char nextChar) {
+        if (skFonts.length == 0) {
+            return .0f;
+        }
+        GlyphRef ref = glyphRef(ch);
+        if (ref.fontIndex < 0) {
+            return .0f;
+        }
+
+        float width = ref.advance;
+
+        // 添加字间距
+        if (fontKerning != null && nextChar != '\0') {
+            width += fontKerning.getKerning(ch, nextChar, sizePx);
+        }
+
+        return width;
+    }
+
+    public double getStringHeight(String text) {
+        return text.split("\n").length * (getFontHeight() + 4) - 4;
+    }
+
+    /**
+     * 将给定的字符串 trim 到给定的 width。
+     * 如果有空格则从空格开始分割
+     * 否则从最后一个字符开始
+     * 所有的分割点详见 {@link #findLineBreak(String, int, double)} 中的 breakable
+     */
+    public String[] fitWidth(String text, double width) {
+        List<String> lines = new ArrayList<>();
+
+        int i = 0;
+        while (i < text.length()) {
+            int previousI = i;
+            LineBreakResult result = findLineBreak(text, i, width);
+
+            lines.add(text.substring(i, result.endIndex));
+
+            i = result.nextStartIndex;
+
+            // avoid infinite loop
+            if (i == previousI) {
+                i++;
+            }
+        }
+
+        return lines.toArray(new String[0]);
+    }
+
+    @Getter
+    static final char[] breakableChars = new char['\uFFFF' + 1];
+    static String breakable  =  " .。,，!！?？;；、";
+    static String wrapStarts =  "(（「『{[【<";
+    static String wrapEnds   =  ")）」』}]】>";
+    static {
+        for (char c : breakable.toCharArray()) {
+            breakableChars[c] = 2;
+        }
+
+        for (char c : wrapStarts.toCharArray()) {
+            breakableChars[c] = 3;
+        }
+
+        for (char c : wrapEnds.toCharArray()) {
+            breakableChars[c] = 1;
+        }
+    }
+
+    private int findMatchingOpenBracket(String text, int closeIndex, int startIndex) {
+        char closeChar = text.charAt(closeIndex);
+        int closeCharType = wrapEnds.indexOf(closeChar);
+        if (closeCharType == -1) {
+            return -1;
+        }
+
+        char openChar = wrapStarts.charAt(closeCharType);
+        int depth = 1;
+
+        for (int i = closeIndex - 1; i >= startIndex; i--) {
+            char c = text.charAt(i);
+
+            if (i > startIndex && text.charAt(i - 1) == '\247') {
+                i--;
+                continue;
+            }
+
+            if (c == closeChar) {
+                depth++;
+            } else if (c == openChar) {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    private LineBreakResult findLineBreak(String text, int startIndex, double maxWidth) {
+        double currentWidth = 0;
+        int lastBreakableIndex = -1;
+        int lastBreakableIndexPriority = 0;
+        boolean lastBreakableTrimThisChar = false;
+
+        for (int i = startIndex; i < text.length(); i++) {
+            char c = text.charAt(i);
+            char nextChar = i + 1 < text.length() ? text.charAt(i + 1) : '\0';
+
+            if (c == '\247' && i + 1 < text.length()) {
+                i++;
+                continue;
+            }
+
+            if (c == '\n') {
+                return new LineBreakResult(i, i + 1);
+            }
+
+            int breakableCharValue = breakableChars[c];
+            if (breakableCharValue > 0) {
+                if (breakableCharValue == 1) {
+                    int openIndex = findMatchingOpenBracket(text, i, startIndex);
+                    if (openIndex != -1 && openIndex == lastBreakableIndex) {
+                        lastBreakableIndexPriority = 2;
+                        lastBreakableIndex = i;
+                        lastBreakableTrimThisChar = false;
+                    } else if (breakableCharValue >= lastBreakableIndexPriority) {
+                        lastBreakableIndexPriority = breakableCharValue;
+                        lastBreakableIndex = i;
+                    }
+                } else if (breakableCharValue >= lastBreakableIndexPriority) {
+                    lastBreakableIndexPriority = breakableCharValue;
+                    lastBreakableIndex = i;
+                    lastBreakableTrimThisChar = (c == ' ');
+                }
+            }
+
+            double charWidth = getCharWidth(c, nextChar);
+
+            if (currentWidth + charWidth > maxWidth) {
+                if (breakableCharValue > 0 && breakableCharValue >= lastBreakableIndexPriority) {
+                    return handleBreakAtCurrentChar(i, breakableCharValue, lastBreakableTrimThisChar);
+                }
+
+                if (lastBreakableIndex != -1) {
+                    return handleBreakAtLastBreakable(text, lastBreakableIndex, lastBreakableTrimThisChar, startIndex, i);
+                }
+
+                if (i == startIndex) {
+                    return new LineBreakResult(startIndex + 1, startIndex + 1);
+                }
+                return new LineBreakResult(i, i);
+            }
+
+            currentWidth += charWidth;
+        }
+
+        return new LineBreakResult(text.length(), text.length());
+    }
+
+    private LineBreakResult handleBreakAtCurrentChar(int index, int breakableCharValue, boolean trimThisChar) {
+        if (trimThisChar) {
+            return new LineBreakResult(index, index + 1);
+        }
+
+        if (breakableCharValue == 3) {
+            return new LineBreakResult(index, index);
+        }
+
+        return new LineBreakResult(index + 1, index + 1);
+    }
+
+    private LineBreakResult handleBreakAtLastBreakable(String text, int lastBreakableIndex,
+                                                       boolean trimThisChar, int startIndex, int currentIndex) {
+        if (trimThisChar) {
+            return new LineBreakResult(lastBreakableIndex, lastBreakableIndex + 1);
+        }
+
+        char lastBreakableChar = text.charAt(lastBreakableIndex);
+        int lastBreakableCharValue = breakableChars[lastBreakableChar];
+
+        if (lastBreakableCharValue == 3) {
+            if (lastBreakableIndex == startIndex) {
+                if (currentIndex == startIndex) {
+                    return new LineBreakResult(startIndex + 1, startIndex + 1);
+                }
+                return new LineBreakResult(currentIndex, currentIndex);
+            }
+            return new LineBreakResult(lastBreakableIndex, lastBreakableIndex);
+        }
+
+        return new LineBreakResult(lastBreakableIndex + 1, lastBreakableIndex + 1);
+    }
+
+    private static class LineBreakResult {
+        final int endIndex;
+        final int nextStartIndex;
+
+        LineBreakResult(int endIndex, int nextStartIndex) {
+            this.endIndex = endIndex;
+            this.nextStartIndex = nextStartIndex;
+        }
+    }
+
+    public void drawStringWithBetterShadow(String text, double x, double y, int color) {
+        drawString(text, x, y, color);
+    }
+
+    public void drawOutlineCenteredString(String text, double x, double y, int color, int outlineColor) {
+        drawOutlineString(text, x - getStringWidthD(text) * .5, y, color, outlineColor);
+    }
+
+    public void drawOutlineString(String text, double x, double y, int color, int outlineColor) {
+        String outlinetext = StringUtils.removeFormattingCodes(text);
+        drawString(outlinetext, x + 0.5, y, outlineColor);
+        drawString(outlinetext, x - 0.5, y, outlineColor);
+        drawString(outlinetext, x, y + 0.5, outlineColor);
+        drawString(outlinetext, x, y - 0.5, outlineColor);
+        drawString(text, x, y, color);
+    }
+
+    public int getWidth(String text) {
+        return this.getStringWidth(text);
+    }
+
+    public float drawString(String text, double x, double y, double scale, int color) {
+
+        SkijaGfx.pushMatrix();
+
+        SkijaGfx.translate(x, y);
+        SkijaGfx.scale(scale, scale);
+
+        float f = drawString(text, 0, 0, color);
+
+        SkijaGfx.popMatrix();
+        return f;
+    }
+
+}

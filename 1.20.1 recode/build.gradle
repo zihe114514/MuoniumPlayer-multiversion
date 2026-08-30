@@ -1,0 +1,59 @@
+// ==================== 1.20.1 多加载器聚合工程 ====================
+// 目录约定（与 1.21.1 / 1.21.11 / 26.2 三个版本工程一致）：
+//   src/main/{java,resources}   共享代码与资源，只用原版 API（Mojang 官方名 / mojmap），
+//                               不出现任何 net.fabricmc / net.minecraftforge 的类；
+//   fabric/                     Fabric 外壳：入口、按键注册、事件挂点、通道实现、fabric.mod.json；
+//   forge/                      Forge 外壳：同上 + META-INF/mods.toml。
+//
+// 为什么这一版是 Forge 而不是 NeoForge：1.20.1 是 Forge 的最后一个大版本，
+// NeoForge 从 1.20.2 才分家，1.20.1 的模组生态与整合包都在 Forge 上。
+//
+// 为什么共享源码用 mojmap 而不是 yarn：Forge/NeoForge 侧只有 mojmap 一种命名。
+// 统一到 mojmap 后四个版本工程的源码命名也一致了，同一处 API 差异只需要看一遍。
+
+allprojects {
+    group = project.maven_group
+    version = project.mod_version
+}
+
+// ==================== 统一产物目录 ====================
+// 四个版本工程是四个独立的 Gradle 构建（各自的 JDK / mappings / 插件都不同，合不成一个
+// 多项目构建），成品原本散在 <版本>/<加载器>/build/libs 下。这里统一复制到仓库根的 dist/，
+// 一次 tools\build-all.ps1 跑完就能在一个目录里拿到全部 8 个 jar。
+// jar 名里已经带了 Minecraft 版本（archivesName = MuoniumPlayer-<mc>-<loader>），所以平铺不撞名。
+def distDir = rootProject.file('../dist')
+
+tasks.register('collectDist', Copy) {
+    group = 'build'
+    description = "把本版本两个加载器的 mod jar 复制到 ${distDir}"
+    dependsOn ':fabric:build', ':forge:build'
+
+    // 只挑「能直接丢进 mods/ 的那一个」。刻意不写 include '*.jar'：
+    // build/libs 里还躺着源码包，以及改过 archivesName / mod_version 之后的旧名产物，
+    // 用通配全收会把过时的 jar 也一起发出去。
+    ['fabric', 'forge'].each { loaderName ->
+        from(project(":$loaderName").layout.buildDirectory.dir('libs')) {
+            include "${project.archives_base_name}-${project.minecraft_version}-${loaderName}-*.jar"
+            exclude '*-sources.jar'
+        }
+    }
+    into distDir
+
+    // 改了 mod_version 之后旧版本号的 jar 会留在 dist/ 里，容易误装。
+    // 每个版本工程只清自己那两个 —— 通配符必须带上加载器名，
+    // 否则 "MuoniumPlayer-1.21.1-*" 会把 1.21.11 的产物也一起删掉。
+    doFirst {
+        distDir.mkdirs()
+        ['fabric', 'forge'].each { loaderName ->
+            project.fileTree(distDir) {
+                include "${project.archives_base_name}-${project.minecraft_version}-${loaderName}-*.jar"
+            }.each { it.delete() }
+        }
+    }
+}
+
+tasks.register('buildAll') {
+    group = 'build'
+    description = '构建 Fabric 与 Forge 两个 jar，并复制到仓库根的 dist/'
+    dependsOn ':fabric:build', ':forge:build', 'collectDist'
+}

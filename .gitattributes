@@ -1,0 +1,23 @@
+# 文本默认按平台换行签出，仓库内统一存 LF
+* text=auto
+
+# 必须 CRLF 才能正确执行
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# 必须 LF（Unix shell 脚本）
+gradlew text eol=lf
+*.sh    text eol=lf
+
+# 二进制：禁止换行/编码转换
+*.jar binary
+*.ttf binary
+*.otf binary
+*.dll binary
+*.so  binary
+*.dylib binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.zip binary

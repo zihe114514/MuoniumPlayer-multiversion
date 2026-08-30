@@ -1,0 +1,31 @@
+# Forge 侧的 mod 元数据，对应 Fabric 的 fabric.mod.json。
+# 1.20.1 的文件名是 META-INF/mods.toml（NeoForge 1.20.2+ 才改叫 neoforge.mods.toml）。
+modLoader = "javafml"
+loaderVersion = "[47,)"
+license = "All-Rights-Reserved"
+issueTrackerURL = "https://github.com/zihe114514/MuoniumPlayer/issues"
+
+[[mods]]
+modId = "muonium"
+version = "${version}"
+displayName = "MuoniumPlayer"
+authors = "zihe, eyz2021"
+description = '''
+Music player for Minecraft ${minecraft_version} Forge.
+'''
+displayURL = "https://github.com/zihe114514/MuoniumPlayer"
+
+# 客户端专用：装到服务端上不需要、也不应该加载。
+[[dependencies.muonium]]
+    modId = "forge"
+    mandatory = true
+    versionRange = "[47,)"
+    ordering = "NONE"
+    side = "CLIENT"
+
+[[dependencies.muonium]]
+    modId = "minecraft"
+    mandatory = true
+    versionRange = "[${minecraft_version},)"
+    ordering = "NONE"
+    side = "CLIENT"

@@ -1,0 +1,220 @@
+plugins {
+    // NeoForge 官方 Gradle 插件。不用 architectury-loom 的原因：
+    // 它最新只到 1.11.x（对应 fabric-loom 1.11 时代），而本仓四个版本里有 1.21.11 与 26.2，
+    // 且它把 yarn 映射搬到 NeoForge 需要 dev.architectury:yarn-mappings-patch-neoforge，
+    // 那个补丁最高只发到 1.21+build.6。ModDevGradle 直接用 Mojang 官方名，与共享源码一致。
+    id 'net.neoforged.moddev' version '2.0.144'
+    // NeoForge 没有 Loom 的 Jar-in-Jar 等价物，第三方库用 shadow 直接塞进 mod jar。
+    id 'com.gradleup.shadow' version '8.3.6'
+}
+
+base {
+    // 产物名带上 Minecraft 版本，这样四个版本工程的 8 个 jar 平铺到一个 dist/ 里不会撞名，
+    // 用户下载后也一眼看出这个 jar 是给哪个版本、哪个加载器的：MuoniumPlayer-<mc>-<loader>-<modver>.jar
+    archivesName = "${project.archives_base_name}-${project.minecraft_version}-neoforge"
+}
+
+neoForge {
+    version = project.neoforge_version
+
+    // 客户端专用 mod：只需要 client run。
+    runs {
+        client {
+            client()
+            def quickPlay = System.getenv('MU_QUICKPLAY')
+            if (quickPlay) {
+                programArguments.addAll('--quickPlaySingleplayer', quickPlay)
+            }
+        }
+    }
+
+    mods {
+        muonium {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+// 与 fabric/ 子工程挂的是同一份共享源码，绝不复制。
+sourceSets {
+    main {
+        java.srcDirs = [
+                'src/main/java',                                       // NeoForge 外壳
+                rootProject.file('src/main/java'),                     // 共享主体
+                rootProject.file('../mpparty-common/src/main/java')    // 一起听共用源码
+        ]
+        resources.srcDirs = [
+                'src/main/resources',                                  // neoforge.mods.toml / pack.mcmeta
+                rootProject.file('src/main/resources')                 // assets、字体、纹理
+        ]
+    }
+}
+
+def centralHosts = ['repo.maven.apache.org', 'repo1.maven.org', 'repo.maven.org'] as Set
+def retargetCentral = { repo ->
+    if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository
+            && repo.url != null && centralHosts.contains(repo.url.host)) {
+        repo.url = 'https://maven.aliyun.com/repository/public'
+    }
+}
+repositories.all(retargetCentral)
+buildscript.repositories.all(retargetCentral)
+
+repositories {
+    maven { url = 'https://maven.aliyun.com/repository/public' }
+    maven { url = 'https://maven.aliyun.com/repository/google' }
+    maven { url = 'https://maven.neoforged.net/releases' }
+    flatDir { dirs rootProject.file('libs') }
+}
+
+// ==================== 第三方库：shadow 打进 jar ====================
+// 与 Fabric 侧 include() 的那一批完全一致，只是手段不同。刻意不做 relocate：
+//   * skija / zstd-jni 是 JNI 库，原生符号里写死了类名，relocate 会让 native 方法找不到；
+//   * music-api 是 Kotlin 编译产物，relocate kotlin.* 容易踩到反射/元数据。
+// 代价是与其它同样自带这些库的 mod 可能撞版本，出现时再按需 relocate 非 JNI 的那几个。
+configurations {
+    embeddedLibs {
+        // ==== 绝不能重复打包 Minecraft 自己就带的库 ====
+        // 1.20.1（BootstrapLauncher 1.1.2）与 1.21.1（2.0.2）的开发期运行把
+        // legacyClassPath 里的每个 jar 都变成 JPMS 自动模块，两个模块导出同一个包时
+        // JVM 在解析阶段就崩：
+        //   ResolutionException: Modules com.google.gson and MuoniumPlayer.<loader>.embedded.libs
+        //   export package com.google.gson to module org.lz4.java
+        // 游戏一行日志都打不出来。用「本 jar 的包名集合 ∩ clientLegacyClasspath.txt 里每个 jar
+        // 的包名集合」实测过，重合的只有下面这四个，全部由 Minecraft 提供（版本按 MC 走，
+        // 我们只是不再自带一份）：gson、jna、jna-platform、error_prone_annotations。
+        // 1.21.11 / 26.2 的开发期不走模块路径，所以那两版原本没暴露这个问题，
+        // 但发布 jar 里同样不该塞重复库，四个版本统一排除。
+        exclude group: 'com.google.code.gson', module: 'gson'
+        exclude group: 'net.java.dev.jna', module: 'jna'
+        exclude group: 'net.java.dev.jna', module: 'jna-platform'
+        exclude group: 'com.google.errorprone', module: 'error_prone_annotations'
+    }
+}
+
+dependencies {
+    embeddedLibs 'com.google.zxing:core:3.5.3'
+    embeddedLibs 'org.mozilla:rhino:1.7.15'
+    embeddedLibs 'com.google.javascript:closure-compiler:v20210202'
+    // gson / jna / jna-platform 刻意不列：Minecraft 自带，见上面 configurations 里的排除说明。
+    // 编译期用的就是 Minecraft 提供的那几个版本，所以这里也不需要 compileOnly 再声明一遍。
+    embeddedLibs 'muoniumplayer.libs:music-api:0.1.1'
+    embeddedLibs 'muoniumplayer.libs:zstd-jni:1.5.6-9-forge189'
+    embeddedLibs 'muoniumplayer.libs:kotlin-stdlib:2.4.0'
+    embeddedLibs 'io.github.humbleui:skija-shared:0.143.17'
+    embeddedLibs 'io.github.humbleui:types:0.2.0'
+    embeddedLibs "io.github.humbleui:skija-${project.skija_natives}:0.143.17"
+
+    compileOnly 'org.projectlombok:lombok:1.18.30'
+    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+    compileOnly 'org.jetbrains:annotations:20.1.0'
+}
+
+def shadeEmbeddedLibs = tasks.register('shadeEmbeddedLibs', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
+    group = 'shadow'
+    description = '把第三方库合并成一个 jar，再整体塞进 mod jar'
+    destinationDirectory.set(layout.buildDirectory.dir('tmp/shadeEmbeddedLibs'))
+    archiveClassifier.set('embedded-libs')
+    configurations = [project.configurations.embeddedLibs]
+    mergeServiceFiles()
+    exclude 'META-INF/MANIFEST.MF'
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    exclude 'module-info.class'
+}
+tasks.named('shadowJar').configure { enabled = false }
+
+// ==================== 压平 Multi-Release jar ====================
+// embeddedLibs 里的 skija-shared / types / gson / kotlin-stdlib 都是 Multi-Release jar：
+// 根目录下那份类是 Java 8 实现，META-INF/versions/9/ 下才是 Java 9+ 实现，
+// 由清单里的 Multi-Release: true 告诉 JVM 该用哪一份。
+//
+// shadow 合并时 exclude 掉了各输入 jar 的 MANIFEST.MF，这个属性随之丢失，
+// 运行期就只剩根目录下的 Java 8 实现了。skija 的
+// io.github.humbleui.skija.impl.Cleanable 基线实现要 sun.misc.Cleaner
+// （JDK 9 起已从 JDK 里删除），静态初始化必然抛 NoClassDefFoundError，
+// 于是任何 Skia 原生对象都造不出来，SkijaHost 会直接停用整个渲染层
+// ——症状正是「mod 装上了、不崩溃、游戏内一个像素都不显示」。
+// Fabric 侧不受影响：Loom 的 include() 是把原 jar 整个嵌进去（JiJ），清单还在。
+//
+// 与其赌各加载器对 Multi-Release 的支持，这里直接把 versions/N 里的类提到根目录、
+// 覆盖 Java 8 基线实现。四个版本要求的最低 Java 都在 17 以上，
+// 这与「JVM 按 Multi-Release 规则挑最高可用版本」完全等价，且不依赖任何清单属性。
+def flattenEmbeddedLibs = tasks.register('flattenEmbeddedLibs', Jar) {
+    dependsOn(shadeEmbeddedLibs)
+    group = 'shadow'
+    description = '把 Multi-Release jar 的 versions/N 类提到根目录，覆盖 Java 8 基线实现'
+    destinationDirectory.set(layout.buildDirectory.dir('tmp/flattenEmbeddedLibs'))
+    archiveClassifier.set('embedded-libs')
+    // 先加入的条目胜出，所以 versions/N 那一批必须排在基线之前。
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    includeEmptyDirs = false
+
+    from({ zipTree(shadeEmbeddedLibs.get().archiveFile) }) {
+        include 'META-INF/versions/**'
+        // 版本目录里的 module-info 不能提上来：会把这个 jar 变成具名模块，
+        // 进而在 FML 的模块层里读不到别的模块。
+        exclude '**/module-info.class'
+        eachFile { it.path = it.path.replaceFirst('^META-INF/versions/\\d+/', '') }
+    }
+    from({ zipTree(shadeEmbeddedLibs.get().archiveFile) }) {
+        exclude 'META-INF/versions/**'
+    }
+}
+
+dependencies {
+    implementation files(flattenEmbeddedLibs.map { it.archiveFile })
+    // 开发期 runClient 也要能加载这些库。
+    // 1.21.1 那边用的是 MDG 的 additionalRuntimeClasspath；1.21.11 起 MDG 直接报
+    // "there is no additional classpath anymore for Minecraft 1.21.11"，改用标准配置。
+    runtimeOnly files(flattenEmbeddedLibs.map { it.archiveFile })
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.dependsOn(flattenEmbeddedLibs)
+}
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'minecraft_version', project.minecraft_version
+    inputs.property 'neoforge_version', project.neoforge_version
+    filteringCharset 'UTF-8'
+
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand 'version': project.version,
+                'minecraft_version': project.minecraft_version,
+                'neoforge_version': project.neoforge_version
+    }
+}
+
+def targetJavaVersion = 21
+tasks.withType(JavaCompile).configureEach {
+    it.options.encoding = 'UTF-8'
+    it.options.release.set(targetJavaVersion)
+    it.options.compilerArgs.addAll(['-Xmaxerrs', '5000'])
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    withSourcesJar()
+}
+
+jar {
+    dependsOn(flattenEmbeddedLibs)
+    from(rootProject.file('LICENSE.txt')) {
+        rename { "${it}_${project.archives_base_name}" }
+    }
+    from({ zipTree(flattenEmbeddedLibs.get().archiveFile) })
+}
+
+tasks.register('dumpCompileClasspath') {
+    def out = layout.buildDirectory.file('compile-classpath.txt')
+    def cp = sourceSets.main.compileClasspath
+    outputs.file(out)
+    doLast {
+        def f = out.get().asFile
+        f.parentFile.mkdirs()
+        f.text = cp.asPath
+    }
+}

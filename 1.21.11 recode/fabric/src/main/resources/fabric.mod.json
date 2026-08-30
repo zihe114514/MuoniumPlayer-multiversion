@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "muonium",
+  "version": "${version}",
+  "name": "MuoniumPlayer",
+  "description": "Music player for Minecraft 1.21.11 Fabric",
+  "authors": [
+    "zihe",
+    "eyz2021"
+  ],
+  "contact": {
+    "homepage": "https://github.com/zihe114514/MuoniumPlayer",
+    "sources": "https://github.com/zihe114514/MuoniumPlayer"
+  },
+  "license": "All-Rights-Reserved",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.muoniumplayer.MuoniumPlayerMod"
+    ]
+  },
+  "mixins": [
+    {
+      "config": "muonium.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "accessWidener": "muoniumplayer.accesswidener",
+  "depends": {
+    "fabricloader": ">=${loader_min_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}",
+    "java": ">=21"
+  }
+}

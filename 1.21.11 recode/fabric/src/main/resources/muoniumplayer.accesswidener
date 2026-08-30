@@ -1,0 +1,6 @@
+accessWidener	v2	named
+# 1.20.1 时这里放开过 net/minecraft/client/gl/Framebuffer 的 depthAttachment / colorAttachment
+# （int 纹理 id），用来给主 framebuffer 换 DEPTH24_STENCIL8 附件。两个前提都没了：
+#   1. 渲染层重写成 Skija 之后，裁剪由 Skia 自己的 render target 管，不再需要动 MC 的附件；
+#   2. 1.21.11 里这两个字段已经从 int 变成 GpuTexture 对象，按 I 放开会直接让 AW 解析失败。
+# 目前不需要任何 access widener 条目；确有需要时再逐条加，并写清为什么。

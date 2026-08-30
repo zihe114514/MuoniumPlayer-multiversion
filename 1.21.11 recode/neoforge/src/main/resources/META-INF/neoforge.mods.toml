@@ -1,0 +1,35 @@
+# NeoForge 侧的 mod 元数据，对应 Fabric 的 fabric.mod.json。
+modLoader = "javafml"
+loaderVersion = "[1,)"
+license = "All-Rights-Reserved"
+issueTrackerURL = "https://github.com/zihe114514/MuoniumPlayer/issues"
+
+[[mods]]
+modId = "muonium"
+version = "${version}"
+displayName = "MuoniumPlayer"
+authors = "zihe, eyz2021"
+description = '''
+Music player for Minecraft ${minecraft_version} NeoForge.
+'''
+displayURL = "https://github.com/zihe114514/MuoniumPlayer"
+
+# 客户端专用：装到服务端上不需要、也不应该加载。
+[[dependencies.muonium]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[${neoforge_version},)"
+    ordering = "NONE"
+    side = "CLIENT"
+
+[[dependencies.muonium]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[${minecraft_version},)"
+    ordering = "NONE"
+    side = "CLIENT"
+
+# 帧末合成用的 mixin（与 Fabric 侧共用同一份 com.muoniumplayer.mixin.FramebufferMixin 源码）。
+# NeoForge 运行期本来就是官方名，不需要 refmap；Fabric 侧的 refmap 由 Loom 自己生成。
+[[mixins]]
+    config = "muonium.mixins.json"
