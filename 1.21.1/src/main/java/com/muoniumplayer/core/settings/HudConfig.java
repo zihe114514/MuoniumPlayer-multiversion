@@ -62,11 +62,28 @@ public final class HudConfig {
 
     public static float currentLineScale = 1.04f;
     public static float currentWordScale = 0.10f;
+
+    /**
+     * 当前行的发光强度，读数就是「唱到这个字时它有多亮」。
+     *
+     * <p>桌面歌词唯一的发光输入。原来它旁边还有「晕染程度」「发光范围」，OSD 分组里又有一份
+     * 「OSD 发光/晕染程度」跟它相乘——四个滑块描述同一束光。而发光改成真高斯之后，这一项
+     * 折算出的 sigma 不到一个像素，从 0 拉到 1 肉眼没有区别，看得见的光其实全来自「晕染」。
+     * 现在只留这一个强度，光晕铺多远交给 {@link #lyricGlowSpread}。</p>
+     */
     public static float currentGlowStrength = 0.62f;
-    public static float currentGlowRadius = 2.40f;
-    public static float currentBloomStrength = 0.42f;
-    public static float currentTransitionWidth = 14.0f;
-    public static float currentBreathStrength = 0.015f;
+
+    /**
+     * 歌词光晕的扩散倍率，1.0 是标定好的默认口径。
+     *
+     * <p>三层高斯的 sigma 是按字号取比例的（见 {@code TextGlow}），所以桌面歌词、全屏歌词页
+     * 共用这一个倍率就能得到成比例的观感，不必各留一个像素单位的「半径」滑块——那个口径
+     * 在 14px 的桌面歌词和 32.5px 的全屏歌词上根本不是一回事。</p>
+     *
+     * <p>调大它会同时把离屏合成的留白撑宽（{@code TextGlow.padding}），否则光晕会被纹理
+     * 边界切成方块。</p>
+     */
+    public static float lyricGlowSpread = 1.00f;
 
     /**
      * 全屏歌词页逐字发光的上限强度。
@@ -224,8 +241,6 @@ public final class HudConfig {
 
     // OSD KTV animation. These values are independent from the full-screen lyric renderer.
     public static float osdKaraokeTransitionWidth = 14.0f;
-    public static float osdKaraokeGlowStrength = 0.68f;
-    public static float osdKaraokeBloomStrength = 0.46f;
     public static float osdKaraokePulseStrength = 0.06f;
     public static float osdKaraokeSmoothing = 0.85f;
     /**
@@ -243,8 +258,8 @@ public final class HudConfig {
     // Ordinary (non-current) lyric rows.
     public static float normalOpacity = 0.48f;
     public static float normalScale = 0.94f;
+    /** 非当前行的发光强度。口径与 {@link #currentGlowStrength} 完全相同，只是默认调得很淡。 */
     public static float normalGlowStrength = 0.14f;
-    public static float normalBloomStrength = 0.08f;
     public static float normalLineSpacing = 10.0f;
     public static float edgeFadeSize = 30.0f;
     public static float scrollSmoothness = 0.65f;
@@ -367,10 +382,7 @@ public final class HudConfig {
         currentLineScale = 1.04f;
         currentWordScale = 0.10f;
         currentGlowStrength = 0.62f;
-        currentGlowRadius = 2.40f;
-        currentBloomStrength = 0.42f;
-        currentTransitionWidth = 14.0f;
-        currentBreathStrength = 0.015f;
+        lyricGlowSpread = 1.00f;
         fullscreenGlowStrength = 0.55f;
         fullscreenLyricStyle = 0;
         cadenzaDecorColorMode = 0;
@@ -402,15 +414,12 @@ public final class HudConfig {
         pendoloActiveScale = 1.25f;
         pendoloGearDecor = true;
         osdKaraokeTransitionWidth = 14.0f;
-        osdKaraokeGlowStrength = 0.68f;
-        osdKaraokeBloomStrength = 0.46f;
         osdKaraokePulseStrength = 0.06f;
         osdKaraokeSmoothing = 0.85f;
         osdDuetSpread = 0.55f;
         normalOpacity = 0.48f;
         normalScale = 0.94f;
         normalGlowStrength = 0.14f;
-        normalBloomStrength = 0.08f;
         normalLineSpacing = 10.0f;
         edgeFadeSize = 30.0f;
         scrollSmoothness = 0.65f;
@@ -481,10 +490,10 @@ public final class HudConfig {
             currentLineScale = clamp(getFloat(o, "currentLineScale", currentLineScale), 0.95f, 1.16f);
             currentWordScale = clamp(getFloat(o, "currentWordScale", currentWordScale), 0.0f, 0.28f);
             currentGlowStrength = clamp01(getFloat(o, "currentGlowStrength", currentGlowStrength));
-            currentGlowRadius = clamp(getFloat(o, "currentGlowRadius", currentGlowRadius), 0.5f, 5.0f);
-            currentBloomStrength = clamp01(getFloat(o, "currentBloomStrength", currentBloomStrength));
-            currentTransitionWidth = clamp(getFloat(o, "currentTransitionWidth", currentTransitionWidth), 4.0f, 32.0f);
-            currentBreathStrength = clamp(getFloat(o, "currentBreathStrength", currentBreathStrength), 0.0f, 0.08f);
+            // 旧配置里的 currentGlowRadius / currentBloomStrength / osdKaraoke*Strength /
+            // normalBloomStrength 直接忽略：那四项描述的是已经不存在的偏移环画法，
+            // 未知键本来就不会报错，读进来反而会把新口径带偏。
+            lyricGlowSpread = clamp(getFloat(o, "lyricGlowSpread", lyricGlowSpread), 0.5f, 1.8f);
             fullscreenGlowStrength = clamp01(getFloat(o, "fullscreenGlowStrength", fullscreenGlowStrength));
             fullscreenLyricStyle = clampInt(getInt(o, "fullscreenLyricStyle", fullscreenLyricStyle), 0,
                     FULLSCREEN_LYRIC_STYLE_MAX);
@@ -521,8 +530,6 @@ public final class HudConfig {
             pendoloGearDecor = getBoolean(o, "pendoloGearDecor", pendoloGearDecor);
 
             osdKaraokeTransitionWidth = clamp(getFloat(o, "osdKaraokeTransitionWidth", osdKaraokeTransitionWidth), 4.0f, 32.0f);
-            osdKaraokeGlowStrength = clamp01(getFloat(o, "osdKaraokeGlowStrength", osdKaraokeGlowStrength));
-            osdKaraokeBloomStrength = clamp01(getFloat(o, "osdKaraokeBloomStrength", osdKaraokeBloomStrength));
             osdKaraokePulseStrength = clamp(getFloat(o, "osdKaraokePulseStrength", osdKaraokePulseStrength), 0.0f, 0.15f);
             osdKaraokeSmoothing = clamp01(getFloat(o, "osdKaraokeSmoothing", osdKaraokeSmoothing));
             osdDuetSpread = clamp01(getFloat(o, "osdDuetSpread", osdDuetSpread));
@@ -530,7 +537,6 @@ public final class HudConfig {
             normalOpacity = clamp(getFloat(o, "normalOpacity", normalOpacity), 0.15f, 1.0f);
             normalScale = clamp(getFloat(o, "normalScale", normalScale), 0.85f, 1.05f);
             normalGlowStrength = clamp(getFloat(o, "normalGlowStrength", normalGlowStrength), 0.0f, 0.65f);
-            normalBloomStrength = clamp(getFloat(o, "normalBloomStrength", normalBloomStrength), 0.0f, 0.50f);
             normalLineSpacing = clamp(getFloat(o, "normalLineSpacing", normalLineSpacing), 4.0f, 22.0f);
             edgeFadeSize = clamp(getFloat(o, "edgeFadeSize", edgeFadeSize), 10.0f, 80.0f);
             scrollSmoothness = clamp01(getFloat(o, "scrollSmoothness", scrollSmoothness));
@@ -599,10 +605,7 @@ public final class HudConfig {
             o.addProperty("currentLineScale", currentLineScale);
             o.addProperty("currentWordScale", currentWordScale);
             o.addProperty("currentGlowStrength", currentGlowStrength);
-            o.addProperty("currentGlowRadius", currentGlowRadius);
-            o.addProperty("currentBloomStrength", currentBloomStrength);
-            o.addProperty("currentTransitionWidth", currentTransitionWidth);
-            o.addProperty("currentBreathStrength", currentBreathStrength);
+            o.addProperty("lyricGlowSpread", lyricGlowSpread);
             o.addProperty("fullscreenGlowStrength", fullscreenGlowStrength);
             o.addProperty("fullscreenLyricStyle", fullscreenLyricStyle);
             o.addProperty("cadenzaDecorColorMode", cadenzaDecorColorMode);
@@ -634,8 +637,6 @@ public final class HudConfig {
             o.addProperty("pendoloActiveScale", pendoloActiveScale);
             o.addProperty("pendoloGearDecor", pendoloGearDecor);
             o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
-            o.addProperty("osdKaraokeGlowStrength", osdKaraokeGlowStrength);
-            o.addProperty("osdKaraokeBloomStrength", osdKaraokeBloomStrength);
             o.addProperty("osdKaraokePulseStrength", osdKaraokePulseStrength);
             o.addProperty("osdKaraokeSmoothing", osdKaraokeSmoothing);
             o.addProperty("osdDuetSpread", osdDuetSpread);
@@ -643,7 +644,6 @@ public final class HudConfig {
             o.addProperty("normalOpacity", normalOpacity);
             o.addProperty("normalScale", normalScale);
             o.addProperty("normalGlowStrength", normalGlowStrength);
-            o.addProperty("normalBloomStrength", normalBloomStrength);
             o.addProperty("normalLineSpacing", normalLineSpacing);
             o.addProperty("edgeFadeSize", edgeFadeSize);
             o.addProperty("scrollSmoothness", scrollSmoothness);

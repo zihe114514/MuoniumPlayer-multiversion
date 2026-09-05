@@ -33,12 +33,27 @@ public final class NCMPlayerConfig {
      */
     private static boolean neteaseListeningHistorySyncEnabled;
     /**
+     * 是否已经就听歌历史同步征求过一次同意。
+     *
+     * <p>问过就不再问：这是一次隐私授权，反复弹只会被顺手点掉，反而让人以为自己没答应过。
+     * 标记在弹窗出现那一刻就落盘，所以"点取消"和"直接关掉窗口"都算问过——两者表达的都是
+     * 不同意，之后想开还能在账号管理里开。</p>
+     */
+    private static boolean neteaseListeningHistorySyncAsked;
+    /**
      * 磁盘音频缓存上限，单位 GB，0 表示不限制。
      *
      * <p>默认 16 GB：足够放下几百首无损，正常使用不会碰到，同时又能挡住「只增不减」
      * 涨到几十 GB 的情况。真正的清理逻辑在 {@link com.muoniumplayer.core.ncm.music.MusicAudioCache}。</p>
      */
     private static int musicCacheLimitGigabytes = DEFAULT_MUSIC_CACHE_LIMIT_GB;
+    /**
+     * 全屏播放页封面下方那排标签用英文还是中文。
+     *
+     * <p>默认英文。那排是音源 / 音质 / 歌词类型，"无损""逐字"这些词在 10 像素高的胶囊里
+     * 笔画会挤成一团，同样宽度的英文短词读得清得多；想看中文在 HUD 设置里一键切回。</p>
+     */
+    private static boolean nowPlayingTagsInEnglish = true;
     private static boolean loaded;
 
     private NCMPlayerConfig() {
@@ -64,8 +79,14 @@ public final class NCMPlayerConfig {
             if (object != null && object.has("neteaseListeningHistorySyncEnabled")) {
                 neteaseListeningHistorySyncEnabled = object.get("neteaseListeningHistorySyncEnabled").getAsBoolean();
             }
+            if (object != null && object.has("neteaseListeningHistorySyncAsked")) {
+                neteaseListeningHistorySyncAsked = object.get("neteaseListeningHistorySyncAsked").getAsBoolean();
+            }
             if (object != null && object.has("musicCacheLimitGigabytes")) {
                 musicCacheLimitGigabytes = normalizeCacheLimit(object.get("musicCacheLimitGigabytes").getAsInt());
+            }
+            if (object != null && object.has("nowPlayingTagsInEnglish")) {
+                nowPlayingTagsInEnglish = object.get("nowPlayingTagsInEnglish").getAsBoolean();
             }
         } catch (Throwable ignored) {
             playerScale = 1.0f;
@@ -102,6 +123,24 @@ public final class NCMPlayerConfig {
     public static synchronized void setNeteaseListeningHistorySyncEnabled(boolean enabled) {
         load();
         neteaseListeningHistorySyncEnabled = enabled;
+        save();
+    }
+
+    /**
+     * 登录时是否还需要问一次听歌历史同步。
+     *
+     * <p>已经开着的老用户直接算问过：他们当年是在账号管理里手动点开的，再弹一次没有意义。</p>
+     */
+    public static synchronized boolean shouldAskNeteaseListeningHistorySync() {
+        load();
+        return !neteaseListeningHistorySyncAsked && !neteaseListeningHistorySyncEnabled;
+    }
+
+    /** 记下"已经问过"。弹窗一出现就调用，不等用户作答。 */
+    public static synchronized void markNeteaseListeningHistorySyncAsked() {
+        load();
+        if (neteaseListeningHistorySyncAsked) return;
+        neteaseListeningHistorySyncAsked = true;
         save();
     }
 
@@ -192,6 +231,23 @@ public final class NCMPlayerConfig {
         return best;
     }
 
+    /** 全屏播放页的标签是否用英文。 */
+    public static synchronized boolean isNowPlayingTagsInEnglish() {
+        load();
+        return nowPlayingTagsInEnglish;
+    }
+
+    /** 设置界面显示的当前档位。 */
+    public static synchronized String getNowPlayingTagLanguageLabel() {
+        return isNowPlayingTagsInEnglish() ? "English" : "中文";
+    }
+
+    public static synchronized void toggleNowPlayingTagsInEnglish() {
+        load();
+        nowPlayingTagsInEnglish = !nowPlayingTagsInEnglish;
+        save();
+    }
+
     private static float normalize(float scale) {
         float clamped = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
         int steppedPercent = Math.round(clamped * 100.0f / 5.0f) * 5;
@@ -204,7 +260,9 @@ public final class NCMPlayerConfig {
             object.addProperty("playerScale", playerScale);
             object.addProperty("audioQuality", getAudioQuality().name());
             object.addProperty("neteaseListeningHistorySyncEnabled", neteaseListeningHistorySyncEnabled);
+        object.addProperty("neteaseListeningHistorySyncAsked", neteaseListeningHistorySyncAsked);
             object.addProperty("musicCacheLimitGigabytes", musicCacheLimitGigabytes);
+            object.addProperty("nowPlayingTagsInEnglish", nowPlayingTagsInEnglish);
             JsonConfigStorage.writeObject(FILE, GSON, object);
 
         } catch (Throwable ignored) {

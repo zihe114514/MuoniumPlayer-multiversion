@@ -187,6 +187,14 @@ public class CFontRenderer implements Closeable, SharedConstants {
         // 旧实现用的是 Java2D 的 FRACTIONALMETRICS_ON，行为一致。
         f.setHinting(FontHinting.NONE);
         f.setSubpixel(true);
+        // 关掉基线吸附。Skia 默认把基线 round 到整数设备像素，而 setSubpixel 只管水平方向，
+        // 垂直方向仍是整像素——幅度小的纵向动画因此走成台阶。实测（GL 后端、Skia 143）一个
+        // 设备像素内可分辨的垂直位置数：吸附时 1 个，关掉后 4 个（1/4 像素），水平垂直的口径
+        // 这才一致。歌词逐字上浮全程只有 1.85px，吸附下 guiScale=2 只有 4 级台阶，肉眼就是
+        // 一顿一顿；关掉后 15 级。
+        // 代价：字形 mask 的缓存键多一维垂直相位，同一个字最多存 4 份。实际远低于 4 倍——
+        // 同一帧里绝大多数文字的垂直相位相同，只有正在上浮的那行才会铺开。
+        f.setBaselineSnapped(false);
         return f;
     }
 
@@ -353,6 +361,28 @@ public class CFontRenderer implements Closeable, SharedConstants {
      *         调用方的推迟重排分支因此不再触发——那正是想要的结果。
      */
     public boolean drawString(String s, double x, double y, float r, float g, float b, float a) {
+        float alpha = a;
+        if (alpha > 1f) alpha = 1f;
+        if (alpha < 0f) alpha = 0f;
+        return drawGlyphs(s, x, y, SkijaGfx.argb(r, g, b, alpha), Math.round(alpha * 255f), 0f);
+    }
+
+    /**
+     * 同样的一串字，但整体过一遍高斯模糊——一次调用就是一层光晕。
+     *
+     * <p>{@code sigma} 是模糊半径，单位与坐标一致（GUI 像素）。模糊作用在字形遮罩上，
+     * 不开离屏图层；Skia 把模糊后的遮罩按 sigma 一起缓存进字形图集，所以同一个字
+     * 第二帧起就是一次贴图。要真正的「光」还得把混合模式设成加色，
+     * 那是调用方的事（见 {@code SkijaGfx.setBlendMode}）。
+     *
+     * @param argb  含 alpha 的颜色；这一层光晕的亮度就是它的 alpha
+     * @param sigma 高斯 sigma；≤0 时退化成普通绘制
+     */
+    public void drawStringGlow(String s, double x, double y, int argb, double sigma) {
+        drawGlyphs(s, x, y, argb, argb >>> 24, (float) Math.max(0.0, sigma));
+    }
+
+    private boolean drawGlyphs(String s, double x, double y, int baseArgb, int alpha255, float glowSigma) {
         if (s == null || s.isEmpty()) {
             return true;
         }
@@ -361,11 +391,6 @@ public class CFontRenderer implements Closeable, SharedConstants {
             return true;
         }
 
-        float alpha = a;
-        if (alpha > 1f) alpha = 1f;
-        if (alpha < 0f) alpha = 0f;
-
-        int baseArgb = SkijaGfx.argb(r, g, b, alpha);
         int argb = baseArgb;
 
         // 旧实现：translate(x, y - 2) 后按 0.5 缩放，字形位图左上角落在原点。
@@ -373,7 +398,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
         double originY = y - 2.0;
         double lineStep = this.getHeight() + 2.0;  // 旧实现 2 倍空间里的 getHeight()*2 + 4
 
-        RunAccumulator runs = new RunAccumulator();
+        RunAccumulator runs = new RunAccumulator(glowSigma);
         double penX = 0;
         double lineY = 0;
         boolean inSel = false;
@@ -391,7 +416,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
                     int colorCode = this.getColorCode(c);
                     if (colorCode != Integer.MIN_VALUE) {
                         runs.flushBlob(canvas, x, originY, argb);
-                        argb = (Math.round(alpha * 255f) << 24) | (colorCode & 0xFFFFFF);
+                        argb = (alpha255 << 24) | (colorCode & 0xFFFFFF);
                     }
                 }
                 continue;
@@ -445,9 +470,14 @@ public class CFontRenderer implements Closeable, SharedConstants {
         private final TextBlobBuilder builder = new TextBlobBuilder();
         private final List<Short> glyphs = new ArrayList<>();
         private final List<Float> xs = new ArrayList<>();
+        private final float glowSigma;
         private int runFontIndex = -1;
         private float runY;
         private boolean hasContent;
+
+        RunAccumulator(float glowSigma) {
+            this.glowSigma = glowSigma;
+        }
 
         void add(int fontIndex, short glyphId, float x, float y) {
             if (runFontIndex != fontIndex || runY != y) {
@@ -485,7 +515,8 @@ public class CFontRenderer implements Closeable, SharedConstants {
             hasContent = false;
             try (TextBlob blob = builder.build()) {
                 if (blob != null) {
-                    canvas.drawTextBlob(blob, (float) originX, (float) originY, SkijaGfx.fill(argb));
+                    canvas.drawTextBlob(blob, (float) originX, (float) originY,
+                            glowSigma > 0.01f ? SkijaGfx.fillBlurred(argb, glowSigma) : SkijaGfx.fill(argb));
                 }
             }
         }

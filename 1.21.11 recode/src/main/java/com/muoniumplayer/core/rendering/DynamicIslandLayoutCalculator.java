@@ -170,13 +170,66 @@ final class DynamicIslandLayoutCalculator {
         return noticeMode ? 34.0 : 38.0;
     }
 
-    /** 左侧图标托盘与右侧留白合计要占掉的宽度。 */
+    /** 托盘视觉右缘到内容区之间的固定呼吸位。所有样式统一，间距才不会一款一个宽度。 */
+    private static final double CONTENT_GAP = 11.5;
+
+    /**
+     * 内容区两端各留的余量。
+     *
+     * <p>宽度动画与字宽测量都带零点几像素的误差，{@link #styleSideReserve} 卡到刚好等于
+     * 「左边界 + 右边界」时，{@code available / rawRowWidth} 会算出 0.999 这种比值，
+     * 于是白白触发一级缩字号。</p>
+     */
+    private static final double CONTENT_SLACK = 3.0;
+
+    /**
+     * 内容区左边界距灵动岛左边的距离。
+     *
+     * <p>通知文案的 {@code textLeft}、常驻行的 gutter、以及本类的 {@link #styleSideReserve}
+     * 原来各写一份常数，三者互相漂移。默认样式托盘的视觉右缘已经在 32.75
+     * （图标内缩 23 + 托盘 18.4 的半宽 × 绘制时的 1.06 缩放），而常驻行的 gutter 只有 34.0，
+     * 歌名距封面就剩 1.25px；CARD 的 34.75、LIQUID_GLASS 的 34.39 更是直接压到封面上。
+     * 现在三处都收到这一个方法，右侧同理收到 {@link #styleRightPadding}。</p>
+     *
+     */
+    static double styleContentLeft(DynamicIslandStyle style) {
+        return stylePlateRight(style) + CONTENT_GAP;
+    }
+
+    /**
+     * 左侧图标托盘的视觉右缘距灵动岛左边的距离 = 图标中心内缩 + 托盘半宽 × 绘制时的额外缩放。
+     *
+     * <p>刻意把式子摊开写而不是填一张算好的表：托盘尺寸的权威定义在
+     * {@code DownloadDynamicIsland#drawIsland}（{@code iconInset} / {@code iconPlateBase} /
+     * {@code scaleAtPos} 的 1.06），改那边时这里的三个因子能被一眼对上；填死数字的话
+     * 对不上也看不出来，而这正是间距一路缩到 1.25px 的来路。</p>
+     *
+     * <p>MUSIC_FOCUS 不走圆托盘而是一块方砖：满高时边长 31（{@code min(31, max(21, 高 - 16))}），
+     * 外面还套一层最大 1.01 的呼吸缩放。</p>
+     */
+    private static double stylePlateRight(DynamicIslandStyle style) {
+        if (style == DynamicIslandStyle.SYSTEM_CARD) return 20.0 + 17.0 * .5;
+        if (style == DynamicIslandStyle.MUSIC_FOCUS) return 26.0 + 31.0 * .5 * 1.01;
+        if (style == DynamicIslandStyle.LIQUID_GLASS) return 24.0 + 19.6 * .5 * 1.06;
+        if (style == DynamicIslandStyle.CARD) return 25.0 + 18.4 * .5 * 1.06;
+        return 23.0 + 18.4 * .5 * 1.06;
+    }
+
+    /** 内容区右侧留白。两种大卡片的圆角更大，要多让一点才不会压到圆角上。 */
+    static double styleRightPadding(DynamicIslandStyle style) {
+        return style == DynamicIslandStyle.SYSTEM_CARD || style == DynamicIslandStyle.MUSIC_FOCUS
+                ? 12.0 : 9.0;
+    }
+
+    /**
+     * 左侧图标托盘与右侧留白合计要占掉的宽度。
+     *
+     * <p>必须严格等于渲染层真正用的左右边界之和：小了，按本值定出来的宽度装不下渲染层排的版，
+     * 文本区会提前退化成缩字号/省略号；大了则白留一块空白。所以这里不再是一张独立的表，
+     * 而是由 {@link #styleContentLeft} 与 {@link #styleRightPadding} 相加得到。</p>
+     */
     private static double styleSideReserve(DynamicIslandStyle style) {
-        if (style == DynamicIslandStyle.SYSTEM_CARD) return 60.0;
-        if (style == DynamicIslandStyle.MUSIC_FOCUS) return 68.0;
-        if (style == DynamicIslandStyle.LIQUID_GLASS) return 50.0;
-        if (style == DynamicIslandStyle.CARD) return 48.0;
-        return 46.0;
+        return styleContentLeft(style) + styleRightPadding(style) + CONTENT_SLACK;
     }
 
     private static String safeValue(String value, String fallback) {

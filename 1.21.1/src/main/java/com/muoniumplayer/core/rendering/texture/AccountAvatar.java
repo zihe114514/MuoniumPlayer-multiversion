@@ -4,6 +4,9 @@ import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.utils.Location;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * 当前登录账号的头像贴图，带节流的按需加载。
  *
@@ -23,6 +26,15 @@ public final class AccountAvatar {
 
     private static volatile String requestedUrl = "";
     private static volatile long requestedNanos;
+
+    /**
+     * 非当前账号的头像请求时间，按地址分开记。
+     *
+     * <p>不能复用上面那对单槽位字段：「已保存账号」列表里同屏有好几个头像，共用一个
+     * {@code requestedUrl} 会让它们每帧互相顶掉对方的冷却，反而变成轮流重发下载。
+     * 最多 8 个本地账号，这张表不会长到需要清理。</p>
+     */
+    private static final Map<String, Long> REQUESTED = new ConcurrentHashMap<String, Long>();
 
     private AccountAvatar() {
     }
@@ -47,6 +59,27 @@ public final class AccountAvatar {
         if (!shouldRequest(url, requestedUrl, requestedNanos, now)) return null;
         requestedUrl = url;
         requestedNanos = now;
+        Textures.downloadTextureAndLoadAsync(url, location);
+        return null;
+    }
+
+    /**
+     * 指定地址的头像贴图，带同样的按地址节流。给“不是当前登录账号”的头像用。
+     *
+     * @return 贴图对象，或 {@code null}（没地址 / 还没上传完 / 下不到），调用方走自己的兑底
+     */
+    public static ITextureObject textureOrNull(String url, Location location) {
+        if (location == null) return null;
+
+        ITextureObject texture = TextureManager.getInstance().getTexture(location);
+        if (texture != null) return texture;
+
+        if (url == null || url.trim().isEmpty()) return null;
+
+        long now = System.nanoTime();
+        Long last = REQUESTED.get(url);
+        if (last != null && !shouldRequest(url, url, last.longValue(), now)) return null;
+        REQUESTED.put(url, Long.valueOf(now));
         Textures.downloadTextureAndLoadAsync(url, location);
         return null;
     }

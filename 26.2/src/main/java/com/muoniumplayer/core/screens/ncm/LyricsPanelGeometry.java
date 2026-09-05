@@ -65,8 +65,15 @@ public final class LyricsPanelGeometry {
         return Math.max(minAnchor, Math.min(maxAnchor, center));
     }
 
+    /**
+     * 全屏页封面的最大边长。
+     *
+     * <p>比"能放多大就放多大"小一号，是给封面下方那五行曲目信息腾的：字号是逻辑像素、
+     * 不随面板缩放，封面每大一点都是从信息块和传送带那边借的。这两个系数配合
+     * {@code MusicLyricsPanel} 里的封面中心（面板高度的 30%）一起定，改一个就要重算另一个。</p>
+     */
     static double coverSizeMax(double width, double height) {
-        return Math.min(height * .46, width * .36);
+        return Math.min(height * .40, width * .34);
     }
 
     static String formatDuration(float totalMillis) {

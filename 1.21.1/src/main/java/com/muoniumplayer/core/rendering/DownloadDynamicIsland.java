@@ -1276,8 +1276,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         // Keep the icon safely inside the rounded silhouette and reserve a real gap before text.
         // Previously the 1.16x icon scale could push its outer edge into a stale clip or the pill's
         // curved shoulder, making the left edge look incomplete.
-        // SYSTEM_CARD reserves a 24px tile at x + 8, whose exact center is x + 20.
-        // Keep the glyph center tied to that tile rather than its wider text gutter.
+        // 这几个内缩值加上托盘半宽、再乘下面 scaleAtPos 的绘制缩放，就是托盘的视觉右缘；
+        // DynamicIslandLayoutCalculator#styleContentLeft 按它推内容区左边界。改这里要一起改那边，
+        // 否则文案/常驻行会重新贴回托盘上（历史上默认样式只剩 1.25px，CARD 是负的）。
         double iconInset = systemCard ? 20.0 : (musicFocus ? 26.0
                 : (liquidGlass ? 24.0 : (style == DynamicIslandStyle.CARD ? 25.0 : 23.0)));
         double iconExpandedX = centerX - expandedWidth * .5 + iconInset;
@@ -1332,8 +1333,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 }
             }
             if (ambientMix > .005f) {
-                renderAmbientIcon(ambient, iconX, iconY, iconPlate, glyphAlpha * ambientMix,
-                        iconAccentColor, now);
+                // 托盘是个整圆（圆角 = 半径），封面必须沿用同一个圆角才能铺满，
+                // 否则圆托盘里塞一枚小圆角方封面，四周各露一道月牙形的空隙。
+                renderAmbientIcon(ambient, iconX, iconY, iconPlate, iconPlate * .5, 1.0,
+                        glyphAlpha * ambientMix, iconAccentColor, now);
             }
         }
         api.getGLStateManager().popMatrix();
@@ -1353,9 +1356,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         float renderedTextAlpha = staticVolumeCopy
                 ? (expansionValue >= .74 ? alpha * eventFade : 0f) : textAlpha;
         if (renderedTextAlpha > .01f) {
-            double textLeft = x + (systemCard ? 44.0 : (musicFocus ? 55.0
-                    : (liquidGlass ? 39.0 : (style == DynamicIslandStyle.CARD ? 39.0 : 37.0))));
-            double textRight = x + width - (systemCard ? 12.0 : (musicFocus ? 12.0 : 9.0));
+            double textLeft = x + DynamicIslandLayoutCalculator.styleContentLeft(style);
+            double textRight = x + width - DynamicIslandLayoutCalculator.styleRightPadding(style);
             double textCenter = (textLeft + textRight) * .5;
             double copySlide = (1.0 - DynamicIslandMath.clamp01(contentFade)) * CONTENT_CHANGE_SLIDE;
             double baseTitleY = y + (systemCard ? 9.0 : (musicFocus ? 10.0 : 5.4));
@@ -1621,8 +1623,6 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private static final double AMBIENT_ICON_GAP = 3.2;
     private static final double AMBIENT_UNIT_GAP = 2.2;
     private static final double AMBIENT_CHIP_SPACING = 11.0;
-    /** 常驻行右侧保留的安全边距，和文本区右边距同源，保证行尾不会压到圆角上。 */
-    private static final double AMBIENT_RIGHT_PADDING = 9.0;
 
     /** 未缩放的常驻内容总宽。缩放由调用方乘上去，便于先量宽再决定字号。 */
     private double measureAmbientRow(IslandAmbientStatus.Snapshot ambient) {
@@ -1652,11 +1652,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                                 float alpha, double scale, int accentColor) {
         if (ambient == null || ambient.isEmpty()) return;
         double centerY = y + height * .5;
-        double gutter = style == DynamicIslandStyle.SYSTEM_CARD ? 40.0
-                : (style == DynamicIslandStyle.MUSIC_FOCUS ? 50.0 : 34.0);
+        // 与通知文案共用同一条左边界。这里原来自带一份 34.0 的常数，而默认样式托盘的视觉右缘
+        // 已经在 32.75，于是歌名距封面只剩 1.25px；CARD/LIQUID_GLASS 的托盘更宽，实际是负数
+        // ——歌名直接压在封面上，正是"图标和右侧栏目间距过小"看到的样子。
+        double gutter = DynamicIslandLayoutCalculator.styleContentLeft(style);
         // 常驻行同样必须跟着本帧的 width 收缩。展开/收起动画中途 width 远小于目标宽度，
         // 而行宽是按目标宽度算好的，不做这一步就会整行横着穿出胶囊右侧。
-        double available = width - gutter - AMBIENT_RIGHT_PADDING;
+        double available = width - gutter - DynamicIslandLayoutCalculator.styleRightPadding(style);
         double rawRowWidth = measureAmbientRow(ambient);
         if (rawRowWidth <= 0.0 || available <= 1.0) return;
         scale = Math.min(scale, available / rawRowWidth);
@@ -1767,46 +1769,67 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
      *   <li>状态页 + 玩家静止 → 仪表盘字形（island-volume-icons 的 U+E902）。</li>
      * </ul>
      * 刻意不复用加载转子——常驻并不代表有任务在跑，用转子会误导成"正在加载"。
+     *
+     * @param plateSize   托盘边长。封面按它铺满整块托盘，不再自己先缩一圈
+     * @param plateRadius 托盘圆角。封面沿用它才能严丝合缝：圆托盘传半径，方砖传方砖的圆角
+     * @param glyphScale  退回字形时相对托盘的缩放。封面是满幅位图、字形自带大片空白边距，
+     *                    两者不能共用一个尺寸口径（MUSIC_FOCUS 那块 31px 的方砖需要 .64）
      */
     private void renderAmbientIcon(IslandAmbientStatus.Snapshot ambient, double centerX, double centerY,
-                                   double plateSize, float alpha, int accentColor, long now) {
+                                   double plateSize, double plateRadius, double glyphScale,
+                                   float alpha, int accentColor, long now) {
         if (alpha <= .01f) return;
+        if (ambient != null && ambient.isNowPlaying()
+                && drawAmbientArtwork(centerX, centerY, plateSize, plateRadius, alpha)) {
+            return;
+        }
+        // 只有字形分支才吃 glyphScale：封面已经在上面按整块托盘铺完并 return 了。
+        api.getGLStateManager().pushMatrix();
+        scaleAtPos(centerX, centerY, glyphScale);
         double glyphSize = Math.max(6.0, plateSize * .68);
-        if (ambient != null && ambient.isNowPlaying() && drawAmbientArtwork(centerX, centerY,
-                Math.max(8.0, plateSize * .82), alpha)) {
-            return;
+        if (!(ambient != null && ambient.moving && drawRunningSprite(centerX, centerY, glyphSize * 1.12,
+                alpha, hexColor(.96f, .97f, 1f, alpha), now))) {
+            drawVolumeFontIcon(FontManager.islandVolumeIcon24, FontManager.ISLAND_VOLUME_ICON_LARGE,
+                    IslandVolumeIcons.GAUGE, centerX, centerY, glyphSize,
+                    RenderSystem.reAlpha(DynamicIslandMath.brightenAccent(accentColor, .18f), alpha));
         }
-        if (ambient != null && ambient.moving && drawRunningSprite(centerX, centerY, glyphSize * 1.12,
-                alpha, hexColor(.96f, .97f, 1f, alpha), now)) {
-            return;
-        }
-        drawVolumeFontIcon(FontManager.islandVolumeIcon24, FontManager.ISLAND_VOLUME_ICON_LARGE,
-                IslandVolumeIcons.GAUGE, centerX, centerY, glyphSize,
-                RenderSystem.reAlpha(DynamicIslandMath.brightenAccent(accentColor, .18f), alpha));
+        api.getGLStateManager().popMatrix();
     }
 
     /**
      * 画当前歌曲封面。动态封面就绪时 {@code preferredCoverLocation} 会返回抽帧纹理，
      * 于是常驻岛上的封面和桌面歌曲信息、全屏歌词页用的是同一张。
      *
+     * <p>尺寸和圆角都由调用方按托盘给定。原来这里自作主张缩到 82% 又固定 5px 小圆角：
+     * 圆托盘上于是四周各露一道约 1.6px 的月牙，MUSIC_FOCUS 的方砖上更是只盖住一半边长，
+     * 底下那两条旋转的强调条纹全露在封面外圈。</p>
+     *
+     * @param radius 圆角，会夹到 {@code size * .5}（即整圆）以内
      * @return 是否真的画出来了；没有歌曲或纹理还没加载好时返回 false，调用方退回字形图标
      */
-    private boolean drawAmbientArtwork(double centerX, double centerY, double size, float alpha) {
+    private boolean drawAmbientArtwork(double centerX, double centerY, double size, double radius,
+                                       float alpha) {
         try {
             if (CloudMusic.currentlyPlaying == null || size <= 2.0) return false;
             ITextureObject texture = ambientArtworkTexture();
             if (texture == null) return false;
-            double radius = Math.min(5.0, size * .28);
+            double left = centerX - size * .5;
+            double top = centerY - size * .5;
+            double corner = DynamicIslandMath.clamp(radius, 0.0, size * .5);
             // 先垫一层几乎不透明的深色底：封面是按 alpha 画上去的，底下要是留着托盘那层强调色，
             // 透过来的主题色会把整张封面染成一片单色（展开动画期间 alpha 还更低，染得更明显）。
-            roundedRect(centerX - size * .5, centerY - size * .5, size, size, radius,
+            roundedRect(left, top, size, size, corner,
                     hexColor(.016f, .020f, .030f, Math.min(1f, alpha * 1.06f)));
             SkijaGfx.setColor(1f, 1f, 1f, 1f);
             api.getGLStateManager().bindTexture(texture.getGlTextureId());
             texture.linearFilter();
-            roundedRectTextured(centerX - size * .5, centerY - size * .5, size, size, radius, alpha);
+            roundedRectTextured(left, top, size, size, corner, alpha);
             api.getGLStateManager().bindTexture(0);
             SkijaGfx.setColor(1f, 1f, 1f, 1f);
+            // 铺满之后托盘自己那圈描边被完全盖掉，按同一个圆角补一道内切的淡高光顶上：
+            // 液态玻璃这类亮表面上，封面没有边界就像直接糊在背景上、看不出是一枚独立的砖。
+            roundedOutline(left, top, size, size, corner, .9,
+                    new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 78f)));
             return true;
         } catch (Throwable ignored) {
             return false;
@@ -2236,18 +2259,24 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         roundedOutline(centerX - tileSize * .5, centerY - tileSize * .5, tileSize, tileSize, tileRadius, .80,
                 new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 92f)));
 
-        api.getGLStateManager().pushMatrix();
-        api.getGLStateManager().translate(centerX, centerY, 0);
-        api.getGLStateManager().rotate((float) ((preview ? now / 7.0 : spinnerRotation * .75) % 360.0), 0, 0, 1);
-        roundedRect(-tileSize * .34, -1.25, tileSize * .68, 2.5, 1.25,
-                RenderSystem.reAlpha(iconAccentColor, alpha * .58f));
-        roundedRect(-1.25, -tileSize * .34, 2.5, tileSize * .68, 1.25,
-                RenderSystem.reAlpha(accentColor, alpha * .46f));
-        api.getGLStateManager().popMatrix();
+        // 封面铺满整砖之后，这两条旋转条纹和下面那枚深色圆芯全在封面之下，留着只会在圆角
+        // 抗锯齿的那一两个像素上透出转动的色边。跟着 tileArtworkMix 淡出即可 —— 没有封面时
+        // （没在播放、或纹理还没加载好）它是 0，条纹照常全亮，字形分支也仍有圆芯当底衬。
+        float tileDecorAlpha = alpha * (1f - tileArtworkMix);
+        if (tileDecorAlpha > .004f) {
+            api.getGLStateManager().pushMatrix();
+            api.getGLStateManager().translate(centerX, centerY, 0);
+            api.getGLStateManager().rotate((float) ((preview ? now / 7.0 : spinnerRotation * .75) % 360.0), 0, 0, 1);
+            roundedRect(-tileSize * .34, -1.25, tileSize * .68, 2.5, 1.25,
+                    RenderSystem.reAlpha(iconAccentColor, tileDecorAlpha * .58f));
+            roundedRect(-1.25, -tileSize * .34, 2.5, tileSize * .68, 1.25,
+                    RenderSystem.reAlpha(accentColor, tileDecorAlpha * .46f));
+            api.getGLStateManager().popMatrix();
 
-        double coreSize = Math.max(8.0, tileSize * .37);
-        roundedRect(centerX - coreSize * .5, centerY - coreSize * .5, coreSize, coreSize, coreSize * .5,
-                hexColor(.012f, .016f, .029f, alpha * .96f));
+            double coreSize = Math.max(8.0, tileSize * .37);
+            roundedRect(centerX - coreSize * .5, centerY - coreSize * .5, coreSize, coreSize, coreSize * .5,
+                    hexColor(.012f, .016f, .029f, tileDecorAlpha * .96f));
+        }
         float eventMix = 1f - DynamicIslandMath.clamp01f(ambientMix);
         if (eventMix > .005f) {
             if (noticeMode) {
@@ -2263,11 +2292,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             }
         }
         if (ambientMix > .005f) {
-            api.getGLStateManager().pushMatrix();
-            scaleAtPos(centerX, centerY, .64);
-            renderAmbientIcon(ambient, centerX, centerY, tileSize, alpha * ambientMix,
-                    iconAccentColor, now);
-            api.getGLStateManager().popMatrix();
+            // 封面按整砖的边长和圆角铺满；.64 只留给退回的字形 —— 原来这层缩放套在封面上，
+            // 叠上封面自己的 82%，封面就只有砖的一半大（31 → 16.3），四周整圈都是砖。
+            renderAmbientIcon(ambient, centerX, centerY, tileSize, tileRadius, .64,
+                    alpha * ambientMix, iconAccentColor, now);
         }
     }
     private void renderSuccess(double centerX, double centerY, float alpha) {

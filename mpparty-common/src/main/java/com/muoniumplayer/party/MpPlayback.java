@@ -135,21 +135,27 @@ public final class MpPlayback {
         });
     }
 
-    /** 房间停了（队列播完 / 离开 / 解散）：停下房间那一路播放，把播放模式还回去。 */
+    /**
+     * 房间停了（队列播完 / 离开 / 解散）：停下房间那一路播放，把播放模式还回去。
+     *
+     * <p>原来这里只是 {@code pause()}，于是房间放完最后一首之后，播放条上还挂着那首歌的名字和
+     * 一条停住的进度条，点了也不播 —— 房间是这一路播放的所有者，它停了就没有「下一首」，界面
+     * 必须回到「未在播放」。
+     *
+     * <p>收尾要 join 播放线程（最多 1 秒），不能放在渲染线程上；起播那一路本来也是异步的。</p>
+     */
     public static void stop() {
         startPending = false;
         final Music music = partyMusic;
         partyMusic = null;
         restorePlayMode();
         if (music == null) return;
-        onMainThread(new Runnable() {
+        MultiThreadingUtil.runAsync(new Runnable() {
             @Override
             public void run() {
-                AudioPlayer player = CloudMusic.player;
-                if (player != null && player.isUsable() && CloudMusic.currentlyPlaying == music
-                        && !player.isPausing()) {
-                    player.pause();
-                }
+                // 带上身份校验：房间的停止指令可能比用户手动点的下一首晚到，那种情况下什么都
+                // 不该动。
+                CloudMusic.stopPlaybackAndClear(music);
             }
         });
     }

@@ -9,24 +9,22 @@ package com.muoniumplayer.core.settings;
 public enum HudSetting {
     CURRENT_LINE_SCALE("整行缩放", 0.95f, 1.16f),
     CURRENT_WORD_SCALE("逐字放大", 0.00f, 0.28f),
-    CURRENT_GLOW("发光程度", 0.00f, 1.00f),
-    CURRENT_GLOW_RADIUS("发光范围", 0.50f, 5.00f),
-    CURRENT_BLOOM("晕染程度", 0.00f, 1.00f),
-    CURRENT_TRANSITION("染色过渡", 4.00f, 32.00f),
-    CURRENT_BREATH("呼吸幅度", 0.00f, 0.08f),
+    CURRENT_GLOW("当前行发光", 0.00f, 1.00f),
     FULLSCREEN_GLOW("全屏逐字发光", 0.00f, 1.00f),
+    /**
+     * 光晕铺多远。所有歌词共用一个倍率而不是各留一个像素半径：sigma 按字号取比例，
+     * 14px 的桌面歌词和 32.5px 的全屏歌词用同一个像素数只会一边糊一边看不见。
+     */
+    LYRIC_GLOW_SPREAD("发光扩散", 0.50f, 1.80f),
     OSD_TRANSITION("OSD填涂过渡", 4.00f, 32.00f),
-    OSD_GLOW("OSD发光程度", 0.00f, 1.00f),
-    OSD_BLOOM("OSD晕染程度", 0.00f, 1.00f),
     OSD_PULSE("OSD逐字放大", 0.00f, 0.15f),
     OSD_SMOOTHNESS("OSD动画平滑", 0.00f, 1.00f),
     OSD_DUET_SPREAD("OSD对唱分列", 0.00f, 1.00f),
     NORMAL_OPACITY("普通透明度", 0.15f, 1.00f),
     NORMAL_SCALE("普通缩放", 0.85f, 1.05f),
-    NORMAL_GLOW("微光程度", 0.00f, 0.65f),
-    NORMAL_BLOOM("柔光晕染", 0.00f, 0.50f),
+    NORMAL_GLOW("其它行发光", 0.00f, 0.65f),
     NORMAL_SPACING("歌词间距", 4.00f, 22.00f),
-    EDGE_FADE("边缘淡出", 10.00f, 80.00f),
+    EDGE_FADE("淡出高度", 10.00f, 80.00f),
     SCROLL_SMOOTHNESS("滚动柔和", 0.00f, 1.00f),
     SECONDARY_OPACITY("副歌词透明", 0.30f, 1.00f),
     DYNAMIC_ISLAND_SCALE("灵动岛大小", 0.60f, 1.35f),
@@ -92,21 +90,15 @@ public enum HudSetting {
             case CURRENT_LINE_SCALE: return HudConfig.currentLineScale;
             case CURRENT_WORD_SCALE: return HudConfig.currentWordScale;
             case CURRENT_GLOW: return HudConfig.currentGlowStrength;
-            case CURRENT_GLOW_RADIUS: return HudConfig.currentGlowRadius;
-            case CURRENT_BLOOM: return HudConfig.currentBloomStrength;
-            case CURRENT_TRANSITION: return HudConfig.currentTransitionWidth;
-            case CURRENT_BREATH: return HudConfig.currentBreathStrength;
             case FULLSCREEN_GLOW: return HudConfig.fullscreenGlowStrength;
+            case LYRIC_GLOW_SPREAD: return HudConfig.lyricGlowSpread;
             case OSD_TRANSITION: return HudConfig.osdKaraokeTransitionWidth;
-            case OSD_GLOW: return HudConfig.osdKaraokeGlowStrength;
-            case OSD_BLOOM: return HudConfig.osdKaraokeBloomStrength;
             case OSD_PULSE: return HudConfig.osdKaraokePulseStrength;
             case OSD_SMOOTHNESS: return HudConfig.osdKaraokeSmoothing;
             case OSD_DUET_SPREAD: return HudConfig.osdDuetSpread;
             case NORMAL_OPACITY: return HudConfig.normalOpacity;
             case NORMAL_SCALE: return HudConfig.normalScale;
             case NORMAL_GLOW: return HudConfig.normalGlowStrength;
-            case NORMAL_BLOOM: return HudConfig.normalBloomStrength;
             case NORMAL_SPACING: return HudConfig.normalLineSpacing;
             case EDGE_FADE: return HudConfig.edgeFadeSize;
             case SCROLL_SMOOTHNESS: return HudConfig.scrollSmoothness;
@@ -152,21 +144,15 @@ public enum HudSetting {
             case CURRENT_LINE_SCALE: HudConfig.currentLineScale = clamped; break;
             case CURRENT_WORD_SCALE: HudConfig.currentWordScale = clamped; break;
             case CURRENT_GLOW: HudConfig.currentGlowStrength = clamped; break;
-            case CURRENT_GLOW_RADIUS: HudConfig.currentGlowRadius = clamped; break;
-            case CURRENT_BLOOM: HudConfig.currentBloomStrength = clamped; break;
-            case CURRENT_TRANSITION: HudConfig.currentTransitionWidth = clamped; break;
-            case CURRENT_BREATH: HudConfig.currentBreathStrength = clamped; break;
             case FULLSCREEN_GLOW: HudConfig.fullscreenGlowStrength = clamped; break;
+            case LYRIC_GLOW_SPREAD: HudConfig.lyricGlowSpread = clamped; break;
             case OSD_TRANSITION: HudConfig.osdKaraokeTransitionWidth = clamped; break;
-            case OSD_GLOW: HudConfig.osdKaraokeGlowStrength = clamped; break;
-            case OSD_BLOOM: HudConfig.osdKaraokeBloomStrength = clamped; break;
             case OSD_PULSE: HudConfig.osdKaraokePulseStrength = clamped; break;
             case OSD_SMOOTHNESS: HudConfig.osdKaraokeSmoothing = clamped; break;
             case OSD_DUET_SPREAD: HudConfig.osdDuetSpread = clamped; break;
             case NORMAL_OPACITY: HudConfig.normalOpacity = clamped; break;
             case NORMAL_SCALE: HudConfig.normalScale = clamped; break;
             case NORMAL_GLOW: HudConfig.normalGlowStrength = clamped; break;
-            case NORMAL_BLOOM: HudConfig.normalBloomStrength = clamped; break;
             case NORMAL_SPACING: HudConfig.normalLineSpacing = clamped; break;
             case EDGE_FADE: HudConfig.edgeFadeSize = clamped; break;
             case SCROLL_SMOOTHNESS: HudConfig.scrollSmoothness = clamped; break;

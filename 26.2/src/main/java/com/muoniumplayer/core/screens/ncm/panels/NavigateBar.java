@@ -27,6 +27,7 @@ import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.*;
 import com.muoniumplayer.core.screens.ncm.NCMPanel;
+import com.muoniumplayer.core.screens.ncm.NcmSheet;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
@@ -34,6 +35,7 @@ import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.json.JsonUtils;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
+import com.muoniumplayer.party.ui.PartyIcons;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -634,15 +636,57 @@ public class NavigateBar extends NCMPanel {
             creatorAvatar.setRadius(7.25);
         });
 
-        LabelWidget lblCreator = new LabelWidget(() -> NeteaseMusicService.getCurrentPlatform().getDisplayName() + " · "
-                + NeteaseMusicService.getAccountName(NeteaseMusicService.getCurrentPlatform()), FontManager.pf14bold);
+        // 会员徽标：网易云已登录且是会员时出现在账号行右端。原来这条信息是主页左下角一行灰字，
+        // 那个位置既压着内容网格、又和"我的账号"离得最远，看着像界面上多出来的一块。
+        // 徽标先建：昵称的可用宽度要按它当帧的实际宽度让位，否则长昵称会压到徽标底下。
+        final RoundedRectWidget vipPlate = new RoundedRectWidget();
+        this.addChild(vipPlate);
+        vipPlate.setClickable(false);
+        final LabelWidget vipMark = new LabelWidget(PartyIcons.VIP, FontManager.partyIcon24);
+        this.addChild(vipMark);
+        vipMark.setClickable(false);
+        final LabelWidget vipText = new LabelWidget("VIP", FontManager.pf10bold);
+        this.addChild(vipText);
+        vipText.setClickable(false);
+
+        // 只写昵称，不再带「平台 · 」前缀：当前来源已经写在上面那颗「音乐来源 · XXX」按钮上，
+        // 在这里再重复一遍只会把昵称挤成跑马灯 —— 侧栏就那么宽，右边还要给会员徽标让位。
+        LabelWidget lblCreator = new LabelWidget(
+                () -> NeteaseMusicService.getAccountName(NeteaseMusicService.getCurrentPlatform()),
+                FontManager.pf14bold);
         this.addChild(lblCreator);
         lblCreator.setClickable(false);
         lblCreator.setBeforeRenderCallback(() -> {
             lblCreator.setPosition(creatorAvatar.getRelativeX() + creatorAvatar.getWidth() + 4,
                     creatorAvatar.getRelativeY() + creatorAvatar.getHeight() * .5 - lblCreator.getHeight() * .5);
             lblCreator.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            lblCreator.setMaxWidth(Math.max(1, this.getWidth() - lblCreator.getRelativeX() - 12));
+            lblCreator.setMaxWidth(Math.max(1, this.getWidth() - lblCreator.getRelativeX() - 12
+                    - (isNeteaseVip() ? vipPlate.getWidth() + 6 : 0)));
+        });
+
+        vipPlate.setBeforeRenderCallback(() -> {
+            double width = 8.0 + VIP_ICON_BOX + 3.0 + FontManager.pf10bold.getStringWidthD("VIP") + 8.0;
+            vipPlate.setRadius(VIP_PLATE_H * .5);
+            vipPlate.setBounds(width, VIP_PLATE_H);
+            vipPlate.setPosition(Math.max(0, this.getWidth() - 12 - width),
+                    creatorAvatar.getRelativeY() + creatorAvatar.getHeight() * .5 - VIP_PLATE_H * .5);
+            // 底色由金色朝导航底色混出来。铺纯金会比旁边的昵称还抢眼 —— 身份标记不该压过账号本身。
+            vipPlate.setColor(NcmSheet.mix(NCMScreen.getColor(NCMScreen.ColorType.NAVIGATION_BACKGROUND),
+                    NcmSheet.VIP_COLOR, .3));
+            vipPlate.setAlpha(isNeteaseVip() ? 1f : 0f);
+        });
+        vipMark.setBeforeRenderCallback(() -> {
+            vipMark.setColor(NcmSheet.VIP_COLOR);
+            vipMark.setAlpha(isNeteaseVip() ? 1f : 0f);
+            NcmSheet.placeIcon(vipMark, FontManager.partyIcon24,
+                    vipPlate.getRelativeX() + 8.0 + VIP_ICON_BOX * .5,
+                    vipPlate.getRelativeY() + VIP_PLATE_H * .5);
+        });
+        vipText.setBeforeRenderCallback(() -> {
+            vipText.setColor(NcmSheet.VIP_COLOR);
+            vipText.setAlpha(isNeteaseVip() ? 1f : 0f);
+            vipText.setPosition(vipPlate.getRelativeX() + 8.0 + VIP_ICON_BOX + 3.0,
+                    NcmSheet.inkTop(vipText, vipPlate.getRelativeY() + VIP_PLATE_H * .5));
         });
 
         // 联想面板最后加入：渲染顺序即层次，而 iterateChildrenMouseClick 是倒序遍历子组件的，
@@ -715,6 +759,21 @@ public class NavigateBar extends NCMPanel {
 
     private Location getUserAvatarLocation() {
         return NeteaseMusicService.getAccountAvatarLocation();
+    }
+
+    /** 会员徽标的胶囊高度与图标方格。方格必须是 partyIcon24 实际画出来的 12，填大了图标和字之间会空一块。 */
+    private static final double VIP_PLATE_H = 15.0;
+    private static final double VIP_ICON_BOX = 12.0;
+
+    /**
+     * 当前是不是「网易云 + 已登录 + 会员」。
+     *
+     * <p>三个条件缺一不可：QQ 与酷狗没有对应的会员字段，而 {@code CloudMusic.profile} 在切到别的
+     * 来源之后仍然留着上一次的网易云资料，只看 profile 会让 QQ 来源下也挂着一枚网易云会员标。</p>
+     */
+    private static boolean isNeteaseVip() {
+        return NeteaseMusicService.getCurrentPlatform() == MusicPlatform.NETEASE
+                && CloudMusic.profile != null && CloudMusic.profile.isVipMember();
     }
 
     private SourceButton createSourceButton(MusicPlatform platform) {

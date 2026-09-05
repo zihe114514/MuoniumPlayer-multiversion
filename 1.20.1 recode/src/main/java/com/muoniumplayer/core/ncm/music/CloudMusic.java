@@ -892,6 +892,55 @@ public class CloudMusic implements SharedConstants {
         playing.set(false);
     }
 
+    /**
+     * 停下播放并把界面收回「未在播放」。
+     *
+     * <p>播放器本来没有这个状态：{@link #currentlyPlaying} 只会被换成下一首，从来不清空。本地
+     * 歌单播完最后一首这样没问题 —— 队列还在，按一下播放就能重播。一起听不一样：房间放完最后
+     * 一首、服务端广播停止之后，这一路播放的曲目和队列都属于房间，而房间已经空了。此时把
+     * 「正在播放」留在那里，播放条就会一直挂着一个歌名和一条不动的进度条，点了也不会播。</p>
+     *
+     * <p>清完之后这几个静态字段与刚进游戏时逐字段相同（{@code player == null}、
+     * {@code currentlyPlaying == null}、空队列），所以所有读它们的地方本来就处理过这种情况。</p>
+     *
+     * @param expected 只有正在播放的就是这一首时才停：房间的停止指令可能比用户手动点的下一首
+     *                 晚到，不校验就会把用户刚点的歌掐掉。传 {@code null} 表示无条件停
+     * @return 是否受理了这次停止；字段清空排在紧随其后的一次主线程回调里
+     */
+    @SneakyThrows
+    public static boolean stopPlaybackAndClear(Music expected) {
+        if (expected != null && currentlyPlaying != expected) return false;
+
+        // 走和「换一条队列」同一条收尾路径：它会让 session 失效、取消预备与正在淡出的另外两副
+        // 牌，并关掉播放线程自己持有的那一副。
+        stopExistingPlayThread();
+
+        AudioPlayer active = player;
+        if (active != null) {
+            try {
+                active.close();
+            } catch (Throwable ignored) {
+                // 可能还没初始化完就被停掉；不能因此吞掉后面的字段清理。
+            }
+        }
+        // 字段清空排到主线程：界面上十几处都是「先判空、再取值」地读这两个 volatile 字段（最
+        // 典型的是播放条歌名 lblMusicName），后台线程把它们从非空改成 null 的话，那两次读之间
+        // 就能插进一个 NPE。渲染与客户端 tick 同在主线程，排上去之后这条缝根本不存在。
+        MultiThreadingUtil.runOnMainThread(() -> {
+            // 上面的收尾最长要等 1 秒，这中间用户完全可能自己点了新的一首 —— 那就什么都不该
+            // 动，所以身份校验在这里再做一次。
+            if (expected != null && currentlyPlaying != expected) return;
+            player = null;
+            currentlyPlaying = null;
+            // 换一个新的 List 实例而不是 clear()：播放线程靠「playList 还是不是我启动时那一条」
+            // 判断队列有没有被整条换掉，复用同一实例会让残存的线程以为队列没动过。
+            playList = new ArrayList<>();
+            curIdx = 0;
+            playing.set(false);
+        });
+        return true;
+    }
+
     /** Restarts the queue only after an explicit next/previous action following a failed track. */
     private static void restartFromUserTrackSelection() {
         awaitingPlaybackAction = false;
@@ -2672,10 +2721,78 @@ public class CloudMusic implements SharedConstants {
         PlaybackSession s = currentSession;
         long sid = s == null ? -1L : s.sessionId;
         long songId = m == null ? -1L : m.getId();
-        long positionMs = (p == null || m == null) ? 0L : Math.round(p.getCurrentTimeMillis());
+        long rawPositionMs = (p == null || m == null) ? 0L : Math.round(p.getCurrentTimeMillis());
         long durationMs = (p == null || m == null) ? 0L : Math.round(p.getTotalTimeMillis());
         boolean playing = (p != null && m != null) && !p.isFinished();
+        long positionMs = (p == null || m == null)
+                ? 0L
+                : smoothPositionMs(songId, rawPositionMs, durationMs, p.isPausing());
         return new PlaybackSnapshot(sid, songId, positionMs, durationMs, playing, p, m);
+    }
+
+    // ── 渲染侧平滑播放位置 ──────────────────────────────────────────────────────
+
+    private static final Object SMOOTH_CLOCK_LOCK = new Object();
+    /**
+     * 外推上限（毫秒）。音频线程真卡住时，歌词最多往前跑这么多就停住等它，而不是一路飞走。
+     */
+    private static final double SMOOTH_CLOCK_MAX_EXTRAPOLATE_MS = 500.0;
+    /** 判定为 seek 的回退量与前跳量（毫秒）。 */
+    private static final long SMOOTH_CLOCK_BACK_JUMP_MS = 200L;
+    private static final long SMOOTH_CLOCK_FWD_JUMP_MS = 2000L;
+
+    private static long smoothClockAnchorNs = 0L;
+    private static double smoothClockAnchorMs = 0.0;
+    private static double smoothClockOutMs = -1.0;
+    private static long smoothClockRawMs = -1L;
+    private static long smoothClockSongId = Long.MIN_VALUE;
+
+    /**
+     * 每帧连续前进的播放位置。
+     *
+     * <p>{@code AudioSample.position()} 只在解码回调里前进，两次回调之间完全冻结。而逐字上浮、
+     * KTV 填涂前沿、逐字缩放都是以毫秒为自变量的连续动画——自变量是阶梯的时候，动画曲线再顺
+     * 也没用，看起来就是一跳一跳。</p>
+     *
+     * <p>照 modernMP 的做法：音频时钟只用来校准锚点，每帧的位置由系统墙钟从锚点外推。这里比它
+     * 多做一件事——每次音频时钟真的前进就重新锚定，因此不会累积墙钟与音频硬件时钟之间的漂移；
+     * 输出再取一次历史最大值，保证同一段播放内单调，不会因为重锚而倒退一两毫秒。</p>
+     *
+     * <p>换歌、seek、暂停这三种情况下没有可信的历史，直接跟随音频时钟并重新锚定。</p>
+     */
+    private static long smoothPositionMs(long songId, long rawMs, long durationMs, boolean paused) {
+        synchronized (SMOOTH_CLOCK_LOCK) {
+            long nowNs = System.nanoTime();
+
+            boolean discontinuous = songId != smoothClockSongId
+                    || smoothClockRawMs < 0L
+                    || rawMs < smoothClockRawMs - SMOOTH_CLOCK_BACK_JUMP_MS
+                    || rawMs > smoothClockRawMs + SMOOTH_CLOCK_FWD_JUMP_MS;
+            if (discontinuous || paused) {
+                smoothClockSongId = songId;
+                smoothClockRawMs = rawMs;
+                smoothClockAnchorNs = nowNs;
+                smoothClockAnchorMs = rawMs;
+                smoothClockOutMs = rawMs;
+                return rawMs;
+            }
+
+            // 音频时钟前进了一格：把锚点挪到这一格上，外推从这里重新起算。
+            if (rawMs != smoothClockRawMs) {
+                smoothClockRawMs = rawMs;
+                smoothClockAnchorNs = nowNs;
+                smoothClockAnchorMs = rawMs;
+            }
+
+            double elapsedMs = (nowNs - smoothClockAnchorNs) / 1_000_000.0;
+            if (elapsedMs < 0.0) elapsedMs = 0.0;
+            double extrapolated = smoothClockAnchorMs
+                    + Math.min(elapsedMs, SMOOTH_CLOCK_MAX_EXTRAPOLATE_MS);
+            double out = Math.max(smoothClockOutMs, extrapolated);
+            if (durationMs > 0L) out = Math.min(out, durationMs);
+            smoothClockOutMs = out;
+            return Math.round(out);
+        }
     }
 
     private static void resetLyricFlags() {

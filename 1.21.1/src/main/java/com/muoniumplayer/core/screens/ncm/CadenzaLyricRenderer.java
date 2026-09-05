@@ -10,6 +10,7 @@ import com.muoniumplayer.core.rendering.StencilClipManager;
 import com.muoniumplayer.core.rendering.animation.spring.SpringAnimation;
 import com.muoniumplayer.core.rendering.animation.spring.SpringParams;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
+import com.muoniumplayer.core.rendering.font.TextGlow;
 import com.muoniumplayer.core.settings.HudConfig;
 
 import java.util.ArrayList;
@@ -1111,35 +1112,13 @@ final class CadenzaLyricRenderer implements FullscreenLyricRenderer,
     }
 
     /**
-     * 字词发光。
-     *
-     * <p>1.8.9 没有可用的后处理管线，沿用项目里其它发光的做法：把同一串文本按环形偏移多画几遍、
-     * 逐层降低透明度。强度上限走 {@link HudConfig#fullscreenGlowStrength}，和经典样式共用同一个滑块。</p>
+     * 字词发光。强度上限走 {@link HudConfig#fullscreenGlowStrength}，和经典样式共用同一个滑块；
+     * 光晕的形状与混合方式见 {@link TextGlow}。
      */
     private void drawGlow(Token token, double x, double y, double strength, float alpha) {
         double limit = Math.max(0f, Math.min(1f, HudConfig.fullscreenGlowStrength));
-        double effective = limit * clamp01(strength);
-        if (effective <= .004 || alpha <= .004f) return;
-
-        double radius = 1.0 + 2.4 * effective;
-        drawGlowRing(token, x, y, radius, (float) (alpha * effective * .34));
-        drawGlowRing(token, x, y, radius * 1.7, (float) (alpha * effective * .15));
-    }
-
-    private void drawGlowRing(Token token, double x, double y, double radius, float ringAlpha) {
-        if (ringAlpha <= .002f) return;
-        int cardinal = reAlpha(token.color, ringAlpha);
-        int diagonal = reAlpha(token.color, ringAlpha * .72f);
-        double diagonalRadius = radius * .7071;
-        CFontRenderer font = token.font;
-        font.drawString(token.text, x - radius, y, cardinal);
-        font.drawString(token.text, x + radius, y, cardinal);
-        font.drawString(token.text, x, y - radius, cardinal);
-        font.drawString(token.text, x, y + radius, cardinal);
-        font.drawString(token.text, x - diagonalRadius, y - diagonalRadius, diagonal);
-        font.drawString(token.text, x + diagonalRadius, y - diagonalRadius, diagonal);
-        font.drawString(token.text, x - diagonalRadius, y + diagonalRadius, diagonal);
-        font.drawString(token.text, x + diagonalRadius, y + diagonalRadius, diagonal);
+        TextGlow.draw(token.font, token.text, x, y, token.color & 0xFFFFFF, alpha,
+                limit * clamp01(strength), HudConfig.lyricGlowSpread);
     }
 
     private void applyEnterPose(Token token, double progress) {

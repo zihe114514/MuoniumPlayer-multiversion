@@ -20,6 +20,7 @@ import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.StencilClipManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
+import com.muoniumplayer.core.rendering.font.TextGlow;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.screens.ncm.LyricDuetGroups;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
@@ -129,13 +130,14 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     private static final int KARAOKE_FEATHER_STEPS = 10;
     /** 块高超过 HUD 时，当前行（对唱是整组）的不透明度下限，避免整行被边缘淡出吃掉。 */
     private static final double MIN_OVERFLOW_BLOCK_ALPHA = .55;
-    /** KTV 光晕的基础强度（还没唱到这个字时也留一点点底光）。 */
-    private static final double KARAOKE_GLOW_BASE_DRIVE = .18;
-    /** KTV 光晕随「这个字已经唱了多久」增加的强度。 */
-    private static final double KARAOKE_GLOW_PROGRESS_DRIVE = .34;
-    /** 上面两项之和，用于反推离屏纹理需要留多少发光白边。 */
-    private static final double KARAOKE_GLOW_MAX_DRIVE =
-            KARAOKE_GLOW_BASE_DRIVE + KARAOKE_GLOW_PROGRESS_DRIVE;
+    /**
+     * KTV 光晕在「还没唱到这个字」时保留的强度比例。
+     *
+     * <p>整条链路只剩一个强度输入（{@link HudConfig#currentGlowStrength}），这里把它按演唱进度
+     * 从这个下限插到 1.0。于是滑块读数就是「唱到这个字时的亮度」本身，不用再在心里乘一串系数
+     * ——原来那三个 drive 常数把滑块的实际影响压到了 .18~.52 倍。</p>
+     */
+    private static final double KARAOKE_GLOW_FLOOR = .35;
 
     /**
      * Seeks must not reuse the animated positions from an unrelated timestamp.
@@ -631,7 +633,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
 
     private void renderKaraokeBlock(LyricLayout layout, double y,
                                      float songProgress, int effectAlpha) {
-        LyricVisualStyle visualStyle = getLyricVisualStyle(true, songProgress);
+        LyricVisualStyle visualStyle = getLyricVisualStyle(true);
         // 整块的真实横向范围（含对齐后的落点），而不是整个内容区：居中对齐的短行不该被
         // 当成占满整行来限制倍率。
         double blockLeft = karaokeBlockLeft(layout);
@@ -871,58 +873,38 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
      * <p>光晕是围绕字形向外扩的，不留白就会被纹理边界切成一个方块。留白必须是整数，这样
      * 合成四边形与纹理仍然一一对应。发光完全关闭时留 1 像素，只为避免最外圈的抗锯齿被纹理
      * 边界和线性过滤啃掉。</p>
+     *
+     * <p>留白直接问 {@link TextGlow#padding}，不再自己按环半径反推：高斯的 sigma 由字号和扩散
+     * 倍率决定，比原先那套偏移半径大得多（默认口径下 11px vs 8px），照旧公式算会把光晕削成方块。</p>
      */
     private int karaokeGlowPadding(LyricVisualStyle visualStyle) {
-        if (!HudConfig.osdKaraokeEmphasisEnabled) {
+        if (!HudConfig.osdKaraokeEmphasisEnabled || visualStyle.glowStrength <= .004) {
             return 1;
         }
-        // KARAOKE_GLOW_MAX_DRIVE 是 drawKaraokeSegmentGlow 里 drive 的最大值（characterProgress = 1）。
-        double glow = KARAOKE_GLOW_MAX_DRIVE * visualStyle.glowStrength
-                * getKaraokeAccent(HudConfig.osdKaraokeGlowStrength);
-        double bloom = KARAOKE_GLOW_MAX_DRIVE * visualStyle.bloomStrength
-                * getKaraokeAccent(HudConfig.osdKaraokeBloomStrength);
-        double baseRadius = Math.max(.35, visualStyle.glowRadius);
-        double radius = 0.0;
-        if (glow > .004) {
-            radius = Math.max(radius, KaraokeAnimationMath.glowRingRadius(baseRadius, glow));
-        }
-        if (bloom > .004) {
-            radius = Math.max(radius, KaraokeAnimationMath.bloomOuterRadius(baseRadius));
-        }
-        return KaraokeAnimationMath.glowPadding(radius);
+        return Math.max(1, TextGlow.padding(getFontRenderer(), HudConfig.lyricGlowSpread));
     }
 
     /**
      * 一个字（或整段）的光晕，亮度只取决于它已经唱了多久。
      *
-     * <p>系数与原来的 {@code renderKaraokeGlow} 完全一致（{@code strength = .18 + .34 * intensity}），
-     * 所以 OSD 发光/晕染两个滑块的手感没有变化；区别只在于它现在画进离屏纹理、由遮罩负责显隐，
-     * 不再需要为每一条羽化带各画一圈。</p>
+     * <p>原来这里按「发光 / 晕染 / 发光半径」三个滑块各算一到两圈偏移环。画法换成真高斯之后
+     * 那套半径就成了错的口径：最内圈折算出来只有 σ≈0.5px，比一个像素还小，于是「发光程度」
+     * 从 0 拉到 1 肉眼没有任何区别（同时它的 alpha 在半程就被补偿系数顶到饱和），
+     * 真正看得见的那点光全部来自「晕染」那两圈。</p>
+     *
+     * <p>现在整条链路只有一个强度 + 一个扩散，三层 sigma 由 {@link TextGlow} 按字号推出，
+     * 和全屏歌词页完全同一个口径。</p>
      */
     private void drawKaraokeSegmentGlow(String text, double x, double y, int color,
                                         LyricVisualStyle visualStyle, double intensity) {
         if (!HudConfig.osdKaraokeEmphasisEnabled || RGBA.alpha(color) <= 0) {
             return;
         }
-        double drive = KARAOKE_GLOW_BASE_DRIVE
-                + KARAOKE_GLOW_PROGRESS_DRIVE * Math.max(0.0, Math.min(1.0, intensity));
-        double glow = drive * visualStyle.glowStrength * getKaraokeAccent(HudConfig.osdKaraokeGlowStrength);
-        double bloom = drive * visualStyle.bloomStrength * getKaraokeAccent(HudConfig.osdKaraokeBloomStrength);
-        if (glow <= .004 && bloom <= .004) {
-            return;
-        }
-
-        double baseRadius = Math.max(.35, visualStyle.glowRadius);
-        if (glow > .004) {
-            drawKaraokeGlowRing(text, x, y, color,
-                    KaraokeAnimationMath.glowRingRadius(baseRadius, glow), glow * 1.12);
-        }
-        if (bloom > .004) {
-            drawKaraokeGlowRing(text, x, y, color,
-                    KaraokeAnimationMath.bloomInnerRadius(baseRadius), bloom * .52);
-            drawKaraokeGlowRing(text, x, y, color,
-                    KaraokeAnimationMath.bloomOuterRadius(baseRadius), bloom * .24);
-        }
+        double progress = Math.max(0.0, Math.min(1.0, intensity));
+        double strength = visualStyle.glowStrength
+                * (KARAOKE_GLOW_FLOOR + (1.0 - KARAOKE_GLOW_FLOOR) * progress);
+        TextGlow.draw(getFontRenderer(), text, x, y, color & 0xFFFFFF,
+                RGBA.alpha(color) / 255.0, strength, HudConfig.lyricGlowSpread);
     }
 
     /**
@@ -1172,58 +1154,23 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     /**
-     * Soft aura for the already-clipped KTV fill. The shared current-line style is
-     * deliberately resolved before entering this branch, so the HUD editor's
-     * current glow, bloom and radius sliders affect both the timed original text
-     * and its translation. OSD-specific sliders remain a gentle KTV accent rather
-     * than a separate replacement configuration path.
+     * 离屏路径不可用时的兜底光晕。当前行的发光强度在进入这个分支之前就解析好了，
+     * 所以原文和译文吃的是同一个滑块。
+     *
+     * <p>原来这里另外乘了一层「OSD 发光/晕染」的 accent 系数（{@code .35 + .65 * 滑块}）：
+     * 同一件事被两个滑块相乘，而且 accent 有 35% 的下限——把「OSD发光程度」拉到 0 也关不掉。
+     * 现在这两项已经删掉，强度只由当前行那一个滑块决定。</p>
+     *
+     * @param strength 这一帧的演唱进度形状（0~1），与配置无关
      */
     private void renderKaraokeGlow(String text, double x, double y, int color, double strength,
                                    LyricVisualStyle visualStyle) {
         if (!HudConfig.osdKaraokeEmphasisEnabled || strength <= .001 || RGBA.alpha(color) <= 0) {
             return;
         }
-
-        double glowAccent = getKaraokeAccent(HudConfig.osdKaraokeGlowStrength);
-        double bloomAccent = getKaraokeAccent(HudConfig.osdKaraokeBloomStrength);
-        double configuredGlow = strength * visualStyle.glowStrength * glowAccent;
-        double configuredBloom = strength * visualStyle.bloomStrength * bloomAccent;
-        if (configuredGlow <= .001 && configuredBloom <= .001) {
-            return;
-        }
-
-        double baseRadius = Math.max(.35, visualStyle.glowRadius);
-        if (configuredGlow > .001) {
-            double glowRadius = baseRadius * (.32 + Math.min(1.0, configuredGlow) * .68);
-            drawKaraokeGlowRing(text, x, y, color, glowRadius, configuredGlow * 1.12);
-        }
-        if (configuredBloom > .001) {
-            drawKaraokeGlowRing(text, x, y, color, baseRadius * 1.35 + .8,
-                    configuredBloom * .52);
-            drawKaraokeGlowRing(text, x, y, color, baseRadius * 2.15 + 1.2,
-                    configuredBloom * .24);
-        }
-    }
-
-    /** OSD-specific values enhance the KTV foreground without disabling shared current-line styling. */
-    private double getKaraokeAccent(float configuredValue) {
-        double clamped = Math.max(0.0, Math.min(1.0, configuredValue));
-        return .35 + clamped * .65;
-    }
-
-    private void drawKaraokeGlowRing(String text, double x, double y, int color,
-                                     double radius, double alpha) {
-        int cardinalColor = multiplyAlpha(color, Math.min(1.0, alpha));
-        int diagonalColor = multiplyAlpha(color, Math.min(1.0, alpha * .72));
-        double diagonalRadius = radius * .72;
-        getFontRenderer().drawString(text, x - radius, y, cardinalColor);
-        getFontRenderer().drawString(text, x + radius, y, cardinalColor);
-        getFontRenderer().drawString(text, x, y - radius, cardinalColor);
-        getFontRenderer().drawString(text, x, y + radius, cardinalColor);
-        getFontRenderer().drawString(text, x - diagonalRadius, y - diagonalRadius, diagonalColor);
-        getFontRenderer().drawString(text, x + diagonalRadius, y - diagonalRadius, diagonalColor);
-        getFontRenderer().drawString(text, x - diagonalRadius, y + diagonalRadius, diagonalColor);
-        getFontRenderer().drawString(text, x + diagonalRadius, y + diagonalRadius, diagonalColor);
+        TextGlow.draw(getFontRenderer(), text, x, y, color & 0xFFFFFF,
+                RGBA.alpha(color) / 255.0,
+                visualStyle.glowStrength * Math.min(1.0, strength), HudConfig.lyricGlowSpread);
     }
 
     private int multiplyAlpha(int color, double multiplier) {
@@ -1267,10 +1214,9 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     private void renderPrimaryLine(String text, double y, int color, boolean isCurrent,
                                    float songProgress, boolean applyGlow) {
         double x = calculateTextX(text, getFontRenderer(), activeAlignMode());
-        LyricVisualStyle visualStyle = getLyricVisualStyle(isCurrent, songProgress);
+        LyricVisualStyle visualStyle = getLyricVisualStyle(isCurrent);
         renderScaledText(text, x, y, color, getFontRenderer(), visualStyle.scale,
-                applyGlow ? visualStyle.glowStrength : 0.0,
-                applyGlow ? visualStyle.bloomStrength : 0.0, visualStyle.glowRadius, false);
+                applyGlow ? visualStyle.glowStrength : 0.0, false);
     }
 
     private void renderSecondaryLine(String text, double y, int color, boolean isCurrent,
@@ -1279,34 +1225,35 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         // The translation intentionally uses the same resolved style as the original.
         // Its smaller font remains the only visual distinction; no hidden 0.45/0.34
         // multipliers may split the HUD editor sliders into two unrelated effects.
-        LyricVisualStyle visualStyle = getLyricVisualStyle(isCurrent, songProgress);
+        LyricVisualStyle visualStyle = getLyricVisualStyle(isCurrent);
         renderScaledText(text, x, y, color, getSmallFontRenderer(), visualStyle.scale,
-                visualStyle.glowStrength, visualStyle.bloomStrength, visualStyle.glowRadius, false);
+                visualStyle.glowStrength, false);
     }
 
     /** Resolves the shared current/ordinary visual configuration for original and translated text. */
-    private LyricVisualStyle getLyricVisualStyle(boolean isCurrent, float songProgress) {
+    private LyricVisualStyle getLyricVisualStyle(boolean isCurrent) {
         if (isCurrent) {
-            double currentGlow = HudConfig.currentLyricEffectsEnabled ? HudConfig.currentGlowStrength : 0.0;
-            double currentBloom = HudConfig.currentLyricEffectsEnabled ? HudConfig.currentBloomStrength : 0.0;
-            return new LyricVisualStyle(getCurrentLineScale(songProgress), currentGlow, currentBloom,
-                    HudConfig.currentGlowRadius);
+            return new LyricVisualStyle(getCurrentLineScale(),
+                    HudConfig.currentLyricEffectsEnabled ? HudConfig.currentGlowStrength : 0.0);
         }
-        double normalGlow = HudConfig.normalLyricEffectsEnabled ? HudConfig.normalGlowStrength : 0.0;
-        double normalBloom = HudConfig.normalLyricEffectsEnabled ? HudConfig.normalBloomStrength : 0.0;
-        return new LyricVisualStyle(HudConfig.normalScale, normalGlow,
-                normalBloom, 1.2 + normalGlow * 1.8);
+        return new LyricVisualStyle(HudConfig.normalScale,
+                HudConfig.normalLyricEffectsEnabled ? HudConfig.normalGlowStrength : 0.0);
     }
 
-    private double getCurrentLineScale(float songProgress) {
-        double breathStrength = HudConfig.currentLyricEffectsEnabled ? HudConfig.currentBreathStrength : 0.0;
-        double breath = Math.sin(songProgress * .0032) * breathStrength;
-        return HudConfig.currentLineScale * (1.0 + breath);
+    /**
+     * 当前行只用配置里的固定倍率，不再叠正弦呼吸。
+     *
+     * <p>字形图集是 2 倍超采样再精确缩小 0.5 倍画出来的，只有整数倍率能一像素对一像素。
+     * 呼吸让倍率每帧都是个不一样的非整数，当前行于是一直在重采样，看着就是持续发虚；
+     * 而且它和 {@code clampScaleToClip} 打架——倍率一过裁剪上限就被夹住，呼吸到峰值那段
+     * 直接卡平，动画本身也不完整。</p>
+     */
+    private double getCurrentLineScale() {
+        return HudConfig.currentLineScale;
     }
 
     private void renderScaledText(String text, double x, double y, int color, CFontRenderer font,
-                                  double scale, double glowStrength, double bloomStrength,
-                                  double glowRadius, boolean forceNoShadow) {
+                                  double scale, double glowStrength, boolean forceNoShadow) {
         // 缩放锚点必须夹在裁剪框内，理由见 renderKaraokeBlock 上方的说明：贴边的行（对唱被强制
         // 贴左/贴右，译文跟随同一列）按自身中心放大时，放大量整份落到外侧，会被裁剪框切掉。
         double textWidth = font.getStringWidthD(text);
@@ -1318,7 +1265,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         api.getGLStateManager().scale(safeScale, safeScale, 1);
         api.getGLStateManager().translate(-centerX, -centerY, 0);
         try {
-            renderTextGlow(font, text, x, y, color, glowStrength, bloomStrength, glowRadius);
+            renderTextGlow(font, text, x, y, color, glowStrength);
             if (!forceNoShadow && this.shadow.getValue()) {
                 font.drawStringWithShadow(text, x, y, color);
             } else {
@@ -1329,57 +1276,21 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         }
     }
 
-    private void renderScaledGlow(String text, double x, double y, int color, CFontRenderer font,
-                                  double scale, double glowStrength, double bloomStrength,
-                                  double glowRadius) {
-        double textWidth = font.getStringWidthD(text);
-        double safeScale = clampScaleToClip(textWidth, scale);
-        double centerX = clampScaleAnchorX(x, textWidth, safeScale);
-        double centerY = y + font.getHeight() * .5;
-        api.getGLStateManager().pushMatrix();
-        api.getGLStateManager().translate(centerX, centerY, 0);
-        api.getGLStateManager().scale(safeScale, safeScale, 1);
-        api.getGLStateManager().translate(-centerX, -centerY, 0);
-        try {
-            renderTextGlow(font, text, x, y, color, glowStrength, bloomStrength, glowRadius);
-        } finally {
-            api.getGLStateManager().popMatrix();
-        }
-    }
-
     /**
-     * Shader-free soft glow for Forge 1.8.9. Sparse rings produce a smooth falloff
-     * without allocating a framebuffer per glyph or leaking OpenGL state.
+     * 非当前行 / 无逐字时间轴时的整行光晕。与 KTV 逐字光晕、全屏歌词页共用
+     * {@link TextGlow} 的同一套三层 sigma，只是强度换成本行自己那一个滑块。
+     *
+     * <p>原来这里另算三圈偏移环（{@code .45 + r * .48} / {@code r * 1.35 + .8} /
+     * {@code r * 2.15 + 1.2}）。那些半径是偏移距离而不是高斯 sigma，直接折算过来最内圈
+     * 不到一个像素，「微光程度」滑块因此看不出效果。</p>
      */
     private void renderTextGlow(CFontRenderer font, String text, double x, double y, int color,
-                                double glowStrength, double bloomStrength, double glowRadius) {
-        if (RGBA.alpha(color) <= 0 || (glowStrength <= .001 && bloomStrength <= .001)) {
+                                double glowStrength) {
+        if (RGBA.alpha(color) <= 0 || glowStrength <= .001) {
             return;
         }
-
-        double baseRadius = Math.max(.35, glowRadius);
-        if (glowStrength > .001) {
-            drawGlowRing(font, text, x, y, color, .45 + baseRadius * .48, glowStrength * .32);
-        }
-        if (bloomStrength > .001) {
-            drawGlowRing(font, text, x, y, color, baseRadius * 1.35 + .8, bloomStrength * .16);
-            drawGlowRing(font, text, x, y, color, baseRadius * 2.15 + 1.2, bloomStrength * .075);
-        }
-    }
-
-    private void drawGlowRing(CFontRenderer font, String text, double x, double y, int color,
-                              double radius, double alpha) {
-        int cardinal = multiplyAlpha(color, Math.min(1.0, alpha));
-        int diagonal = multiplyAlpha(color, Math.min(1.0, alpha * .72));
-        double diagonalRadius = radius * .7071;
-        font.drawString(text, x - radius, y, cardinal);
-        font.drawString(text, x + radius, y, cardinal);
-        font.drawString(text, x, y - radius, cardinal);
-        font.drawString(text, x, y + radius, cardinal);
-        font.drawString(text, x - diagonalRadius, y - diagonalRadius, diagonal);
-        font.drawString(text, x + diagonalRadius, y - diagonalRadius, diagonal);
-        font.drawString(text, x - diagonalRadius, y + diagonalRadius, diagonal);
-        font.drawString(text, x + diagonalRadius, y + diagonalRadius, diagonal);
+        TextGlow.draw(font, text, x, y, color & 0xFFFFFF, RGBA.alpha(color) / 255.0,
+                glowStrength, HudConfig.lyricGlowSpread);
     }
 
     private double calculateTextX(String text, CFontRenderer font, String alignMode) {
@@ -1497,18 +1408,19 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         wpsInterface.setHeight(this.height.getValue().floatValue());
     }
 
-    /** Immutable resolved style shared by primary and translation lyric rendering. */
+    /**
+     * Immutable resolved style shared by primary and translation lyric rendering.
+     *
+     * <p>发光只剩一个强度。「晕染」和「发光半径」是八向偏移时代的两个旋钮，真高斯下
+     * 前者就是同一束光的外层、后者由字号 × 扩散倍率推出，留着只会让三个滑块互相抵消。</p>
+     */
     private static class LyricVisualStyle {
         final double scale;
         final double glowStrength;
-        final double bloomStrength;
-        final double glowRadius;
 
-        LyricVisualStyle(double scale, double glowStrength, double bloomStrength, double glowRadius) {
+        LyricVisualStyle(double scale, double glowStrength) {
             this.scale = scale;
             this.glowStrength = glowStrength;
-            this.bloomStrength = bloomStrength;
-            this.glowRadius = glowRadius;
         }
 
         /**
@@ -1519,7 +1431,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
          */
         LyricVisualStyle withScale(double newScale) {
             return Math.abs(newScale - this.scale) < 1e-9 ? this
-                    : new LyricVisualStyle(newScale, glowStrength, bloomStrength, glowRadius);
+                    : new LyricVisualStyle(newScale, glowStrength);
         }
     }
 

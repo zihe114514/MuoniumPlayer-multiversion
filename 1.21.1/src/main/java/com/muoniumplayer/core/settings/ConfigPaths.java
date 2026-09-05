@@ -61,6 +61,15 @@ public final class ConfigPaths {
      */
     public static final File FFMPEG_NOTICE = new File("config", "muonium/ffmpeg_notice.json");
 
+    /**
+     * 更新提示的开关、被跳过的版本号与远端清单缓存。
+     *
+     * <p>与 {@link #FFMPEG_NOTICE} 同理单独一个文件：这个提示同样要在<b>主菜单</b>就决定要不要弹，
+     * 读失败的代价只是「多打一次网络请求、多提示一次」，不该有机会影响任何别的设置。
+     * 把 {@code enabled} 改成 {@code false} 就是彻底关掉更新检查（连网络都不会打）。</p>
+     */
+    public static final File UPDATE_NOTICE = new File("config", "muonium/update_notice.json");
+
     static {
         migrateLegacyFiles();
     }

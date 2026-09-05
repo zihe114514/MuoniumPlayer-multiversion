@@ -55,7 +55,11 @@ public final class MuoniumPlayerNeoForge {
      * 必须回到主线程执行，所以走 {@code enqueueWork}。
      */
     private void onClientSetup(FMLClientSetupEvent event) {
-        event.enqueueWork(() -> MuoniumPlayerClient.getInstance().init());
+        event.enqueueWork(() -> {
+            // 加载器 id 必须在 init() 之前登记：更新检查按「MC 版本 + 加载器」查清单。
+            MuoniumPlayerClient.setLoaderId("neoforge");
+            MuoniumPlayerClient.getInstance().init();
+        });
     }
 
     private void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {

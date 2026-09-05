@@ -464,8 +464,8 @@ public class HomePanel extends NCMPanel {
         final double recommendationsY = margin + welcomeHeight + 2
                 + margin * .5 - recommendationsHeight * .5;
         final double contentTop = Math.max(52.0, Math.ceil(recommendationsY + recommendationsHeight + margin * .75));
-        // Reserve space for the compact account identity at the player-content lower left.
-        final double bottomPadding = 30.0;
+        // 账号身份已经挪到侧栏的账号行（那里本来就有头像和昵称），主页下方不再需要给它留位置。
+        final double bottomPadding = margin;
 
         scrollPanel = new ScrollPanel();
         this.addChild(scrollPanel);
@@ -488,28 +488,6 @@ public class HomePanel extends NCMPanel {
                 .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)));
         this.addChild(lblWelcome);
-        // Keep the account identity unobtrusive and out of the title area.  The status lives at
-        // the lower-left of the player content and uses the concise "VIP" wording requested.
-        LabelWidget lblAccountStatus = new LabelWidget(() -> {
-            if (platform == MusicPlatform.QQ) {
-                return "QQ · " + NeteaseMusicService.getAccountName(MusicPlatform.QQ);
-            }
-            if (CloudMusic.profile == null) {
-                return "网易云 · 未登录";
-            }
-            return CloudMusic.profile.isVipMember() ? "网易云 · VIP" : "网易云 · 普通";
-        }, FontManager.pf12bold);
-        lblAccountStatus.setClickable(false);
-        lblAccountStatus.setBeforeRenderCallback(() -> {
-            boolean vip = platform == MusicPlatform.NETEASE && CloudMusic.profile != null
-                    && CloudMusic.profile.isVipMember();
-            lblAccountStatus.setColor(vip ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
-                    : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            lblAccountStatus.setMaxWidth(Math.max(56.0, this.getWidth() * .38));
-            lblAccountStatus.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            lblAccountStatus.setPosition(margin, Math.max(margin, this.getHeight() - margin - lblAccountStatus.getHeight()));
-        });
-        this.addChild(lblAccountStatus);
 
         LabelWidget lblRecommendations = new LabelWidget(recommendationsText, FontManager.pf14bold);
         lblRecommendations.setBeforeRenderCallback(() -> lblRecommendations

@@ -14,7 +14,7 @@ import com.muoniumplayer.core.rendering.*;
 import com.muoniumplayer.core.rendering.Image;
 import com.muoniumplayer.core.rendering.animation.Easing;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
-import com.muoniumplayer.core.rendering.entities.impl.ScrollText;
+import com.muoniumplayer.core.rendering.font.TextGlow;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.render.skija.SkijaEffects;
 import com.muoniumplayer.render.skija.SkijaGfx;
@@ -73,6 +73,13 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     /** 左上角「A-Z」逐字特效快捷面板；只影响全屏歌词页的两项配置，实时预览。 */
     private final LyricStyleQuickPanel styleQuickPanel = new LyricStyleQuickPanel();
     /**
+     * 「逐行滚动」的滚动动效：换行用什么弹簧、每行晚多久出发、seek 怎么收尾都在里面。
+     * 只有经典样式走它，别的样式各自有自己的一套运动。
+     */
+    private final LyricScrollMotion scrollMotion = new LyricScrollMotion();
+    /** 每帧算出的文档坐标，按行数复用；这是渲染热路径，不值得每帧新建一个数组。 */
+    private double[] lyricDocTop = new double[0];
+    /**
      * 除「逐行滚动」以外的各套样式的渲染器，下标与 {@link FullscreenLyricStyle} 的序号一一对应
      * （{@code CLASSIC} 那一位固定为 {@code null}，它走下面经典样式的整套流程）。
      *
@@ -103,10 +110,29 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         return styleRenderers[index];
     }
 
-    ScrollText stMusicName = new ScrollText(), stArtists = new ScrollText();
+    /**
+     * 封面下方的曲目信息块（曲名 / 副标题 / 标签 / 艺人 / 专辑）。
+     *
+     * <p>连同曲名一起搬进去了：这五行的纵向让位要一起算，拆在两个地方就没法保证"收行之后
+     * 仍然不压到进度条"。</p>
+     */
+    private final NowPlayingInfo nowPlaying = new NowPlayingInfo();
     IconWidget playPauseButton = new IconWidget("G", FontManager.music40, 0, 0, 24, 24);
     IconWidget prev = new IconWidget("E", FontManager.music40, 0, 0, 32, 32);
     IconWidget next = new IconWidget("H", FontManager.music40, 0, 0, 32, 32);
+
+
+    /**
+     * 传送带（进度条 / 时间 / 三枚控制键 / 音量条）的最小垂直区间。
+     *
+     * <p>三键是在进度条与音量条正中间的，区间再小控制键就会压到时间那一行上：
+     * 8 像素进度条 + 12 像素时间行，再加三键自身 32 像素、居中后上下各占 16。
+     * 平时按面板高度取 17.5%，为的是在大面板上保持和改版前一样的疏密。</p>
+     */
+    private static final double TRANSPORT_ZONE_MIN = 88.0;
+
+    /** 信息块底边到进度条的呼吸量。取 8 是为了和改版前"艺人行到进度条"的间距一模一样。 */
+    private static final double INFO_BAR_GAP = 8.0;
 
     private double lastViewportLyricWidth = -1;
     private double lastViewportAnchorY = Double.NaN;
@@ -177,6 +203,64 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     /** 归一化后的逐字发光上限；为 0 表示整条发光链路完全关闭。 */
+    /**
+     * 逐字上浮的最短动画时长（毫秒）。照搬 modernMP {@code LIFT_FLOAT_MIN_MS}，源头是 AMLL
+     * {@code initFloatAnimation} 的 {@code max(1000ms, wordDuration)}。
+     *
+     * <p>这个下限就是上浮丝滑与否的全部关键。原先每个字的上浮跟着"字符在词内均分出的时长"
+     * 走，一个 400ms 的双字词里每个字只有 200ms；而播放位置来自音频时钟，它按解码缓冲大约
+     * 90ms 才前进一次，于是 200ms 的动画全程只有两三个不同的取值，再叠一层帧间指数逼近就成了
+     * "猛推一下、缓一下、再推一下"——那正是肉眼看到的卡顿。拉到 1000ms 之后，同样 90ms 的时钟
+     * 粒度只对应 0.17 像素的位移，纯时间函数也不需要追赶，动画才是连续的。</p>
+     */
+    private static final double LIFT_FLOAT_MIN_MS = 1000.0;
+    /** 逐字上浮的峰值位移（像素）。与 modernMP 的 {@code 36px × 0.05em} 同量级。 */
+    private static final double LIFT_FLOAT_PX = 1.85;
+
+    /**
+     * 一个字的上浮位移。纯时间函数：只由播放位置决定，不含任何帧间状态，所以掉帧、卡顿、
+     * 甚至跳帧都不会让它偏离该有的形状；到顶后保持不回落（AMLL 的 fill-forwards）。
+     */
+    private static double characterLift(LyricLine.Word word, int characterIndex,
+                                        int characterCount, double songProgress) {
+        if (characterCount <= 0) return 0.0;
+        double duration = Math.max(word.duration, 0L);
+        // 字与字之间仍按词内均分错开出发，逐字错落的观感不变；变的只有每个字自己走多久。
+        double startMs = word.timestamp + duration * (characterIndex / (double) characterCount);
+        double effectiveDuration = Math.max(LIFT_FLOAT_MIN_MS, duration);
+        return LIFT_FLOAT_PX * easeOutCssBezier((songProgress - startMs) / effectiveDuration);
+    }
+
+    /**
+     * CSS {@code ease-out} = {@code cubic-bezier(0, 0, 0.58, 1)}，AMLL 用在逐字上浮上的那条曲线。
+     * 先用牛顿法从 x 反解贝塞尔参数 s，再取它的 y。
+     */
+    private static double easeOutCssBezier(double x) {
+        if (x <= 0.0) return 0.0;
+        if (x >= 1.0) return 1.0;
+        final double x2 = 0.58, y2 = 1.0;
+        double s = x;
+        for (int iteration = 0; iteration < 8; iteration++) {
+            double bx = cubicBezier1d(s, 0.0, x2);
+            double derivative = cubicBezierDeriv1d(s, 0.0, x2);
+            if (Math.abs(derivative) < 1e-6) break;
+            s -= (bx - x) / derivative;
+            s = Math.max(0.0, Math.min(1.0, s));
+        }
+        return cubicBezier1d(s, 0.0, y2);
+    }
+
+    /** 三次贝塞尔的一个分量，两端固定为 P0=0、P3=1。 */
+    private static double cubicBezier1d(double s, double c1, double c2) {
+        double u = 1 - s;
+        return 3 * u * u * s * c1 + 3 * u * s * s * c2 + s * s * s;
+    }
+
+    private static double cubicBezierDeriv1d(double s, double c1, double c2) {
+        double u = 1 - s;
+        return 3 * u * u * c1 + 6 * u * s * (c2 - c1) + 3 * s * s * (1 - c2);
+    }
+
     private static double karaokeGlowStrength() {
         if (!HudConfig.currentLyricEffectsEnabled) {
             return 0.0;
@@ -192,7 +276,12 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
      * 不会引入额外的重采样。发光关闭时返回 0，此时整条链路与加发光之前完全等价。</p>
      */
     private static int karaokeGlowPadding() {
-        return karaokeGlowStrength() <= .004 ? 0 : 6;
+        if (karaokeGlowStrength() <= .004) {
+            return 0;
+        }
+        // 留白不够，图层边界就会把光晕切成方块——换成真高斯之后最容易踩的就是这个坑：
+        // sigma 比原先那个偏移半径大得多，原来写死的 6px 远远不够。
+        return TextGlow.padding(FontManager.pf65bold, HudConfig.lyricGlowSpread);
     }
 
     /**
@@ -200,38 +289,12 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
      *
      * <p>{@code progress} 是该字自己的演唱进度（0 = 还没唱到，1 = 唱完），所以同一个字词里
      * 靠前的字先亮、靠后的字后亮，整体是一道跟着人声推进的光。上限由
-     * {@link HudConfig#fullscreenGlowStrength} 控制。</p>
-     *
-     * <p>1.8.9 没有可用的后处理管线，这里沿用项目里其它发光的做法：把同一个字形按环形偏移
-     * 多画几遍、逐层降低透明度，得到一个免着色器的柔和光晕。</p>
+     * {@link HudConfig#fullscreenGlowStrength} 控制，光晕的形状与混合方式见 {@link TextGlow}。</p>
      */
     private void drawKaraokeCharacterGlow(String text, double x, double y,
                                           double progress, float alpha) {
-        double strength = karaokeGlowStrength() * Math.max(0.0, Math.min(1.0, progress));
-        if (strength <= .004 || alpha <= .004f) {
-            return;
-        }
-
-        double radius = 1.0 + 2.0 * strength;
-        drawKaraokeGlowRing(text, x, y, radius, (float) (alpha * strength * .34));
-        drawKaraokeGlowRing(text, x, y, radius * 1.7, (float) (alpha * strength * .15));
-    }
-
-    private void drawKaraokeGlowRing(String text, double x, double y, double radius, float ringAlpha) {
-        if (ringAlpha <= .002f) {
-            return;
-        }
-        int cardinal = hexColor(1f, 1f, 1f, ringAlpha);
-        int diagonal = hexColor(1f, 1f, 1f, ringAlpha * .72f);
-        double diagonalRadius = radius * .7071;
-        FontManager.pf65bold.drawString(text, x - radius, y, cardinal);
-        FontManager.pf65bold.drawString(text, x + radius, y, cardinal);
-        FontManager.pf65bold.drawString(text, x, y - radius, cardinal);
-        FontManager.pf65bold.drawString(text, x, y + radius, cardinal);
-        FontManager.pf65bold.drawString(text, x - diagonalRadius, y - diagonalRadius, diagonal);
-        FontManager.pf65bold.drawString(text, x + diagonalRadius, y - diagonalRadius, diagonal);
-        FontManager.pf65bold.drawString(text, x - diagonalRadius, y + diagonalRadius, diagonal);
-        FontManager.pf65bold.drawString(text, x + diagonalRadius, y + diagonalRadius, diagonal);
+        TextGlow.draw(FontManager.pf65bold, text, x, y, 0xFFFFFF, alpha,
+                karaokeGlowStrength() * progress, HudConfig.lyricGlowSpread);
     }
 
     private static double getLyricLineSpacing() {
@@ -259,6 +322,16 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     public static void updateLyricPositionsImmediate(double width, double playbackProgress) {
         layoutLyricPositionsImmediately(width, getCurrentViewportAnchorY(), CloudMusic.findCurrentLyric(playbackProgress));
+    }
+
+    /**
+     * 拖动进度条时用的硬吸附。阅读位置必须由调用方按<b>本帧实际绘制的面板矩形</b>给出，而不是
+     * 走 {@link #getCurrentViewportAnchorY()}：那个读的是 {@code NCMScreen} 算出来的目标矩形，
+     * 与面板 widget 的动画值不是同一个数。两者差一点，这里按 A 硬吸附、每帧滚动按 B 拉回，
+     * 每帧一来一回就是肉眼可见的抖动。
+     */
+    private static void updateLyricPositionsImmediate(double width, double anchorY, double playbackProgress) {
+        layoutLyricPositionsImmediately(width, anchorY, CloudMusic.findCurrentLyric(playbackProgress));
     }
 
     private static double getCurrentLyricViewportWidth() {
@@ -391,23 +464,14 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         lyric.spring.setPosition(positionY);
     }
 
-    /**
-     * The progress bar is dragged continuously. Keeping this as an immediate layout avoids
-     * blending the old anchor positions with the preview anchor positions during a seek.
-     */
-    public static void updateLyricPositions(double width, double playbackProgress) {
-        updateLyricPositionsImmediate(width, playbackProgress);
-    }
-    private static long getLyricInterpolationWaitTimeMillis() {
-        return 75;
-    }
-
     private static void resetLyricStatus() {
         CloudMusic.resetLyricStatus();
     }
 
     public void onInit() {
         resetLyricStatus();
+        // 上一首的锚点与布局指纹留着的话，新歌第一帧会被当成一次"布局变了"，整屏歌词飞一次。
+        scrollMotion.reset();
         // 换歌重开歌词页时清掉各样式的上一行状态，否则会看到上一首的内容退场一次。
         for (int i = 0; i < styleRenderers.length; i++) {
             if (styleRenderers[i] != null) styleRenderers[i].reset();
@@ -487,7 +551,12 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                     lyricViewport.width, lyricViewport.height, alpha, songProgress, displayedCurrentLyric);
             return;
         }
-        this.updateLyricPositions(posY, height, lyricsWidth, displayedCurrentLyric);
+        // 拖进度条与手动滚动期间关掉级联：那两种情况下时钟每帧都在跳，逐行错落会被看成卡顿。
+        // 判据照 modernMP 的 isManualScroll（滚动目标或当前偏移任一未归零就算）。
+        boolean lyricManualScroll = progressBarDragging
+                || Math.abs(scrollTarget) > 0.01 || Math.abs(scrollOffset) > 0.01;
+        this.updateLyricPositions(posY, height, lyricsWidth, displayedCurrentLyric,
+                songProgress, lyricViewport.top, lyricManualScroll);
 
         List<Runnable> blurRects = new ArrayList<>();
 
@@ -606,12 +675,19 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
                     if (!lyric.renderEmphasizes) Arrays.fill(word.emphasizes, 2);
 
-                    double emphasizeWholeWord = word.emphasizes[0];
-
                     char[] charArray = word.word.toCharArray();
 
-                    double emphasizeTarget = 1;
-                    double emphasizeSpeed = 0.05;
+                    // 上浮量在这里一次算齐，而不是等各层自己边画边推进：未唱底层、唱完后的文本和
+                    // KTV 合成层是三段独立的绘制代码，原先只有后两段更新 emphasizes，底层读到的
+                    // 永远是上一帧的值——同一个字的两层因此差一帧，边缘看起来是重影和轻微抖动。
+                    if (lyric.renderEmphasizes) {
+                        int liftCount = Math.min(charArray.length, word.emphasizes.length);
+                        for (int j = 0; j < liftCount; j++) {
+                            word.emphasizes[j] = characterLift(word, j, charArray.length, songProgress);
+                        }
+                    }
+
+                    double emphasizeWholeWord = word.emphasizes[0];
 
                     /*
                      * 逐字放大必须让「字形本体」和「KTV 填涂遮罩」共用同一个变换。
@@ -687,9 +763,6 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                                 double x = renderX;
                                 for (int j = 0; j < charArray.length; j++) {
                                     char c = charArray[j];
-                                    if (lyric.renderEmphasizes) {
-                                        word.emphasizes[j] = Interpolations.interpolate(word.emphasizes[j], 1.85, .12);
-                                    }
                                     // 唱完的字词不再走 KTV 纹理合成，发光要在这里以满亮度补上，
                                     // 否则字词唱完的那一帧发光会突然消失。
                                     drawKaraokeCharacterGlow(String.valueOf(c), x,
@@ -753,11 +826,6 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                                 for (int j = 0; j < charArray.length; j++) {
                                     char c = charArray[j];
                                     double characterProgress = getCharacterKaraokeProgress(characterTimeline, j);
-                                    if (lyric.renderEmphasizes) {
-                                        double liftTarget = 1.85 * characterProgress;
-                                        word.emphasizes[j] = Interpolations.interpolate(word.emphasizes[j], liftTarget, .16);
-                                    }
-
                                     double characterAlpha = .70 + .30 * characterProgress;
                                     double characterY = renderY - word.emphasizes[j];
                                     // 发光画在字形底下，亮度只跟「这个字已经唱了多久」有关。
@@ -872,7 +940,21 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         }
     }
 
-    private void updateLyricPositions(double posY, double height, double width, LyricLine currentLyric) {
+    /**
+     * 重排「逐行滚动」的行位置。几何部分与 {@link #layoutLyricPositionsImmediately} 用同一套
+     * 公式（当前行钉在阅读位置、上下按行高加行距累加、对唱组整体抬起），只是拆成 modernMP 的
+     * 两半：<b>文档坐标</b> {@code docTop[]} 加一个<b>滚动偏移</b> {@code restOffset}，
+     * 由 {@link LyricScrollMotion} 决定怎么走过去。
+     *
+     * <p>拆两半不是为了好看：判断"布局变了"只能看 {@code restOffset} 这一个标量。行高是异步
+     * 加载字形之后才算准的，逐行比较目标会让锚点之后任何一行的高度变化都触发全量重新下发，
+     * 而重新下发会重置弹簧解并把级联队列冲掉——那正是字在原地来回抖的成因。</p>
+     *
+     * <p>全表遍历一次而不是像原先那样边算边提前收工：级联要按文档坐标找"视口内第一行"当起点，
+     * 提前 break 会让后面的行拿不到本帧的目标。行高本身有缓存，全表遍历只是一串加法。</p>
+     */
+    private void updateLyricPositions(double posY, double height, double width, LyricLine currentLyric,
+                                      double playheadMs, double viewportTop, boolean manualScroll) {
 
         if (currentLyric == null) return;
 
@@ -880,77 +962,39 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
         if (idxCurrent < 0 || idxCurrent >= CloudMusic.lyrics.size()) return;
 
-        // 对唱组以第一行为锚，整组抬高半个额外行高；组内各行的高度必须先算出来，否则抬升量为 0。
-        int idxGroupEnd = LyricDuetGroups.groupEnd(CloudMusic.lyrics, idxCurrent);
-        idxCurrent = LyricDuetGroups.groupStart(CloudMusic.lyrics, idxCurrent);
-        for (int i = idxCurrent; i <= idxGroupEnd && i < CloudMusic.lyrics.size(); i++) {
-            CloudMusic.lyrics.get(i).computeHeight(width);
-        }
-        double anchorLift = groupAnchorLift(idxCurrent, idxGroupEnd);
-
-        double offsetY = posY + height * lyricFraction() + anchorLift;
-
         synchronized (CloudMusic.lyrics) {
-            List<LyricLine> subList = CloudMusic.lyrics.subList(0, idxCurrent);
-            double frameDeltaTime = RenderSystem.getFrameDeltaTime() * .0125;
-            for (int i = subList.size() - 1; i >= 0; i--) {
-                LyricLine lyric = subList.get(i);
+            int size = CloudMusic.lyrics.size();
+            if (idxCurrent >= size) return;
 
-                lyric.computeHeight(width);
-                offsetY -= lyric.height + getLyricLineSpacing();
-
-                if ((scrollTarget == 0 && (subList.size() - 1 - i) >= 3) && lyric.posY + lyric.height + getLyricLineSpacing() + 2 + scrollOffset < posY)
-                    break;
-
-//                lyric.posY = Interpolations.interpolate(lyric.posY, offsetY, fraction);
-                lyric.spring.setTargetPosition(offsetY);
-                lyric.spring.update(frameDeltaTime);
-                lyric.posY = lyric.spring.getCurrentPosition();
+            for (int i = 0; i < size; i++) {
+                LyricLine lyric = CloudMusic.lyrics.get(i);
+                // 对唱行按自己那一列的宽度算高度，和渲染时的折行数保持一致，否则行与行会叠上。
+                lyric.computeHeight(LyricDuetGroups.columnWidth(width, lyric.duetSlot));
             }
 
-            offsetY = posY + height * lyricFraction() + anchorLift;
-            List<LyricLine> list = CloudMusic.lyrics.subList(idxCurrent, CloudMusic.lyrics.size());
-            int oobCounter = 0;
-            for (LyricLine lyric : list) {
-                int j = CloudMusic.lyrics.indexOf(lyric);
-
-//                Rect.draw(RenderSystem.getWidth() * .5 + lyric.reboundAnimation, lyric.posY, width, lyric.height, 0x80FFFFFF);
-
-                lyric.computeHeight(width);
-
-                LyricLine prev = j > 0 ? CloudMusic.lyrics.get(j - 1) : null;
-
-                if (prev != null) {
-                    if (prev.delayTimer.isDelayed(getLyricInterpolationWaitTimeMillis()))
-                        lyric.shouldUpdatePosition = true;
-//                    if (lyric.posY - (prev.posY) >= prev.height * 1.5)
-//                        lyric.shouldUpdatePosition = true;
-                }
-
-//                if (prev != null && lyric.posY - (prev.posY + prev.height) < 0) {
-//                    updateLyricPositionsImmediate(width);
-//                    break;
-//                }
-
-                if (prev != null && !lyric.shouldUpdatePosition) {
-                    lyric.delayTimer.reset();
-                    break;
-                }
-
-                if (prev == null && !lyric.delayTimer.isDelayed(getLyricInterpolationWaitTimeMillis())) break;
-
-                lyric.spring.setTargetPosition(offsetY);
-                lyric.spring.update(frameDeltaTime);
-                lyric.posY = lyric.spring.getCurrentPosition();
-
-                if (offsetY + scrollOffset > posY + height) {
-                    oobCounter += 1;
-
-                    if (oobCounter >= 4 && scrollTarget == 0) break;
-                }
-
-                offsetY += lyric.height + getLyricLineSpacing();
+            // 文档坐标：只由行高与行距决定，与播放位置无关。对应 modernMP 的 lineTops[]。
+            if (lyricDocTop.length != size) lyricDocTop = new double[size];
+            double[] docTop = lyricDocTop;
+            double cursor = 0;
+            for (int i = 0; i < size; i++) {
+                docTop[i] = cursor;
+                cursor += CloudMusic.lyrics.get(i).height + getLyricLineSpacing();
             }
+
+            // 对唱组以第一行为锚，整组抬高半个额外行高，让两位歌手一起跨在阅读位置上。
+            int idxAnchor = LyricDuetGroups.groupStart(CloudMusic.lyrics, idxCurrent);
+            // 当前行来自一个被 10ms 音频线程反复改写的共享字段，在"提前跳到下一行"的阈值附近会
+            // 在两行之间来回。锚点一抖，下面整套弹簧就每帧重来一次，看起来是字在原地颤。
+            idxAnchor = scrollMotion.stabilizeAnchor(idxAnchor, size, playheadMs);
+            int idxGroupEnd = LyricDuetGroups.groupEnd(CloudMusic.lyrics, idxAnchor);
+            // 滚动偏移，对应 modernMP 的 restOffset = centerY - targetScroll：把锚点行的文档坐标
+            // 平移到阅读位置。之后每行的屏幕位置就是 restOffset + docTop[i]，和改动前逐行累加
+            // 出来的结果逐项相同。
+            double centerY = posY + height * lyricFraction() + groupAnchorLift(idxAnchor, idxGroupEnd);
+            double restOffset = centerY - docTop[idxAnchor];
+
+            scrollMotion.apply(CloudMusic.lyrics, docTop, restOffset, idxAnchor,
+                    playheadMs, viewportTop, manualScroll);
         }
 
     }
@@ -972,11 +1016,16 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         TextureManager textureManager = TextureManager.getInstance();
 
         AudioPlayer player = snapshot.player;
+        // 播完最后一首、或者被停止之后 currentlyPlaying 就是 null，而这一层还在淡出、仍要画好几帧。
+        // renderBackground 早就按 null 处理了，这里漏了整整三处 —— 于是「一起听最后一曲结束」直接
+        // 崩渲染线程。没有曲目时封面与曲名整组让位（这也正是曲名本该消失的样子），进度条与控制键
+        // 照常画：它们只依赖 snapshot 里的时间与 player，和曲目对象无关。
+        Music music = snapshot.music;
 
         double coverSizeMax = this.getCoverSizeMax(width, height);
         double coverSizeMin = coverSizeMax * .8;
         double coverCenterX = posX + width * .24;
-        double coverCenterY = posY + height * .36;
+        double coverCenterY = posY + height * .30;
         coverSize = Interpolations.interpolate(coverSize, player == null || player.isPausing() ? coverSizeMin : coverSizeMax, 0.2f);
 
         double coverSizePerc = coverSize / coverSizeMax;
@@ -991,14 +1040,15 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
         api.getGLStateManager().disableAlpha();
 
-        if (prevCover != null && coverAlpha <= .9f) {
+        // 没有新曲目时也不要留着上一张封面淡出：那是换歌交叉淡入用的，停播时它只会挂在原地。
+        if (music != null && prevCover != null && coverAlpha <= .9f) {
             api.getGLStateManager().bindTexture(prevCover.getGlTextureId());
             this.roundedRectTextured(coverCenterX - coverSize * .5, coverCenterY - coverSize * .575, coverSize, coverSize, coverRadius * coverSizePerc, alpha);
         }
 
         // 动态封面(网易云 MP4 抽帧)就绪后优先用它,否则保持静态封面。
-        ITextureObject tex = textureManager.getTexture(
-                CloudMusic.preferredCoverLocation(snapshot.music, snapshot.music.getCoverLocation()));
+        ITextureObject tex = music == null ? null : textureManager.getTexture(
+                CloudMusic.preferredCoverLocation(music, music.getCoverLocation()));
 
         if (tex != null) {
             coverAlpha = Interpolations.interpolate(coverAlpha, 1.0f, 0.2f);
@@ -1010,11 +1060,17 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         double elementsXOffset = coverCenterX - coverSizeMax * .5;
         double elementsYOffset = coverCenterY + coverSizeMax * .45 + 8;
 
-        stMusicName.render(FontManager.pf28bold, snapshot.music.getName(), elementsXOffset, elementsYOffset, coverSizeMax, RGBA.color((float) 1, (float) 1, (float) 1, alpha));
-        stArtists.render(FontManager.pf20bold, snapshot.music.getArtistsName(), elementsXOffset, elementsYOffset + FontManager.pf20bold.getHeight() + 8, coverSizeMax, RGBA.color((float) 1, (float) 1, (float) 1, alpha * .8f));
+        // 传送带整块贴着底边算，位置与曲目信息无关：信息块的高度会随"这一首有没有别名、
+        // 有没有专辑名"变化，让进度条跟着它排版就会每次换歌上下跳一下。
+        double volumeBarYOffset = posY + height - Math.max(18, height * .08);
+        double progressBarYOffset = volumeBarYOffset - Math.max(TRANSPORT_ZONE_MIN, height * .175);
+
+        double infoBottom = nowPlaying.render(music, elementsXOffset, elementsYOffset, coverSizeMax,
+                alpha, progressBarYOffset - INFO_BAR_GAP);
+        // 面板矮到连"曲名 + 艺人"两行都塞不进去时让进度条让路：宁可挤了传送带，也不压住文字。
+        progressBarYOffset = Math.max(progressBarYOffset, infoBottom + INFO_BAR_GAP);
 
         // progressbar 背景
-        double progressBarYOffset = elementsYOffset + FontManager.pf20bold.getHeight() + 8 + FontManager.pf20bold.getHeight() + 8;
         double progressBarWidth = coverSizeMax;
 
         roundedRect(elementsXOffset, progressBarYOffset - progressBarHeight * .5, progressBarWidth, progressBarHeight, (this.progressBarHeight / 8.0f) * 2.5, hexColor(1, 1, 1, alpha * .5f));
@@ -1038,7 +1094,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
             double xDelta = Math.max(0, Math.min(progressBarWidth, (mouseX - elementsXOffset)));
             this.progressBarProgressOverride = xDelta / progressBarWidth;
-            updateLyricPositionsImmediate(createLyricViewport(posX, posY, width, height).width, progressBarProgressOverride * totalTimeMillis);
+            updateLyricPositionsImmediate(createLyricViewport(posX, posY, width, height).width,
+                    posY + height * lyricFraction(), progressBarProgressOverride * totalTimeMillis);
         }
 
         if (progressBarDragging) {
@@ -1056,7 +1113,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             } else {
                 double xDelta = Math.max(0, Math.min(progressBarWidth, (mouseX - elementsXOffset)));
                 this.progressBarProgressOverride = xDelta / progressBarWidth;
-                updateLyricPositions(createLyricViewport(posX, posY, width, height).width, progressBarProgressOverride * totalTimeMillis);
+                updateLyricPositionsImmediate(createLyricViewport(posX, posY, width, height).width,
+                        posY + height * lyricFraction(), progressBarProgressOverride * totalTimeMillis);
             }
         }
 
@@ -1066,7 +1124,6 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         String remainingTime = "-" + formatDuration((float) (totalTimeMillis - curTime));
         FontManager.pf12bold.drawString(remainingTime, elementsXOffset + progressBarWidth - FontManager.pf12bold.getStringWidthD(remainingTime), progressBarYOffset + 8, hexColor(1, 1, 1, alpha * .5f));
 
-        double volumeBarYOffset = posY + height - Math.max(18, height * .08);
         double volumeBarWidth = coverSizeMax - FontManager.music40.getStringWidthD("I")
                 - FontManager.music40.getStringWidthD("J");
         double volumeBarXOffset = elementsXOffset + FontManager.music40.getStringWidthD("I") - 2;

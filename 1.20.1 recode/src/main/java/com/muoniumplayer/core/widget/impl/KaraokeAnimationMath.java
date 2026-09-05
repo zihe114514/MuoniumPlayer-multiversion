@@ -70,35 +70,6 @@ final class KaraokeAnimationMath {
      */
     private static final double SCALE_FIT_GUARD = 1.0;
 
-    /** 内圈光晕的半径。系数与改动之前的 OSD 光晕完全一致，手感不变。 */
-    static double glowRingRadius(double baseRadius, double glowIntensity) {
-        return baseRadius * (.32 + Math.min(1.0, Math.max(0.0, glowIntensity)) * .68);
-    }
-
-    /** 中圈晕染半径。 */
-    static double bloomInnerRadius(double baseRadius) {
-        return baseRadius * 1.35 + .8;
-    }
-
-    /** 最外圈晕染半径，同时决定离屏纹理四周要留多少白。 */
-    static double bloomOuterRadius(double baseRadius) {
-        return baseRadius * 2.15 + 1.2;
-    }
-
-    /**
-     * 离屏纹理四周的发光留白。
-     *
-     * <p>光晕是围绕字形向外扩的，留白不够就会被纹理边界切成一个方块。因此留白必须 ≥ 最外圈光晕
-     * 的半径；再加 1 像素是给字形本身最外圈的抗锯齿和合成时的线性过滤留余量。留白是整数，
-     * 合成四边形与纹理才能保持一一对应、不引入额外重采样。</p>
-     */
-    static int glowPadding(double maxRingRadius) {
-        if (!(maxRingRadius > .004)) {
-            return 1;
-        }
-        return (int) Math.min(16.0, Math.ceil(maxRingRadius) + 1.0);
-    }
-
     /**
      * 离屏遮罩里「实心已唱段」的右边界。
      *

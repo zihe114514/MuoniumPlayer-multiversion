@@ -23,8 +23,13 @@ public final class MpProto {
     private MpProto() {
     }
 
-    /** 只有破坏性变更才 +1；追加字段不改版本号。 */
-    public static final int VERSION = 1;
+    /**
+     * 只有破坏性变更才 +1；追加字段不改版本号。
+     *
+     * <p>v2 的新帧全是追加式的，老服务端照样能跑；这个数字之所以还是要 +1，是给客户端一个
+     * 「这台服务端认不认识在线态 / 公开房 / 频道 / 投票」的判据 —— 界面要靠它决定那几页显不显示。
+     */
+    public static final int VERSION = 2;
 
     public static final String NAMESPACE = "mpsync";
     public static final String C2S_PATH = "c2s";
@@ -96,6 +101,28 @@ public final class MpProto {
     public static final String C_SYNC       = "sync";
     public static final String C_URL_SUPPLY = "url_supply";
 
+    // ── v2 新增 C2S ──────────────────────────────────────────────────────────
+    /** 自报身份：客户端名/版本、能解析哪些平台、是否愿意贡献会员解析能力。 */
+    public static final String C_PROFILE        = "profile";
+    /** 请求一份全服在线快照（谁在线、在听什么）。 */
+    public static final String C_PRESENCE       = "presence";
+    /** 请求公开房间列表。 */
+    public static final String C_ROOMS          = "rooms";
+    /** 把自己的房间设为公开 / 私密。 */
+    public static final String C_SET_PUBLIC     = "set_public";
+    /** 请求待处理邀请列表。 */
+    public static final String C_INVITES        = "invites";
+    public static final String C_INVITE_ACCEPT  = "invite_accept";
+    public static final String C_INVITE_DECLINE = "invite_decline";
+    /** 个人暂停 / 恢复：只静音自己，房间时钟照走。 */
+    public static final String C_SELF_PAUSE     = "self_pause";
+    /** 加入服务器频道（全服公开大房间）。 */
+    public static final String C_CHANNEL_JOIN   = "channel_join";
+    /** 发起投票：{@code kind} = {@link #VOTE_SKIP} / {@link #VOTE_KICK}。 */
+    public static final String C_VOTE_START     = "vote_start";
+    /** 对进行中的投票表态。 */
+    public static final String C_VOTE_CAST      = "vote_cast";
+
     // ── 服务端 → 客户端 ──────────────────────────────────────────────────────
     public static final String S_HELLO      = "hello";
     public static final String S_ROOM_STATE = "room_state";
@@ -112,6 +139,33 @@ public final class MpProto {
     public static final String S_NOTICE     = "notice";
     public static final String S_ERROR      = "error";
     public static final String S_URL_NEEDED = "url_needed";
+
+    // ── v2 新增 S2C ──────────────────────────────────────────────────────────
+    /** 全服在线玩家 + 正在听 + 客户端角标 + VIP。 */
+    public static final String S_PRESENCE   = "presence";
+    /** 公开房间列表（含服务器频道）。 */
+    public static final String S_ROOMS      = "rooms";
+    /** 待处理邀请列表。v2 起邀请不再写聊天栏。 */
+    public static final String S_INVITES    = "invites";
+    /** 进行中／刚结束的投票状态与倒计时。 */
+    public static final String S_VOTE       = "vote";
+    /** 封禁通知：原因 + 剩余时长。 */
+    public static final String S_BANNED     = "banned";
+
+    // ── 枚举式令牌 ───────────────────────────────────────────────────────────
+
+    /** 房间类型。频道是全服共用的大房间，没有房主，按服务器管理员判权。 */
+    public static final String KIND_ROOM    = "room";
+    public static final String KIND_CHANNEL = "channel";
+
+    /** 投票类型。 */
+    public static final String VOTE_SKIP = "skip";
+    public static final String VOTE_KICK = "kick";
+
+    /** 客户端令牌。服务端拿它决定成员列表里显示的角标（MP / Mu / ??）。 */
+    public static final String CLIENT_ID = "muoniumplayer";
+    /** 给玩家看的客户端名。 */
+    public static final String CLIENT_NAME = "MuoniumPlayer";
 
     public static JsonObject msg(String op) {
         JsonObject o = new JsonObject();

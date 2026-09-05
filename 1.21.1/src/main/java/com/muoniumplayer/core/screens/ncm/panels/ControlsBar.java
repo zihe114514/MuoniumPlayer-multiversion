@@ -7,6 +7,7 @@ import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.NeteaseListenTogetherService;
 import com.muoniumplayer.core.ncm.music.PersonalFmManager;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
@@ -40,6 +41,22 @@ public class ControlsBar extends NCMPanel {
     private double qualityMenuAnimation;
     private RoundedRectWidget qualityMenuBackground;
     private RoundedRectWidget[] qualityOptions;
+    /**
+     * 窄面板下传输簇（上一首/播放/下一首/播放模式）整体左移的量，0 表示宽度够用、版式不变。
+     * 传输簇按面板中线排，一起听/待播/音质/音量贴右边缘，面板一窄两者必然重叠；原来的处理是把
+     * 一起听与待播入口 alpha 归零，于是 GUI 缩放 3 以上根本进不去一起听。让传输簇让位是唯一
+     * 不丢功能的办法。
+     */
+    private double centerShift;
+    /** 让位后居中簇的右边界。取目标值而不是动画中的值，免得拖窗口时入口一闪一闪。 */
+    private double centerClusterRight;
+    /** 图标带整条上抬的量：0 与音质/音量同高，4 抬到传输键那一行，让开下面一行的剩余时间标签。 */
+    private double iconBandLift;
+    /**
+     * 一起听入口在「音量→音质→待播」这条右锚点链上的首选左边界。它只由面板宽度决定、与让位量
+     * 无关，因此可以安全地反馈给让位计算，不会形成逐帧抖动的回路。
+     */
+    private double listenTogetherPrimaryX;
 
     /** 弹出层在动画彻底结束前必须继续渲染，否则收起会变成瞬间消失。 */
     private boolean isQualityMenuVisible() {
@@ -115,7 +132,7 @@ public class ControlsBar extends NCMPanel {
                     playPause
                             .center()
                             .setIcon(showPausingIcon ? "B" : "A")
-                            .setPosition(playPause.getRelativeX(), playPause.getRelativeY() + buttonsYOffset)
+                            .setPosition(playPause.getRelativeX() - centerShift, playPause.getRelativeY() + buttonsYOffset)
                             .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
                 })
                 .setOnClickCallback((x, y, i) -> {
@@ -139,7 +156,7 @@ public class ControlsBar extends NCMPanel {
                 .setBeforeRenderCallback(() -> prev
                         .center()
                         .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
-                        .setPosition(prev.getRelativeX() - 20 - prev.getWidth() * .5, prev.getRelativeY() + buttonsYOffset));
+                        .setPosition(prev.getRelativeX() - 20 - prev.getWidth() * .5 - centerShift, prev.getRelativeY() + buttonsYOffset));
         IconWidget next = new IconWidget("E", FontManager.icon30, 0, 0, 20, 20);
         this.addChild(next);
 
@@ -152,7 +169,7 @@ public class ControlsBar extends NCMPanel {
                 })
                 .setBeforeRenderCallback(() -> next
                         .center()
-                        .setPosition(next.getRelativeX() + next.getWidth() * .5 + 20, next.getRelativeY() + buttonsYOffset)
+                        .setPosition(next.getRelativeX() + next.getWidth() * .5 + 20 - centerShift, next.getRelativeY() + buttonsYOffset)
                         .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)));
         // 播放模式与核心控件并列：顺序播放 → 随机播放 → 单曲循环。
         ThemedTextureIconWidget playMode = new ThemedTextureIconWidget(
@@ -198,7 +215,7 @@ public class ControlsBar extends NCMPanel {
         // 在跑 beforeRenderCallback 之前就会因为 isHidden() 直接返回（父组件的渲染循环也会跳过
         // 隐藏的子组件），而唯一能把它重新显示出来的代码就在那个回调里。播放条是常驻的，首帧
         // 通常还没进入私人 FM，于是这个按钮会永久卡在隐藏状态，进了私人 FM 也不会出现。
-        this.setBeforeRenderCallback(() -> fmSkip.setHidden(!CloudMusic.isPersonalFmActive()));
+        // 这一判定放到播放条自己的每帧回调里，和窄面板让位量一起算（见 onInit 末尾）。
         fmSkip.setBeforeRenderCallback(() -> {
             boolean active = CloudMusic.isPersonalFmActive();
             fmSkip.setClickable(active && !PersonalFmManager.isLoading());
@@ -341,7 +358,13 @@ public class ControlsBar extends NCMPanel {
                 () -> {
                     if (CloudMusic.currentlyPlaying == null)
                         return "无";
-                    return CloudMusic.currentlyPlaying.getArtistsName() + " - " + CloudMusic.currentlyPlaying.getAlbum().getName();
+                    // 专辑可以是 null（单曲、电台、以及一起听下发的曲目都可能没有专辑），
+                    // 那时只显示歌手，不要为了拼一个「 - 」把整条播放条崩掉。
+                    Music playing = CloudMusic.currentlyPlaying;
+                    String album = playing.getAlbum() == null ? null : playing.getAlbum().getName();
+                    return album == null || album.isEmpty()
+                            ? playing.getArtistsName()
+                            : playing.getArtistsName() + " - " + album;
                 },
                 FontManager.pf14bold
         );
@@ -479,13 +502,16 @@ public class ControlsBar extends NCMPanel {
             double toggleX = qualitySelector.getRelativeX() - 8.0 - queueToggle.getWidth();
             // 面板很窄时右下角排不下了：用 alpha 让它隐形并停止响应，而不是 setHidden——
             // 被隐藏的组件不会再执行自己的回调，也就再没有机会把自己显示回来。
-            boolean fits = toggleX > lblRemainingTime.getRelativeX() + lblRemainingTime.getWidth() + 6.0;
+            // 右界由播放条统一算（centerClusterRight）：让位之后才知道居中簇到哪里结束。
+            // 这里额外减掉一颗图标的宽度，是给一起听入口留的：两颗排不下时先让待播退场，
+            // 一起听顶上这个槽位，绝不能出现两个入口一起消失。
+            boolean fits = toggleX - 8.0 - queueToggle.getWidth() > ControlsBar.this.centerClusterRight + 6.0;
             queueToggle
                     .setClickable(fits)
                     .setAlpha(fits ? ControlsBar.this.getAlpha() : 0f)
                     .centerVertically();
             queueToggle
-                    .setPosition(toggleX, queueToggle.getRelativeY())
+                    .setPosition(toggleX, queueToggle.getRelativeY() - ControlsBar.this.iconBandLift)
                     .setColor(opened || CloudMusic.getQueuedNextCount() > 0
                             ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                             : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
@@ -518,8 +544,13 @@ public class ControlsBar extends NCMPanel {
         listenTogether.setShouldOverrideMouseCursor(true);
         listenTogether.setBeforeRenderCallback(() -> {
             boolean netease = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.NETEASE;
-            double toggleX = queueToggle.getRelativeX() - 8.0 - listenTogether.getWidth();
-            boolean fits = toggleX > lblRemainingTime.getRelativeX() + lblRemainingTime.getWidth() + 6.0;
+            // 首选槽位在待播入口左边。这条右锚点链只跟面板宽度有关，可以回喂给让位计算。
+            double primaryX = queueToggle.getRelativeX() - 8.0 - listenTogether.getWidth();
+            ControlsBar.this.listenTogetherPrimaryX = primaryX;
+            boolean pairFits = primaryX > ControlsBar.this.centerClusterRight + 6.0;
+            // 待播入口已经因为排不下退场了，这里接过它的槽位：一起听是主入口，不能跟着消失。
+            double toggleX = pairFits ? primaryX : queueToggle.getRelativeX();
+            boolean fits = pairFits || toggleX > ControlsBar.this.centerClusterRight + 6.0;
             // 服务器装了一起听服务端时，即使当前音源不是网易云也要让入口可点：
             // 房间面板本身要能进去看状态（房间只收网易云歌曲，这一点由房间面板自己说明）。
             boolean usable = (netease || MpPartyClient.serverPresent()) && fits;
@@ -528,7 +559,7 @@ public class ControlsBar extends NCMPanel {
                     .setAlpha(usable ? ControlsBar.this.getAlpha() : 0f)
                     .centerVertically();
             listenTogether
-                    .setPosition(toggleX, listenTogether.getRelativeY())
+                    .setPosition(toggleX, listenTogether.getRelativeY() - ControlsBar.this.iconBandLift)
                     .setColor(NeteaseListenTogetherService.isActive() || MpPartyClient.inRoom()
                             ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                             : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
@@ -537,6 +568,38 @@ public class ControlsBar extends NCMPanel {
             if (mouseButton != 0) return false;
             NCMScreen.getInstance().openListenTogether();
             return true;
+        });
+
+        // 播放条自己的每帧回调：既决定私人 FM 按钮的显示，也算出窄面板下的让位量。放在 onInit
+        // 末尾是因为它要用到上面才声明的剩余时间标签与一起听入口 —— lambda 只能捕获已声明的
+        // 局部变量。
+        this.setBeforeRenderCallback(() -> {
+            fmSkip.setHidden(!CloudMusic.isPersonalFmActive());
+
+            double half = this.getWidth() * .5;
+            // 一律按「未让位」的几何算：改读 playMode 让位后的实际坐标，会把让位量自己反馈进
+            // 输入，每帧收敛一点，肉眼看到的就是控件一直在抖。
+            double transportRight = half + 70.0 + (CloudMusic.isPersonalFmActive() ? 54.0 : 0.0);
+            double progressRight = half + 71.5 + lblRemainingTime.getWidth();
+            double bandLeft = listenTogetherPrimaryX;
+            boolean firstFrame = bandLeft <= 0.0;
+
+            // 图标带默认与音质/音量同高，那个高度上它跟剩余时间标签同排，必须为标签让路。让不
+            // 出来（面板太窄）就整条抬到传输键那一行：标签在下面一行，抬 4 个单位就压不到字，
+            // 于是只剩播放模式/换一首需要避让，一下省出一大截宽度。
+            boolean besideLabel = firstFrame || bandLeft > progressRight + 6.0;
+            iconBandLift = Interpolations.interpolate(iconBandLift, besideLabel ? 0.0 : 4.0, .35);
+
+            // 只让传输簇左移，进度条与时间标签仍然居中：一起拖走会挤掉封面右边的歌名，窄面板上
+            // 「传输键略微偏左」远好过「歌名没了」。
+            double shiftLimit = Math.max(0.0, half - 70.0 - 31.0);
+            double shiftTarget = firstFrame ? 0.0
+                    : Math.max(0.0, Math.min(shiftLimit, transportRight + 6.5 - bandLeft));
+            centerShift = Interpolations.interpolate(centerShift, shiftTarget, .3);
+            double shiftedTransportRight = transportRight - shiftTarget;
+            centerClusterRight = besideLabel
+                    ? Math.max(shiftedTransportRight, progressRight)
+                    : shiftedTransportRight;
         });
 
         // The menu is declared after the selector, therefore it is rendered and hit-tested on

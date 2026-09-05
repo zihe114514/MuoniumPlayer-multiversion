@@ -1,7 +1,13 @@
 package com.muoniumplayer.party;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.muoniumplayer.MuoniumPlayerClient;
+import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.ListenTogetherSettings;
+import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.utils.Tuple;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
@@ -69,6 +75,52 @@ public final class MpPartyClient {
     private static volatile boolean membersCanEnqueue = true;
     private static volatile boolean waitingUrl;
 
+    // ── v2：服务端能力（hello 下发） ──────────────────────────────────────────
+    //
+    // 这些都由服务端说了算，客户端不自己推断：同一个房间里 modernMP 和 MuoniumPlayer
+    // 必须显示同样的按钮、用同样的票数门槛，否则会出现「他那边能投我这边没有」。
+
+    /** 我是不是这台服务器的管理员（频道里的直接控制权来自这里）。 */
+    private static volatile boolean serverAdmin;
+    private static volatile boolean channelEnabled;
+    private static volatile String channelName = "服务器频道";
+    private static volatile String channelCode = "";
+    /** 频道里单人能挂在歌单上的曲目数。 */
+    private static volatile int channelMaxPerMember = 3;
+    private static volatile boolean publicRoomsEnabled = true;
+    /** 投票窗口，进度条要用。 */
+    private static volatile long voteWindowMs = 30_000L;
+    /** 服主配了平台 Token：没有会员的人也能点会员曲，界面应该把这件事说出来。 */
+    private static volatile boolean serverResolve;
+
+    // ── v2：封禁 ─────────────────────────────────────────────────────────────
+    private static volatile boolean banned;
+    private static volatile String banReason = "";
+    private static volatile String banRemaining = "";
+
+    /**
+     * 个人暂停：只静音自己，房间时钟照走，别人不受影响。
+     *
+     * <p>它必须挡住<b>所有</b>开声路径（换歌、恢复、拖进度、心跳对齐），漏一条就会偷偷出声。
+     * 恢复时服务端会单独补一帧 {@code resync} 的 play，那一帧才清掉这个标记。
+     */
+    private static volatile boolean selfPaused;
+
+    // ── v2：全服态 ───────────────────────────────────────────────────────────
+    private static volatile List<MpPresence> presenceList = Collections.emptyList();
+    private static volatile List<MpPublicRoom> publicRooms = Collections.emptyList();
+    private static volatile List<MpInvite> pendingInvites = Collections.emptyList();
+    private static volatile int onlineCount;
+
+    /**
+     * 上一次有人「关心在线态」的时刻。
+     *
+     * <p>在线态只能靠轮询（服务端不会主动推全服快照），而绝大多数时间没人在看那一页。
+     * 界面每帧调一次 {@link #touchPresence()}，这里据此决定要不要继续每 5 秒问一次 ——
+     * 关掉界面就自动停，不给服务端白发包。
+     */
+    private static volatile long presenceInterest;
+
     private static volatile String lastMessage = "";
     private static volatile boolean lastMessageIsError;
 
@@ -131,8 +183,9 @@ public final class MpPartyClient {
     private static void probeHello() {
         if (helloProbes >= HELLO_PROBE_LIMIT) return;
         JsonObject hello = MpProto.msg(MpProto.C_HELLO);
-        hello.addProperty("proto", MpProto.VERSION);
-        hello.addProperty("client", "muoniumplayer");
+        // hello 直接带上完整身份：服务端吸收之后紧接着发出的房间快照里就已经有 Mod 与 VIP，
+        // 不必等第一次 profile / 心跳。
+        fillProfile(hello);
         // 只有真的发出去了才记一次配额。ticker 从 mod 初始化就开始跑，主菜单上每秒都会来一发，
         // 而那时 Fabric 的发送会直接抛 "Cannot send packets when not in game!" —— 旧写法照样扣数，
         // 于是在标题界面停留半分钟就把 30 次试探全烧掉了，真正进服之后一次招呼也发不出去。
@@ -151,12 +204,27 @@ public final class MpPartyClient {
         serverPresent = false;
         helloAcked = false;
         helloProbes = 0;
+        // 这几份是「这台服务器的」状态，换服务器必须清干净，否则上一台的公开房间列表、
+        // 待处理邀请和封禁横幅会跟着显示在新服务器上。
+        serverProto = 0;
+        serverAdmin = false;
+        channelEnabled = false;
+        publicRoomsEnabled = true;
+        serverResolve = false;
+        banned = false;
+        banReason = "";
+        banRemaining = "";
+        presenceList = Collections.emptyList();
+        publicRooms = Collections.emptyList();
+        pendingInvites = Collections.emptyList();
+        onlineCount = 0;
         reset();
         if (had) MpPlayback.stop();
         notifyListeners();
     }
 
     private static int heartbeatCounter;
+    private static int presenceCounter;
 
     private static void tick() {
         try {
@@ -167,12 +235,25 @@ public final class MpPartyClient {
                 if (available()) serverPresent = true;
                 probeHello();
             }
-            if (room == null) return;
+            if (!usable()) return;
+            // 在线态那三帧问的是「整台服务器」的快照，跟着 250ms 的心跳走等于白烧带宽 ——
+            // 单独一个一秒的计数器，而且只在界面确实在看的时候才问（见 presenceInterest）。
+            if (v2() && ++presenceCounter >= 20) {
+                presenceCounter = 0;
+                if (System.currentTimeMillis() - presenceInterest < 10_000L) {
+                    sendQuiet(MpProto.msg(MpProto.C_PRESENCE));
+                    if (room == null) sendQuiet(MpProto.msg(MpProto.C_ROOMS));
+                    sendQuiet(MpProto.msg(MpProto.C_INVITES));
+                }
+            }
             if (++heartbeatCounter < 5) return;
             heartbeatCounter = 0;
+            // 心跳<b>不再</b>因为「不在房间里」就不发：全服在线态那一页（谁在听什么）就靠它。
+            // 顺带把身份也捎上 —— 登录了一个新平台、或者刚打开贡献开关，下一发心跳就生效。
             JsonObject msg = MpProto.msg(MpProto.C_PROGRESS);
             msg.addProperty("pos", MpPlayback.localPositionMs());
             msg.addProperty("playing", MpPlayback.localPlaying());
+            fillProfile(msg);
             sendQuiet(msg);
         } catch (Throwable ignored) {
         }
@@ -307,6 +388,105 @@ public final class MpPartyClient {
         LISTENERS.remove(r);
     }
 
+    // ── 读接口：v2 ───────────────────────────────────────────────────────────
+
+    /** 这台服务端认不认识 v2（在线态 / 公开房 / 频道 / 投票）。 */
+    public static boolean v2() {
+        return usable() && serverProto >= 2;
+    }
+
+    public static boolean isServerAdmin() {
+        return serverAdmin;
+    }
+
+    public static boolean channelEnabled() {
+        return channelEnabled;
+    }
+
+    public static String channelName() {
+        return channelName == null || channelName.isEmpty() ? "服务器频道" : channelName;
+    }
+
+    public static int channelMaxPerMember() {
+        return channelMaxPerMember;
+    }
+
+    public static boolean publicRoomsEnabled() {
+        return publicRoomsEnabled;
+    }
+
+    public static long voteWindowMs() {
+        return voteWindowMs;
+    }
+
+    /** 服主配了平台 Token，没有会员的人也能点会员曲。 */
+    public static boolean serverResolve() {
+        return serverResolve;
+    }
+
+    public static boolean isBanned() {
+        return banned;
+    }
+
+    public static String banReason() {
+        return banReason;
+    }
+
+    public static String banRemaining() {
+        return banRemaining;
+    }
+
+    public static boolean selfPaused() {
+        return selfPaused;
+    }
+
+    /** 当前在的是不是服务器频道。 */
+    public static boolean inChannel() {
+        MpRoom r = room;
+        return r != null && r.channel;
+    }
+
+    /** 我在这个房间里有没有直接控制权（频道里 = 服务器管理员）。 */
+    public static boolean hasControl() {
+        MpRoom r = room;
+        if (r == null) return false;
+        if (r.channel) return serverAdmin;
+        MpMember me = self();
+        return me != null && me.controls();
+    }
+
+    public static List<MpPresence> presence() {
+        return presenceList;
+    }
+
+    public static int onlineCount() {
+        return onlineCount;
+    }
+
+    public static List<MpPublicRoom> publicRooms() {
+        return publicRooms;
+    }
+
+    public static List<MpInvite> pendingInvites() {
+        return pendingInvites;
+    }
+
+    /** 当前进行中／刚结束的投票；没有返回 null。 */
+    public static MpVote openVote() {
+        MpRoom r = room;
+        return r == null ? null : r.openVote();
+    }
+
+    /**
+     * 「我正在看在线态」。界面每帧调一次，{@link #tick()} 据此决定要不要继续轮询。
+     *
+     * <p>为什么不是「打开界面时订阅、关闭时退订」：界面可能被 ESC、切屏、房间解散等好几条
+     * 路径关掉，任何一条漏了退订就会永久轮询下去。用时间戳自然过期，漏不了。
+     */
+    public static void touchPresence() {
+        presenceInterest = System.currentTimeMillis();
+    }
+
     // ── 写接口 ───────────────────────────────────────────────────────────────
 
     public static void createRoom(String name) {
@@ -357,6 +537,169 @@ public final class MpPartyClient {
         JsonObject m = MpProto.msg(MpProto.C_TRANSFER);
         m.addProperty("target", playerName == null ? "" : playerName.trim());
         send(m);
+    }
+
+    /** 加入服务器频道（全服公开大房间）。 */
+    public static void joinChannel() {
+        if (!requireChannel()) return;
+        if (!channelEnabled) {
+            note("这台服务器没有开启服务器频道", true);
+            return;
+        }
+        send(MpProto.msg(MpProto.C_CHANNEL_JOIN));
+    }
+
+    /** 把自己的房间设为公开 / 私密。 */
+    public static void setPublic(boolean open) {
+        if (!requireChannel()) return;
+        JsonObject m = MpProto.msg(MpProto.C_SET_PUBLIC);
+        m.addProperty("public", open);
+        send(m);
+    }
+
+    public static void requestPresence() {
+        if (v2()) sendQuiet(MpProto.msg(MpProto.C_PRESENCE));
+    }
+
+    public static void requestPublicRooms() {
+        if (v2()) sendQuiet(MpProto.msg(MpProto.C_ROOMS));
+    }
+
+    public static void requestInvites() {
+        if (v2()) sendQuiet(MpProto.msg(MpProto.C_INVITES));
+    }
+
+    public static void acceptInvite(String roomId) {
+        if (!requireChannel()) return;
+        JsonObject m = MpProto.msg(MpProto.C_INVITE_ACCEPT);
+        if (roomId != null && !roomId.isEmpty()) m.addProperty("roomId", roomId);
+        send(m);
+    }
+
+    public static void declineInvite(String roomId) {
+        if (!requireChannel()) return;
+        JsonObject m = MpProto.msg(MpProto.C_INVITE_DECLINE);
+        if (roomId != null && !roomId.isEmpty()) m.addProperty("roomId", roomId);
+        send(m);
+    }
+
+    /**
+     * 个人暂停 / 恢复。
+     *
+     * <p>本地先落地再上报，不等服务端回话：按下去就该立刻静音，否则用户会以为按钮没反应而连按。
+     * 恢复时不在本地擅自起播 —— 要等服务端补的那一帧权威位置，否则会从一个过期位置开始放，
+     * 又得纠偏一次。
+     */
+    public static void setSelfPause(boolean paused) {
+        if (!requireChannel()) return;
+        selfPaused = paused;
+        if (paused) MpPlayback.pause(positionMs());
+        JsonObject m = MpProto.msg(MpProto.C_SELF_PAUSE);
+        m.addProperty("paused", paused);
+        send(m);
+        notifyListeners();
+    }
+
+    public static void toggleSelfPause() {
+        setSelfPause(!selfPaused);
+    }
+
+    /** 发起切歌投票（频道里非管理员按「下一首」走的就是这条）。 */
+    public static void startSkipVote() {
+        if (!requireChannel()) return;
+        JsonObject m = MpProto.msg(MpProto.C_VOTE_START);
+        m.addProperty("kind", MpProto.VOTE_SKIP);
+        send(m);
+    }
+
+    public static void startKickVote(UUID target) {
+        if (!requireChannel()) return;
+        if (target == null) return;
+        JsonObject m = MpProto.msg(MpProto.C_VOTE_START);
+        m.addProperty("kind", MpProto.VOTE_KICK);
+        m.addProperty("target", target.toString());
+        send(m);
+    }
+
+    public static void castVote(String voteId, boolean agree) {
+        if (!requireChannel()) return;
+        JsonObject m = MpProto.msg(MpProto.C_VOTE_CAST);
+        if (voteId != null && !voteId.isEmpty()) m.addProperty("voteId", voteId);
+        m.addProperty("agree", agree);
+        send(m);
+    }
+
+    /** 立刻把身份重新报一次（打开/关闭贡献开关、登录了新平台之后调用）。 */
+    public static void reportProfile() {
+        if (!usable()) return;
+        JsonObject m = MpProto.msg(MpProto.C_PROFILE);
+        fillProfile(m);
+        sendQuiet(m);
+    }
+
+    /**
+     * 填入这台客户端的自报信息。
+     *
+     * <p>VIP 的判据是「这个平台的会话在」（{@link NeteaseMusicService#isLoggedIn}）—— 客户端能
+     * 给出的最可靠信号就是它；真要确认「能不能解析出完整音频」得发一次请求才知道，不可能为了填
+     * 一个字段去挨个平台试一遍。
+     *
+     * <p><b>只报平台名，不报任何凭据。</b>cookie 一律留在本机 —— 需要时是本机解析出一条带签名的
+     * 临时直链再上传（{@code url_supply}），账号本身永远不出这台机器。
+     *
+     * <p>{@code MOD_VERSION} / {@code MC_VERSION} 是 {@code static final String} 常量，javac 会
+     * 直接内联进本类，所以这里不会在运行期加载 {@code MuoniumPlayerClient}（那个类碰 Minecraft，
+     * 而本方法跑在 mp-party 线程上）。
+     */
+    private static void fillProfile(JsonObject m) {
+        m.addProperty("proto", MpProto.VERSION);
+        m.addProperty("client", MpProto.CLIENT_ID);
+        m.addProperty("modName", MpProto.CLIENT_NAME);
+        m.addProperty("modVersion", MuoniumPlayerClient.MOD_VERSION + " / MC " + MuoniumPlayerClient.MC_VERSION);
+        m.addProperty("contributeVip", contributeVip());
+        JsonArray vip = new JsonArray();
+        for (MusicPlatform platform : MusicPlatform.values()) {
+            try {
+                if (NeteaseMusicService.isLoggedIn(platform)) vip.add(sourceOf(platform));
+            } catch (Throwable ignored) {
+                // 某个平台的登录态查询抛了，不该拖垮心跳。
+            }
+        }
+        m.add("vip", vip);
+        Music now = localNowPlaying();
+        m.addProperty("nowPlaying", now == null ? "" : safe(now.getName()));
+        m.addProperty("nowArtist", now == null ? "" : safe(now.getArtistsName()));
+        m.addProperty("localPlaying", MpPlayback.localPlaying());
+    }
+
+    /** 本机此刻在听什么（不限于房间曲目：全服在线态要的是「他在听什么」）。 */
+    private static Music localNowPlaying() {
+        try {
+            return CloudMusic.currentlyPlaying;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /** 是否愿意替别人解析（贡献会员解析能力）。默认关，必须玩家显式打开。 */
+    public static boolean contributeVip() {
+        try {
+            return ListenTogetherSettings.isPartyContributeVip();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /** 平台 → 协议里的 source 令牌。必须和服务端认识的那套一致。 */
+    private static String sourceOf(MusicPlatform platform) {
+        if (platform == MusicPlatform.QQ) return MpProto.SOURCE_QQ;
+        if (platform == MusicPlatform.KUGOU) return MpProto.SOURCE_KUGOU;
+        if (platform == MusicPlatform.GD) return MpProto.SOURCE_GD;
+        return MpProto.SOURCE_NETEASE;
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value;
     }
 
     public static void pause() {
@@ -620,6 +963,12 @@ public final class MpPartyClient {
     /** @return true 表示「下一首」已被房间消化 */
     public static boolean interceptNext() {
         if (!engaged()) return false;
+        // 频道里没有房主，普通成员按「下一首」不是被拒绝，而是发起一次切歌投票。
+        // 这一步必须在 requireControl 之前：否则本地就把它拦掉了，投票压根发不出去。
+        if (inChannel() && !hasControl()) {
+            startSkipVote();
+            return true;
+        }
         if (!requireControl()) return true;
         next();
         return true;
@@ -757,6 +1106,18 @@ public final class MpPartyClient {
                     MpProto.num(msg, "resyncCooldownMs", 0L),
                     (int) MpProto.num(msg, "driftConfirmHits", 0L),
                     MpProto.num(msg, "clockGraceMs", -1L));
+            // ── v2：能力位。老服务端不发这些字段，取到的就是本地默认值，
+            //        界面据此把频道/发现/投票那几处直接隐藏。
+            serverAdmin = MpProto.bool(msg, "serverAdmin", false);
+            channelEnabled = MpProto.bool(msg, "channelEnabled", false);
+            channelName = MpProto.str(msg, "channelName", channelName);
+            channelCode = MpProto.str(msg, "channelCode", channelCode);
+            channelMaxPerMember = (int) MpProto.num(msg, "channelMaxPerMember", channelMaxPerMember);
+            publicRoomsEnabled = MpProto.bool(msg, "publicRoomsEnabled", false);
+            voteWindowMs = MpProto.num(msg, "voteWindowMs", voteWindowMs);
+            serverResolve = MpProto.bool(msg, "serverResolve", false);
+            // 服务端刚认识我们，把身份补报一次：它紧接着发出的房间快照里就已经有 Mod 与 VIP。
+            reportProfile();
             notifyListeners();
         } else if (MpProto.S_ROOM_STATE.equals(op)) {
             applySnapshot(msg);
@@ -769,6 +1130,10 @@ public final class MpPartyClient {
         } else if (MpProto.S_PLAY.equals(op)) {
             MpTrack track = MpTrack.fromJson(MpProto.obj(msg, "track"));
             if (track == null) return;
+            // resync = 服务端单独补给我一份权威位置（个人暂停恢复时用），不是新曲目。
+            // 「立即同步播放进度」就落在这里：见到它就清掉个人暂停并直接跳到那个位置，
+            // 不用等下一发心跳。
+            if (MpProto.bool(msg, "resync", false)) selfPaused = false;
             long seq = MpProto.num(msg, "seq", 0L);
             long pos = compensate(MpProto.num(msg, "pos", 0L), MpProto.num(msg, "serverTime", 0L));
             startTrack(track, pos, MpProto.bool(msg, "playing", true), seq);
@@ -781,14 +1146,14 @@ public final class MpPartyClient {
             MpSyncPolicy.markCommand();
             stamp(compensate(MpProto.num(msg, "pos", positionMs()), MpProto.num(msg, "serverTime", 0L)),
                     true, MpProto.num(msg, "seq", 0L));
-            MpPlayback.resume(posBase);
+            if (!selfPaused) MpPlayback.resume(posBase);
             notifyListeners();
         } else if (MpProto.S_SEEK.equals(op)) {
             // 房主／管理员拖进度是明确命令：立刻执行，不受软硬阈值和冷却约束。
             MpSyncPolicy.markCommand();
             stamp(compensate(MpProto.num(msg, "pos", 0L), MpProto.num(msg, "serverTime", 0L)),
                     playing, MpProto.num(msg, "seq", 0L));
-            MpPlayback.seek(posBase);
+            if (!selfPaused) MpPlayback.seek(posBase);
             notifyListeners();
         } else if (MpProto.S_STOP.equals(op)) {
             currentTrack = null;
@@ -806,7 +1171,7 @@ public final class MpPartyClient {
             stampSmooth(pos, isPlaying);
             // 交给播放层的仍是服务端的权威位置（未经平滑）：那边自己有三档判定，
             // 喂它一个被磨过的值只会让判定失真。
-            MpPlayback.time(pos, dur, isPlaying);
+            if (!selfPaused) MpPlayback.time(pos, dur, isPlaying);
         } else if (MpProto.S_INVITE.equals(op)) {
             inviteCode = MpProto.str(msg, "code", "");
             inviteRoomName = MpProto.str(msg, "roomName", "");
@@ -829,7 +1194,87 @@ public final class MpPartyClient {
         } else if (MpProto.S_URL_NEEDED.equals(op)) {
             supplyUrl(MpProto.str(msg, "source", MpProto.SOURCE_NETEASE),
                     MpProto.str(msg, "songId", ""));
+        } else if (MpProto.S_PRESENCE.equals(op)) {
+            presenceList = presenceOf(MpProto.arr(msg, "players"));
+            onlineCount = (int) MpProto.num(msg, "online", presenceList.size());
+            notifyListeners();
+        } else if (MpProto.S_ROOMS.equals(op)) {
+            publicRooms = roomsOf(MpProto.arr(msg, "rooms"));
+            publicRoomsEnabled = MpProto.bool(msg, "publicRoomsEnabled", publicRoomsEnabled);
+            channelEnabled = MpProto.bool(msg, "channelEnabled", channelEnabled);
+            channelCode = MpProto.str(msg, "channelCode", channelCode);
+            notifyListeners();
+        } else if (MpProto.S_INVITES.equals(op)) {
+            pendingInvites = invitesOf(MpProto.arr(msg, "invites"));
+            notifyListeners();
+        } else if (MpProto.S_VOTE.equals(op)) {
+            applyVote(MpVote.fromJson(MpProto.obj(msg, "vote")));
+        } else if (MpProto.S_BANNED.equals(op)) {
+            banned = true;
+            banReason = MpProto.str(msg, "reason", "未说明");
+            banRemaining = MpProto.str(msg, "remaining", "");
+            // 封禁横幅由界面显示；这里仍写一行聊天，纯服务端玩家也得知道自己被封了。
+            note("你的一起听功能已被封禁（" + banReason
+                    + (banRemaining.isEmpty() ? "" : "，剩余 " + banRemaining) + "）", true);
         }
+    }
+
+    private static List<MpPresence> presenceOf(JsonArray a) {
+        List<MpPresence> out = new ArrayList<MpPresence>();
+        if (a == null) return Collections.unmodifiableList(out);
+        for (JsonElement e : a) {
+            if (!e.isJsonObject()) continue;
+            MpPresence p = MpPresence.fromJson(e.getAsJsonObject());
+            if (p != null) out.add(p);
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    private static List<MpPublicRoom> roomsOf(JsonArray a) {
+        List<MpPublicRoom> out = new ArrayList<MpPublicRoom>();
+        if (a == null) return Collections.unmodifiableList(out);
+        for (JsonElement e : a) {
+            if (!e.isJsonObject()) continue;
+            MpPublicRoom r = MpPublicRoom.fromJson(e.getAsJsonObject());
+            if (r != null) out.add(r);
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    private static List<MpInvite> invitesOf(JsonArray a) {
+        List<MpInvite> out = new ArrayList<MpInvite>();
+        if (a == null) return Collections.unmodifiableList(out);
+        for (JsonElement e : a) {
+            if (!e.isJsonObject()) continue;
+            MpInvite inv = MpInvite.fromJson(e.getAsJsonObject());
+            if (inv != null) out.add(inv);
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    /**
+     * 把单独一帧投票合并进房间快照。
+     *
+     * <p>只换 votes 那一份列表（{@link MpRoom#withVotes}）而不重建整个快照：投票期间这一帧每秒
+     * 都会来更新倒计时，重建快照会让成员列表和歌单每秒换一个新对象，界面上正在滚的列表会跟着抖。
+     */
+    private static void applyVote(MpVote vote) {
+        if (vote == null) return;
+        MpRoom r = room;
+        if (r == null) return;
+        List<MpVote> merged = new ArrayList<MpVote>();
+        boolean replaced = false;
+        for (MpVote v : r.votes) {
+            if (v.voteId.equals(vote.voteId)) {
+                merged.add(vote);
+                replaced = true;
+            } else if (!v.closed) {
+                merged.add(v);
+            }
+        }
+        if (!replaced) merged.add(vote);
+        room = r.withVotes(merged);
+        notifyListeners();
     }
 
     private static void applySnapshot(JsonObject msg) {
@@ -885,7 +1330,8 @@ public final class MpPartyClient {
         waitingUrl = false;
         // 换歌是明确命令：清掉漂移确认计数并开静默期，接下来几秒在解析／下载，落后不算脱节。
         MpSyncPolicy.markCommand();
-        MpPlayback.play(track, track.url, pos, isPlaying);
+        // 个人暂停期间只更新房间时钟，不开声。界面照常显示曲目和进度，恢复时才真的起播。
+        if (!selfPaused) MpPlayback.play(track, track.url, pos, isPlaying);
         notifyListeners();
     }
 
@@ -1052,6 +1498,7 @@ public final class MpPartyClient {
         durationMs = 0L;
         appliedSeq = -1L;
         waitingUrl = false;
+        selfPaused = false;
         MpSyncPolicy.reset();
     }
 

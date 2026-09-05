@@ -365,9 +365,12 @@ final class AppleLyricRenderer extends AbstractStageLyricRenderer {
                 // 唱过的字停在亮色不回落，整行的压暗交给 rowAlpha —— Apple 就是这么分工的。
                 double glyphAlpha = layerAlpha * (lightUp ? .62 + .38 * p : 1.0);
                 if (glow && glowStrength > .01 && p > .02) {
+                    // 这里给的是「演唱进度形状」，不能再乘一次 glowStrength：
+                    // FullscreenLyricStage.drawGlow 内部已经乘过 fullscreenGlowStrength，
+                    // 两边都乘等于把滑块平方，滑块前半程几乎没有响应。
                     double amount = (longSyllable
-                            ? glowStrength * (.35 + .65 * Math.sin(Math.PI * p))
-                            : glowStrength * Math.sin(Math.PI * p)) * weight;
+                            ? (.35 + .65 * Math.sin(Math.PI * p))
+                            : Math.sin(Math.PI * p)) * weight;
                     if (amount > .02) {
                         FullscreenLyricStage.drawGlow(tok.font, glyph, startX + cursor, startY,
                                 litColor, glyphAlpha, amount);

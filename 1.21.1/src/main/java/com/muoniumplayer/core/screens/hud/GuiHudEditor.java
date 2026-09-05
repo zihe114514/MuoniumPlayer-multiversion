@@ -63,16 +63,10 @@ public class GuiHudEditor extends GuiScreen {
 
     private static final HudSetting[] CURRENT_SLIDERS = {
             HudSetting.CURRENT_LINE_SCALE,
-            HudSetting.CURRENT_WORD_SCALE,
             HudSetting.CURRENT_GLOW,
-            HudSetting.CURRENT_GLOW_RADIUS,
-            HudSetting.CURRENT_BLOOM,
-            HudSetting.CURRENT_TRANSITION,
-            HudSetting.CURRENT_BREATH,
             HudSetting.FULLSCREEN_GLOW,
+            HudSetting.LYRIC_GLOW_SPREAD,
             HudSetting.OSD_TRANSITION,
-            HudSetting.OSD_GLOW,
-            HudSetting.OSD_BLOOM,
             HudSetting.OSD_PULSE,
             HudSetting.OSD_SMOOTHNESS,
             HudSetting.OSD_DUET_SPREAD
@@ -82,7 +76,6 @@ public class GuiHudEditor extends GuiScreen {
             HudSetting.NORMAL_OPACITY,
             HudSetting.NORMAL_SCALE,
             HudSetting.NORMAL_GLOW,
-            HudSetting.NORMAL_BLOOM,
             HudSetting.NORMAL_SPACING,
             HudSetting.EDGE_FADE,
             HudSetting.SCROLL_SMOOTHNESS,

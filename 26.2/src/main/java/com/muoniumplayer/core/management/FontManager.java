@@ -112,6 +112,22 @@ public class FontManager extends AbstractManager {
      */
     public static CFontRenderer settingsIcon24, settingsIcon32, settingsIcon40;
 
+    /**
+     * 一起听界面的图标字体（party-icons，Material Icons round 一档，U+E400~E430 与 U+E4FF）。
+     *
+     * <p>四档字号对应 12 / 16 / 20 / 28 逻辑像素的图标方格，规矩与 {@link #settingsIcon24} 完全
+     * 相同（{@code create(N)} 的 em 方格落屏是 N×0.5 像素），行内小标记用 12，按钮与列表用 16，
+     * 页签与状态用 20，空状态那枚大图标用 28。</p>
+     *
+     * <p>又是一份独立字体而不是并进 {@code hud-settings-icons}：两份都是 Material round 导出，
+     * 但私用区码位各自从 U+E200 / U+E400 起，合并任何一方都要重排码位。另外这份刻意保留了
+     * Material 24 网格里的原始 x 坐标（hud-settings 那份把字形推到了 x=0），所以窄字形按
+     * {@code PartyIcons.FRAME} 居中时是真的居中，chevron 之类不会偏。</p>
+     *
+     * <p>不做「取一档再缩放」：字形按字号栅格化，额外的非整数倍率会让图标发虚。</p>
+     */
+    public static CFontRenderer partyIcon24, partyIcon32, partyIcon40, partyIcon56;
+
     public static List<CFontRenderer> getAllFontRenderers() {
 
         return Arrays.stream(FontManager.class.getDeclaredFields())
@@ -194,6 +210,11 @@ public class FontManager extends AbstractManager {
         settingsIcon24 = create(24, "hud-settings-icons");
         settingsIcon32 = create(32, "hud-settings-icons");
         settingsIcon40 = create(40, "hud-settings-icons");
+
+        partyIcon24 = create(24, "party-icons");
+        partyIcon32 = create(32, "party-icons");
+        partyIcon40 = create(40, "party-icons");
+        partyIcon56 = create(56, "party-icons");
     }
 
     /**

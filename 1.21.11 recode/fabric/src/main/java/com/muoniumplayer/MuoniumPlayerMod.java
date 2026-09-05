@@ -25,6 +25,8 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         MuoniumPlayerClient client = MuoniumPlayerClient.getInstance();
 
         // 1. OpenAPI 单例 + 扩展初始化（顺序见 MuoniumPlayerClient 的调用契约）
+        // 加载器 id 必须在 init() 之前登记：更新检查按「MC 版本 + 加载器」查清单。
+        MuoniumPlayerClient.setLoaderId("fabric");
         client.init();
 
         // 2. 一起听（服务端房间）通道：服务器没装一起听服务端 mod 时全程无副作用，

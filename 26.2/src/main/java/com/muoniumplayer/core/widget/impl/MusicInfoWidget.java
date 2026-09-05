@@ -150,7 +150,9 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
                 double posX = posInterface.getX();
                 double posY = posInterface.getY();
 
-                Location musicCoverBlurred = CloudMusic.currentlyPlaying.getBlurredCoverLocation();
+                // 用上面那个已经判过空的局部量，别再读一遍 CloudMusic.currentlyPlaying：
+                // 「先判空再取值」这种写法在停播那一帧就会读到 null。
+                Location musicCoverBlurred = playingMusic.getBlurredCoverLocation();
 
                 TextureManager textureManager = TextureManager.getInstance();
                 ITextureObject texBg = textureManager.getTexture(musicCoverBlurred);

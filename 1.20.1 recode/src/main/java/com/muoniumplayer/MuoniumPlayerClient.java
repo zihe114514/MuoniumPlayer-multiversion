@@ -9,9 +9,11 @@ import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.screens.GuiFfmpegNotice;
+import com.muoniumplayer.core.screens.GuiUpdateNotice;
 import com.muoniumplayer.core.screens.hud.GuiHudEditor;
 import com.muoniumplayer.core.screens.hud.GuiHudEditorPro;
 import com.muoniumplayer.core.settings.HudConfig;
+import com.muoniumplayer.core.update.UpdateChecker;
 import com.muoniumplayer.render.skija.SkijaHost;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
@@ -52,7 +54,33 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "1.3.0";
+    public static final String MOD_VERSION = "1.4.4";
+
+    /**
+     * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
+     * 而原版取版本号的入口四个版本各不相同。静态测试钉住它与 gradle.properties 的
+     * minecraft_version 一致，改一处漏另一处会直接构建失败。
+     */
+    public static final String MC_VERSION = "1.20.1";
+
+    /**
+     * 加载器 id（{@code fabric} / {@code forge} / {@code neoforge}），由入口外壳在 {@link #init()}
+     * 之前登记一次。共享源码没法自己判断跑在哪个加载器上（判断本身就要引用加载器 API），
+     * 而更新清单是按「MC 版本 + 加载器」分桶的，所以必须由外壳告诉它。
+     */
+    private static volatile String loaderId = "unknown";
+
+    /** 由 Fabric / Forge 外壳在 {@link #init()} 之前调用。 */
+    public static void setLoaderId(String id) {
+        if (id != null && !id.trim().isEmpty()) {
+            loaderId = id.trim();
+        }
+    }
+
+    /** 登记过的加载器 id；没登记时是 {@code unknown}，更新检查会退到清单里的 fallback。 */
+    public static String loaderId() {
+        return loaderId;
+    }
 
     /** 按键分类名，在「选项 → 控制」中作为分组标题显示。 */
     public static final String KEY_CATEGORY = "key.categories.muonium";
@@ -128,6 +156,10 @@ public final class MuoniumPlayerClient {
         //    缺少时由 GuiFfmpegNotice 在主菜单弹一次全屏提示，同时也让 HUD 编辑器的「未检测到 ffmpeg」
         //    标签在用户放第一首歌之前就有结论。探测会创建子进程，绝不能放在主线程上。
         FfmpegNotice.beginProbe();
+
+        // 4. 更新检查：守护线程上最多拉一次远端版本清单（结果缓存 6 小时，失败静默），
+        //    有新版本时由 GuiUpdateNotice 在主菜单弹一次提示。用户可以在提示里彻底关掉。
+        UpdateChecker.beginCheck(MOD_VERSION, MC_VERSION, loaderId);
     }
 
     /** 供加载器侧的事件回调判断初始化是否已完成（Forge 的事件可能早于 clientSetup 触发）。 */
@@ -171,6 +203,11 @@ public final class MuoniumPlayerClient {
         // 结论往往还没出来，换 GUI 只有一次机会，轮询则下一 tick 再问一次就行。内部自带
         // 「本次启动只弹一次」与「永不展示」两道闸，条件不满足时只是一次布尔判断。
         GuiFfmpegNotice.tickAutoShow(mc);
+
+        // ---- 有新版本的一次性主菜单提示 ----
+        // 与上面 ffmpeg 那条同构，闸门也一样在内部：本次启动只弹一次 / 跳过这个版本 / 不再检查更新。
+        // ffmpeg 提示已经占住界面时，这里读到的当前界面不是主菜单，本 tick 直接跳过 —— 两个提示天然排队。
+        GuiUpdateNotice.tickAutoShow(mc);
 
         // ---- 可配置按键检测（仅在未打开 GUI 时响应，避免与界面内输入冲突）----
         // 1.8.9 的 KeyMapping.isPressed() 是上升沿触发；1.20.1 里同语义的方法叫 wasPressed()

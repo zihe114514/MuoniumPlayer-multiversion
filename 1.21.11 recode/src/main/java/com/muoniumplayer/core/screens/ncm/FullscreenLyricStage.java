@@ -13,6 +13,7 @@ import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.ScissorClipManager;
 import com.muoniumplayer.core.rendering.StencilClipManager;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
+import com.muoniumplayer.core.rendering.font.TextGlow;
 import com.muoniumplayer.core.settings.HudConfig;
 
 /**
@@ -517,36 +518,15 @@ final class FullscreenLyricStage {
     // ==================== 绘制 ====================
 
     /**
-     * 文本发光。
-     *
-     * <p>1.8.9 没有可用的后处理管线，沿用项目里其它发光的做法：同一串文本按环形偏移多画几遍、
-     * 逐层降透明度。上限走 {@link HudConfig#fullscreenGlowStrength}，与其它样式共用同一个滑块。</p>
+     * 文本发光。Apple / Luminous / Tilt 以及本类自己的逐字填涂都走这里；上限走
+     * {@link HudConfig#fullscreenGlowStrength}，与其它样式共用同一个滑块。
+     * 光晕的形状与混合方式见 {@link TextGlow}。
      */
     static void drawGlow(CFontRenderer font, String text, double x, double y,
                          int rgb, double alpha, double strength) {
-        if (font == null || text == null || text.isEmpty()) return;
-        double limit = clamp01(HudConfig.fullscreenGlowStrength);
-        double effective = limit * clamp01(strength);
-        if (effective <= .004 || alpha <= .004) return;
-        double radius = 1.0 + 2.6 * effective;
-        drawGlowRing(font, text, x, y, radius, rgb, alpha * effective * .34);
-        drawGlowRing(font, text, x, y, radius * 1.75, rgb, alpha * effective * .15);
-    }
-
-    private static void drawGlowRing(CFontRenderer font, String text, double x, double y,
-                                     double radius, int rgb, double alpha) {
-        if (alpha <= .002) return;
-        int cardinal = withAlpha(rgb, alpha);
-        int diagonal = withAlpha(rgb, alpha * .72);
-        double d = radius * .7071;
-        font.drawString(text, x - radius, y, cardinal);
-        font.drawString(text, x + radius, y, cardinal);
-        font.drawString(text, x, y - radius, cardinal);
-        font.drawString(text, x, y + radius, cardinal);
-        font.drawString(text, x - d, y - d, diagonal);
-        font.drawString(text, x + d, y - d, diagonal);
-        font.drawString(text, x - d, y + d, diagonal);
-        font.drawString(text, x + d, y + d, diagonal);
+        TextGlow.draw(font, text, x, y, rgb, alpha,
+                clamp01(HudConfig.fullscreenGlowStrength) * clamp01(strength),
+                HudConfig.lyricGlowSpread);
     }
 
     /**

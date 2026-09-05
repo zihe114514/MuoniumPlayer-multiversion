@@ -30,3 +30,7 @@ _legacy-git/
 # ---- 系统垃圾 ----
 .DS_Store
 Thumbs.db
+
+# tools/ 里的 python 脚本被 import 时会留下字节码缓存
+__pycache__/
+*.pyc

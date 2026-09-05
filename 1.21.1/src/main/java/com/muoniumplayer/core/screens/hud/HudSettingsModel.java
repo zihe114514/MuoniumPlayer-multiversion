@@ -335,10 +335,10 @@ public final class HudSettingsModel {
 
     private static Category[] build() {
         return new Category[] {
-                new Category("当前歌词", "正在演唱那一行的颜色、逐字强调与发光", 0xFF8C7CFF, HudSettingsIcons.MIC,
+                new Category("当前歌词", "正在演唱那一行的颜色、发光与逐字强调", 0xFF8C7CFF, HudSettingsIcons.MIC,
                         new Group("基础", HudSettingsIcons.TUNE,
                                 color("当前歌词颜色", "逐字填涂之后那部分文字的颜色。", ColorTarget.CURRENT),
-                                toggle("当前歌词特效", "关掉之后当前行只做普通描边，不再放大、发光与呼吸。",
+                                toggle("当前歌词特效", "关掉之后当前行只做普通描边，不再放大与发光。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.currentLyricEffectsEnabled;
@@ -360,19 +360,14 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         })),
-                        new Group("全屏歌词", HudSettingsIcons.FULLSCREEN,
-                                slider(HudSetting.CURRENT_LINE_SCALE, "当前行整体比其它行大多少。"),
-                                slider(HudSetting.CURRENT_WORD_SCALE, "正在唱的那个字额外放大多少。"),
-                                slider(HudSetting.CURRENT_GLOW, "已唱部分的发光强度。"),
-                                slider(HudSetting.CURRENT_GLOW_RADIUS, "发光向外扩散的范围。"),
-                                slider(HudSetting.CURRENT_BLOOM, "在发光之外再叠一层柔和晕染。"),
-                                slider(HudSetting.CURRENT_TRANSITION, "填涂边缘的软化宽度，越大越像渐变。"),
-                                slider(HudSetting.CURRENT_BREATH, "当前行的呼吸缩放幅度。"),
-                                slider(HudSetting.FULLSCREEN_GLOW, "全屏歌词页逐字发光的总强度上限。")),
-                        new Group("桌面歌词 (OSD)", HudSettingsIcons.CAPTION,
+                        new Group("发光", HudSettingsIcons.SPARKLE,
+                                slider(HudSetting.CURRENT_GLOW, "桌面歌词当前行的发光强度，读数就是唱到那个字时的亮度。"),
+                                slider(HudSetting.FULLSCREEN_GLOW, "全屏歌词页逐字发光的强度，全部样式共用。"),
+                                slider(HudSetting.LYRIC_GLOW_SPREAD, "光晕铺多远。桌面与全屏按各自字号成比例缩放。")),
+                        new Group("整行效果", HudSettingsIcons.TUNE,
+                                slider(HudSetting.CURRENT_LINE_SCALE, "当前行整体比其它行大多少，桌面歌词与全屏页共用。")),
+                        new Group("逐字效果 (OSD)", HudSettingsIcons.CAPTION,
                                 slider(HudSetting.OSD_TRANSITION, "桌面歌词填涂边缘的软化宽度。"),
-                                slider(HudSetting.OSD_GLOW, "桌面歌词的逐字发光强度。"),
-                                slider(HudSetting.OSD_BLOOM, "桌面歌词的柔和晕染强度。"),
                                 slider(HudSetting.OSD_PULSE, "桌面歌词正在唱的那个字放大多少。"),
                                 slider(HudSetting.OSD_SMOOTHNESS, "桌面歌词逐字动画的平滑程度。"),
                                 slider(HudSetting.OSD_DUET_SPREAD, "对唱段落左右分列的间距，0 为完全居中。"))),
@@ -380,7 +375,7 @@ public final class HudSettingsModel {
                 new Category("普通歌词", "还没唱到与已经唱过的那些行", 0xFF65C9B5, HudSettingsIcons.SUBTITLES,
                         new Group("基础", HudSettingsIcons.TUNE,
                                 color("普通歌词颜色", "非当前行的文字颜色。", ColorTarget.NORMAL),
-                                toggle("普通歌词特效", "关掉之后其它行不再做微光与柔光晕染。",
+                                toggle("普通歌词特效", "关掉之后其它行不再发光。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.normalLyricEffectsEnabled;
@@ -405,8 +400,7 @@ public final class HudSettingsModel {
                         new Group("排版与动效", HudSettingsIcons.SPARKLE,
                                 slider(HudSetting.NORMAL_OPACITY, "非当前行的整体不透明度。"),
                                 slider(HudSetting.NORMAL_SCALE, "非当前行的字号缩放。"),
-                                slider(HudSetting.NORMAL_GLOW, "非当前行的微光强度。"),
-                                slider(HudSetting.NORMAL_BLOOM, "非当前行的柔光晕染强度。"),
+                                slider(HudSetting.NORMAL_GLOW, "非当前行的发光强度，与当前行同一套光晕、只是更淡。"),
                                 slider(HudSetting.NORMAL_SPACING, "相邻两行之间的间距。"),
                                 slider(HudSetting.EDGE_FADE, "上下边缘渐隐区域的高度。"),
                                 slider(HudSetting.SCROLL_SMOOTHNESS, "换行滚动的柔和程度，越大越慢越顺。"),
@@ -630,6 +624,21 @@ public final class HudSettingsModel {
                                             }
                                         }))),
 
+                new Category("全屏播放页", "封面下方那块曲目信息", 0xFF9AD0EC, HudSettingsIcons.FULLSCREEN,
+                        new Group("信息标签", HudSettingsIcons.CAPTION,
+                                choice("标签语言",
+                                        "封面下方那排标签（音源 / 音质 / 歌词类型）用英文还是中文。点击切换。"
+                                        + "英文在 10 像素高的胶囊里更清楚，中文更直观。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return NCMPlayerConfig.getNowPlayingTagLanguageLabel();
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                NCMPlayerConfig.toggleNowPlayingTagsInEnglish();
+                                            }
+                                        }))),
+
                 new Category("存储", "已下载音频的磁盘占用与上限", 0xFFD8A657, HudSettingsIcons.STORAGE,
                         new Group("音频缓存", HudSettingsIcons.SWEEP,
                                 choice("缓存上限",
@@ -779,21 +788,15 @@ public final class HudSettingsModel {
             case DYNAMIC_ISLAND_TEXT_SCALE:
             case CURRENT_WORD_SCALE:
             case CURRENT_GLOW:
-            case CURRENT_BLOOM:
-            case CURRENT_BREATH:
             case FULLSCREEN_GLOW:
-            case OSD_GLOW:
-            case OSD_BLOOM:
             case OSD_PULSE:
             case OSD_SMOOTHNESS:
             case OSD_DUET_SPREAD:
             case NORMAL_OPACITY:
             case NORMAL_GLOW:
-            case NORMAL_BLOOM:
             case SCROLL_SMOOTHNESS:
             case SECONDARY_OPACITY:
                 return Math.round(value * 100.0f) + "%";
-            case CURRENT_GLOW_RADIUS:
             case DYNAMIC_ISLAND_MAX_WIDTH:
             case DYNAMIC_ISLAND_PROGRESS_HEIGHT:
                 return String.format("%.1f px", value);
@@ -810,8 +813,8 @@ public final class HudSettingsModel {
             case DYNAMIC_ISLAND_CONTENT_SPEED:
             case DYNAMIC_ISLAND_SPINNER_SPEED:
             case DYNAMIC_ISLAND_OVERSHOOT:
+            case LYRIC_GLOW_SPREAD:
                 return String.format("%.2f×", value);
-            case CURRENT_TRANSITION:
             case OSD_TRANSITION:
             case NORMAL_SPACING:
             case EDGE_FADE:
