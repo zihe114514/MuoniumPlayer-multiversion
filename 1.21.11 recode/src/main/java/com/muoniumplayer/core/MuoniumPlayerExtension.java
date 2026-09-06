@@ -5,6 +5,7 @@ import today.opai.api.OpenAPI;
 import com.muoniumplayer.core.management.AbstractManager;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.module.impl.OpenNCMScreen;
+import com.muoniumplayer.core.ncm.lxsource.LxSourceService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.reflection.Reflection;
 import com.muoniumplayer.core.settings.HudConfig;
@@ -27,7 +28,7 @@ public class MuoniumPlayerExtension {
 
     public static final String NAME = "MuoniumPlayer";
     public static final String AUTHOR = "MuoniumPlayer Contributors";
-    public static final String VERSION = "1.4.4";
+    public static final String VERSION = "1.4.6";
 
     @Getter
     private static final MuoniumPlayerExtension instance = new MuoniumPlayerExtension();
@@ -55,6 +56,9 @@ public class MuoniumPlayerExtension {
         NCMPlayerConfig.load();
         GdStudioSourceSettings.load();
         NeteaseUnblockSettings.load();
+        // 异步起自定义源：启用了脚本时这一步要转译并执行一整份 JS（官方参考源约 2.7 秒），
+        // 放在主线程上就是进游戏前多一次卡顿；没启用任何脚本时它连 Rhino 都不会去碰。
+        MultiThreadingUtil.runAsync(LxSourceService::init);
         CloudMusic.quality = NCMPlayerConfig.getAudioQuality();
         MultiThreadingUtil.runAsync(CloudMusic::initNCM);
         Reflection.init(api);

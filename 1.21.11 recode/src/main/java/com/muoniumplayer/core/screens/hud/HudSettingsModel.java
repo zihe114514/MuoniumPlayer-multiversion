@@ -11,6 +11,7 @@ import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.settings.HudSetting;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
+import com.muoniumplayer.core.widget.impl.BlossomLyricStyle;
 import com.muoniumplayer.core.widget.impl.MusicLyricsWidget;
 
 import java.awt.Color;
@@ -406,6 +407,36 @@ public final class HudSettingsModel {
                                 slider(HudSetting.SCROLL_SMOOTHNESS, "换行滚动的柔和程度，越大越慢越顺。"),
                                 slider(HudSetting.SECONDARY_OPACITY, "译文/音译那一行的不透明度。"))),
 
+                new Category("桌面面板", "桌面歌词的整体样式与毛玻璃卡片", 0xFFE087C0, HudSettingsIcons.CAPTION,
+                        new Group("样式", HudSettingsIcons.PALETTE,
+                                choice("桌面歌词样式", "在「经典」与「Blossom」之间切换。Blossom 是 modernMP 那套毛玻璃卡片：面板自带背景模糊，滚动走弹簧级联，逐字扫光而不画光晕。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return BlossomLyricStyle.currentStyleName();
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                BlossomLyricStyle.cycleStyle();
+                                                saveNow();
+                                            }
+                                        }),
+                                slider(HudSetting.BLOSSOM_LINES, "Blossom 卡片里同时显示几行。为 1 行时不滚动，当前行整块居中。")),
+                        new Group("毛玻璃卡片", HudSettingsIcons.SPARKLE,
+                                slider(HudSetting.BLOSSOM_BLUR, "卡片背后实时模糊的强度。归零就是一块普通的半透明底。"),
+                                slider(HudSetting.BLOSSOM_OPACITY, "卡片深色底的不透明度。压得越低透出的背景越多。"),
+                                toggle("踩点描边", "卡片边框随鼓点呼吸，颜色取当前歌词色。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.blossomRhythmBorder;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.blossomRhythmBorder = !HudConfig.blossomRhythmBorder;
+                                                saveNow();
+                                            }
+                                        }),
+                                slider(HudSetting.BLOSSOM_BORDER, "描边的强度，同时影响它的透明度与线宽。"))),
+
                 new Category("灵动岛", "顶部胶囊的外观、常驻内容与动画时序", 0xFF65A9FF, HudSettingsIcons.ISLAND,
                         new Group("基础", HudSettingsIcons.TUNE,
                                 toggle("下载灵动岛", "总开关。关掉之后下载、通知与常驻都不再显示。",
@@ -661,7 +692,11 @@ public final class HudSettingsModel {
                         new Group("淡入淡出", HudSettingsIcons.SPEED,
                                 slider(HudSetting.PLAYER_FADE_SPEED,
                                         "播放器界面打开与关闭那一下整屏淡入淡出的快慢，1.0 是默认速度。"
-                                        + "只影响这层淡入淡出，界面内部各元素的动画节奏保持原样。"))),
+                                        + "只影响这层淡入淡出，界面内部各元素的动画节奏保持原样。")),
+                        new Group("切换动画", HudSettingsIcons.SPEED,
+                                slider(HudSetting.PLAYER_UI_SWITCH_SPEED,
+                                        "左侧导航换栏目时内容页的淡入缩放与选中指示条滑动的快慢。"
+                                        + "1.25 是出厂默认（比早期版本略快），1.0 是历史速度，越大越快。"))),
 
                 new Category("主题", "播放器与灵动岛的整体配色", 0xFFB68CFF, HudSettingsIcons.PALETTE,
                         new Group("配色预设", HudSettingsIcons.PALETTE,
@@ -795,6 +830,9 @@ public final class HudSettingsModel {
             case NORMAL_GLOW:
             case SCROLL_SMOOTHNESS:
             case SECONDARY_OPACITY:
+            case BLOSSOM_BLUR:
+            case BLOSSOM_OPACITY:
+            case BLOSSOM_BORDER:
                 return Math.round(value * 100.0f) + "%";
             case DYNAMIC_ISLAND_MAX_WIDTH:
             case DYNAMIC_ISLAND_PROGRESS_HEIGHT:
@@ -817,6 +855,8 @@ public final class HudSettingsModel {
             case NORMAL_SPACING:
             case EDGE_FADE:
                 return Math.round(value) + " px";
+            case BLOSSOM_LINES:
+                return Math.round(value) + " 行";
             default:
                 return String.format("%.2f", value);
         }

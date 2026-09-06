@@ -86,7 +86,7 @@ dependencies {
     // 故这些不重复打包（见 build/bundle-deps.txt 的解析结果）。
     implementation include('com.google.zxing:core:3.5.3')
     implementation include('org.mozilla:rhino:1.7.15')
-    implementation include('com.google.javascript:closure-compiler:v20210202')
+    implementation include('com.google.javascript:closure-compiler:v20240317')
     // MC 1.20.1 自带 gson 2.10，而 Cadence 相关代码按 2.11 API 编写，必须自带 2.11。
     implementation include('com.google.code.gson:gson:2.11.0')
     // JNA：DeviceIdGenerator 读注册表 CPU 名 + CursorUtils 切光标。

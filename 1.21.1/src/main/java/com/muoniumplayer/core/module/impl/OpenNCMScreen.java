@@ -8,8 +8,8 @@ import today.opai.api.interfaces.modules.values.ModeValue;
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.Quality;
-import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.settings.ClientSettings;
+import com.muoniumplayer.core.screens.onboarding.OnboardingManager;
 
 /**
  * @author MuoniumPlayer Contributors
@@ -49,6 +49,6 @@ public class OpenNCMScreen extends ExtensionModule implements SharedConstants, E
 
     @Override
     public void onEnabled() {
-        api.displayScreen(NCMScreen.getInstance());
+        OnboardingManager.openPlayerEntry();
     }
 }

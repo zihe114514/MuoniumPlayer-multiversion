@@ -610,6 +610,12 @@ public class Music {
         // 非会员退到试听片段或第三方源，整房的进度条随即失去意义。
         Tuple<String, String> shared = partyPlayUrl();
         if (shared != null) return shared;
+
+        // 自定义源（LX Music 脚本）排在整条内置链路之前：用户导入并启用它就是为了用它取流。
+        // 它拿不出链接时返回 null，下面的内置链路照旧跑 —— 不会因为一份坏脚本而没歌可听。
+        Tuple<String, String> custom = resolveLxSource();
+        if (custom != null) return custom;
+
         if (isGd()) {
             return resolveGdPlayUrl();
         }
@@ -652,6 +658,78 @@ public class Music {
         if (url == null || url.trim().isEmpty()) return null;
         // 类型留空交给 normalizePlayUrl 按 URL 后缀推断：房间协议只传链接，不传容器。
         return normalizePlayUrl(new Tuple<>(url, partyStreamType == null ? "" : partyStreamType));
+    }
+
+    /**
+     * 组装交给脚本的 {@code musicInfo}。
+     *
+     * @return null 表示这个平台在 LX 里没有对应的源（joox / bilibili / tidal / spotify 等）
+     */
+    private com.muoniumplayer.core.ncm.lxsource.LxTrack lxTrack() {
+        String key = com.muoniumplayer.core.ncm.lxsource.LxSourceService
+                .sourceKeyFor(getSource().name(), gdPlatform);
+        if (key == null) return null;
+
+        com.muoniumplayer.core.ncm.lxsource.LxTrack track =
+                new com.muoniumplayer.core.ncm.lxsource.LxTrack()
+                        .source(key)
+                        .name(nonNull(name))
+                        .singer(getArtistsName())
+                        .albumName(album == null ? "" : nonNull(album.getName()))
+                        .img(getCoverUrl(500))
+                        .durationMillis(getDuration());
+
+        if ("kg".equals(key)) {
+            // 酷狗的脚本按文件 hash 取流，songmid 对它没用；三个音质三个 hash，
+            // 这里只给基准那一个，高音质由脚本自己去查。
+            track.songmid(getSourceId()).hash(nonNull(kugouHash).isEmpty() ? getSourceId() : kugouHash);
+        } else if ("tx".equals(key)) {
+            // QQ 的主键是 mid 字符串（例：003aAYrm3GE0Ac）而不是数字 id；
+            // 上游的 songmid 放 mid、songId 放数字 id，albumMid 宓主没有就给空。
+            String mid = nonNull(sourceMid).isEmpty() ? getSourceId() : nonNull(sourceMid);
+            track.songmid(mid).qq(mid, "", getSourceId());
+        } else {
+            track.songmid(getSourceId());
+        }
+        return track;
+    }
+
+    /**
+     * 让已启用的自定义源先试一次。
+     *
+     * <p>走 {@link #resolveWithTimeout} 而不是直接调：脚本自己有 20 秒请求超时、首次还要等
+     * 最多 8 秒初始化，而这条调用链上的那一头是游戏主线程。</p>
+     */
+    private Tuple<String, String> resolveLxSource() {
+        if (!com.muoniumplayer.core.ncm.lxsource.LxSourceService.isEnabled()) return null;
+        final com.muoniumplayer.core.ncm.lxsource.LxTrack track = lxTrack();
+        if (track == null) return null;
+        // 上一首的徒标不能沿用到这一首；失败时下面的内置链路也依赖这个字段是空的。
+        this.unblockedSourceLabel = "";
+        final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
+        return resolveWithTimeout(new Callable<Tuple<String, String>>() {
+            @Override
+            public Tuple<String, String> call() {
+                com.muoniumplayer.core.ncm.lxsource.LxSourceService.Resolved resolved =
+                        com.muoniumplayer.core.ncm.lxsource.LxSourceService
+                                .resolveMusicUrl(track, requestedQuality.name());
+                if (resolved == null) return null;
+                Tuple<String, String> normalized = normalizePlayUrl(new Tuple<>(resolved.url, resolved.format));
+                if (normalized == null) return null;
+                // 复用解灰的那枚徒标：用户需要知道「这一首不是官方流」，而这与解灰是同一件事。
+                unblockedSourceLabel = resolved.sourceLabel;
+                playbackQuality = lxPlaybackQuality(resolved.quality);
+                considerHighestQuality(
+                        com.muoniumplayer.core.ncm.lxsource.LxQuality.muLevelFor(resolved.quality), 0L);
+                return normalized;
+            }
+        }, "LX custom source", GD_PLAY_URL_RESOLVE_TIMEOUT_SECONDS);
+    }
+
+    /** 自定义源的音质徒标按脚本实际给出的档位判定，而不是按容器猜。 */
+    private static PlaybackQuality lxPlaybackQuality(String lxQuality) {
+        if ("flac".equals(lxQuality) || "flac24bit".equals(lxQuality)) return PlaybackQuality.LOSSLESS;
+        return "320k".equals(lxQuality) ? PlaybackQuality.HQ : PlaybackQuality.STANDARD;
     }
 
     /**

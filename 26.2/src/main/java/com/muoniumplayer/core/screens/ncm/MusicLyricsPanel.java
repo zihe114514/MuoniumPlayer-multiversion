@@ -50,12 +50,16 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     float alpha = 0f;
     boolean closing = false;
     /**
-     * 退场时低于这个不透明度就直接停止绘制并宣告关闭。
+     * 退场时低于这个不透明度就不再绘制整层内容。
      *
-     * <p>0.09 不是随手取的：{@code NCMScreen} 用 {@code (int)(alpha*255)} 画压暗层，0.09 对应
-     * 23/255，叠在已经恢复绘制的播放器界面上肉眼分辨不出；再低只是白白多画几帧整层内容。</p>
+     * <p>原来是 0.09：那时 {@code alpha} 走指数逼近、永远到不了 0，只能靠一个「肉眼分辨不出」的
+     * 阈值提前收工。现在 {@code alpha} 由 {@link CoverHeroTransition} 的时钟给，退场末段本身就
+     * 严格等于 0，于是这个常数退化成「已经全透明了就别再画」的守卫，贴着 0 取即可。
+     *
+     * <p>它也不再决定「什么时候算关掉」—— 那件事归 {@link #shouldClose()}，由转场时钟说话：
+     * 接力封面要飞回控制栏，比这一层的内容消失得晚。</p>
      */
-    private static final float CLOSE_ALPHA_EPSILON = 0.09f;
+    private static final float CLOSE_ALPHA_EPSILON = 0.002f;
 
 
     Timer scrollOffsetResetTimer = new Timer();
@@ -166,6 +170,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     private final Music music;
     public MusicLyricsPanel(Music music) {
         this.music = music;
+        // 兜底启动进场时钟。本层的 alpha 现在完全由转场给，少了这一句、又没走小封面那条入口的话，
+        // 面板会永远停在完全透明。
+        CoverHeroTransition.ensureOpen();
         updateLyricPositionsImmediate(getCurrentLyricViewportWidth());
     }
 
@@ -480,22 +487,27 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     public void close() {
         closing = true;
+        CoverHeroTransition.beginClose();
     }
 
+    /**
+     * 由转场时钟宣布结束，而不是等本层 alpha 跌破阈值：内容消失之后接力封面还要飞回控制栏，
+     * 提前把面板置空会让封面在半空中断掉。
+     */
     public boolean shouldClose() {
-        return closing && alpha <= CLOSE_ALPHA_EPSILON;
+        return closing && CoverHeroTransition.isFinished();
     }
 
     public void onRender(double mouseX, double mouseY, double posX, double posY, double width, double height, int dWheel) {
 
         if (prevMouse && !Mouse.isButtonDown(0)) prevMouse = false;
 
-        // 退出比进入快一档：0.30 的逼近系数要十几帧才跌到原来的 0.02 关闭阈值，那段时间里
-        // 播放器主界面已经露出来了（NCMScreen 在 alpha<=.9 就恢复绘制底层），而这一层还在画
-        // 压暗遮罩、进度条与分隔线，看起来就是"退出后遮罩和线条延迟消失"。
-        alpha = Interpolations.interpolate(alpha, closing ? 0.0f : 1f, closing ? 0.45f : 0.3f);
-        // 剩下这几个百分点已经看不见了，但仍然会整层绘制一遍。alpha 继续衰减（shouldClose 靠它
-        // 判定），但不再画任何东西，于是"残留"被彻底掐掉而不是靠肉眼分辨不出来。
+        // 本层不透明度不再自己插值，而是读转场时钟：整条「播放器主页 到 全屏歌词页」的进退场由
+        // CoverHeroTransition 统一编排（页面底色、接力封面、本层内容、左栏、歌词各有时间窗），
+        // 这里自己算一份就会和接力封面的落地时刻错开，交接那一帧看得出跳变。
+        alpha = (float) CoverHeroTransition.contentAlpha();
+        // 退场末段本层已经全透明，但接力封面还在飞（它由 NCMScreen 在本层之外绘制）。这里只是
+        // 省掉一次无意义的整层绘制，不代表转场结束。
         if (closing && alpha <= CLOSE_ALPHA_EPSILON) return;
 
         // 面板尺寸动画过程中按真实视口重排。阈值可避免亚像素变化导致每帧重建全部歌词。
@@ -519,13 +531,26 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
         this.renderBackground(posX, posY, width, height, alpha, snapshot);
         this.renderControlsPart(mouseX, mouseY, posX, posY, width, height, alpha, snapshot);
+
+        // 歌词整列在转场里最后入场，除了 alpha 还带一小段自下而上的浮起：位移与 lyricsFade
+        // 读同一个时钟，稳态严格归零。只影响绘制矩阵，不动任何交互矩形；模糊区域与文字在
+        // 同一矩阵里，一起平移，合成不会错位。快捷面板是浮层，不跟着走。
+        double lyricRise = (1.0 - CoverHeroTransition.lyricsFade()) * height * .014;
+        api.getGLStateManager().pushMatrix();
+        api.getGLStateManager().translate(0, lyricRise, 0);
         this.renderLyrics(mouseX, mouseY, posX, posY, width, height, dWheel, alpha, snapshot);
+        api.getGLStateManager().popMatrix();
         // 快捷面板画在最后：它是浮层，必须盖在封面与歌词之上。
         this.styleQuickPanel.render(mouseX, mouseY, posX, posY, height, alpha);
         api.getGLStateManager().popMatrix();
     }
 
-    private void renderLyrics(double mouseX, double mouseY, double posX, double posY, double width, double height, int dWheel, float alpha, CloudMusic.PlaybackSnapshot snapshot) {
+    private void renderLyrics(double mouseX, double mouseY, double posX, double posY, double width, double height, int dWheel, float alphaIn, CloudMusic.PlaybackSnapshot snapshot) {
+
+        // 歌词是整条转场里最后到场的一层：封面落地、左栏站稳，文字才浮上来。
+        // 这里新声明局部量而不是就地改参数，是因为下面几处模糊矩形的 lambda 捕获了它，
+        // 参数一旦被重新赋值就不再是 effectively final。
+        float alpha = alphaIn * (float) CoverHeroTransition.lyricsFade();
 
         if (CloudMusic.lyrics.isEmpty()) return;
         // 切歌后歌词还没回来时，列表里躺着的是上一首的时间轴。宁可这一瞬空着，也不要用新歌的
@@ -1012,7 +1037,11 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         return getCoverSizeMax() * .8;
     }
 
-    private void renderControlsPart(double mouseX, double mouseY, double posX, double posY, double width, double height, float alpha, CloudMusic.PlaybackSnapshot snapshot) {
+    private void renderControlsPart(double mouseX, double mouseY, double posX, double posY, double width, double height, float alphaIn, CloudMusic.PlaybackSnapshot snapshot) {
+        // 左栏这一簇（信息块 / 进度条 / 音量 / 控制键）比页面底色再晚一档到场：接力封面正飞在
+        // 它们头上，一起冒出来会糊成一片。用局部量而不是就地改参数，理由同 renderLyrics ——
+        // 封面阴影那个 bloom lambda 捕获了它。
+        float alpha = alphaIn * (float) CoverHeroTransition.chromeFade();
         TextureManager textureManager = TextureManager.getInstance();
 
         AudioPlayer player = snapshot.player;
@@ -1030,20 +1059,39 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
         double coverSizePerc = coverSize / coverSizeMax;
         double coverRadius = 7;
+        double coverLeft = coverCenterX - coverSize * .5;
+        double coverTop = coverCenterY - coverSize * .575;
 
-        api.getGLStateManager().pushMatrix();
-        this.scaleAtPos(posX + width * .5, posY + height * .5, (.925 + (alpha * 0.075)));
-        SkijaEffects.bloom(() -> {
-            this.roundedRect(coverCenterX - coverSize * .5, coverCenterY - coverSize * .575, coverSize, coverSize, coverRadius * coverSizePerc, -.5, 0, 0, 0, alpha * .4f);
-        });
-        api.getGLStateManager().popMatrix();
+        // 把封面这一帧真正落在屏幕上的矩形回报给接力动画。接力封面画在 onRender 那层 contentScale
+        // 之外，所以要先按面板中心把矩形换算过去，两边才在同一坐标空间里，落地才能严丝合缝。
+        double coverContentScale = getContentScale(this.alpha);
+        double panelCenterX = posX + width * .5;
+        double panelCenterY = posY + height * .5;
+        CoverHeroTransition.setTarget(
+                panelCenterX + (coverLeft - panelCenterX) * coverContentScale,
+                panelCenterY + (coverTop - panelCenterY) * coverContentScale,
+                coverSize * coverContentScale,
+                coverRadius * coverSizePerc * coverContentScale);
+
+        // 飞行期间这张封面连同它的阴影一起让位，交给 CoverHeroTransition 在更外层画：
+        // 不让位的话同一张封面会同时出现在两个位置。
+        boolean heroOwnsCover = CoverHeroTransition.suppressPanelCover();
+
+        if (!heroOwnsCover) {
+            api.getGLStateManager().pushMatrix();
+            this.scaleAtPos(posX + width * .5, posY + height * .5, (.925 + (alpha * 0.075)));
+            SkijaEffects.bloom(() -> {
+                this.roundedRect(coverLeft, coverTop, coverSize, coverSize, coverRadius * coverSizePerc, -.5, 0, 0, 0, alpha * .4f);
+            });
+            api.getGLStateManager().popMatrix();
+        }
 
         api.getGLStateManager().disableAlpha();
 
         // 没有新曲目时也不要留着上一张封面淡出：那是换歌交叉淡入用的，停播时它只会挂在原地。
-        if (music != null && prevCover != null && coverAlpha <= .9f) {
+        if (!heroOwnsCover && music != null && prevCover != null && coverAlpha <= .9f) {
             api.getGLStateManager().bindTexture(prevCover.getGlTextureId());
-            this.roundedRectTextured(coverCenterX - coverSize * .5, coverCenterY - coverSize * .575, coverSize, coverSize, coverRadius * coverSizePerc, alpha);
+            this.roundedRectTextured(coverLeft, coverTop, coverSize, coverSize, coverRadius * coverSizePerc, alpha);
         }
 
         // 动态封面(网易云 MP4 抽帧)就绪后优先用它,否则保持静态封面。
@@ -1051,10 +1099,14 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                 CloudMusic.preferredCoverLocation(music, music.getCoverLocation()));
 
         if (tex != null) {
+            // coverAlpha 是换歌交叉淡入的进度，让位期间也得照常推进；停住的话转场一结束
+            // 会从上一首的封面重新淡入一次。
             coverAlpha = Interpolations.interpolate(coverAlpha, 1.0f, 0.2f);
-            api.getGLStateManager().bindTexture(tex.getGlTextureId());
-            tex.linearFilter();
-            this.roundedRectTextured(coverCenterX - coverSize * .5, coverCenterY - coverSize * .575, coverSize, coverSize, coverRadius * coverSizePerc, alpha * coverAlpha);
+            if (!heroOwnsCover) {
+                api.getGLStateManager().bindTexture(tex.getGlTextureId());
+                tex.linearFilter();
+                this.roundedRectTextured(coverLeft, coverTop, coverSize, coverSize, coverRadius * coverSizePerc, alpha * coverAlpha);
+            }
         }
 
         double elementsXOffset = coverCenterX - coverSizeMax * .5;

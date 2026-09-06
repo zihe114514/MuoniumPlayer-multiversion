@@ -70,6 +70,37 @@ public final class ConfigPaths {
      */
     public static final File UPDATE_NOTICE = new File("config", "muonium/update_notice.json");
 
+    /**
+     * 界面字体的选择（哪一款系统字体或哪一个字体文件）。
+     *
+     * <p>与 {@link #FFMPEG_NOTICE} 同理单独一个文件：字体要在 {@code FontManager.init()} 里就读到，
+     * 那时 HUD 配置那一整套组件还没建起来；而读失败的代价仅是回到内置字体，不该有机会影响
+     * 任何别的设置。</p>
+     */
+    public static final File UI_FONT = new File("config", "muonium/ui_font.json");
+
+    /**
+     * 用户自备字体的存放目录。
+     *
+     * <p>「选择外部字体」会把选中的文件<b>复制</b>到这里再引用副本，而不是记住原路径：原文件
+     * 可能在 U 盘上、可能被改名，而字体是每次启动都要读的东西，指向一个会消失的路径就等于
+     * 下次启动静默回退成内置字体。用户也可以自己往这个目录里丢 ttf/otf，字体列表会直接列出来。</p>
+     */
+    public static final File FONT_DIR = new File("config", "muonium/fonts");
+
+    /**
+     * 已导入的 LX Music 自定义源脚本，以及当前启用的是哪一个。
+     *
+     * <p>与 {@link #FFMPEG_NOTICE} 同理单独一个文件，但理由更硬：里面存的是用户导入的
+     * <b>脚本正文</b>（压缩后的 base64，单个可能几十 KB）。把它们摆进 {@link #PLAYER}
+     * 会让播放器主配置胀成百 KB，而那个文件是每次改设置都要重写一遍的；
+     * 更关键的是一份写坏的脚本存档不能有机会把整个主配置一起拘进去。</p>
+     */
+    public static final File LX_SOURCES = new File("config", "muonium/lx_sources.json");
+
+    /** First-run setup gate. Kept separate so onboarding state cannot corrupt player preferences. */
+    public static final File ONBOARDING = new File("config", "muonium/onboarding.json");
+
     static {
         migrateLegacyFiles();
     }

@@ -32,6 +32,24 @@ public final class SkijaText {
     private SkijaText() {
     }
 
+    /**
+     * 直接登记一个已经构造好的 Typeface。
+     *
+     * <p>给「界面字体切换」里的<b>系统字体</b>用。Windows 上 Skia 的默认 {@code FontMgr} 本身
+     * 就是系统字体管理器（DirectWrite），{@code matchFamilyStyle("微软雅黑", …)} 直接给回
+     * Typeface —— 既不需要找到字体文件，也不需要读它的字节（msyh.ttc 有 19MB，读一遍就是几十
+     * 毫秒的卡顿，何况 .ttc 里还装着两个字体，按字节自己解还得挑索引）。</p>
+     *
+     * <p>键仍然是 AWT Font 的<b>对象身份</b>：调用方拿 {@code new Font(族名, style, 1)} 造一个
+     * 实例当句柄，那个实例同时也是 {@code GlyphInkMetrics} 量墨迹用的字体，两边指的是同一款字。</p>
+     */
+    public static void registerTypeface(java.awt.Font awtFont, Typeface typeface) {
+        if (awtFont == null || typeface == null) {
+            return;
+        }
+        TYPEFACES.put(awtFont, typeface);
+    }
+
     /** {@code FontManager} 读入字体文件后调用。 */
     public static void register(java.awt.Font awtFont, byte[] data) {
         if (awtFont == null || data == null || data.length == 0) {

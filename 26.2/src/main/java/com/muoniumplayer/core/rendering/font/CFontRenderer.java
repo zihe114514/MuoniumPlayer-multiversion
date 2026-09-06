@@ -14,6 +14,8 @@ import io.github.humbleui.skija.Canvas;
 import io.github.humbleui.skija.FontEdging;
 import io.github.humbleui.skija.FontHinting;
 import io.github.humbleui.skija.FontMetrics;
+import io.github.humbleui.skija.Paint;
+import io.github.humbleui.skija.Shader;
 import io.github.humbleui.skija.TextBlob;
 import io.github.humbleui.skija.TextBlobBuilder;
 import io.github.humbleui.skija.Typeface;
@@ -75,6 +77,30 @@ public class CFontRenderer implements Closeable, SharedConstants {
     /** 未派生的原始 AWT Font 实例，用来向 {@link SkijaText} 查 Typeface。 */
     private Font sourceFont;
     private Font[] sourceFallbacks;
+
+    /**
+     * 行盒高度的锁定值，即 {@link #computeMetrics()} 里那个 {@code box}（2 倍空间）。
+     * -1 表示不锁，按当前字体自己算。
+     *
+     * <p>换用户字体时必须锁。{@link #getFontHeight()} 是整个界面的行高与垂直居中口径，
+     * 而任意一款系统字体的 ascent/descent 比例都和内置的 SF Pro 不同：跟着新字体走，
+     * 换字体的那一帧所有列表行高、按钮内文位置、歌词行距会一起变——那不叫"换了字体"，
+     * 那叫"换了一套布局"。锁住行盒之后，新字体自己的 ascent/descent 盒会被<b>居中放进</b>
+     * 原来的行盒里（{@link #computeMetrics()} 现成的 baseline 公式就是干这个的），
+     * 于是排版一动不动，只有字形换了。</p>
+     */
+    private int lineBoxOverride = -1;
+
+    /**
+     * 主字体是否描边加粗。
+     *
+     * <p>用户挑的字体族里很可能只有 Regular 一个字重（大量免费中文字体如此），而界面上
+     * {@code pf*bold} 那一半渲染器要的是粗体。没有粗体文件时用 Skia 的 {@code setEmboldened}
+     * 顶上，比"粗细完全一样、只有字号不同"更接近原来的信息层次。</p>
+     *
+     * <p>只作用在主字体上：回退字体是内置的 SF Pro / 苹方粗体，本来就是粗的，再加粗会糊。</p>
+     */
+    private boolean emboldenMain;
 
     private FontKerning fontKerning;
 
@@ -156,7 +182,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
         Typeface main = SkijaText.typefaceFor(this.sourceFont);
         if (main != null) {
             typefaces.add(main);
-            fonts.add(newFont(main));
+            fonts.add(newFont(main, this.emboldenMain));
         }
         if (this.sourceFallbacks != null) {
             for (Font fallback : this.sourceFallbacks) {
@@ -165,7 +191,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
                 // 去重避免同一个 typeface 进两次，白白多一轮查表。
                 if (tf != null && !typefaces.contains(tf)) {
                     typefaces.add(tf);
-                    fonts.add(newFont(tf));
+                    fonts.add(newFont(tf, false));
                 }
             }
         }
@@ -178,7 +204,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
         computeMetrics();
     }
 
-    private io.github.humbleui.skija.Font newFont(Typeface typeface) {
+    private io.github.humbleui.skija.Font newFont(Typeface typeface, boolean embolden) {
         io.github.humbleui.skija.Font f = new io.github.humbleui.skija.Font(typeface, this.sizePx);
         // 灰度抗锯齿：内容是画到一张全透明的离屏图层上再合成的，
         // 子像素 LCD 抗锯齿在透明背景上会渲染出彩色边缘。
@@ -195,6 +221,11 @@ public class CFontRenderer implements Closeable, SharedConstants {
         // 代价：字形 mask 的缓存键多一维垂直相位，同一个字最多存 4 份。实际远低于 4 倍——
         // 同一帧里绝大多数文字的垂直相位相同，只有正在上浮的那行才会铺开。
         f.setBaselineSnapped(false);
+        // 假粗只在"用户挑的字体族没有粗体文件"时打开（见 emboldenMain）。Skia 的做法是按字号
+        // 比例描边，不会像整体放大那样把字撑宽，所以行内宽度只多出描边的那一点。
+        if (embolden) {
+            f.setEmboldened(true);
+        }
         return f;
     }
 
@@ -225,9 +256,63 @@ public class CFontRenderer implements Closeable, SharedConstants {
             box = Math.max(box, (int) Math.ceil(-m.getAscent()) + (int) Math.ceil(m.getDescent()));
         }
 
+        if (this.lineBoxOverride > 0) {
+            // 锁定行盒：只替换 box 这一个量。下面的 baselineOffset 公式本来就是
+            // "把主字体自己的 ascent/descent 盒居中放进 box"，于是新字体自动被垂直居中
+            // 到原来那条行盒里，getFontHeight() / getHeight() 的返回值一字不改。
+            box = this.lineBoxOverride;
+        }
+
         // fontHeight 是 2 倍空间的量：旧实现的 AWT 字体是按 sizePx*2 派生的。
         this.fontHeight = box * 2.0;
         this.baselineOffset = (box + mainAscent - mainDescent) * 0.5f;
+    }
+
+    /**
+     * 当前行盒（{@code fontHeight} 的一半，2 倍空间）。换字体前要先把它记下来，
+     * 之后每次 {@link #retarget} 都传同一个值，界面排版才不会随字体漂移。
+     *
+     * @return 字体没解析出来时返回 -1
+     */
+    public int lineBox() {
+        return this.fontHeight <= 0 ? -1 : (int) Math.round(this.fontHeight * .5);
+    }
+
+    /**
+     * 换掉这个渲染器背后的字体，度量口径（行高、基线位置）保持不变。
+     *
+     * <p>这是"界面字体切换"的唯一入口。{@link #buildSkiaFonts()} 顺手把字形索引
+     * （{@code glyphBlocks}）和字符串宽度缓存都清了，所以换完立刻生效，不需要重启。</p>
+     *
+     * <p><b>回退字体必须留着内置那一套。</b>用户挑的字体十有八九缺字（英文字体没有汉字、
+     * 中文字体没有假名），缺的那一格由回退链接住，画出来是内置字体的字形而不是豆腐块。</p>
+     *
+     * @param main          新的主字体（未派生的原始实例，必须已在 {@code SkijaText} 登记过字节）
+     * @param fallbacks     回退链，按顺序查
+     * @param lockedLineBox {@link #lineBox()} 在换字体<b>之前</b>的返回值；&lt;=0 表示不锁
+     * @param emboldenMain  主字体是否描边加粗（字体族没有粗体文件时用）
+     * @param kerning       字间距表；换成别的字体时传 null——内置表是按 SF Pro 的字宽量的，
+     *                      套到别的字体上会让字距忽宽忽窄
+     */
+    public void retarget(Font main, Font[] fallbacks, int lockedLineBox,
+                         boolean emboldenMain, FontKerning kerning) {
+        if (main == null) {
+            return;
+        }
+        this.sourceFont = main;
+        this.sourceFallbacks = fallbacks == null ? new Font[0] : fallbacks.clone();
+        this.fontKerning = kerning;
+        this.emboldenMain = emboldenMain;
+        this.lineBoxOverride = lockedLineBox > 0 ? lockedLineBox : -1;
+
+        this.font = main.deriveFont(this.sizePx * 2 * cffScaleFactor(main));
+        this.fallBackFonts = new Font[this.sourceFallbacks.length];
+        for (int i = 0; i < this.sourceFallbacks.length; i++) {
+            this.fallBackFonts[i] = this.sourceFallbacks[i]
+                    .deriveFont(this.sizePx * 2 * cffScaleFactor(this.sourceFallbacks[i]));
+        }
+
+        buildSkiaFonts();
     }
 
     public static String stripControlCodes(String text) {
@@ -364,7 +449,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
         float alpha = a;
         if (alpha > 1f) alpha = 1f;
         if (alpha < 0f) alpha = 0f;
-        return drawGlyphs(s, x, y, SkijaGfx.argb(r, g, b, alpha), Math.round(alpha * 255f), 0f);
+        return drawGlyphs(s, x, y, SkijaGfx.argb(r, g, b, alpha), Math.round(alpha * 255f), 0f, null);
     }
 
     /**
@@ -379,10 +464,27 @@ public class CFontRenderer implements Closeable, SharedConstants {
      * @param sigma 高斯 sigma；≤0 时退化成普通绘制
      */
     public void drawStringGlow(String s, double x, double y, int argb, double sigma) {
-        drawGlyphs(s, x, y, argb, argb >>> 24, (float) Math.max(0.0, sigma));
+        drawGlyphs(s, x, y, argb, argb >>> 24, (float) Math.max(0.0, sigma), null);
     }
 
-    private boolean drawGlyphs(String s, double x, double y, int baseArgb, int alpha255, float glowSigma) {
+    /**
+     * 同样的一串字，但整体用给定的 {@code shader} 填充。
+     *
+     * <p>为逐字扫光而加：一条水平线性渐变就能把「已唱 → 正在唱 → 未唱」的颜色与透明度
+     * 变化压进<b>一次</b>绘制，羽化由 Skia 逐像素插值，不用像旧做法那样把同一个字形按窄带
+     * 切成十几条各画一遍。shader 的坐标系与当前画布一致，所以调用方按屏幕坐标给渐变端点。
+     *
+     * <p>shader 的生命周期由调用方负责；这里只借用，不关闭。
+     */
+    public void drawStringShaded(String s, double x, double y, Shader shader) {
+        if (shader == null) {
+            return;
+        }
+        drawGlyphs(s, x, y, 0xFFFFFFFF, 255, 0f, shader);
+    }
+
+    private boolean drawGlyphs(String s, double x, double y, int baseArgb, int alpha255,
+                               float glowSigma, Shader shader) {
         if (s == null || s.isEmpty()) {
             return true;
         }
@@ -398,7 +500,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
         double originY = y - 2.0;
         double lineStep = this.getHeight() + 2.0;  // 旧实现 2 倍空间里的 getHeight()*2 + 4
 
-        RunAccumulator runs = new RunAccumulator(glowSigma);
+        RunAccumulator runs = new RunAccumulator(glowSigma, shader);
         double penX = 0;
         double lineY = 0;
         boolean inSel = false;
@@ -471,12 +573,15 @@ public class CFontRenderer implements Closeable, SharedConstants {
         private final List<Short> glyphs = new ArrayList<>();
         private final List<Float> xs = new ArrayList<>();
         private final float glowSigma;
+        /** 非 null 时整串字形改用它填充，颜色码与光晕都让位（见 drawStringShaded）。 */
+        private final Shader shader;
         private int runFontIndex = -1;
         private float runY;
         private boolean hasContent;
 
-        RunAccumulator(float glowSigma) {
+        RunAccumulator(float glowSigma, Shader shader) {
             this.glowSigma = glowSigma;
+            this.shader = shader;
         }
 
         void add(int fontIndex, short glyphId, float x, float y) {
@@ -515,8 +620,20 @@ public class CFontRenderer implements Closeable, SharedConstants {
             hasContent = false;
             try (TextBlob blob = builder.build()) {
                 if (blob != null) {
-                    canvas.drawTextBlob(blob, (float) originX, (float) originY,
-                            glowSigma > 0.01f ? SkijaGfx.fillBlurred(argb, glowSigma) : SkijaGfx.fill(argb));
+                    Paint paint;
+                    if (shader != null) {
+                        paint = SkijaGfx.fillShader(shader);
+                    } else if (glowSigma > 0.01f) {
+                        paint = SkijaGfx.fillBlurred(argb, glowSigma);
+                    } else {
+                        paint = SkijaGfx.fill(argb);
+                    }
+                    canvas.drawTextBlob(blob, (float) originX, (float) originY, paint);
+                    if (shader != null) {
+                        // fillPaint 是全局共享的：渐变留在上面会污染下一次本该纯色的绘制，
+                        // 而且会让 shader 的生命周期挂在一个不知道何时被复用的对象上。
+                        paint.setShader(null);
+                    }
                 }
             }
         }

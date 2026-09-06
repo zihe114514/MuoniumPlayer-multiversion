@@ -7,7 +7,7 @@ package com.muoniumplayer.party.ui;
  * {@code hud-settings-icons} 是同一批设计，两套图标出现在同一个界面里不会一个圆一个方。
  * 生成脚本在 {@code tools/make_party_icon_font.py}，锁了图标包版本，可以重跑。</p>
  *
- * <p>码位落在 U+E400~E430（外加 {@link #FRAME}）。项目里的私用区已经很挤：{@code fontello}
+ * <p>码位落在 U+E400~E432（外加 {@link #FRAME}）。项目里的私用区已经很挤：{@code fontello}
  * 占 U+E001~E004 / U+E800~E802 / U+F127 / U+F234，{@code music-brand-icons} 占 U+E800~E802，
  * {@code qq-music-icons} 占 U+E888，{@code island-status-icons} 占 U+E803 / E807 / E808 /
  * E901~E904，{@code island-volume-icons} 占 U+E902~E906，{@code player-queue-icons} 占 U+E309，
@@ -119,6 +119,10 @@ public final class PartyIcons {
     public static final String MIC = "\ue42f";
     /** 唱片：专辑。 */
     public static final String ALBUM = "\ue430";
+    /** 带下划线的 A：界面字体。 */
+    public static final String TEXT_FORMAT = "\ue431";
+    /** 打开的文件夹：浏览字体文件、打开字体目录。 */
+    public static final String FOLDER_OPEN = "\ue432";
 
     /**
      * 满格实心方块，<b>只用于量测，不要画出来</b>。

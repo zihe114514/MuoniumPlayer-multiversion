@@ -52,7 +52,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "1.4.4";
+    public static final String MOD_VERSION = "1.4.6";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，

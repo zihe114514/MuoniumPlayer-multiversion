@@ -26,6 +26,9 @@ public final class HudConfig {
     /** 全屏歌词样式索引上限,与 {@code FullscreenLyricStyle} 的数量保持一致。 */
     public static final int FULLSCREEN_LYRIC_STYLE_MAX = 9;
 
+    /** 桌面歌词样式索引上限，与 {@code BlossomLyricStyle} 支持的样式数量保持一致。 */
+    public static final int OSD_LYRIC_STYLE_MAX = 1;
+
     private static final File FILE = ConfigPaths.HUD;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
@@ -101,6 +104,34 @@ public final class HudConfig {
      * 越界时渲染层退回经典样式。</p>
      */
     public static int fullscreenLyricStyle = 0;
+
+    /**
+     * 桌面歌词（OSD）的展示样式索引。{@code 0} 经典，{@code 1} Blossom。
+     *
+     * <p>与 {@link #fullscreenLyricStyle} 同一套约定：存索引而不是枚举名，新样式只能往后追加。
+     * 越界时渲染层退回经典样式。</p>
+     */
+    public static int osdLyricStyle = 0;
+
+    /** Blossom：卡片背后实时模糊的强度。0 完全不模糊，1 全量替换成模糊背景。 */
+    public static float blossomBackdropBlur = 1.00f;
+
+    /**
+     * Blossom：卡片深色底的不透明度。
+     *
+     * <p>出厂 0.31 是 mp 的原值。压得低才能透出背后的模糊——这一层的作用是压住背景的对比度
+     * 让字读得清，而不是当一块实心板。</p>
+     */
+    public static float blossomPanelOpacity = 0.31f;
+
+    /** Blossom：卡片里同时显示几行。为 1 时不滚动，当前行整块垂直居中。 */
+    public static int blossomVisibleLines = 3;
+
+    /** Blossom：是否画随鼓点呼吸的描边，颜色取当前歌词色。 */
+    public static boolean blossomRhythmBorder = true;
+
+    /** Blossom：描边强度。它同时缩放描边的透明度与线宽。 */
+    public static float blossomBorderStrength = 0.65f;
 
     // ---- 「律动词云」背景装饰的配色 ----
 
@@ -367,12 +398,25 @@ public final class HudConfig {
      */
     public static float playerFadeSpeed = 1.0f;
 
+    /**
+     * 播放器界面内部「栏目切换」类过渡的速度倍率,越大越快。
+     *
+     * <p>管的正是 {@link #playerFadeSpeed} 明确不碰的那部分：左侧导航换栏目时内容页的
+     * 淡入缩放（{@code NCMScreen} 的 {@code alphaInterpolateSpeed}）与侧栏选中指示条的
+     * 滑动（{@code NavigateBar} 的 leading/trailing 逼近系数）。</p>
+     *
+     * <p>出厂默认 1.25 —— 比历史速度略快一档（用户反馈切换偏慢）；1.0 = 历史速度。
+     * 应用处的逼近系数最终钳在 .95 以下：指数逼近系数到 1 就是一帧到位,再大反而越过目标。</p>
+     */
+    public static float playerUiSwitchSpeed = 1.25f;
+
     private HudConfig() {
     }
 
-    /** 把播放器界面的淡入淡出速度恢复到默认。 */
+    /** 把播放器界面的淡入淡出与切换动画速度恢复到默认。 */
     public static void resetPlayerAnimation() {
         playerFadeSpeed = 1.0f;
+        playerUiSwitchSpeed = 1.25f;
     }
 
     /** Restores only desktop-lyric appearance, leaving HUD positions untouched. */
@@ -389,6 +433,12 @@ public final class HudConfig {
         lyricGlowSpread = 1.00f;
         fullscreenGlowStrength = 0.55f;
         fullscreenLyricStyle = 0;
+        osdLyricStyle = 0;
+        blossomBackdropBlur = 1.00f;
+        blossomPanelOpacity = 0.31f;
+        blossomVisibleLines = 3;
+        blossomRhythmBorder = true;
+        blossomBorderStrength = 0.65f;
         cadenzaDecorColorMode = 0;
         cadenzaDecorColors = CADENZA_DEFAULT_COLORS.clone();
         cadenzaDecorColorCount = 4;
@@ -496,6 +546,13 @@ public final class HudConfig {
             fullscreenGlowStrength = clamp01(getFloat(o, "fullscreenGlowStrength", fullscreenGlowStrength));
             fullscreenLyricStyle = clampInt(getInt(o, "fullscreenLyricStyle", fullscreenLyricStyle), 0,
                     FULLSCREEN_LYRIC_STYLE_MAX);
+            osdLyricStyle = clampInt(getInt(o, "osdLyricStyle", osdLyricStyle), 0,
+                    OSD_LYRIC_STYLE_MAX);
+            blossomBackdropBlur = clamp01(getFloat(o, "blossomBackdropBlur", blossomBackdropBlur));
+            blossomPanelOpacity = clamp01(getFloat(o, "blossomPanelOpacity", blossomPanelOpacity));
+            blossomVisibleLines = clampInt(getInt(o, "blossomVisibleLines", blossomVisibleLines), 1, 5);
+            blossomRhythmBorder = getBoolean(o, "blossomRhythmBorder", blossomRhythmBorder);
+            blossomBorderStrength = clamp01(getFloat(o, "blossomBorderStrength", blossomBorderStrength));
             cadenzaDecorColorMode = clampInt(getInt(o, "cadenzaDecorColorMode", cadenzaDecorColorMode), 0, 1);
             cadenzaDecorColorCount = clampInt(getInt(o, "cadenzaDecorColorCount", cadenzaDecorColorCount),
                     CADENZA_COLOR_COUNT_MIN, CADENZA_PALETTE_SLOTS);
@@ -562,6 +619,7 @@ public final class HudConfig {
             dynamicIslandAmbientClock = getBoolean(o, "dynamicIslandAmbientClock", dynamicIslandAmbientClock);
         dynamicIslandAmbientNowPlaying = getBoolean(o, "dynamicIslandAmbientNowPlaying", dynamicIslandAmbientNowPlaying);
         playerFadeSpeed = clamp(getFloat(o, "playerFadeSpeed", playerFadeSpeed), 0.30f, 3.00f);
+        playerUiSwitchSpeed = clamp(getFloat(o, "playerUiSwitchSpeed", playerUiSwitchSpeed), 0.30f, 3.00f);
         hudEditorModernUi = getBoolean(o, "hudEditorModernUi", hudEditorModernUi);
         hudEditorPanelX = clamp(getFloat(o, "hudEditorPanelX", hudEditorPanelX), -1.0f, 1.0f);
         hudEditorPanelY = clamp(getFloat(o, "hudEditorPanelY", hudEditorPanelY), -1.0f, 1.0f);
@@ -605,6 +663,12 @@ public final class HudConfig {
             o.addProperty("lyricGlowSpread", lyricGlowSpread);
             o.addProperty("fullscreenGlowStrength", fullscreenGlowStrength);
             o.addProperty("fullscreenLyricStyle", fullscreenLyricStyle);
+            o.addProperty("osdLyricStyle", osdLyricStyle);
+            o.addProperty("blossomBackdropBlur", blossomBackdropBlur);
+            o.addProperty("blossomPanelOpacity", blossomPanelOpacity);
+            o.addProperty("blossomVisibleLines", blossomVisibleLines);
+            o.addProperty("blossomRhythmBorder", blossomRhythmBorder);
+            o.addProperty("blossomBorderStrength", blossomBorderStrength);
             o.addProperty("cadenzaDecorColorMode", cadenzaDecorColorMode);
             o.addProperty("cadenzaDecorColorCount", cadenzaDecorColorCount);
             o.addProperty("cadenzaBeatsPerColor", cadenzaBeatsPerColor);
@@ -667,6 +731,7 @@ public final class HudConfig {
         o.addProperty("dynamicIslandAmbientNowPlaying", dynamicIslandAmbientNowPlaying);
         o.addProperty("dynamicIslandAmbientRotate", dynamicIslandAmbientRotate);
         o.addProperty("playerFadeSpeed", playerFadeSpeed);
+        o.addProperty("playerUiSwitchSpeed", playerUiSwitchSpeed);
         o.addProperty("hudEditorModernUi", hudEditorModernUi);
         o.addProperty("hudEditorPanelX", hudEditorPanelX);
         o.addProperty("hudEditorPanelY", hudEditorPanelY);

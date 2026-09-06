@@ -26,13 +26,12 @@ tasks.register('collectDist', Copy) {
     description = "把本版本两个加载器的 mod jar 复制到 ${distDir}"
     dependsOn ':fabric:build', ':neoforge:build'
 
-    // 只挑「能直接丢进 mods/ 的那一个」。刻意不写 include '*.jar'：
-    // build/libs 里还躺着源码包，以及改过 archivesName / mod_version 之后的旧名产物，
-    // 用通配全收会把过时的 jar 也一起发出去。
+    // 只挑「能直接丢进 mods/ 的那一个」，而且精确到当前 mod_version：
+    // build/libs 是只增不减的，历次版本的成品和源码包都还躺在里面，
+    // 收 -*.jar 会把 1.3.0 一路到上一版全部发进 dist/，装错版本的人回头只会报「改的没生效」。
     ['fabric', 'neoforge'].each { loaderName ->
         from(project(":$loaderName").layout.buildDirectory.dir('libs')) {
-            include "${project.archives_base_name}-${project.minecraft_version}-${loaderName}-*.jar"
-            exclude '*-sources.jar'
+            include "${project.archives_base_name}-${project.minecraft_version}-${loaderName}-${project.mod_version}.jar"
         }
     }
     into distDir

@@ -45,6 +45,12 @@ public enum HudSetting {
     /** 播放器界面打开/关闭那层整屏淡入淡出的速度倍率。1.0 = 历史默认速度。 */
     PLAYER_FADE_SPEED("界面淡入淡出速度", 0.30f, 3.00f),
 
+    /**
+     * 播放器界面内部「栏目切换」类过渡的速度倍率：内容页淡入缩放与侧栏选中指示条的滑动。
+     * 1.25 = 出厂默认（比历史速度略快一档），1.0 = 历史速度。
+     */
+    PLAYER_UI_SWITCH_SPEED("界面切换动画速度", 0.30f, 3.00f),
+
     // 移植自 本项目 的各套「文字 PV」全屏歌词样式参数。区间取参考实现的可调范围。
     LYRIC_FONT_SCALE("歌词字号", 0.60f, 1.80f),
     LUMINOUS_WORD_SPACING("词距", 0.20f, 1.60f),
@@ -61,7 +67,13 @@ public enum HudSetting {
     DIORAMA_DEPTH("景深间隔", 0.40f, 2.00f),
     PENDOLO_ARC_RADIUS("弧半径", 0.25f, 0.70f),
     PENDOLO_ARC_ANGLE("弧张角", 60.00f, 160.00f),
-    PENDOLO_ACTIVE_SCALE("当前行放大", 1.00f, 1.60f);
+    PENDOLO_ACTIVE_SCALE("当前行放大", 1.00f, 1.60f),
+
+    // ---- 桌面歌词 Blossom 样式 ----
+    BLOSSOM_LINES("可见行数", 1.00f, 5.00f),
+    BLOSSOM_BLUR("面板模糊", 0.00f, 1.00f),
+    BLOSSOM_OPACITY("面板底色", 0.00f, 1.00f),
+    BLOSSOM_BORDER("踩点描边", 0.00f, 1.00f);
 
     private final String label;
     private final float min;
@@ -118,6 +130,7 @@ public enum HudSetting {
             case DYNAMIC_ISLAND_AMBIENT_STATUS: return HudConfig.dynamicIslandAmbientStatusSeconds;
             case DYNAMIC_ISLAND_AMBIENT_NOW_PLAYING: return HudConfig.dynamicIslandAmbientNowPlayingSeconds;
             case PLAYER_FADE_SPEED: return HudConfig.playerFadeSpeed;
+            case PLAYER_UI_SWITCH_SPEED: return HudConfig.playerUiSwitchSpeed;
             case LYRIC_FONT_SCALE: return HudConfig.lyricFontScale;
             case LUMINOUS_WORD_SPACING: return HudConfig.luminousWordSpacing;
             case LUMINOUS_FLOAT: return HudConfig.luminousFloatAmount;
@@ -134,6 +147,10 @@ public enum HudSetting {
             case PENDOLO_ARC_RADIUS: return HudConfig.pendoloArcRadius;
             case PENDOLO_ARC_ANGLE: return HudConfig.pendoloArcAngle;
             case PENDOLO_ACTIVE_SCALE: return HudConfig.pendoloActiveScale;
+            case BLOSSOM_LINES: return HudConfig.blossomVisibleLines;
+            case BLOSSOM_BLUR: return HudConfig.blossomBackdropBlur;
+            case BLOSSOM_OPACITY: return HudConfig.blossomPanelOpacity;
+            case BLOSSOM_BORDER: return HudConfig.blossomBorderStrength;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }
@@ -172,6 +189,7 @@ public enum HudSetting {
             case DYNAMIC_ISLAND_AMBIENT_STATUS: HudConfig.dynamicIslandAmbientStatusSeconds = clamped; break;
             case DYNAMIC_ISLAND_AMBIENT_NOW_PLAYING: HudConfig.dynamicIslandAmbientNowPlayingSeconds = clamped; break;
             case PLAYER_FADE_SPEED: HudConfig.playerFadeSpeed = clamped; break;
+            case PLAYER_UI_SWITCH_SPEED: HudConfig.playerUiSwitchSpeed = clamped; break;
             case LYRIC_FONT_SCALE: HudConfig.lyricFontScale = clamped; break;
             case LUMINOUS_WORD_SPACING: HudConfig.luminousWordSpacing = clamped; break;
             case LUMINOUS_FLOAT: HudConfig.luminousFloatAmount = clamped; break;
@@ -189,6 +207,11 @@ public enum HudSetting {
             case PENDOLO_ARC_RADIUS: HudConfig.pendoloArcRadius = clamped; break;
             case PENDOLO_ARC_ANGLE: HudConfig.pendoloArcAngle = clamped; break;
             case PENDOLO_ACTIVE_SCALE: HudConfig.pendoloActiveScale = clamped; break;
+            // 行数是整数：滑块给的是浮点，四舍五入而不是截断，拖到 2.9 时读数与效果才一致。
+            case BLOSSOM_LINES: HudConfig.blossomVisibleLines = Math.round(clamped); break;
+            case BLOSSOM_BLUR: HudConfig.blossomBackdropBlur = clamped; break;
+            case BLOSSOM_OPACITY: HudConfig.blossomPanelOpacity = clamped; break;
+            case BLOSSOM_BORDER: HudConfig.blossomBorderStrength = clamped; break;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }

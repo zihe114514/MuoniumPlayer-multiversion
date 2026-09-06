@@ -226,6 +226,34 @@ public final class SkijaEffects {
     }
 
     /**
+     * 与 {@link #backdropBlur} 同一件事，只是裁剪形状换成圆角矩形。
+     *
+     * <p>桌面歌词的 Blossom 面板要的是一张毛玻璃卡片。按直角矩形裁的话，四个圆角外面
+     * 那四小块背景照样被模糊，卡片边缘就变成了方角的模糊残影，圆角形状根本看不出来。
+     * {@code clipRRect} 带抗锯齿，模糊结果的边缘因此与随后压上去的圆角底色严丝合缝。</p>
+     */
+    public static void backdropBlurRounded(double x, double y, double width, double height,
+                                           double radius, float sigma, float alpha) {
+        Canvas canvas = SkijaGfx.canvas();
+        if (canvas == null || alpha <= 0.001f || width <= 0 || height <= 0 || sigma <= 0) {
+            return;
+        }
+        Rect bounds = Rect.makeXYWH((float) x, (float) y, (float) width, (float) height);
+        RRect rounded = RRect.makeXYWH((float) x, (float) y, (float) width, (float) height,
+                (float) Math.max(0.0, radius));
+        int depth = canvas.save();
+        try {
+            canvas.clipRRect(rounded, true);
+            try (ImageFilter blur = ImageFilter.makeBlur(sigma, sigma, FilterTileMode.CLAMP);
+                 Paint paint = new Paint().setAlphaf(Math.min(1f, alpha))) {
+                canvas.restoreToCount(canvas.saveLayer(new SaveLayerRec(bounds, paint, blur)));
+            }
+        } finally {
+            canvas.restoreToCount(depth);
+        }
+    }
+
+    /**
      * 泛光：把 {@code content} 画进一个挂了模糊滤镜的图层。
      *
      * <p>调用点画的是一个近黑色的圆角矩形，旧 {@code bloom.frag} 的竖向趟还会

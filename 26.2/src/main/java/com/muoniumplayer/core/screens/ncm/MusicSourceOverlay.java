@@ -1,6 +1,9 @@
 package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.core.management.FontManager;
+import com.muoniumplayer.core.ncm.lxsource.LxRuntime;
+import com.muoniumplayer.core.ncm.lxsource.LxSourceService;
+import com.muoniumplayer.core.ncm.lxsource.LxSourceStore;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
@@ -11,13 +14,16 @@ import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
+import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.screens.ncm.panels.HomePanel;
+import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.party.ui.PartyIcons;
 
 import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.function.IntSupplier;
+import java.util.function.Supplier;
 
 /**
  * 音乐来源浮层：官方源（网易云 / QQ / 酷狗）与 GD音乐台 聚合源的切换。
@@ -60,7 +66,41 @@ public final class MusicSourceOverlay extends NcmSheet {
     private static final double PLATFORM_ROW = 56.0;
     private static final double PLATFORM_CARD = 48.0;
 
-    private boolean choosingGdPlatform;
+    /**
+     * 自定义源那一组的强调色。
+     *
+     * <p>刻意用紫色而不是从主题色里取：这一页列的是<b>用户自己带进来的东西</b>，和上面几张
+     * 官方卡（品牌色）、聚合源卡（靛蓝）必须一眼分得开。紫色在浅色与深色主题上都还站得住。</p>
+     */
+    private static final int LX_COLOR = 0x9C7CF4;
+    /** 自定义源页：页眉（返回键 + 标题 + 副标题）加一行状态，共 88。 */
+    private static final double LX_HEADER_H = 88.0;
+    /** 自定义源页页脚：分隔线 + 三颗按钮 + 更新提示开关 + 一行安全说明。 */
+    private static final double LX_FOOTER_H = 108.0;
+    private static final double LX_CARD_H = 58.0;
+    private static final double LX_ROW_H = LX_CARD_H + 7.0;
+    private static final double LX_DISC = 36.0;
+    private static final double LX_TEXT_LEFT = 12.0 + LX_DISC + 11.0;
+    /** 行右端留给「使用中」胶囊与删除键的宽度，长脚本名必须在这之前收住。 */
+    private static final double LX_RESERVE = 112.0;
+    private static final double LX_RUNTIME_CARD = 82.0;
+    private static final double LX_RUNTIME_ROW = LX_RUNTIME_CARD + 7.0;
+    /** 运行状态卡上摊开几行 console。三行刚好放得下一条堆栈的头尾。 */
+    private static final int LX_LOG_LINES = 3;
+
+    private static final int PAGE_OVERVIEW = 0;
+    private static final int PAGE_GD = 1;
+    private static final int PAGE_LX = 2;
+
+    /**
+     * 当前在哪一页。
+     *
+     * <p>原来是一个 {@code choosingGdPlatform} 布尔值；加进自定义源之后就有三页了，
+     * 再叠一个布尔值会让「两个都为 false 才是总览」这种隐式约定散落在返回键和 ESC 两处。</p>
+     */
+    private int page = PAGE_OVERVIEW;
+    /** 建这一页时的脚本列表版本号。只有导入 / 删除会让它落后（那时行数变了，必须重建）。 */
+    private int lxRevision = -1;
     private String statusText = "选一个平台后即可直接搜索与播放该平台的曲目";
     /**
      * 状态行的语气：0 说明、1 成功、2 失败。
@@ -76,23 +116,36 @@ public final class MusicSourceOverlay extends NcmSheet {
     }
 
     public void handleEscape() {
-        if (choosingGdPlatform) {
-            showOverview();
-        } else {
+        if (page == PAGE_OVERVIEW) {
             dispose();
+        } else {
+            showOverview();
         }
+    }
+
+    @Override
+    public void onRender(double mouseX, double mouseY) {
+        if (page == PAGE_LX) {
+            LxSourceService.pollUpdateAlert();
+            // 行数变了就重建。放在这里是安全的：renderWidget 先调 onRender，之后才遍历子组件，
+            // 此时清空子组件列表不会撞上遍历（与 FontPickerOverlay 同一处理）。
+            if (lxRevision != LxSourceService.getRevision()) {
+                showLxSources();
+            }
+        }
+        super.onRender(mouseX, mouseY);
     }
 
     // ════════════════════════════ 一级页：来源总览 ════════════════════════════
 
     private void showOverview() {
-        choosingGdPlatform = false;
+        page = PAGE_OVERVIEW;
         beginPage();
 
-        final Panel dialog = sheet(476,
-                () -> HEADER_H + LABEL_ROW + ROW_H * 3 + LABEL_ROW_2 + ROW_H + FOOTER_H);
+        final Panel dialog = sheet(476, () -> HEADER_H + LABEL_ROW + ROW_H * 3
+                + LABEL_ROW_2 + ROW_H + LABEL_ROW_2 + ROW_H + FOOTER_H);
         header(dialog, PartyIcons.NOTE, "音乐来源",
-                () -> "官方源与在线聚合源各自独立，随时切换",
+                () -> "官方源、在线聚合源与自定义脚本源各自独立，随时切换",
                 () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
 
         final Panel body = body(dialog, () -> HEADER_H, () -> FOOTER_H);
@@ -106,6 +159,9 @@ public final class MusicSourceOverlay extends NcmSheet {
 
         sectionLabel(strip(feed, LABEL_ROW_2), "在线聚合源", () -> 9.0, MusicPlatform.GD::getBrandColor);
         gdCard(strip(feed, ROW_H), 3);
+
+        sectionLabel(strip(feed, LABEL_ROW_2), "自定义音源", () -> 9.0, () -> LX_COLOR);
+        lxEntryCard(strip(feed, ROW_H), 4);
 
         unblockRow(dialog);
         tip(dialog, () -> "GD音乐台来源由 music-api.gdstudio.xyz 提供，请遵循上游服务的使用要求",
@@ -246,7 +302,7 @@ public final class MusicSourceOverlay extends NcmSheet {
     // ════════════════════════════ 二级页：GD 平台选择 ════════════════════════════
 
     private void showGdPlatforms() {
-        choosingGdPlatform = true;
+        page = PAGE_GD;
         beginPage();
 
         final List<GdStudioMusicService.Platform> platforms = GdStudioMusicService.getPlatforms();
@@ -348,6 +404,347 @@ public final class MusicSourceOverlay extends NcmSheet {
         }
         resetToHomeForCurrentSource();
         showGdPlatforms();
+    }
+
+    // ════════════════════════════ 三级页：自定义音源（LX Music 脚本） ════════════════════════════
+
+    private void showLxSources() {
+        page = PAGE_LX;
+        lxRevision = LxSourceService.getRevision();
+        beginPage();
+
+        final List<LxSourceStore.Entry> scripts = LxSourceStore.list();
+        final Panel dialog = sheet(524,
+                () -> LX_HEADER_H + Math.min(lxContentHeight(scripts.size()), 300.0) + LX_FOOTER_H);
+        subHeader(dialog, this::showOverview, () -> "自定义音源 · LX Music 脚本",
+                () -> "导入 .js 脚本由它来解析播放链接；与上游一致，同时只启用一个",
+                () -> LX_COLOR);
+        tip(dialog, this::lxStatusGlyph, this::lxStatusText, this::lxStatusColor, () -> 60.0);
+
+        final Panel body = body(dialog, () -> LX_HEADER_H, () -> LX_FOOTER_H);
+        final ScrollPanel feed = feed(body);
+        // 开头让出几像素：卡片悬停生长绕着自己中心做，贴着上边会被硬裁切掉圆角。
+        strip(feed, 6.0);
+
+        sectionLabel(strip(feed, LABEL_ROW),
+                scripts.isEmpty() ? "已导入的脚本" : "已导入的脚本（" + scripts.size() + "）",
+                () -> 5.0, () -> LX_COLOR);
+        if (scripts.isEmpty()) {
+            tip(strip(feed, 44.0), () -> PartyIcons.FOLDER_OPEN,
+                    () -> "还没有脚本。用下面的「从文件导入」挑一个 .js，或复制正文 / 链接后从剪贴板导入。",
+                    () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), () -> 10.0);
+        }
+        for (int i = 0; i < scripts.size(); i++) {
+            scriptRow(strip(feed, LX_ROW_H), i, scripts.get(i));
+        }
+
+        sectionLabel(strip(feed, LABEL_ROW_2), "运行状态", () -> 9.0,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        runtimeCard(strip(feed, LX_RUNTIME_ROW), scripts.size());
+
+        lxFooter(dialog);
+    }
+
+    private double lxContentHeight(final int count) {
+        return 6.0 + LABEL_ROW + (count == 0 ? 44.0 : LX_ROW_H * count)
+                + LABEL_ROW_2 + LX_RUNTIME_ROW;
+    }
+
+    /** 总览页上通往自定义源那一页的入口卡。有 chevron，因为它不是终点操作。 */
+    private void lxEntryCard(final Panel row, final int slot) {
+        final BooleanSupplier picked = LxSourceService::isEnabled;
+        final Card[] self = new Card[1];
+        final Card card = card(row, slot, () -> 0.0, () -> CARD_H, () -> picked.getAsBoolean()
+                ? LX_COLOR
+                : mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
+                NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), self[0].hover));
+        self[0] = card;
+        card.setShouldOverrideMouseCursor(true);
+        card.setOnClickCallback((x, y, button) -> {
+            if (button != 0) return false;
+            showLxSources();
+            return true;
+        });
+
+        selectionSheen(card, picked);
+
+        final RoundedRectWidget disc = new RoundedRectWidget();
+        card.addChild(disc);
+        disc.setClickable(false);
+        disc.setRadius(14);
+        disc.setBeforeRenderCallback(() -> {
+            disc.setBounds(DISC, DISC);
+            disc.setPosition(12, card.getHeight() * .5 - DISC * .5);
+            disc.setColor(picked.getAsBoolean()
+                    ? mix(LX_COLOR, 0xFFFFFF, .20)
+                    : mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND), LX_COLOR, .18));
+        });
+        icon(disc, PartyIcons.LINK, ICON_XL, () -> DISC * .5, () -> DISC * .5,
+                () -> picked.getAsBoolean() ? 0xFFFFFF : LX_COLOR);
+
+        cardText(card, () -> "自定义音源 · LX 脚本", this::buildLxSummary,
+                () -> picked.getAsBoolean() ? 0xFFFFFF
+                        : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                () -> picked.getAsBoolean() ? mix(LX_COLOR, 0xFFFFFF, .78)
+                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                () -> picked.getAsBoolean() ? 74.0 : 40.0);
+
+        icon(card, PartyIcons.CHEVRON_RIGHT, ICON_M, () -> card.getWidth() - 20,
+                () -> card.getHeight() * .5, () -> picked.getAsBoolean() ? 0xFFFFFF
+                        : mix(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), self[0].hover));
+        checkBadge(card, picked, () -> LX_COLOR, () -> card.getWidth() - 46);
+    }
+    /** 列表里的一行脚本。点一下即启用；已启用的再点一下就关掉，与字体列表同一套手感。 */
+    private void scriptRow(final Panel row, final int slot, final LxSourceStore.Entry entry) {
+        final BooleanSupplier picked = () -> LxSourceService.isActive(entry.id);
+        final Card[] self = new Card[1];
+        // card(...) 的入场闸门是 slot*.07，slot 到 15 就再也不会打开；脚本数量不可控，必须夹住。
+        final Card card = card(row, Math.min(slot, 9), () -> 0.0, () -> LX_CARD_H,
+                () -> picked.getAsBoolean()
+                        ? mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND), LX_COLOR, .30)
+                        : mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
+                        NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), self[0].hover));
+        self[0] = card;
+        card.setShouldOverrideMouseCursor(true);
+        card.setOnClickCallback((x, y, button) -> {
+            if (button != 0) return false;
+            LxSourceService.toggle(entry.id);
+            return true;
+        });
+        stroke(card, 12.0, () -> LX_COLOR, () -> picked.getAsBoolean() ? .58 : 0.0);
+
+        final RoundedRectWidget disc = new RoundedRectWidget();
+        card.addChild(disc);
+        disc.setClickable(false);
+        disc.setBeforeRenderCallback(() -> {
+            disc.setRadius(11);
+            disc.setBounds(LX_DISC, LX_DISC);
+            disc.setPosition(12.0, card.getHeight() * .5 - LX_DISC * .5);
+            disc.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND), LX_COLOR,
+                    picked.getAsBoolean() ? .44 : .26));
+        });
+        icon(disc, PartyIcons.TEXT_FORMAT, ICON_M, () -> LX_DISC * .5, () -> LX_DISC * .5,
+                () -> LX_COLOR);
+
+        final LabelWidget title = label(card, () -> scriptTitle(entry), FontManager.pf14bold);
+        title.setBeforeRenderCallback(() -> {
+            title.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            title.setMaxWidth(Math.max(1, card.getWidth() - LX_TEXT_LEFT - LX_RESERVE));
+            title.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            title.setPosition(LX_TEXT_LEFT, inkTop(title, card.getHeight() * .5 - 9));
+        });
+
+        final LabelWidget note = label(card, () -> scriptNote(entry), FontManager.pf12);
+        note.setBeforeRenderCallback(() -> {
+            note.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            note.setMaxWidth(Math.max(1, card.getWidth() - LX_TEXT_LEFT - LX_RESERVE));
+            note.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            note.setPosition(LX_TEXT_LEFT, inkTop(note, card.getHeight() * .5 + 9));
+        });
+
+        // 胶囊整组控透明度：让它自己按状态改颜色的话，没在用的行上会留一枚透明的空胶囊。
+        final Panel badge = veil(card, () -> picked.getAsBoolean() ? 1.0 : 0.0);
+        pill(badge, () -> PartyIcons.CHECK, () -> "使用中", () -> LX_COLOR,
+                () -> card.getWidth() - 46.0, () -> card.getHeight() * .5);
+
+        deleteButton(card, entry);
+    }
+
+    /**
+     * 删除按钮。
+     *
+     * <p>不做二次确认页：导入是一秒钟的事，删错了再导一次就好，而一个确认页会让「清理掉三个
+     * 试过的脚本」变成六次点击。</p>
+     */
+    private void deleteButton(final Card card, final LxSourceStore.Entry entry) {
+        final RoundedButtonWidget button = new RoundedButtonWidget("", FontManager.pf12bold);
+        card.addChild(button);
+        button.setRadius(9);
+        button.setShouldOverrideMouseCursor(true);
+        button.setOnClickCallback((x, y, mouse) -> {
+            if (mouse != 0) return false;
+            LxSourceService.removeScript(entry.id);
+            return true;
+        });
+        button.setBeforeRenderCallback(() -> {
+            button.setBounds(26, 26);
+            button.setPosition(card.getWidth() - 38.0, card.getHeight() * .5 - 13);
+            button.setColor(button.isHovering() ? BAD_COLOR
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            button.setTextColor(0x00FFFFFF);
+        });
+        icon(button, PartyIcons.CLOSE, ICON_S, () -> 13.0, () -> 13.0,
+                () -> button.isHovering() ? 0xFFFFFF
+                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+    }
+    /**
+     * 运行状态卡：脚本声明了哪些源、有没有经过转译，以及 console 的最后几行。
+     *
+     * <p>把 console 摊在界面上而不是只写进日志文件：自定义源出问题时，用户手里唯一的线索就是
+     * 脚本自己打的那几行，让他去翻 latest.log 等于让他放弃。</p>
+     */
+    private void runtimeCard(final Panel row, final int slot) {
+        final Card card = plain(card(row, Math.min(slot + 1, 9), () -> 0.0, () -> LX_RUNTIME_CARD,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)));
+
+        icon(card, this::lxStatusGlyph, ICON_M, () -> 22.0, () -> 22.0, this::lxStatusColor);
+
+        final LabelWidget headline = label(card, this::runtimeHeadline, FontManager.pf12bold);
+        headline.setBeforeRenderCallback(() -> {
+            headline.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            headline.setMaxWidth(Math.max(1, card.getWidth() - 52));
+            headline.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            headline.setPosition(40, inkTop(headline, 22.0));
+        });
+
+        for (int i = 0; i < LX_LOG_LINES; i++) {
+            final int index = i;
+            final LabelWidget line = label(card, () -> logLine(index), FontManager.pf10bold);
+            line.setBeforeRenderCallback(() -> {
+                line.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
+                        NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), .82));
+                line.setMaxWidth(Math.max(1, card.getWidth() - 32));
+                line.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+                line.setPosition(16, inkTop(line, 44.0 + index * 12.0));
+            });
+        }
+    }
+
+    // ──────────────────────────── 自定义源页脚 ────────────────────────────
+
+    private void lxFooter(final Panel dialog) {
+        divider(dialog, () -> dialog.getHeight() - LX_FOOTER_H + 2);
+
+        lxFooterButton(dialog, 0, () -> PartyIcons.FOLDER_OPEN, () -> "从文件导入",
+                LxSourceService::browseForFile);
+        // 一个按钮吃下「链接」和「正文」两种剪贴板内容：用户复制过来的要么是 raw 链接、
+        // 要么是整段脚本，让程序看一眼比让他先选一次更省事。
+        lxFooterButton(dialog, 1, () -> PartyIcons.LINK, () -> "从剪贴板导入",
+                () -> LxSourceService.importFromText(KeyboardUtils.getClipboardString()));
+        lxFooterButton(dialog, 2, () -> PartyIcons.SYNC, () -> "重新加载",
+                LxSourceService::reloadActive);
+
+        // 更新提示是「这个脚本」的开关而不是全局设置，没有启用项时整行调暗。
+        final IntSupplier alertInk = () -> LxSourceService.isEnabled()
+                ? NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT)
+                : mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND),
+                NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), .45);
+        icon(dialog, () -> PartyIcons.MAIL, ICON_S, () -> PAD + CARD_INSET + ICON_S * .5,
+                () -> dialog.getHeight() - 46.0, alertInk);
+        final LabelWidget alertLabel = label(dialog, "允许脚本弹出作者的更新提示", FontManager.pf12);
+        alertLabel.setBeforeRenderCallback(() -> {
+            alertLabel.setColor(alertInk.getAsInt());
+            alertLabel.setMaxWidth(Math.max(1, dialog.getWidth() - PAD * 2 - ICON_S - 60));
+            alertLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            alertLabel.setPosition(PAD + CARD_INSET + ICON_S + 7.0,
+                    inkTop(alertLabel, dialog.getHeight() - 46.0));
+        });
+        toggle(dialog, LxSourceService::isUpdateAlertAllowed, LxSourceService::flipUpdateAlert,
+                () -> dialog.getWidth() - PAD - CARD_INSET, () -> dialog.getHeight() - 46.0,
+                () -> LX_COLOR);
+
+        tip(dialog, () -> PartyIcons.WARNING,
+                () -> "脚本在本机直接执行，没有沙箱：只导入你信得过的来源",
+                () -> WARN_COLOR, () -> dialog.getHeight() - 26.0);
+    }
+
+    private void lxFooterButton(final Panel dialog, final int index, final Supplier<String> glyph,
+                                final Supplier<String> text, final Runnable onClick) {
+        final RoundedButtonWidget button = action(dialog, glyph, text, FontManager.pf12bold,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), onClick);
+        button.setBeforeRenderCallback(() -> {
+            double span = Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2);
+            double width = Math.max(1, (span - 16.0) / 3.0);
+            button.setBounds(width, 30);
+            button.setPosition(PAD + CARD_INSET + (width + 8.0) * index, dialog.getHeight() - 96.0);
+            button.setColor(button.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+    }
+    // ──────────────────────────── 自定义源文案 ────────────────────────────
+
+    private String buildLxSummary() {
+        int count = LxSourceStore.list().size();
+        if (count == 0) return "未导入 · 支持 LX Music 的 .js 自定义源脚本";
+        if (!LxSourceService.isEnabled()) return "已导入 " + count + " 个脚本 · 当前未启用";
+        String status = LxSourceService.statusLabel();
+        return "已启用 · " + (status.isEmpty() ? "正在加载" : status);
+    }
+
+    private String scriptTitle(final LxSourceStore.Entry entry) {
+        String name = entry.info.getName();
+        return name.isEmpty() ? "未命名脚本" : name;
+    }
+
+    private String scriptNote(final LxSourceStore.Entry entry) {
+        String byline = entry.info.getByline();
+        String description = entry.info.getDescription();
+        if (byline.isEmpty()) return description.isEmpty() ? "头注释里没写版本与作者" : description;
+        return description.isEmpty() ? byline : byline + " · " + description;
+    }
+
+    private String runtimeHeadline() {
+        if (!LxSourceService.isEnabled()) return "未启用脚本，播放走内置解析链路";
+        LxRuntime runtime = LxSourceService.getRuntime();
+        if (runtime == null) return "已选中脚本，等待加载";
+        switch (runtime.getState()) {
+            case READY:
+                return "已就绪 · 可解析 " + String.join("/", runtime.getSources().keySet())
+                        + (runtime.isTranspiled() ? " · 已转译为 ES5" : "");
+            case LOADING:
+                return "正在转译并执行脚本…";
+            case FAILED:
+                return "加载失败：" + runtime.getError();
+            default:
+                return "已停止";
+        }
+    }
+
+    /** 取 console 尾巴的第 index 行（不足时给空串，让那一行自然消失）。 */
+    private String logLine(final int index) {
+        List<String> logs = LxSourceService.getLogs();
+        int at = Math.max(0, logs.size() - LX_LOG_LINES) + index;
+        return at >= 0 && at < logs.size() ? logs.get(at) : "";
+    }
+
+    /** 状态行优先显示上一次操作的结果，没有操作时显示运行时状态。 */
+    private String lxStatusText() {
+        String notice = LxSourceService.getNotice();
+        if (!notice.isEmpty()) return notice;
+        String status = LxSourceService.statusLabel();
+        return status.isEmpty()
+                ? "导入的脚本排在内置解析链路之前；它取不到链接时会自动回退"
+                : status;
+    }
+
+    private int lxStatusColor() {
+        if (LxSourceService.isNoticeBad()) return BAD_COLOR;
+        if (LxSourceService.isBusy()) return WARN_COLOR;
+        LxRuntime runtime = LxSourceService.getRuntime();
+        if (runtime == null) return NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+        if (runtime.getState() == LxRuntime.State.FAILED) return BAD_COLOR;
+        if (runtime.getState() == LxRuntime.State.LOADING) return WARN_COLOR;
+        return runtime.getState() == LxRuntime.State.READY
+                ? OK_COLOR : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+    }
+
+    private String lxStatusGlyph() {
+        if (LxSourceService.isNoticeBad()) return PartyIcons.WARNING;
+        if (LxSourceService.isBusy()) return PartyIcons.HOURGLASS;
+        LxRuntime runtime = LxSourceService.getRuntime();
+        if (runtime == null) return PartyIcons.INFO;
+        switch (runtime.getState()) {
+            case READY:
+                return PartyIcons.CHECK;
+            case LOADING:
+                return PartyIcons.HOURGLASS;
+            case FAILED:
+                return PartyIcons.WARNING;
+            default:
+                return PartyIcons.INFO;
+        }
     }
 
     // ════════════════════════════ 卡片零件 ════════════════════════════

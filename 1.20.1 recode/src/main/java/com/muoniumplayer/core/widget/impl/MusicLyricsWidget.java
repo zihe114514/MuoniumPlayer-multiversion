@@ -80,6 +80,14 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
      */
     private final KaraokeTextCompositor karaokeCompositor = new KaraokeTextCompositor();
 
+    /**
+     * 「Blossom」桌面歌词样式（modernMP 浮动挂件的移植）。
+     *
+     * <p>它自己持有跨帧的弹簧与排版缓存，所以必须是实例字段。没被选中时完全不参与绘制，
+     * 也不消耗任何东西。</p>
+     */
+    private final BlossomLyricStyle blossomStyle = new BlossomLyricStyle();
+
     public MusicLyricsWidget() {
         super("Music Lyrics", "Show lyrics.", EnumModuleCategory.VISUAL);
 
@@ -265,12 +273,21 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
 
             api.getGLStateManager().pushMatrix();
 
-            StencilClipManager.beginClip(() -> Rect.draw(wpsInterface.getX() - 2, wpsInterface.getY(), wpsInterface.getWidth() + 4, wpsInterface.getHeight(), -1));
+            if (BlossomLyricStyle.isActive()) {
+                // Blossom 自己画毛玻璃面板，并且要按圆角裁剪文字，所以裁剪框由它自己开；
+                // 这里再套一层直角裁剪只会把圆角外面那四块底色切成方角。
+                blossomStyle.render(wpsInterface.getX(), wpsInterface.getY(),
+                        wpsInterface.getWidth(), wpsInterface.getHeight(),
+                        lyricColor.getValue().getRGB(), currentLyricColor.getValue().getRGB(),
+                        shouldNotDisplayOtherLyrics);
+            } else {
+                StencilClipManager.beginClip(() -> Rect.draw(wpsInterface.getX() - 2, wpsInterface.getY(), wpsInterface.getWidth() + 4, wpsInterface.getHeight(), -1));
 
-            renderAllLyrics(shouldNotDisplayOtherLyrics, songProgress);
+                renderAllLyrics(shouldNotDisplayOtherLyrics, songProgress);
 
-            cleanupRender();
-            StencilClipManager.endClip();
+                cleanupRender();
+                StencilClipManager.endClip();
+            }
         }
 
         if (ClientSettings.DEBUG_MODE) {

@@ -6,6 +6,7 @@ import com.muoniumplayer.core.rendering.font.FontKerning;
 
 import java.awt.*;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -128,6 +129,84 @@ public class FontManager extends AbstractManager {
      */
     public static CFontRenderer partyIcon24, partyIcon32, partyIcon40, partyIcon56;
 
+    /**
+     * 可以被用户换掉字体的<b>正文</b>渲染器。
+     *
+     * <p>白名单式登记，不靠字段名前缀去猜：十几份图标字体也是 {@link CFontRenderer}，一旦被
+     * 一起换掉，界面上所有图标会变成方块或者别的字形，而这种错误只有肉眼能发现。往
+     * {@link #loadFonts()} 里新加一档正文字号时记得走 {@link #createText}，加图标字号走
+     * {@link #create}。</p>
+     */
+    private static final List<TextSlot> TEXT_SLOTS = new ArrayList<>();
+
+    /** 一档正文字号：渲染器本身 + 它的内置字体，换回内置时按这套还原。 */
+    private static final class TextSlot {
+        private final CFontRenderer renderer;
+        private final boolean bold;
+        private final Font builtinMain;
+        private final Font builtinFallback;
+        private final FontKerning builtinKerning;
+        /**
+         * 内置字体下的行盒，锁定用。
+         *
+         * <p>懒取而不是构造时取：{@link CFontRenderer#lineBox()} 要等 Skia 把字体解析出来才有值，
+         * 而首次换字体一定发生在那之后。</p>
+         */
+        private int lineBox = -1;
+
+        private TextSlot(CFontRenderer renderer, boolean bold, Font builtinMain,
+                         Font builtinFallback, FontKerning builtinKerning) {
+            this.renderer = renderer;
+            this.bold = bold;
+            this.builtinMain = builtinMain;
+            this.builtinFallback = builtinFallback;
+            this.builtinKerning = builtinKerning;
+        }
+
+        private int lockedLineBox() {
+            if (this.lineBox <= 0) {
+                this.lineBox = this.renderer.lineBox();
+            }
+            return this.lineBox;
+        }
+    }
+
+    /**
+     * 把界面正文字体换成给定的一套。回退链固定留着内置字体，缺字才不会画成豆腐块。
+     *
+     * @param regular          正文字号用的主字体
+     * @param bold             粗体字号用的主字体（可以和 {@code regular} 是同一款）
+     * @param fakeBoldRegular  正文是否描边加粗（一般是 false）
+     * @param fakeBoldBold     粗体位置是否描边加粗（字体族没有粗体文件时为 true）
+     */
+    public static void retargetTextFonts(Font regular, Font bold,
+                                         boolean fakeBoldRegular, boolean fakeBoldBold) {
+        for (TextSlot slot : TEXT_SLOTS) {
+            Font main = slot.bold ? bold : regular;
+            if (main == null) {
+                continue;
+            }
+            slot.renderer.retarget(main,
+                    new Font[]{slot.builtinMain, slot.builtinFallback},
+                    slot.lockedLineBox(),
+                    slot.bold ? fakeBoldBold : fakeBoldRegular,
+                    null);
+        }
+    }
+
+    /** 换回随 mod 打包的字体：连字间距表一起还原，度量口径也不再锁。 */
+    public static void restoreBuiltinTextFonts() {
+        for (TextSlot slot : TEXT_SLOTS) {
+            slot.renderer.retarget(slot.builtinMain, new Font[]{slot.builtinFallback},
+                    -1, false, slot.builtinKerning);
+        }
+    }
+
+    /** 内置正文字体的主字体实例。用户挑的字体解析不出 AWT 句柄时拿它兜底量墨迹。 */
+    public static Font builtinTextMain(boolean bold) {
+        return readFont(builtinMainPath(bold));
+    }
+
     public static List<CFontRenderer> getAllFontRenderers() {
 
         return Arrays.stream(FontManager.class.getDeclaredFields())
@@ -158,25 +237,28 @@ public class FontManager extends AbstractManager {
         String normalName = "pf_normal";
         String boldName = "pf_middleblack";
 
-        pf12 = create(12, normalName);
-        pf14 = create(14, normalName);
-        pf20 = create(20, normalName);
-        pf25 = create(25, normalName);
-        pf32 = create(32, normalName);
-        pf18 = create(18, normalName);
+        // 重新加载字体时白名单要跟着重建，否则里面留着一批已经 close() 的渲染器。
+        TEXT_SLOTS.clear();
 
-        pf10bold = create(10, boldName);
-        pf12bold = create(12, boldName);
-        pf14bold = create(14, boldName);
-        pf16bold = create(16, boldName);
-        pf18bold = create(18, boldName);
-        pf20bold = create(20, boldName);
-        pf25bold = create(25, boldName);
-        pf28bold = create(28, boldName);
-        pf34bold = create(34, boldName);
-        pf40bold = create(40, boldName);
-        pf50bold = create(50, boldName);
-        pf65bold = create(65, boldName);
+        pf12 = createText(12, normalName);
+        pf14 = createText(14, normalName);
+        pf20 = createText(20, normalName);
+        pf25 = createText(25, normalName);
+        pf32 = createText(32, normalName);
+        pf18 = createText(18, normalName);
+
+        pf10bold = createText(10, boldName);
+        pf12bold = createText(12, boldName);
+        pf14bold = createText(14, boldName);
+        pf16bold = createText(16, boldName);
+        pf18bold = createText(18, boldName);
+        pf20bold = createText(20, boldName);
+        pf25bold = createText(25, boldName);
+        pf28bold = createText(28, boldName);
+        pf34bold = createText(34, boldName);
+        pf40bold = createText(40, boldName);
+        pf50bold = createText(50, boldName);
+        pf65bold = createText(65, boldName);
 
         icon30 = create(30, "icomoon");
 
@@ -245,6 +327,9 @@ public class FontManager extends AbstractManager {
     public void init() {
         loadFonts();
         waitUntilAllLoaded();
+        // 用户上次选的界面字体。同步装：这时界面还没起来，几十毫秒没人看得见，而异步会让
+        // 开头几帧先用内置字体画一遍再突然换掉。
+        UiFontLibrary.bootstrap();
     }
     
     private static final HashMap<String, Font> fonts = new HashMap<>();
@@ -344,23 +429,45 @@ public class FontManager extends AbstractManager {
             Font fallback = readFont("/muonium/fonts/pf_middleblack.ttf");
             FontKerning fallbackKerning = readFontKerning("/muonium/fonts/pf_middleblack.ttf");
             return new CFontRenderer(font, size * 0.5f, kerning, fallback);
-        } else if ("pf_normal".equals(name)) {
-            String mainPath = USE_LEGACY_JAVA8_TTF_FONTS
-                    ? "/muonium/fonts/arial.ttf"
-                    : "/muonium/fonts/sfregular.otf";
-            Font main = readFont(mainPath);
-            FontKerning mainKerning = readFontKerning(mainPath);
-            return new CFontRenderer(main, size * 0.5f, mainKerning, font);
-        } else if ("pf_middleblack".equals(name)) {
-            String mainPath = USE_LEGACY_JAVA8_TTF_FONTS
-                    ? "/muonium/fonts/arialBold.ttf"
-                    : "/muonium/fonts/sfbold.otf";
+        } else if ("pf_normal".equals(name) || "pf_middleblack".equals(name)) {
+            String mainPath = builtinMainPath("pf_middleblack".equals(name));
             Font main = readFont(mainPath);
             FontKerning mainKerning = readFontKerning(mainPath);
             return new CFontRenderer(main, size * 0.5f, mainKerning, font);
         }
         return new CFontRenderer(font, size * 0.5f, kerning, font);
 
+    }
+
+    /**
+     * 建一档<b>正文</b>渲染器并登记进 {@link #TEXT_SLOTS}，于是它能被用户换字体。
+     *
+     * <p>图标字号一律走 {@link #create}：换掉图标字体等于把界面上所有图标画成别的字形。</p>
+     */
+    private static CFontRenderer createText(float size, String name) {
+        CFontRenderer renderer = create(size, name);
+        boolean bold = "pf_middleblack".equals(name);
+        String mainPath = builtinMainPath(bold);
+        TEXT_SLOTS.add(new TextSlot(renderer, bold, readFont(mainPath),
+                readFont(builtinFallbackPath(bold)), readFontKerning(mainPath)));
+        return renderer;
+    }
+
+    /** 内置正文字体的半角主字体：中文由回退字体画，所以这一份只管拉丁字母、数字与半角标点。 */
+    private static String builtinMainPath(boolean bold) {
+        if (bold) {
+            return USE_LEGACY_JAVA8_TTF_FONTS
+                    ? "/muonium/fonts/arialBold.ttf"
+                    : "/muonium/fonts/sfbold.otf";
+        }
+        return USE_LEGACY_JAVA8_TTF_FONTS
+                ? "/muonium/fonts/arial.ttf"
+                : "/muonium/fonts/sfregular.otf";
+    }
+
+    /** 内置正文字体的中文回退（苹方）。 */
+    private static String builtinFallbackPath(boolean bold) {
+        return bold ? "/muonium/fonts/pf_middleblack.ttf" : "/muonium/fonts/pf_normal.ttf";
     }
 
     private static boolean isLegacyJava8CffRuntime() {

@@ -12,6 +12,7 @@ import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.ncm.music.NeteaseSearchSuggestService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
@@ -535,9 +536,19 @@ public class NavigateBar extends NCMPanel {
         });
 
         SidebarActionButton btnTheme = new SidebarActionButton(SidebarActionIcon.THEME);
+        SidebarActionButton btnFont = new SidebarActionButton(SidebarActionIcon.FONT);
         SidebarActionButton btnPlayerSize = new SidebarActionButton(SidebarActionIcon.SCALE);
         SidebarActionButton btnRefresh = new SidebarActionButton(SidebarActionIcon.REFRESH);
-        quickActionsSurface.addChild(btnTheme, btnPlayerSize, btnRefresh);
+        quickActionsSurface.addChild(btnTheme, btnFont, btnPlayerSize, btnRefresh);
+
+        btnFont.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+            if (mouseButton != 0) {
+                // 右键不做别的事，但也不放过去：这颗按钮下面就是账号行，穿透过去会打开账号管理。
+                return mouseButton == 1;
+            }
+            NCMScreen.getInstance().openFontPicker();
+            return true;
+        });
 
         btnTheme.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
             if (mouseButton != 0 && mouseButton != 1) return false;
@@ -599,7 +610,7 @@ public class NavigateBar extends NCMPanel {
             return true;
         });
         btnTheme.setBeforeRenderCallback(() -> {
-            double actionWidth = Math.max(1, (quickActionsSurface.getWidth() - 8) / 3.0);
+            double actionWidth = railSlotWidth(quickActionsSurface.getWidth());
             btnTheme.setBounds(actionWidth, 28);
             btnTheme.setPosition(2, 2);
             btnTheme.setRadius(7);
@@ -608,10 +619,20 @@ public class NavigateBar extends NCMPanel {
                     : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
 
+        btnFont.setBeforeRenderCallback(() -> {
+            double actionWidth = railSlotWidth(quickActionsSurface.getWidth());
+            btnFont.setBounds(actionWidth, 28);
+            btnFont.setPosition(4 + actionWidth, 2);
+            btnFont.setRadius(7);
+            btnFont.setColor(btnFont.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+        });
+
         btnPlayerSize.setBeforeRenderCallback(() -> {
-            double actionWidth = Math.max(1, (quickActionsSurface.getWidth() - 8) / 3.0);
+            double actionWidth = railSlotWidth(quickActionsSurface.getWidth());
             btnPlayerSize.setBounds(actionWidth, 28);
-            btnPlayerSize.setPosition(4 + actionWidth, 2);
+            btnPlayerSize.setPosition(6 + actionWidth * 2, 2);
             btnPlayerSize.setRadius(7);
             btnPlayerSize.setColor(btnPlayerSize.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
@@ -619,9 +640,9 @@ public class NavigateBar extends NCMPanel {
         });
 
         btnRefresh.setBeforeRenderCallback(() -> {
-            double actionWidth = Math.max(1, (quickActionsSurface.getWidth() - 8) / 3.0);
+            double actionWidth = railSlotWidth(quickActionsSurface.getWidth());
             btnRefresh.setBounds(actionWidth, 28);
-            btnRefresh.setPosition(6 + actionWidth * 2, 2);
+            btnRefresh.setPosition(8 + actionWidth * 3, 2);
             btnRefresh.setRadius(7);
             // This refreshes the signed-in NetEase account and its playlists, which is
             // independent from the currently selected search/content provider.
@@ -761,6 +782,17 @@ public class NavigateBar extends NCMPanel {
         return NeteaseMusicService.getAccountAvatarLocation();
     }
 
+    /**
+     * 快捷操作条上一颗按钮的宽度。
+     *
+     * <p>四颗按钮、左右各 2 像素留白、每两颗之间 2 像素，所以扣掉的是 10 而不是 8。
+     * 收成一个方法是因为四处 {@code beforeRenderCallback} 必须用同一个公式：其中任何一处
+     * 落后一版，那颗按钮就会和邻居错开或者叠上去。</p>
+     */
+    private static double railSlotWidth(double railWidth) {
+        return Math.max(1, (railWidth - 10) / 4.0);
+    }
+
     /** 会员徽标的胶囊高度与图标方格。方格必须是 partyIcon24 实际画出来的 12，填大了图标和字之间会空一块。 */
     private static final double VIP_PLATE_H = 15.0;
     private static final double VIP_ICON_BOX = 12.0;
@@ -852,6 +884,7 @@ public class NavigateBar extends NCMPanel {
 
     private enum SidebarActionIcon {
         THEME,
+        FONT,
         SCALE,
         REFRESH
     }
@@ -912,6 +945,8 @@ public class NavigateBar extends NCMPanel {
             scaleAtPos(centerX, centerY, iconScale);
             if (icon == SidebarActionIcon.THEME) {
                 renderThemeIcon(centerX, centerY, alpha, accent, foreground);
+            } else if (icon == SidebarActionIcon.FONT) {
+                renderFontIcon(centerX, centerY, alpha, accent, foreground);
             } else if (icon == SidebarActionIcon.SCALE) {
                 renderScaleIcon(centerX, centerY, alpha, accent, foreground);
             } else {
@@ -939,6 +974,24 @@ public class NavigateBar extends NCMPanel {
                     RenderSystem.reAlpha(0xFF75E0B1, alpha));
             roundedRect(x - 1.05, y - 1.05, 2.1, 2.1, 1.05,
                     RenderSystem.reAlpha(foreground, alpha * .92f));
+        }
+
+        /**
+         * 一枚带下划线的「A」，和字体选择浮层里的 {@code PartyIcons.TEXT_FORMAT} 是同一个符号。
+         *
+         * <p>画出来而不是用图标字体：同一条快捷操作条上另外三颗都是矢量图形，混一枚字形进来，
+         * 描边粗细与光学重心都对不上邻居；而这条按钮会跟着播放器缩放走，矢量在任何倍率下都锐。</p>
+         */
+        private void renderFontIcon(double x, double y, float alpha, int accent, int foreground) {
+            int ink = RenderSystem.reAlpha(foreground, alpha);
+            // 两笔斜杠在字顶交汇：pill 两端是圆头，交汇处自然圆滑，不用另画一个尖。
+            drawRotatedPill(x - 2.35, y - 0.55, 10.9, 1.75, -64.5f, ink);
+            drawRotatedPill(x + 2.35, y - 0.55, 10.9, 1.75, 64.5f, ink);
+            // 横画略窄于两笔的间距，免得端点戳出斜杠外侧。
+            roundedRect(x - 2.45, y + 1.05, 4.9, 1.6, .8, ink);
+            // 下划线用强调色：这条线是「文字」这个概念的落点，也让这颗按钮在条上认得出来。
+            roundedRect(x - 6.3, y + 5.15, 12.6, 1.7, .85,
+                    RenderSystem.reAlpha(accent, alpha * .95f));
         }
 
         private void renderRefreshIcon(double x, double y, float alpha, int accent, int foreground) {
@@ -989,6 +1042,7 @@ public class NavigateBar extends NCMPanel {
         }
 
         private int getIconAccentColor() {
+            if (icon == SidebarActionIcon.FONT) return 0xFFB79BFF;
             if (icon == SidebarActionIcon.SCALE) return 0xFF67D8FF;
             if (icon == SidebarActionIcon.REFRESH) return 0xFF59E3A5;
             return NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
@@ -1046,13 +1100,17 @@ public class NavigateBar extends NCMPanel {
                 indicatorPlaced = true;
             } else {
                 boolean movingDown = targetTop > indicatorTop;
-                double leading = .5, trailing = .26;
+                // 指示条的追赶速度吃用户配置的「界面切换动画速度」倍率；前缘快、后缘慢的
+                // 比例保持不变，整体只是更快地完成同一段拉伸。系数同样钳在 .95 以下：
+                // 指数逼近到 1 就是一帧到位，再大反而越过目标。
+                double switchSpeed = Math.min(.95, HudConfig.playerUiSwitchSpeed);
+                double leading = Math.min(.95, .5 * switchSpeed), trailing = Math.min(.95, .26 * switchSpeed);
                 indicatorTop = Interpolations.interpolate(indicatorTop, targetTop,
                         movingDown ? trailing : leading);
                 indicatorBottom = Interpolations.interpolate(indicatorBottom, targetBottom,
                         movingDown ? leading : trailing);
-                indicatorLeft = Interpolations.interpolate(indicatorLeft, targetLeft, .5);
-                indicatorWidth = Interpolations.interpolate(indicatorWidth, targetWidth, .5);
+                indicatorLeft = Interpolations.interpolate(indicatorLeft, targetLeft, Math.min(.95, .5 * switchSpeed));
+                indicatorWidth = Interpolations.interpolate(indicatorWidth, targetWidth, Math.min(.95, .5 * switchSpeed));
             }
             indicatorAlpha = Interpolations.interpolate(indicatorAlpha, 1f, .4f);
         } else if (selected == null) {

@@ -85,6 +85,12 @@ public final class KuGouSign {
                 + (isBlank(userId) ? "0" : userId));
     }
 
+    /** 新版 tracker/v6/priv_url 的 tracker_param.key，与参考 KuGouMusicApi 的 song_url_new.js 一致。 */
+    public static String trackerKey(String hash, String mid, String userId, String appId) {
+        return md5(nonNull(hash) + "185672dd44712f60bb1736df5a377e82"
+                + nonNull(appId) + nonNull(mid) + (isBlank(userId) ? "0" : userId));
+    }
+
     /** 老版取流接口的 key：{@code MD5(hash + "kgcloudv2")}。匿名也能用，是本实现的主路径。 */
     public static String playKey(String hash) {
         return md5(lower(hash) + PLAY_KEY_SALT);

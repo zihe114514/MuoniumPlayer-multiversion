@@ -6,8 +6,19 @@ public final class LyricsPanelGeometry {
     private LyricsPanelGeometry() {
     }
 
+    /**
+     * 全屏歌词页整体的进场缩放。
+     *
+     * <p><b>已停用，恒返回 1</b>：入场动画定稿为只走不透明度（{@link CoverHeroTransition#contentAlpha()}），
+     * 不再「由小变大覆盖播放器」。曾经的曲线是 {@code .952 + alpha * .048} 的镜头推入，想要
+     * 恢复任何整体缩放，只改这一个方法即可 —— 接力封面的落点换算（{@code setTarget} 与
+     * {@code captureTarget}）两侧都经过它，恢复后落点自动跟着对齐，不会先错一帧。</p>
+     *
+     * <p>不变式依旧成立：{@code alpha == 1} 时严格返回 1（现在是无条件成立），封面交接那一帧
+     * 不会跳。</p>
+     */
     static double contentScale(float alpha) {
-        return .96 + (Math.max(0.0f, Math.min(1.0f, alpha)) * .04);
+        return 1.0;
     }
 
     static double smoothKaraokeProgress(double value) {

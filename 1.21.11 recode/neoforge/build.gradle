@@ -95,7 +95,7 @@ configurations {
 dependencies {
     embeddedLibs 'com.google.zxing:core:3.5.3'
     embeddedLibs 'org.mozilla:rhino:1.7.15'
-    embeddedLibs 'com.google.javascript:closure-compiler:v20210202'
+    embeddedLibs 'com.google.javascript:closure-compiler:v20240317'
     // gson / jna / jna-platform 刻意不列：Minecraft 自带，见上面 configurations 里的排除说明。
     // 编译期用的就是 Minecraft 提供的那几个版本，所以这里也不需要 compileOnly 再声明一遍。
     embeddedLibs 'muoniumplayer.libs:music-api:0.1.1'

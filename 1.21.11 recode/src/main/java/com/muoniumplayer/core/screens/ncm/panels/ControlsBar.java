@@ -17,6 +17,7 @@ import com.muoniumplayer.core.rendering.PlayerQueueIcons;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.ncm.music.Quality;
 import com.muoniumplayer.core.rendering.ui.widgets.*;
+import com.muoniumplayer.core.screens.ncm.CoverHeroTransition;
 import com.muoniumplayer.core.screens.ncm.MusicLyricsPanel;
 import com.muoniumplayer.core.screens.ncm.NCMPanel;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
@@ -87,12 +88,6 @@ public class ControlsBar extends NCMPanel {
 
         this.addChild(bg);
 
-        bg.setBeforeRenderCallback(() -> {
-            bg.setMargin(0);
-            bg.setColor(NCMScreen.getColor(NCMScreen.ColorType.NAVIGATION_BACKGROUND));
-            bg.setAlpha(.95f - NCMTheme.getLiquidGlassAmount() * .22f);
-        });
-
         RoundedImageWidget playingCover = new RoundedImageWidget(() -> {
             if (CloudMusic.currentlyPlaying == null)
                 return null;
@@ -104,6 +99,16 @@ public class ControlsBar extends NCMPanel {
 
         this.addChild(playingCover);
 
+        // 隐藏小封面这件事必须挂在 bg 的每帧回调上：被 setHidden 的组件自己的 beforeRenderCallback
+        // 不再执行，写在 playingCover 上就再也取消不掉隐藏。bg 永远可见，而且它是第一个子组件、
+        // 每帧都排在 playingCover 之前，是这条链上唯一安全的挂点。
+        bg.setBeforeRenderCallback(() -> {
+            bg.setMargin(0);
+            bg.setColor(NCMScreen.getColor(NCMScreen.ColorType.NAVIGATION_BACKGROUND));
+            bg.setAlpha(.95f - NCMTheme.getLiquidGlassAmount() * .22f);
+            playingCover.setHidden(CoverHeroTransition.hidesSmallCover());
+        });
+
         playingCover
                 .fadeIn()
                 .setLinearFilter(true)
@@ -114,6 +119,10 @@ public class ControlsBar extends NCMPanel {
                         .setRadius(2))
                 .setOnClickCallback((relativeX, relativeY, mouseButton) -> {
                     if (CloudMusic.currentlyPlaying != null) {
+                        // 起点必须在造面板之前交出去：面板构造函数会兜底启动转场时钟，那之后再报
+                        // 起点就晚了一帧，封面会从上一次的位置起飞。
+                        CoverHeroTransition.open(playingCover.getX(), playingCover.getY(),
+                                playingCover.getWidth(), playingCover.getRadius());
                         NCMScreen.getInstance().musicLyricsPanel = new MusicLyricsPanel(CloudMusic.currentlyPlaying);
                     }
 

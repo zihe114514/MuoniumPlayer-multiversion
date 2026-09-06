@@ -325,12 +325,101 @@ public final class KuGouMusicApi {
         if (!hashes.contains(lower)) hashes.add(lower);
     }
 
-    /** 老 trackercdn 端点：匿名可用，是主路径。已登录时先试新网关，拿不到再退回这里。 */
+    /**
+     * 新版移动端取流主路径：参考 KuGouMusicApi 的 /v6/priv_url。
+     *
+     * <p>老 /i/v2/ 现在经常只回 status=2；新版接口一次传音质阶梯并返回
+     * data[0].info.tracker_url。非会员可取标准/高品/无损，VIP 曲会返回试听段。
+     * 登录态仍优先尝试 /v5/url，失败再走匿名新版接口。</p>
+     */
     private static Stream resolveHash(Track track, String hash) {
         if (KuGouDevice.isLoggedIn()) {
             Stream authorized = resolveViaGateway(track, hash);
             if (authorized != null) return authorized;
         }
+        Stream modern = resolveViaTracker(track, hash, false);
+        if (modern != null) return modern;
+        // Anonymous VIP tracks may expose only the preview segment; mirror the reference API
+        // free_part switch instead of making the whole song look unavailable.
+        modern = resolveViaTracker(track, hash, true);
+        if (modern != null) return modern;
+        return resolveViaLegacyCdn(track, hash);
+    }
+
+    /** 参考 API 的 tracker/v6/priv_url：请求体参与 Android signature。 */
+    private static Stream resolveViaTracker(Track track, String hash, boolean freePart) {
+        try {
+            // /v6/priv_url rejects a client-generated dfid; register once before the first modern playback request.
+            KuGouDevice.ensureRegistered();
+            JsonObject body = new JsonObject();
+            body.addProperty("area_code", "1");
+            body.addProperty("behavior", "play");
+            JsonArray qualities = new JsonArray();
+            qualities.add("128");
+            qualities.add("320");
+            qualities.add("flac");
+            qualities.add("high");
+            qualities.add("multitrack");
+            qualities.add("viper_atmos");
+            qualities.add("viper_tape");
+            qualities.add("viper_clear");
+            qualities.add("super");
+            body.add("qualities", qualities);
+
+            JsonObject resource = new JsonObject();
+            resource.addProperty("album_audio_id", number(track.albumAudioId));
+            // The reference API uses the real per-request millisecond timestamp, not a fixed value.
+            resource.addProperty("collect_list_id", "3");
+            resource.addProperty("collect_time", System.currentTimeMillis());
+            resource.addProperty("hash", hash);
+            resource.addProperty("id", 0);
+            resource.addProperty("page_id", 1);
+            resource.addProperty("type", "audio");
+            body.add("resource", resource);
+            body.addProperty("token", KuGouDevice.token());
+
+            JsonObject trackerParam = new JsonObject();
+            trackerParam.addProperty("all_m", 1);
+            trackerParam.addProperty("auth", "");
+            trackerParam.addProperty("is_free_part", freePart ? 1 : 0);
+            trackerParam.addProperty("key", KuGouSign.trackerKey(hash, KuGouDevice.mid(), KuGouDevice.userId(), KuGouHttp.APP_ID));
+            trackerParam.addProperty("module_id", 0);
+            trackerParam.addProperty("need_climax", 1);
+            trackerParam.addProperty("need_xcdn", 1);
+            trackerParam.addProperty("open_time", "");
+            trackerParam.addProperty("pid", "411");
+            trackerParam.addProperty("pidversion", "3001");
+            trackerParam.addProperty("priv_vip_type", "6");
+            trackerParam.addProperty("viptoken", "");
+            body.add("tracker_param", trackerParam);
+            body.addProperty("userid", KuGouSign.isBlank(KuGouDevice.userId()) ? "0" : KuGouDevice.userId());
+            body.addProperty("vip", 0);
+
+            JsonObject root = KuGouHttp.postJson(KuGouHttp.TRACKER, "/v6/priv_url",
+                    KuGouHttp.deviceParams(), body.toString(), KuGouHttp.Sign.ANDROID, null);
+            // /v6/priv_url does not return the usual top-level status=1.  A successful
+            // response has data[0].status=0 and keeps the actual URL in info.tracker_url.
+            // Treating the missing top-level status as a failure made every modern
+            // playback request look unavailable even though Kugou had returned a URL.
+            if (root == null || (root.has("error_code") && integer(root, "error_code") != 0)) return null;
+            JsonArray data = array(root, "data");
+            if (data == null || data.size() == 0 || !data.get(0).isJsonObject()) return null;
+            JsonObject item = data.get(0).getAsJsonObject();
+            if (item.has("status") && integer(item, "status") != 0 && integer(item, "status") != 1) return null;
+            JsonObject info = object(item, "info");
+            if (info == null) return null;
+            String url = firstUrl(array(info, "tracker_url", "url"));
+            if (KuGouSign.isBlank(url)) return null;
+            String format = firstText(info, "extname", "extName");
+            return new Stream(url, KuGouSign.isBlank(format) ? inferFormat(url) : format);
+        } catch (Throwable throwable) {
+            System.err.println("[Music/KuGou] tracker/v6/priv_url failed: " + throwable.getMessage());
+            return null;
+        }
+    }
+
+    /** 老接口兜底；部分歌曲仍能由 /i/v2/ 直接返回。 */
+    private static Stream resolveViaLegacyCdn(Track track, String hash) {
         Map<String, String> params = KuGouHttp.params();
         params.put("key", KuGouSign.playKey(hash));
         params.put("hash", hash);
@@ -342,9 +431,7 @@ public final class KuGouMusicApi {
         params.put("album_id", KuGouSign.nonNull(track.albumId));
         params.put("album_audio_id", KuGouSign.nonNull(track.albumAudioId));
         JsonObject root = KuGouHttp.get("https://trackercdn.kugou.com", "/i/v2/", params, KuGouHttp.Sign.NONE);
-        if (root == null) return null;
-        // status=2 表示这一档需要会员/登录，不是网络错误，继续试下一档。
-        if (integer(root, "status") != 1) return null;
+        if (root == null || integer(root, "status") != 1) return null;
         String url = firstUrl(array(root, "url", "backupdownurl"));
         if (KuGouSign.isBlank(url)) return null;
         String format = firstText(root, "extName");
@@ -362,7 +449,7 @@ public final class KuGouMusicApi {
         params.put("ssa_flag", "is_fromtrack");
         params.put("version", "11430");
         params.put("page_id", "151369488");
-        params.put("quality", "128");
+        params.put("quality", qualityForHash(track, hash));
         params.put("album_audio_id", KuGouSign.nonNull(track.albumAudioId));
         params.put("behavior", "play");
         params.put("pid", "2");
@@ -371,13 +458,14 @@ public final class KuGouMusicApi {
         params.put("IsFreePart", "0");
         params.put("ppage_id", "463467626,350369493,788954147");
         params.put("cdnBackup", "1");
-        params.put("clientver", KuGouHttp.CLIENT_VER);
+        // song_url.js uses the tracker protocol version here, overriding the default 20489.
+        params.put("clientver", "11430");
         params.put("key", KuGouSign.urlKey(hash, KuGouDevice.mid(), KuGouDevice.userId(), KuGouHttp.APP_ID));
 
         Map<String, String> headers = new LinkedHashMap<String, String>();
         headers.put("x-router", "trackercdn.kugou.com");
-        // notSign：这个端点用 key 而不是 signature 校验，多带一个签名反而会被拒。
-        JsonObject root = KuGouHttp.get(KuGouHttp.GATEWAY, "/v5/url", params, KuGouHttp.Sign.NONE, headers);
+        // Current /v5/url validates both key and Android signature.
+        JsonObject root = KuGouHttp.get(KuGouHttp.GATEWAY, "/v5/url", params, KuGouHttp.Sign.ANDROID, headers);
         if (root == null || integer(root, "status") != 1) return null;
         JsonArray urls = array(root, "url", "backupdownurl");
         JsonObject data = object(root, "data");
@@ -388,6 +476,13 @@ public final class KuGouMusicApi {
         return new Stream(url, KuGouSign.isBlank(format) ? inferFormat(url) : format);
     }
 
+    private static String qualityForHash(Track track, String hash) {
+        if (track != null && hash != null) {
+            if (hash.equalsIgnoreCase(track.hashLossless)) return "flac";
+            if (hash.equalsIgnoreCase(track.hash320)) return "320";
+        }
+        return "128";
+    }
     // ── 歌词 ────────────────────────────────────────────────────────────────
 
     /**
@@ -520,6 +615,12 @@ public final class KuGouMusicApi {
                 firstText(data, "pic", "avatar", "img"));
     }
 
+
+    private static long number(String value) {
+        if (KuGouSign.isBlank(value)) return 0L;
+        try { return Long.parseLong(value.trim()); }
+        catch (NumberFormatException ignored) { return 0L; }
+    }
     // ── 解析辅助 ────────────────────────────────────────────────────────────
 
     /** {@code data.info} 数组，兼容顶层直接给 {@code info} 的端点。 */

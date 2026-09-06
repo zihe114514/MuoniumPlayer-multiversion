@@ -104,6 +104,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     /** 主题调色板：主题按钮右键打开的二级菜单，实时预览主题颜色配置项。 */
     public ThemePaletteOverlay themePaletteOverlay = null;
 
+    /** 界面字体选择：与主题调色板同层，换字体后整个界面（含本浮层）当帧生效。 */
+    public FontPickerOverlay fontPickerOverlay = null;
+
     /** 对取消收藏等破坏性操作的二次确认层。 */
     public ConfirmationOverlay confirmationOverlay = null;
 
@@ -272,6 +275,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         RenderSystem.refreshResolution();
         this.updatePanelScaleAnimation();
 
+        // 整条「主页 → 全屏歌词页」转场的时钟：每帧恰好推进一次，而且必须赶在这一帧任何读曲线
+        // 的地方之前 —— 下面 basePanel 一簇里 ControlsBar 要读 hidesSmallCover，歌词页要读
+        // contentAlpha/chromeFade/lyricsFade，飞行封面要读几何曲线。
+        CoverHeroTransition.tick(this.musicLyricsPanel != null);
+
         if (closing && alpha <= 0.02f)
             api.displayScreen(null);
 
@@ -325,13 +333,23 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
                 basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+
+        // 转场期间主界面内容整体微微放大（见 CoverHeroTransition#mainScale，最高 +1.6%）。
+        // 放大而不是缩小：裁剪形状在上面已经录成面板矩形，缩小会让圆角内侧漏出游戏画面，
+        // 放大只会被裁掉，永远不漏。飞行封面与歌词页不在这层矩阵里，各自走自己的缩放。
+        api.getGLStateManager().pushMatrix();
+        this.scaleAtPos(basePanel.getX() + basePanel.getWidth() * .5,
+                basePanel.getY() + basePanel.getHeight() * .5, CoverHeroTransition.mainScale());
+
         if (this.musicLyricsPanel == null || this.musicLyricsPanel.alpha <= .9f) {
             this.basePanel.setAlpha(alpha);
             this.basePanel.renderWidget(mouseX, mouseY, baseDWheel);
             // Re-assert the root rounded clip after child/framebuffer rendering.
             StencilClipManager.restoreActiveClip();
 
-            float alphaInterpolateSpeed = 0.4f;
+            // 内容页切换的速度倍率由用户配置（HudConfig.playerUiSwitchSpeed，出厂默认 1.25 =
+            // 比历史速度略快一档）。指数逼近系数必须钳在 .95 以下：到 1 就是一帧到位，再大反而越过目标。
+            float alphaInterpolateSpeed = Math.min(.95f, .4f * HudConfig.playerUiSwitchSpeed);
             if (this.prevAnimatingPanel != null) {
                 this.prevAnimatingPanel.setAlpha(this.prevAnimatingPanelAlpha = Interpolations.interpolate(this.prevAnimatingPanelAlpha, 0f, alphaInterpolateSpeed));
                 this.prevAnimatingPanel.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY(), this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
@@ -388,14 +406,17 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             this.controlsBar.renderWidget(mouseX, mouseY, baseDWheel);
             StencilClipManager.restoreActiveClip();
         }
+        api.getGLStateManager().popMatrix();
         StencilClipManager.endClip();
 
         if (this.musicLyricsPanel != null) {
             StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
                     basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+            // 压暗层读 scrimAlpha 而不是面板 alpha：它要领先内容一档（先把主页压下去，内容才好
+            // 在暗底上浮现），面板 alpha 现在是 contentAlpha，比 scrim 晚一个时间窗。
             roundedRect(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(),
                     cornerRadius, getColor(ColorType.GENERIC_BACKGROUND)
-                            | ((int) (this.musicLyricsPanel.alpha * 255)) << 24);
+                            | ((int) (CoverHeroTransition.scrimAlpha() * 255)) << 24);
             this.musicLyricsPanel.onRender(mouseX, mouseY, basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(), lyricsDWheel);
             StencilClipManager.restoreActiveClip();
             StencilClipManager.endClip();
@@ -403,6 +424,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             if (this.musicLyricsPanel.shouldClose())
                 this.musicLyricsPanel = null;
         }
+
+        // 接力封面画在歌词页之上、裁剪之外：它飞行时要从控制栏一路压过压暗层与面板内容，
+        // 起落两点都在面板矩形内，出界的只有那圈飞行阴影。
+        CoverHeroTransition.render();
 
         // 波浪绘制在播放器内容之上、模态弹窗之下，并复用播放器圆角 Stencil。
         if (this.themeTransitionRenderer.isActive()) {
@@ -479,6 +504,20 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             if (this.themePaletteOverlay.shouldClose()) {
                 this.themePaletteOverlay.dispose();
                 this.themePaletteOverlay = null;
+            }
+            StencilClipManager.endClip();
+        }
+        // 字体选择与主题调色板同层：两者都是"改外观"的二级菜单，且互斥打开。
+        if (this.fontPickerOverlay != null) {
+            StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+            this.fontPickerOverlay.setBounds(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight());
+            this.fontPickerOverlay.setAlpha(alpha);
+            this.fontPickerOverlay.renderWidget(mouseX, mouseY, dWheel);
+            if (this.fontPickerOverlay.shouldClose()) {
+                this.fontPickerOverlay.dispose();
+                this.fontPickerOverlay = null;
             }
             StencilClipManager.endClip();
         }
@@ -724,6 +763,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.themePaletteOverlay.onInit();
     }
 
+    /** 打开界面字体选择；重复打开时先回收上一次的实例，避免两层叠在一起。 */
+    public void openFontPicker() {
+        if (this.fontPickerOverlay != null) this.fontPickerOverlay.dispose();
+        this.fontPickerOverlay = new FontPickerOverlay();
+        this.fontPickerOverlay.onInit();
+    }
+
     /** Opens the second-level source center without changing the current content page. */
     public void openMusicSourceManager() {
         if (this.musicSourceOverlay != null) this.musicSourceOverlay.dispose();
@@ -759,6 +805,18 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             if (keyCode == Keyboard.KEY_ESCAPE) {
                 this.themePaletteOverlay.handleEscape();
             }
+            return;
+        }
+
+        if (this.fontPickerOverlay != null) {
+            // ESC 抢在控件树之前：搜索框一旦聚焦，TextFieldWidget 会把每一个按键都当成
+            // 自己处理掉（包括 ESC），那样这一层就再也关不掉了。其余按键照常下发，
+            // 否则搜索框的输入和粘贴都像没反应。
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                this.fontPickerOverlay.handleEscape();
+                return;
+            }
+            this.fontPickerOverlay.onKeyTypedReceived(typedChar, keyCode);
             return;
         }
 
@@ -849,6 +907,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     private boolean isModalOverlayActive() {
         return this.confirmationOverlay != null
                 || this.themePaletteOverlay != null
+                || this.fontPickerOverlay != null
                 || this.musicSourceOverlay != null
                 || this.listenTogetherOverlay != null
                 || this.mpPartyOverlay != null
@@ -871,6 +930,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         if (this.themePaletteOverlay != null) {
             this.themePaletteOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            return;
+        }
+
+        if (this.fontPickerOverlay != null) {
+            this.fontPickerOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
             return;
         }
 

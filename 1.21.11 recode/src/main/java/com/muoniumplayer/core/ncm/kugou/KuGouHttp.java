@@ -29,6 +29,9 @@ final class KuGouHttp {
     /** 老移动端网关，多数只读接口在这里免签可用，是本实现的主路径。 */
     static final String MOBILE_CDN = "http://mobilecdn.kugou.com";
 
+    /** 新版移动端播放授权接口，返回 data[].info / tracker_url。 */
+    static final String TRACKER = "http://tracker.kugou.com";
+
     static final String LOGIN_USER = "https://login-user.kugou.com";
 
     static final String LYRICS = "https://lyrics.kugou.com";
@@ -57,12 +60,20 @@ final class KuGouHttp {
     /** 注入每个签名接口都要带的设备与版本参数。 */
     static Map<String, String> deviceParams() {
         Map<String, String> params = params();
-        params.put("dfid", "-");
+        params.put("dfid", KuGouDevice.dfid());
         params.put("mid", KuGouDevice.mid());
         params.put("uuid", "-");
         params.put("appid", APP_ID);
         params.put("clientver", CLIENT_VER);
         params.put("clienttime", String.valueOf(System.currentTimeMillis() / 1000L));
+        // The reference request helper promotes login credentials to query parameters
+        // as well as keeping them in the JSON body.  They must be present before the
+        // Android signature is calculated; otherwise authenticated tracker requests
+        // are signed for an anonymous device and silently fall back to preview access.
+        if (KuGouDevice.isLoggedIn()) {
+            params.put("token", KuGouDevice.token());
+            params.put("userid", KuGouDevice.userId());
+        }
         return params;
     }
 
@@ -116,7 +127,7 @@ final class KuGouHttp {
     private static Map<String, String> headers(Map<String, String> params, Map<String, String> extraHeaders) {
         Map<String, String> headers = new LinkedHashMap<>();
         headers.put("User-Agent", USER_AGENT);
-        headers.put("dfid", "-");
+        headers.put("dfid", KuGouDevice.dfid());
         headers.put("mid", KuGouDevice.mid());
         headers.put("kg-rc", "1");
         headers.put("kg-thash", "5d816a0");
