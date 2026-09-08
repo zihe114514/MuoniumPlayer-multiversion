@@ -18,7 +18,7 @@ public final class NCMTheme {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final long TRANSITION_DURATION_NANOS = 950_000_000L;
 
-    private static ThemePreset current = ThemePreset.OBSIDIAN_RED;
+    private static ThemePreset current = ThemePreset.VELVET_ROSE;
     private static boolean loaded;
     private static int[] transitionFromColors;
     private static float transitionFromGlass;
@@ -42,7 +42,7 @@ public final class NCMTheme {
                 readCustomColors(object.getAsJsonObject("custom"));
             }
         } catch (Throwable ignored) {
-            current = ThemePreset.OBSIDIAN_RED;
+            current = ThemePreset.VELVET_ROSE;
             CUSTOM_BY_THEME.clear();
         }
     }
@@ -363,7 +363,7 @@ public final class NCMTheme {
                     if (preset.id.equalsIgnoreCase(id)) return preset;
                 }
             }
-            return OBSIDIAN_RED;
+            return VELVET_ROSE;
         }
     }
 }

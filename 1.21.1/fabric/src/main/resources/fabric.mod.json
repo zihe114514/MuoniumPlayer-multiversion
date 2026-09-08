@@ -31,5 +31,8 @@
     "fabric-api": "*",
     "minecraft": "${minecraft_version}",
     "java": ">=21"
+  },
+  "suggests": {
+    "oneconfigv1": "*"
   }
 }

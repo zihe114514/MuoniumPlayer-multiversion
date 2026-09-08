@@ -42,6 +42,9 @@ public enum HudSetting {
     DYNAMIC_ISLAND_AMBIENT_STATUS("常驻状态时长(s)", 2.00f, 30.00f),
     DYNAMIC_ISLAND_AMBIENT_NOW_PLAYING("常驻歌曲时长(s)", 2.00f, 30.00f),
 
+    // 播放器打开 / 关闭动画。只有一个倍率：展开与收回共用同一组曲线，拆开会给出“能调但无效”的假象。
+    PLAYER_FADE_SPEED("开关动画速度", 0.30f, 3.00f),
+
     /**
      * 播放器界面内部「栏目切换」类过渡的速度倍率：内容页淡入缩放与侧栏选中指示条的滑动。
      * 1.25 = 出厂默认（比历史速度略快一档），1.0 = 历史速度。
@@ -126,6 +129,7 @@ public enum HudSetting {
             case DYNAMIC_ISLAND_SPINNER_SPEED: return HudConfig.dynamicIslandSpinnerSpeed;
             case DYNAMIC_ISLAND_AMBIENT_STATUS: return HudConfig.dynamicIslandAmbientStatusSeconds;
             case DYNAMIC_ISLAND_AMBIENT_NOW_PLAYING: return HudConfig.dynamicIslandAmbientNowPlayingSeconds;
+            case PLAYER_FADE_SPEED: return HudConfig.playerFadeSpeed;
             case PLAYER_UI_SWITCH_SPEED: return HudConfig.playerUiSwitchSpeed;
             case LYRIC_FONT_SCALE: return HudConfig.lyricFontScale;
             case LUMINOUS_WORD_SPACING: return HudConfig.luminousWordSpacing;
@@ -184,6 +188,7 @@ public enum HudSetting {
             case DYNAMIC_ISLAND_SPINNER_SPEED: HudConfig.dynamicIslandSpinnerSpeed = clamped; break;
             case DYNAMIC_ISLAND_AMBIENT_STATUS: HudConfig.dynamicIslandAmbientStatusSeconds = clamped; break;
             case DYNAMIC_ISLAND_AMBIENT_NOW_PLAYING: HudConfig.dynamicIslandAmbientNowPlayingSeconds = clamped; break;
+            case PLAYER_FADE_SPEED: HudConfig.playerFadeSpeed = clamped; break;
             case PLAYER_UI_SWITCH_SPEED: HudConfig.playerUiSwitchSpeed = clamped; break;
             case LYRIC_FONT_SCALE: HudConfig.lyricFontScale = clamped; break;
             case LUMINOUS_WORD_SPACING: HudConfig.luminousWordSpacing = clamped; break;

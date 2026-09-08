@@ -294,6 +294,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
      * @param viewHeight 歌词页视口的高度，用来决定面板要不要整体缩小（见 {@link #MIN_UI_SCALE}）
      */
     void render(double mouseX, double mouseY, double posX, double posY, double viewHeight, float alpha) {
+        if (alpha <= .004f) return;
         this.anchorX = posX + MARGIN;
         this.anchorY = posY + MARGIN;
         this.lastAlpha = alpha;
@@ -302,6 +303,13 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         // 面板收起时不再跟随鼠标，拖动状态也要清掉，否则收起后仍然会改数值。
         if (!expanded && dragKind >= 0) {
             releaseDrag();
+        }
+
+        // 收起且动画已停时只需要画 A-Z 按钮。此前每帧仍然重建整张行布局，
+        // 在低配机上给全屏歌词转场额外叠加了一串对象分配。
+        if (!expanded && expandAnimation <= .004f) {
+            renderButton(mouseX, mouseY, alpha);
+            return;
         }
 
         layout();

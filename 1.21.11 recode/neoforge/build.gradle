@@ -122,6 +122,18 @@ def shadeEmbeddedLibs = tasks.register('shadeEmbeddedLibs', com.github.jengelman
     exclude 'META-INF/*.DSA'
     exclude 'META-INF/*.RSA'
     exclude 'module-info.class'
+    // ==== 剥掉 closure-compiler 打包在自家 artifact 里的 checkerframework 类 ====
+    // closure-compiler:v20240317 的 jar 内部捆绑了 org/checkerframework/**（421 个类，
+    // 解包核实过：closure 自己的字节码对它们零引用，纯死重）。Minecraft 自带
+    // checker-qual（1.21.1 是 3.33.0），生产环境它作为 JPMS 模块同样导出
+    // org/checkerframework/checker/** 包；两边同时导出同一个包时，模块解析阶段直接崩端
+    // （用户实测崩溃报告：
+    //   ResolutionException: Modules muonium and org.checkerframework.checker.qual
+    //   export package org.checkerframework.common.aliasing.qual to module neoforge）。
+    // 注意 gradle 的 exclude 排不掉它们：这批类不在依赖图里，就长在 artifact 内部，
+    // 只能在合并时按路径剥。剥掉对运行期无影响（零引用）；Fabric 侧 JiJ 原样嵌 jar、
+    // 不做 JPMS 模块解析，天然不受影响，无需处理。
+    exclude 'org/checkerframework/**'
 }
 tasks.named('shadowJar').configure { enabled = false }
 

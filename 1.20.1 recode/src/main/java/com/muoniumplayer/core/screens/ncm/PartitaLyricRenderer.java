@@ -224,7 +224,8 @@ final class PartitaLyricRenderer extends AbstractStageLyricRenderer {
         int litColor = FullscreenLyricStage.primaryText() & 0xFFFFFF;
         int accent = FullscreenLyricStage.accent() & 0xFFFFFF;
         int dimColor = FullscreenLyricStage.mixRgb(litColor, accent, .55) & 0xFFFFFF;
-        boolean guides = HudConfig.partitaGuideLines;
+        boolean guides = HudConfig.partitaGuideLines
+                && !TransitionPerformanceBudget.skipStageDecorations();
 
         double exitFade = 1.0 - FullscreenLyricStage.easeInCubic(exitProgress);
         double exitDrop = FullscreenLyricStage.easeInCubic(exitProgress) * fontPx;

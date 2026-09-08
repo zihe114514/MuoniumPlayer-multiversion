@@ -94,7 +94,8 @@ final class PendoloLyricRenderer extends AbstractStageLyricRenderer {
         boolean effects = HudConfig.currentLyricEffectsEnabled;
         double activeScale = FullscreenLyricStage.clamp(HudConfig.pendoloActiveScale, 1.0, 1.8);
 
-        if (HudConfig.pendoloGearDecor) {
+        if (HudConfig.pendoloGearDecor
+                && !TransitionPerformanceBudget.skipStageDecorations()) {
             drawGears(centerX, centerY, radius, angleStep, accent, alpha, opened);
         }
 

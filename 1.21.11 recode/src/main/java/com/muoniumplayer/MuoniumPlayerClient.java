@@ -13,6 +13,7 @@ import com.muoniumplayer.core.screens.GuiFfmpegNotice;
 import com.muoniumplayer.core.screens.GuiUpdateNotice;
 import com.muoniumplayer.core.screens.hud.GuiHudEditor;
 import com.muoniumplayer.core.screens.hud.GuiHudEditorPro;
+import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.update.UpdateChecker;
 import com.muoniumplayer.render.skija.SkijaHost;
@@ -52,7 +53,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "1.4.6";
+    public static final String MOD_VERSION = "1.4.7";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -229,10 +230,7 @@ public final class MuoniumPlayerClient {
                 MuoniumPlayerExtension.getInstance().musicPlayerModule.setEnabled(true);
             }
             if (keyEditHud.consumeClick()) {
-                // 打开哪一套 HUD 设置界面由配置决定；两套界面里都有互相切换的按钮，
-                // 点了之后写回 HudConfig.hudEditorModernUi，所以这里读到的总是用户最后一次的选择。
-                mc.setScreen(HudConfig.hudEditorModernUi
-                        ? new GuiHudEditorPro() : new GuiHudEditor());
+                openHudEditor(mc);
             }
 
             // Reuse the exact player-control path used by the previous/next buttons.
@@ -380,6 +378,16 @@ public final class MuoniumPlayerClient {
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    /** 按用户选择打开 HUD 设置；OneConfig 不可用时自动回退到 MuoniumPlayer 内置界面。 */
+    private void openHudEditor(Minecraft mc) {
+        if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(HudConfig.hudEditorUi)
+                && OneConfigHudBridge.open()) {
+            return;
+        }
+        mc.setScreen(HudConfig.hudEditorModernUi
+                ? new GuiHudEditorPro() : new GuiHudEditor());
     }
 
     /**

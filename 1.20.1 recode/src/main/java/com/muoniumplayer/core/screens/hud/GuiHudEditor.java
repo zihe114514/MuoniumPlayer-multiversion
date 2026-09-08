@@ -383,6 +383,7 @@ public class GuiHudEditor extends GuiScreen {
             lyricSettingsDirty = false;
         }
         HudConfig.hudEditorModernUi = true;
+        HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_BUILTIN;
         HudConfig.save();
         mc.setScreen(new GuiHudEditorPro());
     }

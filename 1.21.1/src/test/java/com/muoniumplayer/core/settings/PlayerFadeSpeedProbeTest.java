@@ -38,9 +38,9 @@ class PlayerFadeSpeedProbeTest {
             MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "core", "screens", "hud", "GuiHudEditor.java"));
 
     @Test
-    @DisplayName("配置项：默认 1.00×，区间 0.30×~3.00×，越界被夹住")
+    @DisplayName("配置项：默认 3.00×，区间 0.30×~3.00×，越界被夹住")
     void 配置项的区间与默认值() {
-        assertEquals(1.0f, HudConfig.playerFadeSpeed, 1.0e-6f, "默认必须是 1.00×，即历史速度不变");
+        assertEquals(3.0f, HudConfig.playerFadeSpeed, 1.0e-6f, "默认必须是 3.00×，即当前发行版的个性化默认值");
         assertEquals(0.30f, HudSetting.PLAYER_FADE_SPEED.getMin(), 1.0e-6f);
         assertEquals(3.00f, HudSetting.PLAYER_FADE_SPEED.getMax(), 1.0e-6f);
 
@@ -58,13 +58,13 @@ class PlayerFadeSpeedProbeTest {
     }
 
     @Test
-    @DisplayName("恢复默认会把它写回 1.00×")
+    @DisplayName("恢复默认会把它写回 3.00×")
     void 恢复默认覆盖这一项() {
         float original = HudConfig.playerFadeSpeed;
         try {
             HudConfig.playerFadeSpeed = 2.5f;
             HudConfig.resetPlayerAnimation();
-            assertEquals(1.0f, HudConfig.playerFadeSpeed, 1.0e-6f);
+            assertEquals(3.0f, HudConfig.playerFadeSpeed, 1.0e-6f);
         } finally {
             HudConfig.playerFadeSpeed = original;
         }
@@ -92,6 +92,7 @@ class PlayerFadeSpeedProbeTest {
         List<String> allowed = new ArrayList<String>();
         allowed.add("HudConfig.java");
         allowed.add("HudSetting.java");
+        allowed.add("PlayerIslandTransition.java");
         allowed.add("NCMScreen.java");
         allowed.add("HudSettingsModel.java");
         allowed.add("GuiHudEditor.java");
@@ -103,18 +104,23 @@ class PlayerFadeSpeedProbeTest {
     }
 
     @Test
-    @DisplayName("NCMScreen：开关动画走倍率，页面切换的 0.4 保持写死")
+    @DisplayName("NCMScreen：开关动画交给灵动岛转场，页面切换仍走 playerUiSwitchSpeed")
     void 消费点与非消费点() throws IOException {
-        String source = stripComments(read(NCM_SCREEN));
-        assertTrue(source.contains("Interpolations.interpolate(alpha, closing ? 0f : 1f, fadeRate())"),
-                "整屏 alpha 的逼近必须走 fadeRate()");
-        assertTrue(source.contains("BASE_FADE_RATE = .4f"),
-                "基准系数必须仍是历史默认 .4：用户配的是它的倍率，改基准会让所有存量配置整体偏移");
-        assertTrue(source.contains("Math.max(.02f"),
-                "下界必须留住：系数为 0 时 alpha 永远到不了 0.02，播放器就再也关不掉");
-        assertTrue(source.contains("float alphaInterpolateSpeed = 0.4f"),
-                "页面切换的交叉淡入必须仍是写死的 0.4，不受这个配置影响");
-        assertTrue(source.contains("interpolate(this.animatedPanelScale, targetScale, .18f)"),
+        String screen = stripComments(read(NCM_SCREEN));
+        String transition = stripComments(read(MAIN_JAVA.resolve(Paths.get(
+                "com", "muoniumplayer", "core", "screens", "ncm", "PlayerIslandTransition.java"))));
+
+        assertTrue(screen.contains("PlayerIslandTransition.open(HudConfig.playerFadeSpeed)"),
+                "打开播放器时必须把开关动画速度交给 PlayerIslandTransition");
+        assertTrue(screen.contains("alpha = (float) PlayerIslandTransition.contentAlpha()"),
+                "整屏 alpha 必须由时间驱动的转场曲线驱动，而不是旧的指数逼近");
+        assertTrue(transition.contains("clampSpeed(speedMultiplier)"),
+                "转场必须把用户倍率夹在安全区间内，避免极端配置把动画变成一帧跳变");
+        assertTrue(transition.contains("OPEN_MS / speed"),
+                "展开时长必须按用户倍率缩放，倍率越大动画越快");
+        assertTrue(screen.contains("float alphaInterpolateSpeed = Math.min(.95f, .4f * HudConfig.playerUiSwitchSpeed)"),
+                "页面切换的交叉淡入必须继续走 playerUiSwitchSpeed，而不是播放器开关动画速度");
+        assertTrue(screen.contains("interpolate(this.animatedPanelScale, targetScale, .18f)"),
                 "窗口尺寸档位的动画必须仍是写死的 .18，不受这个配置影响");
     }
 

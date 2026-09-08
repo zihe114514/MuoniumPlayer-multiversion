@@ -599,6 +599,11 @@ public class GuiHudEditorPro extends GuiScreen {
         int[] classic = classicButton(panelX, panelY, panelW, panelH);
         drawGhostButton("header.classic", fr, HudSettingsIcons.CLASSIC_UI, "经典",
                 classic, mouseX, mouseY, TEXT_PRIMARY, active.accent);
+        if (OneConfigHudBridge.isAvailable()) {
+            int[] oneConfig = oneConfigButton(panelX, panelY, panelW, panelH);
+            drawGhostButton("header.oneconfig", fr, HudSettingsIcons.MODERN_UI, "OneConfig",
+                    oneConfig, mouseX, mouseY, TEXT_PRIMARY, active.accent);
+        }
 
         if (panelMoved()) {
             int[] restore = restorePositionButton(panelX, panelY, panelW, panelH);
@@ -623,10 +628,19 @@ public class GuiHudEditorPro extends GuiScreen {
         return new int[] { panelX + panelW - 14 - 22 - 6 - w, buttonRowY(panelY, panelH), w, 22 };
     }
 
+    /** OneConfig 可用时才存在；点击后注册并打开 OneConfig 的 MuoniumPlayer HUD 页。 */
+    private int[] oneConfigButton(int panelX, int panelY, int panelW, int panelH) {
+        int w = ghostWidth(FontManager.pf12, "OneConfig");
+        int[] classic = classicButton(panelX, panelY, panelW, panelH);
+        return new int[] { classic[0] - 6 - w, classic[1], w, 22 };
+    }
+
     /** 只在面板被拖动过之后出现，用来把它送回默认摆位。 */
     private int[] restorePositionButton(int panelX, int panelY, int panelW, int panelH) {
-        int[] classic = classicButton(panelX, panelY, panelW, panelH);
-        return new int[] { classic[0] - 6 - 22, classic[1], 22, 22 };
+        int[] anchorButton = OneConfigHudBridge.isAvailable()
+                ? oneConfigButton(panelX, panelY, panelW, panelH)
+                : classicButton(panelX, panelY, panelW, panelH);
+        return new int[] { anchorButton[0] - 6 - 22, anchorButton[1], 22, 22 };
     }
 
     /** 图标 + 文字的胶囊按钮宽度。绘制与命中都从这里取，改字号也不会两边错开。 */
@@ -1205,6 +1219,13 @@ public class GuiHudEditorPro extends GuiScreen {
         }
 
         if (!collapsed) {
+            if (OneConfigHudBridge.isAvailable()) {
+                int[] oneConfig = oneConfigButton(panelX, panelY, panelW, panelH);
+                if (isInside(mouseX, mouseY, oneConfig[0], oneConfig[1], oneConfig[2], oneConfig[3])) {
+                    switchToOneConfig();
+                    return;
+                }
+            }
             int[] classic = classicButton(panelX, panelY, panelW, panelH);
             if (isInside(mouseX, mouseY, classic[0], classic[1], classic[2], classic[3])) {
                 switchToClassic();
@@ -1725,8 +1746,16 @@ public class GuiHudEditorPro extends GuiScreen {
     /** 切到经典界面，并把选择记到配置里，下次打开直接是这一套。 */
     private void switchToClassic() {
         HudConfig.hudEditorModernUi = false;
+        HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_BUILTIN;
         HudConfig.save();
         mc.setScreen(new GuiHudEditor());
+    }
+
+    /** 切到 OneConfig 的真实 UI，并把选择记到配置里。 */
+    private void switchToOneConfig() {
+        HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
+        HudConfig.save();
+        OneConfigHudBridge.open();
     }
 
     // ==================== 杂项 ====================

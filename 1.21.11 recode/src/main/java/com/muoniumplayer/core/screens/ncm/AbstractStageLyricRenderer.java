@@ -169,6 +169,13 @@ abstract class AbstractStageLyricRenderer
      */
     protected static List<LyricLine> window(LyricLine current, double positionMs,
                                             int before, int after) {
+        if (TransitionPerformanceBudget.minimalStageWindow()) {
+            before = Math.min(before, 1);
+            after = Math.min(after, 1);
+        } else if (TransitionPerformanceBudget.reduceStageWindow()) {
+            before = Math.min(before, 3);
+            after = Math.min(after, 3);
+        }
         List<LyricLine> out = new ArrayList<LyricLine>();
         List<LyricLine> lyrics = CloudMusic.lyrics;
         if (lyrics.isEmpty()) return out;

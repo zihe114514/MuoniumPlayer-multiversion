@@ -12,7 +12,6 @@ import com.muoniumplayer.core.ncm.OptionsUtil;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.Rect;
-import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.rendering.StencilClipManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
@@ -20,6 +19,7 @@ import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.widgets.RectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
+import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.screens.ncm.panels.ControlsBar;
 import com.muoniumplayer.core.screens.ncm.panels.HomePanel;
 import com.muoniumplayer.core.screens.ncm.panels.NavigateBar;
@@ -45,6 +45,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     /** 统一的播放器外框线宽；内容裁剪使用同一尺寸，避免模糊污染外框。 */
     public static final double PLAYER_BORDER_THICKNESS = .8;
+
+    /** 侧栏/控制栏等基础控件树是否已经在后台 HUD 帧预热过。 */
+    private static boolean layoutPrewarmed;
+    /** 预热后的第一次 initGui 可以复用这棵基础控件树；后续 markDirty 仍要完整重建。 */
+    private static boolean skipNextLayoutAfterPrewarm;
 
     @Getter
     private static NCMScreen instance = new NCMScreen();
@@ -126,6 +131,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         closing = false;
 
         this.checkDirty();
+        PlayerIslandTransition.open(HudConfig.playerFadeSpeed);
 
         if (this.musicLyricsPanel != null)
             this.musicLyricsPanel.onInit();
@@ -136,6 +142,21 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     public void markDirty() {
         this.dirty = true;
+        skipNextLayoutAfterPrewarm = false;
+    }
+
+    /**
+     * 在 HUD 已经稳定渲染后提前构建基础控件树。
+     *
+     * <p>只预热外框、侧栏、控制栏和队列抽屉，不调用 HomePanel#onInit，
+     * 因此不会提前发起首页网络请求。打开播放器时 initGui 仍会创建内容页，
+     * 但最重的一段控件树构造已经不在动画第一帧里。</p>
+     */
+    public static void prewarmLayout() {
+        if (layoutPrewarmed) return;
+        layoutPrewarmed = true;
+        skipNextLayoutAfterPrewarm = true;
+        getInstance().layout();
     }
 
     public void checkDirty() {
@@ -148,7 +169,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
              * 歌单详情、搜索结果等页面点击刷新后被强制送回主页。
              */
             NCMPanel panelBeforeLayout = this.currentPanel;
-            this.layout();
+            if (skipNextLayoutAfterPrewarm) {
+                skipNextLayoutAfterPrewarm = false;
+            } else {
+                this.layout();
+            }
 
             if (panelBeforeLayout == null) {
                 // 首次打开播放器仍默认进入主页。
@@ -163,6 +188,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     @Override
     public void onGuiClosed() {
         Keyboard.enableRepeatEvents(false);
+        PlayerIslandTransition.abort();
     }
 
     public void layout() {
@@ -217,7 +243,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         return PLAYER_BORDER_THICKNESS;
     }
 
-    private double getPlayerCornerRadius() {
+    public double getPlayerCornerRadius() {
         return Math.max(8.0, Math.min(18.0, this.getPanelHeight() * .028));
     }
 
@@ -274,16 +300,14 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         // 布局与鼠标坐标映射立即正确。
         RenderSystem.refreshResolution();
         this.updatePanelScaleAnimation();
-
-        // 整条「主页 → 全屏歌词页」转场的时钟：每帧恰好推进一次，而且必须赶在这一帧任何读曲线
-        // 的地方之前 —— 下面 basePanel 一簇里 ControlsBar 要读 hidesSmallCover，歌词页要读
-        // contentAlpha/chromeFade/lyricsFade，飞行封面要读几何曲线。
+        // 两条时钟互不接管：外层从岛展开/收回，内部主页 -> 全屏歌词页。
+        PlayerIslandTransition.tick();
         CoverHeroTransition.tick(this.musicLyricsPanel != null);
 
-        if (closing && alpha <= 0.02f)
+        if (closing && PlayerIslandTransition.isFinished())
             api.displayScreen(null);
 
-        alpha = Interpolations.interpolate(alpha, closing ? 0f : 1f, 0.4f);
+        alpha = (float) PlayerIslandTransition.contentAlpha();
 
         CursorUtils.resetOverride();
 
@@ -323,89 +347,121 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         int lyricsDWheel = isModalOverlayActive() ? 0 : dWheel;
         int queueDWheel = isModalOverlayActive() ? 0 : dWheel;
 
-        this.scaleAtPos(RenderSystem.getWidth() * .5, RenderSystem.getHeight() * .5, 0.9 + (alpha * 0.1));
+        double[] surface = PlayerIslandTransition.surfaceBounds();
+        double surfaceX = surface[0];
+        double surfaceY = surface[1];
+        double surfaceWidth = surface[2];
+        double surfaceHeight = surface[3];
+        double surfaceRadius = surface[4];
+        double contentScale = PlayerIslandTransition.contentScale();
+        double surfaceCenterX = surfaceX + surfaceWidth * .5;
+        double surfaceCenterY = surfaceY + surfaceHeight * .5;
+        double targetCenterX = this.getPanelX() + this.getPanelWidth() * .5;
+        double targetCenterY = this.getPanelY() + this.getPanelHeight() * .5;
 
         this.basePanel.setBounds(this.getPanelWidth(), this.getPanelHeight());
         this.basePanel.setPosition(this.getPanelX(), this.getPanelY());
         final double cornerRadius = this.getPlayerCornerRadius();
 
-        StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
-                basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+        // The surface must exist before content alpha becomes non-zero. Otherwise the first and
+        // last 10% of the island morph are geometrically moving but visually invisible.
+        PlayerIslandTransition.renderSurface();
 
-        // 转场期间主界面内容整体微微放大（见 CoverHeroTransition#mainScale，最高 +1.6%）。
-        // 放大而不是缩小：裁剪形状在上面已经录成面板矩形，缩小会让圆角内侧漏出游戏画面，
-        // 放大只会被裁掉，永远不漏。飞行封面与歌词页不在这层矩阵里，各自走自己的缩放。
-        api.getGLStateManager().pushMatrix();
-        this.scaleAtPos(basePanel.getX() + basePanel.getWidth() * .5,
-                basePanel.getY() + basePanel.getHeight() * .5, CoverHeroTransition.mainScale());
+        // Below 3.5% the content is imperceptible. Skipping the whole widget tree here avoids
+        // paying for covers/lyrics/queue work during the first and last frames of the morph,
+        // which is exactly when music playback is most likely to pressure the frame budget.
+        if (alpha > .035f) {
+            // 裁剪必须在缩放矩阵外：surfaceBounds 已经是屏幕坐标；
+            // 矩阵只负责把 target 面板内容压进这块 surface。
+            StencilClipManager.beginClip(() -> roundedRect(surfaceX, surfaceY,
+                    surfaceWidth, surfaceHeight, surfaceRadius, -1));
 
-        if (this.musicLyricsPanel == null || this.musicLyricsPanel.alpha <= .9f) {
-            this.basePanel.setAlpha(alpha);
-            this.basePanel.renderWidget(mouseX, mouseY, baseDWheel);
-            // Re-assert the root rounded clip after child/framebuffer rendering.
-            StencilClipManager.restoreActiveClip();
+            api.getGLStateManager().pushMatrix();
+            api.getGLStateManager().translate(surfaceCenterX, surfaceCenterY, 0);
+            api.getGLStateManager().scale(contentScale, contentScale, 1);
+            api.getGLStateManager().translate(-targetCenterX, -targetCenterY, 0);
 
-            // 内容页切换的速度倍率由用户配置（HudConfig.playerUiSwitchSpeed，出厂默认 1.25 =
-            // 比历史速度略快一档）。指数逼近系数必须钳在 .95 以下：到 1 就是一帧到位，再大反而越过目标。
-            float alphaInterpolateSpeed = Math.min(.95f, .4f * HudConfig.playerUiSwitchSpeed);
-            if (this.prevAnimatingPanel != null) {
-                this.prevAnimatingPanel.setAlpha(this.prevAnimatingPanelAlpha = Interpolations.interpolate(this.prevAnimatingPanelAlpha, 0f, alphaInterpolateSpeed));
-                this.prevAnimatingPanel.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY(), this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
+            // 转场期间主界面内容整体微微放大（见 CoverHeroTransition#mainScale，最高 +1.6%）。
+            // 放大而不是缩小：裁剪形状在上面已经录成面板矩形，缩小会让圆角内侧漏出游戏画面，
+            // 放大只会被裁掉，永远不漏。飞行封面与歌词页不在这层矩阵里，各自走自己的缩放。
+            api.getGLStateManager().pushMatrix();
+            this.scaleAtPos(basePanel.getX() + basePanel.getWidth() * .5,
+                    basePanel.getY() + basePanel.getHeight() * .5, CoverHeroTransition.mainScale());
 
-                api.getGLStateManager().pushMatrix();
-                this.scaleAtPos(this.currentPanelBg.getX() + this.currentPanelBg.getWidth() * .5, this.currentPanelBg.getY() + this.currentPanelBg.getHeight() * .5, 0.9 + (this.prevAnimatingPanel.getAlpha() * 0.1));
-                this.prevAnimatingPanel.renderWidget(mouseX, mouseY, baseDWheel);
-                api.getGLStateManager().popMatrix();
-
-                if (this.prevAnimatingPanelAlpha <= 0.02f)
-                    this.prevAnimatingPanel = null;
-            } else if (this.currentPanel != null) {
-                curPanelAlphaAnimation = Interpolations.interpolate(curPanelAlphaAnimation, 1f, alphaInterpolateSpeed);
-                this.currentPanel.setAlpha(Math.min(this.basePanel.getAlpha(), curPanelAlphaAnimation));
-                this.currentPanel.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY(), this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
-
-                StencilClipManager.beginClip(() -> Rect.draw(this.currentPanelBg.getX(), this.currentPanelBg.getY(), this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight(), -1));
-
-                api.getGLStateManager().pushMatrix();
-                this.scaleAtPos(this.currentPanelBg.getX() + this.currentPanelBg.getWidth() * .5, this.currentPanelBg.getY() + this.currentPanelBg.getHeight() * .5, 1.1 - (curPanelAlphaAnimation * 0.1));
-
-                this.currentPanel.renderWidget(mouseX, mouseY, baseDWheel);
-                api.getGLStateManager().popMatrix();
-
-                StencilClipManager.endClip();
-            }
-
-            // 导航等待遮罩：盖在内容页之上，并且裁在内容区里 —— 失败提示可能比内容区还宽，
-            // 不裁会糊到左侧导航栏或控制栏上。
-            if (this.navigationLoading.isVisible()) {
-                StencilClipManager.beginClip(() -> Rect.draw(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
-                        this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight(), -1));
-                this.navigationLoading.render(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
-                        this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight(), alpha);
+            if (this.musicLyricsPanel == null || this.musicLyricsPanel.alpha <= .9f) {
+                this.basePanel.setAlpha(alpha);
+                this.basePanel.renderWidget(mouseX, mouseY, baseDWheel);
+                // Re-assert the root rounded clip after child/framebuffer rendering.
                 StencilClipManager.restoreActiveClip();
-                StencilClipManager.endClip();
-            }
 
-            // 队列抽屉盖在内容页之上、控制栏之下，并且被裁剪在内容区域内，
-            // 因此它的滑入滑出只会在播放器里发生，不会溢到外框上。
-            if (this.playQueuePanel != null && this.playQueuePanel.isVisible()) {
-                this.playQueuePanel.setAlpha(alpha);
-                this.playQueuePanel.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
-                        this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
-                StencilClipManager.beginClip(() -> Rect.draw(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
-                        this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight(), -1));
-                this.playQueuePanel.renderWidget(mouseX, mouseY, queueDWheel);
+                // 内容页切换的速度倍率由用户配置（HudConfig.playerUiSwitchSpeed，当前默认 3.0 =
+                // 明显快于历史速度）。指数逼近系数必须钳在 .95 以下：到 1 就是一帧到位，再大反而越过目标。
+                float alphaInterpolateSpeed = Math.min(.95f, .4f * HudConfig.playerUiSwitchSpeed);
+                if (this.prevAnimatingPanel != null) {
+                    this.prevAnimatingPanel.setAlpha(this.prevAnimatingPanelAlpha = Interpolations.interpolate(this.prevAnimatingPanelAlpha, 0f, alphaInterpolateSpeed));
+                    this.prevAnimatingPanel.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY(), this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
+
+                    api.getGLStateManager().pushMatrix();
+                    this.scaleAtPos(this.currentPanelBg.getX() + this.currentPanelBg.getWidth() * .5, this.currentPanelBg.getY() + this.currentPanelBg.getHeight() * .5, 0.9 + (this.prevAnimatingPanel.getAlpha() * 0.1));
+                    this.prevAnimatingPanel.renderWidget(mouseX, mouseY, baseDWheel);
+                    api.getGLStateManager().popMatrix();
+
+                    if (this.prevAnimatingPanelAlpha <= 0.02f)
+                        this.prevAnimatingPanel = null;
+                } else if (this.currentPanel != null) {
+                    curPanelAlphaAnimation = Interpolations.interpolate(curPanelAlphaAnimation, 1f, alphaInterpolateSpeed);
+                    this.currentPanel.setAlpha(Math.min(this.basePanel.getAlpha(), curPanelAlphaAnimation));
+                    this.currentPanel.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY(), this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
+
+                    StencilClipManager.beginClip(() -> Rect.draw(this.currentPanelBg.getX(), this.currentPanelBg.getY(), this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight(), -1));
+
+                    api.getGLStateManager().pushMatrix();
+                    this.scaleAtPos(this.currentPanelBg.getX() + this.currentPanelBg.getWidth() * .5, this.currentPanelBg.getY() + this.currentPanelBg.getHeight() * .5, 1.1 - (curPanelAlphaAnimation * 0.1));
+
+                    this.currentPanel.renderWidget(mouseX, mouseY, baseDWheel);
+                    api.getGLStateManager().popMatrix();
+
+                    StencilClipManager.endClip();
+                }
+
+                // 导航等待遮罩：盖在内容页之上，并且裁在内容区里 —— 失败提示可能比内容区还宽，
+                // 不裁会糊到左侧导航栏或控制栏上。
+                if (this.navigationLoading.isVisible()) {
+                    StencilClipManager.beginClip(() -> Rect.draw(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
+                            this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight(), -1));
+                    this.navigationLoading.render(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
+                            this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight(), alpha);
+                    StencilClipManager.restoreActiveClip();
+                    StencilClipManager.endClip();
+                }
+
+                // 队列抽屉盖在内容页之上、控制栏之下，并且被裁剪在内容区域内，
+                // 因此它的滑入滑出只会在播放器里发生，不会溢到外框上。
+                if (this.playQueuePanel != null && this.playQueuePanel.isVisible()) {
+                    this.playQueuePanel.setAlpha(alpha);
+                    this.playQueuePanel.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
+                            this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
+                    StencilClipManager.beginClip(() -> Rect.draw(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
+                            this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight(), -1));
+                    this.playQueuePanel.renderWidget(mouseX, mouseY, queueDWheel);
+                    StencilClipManager.restoreActiveClip();
+                    StencilClipManager.endClip();
+                }
+
+                this.controlsBar.setAlpha(alpha);
+                this.controlsBar.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY() + this.currentPanelBg.getHeight(), this.currentPanelBg.getWidth(), this.getPanelHeight() - this.currentPanelBg.getHeight());
+                this.controlsBar.renderWidget(mouseX, mouseY, baseDWheel);
                 StencilClipManager.restoreActiveClip();
-                StencilClipManager.endClip();
             }
+            api.getGLStateManager().popMatrix();
+            PlayerIslandTransition.renderSurfaceDetail();
+            StencilClipManager.endClip();
 
-            this.controlsBar.setAlpha(alpha);
-            this.controlsBar.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY() + this.currentPanelBg.getHeight(), this.currentPanelBg.getWidth(), this.getPanelHeight() - this.currentPanelBg.getHeight());
-            this.controlsBar.renderWidget(mouseX, mouseY, baseDWheel);
-            StencilClipManager.restoreActiveClip();
+        } else {
+            // 打开转场前 10% 与关闭转场最后一段内容完全透明。这里连 Stencil、矩阵和整棵
+            // 控件树都跳过，低配设备上可以把这几帧的 GPU/CPU 工作直接归零。
+            PlayerIslandTransition.renderSurfaceDetail();
         }
-        api.getGLStateManager().popMatrix();
-        StencilClipManager.endClip();
 
         if (this.musicLyricsPanel != null) {
             StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
@@ -546,21 +602,26 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             StencilClipManager.endClip();
         }
 
-        roundedOutline(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(),
-                cornerRadius, getPlayerBorderThickness(), new Color(255, 255, 255,
-                        Math.max(0, Math.min(255, (int) (alpha * 25)))));
-        float glassAmount = NCMTheme.getLiquidGlassAmount();
-        if (glassAmount > 0.001f) {
-            int glassBorderAlpha = Math.max(0, Math.min(255, (int) (alpha * glassAmount * 88)));
-            roundedOutlineGradient(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(),
-                    cornerRadius, .72,
-                    new Color(92, 138, 196, glassBorderAlpha / 3),
-                    new Color(255, 255, 255, glassBorderAlpha),
-                    new Color(115, 164, 230, glassBorderAlpha / 2),
-                    new Color(225, 244, 255, glassBorderAlpha));
-            roundedRect(basePanel.getX() + cornerRadius * 1.25, basePanel.getY() + .75,
-                    Math.max(1.0, basePanel.getWidth() - cornerRadius * 2.5), .7, .35,
-                    1.0f, 1.0f, 1.0f, alpha * glassAmount * .30f);
+        // 这组边框使用最终 basePanel 坐标。岛屿展开/收回期间内容被压进移动中的 surface，
+        // 如果这里照常绘制，屏幕上会出现一个提前停在最终播放器大小的静态落点边框。
+        // 转场表面自己已有跟随几何的 outline；最终外框等动画完全停稳后再出现。
+        if (!PlayerIslandTransition.isRunning()) {
+            roundedOutline(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(),
+                    cornerRadius, getPlayerBorderThickness(), new Color(255, 255, 255,
+                            Math.max(0, Math.min(255, (int) (alpha * 25)))));
+            float glassAmount = NCMTheme.getLiquidGlassAmount();
+            if (glassAmount > 0.001f) {
+                int glassBorderAlpha = Math.max(0, Math.min(255, (int) (alpha * glassAmount * 88)));
+                roundedOutlineGradient(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(),
+                        cornerRadius, .72,
+                        new Color(92, 138, 196, glassBorderAlpha / 3),
+                        new Color(255, 255, 255, glassBorderAlpha),
+                        new Color(115, 164, 230, glassBorderAlpha / 2),
+                        new Color(225, 244, 255, glassBorderAlpha));
+                roundedRect(basePanel.getX() + cornerRadius * 1.25, basePanel.getY() + .75,
+                        Math.max(1.0, basePanel.getWidth() - cornerRadius * 2.5), .7, .35,
+                        1.0f, 1.0f, 1.0f, alpha * glassAmount * .30f);
+            }
         }
         api.getGLStateManager().popMatrix();
         RenderSystem.FIXED_SCALE = false;
@@ -585,6 +646,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         @Override
         public void onRender(double mouseX, double mouseY) {
+            if (TransitionPerformanceBudget.skipLiquidGlass()) return;
             float amount = NCMTheme.getLiquidGlassAmount() * this.getAlpha();
             if (amount <= 0.001f) return;
             themeTransitionRenderer.renderLiquidGlassSurface(this.getX(), this.getY(),
@@ -886,8 +948,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
             if (this.musicLyricsPanel != null)
                 this.musicLyricsPanel.close();
-            else
+            else {
                 closing = true;
+                PlayerIslandTransition.close();
+            }
 
         }
 

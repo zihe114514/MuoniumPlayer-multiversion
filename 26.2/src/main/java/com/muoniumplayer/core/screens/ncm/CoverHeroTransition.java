@@ -44,8 +44,8 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
      * 进场比退场慢一档：展开要让人看清封面走的那条弧，收起只要交代清楚「回去了」。
      *
      * <p>这是<b>历史基准值</b>，实际时长再除以用户配置的「界面切换动画速度」倍率
-     * （{@link HudConfig#playerUiSwitchSpeed}，出厂默认 1.25）：默认观感即 520/1.25 ≈ 416ms
-     * 进场、288ms 退场，比最初调快了一整档；想要老节奏把倍率调回 1.0 即可。</p>
+     * （{@link HudConfig#playerUiSwitchSpeed}，当前默认 3.0）：默认观感即 520/3 ≈ 173ms
+     * 进场、120ms 退场；想要老节奏把倍率调回 1.0 即可。</p>
      */
     private static final double OPEN_MS = 520.0;
     private static final double CLOSE_MS = 360.0;
@@ -59,6 +59,19 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
     private static double startX, startY, startSize, startRadius;
     private static double targetX, targetY, targetSize, targetRadius;
 
+    /** 本帧曲线缓存。tick 一次，多个图层复用，避免同一帧重复反解贝塞尔。 */
+    private static double cachedMotion = 0.0;
+    private static double cachedMotionLagging = 0.0;
+    private static double cachedScrimAlpha = 0.0;
+    private static double cachedContentAlpha = 0.0;
+    private static double cachedChromeFade = 0.0;
+    private static double cachedLyricsFade = 0.0;
+    private static double cachedMainScale = 1.0;
+
+    /** 接力封面在这一首歌内的纹理缓存，避免每帧查两次 ConcurrentHashMap。 */
+    private static Music cachedTextureMusic;
+    private static ITextureObject cachedTexture;
+
     /**
      * 两条缓动。括号里的数字是<b>规范值</b>（{@code MOTION} = Material 3 emphasized，
      * {@code MOTION_LAGGING} = Material 2 standard），不要凭手感改：项目里其它动画迟早要统一到
@@ -69,8 +82,8 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
      * 之所以换曲线而不是简单地给 X 轴加一段延迟，是因为延迟会造出一段"X 完全不动"的死区，
      * 起步那一下看起来像卡了一帧。
      */
-    private static final Bezier MOTION = new Bezier(0.2, 0.0, 0.0, 1.0);
-    private static final Bezier MOTION_LAGGING = new Bezier(0.4, 0.0, 0.2, 1.0);
+    private static final TransitionCurveCache.CachedBezier MOTION = TransitionCurveCache.MOTION;
+    private static final TransitionCurveCache.CachedBezier MOTION_LAGGING = TransitionCurveCache.MOTION_LAGGING;
 
     // ------------------------------------------------------------------ 生命周期
 
@@ -94,6 +107,7 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
         // 打开会直接跳到终态、没有动画。CLOSING 途中重开则保留 t，封面从当前位置折返。
         if (state == OPEN) t = 0.0;
         beginOpen();
+        refreshFrameCache();
     }
 
     /**
@@ -143,6 +157,7 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
                 state = IDLE;
             }
         }
+        refreshFrameCache();
     }
 
     /**
@@ -183,22 +198,22 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
 
     /** 歌词页底色。领先所有内容一档：先把主界面压下去，内容才好在暗底上浮现。 */
     public static double scrimAlpha() {
-        return MOTION.at(sub(t, .05, 1.0));
+        return cachedScrimAlpha;
     }
 
     /** 歌词页整体内容（含模糊背景）的不透明度，也就是 {@code MusicLyricsPanel.alpha}。 */
     public static double contentAlpha() {
-        return MOTION.at(sub(t, .16, 1.0));
+        return cachedContentAlpha;
     }
 
     /** 左栏信息块 / 进度条 / 音量 / 控制键：等封面快落地了再到场，免得和它糊在一起。 */
     public static double chromeFade() {
-        return MOTION.at(sub(t, .36, .98));
+        return cachedChromeFade;
     }
 
     /** 歌词：整条转场最后一层。 */
     public static double lyricsFade() {
-        return MOTION.at(sub(t, .48, 1.0));
+        return cachedLyricsFade;
     }
 
     /**
@@ -210,7 +225,17 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
      * 的镜头运动，比缩小更贴合「小封面胀成大封面」这件事。
      */
     public static double mainScale() {
-        return 1.0 + .016 * MOTION.at(t);
+        return cachedMainScale;
+    }
+
+    private static void refreshFrameCache() {
+        cachedMotion = MOTION.at(t);
+        cachedMotionLagging = MOTION_LAGGING.at(t);
+        cachedScrimAlpha = MOTION.at(sub(t, .05, 1.0));
+        cachedContentAlpha = MOTION.at(sub(t, .16, 1.0));
+        cachedChromeFade = MOTION.at(sub(t, .36, .98));
+        cachedLyricsFade = MOTION.at(sub(t, .48, 1.0));
+        cachedMainScale = 1.0 + .016 * cachedMotion;
     }
 
     // ------------------------------------------------------------------ 接力封面
@@ -235,8 +260,8 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
         // 符合 Material 对「向上跨越」的规定。退场时 t 反向递减，同一条弧自动变成「先横过去
         // 再落下来」，正是「向下跨越」该有的方向 —— 这就是坚持纯函数换来的便宜。
         // 尺寸跟竖直轴同一条曲线：封面是一边升一边长大，两者错开会看出「先飞后胀」。
-        double fx = MOTION_LAGGING.at(t);
-        double fy = MOTION.at(t);
+        double fx = cachedMotionLagging;
+        double fy = cachedMotion;
         double fs = fy;
 
         // 落地微过冲：两端严格为 0，峰值约 2.4% 落在 t≈0.68。那时尺寸曲线已经基本到位，读起来
@@ -252,14 +277,8 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
         // 阴影：起点的小封面本来没有阴影，落点的面板封面是 alpha .4 的 bloom，所以要淡入。
         // 飞行中途额外抬高、外扩一点，这是「卡片离开桌面」的高度暗示；两个附加量在两端都归零，
         // 落地那一帧和面板自己画的那圈阴影完全重合，交接看不出来。
-        double shadow = MOTION.at(sub(t, 0.0, .35)) * .4;
-        double airborne = Math.sin(Math.PI * t);
-        if (shadow > .004) {
-            final double sx = x, sy = y + airborne * size * .03, ss = size, sr = radius;
-            final double expand = -.5 + airborne * 2.5;
-            final float sa = (float) shadow;
-            SkijaEffects.bloom(() -> GFX.roundedRect(sx, sy, ss, ss, sr, expand, 0, 0, 0, sa));
-        }
+        // 转场快路径：飞行封面本体保留，阴影 bloom（一次 saveLayer + Gaussian blur）跳过。
+        // 阴影只服务半秒钟的飞行过程；动画结束后面板自己的 bloom 会立即恢复完整观感。
 
         ITextureObject tex = texture();
         if (tex == null) return;
@@ -280,10 +299,17 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
     private static ITextureObject texture() {
         Music music = CloudMusic.currentlyPlaying;
         if (music == null) return null;
+        if (cachedTexture != null && music == cachedTextureMusic) return cachedTexture;
+
         TextureManager manager = TextureManager.getInstance();
         ITextureObject tex = manager.getTexture(
                 CloudMusic.preferredCoverLocation(music, music.getCoverLocation()));
-        return tex != null ? tex : manager.getTexture(music.getSmallCoverLocation());
+        if (tex == null) tex = manager.getTexture(music.getSmallCoverLocation());
+        if (tex != null) {
+            cachedTextureMusic = music;
+            cachedTexture = tex;
+        }
+        return tex;
     }
 
     /**
@@ -322,63 +348,4 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
         return (value - from) / (to - from);
     }
 
-    /**
-     * CSS 口径的 {@code cubic-bezier(x1,y1,x2,y2)}，端点固定 (0,0) 与 (1,1)。
-     *
-     * <p>项目里的 {@code Easing} 枚举只有十几条写死的解析式，没有任意控制点的求解器；而这两条
-     * 规范曲线都没有初等闭式，只能按 x 反解贝塞尔参数再取 y。
-     */
-    private static final class Bezier {
-
-        private final double x1, y1, x2, y2;
-
-        Bezier(double x1, double y1, double x2, double y2) {
-            this.x1 = x1;
-            this.y1 = y1;
-            this.x2 = x2;
-            this.y2 = y2;
-        }
-
-        double at(double t) {
-            if (t <= 0.0) return 0.0;
-            if (t >= 1.0) return 1.0;
-            return axis(y1, y2, solve(t));
-        }
-
-        /** B(u) = 3(1-u)²·u·a + 3(1-u)·u²·b + u³ */
-        private static double axis(double a, double b, double u) {
-            double iu = 1.0 - u;
-            return 3.0 * iu * iu * u * a + 3.0 * iu * u * u * b + u * u * u;
-        }
-
-        /** B'(u) = 3a(1-u)(1-3u) + 3b·u(2-3u) + 3u² */
-        private static double slope(double a, double b, double u) {
-            double iu = 1.0 - u;
-            return 3.0 * a * iu * (1.0 - 3.0 * u) + 3.0 * b * u * (2.0 - 3.0 * u) + 3.0 * u * u;
-        }
-
-        /**
-         * 已知 x 反解参数 u。牛顿法两三步就够，但导数极小的区段会让它跑出 [0,1]，
-         * 那时落回二分 —— 二分慢一点却永远收敛，动画曲线上一次求解的开销可以忽略。
-         */
-        private double solve(double x) {
-            double u = x;
-            for (int i = 0; i < 8; i++) {
-                double error = axis(x1, x2, u) - x;
-                if (Math.abs(error) < 1e-6) return u;
-                double d = slope(x1, x2, u);
-                if (Math.abs(d) < 1e-6) break;
-                u -= error / d;
-                if (u < 0.0 || u > 1.0) break;
-            }
-            double low = 0.0, high = 1.0;
-            u = x;
-            for (int i = 0; i < 32; i++) {
-                if (axis(x1, x2, u) < x) low = u;
-                else high = u;
-                u = (low + high) * .5;
-            }
-            return u;
-        }
-    }
 }

@@ -138,7 +138,8 @@ final class FumeLyricRenderer extends AbstractStageLyricRenderer {
         double viewCenterX = left + width * .5;
         double viewCenterY = top + height * .5 + (1.0 - opened) * height * .25;
 
-        if (HudConfig.fumeGeometricBackground) {
+        if (HudConfig.fumeGeometricBackground
+                && !TransitionPerformanceBudget.skipStageDecorations()) {
             drawBackground(left, top, width, height, alpha);
         }
 

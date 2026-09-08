@@ -20,6 +20,7 @@ import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
+import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.settings.ConfigPaths;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.Tuple;
@@ -45,6 +46,7 @@ public final class NeteaseMusicService {
     private static final long QQ_PLAYLIST_RETRY_DELAY_MS = 15_000L;
 
     private static volatile MusicPlatform currentPlatform = MusicPlatform.NETEASE;
+    private static volatile boolean currentPlatformLoaded;
     private static volatile QQUserInfo qqUserInfo;
     private static volatile List<PlayList> qqUserPlaylists = Collections.emptyList();
     private static volatile boolean qqUserPlaylistsLoaded;
@@ -56,11 +58,8 @@ public final class NeteaseMusicService {
     }
 
     public static synchronized void initialize(String legacyNeteaseCookie) {
-        // Restore the persisted GD source choice on startup so selecting a platform in the
-        // second-level source menu remains effective after restarting the client.
-        if (GdStudioSourceSettings.isEnabled()) {
-            currentPlatform = MusicPlatform.GD;
-        }
+        ensureCurrentPlatformLoaded();
+
         if (!initialized) {
             CREDENTIALS.load();
             SERVICE.getQq().setMusicid(nonNull(CREDENTIALS.getQqMusicId()));
@@ -86,6 +85,7 @@ public final class NeteaseMusicService {
     }
 
     public static MusicPlatform getCurrentPlatform() {
+        ensureCurrentPlatformLoaded();
         return currentPlatform;
     }
 
@@ -99,6 +99,7 @@ public final class NeteaseMusicService {
             GdStudioSourceSettings.setPlatform("");
         }
         currentPlatform = selected;
+        NCMPlayerConfig.setMusicSourcePlatform(selected);
     }
 
     public static List<Music> search(String keyword, int limit) {
@@ -824,6 +825,18 @@ public final class NeteaseMusicService {
         qqUserPlaylistsLoading = false;
         qqUserPlaylistsLastAttempt = 0L;
     }
+    private static void ensureCurrentPlatformLoaded() {
+        if (currentPlatformLoaded) return;
+        synchronized (NeteaseMusicService.class) {
+            if (currentPlatformLoaded) return;
+            currentPlatform = NCMPlayerConfig.getMusicSourcePlatform();
+            if (GdStudioSourceSettings.isEnabled()) {
+                currentPlatform = MusicPlatform.GD;
+            }
+            currentPlatformLoaded = true;
+        }
+    }
+
     private static void initializeIfNeeded() {
         if (!initialized) initialize(OptionsUtil.getCookie());
     }

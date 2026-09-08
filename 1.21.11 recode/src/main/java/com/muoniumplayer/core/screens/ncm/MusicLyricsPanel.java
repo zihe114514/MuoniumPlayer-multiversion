@@ -300,6 +300,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
      */
     private void drawKaraokeCharacterGlow(String text, double x, double y,
                                           double progress, float alpha) {
+        if (FullscreenLyricStage.transitionFastPath()) return;
         TextGlow.draw(FontManager.pf65bold, text, x, y, 0xFFFFFF, alpha,
                 karaokeGlowStrength() * progress, HudConfig.lyricGlowSpread);
     }
@@ -506,9 +507,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         // CoverHeroTransition 统一编排（页面底色、接力封面、本层内容、左栏、歌词各有时间窗），
         // 这里自己算一份就会和接力封面的落地时刻错开，交接那一帧看得出跳变。
         alpha = (float) CoverHeroTransition.contentAlpha();
-        // 退场末段本层已经全透明，但接力封面还在飞（它由 NCMScreen 在本层之外绘制）。这里只是
-        // 省掉一次无意义的整层绘制，不代表转场结束。
-        if (closing && alpha <= CLOSE_ALPHA_EPSILON) return;
+        // 进场前 16% 与退场末段本层都是全透明的。此前只有退场会跳过，进场仍会完整画一遍
+        // 背景、控制栏与歌词；低配机上这就是开头连续掉帧的来源之一。
+        if (alpha <= CLOSE_ALPHA_EPSILON) return;
 
         // 面板尺寸动画过程中按真实视口重排。阈值可避免亚像素变化导致每帧重建全部歌词。
         LyricViewport lyricViewport = createLyricViewport(posX, posY, width, height);
@@ -541,7 +542,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         this.renderLyrics(mouseX, mouseY, posX, posY, width, height, dWheel, alpha, snapshot);
         api.getGLStateManager().popMatrix();
         // 快捷面板画在最后：它是浮层，必须盖在封面与歌词之上。
-        this.styleQuickPanel.render(mouseX, mouseY, posX, posY, height, alpha);
+        if (!TransitionPerformanceBudget.skipLyricQuickPanel()) {
+            this.styleQuickPanel.render(mouseX, mouseY, posX, posY, height, alpha);
+        }
         api.getGLStateManager().popMatrix();
     }
 
@@ -583,7 +586,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         this.updateLyricPositions(posY, height, lyricsWidth, displayedCurrentLyric,
                 songProgress, lyricViewport.top, lyricManualScroll);
 
-        List<Runnable> blurRects = new ArrayList<>();
+        // 逐行 backdropBlur 是全屏歌词页最贵的后处理之一，且在开合时肉眼主要关注封面接力。
+        // 转场期间暂停，动画结束后恢复原效果。
+        boolean transitionFastPath = FullscreenLyricStage.transitionFastPath();
+        List<Runnable> blurRects = transitionFastPath ? null : new ArrayList<Runnable>();
 
         boolean hoveringLyrics = isHovered(mouseX, mouseY, lyricViewport.left, lyricViewport.top,
                 lyricViewport.width, lyricViewport.height);
@@ -650,6 +656,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             int groupFirst = LyricDuetGroups.groupStart(CloudMusic.lyrics, indexOf);
             int groupLast = LyricDuetGroups.groupEnd(CloudMusic.lyrics, indexOf);
             int activeDistance = k < groupFirst ? groupFirst - k : (k > groupLast ? k - groupLast : 0);
+            if (activeDistance > TransitionPerformanceBudget.classicLyricWindow()) continue;
             lyric.blurAlpha = Interpolations.interpolate(lyric.blurAlpha, !hoveringLyrics ? Math.min(1f, activeDistance * .85f) : 0f, 0.05f);
 
             if (isHovering) {
@@ -931,7 +938,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             double blurTop = Math.max(lyricsViewportTop, lyric.posY + scrollOffset);
             double blurRight = Math.min(lyricsViewportRight, lyricRenderOffsetX + lyricsWidth);
             double blurBottom = Math.min(lyricsViewportBottom, lyric.posY + scrollOffset + lyric.height + 8);
-            if (blurRight > blurLeft && blurBottom > blurTop) {
+            if (!transitionFastPath && blurRight > blurLeft && blurBottom > blurTop) {
                 double clippedBlurWidth = blurRight - blurLeft;
                 double clippedBlurHeight = blurBottom - blurTop;
                 // 旧实现把这个矩形当作「模糊遮罩」画进离屏 FBO，再由 blur.frag 按它的 alpha
@@ -950,7 +957,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         // matches the dynamically scaled player bounds.
         // 依然要等所有歌词都画完再统一模糊：模糊读的是「下方已有像素」，
         // 提前执行会漏掉后面几行的内容。
-        blurRects.forEach(Runnable::run);
+        if (blurRects != null) blurRects.forEach(Runnable::run);
         // The blur pass returns from a full-screen auxiliary framebuffer.
         // Re-enable the parent rounded-player clip before any later panel content is rendered.
         StencilClipManager.restoreActiveClip();
@@ -1076,6 +1083,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         // 飞行期间这张封面连同它的阴影一起让位，交给 CoverHeroTransition 在更外层画：
         // 不让位的话同一张封面会同时出现在两个位置。
         boolean heroOwnsCover = CoverHeroTransition.suppressPanelCover();
+        if (alpha <= .004f) return;
 
         if (!heroOwnsCover) {
             api.getGLStateManager().pushMatrix();
@@ -1265,6 +1273,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     private void renderBackground(double posX, double posY, double width, double height, float alpha, CloudMusic.PlaybackSnapshot snapshot) {
+        if (alpha <= .004f) return;
         TextureManager textureManager = TextureManager.getInstance();
         Music current = snapshot.music;
         Location musicCoverBlurred = current == null ? null : current.getBlurredCoverLocation();
@@ -1292,7 +1301,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                 try {
                     double bgSize = Math.max(width, height);
 
-                    if (prevBg != null && musicBgAlpha < 0.99f) {
+                    boolean skipPreviousCover = texBg != null
+                            && TransitionPerformanceBudget.skipLyricBackgroundCrossfade();
+                    if (skipPreviousCover) musicBgAlpha = 1.0f;
+                    if (prevBg != null && musicBgAlpha < 0.99f && !skipPreviousCover) {
                         int glTextureId = prevBg.getGlTextureId();
                         api.getGLStateManager().bindTexture(glTextureId);
                         prevBg.linearFilter();

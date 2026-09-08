@@ -522,8 +522,15 @@ final class FullscreenLyricStage {
      * {@link HudConfig#fullscreenGlowStrength}，与其它样式共用同一个滑块。
      * 光晕的形状与混合方式见 {@link TextGlow}。
      */
+    static boolean transitionFastPath() {
+        return CoverHeroTransition.isRunning() || PlayerIslandTransition.isRunning();
+    }
+
     static void drawGlow(CFontRenderer font, String text, double x, double y,
                          int rgb, double alpha, double strength) {
+        // 开合转场是掉帧敏感窗口。光晕包含多层 MaskFilter 绘制，转场期间先跳过；
+        // 动画结束后立即恢复，稳态观感不变。
+        if (transitionFastPath()) return;
         TextGlow.draw(font, text, x, y, rgb, alpha,
                 clamp01(HudConfig.fullscreenGlowStrength) * clamp01(strength),
                 HudConfig.lyricGlowSpread);

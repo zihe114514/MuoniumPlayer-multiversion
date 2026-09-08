@@ -12,6 +12,8 @@ import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.rendering.texture.DynamicTexture;
 import com.muoniumplayer.core.rendering.texture.ITextureObject;
+import com.muoniumplayer.core.screens.ncm.NCMScreen;
+import com.muoniumplayer.core.screens.ncm.TransitionPerformanceBudget;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.utils.Location;
@@ -31,6 +33,33 @@ import com.muoniumplayer.render.skija.SkijaGfx;
 public final class DownloadDynamicIsland implements SharedConstants, SharedRenderingConstants {
 
     private static final DownloadDynamicIsland INSTANCE = new DownloadDynamicIsland();
+
+    /** HUD 稳定后再预热播放器基础布局，避开客户端启动与首帧加载高峰。 */
+    /**
+     * Shared damped wave for the island impact. Both the live island and the compact anchor use it,
+     * so reopening during the rebound starts from exactly the shape on screen.
+     */
+    private static double absorbWave(double phase) {
+        return Math.exp(-4.1 * phase) * Math.sin(Math.PI * 2.85 * phase);
+    }
+
+    private static final int PLAYER_LAYOUT_PREWARM_DELAY_FRAMES = 45;
+    private static int hudFramesBeforePlayerPrewarm;
+    private static boolean playerLayoutPrewarmed;
+
+    /** Player surface owns the top-center area during the open/close morph. */
+    private static boolean playerSurfaceTransition;
+    /**
+     * The island's actual on-screen silhouette from the last HUD frame, already including
+     * configured scale, entry scale, visibility offset and the absorb rebound.
+     */
+    private static final double[] LIVE_ANCHOR_BOUNDS = {-1.0, -1.0, -1.0, -1.0, -1.0};
+    /** The player has reached the island anchor; apply the impact deformation now. */
+    private static boolean playerAbsorbImpact;
+    private static long playerAbsorbStartedAt;
+    /** Handoff islands must not replay the normal slide-from-above entrance. */
+    private static boolean suppressPlayerEntryAnimation;
+    private static final long PLAYER_ABSORB_FEEDBACK_MS = 430L;
     private static final double COMPACT_WIDTH = 40.0;
     private static final double COMPACT_HEIGHT = 16.0;
     private static final double TOP_MARGIN = 6.0;
@@ -180,7 +209,142 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     /** Render above the normal game HUD. */
     public static void render() {
+        TransitionPerformanceBudget.tick();
+        prewarmPlayerLayoutOnce();
         INSTANCE.renderInternal();
+    }
+
+    private static void prewarmPlayerLayoutOnce() {
+        if (playerLayoutPrewarmed) return;
+        if (++hudFramesBeforePlayerPrewarm < PLAYER_LAYOUT_PREWARM_DELAY_FRAMES) return;
+        playerLayoutPrewarmed = true;
+        try {
+            NCMScreen.prewarmLayout();
+        } catch (Throwable t) {
+            // 预热永远不允许影响 HUD；真正打开播放器时 initGui 仍会走完整布局。
+            System.err.println("[MuoniumPlayer] 播放器布局预热失败: " + t);
+        }
+    }
+
+    /**
+     * Called when the player begins expanding from the island.
+     *
+     * <p>The real island is intentionally suppressed while the player surface is morphing: drawing
+     * both would create two top-center surfaces. Its animation state is not reset, so a later close
+     * can hand the surface back without replaying the normal island entrance.</p>
+     */
+    public static void beginPlayerSurfaceTransition() {
+        playerSurfaceTransition = true;
+        playerAbsorbImpact = false;
+        playerAbsorbStartedAt = 0L;
+        suppressPlayerEntryAnimation = true;
+    }
+
+    /**
+     * Prepares the island as the closing player's landing target.
+     *
+     * <p>Visibility is set to one before the player reaches the anchor. The old behavior left it at
+     * zero, so the first frame after closing interpolated y from above the screen and looked like a
+     * second, unrelated entrance. Here the island is already at its top anchor and only waits for
+     * the surface handoff.</p>
+     */
+    public static void preparePlayerAbsorb() {
+        playerSurfaceTransition = true;
+        playerAbsorbImpact = false;
+        playerAbsorbStartedAt = 0L;
+        suppressPlayerEntryAnimation = true;
+        INSTANCE.visibility = HudConfig.dynamicIslandEnabled ? 1f : 0f;
+        INSTANCE.expansion = 0.0;
+        INSTANCE.contentAlpha = 0f;
+        INSTANCE.contentTransition = 0f;
+        INSTANCE.ambientBlend = HudConfig.dynamicIslandAlwaysOn ? 1f : 0f;
+        INSTANCE.animatedExpandedWidth = -1.0;
+        INSTANCE.animatedExpandedHeight = -1.0;
+        INSTANCE.shownAt = 0L;
+    }
+
+    /** Transfers the player surface to the island and starts the impact response. */
+    public static void beginPlayerAbsorbImpact() {
+        playerSurfaceTransition = false;
+        playerAbsorbImpact = true;
+        playerAbsorbStartedAt = System.currentTimeMillis();
+        suppressPlayerEntryAnimation = true;
+        INSTANCE.visibility = HudConfig.dynamicIslandEnabled ? 1f : 0f;
+    }
+
+    /** Cancels a handoff when the player is replaced by another screen before it finishes. */
+    public static void cancelPlayerSurfaceTransition() {
+        playerSurfaceTransition = false;
+        playerAbsorbImpact = false;
+        playerAbsorbStartedAt = 0L;
+        suppressPlayerEntryAnimation = false;
+    }
+
+    /**
+     * 返回当前样式的紧凑锚点：x、y、width、height、radius。
+     *
+     * <p>播放器展开动画只需要“岛在哪里、有多大”，不需要知道岛里现在显示的是下载、通知还是常驻
+     * 状态。这里按当前样式与用户缩放重新推一遍紧凑胶囊，和真实渲染使用同一组常量。</p>
+     */
+    public static double[] getAnchorBounds() {
+        DynamicIslandStyle style = getStyle();
+        double localWidth = style == DynamicIslandStyle.COMPACT ? 46.0
+                : (style == DynamicIslandStyle.MUSIC_FOCUS ? 48.0 : COMPACT_WIDTH);
+        double localHeight = style == DynamicIslandStyle.COMPACT ? 14.0 : COMPACT_HEIGHT;
+
+        // A reopen during the absorb rebound starts from the currently deformed pill instead of
+        // snapping back to the resting capsule. This mirrors the same wave used by drawIsland.
+        if (playerAbsorbImpact && playerAbsorbStartedAt > 0L) {
+            double phase = DynamicIslandMath.clamp01((System.currentTimeMillis() - playerAbsorbStartedAt)
+                    / (double) PLAYER_ABSORB_FEEDBACK_MS);
+            double wave = absorbWave(phase);
+            localWidth *= 1.0 + .28 * wave;
+            localHeight *= 1.0 - .36 * wave;
+        }
+
+        double configuredScale = DynamicIslandMath.clamp(HudConfig.dynamicIslandScale, .60, 1.35);
+        double width = localWidth * configuredScale;
+        double height = localHeight * configuredScale;
+        double localRadius = compactRadius(style, localHeight);
+        double centerX = RenderSystem.getWidth() * .5;
+        double x = centerX - width * .5;
+        double y = TOP_MARGIN;
+        return new double[]{x, y, width, height, localRadius * configuredScale};
+    }
+
+    /**
+     * Returns the island silhouette the user actually sees right now.
+     *
+     * <p>The theoretical compact pill is only a fallback. An always-on island is normally expanded
+     * while the player is invoked, so opening from {@link #getAnchorBounds()} made the resident
+     * island disappear and a smaller unrelated capsule appear. This live value includes the real
+     * layout, configured scale, entrance scale and current absorb deformation.</p>
+     */
+    public static double[] getLiveAnchorBounds() {
+        if (INSTANCE.visibility > .72
+                && LIVE_ANCHOR_BOUNDS[2] > 1.0 && LIVE_ANCHOR_BOUNDS[3] > 1.0) {
+            return LIVE_ANCHOR_BOUNDS.clone();
+        }
+        return getAnchorBounds();
+    }
+
+    /** The compact island's base color, used by the player morph at t=0. */
+    public static int getAnchorSurfaceColor() {
+        DynamicIslandStyle style = getStyle();
+        if (style == DynamicIslandStyle.GLASS) return NCMTheme.getAccentColor();
+        if (style == DynamicIslandStyle.CARD) return INSTANCE.hexColor(.028f, .034f, .046f, 1f);
+        if (style == DynamicIslandStyle.SYSTEM_CARD) return INSTANCE.hexColor(.025f, .031f, .043f, 1f);
+        if (style == DynamicIslandStyle.MUSIC_FOCUS) return INSTANCE.hexColor(.010f, .014f, .024f, 1f);
+        if (style == DynamicIslandStyle.LIQUID_GLASS) return INSTANCE.hexColor(.050f, .064f, .098f, 1f);
+        return INSTANCE.hexColor(.012f, .014f, .020f, 1f);
+    }
+
+    private static double compactRadius(DynamicIslandStyle style, double height) {
+        if (style == DynamicIslandStyle.SYSTEM_CARD) return Math.min(11.0, height * .25);
+        if (style == DynamicIslandStyle.MUSIC_FOCUS) return Math.min(14.0, height * .31);
+        if (style == DynamicIslandStyle.LIQUID_GLASS) return Math.min(16.0, height * .40);
+        if (style == DynamicIslandStyle.CARD) return Math.min(12.0, height * .30);
+        return height * .5;
     }
 
     /** A live-size preview used by the HUD editor even when no download is active. */
@@ -850,6 +1014,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     private void renderInternal() {
         long now = System.currentTimeMillis();
+        if (playerAbsorbImpact && now - playerAbsorbStartedAt >= PLAYER_ABSORB_FEEDBACK_MS) {
+            playerAbsorbImpact = false;
+            playerAbsorbStartedAt = 0L;
+            suppressPlayerEntryAnimation = false;
+        }
+        if (playerSurfaceTransition) return;
         advanceQueuedNotice(now);
         double rawProgress = DynamicIslandMath.clamp01(downloadProgress);
         boolean activeDownload = downloading;
@@ -884,7 +1054,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
         boolean enabled = HudConfig.dynamicIslandEnabled;
         boolean alwaysOn = enabled && HudConfig.dynamicIslandAlwaysOn
-                && IslandVisibilityGate.allowAmbient(scene);
+                && (IslandVisibilityGate.allowAmbient(scene) || playerAbsorbImpact);
         // 常驻内容按固定节拍采样：帧率和延迟每帧都在抖，直接跟帧读会让数字闪烁得没法看。
         if (alwaysOn) {
             if (ambientSampledAt <= 0L || now - ambientSampledAt >= IslandAmbientStatus.SAMPLE_INTERVAL_MILLIS) {
@@ -1029,6 +1199,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         IslandAmbientStatus.Snapshot ambient = ambientSnapshot;
         boolean shouldShow = IslandAmbientStatus.shouldShow(enabled, alwaysOn, activeDownload,
                 holdingCompletion, activeNotice);
+        // Even when the user does not use the always-on island, the closing player must land on
+        // something. Keep it visible through the impact, then let the normal visibility target hide it.
+        if (playerAbsorbImpact) shouldShow = enabled;
         // 常驻但三项内容全关时收成紧凑胶囊，而不是展开一张空白卡片。
         double expansionGoal = IslandAmbientStatus.expansionTarget(shouldShow, ambientMode, !ambient.isEmpty());
 
@@ -1168,17 +1341,21 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             ambientTargetWidth = ambientLayout.targetWidth;
             ambientTargetHeight = ambientLayout.targetHeight;
         }
-        // 常驻与通知的目标尺寸按混合度插值，切换时表面是一次连续变形，不会先塌再弹。
-        double blendedTargetWidth = DynamicIslandMath.lerp(layout.targetWidth, ambientTargetWidth, ambientMix);
-        double blendedTargetHeight = DynamicIslandMath.lerp(layout.targetHeight, ambientTargetHeight, ambientMix);
+        // Geometry follows one low-pass only. Blending the notice/ambient targets here and then
+        // animating toward that moving target created a cascaded lag: shortening content appeared
+        // to pause before both edges began moving inward. Content still cross-fades with
+        // ambientMix; the silhouette immediately tracks the active layout through one animation.
+        boolean ambientGeometry = hasAmbient && ambientMix >= .5f;
+        double targetExpandedWidth = ambientGeometry ? ambientTargetWidth : layout.targetWidth;
+        double targetExpandedHeight = ambientGeometry ? ambientTargetHeight : layout.targetHeight;
 
         double compactWidth = style == DynamicIslandStyle.COMPACT ? 46.0
                 : (style == DynamicIslandStyle.MUSIC_FOCUS ? 48.0 : COMPACT_WIDTH);
         double compactHeight = style == DynamicIslandStyle.COMPACT ? 14.0 : COMPACT_HEIGHT;
-        double expandedWidth = preview ? blendedTargetWidth
-                : animateExpandedDimension(animatedExpandedWidth, blendedTargetWidth, true);
-        double expandedHeight = preview ? blendedTargetHeight
-                : animateExpandedDimension(animatedExpandedHeight, blendedTargetHeight, false);
+        double expandedWidth = preview ? targetExpandedWidth
+                : animateExpandedDimension(animatedExpandedWidth, targetExpandedWidth);
+        double expandedHeight = preview ? targetExpandedHeight
+                : animateExpandedDimension(animatedExpandedHeight, targetExpandedHeight);
         if (!preview) {
             animatedExpandedWidth = expandedWidth;
             animatedExpandedHeight = expandedHeight;
@@ -1187,11 +1364,25 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         double width = DynamicIslandMath.lerp(compactWidth, expandedWidth, expansionValue);
         double height = DynamicIslandMath.lerp(compactHeight, expandedHeight, expansionValue);
         double centerX = screenWidth * .5;
+
+        // Apple-style impact: the incoming surface lands as a compact pill, which first squashes
+        // horizontally wide and vertically flat, then rebounds taller/narrower before settling.
+        double absorbGlow = 0.0;
+        if (playerAbsorbImpact && playerAbsorbStartedAt > 0L) {
+            double phase = DynamicIslandMath.clamp01((now - playerAbsorbStartedAt)
+                    / (double) PLAYER_ABSORB_FEEDBACK_MS);
+            double wave = absorbWave(phase);
+            width *= 1.0 + .28 * wave;
+            height *= 1.0 - .36 * wave;
+            absorbGlow = (1.0 - phase)
+                    * (.28 + .72 * Math.min(1.0, Math.abs(wave) * 1.8));
+        }
+
         double visibilityEase = DynamicIslandMath.smoothStep(alpha);
         double y = TOP_MARGIN - (height + 11.0) * (1.0 - visibilityEase);
 
         double entryScale = 1.0;
-        if (!preview && animationStart > 0L) {
+        if (!preview && animationStart > 0L && !suppressPlayerEntryAnimation) {
             double entranceDuration = DynamicIslandMath.clamp(HudConfig.dynamicIslandEntranceDuration,
                     160.0, 1200.0);
             double entryProgress = DynamicIslandMath.clamp01((now - animationStart) / entranceDuration);
@@ -1214,6 +1405,17 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 : (musicFocus ? Math.min(14.0, height * .31)
                 : (liquidGlass ? Math.min(16.0, height * .40)
                 : (style == DynamicIslandStyle.CARD ? Math.min(12.0, height * .30) : height * .5)));
+        // Record the exact post-transform silhouette. The player transition must start from this
+        // shape, not from a compact pill that does not match the currently resident island.
+        if (!preview) {
+            double renderedScale = configuredScale * entryScale;
+            double renderedCenterY = TOP_MARGIN + configuredScale * (y + height * .5 - TOP_MARGIN);
+            LIVE_ANCHOR_BOUNDS[0] = centerX - width * renderedScale * .5;
+            LIVE_ANCHOR_BOUNDS[1] = renderedCenterY - height * renderedScale * .5;
+            LIVE_ANCHOR_BOUNDS[2] = width * renderedScale;
+            LIVE_ANCHOR_BOUNDS[3] = height * renderedScale;
+            LIVE_ANCHOR_BOUNDS[4] = radius * renderedScale;
+        }
         int accentColor = NCMTheme.getAccentColor();
         int iconAccentColor = DynamicIslandMath.brightenAccent(accentColor, .30f);
 
@@ -1267,6 +1469,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             roundedRect(x, y, width, height, radius, hexColor(.012f, .014f, .020f, alpha * .985f));
             roundedOutline(x, y, width, height, radius, .65,
                     new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 20f)));
+        }
+        if (absorbGlow > .01) {
+            roundedOutline(x - 1.0, y - 1.0, width + 2.0, height + 2.0, radius + .7, .82,
+                    new Color(255, 255, 255, DynamicIslandMath.clamp255((float) (alpha * absorbGlow * 128f))));
+            roundedOutline(x - 1.8, y - 1.8, width + 3.6, height + 3.6, radius + 1.2, .62,
+                    new Color(RenderSystem.reAlpha(accentColor, (float) (alpha * absorbGlow * .52f)), true));
         }
         if (!systemCard && !musicFocus && !liquidGlass) {
             roundedRect(x + radius * .70, y + .8, Math.max(2.0, width - radius * 1.40), .75, .38,
@@ -1518,11 +1726,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         return new IslandLayout(layout.title, layout.value, layout.textScale,
                 layout.targetWidth, layout.targetHeight);
     }
-    private double animateExpandedDimension(double current, double target, boolean width) {
+    private double animateExpandedDimension(double current, double target) {
         if (current <= .0) return target;
-        // Expansion reacts a little faster than contraction; this reads as deliberate rather than
-        // as a layout jump when a notification changes from short to long or back again.
-        float speed = target > current ? (width ? .42f : .38f) : (width ? .24f : .22f);
+        // Width and height must use the same clock. Different rates made short content collapse
+        // into an awkward two-stage shape instead of one continuous centered contraction.
+        float speed = target > current ? .40f : .38f;
+        if (Math.abs(target - current) < .15) return target;
         return Interpolations.interpolate(current, target, speed);
     }
 

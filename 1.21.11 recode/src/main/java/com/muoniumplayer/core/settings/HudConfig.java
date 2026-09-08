@@ -33,8 +33,8 @@ public final class HudConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     /** Song information card: top-left corner. */
-    public static float infoX = 0.02f;
-    public static float infoY = 0.02f;
+    public static float infoX = 0.00f;
+    public static float infoY = 0.43429846f;
     public static float infoScale = 1.0f;
 
     /**
@@ -42,12 +42,12 @@ public final class HudConfig {
      * the mod-owned HUD configuration rather than relying on the external value
      * store, which may be recreated between Minecraft launches.
      */
-    public static float playerVolume = 0.10f;
+    public static float playerVolume = 1.00f;
 
     /** Lyrics: horizontally centered near the bottom. */
     public static float lyricX = 0.5f;
-    public static float lyricY = 0.85f;
-    public static float lyricScale = 1.0f;
+    public static float lyricY = 0.8688119f;
+    public static float lyricScale = 0.84999996f;
 
     /** Appearance controls exposed in {@code GuiHudEditor}. */
     public static int lyricColorRgb = 0xFFFFFFFF;
@@ -63,8 +63,8 @@ public final class HudConfig {
     /** Allows the viewport-edge fade to be disabled without changing its configured size. */
     public static boolean lyricEdgeFadeEnabled = true;
 
-    public static float currentLineScale = 1.04f;
-    public static float currentWordScale = 0.10f;
+    public static float currentLineScale = 1.0115517f;
+    public static float currentWordScale = 0.00f;
 
     /**
      * 当前行的发光强度，读数就是「唱到这个字时它有多亮」。
@@ -74,7 +74,7 @@ public final class HudConfig {
      * 折算出的 sigma 不到一个像素，从 0 拉到 1 肉眼没有区别，看得见的光其实全来自「晕染」。
      * 现在只留这一个强度，光晕铺多远交给 {@link #lyricGlowSpread}。</p>
      */
-    public static float currentGlowStrength = 0.62f;
+    public static float currentGlowStrength = 1.00f;
 
     /**
      * 歌词光晕的扩散倍率，1.0 是标定好的默认口径。
@@ -86,7 +86,7 @@ public final class HudConfig {
      * <p>调大它会同时把离屏合成的留白撑宽（{@code TextGlow.padding}），否则光晕会被纹理
      * 边界切成方块。</p>
      */
-    public static float lyricGlowSpread = 1.00f;
+    public static float lyricGlowSpread = 1.3181034f;
 
     /**
      * 全屏歌词页逐字发光的上限强度。
@@ -95,7 +95,7 @@ public final class HudConfig {
      * 这个上限。写成单独一个上限而不是复用 {@link #currentGlowStrength}，是因为后者同时
      * 作用于 OSD 桌面歌词的整行光晕，调大它会让桌面歌词一起过曝。</p>
      */
-    public static float fullscreenGlowStrength = 0.55f;
+    public static float fullscreenGlowStrength = 0.278481f;
 
     /**
      * 全屏歌词页的展示样式索引，对应 {@code FullscreenLyricStyle} 的序号。
@@ -111,7 +111,7 @@ public final class HudConfig {
      * <p>与 {@link #fullscreenLyricStyle} 同一套约定：存索引而不是枚举名，新样式只能往后追加。
      * 越界时渲染层退回经典样式。</p>
      */
-    public static int osdLyricStyle = 0;
+    public static int osdLyricStyle = 1;
 
     /** Blossom：卡片背后实时模糊的强度。0 完全不模糊，1 全量替换成模糊背景。 */
     public static float blossomBackdropBlur = 1.00f;
@@ -122,7 +122,7 @@ public final class HudConfig {
      * <p>出厂 0.31 是 mp 的原值。压得低才能透出背后的模糊——这一层的作用是压住背景的对比度
      * 让字读得清，而不是当一块实心板。</p>
      */
-    public static float blossomPanelOpacity = 0.31f;
+    public static float blossomPanelOpacity = 0.5258621f;
 
     /** Blossom：卡片里同时显示几行。为 1 时不滚动，当前行整块垂直居中。 */
     public static int blossomVisibleLines = 3;
@@ -163,7 +163,7 @@ public final class HudConfig {
      * <p>只影响背景装饰，歌词文字本身永远跟随主题强调色——否则自定义一个低饱和度的颜色就会把字
      * 一起弄糊。</p>
      */
-    public static int cadenzaDecorColorMode = 0;
+    public static int cadenzaDecorColorMode = 1;
 
     /**
      * 自定义调色板，长度恒为 {@link #CADENZA_PALETTE_SLOTS}，只有前 {@link #cadenzaDecorColorCount}
@@ -172,10 +172,10 @@ public final class HudConfig {
     public static int[] cadenzaDecorColors = CADENZA_DEFAULT_COLORS.clone();
 
     /** 调色板实际参与轮换的颜色个数，{@link #CADENZA_COLOR_COUNT_MIN}..{@link #CADENZA_PALETTE_SLOTS}。 */
-    public static int cadenzaDecorColorCount = 4;
+    public static int cadenzaDecorColorCount = 6;
 
     /** 打满这么多拍换下一个颜色。拍是实时包络数出来的，不是 BPM 推的。 */
-    public static int cadenzaBeatsPerColor = 4;
+    public static int cadenzaBeatsPerColor = 6;
 
     /**
      * 全屏歌词「文字 PV」样式的字号倍率。
@@ -186,7 +186,7 @@ public final class HudConfig {
      * <p>只作用于移植过来的那几套样式：「逐行滚动」有自己的整行/普通缩放滑块，「律动词云」是自动挑
      * 字号档位的（挑不到比最大档更大的档），硬接上来会出现「往大调没反应」，所以不接。</p>
      */
-    public static float lyricFontScale = 1.00f;
+    public static float lyricFontScale = 0.60f;
 
     // ---- 移植自 本项目 的各套「文字 PV」全屏歌词样式的可调参数 ----
     // 默认值取参考实现的 DEFAULT_*_TUNING，只有少数几项按本项目的视口尺寸重新标定（见各自注释）。
@@ -230,7 +230,7 @@ public final class HudConfig {
      * <p>内置头像取自参考实现的 folia-chan 素材（AI 生成，其 README 声明不受该仓库 AGPL 约束），
      * 重新压成一张 384×192 的 4×2 精灵图，8 个头像共 54 KB。</p>
      */
-    public static int cappellaAvatarSource = 2;
+    public static int cappellaAvatarSource = 0;
 
     /** 群唱：是否在歌词之间随机插入表情气泡。 */
     public static boolean cappellaEmojiEnabled = true;
@@ -241,7 +241,7 @@ public final class HudConfig {
      * <p>还有两道硬约束在渲染器里：相邻表情至少隔 2 条歌词，且一屏窗口里最多占 1/6。
      * 光靠概率会出现「连着刷五张」的情况，参考实现同样是概率 + 间隔 + 配额三件套。</p>
      */
-    public static float cappellaEmojiChance = 0.18f;
+    public static float cappellaEmojiChance = 0.45f;
 
     /** 倾诉：把一行拆成多段的概率系数。 */
     public static float tiltSplitProbability = 0.75f;
@@ -259,7 +259,7 @@ public final class HudConfig {
     public static boolean dioramaDust = true;
 
     /** 时计：弧半径占视口短边的比例。 */
-    public static float pendoloArcRadius = 0.42f;
+    public static float pendoloArcRadius = 0.41518986f;
 
     /** 时计：可见弧的张角，度。 */
     public static float pendoloArcAngle = 100.0f;
@@ -272,7 +272,7 @@ public final class HudConfig {
 
     // OSD KTV animation. These values are independent from the full-screen lyric renderer.
     public static float osdKaraokeTransitionWidth = 14.0f;
-    public static float osdKaraokePulseStrength = 0.06f;
+    public static float osdKaraokePulseStrength = 0.00f;
     public static float osdKaraokeSmoothing = 0.85f;
     /**
      * 桌面歌词里对唱两行的左右分列幅度。
@@ -290,9 +290,9 @@ public final class HudConfig {
     public static float normalOpacity = 0.48f;
     public static float normalScale = 0.94f;
     /** 非当前行的发光强度。口径与 {@link #currentGlowStrength} 完全相同，只是默认调得很淡。 */
-    public static float normalGlowStrength = 0.14f;
-    public static float normalLineSpacing = 10.0f;
-    public static float edgeFadeSize = 30.0f;
+    public static float normalGlowStrength = 0.1625f;
+    public static float normalLineSpacing = 8.965517f;
+    public static float edgeFadeSize = 53.448273f;
     public static float scrollSmoothness = 0.65f;
     public static float secondaryOpacity = 0.78f;
 
@@ -302,18 +302,18 @@ public final class HudConfig {
     /** Dynamic Island typography scale. Long content is reduced automatically before it is truncated. */
     public static float dynamicIslandTextScale = 1.0f;
     /** Preferred resting width. Long notices may animate wider to keep their complete text visible. */
-    public static float dynamicIslandMaxWidth = 250.0f;
+    public static float dynamicIslandMaxWidth = 280.68964f;
     /** Progress bar thickness in logical pixels. */
     public static float dynamicIslandProgressHeight = 1.35f;
     /** Seconds to keep the completed state visible before hiding. */
-    public static float dynamicIslandCompletionHoldSeconds = 1.80f;
+    public static float dynamicIslandCompletionHoldSeconds = 2.1120691f;
     /** When multiple notices are queued, seconds to show each queued notice. */
-    public static float dynamicIslandQueueIntervalSeconds = 1.00f;
+    public static float dynamicIslandQueueIntervalSeconds = 1.9698277f;
     /**
      * Visual preset for the global island: 0 pill, 1 glass, 2 compact, 3 card, 4 system card,
      * 5 music focus, 6 liquid glass.
      */
-    public static int dynamicIslandStyle = 0;
+    public static int dynamicIslandStyle = 2;
 
     // 灵动岛动画节奏。1.0 表示历史默认速度,数值越大越快;时长以毫秒计。
     /** 弹出/展开阶段的逼近速度倍率。 */
@@ -333,7 +333,7 @@ public final class HudConfig {
      * 常驻灵动岛。打开后即使没有下载和通知,灵动岛也留在屏幕顶部显示实时状态;
      * 通知到来时它只做内容交叉淡入,不会重播入场动画,排队机制与关闭常驻时完全一致。
      */
-    public static boolean dynamicIslandAlwaysOn = false;
+    public static boolean dynamicIslandAlwaysOn = true;
     /** 常驻时显示游戏帧率。 */
     public static boolean dynamicIslandAmbientFps = true;
     /** 常驻时显示服务器延迟。单机或未进服时显示 "--"。 */
@@ -376,7 +376,12 @@ public final class HudConfig {
      * 互相切换的按钮,点了之后这里会被记住,下次打开直接是选中的那一套。刻意不做成"新界面替换旧界面":
      * 经典界面把全部滑块平铺成一列,熟悉之后找某一项其实更快。</p>
      */
+    /** HUD 设置界面的选择：内置界面或 OneConfig。OneConfig 未安装时自动回退内置界面。 */
+    public static final String HUD_EDITOR_UI_BUILTIN = "builtin";
+    public static final String HUD_EDITOR_UI_ONECONFIG = "oneconfig";
+
     public static boolean hudEditorModernUi = true;
+    public static String hudEditorUi = HUD_EDITOR_UI_BUILTIN;
 
     /**
      * 现代 HUD 设置面板左上角的位置,归一化到「可摆放范围」的 0..1。
@@ -390,13 +395,13 @@ public final class HudConfig {
     public static float hudEditorPanelY = -1.0f;
 
     /**
-     * 播放器界面打开/关闭时那层整屏淡入淡出的速度倍率。1.0 = 历史默认速度,越大越快。
+     * 播放器界面打开/关闭时那层整屏淡入淡出的速度倍率。当前默认 3.0，1.0 = 历史速度，越大越快。
      *
      * <p>只作用于 {@code NCMScreen} 与 {@code CoverflowOverlay} 的整屏 alpha,也就是
      * "界面出现/消失"那一下。界面内部的面板、列表、封面等动画一律不受它影响——
      * 那些动画之间有既定的节奏关系,统一提速会让节奏走形,而这种走形肉眼很难定位。</p>
      */
-    public static float playerFadeSpeed = 1.0f;
+    public static float playerFadeSpeed = 3.0f;
 
     /**
      * 播放器界面内部「栏目切换」类过渡的速度倍率,越大越快。
@@ -405,18 +410,18 @@ public final class HudConfig {
      * 淡入缩放（{@code NCMScreen} 的 {@code alphaInterpolateSpeed}）与侧栏选中指示条的
      * 滑动（{@code NavigateBar} 的 leading/trailing 逼近系数）。</p>
      *
-     * <p>出厂默认 1.25 —— 比历史速度略快一档（用户反馈切换偏慢）；1.0 = 历史速度。
+     * <p>当前默认 3.0 —— 明显快于历史速度；1.25 是上一版默认，1.0 是历史速度。
      * 应用处的逼近系数最终钳在 .95 以下：指数逼近系数到 1 就是一帧到位,再大反而越过目标。</p>
      */
-    public static float playerUiSwitchSpeed = 1.25f;
+    public static float playerUiSwitchSpeed = 3.0f;
 
     private HudConfig() {
     }
 
     /** 把播放器界面的淡入淡出与切换动画速度恢复到默认。 */
     public static void resetPlayerAnimation() {
-        playerFadeSpeed = 1.0f;
-        playerUiSwitchSpeed = 1.25f;
+        playerFadeSpeed = 3.0f;
+        playerUiSwitchSpeed = 3.0f;
     }
 
     /** Restores only desktop-lyric appearance, leaving HUD positions untouched. */
@@ -427,23 +432,23 @@ public final class HudConfig {
         osdKaraokeEmphasisEnabled = true;
         normalLyricEffectsEnabled = true;
         lyricEdgeFadeEnabled = true;
-        currentLineScale = 1.04f;
-        currentWordScale = 0.10f;
-        currentGlowStrength = 0.62f;
-        lyricGlowSpread = 1.00f;
-        fullscreenGlowStrength = 0.55f;
+        currentLineScale = 1.0115517f;
+        currentWordScale = 0.00f;
+        currentGlowStrength = 1.00f;
+        lyricGlowSpread = 1.3181034f;
+        fullscreenGlowStrength = 0.278481f;
         fullscreenLyricStyle = 0;
-        osdLyricStyle = 0;
+        osdLyricStyle = 1;
         blossomBackdropBlur = 1.00f;
-        blossomPanelOpacity = 0.31f;
+        blossomPanelOpacity = 0.5258621f;
         blossomVisibleLines = 3;
         blossomRhythmBorder = true;
         blossomBorderStrength = 0.65f;
-        cadenzaDecorColorMode = 0;
+        cadenzaDecorColorMode = 1;
         cadenzaDecorColors = CADENZA_DEFAULT_COLORS.clone();
-        cadenzaDecorColorCount = 4;
-        cadenzaBeatsPerColor = 4;
-        lyricFontScale = 1.00f;
+        cadenzaDecorColorCount = 6;
+        cadenzaBeatsPerColor = 6;
+        lyricFontScale = 0.60f;
         luminousWordSpacing = 0.70f;
         luminousFloatAmount = 1.00f;
         luminousWordRotation = true;
@@ -455,27 +460,27 @@ public final class HudConfig {
         fumeHeroScale = 1.00f;
         fumeGeometricBackground = false;
         cappellaBubbleWidth = 0.72f;
-        cappellaAvatarSource = 2;
+        cappellaAvatarSource = 0;
         cappellaEmojiEnabled = true;
-        cappellaEmojiChance = 0.18f;
+        cappellaEmojiChance = 0.45f;
         tiltSplitProbability = 0.75f;
         tiltStyleProbability = 0.35f;
         tiltColorScheme = 0;
         dioramaDepthSpread = 1.00f;
         dioramaDust = true;
-        pendoloArcRadius = 0.42f;
+        pendoloArcRadius = 0.41518986f;
         pendoloArcAngle = 100.0f;
         pendoloActiveScale = 1.25f;
         pendoloGearDecor = true;
         osdKaraokeTransitionWidth = 14.0f;
-        osdKaraokePulseStrength = 0.06f;
+        osdKaraokePulseStrength = 0.00f;
         osdKaraokeSmoothing = 0.85f;
         osdDuetSpread = 0.55f;
         normalOpacity = 0.48f;
         normalScale = 0.94f;
-        normalGlowStrength = 0.14f;
-        normalLineSpacing = 10.0f;
-        edgeFadeSize = 30.0f;
+        normalGlowStrength = 0.1625f;
+        normalLineSpacing = 8.965517f;
+        edgeFadeSize = 53.448273f;
         scrollSmoothness = 0.65f;
         secondaryOpacity = 0.78f;
     }
@@ -485,18 +490,18 @@ public final class HudConfig {
         dynamicIslandEnabled = true;
         dynamicIslandScale = 0.88f;
         dynamicIslandTextScale = 1.0f;
-        dynamicIslandMaxWidth = 250.0f;
+        dynamicIslandMaxWidth = 280.68964f;
         dynamicIslandProgressHeight = 1.35f;
-        dynamicIslandCompletionHoldSeconds = 1.80f;
-        dynamicIslandQueueIntervalSeconds = 1.00f;
-        dynamicIslandStyle = 0;
+        dynamicIslandCompletionHoldSeconds = 2.1120691f;
+        dynamicIslandQueueIntervalSeconds = 1.9698277f;
+        dynamicIslandStyle = 2;
         dynamicIslandExpandSpeed = 1.0f;
         dynamicIslandCollapseSpeed = 1.0f;
         dynamicIslandContentSpeed = 1.0f;
         dynamicIslandEntranceDuration = 420.0f;
         dynamicIslandOvershoot = 1.0f;
         dynamicIslandSpinnerSpeed = 1.0f;
-        dynamicIslandAlwaysOn = false;
+        dynamicIslandAlwaysOn = true;
         dynamicIslandAmbientFps = true;
         dynamicIslandAmbientPing = true;
         dynamicIslandAmbientClock = true;
@@ -621,6 +626,9 @@ public final class HudConfig {
         playerFadeSpeed = clamp(getFloat(o, "playerFadeSpeed", playerFadeSpeed), 0.30f, 3.00f);
         playerUiSwitchSpeed = clamp(getFloat(o, "playerUiSwitchSpeed", playerUiSwitchSpeed), 0.30f, 3.00f);
         hudEditorModernUi = getBoolean(o, "hudEditorModernUi", hudEditorModernUi);
+        if (o.has("hudEditorUi") && o.get("hudEditorUi").isJsonPrimitive()) {
+            hudEditorUi = normalizeHudEditorUi(o.get("hudEditorUi").getAsString());
+        }
         hudEditorPanelX = clamp(getFloat(o, "hudEditorPanelX", hudEditorPanelX), -1.0f, 1.0f);
         hudEditorPanelY = clamp(getFloat(o, "hudEditorPanelY", hudEditorPanelY), -1.0f, 1.0f);
         dynamicIslandAmbientRotate = getBoolean(o, "dynamicIslandAmbientRotate", dynamicIslandAmbientRotate);
@@ -733,6 +741,7 @@ public final class HudConfig {
         o.addProperty("playerFadeSpeed", playerFadeSpeed);
         o.addProperty("playerUiSwitchSpeed", playerUiSwitchSpeed);
         o.addProperty("hudEditorModernUi", hudEditorModernUi);
+        o.addProperty("hudEditorUi", hudEditorUi);
         o.addProperty("hudEditorPanelX", hudEditorPanelX);
         o.addProperty("hudEditorPanelY", hudEditorPanelY);
         o.addProperty("dynamicIslandAmbientStatusSeconds", dynamicIslandAmbientStatusSeconds);
@@ -828,6 +837,11 @@ public final class HudConfig {
         } catch (Throwable ignored) {
             return def;
         }
+    }
+
+    private static String normalizeHudEditorUi(String value) {
+        return HUD_EDITOR_UI_ONECONFIG.equalsIgnoreCase(value)
+                ? HUD_EDITOR_UI_ONECONFIG : HUD_EDITOR_UI_BUILTIN;
     }
 
     private static boolean getBoolean(JsonObject o, String key, boolean def) {

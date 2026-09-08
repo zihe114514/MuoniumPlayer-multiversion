@@ -76,6 +76,9 @@ public final class UiFontLibrary {
 
     private static final Gson GSON = new Gson();
 
+    /** Preferred first-run system family; falls back to the bundled font when unavailable. */
+    private static final String DEFAULT_FONT_ID = "system:思源黑体";
+
     private static volatile State state = State.IDLE;
     /** 系统字体 + 外部字体，已按显示名排好序。内置那一项不在里面，界面单独列在最前。 */
     private static volatile List<UiFont> catalog = Collections.emptyList();
@@ -151,7 +154,12 @@ public final class UiFontLibrary {
         } catch (Throwable failure) {
             return;
         }
-        if (savedId == null || savedId.isEmpty() || UiFont.BUILTIN.getId().equals(savedId)) {
+        // No persisted choice means first run: try the preferred system family, but never fail
+        // startup if this machine does not have it. An explicit built-in choice stays built-in.
+        if (savedId == null || savedId.isEmpty()) {
+            savedId = DEFAULT_FONT_ID;
+        }
+        if (UiFont.BUILTIN.getId().equals(savedId)) {
             return;
         }
 

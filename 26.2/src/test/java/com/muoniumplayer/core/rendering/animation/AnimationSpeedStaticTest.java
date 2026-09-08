@@ -62,7 +62,7 @@ class AnimationSpeedStaticTest {
     }
 
     @Test
-    @DisplayName("倍率只乘在打开/关闭的整屏 alpha 上，每个界面各一处")
+    @DisplayName("倍率只作用于打开/关闭转场，每个界面各一处")
     void 倍率的作用点只有淡入淡出() throws IOException {
         for (String screen : new String[]{
                 "core/screens/ncm/NCMScreen.java",
@@ -77,11 +77,16 @@ class AnimationSpeedStaticTest {
                             + "打开/关闭的整屏 alpha；一旦蔓延到别的动画上，"
                             + "界面内部的节奏关系就会随用户拖动而走形");
 
-            // 必须落在整屏 alpha 那一句里：alpha = Interpolations.interpolate(alpha, closing ? ...)
-            String statement = code.substring(code.lastIndexOf("alpha =", at), at);
-            assertTrue(statement.contains("Interpolations.interpolate(alpha, closing"),
-                    screen + " 的 playerFadeSpeed 不在「打开/关闭整屏淡入淡出」那一句里："
-                            + statement.trim());
+            if (screen.endsWith("NCMScreen.java")) {
+                assertTrue(code.contains("PlayerIslandTransition.open(HudConfig.playerFadeSpeed)"),
+                        screen + " 的 playerFadeSpeed 必须传给 PlayerIslandTransition.open，"
+                                + "否则开关动画不受配置控制");
+            } else {
+                String statement = code.substring(code.lastIndexOf("alpha =", at), at);
+                assertTrue(statement.contains("Interpolations.interpolate(alpha, closing"),
+                        screen + " 的 playerFadeSpeed 不在整屏淡入淡出那一句里："
+                                + statement.trim());
+            }
         }
     }
 

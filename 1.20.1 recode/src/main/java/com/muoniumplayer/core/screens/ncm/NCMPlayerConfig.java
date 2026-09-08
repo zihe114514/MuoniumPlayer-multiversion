@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 
 import java.io.File;
+import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.Quality;
 import com.muoniumplayer.core.settings.ConfigPaths;
 import com.muoniumplayer.core.settings.JsonConfigStorage;
@@ -27,6 +28,8 @@ public final class NCMPlayerConfig {
 
     private static float playerScale = 1.0f;
     private static Quality audioQuality = Quality.LOSSLESS;
+    /** Music source selected in the player / onboarding. Persisted so it survives restarts. */
+    private static MusicPlatform musicSourcePlatform = MusicPlatform.NETEASE;
     /**
      * Opt-in only. When enabled, MuoniumPlayer submits a NetEase listening record
      * only after the local audio state has actually played for the required time.
@@ -50,10 +53,10 @@ public final class NCMPlayerConfig {
     /**
      * 全屏播放页封面下方那排标签用英文还是中文。
      *
-     * <p>默认英文。那排是音源 / 音质 / 歌词类型，"无损""逐字"这些词在 10 像素高的胶囊里
-     * 笔画会挤成一团，同样宽度的英文短词读得清得多；想看中文在 HUD 设置里一键切回。</p>
+     * <p>默认中文，与当前发行版的界面语言保持一致。那排是音源 / 音质 / 歌词类型；
+     * 英文短词在 10 像素高的胶囊里更易读，想切换可在 HUD 设置里调整。</p>
      */
-    private static boolean nowPlayingTagsInEnglish = true;
+    private static boolean nowPlayingTagsInEnglish = false;
     private static boolean loaded;
 
     private NCMPlayerConfig() {
@@ -88,6 +91,13 @@ public final class NCMPlayerConfig {
             if (object != null && object.has("nowPlayingTagsInEnglish")) {
                 nowPlayingTagsInEnglish = object.get("nowPlayingTagsInEnglish").getAsBoolean();
             }
+            if (object != null && object.has("musicSourcePlatform")) {
+                try {
+                    musicSourcePlatform = MusicPlatform.valueOf(object.get("musicSourcePlatform").getAsString());
+                } catch (Throwable ignored) {
+                    musicSourcePlatform = MusicPlatform.NETEASE;
+                }
+            }
         } catch (Throwable ignored) {
             playerScale = 1.0f;
         }
@@ -110,6 +120,17 @@ public final class NCMPlayerConfig {
     public static synchronized void setAudioQuality(Quality quality) {
         load();
         audioQuality = quality == null ? Quality.LOSSLESS : quality;
+        save();
+    }
+
+    public static synchronized MusicPlatform getMusicSourcePlatform() {
+        load();
+        return musicSourcePlatform == null ? MusicPlatform.NETEASE : musicSourcePlatform;
+    }
+
+    public static synchronized void setMusicSourcePlatform(MusicPlatform platform) {
+        load();
+        musicSourcePlatform = platform == null ? MusicPlatform.NETEASE : platform;
         save();
     }
 
@@ -194,6 +215,15 @@ public final class NCMPlayerConfig {
         return gigabytes <= 0 ? "不限制" : gigabytes + " GB";
     }
 
+    /** 外部配置 UI 直写缓存上限；非法值会被折到最近的合法档位。 */
+    public static synchronized void setMusicCacheLimitGigabytes(int gigabytes) {
+        load();
+        int normalized = gigabytes <= 0 ? 0 : normalizeCacheLimit(gigabytes);
+        if (musicCacheLimitGigabytes == normalized) return;
+        musicCacheLimitGigabytes = normalized;
+        save();
+    }
+
     /** 在 {@link #MUSIC_CACHE_LIMIT_OPTIONS} 之间循环，返回新档位。 */
     public static synchronized int cycleMusicCacheLimit() {
         load();
@@ -248,6 +278,14 @@ public final class NCMPlayerConfig {
         save();
     }
 
+    /** 外部配置 UI 直写标签语言。 */
+    public static synchronized void setNowPlayingTagsInEnglish(boolean enabled) {
+        load();
+        if (nowPlayingTagsInEnglish == enabled) return;
+        nowPlayingTagsInEnglish = enabled;
+        save();
+    }
+
     private static float normalize(float scale) {
         float clamped = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
         int steppedPercent = Math.round(clamped * 100.0f / 5.0f) * 5;
@@ -263,6 +301,7 @@ public final class NCMPlayerConfig {
         object.addProperty("neteaseListeningHistorySyncAsked", neteaseListeningHistorySyncAsked);
             object.addProperty("musicCacheLimitGigabytes", musicCacheLimitGigabytes);
             object.addProperty("nowPlayingTagsInEnglish", nowPlayingTagsInEnglish);
+            object.addProperty("musicSourcePlatform", getMusicSourcePlatform().name());
             JsonConfigStorage.writeObject(FILE, GSON, object);
 
         } catch (Throwable ignored) {

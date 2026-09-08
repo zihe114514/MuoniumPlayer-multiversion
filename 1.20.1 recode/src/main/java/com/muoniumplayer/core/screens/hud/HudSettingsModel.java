@@ -72,11 +72,21 @@ public final class HudSettingsModel {
         private final BooleanSupplier state;
         private final Runnable action;
         private final Supplier<String> value;
+        /** CHOICE 的可选文案；供 OneConfig 这类外部 UI 生成下拉框。 */
+        private final String[] choices;
+        /** CHOICE 的直写入口；没有时退化为循环点击。 */
+        private final Consumer<String> choiceSetter;
         public final ColorTarget colorTarget;
 
         private Entry(Kind kind, Supplier<String> label, String description, HudSetting setting,
                       BooleanSupplier state, Runnable action, Supplier<String> value,
                       ColorTarget colorTarget) {
+            this(kind, label, description, setting, state, action, value, colorTarget, null, null);
+        }
+
+        private Entry(Kind kind, Supplier<String> label, String description, HudSetting setting,
+                      BooleanSupplier state, Runnable action, Supplier<String> value,
+                      ColorTarget colorTarget, String[] choices, Consumer<String> choiceSetter) {
             this.kind = kind;
             this.label = label;
             this.description = description;
@@ -84,6 +94,8 @@ public final class HudSettingsModel {
             this.state = state;
             this.action = action;
             this.value = value;
+            this.choices = choices;
+            this.choiceSetter = choiceSetter;
             this.colorTarget = colorTarget;
         }
 
@@ -115,6 +127,23 @@ public final class HudSettingsModel {
             } catch (RuntimeException ignored) {
                 return "";
             }
+        }
+
+        /** CHOICE 的可选文案；非 CHOICE 或旧条目返回空数组。 */
+        public String[] getChoices() {
+            return choices == null ? new String[0] : choices.clone();
+        }
+
+        /** 外部 UI 直写 CHOICE；没有直写实现时沿用循环动作。 */
+        public void setChoice(String selected) {
+            if (choiceSetter != null) {
+                try {
+                    choiceSetter.accept(selected);
+                } catch (RuntimeException ignored) {
+                }
+                return;
+            }
+            activate();
         }
 
         /**
@@ -246,11 +275,17 @@ public final class HudSettingsModel {
 
     private static Entry choice(final String label, String description,
                                 Supplier<String> value, Runnable next) {
+        return choice(label, description, value, next, null, null);
+    }
+
+    private static Entry choice(final String label, String description,
+                                Supplier<String> value, Runnable next,
+                                String[] choices, Consumer<String> setter) {
         return new Entry(Kind.CHOICE, new Supplier<String>() {
             public String get() {
                 return label;
             }
-        }, description, null, null, next, value, ColorTarget.NONE);
+        }, description, null, null, next, value, ColorTarget.NONE, choices, setter);
     }
 
     private static Entry themeGrid() {
@@ -419,7 +454,7 @@ public final class HudSettingsModel {
                                                 BlossomLyricStyle.cycleStyle();
                                                 saveNow();
                                             }
-                                        }),
+                                        }, blossomStyleChoices(), HudSettingsModel::setBlossomStyle),
                                 slider(HudSetting.BLOSSOM_LINES, "Blossom 卡片里同时显示几行。为 1 行时不滚动，当前行整块居中。")),
                         new Group("毛玻璃卡片", HudSettingsIcons.SPARKLE,
                                 slider(HudSetting.BLOSSOM_BLUR, "卡片背后实时模糊的强度。归零就是一块普通的半透明底。"),
@@ -459,7 +494,7 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 DownloadDynamicIsland.cycleStyle();
                                             }
-                                        }),
+                                        }, islandStyleChoices(), HudSettingsModel::setIslandStyle),
                                 slider(HudSetting.DYNAMIC_ISLAND_SCALE, "整体大小。"),
                                 slider(HudSetting.DYNAMIC_ISLAND_TEXT_SCALE, "岛内文字的字号缩放。"),
                                 slider(HudSetting.DYNAMIC_ISLAND_MAX_WIDTH, "基础宽度。文案更长时仍会自动伸展。"),
@@ -585,7 +620,7 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 AutomixSettings.cycleOverlapSeconds();
                                             }
-                                        })),
+                                        }, overlapChoices(), HudSettingsModel::setOverlapChoice)),
                         new Group("衔接处理", HudSettingsIcons.SPARKLE,
                                 toggle("跳过前奏", "打开后新歌从主体进来，跳掉没内容的前奏；关掉则一律从第 0 秒淡入，也就是旧版的平滑切换。前奏位置照样会被分析，关掉不影响对拍。",
                                         new BooleanSupplier() {
@@ -661,7 +696,7 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 NCMPlayerConfig.toggleNowPlayingTagsInEnglish();
                                             }
-                                        }))),
+                                        }, tagLanguageChoices(), HudSettingsModel::setTagLanguage))),
 
                 new Category("存储", "已下载音频的磁盘占用与上限", 0xFFD8A657, HudSettingsIcons.STORAGE,
                         new Group("音频缓存", HudSettingsIcons.SWEEP,
@@ -676,7 +711,7 @@ public final class HudSettingsModel {
                                                 NCMPlayerConfig.cycleMusicCacheLimit();
                                                 MusicAudioCache.enforceLimitAsync();
                                             }
-                                        }),
+                                        }, cacheLimitChoices(), HudSettingsModel::setCacheLimit),
                                 action(new Supplier<String>() {
                                     public String get() {
                                         return cacheSweepLabel();
@@ -688,7 +723,11 @@ public final class HudSettingsModel {
                                             }
                                         }))),
 
-                new Category("播放器界面", "播放器窗口自身的切换动画", 0xFFE59AC8, HudSettingsIcons.NOTE,
+                new Category("播放器界面", "播放器窗口自身的动画节奏", 0xFFE59AC8, HudSettingsIcons.NOTE,
+                        new Group("开关动画", HudSettingsIcons.SPEED,
+                                slider(HudSetting.PLAYER_FADE_SPEED,
+                                        "按键打开与关闭播放器时，界面从灵动岛展开 / 收回的速度倍率。"
+                                        + "1.00 是默认速度，越大越快；只影响这一段。")),
                         new Group("切换动画", HudSettingsIcons.SPEED,
                                 slider(HudSetting.PLAYER_UI_SWITCH_SPEED,
                                         "左侧导航换栏目时内容页的淡入缩放与选中指示条滑动的快慢。"
@@ -705,7 +744,7 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 applyTheme(NCMTheme.next());
                                             }
-                                        }),
+                                        }, themeChoices(), HudSettingsModel::setThemeChoice),
                                 themeGrid())),
 
                 new Category("HUD 位置", "桌面上两块 HUD 的开关与摆放", 0xFF7FD4A0, HudSettingsIcons.MOVE,
@@ -766,6 +805,95 @@ public final class HudSettingsModel {
                 }
             }
         });
+    }
+
+    private static String[] blossomStyleChoices() {
+        return new String[] {"经典", "Blossom"};
+    }
+
+    private static void setBlossomStyle(String value) {
+        int style = "Blossom".equalsIgnoreCase(value) ? 1 : 0;
+        if (HudConfig.osdLyricStyle == style) return;
+        HudConfig.osdLyricStyle = style;
+        saveNow();
+    }
+
+    private static String[] islandStyleChoices() {
+        DownloadDynamicIsland.DynamicIslandStyle[] styles = DownloadDynamicIsland.DynamicIslandStyle.values();
+        String[] names = new String[styles.length];
+        for (int i = 0; i < styles.length; i++) names[i] = styles[i].getDisplayName();
+        return names;
+    }
+
+    private static void setIslandStyle(String value) {
+        for (DownloadDynamicIsland.DynamicIslandStyle style : DownloadDynamicIsland.DynamicIslandStyle.values()) {
+            if (style.getDisplayName().equals(value)) {
+                if (HudConfig.dynamicIslandStyle == style.ordinal()) return;
+                HudConfig.dynamicIslandStyle = style.ordinal();
+                saveNow();
+                return;
+            }
+        }
+    }
+
+    private static String[] overlapChoices() {
+        return new String[] {"1.5 秒", "2 秒", "3 秒", "4 秒", "6 秒", "8 秒", "10 秒"};
+    }
+
+    private static void setOverlapChoice(String value) {
+        if (value == null) return;
+        String normalized = value.replace("秒", "").trim();
+        try {
+            AutomixSettings.setOverlapSeconds(Float.parseFloat(normalized));
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private static String[] tagLanguageChoices() {
+        return new String[] {"中文", "English"};
+    }
+
+    private static void setTagLanguage(String value) {
+        NCMPlayerConfig.setNowPlayingTagsInEnglish("English".equalsIgnoreCase(value));
+    }
+
+    private static String[] cacheLimitChoices() {
+        int[] options = NCMPlayerConfig.MUSIC_CACHE_LIMIT_OPTIONS;
+        String[] labels = new String[options.length];
+        for (int i = 0; i < options.length; i++) {
+            labels[i] = options[i] <= 0 ? "不限制" : options[i] + " GB";
+        }
+        return labels;
+    }
+
+    private static void setCacheLimit(String value) {
+        if (value == null) return;
+        if (value.startsWith("不限制")) {
+            NCMPlayerConfig.setMusicCacheLimitGigabytes(0);
+            return;
+        }
+        try {
+            NCMPlayerConfig.setMusicCacheLimitGigabytes(
+                    Integer.parseInt(value.replace("GB", "").trim()));
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private static String[] themeChoices() {
+        NCMTheme.ThemePreset[] presets = NCMTheme.ThemePreset.values();
+        String[] names = new String[presets.length];
+        for (int i = 0; i < presets.length; i++) names[i] = presets[i].getDisplayName();
+        return names;
+    }
+
+    private static void setThemeChoice(String value) {
+        for (NCMTheme.ThemePreset preset : NCMTheme.ThemePreset.values()) {
+            if (preset.getDisplayName().equals(value)) {
+                NCMTheme.setCurrent(preset);
+                applyTheme(preset);
+                return;
+            }
+        }
     }
 
     private static void applyTheme(NCMTheme.ThemePreset preset) {
@@ -840,6 +968,7 @@ public final class HudSettingsModel {
                 return String.format("%.1f s", value);
             case DYNAMIC_ISLAND_ENTRANCE_DURATION:
                 return Math.round(value) + " ms";
+            case PLAYER_FADE_SPEED:
             case DYNAMIC_ISLAND_EXPAND_SPEED:
             case DYNAMIC_ISLAND_COLLAPSE_SPEED:
             case DYNAMIC_ISLAND_CONTENT_SPEED:

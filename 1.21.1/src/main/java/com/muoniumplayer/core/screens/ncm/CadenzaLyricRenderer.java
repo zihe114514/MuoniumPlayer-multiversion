@@ -397,8 +397,10 @@ final class CadenzaLyricRenderer implements FullscreenLyricRenderer,
         }
         try {
             float layerAlpha = (float) (alpha * opened);
-            decor.render(viewLeft, viewTop, viewWidth, viewHeight, elapsedSeconds,
-                    beatSmooth, PlaybackPulse.loudness(), layerAlpha);
+            if (!TransitionPerformanceBudget.skipStageDecorations()) {
+                decor.render(viewLeft, viewTop, viewWidth, viewHeight, elapsedSeconds,
+                        beatSmooth, PlaybackPulse.loudness(), layerAlpha);
+            }
 
             if (!outgoing.isEmpty()) {
                 double exitProgress = (now - exitStartNanos) / 1.0e9 / EXIT_SECONDS;
@@ -1116,6 +1118,7 @@ final class CadenzaLyricRenderer implements FullscreenLyricRenderer,
      * 光晕的形状与混合方式见 {@link TextGlow}。
      */
     private void drawGlow(Token token, double x, double y, double strength, float alpha) {
+        if (FullscreenLyricStage.transitionFastPath()) return;
         double limit = Math.max(0f, Math.min(1f, HudConfig.fullscreenGlowStrength));
         TextGlow.draw(token.font, token.text, x, y, token.color & 0xFFFFFF, alpha,
                 limit * clamp01(strength), HudConfig.lyricGlowSpread);
