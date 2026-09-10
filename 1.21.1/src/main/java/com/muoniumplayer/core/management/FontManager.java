@@ -72,6 +72,8 @@ public class FontManager extends AbstractManager {
      * 才不会在私有区码位上互相覆盖。</p>
      */
     public static CFontRenderer actionIcon34, actionIcon38;
+    /** YouTube play-button brand mark; generated separately to avoid private-use code collisions. */
+    public static CFontRenderer youtubeIcon24, youtubeIcon34;
     /** QQ Music brand icon font; deliberately separate from Fontello login glyphs. */
     public static CFontRenderer qqMusicIcon16, qqMusicIcon20;
     /** 与 {@link #musicBrand52} 配套：QQ 音乐的品牌字形在另一份字体里（music-brand-icons 没有 U+E888）。 */
@@ -275,6 +277,8 @@ public class FontManager extends AbstractManager {
         musicBrand16 = create(16, "music-brand-icons");
         musicBrand18 = create(18, "music-brand-icons");
         musicBrand52 = create(52, "music-brand-icons");
+        youtubeIcon24 = create(24, "youtube-icons");
+        youtubeIcon34 = create(34, "youtube-icons");
         qqMusicIcon16 = create(16, "qq-music-icons");
         // The QQ Music brand glyph has more internal whitespace than the NetEase glyph.
         // Use a dedicated larger renderer in the source switcher so both providers read at the same visual size.

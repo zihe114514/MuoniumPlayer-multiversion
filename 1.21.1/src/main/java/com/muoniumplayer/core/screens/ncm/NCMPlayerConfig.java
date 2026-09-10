@@ -27,6 +27,14 @@ public final class NCMPlayerConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private static float playerScale = 1.0f;
+    /**
+     * 播放器与播放器设置页是否按“物理游戏窗口尺寸”推导一套连续缩放。
+     *
+     * <p>默认开启：布局先换算到窗口坐标系，再由渲染层一次性变换回屏幕，
+     * 因此不随 Minecraft GUI Scale 的整数档位跳动。关闭则回到旧行为，
+     * 直接使用当前 GUI Scale 下的逻辑宽高。</p>
+     */
+    private static boolean windowAdaptiveScale = true;
     private static Quality audioQuality = Quality.LOSSLESS;
     /** Music source selected in the player / onboarding. Persisted so it survives restarts. */
     private static MusicPlatform musicSourcePlatform = MusicPlatform.NETEASE;
@@ -72,6 +80,9 @@ public final class NCMPlayerConfig {
             if (object != null && object.has("playerScale")) {
                 playerScale = normalize(object.get("playerScale").getAsFloat());
             }
+            if (object != null && object.has("windowAdaptiveScale")) {
+                windowAdaptiveScale = object.get("windowAdaptiveScale").getAsBoolean();
+            }
             if (object != null && object.has("audioQuality")) {
                 try {
                     audioQuality = Quality.valueOf(object.get("audioQuality").getAsString());
@@ -110,6 +121,23 @@ public final class NCMPlayerConfig {
 
     public static synchronized int getPlayerScalePercent() {
         return Math.round(getPlayerScale() * 100.0f);
+    }
+
+    public static synchronized boolean isWindowAdaptiveScaleEnabled() {
+        load();
+        return windowAdaptiveScale;
+    }
+
+    public static synchronized void setWindowAdaptiveScaleEnabled(boolean enabled) {
+        load();
+        if (windowAdaptiveScale == enabled) return;
+        windowAdaptiveScale = enabled;
+        save();
+    }
+
+    public static synchronized boolean toggleWindowAdaptiveScale() {
+        setWindowAdaptiveScaleEnabled(!windowAdaptiveScale);
+        return windowAdaptiveScale;
     }
 
     public static synchronized Quality getAudioQuality() {
@@ -296,6 +324,7 @@ public final class NCMPlayerConfig {
         try {
             JsonObject object = new JsonObject();
             object.addProperty("playerScale", playerScale);
+            object.addProperty("windowAdaptiveScale", windowAdaptiveScale);
             object.addProperty("audioQuality", getAudioQuality().name());
             object.addProperty("neteaseListeningHistorySyncEnabled", neteaseListeningHistorySyncEnabled);
         object.addProperty("neteaseListeningHistorySyncAsked", neteaseListeningHistorySyncAsked);

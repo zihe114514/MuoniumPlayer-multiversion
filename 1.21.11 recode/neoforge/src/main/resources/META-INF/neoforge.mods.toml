@@ -17,13 +17,23 @@ displayURL = "https://github.com/zihe114514/MuoniumPlayer"
 # 客户端专用：装到服务端上不需要、也不应该加载。
 [[dependencies.muonium]]
     modId = "neoforge"
+    mandatory = true
     type = "required"
-    versionRange = "[${neoforge_version},)"
+    versionRange = "[${neoforge_min_version},)"
+    ordering = "NONE"
+    side = "CLIENT"
+
+[[dependencies.muonium]]
+    modId = "kotlinforforge"
+    mandatory = true
+    type = "required"
+    versionRange = "[${kotlinforforge_version},)"
     ordering = "NONE"
     side = "CLIENT"
 
 [[dependencies.muonium]]
     modId = "minecraft"
+    mandatory = true
     type = "required"
     versionRange = "[${minecraft_version},)"
     ordering = "NONE"

@@ -9,6 +9,7 @@ import com.muoniumplayer.core.utils.other.WrappedInputStream;
 import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.Proxy;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
 import java.util.Map;
@@ -29,7 +30,7 @@ final class MusicDownloadService {
     }
 
     @SneakyThrows
-    static void downloadMusic(String playUrl, File music) {
+    static void downloadMusic(String playUrl, File music, Proxy proxy) {
         // Some CDNs reject anonymous requests (Bilibili answers 403 without a browser
         // User-Agent plus a bilibili Referer), so host-specific headers travel with the transfer.
         Map<String, String> streamHeaders = AudioStreamHeaders.forUrl(playUrl);
@@ -40,7 +41,7 @@ final class MusicDownloadService {
 
         try {
             InputStream stream = new WrappedInputStream(HttpUtils.get(playUrl, null, streamHeaders,
-                    STREAM_CONNECT_TIMEOUT_MILLIS, STREAM_READ_TIMEOUT_MILLIS),
+                    STREAM_CONNECT_TIMEOUT_MILLIS, STREAM_READ_TIMEOUT_MILLIS, proxy),
                     new WrappedInputStream.ProgressListener() {
                         com.muoniumplayer.core.utils.timing.Timer timer = new com.muoniumplayer.core.utils.timing.Timer();
 

@@ -10,7 +10,8 @@ import com.muoniumplayer.party.ui.PartyIcons;
 /** Music source page. Selection is applied immediately and persisted by the controller. */
 public final class SourceStep implements OnboardingStepView {
     private static final MusicPlatform[] PLATFORMS = {
-            MusicPlatform.NETEASE, MusicPlatform.QQ, MusicPlatform.KUGOU, MusicPlatform.GD
+            MusicPlatform.NETEASE, MusicPlatform.QQ, MusicPlatform.KUGOU,
+            MusicPlatform.YOUTUBE, MusicPlatform.BILIBILI, MusicPlatform.QISHUI, MusicPlatform.GD
     };
 
     @Override
@@ -47,8 +48,9 @@ public final class SourceStep implements OnboardingStepView {
             }
         }
 
-        OnboardingUi.drawText(FontManager.pf12, "GD 音乐台沿用现有的平台配置。",
-                x, y + 254, OnboardingUi.DIM);
+        double noteY = y + 94 + ((PLATFORMS.length + 1) / 2) * 66 + 16;
+        OnboardingUi.drawText(FontManager.pf12, "YouTube 与哔哩哔哩无需登录；汽水音乐支持抖音 App 扫码；GD 沿用现有配置。",
+                x, noteY, OnboardingUi.DIM);
     }
 
     @Override

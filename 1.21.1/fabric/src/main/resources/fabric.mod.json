@@ -27,6 +27,7 @@
   ],
   "accessWidener": "muoniumplayer.accesswidener",
   "depends": {
+    "fabric-language-kotlin": ">=${fabric_language_kotlin_version}",
     "fabricloader": ">=${loader_min_version}",
     "fabric-api": "*",
     "minecraft": "${minecraft_version}",

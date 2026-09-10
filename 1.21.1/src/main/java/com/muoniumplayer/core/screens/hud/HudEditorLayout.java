@@ -25,7 +25,7 @@ final class HudEditorLayout {
         // 共 8 行等高控件。
         if (islandExpanded) contentHeight += colorRowHeight * 8 + islandSliderCount * sliderRowHeight;
         // 播放器分组：只有开关动画速度一个滑块。
-        if (playerExpanded) contentHeight += playerSliderCount * sliderRowHeight;
+        if (playerExpanded) contentHeight += colorRowHeight + playerSliderCount * sliderRowHeight;
         if (coverExpanded) contentHeight += colorRowHeight;
         // 无缝切换分组：总开关、重叠时长、跳过前奏、小节对齐、低频交换、去人声淡入、节奏锁定、
         // 音高跳跃，共 8 行等高控件。

@@ -336,6 +336,17 @@ public final class HudSettingsModel {
         }
     }
 
+    /** Keep the legacy module wrapper's dimension values aligned with the persisted viewport. */
+    public static void syncLyricViewportModuleValues() {
+        try {
+            MusicLyricsWidget lyrics = MuoniumPlayerExtension.getInstance().musicLyrics;
+            lyrics.width.setValue((double) HudConfig.lyricWidth);
+            lyrics.height.setValue((double) HudConfig.lyricHeight);
+        } catch (Throwable ignored) {
+            // The widget is not required for rendering; HudConfig remains authoritative.
+        }
+    }
+
     /** 模块面板里的 {@code Animated Cover} 只是同一状态的另一处显示，改完要立刻跟上。 */
     public static void syncAnimatedCoverModuleValue() {
         try {
@@ -354,6 +365,9 @@ public final class HudSettingsModel {
         HudConfig.lyricX = 0.5f;
         HudConfig.lyricY = 0.85f;
         HudConfig.lyricScale = 1.0f;
+        HudConfig.lyricWidth = 450.0f;
+        HudConfig.lyricHeight = 120.0f;
+        syncLyricViewportModuleValues();
         saveNow();
     }
 
@@ -443,6 +457,9 @@ public final class HudSettingsModel {
                                 slider(HudSetting.SECONDARY_OPACITY, "译文/音译那一行的不透明度。"))),
 
                 new Category("桌面面板", "桌面歌词的整体样式与毛玻璃卡片", 0xFFE087C0, HudSettingsIcons.CAPTION,
+                        new Group("大小与换行", HudSettingsIcons.RULER,
+                                slider(HudSetting.OSD_WIDTH, "桌面歌词视口的基础宽度。超出这一宽度的原文、译文和逐字歌词都会自动换行。"),
+                                slider(HudSetting.OSD_HEIGHT, "桌面歌词视口的基础高度。对唱或长行换行后放不下时会优先保留原文。")),
                         new Group("样式", HudSettingsIcons.PALETTE,
                                 choice("桌面歌词样式", "在「经典」与「Blossom」之间切换。Blossom 是 modernMP 那套毛玻璃卡片：面板自带背景模糊，滚动走弹簧级联，逐字扫光而不画光晕。",
                                         new Supplier<String>() {
@@ -581,6 +598,11 @@ public final class HudSettingsModel {
                                 slider(HudSetting.DYNAMIC_ISLAND_SPINNER_SPEED, "加载转子的转速倍率。"))),
 
                 new Category("播放器", "播放器窗口自身的动画节奏", 0xFFFF8FB1, HudSettingsIcons.NOTE,
+                        new Group("窗口缩放", HudSettingsIcons.RULER,
+                                toggle("窗口自适应缩放",
+                                        "按物理游戏窗口尺寸计算连续缩放，播放器大小不随 GUI Scale 整数档位跳动；关闭后跟随游戏内 GUI 缩放。",
+                                        NCMPlayerConfig::isWindowAdaptiveScaleEnabled,
+                                        NCMPlayerConfig::toggleWindowAdaptiveScale)),
                         new Group("开关动画", HudSettingsIcons.SPEED,
                                 slider(HudSetting.PLAYER_FADE_SPEED,
                                         "按键打开与关闭播放器时那段淡入淡出的速度倍率，1.00× 是默认速度，"
@@ -712,7 +734,7 @@ public final class HudSettingsModel {
                 new Category("存储", "已下载音频的磁盘占用与上限", 0xFFD8A657, HudSettingsIcons.STORAGE,
                         new Group("音频缓存", HudSettingsIcons.SWEEP,
                                 choice("缓存上限",
-                                        "MusicCache 目录最多占多少磁盘。超出后从最久没听的歌开始整首删除，正在播放与预备播放的歌不会被删。",
+                                        "音频缓存目录（config/muonium/cache/music）最多占多少磁盘。超出后从最久没听的歌开始整首删除，正在播放与预备播放的歌不会被删。",
                                         new Supplier<String>() {
                                             public String get() {
                                                 return NCMPlayerConfig.getMusicCacheLimitLabel();

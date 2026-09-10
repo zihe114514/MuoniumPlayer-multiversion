@@ -22,6 +22,7 @@ import com.muoniumplayer.core.screens.ncm.LyricLine;
 import com.muoniumplayer.core.screens.ncm.LyricParser;
 import com.muoniumplayer.core.screens.ncm.MusicLyricsPanel;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
+import com.muoniumplayer.core.settings.ConfigPaths;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.widget.impl.MusicLyricsWidget;
 import com.muoniumplayer.core.utils.Location;
@@ -150,7 +151,7 @@ public class CloudMusic implements SharedConstants {
     public static boolean hasRomanization = false;
     public static boolean haveNoWords = false;
 
-    public static final File COOKIE_FILE = new File("NCMCookie.txt");
+    public static final File COOKIE_FILE = ConfigPaths.NETEASE_COOKIE;
 
     @SneakyThrows
     public static void initNCM() {
@@ -300,6 +301,10 @@ public class CloudMusic implements SharedConstants {
 
     @SneakyThrows
     public static void onStop() {
+        File parent = COOKIE_FILE.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory()) {
+            throw new IOException("Unable to create MuoniumPlayer config directory: " + parent.getAbsolutePath());
+        }
         Files.write(COOKIE_FILE.toPath(), OptionsUtil.getCookie().getBytes(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
     }
 
@@ -1654,7 +1659,7 @@ public class CloudMusic implements SharedConstants {
          * cache extension must follow the downloaded bytes rather than the reported URL type.
          */
         private File getCachedOrTempFile(String playUrl, String type, Music song) {
-            File musicCacheDir = new File("MusicCache");
+            File musicCacheDir = MusicAudioCache.directory();
             if (!musicCacheDir.exists() && !musicCacheDir.mkdirs()) {
                 throw new IllegalStateException("Unable to create music cache directory: " + musicCacheDir.getAbsolutePath());
             }
@@ -1674,7 +1679,16 @@ public class CloudMusic implements SharedConstants {
                 throw new IllegalStateException("Unable to replace incomplete music download: " + temporaryMusic.getName());
             }
 
-            downloadMusic(playUrl, temporaryMusic);
+            downloadMusic(playUrl, temporaryMusic, song);
+            if (song != null && song.isQishui() && !song.getQishuiPlayAuth().isEmpty()) {
+                try {
+                    QishuiMusicService.decryptDownloadedAudio(temporaryMusic, song.getQishuiPlayAuth());
+                } catch (java.io.IOException error) {
+                    throw new IllegalStateException("Unable to decrypt Qishui audio", error);
+                } finally {
+                    song.clearQishuiPlayAuth();
+                }
+            }
             if (!temporaryMusic.isFile() || temporaryMusic.length() < 4L) {
                 throw new IllegalStateException("music download failed or was interrupted: " + temporaryMusic.getName());
             }
@@ -1743,7 +1757,7 @@ public class CloudMusic implements SharedConstants {
                 if (!AudioCacheFiles.isReusableDecodedWav(sourceFile, decodedFile)) {
                     throw new IOException("Decoded AAC cache is invalid: " + sourceFile.getName());
                 }
-            } catch (Exception exception) {
+            } catch (Throwable exception) {
                 DownloadDynamicIsland.cancelTranscode();
                 if (decodedFile.exists()) {
                     decodedFile.delete();
@@ -2636,8 +2650,10 @@ public class CloudMusic implements SharedConstants {
     }
 
 
-    private static void downloadMusic(String playUrl, File music) {
-        MusicDownloadService.downloadMusic(playUrl, music);
+    private static void downloadMusic(String playUrl, File music, Music song) {
+        // 只有 YouTube 曲目读取 YouTubeProxySettings；按曲目来源分流，避免按 URL 猜域名。
+        MusicDownloadService.downloadMusic(playUrl, music,
+                song != null && song.isYouTube() ? YouTubeProxySettings.createHttpProxy() : null);
     }
 
     public static void writeTo(InputStream src, OutputStream dest) {

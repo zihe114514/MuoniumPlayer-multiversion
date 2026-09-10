@@ -13,6 +13,9 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.Quality;
+import com.muoniumplayer.core.ncm.music.BilibiliMusicService;
+import com.muoniumplayer.core.ncm.music.QishuiMusicService;
+import com.muoniumplayer.core.ncm.music.YouTubeMusicService;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.Tuple;
 
@@ -163,6 +166,9 @@ public class Music {
     /** Actual stream quality resolved for the current playback request. */
     private transient volatile PlaybackQuality playbackQuality = PlaybackQuality.UNKNOWN;
 
+    /** 汽水登录流返回的一次性 play_auth；只在解析到下载完成之间使用，不写配置。 */
+    private transient volatile String qishuiPlayAuth = "";
+
     /**
      * Gson may allocate this DTO without running field initializers when it decodes
      * the immutable NetEase response model. Keep the render-facing state non-null
@@ -175,6 +181,19 @@ public class Music {
             return PlaybackQuality.UNKNOWN;
         }
         return current;
+    }
+
+    public String getQishuiPlayAuth() {
+        String current = qishuiPlayAuth;
+        return current == null ? "" : current;
+    }
+
+    public void setQishuiPlayAuth(String value) {
+        qishuiPlayAuth = nonNull(value);
+    }
+
+    public void clearQishuiPlayAuth() {
+        qishuiPlayAuth = "";
     }
 
     public enum PlaybackQuality {
@@ -339,6 +358,100 @@ public class Music {
         return music;
     }
 
+    /** Builds a YouTube search result. YouTube video ids are stable and become the source key. */
+    public static Music fromYouTubeMusicTrack(YouTubeMusicService.Track track) {
+        if (track == null) return null;
+        String videoId = nonNull(track.videoId);
+        long stableId = stableLong("youtube:" + videoId);
+
+        List<Artist> artistList = new ArrayList<>();
+        String artist = nonNull(track.artist);
+        if (!artist.trim().isEmpty()) {
+            artistList.add(new Artist(stableLong("youtube:artist:" + artist), artist.trim(),
+                    Collections.emptyList(), Collections.emptyList()));
+        } else {
+            artistList.add(new Artist(0L, "Unknown", Collections.emptyList(), Collections.emptyList()));
+        }
+
+        String cover = nonNull(track.coverUrl);
+        // Compact YouTube search results do not carry album metadata. Keep it empty instead of
+        // presenting the channel name as a fake album in the full-screen track details.
+        Album album = new Album(stableLong("youtube:album:" + videoId), "", cover,
+                Collections.emptyList());
+        Music music = new Music(nonNull(track.title), nonNull(track.title), "", stableId,
+                artistList, Collections.emptyList(), album, track.durationMillis, 0L, 0L,
+                Collections.emptyList());
+        music.source = MusicPlatform.YOUTUBE;
+        music.sourceId = videoId;
+        music.sourceMid = videoId;
+        music.externalCoverUrl = cover;
+        return music;
+    }
+
+    /** Builds a Qishui Music search result. Qishui track ids are globally stable. */
+    public static Music fromQishuiTrack(QishuiMusicService.Track track) {
+        if (track == null) return null;
+        String trackId = nonNull(track.trackId);
+        long stableId = stableLong("qishui:" + trackId);
+
+        List<Artist> artistList = new ArrayList<>();
+        String artist = nonNull(track.artist);
+        if (!artist.trim().isEmpty()) {
+            for (String artistName : artist.split("\\s*/\\s*")) {
+                if (artistName.trim().isEmpty()) continue;
+                artistList.add(new Artist(stableLong("qishui:artist:" + artistName), artistName.trim(),
+                        Collections.emptyList(), Collections.emptyList()));
+            }
+        }
+        if (artistList.isEmpty()) {
+            artistList.add(new Artist(0L, "Unknown", Collections.emptyList(), Collections.emptyList()));
+        }
+
+        String albumName = nonNull(track.album);
+        String cover = nonNull(track.coverUrl);
+        Album album = new Album(stableLong("qishui:album:" + albumName), albumName, cover,
+                Collections.emptyList());
+        Music music = new Music(nonNull(track.title), nonNull(track.title), "", stableId,
+                artistList, Collections.emptyList(), album, track.durationMillis, 0L, 0L,
+                Collections.emptyList());
+        music.source = MusicPlatform.QISHUI;
+        music.sourceId = trackId;
+        music.sourceMid = trackId;
+        music.externalCoverUrl = cover;
+        music.vip = track.vip;
+        return music;
+    }
+
+    /** Builds a Bilibili search result. The BVID plus page number is the stable source key. */
+    public static Music fromBilibiliTrack(BilibiliMusicService.Track track) {
+        if (track == null) return null;
+        String bvid = nonNull(track.bvid);
+        int page = Math.max(1, track.page);
+        String sourceKey = BilibiliMusicService.sourceKey(bvid, page);
+        long stableId = stableLong("bilibili:" + sourceKey);
+
+        List<Artist> artistList = new ArrayList<>();
+        String artist = nonNull(track.artist);
+        if (!artist.trim().isEmpty()) {
+            artistList.add(new Artist(stableLong("bilibili:artist:" + artist), artist.trim(),
+                    Collections.emptyList(), Collections.emptyList()));
+        } else {
+            artistList.add(new Artist(0L, "Unknown", Collections.emptyList(), Collections.emptyList()));
+        }
+
+        String cover = nonNull(track.coverUrl);
+        Album album = new Album(stableLong("bilibili:album:" + sourceKey), "", cover,
+                Collections.emptyList());
+        Music music = new Music(nonNull(track.title), nonNull(track.title), "", stableId,
+                artistList, Collections.emptyList(), album, track.durationMillis, 0L, 0L,
+                Collections.emptyList());
+        music.source = MusicPlatform.BILIBILI;
+        music.sourceId = sourceKey;
+        music.sourceMid = bvid;
+        music.externalCoverUrl = cover;
+        return music;
+    }
+
     /**
      * 由酷狗曲目构造一首 {@link Music}。
      *
@@ -487,6 +600,18 @@ public class Music {
         return getSource() == MusicPlatform.GD;
     }
 
+    public boolean isYouTube() {
+        return getSource() == MusicPlatform.YOUTUBE;
+    }
+
+    public boolean isBilibili() {
+        return getSource() == MusicPlatform.BILIBILI;
+    }
+
+    public boolean isQishui() {
+        return getSource() == MusicPlatform.QISHUI;
+    }
+
     public boolean isKuGou() {
         return getSource() == MusicPlatform.KUGOU;
     }
@@ -563,8 +688,8 @@ public class Music {
             String resolved = com.muoniumplayer.core.ncm.kugou.KuGouMusicApi.cover(template, size);
             return (resolved.isEmpty() ? base : resolved).replace("http://", "https://");
         }
-        if (isQQ() || isGd()) {
-            // QQ/GD 封面 URL 已带平台尺寸，避免追加网易云专用 param 导致 404。
+        if (isQQ() || isGd() || isYouTube() || isBilibili() || isQishui()) {
+            // 这些平台的封面 URL 已带尺寸或模板，避免追加网易云专用 param 导致 404。
             return base.replace("http://", "https://");
         }
         return base + "?param=" + size + "y" + size;
@@ -616,6 +741,15 @@ public class Music {
         Tuple<String, String> custom = resolveLxSource();
         if (custom != null) return custom;
 
+        if (isYouTube()) {
+            return resolveYouTubePlayUrl();
+        }
+        if (isBilibili()) {
+            return resolveBilibiliPlayUrl();
+        }
+        if (isQishui()) {
+            return resolveQishuiPlayUrl();
+        }
         if (isGd()) {
             return resolveGdPlayUrl();
         }
@@ -775,6 +909,61 @@ public class Music {
     /** 官方链路取不到流，且「音乐是否可用」也判定为不可用。 */
     public boolean isGreyDetected() {
         return greyDetected;
+    }
+
+    /**
+     * Resolves a YouTube audio stream. YouTube only exposes lossy audio here; the resolved
+     * quality badge therefore intentionally remains standard/HQ instead of claiming lossless.
+     */
+    private Tuple<String, String> resolveYouTubePlayUrl() {
+        final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
+        return resolveWithTimeout(new Callable<Tuple<String, String>>() {
+            @Override
+            public Tuple<String, String> call() {
+                YouTubeMusicService.ResolveResult result =
+                        YouTubeMusicService.getSongUrl(getSourceId(), requestedQuality);
+                if (result == null) return null;
+                playbackQuality = detectCadencePlaybackQuality(result.format, requestedQuality);
+                considerHighestQuality(result.format, 0L);
+                return new Tuple<>(result.url, result.format);
+            }
+        }, "YouTube Music", GD_PLAY_URL_RESOLVE_TIMEOUT_SECONDS);
+    }
+
+    /**
+     * Resolves Bilibili's audio-only DASH stream. The service prefers AAC-LC because the
+     * bundled JAAD decoder handles it reliably; fragmented MP4 then flows through the
+     * existing AAC decode cache pipeline.
+     */
+    private Tuple<String, String> resolveQishuiPlayUrl() {
+        final Quality requestedQuality = CloudMusic.quality == null ? Quality.STANDARD : CloudMusic.quality;
+        return resolveWithTimeout(new Callable<Tuple<String, String>>() {
+            @Override
+            public Tuple<String, String> call() {
+                QishuiMusicService.ResolveResult result =
+                        QishuiMusicService.getSongUrl(getSourceId(), requestedQuality);
+                if (result == null) return null;
+                setQishuiPlayAuth(result.playAuth);
+                playbackQuality = detectCadencePlaybackQuality(result.format, requestedQuality);
+                considerHighestQuality(result.format, result.bitrate);
+                return new Tuple<>(result.url, result.format);
+            }
+        }, "Qishui Music", GD_PLAY_URL_RESOLVE_TIMEOUT_SECONDS);
+    }
+
+    private Tuple<String, String> resolveBilibiliPlayUrl() {
+        final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
+        return resolveWithTimeout(new Callable<Tuple<String, String>>() {
+            @Override
+            public Tuple<String, String> call() {
+                BilibiliMusicService.ResolveResult result =
+                        BilibiliMusicService.getSongUrl(getSourceId(), requestedQuality);
+                if (result == null) return null;
+                playbackQuality = detectCadencePlaybackQuality(result.format, requestedQuality);
+                considerHighestQuality(result.format, 0L);
+                return new Tuple<>(result.url, result.format);
+            }
+        }, "Bilibili", GD_PLAY_URL_RESOLVE_TIMEOUT_SECONDS);
     }
 
     /**

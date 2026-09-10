@@ -46,7 +46,7 @@ compileOnly 'org.jetbrains:annotations:20.1.0'
 ### 1.2 保留的保险机制
 
 `SkijaNatives` 实现了两条加载路径：默认路径失败时，自己从 classpath 解出
-`skija.dll` + `icudtl.dat` + `skija.version` 到 `<user.dir>/muonium-skija/<version>/`
+`skija.dll` + `icudtl.dat` + `skija.version` 到 `config/muonium/native/skija/<version>/`
 再用 `-Dskija.library.path` 指给 Skija。实测默认路径可用，但这条保险要留着——
 打成正式 jar（而不是 Loom 的开发类路径）之后 `ResourceFinder` 的行为可能变化，
 到时候不用重新研究，日志里的「方式=」会直接说明走了哪条。

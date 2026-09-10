@@ -12,6 +12,7 @@ import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.ncm.music.NeteaseSearchSuggestService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
@@ -40,6 +41,7 @@ import com.muoniumplayer.party.ui.PartyIcons;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
@@ -208,9 +210,12 @@ public class NavigateBar extends NCMPanel {
         searchBar.addChild(searchTypeToggle);
         searchTypeToggle.setShouldOverrideMouseCursor(true);
         searchTypeToggle.setBeforeRenderCallback(() -> {
-            boolean netease = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.NETEASE;
-            searchTypeToggle.setHidden(!netease);
-            searchTypeToggle.setClickable(netease);
+            MusicPlatform currentPlatform = NeteaseMusicService.getCurrentPlatform();
+            boolean supportsPlaylistSearch = currentPlatform == MusicPlatform.NETEASE
+                    || currentPlatform == MusicPlatform.KUGOU
+                    || currentPlatform == MusicPlatform.QISHUI;
+            searchTypeToggle.setHidden(!supportsPlaylistSearch);
+            searchTypeToggle.setClickable(supportsPlaylistSearch);
             searchTypeToggle.setBounds(32, 13);
             searchTypeToggle.setPosition(Math.max(0, searchBar.getWidth() - searchTypeToggle.getWidth() - 2), 1.5);
             searchTypeToggle.setRadius(3);
@@ -222,7 +227,10 @@ public class NavigateBar extends NCMPanel {
                     : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
         });
         searchTypeToggle.setOnClickCallback((x, y, button) -> {
-            if (button != 0 || NeteaseMusicService.getCurrentPlatform() != MusicPlatform.NETEASE) {
+            MusicPlatform togglePlatform = NeteaseMusicService.getCurrentPlatform();
+            if (button != 0 || (togglePlatform != MusicPlatform.NETEASE
+                    && togglePlatform != MusicPlatform.KUGOU
+                    && togglePlatform != MusicPlatform.QISHUI)) {
                 return false;
             }
             playlistSearchMode = !playlistSearchMode;
@@ -283,7 +291,9 @@ public class NavigateBar extends NCMPanel {
             searchField.drawUnderline(false);
             searchField.setMargin(2);
             double xSpacing = lblSearchIcon.getRelativeX() + lblSearchIcon.getWidth() + 4;
-            double typeToggleReserve = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.NETEASE ? 36.0 : 0.0;
+            MusicPlatform reservePlatform = NeteaseMusicService.getCurrentPlatform();
+            double typeToggleReserve = (reservePlatform == MusicPlatform.NETEASE
+                    || reservePlatform == MusicPlatform.KUGOU) ? 36.0 : 0.0;
             searchField.setBounds(xSpacing, searchField.getRelativeY(),
                     Math.max(1.0, searchBar.getWidth() - xSpacing - typeToggleReserve), searchField.getHeight());
             searchField.setColor(this.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
@@ -352,11 +362,15 @@ public class NavigateBar extends NCMPanel {
 
         boolean qqMode = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QQ;
         boolean kugouMode = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.KUGOU;
-        // GD 聚合源沿用网易云那一套入口（原来 neteaseMode 就是这个含义），这里只把酷狗单独拆出来。
-        boolean neteaseMode = !qqMode && !kugouMode;
+        boolean youtubeMode = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.YOUTUBE;
+        boolean bilibiliMode = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.BILIBILI;
+        boolean qishuiMode = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QISHUI;
+        // GD 聚合源沿用网易云那一套入口（原来 neteaseMode 就是这个含义），这里只把自有入口的平台单独拆出来。
+        boolean neteaseMode = !qqMode && !kugouMode && !youtubeMode && !bilibiliMode && !qishuiMode;
         {
             LabelWidget lblDiscovery = new LabelWidget(
-                    kugouMode ? "酷狗音乐发现" : qqMode ? "QQ 音乐发现" : "网易云发现", FontManager.pf14bold);
+                    qishuiMode ? "汽水音乐" : bilibiliMode ? "哔哩哔哩" : youtubeMode ? "YouTube Music" : kugouMode ? "酷狗音乐发现"
+                            : qqMode ? "QQ 音乐发现" : "网易云发现", FontManager.pf14bold);
             lblDiscovery.setClickable(false);
             lblDiscovery.setBeforeRenderCallback(() -> {
                 lblDiscovery.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
@@ -367,29 +381,36 @@ public class NavigateBar extends NCMPanel {
             // 排行榜：网易云的榜单页最终展示的是 HomePanel 卡片墙，先取数据再一次切页（navigateAsync），
             // 否则会先闪一个空的中转页、历史栈里也会多出一条回不去的记录。
             // QQ 的榜单不一样 —— 它是真的留在 NeteaseDiscoveryPanel 里按歌曲行展示，所以照旧直接切页。
-            this.playlistPanel.addChild(new PlaylistItem(FontelloIcons.LEADERBOARD, FontManager.fontello16,
-                    () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                    () -> "排行榜", () -> {
-                if (qqMode) {
-                    // QQ 的榜单目录也是卡片墙（25 个榜），同样先取数据再一次切页。
-                    NCMScreen.getInstance().navigateAsync("排行榜", NeteaseDiscoveryPanel::loadQQTopListsPanel);
-                } else if (kugouMode) {
-                    // 酷狗榜单同样是卡片墙：先取数据再一次切页，避免闪一个空的中转页。
-                    NCMScreen.getInstance().navigateAsync("排行榜", () -> {
-                        List<PlayList> ranks = KuGouMusicService.rankPlaylists();
-                        return new HomePanel(ranks, "酷狗榜单 · " + ranks.size());
-                    });
-                } else {
-                    NCMScreen.getInstance().navigateAsync("排行榜", NeteaseDiscoveryPanel::loadTopListsPanel);
-                }
-            }));
+            if (!youtubeMode && !bilibiliMode && !qishuiMode) {
+                this.playlistPanel.addChild(new PlaylistItem(FontelloIcons.LEADERBOARD, FontManager.fontello16,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        () -> "排行榜", () -> {
+                    if (qqMode) {
+                        // QQ 的榜单目录也是卡片墙（25 个榜），同样先取数据再一次切页。
+                        NCMScreen.getInstance().navigateAsync("排行榜", NeteaseDiscoveryPanel::loadQQTopListsPanel);
+                    } else if (kugouMode) {
+                        // 酷狗榜单同样是卡片墙：先取数据再一次切页，避免先闪一个空的中转页。
+                        NCMScreen.getInstance().navigateAsync("排行榜", () -> {
+                            List<PlayList> ranks = KuGouMusicService.rankPlaylists();
+                            return new HomePanel(ranks, "酷狗榜单 · " + ranks.size());
+                        });
+                    } else {
+                        NCMScreen.getInstance().navigateAsync("排行榜", NeteaseDiscoveryPanel::loadTopListsPanel);
+                    }
+                }));
+            }
             if (qqMode) {
                 // QQ 也有自己的热搜端点，和网易云一样在发现页里展示列表，保持直接切页。
                 this.playlistPanel.addChild(new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "热搜", () -> NCMScreen.getInstance().setCurrentPanel(
                         new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.HOT_SEARCH, MusicPlatform.QQ))));
             }
-            if (neteaseMode) {
+            if (qishuiMode) {
+                this.playlistPanel.addChild(new PlaylistItem("台", FontManager.pf12bold,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        () -> "电台", () -> NCMScreen.getInstance().navigateAsync(
+                        "汽水电台", this::loadQishuiRadioPanel)));
+            }            if (neteaseMode) {
                 // 热搜是真正在发现页里展示列表的，保持直接切页。
                 this.playlistPanel.addChild(new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "热搜", () -> NCMScreen.getInstance().setCurrentPanel(
@@ -410,10 +431,36 @@ public class NavigateBar extends NCMPanel {
 
         this.playlistPanel.addChild(lblPlaylists);
 
+        if (qishuiMode) {
+            if (NeteaseMusicService.isLoggedIn(MusicPlatform.QISHUI)) {
+                PlaylistItem mine = new PlaylistItem("D",
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        () -> "我的汽水歌单", () -> NCMScreen.getInstance().navigateAsync(
+                        "我的汽水歌单", this::loadQishuiUserPlaylists));
+                mine.setShouldOverrideMouseCursor(true);
+                this.playlistPanel.addChild(mine);
+
+                PlaylistItem favorites = new PlaylistItem("C",
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                        () -> "我收藏的歌曲", () -> NCMScreen.getInstance().navigateAsync(
+                        "我收藏的歌曲", this::loadQishuiCollectionPanel));
+                favorites.setShouldOverrideMouseCursor(true);
+                this.playlistPanel.addChild(favorites);
+            } else {
+                PlaylistItem login = new PlaylistItem("·",
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        () -> "登录汽水音乐后加载歌单",
+                        () -> NCMScreen.getInstance().openAccountManager());
+                login.setShouldOverrideMouseCursor(true);
+                this.playlistPanel.addChild(login);
+            }
+        }
+
         // QQ / 酷狗账号歌单都是异步加载的快照；网易云继续使用现有 CloudMusic 缓存。
         List<PlayList> pl = qqMode
                 ? NeteaseMusicService.getQQUserPlaylistsSnapshot()
-                : kugouMode ? KuGouMusicService.getUserPlaylistsSnapshot() : CloudMusic.playLists;
+                : kugouMode ? KuGouMusicService.getUserPlaylistsSnapshot()
+                : (youtubeMode || bilibiliMode || qishuiMode) ? Collections.emptyList() : CloudMusic.playLists;
 
         if (qqMode && NeteaseMusicService.isLoggedIn(MusicPlatform.QQ)
                 && !NeteaseMusicService.areQQUserPlaylistsLoaded()) {
@@ -481,7 +528,7 @@ public class NavigateBar extends NCMPanel {
         });
 
         // 收藏歌单是网易云独有的分组：QQ 与酷狗的收藏歌单都已经并入上面的"我的歌单"。
-        lblSubscribed.setHidden(qqMode || kugouMode);
+        lblSubscribed.setHidden(qqMode || kugouMode || youtubeMode || bilibiliMode || qishuiMode);
         this.playlistPanel.addChild(lblSubscribed);
 
         if (neteaseMode && pl != null) {
@@ -808,6 +855,22 @@ public class NavigateBar extends NCMPanel {
                 && CloudMusic.profile != null && CloudMusic.profile.isVipMember();
     }
 
+    private static String sourceGlyph(MusicPlatform platform) {
+        if (platform == MusicPlatform.QQ) return MusicBrandIcons.QQ_MUSIC;
+        if (platform == MusicPlatform.YOUTUBE) return MusicBrandIcons.YOUTUBE;
+        if (platform == MusicPlatform.BILIBILI) return MusicBrandIcons.BILIBILI_MONOGRAM;
+        if (platform == MusicPlatform.QISHUI) return MusicBrandIcons.QISHUI_MONOGRAM;
+        return MusicBrandIcons.NETEASE_CLOUD_MUSIC;
+    }
+
+    private static CFontRenderer sourceFont(MusicPlatform platform) {
+        if (platform == MusicPlatform.QQ) return FontManager.qqMusicIcon20;
+        if (platform == MusicPlatform.YOUTUBE) return FontManager.youtubeIcon24;
+        if (platform == MusicPlatform.BILIBILI) return FontManager.pf12bold;
+        if (platform == MusicPlatform.QISHUI) return FontManager.pf12bold;
+        return FontManager.musicBrand16;
+    }
+
     private SourceButton createSourceButton(MusicPlatform platform) {
         SourceButton button = new SourceButton(platform);
         button.setOnClickCallback((x, y, mouseButton) -> {
@@ -854,13 +917,12 @@ public class NavigateBar extends NCMPanel {
             });
 
             // QQ Music uses its own provider-brand glyph. Do not reuse the QQ login icon.
-            this.platformIcon = new LabelWidget(this.platform == MusicPlatform.QQ ? MusicBrandIcons.QQ_MUSIC : MusicBrandIcons.NETEASE_CLOUD_MUSIC,
-                    this.platform == MusicPlatform.QQ ? FontManager.qqMusicIcon20 : FontManager.musicBrand16);
+            this.platformIcon = new LabelWidget(sourceGlyph(this.platform),
+                    sourceFont(this.platform));
             this.platformIcon.setClickable(false);
             this.addChild(this.platformIcon);
             this.label = new LabelWidget(
-                    () -> NavigateBar.this.getWidth() < 112 ? ""
-                            : (this.platform == MusicPlatform.QQ ? "QQ音乐" : "网易云音乐"),
+                    () -> NavigateBar.this.getWidth() < 112 ? "" : this.platform.getDisplayName(),
                     FontManager.pf12bold);
             this.label.setClickable(false);
             this.addChild(this.label);
@@ -1335,13 +1397,22 @@ public class NavigateBar extends NCMPanel {
             }
         });
 
+        MusicPlatform searchPlatform = NeteaseMusicService.getCurrentPlatform();
         final boolean searchPlaylists = playlistSearchMode
-                && NeteaseMusicService.getCurrentPlatform() == MusicPlatform.NETEASE;
+                && (searchPlatform == MusicPlatform.NETEASE || searchPlatform == MusicPlatform.KUGOU
+                || searchPlatform == MusicPlatform.QISHUI);
         if (searchPlaylists) {
+            final boolean kugouSearch = searchPlatform == MusicPlatform.KUGOU;
+            final boolean qishuiSearch = searchPlatform == MusicPlatform.QISHUI;
             MultiThreadingUtil.runAsync(() -> {
-                List<PlayList> results = searchNeteasePlaylists(query);
+                List<PlayList> results = qishuiSearch
+                        ? QishuiMusicService.searchPlaylists(query, 50)
+                        : kugouSearch ? KuGouMusicService.searchPlaylists(query, 50)
+                        : searchNeteasePlaylists(query);
+                String title = (qishuiSearch ? "汽水歌单搜索" : kugouSearch ? "酷狗歌单搜索" : "歌单搜索")
+                        + " · " + query + " · " + results.size();
                 MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().setCurrentPanel(
-                        new HomePanel(results, "歌单搜索 · " + query + " · " + results.size())));
+                        new HomePanel(results, title)));
             });
         } else {
             // Keep the original track-search flow and its independent temporary playlist.
@@ -1360,6 +1431,34 @@ public class NavigateBar extends NCMPanel {
         }
     }
 
+    private NCMPanel loadQishuiUserPlaylists() {
+        LinkedHashSet<PlayList> unique = new LinkedHashSet<>();
+        unique.addAll(QishuiMusicService.userPlaylists(200));
+        unique.addAll(QishuiMusicService.collectionPlaylists(200));
+        if (unique.isEmpty()) return null;
+        return new HomePanel(new ArrayList<>(unique), "我的汽水歌单 · " + unique.size());
+    }
+
+    private NCMPanel loadQishuiCollectionPanel() {
+        List<Music> tracks = QishuiMusicService.collectionTracks(500);
+        if (tracks.isEmpty()) return null;
+        PlayList collection = new PlayList(-910_000_001L, "我收藏的歌曲", "", tracks.size(),
+                0L, null, "汽水音乐收藏", 0L);
+        collection.setPlatform(MusicPlatform.QISHUI);
+        collection.setPlatformPlaylistId("collection");
+        collection.setSearchMode(true);
+        collection.setSearchResultList(true);
+        collection.setMusics(new CopyOnWriteArrayList<>(tracks));
+        collection.setMusicsQueried(true);
+        collection.setMusicsLoaded(true);
+        return new PlaylistPanel(collection, false);
+    }
+
+    private NCMPanel loadQishuiRadioPanel() {
+        List<PlayList> radios = QishuiMusicService.recommendRadios(80);
+        if (radios.isEmpty()) return null;
+        return new HomePanel(radios, "汽水电台 · " + radios.size());
+    }
     /** 列表里当前被选中的条目，没有选中项时返回 {@code null}。 */
     private PlaylistItem findSelectedItem() {
         for (AbstractWidget<?> child : this.playlistPanel.getChildren()) {

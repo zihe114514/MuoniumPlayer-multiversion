@@ -37,6 +37,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.ByteArrayOutputStream;
+import java.net.Proxy;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HashMap;
@@ -378,7 +379,8 @@ final class MusicCoverService {
         MultiThreadingUtil.runAsync(() -> {
             try {
                 @Cleanup
-                InputStream coverStream = HttpUtils.downloadStream(coverUrl(music, 320), 5);
+                InputStream coverStream = HttpUtils.downloadStream(coverUrl(music, 320), 5,
+                        music != null && music.isYouTube() ? YouTubeProxySettings.createHttpProxy() : null);
                 byte[] imageData = IOUtils.toByteArray(coverStream);
                 BufferedImage coverImage = DynamicTexture.readImage(new ByteArrayInputStream(imageData));
                 if (coverImage != null) {
@@ -405,7 +407,8 @@ final class MusicCoverService {
 
     private static void loadSmallCoverAsync(Music music, Location musicCoverSmall) {
         MultiThreadingUtil.runAsync(() -> {
-            InputStream smallCoverStream = HttpUtils.downloadStream(coverUrl(music, 128), 5);
+            InputStream smallCoverStream = HttpUtils.downloadStream(coverUrl(music, 128), 5,
+                    music != null && music.isYouTube() ? YouTubeProxySettings.createHttpProxy() : null);
             BufferedImage smallCoverImage = DynamicTexture.readImage(smallCoverStream);
             Textures.loadTexture(musicCoverSmall, smallCoverImage);
         });

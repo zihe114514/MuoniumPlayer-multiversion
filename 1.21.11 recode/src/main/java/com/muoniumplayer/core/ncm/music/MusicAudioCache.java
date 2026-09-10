@@ -1,6 +1,7 @@
 package com.muoniumplayer.core.ncm.music;
 
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
+import com.muoniumplayer.core.settings.ConfigPaths;
 import com.muoniumplayer.core.utils.other.multithreading.BackgroundWork;
 
 import java.io.File;
@@ -15,7 +16,7 @@ import java.util.Map;
 /**
  * 磁盘音频缓存的容量兜底。
  *
- * <p>为什么需要：{@code MusicCache/} 原先只会因为「同一首歌换了音质」而删旧文件，
+ * <p>为什么需要：音频缓存目录原先只会因为「同一首歌换了音质」而删旧文件，
  * 除此之外只增不减。一首无损 FLAC 二三十兆，长期使用下这个目录能涨到几个 GB 甚至几十 GB，
  * 用户看不到也管不了。歌词缓存不存在这个问题（只在内存里，且有条数上限与 TTL），
  * 真正会无限增长的只有这里。</p>
@@ -34,8 +35,8 @@ import java.util.Map;
  */
 public final class MusicAudioCache {
 
-    /** 播放流程里硬编码的缓存目录，保持一致。 */
-    private static final File DIRECTORY = new File("MusicCache");
+    /** 播放流程与容量淘汰共用的缓存目录。 */
+    private static final File DIRECTORY = ConfigPaths.MUSIC_CACHE;
 
     /** 最近使用过的组数量，这些组永不淘汰。够覆盖「当前播放 + automix 预备 + 前后翻几首」。 */
     static final int PROTECTED_RECENT_GROUPS = 6;
@@ -178,7 +179,7 @@ public final class MusicAudioCache {
                 // 自动清理刻意不弹灵动岛：它总是跟在下载/转码通知后面，再插一条只会挤掉更重要的信息。
                 // 留一行日志，事后能从 latest.log 里查到到底删了什么规模的缓存。
                 System.out.println("[Cache] freed " + formatBytes(result.freedBytes)
-                        + " from MusicCache, " + result.removedGroups + " track(s) removed, "
+                        + " from the music cache, " + result.removedGroups + " track(s) removed, "
                         + formatBytes(result.remainingBytes) + " left"
                         + (result.skippedGroups > 0 ? " (" + result.skippedGroups + " in use)" : ""));
             }

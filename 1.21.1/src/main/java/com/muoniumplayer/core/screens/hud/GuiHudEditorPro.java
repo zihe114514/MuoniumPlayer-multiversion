@@ -9,6 +9,7 @@ import com.muoniumplayer.compat.lwjgl2.Mouse;
 import com.muoniumplayer.compat.gl.GL11;
 
 import com.muoniumplayer.core.MuoniumPlayerExtension;
+import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
@@ -18,7 +19,9 @@ import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.font.GlyphInkMetrics;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
+import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
+import com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.settings.HudSetting;
 import com.muoniumplayer.core.widget.impl.MusicInfoWidget;
@@ -101,7 +104,8 @@ public class GuiHudEditorPro extends GuiScreen {
     private static final int HEX_INPUT_W = 86;
     private static final int HEX_INPUT_H = 18;
 
-    private static final int SNAP_THRESHOLD = 20;
+    private static final int SNAP_THRESHOLD = 8;
+    private static final double SNAP_STRENGTH = 0.35;
     private static final int INFO_BASE_W = 230;
     private static final int INFO_BASE_H = 56;
 
@@ -226,6 +230,9 @@ public class GuiHudEditorPro extends GuiScreen {
 
     /** 面板自身的拖动。和两块 HUD 的拖动互斥（面板在最上层，命中它就不会落到 HUD 上）。 */
     private boolean draggingPanel;
+    /** 窗口自适应模式临时替换 Screen#width/height 时保存的原值。 */
+    private int savedAdaptiveWidth;
+    private int savedAdaptiveHeight;
     private int panelDragOffX;
     private int panelDragOffY;
     private long lastHeaderClick;
@@ -313,8 +320,17 @@ public class GuiHudEditorPro extends GuiScreen {
         // 都会带进 Forge 覆盖层和下一帧世界（树叶/玻璃变透明、计分板发虚）。整段绘制包在一次状态边界里。
         SkijaGfx.pushAttrib();
         SkijaGfx.pushMatrix();
+        boolean adaptive = false;
         try {
             RenderSystem.refreshResolution();
+            adaptive = beginAdaptiveLayout();
+            if (adaptive) {
+                mouseX = WindowAdaptiveScale.toLayoutX(mouseX);
+                mouseY = WindowAdaptiveScale.toLayoutY(mouseY);
+                SharedConstants.api.getGLStateManager().pushMatrix();
+                SharedConstants.api.getGLStateManager().scale(
+                        WindowAdaptiveScale.correctionX(), WindowAdaptiveScale.correctionY(), 1);
+            }
             CFontRenderer fr = FontManager.pf12;
             if (fr == null) return;
 
@@ -360,8 +376,8 @@ public class GuiHudEditorPro extends GuiScreen {
             }
             drawHudSelection(fr, "歌曲信息", infoX, infoY, infoW, infoH, 0xFF7DD3FC);
 
-            int lyricW = (int) (lyrics.width.getValue().floatValue() * HudConfig.lyricScale);
-            int lyricH = (int) (lyrics.height.getValue().floatValue() * HudConfig.lyricScale);
+            int lyricW = (int) (HudConfig.lyricWidth * HudConfig.lyricScale);
+            int lyricH = (int) (HudConfig.lyricHeight * HudConfig.lyricScale);
             int lyricX = (int) (HudConfig.lyricX * (width - lyricW));
             int lyricY = (int) (HudConfig.lyricY * (height - lyricH));
             handleDrag(lmb && !uiBusy, uiBusy ? 0 : wheel, mouseX, mouseY, lyricX, lyricY, lyricW, lyricH, false);
@@ -396,9 +412,32 @@ public class GuiHudEditorPro extends GuiScreen {
         } finally {
             layerAlpha = 1f;
             endScissor();
+            if (adaptive) {
+                SharedConstants.api.getGLStateManager().popMatrix();
+            }
+            restoreAdaptiveLayout(adaptive);
             SkijaGfx.popMatrix();
             SkijaGfx.popAttrib();
         }
+    }
+
+    /** 进入窗口自适应布局：临时把 Screen 的宽高换成由物理窗口推导出的逻辑宽高。 */
+    private boolean beginAdaptiveLayout() {
+        RenderSystem.refreshResolution();
+        WindowAdaptiveScale.begin();
+        if (!WindowAdaptiveScale.isTransforming()) return false;
+        savedAdaptiveWidth = width;
+        savedAdaptiveHeight = height;
+        width = WindowAdaptiveScale.layoutWidth();
+        height = WindowAdaptiveScale.layoutHeight();
+        return true;
+    }
+
+    private void restoreAdaptiveLayout(boolean active) {
+        if (!active) return;
+        width = savedAdaptiveWidth;
+        height = savedAdaptiveHeight;
+        WindowAdaptiveScale.end();
     }
 
     private int panelWidth() {
@@ -1183,6 +1222,19 @@ public class GuiHudEditorPro extends GuiScreen {
 
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int button) throws IOException {
+        boolean adaptive = beginAdaptiveLayout();
+        if (adaptive) {
+            mouseX = WindowAdaptiveScale.toLayoutX(mouseX);
+            mouseY = WindowAdaptiveScale.toLayoutY(mouseY);
+        }
+        try {
+            mouseClickedImpl(mouseX, mouseY, button);
+        } finally {
+            restoreAdaptiveLayout(adaptive);
+        }
+    }
+
+    private void mouseClickedImpl(int mouseX, int mouseY, int button) throws IOException {
         if (resetConfirmationVisible) {
             if (button == 0) handleResetConfirmationClick(mouseX, mouseY);
             return;
@@ -1404,6 +1456,19 @@ public class GuiHudEditorPro extends GuiScreen {
 
     @Override
     protected void mouseReleased(int mouseX, int mouseY, int state) {
+        boolean adaptive = beginAdaptiveLayout();
+        if (adaptive) {
+            mouseX = WindowAdaptiveScale.toLayoutX(mouseX);
+            mouseY = WindowAdaptiveScale.toLayoutY(mouseY);
+        }
+        try {
+            mouseReleasedImpl(mouseX, mouseY, state);
+        } finally {
+            restoreAdaptiveLayout(adaptive);
+        }
+    }
+
+    private void mouseReleasedImpl(int mouseX, int mouseY, int state) {
         if (state == 0 && (draggingSaturationBrightness || draggingHue
                 || draggingSlider != null || settingsDirty)) {
             HudConfig.save();
@@ -1662,8 +1727,8 @@ public class GuiHudEditorPro extends GuiScreen {
             boolean snapX = Math.abs(nx - centerX) < SNAP_THRESHOLD;
             boolean snapY = Math.abs(ny - centerY) < SNAP_THRESHOLD;
             showSnapGuide = snapX || snapY;
-            if (snapX) nx = centerX;
-            if (snapY) ny = centerY;
+            nx = softenSnap(nx, centerX);
+            ny = softenSnap(ny, centerY);
             if (isInfo) {
                 HudConfig.infoX = maxX > 0 ? (float) nx / maxX : 0;
                 HudConfig.infoY = maxY > 0 ? (float) ny / maxY : 0;
@@ -1681,6 +1746,15 @@ public class GuiHudEditorPro extends GuiScreen {
             }
             HudConfig.save();
         }
+    }
+
+    /** 中心吸附从硬跳降级为弱磁吸：贴近时辅助对齐，仍可无感拖离。 */
+    private static int softenSnap(int value, int center) {
+        int delta = center - value;
+        int distance = Math.abs(delta);
+        if (distance >= SNAP_THRESHOLD) return value;
+        if (distance <= 1) return center;
+        return value + (int) Math.round(delta * SNAP_STRENGTH);
     }
 
     private boolean hasLiveInfoPreview() {

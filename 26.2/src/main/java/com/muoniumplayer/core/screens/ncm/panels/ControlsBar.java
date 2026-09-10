@@ -357,11 +357,12 @@ public class ControlsBar extends NCMPanel {
                 .setBeforeRenderCallback(() -> lblMusicName
                         .centerVertically()
                         .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
-                        .setMaxWidth(lblCurTime.getRelativeX() - lblMusicName.getRelativeX() - 4)
                         .setPosition(
                                 playingCover.getRelativeX() + playingCover.getWidth() + 4,
                                 lblMusicName.getRelativeY() - lblMusicName.getHeight() * .5 - 2
-                        ));
+                        )
+                        .setMaxWidth(Math.max(0.0,
+                                lblCurTime.getRelativeX() - lblMusicName.getRelativeX() - 4)));
 
         LabelWidget lblMusicArtist = new LabelWidget(
                 () -> {
@@ -384,11 +385,12 @@ public class ControlsBar extends NCMPanel {
                 .setBeforeRenderCallback(() -> lblMusicArtist
                         .centerVertically()
                         .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
-                        .setMaxWidth(lblCurTime.getRelativeX() - lblMusicArtist.getRelativeX() - 4)
                         .setPosition(
                                 playingCover.getRelativeX() + playingCover.getWidth() + 4,
                                 lblMusicArtist.getRelativeY() + lblMusicArtist.getHeight() * .5 + 2
-                        ));
+                        )
+                        .setMaxWidth(Math.max(0.0,
+                                lblCurTime.getRelativeX() - lblMusicArtist.getRelativeX() - 4)));
 
         // Right-aligned compact volume strip. It delegates all visual and input behavior to the
         // full-screen control implementation, so both surfaces remain visually synchronized.

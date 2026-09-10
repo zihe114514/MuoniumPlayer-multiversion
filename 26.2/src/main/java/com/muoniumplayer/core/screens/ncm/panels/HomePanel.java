@@ -10,6 +10,7 @@ import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.TextureManager;
@@ -77,6 +78,9 @@ public class HomePanel extends NCMPanel {
     private static final int KUGOU_HOME_TARGET = 240;
     private static volatile List<PlayList> kugouHomePlaylists = Collections.emptyList();
     private static volatile boolean kugouHomeLoading;
+    private static final int QISHUI_HOME_TARGET = 120;
+    private static volatile List<PlayList> qishuiHomePlaylists = Collections.emptyList();
+    private static volatile boolean qishuiHomeLoading;
 
     @Override
     public void onInit() {
@@ -89,6 +93,12 @@ public class HomePanel extends NCMPanel {
             loadQQHome();
         } else if (platform == MusicPlatform.KUGOU) {
             loadKuGouHome();
+        } else if (platform == MusicPlatform.YOUTUBE) {
+            layout(Collections.emptyList(), "YouTube Music · 使用搜索开始播放");
+        } else if (platform == MusicPlatform.BILIBILI) {
+            layout(Collections.emptyList(), "哔哩哔哩 · 搜索、粘贴 BV号或视频链接");
+        } else if (platform == MusicPlatform.QISHUI) {
+            loadQishuiHome();
         } else {
             loadNeteaseHome();
         }
@@ -102,6 +112,9 @@ public class HomePanel extends NCMPanel {
     private static String welcomeTextFor(MusicPlatform platform) {
         if (platform == MusicPlatform.QQ) return "欢迎使用 QQ 音乐!";
         if (platform == MusicPlatform.KUGOU) return "欢迎使用 酷狗音乐!";
+        if (platform == MusicPlatform.YOUTUBE) return "欢迎使用 YouTube Music!";
+        if (platform == MusicPlatform.BILIBILI) return "欢迎使用 哔哩哔哩!";
+        if (platform == MusicPlatform.QISHUI) return "欢迎使用 汽水音乐!";
         return "欢迎来到 MuoniumPlayer!";
     }
 
@@ -449,6 +462,72 @@ public class HomePanel extends NCMPanel {
     private static String kugouRecommendationTitle(int count) {
         return count > 0 ? "酷狗音乐 · 推荐歌单 · " + count : "酷狗音乐 · 推荐歌单";
     }
+    /** 汽水首页：公开发现流直接铺成推荐歌单卡片墙。 */
+    private void loadQishuiHome() {
+        List<PlayList> cached = new ArrayList<>(qishuiHomePlaylists);
+        if (!cached.isEmpty()) {
+            layout(cached, qishuiRecommendationTitle(cached.size()));
+            return;
+        }
+
+        layoutPlaceholder("正在获取汽水推荐歌单…", true);
+        synchronized (HomePanel.class) {
+            if (qishuiHomeLoading) {
+                MultiThreadingUtil.runAsync(this::awaitQishuiHomeCache);
+                return;
+            }
+            qishuiHomeLoading = true;
+        }
+
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                List<PlayList> result = QishuiMusicService.recommendPlaylists(QISHUI_HOME_TARGET);
+                qishuiHomePlaylists = Collections.unmodifiableList(new ArrayList<>(result));
+                final List<PlayList> displayed = new ArrayList<>(result);
+                MultiThreadingUtil.runOnMainThread(() -> {
+                    if (NeteaseMusicService.getCurrentPlatform() != platform) return;
+                    if (!displayed.isEmpty()) {
+                        layout(displayed, qishuiRecommendationTitle(displayed.size()));
+                    } else {
+                        layoutPlaceholder("汽水推荐歌单获取失败，请稍后重试", false);
+                    }
+                });
+            } catch (Throwable throwable) {
+                System.err.println("[Music] 汽水首页加载失败: " + throwable);
+                MultiThreadingUtil.runOnMainThread(() -> {
+                    if (NeteaseMusicService.getCurrentPlatform() == platform)
+                        layoutPlaceholder("汽水推荐歌单获取失败，请稍后重试", false);
+                });
+            } finally {
+                qishuiHomeLoading = false;
+            }
+        });
+    }
+
+    private void awaitQishuiHomeCache() {
+        final long deadline = System.nanoTime() + 20_000_000_000L;
+        while (qishuiHomeLoading && System.nanoTime() - deadline < 0L) {
+            try {
+                Thread.sleep(120L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        final List<PlayList> cached = new ArrayList<>(qishuiHomePlaylists);
+        MultiThreadingUtil.runOnMainThread(() -> {
+            if (NeteaseMusicService.getCurrentPlatform() != platform) return;
+            if (cached.isEmpty()) {
+                layoutPlaceholder("汽水推荐歌单获取失败，请稍后重试", false);
+            } else {
+                layout(cached, qishuiRecommendationTitle(cached.size()));
+            }
+        });
+    }
+
+    private static String qishuiRecommendationTitle(int count) {
+        return count > 0 ? "汽水音乐 · 推荐歌单 · " + count : "汽水音乐 · 推荐歌单";
+    }
     public ScrollPanel scrollPanel;
 
     private void layout(List<PlayList> displayedPlayLists, String recommendationsText) {
@@ -620,7 +699,7 @@ public class HomePanel extends NCMPanel {
             String coverUrl = playList.getCoverUrl();
             if (coverUrl == null || coverUrl.trim().isEmpty()) return;
             String secureUrl = coverUrl.replace("http://", "https://");
-            String requestUrl = playList.getPlatform() == MusicPlatform.QQ || playList.isSearchMode()
+            String requestUrl = playList.getPlatform() == MusicPlatform.QQ || playList.getPlatform() == MusicPlatform.QISHUI || playList.isSearchMode()
                     ? secureUrl
                     : secureUrl + "?param=256y256";
             Textures.downloadTextureAndLoadAsync(requestUrl, coverLoc);

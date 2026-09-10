@@ -102,7 +102,6 @@ dependencies {
     // 对应 libs/ 下的三个本地 jar（Cadence 音源 SDK / zstd / Kotlin 运行时）。
     implementation include('muoniumplayer.libs:music-api:0.1.1')
     implementation include('muoniumplayer.libs:zstd-jni:1.5.6-9-forge189')
-    implementation include('muoniumplayer.libs:kotlin-stdlib:2.4.0')
 
     // ==================== Skija（渲染层重写）====================
     // Skia 的 Java 绑定。渲染层重写后，文字整形/光栅、圆角、裁剪、模糊、渐变、阴影
@@ -115,6 +114,8 @@ dependencies {
     //
     // 原生库当前只打包开发机平台。发布前需要把四个平台都加上（合计约 46 MB），
     // 见 gradle.properties 的 skija_natives；SkijaNatives 会按 os.name/os.arch 自动挑资源路径。
+    // Kotlin 运行时由 Fabric Language Kotlin 统一提供，不再随本 mod 打包。
+    implementation "net.fabricmc:fabric-language-kotlin:${project.fabric_language_kotlin_version}"
     implementation include('io.github.humbleui:skija-shared:0.143.17')
     implementation include('io.github.humbleui:types:0.2.0')
     implementation include("io.github.humbleui:skija-" + project.skija_natives + ":0.143.17")
@@ -139,12 +140,14 @@ processResources {
     inputs.property 'version', project.version
     inputs.property 'minecraft_version', project.minecraft_version
     inputs.property 'loader_min_version', project.loader_min_version
+    inputs.property 'fabric_language_kotlin_version', project.fabric_language_kotlin_version
     filteringCharset 'UTF-8'
 
     filesMatching('fabric.mod.json') {
         expand 'version': project.version,
                 'minecraft_version': project.minecraft_version,
-                'loader_min_version': project.loader_min_version
+                'loader_min_version': project.loader_min_version,
+                'fabric_language_kotlin_version': project.fabric_language_kotlin_version
     }
 }
 

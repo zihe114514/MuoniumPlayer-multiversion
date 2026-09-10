@@ -7,6 +7,7 @@ import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
 import java.io.*;
 import java.net.HttpURLConnection;
+import java.net.Proxy;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLEncoder;
@@ -44,8 +45,15 @@ public class HttpUtils {
      */
     public static InputStream get(String url, Map<String, String> params, Map<String, String> headers,
                                   int connectTimeoutMillis, int readTimeoutMillis) throws IOException {
+        return get(url, params, headers, connectTimeoutMillis, readTimeoutMillis, null);
+    }
+
+    /** GET with an explicit proxy. Passing {@code null} preserves the historical direct connection. */
+    public static InputStream get(String url, Map<String, String> params, Map<String, String> headers,
+                                  int connectTimeoutMillis, int readTimeoutMillis,
+                                  Proxy proxy) throws IOException {
         return request(mapToString(url, params, "?"), null, headers, "GET",
-                "application/x-www-form-urlencoded", connectTimeoutMillis, readTimeoutMillis);
+                "application/x-www-form-urlencoded", connectTimeoutMillis, readTimeoutMillis, proxy);
     }
 
     public static String getString(String url, Map<String, String> params, Map<String, String> headers) throws IOException {
@@ -127,13 +135,22 @@ public class HttpUtils {
 
     public static InputStream request(String url, String params, Map<String, String> headers, String method,
                                       String mediaType, int connectTimeoutMillis, int readTimeoutMillis) throws IOException {
+        return request(url, params, headers, method, mediaType,
+                connectTimeoutMillis, readTimeoutMillis, null);
+    }
+
+    private static InputStream request(String url, String params, Map<String, String> headers, String method,
+                                       String mediaType, int connectTimeoutMillis, int readTimeoutMillis,
+                                       Proxy proxy) throws IOException {
         if (url == null || url.trim().isEmpty()) {
             return null;
         }
         method = method.toUpperCase();
         OutputStreamWriter writer = null;
         URL httpUrl = new URL(url);
-        HttpURLConnection conn = (HttpURLConnection) httpUrl.openConnection();
+        HttpURLConnection conn = proxy == null
+                ? (HttpURLConnection) httpUrl.openConnection()
+                : (HttpURLConnection) httpUrl.openConnection(proxy);
         if (method.equals("POST") || method.equals("PUT")) {
             conn.setDoOutput(true);
             conn.setUseCaches(false);
@@ -335,10 +352,14 @@ public class HttpUtils {
     }
 
     public static InputStream downloadStream(String path, int retry) {
+        return downloadStream(path, retry, null);
+    }
+
+    public static InputStream downloadStream(String path, int retry, Proxy proxy) {
         InputStream bin = null;
         try {
             URL url = new URL(path);
-            URLConnection urlConnection = url.openConnection();
+            URLConnection urlConnection = proxy == null ? url.openConnection() : url.openConnection(proxy);
             HttpURLConnection httpURLConnection = (HttpURLConnection) urlConnection;
             httpURLConnection.setInstanceFollowRedirects(true);
             httpURLConnection.setRequestMethod("GET");
@@ -351,7 +372,7 @@ public class HttpUtils {
             if (retry >= retryTimes) {
                 throw new RuntimeException("Max retry time reached for url " + path);
             }
-            return downloadStream(path, ++retry);
+            return downloadStream(path, ++retry, proxy);
         }
         return bin;
     }

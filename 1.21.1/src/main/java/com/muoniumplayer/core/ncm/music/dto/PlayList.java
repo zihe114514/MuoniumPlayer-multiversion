@@ -8,6 +8,7 @@ import com.muoniumplayer.core.ncm.RequestUtil;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.json.JsonUtils;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
@@ -202,6 +203,15 @@ public class PlayList {
                         .playlistTracks(getPlatformPlaylistId());
                 if (loadedMusics == null) {
                     throw new IllegalStateException("KuGou playlist track response is null");
+                }
+            } else if (getPlatform() == MusicPlatform.QISHUI) {
+                String qishuiId = getPlatformPlaylistId();
+                int requested = Math.max(100, count > 0 ? count : 100);
+                loadedMusics = qishuiId.startsWith("radio:")
+                        ? QishuiMusicService.radioTracks(qishuiId, requested)
+                        : QishuiMusicService.playlistTracks(qishuiId, requested);
+                if (loadedMusics == null) {
+                    throw new IllegalStateException("Qishui playlist track response is null");
                 }
             } else {
                 RequestUtil.RequestAnswer requestAnswer = CloudMusicApi.playlistTrackAll(id, 8);

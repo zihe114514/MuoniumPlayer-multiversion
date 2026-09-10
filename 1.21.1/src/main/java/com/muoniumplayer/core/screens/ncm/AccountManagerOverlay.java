@@ -10,6 +10,7 @@ import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseAccountProfiles;
+import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.QRCodeGenerator;
 import com.muoniumplayer.core.ncm.music.dto.User;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
@@ -58,6 +59,7 @@ public class AccountManagerOverlay extends NcmSheet {
     private static final Location NETEASE_QR = Location.of("muonium/textures/account/netease_qr.png");
     private static final Location QQ_QR = Location.of("muonium/textures/account/qq_qr.png");
     private static final Location KUGOU_QR = Location.of("muonium/textures/account/kugou_qr.png");
+    private static final Location QISHUI_QR = Location.of("muonium/textures/account/qishui_qr.png");
 
     /** 页眉占掉的高度：图标盘 / 返回键 34 见方 + 上下留白，标题与副标题都在这一段里。 */
     private static final double HEADER_H = 64.0;
@@ -131,9 +133,9 @@ public class AccountManagerOverlay extends NcmSheet {
         requestRunning = false;
         beginPage();
 
-        final Panel dialog = sheet(482, () -> HEADER_H + LEAD + ACCOUNT_ROW * 3 + 44);
+        final Panel dialog = sheet(482, () -> HEADER_H + LEAD + ACCOUNT_ROW * 4 + 44);
         header(dialog, PartyIcons.PERSON, "账号与登录",
-                () -> "凭据只保存在本地 · 三个来源各自独立",
+                () -> "凭据只保存在本地 · 四个来源各自独立",
                 () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
 
         final Panel body = body(dialog, () -> HEADER_H, () -> 44.0);
@@ -143,6 +145,7 @@ public class AccountManagerOverlay extends NcmSheet {
         accountCard(strip(feed, ACCOUNT_ROW), 0, MusicPlatform.NETEASE);
         accountCard(strip(feed, ACCOUNT_ROW), 1, MusicPlatform.QQ);
         accountCard(strip(feed, ACCOUNT_ROW), 2, MusicPlatform.KUGOU);
+        accountCard(strip(feed, ACCOUNT_ROW), 3, MusicPlatform.QISHUI);
 
         tip(dialog, () -> PartyIcons.LOCK,
                 () -> "登录信息仅保存在本地配置中，界面不会显示 Cookie 内容",
@@ -174,7 +177,7 @@ public class AccountManagerOverlay extends NcmSheet {
                 () -> card.getWidth() - 34, () -> card.getHeight() * .5 - 11);
 
         // 会员标记就该长在账号旁边。原来它是主页左下角一行灰字，那个位置离「我的账号」最远。
-        final Panel vipLayer = veil(card, () -> isNeteaseVip(platform) ? 1.0 : 0.0);
+        final Panel vipLayer = veil(card, () -> isAccountVip(platform) ? 1.0 : 0.0);
         pill(vipLayer, () -> PartyIcons.VIP, () -> "会员", () -> VIP_COLOR,
                 () -> vipLayer.getWidth() - 34, () -> vipLayer.getHeight() * .5 + 11);
 
@@ -328,9 +331,10 @@ public class AccountManagerOverlay extends NcmSheet {
             }
         }
 
-        // 网易云与酷狗只有一条扫码链路，进页面就直接取码。QQ 必须先定下走 QQ 还是微信，
+        // 网易云、酷狗与汽水都只有一条扫码链路，进页面就直接取码。QQ 必须先定下走 QQ 还是微信，
         // 否则会拿 QQ 的码去问微信的状态。
-        if ((platform == MusicPlatform.NETEASE || platform == MusicPlatform.KUGOU) && qrVisible) {
+        if ((platform == MusicPlatform.NETEASE || platform == MusicPlatform.KUGOU
+                || platform == MusicPlatform.QISHUI) && qrVisible) {
             startQrLogin(platform, token, addAccountByQr);
         }
         if (platform == MusicPlatform.NETEASE && loggedIn && !addAccountByQr) {
@@ -395,7 +399,7 @@ public class AccountManagerOverlay extends NcmSheet {
                         platform.getBrandColor(), .12)));
         avatarSlot(card, platform, 52.0, () -> 14.0, () -> card.getHeight() * .5);
 
-        final Panel vipLayer = veil(card, () -> isNeteaseVip(platform) ? 1.0 : 0.0);
+        final Panel vipLayer = veil(card, () -> isAccountVip(platform) ? 1.0 : 0.0);
         final RoundedRectWidget vip = pill(vipLayer, () -> PartyIcons.VIP, () -> "会员", () -> VIP_COLOR,
                 () -> vipLayer.getWidth() - 14, () -> vipLayer.getHeight() * .5);
 
@@ -404,7 +408,7 @@ public class AccountManagerOverlay extends NcmSheet {
         name.setBeforeRenderCallback(() -> {
             name.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             name.setMaxWidth(Math.max(1, card.getWidth() - 80
-                    - (isNeteaseVip(platform) ? vip.getWidth() + 22 : 20)));
+                    - (isAccountVip(platform) ? vip.getWidth() + 22 : 20)));
             name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             name.setPosition(80, inkTop(name, card.getHeight() * .5 - 11));
         });
@@ -1059,7 +1063,7 @@ public class AccountManagerOverlay extends NcmSheet {
 
     private void loadQrTexture(MusicPlatform platform, String content, long token) throws Exception {
         BufferedImage image;
-        if (platform == MusicPlatform.QQ) {
+        if (platform == MusicPlatform.QQ || platform == MusicPlatform.QISHUI) {
             String encoded = content == null ? "" : content;
             int comma = encoded.indexOf(',');
             if (comma >= 0) encoded = encoded.substring(comma + 1);
@@ -1087,6 +1091,7 @@ public class AccountManagerOverlay extends NcmSheet {
 
     private Location getQrLocation(MusicPlatform platform) {
         if (platform == MusicPlatform.KUGOU) return KUGOU_QR;
+        if (platform == MusicPlatform.QISHUI) return QISHUI_QR;
         return platform == MusicPlatform.QQ ? QQ_QR : NETEASE_QR;
     }
 
@@ -1096,6 +1101,7 @@ public class AccountManagerOverlay extends NcmSheet {
     private String scanClientName(MusicPlatform platform) {
         if (platform == MusicPlatform.QQ && qqLoginChannel == QQLoginChannel.WECHAT) return "微信";
         if (platform == MusicPlatform.KUGOU) return "酷狗音乐客户端";
+        if (platform == MusicPlatform.QISHUI) return "抖音 App";
         if (platform == MusicPlatform.QQ) return "手机 QQ";
         return "网易云音乐客户端";
     }
@@ -1105,7 +1111,20 @@ public class AccountManagerOverlay extends NcmSheet {
             User profile = CloudMusic.profile;
             if (profile != null) return "网易云 ID " + profile.getId();
         }
+        if (platform == MusicPlatform.QISHUI) {
+            String douyinId = QishuiMusicService.getDouyinId();
+            if (!douyinId.isEmpty()) return "抖音 ID " + douyinId;
+            String accountId = QishuiMusicService.getAccountId();
+            if (!accountId.isEmpty()) return "汽水账号 " + accountId;
+        }
         return platform.getDisplayName() + " · 已登录";
+    }
+
+    private boolean isAccountVip(MusicPlatform platform) {
+        if (platform == MusicPlatform.QISHUI) {
+            return NeteaseMusicService.isLoggedIn(platform) && QishuiMusicService.isVipAccount();
+        }
+        return isNeteaseVip(platform);
     }
 
     /**
@@ -1136,6 +1155,7 @@ public class AccountManagerOverlay extends NcmSheet {
 
     private static String brandGlyph(MusicPlatform platform) {
         if (platform == MusicPlatform.KUGOU) return MusicBrandIcons.KUGOU_MONOGRAM;
+        if (platform == MusicPlatform.QISHUI) return MusicBrandIcons.QISHUI_MONOGRAM;
         return platform == MusicPlatform.QQ ? MusicBrandIcons.QQ_MUSIC : MusicBrandIcons.NETEASE_CLOUD_MUSIC;
     }
 
@@ -1146,7 +1166,7 @@ public class AccountManagerOverlay extends NcmSheet {
      * 兜底字体上、画出一片空白。酷狗两份图标字体里都没有，用正文字体画一枚汉字字标。</p>
      */
     private static CFontRenderer brandFont(MusicPlatform platform) {
-        if (platform == MusicPlatform.KUGOU) return FontManager.pf34bold;
+        if (platform == MusicPlatform.KUGOU || platform == MusicPlatform.QISHUI) return FontManager.pf34bold;
         return platform == MusicPlatform.QQ ? FontManager.qqMusicIcon68 : FontManager.musicBrand52;
     }
 

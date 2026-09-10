@@ -64,6 +64,7 @@ repositories {
     maven { url = 'https://maven.aliyun.com/repository/public' }
     maven { url = 'https://maven.aliyun.com/repository/google' }
     maven { url = 'https://maven.minecraftforge.net/' }
+    maven { url = 'https://thedarkcolour.github.io/KotlinForForge/' }
     maven { url = 'https://maven.neoforged.net/releases' }
     flatDir { dirs rootProject.file('libs') }
 }
@@ -72,6 +73,7 @@ repositories {
 // 与 Fabric 侧 include() 的那一批完全一致，只是手段不同。刻意不做 relocate：
 //   * skija / zstd-jni 是 JNI 库，原生符号里写死了类名，relocate 会让 native 方法找不到；
 //   * music-api 是 Kotlin 编译产物，relocate kotlin.* 容易踩到反射/元数据。
+// 代价是与其它同样自带这些库的 mod 可能撞版本，出现时再按需 relocate 非 JNI 的那几个。
 configurations {
     embeddedLibs {
         // ==== 绝不能重复打包 Minecraft 自己就带的库 ====
@@ -100,10 +102,12 @@ dependencies {
     // 编译期用的就是 Minecraft 提供的那几个版本，所以这里也不需要 compileOnly 再声明一遍。
     embeddedLibs 'muoniumplayer.libs:music-api:0.1.1'
     embeddedLibs 'muoniumplayer.libs:zstd-jni:1.5.6-9-forge189'
-    embeddedLibs 'muoniumplayer.libs:kotlin-stdlib:2.4.0'
     embeddedLibs 'io.github.humbleui:skija-shared:0.143.17'
     embeddedLibs 'io.github.humbleui:types:0.2.0'
     embeddedLibs "io.github.humbleui:skija-${project.skija_natives}:0.143.17"
+
+    // Kotlin 运行时由前置统一提供，不再随本 mod 打包。
+    implementation "thedarkcolour:kotlinforforge:${project.kotlinforforge_version}"
 
     compileOnly 'org.projectlombok:lombok:1.18.30'
     annotationProcessor 'org.projectlombok:lombok:1.18.30'
@@ -177,8 +181,33 @@ def flattenEmbeddedLibs = tasks.register('flattenEmbeddedLibs', Jar) {
 
 dependencies {
     implementation files(flattenEmbeddedLibs.map { it.archiveFile })
-    // 开发期 runClient 也要能加载这些库。
-    additionalRuntimeClasspath files(flattenEmbeddedLibs.map { it.archiveFile })
+}
+
+// ==================== 开发期：把 embedded libs 提取到编译输出目录 ====================
+// 为什么不用 additionalRuntimeClasspath：
+//   additionalRuntimeClasspath 把 jar 放进游戏的 legacyClassPath，由 AppClassLoader 加载。
+//   而 KotlinForForge 的 kotlin-stdlib 走 JiJ，由 TransformingClassLoader（子加载器）加载。
+//   双亲委派下 AppClassLoader 看不到子加载器的类，于是 music-api（Kotlin 编译产物，
+//   字节码引用 kotlin.NoWhenBranchMatchedException）静态初始化时抛 NoClassDefFoundError，
+//   连带 NeteaseMusicService 类初始化失败，最终客户端 tick 崩溃。
+//   若反过来把 kotlin-stdlib 也加进 additionalRuntimeClasspath，则 JPMS 模块解析阶段报
+//   "reads more than one module named kotlin.stdlib"，游戏连启动都做不到。
+//
+// 正确做法：把 flattenEmbeddedLibs 的类直接提取到 sourceSets.main.output.classesDirs，
+// 它们就成为 mod 类的一部分，由 TransformingClassLoader 加载，与 kotlin-stdlib 同处
+// 一个类加载器，music-api 自然能解析到 kotlin.NoWhenBranchMatchedException。
+// jar 任务不再需要显式 from(flattenEmbeddedLibs)：编译输出目录已含这些类，
+// jar 默认会打包 sourceSets.main.output。
+tasks.named('classes') {
+    dependsOn(flattenEmbeddedLibs)
+    doLast {
+        copy {
+            from(zipTree(flattenEmbeddedLibs.get().archiveFile))
+            into sourceSets.main.output.classesDirs.singleFile
+            includeEmptyDirs = false
+            duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+        }
+    }
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -189,12 +218,16 @@ processResources {
     inputs.property 'version', project.version
     inputs.property 'minecraft_version', project.minecraft_version
     inputs.property 'forge_version', project.forge_version
+    inputs.property 'forge_min_version', project.forge_min_version
+    inputs.property 'kotlinforforge_version', project.kotlinforforge_version
     filteringCharset 'UTF-8'
 
     filesMatching('META-INF/mods.toml') {
         expand 'version': project.version,
                 'minecraft_version': project.minecraft_version,
-                'forge_version': project.forge_version
+                'forge_version': project.forge_version,
+                'forge_min_version': project.forge_min_version,
+                'kotlinforforge_version': project.kotlinforforge_version
     }
 }
 
@@ -211,11 +244,11 @@ java {
 }
 
 jar {
-    dependsOn(flattenEmbeddedLibs)
     from(rootProject.file('LICENSE.txt')) {
         rename { "${it}_${project.archives_base_name}" }
     }
-    from({ zipTree(flattenEmbeddedLibs.get().archiveFile) })
+    // flattenEmbeddedLibs 的类已由 classes 任务提取到编译输出目录，
+    // jar 默认打包 sourceSets.main.output，无需再显式 from。
 }
 
 tasks.register('dumpCompileClasspath') {

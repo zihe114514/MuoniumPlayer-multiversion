@@ -306,7 +306,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         double width = localWidth * configuredScale;
         double height = localHeight * configuredScale;
         double localRadius = compactRadius(style, localHeight);
-        double centerX = RenderSystem.getWidth() * .5;
+        // This anchor describes the global HUD island, not the player's adaptive layout.
+        // Always use the untransformed Minecraft GUI width so callers can convert it once.
+        double centerX = RenderSystem.getWidthNotScaled() * .5;
         double x = centerX - width * .5;
         double y = TOP_MARGIN;
         return new double[]{x, y, width, height, localRadius * configuredScale};
@@ -391,8 +393,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     public static void finishTranscode(String sourceName, String targetName, long elapsedMillis) {
         transcoding = false;
         transcodeProgress = 1.0;
-        publishNotice(IslandNoticeType.TRANSCODE_SUCCESS, "转码完成",
-                formatTranscodeValue(sourceName, targetName) + " · " + Math.max(0L, elapsedMillis) + " ms");
+        transcodeProgressAdvancedAt = 0L;
+        // The live card is persistent, so an ordinary notice is queued behind it and cannot replace
+        // it. Complete the status channel directly; otherwise the island stays on "transcoding"
+        // until the stall watchdog misreports a successful decode as unresponsive.
+        completePersistentNotice(IslandNoticeType.TRANSCODING, IslandNoticeType.TRANSCODE_SUCCESS,
+                "转码完成", formatTranscodeValue(sourceName, targetName) + " · "
+                        + Math.max(0L, elapsedMillis) + " ms");
     }
 
     /** Removes an interrupted transcode card before the normal playback-failure notice is shown. */

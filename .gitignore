@@ -37,3 +37,6 @@ Thumbs.db
 # tools/ 里的 python 脚本被 import 时会留下字节码缓存
 __pycache__/
 *.pyc
+
+# 本地排障导出的完整错误报告（含日志、账号环境与第三方 jar，绝不上传）
+error-report-*/

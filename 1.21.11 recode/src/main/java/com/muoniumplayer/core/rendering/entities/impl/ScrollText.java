@@ -53,6 +53,15 @@ public class ScrollText implements SharedConstants {
     public boolean isScrolling = false;
 
     public void render(CFontRenderer fr, String text, double x, double y, double width, int color) {
+        // Layout can transiently produce a negative max width while a panel is animating or being
+        // rebuilt. Skia Rect::makeXYWH rejects negative widths, and one bad label must not take down
+        // the whole screen, so treat every non-positive/non-finite width as "no drawable space".
+        if (fr == null || text == null || text.isEmpty()
+                || !Double.isFinite(width) || width <= 0.0) {
+            isScrolling = false;
+            scrollOffset = 0.0;
+            return;
+        }
 
         if (!cachedText.equals(text)) {
             cachedText = text;
@@ -66,7 +75,7 @@ public class ScrollText implements SharedConstants {
 
             isScrolling = true;
 
-            double gradWidth = 6;
+            double gradWidth = Math.min(6.0, Math.max(0.0, width * .25));
             double exp = 2;
 
             // 旧实现：把文字画进一个全屏离屏帧缓冲，再把「左右两端渐隐」的遮罩画进第二个
@@ -77,12 +86,13 @@ public class ScrollText implements SharedConstants {
             // 再用两条横向 alpha 渐变以 DST_IN 把两端的 alpha 乘下去。
             // 没有全屏纹理、没有自己搭投影、没有第二遍全屏合成。
             io.github.humbleui.skija.Canvas canvas = SkijaGfx.canvas();
+            if (canvas == null) return;
+            double layerHeight = Math.max(1.0, fr.getHeight() + exp * 2);
             io.github.humbleui.types.Rect bounds = io.github.humbleui.types.Rect.makeXYWH(
-                    (float) x, (float) (y - exp),
-                    (float) width, (float) (fr.getHeight() + exp * 2));
+                    (float) x, (float) (y - exp), (float) width, (float) layerHeight);
             int layer = canvas == null ? -1 : canvas.saveLayer(bounds, null);
             try {
-                StencilClipManager.beginClip(() -> Rect.draw(x, y - exp, width, fr.getHeight() + exp * 2, -1, Rect.RectType.EXPAND));
+                StencilClipManager.beginClip(() -> Rect.draw(x, y - exp, width, layerHeight, -1, Rect.RectType.EXPAND));
 
                 fr.drawString(text, x + scrollOffset, y, color);
 
@@ -122,9 +132,9 @@ public class ScrollText implements SharedConstants {
                 if (canvas != null) {
                     // 左端：从 leftGradientAlpha 渐变到全不透明；右端：全不透明渐变到全透明。
                     // 中段旧实现画的是纯不透明白，对 alpha 是恒等变换，直接省掉。
-                    fadeEdge(canvas, x, y - exp, gradWidth, fr.getHeight() + exp * 2,
+                    fadeEdge(canvas, x, y - exp, gradWidth, layerHeight,
                             RGBA.color(1f, 1f, 1f, this.leftGradientAlpha), 0xFFFFFFFF);
-                    fadeEdge(canvas, x + width - gradWidth, y - exp, gradWidth, fr.getHeight() + exp * 2,
+                    fadeEdge(canvas, x + width - gradWidth, y - exp, gradWidth, layerHeight,
                             0xFFFFFFFF, 0x00FFFFFF);
                 }
             } finally {
@@ -151,6 +161,8 @@ public class ScrollText implements SharedConstants {
     private static void fadeEdge(io.github.humbleui.skija.Canvas canvas,
                                  double x, double y, double width, double height,
                                  int fromArgb, int toArgb) {
+        if (canvas == null || !Double.isFinite(width) || width <= 0.0
+                || !Double.isFinite(height) || height <= 0.0) return;
         io.github.humbleui.types.Rect rect = io.github.humbleui.types.Rect.makeXYWH(
                 (float) x, (float) y, (float) width, (float) height);
         try (io.github.humbleui.skija.Shader gradient =

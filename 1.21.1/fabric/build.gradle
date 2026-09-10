@@ -87,9 +87,10 @@ dependencies {
     implementation include('net.java.dev.jna:jna-platform:5.14.0')
     implementation include('muoniumplayer.libs:music-api:0.1.1')
     implementation include('muoniumplayer.libs:zstd-jni:1.5.6-9-forge189')
-    implementation include('muoniumplayer.libs:kotlin-stdlib:2.4.0')
 
     // ==================== Skija（渲染层）====================
+    // Kotlin 运行时由 Fabric Language Kotlin 统一提供，不再随本 mod 打包。
+    implementation "net.fabricmc:fabric-language-kotlin:${project.fabric_language_kotlin_version}"
     implementation include('io.github.humbleui:skija-shared:0.143.17')
     implementation include('io.github.humbleui:types:0.2.0')
     implementation include("io.github.humbleui:skija-" + project.skija_natives + ":0.143.17")
@@ -114,13 +115,15 @@ processResources {
     inputs.property 'minecraft_version', project.minecraft_version
     inputs.property 'loader_version', project.loader_version
     inputs.property 'loader_min_version', project.loader_min_version
+    inputs.property 'fabric_language_kotlin_version', project.fabric_language_kotlin_version
     filteringCharset 'UTF-8'
 
     filesMatching('fabric.mod.json') {
         expand 'version': project.version,
                 'minecraft_version': project.minecraft_version,
                 'loader_version': project.loader_version,
-                'loader_min_version': project.loader_min_version
+                'loader_min_version': project.loader_min_version,
+                'fabric_language_kotlin_version': project.fabric_language_kotlin_version
     }
 }
 

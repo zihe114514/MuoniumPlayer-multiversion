@@ -71,6 +71,11 @@ public class LabelWidget extends AbstractWidget<LabelWidget> {
 
         if (widthNotLimited) {
             activeFont.drawString(lbl, this.getX(), this.getY(), this.getHexColor());
+        } else if (this.getMaxWidth() <= 0.0) {
+            // A collapsed parent or a transitional layout can ask for a negative width.
+            // There is no useful text to draw in that space; keep the widget alive instead.
+            this.setBounds(0, Math.max(0, activeFont.getStringHeight(lbl)));
+            return;
         } else if (this.widthLimitType == WidthLimitType.SCROLL) {
             this.scrollText.getValue().render(activeFont, lbl, this.getX(), this.getY(),
                     this.getMaxWidth(), this.getHexColor());
@@ -84,7 +89,14 @@ public class LabelWidget extends AbstractWidget<LabelWidget> {
     }
 
     public LabelWidget setMaxWidth(double maxWidth) {
-        this.maxWidth = maxWidth;
+        // -1 is the documented "unlimited" sentinel. Any other negative or non-finite value
+        // comes from a transient layout calculation and is normalized to zero so onRender can
+        // skip it safely instead of forwarding it to Skia.
+        if (maxWidth == -1.0) {
+            this.maxWidth = -1.0;
+        } else {
+            this.maxWidth = Double.isFinite(maxWidth) ? Math.max(0.0, maxWidth) : 0.0;
+        }
         return this;
     }
 

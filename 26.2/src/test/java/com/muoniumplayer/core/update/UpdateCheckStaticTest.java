@@ -29,7 +29,7 @@ class UpdateCheckStaticTest {
     private static final Path SHARED_JAVA = ProjectPaths.sharedJava();
 
     private static final String MC_VERSION = "26.2";
-    private static final String MOD_VERSION = "1.4.7";
+    private static final String MOD_VERSION = "1.4.8";
     private static final String LOADER_ID = "neoforge";
 
     @Test
@@ -219,7 +219,7 @@ class UpdateCheckStaticTest {
                 "com", "muoniumplayer", "core", "settings", "ConfigPaths.java")));
         assertTrue(configPaths.contains("UPDATE_NOTICE"),
                 "必须有独立的 UPDATE_NOTICE 路径");
-        assertTrue(configPaths.contains("muonium/update_notice.json"),
+        assertTrue(configPaths.contains("UPDATE_NOTICE = new File(CONFIG_DIRECTORY, \"update_notice.json\")"),
                 "状态要落在 config/muonium/update_notice.json，读坏了也不影响别的设置");
 
         String checker = stripComments(read(updateSource("UpdateChecker.java")));

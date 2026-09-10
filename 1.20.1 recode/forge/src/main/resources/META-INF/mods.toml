@@ -19,7 +19,14 @@ displayURL = "https://github.com/zihe114514/MuoniumPlayer"
 [[dependencies.muonium]]
     modId = "forge"
     mandatory = true
-    versionRange = "[47,)"
+    versionRange = "[${forge_min_version},)"
+    ordering = "NONE"
+    side = "CLIENT"
+
+[[dependencies.muonium]]
+    modId = "kotlinforforge"
+    mandatory = true
+    versionRange = "[${kotlinforforge_version},)"
     ordering = "NONE"
     side = "CLIENT"
 

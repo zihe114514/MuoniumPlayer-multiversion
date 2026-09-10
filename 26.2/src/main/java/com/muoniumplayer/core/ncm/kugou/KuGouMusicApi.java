@@ -112,6 +112,47 @@ public final class KuGouMusicApi {
         return result;
     }
 
+    /**
+     *
+     * identify a cloud playlist by {@code gid}, so the service layer must route them through
+     * {@link #collectionTracks(String, int)} rather than the legacy specialid endpoint.</p>
+     */
+    public static List<Playlist> searchPlaylists(String keyword, int limit) {
+        List<Playlist> result = new ArrayList<Playlist>();
+        if (KuGouSign.isBlank(keyword)) return result;
+
+        Map<String, String> params = KuGouHttp.deviceParams();
+        params.put("albumhide", "0");
+        params.put("iscorrection", "1");
+        params.put("keyword", keyword.trim());
+        params.put("nocollect", "0");
+        params.put("page", "1");
+        params.put("pagesize", String.valueOf(clampPageSize(limit)));
+        params.put("platform", "AndroidFilter");
+
+        Map<String, String> headers = new LinkedHashMap<String, String>();
+        headers.put("x-router", "complexsearch.kugou.com");
+        JsonObject root = KuGouHttp.get(KuGouHttp.GATEWAY, "/v1/search/special",
+                params, KuGouHttp.Sign.ANDROID, headers);
+        if (!isOk(root)) return result;
+
+        JsonArray lists = array(object(root, "data"), "lists");
+        if (lists == null) return result;
+        for (JsonElement element : lists) {
+            if (element == null || !element.isJsonObject()) continue;
+            JsonObject item = element.getAsJsonObject();
+            Playlist playlist = new Playlist();
+            playlist.id = firstText(item, "gid", "global_collection_id", "specialid");
+            playlist.name = firstText(item, "specialname", "name");
+            playlist.coverTemplate = firstText(item, "img", "imgurl", "pic", "cover");
+            playlist.description = firstText(item, "intro", "nickname");
+            playlist.trackCount = integer(item, "song_count", "songcount", "count", "musiccount");
+            if (KuGouSign.isBlank(playlist.id) || KuGouSign.isBlank(playlist.name)) continue;
+            result.add(playlist);
+        }
+        return result;
+    }
+
     // ── 歌单 / 榜单 ─────────────────────────────────────────────────────────
 
     /** 首页推荐歌单（酷狗的「精选歌单」）。匿名可用。 */
@@ -649,15 +690,17 @@ public final class KuGouMusicApi {
         if (KuGouSign.isBlank(track.hash)) return null;
         track.hash320 = KuGouSign.lower(firstText(item, "320hash", "hash_high"));
         track.hashLossless = KuGouSign.lower(firstText(item, "sqhash", "hash_super"));
+        applyRelatedQualityHashes(item, track);
         track.albumId = firstText(item, "album_id", "AlbumID");
         track.albumAudioId = firstText(item, "album_audio_id", "Audioid", "audio_id");
         track.durationMillis = Math.max(0L, longValue(item, "duration", "timelength", "Duration")) ;
         // 搜索给的是秒，个别端点给毫秒；超过 1 小时的"秒"几乎不存在，按此判定单位。
         if (track.durationMillis > 0L && track.durationMillis < 36000L) track.durationMillis *= 1000L;
 
-        String name = firstText(item, "songname", "SongName", "filename", "FileName", "audio_name");
+        String name = firstText(item, "songname", "SongName", "filename", "FileName", "audio_name", "name");
         String artist = firstText(item, "singername", "SingerName", "author_name");
         if (KuGouSign.isBlank(artist)) artist = authorNames(item);
+        if (KuGouSign.isBlank(artist)) artist = singerNames(item);
         String fileName = firstText(item, "filename", "FileName");
         if (KuGouSign.isBlank(artist) && fileName.contains(" - ")) {
             int split = fileName.indexOf(" - ");
@@ -669,9 +712,13 @@ public final class KuGouMusicApi {
         track.name = name;
         track.artist = artist;
         track.album = firstText(item, "album_name", "AlbumName", "remark");
+        if (KuGouSign.isBlank(track.album)) {
+            JsonObject albumInfo = object(item, "albuminfo");
+            if (albumInfo != null) track.album = firstText(albumInfo, "name", "album_name");
+        }
         if (KuGouSign.isBlank(track.name)) return null;
 
-        track.coverTemplate = firstText(item, "album_sizable_cover", "sizable_cover", "img", "imgurl");
+        track.coverTemplate = firstText(item, "album_sizable_cover", "sizable_cover", "img", "imgurl", "cover");
         if (KuGouSign.isBlank(track.coverTemplate)) {
             JsonObject transParam = object(item, "trans_param");
             if (transParam != null) track.coverTemplate = firstText(transParam, "union_cover");
@@ -679,6 +726,39 @@ public final class KuGouMusicApi {
         // privilege 10 是最常见的「仅会员」标记；0/8 在实测里都能匿名取到标准音质。
         track.vip = integer(item, "privilege") == 10;
         return track;
+    }
+
+    /**
+     * Cloud playlist songs expose their quality variants in {@code relate_goods} instead of the
+     * flat hash fields used by search and legacy playlist endpoints.
+     */
+    private static void applyRelatedQualityHashes(JsonObject item, Track track) {
+        JsonArray related = array(item, "relate_goods");
+        if (related == null) return;
+        for (JsonElement element : related) {
+            if (element == null || !element.isJsonObject()) continue;
+            JsonObject quality = element.getAsJsonObject();
+            int bitrate = integer(quality, "bitrate");
+            String hash = KuGouSign.lower(firstText(quality, "hash"));
+            if (KuGouSign.isBlank(hash)) continue;
+            if (bitrate >= 700) track.hashLossless = hash;
+            else if (bitrate >= 300) track.hash320 = hash;
+        }
+    }
+
+    /** Cloud playlist songs use {@code singerinfo[].name} for artist metadata. */
+    private static String singerNames(JsonObject item) {
+        JsonArray singers = array(item, "singerinfo");
+        if (singers == null) return "";
+        StringBuilder builder = new StringBuilder();
+        for (JsonElement element : singers) {
+            if (element == null || !element.isJsonObject()) continue;
+            String name = firstText(element.getAsJsonObject(), "name", "author_name");
+            if (KuGouSign.isBlank(name)) continue;
+            if (builder.length() > 0) builder.append(", ");
+            builder.append(name);
+        }
+        return builder.toString();
     }
 
     private static String authorNames(JsonObject item) {

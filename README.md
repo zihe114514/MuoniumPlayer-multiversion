@@ -16,15 +16,27 @@ Minecraft 客户端 mod **MuoniumPlayer**（网易云音乐播放器 + 灵动岛
 | `1.21.11 recode` | 1.21.11 | Fabric + NeoForge | 21.11.45 | MDG 2.0.144 | 0.141.6+1.21.11 | 0.17.3 | 21 | JDK 21 |
 | `26.2` | 26.2 | Fabric + NeoForge | 26.2.0.72 | MDG 2.0.144 | 0.158.0+26.2 | 0.18.4 | 25 | JDK 25 |
 
+### 运行期 Kotlin / 加载器下限
+
+- Kotlin **不再随 mod jar 打包**，改由前置统一提供：
+  - `1.20.1 Forge`：`Kotlin for Forge 4.3.0+`
+  - `1.21.1 NeoForge`：`Kotlin for Forge 5.4.0+`
+  - `1.21.11 NeoForge`：`Kotlin for Forge 6.0.0+`
+  - `26.2 NeoForge`：`Kotlin for Forge 6.3.0+`
+  - Fabric 侧：`Fabric Language Kotlin 1.13.12+kotlin.2.4.0+`
+- 加载器最低支持版本不再跟随构建时的最新版：
+  - `Forge 47.0.0+`
+  - `NeoForge 21.1.0+ / 21.11.0+ / 26.2.0+`
+
 **1.20.1 用 Forge 而不是 NeoForge**：1.20.1 是 Forge 的最后一个大版本，NeoForge 从
 1.20.2 才分家，1.20.1 的模组生态与整合包都在 Forge 上。
 
-四份工程共用：`mod_version=1.4.7`、`maven_group=com.muoniumplayer`、
+四份工程共用：`mod_version=1.4.8`、`maven_group=com.muoniumplayer`、
 `archives_base_name=MuoniumPlayer`、Skija `0.143.17`（Fabric 侧 `include` 进 jar，
 Forge/NeoForge 侧用 shadow 合并；原生库平台由 `skija_natives` 控制，发布时需要改成四平台全打）。
 
 产物命名：`MuoniumPlayer-<mc版本>-<加载器>-<mod版本>.jar`，
-例如 `MuoniumPlayer-1.21.11-neoforge-1.4.7.jar` / `MuoniumPlayer-1.20.1-forge-1.4.7.jar`。
+例如 `MuoniumPlayer-1.21.11-neoforge-1.4.8.jar` / `MuoniumPlayer-1.20.1-forge-1.4.8.jar`。
 名字里带 Minecraft 版本是必要的，不是好看：四个版本工程是四个独立构建，
 8 个 jar 要平铺进同一个 `dist/`，不带版本号的话 1.21.1 与 1.21.11 的 fabric 产物会同名互相覆盖。
 `buildAll` 跑完会把成品汇总到仓库根的 `dist/`（`collectDist` 任务，只收成品、不收源码包与改名前的旧 jar）。
@@ -219,11 +231,15 @@ Gradle wrapper 与构建配置。
 ```powershell
 # 全版本构建（默认任务 buildAll = 两个加载器各出一个 jar，并汇总到仓库根 dist/；
 # 日志写 _build_all.log，末尾打印 dist/ 里的 8 个 jar，任一版本失败退出码为 1）
-.\tools\build-all.ps1
+# 默认会清理输出目录中旧的 MuoniumPlayer-*.jar；需要保留时加 -KeepOldJars
+.\build-all.bat
 
-# 只构建部分版本 / 换任务 / 离线
+# PowerShell 里直接调用；构建到指定目录而不是默认 dist/
+.\tools\build-all.ps1 -OutputDir releases\1.4.8
+
+# 只构建部分版本 / 换任务 / 离线 / 不复用 Gradle daemon
 .\tools\build-all.ps1 -Versions '1.21.1','26.2' -Task ':fabric:build'
-.\tools\build-all.ps1 -Task ':fabric:test' -Offline
+.\tools\build-all.ps1 -Task ':fabric:test' -Offline -NoDaemon
 
 # 单版本：两个加载器都构建
 cd '1.21.11 recode'; .\gradlew.bat buildAll

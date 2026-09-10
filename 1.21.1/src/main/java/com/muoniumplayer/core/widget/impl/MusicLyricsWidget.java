@@ -95,7 +95,9 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         showRoman.setHiddenPredicate(() -> !showTranslation.getValue());
         dynIsland.setHiddenPredicate(() -> !Reflection.DYNAMIC_ISLAND_SUPPORTED);
         
-        this.addValues(alignMode, width, height, lyricHeight, lyricColor, currentLyricColor, shadow, singleLine, graceScroll, showRoman, dynIsland, preferAmllLyrics, preferQqQrcLyrics);
+        // Width/height are owned by HudConfig so both HUD editors and the module wrapper use the
+        // same responsive viewport. Keeping the NumberValues here preserves wrapper compatibility.
+        this.addValues(alignMode, lyricHeight, lyricColor, currentLyricColor, shadow, singleLine, graceScroll, showRoman, dynIsland, preferAmllLyrics, preferQqQrcLyrics);
 
         Tuple<ExtensionWidget, WidgetWrapper.WidgetPosSizeInterface> wrapped = WidgetWrapper.createWrapper(this, this::onRender);
         this.widget = wrapped.getA();
@@ -107,6 +109,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     public void loadHudEditorSettings() {
         lyricColor.setValue(new Color(HudConfig.lyricColorRgb, true));
         currentLyricColor.setValue(new Color(HudConfig.currentLyricColorRgb, true));
+        width.setValue((double) HudConfig.lyricWidth);
+        height.setValue((double) HudConfig.lyricHeight);
     }
 
     /**
@@ -184,8 +188,10 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         // HUD 位置 + 缩放（HudConfig，由 GuiHudEditor 拖拽/滚轮调整）。
         // 位置公式与参考实现一致：pixel = pos * (screen - baseSize * scale)；缩放围绕左上锚点等比进行。
         float hudScale = editorPreviewActive ? editorPreviewScale : HudConfig.lyricScale;
-        float baseW = this.width.getValue().floatValue();
-        float baseH = this.height.getValue().floatValue();
+        float baseW = HudConfig.lyricWidth;
+        float baseH = HudConfig.lyricHeight;
+        wpsInterface.setWidth(baseW);
+        wpsInterface.setHeight(baseH);
         float hudX = editorPreviewActive
                 ? editorPreviewX
                 : (float) (HudConfig.lyricX * (getWidth() - baseW * hudScale));
@@ -1421,8 +1427,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
 
     private void cleanupRender() {
         api.getGLStateManager().popMatrix();
-        wpsInterface.setWidth(this.width.getValue().floatValue());
-        wpsInterface.setHeight(this.height.getValue().floatValue());
+        wpsInterface.setWidth(HudConfig.lyricWidth);
+        wpsInterface.setHeight(HudConfig.lyricHeight);
     }
 
     /**

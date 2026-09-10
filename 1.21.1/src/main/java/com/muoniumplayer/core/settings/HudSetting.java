@@ -20,6 +20,8 @@ public enum HudSetting {
     OSD_PULSE("OSD逐字放大", 0.00f, 0.15f),
     OSD_SMOOTHNESS("OSD动画平滑", 0.00f, 1.00f),
     OSD_DUET_SPREAD("OSD对唱分列", 0.00f, 1.00f),
+    OSD_WIDTH("桌面歌词宽度", 225.0f, 900.0f),
+    OSD_HEIGHT("桌面歌词高度", 60.0f, 480.0f),
     NORMAL_OPACITY("普通透明度", 0.15f, 1.00f),
     NORMAL_SCALE("普通缩放", 0.85f, 1.05f),
     NORMAL_GLOW("其它行发光", 0.00f, 0.65f),
@@ -109,6 +111,8 @@ public enum HudSetting {
             case OSD_PULSE: return HudConfig.osdKaraokePulseStrength;
             case OSD_SMOOTHNESS: return HudConfig.osdKaraokeSmoothing;
             case OSD_DUET_SPREAD: return HudConfig.osdDuetSpread;
+            case OSD_WIDTH: return HudConfig.lyricWidth;
+            case OSD_HEIGHT: return HudConfig.lyricHeight;
             case NORMAL_OPACITY: return HudConfig.normalOpacity;
             case NORMAL_SCALE: return HudConfig.normalScale;
             case NORMAL_GLOW: return HudConfig.normalGlowStrength;
@@ -168,6 +172,8 @@ public enum HudSetting {
             case OSD_PULSE: HudConfig.osdKaraokePulseStrength = clamped; break;
             case OSD_SMOOTHNESS: HudConfig.osdKaraokeSmoothing = clamped; break;
             case OSD_DUET_SPREAD: HudConfig.osdDuetSpread = clamped; break;
+            case OSD_WIDTH: HudConfig.lyricWidth = clamped; break;
+            case OSD_HEIGHT: HudConfig.lyricHeight = clamped; break;
             case NORMAL_OPACITY: HudConfig.normalOpacity = clamped; break;
             case NORMAL_SCALE: HudConfig.normalScale = clamped; break;
             case NORMAL_GLOW: HudConfig.normalGlowStrength = clamped; break;

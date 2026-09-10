@@ -9,6 +9,7 @@ import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseUnblockSettings;
+import com.muoniumplayer.core.ncm.music.YouTubeProxySettings;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
@@ -16,6 +17,7 @@ import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
+import com.muoniumplayer.core.rendering.ui.widgets.TextFieldWidget;
 import com.muoniumplayer.core.screens.ncm.panels.HomePanel;
 import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.party.ui.PartyIcons;
@@ -26,7 +28,7 @@ import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
 /**
- * 音乐来源浮层：官方源（网易云 / QQ / 酷狗）与 GD音乐台 聚合源的切换。
+ * 音乐来源浮层：官方源（网易云 / QQ / 酷狗 / YouTube / 哔哩哔哩）与 GD音乐台 聚合源的切换。
  *
  * <p>版式、动效与图标对齐都在 {@link NcmSheet}，这里只描述「有哪些来源、每张卡上写什么」。
  * 改写的起因是原来这个文件自己写了一遍遮罩、弹窗、标题、卡片和胶囊，纵向位置是一串写死的
@@ -91,6 +93,7 @@ public final class MusicSourceOverlay extends NcmSheet {
     private static final int PAGE_OVERVIEW = 0;
     private static final int PAGE_GD = 1;
     private static final int PAGE_LX = 2;
+    private static final int PAGE_YOUTUBE_PROXY = 3;
 
     /**
      * 当前在哪一页。
@@ -142,7 +145,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         page = PAGE_OVERVIEW;
         beginPage();
 
-        final Panel dialog = sheet(476, () -> HEADER_H + LABEL_ROW + ROW_H * 3
+        final Panel dialog = sheet(476, () -> HEADER_H + LABEL_ROW + ROW_H * 6
                 + LABEL_ROW_2 + ROW_H + LABEL_ROW_2 + ROW_H + FOOTER_H);
         header(dialog, PartyIcons.NOTE, "音乐来源",
                 () -> "官方源、在线聚合源与自定义脚本源各自独立，随时切换",
@@ -156,12 +159,15 @@ public final class MusicSourceOverlay extends NcmSheet {
         officialCard(strip(feed, ROW_H), 0, MusicPlatform.NETEASE);
         officialCard(strip(feed, ROW_H), 1, MusicPlatform.QQ);
         officialCard(strip(feed, ROW_H), 2, MusicPlatform.KUGOU);
+        officialCard(strip(feed, ROW_H), 3, MusicPlatform.YOUTUBE);
+        officialCard(strip(feed, ROW_H), 4, MusicPlatform.BILIBILI);
+        officialCard(strip(feed, ROW_H), 5, MusicPlatform.QISHUI);
 
         sectionLabel(strip(feed, LABEL_ROW_2), "在线聚合源", () -> 9.0, MusicPlatform.GD::getBrandColor);
-        gdCard(strip(feed, ROW_H), 3);
+        gdCard(strip(feed, ROW_H), 6);
 
         sectionLabel(strip(feed, LABEL_ROW_2), "自定义音源", () -> 9.0, () -> LX_COLOR);
-        lxEntryCard(strip(feed, ROW_H), 4);
+        lxEntryCard(strip(feed, ROW_H), 7);
 
         unblockRow(dialog);
         tip(dialog, () -> "GD音乐台来源由 music-api.gdstudio.xyz 提供，请遵循上游服务的使用要求",
@@ -202,9 +208,170 @@ public final class MusicSourceOverlay extends NcmSheet {
                         // 从品牌色朝白推 .78 得到的才是"同一块底上的第二层文字"。
                         ? mix(platform.getBrandColor(), 0xFFFFFF, .78)
                         : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                () -> picked.getAsBoolean() ? 46.0 : 16.0);
+                () -> platform == MusicPlatform.YOUTUBE ? 74.0 : (picked.getAsBoolean() ? 46.0 : 16.0));
 
         checkBadge(card, picked, platform::getBrandColor, () -> card.getWidth() - 23);
+        if (platform == MusicPlatform.YOUTUBE) youtubeProxyButton(card);
+    }
+
+    /** YouTube 专属设置入口。代理只作用于 YouTube 链路，所以留在 YouTube 卡上而不是全局设置。 */
+    private void youtubeProxyButton(final Card card) {
+        final RoundedButtonWidget button = new RoundedButtonWidget("", FontManager.pf12bold);
+        card.addChild(button);
+        button.setRadius(10);
+        button.setShouldOverrideMouseCursor(true);
+        button.setOnClickCallback((x, y, mouse) -> {
+            if (mouse != 0) return false;
+            showYouTubeProxySettings();
+            return true;
+        });
+        button.setBeforeRenderCallback(() -> {
+            button.setBounds(32, 32);
+            button.setPosition(card.getWidth() - 64, card.getHeight() * .5 - 16);
+            button.setColor(button.isHovering()
+                    ? mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), MusicPlatform.YOUTUBE.getBrandColor(), .16)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+        icon(button, PartyIcons.LINK, ICON_M, () -> 16.0, () -> 16.0,
+                () -> YouTubeProxySettings.isEnabled() ? MusicPlatform.YOUTUBE.getBrandColor()
+                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+    }
+
+    /** 二级页：YouTube 专用 HTTP 代理。 */
+    private void showYouTubeProxySettings() {
+        page = PAGE_YOUTUBE_PROXY;
+        beginPage();
+
+        statusText = YouTubeProxySettings.describe();
+        statusTone = YouTubeProxySettings.isEnabled() ? 1 : 0;
+
+        final Panel dialog = sheet(476, () -> 300.0);
+        subHeader(dialog, this::showOverview, () -> "YouTube · 网络代理",
+                () -> "仅影响 YouTube 搜索、取流、音频下载与封面下载",
+                MusicPlatform.YOUTUBE::getBrandColor);
+        tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> 60.0);
+
+        final Panel body = body(dialog, () -> 88.0, () -> 54.0);
+        final ScrollPanel feed = feed(body);
+        sectionLabel(strip(feed, 20.0), "HTTP 代理", () -> 4.0,
+                MusicPlatform.YOUTUBE::getBrandColor);
+        youtubeProxyToggleRow(strip(feed, 48.0));
+        sectionLabel(strip(feed, 24.0), "代理地址", () -> 8.0,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        final TextFieldWidget input = youtubeProxyInputRow(strip(feed, 46.0));
+
+        youtubeProxyFooter(dialog, input);
+    }
+
+    private void youtubeProxyToggleRow(final Panel row) {
+        final RoundedRectWidget surface = new RoundedRectWidget();
+        row.addChild(surface);
+        surface.setClickable(false);
+        surface.setRadius(11);
+        surface.setBeforeRenderCallback(() -> {
+            surface.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 40);
+            surface.setPosition(PAD + CARD_INSET, 4.0);
+            surface.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+
+        icon(surface, PartyIcons.LINK, ICON_M, () -> 20.0, () -> 24.0,
+                () -> YouTubeProxySettings.isEnabled() ? MusicPlatform.YOUTUBE.getBrandColor()
+                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        final LabelWidget title = label(surface, "启用 YouTube 代理", FontManager.pf12bold);
+        title.setBeforeRenderCallback(() -> {
+            title.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            title.setPosition(38, inkTop(title, 13.0));
+        });
+        final LabelWidget note = label(surface, "网易云、QQ、酷狗、Bilibili 与更新检查保持直连", FontManager.pf12);
+        note.setBeforeRenderCallback(() -> {
+            note.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            note.setMaxWidth(Math.max(1, surface.getWidth() - 38 - 96));
+            note.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            note.setPosition(38, inkTop(note, 28.0));
+        });
+
+        toggle(surface, YouTubeProxySettings::isEnabled, () -> {
+            if (!YouTubeProxySettings.isConfigured()) {
+                statusText = "请先保存一个有效的 host:port 代理地址";
+                statusTone = 2;
+                return;
+            }
+            boolean enable = !YouTubeProxySettings.isEnabled();
+            YouTubeProxySettings.setConfiguration(enable, YouTubeProxySettings.getEndpoint());
+            statusText = YouTubeProxySettings.describe();
+            statusTone = enable ? 1 : 0;
+            showYouTubeProxySettings();
+        }, () -> surface.getWidth() - 12, () -> 24.0, MusicPlatform.YOUTUBE::getBrandColor);
+    }
+
+    private TextFieldWidget youtubeProxyInputRow(final Panel row) {
+        final RoundedRectWidget field = new RoundedRectWidget();
+        row.addChild(field);
+        field.setClickable(false);
+        field.setRadius(9);
+        field.setBeforeRenderCallback(() -> {
+            field.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 40);
+            field.setPosition(PAD + CARD_INSET, 4.0);
+            field.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+        });
+
+        final TextFieldWidget input = new TextFieldWidget(FontManager.pf12);
+        row.addChild(input);
+        input.setEnabled(true).setFocused(true);
+        input.setPlaceholder("127.0.0.1:7890");
+        input.drawUnderline(false);
+        input.setText(YouTubeProxySettings.getEndpoint());
+        input.setBeforeRenderCallback(() -> {
+            input.setBounds(Math.max(1, field.getWidth() - 22), 24);
+            input.setPosition(field.getRelativeX() + 11, field.getRelativeY() + 8);
+            input.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            input.setDisabledTextColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        });
+        stroke(field, 9.0, MusicPlatform.YOUTUBE::getBrandColor, () -> input.isFocused() ? .62 : 0.0);
+        return input;
+    }
+
+    private void youtubeProxyFooter(final Panel dialog, final TextFieldWidget input) {
+        final RoundedButtonWidget save = action(dialog, () -> PartyIcons.CHECK, () -> "保存并启用",
+                FontManager.pf12bold, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                () -> {
+                    String value = input.getText();
+                    if (!YouTubeProxySettings.setConfiguration(!value.trim().isEmpty(), value)) {
+                        statusText = "代理地址无效，请使用 host:port（支持 http:// 前缀）";
+                        statusTone = 2;
+                        return;
+                    }
+                    statusText = YouTubeProxySettings.describe();
+                    statusTone = YouTubeProxySettings.isEnabled() ? 1 : 0;
+                });
+        save.setBeforeRenderCallback(() -> {
+            save.setBounds(118, 30);
+            save.setPosition(PAD + CARD_INSET, dialog.getHeight() - 46);
+            save.setColor(save.isHovering()
+                    ? mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), MusicPlatform.YOUTUBE.getBrandColor(), .16)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+
+        final RoundedButtonWidget clear = action(dialog, () -> PartyIcons.CLOSE, () -> "关闭并清空",
+                FontManager.pf12bold, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                () -> {
+                    YouTubeProxySettings.setConfiguration(false, "");
+                    statusText = YouTubeProxySettings.describe();
+                    statusTone = 0;
+                    showYouTubeProxySettings();
+                });
+        clear.setBeforeRenderCallback(() -> {
+            clear.setBounds(118, 30);
+            clear.setPosition(save.getRelativeX() + 126, dialog.getHeight() - 46);
+            clear.setColor(clear.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+
+        tip(dialog, () -> PartyIcons.INFO,
+                () -> "格式：host:port，例如 127.0.0.1:7890；暂不支持 SOCKS 与代理认证",
+                () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                () -> dialog.getHeight() - 20);
     }
 
     /** GD 聚合源卡。它通往下一页，所以右端常驻一枚 chevron。 */
@@ -765,11 +932,21 @@ public final class MusicSourceOverlay extends NcmSheet {
     private void brandDisc(final Card card, final MusicPlatform platform, final BooleanSupplier picked) {
         final boolean kugou = platform == MusicPlatform.KUGOU;
         final boolean qq = platform == MusicPlatform.QQ;
+        final boolean youtube = platform == MusicPlatform.YOUTUBE;
+        final boolean bilibili = platform == MusicPlatform.BILIBILI;
+        final boolean qishui = platform == MusicPlatform.QISHUI;
         // 品牌字形必须配对到自己那份字体：music-brand-icons 里没有 U+E888（QQ 音乐），
         // 拿错字体会落到兜底字体上、画出一片空白。酷狗两份字体里都没有，用正文字体画一枚汉字字标。
         final String mark = kugou ? MusicBrandIcons.KUGOU_MONOGRAM
-                : qq ? MusicBrandIcons.QQ_MUSIC : MusicBrandIcons.NETEASE_CLOUD_MUSIC;
+                : qq ? MusicBrandIcons.QQ_MUSIC
+                : youtube ? MusicBrandIcons.YOUTUBE
+                : bilibili ? MusicBrandIcons.BILIBILI_MONOGRAM
+                : qishui ? MusicBrandIcons.QISHUI_MONOGRAM
+                : MusicBrandIcons.NETEASE_CLOUD_MUSIC;
         final CFontRenderer font = kugou ? FontManager.pf34bold
+                : youtube ? FontManager.youtubeIcon34
+                : bilibili ? FontManager.pf34bold
+                : qishui ? FontManager.pf34bold
                 : qq ? FontManager.qqMusicIcon68 : FontManager.musicBrand52;
 
         final RoundedRectWidget disc = new RoundedRectWidget();
@@ -842,6 +1019,18 @@ public final class MusicSourceOverlay extends NcmSheet {
 
     /** 官方卡副标题：这个来源现在能不能用。比一句写死的能力描述有用得多。 */
     private String accountLine(final MusicPlatform platform) {
+        if (platform == MusicPlatform.YOUTUBE) {
+            return "无需登录 · 搜索并播放 YouTube 音频";
+        }
+        if (platform == MusicPlatform.BILIBILI) {
+            return "无需登录 · 搜索 / BV号 / 分P播放 B站音频";
+        }
+        if (platform == MusicPlatform.QISHUI) {
+            if (NeteaseMusicService.isLoggedIn(platform)) {
+                return "已登录 · " + NeteaseMusicService.getAccountName(platform);
+            }
+            return "未登录 · 可试听，扫码登录后播放完整 AAC";
+        }
         if (NeteaseMusicService.isLoggedIn(platform)) {
             return "已登录 · " + NeteaseMusicService.getAccountName(platform);
         }

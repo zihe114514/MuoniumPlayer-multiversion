@@ -124,7 +124,7 @@ Select-String -Path build\runclient.out.log -Pattern 'Skija|GL_INVALID|已停用
 首次 `compileJava` 约 4 分钟（含 1.21.1 的 remap sources），之后约 40 秒。javac 的错误走 **stderr**，
 用 `Start-Process -RedirectStandardError` 时记得读 `.err.log`。
 `run/` 已带上基线的 `options.txt`（右 Shift 开播放器、H 开 HUD 编辑器、`pauseOnLostFocus:false`）、
-`config/muonium/*` 与存档；`run/logs`、`MusicCache`、崩溃报告没有迁。
+`config/muonium/*` 与存档；`run/logs`、旧版 `MusicCache`、崩溃报告没有迁。
 
 ---
 
@@ -203,7 +203,7 @@ Automix 正常编排，日志里能看到
 
 | 项 | 值 |
 | --- | --- |
-| 配置字段 | `HudConfig.playerFadeSpeed`，持久化键 `playerFadeSpeed`（`muoniumplayer_hud.json`） |
+| 配置字段 | `HudConfig.playerFadeSpeed`，持久化键 `playerFadeSpeed`（`config/muonium/hud.json`） |
 | 设置项 | `HudSetting.PLAYER_FADE_SPEED`（标签「开关动画速度」），区间 0.30×~3.00×，默认 1.00× |
 | 界面入口 | 现代设置界面新增分类**「播放器」→ 分组「开关动画」**；经典设置界面新增**「播放器」**分组，同一个滑块 |
 | 消费点 | `NCMScreen#drawScreen` 里整屏 alpha 的那一次 `Interpolations.interpolate`，系数 = `BASE_FADE_RATE(.4) × 倍率`，钳在 (0,.95] |

@@ -54,6 +54,10 @@ public final class KuGouMusicService {
         return adaptTracks(KuGouMusicApi.search(keyword, limit));
     }
 
+    public static List<PlayList> searchPlaylists(String keyword, int limit) {
+        return adaptPlaylists(KuGouMusicApi.searchPlaylists(keyword, limit), false);
+    }
+
     /** 首页推荐歌单。 */
     public static List<PlayList> recommendPlaylists(int limit) {
         return adaptPlaylists(KuGouMusicApi.recommendPlaylists(limit), false);
@@ -323,8 +327,9 @@ public final class KuGouMusicService {
     private static String platformId(KuGouMusicApi.Playlist playlist, boolean owned) {
         String id = playlist.id.trim();
         if (playlist.rank) return RANK_PREFIX + id;
-        // 用户自己的歌单主键是 global_collection_id：它不是纯数字，老 specialid 端点认不出来。
-        if (owned && !id.matches("\\d+")) return COLLECTION_PREFIX + id;
+        // Cloud playlists use a non-numeric global_collection_id, including public search
+        // results. The legacy specialid endpoint cannot resolve that key.
+        if (!id.matches("\\d+")) return COLLECTION_PREFIX + id;
         return id;
     }
 

@@ -63,6 +63,13 @@ final class LyricLoadService {
             return new LyricLoadResult(rawJson, kugouLyrics);
         }
 
+        // 逐字第四顺位：汽水音乐 H5 返回的逐字时间轴。
+        List<LyricLine> qishuiLyrics = QishuiMusicService.getWordByWordLyrics(music);
+        if (LyricParser.hasWordByWordTiming(qishuiLyrics)) {
+            System.out.println("[Music/Qishui] Loaded word-by-word lyrics for " + trackKey);
+            return new LyricLoadResult(rawJson, qishuiLyrics);
+        }
+
         if (music.isCloudSong() && profileId > 0L) {
             try {
                 JsonObject cloudJson = normalizeCloudLyricResponse(

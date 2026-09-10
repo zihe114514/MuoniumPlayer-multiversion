@@ -8,6 +8,8 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 
+import com.muoniumplayer.core.settings.ConfigPaths;
+
 /**
  * Skija 原生库加载器。
  *
@@ -35,7 +37,7 @@ public final class SkijaNatives {
     /** 平台 jar 里资源的包路径前缀，例如 {@code io/github/humbleui/skija/windows/x64}。 */
     private static final String RESOURCE_ROOT = "io/github/humbleui/skija";
 
-    /** 覆盖解压目标目录；不设时用 {@code user.dir}，再退到 {@code java.io.tmpdir}。 */
+    /** 覆盖解压目标目录；不设时统一落在 {@code config/muonium/native/skija}。 */
     private static final String PROP_DIR = "muonium.skija.dir";
 
     /** Skija 自己认的「直接从这个目录加载」开关。 */
@@ -119,7 +121,7 @@ public final class SkijaNatives {
     private static File extractNatives() throws IOException {
         String platform = platformPath();
         String version = readVersionResource(platform);
-        File dir = new File(baseDir(), "muonium-skija/" + version);
+        File dir = nativeDirectory(version);
         if (!dir.isDirectory() && !dir.mkdirs()) {
             throw new IOException("无法创建 Skija 原生库目录: " + dir);
         }
@@ -219,16 +221,12 @@ public final class SkijaNatives {
         return SkijaNatives.class.getResource("/" + resource);
     }
 
-    private static File baseDir() {
+    private static File nativeDirectory(String version) {
         String override = System.getProperty(PROP_DIR);
         if (override != null && !override.isBlank()) {
-            return new File(override);
+            return new File(override, "muonium-skija/" + version);
         }
-        String userDir = System.getProperty("user.dir");
-        if (userDir != null && !userDir.isBlank() && new File(userDir).isDirectory()) {
-            return new File(userDir);
-        }
-        return new File(System.getProperty("java.io.tmpdir", "."));
+        return new File(ConfigPaths.SKIJA_NATIVE_ROOT, version);
     }
 
     // ------------------------------------------------------------------

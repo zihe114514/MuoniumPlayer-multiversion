@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.muoniumplayer.core.settings.ConfigPaths;
+
 import java.io.File;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -86,7 +88,7 @@ final class FfmpegSupport {
         boolean windows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
         String binaryName = windows ? "ffmpeg.exe" : "ffmpeg";
         // 游戏目录内的私有位置:用户不想改系统 PATH 时把二进制丢进来就能用。
-        addCandidate(candidates, new File(new File("config", "muonium"), "bin/" + binaryName).getPath());
+        addCandidate(candidates, new File(ConfigPaths.BIN_DIR, binaryName).getPath());
         addCandidate(candidates, "ffmpeg");
 
         if (windows) {

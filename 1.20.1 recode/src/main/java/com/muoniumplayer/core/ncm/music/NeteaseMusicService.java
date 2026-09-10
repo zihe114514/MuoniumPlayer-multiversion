@@ -113,6 +113,15 @@ public final class NeteaseMusicService {
         if (currentPlatform == MusicPlatform.KUGOU) {
             return KuGouMusicService.search(keyword, limit);
         }
+        if (currentPlatform == MusicPlatform.YOUTUBE) {
+            return searchYouTube(keyword, limit);
+        }
+        if (currentPlatform == MusicPlatform.BILIBILI) {
+            return searchBilibili(keyword, limit);
+        }
+        if (currentPlatform == MusicPlatform.QISHUI) {
+            return searchQishui(keyword, limit);
+        }
         try {
             List<Track> tracks = SERVICE.search(currentPlatform.toCadenceSource(), keyword.trim(), Math.max(1, limit));
             return adaptTracks(tracks);
@@ -147,6 +156,33 @@ public final class NeteaseMusicService {
     }
 
 
+    private static List<Music> searchYouTube(String keyword, int limit) {
+        List<Music> result = new ArrayList<>();
+        for (YouTubeMusicService.Track track : YouTubeMusicService.search(keyword, limit)) {
+            Music adapted = Music.fromYouTubeMusicTrack(track);
+            if (adapted != null) result.add(adapted);
+        }
+        return result;
+    }
+
+    private static List<Music> searchBilibili(String keyword, int limit) {
+        List<Music> result = new ArrayList<>();
+        for (BilibiliMusicService.Track track : BilibiliMusicService.search(keyword, limit)) {
+            Music adapted = Music.fromBilibiliTrack(track);
+            if (adapted != null) result.add(adapted);
+        }
+        return result;
+    }
+
+    private static List<Music> searchQishui(String keyword, int limit) {
+        List<Music> result = new ArrayList<>();
+        for (QishuiMusicService.Track track : QishuiMusicService.search(keyword, limit)) {
+            Music adapted = Music.fromQishuiTrack(track);
+            if (adapted != null) result.add(adapted);
+        }
+        return result;
+    }
+
     /**
      * Performs a caller-selected official-provider search without changing the visible provider.
      * This is used only for the platform explicitly chosen by the caller.
@@ -154,6 +190,9 @@ public final class NeteaseMusicService {
     public static List<Music> search(MusicPlatform platform, String keyword, int limit) {
         if (isBlank(keyword) || platform == null) return Collections.emptyList();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.search(keyword, limit);
+        if (platform == MusicPlatform.YOUTUBE) return searchYouTube(keyword, limit);
+        if (platform == MusicPlatform.BILIBILI) return searchBilibili(keyword, limit);
+        if (platform == MusicPlatform.QISHUI) return searchQishui(keyword, limit);
         if (!platform.isCadenceBacked()) return Collections.emptyList();
         initialize(OptionsUtil.getCookie());
         try {
@@ -263,6 +302,24 @@ public final class NeteaseMusicService {
     /** Resolves one Cadence stream attempt at an explicit tier without mutating global preferences. */
     public static Tuple<String, String> getSongUrl(Music music, Quality requestedQuality) {
         if (music == null) return null;
+        if (music.isYouTube()) {
+            Quality effectiveQuality = requestedQuality == null ? Quality.LOSSLESS : requestedQuality;
+            YouTubeMusicService.ResolveResult result =
+                    YouTubeMusicService.getSongUrl(music.getSourceId(), effectiveQuality);
+            return result == null ? null : new Tuple<>(result.url, result.format);
+        }
+        if (music.isBilibili()) {
+            Quality effectiveQuality = requestedQuality == null ? Quality.LOSSLESS : requestedQuality;
+            BilibiliMusicService.ResolveResult result =
+                    BilibiliMusicService.getSongUrl(music.getSourceId(), effectiveQuality);
+            return result == null ? null : new Tuple<>(result.url, result.format);
+        }
+        if (music.isQishui()) {
+            Quality effectiveQuality = requestedQuality == null ? Quality.STANDARD : requestedQuality;
+            QishuiMusicService.ResolveResult result =
+                    QishuiMusicService.getSongUrl(music.getSourceId(), effectiveQuality);
+            return result == null ? null : new Tuple<>(result.url, result.format);
+        }
         if (music.isKuGou()) {
             return KuGouMusicService.getSongUrl(music, requestedQuality);
         }
@@ -296,6 +353,10 @@ public final class NeteaseMusicService {
 
     public static Lyric getLyric(Music music) {
         if (music == null) return null;
+        if (music.isYouTube() || music.isBilibili() || music.isQishui()) {
+            // Qishui has its own word-by-word provider; other anonymous sources use fallback matchers.
+            return null;
+        }
         if (music.isKuGou()) {
             // 酷狗的歌词走 KRC（逐字），在 LyricLoadService 里比这条统一兜底链路更早被问。
             // 这里返回 null 而不是硬凑一个空 Lyric：null 才会让调用方继续往下走兜底。
@@ -327,6 +388,12 @@ public final class NeteaseMusicService {
     }
 
     public static QrCode createQrCode(MusicPlatform platform) {
+        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) {
+            throw new UnsupportedOperationException("YouTube Music and Bilibili do not require login");
+        }
+        if (platform == MusicPlatform.QISHUI) {
+            return QishuiMusicService.createQrCode();
+        }
         if (platform == MusicPlatform.KUGOU) {
             String key = KuGouMusicService.createQrKey();
             if (isBlank(key)) throw new IllegalStateException("酷狗未返回扫码 key");
@@ -414,6 +481,13 @@ public final class NeteaseMusicService {
         if (platform == null || qrCode == null) {
             return QrLoginState.ERROR;
         }
+        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) {
+            return QrLoginState.ERROR;
+        }
+        if (platform == MusicPlatform.QISHUI) {
+            QrLoginState state = QishuiMusicService.checkQrCode(qrCode);
+            return state;
+        }
         if (platform == MusicPlatform.KUGOU) {
             // 酷狗不经 Cadence：上游给的是原始码，这里翻成宿主的状态机。
             switch (KuGouMusicService.checkQr(qrCode.getKey())) {
@@ -439,6 +513,12 @@ public final class NeteaseMusicService {
     }
 
     public static synchronized void persistLogin(MusicPlatform platform) {
+        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) {
+            return;
+        }
+        if (platform == MusicPlatform.QISHUI) {
+            return; // QishuiMusicService 在扫码确认时已经原子写入自己的凭据文件。
+        }
         if (platform == MusicPlatform.KUGOU) {
             // 酷狗的 token 在扫码成功那一刻已由 KuGouDevice 落盘，这里无需二次写入。
             return;
@@ -454,6 +534,13 @@ public final class NeteaseMusicService {
     }
 
     public static synchronized void logout(MusicPlatform platform) {
+        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) {
+            return;
+        }
+        if (platform == MusicPlatform.QISHUI) {
+            QishuiMusicService.logout();
+            return;
+        }
         if (platform == MusicPlatform.KUGOU) {
             // 必须挡在 initialize 之前返回：下面的 else 分支会清网易云 cookie，
             // 酷狗掉进去就会把网易云一起注销。
@@ -480,6 +567,8 @@ public final class NeteaseMusicService {
     }
 
     public static boolean isLoggedIn(MusicPlatform platform) {
+        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) return false;
+        if (platform == MusicPlatform.QISHUI) return QishuiMusicService.isLoggedIn();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.isLoggedIn();
         initializeIfNeeded();
         if (platform == MusicPlatform.QQ) {
@@ -489,6 +578,8 @@ public final class NeteaseMusicService {
     }
 
     public static String getAccountName(MusicPlatform platform) {
+        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) return "无需登录";
+        if (platform == MusicPlatform.QISHUI) return QishuiMusicService.getAccountName();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.getAccountName();
         if (platform == MusicPlatform.QQ) {
             QQUserInfo info = qqUserInfo;
@@ -513,6 +604,8 @@ public final class NeteaseMusicService {
      * 而两处必须请出<b>同一个</b>地址：贴图位置是按账号定的，两处若请求不同尺寸就会互相覆盖。</p>
      */
     public static String getAccountAvatarUrl(MusicPlatform platform) {
+        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) return "";
+        if (platform == MusicPlatform.QISHUI) return QishuiMusicService.getAvatarUrl();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.getAvatarUrl();
         if (platform == MusicPlatform.QQ) return getQQAvatarUrl();
         if (CloudMusic.profile == null) return "";
@@ -532,6 +625,11 @@ public final class NeteaseMusicService {
      * 就绪判断交给 {@link com.muoniumplayer.core.rendering.texture.AccountAvatar}。</p>
      */
     public static Location getAccountAvatarLocation(MusicPlatform platform) {
+        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) return null;
+        if (platform == MusicPlatform.QISHUI) {
+            return QishuiMusicService.getAvatarUrl().isEmpty()
+                    ? null : Location.of("muonium/textures/account/qishui_avatar.png");
+        }
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.getAvatarLocation();
         if (platform == MusicPlatform.QQ) {
             return getQQAvatarUrl().isEmpty()

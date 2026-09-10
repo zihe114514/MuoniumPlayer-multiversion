@@ -167,6 +167,15 @@ public final class OnboardingUi {
         } else if (platform == MusicPlatform.KUGOU) {
             drawBrandIcon(MusicBrandIcons.KUGOU_MONOGRAM, FontManager.musicBrand18,
                     centerX, centerY, color);
+        } else if (platform == MusicPlatform.YOUTUBE) {
+            drawBrandIcon(MusicBrandIcons.YOUTUBE, FontManager.youtubeIcon24,
+                    centerX, centerY, color);
+        } else if (platform == MusicPlatform.BILIBILI) {
+            drawBrandIcon(MusicBrandIcons.BILIBILI_MONOGRAM, FontManager.pf18bold,
+                    centerX, centerY, color);
+        } else if (platform == MusicPlatform.QISHUI) {
+            drawBrandIcon(MusicBrandIcons.QISHUI_MONOGRAM, FontManager.pf18bold,
+                    centerX, centerY, color);
         } else {
             drawPartyIcon(PartyIcons.RADIO, centerX, centerY, box, color);
         }

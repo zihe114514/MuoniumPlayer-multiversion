@@ -48,6 +48,9 @@ public final class HudConfig {
     public static float lyricX = 0.5f;
     public static float lyricY = 0.8688119f;
     public static float lyricScale = 0.84999996f;
+    /** Desktop lyric viewport size in unscaled logical units. Text wraps inside this width. */
+    public static float lyricWidth = 450.0f;
+    public static float lyricHeight = 120.0f;
 
     /** Appearance controls exposed in {@code GuiHudEditor}. */
     public static int lyricColorRgb = 0xFFFFFFFF;
@@ -533,6 +536,8 @@ public final class HudConfig {
             lyricX = clampPos(getFloat(o, "lyricX", lyricX));
             lyricY = clampPos(getFloat(o, "lyricY", lyricY));
             lyricScale = clampScale(getFloat(o, "lyricScale", lyricScale));
+            lyricWidth = clamp(getFloat(o, "lyricWidth", lyricWidth), 225.0f, 900.0f);
+            lyricHeight = clamp(getFloat(o, "lyricHeight", lyricHeight), 60.0f, 480.0f);
             lyricColorRgb = getInt(o, "lyricColorRgb", lyricColorRgb);
             currentLyricColorRgb = getInt(o, "currentLyricColorRgb", currentLyricColorRgb);
 
@@ -658,6 +663,8 @@ public final class HudConfig {
             o.addProperty("lyricX", lyricX);
             o.addProperty("lyricY", lyricY);
             o.addProperty("lyricScale", lyricScale);
+            o.addProperty("lyricWidth", lyricWidth);
+            o.addProperty("lyricHeight", lyricHeight);
             o.addProperty("lyricColorRgb", lyricColorRgb);
             o.addProperty("currentLyricColorRgb", currentLyricColorRgb);
 

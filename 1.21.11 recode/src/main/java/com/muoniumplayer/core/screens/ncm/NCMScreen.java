@@ -299,6 +299,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         // 停留在上一次游戏帧值。每帧刷新 ScaledResolution，保证窗口 resize / GUI Scale 变化后
         // 布局与鼠标坐标映射立即正确。
         RenderSystem.refreshResolution();
+        // All player geometry and transition targets must be captured in the adaptive layout.
+        // Entering it after updatePanelScaleAnimation()/tick() left the morph target in Minecraft
+        // GUI coordinates while the render transform expected adaptive coordinates.
+        WindowAdaptiveScale.begin();
         this.updatePanelScaleAnimation();
         // 两条时钟互不接管：外层从岛展开/收回，内部主页 -> 全屏歌词页。
         PlayerIslandTransition.tick();
@@ -318,8 +322,6 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.checkDirty();
 
         int dWheel = Mouse.getDWheel();
-
-        RenderSystem.FIXED_SCALE = true;
 
         // —— GL 状态隔离（关键修复：播放器打开/关闭时半透明元素发白）——
         // 在界面边界压一层绘制状态与变换：内部有 push/pop 不配对的写法，
@@ -624,7 +626,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             }
         }
         api.getGLStateManager().popMatrix();
-        RenderSystem.FIXED_SCALE = false;
+        WindowAdaptiveScale.end();
         CursorUtils.setOverride();
 
         // 恢复投影矩阵与全部 GL 属性（替代原先只 enableTexture2D 的不完整恢复）。
@@ -980,10 +982,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     @Override
     public void mouseClicked(int mX, int mY, int mouseButton) {
 
-        double xScale = RenderSystem.getWidthNotScaled() / (RenderSystem.getFixedWidth() * .5);
-        double yScale = RenderSystem.getHeightNotScaled() / (RenderSystem.getFixedHeight() * .5);
+        RenderSystem.refreshResolution();
+        WindowAdaptiveScale.begin();
+        double xScale = WindowAdaptiveScale.correctionX();
+        double yScale = WindowAdaptiveScale.correctionY();
         double mouseX = mX / xScale;
         double mouseY = mY / yScale;
+        WindowAdaptiveScale.end();
 
         if (this.confirmationOverlay != null) {
             this.confirmationOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);

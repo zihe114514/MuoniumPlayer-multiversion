@@ -9,6 +9,7 @@ import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.compat.lwjgl2.Mouse;
 import com.muoniumplayer.compat.gl.GL11;
 import com.muoniumplayer.core.MuoniumPlayerExtension;
+import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
@@ -19,6 +20,7 @@ import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
+import com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.settings.HudSetting;
 import com.muoniumplayer.core.widget.impl.MusicInfoWidget;
@@ -35,7 +37,8 @@ import com.muoniumplayer.render.skija.SkijaShapes;
  */
 public class GuiHudEditor extends GuiScreen {
 
-    private static final int SNAP_THRESHOLD = 20;
+    private static final int SNAP_THRESHOLD = 8;
+    private static final double SNAP_STRENGTH = 0.35;
     private static final int INFO_BASE_W = 230;
     private static final int INFO_BASE_H = 56;
     private static final int SETTINGS_W = 236;
@@ -73,6 +76,8 @@ public class GuiHudEditor extends GuiScreen {
     };
 
     private static final HudSetting[] NORMAL_SLIDERS = {
+            HudSetting.OSD_WIDTH,
+            HudSetting.OSD_HEIGHT,
             HudSetting.NORMAL_OPACITY,
             HudSetting.NORMAL_SCALE,
             HudSetting.NORMAL_GLOW,
@@ -130,6 +135,9 @@ public class GuiHudEditor extends GuiScreen {
     private boolean draggingHue;
     private GuiTextField hexColorInput;
     private boolean lyricSettingsDirty;
+    /** 窗口自适应模式临时替换 Screen#width/height 时保存的原值。 */
+    private int savedAdaptiveWidth;
+    private int savedAdaptiveHeight;
     private boolean resetConfirmationVisible;
 
     @Override
@@ -162,8 +170,17 @@ public class GuiHudEditor extends GuiScreen {
         // including live previews, inside one state boundary.
         SkijaGfx.pushAttrib();
         SkijaGfx.pushMatrix();
+        boolean adaptive = false;
         try {
             RenderSystem.refreshResolution();
+            adaptive = beginAdaptiveLayout();
+            if (adaptive) {
+                mouseX = WindowAdaptiveScale.toLayoutX(mouseX);
+                mouseY = WindowAdaptiveScale.toLayoutY(mouseY);
+                SharedConstants.api.getGLStateManager().pushMatrix();
+                SharedConstants.api.getGLStateManager().scale(
+                        WindowAdaptiveScale.correctionX(), WindowAdaptiveScale.correctionY(), 1);
+            }
             // Keep the current Minecraft frame visible behind the editor. GuiScreen already
             // renders on top of the game because doesGuiPauseGame() is false; drawing the
             // vanilla background here would replace that frame with an opaque gradient.
@@ -216,10 +233,8 @@ public class GuiHudEditor extends GuiScreen {
             drawHudSelection(fr, "歌曲信息", infoX, infoY, infoW, infoH, 0xFF7DD3FC);
 
             // ==== Lyrics HUD ====
-            float lrBaseW = lyrics.width.getValue().floatValue();
-            float lrBaseH = lyrics.height.getValue().floatValue();
-            int lrW = (int) (lrBaseW * HudConfig.lyricScale);
-            int lrH = (int) (lrBaseH * HudConfig.lyricScale);
+            int lrW = (int) (HudConfig.lyricWidth * HudConfig.lyricScale);
+            int lrH = (int) (HudConfig.lyricHeight * HudConfig.lyricScale);
             int lrX = (int) (HudConfig.lyricX * (sw - lrW));
             int lrY = (int) (HudConfig.lyricY * (sh - lrH));
             handleDrag(lmb && !mouseOverSettings, mouseOverSettings ? 0 : wheel,
@@ -253,9 +268,32 @@ public class GuiHudEditor extends GuiScreen {
             // Scissor is normally closed by drawLyricsSettings, but explicitly closing it
             // before restoring attributes also covers an interrupted drawing path.
             endScissor();
+            if (adaptive) {
+                SharedConstants.api.getGLStateManager().popMatrix();
+            }
+            restoreAdaptiveLayout(adaptive);
             SkijaGfx.popMatrix();
             SkijaGfx.popAttrib();
         }
+    }
+
+    /** 进入窗口自适应布局：临时把 Screen 的宽高换成由物理窗口推导出的逻辑宽高。 */
+    private boolean beginAdaptiveLayout() {
+        RenderSystem.refreshResolution();
+        WindowAdaptiveScale.begin();
+        if (!WindowAdaptiveScale.isTransforming()) return false;
+        savedAdaptiveWidth = width;
+        savedAdaptiveHeight = height;
+        width = WindowAdaptiveScale.layoutWidth();
+        height = WindowAdaptiveScale.layoutHeight();
+        return true;
+    }
+
+    private void restoreAdaptiveLayout(boolean active) {
+        if (!active) return;
+        width = savedAdaptiveWidth;
+        height = savedAdaptiveHeight;
+        WindowAdaptiveScale.end();
     }
     private void drawEditorBackdrop(int panelX, int panelY, int panelH) {
         // The game world is the editor canvas. Keep the shadow local, circular and on
@@ -266,6 +304,15 @@ public class GuiHudEditor extends GuiScreen {
     private void drawSoftCardShadow(int x, int y, int w, int h, int radius) {
         drawRoundedRect(x + 1, y + 2, w, h, radius, 0x30000000);
         drawRoundedRect(x + 2, y + 3, w, h, radius, 0x18000000);
+    }
+
+    /** 中心吸附从硬跳降级为弱磁吸：贴近时辅助对齐，仍可无感拖离。 */
+    private static int softenSnap(int value, int center) {
+        int delta = center - value;
+        int distance = Math.abs(delta);
+        if (distance >= SNAP_THRESHOLD) return value;
+        if (distance <= 1) return center;
+        return value + (int) Math.round(delta * SNAP_STRENGTH);
     }
 
     private boolean hasLiveInfoPreview() {
@@ -553,6 +600,9 @@ public class GuiHudEditor extends GuiScreen {
                     SETTINGS_W - 10, mouseX, mouseY, 0xFFE59AC8);
             rowY += SECTION_H;
             if (playerExpanded) {
+                drawToggleRow(fr, "窗口自适应缩放", NCMPlayerConfig.isWindowAdaptiveScaleEnabled(),
+                        x + 6, rowY, mouseX, mouseY);
+                rowY += COLOR_ROW_H;
                 for (HudSetting setting : PLAYER_SLIDERS) {
                     drawSlider(fr, setting, x + 6, rowY, SETTINGS_W - 12, mouseX, mouseY);
                     rowY += SLIDER_ROW_H;
@@ -808,8 +858,8 @@ public class GuiHudEditor extends GuiScreen {
             boolean snapX = Math.abs(nx - centerX) < SNAP_THRESHOLD;
             boolean snapY = Math.abs(ny - centerY) < SNAP_THRESHOLD;
             showSnapGuide = snapX || snapY;
-            if (snapX) nx = centerX;
-            if (snapY) ny = centerY;
+            nx = softenSnap(nx, centerX);
+            ny = softenSnap(ny, centerY);
             if (isInfo) {
                 HudConfig.infoX = maxX > 0 ? (float) nx / maxX : 0;
                 HudConfig.infoY = maxY > 0 ? (float) ny / maxY : 0;
@@ -831,6 +881,19 @@ public class GuiHudEditor extends GuiScreen {
 
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int button) throws IOException {
+        boolean adaptive = beginAdaptiveLayout();
+        if (adaptive) {
+            mouseX = WindowAdaptiveScale.toLayoutX(mouseX);
+            mouseY = WindowAdaptiveScale.toLayoutY(mouseY);
+        }
+        try {
+            mouseClickedImpl(mouseX, mouseY, button);
+        } finally {
+            restoreAdaptiveLayout(adaptive);
+        }
+    }
+
+    private void mouseClickedImpl(int mouseX, int mouseY, int button) throws IOException {
         if (resetConfirmationVisible) {
             if (button == 0) {
                 handleResetConfirmationClick(mouseX, mouseY);
@@ -1132,6 +1195,11 @@ public class GuiHudEditor extends GuiScreen {
             }
             rowY += SECTION_H;
             if (playerExpanded) {
+                if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                    NCMPlayerConfig.toggleWindowAdaptiveScale();
+                    return;
+                }
+                rowY += COLOR_ROW_H;
                 for (HudSetting setting : PLAYER_SLIDERS) {
                     if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, SLIDER_ROW_H)) {
                         draggingSlider = setting;
@@ -1183,6 +1251,10 @@ public class GuiHudEditor extends GuiScreen {
             HudConfig.lyricX = 0.5f;
             HudConfig.lyricY = 0.85f;
             HudConfig.lyricScale = 1.0f;
+            HudConfig.lyricWidth = 450.0f;
+            HudConfig.lyricHeight = 120.0f;
+            lyrics.width.setValue((double) HudConfig.lyricWidth);
+            lyrics.height.setValue((double) HudConfig.lyricHeight);
             HudConfig.save();
             return;
         }
@@ -1201,6 +1273,19 @@ public class GuiHudEditor extends GuiScreen {
 
     @Override
     protected void mouseReleased(int mouseX, int mouseY, int state) {
+        boolean adaptive = beginAdaptiveLayout();
+        if (adaptive) {
+            mouseX = WindowAdaptiveScale.toLayoutX(mouseX);
+            mouseY = WindowAdaptiveScale.toLayoutY(mouseY);
+        }
+        try {
+            mouseReleasedImpl(mouseX, mouseY, state);
+        } finally {
+            restoreAdaptiveLayout(adaptive);
+        }
+    }
+
+    private void mouseReleasedImpl(int mouseX, int mouseY, int state) {
         if (state == 0 && (draggingSaturationBrightness || draggingHue
                 || draggingSlider != null || lyricSettingsDirty)) {
             HudConfig.save();

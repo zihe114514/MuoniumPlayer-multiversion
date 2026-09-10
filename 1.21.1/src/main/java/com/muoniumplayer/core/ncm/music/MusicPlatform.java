@@ -7,6 +7,9 @@ public enum MusicPlatform {
     NETEASE("网易云", 0xE94747),
     QQ("QQ音乐", 0x31C27C),
     KUGOU("酷狗音乐", 0x1F9CF0),
+    YOUTUBE("YouTube Music", 0xFF0033),
+    BILIBILI("哔哩哔哩", 0xFB7299),
+    QISHUI("汽水音乐", 0x1ED6C8),
     GD("GD音乐台", 0x3D5AFE);
 
     private final String displayName;
@@ -28,7 +31,7 @@ public enum MusicPlatform {
     /**
      * 该平台是否由 Cadence（{@code music-api} 库）承载。
      *
-     * <p>酷狗与 GD 都是宿主自己实现的，{@link #toCadenceSource()} 对它们只能给出一个不正确的兜底值；
+     * <p>酷狗、YouTube、哔哩哔哩与 GD 都是宿主自己实现的，{@link #toCadenceSource()} 对它们只能给出一个不正确的兜底值；
      * 任何要走 Cadence 的调用点都必须先问这个方法，而不是直接转换。</p>
      */
     public boolean isCadenceBacked() {

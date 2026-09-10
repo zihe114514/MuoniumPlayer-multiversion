@@ -356,20 +356,20 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
 
     private static void captureStart() {
         double[] island = DownloadDynamicIsland.getLiveAnchorBounds();
-        startX = island[0];
-        startY = island[1];
-        startWidth = island[2];
-        startHeight = island[3];
-        startRadius = island[4];
+        startX = WindowAdaptiveScale.toLayoutX(island[0]);
+        startY = WindowAdaptiveScale.toLayoutY(island[1]);
+        startWidth = WindowAdaptiveScale.toLayoutWidth(island[2]);
+        startHeight = WindowAdaptiveScale.toLayoutHeight(island[3]);
+        startRadius = WindowAdaptiveScale.toLayoutRadius(island[4]);
     }
 
     private static void captureCapsule() {
         double[] island = DownloadDynamicIsland.getAnchorBounds();
-        capsuleX = island[0];
-        capsuleY = island[1];
-        capsuleWidth = island[2];
-        capsuleHeight = island[3];
-        capsuleRadius = island[4];
+        capsuleX = WindowAdaptiveScale.toLayoutX(island[0]);
+        capsuleY = WindowAdaptiveScale.toLayoutY(island[1]);
+        capsuleWidth = WindowAdaptiveScale.toLayoutWidth(island[2]);
+        capsuleHeight = WindowAdaptiveScale.toLayoutHeight(island[3]);
+        capsuleRadius = WindowAdaptiveScale.toLayoutRadius(island[4]);
     }
 
     /** Rebuilds small immutable color ramps only when the source theme/style colors change. */
@@ -407,12 +407,21 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
     }
 
     private static void captureTarget() {
-        NCMScreen screen = NCMScreen.getInstance();
-        targetX = screen.getPanelX();
-        targetY = screen.getPanelY();
-        targetWidth = screen.getPanelWidth();
-        targetHeight = screen.getPanelHeight();
-        targetRadius = screen.getPlayerCornerRadius();
+        // open() runs from initGui, before drawScreen has entered the adaptive layout.
+        // tick() runs after drawScreen has already entered it. Both must capture the target in
+        // exactly the same coordinate system, otherwise the morph lands off-center.
+        boolean ownedLayout = !WindowAdaptiveScale.isTransforming();
+        WindowAdaptiveScale.begin();
+        try {
+            NCMScreen screen = NCMScreen.getInstance();
+            targetX = screen.getPanelX();
+            targetY = screen.getPanelY();
+            targetWidth = screen.getPanelWidth();
+            targetHeight = screen.getPanelHeight();
+            targetRadius = screen.getPlayerCornerRadius();
+        } finally {
+            if (ownedLayout) WindowAdaptiveScale.end();
+        }
     }
 
     private static double openDuration() {

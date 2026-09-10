@@ -12,6 +12,7 @@ import java.io.OutputStreamWriter;
 import java.io.Reader;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 
 /** Shared UTF-8 JSON object I/O for persisted player settings. */
 public final class JsonConfigStorage {
@@ -26,6 +27,10 @@ public final class JsonConfigStorage {
     }
 
     public static void writeObject(File file, Gson gson, JsonObject object) throws IOException {
+        File parent = file.getParentFile();
+        if (parent != null) {
+            Files.createDirectories(parent.toPath());
+        }
         try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
             writer.write(gson.toJson(object));
         }

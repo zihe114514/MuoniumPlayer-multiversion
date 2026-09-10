@@ -31,7 +31,7 @@ final class HudEditorLayout {
         // 存储分组：缓存上限、立即清理，两行等高控件。
         if (storageExpanded) contentHeight += colorRowHeight * 2;
         // 播放器界面分组：目前只有淡入淡出速度这一条滑块。
-        if (playerExpanded) contentHeight += playerSliderCount * sliderRowHeight;
+        if (playerExpanded) contentHeight += colorRowHeight + playerSliderCount * sliderRowHeight;
         if (themeExpanded) contentHeight += colorRowHeight + themeGridHeight;
         return new Metrics(panelHeight, contentHeight, settingsMargin, settingsHeaderHeight, pickerWidth);
     }

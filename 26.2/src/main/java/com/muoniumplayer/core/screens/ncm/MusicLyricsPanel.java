@@ -83,6 +83,20 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     private final LyricScrollMotion scrollMotion = new LyricScrollMotion();
     /** 每帧算出的文档坐标，按行数复用；这是渲染热路径，不值得每帧新建一个数组。 */
     private double[] lyricDocTop = new double[0];
+    /** qplayer group model: first line, last line (exclusive-end convention is inclusive here). */
+    private int[] qplayerGroupStart = new int[0];
+    private int[] qplayerGroupEnd = new int[0];
+    private int[] qplayerLineToGroup = new int[0];
+    private double[] qplayerInterludeBefore = new double[0];
+    private int qplayerGroupCount;
+    private boolean qplayerInInterlude;
+    private int qplayerInterludeNextGroup = -1;
+    private long qplayerInterludeStartMs;
+    /** qplayer caches shaped rows; this is the equivalent cache for our word placements. */
+    private final java.util.IdentityHashMap<LyricLine, WordPlacement> qplayerPlacementCache =
+            new java.util.IdentityHashMap<>();
+    private final java.util.IdentityHashMap<LyricLine, double[]> qplayerPlacementGeometry =
+            new java.util.IdentityHashMap<>();
     /**
      * 除「逐行滚动」以外的各套样式的渲染器，下标与 {@link FullscreenLyricStyle} 的序号一一对应
      * （{@code CLASSIC} 那一位固定为 {@code null}，它走下面经典样式的整套流程）。
@@ -369,7 +383,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             // positions so a wrapped/translated line cannot overlap its neighbour.
             for (LyricLine lyric : CloudMusic.lyrics) {
                 // 对唱行按自己那一列的宽度算高度，否则折行数与渲染时不一致，行与行会叠在一起。
-                lyric.computeHeight(LyricDuetGroups.columnWidth(width, lyric.duetSlot));
+                lyric.computeHeight(qplayerWrapWidth(LyricDuetGroups.columnWidth(width, lyric.duetSlot)));
             }
 
             // A duet is anchored as one block: its first line leads, and the block is lifted by
@@ -478,6 +492,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     public void onInit() {
         resetLyricStatus();
+        qplayerPlacementCache.clear();
+        qplayerPlacementGeometry.clear();
         // 上一首的锚点与布局指纹留着的话，新歌第一帧会被当成一次"布局变了"，整屏歌词飞一次。
         scrollMotion.reset();
         // 换歌重开歌词页时清掉各样式的上一行状态，否则会看到上一首的内容退场一次。
@@ -549,15 +565,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     private void renderLyrics(double mouseX, double mouseY, double posX, double posY, double width, double height, int dWheel, float alphaIn, CloudMusic.PlaybackSnapshot snapshot) {
-
-        // 歌词是整条转场里最后到场的一层：封面落地、左栏站稳，文字才浮上来。
-        // 这里新声明局部量而不是就地改参数，是因为下面几处模糊矩形的 lambda 捕获了它，
-        // 参数一旦被重新赋值就不再是 effectively final。
         float alpha = alphaIn * (float) CoverHeroTransition.lyricsFade();
 
         if (CloudMusic.lyrics.isEmpty()) return;
-        // 切歌后歌词还没回来时，列表里躺着的是上一首的时间轴。宁可这一瞬空着，也不要用新歌的
-        // 进度去画旧歌的行 —— 那才是用户看到的"切歌歌词不同步"。
         if (!CloudMusic.lyricsMatchCurrentTrack()) return;
 
         boolean playerNotReady = snapshot.player == null;
@@ -569,466 +579,763 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         if (lyricViewport.width <= .5 || lyricViewport.height <= .5) return;
 
         double lyricsWidth = lyricViewport.width;
-        LyricLine displayedCurrentLyric = progressBarDragging ? CloudMusic.findCurrentLyric(overridePlaybackProgress) : CloudMusic.currentLyric;
+        LyricLine displayedCurrentLyric = qplayerVisualAnchorLyric(songProgress);
 
-        // 除「逐行滚动」以外的样式都是独立的绘制方式（不滚动、不做 KTV 填涂），
-        // 因此在这里就整段接管，下面经典样式的滚动、模糊、译文与 FBO 合成一律不执行。
         FullscreenLyricRenderer styleRenderer = currentStyleRenderer();
         if (styleRenderer != null) {
             styleRenderer.render(lyricViewport.left, lyricViewport.top,
                     lyricViewport.width, lyricViewport.height, alpha, songProgress, displayedCurrentLyric);
             return;
         }
-        // 拖进度条与手动滚动期间关掉级联：那两种情况下时钟每帧都在跳，逐行错落会被看成卡顿。
-        // 判据照 modernMP 的 isManualScroll（滚动目标或当前偏移任一未归零就算）。
-        boolean lyricManualScroll = progressBarDragging
-                || Math.abs(scrollTarget) > 0.01 || Math.abs(scrollOffset) > 0.01;
-        this.updateLyricPositions(posY, height, lyricsWidth, displayedCurrentLyric,
-                songProgress, lyricViewport.top, lyricManualScroll);
 
-        // 逐行 backdropBlur 是全屏歌词页最贵的后处理之一，且在开合时肉眼主要关注封面接力。
-        // 转场期间暂停，动画结束后恢复原效果。
-        boolean transitionFastPath = FullscreenLyricStage.transitionFastPath();
-        List<Runnable> blurRects = transitionFastPath ? null : new ArrayList<Runnable>();
+        boolean lyricManualScroll = Math.abs(scrollTarget) > 0.01 || Math.abs(scrollOffset) > 0.01;
+        updateLyricPositions(posY, height, lyricsWidth, displayedCurrentLyric,
+                songProgress, lyricManualScroll);
 
         boolean hoveringLyrics = isHovered(mouseX, mouseY, lyricViewport.left, lyricViewport.top,
                 lyricViewport.width, lyricViewport.height);
-
         if (hoveringLyrics && dWheel != 0) {
-
             double strength = 24;
-
             if (Keyboard.isKeyDown(Keyboard.KEY_LSHIFT)) strength *= 2;
-
             if (dWheel > 0) scrollTarget += strength;
             else scrollTarget -= strength;
-
             scrollOffsetResetTimer.reset();
-
-//            this.scrollTarget = Math.min(this.scrollTarget, 0);
         }
-
-        if (scrollOffsetResetTimer.isDelayed(3000)) {
-            scrollTarget = 0;
-        }
-
+        if (scrollOffsetResetTimer.isDelayed(3000)) scrollTarget = 0;
         scrollOffset = Interpolations.interpolate(scrollOffset, scrollTarget, 0.25f);
 
         double lyricRenderOffsetX = lyricViewport.left;
         double lyricsViewportTop = lyricViewport.top;
         double lyricsViewportBottom = lyricViewport.bottom();
-        double lyricsViewportHeight = lyricViewport.height;
-        double lyricsViewportLeft = lyricViewport.left;
-        double lyricsViewportRight = lyricViewport.right();
 
-        // The parent player clip is rounded; this nested clip is the hard text viewport.
-        // It remains on the Minecraft framebuffer stack and is restored after every KTV FBO pass.
-        StencilClipManager.beginClip(() -> Rect.draw(lyricsViewportLeft, lyricsViewportTop,
-                lyricsWidth, lyricsViewportHeight, -1));
-        // The KTV renderer temporarily binds small word-sized framebuffers.  Stencil is
-        // intentionally disabled there, so keep a screen-space clip active for every
-        // direct lyric draw on the Minecraft framebuffer as the non-negotiable boundary.
-        ScissorClipManager.begin(lyricsViewportLeft, lyricsViewportTop, lyricsWidth, lyricsViewportHeight);
+        StencilClipManager.beginClip(() -> Rect.draw(lyricViewport.left, lyricsViewportTop,
+                lyricsWidth, lyricViewport.height, -1));
+        ScissorClipManager.begin(lyricViewport.left, lyricsViewportTop, lyricsWidth, lyricViewport.height);
         boolean lyricScissorActive = true;
         try {
-            for (int k = 0; k < CloudMusic.lyrics.size(); k++) {
-            LyricLine lyric = CloudMusic.lyrics.get(k);
+            List<LyricLine> lines = CloudMusic.lyrics;
+            int anchorIndex = Math.max(0, lines.indexOf(displayedCurrentLyric));
+            int anchorGroup = anchorIndex < lines.size() && qplayerLineToGroup[anchorIndex] >= 0
+                    ? qplayerLineToGroup[anchorIndex] : 0;
+            int renderStart = Math.max(0, qplayerGroupStart[anchorGroup] - 16);
+            int renderEnd = Math.min(lines.size(), qplayerGroupEnd[anchorGroup] + 16 + 1);
+            double fontHeight = FontManager.pf65bold.getHeight();
+            double lineStep = fontHeight;
 
-            if (lyric.posY + lyric.height + getLyricLineSpacing() + scrollOffset < lyricsViewportTop) {
-                continue;
-            }
+            for (int k = renderStart; k < renderEnd; k++) {
+                LyricLine lyric = lines.get(k);
+                if (lyric == null || lyric.isBreakLine) continue;
+                if (lyric.posY + lyric.height + scrollOffset < lyricsViewportTop - 32.0) continue;
+                if (lyric.posY + scrollOffset > lyricsViewportBottom + 32.0) continue;
 
-            if (lyric.posY + scrollOffset > lyricsViewportBottom) {
-                break;
-            }
-
-            LyricLine currentLyric = displayedCurrentLyric;
-            int indexOf = CloudMusic.lyrics.indexOf(currentLyric);
-
-            // 对唱段落里同组的行一起算作当前行：两位歌手同时在唱，只点亮一行会让另一行看起来
-            // 像已经唱完或还没开始。
-            boolean isCurrentLyric = LyricDuetGroups.isActive(lyric, currentLyric);
-            lyric.alpha = Interpolations.interpolate(lyric.alpha, isCurrentLyric ? 1f : 0f, isCurrentLyric ? 0.1f : .05f);
-            boolean isHovering = isHovered(mouseX, mouseY - scrollOffset, lyricRenderOffsetX, lyric.posY, lyricsWidth, lyric.height);
-            lyric.hoveringAlpha = Interpolations.interpolate(lyric.hoveringAlpha, isHovering ? 1f : 0f, 0.2f);
-            // 失焦模糊按到"活跃块"的距离算，而不是到单一当前行的距离：对唱组内的行距离为 0，
-            // 否则同时点亮的另一位歌手会被糊掉。
-            int groupFirst = LyricDuetGroups.groupStart(CloudMusic.lyrics, indexOf);
-            int groupLast = LyricDuetGroups.groupEnd(CloudMusic.lyrics, indexOf);
-            int activeDistance = k < groupFirst ? groupFirst - k : (k > groupLast ? k - groupLast : 0);
-            if (activeDistance > TransitionPerformanceBudget.classicLyricWindow()) continue;
-            lyric.blurAlpha = Interpolations.interpolate(lyric.blurAlpha, !hoveringLyrics ? Math.min(1f, activeDistance * .85f) : 0f, 0.05f);
-
-            if (isHovering) {
-                CursorUtils.setOverride(CursorUtils.HAND);
-            }
-
-            if (isHovering && Mouse.isButtonDown(0) && !prevMouse) {
-                prevMouse = true;
-                if (snapshot.player != null) {
-                    // 点歌词行跳转也走 CloudMusic.seekToMillis()：一起听房间里这一步会变成房间指令，
-                    // 普通成员则被挡住，不会一个人从全房进度里脱队。
-                    if (CloudMusic.seekToMillis(lyric.timestamp)) {
+                int groupIndex = qplayerLineToGroup[k];
+                float activeK = groupIndex >= 0 ? qplayerActiveK(groupIndex, songProgress) : 0f;
+                float qBaseAlpha = qplayerBaseAlpha(activeK);
+                lyric.alpha = activeK;
+                boolean isHovering = isHovered(mouseX, mouseY - scrollOffset,
+                        lyricRenderOffsetX, lyric.posY, lyricsWidth, lyric.height);
+                lyric.hoveringAlpha = Interpolations.interpolate(lyric.hoveringAlpha,
+                        isHovering ? 1f : 0f, 0.2f);
+                if (isHovering) CursorUtils.setOverride(CursorUtils.HAND);
+                if (isHovering && Mouse.isButtonDown(0) && !prevMouse) {
+                    prevMouse = true;
+                    if (snapshot.player != null && CloudMusic.seekToMillis(lyric.timestamp)) {
                         resetLyricStatus();
                     }
+                    scrollTarget = 0;
                 }
 
-                scrollTarget = 0;
-            }
+                double columnWidth = LyricDuetGroups.columnWidth(lyricsWidth, lyric.duetSlot);
+                double columnLeft = LyricDuetGroups.columnLeft(lyricRenderOffsetX, lyricsWidth, lyric.duetSlot);
+                boolean columnRightAligned = LyricDuetGroups.rightAligned(lyric.duetSlot);
+                double renderBaseY = lyric.posY + scrollOffset;
 
-            // 对唱行分左右两列：偶数序号靠左、奇数序号靠右，两位歌手同时点亮时一眼能分出是谁在唱。
-            // 独唱行的列宽 == 整个歌词区，几何与改动之前完全一致。
-            double columnWidth = LyricDuetGroups.columnWidth(lyricsWidth, lyric.duetSlot);
-            double columnLeft = LyricDuetGroups.columnLeft(lyricRenderOffsetX, lyricsWidth, lyric.duetSlot);
-            boolean columnRightAligned = LyricDuetGroups.rightAligned(lyric.duetSlot);
-
-            if (lyric.hoveringAlpha >= .02f)
-                roundedRect(columnLeft - 4, lyric.posY + scrollOffset + lyric.reboundAnimation, columnWidth + lyric.reboundAnimation, lyric.height + 2, 8, 4 + 2 * Easing.EASE_IN_OUT_QUAD.getFunction().apply((double) lyric.hoveringAlpha), 1, 1, 1, alpha * lyric.hoveringAlpha * .15f);
-
-            double lineStep = FontManager.pf65bold.getHeight() * .85 + 4;
-            double renderX = columnLeft + lyric.reboundAnimation;
-            double renderBaseY = lyric.posY + lyric.reboundAnimation + scrollOffset;
-            double renderY = renderBaseY;
-
-            lyric.reboundAnimation = Interpolations.interpolate(lyric.reboundAnimation, isCurrentLyric ? 2f : 0f, 0.1f);
-
-            List<LyricLine.Word> words = lyric.words;
-            if (!words.isEmpty()) {
-                // 折行与每个字词的落点先整行算好，再逐个绘制。原来是边画边判断"超出右边界就换行"，
-                // 那套增量逻辑没法做右对齐（右对齐需要先知道整行有多宽），而且判定用的是 >=，
-                // 右对齐时行末字词恰好压在边界上会被误判成又要换行。
-                WordPlacement placement = layoutWords(words, columnLeft, columnWidth, columnRightAligned);
-                for (int wordIndex = 0; wordIndex < words.size(); wordIndex++) {
-                    LyricLine.Word word = words.get(wordIndex);
-                    double wordWidth = FontManager.pf65bold.getStringWidthD(word.word);
-
-                    renderX = placement.x[wordIndex] + lyric.reboundAnimation;
-                    renderY = renderBaseY + placement.row[wordIndex] * lineStep;
-
-                    if (!lyric.renderEmphasizes) Arrays.fill(word.emphasizes, 2);
-
-                    char[] charArray = word.word.toCharArray();
-
-                    // 上浮量在这里一次算齐，而不是等各层自己边画边推进：未唱底层、唱完后的文本和
-                    // KTV 合成层是三段独立的绘制代码，原先只有后两段更新 emphasizes，底层读到的
-                    // 永远是上一帧的值——同一个字的两层因此差一帧，边缘看起来是重影和轻微抖动。
-                    if (lyric.renderEmphasizes) {
-                        int liftCount = Math.min(charArray.length, word.emphasizes.length);
-                        for (int j = 0; j < liftCount; j++) {
-                            word.emphasizes[j] = characterLift(word, j, charArray.length, songProgress);
-                        }
+                List<LyricLine.Word> words = lyric.words;
+                WordPlacement placement = null;
+                String[] plainRows = null;
+                int rowCount;
+                if (!words.isEmpty()) {
+                    placement = qplayerPlacement(lyric, words, columnLeft,
+                            qplayerWrapWidth(columnWidth), columnRightAligned);
+                    rowCount = 1;
+                    for (int wordIndex = 0; wordIndex < words.size(); wordIndex++) {
+                        rowCount = Math.max(rowCount, placement.row[wordIndex] + 1);
                     }
+                } else {
+                    plainRows = FontManager.pf65bold.fitWidth(lyric.lyric, qplayerWrapWidth(columnWidth));
+                    rowCount = Math.max(1, plainRows.length);
+                }
 
-                    double emphasizeWholeWord = word.emphasizes[0];
+                double mainTextHeight = lineStep * rowCount;
+                double maxRowRightX = columnLeft;
+                double lineScaleAnchorX = columnRightAligned ? columnLeft + columnWidth : columnLeft;
+                double lineScaleAnchorY = renderBaseY + mainTextHeight * .5;
+                double lineScale = qplayerLineScale(activeK,
+                        posY + height * lyricFraction(), lineScaleAnchorY, mainTextHeight);
+                api.getGLStateManager().pushMatrix();
+                api.getGLStateManager().translate(lineScaleAnchorX, lineScaleAnchorY, 0);
+                api.getGLStateManager().scale(lineScale, lineScale, 1);
+                api.getGLStateManager().translate(-lineScaleAnchorX, -lineScaleAnchorY, 0);
 
-                    /*
-                     * 逐字放大必须让「字形本体」和「KTV 填涂遮罩」共用同一个变换。
-                     *
-                     * 旧实现只给 FBO 合成出来的高亮层套上 karaokeScale，未唱底层和唱完后的
-                     * 文本仍以原始尺寸直接画在 Minecraft framebuffer 上。于是同一个字同时存在
-                     * 两份大小不同的拷贝（重影）；而且这个字未唱的部分来自没放大的底层、已唱的
-                     * 部分来自放大后的合成层，两者交界处必然对不上（脱节）。
-                     *
-                     * 因此缩放倍率与锚点在字词开头就一次算好，本字词后面每一次直接绘制都套用
-                     * 同一份变换。布局推进量 renderX / wordWidth 仍然是未放大的，换行不会抖动。
-                     */
-                    double progress = word.getProgress(songProgress);
-                    double easedProgress = smoothKaraokeProgress(progress);
-                    double stringWidthD = wordWidth;
-                    // 宽度向上取整：直接截断会削掉最后一个字形的右边缘，也会让 KTV 前沿
-                    // (progress * stringWidthD) 超出纹理宽度。
-                    double karaokeQuadWidth = Math.max(2, Math.ceil(stringWidthD));
-                    double karaokePulse = Math.sin(Math.PI * easedProgress);
-                    // 逐字放大程度直接取配置值（HudConfig 已把它夹在 0~0.28）。这里原先又写死了
-                    // 0.14 的上限，于是"逐字放大"滑块拖过一半之后完全没有反应。
-                    double karaokeScale = 1.0
-                            + Math.max(0.0, HudConfig.currentWordScale) * karaokePulse;
-                    // 锚点默认在字词中心，但要约束在歌词视口内：行首字词的左边缘正好压在视口
-                    // 裁剪边界上，按中心放大会有一半放大量被裁掉（首字缺一块），因此贴边时把
-                    // 锚点收拢到边界，只向视口内侧生长。
-                    double karaokeAnchorX = LyricsPanelGeometry.clampScaleAnchorX(renderX, karaokeQuadWidth,
-                            karaokeScale, lyricsViewportLeft, lyricsViewportRight);
-                    double karaokeAnchorY = renderY + FontManager.pf65bold.getHeight() * .5;
-                    boolean karaokeScaled = karaokeScale > 1.0001;
+                boolean animatePerToken = lyric.hasTimedWords();
+                for (int row = 0; row < rowCount; row++) {
+                    double rowRenderY = renderBaseY + row * lineStep;
 
-                    if (karaokeScaled) {
-                        api.getGLStateManager().pushMatrix();
-                        api.getGLStateManager().translate(karaokeAnchorX, karaokeAnchorY, 0);
-                        api.getGLStateManager().scale(karaokeScale, karaokeScale, 1);
-                        api.getGLStateManager().translate(-karaokeAnchorX, -karaokeAnchorY, 0);
-                    }
-                    try {
-                        if (isCurrentLyric) {
-                            if (charArray.length > 1) {
-                                double x = renderX;
-                                for (int j = 0; j < charArray.length; j++) {
-                                    char c = charArray[j];
-
-                                    FontManager.pf65bold.drawString(String.valueOf(c), x, renderY - word.emphasizes[j], hexColor(1, 1, 1, alpha * .5f));
-                                    x += FontManager.pf65bold.getCharWidth(c, j + 1 < charArray.length ? charArray[j + 1] : '\0');
-                                }
-                            } else {
-                                FontManager.pf65bold.drawString(word.word, renderX, renderY - word.emphasizes[0], hexColor(1, 1, 1, alpha * .5f));
-                            }
-                        } else {
-                            FontManager.pf65bold.drawString(word.word, renderX, renderY, hexColor(1, 1, 1, alpha * .5f));
+                    if (placement != null) {
+                        int first = -1;
+                        int last = -1;
+                        for (int wordIndex = 0; wordIndex < words.size(); wordIndex++) {
+                            if (placement.row[wordIndex] != row) continue;
+                            if (first < 0) first = wordIndex;
+                            last = wordIndex;
                         }
-                    } finally {
-                        if (karaokeScaled) {
-                            api.getGLStateManager().popMatrix();
-                        }
-                    }
+                        if (first < 0) continue;
 
-                    if (isCurrentLyric || CloudMusic.lyrics.indexOf(currentLyric) - k <= 1) {
-                        boolean shouldClip = progress > .001 && progress < .999;
-
-                        if (progress >= .999) {
-                            // 唱完后仍保留抬升，并且和上面的底层、下面的 KTV 合成层
-                            // 共用同一个缩放变换，避免任何一层单独放大造成错位。
-                            if (karaokeScaled) {
-                                api.getGLStateManager().pushMatrix();
-                                api.getGLStateManager().translate(karaokeAnchorX, karaokeAnchorY, 0);
-                                api.getGLStateManager().scale(karaokeScale, karaokeScale, 1);
-                                api.getGLStateManager().translate(-karaokeAnchorX, -karaokeAnchorY, 0);
-                            }
-                            try {
-                                double x = renderX;
-                                for (int j = 0; j < charArray.length; j++) {
-                                    char c = charArray[j];
-                                    // 唱完的字词不再走 KTV 纹理合成，发光要在这里以满亮度补上，
-                                    // 否则字词唱完的那一帧发光会突然消失。
-                                    drawKaraokeCharacterGlow(String.valueOf(c), x,
-                                            renderY - word.emphasizes[j], 1.0, alpha * lyric.alpha);
-                                    FontManager.pf65bold.drawString(String.valueOf(c), x,
-                                            renderY - word.emphasizes[j], hexColor(1, 1, 1, alpha * lyric.alpha));
-                                    x += FontManager.pf65bold.getCharWidth(c, j + 1 < charArray.length ? charArray[j + 1] : '\0');
-                                }
-                            } finally {
-                                if (karaokeScaled) {
-                                    api.getGLStateManager().popMatrix();
-                                }
-                            }
-                        }
-
-                        if (shouldClip) {
-                            // glowPad 是逐字发光需要的四周留白：发光围绕字形向外扩，
-                            // 不留白就会被图层边界切成方块。发光关闭时留白为 0，
-                            // 此时图层尺寸、遮罩坐标与合成区和加发光之前完全一致（零行为变化）。
-                            int glowPad = karaokeGlowPadding();
-                            int quadWidth = (int) karaokeQuadWidth;
-                            double layerWidth = quadWidth + glowPad * 2;
-                            double layerHeight = FontManager.pf65bold.getHeight() + 6 + glowPad * 2;
-
-                            // A wider alpha feather makes the colour sweep melt into the
-                            // base lyric instead of switching colour at a sharp boundary.
-                            double gradientWidth = Math.min(Math.max(10.0, FontManager.pf65bold.getHeight() * .42),
-                                    Math.max(10.0, stringWidthD * .28));
-
-                            // 当前字词在演唱期间平滑放大，布局宽度保持不变，避免换行抖动。
-                            // 倍率与锚点在字词开头就算好了（见上），未唱底层、唱完后的文本和
-                            // 这里的 KTV 合成层共用同一份变换，因此不会出现「遮罩放大、字形没
-                            // 放大」的重影与脱节。
+                        double rowLeft = placement.x[first];
+                        double rowRight = placement.x[last]
+                                + FontManager.pf65bold.getStringWidthD(words.get(last).word);
+                        maxRowRightX = Math.max(maxRowRightX, rowRight);
+                        double rowWidth = Math.max(1.0, rowRight - rowLeft);
+                        double rowHScale = Math.min(1.0,
+                                columnWidth / (rowWidth * Math.max(1.0, lineScale)));
+                        boolean rowHGuard = rowHScale < .999;
+                        if (rowHGuard) {
                             api.getGLStateManager().pushMatrix();
-                            api.getGLStateManager().translate(karaokeAnchorX, karaokeAnchorY, 0);
-                            api.getGLStateManager().scale(karaokeScale, karaokeScale, 1);
-                            api.getGLStateManager().translate(-karaokeAnchorX, -karaokeAnchorY, 0);
-
-                            // 旧实现：把字形与发光画进一张离屏纹理、把填涂遮罩画进第二张离屏纹理，
-                            // 再用自写的 stencil.frag 按 base.a * mask.a 合成。为此还要自己压一套
-                            // 正交投影（离屏纹理是像素尺寸的）、挂起裁剪盒（屏幕空间的裁剪在离屏
-                            // 坐标系里会把整张纹理裁空）、并在回到主画面后重新断言圆角裁剪。
-                            //
-                            // 换成 Skia 只需要一个「刚好这么大」的图层：字形与发光照原样画上去，
-                            // 再用一条横向 alpha 渐变以 DST_IN 把填涂进度乘下去。
-                            // 没有离屏纹理、不用自己搭投影、也不用挂起再恢复裁剪——
-                            // 图层继承外层裁剪本来就是想要的行为。
-                            double layerOriginX = renderX - glowPad;
-                            double layerOriginY = renderY - 2 - glowPad;
-                            io.github.humbleui.skija.Canvas ktvCanvas = SkijaGfx.canvas();
-                            int ktvLayer = ktvCanvas == null ? -1 : ktvCanvas.saveLayer(
-                                    io.github.humbleui.types.Rect.makeXYWH(
-                                            (float) layerOriginX, (float) layerOriginY,
-                                            (float) layerWidth, (float) layerHeight), null);
-                            try {
-                                // 字形与逐字发光。旧实现在离屏纹理的局部坐标里从 x = glowPad 起画，
-                                // 而局部 glowPad 正对应屏幕的 renderX；局部 characterY = 2 + glowPad - lift
-                                // 正对应屏幕的 renderY - lift。所以直接按屏幕坐标画，几何完全一致。
-                                double x = renderX;
-                                double characterTimeline = progress * charArray.length;
-                                for (int j = 0; j < charArray.length; j++) {
-                                    char c = charArray[j];
-                                    double characterProgress = getCharacterKaraokeProgress(characterTimeline, j);
-                                    double characterAlpha = .70 + .30 * characterProgress;
-                                    double characterY = renderY - word.emphasizes[j];
-                                    // 发光画在字形底下，亮度只跟「这个字已经唱了多久」有关。
-                                    // 它和字形在同一个图层里，最终会被 KTV 遮罩一起裁掉未唱的部分，
-                                    // 所以发光是随着填涂前沿一个字一个字亮起来的。
-                                    drawKaraokeCharacterGlow(String.valueOf(c), x, characterY,
-                                            characterProgress, (float) (alpha * lyric.alpha));
-                                    FontManager.pf65bold.drawString(String.valueOf(c), x, characterY,
-                                            hexColor(1, 1, 1, (float) (alpha * lyric.alpha * characterAlpha)));
-                                    x += FontManager.pf65bold.getCharWidth(c, j + 1 < charArray.length ? charArray[j + 1] : '\0');
-                                }
-
-                                // 填涂遮罩。严格以真实播放前沿裁剪，渐变只位于已播放区域内部。
-                                // 左侧那一段 glowPad 留白一并放行，否则行首那个字向左扩散的发光会被切掉。
-                                if (ktvCanvas != null) {
-                                    double front = progress * stringWidthD;
-                                    double activeGradientWidth = Math.min(gradientWidth, front);
-                                    double solidWidth = Math.max(0.0, front - activeGradientWidth);
-                                    double featherLeft = layerOriginX + glowPad + solidWidth;
-                                    double featherRight = layerOriginX + glowPad + front;
-                                    if (featherRight - featherLeft > .001) {
-                                        applyKaraokeFeather(ktvCanvas, featherLeft, layerOriginY,
-                                                featherRight - featherLeft, layerHeight);
-                                    }
-                                    double tailLeft = Math.max(featherRight, layerOriginX);
-                                    double tailRight = layerOriginX + layerWidth;
-                                    if (tailRight - tailLeft > .001) {
-                                        eraseKaraokeTail(ktvCanvas, tailLeft, layerOriginY,
-                                                tailRight - tailLeft, layerHeight);
-                                    }
-                                }
-                            } finally {
-                                if (ktvLayer >= 0) {
-                                    ktvCanvas.restoreToCount(ktvLayer);
-                                }
+                            api.getGLStateManager().translate(lineScaleAnchorX, rowRenderY, 0);
+                            api.getGLStateManager().scale(rowHScale, 1, 1);
+                            api.getGLStateManager().translate(-lineScaleAnchorX, -rowRenderY, 0);
+                        }
+                        try {
+                        if (!animatePerToken || activeK <= .001f) {
+                            for (int wordIndex = first; wordIndex <= last; wordIndex++) {
+                                String text = words.get(wordIndex).word;
+                                FontManager.pf65bold.drawString(text, placement.x[wordIndex], rowRenderY + 2.0,
+                                        hexColor(0, 0, 0, alpha * qBaseAlpha * .48f));
+                                FontManager.pf65bold.drawString(text, placement.x[wordIndex], rowRenderY,
+                                        qplayerTextColor(alpha * qBaseAlpha));
                             }
-                            api.getGLStateManager().popMatrix();
+                            continue;
                         }
 
+                        for (int wordIndex = first; wordIndex <= last; wordIndex++) {
+                            double lift = qplayerSyllableLift(words.get(wordIndex).timestamp, songProgress);
+                            Arrays.fill(words.get(wordIndex).emphasizes, lift);
+                        }
+
+                        int glowPad = TextGlow.padding(FontManager.pf65bold, .034);
+                        double layerLeft = rowLeft - 8.0 - glowPad;
+                        double layerRight = rowRight + 8.0 + glowPad;
+                        double layerTop = rowRenderY - 2.0 - glowPad;
+                        double layerBottom = rowRenderY + fontHeight + 6.0 + glowPad;
+                        io.github.humbleui.skija.Canvas ktvCanvas = SkijaGfx.canvas();
+                        int ktvLayer = ktvCanvas == null ? -1 : ktvCanvas.saveLayer(
+                                io.github.humbleui.types.Rect.makeLTRB(
+                                        (float) layerLeft, (float) layerTop,
+                                        (float) layerRight, (float) layerBottom), null);
+                        try {
+                            for (int wordIndex = first; wordIndex <= last; wordIndex++) {
+                                LyricLine.Word word = words.get(wordIndex);
+                                double x = placement.x[wordIndex];
+                                char[] chars = word.word.toCharArray();
+                                for (int charIndex = 0; charIndex < chars.length; charIndex++) {
+                                    char c = chars[charIndex];
+                                    double y = rowRenderY - word.emphasizes[Math.min(charIndex, word.emphasizes.length - 1)]
+                                            - qplayerWordRibbonLift(word, songProgress, activeK);
+                                    String glyph = String.valueOf(c);
+                                    FontManager.pf65bold.drawString(glyph, x, y + 2.0,
+                                            hexColor(0, 0, 0, alpha * qBaseAlpha * .48f));
+                                    FontManager.pf65bold.drawString(glyph, x, y, qplayerTextColor(alpha * qBaseAlpha));
+                                    x += FontManager.pf65bold.getCharWidth(c,
+                                            charIndex + 1 < chars.length ? chars[charIndex + 1] : '\0');
+                                }
+                            }
+                            if (ktvCanvas != null) {
+                                double sweepX = qplayerSweepX(words, placement, first, last,
+                                        rowLeft, rowRight, songProgress);
+                                applyQplayerSweepMask(ktvCanvas, sweepX, layerLeft, layerRight,
+                                        layerTop, layerBottom - layerTop, activeK);
+                            }
+                        } finally {
+                            if (ktvLayer >= 0) ktvCanvas.restoreToCount(ktvLayer);
+                        }
+
+                        for (int wordIndex = first; wordIndex <= last; wordIndex++) {
+                            LyricLine.Word word = words.get(wordIndex);
+                            long wordEnd = word.timestamp + Math.max(0L, word.duration);
+                            long wordDuration = wordEnd - word.timestamp;
+                            if (wordDuration < 1500L) continue;
+                            if (songProgress < word.timestamp || songProgress > wordEnd) continue;
+                            double progress = (songProgress - word.timestamp) / (double) Math.max(1L, wordDuration);
+                            float glowAlpha = activeK
+                                    * smoothStepQplayer(progress / .18)
+                                    * (1f - smoothStepQplayer((progress - .90) / .10))
+                                    * .55f * qBaseAlpha;
+                            if (glowAlpha <= .01f) continue;
+                            drawQplayerWordGlow(word, placement.x[wordIndex],
+                                    rowRenderY - qplayerWordRibbonLift(word, songProgress, activeK),
+                                    alpha * glowAlpha);
+                        }
+                        } finally {
+                            if (rowHGuard) api.getGLStateManager().popMatrix();
+                        }
                     } else {
-                        FontManager.pf65bold.drawString(word.word, renderX, renderY - emphasizeWholeWord, hexColor(1, 1, 1, alpha * lyric.alpha));
+                        String text = plainRows[row];
+                        double rowX = columnRightAligned
+                                ? columnLeft + columnWidth - FontManager.pf65bold.getStringWidthD(text)
+                                : columnLeft;
+                        double rowWidth = Math.max(1.0, FontManager.pf65bold.getStringWidthD(text));
+                        double rowHScale = Math.min(1.0,
+                                columnWidth / (rowWidth * Math.max(1.0, lineScale)));
+                        boolean rowHGuard = rowHScale < .999;
+                        if (rowHGuard) {
+                            api.getGLStateManager().pushMatrix();
+                            api.getGLStateManager().translate(lineScaleAnchorX, rowRenderY, 0);
+                            api.getGLStateManager().scale(rowHScale, 1, 1);
+                            api.getGLStateManager().translate(-lineScaleAnchorX, -rowRenderY, 0);
+                        }
+                        try {
+                        FontManager.pf65bold.drawString(text, rowX, rowRenderY + 2.0,
+                                hexColor(0, 0, 0, alpha * qBaseAlpha * .48f));
+                        FontManager.pf65bold.drawString(text, rowX, rowRenderY,
+                                qplayerTextColor(alpha * qBaseAlpha));
+                        maxRowRightX = Math.max(maxRowRightX,
+                                rowX + FontManager.pf65bold.getStringWidthD(text));
+                        } finally {
+                            if (rowHGuard) api.getGLStateManager().popMatrix();
+                        }
                     }
-
-                }
-            } else {
-                String[] strings = FontManager.pf65bold.fitWidth(lyric.lyric, columnWidth);
-
-                for (String string : strings) {
-                    double lineX = columnRightAligned
-                            ? columnLeft + columnWidth - FontManager.pf65bold.getStringWidthD(string)
-                            + lyric.reboundAnimation
-                            : renderX;
-                    FontManager.pf65bold.drawString(string, lineX, renderY, hexColor(1, 1, 1, alpha * ((lyric.alpha * .6f) + .4f)));
-                    renderY += lineStep;
                 }
 
-                renderY -= lineStep;
-            }
-
-            if (lyric.translationText != null) {
-                double translationY = renderY + FontManager.pf65bold.getHeight() * .85 + 8;
-
-                String[] strings = FontManager.pf34bold.fitWidth(lyric.translationText, columnWidth);
-                for (String string : strings) {
-                    // 译文跟随本行所在列的对齐方式，否则对唱右列的歌词右对齐、译文却贴在左边。
-                    double translationX = columnRightAligned
-                            ? columnLeft + columnWidth - FontManager.pf34bold.getStringWidthD(string)
-                            + lyric.reboundAnimation
-                            : columnLeft + lyric.reboundAnimation;
-                    FontManager.pf34bold.drawString(string, translationX, translationY, hexColor(1, 1, 1, alpha * .75f * ((lyric.alpha * .6f) + .4f)));
-                    translationY += FontManager.pf34bold.getHeight() + 4;
+                if (lyric.translationText != null && !lyric.translationText.trim().isEmpty()) {
+                    double translationY = renderBaseY + (rowCount - 1) * lineStep
+                            + fontHeight * .85 + 8.0;
+                    String[] strings = FontManager.pf34bold.fitWidth(lyric.translationText, qplayerWrapWidth(columnWidth));
+                    for (String string : strings) {
+                        double translationX = columnRightAligned
+                                ? columnLeft + columnWidth - FontManager.pf34bold.getStringWidthD(string)
+                                : columnLeft;
+                        FontManager.pf34bold.drawString(string, translationX, translationY + 2.0,
+                                hexColor(0, 0, 0, alpha * qBaseAlpha * .75f * .48f));
+                        FontManager.pf34bold.drawString(string, translationX, translationY,
+                                qplayerTextColor(alpha * qBaseAlpha * .75f));
+                        translationY += FontManager.pf34bold.getHeight() + 4;
+                    }
                 }
-//                FontManager.pf34bold.drawString(lyric.translationText, translationX, translationY, hexColor(1, 1, 1, alpha * .75f * ((lyric.alpha * .6f) + .4f)));
+
+                api.getGLStateManager().popMatrix();
             }
 
-            // 先把源矩形与歌词视口求交，减少模糊输入在视口外的扩散。
-            double blurLeft = Math.max(lyricsViewportLeft, lyricRenderOffsetX - 4);
-            double blurTop = Math.max(lyricsViewportTop, lyric.posY + scrollOffset);
-            double blurRight = Math.min(lyricsViewportRight, lyricRenderOffsetX + lyricsWidth);
-            double blurBottom = Math.min(lyricsViewportBottom, lyric.posY + scrollOffset + lyric.height + 8);
-            if (!transitionFastPath && blurRight > blurLeft && blurBottom > blurTop) {
-                double clippedBlurWidth = blurRight - blurLeft;
-                double clippedBlurHeight = blurBottom - blurTop;
-                // 旧实现把这个矩形当作「模糊遮罩」画进离屏 FBO，再由 blur.frag 按它的 alpha
-                // 把全屏模糊结果混合回来。Skia 用带 backdrop 的图层一步做完同一件事，
-                // 所以这里登记的就是最终那次就地模糊；矩形与 alpha 的算式一字未改。
-                float blurStrength = (float) (alpha * lyric.blurAlpha);
-                blurRects.add(() -> SkijaEffects.backdropBlur(blurLeft, blurTop,
-                        clippedBlurWidth, clippedBlurHeight,
-                        SkijaEffects.LYRIC_BLUR_SIGMA, blurStrength));
-            }
-        }
-
-        // The blur input/output framebuffers use the full game resolution.  Keep the same
-        // lyric viewport scissor active through both passes and final composition; do not
-        // cancel the content transform here, otherwise the projected scissor no longer
-        // matches the dynamically scaled player bounds.
-        // 依然要等所有歌词都画完再统一模糊：模糊读的是「下方已有像素」，
-        // 提前执行会漏掉后面几行的内容。
-        if (blurRects != null) blurRects.forEach(Runnable::run);
-        // The blur pass returns from a full-screen auxiliary framebuffer.
-        // Re-enable the parent rounded-player clip before any later panel content is rendered.
-        StencilClipManager.restoreActiveClip();
+            renderQplayerInterludeDots(lyricViewport.left, lyricsWidth,
+                    fontHeight, fontHeight, songProgress, alpha);
         } finally {
-            if (lyricScissorActive) {
-                ScissorClipManager.end();
-            }
-            // Blur/FBO rendering can toggle raw stencil state. Restore the lyric viewport
-            // before leaving it, then pop only the clip introduced by this method.
+            if (lyricScissorActive) ScissorClipManager.end();
             StencilClipManager.restoreActiveClip();
             StencilClipManager.endClip();
         }
     }
 
+    // ── qplayer full-screen lyric motion ───────────────────────────────────────
+
     /**
-     * 重排「逐行滚动」的行位置。几何部分与 {@link #layoutLyricPositionsImmediately} 用同一套
-     * 公式（当前行钉在阅读位置、上下按行高加行距累加、对唱组整体抬起），只是拆成 modernMP 的
-     * 两半：<b>文档坐标</b> {@code docTop[]} 加一个<b>滚动偏移</b> {@code restOffset}，
-     * 由 {@link LyricScrollMotion} 决定怎么走过去。
-     *
-     * <p>拆两半不是为了好看：判断"布局变了"只能看 {@code restOffset} 这一个标量。行高是异步
-     * 加载字形之后才算准的，逐行比较目标会让锚点之后任何一行的高度变化都触发全量重新下发，
-     * 而重新下发会重置弹簧解并把级联队列冲掉——那正是字在原地来回抖的成因。</p>
-     *
-     * <p>全表遍历一次而不是像原先那样边算边提前收工：级联要按文档坐标找"视口内第一行"当起点，
-     * 提前 break 会让后面的行拿不到本帧的目标。行高本身有缓存，全表遍历只是一串加法。</p>
+     * Reserve room for the active line's 1.14x emphasis. Without this divisor, a row that fits
+     * at 1.0x is clipped at the right edge as soon as it becomes the active row.
      */
-    private void updateLyricPositions(double posY, double height, double width, LyricLine currentLyric,
-                                      double playheadMs, double viewportTop, boolean manualScroll) {
+    private static double qplayerWrapWidth(double columnWidth) {
+        return Math.max(1.0, columnWidth / 1.14);
+    }
 
+    private int qplayerTextColor(float alpha) {
+        return hexColor(.902f, .902f, .902f, alpha);
+    }
+
+    private void qplayerBuildGroups() {
+        List<LyricLine> lines = CloudMusic.lyrics;
+        int size = lines.size();
+        if (qplayerGroupStart.length != size || qplayerGroupEnd.length != size
+                || qplayerLineToGroup.length != size || qplayerInterludeBefore.length != size) {
+            qplayerGroupStart = new int[size];
+            qplayerGroupEnd = new int[size];
+            qplayerLineToGroup = new int[size];
+            qplayerInterludeBefore = new double[size];
+        }
+        java.util.Arrays.fill(qplayerLineToGroup, -1);
+
+        int groupCount = 0;
+        int index = 0;
+        while (index < size) {
+            if (lines.get(index).isBreakLine) {
+                index++;
+                continue;
+            }
+            int start = index;
+            int end = index;
+            while (end + 1 < size && !lines.get(end + 1).isBreakLine
+                    && LyricDuetGroups.sharesGroup(lines.get(start), lines.get(end + 1))) {
+                end++;
+            }
+            qplayerGroupStart[groupCount] = start;
+            qplayerGroupEnd[groupCount] = end;
+            for (int i = start; i <= end; i++) qplayerLineToGroup[i] = groupCount;
+            groupCount++;
+            index = end + 1;
+        }
+        qplayerGroupCount = groupCount;
+    }
+
+    private long qplayerGroupStartMs(int groupIndex) {
+        if (groupIndex < 0 || groupIndex >= qplayerGroupCount) return 0L;
+        long value = Long.MAX_VALUE;
+        for (int i = qplayerGroupStart[groupIndex]; i <= qplayerGroupEnd[groupIndex]; i++) {
+            value = Math.min(value, CloudMusic.lyrics.get(i).timestamp);
+        }
+        return value == Long.MAX_VALUE ? 0L : value;
+    }
+
+    private long qplayerGroupEndMs(int groupIndex) {
+        if (groupIndex < 0 || groupIndex >= qplayerGroupCount) return 0L;
+        long value = Long.MIN_VALUE;
+        for (int i = qplayerGroupStart[groupIndex]; i <= qplayerGroupEnd[groupIndex]; i++) {
+            LyricLine line = CloudMusic.lyrics.get(i);
+            value = Math.max(value, line.timestamp + Math.max(line.duration, 0L));
+        }
+        return value == Long.MIN_VALUE ? 0L : value;
+    }
+
+    private static long qplayerFadeInStart(long groupStartMs) {
+        return groupStartMs - 600L + 150L;
+    }
+
+    private static float qplayerActiveK(long groupStartMs, long groupEndMs, double positionMs) {
+        final long fadeInDuration = 600L;
+        final long fadeOutDelay = 100L;
+        final long fadeOutDuration = 350L;
+        long fadeInStart = qplayerFadeInStart(groupStartMs);
+        long fadeInEnd = fadeInStart + fadeInDuration;
+        long fadeOutStart = groupEndMs + fadeOutDelay;
+        long fadeOutEnd = fadeOutStart + fadeOutDuration;
+        if (positionMs < fadeInStart || positionMs >= fadeOutEnd) return 0f;
+        if (positionMs < fadeInEnd) {
+            return smoothStepQplayer((positionMs - fadeInStart) / (double) fadeInDuration);
+        }
+        if (positionMs < fadeOutStart) return 1f;
+        return 1f - smoothStepQplayer((positionMs - fadeOutStart) / (double) fadeOutDuration);
+    }
+
+    private float qplayerActiveK(int groupIndex, double positionMs) {
+        if (groupIndex < 0 || groupIndex >= qplayerGroupCount) return 0f;
+        return qplayerActiveK(qplayerGroupStartMs(groupIndex), qplayerGroupEndMs(groupIndex), positionMs);
+    }
+
+    /**
+     * qplayer hands the scroll anchor to the next group at its first visible brightening,
+     * 450ms before it sings. The outgoing group keeps its own fade and sweep timeline.
+     */
+    private LyricLine qplayerVisualAnchorLyric(double positionMs) {
+        qplayerBuildGroups();
+        List<LyricLine> lines = CloudMusic.lyrics;
+        if (lines.isEmpty() || qplayerGroupCount == 0) return CloudMusic.currentLyric;
+
+        int resultGroup = 0;
+        for (int group = 0; group < qplayerGroupCount; group++) {
+            if (qplayerFadeInStart(qplayerGroupStartMs(group)) > positionMs) break;
+            resultGroup = group;
+        }
+        return lines.get(qplayerGroupStart[resultGroup]);
+    }
+
+    /** qplayer's underdamped syllable lift: 2px peak, ω0=3.7416574, ζ=0.935414. */
+    private static double qplayerSyllableLift(long startMs, double positionMs) {
+        double elapsed = (positionMs - startMs) / 1000.0;
+        if (elapsed <= 0.0) return 0.0;
+
+        final double omega0 = 3.7416574;
+        final double zeta = .935414;
+        double dampedFrequency = zeta * omega0;
+        double frequency = omega0 * Math.sqrt(1.0 - zeta * zeta);
+        double envelope = Math.exp(-dampedFrequency * elapsed);
+        double value = 1.0 - envelope * (Math.cos(frequency * elapsed)
+                + (dampedFrequency / frequency) * Math.sin(frequency * elapsed));
+        return 2.0 * Math.max(0.0, value);
+    }
+
+    /** qplayer's extra 2px word-ribbon lift for sustained words, driven by word progress. */
+    private static double qplayerWordRibbonLift(LyricLine.Word word, double positionMs, float activeK) {
+        long end = word.timestamp + Math.max(0L, word.duration);
+        long duration = Math.max(1L, end - word.timestamp);
+        if (end - word.timestamp < 1500L) return 0.0;
+        double progress = Math.max(0.0, Math.min(1.0, (positionMs - word.timestamp) / (double) duration));
+        return 2.0 * Math.sin(Math.PI * progress) * Math.max(0f, Math.min(1f, activeK));
+    }
+
+    /** Caches qplayer word wrapping by line and viewport geometry, avoiding per-frame allocations. */
+    private WordPlacement qplayerPlacement(LyricLine lyric, List<LyricLine.Word> words,
+                                           double columnLeft, double columnWidth, boolean rightAligned) {
+        double[] geometry = qplayerPlacementGeometry.get(lyric);
+        if (geometry == null || geometry.length != 2
+                || Math.abs(geometry[0] - columnLeft) > .5
+                || Math.abs(geometry[1] - columnWidth) > .5) {
+            geometry = new double[]{columnLeft, columnWidth};
+            qplayerPlacementGeometry.put(lyric, geometry);
+            WordPlacement placement = layoutWords(words, columnLeft, columnWidth, rightAligned);
+            qplayerPlacementCache.put(lyric, placement);
+            return placement;
+        }
+        WordPlacement placement = qplayerPlacementCache.get(lyric);
+        if (placement == null) {
+            placement = layoutWords(words, columnLeft, columnWidth, rightAligned);
+            qplayerPlacementCache.put(lyric, placement);
+        }
+        return placement;
+    }
+
+    /** qplayer's row sweep front. Outside the row it is offset by two feather widths. */
+    private static double qplayerSweepX(List<LyricLine.Word> words, WordPlacement placement,
+                                        int first, int last, double rowLeft, double rowRight,
+                                        double positionMs) {
+        LyricLine.Word firstWord = words.get(first);
+        LyricLine.Word lastWord = words.get(last);
+        long lastEnd = lastWord.timestamp + Math.max(0L, lastWord.duration);
+        if (positionMs < firstWord.timestamp) return rowLeft - 32.0;
+        if (positionMs >= lastEnd) return rowRight + 32.0;
+
+        for (int index = first; index <= last; index++) {
+            LyricLine.Word word = words.get(index);
+            long start = word.timestamp;
+            long end = word.duration > 0L ? start + word.duration
+                    : (index + 1 <= last ? words.get(index + 1).timestamp : start + 1L);
+            if (end <= start) end = start + 1L;
+            if (positionMs < start) return placement.x[index];
+
+            double left = placement.x[index];
+            double right = left + FontManager.pf65bold.getStringWidthD(word.word);
+            if (positionMs < end) {
+                return left + (right - left) * ((positionMs - start) / (double) (end - start));
+            }
+        }
+        return rowRight;
+    }
+
+    /**
+     * qplayer's 16px DST_IN sweep. The gradient itself is only 16px wide, but the DST_IN
+     * rectangle covers the complete row layer, exactly like qplayer's translated big rect.
+     */
+    private static void applyQplayerSweepMask(io.github.humbleui.skija.Canvas canvas,
+                                              double sweepX, double layerLeft, double layerRight,
+                                              double layerTop, double layerHeight, float activeK) {
+        float maskAlpha = 1f - (1f - .36f) * Math.max(0f, Math.min(1f, activeK));
+        int dark = ((int) (maskAlpha * 255f) << 24) | 0x00FFFFFF;
+        try (io.github.humbleui.skija.Shader gradient = io.github.humbleui.skija.Shader.makeLinearGradient(
+                (float) (sweepX - 8.0), (float) layerTop,
+                (float) (sweepX + 8.0), (float) layerTop,
+                new int[]{0xFFFFFFFF, dark})) {
+            io.github.humbleui.skija.Paint paint = SkijaGfx.fillShader(gradient);
+            paint.setBlendMode(io.github.humbleui.skija.BlendMode.DST_IN);
+            canvas.drawRect(io.github.humbleui.types.Rect.makeLTRB(
+                    (float) layerLeft, (float) layerTop,
+                    (float) layerRight, (float) (layerTop + layerHeight)), paint);
+            paint.setShader(null);
+            paint.setBlendMode(SkijaGfx.blendMode());
+        }
+    }
+
+    /** qplayer idle/active base brightness: 0.22 → 1.0, driven by the group timeline. */
+    private static float qplayerBaseAlpha(float activeK) {
+        return .22f + .78f * Math.max(0f, Math.min(1f, activeK));
+    }
+
+    /** qplayer depth emphasis adapted to MuoniumPlayer's native main-text box. */
+    private static double qplayerLineScale(float activeK, double readingCenterY,
+                                           double lineCenterY, double referenceHeight) {
+        double reference = Math.max(40.0, referenceHeight);
+        double proximity = 1.0 - Math.min(1.0, Math.abs(lineCenterY - readingCenterY) / reference);
+        double emphasis = Math.max(0f, Math.min(1f, activeK)) * proximity;
+        return .97 + .17 * emphasis;
+    }
+
+    private static float smoothStepQplayer(double value) {
+        double progress = Math.max(0.0, Math.min(1.0, value));
+        return (float) (progress * progress * (3.0 - 2.0 * progress));
+    }
+
+    /** Project-native sidecar drawing helper: original top-coordinate semantics and +4 row pitch. */
+    private double drawQplayerSubline(String text, double columnLeft, double columnWidth,
+                                      boolean rightAligned, double subY, float alpha) {
+        String[] rows = FontManager.pf34bold.fitWidth(text, columnWidth);
+        for (String row : rows) {
+            double x = rightAligned
+                    ? columnLeft + columnWidth - FontManager.pf34bold.getStringWidthD(row)
+                    : columnLeft;
+            FontManager.pf34bold.drawString(row, x, subY + 2.0,
+                    hexColor(0, 0, 0, alpha * .48f));
+            FontManager.pf34bold.drawString(row, x, subY, qplayerTextColor(alpha));
+            subY += FontManager.pf34bold.getHeight() + 4;
+        }
+        return subY;
+    }
+
+    /** qplayer's single 2.2px word glow; only words sustained for 1.5s receive it. */
+    private static void drawQplayerWordGlow(LyricLine.Word word, double x, double drawY, float alpha) {
+        if (alpha <= .01f) return;
+        io.github.humbleui.skija.BlendMode previous = SkijaGfx.blendMode();
+        SkijaGfx.setBlendMode(io.github.humbleui.skija.BlendMode.PLUS);
+        try {
+            FontManager.pf65bold.drawStringGlow(word.word, x, drawY,
+                    ((int) (Math.max(0f, Math.min(1f, alpha)) * 255f) << 24) | 0xE6E6E6, 2.2);
+        } finally {
+            SkijaGfx.setBlendMode(previous);
+        }
+    }
+
+    /**
+     * qplayer's interlude constants are tuned for a 28px lyric font. MuoniumPlayer's pf65 slot is
+     * created at 32.5px and reports a different line box, so scale the geometry instead of using
+     * raw pixel constants.
+     */
+    private static double qplayerInterludeScale() {
+        return Math.max(1.0, FontManager.pf65bold.getHeight() / 28.0);
+    }
+
+    /**
+     * Native lyric groups already include a 20px line gap. Subtract it from the scaled qplayer
+     * slot so the total distance between the two lyric blocks stays qplayer-sized instead of
+     * accidentally adding qplayer's slot on top of MuoniumPlayer's native spacing.
+     */
+    private static double qplayerInterludeSlotHeight() {
+        return Math.max(0.0, 40.0 * qplayerInterludeScale() - getLyricLineSpacing());
+    }
+
+    private static double qplayerInterludeDotRadius() {
+        return 6.8 * qplayerInterludeScale();
+    }
+
+    private static double qplayerInterludeDotSpacing() {
+        return 27.0 * qplayerInterludeScale();
+    }
+
+    /**
+     * Rebuilds qplayer's document layout. Interlude slots are dynamic and grow/collapse with the
+     * play head, so lineTops and targetScroll are intentionally recomputed every frame.
+     */
+    private void updateLyricPositions(double posY, double height, double width,
+                                      LyricLine currentLyric, double playheadMs, boolean manualScroll) {
         if (currentLyric == null) return;
-
-        int idxCurrent = CloudMusic.lyrics.indexOf(currentLyric);
-
-        if (idxCurrent < 0 || idxCurrent >= CloudMusic.lyrics.size()) return;
+        List<LyricLine> lines = CloudMusic.lyrics;
+        int size = lines.size();
+        if (size == 0) return;
 
         synchronized (CloudMusic.lyrics) {
-            int size = CloudMusic.lyrics.size();
-            if (idxCurrent >= size) return;
-
-            for (int i = 0; i < size; i++) {
-                LyricLine lyric = CloudMusic.lyrics.get(i);
-                // 对唱行按自己那一列的宽度算高度，和渲染时的折行数保持一致，否则行与行会叠上。
-                lyric.computeHeight(LyricDuetGroups.columnWidth(width, lyric.duetSlot));
-            }
-
-            // 文档坐标：只由行高与行距决定，与播放位置无关。对应 modernMP 的 lineTops[]。
+            qplayerBuildGroups();
+            if (qplayerGroupCount == 0) return;
             if (lyricDocTop.length != size) lyricDocTop = new double[size];
             double[] docTop = lyricDocTop;
-            double cursor = 0;
+
             for (int i = 0; i < size; i++) {
-                docTop[i] = cursor;
-                cursor += CloudMusic.lyrics.get(i).height + getLyricLineSpacing();
+                LyricLine lyric = lines.get(i);
+                if (!lyric.isBreakLine) {
+                    lyric.computeHeight(qplayerWrapWidth(LyricDuetGroups.columnWidth(width, lyric.duetSlot)));
+                }
             }
 
-            // 对唱组以第一行为锚，整组抬高半个额外行高，让两位歌手一起跨在阅读位置上。
-            int idxAnchor = LyricDuetGroups.groupStart(CloudMusic.lyrics, idxCurrent);
-            // 当前行来自一个被 10ms 音频线程反复改写的共享字段，在"提前跳到下一行"的阈值附近会
-            // 在两行之间来回。锚点一抖，下面整套弹簧就每帧重来一次，看起来是字在原地颤。
-            idxAnchor = scrollMotion.stabilizeAnchor(idxAnchor, size, playheadMs);
-            int idxGroupEnd = LyricDuetGroups.groupEnd(CloudMusic.lyrics, idxAnchor);
-            // 滚动偏移，对应 modernMP 的 restOffset = centerY - targetScroll：把锚点行的文档坐标
-            // 平移到阅读位置。之后每行的屏幕位置就是 restOffset + docTop[i]，和改动前逐行累加
-            // 出来的结果逐项相同。
-            double centerY = posY + height * lyricFraction() + groupAnchorLift(idxAnchor, idxGroupEnd);
-            double restOffset = centerY - docTop[idxAnchor];
+            for (int group = 0; group < qplayerGroupCount; group++) {
+                long previousEnd = group == 0 ? 0L : qplayerGroupEndMs(group - 1);
+                long currentStart = qplayerGroupStartMs(group);
+                long effectiveEnd = currentStart - 250L;
+                long gap = effectiveEnd - previousEnd;
+                qplayerInterludeBefore[group] = gap >= 2000L
+                        ? qplayerInterludeSlot(playheadMs, previousEnd, effectiveEnd, qplayerInterludeSlotHeight())
+                        : 0.0;
+            }
 
-            scrollMotion.apply(CloudMusic.lyrics, docTop, restOffset, idxAnchor,
-                    playheadMs, viewportTop, manualScroll);
+            double cursor = 0.0;
+            for (int group = 0; group < qplayerGroupCount; group++) {
+                double groupTop = cursor + qplayerInterludeBefore[group];
+                for (int i = qplayerGroupStart[group]; i <= qplayerGroupEnd[group]; i++) {
+                    docTop[i] = groupTop;
+                    groupTop += lines.get(i).height + getLyricLineSpacing();
+                }
+                cursor = groupTop;
+            }
+            for (int i = 0; i < size; i++) {
+                if (lines.get(i).isBreakLine) docTop[i] = cursor;
+            }
+
+            int anchorGroup = -1;
+            for (int group = 0; group < qplayerGroupCount; group++) {
+                if (qplayerFadeInStart(qplayerGroupStartMs(group)) > playheadMs) break;
+                anchorGroup = group;
+            }
+
+            double targetScroll = 0.0;
+            if (anchorGroup >= 0) {
+                double blockTop = docTop[qplayerGroupStart[anchorGroup]];
+                double groupBottom = docTop[qplayerGroupEnd[anchorGroup]]
+                        + lines.get(qplayerGroupEnd[anchorGroup]).height;
+                targetScroll = (blockTop + groupBottom) * .5;
+                double topLimit = blockTop + height * lyricFraction() - 12.0;
+                targetScroll = Math.min(targetScroll, topLimit);
+                double bottomLimit = groupBottom - height * (1.0 - lyricFraction()) + 12.0;
+                if (bottomLimit <= topLimit) {
+                    targetScroll = Math.max(targetScroll, bottomLimit);
+                }
+            }
+
+            qplayerInInterlude = false;
+            qplayerInterludeNextGroup = -1;
+            int timelineGroup = -1;
+            for (int group = 0; group < qplayerGroupCount; group++) {
+                if (qplayerGroupStartMs(group) > playheadMs) break;
+                timelineGroup = group;
+            }
+
+            int nextGroup = -1;
+            long gapStart = -1L;
+            if (timelineGroup < 0 && qplayerGroupCount > 0) {
+                nextGroup = 0;
+                gapStart = 0L;
+            } else if (timelineGroup >= 0 && timelineGroup + 1 < qplayerGroupCount
+                    && playheadMs >= qplayerGroupEndMs(timelineGroup)) {
+                nextGroup = timelineGroup + 1;
+                gapStart = qplayerGroupEndMs(timelineGroup);
+            }
+            if (nextGroup >= 0) {
+                long effectiveEnd = qplayerGroupStartMs(nextGroup) - 250L;
+                long gap = effectiveEnd - gapStart;
+                if (playheadMs < effectiveEnd && gap >= 2000L) {
+                    qplayerInInterlude = true;
+                    qplayerInterludeNextGroup = nextGroup;
+                    qplayerInterludeStartMs = gapStart;
+                    if (anchorGroup != nextGroup) {
+                        double slotHeight = qplayerInterludeBefore[nextGroup];
+                        targetScroll = docTop[qplayerGroupStart[nextGroup]]
+                                - slotHeight + slotHeight * .5;
+                    }
+                }
+            }
+
+            int lastLine = qplayerGroupEnd[qplayerGroupCount - 1];
+            double contentEnd = docTop[lastLine] + lines.get(lastLine).height;
+            if (contentEnd > height) {
+                double edgePad = height * .7;
+                double minimum = height * lyricFraction() - edgePad;
+                double maximum = contentEnd - height * (1.0 - lyricFraction()) + edgePad;
+                targetScroll = Math.max(minimum, Math.min(maximum, targetScroll));
+            }
+
+            double centerY = posY + height * lyricFraction();
+            double restOffset = centerY - targetScroll;
+            scrollMotion.apply(lines, docTop, restOffset,
+                    qplayerGroupStart[Math.max(0, anchorGroup)], playheadMs,
+                    qplayerInInterlude, manualScroll);
+        }
+    }
+
+    /** qplayer/AMLL interlude slot: a 150ms smoothstep open at both edges. */
+    private static double qplayerInterludeSlot(double positionMs, long startMs, long endMs, double height) {
+        if (positionMs < startMs || positionMs > endMs) return 0.0;
+        double elapsed = positionMs - startMs;
+        double progress;
+        if (elapsed < 150.0) progress = elapsed / 150.0;
+        else if (endMs - positionMs < 150.0) progress = (endMs - positionMs) / 150.0;
+        else progress = 1.0;
+        return height * smoothStepQplayer(progress);
+    }
+
+    private void renderQplayerInterludeDots(double left, double width, double firstRowHeight,
+                                            double fontHeight, double positionMs, float alpha) {
+        if (!qplayerInInterlude || qplayerInterludeNextGroup < 0
+                || qplayerInterludeNextGroup >= qplayerGroupCount) return;
+        List<LyricLine> lines = CloudMusic.lyrics;
+        int nextLineIndex = qplayerGroupStart[qplayerInterludeNextGroup];
+        if (nextLineIndex >= lines.size()) return;
+        double slotHeight = qplayerInterludeBefore[qplayerInterludeNextGroup];
+        if (slotHeight <= 4.0) return;
+
+        LyricLine nextLine = lines.get(nextLineIndex);
+        double nextTop = nextLine.posY + scrollOffset;
+        // MuoniumPlayer's line top is already the native text-top coordinate. qplayer's baseline
+        // offset must not be added here; doing so pushed the dots toward the following lyric.
+        double totalGap = slotHeight + getLyricLineSpacing();
+        double prevTextBottom = nextTop - totalGap;
+        double nextTextTop = nextTop;
+        double dotRadius = qplayerInterludeDotRadius();
+        double dotSpacing = qplayerInterludeDotSpacing();
+        double anchorY = (prevTextBottom + nextTextTop) * .5 - dotRadius;
+        boolean dotsRight = LyricDuetGroups.rightAligned(nextLine.duetSlot);
+        double dotsWidth = 2.0 * dotRadius + 2.0 * dotSpacing;
+        double dotsX = dotsRight ? Math.max(left, left + width - dotsWidth) : left;
+
+        long effectiveEnd = qplayerGroupStartMs(qplayerInterludeNextGroup) - 250L;
+        long interludeDuration = effectiveEnd - qplayerInterludeStartMs;
+        renderQplayerInterludeDots(dotsX, anchorY,
+                (long) Math.floor(positionMs) - qplayerInterludeStartMs,
+                interludeDuration, alpha);
+    }
+
+    private void renderQplayerInterludeDots(double left, double anchorY,
+                                            long currentDuration, long interludeDuration, float alpha) {
+        if (currentDuration < 0L || currentDuration > interludeDuration || interludeDuration <= 0L) return;
+
+        long fadeInEnd = Math.min(600L, (long) (interludeDuration * 0.20));
+        long scaleRamp = Math.min(1500L, (long) (interludeDuration * 0.35));
+        long exitScale = Math.min(750L, (long) (interludeDuration * 0.20));
+        long exitOpacity = Math.min(375L, (long) (interludeDuration * 0.10));
+        if (fadeInEnd <= 0L) fadeInEnd = 1L;
+
+        double breatheDuration = interludeDuration / Math.ceil(interludeDuration / 1500.0);
+        double scale = 1.0 + Math.sin(1.5 * Math.PI - (currentDuration / breatheDuration) * 2.0) / 20.0;
+        double globalOpacity = 1.0;
+        if (currentDuration < fadeInEnd) globalOpacity *= currentDuration / (double) fadeInEnd;
+        if (currentDuration < scaleRamp) scale *= 1.0 - Math.pow(2.0, -10.0 * currentDuration / (double) scaleRamp);
+        long remaining = interludeDuration - currentDuration;
+        if (remaining < exitScale) {
+            scale *= 1.0 - easeInOutBackQplayer((exitScale - remaining) / (double) exitScale / 2.0);
+        }
+        if (remaining < exitOpacity) {
+            globalOpacity *= Math.max(0.0, Math.min(1.0, remaining / (double) exitOpacity));
         }
 
+        long dotsDuration = Math.max(1L, interludeDuration - exitScale);
+        scale = Math.max(0.0, scale) * .7;
+        if (scale < .01) return;
+
+        double opacity0 = clampQplayer(.25, currentDuration * 3.0 / dotsDuration * .75, 1.0);
+        double opacity1 = clampQplayer(.25, (currentDuration - dotsDuration / 3.0) * 3.0 / dotsDuration * .75, 1.0);
+        double opacity2 = clampQplayer(.25, (currentDuration - dotsDuration * 2.0 / 3.0) * 3.0 / dotsDuration * .75, 1.0);
+
+        double dotRadius = qplayerInterludeDotRadius();
+        double dotSpacing = qplayerInterludeDotSpacing();
+        double cx0 = left + dotRadius;
+        double cy = anchorY + dotRadius;
+        api.getGLStateManager().pushMatrix();
+        api.getGLStateManager().translate(cx0 + dotSpacing, cy, 0);
+        api.getGLStateManager().scale(scale, scale, 1);
+        api.getGLStateManager().translate(-(cx0 + dotSpacing), -cy, 0);
+        try {
+            io.github.humbleui.skija.Canvas canvas = SkijaGfx.canvas();
+            if (canvas == null) return;
+            double[] opacities = {globalOpacity * opacity0, globalOpacity * opacity1, globalOpacity * opacity2};
+            for (int i = 0; i < 3; i++) {
+                float dotAlpha = (float) Math.max(0.0, Math.min(1.0, opacities[i])) * alpha;
+                io.github.humbleui.skija.Paint paint = SkijaGfx.fill(0x00FFFFFF | ((int) (dotAlpha * 255f) << 24));
+                paint.setAntiAlias(true);
+                canvas.drawCircle((float) (cx0 + i * dotSpacing), (float) cy,
+                        (float) dotRadius, paint);
+            }
+        } finally {
+            api.getGLStateManager().popMatrix();
+        }
+    }
+
+    private static double easeInOutBackQplayer(double value) {
+        double c1 = 1.70158;
+        double c2 = c1 * 1.525;
+        return value < .5
+                ? (Math.pow(2 * value, 2) * ((c2 + 1) * 2 * value - c2)) / 2
+                : (Math.pow(2 * value - 2, 2) * ((c2 + 1) * (value * 2 - 2) + c2) + 2) / 2;
+    }
+
+    private static double clampQplayer(double minimum, double value, double maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
     }
 
     private double getCoverSizeMax() {
