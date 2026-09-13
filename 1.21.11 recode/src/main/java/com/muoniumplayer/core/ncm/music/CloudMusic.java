@@ -7,6 +7,7 @@ import com.google.gson.JsonObject;
 import lombok.Getter;
 import lombok.SneakyThrows;
 import repackage.com.jsyn.exceptions.ChannelMismatchException;
+import repackage.processing.sound.Engine;
 import today.opai.api.enums.EnumChatColor;
 import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.interfaces.SharedConstants;
@@ -1205,6 +1206,23 @@ public class CloudMusic implements SharedConstants {
         private volatile long nextFmPrefetchAt;
         private volatile AutomixFade activeFade;
 
+        /**
+         * {@link AutomixFade#audioDrivenAt} 可以陈旧多久，超过就由监督 tick 收回曲线写入权。
+         *
+         * <p>几个音频缓冲：长到一次漏掉的缓冲不会让写入权来回易手，短到死掉的音频任务能在
+         * 一个 10 ms tick 内被发现。</p>
+         */
+        private static final long AUDIO_DRIVEN_WINDOW_MILLIS = 40L;
+
+        /**
+         * 交叉淡化曲线的音频线程写入者，只在一次淡化进行期间注册。
+         *
+         * <p>为什么值得有它见 {@link #registerAutomixAudioTask()}；轮到它跑时做什么见
+         * {@link #writeTransitionFrameOnAudioThread()}。</p>
+         */
+        private final Runnable automixAudioTask = this::writeTransitionFrameOnAudioThread;
+        private volatile boolean automixAudioTaskRegistered;
+
         public PlayThread(List<Music> songs, int startIdx) {
             this.songs = songs;
             this.setName("Play Thread");
@@ -1919,10 +1937,32 @@ public class CloudMusic implements SharedConstants {
              * 
              */
             private final long overlapMillis;
-            private long startedAt;
+            /**
+             * 斜坡读作进度 0 的那个墙钟时刻。
+             *
+             * <p>{@code volatile} 是因为 JSyn 的音频任务也会采样它：见
+             * {@code writeTransitionFrameOnAudioThread()}。</p>
+             */
+            private volatile long startedAt;
             private long tickedAt;
             /** 仅当是这次淡化暂停了出去的 deck 时为 true，免得它被误恢复。 */
             private boolean outgoingPaused;
+            /**
+             * 活动 deck 暂停期间要按住的进度，斜坡正在跑时为 {@code -1}。
+             *
+             * <p>{@link #driveAutomixFade()} 本来就会在暂停期间冻结 {@link #startedAt}，但它一个
+             * tick 只能冻结一次；两次 tick 之间墙钟仍在走，而那正是音频任务在采样的东西。把按住的
+             * 进度发出来，音频任务就能在这两次 tick 之间原地停住，而不是先冲出去再被拽回来。</p>
+             */
+            private volatile double pausedProgress = -1.0;
+            /**
+             * 音频任务最后一次写入帧的墙钟时刻，从未写过时为 {@code 0}。
+             *
+             * <p>tick 读它来决定曲线的写入权是不是还在自己手上：注册失败、抛异常、或者根本不再被
+             * 调用的音频任务都只是停止刷新这个值，tick 在 {@code AUDIO_DRIVEN_WINDOW_MILLIS} 之内
+             * 就会重新接管。这样高分辨率那条路就永远不可能把一次本来能跑的转场变成卡死的转场。</p>
+             */
+            private volatile long audioDrivenAt;
 
             private AutomixFade(AudioPlayer outgoing, AudioPlayer incoming, AutomixPlan plan,
                                 long overlapMillis, long startedAt) {
@@ -2449,6 +2489,9 @@ public class CloudMusic implements SharedConstants {
                 fadingOutPlayer = outgoing;
                 activeFade = new AutomixFade(outgoing, incoming, plan, effectiveOverlap,
                         System.currentTimeMillis());
+                // 只在这次淡化的长度内注册：音频任务把本线程当作捕获引用持有，淡化结束还留着注册
+                // 等于让一个已经结束的播放会话在游戏余下的时间里都活着。
+                registerAutomixAudioTask();
                 playing.set(true);
             }
 
@@ -2480,7 +2523,13 @@ public class CloudMusic implements SharedConstants {
             return true;
         }
 
-        /** 推进等功率斜坡。从监督播放的同一个 10 ms tick 调用。 */
+        /**
+         * 推进等功率斜坡。从监督播放的同一个 10 ms tick 调用。
+         *
+         * <p>曲线写入本身通常归 JSyn 的音频任务（见 {@link #writeTransitionFrameOnAudioThread()}），
+         * 它每个输出缓冲就能轮上一次，而不是每个 tick 一次。这个方法保留生命周期——暂停、恢复、
+         * 结束淡化——并在那个任务没有在跑时继续当写入者，所以转场从不依赖它。</p>
+         */
         private void driveAutomixFade() {
             AutomixFade fade = activeFade;
             if (fade == null) return;
@@ -2494,6 +2543,9 @@ public class CloudMusic implements SharedConstants {
                 // 播放器里没有别的地方知道它的存在。
                 fade.startedAt += Math.max(0L, now - fade.tickedAt);
                 fade.tickedAt = now;
+                // 把 startedAt 按空闲时长平移，正是「now - startedAt 等于被按住的已用时长」的原因，
+                // 所以这里发出去的就是那个冻结的进度。
+                fade.pausedProgress = progressAt(fade, now);
                 if (!fade.outgoingPaused && fade.outgoing != null && fade.outgoing.isUsable()
                         && !fade.outgoing.isPausing()) {
                     fade.outgoing.pause();
@@ -2509,30 +2561,22 @@ public class CloudMusic implements SharedConstants {
                 fade.outgoing.unpause();
                 fade.outgoingPaused = false;
             }
+            fade.pausedProgress = -1.0;
             fade.tickedAt = now;
 
-            double progress = (now - fade.startedAt) / (double) fade.overlapMillis;
-            if (fade.incoming != null) {
-                fade.incoming.setFadeGain(fade.plan.incomingGain(progress));
-                fade.incoming.setBassGainDb(fade.plan.incomingBassDb(progress));
-                fade.incoming.setVocalDuckDepth(fade.plan.incomingVocalDepth(progress));
-                fade.incoming.setMidGainDb(fade.plan.incomingMidDb(progress));
-                fade.incoming.setHighGainDb(fade.plan.incomingHighDb(progress));
-            }
-            if (fade.outgoing != null) {
-                fade.outgoing.setFadeGain(fade.plan.outgoingGain(progress));
-                fade.outgoing.setBassGainDb(fade.plan.outgoingBassDb(progress));
-                // 按实际正在跑的斜坡来算，而不是计划的那条：缩短的斜坡
-                // 绝不能把一个半音的节奏锁定压缩进几百毫秒。
-                // 速度与音高分开给：节奏锁定只动速度（WSOLA，音高不变），整半音吸附只动音高
-                // （重采样 + WSOLA 把时长还原）。合成一个数会让 WSOLA 把「移调」当成「变速」。
-                fade.outgoing.setSpeedAndPitch(
-                        fade.plan.outgoingTempo(progress, fade.overlapMillis),
-                        fade.plan.outgoingPitch(progress, fade.overlapMillis));
+            double progress = progressAt(fade, now);
+            if (now - fade.audioDrivenAt >= AUDIO_DRIVEN_WINDOW_MILLIS) {
+                // 最近没有音频任务写过帧——没注册成、抛了异常、或者引擎没了——那就退回 tick 来写，
+                // 和它存在之前完全一样。
+                writeTransitionFrame(fade, progress);
             }
             if (progress < 1.0) return;
 
+            // 在下面把两路 deck 抹平之前先清掉。已经在音频任务里跑着的那一帧最多只能把计划自己的
+            // 终态再写一遍——对进场 deck 而言那正好就是平直的——而且它是直写端口，下面的复位走的是
+            // 命令队列，必然在它之后被抽干。
             activeFade = null;
+            unregisterAutomixAudioTask();
             if (fade.incoming != null) {
                 fade.incoming.setFadeGain(1.0f);
                 // 剩余曲目恢复平直响应与自然速度：淡化的任何痕迹都不能带进普通播放。
@@ -2542,11 +2586,99 @@ public class CloudMusic implements SharedConstants {
             releaseFadedDeck(fade.outgoing);
         }
 
+        /** {@code now} 处的斜坡位置，以「几个斜坡长度」计；越界值由计划自己钳住。 */
+        private static double progressAt(AutomixFade fade, long now) {
+            return (now - fade.startedAt) / (double) fade.overlapMillis;
+        }
+
+        /**
+         * 在 {@code progress} 处采样计划里的每一条曲线，写进两路 deck。
+         *
+         * <p>一份实现、两个调用者：监督 tick 与 JSyn 音频任务都走这里，所以兜底的那一帧和音频线程写的
+         * 那一帧形状完全一致，两者不可能对「同一个进度该是什么声音」有分歧。写入本身走
+         * {@code AudioPlayer.applyAutomixFrame}，它直写端口而不入队命令 —— 见
+         * {@link repackage.processing.sound.SoundFile#setAmplitudeNow(float)}。</p>
+         */
+        private void writeTransitionFrame(AutomixFade fade, double progress) {
+            if (fade.incoming != null) {
+                fade.incoming.applyAutomixFrame(fade.plan.incomingGain(progress),
+                        fade.plan.incomingBassDb(progress),
+                        fade.plan.incomingVocalDepth(progress),
+                        fade.plan.incomingMidDb(progress),
+                        fade.plan.incomingHighDb(progress));
+            }
+            if (fade.outgoing != null) {
+                // 按实际正在跑的斜坡来算，而不是计划的那条：缩短的斜坡
+                // 绝不能把一个半音的节奏锁定压缩进几百毫秒。
+                // 速度与音高分开给：节奏锁定只动速度（WSOLA，音高不变），整半音吸附只动音高
+                // （重采样 + WSOLA 把时长还原）。合成一个数会让 WSOLA 把「移调」当成「变速」。
+                fade.outgoing.applyAutomixFrame(fade.plan.outgoingGain(progress),
+                        fade.plan.outgoingBassDb(progress),
+                        fade.plan.outgoingTempo(progress, fade.overlapMillis),
+                        fade.plan.outgoingPitch(progress, fade.overlapMillis));
+            }
+        }
+
+        /**
+         * 曲线写入者，跑在 JSyn 音频线程上、每个输出缓冲一次（64 帧，44.1 kHz 下约 1.5 ms），
+         * 而不是每个 10 ms 监督 tick 一次。
+         *
+         * <p>这就是全部意义所在：监督 tick 是一个 sleep 循环，和歌词查找、播放历史上报、预备检查
+         * 共用同一条线程，所以它的节拍既粗又不匀，它写出来的斜坡也就继承了那份不匀。音频线程踩的是
+         * 声音时钟，也就是斜坡真正对着的那个时钟。</p>
+         *
+         * <p><b>纯增量。</b>这里没有任何东西是承重的：tick 用同一条公式写同样的曲线，只在
+         * {@link AutomixFade#audioDrivenAt} 持续被刷新期间让位给这个任务。抛出的异常被吞掉并停止刷新，
+         * 写入权在下一个 tick 就回到 tick 手上。</p>
+         */
+        private void writeTransitionFrameOnAudioThread() {
+            try {
+                AutomixFade fade = activeFade;
+                if (fade == null) return;
+                double held = fade.pausedProgress;
+                long now = System.currentTimeMillis();
+                double progress = held >= 0.0 ? held : progressAt(fade, now);
+                writeTransitionFrame(fade, progress);
+                fade.audioDrivenAt = now;
+            } catch (Throwable ignored) {
+                // 刻意静默、也刻意不标记这一帧：tick 会把写入权捡回去，所以失败的代价只是分辨率。
+            }
+        }
+
+        /**
+         * 在一次淡化的长度内把曲线写入权交给音频线程。
+         *
+         * <p>尽力而为：引擎还没起来、或者拒绝了这个任务，就仍然由 tick 当写入者，别的什么都不变。
+         * 按「一次淡化」注册而不是按「线程生命期」注册是刻意的 —— 这个任务会被捕获进引擎自己的
+         * 列表里，活得比它那次淡化久的注册会把一个已经结束的播放会话留在内存里。</p>
+         */
+        private void registerAutomixAudioTask() {
+            if (automixAudioTaskRegistered) return;
+            try {
+                Engine.addAudioTask(automixAudioTask);
+                automixAudioTaskRegistered = true;
+            } catch (Throwable ignored) {
+                automixAudioTaskRegistered = false;
+            }
+        }
+
+        private void unregisterAutomixAudioTask() {
+            if (!automixAudioTaskRegistered) return;
+            automixAudioTaskRegistered = false;
+            try {
+                Engine.removeAudioTask(automixAudioTask);
+            } catch (Throwable ignored) {
+            }
+        }
+
         /** 提前结束一次淡化（取消、手动切歌），且不让任何一路 deck 仍听得见。 */
         private void finishAutomixFade() {
             AutomixTransitionAnimation.cancel();
             AutomixFade fade = activeFade;
             activeFade = null;
+            // 这里同时也是会话拆除路径（见 PlayThread.run），所以音频任务在这里注销，
+            // 而不只在淡化自然跑完的地方注销。
+            unregisterAutomixAudioTask();
             if (fade == null) return;
             if (fade.incoming != null && fade.incoming == ownedPlayer) {
                 fade.incoming.setFadeGain(1.0f);

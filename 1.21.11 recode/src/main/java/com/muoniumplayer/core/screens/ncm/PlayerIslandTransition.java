@@ -100,7 +100,11 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
             capsuleHandoffMix = 0.0;
         }
         lastTickNanos = System.nanoTime();
-        DownloadDynamicIsland.beginPlayerSurfaceTransition();
+        if (state == OPEN) {
+            DownloadDynamicIsland.finishPlayerSurfaceTransition();
+        } else {
+            DownloadDynamicIsland.beginPlayerSurfaceTransition();
+        }
         captureTarget();
 
         if (state == IDLE) {
@@ -153,9 +157,12 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         //调试器暂停；音乐引起的正常卡顿绝不能拉长动画。
         deltaMs = Math.min(250.0, Math.max(0.0, deltaMs));
 
-        // Once fully open, the normal panel owns rendering. Refresh only the four cached outputs;
+        // 完全打开后，普通面板拥有渲染权。仅刷新四个缓存输出；
         // this avoids re-solving two bezier curves and rebuilding the pulse every idle player frame.
         if (state == OPEN) {
+            // 屏幕调整大小/初始化可能在播放器已打开时再次调用 open()。完成任何
+            // 重新武装的表面过渡，使通知不会被无限期阻塞。
+            DownloadDynamicIsland.finishPlayerSurfaceTransition();
             surfaceBoundsCache[0] = targetX;
             surfaceBoundsCache[1] = targetY;
             surfaceBoundsCache[2] = targetWidth;
@@ -172,6 +179,7 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
             if (t >= 1.0) {
                 t = 1.0;
                 state = OPEN;
+                DownloadDynamicIsland.finishPlayerSurfaceTransition();
             }
         } else if (state == CLOSING) {
             t = Math.max(0.0, t - deltaMs / closeDuration());
@@ -407,8 +415,8 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
     }
 
     private static void captureTarget() {
-        // open() runs from initGui, before drawScreen has entered the adaptive layout.
-        // tick() runs after drawScreen has already entered it. Both must capture the target in
+        // open() 从 initGui 运行，在 drawScreen 进入自适应布局之前。
+        // tick() 在 drawScreen 已进入之后运行。两者都必须在
         //完全相同的坐标系，否则形变会落偏中心。
         boolean ownedLayout = !WindowAdaptiveScale.isTransforming();
         WindowAdaptiveScale.begin();

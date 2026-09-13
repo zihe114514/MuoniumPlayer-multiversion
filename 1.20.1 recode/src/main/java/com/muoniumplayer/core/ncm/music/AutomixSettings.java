@@ -28,13 +28,27 @@ public final class AutomixSettings {
         public String getLabel() { return label; }
 
         public static Engine fromStored(String value) {
-            if (value == null) return LEGACY;
+            if (value == null) return DEFAULT_ENGINE;
             for (Engine engine : values()) {
                 if (engine.name().equalsIgnoreCase(value) || engine.label.equalsIgnoreCase(value)) return engine;
             }
-            return LEGACY;
+            return DEFAULT_ENGINE;
         }
     }
+
+    /**
+     * The engine a fresh installation gets.
+     *
+     * <p>Folia degrades on its own: without the models it falls back to pure DSP analysis (see
+     * the {@code profile == null} branches in {@code FoliaAutomixPlanner}), so making it the
+     * default never turns a machine that lacks the models into a hard cut. Users who prefer the
+     * old chain can still switch back to {@link Engine#LEGACY} explicitly in HUD settings.</p>
+     *
+     * <p>Every "no explicit choice" fallback points here instead of hard-coding an enum
+     * constant, otherwise a change to the default always leaves a few call sites behind and the
+     * same concept ends up answering differently depending on where it is asked.</p>
+     */
+    public static final Engine DEFAULT_ENGINE = Engine.FOLIA;
 
 
     /** Shortest overlap that still reads as a blend rather than a cut. */
@@ -65,6 +79,9 @@ public final class AutomixSettings {
      */
     public static final float MIN_PLAYBACK_RATE = .94f;
     public static final float MAX_PLAYBACK_RATE = 1.06f;
+    /** Folia keeps pitch independent with WSOLA, so its tempo bend may use the full policy range. */
+    public static final float FOLIA_MIN_TEMPO_RATE = .88f;
+    public static final float FOLIA_MAX_TEMPO_RATE = 1.12f;
     /** One semitone as a playback-rate factor. */
     public static final float SEMITONE_RATIO = 1.0594630943592953f;
 
@@ -97,9 +114,9 @@ public final class AutomixSettings {
     private static final Gson GSON = new Gson();
 
     private static boolean loaded;
-    private static Engine engine = Engine.LEGACY;
-    // Existing installations and loader-specific game directories without automix.json retain
-    // the original transition path. Folia remains an explicit HUD choice.
+    private static Engine engine = DEFAULT_ENGINE;
+    // Existing installations and loader-specific game directories without automix.json land on
+    // DEFAULT_ENGINE as well.
     private static boolean enabled = true;
     private static boolean beatAlign = true;
     private static boolean bassSwap = true;
@@ -131,7 +148,7 @@ public final class AutomixSettings {
     public static void setEngine(Engine value) {
         load();
         synchronized (LOCK) {
-            Engine next = value == null ? Engine.LEGACY : value;
+            Engine next = value == null ? DEFAULT_ENGINE : value;
             if (engine == next) return;
             engine = next;
             saveLocked();
@@ -438,9 +455,11 @@ public final class AutomixSettings {
                 if (!migrateEngine) {
                     engine = Engine.fromStored(root.get("engine").getAsString());
                 } else {
-                    // Configurations written before the engine selector existed belonged to the
-                    // original automix path. Never reinterpret them as the new Folia engine.
-                    engine = Engine.LEGACY;
+                    // Configurations written before the engine selector existed never expressed an
+                    // engine choice, so they follow the current default. The migration is written
+                    // back immediately (saveLocked below), so from then on the file holds an
+                    // explicit record and later default changes cannot move it again.
+                    engine = DEFAULT_ENGINE;
                 }
                 if (root.has("beatAlign") && !root.get("beatAlign").isJsonNull()) {
                     beatAlign = root.get("beatAlign").getAsBoolean();

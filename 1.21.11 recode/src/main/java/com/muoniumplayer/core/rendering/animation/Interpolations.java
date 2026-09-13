@@ -89,7 +89,7 @@ public class Interpolations {
     }
 
     /**
-     * the curve of the interpolate animation
+     * 插值动画的曲线
      *
      * @param t speed input
      * @return curve value
@@ -118,7 +118,7 @@ public class Interpolations {
     }
 
     /**
-     * calculates the delta frame time
+     * 计算帧时间增量
      */
     public static void calcFrameDelta() {
 

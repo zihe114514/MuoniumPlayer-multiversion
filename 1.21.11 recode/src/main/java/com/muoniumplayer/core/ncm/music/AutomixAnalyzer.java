@@ -94,7 +94,7 @@ final class AutomixAnalyzer {
      */
     private static final int CHROMA_BLOCK = 8_192;
     /** C3 到 B6，以 MIDI 编号表示。C3 以下 bins 无法再分辨半音；B6 以上则基本
-     *  harmonic content of notes already counted. */
+     * 是已统计音符的和声内容。 */
     private static final int CHROMA_LOWEST_MIDI = 48;
     private static final int CHROMA_HIGHEST_MIDI = 83;
 

@@ -186,7 +186,7 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
 
             this.roundedRect(posInterface.getX(), posInterface.getY(), width, height + downloadProgHeight, bgRound, 1, 0, 0, 0, alpha * 0.25f);
 
-            // render download panel
+            // 渲染下载面板
 
             if (this.downloading) {
 

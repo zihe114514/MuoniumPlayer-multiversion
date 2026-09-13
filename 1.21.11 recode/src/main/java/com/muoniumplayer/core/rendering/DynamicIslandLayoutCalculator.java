@@ -78,8 +78,8 @@ final class DynamicIslandLayoutCalculator {
         double screenMaxWidth = Math.max(compactWidth, (screenWidth - 12.0) / configuredScale);
         /*
          * "灵动岛基础宽度" is a real base width, not a passive ceiling. Previously it was only
-         * fed into Math.max(configured, desired), so the natural text width always won and dragging
-         * the slider changed nothing. It therefore scales the per-style minimum (resting) width.
+         * 被输入 Math.max(configured, desired)，因此自然文本宽度总是胜出，拖动
+         * 滑块毫无效果。因此它按样式缩放最小（静止）宽度。
          *
          * 但它<b>不再</b>同时当作硬上限：长文案会被截成"前半段…"，后半段完全看不到。现在改成
          * 三级降级 —— ① 优先让灵动岛自己伸长去装下全文（上限是屏幕可用宽度的

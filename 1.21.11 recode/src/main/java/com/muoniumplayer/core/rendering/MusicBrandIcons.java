@@ -12,7 +12,7 @@ public final class MusicBrandIcons {
     public static final String KUGOU_MONOGRAM = "酷";
     public static final String PERSONAL_FM = "\ue802";
 
-    /** YouTube play-button mark from the bundled youtube-icons font. */
+    /** 来自内置 youtube-icons 字体的 YouTube 播放按钮标记。 */
     public static final String YOUTUBE = "\ue803";
 
     /**

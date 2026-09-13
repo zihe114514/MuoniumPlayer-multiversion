@@ -28,13 +28,25 @@ public final class AutomixSettings {
         public String getLabel() { return label; }
 
         public static Engine fromStored(String value) {
-            if (value == null) return LEGACY;
+            if (value == null) return DEFAULT_ENGINE;
             for (Engine engine : values()) {
                 if (engine.name().equalsIgnoreCase(value) || engine.label.equalsIgnoreCase(value)) return engine;
             }
-            return LEGACY;
+            return DEFAULT_ENGINE;
         }
     }
+
+    /**
+     * 出厂默认引擎。
+     *
+     * <p>Folia 在缺模型时会自行退回纯 DSP 分析（见 {@code FoliaAutomixPlanner} 里 profile 为 null
+     * 的那些分支），所以把它当默认不会让「没装模型」的电脑退化成硬切；想要旧链路的用户仍然可以
+     * 在 HUD 设置里显式切回 {@link Engine#LEGACY}。</p>
+     *
+     * <p>所有「没有显式选择」的回退都指向这里，而不是各自写死一个枚举常量——否则默认值一改，
+     * 就总有几处漏改，表现成「同一个概念在不同场合给出不同答案」。</p>
+     */
+    public static final Engine DEFAULT_ENGINE = Engine.FOLIA;
 
 
     /** 仍读作混音而非硬切的最短重叠。 */
@@ -65,6 +77,9 @@ public final class AutomixSettings {
      */
     public static final float MIN_PLAYBACK_RATE = .94f;
     public static final float MAX_PLAYBACK_RATE = 1.06f;
+    /** Folia 通过 WSOLA 保持音高独立，因此速度弯曲可以使用完整策略范围。 */
+    public static final float FOLIA_MIN_TEMPO_RATE = .88f;
+    public static final float FOLIA_MAX_TEMPO_RATE = 1.12f;
     /** 以播放速率因子表示的一个半音。 */
     public static final float SEMITONE_RATIO = 1.0594630943592953f;
 
@@ -97,9 +112,8 @@ public final class AutomixSettings {
     private static final Gson GSON = new Gson();
 
     private static boolean loaded;
-    private static Engine engine = Engine.LEGACY;
-    // 没有 automix.json 的旧安装和加载器专属游戏目录，保留
-    // 原有的过渡路径。Folia 仍是 HUD 中的显式选择。
+    private static Engine engine = DEFAULT_ENGINE;
+    // 没有 automix.json 的旧安装和加载器专属游戏目录，同样落到 DEFAULT_ENGINE。
     private static boolean enabled = true;
     private static boolean beatAlign = true;
     private static boolean bassSwap = true;
@@ -131,7 +145,7 @@ public final class AutomixSettings {
     public static void setEngine(Engine value) {
         load();
         synchronized (LOCK) {
-            Engine next = value == null ? Engine.LEGACY : value;
+            Engine next = value == null ? DEFAULT_ENGINE : value;
             if (engine == next) return;
             engine = next;
             saveLocked();
@@ -438,9 +452,10 @@ public final class AutomixSettings {
                 if (!migrateEngine) {
                     engine = Engine.fromStored(root.get("engine").getAsString());
                 } else {
-                    // 在引擎选择器存在之前写入的配置属于
-                    // 原有 automix 路径。切勿把它们重新解释为新的 Folia 引擎。
-                    engine = Engine.LEGACY;
+                    // 在引擎选择器存在之前写入的配置从来没有表达过引擎选择，所以它们跟随
+                    // 当前默认值；迁移结果马上就写回盘（下面的 saveLocked），从此这条配置就是
+                    // 一条显式记录了，不会再被后续的默认值变化影响。
+                    engine = DEFAULT_ENGINE;
                 }
                 if (root.has("beatAlign") && !root.get("beatAlign").isJsonNull()) {
                     beatAlign = root.get("beatAlign").getAsBoolean();

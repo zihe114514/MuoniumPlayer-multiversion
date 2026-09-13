@@ -264,9 +264,9 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
                     break;
                 }
                 case VERTICAL_WITH_HORIZONTAL_FILL: {
-                    // Do not create an empty first row when a child is wider than a very
-                    // small viewport. For mixed-size controls, advance by the tallest item
-                    // in the completed row instead of whichever item happened to wrap.
+                    // 当子组件比极小视口更宽时，不要创建空的第一行。
+                    // 对于混合大小的控件，按已完成行中最高的项
+                    // 推进，而不是按恰好换行的那个项。
                     if (offsetX > 0 && offsetX + width > this.getWidth()) {
                         offsetX = 0;
                         offsetY += rowHeight + spacing;
@@ -360,9 +360,9 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
 
     @Override
     protected void beforeRenderChildren(double mouseX, double mouseY) {
-        // The stencil provides normal widget clipping, while the projected scissor is a
-        // hard screen-space boundary. Rounded cover rendering may open nested stencil
-        // levels, but it can no longer escape above the header or below the controls bar.
+        // 模板缓冲提供普通的组件裁剪，而投影裁剪矩形是一个
+        // 硬屏幕空间边界。圆角封面渲染可能打开嵌套模板
+        // 层级，但它无法再逃逸到标题栏上方或控制栏下方。
         ScissorClipManager.begin(this.getX(), this.getY(), this.getWidth(), this.getHeight());
         StencilClipManager.beginClip(() ->
                 Rect.draw(this.getX(), this.getY(), this.getWidth(), this.getHeight(), -1));

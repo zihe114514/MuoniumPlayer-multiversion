@@ -4,7 +4,7 @@ import java.util.Arrays;
 
 /** Cached musical evidence used by the Folia planner. */
 final class FoliaTrackProfile {
-    static final int VERSION = 3;
+    static final int VERSION = 4;
     int version = VERSION;
     String cacheKey;
     long durationMillis;

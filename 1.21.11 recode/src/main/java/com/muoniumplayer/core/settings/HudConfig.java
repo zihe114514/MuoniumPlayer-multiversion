@@ -277,7 +277,7 @@ public final class HudConfig {
     /** 时计：是否画左侧的齿轮刻度装饰。 */
     public static boolean pendoloGearDecor = true;
 
-    // OSD KTV animation. These values are independent from the full-screen lyric renderer.
+    // OSD KTV 动画。这些值独立于全屏歌词渲染器。
     public static float osdKaraokeTransitionWidth = 14.0f;
     public static float osdKaraokePulseStrength = 0.00f;
     public static float osdKaraokeSmoothing = 0.85f;
@@ -293,7 +293,7 @@ public final class HudConfig {
      */
     public static float osdDuetSpread = 0.55f;
 
-    // Ordinary (non-current) lyric rows.
+    // 普通（非当前）歌词行。
     public static float normalOpacity = 0.48f;
     public static float normalScale = 0.94f;
     /** 非当前行的发光强度。口径与 {@link #currentGlowStrength} 完全相同，只是默认调得很淡。 */
@@ -303,21 +303,21 @@ public final class HudConfig {
     public static float scrollSmoothness = 0.65f;
     public static float secondaryOpacity = 0.78f;
 
-    /** Global download Dynamic Island. */
+    /** 全局下载灵动岛。 */
     public static boolean dynamicIslandEnabled = true;
     public static float dynamicIslandScale = 0.88f;
-    /** Dynamic Island typography scale. Long content is reduced automatically before it is truncated. */
+    /** 灵动岛排版缩放。长内容在被截断前自动缩小。 */
     public static float dynamicIslandTextScale = 1.0f;
-    /** Preferred resting width. Long notices may animate wider to keep their complete text visible. */
+    /** 首选静止宽度。长通知可能动画变宽以保持完整文字可见。 */
     public static float dynamicIslandMaxWidth = 280.68964f;
-    /** Progress bar thickness in logical pixels. */
+    /** 进度条厚度（逻辑像素）。 */
     public static float dynamicIslandProgressHeight = 1.35f;
-    /** Seconds to keep the completed state visible before hiding. */
+    /** 隐藏前保持完成状态可见的秒数。 */
     public static float dynamicIslandCompletionHoldSeconds = 2.1120691f;
-    /** When multiple notices are queued, seconds to show each queued notice. */
+    /** 多个通知排队时，每个排队通知的显示秒数。 */
     public static float dynamicIslandQueueIntervalSeconds = 1.9698277f;
     /**
-     * Visual preset for the global island: 0 pill, 1 glass, 2 compact, 3 card, 4 system card,
+     * 全局灵动岛的视觉预设：0 胶囊、1 玻璃、2 紧凑、3 卡片、4 系统卡片、
      * 5 music focus, 6 liquid glass.
      */
     public static int dynamicIslandStyle = 2;
@@ -431,7 +431,7 @@ public final class HudConfig {
         playerUiSwitchSpeed = 3.0f;
     }
 
-    /** Restores only desktop-lyric appearance, leaving HUD positions untouched. */
+    /** 仅恢复桌面歌词外观，不改动 HUD 位置。 */
     public static void resetLyricAppearance() {
         lyricColorRgb = 0xFFFFFFFF;
         currentLyricColorRgb = 0xFFFFFFFF;
@@ -509,7 +509,7 @@ public final class HudConfig {
         secondaryOpacity = 0.78f;
     }
 
-    /** Restores the global download-island appearance. */
+    /** 恢复全局下载灵动岛外观。 */
     public static void resetDynamicIslandAppearance() {
         dynamicIslandEnabled = true;
         dynamicIslandScale = 0.88f;
@@ -540,7 +540,7 @@ public final class HudConfig {
         animatedCoverEnabled = true;
     }
 
-    /** Loads saved settings; malformed or out-of-range values fall back safely. */
+    /** 加载已保存的设置；格式错误或超出范围的值安全回退。 */
     public static void load() {
         if (!FILE.exists()) {
             return;
@@ -704,7 +704,7 @@ public final class HudConfig {
         }
     }
 
-    /** Persists settings after an editor interaction. */
+    /** 编辑器交互后持久化设置。 */
     public static void save() {
         try {
             JsonObject o = new JsonObject();

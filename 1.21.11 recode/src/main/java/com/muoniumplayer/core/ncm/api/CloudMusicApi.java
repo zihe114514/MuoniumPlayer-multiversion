@@ -676,7 +676,7 @@ public class CloudMusicApi {
             if (song != null) {
                 orderedSongs.add(song);
                 JsonObject privilege = privilegesById.get(songId);
-                // Preserve song/privilege index alignment expected by PlayList.queryMusics().
+                // 保持 PlayList.queryMusics() 期望的歌曲/权限索引对齐。
                 orderedPrivileges.add(privilege == null ? new JsonObject() : privilege);
             }
         }

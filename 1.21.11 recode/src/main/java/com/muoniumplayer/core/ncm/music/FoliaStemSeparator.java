@@ -33,8 +33,8 @@ final class FoliaStemSeparator {
             input = File.createTempFile("folia-stems-", ".f32");
             output = File.createTempFile("folia-stems-", ".json");
             ByteBuffer bytes = ByteBuffer.allocate(samples.length * 8).order(ByteOrder.LITTLE_ENDIAN);
-            // The model is stereo. Analysis supplies mono, so both sides carry the same evidence;
-            // this preserves centre-vocal separation without pretending to invent a stereo image.
+            // 模型是立体声的。分析输入为单声道，因此两侧携带相同的证据；
+            // 这保留了中人声分离效果，而不会假装凭空构建立体声影像。
             for (float value : samples) bytes.putFloat(value);
             for (float value : samples) bytes.putFloat(value);
             Files.write(input.toPath(), bytes.array());

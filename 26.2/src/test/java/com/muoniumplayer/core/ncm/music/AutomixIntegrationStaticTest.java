@@ -11,32 +11,35 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * AUTOMIX 的离线架构回归测试。
  *
- * <p>测试只读取源码，不启动 Minecraft、音频设备或网络。它保护移植的关键边界：功能默认
- * opt-in、配置独立落盘、关闭时保留旧单 Deck 路径、失败时能够回退，以及 UI 有明确开关。</p>
+ * <p>测试只读取源码，不启动 Minecraft、音频设备或网络。它保护移植的关键边界：功能默认开启、
+ * 默认引擎为 Folia、配置独立落盘、关闭时保留旧单 Deck 路径、失败时能够回退，以及 UI 有明确开关。</p>
  */
 class AutomixIntegrationStaticTest {
 
     private static final Path JAVA = ProjectPaths.sharedJava();
 
     @Test
-    @DisplayName("Automix 默认开启且缺少 engine 的旧配置保持原版引擎")
-    void automixDefaultsAndConfigMigrationPreserveLegacyPlayback() throws IOException {
+    @DisplayName("Automix 默认开启，且缺少 engine 的旧配置跟随当前默认引擎")
+    void automixDefaultsAndConfigMigrationFollowTheDefaultEngine() throws IOException {
         String settings = read(music("AutomixSettings.java"));
         String paths = read(setting("ConfigPaths.java"));
 
         assertTrue(settings.contains("private static boolean enabled = true;"),
                 "缺少 automix.json 时不能静默关闭全部过渡");
-        assertTrue(settings.contains("private static Engine engine = Engine.LEGACY;"),
-                "未选择引擎时必须保留原版智能淡化");
+        assertTrue(settings.contains("public static final Engine DEFAULT_ENGINE = Engine.FOLIA;"),
+                "出厂默认引擎必须是 智能混音");
+        assertTrue(settings.contains("private static Engine engine = DEFAULT_ENGINE;"),
+                "未选择引擎时必须落到 DEFAULT_ENGINE，而不是写死另一个枚举常量");
         assertTrue(settings.contains("boolean migrateEngine = !root.has(\"engine\")"),
                 "旧配置缺少 engine 时必须进入迁移路径");
-        assertTrue(settings.contains("engine = Engine.LEGACY;"),
-                "旧配置必须迁移为原版引擎，不能静默切到 Folia");
+        assertTrue(settings.contains("engine = DEFAULT_ENGINE;"),
+                "从未表达过引擎选择的旧配置必须跟随当前默认值，不能再被钉在原版引擎上");
         assertTrue(settings.contains("if (migrateEngine) saveLocked();"),
                 "迁移结果必须立即写回，避免每次启动重复判定");
         assertTrue(settings.contains("root.addProperty(\"enabled\", enabled)"));
@@ -45,11 +48,13 @@ class AutomixIntegrationStaticTest {
     }
 
     @Test
-    @DisplayName("运行时默认开启且使用原版引擎")
-    void runtimeDefaultsKeepOriginalAutomixEnabled() {
+    @DisplayName("运行时默认开启、默认引擎为 Folia、且不默认开启表现模式")
+    void runtimeDefaultsUseFoliaWithoutPerformanceMode() {
         assertTrue(AutomixSettings.isEnabled(), "默认配置必须启用 AUTOMIX");
-        assertEquals(AutomixSettings.Engine.LEGACY, AutomixSettings.getEngine(),
-                "默认配置必须保留原版智能淡化");
+        assertEquals(AutomixSettings.Engine.FOLIA, AutomixSettings.getEngine(),
+                "默认配置必须使用 智能混音");
+        assertFalse(AutomixSettings.isPerformanceModeEnabled(),
+                "表现模式是显式 opt-in，默认不能替用户打开");
         assertTrue(AutomixSettings.isModelInferenceStatusEnabled(),
                 "模型推理状态默认应开启，并可由 HUD 关闭");
     }

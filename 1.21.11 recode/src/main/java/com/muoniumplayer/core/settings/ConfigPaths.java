@@ -79,7 +79,7 @@ public final class ConfigPaths {
      */
     public static final File LYRIC_SOURCES = new File(CONFIG_DIRECTORY, "lyric_sources.json");
 
-    /** Deterministic fallback extraction directory for Skija native libraries. */
+    /** Skija 原生库的确定性回退解压目录。 */
     public static final File SKIJA_NATIVE_ROOT = new File(CONFIG_DIRECTORY, "native/skija");
 
     // 只读/被锁定的旧文件不应阻止模组加载。
@@ -122,7 +122,7 @@ public final class ConfigPaths {
      */
     public static final File LX_SOURCES = new File(CONFIG_DIRECTORY, "lx_sources.json");
 
-    /** First-run setup gate. Kept separate so onboarding state cannot corrupt player preferences. */
+    /** 首次运行设置门控。独立保存，使引导状态不会污染播放器偏好设置。 */
     public static final File ONBOARDING = new File(CONFIG_DIRECTORY, "onboarding.json");
 
     static {
@@ -133,20 +133,20 @@ public final class ConfigPaths {
     }
 
     /**
-     * Migrates only when the new file is absent. Existing new files always win,
-     * so a user can safely keep backups of the old configuration beside them.
+     * 仅在新文件不存在时迁移。已有的新文件始终优先，
+     * 因此用户可以安全地在旁边保留旧配置的备份。
      */
     private static void migrateLegacyFiles() {
         migrate(new File("music_hud.json"), HUD);
         migrate(new File("_player_config.json"), PLAYER);
         migrate(new File("_player_theme.json"), THEME);
 
-        // Intermediate Muonium names created by development builds.
+        // 开发构建创建的中间 Muonium 名称。
         migrate(new File("muonium_hud.json"), HUD);
         migrate(new File("muonium_player_config.json"), PLAYER);
         migrate(new File("muonium_player_theme.json"), THEME);
 
-        // Pre-normalization release names, which used to sit in the game root.
+        // 规范化之前的发布名称，过去位于游戏根目录。
         migrate(new File("muoniumplayer_hud.json"), HUD);
         migrate(new File("muoniumplayer_config.json"), PLAYER);
         migrate(new File("muoniumplayer_theme.json"), THEME);
@@ -168,8 +168,8 @@ public final class ConfigPaths {
     }
 
     /**
-     * Moves a legacy directory. If the target already exists, children are merged one by one;
-     * conflicts remain in the legacy location rather than being overwritten.
+     * 移动旧版目录。如果目标已存在，则逐个合并子项；
+     * 冲突项保留在旧位置而不是被覆盖。
      */
     private static void migrateDirectory(File legacy, File target) {
         if (legacy == null || target == null || !legacy.isDirectory()) {
@@ -200,7 +200,7 @@ public final class ConfigPaths {
         }
         File[] remaining = legacy.listFiles();
         if (remaining != null && remaining.length == 0) {
-            // Keep this best-effort: a locked file simply remains for the next startup.
+            // 保持尽力而为：被锁定的文件直接留到下次启动处理。
             // noinspection ResultOfMethodCallIgnored
             legacy.delete();
         }
@@ -213,7 +213,7 @@ public final class ConfigPaths {
             try {
                 Files.move(legacy.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
             } catch (IOException ignored) {
-                // A read-only/locked legacy file should not prevent the mod from loading.
+                // 只读/锁定的旧文件不应阻止 mod 加载。
             }
         }
     }

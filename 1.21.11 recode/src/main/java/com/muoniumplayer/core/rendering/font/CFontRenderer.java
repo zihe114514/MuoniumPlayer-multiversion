@@ -627,8 +627,8 @@ public class CFontRenderer implements Closeable, SharedConstants {
     public String trim(String text, double width) {
         String name = text == null ? "" : text;
 
-        // A zero/negative content area can legitimately occur while responsive UI controls
-        // collapse.  There is no valid substring to draw in that case.
+        // 响应式 UI 控件折叠时，内容区域为零/负值是合法的。
+        // 这种情况下没有可绘制的有效子串。
         if (width <= 0.0 || name.isEmpty()) {
             return "";
         }
@@ -645,8 +645,8 @@ public class CFontRenderer implements Closeable, SharedConstants {
                 idx--;
             }
 
-            // Even an ellipsis cannot fit; keep the renderer safe and draw nothing rather
-            // than letting the substring index become negative.
+            // 即使省略号也放不下；保持渲染器安全，什么都不画，
+            // 而不是让子串索引变为负数。
             return "";
         }
 
@@ -798,7 +798,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
 
             i = result.nextStartIndex;
 
-            // avoid infinite loop
+            // 避免无限循环
             if (i == previousI) {
                 i++;
             }

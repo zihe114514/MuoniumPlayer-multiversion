@@ -154,18 +154,24 @@ final class AutomixPlan {
         this.midTiltDb = clampTilt(midTiltDb);
         this.highTiltDb = clampTilt(highTiltDb);
         this.echoThrow = echoThrow;
-        this.drumHandoverAt = clampFraction(drumHandoverAt, .18, .72);
-        this.bassHandoverAt = clampFraction(bassHandoverAt, .18, .72);
+        // 规划器已经把 stem 证据限制在可用窗口内；这里不能再把模型测得的后段鼓/低音换手静默提前。
+        this.drumHandoverAt = clampFraction(drumHandoverAt, .18, .88);
+        this.bassHandoverAt = clampFraction(bassHandoverAt, .18, .88);
         this.vocalEntryAt = clampFraction(vocalEntryAt, .28, .88);
         this.stemDriven = stemDriven;
         this.animationPeriodMillis = Double.isFinite(animationPeriodMillis)
                 ? Math.max(120.0, Math.min(4_000.0, animationPeriodMillis)) : 500.0;
     }
 
+    /** Folia 只降低混音中段，并让两端保持精确单位增益。 */
+    private static final double FOLIA_BLEND_HEADROOM_DB = 1.5;
+
     /** 渐变 [0,1] 中 {@code progress} 处的退出方增益。 */
     float outgoingGain(double progress) {
-        if (style != null && style.together > 0.0) return (float) togetherGain(clamp(progress), true);
-        return (float) Math.cos(clamp(progress) * Math.PI * .5);
+        double p = clamp(progress);
+        double shape = style != null && style.together > 0.0
+                ? togetherGain(p, true) : Math.cos(p * Math.PI * .5);
+        return (float) (shape * blendHeadroom(p));
     }
 
     /**
@@ -182,7 +188,13 @@ final class AutomixPlan {
         double match = 1.0 + (matchGain - 1.0) * remaining * remaining;
         double shape = style != null && style.together > 0.0
                 ? togetherGain(p, false) : Math.sin(p * Math.PI * .5);
-        return (float) (shape * match);
+        return (float) (shape * match * blendHeadroom(p));
+    }
+
+    private double blendHeadroom(double progress) {
+        if (style == null) return 1.0;
+        double attenuationDb = -FOLIA_BLEND_HEADROOM_DB * Math.sin(progress * Math.PI);
+        return Math.pow(10.0, attenuationDb / 20.0);
     }
 
     /** 带平台期的等功率曲线，两 deck 在平台期都保持在场。 */
@@ -348,7 +360,7 @@ final class AutomixPlan {
         if (rampMillis < MIN_RATE_CORRECTION_OVERLAP_MILLIS) return 1f;
         double p = clamp(progress);
         double bump = 1.0 + phaseBump(p, rampMillis);
-        return (float) (pitchShift ? bump : clampRate(baseBend(p)) * bump);
+        return (float) (pitchShift ? bump : clampRate(clampRate(baseBend(p)) * bump));
     }
 
     /**
@@ -397,10 +409,14 @@ final class AutomixPlan {
         return Math.min(capacity, needed);
     }
 
-    private static double clampRate(double rate) {
+    private double clampRate(double rate) {
         if (Double.isNaN(rate)) return 1.0;
-        if (rate < AutomixSettings.MIN_PLAYBACK_RATE) return AutomixSettings.MIN_PLAYBACK_RATE;
-        if (rate > AutomixSettings.MAX_PLAYBACK_RATE) return AutomixSettings.MAX_PLAYBACK_RATE;
+        double minimum = style == null ? AutomixSettings.MIN_PLAYBACK_RATE
+                : AutomixSettings.FOLIA_MIN_TEMPO_RATE;
+        double maximum = style == null ? AutomixSettings.MAX_PLAYBACK_RATE
+                : AutomixSettings.FOLIA_MAX_TEMPO_RATE;
+        if (rate < minimum) return minimum;
+        if (rate > maximum) return maximum;
         return rate;
     }
 

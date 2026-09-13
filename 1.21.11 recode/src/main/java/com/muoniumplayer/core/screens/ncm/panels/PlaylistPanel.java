@@ -420,9 +420,9 @@ public class PlaylistPanel extends NCMPanel {
     }
 
     /**
-     * Only external NetEase playlists support the subscribe/unsubscribe toggle.
-     * A playlist created by the current account is already part of “我的歌单”,
-     * so displaying “取消收藏” there is both misleading and ineffective.
+     * 仅外部网易云歌单支持收藏/取消收藏切换。
+     * 当前账号创建的歌单已经是“我的歌单”的一部分，
+     * 因此在那里显示“取消收藏”既具有误导性又无效。
      */
     private boolean canToggleSubscription() {
         if (playList == null || playList.getPlatform() != MusicPlatform.NETEASE) {

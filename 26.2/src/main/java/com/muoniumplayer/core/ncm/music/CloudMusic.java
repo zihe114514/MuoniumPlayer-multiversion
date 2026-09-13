@@ -7,6 +7,7 @@ import com.google.gson.JsonObject;
 import lombok.Getter;
 import lombok.SneakyThrows;
 import repackage.com.jsyn.exceptions.ChannelMismatchException;
+import repackage.processing.sound.Engine;
 import today.opai.api.enums.EnumChatColor;
 import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.interfaces.SharedConstants;
@@ -1205,6 +1206,25 @@ public class CloudMusic implements SharedConstants {
         private volatile long nextFmPrefetchAt;
         private volatile AutomixFade activeFade;
 
+        /**
+         * How stale {@link AutomixFade#audioDrivenAt} may be before the supervisor tick takes the curve
+         * writes back.
+         *
+         * <p>A handful of audio buffers: long enough that one missed buffer cannot make the writer
+         * hand back and forth, short enough that a dead audio task is noticed inside a single 10 ms
+         * tick.</p>
+         */
+        private static final long AUDIO_DRIVEN_WINDOW_MILLIS = 40L;
+
+        /**
+         * The audio-thread writer of the crossfade curves, registered for as long as a blend runs.
+         *
+         * <p>See {@link #registerAutomixAudioTask()} for why this is worth having and
+         * {@link #writeTransitionFrameOnAudioThread()} for what it does when it gets a turn.</p>
+         */
+        private final Runnable automixAudioTask = this::writeTransitionFrameOnAudioThread;
+        private volatile boolean automixAudioTaskRegistered;
+
         public PlayThread(List<Music> songs, int startIdx) {
             this.songs = songs;
             this.setName("Play Thread");
@@ -1919,10 +1939,34 @@ public class CloudMusic implements SharedConstants {
              * ended would open the new song from near silence.
              */
             private final long overlapMillis;
-            private long startedAt;
+            /**
+             * Wall clock at which the ramp reads progress 0.
+             *
+             * <p>{@code volatile} because the JSyn audio task samples it too: see
+             * {@link #writeTransitionFrameOnAudioThread()}.</p>
+             */
+            private volatile long startedAt;
             private long tickedAt;
             /** True only when this fade paused the outgoing deck, so it is never resumed by accident. */
             private boolean outgoingPaused;
+            /**
+             * Progress to hold while the active deck is paused, or {@code -1} when the ramp is running.
+             *
+             * <p>{@link #driveAutomixFade()} already freezes {@link #startedAt} while paused, but it
+             * can only do that once per tick; between ticks the wall clock would keep moving the ramp
+             * that the audio task is sampling. Publishing the held progress lets the audio task sit
+             * still between those ticks instead of surging forward and being pulled back.</p>
+             */
+            private volatile double pausedProgress = -1.0;
+            /**
+             * Wall clock of the last frame the audio task wrote, or {@code 0} if it never has.
+             *
+             * <p>The tick reads it to decide whether it still owns the curve writes: an audio task
+             * that failed to register, threw, or stopped being called simply stops updating this, and
+             * the tick takes over again within {@code AUDIO_DRIVEN_WINDOW_MILLIS}. That way the
+             * higher-resolution path can never turn a working transition into a stuck one.</p>
+             */
+            private volatile long audioDrivenAt;
 
             private AutomixFade(AudioPlayer outgoing, AudioPlayer incoming, AutomixPlan plan,
                                 long overlapMillis, long startedAt) {
@@ -2449,6 +2493,10 @@ public class CloudMusic implements SharedConstants {
                 fadingOutPlayer = outgoing;
                 activeFade = new AutomixFade(outgoing, incoming, plan, effectiveOverlap,
                         System.currentTimeMillis());
+                // Registered only for the length of the blend: the audio task holds this thread as a
+                // captured reference, so leaving it registered past the fade would keep a finished
+                // playback session alive for the rest of the game.
+                registerAutomixAudioTask();
                 playing.set(true);
             }
 
@@ -2480,7 +2528,15 @@ public class CloudMusic implements SharedConstants {
             return true;
         }
 
-        /** Advances the equal-power ramp. Called from the same 10 ms tick that supervises playback. */
+        /**
+         * Advances the equal-power ramp. Called from the same 10 ms tick that supervises playback.
+         *
+         * <p>The curve writes themselves normally belong to the JSyn audio task (see
+         * {@link #writeTransitionFrameOnAudioThread()}), which gets a turn once per output buffer
+         * rather than once per tick. This method keeps the lifecycle - pausing, resuming, ending the
+         * blend - and stays the writer whenever that task is not running, so the transition never
+         * depends on it.</p>
+         */
         private void driveAutomixFade() {
             AutomixFade fade = activeFade;
             if (fade == null) return;
@@ -2494,6 +2550,9 @@ public class CloudMusic implements SharedConstants {
                 // outgoing deck down with the active one - nothing else in the player knows about it.
                 fade.startedAt += Math.max(0L, now - fade.tickedAt);
                 fade.tickedAt = now;
+                // Shifting startedAt by the idle interval is precisely what makes now - startedAt the
+                // held elapsed time, so this is the frozen progress the audio task has to sit on.
+                fade.pausedProgress = progressAt(fade, now);
                 if (!fade.outgoingPaused && fade.outgoing != null && fade.outgoing.isUsable()
                         && !fade.outgoing.isPausing()) {
                     fade.outgoing.pause();
@@ -2509,30 +2568,23 @@ public class CloudMusic implements SharedConstants {
                 fade.outgoing.unpause();
                 fade.outgoingPaused = false;
             }
+            fade.pausedProgress = -1.0;
             fade.tickedAt = now;
 
-            double progress = (now - fade.startedAt) / (double) fade.overlapMillis;
-            if (fade.incoming != null) {
-                fade.incoming.setFadeGain(fade.plan.incomingGain(progress));
-                fade.incoming.setBassGainDb(fade.plan.incomingBassDb(progress));
-                fade.incoming.setVocalDuckDepth(fade.plan.incomingVocalDepth(progress));
-                fade.incoming.setMidGainDb(fade.plan.incomingMidDb(progress));
-                fade.incoming.setHighGainDb(fade.plan.incomingHighDb(progress));
-            }
-            if (fade.outgoing != null) {
-                fade.outgoing.setFadeGain(fade.plan.outgoingGain(progress));
-                fade.outgoing.setBassGainDb(fade.plan.outgoingBassDb(progress));
-                // Evaluated against the ramp actually running, not the planned one: a shortened ramp
-                // must not compress a semitone of tempo lock into a couple of hundred milliseconds.
-                // 速度与音高分开给：节奏锁定只动速度（WSOLA，音高不变），整半音吸附只动音高
-                // （重采样 + WSOLA 把时长还原）。合成一个数会让 WSOLA 把「移调」当成「变速」。
-                fade.outgoing.setSpeedAndPitch(
-                        fade.plan.outgoingTempo(progress, fade.overlapMillis),
-                        fade.plan.outgoingPitch(progress, fade.overlapMillis));
+            double progress = progressAt(fade, now);
+            if (now - fade.audioDrivenAt >= AUDIO_DRIVEN_WINDOW_MILLIS) {
+                // No audio task has written a frame recently - never registered, threw, or the engine
+                // went away - so fall back to the tick exactly as before it existed.
+                writeTransitionFrame(fade, progress);
             }
             if (progress < 1.0) return;
 
+            // Cleared before the decks are flattened below. A frame the audio task is already inside
+            // can then at worst re-write the plan's own end state - which for the incoming deck is
+            // exactly flat - and it is a direct port write, while the resets below go through the
+            // command queue and are therefore drained after it.
             activeFade = null;
+            unregisterAutomixAudioTask();
             if (fade.incoming != null) {
                 fade.incoming.setFadeGain(1.0f);
                 // Flat response and natural tempo for the rest of the track: nothing from the blend
@@ -2542,11 +2594,104 @@ public class CloudMusic implements SharedConstants {
             releaseFadedDeck(fade.outgoing);
         }
 
+        /** Ramp position at {@code now}, in ramp lengths; the plan clamps out-of-range values itself. */
+        private static double progressAt(AutomixFade fade, long now) {
+            return (now - fade.startedAt) / (double) fade.overlapMillis;
+        }
+
+        /**
+         * Samples every curve of the plan at {@code progress} and writes it to the two decks.
+         *
+         * <p>One implementation, two callers: the supervisor tick and the JSyn audio task both come
+         * through here, so a fallback frame has exactly the shape of an audio-thread one and the two
+         * can never disagree about what a given progress should sound like. The writes themselves go
+         * through {@code AudioPlayer.applyAutomixFrame}, which writes the ports directly instead of
+         * queueing commands - see {@link repackage.processing.sound.SoundFile#setAmplitudeNow(float)}.</p>
+         */
+        private void writeTransitionFrame(AutomixFade fade, double progress) {
+            if (fade.incoming != null) {
+                fade.incoming.applyAutomixFrame(fade.plan.incomingGain(progress),
+                        fade.plan.incomingBassDb(progress),
+                        fade.plan.incomingVocalDepth(progress),
+                        fade.plan.incomingMidDb(progress),
+                        fade.plan.incomingHighDb(progress));
+            }
+            if (fade.outgoing != null) {
+                // Evaluated against the ramp actually running, not the planned one: a shortened ramp
+                // must not compress a semitone of tempo lock into a couple of hundred milliseconds.
+                // 速度与音高分开给：节奏锁定只动速度（WSOLA，音高不变），整半音吸附只动音高
+                // （重采样 + WSOLA 把时长还原）。合成一个数会让 WSOLA 把「移调」当成「变速」。
+                fade.outgoing.applyAutomixFrame(fade.plan.outgoingGain(progress),
+                        fade.plan.outgoingBassDb(progress),
+                        fade.plan.outgoingTempo(progress, fade.overlapMillis),
+                        fade.plan.outgoingPitch(progress, fade.overlapMillis));
+            }
+        }
+
+        /**
+         * The curve writer, running on the JSyn audio thread once per output buffer (64 frames, i.e.
+         * ~1.5 ms at 44.1 kHz) instead of once per 10 ms supervisor tick.
+         *
+         * <p>That is the whole point: the supervisor tick is a sleeping loop that shares its thread with
+         * lyric lookup, history reporting and arm checks, so its cadence is both coarser and uneven,
+         * and the ramp it writes inherits that unevenness. The audio thread runs off the sound clock,
+         * which is the clock the ramp is actually against.</p>
+         *
+         * <p><b>Purely additive.</b> Nothing here is load-bearing: the tick writes the same curves by
+         * the same formula, and only yields to this task while {@link AutomixFade#audioDrivenAt} keeps
+         * being refreshed. A throw is swallowed and stops the refresh, which hands the writes back to
+         * the tick on the next tick.</p>
+         */
+        private void writeTransitionFrameOnAudioThread() {
+            try {
+                AutomixFade fade = activeFade;
+                if (fade == null) return;
+                double held = fade.pausedProgress;
+                long now = System.currentTimeMillis();
+                double progress = held >= 0.0 ? held : progressAt(fade, now);
+                writeTransitionFrame(fade, progress);
+                fade.audioDrivenAt = now;
+            } catch (Throwable ignored) {
+                // Deliberately silent and deliberately not marking the frame: the tick picks the
+                // writes back up, so all a failure costs is resolution.
+            }
+        }
+
+        /**
+         * Hands the curve writes to the audio thread for the length of one blend.
+         *
+         * <p>Best-effort: an engine that is not up yet, or refuses the task, leaves the tick as the
+         * writer and nothing else changes. Registering per blend rather than for the life of the
+         * thread is deliberate - the task is captured into the engine's own list, so a registration
+         * that outlived its fade would hold a finished playback session in memory.</p>
+         */
+        private void registerAutomixAudioTask() {
+            if (automixAudioTaskRegistered) return;
+            try {
+                Engine.addAudioTask(automixAudioTask);
+                automixAudioTaskRegistered = true;
+            } catch (Throwable ignored) {
+                automixAudioTaskRegistered = false;
+            }
+        }
+
+        private void unregisterAutomixAudioTask() {
+            if (!automixAudioTaskRegistered) return;
+            automixAudioTaskRegistered = false;
+            try {
+                Engine.removeAudioTask(automixAudioTask);
+            } catch (Throwable ignored) {
+            }
+        }
+
         /** Ends a blend early (cancellation, manual switch) without leaving a deck audible. */
         private void finishAutomixFade() {
             AutomixTransitionAnimation.cancel();
             AutomixFade fade = activeFade;
             activeFade = null;
+            // This is also the session teardown path (see PlayThread.run), so the audio task is dropped
+            // here rather than only where a blend runs to its natural end.
+            unregisterAutomixAudioTask();
             if (fade == null) return;
             if (fade.incoming != null && fade.incoming == ownedPlayer) {
                 fade.incoming.setFadeGain(1.0f);

@@ -72,21 +72,21 @@ public class KeyboardUtils {
     }
 
     /**
-     * Returns true if either windows ctrl key is down or if either mac meta key is down
+     * 如果任一 Windows ctrl 键按下或任一 mac meta 键按下则返回 true
      */
     public static boolean isCtrlKeyDown() {
         return Keyboard.isKeyDown(29) || Keyboard.isKeyDown(157);
     }
 
     /**
-     * Returns true if either shift key is down
+     * 如果任一 shift 键按下则返回 true
      */
     public static boolean isShiftKeyDown() {
         return Keyboard.isKeyDown(42) || Keyboard.isKeyDown(54);
     }
 
     /**
-     * Returns true if either alt key is down
+     * 如果任一 alt 键按下则返回 true
      */
     public static boolean isAltKeyDown() {
         return Keyboard.isKeyDown(56) || Keyboard.isKeyDown(184);

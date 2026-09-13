@@ -4,7 +4,7 @@ import today.opai.api.Extension;
 import today.opai.api.OpenAPI;
 
 /**
- * Commonly shared constants between the classes.
+ * 各类之间共享的通用常量。
  *
  * 原项目对应 {@code today.opai.api.OpenAPI api = ExtensionEntry.getAPI();}，
  * 此处经 today.opai.api.Extension.getAPI() 适配到本 Mod 的 OpenAPI 单例。

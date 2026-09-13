@@ -251,7 +251,7 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
      * 渲染 Debug 布局
      */
     protected void renderDebugLayout() {
-        // show layout
+        // 显示布局
         RenderSystem.drawOutLine(this.getX(), this.getY(), this.getWidth(), this.getHeight(), 0.5, reAlpha(0x00FF0000, this.getAlpha()));
 
         double lineLength = Math.min(8, Math.min(this.getWidth() * .25, this.getHeight() * .25));
@@ -265,11 +265,11 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
         Rect.draw(this.getX() + this.getWidth() - lineLength, this.getY(), lineLength, lineSize, lineColor);
         Rect.draw(this.getX() + this.getWidth() - lineSize, this.getY(), lineSize, lineLength, lineColor);
 
-        // left bottom
+        // 左下
         Rect.draw(this.getX(), this.getY() + this.getHeight() - lineLength, lineSize, lineLength, lineColor);
         Rect.draw(this.getX(), this.getY() + this.getHeight() - lineSize, lineLength, lineSize, lineColor);
 
-        // right bottom
+        // 右下
         Rect.draw(this.getX() + this.getWidth() - lineLength, this.getY() + this.getHeight() - lineSize, lineLength, lineSize, lineColor);
         Rect.draw(this.getX() + this.getWidth() - lineSize, this.getY() + this.getHeight() - lineLength, lineSize, lineLength, lineColor);
     }
@@ -342,7 +342,7 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
      */
     public boolean isHovered(double mouseX, double mouseY, double x, double y, double width, double height) {
 
-        // bounds check
+        // 边界检查
         if (width < 0) {
             width = -width;
             x -= width;
@@ -358,7 +358,7 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
 
     protected boolean iterateChildrenMouseClick(List<AbstractWidget<?>> children, double mouseX, double mouseY, int mouseButton) {
         for (int childIndex = children.size() - 1; childIndex >= 0; childIndex--) {
-            // Later children render above earlier ones, so they must receive input first.
+            // 后添加的子组件渲染在更早的子组件之上，因此必须先接收输入。
             AbstractWidget<?> child = children.get(childIndex);
 
             if (child.isHidden()) {

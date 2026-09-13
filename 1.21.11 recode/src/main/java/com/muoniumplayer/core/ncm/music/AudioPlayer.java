@@ -281,6 +281,43 @@ public class AudioPlayer {
         return this.fadeGain;
     }
 
+    /** 供 automix 自动化使用的音频线程版本；不会把任何命令排回 JSyn 的队列。 */
+    void applyAutomixFrame(float fade, float bassDb, float vocalDepth, float midDb, float highDb) {
+        this.fadeGain = Float.isFinite(fade) ? Math.max(0f, fade) : 0f;
+        this.bassGainDb = Float.isFinite(bassDb) ? bassDb : 0f;
+        this.vocalDuckDepth = Float.isFinite(vocalDepth) ? Math.max(0f, Math.min(1f, vocalDepth)) : 0f;
+        this.midGainDb = Float.isFinite(midDb) ? Math.max(-3f, Math.min(3f, midDb)) : 0f;
+        this.highGainDb = Float.isFinite(highDb) ? Math.max(-3f, Math.min(3f, highDb)) : 0f;
+        if (!isUsable()) return;
+        this.player.setAmplitudeNow(this.volume * this.fadeGain);
+        AutomixDeckChain chain = this.automixChain;
+        if (chain != null) chain.setTargetsNow(this.bassGainDb, this.vocalDuckDepth,
+                this.midGainDb, this.highGainDb);
+    }
+
+    /** 淡出 deck 的音频线程版本，多带上已经解耦的速度与音高两条控制。 */
+    void applyAutomixFrame(float fade, float bassDb, float tempo, float pitch) {
+        applyAutomixFrame(fade, bassDb, 0f, 0f, 0f);
+        applySpeedAndPitchNow(tempo, pitch);
+    }
+
+    private void applySpeedAndPitchNow(float tempo, float pitch) {
+        if (!isUsable()) return;
+        float safeTempo = Float.isFinite(tempo) ? Math.max(.5f, Math.min(2f, tempo)) : 1f;
+        float safePitch = Float.isFinite(pitch) ? Math.max(.5f, Math.min(2f, pitch)) : 1f;
+        this.playbackRate = safeTempo;
+        this.pitchRatio = safePitch;
+        if (this.player.canTimeStretch()) {
+            this.pitchPreserved = true;
+            this.player.setRateAndStretchNow(safePitch, safeTempo / safePitch);
+        } else {
+            this.pitchPreserved = false;
+            float combined = Math.max(AutomixSettings.MIN_PLAYBACK_RATE,
+                    Math.min(AutomixSettings.MAX_PLAYBACK_RATE, safeTempo * safePitch));
+            this.player.setRateNow(combined);
+        }
+    }
+
     /**
      * 如果 automix 处理链还不在信号图里，就把它接上。
      *

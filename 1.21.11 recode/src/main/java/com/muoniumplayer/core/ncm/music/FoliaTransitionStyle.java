@@ -23,7 +23,4 @@ enum FoliaTransitionStyle {
         return this == BASS_SWAP || this == TAIL_RIDE;
     }
 
-    boolean usesEchoThrow() {
-        return this == BEAT_CUT;
-    }
 }

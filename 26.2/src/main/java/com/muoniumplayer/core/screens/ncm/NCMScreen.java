@@ -10,6 +10,7 @@ import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.OptionsUtil;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.FoliaModelNotice;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.StencilClipManager;
@@ -116,6 +117,15 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     public ConfirmationOverlay confirmationOverlay = null;
 
     /**
+     * One-shot notice for a machine that has not installed the Folia analysis models yet.
+     *
+     * <p>It sits on the same layer as the confirmation overlay and owns input the same way, but
+     * it is mounted at most once per launch: {@link FoliaModelNotice} owns both the decision and
+     * the "already shown this session" gate.</p>
+     */
+    public ModelInstallNoticeOverlay modelInstallNoticeOverlay = null;
+
+    /**
      * 表示是否需要重新布局, 当用户信息和用户歌单加载完设置为 true,
      * 然后会自动进行重新布局并设为 false
      */
@@ -189,6 +199,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     public void onGuiClosed() {
         Keyboard.enableRepeatEvents(false);
         PlayerIslandTransition.abort();
+        // The notice layer does not survive a single opening of the player: the next open
+        // decides again via maybeShowModelNotice, and the "already shown this launch" gate
+        // lives in FoliaModelNotice, so clearing it here cannot cause a duplicate prompt.
+        this.modelInstallNoticeOverlay = null;
     }
 
     public void layout() {
@@ -320,6 +334,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 //        }));
 
         this.checkDirty();
+
+        // The "first time the player is opened this launch" model notice. It is driven from
+        // here rather than initGui because the island morph has to finish before the player
+        // counts as open - dropping a card mid-morph would fight the opening animation. The gate
+        // inside is "once per launch", "something really is missing" and "no other modal is
+        // up", so when the conditions do not hold this is nothing but a few boolean checks.
+        this.maybeShowModelNotice();
 
         int dWheel = Mouse.getDWheel();
 
@@ -604,6 +625,20 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             StencilClipManager.endClip();
         }
 
+        // One-shot notice for missing analysis models: same layer as the confirmation overlay,
+        // and it owns mouse/wheel input the same way.
+        if (this.modelInstallNoticeOverlay != null) {
+            StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+            this.modelInstallNoticeOverlay.setBounds(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight());
+            this.modelInstallNoticeOverlay.setAlpha(alpha);
+            this.modelInstallNoticeOverlay.renderWidget(mouseX, mouseY, 0);
+            if (this.modelInstallNoticeOverlay.shouldClose()) {
+                this.modelInstallNoticeOverlay = null;
+            }
+            StencilClipManager.endClip();
+        }
+
         // 这组边框使用最终 basePanel 坐标。岛屿展开/收回期间内容被压进移动中的 surface，
         // 如果这里照常绘制，屏幕上会出现一个提前停在最终播放器大小的静态落点边框。
         // 转场表面自己已有跟随几何的 outline；最终外框等动画完全停稳后再出现。
@@ -812,6 +847,31 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.confirmationOverlay.onInit();
     }
 
+    /**
+     * Mounts the model-install notice the first time the player is opened this launch, when
+     * something really is missing.
+     *
+     * <p>The decision and the "shown once per launch" gate both live in {@link FoliaModelNotice};
+     * this only picks the moment: the island morph has finished, no other modal is up, and the
+     * player is not on the fullscreen lyrics page. When the conditions do not hold it is a short
+     * chain of boolean checks, so asking every frame is safe.</p>
+     */
+    private void maybeShowModelNotice() {
+        if (this.modelInstallNoticeOverlay != null) return;
+        // The player surface is still moving during the morph; a centred card would drift with it.
+        if (PlayerIslandTransition.isRunning()) return;
+        // A player that is already closing does not need one more card.
+        if (this.closing) return;
+        // Do not interrupt the fullscreen lyrics page: like every other modal, only one layer
+        // gets to own the input at a time.
+        if (this.musicLyricsPanel != null) return;
+        if (isModalOverlayActive()) return;
+        if (!FoliaModelNotice.shouldShow()) return;
+        this.modelInstallNoticeOverlay = new ModelInstallNoticeOverlay();
+        this.modelInstallNoticeOverlay.onInit();
+        FoliaModelNotice.markShownThisSession();
+    }
+
     public void openAccountManager() {
         if (this.accountManagerOverlay != null) this.accountManagerOverlay.dispose();
         this.accountManagerOverlay = new AccountManagerOverlay();
@@ -855,6 +915,14 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     @Override
     public void keyTyped(char typedChar, int keyCode) {
+
+        if (this.modelInstallNoticeOverlay != null) {
+            // ESC means "later", and must not also close the player.
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                this.modelInstallNoticeOverlay.handleEscape();
+            }
+            return;
+        }
 
         if (this.confirmationOverlay != null) {
             if (keyCode == Keyboard.KEY_ESCAPE) {
@@ -969,7 +1037,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
      * 滚轮必须用同一套判断，否则弹窗里滚动会连带下层一起滚。
      */
     private boolean isModalOverlayActive() {
-        return this.confirmationOverlay != null
+        return this.modelInstallNoticeOverlay != null
+                || this.confirmationOverlay != null
                 || this.themePaletteOverlay != null
                 || this.fontPickerOverlay != null
                 || this.musicSourceOverlay != null
@@ -989,6 +1058,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         double mouseX = mX / xScale;
         double mouseY = mY / yScale;
         WindowAdaptiveScale.end();
+
+        if (this.modelInstallNoticeOverlay != null) {
+            this.modelInstallNoticeOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            return;
+        }
 
         if (this.confirmationOverlay != null) {
             this.confirmationOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);

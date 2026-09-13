@@ -153,4 +153,28 @@ public class AutomixDeckChain extends Effect<VocalDuckFilter> {
         this.left.resetDepthTo(depth);
         this.right.resetDepthTo(depth);
     }
+
+    /**
+     * Publishes one frame's worth of automix targets - shelf gain, duck depth and the two tone tilts -
+     * from the audio thread.
+     *
+     * <p>The four individual setters already reach the filters as plain {@code volatile} writes, so
+     * calling them from the audio thread is safe; this exists so a single frame's values go out as one
+     * unit instead of being interleaved with whatever the supervisor tick is doing, and so the audio
+     * task has one call to make per output buffer.</p>
+     *
+     * <p><b>Deliberately not built on {@code resetTo} / {@code resetDepthTo} / {@code resetToneTo}.</b>
+     * Those clear filter state, which is only correct for a deck that has not started sounding yet:
+     * running them once per audio buffer would zero the biquad history ~700 times a second and the
+     * band canceller would never converge. The one-pole slew inside the filters is left in place as
+     * well - the automix curve arriving here is already smooth, so the slew costs a fraction of a
+     * millisecond, and keeping it preserves the "stepping coefficients at 10 ms would zipper" property
+     * for the tick path that still drives decks when the audio task is not running.</p>
+     */
+    public void setTargetsNow(float bassDb, float duckDepth, float midDb, float highDb) {
+        gainDb(bassDb);
+        duckDepth(duckDepth);
+        midGainDb(midDb);
+        highGainDb(highDb);
+    }
 }

@@ -241,6 +241,31 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
 
     /**
+     * 播放器展开动画结束：恢复全局岛渲染，让播放器界面里的即时通知继续可见。
+     *
+     * <p>常驻状态仍由 {@link IslandVisibilityGate#allowAmbient} 在播放器界面隐藏；这里只解除
+     * 展开形变对所有内容的拦截，并清掉展开前遗留的常驻可见状态，避免展开结束时先闪一下旧
+     * 常驻岛再收起。</p>
+     */
+    public static void finishPlayerSurfaceTransition() {
+        if (!playerSurfaceTransition) return;
+        playerSurfaceTransition = false;
+        playerAbsorbImpact = false;
+        playerAbsorbStartedAt = 0L;
+        suppressPlayerEntryAnimation = false;
+        INSTANCE.visibility = 0f;
+        INSTANCE.expansion = 0.0;
+        INSTANCE.contentAlpha = 0f;
+        INSTANCE.contentTransition = 0f;
+        INSTANCE.ambientBlend = 0f;
+        INSTANCE.previousAlwaysOn = false;
+        INSTANCE.ambientSnapshot = IslandAmbientStatus.EMPTY;
+        INSTANCE.ambientSampledAt = 0L;
+        INSTANCE.animatedExpandedWidth = -1.0;
+        INSTANCE.animatedExpandedHeight = -1.0;
+    }
+
+    /**
      * Prepares the island as the closing player's landing target.
      *
      * <p>Visibility is set to one before the player reaches the anchor. The old behavior left it at

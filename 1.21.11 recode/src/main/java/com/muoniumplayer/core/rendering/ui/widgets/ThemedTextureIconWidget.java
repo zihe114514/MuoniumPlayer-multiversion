@@ -64,9 +64,9 @@ public class ThemedTextureIconWidget extends AbstractWidget<ThemedTextureIconWid
                 RenderSystem.linearFilter();
                 texture = TextureManager.getInstance().getTexture(iconLocation);
             } catch (Throwable ignored) {
-                // A resource pack or an outdated development jar can omit an
-                // optional texture. Keep the established font-icon fallback
-                // rather than crashing while rendering the player screen.
+                // 资源包或过时的开发 jar 可能缺少某个
+                // 可选纹理。保持已有的字体图标回退机制，
+                // 而不是在渲染播放器界面时崩溃。
                 texture = null;
             }
         }

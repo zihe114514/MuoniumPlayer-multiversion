@@ -27,7 +27,7 @@ import java.util.regex.Pattern;
  * 真正要做的是把 UnblockNeteaseMusic/server 的匹配流水线搬过来。</p>
  *
  * <p>所以这里复刻的是 UNM {@code src/provider/} 那一套的<b>流程</b>，而不是它的九个
- * Node provider：</p>
+ * 节点提供方：</p>
  * <ol>
  *   <li>{@code find.js}：清掉曲名里的 {@code （cover:xxx）}/{@code （翻自xxx）}，
  *       艺人按累计长度 15 截断，拼成检索关键词；</li>

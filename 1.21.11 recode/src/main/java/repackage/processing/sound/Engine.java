@@ -81,6 +81,21 @@ public class Engine {
 		return Engine.getEngine(false);
 	}
 
+	/** 当前 JSyn 渲染时间，单位秒。 */
+	public static double audioTimeSeconds() {
+		return Engine.getEngine().synth.getCurrentTime();
+	}
+
+	/** 在音频线程上注册一个轻量控制任务：每输出一个缓冲、合成之前跑一次。 */
+	public static void addAudioTask(Runnable task) {
+		if (task != null) Engine.getEngine().synth.addAudioTask(task);
+	}
+
+	/** 注销一个先前用 {@link #addAudioTask(Runnable)} 注册的控制任务。 */
+	public static void removeAudioTask(Runnable task) {
+		if (task != null && Engine.singleton != null) Engine.singleton.synth.removeAudioTask(task);
+	}
+
 	static Engine getEngine(boolean portAudio) {
 		if (Engine.singleton == null) {
 			// 这可能会抛出RuntimeException ，

@@ -239,6 +239,31 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         suppressPlayerEntryAnimation = true;
     }
 
+    /**
+     * 播放器展开动画结束：恢复全局岛渲染，让播放器界面里的即时通知继续可见。
+     *
+     * <p>常驻状态仍由 {@link IslandVisibilityGate#allowAmbient} 在播放器界面隐藏；这里只解除
+     * 展开形变对所有内容的拦截，并清掉展开前遗留的常驻可见状态，避免展开结束时先闪一下旧
+     * 常驻岛再收起。</p>
+     */
+    public static void finishPlayerSurfaceTransition() {
+        if (!playerSurfaceTransition) return;
+        playerSurfaceTransition = false;
+        playerAbsorbImpact = false;
+        playerAbsorbStartedAt = 0L;
+        suppressPlayerEntryAnimation = false;
+        INSTANCE.visibility = 0f;
+        INSTANCE.expansion = 0.0;
+        INSTANCE.contentAlpha = 0f;
+        INSTANCE.contentTransition = 0f;
+        INSTANCE.ambientBlend = 0f;
+        INSTANCE.previousAlwaysOn = false;
+        INSTANCE.ambientSnapshot = IslandAmbientStatus.EMPTY;
+        INSTANCE.ambientSampledAt = 0L;
+        INSTANCE.animatedExpandedWidth = -1.0;
+        INSTANCE.animatedExpandedHeight = -1.0;
+    }
+
     /** 即使没有正在进行的下载，HUD 编辑器也使用此实时尺寸预览。 */
     public static void preparePlayerAbsorb() {
         playerSurfaceTransition = true;
@@ -1084,8 +1109,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             boolean noticeContentChanged = sourceNoticeType != observedNoticeType
                     || !sourceNoticeTitle.equals(observedNoticeTitle)
                     || !sourceNoticeValue.equals(observedNoticeValue);
-            // noticeShownAt is refreshed by each publisher to extend the hold window. shownAt
-            // instead owns the surface-entry animation and stays stable while the island is visible.
+            // noticeShownAt 由每个发布者刷新以延长保持窗口。shownAt
+            // 则负责表面进入动画，并在灵动岛可见期间保持稳定。
             boolean islandAlreadyVisible = visibility > .035f || expansion > .05 || contentAlpha > .05f;
             observedNoticeRevision = sourceNoticeRevision;
             if (!activeDownload) {
@@ -1100,8 +1125,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     // 通知的残留文案，否则会看到一条早就过期的旧消息闪一下再被顶掉。
                     noticeCopyTransition = 1f;
                 } else if (noticeContentChanged && noticeCopyTransition >= .84f) {
-                    // The surface does not re-enter. Copy transitions are coalesced so a rapid
-                    // key-repeat sequence resolves cleanly to its latest notification value.
+                    // 表面不会重新进入。复制过渡被合并，因此快速的
+                    // 按键重复序列能干净地解析为其最新通知值。
                     outgoingNoticeTitle = observedNoticeTitle;
                     outgoingNoticeValue = observedNoticeValue;
                     noticeCopyTransition = 0f;
@@ -1126,8 +1151,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             }
         }
 
-        // Fast downloads may begin and finish between two rendered frames. The final progress
-        // edge keeps a short success state visible instead of silently disappearing.
+        // 快速下载可能在两个渲染帧之间开始并完成。最终进度
+        // 边缘保持短暂的成功状态可见，而不是静默消失。
         boolean completedBetweenFrames = !activeDownload
                 && rawProgress >= .995
                 && lastObservedProgress < .995;
@@ -1160,7 +1185,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 : sourceNoticeType == IslandNoticeType.TRANSCODING ? sourceTranscodeProgress : 0.0;
         if (sourceNoticeType == IslandNoticeType.VOLUME
                 || sourceNoticeType == IslandNoticeType.TRANSCODING) {
-            // Repeated transcode/volume updates converge to one continuous bar animation.
+            // 重复的转码/音量更新收敛为一个连续的进度条动画。
             animatedNoticeProgress = Interpolations.interpolate(animatedNoticeProgress, noticeProgressTarget, .26f);
         } else {
             animatedNoticeProgress = Interpolations.interpolate(animatedNoticeProgress, 0.0, .24f);
@@ -1179,8 +1204,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         IslandAmbientStatus.Snapshot ambient = ambientSnapshot;
         boolean shouldShow = IslandAmbientStatus.shouldShow(enabled, alwaysOn, activeDownload,
                 holdingCompletion, activeNotice);
-        // Even when the user does not use the always-on island, the closing player must land on
-        // something. Keep it visible through the impact, then let the normal visibility target hide it.
+        // 即使用户不使用常驻灵动岛，关闭的播放器也必须落在某个
+        // 位置上。在撞击过程中保持可见，然后让普通可见性目标将其隐藏。
         if (playerAbsorbImpact) shouldShow = enabled;
         // 常驻但三项内容全关时收成紧凑胶囊，而不是展开一张空白卡片。
         double expansionGoal = IslandAmbientStatus.expansionTarget(shouldShow, ambientMode, !ambient.isEmpty());
@@ -1321,10 +1346,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             ambientTargetWidth = ambientLayout.targetWidth;
             ambientTargetHeight = ambientLayout.targetHeight;
         }
-        // Geometry follows one low-pass only. Blending the notice/ambient targets here and then
-        // animating toward that moving target created a cascaded lag: shortening content appeared
-        // to pause before both edges began moving inward. Content still cross-fades with
-        // ambientMix; the silhouette immediately tracks the active layout through one animation.
+        // 几何形状仅跟随一个低通滤波器。在此处混合通知/环境目标然后
+        // 向该移动目标动画会产生级联滞后：内容缩短时似乎
+        // 在两侧开始向内移动之前暂停。内容仍与 ambientMix 交叉淡入淡出；
+        // 轮廓通过一个动画立即跟踪当前活动布局。
         boolean ambientGeometry = hasAmbient && ambientMix >= .5f;
         double targetExpandedWidth = ambientGeometry ? ambientTargetWidth : layout.targetWidth;
         double targetExpandedHeight = ambientGeometry ? ambientTargetHeight : layout.targetHeight;
@@ -1345,8 +1370,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         double height = DynamicIslandMath.lerp(compactHeight, expandedHeight, expansionValue);
         double centerX = screenWidth * .5;
 
-        // Apple-style impact: the incoming surface lands as a compact pill, which first squashes
-        // horizontally wide and vertically flat, then rebounds taller/narrower before settling.
+        // Apple 风格的撞击：进入的表面以紧凑胶囊形态落下，先被挤压成
+        // 水平宽、垂直扁的形状，然后回弹得更高/更窄，最后稳定下来。
         double absorbGlow = 0.0;
         if (playerAbsorbImpact && playerAbsorbStartedAt > 0L) {
             double phase = DynamicIslandMath.clamp01((now - playerAbsorbStartedAt)
@@ -1385,8 +1410,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 : (musicFocus ? Math.min(14.0, height * .31)
                 : (liquidGlass ? Math.min(16.0, height * .40)
                 : (style == DynamicIslandStyle.CARD ? Math.min(12.0, height * .30) : height * .5)));
-        // Record the exact post-transform silhouette. The player transition must start from this
-        // shape, not from a compact pill that does not match the currently resident island.
+        // 记录变换后的确切轮廓。播放器过渡必须从这个
+        // 形状开始，而不是从与当前驻留灵动岛不匹配的紧凑胶囊开始。
         if (!preview) {
             double renderedScale = configuredScale * entryScale;
             double renderedCenterY = TOP_MARGIN + configuredScale * (y + height * .5 - TOP_MARGIN);
@@ -1399,8 +1424,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         int accentColor = NCMTheme.getAccentColor();
         int iconAccentColor = DynamicIslandMath.brightenAccent(accentColor, .30f);
 
-        // Keep the shadow on the island's own rounded silhouette. The prior expanded,
-        // left-shifted rectangle looked like a separate dark background canvas.
+        // 阴影保持在灵动岛自身的圆角轮廓上。之前的扩展、
+        // 左移矩形看起来像一个独立的深色背景画布。
         float shadowAlpha = alpha * (style == DynamicIslandStyle.GLASS ? .13f
                 : (liquidGlass ? .15f : (musicFocus ? .23f : .19f)));
         roundedRect(x + 1.0, y + 1.8, width, height, radius,
@@ -1422,7 +1447,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             roundedOutline(x, y, width, height, radius, .65,
                     new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 30f)));
         } else if (musicFocus) {
-            // Music-focused card: the surface expands first, then the animated artwork and copy settle in.
+            // 音乐聚焦卡片：表面先扩展，然后动画封面和文字逐渐就位。
             roundedRect(x, y, width, height, radius, hexColor(.010f, .014f, .024f, alpha * .99f));
             roundedRect(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height - 2.0),
                     Math.max(1.0, radius - 1.0), hexColor(.050f, .064f, .098f, alpha * .46f));
@@ -1433,7 +1458,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             roundedRect(x + 8.0, y + height - 5.0, Math.max(1.0, width - 16.0), 1.0, .5,
                     RenderSystem.reAlpha(accentColor, alpha * .22f));
         } else if (systemCard) {
-            // Dedicated content-driven system notification card inspired by the supplied reference project.
+            // 受提供的参考项目启发的专用内容驱动系统通知卡片。
             roundedRect(x, y, width, height, radius, hexColor(.025f, .031f, .043f, alpha * .99f));
             roundedRect(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height - 2.0),
                     Math.max(1.0, radius - 1.0), hexColor(.075f, .088f, .118f, alpha * .32f));
@@ -1461,9 +1486,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     hexColor(1f, 1f, 1f, alpha * (style == DynamicIslandStyle.GLASS ? .13f : .055f)));
         }
 
-        // Keep the icon safely inside the rounded silhouette and reserve a real gap before text.
-        // Previously the 1.16x icon scale could push its outer edge into a stale clip or the pill's
-        // curved shoulder, making the left edge look incomplete.
+        // 图标安全地保持在圆角轮廓内，并在文字前保留实际间距。
+        // 之前 1.16x 的图标缩放可能将其外边缘推入过期裁剪区域或胶囊的
+        // 弧形肩部，使左边缘看起来不完整。
         // 这几个内缩值加上托盘半宽、再乘下面 scaleAtPos 的绘制缩放，就是托盘的视觉右缘；
         // DynamicIslandLayoutCalculator#styleContentLeft 按它推内容区左边界。改这里要一起改那边，
         // 否则文案/常驻行会重新贴回托盘上（历史上默认样式只剩 1.25px，CARD 是负的）。
@@ -1540,8 +1565,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         // 其余通知都是已经发生完的结果，扫光在它们身上只会变成噪音。
         boolean shimmerTitle = noticeMode && (activeNoticeType == IslandNoticeType.AUTOMIX_BLENDING
                 || activeNoticeType == IslandNoticeType.MODEL_INFERENCE);
-        // Volume is frequently updated from key-repeat. Its labels deliberately skip both the
-        // island-content entry and copy-transition animations, while the bar still interpolates.
+        // 音量经常通过按键重复更新。其标签有意跳过灵动岛内容进入
+        // 和文字过渡动画，同时进度条仍进行插值。
         float renderedTextAlpha = staticVolumeCopy
                 ? (expansionValue >= .74 ? alpha * eventFade : 0f) : textAlpha;
         if (renderedTextAlpha > .01f) {
@@ -1583,9 +1608,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     double copyBlend = DynamicIslandMath.clamp01(noticeCopyBlend);
                     double noticeSlide = CONTENT_CHANGE_SLIDE * .62;
 
-                    // A notification refresh keeps the island itself stable. The previous copy exits
-                    // upward while the latest value enters from below; rapid updates are coalesced by
-                    // renderInternal rather than constantly restarting this transition.
+                    // 通知刷新保持灵动岛本身稳定。之前的文字向上退出，
+                    // 同时最新值从下方进入；快速更新由 renderInternal 合并，
+                    // 而不是不断重启此过渡。
                     if (copyBlend < .995) {
                         float outgoingAlpha = textAlpha * (float) (1.0 - copyBlend);
                         if (outgoingAlpha > .01f) {
@@ -1709,8 +1734,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
     private double animateExpandedDimension(double current, double target) {
         if (current <= .0) return target;
-        // Width and height must use the same clock. Different rates made short content collapse
-        // into an awkward two-stage shape instead of one continuous centered contraction.
+        // 宽度和高度必须使用相同时钟。不同速率会使短内容坍缩成
+        // 尴尬的两阶段形状，而不是一个连续的居中收缩。
         float speed = target > current ? .40f : .38f;
         if (Math.abs(target - current) < .15) return target;
         return Interpolations.interpolate(current, target, speed);
@@ -2161,7 +2186,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             return;
         }
         if (type == IslandNoticeType.PLAY_NEXT) {
-            // Three queue lines with a play wedge: the same idea as the row control that produced it.
+            // 三条队列线加一个播放楔形：与生成它的行控件相同的设计思路。
             roundedRect(centerX - 5.6, centerY - 4.6, 8.4, 1.4, .7, foreground);
             roundedRect(centerX - 5.6, centerY - 1.0, 8.4, 1.4, .7, foreground);
             roundedRect(centerX - 5.6, centerY + 2.6, 4.6, 1.4, .7, foreground);
@@ -2182,7 +2207,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
         if (type == IslandNoticeType.QUALITY || type == IslandNoticeType.AUTOMIX
                 || type == IslandNoticeType.AUTOMIX_BLENDING) {
-            // A compact equalizer makes a playback-quality notice distinct from other status states.
+            // 紧凑的均衡器使播放质量通知与其他状态区分开来。
             roundedRect(centerX - 5.1, centerY + 1.5, 2.2, 3.5, 1.1,
                     RenderSystem.reAlpha(accentColor, alpha));
             roundedRect(centerX - 1.1, centerY - 1.3, 2.2, 6.3, 1.1, foreground);
@@ -2211,9 +2236,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         if (glyph == null || glyph.isEmpty() || alpha <= .01f || FontManager.fontello16 == null) return;
         double width = FontManager.fontello16.getStringWidthD(glyph);
         double height = Math.max(1.0, FontManager.fontello16.getFontHeight());
-        // Do not use a fixed baseline: Fontello glyphs have different ascender and
-        // descender bounds. Metric centering keeps every left-side notice icon in
-        // the middle of its circular plate.
+        // 不要使用固定基线：Fontello 字形有不同的上伸部和
+        // 下伸部边界。度量居中使每个左侧通知图标保持在
+        // 其圆形底板的中央。
         FontManager.fontello16.drawString(glyph, centerX - width * .5, centerY - height * .5, color);
     }
 
@@ -2429,9 +2454,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
 
     /**
-     * Original music-card artwork for the MUSIC_FOCUS style. It deliberately uses primitive OpenGL
-     * shapes instead of Android assets: the rotating accent bands make the compact and expanded
-     * states feel connected while remaining safe for Minecraft 1.8.9's fixed-function pipeline.
+     * MUSIC_FOCUS 样式的原始音乐卡片封面。有意使用原始 OpenGL
+     * 形状而非 Android 素材：旋转的强调色带使紧凑和展开
+     * 状态感觉连贯，同时对 Minecraft 1.8.9 的固定功能管线保持安全。
      */
     private void renderMusicFocusArtwork(double centerX, double centerY, double islandHeight, float alpha,
                                          int accentColor, int iconAccentColor, long now, boolean preview,
@@ -2542,7 +2567,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         GD_SOURCE_HEALTHY,
         GD_SOURCE_ERROR,
         AUTOMIX,
-        /** Folia model inference lifecycle. */
+        /** Folia 模型推理生命周期。 */
         MODEL_INFERENCE,
         MODEL_INFERENCE_SUCCESS,
         MODEL_INFERENCE_FAILURE,

@@ -4,11 +4,10 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.utils.Location;
 
 /**
- * Static player-control icons imported from the supplied artwork.
+ * 从提供的美术资源导入的静态播放器控制图标。
  *
- * <p>Resource paths intentionally stay under the historical {@code muonium}
- * root because that root is part of the installed-mod resource compatibility
- * contract.</p>
+ * <p>资源路径有意保持在历史 {@code muonium} 根目录下，
+ * 因为该根目录是已安装 mod 资源兼容性契约的一部分。</p>
  *
  * <p><b>必须带前导斜杠。</b>{@link Location#getResourceStream()} 用的是
  * {@code Location.class.getResourceAsStream(path)}，不带斜杠会被当成相对

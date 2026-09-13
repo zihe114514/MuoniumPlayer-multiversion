@@ -49,6 +49,14 @@ public final class FoliaModelManager {
     private static volatile File modelsDir = initialDirectory();
     private static volatile File cachedPython;
     private static volatile File cachedPythonRuntime;
+    /**
+     * 解析失败也要记住，否则「没装运行组件」这条最常见的路径会每次都去扫一遍目录树。
+     *
+     * <p>只记成功是不够的：{@link #isInstalled(Kind)} 对 RUNTIME 直接问 {@link #pythonExecutable()}，
+     * 而 profile 的缓存键、模型可用性判定、提示弹窗都会调它。未安装时每次都 miss，
+     * 等于每次分析都做一次递归遍历。</p>
+     */
+    private static volatile boolean cachedPythonResolved;
     private static final Map<Kind, Double> ACTIVE_DOWNLOADS = new ConcurrentHashMap<Kind, Double>();
     private static final Set<Kind> ACTIVE_INSTALLS = ConcurrentHashMap.newKeySet();
 
@@ -65,8 +73,7 @@ public final class FoliaModelManager {
     public static void setDirectory(File dir) {
         if (dir == null) return;
         modelsDir = dir.getAbsoluteFile();
-        cachedPython = null;
-        cachedPythonRuntime = null;
+        invalidatePythonCache();
         AutomixSettings.setModelsDirectory(modelsDir.getAbsolutePath());
     }
 
@@ -83,8 +90,7 @@ public final class FoliaModelManager {
 
     public static void resetDirectory() {
         modelsDir = DEFAULT_DIR;
-        cachedPython = null;
-        cachedPythonRuntime = null;
+        invalidatePythonCache();
         AutomixSettings.setModelsDirectory("");
     }
 
@@ -157,6 +163,8 @@ public final class FoliaModelManager {
             deleteTree(runtimeDir);
             try { Files.move(unpacked.toPath(), runtimeDir.toPath(), StandardCopyOption.REPLACE_EXISTING); }
             catch (Exception failure) { deleteTree(unpacked); throw failure; }
+            // 运行组件刚落地，之前缓存的「找不到 python」必须作废，否则装完仍显示未安装。
+            invalidatePythonCache();
             return;
         }
         File part = new File(modelsDir, kind.file + ".part");
@@ -212,18 +220,37 @@ public final class FoliaModelManager {
         return connection;
     }
 
+    /**
+     * 运行组件目录换代时作废 python 解析结果。
+     *
+     * <p>缓存键是「运行组件目录」这个路径，因此换目录、删模型、重装运行组件都必须显式作废；
+     * 其余时刻它一直是热的。别把它做成「每次都重扫」——{@link #isInstalled(Kind)} 会从
+     * profile 缓存键、模型可用性判定和提示弹窗三条热路径进来。</p>
+     */
+    private static void invalidatePythonCache() {
+        cachedPython = null;
+        cachedPythonRuntime = null;
+        cachedPythonResolved = false;
+    }
+
+    /**
+     * 解析出的 Python 可执行文件；未安装运行组件时为 {@code null}。
+     *
+     * <p>命中与未命中都缓存：未安装是本项目最常见的状态，而 {@code null} 结果每次都要
+     * 走一遍 {@link #findPython(File, String, int)} 的递归目录遍历。缓存按
+     * {@code cachedPythonRuntime}（即解析时所用的运行组件目录）而不是按文件是否仍存在来判断，
+     * 因为目录被替换之后旧的那份 {@code File} 依然可能指向一个同名的旧文件。</p>
+     */
     public static File pythonExecutable() {
         File runtime = path(Kind.RUNTIME);
-        File cached = cachedPython;
-        if (cached != null && runtime.equals(cachedPythonRuntime) && cached.isFile()) return cached;
+        if (cachedPythonResolved && runtime.equals(cachedPythonRuntime)) return cachedPython;
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         String executable = os.contains("win") ? "python.exe" : "python3";
         File direct = new File(runtime, executable);
         File resolved = direct.isFile() ? direct : findPython(runtime, executable, 0);
-        if (resolved != null) {
-            cachedPython = resolved;
-            cachedPythonRuntime = runtime;
-        }
+        cachedPython = resolved;
+        cachedPythonRuntime = runtime;
+        cachedPythonResolved = true;
         return resolved;
     }
 
@@ -285,6 +312,7 @@ public final class FoliaModelManager {
     }
 
     public static void deleteAll() {
+        invalidatePythonCache();
         for (Kind kind : Kind.values()) {
             File target = path(kind);
             if (kind == Kind.RUNTIME) deleteTree(target); else {
@@ -319,6 +347,7 @@ public final class FoliaModelManager {
                             File parent = target.getParentFile();
                             if (parent != null) parent.mkdirs();
                             Files.copy(file.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                            if (kind == Kind.RUNTIME) invalidatePythonCache();
                             found++;
                         } catch (Throwable ignored) {}
                     }

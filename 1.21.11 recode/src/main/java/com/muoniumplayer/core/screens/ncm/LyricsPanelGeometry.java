@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.screens.ncm;
 
+import java.util.Arrays;
+
 /** 全屏歌词面板的无状态视口、计时与尺寸计算。 */
 public final class LyricsPanelGeometry {
 
@@ -38,14 +40,176 @@ public final class LyricsPanelGeometry {
         return .25;
     }
 
+    /**
+     * 歌词正文列的左边界。
+     *
+     * <p>左栏（封面、曲目信息）与歌词列的分界线；也是全屏歌词页上一切浮层不许越过的<b>硬边界</b>
+     * ——越过一像素就是盖住歌词，那比字号小得多更糟。快捷面板（{@code LyricStyleQuickPanel}）
+     * 的可用宽度就是从这里往前推的，所以两边共用这一个函数而不是各写一遍 {@code .48}。</p>
+     */
+    public static double lyricColumnLeft(double posX, double width) {
+        return posX + width * .48;
+    }
+
     static Viewport createViewport(double posX, double posY, double width, double height, double borderThickness) {
         double horizontalInset = Math.max(8.0, width * .04);
         double verticalInset = Math.max(borderThickness, Math.min(10.0, height * .018));
-        double left = posX + width * .48;
+        double left = lyricColumnLeft(posX, width);
         double right = Math.max(left, posX + width - horizontalInset);
         double top = posY + verticalInset;
         double bottom = Math.max(top, posY + height - verticalInset);
         return new Viewport(left, top, right - left, bottom - top);
+    }
+
+    /**
+     * 快捷面板的分列结果。
+     *
+     * <p>面板的行数是随配置变的（背景样式、配色模式、当前歌词样式都会增删行），一列排下来的高度
+     * 可以轻易超过整个视口。这时候正确的做法是<b>分列</b>（面板变宽、变矮），而不是把整块面板
+     * 连同文字一起等比缩小——缩小到能塞进去的时候，字已经没法看了。</p>
+     */
+    static final class ColumnPacking {
+        /** 实际用到的列数，至少为 1。 */
+        final int columns;
+        /** 每行落在第几列，与入参行表等长。 */
+        final int[] columnOf;
+        /** 最高的那一列的高度（不含标题与面板内边距）。 */
+        final double maxColumnHeight;
+        /** 整块面板的宽度。 */
+        final double width;
+
+        private ColumnPacking(int columns, int[] columnOf, double maxColumnHeight, double width) {
+            this.columns = columns;
+            this.columnOf = columnOf;
+            this.maxColumnHeight = maxColumnHeight;
+            this.width = width;
+        }
+    }
+
+    /**
+     * 给快捷面板选列数并分列。
+     *
+     * <p>判据是<b>缩放需求量</b>：先试一列，装不下就试两列、三列……取第一个「一点都不用缩小」的
+     * 列数就停（再加列只会让面板更宽，反而更容易碰到歌词列）；连允许的最大列数都要缩小的时候，
+     * 取缩放需求最小的那一档，让调用方尽量少缩。列数还受可用宽度限制——分出来的面板不允许越过
+     * {@link #lyricColumnLeft}。</p>
+     *
+     * @param heights         每行的高度，顺序即显示顺序
+     * @param keepWithNext    该行是否必须和下一行同列（分节小标题不能落在列尾）
+     * @param availableWidth  面板左边缘到歌词列之间可用的宽度
+     * @param availableHeight 面板顶部到视口底部可用的高度
+     * @param chromeHeight    标题与上下内边距占掉的固定高度
+     * @param columnWidth     单列宽度
+     * @param columnGap       列间距
+     * @param maxColumns      允许的最大列数
+     */
+    static ColumnPacking packQuickPanel(double[] heights, boolean[] keepWithNext,
+                                        double availableWidth, double availableHeight, double chromeHeight,
+                                        double columnWidth, double columnGap, int maxColumns) {
+        int limit = Math.max(1, Math.min(Math.max(1, maxColumns),
+                maxColumnsThatFit(availableWidth, columnWidth, columnGap)));
+
+        int chosen = 1;
+        int[] chosenColumnOf = packRows(heights, keepWithNext, 1);
+        double chosenTallest = tallestColumn(heights, chosenColumnOf);
+        double chosenScore = Double.MAX_VALUE;
+
+        for (int columns = 1; columns <= limit; columns++) {
+            int[] columnOf = packRows(heights, keepWithNext, columns);
+            if (columnOf == null) continue;   // 这一档在合法位置断不开，跳过
+            double tallest = tallestColumn(heights, columnOf);
+            double width = panelWidthFor(columns, columnWidth, columnGap);
+            double score = Math.max((chromeHeight + tallest) / Math.max(1.0, availableHeight),
+                    width / Math.max(1.0, availableWidth));
+            if (score < chosenScore - 1.0e-6) {
+                chosen = columns;
+                chosenColumnOf = columnOf;
+                chosenTallest = tallest;
+                chosenScore = score;
+            }
+            if (score <= 1.0 + 1.0e-9) break;
+        }
+        return new ColumnPacking(chosen, chosenColumnOf, chosenTallest,
+                panelWidthFor(chosen, columnWidth, columnGap));
+    }
+
+    /**
+     * 把行按顺序分成 {@code columns} 列，返回每行的列号。
+     *
+     * <p>分割点取「让最高的那一列尽量矮」的那一组（线性划分的最优解）：面板要不要缩小、缩多少
+     * 完全由最高的那一列决定，所以按行数平均、或按高度做单趟贪心都不够——贪心在最后一格上
+     * 会明显失衡，白白多缩几个百分点。行数在几十以内，二维 DP 的开销可以忽略。</p>
+     *
+     * @return 每行的列号；给定列数下找不到合法分割（列数比可用断点还多）时返回 {@code null}
+     */
+    static int[] packRows(double[] heights, boolean[] keepWithNext, int columns) {
+        int count = heights.length;
+        int[] columnOf = new int[count];
+        if (count == 0) return columnOf;
+        int limit = Math.max(1, Math.min(columns, count));
+
+        double[] prefix = new double[count + 1];
+        for (int i = 0; i < count; i++) {
+            prefix[i + 1] = prefix[i] + heights[i];
+        }
+
+        // best[c][i]：前 i 行分成 c 列的「最高列高」最优值；from[c][i] 记录最后一列的起点。
+        double[][] best = new double[limit + 1][count + 1];
+        int[][] from = new int[limit + 1][count + 1];
+        for (int c = 0; c <= limit; c++) {
+            Arrays.fill(best[c], Double.MAX_VALUE);
+        }
+        for (int i = 1; i <= count; i++) {
+            best[1][i] = prefix[i];
+        }
+        for (int c = 2; c <= limit; c++) {
+            for (int i = c; i <= count; i++) {
+                for (int j = c - 1; j < i; j++) {
+                    // 断点落在第 j-1 行之后；这一行要求与下一行同列时不能断。
+                    if (keepWithNext != null && j > 0 && keepWithNext[j - 1]) continue;
+                    if (best[c - 1][j] == Double.MAX_VALUE) continue;
+                    double candidate = Math.max(best[c - 1][j], prefix[i] - prefix[j]);
+                    if (candidate < best[c][i]) {
+                        best[c][i] = candidate;
+                        from[c][i] = j;
+                    }
+                }
+            }
+        }
+        if (limit > 1 && best[limit][count] == Double.MAX_VALUE) return null;
+
+        int end = count;
+        for (int c = limit; c >= 1; c--) {
+            int start = c == 1 ? 0 : from[c][end];
+            for (int i = start; i < end; i++) {
+                columnOf[i] = c - 1;
+            }
+            end = start;
+        }
+        return columnOf;
+    }
+
+    private static double tallestColumn(double[] heights, int[] columnOf) {
+        double[] totals = new double[heights.length];
+        double tallest = 0;
+        for (int i = 0; i < heights.length; i++) {
+            totals[columnOf[i]] += heights[i];
+            tallest = Math.max(tallest, totals[columnOf[i]]);
+        }
+        return tallest;
+    }
+
+    private static double panelWidthFor(int columns, double columnWidth, double columnGap) {
+        return columns * columnWidth + Math.max(0, columns - 1) * columnGap;
+    }
+
+    /** 可用宽度最多放得下几列；宽度未知（{@link Double#MAX_VALUE}）时按调用方的上限截断。 */
+    private static int maxColumnsThatFit(double availableWidth, double columnWidth, double columnGap) {
+        if (!(availableWidth > 0) || !(columnWidth > 0)) return 1;
+        double stride = columnWidth + Math.max(0, columnGap);
+        double columns = Math.floor((availableWidth + Math.max(0, columnGap)) / stride);
+        if (!(columns >= 1)) return 1;
+        return (int) Math.min(64, columns);
     }
 
     /**

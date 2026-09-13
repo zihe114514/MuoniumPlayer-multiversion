@@ -83,26 +83,37 @@ final class FoliaAutomixPlanner {
                 ? new AutomixAnalyzer.KeyEstimate(incomingProfile.introKeyTonic, incomingProfile.introKeyMajor, incomingProfile.introKeyConfidence)
                 : (analysed ? AutomixAnalyzer.analyzeKey(incomingHead, incomingAudio.sampleRate()) : null);
 
-        float introEnd = incomingProfile != null ? incomingProfile.leadInMillis / 1000f
-                : (incomingHead.length > 0 ? AutomixAnalyzer.detectIntroEnd(incomingHead, incomingAudio.sampleRate()) : 0f);
-        introEnd = Math.max(0f, Math.min((float) incomingMillis, introEnd));
-        float outroLanding = outgoingProfile != null && outgoingProfile.outroLandingMillis > 0f
-                ? (outgoingProfile.outroLandingMillis - outgoingWindowStart) / 1000f
-                : (outgoingTail.length > 0 ? AutomixAnalyzer.detectOutroLanding(outgoingTail, outgoingAudio.sampleRate()) : -1f);
+        long introEndMillis = incomingProfile != null ? Math.round(incomingProfile.leadInMillis)
+                : (incomingHead.length > 0 ? Math.round(AutomixAnalyzer.detectIntroEnd(incomingHead, incomingAudio.sampleRate())) : 0L);
+        introEndMillis = Math.max(0L, Math.min(incomingMillis, introEndMillis));
+        // 先判哨兵，再换算成绝对时间：detectOutroLanding 返回 -1 表示「测不到」，
+        // 而 -1 加进窗口起点会变成一个正数，让 :125 的 `> 0` 判断把「没有证据」
+        // 当成一条证据。这与 LEGACY 侧的写法一致（AutomixPlanner 里是 `if (landing >= 0f)`）。
+        long landing = outgoingTail.length > 0
+                ? Math.round(AutomixAnalyzer.detectOutroLanding(outgoingTail, outgoingAudio.sampleRate()))
+                : -1L;
+        long outroLandingMillis = outgoingProfile != null && outgoingProfile.outroLandingMillis > 0f
+                ? Math.round(outgoingProfile.outroLandingMillis)
+                : (landing < 0L ? -1L : outgoingWindowStart + landing);
 
         boolean outgoingUsable = usableGrid(outgoingGrid);
         boolean incomingUsable = usableGrid(incomingGrid);
         TempoMatch tempo = tempoMatch(outgoingUsable ? outgoingGrid.bpm : null,
                 incomingUsable ? incomingGrid.bpm : null);
         KeyRelation keyRelation = keyRelation(outgoingKey, incomingKey);
-        boolean startsHot = introEnd <= .35f;
+        // 与 endsHot 对称：两者都优先取证据层已经判定的结论，只有在没有 profile 时
+        // 才回退到就地测量。曾经这里是 `introEndMillis <= 350L` 的重算 —— 那让同一个
+        // 概念在「有 profile」和「没 profile」两条路上各有一套算术，而 profile 里的
+        // leadInMillis 正是同一个量。
+        boolean startsHot = incomingProfile != null ? incomingProfile.startsHot
+                : introEndMillis <= 350L;
         boolean endsHot = outgoingProfile != null ? outgoingProfile.endsHot
                 : endsHot(outgoingTail, outgoingAudio == null ? 0 : outgoingAudio.sampleRate());
         float outroSlope = outgoingProfile != null ? outgoingProfile.outroSlopeDbPerSecond
                 : outroSlope(outgoingTail, outgoingAudio == null ? 0 : outgoingAudio.sampleRate());
 
         FoliaTransitionStyle style = chooseStyle(tempo, startsHot, endsHot, outroSlope,
-                outgoingUsable, incomingUsable, introEnd,
+                outgoingUsable, incomingUsable, introEndMillis,
                 outgoingGrid == null ? null : outgoingGrid);
 
         boolean performance = AutomixSettings.isPerformanceModeEnabled();
@@ -120,9 +131,10 @@ final class FoliaAutomixPlanner {
         if (earliestFire > latestFire) earliestFire = latestFire;
 
         long anchor = latestFire;
-        if (outroLanding > 0f) {
-            long landing = outgoingWindowStart + (long) outroLanding;
-            if (landing >= earliestFire && landing <= latestFire) anchor = landing;
+        if (outroLandingMillis > 0L) {
+            if (outroLandingMillis >= earliestFire && outroLandingMillis <= latestFire) {
+                anchor = outroLandingMillis;
+            }
         }
         long stemVocalGuard = stemVocalGuardMillis(outgoingProfile);
         if (stemVocalGuard > 0L) {
@@ -150,8 +162,8 @@ final class FoliaAutomixPlanner {
         if (fire < earliestFire || fire > latestFire) fire = anchor;
 
         long cue = 0L;
-        if (AutomixSettings.isSkipIntroEnabled() && introEnd > 50f) {
-            cue = Math.min(INTRO_SKIP_LIMIT_MILLIS, (long) introEnd);
+        if (AutomixSettings.isSkipIntroEnabled() && introEndMillis > 50L) {
+            cue = Math.min(INTRO_SKIP_LIMIT_MILLIS, introEndMillis);
             if (AutomixSettings.isBeatAlignEnabled() && incomingGrid != null && incomingUsable) {
                 long beat = Math.max(180L, (long) (60_000f / incomingGrid.bpm));
                 long phase = positiveModulo((long) incomingGrid.barPhaseMillis, beat);
@@ -209,7 +221,7 @@ final class FoliaAutomixPlanner {
         System.out.println("[Automix/Folia] " + summary);
         return new AutomixPlan(fire, overlap, cue, gain, beatMatched, bassSwap, tempoRatio,
                 false, phaseError, vocalDuck, summary, style,
-                midTilt, highTilt, style.usesEchoThrow() || endsHot,
+                midTilt, highTilt, false,
                 drumAt, bassAt, vocalEntry, stemDriven, animationPeriod);
     }
 
@@ -230,18 +242,18 @@ final class FoliaAutomixPlanner {
     }
     private static FoliaTransitionStyle chooseStyle(TempoMatch tempo, boolean startsHot, boolean endsHot,
                                                     float outroSlope, boolean outgoingUsable,
-                                                    boolean incomingUsable, float introEnd,
+                                                    boolean incomingUsable, long introEndMillis,
                                                     AutomixAnalyzer.BeatGrid outgoingGrid) {
         long beatMillis = outgoingUsable && outgoingGrid != null && outgoingGrid.bpm > 1f
                 ? Math.max(1L, (long) (60_000f / outgoingGrid.bpm)) : 500L;
         if (startsHot && outgoingUsable) {
-            return introEnd >= beatMillis / 1000f ? FoliaTransitionStyle.BEAT_CUT
+            return introEndMillis >= beatMillis ? FoliaTransitionStyle.BEAT_CUT
                     : FoliaTransitionStyle.BASS_SWAP;
         }
         if (tempo.relation == TempoRelation.FAR && outgoingUsable
-                && introEnd * 1000f >= beatMillis) return FoliaTransitionStyle.BEAT_CUT;
+                && introEndMillis >= beatMillis) return FoliaTransitionStyle.BEAT_CUT;
         if (outroSlope <= -1.5f) return FoliaTransitionStyle.BASS_SWAP;
-        if (!endsHot && (!startsHot || introEnd > .3f)) return FoliaTransitionStyle.TAIL_RIDE;
+        if (!endsHot && (!startsHot || introEndMillis > 300L)) return FoliaTransitionStyle.TAIL_RIDE;
         if (outgoingUsable || incomingUsable) return FoliaTransitionStyle.BASS_SWAP;
         return FoliaTransitionStyle.PLAIN_BLEND;
     }
@@ -398,8 +410,8 @@ final class FoliaAutomixPlanner {
 
     private static float clampRate(float rate) {
         if (Float.isNaN(rate)) return 1f;
-        return Math.max(AutomixSettings.MIN_PLAYBACK_RATE,
-                Math.min(AutomixSettings.MAX_PLAYBACK_RATE, rate));
+        return Math.max(AutomixSettings.FOLIA_MIN_TEMPO_RATE,
+                Math.min(AutomixSettings.FOLIA_MAX_TEMPO_RATE, rate));
     }
 
     private static long positiveModulo(long value, long span) {

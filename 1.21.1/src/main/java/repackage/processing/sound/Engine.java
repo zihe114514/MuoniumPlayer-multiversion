@@ -81,6 +81,21 @@ public class Engine {
 		return Engine.getEngine(false);
 	}
 
+	/** Current JSyn rendering time in seconds. */
+	public static double audioTimeSeconds() {
+		return Engine.getEngine().synth.getCurrentTime();
+	}
+
+	/** Runs a lightweight control task on the JSyn audio thread before each output buffer. */
+	public static void addAudioTask(Runnable task) {
+		if (task != null) Engine.getEngine().synth.addAudioTask(task);
+	}
+
+	/** Removes a control task previously registered with {@link #addAudioTask(Runnable)}. */
+	public static void removeAudioTask(Runnable task) {
+		if (task != null && Engine.singleton != null) Engine.singleton.synth.removeAudioTask(task);
+	}
+
 	static Engine getEngine(boolean portAudio) {
 		if (Engine.singleton == null) {
 			// this might throw a RuntimeException, which is fine

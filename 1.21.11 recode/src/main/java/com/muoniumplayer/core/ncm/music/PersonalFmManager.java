@@ -175,7 +175,7 @@ public final class PersonalFmManager {
                 List<Music> loaded = fetchRecommendations();
                 currentBatch = Collections.unmodifiableList(loaded);
                 status = selectedMode.getDisplayName() + " · " + loaded.size() + " 首推荐";
-                // playFm() establishes the isolated FM session itself, so first entry must not
+                // playFm() 本身会建立隔离的 FM 会话，因此首次进入不能
                 // 要求已有活动的 FM 会话才能自动启动。
                 if (startPlaybackAfterLoad) {
                     CloudMusic.playFm(loaded, 0);

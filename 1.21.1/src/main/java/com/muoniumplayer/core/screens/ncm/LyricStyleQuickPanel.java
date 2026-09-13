@@ -10,6 +10,7 @@ import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.LyricSourceMemory;
 import com.muoniumplayer.core.rendering.animation.Easing;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.settings.HudConfig;
@@ -29,8 +30,18 @@ import com.muoniumplayer.core.utils.cursor.CursorUtils;
  * <h3>行布局是一张表，不是一串偏移量</h3>
  * <p>面板的行数会随「当前是哪种歌词样式」「配色是不是自定义」变化，早先那种「每个 rowY 各自用常量
  * 累加算」的写法每加一行都要同步改 {@code panelHeight()} 和后面所有行的偏移，漏一处就是「看得见
- * 但点不到」。现在改成 {@link #layout()} 每帧顺序摆一次行、把 y 与高度记进 {@link #rows}，
+ * 但点不到」。现在改成 {@link #layout()} 每帧顺序摆一次行、把位置与高度记进 {@link #rows}，
  * 渲染与命中<b>共用同一张表</b>，加行只需要在 {@code layout()} 里插一句。</p>
+ *
+ * <h3>装不下就分列，不是把整块缩小</h3>
+ * <p>行数一多（「隐现」背景的像素/流体两段参数、加上自定义配色，能有三十行、八九百像素高），
+ * 一列排下来必然高过视口。此前的唯一手段是 {@link #updateUiScale()}：把面板连同文字一起等比
+ * 缩小，缩到 {@link #MIN_UI_SCALE} 就停手——可 0.62 只是「比原来好看一点」，一列八百多像素
+ * 对上半屏的可视高度，缩到底也塞不进去，结果是<b>字小得看不清 + 底部还要滚</b>。</p>
+ * <p>现在先分列：列数由 {@link LyricsPanelGeometry#packQuickPanel} 按「缩放需求量最小」选出来，
+ * 一列装得下就还是原来那一列、一个字都不缩；装不下就两列、三列，面板变宽变矮而字号保持 1.0。
+ * 加宽有硬上限——不许越过 {@link LyricsPanelGeometry#lyricColumnLeft}，那是歌词正文的左边界，
+ * 面板宁可继续缩也绝不压到歌词上。缩放只是最后兜底（窗口小到列数顶满还放不下时）。</p>
  */
 final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedConstants {
 
@@ -68,6 +79,14 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private static final int KIND_LATENT_TOGGLE = 16;
     /** 「隐现」浮点参数。 */
     private static final int KIND_LATENT_SLIDER = 17;
+    /**
+     * 歌词来源：自动，或指定某一个源。
+     *
+     * <p>与 {@link #KIND_LYRIC_RELOAD} 是两件事，故意分成两行。自动匹配错了的时候，「重新匹配」
+     * 是没用的——它把同一条确定性链路原样再跑一遍，输入没变、结果必然一样。能脱困的只有换源，
+     * 所以「换哪个库」必须有自己的一行，不能让用户在一次「重取」里猜为什么毫无变化。</p>
+     */
+    private static final int KIND_LYRIC_SOURCE = 18;
 
     /** 偏移滑块的两端（毫秒）。与 {@code LyricOffsetMemory} 的夹取范围保持一致。 */
     private static final long OFFSET_SPAN_MILLIS = 10_000L;
@@ -342,6 +361,12 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private static final double PANEL_PADDING = 10.0;
     private static final double TITLE_HEIGHT = 18.0;
     private static final double ROW_HEIGHT = 30.0;
+    /** 分列时列与列之间的空隙。 */
+    private static final double COLUMN_GAP = 8.0;
+    /** 分列的上限。再多列会让面板横向铺满左栏，也会把「一列变两列」这件简单的事变复杂。 */
+    private static final int MAX_COLUMNS = 3;
+    /** 面板右边缘与歌词列之间留的空隙，防止贴到歌词上。 */
+    private static final double PANEL_RIGHT_GAP = 8.0;
     private static final double TRACK_HEIGHT = 4.0;
     /** 整行按钮的高度（样式切换、配色模式、颜色数量），不需要滑块那么高。 */
     private static final double PICK_ROW_HEIGHT = 26.0;
@@ -360,8 +385,8 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     /**
      * 面板整体的最小缩放。
      *
-     * <p>展开全部配色控件时面板要 300 像素上下，在 GUI 缩放 3~4 档下（视口只有 360 / 270 高）会伸到
-     * 屏幕外面——那部分就是「看得见但点不到」甚至「完全看不见」。所以空间不够时整块面板等比缩小，
+     * <p>分列之后 {@link #updateUiScale()} 已经很少触发了，这里只是最后一档兜底：窗口小到
+     * {@link #MAX_COLUMNS} 列都排不下（可用宽度不够分列、可用高度又太矮）时，面板才整体缩小，
      * 缩到这个下限就不再缩（再小文字就没法看了；到那一档为止都还塞得进最小的视口）。</p>
      */
     private static final double MIN_UI_SCALE = .62;
@@ -372,16 +397,62 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
 
     private static final String[] HSB_LABELS = {"色相", "饱和", "明度"};
 
-    /** 一行控件的位置。{@link #layout()} 每帧重建，渲染与命中共用。 */
+    /**
+     * 一行控件的位置与显示状态。
+     *
+     * <p>{@code x / y / height} 是<b>这一帧真正画在哪</b>——{@link #followLayout()} 每帧把目标值追过去的
+     * 结果；{@code targetX / targetY} 是 {@link #layout()} 这一帧算出来的目标。渲染与命中都读显示值，
+     * 所以「看到的位置」和「点得到的位置」永远是同一处，过渡动画进行到一半时也不例外。</p>
+     */
     private static final class Row {
         int kind;
         int index;
+        /** 所在列的左边缘；不分列时恒为 {@code anchorX}。 */
+        double x;
+        /** 屏幕上的纵向位置（已经扣掉本帧的滚动量，见 {@link #appliedScroll}）。 */
         double y;
         double height;
+        double targetX;
+        double targetY;
+        /** 显示透明度：新出现的行从 0 淡入，被删掉的行淡到看不见才真正离开行表。 */
+        float alpha = 1f;
+        float targetAlpha = 1f;
+        /** 这一行在<b>本帧的目标表</b>里还活着；只在一帧之内有效。 */
+        boolean present;
     }
 
+    /**
+     * 目标行表：{@link #layout()} 每帧重写一遍，{@link #followLayout()} 拿它去认领显示行。
+     *
+     * <p>和显示行表分开是有意的。切换样式 / 背景 / 配色模式会让行数整块变化（最多的一档三十一行），
+     * 只维护一份行表的话就只能「瞬间换掉」——那正是「切换时大小突变、栏目凭空增减」的来源。分成两份
+     * 之后，新行可以从透明淡入、消失的行可以留在原地淡出，其余行平滑挪到新位置。</p>
+     */
+    private final List<Row> targetRows = new ArrayList<Row>();
+    private int targetCount;
+    /** 显示行表；渲染与命中共用。 */
     private final List<Row> rows = new ArrayList<Row>();
+    /** {@link #followLayout()} 组装新行表时的暂存，省得每帧新建一个列表。 */
+    private final List<Row> mergedRows = new ArrayList<Row>();
+
+    /** 目标内容高度（{@link #layout()} 写）。 */
     private double layoutHeight;
+    /** 面板目标宽度；分列后会宽于 {@link #PANEL_WIDTH}。 */
+    private double layoutWidth = PANEL_WIDTH;
+    /** 正在画的面板宽高：追着目标值走，所以分列与增删行都是「长出来」而不是瞬间跳。 */
+    private double shownWidth = -1;
+    private double shownHeight = -1;
+
+    /**
+     * 布局跟随速度，交给 {@link Interpolations#interpolate} 用。
+     *
+     * <p>与 {@code expandAnimation} 的 {@code .22f} 同一个量纲（乘帧时间），越大追得越快。取值下大约
+     * 八到十帧走完：切换样式时看得出是「长过去」的，又不会慢到让人以为没反应。</p>
+     *
+     * <p>刻意声明成 {@code float}：行透明度是 float，用它才能命中 {@code interpolate(float, float,
+     * float)} 这个重载；位置那几个 double 传进去会自动提升，不影响精度。</p>
+     */
+    private static final float LAYOUT_FOLLOW = .38f;
 
     /**
      * 面板的整体缩放，1 表示原尺寸。
@@ -389,12 +460,18 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
      * <p>布局与命中判定全部在<b>未缩放</b>的坐标系里做，只有绘制时套一次
      * {@code scaleAtPos(anchorX, panelTop, uiScale)}；鼠标坐标在进入面板逻辑之前用
      * {@link #toLayoutX}/{@link #toLayoutY} 反变换回去。这样「点得到的地方」和「画出来的地方」
-     * 永远是同一处，不需要在每个命中框上重复乘一遍缩放。</p>
+     * 永远是同一处，不需要在每个命中框上重复乘一遍缩放，缩放有过渡动画时也不会错位。</p>
      */
     private double uiScale = 1.0;
 
+    /** 目标缩放（{@link #updateUiScale()} 写）；{@link #uiScale} 追着它走。 */
+    private double targetUiScale = 1.0;
+
     /** 面板底部最多能画到哪（绝对坐标），由调用方给的视口高度算出。 */
     private double panelSpaceBottom = Double.NaN;
+
+    /** 歌词页视口的宽度，用来算「面板最宽能到哪」（见 {@link #availableWidth()}）。 */
+    private double viewWidth = Double.NaN;
 
     private boolean expanded;
     private float expandAnimation;
@@ -407,6 +484,15 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     /** 「隐现」完整参数超出可用高度时，面板内部滚动。 */
     private double scrollOffset;
     private double scrollTarget;
+
+    /**
+     * 上一帧已经扣掉的滚动量。
+     *
+     * <p>行位置要平滑跟随目标布局，而滚动是「整块平移、必须跟手」的——两者直接叠在一起的话，滚动会
+     * 被位置的平滑拖出一段黏滞。所以每帧先把上一次扣掉的滚动量退回去、平滑到目标之后再扣上这一次的：
+     * 位置动画照旧平滑，滚动依旧是即时的。</p>
+     */
+    private double appliedScroll;
 
     /** 正在编辑调色板的第几槽。 */
     private int editSlot;
@@ -422,13 +508,16 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private float lastAlpha;
 
     /**
-     * @param viewHeight 歌词页视口的高度，用来决定面板要不要整体缩小（见 {@link #MIN_UI_SCALE}）
+     * @param viewWidth  歌词页视口的宽度，用来算面板最宽能到哪（见 {@link #availableWidth()}）
+     * @param viewHeight 歌词页视口的高度，用来决定分几列、以及要不要整体缩小（见 {@link #MIN_UI_SCALE}）
      */
-    void render(double mouseX, double mouseY, double posX, double posY, double viewHeight, float alpha) {
+    void render(double mouseX, double mouseY, double posX, double posY,
+                double viewWidth, double viewHeight, float alpha) {
         if (alpha <= .004f) return;
         this.anchorX = posX + MARGIN;
         this.anchorY = posY + MARGIN;
         this.lastAlpha = alpha;
+        this.viewWidth = viewWidth;
         this.panelSpaceBottom = posY + viewHeight - MARGIN;
 
         // 面板收起时不再跟随鼠标，拖动状态也要清掉，否则收起后仍然会改数值。
@@ -445,7 +534,9 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
 
         layout();
         updateUiScale();
+        // 滚动先算：followLayout() 要靠本帧的滚动量把「上一帧扣掉的那一份」退回去。
         updateScroll();
+        followLayout();
         syncEditColor();
         updateDrag(mouseX, mouseY);
 
@@ -456,15 +547,49 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         renderButton(mouseX, mouseY, alpha);
     }
 
-    /** 视口装不下整块面板时等比缩小。装得下就恒为 1，行为与加这段之前完全一致。 */
+    /**
+     * 分列之后还是装不下时，才把整块面板等比缩小。
+     *
+     * <p>尺寸都是分列后的真实尺寸：{@link #layoutWidth} 可能已经宽过 {@link #PANEL_WIDTH}，
+     * {@link #layoutHeight} 是最高那一列的高度。所以这一档现在只在「窗口小到列数顶满还排不下」
+     * 时生效；只要排得下，{@code uiScale} 就是 1，字号与加这段之前完全一致。</p>
+     *
+     * <p>这里只算目标值，真正的缩放由 {@link #followLayout()} 平滑过去，窗口拉伸时不会一帧跳档。</p>
+     */
     private void updateUiScale() {
-        double needed = contentHeight();
-        double available = panelSpaceBottom - panelTop();
-        if (Double.isNaN(available) || available <= 8 || needed <= available || needed <= 0) {
-            uiScale = 1.0;
+        double available = availableHeight();
+        if (Double.isNaN(anchorY) || layoutHeight <= 0 || available <= 8) {
+            targetUiScale = 1.0;
             return;
         }
-        uiScale = Math.max(MIN_UI_SCALE, available / needed);
+        double scale = 1.0;
+        if (layoutHeight > available) {
+            scale = available / layoutHeight;
+        }
+        double room = availableWidth();
+        if (layoutWidth > room) {
+            scale = Math.min(scale, room / layoutWidth);
+        }
+        targetUiScale = Math.max(MIN_UI_SCALE, scale);
+    }
+
+    /** 面板顶部到视口底部可用的高度；视口高度未知时返回 {@link Double#MAX_VALUE}（等于不限制）。 */
+    private double availableHeight() {
+        if (Double.isNaN(panelSpaceBottom)) return Double.MAX_VALUE;
+        return Math.max(0.0, panelSpaceBottom - panelTop());
+    }
+
+    /**
+     * 面板左边缘到歌词列之间可用的宽度。
+     *
+     * <p>上限是 {@link LyricsPanelGeometry#lyricColumnLeft} 再往前留 {@link #PANEL_RIGHT_GAP}：
+     * 面板可以变宽，但绝不许压到歌词正文上。宽度未知时返回 {@link Double#MAX_VALUE}，此时列数
+     * 仍受 {@link #MAX_COLUMNS} 限制。</p>
+     */
+    private double availableWidth() {
+        if (Double.isNaN(viewWidth)) return Double.MAX_VALUE;
+        double limit = LyricsPanelGeometry.lyricColumnLeft(anchorX - MARGIN, viewWidth) - PANEL_RIGHT_GAP;
+        return Math.max(PANEL_WIDTH, limit - anchorX);
     }
 
     /**
@@ -474,7 +599,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         if (!expanded || wheel == 0 || Double.isNaN(anchorX)) return false;
         double layoutX = toLayoutX(mouseX);
         double layoutY = toLayoutY(mouseY);
-        if (!isInside(layoutX, layoutY, anchorX, panelTop(), PANEL_WIDTH, panelHeight())) {
+        if (!isInside(layoutX, layoutY, anchorX, panelTop(), shownWidth, panelHeight())) {
             return false;
         }
         double max = Math.max(0.0, contentHeight() - panelHeight());
@@ -488,10 +613,104 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         if (scrollOffset > max) scrollOffset = max;
         scrollOffset += (scrollTarget - scrollOffset) * .30;
         if (Math.abs(scrollTarget - scrollOffset) < .1) scrollOffset = scrollTarget;
-        if (scrollOffset <= .01) return;
-        for (int i = 0; i < rows.size(); i++) {
-            rows.get(i).y -= scrollOffset;
+    }
+
+    /**
+     * 合并目标行表，并把显示值平滑推向目标。
+     *
+     * <p>三件事一起做，顺序不能调：</p>
+     * <ol>
+     *   <li><b>认领</b>——目标表里每一条，按「同 kind 同 index」在上一帧的显示行里找它的前世。找不到
+     *       就是新出现的行：直接落在目标位置、从透明淡入，不从别处飞过来（对用户来说它就是「这里多了
+     *       一项」）。找到的行改写目标坐标，于是它自己滑过去，包括整行换列时横着挪一段。</li>
+     *   <li><b>退场</b>——上一帧有、这一帧目标表里没有的行留在原地淡出，淡到看不见才从行表里删掉。
+     *       直接删的话，切换样式时就是一排控件凭空消失；现在是它们先淡掉，后面几行紧接着补位。</li>
+     *   <li><b>平滑</b>——行位置 / 行透明度 / 面板宽高 / 整体缩放一起追目标值。</li>
+     * </ol>
+     *
+     * <p>已经认领过的行会打上 {@code present}，所以「同 key 出现两次」（理论上不会，layout() 里
+     * kind + index 唯一）只会认领到最近的那个，不会两行共用一个对象。</p>
+     */
+    private void followLayout() {
+        boolean first = shownWidth < 0;
+        if (first) {
+            // 面板第一次展开：直接落在目标尺寸上。出现的观感由 expandAnimation 负责，不必再叠一层。
+            shownWidth = layoutWidth;
+            shownHeight = layoutHeight;
+            uiScale = targetUiScale;
         }
+
+        for (int i = 0; i < rows.size(); i++) {
+            rows.get(i).present = false;
+        }
+
+        mergedRows.clear();
+        for (int i = 0; i < targetCount; i++) {
+            Row target = targetRows.get(i);
+            Row row = claimRow(rows, target.kind, target.index);
+            if (row == null) {
+                row = new Row();
+                row.kind = target.kind;
+                row.index = target.index;
+                row.x = target.targetX;
+                row.y = target.targetY - scrollOffset;
+                row.alpha = 0f;
+            }
+            row.present = true;
+            row.height = target.height;
+            row.targetX = target.targetX;
+            row.targetY = target.targetY;
+            row.targetAlpha = 1f;
+            mergedRows.add(row);
+        }
+        for (int i = 0; i < rows.size(); i++) {
+            Row row = rows.get(i);
+            if (row.present) continue;
+            // 退场：停在原地淡出，不跟着目标表的新位置跑。
+            row.targetAlpha = 0f;
+            row.targetX = row.x;
+            row.targetY = row.y + appliedScroll;
+            if (row.alpha > .015f) {
+                mergedRows.add(row);
+            }
+        }
+        rows.clear();
+        rows.addAll(mergedRows);
+
+        if (first) {
+            for (int i = 0; i < rows.size(); i++) {
+                Row row = rows.get(i);
+                row.x = row.targetX;
+                row.y = row.targetY - scrollOffset;
+                row.alpha = row.targetAlpha;
+            }
+            appliedScroll = scrollOffset;
+            return;
+        }
+
+        shownWidth = Interpolations.interpolate(shownWidth, layoutWidth, LAYOUT_FOLLOW);
+        shownHeight = Interpolations.interpolate(shownHeight, layoutHeight, LAYOUT_FOLLOW);
+        uiScale = Interpolations.interpolate(uiScale, targetUiScale, LAYOUT_FOLLOW);
+
+        for (int i = 0; i < rows.size(); i++) {
+            Row row = rows.get(i);
+            row.x = Interpolations.interpolate(row.x, row.targetX, LAYOUT_FOLLOW);
+            // 先把上一帧扣掉的滚动量退回来再平滑，滚动因此不会被位置动画拖慢。
+            row.y = Interpolations.interpolate(row.y + appliedScroll, row.targetY, LAYOUT_FOLLOW)
+                    - scrollOffset;
+            row.alpha = Interpolations.interpolate(row.alpha, row.targetAlpha, LAYOUT_FOLLOW);
+        }
+        appliedScroll = scrollOffset;
+    }
+
+    /** 在显示行表里找「同 kind 同 index」且这一帧还没被认领的行；没有就返回 null。 */
+    private Row claimRow(List<Row> pool, int kind, int index) {
+        for (int i = 0; i < pool.size(); i++) {
+            Row row = pool.get(i);
+            if (row.present || row.kind != kind || row.index != index) continue;
+            return row;
+        }
+        return null;
     }
 
     /** 屏幕坐标 -> 布局坐标。缩放是绕（anchorX, panelTop）做的，所以反变换也绕这一点。 */
@@ -505,84 +724,123 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     }
 
     /**
-     * 按当前配置顺序摆一遍行。
+     * 按当前配置顺序摆一遍行，并决定分几列。结果写进 {@link #targetRows}，不直接改显示行表。
+     *
+     * <p>行只负责「顺序」和「高度」；放在第几列、列内什么位置由
+     * {@link LyricsPanelGeometry#packQuickPanel} 统一分配。一列装得下时结果与不分列时逐像素一致。</p>
      *
      * <p>背景配色那几行只在「律动词云」样式下出现——它们只对那一种样式有效果，在经典样式下摆出来
      * 只会让人以为调了没反应。</p>
      */
     private void layout() {
-        rows.clear();
-        double top = panelTop();
-        double y = top + PANEL_PADDING + TITLE_HEIGHT;
-        y = addRow(KIND_STYLE, 0, y, PICK_ROW_HEIGHT);
-        y = addRow(KIND_BACKGROUND, 0, y, PICK_ROW_HEIGHT);
-        y = addRow(KIND_THEME_SOURCE, 0, y, PICK_ROW_HEIGHT);
+        targetCount = 0;
+        // ---- 1) 先按显示顺序把行收集起来 ----
+        addRow(KIND_STYLE, 0, PICK_ROW_HEIGHT);
+        addRow(KIND_BACKGROUND, 0, PICK_ROW_HEIGHT);
+        addRow(KIND_THEME_SOURCE, 0, PICK_ROW_HEIGHT);
         if (FullscreenLyricBackground.current() == FullscreenLyricBackground.LATENT) {
-            y = addRow(KIND_SECTION, 3, y, SECTION_HEIGHT);
-            y = addRow(KIND_LATENT_MODE, 0, y, PICK_ROW_HEIGHT);
-            y = addRow(KIND_LATENT_COLOR, 0, y, PICK_ROW_HEIGHT);
+            addRow(KIND_SECTION, 3, SECTION_HEIGHT);
+            addRow(KIND_LATENT_MODE, 0, PICK_ROW_HEIGHT);
+            addRow(KIND_LATENT_COLOR, 0, PICK_ROW_HEIGHT);
             for (int i = 0; i < LATENT_TOGGLES.length; i++) {
-                y = addRow(KIND_LATENT_TOGGLE, i, y, PICK_ROW_HEIGHT);
+                addRow(KIND_LATENT_TOGGLE, i, PICK_ROW_HEIGHT);
             }
             if (HudConfig.latentOverlayEnabled) {
-                y = addRow(KIND_LATENT_SLIDER, LATENT_OVERLAY_OPACITY, y, ROW_HEIGHT);
+                addRow(KIND_LATENT_SLIDER, LATENT_OVERLAY_OPACITY, ROW_HEIGHT);
             }
             if (HudConfig.latentBackgroundDisplayMode != 1) {
-                y = addRow(KIND_SECTION, 4, y, SECTION_HEIGHT);
+                addRow(KIND_SECTION, 4, SECTION_HEIGHT);
                 for (int i = LATENT_DITHER_SPEED; i <= LATENT_DITHER_OPACITY; i++) {
-                    y = addRow(KIND_LATENT_SLIDER, i, y, ROW_HEIGHT);
+                    addRow(KIND_LATENT_SLIDER, i, ROW_HEIGHT);
                 }
             }
             if (HudConfig.latentBackgroundDisplayMode != 0) {
-                y = addRow(KIND_SECTION, 5, y, SECTION_HEIGHT);
+                addRow(KIND_SECTION, 5, SECTION_HEIGHT);
                 for (int i = LATENT_MESH_SPEED; i <= LATENT_MESH_SWIRL; i++) {
-                    y = addRow(KIND_LATENT_SLIDER, i, y, ROW_HEIGHT);
+                    addRow(KIND_LATENT_SLIDER, i, ROW_HEIGHT);
                 }
             }
         }
         for (int i = 0; i < SETTINGS.length; i++) {
-            y = addRow(KIND_SLIDER, i, y, ROW_HEIGHT);
+            addRow(KIND_SLIDER, i, ROW_HEIGHT);
         }
         // 歌词同步：跟样式无关，只跟「这首歌的歌词对不对」有关，所以排在通用项之后、样式专属参数
         // 之前。刻意不放到面板最底下 —— 底部在「最小视口 + 律动词云自定义配色」那一档会被整体
         // 缩放裁掉，摆在那里会让这个功能在那种配置下直接够不到。
-        y = addRow(KIND_SECTION, 2, y, SECTION_HEIGHT);
-        y = addRow(KIND_LYRIC_RELOAD, 0, y, PICK_ROW_HEIGHT);
-        y = addRow(KIND_LYRIC_OFFSET, 0, y, ROW_HEIGHT);
+        addRow(KIND_SECTION, 2, SECTION_HEIGHT);
+        addRow(KIND_LYRIC_SOURCE, 0, PICK_ROW_HEIGHT);
+        addRow(KIND_LYRIC_RELOAD, 0, PICK_ROW_HEIGHT);
+        addRow(KIND_LYRIC_OFFSET, 0, ROW_HEIGHT);
         HudSetting[] styleSliders = styleSettings();
         int[] toggles = styleToggles();
         if (styleSliders.length > 0 || toggles.length > 0) {
-            y = addRow(KIND_SECTION, 1, y, SECTION_HEIGHT);
+            addRow(KIND_SECTION, 1, SECTION_HEIGHT);
             for (int i = 0; i < styleSliders.length; i++) {
-                y = addRow(KIND_STYLE_SLIDER, i, y, ROW_HEIGHT);
+                addRow(KIND_STYLE_SLIDER, i, ROW_HEIGHT);
             }
             for (int i = 0; i < toggles.length; i++) {
-                y = addRow(KIND_STYLE_TOGGLE, i, y, PICK_ROW_HEIGHT);
+                addRow(KIND_STYLE_TOGGLE, i, PICK_ROW_HEIGHT);
             }
         }
         if (FullscreenLyricStyle.current() == FullscreenLyricStyle.CADENZA) {
-            y = addRow(KIND_SECTION, 0, y, SECTION_HEIGHT);
-            y = addRow(KIND_DECOR_MODE, 0, y, PICK_ROW_HEIGHT);
+            addRow(KIND_SECTION, 0, SECTION_HEIGHT);
+            addRow(KIND_DECOR_MODE, 0, PICK_ROW_HEIGHT);
             if (HudConfig.cadenzaDecorColorMode == 1) {
-                y = addRow(KIND_BEATS, 0, y, ROW_HEIGHT);
-                y = addRow(KIND_COLOR_COUNT, 0, y, PICK_ROW_HEIGHT);
-                y = addRow(KIND_SWATCHES, 0, y, SWATCH_ROW_HEIGHT);
+                addRow(KIND_BEATS, 0, ROW_HEIGHT);
+                addRow(KIND_COLOR_COUNT, 0, PICK_ROW_HEIGHT);
+                addRow(KIND_SWATCHES, 0, SWATCH_ROW_HEIGHT);
                 for (int i = 0; i < HSB_LABELS.length; i++) {
-                    y = addRow(KIND_HSB, i, y, HSB_ROW_HEIGHT);
+                    addRow(KIND_HSB, i, HSB_ROW_HEIGHT);
                 }
             }
         }
-        layoutHeight = y - top + PANEL_PADDING;
+
+        // ---- 2) 交给纯几何层分列：装不下就加列，而不是把字缩小 ----
+        int count = targetCount;
+        double[] heights = new double[count];
+        boolean[] keepWithNext = new boolean[count];
+        for (int i = 0; i < count; i++) {
+            Row row = targetRows.get(i);
+            heights[i] = row.height;
+            // 分节小标题必须和它管的第一行同列，否则标题孤零零挂在列尾。
+            keepWithNext[i] = row.kind == KIND_SECTION;
+        }
+        LyricsPanelGeometry.ColumnPacking packing = LyricsPanelGeometry.packQuickPanel(
+                heights, keepWithNext, availableWidth(), availableHeight(),
+                PANEL_PADDING * 2 + TITLE_HEIGHT, PANEL_WIDTH, COLUMN_GAP, MAX_COLUMNS);
+
+        // ---- 3) 按分列结果定位；列内高度各自累加，滚动照旧整块平移 ----
+        double contentTop = panelTop() + PANEL_PADDING + TITLE_HEIGHT;
+        double[] columnUsed = new double[packing.columns];
+        for (int i = 0; i < count; i++) {
+            Row row = targetRows.get(i);
+            int column = packing.columnOf[i];
+            row.targetX = columnLeft(column);
+            row.targetY = contentTop + columnUsed[column];
+            columnUsed[column] += row.height;
+        }
+        this.layoutWidth = packing.width;
+        this.layoutHeight = PANEL_PADDING * 2 + TITLE_HEIGHT + packing.maxColumnHeight;
     }
 
-    private double addRow(int kind, int index, double y, double height) {
-        Row row = new Row();
+    private void addRow(int kind, int index, double height) {
+        Row row = targetRow(targetCount++);
         row.kind = kind;
         row.index = index;
-        row.y = y;
         row.height = height;
-        rows.add(row);
-        return y + height;
+    }
+
+    /** 目标表里第 {@code i} 行。行对象在这里复用，稳态下不再分配。 */
+    private Row targetRow(int i) {
+        while (targetRows.size() <= i) {
+            targetRows.add(new Row());
+        }
+        return targetRows.get(i);
+    }
+
+    /** 第 {@code column} 列的左边缘。 */
+    private double columnLeft(int column) {
+        return anchorX + column * (PANEL_WIDTH + COLUMN_GAP);
     }
 
     /**
@@ -611,7 +869,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         double layoutX = toLayoutX(mouseX);
         double layoutY = toLayoutY(mouseY);
 
-        if (!isInside(layoutX, layoutY, anchorX, panelTop(), PANEL_WIDTH, panelHeight())) {
+        if (!isInside(layoutX, layoutY, anchorX, panelTop(), shownWidth, panelHeight())) {
             // 点面板外面就收起来，并且这一下不吃掉：让它照常落到下面的控件上。
             expanded = false;
             releaseDrag();
@@ -621,7 +879,9 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         if (mouseButton == 0 || mouseButton == 1) {
             for (int i = 0; i < rows.size(); i++) {
                 Row row = rows.get(i);
-                if (!isInside(layoutX, layoutY, trackLeft(), row.y - 2, trackWidth(), row.height)) {
+                // 正在淡入 / 淡出的行不接受点击：看得见一点点却点得到，比点不到更难理解。
+                if (row.alpha <= .5f) continue;
+                if (!isInside(layoutX, layoutY, rowLeft(row), row.y - 2, trackWidth(), row.height)) {
                     continue;
                 }
                 handleRowClick(row, layoutX, mouseButton);
@@ -649,6 +909,12 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             else ThemeColorSource.next();
             return;
         }
+        if (row.kind == KIND_LYRIC_SOURCE) {
+            // 左键往后一档、右键往前一档，与上面「样式 / 背景 / 配色来源」几条完全一致。
+            // 切换本身就等于重取，所以这一行不需要再有第二个动作。
+            CloudMusic.cycleLyricSource(!right);
+            return;
+        }
         if (row.kind == KIND_LYRIC_RELOAD) {
             // 只认左键：右键留在「重置偏移」那条上，这两件事都很容易误触，分开更安全。
             if (!right) CloudMusic.reloadLyrics();
@@ -661,7 +927,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             }
             dragKind = row.kind;
             dragIndex = row.index;
-            applyDrag(mouseX);
+            applyDrag(mouseX, rowLeft(row));
             return;
         }
         if (row.kind == KIND_DECOR_MODE) {
@@ -685,7 +951,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             return;
         }
         if (row.kind == KIND_SWATCHES) {
-            int slot = swatchAt(mouseX);
+            int slot = swatchAt(mouseX, row);
             if (slot < 0) return;
             if (right) {
                 // 右键把这一槽恢复出厂色：调砸了以后总得有条退路。
@@ -732,7 +998,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
                 || row.kind == KIND_STYLE_SLIDER || row.kind == KIND_LATENT_SLIDER) {
             dragKind = row.kind;
             dragIndex = row.index;
-            applyDrag(mouseX);
+            applyDrag(mouseX, rowLeft(row));
         }
     }
 
@@ -744,14 +1010,31 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             releaseDrag();
             return;
         }
-        applyDrag(toLayoutX(mouseX));
+        applyDrag(toLayoutX(mouseX), dragRowLeft());
     }
 
-    private void applyDrag(double mouseX) {
+    /**
+     * 正在拖的那一行落在哪一列的左边缘。
+     *
+     * <p>每帧重新查，不缓存按下时的横坐标：拖动过程中开关会增删行，布局可能整块重排（列数变化、
+     * 行换列）。用上一帧的坐标会让滑块突然跳到别处。</p>
+     */
+    private double dragRowLeft() {
+        for (int i = 0; i < rows.size(); i++) {
+            Row row = rows.get(i);
+            if (row.kind == dragKind && row.index == dragIndex) {
+                return rowLeft(row);
+            }
+        }
+        // 行已经不在了（比如拖动中把这一段收起来了）：退回第一列，至少不算错。
+        return anchorX + PANEL_PADDING;
+    }
+
+    private void applyDrag(double mouseX, double left) {
         if (dragKind == KIND_SLIDER) {
             if (dragIndex < 0 || dragIndex >= SETTINGS.length) return;
             HudSetting setting = SETTINGS[dragIndex];
-            double fraction = fractionAt(mouseX, trackLeft(), trackWidth());
+            double fraction = fractionAt(mouseX, left, trackWidth());
             setting.setValue((float) (setting.getMin() + (setting.getMax() - setting.getMin()) * fraction));
             pendingSave = true;
             return;
@@ -760,14 +1043,14 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             HudSetting[] sliders = styleSettings();
             if (dragIndex < 0 || dragIndex >= sliders.length) return;
             HudSetting setting = sliders[dragIndex];
-            double fraction = fractionAt(mouseX, trackLeft(), trackWidth());
+            double fraction = fractionAt(mouseX, left, trackWidth());
             setting.setValue((float) (setting.getMin() + (setting.getMax() - setting.getMin()) * fraction));
             pendingSave = true;
             return;
         }
         if (dragKind == KIND_LATENT_SLIDER) {
             if (dragIndex < 0 || dragIndex >= LATENT_SLIDER_LABELS.length) return;
-            double fraction = fractionAt(mouseX, trackLeft(), trackWidth());
+            double fraction = fractionAt(mouseX, left, trackWidth());
             float value = (float) (LATENT_SLIDER_MIN[dragIndex]
                     + (LATENT_SLIDER_MAX[dragIndex] - LATENT_SLIDER_MIN[dragIndex]) * fraction);
             setLatentSliderValue(dragIndex, value);
@@ -775,7 +1058,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             return;
         }
         if (dragKind == KIND_BEATS) {
-            double fraction = fractionAt(mouseX, trackLeft(), trackWidth());
+            double fraction = fractionAt(mouseX, left, trackWidth());
             int span = HudConfig.CADENZA_BEATS_PER_COLOR_MAX - HudConfig.CADENZA_BEATS_PER_COLOR_MIN;
             HudConfig.cadenzaBeatsPerColor = HudConfig.CADENZA_BEATS_PER_COLOR_MIN
                     + (int) Math.round(fraction * span);
@@ -787,7 +1070,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             // 直接写回去会把颜色写成别的东西（最糟的情况是饱和度与明度都是 0，写出纯黑）。
             // 渲染每帧都会同步，所以正常操作下这里是空转；但正确性不该依赖「点击之前一定渲染过」。
             syncEditColor();
-            double fraction = fractionAt(mouseX, hsbTrackLeft(), hsbTrackWidth());
+            double fraction = fractionAt(mouseX, left + HSB_LABEL_WIDTH, hsbTrackWidth());
             if (dragIndex == 0) {
                 editHue = (float) fraction;
             } else if (dragIndex == 1) {
@@ -869,28 +1152,75 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         float panelAlpha = (float) (alpha * eased);
         double panelTop = panelTop();
         double height = panelHeight();
+        // 画的是显示尺寸而不是目标尺寸：切换样式 / 分列时面板是「长过去」的，边框和内容一起动。
+        double width = Math.max(PANEL_WIDTH, shownWidth);
 
         api.getGLStateManager().pushMatrix();
         // 从按钮左上角展开：只放大不平移，收起时看起来是被按钮"吸"回去的。
         // uiScale 是「装不下就整体缩小」，展开动画那一档只在动画期间偏离 1。
         scaleAtPos(anchorX, panelTop, uiScale * (.90 + .10 * eased));
         try {
-            roundedRect(anchorX, panelTop, PANEL_WIDTH, height, 10, hexColor(.06f, .07f, .09f, panelAlpha * .88f));
-            roundedOutline(anchorX, panelTop, PANEL_WIDTH, height, 10, .8,
+            roundedRect(anchorX, panelTop, width, height, 10, hexColor(.06f, .07f, .09f, panelAlpha * .88f));
+            roundedOutline(anchorX, panelTop, width, height, 10, .8,
                     new java.awt.Color(1f, 1f, 1f, Math.max(0f, Math.min(1f, panelAlpha * .16f))));
 
             FontManager.pf14bold.drawString("歌词显示", anchorX + PANEL_PADDING,
                     panelTop + PANEL_PADDING, hexColor(1f, 1f, 1f, panelAlpha));
 
+            renderColumnDividers(panelTop, width, height, panelAlpha);
+
             double top = panelTop();
             double bottom = top + height;
+            double contentBottom = bottom - PANEL_PADDING;
+            double panelRight = anchorX + width;
             for (int i = 0; i < rows.size(); i++) {
                 Row row = rows.get(i);
                 if (row.y + row.height < top || row.y > bottom) continue;
-                renderRow(row, mouseX, mouseY, panelAlpha);
+
+                float rowAlpha = panelAlpha * row.alpha;
+                // 面板还在变高时露头的行按「离内容区下沿多远」渐显，免得被硬切一刀；
+                // 分列时右侧那一列也是同样处理，面板还没长宽过去就先淡着。
+                double overflow = row.y + row.height - contentBottom;
+                if (overflow > 0) {
+                    rowAlpha *= (float) Math.max(0.0, 1.0 - overflow / 18.0);
+                }
+                double rightOverflow = row.x + PANEL_PADDING + trackWidth() - panelRight;
+                if (rightOverflow > 0) {
+                    rowAlpha *= (float) Math.max(0.0, 1.0 - rightOverflow / 12.0);
+                }
+                if (rowAlpha <= .004f) continue;
+
+                // 淡出中的行把鼠标坐标推到无穷远：不画 hover 高亮、也不出手型光标，
+                // 免得「看着已经没了却还有反应」。
+                boolean live = row.alpha > .5f;
+                renderRow(row, live ? mouseX : Double.NEGATIVE_INFINITY,
+                        live ? mouseY : Double.NEGATIVE_INFINITY, rowAlpha);
             }
         } finally {
             api.getGLStateManager().popMatrix();
+        }
+    }
+
+    /**
+     * 分列时在两列之间画一道很淡的竖线。
+     *
+     * <p>没有这道线，两列的行会被读成同一条纵向流（尤其列首是两条滑块时），加一条线就能让人看出
+     * 「左列读到底，再读右列」。</p>
+     *
+     * <p>分列的过渡动画期间宽度是从一列长到两列的，所以这条线按「面板右边缘越过它的程度」淡入，
+     * 不然会在某一帧凭空冒出来。</p>
+     */
+    private void renderColumnDividers(double panelTop, double width, double height, float panelAlpha) {
+        double contentTop = panelTop + PANEL_PADDING + TITLE_HEIGHT;
+        double contentBottom = panelTop + height - PANEL_PADDING;
+        double dividerHeight = Math.max(0.0, contentBottom - contentTop);
+        if (dividerHeight <= 0) return;
+        for (int column = 1; column * (PANEL_WIDTH + COLUMN_GAP) < width + COLUMN_GAP; column++) {
+            double x = anchorX + column * (PANEL_WIDTH + COLUMN_GAP) - COLUMN_GAP * .5;
+            double fade = Math.max(0.0, Math.min(1.0, (width - x) / (COLUMN_GAP * .5)));
+            if (fade <= .01) continue;
+            roundedRect(x - .5, contentTop, 1.0, dividerHeight, 0,
+                    hexColor(1f, 1f, 1f, (float) (panelAlpha * .09f * fade)));
         }
     }
 
@@ -970,12 +1300,16 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             } else {
                 title = "背景配色";
             }
-            FontManager.pf12bold.drawString(title, trackLeft(), row.y + 3,
+            FontManager.pf12bold.drawString(title, rowLeft(row), row.y + 3,
                     hexColor(1f, 1f, 1f, panelAlpha * .52f));
             return;
         }
+        if (row.kind == KIND_LYRIC_SOURCE) {
+            renderPickRow(row, "歌词来源", lyricSourceValue(), mouseX, mouseY, panelAlpha);
+            return;
+        }
         if (row.kind == KIND_LYRIC_RELOAD) {
-            renderPickRow(row, "歌词来源", "重新匹配", mouseX, mouseY, panelAlpha);
+            renderPickRow(row, "重新匹配", "再取一次", mouseX, mouseY, panelAlpha);
             return;
         }
         if (row.kind == KIND_LYRIC_OFFSET) {
@@ -1008,7 +1342,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     /** 整行按钮：左边标签、右边当前值，点一下换下一个。 */
     private void renderPickRow(Row row, String label, String value,
                                double mouseX, double mouseY, float panelAlpha) {
-        double left = trackLeft();
+        double left = rowLeft(row);
         double width = trackWidth();
         double barHeight = row.height - 4;
         boolean hover = isInside(mouseX, mouseY, left, row.y, width, barHeight);
@@ -1029,9 +1363,30 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
                 reAlpha(accent, panelAlpha));
     }
 
+    /**
+     * 「歌词来源」那一行右侧的文本。
+     *
+     * <p>自动档下把<b>实际生效</b>的源也带上（{@code 自动 · AMLL}）：自动匹配错的时候，用户第一件
+     * 想知道的事就是「这份歌词到底是从哪来的」——不知道是哪个源给的，也就无从知道该换到哪一档。
+     * 而「换个源到底有没有生效」也正是这一行最需要给回执的地方。</p>
+     *
+     * <p>指定了来源、但那个源这次没货（加载链已回落）时标出「未命中」。否则界面会写着「AMLL」，
+     * 屏幕上的歌词却来自别处，用户只会再来一次「点了没反应」。</p>
+     */
+    private String lyricSourceValue() {
+        int pinned = CloudMusic.getLyricSource();
+        int served = CloudMusic.getServedLyricSource();
+        String pinnedName = LyricSourceMemory.displayName(pinned);
+        if (pinned != LyricSourceMemory.AUTO) {
+            if (served < 0 || served == pinned) return pinnedName;
+            return pinnedName + " · 未命中";
+        }
+        return served < 0 ? pinnedName : pinnedName + " · " + LyricSourceMemory.displayName(served);
+    }
+
     private void renderSettingRow(Row row, HudSetting setting,
                                   double mouseX, double mouseY, float panelAlpha) {
-        double left = trackLeft();
+        double left = rowLeft(row);
         double width = trackWidth();
         double trackY = row.y + 16;
 
@@ -1052,7 +1407,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
 
     private void renderLatentSettingRow(Row row, double mouseX, double mouseY, float panelAlpha) {
         if (row.index < 0 || row.index >= LATENT_SLIDER_LABELS.length) return;
-        double left = trackLeft();
+        double left = rowLeft(row);
         double width = trackWidth();
         double trackY = row.y + 16;
         float value = latentSliderValue(row.index);
@@ -1073,7 +1428,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     }
 
     private void renderBeatsRow(Row row, double mouseX, double mouseY, float panelAlpha) {
-        double left = trackLeft();
+        double left = rowLeft(row);
         double width = trackWidth();
         double trackY = row.y + 16;
 
@@ -1095,7 +1450,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
 
     /** 时间偏移行：轨道中点就是 0，往左歌词提前、往右歌词延后，右键归零。 */
     private void renderLyricOffsetRow(Row row, double mouseX, double mouseY, float panelAlpha) {
-        double left = trackLeft();
+        double left = rowLeft(row);
         double width = trackWidth();
         double trackY = row.y + 16;
 
@@ -1142,9 +1497,10 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private void renderSwatchRow(Row row, double mouseX, double mouseY, float panelAlpha) {
         int count = HudConfig.cadenzaColorCount();
         double cellWidth = swatchWidth(count);
+        double left = rowLeft(row);
         double y = row.y + (row.height - SWATCH_HEIGHT) * .5;
         for (int i = 0; i < count; i++) {
-            double x = trackLeft() + i * (cellWidth + SWATCH_GAP);
+            double x = left + i * (cellWidth + SWATCH_GAP);
             boolean hover = isInside(mouseX, mouseY, x, y, cellWidth, SWATCH_HEIGHT);
             if (hover) {
                 CursorUtils.setOverride(CursorUtils.HAND);
@@ -1169,11 +1525,11 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
      * 里关于 {@code rqg.frag} 的注释），而这里的轨道是要跟着面板一起淡入淡出的。</p>
      */
     private void renderHsbRow(Row row, double mouseX, double mouseY, float panelAlpha) {
-        double left = hsbTrackLeft();
+        double left = hsbTrackLeft(row);
         double width = hsbTrackWidth();
         double trackY = row.y + (row.height - HSB_TRACK_HEIGHT) * .5;
 
-        FontManager.pf12bold.drawString(HSB_LABELS[row.index], trackLeft(),
+        FontManager.pf12bold.drawString(HSB_LABELS[row.index], rowLeft(row),
                 row.y + (row.height - FontManager.pf12bold.getFontHeight()) * .5,
                 hexColor(1f, 1f, 1f, panelAlpha * .62f));
 
@@ -1211,11 +1567,12 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     }
 
     /** 鼠标横坐标落在第几个色块上；不在任何色块上返回 -1。 */
-    private int swatchAt(double mouseX) {
+    private int swatchAt(double mouseX, Row row) {
         int count = HudConfig.cadenzaColorCount();
         double cellWidth = swatchWidth(count);
+        double left = rowLeft(row);
         for (int i = 0; i < count; i++) {
-            double x = trackLeft() + i * (cellWidth + SWATCH_GAP);
+            double x = left + i * (cellWidth + SWATCH_GAP);
             if (mouseX >= x && mouseX <= x + cellWidth) return i;
         }
         return -1;
@@ -1230,9 +1587,14 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         return anchorY + BUTTON_SIZE + 6;
     }
 
-    /** 面板完整内容高度，来自最近一次 {@link #layout()}。 */
+    /**
+     * 面板完整内容高度（= 最高那一列的高度 + 标题 + 上下内边距）。
+     *
+     * <p>取的是<b>显示高度</b>（{@link #followLayout()} 平滑过的那一份）而不是目标值：面板正在为增删
+     * 行改变大小时，上下的滚动余量要跟着边框一起变，不然滚动范围会在动画期间和看到的框对不上。</p>
+     */
     private double contentHeight() {
-        return layoutHeight > 0 ? layoutHeight : PANEL_PADDING * 2 + TITLE_HEIGHT;
+        return shownHeight > 0 ? shownHeight : PANEL_PADDING * 2 + TITLE_HEIGHT;
     }
 
     /** 当前可见高度；内容比视口高时截到视口底部，其余通过内部滚动查看。 */
@@ -1243,16 +1605,17 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         return Math.min(content, available / Math.max(.01, uiScale));
     }
 
-    private double trackLeft() {
-        return anchorX + PANEL_PADDING;
+    /** 一行控件的左边缘 = 它所在列的左边缘 + 面板内边距。 */
+    private double rowLeft(Row row) {
+        return row.x + PANEL_PADDING;
     }
 
     private double trackWidth() {
         return PANEL_WIDTH - PANEL_PADDING * 2;
     }
 
-    private double hsbTrackLeft() {
-        return trackLeft() + HSB_LABEL_WIDTH;
+    private double hsbTrackLeft(Row row) {
+        return rowLeft(row) + HSB_LABEL_WIDTH;
     }
 
     private double hsbTrackWidth() {

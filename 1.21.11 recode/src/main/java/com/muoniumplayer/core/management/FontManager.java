@@ -254,8 +254,8 @@ public class FontManager extends AbstractManager {
         youtubeIcon24 = create(24, "youtube-icons");
         youtubeIcon34 = create(34, "youtube-icons");
         qqMusicIcon16 = create(16, "qq-music-icons");
-        // The QQ Music brand glyph has more internal whitespace than the NetEase glyph.
-        // Use a dedicated larger renderer in the source switcher so both providers read at the same visual size.
+        // QQ 音乐品牌字形比网易云音乐字形有更多内部空白。
+        // 在源切换器中使用专门的更大渲染器，使两个提供方在相同视觉大小下显示。
         qqMusicIcon20 = create(20, "qq-music-icons");
         qqMusicIcon68 = create(68, "qq-music-icons");
         queueIcon34 = create(34, "player-queue-icons");
@@ -278,10 +278,10 @@ public class FontManager extends AbstractManager {
     }
 
     /**
-     * Font renderers are constructed synchronously in {@link #loadFonts()}; none
-     * are initialized by a later worker. The former endless polling loop therefore
-     * could never repair a missing assignment/resource and froze Forge's loading
-     * screen while spamming the log. Validate once and continue startup instead.
+     * 字体渲染器在 {@link #loadFonts()} 中同步构造；没有任何一个
+     * 由后续 worker 初始化。因此之前的无限轮询循环永远无法
+     * 修复缺失的赋值/资源，只会冻结 Forge 的加载界面
+     * 同时刷屏日志。改为一次性验证后继续启动。
      */
     public static void waitUntilAllLoaded() {
         List<String> missing = Arrays.stream(FontManager.class.getDeclaredFields())
@@ -454,8 +454,8 @@ public class FontManager extends AbstractManager {
             update = parseJava8Update(System.getProperty("java.runtime.version", ""));
         }
 
-        // Java 8u51 is the affected target environment.  Keep newer Java 8
-        // runtimes on the original SF Pro appearance.
+        // Java 8u51 是受影响的目标环境。让更新的 Java 8
+        // 运行时保持原始的 SF Pro 外观。
         return update >= 0 && update <= 60;
     }
 

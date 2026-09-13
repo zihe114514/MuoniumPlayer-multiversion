@@ -10,6 +10,7 @@ import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.OptionsUtil;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.FoliaModelNotice;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.StencilClipManager;
@@ -116,6 +117,14 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     public ConfirmationOverlay confirmationOverlay = null;
 
     /**
+     * 「还没装 Folia 分析模型」的一次性提示层。
+     *
+     * <p>与二次确认同层、同样独占输入。只在<b>本次启动第一次打开播放器</b>时挂上去一次，
+     * 判定与闸门都在 {@link FoliaModelNotice}。</p>
+     */
+    public ModelInstallNoticeOverlay modelInstallNoticeOverlay = null;
+
+    /**
      * 表示是否需要重新布局, 当用户信息和用户歌单加载完设置为 true,
      * 然后会自动进行重新布局并设为 false
      */
@@ -189,6 +198,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     public void onGuiClosed() {
         Keyboard.enableRepeatEvents(false);
         PlayerIslandTransition.abort();
+        // 提示层不跨「一次打开播放器」存活：下次打开时由 maybeShowModelNotice 重新决定要不要弹，
+        // 而「本次启动已弹过」的闸门在 FoliaModelNotice 里，所以这里清掉不会导致重复提示。
+        this.modelInstallNoticeOverlay = null;
     }
 
     public void layout() {
@@ -320,6 +332,12 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 //        }));
 
         this.checkDirty();
+
+        // 「本次启动第一次打开播放器」的模型提示。放在这里而不是 initGui：岛屿展开动画跑完
+        // 才算真的「打开了播放器」，在动画中间糊一张卡片会跟展开过程打架。内部自带
+        // 「本次启动只弹一次」「确实还缺组件」「没有别的模态占着」三道闸，条件不满足时
+        // 只是一次布尔判断。
+        this.maybeShowModelNotice();
 
         int dWheel = Mouse.getDWheel();
 
@@ -604,6 +622,19 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             StencilClipManager.endClip();
         }
 
+        // 未安装分析模型的一次性提示：与二次确认同层，同样独占鼠标/滚轮输入。
+        if (this.modelInstallNoticeOverlay != null) {
+            StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+            this.modelInstallNoticeOverlay.setBounds(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight());
+            this.modelInstallNoticeOverlay.setAlpha(alpha);
+            this.modelInstallNoticeOverlay.renderWidget(mouseX, mouseY, 0);
+            if (this.modelInstallNoticeOverlay.shouldClose()) {
+                this.modelInstallNoticeOverlay = null;
+            }
+            StencilClipManager.endClip();
+        }
+
         // 这组边框使用最终 basePanel 坐标。岛屿展开/收回期间内容被压进移动中的 surface，
         // 如果这里照常绘制，屏幕上会出现一个提前停在最终播放器大小的静态落点边框。
         // 转场表面自己已有跟随几何的 outline；最终外框等动画完全停稳后再出现。
@@ -812,6 +843,28 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.confirmationOverlay.onInit();
     }
 
+    /**
+     * 本次启动第一次打开播放器、且确实还有分析组件没装时，挂上安装提示。
+     *
+     * <p>判定与「本次启动只弹一次」的闸门都在 {@link FoliaModelNotice} 里；这里只负责挑时机：
+     * 岛屿展开动画已经跑完、没有别的模态占着、也不在全屏歌词页上。条件不满足时它只是一串
+     * 布尔判断，所以每帧问一次是安全的。</p>
+     */
+    private void maybeShowModelNotice() {
+        if (this.modelInstallNoticeOverlay != null) return;
+        // 展开动画期间播放器表面还在动，这时弹一张居中卡片会跟着一起漂。
+        if (PlayerIslandTransition.isRunning()) return;
+        // 正在关闭的播放器不需要再来一张新卡片。
+        if (this.closing) return;
+        // 全屏歌词页上不打断；与其它模态浮层同理，一次只让一层独占输入。
+        if (this.musicLyricsPanel != null) return;
+        if (isModalOverlayActive()) return;
+        if (!FoliaModelNotice.shouldShow()) return;
+        this.modelInstallNoticeOverlay = new ModelInstallNoticeOverlay();
+        this.modelInstallNoticeOverlay.onInit();
+        FoliaModelNotice.markShownThisSession();
+    }
+
     public void openAccountManager() {
         if (this.accountManagerOverlay != null) this.accountManagerOverlay.dispose();
         this.accountManagerOverlay = new AccountManagerOverlay();
@@ -855,6 +908,14 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     @Override
     public void keyTyped(char typedChar, int keyCode) {
+
+        if (this.modelInstallNoticeOverlay != null) {
+            // ESC 等价于「稍后再说」，不会顺手把播放器一起关掉。
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                this.modelInstallNoticeOverlay.handleEscape();
+            }
+            return;
+        }
 
         if (this.confirmationOverlay != null) {
             if (keyCode == Keyboard.KEY_ESCAPE) {
@@ -969,7 +1030,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
      * 滚轮必须用同一套判断，否则弹窗里滚动会连带下层一起滚。
      */
     private boolean isModalOverlayActive() {
-        return this.confirmationOverlay != null
+        return this.modelInstallNoticeOverlay != null
+                || this.confirmationOverlay != null
                 || this.themePaletteOverlay != null
                 || this.fontPickerOverlay != null
                 || this.musicSourceOverlay != null
@@ -989,6 +1051,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         double mouseX = mX / xScale;
         double mouseY = mY / yScale;
         WindowAdaptiveScale.end();
+
+        if (this.modelInstallNoticeOverlay != null) {
+            this.modelInstallNoticeOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            return;
+        }
 
         if (this.confirmationOverlay != null) {
             this.confirmationOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);

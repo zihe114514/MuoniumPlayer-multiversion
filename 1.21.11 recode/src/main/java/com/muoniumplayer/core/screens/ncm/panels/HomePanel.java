@@ -59,7 +59,7 @@ public class HomePanel extends NCMPanel {
     }
 
     /**允许数字专辑等发现卡片保持歌单卡片外观，而
-     * opening their provider-specific detail action instead of treating an album as a playlist. */
+     * 打开它们的提供方特定详情操作，而不是将专辑当作歌单处理。 */
     public HomePanel(List<PlayList> playlists, String recommendationTitle, Map<Long, Runnable> cardActions) {
         super();
         this.platform = NeteaseMusicService.getCurrentPlatform();

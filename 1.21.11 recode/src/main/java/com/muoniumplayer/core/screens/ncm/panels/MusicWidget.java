@@ -154,8 +154,8 @@ public class MusicWidget extends RoundedRectWidget {
         boolean musicDirty = music.isDirty();
         double dirtyIndicatorSize = 8;
         boolean digitalAlbumTrack = music.isDigitalAlbumTrack();
-        // A digital-album purchase is a different entitlement from a VIP-only stream;
-        // show one clear badge instead of a redundant "VIP + 专辑" pair.
+        // 数字专辑购买是与仅限 VIP 流媒体不同的权益；
+        // 显示一个清晰的徽章，而不是冗余的 "VIP + 专辑" 组合。
         boolean vipRestricted = music.hasVipRestriction() && !digitalAlbumTrack;
         boolean cloudSong = music.isCloudSong();
         String highestQuality = music.getHighestQualityLabel();

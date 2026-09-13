@@ -34,7 +34,7 @@ public class Image implements SharedConstants {
         Rect.draw(x, y + height - lineLength, lineSize, lineLength, lineColor);
         Rect.draw(x, y + height - lineSize, lineLength, lineSize, lineColor);
 
-        // right bottom
+        // 右下
         Rect.draw(x + width - lineLength, y + height - lineSize, lineLength, lineSize, lineColor);
         Rect.draw(x + width - lineSize, y + height - lineLength, lineSize, lineLength, lineColor);
 

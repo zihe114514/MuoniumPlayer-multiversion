@@ -563,7 +563,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         api.getGLStateManager().popMatrix();
         // 快捷面板画在最后：它是浮层，必须盖在封面与歌词之上。
         if (!TransitionPerformanceBudget.skipLyricQuickPanel()) {
-            this.styleQuickPanel.render(mouseX, mouseY, posX, posY, height, alpha);
+            this.styleQuickPanel.render(mouseX, mouseY, posX, posY, width, height, alpha);
         }
         api.getGLStateManager().popMatrix();
     }

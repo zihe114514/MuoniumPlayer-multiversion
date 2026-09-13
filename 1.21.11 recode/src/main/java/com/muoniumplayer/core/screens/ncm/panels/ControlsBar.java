@@ -465,7 +465,7 @@ public class ControlsBar extends NCMPanel {
                     double selectorWidth = Math.max(56.0 * scale, Math.min(112.0 * scale, desiredWidth));
                     double selectorX = volumeX - selectorGap - selectorWidth;
 
-                    // On a very narrow player, shrink only enough to remain inside the footer;
+                    // 在极窄的播放器上，仅收缩到足以留在页脚内；
                     //标签本身安全裁剪，而非整个质量动作消失。
                     if (selectorX < 6.0) {
                         selectorWidth = Math.max(34.0 * scale, volumeX - selectorGap - 6.0);

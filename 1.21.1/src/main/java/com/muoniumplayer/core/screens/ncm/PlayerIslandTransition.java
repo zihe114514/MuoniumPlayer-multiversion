@@ -100,7 +100,11 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
             capsuleHandoffMix = 0.0;
         }
         lastTickNanos = System.nanoTime();
-        DownloadDynamicIsland.beginPlayerSurfaceTransition();
+        if (state == OPEN) {
+            DownloadDynamicIsland.finishPlayerSurfaceTransition();
+        } else {
+            DownloadDynamicIsland.beginPlayerSurfaceTransition();
+        }
         captureTarget();
 
         if (state == IDLE) {
@@ -156,6 +160,9 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         // Once fully open, the normal panel owns rendering. Refresh only the four cached outputs;
         // this avoids re-solving two bezier curves and rebuilding the pulse every idle player frame.
         if (state == OPEN) {
+            // Screen resize/init can call open() again while the player is already open. Finish any
+            // re-armed surface transition so notifications are not blocked indefinitely.
+            DownloadDynamicIsland.finishPlayerSurfaceTransition();
             surfaceBoundsCache[0] = targetX;
             surfaceBoundsCache[1] = targetY;
             surfaceBoundsCache[2] = targetWidth;
@@ -172,6 +179,7 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
             if (t >= 1.0) {
                 t = 1.0;
                 state = OPEN;
+                DownloadDynamicIsland.finishPlayerSurfaceTransition();
             }
         } else if (state == CLOSING) {
             t = Math.max(0.0, t - deltaMs / closeDuration());

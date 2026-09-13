@@ -80,9 +80,12 @@ final class FoliaTrackProfiler {
                 if (outgoing) { profile.outroKeyTonic=key.tonic; profile.outroKeyMajor=key.major; profile.outroKeyConfidence=key.confidence; }
                 else { profile.introKeyTonic=key.tonic; profile.introKeyMajor=key.major; profile.introKeyConfidence=key.confidence; }
             }
-            profile.leadInMillis = outgoing ? 0f : AutomixAnalyzer.detectIntroEnd(mono, audio.sampleRate()) * 1000f;
-            float landing = outgoing ? AutomixAnalyzer.detectOutroLanding(mono, audio.sampleRate()) : 0f;
-            profile.outroLandingMillis = start + landing * 1000f;
+            profile.leadInMillis = outgoing ? 0f : AutomixAnalyzer.detectIntroEnd(mono, audio.sampleRate());
+            float landingMillis = outgoing ? AutomixAnalyzer.detectOutroLanding(mono, audio.sampleRate()) : 0f;
+            // detectOutroLanding 用 -1 表示「整段窗口没有可测电平」，不是「窗口起点」。
+            // 直接做 start + landing 会把这个哨兵变成 start-1 这个正数，于是「测不到」
+            // 在下游看起来像一个位于窗口开头的合法落点候选。
+            profile.outroLandingMillis = outgoing && landingMillis < 0f ? -1f : start + landingMillis;
             profile.headLufs = AutomixAnalyzer.kWeightedLoudness(prefix(mono,audio.sampleRate(),12),audio.sampleRate());
             profile.tailLufs = AutomixAnalyzer.kWeightedLoudness(tail(mono,audio.sampleRate(),12),audio.sampleRate());
             float[] tone = bandShares(mono, audio.sampleRate());

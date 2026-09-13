@@ -399,7 +399,7 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
     }
 
     private static void openSongs(String title, List<Music> songs, boolean showBackButton) {
-        // setCurrentPanel() invokes onInit() exactly once. Calling it again here
+        // setCurrentPanel() 仅调用一次 onInit()。在此处再次调用
         //每行都重复，使最近播放页渲染重叠文字。
         NCMScreen.getInstance().setCurrentPanel(buildSongsPanel(songs, showBackButton));
     }

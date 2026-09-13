@@ -153,4 +153,24 @@ public class AutomixDeckChain extends Effect<VocalDuckFilter> {
         this.left.resetDepthTo(depth);
         this.right.resetDepthTo(depth);
     }
+
+    /**
+     * 从音频线程一次性发布一帧的 automix 目标值 —— 低频 shelf 增益、人声消除深度、两个音色倾斜。
+     *
+     * <p>四个单项 setter 本身就已经是普通的 {@code volatile} 写入，从音频线程调用是安全的；
+     * 这个方法存在的意义是让同一帧的四个值作为一个整体发出去，而不是和监督 tick 的写入交错，
+     * 同时让音频任务每个输出缓冲只需一次调用。</p>
+     *
+     * <p><b>刻意不建立在 {@code resetTo} / {@code resetDepthTo} / {@code resetToneTo} 之上。</b>
+     * 那三个会清滤波器状态，只对「还没出声的 deck」成立：每个音频缓冲跑一次就是每秒把双二阶的
+     * 历史清零约 700 次，带限中心抵消永远收敛不了。滤波器内部的一阶缓变也一并保留 ——
+     * 送到这里来的曲线本来就是平滑的，这点缓变只值零点几毫秒，而留着它也就保住了
+     * 「10 ms 步进双二阶系数会 zipper」这条性质对仍然在写参的 tick 路径的兜底。</p>
+     */
+    public void setTargetsNow(float bassDb, float duckDepth, float midDb, float highDb) {
+        gainDb(bassDb);
+        duckDepth(duckDepth);
+        midGainDb(midDb);
+        highGainDb(highDb);
+    }
 }

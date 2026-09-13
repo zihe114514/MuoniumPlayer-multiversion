@@ -4,7 +4,7 @@ import java.util.Arrays;
 
 /** Folia 规划器使用的缓存音乐证据。 */
 final class FoliaTrackProfile {
-    static final int VERSION = 3;
+    static final int VERSION = 4;
     int version = VERSION;
     String cacheKey;
     long durationMillis;

@@ -67,6 +67,52 @@ public class SoundFile extends AudioSample {
 		}
 	}
 
+	/**
+	 * 音频线程版 {@link #amp(float)}：直接写端口，不往 JSyn 的命令队列里排。
+	 *
+	 * <p>普通的 {@code UnitInputPort.set()} 除了写值还会 {@code queueCommand}，而命令要到
+	 * <b>下一个</b>块由音频线程 {@code processScheduledCommands} 抽干才真正生效。
+	 * automix 的曲线执行本身就跑在音频线程上（{@code SynthesisEngine.runAudioTasks()}，
+	 * 每输出缓冲一次）：在那里入队既要把这一块的值推后一块，又是在音频回调里做一次没必要的
+	 * 队列写入。{@code setValueInternal} 正是那条队列命令最后执行的动作，直接调它就是「立刻生效」。</p>
+	 *
+	 * <p>{@code amp} 与 {@code volume} 两个字段一并跟上：{@code SoundObject.play()} 会用
+	 * {@code amp} 字段重新覆盖端口，只写端口的值会在下次起播时被丢掉（交叉淡化里进场 deck
+	 * 是<b>故意</b>从 0 起播的，丢了就是一声突入）。</p>
+	 */
+	public void setAmplitudeNow(float amp) {
+		if (Float.isNaN(amp) || Float.isInfinite(amp)) return;
+		this.amp = amp;
+		this.volume = amp;
+		this.player.amplitude.setValueInternal(amp);
+	}
+
+	/**
+	 * 音频线程版 {@link #rate(float)}。参数约束与它一致：{@code rate} 必须为正。
+	 *
+	 * <p>只写读头的步进端口，不碰时间伸缩层 —— 那是 {@link #setRateAndStretchNow} 的事。</p>
+	 */
+	public void setRateNow(float rate) {
+		if (!(rate > 0f) || Float.isInfinite(rate)) return;
+		this.player.rate.setValueInternal(this.sampleRate() * rate);
+	}
+
+	/**
+	 * 音频线程版的「读头速率 + 时间伸缩」一次设定，等价于 {@link #setRateNow(float)} 接着
+	 * {@link #timeStretch(float)}。
+	 *
+	 * <p>两条在音频线程上都是安全的：前者直写端口，后者只写一个 volatile 因子、下一个块生效
+	 * （见 {@link WsolaTimeStretch#setTempo(double)}）。合成一个方法是因为<b>顺序有意义</b>：
+	 * 读头必须先落到音高倍率上，否则某一帧里会出现「伸缩已经按解耦后的比值跑、读头还停在上一次
+	 * 的 pitch」这种半拍不一致（与 {@code AudioPlayer.setSpeedAndPitch} 同一理由）。</p>
+	 *
+	 * @return 与 {@link #timeStretch(float)} 同义：时间伸缩层是否接住了这次请求
+	 */
+	public boolean setRateAndStretchNow(float rate, float stretch) {
+		setRateNow(rate);
+		return timeStretch(stretch);
+	}
+
 	// Below are just duplicated methods from the AudioSample superclass which
 	// are required for the reference to build the corresponding pages.
 
