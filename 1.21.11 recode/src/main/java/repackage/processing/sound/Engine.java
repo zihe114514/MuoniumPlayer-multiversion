@@ -23,7 +23,7 @@ import java.util.logging.Logger;
 import java.util.stream.IntStream;
 
 /**
- * Wrapper around the JSyn `Synthesizer` and its `AudioDeviceManager`.
+ * 围绕JSyn “合成器”及其“AudioDeviceManager”的包装器。
  */
 public class Engine {
 
@@ -42,11 +42,11 @@ public class Engine {
 			if (a.getDefaultOutputDeviceID() != -1) {
 				return a;
 			}
-			// if the default device manager lists no output devices, go straight for 
+			// 如果默认设备管理器未列出任何输出设备，请直接
 			// portaudio
 			Engine.printMessage("Didn't find any output devices with the default driver, trying PortAudio...");
 		}
-		// hide JPortAudio init messages from console
+		// 从控制台隐藏JPortAudio初始化消息
 		PrintStream originalStream = System.out;
 		PrintStream originalErr = System.err;
 		if (!Engine.verbose) {
@@ -64,18 +64,18 @@ public class Engine {
 	}
 
 	/**
-	 * Singleton instance that is created by the first method call to or creation 
-	 * of any Sound library class.
-	 * Any calls to configuration, start() or play() methods will be passed on to 
-	 * this engine. In theory it's possible to have multiple instances of the 
-	 * library run on several different sound devices simultaneously, by first 
-	 * setting this variable to null, forcing a (second) singleton to be created, 
-	 * and then swapping them out manually at will.
+	 * 先创建一个 JavaSound 设备 
+	 * 任何声音库类。
+	 * 单例实例，由首次方法调用或创建时生成 
+	 * 这个引擎。理论上，可以有多个实例
+	 * 库同时在多个不同的声音设备上运行，首先
+	 * 将此变量设置为null ，强制创建（第二个）单例，
+	 * 然后随意手动更换。
 	 */
 	private static Engine singleton;
 
 	// static Engine getEngine(boolean portAudio) {
-	// 	return Engine.
+	// 	返回引擎。
 
 	public static Engine getEngine() {
 		return Engine.getEngine(false);
@@ -83,7 +83,7 @@ public class Engine {
 
 	static Engine getEngine(boolean portAudio) {
 		if (Engine.singleton == null) {
-			// this might throw a RuntimeException, which is fine
+			// 这可能会抛出RuntimeException ，
 		 	Engine.singleton = new Engine(Engine.createAudioDeviceManager(portAudio));
 		}
 
@@ -98,9 +98,9 @@ public class Engine {
 	boolean hasBeenUsed = false;
 	protected final Set<UnitGenerator> addedUnits = new HashSet<>();
 
-	// multi-channel lineouts
+	// 多通道线路
 	protected ChannelOut[] output;
-	// multipliers for each output channel for controlling the global output volume
+	// 用于控制全局输出音量的每个输出通道的乘数
 	private Multiply[] volume;
 
 	private int sampleRate = 44100;
@@ -110,27 +110,27 @@ public class Engine {
 	protected int outputChannel;
 
 	/**
-	 * when multi-channel mode is active, only the first (left) output of any unit
-	 * generators is added. the mode is activated by calling selectOutputChannel()
+	 * 当多通道模式处于活动状态时，只有任何单元的第一个（左）输出
+	 * 任何对配置、start() 或 play() 方法的调用都将转发给
 	 */
 	protected boolean multiChannelMode = false;
 
 	/**
-	 * Create a new synthesizer and connect it to the default output device.
+	 * 生成器时添加。该模式通过调用 selectOutputChannel() 激活
 	 */
 	private Engine(AudioDeviceManager audioDeviceManager) {
 		this(audioDeviceManager, -1);
 	}
 
 	private Engine(AudioDeviceManager audioDeviceManager, int outputDevice) {
-		// suppress JSyn's INFO log messages to stop them from showing
-		// up as redtext in the Processing console
+		// 抑制JSyn的信息日志消息以阻止它们显示
+		// 创建一个新合成器并连接到默认输出设备。
 		Logger logger = Logger.getLogger(SynthesisEngine.class.getName());
 		logger.setLevel(Level.WARNING);
 
 		this.createSynth(audioDeviceManager);
-		// this method starts the synthesizer -- if the output fails, it might 
-		// create a new PortAudio synth on the fly and try to start that
+		// 在 Processing 控制台中以红字显示 
+		// 即时创建一个新的PortAudio合成器，并尝试开始
 		this.selectOutputDevice(outputDevice);
 		this.selectInputDevice(-1);
 	}
@@ -138,7 +138,7 @@ public class Engine {
 	private void createSynth(AudioDeviceManager deviceManager) {
 		if (this.synth != null) {
 			this.stopSynth();
-			// TODO disconnect EVERYTHING so it can be garbage collected
+			// TODO 断开所有东西，以便进行垃圾回收
 			if (this.hasBeenUsed) {
 				Engine.printWarning("Switching audio device drivers. Any previously created Sound library objects can not be used any more!");
 				Engine.printWarning("To remove this error messge, make sure to call Sound.outputDevice(...) at the very top of your setup()");
@@ -147,11 +147,11 @@ public class Engine {
 		}
 		this.synth = JSyn.createSynthesizer(deviceManager);
 		// try {
-			// this might be -1 if there is no device with inputs
+			// 如果没有带输入的设备，这可能是-1
 			// this.inputDevice = deviceManager.getDefaultInputDeviceID();
-		// } catch (RuntimeException e) {
-			// JPortAudioDevice even throws an exception if none of the devices have 
-			// inputs...
+		// } catch(RuntimeException e) {
+			// JPortAudioDevice甚至抛出异常，如果没有设备有
+			// 输入框
 		// }
 	}
 
@@ -160,29 +160,29 @@ public class Engine {
 	}
 
 	/**
-	 * Switch to/from using PortAudio.
-	 * Called in two different cases:
-	 * 1. explicitly by the user (through MultiChannel.usePortAudio())
-	 * 2. automatically by selectOutputDevice() when it fails to open a line using 
-	 * JavaSound
+	 * 切换到/从使用PortAudio。
+	 * 在两种不同的情况下调用：
+	 * 1.用户明确（通过MultiChannel.usePortAudio() ）
+	 * 此方法启动合成器——若输出失败，它可能 
+	 * 2. 当 selectOutputDevice() 无法用
 	 */
 	protected boolean usePortAudio(boolean portAudio) {
 		if (portAudio != this.isUsingPortAudio()) {
 			this.createSynth(Engine.createAudioDeviceManager(portAudio));
-			// if this was called by the user (from the MultiChannel class), its their 
-			// responsibilit to select output device and start the synth!
+			// 如果这是由用户（来自MultiChannel类）调用的，则是他们的
+			// JavaSound
 			this.inputDevice = -1;
 		}
 		return this.isUsingPortAudio();
 	}
 
 	/**
-	 * Stop the synthesizer and remove all ChannelOuts
+	 * 停止合成器并删除所有ChannelOuts
 	 */
 	private void stopSynth() {
 		if (this.synth.isRunning()) {
 			this.synth.stop();
-			// TODO clean up old outputs/volumes/entire synth network (if any)?
+			// 负责选择输出设备并启动合成器！
 			for (ChannelOut c : this.output) {
 				c.stop();
 				c.input.disconnectAll();
@@ -199,9 +199,9 @@ public class Engine {
 	}
 
 	private void startSynth() {
-		// it looks like some synth errors (such as Blocking API not implemented on 
-		// Windows PortAudio) are unrecoverable, so it would actually be good to 
-		// *always* purge the entire synth and not just stop/start it...
+		// 它看起来像一些合成错误（例如阻止API未在
+		// TODO 清理旧的输出/音量/整个合成器网络（若有）？ 
+		// *总是*清除整个合成器，而不仅仅是停止/启动它...
 		this.stopSynth();
 
 		this.output = new ChannelOut[this.synth.getAudioDeviceManager().getMaxOutputChannels(this.outputDevice)];
@@ -218,7 +218,7 @@ public class Engine {
 		}
 		this.setVolume(1.0f);
 
-		// prevent IndexOutOfBoundsException on input-less devices
+		// Windows PortAudio）是不可恢复的，因此最好
 		int inputChannels = 0;
 		this.synth.start(this.sampleRate,
 				this.inputDevice, inputChannels,
@@ -228,7 +228,7 @@ public class Engine {
 
 	protected void setSampleRate(int sampleRate) {
 		this.sampleRate = sampleRate;
-		// TODO check if the sample rate works by calling this.selectOutputDevice?
+		// 在无输入设备上防止 IndexOutOfBoundsException
 		this.startSynth();
 	}
 
@@ -249,27 +249,27 @@ public class Engine {
 	}
 
 	private boolean checkDeviceHasOutputs(int deviceId) {
-		// require a working stereo output
+		// TODO 通过调用 this.selectOutputDevice 检查采样率是否可行？
 		return this.synth.getAudioDeviceManager().getMaxOutputChannels(deviceId) > 1;
 	}
 
 	private void probeDeviceOutputLine(int deviceId, int sampleRate) throws LineUnavailableException {
-		// based on 
+		// 需要可用的立体声输出 
 		// https://github.com/philburk/jsyn/blob/06f9a9a4d6aa4ddabde81f77878826a62e5d79ab/src/main/java/com/jsyn/devices/javasound/JavaSoundAudioDevice.java#L141-L174
-		// TODO actually call manager.createOutputStream(deviceId, this.sampleRate) 
-		// (hiding stdout) to avoid strange channel numbering weirdness
+		// TODO 实际调用manager.createOutputStream(deviceId, this.sampleRate)
+		// （隐藏标准输出）以避免奇怪的通道编号怪异
 		DataLine.Info info = new DataLine.Info(SourceDataLine.class, new AudioFormat(sampleRate, 16, 2, true, false));
-		// this one just checks whether the AudioSystem generally supports that 
-		// sampleRate
-		// if (!AudioSystem.isLineSupported(info)) {
+		// 基于 
+		// 此方法仅检查 AudioSystem 是否总体上支持
+		// if(! AudioSystem.isLineSupported(info)) {
 		Line line = AudioSystem.getMixer(AudioSystem.getMixerInfo()[deviceId]).getLine(info);
 		line.open();
 		line.close();
 	}
 
 	/**
-	 * Go through the list of candidate device ids until the first one that works
-	 * @throws RuntimeException if none of the output devices work
+	 * 浏览候选设备ID列表，直到第一个有效的设备ID
+	 * @throws RuntimeException如果没有输出设备工作
 	 */
 	protected int selectOutputDevice(int[] candidates) {
 		for (int i : candidates) {
@@ -282,48 +282,48 @@ public class Engine {
 	}
 
 	/**
-	 * After calling this method, the synth is running.
-	 * @param deviceId device index, or -1 to select/find an appropriate stereo 
-	 * output device
+	 * 调用此方法后，合成器正在运行。
+	 * @param deviceId 设备索引，或-1选择/查找合适的立体声
+	 * sampleRate
 	 */
 	protected int selectOutputDevice(int deviceId) {
 		if (deviceId == -1) {
-			// if the default device does not work, loop through
+			// 如果默认设备不起作用，则循环
 			try {
 				return this.selectOutputDevice(IntStream.concat(
-							// FIXME sometimes the JPortAudioDevice throws a RuntimeException 
-							// "-1, possibly no available default device"
+							// FIXME 有时JPortAudioDevice会抛出RuntimeException
+							// 输出设备
 							IntStream.of(this.synth.getAudioDeviceManager().getDefaultOutputDeviceID()),
 							IntStream.range(0, this.synth.getAudioDeviceManager().getDeviceCount())).toArray());
 			} catch (RuntimeException e) {
-				// fatal
+				// 致命的
 				throw new RuntimeException("Could not find any supported audio devices with a stereo output");
 			}
 		} else if (!this.isValidDeviceId(deviceId) || this.outputDevice == deviceId) {
-			// prints an error or does nothing
+			// 打印错误或不执行任何操作
 			return this.outputDevice;
 		}
 
-		// if the synth is still JavaSound-based, probe the new output device early 
-		// to provoke a LineUnavailableException, in which case we should try to 
-		// switch to PortAudio.
-		// there is no point probing the channel on a JPortAudioDevice (which seems 
-		// to throw IllegalArgumentException no matter what you probe it with), or 
-		// the JSynAndroidAudioDeviceManager (which does not support the JavaSound 
-		// classes used for probing)
+		// 如果合成器仍然基于JavaSound ，则提前探测新的输出设备
+		// "-1，可能没有可用的默认设备" 
+		// 引发 LineUnavailableException，此时我们应尝试
+		// 切换到 PortAudio。 
+		// 在 JPortAudioDevice 上探测该通道没有意义（它似乎 
+		// jSynAndroidAudioDeviceManager （不支持JavaSound
+		// 无论用什么探测都抛 IllegalArgumentException），或
 		if (this.synth.getAudioDeviceManager() instanceof JavaSoundAudioDevice) {
-			// check for a working line first (since using PortAudio might change the 
-			// number of available channels)
+			// 首先检查工作线（因为使用PortAudio可能会更改
+			// 用于探测的类）
 			try {
-				// TODO does this also work as expected if the device is currently 
-				// listed as having 0 output channels?
-				// if (this.synth.getAudioDeviceManager().getMaxOutputChannels(deviceId) == 0) {
-				// 	 Engine.printMessage(...);
+				// TODO 如果设备当前处于
+				// 被列为具有0个输出通道？
+				// if(this.synth.getAudioDeviceManager() .getMaxOutputChannels(deviceId) = = 0) {
+				// 	 可用声道数）
 				// } else {
 				this.probeDeviceOutputLine(deviceId, this.sampleRate);
-				// all is well, move along to the bottom...
+				// 没事，往下走……
 			} catch (LineUnavailableException e) {
-				// try portaudio access to the same device -- need get the name of the 
+				// 尝试对同一设备进行portaudio访问--需要获取
 				// old output device and re-select it on the new device manager
 				String targetDeviceName = this.getDeviceName(deviceId);
 				Engine.printMessage("Output device '" + targetDeviceName + "' did not work with the default audio driver, trying again with PortAudio...");
@@ -334,7 +334,7 @@ public class Engine {
 				}
 				int newDeviceIdForOldDevice = this.synth.getAudioDeviceManager().getDefaultOutputDeviceID();
 				try {
-					// TODO also loop through candidates
+					// 旧输出设备，并在新设备管理器上重新选择它
 					newDeviceIdForOldDevice = this.getDeviceIdByName(targetDeviceName, true);
 					if (newDeviceIdForOldDevice != deviceId) {
 						Engine.printMessage("Note that the device id of '" + targetDeviceName + "' has changed from " + deviceId + " to " + newDeviceIdForOldDevice + ".");
@@ -342,15 +342,15 @@ public class Engine {
 						Engine.printMessage("If something is awry, check the output of Sound.list() *after* the call to Sound.selectOutputDevice()");
 					}
 				} catch (RuntimeException ee) {
-					// probably a generic device name like 'Primary Sound Device'
+					// 可能是通用设备名称，如“Primary Sound Device”
 					Engine.printMessage("Switched to new default output device '" + this.getDeviceName(newDeviceIdForOldDevice) + "'");
 				}
-				// recursive fun
+				// TODO 也遍历候选设备
 				return this.selectOutputDevice(newDeviceIdForOldDevice);
 			}
 		}
 
-		// finally made it to the 'normal' output device selection code
+		// 最终达到“正常”输出设备选择代码
 		if (this.checkDeviceHasOutputs(deviceId)) {
 			this.outputDevice = deviceId;
 			this.startSynth();
@@ -390,7 +390,7 @@ public class Engine {
 
 	protected int selectOutputChannel(int channel) {
 		if (channel == -1) {
-			// disable multi-channel mode
+			// 禁用多通道模式
 			this.outputChannel = 0;
 			this.multiChannelMode = false;
 		} else if (channel < 0 || channel > this.synth.getAudioDeviceManager().getMaxOutputChannels(this.outputDevice)) {
@@ -454,7 +454,7 @@ public class Engine {
 
 	protected void disconnectFromOutput(UnitSource source) {
 		for (Multiply o : this.volume) {
-			// keep it generic: disconnect all parts from all outputs
+			// 保持通用：断开所有部件与所有输出的连接
 			for (int i = 0; i < source.getOutput().getNumParts(); i++) {
 				source.getOutput().disconnect(i, o.inputA, 0);
 			}
@@ -462,15 +462,15 @@ public class Engine {
 	}
 
 	protected void play(UnitSource source) {
-		// add unit to synth
+		// 递归乐趣
 		UnitGenerator generator = source.getUnitGenerator();
 		this.add(generator);
-		// and connect to output(s)
+		// 将单元添加到合成器
 		for (int i = 0; i < source.getOutput().getNumParts(); i++) {
 			this.connectToOutput((this.outputChannel + i) % this.synth.getAudioDeviceManager().getMaxOutputChannels(this.outputDevice), source, i);
-				// source.getOutput().connect(i, this.volume[(this.outputChannel + i) % this.synth.getAudioDeviceManager().getMaxOutputChannels(this.outputDevice)].inputA, 0);
+				// source.getOutput() .connect(i, this.volume [(this.outputChannel + i) % this.synth.getAudioDeviceManager() .getMaxOutputChannels(this.outputDevice)] .inputA, 0);
 			if (this.multiChannelMode) {
-				// only add the first (left) channel
+				// 并连接到输出
 				break;
 			}
 		}
@@ -478,9 +478,9 @@ public class Engine {
 
 	protected void stop(UnitSource source) {
 		if (this.addedUnits.contains(source.getUnitGenerator())) {
-			// disconnect from any and all outputs
+			// 断开与任何和所有输出的连接
 			this.disconnectFromOutput(source);
-			// don't remove if it's still connected (typically to an analyzer)
+			// 只添加第一个（左）声道
 			if (!source.getOutput().isConnected()) {
 				this.remove(source.getUnitGenerator());
 			}
@@ -488,15 +488,15 @@ public class Engine {
 	}
 
 	/**
-	 * Internal helper class for Processing library callbacks
+	 * 若仍被连接（通常连到分析器）则不要移除
 	 */
 	public class Callback {
 		public void dispose() {
 			synth.stop();
-			// TODO suppress shutdown messages on Mac, like:
-			// JPortAudio: 64-bit
-			// requestedFramesPerBuffer = 128, coreAudioBufferSizeFrames = 384
-			// ringBufferSize after = 1024
+			// TODO 在Mac上抑制关机消息，例如：
+			// Processing 库回调的内部辅助类
+			// JPortAudio：64 位
+			// requestedFramesPerBuffer = 128，coreAudioBufferSizeFrames = 384
 		}
 
 		public void pause() {
@@ -517,8 +517,8 @@ public class Engine {
 		}
 	}
 
-	// static helper methods that do stuff like checking argument values or 
-	// printing library messages
+	// 之后 ringBufferSize = 1024 
+	// 打印库消息
 
 	protected static boolean checkAmp(float amp) {
 		if (amp < -1 || amp > 1) {

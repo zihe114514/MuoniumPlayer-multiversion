@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.google.gson.JsonObject;
 import com.muoniumplayer.core.ncm.kugou.KrcLyrics;
 import com.muoniumplayer.core.ncm.kugou.KuGouDevice;
 import com.muoniumplayer.core.ncm.kugou.KuGouMusicApi;
@@ -33,6 +34,14 @@ public final class KuGouMusicService {
 
     /** 歌单曲目单次最多取多少首。酷狗单页上限比这个大，但一屏几百首已经够用且更快。 */
     private static final int PLAYLIST_TRACK_LIMIT = 300;
+
+    /**
+     * 跨源检索时最多给多少个候选打分。
+     *
+     * <p>上游一次通常只回 10~20 条，打分是纯计算（字符串相似度 + 一次哈希查找），所以这个上限
+     * 主要是防御性的：万一上游回几百条，也不至于在歌词加载线程上做几万次字符串比较。</p>
+     */
+    private static final int MAX_CROSS_SOURCE_CANDIDATES = 24;
 
     private static final String RANK_PREFIX = "rank:";
     private static final String COLLECTION_PREFIX = "collection:";
@@ -121,27 +130,182 @@ public final class KuGouMusicService {
     /**
      * 酷狗 KRC 逐字歌词。
      *
+     * <p><b>跨源检索。</b>KRC 是逐字第三顺位，但它原来的实现第一行就是
+     * {@code if (!music.isKuGou()) return}，非酷狗曲目永远拿不到这一路 —— 第三顺位等于形同虚设。
+     * 现在改成：酷狗曲目走原来的 hash 精确匹配（行为一字不变）；其它平台的曲目按
+     * 「歌手 - 歌名」搜酷狗歌词候选，用曲名/歌手/专辑/时长一起打分，越过门槛才采用。</p>
+     *
+     * <p>打分这一步不能省。没有 hash 时上游返回的是一串同名候选（原曲、Live、Remix、翻唱），
+     * 只按时长挑最近的会贴错版本，而逐字歌词贴错版本比没有歌词更难用。</p>
+     *
      * @return 只有<b>真的带音节时间</b>时才返回非空；行级结果一律返回空列表，让上层的普通歌词兜底
      *         链路接手 —— 那条链路能给出带翻译的完整 LRC，用行级 KRC 替换它是降级
      */
     public static List<LyricLine> getWordByWordLyrics(Music music) {
-        if (music == null || !music.isKuGou()) return Collections.emptyList();
+        if (music == null) return Collections.emptyList();
         try {
-            KrcLyrics.Decoded decoded = KuGouMusicApi.lyric(music.getSourceId(), music.getDuration(),
-                    music.getArtistsName() + " - " + music.getName());
-            if (decoded.yrc.isEmpty()) return Collections.emptyList();
-
-            List<LyricLine> parsed = new ArrayList<LyricLine>();
-            LyricParser.parseYrc(decoded.yrc, parsed);
-            if (!LyricParser.hasWordByWordTiming(parsed)) return Collections.emptyList();
-            if (!decoded.translation.isEmpty()) {
-                LyricParser.applyQrcSidecar(decoded.translation, parsed, true);
+            String keyword = keywordFor(music);
+            if (music.isKuGou()) {
+                return adapt(KuGouMusicApi.lyric(music.getSourceId(), music.getDuration(), keyword));
             }
-            return parsed;
+            return adapt(fetchDecodedFromSearch(music, keyword));
         } catch (Throwable throwable) {
             System.err.println("[Music/KuGou] KRC 歌词失败 " + music.getStableKey() + ": " + throwable.getMessage());
             return Collections.emptyList();
         }
+    }
+
+    /** KRC 解码结果 → 渲染模型。行级或解不出音节的一律返回空列表。 */
+    private static List<LyricLine> adapt(KrcLyrics.Decoded decoded) {
+        if (decoded == null || decoded.yrc.isEmpty()) return Collections.emptyList();
+
+        List<LyricLine> parsed = new ArrayList<LyricLine>();
+        LyricParser.parseYrc(decoded.yrc, parsed);
+        if (!LyricParser.hasWordByWordTiming(parsed)) return Collections.emptyList();
+        if (!decoded.translation.isEmpty()) {
+            LyricParser.applyQrcSidecar(decoded.translation, parsed, true);
+        }
+        return parsed;
+    }
+
+    /**
+     * 跨源：搜酷狗歌词候选 → 打分 → 取分最高的一份。
+     *
+     * <p>只有越过 {@link LyricMatchScore#MIN_ACCEPT_SCORE} 的候选才会被下载，所以「搜到一堆同名歌」
+     * 的结果是「放弃这一路、交给下一个源」，而不是「随便贴一份逐字歌词」。</p>
+     */
+    private static KrcLyrics.Decoded fetchDecodedFromSearch(Music music, String keyword) {
+        // Decoded 的构造器是包可见的（它在 kugou 包里），这里用公开的 decode("") 拿一个空结果：
+        // 既不用为了「构造空值」去放宽 KrcLyrics 的可见性，也不会真的解密什么东西。
+        if (keyword.trim().isEmpty()) return KrcLyrics.decode("");
+
+        List<JsonObject> candidates = KuGouMusicApi.lyricCandidates("", keyword);
+        if (candidates.isEmpty()) return KrcLyrics.decode("");
+
+        LyricMatchScore.Target target = new LyricMatchScore.Target(
+                music.getName(), artistsOf(music), albumName(music), music.getDuration());
+
+        JsonObject best = null;
+        LyricMatchScore.Result bestResult = null;
+        int scanned = 0;
+        for (int index = 0; index < candidates.size() && scanned < MAX_CROSS_SOURCE_CANDIDATES; index++) {
+            JsonObject candidate = candidates.get(index);
+            if (candidate == null) continue;
+            scanned++;
+
+            LyricMatchScore.Result result = LyricMatchScore.evaluate(target, candidateOf(candidate));
+            if (!result.accepted()) continue;
+            if (bestResult == null || result.score > bestResult.score) {
+                best = candidate;
+                bestResult = result;
+            }
+        }
+        if (best == null || bestResult == null) return KrcLyrics.decode("");
+
+        System.out.println("[Music/KuGou] 跨源命中 " + music.getName() + " → "
+                + text(best, "song") + " / " + text(best, "singer") + " (" + bestResult.describe() + ")");
+        return KuGouMusicApi.lyric(best);
+    }
+
+    /**
+     * 酷狗歌词候选 → 打分输入。
+     *
+     * <h3>两个实测出来的坑</h3>
+     * <p>酷狗歌词库里有<b>两套并存的条目</b>，字段语义不一致，直接按名字读会全军覆没：</p>
+     * <ol>
+     *   <li><b>{@code singer} / {@code song} 会互换。</b>现代条目是
+     *       {@code singer=米津玄師, song=Lemon}（人名在前），而库里大量老条目是
+     *       {@code singer=起风了, song=买辣椒也用券}（歌名在前）。这里<b>不猜哪个是哪个</b>，
+     *       而是把两个字段都当成「可能是歌名、也可能是歌手」，让相似度自己选最高的那一头——
+     *       两种写法都能命中，也不需要往上加一张"哪些 id 是旧格式"的表。</li>
+     *   <li><b>{@code duration} 有秒和毫秒两种单位。</b>同一批候选里 {@code 314} 和
+     *       {@code 255582} 会同时出现。小于 10 秒的值只可能是秒，据此归一化到毫秒；
+     *       不归一化会让时长乘数把正确候选压到 0.1 倍。</li>
+     * </ol>
+     *
+     * <p>两个字段相同时（{@code singer=晴天, song=晴天}）只当一个歌名用，不重复塞进歌手列表——
+     * 否则「歌名恰好同名的另一个人」会把歌手相似度蒙对。</p>
+     */
+    private static LyricMatchScore.Candidate candidateOf(JsonObject candidate) {
+        String singer = text(candidate, "singer");
+        String song = text(candidate, "song");
+        String album = text(candidate, "album");
+
+        List<String> titles = new ArrayList<String>(2);
+        List<String> artists = new ArrayList<String>(2);
+        titles.add(song);
+        titles.add(singer);
+        if (!singer.equals(song)) {
+            artists.add(singer);
+            artists.add(song);
+        }
+        return new LyricMatchScore.Candidate(titles, artists, album, durationMillis(candidate));
+    }
+
+    /**
+     * 候选时长归一化到毫秒。
+     *
+     * <p>小于 10 秒的值只可能是「秒」——没有任何一首带歌词的曲子短于 10 秒，而毫秒表示下
+     * 真实曲目都在 10^5 量级。这个分界线两侧都留了足够余量。</p>
+     */
+    private static long durationMillis(JsonObject candidate) {
+        long raw = longOf(candidate, "duration");
+        if (raw <= 0L) return 0L;
+        return raw < 10_000L ? raw * 1000L : raw;
+    }
+
+    private static String keywordFor(Music music) {
+        String artist = artistsOf(music);
+        String name = nonNull(music.getName()).trim();
+        if (name.isEmpty()) return "";
+        return artist.isEmpty() ? name : artist + " - " + name;
+    }
+
+    /** 歌手串。{@code "/"} 既是给人看的连接符，也正好在 {@code LyricMatchText} 的分隔符集合里，能原样拆回去。 */
+    private static String artistsOf(Music music) {
+        List<String> result = new ArrayList<String>();
+        try {
+            String artists = safe(music.getArtistsName());
+            if (artists.isEmpty() || artists.equalsIgnoreCase("Unknown")) return "";
+            for (String part : artists.split("\\s*[/、,&]\\s*")) {
+                String trimmed = part == null ? "" : part.trim();
+                if (!trimmed.isEmpty()) result.add(trimmed);
+            }
+        } catch (Throwable ignored) {
+            return "";
+        }
+        return String.join("/", result);
+    }
+
+    private static String albumName(Music music) {
+        try {
+            return music.getAlbum() == null ? "" : safe(music.getAlbum().getName()).trim();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    /** JsonUtils 的取值方法在字段缺失时会抛异常，这里统一按「缺失即空」处理。 */
+    private static String text(JsonObject object, String property) {
+        try {
+            if (object == null || !object.has(property) || object.get(property).isJsonNull()) return "";
+            return safe(object.get(property).getAsString()).trim();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    private static long longOf(JsonObject object, String property) {
+        try {
+            if (object == null || !object.has(property) || object.get(property).isJsonNull()) return 0L;
+            return object.get(property).getAsLong();
+        } catch (Throwable ignored) {
+            return 0L;
+        }
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value;
     }
 
     /**

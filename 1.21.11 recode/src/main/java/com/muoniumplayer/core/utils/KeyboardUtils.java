@@ -5,39 +5,19 @@ import net.minecraft.client.Minecraft;
 import org.apache.commons.lang3.StringUtils;
 
 /**
- * 键盘组合键判定 + 系统剪贴板读写。
- *
- * <h2>为什么剪贴板不能用 AWT</h2>
- * 这里原本是 {@code Toolkit.getDefaultToolkit().getSystemClipboard()}，四个版本上全都是空操作
- * ——「一起听」里的复制链接 / 复制邀请码按钮会亮起「已复制」，但剪贴板里什么都没有。
- *
- * <p>原因是 Minecraft 自己在 {@code net.minecraft.client.main.Main} 的静态初始化里写了
- * {@code System.setProperty("java.awt.headless", "true")}（1.20.1 / 1.21.1 / 1.21.11 / 26.2
- * 四个版本的 Main.class 里都能反编译出这三条字节码）。headless 模式下
- * {@code Toolkit#getSystemClipboard()} 必抛 {@code HeadlessException}，而原来的实现是
- * {@code catch (Exception) {}} 全吞，于是失败得毫无痕迹：按钮的「已复制」提示由调用方自己点亮，
- * 根本不看写入结果。
- *
- * <p>正确做法是走原版自己的剪贴板通道 {@code Minecraft#keyboardHandler}
- * （{@code getClipboard()} / {@code setClipboard(String)}，内部是
- * {@code GLFW.glfwGetClipboardString} / {@code glfwSetClipboardString}）。
- * 这两个方法名与 {@code Minecraft#keyboardHandler} 字段名在四个版本上完全一致（已 javap 核实），
- * 所以共享源码里只需要一份实现。
- *
- * <h2>线程</h2>
- * GLFW 的剪贴板函数只能在主线程（渲染线程）调用。写入时如果当前不在渲染线程，
- * 就丢给 {@code Minecraft#execute} 排到下一帧；读取没法这样异步化，
- * 非渲染线程直接返回空串并打一条日志，而不是悄悄给出错误结果。
- */
+     * 若 Windows 上左右 ctrl 键任一按下，或 Mac 上左右 meta 键任一按下，则返回 true
+     */
 public class KeyboardUtils {
 
     private static final String TAG = "[MuoniumPlayer/Clipboard] ";
 
-    /** 失败日志只打一次：这些调用点在按键处理里，出问题会每帧刷屏。 */
+    /**
+     * 若左右 shift 键任一按下则返回 true
+     */
     private static boolean failureLogged;
 
     /**
-     * 读系统剪贴板。读不到时返回空串（所有调用方都按「空串 = 没内容」处理）。
+     * 若左右 alt 键任一按下则返回 true
      */
     public static String getClipboardString() {
         Minecraft mc = Minecraft.getInstance();

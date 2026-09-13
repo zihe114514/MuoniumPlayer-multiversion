@@ -62,10 +62,16 @@ public class VocalDuckFilter extends FilterLowShelf {
     public UnitInputPort side;
 
     private volatile double targetDepth;
+    private volatile double targetMidGainDb;
+    private volatile double targetHighGainDb;
     /** Defaults to the safe mode: without a wired side channel a full subtraction would be wrong. */
     private volatile boolean monoFallback = true;
 
     private double currentDepth;
+    private double currentMidGainDb;
+    private double currentHighGainDb;
+    private double lowState;
+    private double midState;
     private int cachedRate;
     private int computedRate;
 
@@ -97,6 +103,26 @@ public class VocalDuckFilter extends FilterLowShelf {
         clearBandState();
     }
 
+    public void setMidGainDb(float db) {
+        if (Float.isNaN(db) || Float.isInfinite(db)) return;
+        this.targetMidGainDb = Math.max(-3.0, Math.min(3.0, db));
+    }
+
+    public float getMidGainDb() { return (float) this.targetMidGainDb; }
+
+    public void setHighGainDb(float db) {
+        if (Float.isNaN(db) || Float.isInfinite(db)) return;
+        this.targetHighGainDb = Math.max(-3.0, Math.min(3.0, db));
+    }
+
+    public float getHighGainDb() { return (float) this.targetHighGainDb; }
+
+    public void resetToneTo(float midDb, float highDb) {
+        setMidGainDb(midDb); setHighGainDb(highDb);
+        this.currentMidGainDb = this.targetMidGainDb; this.currentHighGainDb = this.targetHighGainDb;
+        this.lowState = 0.0; this.midState = 0.0;
+    }
+
     /** True when this channel has no usable side signal and has to fall back to a mid-band dip. */
     public void setMonoFallback(boolean mono) {
         this.monoFallback = mono;
@@ -104,60 +130,57 @@ public class VocalDuckFilter extends FilterLowShelf {
 
     @Override
     public void generate(int start, int limit) {
-        // The shelf writes the output first; the cancellation is applied on top of it.
         super.generate(start, limit);
-
         int frames = limit - start;
         if (frames <= 0) return;
-
         int rate = this.cachedRate;
         if (rate <= 0) {
-            try {
-                rate = getFrameRate();
-            } catch (Throwable ignored) {
-                rate = 0;
-            }
+            try { rate = getFrameRate(); } catch (Throwable ignored) { rate = 0; }
             if (rate <= 0) rate = 44_100;
             this.cachedRate = rate;
         }
-
-        double target = this.targetDepth;
         double coefficient = 1.0 - Math.exp(-frames / (SLEW_SECONDS * rate));
+        double target = this.targetDepth;
         this.currentDepth += (target - this.currentDepth) * coefficient;
-        if (Math.abs(target - this.currentDepth) < DEPTH_EPSILON) {
-            this.currentDepth = target;
-        }
-        if (this.currentDepth < DEPTH_EPSILON && target < DEPTH_EPSILON) {
-            // Off: leave the shelf's output byte for byte and forget the band state, so re-engaging
-            // later cannot ring out an old buffer into the mix.
+        if (Math.abs(target - this.currentDepth) < DEPTH_EPSILON) this.currentDepth = target;
+        double targetMid = this.targetMidGainDb, targetHigh = this.targetHighGainDb;
+        this.currentMidGainDb += (targetMid - this.currentMidGainDb) * coefficient;
+        this.currentHighGainDb += (targetHigh - this.currentHighGainDb) * coefficient;
+        boolean toneFlat = Math.abs(this.currentMidGainDb) < .002 && Math.abs(this.currentHighGainDb) < .002
+                && Math.abs(targetMid) < .002 && Math.abs(targetHigh) < .002;
+        if (this.currentDepth < DEPTH_EPSILON && target < DEPTH_EPSILON && toneFlat) {
             clearBandState();
             return;
         }
-
-        if (rate != this.computedRate) {
-            updateBand(rate);
-            this.computedRate = rate;
-        }
-
+        if (rate != this.computedRate) { updateBand(rate); this.computedRate = rate; }
         double[] outputs = output.getValues();
         double[] own = input.getValues();
         double[] other = this.side.getValues();
         boolean mono = this.monoFallback;
         double depth = this.currentDepth;
+        double lowAlpha = 1.0 - Math.exp(-1.0 / (.004 * rate));
+        double midAlpha = 1.0 - Math.exp(-1.0 / (.012 * rate));
+        double midGain = Math.pow(10.0, this.currentMidGainDb / 20.0);
+        double highGain = Math.pow(10.0, this.currentHighGainDb / 20.0);
         for (int i = start; i < limit; i++) {
             double centre = mono ? own[i] * MONO_DIP_SCALE : (own[i] + other[i]) * .5;
             double band = bandPass(centre);
             double value = outputs[i] - depth * band;
-            if (value != value || Double.isInfinite(value)) {
-                // Same guard as the shelf: a NaN from a broken decoder must not lock the canceller into
-                // producing garbage for the rest of the track.
-                clearBandState();
-                value = outputs[i];
+            this.lowState += lowAlpha * (value - this.lowState);
+            this.midState += midAlpha * (this.lowState - this.midState);
+            double mid = this.lowState - this.midState;
+            double high = value - this.lowState;
+            value += (midGain - 1.0) * mid + (highGain - 1.0) * high;
+            double level = Math.abs(value);
+            if (level > .95) {
+                double room = .05;
+                double held = .95 + room * Math.tanh((level - .95) / room);
+                value = value < 0.0 ? -held : held;
             }
+            if (value != value || Double.isInfinite(value)) { clearBandState(); value = outputs[i]; }
             outputs[i] = value;
         }
     }
-
     /** Cascaded high pass then low pass, i.e. the band the vocal lives in. */
     private double bandPass(double x0) {
         double high = this.highB0 * x0 + this.highB1 * this.highX1 + this.highB2 * this.highX2

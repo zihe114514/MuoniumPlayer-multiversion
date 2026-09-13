@@ -1,22 +1,22 @@
 package repackage.org.kc7bfi.jflac.io;
 
 /**
- * libFLAC - Free Lossless Audio Codec library Copyright (C) 2000,2001,2002,2003
+ * libFLAC -免费无损音频编解码器库版权所有(C) 2000,2001,2002,2003
  * Josh Coalson
  * <p>
- * This library is free software; you can redistribute it and/or modify it under
- * the terms of the GNU Library General Public License as published by the Free
- * Software Foundation; either version 2 of the License, or (at your option) any
- * later version.
+ * 此库是自由软件；您可以重新分发和/或修改它
+ * @return 字符串描述
+ * 软件基础；许可证第2版，或（由您选择）任何
+ * 更高版本。
  * <p>
- * This library is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
- * FOR A PARTICULAR PURPOSE. See the GNU Library General Public License for more
- * details.
+ * 此库的分发是希望它有用，但没有
+ * 由 Free Software Foundation 发布的 GNU 库通用公共许可证的条款
+ * 用于特定目的。有关更多信息，请参阅GNU库通用公共许可证
+ * 详情。
  * <p>
- * You should have received a copy of the GNU Library General Public License
- * along with this library; if not, write to the Free Software Foundation, Inc.,
- * 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ * 您应该已经收到了GNU库通用公共许可证的副本
+ * 不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保
+ * （详见本库）；若没有，请致信 Free Software Foundation, Inc.,
  */
 
 import repackage.org.kc7bfi.jflac.util.ByteData;
@@ -35,19 +35,19 @@ public class BitInputStream {
     private static final int BITS_PER_BLURB = 8;
     private static final int BITS_PER_BLURB_LOG2 = 3;
     private static final byte BLURB_TOP_BIT_ONE = ((byte) 0x80);
-    //private static final long[] MASK32 = new long[]{0, 0x0000000000000001, 0x0000000000000003, 0x0000000000000007, 0x000000000000000F,
-    //        0x000000000000001F, 0x000000000000003F, 0x000000000000007F, 0x00000000000000FF, 0x00000000000001FF, 0x00000000000003FF,
+    //位宽输入流。
+    //        0x000000000000001F、0x0000000000003F、0x0000000000007F、0x00000000000000FF、0x00000000000001FF、0x000000000003FF、
     //        0x00000000000007FF, 0x0000000000000FFF, 0x0000000000001FFF, 0x0000000000003FFF, 0x0000000000007FFF, 0x000000000000FFFF,
-    //        0x000000000001FFFF, 0x000000000003FFFF, 0x000000000007FFFF, 0x00000000000FFFFF, 0x00000000001FFFFF, 0x00000000003FFFFF,
+    //        0x000000000001FFFF, 0x000000000003FFFF, 0x0000000007FFFFFF, 0x00000000000FFFFF, 0x00000000001FFFFF, 0x00000000003FFFFF,
     //        0x00000000007FFFFF, 0x0000000000FFFFFF, 0x0000000001FFFFFF, 0x0000000003FFFFFF, 0x0000000007FFFFFF, 0x000000000FFFFFFF,
     //        0x000000001FFFFFFF, 0x000000003FFFFFFF, 0x000000007FFFFFFF, 0x00000000FFFFFFFF, 0x00000001FFFFFFFFL,
-    //        0x00000003FFFFFFFFL, 0x00000007FFFFFFFFL, 0x0000000FFFFFFFFFL, 0x0000001FFFFFFFFFL, 0x0000003FFFFFFFFFL,
+    //        0x00000003FFFFFFFFL、0x00000007FFFFFFFFL、0x0000000FFFFFFFL、0x0000001FFFFFFFFFL、0x0000003FFFFFFFFFL、
     //        0x0000007FFFFFFFFFL, 0x000000FFFFFFFFFFL, 0x000001FFFFFFFFFFL, 0x000003FFFFFFFFFFL, 0x000007FFFFFFFFFFL,
-    //        0x00000FFFFFFFFFFFL, 0x00001FFFFFFFFFFFL, 0x00003FFFFFFFFFFFL, 0x00007FFFFFFFFFFFL, 0x0000FFFFFFFFFFFFL,
-    //        0x0001FFFFFFFFFFFFL, 0x0003FFFFFFFFFFFFL, 0x0007FFFFFFFFFFFFL, 0x000FFFFFFFFFFFFFL, 0x001FFFFFFFFFFFFFL,
-    //        0x003FFFFFFFFFFFFFL, 0x007FFFFFFFFFFFFFL, 0x00FFFFFFFFFFFFFFL, 0x01FFFFFFFFFFFFFFL, 0x03FFFFFFFFFFFFFFL,
-    //        0x07FFFFFFFFFFFFFFL, 0x0FFFFFFFFFFFFFFFL, 0x1FFFFFFFFFFFFFFFL, 0x3FFFFFFFFFFFFFFFL, 0x7FFFFFFFFFFFFFFFL,
-    //        0xFFFFFFFFFFFFFFFFL};
+    //        0x00000FFFFFFFFFL、0x00001FFFFFFFFFFFL、0x00003FFFFFFFFFL、0x00007FFFFFFFFFFFL、0x0000FFFFFFFFFFL、
+    //        0x0001FFFFFFFFFFFFL、0x0003FFFFFFFFFFFFL、0x0007FFFFFFFFFFFFL、0x000FFFFFFFFFFFL、0x001FFFFFFFFFFFFFL、
+    //        0x003FFFFFFFFFFFFFL、0x007FFFFFFFFFFFFFL、0x00FFFFFFFFFFL、0x01FFFFFFFFFFFFFFL、0x03FFFFFFFFFFFFFFL、
+    //        0x07FFFFFFFFFFFFFFFL、0x0FFFFFFFFFFFFFL、0x1FFFFFFFFFFFFFL、0x3FFFFFFFFFFFFFFFL、0x7FFFFFFFFFFFFFFFL、
+    //        0xFFFFFFFFFFFFFFL} ；
 
     private static final int BUFFER_CHUNK_SIZE = 1024;
     private byte[] buffer = new byte[BUFFER_CHUNK_SIZE];
@@ -62,30 +62,30 @@ public class BitInputStream {
     private InputStream inStream;
 
     /**
-     * The constructor.
+     * 构造函数。
      * @param is    The InputStream to read bits from
      */
     public BitInputStream(InputStream is) {
         this.inStream = is;
     }
 
-    //private void resize(int newCapacity) {
+    //@param is    从中读取位的 InputStream
     //    if (buffer.length >= newCapacity) return;
-    //    System.out.println("RESIZE FROM " + buffer.length + " TO " + newCapacity);
-    //    byte[] newBuffer = new byte[newCapacity];
+    //    System.out.println("RESIZE FROM" + buffer.length + "TO" + newCapacity);
+    //    byte [] newBuffer = new byte [newCapacity];
     //    System.arraycopy(buffer, 0, newBuffer, 0, putByte);
     //    buffer = newBuffer;
-    //    //return;
+    //    集结返回
     //}
 
     //private void grow(int minBlurbsToAdd) {
-    //    int newCapacity = (buffer.length + minBlurbsToAdd + BUFFER_CHUNK_SIZE - 1) / BUFFER_CHUNK_SIZE;
+    //    int newCapacity = (buffer.length + minBlurbsToAdd + BUFFER_CHUNK_SIZE - 1)/BUFFER_CHUNK_SIZE;
     //    resize(newCapacity);
     //}
 
     //private void ensureSize(int bitsToAdd) {
-    //    int blurbsToAdd = (bitsToAdd + 7) >> 3;
-    //    if (buffer.length < (putByte + blurbsToAdd))
+    //    int blurbsToAdd = (bitsToAdd + 7) > > 3;
+    //    if(buffer.length < (putByte + blurbsToAdd))
     //        grow(blurbsToAdd);
     //}
 
@@ -97,23 +97,23 @@ public class BitInputStream {
         putByte -= getByte;
         getByte = 0;
 
-        // set the target for reading, taking into account blurb alignment
-        // blurb == byte, so no gyrations necessary:
+        // 首先尽可能将未消费的缓冲区数据前移到前端
+        // 设置读取目标，同时考虑 blurb 对齐
         int bytes = buffer.length - putByte;
 
-        // finally, read in some data
+        // 最后，读取一些数据
         bytes = inStream.read(buffer, putByte, bytes);
         if (bytes <= 0) throw new EOFException();
 
-        // now we have to handle partial blurb cases:
-        // blurb == byte, so no gyrations necessary:
+        // 现在我们必须处理部分简介案例：
+        // 设置读取目标，同时考虑 blurb 对齐
         putByte += bytes;
         availBits += bytes << 3;
         return bytes;
     }
 
     /**
-     * Reset the bit stream.
+     * 重置位流。
      */
     public void reset() {
         getByte = 0;
@@ -123,49 +123,49 @@ public class BitInputStream {
     }
 
     /**
-     * Reset the read CRC-16 value.
-     * @param seed  The initial CRC-16 value
+     * 重置读取CRC-16值。
+     * @param seed CRC-16初始值
      */
     public void resetReadCRC16(short seed) {
         readCRC16 = seed;
     }
 
     /**
-     * return the read CRC-16 value.
-     * @return The read CRC-16 value
+     * blurb == byte，因此无需复杂处理：
+     * @return 读CRC-16值
      */
     public short getReadCRC16() {
         return readCRC16;
     }
 
     /**
-     * Test if the Bit Stream consumed bits is byte aligned.
-     * @return True of bit stream consumed bits is byte aligned
+     * 测试比特流消耗的比特是否字节对齐。
+     * 返回读取到的 CRC-16 值。
      */
     public boolean isConsumedByteAligned() {
         return ((getBit & 7) == 0);
     }
 
     /**
-     * return the number of bits to read to align the byte.
-     * @return The number of bits to align the byte
+     * @return 位流已消费位按字节对齐时返回 true
+     * @return 对齐字节的位数
      */
     public int bitsLeftForByteAlignment() {
         return 8 - (getBit & 7);
     }
 
     /**
-     * return the number of bytes left to read.
-     * @return The number of bytes left to read
+     * 返回要读取的剩余字节数。
+     * @return 剩余可读字节数
      */
     public int getInputBytesUnconsumed() {
         return availBits >> 3;
     }
 
     /**
-     * skip over bits in bit stream without updating CRC.
-     * @param bits  Number of bits to skip
-     * @throws IOException  Thrown if error reading from input stream
+     * 在不更新CRC的情况下跳过位流中的位。
+     * @param bits 要跳过的位数
+     * @throws 从输入流读取错误时引发IOException
      */
     public void skipBitsNoCRC(int bits) throws IOException {
         if (bits == 0) return;
@@ -186,9 +186,9 @@ public class BitInputStream {
     }
 
     /**
-     * read a single bit.
-     * @return The bit
-     * @throws IOException  Thrown if error reading input stream
+     * 返回为对齐字节所需读取的位数。
+     * @return 钻头
+     * 读取单个位。
      */
     public int readBit() throws IOException {
         while (true) {
@@ -210,12 +210,12 @@ public class BitInputStream {
     }
 
     /**
-     * read a bit into an integer value.
-     * The bits of the input integer are shifted left and the 
-     * read bit is placed into bit 0.
-     * @param val   The integer to shift and add read bit
-     * @return The updated integer value
-     * @throws IOException  Thrown if error reading input stream
+     * 将位读取为整数值。
+     * 输入整数的位向左移动，
+     * 读位被放置在位0中。
+     * @throws IOException 读取输入流出错时抛出
+     * @return 更新后的整数值
+     * 读取单个位。
      */
     public int readBitToInt(int val) throws IOException {
         while (true) {
@@ -238,13 +238,13 @@ public class BitInputStream {
     }
 
     /**
-     * peek at the next bit and add it to the input integer.
-     * The bits of the input integer are shifted left and the 
-     * read bit is placed into bit 0.
-     * @param val   The input integer
-     * @param bit   The bit to peek at
-     * @return The updated integer value
-     * @throws IOException  Thrown if error reading input stream
+     * 窥探下一位，并将其添加到输入整数中。
+     * 输入整数的位向左移动，
+     * 读位被放置在位0中。
+     * @param val 输入整数
+     * @param bit 要窥视的位
+     * @return 更新后的整数值
+     * 读取单个位。
      */
     public int peekBitToInt(int val, int bit) throws IOException {
         while (true) {
@@ -264,12 +264,12 @@ public class BitInputStream {
     }
 
     /**
-     * read a bit into a long value.
-     * The bits of the input long are shifted left and the 
-     * read bit is placed into bit 0.
-     * @param val   The long to shift and add read bit
-     * @return The updated long value
-     * @throws IOException  Thrown if error reading input stream
+     * @param val   要移位并追加读取位的整数
+     * 输入long的位向左移动，
+     * 读位被放置在位0中。
+     * @param val 长时间移位并添加读位
+     * @return 更新后的long值
+     * 读取单个位。
      */
     public long readBitToLong(long val) throws IOException {
         while (true) {
@@ -292,10 +292,10 @@ public class BitInputStream {
     }
 
     /**
-     * read bits into an unsigned integer.
-     * @param bits  The number of bits to read
-     * @return The bits as an unsigned integer
-     * @throws IOException  Thrown if error reading input stream
+     * 将一个位读入 long 值。
+     * 将若干位读入无符号整数。
+     * @param bits  要读取的位数
+     * 读取单个位。
      */
     public int readRawUInt(int bits) throws IOException {
         int val = 0;
@@ -306,10 +306,10 @@ public class BitInputStream {
     }
 
     /**
-     * peek at bits into an unsigned integer without advancing the input stream.
-     * @param bits  The number of bits to read
-     * @return The bits as an unsigned integer
-     * @throws IOException  Thrown if error reading input stream
+     * 在不推进输入流的情况下，将比特窥探到无符号整数中。
+     * 将若干位读入无符号整数。
+     * @param bits  要读取的位数
+     * 读取单个位。
      */
     public int peekRawUInt(int bits) throws IOException {
         int val = 0;
@@ -320,10 +320,10 @@ public class BitInputStream {
     }
 
     /**
-     * read bits into a signed integer.
-     * @param bits  The number of bits to read
-     * @return The bits as a signed integer
-     * @throws IOException  Thrown if error reading input stream
+     * @return 以无符号整数表示的这些位
+     * 将若干位读入无符号整数。
+     * @return 位为有符号整数
+     * 读取单个位。
      */
     public int readRawInt(int bits) throws IOException {
         if (bits == 0) {
@@ -334,7 +334,7 @@ public class BitInputStream {
             uval = readBitToInt(uval);
         }
 
-        // fix the sign
+        // 将若干位读入有符号整数。
         int val;
         int bitsToleft = 32 - bits;
         if (bitsToleft != 0) {
@@ -348,10 +348,10 @@ public class BitInputStream {
     }
 
     /**
-     * read bits into an unsigned long.
-     * @param bits  The number of bits to read
-     * @return The bits as an unsigned long
-     * @throws IOException  Thrown if error reading input stream
+     * 修正符号
+     * 将若干位读入无符号整数。
+     * @return 位为无符号长
+     * 读取单个位。
      */
     public long readRawULong(int bits) throws IOException {
         long val = 0;
@@ -362,9 +362,9 @@ public class BitInputStream {
     }
 
     /**
-     * read bits into an unsigned little endian integer.
-     * @return The bits as an unsigned integer
-     * @throws IOException  Thrown if error reading input stream
+     * 将位读入无符号小字节整数。
+     * @param bits  要读取的位数
+     * 读取单个位。
      */
     public int readRawIntLittleEndian() throws IOException {
         int x32 = readRawUInt(8);
@@ -378,10 +378,10 @@ public class BitInputStream {
     }
 
     /**
-     * Read a block of bytes (aligned) without updating the CRC value.
-     * @param val   The array to receive the bytes. If null, no bytes are returned
-     * @param nvals The number of bytes to read
-     * @throws IOException  Thrown if error reading input stream
+     * 将若干位读入无符号 long。
+     * 读取一块字节（对齐），不更新 CRC 值。
+     * @param nvals 要读取的字节数
+     * 读取单个位。
      */
     public void readByteBlockAlignedNoCRC(byte[] val, int nvals) throws IOException {
         int destlength = nvals;
@@ -393,7 +393,7 @@ public class BitInputStream {
                 if (val != null) System.arraycopy(buffer, getByte, val, destlength - nvals, chunk);
                 nvals -= chunk;
                 getByte += chunk;
-                //totalConsumedBits = (getByte << BITS_PER_BLURB_LOG2);
+                //@param val   接收字节的数组。若为 null，则不返回字节
                 availBits -= (chunk << BITS_PER_BLURB_LOG2);
                 totalBitsRead += (chunk << BITS_PER_BLURB_LOG2);
             }
@@ -401,9 +401,9 @@ public class BitInputStream {
     }
 
     /**
-     * Read and count the number of zero bits.
+     * 读取并计数零位数。
      * @return The number of zero bits read
-     * @throws IOException  Thrown if error reading input stream
+     * 读取单个位。
      */
     public int readUnaryUnsigned() throws IOException {
         int val = 0;
@@ -416,24 +416,24 @@ public class BitInputStream {
     }
 
     /**
-     * Read a Rice Signal Block.
-     * @param vals  The values to be returned
-     * @param pos   The starting position in the vals array
-     * @param nvals The number of values to return
-     * @param parameter The Rice parameter
-     * @throws IOException  On read error
+     * 读取水稻信号块。
+     * @param vals 要返回的值
+     * @return 读取到的零位数
+     * @param pos   vals 数组中的起始位置
+     * @param nvals 要返回的值的个数
+     * @throws 读取时IOException错误
      */
     public void readRiceSignedBlock(int[] vals, int pos, int nvals, int parameter) throws IOException {
         int j, valI = 0;
         int cbits = 0, uval = 0, msbs = 0, lsbsLeft = 0;
         byte blurb, saveBlurb;
-        int state = 0; // 0 = getting unary MSBs, 1 = getting binary LSBs
+        int state = 0; // 0 =获取一元MSB ， 1 =获取二元LSB
         if (nvals == 0) return;
         int i = getByte;
 
         long startBits = getByte * 8 + getBit;
 
-        // We unroll the main loop to take care of partially consumed blurbs here.
+        // 我们展开主循环来处理部分消耗的模糊。
         if (getBit > 0) {
             saveBlurb = blurb = buffer[i];
             cbits = getBit;
@@ -445,14 +445,14 @@ public class BitInputStream {
                             blurb <<= 1;
                         msbs += j;
 
-                        // dispose of the unary end bit
+                        // 处置一元端位
                         blurb <<= 1;
                         j++;
                         cbits += j;
                         uval = 0;
                         lsbsLeft = parameter;
                         state++;
-                        //totalBitsRead += msbs;
+                        //@param parameter Rice 参数
                         if (cbits == BITS_PER_BLURB) {
                             cbits = 0;
                             readCRC16 = CRC16.update(saveBlurb, readCRC16);
@@ -462,7 +462,7 @@ public class BitInputStream {
                         msbs += BITS_PER_BLURB - cbits;
                         cbits = 0;
                         readCRC16 = CRC16.update(saveBlurb, readCRC16);
-                        //totalBitsRead += msbs;
+                        //@param parameter Rice 参数
                         break;
                     }
                 } else {
@@ -472,9 +472,9 @@ public class BitInputStream {
                         uval |= ((blurb & 0xff) >> cbits);
                         cbits = 0;
                         readCRC16 = CRC16.update(saveBlurb, readCRC16);
-                        //totalBitsRead += availableBits;
+                        //totalBitsRead + = availableBits;
                         if (lsbsLeft == availableBits) {
-                            // compose the value
+                            // 组成值
                             uval |= (msbs << parameter);
                             if ((uval & 1) != 0)
                                 vals[pos + valI++] = -((int) (uval >> 1)) - 1;
@@ -492,16 +492,16 @@ public class BitInputStream {
                         uval |= ((blurb & 0xff) >> (BITS_PER_BLURB - lsbsLeft));
                         blurb <<= lsbsLeft;
                         cbits += lsbsLeft;
-                        //totalBitsRead += lsbsLeft;
-                        // compose the value
+                        //totalBitsRead + = lsbsLeft;
+                        // 组成值
                         uval |= (msbs << parameter);
                         if ((uval & 1) != 0)
                             vals[pos + valI++] = -((int) (uval >> 1)) - 1;
                         else
                             vals[pos + valI++] = uval >> 1;
                         if (valI == nvals) {
-                            // back up one if we exited the for loop because we
-                            // read all nvals but the end came in the middle of
+                            // 如果我们退出for循环，则备份一个，因为我们
+                            // 读取所有nvals ，但结尾在中间
                             // a blurb
                             i--;
                             break;
@@ -514,11 +514,11 @@ public class BitInputStream {
             i++;
             getByte = i;
             getBit = cbits;
-            //totalConsumedBits = (i << BITS_PER_BLURB_LOG2) | cbits;
+            //一个 blurb
             //totalBitsRead += (BITS_PER_BLURB) | cbits;
         }
 
-        // Now that we are blurb-aligned the logic is slightly simpler
+        // 现在我们进行了模糊对齐，逻辑稍微简单一些
         while (valI < nvals) {
             for (; i < putByte && valI < nvals; i++) {
                 saveBlurb = blurb = buffer[i];
@@ -528,14 +528,14 @@ public class BitInputStream {
                         if (blurb != 0) {
                             for (j = 0; (blurb & BLURB_TOP_BIT_ONE) == 0; j++) blurb <<= 1;
                             msbs += j;
-                            // dispose of the unary end bit
+                            // 处置一元端位
                             blurb <<= 1;
                             j++;
                             cbits += j;
                             uval = 0;
                             lsbsLeft = parameter;
                             state++;
-                            //totalBitsRead += msbs;
+                            //@param parameter Rice 参数
                             if (cbits == BITS_PER_BLURB) {
                                 cbits = 0;
                                 readCRC16 = CRC16.update(saveBlurb, readCRC16);
@@ -545,7 +545,7 @@ public class BitInputStream {
                             msbs += BITS_PER_BLURB - cbits;
                             cbits = 0;
                             readCRC16 = CRC16.update(saveBlurb, readCRC16);
-                            //totalBitsRead += msbs;
+                            //@param parameter Rice 参数
                             break;
                         }
                     } else {
@@ -555,9 +555,9 @@ public class BitInputStream {
                             uval |= ((blurb & 0xff) >> cbits);
                             cbits = 0;
                             readCRC16 = CRC16.update(saveBlurb, readCRC16);
-                            //totalBitsRead += availableBits;
+                            //totalBitsRead + = availableBits;
                             if (lsbsLeft == availableBits) {
-                                // compose the value
+                                // 组成值
                                 uval |= (msbs << parameter);
                                 if ((uval & 1) != 0)
                                     vals[pos + valI++] = -((int) (uval >> 1)) - 1;
@@ -575,17 +575,17 @@ public class BitInputStream {
                             uval |= ((blurb & 0xff) >> (BITS_PER_BLURB - lsbsLeft));
                             blurb <<= lsbsLeft;
                             cbits += lsbsLeft;
-                            //totalBitsRead += lsbsLeft;
-                            // compose the value
+                            //totalBitsRead + = lsbsLeft;
+                            // 组成值
                             uval |= (msbs << parameter);
                             if ((uval & 1) != 0)
                                 vals[pos + valI++] = -((int) (uval >> 1)) - 1;
                             else
                                 vals[pos + valI++] = uval >> 1;
                             if (valI == nvals) {
-                                // back up one if we exited the for loop because
-                                // we read all nvals but the end came in the
-                                // middle of a blurb
+                                // 如果我们退出for循环，则备份一个，因为
+                                // 我们阅读了所有nvals ，但结尾是在
+                                // 简介的中间
                                 i--;
                                 break;
                             }
@@ -597,34 +597,34 @@ public class BitInputStream {
             }
             getByte = i;
             getBit = cbits;
-            //totalConsumedBits = (i << BITS_PER_BLURB_LOG2) | cbits;
+            //一个 blurb
             //totalBitsRead += (BITS_PER_BLURB) | cbits;
             if (valI < nvals) {
                 long endBits = getByte * 8 + getBit;
-                //System.out.println("SE0 "+startBits+" "+endBits);
+                //System.out.println("SE0" + startBits + "" + endBits);
                 totalBitsRead += endBits - startBits;
                 availBits -= endBits - startBits;
                 readFromStream();
-                // these must be zero because we can only get here if we got to
-                // the end of the buffer
+                // 这些必须为零，因为我们只有在达到
+                // 缓冲区的末尾
                 i = 0;
                 startBits = getByte * 8 + getBit;
             }
         }
 
         long endBits = getByte * 8 + getBit;
-        //System.out.println("SE1 "+startBits+" "+endBits);
+        //System.out.println("SE1" + startBits + "" + endBits);
         totalBitsRead += endBits - startBits;
         availBits -= endBits - startBits;
     }
 
     /**
      * read UTF8 integer.
-     * on return, if *val == 0xffffffff then the utf-8 sequence was invalid, but
-     * the return value will be true
-     * @param raw   The raw bytes read (output). If null, no bytes are returned
-     * @return The integer read
-     * @throws IOException  Thrown if error reading input stream
+     * 读取 UTF8 整数。
+     * 返回时，若 *val == 0xffffffff 则 utf-8 序列无效，但
+     * @param raw 读取的原始字节（输出）。如果为空，则不返回字节
+     * 返回值仍为 true
+     * 读取单个位。
      */
     public int readUTF8Int(ByteData raw) throws IOException {
 
@@ -633,7 +633,7 @@ public class BitInputStream {
         int i;
         x = readRawUInt(8);
         if (raw != null) raw.append((byte) x);
-        if ((x & 0x80) == 0) { // 0xxxxxxx
+        if ((x & 0x80) == 0) { // @return 读取到的整数
             v = x;
             i = 0;
         } else if (((x & 0xC0) != 0) && ((x & 0x20) == 0)) { // 110xxxxx
@@ -669,12 +669,12 @@ public class BitInputStream {
     }
 
     /**
-     * read UTF long.
-     * on return, if *val == 0xffffffffffffffff then the utf-8 sequence was
-     * invalid, but the return value will be true
-     * @param raw   The raw bytes read (output). If null, no bytes are returned
-     * @return The long read
-     * @throws IOException  Thrown if error reading input stream
+     * 读取UTF长度。
+     * 返回时，如果* val = = 0xffffffffffffffff ，则utf-8序列为
+     * 无效，但返回值为true
+     * @param raw 读取的原始字节（输出）。如果为空，则不返回字节
+     * @return 长读
+     * 读取单个位。
      */
     public long readUTF8Long(ByteData raw) throws IOException {
         long v = 0;
@@ -683,7 +683,7 @@ public class BitInputStream {
         x = readRawUInt(8);
         if (raw != null)
             raw.append((byte) x);
-        if (((x & 0x80) == 0)) { // 0xxxxxxx
+        if (((x & 0x80) == 0)) { // @return 读取到的整数
             v = x;
             i = 0;
         } else if (((x & 0xC0) != 0) && ((x & 0x20) == 0)) { // 110xxxxx
@@ -721,8 +721,8 @@ public class BitInputStream {
     }
 
     /**
-     * Total Blurbs read.
-     * @return Returns the total blurbs read.
+     * 阅读的模糊总数。
+     * @return 返回读取的总模糊。
      */
     public int getTotalBytesRead() {
         return ((totalBitsRead + 7) / 8);

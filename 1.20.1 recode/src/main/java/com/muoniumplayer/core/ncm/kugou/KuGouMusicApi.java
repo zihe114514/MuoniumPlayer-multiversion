@@ -541,6 +541,38 @@ public final class KuGouMusicApi {
     }
 
     /**
+     * 歌词候选列表（原始 JSON），交给调用方自己打分。
+     *
+     * <p>给「非酷狗曲目跨源取 KRC」用：那种情况没有 hash 可精确匹配，只能按关键词搜出一批候选，
+     * 而<b>挑哪一个不能只看时长</b>——同名不同版本的时长可能只差几秒，必须由调用方用曲名/歌手/
+     * 专辑一起判断。这里因此只做检索，不做选择。</p>
+     *
+     * @param hash    曲目 hash；非酷狗曲目传空串
+     * @param keyword "歌手 - 歌名"
+     * @return 永不为 {@code null}；没有候选时为空列表
+     */
+    public static List<JsonObject> lyricCandidates(String hash, String keyword) {
+        List<JsonObject> result = new ArrayList<JsonObject>();
+        JsonArray candidates = searchLyric(hash, keyword);
+        if (candidates == null) return result;
+        for (JsonElement element : candidates) {
+            if (element != null && element.isJsonObject()) result.add(element.getAsJsonObject());
+        }
+        return result;
+    }
+
+    /**
+     * 按指定候选下载并解密 KRC。
+     *
+     * @return 永不为 {@code null}；候选无效或下载失败时 {@code yrc} 为空串
+     */
+    public static KrcLyrics.Decoded lyric(JsonObject candidate) {
+        String content = lyricContent(candidate, "krc");
+        if (KuGouSign.isBlank(content)) return new KrcLyrics.Decoded("", "");
+        return KrcLyrics.decode(content);
+    }
+
+    /**
      * 取行级 LRC 歌词，作为 KRC 解不出逐字时的兜底。
      *
      * <p>单独一条而不是从 KRC 降级得来：行级 KRC 会丢掉翻译，而 {@code fmt=lrc} 的那一份自带
@@ -563,7 +595,11 @@ public final class KuGouMusicApi {
 
     /** 检索候选 → 下载，返回上游 {@code content} 原文（两种 fmt 都是 base64）。 */
     private static String lyricContent(String hash, long durationMs, String keyword, String format) {
-        JsonObject candidate = bestLyricCandidate(hash, durationMs, keyword);
+        return lyricContent(bestLyricCandidate(hash, durationMs, keyword), format);
+    }
+
+    /** 下载指定候选的歌词正文（base64）。 */
+    private static String lyricContent(JsonObject candidate, String format) {
         if (candidate == null) return "";
         String id = text(candidate, "id");
         String accessKey = firstText(candidate, "accesskey", "accessKey");
@@ -593,14 +629,27 @@ public final class KuGouMusicApi {
             if (!element.isJsonObject()) continue;
             JsonObject item = element.getAsJsonObject();
             if (durationMs <= 0L) return item;
-            long candidateDuration = longValue(item, "duration");
-            long delta = Math.abs(candidateDuration - durationMs);
+            long candidateDuration = lyricCandidateDurationMillis(item);
+            long delta = candidateDuration <= 0L ? Long.MAX_VALUE : Math.abs(candidateDuration - durationMs);
             if (delta < bestDelta) {
                 bestDelta = delta;
                 best = item;
             }
         }
         return best;
+    }
+
+    /**
+     * 歌词候选的时长统一到毫秒。
+     *
+     * <p>酷狗歌词库里新老条目并存：老条目按<b>秒</b>给（{@code 314}），新条目按<b>毫秒</b>给
+     * （{@code 255582}）。拿 {@code 314} 直接和毫秒比，差值永远是几十万，于是「最近的候选」
+     * 实际上退化成「最短的候选」——关键词兜底那一路上就会挑错版本。</p>
+     */
+    private static long lyricCandidateDurationMillis(JsonObject candidate) {
+        long raw = longValue(candidate, "duration");
+        if (raw <= 0L) return 0L;
+        return raw < 10_000L ? raw * 1000L : raw;
     }
 
     private static JsonArray searchLyric(String hash, String keyword) {

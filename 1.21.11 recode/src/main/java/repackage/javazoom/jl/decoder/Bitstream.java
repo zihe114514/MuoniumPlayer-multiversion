@@ -1,35 +1,35 @@
 /*
- * 11/19/04  1.0 moved to LGPL.
+ * 2004年11月19日1.0移至LGPL。
  *
- * 11/17/04     Uncomplete frames discarded. E.B, javalayer@javazoom.net
+ * 2004年11月17日未完成的帧被丢弃。E.B, javalayer@javazoom.net
  *
  * 12/05/03     ID3v2 tag returned. E.B, javalayer@javazoom.net
  *
- * 12/12/99     Based on Ibitstream. Exceptions thrown on errors,
- *             Temporary removed seek functionality. mdm@techie.com
+ * 12/12/99     基于 Ibitstream。出错时抛出异常，
+ *             临时移除了 seek 功能。mdm@techie.com
  *
- * 02/12/99 : Java Conversion by E.B , javalayer@javazoom.net
+ * 1999年2月12日： E.B的Java转换， javalayer@javazoom.net
  *
- * 04/14/97 : Added function prototypes for new syncing and seeking
- * mechanisms. Also made this file portable. Changes made by Jeff Tsay
+ * 04/14/97：为新的同步和定位添加了函数原型，
+ * 机制。还使此文件可移植。Jeff Tsay所做的更改
  *
- *  @(#) ibitstream.h 1.5, last edit: 6/15/94 16:55:34
- *  @(#) Copyright (C) 1993, 1994 Tobias Bading (bading@cs.tu-berlin.de)
- *  @(#) Berlin University of Technology
+ *  @ (#) ibitstream.h 1.5 ，最后编辑： 6/15/94 16:55:34
+ *  @ (#)版权所有(C) 1993, 1994 Tobias Bading(bading@cs.tu-berlin.de)
+ *  @ (#)柏林理工大学
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
@@ -39,67 +39,67 @@ import java.io.*;
 
 
 /**
- * The <code>Bistream</code> class is responsible for parsing
- * an MPEG audio bitstream.
+ * <code> Bistream </code>类负责解析
+ * MPEG 音频比特流。
  *
- * <b>REVIEW:</b> much of the parsing currently occurs in the
- * various decoders. This should be moved into this class and associated
- * inner classes.
+ * <b>回顾： </b>目前大部分解析发生在
+ * 各种解码器。这应移入此类及关联的
+ * 内部类中。
  */
 public final class Bitstream implements BitstreamErrors {
 
     /**
-     * Synchronization control constant for the initial
-     * synchronization to the start of a frame.
+     * 初始同步控制常数
+     * 同步到帧的开始。
      */
     static byte INITIAL_SYNC = 0;
 
     /**
-     * Synchronization control constant for non-initial frame
-     * synchronizations.
+     * 非起始帧的同步控制常量
+     * 同步
      */
     static byte STRICT_SYNC = 1;
 
     /**
-     * Maximum size of the frame buffer.
+     * 帧缓冲区的最大大小。
      * <p>
-     * max. 1730 bytes per frame: 144 * 384kbit/s / 32000 Hz + 2 Bytes CRC
+     * 每帧最多 1730 字节：144 * 384kbit/s / 32000 Hz + 2 字节 CRC
      */
     private static final int BUFFER_INT_SIZE = 433;
 
     /**
-     * The frame buffer that holds the data for the current frame.
+     * 保存当前帧数据的帧缓冲区。
      */
     private final int[] frameBuffer = new int[BUFFER_INT_SIZE];
 
     /**
-     * Number of valid bytes in the frame buffer.
+     * 帧缓冲区中的有效字节数。
      */
     private int frameSize;
 
     /**
-     * The bytes read from the stream.
+     * 从流中读取的字节。
      */
     private byte[] frameBytes = new byte[BUFFER_INT_SIZE * 4];
 
     /**
-     * Index into <code>frameBuffer</code> where the next bits are
-     * retrieved.
+     * 进入 <code>frameBuffer</code> 的索引，下一位所在位置
+     * 已检索
      */
     private int wordPointer;
 
     /**
-     * Number (0-31, from MSB to LSB) of next bit for get_bits()
+     * Get_bits()的下一位数（ 0-31 ，从MSB到LSB ）
      */
     private int bitindex;
 
     /**
-     * The current specified syncword
+     * 当前指定的syncword
      */
     private int syncWord;
 
     /**
-     * Audio header position in stream.
+     * 流中的音频标题位置。
      */
     private int headerPos = 0;
 
@@ -127,10 +127,10 @@ public final class Bitstream implements BitstreamErrors {
     private boolean firstframe = true;
 
     /**
-     * Construct a IBitstream that reads data from a
-     * given InputStream.
+     * 构造一个IBitstream ，从
+     * 给定InputStream。
      *
-     * @param in The InputStream to read from.
+     * @param in 要读取的InputStream。
      */
     public Bitstream(InputStream in) {
         if (in == null)
@@ -144,36 +144,36 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Return position of the first audio header.
+     * 返回第一个音频标题的位置。
      *
-     * @return size of ID3v2 tag frames.
+     * @return ID3v2 标签帧的大小。
      */
     public int header_pos() {
         return headerPos;
     }
 
     /**
-     * Load ID3v2 frames.
+     * 加载ID3v2帧。
      *
-     * @param in MP3 InputStream.
+     * @param in MP3输入流。
      * @author JavaZOOM
      */
     private void loadID3v2(InputStream in) {
         int size = -1;
         try {
-            // Read ID3v2 header (10 bytes).
+            // 读取ID3v2标头（ 10字节）。
             in.mark(10);
             size = readID3v2Header(in);
             headerPos = size;
         } catch (IOException e) {
         } finally {
             try {
-                // Unread ID3v2 header (10 bytes).
+                // 未读的 ID3v2 头（10 字节）。
                 in.reset();
             } catch (IOException e) {
             }
         }
-        // Load ID3v2 tags.
+        // 加载 ID3v2 标签。
         try {
             if (size > 0) {
                 rawid3v2 = new byte[size];
@@ -184,10 +184,10 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Parse ID3v2 tag header to find out size of ID3v2 frames.
+     * 解析 ID3v2 标签头，以确定 ID3v2 帧的大小。
      *
-     * @param in MP3 InputStream
-     * @return size of ID3v2 frames + header
+     * @param in MP3输入流
+     * ID3v2帧的@return 大小+标头
      * @throws IOException
      * @author JavaZOOM
      */
@@ -195,7 +195,7 @@ public final class Bitstream implements BitstreamErrors {
         byte[] id3header = new byte[4];
         int size = -10;
         in.read(id3header, 0, 3);
-        // Look for ID3v2
+        // 查找ID3v2
         if ((id3header[0] == 'I') && (id3header[1] == 'D') && (id3header[2] == '3')) {
             in.read(id3header, 0, 3);
             @SuppressWarnings("unused")
@@ -209,9 +209,9 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Return raw ID3v2 frames + header.
+     * 返回原始 ID3v2 帧 + 头。
      *
-     * @return ID3v2 InputStream or null if ID3v2 frames are not available.
+     * @return ID3v2 InputStream或NULL （如果ID3v2帧不可用）。
      */
     public InputStream getRawID3v2() {
         if (rawid3v2 == null)
@@ -222,7 +222,7 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Close the Bitstream.
+     * 关闭比特流。
      *
      * @throws BitstreamException
      */
@@ -235,35 +235,35 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Reads and parses the next frame from the input source.
+     * 从输入源读取并解析下一帧。
      *
-     * @return the Header describing details of the frame read,
-     * or null if the end of the stream has been reached.
+     * @return 描述帧读取细节的标题，
+     * 或NULL （如果已到达流的末尾）。
      */
     public Header readFrame() throws BitstreamException {
         Header result = null;
         try {
             result = readNextFrame();
-            // E.B, Parse VBR (if any) first frame.
+            // E.B，先解析 VBR（若有）首帧。
             if (firstframe) {
                 result.parseVBR(frameBytes);
                 firstframe = false;
             }
         } catch (BitstreamException ex) {
             if ((ex.getErrorCode() == INVALIDFRAME)) {
-                // Try to skip this frame.
+                // 请尝试跳过此帧。
                 //System.out.println("INVALIDFRAME");
                 try {
                     closeFrame();
                     result = readNextFrame();
                 } catch (BitstreamException e) {
                     if ((e.getErrorCode() != STREAM_EOF)) {
-                        // wrap original exception so stack trace is maintained.
+                        // 包装原始异常以保留堆栈跟踪。
                         throw newBitstreamException(e.getErrorCode(), e);
                     }
                 }
             } else if ((ex.getErrorCode() != STREAM_EOF)) {
-                // wrap original exception so stack trace is maintained.
+                // 包装原始异常以保留堆栈跟踪。
                 throw newBitstreamException(ex.getErrorCode(), ex);
             }
         }
@@ -271,9 +271,9 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Read next MP3 frame.
+     * 读取下一个MP3帧。
      *
-     * @return MP3 frame header.
+     * @return MP3帧头。
      * @throws BitstreamException
      */
     private Header readNextFrame() throws BitstreamException {
@@ -284,21 +284,21 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Read next MP3 frame.
+     * 读取下一个MP3帧。
      *
      * @throws BitstreamException
      */
     private void nextFrame() throws BitstreamException {
-        // entire frame is read by the header class.
+        // 整个帧由header类读取。
         header.read_header(this, crc);
     }
 
     /**
-     * Unreads the bytes read from the frame.
+     * 未读取从帧中读取的字节。
      *
      * @throws BitstreamException
      */
-    // REVIEW: add new error codes for this.
+    // 审核：为此添加新的错误代码。
     public void unreadFrame() throws BitstreamException {
         if (wordPointer == -1 && bitindex == -1 && (frameSize > 0)) {
             try {
@@ -310,7 +310,7 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Close MP3 frame.
+     * 关闭 MP3 帧。
      */
     public void closeFrame() {
         frameSize = -1;
@@ -319,8 +319,8 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Determines if the next 4 bytes of the stream represent a
-     * frame header.
+     * 判断流中接下来的 4 个字节是否表示一个
+     * 帧头。
      */
     public boolean isSyncCurrentPosition(int syncmode) throws BitstreamException {
         int read = readBytes(syncBuf, 0, 4);
@@ -342,15 +342,15 @@ public final class Bitstream implements BitstreamErrors {
         }
     }
 
-    // REVIEW: this class should provide inner classes to
-    // parse the frame contents. Eventually, readBits will
-    // be removed.
+    // 复习：此课程应提供内部课程，
+    // 解析框架内容。最终， readBits将
+    // 已移除！
     public int readBits(int n) {
         return getBits(n);
     }
 
     public int readCheckedBits(int n) {
-        // REVIEW: implement CRC check.
+        // REVIEW：实现 CRC 校验。
         return getBits(n);
     }
 
@@ -363,15 +363,15 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Get next 32 bits from bitstream.
-     * They are stored in the headerString.
-     * syncMode allows Synchro flag ID
-     * The returned value is False at the end of stream.
+     * 从比特流中获取接下来的32位。
+     * 它们存储在 headerString 中。
+     * syncMode 允许 Synchro 标志 ID
+     * 流末尾时返回值为 False。
      */
     int syncHeader(byte syncMode) throws BitstreamException {
         boolean sync;
         int headerString;
-        // read additional 2 bytes
+        // 再读取 2 个字节
         int bytesRead = readBytes(syncBuf, 0, 3);
 
         if (bytesRead != 3)
@@ -397,19 +397,19 @@ public final class Bitstream implements BitstreamErrors {
         boolean sync = false;
 
         if (syncmode == INITIAL_SYNC) {
-            //sync =  ((headerstring & 0xFFF00000) == 0xFFF00000);
-            sync = ((headerstring & 0xFFE00000) == 0xFFE00000); // SZD: MPEG 2.5
+            //sync = ((headerstring & 0xFFF00000) = = 0xFFF00000);
+            sync = ((headerstring & 0xFFE00000) == 0xFFE00000); // SZD ： MPEG 2.5
         } else {
             sync = ((headerstring & 0xFFF80C00) == word) && (((headerstring & 0x000000C0) == 0x000000C0) == singleChMode);
         }
 
-        // filter out invalid sample rate
+        // 过滤无效采样率
         if (sync)
             sync = (((headerstring >>> 10) & 3) != 3);
-        // filter out invalid layer
+        // 过滤无效图层
         if (sync)
             sync = (((headerstring >>> 17) & 3) != 0);
-        // filter out invalid version
+        // 过滤掉无效版本
         if (sync)
             sync = (((headerstring >>> 19) & 3) != 1);
 
@@ -417,8 +417,8 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Reads the data for the next frame. The frame is not parsed
-     * until parse frame is called.
+     * 读取下一帧的数据。框架未解析
+     * 直到调用解析帧。
      */
     int readFrameData(int bytesize) throws BitstreamException {
         int numread = 0;
@@ -430,15 +430,15 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Parses the data previously read with read_frame_data().
+     * 解析先前用 read_frame_data() 读取的数据。
      */
     void parseFrame() {
-        // Convert Bytes read to int
+        // 将读取的字节转换为整数
         int b = 0;
         byte[] byteread = frameBytes;
         int bytesize = frameSize;
 
-        // Check ID3v1 TAG (True only if last frame).
+        // 检查ID3v1标签（仅在最后一帧时为True ）。
 
         for (int k = 0; k < bytesize; k = k + 4) {
             @SuppressWarnings("unused")
@@ -462,26 +462,26 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Read bits from buffer into the lower bits of an unsigned int.
-     * The LSB contains the latest read bit of the stream.
-     * (1 <= number_of_bits <= 16)
+     * 从缓冲区读取位，放入无符号 int 的低位。
+     * LSB包含流的最新读取位。
+     * (1 < = number_of_bits < = 16)
      */
     public int getBits(int number_of_bits) {
         int returnvalue = 0;
         int sum = bitindex + number_of_bits;
 
         // E.B
-        // There is a problem here, wordPointer could be -1 ?!
+        // 这里有问题， wordPointer可能是-1 ？ ！
         if (wordPointer < 0)
             wordPointer = 0;
-        // E.B : End.
+        // EB ：结束。
 
         if (sum <= 32) {
-            // all bits contained in *wordPointer
+            // *wordPointer 中包含的所有位
             returnvalue = (frameBuffer[wordPointer] >>> (32 - sum)) & bitmask[number_of_bits];
             if ((bitindex += number_of_bits) == 32) {
                 bitindex = 0;
-                wordPointer++; // added by me!
+                wordPointer++; // 由我添加！
             }
             return returnvalue;
         }
@@ -498,8 +498,8 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Set the word we want to sync the header to.
-     * In Big-Endian byte order
+     * 设置要将页眉同步到的单词。
+     * 按大端字节序
      */
     void setSyncWord(int syncWord) {
         this.syncWord = syncWord & 0xFFFFFF3F;
@@ -507,16 +507,16 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Reads the exact number of bytes from the source
-     * input stream into a byte array.
+     * 从源读取确切数量的字节到
+     * 输入流到字节数组中。
      *
-     * @param b    The byte array to read the specified number
-     *             of bytes into.
-     * @param offs The index in the array where the first byte
-     *             read should be stored.
-     * @param len  the number of bytes to read.
-     * @throws BitstreamException is thrown if the specified
-     *                            number of bytes could not be read from the stream.
+     * @param b 读取指定数字的字节数组
+     *             。
+     * @param offs 数组中第一个字节所在的索引
+     *             读数应被存储。
+     * @param len 要读取的字节数。
+     * 如果指定，则抛出@throws BitstreamException
+     *                            无法从流中读取字节数。
      */
     private int readFully(byte[] b, int offs, int len) throws BitstreamException {
         int nRead = 0;
@@ -541,8 +541,8 @@ public final class Bitstream implements BitstreamErrors {
     }
 
     /**
-     * Similar to readFully, but doesn't throw exception when
-     * EOF is reached.
+     * 类似于readFully ，但在以下情况下不会抛出异常：
+     * 达到EOF。
      */
     private int readBytes(byte[] b, int offs, int len) throws BitstreamException {
         int totalBytesRead = 0;

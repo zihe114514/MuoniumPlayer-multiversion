@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.unitgen;
@@ -20,9 +20,9 @@ import repackage.com.jsyn.Synthesizer;
 import repackage.com.jsyn.ports.UnitInputPort;
 
 /**
- * Provides access to one channel of the audio output.
- * For more than two channels you must call
- * the {@link Synthesizer} start() method with numOutputChannels &gt; 2.
+ * 提供对音频输出某个声道的访问。
+ * 对于两个以上的频道，您必须致电
+ * zZQ0ZZQ start()方法， numOutputChannels &gt; 2。
  *
  * @author Phil Burk (C) 2009 Mobileer Inc
  */
@@ -43,7 +43,7 @@ public class ChannelOut extends UnitGenerator {
     }
 
     /**
-     * This unit won't do anything unless you start() it.
+     * 除非你开始（ ） ，否则这个单位不会做任何事情。
      */
     @Override
     public boolean isStartRequired() {

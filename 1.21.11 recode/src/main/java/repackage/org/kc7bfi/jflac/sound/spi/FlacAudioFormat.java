@@ -12,7 +12,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * An AudioFormat instance wrapping a FLAC StreamInfo object. With Java 5.0
+ * 包装FLAC StreamInfo对象的AudioFormat实例。使用Java 5.0
  * style properties support.
  *
  * @author Florian Bomers
@@ -20,23 +20,23 @@ import java.util.Map;
 public class FlacAudioFormat extends AudioFormat {
 
     /**
-     * Property key for minimum frame size. The value is of type Integer and
-     * gives the minimum size of encoded frames in bytes.
+     * 用于最小帧大小的属性键。该值的类型为Integer和
+     * 给出编码帧的最小大小（以字节为单位）。
      */
     public static final String KEY_FRAMESIZE_MIN = "framesize_min";
     /**
-     * Property key for maximum frame size. The value is of type Integer and
-     * gives the maximum size of encoded frames in bytes.
+     * 最大帧大小的属性键。该值的类型为Integer和
+     * 给出编码帧的最大大小（以字节为单位）。
      */
     public static final String KEY_FRAMESIZE_MAX = "framesize_max";
     /**
-     * Property key for minimum block size. The value is of type Integer and
-     * gives the minimum size of decoded frames in bytes.
+     * 最小区块大小的属性键。该值的类型为Integer和
+     * 以字节为单位给出解码帧的最小大小。
      */
     public static final String KEY_BLOCKSIZE_MIN = "blocksize_min";
     /**
-     * Property key for maximum block size. The value is of type Integer and
-     * gives the maximum size of decoded frames in bytes.
+     * 样式属性支持。
+     * 给出解码帧的最大大小（以字节为单位）。
      */
     public static final String KEY_BLOCKSIZE_MAX = "blocksize_max";
 
@@ -45,7 +45,7 @@ public class FlacAudioFormat extends AudioFormat {
     public FlacAudioFormat(StreamInfo streamInfo) {
         super(FlacEncoding.FLAC, streamInfo.getSampleRate(),
                 streamInfo.getBitsPerSample(), streamInfo.getChannels(),
-                /* streamInfo.maxFrameSize */AudioSystem.NOT_SPECIFIED,
+                /* 最大块大小的属性键。值为 Integer 类型， */AudioSystem.NOT_SPECIFIED,
                 AudioSystem.NOT_SPECIFIED, false);
         props = new HashMap();
         props.put(KEY_FRAMESIZE_MIN, streamInfo.getMinFrameSize());
@@ -55,8 +55,8 @@ public class FlacAudioFormat extends AudioFormat {
     }
 
     /**
-     * Java 5.0 compatible method to get the full map of properties. The
-     * properties use the KEY_ keys defined in this class.
+     * streamInfo.maxFrameSize
+     * 属性使用此类中定义的KEY_keys。
      */
     public Map properties() {
         Map ret;
@@ -69,7 +69,7 @@ public class FlacAudioFormat extends AudioFormat {
     }
 
     /**
-     * Java 5.0 compatible method to get a property. As key use the KEY_ constants defined in this class.
+     * 获取属性的Java 5.0兼容方法。使用此类中定义的KEY_CONSTANTS作为键。
      */
     public Object getProperty(String key) {
         if (props == null) {

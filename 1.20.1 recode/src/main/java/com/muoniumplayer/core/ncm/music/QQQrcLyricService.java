@@ -33,7 +33,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>流程:</p>
  * <ol>
  *   <li>能直接拿到 QQ 数字 songid 的曲目(QQ 源、GD 的 tencent 平台)直接用它请求;</li>
- *   <li>否则用 {@code search_for_qq_cp} 搜索并在本地打分,<b>宁可没有歌词,也不给错歌的歌词</b>;</li>
+ *   <li>否则用 {@code search_for_qq_cp} 搜索并在本地打分,<b>宁可没有歌词,也不给错歌的歌词</b>。
+ *       检索词用 {@code 标题 - 歌手 - 专辑} 三段式;打分走 {@link LyricMatchScore},候选自带的
+ *       {@code interval} 参与时长乘数——同名不同版本(原曲 vs Remix 差几十秒)就是靠这一项挡掉的;</li>
  *   <li>{@code music.musichallSong.PlayLyricInfo} 取回 lyric/trans/roma 三段密文,
  *       交给 {@link QrcCipher} 解密 + inflate;</li>
  *   <li>解出的 XML 里 {@code LyricContent} 属性才是 QRC 正文,解析后<b>必须真的是逐字</b>
@@ -103,7 +105,7 @@ final class QQQrcLyricService {
         try {
             long directId = directSongId(music);
             if (directId > 0L) {
-                payload = fetchLyric(directId, music.getName(), firstArtist(music), albumName(music),
+                payload = fetchLyric(directId, music.getName(), artistsOf(music), albumName(music),
                         (int) (music.getDuration() / 1000L), "songID=" + directId);
             }
             if (payload == null) {
@@ -159,12 +161,24 @@ final class QQQrcLyricService {
         return parsed;
     }
 
-    private static boolean isEnabled() {
+    /** 包内可见：{@code LyricLoadService} 要拿它拼落盘缓存的键。 */
+    static boolean isEnabled() {
         try {
             return MuoniumPlayerExtension.getInstance().musicLyrics.preferQqQrcLyrics.getValue();
         } catch (Throwable ignored) {
             return true;   // 设置尚未初始化时按默认开启处理
         }
+    }
+
+    /**
+     * 忘掉这首歌的查询结果。
+     *
+     * <p>手动「重取歌词」用它：光清掉落盘缓存还不够，这里的 6 小时记忆不清掉，重取拿回来的还是
+     * 同一份结果，用户看到的就是「点了没反应」。</p>
+     */
+    static void invalidate(Music music) {
+        if (music == null) return;
+        CACHE.remove(music.getStableKey());
     }
 
     // ── 直接命中 QQ songid ──────────────────────────────────────────────────
@@ -206,45 +220,65 @@ final class QQQrcLyricService {
     private static Payload fetchBySearch(Music music) {
         String title = safe(music.getName()).trim();
         if (title.isEmpty()) return null;
-        String artist = firstArtist(music);
 
-        String keyword = artist.isEmpty() ? title : title + ' ' + artist;
-        JsonArray candidates = search(keyword);
+        LyricMatchScore.Target target = target(music);
+        // QQ 的 w 是整串关键词搜索,所以用「标题 - 歌手 - 专辑」三段式(缺哪段就少哪段)。
+        // 专辑进检索词不只是为了提高命中率:它让返回的候选倾向于是同一个版本。
+        JsonArray candidates = search(LyricMatchText.buildStructuredQuery(title, target.artist, target.album));
         if (candidates == null || candidates.size() == 0) {
-            String stripped = stripBracketSuffix(title);
-            if (!stripped.equals(title)) candidates = search(stripped);
+            String withoutBrackets = LyricMatchText.dropBrackets(title);
+            if (!withoutBrackets.equals(title)) candidates = search(withoutBrackets);
         }
         if (candidates == null || candidates.size() == 0) return null;
 
         JsonObject best = null;
-        int bestScore = 0;
-        long bestDurationGap = Long.MAX_VALUE;
-        long duration = music.getDuration();
+        LyricMatchScore.Result bestResult = null;
         for (int i = 0; i < candidates.size(); i++) {
             JsonElement element = candidates.get(i);
             if (element == null || !element.isJsonObject()) continue;
             JsonObject candidate = element.getAsJsonObject();
-            int score = score(candidate, title, artist);
-            if (score <= 0) continue;
-
-            long gap = Long.MAX_VALUE;
-            long interval = intOf(candidate, "interval") * 1000L;
-            if (duration > 0L && interval > 0L) gap = Math.abs(duration - interval);
-            if (score > bestScore || (score == bestScore && gap < bestDurationGap)) {
-                bestScore = score;
-                bestDurationGap = gap;
+            LyricMatchScore.Result result = LyricMatchScore.evaluate(target, candidate(candidate));
+            if (bestResult == null || result.score > bestResult.score) {
+                bestResult = result;
                 best = candidate;
             }
         }
-        if (best == null) return null;
+        if (best == null || bestResult == null) return null;
+        if (!bestResult.accepted()) {
+            System.out.println("[Music/QQ-QRC] " + music.getName() + " rejected every candidate (best "
+                    + bestResult.describe() + "), keeping platform lyrics");
+            return null;
+        }
 
         long songId = numeric(text(best, "songid"));
         if (songId <= 0L) return null;
 
         int interval = intOf(best, "interval");
+        long duration = music.getDuration();
         if (interval <= 0 && duration > 0L) interval = (int) (duration / 1000L);
         return fetchLyric(songId, text(best, "songname"), singerName(best), text(best, "albumname"), interval,
-                "search score " + bestScore + " (songID=" + songId + ")");
+                "search " + bestResult.describe() + " (songID=" + songId + ")");
+    }
+
+    private static LyricMatchScore.Target target(Music music) {
+        return new LyricMatchScore.Target(safe(music.getName()), artistsOf(music), albumName(music),
+                music.getDuration());
+    }
+
+    /** {@code interval} 是秒,换成毫秒后参与时长乘数。 */
+    private static LyricMatchScore.Candidate candidate(JsonObject item) {
+        return LyricMatchScore.Candidate.of(text(item, "songname"), singerNames(item),
+                text(item, "albumname"), intOf(item, "interval") * 1000L);
+    }
+
+    private static String artistsOf(Music music) {
+        try {
+            String artists = safe(music.getArtistsName());
+            // Music 在没有歌手元数据时返回占位的 "Unknown",拿它去比对会把正确的候选全部否掉。
+            return artists.equalsIgnoreCase("Unknown") ? "" : artists;
+        } catch (Throwable ignored) {
+            return "";
+        }
     }
 
     private static JsonArray search(String keyword) {
@@ -282,36 +316,6 @@ final class QQQrcLyricService {
         } finally {
             closeQuietly(stream);
         }
-    }
-
-    /**
-     * 候选打分,和 AMLL 那条链路保持同一套判断:3 = 曲名完全一致且歌手对得上,2 = 曲名完全一致且本地
-     * 没有歌手信息,1 = 曲名互相包含且歌手对得上,0 = 拒绝。
-     */
-    private static int score(JsonObject candidate, String title, String artist) {
-        String normalizedTitle = normalize(title);
-        if (normalizedTitle.isEmpty()) return 0;
-
-        String candidateTitle = normalize(text(candidate, "songname"));
-        if (candidateTitle.isEmpty()) return 0;
-
-        boolean exactTitle = candidateTitle.equals(normalizedTitle);
-        boolean looseTitle = !exactTitle
-                && (candidateTitle.contains(normalizedTitle) || normalizedTitle.contains(candidateTitle));
-        if (!exactTitle && !looseTitle) return 0;
-
-        String normalizedArtist = normalize(artist);
-        if (normalizedArtist.isEmpty()) return exactTitle ? 2 : 0;
-
-        for (String name : singerNames(candidate)) {
-            String normalized = normalize(name);
-            if (normalized.isEmpty()) continue;
-            if (normalized.equals(normalizedArtist)
-                    || normalized.contains(normalizedArtist) || normalizedArtist.contains(normalized)) {
-                return exactTitle ? 3 : 1;
-            }
-        }
-        return 0;
     }
 
     private static List<String> singerNames(JsonObject candidate) {
@@ -529,36 +533,6 @@ final class QQQrcLyricService {
         }
     }
 
-    private static String firstArtist(Music music) {
-        try {
-            String artists = safe(music.getArtistsName());
-            // Music 在没有歌手元数据时返回占位的 "Unknown",拿它去比对会把正确的候选全部否掉。
-            if (artists.isEmpty() || artists.equalsIgnoreCase("Unknown")) return "";
-            String[] parts = artists.split("\\s*[/、,&]\\s*");
-            for (String part : parts) {
-                if (part != null && !part.trim().isEmpty()) return part.trim();
-            }
-        } catch (Throwable ignored) {
-        }
-        return "";
-    }
-
-    private static String stripBracketSuffix(String title) {
-        String stripped = title.replaceAll("[(\\uff08\\[【].*?[)\\uff09\\]】]", " ").trim();
-        return stripped.isEmpty() ? title : stripped;
-    }
-
-    /** 归一化:忽略大小写、空白与标点,这些在不同平台的曲名里几乎总是不一致。 */
-    private static String normalize(String value) {
-        if (value == null) return "";
-        StringBuilder builder = new StringBuilder();
-        String lower = value.toLowerCase(Locale.ROOT);
-        for (int i = 0; i < lower.length(); i++) {
-            char character = lower.charAt(i);
-            if (Character.isLetterOrDigit(character)) builder.append(character);
-        }
-        return builder.toString();
-    }
 
     /** JsonUtils 的取值方法在字段缺失时会抛异常,这里统一按"缺失即空"处理。 */
     private static String text(JsonObject object, String property) {

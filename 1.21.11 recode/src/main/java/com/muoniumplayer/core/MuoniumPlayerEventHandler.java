@@ -9,6 +9,7 @@ import org.apache.commons.lang3.Validate;
 import com.muoniumplayer.core.utils.logging.Logger;
 import today.opai.api.events.EventRender2D;
 import today.opai.api.interfaces.EventHandler;
+import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.utils.logging.LogManager;
@@ -88,5 +89,6 @@ public class MuoniumPlayerEventHandler implements EventHandler {
         Interpolations.calcFrameDelta();
 
         DownloadDynamicIsland.render();
+        AutomixTransitionAnimation.render();
     }
 }

@@ -15,6 +15,7 @@ import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.ncm.music.dto.User;
+import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.texture.DynamicTexture;
 import com.muoniumplayer.core.rendering.texture.Textures;
@@ -1368,6 +1369,8 @@ public class CloudMusic implements SharedConstants {
                 return false;
             }
             currentlyPlaying = song;
+            // 封面可能已经由上一轮预加载完成；切歌这一刻才把它提升为活动主题色。
+            CoverThemePalette.set(song.getCoverPalette());
             // 有了 FM 预备之后，推进不再每首都经过 PersonalFmManager.requestBatch，界面同步必须在这里补。
             if (personalFmActive) PersonalFmManager.noteFmTrackStarted(song);
             // Dynamic cover lookup is optional and never blocks audio startup or static-cover rendering.
@@ -1410,7 +1413,7 @@ public class CloudMusic implements SharedConstants {
             synchronized (PLAYER_STATE_LOCK) {
                 if (!isSessionUsable(targetSession)) return false;
                 try {
-                    player = initializePlayer(musicFile);
+                    player = initializePlayer(musicFile, song);
                     ownedPlayer = player;
                     targetSession.player = ownedPlayer;
                     // 必须捕 Throwable 而不是 Exception：下载与解码链路会抛 Error。随 mod 打包的
@@ -1566,7 +1569,7 @@ public class CloudMusic implements SharedConstants {
                     File retryFile = getMusicFile(playUrl, song);
                     synchronized (PLAYER_STATE_LOCK) {
                         if (!isSessionUsable(targetSession)) return false;
-                        player = initializePlayer(retryFile);
+                        player = initializePlayer(retryFile, song);
                         ownedPlayer = player;
                         targetSession.player = ownedPlayer;
                         activePlayer = ownedPlayer;
@@ -1796,14 +1799,21 @@ public class CloudMusic implements SharedConstants {
             });
         }
 
-        private AudioPlayer initializePlayer(File musicFile) {
+        private static String trackDisplayName(Music song, File file) {
+            String name = song == null ? null : song.getName();
+            if (name != null && !name.trim().isEmpty()) return name;
+            return file == null || file.getName() == null ? "当前歌曲" : file.getName();
+        }
+        private AudioPlayer initializePlayer(File musicFile, Music song) {
             AudioPlayer player = CloudMusic.player;
             if (player == null) {
                 player = new AudioPlayer(musicFile);
                 player.setVolume(CloudMusic.getVolume());
                 CloudMusic.player = player;
+                player.setTrackName(trackDisplayName(song, musicFile));
             } else {
                 player.setAudio(musicFile);
+                player.setTrackName(trackDisplayName(song, musicFile));
             }
             return player;
         }
@@ -2097,6 +2107,7 @@ public class CloudMusic implements SharedConstants {
                 }
 
                 deck = new AudioPlayer(file);
+                deck.setTrackName(trackDisplayName(song, file));
                 deck.setVolume(CloudMusic.getVolume());
                 deck.setFadeGain(0.0f);
                 // Third-party search results carry no duration; the decoder knows the real one now.
@@ -2390,6 +2401,8 @@ public class CloudMusic implements SharedConstants {
                 // Same reason: the canceller slews, so the depth has to be in place before the first
                 // block is rendered or the arriving vocal gets a syllable in before the duck engages.
                 incoming.setVocalDuckDepth(plan.incomingVocalDepth(0.0));
+                incoming.setMidGainDb(plan.incomingMidDb(0.0));
+                incoming.setHighGainDb(plan.incomingHighDb(0.0));
                 incoming.setFadeGain(plan.incomingGain(0.0));
                 try {
                     if (track.preRolled) {
@@ -2451,7 +2464,17 @@ public class CloudMusic implements SharedConstants {
             loadDynamicMusicCover(track.song);
             loadLyric(track.song, nextSession, track.file);
             NeteasePlaybackHistoryReporter.start(track.song, currentPlaylistContext, incoming);
-            DownloadDynamicIsland.showAutomixHandover(track.song.getName());
+            if (AutomixSettings.isTransitionAnimationEnabled() && effectiveOverlap >= 5_000L) {
+                if (AutomixSettings.isFoliaEngine() && plan.style != null
+                        && plan.style != FoliaTransitionStyle.PLAIN_BLEND) {
+                    double crossover = plan.style == FoliaTransitionStyle.BASS_SWAP
+                            ? plan.bassHandoverAt
+                            : plan.style == FoliaTransitionStyle.TAIL_RIDE ? plan.drumHandoverAt : .5;
+                    AutomixTransitionAnimation.start(effectiveOverlap, crossover, plan.animationPeriodMillis);
+                } else if (!AutomixSettings.isFoliaEngine()) {
+                    DownloadDynamicIsland.showAutomixHandover(track.song.getName());
+                }
+            }
             // 无缝交接同样是"一首 FM 曲目开始出声"，面板与预备标记都要跟着走。
             if (personalFmActive) PersonalFmManager.noteFmTrackStarted(track.song);
             return true;
@@ -2466,6 +2489,7 @@ public class CloudMusic implements SharedConstants {
             AudioPlayer active = ownedPlayer;
             boolean paused = active != null && active.isUsable() && !active.isFinished() && active.isPausing();
             if (paused) {
+                AutomixTransitionAnimation.setPaused(true);
                 // Hold the ramp instead of letting the wall clock run through the pause, and take the
                 // outgoing deck down with the active one - nothing else in the player knows about it.
                 fade.startedAt += Math.max(0L, now - fade.tickedAt);
@@ -2477,6 +2501,7 @@ public class CloudMusic implements SharedConstants {
                 }
                 return;
             }
+            AutomixTransitionAnimation.setPaused(false);
             if (fade.outgoingPaused && fade.outgoing != null) {
                 // Only ever resumed when this fade was the one that paused it: unpause() restarts a
                 // deck that stopped on its own from wherever it was cued, which would replay the
@@ -2491,6 +2516,8 @@ public class CloudMusic implements SharedConstants {
                 fade.incoming.setFadeGain(fade.plan.incomingGain(progress));
                 fade.incoming.setBassGainDb(fade.plan.incomingBassDb(progress));
                 fade.incoming.setVocalDuckDepth(fade.plan.incomingVocalDepth(progress));
+                fade.incoming.setMidGainDb(fade.plan.incomingMidDb(progress));
+                fade.incoming.setHighGainDb(fade.plan.incomingHighDb(progress));
             }
             if (fade.outgoing != null) {
                 fade.outgoing.setFadeGain(fade.plan.outgoingGain(progress));
@@ -2517,6 +2544,7 @@ public class CloudMusic implements SharedConstants {
 
         /** Ends a blend early (cancellation, manual switch) without leaving a deck audible. */
         private void finishAutomixFade() {
+            AutomixTransitionAnimation.cancel();
             AutomixFade fade = activeFade;
             activeFade = null;
             if (fade == null) return;
@@ -2698,6 +2726,9 @@ public class CloudMusic implements SharedConstants {
         }
 
         initLyrics(rawLyricData, current, parsedLyrics);
+        // 歌词换了歌，时间轴偏移也要换成这一首的。放在 initLyrics 之后：initLyrics 会用
+        // currentLyric = lyrics.get(0) 定个初值，那一步不该受上一首的偏移影响。
+        restoreLyricOffsetFor(current);
 
         AudioPlayer p = session.player != null ? session.player : player;
         if (p != null) {
@@ -2834,6 +2865,145 @@ public class CloudMusic implements SharedConstants {
      *
      * @param songProgress 歌曲进度 (ms)
      */
+    /**
+     * 当前歌的歌词时间轴偏移（毫秒），正数表示<b>歌词提前</b>。
+     *
+     * <p>曲子与歌词版本对不齐是常态（现场版、重制版、第三方歌词源），自动匹配再准也会有需要手动
+     * 微调的时候。所有歌词时钟都汇到 {@link #findCurrentLyric(double)}，所以补偿只需要在那里加一次——
+     * 逐字高亮、扫光、发光、居中定位读的都是同一个 {@code currentLyric}，不会出现某一层跟着偏、
+     * 另一层没偏的错位。</p>
+     */
+    private static volatile long lyricOffsetMillis = 0L;
+
+    public static long getLyricOffsetMillis() {
+        return lyricOffsetMillis;
+    }
+
+    /**
+     * 设置当前歌的偏移并记住它。调用方自行保证在主线程执行（会重算当前行）。
+     *
+     * @return 实际生效的偏移（已夹取到 ±10 秒）
+     */
+    public static long setLyricOffsetMillis(long offsetMillis) {
+        long clamped = LyricOffsetMemory.clamp(offsetMillis);
+        lyricOffsetMillis = clamped;
+        Music current = currentlyPlaying;
+        if (current != null) {
+            LyricOffsetMemory.write(current.getStableKey(), clamped);
+        }
+        applyOffsetImmediately();
+        return clamped;
+    }
+
+    /** 在当前偏移上加一个增量。 */
+    public static long adjustLyricOffsetMillis(long deltaMillis) {
+        return setLyricOffsetMillis(lyricOffsetMillis + deltaMillis);
+    }
+
+    /**
+     * 拖动中的实时预览：只改内存值并立刻重算，<b>不写盘</b>。
+     *
+     * <p>滑块是逐帧回调的，一帧一次 {@code LyricOffsetMemory.write} 会把整张「歌曲→偏移」表
+     * 反复序列化（最多上千条）。所以拖动期间走这条轻量路径，松手时再 {@link #commitLyricOffset()}
+     * 落盘一次。</p>
+     */
+    public static long previewLyricOffsetMillis(long offsetMillis) {
+        lyricOffsetMillis = LyricOffsetMemory.clamp(offsetMillis);
+        applyOffsetImmediately();
+        return lyricOffsetMillis;
+    }
+
+    /** 把当前偏移（通常来自拖动预览）落盘到这首歌的记忆里。 */
+    public static void commitLyricOffset() {
+        Music current = currentlyPlaying;
+        if (current == null) return;
+        LyricOffsetMemory.write(current.getStableKey(), lyricOffsetMillis);
+    }
+
+    /** 偏移归零并从记忆里删掉这一首。 */
+    public static void resetLyricOffset() {
+        setLyricOffsetMillis(0L);
+    }
+
+    /** 切歌时把这一首上次用过的偏移捡回来。 */
+    private static void restoreLyricOffsetFor(Music music) {
+        lyricOffsetMillis = music == null ? 0L : LyricOffsetMemory.read(music.getStableKey());
+    }
+
+    /** 改完偏移立刻按当前播放位置重算，用户马上能看到对不对齐。 */
+    private static void applyOffsetImmediately() {
+        final PlaybackSession session = currentSession;
+        AudioPlayer active = session != null && session.player != null ? session.player : player;
+        if (active == null) return;
+        MultiThreadingUtil.runOnMainThread(new Runnable() {
+            @Override
+            public void run() {
+                if (lyricsMatchCurrentTrack()) {
+                    updateCurrentLyric(active.getCurrentTimeMillis());
+                }
+            }
+        });
+    }
+
+    /**
+     * 手动「重取歌词」：清掉全部缓存与各源的记忆，再走一遍完整解析链。
+     *
+     * <p>自动匹配必然有边界情况（同名不同版本、歌词库缺条目、上游换了歌词），没有手动兜底时用户
+     * 只能等缓存过期。这里刻意<b>只清当前这一首</b>，队列里其它歌的缓存不动。</p>
+     *
+     * <p><b>它修不好「匹配错了」。</b>重取只是把同一条确定性链路再跑一遍——输入（本地元数据、
+     * 检索词、打分规则）没变，输出必然一模一样。用户手里的错歌词属于这种情况时，唯一出路是换一个源，
+     * 那由 {@link #setLyricSource(int)} 负责。两者刻意分开：换源是「这首歌用哪个库」的持久偏好，
+     * 重取是「同一个库再问一次」的一次性动作。</p>
+     */
+    public static void reloadLyrics() {
+        final Music music = currentlyPlaying;
+        final PlaybackSession session = currentSession;
+        if (music == null || session == null || !session.isActive()) return;
+
+        int source = LyricSourceMemory.read(music.getStableKey());
+        System.out.println("[Music] 重取歌词: " + music.getStableKey()
+                + "（来源 " + LyricSourceMemory.displayName(source) + "）");
+        LyricLoadService.invalidateAll(music);
+        loadLyric(music, session);
+    }
+
+    /** 当前这首歌指定的歌词来源；没有正在播放的曲子时返回「自动」。 */
+    public static int getLyricSource() {
+        Music current = currentlyPlaying;
+        return current == null ? LyricSourceMemory.AUTO
+                : LyricSourceMemory.read(current.getStableKey());
+    }
+
+    /**
+     * 上一轮实际服务这首歌的来源；界面显示「现在用的是哪个源」用。
+     *
+     * @return {@link LyricSourceMemory#AMLL} 等具体来源，或 {@code -1} 表示本次进程还没解析过
+     */
+    public static int getServedLyricSource() {
+        Music current = currentlyPlaying;
+        return current == null ? -1 : LyricLoadService.servedSource(current.getStableKey());
+    }
+
+    /**
+     * 指定这首歌的歌词来源并立刻重取。
+     *
+     * <p>写盘与重取一起做：来源是<b>按歌记住的偏好</b>，切歌回来、重启之后仍然有效，
+     * 所以不能在内存里飘着。</p>
+     */
+    public static void setLyricSource(int source) {
+        final Music music = currentlyPlaying;
+        if (music == null) return;
+        LyricSourceMemory.write(music.getStableKey(), LyricSourceMemory.clamp(source));
+        reloadLyrics();
+    }
+
+    /** 在可选来源之间绕圈，{@code forward=false} 时往前一档。 */
+    public static void cycleLyricSource(boolean forward) {
+        int current = getLyricSource();
+        setLyricSource(forward ? LyricSourceMemory.next(current) : LyricSourceMemory.previous(current));
+    }
+
     public static void updateCurrentLyric(float songProgress) {
         LyricLine previousLyric = currentLyric;
         currentLyric = findCurrentLyric(songProgress);
@@ -2843,8 +3013,24 @@ public class CloudMusic implements SharedConstants {
         }
     }
 
+    /**
+     * 按播放位置查当前行。
+     *
+     * <p>用户设置的歌词偏移在这里统一生效，因此这个方法是唯一的时钟入口：内部调用、面板布局、
+     * 全屏样式都走它。</p>
+     */
     public static LyricLine findCurrentLyric(double songProgress) {
-        return LyricTimelineSupport.findCurrentLyric(lyrics, haveNoWords, songProgress);
+        return LyricTimelineSupport.findCurrentLyric(lyrics, haveNoWords, songProgress + lyricOffsetMillis);
+    }
+
+    /**
+     * 副歌强调量 0..1，供渲染层直接使用。
+     *
+     * <p>{@code LyricChorusMarker} 是包内私有类，渲染层在别的包里，所以由这个门面转一手——
+     * 顺便把「传进去的进度要不要加偏移」这个决定收在一处：这里加，渲染层只管把播放进度递进来。</p>
+     */
+    public static double chorusEmphasis(LyricLine line, double songProgress) {
+        return LyricChorusMarker.emphasis(line, songProgress + lyricOffsetMillis);
     }
 
     public static void resetLyricPositionUpdate() {
@@ -2974,6 +3160,10 @@ public class CloudMusic implements SharedConstants {
                     ? Collections.<LyricLine>emptyList() : result.lines;
             session.pendingLyrics = committedLyrics;
             MultiThreadingUtil.runOnMainThread(() -> applyLyricTimeline(session, committedJson, committedLyrics));
+
+            // 这一首的歌词已经落定，顺手把队列里下一首也解析好落盘。弱网下这几秒的提前量，
+            // 就是"切歌歌词立刻出现"和"切歌后干等几秒"的区别。
+            LyricCacheStore.prefetchNext(playList, curIdx);
         });
     }
 

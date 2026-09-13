@@ -40,19 +40,19 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
 
     /** 1 = 完全展开。全部曲线都读它，一帧只推进一次（{@link #tick()}）。 */
     private static double t = 0.0;
-    /** Smooth live-island → capsule handoff; retained when a close is reversed mid-flight. */
+    /** 平滑的灵动岛 → 胶囊交接；在关闭被中途逆转时保留。 */
     private static double capsuleHandoffMix = 0.0;
     /**
-     * Transition-local monotonic clock. The shared frame-delta helper caps long frames and is also
-     * shared by HUD/music rendering; when playback drops the frame rate below 25fps, the old 40ms
-     * cap made this morph take longer in wall-clock time even though its configured speed was unchanged.
+     * 过渡专用的单调时钟。共享的帧增量助手对长帧设上限，且也
+     * 被 HUD/音乐渲染共享；当播放把帧率降到 25fps 以下时，旧的 40ms
+     * 上限使该形变在墙上时钟上更久，即使其配置速度未变。
      */
     private static long lastTickNanos;
 
     private static float speed = 1.0f;
 
     private static double startX, startY, startWidth, startHeight, startRadius;
-    /** Opening follows the live resident island; closing must eventually land on the compact pill. */
+    /** 打开跟随常驻灵动岛；关闭最终必须落到紧凑胶囊。 */
     private static double capsuleX, capsuleY, capsuleWidth, capsuleHeight, capsuleRadius;
     private static double targetX, targetY, targetWidth, targetHeight, targetRadius;
 
@@ -62,7 +62,7 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
     private static double cachedContentScale = 1.0;
     private static double cachedSettlePulse = 0.0;
 
-    /** Immutable colors used every transition frame; allocating these per frame only added GC pressure. */
+    /** 每个过渡帧使用的不可变颜色；逐帧分配这些只会增加 GC 压力。 */
     private static final Color SHADOW_STRONG = new Color(0, 0, 0, 48);
     private static final Color SHADOW_SOFT = new Color(0, 0, 0, 20);
     private static final Color SURFACE_EDGE = new Color(255, 255, 255, 38);
@@ -91,8 +91,8 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
      */
     public static void open(float speedMultiplier) {
         speed = clampSpeed(speedMultiplier);
-        // Only a fresh open starts at the island. Reopening during a close must preserve the current
-        // geometry; recapturing a stale anchor would make the surface jump sideways or change size.
+        // 只有全新打开才从岛开始。关闭期间重新打开必须保留当前
+        //几何；重新捕获陈旧锚点会使表面横向跳变或改变大小。
         if (state == IDLE) {
             captureStart();
             captureCapsule();
@@ -115,8 +115,8 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
     /** 开始收回。已经完全打开时才有效；正在展开时按下 ESC 会立刻反向。 */
     public static void close() {
         if (state == OPENING || state == OPEN) {
-            // The resident island may be expanded, but Apple's handoff lands in the compact pill.
-            // Capture that destination now; tick() blends into it without changing the current frame.
+            // 常驻岛可被展开，但 Apple 的交接落到紧凑胶囊。
+            // 现在捕获该目标；tick() 淡入它而不改变当前帧。
             captureCapsule();
             captureSurfacePalette();
             lastTickNanos = System.nanoTime();
@@ -127,9 +127,9 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
 
     /** 外部直接换屏时使用：立刻复位，并让真实灵动岛恢复显示。 */
     public static void abort() {
-        // Normal closing reaches IDLE before NCMScreen#onGuiClosed is invoked. In that case the
-        // real island has just received the absorb impulse and must keep it; abort here would
-        // cancel the impact and make the surface look like it stopped dead.
+        // 正常关闭在 NCMScreen#onGuiClosed 被调用前到达 IDLE。此时
+        //真实岛刚收到吸收脉冲，必须保留它；在此中止会
+        //取消冲击，使表面看起来像戛然而止。
         if (state == IDLE && t == 0.0) {
             refreshFrameCache();
             return;
@@ -149,8 +149,8 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         long now = System.nanoTime();
         double deltaMs = lastTickNanos == 0L ? 0.0 : (now - lastTickNanos) / 1_000_000.0;
         lastTickNanos = now;
-        // Keep real-time pacing across frame drops. The cap only protects against tab switches and
-        // debugger pauses; normal music-induced frame hitches must not stretch the animation.
+        // 在掉帧期间保持实时步调。该上限只防标签页切换和
+        //调试器暂停；音乐引起的正常卡顿绝不能拉长动画。
         deltaMs = Math.min(250.0, Math.max(0.0, deltaMs));
 
         // Once fully open, the normal panel owns rendering. Refresh only the four cached outputs;
@@ -183,11 +183,11 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
             }
         }
 
-        // Keep the anchor change time-based. Reversing a close mid-flight must not snap the origin
-        // back from the capsule to the larger resident island in one frame.
+        // 保持锚点变化基于时间。中途逆转关闭绝不能在一帧内把原点
+        //从胶囊猛地拉回更大的常驻岛。
         if (state == OPENING || state == CLOSING) {
-            // Start the compact-pill handoff inside the main collapse instead of waiting for a
-            // separate final stage. Reversing still eases through this retained mix.
+            // 在主折叠内启动紧凑胶囊交接，而非等待一个
+            //单独的最终阶段。逆转仍平滑穿过这个保留的混合。
             double capsuleTarget = state == CLOSING ? MOTION.at(sub(1.0 - t, .32, .74)) : 0.0;
             capsuleHandoffMix += (capsuleTarget - capsuleHandoffMix) * Math.min(1.0, deltaMs / 45.0);
         }
@@ -229,8 +229,8 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         double fw = fy;
         double fh = fx;
 
-        // Closing is intentionally asymmetric: it starts back along the live-island path, then the
-        // last segment hands the surface to the compact capsule. Reopening reverses this blend.
+        // 关闭刻意不对称：它沿灵动岛路径往回走，然后
+        //最后一段把表面交给紧凑胶囊。重新打开逆转这个混合。
         double capsuleMix = Math.max(0.0, Math.min(1.0, capsuleHandoffMix));
         double originX = lerp(startX, capsuleX, capsuleMix);
         double originY = lerp(startY, capsuleY, capsuleMix);
@@ -245,8 +245,8 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         double y = lerp(originY + originHeight * .5, targetY + targetHeight * .5, fy) - height * .5;
         double radius = lerp(originRadius, targetRadius, fy);
 
-        // Opening has no secondary rebound: the emphasized curve simply settles at the exact target.
-        // Only closing keeps a pre-impact compression before the real island takes over.
+        // 打开没有二次回弹：强调曲线简单地落到确切目标。
+        // 只有关闭在真实岛接管前保留一段冲击前压缩。
         double landing = settlePulseRaw();
         if (state == CLOSING) {
             width *= 1.0 + landing * .080;
@@ -284,31 +284,31 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
      * 两端都有一小段呼吸，而不是只有中段有动感。</p>
      */
     private static double settlePulseRaw() {
-        // Opening must land exactly on the target with no added bounce. The pulse exists only for
-        // closing, where it anticipates the compact-island impact.
+        // 打开必须无额外弹跳地恰好落到目标。脉冲仅用于
+        //关闭，在那里它预示紧凑岛的冲击。
         if (state != CLOSING) return 0.0;
         return Math.sin(Math.PI * sub(1.0 - t, .74, 1.0));
     }
 
 
     /**
-     * Draws the morphing surface itself, independent of player content alpha.
+     * 绘制形变表面本身，独立于播放器内容 alpha。
      *
-     * <p>The old path only rendered {@code basePanel}, whose alpha follows {@link #contentAlpha()}.
-     * At the first 10% of opening and the last 10% of closing that alpha is zero, so the surface
-     * vanished even while its geometry was still moving. Apple's island expansion is exactly the
-     * opposite: the dark surface is visible from the first frame and content only appears later.</p>
+     * <p>旧路径只渲染 {@code basePanel}，其 alpha 跟随 {@link #contentAlpha()}。
+     * 在打开的前 10% 和关闭的后 10% 该 alpha 为零，因此表面
+     * 即使在几何仍在动时也消失。Apple 的岛展开恰好
+     * 相反：暗色表面从第一帧就可见，内容稍后才出现。</p>
      */
     public static void renderSurface() {
-        // Once open, basePanel already draws the authoritative surface. Drawing this fallback too
-        // doubled the rounded-rect work for every frame the player remained open.
+        // 一旦打开，basePanel 已绘制权威表面。再绘制这个回退会
+        //在播放器保持打开的每一帧使圆角矩形工作翻倍。
         if (state == IDLE || state == OPEN) return;
 
         double[] bounds = surfaceBounds();
         double x = bounds[0], y = bounds[1], width = bounds[2], height = bounds[3], radius = bounds[4];
 
-        // A fresh open starts with the live island's material; closing reaches the compact pill
-        // with the same material. The 65-entry ramp is rebuilt only when theme/style colors change.
+        // 全新打开从灵动岛的材质开始；关闭以相同材质到达紧凑胶囊。
+        //65 项渐变仅在主题/样式颜色变化时重建。
         double colorMix = MOTION.at(sub(t, .04, .30));
         int colorIndex = (int) Math.round(colorMix * COLOR_STEPS);
         Color color = SURFACE_COLOR_CACHE[Math.max(0, Math.min(COLOR_STEPS, colorIndex))];
@@ -372,7 +372,7 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         capsuleRadius = WindowAdaptiveScale.toLayoutRadius(island[4]);
     }
 
-    /** Rebuilds small immutable color ramps only when the source theme/style colors change. */
+    /** 仅在源主题/样式颜色变化时重建小型不可变颜色渐变。 */
     private static void captureSurfacePalette() {
         int islandColor = DownloadDynamicIsland.getAnchorSurfaceColor();
         int playerColor = NCMTheme.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND);
@@ -409,7 +409,7 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
     private static void captureTarget() {
         // open() runs from initGui, before drawScreen has entered the adaptive layout.
         // tick() runs after drawScreen has already entered it. Both must capture the target in
-        // exactly the same coordinate system, otherwise the morph lands off-center.
+        //完全相同的坐标系，否则形变会落偏中心。
         boolean ownedLayout = !WindowAdaptiveScale.isTransforming();
         WindowAdaptiveScale.begin();
         try {

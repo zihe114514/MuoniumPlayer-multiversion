@@ -20,24 +20,24 @@ public class BitRateBox extends BoxImpl {
 	}
 
 	/**
-	 * Gives the size of the decoding buffer for the elementary stream in bytes.
-	 * @return the decoding buffer size
+	 * 以字节为单位给出该基本流的解码缓冲区大小。
+	 * @return 解码缓冲区大小
 	 */
 	public long getDecodingBufferSize() {
 		return decodingBufferSize;
 	}
 
 	/**
-	 * Gives the maximum rate in bits/second over any window of one second.
-	 * @return the maximum bitrate
+	 * 给出任意一秒时间窗内的最大速率（位/秒）。
+	 * @return 最大比特率
 	 */
 	public long getMaximumBitrate() {
 		return maxBitrate;
 	}
 
 	/**
-	 * Gives the average rate in bits/second over the entire presentation.
-	 * @return the average bitrate
+	 * 给出整个放映期间的平均速率（位/秒）。
+	 * @return 平均比特率
 	 */
 	public long getAverageBitrate() {
 		return avgBitrate;

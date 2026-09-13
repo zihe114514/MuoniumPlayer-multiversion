@@ -92,10 +92,10 @@ public final class NeteaseMusicService {
     public static synchronized void setCurrentPlatform(MusicPlatform platform) {
         MusicPlatform selected = platform == null ? MusicPlatform.NETEASE : platform;
         if (selected != MusicPlatform.GD) {
-            // GD is an optional persisted provider. Selecting an official source must also
-            // disable the persisted GD choice; otherwise initialize() restores GD before every
-            // search and the UI appears to switch back to the official source while requests
-            // still go to the third-party GD API.
+            // GD 是可选的持久化提供方。选择官方源时也必须
+            // 禁用持久化的 GD 选择；否则 initialize() 会在每次搜索前恢复 GD，
+            // 于是 UI 看似切回官方源，而请求
+            // 仍发往第三方 GD API。
             GdStudioSourceSettings.setPlatform("");
         }
         currentPlatform = selected;
@@ -133,9 +133,9 @@ public final class NeteaseMusicService {
     private static List<Music> searchGd(String keyword, int limit) {
         String platform = GdStudioSourceSettings.getPlatform();
         if (platform.isEmpty()) return Collections.emptyList();
-        // The GD API documents a 20-result default page; staying within it avoids excess payload.
-        // searchWithFallback always tries the selected source first and only hands the query to a
-        // healthy source when that source genuinely fails, so the screen never goes silently empty.
+        // GD API 文档默认每页 20 条；保持在该范围内可避免过大的载荷。
+        // searchWithFallback 总是先试选中的源，仅在该源真正失败时才把查询
+        // 交给一个健康的源，因此界面绝不会静默变空。
         GdStudioMusicService.SearchOutcome outcome = GdStudioMusicService.searchWithFallback(
                 platform, keyword.trim(), Math.min(20, Math.max(1, limit)), 1);
         if (outcome.isFallback()) {
@@ -184,8 +184,8 @@ public final class NeteaseMusicService {
     }
 
     /**
-     * Performs a caller-selected official-provider search without changing the visible provider.
-     * This is used only for the platform explicitly chosen by the caller.
+     * 在不改变可见提供方的前提下，执行一次调用方选定的官方提供方搜索。
+     * 仅用于调用方显式选择的平台。
      */
     public static List<Music> search(MusicPlatform platform, String keyword, int limit) {
         if (isBlank(keyword) || platform == null) return Collections.emptyList();
@@ -294,12 +294,12 @@ public final class NeteaseMusicService {
         refreshQQUserPlaylists(true);
     }
 
-    /** Resolves with the current configured tier for legacy callers. */
+    /** 对旧调用方按当前配置的档位解析。 */
     public static Tuple<String, String> getSongUrl(Music music) {
         return getSongUrl(music, CloudMusic.quality);
     }
 
-    /** Resolves one Cadence stream attempt at an explicit tier without mutating global preferences. */
+    /** 在不改动全局偏好的前提下，按显式档位解析一次 Cadence 流尝试。 */
     public static Tuple<String, String> getSongUrl(Music music, Quality requestedQuality) {
         if (music == null) return null;
         if (music.isYouTube()) {
@@ -354,7 +354,7 @@ public final class NeteaseMusicService {
     public static Lyric getLyric(Music music) {
         if (music == null) return null;
         if (music.isYouTube() || music.isBilibili() || music.isQishui()) {
-            // Qishui has its own word-by-word provider; other anonymous sources use fallback matchers.
+            // 汽水音乐有自己的逐字提供方；其他匿名源使用兜底匹配器。
             return null;
         }
         if (music.isKuGou()) {
@@ -469,13 +469,13 @@ public final class NeteaseMusicService {
     }
 
     /**
-     * Checks the state of an already-created QR session without reinitializing the
-     * Netease cookie.  Reinitializing during every polling pass overwrote the
-     * temporary QR-login session with the previously active account's cookie,
-     * which prevented a newly scanned Netease account from being persisted.
+     * 检查已创建的 QR 会话状态，而不重新初始化
+     * 网易云 cookie。每次轮询都重新初始化，会用此前活动账号的 cookie
+     * 覆盖临时 QR 登录会话，
+     * 导致新扫码的网易云账号无法持久化。
      *
-     * <p>The QR session is initialized exactly once by {@link #createQrCode(MusicPlatform)}.
-     * QQ callers retain the same Cadence state and are deliberately untouched.</p>
+     * <p>QR 会话仅由 {@link #createQrCode(MusicPlatform)} 初始化一次。
+     * QQ 调用方保留同一 Cadence 状态，刻意不改动。</p>
      */
     public static QrLoginState checkQrCodeSession(MusicPlatform platform, QrCode qrCode) {
         if (platform == null || qrCode == null) {
@@ -824,7 +824,7 @@ public final class NeteaseMusicService {
                 destination.putIfAbsent(id,
                         createQQPlaylist(id, name, cover, count, description, subscribed));
             } catch (Throwable ignored) {
-                // A malformed item must not abort the remaining account playlists.
+                // 一个畸形条目绝不能中止其余账号歌单。
             }
         }
     }

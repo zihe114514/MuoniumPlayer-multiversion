@@ -34,7 +34,7 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
 
     public BooleanValue turnComposerIntoLyric = api.getValueManager().createBoolean("Turn Composer Into Lyric", false);
 
-    /** 网易云动态封面(需要 ffmpeg 抽帧)。关掉后桌面歌曲信息与全屏歌词页一律用静态封面。 */
+    // 渲染下载面板
     public BooleanValue animatedCover = api.getValueManager().createBoolean("Animated Cover", true);
 
     public NumberValue volume = api.getValueManager().createDouble("Volume", 0.1, 0.0, 1.0, 0.01);

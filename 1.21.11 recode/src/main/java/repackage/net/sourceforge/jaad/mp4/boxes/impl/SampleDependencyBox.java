@@ -6,10 +6,10 @@ import repackage.net.sourceforge.jaad.mp4.boxes.BoxTypes;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * This box contains the sample dependencies for each switching sample. The
- * dependencies are stored in the table, one record for each sample. The size of
- * the table is taken from the the Sample Size Box ('stsz') or Compact Sample
- * Size Box ('stz2').
+ * 此 box 包含每个切换采样的采样依赖关系。
+ * 依赖关系存于表中，每个采样一条记录。表大小取自
+ * Sample Size Box（'stsz'）或 Compact Sample Size Box
+ *（'stz2'）。
  *
  * @author in-somnia
  */
@@ -38,28 +38,26 @@ public class SampleDependencyBox extends FullBox {
 	}
 
 	/**
-	 * The dependency count is an integer that counts the number of samples
-	 * in the source track on which this switching sample directly depends.
+	 * 依赖计数为整数，统计此切换采样直接依赖的
+	 * 源轨道中的采样数。
 	 *
-	 * @return all dependency counts
+	 * @return 所有依赖计数
 	 */
 	public int[] getDependencyCount() {
 		return dependencyCount;
 	}
 
 	/**
-	 * The relative sample number is an integer that identifies a sample in
-	 * the source track. The relative sample numbers are encoded as follows.
-	 * If there is a sample in the source track with the same decoding time,
-	 * it has a relative sample number of 0. Whether or not this sample
-	 * exists, the sample in the source track which immediately precedes the
-	 * decoding time of the switching sample has relative sample number –1,
-	 * the sample before that –2, and so on. Similarly, the sample in the
-	 * source track which immediately follows the decoding time of the
-	 * switching sample has relative sample number +1, the sample after that
-	 * +2, and so on.
+	 * 相对采样号为整数，标识源轨道中的一个采样。
+	 * 相对采样号编码如下。
+	 * 若源轨道中有解码时间相同的采样，
+	 * 其相对采样号为 0。无论该采样是否存在，
+	 * 紧邻切换采样解码时间之前的源轨道采样
+	 * 相对采样号为 –1，再前一个为 –2，依此类推。
+	 * 同样，紧邻切换采样解码时间之后的源轨道采样
+	 * 相对采样号为 +1，再后一个为 +2，依此类推。
 	 *
-	 * @return all relative sample numbers
+	 * @return 所有相对采样号
 	 */
 	public int[][] getRelativeSampleNumber() {
 		return relativeSampleNumber;

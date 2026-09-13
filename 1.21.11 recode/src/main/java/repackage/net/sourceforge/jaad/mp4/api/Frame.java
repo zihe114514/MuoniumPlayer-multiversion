@@ -32,7 +32,7 @@ public class Frame implements Comparable<Frame> {
 
 	public int compareTo(Frame f) {
 		final double d = time-f.time;
-		//0 should not happen, since frames don't have the same timestamps
+		//0 不应发生，因为各帧的时间戳并不相同
 		return (d<0) ? -1 : ((d>0) ? 1 : 0);
 	}
 

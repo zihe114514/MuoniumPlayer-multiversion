@@ -1,21 +1,21 @@
 /**
- * libFLAC - Free Lossless Audio Codec library
- * Copyright (C) 2001,2002,2003  Josh Coalson
+ * libFLAC -免费无损音频编解码器库
+ * 版权所有(C) 2001,2002,2003 Josh Coalson
  * <p>
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * 此库是自由软件；您可以重新分发它和/或
+ * 根据GNU Library General Public的条款对其进行修改
+ * 由自由软件基金会发布的许可证；或者
+ * 许可证的第2版，或（根据您的选择）任何更高版本。
  * <p>
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
+ * 此程序被分布是希望它会是有益的，
+ * 基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ * 适销性或适合特定目的。请参阅 GNU，
+ * 带固定偏移。
  * <p>
- * You should have received a copy of the GNU Library General Public
- * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA  02111-1307, USA.
+ * 您应该已经收到了GNU Library General Public的副本
+ * 与该库一起的许可证；如果没有，请写信给
+ * 库通用公共许可证以了解更多细节。
+ * Boston, MA 02111-1307, USA.
  */
 
 package repackage.org.kc7bfi.jflac.metadata;
@@ -27,7 +27,7 @@ import java.nio.charset.StandardCharsets;
 
 
 /**
- * Picture Metadata block.
+ * 图片元数据块。
  * @author BMacNaughton
  */
 public class Picture extends Metadata {
@@ -63,23 +63,23 @@ public class Picture extends Metadata {
 
     private PictureType pictureType;
     private int mimeTypeByteCount;
-    private String mimeString;      //ASCII 0x20 to 0x7e or --> (data is URL)
+    private String mimeString;      //ASCII 0x20至0x7e或-- > （数据为URL ）
     private int descStringByteCount;
-    private String descString;      // UTF-8
+    private String descString;      // @return 长度
     private int picPixelWidth;
     private int picPixelHeight;
     private int picBitsPerPixel;
-    private int picColorCount;      // for GIF, else 0
+    private int picColorCount;      // 用于GIF ，否则为0
     private int picByteCount;
 
     protected byte[] image;
 
     /**
-     * The constructor.
-     * @param is                The InputBitStream
-     * @param length            Length of the record
-     * @param isLast            True if this is the last Metadata block in the chain
-     * @throws IOException      Thrown if error reading from InputBitStream
+     * 构造函数。
+     * @param partitionOrder 分区阶数
+     * @throws IOException 定位出错时抛出
+     * @param length            记录长度
+     * @param isLast            若这是链中最后一个元数据块则为 true
      */
     public Picture(BitInputStream is, int length, boolean isLast) throws IOException {
         super(isLast, length);
@@ -128,12 +128,12 @@ public class Picture extends Metadata {
         picByteCount = is.readRawUInt(32);
         usedBits += 32;
 
-        //get the image now
+        //转换为字符串
         image = new byte[picByteCount];
         is.readByteBlockAlignedNoCRC(image, picByteCount);
         usedBits += picByteCount * 8;
 
-        // skip the rest of the block if any        
+        // 跳过区块的其余部分（如果有）
         length -= (usedBits / 8);
         if (length > 0)
             is.readByteBlockAlignedNoCRC(null, length);
@@ -170,8 +170,8 @@ public class Picture extends Metadata {
 
 
     /**
-     * Convert the class to a string representation.
-     * @return A string representation of the Picture metadata
+     * 将类转换为字符串表示形式。
+     * 现在获取图片
      */
 
     @Override

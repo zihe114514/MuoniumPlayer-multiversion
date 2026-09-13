@@ -23,12 +23,12 @@ public class DynamicTexture extends AbstractTexture {
     public int[] dynamicTextureData;
 
     /**
-     * width of this icon in pixels
+     * 此图标的宽度（像素）
      */
     protected int width;
 
     /**
-     * height of this icon in pixels
+     * 此图标的高度（像素）
      */
     protected int height;
 

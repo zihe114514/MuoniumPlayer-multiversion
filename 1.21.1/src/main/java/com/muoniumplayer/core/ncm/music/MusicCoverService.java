@@ -384,7 +384,7 @@ final class MusicCoverService {
                 byte[] imageData = IOUtils.toByteArray(coverStream);
                 BufferedImage coverImage = DynamicTexture.readImage(new ByteArrayInputStream(imageData));
                 if (coverImage != null) {
-                    loadCoverTextures(coverImage, musicCover, musicCoverBlur);
+                    loadCoverTextures(music, coverImage, musicCover, musicCoverBlur);
                 }
             } catch (IOException e) {
                 e.printStackTrace();
@@ -392,7 +392,15 @@ final class MusicCoverService {
         });
     }
 
-    private static void loadCoverTextures(BufferedImage coverImage, Location musicCover, Location musicCoverBlur) {
+    private static void loadCoverTextures(Music music, BufferedImage coverImage,
+                                          Location musicCover, Location musicCoverBlur) {
+        int[] palette = CoverPalette.extract(coverImage, 6);
+        if (music != null) {
+            music.setCoverPalette(palette);
+        }
+        if (music == CloudMusic.currentlyPlaying) {
+            CoverThemePalette.set(palette);
+        }
         Textures.loadTexture(musicCover, coverImage);
         // 低优先级池：31 半径的高斯模糊是纯 CPU 卷积，一张 320×320 的封面就能吃满一个核几十毫秒。
         BackgroundWork.submit(() -> {

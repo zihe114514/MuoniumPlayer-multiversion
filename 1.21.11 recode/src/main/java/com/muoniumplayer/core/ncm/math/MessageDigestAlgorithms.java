@@ -20,50 +20,50 @@ package com.muoniumplayer.core.ncm.math;
 import java.security.MessageDigest;
 
 /**
- * Standard {@link MessageDigest} algorithm names from the <cite>Java Cryptography Architecture Standard Algorithm Name
- * Documentation</cite>.
+ * 来自 <cite>Java 加密架构标准算法名
+ * 文档</cite> 的标准 {@link MessageDigest} 算法名。
  * <p>
- * This class is immutable and thread-safe.
+ * 该类不可变且线程安全。
  * </p>
  * <ul>
- * <li>Java 8 and up: SHA-224.</li>
- * <li>Java 9 and up: SHA3-224, SHA3-256, SHA3-384, SHA3-512.</li>
+ * <li>Java 8 及以上：SHA-224。</li>
+ * <li>Java 9 及以上：SHA3-224、SHA3-256、SHA3-384、SHA3-512。</li>
  * </ul>
  *
- * @see <a href="https://docs.oracle.com/javase/8/docs/technotes/guides/security/StandardNames.html#MessageDigest">
- *      Java 8 Cryptography Architecture Standard Algorithm Name Documentation</a>
- * @see <a href="https://docs.oracle.com/en/java/javase/11/docs/specs/security/standard-names.html#messagedigest-algorithms">
- *      Java 11 Cryptography Architecture Standard Algorithm Name Documentation</a>
- * @see <a href="https://docs.oracle.com/en/java/javase/17/docs/specs/security/standard-names.html#messagedigest-algorithms">
- *      Java 17 Cryptography Architecture Standard Algorithm Name Documentation</a>
- * @see <a href="https://docs.oracle.com/en/java/javase/21/docs/specs/security/standard-names.html#messagedigest-algorithms">
- *      Java 21 Cryptography Architecture Standard Algorithm Name Documentation</a>
+ *     @see <a href="https://docs.oracle.com/javase/8/docs/technotes/guides/security/StandardNames.html#MessageDigest">
+ *      Java 8 加密架构标准算法名文档</a>
+ *     @see <a href="https://docs.oracle.com/en/java/javase/11/docs/specs/security/standard-names.html#messagedigest-algorithms">
+ *      Java 11 加密架构标准算法名文档</a>
+ *     @see <a href="https://docs.oracle.com/en/java/javase/17/docs/specs/security/standard-names.html#messagedigest-algorithms">
+ *      Java 17 加密架构标准算法名文档</a>
+ *     @see <a href="https://docs.oracle.com/en/java/javase/21/docs/specs/security/standard-names.html#messagedigest-algorithms">
+ *      Java 21 加密架构标准算法名文档</a>
  *
- * @see <a href="https://dx.doi.org/10.6028/NIST.FIPS.180-4">FIPS PUB 180-4</a>
- * @see <a href="https://dx.doi.org/10.6028/NIST.FIPS.202">FIPS PUB 202</a>
+ *     @see <a href="https://dx.doi.org/10.6028/NIST.FIPS.180-4">FIPS PUB 180-4</a>
+ *     @see <a href="https://dx.doi.org/10.6028/NIST.FIPS.202">FIPS PUB 202</a>
  * @since 1.7
  */
 public class MessageDigestAlgorithms {
 
     /**
-     * The MD2 message digest algorithm defined in RFC 1319.
+     * RFC 1319 中定义的 MD2 消息摘要算法。
      */
     public static final String MD2 = "MD2";
 
     /**
-     * The MD5 message digest algorithm defined in RFC 1321.
+     * RFC 1321 中定义的 MD5 消息摘要算法。
      */
     public static final String MD5 = "MD5";
 
     /**
-     * The SHA-1 hash algorithm defined in the FIPS PUB 180-2.
+     * FIPS PUB 180-2 中定义的 SHA-1 哈希算法。
      */
     public static final String SHA_1 = "SHA-1";
 
     /**
-     * The SHA-224 hash algorithm defined in the FIPS PUB 180-3.
+     * FIPS PUB 180-3 中定义的 SHA-224 哈希算法。
      * <p>
-     * Present in Oracle Java 8.
+     * Oracle Java 8 中已包含。
      * </p>
      *
      * @since 1.11
@@ -71,24 +71,24 @@ public class MessageDigestAlgorithms {
     public static final String SHA_224 = "SHA-224";
 
     /**
-     * The SHA-256 hash algorithm defined in the FIPS PUB 180-2.
+     * FIPS PUB 180-2 中定义的 SHA-256 哈希算法。
      */
     public static final String SHA_256 = "SHA-256";
 
     /**
-     * The SHA-384 hash algorithm defined in the FIPS PUB 180-2.
+     * FIPS PUB 180-2 中定义的 SHA-384 哈希算法。
      */
     public static final String SHA_384 = "SHA-384";
 
     /**
-     * The SHA-512 hash algorithm defined in the FIPS PUB 180-2.
+     * FIPS PUB 180-2 中定义的 SHA-512 哈希算法。
      */
     public static final String SHA_512 = "SHA-512";
 
     /**
-     * The SHA-512 hash algorithm defined in the FIPS PUB 180-4.
+     * FIPS PUB 180-4 中定义的 SHA-512 哈希算法。
      * <p>
-     * Included starting in Oracle Java 9.
+     * 自 Oracle Java 9 起包含。
      * </p>
      *
      * @since 1.14
@@ -96,9 +96,9 @@ public class MessageDigestAlgorithms {
     public static final String SHA_512_224 = "SHA-512/224";
 
     /**
-     * The SHA-512 hash algorithm defined in the FIPS PUB 180-4.
+     * FIPS PUB 180-4 中定义的 SHA-512 哈希算法。
      * <p>
-     * Included starting in Oracle Java 9.
+     * 自 Oracle Java 9 起包含。
      * </p>
      *
      * @since 1.14
@@ -106,9 +106,9 @@ public class MessageDigestAlgorithms {
     public static final String SHA_512_256 = "SHA-512/256";
 
     /**
-     * The SHA3-224 hash algorithm defined in the FIPS PUB 202.
+     * FIPS PUB 202 中定义的 SHA3-224 哈希算法。
      * <p>
-     * Included starting in Oracle Java 9.
+     * 自 Oracle Java 9 起包含。
      * </p>
      *
      * @since 1.11
@@ -116,9 +116,9 @@ public class MessageDigestAlgorithms {
     public static final String SHA3_224 = "SHA3-224";
 
     /**
-     * The SHA3-256 hash algorithm defined in the FIPS PUB 202.
+     * FIPS PUB 202 中定义的 SHA3-256 哈希算法。
      * <p>
-     * Included starting in Oracle Java 9.
+     * 自 Oracle Java 9 起包含。
      * </p>
      *
      * @since 1.11
@@ -126,9 +126,9 @@ public class MessageDigestAlgorithms {
     public static final String SHA3_256 = "SHA3-256";
 
     /**
-     * The SHA3-384 hash algorithm defined in the FIPS PUB 202.
+     * FIPS PUB 202 中定义的 SHA3-384 哈希算法。
      * <p>
-     * Included starting in Oracle Java 9.
+     * 自 Oracle Java 9 起包含。
      * </p>
      *
      * @since 1.11
@@ -136,9 +136,9 @@ public class MessageDigestAlgorithms {
     public static final String SHA3_384 = "SHA3-384";
 
     /**
-     * The SHA3-512 hash algorithm defined in the FIPS PUB 202.
+     * FIPS PUB 202 中定义的 SHA3-512 哈希算法。
      * <p>
-     * Included starting in Oracle Java 9.
+     * 自 Oracle Java 9 起包含。
      * </p>
      *
      * @since 1.11
@@ -146,13 +146,13 @@ public class MessageDigestAlgorithms {
     public static final String SHA3_512 = "SHA3-512";
 
     /**
-     * Gets all constant values defined in this class.
+     * 获取本类中定义的所有常量值。
      *
-     * @return all constant values defined in this class.
+     * @return 本类中定义的所有常量值。
      * @since 1.11
      */
     public static String[] values() {
-        // Do not use a constant array here as that can be changed externally by accident or design
+        // 此处不要使用常量数组，因为它可能被外部意外或有意地修改
         return new String[] {
             MD2, MD5, SHA_1, SHA_224, SHA_256, SHA_384,
             SHA_512, SHA_512_224, SHA_512_256, SHA3_224, SHA3_256, SHA3_384, SHA3_512
@@ -160,7 +160,7 @@ public class MessageDigestAlgorithms {
     }
 
     private MessageDigestAlgorithms() {
-        // cannot be instantiated.
+        // 不可实例化。
     }
 
 }

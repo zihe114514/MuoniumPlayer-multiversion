@@ -5,13 +5,12 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * For a given handler, the primary data may be one of the referenced items when
- * it is desired that it be stored elsewhere, or divided into extents; or the
- * primary metadata may be contained in the meta-box (e.g. in an XML box).
+ * 对于给定处理器，当希望主数据存放在他处或分为多个 extent 时，
+ * 它可以是被引用条目之一；否则主元数据可包含在 meta-box 中
+ *（例如在 XML box 中）。
  *
- * Either this box must occur, or there must be a box within the meta-box (e.g.
- * an XML box) containing the primary information in the format required by the
- * identified handler.
+ * 要么必须出现此 box，要么 meta-box 内必须有一个 box（例如
+ * XML box），按所标识处理器要求的格式包含主信息。
  *
  * @author in-somnia
  */
@@ -31,9 +30,9 @@ public class PrimaryItemBox extends FullBox {
 	}
 
 	/**
-	 * The item ID is the identifier of the primary item.
+	 * item ID 是主条目的标识符。
 	 *
-	 * @return the item ID
+	 * @return item ID
 	 */
 	public int getItemID() {
 		return itemID;

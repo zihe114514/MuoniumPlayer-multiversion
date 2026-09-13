@@ -41,7 +41,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class HomePanel extends NCMPanel {
 
     private final MusicPlatform platform;
-    /** A fixed result set is used by the in-player playlist search without touching homepage caches. */
+    /** 固定结果集由播放器内歌单搜索使用，而不触碰首页缓存。 */
     private final List<PlayList> fixedPlaylists;
     private final String fixedRecommendationTitle;
     private final Map<Long, Runnable> fixedPlaylistActions;
@@ -51,14 +51,14 @@ public class HomePanel extends NCMPanel {
     }
 
     /**
-     * Builds a read-only playlist-card page, currently used by NetEase discovery/search pages.
-     * The result owns no global cache, so returning home always resumes the normal recommendation page.
+     * 构建一个只读的歌单卡片页，当前被网易云发现/搜索页使用。
+     * 该结果不拥有全局缓存，因此返回首页总是恢复普通推荐页。
      */
     public HomePanel(List<PlayList> playlists, String recommendationTitle) {
         this(playlists, recommendationTitle, Collections.emptyMap());
     }
 
-    /** Allows discovery cards such as digital albums to keep the playlist-card appearance while
+    /**允许数字专辑等发现卡片保持歌单卡片外观，而
      * opening their provider-specific detail action instead of treating an album as a playlist. */
     public HomePanel(List<PlayList> playlists, String recommendationTitle, Map<Long, Runnable> cardActions) {
         super();
@@ -157,8 +157,8 @@ public class HomePanel extends NCMPanel {
             cached = new ArrayList<>(playLists);
         }
 
-        // Do not hide already loaded recommendations while the larger public pages are
-        // being appended in the background.
+        // 在更大的公开页面在后台追加时，
+        //不隐藏已加载的推荐。
         if (!cached.isEmpty()) {
             layout(cached, recommendationTitle(cached.size()));
         }
@@ -179,9 +179,9 @@ public class HomePanel extends NCMPanel {
                 }
             }
 
-            // Account-aware daily recommendations stay at the front, but that endpoint
-            // intentionally returns only a small set and therefore cannot be the sole
-            // homepage source.
+            // 账号感知的每日推荐留在最前，但该端点
+            //刻意只返回一小集，因此不能作为唯一
+            //首页源。
             appendNeteasePlaylists(merged, CloudMusicApi.recommendResource(), "recommend");
 
             boolean personalizedLoaded = appendNeteasePlaylists(
@@ -219,8 +219,8 @@ public class HomePanel extends NCMPanel {
                 }
             }
 
-            // If a public source failed, keep the cache usable but allow the next visit to
-            // retry filling it instead of permanently locking in a partial first response.
+            // 若一个公开源失败，保持缓存可用但允许下次访问
+            //重试填充，而非永久锁定在部分的首次回答上。
             neteaseHomeComplete = personalizedLoaded
                     && publicPagesLoaded
                     && !result.isEmpty();
@@ -280,7 +280,7 @@ public class HomePanel extends NCMPanel {
                     }
                     destination.putIfAbsent(playList.getId(), playList);
                 } catch (Throwable ignored) {
-                    // One malformed recommendation must not discard every valid item after it.
+                    // 一条畸形推荐绝不能丢弃其后每个有效条目。
                 }
             }
             return true;
@@ -535,8 +535,8 @@ public class HomePanel extends NCMPanel {
         final String welcomeText = welcomeTextFor(platform);
         final int margin = 12;
 
-        // Font atlases report a negative height before their first draw. Keep a stable
-        // header reserve from frame one so the responsive card grid can never cover text
+        // 字体图集在首次绘制前报告负高度。从第一帧起保持稳定的
+        //头部预留，使响应式卡片网格永远不会盖住文字
         // while the player opens or changes between 100/90/80/70 percent.
         final double welcomeHeight = Math.max(12.0, FontManager.pf25bold.getStringHeight(welcomeText));
         final double recommendationsHeight = Math.max(7.0, FontManager.pf14bold.getStringHeight(recommendationsText));
@@ -576,13 +576,13 @@ public class HomePanel extends NCMPanel {
                 .setPosition(margin, recommendationsY));
         this.addChild(lblRecommendations);
 
-        // Headings are intentionally added after the clipped grid so they always remain on top.
+        // 标题刻意加在被裁剪网格之后，因此它们始终在最上。
         displayedPlayLists.forEach(pl -> scrollPanel.addChild(new PlaylistWidget(pl, fixedPlaylistActions.get(pl.getId())).setShouldOverrideMouseCursor(true)));
 
     }
     private static class PlaylistWidget extends AbstractWidget<PlaylistWidget> {
 
-        /** Extra air between the two title lines in the NetEase home grid. */
+        /** 网易云首页网格中两条标题行之间的额外空隙。 */
         private static final double NETEASE_TITLE_LINE_GAP = 6.0;
         private static final double DEFAULT_TITLE_LINE_GAP = 4.0;
         private static final double COVER_SIZE = 100.0;
@@ -614,8 +614,8 @@ public class HomePanel extends NCMPanel {
             boolean neteaseTitle = playList.getPlatform() == MusicPlatform.NETEASE;
             this.titleLineGap = neteaseTitle ? NETEASE_TITLE_LINE_GAP : DEFAULT_TITLE_LINE_GAP;
 
-            // Glyph widths are generated lazily by CFontRenderer. Start with one
-            // loading line, then reflow after its glyph atlas has measured this title.
+            // 字形宽度由 CFontRenderer 惰性生成。先从一行
+            //加载文字开始，再在其字形图集测量过本标题后排版。
             this.titleWidget = new PlaylistTitleWidget(new String[]{safePlaylistTitle(playList.getName())},
                     titleFont, titleLineGap, size);
             updateTitleLayout(false);
@@ -666,9 +666,9 @@ public class HomePanel extends NCMPanel {
 
         @Override
         public void onRender(double mouseX, double mouseY) {
-            // Runs before this card's children. Once the first frame has loaded the
-            // title glyphs, remeasure and reserve every wrapped line before the grid
-            // lays out the following frame's rows.
+            // 在本卡片的子级之前运行。一旦首帧加载了
+            //标题字形，就在网格布局下一帧的行之前
+            //重新测量并预留每个折行。
             updateTitleLayout(titleFont.areGlyphsLoaded(safePlaylistTitle(playList.getName())));
         }
 
@@ -713,8 +713,8 @@ public class HomePanel extends NCMPanel {
     }
 
     /**
-     * Draws each playlist-title line explicitly so NetEase cards can use a
-     * slightly roomier line advance without changing the global font renderer.
+     * 显式绘制每条歌单标题行，使网易云卡片能用略宽松的
+     * 行前进，而不改变全局字体渲染器。
      */
     private static final class PlaylistTitleWidget extends AbstractWidget<PlaylistTitleWidget> {
         private String[] lines;
@@ -744,8 +744,8 @@ public class HomePanel extends NCMPanel {
             for (int index = 0; index < lines.length; index++) {
                 font.drawString(lines[index], getX(), getY() + advance * index, getHexColor());
             }
-            // Keep the text viewport exactly aligned with the cover footprint. The
-            // explicit width stops a caption from changing horizontal grid spacing.
+            // 让文本视口与封面足迹精确对齐。显式宽度
+            //阻止说明文字改变水平网格间距。
             setBounds(maxWidth, getContentHeight());
         }
 
@@ -755,8 +755,8 @@ public class HomePanel extends NCMPanel {
         }
 
         private static double lineAdvance(CFontRenderer font, double lineGap) {
-            // Before its first glyph upload CFontRenderer reports a negative height.
-            // The configured font size is a safe reserve until measurement is ready.
+            // 在首次字形上传前，CFontRenderer 报告负高度。
+            // 配置的字号在测量就绪前是安全预留。
             double glyphHeight = Math.max(font.sizePx + 2.0, font.getFontHeight());
             return glyphHeight + Math.max(0.0, lineGap);
         }

@@ -17,6 +17,7 @@ import com.muoniumplayer.core.screens.ncm.AccountManagerOverlay;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.screens.onboarding.steps.AccountStep;
 import com.muoniumplayer.core.screens.onboarding.steps.AppearanceStep;
+import com.muoniumplayer.core.screens.onboarding.steps.AutomixModelStep;
 import com.muoniumplayer.core.screens.onboarding.steps.FinishStep;
 import com.muoniumplayer.core.screens.onboarding.steps.SourceStep;
 import com.muoniumplayer.core.screens.onboarding.steps.WelcomeStep;
@@ -29,8 +30,8 @@ import today.opai.api.features.ExtensionScreen;
 import java.util.List;
 
 /**
- * Standalone first-run surface. Existing player functionality is reused through
- * the account overlay, music service, theme and font configuration systems.
+ * 独立的首次运行界面。既有播放器功能通过
+ * 账号覆盖层、音乐服务、主题和字体配置系统复用。
  */
 public final class OnboardingScreen extends ExtensionScreen
         implements SharedConstants, OnboardingController {
@@ -38,10 +39,11 @@ public final class OnboardingScreen extends ExtensionScreen
     private static final long STEP_TRANSITION_NANOS = 360_000_000L;
     private static final double STEP_DESIGN_WIDTH = 620.0;
     private static final double STEP_DESIGN_HEIGHT = 410.0;
+    private static final double MIN_READABLE_SCALE = 0.82;
 
     private final OnboardingStepView[] steps = {
             new WelcomeStep(), new AccountStep(), new SourceStep(),
-            new AppearanceStep(), new FinishStep()
+            new AppearanceStep(), new AutomixModelStep(), new FinishStep()
     };
 
     private int stepIndex;
@@ -76,7 +78,7 @@ public final class OnboardingScreen extends ExtensionScreen
     @Override
     public void drawScreen(int mouseX, int mouseY) {
         RenderSystem.refreshResolution();
-        RenderSystem.FIXED_SCALE = true;
+        RenderSystem.FIXED_SCALE = false;
         alpha = Interpolations.interpolate((float) alpha, 1f, .18f);
 
         double width = RenderSystem.getWidth();
@@ -181,27 +183,38 @@ public final class OnboardingScreen extends ExtensionScreen
     private void drawBackground(double width, double height) {
         Rect.draw(0, 0, width, height, OnboardingUi.BACKDROP);
         double t = (System.nanoTime() - openedAt) / 1_000_000_000.0;
-        double breathe = .5 + .5 * Math.sin(t * .42);
-        OnboardingUi.roundedRect(width * .02, height * .08, width * .62, height * .72, 160,
-                24, 52, 113, (int) (28 + breathe * 12));
-        OnboardingUi.roundedRect(width * .48, height * .20, width * .58, height * .70, 180,
-                82, 36, 150, (int) (20 + (1.0 - breathe) * 16));
-        OnboardingUi.roundedRect(width * .18, height * .86, width * .72, height * .08, 60,
-                35, 105, 177, 18);
-        for (int i = 0; i < 6; i++) {
-            double x = width * (.07 + i * .18) + Math.sin(t * .25 + i) * 10;
-            double y = height * (.12 + (i % 3) * .31);
-            OnboardingUi.roundedRect(x, y, 2, 2, 2, 90, 160, 255, 85 + i * 9);
+        double breathe = .5 + .5 * Math.sin(t * .38);
+
+        // 官网氛围：暖色品牌光晕、冷色 aqua/violet 逆光，
+        //然后是克制的 52 px 网格，使界面保持可辨识的技术感。
+        OnboardingUi.roundedRect(-width * .18, -height * .34, width * .72, height * .92, height * .46,
+                216, 30, 58, (int) (22 + breathe * 13));
+        OnboardingUi.roundedRect(width * .68, -height * .20, width * .48, height * .72, height * .36,
+                95, 208, 230, (int) (10 + (1.0 - breathe) * 8));
+        OnboardingUi.roundedRect(width * .26, height * .76, width * .54, height * .48, height * .24,
+                142, 124, 255, 13);
+
+        int grid = OnboardingUi.colorWithAlpha(OnboardingUi.WHITE, 7);
+        for (double gx = 0; gx < width; gx += 52) Rect.draw(gx, 0, 1, height, grid);
+        for (double gy = 0; gy < height; gy += 52) Rect.draw(0, gy, width, 1, grid);
+        for (int i = 0; i < 7; i++) {
+            double x = width * (.05 + i * .155) + Math.sin(t * .24 + i) * 8;
+            double y = height * (.13 + (i % 3) * .29);
+            OnboardingUi.roundedRect(x, y, 3, 3, 1.5,
+                    OnboardingUi.colorWithAlpha(i % 2 == 0 ? OnboardingUi.BRAND_2 : OnboardingUi.AQUA,
+                            52 + i * 5));
         }
     }
 
     private void drawSurface(double left, double top, double width, double height) {
-        OnboardingUi.roundedRect(left, top, width, height, 28, OnboardingUi.GLASS);
-        OnboardingUi.roundedOutlineGradient(left, top, width, height, 28, 1.15,
-                OnboardingUi.awtColorWithAlpha(OnboardingUi.BLUE, 210),
-                new java.awt.Color(35, 68, 120, 180),
-                new java.awt.Color(197, 107, 255, 210),
-                new java.awt.Color(54, 82, 143, 180));
+        OnboardingUi.roundedRect(left, top, width, height, 32, OnboardingUi.GLASS);
+        OnboardingUi.roundedOutlineGradient(left, top, width, height, 32, 1.1,
+                OnboardingUi.awtColorWithAlpha(OnboardingUi.WHITE, 26),
+                OnboardingUi.awtColorWithAlpha(OnboardingUi.WHITE, 70),
+                OnboardingUi.awtColorWithAlpha(OnboardingUi.BRAND_2, 58),
+                OnboardingUi.awtColorWithAlpha(OnboardingUi.WHITE, 18));
+        OnboardingUi.roundedGradient(left + 34, top, Math.min(180, width * .24), 2, 1,
+                OnboardingUi.BRAND, OnboardingUi.BRAND_2);
     }
 
     private void drawProgress(double x, double y, double width) {
@@ -225,9 +238,9 @@ public final class OnboardingScreen extends ExtensionScreen
         NavLayout nav = NavLayout.of(left, top, width, height);
         double buttonY = nav.buttonY;
         boolean hover = OnboardingUi.inside(mouseX, mouseY, nav.primaryX, buttonY, nav.primaryW, 44);
-        OnboardingUi.roundedRect(nav.primaryX, buttonY, nav.primaryW, 44, 22,
-                hover ? OnboardingUi.colorWithAlpha(OnboardingUi.BLUE, 220)
-                        : OnboardingUi.colorWithAlpha(OnboardingUi.BLUE, 165));
+        OnboardingUi.roundedGradient(nav.primaryX, buttonY, nav.primaryW, 44, 22,
+                hover ? OnboardingUi.BRAND_2 : OnboardingUi.BRAND,
+                hover ? com.muoniumplayer.core.rendering.RGBA.color(255, 181, 107, 255) : OnboardingUi.BRAND_2);
         OnboardingUi.roundedOutline(nav.primaryX, buttonY, nav.primaryW, 44, 22, 1,
                 OnboardingUi.awtColorWithAlpha(OnboardingUi.CYAN, 190));
         String label = nav.compact
@@ -321,7 +334,7 @@ public final class OnboardingScreen extends ExtensionScreen
     public void mouseClicked(int mouseX, int mouseY, int mouseButton) {
         if (mouseButton != 0) return;
         RenderSystem.refreshResolution();
-        RenderSystem.FIXED_SCALE = true;
+        RenderSystem.FIXED_SCALE = false;
         double width = RenderSystem.getWidth();
         double height = RenderSystem.getHeight();
         double sx = RenderSystem.getWidthNotScaled() / width;
@@ -481,8 +494,11 @@ public final class OnboardingScreen extends ExtensionScreen
     }
 
     private static double stepScale(double contentWidth, double contentHeight) {
-        return Math.min(1.0, Math.min(contentWidth / STEP_DESIGN_WIDTH,
-                contentHeight / STEP_DESIGN_HEIGHT));
+        double available = Math.min(contentWidth / STEP_DESIGN_WIDTH,
+                contentHeight / STEP_DESIGN_HEIGHT);
+        // 低于此阈值文字变得不可读。保持字体可读，让
+        //固定内容视口裁剪仅在异常小的 Minecraft 窗口上生效。
+        return Math.min(1.0, Math.max(MIN_READABLE_SCALE, available));
     }
 
     @Override
@@ -602,10 +618,10 @@ public final class OnboardingScreen extends ExtensionScreen
     }
 
     private static double surfaceWidth(double width) {
-        return Math.min(width * .83, 1120);
+        return Math.max(Math.min(width - 28, 1120), Math.min(width, 700));
     }
 
     private static double surfaceHeight(double height) {
-        return Math.min(height * .83, 700);
+        return Math.max(Math.min(height - 24, 700), Math.min(height, 540));
     }
 }

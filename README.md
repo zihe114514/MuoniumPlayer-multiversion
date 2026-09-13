@@ -31,12 +31,12 @@ Minecraft 客户端 mod **MuoniumPlayer**（网易云音乐播放器 + 灵动岛
 **1.20.1 用 Forge 而不是 NeoForge**：1.20.1 是 Forge 的最后一个大版本，NeoForge 从
 1.20.2 才分家，1.20.1 的模组生态与整合包都在 Forge 上。
 
-四份工程共用：`mod_version=1.4.8`、`maven_group=com.muoniumplayer`、
+四份工程共用：`mod_version=1.4.9`、`maven_group=com.muoniumplayer`、
 `archives_base_name=MuoniumPlayer`、Skija `0.143.17`（Fabric 侧 `include` 进 jar，
 Forge/NeoForge 侧用 shadow 合并；原生库平台由 `skija_natives` 控制，发布时需要改成四平台全打）。
 
 产物命名：`MuoniumPlayer-<mc版本>-<加载器>-<mod版本>.jar`，
-例如 `MuoniumPlayer-1.21.11-neoforge-1.4.8.jar` / `MuoniumPlayer-1.20.1-forge-1.4.8.jar`。
+例如 `MuoniumPlayer-1.21.11-neoforge-1.4.9.jar` / `MuoniumPlayer-1.20.1-forge-1.4.9.jar`。
 名字里带 Minecraft 版本是必要的，不是好看：四个版本工程是四个独立构建，
 8 个 jar 要平铺进同一个 `dist/`，不带版本号的话 1.21.1 与 1.21.11 的 fabric 产物会同名互相覆盖。
 `buildAll` 跑完会把成品汇总到仓库根的 `dist/`（`collectDist` 任务，只收成品、不收源码包与改名前的旧 jar）。
@@ -143,6 +143,16 @@ HUD 画完 `onHudRender()`、Screen 画完 `onScreenRendered(Screen)`。
   全部由 Minecraft 提供，因此从 `embeddedLibs` 里 `exclude` 掉（编译期直接用原版那几个版本）。
   1.21.11 / 26.2 开发期不走模块路径，原本不暴露这个问题，但发布 jar 里同样不该塞重复库，四个版本统一排除。
 
+## 全屏歌词背景 / 主题配色
+
+打开全屏歌词页后，左上角 **A-Z** 快捷面板里有两条独立选项：
+
+- **歌词背景**：`模糊封面`（原有默认） / `隐现`（封面取色的 MeshGradient + Dithering，随后播放包络实时响应）。
+- **主题配色**：`当前主题`（原有默认，保留所有预设与自定义颜色） / `封面跟随`（按当前歌曲封面自动生成同色系明暗主题）。
+
+两项都只影响新选择，旧配置没有对应字段时继续使用原有模糊封面和当前主题；`封面跟随`
+不会覆盖预设主题的调色数据，随时切回 `当前主题` 即可恢复。
+
 ## 更新提示（四版共用一份实现）
 
 启动后在主菜单弹一次「有新版本」提示。实现刻意与既有的 ffmpeg 提示同构 —— 那套
@@ -235,7 +245,7 @@ Gradle wrapper 与构建配置。
 .\build-all.bat
 
 # PowerShell 里直接调用；构建到指定目录而不是默认 dist/
-.\tools\build-all.ps1 -OutputDir releases\1.4.8
+.\tools\build-all.ps1 -OutputDir releases\1.4.9
 
 # 只构建部分版本 / 换任务 / 离线 / 不复用 Gradle daemon
 .\tools\build-all.ps1 -Versions '1.21.1','26.2' -Task ':fabric:build'

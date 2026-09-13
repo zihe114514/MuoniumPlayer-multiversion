@@ -2,7 +2,7 @@ package repackage.net.sourceforge.jaad.aac.error;
 
 interface RVLCTables {
 
-	//index,length,codeword
+	//索引、长度、码字
 	int[][] RVLC_BOOK = {
 		{0, 1, 0}, /*         0 */
 		{-1, 3, 5}, /*       101 */

@@ -1,31 +1,31 @@
 /*
- * Created on Jun 24, 2004
+ * 创建于2004年6月24日
  *
- * To change the template for this generated file go to
+ * 要更改此生成文件的模板，请转到
  * Window - Preferences - Java - Code Generation - Code and Comments
  */
 package repackage.org.kc7bfi.jflac.util;
 
 
 /**
- * Utility class for handling Rice codes.
+ * 用于处理大米代码的实用程序类。
  *
  * @author kc7bfi
  */
 public class RiceCodes {
 
     /**
-     * generate int from rice code.
+     * 从大米代码生成int。
      *
-     * @param val       The rice code
-     * @param parameter The rice parameter
-     * @return The decoded value
+     * 写入一条 WAV 帧记录。
+     * @param parameter 大米参数
+     * @return 返回解码后的缓冲区数据
      */
     public int riceBits(int val, int parameter) {
-        // fold signed to unsigned
+        // 已签名到未签名的折叠
         int uval;
         if (val < 0) {
-            // equivalent to (unsigned)(((--val) < < 1) - 1); but without the overflow problem at MININT
+            // 这可以更快，但目前我们不需要
             uval = ((-(++val)) << 1) + 1;
         } else {
             uval = val << 1;

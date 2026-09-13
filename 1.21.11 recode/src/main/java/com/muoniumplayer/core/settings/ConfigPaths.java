@@ -8,16 +8,16 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 
 /**
- * Central registry for MuoniumPlayer persisted paths.
+ * MuoniumPlayer 持久化路径的集中注册表。
  *
- * <p>Mod-owned files never live directly in the game directory. Everything is kept under
- * {@code config/muonium/}, which is the layout expected by Minecraft mod launchers and
- * config backup tools. Legacy root files and directories are moved on first use; an existing
- * file in the new location always wins.</p>
+ * <p>本模组自有的文件从不直接放在游戏目录下。所有内容都保存在
+ * {@code config/muonium/} 下，这是 Minecraft 模组启动器和配置备份工具
+ * 所期望的布局。旧的根目录文件和目录在首次使用时迁移；新位置已存在的
+ * 文件始终优先。</p>
  */
 public final class ConfigPaths {
 
-    /** The only mod-owned root. All persisted state hangs off this directory. */
+    /** 唯一由本模组自有的根目录。所有持久化状态都挂在此目录下。 */
     private static final File CONFIG_DIRECTORY = new File("config", "muonium");
 
     public static final File HUD = new File(CONFIG_DIRECTORY, "hud.json");
@@ -27,74 +27,62 @@ public final class ConfigPaths {
     public static final Path MUSIC_AUTH = CONFIG_DIRECTORY.toPath().resolve("music_auth.json");
     public static final File NETEASE_ACCOUNTS = new File(CONFIG_DIRECTORY, "netease_accounts.json");
 
-    /** Legacy NetEase cookie fallback, kept separate from Cadence's credential store. */
+    /** 旧版网易云 cookie 回退，与 Cadence 的凭据存储分开保存。 */
     public static final File NETEASE_COOKIE = new File(CONFIG_DIRECTORY, "netease_cookie.txt");
 
-    /**
-     * YouTube 专用 HTTP 代理。
-     *
-     * <p>只作用于 YouTube InnerTube 请求、YouTube 音频 CDN 下载与 YouTube 封面下载；其他音源
-     * 与更新检查不读取这个文件，避免用户为 YouTube 配置代理时改变全局网络行为。</p>
-     */
+    /** 用户选择的 GD Studio 聚合平台（netease/joox/...），单独持久化。 */
     public static final File YOUTUBE_PROXY = new File(CONFIG_DIRECTORY, "youtube_proxy.json");
-    /** User-selected GD Studio aggregated platform (netease/joox/...), persisted separately. */
+    /** Automix（无缝曲目交接）偏好设置。 */
     public static final File GD_SOURCE = new File(CONFIG_DIRECTORY, "gd_source.json");
 
-    /**
-     * 酷狗的设备标识与登录凭证。
-     *
-     * <p>不能塞进 {@link #MUSIC_AUTH}：那个文件由 Cadence（{@code music-api} 库）的
-     * {@code MusicCredentialStore} 独占读写，它只认识网易云 cookie 与 QQ 的 musicid/musickey，
-     * 写进去的第三个平台会在它下一次保存时被整段丢掉。</p>
-     */
+    /** 用户提供的 ffmpeg 可执行文件。 */
     public static final File KUGOU_AUTH = new File(CONFIG_DIRECTORY, "kugou_auth.json");
 
-    /**
-     * 汽水音乐的 Passport Cookie 与本地账号资料。
-     *
-     * <p>同样不能写进 {@link #MUSIC_AUTH}；该文件由 Cadence 的凭据存储整段重写。汽水登录
-     * 由宿主自己完成，单独保存也便于退出登录时只清除汽水凭据。</p>
-     */
+    /** 本模组自有的缓存。将其放在游戏根目录之外，但与小型 JSON 设置分开。 */
     public static final File QISHUI_AUTH = new File(CONFIG_DIRECTORY, "qishui_auth.json");
 
-    /**
-     * 一起听的行为开关。
-     *
-     * <p>单独一个文件而不是塞进 {@link #PLAYER}：这些开关只在房间里有意义，读失败的代价是
-     * 回到默认行为，不该有机会影响播放器主配置的读写。</p>
-     */
+    /** 已下载并解码的音频文件。该目录可能增长到数 GB。 */
     public static final File LISTEN_TOGETHER = new File(CONFIG_DIRECTORY, "listen_together.json");
 
-    /**
-     * 网易云灰色歌曲解灰的行为开关。
-     *
-     * <p>与 {@link #LISTEN_TOGETHER} 同理单独一个文件：这些开关只在「官方链路已经取不到流」
-     * 之后才生效，读失败的代价仅是回到默认行为，不该有机会影响播放器主配置的读写。</p>
-     */
+    /** Skija 本地库的确定性回退解压目录。 */
     public static final File NETEASE_UNBLOCK = new File(CONFIG_DIRECTORY, "netease_unblock.json");
 
-    /** Automix (seamless track handover) preferences. */
+    /** 首次运行设置门控。单独保存，使引导状态不会损坏播放器偏好。 */
     public static final File AUTOMIX = new File(CONFIG_DIRECTORY, "automix.json");
 
-    /** User-supplied ffmpeg binaries. */
+    /**
+     * 仅在新文件不存在时迁移。已有的新文件始终优先，
+     * 因此用户可安全地在旁边保留旧配置的备份。
+     */
     public static final File BIN_DIR = new File(CONFIG_DIRECTORY, "bin");
 
-    /** Mod-owned caches. Keep this out of the game root, but separate from tiny JSON settings. */
+    // 由开发版构建产生的中间 Muonium 命名。
     public static final File CACHE_DIR = new File(CONFIG_DIRECTORY, "cache");
 
-    /** Downloaded and decoded audio files. This directory can grow to multiple gigabytes. */
+    // 归一化之前的发布名称，过去曾位于游戏根目录。
     public static final File MUSIC_CACHE = new File(CACHE_DIR, "music");
+
+    /**
+     * 移动旧目录。若目标已存在，则逐个合并子项；
+     * 冲突项保留在旧位置，而不被覆盖。
+     */
+    public static final File LYRIC_CACHE = new File(CACHE_DIR, "lyrics");
+
+    // 尽力而为即可：被锁定的文件直接留待下次启动处理。
+    public static final File LYRIC_OFFSETS = new File(CONFIG_DIRECTORY, "lyric_offsets.json");
+
+    /**
+     * 每首歌手动指定的歌词来源。
+     *
+     * <p>与 {@link #LYRIC_OFFSETS} 同一类东西——都是「这首歌的歌词不对」时用户手动留下的补偿，
+     * 一样要跨切歌与重启存活，所以放同一个位置、同样的尽力而为语义。</p>
+     */
+    public static final File LYRIC_SOURCES = new File(CONFIG_DIRECTORY, "lyric_sources.json");
 
     /** Deterministic fallback extraction directory for Skija native libraries. */
     public static final File SKIJA_NATIVE_ROOT = new File(CONFIG_DIRECTORY, "native/skija");
 
-    /**
-     * 「没装 ffmpeg」全屏提示的「永不展示」选择。
-     *
-     * <p>刻意单独一个文件而不是塞进 {@link #HUD}：这个提示要在<b>主菜单</b>就决定要不要弹，
-     * 那时 HUD 配置的读写路径还牵着一整套 HUD 组件；单独一个只有一个布尔值的小文件，读失败也
-     * 只是「再提示一次」，不会影响任何别的设置。</p>
-     */
+    // 只读/被锁定的旧文件不应阻止模组加载。
     public static final File FFMPEG_NOTICE = new File(CONFIG_DIRECTORY, "ffmpeg_notice.json");
 
     /**

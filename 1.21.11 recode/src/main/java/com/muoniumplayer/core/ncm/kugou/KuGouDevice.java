@@ -63,7 +63,7 @@ public final class KuGouDevice {
         return avatarUrl;
     }
 
-    /** Server-issued device fingerprint registration used by the modern tracker API. */
+    /** 现代 tracker API 所用的、由服务端下发的设备指纹注册。 */
     public static void ensureRegistered() {
         ensureLoaded();
         if (registered) return;

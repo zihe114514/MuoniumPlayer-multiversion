@@ -4,7 +4,7 @@ import java.io.IOException;
 import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
-//TODO: check decoding, add get-methods
+//TODO: 检查解码，添加 get 方法
 public class ColorParameterBox extends FullBox {
 
 	private long colorParameterType;

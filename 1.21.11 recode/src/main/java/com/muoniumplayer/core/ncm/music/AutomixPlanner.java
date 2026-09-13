@@ -3,117 +3,117 @@ package com.muoniumplayer.core.ncm.music;
 import java.util.Locale;
 
 /**
- * Builds the {@link AutomixPlan} for a handover between two already decoded decks.
+ * 为两个已解码 deck 之间的交接构建 {@link AutomixPlan}。
  *
- * <p>The structural choices follow the DJ logic the reference implementation documents: mix out of the
- * outgoing track once its vocals are done and its arrangement thins out, mix into the incoming track
- * where its intro actually ends, land the handover on a bar boundary, and match loudness so neither
- * side appears to drop.</p>
+ * <p>结构性选择遵循参考实现所记载的 DJ 逻辑：在退出曲目人声唱完、
+ * 编曲变薄处混音退出，在接入曲目前奏真正结束处混音进入，
+ * 把交接落在小节边界上，并匹配响度使两边
+ * 都不像掉了。</p>
  *
- * <p>On top of that the plan carries the things that actually separate a DJ blend from a crossfade.</p>
+ * <p>在此之上，该计划还携带真正把 DJ 混音与普通交叉淡化区分开的东西。</p>
  * <ul>
- *   <li><b>The low band is swapped, not summed.</b> Two tracks overlapping put two kick drums and two
- *       bass lines into the same octave, and that sums into a boom no volume curve can fix, so the
- *       outgoing deck's low shelf is pulled out early and the incoming one's is held back until it owns
- *       the mix.</li>
- *   <li><b>The arriving track enters without its vocal.</b> Two lead vocals at once is the artefact a
- *       listener can actually name, and it cannot be shelved away because voices share their band with
- *       everything else - so the incoming deck's band-limited centre is cancelled and released.</li>
- *   <li><b>The two beat grids are phase locked, not just tempo matched.</b> The mix-out is quantised onto
- *       an outgoing downbeat and the cue onto an incoming one; what is left over after that quantisation
- *       is measured and handed to the plan's rhythm buffer, which walks it off over the middle of the
- *       ramp. Matching tempo without matching phase produces two grids a fraction of a beat apart for
- *       the whole overlap, which is exactly what flamming is.</li>
- *   <li><b>Where there is no beat, the rate budget is spent on key instead.</b> One rate port cannot serve
- *       tempo and pitch at once, and the whole ±6 % budget happens to be one semitone. So a mix-out that
- *       lands in an outro or on a pad - measurably weak beat grid - gets a whole-semitone transposition
- *       that makes the two keys agree, while a mix-out with a real beat gets the tempo lock.</li>
+ *   <li><b>低频段是交换而非叠加。</b>两首重叠曲目会把两个底鼓和两条
+ *       贝斯线放进同一个八度，叠加成任何音量曲线都救不了的闷响，因此
+ *       退出方 deck 的低 shelf 早早抽出，接入方的则压着直到它掌控
+ *       混音。</li>
+ *   <li><b>到达的曲目不带人声进入。</b>两个主唱同时出现是听众
+ *       真能指出的毛病，而且它无法用 shelf 滤掉，因为人声与
+ *       其他所有东西共用频段——因此接入方 deck 的限带中央被消除后再释放。</li>
+ *   <li><b>两个节拍网格是相位锁定，而不只是速度匹配。</b>混音退出被量化到
+ *       退出方的强拍、cue 被量化到接入方的强拍；量化之后剩下的部分
+ *       被测量并交给计划的节奏缓冲，由它在渐变中段走掉。
+ * 只匹配速度而不匹配相位，会让两个网格在整个重叠期内相差几分之拍，
+ *       这正是 flamming。</li>
+ *   <li><b>没有节拍时，速率预算转而花在调性上。</b>一个速率端口无法同时服务
+ *       速度和音高，而整个 ±6 % 预算恰好是一个半音。因此落在 outro 或铺底上的
+ *       混音退出（网格明显很弱）会得到一次整半音转调，使两个调性一致，
+ *       而有真实节拍的混音退出则得到速度锁定。</li>
  * </ul>
  *
- * <p>Only the deck that is leaving is ever bent: JSyn's rate control shifts pitch as well as tempo, and a
- * few percent on a track that is already several dB down and on its way out is inaudible, whereas doing
- * it to the arriving track would detune the rest of the song.</p>
+ * <p>只弯曲正在离开的 deck：JSyn 的速率控制同时移动音高和速度，
+ * 在已衰减数 dB、正在退出的曲目上动几个百分点听不见，而对到达曲目这样做
+ * 会让歌曲其余部分走调。</p>
  *
- * <p><b>Analysis is never a requirement</b>: when a window cannot be measured the plan degrades to a
- * plain equal-power crossfade instead of falling back to a hard cut, because the whole point is that
- * the queue never falls silent between two tracks.</p>
+ * <p><b>分析从来不是必需的</b>：当窗口无法测量时，计划退化为普通的等功率交叉淡化，
+ * 而非硬切——因为整个意义就在于
+ * 队列在两首曲目之间永远不会静默。</p>
  */
 final class AutomixPlanner {
 
-    /** Window used for tempo induction; a few seconds are needed to lock onto a beat period. */
+    /** 用于速度推算的窗口；锁定一个节拍周期需要几秒。 */
     private static final long BEAT_WINDOW_MILLIS = 12_000L;
     /**
-     * How much of an incoming intro may be skipped. Deliberately conservative: the point is to avoid
-     * blending into dead air, not to edit the song, so a long deliberate intro is played in full.
+     * 接入曲目前奏可跳过多少。刻意保守：目的是避免
+     * 混进死寂，而不是剪辑歌曲，因此一段刻意的长前奏会完整播放。
      */
     private static final long MAX_INTRO_SKIP_MILLIS = 12_000L;
-    /** An intro is never allowed to eat more than this share of a short track. */
+    /** 前奏绝不允许吃掉短曲目超过这一份额。 */
     private static final double MAX_INTRO_SKIP_FRACTION = .12;
-    /** Beat alignment is only claimed inside this tempo band, mirroring the reference's vibe check. */
+    /** 只在这个速度带内才声称节拍对齐，对齐参考实现的氛围判断。 */
     private static final float MIN_TEMPO_RATIO = .92f;
     private static final float MAX_TEMPO_RATIO = 1.08f;
     /**
-     * How confident a beat grid has to be before anything is built on it.
+     * 节拍网格需要达到多高置信度，才会在其上构建任何东西。
      *
-     * <p>Tempo induction returns a number for any input, including a string pad. Acting on a grid that
-     * was not really there moves the mix-out by up to two seconds onto an imaginary bar line and claims
-     * the result is beat matched, which is worse than not aligning at all. The same threshold decides
-     * whether the rate budget goes to tempo or to key: below it there is no beat to keep locked.</p>
+     * <p>速度推算对任何输入都会返回一个数字，包括弦乐铺底。在一个并不
+     * 真实存在的网格上动手，会把混音退出移动至多两秒到一条假想小节线上，并声称
+     * 已对拍，这比完全不对齐更糟。同一阈值还决定
+     * 速率预算花在速度还是调性上：低于它就没有节拍可锁定。</p>
      */
     private static final float MIN_GRID_CONFIDENCE = .28f;
-    /** A bend this small is inaudible and not worth touching the rate port for. */
+    /** 这么小的弯曲听不见，不值得为此碰速率端口。 */
     private static final float MIN_USEFUL_RATE_DELTA = .004f;
     /**
-     * Safety factor on the two grids' own tempo precision, used to build the dead band inside which the
-     * two tempos are treated as identical.
+     * 对两个网格自身速度精度的安全系数，用于构建死区，死区内
+     * 两个速度视为相同。
      *
-     * <p>The analysis is good to a fraction of a percent on paper, but the two grids are measured on
-     * different windows of different tracks - one of them typically a thinning outro - and in practice
-     * they disagree by more than the ideal figure. Doubling the combined tolerance is what stops the lock
-     * from "correcting" a pair that was already in sync: bending 1.5 % over a four second overlap adds
-     * 60 ms of drift where there was none, which is exactly the flamming the lock exists to prevent.</p>
+     * <p>分析纸面精度可达小数点后一位，但两个网格是在不同曲目、
+     * 不同窗口上测得的——其中之一通常是变薄的 outro——实践中
+     * 它们分歧大于理想值。把合并容差加倍，正是为了阻止锁定
+     * 去"纠正"一对本已同步的曲子：在四秒重叠上弯曲 1.5 %，会在原本没有漂移处凭空
+     * 多出 60 ms 漂移，这正是锁定所要防止的 flamming。</p>
      */
     private static final double TEMPO_NOISE_FACTOR = 2.0;
-    /** Loudness compensation stays gentle; a big correction would just sound like a volume jump. */
+    /** 响度补偿保持温和；大修正听起来只会像音量跳变。 */
     private static final float MIN_GAIN = .65f;
     private static final float MAX_GAIN = 1.60f;
-    /** Below this the outgoing track is too short for an overlap to be anything but a cut. */
+    /** 低于此值时退出曲目过短，重叠只能是硬切。 */
     private static final long MIN_OUTGOING_MILLIS = 12_000L;
     private static final long MIN_INCOMING_MILLIS = 8_000L;
     /**
-     * How much of the outgoing tail may be traded for an earlier, more musical mix-out. Mixing out at
-     * the structural outro is what makes a transition sound intentional, but cutting the end off a song
-     * is exactly what users notice and complain about, so the trim is bounded both absolutely and as a
-     * share of the track - and a mix-out estimate that falls outside those bounds is discarded rather
-     * than clamped onto them.
+     * 退出曲目尾声可拿出多少，换一个更早、更有音乐性的混音退出。在
+     * 结构性 outro 处混音退出，正是让过渡听起来像有意为之的关键，但砍掉歌曲结尾
+     * 正是用户会注意并抱怨的地方，因此修剪同时受绝对上限和
+     * 曲目份额约束——落在这些界外的混音退出估计会被丢弃，
+     * 而非被钳到界内。
      */
     private static final long MAX_TRIM_MILLIS = 12_000L;
     private static final double MIN_TRIM_POSITION = .60;
-    /** Tail scanned for the structural outro when no lyric boundary is available. */
+    /** 无歌词边界可用时，为寻找结构性 outro 而扫描的尾声长度。 */
     private static final long OUTRO_SCAN_MILLIS = 45_000L;
-    /** A plain LRC line has no end time; assume the last word rings out roughly this long. */
+    /** 普通 LRC 行没有结束时间；假定最后一个词大致延续这么长。 */
     private static final long LYRIC_TAIL_MILLIS = 1_500L;
 
     /**
-     * Largest residual grid offset the rhythm buffer is asked to absorb. Beyond this the two grids were
-     * not really describing the same pulse, and pushing the outgoing deck around for half a beat would
-     * be heard as the deck stumbling rather than as a correction.
+     * 要求节奏缓冲吸收的最大残余网格偏移。超过此值，两个网格
+     * 其实并未描述同一个脉冲，而把退出方 deck 推来推去半拍
+     * 会被听成 deck 绊了一下，而非修正。
      */
     private static final long MAX_PHASE_ERROR_MILLIS = 140L;
-    /** A residual this small is already inside the ear's flam threshold. */
+    /** 这么小的残余已在耳朵的 flamming 阈值之内。 */
     private static final long MIN_PHASE_ERROR_MILLIS = 6L;
 
-    /** A key estimate below this is treated as "no key measured". */
+    /** 低于此值的调性估计视为"未测得调性"。 */
     private static final float MIN_KEY_CONFIDENCE = .35f;
-    /** Only a clash at least this bad is worth transposing a deck to avoid. */
+    /** 只有冲突至少这么糟，才值得为避免它而转调一个 deck。 */
     private static final float MIN_CLASH_TO_TRANSPOSE = .50f;
-    /** …and the transposition has to buy at least this much improvement to be applied. */
+    /** ……而且转调必须至少换来这么多改进，才会施加。 */
     private static final float MIN_HARMONY_GAIN = .25f;
-    /** From here up the two keys are fighting, and the blend is kept short. */
+    /** 从此处起两个调性相互冲突，混音保持短促。 */
     private static final float CLASH_TRIM_PENALTY = .70f;
     private static final double CLASH_OVERLAP_SHARE = .55;
     private static final long MIN_CLASH_OVERLAP_MILLIS = 1_200L;
-    /** Extra vocal cancellation for a clashing pair, on top of the configured depth. */
+    /** 为冲突配对额外增加的人声消除，叠加在配置的深度之上。 */
     private static final float CLASH_EXTRA_DUCK = .12f;
     private static final float MAX_VOCAL_DUCK = .85f;
 
@@ -125,13 +125,16 @@ final class AutomixPlanner {
     }
 
     /**
-     * @param lastVocalEndMillis absolute position of the end of the outgoing track's last lyric line,
-     *                           or a non-positive value when no timed lyrics are available. Mixing out
-     *                           after the last vocal is the single biggest reason a blend sounds
-     *                           seamless: two sets of vocals never collide.
-     * @return the plan, or {@code null} only when the pair is fundamentally too short to blend
+     * @param lastVocalEndMillis 退出曲目最后一句歌词结束处的绝对位置，
+     *                            无定时歌词时为非正值。在最后一句人声之后混音退出，
+     *                            是混音听起来无缝的最主要原因：
+     *                            两个人声永远不会相撞。
+     * @return 计划；仅当两首曲子短到根本无法混音时为 {@code null}
      */
     static AutomixPlan plan(AudioPlayer outgoing, AudioPlayer incoming, long lastVocalEndMillis) {
+        if (AutomixSettings.isFoliaEngine()) {
+            return FoliaAutomixPlanner.plan(outgoing, incoming, lastVocalEndMillis);
+        }
         if (outgoing == null || incoming == null) return null;
         if (!outgoing.isUsable() || !incoming.isUsable()) return null;
 
@@ -139,16 +142,16 @@ final class AutomixPlanner {
         long incomingMillis = (long) incoming.getTotalTimeMillis();
         if (outgoingMillis < MIN_OUTGOING_MILLIS || incomingMillis < MIN_INCOMING_MILLIS) return null;
 
-        // The overlap can never exceed a quarter of the outgoing track or half of the incoming one,
-        // otherwise a short track would be blended almost end to end.
+        // 重叠时长绝不能超过退出曲目的四分之一或接入曲目的一半，
+        // 否则短曲目会被几乎从头到尾地混音。
         long overlap = AutomixSettings.getOverlapMillis();
         overlap = Math.min(overlap, outgoingMillis / 4L);
         overlap = Math.min(overlap, incomingMillis / 2L);
         if (overlap < 800L) return null;
 
-        // Analysis reads the decoded cache files with their own handles. It must never read the live
-        // JSyn samples: those stream through one shared sliding window, and moving it under the audio
-        // thread stops playback dead (see PcmWindowReader).
+        // 分析用自己的句柄读取已解码缓存文件，绝不读取实时
+        // JSyn 采样：那些采样经由一个共享滑动窗口流出，在音频
+        // 线程下移动它会直接停掉播放（见 PcmWindowReader）。
         AnalysisAudio outgoingAudio = AnalysisAudioSource.open(outgoing.getSourceFile());
         AnalysisAudio incomingAudio = AnalysisAudioSource.open(incoming.getSourceFile());
         try {
@@ -163,24 +166,24 @@ final class AutomixPlanner {
     private static AutomixPlan plan(long outgoingMillis, long incomingMillis, long overlap,
                                     long lastVocalEndMillis, AnalysisAudio outgoingAudio,
                                     AnalysisAudio incomingAudio) {
-        // Analysis is a bonus, not a requirement. A pair whose cache files cannot be parsed still gets
-        // a plain equal-power crossfade rather than degrading to the old silent gap.
+        // 分析是加分项，不是必需项。缓存文件无法解析的配对仍会得到
+        // 普通的等功率交叉淡化，而不是退回到旧的静默间隙。
         boolean analysable = outgoingAudio != null && incomingAudio != null;
         int outgoingRate = analysable ? outgoingAudio.sampleRate() : 0;
         int incomingRate = analysable ? incomingAudio.sampleRate() : 0;
         if (outgoingRate <= 0 || incomingRate <= 0) analysable = false;
         boolean beatAlign = AutomixSettings.isBeatAlignEnabled();
 
-        // -- Incoming side: skip a dead intro, then snap onto its first downbeat. --
+        // -- 接入方：跳过死寂前奏，然后对齐到其首个强拍。 --
         long cue = 0L;
         long incomingGridOrigin = 0L;
         AutomixAnalyzer.BeatGrid incomingGrid = null;
         AutomixAnalyzer.KeyEstimate incomingKey = null;
         if (analysable) {
-            // Where the intro ends is measured either way, even when the setting says to play it. The beat
-            // grid and the key have to be read off material that actually has content: a quiet intro
-            // measures as no pulse and no tonic, which would silently disable the tempo lock, the phase
-            // buffer and the harmony gate for the entire handover. Only the *entry point* is optional.
+            // 无论如何都会测量前奏在哪里结束，即使设置要求完整播放。节拍
+            // 网格和调性必须从真正有内容的素材上读取：安静的前奏
+            // 会被测成无脉冲、无主音，从而静默地禁用整个交接的速度锁定、相位
+            // 缓冲与和声门控。只有*进入点*是可选的。
             long introEnd = 0L;
             long introScan = Math.min(MAX_INTRO_SKIP_MILLIS + BEAT_WINDOW_MILLIS, incomingMillis / 2L);
             float[] introWindow = incomingAudio.readMono(0L, introScan);
@@ -195,23 +198,23 @@ final class AutomixPlanner {
             float[] incomingBeatWindow = incomingAudio.readMono(introEnd,
                     Math.min(BEAT_WINDOW_MILLIS, incomingMillis - introEnd));
             incomingGrid = AutomixAnalyzer.analyzeBeats(incomingBeatWindow, incomingRate);
-            // The same window answers the key question. Reading a second one would cost another ffmpeg
-            // decode for exactly the material already in hand.
+            // 同一个窗口回答调性问题。再读一个窗口会为已经在手的素材
+            // 额外付出一次 ffmpeg 解码。
             incomingKey = AutomixAnalyzer.analyzeKey(incomingBeatWindow, incomingRate);
             if (AutomixSettings.isSkipIntroEnabled()) {
                 cue = introEnd;
                 if (beatAlign && usableGrid(incomingGrid)) {
                     long snapped = cue + (long) incomingGrid.barPhaseMillis;
-                    // Only accept the snap when it still leaves a full overlap of audio behind it.
+                    // 仅当对齐之后身后仍留有完整的音频重叠时，才接受该对齐。
                     if (snapped + overlap < incomingMillis) cue = snapped;
                 }
             }
-            // cue stays 0 otherwise. The residual-phase maths below folds each grid against its own
-            // origin and wraps into ±half a beat, so a cue that sits before the grid origin is handled
-            // by the same expression - nothing there assumes cue >= incomingGridOrigin.
+            // 否则 cue 保持 0。下面的残余相位数学把每个网格折到其自身
+            // 原点并卷绕到 ±半拍内，因此落在网格原点之前的 cue 由同一表达式
+            // 处理——这里没有任何地方假定 cue >= incomingGridOrigin。
         }
 
-        // -- Outgoing side: mix out where the song is done talking, not where the file ends. --
+        // -- 退出方：在歌唱完处混音退出，而不是文件结束处。 --
         long latestFire = outgoingMillis - overlap;
         long earliestFire = Math.max((long) (outgoingMillis * MIN_TRIM_POSITION),
                 outgoingMillis - MAX_TRIM_MILLIS);
@@ -221,10 +224,10 @@ final class AutomixPlanner {
         String mixOutReason = "尾部混出";
         if (lastVocalEndMillis > 0L) {
             long candidate = lastVocalEndMillis + LYRIC_TAIL_MILLIS;
-            // Only trusted inside the window this track may be trimmed by. A lyric end far earlier than
-            // that is not a long outro, it is bad data - a failed lyric load leaves the previous track's
-            // timeline in place - and clamping it onto the boundary would silently cut the maximum
-            // allowed amount off the end of every song.
+            // 只在本曲目可被修剪的窗口内才信任。远早于
+            // 该窗口的歌词结束不是长 outro，而是坏数据——歌词加载失败会保留上一首曲目的
+            // 时间线——把它钳到边界上会静默地从每首歌末尾砍掉最大
+            // 允许量。
             if (candidate >= earliestFire && candidate <= latestFire) {
                 preferredFire = candidate;
                 mixOutReason = "唱完后混出";
@@ -235,8 +238,8 @@ final class AutomixPlanner {
             float[] tail = outgoingAudio.readMono(scanStart, outgoingMillis - scanStart);
             float landing = AutomixAnalyzer.detectOutroLanding(tail, outgoingRate);
             if (landing >= 0f) {
-                // Measured from the audio itself, so a landing beyond the trim budget is real evidence
-                // and only gets pulled back to the boundary.
+                // 从音频本身测得，因此落在修剪预算之外的落点是真实证据，
+                // 只是被拉回到边界。
                 preferredFire = scanStart + (long) landing;
                 mixOutReason = "尾奏混出";
             }
@@ -247,14 +250,14 @@ final class AutomixPlanner {
             fire = Math.max(earliestFire, Math.min(latestFire, preferredFire));
         }
 
-        // -- Land the handover on a bar boundary of the outgoing track. --
+        // -- 把交接落在退出曲目的小节边界上。 --
         long outgoingGridOrigin = 0L;
         AutomixAnalyzer.BeatGrid outgoingGrid = null;
         AutomixAnalyzer.KeyEstimate outgoingKey = null;
         boolean barAligned = false;
         if (analysable) {
-            // Analysed backwards from the mix-out point: a window that ran forwards would overrun the
-            // end of the track exactly when the mix-out sits near it, and return nothing.
+            // 从混音退出点反向分析：一个正向运行的窗口会在
+            // 混音退出点靠近曲目末尾时恰好超出结尾，从而什么都返回不了。
             long gridStart = Math.max(0L, fire - BEAT_WINDOW_MILLIS);
             outgoingGridOrigin = gridStart;
             float[] outgoingBeatWindow = outgoingAudio.readMono(gridStart, fire - gridStart);
@@ -265,10 +268,10 @@ final class AutomixPlanner {
                 if (barPeriod > 200f && barPeriod < 8_000f) {
                     long firstBar = gridStart + (long) outgoingGrid.barPhaseMillis;
                     long nearest = Math.round((fire - firstBar) / (double) barPeriod);
-                    // The nearest bar line very often sits just outside the window the mix-out is allowed
-                    // in - the default mix-out *is* latestFire, so half the time the nearest bar is past
-                    // it - and the old code then gave up on alignment entirely. The bar before is still a
-                    // bar line and still musical, so the neighbours are tried in order of distance.
+                    // 最近的小节线常常就在混音退出允许的窗口之外——
+                    // 默认混音退出*就是* latestFire，因此有一半时间最近小节线在它之后，
+                    // 旧代码随后就完全放弃对齐。前一小节仍是一条小节线，
+                    // 仍有音乐性，因此按距离顺序尝试邻近小节线。
                     long[] bars = {nearest, nearest - 1L, nearest + 1L, nearest - 2L, nearest + 2L};
                     for (int index = 0; index < bars.length; index++) {
                         long candidate = firstBar + (long) (bars[index] * barPeriod);
@@ -282,13 +285,13 @@ final class AutomixPlanner {
             }
         }
 
-        // -- Loudness match across the two zones that will actually overlap. --
+        // -- 在真正会重叠的两个区间上做响度匹配。 --
         float gain = 1f;
         if (analysable) {
             float[] outgoingZone = outgoingAudio.readMono(fire, Math.min(overlap, outgoingMillis - fire));
             float[] incomingZone = incomingAudio.readMono(cue, Math.min(overlap, incomingMillis - cue));
-            // K-weighted first: it is what the ear does. RMS is only the fallback for a window the
-            // gating rejects, e.g. an overlap that lands on a near-silent tail.
+            // 先用 K 加权：那是耳朵的工作方式。RMS 只作为被门限拒绝窗口的兜底，
+            // 例如重叠恰好落在近静默尾声上时。
             float outgoingLufs = AutomixAnalyzer.kWeightedLoudness(outgoingZone, outgoingRate);
             float incomingLufs = AutomixAnalyzer.kWeightedLoudness(incomingZone, incomingRate);
             if (!Float.isNaN(outgoingLufs) && !Float.isNaN(incomingLufs)) {
@@ -303,7 +306,7 @@ final class AutomixPlanner {
             gain = Math.max(MIN_GAIN, Math.min(MAX_GAIN, gain));
         }
 
-        // -- Vibe check: only call it beat matched when the tempos really are close. --
+        // -- 氛围判断：只有当速度确实接近时才声称已对拍。 --
         boolean gridsUsable = usableGrid(outgoingGrid) && usableGrid(incomingGrid);
         boolean tempoMatched = false;
         if (gridsUsable) {
@@ -312,8 +315,8 @@ final class AutomixPlanner {
             tempoMatched = ratio >= MIN_TEMPO_RATIO && ratio <= MAX_TEMPO_RATIO;
         }
 
-        // -- The rate budget. Tempo or pitch, never both: one port moves them together, and the whole
-        //    ±6 % it may be moved by is exactly one semitone. --
+        // -- 速率预算。速度或音高，从不兼有：一个端口同时移动二者，而可移动的整个
+        //     ±6 % 恰好是一个半音。 --
         float tempoRatio = 1f;
         int semitoneShift = 0;
         long phaseError = 0L;
@@ -323,26 +326,26 @@ final class AutomixPlanner {
             float desired = normalisedIncoming / outgoingGrid.bpm;
             tempoRatio = Math.max(AutomixSettings.MIN_PLAYBACK_RATE,
                     Math.min(AutomixSettings.MAX_PLAYBACK_RATE, desired));
-            // Dead band from the measurements' own precision, never smaller than the audibility floor.
+            // 由测量自身精度得出的死区，绝不小于可闻下限。
             double deadband = Math.max(MIN_USEFUL_RATE_DELTA, TEMPO_NOISE_FACTOR
                     * Math.hypot(outgoingGrid.tempoTolerance, incomingGrid.tempoTolerance));
             if (Math.abs(tempoRatio - 1f) < deadband) tempoRatio = 1f;
             tempoLocked = true;
-            // Phase locking only means something once both grids are believed and the mix-out really
-            // sits on an outgoing downbeat; otherwise the "residual" is measured against a line that
-            // was never used.
+            // 相位锁定只有在两个网格都被信任、且混音退出确实落在
+            // 退出方强拍上时才有意义；否则"残余"是对照一条
+            // 从未使用过的线测得的。
             if (barAligned) {
                 phaseError = residualPhaseMillis(outgoingGrid, outgoingGridOrigin, fire,
                         incomingGrid, incomingGridOrigin, cue);
             }
         } else if (AutomixSettings.isPitchMatchEnabled() && !tempoMatched
                 && confidentKey(outgoingKey) && confidentKey(incomingKey)) {
-            // Reached exactly when there is no beat relationship to protect: either a grid was too weak
-            // to believe (an outro, a fade, a pad) or the two tempos are more than 8 % apart, in which
-            // case they are going to drift regardless and a few percent more changes nothing. The rate
-            // budget is therefore free, and what a listener hears in that situation is the harmony. Note
-            // that a matched pair whose lock happens to come out as 1.000 does *not* land here: bending
-            // that deck would break a beat match that already existed.
+            // 仅在没有节拍关系可保护时到达此处：要么网格太弱
+            // 不足信（outro、淡出、铺底），要么两个速度相差超过 8 %，此时
+            // 无论如何都会漂移，再动几个百分点也无济于事。因此速率
+            // 预算是空闲的，而这种情况下听众听到的是和声。注意
+            // 一对锁定结果恰好为 1.000 的配对*不会*落到这里：弯曲那个
+            // deck 会破坏本已存在的对拍。
             float straight = AutomixAnalyzer.harmonicPenalty(outgoingKey, incomingKey, 0);
             if (straight >= MIN_CLASH_TO_TRANSPOSE) {
                 int shift = AutomixAnalyzer.bestSemitoneShift(outgoingKey, incomingKey, 1);
@@ -356,9 +359,9 @@ final class AutomixPlanner {
             }
         }
 
-        // -- Harmony gate. Two keys a semitone or a tritone apart are the one pairing that gets worse
-        //    the longer it lasts, so the blend is shortened and the arriving vocal held down harder.
-        //    Only ever shortened: a longer overlap would invalidate the mix-out window above. --
+        // -- 和声门控。相差一个半音或三全音的两个调性，是持续越久就越糟的唯一配对，
+        //    因此缩短混音并更重地压下到达方人声。
+        //    只缩短不延长：更长的重叠会使上面的混音退出窗口失效。 --
         boolean keysKnown = confidentKey(outgoingKey) && confidentKey(incomingKey);
         float harmony = keysKnown
                 ? AutomixAnalyzer.harmonicPenalty(outgoingKey, incomingKey, semitoneShift)
@@ -396,7 +399,7 @@ final class AutomixPlanner {
                 semitoneShift != 0, phaseError, vocalDuck, summary);
     }
 
-    /** A grid is only usable when it exists, has a sane tempo, and was measured with confidence. */
+    /** 一个网格只有在存在、速度合理且测得有置信度时才可用。 */
     private static boolean usableGrid(AutomixAnalyzer.BeatGrid grid) {
         return grid != null && grid.bpm > 1f && grid.confidence >= MIN_GRID_CONFIDENCE;
     }
@@ -406,17 +409,17 @@ final class AutomixPlanner {
     }
 
     /**
-     * How far the outgoing deck has to be nudged forward for the two downbeat grids to line up at the
-     * handover, in ms. Positive means the outgoing downbeat arrives late.
+     * 为使两个强拍网格在交接处对齐，退出方 deck 需要向前推多远，
+     * 单位 ms。正值表示退出方强拍晚到。
      *
-     * <p>Both sides are measured as "how far past a downbeat is this deck at the moment of the
-     * handover", using each grid's own origin, and the difference is wrapped into ±half a beat. Half a
-     * <em>beat</em>, not half a bar: what the ear hears when two grids disagree is the beat flamming, and
-     * pushing a deck by three beats to line up bar numbers would be a far bigger intervention than the
-     * problem.</p>
+     * <p>两边都按"交接瞬间该 deck 越过了强拍多远"来测，使用各自网格的原点，
+     * 差值卷绕到 ±半拍内。是半
+     * <em>拍</em>，不是半小节：耳朵在两个网格不一致时听到的是拍的 flamming，而为对齐小节数把 deck 推三拍，
+     * 比对问题本身的干预
+     * 大得多。</p>
      *
-     * <p>Returns 0 when the answer is already inside the flam threshold or so large that the two grids
-     * clearly were not describing the same pulse.</p>
+     * <p>当答案已在 flamming 阈值之内，或大到两个网格
+     * 显然未描述同一脉冲时，返回 0。</p>
      */
     private static long residualPhaseMillis(AutomixAnalyzer.BeatGrid outgoingGrid, long outgoingOrigin,
                                             long fire, AutomixAnalyzer.BeatGrid incomingGrid,
@@ -438,7 +441,7 @@ final class AutomixPlanner {
         return error;
     }
 
-    /** Signed distance to the nearest multiple of {@code period}, in [-period/2, period/2]. */
+    /** 到最近的 {@code period} 整数倍的有符号距离，范围 [-period/2, period/2]。 */
     private static double wrapSigned(double value, double period) {
         if (period <= 0.0 || Double.isNaN(value)) return 0.0;
         double wrapped = value % period;

@@ -1,56 +1,56 @@
 /*
- * 11/19/04            1.0 moved to LGPL.
+ * 2004年11月19日1.0移至LGPL。
  *
- * 12/12/99 0.0.7    Implementation stores single bits
- *                    as ints for better performance. mdm@techie.com.
+ * 1999年12月12日0.0.7实施存储单位
+ *                    为整数以获得更好的性能。mdm@techie.com。
  *
  * 02/28/99 0.0     Java Conversion by E.B, javalayer@javazoom.net
  *
- *                  Adapted from the public c code by Jeff Tsay.
+ *                  改编自Jeff Tsay的公共c代码。
  *
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
 package repackage.javazoom.jl.decoder;
 
 /**
- * Implementation of Bit Reservoir for Layer III.
+ * Layer III 比特蓄水池的实现。
  * <p>
- * The implementation stores single bits as a word in the buffer. If
- * a bit is set, the corresponding word in the buffer will be non-zero.
- * If a bit is clear, the corresponding word is zero. Although this
- * may seem wasteful, this can be a factor of two quicker than
- * packing 8 bits to a byte and extracting.
+ * 实现将单个位作为单词存储在缓冲区中。如果
+ * 设置一个位，缓冲区中对应的单词将为非零。
+ * 若某位为 0，则对应字为零。虽然
+ * 可能看起来很浪费，这可能比
+ * 将8位打包成一个字节并提取。
  * <p>
- * REVIEW: there is no range checking, so buffer underflow or overflow
- * can silently occur.
+ * REVIEW：没有范围检查，因此缓冲区下溢或溢出
+ * 可以静悄悄地发生。
  */
 final class BitReserve {
 
     /**
-     * Size of the internal buffer to store the reserved bits.
-     * Must be a power of 2. And x8, as each bit is stored as a single
-     * entry.
+     * 用于存储保留位的内部缓冲区的大小。
+     * 必须是 2 的幂。且乘以 8，因为每一位存为一个
+     * 项目
      */
     private static final int BUFSIZE = 4096 * 8;
 
     /**
-     * Mask that can be used to quickly implement the
-     * modulus operation on BUFSIZE.
+     * 可用于快速实现
+     * bUFSIZE上的模数运算。
      */
     private static final int BUFSIZE_MASK = BUFSIZE - 1;
 
@@ -66,16 +66,16 @@ final class BitReserve {
     }
 
     /**
-     * Return totbit Field.
+     * 返回 totbit 字段。
      */
     public int hsstell() {
         return (totbit);
     }
 
     /**
-     * Read a number bits from the bit stream.
+     * 从位流中读取一个数字位。
      *
-     * @param N the number of
+     * @param N 数量
      */
     public int hgetbits(int N) {
         totbit += N;
@@ -100,9 +100,9 @@ final class BitReserve {
     }
 
     /**
-     * Returns next bit from reserve.
+     * 从RESERVE返回下一位。
      *
-     * @return 0 if next bit is reset, or 1 if next bit is set.
+     * @return 下一位为 0 返回 0，下一位为 1 返回 1。
      */
     public int hget1bit() {
         totbit++;
@@ -112,7 +112,7 @@ final class BitReserve {
     }
 
     /**
-     * Write 8 bits into the bit stream.
+     * 将8位写入位流。
      */
     public void hputbuf(int val) {
         int ofs = offset;
@@ -132,7 +132,7 @@ final class BitReserve {
     }
 
     /**
-     * Rewind n bits in Stream.
+     * 在Stream中倒带n位。
      */
     public void rewindNBits(int n) {
         totbit -= n;
@@ -142,7 +142,7 @@ final class BitReserve {
     }
 
     /**
-     * Rewind n bytes in Stream.
+     * 在流中回退 n 个字节。
      */
     public void rewindNBytes(int n) {
         int bits = (n << 3);

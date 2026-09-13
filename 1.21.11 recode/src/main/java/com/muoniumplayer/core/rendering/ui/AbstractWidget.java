@@ -14,11 +14,7 @@ import java.awt.*;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-/**
- * 组件 base.
- * @author MuoniumPlayer Contributors
- * Date: 2025/7/8 19:42
- */
+// 显示布局
 public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implements SharedRenderingConstants, SharedConstants {
 
     public interface OnClickCallback {
@@ -37,46 +33,28 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
         void onRender();
     }
 
-    /**
-     * 父组件，可为空
-     */
+    // 左上
     @Getter
     AbstractWidget<?> parent = null;
 
-    /**
-     * 子组件列表
-     */
+    // 右上
     @Getter
     List<AbstractWidget<?>> children = new CopyOnWriteArrayList<>();
 
     public static class Bounds {
-        /**
-         * 这个组件相对于父组件的坐标的偏移.
-         * 比如说, 有一个坐标为 (100, 100) 的矩形组件,
-         * 然后有一个新的组件作为这个矩形组件的子组件,
-         * 然后设置子组件 x, y 都为 2,
-         * 那么子组件的 {@link AbstractWidget#getX()} 将返回 父组件的屏幕 X 坐标 100 加上子组件的偏移 X 坐标 2, 结果为 102. Y 轴同理.
-         * 子组件的 {@link AbstractWidget#getRelativeX()} 将返回 2.
-         * 如果该组件没有父组件, 则 x, y 字段代表的是屏幕坐标.
-         */
+        // 左下
         private double x, y;
         private double width, height;
     }
 
-    /**
-     * 组件 (偏移) 位置
-     */
+    // 右下
     @Getter
     private final Bounds bounds = new Bounds();
 
-    /**
-     * 渲染回调
-     */
+    // 边界检查
     private RenderCallback beforeRenderCallback = () -> {};
 
-    /**
-     * 组件是否可点击
-     */
+    // 后添加的子控件渲染在更上层，因此必须优先接收输入。
     @Getter
     private boolean clickable = true;
 

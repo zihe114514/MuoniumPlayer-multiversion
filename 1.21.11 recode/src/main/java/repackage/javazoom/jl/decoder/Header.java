@@ -1,39 +1,39 @@
 /*
  * 11/19/04 : 1.0 moved to LGPL.
- *            VBRI header support added, E.B javalayer@javazoom.net
+ *            已添加VBRI标头支持， E.B javalayer@javazoom.net
  *
  * 12/04/03 : VBR (XING) header support added, E.B javalayer@javazoom.net
  *
- * 02/13/99 : Java Conversion by JavaZOOM , E.B javalayer@javazoom.net
+ * 02/13/99 ： JavaZOOM的Java转换， E.B javalayer@javazoom.net
  *
- * Declarations for MPEG header class
- * A few layer III, MPEG-2 LSF, and seeking modifications made by Jeff Tsay.
- * Last modified : 04/19/97
+ * MPEG 头类的声明
+ * 由 Jeff Tsay 做的少量 layer III、MPEG-2 LSF 和 seek 方面的修改。
+ * 最后修改日期： 1997年4月19日
  *
  *  @(#) header.h 1.7, last edit: 6/15/94 16:55:33
- *  @(#) Copyright (C) 1993, 1994 Tobias Bading (bading@cs.tu-berlin.de)
- *  @(#) Berlin University of Technology
+ *  @ (#)版权所有(C) 1993, 1994 Tobias Bading(bading@cs.tu-berlin.de)
+ *  @ (#)柏林理工大学
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
 package repackage.javazoom.jl.decoder;
 
 /**
- * Class for extracting information from a frame header.
+ * 用于从帧头提取信息的类。
  */
 public final class Header {
 
@@ -44,13 +44,13 @@ public final class Header {
     };
 
     /**
-     * Constant for MPEG-2 LSF version
+     * MPEG-2 LSF 版本的常量
      */
     public static final int MPEG2_LSF = 0;
     public static final int MPEG25_LSF = 2; // SZD
 
     /**
-     * Constant for MPEG-1 version
+     * MPEG-1版本的常量
      */
     public static final int MPEG1 = 1;
 
@@ -69,7 +69,7 @@ public final class Header {
     private int h_sample_frequency;
     private int hNumberOfSubbands, hIntensityStereoBound;
     private boolean h_copyright, h_original;
-    // VBR support added by E.B
+    // 由 E.B 添加的 VBR 支持
     private static final double[] h_vbr_time_per_frame = {-1, 384, 1152, 1152};
     private boolean h_vbr;
     private int h_vbr_frames;
@@ -110,7 +110,7 @@ public final class Header {
     }
 
     /**
-     * Read a 32-bit header from the bitstream.
+     * 从比特流中读取32位标头。
      */
     void read_header(Bitstream stream, Crc16[] crcp) throws BitstreamException {
         int headerString;
@@ -121,7 +121,7 @@ public final class Header {
             _headerstring = headerString; // E.B
             if (syncmode == Bitstream.INITIAL_SYNC) {
                 hVersion = ((headerString >>> 19) & 1);
-                if (((headerString >>> 20) & 1) == 0) // SZD: MPEG2.5 detection
+                if (((headerString >>> 20) & 1) == 0) // SZD ： MPEG2.5检测
                     if (hVersion == MPEG2_LSF)
                         hVersion = MPEG25_LSF;
                     else
@@ -139,17 +139,17 @@ public final class Header {
             if (h_mode == JOINT_STEREO)
                 hIntensityStereoBound = (h_mode_extension << 2) + 4;
             else
-                hIntensityStereoBound = 0; // should never be used
+                hIntensityStereoBound = 0; // 切勿使用
             if (((headerString >>> 3) & 1) == 1)
                 h_copyright = true;
             if (((headerString >>> 2) & 1) == 1)
                 h_original = true;
-            // calculate number of subbands:
+            // 计算子带数：
             if (hLayer == 1)
                 hNumberOfSubbands = 32;
             else {
                 channelBitrate = hBitrateIndex;
-                // calculate bitrate per channel:
+                // 计算每个通道的比特率：
                 if (h_mode != SINGLE_CHANNEL)
                     if (channelBitrate == 4)
                         channelBitrate = 1;
@@ -167,13 +167,13 @@ public final class Header {
             }
             if (hIntensityStereoBound > hNumberOfSubbands)
                 hIntensityStereoBound = hNumberOfSubbands;
-            // calculate framesize and nSlots
+            // 计算框架大小和nSlots
             calculateFrameSize();
-            // read framedata:
+            // 读取帧数据：
             int framesizeloaded = stream.readFrameData(framesize);
             if ((framesize >= 0) && (framesizeloaded != framesize)) {
-                // Data loaded does not match to expected framesize,
-                // it might be an ID3v1 TAG. (Fix 11/17/04).
+                // 加载的数据与预期帧大小不符，
+                // 它可能是一个ID3v1标签。（修复2004年11月17日）。
                 throw stream.newBitstreamException(Bitstream.INVALIDFRAME);
             }
             if (stream.isSyncCurrentPosition(syncmode)) {
@@ -189,7 +189,7 @@ public final class Header {
         while (!sync);
         stream.parseFrame();
         if (h_protection_bit == 0) {
-            // frame contains a crc checksum
+            // 帧包含crc校验和
             checksum = (short) stream.getBits(16);
             if (crc == null)
                 crc = new Crc16();
@@ -202,17 +202,17 @@ public final class Header {
     }
 
     /**
-     * Parse frame to extract optional VBR frame.
+     * 解析帧以提取可选的VBR帧。
      *
      * @param firstFrame
      * @author E.B (javalayer@javazoom.net)
      */
     void parseVBR(byte[] firstFrame) throws BitstreamException {
-        // Trying Xing header.
+        // 正在尝试Xing标头。
         String xing = "Xing";
         byte[] tmp = new byte[4];
         int offset = 0;
-        // Compute "Xing" offset depending on MPEG version and channels.
+        // 根据MPEG版本和频道计算“Xing”偏移量。
         if (hVersion == MPEG1) {
             if (h_mode == SINGLE_CHANNEL) offset = 21 - 4;
             else offset = 36 - 4;
@@ -222,9 +222,9 @@ public final class Header {
         }
         try {
             System.arraycopy(firstFrame, offset, tmp, 0, 4);
-            // Is "Xing" ?
+            // 是“Xing”吗？
             if (xing.equals(new String(tmp))) {
-                //Yes.
+                //是的。
                 h_vbr = true;
                 h_vbr_frames = -1;
                 h_vbr_bytes = -1;
@@ -232,28 +232,28 @@ public final class Header {
                 h_vbr_toc = new byte[100];
 
                 int length = 4;
-                // Read flags.
+                // 读取标志。
                 byte[] flags = new byte[4];
                 System.arraycopy(firstFrame, offset + length, flags, 0, flags.length);
                 length += flags.length;
-                // Read number of frames (if available).
+                // 读取帧数（若可用）。
                 if ((flags[3] & (byte) (1 << 0)) != 0) {
                     System.arraycopy(firstFrame, offset + length, tmp, 0, tmp.length);
                     h_vbr_frames = (tmp[0] << 24) & 0xFF000000 | (tmp[1] << 16) & 0x00FF0000 | (tmp[2] << 8) & 0x0000FF00 | tmp[3] & 0x000000FF;
                     length += 4;
                 }
-                // Read size (if available).
+                // 读取大小（若可用）。
                 if ((flags[3] & (byte) (1 << 1)) != 0) {
                     System.arraycopy(firstFrame, offset + length, tmp, 0, tmp.length);
                     h_vbr_bytes = (tmp[0] << 24) & 0xFF000000 | (tmp[1] << 16) & 0x00FF0000 | (tmp[2] << 8) & 0x0000FF00 | tmp[3] & 0x000000FF;
                     length += 4;
                 }
-                // Read TOC (if available).
+                // 读取 TOC（若可用）。
                 if ((flags[3] & (byte) (1 << 2)) != 0) {
                     System.arraycopy(firstFrame, offset + length, h_vbr_toc, 0, h_vbr_toc.length);
                     length += h_vbr_toc.length;
                 }
-                // Read scale (if available).
+                // 读取 scale（若可用）。
                 if ((flags[3] & (byte) (1 << 3)) != 0) {
                     System.arraycopy(firstFrame, offset + length, tmp, 0, tmp.length);
                     h_vbr_scale = (tmp[0] << 24) & 0xFF000000 | (tmp[1] << 16) & 0x00FF0000 | (tmp[2] << 8) & 0x0000FF00 | tmp[3] & 0x000000FF;
@@ -265,30 +265,30 @@ public final class Header {
             throw new BitstreamException("XingVBRHeader Corrupted", e);
         }
 
-        // Trying VBRI header.
+        // 正在尝试VBRI标头。
         String vbri = "VBRI";
         offset = 36 - 4;
         try {
             System.arraycopy(firstFrame, offset, tmp, 0, 4);
-            // Is "VBRI" ?
+            // 是否为 "VBRI"？
             if (vbri.equals(new String(tmp))) {
-                //Yes.
+                //是的。
                 h_vbr = true;
                 h_vbr_frames = -1;
                 h_vbr_bytes = -1;
                 h_vbr_scale = -1;
                 h_vbr_toc = new byte[100];
-                // Bytes.
+                // 字节。
                 int length = 4 + 6;
                 System.arraycopy(firstFrame, offset + length, tmp, 0, tmp.length);
                 h_vbr_bytes = (tmp[0] << 24) & 0xFF000000 | (tmp[1] << 16) & 0x00FF0000 | (tmp[2] << 8) & 0x0000FF00 | tmp[3] & 0x000000FF;
                 length += 4;
-                // Frames.
+                // 帧数。
                 System.arraycopy(firstFrame, offset + length, tmp, 0, tmp.length);
                 h_vbr_frames = (tmp[0] << 24) & 0xFF000000 | (tmp[1] << 16) & 0x00FF0000 | (tmp[2] << 8) & 0x0000FF00 | tmp[3] & 0x000000FF;
                 length += 4;
                 //System.out.println("VBR:"+vbri+" Frames:"+ h_vbr_frames +" Size:"+h_vbr_bytes);
-                // TOC
+                // 目录
                 // TODO
             }
         } catch (ArrayIndexOutOfBoundsException e) {
@@ -296,159 +296,159 @@ public final class Header {
         }
     }
 
-    // Functions to query header contents:
+    // 查询标头内容的函数：
 
     /**
-     * Returns version.
+     * 返回版本。
      */
     public int version() {
         return hVersion;
     }
 
     /**
-     * Returns Layer ID.
+     * 返回图层ID。
      */
     public int layer() {
         return hLayer;
     }
 
     /**
-     * Returns bitrate index.
+     * 返回比特率索引。
      */
     public int bitrateIndex() {
         return hBitrateIndex;
     }
 
     /**
-     * Returns Sample Frequency.
+     * 返回采样频率。
      */
     public int sampleFrequency() {
         return h_sample_frequency;
     }
 
     /**
-     * Returns Frequency.
+     * 返回频率。
      */
     public int frequency() {
         return frequencies[hVersion][h_sample_frequency];
     }
 
     /**
-     * Returns Mode.
+     * 返回模式。
      */
     public int mode() {
         return h_mode;
     }
 
     /**
-     * Returns Protection bit.
+     * 返回保护位。
      */
     public boolean checksums() {
         return h_protection_bit == 0;
     }
 
     /**
-     * Returns Copyright.
+     * 返回版权。
      */
     public boolean copyright() {
         return h_copyright;
     }
 
     /**
-     * Returns Original.
+     * 返回Original。
      */
     public boolean original() {
         return h_original;
     }
 
     /**
-     * Return VBR.
+     * 返回 VBR。
      *
-     * @return true if VBR header is found
+     * 如果找到VBR标头，则@return 为true
      */
     public boolean vbr() {
         return h_vbr;
     }
 
     /**
-     * Return VBR scale.
+     * 返回VBR刻度。
      *
-     * @return scale of -1 if not available
+     * @return 量表-1 （如果没有）
      */
     public int vbrScale() {
         return h_vbr_scale;
     }
 
     /**
-     * Return VBR TOC.
+     * 返回VBR TOC。
      *
-     * @return vbr toc ot null if not available
+     * @return vbr toc ot null （如果不可用）
      */
     public byte[] vbrToc() {
         return h_vbr_toc;
     }
 
     /**
-     * Returns Checksum flag.
-     * Compares computed checksum with stream checksum.
+     * 返回校验和标志。
+     * 将计算出的校验和与流中的校验和比较。
      */
     public boolean checksumOk() {
         return (checksum == crc.checksum());
     }
 
-    // Seeking and layer III stuff
+    // 定位和 layer III 相关内容
 
     /**
-     * Returns Layer III Padding bit.
+     * 返回 Layer III 填充位。
      */
     public boolean padding() {
         return h_padding_bit != 0;
     }
 
     /**
-     * Returns Slots.
+     * 返回 slots。
      */
     public int slots() {
         return nSlots;
     }
 
     /**
-     * Returns Mode Extension.
+     * 返回模式扩展。
      */
     public int modeExtension() {
         return h_mode_extension;
     }
 
-    // E.B -> private to public
+    // E.B -> private 改为 public
     public static final int[][][] bitrates = {
-            {{0 /*free format*/, 32000, 48000, 56000, 64000, 80000, 96000,
+            {{0 /*自由格式*/, 32000, 48000, 56000, 64000, 80000, 96000,
             112000, 128000, 144000, 160000, 176000, 192000, 224000, 256000, 0},
-            {0 /*free format*/, 8000, 16000, 24000, 32000, 40000, 48000,
+            {0 /*自由格式*/, 8000, 16000, 24000, 32000, 40000, 48000,
             56000, 64000, 80000, 96000, 112000, 128000, 144000, 160000, 0},
-            {0 /*free format*/, 8000, 16000, 24000, 32000, 40000, 48000,
+            {0 /*自由格式*/, 8000, 16000, 24000, 32000, 40000, 48000,
             56000, 64000, 80000, 96000, 112000, 128000, 144000, 160000, 0}},
 
-            {{0 /*free format*/, 32000, 64000, 96000, 128000, 160000, 192000,
+            {{0 /*自由格式*/, 32000, 64000, 96000, 128000, 160000, 192000,
             224000, 256000, 288000, 320000, 352000, 384000, 416000, 448000, 0},
-            {0 /*free format*/, 32000, 48000, 56000, 64000, 80000, 96000,
+            {0 /*自由格式*/, 32000, 48000, 56000, 64000, 80000, 96000,
             112000, 128000, 160000, 192000, 224000, 256000, 320000, 384000, 0},
-            {0 /*free format*/, 32000, 40000, 48000, 56000, 64000, 80000,
+            {0 /*自由格式*/, 32000, 40000, 48000, 56000, 64000, 80000,
             96000, 112000, 128000, 160000, 192000, 224000, 256000, 320000, 0}},
             // SZD: MPEG2.5
-            {{0 /*free format*/, 32000, 48000, 56000, 64000, 80000, 96000,
+            {{0 /*自由格式*/, 32000, 48000, 56000, 64000, 80000, 96000,
             112000, 128000, 144000, 160000, 176000, 192000, 224000, 256000, 0},
-            {0 /*free format*/, 8000, 16000, 24000, 32000, 40000, 48000,
+            {0 /*自由格式*/, 8000, 16000, 24000, 32000, 40000, 48000,
             56000, 64000, 80000, 96000, 112000, 128000, 144000, 160000, 0},
-            {0 /*free format*/, 8000, 16000, 24000, 32000, 40000, 48000,
+            {0 /*自由格式*/, 8000, 16000, 24000, 32000, 40000, 48000,
             56000, 64000, 80000, 96000, 112000, 128000, 144000, 160000, 0}},
     };
 
 
     /**
-     * Calculate Frame size.
-     * Calculates framesize in bytes excluding header size.
+     * 计算帧大小。
+     * 计算帧大小（字节，不含头大小）。
      * <p>
-     * E.B -> private to public
+     * E.B -> private 改为 public
      */
     public int calculateFrameSize() {
 
@@ -456,7 +456,7 @@ public final class Header {
             framesize = (12 * bitrates[hVersion][0][hBitrateIndex]) /
                     frequencies[hVersion][h_sample_frequency];
             if (h_padding_bit != 0) framesize++;
-            framesize <<= 2; // one slot is 4 bytes long
+            framesize <<= 2; // 一个插槽长4字节
             nSlots = 0;
         } else {
             framesize = (144 * bitrates[hVersion][hLayer - 1][hBitrateIndex]) /
@@ -466,27 +466,27 @@ public final class Header {
             // Layer III slots
             if (hLayer == 3) {
                 if (hVersion == MPEG1) {
-                    nSlots = framesize - ((h_mode == SINGLE_CHANNEL) ? 17 : 32) // side info size
-                            - ((h_protection_bit != 0) ? 0 : 2)                 // CRC size
-                            - 4;                                                // header size
-                } else {  // MPEG-2 LSF, SZD: MPEG-2.5 LSF
-                    nSlots = framesize - ((h_mode == SINGLE_CHANNEL) ? 9 : 17) // side info size
-                            - ((h_protection_bit != 0) ? 0 : 2)                // CRC size
-                            - 4;                                               // header size
+                    nSlots = framesize - ((h_mode == SINGLE_CHANNEL) ? 17 : 32) // 侧边信息大小
+                            - ((h_protection_bit != 0) ? 0 : 2)                 // CRC 大小
+                            - 4;                                                // 头大小
+                } else {  // MPEG-2 LSF、SZD ： MPEG-2.5 LSF
+                    nSlots = framesize - ((h_mode == SINGLE_CHANNEL) ? 9 : 17) // 侧边信息大小
+                            - ((h_protection_bit != 0) ? 0 : 2)                // CRC 大小
+                            - 4;                                               // 头大小
                 }
             } else {
                 nSlots = 0;
             }
         }
-        framesize -= 4; // subtract header size
+        framesize -= 4; // 减去标题大小
         return framesize;
     }
 
     /**
-     * Returns the maximum number of frames in the stream.
+     * 返回流中的最大帧数。
      *
-     * @param streamSize stream size
-     * @return number of frames
+     * @param streamSize 流大小
+     * @return 帧数
      */
     public int maxNumberOfFrames(int streamSize) { // E.B
         if (h_vbr) return h_vbr_frames;
@@ -497,10 +497,10 @@ public final class Header {
     }
 
     /**
-     * Returns the maximum number of frames in the stream.
+     * 返回流中的最大帧数。
      *
-     * @param streamSize stream size
-     * @return number of frames
+     * @param streamSize 流大小
+     * @return 帧数
      */
     public int minNumberOfFrames(int streamSize) { // E.B
         if (h_vbr) return h_vbr_frames;
@@ -511,9 +511,9 @@ public final class Header {
     }
 
     /**
-     * Returns ms/frame.
+     * 返回ms/frame。
      *
-     * @return milliseconds per frame
+     * 每帧@return 毫秒
      */
     public float msPerFrame() { // E.B
         if (h_vbr) {
@@ -531,26 +531,26 @@ public final class Header {
     }
 
     /**
-     * Returns total ms.
+     * 返回总毫秒数。
      *
-     * @param streamSize stream size
-     * @return total milliseconds
+     * @param streamSize 流大小
+     * @return 总毫秒数
      */
     public float totalMs(int streamSize) { // E.B
         return (maxNumberOfFrames(streamSize) * msPerFrame());
     }
 
     /**
-     * Returns synchronized header.
+     * 返回已同步的头。
      */
     public int getSyncHeader() { // E.B
         return _headerstring;
     }
 
-    // functions which return header information as strings:
+    // 以字符串形式返回标头信息的函数：
 
     /**
-     * Return Layer version.
+     * 返回图层版本。
      */
     public String layerString() {
         switch (hLayer) {
@@ -565,7 +565,7 @@ public final class Header {
         }
     }
 
-    // E.B -> private to public
+    // E.B -> private 改为 public
     public static final String[][][] bitrate_str = {
             {{"free format", "32 kbit/s", "48 kbit/s", "56 kbit/s", "64 kbit/s",
                     "80 kbit/s", "96 kbit/s", "112 kbit/s", "128 kbit/s", "144 kbit/s",
@@ -608,9 +608,9 @@ public final class Header {
     };
 
     /**
-     * Return Bitrate.
+     * 返回比特率。
      *
-     * @return bitrate in bps
+     * @return 比特率（ bps ）
      */
     public String bitrateString() {
         if (h_vbr) {
@@ -619,9 +619,9 @@ public final class Header {
     }
 
     /**
-     * Return Bitrate.
+     * 返回比特率。
      *
-     * @return bitrate in bps and average bitrate for VBR header
+     * @return 比特率（bps），VBR 头为平均比特率
      */
     public int bitrate() {
         if (h_vbr) {
@@ -630,19 +630,19 @@ public final class Header {
     }
 
     /**
-     * Return Instant Bitrate.
-     * Bitrate for VBR is not constant.
+     * 返回即时比特率。
+     * VBR的比特率不是恒定的。
      *
-     * @return bitrate in bps
+     * @return 比特率（ bps ）
      */
     public int bitrateInstant() {
         return bitrates[hVersion][hLayer - 1][hBitrateIndex];
     }
 
     /**
-     * Returns Frequency
+     * 返回频率
      *
-     * @return frequency string in kHz
+     * @return 频率串，单位为kHz
      */
     public String sampleFrequencyString() {
         switch (h_sample_frequency) {
@@ -672,7 +672,7 @@ public final class Header {
     }
 
     /**
-     * Returns Mode.
+     * 返回模式。
      */
     public String modeString() {
         switch (h_mode) {
@@ -690,9 +690,9 @@ public final class Header {
     }
 
     /**
-     * Returns Version.
+     * 返回版本。
      *
-     * @return MPEG-1 or MPEG-2 LSF or MPEG-2.5 LSF
+     * @return MPEG-1或MPEG-2 LSF或MPEG-2.5 LSF
      */
     public String versionString() {
         switch (hVersion) {
@@ -709,21 +709,21 @@ public final class Header {
     }
 
     /**
-     * Returns the number of subbands in the current frame.
+     * 返回当前帧中的子带数。
      *
-     * @return number of subbands
+     * @return 子带数
      */
     public int numberOfSubbands() {
         return hNumberOfSubbands;
     }
 
     /**
-     * Returns Intensity Stereo.
-     * (Layer II joint stereo only).
-     * Returns the number of subbands which are in stereo mode,
-     * subbands above that limit are in intensity stereo mode.
+     * 返回 Intensity Stereo。
+     * （仅限 Layer II 联合立体声）。
+     * 返回处于立体声模式的子带数，
+     * 高于该限制的子带处于强度立体声模式。
      *
-     * @return intensity
+     * @return 强度
      */
     public int intensityStereoBound() {
         return hIntensityStereoBound;

@@ -76,6 +76,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     /** 左上角「A-Z」逐字特效快捷面板；只影响全屏歌词页的两项配置，实时预览。 */
     private final LyricStyleQuickPanel styleQuickPanel = new LyricStyleQuickPanel();
+    /** 「隐现」背景的音频响应状态；旧模糊封面背景不会触碰它。 */
+    private final LatentLyricBackground latentBackground = new LatentLyricBackground();
     /**
      * 「逐行滚动」的滚动动效：换行用什么弹簧、每行晚多久出发、seek 怎么收尾都在里面。
      * 只有经典样式走它，别的样式各自有自己的一套运动。
@@ -118,6 +120,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         renderers[FullscreenLyricStyle.DIORAMA.ordinal()] = new DioramaLyricRenderer();
         renderers[FullscreenLyricStyle.PENDOLO.ordinal()] = new PendoloLyricRenderer();
         renderers[FullscreenLyricStyle.APPLE.ordinal()] = new AppleLyricRenderer();
+        renderers[FullscreenLyricStyle.LUMINOUS_CLASSIC.ordinal()] = new LuminousClassicLyricRenderer();
         return renderers;
     }
 
@@ -553,9 +556,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         // 读同一个时钟，稳态严格归零。只影响绘制矩阵，不动任何交互矩形；模糊区域与文字在
         // 同一矩阵里，一起平移，合成不会错位。快捷面板是浮层，不跟着走。
         double lyricRise = (1.0 - CoverHeroTransition.lyricsFade()) * height * .014;
+        int lyricWheel = this.styleQuickPanel.handleScroll(dWheel, mouseX, mouseY) ? 0 : dWheel;
         api.getGLStateManager().pushMatrix();
         api.getGLStateManager().translate(0, lyricRise, 0);
-        this.renderLyrics(mouseX, mouseY, posX, posY, width, height, dWheel, alpha, snapshot);
+        this.renderLyrics(mouseX, mouseY, posX, posY, width, height, lyricWheel, alpha, snapshot);
         api.getGLStateManager().popMatrix();
         // 快捷面板画在最后：它是浮层，必须盖在封面与歌词之上。
         if (!TransitionPerformanceBudget.skipLyricQuickPanel()) {
@@ -718,8 +722,15 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                         }
 
                         for (int wordIndex = first; wordIndex <= last; wordIndex++) {
-                            double lift = qplayerSyllableLift(words.get(wordIndex).timestamp, songProgress);
-                            Arrays.fill(words.get(wordIndex).emphasizes, lift);
+                            LyricLine.Word word = words.get(wordIndex);
+                            // 字形级提升:整词共用一个提升量时，长音节（"真"、"風"这类一拍唱很久的字）
+                            // 只能整块一起弹；改成逐 char 用自己字形的起始时刻求提升，纹波才细到一个字。
+                            // 对齐、时长归一化都交给共享的字形时间轴，这里只提供曲线。
+                            final double wordLift = qplayerSyllableLift(word.timestamp, songProgress);
+                            // 第五个参数是兜底：字形表覆盖不到的位置（理论上不该有）整格回落到按词求的提升量，
+                            // 免得画出来一个 0 提升量的字孤零零杵在原地。
+                            LyricGraphemeTimeline.fillCharLifts(lyric, wordIndex, word.emphasizes,
+                                    start -> qplayerSyllableLift((long) start, songProgress), wordLift);
                         }
 
                         int glowPad = TextGlow.padding(FontManager.pf65bold, .034);
@@ -759,6 +770,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                             if (ktvLayer >= 0) ktvCanvas.restoreToCount(ktvLayer);
                         }
 
+                        // 副歌强调：整行的持续音发光更足。曲线由段号（bar/circle/beam）决定，
+                        // 非副歌行恒为 0，所以这里的系数退化成 1，行为与加这段之前一致。
+                        float chorusK = (float) CloudMusic.chorusEmphasis(lyric, songProgress);
                         for (int wordIndex = first; wordIndex <= last; wordIndex++) {
                             LyricLine.Word word = words.get(wordIndex);
                             long wordEnd = word.timestamp + Math.max(0L, word.duration);
@@ -769,7 +783,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                             float glowAlpha = activeK
                                     * smoothStepQplayer(progress / .18)
                                     * (1f - smoothStepQplayer((progress - .90) / .10))
-                                    * .55f * qBaseAlpha;
+                                    * (.55f * (1f + .9f * chorusK)) * qBaseAlpha;
                             if (glowAlpha <= .01f) continue;
                             drawQplayerWordGlow(word, placement.x[wordIndex],
                                     rowRenderY - qplayerWordRibbonLift(word, songProgress, activeK),
@@ -1581,8 +1595,21 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     private void renderBackground(double posX, double posY, double width, double height, float alpha, CloudMusic.PlaybackSnapshot snapshot) {
         if (alpha <= .004f) return;
-        TextureManager textureManager = TextureManager.getInstance();
         Music current = snapshot.music;
+
+        // 新背景是可选的；着色器不可用或用户选择旧模式时，原模糊封面路径完全保留。
+        if (FullscreenLyricBackground.current() == FullscreenLyricBackground.LATENT
+                && latentBackground.render(posX, posY, width, height, alpha,
+                        current == null ? null : current.getCoverPalette())) {
+            if (HudConfig.latentOverlayEnabled && HudConfig.latentOverlayOpacity > .001f) {
+                int overlayColor = NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND);
+                Rect.draw(posX, posY, width, height,
+                        reAlpha(overlayColor, alpha * HudConfig.latentOverlayOpacity));
+            }
+            return;
+        }
+
+        TextureManager textureManager = TextureManager.getInstance();
         Location musicCoverBlurred = current == null ? null : current.getBlurredCoverLocation();
         ITextureObject texBg = current == null ? null : textureManager.getTexture(musicCoverBlurred);
 

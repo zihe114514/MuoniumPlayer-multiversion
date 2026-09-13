@@ -77,6 +77,18 @@ final class AutomixPlan {
     final boolean barAligned;
     /** Whether the low band is swapped between the decks during the blend. */
     final boolean bassSwap;
+    /** Folia strategy fields; null on the legacy planner. */
+    final FoliaTransitionStyle style;
+    final float midTiltDb;
+    final float highTiltDb;
+    final boolean echoThrow;
+    /** Stem-derived handover positions as fractions of the blend; defaults are the legacy curves. */
+    final double drumHandoverAt;
+    final double bassHandoverAt;
+    final double vocalEntryAt;
+    final boolean stemDriven;
+    /** Wall-clock milliseconds per outgoing beat, for the transition-visual pulse. */
+    final double animationPeriodMillis;
     /**
      * Playback rate the outgoing deck is bent to, 1 meaning "leave it alone". Either a tempo lock (both
      * beat grids measurable, close, and confident) or a whole-semitone key snap (no beat worth locking),
@@ -115,6 +127,17 @@ final class AutomixPlan {
     AutomixPlan(long fireMillis, long overlapMillis, long incomingCueMillis, float matchGain,
                 boolean barAligned, boolean bassSwap, float tempoRatio, boolean pitchShift,
                 long phaseErrorMillis, float vocalDuckDepth, String summary) {
+        this(fireMillis, overlapMillis, incomingCueMillis, matchGain, barAligned, bassSwap,
+                tempoRatio, pitchShift, phaseErrorMillis, vocalDuckDepth, summary,
+                null, 0f, 0f, false, .42, .42, .45, false, 500.0);
+    }
+
+    AutomixPlan(long fireMillis, long overlapMillis, long incomingCueMillis, float matchGain,
+                boolean barAligned, boolean bassSwap, float tempoRatio, boolean pitchShift,
+                long phaseErrorMillis, float vocalDuckDepth, String summary,
+                FoliaTransitionStyle style, float midTiltDb, float highTiltDb, boolean echoThrow,
+                double drumHandoverAt, double bassHandoverAt, double vocalEntryAt, boolean stemDriven,
+                double animationPeriodMillis) {
         this.pitchShift = pitchShift;
         this.fireMillis = fireMillis;
         this.overlapMillis = overlapMillis;
@@ -127,10 +150,21 @@ final class AutomixPlan {
         this.vocalDuckDepth = Float.isNaN(vocalDuckDepth)
                 ? 0f : Math.max(0f, Math.min(1f, vocalDuckDepth));
         this.summary = summary == null ? "" : summary;
+        this.style = style;
+        this.midTiltDb = clampTilt(midTiltDb);
+        this.highTiltDb = clampTilt(highTiltDb);
+        this.echoThrow = echoThrow;
+        this.drumHandoverAt = clampFraction(drumHandoverAt, .18, .72);
+        this.bassHandoverAt = clampFraction(bassHandoverAt, .18, .72);
+        this.vocalEntryAt = clampFraction(vocalEntryAt, .28, .88);
+        this.stemDriven = stemDriven;
+        this.animationPeriodMillis = Double.isFinite(animationPeriodMillis)
+                ? Math.max(120.0, Math.min(4_000.0, animationPeriodMillis)) : 500.0;
     }
 
     /** Outgoing gain at {@code progress} in [0,1] of the ramp. */
     float outgoingGain(double progress) {
+        if (style != null && style.together > 0.0) return (float) togetherGain(clamp(progress), true);
         return (float) Math.cos(clamp(progress) * Math.PI * .5);
     }
 
@@ -144,12 +178,32 @@ final class AutomixPlan {
      */
     float incomingGain(double progress) {
         double p = clamp(progress);
-        // The decay is quadratic on purpose. A linear one still falls at full rate where the sine has
-        // already flattened out, which makes the last few percent of the ramp move backwards - an
-        // audible little dip right at the handover. Squaring kills the tail of the correction first.
         double remaining = 1.0 - p;
         double match = 1.0 + (matchGain - 1.0) * remaining * remaining;
-        return (float) (Math.sin(p * Math.PI * .5) * match);
+        double shape = style != null && style.together > 0.0
+                ? togetherGain(p, false) : Math.sin(p * Math.PI * .5);
+        return (float) (shape * match);
+    }
+
+    /** Equal-power curves with a plateau where both decks stay present. */
+    private double togetherGain(double progress, boolean outgoing) {
+        double together = Math.max(0.0, Math.min(0.8, style.together));
+        double edge = (1.0 - together) * 0.5;
+        if (edge < 1e-6) return outgoing ? Math.cos(Math.PI * .25) : Math.sin(Math.PI * .25);
+        double u;
+        if (progress < edge) u = 0.25 * (progress / edge);
+        else if (progress > 1.0 - edge) u = 0.25 + 0.25 * ((progress - (1.0 - edge)) / edge);
+        else u = 0.25;
+        return outgoing ? Math.cos(u * Math.PI) : Math.sin(u * Math.PI);
+    }
+
+    private static double clampFraction(double value, double minimum, double maximum) {
+        if (Double.isNaN(value) || Double.isInfinite(value)) return minimum;
+        return Math.max(minimum, Math.min(maximum, value));
+    }
+    private static float clampTilt(float value) {
+        if (Float.isNaN(value) || Float.isInfinite(value)) return 0f;
+        return Math.max(-3f, Math.min(3f, value));
     }
 
     /**
@@ -161,9 +215,17 @@ final class AutomixPlan {
      */
     float outgoingBassDb(double progress) {
         if (!bassSwap) return 0f;
-        double p = clamp(progress) / BASS_CUT_COMPLETE;
-        if (p > 1.0) p = 1.0;
-        return (float) (AutomixSettings.BASS_CUT_DB * p);
+        double p = clamp(progress);
+        if (stemDriven) {
+            double start = Math.max(0.0, bassHandoverAt - .12);
+            if (p <= start) return 0f;
+            if (p >= bassHandoverAt) return AutomixSettings.BASS_CUT_DB;
+            double share = (p - start) / Math.max(.01, bassHandoverAt - start);
+            return (float) (AutomixSettings.BASS_CUT_DB * smoothstep(share));
+        }
+        double legacy = p / BASS_CUT_COMPLETE;
+        if (legacy > 1.0) legacy = 1.0;
+        return (float) (AutomixSettings.BASS_CUT_DB * legacy);
     }
 
     /**
@@ -175,6 +237,13 @@ final class AutomixPlan {
     float incomingBassDb(double progress) {
         if (!bassSwap) return 0f;
         double p = clamp(progress);
+        if (stemDriven) {
+            if (p <= bassHandoverAt) return AutomixSettings.BASS_ENTRY_CUT_DB;
+            double complete = Math.min(.94, bassHandoverAt + .14);
+            if (p >= complete) return 0f;
+            double share = (p - bassHandoverAt) / Math.max(.01, complete - bassHandoverAt);
+            return (float) (AutomixSettings.BASS_ENTRY_CUT_DB * (1.0 - smoothstep(share)));
+        }
         if (p <= BASS_ENTRY_START) return AutomixSettings.BASS_ENTRY_CUT_DB;
         if (p >= BASS_ENTRY_COMPLETE) return 0f;
         double share = (p - BASS_ENTRY_START) / (BASS_ENTRY_COMPLETE - BASS_ENTRY_START);
@@ -189,13 +258,36 @@ final class AutomixPlan {
      * {@value #VOCAL_DUCK_RELEASE_COMPLETE} of the ramp: the deck the listener keeps has to be flat
      * before the blend ends, not when the driver happens to notice.</p>
      */
+    /** Mid-band compensation for the incoming deck, eased back to flat before the blend ends. */
+    float incomingMidDb(double progress) {
+        return toneEntry(midTiltDb, progress, stemDriven ? drumHandoverAt : .85);
+    }
+
+    /** High-band compensation for the incoming deck, eased back to flat before the blend ends. */
+    float incomingHighDb(double progress) {
+        return toneEntry(highTiltDb, progress, .85);
+    }
+
+    /**
+     * Matching the previous track's spectral balance at entry removes the most obvious "new master"
+     * cue, then the compensation walks back to zero so the listener keeps the incoming master intact.
+     */
+    private static float toneEntry(float tiltDb, double progress, double releaseAt) {
+        if (tiltDb == 0f) return 0f;
+        double end = Math.max(.18, Math.min(.95, releaseAt));
+        double p = clamp(progress);
+        if (p >= end) return 0f;
+        return (float) (tiltDb * (1.0 - smoothstep(p / end)));
+    }
     float incomingVocalDepth(double progress) {
         if (vocalDuckDepth <= 0f) return 0f;
         double p = clamp(progress);
-        if (p <= VOCAL_DUCK_RELEASE_START) return vocalDuckDepth;
-        if (p >= VOCAL_DUCK_RELEASE_COMPLETE) return 0f;
-        double share = (p - VOCAL_DUCK_RELEASE_START)
-                / (VOCAL_DUCK_RELEASE_COMPLETE - VOCAL_DUCK_RELEASE_START);
+        double releaseStart = stemDriven ? vocalEntryAt : VOCAL_DUCK_RELEASE_START;
+        double releaseComplete = stemDriven ? Math.min(.96, Math.max(.72, releaseStart + .18))
+                : VOCAL_DUCK_RELEASE_COMPLETE;
+        if (p <= releaseStart) return vocalDuckDepth;
+        if (p >= releaseComplete) return 0f;
+        double share = (p - releaseStart) / (releaseComplete - releaseStart);
         return (float) (vocalDuckDepth * (1.0 - smoothstep(share)));
     }
 

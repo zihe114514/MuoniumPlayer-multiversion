@@ -58,33 +58,27 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     public BooleanValue graceScroll = api.getValueManager().createBoolean("Elegant Scrolling", true);
     public BooleanValue showRoman = api.getValueManager().createBoolean("Show Romanization in Japanese songs", false);
     public BooleanValue dynIsland = api.getValueManager().createBoolean("Dynamic Island Lyrics", false);
-    /** AMLL TTML 词库(人工校对的逐字歌词)优先于任何平台歌词。关掉后完全回到旧的解析链。 */
+    // HUD 编辑器在编辑器提供的位置复用正式渲染器。
     public BooleanValue preferAmllLyrics = api.getValueManager().createBoolean("Prefer AMLL Word-by-Word Lyrics", true);
-    /** AMLL 词库没有收录时,再用 QQ 音乐的 QRC 逐字歌词;仍然优先于任何行级歌词。 */
+    // 将此状态保存在本地，可在预览时避免修改持久化的 HUD 配置。
     public BooleanValue preferQqQrcLyrics = api.getValueManager().createBoolean("Prefer QQ Word-by-Word Lyrics", true);
 
     public ExtensionWidget widget;
     WidgetWrapper.WidgetPosSizeInterface wpsInterface;
 
-    // The HUD editor reuses the production renderer at an editor-provided position.
-    // Keeping this state local avoids changing the persisted HUD configuration while previewing.
+    // 宽/高由 HudConfig 持有，使 HUD 编辑器和模块包装器都使用
+    // 同一个响应式视口。将 NumberValues 保留在此处可维持包装器兼容性。
     private boolean editorPreviewActive;
     private float editorPreviewX;
     private float editorPreviewY;
     private float editorPreviewScale;
 
-    /**
-     * 桌面歌词的 KTV 离屏合成器（与全屏歌词页同一套做法）。
-     *
-     * <p>持有两张复用的离屏纹理，所以必须是实例字段而不是每帧新建。</p>
-     */
+    /** 应用由内置 HUD 编辑器保存的歌词外观设置。 */
     private final KaraokeTextCompositor karaokeCompositor = new KaraokeTextCompositor();
 
     /**
-     * 「Blossom」桌面歌词样式（modernMP 浮动挂件的移植）。
-     *
-     * <p>它自己持有跨帧的弹簧与排版缓存，所以必须是实例字段。没被选中时完全不参与绘制，
-     * 也不消耗任何东西。</p>
+     * 渲染与游戏中相同的动画桌面歌词路径，但位置为 HUD 编辑器中所选位置。
+     * 此预览有意不修改持久化的 HudConfig 位置。
      */
     private final BlossomLyricStyle blossomStyle = new BlossomLyricStyle();
 
@@ -95,7 +89,11 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         showRoman.setHiddenPredicate(() -> !showTranslation.getValue());
         dynIsland.setHiddenPredicate(() -> !Reflection.DYNAMIC_ISLAND_SUPPORTED);
         
-        // Width/height are owned by HudConfig so both HUD editors and the module wrapper use the
+        /**
+     * 拖动跳转绝不能复用来自无关时间戳的动画位置。
+     * 将缓存位置标记为无效，可使下一帧先把每个可见行布局到新位置，
+     * 然后再恢复平滑跟随动画。
+     */
         // same responsive viewport. Keeping the NumberValues here preserves wrapper compatibility.
         this.addValues(alignMode, lyricHeight, lyricColor, currentLyricColor, shadow, singleLine, graceScroll, showRoman, dynIsland, preferAmllLyrics, preferQqQrcLyrics);
 
@@ -226,8 +224,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                 }
 
                 if (CloudMusic.haveNoWords || currentLine.words.isEmpty()) {
-                    // words 为空时不能走逐字分支：calculateCurrentWordInfo 会返回下标 0，
-                    // 紧接着的 words.get(0) 直接 IndexOutOfBounds —— 而这是每帧执行的渲染路径。
+                    // 合唱段是时间轴真正重叠的两行（罕见为三行）。它们全部
+                    // 同时都是当前行，因此作为一个整体块布局并居中：
                     System.setProperty("ncm.dynIslandLyrics", EnumChatColor.WHITE + currentLine.getLyric());
                 } else {
                     WordInfo wordInfo = calculateCurrentWordInfo(currentLine, songProgress);
@@ -238,15 +236,15 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                     int leftEndIdx = wordInfo.currentIndex;
                     int rightStartIdx = wordInfo.currentIndex + 1;
 
-//                    if (rightStartIdx == 1) {
-//                        LyricLine.Word current = currentLine.words.get(wordInfo.currentIndex);
-//                        double value = (songProgress - current.timestamp) / (double) (current.duration);
-//
-//                        if (value < 0) {
-//                            rightStartIdx -= 1;
-//                            leftEndIdx -= 1;
-//                        }
-//                    }
+// 只高亮其中一行会让另一行看起来已唱完，而且"当前"行
+// 会在两位演唱者之间明显跳动。
+// 保持活动歌词块居中。在较窄的 HUD 将其折成多行
+// 文本时，这一点尤为重要。
+// 单行模式仍显示完整合唱：该模式的目的是隐藏
+// 未在演唱的行，而在合唱中两行都在唱。
+// 可见行数由视口高度而非固定数值设置决定。
+// 裁剪范围外的行仍保留在布局阶段，使其
+// 滚动时的运动和边缘淡出保持连续。
 
                     for (int i = 0; i <= leftEndIdx - 1; i++) {
                         left += currentLine.words.get(i).word;
@@ -280,8 +278,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             api.getGLStateManager().pushMatrix();
 
             if (BlossomLyricStyle.isActive()) {
-                // Blossom 自己画毛玻璃面板，并且要按圆角裁剪文字，所以裁剪框由它自己开；
-                // 这里再套一层直角裁剪只会把圆角外面那四块底色切成方角。
+                // 平滑度越高，跟随越柔和，同时在换句后仍能收敛。
+                // smoothstep 消除了线性透明度渐变造成的可见边界。
                 blossomStyle.render(wpsInterface.getX(), wpsInterface.getY(),
                         wpsInterface.getWidth(), wpsInterface.getHeight(),
                         lyricColor.getValue().getRGB(), currentLyricColor.getValue().getRGB(),
@@ -314,8 +312,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     private boolean shouldRender() {
-        // lyricsMatchCurrentTrack()：切歌后歌词时间轴还属于上一首时整块不画，否则桌面歌词会用
-        // 新歌的进度去填涂旧歌的字。
+        // 不要让淡出占用紧凑视口超过一半。
+        // 只有真正的字级时间戳才能进入 KTV 渲染器。普通 LRC 解析后可能带有
         return CloudMusic.player != null && !CloudMusic.player.isFinished()
                 && !CloudMusic.lyrics.isEmpty() && CloudMusic.lyricsMatchCurrentTrack();
     }
@@ -340,10 +338,14 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                 return;
             }
 
-            // A duet section is two (rarely three) lines whose timelines genuinely overlap. All of
-            // them are the current line at once, so they are laid out and centered as one block:
-            // highlighting only one of them makes the other look already-sung, and the "current"
-            // line would visibly bounce between the two singers.
+            // 字 token，但没有持续时间时每个 token 会同时解析，
+            // 从而错误地给整行重新着色。
+            /**
+     * 保留每个 YRC 字的计时，同时生成与 HUD 所用相同的响应式物理行。
+     * 比 HUD 更宽的字会被拆成带计时的片段，因此组件调整大小时
+     * KTV 高亮绝不会溢出。
+     */
+            // KaraokeLayout 仅由解析出的字级计时创建。每当该计时可用时，
             int groupStart = LyricDuetGroups.groupStart(CloudMusic.lyrics, currentIndex);
             int groupEnd = LyricDuetGroups.groupEnd(CloudMusic.lyrics, currentIndex);
             int groupSize = groupEnd - groupStart + 1;
@@ -355,16 +357,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             double viewportHeight = wpsInterface.getHeight();
             double viewportBottom = viewportTop + viewportHeight;
 
-            /*
-             * 对唱把"当前行"从一行变成两三行，块高很容易超过 HUD 高度：两行各自折行、各自还带一行
-             * 译文。块高一旦超过视口，居中摆放会让首行顶端和末行底端同时落在 stencil 之外，再加上
-             * calculateEdgeAlpha 会把贴边的行淡到 0（alpha <= .01 直接不画），表现就是"对唱溢出、
-             * 有一行整行不见了"。
-             *
-             * 第一级：丢掉这一组的译文（原文优先）。译文本来就是辅助信息，比整行原文消失好得多。
-             * 第二级：仍然放不下就把块顶对齐到视口顶部（而不是让它跑到视口上方），并给这一组的行
-             *        一个不透明度下限，保证两位歌手的行都还看得见。
-             */
+            // 当前 OSD 行必须使用唯一的 KTV 渲染器；可选的旧版效果
             if (blockHeight > viewportHeight && groupSize > 1) {
                 LyricLayout[] compact = buildGroupLayouts(groupStart, groupSize, false);
                 double compactHeight = measureBlockHeight(compact);
@@ -375,15 +368,15 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             }
             this.currentBlockOverflows = blockHeight > viewportHeight;
 
-            // Keep the active lyric block centered. This is especially important when
-            // a narrow HUD wraps it into multiple physical text rows.
+            // 绝不能替换其从左到右的填充。
+            // 基础文本、辉光、模板裁剪和移动高亮必须共用同一个变换。
             double blockTop = this.currentBlockOverflows
                     ? viewportTop
                     : viewportTop + (viewportHeight - blockHeight) * .5;
 
             if (singleLineMode) {
-                // Single-line mode still shows a whole duet: the point of the mode is to hide the
-                // lines that are not being sung, and in a duet both of them are.
+                // 否则当前行缩放会使着色层偏离字形。
+                /** 返回从带计时字的起点到某码点偏移处的渲染前进量。 */
                 double y = blockTop;
                 for (int i = 0; i < groupSize; i++) {
                     renderLyricLine(CloudMusic.lyrics.get(groupStart + i), true, y,
@@ -393,9 +386,17 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                 return;
             }
 
-            // The viewport height, not a fixed number setting, decides how many rows are
-            // visible. Lines just outside the clip are kept in the layout pass so their
-            // motion and edge fade remain continuous while scrolling.
+            /*
+         * 此处不要使用嵌套模板。桌面 OSD 渲染到 Minecraft 共享的 HUD 帧缓冲中，
+         * OptiFine/其他模组的一道渲染过程可能使模板附件或其测试状态不可用。
+         * 那种情况下整个高亮的字都会显示到屏幕上，看起来像瞬间整行换色。
+         *
+         * 投影裁剪矩形跟随当前 HUD 缩放矩阵，并与任何父级裁剪矩形取交集。
+         * 因此它将辉光和字形绘制裁剪到实际移动的 KTV 填充宽度，
+         * 而不改变外部视口裁剪或外来渲染状态。
+         */
+            // 翻译文本有意使用与原文相同的解析样式。
+            // 其更小的字体仍是唯一的视觉区别；没有隐藏的 0.45/0.34
             double fadePadding = getEdgeFadeSize();
             double y = blockTop;
             for (int i = groupStart - 1; i >= 0; i--) {
@@ -431,8 +432,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         double animatedY = updateLineY(line, targetY);
         double edgeAlpha = calculateEdgeAlpha(animatedY, layout.visualHeight);
         if (isCurrent && this.currentBlockOverflows) {
-            // 块比 HUD 还高时，靠边那一行的中心必然落在淡出带里，边缘淡出会把它整行淡到不画。
-            // 对唱段落里那就是"另一位歌手的整句消失"，比让它半透明地挤在边上糟糕得多。
+            // 乘子会把 HUD 编辑器的滑杆拆成两个不相关的效果。
+            /** 为原文和翻译文本解析共享的当前/普通视觉配置。 */
             edgeAlpha = Math.max(edgeAlpha, MIN_OVERFLOW_BLOCK_ALPHA);
         }
         if (edgeAlpha <= .01) {
@@ -451,7 +452,11 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         if (line.offsetY == Double.MIN_VALUE || Math.abs(line.offsetY - targetY) > resetDistance) {
             line.offsetY = targetY;
         } else if (this.graceScroll.getValue()) {
-            // Higher smoothness follows more gently while still converging after a line change.
+            /**
+     * HUD 编辑器负责歌词外观的持久化。在绘制时从 HudConfig 解析颜色，
+     * 使当前颜色选择器绝不可能通过旧版 ClickGUI ColorValue 实例
+     * 修改普通歌词颜色。
+     */
             float follow = 0.35f - HudConfig.scrollSmoothness * 0.26f;
             line.offsetY = Interpolations.interpolate(line.offsetY, targetY, follow);
         } else {
@@ -469,25 +474,26 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         double center = y + visualHeight * .5;
         double distanceToEdge = Math.min(center - top, bottom - center);
         double progress = Math.max(0.0, Math.min(1.0, distanceToEdge / getEdgeFadeSize()));
-        // smoothstep removes the visible boundary created by a linear alpha ramp.
+        /** 当前颜色专门保留给被裁剪的、带计时的 KTV 前景字形。 */
         return progress * progress * (3.0 - 2.0 * progress);
     }
 
     private double getEdgeFadeSize() {
-        // Do not let the fade consume more than half of a compact viewport.
+        /**
+     * 解析当前正在播放的带计时字。保留此项是为了 Dynamic Island
+     * 文本桥接和诊断；OSD 绘制本身使用上面的逐码点 KTV 路径。
+     */
         return Math.max(6.0, Math.min(HudConfig.edgeFadeSize, wpsInterface.getHeight() * .48));
     }
 
     /**
-     * 当前歌词块（对唱时是整组）是否高于 HUD 视口。
-     *
-     * <p>为真时块顶对齐视口顶部，并且这一组的行不允许被边缘淡出吃掉。用字段而不是给
-     * {@link #renderLyricLine} 加参数：它有四个调用点，其中三个与这件事无关。渲染只在渲染线程上
-     * 发生，每帧在 {@link #renderAllLyrics} 开头重置。</p>
+     * 活动颜色专门保留给被裁剪的 KTV 前景层。用它渲染整行当前歌词
+     * 会绕过字级计时，看起来像生硬的换色，因此未填充的基础部分
+     * 始终使用普通歌词颜色。
      */
     private boolean currentBlockOverflows;
 
-    /** 对唱组内每一行的排版。{@code allowSecondary} 为假时不给译文留行，用于压缩过高的块。 */
+    /** 响应式换行后，一个逻辑歌词行的缓存几何。 */
     private LyricLayout[] buildGroupLayouts(int groupStart, int groupSize, boolean allowSecondary) {
         LyricLayout[] layouts = new LyricLayout[groupSize];
         for (int i = 0; i < groupSize; i++) {

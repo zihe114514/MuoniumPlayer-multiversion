@@ -40,7 +40,7 @@ public class PlaylistPanel extends NCMPanel {
         this(playlist, true);
     }
 
-    /** Used by the recent-play list, whose parent discovery page already owns navigation. */
+    /** 被最近播放列表使用，其父发现页已拥有导航。 */
     public PlaylistPanel(PlayList playlist, boolean showBackButton) {
         this.playList = playlist;
         this.showBackButton = showBackButton;
@@ -55,9 +55,9 @@ public class PlaylistPanel extends NCMPanel {
 
     @Override
     public void onInit() {
-        // onInit is also used when account metadata (including cloud-drive IDs)
-        // arrives asynchronously. Make it idempotent so a refresh replaces the
-        // old rows instead of stacking a second copy over the first one.
+        // 账号元数据（含云盘 ID）异步到达时也使用 onInit。
+        //使其幂等，使刷新替换
+        //旧行，而非在第一份之上再叠第二份。
         this.getChildren().clear();
         this.musicsLoading = true;
 
@@ -333,8 +333,8 @@ public class PlaylistPanel extends NCMPanel {
         this.addChild(rwMusicsContainer);
 
         rwMusicsContainer.setBeforeRenderCallback(() -> {
-            // Keep the last visible row clear of the controls bar. The nested ScrollPanel
-            // clips song rows to this reduced viewport instead of letting text touch the edge.
+            // 让最后可见行远离控件栏。嵌套 ScrollPanel
+            //把歌曲行裁剪到这个缩小视口，而非让文字碰到边缘。
             rwMusicsContainer.setBounds(
                     Math.max(0.0, this.getWidth() - 36),
                     Math.max(0.0, this.getHeight() - musicsContainerOffsetY - bottomSafeInset)
@@ -350,8 +350,8 @@ public class PlaylistPanel extends NCMPanel {
 
         musicsPanel.setBeforeRenderCallback(() -> musicsPanel.setMargin(0));
 
-        // Keep the loading feedback above the clipped song list. The widget fades
-        // itself out after the asynchronous request has finished.
+        // 让加载反馈在被裁剪的歌曲列表之上。该组件
+        //在异步请求完成后自身淡出。
         PanelLoadingWidget loadingWidget = new PanelLoadingWidget("正在加载曲目…");
         this.addChild(loadingWidget);
         loadingWidget
@@ -368,8 +368,8 @@ public class PlaylistPanel extends NCMPanel {
                 });
 
         playList.loadMusicsWithCallback(musics -> {
-            // Do not call List#indexOf for every song: that is O(n²) and becomes
-            // noticeably slow for large playlists. Build one child batch instead.
+            // 不要对每首歌调用 List#indexOf：那是 O(n²)，对大歌单会明显变慢。
+            //改为构建一个子批次。
             List<AbstractWidget<?>> musicWidgets = new ArrayList<>(musics == null ? 0 : musics.size());
             if (musics != null) {
                 for (int index = 0; index < musics.size(); index++) {
@@ -379,8 +379,8 @@ public class PlaylistPanel extends NCMPanel {
                 }
             }
 
-            // Start the entrance animation after every widget has been built. This
-            // keeps huge playlists from spending their fade-in time on construction.
+            // 在每个组件构建后开始进入动画。这
+            //使巨大歌单不会把淡入时间花在构建上。
             long entranceStartedAt = System.currentTimeMillis();
             for (int index = 0; index < musicWidgets.size(); index++) {
                 ((MusicWidget) musicWidgets.get(index)).setEntranceAnimation(

@@ -31,11 +31,10 @@ public class BoxImpl implements Box {
 	}
 
 	/**
-	 * Decodes the given input stream by reading this box and all of its
-	 * children (if any).
+	 * 通过读取此 box 及其所有子级（如有）来解码给定的输入流。
 	 * 
-	 * @param in an input stream
-	 * @throws IOException if an error occurs while reading
+	 * @param in 一个输入流
+	 * @throws IOException 读取时发生错误
 	 */
 	public void decode(MP4InputStream in) throws IOException {
 	}
@@ -65,7 +64,7 @@ public class BoxImpl implements Box {
 		return name+" ["+BoxFactory.typeToString(type)+"]";
 	}
 
-	//container methods
+	//容器方法
 	public boolean hasChildren() {
 		return children.size()>0;
 	}

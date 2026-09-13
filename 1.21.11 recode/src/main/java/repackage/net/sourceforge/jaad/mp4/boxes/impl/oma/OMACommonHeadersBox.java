@@ -6,7 +6,7 @@ import java.util.Map;
 import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
-//TODO: add remaining javadoc
+//TODO: 补充其余 javadoc
 public class OMACommonHeadersBox extends FullBox {
 
 	private int encryptionMethod, paddingScheme;
@@ -48,46 +48,42 @@ public class OMACommonHeadersBox extends FullBox {
 	}
 
 	/**
-	 * The encryption method defines how the encrypted content can be decrypted.
-	 * Values for the field are defined in the following table:
+	 * 加密方法定义加密内容如何解密。
+	 * 该字段取值见下表：
 	 * 
 	 * <table>
-	 * <tr><th>Value</th><th>Algorithm</th></tr>
-	 * <tr><td>0</td><td>no encryption used</td></tr>
-	 * <tr><td>1</td><td>AES_128_CBC:<br />AES symmetric encryption as defined 
-	 * by NIST. 128 bit keys, Cipher block chaining mode (CBC). For the first 
-	 * block a 128-bit initialisation vector (IV) is used. For DCF files, the IV
-	 * is included in the OMADRMData as a prefix of the encrypted data. For 
-	 * non-streamable PDCF files, the IV is included in the IV field of the 
-	 * OMAAUHeader and the IVLength field in the OMAAUFormatBox MUST be set to
-	 * 16. Padding according to RFC 2630</td></tr>
-	 * <tr><td>2</td><td>AES_128_CTR:<br />AES symmetric encryption as defined 
-	 * by NIST. 128 bit keys, Counter mode (CTR). The counter block has a length
-	 * of 128 bits. For DCF files, the initial counter value is included in the 
-	 * OMADRMData as a prefix of the encrypted data. For non-streamable PDCF 
-	 * files, the initial counter value is included in the IV field of the 
-	 * OMAAUHeader  and the IVLength field in the OMAAUFormatBox MUST be set to 
-	 * 16. For each cipherblock the counter is incremented by 1 (modulo 2128). 
-	 * No padding.</td></tr>
+	 * <tr><th>值</th><th>算法</th></tr>
+	 * <tr><td>0</td><td>不使用加密</td></tr>
+	 * <tr><td>1</td><td>AES_128_CBC：<br />由 NIST 定义的 AES 对称加密。
+	 * 128 位密钥，密文分组链接模式（CBC）。第一个分组使用 128 位初始化向量（IV）。
+	 * 对 DCF 文件，IV 作为加密数据的前缀包含在 OMADRMData 中。
+	 * 对不可流式 PDCF 文件，IV 包含在 OMAAUHeader 的 IV 字段中，
+	 * 且 OMAAUFormatBox 中的 IVLength 字段必须设为 16。按 RFC 2630 填充</td></tr>
+	 * <tr><td>2</td><td>AES_128_CTR：<br />由 NIST 定义的 AES 对称加密。
+	 * 128 位密钥，计数器模式（CTR）。计数分组长度为 128 位。
+	 * 对 DCF 文件，初始计数值作为加密数据前缀包含在 OMADRMData 中。
+	 * 对不可流式 PDCF 文件，初始计数值包含在 OMAAUHeader 的 IV 字段中，
+	 * 且 OMAAUFormatBox 中的 IVLength 字段必须设为 16。
+	 * 每个密文分组计数器加 1（模 2^128）。不填充。</td></tr>
 	 * </table>
 	 * 
-	 * @return the encryption method
+	 * @return 加密方法
 	 */
 	public int getEncryptionMethod() {
 		return encryptionMethod;
 	}
 
 	/**
-	 * The padding scheme defines how the last block of ciphertext is padded. 
-	 * Values of the padding scheme field are defined in the following table:
+	 * 填充方案定义最后一个密文分组如何填充。
+	 * padding scheme 字段取值见下表：
 	 * 
 	 * <table>
-	 * <tr><th>Value</th><th>Padding scheme</th></tr>
-	 * <tr><td>0</td><td>No padding (e.g. when using NULL or CTR algorithm)</td></tr>
-	 * <tr><td>1</td><td>Padding according to RFC 2630</td></tr>
+	 * <tr><th>值</th><th>填充方案</th></tr>
+	 * <tr><td>0</td><td>不填充（例如使用 NULL 或 CTR 算法时）</td></tr>
+	 * <tr><td>1</td><td>按 RFC 2630 填充</td></tr>
 	 * </table>
 	 * 
-	 * @return the padding scheme
+	 * @return 填充方案
 	 */
 	public int getPaddingScheme() {
 		return paddingScheme;

@@ -19,14 +19,7 @@ import java.util.stream.Collectors;
  */
 public class FontManager extends AbstractManager {
 
-    /**
-     * Java 8u51 的 Java2D CFF/OpenType 光栅化会让 SF Pro 的半角字形使用
-     * 与实际绘制不一致的尺寸。中文由 PingFang TrueType 回退字体绘制，
-     * 因而只有英文、数字和半角标点出现比例异常。
-     *
-     * 仅在受影响的早期 Java 8 运行时切换半角主字体到已内置的 Arial
-     * TrueType；中文回退字体、UI 逻辑及其它字体系统均保持不变。
-     */
+    /** 随播放器 UI 一同打包的 Fontello 图标字体。 */
     private static final boolean USE_LEGACY_JAVA8_TTF_FONTS = isLegacyJava8CffRuntime();
 
     public FontManager() {
@@ -37,44 +30,25 @@ public class FontManager extends AbstractManager {
     public static CFontRenderer pf12, pf14, pf18, pf20, pf25, pf32;
     public static CFontRenderer icon30;
     public static CFontRenderer music14, music18, music40;
-    /** Fontello icon font bundled with the player UI. */
+    /** 各音源品牌的 Fontello 字形使用独立字体，以避免私用区码位冲突。 */
     public static CFontRenderer fontello14, fontello16, fontello18, fontello22;
-    /** 与 {@link #musicBrand52} 同一档视觉尺寸的 fontello 图标（在线聚合源卡片上的链条）。 */
+    /** YouTube 播放按钮品牌标识；单独生成以避免私用区码位冲突。 */
     public static CFontRenderer fontello40;
-    /** Provider-brand Fontello glyphs use a separate font to avoid private-use code collisions. */
+    /** QQ 音乐品牌图标字体；有意与 Fontello 登录字形分开。 */
     public static CFontRenderer musicBrand16, musicBrand18;
-    /**
-     * 音乐来源二级菜单卡片上的品牌标记。
-     *
-     * <p>这一档的字号是按「墨迹高度等于 18 逻辑像素」反算出来的，而不是和别处取同一个字号：三个
-     * 图标字形在自己的 em 方格里占的比例差很多（网易云 0.69em、QQ 音乐 0.53em、fontello 的链条
-     * 0.91em），统一字号会让它们看起来一大一小。反算后 create(52)/create(68)/create(40) 分别得到
-     * 17.94 / 17.88 / 18.22 像素的墨迹，肉眼一致。</p>
-     *
-     * <p>刻意不靠绘制时缩放去放大小字号的渲染器：字形图集是 2 倍超采样 + 精确 0.5 倍缩小，任何
-     * 额外的非整数倍率都会重采样发虚。代价是每个 CFontRenderer 各自持有一张 2048² 的 GL_ALPHA
-     * 图集（约 4MB 显存），所以只加了这三档，其它地方要用大号品牌图标时请复用它们。</p>
-     */
+    // QQ 音乐品牌字形比网易字形有更多内部留白。
     public static CFontRenderer musicBrand52;
-    /**
-     * 「下一首播放」图标字体（player-queue-icons，fontello U+E309）的两档字号。
-     *
-     * <p>两档而不是一档：这枚图标出现在两种大小的按钮里（歌曲行 20 像素、播放条 18 像素），而
-     * 字形是按字号栅格化的，同一个渲染器画进不同大小的按钮就会一大一小。{@code PlayerQueueIcons}
-     * 会按按钮边长挑墨迹最接近目标比例的那一档，把两处的观感对齐到相邻贴图图标的水平。</p>
-     */
+    // 在音源切换器中使用专门的更大尺寸渲染器，使两个音源品牌在视觉上保持一致大小。
     public static CFontRenderer queueIcon34, queueIcon38;
     /**
-     * 播放器动作图标字体（player-action-icons，fontello U+E113 添加到歌单 / U+E144 下一首播放列表）的两档字号。
-     *
-     * <p>和 {@code queueIcon*} 同样的理由要两档：同一枚字形出现在 20 像素与 18 像素的按钮里。
-     * 单独一份字体文件而不是并入 player-queue-icons：两份是不同批次的 fontello 导出，各自独立
-     * 才不会在私有区码位上互相覆盖。</p>
+     * 字体渲染器在 {@link #loadFonts()} 中同步构造；没有任何一个由后续 worker 初始化。
+     * 因此原先的无限轮询循环永远无法修复缺失的赋值/资源，还会卡死 Forge 的加载
+     * 界面并刷屏日志。改为只校验一次然后继续启动。
      */
     public static CFontRenderer actionIcon34, actionIcon38;
-    /** YouTube play-button brand mark; generated separately to avoid private-use code collisions. */
+    // Java 8u51 是受影响的目标环境。让更新的 Java 8
     public static CFontRenderer youtubeIcon24, youtubeIcon34;
-    /** QQ Music brand icon font; deliberately separate from Fontello login glyphs. */
+    // 运行时仍使用原本的 SF Pro 外观。
     public static CFontRenderer qqMusicIcon16, qqMusicIcon20;
     /** 与 {@link #musicBrand52} 配套：QQ 音乐的品牌字形在另一份字体里（music-brand-icons 没有 U+E888）。 */
     public static CFontRenderer qqMusicIcon68;

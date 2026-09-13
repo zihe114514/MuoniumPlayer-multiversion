@@ -111,7 +111,7 @@ public final class OneConfigHudBridge {
             for (HudSettingsModel.Category category : HudSettingsModel.categories()) {
                 for (HudSettingsModel.Group group : category.groups) {
                     for (HudSettingsModel.Entry entry : group.entries) {
-                        if (entry.kind == HudSettingsModel.Kind.THEME_GRID) continue;
+                        if (!entry.isVisible() || entry.kind == HudSettingsModel.Kind.THEME_GRID) continue;
                         Object property = createProperty(entry, entryIndex++, functional, dummy);
                         if (property == null) continue;
                         addMetadata.invoke(property, "category", category.title);

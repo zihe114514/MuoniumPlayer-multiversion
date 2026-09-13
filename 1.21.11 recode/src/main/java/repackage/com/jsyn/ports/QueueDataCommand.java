@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.ports;
@@ -20,37 +20,37 @@ import repackage.com.jsyn.data.SequentialData;
 import repackage.com.softsynth.shared.time.ScheduledCommand;
 
 /**
- * A command that can be used to queue SequentialData to a UnitDataQueuePort. Here is an example of
- * queuing data with a callback using this command.
+ * 可用于将 SequentialData 入队到 UnitDataQueuePort 的命令。示例：
+ * 使用此命令使用回调对数据进行排队。
  *
  * <pre>
  * <code>
- * 	// Queue an envelope with a completion callback.
+ * 	//使用完成回调对信封进行排队。
  * 	QueueDataCommand command = envelopePlayer.dataQueue.createQueueDataCommand( envelope, 0,
- * 			envelope.getNumFrames() );
- * 	// Create an object to be called when the queued data is done.
+ * 			envelope.getNumFrames());
+ * 	//创建要在队列数据完成时调用的对象。
  * 	TestQueueCallback callback = new TestQueueCallback();
- * 	command.setCallback( callback );
- * 	command.setNumLoops( 2 );
+ * 	command.setCallback(callback);
+ * 	command.setNumLoops(2);
  * 	envelopePlayer.rate.set( 0.2 );
- * 	synth.queueCommand( command );
+ * 	synth.queueCommand(command);
  *  </code>
  * </pre>
  *
- * The callback will be passed QueueDataEvents.
+ * 回调将收到 QueueDataEvent。
  *
  * <pre>
  * <code>
- * 	class TestQueueCallback implements UnitDataQueueCallback
+ * 	testQueueCallback类实现UnitDataQueueCallback
  * 	{
- * 		public void started( QueueDataEvent event )
+ * 		public void已启动（ QueueDataEvent事件）
  * 		{
- * 			LOGGER.debug("CALLBACK: Envelope started.");
+ * 			LOGGER.debug("回调：信封已启动。");
  * 		}
  *
- * 		public void looped( QueueDataEvent event )
+ * 		public void循环（ QueueDataEvent事件）
  * 		{
- * 			LOGGER.debug("CALLBACK: Envelope looped.");
+ * 			LOGGER.debug("回调：信封已循环。");
  * 		}
  *
  * 		public void finished( QueueDataEvent event )
@@ -91,8 +91,8 @@ public abstract class QueueDataCommand extends QueueDataEvent implements Schedul
     public abstract void run();
 
     /**
-     * If true then this item will be skipped if other items are queued after it. This flag allows
-     * you to queue lots of small pieces of sound without making the queue very long.
+     * 如果为true ，则如果其他项目在其后排队，则将跳过此项目。此标志允许
+     * 你排队很多小声音，而不会让队列很长。
      *
      * @param skipIfOthers
      */
@@ -101,9 +101,9 @@ public abstract class QueueDataCommand extends QueueDataEvent implements Schedul
     }
 
     /**
-     * If true then the queue will be cleared and this item will be started immediately. It is
-     * better to use this flag than to clear the queue from the application because there could be a
-     * gap before the next item is available. This is most useful when combined with
+     * 如果为true ，则队列将被清除，此项目将立即启动。
+     * 使用此标志比从应用程序中清除队列更好，因为可能会有一个
+     * 在下一项可用之前的间隔。与
      * setCrossFadeIn().
      *
      * @param immediate
@@ -137,7 +137,7 @@ public abstract class QueueDataCommand extends QueueDataEvent implements Schedul
     }
 
     /**
-     * Stop the unit that contains this port after this command has finished.
+     * 此命令完成后，停止包含此端口的设备。
      *
      * @param autoStop
      */
@@ -146,20 +146,20 @@ public abstract class QueueDataCommand extends QueueDataEvent implements Schedul
     }
 
     /**
-     * Set how many time the block should be repeated after the first time. For example, if you set
-     * numLoops to zero the block will only be played once. If you set numLoops to one the block
-     * will be played twice.
+     * 设置第一次后应重复块的次数。例如，如果您设置
+     * numLoops到零时，区块将仅播放一次。如果将numLoops设置为1 ，
+     * 将播放两次。
      *
-     * @param numLoops number of times to loop back
+     * @param numLoops 回送次数
      */
     public void setNumLoops(int numLoops) {
         this.numLoops = numLoops;
     }
 
     /**
-     * Number of frames to cross fade from the previous block to this block. This can be used to
-     * avoid pops when making abrupt transitions. There must be frames available after the end of
-     * the previous block to use for crossfading. The crossfade is linear.
+     * 从上一块交叉淡入到本块的帧数。可用于
+     * 在进行突然转换时避免弹出。在结束之后必须有可用的帧
+     * 交叉淡入所使用的前一块。交叉淡入是线性的。
      *
      * @param size
      */

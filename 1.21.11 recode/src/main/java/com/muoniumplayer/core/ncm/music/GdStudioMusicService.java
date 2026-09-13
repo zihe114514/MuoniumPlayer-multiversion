@@ -23,22 +23,22 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Built-in client for the GD Studio aggregated music API (https://music-api.gdstudio.xyz).
+ * GD Studio 聚合音乐 API（https://music-api.gdstudio.xyz）的内置客户端。
  *
- * <p>Only the four documented request types are used: {@code types=search}, {@code types=url},
- * {@code types=pic} and {@code types=lyric}. Every request carries the platform and identifiers
- * returned by the preceding search response, exactly as the documentation requires.</p>
+ * <p>仅使用文档记载的四种请求类型：{@code types=search}、{@code types=url}、
+ * {@code types=pic} 和 {@code types=lyric}。每个请求都携带前一次搜索响应返回的平台和标识，
+ * 与文档要求完全一致。</p>
  *
- * <h3>Fallback protection</h3>
+ * <h3>兜底保护</h3>
  * <ul>
- *   <li>A rolling-window limiter caps traffic at the documented 50 requests / 5 minutes and keeps a
- *       reserve so cosmetic artwork/lyric traffic can never starve search and playback.</li>
- *   <li>Per-request-type timeouts stop a slow artwork provider from blocking a playback resolve.</li>
- *   <li>Per-source health tracking (circuit breaker) records the upstream error, cools a failing
- *       source down and recovers automatically as soon as one request succeeds.</li>
- *   <li>Playback resolves walk a documented bitrate ladder and, when the selected source still
- *       returns nothing, re-match the track on one healthy source instead of failing outright.</li>
- *   <li>Artwork/lyric misses are negatively cached so a dead provider is not polled every frame.</li>
+ *   <li>一个滚动窗口限流器把流量限制在文档记载的 50 请求 / 5 分钟，并保留
+ *       余量，使封面/歌词的装饰性流量永远不会挤占搜索和播放。</li>
+ *   <li>按请求类型的超时防止缓慢的封面提供方阻塞播放解析。</li>
+ *   <li>按源的健康追踪（断路器）记录上游错误，冷却失败的
+ *       源，并在一个请求成功后自动恢复。</li>
+ *   <li>播放解析走文档记载的码率阶梯，当选中源仍
+ *       无返回时，在一个健康源上重新匹配该曲目，而非直接失败。</li>
+ *   <li>封面/歌词未命中被负缓存，使死掉的提供方不会每帧都被轮询。</li>
  * </ul>
  */
 public final class GdStudioMusicService {
@@ -51,23 +51,23 @@ public final class GdStudioMusicService {
 
     private static final long REQUEST_WINDOW_MILLIS = 5L * 60L * 1000L;
     private static final int MAX_REQUESTS_PER_WINDOW = 50;
-    /** Slots kept for search/playback; artwork and lyrics stop requesting below this reserve. */
+    /** 为搜索/播放保留的槽位；封面和歌词在低于此余量时停止请求。 */
     private static final int COSMETIC_BUDGET_RESERVE = 12;
-    /** A bitrate downgrade retry only runs while this much budget is still free. */
+    /** 码率降级重试仅在此预算仍有空闲时运行。 */
     private static final int LADDER_MIN_BUDGET = 6;
-    /** A cross-source rescue costs one search plus one url request. */
+    /** 跨源救援花费一次搜索加一次 url 请求。 */
     private static final int CROSS_SOURCE_MIN_BUDGET = 10;
     private static final int CROSS_SOURCE_LIMIT = 1;
-    /** A lyric rescue is decoration; it only runs while playback has ample budget to spare. */
+    /** 歌词救援是装饰性的；它仅在播放预算充裕时运行。 */
     private static final int LYRIC_FALLBACK_MIN_BUDGET = 20;
-    /** Wall-clock guards so a slow provider cannot chain three full read timeouts. */
+    /** 墙上时钟守护，使缓慢的提供方无法串联三次完整读取超时。 */
     private static final long LADDER_DEADLINE_MILLIS = 18_000L;
     private static final long CROSS_SOURCE_DEADLINE_MILLIS = 22_000L;
 
     private static final long SEARCH_CACHE_MILLIS = 15_000L;
     private static final long COVER_CACHE_MILLIS = 6L * 60L * 60L * 1000L;
     private static final long LYRIC_CACHE_MILLIS = 6L * 60L * 60L * 1000L;
-    /** Empty artwork/lyric answers are remembered briefly instead of being re-requested. */
+    /** 空的封面/歌词回答被短暂记住，而非重复请求。 */
     private static final long NEGATIVE_CACHE_MILLIS = 10L * 60L * 1000L;
 
     private static final long UNSUPPORTED_COOLDOWN_MILLIS = 30L * 60L * 1000L;
@@ -89,7 +89,7 @@ public final class GdStudioMusicService {
     private GdStudioMusicService() {
     }
 
-    /** Runtime guidance shown in the source menu; entries remain selectable if upstream recovers. */
+    /** 源菜单中显示的运行时提示；若上游恢复，条目仍可选。 */
     public enum PlatformStatus {
         RECOMMENDED("稳定 · 搜索、封面、播放、歌词", 0x75D8A0),
         PLAYABLE("可播放 · 歌词可能为空", 0x82C7FF),
@@ -105,7 +105,7 @@ public final class GdStudioMusicService {
         }
     }
 
-    /** One selectable platform exposed by the GD Studio API. */
+    /** GD Studio API 暴露的一个可选平台。 */
     public static final class Platform {
         public final String key;
         public final String displayName;
@@ -118,7 +118,7 @@ public final class GdStudioMusicService {
         }
     }
 
-    /** Search result adapted from the GD Studio search response. */
+    /** 由 GD Studio 搜索响应适配来的搜索结果。 */
     public static final class GdTrack {
         public final String id;
         public final String name;
@@ -139,7 +139,7 @@ public final class GdStudioMusicService {
         }
     }
 
-    /** Upstream error carrying the documented {@code detail} message. */
+    /** 携带文档记载 {@code detail} 消息的上游错误。 */
     public static final class GdApiException extends RuntimeException {
         public final int httpStatus;
         public final boolean unsupportedSource;
@@ -151,7 +151,7 @@ public final class GdStudioMusicService {
         }
     }
 
-    /** Result of a GD Studio playback resolution, including which source actually served it. */
+    /** 一次 GD Studio 播放解析的结果，包括实际服务它的源。 */
     public static final class ResolveResult {
         public final String url;
         public final String format;
@@ -167,19 +167,19 @@ public final class GdStudioMusicService {
             this.bitrate = bitrate;
         }
 
-        /** True when the selected source failed and another healthy source rescued playback. */
+        /** 选中源失败、另一个健康源救回播放时为 true。 */
         public boolean isFallback() {
             return !platform.isEmpty() && !requestedPlatform.isEmpty() && !platform.equals(requestedPlatform);
         }
     }
 
-    /** Search results plus the source that actually answered, so the UI can explain a fallback. */
+    /** 搜索结果加上实际应答的源，使 UI 能解释一次兜底。 */
     public static final class SearchOutcome {
         public final List<GdTrack> tracks;
         public final String source;
         public final String requestedSource;
         public final String failureReason;
-        /** True when the selected source errored out; false when it simply had no match. */
+        /** 选中源报错时为 true；它只是没有匹配时为 false。 */
         public final boolean requestedSourceFailed;
 
         private SearchOutcome(List<GdTrack> tracks, String source, String requestedSource,
@@ -200,7 +200,7 @@ public final class GdStudioMusicService {
         }
     }
 
-    /** Runtime health of one source, used by the source menu and by the fallback picker. */
+    /** 一个源的运行时健康，由源菜单和兜底选择器使用。 */
     public static final class Health {
         public final boolean cooling;
         public final boolean unsupported;
@@ -228,7 +228,7 @@ public final class GdStudioMusicService {
         return PLATFORM_BY_KEY.containsKey(safe(key).toLowerCase(Locale.ROOT));
     }
 
-    /** Requests still available inside the documented five-minute window. */
+    /** 在文档记载的五分钟窗口内仍可用的请求数。 */
     public static int remainingRequestBudget() {
         synchronized (REQUEST_LOCK) {
             pruneTimestampsLocked(System.currentTimeMillis());
@@ -236,7 +236,7 @@ public final class GdStudioMusicService {
         }
     }
 
-    /** Runtime health snapshot; never null. */
+    /** 运行时健康快照；永不为 null。 */
     public static Health getHealth(String key) {
         String platform = safe(key).toLowerCase(Locale.ROOT);
         synchronized (HEALTH_LOCK) {
@@ -253,7 +253,7 @@ public final class GdStudioMusicService {
         }
     }
 
-    /** Short status suffix for the source menu, empty when the source looks healthy. */
+    /** 源菜单的简短状态后缀，源看起来健康时为空。 */
     public static String statusLabel(String key) {
         Health health = getHealth(key);
         if (!health.cooling) return "";
@@ -262,7 +262,7 @@ public final class GdStudioMusicService {
         return (health.unsupported ? "接口未开放 · " : "暂时故障 · ") + window + "后重试";
     }
 
-    /** GET types=search. The documented default page size is 20; do not request more than that. */
+    /** GET types=search。文档记载的默认页大小为 20；不要请求超过该数。 */
     public static List<GdTrack> search(String source, String keyword, int count, int page) throws Exception {
         String platform = requirePlatform(source);
         String name = safe(keyword);
@@ -291,8 +291,8 @@ public final class GdStudioMusicService {
         if (root.isJsonArray()) {
             for (JsonElement element : root.getAsJsonArray()) {
                 if (!element.isJsonObject()) continue;
-                // Some sources ignore the requested page size (JOOX answers 30 for count=5),
-                // so the payload is trimmed locally to keep list rendering predictable.
+                // 一些源会忽略请求的页大小（JOOX 对 count=5 返回 30），
+                //因此在本地裁剪载荷，使列表渲染可预测。
                 if (result.size() >= pageSize) break;
                 JsonObject item = element.getAsJsonObject();
                 String id = text(item, "id");
@@ -304,8 +304,8 @@ public final class GdStudioMusicService {
             }
         }
         List<GdTrack> immutable = Collections.unmodifiableList(result);
-        // Never pin an empty answer: some sources intermittently return an empty array, and a cached
-        // miss would make an immediate retry (or the user searching again) pointless for 15 seconds.
+        // 绝不固定空回答：一些源间歇性返回空数组，而缓存的
+        //未命中会让立即重试（或用户再次搜索）在 15 秒内变得无意义。
         if (!immutable.isEmpty()) {
             cacheSearch(cacheKey, immutable);
         }
@@ -313,9 +313,9 @@ public final class GdStudioMusicService {
     }
 
     /**
-     * Search with fallback protection: the selected source is always tried first, and only a real
-     * failure (or a documented "source not supported" answer) hands the query to one healthy
-     * source so the search screen still shows results instead of an empty list.
+     * 带兜底保护的搜索：总是先试选中源，仅当真正失败
+     * （或文档记载的"源不支持"回答）时才把查询交给一个健康
+     * 源，使搜索界面仍显示结果而非空列表。
      */
     public static SearchOutcome searchWithFallback(String source, String keyword, int count, int page) {
         String requested = normalizePlatform(source);
@@ -332,15 +332,15 @@ public final class GdStudioMusicService {
                 List<GdTrack> tracks = search(requested, name, count, page);
                 if (tracks.isEmpty() && isFlakyEmptySource(requested)
                         && remainingRequestBudget() >= LADDER_MIN_BUDGET) {
-                    // Bilibili answers HTTP 200 with an empty array at random, so the source the user
-                    // actually selected gets one more chance before the query leaves it.
+                    // Bilibili 随机返回 HTTP 200 加空数组，因此用户
+                    //实际选中的源在查询离开它之前再获一次机会。
                     tracks = search(requested, name, count, page);
                 }
                 if (!tracks.isEmpty()) {
                     return new SearchOutcome(tracks, requested, requested, "", false);
                 }
-                // An empty array is a legitimate answer, not an outage: some sources also return
-                // an empty array intermittently, which is why the query is still offered elsewhere.
+                // 空数组是合法回答，而非故障：一些源也会间歇性
+                //返回空数组，这就是为什么查询仍会在别处被提供。
                 reason = "该音源没有匹配结果";
             } catch (Throwable throwable) {
                 reason = describe(throwable);
@@ -361,13 +361,13 @@ public final class GdStudioMusicService {
                     return new SearchOutcome(tracks, candidate, requested, reason, failed);
                 }
             } catch (Throwable ignored) {
-                // Keep the primary failure as the user-facing reason.
+                // 保留主失败作为面向用户的原因。
             }
         }
         return new SearchOutcome(Collections.<GdTrack>emptyList(), "", requested, reason, failed);
     }
 
-    /** GET types=url. The requested value is one of the documented bitrates only. */
+    /** GET types=url。请求的值只能是文档记载的码率之一。 */
     public static JsonObject requestUrl(String source, String trackId, int br) throws Exception {
         String platform = requirePlatform(source);
         String id = safe(trackId);
@@ -381,18 +381,18 @@ public final class GdStudioMusicService {
     }
 
     /**
-     * GET types=pic with only the documented 300/500 size values.
+     * 仅用文档记载的 300/500 尺寸值的 GET types=pic。
      *
-     * <p>Artwork is optional decoration: a missing budget, a failing provider or an empty answer
-     * returns an empty string instead of throwing, and misses are negatively cached so the cover
-     * loader cannot poll a dead provider on every list frame.</p>
+     * <p>封面是可选装饰：缺少预算、提供方失败或空回答
+     * 都返回空字符串而非抛异常，未命中被负缓存，使封面
+     * 加载器不会在每个列表帧上轮询死掉的提供方。</p>
      */
     public static String getPicUrl(String source, String picId, int size) {
         String platform = normalizePlatform(source);
         String id = safe(picId);
         if (platform.isEmpty() || id.isEmpty()) return "";
-        // Bilibili already returns a usable (protocol-relative) artwork URL in pic_id,
-        // so no request is spent on resolving it again.
+        // Bilibili 已在 pic_id 中返回可用的（协议相对的）封面 URL，
+        //因此不花费请求再次解析它。
         String direct = directImageUrl(id);
         if (!direct.isEmpty()) return direct;
 
@@ -419,10 +419,10 @@ public final class GdStudioMusicService {
     }
 
     /**
-     * GET types=lyric: original LRC plus optional translated LRC.
+     * GET types=lyric：原始 LRC 加可选翻译 LRC。
      *
-     * <p>Lyrics are optional too. Empty answers (Bilibili never has any) are cached briefly so the
-     * lyric panel does not re-request them, and failures return {@code null} without throwing.</p>
+     * <p>歌词也是可选的。空回答（Bilibili 从来没有）被短暂缓存，使歌词面板
+     * 不重复请求，失败时返回 {@code null} 而非抛异常。</p>
      */
     public static Tuple<String, String> getLyric(String source, String lyricId) {
         String platform = normalizePlatform(source);
@@ -450,10 +450,10 @@ public final class GdStudioMusicService {
     }
 
     /**
-     * Lyrics with fallback protection. Bilibili never returns an LRC, and other sources occasionally
-     * have none, so a healthy source is matched by title/artist once and the answer (hit or miss) is
-     * cached. The rescue only runs while there is plenty of request budget left, because it costs a
-     * search plus a lyric request and must never compete with playback.
+     * 带兜底保护的歌词。Bilibili 从不返回 LRC，其他源偶尔也没有，
+     * 因此按标题/艺术家在一个健康源匹配一次，答案（命中或未命中）被缓存。
+     * 救援仅在请求预算仍充裕时运行，因为它花费
+     * 一次搜索加一次歌词请求，绝不能与播放竞争。
      */
     public static Tuple<String, String> getLyricWithFallback(String source, String lyricId,
                                                             String trackName, String artist) {
@@ -486,26 +486,50 @@ public final class GdStudioMusicService {
                     return rescued;
                 }
             } catch (Throwable ignored) {
-                // Lyrics are decoration: a failed rescue must never surface as an error.
+                // 歌词是装饰：失败的救援绝不能作为错误暴露。
             }
         }
-        // Remember the miss so the lyric panel does not retry it on every playback.
+        // 记住这次未命中，使歌词面板不会每次播放都重试。
         cache(LYRIC_FALLBACK_CACHE, cacheKey, new Tuple<>("", ""), NEGATIVE_CACHE_MILLIS);
         return primary;
     }
 
     /**
-     * Resolves exactly the selected source/id pair from the search response, walking the documented
-     * bitrate ladder when a source answers with an empty URL for the preferred tier.
+     * 清掉某首歌的歌词缓存（含跨源兜底的救援缓存）。
+     *
+     * <p>手动「重新匹配」要用它。这里的歌词缓存按小时计，而且<b>未命中也会被记住</b>——一次错误的
+     * 兜底匹配或一次误判的「没有歌词」，在那之后无论刷新多少次都拿不到新结果，用户看到的就是
+     * 「点了没反应」。</p>
+     *
+     * <p>与 {@link #getLyric} 用同一把 {@code CACHE_LOCK}：缓存是普通 {@code LinkedHashMap}，
+     * 从别的线程直接 remove 会和请求线程打架。</p>
+     */
+    public static void invalidateLyric(String source, String lyricId, String trackName) {
+        String platform = normalizePlatform(source);
+        String id = safe(lyricId);
+        if (platform.isEmpty() || id.isEmpty()) return;
+
+        String title = safe(trackName);
+        synchronized (CACHE_LOCK) {
+            LYRIC_CACHE.remove(platform + ':' + id);
+            if (!title.isEmpty()) {
+                LYRIC_FALLBACK_CACHE.remove(platform + ':' + id + ':' + title.toLowerCase(Locale.ROOT));
+            }
+        }
+    }
+
+    /**
+     * 从搜索响应精确解析选中的源/id 对，当源对首选档位返回空 URL 时，
+     * 走文档记载的码率阶梯。
      */
     public static ResolveResult resolveTrack(String source, String trackId, Quality quality) throws Exception {
         return resolveDirect(requirePlatform(source), safe(trackId), quality);
     }
 
     /**
-     * Playback resolve with full fallback protection: documented bitrate ladder on the selected
-     * source first, then one healthy recommended source re-matched by title/artist. Returns
-     * {@code null} only when every protected attempt legitimately produced no stream.
+     * 带完整兜底保护的播放解析：先走选中源上文档记载的码率阶梯，
+     * 再按标题/艺术家在一个健康推荐源重新匹配。仅当
+     * 每个受保护尝试都合法地没有产出流时返回 {@code null}。
      */
     public static ResolveResult resolveTrackWithFallback(String source, String trackId, String trackName,
                                                          String artist, Quality quality) throws Exception {
@@ -513,8 +537,8 @@ public final class GdStudioMusicService {
     }
 
     /**
-     * Skips the selected source entirely and only tries a healthy recommended source. Used when the
-     * selected source did return a URL but the downloaded bytes turned out not to be playable audio.
+     * 完全跳过选中源，只试一个健康的推荐源。用于
+     * 选中源确实返回了 URL、但下载的字节结果不是可播放音频时。
      */
     public static ResolveResult resolveCrossSource(String source, String trackName, String artist,
                                                   Quality quality) throws Exception {
@@ -555,7 +579,7 @@ public final class GdStudioMusicService {
                         return new ResolveResult(rescued.url, rescued.format, candidate, requested, rescued.bitrate);
                     }
                 } catch (Throwable ignored) {
-                    // A failed rescue must never mask the original error.
+                    // 失败的救援绝不能掩盖原始错误。
                 }
             }
         }
@@ -582,7 +606,7 @@ public final class GdStudioMusicService {
                             intValue(object, "br", ladder[index]));
                 }
             } catch (GdApiException error) {
-                // A source the upstream service does not expose will not answer another bitrate.
+                // 上游服务未暴露的源不会应答另一个码率。
                 if (error.unsupportedSource) throw error;
                 firstError = error;
             } catch (Exception error) {
@@ -590,13 +614,13 @@ public final class GdStudioMusicService {
             }
         }
         if (firstError != null) throw firstError;
-        // A cancelled attempt says nothing about the source, so it must not be flagged as broken.
+        // 被取消的尝试不说明源的问题，因此不得标记为损坏。
         ensureNotCancelled();
         markEmptyPlayback(platform);
         return null;
     }
 
-    /** Recommended, currently healthy sources that may rescue a failing selection. */
+    /** 可救回失败选择的、推荐的、当前健康的源。 */
     private static List<String> fallbackCandidates(String requested) {
         List<String> candidates = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
@@ -610,7 +634,7 @@ public final class GdStudioMusicService {
         return candidates;
     }
 
-    /** Sources observed to answer HTTP 200 with an empty array even for a matching query. */
+    /** 观察到即使对匹配查询也返回 HTTP 200 加空数组的源。 */
     private static boolean isFlakyEmptySource(String source) {
         return "bilibili".equals(safe(source).toLowerCase(Locale.ROOT));
     }
@@ -621,7 +645,7 @@ public final class GdStudioMusicService {
         return performer.isEmpty() ? name : name + ' ' + performer;
     }
 
-    /** Picks the closest search hit; simplified/traditional spellings still match by character overlap. */
+    /** 挑选最接近的搜索命中；简体/繁体拼写仍按字符重叠匹配。 */
     private static GdTrack bestMatch(List<GdTrack> tracks, String title, String artist) {
         if (tracks == null || tracks.isEmpty()) return null;
         GdTrack best = null;
@@ -632,8 +656,8 @@ public final class GdStudioMusicService {
             double nameScore = titleSimilarity(track.name, title);
             if (nameScore < .5) continue;
             double artistScore = similarity(track.artist, artist);
-            // Without an artist guard a rescue could silently play a different song that merely
-            // shares characters with the requested title.
+            // 没有艺术家守护，救援可能静默播放另一首仅仅
+            //与请求标题共享字符的歌。
             if (artistKnown && !safe(track.artist).isEmpty() && artistScore < .34) continue;
             double score = nameScore * 2.0 + artistScore;
             if (score > bestScore) {
@@ -709,7 +733,7 @@ public final class GdStudioMusicService {
         return "";
     }
 
-    /** Documented bitrate ladder: preferred tier first, then progressively safer tiers. */
+    /** 文档记载的码率阶梯：先首选档位，再逐级更安全。 */
     private static int[] bitrateLadder(Quality quality) {
         Quality requested = quality == null ? Quality.LOSSLESS : quality;
         switch (requested) {
@@ -787,7 +811,7 @@ public final class GdStudioMusicService {
         }
     }
 
-    /** Request classes with their own timeouts; artwork/lyrics must never stall a playback resolve. */
+    /** 有各自超时的请求类别；封面/歌词绝不能拖延播放解析。 */
     private enum RequestKind {
         SEARCH(12_000, 25_000, false),
         URL(12_000, 30_000, false),
@@ -826,7 +850,7 @@ public final class GdStudioMusicService {
         }
     }
 
-    /** Enforces GD Studio's documented rolling request budget before opening a connection. */
+    /** 在建立连接前强制 GD Studio 文档记载的滚动请求预算。 */
     private static void acquireRequestSlot(RequestKind kind) {
         synchronized (REQUEST_LOCK) {
             long now = System.currentTimeMillis();
@@ -859,13 +883,13 @@ public final class GdStudioMusicService {
         private long cooldownUntil;
         private boolean unsupported;
         private String lastError = "";
-        // A source can answer HTTP 200 for search yet never hand out a stream (kuwo). That state
-        // must survive a successful search, otherwise the menu would claim the source is healthy.
+        // 一个源可能对搜索应答 HTTP 200 却从不给出流（酷我）。该状态
+        //必须在一次成功搜索后保留，否则菜单会声称该源健康。
         private long playbackCooldownUntil;
         private String playbackError = "";
     }
 
-    /** True only for sources the upstream service reported as not supported, while still cooling. */
+    /** 仅对上游服务报告为不支持、且仍在冷却的源为 true。 */
     private static boolean isHardBlocked(String source) {
         Health health = getHealth(source);
         return health.unsupported && health.cooling;
@@ -875,7 +899,7 @@ public final class GdStudioMusicService {
         return getHealth(source).cooling;
     }
 
-    /** Clears transport-level failures. A known playback outage is kept until a stream succeeds. */
+    /** 清除传输层失败。已知的播放故障保留到一次流成功。 */
     private static void markSuccess(String source) {
         String platform = safe(source).toLowerCase(Locale.ROOT);
         if (platform.isEmpty()) return;
@@ -892,7 +916,7 @@ public final class GdStudioMusicService {
         }
     }
 
-    /** A real stream came back: the source is fully healthy again. */
+    /** 真实流回来了：该源再次完全健康。 */
     private static void markPlaybackSuccess(String source) {
         String platform = safe(source).toLowerCase(Locale.ROOT);
         if (platform.isEmpty()) return;
@@ -923,7 +947,7 @@ public final class GdStudioMusicService {
         }
     }
 
-    /** A documented 200 answer with an empty URL: the source lives, but playback is unavailable. */
+    /** 文档记载的 200 回答带空 URL：源活着，但播放不可用。 */
     private static void markEmptyPlayback(String source) {
         String platform = safe(source).toLowerCase(Locale.ROOT);
         if (platform.isEmpty()) return;
@@ -940,8 +964,8 @@ public final class GdStudioMusicService {
     }
 
     private static JsonElement json(String query, RequestKind kind, String source) throws Exception {
-        // A resolve abandoned by its caller (timeout cancels the future with an interrupt) must not
-        // keep consuming the documented 50 requests / 5 minutes for a result nobody will read.
+        // 被调用方放弃的解析（超时用中断取消 future）绝不能
+        //为没人会读的结果继续消耗文档记载的 50 请求 / 5 分钟。
         ensureNotCancelled();
         acquireRequestSlot(kind);
         HttpURLConnection connection = (HttpURLConnection) new URL(API_ENDPOINT + "?" + query).openConnection();
@@ -1071,8 +1095,8 @@ public final class GdStudioMusicService {
 
     private static List<Platform> buildPlatforms() {
         List<Platform> platforms = new ArrayList<>();
-        // Ordered by current end-to-end verification. All documented parameters are kept so a
-        // source that the upstream service restores becomes selectable without a client update.
+        // 按当前端到端验证排序。所有文档记载参数都保留，使
+        //上游服务恢复的源无需客户端更新即可再次可选。
         platforms.add(new Platform("netease", "网易云音乐", PlatformStatus.RECOMMENDED));
         platforms.add(new Platform("joox", "JOOX", PlatformStatus.RECOMMENDED));
         platforms.add(new Platform("bilibili", "哔哩哔哩", PlatformStatus.PLAYABLE));

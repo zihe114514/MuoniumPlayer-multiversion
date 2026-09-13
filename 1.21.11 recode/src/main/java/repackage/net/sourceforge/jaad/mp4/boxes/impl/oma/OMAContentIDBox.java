@@ -5,11 +5,9 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The ContentID box contains the unique identifier for the Content Object the 
- * metadata are associated with. The value of the content-ID must be the value 
- * of the content-ID stored in the Common Headers for this Content Object. There
- * must be exactly one ContentID sub-box per User-Data box, as the first sub-box
- * in the container.
+ * ContentID box 包含元数据所关联内容对象的唯一标识符。
+ * content-ID 的值必须等于该内容对象 Common Headers 中存储的 content-ID 值。
+ * 每个 User-Data box 中必须恰好有一个 ContentID 子 box，且作为容器中第一个子 box。
  * 
  * @author in-somnia
  */
@@ -30,9 +28,9 @@ public class OMAContentIDBox extends FullBox {
 	}
 
 	/**
-	 * Returns the content-ID string.
+	 * 返回 content-ID 字符串。
 	 * 
-	 * @return the content-ID
+	 * @return content-ID
 	 */
 	public String getContentID() {
 		return contentID;

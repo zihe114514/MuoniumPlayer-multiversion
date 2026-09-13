@@ -14,7 +14,9 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.AutomixSettings;
+import com.muoniumplayer.core.ncm.music.FoliaModelManager;
 import com.muoniumplayer.core.ncm.music.MusicAudioCache;
+import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
@@ -198,7 +200,7 @@ public class GuiHudEditor extends GuiScreen {
             int panelH = getSettingsLayout().panelHeight;
 
             drawEditorBackdrop(panelX, panelY, panelH);
-            DownloadDynamicIsland.renderEditorPreview();
+            if (!DownloadDynamicIsland.isDownloadActive()) DownloadDynamicIsland.renderEditorPreview();
 
             int wheel = resetConfirmationVisible ? 0 : Mouse.getDWheel();
             boolean overPanel = isInside(mouseX, mouseY, panelX, panelY, SETTINGS_W, panelH);
@@ -560,9 +562,22 @@ public class GuiHudEditor extends GuiScreen {
                 drawToggleRow(fr, "无缝切换", AutomixSettings.isEnabled(),
                         x + 6, rowY, mouseX, mouseY);
                 rowY += COLOR_ROW_H;
-                drawChoiceRow(fr, "重叠时长", AutomixSettings.getOverlapLabel(),
+                drawChoiceRow(fr, "处理方案", AutomixSettings.getEngineLabel(),
                         x + 6, rowY, mouseX, mouseY);
                 rowY += COLOR_ROW_H;
+                if (AutomixSettings.isFoliaEngine()) {
+                    drawToggleRow(fr, "表现模式", AutomixSettings.isPerformanceModeEnabled(),
+                            x + 6, rowY, mouseX, mouseY);
+                    rowY += COLOR_ROW_H;
+                }
+                drawToggleRow(fr, "过渡动画", AutomixSettings.isTransitionAnimationEnabled(),
+                        x + 6, rowY, mouseX, mouseY);
+                rowY += COLOR_ROW_H;
+                if (!AutomixSettings.isFoliaEngine()) {
+                    drawChoiceRow(fr, "原版重叠时长", AutomixSettings.getOverlapLabel(),
+                            x + 6, rowY, mouseX, mouseY);
+                    rowY += COLOR_ROW_H;
+                }
                 drawToggleRow(fr, "跳过前奏", AutomixSettings.isSkipIntroEnabled(),
                         x + 6, rowY, mouseX, mouseY);
                 rowY += COLOR_ROW_H;
@@ -578,9 +593,37 @@ public class GuiHudEditor extends GuiScreen {
                 drawToggleRow(fr, "节奏锁定", AutomixSettings.isTempoLockEnabled(),
                         x + 6, rowY, mouseX, mouseY);
                 rowY += COLOR_ROW_H;
-                drawToggleRow(fr, "音高跳跃", AutomixSettings.isPitchMatchEnabled(),
-                        x + 6, rowY, mouseX, mouseY);
-                rowY += COLOR_ROW_H;
+                if (!AutomixSettings.isFoliaEngine()) {
+                    drawToggleRow(fr, "音高跳跃", AutomixSettings.isPitchMatchEnabled(),
+                            x + 6, rowY, mouseX, mouseY);
+                    rowY += COLOR_ROW_H;
+                }
+                if (AutomixSettings.isFoliaEngine()) {
+                    drawSectionHeader(fr, "分析模型", true, x + 5, rowY,
+                            SETTINGS_W - 10, mouseX, mouseY, 0xFFD8A657);
+                    rowY += SECTION_H;
+                    drawChoiceRow(fr, FoliaModelManager.statusLabel(FoliaModelManager.Kind.BEAT_THIS), "点击安装",
+                            x + 6, rowY, mouseX, mouseY);
+                    rowY += COLOR_ROW_H;
+                    drawChoiceRow(fr, FoliaModelManager.statusLabel(FoliaModelManager.Kind.HTDEMUCS), "点击安装",
+                            x + 6, rowY, mouseX, mouseY);
+                    rowY += COLOR_ROW_H;
+                    drawChoiceRow(fr, FoliaModelManager.statusLabel(FoliaModelManager.Kind.RUNTIME), "点击安装",
+                            x + 6, rowY, mouseX, mouseY);
+                    rowY += COLOR_ROW_H;
+                    drawChoiceRow(fr, "从本机查找模型", "点击扫描",
+                            x + 6, rowY, mouseX, mouseY);
+                    rowY += COLOR_ROW_H;
+                    drawChoiceRow(fr, "模型位置", FoliaModelManager.directory().getAbsolutePath(),
+                            x + 6, rowY, mouseX, mouseY);
+                    rowY += COLOR_ROW_H;
+                    drawChoiceRow(fr, "恢复默认模型位置", "点击恢复",
+                            x + 6, rowY, mouseX, mouseY);
+                    rowY += COLOR_ROW_H;
+                    drawChoiceRow(fr, "删除所有模型", "点击删除",
+                            x + 6, rowY, mouseX, mouseY);
+                    rowY += COLOR_ROW_H;
+                }
             }
 
             drawSectionHeader(fr, "存储", storageExpanded, x + 5, rowY,
@@ -1132,10 +1175,31 @@ public class GuiHudEditor extends GuiScreen {
                 }
                 rowY += COLOR_ROW_H;
                 if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
-                    AutomixSettings.cycleOverlapSeconds();
+                    AutomixSettings.cycleEngine();
                     return;
                 }
                 rowY += COLOR_ROW_H;
+                if (AutomixSettings.isFoliaEngine()) {
+                    if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                        AutomixSettings.setPerformanceModeEnabled(!AutomixSettings.isPerformanceModeEnabled());
+                        return;
+                    }
+                    rowY += COLOR_ROW_H;
+                }
+                if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                    boolean enabled = !AutomixSettings.isTransitionAnimationEnabled();
+                    AutomixSettings.setTransitionAnimationEnabled(enabled);
+                    if (enabled) AutomixTransitionAnimation.preview();
+                    return;
+                }
+                rowY += COLOR_ROW_H;
+                if (!AutomixSettings.isFoliaEngine()) {
+                    if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                        AutomixSettings.cycleOverlapSeconds();
+                        return;
+                    }
+                    rowY += COLOR_ROW_H;
+                }
                 if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
                     AutomixSettings.setSkipIntroEnabled(!AutomixSettings.isSkipIntroEnabled());
                     return;
@@ -1161,11 +1225,59 @@ public class GuiHudEditor extends GuiScreen {
                     return;
                 }
                 rowY += COLOR_ROW_H;
-                if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
-                    AutomixSettings.setPitchMatchEnabled(!AutomixSettings.isPitchMatchEnabled());
-                    return;
+                if (!AutomixSettings.isFoliaEngine()) {
+                    if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                        AutomixSettings.setPitchMatchEnabled(!AutomixSettings.isPitchMatchEnabled());
+                        return;
+                    }
+                    rowY += COLOR_ROW_H;
                 }
-                rowY += COLOR_ROW_H;
+                if (AutomixSettings.isFoliaEngine()) {
+                    rowY += SECTION_H;
+                    if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                        FoliaModelManager.downloadAsync(FoliaModelManager.Kind.BEAT_THIS,
+                                (ok, detail) -> DownloadDynamicIsland.showModelOperationResult(
+                                        ok ? "模型安装完成" : "模型安装失败", detail, ok));
+                        return;
+                    }
+                    rowY += COLOR_ROW_H;
+                    if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                        FoliaModelManager.downloadAsync(FoliaModelManager.Kind.HTDEMUCS,
+                                (ok, detail) -> DownloadDynamicIsland.showModelOperationResult(
+                                        ok ? "模型安装完成" : "模型安装失败", detail, ok));
+                        return;
+                    }
+                    rowY += COLOR_ROW_H;
+                    if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                        FoliaModelManager.downloadAsync(FoliaModelManager.Kind.RUNTIME,
+                                (ok, detail) -> DownloadDynamicIsland.showModelOperationResult(
+                                        ok ? "模型安装完成" : "模型安装失败", detail, ok));
+                        return;
+                    }
+                    rowY += COLOR_ROW_H;
+                    if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                        DownloadDynamicIsland.showCacheSweep(FoliaModelManager.scanKnownFolders(), true);
+                        return;
+                    }
+                    rowY += COLOR_ROW_H;
+                    if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                        DownloadDynamicIsland.showCacheSweep(FoliaModelManager.chooseDirectory(), true);
+                        return;
+                    }
+                    rowY += COLOR_ROW_H;
+                    if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                        FoliaModelManager.resetDirectory();
+                        DownloadDynamicIsland.showCacheSweep("模型位置已恢复默认", true);
+                        return;
+                    }
+                    rowY += COLOR_ROW_H;
+                    if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                        FoliaModelManager.deleteAll();
+                        DownloadDynamicIsland.showCacheSweep("Folia 模型与运行组件已删除", true);
+                        return;
+                    }
+                    rowY += COLOR_ROW_H;
+                }
             }
 
             if (isInside(mouseX, mouseY, panelX + 5, rowY, SETTINGS_W - 10, SECTION_H)) {

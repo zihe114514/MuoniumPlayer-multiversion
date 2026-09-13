@@ -248,7 +248,7 @@ public class CoverflowOverlay extends ExtensionScreen implements SharedConstants
                     }
                 }
 
-                // distinct the list
+                // 对列表去重
                 renderList = renderList.stream().distinct().collect(Collectors.toList());
             }
         });
@@ -369,11 +369,11 @@ public class CoverflowOverlay extends ExtensionScreen implements SharedConstants
             renderingData.scale = Interpolations.interpolate(renderingData.scale, 1.0, 0.2f);
         }
 
-        // rotate
+        // 旋转
         api.getGLStateManager().rotate(renderingData.rotateDeg, 0, 1, 0);
         api.getGLStateManager().translate(-(offsetX + coverSize * 0.5), -coverSize * 0.5, 0);
 
-        // scale
+        // 缩放
         api.getGLStateManager().translate(offsetX + coverSize * 0.5, 0, 0);
         api.getGLStateManager().scale(renderingData.scale, renderingData.scale, 1);
         api.getGLStateManager().translate(-(offsetX + coverSize * 0.5), 0, 0);
@@ -394,7 +394,7 @@ public class CoverflowOverlay extends ExtensionScreen implements SharedConstants
                     0, 1, 1, 0, texture.getGlTextureId(), true, 0.85f, 0f);
 
             if (renderingData.flipped || (renderingData.rotateDeg < -5 && index == i)) {
-                // flip it
+                // 翻转它
                 api.getGLStateManager().translate(offsetX + coverSize * 0.5, coverSize * 0.5, 0);
                 api.getGLStateManager().rotate(-180, 0, 1, 0);
                 api.getGLStateManager().translate(-(offsetX + coverSize * 0.5), -coverSize * 0.5, 0);

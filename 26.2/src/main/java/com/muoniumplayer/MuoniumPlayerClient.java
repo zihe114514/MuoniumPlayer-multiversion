@@ -6,6 +6,7 @@ import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.MusicHotkeys;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.FfmpegNotice;
+import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
@@ -53,7 +54,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "1.4.8";
+    public static final String MOD_VERSION = "1.4.10";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -412,8 +413,10 @@ public final class MuoniumPlayerClient {
         Interpolations.calcFrameDelta();
 
         // 两套 HUD 设置界面都自己画灵动岛的专用预览，这里再画一次会叠成双层。
-        if (!(screen instanceof GuiHudEditor) && !(screen instanceof GuiHudEditorPro)) {
+        if (DownloadDynamicIsland.isDownloadActive()
+                || (!(screen instanceof GuiHudEditor) && !(screen instanceof GuiHudEditorPro))) {
             DownloadDynamicIsland.render();
         }
+        AutomixTransitionAnimation.render();
     }
 }

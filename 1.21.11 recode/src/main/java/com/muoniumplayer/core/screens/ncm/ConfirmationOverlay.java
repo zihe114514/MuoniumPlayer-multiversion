@@ -9,8 +9,8 @@ import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 
 /**
- * Compact modal confirmation dialog used for destructive player actions.
- * It deliberately keeps the pending operation untouched until the user confirms.
+ * 用于破坏性播放器操作的紧凑模态确认对话框。
+ * 它刻意在用户确认前不动待执行操作。
  */
 public final class ConfirmationOverlay extends NCMPanel {
 
@@ -63,7 +63,7 @@ public final class ConfirmationOverlay extends NCMPanel {
         mask.setColor(0x000000).setAlpha(.48f);
         mask.setBeforeRenderCallback(() -> mask.setMargin(0));
 
-        // Clicking outside dismisses the dialog and never reaches the panel beneath it.
+        // 点击外部关闭对话框，绝不落到其下方的面板。
         setOnClickCallback((x, y, button) -> {
             if (button == 0) {
                 cancel();
@@ -76,9 +76,9 @@ public final class ConfirmationOverlay extends NCMPanel {
         addChild(dialog);
         dialog.setOnClickCallback((x, y, button) -> true);
         dialog.setBeforeRenderCallback(() -> {
-            // The old 174-unit card left a large, visually empty middle section at
-            // normal GUI scale. Keep destructive confirmations compact and arrange
-            // all information in one clear header / message / actions flow.
+            // 旧的 174 单位卡片在普通 GUI 缩放下留下一大块视觉上空旷的中部。
+            //把破坏性确认保持紧凑，把
+            //所有信息安排在一条清晰的头部/消息/操作流中。
             double width = Math.max(248, Math.min(340, getWidth() - 32));
             // 先按这个宽度把说明换行，再由行数决定卡片高度：隐私授权类的说明有好几行，
             // 固定高度只能把它裁成一行，用户根本看不到自己同意了什么。
@@ -103,8 +103,8 @@ public final class ConfirmationOverlay extends NCMPanel {
         warningBadge.setColor(0xD87857);
         warningBadge.setBeforeRenderCallback(() -> warningBadge.setBounds(18, 16, 24, 24));
 
-        // Fontello's warning glyph is bundled with the player and avoids the malformed
-        // half-width exclamation fallback that was visible on early Java 8 runtimes.
+        // Fontello 的警告字形随播放器内置，避免了畸形的
+        //半角感叹号回退，后者在早期 Java 8 运行时上可见。
         LabelWidget warningIcon = new LabelWidget(FontelloIcons.WARNING, FontManager.fontello18);
         dialog.addChild(warningIcon);
         warningIcon.setClickable(false);

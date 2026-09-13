@@ -193,6 +193,33 @@ public class CloudMusicApi {
         return RequestUtil.createRequest("/api/song/lyric/v1", data, OptionsUtil.createOptions());
     }
 
+    /**
+     * 网易云副歌（高潮段）区间。
+     *
+     * <p>端点和参数与 {@link #lyricNew(long)} <b>完全相同</b>，唯一的差别是 {@code cp} 传 {@code true}
+     * ——响应里因此多出一个 {@code chorus} 数组，每项给出该段的起止毫秒。上游参考实现
+     * （NeteaseCloudMusicApi 的 {@code chorus} 模块）就是同一个 {@code /api/song/lyric/v1} 加这一个开关。
+     * 单独一个方法而不是改 {@code lyricNew}，是为了不让歌词主链路的响应形状跟着变。</p>
+     *
+     * <p>未登录、无版权、纯音乐都会正常返回只是没有 {@code chorus} 字段，调用方按「没有区间」处理。</p>
+     */
+    public RequestUtil.RequestAnswer chorus(long id) {
+
+        Map<String, Object> data = new HashMap<>();
+
+        data.put("id", id);
+        data.put("cp", true);
+        data.put("tv", 0);
+        data.put("lv", 0);
+        data.put("rv", 0);
+        data.put("kv", 0);
+        data.put("yv", 0);
+        data.put("ytv", 0);
+        data.put("yrv", 0);
+
+        return RequestUtil.createRequest("/api/song/lyric/v1", data, OptionsUtil.createOptions());
+    }
+
     public RequestUtil.RequestAnswer loginStatus() {
 
         RequestUtil.RequestAnswer request = RequestUtil.createRequest("/api/w/nuser/account/get", new HashMap<>(), OptionsUtil.createOptions("weapi"));

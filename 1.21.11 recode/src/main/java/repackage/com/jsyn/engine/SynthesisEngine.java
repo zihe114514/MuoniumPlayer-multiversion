@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.engine;
@@ -35,21 +35,21 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Logger;
 
-//TODO Resolve problem with HearDAHDSR where "Rate" port.set is not reflected in knob. Engine not running.
-//TODO new tutorial and docs on website
-//TODO AutoStop on DAHDSR
-//TODO Test/example SequentialData queueOn and queueOff
+//TODO 解决HearDAHDSR的问题，其中“Rate” port.set未反映在旋钮中。发动机未运行。
+//TODO 在网站上新增教程和文档
+//DAHDSR上的TODO 自动停止
+//TODO 测试/示例SequentialData queueOn和queueOff
 
-//TODO Abstract device interface. File device!
-//TODO Measure thread switching sync, performance for multi-core synthesis. Use 4 core pro.
-//TODO Optimize SineOscillatorPhaseModulated
-//TODO More circuits.
-//TODO DC blocker
-//TODO Swing scope probe UIs, auto ranging
+//TODO 抽象设备界面，文件设备！
+//TODO 测量线程切换同步，多核合成性能。使用4核专业版。
+//TODO 优化正弦振荡器相位调制
+//TODO 更多电路。
+//TODO 直流阻断器
+//TODO 摆动视野镜探头UI ，自动测距
 
 /**
- * Internal implementation of JSyn Synthesizer. The public API is in the Synthesizer interface. This
- * class might be used directly internally.
+ * JSyn Synthesizer的内部实现。公共API位于Synthesizer接口中。此
+ * 该类可能在内部被直接使用。
  *
  * @author Phil Burk (C) 2009 Mobileer Inc
  * @see Synthesizer
@@ -58,7 +58,7 @@ public class SynthesisEngine implements Synthesizer {
 
     private final static int BLOCKS_PER_BUFFER = 8;
     private final static int FRAMES_PER_BUFFER = Synthesizer.FRAMES_PER_BLOCK * BLOCKS_PER_BUFFER;
-    // I have measured JavaSound taking 1200 msec to close devices.
+    // 我实测 JavaSound 关闭设备耗时 1200 毫秒。
     private static final int MAX_THREAD_STOP_TIME = 2000;
 
     public static final int DEFAULT_FRAME_RATE = 44100;
@@ -77,21 +77,21 @@ public class SynthesisEngine implements Synthesizer {
     private int frameRate = DEFAULT_FRAME_RATE;
     private double framePeriod = 1.0 / frameRate;
 
-    // List of all units added to the synth.
+    // 添加到合成器的所有单元的列表。
     private final ArrayList<UnitGenerator> allUnitList = new ArrayList<>();
-    // List of running units.
+    // 运行单元列表。
     private final ArrayList<UnitGenerator> runningUnitList = new ArrayList<>();
-    // List of units stopping because of autoStop.
+    // 由于自动停止而停止的设备列表。
     private final ArrayList<UnitGenerator> stoppingUnitList = new ArrayList<>();
 
-    // private int numOutputChannels;
-    // private int numInputChannels;
+    // private int numOutputChannels ；
+    // private int numInputChannels ；
     private final CopyOnWriteArrayList<Runnable> audioTasks = new CopyOnWriteArrayList<>();
     private double mOutputLatency;
     private double mInputLatency;
-    /** A fraction corresponding to exactly -96 dB. */
+    /** 精确对应于-96 dB的分数。*/
     public static final double DB96 = (1.0 / 63095.73444801943);
-    /** A fraction that is approximately -90.3 dB. Defined as 1 bit of an S16. */
+    /** 约等于 -90.3 dB 的小数。定义为 S16 的 1 个比特。 */
     public static final double DB90 = (1.0 / (1 << 15));
 
     static Logger logger = Logger.getLogger(SynthesisEngine.class.getName());
@@ -124,8 +124,8 @@ public class SynthesisEngine implements Synthesizer {
     }
 
     /**
-     * If set true then audio data will be pulled from the output ports of connected unit
-     * generators. The final unit in a tree of units needs to be start()ed.
+     * 如果设置为true ，则音频数据将从连接设备的输出端口拉出
+     * 生成器。单元树中最末端的单元需要调用 start()。
      *
      * @param pullDataEnabled
      */
@@ -149,7 +149,7 @@ public class SynthesisEngine implements Synthesizer {
 
         InterleavingBuffer(int framesPerBuffer, int framesPerBlock, int samplesPerFrame) {
             interleavedBuffer = new double[framesPerBuffer * samplesPerFrame];
-            // Allocate buffers for each channel of synthesis output.
+            // 为合成输出的每个声道分配缓冲区。
             blockBuffers = new ChannelBlockBuffer[samplesPerFrame];
             for (int i = 0; i < blockBuffers.length; i++) {
                 blockBuffers[i] = new ChannelBlockBuffer(framesPerBlock);
@@ -199,13 +199,13 @@ public class SynthesisEngine implements Synthesizer {
 
     @Override
     public void start() {
-        // TODO Use constants.
+        // TODO 使用常量。
         start(DEFAULT_FRAME_RATE, -1, 0, -1, 2);
     }
 
     @Override
     public void start(int frameRate) {
-        // TODO Use constants.
+        // TODO 使用常量。
         start(frameRate, -1, 0, -1, 2);
     }
 
@@ -251,10 +251,10 @@ public class SynthesisEngine implements Synthesizer {
         }
 
         if (useRealTime) {
-            // Stop audio synthesis and all units.
+            // 停止音频合成及所有单元。
             if (engineThread != null) {
                 try {
-                    // Interrupt now, otherwise audio thread will wait for audio I/O.
+                    // 立即中断，否则音频线程将等待音频 I/O。
                     engineThread.requestStop();
                     engineThread.join(MAX_THREAD_STOP_TIME);
                 } catch (InterruptedException e) {
@@ -310,7 +310,7 @@ public class SynthesisEngine implements Synthesizer {
                 String msg = String.format("Output Latency = %5.1f msec",
                         1000 * mOutputLatency);
                 logger.fine(msg);
-                // Buy some time while we fill the buffer.
+                // 在我们填充缓冲区的同时争取一点时间。
                 try {
                     audioOutputStream.write(outputBuffer.interleavedBuffer);
                 } catch (IOException e) {
@@ -323,7 +323,7 @@ public class SynthesisEngine implements Synthesizer {
 
                     boolean throttled = false;
                     if (audioInputStream != null) {
-                        // This call will block when the input is empty.
+                        // 当输入为空时，此调用将被阻止。
                         audioInputStream.read(inputBuffer.interleavedBuffer);
                         throttled = true;
                     }
@@ -332,12 +332,12 @@ public class SynthesisEngine implements Synthesizer {
                     generateNextBuffer();
 
                     if (audioOutputStream != null) {
-                        // This call will block when the output is full.
+                        // 当输出已满时，此调用将阻塞。
                         audioOutputStream.write(outputBuffer.interleavedBuffer);
                         throttled = true;
                     }
                     if (!throttled && isRealTime()) {
-                        Thread.sleep(2); // avoid spinning and eating up CPU
+                        Thread.sleep(2); // 避免空转并消耗 CPU
                     }
 
                 } catch (Throwable e) {
@@ -348,7 +348,7 @@ public class SynthesisEngine implements Synthesizer {
             }
 
             logger.info("JSyn synthesis thread in finally code.");
-            // Stop audio system.
+            // 音频系统
             if (audioInputStream != null) {
                 audioInputStream.stop();
             }
@@ -365,7 +365,7 @@ public class SynthesisEngine implements Synthesizer {
         }
     }
 
-    // TODO We need to implement a sharedSleeper like we use in JSyn1.
+    // TODO 我们需要像在 JSyn1 中那样实现一个 sharedSleeper。
     public void generateNextBuffer() {
         int outIndex = 0;
         int inIndex = 0;
@@ -375,8 +375,8 @@ public class SynthesisEngine implements Synthesizer {
             }
 
             TimeStamp timeStamp = createTimeStamp();
-            // Try putting this up here so incoming time-stamped events will get
-            // scheduled later.
+            // 请尝试将此内容放在这里，以便收到带有时间戳的事件
+            // 稍后计划
             processScheduledCommands(timeStamp);
             clearBlockBuffers();
             synthesizeBuffer();
@@ -407,7 +407,7 @@ public class SynthesisEngine implements Synthesizer {
                 logger.fine("repackage/processing " + command + ", at time " + timeStamp.getTime());
                 command.run();
             }
-            // Get next list of commands at the given time.
+            // 获取给定时刻的下一组命令。
             timeList = commandQueue.removeNextList(timeStamp);
         }
     }
@@ -453,7 +453,7 @@ public class SynthesisEngine implements Synthesizer {
                         unit.generate(0, Synthesizer.FRAMES_PER_BLOCK);
                     }
                 }
-                // Remove any units that got auto stopped.
+                // 移除所有已自动停止的单元。
                 for (UnitGenerator ugen : stoppingUnitList) {
                     runningUnitList.remove(ugen);
                     ugen.flattenOutputs();
@@ -506,8 +506,8 @@ public class SynthesisEngine implements Synthesizer {
 
     @Override
     public void startUnit(final UnitGenerator unit, TimeStamp timeStamp) {
-        // Don't start if it is a component in a circuit because it will be
-        // executed by the circuit.
+        // 若它是某个 circuit 中的组件，则不要启动，因为它会
+        // 由电路执行。
         if (unit.getCircuit() == null) {
             scheduleCommand(timeStamp, () -> internalStartUnit(unit));
         }
@@ -530,7 +530,7 @@ public class SynthesisEngine implements Synthesizer {
 
     private void internalStartUnit(UnitGenerator unit) {
         // logger.info( "internalStartUnit " + unit + " with circuit " +
-        // unit.getCircuit() );
+        // unit.getCircuit());
         if (unit.getCircuit() == null) {
             synchronized (runningUnitList) {
                 if (!runningUnitList.contains(unit)) {
@@ -542,7 +542,7 @@ public class SynthesisEngine implements Synthesizer {
         // {
         // logger.info(
         // "internalStartUnit detected race condition !!!! from old JSyn" + unit
-        // + " with circuit " + unit.getCircuit() );
+        // + "with circuit" + unit.getCircuit());
         // }
     }
 
@@ -551,7 +551,7 @@ public class SynthesisEngine implements Synthesizer {
     }
 
     public double convertTimeToExponentialScaler(double duration) {
-        // Calculate scaler so that scaler^frames = target/source
+        // 计算缩放因子，使 scaler^frames = target/source
         double numFrames = duration * getFrameRate();
         return Math.pow(DB90, (1.0 / numFrames));
     }
@@ -562,7 +562,7 @@ public class SynthesisEngine implements Synthesizer {
     }
 
     /**
-     * @return the frameRate
+     * @return 帧速率
      */
     @Override
     public int getFrameRate() {
@@ -570,21 +570,21 @@ public class SynthesisEngine implements Synthesizer {
     }
 
     /**
-     * @return the inverse of the frameRate for efficiency
+     * @return 效率帧率的倒数
      */
     @Override
     public double getFramePeriod() {
         return framePeriod;
     }
 
-    /** Convert a short value to a double in the range -1.0 to almost 1.0. */
+    /** 将短值转换为-1.0到近1.0范围内的双精度值。*/
     public static double convertShortToDouble(short sdata) {
         return (sdata * (1.0 / Short.MAX_VALUE));
     }
 
     /**
-     * Convert a double value in the range -1.0 to almost 1.0 to a short. Double value is clipped
-     * before converting.
+     * 将-1.0到近1.0范围内的双精度值转换为短精度值。双值被裁剪
+     * 在转换之前。
      */
     public static short convertDoubleToShort(double d) {
         final double maxValue = ((double) (Short.MAX_VALUE - 1)) / Short.MAX_VALUE;
@@ -608,7 +608,7 @@ public class SynthesisEngine implements Synthesizer {
 
     @Override
     public double getUsage() {
-        // use temp so we don't have to synchronize
+        // 使用temp ，这样我们就不必同步
         return 0.0;
     }
 

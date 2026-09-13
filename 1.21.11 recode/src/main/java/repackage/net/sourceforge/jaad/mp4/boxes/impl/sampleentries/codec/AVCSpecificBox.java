@@ -3,7 +3,7 @@ package repackage.net.sourceforge.jaad.mp4.boxes.impl.sampleentries.codec;
 import java.io.IOException;
 import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 
-//defined in ISO 14496-15 as 'AVC Configuration Record'
+//在 ISO 14496-15 中定义为 'AVC Configuration Record'
 public class AVCSpecificBox extends CodecSpecificBox {
 
 	private int configurationVersion, profile, level, lengthSize;
@@ -20,11 +20,11 @@ public class AVCSpecificBox extends CodecSpecificBox {
 		profile = in.read();
 		profileCompatibility = (byte) in.read();
 		level = in.read();
-		//6 bits reserved, 2 bits 'length size minus one'
+		//6 位保留，2 位 'length size minus one'
 		lengthSize = (in.read()&3)+1;
 
 		int len;
-		//3 bits reserved, 5 bits number of sequence parameter sets
+		//3 位保留，5 位 sequence parameter set 数量
 		final int sequenceParameterSets = in.read()&31;
 
 		sequenceParameterSetNALUnit = new byte[sequenceParameterSets][];
@@ -49,20 +49,19 @@ public class AVCSpecificBox extends CodecSpecificBox {
 	}
 
 	/**
-	 * The AVC profile code as defined in ISO/IEC 14496-10.
+	 * ISO/IEC 14496-10 中定义的 AVC profile 代码。
 	 *
-	 * @return the AVC profile
+	 * @return AVC profile
 	 */
 	public int getProfile() {
 		return profile;
 	}
 
 	/**
-	 * The profileCompatibility is a byte defined exactly the same as the byte
-	 * which occurs between the profileIDC and levelIDC in a sequence parameter
-	 * set (SPS), as defined in ISO/IEC 14496-10.
+	 * profileCompatibility 是一个字节，其定义与 sequence parameter set（SPS）
+	 * 中 profileIDC 与 levelIDC 之间出现的字节完全相同，如 ISO/IEC 14496-10 所定义。
 	 *
-	 * @return the profile compatibility byte
+	 * @return profile 兼容字节
 	 */
 	public byte getProfileCompatibility() {
 		return profileCompatibility;
@@ -73,31 +72,28 @@ public class AVCSpecificBox extends CodecSpecificBox {
 	}
 
 	/**
-	 * The length in bytes of the NALUnitLength field in an AVC video sample or
-	 * AVC parameter set sample of the associated stream. The value of this
-	 * field 1, 2, or 4 bytes.
+	 * 关联流的 AVC 视频采样或 AVC 参数集采样中 NALUnitLength 字段的字节长度。
+	 * 此字段值为 1、2 或 4 字节。
 	 *
-	 * @return the NALUnitLength length in bytes
+	 * @return NALUnitLength 的字节长度
 	 */
 	public int getLengthSize() {
 		return lengthSize;
 	}
 
 	/**
-	 * The SPS NAL units, as specified in ISO/IEC 14496-10. SPSs shall occur in
-	 * order of ascending parameter set identifier with gaps being allowed.
+	 * ISO/IEC 14496-10 规定的 SPS NAL 单元。SPS 应按参数集标识符升序出现，允许有间隔。
 	 *
-	 * @return all SPS NAL units
+	 * @return 所有 SPS NAL 单元
 	 */
 	public byte[][] getSequenceParameterSetNALUnits() {
 		return sequenceParameterSetNALUnit;
 	}
 
 	/**
-	 * The PPS NAL units, as specified in ISO/IEC 14496-10. PPSs shall occur in
-	 * order of ascending parameter set identifier with gaps being allowed.
+	 * ISO/IEC 14496-10 规定的 PPS NAL 单元。PPS 应按参数集标识符升序出现，允许有间隔。
 	 *
-	 * @return all PPS NAL units
+	 * @return 所有 PPS NAL 单元
 	 */
 	public byte[][] getPictureParameterSetNALUnits() {
 		return pictureParameterSetNALUnit;

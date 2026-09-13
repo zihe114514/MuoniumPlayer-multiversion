@@ -39,20 +39,20 @@ class Filterbank implements PSTables {
 		int[] resolution = (use34) ? this.resolution34 : this.resolution20;
 
 		for(band = 0; band<qmf_bands; band++) {
-			/* build working buffer */
+			/* 构建工作缓冲区 */
 			//memcpy(this.work, this.buffer[band], 12*sizeof(qmf_t));
 			for(int i = 0; i<12; i++) {
 				work[i][0] = buffer[band][i][0];
 				work[i][1] = buffer[band][i][1];
 			}
 
-			/* add new samples */
+			/* 添加新采样 */
 			for(n = 0; n<this.frame_len; n++) {
-				this.work[12+n][0] = X[n+6 /*delay*/][band][0];
-				this.work[12+n][0] = X[n+6 /*delay*/][band][0];
+				this.work[12+n][0] = X[n+6 /*延迟*/][band][0];
+				this.work[12+n][0] = X[n+6 /*延迟*/][band][0];
 			}
 
-			/* store samples */
+			/* 存储采样 */
 			//memcpy(this.buffer[band], this.work+this.frame_len, 12*sizeof(qmf_t));
 			for(int i = 0; i<12; i++) {
 				buffer[band][i][0] = work[frame_len+i][0];
@@ -61,20 +61,20 @@ class Filterbank implements PSTables {
 
 			switch(resolution[band]) {
 				case 2:
-					/* Type B real filter, Q[p] = 2 */
+					/* B 型实滤波器，Q[p] = 2 */
 					channel_filter2(this.frame_len, p2_13_20, this.work, this.temp);
 					break;
 				case 4:
-					/* Type A complex filter, Q[p] = 4 */
+					/* A 型复滤波器，Q[p] = 4 */
 					channel_filter4(this.frame_len, p4_13_34, this.work, this.temp);
 					break;
 				case 8:
-					/* Type A complex filter, Q[p] = 8 */
+					/* A 型复滤波器，Q[p] = 8 */
 					channel_filter8(this.frame_len, (use34) ? p8_13_34 : p8_13_20,
 						this.work, this.temp);
 					break;
 				case 12:
-					/* Type A complex filter, Q[p] = 12 */
+					/* A 型复滤波器，Q[p] = 12 */
 					channel_filter12(this.frame_len, p12_13_34, this.work, this.temp);
 					break;
 			}
@@ -88,7 +88,7 @@ class Filterbank implements PSTables {
 			offset += resolution[band];
 		}
 
-		/* group hybrid channels */
+		/* 混合声道分组 */
 		if(!use34) {
 			for(n = 0; n<numTimeSlotsRate; n++) {
 				X_hybrid[n][3][0] += X_hybrid[n][4][0];
@@ -104,7 +104,7 @@ class Filterbank implements PSTables {
 		}
 	}
 
-	/* real filter, size 2 */
+	/* 实滤波器，大小 2 */
 	static void channel_filter2(int frame_len, float[] filter,
 		float[][] buffer, float[][][] X_hybrid) {
 		int i;
@@ -135,7 +135,7 @@ class Filterbank implements PSTables {
 		}
 	}
 
-	/* complex filter, size 4 */
+	/* 复滤波器，大小 4 */
 	static void channel_filter4(int frame_len, float[] filter,
 		float[][] buffer, float[][][] X_hybrid) {
 		int i;
@@ -207,7 +207,7 @@ class Filterbank implements PSTables {
 		y[1] = f1+f7;
 	}
 
-	/* complex filter, size 8 */
+	/* 复滤波器，大小 8 */
 	void channel_filter8(int frame_len, float[] filter,
 		float[][] buffer, float[][][] X_hybrid) {
 		int i, n;
@@ -293,7 +293,7 @@ class Filterbank implements PSTables {
 		y[5] = f2-f6+f4;
 	}
 
-	/* complex filter, size 12 */
+	/* 复滤波器，大小 12 */
 	void channel_filter12(int frame_len, float[] filter,
 		float[][] buffer, float[][][] X_hybrid) {
 		int i, n;

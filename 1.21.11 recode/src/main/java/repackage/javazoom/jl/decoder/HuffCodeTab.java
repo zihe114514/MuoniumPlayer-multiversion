@@ -1,39 +1,39 @@
 /*
- * 11/19/04 1.0 moved to LGPL.
- * 16/11/99 Renamed class, added javadoc, and changed table
+ * 本程序为自由软件；你可以在自由软件基金会发布的
+ * 1999年11月16日重命名类、添加javadoc并更改表
  *            name from String to 3 chars. mdm@techie.com
- * 02/15/99 Java Conversion by E.B, javalayer@javazoom.net
+ * 1999年2月15日E.B.转换Java ， javalayer@javazoom.net
  *
- * 04/19/97 : Adapted from the ISO MPEG Audio Subgroup Software Simulation
- *  Group's public c source for its MPEG audio decoder. Miscellaneous
- *  changes by Jeff Tsay (ctsay@pasteur.eecs.berkeley.edu).
+ * 1997年4月19日：改编自ISO MPEG音频子组软件模拟
+ *  本组织 MPEG 音频解码器的公开 C 源码。杂项
+ *  由 Jeff Tsay (ctsay@pasteur.eecs.berkeley.edu) 做的修改。
  *-----------------------------------------------------------------------
  * Copyright (c) 1991 MPEG/audio software simulation group, All Rights Reserved
- * MPEG/audio coding/decoding software, work in progress
- *   NOT for public distribution until verified and approved by the
- *   MPEG/audio committee.  For further information, please contact
- *   Davis Pan, 508-493-2241, e-mail: pan@3d.enet.dec.com
+ * MPEG/音频编码/解码软件，开发中
+ *   未经核实和批准，不得公开分发
+ *   MPEG/音频委员会。如需了解更多信息，请联系
+ *   Davis Pan ， 508-493-2241 ，电子邮件： pan@3d.enet.dec.com
  *
- * VERSION 4.1
- *   changes made since last update:
- *   date   programmers         comment
- *  27.2.92 F.O.Witte (ITT Intermetall)
+ * 4.1版
+ *   自上次更新以来的修改：
+ *   日期程序员评论
+ *  27.2.92 F.O.Witte （ ITT Intermetall ）
  *  8/24/93 M. Iwadare          Changed for 1 pass decoding.
- *  7/14/94 J. Koller            useless 'typedef' before HuffCodeTab  removed
+ *  1994年7月14日J. Koller在删除HuffCodeTab之前无用的“typedef”
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
@@ -41,42 +41,42 @@ package repackage.javazoom.jl.decoder;
 
 
 /**
- * Class to implements Huffman decoder.
+ * 实现 Huffman 解码器的类。
  */
 final class HuffCodeTab {
 
     private static final int MXOFF = 250;
     private static final int HTN = 34;
 
-    /** string, containing table_description */
+    /** 字符串，包含table_description*/
     private char tablename0 = ' ';
-    /** string, containing table_description */
+    /** 字符串，包含table_description*/
     private char tablename1 = ' ';
-    /** string, containing table_description */
+    /** 字符串，包含table_description*/
     @SuppressWarnings("unused")
     private char tablename2 = ' ';
 
-    /** max. x-index+ */
+    /** 最大X指数+*/
     private int xlen;
-    /** max. y-index+ */
+    /** 最大 y 索引+ */
     private int ylen;
-    /** number of linbits */
+    /** 林比特数*/
     private int linbits;
-    /** max number to be stored in linbits */
+    /** 存储在linbits中的最大数量*/
     @SuppressWarnings("unused")
     private int linmax;
-    /** a positive value indicates a reference */
+    /** 正值表示引用*/
     @SuppressWarnings("unused")
     private int ref;
-    /** pointer to array[xlen][ylen] */
+    /** 指向数组[xlen] [ylen]的指针*/
     @SuppressWarnings("unused")
     private int[] table = null;
-    /** pointer to array[xlen][ylen] */
+    /** 指向数组[xlen] [ylen]的指针*/
     @SuppressWarnings("unused")
     private int[] hlen = null;
-    /** decoder tree */
+    /** 解码器树*/
     private int[][] val = null;
-    /** length of decoder tree */
+    /** 解码树长度 */
     private int treelen;
 
     private static final int[][] ValTab0 = {
@@ -432,14 +432,14 @@ final class HuffCodeTab {
             {0, 15},
     };
 
-    /** Simulate extern struct */
+    /** 模拟外部结构*/
     public static HuffCodeTab[] ht = null;
 
     @SuppressWarnings("unused")
     private static int[] bitbuf = new int[32];
 
     /**
-     * Big Constructor : Computes all Huffman Tables.
+     * 大构造函数：计算所有霍夫曼表。
      */
     private HuffCodeTab(String S, int XLEN, int YLEN, int LINBITS, int LINMAX, int REF,
                         int[] TABLE, int[] HLEN, int[][] VAL, int TREELEN) {
@@ -458,13 +458,13 @@ final class HuffCodeTab {
     }
 
     /**
-     * Do the huffman-decoding.
-     * note! for counta,countb -the 4 bit value is returned in y,
-     * discard x.
+     * 进行霍夫曼解码。
+     * 注意！对于counta ， countb -在y中返回4位值，
+     * 丢弃x。
      */
     public static int huffman_decoder(HuffCodeTab h, int[] x, int[] y, int[] v, int[] w, BitReserve br) {
-        // array of all huffcodtable headers
-        // 0..31 Huffman code table 0..31
+        // 所有 huffcodtable 头的数组
+        // 0.. 31霍夫曼码表0.. 31
         // 32,33 count1-tables
 
         int dmask = 1 << ((4 * 8) - 1);
@@ -477,16 +477,16 @@ final class HuffCodeTab {
 
         if (h.val == null) return 2;
 
-        // table 0 needs no bits
+        // 表0不需要位
         if (h.treelen == 0) {
             x[0] = y[0] = 0;
             return 0;
         }
 
-        // Lookup in Huffman table.
+        // 在Huffman表中查找。
 
         do {
-            if (h.val[point][0] == 0) { // end of tree
+            if (h.val[point][0] == 0) { // 树的末尾
                 x[0] = h.val[point][1] >>> 4;
                 y[0] = h.val[point][1] & 0xf;
                 error = 0;
@@ -501,18 +501,18 @@ final class HuffCodeTab {
                 point += h.val[point][0];
             }
             level >>>= 1;
-            // MDM: ht[0] is always 0;
+            // MDM：ht[0] 始终为 0；
         } while ((level != 0) || (point < 0));
 
-        // Process sign encodings for quadruples tables.
+        // 处理四元组表的符号编码。
         if (h.tablename0 == '3' && (h.tablename1 == '2' || h.tablename1 == '3')) {
             v[0] = (y[0] >> 3) & 1;
             w[0] = (y[0] >> 2) & 1;
             x[0] = (y[0] >> 1) & 1;
             y[0] = y[0] & 1;
 
-            // v, w, x and y are reversed in the bitstream.
-            // switch them around to make test bistream work.
+            // v、w、x、y 在比特流中是反序的。
+            // 把它们调换过来以使测试比特流正常工作。
 
             if (v[0] != 0)
                 if (br.hget1bit() != 0) v[0] = -v[0];
@@ -521,9 +521,9 @@ final class HuffCodeTab {
             if (x[0] != 0)
                 if (br.hget1bit() != 0) x[0] = -x[0];
         } else {
-            // Process sign and escape encodings for dual tables.
-            // x and y are reversed in the test bitstream.
-            // Reverse x and y here to make test bitstream work.
+            // 处理双表符号和转义编码。
+            // x和y在测试比特流中颠倒。
+            // 在此反转 x 和 y，以使测试比特流正常工作。
 
             if (h.linbits != 0)
                 if ((h.xlen - 1) == x[0])

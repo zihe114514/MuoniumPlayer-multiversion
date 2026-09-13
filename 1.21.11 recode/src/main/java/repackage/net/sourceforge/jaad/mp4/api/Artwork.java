@@ -10,7 +10,7 @@ import repackage.net.sourceforge.jaad.mp4.boxes.impl.meta.ITunesMetadataBox.Data
 
 public class Artwork {
 
-	//TODO: need this enum? it just copies the DataType
+	//TODO: 需要这个枚举吗？它只是复制了 DataType
 	public enum Type {
 
 		GIF, JPEG, PNG, BMP;
@@ -46,29 +46,29 @@ public class Artwork {
 	}
 
 	/**
-	 * Returns the type of data in this artwork.
+	 * 返回此封面（artwork）中的数据类型。
 	 *
 	 * @see Type
-	 * @return the data's type
+	 * @return 数据的类型
 	 */
 	public Type getType() {
 		return type;
 	}
 
 	/**
-	 * Returns the encoded data of this artwork.
+	 * 返回此封面的编码数据。
 	 *
-	 * @return the encoded data
+	 * @return 编码后的数据
 	 */
 	public byte[] getData() {
 		return data;
 	}
 
 	/**
-	 * Returns the decoded image, that can be painted.
+	 * 返回可绘制的解码后图像。
 	 *
-	 * @return the decoded image
-	 * @throws IOException if decoding fails
+	 * @return 解码后的图像
+	 * @throws IOException 如果解码失败
 	 */
 	public Image getImage() throws IOException {
 		try {

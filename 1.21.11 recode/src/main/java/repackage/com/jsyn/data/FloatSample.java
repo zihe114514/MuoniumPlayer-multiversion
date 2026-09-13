@@ -1,17 +1,17 @@
 /*
  * Copyright 2010 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.data;
@@ -22,8 +22,8 @@ import repackage.com.jsyn.unitgen.VariableRateStereoReader;
 import repackage.com.jsyn.util.SampleLoader;
 
 /**
- * Store multi-channel floating point audio data in an interleaved buffer. The values are stored as
- * 32-bit floats. You can play samples using one of the readers, for example VariableRateMonoReader.
+ * 将多声道浮点音频数据存储在交错缓冲区中。数值以
+ * 32位浮点数。可以使用其中一个读取器播放示例，例如VariableRateMonoReader。
  *
  * @author Phil Burk (C) 2010 Mobileer Inc
  * @see SampleLoader
@@ -39,40 +39,40 @@ public class FloatSample extends AudioSample {
     public FloatSample() {
     }
 
-    /** Constructor for mono samples. */
+    /** 单样本的构造函数。*/
     public FloatSample(int numFrames) {
         this(numFrames, 1);
     }
 
-    /** Constructor for mono samples with data. */
+    /** 具有数据的单样本的构造函数。*/
     public FloatSample(float[] data) {
         this(data.length, 1);
         write(data);
     }
 
-    /** Constructor for multi-channel samples with data. */
+    /** 带数据的多声道采样构造函数。 */
     public FloatSample(float[] data, int channelsPerFrame) {
         this(data.length / channelsPerFrame, channelsPerFrame);
         write(data);
     }
 
     /**
-     * Create a silent sample with enough memory to hold the audio data. The number of sample
-     * numbers in the array will be numFrames*channelsPerFrame.
+     * 创建一个静音采样，并分配足够内存存放音频数据。采样
+     * 数组中的数字将是numFrames * channelsPerFrame。
      *
-     * @param numFrames number of sample groups. A stereo frame contains 2 samples.
-     * @param channelsPerFrame 1 for mono, 2 for stereo
+     * @param numFrames 采样组数。一个立体声帧包含 2 个采样。
+     * @param channelsPerFrame 1 为单声道，2 为立体声
      */
     public FloatSample(int numFrames, int channelsPerFrame) {
         allocate(numFrames, channelsPerFrame);
     }
 
     /**
-     * Allocate memory to hold the audio data. The number of sample numbers in the array will be
+     * 分配内存以保存音频数据。数组中的样本编号数量将为
      * numFrames*channelsPerFrame.
      *
-     * @param numFrames number of sample groups. A stereo frame contains 2 samples.
-     * @param channelsPerFrame 1 for mono, 2 for stereo
+     * @param numFrames 采样组数。一个立体声帧包含 2 个采样。
+     * @param channelsPerFrame 1 为单声道，2 为立体声
      */
     @Override
     public void allocate(int numFrames, int channelsPerFrame) {
@@ -82,11 +82,11 @@ public class FloatSample extends AudioSample {
     }
 
     /**
-     * Note that in a stereo sample, a frame has two values.
+     * 注意，在立体声采样中，一个帧有两个值。
      *
-     * @param startFrame index of frame in the sample
-     * @param data data to be written
-     * @param startIndex index of first value in array
+     * 样本中框架的@param startFrame 索引
+     * @param data 待写入的数据
+     * 数组中第一个值的@param startIndex 索引
      * @param numFrames
      */
     public void write(int startFrame, float[] data, int startIndex, int numFrames) {
@@ -97,11 +97,11 @@ public class FloatSample extends AudioSample {
     }
 
     /**
-     * Note that in a stereo sample, a frame has two values.
+     * 注意，在立体声采样中，一个帧有两个值。
      *
-     * @param startFrame index of frame in the sample
-     * @param data array to receive the data from the sample
-     * @param startIndex index of first location in array to start filling
+     * 样本中框架的@param startFrame 索引
+     * @param data 数组接收样本数据
+     * 要开始填充的数组中第一个位置的@param startIndex 索引
      * @param numFrames
      */
     public void read(int startFrame, float[] data, int startIndex, int numFrames) {
@@ -111,8 +111,8 @@ public class FloatSample extends AudioSample {
     }
 
     /**
-     * Write the entire array to the sample. The sample data must have already been allocated with
-     * enough room to contain the data.
+     * 将整个数组写入采样。采样数据必须已通过
+     * 足够的空间来容纳数据。
      *
      * @param data
      */
@@ -149,10 +149,10 @@ public class FloatSample extends AudioSample {
     }
 
     /**
-     * Interpolate between two adjacent samples.
-     * Note that this will only work for mono, single channel samples.
+     * 在两个相邻样品之间进行插值。
+     * 请注意，这仅适用于单声道样本。
      *
-     * @param fractionalIndex must be >=0 and < (size-1)
+     * @param fractionalIndex 必须> = 0且< (size-1)
      */
     public double interpolate(double fractionalIndex) {
         int index = (int) fractionalIndex;

@@ -5,9 +5,9 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The Movie Extends Header is optional, and provides the overall duration,
- * including fragments, of a fragmented movie. If this box is not present, the
- * overall duration must be computed by examining each fragment.
+ * Movie Extends Header 为可选项，给出分片电影的整体时长，
+ * 包括各分片。若不存在此 box，则必须通过检查每个分片来
+ * 计算整体时长。
  * 
  * @author in-somnia
  */
@@ -28,15 +28,14 @@ public class MovieExtendsHeaderBox extends FullBox {
 	}
 
 	/**
-	 * The fragment duration is an integer that declares length of the
-	 * presentation of the whole movie including fragments (in the timescale
-	 * indicated in the Movie Header Box). The value of this field corresponds
-	 * to the duration of the longest track, including movie fragments. If an
-	 * MP4 file is created in real-time, such as used in live streaming, it is
-	 * not likely that the fragment duration is known in advance and this box
-	 * may be omitted.
+	 * 分片时长为整数，声明整部电影（含各分片）放映的长度
+	 *（以 Movie Header Box 中指示的时间刻度为单位）。
+	 * 此字段值对应最长轨道的时长，包括电影分片。
+	 * 若 MP4 文件实时创建（如用于直播），
+	 * 则不太可能事先知道分片时长，此 box
+	 * 可省略。
 	 * 
-	 * @return the fragment duration
+	 * @return 分片时长
 	 */
 	public long getFragmentDuration() {
 		return fragmentDuration;

@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.ports;
@@ -22,7 +22,7 @@ import repackage.com.jsyn.unitgen.UnitGenerator;
 import java.io.PrintStream;
 
 /**
- * A UnitInputPort has an array of these, one for each part.
+ * UnitInputPort有一个这些数组，每个部分一个。
  *
  * @author Phil Burk 2009 Mobileer Inc
  */
@@ -52,26 +52,26 @@ public class InputMixingBlockPart extends PortBlockPart {
     public double[] getValues() {
         double[] result;
         int numConnections = getConnectionCount();
-        // LOGGER.debug("numConnection = " + numConnections + " for " +
+        // LOGGER.debug("numConnection =" + numConnections + "for" +
         // this );
         if (numConnections == 0) {
-            // No connection so just use our own data.
+            // 没有连接，因此直接使用我们自己的数据。
             result = super.getValues();
         } else {
-            // Mix all of the connected ports.
+            // 混合所有连接的端口。
             double[] inputs;
             int jCon = 0;
             PortBlockPart otherPart;
-            // Choose value to initialize the mixer array.
+            // 选择值以初始化混频器数组。
             if (unitInputPort.isValueAdded()) {
-                inputs = super.getValues();  // prime mixer with the set() values
+                inputs = super.getValues();  // 具有set()值的素数混合器
             } else {
                 otherPart = getConnection(jCon);
-                inputs = otherPart.getValues(); // prime mixer with first connected
+                inputs = otherPart.getValues(); // 首次连接的灌注搅拌机
                 jCon = 1;
             }
             System.arraycopy(inputs, 0, mixer, 0, mixer.length);
-            // Now mix in the remaining inputs.
+            // 现在混合剩余的输入。
             for (; jCon < numConnections; jCon++) {
                 otherPart = getConnection(jCon);
                 inputs = otherPart.getValues();

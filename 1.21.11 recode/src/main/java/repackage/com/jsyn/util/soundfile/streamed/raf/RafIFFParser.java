@@ -22,10 +22,10 @@ public class RafIFFParser extends IFFParser {
     }
 
     /**
-     * Since IFF files use chunks with explicit size, it is important to keep track of how many
-     * bytes have been read from the file. Can be used to report progress when loading samples.
+     * 由于IFF文件使用显式大小的块，因此跟踪
+     * 已从文件中读取字节。加载样品时可用于报告进度。
      *
-     * @return Number of bytes read from stream, or skipped.
+     * @return 从流读取的字节数，或跳过的字节数。
      */
     @Override
     @SneakyThrows
@@ -33,21 +33,21 @@ public class RafIFFParser extends IFFParser {
         return raf.getFilePointer();
     }
 
-    /** @return Next byte from stream. Increment offset by 1. */
+    /** @return 来自流的下一个字节。增量偏移1。*/
     @Override
     public int read() throws IOException {
         numBytesRead++;
         return raf.read();
     }
 
-    /** @return Next byte array from stream. Increment offset by len. */
+    /** @return 来自流的下一个字节数组。增量被镜头偏移。*/
     @Override
     public int read(byte[] bar, int off, int len) throws IOException {
-        // Reading from a URL can return before all the bytes are available.
-        // So we keep reading until we get the whole thing.
+        // 从URL读取可以在所有字节可用之前返回。
+        // 所以我们继续阅读，直到我们得到全部内容。
         int cursor = off;
         int numLeft = len;
-        // keep reading data until we get it all
+        // 继续读取数据，直到我们获得所有数据
         while (numLeft > 0) {
             int numRead = raf.read(bar, cursor, numLeft);
             if (numRead < 0)
@@ -55,13 +55,13 @@ public class RafIFFParser extends IFFParser {
             cursor += numRead;
             numBytesRead += numRead;
             numLeft -= numRead;
-            // LOGGER.debug("read " + numRead + ", cursor = " + cursor +
-            // ", len = " + len);
+            // LOGGER.debug("read" + numRead + ", cursor =" + cursor +
+            // ", len =" + len);
         }
         return cursor - off;
     }
 
-    /** @return Skip forward in stream and add numBytes to offset. */
+    /** @return 在流中向前跳过，并在偏移量中添加numBytes。*/
     @Override
     public long skip(long numBytes) throws IOException {
         numBytesRead += numBytes;
@@ -79,7 +79,7 @@ public class RafIFFParser extends IFFParser {
     }
 
     /**
-     * Parse the stream after reading the first ID and pass the forms and chunks to the ChunkHandler
+     * 读取第一个 ID 后解析流，并把各个 form 和块传给 ChunkHandler
      */
     @Override
     public void parseAfterHead(ChunkHandler handler) throws IOException {
@@ -89,8 +89,8 @@ public class RafIFFParser extends IFFParser {
     }
 
     /**
-     * Parse the FORM and pass the chunks to the ChunkHandler The cursor should be positioned right
-     * after the type field.
+     * 解析表单并将块传递给ChunkHandler光标应位于右侧
+     * 在类型字段之后。
      */
     @Override
     public void parseForm(ChunkHandler handler, int ID, int numBytes, int type) throws IOException {
@@ -114,8 +114,8 @@ public class RafIFFParser extends IFFParser {
     }
 
     /*
-     * Parse one chunk from IFF file. After calling handler, make sure stream is positioned at end
-     * of chunk.
+     * 从IFF文件解析一个块。调用处理程序后，请确保流位于末尾
+     * 大块的。
      */
     @Override
     public void parseChunk(ChunkHandler handler, int ckid, int numBytes) throws IOException {

@@ -2,8 +2,10 @@ package com.muoniumplayer.core.screens.hud;
 
 import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.ncm.music.AutomixSettings;
+import com.muoniumplayer.core.ncm.music.FoliaModelManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.MusicAudioCache;
+import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.HudSettingsIcons;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
@@ -77,16 +79,26 @@ public final class HudSettingsModel {
         /** CHOICE 的直写入口；没有时退化为循环点击。 */
         private final Consumer<String> choiceSetter;
         public final ColorTarget colorTarget;
+        /** 可选的运行时可见性钩子；旧版与 Folia 暴露不同的控件。 */
+        private final BooleanSupplier visibleWhen;
 
         private Entry(Kind kind, Supplier<String> label, String description, HudSetting setting,
                       BooleanSupplier state, Runnable action, Supplier<String> value,
                       ColorTarget colorTarget) {
-            this(kind, label, description, setting, state, action, value, colorTarget, null, null);
+            this(kind, label, description, setting, state, action, value, colorTarget, null, null, null);
         }
 
         private Entry(Kind kind, Supplier<String> label, String description, HudSetting setting,
                       BooleanSupplier state, Runnable action, Supplier<String> value,
                       ColorTarget colorTarget, String[] choices, Consumer<String> choiceSetter) {
+            this(kind, label, description, setting, state, action, value, colorTarget, choices,
+                    choiceSetter, null);
+        }
+
+        private Entry(Kind kind, Supplier<String> label, String description, HudSetting setting,
+                      BooleanSupplier state, Runnable action, Supplier<String> value,
+                      ColorTarget colorTarget, String[] choices, Consumer<String> choiceSetter,
+                      BooleanSupplier visibleWhen) {
             this.kind = kind;
             this.label = label;
             this.description = description;
@@ -97,6 +109,12 @@ public final class HudSettingsModel {
             this.choices = choices;
             this.choiceSetter = choiceSetter;
             this.colorTarget = colorTarget;
+            this.visibleWhen = visibleWhen;
+        }
+
+        public boolean isVisible() {
+            if (visibleWhen == null) return true;
+            try { return visibleWhen.getAsBoolean(); } catch (RuntimeException ignored) { return false; }
         }
 
         public String getLabel() {
@@ -196,6 +214,7 @@ public final class HudSettingsModel {
 
         /** 条目是否命中搜索关键字。标签与说明都参与匹配。 */
         public boolean matches(String lowerQuery) {
+            if (!isVisible()) return false;
             if (lowerQuery == null || lowerQuery.isEmpty()) return true;
             if (getLabel().toLowerCase().contains(lowerQuery)) return true;
             if (description != null && description.toLowerCase().contains(lowerQuery)) return true;
@@ -235,7 +254,7 @@ public final class HudSettingsModel {
 
         public int entryCount() {
             int total = 0;
-            for (Group group : groups) total += group.entries.length;
+            for (Group group : groups) for (Entry entry : group.entries) if (entry.isVisible()) total++;
             return total;
         }
     }
@@ -264,6 +283,13 @@ public final class HudSettingsModel {
                                 BooleanSupplier state, Runnable action) {
         return new Entry(Kind.TOGGLE, label, description, null, state, action, null, ColorTarget.NONE);
     }
+    private static Entry toggle(final String label, String description,
+                                BooleanSupplier state, Runnable action, BooleanSupplier visibleWhen) {
+        return new Entry(Kind.TOGGLE, new Supplier<String>() {
+            public String get() { return label; }
+        }, description, null, state, action, null, ColorTarget.NONE, null, null, visibleWhen);
+    }
+
 
     private static Entry color(final String label, String description, ColorTarget target) {
         return new Entry(Kind.COLOR, new Supplier<String>() {
@@ -287,6 +313,14 @@ public final class HudSettingsModel {
             }
         }, description, null, null, next, value, ColorTarget.NONE, choices, setter);
     }
+    private static Entry choice(final String label, String description,
+                                Supplier<String> value, Runnable next,
+                                String[] choices, Consumer<String> setter,
+                                BooleanSupplier visibleWhen) {
+        return new Entry(Kind.CHOICE, new Supplier<String>() {
+            public String get() { return label; }
+        }, description, null, null, next, value, ColorTarget.NONE, choices, setter, visibleWhen);
+    }
 
     private static Entry themeGrid() {
         return new Entry(Kind.THEME_GRID, new Supplier<String>() {
@@ -306,6 +340,18 @@ public final class HudSettingsModel {
 
     private static Entry action(Supplier<String> label, String description, Runnable run) {
         return new Entry(Kind.ACTION, label, description, null, null, run, null, ColorTarget.NONE);
+    }
+    private static Entry action(Supplier<String> label, String description, Runnable run,
+                                BooleanSupplier visibleWhen) {
+        return new Entry(Kind.ACTION, label, description, null, null, run, null, ColorTarget.NONE,
+                null, null, visibleWhen);
+    }
+
+    private static Entry action(final String label, String description, Runnable run,
+                                BooleanSupplier visibleWhen) {
+        return new Entry(Kind.ACTION, new Supplier<String>() {
+            public String get() { return label; }
+        }, description, null, null, run, null, ColorTarget.NONE, null, null, visibleWhen);
     }
 
     private static MusicLyricsWidget lyrics() {
@@ -336,14 +382,14 @@ public final class HudSettingsModel {
         }
     }
 
-    /** Keep the legacy module wrapper's dimension values aligned with the persisted viewport. */
+    /** 让旧版模块包装器的尺寸值与持久化视口保持一致。 */
     public static void syncLyricViewportModuleValues() {
         try {
             MusicLyricsWidget lyrics = MuoniumPlayerExtension.getInstance().musicLyrics;
             lyrics.width.setValue((double) HudConfig.lyricWidth);
             lyrics.height.setValue((double) HudConfig.lyricHeight);
         } catch (Throwable ignored) {
-            // The widget is not required for rendering; HudConfig remains authoritative.
+            // 渲染不需要该组件；HudConfig 仍是权威。
         }
     }
 
@@ -617,6 +663,29 @@ public final class HudSettingsModel {
                                         }))),
 
                 new Category("无缝切换", "两首歌之间的交接方式与衔接处理", 0xFF5FD3E8, HudSettingsIcons.SPEED,
+                        new Group("过渡模式", HudSettingsIcons.SPEED,
+                                choice("处理方案", "原版保留现有等功率淡化与低架处理；智能混音 会分析结构、节奏和调性后选择切拍、低频交接、尾奏滑入或普通淡化。",
+                                        new Supplier<String>() {
+                                            public String get() { return AutomixSettings.getEngineLabel(); }
+                                        }, new Runnable() {
+                                            public void run() { AutomixSettings.cycleEngine(); }
+                                        }, engineChoices(), HudSettingsModel::setEngineChoice),
+                                toggle("表现模式", "Folia 模式下允许更主动的分轨/尾奏处理；关闭时始终走保守的自动过渡。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() { return AutomixSettings.isPerformanceModeEnabled(); }
+                                        }, new Runnable() {
+                                            public void run() { AutomixSettings.setPerformanceModeEnabled(!AutomixSettings.isPerformanceModeEnabled()); }
+                                        }, AutomixSettings::isFoliaEngine),
+                                toggle("过渡动画", "Folia 切歌时在屏幕中央显示与真实混合同步的圆环动画；原版继续使用动态岛提示。关闭后只保留音频处理。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() { return AutomixSettings.isTransitionAnimationEnabled(); }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                boolean enabled = !AutomixSettings.isTransitionAnimationEnabled();
+                                                AutomixSettings.setTransitionAnimationEnabled(enabled);
+                                                if (enabled) AutomixTransitionAnimation.preview();
+                                            }
+                                        })),
                         new Group("基础", HudSettingsIcons.TUNE,
                                 toggle("无缝切换", "打开后提前解码下一首并交叉淡化；关掉则切歌时先停下再重新下载解码，中间有静音间隙。",
                                         new BooleanSupplier() {
@@ -628,7 +697,7 @@ public final class HudSettingsModel {
                                                 AutomixSettings.setEnabled(!AutomixSettings.isEnabled());
                                             }
                                         }),
-                                choice("重叠时长", "两首歌同时出声的长度。手动按下一曲时会自动缩短到 0.9 秒，这里只影响放完自动切歌。",
+                                choice("原版重叠时长", "仅原版处理使用；Folia 会按拍数、结构与人声尾音动态决定重叠长度。",
                                         new Supplier<String>() {
                                             public String get() {
                                                 return AutomixSettings.getOverlapLabel();
@@ -637,7 +706,7 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 AutomixSettings.cycleOverlapSeconds();
                                             }
-                                        }, overlapChoices(), HudSettingsModel::setOverlapChoice)),
+                                        }, overlapChoices(), HudSettingsModel::setOverlapChoice, () -> !AutomixSettings.isFoliaEngine())),
                         new Group("衔接处理", HudSettingsIcons.SPARKLE,
                                 toggle("跳过前奏", "打开后新歌从主体进来，跳掉没内容的前奏；关掉则一律从第 0 秒淡入，也就是旧版的平滑切换。前奏位置照样会被分析，关掉不影响对拍。",
                                         new BooleanSupplier() {
@@ -679,7 +748,7 @@ public final class HudSettingsModel {
                                                 AutomixSettings.setVocalDuckEnabled(!AutomixSettings.isVocalDuckEnabled());
                                             }
                                         }),
-                                toggle("节奏锁定", "重叠期间微调旧歌的速度去追上新歌的 BPM。因为是重采样，会带来最多约 1% 的音调偏移。",
+                                toggle("节奏锁定", "用 WSOLA 微调旧歌速度去追上新歌的 BPM，只改变速度、不改变音高；误差过大时保持原速。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return AutomixSettings.isTempoLockEnabled();
@@ -689,7 +758,7 @@ public final class HudSettingsModel {
                                                 AutomixSettings.setTempoLockEnabled(!AutomixSettings.isTempoLockEnabled());
                                             }
                                         }),
-                                toggle("音高跳跃", "两首歌速度对不上时，把旧歌整体移调一个半音去凑更协和的和声。听得出音调变化，不想要就关掉。",
+                                toggle("音高跳跃", "仅原版处理使用的半音吸附；Folia 不会对整首歌做移调。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return AutomixSettings.isPitchMatchEnabled();
@@ -698,7 +767,30 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 AutomixSettings.setPitchMatchEnabled(!AutomixSettings.isPitchMatchEnabled());
                                             }
-                                        }))),
+                                        }, () -> !AutomixSettings.isFoliaEngine())),
+                        new Group("分析模型", HudSettingsIcons.STORAGE,
+                                toggle("模型推理状态", "Folia 调用 Beat This! 或 HTDemucs 时，在动态岛显示推理中；成功后显示完成耗时，失败则提示已回退传统分析。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() { return AutomixSettings.isModelInferenceStatusEnabled(); }
+                                        }, new Runnable() {
+                                            public void run() { AutomixSettings.setModelInferenceStatusEnabled(!AutomixSettings.isModelInferenceStatusEnabled()); }
+                                        }, AutomixSettings::isFoliaEngine),
+                                action(() -> FoliaModelManager.statusLabel(FoliaModelManager.Kind.BEAT_THIS),
+                                        "Beat This! 拍点/小节模型。Folia 模式会在已安装时优先使用它，未安装则回退传统分析。",
+                                        () -> installModel(FoliaModelManager.Kind.BEAT_THIS), AutomixSettings::isFoliaEngine),
+                                action(() -> FoliaModelManager.statusLabel(FoliaModelManager.Kind.HTDEMUCS),
+                                        "HTDemucs 四轨分离模型。仅在开启表现模式时分析首尾窗口；关闭时不会推理，缺失时继续使用频段与增益处理。",
+                                        () -> installModel(FoliaModelManager.Kind.HTDEMUCS), AutomixSettings::isFoliaEngine),
+                                action(() -> FoliaModelManager.statusLabel(FoliaModelManager.Kind.RUNTIME),
+                                        "模型所需的 Python/ONNX 运行组件。安装 Beat This! 或 HTDemucs 前需要它。",
+                                        () -> installModel(FoliaModelManager.Kind.RUNTIME), AutomixSettings::isFoliaEngine),
+                                action("从本机查找模型", "扫描下载目录、桌面和游戏目录，校验文件名与 SHA-256 后导入。", HudSettingsModel::scanModels, AutomixSettings::isFoliaEngine),
+                                action(FoliaModelManager::directoryLabel, "当前模型与运行时位置；点击选择新目录，不改变已经下载的音频缓存。", () -> {
+                                    String detail = FoliaModelManager.chooseDirectory();
+                                    DownloadDynamicIsland.showCacheSweep(detail, true);
+                                }, AutomixSettings::isFoliaEngine),
+                                action("恢复默认模型位置", "恢复为 config/muonium/models。", () -> FoliaModelManager.resetDirectory(), AutomixSettings::isFoliaEngine),
+                                action("删除所有模型", "删除 Beat This!、HTDemucs 和运行组件，不会删除歌曲缓存。", HudSettingsModel::deleteModels, AutomixSettings::isFoliaEngine))),
 
                 new Category("全屏播放页", "封面下方那块曲目信息", 0xFF9AD0EC, HudSettingsIcons.FULLSCREEN,
                         new Group("信息标签", HudSettingsIcons.CAPTION,
@@ -856,6 +948,37 @@ public final class HudSettingsModel {
                 return;
             }
         }
+    }
+
+    private static void installModel(FoliaModelManager.Kind kind) {
+        FoliaModelManager.downloadAsync(kind, (ok, detail) ->
+                DownloadDynamicIsland.showModelOperationResult(ok ? "模型安装完成" : "模型安装失败", detail, ok));
+    }
+
+    private static void scanModels() {
+        MultiThreadingUtil.runAsync(() -> {
+            String detail = FoliaModelManager.scanKnownFolders();
+            boolean found = !detail.startsWith("没有找到");
+            DownloadDynamicIsland.showModelOperationResult(found ? "模型扫描完成" : "模型扫描未找到", detail, found);
+        });
+    }
+
+    private static void deleteModels() {
+        MultiThreadingUtil.runAsync(() -> {
+            FoliaModelManager.deleteAll();
+            DownloadDynamicIsland.showModelOperationResult("模型已删除", "Folia 模型与运行组件已删除", true);
+        });
+    }
+
+    private static String[] engineChoices() {
+        AutomixSettings.Engine[] engines = AutomixSettings.Engine.values();
+        String[] labels = new String[engines.length];
+        for (int i = 0; i < engines.length; i++) labels[i] = engines[i].getLabel();
+        return labels;
+    }
+
+    private static void setEngineChoice(String value) {
+        AutomixSettings.setEngine(AutomixSettings.Engine.fromStored(value));
     }
 
     private static String[] overlapChoices() {

@@ -11,15 +11,15 @@ import java.lang.reflect.Method;
 import java.util.Arrays;
 
 /**
- * Bridge from MuoniumPlayer's HUD model to OneConfig v1.
+ * 从 MuoniumPlayer 的 HUD 模型到 OneConfig v1 的桥。
  *
- * <p>This class deliberately has no compile-time dependency on OneConfig. The project still builds and
- * runs when OneConfig is absent; when it is installed, this bridge lazily builds a OneConfig
- * {@code Tree} from {@link HudSettingsModel} and opens the real OneConfig UI.</p>
+ * <p>本类刻意不依赖 OneConfig 的编译期。项目在没有 OneConfig 时仍能构建并
+ * 运行；安装了它时，本桥从 {@link HudSettingsModel} 惰性构建一个 OneConfig
+ * {@code Tree}，并打开真正的 OneConfig UI。</p>
  *
- * <p>The registered tree is marked {@code ui_only}. OneConfig therefore renders and edits it, but never
- * writes a second config file. Every property is functional and reads/writes MuoniumPlayer's live
- * settings, then calls {@link HudConfig#save()}.</p>
+ * <p>注册的树标记为 {@code ui_only}。因此 OneConfig 渲染并编辑它，但从不
+ * 写第二个配置文件。每个属性都是功能性的，读写 MuoniumPlayer 的实时
+ * 设置，然后调用 {@link HudConfig#save()}。</p>
  */
 public final class OneConfigHudBridge {
     private static final String TREE_ID = "muonium.hud";
@@ -40,7 +40,7 @@ public final class OneConfigHudBridge {
     private OneConfigHudBridge() {
     }
 
-    /** Whether the complete OneConfig UI stack (API, implementation, and config route) is present. */
+    /** 完整 OneConfig UI 栈（API、实现和配置路由）是否存在。 */
     public static boolean isAvailable() {
         if (available != null) return available;
         ClassLoader loader = OneConfigHudBridge.class.getClassLoader();
@@ -57,7 +57,7 @@ public final class OneConfigHudBridge {
         return available;
     }
 
-    /** Registers the tree if needed and opens OneConfig directly on MuoniumPlayer's HUD page. */
+    /** 按需注册树，并在 MuoniumPlayer 的 HUD 页面上直接打开 OneConfig。 */
     public static boolean open() {
         if (!isAvailable()) return false;
         try {
@@ -111,7 +111,7 @@ public final class OneConfigHudBridge {
             for (HudSettingsModel.Category category : HudSettingsModel.categories()) {
                 for (HudSettingsModel.Group group : category.groups) {
                     for (HudSettingsModel.Entry entry : group.entries) {
-                        if (entry.kind == HudSettingsModel.Kind.THEME_GRID) continue;
+                        if (!entry.isVisible() || entry.kind == HudSettingsModel.Kind.THEME_GRID) continue;
                         Object property = createProperty(entry, entryIndex++, functional, dummy);
                         if (property == null) continue;
                         addMetadata.invoke(property, "category", category.title);

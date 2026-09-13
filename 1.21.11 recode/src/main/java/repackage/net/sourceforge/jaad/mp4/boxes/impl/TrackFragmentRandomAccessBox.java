@@ -19,7 +19,7 @@ public class TrackFragmentRandomAccessBox extends FullBox {
 		super.decode(in);
 
 		trackID = in.readBytes(4);
-		//26 bits reserved, 2 bits trafSizeLen, 2 bits trunSizeLen, 2 bits sampleSizeLen
+		//26 位保留，2 位 trafSizeLen，2 位 trunSizeLen，2 位 sampleSizeLen
 		final long l = in.readBytes(4);
 		final int trafNumberLen = (int) ((l>>4)&0x3)+1;
 		final int trunNumberLen = (int) ((l>>2)&0x3)+1;
@@ -38,9 +38,9 @@ public class TrackFragmentRandomAccessBox extends FullBox {
 	}
 
 	/**
-	 * The track ID is an integer identifying the associated track.
+	 * track ID 为整数，标识关联的轨道。
 	 *
-	 * @return the track ID
+	 * @return track ID
 	 */
 	public long getTrackID() {
 		return trackID;
@@ -51,51 +51,50 @@ public class TrackFragmentRandomAccessBox extends FullBox {
 	}
 
 	/**
-	 * The time is an integer that indicates the presentation time of the random
-	 * access sample in units defined in the 'mdhd' of the associated track.
+	 * 时间为整数，以关联轨道 'mdhd' 中定义的单位表示
+	 * 随机访问采样的放映时间。
 	 *
-	 * @return the times of all entries
+	 * @return 所有条目的时间
 	 */
 	public long[] getTimes() {
 		return times;
 	}
 
 	/**
-	 * The moof-Offset is an integer that gives the offset of the 'moof' used in
-	 * the an entry. Offset is the byte-offset between the beginning of the file
-	 * and the beginning of the 'moof'.
+	 * moof-Offset 为整数，给出某条目所用 'moof' 的偏移。
+	 * 偏移是文件开头与 'moof' 开头之间的字节偏移。
 	 *
-	 * @return the offsets for all entries
+	 * @return 所有条目的偏移
 	 */
 	public long[] getMoofOffsets() {
 		return moofOffsets;
 	}
 
 	/**
-	 * The 'traf' number that contains the random accessible sample. The number
-	 * ranges from 1 (the first 'traf' is numbered 1) in each 'moof'.
+	 * 含随机可访问采样的 'traf' 编号。
+	 * 每个 'moof' 中编号从 1 开始（第一个 'traf' 编号为 1）。
 	 *
-	 * @return the 'traf' numbers for all entries
+	 * @return 所有条目的 'traf' 编号
 	 */
 	public long[] getTrafNumbers() {
 		return trafNumbers;
 	}
 
 	/**
-	 * The 'trun' number that contains the random accessible sample. The number
-	 * ranges from 1 in each 'traf'.
+	 * 含随机可访问采样的 'trun' 编号。
+	 * 每个 'traf' 中编号从 1 开始。
 	 *
-	 * @return the 'trun' numbers for all entries
+	 * @return 所有条目的 'trun' 编号
 	 */
 	public long[] getTrunNumbers() {
 		return trunNumbers;
 	}
 
 	/**
-	 * The sample number that contains the random accessible sample. The number
-	 * ranges from 1 in each 'trun'.
+	 * 含随机可访问采样的采样号。
+	 * 每个 'trun' 中编号从 1 开始。
 	 *
-	 * @return the sample numbers for all entries
+	 * @return 所有条目的采样号
 	 */
 	public long[] getSampleNumbers() {
 		return sampleNumbers;

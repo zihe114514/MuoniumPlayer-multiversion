@@ -495,6 +495,30 @@ public final class GdStudioMusicService {
     }
 
     /**
+     * 清掉某首歌的歌词缓存（含跨源兜底的救援缓存）。
+     *
+     * <p>手动「重新匹配」要用它。这里的歌词缓存按小时计，而且<b>未命中也会被记住</b>——一次错误的
+     * 兜底匹配或一次误判的「没有歌词」，在那之后无论刷新多少次都拿不到新结果，用户看到的就是
+     * 「点了没反应」。</p>
+     *
+     * <p>与 {@link #getLyric} 用同一把 {@code CACHE_LOCK}：缓存是普通 {@code LinkedHashMap}，
+     * 从别的线程直接 remove 会和请求线程打架。</p>
+     */
+    public static void invalidateLyric(String source, String lyricId, String trackName) {
+        String platform = normalizePlatform(source);
+        String id = safe(lyricId);
+        if (platform.isEmpty() || id.isEmpty()) return;
+
+        String title = safe(trackName);
+        synchronized (CACHE_LOCK) {
+            LYRIC_CACHE.remove(platform + ':' + id);
+            if (!title.isEmpty()) {
+                LYRIC_FALLBACK_CACHE.remove(platform + ':' + id + ':' + title.toLowerCase(Locale.ROOT));
+            }
+        }
+    }
+
+    /**
      * Resolves exactly the selected source/id pair from the search response, walking the documented
      * bitrate ladder when a source answers with an empty URL for the preferred tier.
      */

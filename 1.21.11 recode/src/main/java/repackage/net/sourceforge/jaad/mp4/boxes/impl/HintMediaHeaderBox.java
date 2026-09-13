@@ -5,8 +5,7 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The hint media header contains general information, independent of the
- * protocol, for hint tracks.
+ * 提示媒体头包含与协议无关的、用于提示轨道的通用信息。
  *
  * @author in-somnia
  */
@@ -28,36 +27,33 @@ public class HintMediaHeaderBox extends FullBox {
 		maxBitrate = in.readBytes(4);
 		avgBitrate = in.readBytes(4);
 
-		in.skipBytes(4); //reserved
+		in.skipBytes(4); //保留
 	}
 
 	/**
-	 * The maximum PDU size gives the size in bytes of the largest PDU (protocol
-	 * data unit) in this hint stream.
+	 * 最大 PDU 大小给出此提示流中最大 PDU（协议
+	 * 数据单元）的字节大小。
 	 */
 	public long getMaxPDUsize() {
 		return maxPDUsize;
 	}
 
 	/**
-	 * The average PDU size gives the average size of a PDU over the entire
-	 * presentation.
+	 * 平均 PDU 大小给出整个放映期间 PDU 的平均大小。
 	 */
 	public long getAveragePDUsize() {
 		return avgPDUsize;
 	}
 
 	/**
-	 * The maximum bitrate gives the maximum rate in bits/second over any window
-	 * of one second.
+	 * 最大比特率给出任意一秒时间窗内的最大速率（位/秒）。
 	 */
 	public long getMaxBitrate() {
 		return maxBitrate;
 	}
 
 	/**
-	 * The average bitrate gives the average rate in bits/second over the entire
-	 * presentation.
+	 * 平均比特率给出整个放映期间的平均速率（位/秒）。
 	 */
 	public long getAverageBitrate() {
 		return avgBitrate;

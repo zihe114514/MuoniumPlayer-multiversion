@@ -54,8 +54,8 @@ public class BufferedSampleLoader extends CustomSampleLoader {
 
         is1.mark(0);
 
-//        System.out.println("(int) streamInfo.getTotalSamples() = " + (int) totalSamples);
-//        System.out.println("streamInfo.getChannels() = " + streamInfo.getChannels());
+//        System.out.println("(int) streamInfo.getTotalSamples() =" + (int) totalSamples);
+//        System.out.println("streamInfo.getChannels() =" + streamInfo.getChannels());
 //        System.out.println("streamInfo.getBitsPerSample() = " + streamInfo.getBitsPerSample());
 //        System.out.println("streamInfo.getSampleRate() = " + sampleRate);
 

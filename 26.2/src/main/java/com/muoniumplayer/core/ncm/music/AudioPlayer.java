@@ -34,6 +34,8 @@ public class AudioPlayer {
     private AutomixDeckChain automixChain;
     private volatile float bassGainDb = 0.0f;
     private volatile float vocalDuckDepth = 0.0f;
+    private volatile float midGainDb = 0.0f;
+    private volatile float highGainDb = 0.0f;
     private volatile float playbackRate = 1.0f;
     /** 音高倍率。只有「整半音吸附」会动它；节奏锁定恒为 1。 */
     private volatile float pitchRatio = 1.0f;
@@ -52,6 +54,8 @@ public class AudioPlayer {
      * sliding window, and moving that window under the audio thread breaks playback outright.
      */
     private volatile File sourceFile;
+    /** Human-readable track metadata used by non-audio status surfaces. */
+    private volatile String trackName;
 
     /**
      * Some downloaded files can be opened by the decoder but contain no usable
@@ -287,7 +291,8 @@ public class AudioPlayer {
      */
     private void attachAutomixChain() {
         if (!AutomixSettings.isEnabled()) return;
-        if (!AutomixSettings.isBassSwapEnabled() && !AutomixSettings.isVocalDuckEnabled()) return;
+        if (!AutomixSettings.isFoliaEngine() && !AutomixSettings.isBassSwapEnabled()
+                && !AutomixSettings.isVocalDuckEnabled()) return;
         if (!isUsable()) return;
         try {
             if (this.automixChain == null) {
@@ -299,6 +304,8 @@ public class AudioPlayer {
             // cancelled band with it.
             this.automixChain.stereo(channelCount() >= 2);
             this.automixChain.resetTo(this.bassGainDb, this.vocalDuckDepth);
+            this.automixChain.midGainDb(this.midGainDb);
+            this.automixChain.highGainDb(this.highGainDb);
             // Not isProcessing(): pause() rips the effect out of the circuit without telling the
             // effect, so a resumed deck has to be re-wired or it would play unfiltered.
             if (!this.automixChain.isAttachedTo(this.player)) {
@@ -346,6 +353,20 @@ public class AudioPlayer {
      * blend ends. A no-op when no chain is attached, so callers do not have to know which decks are
      * processed.</p>
      */
+    public void setMidGainDb(float db) {
+        float safe = Float.isNaN(db) || Float.isInfinite(db) ? 0f : Math.max(-3f, Math.min(3f, db));
+        this.midGainDb = safe;
+        AutomixDeckChain chain = this.automixChain;
+        if (chain != null) try { chain.midGainDb(safe); } catch (RuntimeException ignored) {}
+    }
+
+    public void setHighGainDb(float db) {
+        float safe = Float.isNaN(db) || Float.isInfinite(db) ? 0f : Math.max(-3f, Math.min(3f, db));
+        this.highGainDb = safe;
+        AutomixDeckChain chain = this.automixChain;
+        if (chain != null) try { chain.highGainDb(safe); } catch (RuntimeException ignored) {}
+    }
+
     public void setVocalDuckDepth(float depth) {
         float safe = Float.isNaN(depth) || Float.isInfinite(depth)
                 ? 0.0f : Math.max(0.0f, Math.min(1.0f, depth));
@@ -363,6 +384,15 @@ public class AudioPlayer {
     }
 
     /** The decoded file behind this deck, or {@code null} when it is not known. */
+    /** The display name of the track loaded on this deck, when known. */
+    public String getTrackName() {
+        return this.trackName;
+    }
+
+    public void setTrackName(String trackName) {
+        this.trackName = trackName;
+    }
+
     public File getSourceFile() {
         return this.sourceFile;
     }
@@ -465,6 +495,8 @@ public class AudioPlayer {
     /** Returns the deck to flat response, full vocal and natural tempo. */
     public void resetAutomixProcessing() {
         setBassGainDb(0.0f);
+        setMidGainDb(0.0f);
+        setHighGainDb(0.0f);
         setVocalDuckDepth(0.0f);
         if (Math.abs(this.playbackRate - 1.0f) > .0005f
                 || Math.abs(this.pitchRatio - 1.0f) > .0005f) {

@@ -12,17 +12,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 
 @Getter
-/**
- * 项目自己的日志门面。
- *
- * <p>1.8.9 时它 {@code implements org.apache.logging.log4j.Logger}（当时 MC 自带 log4j 2.0-beta9）。
- * 1.20.1 自带的 log4j 是 2.x 新版，接口多出了 debug/info/warn/error/fatal/trace 的
- * 1~10 个 Object 参数重载等一大批方法，继续实现该接口等于把本类绑死在某个 log4j 小版本上。
- *
- * <p>实测全项目只有一处把它当 log4j Logger 用（MuoniumPlayerEventHandler 的字段声明），
- * 已改为直接声明本类型，因此这里断开对 log4j 接口的实现。为兼容 log4j 接口而存在的
- * Marker / Message / MessageFactory 重载全部保留，行为不变，只是不再被接口约束。
- */
+// 此日志系统未实现 TRACE 级别
 public class Logger {
 
     private final String name;
@@ -366,7 +356,7 @@ public class Logger {
     }
 
     public boolean isTraceEnabled() {
-        return false; // Trace level not implemented in this logging system
+        return false; // 此日志系统未实现 TRACE 级别
     }
 
     public boolean isTraceEnabled(Marker marker) {
@@ -457,59 +447,61 @@ public class Logger {
     }
 
     public void trace(Marker marker, Message message) {
-        // Trace level not implemented in this logging system
+        // 此日志系统未实现 TRACE 级别
     }
 
     public void trace(Marker marker, Message message, Throwable throwable) {
-        // Trace level not implemented in this logging system
+        // 此日志系统未实现 TRACE 级别
     }
 
     public void trace(Marker marker, Object o) {
-        // Trace level not implemented in this logging system
+        // 此日志系统未实现 TRACE 级别
     }
 
     public void trace(Marker marker, Object o, Throwable throwable) {
-        // Trace level not implemented in this logging system
+        // 此日志系统未实现 TRACE 级别
     }
 
     public void trace(Marker marker, String s) {
-        // Trace level not implemented in this logging system
+        // 此日志系统未实现 TRACE 级别
     }
 
     public void trace(Marker marker, String s, Object... objects) {
-        // Trace level not implemented in this logging system
+        // 此日志系统未实现 TRACE 级别
     }
 
     public void trace(Marker marker, String s, Throwable throwable) {
-        // Trace level not implemented in this logging system
+        // 此日志系统未实现 TRACE 级别
     }
 
     public void trace(Message message) {
-        // Trace level not implemented in this logging system
+        // 此日志系统未实现 TRACE 级别
     }
 
     public void trace(Message message, Throwable throwable) {
-        // Trace level not implemented in this logging system
+        // 此日志系统未实现 TRACE 级别
     }
 
     public void trace(Object o) {
-        // Trace level not implemented in this logging system
+        // 此日志系统未实现 TRACE 级别
     }
 
     public void trace(Object o, Throwable throwable) {
-        // Trace level not implemented in this logging system
+        // 此日志系统未实现 TRACE 级别
     }
 
     public void trace(String s) {
-        // Trace level not implemented in this logging system
+        // 此日志系统未实现 TRACE 级别
     }
 
     public void trace(String s, Object... objects) {
-        // Trace level not implemented in this logging system
+        // 此日志系统未实现 TRACE 级别
     }
 
     public void trace(String s, Throwable throwable) {
-        // Trace level not implemented in this logging system
+        /**
+     * 将 Log4j Level 转换为内部 LogLevel
+     */
     }
 
     public void warn(Marker marker, Message message) {
@@ -564,9 +556,7 @@ public class Logger {
         warn(s, new Object[]{throwable});
     }
 
-    /**
-     * Convert Log4j Level to internal LogLevel
-     */
+    // 由于没有 TRACE，将 TRACE 映射为 DEBUG
     private LogLevel getLogLevel(Level level) {
         if (level == Level.TRACE) {
             return LogLevel.DEBUG; // Map TRACE to DEBUG since we don't have TRACE

@@ -48,11 +48,11 @@ import java.util.Set;
 import org.w3c.dom.Node;
 
 /**
- * Asynchronous music-cover retrieval, texture upload and lyric-background blur generation.
+ * 异步音乐封面获取、纹理上传和歌词背景模糊生成。
  *
- * <p>This service intentionally preserves the existing asynchronous task boundaries: the main
- * cover texture is uploaded as soon as it downloads, while the blurred lyric texture is produced
- * on a separate task.</p>
+ * <p>本服务刻意保留既有的异步任务边界：主
+ * 封面纹理一下载完即上传，而模糊的歌词纹理在
+ * 另一个任务上生成。</p>
  */
 final class MusicCoverService {
 
@@ -367,7 +367,7 @@ final class MusicCoverService {
         return textureManager.getTexture(coverLocation) == null || forceReload;
     }
 
-    /** Resolves a GD track cover on the background thread; official tracks return as-is. */
+    /** 在后台线程解析 GD 曲目封面；官方曲目原样返回。 */
     private static String coverUrl(Music music, int size) {
         if (music != null && music.isGd()) {
             return music.resolveGdCoverUrl(size);
@@ -384,7 +384,7 @@ final class MusicCoverService {
                 byte[] imageData = IOUtils.toByteArray(coverStream);
                 BufferedImage coverImage = DynamicTexture.readImage(new ByteArrayInputStream(imageData));
                 if (coverImage != null) {
-                    loadCoverTextures(coverImage, musicCover, musicCoverBlur);
+                    loadCoverTextures(music, coverImage, musicCover, musicCoverBlur);
                 }
             } catch (IOException e) {
                 e.printStackTrace();
@@ -392,7 +392,15 @@ final class MusicCoverService {
         });
     }
 
-    private static void loadCoverTextures(BufferedImage coverImage, Location musicCover, Location musicCoverBlur) {
+    private static void loadCoverTextures(Music music, BufferedImage coverImage,
+                                          Location musicCover, Location musicCoverBlur) {
+        int[] palette = CoverPalette.extract(coverImage, 6);
+        if (music != null) {
+            music.setCoverPalette(palette);
+        }
+        if (music == CloudMusic.currentlyPlaying) {
+            CoverThemePalette.set(palette);
+        }
         Textures.loadTexture(musicCover, coverImage);
         // 低优先级池：31 半径的高斯模糊是纯 CPU 卷积，一张 320×320 的封面就能吃满一个核几十毫秒。
         BackgroundWork.submit(() -> {
@@ -489,7 +497,7 @@ final class MusicCoverService {
                 child = child.getNextSibling();
             }
         } catch (Throwable ignored) {
-            // Non-GIF image readers do not expose the GIF metadata tree.
+            // 非 GIF 图像读取器不暴露 GIF 元数据树。
         }
         return 100L;
     }

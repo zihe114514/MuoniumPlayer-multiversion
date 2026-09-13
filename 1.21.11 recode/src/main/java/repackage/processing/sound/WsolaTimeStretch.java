@@ -1,25 +1,25 @@
 package repackage.processing.sound;
 
 /**
- * WSOLA（waveform-similarity-based overlap-add）时间伸缩：<b>改变速度但不改变音高</b>。
+ * WSOLA （基于波形相似度的叠加）时间伸缩 ： <b> 改变速度但不改变音高 </b> 。
  *
  * <p>移植自 TarsosDSP 的 {@code be.tarsos.dsp.WaveformSimilarityBasedOverlapAdd}
  * （Joren Six / IPEM，Ghent University；其本身参考了 Olli Parviainen 的 SoundTouch {@code TDStretch.cpp}），
  * 算法出自 Verhelst &amp; Roelands 1993 的 WSOLA 论文。</p>
  *
- * <h3>为什么不能直接用 TarsosDSP 的类</h3>
+ * <h3> 为什么不能直接用 TarsosDSP 的类 </h3>
  * <ul>
- *   <li>它是 {@code AudioProcessor}，必须挂在 {@code AudioDispatcher} 上，由后者按
+ *   <li> 它是 {@code AudioProcessor} ，必须挂在 {@code AudioDispatcher} 上，由后者按
  *       {@code stepSize/overlap} 推帧。本项目的播放链是 JSyn 的 {@code VariableRateStereoReader}
- *       <b>按绝对下标向 FloatSample 拉一帧</b>，方向完全相反，没法把 dispatcher 塞进去。</li>
- *   <li>它只处理单声道：{@code precalcCorrReferenceMono} 与 {@code calcCrossCorr} 直接把缓冲当一维数组扫，
+ *       <b> 按绝对下标向 FloatSample 拉一帧 </b> ，没法把调方向完全相反度器塞进去。</li>
+ *   <li> 它只处理单声道： {@code precalcCorrReferenceMono} 与 {@code calcCrossCorr} 直接把缓冲当一维数组扫，
  *       喂立体声进去会把左右声道当成相邻采样做互相关，选出来的接缝位置是错的。</li>
  * </ul>
  *
  * <p>所以这里保留它的<b>算法与参数</b>（三档参数表、抛物线加权的相关参考、偏向搜索窗中部的启发式罚项、
  * 线性交叉淡化的 overlap-add），把 I/O 改成「按绝对交织下标从随机读源拉窗口」，并把互相关扩展成多声道求和。</p>
  *
- * <h3>与 TarsosDSP 的两处刻意不同</h3>
+ * <h3> 与 TarsosDSP 的两处刻意不同 </h3>
  * <ol>
  *   <li><b>归一化用的是被比较窗口的能量，不是参考的。</b>TarsosDSP 的 {@code calcCrossCorr} 里
  *       {@code norm += mixingPos[i] * mixingPos[i]} 累的是参考自己的能量 —— 那个值在整个搜索里是常数，
@@ -31,8 +31,8 @@ package repackage.processing.sound;
  *       「没在变速时输出与输入逐采样相同」。</li>
  * </ol>
  *
- * <p><b>线程约束</b>：{@link #read} 只能由音频线程调用，{@link #setTempo} 可以从别的线程调用
- * （只写一个 {@code volatile double}，下一个块生效）。</p>
+ * <p> <b> 线程约束 </b> ： {@link #read} 只能由音频线程调用， {@link #setTempo} 可以从别的线程调用
+ * （ 只写一个 {@code volatile double} ，下一个块生效 ）。 </p>
  */
 public final class WsolaTimeStretch {
 
@@ -44,7 +44,7 @@ public final class WsolaTimeStretch {
         int length();
     }
 
-    /** tempo 的允许范围。和 {@code AutomixSettings} 的速率上下限同量级，留了余量。 */
+    /** tEMPO 的允许范围。和 {@code AutomixSettings} 的速率上下限同量级，留了余量。*/
     public static final double MIN_TEMPO = 0.5;
     public static final double MAX_TEMPO = 2.0;
 
@@ -54,22 +54,22 @@ public final class WsolaTimeStretch {
     private final Samples source;
     private final int channels;
 
-    /** 单个处理序列的长度（帧）。TarsosDSP 的 {@code sequenceMs}。 */
+    /** 单个处理序列的长度（一帧）。 TarsosDSP 的 {@code sequenceMs} 。*/
     private final int seq;
     /** 搜索最佳接缝的窗口长度（帧）。TarsosDSP 的 {@code seekWindowMs}。 */
     private final int seek;
-    /** 交叉淡化长度（帧）。TarsosDSP 的 {@code overlapMs}。 */
+    /** 交叉淡化长度（一帧）。 TarsosDSP 的 {@code overlapMs} 。*/
     private final int ovl;
 
     private volatile double tempo = 1.0;
 
-    /** 上一序列的尾巴，用来和下一序列的头做交叉淡化（TarsosDSP 的 {@code pMidBuffer}）。 */
+    /** 上一序列的尾巴用来和下一序列的头做交叉淡化TarsosDSP 的 {@code pMidBuffer}。*/
     private final float[] mid;
-    /** {@code mid} 乘上抛物线权重后的相关参考（TarsosDSP 的 {@code pRefMidBuffer}）。 */
+    /** {@code mid} 乘上抛物线权重后的相关参考（ TarsosDSP 的 {@code pRefMidBuffer} ）。*/
     private final float[] ref;
     /** 每个块从源里拉进来的输入窗口。 */
     private final float[] window;
-    /** 一次产出的输出块，长度恒为 {@code (seq - ovl) * channels}。 */
+    /** 一次产出的输出块，长度恒为 {@code(seq - ovl) * channels} 。*/
     private final float[] block;
 
     private boolean midReady;
@@ -154,9 +154,9 @@ public final class WsolaTimeStretch {
     /**
      * 读输出时间轴上的一个采样。
      *
-     * <p>调用方必须<b>单调递增</b>地读（JSyn 的 {@code VariableRateStereoReader} 正是逐帧、逐声道
+     * <p> 调用方必须 <b> 单调递增 </b> 地读（ JSyn 的 {@code VariableRateStereoReader} 正是逐帧、逐声道
      * 顺序拉的）。乱序或跳跃会触发一次重锚：能继续出声，但接缝处会听到一次跳变，
-     * 所以 {@link #getReanchorCount} 不为 0 就说明上游访问模式和假设不符。</p>
+     * 所以 {@link #getReanchorCount} 不为 0 就说明上游访问模式和假设不符。 </p>
      */
     public double read(int outputIndex) {
         if (outputIndex < 0) return 0.0;

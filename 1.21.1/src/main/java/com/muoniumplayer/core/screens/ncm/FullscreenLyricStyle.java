@@ -46,7 +46,15 @@ public enum FullscreenLyricStyle {
      * 苹果：仿 Apple Music —— 左对齐（对唱行右对齐）、逐音节点亮 + 音节弹跳、弹簧滚动、
      * 长音节持续发光、前奏与间奏显示等待圆点。
      */
-    APPLE("苹果");
+    APPLE("苹果"),
+
+    /**
+     * 流光 · 原版：对 本项目 {@code classic} 的更忠实移植。
+     *
+     * <p>原样式 {@link #LUMINOUS} 保持不动；这一套补回参考实现里的等待/演唱/唱过三态、
+     * passed 旋转余晖以及整行缩放进退场，供用户按喜好自由切换。</p>
+     */
+    LUMINOUS_CLASSIC("流光 · 原版");
 
     private final String displayName;
 
@@ -74,7 +82,7 @@ public enum FullscreenLyricStyle {
     /**
      * 切到上一种样式并落盘。
      *
-     * <p>样式已经有九种，只能单向轮换的话想回到上一种得点八下。</p>
+     * <p>样式已经有十种，只能单向轮换的话想回到上一种得点九下。</p>
      */
     public static FullscreenLyricStyle previous() {
         return shift(-1);

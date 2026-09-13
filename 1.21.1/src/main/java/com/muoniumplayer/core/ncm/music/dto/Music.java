@@ -129,6 +129,8 @@ public class Music {
     private transient String sourceId;
     private transient String sourceMid;
     private transient String externalCoverUrl;
+    /** 当前封面提取出的代表色，供「隐现」歌词背景实时取用；不进入歌单序列化。 */
+    private transient volatile int[] coverPalette;
     /** GD Studio aggregated source key (netease/joox/...) for freely selected GD tracks. */
     private transient String gdPlatform;
     private transient String gdPicId;

@@ -15,10 +15,10 @@ package repackage.be.tarsos.dsp;
  *
  * <h3>与 TarsosDSP 的不同</h3>
  * <ul>
- *   <li>去掉 {@code AudioProcessor} 那层：上游是 {@code AudioDispatcher} 按块推，本项目是
+ *   <li> 去掉 {@code AudioProcessor} 那层：上游是 {@code AudioDispatcher} 按块推，本项目是
  *       自己拿着整段 {@code float[]} 逐块扫，用不上 {@code process(AudioEvent)} 与
- *       {@code breakProcessingQueueOnSilence}。</li>
- *   <li>补了带 {@code offset/length} 的重载：本项目的调用方要在一整段 mono 上滑窗，
+ *       {@code breakProcessingQueueOnSilence} 。 </li>
+ *   <li> 补了带 {@code offset/length} 的重载：本项目的调用方要在一整段 mono 上滑窗，
  *       原版每次都得先拷一个子数组出来。</li>
  * </ul>
  */
@@ -62,7 +62,7 @@ public final class SilenceDetector {
         return 20.0 * Math.log10(value);
     }
 
-    /** 整块的 dBSPL。 */
+    /** 整块的 dBSPL。*/
     public static double soundPressureLevel(float[] buffer) {
         return linearToDecibel(calculateRMS(buffer));
     }

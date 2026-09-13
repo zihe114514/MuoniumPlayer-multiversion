@@ -25,7 +25,7 @@ class AACAudioInputStream extends AsynchronousAudioInputStream {
 	@Override
 	public AudioFormat getFormat() {
 		if(audioFormat==null) {
-			//read first frame
+			//读取第一帧
 			try {
 				decoder.decodeFrame(adts.readNextFrame(), sampleBuffer);
 				audioFormat = new AudioFormat(sampleBuffer.getSampleRate(), sampleBuffer.getBitsPerSample(), sampleBuffer.getChannels(), true, true);

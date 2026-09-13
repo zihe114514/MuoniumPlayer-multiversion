@@ -8,11 +8,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * File-system rules for the on-disk audio cache.
+ * 磁盘音频缓存的文件系统规则。
  *
- * <p>This class owns cache-file validation and normalization only. Downloading,
- * decoding progress, playback state and quality-retention policy remain in the
- * playback flow.</p>
+ * <p>本类只负责缓存文件的校验与规范化。下载、
+ * 解码进度、播放状态和音质保留策略仍归
+ * 播放流程管理。</p>
  */
 final class AudioCacheFiles {
 

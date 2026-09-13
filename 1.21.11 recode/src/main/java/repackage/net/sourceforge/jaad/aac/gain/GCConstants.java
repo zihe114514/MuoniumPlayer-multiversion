@@ -5,7 +5,7 @@ interface GCConstants {
 	int BANDS = 4;
 	int MAX_CHANNELS = 5;
 	int NPQFTAPS = 96;
-	int NPEPARTS = 64;	//number of pre-echo inhibition parts
+	int NPEPARTS = 64;	//前回声抑制部分的数量
 	int ID_GAIN = 16;
 	int[] LN_GAIN = {
 		-4, -3, -2, -1, 0, 1, 2, 3,

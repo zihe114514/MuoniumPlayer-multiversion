@@ -9,104 +9,108 @@ import com.google.gson.JsonPrimitive;
 import java.io.File;
 
 /**
- * The position, scale, and built-in editor appearance settings for the music HUDs.
+ * 音乐 HUD 的位置、缩放和内置编辑器外观设置。
  *
- * <p>Position is stored as a 0..1 fraction. Desktop-lyric appearance settings live
- * here so the built-in HUD editor can preview and persist them without depending on
- * the external ClickGUI value store.</p>
+ * <p>位置以 0..1 的分数存储。桌面歌词外观设置保存在此处，
+ * 使内置 HUD 编辑器可预览并持久化它们，而不必依赖外部的
+ * ClickGUI 值存储。</p>
  */
 public final class HudConfig {
 
     public static final float SCALE_MIN = 0.5f;
     public static final float SCALE_MAX = 2.0f;
 
-    /** 灵动岛样式索引上限,与 {@code DownloadDynamicIsland.DynamicIslandStyle} 的数量保持一致。 */
+    /** 歌曲信息卡片：左上角。 */
     public static final int DYNAMIC_ISLAND_STYLE_MAX = 6;
 
-    /** 全屏歌词样式索引上限,与 {@code FullscreenLyricStyle} 的数量保持一致。 */
-    public static final int FULLSCREEN_LYRIC_STYLE_MAX = 9;
+    /**
+     * 播放器输出音量，归一化为 {@code 0.0..1.0}。它存储在本模组自有的
+     * HUD 配置中，而非依赖外部值存储——后者可能在 Minecraft 多次启动间
+     * 被重建。
+     */
+    public static final int FULLSCREEN_LYRIC_STYLE_MAX = 10;
 
-    /** 桌面歌词样式索引上限，与 {@code BlossomLyricStyle} 支持的样式数量保持一致。 */
+    /** 歌词：靠近底部水平居中。 */
+    public static final int FULLSCREEN_LYRIC_BACKGROUND_MAX = 1;
+
+    /** 桌面歌词视口尺寸，以未缩放逻辑单位计。文本在此宽度内换行。 */
+    public static final int THEME_COLOR_SOURCE_MAX = 1;
+
+    /** 在 {@code GuiHudEditor} 中暴露的外观控件。 */
     public static final int OSD_LYRIC_STYLE_MAX = 1;
 
     private static final File FILE = ConfigPaths.HUD;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    /** Song information card: top-left corner. */
+    // 当前歌词 / 正在唱的 KTV 字。
     public static float infoX = 0.00f;
     public static float infoY = 0.43429846f;
     public static float infoScale = 1.0f;
 
-    /**
-     * Player output volume, normalized to {@code 0.0..1.0}.  This is stored in
-     * the mod-owned HUD configuration rather than relying on the external value
-     * store, which may be recreated between Minecraft launches.
-     */
+    /** 当前行辉光、泛光和呼吸效果的总开关。 */
     public static float playerVolume = 1.00f;
 
-    /** Lyrics: horizontally centered near the bottom. */
+    /** OSD 逐字辉光和保持缩放强调的总开关。 */
     public static float lyricX = 0.5f;
     public static float lyricY = 0.8688119f;
     public static float lyricScale = 0.84999996f;
-    /** Desktop lyric viewport size in unscaled logical units. Text wraps inside this width. */
+    /** 普通歌词行辉光和泛光的总开关。 */
     public static float lyricWidth = 450.0f;
     public static float lyricHeight = 120.0f;
 
-    /** Appearance controls exposed in {@code GuiHudEditor}. */
+    /** 允许在不改变配置尺寸的情况下禁用视口边缘淡出。 */
     public static int lyricColorRgb = 0xFFFFFFFF;
     public static int currentLyricColorRgb = 0xFFFFFFFF;
 
-    // Current lyric / active KTV word.
-    /** Master switch for current-line glow, bloom and breathing. */
+    // OSD KTV 动画。这些值与全屏歌词渲染器相互独立。
+    // 普通（非当前）歌词行。
     public static boolean currentLyricEffectsEnabled = true;
-    /** Master switch for OSD per-character glow and retained scale emphasis. */
+    /** 全局下载 Dynamic Island。 */
     public static boolean osdKaraokeEmphasisEnabled = true;
-    /** Master switch for ordinary lyric-row glow and bloom. */
+    /** Dynamic Island 字体缩放。长内容在被截断前自动缩小。 */
     public static boolean normalLyricEffectsEnabled = true;
-    /** Allows the viewport-edge fade to be disabled without changing its configured size. */
+    /** 首选静止宽度。较长的通知可能动画变宽，以保持完整文本可见。 */
     public static boolean lyricEdgeFadeEnabled = true;
 
     public static float currentLineScale = 1.0115517f;
     public static float currentWordScale = 0.00f;
 
-    /**
-     * 当前行的发光强度，读数就是「唱到这个字时它有多亮」。
-     *
-     * <p>桌面歌词唯一的发光输入。原来它旁边还有「晕染程度」「发光范围」，OSD 分组里又有一份
-     * 「OSD 发光/晕染程度」跟它相乘——四个滑块描述同一束光。而发光改成真高斯之后，这一项
-     * 折算出的 sigma 不到一个像素，从 0 拉到 1 肉眼没有区别，看得见的光其实全来自「晕染」。
-     * 现在只留这一个强度，光晕铺多远交给 {@link #lyricGlowSpread}。</p>
-     */
+    /** 进度条粗细，以逻辑像素计。 */
     public static float currentGlowStrength = 1.00f;
 
-    /**
-     * 歌词光晕的扩散倍率，1.0 是标定好的默认口径。
-     *
-     * <p>三层高斯的 sigma 是按字号取比例的（见 {@code TextGlow}），所以桌面歌词、全屏歌词页
-     * 共用这一个倍率就能得到成比例的观感，不必各留一个像素单位的「半径」滑块——那个口径
-     * 在 14px 的桌面歌词和 32.5px 的全屏歌词上根本不是一回事。</p>
-     *
-     * <p>调大它会同时把离屏合成的留白撑宽（{@code TextGlow.padding}），否则光晕会被纹理
-     * 边界切成方块。</p>
-     */
+    /** 完成状态在隐藏前保持可见的秒数。 */
     public static float lyricGlowSpread = 1.3181034f;
 
-    /**
-     * 全屏歌词页逐字发光的上限强度。
-     *
-     * <p>发光是"随这个字已经唱了多久"逐渐变亮的：每个字的发光透明度 = 该字的演唱进度 ×
-     * 这个上限。写成单独一个上限而不是复用 {@link #currentGlowStrength}，是因为后者同时
-     * 作用于 OSD 桌面歌词的整行光晕，调大它会让桌面歌词一起过曝。</p>
-     */
+    /** 多条通知排队时，每条已排队通知显示的秒数。 */
     public static float fullscreenGlowStrength = 0.278481f;
 
     /**
-     * 全屏歌词页的展示样式索引，对应 {@code FullscreenLyricStyle} 的序号。
-     *
-     * <p>存索引而不是枚举名：枚举名一改配置就读不回来了，而索引只要求新样式往后追加。
-     * 越界时渲染层退回经典样式。</p>
+     * 全局岛屿的视觉预设：0 药丸、1 玻璃、2 紧凑、3 卡片、4 系统卡片、
+     * 5 音乐聚焦、6 液态玻璃。
      */
     public static int fullscreenLyricStyle = 0;
+
+    /** 仅恢复桌面歌词外观，HUD 位置保持不变。 */
+    public static int fullscreenLyricBackground = 0;
+
+    /** 恢复全局下载岛屿外观。 */
+    public static int latentBackgroundDisplayMode = 2; /** 加载已保存的设置；格式错误或越界的值安全回退。 */
+    public static int latentBackgroundColorSource = 0; /** 在编辑器交互后持久化设置。 */
+    public static boolean latentDynamicOnlyInPlayer = true;
+    public static boolean latentEnhancedBeatResponse = true;
+    public static float latentDitheringSpeed = 0.10f;
+    public static float latentDitheringAudioSpeed = 1.20f;
+    public static float latentDitheringSize = 2.50f;
+    public static float latentDitheringOpacity = 0.55f;
+    public static float latentMeshSpeed = 0.30f;
+    public static float latentMeshAudioSpeed = 2.00f;
+    public static float latentMeshDistortion = 0.80f;
+    public static float latentMeshSwirl = 0.10f;
+    public static boolean latentOverlayEnabled = true;
+    public static float latentOverlayOpacity = 0.35f;
+
+    /** 主题颜色来源。0 保留用户当前主题预设，1 使用当前歌曲封面自动配色。 */
+    public static int themeColorSource = 0;
 
     /**
      * 桌面歌词（OSD）的展示样式索引。{@code 0} 经典，{@code 1} Blossom。
@@ -441,6 +445,23 @@ public final class HudConfig {
         lyricGlowSpread = 1.3181034f;
         fullscreenGlowStrength = 0.278481f;
         fullscreenLyricStyle = 0;
+        fullscreenLyricBackground = 0;
+
+        latentBackgroundDisplayMode = 2;
+        latentBackgroundColorSource = 0;
+        latentDynamicOnlyInPlayer = true;
+        latentEnhancedBeatResponse = true;
+        latentDitheringSpeed = 0.10f;
+        latentDitheringAudioSpeed = 1.20f;
+        latentDitheringSize = 2.50f;
+        latentDitheringOpacity = 0.55f;
+        latentMeshSpeed = 0.30f;
+        latentMeshAudioSpeed = 2.00f;
+        latentMeshDistortion = 0.80f;
+        latentMeshSwirl = 0.10f;
+        latentOverlayEnabled = true;
+        latentOverlayOpacity = 0.35f;
+        themeColorSource = 0;
         osdLyricStyle = 1;
         blossomBackdropBlur = 1.00f;
         blossomPanelOpacity = 0.5258621f;
@@ -556,6 +577,37 @@ public final class HudConfig {
             fullscreenGlowStrength = clamp01(getFloat(o, "fullscreenGlowStrength", fullscreenGlowStrength));
             fullscreenLyricStyle = clampInt(getInt(o, "fullscreenLyricStyle", fullscreenLyricStyle), 0,
                     FULLSCREEN_LYRIC_STYLE_MAX);
+            fullscreenLyricBackground = clampInt(
+                    getInt(o, "fullscreenLyricBackground", fullscreenLyricBackground), 0,
+                    FULLSCREEN_LYRIC_BACKGROUND_MAX);
+
+            latentBackgroundDisplayMode = clampInt(getInt(o, "latentBackgroundDisplayMode",
+                    latentBackgroundDisplayMode), 0, 2);
+            latentBackgroundColorSource = clampInt(getInt(o, "latentBackgroundColorSource",
+                    latentBackgroundColorSource), 0, 1);
+            latentDynamicOnlyInPlayer = getBoolean(o, "latentDynamicOnlyInPlayer",
+                    latentDynamicOnlyInPlayer);
+            latentEnhancedBeatResponse = getBoolean(o, "latentEnhancedBeatResponse",
+                    latentEnhancedBeatResponse);
+            latentDitheringSpeed = clamp(getFloat(o, "latentDitheringSpeed", latentDitheringSpeed),
+                    0.0f, 2.0f);
+            latentDitheringAudioSpeed = clamp(getFloat(o, "latentDitheringAudioSpeed",
+                    latentDitheringAudioSpeed), 0.0f, 2.0f);
+            latentDitheringSize = clamp(getFloat(o, "latentDitheringSize", latentDitheringSize),
+                    0.50f, 8.0f);
+            latentDitheringOpacity = clamp01(getFloat(o, "latentDitheringOpacity",
+                    latentDitheringOpacity));
+            latentMeshSpeed = clamp(getFloat(o, "latentMeshSpeed", latentMeshSpeed), 0.0f, 2.0f);
+            latentMeshAudioSpeed = clamp(getFloat(o, "latentMeshAudioSpeed", latentMeshAudioSpeed),
+                    0.0f, 2.0f);
+            latentMeshDistortion = clamp(getFloat(o, "latentMeshDistortion", latentMeshDistortion),
+                    0.0f, 2.0f);
+            latentMeshSwirl = clamp(getFloat(o, "latentMeshSwirl", latentMeshSwirl), 0.0f, 1.0f);
+            latentOverlayEnabled = getBoolean(o, "latentOverlayEnabled", latentOverlayEnabled);
+            latentOverlayOpacity = clamp01(getFloat(o, "latentOverlayOpacity",
+                    latentOverlayOpacity));
+            themeColorSource = clampInt(getInt(o, "themeColorSource", themeColorSource), 0,
+                    THEME_COLOR_SOURCE_MAX);
             osdLyricStyle = clampInt(getInt(o, "osdLyricStyle", osdLyricStyle), 0,
                     OSD_LYRIC_STYLE_MAX);
             blossomBackdropBlur = clamp01(getFloat(o, "blossomBackdropBlur", blossomBackdropBlur));
@@ -678,6 +730,23 @@ public final class HudConfig {
             o.addProperty("lyricGlowSpread", lyricGlowSpread);
             o.addProperty("fullscreenGlowStrength", fullscreenGlowStrength);
             o.addProperty("fullscreenLyricStyle", fullscreenLyricStyle);
+            o.addProperty("fullscreenLyricBackground", fullscreenLyricBackground);
+
+            o.addProperty("latentBackgroundDisplayMode", latentBackgroundDisplayMode);
+            o.addProperty("latentBackgroundColorSource", latentBackgroundColorSource);
+            o.addProperty("latentDynamicOnlyInPlayer", latentDynamicOnlyInPlayer);
+            o.addProperty("latentEnhancedBeatResponse", latentEnhancedBeatResponse);
+            o.addProperty("latentDitheringSpeed", latentDitheringSpeed);
+            o.addProperty("latentDitheringAudioSpeed", latentDitheringAudioSpeed);
+            o.addProperty("latentDitheringSize", latentDitheringSize);
+            o.addProperty("latentDitheringOpacity", latentDitheringOpacity);
+            o.addProperty("latentMeshSpeed", latentMeshSpeed);
+            o.addProperty("latentMeshAudioSpeed", latentMeshAudioSpeed);
+            o.addProperty("latentMeshDistortion", latentMeshDistortion);
+            o.addProperty("latentMeshSwirl", latentMeshSwirl);
+            o.addProperty("latentOverlayEnabled", latentOverlayEnabled);
+            o.addProperty("latentOverlayOpacity", latentOverlayOpacity);
+            o.addProperty("themeColorSource", themeColorSource);
             o.addProperty("osdLyricStyle", osdLyricStyle);
             o.addProperty("blossomBackdropBlur", blossomBackdropBlur);
             o.addProperty("blossomPanelOpacity", blossomPanelOpacity);

@@ -9,6 +9,7 @@ import com.muoniumplayer.compat.lwjgl2.Mouse;
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
+import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.rendering.animation.Easing;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.settings.HudConfig;
@@ -51,6 +52,25 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private static final int KIND_STYLE_SLIDER = 8;
     /** 当前样式专属的开关 / 枚举，点一下换下一档。 */
     private static final int KIND_STYLE_TOGGLE = 9;
+    /** 全屏歌词背景来源；不随歌词样式切换而消失。 */
+    private static final int KIND_BACKGROUND = 10;
+    /** 播放器颜色来源：当前预设或当前歌曲封面。 */
+    private static final int KIND_THEME_SOURCE = 11;
+    /** 手动重取歌词（左键重新走一遍解析链）。 */
+    private static final int KIND_LYRIC_RELOAD = 12;
+    /** 歌词时间偏移滑块；左右各 ±10 秒，右键归零。 */
+    private static final int KIND_LYRIC_OFFSET = 13;
+    /** 「隐现」显示图层：像素 / 流体 / 混合。 */
+    private static final int KIND_LATENT_MODE = 14;
+    /** 「隐现」颜色来源：封面与主题 / 仅封面取色。 */
+    private static final int KIND_LATENT_COLOR = 15;
+    /** 「隐现」布尔开关。 */
+    private static final int KIND_LATENT_TOGGLE = 16;
+    /** 「隐现」浮点参数。 */
+    private static final int KIND_LATENT_SLIDER = 17;
+
+    /** 偏移滑块的两端（毫秒）。与 {@code LyricOffsetMemory} 的夹取范围保持一致。 */
+    private static final long OFFSET_SPAN_MILLIS = 10_000L;
 
     // ---- 各样式专属参数表 ----
     // 做成 static final 而不是每次现算：layout() 每帧都会跑一遍，没必要每帧 new 一堆小数组。
@@ -107,6 +127,36 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private static final int[] DIORAMA_TOGGLES = {TOGGLE_DIORAMA_DUST};
     private static final int[] PENDOLO_TOGGLES = {TOGGLE_PENDOLO_GEARS};
 
+    // ---- 「隐现」背景参数 ----
+    private static final int LATENT_TOGGLE_DYNAMIC_ONLY = 0;
+    private static final int LATENT_TOGGLE_ENHANCED_BEAT = 1;
+    private static final int LATENT_TOGGLE_OVERLAY = 2;
+    private static final int[] LATENT_TOGGLES = {
+            LATENT_TOGGLE_DYNAMIC_ONLY, LATENT_TOGGLE_ENHANCED_BEAT, LATENT_TOGGLE_OVERLAY
+    };
+
+    private static final int LATENT_DITHER_SPEED = 0;
+    private static final int LATENT_DITHER_AUDIO_SPEED = 1;
+    private static final int LATENT_DITHER_SIZE = 2;
+    private static final int LATENT_DITHER_OPACITY = 3;
+    private static final int LATENT_MESH_SPEED = 4;
+    private static final int LATENT_MESH_AUDIO_SPEED = 5;
+    private static final int LATENT_MESH_DISTORTION = 6;
+    private static final int LATENT_MESH_SWIRL = 7;
+    private static final int LATENT_OVERLAY_OPACITY = 8;
+    private static final String[] LATENT_DISPLAY_NAMES = {"像素", "流体", "混合"};
+    private static final String[] LATENT_COLOR_NAMES = {"封面与主题", "仅封面取色"};
+    private static final String[] LATENT_SLIDER_LABELS = {
+            "基础速度", "音频响应最大速度", "像素尺寸", "像素层透明度",
+            "基础速度", "音频响应最大速度", "流体扭曲", "流体旋涡", "叠色透明度"
+    };
+    private static final float[] LATENT_SLIDER_MIN = {
+            0f, 0f, 0.5f, 0f, 0f, 0f, 0f, 0f, 0f
+    };
+    private static final float[] LATENT_SLIDER_MAX = {
+            2f, 2f, 8f, 1f, 2f, 2f, 2f, 1f, 1f
+    };
+
     private static final String[] TILT_COLOR_NAMES = {"默认", "互换", "全强调", "全主色"};
 
     /** 第 0 档是「左侧歌曲封面 + 右侧登录账号头像」，未登录时右侧自动退回封面。 */
@@ -114,7 +164,8 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
 
     private static HudSetting[] styleSettings() {
         switch (FullscreenLyricStyle.current()) {
-            case LUMINOUS: return LUMINOUS_SETTINGS;
+            case LUMINOUS:
+            case LUMINOUS_CLASSIC: return LUMINOUS_SETTINGS;
             case PARTITA: return PARTITA_SETTINGS;
             case FUME: return FUME_SETTINGS;
             case CAPPELLA: return CAPPELLA_SETTINGS;
@@ -127,7 +178,8 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
 
     private static int[] styleToggles() {
         switch (FullscreenLyricStyle.current()) {
-            case LUMINOUS: return LUMINOUS_TOGGLES;
+            case LUMINOUS:
+            case LUMINOUS_CLASSIC: return LUMINOUS_TOGGLES;
             case PARTITA: return PARTITA_TOGGLES;
             case FUME: return FUME_TOGGLES;
             case CAPPELLA: return CAPPELLA_TOGGLES;
@@ -209,6 +261,81 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         HudConfig.save();
     }
 
+    private static String latentToggleLabel(int id) {
+        switch (id) {
+            case LATENT_TOGGLE_DYNAMIC_ONLY: return "仅播放时动态";
+            case LATENT_TOGGLE_ENHANCED_BEAT: return "增强节拍响应";
+            case LATENT_TOGGLE_OVERLAY: return "可读性叠色";
+            default: return "";
+        }
+    }
+
+    private static String latentToggleValue(int id) {
+        switch (id) {
+            case LATENT_TOGGLE_DYNAMIC_ONLY:
+                return HudConfig.latentDynamicOnlyInPlayer ? "开" : "关";
+            case LATENT_TOGGLE_ENHANCED_BEAT:
+                return HudConfig.latentEnhancedBeatResponse ? "开" : "关";
+            case LATENT_TOGGLE_OVERLAY:
+                return HudConfig.latentOverlayEnabled ? "开" : "关";
+            default:
+                return "";
+        }
+    }
+
+    private static void cycleLatentToggle(int id) {
+        switch (id) {
+            case LATENT_TOGGLE_DYNAMIC_ONLY:
+                HudConfig.latentDynamicOnlyInPlayer = !HudConfig.latentDynamicOnlyInPlayer;
+                break;
+            case LATENT_TOGGLE_ENHANCED_BEAT:
+                HudConfig.latentEnhancedBeatResponse = !HudConfig.latentEnhancedBeatResponse;
+                break;
+            case LATENT_TOGGLE_OVERLAY:
+                HudConfig.latentOverlayEnabled = !HudConfig.latentOverlayEnabled;
+                break;
+            default:
+                return;
+        }
+        HudConfig.save();
+    }
+
+    private static float latentSliderValue(int index) {
+        switch (index) {
+            case LATENT_DITHER_SPEED: return HudConfig.latentDitheringSpeed;
+            case LATENT_DITHER_AUDIO_SPEED: return HudConfig.latentDitheringAudioSpeed;
+            case LATENT_DITHER_SIZE: return HudConfig.latentDitheringSize;
+            case LATENT_DITHER_OPACITY: return HudConfig.latentDitheringOpacity;
+            case LATENT_MESH_SPEED: return HudConfig.latentMeshSpeed;
+            case LATENT_MESH_AUDIO_SPEED: return HudConfig.latentMeshAudioSpeed;
+            case LATENT_MESH_DISTORTION: return HudConfig.latentMeshDistortion;
+            case LATENT_MESH_SWIRL: return HudConfig.latentMeshSwirl;
+            case LATENT_OVERLAY_OPACITY: return HudConfig.latentOverlayOpacity;
+            default: return 0f;
+        }
+    }
+
+    private static void setLatentSliderValue(int index, float value) {
+        switch (index) {
+            case LATENT_DITHER_SPEED: HudConfig.latentDitheringSpeed = value; break;
+            case LATENT_DITHER_AUDIO_SPEED: HudConfig.latentDitheringAudioSpeed = value; break;
+            case LATENT_DITHER_SIZE: HudConfig.latentDitheringSize = value; break;
+            case LATENT_DITHER_OPACITY: HudConfig.latentDitheringOpacity = value; break;
+            case LATENT_MESH_SPEED: HudConfig.latentMeshSpeed = value; break;
+            case LATENT_MESH_AUDIO_SPEED: HudConfig.latentMeshAudioSpeed = value; break;
+            case LATENT_MESH_DISTORTION: HudConfig.latentMeshDistortion = value; break;
+            case LATENT_MESH_SWIRL: HudConfig.latentMeshSwirl = value; break;
+            case LATENT_OVERLAY_OPACITY: HudConfig.latentOverlayOpacity = value; break;
+            default: break;
+        }
+    }
+
+    private static String latentSliderText(int index, float value) {
+        return index == LATENT_DITHER_OPACITY || index == LATENT_OVERLAY_OPACITY
+                ? Math.round(value * 100f) + "%"
+                : String.format("%.2f", value);
+    }
+
     private static final double MARGIN = 12.0;
     private static final double BUTTON_SIZE = 24.0;
     private static final double PANEL_WIDTH = 178.0;
@@ -277,6 +404,10 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private int dragKind = -1;
     private int dragIndex = -1;
 
+    /** 「隐现」完整参数超出可用高度时，面板内部滚动。 */
+    private double scrollOffset;
+    private double scrollTarget;
+
     /** 正在编辑调色板的第几槽。 */
     private int editSlot;
     /** 上一次同步过的槽颜色，用来发现「颜色被别处改了」而重算 HSB。 */
@@ -314,6 +445,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
 
         layout();
         updateUiScale();
+        updateScroll();
         syncEditColor();
         updateDrag(mouseX, mouseY);
 
@@ -326,13 +458,40 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
 
     /** 视口装不下整块面板时等比缩小。装得下就恒为 1，行为与加这段之前完全一致。 */
     private void updateUiScale() {
-        double needed = panelHeight();
+        double needed = contentHeight();
         double available = panelSpaceBottom - panelTop();
         if (Double.isNaN(available) || available <= 8 || needed <= available || needed <= 0) {
             uiScale = 1.0;
             return;
         }
         uiScale = Math.max(MIN_UI_SCALE, available / needed);
+    }
+
+    /**
+     * 面板内容超过可见高度时，在内层滚轮滚动。返回 true 表示这次滚轮已被面板吃掉。
+     */
+    boolean handleScroll(int wheel, double mouseX, double mouseY) {
+        if (!expanded || wheel == 0 || Double.isNaN(anchorX)) return false;
+        double layoutX = toLayoutX(mouseX);
+        double layoutY = toLayoutY(mouseY);
+        if (!isInside(layoutX, layoutY, anchorX, panelTop(), PANEL_WIDTH, panelHeight())) {
+            return false;
+        }
+        double max = Math.max(0.0, contentHeight() - panelHeight());
+        scrollTarget = Math.max(0.0, Math.min(max, scrollTarget - wheel * 24.0));
+        return true;
+    }
+
+    private void updateScroll() {
+        double max = Math.max(0.0, contentHeight() - panelHeight());
+        if (scrollTarget > max) scrollTarget = max;
+        if (scrollOffset > max) scrollOffset = max;
+        scrollOffset += (scrollTarget - scrollOffset) * .30;
+        if (Math.abs(scrollTarget - scrollOffset) < .1) scrollOffset = scrollTarget;
+        if (scrollOffset <= .01) return;
+        for (int i = 0; i < rows.size(); i++) {
+            rows.get(i).y -= scrollOffset;
+        }
     }
 
     /** 屏幕坐标 -> 布局坐标。缩放是绕（anchorX, panelTop）做的，所以反变换也绕这一点。 */
@@ -356,9 +515,40 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         double top = panelTop();
         double y = top + PANEL_PADDING + TITLE_HEIGHT;
         y = addRow(KIND_STYLE, 0, y, PICK_ROW_HEIGHT);
+        y = addRow(KIND_BACKGROUND, 0, y, PICK_ROW_HEIGHT);
+        y = addRow(KIND_THEME_SOURCE, 0, y, PICK_ROW_HEIGHT);
+        if (FullscreenLyricBackground.current() == FullscreenLyricBackground.LATENT) {
+            y = addRow(KIND_SECTION, 3, y, SECTION_HEIGHT);
+            y = addRow(KIND_LATENT_MODE, 0, y, PICK_ROW_HEIGHT);
+            y = addRow(KIND_LATENT_COLOR, 0, y, PICK_ROW_HEIGHT);
+            for (int i = 0; i < LATENT_TOGGLES.length; i++) {
+                y = addRow(KIND_LATENT_TOGGLE, i, y, PICK_ROW_HEIGHT);
+            }
+            if (HudConfig.latentOverlayEnabled) {
+                y = addRow(KIND_LATENT_SLIDER, LATENT_OVERLAY_OPACITY, y, ROW_HEIGHT);
+            }
+            if (HudConfig.latentBackgroundDisplayMode != 1) {
+                y = addRow(KIND_SECTION, 4, y, SECTION_HEIGHT);
+                for (int i = LATENT_DITHER_SPEED; i <= LATENT_DITHER_OPACITY; i++) {
+                    y = addRow(KIND_LATENT_SLIDER, i, y, ROW_HEIGHT);
+                }
+            }
+            if (HudConfig.latentBackgroundDisplayMode != 0) {
+                y = addRow(KIND_SECTION, 5, y, SECTION_HEIGHT);
+                for (int i = LATENT_MESH_SPEED; i <= LATENT_MESH_SWIRL; i++) {
+                    y = addRow(KIND_LATENT_SLIDER, i, y, ROW_HEIGHT);
+                }
+            }
+        }
         for (int i = 0; i < SETTINGS.length; i++) {
             y = addRow(KIND_SLIDER, i, y, ROW_HEIGHT);
         }
+        // 歌词同步：跟样式无关，只跟「这首歌的歌词对不对」有关，所以排在通用项之后、样式专属参数
+        // 之前。刻意不放到面板最底下 —— 底部在「最小视口 + 律动词云自定义配色」那一档会被整体
+        // 缩放裁掉，摆在那里会让这个功能在那种配置下直接够不到。
+        y = addRow(KIND_SECTION, 2, y, SECTION_HEIGHT);
+        y = addRow(KIND_LYRIC_RELOAD, 0, y, PICK_ROW_HEIGHT);
+        y = addRow(KIND_LYRIC_OFFSET, 0, y, ROW_HEIGHT);
         HudSetting[] styleSliders = styleSettings();
         int[] toggles = styleToggles();
         if (styleSliders.length > 0 || toggles.length > 0) {
@@ -444,9 +634,34 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private void handleRowClick(Row row, double mouseX, int mouseButton) {
         boolean right = mouseButton == 1;
         if (row.kind == KIND_STYLE) {
-            // 右键往回退一档：九种样式只能单向轮换的话，想回上一种得点八下。
+            // 右键往回退一档：十种样式只能单向轮换的话，想回上一种得点九下。
             if (right) FullscreenLyricStyle.previous();
             else FullscreenLyricStyle.next();
+            return;
+        }
+        if (row.kind == KIND_BACKGROUND) {
+            if (right) FullscreenLyricBackground.previous();
+            else FullscreenLyricBackground.next();
+            return;
+        }
+        if (row.kind == KIND_THEME_SOURCE) {
+            if (right) ThemeColorSource.previous();
+            else ThemeColorSource.next();
+            return;
+        }
+        if (row.kind == KIND_LYRIC_RELOAD) {
+            // 只认左键：右键留在「重置偏移」那条上，这两件事都很容易误触，分开更安全。
+            if (!right) CloudMusic.reloadLyrics();
+            return;
+        }
+        if (row.kind == KIND_LYRIC_OFFSET) {
+            if (right) {
+                CloudMusic.resetLyricOffset();
+                return;
+            }
+            dragKind = row.kind;
+            dragIndex = row.index;
+            applyDrag(mouseX);
             return;
         }
         if (row.kind == KIND_DECOR_MODE) {
@@ -492,11 +707,29 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             }
             return;
         }
+        if (row.kind == KIND_LATENT_MODE) {
+            int next = HudConfig.latentBackgroundDisplayMode + (right ? -1 : 1);
+            HudConfig.latentBackgroundDisplayMode = ((next % 3) + 3) % 3;
+            HudConfig.save();
+            return;
+        }
+        if (row.kind == KIND_LATENT_COLOR) {
+            int next = HudConfig.latentBackgroundColorSource + (right ? -1 : 1);
+            HudConfig.latentBackgroundColorSource = ((next % 2) + 2) % 2;
+            HudConfig.save();
+            return;
+        }
+        if (row.kind == KIND_LATENT_TOGGLE) {
+            if (row.index >= 0 && row.index < LATENT_TOGGLES.length) {
+                cycleLatentToggle(LATENT_TOGGLES[row.index]);
+            }
+            return;
+        }
         if (right) {
             return;
         }
         if (row.kind == KIND_SLIDER || row.kind == KIND_BEATS || row.kind == KIND_HSB
-                || row.kind == KIND_STYLE_SLIDER) {
+                || row.kind == KIND_STYLE_SLIDER || row.kind == KIND_LATENT_SLIDER) {
             dragKind = row.kind;
             dragIndex = row.index;
             applyDrag(mouseX);
@@ -529,6 +762,15 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             HudSetting setting = sliders[dragIndex];
             double fraction = fractionAt(mouseX, trackLeft(), trackWidth());
             setting.setValue((float) (setting.getMin() + (setting.getMax() - setting.getMin()) * fraction));
+            pendingSave = true;
+            return;
+        }
+        if (dragKind == KIND_LATENT_SLIDER) {
+            if (dragIndex < 0 || dragIndex >= LATENT_SLIDER_LABELS.length) return;
+            double fraction = fractionAt(mouseX, trackLeft(), trackWidth());
+            float value = (float) (LATENT_SLIDER_MIN[dragIndex]
+                    + (LATENT_SLIDER_MAX[dragIndex] - LATENT_SLIDER_MIN[dragIndex]) * fraction);
+            setLatentSliderValue(dragIndex, value);
             pendingSave = true;
             return;
         }
@@ -565,8 +807,13 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     }
 
     private void releaseDrag() {
+        int finishedKind = dragKind;
         dragKind = -1;
         dragIndex = -1;
+        if (finishedKind == KIND_LYRIC_OFFSET) {
+            // 偏移的落盘与 HudConfig 分开：它记在每首歌的记忆表里，跟样式设置不是一回事。
+            CloudMusic.commitLyricOffset();
+        }
         if (pendingSave) {
             pendingSave = false;
             HudConfig.save();
@@ -635,8 +882,12 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             FontManager.pf14bold.drawString("歌词显示", anchorX + PANEL_PADDING,
                     panelTop + PANEL_PADDING, hexColor(1f, 1f, 1f, panelAlpha));
 
+            double top = panelTop();
+            double bottom = top + height;
             for (int i = 0; i < rows.size(); i++) {
-                renderRow(rows.get(i), mouseX, mouseY, panelAlpha);
+                Row row = rows.get(i);
+                if (row.y + row.height < top || row.y > bottom) continue;
+                renderRow(row, mouseX, mouseY, panelAlpha);
             }
         } finally {
             api.getGLStateManager().popMatrix();
@@ -646,6 +897,16 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private void renderRow(Row row, double mouseX, double mouseY, float panelAlpha) {
         if (row.kind == KIND_STYLE) {
             renderPickRow(row, "歌词样式", FullscreenLyricStyle.current().getDisplayName(),
+                    mouseX, mouseY, panelAlpha);
+            return;
+        }
+        if (row.kind == KIND_BACKGROUND) {
+            renderPickRow(row, "歌词背景", FullscreenLyricBackground.current().getDisplayName(),
+                    mouseX, mouseY, panelAlpha);
+            return;
+        }
+        if (row.kind == KIND_THEME_SOURCE) {
+            renderPickRow(row, "主题配色", ThemeColorSource.current().getDisplayName(),
                     mouseX, mouseY, panelAlpha);
             return;
         }
@@ -668,12 +929,57 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             }
             return;
         }
+        if (row.kind == KIND_LATENT_MODE) {
+            int mode = Math.max(0, Math.min(LATENT_DISPLAY_NAMES.length - 1,
+                    HudConfig.latentBackgroundDisplayMode));
+            renderPickRow(row, "显示图层", LATENT_DISPLAY_NAMES[mode],
+                    mouseX, mouseY, panelAlpha);
+            return;
+        }
+        if (row.kind == KIND_LATENT_COLOR) {
+            int source = Math.max(0, Math.min(LATENT_COLOR_NAMES.length - 1,
+                    HudConfig.latentBackgroundColorSource));
+            renderPickRow(row, "颜色来源", LATENT_COLOR_NAMES[source],
+                    mouseX, mouseY, panelAlpha);
+            return;
+        }
+        if (row.kind == KIND_LATENT_TOGGLE) {
+            if (row.index >= 0 && row.index < LATENT_TOGGLES.length) {
+                int id = LATENT_TOGGLES[row.index];
+                renderPickRow(row, latentToggleLabel(id), latentToggleValue(id),
+                        mouseX, mouseY, panelAlpha);
+            }
+            return;
+        }
+        if (row.kind == KIND_LATENT_SLIDER) {
+            renderLatentSettingRow(row, mouseX, mouseY, panelAlpha);
+            return;
+        }
         if (row.kind == KIND_SECTION) {
-            String title = row.index == 1
-                    ? FullscreenLyricStyle.current().getDisplayName() + " 参数"
-                    : "背景配色";
+            String title;
+            if (row.index == 1) {
+                title = FullscreenLyricStyle.current().getDisplayName() + " 参数";
+            } else if (row.index == 2) {
+                title = "歌词同步";
+            } else if (row.index == 3) {
+                title = "隐现背景";
+            } else if (row.index == 4) {
+                title = "像素背景";
+            } else if (row.index == 5) {
+                title = "流体背景";
+            } else {
+                title = "背景配色";
+            }
             FontManager.pf12bold.drawString(title, trackLeft(), row.y + 3,
                     hexColor(1f, 1f, 1f, panelAlpha * .52f));
+            return;
+        }
+        if (row.kind == KIND_LYRIC_RELOAD) {
+            renderPickRow(row, "歌词来源", "重新匹配", mouseX, mouseY, panelAlpha);
+            return;
+        }
+        if (row.kind == KIND_LYRIC_OFFSET) {
+            renderLyricOffsetRow(row, mouseX, mouseY, panelAlpha);
             return;
         }
         if (row.kind == KIND_DECOR_MODE) {
@@ -744,6 +1050,28 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         renderTrack(left, trackY, width, fraction, hover, panelAlpha);
     }
 
+    private void renderLatentSettingRow(Row row, double mouseX, double mouseY, float panelAlpha) {
+        if (row.index < 0 || row.index >= LATENT_SLIDER_LABELS.length) return;
+        double left = trackLeft();
+        double width = trackWidth();
+        double trackY = row.y + 16;
+        float value = latentSliderValue(row.index);
+        float min = LATENT_SLIDER_MIN[row.index];
+        float max = LATENT_SLIDER_MAX[row.index];
+
+        FontManager.pf12bold.drawString(LATENT_SLIDER_LABELS[row.index], left, row.y,
+                hexColor(1f, 1f, 1f, panelAlpha * .82f));
+        String valueText = latentSliderText(row.index, value);
+        FontManager.pf12bold.drawString(valueText,
+                left + width - FontManager.pf12bold.getStringWidthD(valueText), row.y,
+                hexColor(1f, 1f, 1f, panelAlpha * .62f));
+
+        double fraction = Math.max(0.0, Math.min(1.0, (value - min) / Math.max(1.0e-4, max - min)));
+        boolean hover = (dragKind == row.kind && dragIndex == row.index)
+                || isInside(mouseX, mouseY, left, trackY - 6, width, TRACK_HEIGHT + 12);
+        renderTrack(left, trackY, width, fraction, hover, panelAlpha);
+    }
+
     private void renderBeatsRow(Row row, double mouseX, double mouseY, float panelAlpha) {
         double left = trackLeft();
         double width = trackWidth();
@@ -763,6 +1091,28 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         boolean hover = dragKind == KIND_BEATS
                 || isInside(mouseX, mouseY, left, trackY - 6, width, TRACK_HEIGHT + 12);
         renderTrack(left, trackY, width, fraction, hover, panelAlpha);
+    }
+
+    /** 时间偏移行：轨道中点就是 0，往左歌词提前、往右歌词延后，右键归零。 */
+    private void renderLyricOffsetRow(Row row, double mouseX, double mouseY, float panelAlpha) {
+        double left = trackLeft();
+        double width = trackWidth();
+        double trackY = row.y + 16;
+
+        FontManager.pf12bold.drawString("时间偏移", left, row.y,
+                hexColor(1f, 1f, 1f, panelAlpha * .82f));
+
+        long offset = CloudMusic.getLyricOffsetMillis();
+        String value = offset == 0L ? "0 ms"
+                : (offset > 0L ? "+" : "-") + Math.abs(offset) + " ms";
+        FontManager.pf12bold.drawString(value,
+                left + width - FontManager.pf12bold.getStringWidthD(value), row.y,
+                hexColor(1f, 1f, 1f, panelAlpha * .62f));
+
+        double fraction = (offset / (double) OFFSET_SPAN_MILLIS + 1.0) * .5;
+        boolean hover = dragKind == KIND_LYRIC_OFFSET
+                || isInside(mouseX, mouseY, left, trackY - 6, width, TRACK_HEIGHT + 12);
+        renderTrack(left, trackY, width, Math.max(0.0, Math.min(1.0, fraction)), hover, panelAlpha);
     }
 
     private void renderTrack(double left, double trackY, double width, double fraction,
@@ -880,9 +1230,17 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         return anchorY + BUTTON_SIZE + 6;
     }
 
-    /** 面板高度来自最近一次 {@link #layout()}；还没摆过时给一个只够标题的高度。 */
-    private double panelHeight() {
+    /** 面板完整内容高度，来自最近一次 {@link #layout()}。 */
+    private double contentHeight() {
         return layoutHeight > 0 ? layoutHeight : PANEL_PADDING * 2 + TITLE_HEIGHT;
+    }
+
+    /** 当前可见高度；内容比视口高时截到视口底部，其余通过内部滚动查看。 */
+    private double panelHeight() {
+        double content = contentHeight();
+        if (Double.isNaN(panelSpaceBottom)) return content;
+        double available = Math.max(0.0, panelSpaceBottom - panelTop());
+        return Math.min(content, available / Math.max(.01, uiScale));
     }
 
     private double trackLeft() {

@@ -72,7 +72,7 @@ class RenderLayerStaticTest {
             assertFalse(Files.exists(path), "旧渲染实现又回来了: " + removed);
         }
         assertFalse(Files.exists(MAIN_RESOURCES.resolve(Paths.get("muonium", "shaders"))),
-                "muonium/shaders 目录又出现了；渲染层唯一允许的着色器是 SkijaEffects 里的 SkSL");
+                "muonium/shaders 目录又出现了；渲染层允许的着色器只放在 SkijaEffects / SkijaLatentEffects 的 SkSL 中");
     }
 
     @Test

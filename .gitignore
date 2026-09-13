@@ -40,3 +40,6 @@ __pycache__/
 
 # 本地排障导出的完整错误报告（含日志、账号环境与第三方 jar，绝不上传）
 error-report-*/
+
+# Codex 临时上游源码参考（不参与项目构建）
+.codex-reference/

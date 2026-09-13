@@ -24,7 +24,13 @@ public final class HudConfig {
     public static final int DYNAMIC_ISLAND_STYLE_MAX = 6;
 
     /** 全屏歌词样式索引上限,与 {@code FullscreenLyricStyle} 的数量保持一致。 */
-    public static final int FULLSCREEN_LYRIC_STYLE_MAX = 9;
+    public static final int FULLSCREEN_LYRIC_STYLE_MAX = 10;
+
+    /** 全屏歌词背景索引上限，与 {@code FullscreenLyricBackground} 的数量保持一致。 */
+    public static final int FULLSCREEN_LYRIC_BACKGROUND_MAX = 1;
+
+    /** 主题颜色来源索引上限，与 {@code ThemeColorSource} 的数量保持一致。 */
+    public static final int THEME_COLOR_SOURCE_MAX = 1;
 
     /** 桌面歌词样式索引上限，与 {@code BlossomLyricStyle} 支持的样式数量保持一致。 */
     public static final int OSD_LYRIC_STYLE_MAX = 1;
@@ -107,6 +113,34 @@ public final class HudConfig {
      * 越界时渲染层退回经典样式。</p>
      */
     public static int fullscreenLyricStyle = 0;
+
+    /**
+     * 全屏歌词页的背景索引。{@code 0} 是原有的模糊封面，{@code 1} 是「隐现」shader 背景。
+     * 旧配置没有这个字段时默认仍然是模糊封面。
+     */
+    public static int fullscreenLyricBackground = 0;
+
+    /**
+     * 「隐现」参数组。默认值直接对齐 本项目 的 DEFAULT_LATENT_BACKGROUND_TUNING，
+     * 以便旧配置升级后保持原版的细腻度与节拍响应。
+     */
+    public static int latentBackgroundDisplayMode = 2; // 0 像素，1 流体，2 混合
+    public static int latentBackgroundColorSource = 0; // 0 封面与主题，1 仅封面取色
+    public static boolean latentDynamicOnlyInPlayer = true;
+    public static boolean latentEnhancedBeatResponse = true;
+    public static float latentDitheringSpeed = 0.10f;
+    public static float latentDitheringAudioSpeed = 1.20f;
+    public static float latentDitheringSize = 2.50f;
+    public static float latentDitheringOpacity = 0.55f;
+    public static float latentMeshSpeed = 0.30f;
+    public static float latentMeshAudioSpeed = 2.00f;
+    public static float latentMeshDistortion = 0.80f;
+    public static float latentMeshSwirl = 0.10f;
+    public static boolean latentOverlayEnabled = true;
+    public static float latentOverlayOpacity = 0.35f;
+
+    /** 主题颜色来源。0 保留用户当前主题预设，1 使用当前歌曲封面自动配色。 */
+    public static int themeColorSource = 0;
 
     /**
      * 桌面歌词（OSD）的展示样式索引。{@code 0} 经典，{@code 1} Blossom。
@@ -432,6 +466,23 @@ public final class HudConfig {
         lyricGlowSpread = 1.3181034f;
         fullscreenGlowStrength = 0.278481f;
         fullscreenLyricStyle = 0;
+        fullscreenLyricBackground = 0;
+
+        latentBackgroundDisplayMode = 2;
+        latentBackgroundColorSource = 0;
+        latentDynamicOnlyInPlayer = true;
+        latentEnhancedBeatResponse = true;
+        latentDitheringSpeed = 0.10f;
+        latentDitheringAudioSpeed = 1.20f;
+        latentDitheringSize = 2.50f;
+        latentDitheringOpacity = 0.55f;
+        latentMeshSpeed = 0.30f;
+        latentMeshAudioSpeed = 2.00f;
+        latentMeshDistortion = 0.80f;
+        latentMeshSwirl = 0.10f;
+        latentOverlayEnabled = true;
+        latentOverlayOpacity = 0.35f;
+        themeColorSource = 0;
         osdLyricStyle = 1;
         blossomBackdropBlur = 1.00f;
         blossomPanelOpacity = 0.5258621f;
@@ -552,6 +603,37 @@ public final class HudConfig {
             fullscreenGlowStrength = clamp01(getFloat(o, "fullscreenGlowStrength", fullscreenGlowStrength));
             fullscreenLyricStyle = clampInt(getInt(o, "fullscreenLyricStyle", fullscreenLyricStyle), 0,
                     FULLSCREEN_LYRIC_STYLE_MAX);
+            fullscreenLyricBackground = clampInt(
+                    getInt(o, "fullscreenLyricBackground", fullscreenLyricBackground), 0,
+                    FULLSCREEN_LYRIC_BACKGROUND_MAX);
+
+            latentBackgroundDisplayMode = clampInt(getInt(o, "latentBackgroundDisplayMode",
+                    latentBackgroundDisplayMode), 0, 2);
+            latentBackgroundColorSource = clampInt(getInt(o, "latentBackgroundColorSource",
+                    latentBackgroundColorSource), 0, 1);
+            latentDynamicOnlyInPlayer = getBoolean(o, "latentDynamicOnlyInPlayer",
+                    latentDynamicOnlyInPlayer);
+            latentEnhancedBeatResponse = getBoolean(o, "latentEnhancedBeatResponse",
+                    latentEnhancedBeatResponse);
+            latentDitheringSpeed = clamp(getFloat(o, "latentDitheringSpeed", latentDitheringSpeed),
+                    0.0f, 2.0f);
+            latentDitheringAudioSpeed = clamp(getFloat(o, "latentDitheringAudioSpeed",
+                    latentDitheringAudioSpeed), 0.0f, 2.0f);
+            latentDitheringSize = clamp(getFloat(o, "latentDitheringSize", latentDitheringSize),
+                    0.50f, 8.0f);
+            latentDitheringOpacity = clamp01(getFloat(o, "latentDitheringOpacity",
+                    latentDitheringOpacity));
+            latentMeshSpeed = clamp(getFloat(o, "latentMeshSpeed", latentMeshSpeed), 0.0f, 2.0f);
+            latentMeshAudioSpeed = clamp(getFloat(o, "latentMeshAudioSpeed", latentMeshAudioSpeed),
+                    0.0f, 2.0f);
+            latentMeshDistortion = clamp(getFloat(o, "latentMeshDistortion", latentMeshDistortion),
+                    0.0f, 2.0f);
+            latentMeshSwirl = clamp(getFloat(o, "latentMeshSwirl", latentMeshSwirl), 0.0f, 1.0f);
+            latentOverlayEnabled = getBoolean(o, "latentOverlayEnabled", latentOverlayEnabled);
+            latentOverlayOpacity = clamp01(getFloat(o, "latentOverlayOpacity",
+                    latentOverlayOpacity));
+            themeColorSource = clampInt(getInt(o, "themeColorSource", themeColorSource), 0,
+                    THEME_COLOR_SOURCE_MAX);
             osdLyricStyle = clampInt(getInt(o, "osdLyricStyle", osdLyricStyle), 0,
                     OSD_LYRIC_STYLE_MAX);
             blossomBackdropBlur = clamp01(getFloat(o, "blossomBackdropBlur", blossomBackdropBlur));
@@ -676,6 +758,23 @@ public final class HudConfig {
             o.addProperty("lyricGlowSpread", lyricGlowSpread);
             o.addProperty("fullscreenGlowStrength", fullscreenGlowStrength);
             o.addProperty("fullscreenLyricStyle", fullscreenLyricStyle);
+            o.addProperty("fullscreenLyricBackground", fullscreenLyricBackground);
+
+            o.addProperty("latentBackgroundDisplayMode", latentBackgroundDisplayMode);
+            o.addProperty("latentBackgroundColorSource", latentBackgroundColorSource);
+            o.addProperty("latentDynamicOnlyInPlayer", latentDynamicOnlyInPlayer);
+            o.addProperty("latentEnhancedBeatResponse", latentEnhancedBeatResponse);
+            o.addProperty("latentDitheringSpeed", latentDitheringSpeed);
+            o.addProperty("latentDitheringAudioSpeed", latentDitheringAudioSpeed);
+            o.addProperty("latentDitheringSize", latentDitheringSize);
+            o.addProperty("latentDitheringOpacity", latentDitheringOpacity);
+            o.addProperty("latentMeshSpeed", latentMeshSpeed);
+            o.addProperty("latentMeshAudioSpeed", latentMeshAudioSpeed);
+            o.addProperty("latentMeshDistortion", latentMeshDistortion);
+            o.addProperty("latentMeshSwirl", latentMeshSwirl);
+            o.addProperty("latentOverlayEnabled", latentOverlayEnabled);
+            o.addProperty("latentOverlayOpacity", latentOverlayOpacity);
+            o.addProperty("themeColorSource", themeColorSource);
             o.addProperty("osdLyricStyle", osdLyricStyle);
             o.addProperty("blossomBackdropBlur", blossomBackdropBlur);
             o.addProperty("blossomPanelOpacity", blossomPanelOpacity);

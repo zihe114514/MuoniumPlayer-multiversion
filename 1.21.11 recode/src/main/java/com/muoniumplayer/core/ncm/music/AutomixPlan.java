@@ -1,86 +1,98 @@
 package com.muoniumplayer.core.ncm.music;
 
 /**
- * A planned automix handover. Positions are absolute milliseconds inside their own track.
+ * 一次规划好的 automix 交接。位置为各自曲目内的绝对毫秒。
  *
- * <p>{@link #fireMillis} is where the outgoing deck starts fading, {@link #incomingCueMillis} is where
- * the incoming deck starts playing, and both ramps last {@link #overlapMillis}. The ramp is equal power
- * ({@code cos}/{@code sin}), so perceived loudness stays flat through the blend instead of dipping in
- * the middle the way a linear fade does.</p>
+ * <p>{@link #fireMillis} 是退出方 deck 开始淡出之处，{@link #incomingCueMillis} 是
+ * 接入方 deck 开始播放之处，两条渐变都持续 {@link #overlapMillis}。渐变是等功率的
+ * （{@code cos}/{@code sin}），因此混音过程中感知响度保持平直，而不像线性淡入淡出那样
+ * 在中间下凹。</p>
  *
- * <p>On top of the volume ramp the plan carries the four things that separate a DJ blend from a
- * crossfade:</p>
+ * <p>在音量渐变之上，该计划还携带把 DJ 混音与普通交叉淡化区分开的
+ * 四样东西：</p>
  * <ul>
- *   <li>a <b>bass swap</b> ({@link #outgoingBassDb}/{@link #incomingBassDb}), which keeps the low band
- *       belonging to exactly one track at a time;</li>
- *   <li>a <b>vocal duck</b> ({@link #incomingVocalDepth}), which lets the arriving track enter as an
- *       instrumental bed so two lead vocals are never audible together;</li>
- *   <li>a <b>tempo lock</b> and a <b>rhythm buffer</b> ({@link #outgoingRate}), which bends the outgoing
- *       deck onto the incoming tempo and then walks off the residual phase error instead of letting the
- *       two grids flam for the whole overlap;</li>
- *   <li>or, where there is no beat worth locking, a <b>whole-semitone transposition</b> - also carried by
- *       {@link #tempoRatio}, because one rate port cannot serve tempo and pitch at the same time.</li>
+ *   <li><b>低音交换</b>（{@link #outgoingBassDb}/{@link #incomingBassDb}），使低频段
+ *       任一时刻只属于一首曲目；</li>
+ *   <li><b>人声闪避</b>（{@link #incomingVocalDepth}），让到达的曲目以
+ *       纯伴奏底形式进入，使两个主唱永不同时可闻；</li>
+ *   <li><b>速度锁定</b>和<b>节奏缓冲</b>（{@link #outgoingRate}），把退出方
+ *       deck 弯曲到接入方速度，再逐步走掉残余相位误差，而不是让两个网格在整个重叠期内
+ *       飘忽（flam）；</li>
+ *   <li>或在没有值得锁定的节拍时，做一次<b>整半音转调</b>——同样由
+ *       {@link #tempoRatio} 承载，因为一个速率端口无法同时服务速度和音高。</li>
  * </ul>
  *
- * <p>Every curve here is a pure function of the ramp position, which is what makes the whole schedule
- * checkable offline: the driver in the player only samples them.</p>
+ * <p>这里的每条曲线都是渐变位置的纯函数，这正是整个时间表可离线检查的原因：
+ * 播放器中的驱动器只负责采样它们。</p>
  */
 final class AutomixPlan {
 
-    /** The outgoing low band is fully out of the way by this point in the ramp. */
+    /** 到渐变的这一点时，退出方低频段已完全让开。 */
     private static final double BASS_CUT_COMPLETE = .5;
-    /** The incoming low band stays held back until here, then comes up. */
+    /** 接入方低频段一直压到这里，然后抬升。 */
     private static final double BASS_ENTRY_START = .3;
     private static final double BASS_ENTRY_COMPLETE = .8;
     /**
-     * The tempo bend is applied over the first sliver of the ramp. Instantly would be a step in pitch;
-     * slowly would let the grids drift for exactly as long as the correction takes to arrive.
+     * 速度弯曲施加在渐变最开头的一小段。瞬间施加会造成音高台阶；
+     * 太慢则会让网格在修正生效所需的整段时间里一直漂移。
      */
     private static final double RATE_RAMP_COMPLETE = .15;
     /**
-     * The rhythm buffer: the stretch of the ramp over which the residual phase error is walked off.
+     * 节奏缓冲：渐变中逐步走掉残余相位误差的那一段。
      *
-     * <p>It starts only after the tempo bend has settled and ends before the ramp does, so the outgoing
-     * deck is back at its locked tempo - not still being pushed - by the time it goes quiet. A raised
-     * cosine is used rather than a rectangular nudge because its derivative is zero at both ends: the
-     * correction has no edges, and the 10 ms driver cannot sample a step out of it.</p>
+     * <p>它只在速度弯曲稳定后才开始，并在渐变结束前结束，因此退出方
+     * deck 在静默时已回到锁定速度——而不是仍被推着走。使用升余弦
+     * 而非矩形脉冲，是因为它两端导数为零：
+     * 修正没有边缘，10 ms 的驱动器不会从中采样出台阶。</p>
      */
     private static final double PHASE_BUFFER_START = RATE_RAMP_COMPLETE;
     private static final double PHASE_BUFFER_COMPLETE = .85;
     /**
-     * Ceiling on the extra rate used for phase correction, on top of the tempo lock. 2 % is roughly a
-     * third of a semitone and is inaudible on a deck that is already several dB down; more than that
-     * starts to be heard as a wobble rather than as a correction.
+     * 在速度锁定之上，相位修正所用额外速率的上限。2 % 约为
+     * 三分之一个半音，在已衰减数 dB 的 deck 上听不见；超过这个量
+     * 就会被听成抖动而非修正。
      */
     private static final double MAX_PHASE_RATE_BUMP = .02;
     /**
-     * Shortest ramp that may still bend the outgoing deck's playback rate.
+     * 仍可弯曲退出方 deck 播放速率的最短渐变。
      *
-     * <p>Rate correction is heard as a pitch change, because the reader resamples rather than
-     * time-stretches. That trade is worth it across a planned multi-bar blend, where the two grids
-     * really do lock. It is never worth it on a ramp this short: less than a beat of the outgoing
-     * track is left, so there is no grid left to lock, and all that reaches the listener is the
-     * semitone of pitch. A user-pressed skip and a late fire both land here.</p>
+     * <p>速率修正会被听成音高变化，因为 reader 是重采样而非
+     * 时间拉伸。在规划好的多小节混音中这种取舍值得，两个网格确实会锁定。
+     * 但在这么短的渐变上绝不值得：退出曲目剩下的不足一拍，
+     * 没有网格可锁，听众听到的只有
+     * 那一个半音的音高。用户点的跳过和迟到触发都会落到这里。</p>
      */
     private static final long MIN_RATE_CORRECTION_OVERLAP_MILLIS = 1_500L;
 
-    /** Vocal cancellation is held at full depth until here, then let go. */
+    /** 人声消除在达到全深之前一直保持，然后释放。 */
     private static final double VOCAL_DUCK_RELEASE_START = .45;
-    /** …and is completely gone by here, so nothing from the blend survives into the track. */
+    /** ……到这里完全消失，使混音中不再有任何东西残留进曲目。 */
     private static final double VOCAL_DUCK_RELEASE_COMPLETE = .92;
 
     final long fireMillis;
     final long overlapMillis;
     final long incomingCueMillis;
-    /** Loudness match for the incoming deck, applied only during the blend. */
+    /** 接入方 deck 的响度匹配，仅在混音期间施加。 */
     final float matchGain;
     final boolean barAligned;
-    /** Whether the low band is swapped between the decks during the blend. */
+    /** 混音期间是否在两个 deck 之间交换低频段。 */
     final boolean bassSwap;
+    /** Folia 策略字段；旧规划器上为 null。 */
+    final FoliaTransitionStyle style;
+    final float midTiltDb;
+    final float highTiltDb;
+    final boolean echoThrow;
+    /** 由音轨分离（stem）得出的交接位置，以混音的分数表示；默认为旧曲线。 */
+    final double drumHandoverAt;
+    final double bassHandoverAt;
+    final double vocalEntryAt;
+    final boolean stemDriven;
+    /** 每个退出方拍的墙钟毫秒数，用于过渡视觉的脉冲。 */
+    final double animationPeriodMillis;
     /**
-     * Playback rate the outgoing deck is bent to, 1 meaning "leave it alone". Either a tempo lock (both
-     * beat grids measurable, close, and confident) or a whole-semitone key snap (no beat worth locking),
-     * never both - and clamped either way so the pitch move stays inside one semitone.
+     * 退出方 deck 被弯曲到的播放速率，1 表示"不要动它"。要么是速度锁定（两个
+     * 节拍网格都可测、接近且置信），要么是整半音的调性对齐（没有值得锁定的节拍），
+     * 二者从不兼有——且无论哪种都被钳制，使音高移动保持在一个半音内。
      */
     final float tempoRatio;
     /**
@@ -96,18 +108,18 @@ final class AutomixPlan {
      */
     final boolean pitchShift;
     /**
-     * Residual offset between the two beat grids at the moment of the handover, in ms. Positive means
-     * the outgoing deck's downbeat arrives <em>late</em> and has to be nudged forward.
+     * 交接瞬间两个节拍网格之间的残余偏移，单位 ms。正值表示
+     * 退出方 deck 的强拍<em>晚</em>到，需要向前推。
      *
-     * <p>This is what is left after the incoming cue has been snapped to a downbeat: two grids measured
-     * on an ~11.6 ms envelope hop cannot be quantised into exact agreement, and a few tens of ms is
-     * audible as flamming when both tracks are at full level. {@link #outgoingRate} spends the rhythm
-     * buffer on it.</p>
+     * <p>这是接入 cue 已对齐到强拍之后剩下的部分：在约 11.6 ms 包络步长上测得的两个网格
+     * 无法被量化成完全一致，而几十 ms 在两首曲子都满音量时
+     * 会被听成飘忽（flam）。{@link #outgoingRate} 把节奏
+     * 缓冲用在它身上。</p>
      */
     final long phaseErrorMillis;
     /**
-     * Peak vocal-band cancellation depth for the incoming deck, 0 disabling it. Held for the first part
-     * of the blend and released before the end.
+     * 接入方 deck 的人声频段消除峰值深度，0 表示禁用。在混音前半段保持，
+     * 并在结束前释放。
      */
     final float vocalDuckDepth;
     final String summary;
@@ -115,6 +127,17 @@ final class AutomixPlan {
     AutomixPlan(long fireMillis, long overlapMillis, long incomingCueMillis, float matchGain,
                 boolean barAligned, boolean bassSwap, float tempoRatio, boolean pitchShift,
                 long phaseErrorMillis, float vocalDuckDepth, String summary) {
+        this(fireMillis, overlapMillis, incomingCueMillis, matchGain, barAligned, bassSwap,
+                tempoRatio, pitchShift, phaseErrorMillis, vocalDuckDepth, summary,
+                null, 0f, 0f, false, .42, .42, .45, false, 500.0);
+    }
+
+    AutomixPlan(long fireMillis, long overlapMillis, long incomingCueMillis, float matchGain,
+                boolean barAligned, boolean bassSwap, float tempoRatio, boolean pitchShift,
+                long phaseErrorMillis, float vocalDuckDepth, String summary,
+                FoliaTransitionStyle style, float midTiltDb, float highTiltDb, boolean echoThrow,
+                double drumHandoverAt, double bassHandoverAt, double vocalEntryAt, boolean stemDriven,
+                double animationPeriodMillis) {
         this.pitchShift = pitchShift;
         this.fireMillis = fireMillis;
         this.overlapMillis = overlapMillis;
@@ -127,54 +150,100 @@ final class AutomixPlan {
         this.vocalDuckDepth = Float.isNaN(vocalDuckDepth)
                 ? 0f : Math.max(0f, Math.min(1f, vocalDuckDepth));
         this.summary = summary == null ? "" : summary;
+        this.style = style;
+        this.midTiltDb = clampTilt(midTiltDb);
+        this.highTiltDb = clampTilt(highTiltDb);
+        this.echoThrow = echoThrow;
+        this.drumHandoverAt = clampFraction(drumHandoverAt, .18, .72);
+        this.bassHandoverAt = clampFraction(bassHandoverAt, .18, .72);
+        this.vocalEntryAt = clampFraction(vocalEntryAt, .28, .88);
+        this.stemDriven = stemDriven;
+        this.animationPeriodMillis = Double.isFinite(animationPeriodMillis)
+                ? Math.max(120.0, Math.min(4_000.0, animationPeriodMillis)) : 500.0;
     }
 
-    /** Outgoing gain at {@code progress} in [0,1] of the ramp. */
+    /** 渐变 [0,1] 中 {@code progress} 处的退出方增益。 */
     float outgoingGain(double progress) {
+        if (style != null && style.together > 0.0) return (float) togetherGain(clamp(progress), true);
         return (float) Math.cos(clamp(progress) * Math.PI * .5);
     }
 
     /**
-     * Incoming gain at {@code progress} in [0,1] of the ramp.
+     * 渐变 [0,1] 中 {@code progress} 处的接入方增益。
      *
-     * <p>The loudness match is strongest at the start of the blend, where the incoming track has to
-     * hold its own against the outgoing one, and is interpolated back to unity by the end. That way the
-     * compensation never survives into the rest of the track as a stuck volume offset, and there is no
-     * audible step when the blend finishes.</p>
+     * <p>响度匹配在混音开始时最强，此时接入曲目必须
+     * 顶住退出曲目，然后在结束前插值回单位增益。这样补偿
+     * 永远不会以卡住的音量偏移形式残留进曲目其余部分，混音结束时也没有
+     * 可闻的台阶。</p>
      */
     float incomingGain(double progress) {
         double p = clamp(progress);
-        // The decay is quadratic on purpose. A linear one still falls at full rate where the sine has
-        // already flattened out, which makes the last few percent of the ramp move backwards - an
-        // audible little dip right at the handover. Squaring kills the tail of the correction first.
         double remaining = 1.0 - p;
         double match = 1.0 + (matchGain - 1.0) * remaining * remaining;
-        return (float) (Math.sin(p * Math.PI * .5) * match);
+        double shape = style != null && style.together > 0.0
+                ? togetherGain(p, false) : Math.sin(p * Math.PI * .5);
+        return (float) (shape * match);
+    }
+
+    /** 带平台期的等功率曲线，两 deck 在平台期都保持在场。 */
+    private double togetherGain(double progress, boolean outgoing) {
+        double together = Math.max(0.0, Math.min(0.8, style.together));
+        double edge = (1.0 - together) * 0.5;
+        if (edge < 1e-6) return outgoing ? Math.cos(Math.PI * .25) : Math.sin(Math.PI * .25);
+        double u;
+        if (progress < edge) u = 0.25 * (progress / edge);
+        else if (progress > 1.0 - edge) u = 0.25 + 0.25 * ((progress - (1.0 - edge)) / edge);
+        else u = 0.25;
+        return outgoing ? Math.cos(u * Math.PI) : Math.sin(u * Math.PI);
+    }
+
+    private static double clampFraction(double value, double minimum, double maximum) {
+        if (Double.isNaN(value) || Double.isInfinite(value)) return minimum;
+        return Math.max(minimum, Math.min(maximum, value));
+    }
+    private static float clampTilt(float value) {
+        if (Float.isNaN(value) || Float.isInfinite(value)) return 0f;
+        return Math.max(-3f, Math.min(3f, value));
     }
 
     /**
-     * Low shelf gain in dB for the outgoing deck.
+     * 退出方 deck 的低 shelf 增益（dB）。
      *
-     * <p>Pulled down early and held there: the outgoing track hands its low end over well before it
-     * hands over its volume, which is what stops two kick drums from stacking. It reads as the outgoing
-     * track "thinning out", the same gesture a DJ makes with the low knob.</p>
+     * <p>早早拉下并保持：退出曲目远在交音量之前就把低频交出去，
+     * 这正是阻止两个底鼓叠加的关键。听起来像退出曲目在"变薄"，
+     * 和 DJ 拧低频旋钮是同一个动作。</p>
      */
     float outgoingBassDb(double progress) {
         if (!bassSwap) return 0f;
-        double p = clamp(progress) / BASS_CUT_COMPLETE;
-        if (p > 1.0) p = 1.0;
-        return (float) (AutomixSettings.BASS_CUT_DB * p);
+        double p = clamp(progress);
+        if (stemDriven) {
+            double start = Math.max(0.0, bassHandoverAt - .12);
+            if (p <= start) return 0f;
+            if (p >= bassHandoverAt) return AutomixSettings.BASS_CUT_DB;
+            double share = (p - start) / Math.max(.01, bassHandoverAt - start);
+            return (float) (AutomixSettings.BASS_CUT_DB * smoothstep(share));
+        }
+        double legacy = p / BASS_CUT_COMPLETE;
+        if (legacy > 1.0) legacy = 1.0;
+        return (float) (AutomixSettings.BASS_CUT_DB * legacy);
     }
 
     /**
-     * Low shelf gain in dB for the incoming deck.
+     * 接入方 deck 的低 shelf 增益（dB）。
      *
-     * <p>Held back while the outgoing track still owns the low end, then brought up to flat before the
-     * blend finishes so the new track is never left sounding thin once it is alone.</p>
+     * <p>在退出曲目仍掌控低频时压着，在混音结束前拉回平直，
+     * 使新曲独自播放时永远不会显得单薄。</p>
      */
     float incomingBassDb(double progress) {
         if (!bassSwap) return 0f;
         double p = clamp(progress);
+        if (stemDriven) {
+            if (p <= bassHandoverAt) return AutomixSettings.BASS_ENTRY_CUT_DB;
+            double complete = Math.min(.94, bassHandoverAt + .14);
+            if (p >= complete) return 0f;
+            double share = (p - bassHandoverAt) / Math.max(.01, complete - bassHandoverAt);
+            return (float) (AutomixSettings.BASS_ENTRY_CUT_DB * (1.0 - smoothstep(share)));
+        }
         if (p <= BASS_ENTRY_START) return AutomixSettings.BASS_ENTRY_CUT_DB;
         if (p >= BASS_ENTRY_COMPLETE) return 0f;
         double share = (p - BASS_ENTRY_START) / (BASS_ENTRY_COMPLETE - BASS_ENTRY_START);
@@ -182,48 +251,71 @@ final class AutomixPlan {
     }
 
     /**
-     * Vocal-band cancellation depth for the incoming deck, 0..1.
+     * 接入方 deck 的人声频段消除深度，0..1。
      *
-     * <p>Full depth while the outgoing track is still singing, then released along a smoothstep so the
-     * arriving track grows into a full mix instead of switching its vocal on. Zero by
-     * {@value #VOCAL_DUCK_RELEASE_COMPLETE} of the ramp: the deck the listener keeps has to be flat
-     * before the blend ends, not when the driver happens to notice.</p>
+     * <p>退出曲目仍在唱时保持全深，然后沿 smoothstep 释放，使
+     * 到达的曲目逐渐长成完整混音，而不是突然打开人声。在渐变的
+     * {@value #VOCAL_DUCK_RELEASE_COMPLETE} 处归零：听众保留的那个 deck 必须平直，
+     * 且要在混音结束前——而不是驱动器恰好注意到时。</p>
      */
+    /** 接入方 deck 的中频补偿，在混音结束前缓回平直。 */
+    float incomingMidDb(double progress) {
+        return toneEntry(midTiltDb, progress, stemDriven ? drumHandoverAt : .85);
+    }
+
+    /** 接入方 deck 的高频补偿，在混音结束前缓回平直。 */
+    float incomingHighDb(double progress) {
+        return toneEntry(highTiltDb, progress, .85);
+    }
+
+    /**
+     * 进入时匹配前一首曲目的频谱平衡，可去掉最明显的"换了个母带"
+     * 信号，随后补偿走回零，使听众保持接入曲目母带的完整性。
+     */
+    private static float toneEntry(float tiltDb, double progress, double releaseAt) {
+        if (tiltDb == 0f) return 0f;
+        double end = Math.max(.18, Math.min(.95, releaseAt));
+        double p = clamp(progress);
+        if (p >= end) return 0f;
+        return (float) (tiltDb * (1.0 - smoothstep(p / end)));
+    }
     float incomingVocalDepth(double progress) {
         if (vocalDuckDepth <= 0f) return 0f;
         double p = clamp(progress);
-        if (p <= VOCAL_DUCK_RELEASE_START) return vocalDuckDepth;
-        if (p >= VOCAL_DUCK_RELEASE_COMPLETE) return 0f;
-        double share = (p - VOCAL_DUCK_RELEASE_START)
-                / (VOCAL_DUCK_RELEASE_COMPLETE - VOCAL_DUCK_RELEASE_START);
+        double releaseStart = stemDriven ? vocalEntryAt : VOCAL_DUCK_RELEASE_START;
+        double releaseComplete = stemDriven ? Math.min(.96, Math.max(.72, releaseStart + .18))
+                : VOCAL_DUCK_RELEASE_COMPLETE;
+        if (p <= releaseStart) return vocalDuckDepth;
+        if (p >= releaseComplete) return 0f;
+        double share = (p - releaseStart) / (releaseComplete - releaseStart);
         return (float) (vocalDuckDepth * (1.0 - smoothstep(share)));
     }
 
     /**
-     * Playback rate for the outgoing deck at this point in the ramp; 1 when there is nothing to correct.
+     * 渐变此时刻退出方 deck 的播放速率；无需修正时为 1。
      *
-     * <p>Two things are summed here. The <b>tempo lock</b> eases from 1 to {@link #tempoRatio} over the
-     * first {@value #RATE_RAMP_COMPLETE} of the ramp - along a smoothstep rather than a straight line,
-     * because a linear ramp starts and stops with a corner and a corner in rate is a click in pitch. The
-     * <b>rhythm buffer</b> then adds a raised-cosine bump whose area is exactly the residual phase error,
-     * so the outgoing grid slides into agreement with the incoming one and ends up back at its locked
-     * tempo.</p>
+     * <p>这里求和了两样东西。<b>速度锁定</b>在渐变的第一个 {@value #RATE_RAMP_COMPLETE}
+     * 内从 1 缓到 {@link #tempoRatio}——沿 smoothstep 而非直线，
+     * 因为线性渐变起止都有拐角，而速率上的拐角就是音高上的咔哒声。
+     * <b>节奏缓冲</b>再叠加一个升余弦凸起，其面积恰好等于残余相位误差，
+     * 使退出方网格滑入与接入方一致，并最终回到其锁定
+     * 速度。</p>
      *
-     * <p>The result is clamped to the shared rate bounds: the correction may never push the deck outside
-     * the one-semitone budget, however large the measured error was.</p>
+     * <p>结果被钳制到共享速率上下限：无论测得误差多大，修正都不能把 deck
+     * 推出一个半音的预算之外。</p>
      */
     float outgoingRate(double progress) {
         return outgoingRate(progress, overlapMillis);
     }
 
     /**
-     * Playback rate for the outgoing deck, evaluated against the ramp actually being run.
+     * 退出方 deck 的播放速率，按实际正在运行的渐变求值。
      *
-     * <p>{@code rampMillis} is not always {@link #overlapMillis}: a user-pressed skip and a late fire
-     * both shorten it. It matters twice. The rhythm buffer sizes its amplitude from the window it has,
-     * so using the planned length there would move the deck by only a fraction of the error it was
-     * solving for. And below {@value #MIN_RATE_CORRECTION_OVERLAP_MILLIS} the correction is dropped
-     * outright - see that constant.</p>
+     * <p>{@code rampMillis} 并不总是 {@link #overlapMillis}：用户点的跳过和迟到触发
+     * 都会缩短它。这影响两处。节奏缓冲按其实际拥有的窗口来定幅，
+     * 若在那里使用规划长度，只会把 deck 移动所求解误差的一小部分。
+     * 而低于 {@value #MIN_RATE_CORRECTION_OVERLAP_MILLIS} 时修正被直接
+     * 丢弃——见该常量。</p>
      */
     float outgoingRate(double progress, long rampMillis) {
         if (rampMillis < MIN_RATE_CORRECTION_OVERLAP_MILLIS) return 1f;
@@ -271,13 +363,13 @@ final class AutomixPlan {
     }
 
     /**
-     * The rhythm buffer's extra rate at {@code p}, as a fraction (0 outside the buffer window).
+     * 节奏缓冲在 {@code p} 处的额外速率，以分数表示（缓冲窗口外为 0）。
      *
-     * <p>Amplitude is derived, not tuned: a raised cosine {@code .5(1-cos 2πu)} has mean {@code .5}, so a
-     * bump of amplitude {@code A} over a window of {@code W} ms moves the deck by {@code A·W/2} ms. To
-     * absorb an error of {@code e} ms the amplitude therefore has to be {@code 2e/W}, and that is capped
-     * at {@link #MAX_PHASE_RATE_BUMP} - an error too large for the budget is partially corrected rather
-     * than corrected with an audible lurch.</p>
+     * <p>幅度是推导出来的，不是调出来的：升余弦 {@code .5(1-cos 2πu)} 均值为 {@code .5}，
+     * 因此幅度为 {@code A}、窗口 {@code W} ms 的凸起使 deck 移动 {@code A·W/2} ms。要
+     * 吸收 {@code e} ms 的误差，幅度就必须是 {@code 2e/W}，并被
+     * {@link #MAX_PHASE_RATE_BUMP} 截断——超出预算的误差只做部分修正，
+     * 而不是带着可闻的一冲一顿去修完。</p>
      */
     private double phaseBump(double p, long rampMillis) {
         if (phaseErrorMillis == 0L || rampMillis <= 0L) return 0.0;
@@ -291,12 +383,12 @@ final class AutomixPlan {
         return amplitude * .5 * (1.0 - Math.cos(2.0 * Math.PI * u));
     }
 
-    /** How much of {@link #phaseErrorMillis} the rhythm buffer can actually absorb, in ms. */
+    /** 节奏缓冲实际能吸收 {@link #phaseErrorMillis} 的多少，单位 ms。 */
     long correctablePhaseMillis() {
         return correctablePhaseMillis(overlapMillis);
     }
 
-    /** As {@link #correctablePhaseMillis()}, for a ramp that was shortened at handover time. */
+    /** 同 {@link #correctablePhaseMillis()}，但针对在交接时被缩短的渐变。 */
     long correctablePhaseMillis(long rampMillis) {
         if (rampMillis <= 0L || rampMillis < MIN_RATE_CORRECTION_OVERLAP_MILLIS) return 0L;
         double windowMillis = (PHASE_BUFFER_COMPLETE - PHASE_BUFFER_START) * rampMillis;
@@ -312,7 +404,7 @@ final class AutomixPlan {
         return rate;
     }
 
-    /** Hermite ease in/out on [0,1]; values outside are clamped. */
+    /** [0,1] 上的 Hermite 缓入缓出；超出范围的值被钳制。 */
     private static double smoothstep(double value) {
         double t = value < 0.0 ? 0.0 : (value > 1.0 ? 1.0 : value);
         return t * t * (3.0 - 2.0 * t);

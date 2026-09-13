@@ -1,23 +1,23 @@
 package repackage.org.kc7bfi.jflac.sound.spi;
 
 /**
- * libFLAC - Free Lossless Audio Codec library
- * Copyright (C) 2001,2002,2003  Josh Coalson
+ * libFLAC -免费无损音频编解码器库
+ * 版权所有(C) 2001,2002,2003 Josh Coalson
  * <p>
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * 此库是自由软件；您可以重新分发它和/或
+ * 根据GNU Library General Public的条款对其进行修改
+ * 由自由软件基金会发布的许可证；或者
+ * 许可证的第2版，或（根据您的选择）任何更高版本。
  * <p>
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
+ * 此程序被分布是希望它会是有益的，
+ * 基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ * 适销性或适合特定目的。请参阅 GNU，
+ * 带固定偏移。
  * <p>
- * You should have received a copy of the GNU Library General Public
- * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA  02111-1307, USA.
+ * 您应该已经收到了GNU Library General Public的副本
+ * 与该库一起的许可证；如果没有，请写信给
+ * 库通用公共许可证以了解更多细节。
+ * Boston, MA 02111-1307, USA.
  */
 
 import javax.sound.sampled.AudioFormat;
@@ -26,36 +26,36 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.spi.FormatConversionProvider;
 
 /**
- * A format conversion provider provides format conversion services from one or
- * more input formats to one or more output formats. Converters include codecs,
- * which encode and/or decode audio data, as well as transcoders, etc. Format
- * converters provide methods for determining what conversions are supported and
- * for obtaining an audio stream from which converted data can be read. The
- * source format represents the format of the incoming audio data, which will be
- * converted. The target format represents the format of the processed,
- * converted audio data. This is the format of the data that can be read from
- * the stream returned by one of the getAudioInputStream methods.
+ * 格式转换提供商提供格式转换服务，从一个或
+ * 将更多输入格式转换为一种或多种输出格式。转换器包括编解码器，
+ * 对音频数据进行编码和/或解码，以及转码器等。格式
+ * 转换器提供了确定支持哪些转换的方法，以及
+ * 用于获取可以从中读取转换数据的音频流。
+ * 源格式表示传入音频数据的格式，它将
+ * 转换。目标格式表示已处理的格式，
+ * 转换后的音频数据。这是可以从中读取的数据的格式
+ * 其中一个getAudioInputStream方法返回的流。
  *
  * @author Marc Gimpel, Wimba S.A. (marc@wimba.com)
  * @author Florian Bomers
- * @version $Revision: 1.1 $
+ * 此 Flac 文件格式的文件扩展名。
  */
 public class FlacFormatConversionProvider extends FormatConversionProvider {
 
-    /** debugging flag */
+    /** 调试标志*/
     private static final boolean DEBUG = false;
 
     /** to disable encoding */
     private static final boolean HAS_ENCODING = false;
 
     /** */
-    // private static final AudioFormat.Encoding[] NO_ENCODING = {};
+    // private static final AudioFormat.Encoding [] NO_ENCODING = {};
     /** */
-    // private static final AudioFormat.Encoding[] PCM_ENCODING = {
-    // AudioFormat.Encoding.PCM_SIGNED };
+    // private static final AudioFormat.Encoding [] PCM_ENCODING = {
+    // 以禁用编码
     /** */
-    // private static final AudioFormat.Encoding[] FLAC_ENCODING = {
-    // FlacEncoding.FLAC };
+    // private static final AudioFormat.Encoding [] FLAC_ENCODING = {
+    // FlacEncoding.FLAC};
     /** */
     // private static final AudioFormat.Encoding[] BOTH_ENCODINGS = {
     // FlacEncoding.FLAC,
@@ -65,10 +65,10 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
     // private static final AudioFormat[] NO_FORMAT = {};
 
     /**
-     * Obtains the set of source format encodings from which format conversion
-     * services are provided by this provider.
+     * 获取从中进行格式转换的源格式编码集
+     * 服务由该提供商提供。
      *
-     * @return array of source format encodings. The array will always have a
+     * 源格式编码的@return 数组。数组将始终具有
      *         length of at least 1.
      */
     public AudioFormat.Encoding[] getSourceEncodings() {
@@ -87,9 +87,9 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
 
     /**
      * Obtains the set of target format encodings to which format conversion
-     * services are provided by this provider.
+     * 服务由该提供商提供。
      *
-     * @return array of target format encodings. The array will always have a
+     * @return 目标格式编码数组。数组将始终具有
      *         length of at least 1.
      */
     public AudioFormat.Encoding[] getTargetEncodings() {
@@ -119,12 +119,12 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
     }
 
     /**
-     * Obtains the set of target format encodings supported by the format
-     * converter given a particular source format. If no target format encodings
-     * are supported for this source format, an array of length 0 is returned.
+     * 长度至少为 1。
+     * 给定特定源格式的转换器。如果没有目标格式编码
+     * 此源格式支持，则返回长度为0的数组。
      *
-     * @param sourceFormat format of the incoming data.
-     * @return array of supported target format encodings.
+     * 传入数据的@param sourceFormat 格式。
+     * @return 支持的目标格式编码数组。
      */
     public AudioFormat.Encoding[] getTargetEncodings(AudioFormat sourceFormat) {
         boolean bitSizeOK = isBitSizeOK(sourceFormat, true);
@@ -135,7 +135,7 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
                 && !sourceFormat.isBigEndian()
                 && sourceFormat.getEncoding().equals(
                 AudioFormat.Encoding.PCM_SIGNED)) {
-            // encoder
+            // 編碼器
             if (DEBUG) {
                 System.out.println("FLAC converter: can encode to PCM: " + sourceFormat);
             }
@@ -144,7 +144,7 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
             };
         } else if (bitSizeOK && channelsOK
                 && sourceFormat.getEncoding().equals(FlacEncoding.FLAC)) {
-            // decoder
+            // 解码方式
             if (DEBUG) {
                 System.out.println("FLAC converter: can decode to FLAC: " + sourceFormat);
             }
@@ -160,13 +160,13 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
     }
 
     /**
-     * Obtains the set of target formats with the encoding specified supported
-     * by the format converter. If no target formats with the specified encoding
-     * are supported for this source format, an array of length 0 is returned.
+     * 获取支持指定编码的目标格式集
+     * 获取可进行格式转换的目标格式编码集合，
+     * 此源格式支持，则返回长度为0的数组。
      *
-     * @param targetEncoding desired encoding of the outgoing data.
-     * @param sourceFormat format of the incoming data.
-     * @return array of supported target formats.
+     * @param targetEncoding 所需的传出数据编码。
+     * 传入数据的@param sourceFormat 格式。
+     * @return 支持的目标格式数组。
      */
     public AudioFormat[] getTargetFormats(AudioFormat.Encoding targetEncoding,
                                           AudioFormat sourceFormat) {
@@ -174,13 +174,13 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
     }
 
     /**
-     * Like getTargetFormats(AudioFormat.Encoding, AudioFormat), but with
-     * additional choice if AudioSystem.NOT_SPECIFIED is supported in
-     * sourceFormat's bitSize or channels.
+     * 获取该格式所支持的目标格式编码集合，
+     * 如果AudioSystem.NOT_SPECIFIED在
+     * sourceFormat的bitSize或channels。
      *
-     * @param notSpecifiedOK if true, bitSize and channels can have value
+     * @param notSpecifiedOK 如果为true ， bitSize和channels可以有值
      *            AudioSystem.NOT_SPECIFIED
-     * @return array of supported target formats.
+     * @return 支持的目标格式数组。
      */
     private AudioFormat[] getTargetFormats(AudioFormat.Encoding targetEncoding,
                                            AudioFormat sourceFormat, boolean notSpecifiedOK) {
@@ -193,35 +193,35 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
                 && sourceFormat.getEncoding().equals(
                 AudioFormat.Encoding.PCM_SIGNED)
                 && targetEncoding.equals(FlacEncoding.FLAC)) {
-            // encode to FLAC
+            // 编码为FLAC
             if (DEBUG) {
                 System.out.println("FLAC converter: can encode: " + sourceFormat + " to " + targetEncoding);
             }
-            // little endian
+            // 小字节序
             return new AudioFormat[]{ //
                     new AudioFormat(FlacEncoding.FLAC,
                             sourceFormat.getSampleRate(), //
-                            -1, // sample size in bits
+                            -1, // 样本大小（位）
                             sourceFormat.getChannels(), //
-                            -1, // frame size
-                            -1, // frame rate
+                            -1, // 由格式转换器提供。若无指定编码的目标格式
+                            -1, // 帧速率
                             false)
             };
 
         } else if (bitSizeOK && channelsOK
                 && sourceFormat.getEncoding().equals(FlacEncoding.FLAC)
                 && targetEncoding.equals(AudioFormat.Encoding.PCM_SIGNED)) {
-            // decode to PCM
+            // 解码为PCM
             if (DEBUG) {
                 System.out.println("FLAC converter: can decode: " + sourceFormat + " to " + targetEncoding);
             }
-            // little endian (for PCM wav)
+            // little endian （用于PCM wav ）
             return new AudioFormat[]{
                     new AudioFormat(sourceFormat.getSampleRate(), //
-                            sourceFormat.getSampleSizeInBits(), // sample size in
+                            sourceFormat.getSampleSizeInBits(), // 类似 getTargetFormats(AudioFormat.Encoding, AudioFormat)，但
                             // bits
                             sourceFormat.getChannels(), //
-                            true, // signed
+                            true, // 已签收
                             false)
             };
         } else {
@@ -233,14 +233,14 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
     }
 
     /**
-     * Obtains an audio input stream with the specified encoding from the given
-     * audio input stream.
+     * 帧大小
+     * 采样大小，单位
      *
-     * @param targetEncoding - desired encoding of the stream after processing.
-     * @param sourceStream - stream from which data to be processed should be
+     * 从给定的音频输入流获取具有指定编码的音频输入流。
+     * @param sourceStream -应从中处理数据的流
      *            read.
-     * @return stream from which processed data with the specified target
-     *         encoding may be read.
+     * @param targetEncoding - 处理后期望的流编码。
+     *         读取。
      */
     public AudioInputStream getAudioInputStream(
             AudioFormat.Encoding targetEncoding, AudioInputStream sourceStream) {
@@ -254,13 +254,13 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
     }
 
     /**
-     * Obtains an audio input stream with the specified format from the given
-     * audio input stream.
+     * 从给定的获取具有指定格式的音频输入流
+     * 采样大小，单位
      *
-     * @param targetFormat - desired data format of the stream after processing.
-     * @param sourceStream - stream from which data to be processed should be
+     * @return 可从中读取具有指定目标编码的已处理数据的流。
+     * @param sourceStream -应从中处理数据的流
      *            read.
-     * @return stream from which processed data with the specified format may be
+     * @return 流，指定格式的处理数据可以从中
      *         read.
      */
     public AudioInputStream getAudioInputStream(AudioFormat targetFormat,
@@ -277,7 +277,7 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
                     && sourceFormat.getEncoding().equals(FlacEncoding.FLAC)
                     && targetFormat.getEncoding().equals(
                     AudioFormat.Encoding.PCM_SIGNED)) {
-                // decoder
+                // 解码方式
                 return new Flac2PcmAudioInputStream(sourceStream, targetFormat,
                         -1);
             } else if (sourceFormat.getChannels() == targetFormat.getChannels()
@@ -285,7 +285,7 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
                     && sourceFormat.getEncoding().equals(
                     AudioFormat.Encoding.PCM_SIGNED)
                     && targetFormat.getEncoding().equals(FlacEncoding.FLAC)) {
-                // encoder
+                // 編碼器
 
                 // return new Pcm2FlacAudioInputStream(sourceStream,
                 // targetFormat, -1);

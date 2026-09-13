@@ -5,21 +5,19 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import java.io.IOException;
 
 /**
- * This box contains a compact version of a table that allows indexing from
- * decoding time to sample number. Other tables give sample sizes and pointers,
- * from the sample number. Each entry in the table gives the number of
- * consecutive samples with the same time delta, and the delta of those samples.
- * By adding the deltas a complete time-to-sample map may be built.
- * The Decoding Time to Sample Box contains decode time delta's:
+ * 此 box 包含一张紧凑版的表，用于从
+ * 解码时间索引到采样号。其他表从采样号给出采样大小和指针。
+ * 表中每个条目给出具有相同时间增量的连续采样数量，以及这些采样的增量。
+ * 将各增量相加即可构建完整的时间到采样映射。
+ * Decoding Time to Sample Box 包含解码时间增量：
  * DT(n+1) = DT(n) + STTS(n)
- * where STTS(n) is the (uncompressed) table entry for sample n.
- * The sample entries are ordered by decoding time stamps; therefore the deltas
- * are all non-negative.
- * The DT axis has a zero origin; DT(i) = SUM(for j=0 to i-1 of delta(j)), and
- * the sum of all deltas gives the length of the media in the track (not mapped
- * to the overall timescale, and not considering any edit list).
- * The Edit List Box provides the initial CT value if it is non-empty
- * (non-zero).
+ * 其中 STTS(n) 是采样 n 的（未压缩）表项。
+ * 采样条目按解码时间戳排序；因此各增量
+ * 均为非负。
+ * DT 轴以零为原点；DT(i) = SUM(j=0 到 i-1 的 delta(j))，
+ * 所有增量之和给出该轨道中媒体的长度（未映射到整体时间刻度，
+ * 也未考虑任何编辑列表）。
+ * 若非空（非零），Edit List Box 提供初始 CT 值。
  * 
  * @author in-somnia
  */

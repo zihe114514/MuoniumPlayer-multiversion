@@ -8,16 +8,21 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Pure construction and lookup rules for a parsed lyric timeline.
+ * 已解析歌词时间线的纯构造与查找规则。
  *
- * <p>It does not access playback, rendering or GUI state. {@link CloudMusic}
- * remains the compatibility facade and publishes the prepared result to its
- * existing thread-safe lyric list.</p>
+ * <p>它不访问播放、渲染或 GUI 状态。{@link CloudMusic}
+ * 仍是兼容外观，并把准备好的结果发布到其
+ * 既有的线程安全歌词列表。</p>
  */
 final class LyricTimelineSupport {
 
     private static final long LONG_BREAK_DURATION_MILLIS = 3000L;
     private static final float JUMP_TO_NEXT_MILLIS = 300.0f;
+
+    /** 间奏行的文本，与 Folia 的 {@code INTERLUDE_FULL_TEXT} 一致。 */
+    static final String INTERLUDE_TEXT = "......";
+    /** 间奏行的点数。每个点各占整段间奏的 1/6，所以它们是依次出现的。 */
+    private static final int INTERLUDE_DOTS = 6;
 
     private LyricTimelineSupport() {
     }
@@ -31,8 +36,8 @@ final class LyricTimelineSupport {
 
         boolean haveNoWords = hasNoWords(timeline);
         addLongBreaks(timeline, haveNoWords);
-        // Overlapping lines only mean anything once the timeline is final: the break lines inserted
-        // above take part in the ordering, and a duet group must never straddle one.
+        // 重叠行只有在时间线最终确定后才有意义：上面插入的断行
+        //参与排序，一个对唱组绝不能横跨一条断行。
         LyricDuetGroups.mark(timeline);
         return new PreparedTimeline(timeline, haveNoWords);
     }
@@ -101,10 +106,28 @@ final class LyricTimelineSupport {
         timeline.sort(Comparator.comparingLong(LyricLine::getTimestamp));
     }
 
+    /**
+     * 间奏行。
+     *
+     * <p>对应 Folia 的 {@code attachInterludes}。这里刻意把它做成<b>六个各自计时的点</b>而不是一个
+     * 覆盖整段间奏的长音节：音节时间是渲染层唯一的插值来源，一个长音节只能让整行一起亮/一起灭，
+     * 六个点则能一个接一个出现，这正是「节奏行」想要的效果。</p>
+     *
+     * <p>注意 qplayer 那套样式并不画这行文本——它用 {@code renderQplayerInterludeDots} 依据行间
+     * 空隙自己画三个点的渐显，"● ● ●" 对它是分组边界标记。这里补齐逐点时间是为了让<b>读词表</b>的
+     * 渲染路径（HUD 单行模式、苹果等待点之后的行）也能得到同样的逐点节奏，而不是拿到一个
+     * 起步就到位的静态字符串。</p>
+     */
     private static LyricLine createBreakLine(long timestamp, long duration) {
-        LyricLine line = new LyricLine(timestamp, "● ● ●");
+        LyricLine line = new LyricLine(timestamp, INTERLUDE_TEXT);
         line.isBreakLine = true;
-        line.words.add(new LyricLine.Word("● ● ●", timestamp, duration));
+        long span = Math.max(0L, duration);
+        for (int index = 0; index < INTERLUDE_DOTS; index++) {
+            long dotStart = timestamp + span * index / INTERLUDE_DOTS;
+            long dotEnd = index == INTERLUDE_DOTS - 1
+                    ? timestamp + span : timestamp + span * (index + 1) / INTERLUDE_DOTS;
+            line.words.add(new LyricLine.Word(".", dotStart, Math.max(0L, dotEnd - dotStart)));
+        }
         return line;
     }
 

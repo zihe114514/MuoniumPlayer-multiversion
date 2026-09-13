@@ -38,7 +38,7 @@ final class DynamicIslandLayoutCalculator {
             value = safeValue(noticeBodyValue, "—");
         } else {
             String speed = speedValue == null ? "" : speedValue.trim();
-            title = preview ? "灵动岛预览" : "正在加载歌曲";
+            title = preview ? "灵动岛预览" : "正在下载";
             value = preview ? speed : (speed.isEmpty() || "0 b/s".equalsIgnoreCase(speed)
                     ? "正在连接音频源" : speed);
         }

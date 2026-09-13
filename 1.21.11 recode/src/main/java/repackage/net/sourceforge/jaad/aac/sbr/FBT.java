@@ -5,8 +5,8 @@ import repackage.net.sourceforge.jaad.aac.SampleFrequency;
 
 class FBT implements Constants {
 
-	/* calculate the start QMF channel for the master frequency band table */
-	/* parameter is also called k0 */
+	/* 为主频带表计算起始 QMF 声道 */
+	/* 该参数也称为 k0 */
 	public static int qmf_start_channel(int bs_start_freq, int bs_samplerate_mode,
 		SampleFrequency sample_rate) {
 
@@ -37,8 +37,8 @@ class FBT implements Constants {
 		{0, -1, -2, -3, -4, -5, -6, -6, -6, -6, -6, -6, -6, -6},
 		{0, -3, -6, -9, -12, -15, -18, -20, -22, -24, -26, -28, -30, -32}
 	};
-	/* calculate the stop QMF channel for the master frequency band table */
-	/* parameter is also called k2 */
+	/* 为主频带表计算结束 QMF 声道 */
+	/* 该参数也称为 k2 */
 
 	public static int qmf_stop_channel(int bs_stop_freq, SampleFrequency sample_rate,
 		int k0) {
@@ -57,10 +57,10 @@ class FBT implements Constants {
 		}
 	}
 
-	/* calculate the master frequency table from k0, k2, bs_freq_scale
-	 and bs_alter_scale
-
-	 version for bs_freq_scale = 0
+	/* 根据 k0、k2、bs_freq_scale
+		 和 bs_alter_scale 计算主频表
+	 
+	 bs_freq_scale = 0 的版本
 	 */
 	public static int master_frequency_table_fs0(SBR sbr, int k0, int k2,
 		boolean bs_alter_scale) {
@@ -71,7 +71,7 @@ class FBT implements Constants {
 		int k2Diff;
 		int[] vDk = new int[64];
 
-		/* mft only defined for k2 > k0 */
+		/* mft 仅在 k2 > k0 时有定义 */
 		if(k2<=k0) {
 			sbr.N_master = 0;
 			return 1;
@@ -118,7 +118,7 @@ class FBT implements Constants {
 	}
 
 	/*
-	 This function finds the number of bands using this formula:
+	 此函数用以下公式计算频带数：
 	 bands * log(a1/a0)/log(2.0) + 0.5
 	 */
 	public static int find_bands(int warp, int bands, int a0, int a1) {
@@ -133,7 +133,7 @@ class FBT implements Constants {
 	}
 
 	/*
-	 version for bs_freq_scale > 0
+	 bs_freq_scale > 0 的版本
 	 */
 	public static int master_frequency_table(SBR sbr, int k0, int k2,
 		int bs_freq_scale, boolean bs_alter_scale) {
@@ -147,7 +147,7 @@ class FBT implements Constants {
 		float q, qk;
 		int A_1;
 
-		/* mft only defined for k2 > k0 */
+		/* mft 仅在 k2 > k0 时有定义 */
 		if(k2<=k0) {
 			sbr.N_master = 0;
 			return 1;
@@ -179,7 +179,7 @@ class FBT implements Constants {
 			vDk0[k] = A_1-A_0;
 		}
 
-		/* needed? */
+		/* 需要吗？ */
 		//qsort(vDk0, nrBand0, sizeof(vDk0[0]), longcmp);
 		Arrays.sort(vDk0, 0, nrBand0);
 
@@ -200,7 +200,7 @@ class FBT implements Constants {
 			return 0;
 		}
 
-		nrBand1 = (2*find_bands(1 /* warped */, bands, k1, k2));
+		nrBand1 = (2*find_bands(1 /* warped（弯曲） */, bands, k1, k2));
 		nrBand1 = Math.min(nrBand1, 63);
 
 		q = find_initial_power(nrBand1, k1, k2);
@@ -216,7 +216,7 @@ class FBT implements Constants {
 		if(vDk1[0]<vDk0[nrBand0-1]) {
 			int change;
 
-			/* needed? */
+			/* 需要吗？ */
 			//qsort(vDk1, nrBand1+1, sizeof(vDk1[0]), longcmp);
 			Arrays.sort(vDk1, 0, nrBand1+1);
 			change = vDk0[nrBand0-1]-vDk1[0];
@@ -224,7 +224,7 @@ class FBT implements Constants {
 			vDk1[nrBand1-1] = vDk1[nrBand1-1]-change;
 		}
 
-		/* needed? */
+		/* 需要吗？ */
 		//qsort(vDk1, nrBand1, sizeof(vDk1[0]), longcmp);
 		Arrays.sort(vDk1, 0, nrBand1);
 		vk1[0] = k1;
@@ -246,13 +246,13 @@ class FBT implements Constants {
 		return 0;
 	}
 
-	/* calculate the derived frequency border tables from f_master */
+	/* 从 f_master 计算派生的频率边界表 */
 	public static int derived_frequency_table(SBR sbr, int bs_xover_band,
 		int k2) {
 		int k, i = 0;
 		int minus;
 
-		/* The following relation shall be satisfied: bs_xover_band < N_Master */
+		/* 应满足以下关系：bs_xover_band < N_Master */
 		if(sbr.N_master<=bs_xover_band)
 			return 1;
 
@@ -303,7 +303,7 @@ class FBT implements Constants {
 			sbr.f_table_noise[k] = sbr.f_table_res[LO_RES][i];
 		}
 
-		/* build table for mapping k to g in hf patching */
+		/* 构建在高频修补（hf patching）中将 k 映射到 g 的表 */
 		for(k = 0; k<64; k++) {
 			int g;
 			for(g = 0; g<sbr.N_Q; g++) {
@@ -317,10 +317,10 @@ class FBT implements Constants {
 		return 0;
 	}
 
-	/* TODO: blegh, ugly */
-	/* Modified to calculate for all possible bs_limiter_bands always
-	 * This reduces the number calls to this functions needed (now only on
-	 * header reset)
+	/* TODO: blegh，真难看 */
+	/* 已修改为始终对所有可能的 bs_limiter_bands 进行计算
+	 * 这减少了对此函数所需的调用次数（现在仅在
+	 * 头重置时调用）
 	 */
 	private static final float[] limiterBandsCompare = {1.327152f,
 		1.185093f, 1.119872f};
@@ -350,13 +350,13 @@ class FBT implements Constants {
 				limTable[k+sbr.N_low] = patchBorders[k];
 			}
 
-			/* needed */
+			/* 需要 */
 			//qsort(limTable, sbr.noPatches+sbr.N_low, sizeof(limTable[0]), longcmp);
 			Arrays.sort(limTable, 0, sbr.noPatches+sbr.N_low);
 			k = 1;
 			nrLim = sbr.noPatches+sbr.N_low-1;
 
-			if(nrLim<0) // TODO: BIG FAT PROBLEM
+			if(nrLim<0) // TODO: 大麻烦（BIG FAT PROBLEM）
 				return;
 
 			restart:
@@ -387,7 +387,7 @@ class FBT implements Constants {
 								continue;
 							}
 							else {
-								/* remove (k-1)th element */
+								/* 删除第 (k-1) 个元素 */
 								limTable[k-1] = sbr.f_table_res[LO_RES][sbr.N_low];
 								//qsort(limTable, sbr.noPatches+sbr.N_low, sizeof(limTable[0]), longcmp);
 								Arrays.sort(limTable, 0, sbr.noPatches+sbr.N_low);
@@ -396,7 +396,7 @@ class FBT implements Constants {
 							}
 						}
 					}
-					/* remove kth element */
+					/* 删除第 k 个元素 */
 					limTable[k] = sbr.f_table_res[LO_RES][sbr.N_low];
 					//qsort(limTable, nrLim, sizeof(limTable[0]), longcmp);
 					Arrays.sort(limTable, 0, nrLim);

@@ -34,9 +34,9 @@ public final class PlayerIconAssets {
     }
 
     /**
-     * Returns {@code null} for legacy modes without supplied artwork.  The
-     * caller then keeps its established icon-font fallback instead of mapping
-     * a legacy state to the wrong visual icon.
+     * 对未提供封面的旧模式返回 {@code null}。
+     * 调用方随后保留其既有的图标字体回退，而非把
+     * 旧状态映射到错误的视觉图标。
      */
     public static Location forPlayMode(CloudMusic.PlayMode mode) {
         if (mode == null) {

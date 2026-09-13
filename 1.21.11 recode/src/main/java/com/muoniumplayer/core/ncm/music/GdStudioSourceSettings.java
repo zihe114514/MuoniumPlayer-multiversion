@@ -9,7 +9,7 @@ import com.muoniumplayer.core.settings.JsonConfigStorage;
 import java.io.File;
 import java.util.Locale;
 
-/** Persists the one GD Studio API platform selected in the music-source menu. */
+/** 在音乐源菜单中选中的一个 GD Studio API 平台。 */
 public final class GdStudioSourceSettings {
 
     private static final Object LOCK = new Object();
@@ -40,7 +40,7 @@ public final class GdStudioSourceSettings {
         return !getPlatform().isEmpty();
     }
 
-    /** Selects a known GD Studio platform. An empty value disables the source. */
+    /** 选择一个已知的 GD Studio 平台。空值禁用该源。 */
     public static boolean setPlatform(String value) {
         String key = normalize(value);
         if (!key.isEmpty() && !GdStudioMusicService.isKnownPlatform(key)) return false;

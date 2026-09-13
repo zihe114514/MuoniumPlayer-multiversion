@@ -11,45 +11,26 @@ import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.render.skija.SkijaGfx;
 import com.muoniumplayer.render.skija.SkijaImages;
 
-/**
- * 贴图绘制门面。签名全部保持不变，绘制改由 Skia 完成。
- *
- * <h2>纹理仍然是真实的 GL 纹理</h2>
- * 「解码图片、把像素上传到显存」不是 UI 渲染而是资源加载，这条链路
- * （{@code TextureManager} / {@code DynamicTexture} / 封面下载）没有旧固定管线的包袱，
- * 重写它只会凭空引入 bug。所以纹理照旧由现有代码上传，Skia 通过
- * {@code Image.borrowTextureFrom} 借来采样，见 {@link SkijaImages}。
- *
- * <h2>Type 的语义</h2>
- * {@code Type.Normal} 把当前颜色重置成不透明白（也就是不做调制），
- * {@code Type.NoColor} 保留调用方之前设的当前颜色，让它去调制贴图——
- * 这是旧固定管线 {@code GL_MODULATE} 的行为，界面上大量用它来给图标染色和整体淡入淡出。
- * Skia 侧的等价物是 {@code BlendMode.MODULATE} 的 ColorFilter。
- *
- * <h2>uv 换算</h2>
- * 旧实现给的是像素级的 {@code u/v} 加纹理尺寸，着色器里除一下变成归一化坐标。
- * 这里在 Java 侧做同样的除法。{@code Flipped*} 系列在旧实现里是把四个顶点的 uv 换位，
- * 换成 Skia 之后就是把源矩形的左右或上下边界对调。
- */
+// 显示布局
 public class Image implements SharedConstants {
 
     private static void renderDbgInfo(String str, double x, double y, double width, double height) {
 
-        // show layout
+        // 左上
         RenderSystem.drawOutLine(x, y, width, height, 0.5, 0x40FF0000);
 
         double lineLength = Math.min(8, Math.min(width * .25, height * .25));
         double lineSize = 1;
         int lineColor = 0x400090FF;
-        // left top
+        // 右上
         Rect.draw(x, y, lineLength, lineSize, lineColor);
         Rect.draw(x, y, lineSize, lineLength, lineColor);
 
-        // right top
+        // 左下
         Rect.draw(x + width - lineLength, y, lineLength, lineSize, lineColor);
         Rect.draw(x + width - lineSize, y, lineSize, lineLength, lineColor);
 
-        // left bottom
+        // 右下
         Rect.draw(x, y + height - lineLength, lineSize, lineLength, lineColor);
         Rect.draw(x, y + height - lineSize, lineLength, lineSize, lineColor);
 

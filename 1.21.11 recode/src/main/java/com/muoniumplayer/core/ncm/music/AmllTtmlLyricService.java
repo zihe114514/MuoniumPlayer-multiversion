@@ -29,8 +29,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 请求任何平台歌词。</p>
  *
  * <p>匹配顺序严格按接口文档:先用平台 ID 精确取(netease/QQ/Apple/Spotify 各自的 ID 参数,交集匹配,
- * 只返回最新一条),取不到再按曲名搜索并在本地打分。<b>宁可没有歌词,也不给错歌的歌词</b>——搜索结果
- * 必须曲名归一化后相等或互相包含,且歌手能对上,才会被采用。</p>
+ * 只返回最新一条),取不到再按曲名搜索并在本地打分。<b>宁可没有歌词,也不给错歌的歌词</b>——候选要走
+ * {@link LyricMatchScore}(曲名 45 + 歌手 25 + 专辑 30,再乘时长系数)并且达到
+ * {@link LyricMatchScore#MIN_ACCEPT_SCORE} 才会被采用,一个明确的错版本都不放行。</p>
+ *
+ * <p>注意检索词只能放曲名:api.amll.dev 的 {@code musicName} 是<b>严格标题匹配</b>,实测拼上歌手或
+ * 专辑会直接返回 0 条。所以歌手与专辑只在本地打分阶段参与,不要往检索词里塞。</p>
  *
  * <p>兜底保护:</p>
  * <ul>
@@ -130,7 +134,8 @@ final class AmllTtmlLyricService {
         return parsed;
     }
 
-    private static boolean isEnabled() {
+    /** 包内可见：{@code LyricLoadService} 要拿它拼落盘缓存的键。 */
+    static boolean isEnabled() {
         try {
             return MuoniumPlayerExtension.getInstance().musicLyrics.preferAmllLyrics.getValue();
         } catch (Throwable ignored) {
@@ -138,6 +143,16 @@ final class AmllTtmlLyricService {
         }
     }
 
+    /**
+     * 忘掉这首歌的查询结果。
+     *
+     * <p>手动「重取歌词」用它：光清掉落盘缓存还不够，这里的 6 小时记忆不清掉，重取拿回来的还是
+     * 同一份结果，用户看到的就是「点了没反应」。</p>
+     */
+    static void invalidate(Music music) {
+        if (music == null) return;
+        CACHE.remove(music.getStableKey());
+    }
     // ── 平台 ID 精确匹配 ────────────────────────────────────────────────────
 
     private static String fetchByPlatformId(Music music) {
@@ -190,28 +205,34 @@ final class AmllTtmlLyricService {
     private static String fetchBySearch(Music music) {
         String title = safe(music.getName()).trim();
         if (title.isEmpty()) return null;
-        String artist = firstArtist(music);
 
+        // 检索词只放曲名(见类注释):musicName 是严格标题匹配,拼上歌手会一条都搜不到。
+        LyricMatchScore.Target target = target(music);
         JsonArray items = search(title);
-        String stripped = stripBracketSuffix(title);
-        if ((items == null || items.size() == 0) && !stripped.equals(title)) {
-            items = search(stripped);
+        if (items == null || items.size() == 0) {
+            String withoutBrackets = LyricMatchText.dropBrackets(title);
+            if (!withoutBrackets.equals(title)) items = search(withoutBrackets);
         }
         if (items == null || items.size() == 0) return null;
 
         JsonObject best = null;
-        int bestScore = 0;
+        LyricMatchScore.Result bestResult = null;
         for (int i = 0; i < items.size(); i++) {
             JsonElement element = items.get(i);
             if (element == null || !element.isJsonObject()) continue;
             JsonObject item = element.getAsJsonObject();
-            int score = score(item, title, artist);
-            if (score > bestScore) {
-                bestScore = score;
+            LyricMatchScore.Result result = LyricMatchScore.evaluate(target, candidate(item));
+            if (bestResult == null || result.score > bestResult.score) {
+                bestResult = result;
                 best = item;
             }
         }
-        if (best == null) return null;
+        if (best == null || bestResult == null) return null;
+        if (!bestResult.accepted()) {
+            System.out.println("[AMLL] " + music.getName() + " rejected every candidate (best "
+                    + bestResult.describe() + "), keeping platform lyrics");
+            return null;
+        }
 
         String id = text(best, "id");
         if (id.isEmpty()) return null;
@@ -220,8 +241,8 @@ final class AmllTtmlLyricService {
         JsonObject data = request(GET_ENDPOINT, params);
         String ttml = lyricsOf(data);
         if (ttml != null) {
-            System.out.println("[AMLL] " + music.getName() + " matched by search score " + bestScore
-                    + " (" + text(data, "filename") + ")");
+            System.out.println("[AMLL] " + music.getName() + " matched by search "
+                    + bestResult.describe() + " (" + text(data, "filename") + ")");
         }
         return ttml;
     }
@@ -236,67 +257,36 @@ final class AmllTtmlLyricService {
         return data.getAsJsonArray("items");
     }
 
-    /**
-     * 候选打分。3 = 曲名完全一致且歌手对得上,2 = 曲名完全一致且本地没有歌手信息,
-     * 1 = 曲名互相包含且歌手对得上。0 表示拒绝——错歌的逐字歌词比没有歌词糟糕得多。
-     */
-    private static int score(JsonObject item, String title, String artist) {
-        String normalizedTitle = normalize(title);
-        if (normalizedTitle.isEmpty()) return 0;
-
-        boolean exactTitle = false;
-        boolean looseTitle = false;
-        for (String candidate : strings(item, "musicNames")) {
-            String normalized = normalize(candidate);
-            if (normalized.isEmpty()) continue;
-            if (normalized.equals(normalizedTitle)) exactTitle = true;
-            else if (normalized.contains(normalizedTitle) || normalizedTitle.contains(normalized)) looseTitle = true;
-        }
-        if (!exactTitle && !looseTitle) return 0;
-
-        String normalizedArtist = normalize(artist);
-        if (normalizedArtist.isEmpty()) return exactTitle ? 2 : 0;
-
-        for (String candidate : strings(item, "artistNames")) {
-            String normalized = normalize(candidate);
-            if (normalized.isEmpty()) continue;
-            if (normalized.equals(normalizedArtist)
-                    || normalized.contains(normalizedArtist) || normalizedArtist.contains(normalized)) {
-                return exactTitle ? 3 : 1;
-            }
-        }
-        return 0;
+    private static LyricMatchScore.Target target(Music music) {
+        return new LyricMatchScore.Target(safe(music.getName()), artistsOf(music), albumName(music),
+                music.getDuration());
     }
 
-    private static String firstArtist(Music music) {
+    /**
+     * AMLL 的搜索结果只有 musicNames / artistNames / albumNames,<b>不带时长</b>,所以这里传 0;
+     * 时长乘数会取"未知"档(0.9),「原曲 vs Remix」的时长校验交给 QQ 那条链路。
+     */
+    private static LyricMatchScore.Candidate candidate(JsonObject item) {
+        return new LyricMatchScore.Candidate(strings(item, "musicNames"), strings(item, "artistNames"),
+                LyricMatchText.firstNonBlank(strings(item, "albumNames")), 0L);
+    }
+
+    private static String artistsOf(Music music) {
         try {
             String artists = safe(music.getArtistsName());
             // Music 在没有歌手元数据时返回占位的 "Unknown",拿它去比对会把正确的候选全部否掉。
-            if (artists.isEmpty() || artists.equalsIgnoreCase("Unknown")) return "";
-            String[] parts = artists.split("\\s*[/、,&]\\s*");
-            for (String part : parts) {
-                if (part != null && !part.trim().isEmpty()) return part.trim();
-            }
+            return artists.equalsIgnoreCase("Unknown") ? "" : artists;
         } catch (Throwable ignored) {
+            return "";
         }
-        return "";
     }
 
-    private static String stripBracketSuffix(String title) {
-        String stripped = title.replaceAll("[(\\uff08\\[【].*?[)\\uff09\\]】]", " ").trim();
-        return stripped.isEmpty() ? title : stripped;
-    }
-
-    /** 归一化:忽略大小写、空白与标点,这些在不同平台的曲名里几乎总是不一致。 */
-    private static String normalize(String value) {
-        if (value == null) return "";
-        StringBuilder builder = new StringBuilder();
-        String lower = value.toLowerCase(Locale.ROOT);
-        for (int i = 0; i < lower.length(); i++) {
-            char character = lower.charAt(i);
-            if (Character.isLetterOrDigit(character)) builder.append(character);
+    private static String albumName(Music music) {
+        try {
+            return music.getAlbum() == null ? "" : safe(music.getAlbum().getName());
+        } catch (Throwable ignored) {
+            return "";
         }
-        return builder.toString();
     }
 
     // ── HTTP ───────────────────────────────────────────────────────────────

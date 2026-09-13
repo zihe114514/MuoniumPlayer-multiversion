@@ -5,11 +5,10 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The movie fragment header contains a sequence number, as a safety check. The
- * sequence number usually starts at 1 and must increase for each movie fragment
- * in the file, in the order in which they occur. This allows readers to verify
- * integrity of the sequence; it is an error to construct a file where the
- * fragments are out of sequence.
+ * movie fragment header 含一个序列号，作为安全检查。
+ * 序列号通常从 1 开始，且文件中每个 movie fragment
+ * 必须按其出现顺序递增。这使读取者可验证序列的
+ * 完整性；构造一个分片乱序的文件是错误的。
  */
 public class MovieFragmentHeaderBox extends FullBox {
 
@@ -27,7 +26,7 @@ public class MovieFragmentHeaderBox extends FullBox {
 	}
 
 	/**
-	 * The ordinal number of this fragment, in increasing order.
+	 * 此分片的序号，按递增顺序。
 	 */
 	public long getSequenceNumber() {
 		return sequenceNumber;

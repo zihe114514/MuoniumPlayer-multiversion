@@ -5,8 +5,8 @@ import repackage.com.jsyn.ports.UnitOutputPort;
 
 
 /**
- * Common superclass of all audio analysis classes
- * @webref Analysis
+ * 所有音频分析类的通用超类
+ * @ webref分析
  */
 public abstract class Analyzer {
 
@@ -17,18 +17,18 @@ public abstract class Analyzer {
 	}
 
 	/**
-	 * Define the audio input for the analyzer.
+	 * TODO 检查输入是否存在，若否则打印警告
 	 * 
-	 * @param input The input sound source
-	 * @webref Analysis:Analyzer
+	 * @param input 输入声源
+	 * 为分析器定义音频输入。
 	 **/
 	public void input(SoundObject input) {
 		if (this.input == input) {
-//			Engine.printWarning("This input was already connected to the analyzer");
+//			Engine.printWarning("此输入已连接到分析器");
 		} else {
 			if (this.input != null) {
 				if (!this.input.isPlaying()) {
-					// unit was only analyzed but not playing out loud - remove from synth
+					// 输入声源。可以是振荡器、噪声发生器，
 					Engine.getEngine().remove(this.input.circuit);
 				}
 
@@ -47,6 +47,6 @@ public abstract class Analyzer {
 	// remove the current input
 	public abstract void removeInput();
 
-	// connect sound source in subclass AND add analyser unit to Engine
+	// 单元仅被分析而未外放 - 从合成器中移除
 	protected abstract void setInput(UnitOutputPort input);
 }

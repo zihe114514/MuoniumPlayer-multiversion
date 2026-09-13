@@ -1,11 +1,12 @@
 package com.muoniumplayer.core.screens.onboarding;
 
-/** The five intentionally small first-run pages. */
+/** The six intentionally small first-run pages. */
 public enum OnboardingStep {
     WELCOME("欢迎使用", "Welcome"),
     ACCOUNT("连接账号", "Account"),
     SOURCE("选择音源", "Source"),
     APPEARANCE("个性化播放器", "Appearance"),
+    AUTOMIX("Automix 模型", "Automix"),
     FINISH("设置完成", "Finish");
 
     private final String title;

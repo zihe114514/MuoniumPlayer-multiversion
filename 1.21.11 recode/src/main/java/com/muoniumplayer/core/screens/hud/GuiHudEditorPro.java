@@ -348,7 +348,7 @@ public class GuiHudEditorPro extends GuiScreen {
             int panelW = panel[2];
             int panelH = panel[3];
 
-            DownloadDynamicIsland.renderEditorPreview();
+            if (!DownloadDynamicIsland.isDownloadActive()) DownloadDynamicIsland.renderEditorPreview();
 
             int wheel = resetConfirmationVisible ? 0 : Mouse.getDWheel();
             boolean overPanel = isInside(mouseX, mouseY, panelX, panelY, panelW, panelH);
@@ -864,7 +864,7 @@ public class GuiHudEditorPro extends GuiScreen {
                             int rowX, int rowW, int cursor, String query, boolean searching) {
         List<HudSettingsModel.Entry> visible = new ArrayList<HudSettingsModel.Entry>();
         for (HudSettingsModel.Entry entry : group.entries) {
-            if (!searching || entry.matches(query)) visible.add(entry);
+            if (entry.isVisible() && (!searching || entry.matches(query))) visible.add(entry);
         }
         if (visible.isEmpty()) return cursor;
 

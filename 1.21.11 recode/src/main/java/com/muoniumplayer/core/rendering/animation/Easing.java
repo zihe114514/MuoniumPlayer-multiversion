@@ -9,9 +9,9 @@ import static java.lang.Math.pow;
 import static java.lang.Math.sin;
 
 /**
- * This is the easing class which is used to manage the different easing functions.
- * Each function is supposed to return a value between 0 and 1.
- * More easing functions can be found here: <a href="https://easings.net/">...</a>
+ * 这是用于管理各种缓动函数的缓动类。
+ * 每个函数都应返回 0 到 1 之间的值。
+ * 更多缓动函数可参见：<a href="https://easings.net/">...</a>
  *
  * @author Patrick
  */

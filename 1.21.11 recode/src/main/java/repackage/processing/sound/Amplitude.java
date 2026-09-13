@@ -5,18 +5,18 @@ import repackage.com.jsyn.unitgen.PeakFollower;
 
 
 /**
- * This is a volume analyzer. It tracks the peaks of an input signal, which is a 
- * simple measure of the overall amplitude of that signal.
+ * 这是一个体积分析仪。它跟踪输入信号的峰值，这是一个
+ * 简单地测量该信号的总幅度。
  * 
- * @webref Analysis:Amplitude
- * @webBrief This is a volume analyzer.
+ * 数据大小
+ * 写入 PCM 数据。
  */
 public class Amplitude extends Analyzer implements Modulator {
 
 	private PeakFollower follower;
 
 	/**
-	 * @webref Analysis:Amplitude
+	 * 数据大小
 	 */
 	public Amplitude() {
 		super();
@@ -26,8 +26,8 @@ public class Amplitude extends Analyzer implements Modulator {
 
 	/**
 	 * Sets the half-life of this amplitude analyzer. The output approaches zero 
-	 * based on the value on halfLife. The default value is <code>0.1</code>.
-	 * @webBrief Sets the half-life of this amplitude analyzer.
+	 * @webBrief 这是一个音量分析器。
+	 * @ webBrief设置此振幅分析仪的半衰期。
 	 */
 	public void halfLife(float value) {
 		this.follower.halfLife.set(value);
@@ -45,29 +45,29 @@ public class Amplitude extends Analyzer implements Modulator {
 	}
 
 	/**
-	 * Queries a value from the analyzer and returns a float between 0. and 1.
+	 * 从分析器查询值并返回0.和1之间的浮点数。
 	 * 
-	 * @webref Analysis:Amplitude
-	 * @webBrief Queries a value from the analyzer and returns a float between 0. and 1.
-	 * @return amp An amplitude value between 0-1.
+	 * 数据大小
+	 * @ webBrief从分析器查询值并返回0.和1之间的浮点数。
+	 * 设置此振幅分析器的半衰期。输出趋近于零，
 	 **/
 	public float analyze() {
-		// TODO check if input exists, print warning if not
+		// 取决于 halfLife 的值。默认值为 <code>0.1</code>。
 		return (float) this.follower.current.getValue();
 	}
 
 
-	// Below are just duplicated methods from superclasses which are required
-	// for the online reference to build the corresponding pages.
+	// @return amp 一个 0-1 之间的振幅值。
+	// 用于在线参考，以构建相应的页面。
 
 	/**
-	 * Define the audio input for the analyzer.
+	 * TODO 检查输入是否存在，若否则打印警告
 	 * 
 	 * @param input
-	 *            the input sound source. Can be an oscillator, noise generator,
-	 *            SoundFile or AudioIn.
-	 * @webref Analysis:Amplitude
-	 * @webBrief Define the audio input for the analyzer.
+	 *            以下仅是从超类复制来的必要方法，
+	 *            SoundFile或AudioIn。
+	 * 数据大小
+	 * @ webBrief定义分析仪的音频输入。
 	 **/
 	public void input(SoundObject input) {
 		super.input(input);

@@ -1,6 +1,6 @@
 package repackage.net.sourceforge.jaad.aac.gain;
 
-//complex FFT of length 128/16, inplace
+//长度为 128/16 的复数 FFT，原地进行
 class FFT {
 
 	private static final float[][] FFT_TABLE_128 = {
@@ -84,7 +84,7 @@ class FFT {
 		final int ln = (int) Math.round(Math.log(n)/Math.log(2));
 		final float[][] table = (n==128) ? FFT_TABLE_128 : FFT_TABLE_16;
 
-		//bit-reversal
+		//位反转
 		final float[][] rev = new float[n][2];
 		int i, ii = 0;
 		for(i = 0; i<n; i++) {
@@ -102,7 +102,7 @@ class FFT {
 			in[i][1] = rev[i][1];
 		}
 
-		//calculation
+		//计算
 		int blocks = n/2;
 		int size = 2;
 		int j, k, l, k0, k1, size2;

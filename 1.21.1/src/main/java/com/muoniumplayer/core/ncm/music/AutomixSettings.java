@@ -17,6 +17,26 @@ import java.io.File;
  */
 public final class AutomixSettings {
 
+    /** The transition engine the user selected in HUD settings. */
+    public enum Engine {
+        LEGACY("原版智能淡化"),
+        FOLIA("智能混音");
+
+        private final String label;
+
+        Engine(String label) { this.label = label; }
+        public String getLabel() { return label; }
+
+        public static Engine fromStored(String value) {
+            if (value == null) return LEGACY;
+            for (Engine engine : values()) {
+                if (engine.name().equalsIgnoreCase(value) || engine.label.equalsIgnoreCase(value)) return engine;
+            }
+            return LEGACY;
+        }
+    }
+
+
     /** Shortest overlap that still reads as a blend rather than a cut. */
     public static final float MIN_OVERLAP_SECONDS = 1.5f;
     /** Longest overlap; beyond this the two tracks fight each other for too long. */
@@ -77,6 +97,9 @@ public final class AutomixSettings {
     private static final Gson GSON = new Gson();
 
     private static boolean loaded;
+    private static Engine engine = Engine.LEGACY;
+    // Existing installations and loader-specific game directories without automix.json retain
+    // the original transition path. Folia remains an explicit HUD choice.
     private static boolean enabled = true;
     private static boolean beatAlign = true;
     private static boolean bassSwap = true;
@@ -84,6 +107,10 @@ public final class AutomixSettings {
     private static boolean vocalDuck = true;
     private static boolean pitchMatch = true;
     private static boolean skipIntro = true;
+    private static boolean performanceMode = false;
+    private static boolean transitionAnimation = true;
+    private static boolean modelInferenceStatus = true;
+    private static String modelsDirectory = "";
     private static float overlapSeconds = DEFAULT_OVERLAP_SECONDS;
 
     private AutomixSettings() {
@@ -94,6 +121,102 @@ public final class AutomixSettings {
         return Math.min(ABSOLUTE_DECK_LIMIT_BYTES, PlaybackMemoryLimits.maxDecodedPcmBytes() / 2L);
     }
 
+    public static Engine getEngine() {
+        load();
+        synchronized (LOCK) {
+            return engine;
+        }
+    }
+
+    public static void setEngine(Engine value) {
+        load();
+        synchronized (LOCK) {
+            Engine next = value == null ? Engine.LEGACY : value;
+            if (engine == next) return;
+            engine = next;
+            saveLocked();
+        }
+    }
+
+    public static boolean isFoliaEngine() {
+        return getEngine() == Engine.FOLIA;
+    }
+
+    public static String getEngineLabel() {
+        return getEngine().getLabel();
+    }
+
+    public static void cycleEngine() {
+        setEngine(getEngine() == Engine.FOLIA ? Engine.LEGACY : Engine.FOLIA);
+    }
+
+    /** More aggressive build-up/stem gestures when the user asks for it. */
+    public static boolean isPerformanceModeEnabled() {
+        load();
+        synchronized (LOCK) {
+            return performanceMode;
+        }
+    }
+
+    public static void setPerformanceModeEnabled(boolean value) {
+        load();
+        synchronized (LOCK) {
+            if (performanceMode == value) return;
+            performanceMode = value;
+            saveLocked();
+        }
+    }
+
+    public static boolean isTransitionAnimationEnabled() {
+        load();
+        synchronized (LOCK) {
+            return transitionAnimation;
+        }
+    }
+
+    public static void setTransitionAnimationEnabled(boolean value) {
+        load();
+        synchronized (LOCK) {
+            if (transitionAnimation == value) return;
+            transitionAnimation = value;
+            saveLocked();
+        }
+    }
+
+    /** Whether Folia model inference publishes a live start/finish card to the dynamic island. */
+    public static boolean isModelInferenceStatusEnabled() {
+        load();
+        synchronized (LOCK) {
+            return modelInferenceStatus;
+        }
+    }
+
+    public static void setModelInferenceStatusEnabled(boolean value) {
+        load();
+        synchronized (LOCK) {
+            if (modelInferenceStatus == value) return;
+            modelInferenceStatus = value;
+            saveLocked();
+        }
+    }
+
+    /** Persisted Folia model/runtime directory; an empty value means the default location. */
+    public static String getModelsDirectory() {
+        load();
+        synchronized (LOCK) {
+            return modelsDirectory == null ? "" : modelsDirectory;
+        }
+    }
+
+    public static void setModelsDirectory(String value) {
+        load();
+        synchronized (LOCK) {
+            String next = value == null ? "" : value.trim();
+            if (next.equals(modelsDirectory)) return;
+            modelsDirectory = next;
+            saveLocked();
+        }
+    }
     public static boolean isEnabled() {
         load();
         synchronized (LOCK) {
@@ -308,8 +431,16 @@ public final class AutomixSettings {
                 if (!file.isFile()) return;
                 JsonObject root = JsonConfigStorage.readObject(file, GSON);
                 if (root == null) return;
+                boolean migrateEngine = !root.has("engine") || root.get("engine").isJsonNull();
                 if (root.has("enabled") && !root.get("enabled").isJsonNull()) {
                     enabled = root.get("enabled").getAsBoolean();
+                }
+                if (!migrateEngine) {
+                    engine = Engine.fromStored(root.get("engine").getAsString());
+                } else {
+                    // Configurations written before the engine selector existed belonged to the
+                    // original automix path. Never reinterpret them as the new Folia engine.
+                    engine = Engine.LEGACY;
                 }
                 if (root.has("beatAlign") && !root.get("beatAlign").isJsonNull()) {
                     beatAlign = root.get("beatAlign").getAsBoolean();
@@ -329,9 +460,22 @@ public final class AutomixSettings {
                 if (root.has("pitchMatch") && !root.get("pitchMatch").isJsonNull()) {
                     pitchMatch = root.get("pitchMatch").getAsBoolean();
                 }
+                if (root.has("performanceMode") && !root.get("performanceMode").isJsonNull()) {
+                    performanceMode = root.get("performanceMode").getAsBoolean();
+                }
+                if (root.has("transitionAnimation") && !root.get("transitionAnimation").isJsonNull()) {
+                    transitionAnimation = root.get("transitionAnimation").getAsBoolean();
+                }
+                if (root.has("modelInferenceStatus") && !root.get("modelInferenceStatus").isJsonNull()) {
+                    modelInferenceStatus = root.get("modelInferenceStatus").getAsBoolean();
+                }
+                if (root.has("modelsPath") && !root.get("modelsPath").isJsonNull()) {
+                    modelsDirectory = root.get("modelsPath").getAsString();
+                }
                 if (root.has("overlapSeconds") && !root.get("overlapSeconds").isJsonNull()) {
                     overlapSeconds = clamp(root.get("overlapSeconds").getAsFloat());
                 }
+                if (migrateEngine) saveLocked();
             } catch (Throwable ignored) {
                 // A damaged automix config must never stop playback from starting.
             }
@@ -344,6 +488,10 @@ public final class AutomixSettings {
             if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.isDirectory()) return;
             JsonObject root = new JsonObject();
             root.addProperty("enabled", enabled);
+            root.addProperty("engine", engine.name());
+            root.addProperty("performanceMode", performanceMode);
+            root.addProperty("transitionAnimation", transitionAnimation);
+            root.addProperty("modelInferenceStatus", modelInferenceStatus);
             root.addProperty("beatAlign", beatAlign);
             root.addProperty("bassSwap", bassSwap);
             root.addProperty("tempoLock", tempoLock);
@@ -351,6 +499,7 @@ public final class AutomixSettings {
             root.addProperty("pitchMatch", pitchMatch);
             root.addProperty("skipIntro", skipIntro);
             root.addProperty("overlapSeconds", overlapSeconds);
+            root.addProperty("modelsPath", modelsDirectory == null ? "" : modelsDirectory);
             JsonConfigStorage.writeObject(ConfigPaths.AUTOMIX, GSON, root);
         } catch (Throwable ignored) {
         }

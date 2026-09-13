@@ -14,6 +14,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Locale;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -34,6 +35,36 @@ public class LyricParser {
     private static final Pattern QRC_LINE = Pattern.compile("^\\[(\\d+),(\\d+)](.*)$");
     /** QRC 音节:文本在前,{@code (绝对起始毫秒,时长毫秒)} 在后。 */
     private static final Pattern QRC_WORD = Pattern.compile("([^()]*?)\\((\\d+),(\\d+)\\)");
+
+    /**
+     * WEBVTT 提示块的时间行:{@code 00:00.000 --> 00:02.500}；小时段与时间轴后的设置项都可选。
+     */
+    private static final Pattern VTT_TIMING = Pattern.compile(
+            "^((?:\\d{1,3}:)?\\d{1,2}:\\d{1,2}\\.\\d{1,3})\\s*-->\\s*((?:\\d{1,3}:)?\\d{1,2}:\\d{1,2}\\.\\d{1,3})(?:\\s+.*)?$");
+
+    /** VTT 提示文本里的行内音节时间标签 {@code <00:01.500>}。卡拉OK 字幕用它标每个字的起点。 */
+    private static final Pattern VTT_INLINE_TIME = Pattern.compile(
+            "<((?:\\d{1,3}:)?\\d{1,2}:\\d{1,2}\\.\\d{1,3})>");
+
+    /** 提示文本里要丢掉的其它标签:{@code <v 说话人>}、{@code <c.class>}、{@code <b>} 等。 */
+    private static final Pattern VTT_OTHER_TAG = Pattern.compile("<[^>]*>");
+
+    /**
+     * LX awlrc 行头:{@code [mm:ss.ms]}、{@code [ss.ms]}、{@code [hh:mm:ss.ms]}。
+     *
+     * <p>小数位是<b>原样毫秒数</b>而不是十进制小数：{@code [02:43.97]} 是 43 秒 97 毫秒，
+     * 不是 43.970 秒。洛雪写这个值时对酷狗/咪咕源不做补零，只有 QQ 源补到三位。</p>
+     */
+    private static final Pattern AWLRC_LINE = Pattern.compile("^\\[(\\d{1,3}(?::\\d{1,3}){0,2})\\.(\\d{1,3})](.*)$");
+
+    /** awlrc 音节:{@code <相对行首偏移毫秒,时长毫秒[,保留位]>文本}。 */
+    private static final Pattern AWLRC_WORD = Pattern.compile("<(\\d+),(\\d+)(?:,\\d+)?>([^<]*)");
+
+    /** LX awlrc 容器标记:{@code [awlrc:lrc:B64,tlrc:B64,...]}。 */
+    private static final Pattern AWLRC_CONTAINER_TAG = Pattern.compile("\\[awlrc:");
+
+    /** YRC 的三段式音节标记 {@code (start,duration,0)}——用它把 YRC 与 QRC 的括号形状区分开。 */
+    private static final Pattern YRC_THREE_FIELD_WORD = Pattern.compile("\\(\\d+,\\d+,\\d+\\)");
 
     public static List<LyricLine> parse(JsonObject input) {
         if (input == null || input.has("uncollected")) return new ArrayList<>();
@@ -394,8 +425,214 @@ public class LyricParser {
     }
 
     /**
+     * 从一段<b>歌词文本</b>解析时间轴，自动识别格式。
+     *
+     * <p>这是给「文本来源」用的入口：嵌入音频标签里的歌词、音频同目录的同名歌词文件、洛雪导出的
+     * {@code .lrc}。各平台接口拿到的是 JSON，走 {@link #parse(JsonObject)}，两条路互不干扰。</p>
+     *
+     * <p>识别顺序与理由：</p>
+     * <ol>
+     *   <li>LX {@code [awlrc:...]} 容器优先 —— 正文只是给不认识容器的播放器看的降级视图，
+     *       容器里的逐字轨才是权威数据；</li>
+     *   <li>WEBVTT（{@code -->} 时间行）；</li>
+     *   <li>awlrc 逐字（行头 + {@code <偏移,时长>} 音节）；</li>
+     *   <li>YRC（三段式音节）与 QRC（文本在前、括号在后）；</li>
+     *   <li>增强型 LRC（{@code <mm:ss.fff>} 行内时间）；</li>
+     *   <li>普通 LRC。</li>
+     * </ol>
+     *
+     * @param translation  外部翻译文本（可为空）；为空时用容器自带的 {@code tlrc}
+     * @param romanization 外部罗马音文本（可为空）；为空时用容器自带的 {@code rlrc}
+     * @return 解析不到任何行时返回空列表，调用方按「这首歌没有歌词」处理
+     */
+    public static List<LyricLine> parseLyricText(String content, String translation, String romanization) {
+        List<LyricLine> result = new ArrayList<>();
+        if (content == null || content.trim().isEmpty()) return result;
+
+        AwlrcContainer.Tracks container = AwlrcContainer.extract(content);
+        if (container != null && !container.awlrc.isEmpty()) {
+            parseAwlrc(container.awlrc, firstNonEmpty(translation, container.tlrc),
+                    firstNonEmpty(romanization, container.rlrc), result);
+            if (!result.isEmpty()) return result;
+        }
+
+        String body = container != null && !container.lrc.isEmpty() ? container.lrc : content;
+        String sideTranslation = firstNonEmpty(translation, container == null ? "" : container.tlrc);
+        String sideRomanization = firstNonEmpty(romanization, container == null ? "" : container.rlrc);
+
+        if (looksLikeVtt(body)) {
+            parseVtt(body, sideTranslation, sideRomanization, result);
+            if (!result.isEmpty()) return result;
+        }
+
+        if (looksLikeAwlrc(body)) {
+            parseAwlrc(body, sideTranslation, sideRomanization, result);
+            if (!result.isEmpty()) return result;
+        }
+
+        if (looksLikeYrc(body)) {
+            parseYrc(replace(body), result);
+            if (!result.isEmpty()) {
+                applySecondaryExactFirst(parseSingleLine(replace(sideTranslation)), result, true, 80L);
+                applySecondaryExactFirst(parseSingleLine(replace(sideRomanization)), result, false, 80L);
+                return result;
+            }
+        }
+
+        if (looksLikeQrc(body)) {
+            parseQrc(replace(body), result);
+            if (!result.isEmpty()) {
+                applyQrcSidecar(sideTranslation, result, true);
+                applyQrcSidecar(sideRomanization, result, false);
+                return result;
+            }
+        }
+
+        if (containsEnhancedTiming(body)) {
+            List<LyricLine> enhanced = parseEnhancedLrc(replace(body));
+            if (!enhanced.isEmpty()) {
+                applySecondaryExactFirst(parseSingleLine(replace(sideTranslation)), enhanced, true, 80L);
+                applySecondaryExactFirst(parseSingleLine(replace(sideRomanization)), enhanced, false, 80L);
+                return enhanced;
+            }
+        }
+
+        List<LyricLine> plain = new ArrayList<>(parseSingleLine(replace(body)));
+        applySecondaryExactFirst(parseSingleLine(replace(sideTranslation)), plain, true, 80L);
+        applySecondaryExactFirst(parseSingleLine(replace(sideRomanization)), plain, false, 80L);
+        inferLineDurations(plain, 0L);
+        return plain;
+    }
+
+    /**
+     * WEBVTT（外挂字幕最常见的格式）解析。
+     *
+     * <p>两种提示文本分别处理：</p>
+     * <ul>
+     *   <li><b>带行内时间标签</b>（{@code <00:01.500>}，卡拉OK 字幕）→ 按标签切出<b>真实</b>逐字
+     *       时间轴，最后一个字唱到该提示块的结束时刻；</li>
+     *   <li><b>不带标签</b> → 只给出行级的精确起止（VTT 自带 {@code end}，比普通 LRC 靠下一行推
+     *       出来的时长准），<b>不</b>按字数伪造音节时间。本项目对「假逐字」的态度是明确的：
+     *       宁可行级，也不给一个看起来像逐字、实际是均分的词表。</li>
+     * </ul>
+     *
+     * @param vtt            WEBVTT 正文
+     * @param translationVtt 翻译轨（同为 WEBVTT；空串表示没有）
+     * @param romanizationVtt 罗马音轨（同为 WEBVTT；空串表示没有）
+     */
+    public static void parseVtt(String vtt, String translationVtt, String romanizationVtt, List<LyricLine> lyricLines) {
+        lyricLines.clear();
+        if (vtt == null || vtt.trim().isEmpty()) return;
+
+        String normalized = vtt.replace("\uFEFF", "").replace("\r\n", "\n").replace('\r', '\n');
+        List<VttCue> cues = new ArrayList<>();
+        for (String block : normalized.split("\n{2,}")) {
+            VttCue cue = parseVttCue(block);
+            if (cue != null) cues.add(cue);
+        }
+        if (cues.isEmpty()) return;
+        cues.sort(Comparator.comparingLong(cue -> cue.start));
+
+        for (int index = 0; index < cues.size(); index++) {
+            VttCue cue = cues.get(index);
+            // 提示块自己的 end 缺失时退到下一块的开始；再兜一个 5 秒，免得整行是零长。
+            long fallbackEnd = index + 1 < cues.size() ? cues.get(index + 1).start : cue.start + 5000L;
+            long end = Math.max(cue.end > 0L ? cue.end : fallbackEnd, cue.start + 100L);
+
+            LyricLine line = new LyricLine(cue.start, cue.text);
+            if (cue.words.isEmpty()) {
+                line.duration = end - cue.start;
+            } else {
+                for (int wordIndex = 0; wordIndex < cue.words.size(); wordIndex++) {
+                    TimedText word = cue.words.get(wordIndex);
+                    long wordEnd = wordIndex + 1 < cue.words.size()
+                            ? cue.words.get(wordIndex + 1).start : end;
+                    line.words.add(new LyricLine.Word(word.text, word.start,
+                            Math.max(1L, wordEnd - word.start)));
+                }
+                long wordsEnd = line.words.get(line.words.size() - 1).timestamp
+                        + line.words.get(line.words.size() - 1).duration;
+                line.duration = Math.max(end, wordsEnd) - cue.start;
+            }
+            lyricLines.add(line);
+        }
+
+        lyricLines.sort(Comparator.comparingLong(LyricLine::getTimestamp));
+        inferLineDurations(lyricLines, 0L);
+        normalizeWordDurations(lyricLines);
+        applyVttSidecar(translationVtt, lyricLines, true);
+        applyVttSidecar(romanizationVtt, lyricLines, false);
+    }
+
+    /**
+     * LX awlrc（洛雪逐字轨，酷狗 KRC 的洛雪写法）解析。
+     *
+     * <p>与 KRC 的区别：行头<b>只有起始时间</b>，行尾由最后一个音节推出；音节偏移是<b>相对行首</b>
+     * 的毫秒。上游偶尔会写出零时长或倒退的音节标记，所以用一个只前进的游标把它们修掉，
+     * 而不是让迟到的时间戳把扫光拖回去。</p>
+     *
+     * @param translation    翻译轨（普通 LRC 或 awlrc 行头都行；空串表示没有）
+     * @param romanization   罗马音轨（同上）
+     */
+    public static void parseAwlrc(String awlrc, String translation, String romanization, List<LyricLine> lyricLines) {
+        lyricLines.clear();
+        if (awlrc == null || awlrc.trim().isEmpty()) return;
+
+        for (String rawLine : awlrc.replace("\uFEFF", "").split("\\r?\\n")) {
+            String line = rawLine.trim();
+            if (line.isEmpty()) continue;
+
+            Matcher lineMatcher = AWLRC_LINE.matcher(line);
+            if (!lineMatcher.matches()) continue;
+
+            long lineStart = parseAwlrcTimestamp(lineMatcher.group(1), lineMatcher.group(2));
+            List<TimedText> words = new ArrayList<>();
+            StringBuilder text = new StringBuilder();
+            long cursor = 0L;
+
+            Matcher wordMatcher = AWLRC_WORD.matcher(lineMatcher.group(3));
+            while (wordMatcher.find()) {
+                long offset;
+                long duration;
+                try {
+                    offset = Long.parseLong(wordMatcher.group(1));
+                    duration = Long.parseLong(wordMatcher.group(2));
+                } catch (NumberFormatException overflow) {
+                    continue;
+                }
+                String wordText = replace(wordMatcher.group(3));
+                if (wordText.isEmpty()) continue;
+
+                long safeOffset = Math.max(offset, cursor);
+                long safeDuration = Math.max(duration, 1L);
+                words.add(new TimedText(wordText, lineStart + safeOffset, safeDuration));
+                cursor = safeOffset + safeDuration;
+                text.append(wordText);
+            }
+
+            if (words.isEmpty() || text.toString().trim().isEmpty()) continue;
+
+            LyricLine lyricLine = new LyricLine(lineStart, text.toString());
+            lyricLine.duration = Math.max(0L, cursor);
+            addWords(lyricLine, words);
+            lyricLines.add(lyricLine);
+        }
+
+        lyricLines.sort(Comparator.comparingLong(LyricLine::getTimestamp));
+        inferLineDurations(lyricLines, 0L);
+        normalizeWordDurations(lyricLines);
+
+        // 容器里的翻译/罗马音与主轨是同一个写出器盖的时间戳，所以先按精确毫秒键对，零命中才退回最近邻。
+        applyAwlrcAlternateTrack(translation, lyricLines, true);
+        applyAwlrcAlternateTrack(romanization, lyricLines, false);
+    }
+
+    /**
      * 把 QQ 的翻译/罗马音贴到已解析的逐字行上。QQ 这两个字段有时是普通 LRC,有时也是 QRC(带音节
-     * 时间),所以两种都试;行首时间与主歌词不总是完全相等,按最近的一行匹配,容差 1 秒。
+     * 时间),所以两种都试。
+     *
+     * <p>对齐策略是<b>精确毫秒键优先</b>：QQ 的侧车与主轨通常逐个时间戳相等，此时某一行没有精确键
+     * 就说明这一行真的没有译文；只有整表零命中（时间戳整体错位）才退回 ±1 秒的最近邻。</p>
      */
     public static void applyQrcSidecar(String sidecar, List<LyricLine> lyricLines, boolean translation) {
         if (sidecar == null || sidecar.trim().isEmpty() || lyricLines == null || lyricLines.isEmpty()) return;
@@ -409,22 +646,7 @@ public class LyricParser {
         if (side.isEmpty()) side = parseSingleLine(sidecar);
         if (side.isEmpty()) return;
 
-        Map<Long, String> values = new HashMap<>();
-        for (LyricLine line : side) {
-            String text = line.lyric == null ? "" : line.lyric.trim();
-            // QQ 用 "//" 之类的占位符标记"这一行没有翻译"。
-            if (text.isEmpty() || text.equals("//")) continue;
-            values.put(line.timestamp, text);
-        }
-        if (values.isEmpty()) return;
-
-        for (LyricLine line : lyricLines) {
-            String value = values.get(line.timestamp);
-            if (value == null) value = findNearbySecondary(values, line.timestamp, 1000L);
-            if (value == null || value.isEmpty()) continue;
-            if (translation && line.translationText == null) line.translationText = value;
-            if (!translation && line.romanizationText == null) line.romanizationText = value;
-        }
+        applyExactFirst(sidecarValues(side), lyricLines, translation, 1000L);
     }
 
     /**
@@ -662,6 +884,259 @@ public class LyricParser {
         } catch (Throwable ignored) {
         }
     }
+
+    // ── VTT / awlrc 的辅助实现 ───────────────────────────────────────────────
+
+    /** 一个 WEBVTT 提示块。{@code words} 为空表示这一块没有行内时间标签，只有行级起止。 */
+    private static final class VttCue {
+        private final long start;
+        private final long end;
+        private final String text;
+        private final List<TimedText> words;
+
+        private VttCue(long start, long end, String text, List<TimedText> words) {
+            this.start = start;
+            this.end = end;
+            this.text = text;
+            this.words = words;
+        }
+    }
+
+    private static boolean looksLikeVtt(String content) {
+        if (content == null || content.trim().isEmpty()) return false;
+        String trimmed = content.replace("\uFEFF", "").trim();
+        if (trimmed.startsWith("WEBVTT")) return true;
+        for (String line : trimmed.replace("\r\n", "\n").split("\n", 40)) {
+            if (VTT_TIMING.matcher(line.trim()).matches()) return true;
+        }
+        return false;
+    }
+
+    private static boolean looksLikeAwlrc(String content) {
+        if (content == null || content.trim().isEmpty()) return false;
+        for (String rawLine : content.replace("\uFEFF", "").split("\\r?\\n", 60)) {
+            String line = rawLine.trim();
+            if (line.isEmpty()) continue;
+            // 普通 LRC 的 [mm:ss.ff] 也能匹配行头正则,所以必须同一行里还带 <偏移,时长> 音节标记,
+            // 才能认定这是 awlrc 而不是 LRC。
+            if (AWLRC_LINE.matcher(line).matches() && AWLRC_WORD.matcher(line).find()) return true;
+        }
+        return false;
+    }
+
+    private static boolean looksLikeQrc(String content) {
+        if (content == null || content.trim().isEmpty()) return false;
+        for (String rawLine : content.replace("\uFEFF", "").split("\\r?\\n", 40)) {
+            String line = rawLine.trim();
+            if (line.isEmpty()) continue;
+            if (!QRC_LINE.matcher(line).matches()) return false;
+            // YRC 的音节是 (start,dur,0),QRC 是 text(start,dur):有了第三个字段才是 YRC。
+            return YRC_THREE_FIELD_WORD.matcher(line).find() || QRC_WORD.matcher(line).find();
+        }
+        return false;
+    }
+
+    /** 解析一个提示块。序号行、{@code WEBVTT}/{@code NOTE}/{@code STYLE}/{@code REGION} 块一律跳过。 */
+    private static VttCue parseVttCue(String block) {
+        if (block == null || block.trim().isEmpty()) return null;
+        String[] rawLines = block.replace("\r\n", "\n").replace('\r', '\n').split("\n");
+        int first = 0;
+        while (first < rawLines.length && rawLines[first].trim().isEmpty()) first++;
+        if (first >= rawLines.length) return null;
+
+        String header = rawLines[first].trim();
+        if (header.equals("WEBVTT") || header.startsWith("WEBVTT ") || header.startsWith("NOTE")
+                || header.equals("STYLE") || header.equals("REGION")) {
+            return null;
+        }
+
+        int timingIndex = -1;
+        Matcher timing = null;
+        for (int index = first; index < rawLines.length; index++) {
+            Matcher candidate = VTT_TIMING.matcher(rawLines[index].trim());
+            if (candidate.matches()) {
+                timingIndex = index;
+                timing = candidate;
+                break;
+            }
+        }
+        if (timingIndex < 0 || timing == null) return null;
+
+        StringBuilder raw = new StringBuilder();
+        for (int index = timingIndex + 1; index < rawLines.length; index++) {
+            if (raw.length() > 0) raw.append(' ');
+            raw.append(rawLines[index].trim());
+        }
+        String rawText = raw.toString();
+        if (cleanVttText(rawText).isEmpty()) return null;
+
+        long start = parseVttTimestamp(timing.group(1));
+        long end = parseVttTimestamp(timing.group(2));
+
+        List<Long> times = new ArrayList<>();
+        List<String> segments = new ArrayList<>();
+        Matcher inline = VTT_INLINE_TIME.matcher(rawText);
+        int last = 0;
+        while (inline.find()) {
+            segments.add(rawText.substring(last, inline.start()));
+            times.add(parseVttTimestamp(inline.group(1)));
+            last = inline.end();
+        }
+        segments.add(rawText.substring(last));
+
+        if (times.isEmpty()) {
+            return new VttCue(start, end, cleanVttText(rawText), Collections.<TimedText>emptyList());
+        }
+
+        List<TimedText> words = new ArrayList<>();
+        String leading = cleanVttText(segments.get(0));
+        StringBuilder text = new StringBuilder();
+        for (int index = 0; index < times.size(); index++) {
+            String wordText = cleanVttText(segments.get(index + 1));
+            if (wordText.isEmpty()) continue;
+            // 第一个标签之前的文本是行首前缀(缩进、说话人残留),折进第一个音节而不是另起一个词。
+            String merged = text.length() == 0 ? leading + wordText : wordText;
+            words.add(new TimedText(merged, times.get(index), 0L));
+            text.append(merged);
+        }
+        if (words.isEmpty()) {
+            return new VttCue(start, end, cleanVttText(rawText), Collections.<TimedText>emptyList());
+        }
+        return new VttCue(start, end, text.toString(), words);
+    }
+
+    /** 去掉非时间标签、还原实体、折叠空白。{@code <v 歌手>}、{@code <c.class>} 这类样式标签在这里丢掉。 */
+    private static String cleanVttText(String value) {
+        if (value == null) return "";
+        String text = VTT_OTHER_TAG.matcher(value).replaceAll("");
+        text = text.replace("&nbsp;", " ").replace("&amp;", "&")
+                .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"");
+        return replace(text).trim();
+    }
+
+    /** VTT 时间轴：{@code hh:mm:ss.mmm} / {@code mm:ss.mmm} / {@code ss.mmm}。无法识别时返回 -1。 */
+    static long parseVttTimestamp(String value) {
+        if (value == null) return -1L;
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) return -1L;
+        try {
+            String[] parts = trimmed.split(":");
+            double seconds = Double.parseDouble(parts[parts.length - 1]);
+            long millis = Math.round(seconds * 1000.0);
+            if (parts.length >= 2) millis += Long.parseLong(parts[parts.length - 2]) * 60_000L;
+            if (parts.length >= 3) millis += Long.parseLong(parts[parts.length - 3]) * 3_600_000L;
+            return Math.max(0L, millis);
+        } catch (RuntimeException failure) {
+            return -1L;
+        }
+    }
+
+    // ── 侧车（翻译 / 罗马音）对齐 ────────────────────────────────────────────
+
+    /**
+     * 精确毫秒键对齐。
+     *
+     * <p>全表零命中才退回 ±容差的最近邻。理由：同一个写出器产出的侧车与主轨时间戳是逐个相等的，
+     * 只要有一条精确命中就说明这份侧车是「按毫秒键编的」，此时某一行没有精确键就意味着它<b>真的
+     * 没有译文</b>（标题、作曲者这类在侧车里是空行），用最近邻去补只会把下一行的译文安到它头上；
+     * 反过来，时间戳整体错位的侧车一条都命中不了，这时最近邻才是唯一可行的对齐方式。</p>
+     */
+    private static void applyExactFirst(Map<Long, String> values, List<LyricLine> lyricLines,
+                                        boolean translation, long toleranceMs) {
+        if (values.isEmpty() || lyricLines == null || lyricLines.isEmpty()) return;
+
+        boolean anyExact = false;
+        for (LyricLine line : lyricLines) {
+            if (values.containsKey(line.timestamp)) {
+                anyExact = true;
+                break;
+            }
+        }
+
+        for (LyricLine line : lyricLines) {
+            String value = values.get(line.timestamp);
+            if (value == null && !anyExact) value = findNearbySecondary(values, line.timestamp, toleranceMs);
+            if (value == null || value.isEmpty()) continue;
+            if (translation && line.translationText == null) line.translationText = value;
+            if (!translation && line.romanizationText == null) line.romanizationText = value;
+        }
+    }
+
+    /** 把一份普通 LRC 文本转成「时间戳 → 文本」的侧车表，跳过 QQ 的 {@code //} 空占位。 */
+    private static Map<Long, String> sidecarValues(List<LyricLine> secondary) {
+        Map<Long, String> values = new HashMap<>();
+        for (LyricLine line : secondary) {
+            String text = line.lyric == null ? "" : line.lyric.trim();
+            if (text.isEmpty() || text.equals("//")) continue;
+            if (!values.containsKey(line.timestamp)) values.put(line.timestamp, text);
+        }
+        return values;
+    }
+
+    private static void applySecondaryExactFirst(List<LyricLine> secondary, List<LyricLine> lyricLines,
+                                                 boolean translation, long toleranceMs) {
+        applyExactFirst(sidecarValues(secondary), lyricLines, translation, toleranceMs);
+    }
+
+    /** VTT 侧车：先按 VTT 解析出时间戳，再走精确键优先对齐。 */
+    private static void applyVttSidecar(String vtt, List<LyricLine> lyricLines, boolean translation) {
+        if (vtt == null || vtt.trim().isEmpty() || lyricLines == null || lyricLines.isEmpty()) return;
+        List<LyricLine> side = new ArrayList<>();
+        try {
+            parseVtt(vtt, "", "", side);
+        } catch (Throwable ignored) {
+            side.clear();
+        }
+        if (side.isEmpty()) side = parseSingleLine(replace(vtt));
+        applyExactFirst(sidecarValues(side), lyricLines, translation, 1000L);
+    }
+
+    /** awlrc 侧车：与主轨同一套时间轴语义（行头是 {@code [mm:ss.ms]}，小数位是原样毫秒）。 */
+    private static void applyAwlrcAlternateTrack(String content, List<LyricLine> lyricLines, boolean translation) {
+        if (content == null || content.trim().isEmpty() || lyricLines == null || lyricLines.isEmpty()) return;
+
+        Map<Long, String> values = new HashMap<>();
+        for (String rawLine : content.replace("\uFEFF", "").split("\\r?\\n")) {
+            Matcher matcher = AWLRC_LINE.matcher(rawLine.trim());
+            if (!matcher.matches()) continue;
+            String text = replace(matcher.group(3)).trim();
+            if (text.isEmpty()) continue;
+            long timestamp = parseAwlrcTimestamp(matcher.group(1), matcher.group(2));
+            if (!values.containsKey(timestamp)) values.put(timestamp, text);
+        }
+        applyExactFirst(values, lyricLines, translation, 1000L);
+    }
+
+    /**
+     * awlrc 行头转毫秒。
+     *
+     * <p>字段段按 {@code :} 切分后左侧补零到三段；小数段是<b>原样毫秒</b>而不是十进制小数，
+     * 所以直接除 1000 而<b>不</b>按位数补零——读成百分秒会把这类行整体前移最多 900 毫秒。</p>
+     */
+    static long parseAwlrcTimestamp(String fields, String fraction) {
+        try {
+            String[] parts = fields.split(":");
+            long hours = 0L;
+            long minutes = 0L;
+            long seconds;
+            if (parts.length == 1) {
+                seconds = Long.parseLong(parts[0]);
+            } else if (parts.length == 2) {
+                minutes = Long.parseLong(parts[0]);
+                seconds = Long.parseLong(parts[1]);
+            } else {
+                hours = Long.parseLong(parts[parts.length - 3]);
+                minutes = Long.parseLong(parts[parts.length - 2]);
+                seconds = Long.parseLong(parts[parts.length - 1]);
+            }
+            long millis = Long.parseLong(fraction);
+            return Math.max(0L, (hours * 3600L + minutes * 60L + seconds) * 1000L + millis);
+        } catch (RuntimeException failure) {
+            return 0L;
+        }
+    }
+
+    // ── VTT / awlrc 的辅助实现结束 ───────────────────────────────────────────
 
     /** TTML 解析中转:词表、待拼接前缀,以及行级的翻译/罗马音。 */
     private static final class TtmlCollector {

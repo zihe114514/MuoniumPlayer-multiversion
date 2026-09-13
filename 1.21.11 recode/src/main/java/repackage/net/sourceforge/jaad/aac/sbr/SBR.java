@@ -113,9 +113,9 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 	boolean ps_used;
 	boolean psResetFlag;
 
-	/* to get it compiling */
-	/* we'll see during the coding of all the tools, whether
-	 these are all used or not.
+	/* 为了让它能编译通过 */
+	/* 在对所有工具进行编码时我们会看到，
+	 这些是否都被用到。
 	 */
 	boolean bs_header_flag;
 	int bs_crc_flag;
@@ -178,7 +178,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		this.bsco_prev = 0;
 		this.M_prev = 0;
 
-		/* force sbr reset */
+		/* 强制 sbr 重置 */
 		this.bs_start_freq_prev = -1;
 
 		if(smallFrames) {
@@ -194,7 +194,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		this.GQ_ringbuf_index[1] = 0;
 
 		if(stereo) {
-			/* stereo */
+			/* 立体声 */
 			int j;
 			this.qmfa[0] = new AnalysisFilterbank(32);
 			this.qmfa[1] = new AnalysisFilterbank(32);
@@ -202,7 +202,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 			this.qmfs[1] = new SynthesisFilterbank((downSampledSBR) ? 32 : 64);
 		}
 		else {
-			/* mono */
+			/* 单声道 */
 			this.qmfa[0] = new AnalysisFilterbank(32);
 			this.qmfs[0] = new SynthesisFilterbank((downSampledSBR) ? 32 : 64);
 			this.qmfs[1] = null;
@@ -272,7 +272,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 
 	void sbr_reset() {
 
-		/* if these are different from the previous frame: Reset = 1 */
+		/* 如果这些与上一帧不同：Reset = 1 */
 		if((this.bs_start_freq!=this.bs_start_freq_prev)
 			||(this.bs_stop_freq!=this.bs_stop_freq_prev)
 			||(this.bs_freq_scale!=this.bs_freq_scale_prev)
@@ -299,11 +299,11 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		int result = 0;
 		int k2;
 
-		/* calculate the Master Frequency Table */
+		/* 计算主频率表 */
 		this.k0 = FBT.qmf_start_channel(start_freq, samplerate_mode, this.sample_rate);
 		k2 = FBT.qmf_stop_channel(stop_freq, this.sample_rate, this.k0);
 
-		/* check k0 and k2 */
+		/* 检查 k0 和 k2 */
 		if(this.sample_rate.getFrequency()>=48000) {
 			if((k2-this.k0)>32)
 				result += 1;
@@ -331,7 +331,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		return result;
 	}
 
-	/* table 2 */
+	/* 表 2 */
 	public int decode(BitStream ld, int cnt) throws AACException {
 		int result = 0;
 		int num_align_bits = 0;
@@ -349,7 +349,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 			this.bs_sbr_crc_bits = ld.readBits(10);
 		}
 
-		/* save old header values, in case the new ones are corrupted */
+		/* 保存旧的头值，以防新值损坏 */
 		saved_start_freq = this.bs_start_freq;
 		saved_samplerate_mode = this.bs_samplerate_mode;
 		saved_stop_freq = this.bs_stop_freq;
@@ -362,10 +362,10 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		if(this.bs_header_flag)
 			sbr_header(ld);
 
-		/* Reset? */
+		/* 重置？ */
 		sbr_reset();
 
-		/* first frame should have a header */
+		/* 第一帧应当有一个头 */
 		//if (!(sbr.frame == 0 && sbr.bs_header_flag == 0))
 		if(this.header_count!=0) {
 			if(this.Reset||(this.bs_header_flag&&this.just_seeked)) {
@@ -373,7 +373,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 					this.bs_samplerate_mode, this.bs_freq_scale,
 					this.bs_alter_scale, this.bs_xover_band);
 
-				/* if an error occured with the new header values revert to the old ones */
+				/* 如果新的头值发生错误，恢复为旧值 */
 				if(rt>0) {
 					calc_sbr_tables(saved_start_freq, saved_stop_freq,
 						saved_samplerate_mode, saved_freq_scale,
@@ -384,12 +384,12 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 			if(result==0) {
 				result = sbr_data(ld);
 
-				/* sbr_data() returning an error means that there was an error in
-				 envelope_time_border_vector().
-				 In this case the old time border vector is saved and all the previous
-				 data normally read after sbr_grid() is saved.
+				/* sbr_data() 返回错误意味着 envelope_time_border_vector()
+				 * 中出现了错误。
+				 这种情况下保存旧的时间边界向量，并保存通常在
+				 sbr_grid() 之后读取的所有先前数据。
 				 */
-				/* to be on the safe side, calculate old sbr tables in case of error */
+				/* 为稳妥起见，在出错时计算旧的 sbr 表 */
 				if((result>0)
 					&&(this.Reset||(this.bs_header_flag&&this.just_seeked))) {
 					calc_sbr_tables(saved_start_freq, saved_stop_freq,
@@ -397,8 +397,8 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 						saved_alter_scale, saved_xover_band);
 				}
 
-				/* we should be able to safely set result to 0 now, */
-				/* but practise indicates this doesn't work well */
+				/* 现在我们应当可以安全地将 result 设为 0， */
+				/* 但实践表明这样效果不好 */
 			}
 		}
 		else {
@@ -407,22 +407,22 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 
 		num_sbr_bits2 = (int) (ld.getPosition()-num_sbr_bits1);
 
-		/* check if we read more bits then were available for sbr */
+		/* 检查我们读取的 sbr 位数是否超过可用位数 */
 		if(8*cnt<num_sbr_bits2) {
 			throw new AACException("frame overread");
 			//faad_resetbits(ld, num_sbr_bits1+8*cnt);
 			//num_sbr_bits2 = 8*cnt;
 
-			/* turn off PS for the unfortunate case that we randomly read some
-			 * PS data that looks correct */
+			/* 针对这种不幸情况关闭 PS：我们随机读到了一些
+			 * 看起来正确的 PS 数据 */
 			//this.ps_used = 0;
 
-			/* Make sure it doesn't decode SBR in this frame, or we'll get glitches */
+			/* 确保此帧不解码 SBR，否则会出现爆音 */
 			//return 1;
 		}
 
 		{
-			/* -4 does not apply, bs_extension_type is re-read in this function */
+			/* 不适用 -4，bs_extension_type 在此函数中重新读取 */
 			num_align_bits = 8*cnt /*- 4*/-num_sbr_bits2;
 
 			while(num_align_bits>7) {
@@ -435,7 +435,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		return result;
 	}
 
-	/* table 3 */
+	/* 表 3 */
 	private void sbr_header(BitStream ld) throws AACException {
 		boolean bs_header_extra_1, bs_header_extra_2;
 
@@ -443,12 +443,12 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 
 		this.bs_amp_res = ld.readBool();
 
-		/* bs_start_freq and bs_stop_freq must define a fequency band that does
-		 not exceed 48 channels */
+		/* bs_start_freq 和 bs_stop_freq 定义的频带不得
+		 超过 48 个声道 */
 		this.bs_start_freq = ld.readBits(4);
 		this.bs_stop_freq = ld.readBits(4);
 		this.bs_xover_band = ld.readBits(3);
-		ld.readBits(2); //reserved
+		ld.readBits(2); //保留
 		bs_header_extra_1 = ld.readBool();
 		bs_header_extra_2 = ld.readBool();
 
@@ -458,7 +458,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 			this.bs_noise_bands = ld.readBits(2);
 		}
 		else {
-			/* Default values */
+			/* 默认值 */
 			this.bs_freq_scale = 2;
 			this.bs_alter_scale = true;
 			this.bs_noise_bands = 2;
@@ -471,7 +471,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 			this.bs_smoothing_mode = ld.readBool();
 		}
 		else {
-			/* Default values */
+			/* 默认值 */
 			this.bs_limiter_bands = 2;
 			this.bs_limiter_gains = 2;
 			this.bs_interpol_freq = true;
@@ -480,7 +480,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 
 	}
 
-	/* table 4 */
+	/* 表 4 */
 	private int sbr_data(BitStream ld) throws AACException {
 		int result;
 
@@ -498,12 +498,12 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		return 0;
 	}
 
-	/* table 5 */
+	/* 表 5 */
 	private int sbr_single_channel_element(BitStream ld) throws AACException {
 		int result;
 
 		if(ld.readBool()) {
-			ld.readBits(4); //reserved
+			ld.readBits(4); //保留
 		}
 
 		if((result = sbr_grid(ld, 0))>0)
@@ -540,28 +540,28 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 				this.bs_extension_id = ld.readBits(2);
 				tmp_nr_bits += 2;
 
-				/* allow only 1 PS extension element per extension data */
+				/* 每个扩展数据仅允许 1 个 PS 扩展元素 */
 				if(this.bs_extension_id==EXTENSION_ID_PS) {
 					if(ps_ext_read==0) {
 						ps_ext_read = 1;
 					}
 					else {
-						/* to be safe make it 3, will switch to "default"
-						 * in sbr_extension() */
+						/* 为安全起见设为 3，之后会切换为 "default"
+					 * 于 sbr_extension() 中 */
 						this.bs_extension_id = 3;
 					}
 				}
 
 				tmp_nr_bits += sbr_extension(ld, this.bs_extension_id, nr_bits_left);
 
-				/* check if the data read is bigger than the number of available bits */
+				/* 检查读取的数据是否大于可用位数 */
 				if(tmp_nr_bits>nr_bits_left)
 					return 1;
 
 				nr_bits_left -= tmp_nr_bits;
 			}
 
-			/* Corrigendum */
+			/* 勘误（Corrigendum） */
 			if(nr_bits_left>0) {
 				ld.readBits(nr_bits_left);
 			}
@@ -570,12 +570,12 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		return 0;
 	}
 
-	/* table 6 */
+	/* 表 6 */
 	private int sbr_channel_pair_element(BitStream ld) throws AACException {
 		int n, result;
 
 		if(ld.readBool()) {
-			//reserved
+			//保留
 			ld.readBits(4);
 			ld.readBits(4);
 		}
@@ -586,7 +586,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 			if((result = sbr_grid(ld, 0))>0)
 				return result;
 
-			/* need to copy some data from left to right */
+			/* 需要将一些数据从左复制到右 */
 			this.bs_frame_class[1] = this.bs_frame_class[0];
 			this.L_E[1] = this.L_E[0];
 			this.L_Q[1] = this.L_Q[0];
@@ -604,7 +604,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 			sbr_dtdf(ld, 1);
 			invf_mode(ld, 0);
 
-			/* more copying */
+			/* 更多复制 */
 			for(n = 0; n<this.N_Q; n++) {
 				this.bs_invf_mode[1][n] = this.bs_invf_mode[0][n];
 			}
@@ -641,7 +641,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 			if((result = sbr_grid(ld, 0))>0)
 				return result;
 			if((result = sbr_grid(ld, 1))>0) {
-				/* restore first channel data as well */
+				/* 同时恢复第一声道数据 */
 				this.bs_frame_class[0] = saved_frame_class;
 				this.L_E[0] = saved_L_E;
 				this.L_Q[0] = saved_L_Q;
@@ -696,14 +696,14 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 				tmp_nr_bits += 2;
 				tmp_nr_bits += sbr_extension(ld, this.bs_extension_id, nr_bits_left);
 
-				/* check if the data read is bigger than the number of available bits */
+				/* 检查读取的数据是否大于可用位数 */
 				if(tmp_nr_bits>nr_bits_left)
 					return 1;
 
 				nr_bits_left -= tmp_nr_bits;
 			}
 
-			/* Corrigendum */
+			/* 勘误（Corrigendum） */
 			if(nr_bits_left>0) {
 				ld.readBits(nr_bits_left);
 			}
@@ -712,7 +712,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		return 0;
 	}
 
-	/* integer log[2](x): input range [0,10) */
+	/* 整数 log[2](x)：输入范围 [0,10) */
 	private int sbr_log2(int val) {
 		int log2tab[] = {0, 0, 1, 2, 2, 3, 3, 3, 3, 4};
 		if(val<10&&val>=0)
@@ -722,7 +722,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 	}
 
 
-	/* table 7 */
+	/* 表 7 */
 	private int sbr_grid(BitStream ld, int ch) throws AACException {
 		int i, env, rel, result;
 		int bs_abs_bord, bs_abs_bord_1;
@@ -831,7 +831,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		else
 			this.L_Q[ch] = 1;
 
-		/* TODO: this code can probably be integrated into the code above! */
+		/* TODO: 这段代码大概可以并入上面的代码！ */
 		if((result = TFGrid.envelope_time_border_vector(this, ch))>0) {
 			this.bs_frame_class[ch] = saved_frame_class;
 			this.L_E[ch] = saved_L_E;
@@ -843,7 +843,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		return 0;
 	}
 
-	/* table 8 */
+	/* 表 8 */
 	private void sbr_dtdf(BitStream ld, int ch) throws AACException {
 		int i;
 
@@ -856,7 +856,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		}
 	}
 
-	/* table 9 */
+	/* 表 9 */
 	private void invf_mode(BitStream ld, int ch) throws AACException {
 		int n;
 
@@ -878,7 +878,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 				}
 				ret = ps.decode(ld);
 
-				/* enable PS if and only if: a header has been decoded */
+				/* 当且仅当已解码出一个头时启用 PS */
 				if(!ps_used&&ps.header_read) {
 					this.ps_used = true;
 				}
@@ -894,7 +894,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		}
 	}
 
-	/* table 12 */
+	/* 表 12 */
 	private void sinusoidal_coding(BitStream ld, int ch) throws AACException {
 		int n;
 
@@ -902,7 +902,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 			this.bs_add_harmonic[ch][n] = ld.readBit();
 		}
 	}
-	/* table 10 */
+	/* 表 10 */
 
 	private void sbr_envelope(BitStream ld, int ch) throws AACException {
 		int env, band;
@@ -971,7 +971,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		NoiseEnvelope.extract_envelope_data(this, ch);
 	}
 
-	/* table 11 */
+	/* 表 11 */
 	private void sbr_noise(BitStream ld, int ch) throws AACException {
 		int noise, band;
 		int delta = 0;
@@ -1025,14 +1025,14 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 	private int sbr_save_prev_data(int ch) {
 		int i;
 
-		/* save data for next frame */
+		/* 保存数据供下一帧使用 */
 		this.kx_prev = this.kx;
 		this.M_prev = this.M;
 		this.bsco_prev = this.bsco;
 
 		this.L_E_prev[ch] = this.L_E[ch];
 
-		/* sbr.L_E[ch] can become 0 on files with bit errors */
+		/* 在有比特错误的文件中 sbr.L_E[ch] 可能变为 0 */
 		if(this.L_E[ch]<=0)
 			return 19;
 
@@ -1079,19 +1079,19 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 
 		this.bsco = 0;
 
-		/* subband analysis */
+		/* 子带分析 */
 		if(dont_process)
 			qmfa[ch].sbr_qmf_analysis_32(this, channel_buf, this.Xsbr[ch], this.tHFGen, 32);
 		else
 			qmfa[ch].sbr_qmf_analysis_32(this, channel_buf, this.Xsbr[ch], this.tHFGen, this.kx);
 
 		if(!dont_process) {
-			/* insert high frequencies here */
-			/* hf generation using patching */
+			/* 在此插入高频 */
+			/* 使用修补进行高频生成 */
 			HFGeneration.hf_generation(this, this.Xsbr[ch], this.Xsbr[ch], ch);
 
 
-			/* hf adjustment */
+			/* 高频调整 */
 			ret = HFAdjustment.hf_adjustment(this, this.Xsbr[ch], ch);
 			if(ret>0) {
 				dont_process = true;
@@ -1149,14 +1149,14 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		int ret = 0;
 		float[][][] X = new float[MAX_NTSR][64][2];
 
-		/* case can occur due to bit errors */
+		/* 此情形可能由比特错误引起 */
 		if(!stereo) return 21;
 
 		if(this.ret!=0||(this.header_count==0)) {
-			/* don't process just upsample */
+			/* 不做处理，仅上采样 */
 			dont_process = true;
 
-			/* Re-activate reset for next frame */
+			/* 为下一帧重新激活重置 */
 			if(this.ret!=0&&this.Reset)
 				this.bs_start_freq_prev = -1;
 		}
@@ -1169,7 +1169,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		}
 
 		this.ret += sbr_process_channel(left_chan, X, 0, dont_process);
-		/* subband synthesis */
+		/* 子带综合 */
 		if(downSampledSBR) {
 			qmfs[0].sbr_qmf_synthesis_32(this, X, left_chan);
 		}
@@ -1178,7 +1178,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		}
 
 		this.ret += sbr_process_channel(right_chan, X, 1, dont_process);
-		/* subband synthesis */
+		/* 子带综合 */
 		if(downSampledSBR) {
 			qmfs[1].sbr_qmf_synthesis_32(this, X, right_chan);
 		}
@@ -1210,14 +1210,14 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		int ret = 0;
 		float[][][] X = new float[MAX_NTSR][64][2];
 
-		/* case can occur due to bit errors */
+		/* 此情形可能由比特错误引起 */
 		if(stereo) return 21;
 
 		if(this.ret!=0||(this.header_count==0)) {
-			/* don't process just upsample */
+			/* 不做处理，仅上采样 */
 			dont_process = true;
 
-			/* Re-activate reset for next frame */
+			/* 为下一帧重新激活重置 */
 			if(this.ret!=0&&this.Reset)
 				this.bs_start_freq_prev = -1;
 		}
@@ -1230,7 +1230,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		}
 
 		this.ret += sbr_process_channel(channel, X, 0, dont_process);
-		/* subband synthesis */
+		/* 子带综合 */
 		if(downSampledSBR) {
 			qmfs[0].sbr_qmf_synthesis_32(this, X, channel);
 		}
@@ -1261,14 +1261,14 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 		float[][][] X_left = new float[38][64][2];
 		float[][][] X_right = new float[38][64][2];
 
-		/* case can occur due to bit errors */
+		/* 此情形可能由比特错误引起 */
 		if(stereo) return 21;
 
 		if(this.ret!=0||(this.header_count==0)) {
-			/* don't process just upsample */
+			/* 不做处理，仅上采样 */
 			dont_process = true;
 
-			/* Re-activate reset for next frame */
+			/* 为下一帧重新激活重置 */
 			if(this.ret!=0&&this.Reset)
 				this.bs_start_freq_prev = -1;
 		}
@@ -1286,7 +1286,7 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 
 		this.ret += sbr_process_channel(left_channel, X_left, 0, dont_process);
 
-		/* copy some extra data for PS */
+		/* 为 PS 复制一些额外数据 */
 		for(l = this.numTimeSlotsRate; l<this.numTimeSlotsRate+6; l++) {
 			for(k = 0; k<5; k++) {
 				X_left[l][k][0] = this.Xsbr[0][this.tHFAdj+l][k][0];
@@ -1294,10 +1294,10 @@ public class SBR implements Constants, repackage.net.sourceforge.jaad.aac.syntax
 			}
 		}
 
-		/* perform parametric stereo */
+		/* 执行参数立体声 */
 		ps.process(X_left, X_right);
 
-		/* subband synthesis */
+		/* 子带综合 */
 		if(downSampledSBR) {
 			qmfs[0].sbr_qmf_synthesis_32(this, X_left, left_channel);
 			qmfs[1].sbr_qmf_synthesis_32(this, X_right, right_channel);

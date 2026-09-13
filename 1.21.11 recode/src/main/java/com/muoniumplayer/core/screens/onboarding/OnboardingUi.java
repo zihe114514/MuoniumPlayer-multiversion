@@ -15,19 +15,24 @@ import java.awt.Color;
 import java.util.IdentityHashMap;
 import java.util.Map;
 
-/** Shared low-level drawing helpers for the onboarding module. */
+/** 新手引导模块共享的低层绘制助手。 */
 public final class OnboardingUi {
-    public static final int BACKDROP = RGBA.color(5, 9, 19, 255);
-    public static final int GLASS = RGBA.color(12, 20, 38, 246);
-    public static final int GLASS_2 = RGBA.color(17, 29, 53, 238);
-    public static final int WHITE = RGBA.color(245, 248, 255, 255);
-    public static final int SOFT = RGBA.color(181, 197, 224, 255);
-    public static final int DIM = RGBA.color(112, 133, 165, 255);
-    public static final int LINE = RGBA.color(63, 92, 145, 210);
-    public static final int BLUE = RGBA.color(93, 145, 255, 255);
-    public static final int CYAN = RGBA.color(103, 229, 221, 255);
-    public static final int VIOLET = RGBA.color(203, 119, 255, 255);
-    public static final int GREEN = RGBA.color(119, 228, 169, 255);
+    // token 镜像官网（stile/assets/css/style.css）：黑曜石背景、
+    //低 alpha 玻璃、暖红/橙品牌渐变和克制的 aqua/violet 强调。
+    public static final int BACKDROP = RGBA.color(14, 16, 22, 255);
+    public static final int GLASS = RGBA.color(25, 27, 35, 248);
+    public static final int GLASS_2 = RGBA.color(38, 41, 51, 250);
+    public static final int WHITE = RGBA.color(238, 240, 245, 255);
+    public static final int SOFT = RGBA.color(180, 187, 202, 255);
+    public static final int DIM = RGBA.color(138, 145, 164, 255);
+    public static final int LINE = RGBA.color(255, 255, 255, 28);
+    public static final int BRAND = RGBA.color(216, 30, 58, 255);
+    public static final int BRAND_2 = RGBA.color(255, 120, 72, 255);
+    public static final int BLUE = BRAND;
+    public static final int CYAN = BRAND_2;
+    public static final int AQUA = RGBA.color(95, 208, 230, 255);
+    public static final int VIOLET = RGBA.color(142, 124, 255, 255);
+    public static final int GREEN = RGBA.color(112, 214, 151, 255);
 
     private static final Map<CFontRenderer, GlyphInkMetrics> PARTY_EM_SQUARE =
             new IdentityHashMap<CFontRenderer, GlyphInkMetrics>();
@@ -84,6 +89,17 @@ public final class OnboardingUi {
         SkijaShapes.roundedOutlineGradient(x, y, width, height, radius, thickness,
                 modulate(bottomLeft), modulate(topLeft),
                 modulate(bottomRight), modulate(topRight));
+    }
+
+    public static void roundedGradient(double x, double y, double width, double height,
+                                       double radius, int startArgb, int endArgb) {
+        SkijaShapes.roundedRectGradient(x, y, width, height, radius,
+                modulate(startArgb), modulate(endArgb), true);
+    }
+
+    public static void drawEyebrow(String text, double x, double y) {
+        roundedRect(x, y + 6, 22, 1, .5, colorWithAlpha(BRAND_2, 155));
+        drawText(FontManager.pf12bold, text, x + 31, y, BRAND_2);
     }
 
     public static void drawText(CFontRenderer font, String text, double x, double y, int color) {
@@ -186,6 +202,7 @@ public final class OnboardingUi {
             case ACCOUNT: return PartyIcons.PERSON;
             case SOURCE: return PartyIcons.RADIO;
             case APPEARANCE: return PartyIcons.TEXT_FORMAT;
+            case AUTOMIX: return PartyIcons.SYNC;
             case FINISH: return PartyIcons.CHECK;
             default: return PartyIcons.NOTE;
         }

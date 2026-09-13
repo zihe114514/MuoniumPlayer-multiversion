@@ -27,9 +27,9 @@ final class HudEditorLayout {
         // 播放器分组：只有开关动画速度一个滑块。
         if (playerExpanded) contentHeight += colorRowHeight + playerSliderCount * sliderRowHeight;
         if (coverExpanded) contentHeight += colorRowHeight;
-        // 无缝切换分组：总开关、重叠时长、跳过前奏、小节对齐、低频交换、去人声淡入、节奏锁定、
-        // 音高跳跃，共 8 行等高控件。
-        if (automixExpanded) contentHeight += colorRowHeight * 8;
+        // 无缝切换按引擎显示不同条目；Folia 还包含 7 个模型/运行组件动作和分组标题。
+        // 取两个引擎中较长的一侧，保证经典 HUD 能滚到最后一个模型动作。
+        if (automixExpanded) contentHeight += sectionHeight + colorRowHeight * 16;
         // 存储分组：缓存上限、立即清理，两行等高控件。
         if (storageExpanded) contentHeight += colorRowHeight * 2;
         if (themeExpanded) contentHeight += colorRowHeight + themeGridHeight;

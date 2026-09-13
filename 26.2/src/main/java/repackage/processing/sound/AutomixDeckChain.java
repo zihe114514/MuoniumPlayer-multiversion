@@ -40,6 +40,14 @@ public class AutomixDeckChain extends Effect<VocalDuckFilter> {
         this.right.setFrequency(hz);
     }
 
+    /** Broad mid-band gain used to match the incoming master's tone during the seam. */
+    public void midGainDb(float db) { this.left.setMidGainDb(db); this.right.setMidGainDb(db); }
+    public float midGainDb() { return (float) this.left.getMidGainDb(); }
+
+    /** High-band gain used to soften a bright master entering after a dull one. */
+    public void highGainDb(float db) { this.left.setHighGainDb(db); this.right.setHighGainDb(db); }
+    public float highGainDb() { return (float) this.left.getHighGainDb(); }
+
     /** Vocal-band cancellation depth for both channels, 0..1; 0 is transparent. */
     public void duckDepth(float depth) {
         this.left.setDepth(depth);

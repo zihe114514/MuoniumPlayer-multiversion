@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.util.soundfile;
@@ -79,15 +79,15 @@ public class WAVEFileParser extends AudioFileParser implements ChunkHandler {
     }
 
     // typedef struct {
-    // long dwIdentifier;
+    // long dwIdentifier ；
     // long dwPosition;
     // ID fccChunk;
-    // long dwChunkStart;
-    // long dwBlockStart;
+    // long dwChunkStart ；
+    // long dwBlockStart ；
     // long dwSampleOffset;
     // } CuePoint;
 
-    /* Parse various chunks encountered in WAV file. */
+    /* 解析WAV文件中遇到的各种块。*/
     public void parseCueChunk(IFFParser parser, int ckSize) throws IOException {
         int numCuePoints = parser.readIntLittle();
         if ((ckSize - 4) != (6 * 4 * numCuePoints))
@@ -95,7 +95,7 @@ public class WAVEFileParser extends AudioFileParser implements ChunkHandler {
         for (int i = 0; i < numCuePoints; i++) {
             int dwName = parser.readIntLittle(); /* dwName */
             int position = parser.readIntLittle(); // dwPosition
-            parser.skip(3 * 4); // fccChunk, dwChunkStart, dwBlockStart
+            parser.skip(3 * 4); // fccChunk、dwChunkStart、dwBlockStart
             int sampleOffset = parser.readIntLittle(); // dwPosition
             SampleMarker cuePoint = findOrCreateCuePoint(dwName);
             cuePoint.position = position;
@@ -104,7 +104,7 @@ public class WAVEFileParser extends AudioFileParser implements ChunkHandler {
 
     public void parseLablChunk(IFFParser parser, int ckSize) throws IOException {
         int dwName = parser.readIntLittle();
-        int textLength = (ckSize - 4) - 1; // don't read NUL terminator
+        int textLength = (ckSize - 4) - 1; // 不读取NUL终止符
         String text = parseString(parser, textLength);
         SampleMarker cuePoint = findOrCreateCuePoint(dwName);
         cuePoint.name = text;
@@ -113,9 +113,9 @@ public class WAVEFileParser extends AudioFileParser implements ChunkHandler {
     public void parseLtxtChunk(IFFParser parser, int ckSize) throws IOException {
         int dwName = parser.readIntLittle();
         int dwSampleLength = parser.readIntLittle();
-        parser.skip(4 + (4 * 2)); // purpose through codepage
-        int textLength = (ckSize - ((4 * 4) + (4 * 2))) - 1; // don't read NUL
-                                                             // terminator
+        parser.skip(4 + (4 * 2)); // 通过代码页达到目的
+        int textLength = (ckSize - ((4 * 4) + (4 * 2))) - 1; // 不要读取 NUL
+                                                             // 终止符
         if (textLength > 0) {
             String text = parseString(parser, textLength);
             SampleMarker cuePoint = findOrCreateCuePoint(dwName);
@@ -127,7 +127,7 @@ public class WAVEFileParser extends AudioFileParser implements ChunkHandler {
         format = parser.readShortLittle();
         samplesPerFrame = parser.readShortLittle();
         frameRate = parser.readIntLittle();
-        parser.readIntLittle(); /* skip dwAvgBytesPerSec */
+        parser.readIntLittle(); /* skip dwAvgBytesPerSec*/
         blockAlign = parser.readShortLittle();
         bitsPerSample = parser.readShortLittle();
         bytesPerFrame = blockAlign;
@@ -181,48 +181,48 @@ public class WAVEFileParser extends AudioFileParser implements ChunkHandler {
         int nFrames;
         if (numFactSamples > 0) {
             // nFrames = numFactSamples / samplesPerFrame;
-            nFrames = numFactSamples; // FIXME which is right
+            nFrames = numFactSamples; // FIXME 右
         } else {
             nFrames = convertByteToFrame(numBytes);
         }
         return nFrames;
     }
 
-    // Read fraction in range of 0 to 0xFFFFFFFF and
-    // convert to 0.0 to 1.0 range.
+    // 读取 0 到 0xFFFFFFFF 范围内的小数，并
+    // 转换到 0.0 到 1.0 范围。
     private double readFraction(IFFParser parser) throws IOException {
-        // Put L at end or we get -1.
+        // 将L放在末尾，否则我们得到-1。
         long maxFraction = 0x0FFFFFFFFL;
-        // Get unsigned fraction. Have to fit in long.
+        // 获取无符号小数。必须能放进 long。
         long fraction = (parser.readIntLittle()) & maxFraction;
         return (double) fraction / (double) maxFraction;
     }
 
     public void parseSmplChunk(IFFParser parser, int ckSize) throws IOException {
-        parser.readIntLittle(); // Manufacturer
-        parser.readIntLittle(); // Product
-        parser.readIntLittle(); // Sample Period
+        parser.readIntLittle(); // 制造商
+        parser.readIntLittle(); // 产品
+        parser.readIntLittle(); // 样品周期
         int unityNote = parser.readIntLittle();
         double pitchFraction = readFraction(parser);
         originalPitch = unityNote + pitchFraction;
 
-        parser.readIntLittle(); // SMPTE Format
-        parser.readIntLittle(); // SMPTE Offset
+        parser.readIntLittle(); // SMPTE 格式
+        parser.readIntLittle(); // SMPTE偏移
         int numLoops = parser.readIntLittle();
-        parser.readIntLittle(); // Sampler Data
+        parser.readIntLittle(); // 采样器数据
 
         int lastCueID = Integer.MAX_VALUE;
         for (int i = 0; i < numLoops; i++) {
             int cueID = parser.readIntLittle();
             parser.readIntLittle(); // type
             int loopStartPosition = parser.readIntLittle();
-            // Point to sample one after.
+            // 指向后面的样品。
             int loopEndPosition = parser.readIntLittle() + 1;
-            // TODO handle fractional loop sizes?
+            // TODO 处理小数循环大小？
             double endFraction = readFraction(parser);
             parser.readIntLittle(); // playCount
 
-            // Use lowest numbered cue.
+            // 使用编号最小的 cue。
             if (cueID < lastCueID) {
                 sustainBegin = loopStartPosition;
                 sustainEnd = loopEndPosition;
@@ -257,11 +257,11 @@ public class WAVEFileParser extends AudioFileParser implements ChunkHandler {
     }
 
     /**
-     * Called by parse() method to handle chunks in a WAV specific manner.
+     * 由 parse() 方法调用，以 WAV 特有的方式处理块。
      *
-     * @param ckID four byte chunk ID such as 'data'
-     * @param ckSize size of chunk in bytes
-     * @return number of bytes left in chunk
+     * @param ckID 四个字节的块ID ，如“data”
+     * @param ckSize 块大小，单位字节
+     * @return 块中剩余的字节数
      */
     @Override
     public void handleChunk(IFFParser parser, int ckID, int ckSize) throws IOException {
@@ -293,7 +293,7 @@ public class WAVEFileParser extends AudioFileParser implements ChunkHandler {
     }
 
     /*
-     * (non-Javadoc)
+     * （非Javadoc ）
      * @see com.softsynth.javasonics.util.AudioSampleLoader#isLittleEndian()
      */
     boolean isLittleEndian() {

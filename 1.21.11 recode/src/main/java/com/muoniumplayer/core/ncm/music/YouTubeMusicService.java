@@ -25,15 +25,15 @@ import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Built-in YouTube source adapter.
+ * 内置的 YouTube 源适配器。
  *
- * cannot be embedded directly in the Minecraft Java runtime. This class keeps the same InnerTube
- * request shape, but uses YouTube's Android client for the two operations the player needs:
- * search and audio stream resolution.</p>
+ * 不能直接嵌入 Minecraft Java 运行时。本类保持相同的 InnerTube
+ * 请求形态，但对播放器所需的两个操作使用 YouTube 的 Android 客户端：
+ * 搜索和音频流解析。</p>
  *
- * <p>Playback intentionally selects only {@code audio/mp4} streams. The host audio pipeline already
- * understands AAC/M4A, while YouTube's Opus streams arrive in WebM containers which that pipeline
- * deliberately rejects.</p>
+ * <p>播放刻意只选 {@code audio/mp4} 流。宿主音频管线已
+ * 理解 AAC/M4A，而 YouTube 的 Opus 流到达 WebM 容器，该管线
+ * 刻意拒绝。</p>
  */
 public final class YouTubeMusicService {
 
@@ -47,7 +47,7 @@ public final class YouTubeMusicService {
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     private static final int REQUEST_TIMEOUT_MS = 25_000;
 
-    /** {@link HttpClient} cannot change its proxy after construction, so rebuild only when the setting changes. */
+    /** {@link HttpClient} 构造后不能改代理，因此仅在设置变化时重建。 */
     private static final Object CLIENT_LOCK = new Object();
     private static volatile HttpClient cachedClient;
     private static volatile String cachedProxyEndpoint = "";
@@ -203,8 +203,8 @@ public final class YouTubeMusicService {
     }
 
     /**
-     * YouTube's player API rejects streams created with an old signature timestamp. The upstream
-     * Python implementation uses the current UTC datestamp minus one, so keep that exact rule.
+     * YouTube 的 player API 拒绝用旧签名时间戳创建的流。上游
+     * Python 实现使用当前 UTC 日期减一，因此保留这条确切规则。
      */
     private static int signatureTimestamp() {
         return (int) TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis()) - 1;

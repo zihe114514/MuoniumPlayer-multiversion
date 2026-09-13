@@ -28,83 +28,30 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 文字渲染器。对外的方法签名、度量口径、换行与截断规则全部保持不变，内部改由 Skia 绘制。
- *
- * <h2>旧实现做了什么，为什么要换</h2>
- * 旧实现自己造了一套字形缓存：用 Java2D 把每个字符单独画进 {@code BufferedImage}，
- * 异步上传到一张 2048² 的 {@code GL_ALPHA} 图集，绘制时逐字符发两个三角形。
- * 代价有三条：
- * <ol>
- *   <li><b>字形是异步生成的</b>。第一次遇到的字符当帧画不出来，所以整个 UI 层到处都要
- *       {@code areGlyphsLoaded(...)} 判断「这行字能不能画了」，画不了就推迟一帧重排。
- *       这是很多首帧跳动问题的根源。</li>
- *   <li><b>每个字号一张图集</b>。字体梯子上有几十档，几十张 2048² 图集就是上百 MB 显存。</li>
- *   <li>它依赖 {@code glTexEnvi(GL_MODULATE)}、{@code glBegin/glEnd}、显示列表——
- *       正是这次要清掉的固定管线。</li>
- * </ol>
- * Skia 自己管字形图集，度量是同步的、缓存是全局共享的，上面三条全部消失。
- * {@code areGlyphsLoaded} 于是恒为 true，调用方的重排分支自然不再触发。
- *
- * <h2>度量口径为什么要照抄</h2>
- * 布局代码（歌词逐字进度、图标居中、滚动区宽度、截断省略号）全部读这里的度量结果。
- * 只要口径变一点，整个界面都会错位，而这属于业务逻辑，不许改。所以下面三个量原封不动：
- * <ul>
- *   <li>{@link #fontHeight} 仍然是<b>2 倍空间</b>里的行盒高度，
- *       取主字体与所有回退字体中 {@code ascent + descent} 的最大值；</li>
- *   <li>{@link #getFontHeight()} 仍然是 {@code (fontHeight - 8.5) * .5} 这个经验公式；</li>
- *   <li>单字宽度仍然是「2 倍空间里的整数像素再除以 2」，也就是量化到 0.5 个 GUI 单位。
- *       不保留这个量化，图标类控件的居中会整体偏半像素。</li>
- * </ul>
- * 唯一刻意去掉的是旧实现给单字宽度额外加的 {@code max(0, -lsb)}：那是为了把字形画进
- * 一张刚好够大的临时位图而做的左侧留白补偿，被顺手算进了<b>步进</b>里。
- * Skia 不需要这块留白，把它算进步进反而是错的（会让带负左边距的字形后面多出空隙）。
- *
- * <h2>基线位置</h2>
- * 旧实现把字形位图的<b>左上角</b>放在 {@code (x, y - 2)}，位图内部的基线在
- * {@code (height + ascent - descent) / 2} 处。Skia 是按<b>基线</b>定位的，
- * 所以这里把同一个偏移量换算好（见 {@link #baselineOffset}），
- * 保证同样的 {@code (x, y)} 画出来的字在同一个位置。
- */
+// 默认颜色，否则抛出异常
 public class CFontRenderer implements Closeable, SharedConstants {
 
-    /** 主字体（已按字号派生）。{@code GlyphInk} / {@code GlyphInkMetrics} 仍然读它做墨迹度量。 */
+    /**
+     * @return 若字符串中的所有字符均已加载则为 true
+     */
     public Font font;
-    /** 回退字体（已按字号派生）。 */
+    // 在响应式 UI 控件折叠时，内容区域为零/负是合理可能出现的，
     public Font[] fallBackFonts;
     public float sizePx;
 
-    /** 未派生的原始 AWT Font 实例，用来向 {@link SkijaText} 查 Typeface。 */
+    // 这种情况下没有可绘制的有效子串。
     private Font sourceFont;
     private Font[] sourceFallbacks;
 
-    /**
-     * 行盒高度的锁定值，即 {@link #computeMetrics()} 里那个 {@code box}（2 倍空间）。
-     * -1 表示不锁，按当前字体自己算。
-     *
-     * <p>换用户字体时必须锁。{@link #getFontHeight()} 是整个界面的行高与垂直居中口径，
-     * 而任意一款系统字体的 ascent/descent 比例都和内置的 SF Pro 不同：跟着新字体走，
-     * 换字体的那一帧所有列表行高、按钮内文位置、歌词行距会一起变——那不叫"换了字体"，
-     * 那叫"换了一套布局"。锁住行盒之后，新字体自己的 ascent/descent 盒会被<b>居中放进</b>
-     * 原来的行盒里（{@link #computeMetrics()} 现成的 baseline 公式就是干这个的），
-     * 于是排版一动不动，只有字形换了。</p>
-     */
+    // 即使省略号也放不下；保持渲染器安全，什么都不绘制，而不是
     private int lineBoxOverride = -1;
 
-    /**
-     * 主字体是否描边加粗。
-     *
-     * <p>用户挑的字体族里很可能只有 Regular 一个字重（大量免费中文字体如此），而界面上
-     * {@code pf*bold} 那一半渲染器要的是粗体。没有粗体文件时用 Skia 的 {@code setEmboldened}
-     * 顶上，比"粗细完全一样、只有字号不同"更接近原来的信息层次。</p>
-     *
-     * <p>只作用在主字体上：回退字体是内置的 SF Pro / 苹方粗体，本来就是粗的，再加粗会糊。</p>
-     */
+    // 让子串索引变成负数。
     private boolean emboldenMain;
 
     private FontKerning fontKerning;
 
-    /** 索引 0 是主字体，之后依次是回退字体。 */
+    // 避免无限循环
     private io.github.humbleui.skija.Font[] skFonts = new io.github.humbleui.skija.Font[0];
     private Typeface[] skTypefaces = new Typeface[0];
 

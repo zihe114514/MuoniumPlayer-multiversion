@@ -1,25 +1,25 @@
 /*
- * 11/19/04 1.0 moved to LGPL.
- * 02/23/99 JavaConversion by E.B
- * Don Cross, April 1993.
- * RIFF file format classes.
- * See Chapter 8 of "Multimedia Programmer's Reference" in
- * the Microsoft Windows SDK.
+ * 本程序为自由软件；你可以在自由软件基金会发布的
+ * 1999年2月23日E.B.的JavaConversion
+ * Don Cross ， 1993年4月。
+ * RIFF文件格式类。
+ * 请参见《Multimedia Programmer's Reference》第 8 章，位于
+ * Microsoft Windows SDK 中。
  *
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
@@ -29,53 +29,53 @@ import lombok.Getter;
 
 
 /**
- * Class to manage RIFF files
+ * 用于管理 RIFF 文件的类
  */
 public class RiffStream {
 
     static class RiffChunkHeader {
-        /** Four-character chunk ID */
+        /** 四字符区块ID*/
         public int ckID = 0;
-        /** Length of data in chunk */
+        /** 块中数据的长度 */
         public int ckSize = 0;
     }
 
     // DDCRET
 
-    /** The operation succeeded */
+    /** 操作成功*/
     public static final int DDC_SUCCESS = 0;
-    /** The operation failed for unspecified reasons */
+    /** 操作因未知原因失败 */
     public static final int DDC_FAILURE = 1;
-    /** Operation failed due to running out of memory */
+    /** 因内存不足导致操作失败 */
     public static final int DDC_OUT_OF_MEMORY = 2;
-    /** Operation encountered file I/O error */
+    /** 操作遇到文件 I/O 错误 */
     public static final int DDC_FILE_ERROR = 3;
-    /** Operation was called with invalid parameters */
+    /** 使用无效参数调用操作*/
     public static final int DDC_INVALID_CALL = 4;
-    /** Operation was aborted by the user */
+    /** 操作被用户中止 */
     public static final int DDC_USER_ABORT = 5;
-    /** File format does not match */
+    /** 文件格式不匹配*/
     public static final int DDC_INVALID_FILE = 6;
 
     // RiffFileMode
 
-    /** undefined type (can use to mean "N/A" or "not open") */
+    /** 未定义类型（可表示“N/A”或“未打开”） */
     public static final int RFM_UNKNOWN = 0;
-    /** open for write */
+    /** 打开并写入*/
     public static final int RFM_WRITE = 1;
-    /** open for read */
+    /** 打开以供阅读*/
     public static final int RFM_READ = 2;
 
-    /** header for whole file */
+    /** 整个文件的标题*/
     private RiffChunkHeader riffHeader;
-    /** current file I/O mode */
+    /** 当前文件 I/O 模式 */
     protected int fmode;
-    /** I/O stream to use */
+    /** 要使用的I/O流*/
     @Getter
     protected SeekableByteArrayOutputStream stream;
 
     /**
-     * Dummy Constructor
+     * 哑构造函数
      */
     public RiffStream() {
         stream = null;
@@ -87,14 +87,14 @@ public class RiffStream {
     }
 
     /**
-     * Return File Mode.
+     * 返回文件模式。
      */
     public int CurrentFileMode() {
         return fmode;
     }
 
     /**
-     * Open a RIFF file.
+     * 打开一个 RIFF 文件。
      */
     public int Open() {
         int retcode = DDC_SUCCESS;
@@ -106,8 +106,8 @@ public class RiffStream {
         if (retcode == DDC_SUCCESS) {
             this.stream = new SeekableByteArrayOutputStream();
 
-            // Write the RIFF header...
-            // We will have to come back later and patch it!
+            // 编写RIFF页眉...
+            // 我们必须稍后再来修补它！
             byte[] br = new byte[8];
             br[0] = (byte) ((riffHeader.ckID >>> 24) & 0x000000FF);
             br[1] = (byte) ((riffHeader.ckID >>> 16) & 0x000000FF);
@@ -131,7 +131,7 @@ public class RiffStream {
     }
 
     /**
-     * Write numBytes data.
+     * 写入 numBytes 数据。
      */
     public int write(byte[] data, int numBytes) {
         if (fmode != RFM_WRITE) {
@@ -144,7 +144,7 @@ public class RiffStream {
 
 
     /**
-     * Write numBytes data.
+     * 写入 numBytes 数据。
      */
     public int write(short[] data, int numBytes) {
         byte[] theData = new byte[numBytes];
@@ -162,7 +162,7 @@ public class RiffStream {
     }
 
     /**
-     * Write numBytes data.
+     * 写入 numBytes 数据。
      */
     public int write(RiffChunkHeader triffHeader, int numBytes) {
         byte[] br = new byte[8];
@@ -192,11 +192,11 @@ public class RiffStream {
     public final void writeShort(int v) {
         stream.write((v >>> 8) & 0xFF);
         stream.write((v >>> 0) & 0xFF);
-        //written += 2;
+        //written + = 2;
     }
 
     /**
-     * Write numBytes data.
+     * 写入 numBytes 数据。
      */
     public int write(short data, int numBytes) {
         short theData = (short) (((data >>> 8) & 0x00FF) | ((data << 8) & 0xFF00));
@@ -218,7 +218,7 @@ public class RiffStream {
     }
 
     /**
-     * Write numBytes data.
+     * 写入 numBytes 数据。
      */
     public int write(int data, int numBytes) {
         short theDataL = (short) ((data >>> 16) & 0x0000FFFF);
@@ -236,22 +236,22 @@ public class RiffStream {
     }
 
     /**
-     * Read numBytes data.
+     * 读取 numBytes 数据。
      */
     public int read(byte[] data, int numBytes) {
         return DDC_FILE_ERROR;
     }
 
     /**
-     * Expect numBytes data.
+     * 应为numBytes数据。
      */
     public int expect(String data, int numBytes) {
         return DDC_FILE_ERROR;
     }
 
     /**
-     * Close Riff File.
-     * Length is written too.
+     * 关闭 RIFF 文件。
+     * 长度也写下来了。
      */
     public int close() {
         int retcode = DDC_SUCCESS;
@@ -274,7 +274,7 @@ public class RiffStream {
     }
 
     /**
-     * Write data to specified offset.
+     * 将数据写入指定偏移。
      */
     public int backpatch(long fileOffset, RiffChunkHeader data, int numBytes) {
         if (stream == null) {
@@ -293,7 +293,7 @@ public class RiffStream {
     }
 
     /**
-     * Seek in the File.
+     * 在文件中定位。
      */
     protected int seek(long offset) {
         int rc;
@@ -303,7 +303,7 @@ public class RiffStream {
     }
 
     /**
-     * Error Messages.
+     * 错误消息。
      */
     private String toDDCRETString(int retcode) {
         switch (retcode) {
@@ -327,7 +327,7 @@ public class RiffStream {
     }
 
     /**
-     * Fill the header.
+     * 填充页眉。
      */
     public static int fourCC(String chunkName) {
         return RiffFile.fourCC(chunkName);

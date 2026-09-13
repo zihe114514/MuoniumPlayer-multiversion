@@ -4,10 +4,10 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland.DynamicIslandStyle;
 import com.muoniumplayer.core.settings.HudConfig;
 
-/** Calculates text-aware Dynamic Island bounds without mutating animation state. */
+/** 计算考虑文本的 Dynamic Island 边界，且不修改动画状态。 */
 final class DynamicIslandLayoutCalculator {
 
-    /** Reference base width the per-style minimum widths were tuned against. */
+    /** 各风格最小宽度所依据的参考基础宽度。 */
     static final double DEFAULT_BASE_WIDTH = 250.0;
     static final double MIN_BASE_WIDTH = 160.0;
     static final double MAX_BASE_WIDTH = 720.0;
@@ -38,7 +38,7 @@ final class DynamicIslandLayoutCalculator {
             value = safeValue(noticeBodyValue, "—");
         } else {
             String speed = speedValue == null ? "" : speedValue.trim();
-            title = preview ? "灵动岛预览" : "正在加载歌曲";
+            title = preview ? "灵动岛预览" : "正在下载";
             value = preview ? speed : (speed.isEmpty() || "0 b/s".equalsIgnoreCase(speed)
                     ? "正在连接音频源" : speed);
         }

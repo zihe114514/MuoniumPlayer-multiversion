@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.unitgen;
@@ -29,7 +29,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 
 /**
- * Base class for all unit generators.
+ * 所有单元生成器的基类。
  *
  * @author Phil Burk (C) 2009 Mobileer Inc
  */
@@ -37,7 +37,7 @@ public abstract class UnitGenerator {
 
     protected static final double VERY_SMALL_FLOAT = 1.0e-26;
 
-    // Some common port names.
+    // 一些常见的端口名称。
     public static final String PORT_NAME_INPUT = "Input";
     public static final String PORT_NAME_OUTPUT = "Output";
     public static final String PORT_NAME_PHASE = "Phase";
@@ -65,18 +65,18 @@ public abstract class UnitGenerator {
     }
 
     public int getFrameRate() {
-        // return frameRate;
+        // return frameRate ；
         return synthesisEngine.getFrameRate();
     }
 
     public double getFramePeriod() {
-        // return framePeriod; // TODO - Why does OldJSynTestSuite fail if I use this!
+        // return framePeriod;//TODO -如果我使用这个，为什么OldJSynTestSuite会失败！
         return synthesisEngine.getFramePeriod();
     }
 
     public void addPort(UnitPort port) {
         port.setUnitGenerator(this);
-        // Store in a hash table by name.
+        // 按名称存入哈希表。
         ports.put(port.getName().toLowerCase(), port);
     }
 
@@ -86,9 +86,9 @@ public abstract class UnitGenerator {
     }
 
     /**
-     * Case-insensitive search for a port by name.
+     * 按名称搜索端口时不区分大小写。
      * @param portName
-     * @return matching port or null
+     * @return 匹配端口或空
      */
     public UnitPort getPortByName(String portName) {
         return ports.get(portName.toLowerCase());
@@ -99,36 +99,36 @@ public abstract class UnitGenerator {
     }
 
     /**
-     * Perform essential synthesis function.
+     * 执行必要的合成功能。
      *
-     * @param start offset into port buffers
-     * @param limit limit offset into port buffers for loop
+     * @param start 端口缓冲区中的偏移
+     * @param limit 极限偏移到环路端口缓冲区
      */
     public abstract void generate(int start, int limit);
 
     /**
-     * Generate a full block.
+     * 生成一个完整块。
      */
     public void generate() {
         generate(0, Synthesizer.FRAMES_PER_BLOCK);
     }
 
     /**
-     * @return the synthesisEngine
+     * @return synthesisEngine
      */
     public SynthesisEngine getSynthesisEngine() {
         return synthesisEngine;
     }
 
     /**
-     * @return the Synthesizer
+     * @return 合成器
      */
     public Synthesizer getSynthesizer() {
         return synthesisEngine;
     }
 
     /**
-     * @param synthesisEngine the synthesisEngine to set
+     * @param synthesisEngine 要设置的合成引擎
      */
     public void setSynthesisEngine(SynthesisEngine synthesisEngine) {
         if ((this.synthesisEngine != null) && (this.synthesisEngine != synthesisEngine)) {
@@ -139,7 +139,7 @@ public abstract class UnitGenerator {
 
     public UnitGenerator getTopUnit() {
         UnitGenerator unit = this;
-        // Climb to top of circuit hierarchy.
+        // 爬升到电路层次结构的顶部。
         while (unit.circuit != null) {
             unit = unit.circuit;
         }
@@ -150,7 +150,7 @@ public abstract class UnitGenerator {
         synthesisEngine.autoStopUnit(getTopUnit());
     }
 
-    /** Calculate signal based on halflife of an exponential decay. */
+    /** 根据指数衰减的半衰期计算信号。*/
     public double convertHalfLifeToMultiplier(double halfLife) {
         if (halfLife < (2.0 * getFramePeriod())) {
             return 1.0;
@@ -170,7 +170,7 @@ public abstract class UnitGenerator {
         return currentPhase;
     }
 
-    /** Calculate rate based on phase going from 0.0 to 1.0 in time. */
+    /** 根据相位随时间从 0.0 到 1.0 的变化计算速率。 */
     protected double convertTimeToRate(double time) {
         double period2X = synthesisEngine.getInverseNyquist();
         if (time < period2X) {
@@ -180,7 +180,7 @@ public abstract class UnitGenerator {
         }
     }
 
-    /** Flatten output ports so we don't output a changing signal when stopped. */
+    /** 扁平化输出端口，以便在停止时不会输出变化的信号。*/
     public void flattenOutputs() {
         for (UnitPort port : ports.values()) {
             if (port instanceof UnitOutputPort) {
@@ -202,17 +202,17 @@ public abstract class UnitGenerator {
     }
 
     public void pullData(long frameCount, int start, int limit) {
-        // Don't generate twice in case the paths merge.
+        // 如果路径合并，请勿生成两次。
         if (enabled && (frameCount > lastFrameCount)) {
-            // Do this first to block recursion when there is a feedback loop.
+            // 首先执行此操作，以便在存在反馈循环时阻止递归。
             lastFrameCount = frameCount;
-            // Then pull from all the units that are upstream.
+            // 然后从上游的所有单元中拉出。
             for (UnitPort port : ports.values()) {
                 if (port instanceof ConnectableInput) {
                     ((ConnectableInput) port).pullData(frameCount, start, limit);
                 }
             }
-            // Finally generate using outputs of the upstream units.
+            // 最后使用上游单元的输出生成。
             generate(start, limit);
         }
     }
@@ -222,10 +222,10 @@ public abstract class UnitGenerator {
     }
 
     /**
-     * If enabled, then a unit will execute if its output is connected to another unit that is
-     * executed. If not enabled then it will not execute and will not pull data from units that are
-     * connected to its inputs. Disabling a unit at the output of a tree of units can be used to
-     * turn off the entire tree, thus saving CPU cycles.
+     * 如果启用，则如果一个单元的输出连接到另一个单元，则该单元将执行
+     * 执行。如果未启用，则它将不会执行，也不会从
+     * 连接到其输入。在单元树的输出处禁用单元可用于
+     * 关闭整个树，从而节省CPU周期。
      *
      * @param enabled
      * @see #start()
@@ -238,22 +238,22 @@ public abstract class UnitGenerator {
     }
 
     /**
-     * Some units, for example LineOut and FixedRateMonoWriter, will only work if
-     * started explicitly. Other units will run when downstream units are started.
+     * 某些单元，例如LineOut和FixedRateMonoWriter ，仅在
+     * 显式启动。其他单元将在下游单元启动时运行。
      *
-     * @return true if you should call start() for this unit
+     * 如果您应该为此单元调用start() ，则@return 为true
      */
     public boolean isStartRequired() {
         return false;
     }
 
     /**
-     * Start executing this unit directly by adding it to a "run list" of units in the synthesis
-     * engine. This method is normally only called for the final unit in a chain, for example a
-     * LineOut. When that final unit executes it will "pull" data from any units connected to its
-     * inputs. Those units will then pull data their inputs until the entire chain is executed. If
-     * units are connected in a circle then this will be detected and the infinite recursion will be
-     * blocked.
+     * 通过将其添加到合成中的单元的“运行列表”中，直接执行此单元
+     * 引擎。此方法通常只对链中最末端的单元调用，例如
+     * LineOut。当该末端单元执行时，它会从连接到其
+     * 输入。然后，这些单元将提取其输入的数据，直到整个链被执行。如果
+     * 单位被连接成一个圆圈，那么这将被检测到，无限递归将被
+     * 被阻塞。
      *
      * @see #setEnabled(boolean)
      */
@@ -266,7 +266,7 @@ public abstract class UnitGenerator {
     }
 
     /**
-     * Start a unit at the specified time.
+     * 在指定时间启动单元。
      *
      * @param time
      * @see #start()
@@ -276,7 +276,7 @@ public abstract class UnitGenerator {
     }
 
     /**
-     * Start a unit at the specified time.
+     * 在指定时间启动单元。
      *
      * @param timeStamp
      * @see #start()
@@ -290,7 +290,7 @@ public abstract class UnitGenerator {
     }
 
     /**
-     * Stop a unit at the specified time.
+     * 供 UnitVoice 使用
      *
      * @param time
      * @see #start()
@@ -308,22 +308,22 @@ public abstract class UnitGenerator {
     }
 
     /**
-     * @deprecated ignored, frameRate comes from the SynthesisEngine
-     * @param rate
+     * @deprecated 已忽略， frameRate来自SynthesisEngine
+     * 由合成器开始执行此单元。输入端会从任何输出
      */
     @Deprecated
     public void setFrameRate(int rate) {
     }
 
-    /** Needed by UnitSink */
+    /** UnitSink需要*/
     public UnitGenerator getUnitGenerator() {
         return this;
     }
 
-    /** Needed by UnitVoice */
+    /** 用于拥有输出及关联 UnitGenerator 的对象的接口。 */
     public void setPort(String portName, double value, TimeStamp timeStamp) {
         UnitInputPort port = (UnitInputPort) getPortByName(portName);
-        // LOGGER.debug("setPort " + port );
+        // LOGGER.debug("setPort" + port);
         if (port != null) {
             port.set(value, timeStamp);
         }

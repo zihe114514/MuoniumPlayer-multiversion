@@ -1,8 +1,8 @@
 package com.muoniumplayer.core.rendering;
 
 /**
- * Code points from the bundled Fontello package. Keep icon selection in one
- * place so UI code never relies on fragile literal private-use characters.
+ * 来自内置 Fontello 字体包的码位。把图标选择集中在一处，
+ * 使 UI 代码永不依赖脆弱的字面私用区字符。
  */
 public final class FontelloIcons {
 

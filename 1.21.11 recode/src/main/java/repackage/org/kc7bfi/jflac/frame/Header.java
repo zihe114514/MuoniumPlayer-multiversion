@@ -1,23 +1,23 @@
 package repackage.org.kc7bfi.jflac.frame;
 
 /**
- * libFLAC - Free Lossless Audio Codec library
- * Copyright (C) 2001,2002,2003  Josh Coalson
+ * libFLAC -免费无损音频编解码器库
+ * 版权所有(C) 2001,2002,2003 Josh Coalson
  * <p>
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * 此库是自由软件；您可以重新分发它和/或
+ * 根据GNU Library General Public的条款对其进行修改
+ * 由自由软件基金会发布的许可证；或者
+ * 许可证的第2版，或（根据您的选择）任何更高版本。
  * <p>
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
+ * 此程序被分布是希望它会是有益的，
+ * 基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ * 适销性或适合特定目的。请参阅 GNU，
+ * 带固定偏移。
  * <p>
- * You should have received a copy of the GNU Library General Public
- * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA  02111-1307, USA.
+ * 您应该已经收到了GNU Library General Public的副本
+ * 与该库一起的许可证；如果没有，请写信给
+ * 库通用公共许可证以了解更多细节。
+ * Boston, MA 02111-1307, USA.
  */
 
 import repackage.org.kc7bfi.jflac.Constants;
@@ -29,71 +29,71 @@ import repackage.org.kc7bfi.jflac.util.CRC8;
 import java.io.IOException;
 
 /**
- * Frame header class.
+ * 帧标头类。
  * @author kc7bfi
  */
 public class Header {
 
-    /** The number of samples per subframe. */
+    /** @param crc 要设置的 crc。 */
     public int blockSize;
-    /** The sample rate in Hz. */
+    /** 每个子帧的采样数。 */
     public int sampleRate;
-    /** The number of channels (== number of subframes). */
+    /** 通道数（ = =子帧数）。*/
     public int channels;
-    /** The channel assignment for the frame. */
+    /** 帧的通道分配。*/
     public int channelAssignment;
-    /** The sample resolution. */
+    /** 样本分辨率。*/
     public int bitsPerSample;
 
     /**
-     * The frame number or sample number of first sample in frame.
-     * use the number_type value to determine which to use. 
+     * 帧中第一个样本的帧号或样本号。
+     * 使用NUMBER_TYPE值来确定要使用哪一个。
      */
     public int frameNumber = -1;
 
     /**
-     * The sample number for the first sample in the frame.
+     * 帧中第一个样本的样本编号。
      */
     public long sampleNumber = -1;
 
     /**
-     * CRC-8 (polynomial = x^8 + x^2 + x^1 + x^0, initialized with 0).
-     * of the raw frame header bytes, meaning everything before the CRC byte
-     * including the sync code.
+     * 采样率，单位 Hz。
+     * 原始帧头字节，这意味着CRC字节之前的所有内容
+     * CRC-8（多项式 = x^8 + x^2 + x^1 + x^0，初始化为 0）。
      */
     protected byte crc;
 
     /**
-     * The constructor.
-     * @param is                    The InputBitStream
-     * @param headerWarmup          The header warm-up bytes
-     * @param streamInfo            The FLAC Stream Info
-     * @throws IOException          Thrown on error reading InputBitStream
-     * @throws BadHeaderException   Thrown if header is bad
+     * 构造函数。
+     * 包括同步码。
+     * @param is                    InputBitStream
+     * @param streamInfo FLAC流信息
+     * @param headerWarmup          帧头预热字节
+     * @throws IOException          读取 InputBitStream 出错时抛出
      */
     public Header(BitInputStream is, byte[] headerWarmup, StreamInfo streamInfo) throws IOException, BadHeaderException {
         int blocksizeHint = 0;
         int sampleRateHint = 0;
-        ByteData rawHeader = new ByteData(16); // MAGIC NUMBER based on the maximum frame header size, including CRC
+        ByteData rawHeader = new ByteData(16); // 基于最大帧头大小的幻数，包括CRC
         boolean isKnownVariableBlockSizeStream = (streamInfo != null && streamInfo.getMinBlockSize() != streamInfo.getMaxBlockSize());
         boolean isKnownFixedBlockSizeStream = (streamInfo != null && streamInfo.getMinBlockSize() == streamInfo.getMaxBlockSize());
 
-        // init the raw header with the saved bits from synchronization
+        // 使用同步中保存的位初始化原始标头
         rawHeader.append(headerWarmup[0]);
         rawHeader.append(headerWarmup[1]);
 
-        // check to make sure that the reserved bits are 0
-        if ((rawHeader.getData(1) & 0x02) != 0) { // MAGIC NUMBER
+        // 检查以确保保留位为0
+        if ((rawHeader.getData(1) & 0x02) != 0) { // 魔術數字
             throw new BadHeaderException("Bad Magic Number: " + (rawHeader.getData(1) & 0xff));
         }
 
-        // Note that along the way as we read the header, we look for a sync
-        // code inside.  If we find one it would indicate that our original
-        // sync was bad since there cannot be a sync code in a valid header.
+        // 请注意，在阅读标题的过程中，我们会查找同步
+        // 里面的代码。如果我们找到一个，它将表明我们的原始
+        // @throws BadHeaderException   帧头损坏时抛出
 
-        // read in the raw header as bytes so we can CRC it, and parse it on the way
+        // 同步错误，因为有效帧头中不可能出现同步码。
         for (int i = 0; i < 2; i++) {
-            if (is.peekRawUInt(8) == 0xff) { // MAGIC NUMBER for the first 8 frame sync bits
+            if (is.peekRawUInt(8) == 0xff) { // 前8个帧同步位的幻数
                 is.readRawUInt(8); // move ff
                 throw new BadHeaderException("Found sync byte");
             }
@@ -133,7 +133,7 @@ public class Header {
             default:
                 break;
         }
-        //System.out.println("BSType="+bsType+" BS="+blockSize);
+        //以字节形式读取原始帧头以便做 CRC，并在过程中解析
 
         int srType = rawHeader.getData(2) & 0x0f;
         switch (srType) {
@@ -141,7 +141,7 @@ public class Header {
                 if (streamInfo == null)
                     throw new BadHeaderException("Bad Sample Rate (0)");
                 sampleRate = streamInfo.getSampleRate();
-                break; // throw new BadHeaderException("Bad Sample Rate (" + srType + ")");
+                break; // throw new BadHeaderException("错误采样率(" + srType + ")");
             case 1:
                 sampleRate = 88200;
                 break;
@@ -186,7 +186,7 @@ public class Header {
         }
 
         int asgnType = (rawHeader.getData(3) >> 4) & 0x0f;
-        //System.out.println("AsgnType="+asgnType+" "+(rawHeader.space[3] >> 4));
+        //System.out.println("AsgnType =" + asgnType + "" + (rawHeader.space [3] > > 4));
         if ((asgnType & 8) != 0) {
             channels = 2;
             switch (asgnType & 7) {
@@ -243,12 +243,12 @@ public class Header {
 
         if ((blocksizeHint != 0) && isKnownVariableBlockSizeStream) {
             sampleNumber = is.readUTF8Long(rawHeader);
-            if (sampleNumber == 0xffffffffffffffffL) { // i.e. non-UTF8 code...
+            if (sampleNumber == 0xffffffffffffffffL) { // 即非UTF8代码...
                 throw new BadHeaderException("Bad Sample Number");
             }
         } else {
             frameNumber = is.readUTF8Int(rawHeader);
-            if (frameNumber == 0xffffffff) { // i.e. non-UTF8 code...
+            if (frameNumber == 0xffffffff) { // 即非UTF8代码...
                 throw new BadHeaderException("Bad Last Frame");
             }
             sampleNumber = (long) streamInfo.getMinBlockSize() * (long) frameNumber;
@@ -281,7 +281,7 @@ public class Header {
                 sampleRate = sampleRateCode * 10;
         }
 
-        // read the CRC-8 byte
+        // 这应为一个零填充位
         byte crc8 = (byte) is.readRawUInt(8);
 
         if (CRC8.calc(rawHeader.getData(), rawHeader.getLen()) != crc8) {
@@ -290,8 +290,8 @@ public class Header {
     }
 
     /**
-     * Return a descriptive string for this object.
-     * @return the string description
+     * 读取 CRC-8 字节
+     * 返回此对象的描述性字符串。
      * @see Object#toString()
      */
     public String toString() {

@@ -11,18 +11,18 @@ import repackage.com.jsyn.data.FloatSample;
  *
  * <h3>为什么能装在这一层</h3>
  * <ul>
- *   <li>读头是<b>严格顺序</b>拉的：{@code advanceToNextFrame()} 每帧调一次
+ *   <li> 读头是 <b> 严格顺序 </b> 拉的： {@code advanceToNextFrame()} 每帧调一次
  *       {@code readCurrentChannelDouble(0/1)}，落到 {@code readDouble(frameIndex * channels + ch)}，
  *       下标每次 +1，永不回头。{@link WsolaTimeStretch} 要的正是这种访问模式。</li>
- *   <li>输入侧可以<b>随机读</b>：真正的样本是 {@code RafFloatSample}（WAV 走 RandomAccessFile，
+ *   <li> 输入侧可以 <b> 随机读 </b> ：真正的样本是 {@code RafFloatSample} （ WAV 走 RandomAccessFile ，
  *       窗口未命中就重读一段）或整块在内存里的 {@code FloatSample}。WSOLA 需要向前看
- *       {@code seq + seek} 帧来找接缝，这一层能满足。</li>
+ *       {@code seq + seek} 帧来找接缝，这一层能满足。 </li>
  * </ul>
  *
  * <h3>直通与接管</h3>
- * <p>{@code tempo == 1} 时是<b>真直通</b>：{@code readDouble} 直接转发给内层，一个采样都不经过 WSOLA。
+ * <p> {@code tempo == 1} 时是 <b> 真直通 </b> ： {@code readDouble} 直接转发给内层，一个采样都不经过 WSOLA。
  * 这一点是刻意的 —— 正常听歌的那条路必须和没有这个类时逐采样一致，不能因为「以后可能要变速」
- * 就让每首歌都多走一遍 overlap-add。</p>
+ * 就让每首歌都多走一遍 重叠添加。</p>
  *
  * <p>一旦 {@link #setTempo} 给了非 1 的值就<b>就地接管</b>：以当前输出下标为锚点开始跑 WSOLA。
  * 接管瞬间 tempo 还非常接近 1（速率曲线是从 1.0 斜坡上去的），WSOLA 在 tempo=1 时输出等于输入，
@@ -48,12 +48,12 @@ public final class WsolaStretchSample extends FloatSample {
     private WsolaStretchSample(FloatSample inner, int channels, int numFrames, double frameRate) {
         this.inner = inner;
         this.innerLength = numFrames * channels;
-        // 这里<b>不能</b>用 setNumFrames()，两个坑叠在一起：
-        //  1. SequentialDataCommon#setNumFrames 会把入参夹到 maxFrames，而 maxFrames 只由
-        //     allocate() 设置 —— 本类刻意把 allocate() 改成空实现（不持有缓冲区），于是 maxFrames
-        //     恒为 0，setNumFrames(n) 直接被夹成 0；
+        // 这里 <b> 不能 </b> 用 setNumFrames() ，两个坑叠在一起说明：
+        //  1. SequentialDataCommon # setNumFrames 会把入参夹到 maxFrames ，而 maxFrames 只由
+        //     allocate() 设置 —— 本类刻意把 allocate() 改成空实现（不持有缓冲区 ） ，于是 maxFrames
+        //     恒为 0 ， setNumFrames(n) 直接被夹成 0 ；
         //  2. AudioSample 又重新声明了一个 numFrames 字段，把 SequentialDataCommon 的那个遮住了。
-        //     getNumFrames() 读的是 AudioSample 的那一个，setNumFrames() 写的是被遮住的那一个,
+        //     getNumFrames() 读的是 AudioSample 的那一个， setNumFrames() 写的是被遮住的那一个，
         //     就算不被夹也写不到会被读到的地方。
         // 结果是 getNumFrames() 恒为 0 -> SoundFile.frames() 为 0 -> AudioPlayer 判定
         // "Audio file contains no usable frames" 把每一首歌都拒了。FloatSample#allocate 本身就是
@@ -96,9 +96,9 @@ public final class WsolaStretchSample extends FloatSample {
     }
 
     /**
-     * 设置伸缩因子（SoundTouch 语义，{@code > 1} 更快更短）。
+     * 设置伸缩因子（ SoundTouch 语义， {@code > 1} 更快更短）。
      *
-     * @return {@code true} 表示这一层会负责变速，调用方<b>不要</b>再去动读头的 {@code rate} 端口
+     * @return {@code true} 表示这一层会负责变速，调用方 <b> 不要 </b> 再去动读头的 {@code rate} 端口
      */
     public boolean setTempo(double value) {
         if (Double.isNaN(value) || Double.isInfinite(value)) return engaged;
@@ -133,7 +133,7 @@ public final class WsolaStretchSample extends FloatSample {
             if (Math.abs(tempo - 1.0) < IDLE_EPSILON) {
                 return inner.readDouble(index);
             }
-            // 只在帧边界接管。{@link WsolaTimeStretch#anchor} 把输出下标整除声道数当作起始帧，
+            // 只在帧边界接管。 {@link WsolaTimeStretch#anchor} 把输出下标整除声道数当作起始帧，
             // 而块的第 0 个采样恒为某一帧的第 0 声道；若在右声道的下标上锚定，从这一刻起左右声道
             // 整体错开一格 —— 听起来是立体声像被镜像，而且接管之后不退回直通，再也纠不回来。
             // 读头是逐采样顺序拉的，最多等一个采样就落到帧边界上。
@@ -160,7 +160,7 @@ public final class WsolaStretchSample extends FloatSample {
 
     @Override
     public void allocate(int numFrames, int channelsPerFrame) {
-        // 不持有缓冲区，什么都不用分配。父类会 new 一个 numFrames*channels 的 float[]，
+        // 不持有缓冲区，什么都不用分配。父类会 new 一个 numFrames * channels 的 float [] ，
         // 对一首五分钟的立体声曲子是 50 MB 的白扔。
     }
 

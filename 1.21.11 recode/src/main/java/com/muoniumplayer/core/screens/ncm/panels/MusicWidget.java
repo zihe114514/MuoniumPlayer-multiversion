@@ -187,7 +187,7 @@ public class MusicWidget extends RoundedRectWidget {
                     lblMusicName.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
                     lblMusicName.centerVertically();
                     lblMusicName.setPosition(cover.getRelativeX() + cover.getWidth() + 4, lblMusicName.getRelativeY() - lblMusicName.getHeight() * .5 - 2);
-                    // Reserve space for duration/actions and licensing badges so no badge can overlap a trimmed title.
+                    // 为时长/动作和授权徽标预留空间，使没有徽标会与被裁剪的标题重叠。
                     lblMusicName.setMaxWidth(Math.max(1.0, this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4
                             + rightActionsReserve() + (musicDirty ? (dirtyIndicatorSize + 4) : 0)
                             + accessBadgeReserve + unblockBadgeReserve[0])));
@@ -237,7 +237,7 @@ public class MusicWidget extends RoundedRectWidget {
             });
         }
 
-        // Keep the title badges in one advancing row: VIP / digital album / cloud drive / highest tier.
+        // 让标题徽标保持在一行前进：VIP / 数字专辑 / 云盘 / 最高档。
         nextAccessBadgeX += digitalAlbumTrack ? 28.0 : 0.0;
         if (cloudSong) {
             final double cloudBadgeOffset = nextAccessBadgeX;
@@ -431,8 +431,8 @@ public class MusicWidget extends RoundedRectWidget {
 
         lblMusicArtist.setClickable(false);
 
-        // Third-party sources ship no duration in their search response; it is measured while
-        // decoding, so the label reads the value live instead of freezing 00:00 at build time.
+        // 第三方源在搜索响应中不带时长；它在
+        //解码时测量，因此标签实时读值，而非在构建时冻结 00:00。
         LabelWidget lblMusicDuration = new LabelWidget(
                 () -> formatDuration(music.getDuration()), FontManager.pf14bold);
         this.addChild(lblMusicDuration);
@@ -511,8 +511,8 @@ public class MusicWidget extends RoundedRectWidget {
         });
 
         // ===== 下一首播放：把这首歌插到当前歌曲之后，按点击顺序排队 =====
-        // Available for every source, not just Netease: it only reorders the local play queue, so it
-        // needs nothing from any account or API.
+        // 每个源都可用，不只是网易云：它只重排本地播放队列，因此
+        //不需要任何账号或 API 的东西。
         // 图标走字体（player-queue-icons U+E309）而不是贴图：烘成 PNG 的那一版把字形放大并裁掉了
         // 一角，且每个播放器缩放下都要重新采样。
         IconWidget btnPlayNext = PlayerQueueIcons.newPlayNextButton(20);
@@ -523,8 +523,8 @@ public class MusicWidget extends RoundedRectWidget {
             btnPlayNext.setColor(queued ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                     : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             btnPlayNext.centerVertically();
-            // The two Netease-only controls are hidden for third-party tracks, and a hidden widget's
-            // position is not a reliable anchor, so fall back to the fixed duration slot in that case.
+            // 两个仅网易云的控件对第三方曲目隐藏，而隐藏组件的
+            //位置不是可靠锚点，因此在那种情况下回退到固定时长槽。
             double anchorX = music.isNetease()
                     ? btnAddToPlaylist.getRelativeX()
                     : actionsAnchorX(lblMusicDuration);
@@ -539,8 +539,8 @@ public class MusicWidget extends RoundedRectWidget {
     }
 
     /**
-     * Gives freshly fetched tracks a short, staggered opacity entrance without
-     * moving their real layout bounds (so scrolling and hit-testing stay stable).
+     * 给新获取的曲目一个短促、交错的不透明度进入，而不
+     * 移动其真实布局边界（使滚动和命中测试保持稳定）。
      */
     public MusicWidget setEntranceAnimation(long startedAt, long delayMillis) {
         this.entranceStartedAt = startedAt;
@@ -562,7 +562,7 @@ public class MusicWidget extends RoundedRectWidget {
         }
 
         float progress = Math.min(1f, elapsed / (float) ENTRANCE_DURATION_MILLIS);
-        // Cubic ease-out makes the fade settle gently instead of appearing linear.
+        // 三次方 ease-out 使淡入平缓落定，而非显得线性。
         float easedProgress = 1f - (float) Math.pow(1f - progress, 3f);
         this.setAlpha(easedProgress);
 

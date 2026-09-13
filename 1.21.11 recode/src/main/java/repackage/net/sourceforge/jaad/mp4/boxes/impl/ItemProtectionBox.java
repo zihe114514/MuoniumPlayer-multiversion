@@ -5,8 +5,8 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The item protection box provides an array of item protection information, for
- * use by the Item Information Box.
+ * item protection box 提供一个条目保护信息数组，供
+ * Item Information Box 使用。
  *
  * @author in-somnia
  */

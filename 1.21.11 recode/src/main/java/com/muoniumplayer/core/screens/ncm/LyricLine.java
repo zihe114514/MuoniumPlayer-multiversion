@@ -59,9 +59,41 @@ public class LyricLine {
      */
     public int duetSlot = -1;
 
+    /**
+     * 这一行属于副歌（高潮段）。
+     *
+     * <p>两个来源：网易云 {@code /api/song/lyric/v1?cp=true} 返回的 {@code chorus} 区间，
+     * 或者没有区间时按「重复次数最多的歌词文本」做的文本频次兜底（见
+     * {@code LyricChorusMarker}）。渲染层据此对副歌特化配色与发光强度。</p>
+     */
+    public boolean isChorus = false;
+
+    /**
+     * 副歌段编号，从 0 开始；{@code -1} 表示不是副歌。
+     *
+     * <p>同一段副歌里的所有行共用一个编号，所以渲染层可以让一整段用同一种强调色，
+     * 而不是逐行随机。这个编号同时决定 {@link #chorusEffect}。</p>
+     */
+    public int chorusIndex = -1;
+
+    /**
+     * 副歌特效样式（{@code 0/1/2} 对应 bars / circles / beams）。
+     *
+     * <p>只有词云一类有独立特效层的样式会读它；平铺渲染的样式只看 {@link #isChorus}。</p>
+     */
+    public int chorusEffect = -1;
+
+    /**
+     * 逐字形时间轴的惰性缓存，由 {@link LyricGraphemeTimeline#of(LyricLine)} 填充。
+     *
+     * <p>故意不在解析阶段构建：绝大多数行不会走到「按字形」这条路径，提前算等于白花时间。
+     * {@link #markDirty()} 会把它一起清掉，所以词表被改写之后不会读到过期数据。</p>
+     */
+    List<LyricGraphemeTimeline.Glyph> glyphTimeline;
+
     public final SpringAnimation spring = new SpringAnimation(new SpringParams(.9, 15, 90, false));
 
-    // MusicLyricsWidgets fields
+    // MusicLyricsWidgets 字段
     public double scrollWidth = 0;
     public double offsetX = 0;
     public double targetOffsetX = 0;
@@ -83,7 +115,7 @@ public class LyricLine {
         public final long timestamp, duration;
         public final double[] emphasizes;
 
-        // fields for MusicLyricsWidget
+        // MusicLyricsWidget 用的字段
         public float alpha = 0.0f;
         public double progress = 0.0;
 
@@ -119,6 +151,8 @@ public class LyricLine {
 
     public void markDirty() {
         heightComputed = false;
+        // 词表可能被解析层改写（normalizeWordDurations / addWords），字形时间轴必须一起失效。
+        glyphTimeline = null;
     }
 
     public void computeHeight(double width) {

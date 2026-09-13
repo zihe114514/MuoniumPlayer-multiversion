@@ -8,37 +8,28 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * A typical presentation stored in a file contains one alternate group per
- * media type: one for video, one for audio, etc. Such a file may include
- * several video tracks, although, at any point in time, only one of them should
- * be played or streamed. This is achieved by assigning all video tracks to the
- * same alternate group. (See subclause 8.3.2 for the definition of alternate
- * groups.)
+ * 存于文件中的典型放映每个媒体类型含一个 alternate group：视频一个、音频一个，等等。
+ * 这样的文件可含多个视频轨道，但任一时刻只应播放或串流其中一个。
+ * 做法是将所有视频轨道分配到同一个 alternate group。
+ *（alternate group 的定义见子条款 8.3.2。）
  *
- * All tracks in an alternate group are candidates for media selection, but it
- * may not make sense to switch between some of those tracks during a session.
- * One may for instance allow switching between video tracks at different
- * bitrates and keep frame size but not allow switching between tracks of
- * different frame size. In the same manner it may be desirable to enable
- * selection – but not switching – between tracks of different video codecs or
- * different audio languages.
+ * alternate group 中的所有轨道都是媒体选择的候选，但在会话期间在某些轨道间切换可能没有意义。
+ * 例如可允许在不同比特率、相同帧大小的视频轨道间切换，
+ * 但不允许在不同帧大小的轨道间切换。
+ * 同样，可能希望在不同视频编解码器或不同音频语言的轨道间
+ * 进行选择——而非切换。
  *
- * The distinction between tracks for selection and switching is addressed by
- * assigning tracks to switch groups in addition to alternate groups. One
- * alternate group may contain one or more switch groups. All tracks in an
- * alternate group are candidates for media selection, while tracks in a switch
- * group are also available for switching during a session. Different switch
- * groups represent different operation points, such as different frame size,
- * high/low quality, etc.
+ * 选择与切换的区别通过除 alternate group 外再将轨道分配到 switch group 来处理。
+ * 一个 alternate group 可含一个或多个 switch group。
+ * alternate group 中的所有轨道都是媒体选择候选，
+ * 而 switch group 中的轨道还可在会话期间切换。
+ * 不同 switch group 代表不同工作点，例如不同帧大小、高低画质等。
  *
- * For the case of non-scalable bitstreams, several tracks may be included in a
- * switch group. The same also applies to non-layered scalable bitstreams, such
- * as traditional AVC streams.
+ * 对于非可扩展比特流，一个 switch group 中可含多个轨道。
+ * 对于非分层可扩展比特流（如传统 AVC 流）同样适用。
  *
- * By labelling tracks with attributes it is possible to characterize them. Each
- * track can be labelled with a list of attributes which can be used to describe
- * tracks in a particular switch group or differentiate tracks that belong to
- * different switch groups.
+ * 通过用属性标记轨道可以刻画它们。每个轨道可用一组属性标记，
+ * 用于描述某个 switch group 中的轨道或区分属于不同 switch group 的轨道。
  * @author in-somnia
  */
 public class TrackSelectionBox extends FullBox {
@@ -63,62 +54,46 @@ public class TrackSelectionBox extends FullBox {
 	}
 
 	/**
-	 * The switch group is an integer that specifies a group or collection of
-	 * tracks. If this field is 0 (default value) or if the Track Selection box
-	 * is absent there is no information on whether the track can be used for
-	 * switching during playing or streaming. If this integer is not 0 it shall
-	 * be the same for tracks that can be used for switching between each other.
-	 * Tracks that belong to the same switch group shall belong to the same
-	 * alternate group. A switch group may have only one member.
+	 * switch group 为整数，指定一组轨道或轨道集合。
+	 * 若此字段为 0（默认值）或不存在 Track Selection box，
+	 * 则没有关于该轨道能否在播放或串流期间切换的信息。
+	 * 若非 0，可相互切换的轨道应取相同值。
+	 * 属于同一 switch group 的轨道应属于同一 alternate group。
+	 * 一个 switch group 可只有一个成员。
 	 */
 	public long getSwitchGroup() {
 		return switchGroup;
 	}
 
 	/**
-	 * <p>A list of attributes, that should be used as descriptions of tracks or
-	 * differentiation criteria for tracks in the same alternate or switch
-	 * group. Each differentiating attribute is associated with a pointer to the
-	 * field or information that distinguishes the track.</p>
+	 * <p>一组属性，应用作同属一个 alternate 或 switch group 中轨道的描述
+	 * 或区分准则。每个区分性属性都关联一个指针，
+	 * 指向区分该轨道的字段或信息。</p>
 	 *
-	 * <p>The following attributes are descriptive:
+	 * <p>以下属性为描述性：
 	 * <table>
-	 * <tr><th>Name</th><th>Attribute</th><th>Description</th></tr>
-	 * <tr><td>Temporal scalability</td><td>'tesc'</td><td>The track can be
-	 * temporally scaled.</td></tr>
-	 * <tr><td>Fine-grain SNR scalability</td><td>'fgsc'</td><td>The track can
-	 * be fine-grain scaled.</td></tr>
-	 * <tr><td>Coarse-grain SNR scalability</td><td>'cgsc'</td><td>The track can
-	 * be coarse-grain scaled.</td></tr>
-	 * <tr><td>Spatial scalability</td><td>'spsc'</td><td>The track can be
-	 * spatially scaled.</td></tr>
-	 * <tr><td>Region-of-interest scalability</td><td>'resc'</td><td>The track
-	 * can be region-of-interest scaled.</td></tr>
+	 * <tr><th>名称</th><th>属性</th><th>描述</th></tr>
+	 * <tr><td>时间可扩展性</td><td>'tesc'</td><td>该轨道可在时间上缩放。</td></tr>
+	 * <tr><td>细粒度 SNR 可扩展性</td><td>'fgsc'</td><td>该轨道可细粒度缩放。</td></tr>
+	 * <tr><td>粗粒度 SNR 可扩展性</td><td>'cgsc'</td><td>该轨道可粗粒度缩放。</td></tr>
+	 * <tr><td>空间可扩展性</td><td>'spsc'</td><td>该轨道可在空间上缩放。</td></tr>
+	 * <tr><td>感兴趣区域可扩展性</td><td>'resc'</td><td>该轨道可按感兴趣区域缩放。</td></tr>
 	 * </table></p>
 	 *
-	 * <p>The following attributes are differentiating:
-	 * <table><tr><th>Name</th><th>Attribute</th><th>Pointer</th></tr>
-	 * <tr><td>Codec</td><td>'cdec'</td><td>Sample Entry (in Sample Description
-	 * box of media track)</td></tr>
-	 * <tr><td>Screen size</td><td>'scsz'</td><td>Width and height fields of
-	 * Visual Sample Entries.</td></tr>
-	 * <tr><td>Max packet size</td><td>'mpsz'</td><td>Maxpacketsize field in RTP
-	 * Hint Sample Entry</td></tr>
-	 * <tr><td>Media type</td><td>'mtyp'</td><td>Handlertype in Handler box (of
-	 * media track)</td></tr>
-	 * <tr><td>Media language</td><td>'mela'</td><td>Language field in Media
-	 * Header box</td></tr>
-	 * <tr><td>Bitrate</td><td>'bitr'</td><td>Total size of the samples in the
-	 * track divided by the duration in the track header box</td></tr>
-	 * <tr><td>Frame rate</td><td>'frar'</td><td>Number of samples in the track
-	 * divided by duration in the track header box</td></tr>
+	 * <p>以下属性为区分性：
+	 * <table><tr><th>名称</th><th>属性</th><th>指针</th></tr>
+	 * <tr><td>编解码器</td><td>'cdec'</td><td>采样条目（在媒体轨道的采样描述 box 中）</td></tr>
+	 * <tr><td>屏幕大小</td><td>'scsz'</td><td>视觉采样条目的宽高字段。</td></tr>
+	 * <tr><td>最大包大小</td><td>'mpsz'</td><td>RTP 提示采样条目中的 Maxpacketsize 字段</td></tr>
+	 * <tr><td>媒体类型</td><td>'mtyp'</td><td>Handler box 中的 Handlertype（媒体轨道的）</td></tr>
+	 * <tr><td>媒体语言</td><td>'mela'</td><td>Media Header box 中的 Language 字段</td></tr>
+	 * <tr><td>比特率</td><td>'bitr'</td><td>轨道中采样总大小除以 track header box 中的时长</td></tr>
+	 * <tr><td>帧率</td><td>'frar'</td><td>轨道中采样数除以 track header box 中的时长</td></tr>
 	 * </table></p>
 	 *
-	 * <p>Descriptive attributes characterize the tracks they modify, whereas
-	 * differentiating attributes differentiate between tracks that belong to
-	 * the same alternate or switch groups. The pointer of a differentiating
-	 * attribute indicates the location of the information that differentiates
-	 * the track from other tracks with the same attribute.</p>
+	 * <p>描述性属性刻画其所修饰的轨道，而区分性属性用于区分
+	 * 属于同一 alternate 或 switch group 的轨道。区分性属性的指针
+	 * 指示将该轨道与具有相同属性的其他轨道区分开的信息所在位置。</p>
 	 */
 	public List<Long> getAttributes() {
 		return Collections.unmodifiableList(attributes);

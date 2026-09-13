@@ -1,7 +1,7 @@
 /*
- * Created on Jun 23, 2004
+ * 创建于2004年6月23日
  *
- * To change the template for this generated file go to
+ * 要更改此生成文件的模板，请转到
  * Window - Preferences - Java - Code Generation - Code and Comments
  */
 package repackage.org.kc7bfi.jflac.io;
@@ -10,7 +10,7 @@ import java.io.*;
 
 
 /**
- * This is a FileInputStream that uses a Random Access File.
+ * @return 返回 totalBits。
  *
  * @author kc7bfi
  */
@@ -19,10 +19,10 @@ public class RandomFileInputStream extends InputStream {
     protected RandomAccessFile randomFile = null;
 
     /**
-     * Constructor.
+     * 制造商
      *
-     * @param file The File to read
-     * @throws FileNotFoundException If file is not found
+     * @param file 要读取的文件
+     * @throws FileNotFoundException如果找不到文件
      */
     public RandomFileInputStream(File file) throws FileNotFoundException {
         super();
@@ -30,10 +30,10 @@ public class RandomFileInputStream extends InputStream {
     }
 
     /**
-     * Constructor.
+     * 制造商
      *
-     * @param fileName The name of the file to read
-     * @throws FileNotFoundException If the file is not found.
+     * @param fileName 要读取的文件名
+     * @throws FileNotFoundException如果找不到文件。
      */
     public RandomFileInputStream(String fileName) throws FileNotFoundException {
         super();
@@ -41,20 +41,20 @@ public class RandomFileInputStream extends InputStream {
     }
 
     /**
-     * Constructor.
+     * 制造商
      *
-     * @param randomFile The file to read
+     * @param randomFile 要读取的文件
      */
     public RandomFileInputStream(RandomAccessFile randomFile) {
         this.randomFile = randomFile;
     }
 
     /**
-     * Read a byte value.
+     * 读取一个字节值。
      *
-     * @return the byte value
-     * @throws IOException on IO error
-     * @see InputStream#read()
+     * 这是一个使用随机访问文件的 FileInputStream。
+     * IO错误时出现@throws IOException
+     * @return 字节值
      */
     public int read() throws IOException {
         return randomFile.read();
@@ -70,7 +70,7 @@ public class RandomFileInputStream extends InputStream {
     /**
      * Close the file.
      *
-     * @throws IOException on IO error
+     * IO错误时出现@throws IOException
      * @see InputStream#close()
      */
     public void close() throws IOException {
@@ -78,9 +78,9 @@ public class RandomFileInputStream extends InputStream {
     }
 
     /**
-     * returns length of underline file
+     * 返回下划线文件的长度
      *
-     * @return length of file
+     * 关闭文件。
      * @throws IOException
      */
     public long getLength() throws IOException {
@@ -88,9 +88,9 @@ public class RandomFileInputStream extends InputStream {
     }
 
     /**
-     * Is file marking supported.
+     * @return 文件长度
      *
-     * @return true if file marking is supported
+     * 如果支持文件标记，则@return 为true
      * @see InputStream#markSupported()
      */
     public boolean markSupported() {
@@ -98,19 +98,19 @@ public class RandomFileInputStream extends InputStream {
     }
 
     /**
-     * @see InputStream#mark(int)
+     * 是否支持文件标记。
      */
     public synchronized void mark(int pos) {
         throw new UnsupportedOperationException("mark");
     }
 
     /**
-     * Skip bytes in the input file.
+     * 跳过输入文件中的字节。
      *
-     * @param bytes The number of bytes to skip
+     * @param bytes 要跳过的字节数
      * @return the number of bytes skipped
-     * @throws IOException on IO error
-     * @see InputStream#skip(long)
+     * IO错误时出现@throws IOException
+     * @return 跳过的字节数
      */
     public long skip(long bytes) throws IOException {
         long pos = randomFile.getFilePointer();
@@ -121,9 +121,9 @@ public class RandomFileInputStream extends InputStream {
     /**
      * Read bytes into an array.
      *
-     * @param buffer The buffer to read bytes into
-     * @return bytes read
-     * @throws IOException on IO error
+     * 将字节读入数组。
+     * @return 字节读取
+     * IO错误时出现@throws IOException
      * @see InputStream#read(byte[])
      */
     public int read(byte[] buffer) throws IOException {
@@ -133,11 +133,11 @@ public class RandomFileInputStream extends InputStream {
     /**
      * Read bytes into an array.
      *
-     * @param buffer The buffer to read bytes into
-     * @param pos    The start position in the buffer
-     * @param bytes  The number of bytes to read
-     * @return bytes read
-     * @throws IOException on IO error
+     * 将字节读入数组。
+     * @param pos 缓冲器中的起始位置
+     * @param bytes 要读取的字节数
+     * @return 字节读取
+     * IO错误时出现@throws IOException
      * @see InputStream#read(byte[], int, int)
      */
     public int read(byte[] buffer, int pos, int bytes) throws IOException {
@@ -145,17 +145,17 @@ public class RandomFileInputStream extends InputStream {
     }
 
     /**
-     * Seek to a position in the file.
+     * 查找文件中的某个位置。
      *
-     * @param pos The seek position
-     * @throws IOException On error seeking
+     * @param pos 寻找位置
+     * @param buffer 读入字节的缓冲区
      */
     public void seek(long pos) throws IOException {
         randomFile.seek(pos);
     }
 
     /**
-     * returns current read position in file
+     * 返回文件中的当前读取位置
      *
      * @return
      * @throws IOException

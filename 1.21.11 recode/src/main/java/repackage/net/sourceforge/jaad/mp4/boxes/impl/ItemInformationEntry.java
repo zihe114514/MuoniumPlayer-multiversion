@@ -24,10 +24,10 @@ public class ItemInformationEntry extends FullBox {
 			itemProtectionIndex = (int) in.readBytes(2);
 			itemName = in.readUTFString((int) getLeft(in), MP4InputStream.UTF8);
 			contentType = in.readUTFString((int) getLeft(in), MP4InputStream.UTF8);
-			contentEncoding = in.readUTFString((int) getLeft(in), MP4InputStream.UTF8); //optional
+			contentEncoding = in.readUTFString((int) getLeft(in), MP4InputStream.UTF8); //可选
 		}
 		if(version==1&&getLeft(in)>0) {
-			//optional
+			//可选
 			extensionType = in.readBytes(4);
 			if(getLeft(in)>0) {
 				extension = Extension.forType((int) extensionType);
@@ -37,76 +37,75 @@ public class ItemInformationEntry extends FullBox {
 	}
 
 	/**
-	 * The item ID contains either 0 for the primary resource (e.g., the XML
-	 * contained in an 'xml ' box) or the ID of the item for which the following
-	 * information is defined.
+	 * item ID 对主资源为 0（例如 'xml ' box 中所含的 XML），
+	 * 否则为定义了以下信息的条目 ID。
 	 *
-	 * @return the item ID
+	 * @return item ID
 	 */
 	public int getItemID() {
 		return itemID;
 	}
 
 	/**
-	 * The item protection index contains either 0 for an unprotected item, or
-	 * the one-based index into the item protection box defining the protection
-	 * applied to this item (the first box in the item protection box has the
-	 * index 1).
+	 * 条目保护索引对未保护条目为 0，否则为 item protection box 中
+	 * 的从 1 开始的索引，用于定义应用于该条目的保护
+	 *（item protection box 中第一个 box 的索引为
+	 * 1）。
 	 *
-	 * @return the item protection index
+	 * @return 条目保护索引
 	 */
 	public int getItemProtectionIndex() {
 		return itemProtectionIndex;
 	}
 
 	/**
-	 * The item name is a String containing a symbolic name of the item (source
-	 * file for file delivery transmissions).
+	 * 条目名称为一个 String，包含条目的符号名称
+	 *（文件交付传输中即源文件）。
 	 *
-	 * @return the item name
+	 * @return 条目名称
 	 */
 	public String getItemName() {
 		return itemName;
 	}
 
 	/**
-	 * The content type is a String with the MIME type of the item. If the item 
-	 * is content encoded (see below), then the content type refers to the item 
-	 * after content decoding.
+	 * 内容类型为一个 String，包含条目的 MIME 类型。若该条目
+	 * 经过内容编码（见下），则内容类型指内容解码
+	 * 之后的条目。
 	 * 
-	 * @return the content type
+	 * @return 内容类型
 	 */
 	public String getContentType() {
 		return contentType;
 	}
 
 	/**
-	 * The content encoding is an optional String used to indicate that the
-	 * binary file is encoded and needs to be decoded before interpreted. The
-	 * values are as defined for Content-Encoding for HTTP/1.1. Some possible
-	 * values are "gzip", "compress" and "deflate". An empty string indicates no
-	 * content encoding. Note that the item is stored after the content encoding
-	 * has been applied.
+	 * 内容编码为一个可选 String，用于表明该
+	 * 二进制文件已编码，在解释前需要先解码。
+	 * 取值与 HTTP/1.1 中 Content-Encoding 的定义相同。可能的
+	 * 取值如 "gzip"、"compress" 和 "deflate"。空字符串表示
+	 * 无内容编码。注意，条目是在应用内容编码
+	 * 之后存储的。
 	 *
-	 * @return the content encoding
+	 * @return 内容编码
 	 */
 	public String getContentEncoding() {
 		return contentEncoding;
 	}
 
 	/**
-	 * The extension type is a printable four-character code that identifies the
-	 * extension fields of version 1 with respect to version 0 of the item 
-	 * information entry.
+	 * 扩展类型为一个可打印的四字代码，标识
+	 * 相对于版本 0 的 item information 条目，
+	 * 版本 1 的扩展字段。
 	 * 
-	 * @return the extension type
+	 * @return 扩展类型
 	 */
 	public long getExtensionType() {
 		return extensionType;
 	}
 
 	/**
-	 * Returns the extension.
+	 * 返回扩展。
 	 */
 	public Extension getExtension() {
 		return extension;
@@ -153,50 +152,50 @@ public class ItemInformationEntry extends FullBox {
 		}
 
 		/**
-		 * The content location is a String in containing the URI of the file as
-		 * defined in HTTP/1.1 (RFC 2616).
+		 * 内容位置为一个 String，包含 HTTP/1.1（RFC 2616）
+		 * 所定义的文件 URI。
 		 *
-		 * @return the content location
+		 * @return 内容位置
 		 */
 		public String getContentLocation() {
 			return contentLocation;
 		}
 
 		/**
-		 * The content MD5 is a string containing an MD5 digest of the file. See
-		 * HTTP/1.1 (RFC 2616) and RFC 1864.
+		 * 内容 MD5 为一个字符串，包含该文件的 MD5 摘要。见
+		 * HTTP/1.1（RFC 2616）和 RFC 1864。
 		 *
-		 * @return the content MD5
+		 * @return 内容 MD5
 		 */
 		public String getContentMD5() {
 			return contentMD5;
 		}
 
 		/**
-		 * The total length (in bytes) of the (un-encoded) file.
+		 *（未编码）文件的总长度（字节）。
 		 *
-		 * @return the content length
+		 * @return 内容长度
 		 */
 		public long getContentLength() {
 			return contentLength;
 		}
 
 		/**
-		 * The transfer length is the total length (in bytes) of the (encoded)
-		 * file. Note that transfer length is equal to content length if no
-		 * content encoding is applied (see above).
+		 * 传输长度为（编码后）文件的总长度（字节）。
+		 * 注意，若未应用内容编码（见上），
+		 * 传输长度等于内容长度。
 		 *
-		 * @return the transfer length
+		 * @return 传输长度
 		 */
 		public long getTransferLength() {
 			return transferLength;
 		}
 
 		/**
-		 * The group ID indicates a file group to which the file item (source
-		 * file) belongs. See 3GPP TS 26.346 for more details on file groups.
+		 * 组 ID 指示该文件条目（源文件）所属的
+		 * 文件组。文件组的更多细节见 3GPP TS 26.346。
 		 *
-		 * @return the group IDs
+		 * @return 组 ID
 		 */
 		public long[] getGroupID() {
 			return groupID;

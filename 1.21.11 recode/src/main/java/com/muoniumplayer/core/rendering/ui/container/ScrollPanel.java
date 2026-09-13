@@ -10,11 +10,7 @@ import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 
 import java.util.List;
 
-/**
- * 一个从上至下排列的可以滚动的容器
- * @author MuoniumPlayer Contributors
- * Date: 2025/7/8 21:45
- */
+// 当某个子控件比很小的视口还宽时，不要创建空的首行。
 public class ScrollPanel extends AbstractWidget<ScrollPanel> {
 
     @Getter
@@ -26,21 +22,13 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
     @Getter
     private Alignment alignment = Alignment.VERTICAL;
 
-    /**
-     * 子组件的排列方式
-     */
+    // 对于混合尺寸的控件，按已完成行中最高的项推进，
     public enum Alignment {
-        /**
-         * 仅垂直排列 (默认)
-         */
+        // 而不是按恰好换行的那一项推进。
         VERTICAL,
-        /**
-         * 仅水平排列
-         */
+        // 模板缓冲提供常规的组件裁剪，而投影裁剪矩形则是一道
         HORIZONTAL,
-        /**
-         * 垂直排列并水平填充
-         */
+        // 硬性的屏幕空间边界。圆角封面渲染可能开启嵌套模板
         VERTICAL_WITH_HORIZONTAL_FILL
     }
 
@@ -55,7 +43,7 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
 
     @Override
     public void onRender(double mouseX, double mouseY) {
-        // 播放器尺寸动画会逐帧改变滚动区域和每行可容纳的控件数量。
+        // 层级，但它再也不会越出到标题上方或控件栏下方。
         // 先按新边界修正偏移，避免尺寸切换时使用上一帧的无效滚动位置而冲出面板。
         this.clampScrollOffset();
         this.actualScrollOffset = Interpolations.interpolate(this.actualScrollOffset, this.targetScrollOffset, 1f);

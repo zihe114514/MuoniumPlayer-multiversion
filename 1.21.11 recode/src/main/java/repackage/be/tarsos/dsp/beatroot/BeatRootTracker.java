@@ -7,8 +7,8 @@ import java.util.ListIterator;
 /**
  * BeatRoot 的多智能体节拍跟踪。
  *
- * <p>移植自 TarsosDSP 的 {@code be.tarsos.dsp.beatroot} 包（Simon Dixon 的 BeatRoot，
- * 由 Joren Six 移入 TarsosDSP），算法出自 Dixon, "Automatic Extraction of Tempo and Beat
+ * <p> 移植自 TarsosDSP 的 {@code be.tarsos.dsp.beatroot} 包（ Simon Dixon 的 BeatRoot ，
+ * 由 Joren Six 移入 TarsosDSP ） ，算法出自 Dixon ， “自动提取节奏和节拍
  * from Expressive Performances", JNMR 2001。</p>
  *
  * <h3>它比自相关强在哪里</h3>
@@ -27,14 +27,14 @@ import java.util.ListIterator;
  *       MIDI 字段、{@code EventList} 大半是 .match/.mid 读写。本项目只从 onset 包络喂时间与
  *       salience 两个数进去，那些都用不上。</li>
  *   <li><b>可变静态字段全部变成常量或实例字段。</b>上游 {@code Agent.innerMargin /
- *       correctionFactor / expiryTime / decayFactor} 是 static，且每次 {@code init()} 都重新赋一遍
+ *       correctionFactor/expiryTime/decayFactor}是静态，且每次 {@code init()} 都重新赋一遍
  *       同样的值；{@code AgentList.count / thresholdBI / thresholdBT} 也是 static。本项目的分析跑在
  *       后台线程池上（最多两条并发），两首歌同时分析会互相写这些字段。既然它们从来没被真正改过，
  *       这里直接写成 {@code static final} 常量。{@code idCounter} 与 {@code count} 只服务于调试打印，
  *       连带删掉。</li>
  *   <li><b>{@code decayFactor} 恒为 0，实时打分那条分支是死代码，删掉。</b>上游注释就写了
- *       "For scoring Agents in a (non-existent) real-time version (otherwise not used)"。</li>
- *   <li><b>拍点带 {@code interpolated} 标记。</b>上游 {@code fillBeats} 插进去的补拍和真拍长得
+ *       “对于（不存在的）实时版本（否则未使用）中的评分座席”。 </li>
+ *   <li> <b> 拍点带 {@code interpolated} 标记。 </b> 上游 {@code fillBeats} 插进去的补拍和真拍长得
  *       一模一样（都是 pitch 56 / velocity 64），事后分不出来。而「多少拍是真的踩在 onset 上」
  *       正是本项目要的置信度，所以补拍显式打标。</li>
  *   <li><b>多算一个最小二乘。</b>对所有<b>真拍</b>做 时刻~拍号 的线性回归，斜率就是节拍周期、
@@ -59,7 +59,7 @@ public final class BeatRootTracker {
     private static final double ONSET_DECAY_RATE = 0.84;
     /** 两个 onset 之间至少隔这么久（秒）。 */
     private static final double ONSET_MIN_SEPARATION = 0.06;
-    /** onset 时刻的量化粒度（秒）。上游 {@code BeatRootOnsetEventHandler} 就是取到 10ms。 */
+    /** onset 时刻的量化粒度（发作秒）。上游 {@code BeatRootOnsetEventHandler} 就是取到 10ms。*/
     private static final double ONSET_TIME_QUANTUM = 0.01;
 
     // ---- Induction（上游 Induction 的默认值） ----
@@ -72,7 +72,7 @@ public final class BeatRootTracker {
     private static final double MAX_IBI = 1.0;
     private static final int TOP_N = 10;
 
-    // ---- Agent（上游 Agent 的默认值） ----
+    // ----代理（上游 Agent 的默认值） ----
     private static final double POST_MARGIN_FACTOR = 0.3;
     private static final double PRE_MARGIN_FACTOR = 0.15;
     private static final double INNER_MARGIN = 0.040;
@@ -81,7 +81,7 @@ public final class BeatRootTracker {
     private static final double CORRECTION_FACTOR = 50.0;
     private static final double EXPIRY_TIME = 10.0;
 
-    // ---- AgentList（上游 AgentList 的默认值） ----
+    // ----代理列表（上游 AgentList 的默认值） ----
     private static final double THRESHOLD_BI = 0.02;
     private static final double THRESHOLD_BT = 0.04;
     /** 上游 {@code useAverageSalience}：false 表示总分用累加，偏好更快的速度层级。 */
@@ -106,7 +106,7 @@ public final class BeatRootTracker {
         public final double tempoTolerance;
         /** 拍点相对拟合网格的 RMS 偏差，秒。 */
         public final double residualSeconds;
-        /** 获胜 agent 的 phaseScore（累加的加权 salience）。 */
+        /** 获胜 agent 的 phaseScore （累加的加权显著性）。*/
         public final double phaseScore;
 
         Result(double[] beatTimes, int matchedBeats, int onsetCount, double beatIntervalSeconds,
@@ -135,7 +135,7 @@ public final class BeatRootTracker {
     /**
      * 在一条 onset 强度包络上跑完整条 BeatRoot 流水线。
      *
-     * @param onsetFunction  onset 强度，等间隔采样（谱通量最合适）。<b>会被原地归一化</b>
+     * @param onsetFunction 起病强度，等间隔采样 （谱通量最合适 ）。 <b> 会被原地归一化 </b>
      * @param hopTimeSeconds 相邻两个包络样点相隔多少秒
      * @return 结果，或 {@code null}（包络太短、没有 onset、或所有 agent 都死了）
      */
@@ -145,7 +145,7 @@ public final class BeatRootTracker {
 
         normalise(onsetFunction);
         // salience 用归一化后的值减归一化后的最小值 —— 上游正是先 normalise，
-        // 再 findOnsets，再在 findOnsets 里取 Peaks.min，顺序一致。
+        // 再 findOnsets ，再在 findOnsets 里取 Peaks.min ，顺序一致。
         double normalisedMin = min(onsetFunction);
         if (Double.isNaN(normalisedMin) || Double.isInfinite(normalisedMin)) return null;
 
@@ -170,7 +170,7 @@ public final class BeatRootTracker {
         if (best == null || best.events.list.size() < 4) return null;
         best.fillBeats();
 
-        // 一次性摊平成数组：events.list 是 LinkedList，下面要按下标访问两遍。
+        // 一次性摊平成数组： events.list 是 LinkedList ，下面要按下标访问两遍。
         int total = best.events.list.size();
         double[] times = new double[total];
         boolean[] interpolated = new boolean[total];
@@ -223,7 +223,7 @@ public final class BeatRootTracker {
                 tolerance, residual, best.phaseScore);
     }
 
-    // ================================================================== Peaks
+    // 波峰
 
     /** 上游 {@code Peaks.min}。 */
     private static double min(double[] data) {
@@ -234,7 +234,7 @@ public final class BeatRootTracker {
         return smallest;
     }
 
-    /** 上游 {@code Peaks.normalise}：原地 z-score。 */
+    /** 上游 {@code Peaks.normalise} ：原地 z-score。*/
     private static void normalise(double[] data) {
         double sum = 0.0;
         double sumSquared = 0.0;
@@ -281,7 +281,7 @@ public final class BeatRootTracker {
         return peaks;
     }
 
-    /** 上游 {@code Peaks.overThreshold}，{@code isRelative} 恒为 true 的那一支。 */
+    /** 上游 {@code Peaks.overThreshold} ， {@code isRelative} 恒为 true 的那一支。*/
     private static boolean overThreshold(double[] data, int index, int width, double threshold,
                                          double average) {
         if (data[index] < average) return false;
@@ -475,7 +475,7 @@ public final class BeatRootTracker {
         }
     }
 
-    // ================================================================= Agent
+    // or Attorney
 
     /** 上游 {@code Agent}：一个速度假设 + 它认下的拍点 + 它的得分。 */
     private static final class Agent {
@@ -531,11 +531,11 @@ public final class BeatRootTracker {
         }
 
         /**
-         * 上游 {@code considerAsBeat}：这个 onset 能不能算作本 agent 的下一拍。
+         * 上游 {@code considerAsBeat} ：这个发病 能不能算作本剂 的下一拍。
          *
          * <p>落在内窗里直接认；落在外窗但出了内窗，认下的同时分裂出一个不认它的 agent
          * （避免相位被一个偏得多的 onset 一把拽走）；离上一次认拍超过
-         * {@link #EXPIRY_TIME} 就把自己标记为待删。</p>
+         * {@link #EXPIRY_TIME} 就把自己标记为待删。 </p>
          */
         boolean considerAsBeat(Event event, AgentList agents) {
             if (beatTime < 0.0) {
@@ -586,7 +586,7 @@ public final class BeatRootTracker {
     /**
      * 上游 {@code AgentList}：以 {@code ag == null} 结尾的手写单链表。
      *
-     * <p>这里刻意<b>没有</b>换成 {@code ArrayList}。{@code beatTrack} 在遍历的同时往表里插新
+     * <p> 这里刻意 <b> 没有 </b> 换成 {@code ArrayList} 。 {@code beatTrack} 在遍历的同时往表里插新
      * agent，并且靠「插入点恰好在当前节点之前」这一点来判断要不要跳过一格；换成随机访问容器
      * 之后插入位置与遍历顺序都会变，跟踪结果也就跟着变。</p>
      */
@@ -606,7 +606,7 @@ public final class BeatRootTracker {
             }
         }
 
-        /** 按 beatInterval 升序插入。 */
+        /** 按 beatInterval 升序插入。*/
         void add(Agent newAgent) {
             if (newAgent == null) return;
             AgentList node;
@@ -674,7 +674,7 @@ public final class BeatRootTracker {
             }
         }
 
-        /** 上游 {@code beatTrack(el, -1)}。 */
+        /** 上游 {@code beatTrack(el, -1)} 。*/
         void beatTrack(EventList onsets) {
             boolean phaseGiven = ag != null && ag.beatTime >= 0.0;
             ListIterator<Event> cursor = onsets.listIterator();

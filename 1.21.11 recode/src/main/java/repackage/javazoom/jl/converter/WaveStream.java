@@ -1,25 +1,25 @@
 /*
- * 11/19/04 1.0 moved to LGPL.
- * 02/23/99 JavaConversion by E.B
- * Don Cross, April 1993.
- * RIFF file format classes.
- * See Chapter 8 of "Multimedia Programmer's Reference" in
- * the Microsoft Windows SDK.
+ * 本程序为自由软件；你可以在自由软件基金会发布的
+ * 1999年2月23日E.B.的JavaConversion
+ * Don Cross ， 1993年4月。
+ * RIFF文件格式类。
+ * 请参见《Multimedia Programmer's Reference》第 8 章，位于
+ * Microsoft Windows SDK 中。
  *
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
@@ -27,25 +27,25 @@ package repackage.javazoom.jl.converter;
 
 
 /**
- * Class allowing WaveFormat Access
+ * 允许访问 WaveFormat 的类
  */
 public class WaveStream extends RiffStream {
 
     public static final int MAX_WAVE_CHANNELS = 2;
 
     static class ChunkData {
-        /** Format category (PCM=1) */
+        /** 格式类别（ PCM = 1 ）*/
         public short wFormatTag = 0;
-        /** Number of channels (mono=1, stereo=2) */
+        /** 通道数（单声道= 1 ，立体声= 2 ）*/
         public short nChannels = 0;
-        /** Sampling rate [Hz] */
+        /** 采样率 [Hz] */
         public int nSamplesPerSec = 0;
         public int nAvgBytesPerSec = 0;
         public short nBlockAlign = 0;
         public short nBitsPerSample = 0;
 
         public ChunkData() {
-            wFormatTag = 1;     // PCM
+            wFormatTag = 1;     // 脉码调制
             config(44100, (short) 16, (short) 1);
         }
 
@@ -95,11 +95,11 @@ public class WaveStream extends RiffStream {
 
     private Chunk waveFormat;
     private RiffChunkHeader pcmData;
-    private long pcmDataOffset = 0;  // offset of 'pcmData' in output file
+    private long pcmDataOffset = 0;  // 输出文件中“pcmData”的偏移量
     private int numSamples = 0;
 
     /**
-     * Constructs a new WaveFile instance.
+     * 构造新的WaveFile实例。
      */
     public WaveStream() {
         pcmData = new RiffChunkHeader();
@@ -113,7 +113,7 @@ public class WaveStream extends RiffStream {
      *
      */
     public int openForWrite(int samplingRate, short bitsPerSample, short numChannels) {
-        // Verify parameters...
+        // 校验参数……
         if ((bitsPerSample != 8 && bitsPerSample != 16) ||
                 numChannels < 1 || numChannels > 2) {
             return DDC_INVALID_CALL;
@@ -128,7 +128,7 @@ public class WaveStream extends RiffStream {
             retcode = write(theWave, 4);
 
             if (retcode == DDC_SUCCESS) {
-                // Writing waveFormat
+                // 正在写入waveFormat
                 retcode = write(waveFormat.header, 8);
                 retcode = write(waveFormat.data.wFormatTag, 2);
                 retcode = write(waveFormat.data.nChannels, 2);
@@ -149,7 +149,7 @@ public class WaveStream extends RiffStream {
     }
 
     /**
-     * Write 16-bit audio
+     * 写入16位音频
      */
     public int writeData(short[] data, int numData) {
         int extraBytes = numData * 2;
@@ -171,7 +171,7 @@ public class WaveStream extends RiffStream {
         return rc;
     }
 
-    // [Hz]
+    // Hz
     public int samplingRate() {
         return waveFormat.data.nSamplesPerSec;
     }
@@ -189,7 +189,7 @@ public class WaveStream extends RiffStream {
     }
 
     /**
-     * Open for write using another wave file's parameters...
+     * 使用另一个 wave 文件的参数打开写入……
      */
     public int openForWrite(WaveStream otherWave) {
         return openForWrite(otherWave.samplingRate(),

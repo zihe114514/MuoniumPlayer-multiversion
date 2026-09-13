@@ -16,11 +16,11 @@ public class RatingBox extends FullBox {
 
 	@Override
 	public void decode(MP4InputStream in) throws IOException {
-		//3gpp or iTunes
+		//3gpp 或 iTunes
 		if(parent.getType()==BoxTypes.USER_DATA_BOX) {
 			super.decode(in);
 
-			//TODO: what to do with both?
+			//TODO: 两者都有时怎么处理？
 			final long entity = in.readBytes(4);
 			final long criteria = in.readBytes(4);
 			languageCode = Utils.getLanguageCode(in.readBytes(2));

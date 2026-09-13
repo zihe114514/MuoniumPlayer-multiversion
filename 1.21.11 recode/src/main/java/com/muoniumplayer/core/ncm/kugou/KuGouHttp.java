@@ -66,10 +66,10 @@ final class KuGouHttp {
         params.put("appid", APP_ID);
         params.put("clientver", CLIENT_VER);
         params.put("clienttime", String.valueOf(System.currentTimeMillis() / 1000L));
-        // The reference request helper promotes login credentials to query parameters
-        // as well as keeping them in the JSON body.  They must be present before the
-        // Android signature is calculated; otherwise authenticated tracker requests
-        // are signed for an anonymous device and silently fall back to preview access.
+        // 参考实现的请求助手会把登录凭证提升为查询参数，
+        // 同时保留在 JSON 请求体中。它们必须在 Android
+        // 签名计算之前就位；否则已鉴权的 tracker 请求
+        // 会以匿名设备身份签名，并静默降级为试听访问。
         if (KuGouDevice.isLoggedIn()) {
             params.put("token", KuGouDevice.token());
             params.put("userid", KuGouDevice.userId());

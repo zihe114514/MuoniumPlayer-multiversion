@@ -5,10 +5,10 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * This box provides a compact marking of the random access points within the
- * stream. The table is arranged in strictly increasing order of sample number.
+ * 此表对流内的随机访问点提供紧凑标记。
+ * 表按采样号严格递增排列。
  *
- * If the sync sample box is not present, every sample is a random access point.
+ * 若不存在同步采样 box，则每个采样都是随机访问点。
  *
  * @author in-somnia
  */
@@ -32,10 +32,9 @@ public class SyncSampleBox extends FullBox {
 	}
 
 	/**
-	 * Gives the numbers of the samples for each entry that are random access
-	 * points in the stream.
+	 * 给出流中作为随机访问点的每个条目的采样号。
 	 * 
-	 * @return a list of sample numbers
+	 * @return 采样号列表
 	 */
 	public long[] getSampleNumbers() {
 		return sampleNumbers;

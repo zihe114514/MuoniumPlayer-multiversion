@@ -9,7 +9,7 @@ import java.io.IOException;
 
 /**
  * @author MuoniumPlayer Contributors
- * Date: 2025/5/5 12:48
+ * 日期： 2025/5/5 12:48
  */
 public class RafWAVEFileParser extends WAVEFileParser {
 
@@ -24,7 +24,7 @@ public class RafWAVEFileParser extends WAVEFileParser {
         samplesPerFrame = parser.readShortLittle();
 //        System.out.println("Samples Per Frame: " + samplesPerFrame);
         frameRate = parser.readIntLittle();
-        parser.readIntLittle(); /* skip dwAvgBytesPerSec */
+        parser.readIntLittle(); /* skip dwAvgBytesPerSec*/
         blockAlign = parser.readShortLittle();
         bitsPerSample = parser.readShortLittle();
         bytesPerFrame = blockAlign;
@@ -100,7 +100,7 @@ public class RafWAVEFileParser extends WAVEFileParser {
         int nFrames;
         if (numFactSamples > 0) {
             // nFrames = numFactSamples / samplesPerFrame;
-            nFrames = numFactSamples; // FIXME which is right
+            nFrames = numFactSamples; // FIXME 右
         } else {
             nFrames = convertByteToFrame(numBytes);
         }
@@ -144,7 +144,7 @@ public class RafWAVEFileParser extends WAVEFileParser {
                 // 3b to 1f
                 factor = 3;
             } else if (bitsPerSample == 32) {
-                // 4b to 1f
+                // 4b至1f
                 factor = 4;
             }
 
@@ -175,7 +175,7 @@ public class RafWAVEFileParser extends WAVEFileParser {
         public float[] read(long pos) throws IOException {
 
             if (pos >= totalSize || this.startPos + pos >= parser.raf.length()) {
-//                System.out.println("Returning empty because EOF");
+//                System.out.println("由于EOF而返回空值");
                 return empty;
             }
 
@@ -189,8 +189,8 @@ public class RafWAVEFileParser extends WAVEFileParser {
             int arrSize = this.getArrSize(floatArrLen);
 
             if (totalSize - filePointer < arrSize) {
-//                System.out.println("Adjusting array size cuz there's no enough data left");
-//                System.out.println("totalSize: " + totalSize + ", filePointer: " + filePointer);
+//                System.out.println("调整数组大小，因为没有足够的数据");
+//                System.out.println("totalSize:" + totalSize + ", filePointer:" + filePointer);
                 int i = this.fillArrSize((int) (totalSize - filePointer));
                 byteData = new byte[(int) (totalSize - filePointer)];
                 floatData = new float[i / this.getSampleSizeInBytes()];
@@ -203,7 +203,7 @@ public class RafWAVEFileParser extends WAVEFileParser {
 
             if (read == -1) {
 //                System.out.println("Read " + read + " bytes but expected " + arrSize);
-//                System.out.println("Attempt to read at " + (this.startPos + pos) + ", parser pos: " + filePointer + ", total length: " + parser.raf.length());
+//                System.out.println("尝试读取" + (this.startPos + pos) + ",解析器pos:" + filePointer + ",总长度:" + parser.raf.length());
                 return empty;
             }
 
@@ -216,7 +216,7 @@ public class RafWAVEFileParser extends WAVEFileParser {
                     // 3b to 1f
                     SampleLoader.decodeLittleI24ToF32(byteData, 0, length, floatData, 0);
                 } else if (bitsPerSample == 32) {
-                    // 4b to 1f
+                    // 4b至1f
                     if (format == WAVE_FORMAT_IEEE_FLOAT) {
                         SampleLoader.decodeLittleF32ToF32(byteData, 0, length, floatData, 0);
                     } else if (format == WAVE_FORMAT_PCM) {
@@ -264,7 +264,7 @@ public class RafWAVEFileParser extends WAVEFileParser {
             floatSample.addMarker(marker);
         }
 
-        /* Set Sustain Loop by assuming first two markers are loop points. */
+        /* 通过假设前两个标记是循环点来设置维持循环。*/
         if (floatSample.getMarkerCount() >= 2) {
             floatSample.setSustainBegin(floatSample.getMarker(0).position);
             floatSample.setSustainEnd(floatSample.getMarker(1).position);

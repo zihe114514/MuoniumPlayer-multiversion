@@ -114,8 +114,8 @@ public final class KuGouMusicApi {
 
     /**
      *
-     * identify a cloud playlist by {@code gid}, so the service layer must route them through
-     * {@link #collectionTracks(String, int)} rather than the legacy specialid endpoint.</p>
+     * 通过 {@code gid} 标识一个云盘播放列表，因此服务层必须把它们路由到
+     * {@link #collectionTracks(String, int)}，而非旧的 specialid 端点。</p>
      */
     public static List<Playlist> searchPlaylists(String keyword, int limit) {
         List<Playlist> result = new ArrayList<Playlist>();
@@ -380,8 +380,8 @@ public final class KuGouMusicApi {
         }
         Stream modern = resolveViaTracker(track, hash, false);
         if (modern != null) return modern;
-        // Anonymous VIP tracks may expose only the preview segment; mirror the reference API
-        // free_part switch instead of making the whole song look unavailable.
+        // 匿名 VIP 曲目可能只暴露试听片段；对齐参考 API 的
+        // free_part 开关，而不是把整首歌当作不可用。
         modern = resolveViaTracker(track, hash, true);
         if (modern != null) return modern;
         return resolveViaLegacyCdn(track, hash);
@@ -390,7 +390,7 @@ public final class KuGouMusicApi {
     /** 参考 API 的 tracker/v6/priv_url：请求体参与 Android signature。 */
     private static Stream resolveViaTracker(Track track, String hash, boolean freePart) {
         try {
-            // /v6/priv_url rejects a client-generated dfid; register once before the first modern playback request.
+            // /v6/priv_url 拒绝客户端生成的 dfid；在首次现代播放请求前先注册一次。
             KuGouDevice.ensureRegistered();
             JsonObject body = new JsonObject();
             body.addProperty("area_code", "1");
@@ -409,7 +409,7 @@ public final class KuGouMusicApi {
 
             JsonObject resource = new JsonObject();
             resource.addProperty("album_audio_id", number(track.albumAudioId));
-            // The reference API uses the real per-request millisecond timestamp, not a fixed value.
+            // 参考 API 使用真实的逐请求毫秒时间戳，而非固定值。
             resource.addProperty("collect_list_id", "3");
             resource.addProperty("collect_time", System.currentTimeMillis());
             resource.addProperty("hash", hash);
@@ -438,10 +438,10 @@ public final class KuGouMusicApi {
 
             JsonObject root = KuGouHttp.postJson(KuGouHttp.TRACKER, "/v6/priv_url",
                     KuGouHttp.deviceParams(), body.toString(), KuGouHttp.Sign.ANDROID, null);
-            // /v6/priv_url does not return the usual top-level status=1.  A successful
-            // response has data[0].status=0 and keeps the actual URL in info.tracker_url.
-            // Treating the missing top-level status as a failure made every modern
-            // playback request look unavailable even though Kugou had returned a URL.
+            // /v6/priv_url 不返回常见的顶层 status=1。成功的
+            // 响应中 data[0].status=0，真正的 URL 位于 info.tracker_url。
+            // 把缺失顶层 status 当作失败，会导致每次现代播放请求
+            // 看起来都不可用，即使酷狗已经返回了 URL。
             if (root == null || (root.has("error_code") && integer(root, "error_code") != 0)) return null;
             JsonArray data = array(root, "data");
             if (data == null || data.size() == 0 || !data.get(0).isJsonObject()) return null;
@@ -499,13 +499,13 @@ public final class KuGouMusicApi {
         params.put("IsFreePart", "0");
         params.put("ppage_id", "463467626,350369493,788954147");
         params.put("cdnBackup", "1");
-        // song_url.js uses the tracker protocol version here, overriding the default 20489.
+        // song_url.js 在此使用 tracker 协议版本，覆盖默认的 20489。
         params.put("clientver", "11430");
         params.put("key", KuGouSign.urlKey(hash, KuGouDevice.mid(), KuGouDevice.userId(), KuGouHttp.APP_ID));
 
         Map<String, String> headers = new LinkedHashMap<String, String>();
         headers.put("x-router", "trackercdn.kugou.com");
-        // Current /v5/url validates both key and Android signature.
+        // 当前 /v5/url 同时校验 key 和 Android 签名。
         JsonObject root = KuGouHttp.get(KuGouHttp.GATEWAY, "/v5/url", params, KuGouHttp.Sign.ANDROID, headers);
         if (root == null || integer(root, "status") != 1) return null;
         JsonArray urls = array(root, "url", "backupdownurl");
@@ -541,6 +541,38 @@ public final class KuGouMusicApi {
     }
 
     /**
+     * 歌词候选列表（原始 JSON），交给调用方自己打分。
+     *
+     * <p>给「非酷狗曲目跨源取 KRC」用：那种情况没有 hash 可精确匹配，只能按关键词搜出一批候选，
+     * 而<b>挑哪一个不能只看时长</b>——同名不同版本的时长可能只差几秒，必须由调用方用曲名/歌手/
+     * 专辑一起判断。这里因此只做检索，不做选择。</p>
+     *
+     * @param hash    曲目 hash；非酷狗曲目传空串
+     * @param keyword "歌手 - 歌名"
+     * @return 永不为 {@code null}；没有候选时为空列表
+     */
+    public static List<JsonObject> lyricCandidates(String hash, String keyword) {
+        List<JsonObject> result = new ArrayList<JsonObject>();
+        JsonArray candidates = searchLyric(hash, keyword);
+        if (candidates == null) return result;
+        for (JsonElement element : candidates) {
+            if (element != null && element.isJsonObject()) result.add(element.getAsJsonObject());
+        }
+        return result;
+    }
+
+    /**
+     * 按指定候选下载并解密 KRC。
+     *
+     * @return 永不为 {@code null}；候选无效或下载失败时 {@code yrc} 为空串
+     */
+    public static KrcLyrics.Decoded lyric(JsonObject candidate) {
+        String content = lyricContent(candidate, "krc");
+        if (KuGouSign.isBlank(content)) return new KrcLyrics.Decoded("", "");
+        return KrcLyrics.decode(content);
+    }
+
+    /**
      * 取行级 LRC 歌词，作为 KRC 解不出逐字时的兜底。
      *
      * <p>单独一条而不是从 KRC 降级得来：行级 KRC 会丢掉翻译，而 {@code fmt=lrc} 的那一份自带
@@ -563,7 +595,11 @@ public final class KuGouMusicApi {
 
     /** 检索候选 → 下载，返回上游 {@code content} 原文（两种 fmt 都是 base64）。 */
     private static String lyricContent(String hash, long durationMs, String keyword, String format) {
-        JsonObject candidate = bestLyricCandidate(hash, durationMs, keyword);
+        return lyricContent(bestLyricCandidate(hash, durationMs, keyword), format);
+    }
+
+    /** 下载指定候选的歌词正文（base64）。 */
+    private static String lyricContent(JsonObject candidate, String format) {
         if (candidate == null) return "";
         String id = text(candidate, "id");
         String accessKey = firstText(candidate, "accesskey", "accessKey");
@@ -593,14 +629,27 @@ public final class KuGouMusicApi {
             if (!element.isJsonObject()) continue;
             JsonObject item = element.getAsJsonObject();
             if (durationMs <= 0L) return item;
-            long candidateDuration = longValue(item, "duration");
-            long delta = Math.abs(candidateDuration - durationMs);
+            long candidateDuration = lyricCandidateDurationMillis(item);
+            long delta = candidateDuration <= 0L ? Long.MAX_VALUE : Math.abs(candidateDuration - durationMs);
             if (delta < bestDelta) {
                 bestDelta = delta;
                 best = item;
             }
         }
         return best;
+    }
+
+    /**
+     * 歌词候选的时长统一到毫秒。
+     *
+     * <p>酷狗歌词库里新老条目并存：老条目按<b>秒</b>给（{@code 314}），新条目按<b>毫秒</b>给
+     * （{@code 255582}）。拿 {@code 314} 直接和毫秒比，差值永远是几十万，于是「最近的候选」
+     * 实际上退化成「最短的候选」——关键词兜底那一路上就会挑错版本。</p>
+     */
+    private static long lyricCandidateDurationMillis(JsonObject candidate) {
+        long raw = longValue(candidate, "duration");
+        if (raw <= 0L) return 0L;
+        return raw < 10_000L ? raw * 1000L : raw;
     }
 
     private static JsonArray searchLyric(String hash, String keyword) {
@@ -729,8 +778,8 @@ public final class KuGouMusicApi {
     }
 
     /**
-     * Cloud playlist songs expose their quality variants in {@code relate_goods} instead of the
-     * flat hash fields used by search and legacy playlist endpoints.
+     * 云盘播放列表歌曲在 {@code relate_goods} 中暴露其音质变体，而非搜索和旧播放列表端点使用的
+     * 扁平 hash 字段。
      */
     private static void applyRelatedQualityHashes(JsonObject item, Track track) {
         JsonArray related = array(item, "relate_goods");
@@ -746,7 +795,7 @@ public final class KuGouMusicApi {
         }
     }
 
-    /** Cloud playlist songs use {@code singerinfo[].name} for artist metadata. */
+    /** 云盘播放列表歌曲使用 {@code singerinfo[].name} 作为艺术家元数据。 */
     private static String singerNames(JsonObject item) {
         JsonArray singers = array(item, "singerinfo");
         if (singers == null) return "";

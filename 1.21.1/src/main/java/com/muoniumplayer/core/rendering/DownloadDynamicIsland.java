@@ -438,6 +438,35 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         publishNotice(success ? IslandNoticeType.REFRESH_SUCCESS : IslandNoticeType.REFRESH_ERROR,
                 success ? "缓存已清理" : "缓存清理失败", safeNoticeValue(detail, "没有可回收的缓存"));
     }
+
+    /** Result of a Folia model install, scan or delete operation. */
+    public static void showModelOperationResult(String title, String detail, boolean success) {
+        publishNotice(success ? IslandNoticeType.REFRESH_SUCCESS : IslandNoticeType.REFRESH_ERROR,
+                safeNoticeValue(title, success ? "模型操作完成" : "模型操作失败"),
+                safeNoticeValue(detail, success ? "操作已完成" : "请检查网络与模型目录"));
+    }
+
+    /** Keeps one persistent status card alive while a Folia model analysis session is running. */
+    public static void beginModelInference(String trackName, String modelNames) {
+        publishNotice(IslandNoticeType.MODEL_INFERENCE, "模型推理中",
+                safeNoticeValue(trackName, "当前歌曲") + " · "
+                        + safeNoticeValue(modelNames, "Folia 模型"), true);
+    }
+
+    /** Completes the live card only after the configured model returned usable evidence. */
+    public static void finishModelInference(String trackName, String modelNames, long elapsedMillis) {
+        completePersistentNotice(IslandNoticeType.MODEL_INFERENCE, IslandNoticeType.MODEL_INFERENCE_SUCCESS,
+                "模型推理完成", safeNoticeValue(trackName, "当前歌曲") + " · "
+                        + safeNoticeValue(modelNames, "Folia 模型") + " · "
+                        + Math.max(0L, elapsedMillis) + " ms");
+    }
+
+    /** Terminal state for a model attempt that failed and fell back to deterministic analysis. */
+    public static void failModelInference(String trackName, String modelNames) {
+        completePersistentNotice(IslandNoticeType.MODEL_INFERENCE, IslandNoticeType.MODEL_INFERENCE_FAILURE,
+                "模型推理未完成", safeNoticeValue(trackName, "当前歌曲") + " · "
+                        + safeNoticeValue(modelNames, "Folia 模型") + " · 已回退传统分析");
+    }
     /** Keeps the island visible while a selected track is submitted to a playlist. */
     public static void showPlaylistTrackAddInProgress(String playlistName) {
         publishNotice(IslandNoticeType.PLAYLIST_TRACK_ADDING, "加入歌单",
@@ -980,6 +1009,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     private static String safeNoticeValue(String value, String fallback) {
         return value == null || value.trim().isEmpty() ? fallback : value.trim();
+    }
+
+    /** Whether a real download card is occupying the island right now. */
+    public static boolean isDownloadActive() {
+        return downloading || INSTANCE.completing
+                || (downloadCompletedAt > 0L && System.currentTimeMillis() - downloadCompletedAt
+                < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds));
     }
 
     /** Starts a fresh download snapshot. Publish the flag last for cross-thread visibility. */
@@ -1565,7 +1601,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         boolean transcodeCopy = noticeMode && activeNoticeType == IslandNoticeType.TRANSCODING;
         // 只有"正在进行的无缝重叠"这一条走扫光标题：它描述的是一件此刻仍在发生的事，
         // 其余通知都是已经发生完的结果，扫光在它们身上只会变成噪音。
-        boolean shimmerTitle = noticeMode && activeNoticeType == IslandNoticeType.AUTOMIX_BLENDING;
+        boolean shimmerTitle = noticeMode && (activeNoticeType == IslandNoticeType.AUTOMIX_BLENDING
+                || activeNoticeType == IslandNoticeType.MODEL_INFERENCE);
         // Volume is frequently updated from key-repeat. Its labels deliberately skip both the
         // island-content entry and copy-transition animations, while the bar still interpolates.
         float renderedTextAlpha = staticVolumeCopy
@@ -1676,11 +1713,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
                 drawCenteredIslandText(FontManager.pf14bold, layout.title, bodyCenter, titleY,
                         bodyWidth, layout.textScale, hexColor(1f, 1f, 1f, loadingAlpha));
-                drawCenteredIslandText(FontManager.pf14bold, "加载完成", bodyCenter, titleY,
+                drawCenteredIslandText(FontManager.pf14bold, "下载完成", bodyCenter, titleY,
                         bodyWidth, layout.textScale, hexColor(1f, 1f, 1f, completeAlpha));
                 drawCenteredIslandText(FontManager.pf12, layout.value, bodyCenter, valueY,
                         bodyWidth, layout.textScale, hexColor(.65f, .69f, .78f, loadingAlpha * .94f));
-                drawCenteredIslandText(FontManager.pf12, "可以开始播放", bodyCenter, valueY,
+                drawCenteredIslandText(FontManager.pf12, "文件已就绪", bodyCenter, valueY,
                         bodyWidth, layout.textScale, hexColor(.59f, .90f, .67f, completeAlpha));
 
                 int statusColor = success > .52f
@@ -2127,7 +2164,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         if (alpha <= .01f) return;
         int foreground = hexColor(.94f, .95f, .98f, alpha);
         if (type == IslandNoticeType.REFRESHING || type == IslandNoticeType.PLAYLIST_TRACK_ADDING
-                || type == IslandNoticeType.TRANSCODING || type == IslandNoticeType.GD_SOURCE_LOADING) {
+                || type == IslandNoticeType.TRANSCODING || type == IslandNoticeType.GD_SOURCE_LOADING
+                || type == IslandNoticeType.MODEL_INFERENCE) {
             renderSpinner(centerX, centerY, alpha, accentColor, now, false);
             return;
         }
@@ -2138,7 +2176,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 || type == IslandNoticeType.PLAYLIST_TRACK_ALREADY_EXISTS
                 || type == IslandNoticeType.TRANSCODE_SUCCESS || type == IslandNoticeType.GD_SOURCE_HEALTHY
                 || type == IslandNoticeType.RECENT_PLAY_SUCCESS
-                || type == IslandNoticeType.LISTENING_DURATION_SUCCESS) {
+                || type == IslandNoticeType.LISTENING_DURATION_SUCCESS
+                || type == IslandNoticeType.MODEL_INFERENCE_SUCCESS) {
             drawIslandStatusIcon(IslandStatusIcons.SUCCESS, centerX, centerY, alpha,
                     hexColor(.70f, 1f, .77f, alpha));
             return;
@@ -2161,7 +2200,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             return;
         }
         if (type == IslandNoticeType.REFRESH_ERROR || type == IslandNoticeType.PLAYLIST_TRACK_ADD_ERROR
-                || type == IslandNoticeType.PLAYBACK_ERROR || type == IslandNoticeType.GD_SOURCE_ERROR) {
+                || type == IslandNoticeType.PLAYBACK_ERROR || type == IslandNoticeType.GD_SOURCE_ERROR
+                || type == IslandNoticeType.MODEL_INFERENCE_FAILURE) {
             drawRotatedPill(centerX, centerY, 10.0, 1.25, 45f,
                     hexColor(1f, .48f, .50f, alpha));
             drawRotatedPill(centerX, centerY, 10.0, 1.25, -45f,
@@ -2565,6 +2605,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         GD_SOURCE_HEALTHY,
         GD_SOURCE_ERROR,
         AUTOMIX,
+        /** Folia model inference lifecycle. */
+        MODEL_INFERENCE,
+        MODEL_INFERENCE_SUCCESS,
+        MODEL_INFERENCE_FAILURE,
         /** 无缝重叠正在进行：两首歌同时出声的那几秒。文案带扫光，和已就绪/开关提示区分开。 */
         AUTOMIX_BLENDING,
         PLAY_NEXT,

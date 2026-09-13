@@ -1,7 +1,7 @@
 /*
- * Created on Jun 28, 2004
+ * 创建于2004年6月28日
  *
- * To change the template for this generated file go to
+ * 要更改此生成文件的模板，请转到
  * Window - Preferences - Java - Code Generation - Code and Comments
  */
 package repackage.org.kc7bfi.jflac;
@@ -13,7 +13,7 @@ import java.util.HashSet;
 
 
 /**
- * Class to handle PCM processors.
+ * 处理PCM处理器的类。
  *
  * @author kc7bfi
  */
@@ -21,9 +21,9 @@ class PCMProcessors implements PCMProcessor {
     private final HashSet pcmProcessors = new HashSet();
 
     /**
-     * Add a PCM processor.
+     * 添加PCM处理器。
      *
-     * @param processor The processor listener to add
+     * @param pcm 解压后的 PCM 数据
      */
     public void addPCMProcessor(PCMProcessor processor) {
         synchronized (pcmProcessors) {
@@ -32,9 +32,9 @@ class PCMProcessors implements PCMProcessor {
     }
 
     /**
-     * Remove a PCM processor.
+     * 卸下PCM处理器。
      *
-     * @param processor The processor listener to remove
+     * @param processor 要删除的处理器监听程序
      */
     public void removePCMProcessor(PCMProcessor processor) {
         synchronized (pcmProcessors) {
@@ -43,9 +43,9 @@ class PCMProcessors implements PCMProcessor {
     }
 
     /**
-     * Process the StreamInfo block.
+     * 处理StreamInfo块。
      *
-     * @param info the StreamInfo block
+     * @param info StreamInfo块
      * @see PCMProcessor#processStreamInfo(StreamInfo)
      */
     public void processStreamInfo(StreamInfo info) {
@@ -58,7 +58,7 @@ class PCMProcessors implements PCMProcessor {
     }
 
     /**
-     * Process the decoded PCM bytes.
+     * @param processor 要添加的处理器监听器
      *
      * @param pcm The decoded PCM data
      * @see PCMProcessor#processPCM(org.kc7bfi.jflac.util.ByteSpace)

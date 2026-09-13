@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.util.soundfile;
@@ -69,14 +69,14 @@ public class AIFFFileParser extends AudioFileParser {
 
     double read80BitFloat() throws IOException {
         /*
-         * This is not a full decoding of the 80 bit number but it should suffice for the range we
-         * expect.
+         * 这不是对80位数字的完整解码，但它应该足以满足我们
+         * 等
          */
         byte[] bytes = new byte[10];
         parser.read(bytes);
         int exp = ((bytes[0] & 0x3F) << 8) | (bytes[1] & 0xFF);
         int mant = ((bytes[2] & 0xFF) << 16) | ((bytes[3] & 0xFF) << 8) | (bytes[4] & 0xFF);
-        // LOGGER.debug( "exp = " + exp + ", mant = " + mant );
+        // LOGGER.debug("exp =" + exp + ", mant =" + mant);
         return mant / (double) (1 << (22 - exp));
     }
 
@@ -87,7 +87,7 @@ public class AIFFFileParser extends AudioFileParser {
         frameRate = read80BitFloat();
         if (ckSize > 18) {
             int format = parser.readIntBig();
-            // Validate data format.
+            // 校验数据格式。
             if ((format == FL32_ID) || (format == FL32_ID_LC)) {
                 typeFloat = true;
             } else if (format == NONE_ID) {
@@ -101,7 +101,7 @@ public class AIFFFileParser extends AudioFileParser {
         bytesPerFrame = bytesPerSample * samplesPerFrame;
     }
 
-    /* parse tuning and multi-sample info */
+    /* 解析调音和多重采样信息 */
     @SuppressWarnings("unused")
     void parseINSTChunk(IFFParser parser, int ckSize) throws IOException {
         int baseNote = parser.readByte();
@@ -111,14 +111,14 @@ public class AIFFFileParser extends AudioFileParser {
         int lowNote = parser.readByte();
         int highNote = parser.readByte();
 
-        parser.skip(2); /* lo,hi velocity */
+        parser.skip(2); /* lo, hi速度*/
         int gain = parser.readShortBig();
 
-        int playMode = parser.readShortBig(); /* sustain */
+        int playMode = parser.readShortBig(); /* 支持；认可；持续*/
         sustainBeginID = parser.readShortBig();
         sustainEndID = parser.readShortBig();
 
-        playMode = parser.readShortBig(); /* release */
+        playMode = parser.readShortBig(); /* 释放*/
         releaseBeginID = parser.readShortBig();
         releaseEndID = parser.readShortBig();
     }
@@ -138,7 +138,7 @@ public class AIFFFileParser extends AudioFileParser {
         long numRead;
         // LOGGER.debug("parseSSNDChunk()");
         int offset = parser.readIntBig();
-        parser.readIntBig(); /* blocksize */
+        parser.readIntBig(); /* 模块尺寸*/
         parser.skip(offset);
         dataPosition = parser.getOffset();
         int numBytes = ckSize - 8 - offset;
@@ -158,8 +158,8 @@ public class AIFFFileParser extends AudioFileParser {
         // LOGGER.debug( "parseCueChunk: numCuePoints = " + numCuePoints
         // );
         for (int i = 0; i < numCuePoints; i++) {
-            // Some AIF files have a bogus numCuePoints so check to see if we
-            // are at end.
+            // 有些 AIF 文件的 numCuePoints 是错的，因此要检查是否
+            // 已到末尾。
             long numInMark = parser.getOffset() - startOffset;
             if (numInMark >= ckSize) {
                 break;
@@ -170,7 +170,7 @@ public class AIFFFileParser extends AudioFileParser {
             int len = parser.read();
             String markerName = parseString(parser, len);
             if ((len & 1) == 0) {
-                parser.skip(1); /* skip pad byte */
+                parser.skip(1); /* 跳过填充字节*/
             }
 
             SampleMarker cuePoint = findOrCreateCuePoint(uniqueID);
@@ -180,11 +180,11 @@ public class AIFFFileParser extends AudioFileParser {
     }
 
     /**
-     * Called by parse() method to handle FORM chunks in an AIFF specific manner.
+     * 由parse()方法调用，以AIFF特定的方式处理表单块。
      *
-     * @param ckID four byte chunk ID such as 'data'
-     * @param ckSize size of chunk in bytes
-     * @exception IOException If parsing fails, or IO error occurs.
+     * @param ckID 四个字节的块ID ，如“data”
+     * @param ckSize 块大小，单位字节
+     * @exception IOException如果解析失败或发生IO错误。
      */
     @Override
     public void handleForm(IFFParser parser, int ckID, int ckSize, int type) throws IOException {
@@ -193,11 +193,11 @@ public class AIFFFileParser extends AudioFileParser {
     }
 
     /**
-     * Called by parse() method to handle chunks in an AIFF specific manner.
+     * 由parse()方法调用以AIFF特定的方式处理块。
      *
-     * @param ckID four byte chunk ID such as 'data'
-     * @param ckSize size of chunk in bytes
-     * @exception IOException If parsing fails, or IO error occurs.
+     * @param ckID 四个字节的块ID ，如“data”
+     * @param ckSize 块大小，单位字节
+     * @exception IOException如果解析失败或发生IO错误。
      */
     @Override
     public void handleChunk(IFFParser parser, int ckID, int ckSize) throws IOException {

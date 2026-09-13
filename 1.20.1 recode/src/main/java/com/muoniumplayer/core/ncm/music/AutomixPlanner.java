@@ -132,6 +132,9 @@ final class AutomixPlanner {
      * @return the plan, or {@code null} only when the pair is fundamentally too short to blend
      */
     static AutomixPlan plan(AudioPlayer outgoing, AudioPlayer incoming, long lastVocalEndMillis) {
+        if (AutomixSettings.isFoliaEngine()) {
+            return FoliaAutomixPlanner.plan(outgoing, incoming, lastVocalEndMillis);
+        }
         if (outgoing == null || incoming == null) return null;
         if (!outgoing.isUsable() || !incoming.isUsable()) return null;
 

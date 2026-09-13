@@ -19,29 +19,27 @@ import repackage.net.sourceforge.jaad.mp4.boxes.impl.FileTypeBox;
 import repackage.net.sourceforge.jaad.mp4.boxes.impl.ProgressiveDownloadInformationBox;
 
 /**
- * The MP4Container is the central class for the MP4 demultiplexer. It reads the
- * container and gives access to the containing data.
+ * MP4Container 是 MP4 解复用器的核心类。它读取
+ * 容器并提供对其中所含数据的访问。
  *
- * The data source can be either an <code>InputStream</code> or a
- * <code>RandomAccessFile</code>. Since the specification does not decree a
- * specific order of the content, the data needed for parsing (the sample
- * tables) may be at the end of the stream. In this case, random access is
- * needed and reading from an <code>InputSteam</code> will cause an exception.
- * Thus, whenever possible, a <code>RandomAccessFile</code> should be used for 
- * local files. Parsing from an <code>InputStream</code> is useful when reading 
- * from a network stream.
+ * 数据源可以是 <code>InputStream</code> 或
+ * <code>RandomAccessFile</code>。由于规范并未规定内容的
+ * 特定顺序，解析所需的数据（采样
+ * 表）可能位于流的末尾。这种情况下需要随机访问，
+ * 而从 <code>InputSteam</code> 读取将抛出异常。
+ * 因此，只要可能，对于本地文件应使用 <code>RandomAccessFile</code>。
+ * 当从网络流读取时，从 <code>InputStream</code> 解析才有用。
  *
- * Each <code>MP4Container</code> can return the used file brand (file format
- * version). Optionally, the following data may be present:
+ * 每个 <code>MP4Container</code> 可返回所使用的文件品牌（文件格式
+ * 版本）。可选地，还可能存在以下数据：
  * <ul>
- * <li>progressive download informations: pairs of download rate and playback
- * delay, see {@link #getDownloadInformationPairs() getDownloadInformationPairs()}</li>
- * <li>a <code>Movie</code></li>
+ * <li>渐进式下载信息：下载速率与播放
+ * 延迟的成对数据，见 {@link #getDownloadInformationPairs() getDownloadInformationPairs()}</li>
+ * <li>一个 <code>Movie</code></li>
  * </ul>
  *
- * Additionally it gives access to the underlying MP4 boxes, that can be 
- * retrieved by <code>getBoxes()</code>. However, it is not recommended to 
- * access the boxes directly.
+ * 此外它还提供对底层 MP4 box 的访问，可通过
+ * <code>getBoxes()</code> 获取。但不建议直接访问这些 box。
  * 
  * @author in-somnia
  */
@@ -82,7 +80,7 @@ public class MP4Container {
 	}
 
 	private void readContent() throws IOException {
-		//read all boxes
+		//读取所有 box
 		Box box = null;
 		long type;
 		boolean moovFound = false;
@@ -130,7 +128,7 @@ public class MP4Container {
 		return compatible;
 	}
 
-	//TODO: pdin, movie fragments??
+	//TODO: pdin、movie 片段？？
 	public Movie getMovie() {
 		if(moov==null) return null;
 		else if(movie==null) movie = new Movie(moov, in);

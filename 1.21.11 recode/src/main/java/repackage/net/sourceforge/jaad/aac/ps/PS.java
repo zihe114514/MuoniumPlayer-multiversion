@@ -6,7 +6,7 @@ import repackage.net.sourceforge.jaad.aac.syntax.BitStream;
 
 public class PS implements PSConstants, PSTables, HuffmanTables {
 
-	/* bitstream parameters */
+	/* 比特流参数 */
 	boolean enable_iid, enable_icc, enable_ext;
 	int iid_mode;
 	int icc_mode;
@@ -23,7 +23,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 	boolean[] ipd_dt = new boolean[MAX_PS_ENVELOPES];
 	boolean[] opd_dt = new boolean[MAX_PS_ENVELOPES];
 
-	/* indices */
+	/* 索引 */
 	int[] iid_index_prev = new int[34];
 	int[] icc_index_prev = new int[34];
 	int[] ipd_index_prev = new int[17];
@@ -37,11 +37,11 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 	int[] opd_index_1 = new int[17];
 	int[] ipd_index_2 = new int[17];
 	int[] opd_index_2 = new int[17];
-	/* ps data was correctly read */
+	/* ps 数据已正确读取 */
 	int ps_data_available;
-	/* a header has been read */
+	/* 已读取一个头 */
 	public boolean header_read;
-	/* hybrid filterbank parameters */
+	/* 混合滤波器组参数 */
 	Filterbank hyb;
 	boolean use34hybrid_bands;
 	int numTimeSlotsRate;
@@ -52,27 +52,27 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 	int decay_cutoff;
 	int[] group_border;
 	int[] map_group2bk;
-	/* filter delay handling */
+	/* 滤波器延迟处理 */
 	int saved_delay;
 	int[] delay_buf_index_ser = new int[NO_ALLPASS_LINKS];
 	int[] num_sample_delay_ser = new int[NO_ALLPASS_LINKS];
 	int[] delay_D = new int[64];
 	int[] delay_buf_index_delay = new int[64];
-	float[][][] delay_Qmf = new float[14][64][2]; /* 14 samples delay max, 64 QMF channels */
+	float[][][] delay_Qmf = new float[14][64][2]; /* 最大 14 个采样延迟，64 个 QMF 声道 */
 
-	float[][][] delay_SubQmf = new float[2][32][2]; /* 2 samples delay max (SubQmf is always allpass filtered) */
+	float[][][] delay_SubQmf = new float[2][32][2]; /* 最大 2 个采样延迟（SubQmf 始终经过全通滤波） */
 
-	float[][][][] delay_Qmf_ser = new float[NO_ALLPASS_LINKS][5][64][2]; /* 5 samples delay max (table 8.34), 64 QMF channels */
+	float[][][][] delay_Qmf_ser = new float[NO_ALLPASS_LINKS][5][64][2]; /* 最大 5 个采样延迟（表 8.34），64 个 QMF 声道 */
 
-	float[][][][] delay_SubQmf_ser = new float[NO_ALLPASS_LINKS][5][32][2]; /* 5 samples delay max (table 8.34) */
-	/* transients */
+	float[][][][] delay_SubQmf_ser = new float[NO_ALLPASS_LINKS][5][32][2]; /* 最大 5 个采样延迟（表 8.34） */
+	/* 瞬态 */
 
 	float alpha_decay;
 	float alpha_smooth;
 	float[] P_PeakDecayNrg = new float[34];
 	float[] P_prev = new float[34];
 	float[] P_SmoothPeakDecayDiffNrg_prev = new float[34];
-	/* mixing and phase */
+	/* 混合与相位 */
 	float[][] h11_prev = new float[50][2];
 	float[][] h12_prev = new float[50][2];
 	float[][] h21_prev = new float[50][2];
@@ -90,7 +90,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 
 		this.ps_data_available = 0;
 
-		/* delay stuff*/
+		/* 延迟相关 */
 		this.saved_delay = 0;
 
 		for(i = 0; i<64; i++) {
@@ -99,17 +99,17 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 
 		for(i = 0; i<NO_ALLPASS_LINKS; i++) {
 			this.delay_buf_index_ser[i] = 0;
-			/* THESE ARE CONSTANTS NOW */
+			/* 以下现在是常量 */
 			this.num_sample_delay_ser[i] = delay_length_d[i];
 		}
 
-		/* THESE ARE CONSTANTS NOW */
+		/* 以下现在是常量 */
 		short_delay_band = 35;
 		this.nr_allpass_bands = 22;
 		this.alpha_decay = 0.76592833836465f;
 		this.alpha_smooth = 0.25f;
 
-		/* THESE ARE CONSTANT NOW IF PS IS INDEPENDANT OF SAMPLERATE */
+		/* 如果 PS 与采样率无关，以下现在是常量 */
 		for(i = 0; i<short_delay_band; i++) {
 			this.delay_D[i] = 14;
 		}
@@ -117,7 +117,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 			this.delay_D[i] = 1;
 		}
 
-		/* mixing and phase */
+		/* 混合与相位 */
 		for(i = 0; i<50; i++) {
 			this.h11_prev[i][0] = 1;
 			this.h12_prev[i][1] = 1;
@@ -143,13 +143,13 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 		int tmp, n;
 		long bits = ld.getPosition();
 
-		/* check for new PS header */
+		/* 检查是否有新的 PS 头 */
 		if(ld.readBool()) {
 			this.header_read = true;
 
 			this.use34hybrid_bands = false;
 
-			/* Inter-channel Intensity Difference (IID) parameters enabled */
+			/* 已启用声道间强度差（IID）参数 */
 			this.enable_iid = ld.readBool();
 
 			if(this.enable_iid) {
@@ -161,11 +161,11 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 				if(this.iid_mode==2||this.iid_mode==5)
 					this.use34hybrid_bands = true;
 
-				/* IPD freq res equal to IID freq res */
+				/* IPD 频率分辨率等于 IID 频率分辨率 */
 				this.ipd_mode = this.iid_mode;
 			}
 
-			/* Inter-channel Coherence (ICC) parameters enabled */
+			/* 已启用声道间相干性（ICC）参数 */
 			this.enable_icc = ld.readBool();
 
 			if(this.enable_icc) {
@@ -177,11 +177,11 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 					this.use34hybrid_bands = true;
 			}
 
-			/* PS extension layer enabled */
+			/* 已启用 PS 扩展层 */
 			this.enable_ext = ld.readBool();
 		}
 
-		/* we are here, but no header has been read yet */
+		/* 我们到了这里，但尚未读取任何头 */
 		if(this.header_read==false) {
 			this.ps_data_available = 0;
 			return 1;
@@ -273,28 +273,28 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 						f_huff_opd, this.opd_index[n]);
 				}
 			}
-			ld.readBit(); //reserved
+			ld.readBit(); //保留
 		}
 
-		/* return number of bits read */
+		/* 返回已读取的位数 */
 		int bits2 = (int) (ld.getPosition()-bits);
 
 		return bits2;
 	}
 
-	/* read huffman data coded in either the frequency or the time direction */
+	/* 读取以频率方向或时间方向编码的 huffman 数据 */
 	private void huff_data(BitStream ld, boolean dt, int nr_par,
 		int[][] t_huff, int[][] f_huff, int[] par) throws AACException {
 		int n;
 
 		if(dt) {
-			/* coded in time direction */
+			/* 以时间方向编码 */
 			for(n = 0; n<nr_par; n++) {
 				par[n] = ps_huff_dec(ld, t_huff);
 			}
 		}
 		else {
-			/* coded in frequency direction */
+			/* 以频率方向编码 */
 			par[0] = ps_huff_dec(ld, f_huff);
 
 			for(n = 1; n<nr_par; n++) {
@@ -303,7 +303,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 		}
 	}
 
-	/* binary search huffman decoding */
+	/* 二分查找 huffman 解码 */
 	private int ps_huff_dec(BitStream ld, int[][] t_huff) throws AACException {
 		int bit;
 		int index = 0;
@@ -316,7 +316,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 		return index+31;
 	}
 
-	/* limits the value i to the range [min,max] */
+	/* 将值 i 限制在范围 [min,max] 内 */
 	private int delta_clip(int i, int min, int max) {
 		if(i<min) return min;
 		else if(i>max) return max;
@@ -324,7 +324,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 	}
 
 
-	/* delta decode array */
+	/* 增量解码数组 */
 	private void delta_decode(boolean enable, int[] index, int[] index_prev,
 		boolean dt_flag, int nr_par, int stride,
 		int min_index, int max_index) {
@@ -332,7 +332,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 
 		if(enable) {
 			if(!dt_flag) {
-				/* delta coded in frequency direction */
+				/* 以频率方向进行增量编码 */
 				index[0] = 0+index[0];
 				index[0] = delta_clip(index[0], min_index, max_index);
 
@@ -342,7 +342,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 				}
 			}
 			else {
-				/* delta coded in time direction */
+				/* 以时间方向进行增量编码 */
 				for(i = 0; i<nr_par; i++) {
                 //int8_t tmp2;
 					//int8_t tmp = index[i];
@@ -364,13 +364,13 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 			}
 		}
 		else {
-			/* set indices to zero */
+			/* 将索引置零 */
 			for(i = 0; i<nr_par; i++) {
 				index[i] = 0;
 			}
 		}
 
-		/* coarse */
+		/* 粗略（coarse） */
 		if(stride==2) {
 			for(i = (nr_par<<1)-1; i>0; i--) {
 				index[i] = index[i>>1];
@@ -378,8 +378,8 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 		}
 	}
 
-	/* delta modulo decode array */
-	/* in: log2 value of the modulo value to allow using AND instead of MOD */
+	/* 增量取模解码数组 */
+	/* 入参：取模值的 log2 值，以便用 AND 代替 MOD */
 	private void delta_modulo_decode(boolean enable, int[] index, int[] index_prev,
 		boolean dt_flag, int nr_par, int stride,
 		int and_modulo) {
@@ -387,7 +387,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 
 		if(enable) {
 			if(!dt_flag) {
-				/* delta coded in frequency direction */
+				/* 以频率方向进行增量编码 */
 				index[0] = 0+index[0];
 				index[0] &= and_modulo;
 
@@ -397,7 +397,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 				}
 			}
 			else {
-				/* delta coded in time direction */
+				/* 以时间方向进行增量编码 */
 				for(i = 0; i<nr_par; i++) {
 					index[i] = index_prev[i*stride]+index[i];
 					index[i] &= and_modulo;
@@ -405,13 +405,13 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 			}
 		}
 		else {
-			/* set indices to zero */
+			/* 将索引置零 */
 			for(i = 0; i<nr_par; i++) {
 				index[i] = 0;
 			}
 		}
 
-		/* coarse */
+		/* 粗略（coarse） */
 		if(stride==2) {
 			index[0] = 0;
 			for(i = (nr_par<<1)-1; i>0; i--) {
@@ -460,11 +460,11 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 		}
 	}
 
-	/* parse the bitstream data decoded in ps_data() */
+	/* 解析在 ps_data() 中解码的比特流数据 */
 	private void ps_data_decode() {
 		int env, bin;
 
-		/* ps data not available, use data from previous frame */
+		/* ps 数据不可用，使用上一帧的数据 */
 		if(this.ps_data_available==0) {
 			this.num_env = 0;
 		}
@@ -475,17 +475,17 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 			int[] ipd_index_prev;
 			int[] opd_index_prev;
 
-			int num_iid_steps = (this.iid_mode<3) ? 7 : 15 /*fine quant*/;
+			int num_iid_steps = (this.iid_mode<3) ? 7 : 15 /*精细量化*/;
 
 			if(env==0) {
-				/* take last envelope from previous frame */
+				/* 沿用上一帧的最后一个包络 */
 				iid_index_prev = this.iid_index_prev;
 				icc_index_prev = this.icc_index_prev;
 				ipd_index_prev = this.ipd_index_prev;
 				opd_index_prev = this.opd_index_prev;
 			}
 			else {
-				/* take index values from previous envelope */
+				/* 沿用上一个包络的索引值 */
 				iid_index_prev = this.iid_index[env-1];
 				icc_index_prev = this.icc_index[env-1];
 				ipd_index_prev = this.ipd_index[env-1];
@@ -493,31 +493,31 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 			}
 
 //        iid = 1;
-        /* delta decode iid parameters */
+        /* 对 iid 参数进行增量解码 */
 			delta_decode(this.enable_iid, this.iid_index[env], iid_index_prev,
 				this.iid_dt[env], this.nr_iid_par,
 				(this.iid_mode==0||this.iid_mode==3) ? 2 : 1,
 				-num_iid_steps, num_iid_steps);
 //        iid = 0;
 
-			/* delta decode icc parameters */
+			/* 对 icc 参数进行增量解码 */
 			delta_decode(this.enable_icc, this.icc_index[env], icc_index_prev,
 				this.icc_dt[env], this.nr_icc_par,
 				(this.icc_mode==0||this.icc_mode==3) ? 2 : 1,
 				0, 7);
 
-			/* delta modulo decode ipd parameters */
+			/* 对 ipd 参数进行增量取模解码 */
 			delta_modulo_decode(this.enable_ipdopd, this.ipd_index[env], ipd_index_prev,
 				this.ipd_dt[env], this.nr_ipdopd_par, 1, 7);
 
-			/* delta modulo decode opd parameters */
+			/* 对 opd 参数进行增量取模解码 */
 			delta_modulo_decode(this.enable_ipdopd, this.opd_index[env], opd_index_prev,
 				this.opd_dt[env], this.nr_ipdopd_par, 1, 7);
 		}
 
-		/* handle error case */
+		/* 处理错误情况 */
 		if(this.num_env==0) {
-			/* force to 1 */
+			/* 强制设为 1 */
 			this.num_env = 1;
 
 			if(this.enable_iid) {
@@ -556,7 +556,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 			}
 		}
 
-		/* update previous indices */
+		/* 更新先前的索引 */
 		for(bin = 0; bin<34; bin++) {
 			this.iid_index_prev[bin] = this.iid_index[this.num_env-1][bin];
 		}
@@ -608,9 +608,9 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 			}
 		}
 
-		/* make sure that the indices of all parameters can be mapped
-		 * to the same hybrid synthesis filterbank
-		 */
+		/* 确保所有参数的索引都能映射
+			 * 到同一个混合综合滤波器组
+			 */
 		if(this.use34hybrid_bands) {
 			for(env = 0; env<this.num_env; env++) {
 				if(this.iid_mode!=2&&this.iid_mode!=5)
@@ -625,7 +625,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 		}
 	}
 
-	/* decorrelate the mono signal using an allpass filter */
+	/* 使用全通滤波器对单声道信号去相关 */
 	private void ps_decorrelate(float[][][] X_left, float[][][] X_right,
 		float[][][] X_hybrid_left, float[][][] X_hybrid_right) {
 		int gr, n, m, bk;
@@ -638,7 +638,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 		float[] inputLeft = new float[2];
 
 
-		/* chose hybrid filterbank: 20 or 34 band case */
+		/* 选择混合滤波器组：20 或 34 频带情形 */
 		float[][] Phi_Fract_SubQmf;
 		if(this.use34hybrid_bands) {
 			Phi_Fract_SubQmf = Phi_Fract_SubQmf34;
@@ -647,25 +647,25 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 			Phi_Fract_SubQmf = Phi_Fract_SubQmf20;
 		}
 
-		/* clear the energy values */
+		/* 清空能量值 */
 		for(n = 0; n<32; n++) {
 			for(bk = 0; bk<34; bk++) {
 				P[n][bk] = 0;
 			}
 		}
 
-		/* calculate the energy in each parameter band b(k) */
+		/* 计算每个参数频带 b(k) 中的能量 */
 		for(gr = 0; gr<this.num_groups; gr++) {
-			/* select the parameter index b(k) to which this group belongs */
+			/* 选择该组所属的参数索引 b(k) */
 			bk = (~NEGATE_IPD_MASK)&this.map_group2bk[gr];
 
-			/* select the upper subband border for this group */
+			/* 为该组选择上子带边界 */
 			maxsb = (gr<this.num_hybrid_groups) ? this.group_border[gr]+1 : this.group_border[gr+1];
 
 			for(sb = this.group_border[gr]; sb<maxsb; sb++) {
 				for(n = this.border_position[0]; n<this.border_position[this.num_env]; n++) {
 
-					/* input from hybrid subbands or QMF subbands */
+					/* 来自混合子带或 QMF 子带的输入 */
 					if(gr<this.num_hybrid_groups) {
 						inputLeft[0] = X_hybrid_left[n][sb][0];
 						inputLeft[1] = X_hybrid_left[n][sb][1];
@@ -675,13 +675,13 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 						inputLeft[1] = X_left[n][sb][1];
 					}
 
-					/* accumulate energy */
+					/* 累加能量 */
 					P[n][bk] += (inputLeft[0]*inputLeft[0])+(inputLeft[1]*inputLeft[1]);
 				}
 			}
 		}
 
-		/* calculate transient reduction ratio for each parameter band b(k) */
+		/* 计算每个参数频带 b(k) 的瞬态衰减比 */
 		for(bk = 0; bk<this.nr_par_bands; bk++) {
 			for(n = this.border_position[0]; n<this.border_position[this.num_env]; n++) {
 				float gamma = 1.5f;
@@ -690,17 +690,17 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 				if(this.P_PeakDecayNrg[bk]<P[n][bk])
 					this.P_PeakDecayNrg[bk] = P[n][bk];
 
-				/* apply smoothing filter to peak decay energy */
+				/* 对峰值衰减能量应用平滑滤波器 */
 				P_SmoothPeakDecayDiffNrg = this.P_SmoothPeakDecayDiffNrg_prev[bk];
 				P_SmoothPeakDecayDiffNrg += ((this.P_PeakDecayNrg[bk]-P[n][bk]-this.P_SmoothPeakDecayDiffNrg_prev[bk])*alpha_smooth);
 				this.P_SmoothPeakDecayDiffNrg_prev[bk] = P_SmoothPeakDecayDiffNrg;
 
-				/* apply smoothing filter to energy */
+				/* 对能量应用平滑滤波器 */
 				nrg = this.P_prev[bk];
 				nrg += ((P[n][bk]-this.P_prev[bk])*this.alpha_smooth);
 				this.P_prev[bk] = nrg;
 
-				/* calculate transient ratio */
+				/* 计算瞬态比 */
 				if((P_SmoothPeakDecayDiffNrg*gamma)<=nrg) {
 					G_TransientRatio[n][bk] = 1.0f;
 				}
@@ -710,14 +710,14 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 			}
 		}
 
-		/* apply stereo decorrelation filter to the signal */
+		/* 对信号应用立体声去相关滤波器 */
 		for(gr = 0; gr<this.num_groups; gr++) {
 			if(gr<this.num_hybrid_groups)
 				maxsb = this.group_border[gr]+1;
 			else
 				maxsb = this.group_border[gr+1];
 
-			/* QMF channel */
+			/* QMF 声道 */
 			for(sb = this.group_border[gr]; sb<maxsb; sb++) {
 				float g_DecaySlope;
 				float[] g_DecaySlope_filt = new float[NO_ALLPASS_LINKS];
@@ -737,13 +737,13 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 					}
 				}
 
-				/* calculate g_DecaySlope_filt for every m multiplied by filter_a[m] */
+				/* 对每个 m 计算 g_DecaySlope_filt，乘以 filter_a[m] */
 				for(m = 0; m<NO_ALLPASS_LINKS; m++) {
 					g_DecaySlope_filt[m] = g_DecaySlope*filter_a[m];
 				}
 
 
-				/* set delay indices */
+				/* 设置延迟索引 */
 				temp_delay = this.saved_delay;
 				for(n = 0; n<NO_ALLPASS_LINKS; n++) {
 					temp_delay_ser[n] = this.delay_buf_index_ser[n];
@@ -753,20 +753,20 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 					float[] tmp = new float[2], tmp0 = new float[2], R0 = new float[2];
 
 					if(gr<this.num_hybrid_groups) {
-						/* hybrid filterbank input */
+						/* 混合滤波器组输入 */
 						inputLeft[0] = X_hybrid_left[n][sb][0];
 						inputLeft[1] = X_hybrid_left[n][sb][1];
 					}
 					else {
-						/* QMF filterbank input */
+						/* QMF 滤波器组输入 */
 						inputLeft[0] = X_left[n][sb][0];
 						inputLeft[1] = X_left[n][sb][1];
 					}
 
 					if(sb>this.nr_allpass_bands&&gr>=this.num_hybrid_groups) {
-						/* delay */
+						/* 延迟 */
 
-						/* never hybrid subbands here, always QMF subbands */
+						/* 此处绝不使用混合子带，始终为 QMF 子带 */
 						tmp[0] = this.delay_Qmf[this.delay_buf_index_delay[sb]][sb][0];
 						tmp[1] = this.delay_Qmf[this.delay_buf_index_delay[sb]][sb][1];
 						R0[0] = tmp[0];
@@ -775,13 +775,13 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 						this.delay_Qmf[this.delay_buf_index_delay[sb]][sb][1] = inputLeft[1];
 					}
 					else {
-						/* allpass filter */
+						/* 全通滤波器 */
 						//int m;
 						float[] Phi_Fract = new float[2];
 
-						/* fetch parameters */
+						/* 获取参数 */
 						if(gr<this.num_hybrid_groups) {
-							/* select data from the hybrid subbands */
+							/* 从混合子带选择数据 */
 							tmp0[0] = this.delay_SubQmf[temp_delay][sb][0];
 							tmp0[1] = this.delay_SubQmf[temp_delay][sb][1];
 
@@ -792,7 +792,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 							Phi_Fract[1] = Phi_Fract_SubQmf[sb][1];
 						}
 						else {
-							/* select data from the QMF subbands */
+							/* 从 QMF 子带选择数据 */
 							tmp0[0] = this.delay_Qmf[temp_delay][sb][0];
 							tmp0[1] = this.delay_Qmf[temp_delay][sb][1];
 
@@ -812,9 +812,9 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 						for(m = 0; m<NO_ALLPASS_LINKS; m++) {
 							float[] Q_Fract_allpass = new float[2], tmp2 = new float[2];
 
-							/* fetch parameters */
+							/* 获取参数 */
 							if(gr<this.num_hybrid_groups) {
-								/* select data from the hybrid subbands */
+								/* 从混合子带选择数据 */
 								tmp0[0] = this.delay_SubQmf_ser[m][temp_delay_ser[m]][sb][0];
 								tmp0[1] = this.delay_SubQmf_ser[m][temp_delay_ser[m]][sb][1];
 
@@ -828,7 +828,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 								}
 							}
 							else {
-								/* select data from the QMF subbands */
+								/* 从 QMF 子带选择数据 */
 								tmp0[0] = this.delay_Qmf_ser[m][temp_delay_ser[m]][sb][0];
 								tmp0[1] = this.delay_Qmf_ser[m][temp_delay_ser[m]][sb][1];
 
@@ -836,7 +836,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 								Q_Fract_allpass[1] = Q_Fract_allpass_Qmf[sb][m][1];
 							}
 
-							/* delay by a fraction */
+							/* 延迟一个分数 */
 							/* z^(-d(m)) * Q_Fract_allpass[k,m] */
 							tmp[0] = (tmp0[0]*Q_Fract_allpass[0])+(tmp0[1]*Q_Fract_allpass[1]);
 							tmp[1] = (tmp0[1]*Q_Fract_allpass[0])-(tmp0[0]*Q_Fract_allpass[1]);
@@ -849,7 +849,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 							tmp2[0] = R0[0]+(g_DecaySlope_filt[m]*tmp[0]);
 							tmp2[1] = R0[1]+(g_DecaySlope_filt[m]*tmp[1]);
 
-							/* store sample */
+							/* 存储采样 */
 							if(gr<this.num_hybrid_groups) {
 								this.delay_SubQmf_ser[m][temp_delay_ser[m]][sb][0] = tmp2[0];
 								this.delay_SubQmf_ser[m][temp_delay_ser[m]][sb][1] = tmp2[1];
@@ -859,21 +859,21 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 								this.delay_Qmf_ser[m][temp_delay_ser[m]][sb][1] = tmp2[1];
 							}
 
-							/* store for next iteration (or as output value if last iteration) */
+							/* 保存供下一次迭代使用（若是最后一次迭代则作为输出值） */
 							R0[0] = tmp[0];
 							R0[1] = tmp[1];
 						}
 					}
 
-					/* select b(k) for reading the transient ratio */
+					/* 选择 b(k) 以读取瞬态比 */
 					bk = (~NEGATE_IPD_MASK)&this.map_group2bk[gr];
 
-					/* duck if a past transient is found */
+					/* 若发现过去的瞬态则进行压低（duck） */
 					R0[0] = (G_TransientRatio[n][bk]*R0[0]);
 					R0[1] = (G_TransientRatio[n][bk]*R0[1]);
 
 					if(gr<this.num_hybrid_groups) {
-						/* hybrid */
+						/* 混合 */
 						X_hybrid_right[n][sb][0] = R0[0];
 						X_hybrid_right[n][sb][1] = R0[1];
 					}
@@ -883,14 +883,14 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 						X_right[n][sb][1] = R0[1];
 					}
 
-					/* Update delay buffer index */
+					/* 更新延迟缓冲区索引 */
 					if(++temp_delay>=2) {
 						temp_delay = 0;
 					}
 
-					/* update delay indices */
+					/* 更新延迟索引 */
 					if(sb>this.nr_allpass_bands&&gr>=this.num_hybrid_groups) {
-						/* delay_D depends on the samplerate, it can hold the values 14 and 1 */
+						/* delay_D 取决于采样率，可取值 14 和 1 */
 						if(++this.delay_buf_index_delay[sb]>=this.delay_D[sb]) {
 							this.delay_buf_index_delay[sb] = 0;
 						}
@@ -905,7 +905,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 			}
 		}
 
-		/* update delay indices */
+		/* 更新延迟索引 */
 		this.saved_delay = temp_delay;
 		for(m = 0; m<NO_ALLPASS_LINKS; m++) {
 			this.delay_buf_index_ser[m] = temp_delay_ser[m];
@@ -945,7 +945,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 		}
 
 		if(this.ipd_mode==0||this.ipd_mode==3) {
-			nr_ipdopd_par = 11; /* resolution */
+			nr_ipdopd_par = 11; /* 分辨率 */
 
 		}
 		else {
@@ -955,12 +955,12 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 		for(gr = 0; gr<this.num_groups; gr++) {
 			bk = (~NEGATE_IPD_MASK)&this.map_group2bk[gr];
 
-			/* use one channel per group in the subqmf domain */
+			/* 在 subqmf 域中每组使用一个声道 */
 			maxsb = (gr<this.num_hybrid_groups) ? this.group_border[gr]+1 : this.group_border[gr+1];
 
 			for(env = 0; env<this.num_env; env++) {
 				if(this.icc_mode<3) {
-					/* type 'A' mixing as described in 8.6.4.6.2.1 */
+					/* 8.6.4.6.2.1 中所述的 'A' 型混合 */
 					float c_1, c_2;
 					float cosa, sina;
 					float cosb, sinb;
@@ -975,11 +975,11 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 					 */
 					//printf("%d\n", ps.iid_index[env][bk]);
 
-					/* calculate the scalefactors c_1 and c_2 from the intensity differences */
+					/* 根据强度差计算比例因子 c_1 和 c_2 */
 					c_1 = sf_iid[no_iid_steps+this.iid_index[env][bk]];
 					c_2 = sf_iid[no_iid_steps-this.iid_index[env][bk]];
 
-					/* calculate alpha and beta using the ICC parameters */
+					/* 使用 ICC 参数计算 alpha 和 beta */
 					cosa = cos_alphas[this.icc_index[env][bk]];
 					sina = sin_alphas[this.icc_index[env][bk]];
 
@@ -1016,7 +1016,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 					h22[0] = (c_1*(ab3-ab4));
 				}
 				else {
-					/* type 'B' mixing as described in 8.6.4.6.2.2 */
+					/* 8.6.4.6.2.2 中所述的 'B' 型混合 */
 					float sina, cosa;
 					float cosg, sing;
 
@@ -1043,41 +1043,41 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 					h22[0] = (COEF_SQRT2*(sina*sing));
 				}
 
-				/* calculate phase rotation parameters H_xy */
-				/* note that the imaginary part of these parameters are only calculated when
-				 IPD and OPD are enabled
+				/* 计算相位旋转参数 H_xy */
+				/* 注意，这些参数的虚部仅在启用
+				 * IPD 和 OPD 时才计算
 				 */
 				if((this.enable_ipdopd)&&(bk<nr_ipdopd_par)) {
 					float xy, pq, xypq;
 
-					/* ringbuffer index */
+					/* 环形缓冲区索引 */
 					int i = this.phase_hist;
 
-					/* previous value */
+					/* 先前值 */
 					tempLeft[0] = (this.ipd_prev[bk][i][0]*0.25f);
 					tempLeft[1] = (this.ipd_prev[bk][i][1]*0.25f);
 					tempRight[0] = (this.opd_prev[bk][i][0]*0.25f);
 					tempRight[1] = (this.opd_prev[bk][i][1]*0.25f);
 
-					/* save current value */
+					/* 保存当前值 */
 					this.ipd_prev[bk][i][0] = ipdopd_cos_tab[Math.abs(this.ipd_index[env][bk])];
 					this.ipd_prev[bk][i][1] = ipdopd_sin_tab[Math.abs(this.ipd_index[env][bk])];
 					this.opd_prev[bk][i][0] = ipdopd_cos_tab[Math.abs(this.opd_index[env][bk])];
 					this.opd_prev[bk][i][1] = ipdopd_sin_tab[Math.abs(this.opd_index[env][bk])];
 
-					/* add current value */
+					/* 加上当前值 */
 					tempLeft[0] += this.ipd_prev[bk][i][0];
 					tempLeft[1] += this.ipd_prev[bk][i][1];
 					tempRight[0] += this.opd_prev[bk][i][0];
 					tempRight[1] += this.opd_prev[bk][i][1];
 
-					/* ringbuffer index */
+					/* 环形缓冲区索引 */
 					if(i==0) {
 						i = 2;
 					}
 					i--;
 
-					/* get value before previous */
+					/* 获取前一个之前的值 */
 					tempLeft[0] += (this.ipd_prev[bk][i][0]*0.5f);
 					tempLeft[1] += (this.ipd_prev[bk][i][1]*0.5f);
 					tempRight[0] += (this.opd_prev[bk][i][0]*0.5f);
@@ -1121,11 +1121,11 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 					h22[0] = (h22[0]*phaseRight[0]);
 				}
 
-				/* length of the envelope n_e+1 - n_e (in time samples) */
-				/* 0 < L <= 32: integer */
+				/* 包络长度 n_e+1 - n_e（以时间采样计） */
+				/* 0 < L <= 32：整数 */
 				L = (float) (this.border_position[env+1]-this.border_position[env]);
 
-				/* obtain final H_xy by means of linear interpolation */
+				/* 通过线性插值获得最终的 H_xy */
 				deltaH11[0] = (h11[0]-this.h11_prev[gr][0])/L;
 				deltaH12[0] = (h12[0]-this.h12_prev[gr][0])/L;
 				deltaH21[0] = (h21[0]-this.h21_prev[gr][0])/L;
@@ -1141,9 +1141,9 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 				this.h21_prev[gr][0] = h21[0];
 				this.h22_prev[gr][0] = h22[0];
 
-				/* only calculate imaginary part when needed */
+				/* 仅在需要时计算虚部 */
 				if((this.enable_ipdopd)&&(bk<nr_ipdopd_par)) {
-					/* obtain final H_xy by means of linear interpolation */
+					/* 通过线性插值获得最终的 H_xy */
 					deltaH11[1] = (h11[1]-this.h11_prev[gr][1])/L;
 					deltaH12[1] = (h12[1]-this.h12_prev[gr][1])/L;
 					deltaH21[1] = (h21[1]-this.h21_prev[gr][1])/L;
@@ -1172,9 +1172,9 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 					this.h22_prev[gr][1] = h22[1];
 				}
 
-				/* apply H_xy to the current envelope band of the decorrelated subband */
+				/* 将 H_xy 应用于去相关子带的当前包络频带 */
 				for(n = this.border_position[env]; n<this.border_position[env+1]; n++) {
-					/* addition finalises the interpolation over every n */
+					/* 该加法完成了对每个 n 的插值 */
 					H11[0] += deltaH11[0];
 					H12[0] += deltaH12[0];
 					H21[0] += deltaH21[0];
@@ -1186,11 +1186,11 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 						H22[1] += deltaH22[1];
 					}
 
-					/* channel is an alias to the subband */
+					/* channel 是该子带的别名 */
 					for(sb = this.group_border[gr]; sb<maxsb; sb++) {
 						float[] inLeft = new float[2], inRight = new float[2];
 
-						/* load decorrelated samples */
+						/* 加载去相关后的采样 */
 						if(gr<this.num_hybrid_groups) {
 							inLeft[0] = X_hybrid_left[n][sb][0];
 							inLeft[1] = X_hybrid_left[n][sb][1];
@@ -1204,22 +1204,22 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 							inRight[1] = X_right[n][sb][1];
 						}
 
-						/* apply mixing */
+						/* 应用混合 */
 						tempLeft[0] = (H11[0]*inLeft[0])+(H21[0]*inRight[0]);
 						tempLeft[1] = (H11[0]*inLeft[1])+(H21[0]*inRight[1]);
 						tempRight[0] = (H12[0]*inLeft[0])+(H22[0]*inRight[0]);
 						tempRight[1] = (H12[0]*inLeft[1])+(H22[0]*inRight[1]);
 
-						/* only perform imaginary operations when needed */
+						/* 仅在需要时执行虚部运算 */
 						if((this.enable_ipdopd)&&(bk<nr_ipdopd_par)) {
-							/* apply rotation */
+							/* 应用旋转 */
 							tempLeft[0] -= (H11[1]*inLeft[1])+(H21[1]*inRight[1]);
 							tempLeft[1] += (H11[1]*inLeft[0])+(H21[1]*inRight[0]);
 							tempRight[0] -= (H12[1]*inLeft[1])+(H22[1]*inRight[1]);
 							tempRight[1] += (H12[1]*inLeft[0])+(H22[1]*inRight[0]);
 						}
 
-						/* store final samples */
+						/* 存储最终采样 */
 						if(gr<this.num_hybrid_groups) {
 							X_hybrid_left[n][sb][0] = tempLeft[0];
 							X_hybrid_left[n][sb][1] = tempLeft[1];
@@ -1235,7 +1235,7 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 					}
 				}
 
-				/* shift phase smoother's circular buffer index */
+				/* 移动相位平滑器的环形缓冲区索引 */
 				this.phase_hist++;
 				if(this.phase_hist==2) {
 					this.phase_hist = 0;
@@ -1244,15 +1244,15 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 		}
 	}
 
-	/* main Parametric Stereo decoding function */
+	/* 参数立体声（Parametric Stereo）主解码函数 */
 	public int process(float[][][] X_left, float[][][] X_right) {
 		float[][][] X_hybrid_left = new float[32][32][2];
 		float[][][] X_hybrid_right = new float[32][32][2];
 
-		/* delta decoding of the bitstream data */
+		/* 对比特流数据进行增量解码 */
 		ps_data_decode();
 
-		/* set up some parameters depending on filterbank type */
+		/* 根据滤波器组类型设置若干参数 */
 		if(this.use34hybrid_bands) {
 			this.group_border = group_border34;
 			this.map_group2bk = map_group2bk34;
@@ -1270,19 +1270,19 @@ public class PS implements PSConstants, PSTables, HuffmanTables {
 			this.decay_cutoff = 3;
 		}
 
-		/* Perform further analysis on the lowest subbands to get a higher
-		 * frequency resolution
+		/* 对最低子带做进一步分析，以获得更高的
+		 * 频率分辨率
 		 */
 		hyb.hybrid_analysis(X_left, X_hybrid_left,
 			this.use34hybrid_bands, this.numTimeSlotsRate);
 
-		/* decorrelate mono signal */
+		/* 对单声道信号去相关 */
 		ps_decorrelate(X_left, X_right, X_hybrid_left, X_hybrid_right);
 
-		/* apply mixing and phase parameters */
+		/* 应用混合与相位参数 */
 		ps_mix_phase(X_left, X_right, X_hybrid_left, X_hybrid_right);
 
-		/* hybrid synthesis, to rebuild the SBR QMF matrices */
+		/* 混合综合，用于重建 SBR QMF 矩阵 */
 		hyb.hybrid_synthesis(X_left, X_hybrid_left,
 			this.use34hybrid_bands, this.numTimeSlotsRate);
 

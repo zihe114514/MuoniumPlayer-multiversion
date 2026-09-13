@@ -1,7 +1,7 @@
 /*
  * Created on Jun 30, 2004
  *
- * To change the template for this generated file go to
+ * 要更改此生成文件的模板，请转到
  * Window - Preferences - Java - Code Generation - Code and Comments
  */
 package repackage.org.kc7bfi.jflac;
@@ -16,35 +16,35 @@ package repackage.org.kc7bfi.jflac;
 public class FrameDecodeException extends Exception {
 
     /**
-     * Constructor.
+     * 制造商
      */
     public FrameDecodeException() {
         super();
     }
 
     /**
-     * Constructor.
+     * 制造商
      *
-     * @param msg Error message
+     * @param msg 错误消息
      */
     public FrameDecodeException(String msg) {
         super(msg);
     }
 
     /**
-     * Constructor.
+     * 制造商
      *
-     * @param err The causing error
+     * @param err 导致错误
      */
     public FrameDecodeException(Throwable err) {
         super(err);
     }
 
     /**
-     * Constructor.
+     * 制造商
      *
-     * @param msg The error message
-     * @param err The causing error
+     * @param msg 错误信息
+     * @param err 导致错误
      */
     public FrameDecodeException(String msg, Throwable err) {
         super(msg, err);

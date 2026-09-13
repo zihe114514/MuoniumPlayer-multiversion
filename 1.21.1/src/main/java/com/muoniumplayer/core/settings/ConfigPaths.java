@@ -85,6 +85,30 @@ public final class ConfigPaths {
     /** Downloaded and decoded audio files. This directory can grow to multiple gigabytes. */
     public static final File MUSIC_CACHE = new File(CACHE_DIR, "music");
 
+    /**
+     * 已解析歌词时间轴的落盘缓存。
+     *
+     * <p>一首歌一个 JSON，按歌曲稳定键的哈希命名，<b>可以随时整个删掉</b>——删掉只会让下次播放
+     * 重新走一遍网络链路，不会丢任何用户数据。放在 cache 而不是配置根，就是为了让这个语义清楚。</p>
+     */
+    public static final File LYRIC_CACHE = new File(CACHE_DIR, "lyrics");
+
+    /**
+     * 每首歌手动设置的歌词时间轴偏移（毫秒）。
+     *
+     * <p>与 {@link #FFMPEG_NOTICE} 同理单独一个文件：这是用户对某首歌的补偿值，读失败的代价只是
+     * 「这首歌回到零偏移」，不该有机会影响播放器主配置的读写。</p>
+     */
+    public static final File LYRIC_OFFSETS = new File(CONFIG_DIRECTORY, "lyric_offsets.json");
+
+    /**
+     * 每首歌手动指定的歌词来源。
+     *
+     * <p>与 {@link #LYRIC_OFFSETS} 同一类东西——都是「这首歌的歌词不对」时用户手动留下的补偿，
+     * 一样要跨切歌与重启存活，所以放同一个位置、同样的尽力而为语义。</p>
+     */
+    public static final File LYRIC_SOURCES = new File(CONFIG_DIRECTORY, "lyric_sources.json");
+
     /** Deterministic fallback extraction directory for Skija native libraries. */
     public static final File SKIJA_NATIVE_ROOT = new File(CONFIG_DIRECTORY, "native/skija");
 

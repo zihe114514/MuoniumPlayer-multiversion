@@ -4,12 +4,15 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 
+import java.awt.Color;
 import java.io.File;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.Map;
 import com.muoniumplayer.core.settings.ConfigPaths;
 import com.muoniumplayer.core.settings.JsonConfigStorage;
+import com.muoniumplayer.core.settings.HudConfig;
+import com.muoniumplayer.core.ncm.music.CoverThemePalette;
 
 /** 播放器主题：读取主题色时实时生效，切换时使用平滑颜色过渡。 */
 public final class NCMTheme {
@@ -25,6 +28,9 @@ public final class NCMTheme {
     private static long transitionStartedAt = -1L;
     /** 每套预设各自保存一份用户调色覆盖，切换主题时不会互相污染。 */
     private static final Map<String, EnumMap<NCMScreen.ColorType, Integer>> CUSTOM_BY_THEME = new HashMap<String, EnumMap<NCMScreen.ColorType, Integer>>();
+    /** 「封面跟随」生成的目标色；关闭该模式后不再参与任何读取。 */
+    private static int[] dynamicThemeColors;
+    private static int dynamicThemeVersion = -1;
 
     private NCMTheme() {
     }
@@ -91,7 +97,9 @@ public final class NCMTheme {
 
     public static synchronized int getColor(NCMScreen.ColorType colorType) {
         load();
-        return getAnimatedColorLocked(colorType, System.nanoTime());
+        long now = System.nanoTime();
+        syncDynamicThemeLocked(true);
+        return getAnimatedColorLocked(colorType, now);
     }
 
     /** 液态玻璃材质权重；切入和切出主题时同样平滑变化。 */
@@ -100,7 +108,7 @@ public final class NCMTheme {
         return getLiquidGlassAmountLocked(System.nanoTime());
     }
 
-    /** Theme accent exposed without requiring global HUD elements to depend on NCMScreen. */
+    /** 暴露主题强调色，而不要求全局 HUD 元素依赖 NCMScreen。 */
     public static int getAccentColor() {
         return getColor(NCMScreen.ColorType.ACCENT);
     }
@@ -114,7 +122,25 @@ public final class NCMTheme {
     /** 颜色的最终目标值：存在用户调色时返回调色结果，否则返回预设色。 */
     public static synchronized int getTargetColor(NCMScreen.ColorType colorType) {
         load();
-        return effectiveColorLocked(current, colorType);
+        syncDynamicThemeLocked(true);
+        return targetColorLocked(colorType);
+    }
+
+    /**
+     * 切换主题颜色来源。切换前先记录当前画面颜色，随后仍走原有的 950ms 过渡。
+     */
+    public static synchronized void setColorSource(int source) {
+        load();
+        int safe = source == ThemeColorSource.COVER.ordinal()
+                ? ThemeColorSource.COVER.ordinal() : ThemeColorSource.PRESET.ordinal();
+        if (safe == HudConfig.themeColorSource) return;
+
+        beginTransitionLocked();
+        HudConfig.themeColorSource = safe;
+        dynamicThemeVersion = -1;
+        dynamicThemeColors = null;
+        syncDynamicThemeLocked(false);
+        HudConfig.save();
     }
 
     public static synchronized boolean hasCustomColor(NCMScreen.ColorType colorType) {
@@ -241,8 +267,43 @@ public final class NCMTheme {
         return null;
     }
 
+    private static void syncDynamicThemeLocked(boolean captureTransition) {
+        if (ThemeColorSource.current() != ThemeColorSource.COVER) {
+            dynamicThemeColors = null;
+            dynamicThemeVersion = -1;
+            return;
+        }
+
+        int version = CoverThemePalette.version();
+        if (version == dynamicThemeVersion) return;
+        int[] palette = CoverThemePalette.snapshot();
+        if (palette.length < 2) return;
+        int[] generated = CoverThemeGenerator.generate(palette, isLightPreset());
+        if (generated == null) return;
+
+        if (captureTransition) beginTransitionLocked();
+        dynamicThemeColors = generated;
+        dynamicThemeVersion = version;
+    }
+
+    private static boolean isLightPreset() {
+        int background = current.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND);
+        return Color.RGBtoHSB((background >>> 16) & 0xFF, (background >>> 8) & 0xFF,
+                background & 0xFF, null)[2] > .62f;
+    }
+
+    private static int targetColorLocked(NCMScreen.ColorType colorType) {
+        if (ThemeColorSource.current() == ThemeColorSource.COVER
+                && dynamicThemeColors != null
+                && colorType != null
+                && colorType.ordinal() < dynamicThemeColors.length) {
+            return dynamicThemeColors[colorType.ordinal()];
+        }
+        return effectiveColorLocked(current, colorType);
+    }
+
     private static int getAnimatedColorLocked(NCMScreen.ColorType colorType, long now) {
-        int target = effectiveColorLocked(current, colorType);
+        int target = targetColorLocked(colorType);
         if (transitionFromColors == null) return target;
 
         float progress = getTransitionProgressLocked(now);

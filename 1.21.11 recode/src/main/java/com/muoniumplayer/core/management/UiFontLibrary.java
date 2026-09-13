@@ -29,43 +29,17 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/**
- * 界面字体的目录与切换。
- *
- * <h2>为什么可以只换字形不动排版</h2>
- * 整个界面的行高与垂直居中都读 {@code CFontRenderer.getFontHeight()}，而它是由字体的
- * ascent/descent 算出来的。任意一款系统字体的这两个量都和内置的 SF Pro 不同，直接换字体
- * 会让所有列表行、按钮内文、歌词行距在同一帧里全部改变。所以换字体走
- * {@link CFontRenderer#retarget} 并锁住原来的行盒：新字体自己的 ascent/descent 盒被居中
- * 放进旧行盒，度量口径一字不改，只有字形换了。
- *
- * <h2>系统字体为什么不需要找字体文件</h2>
- * Windows 上 Skia 的默认 {@code FontMgr} 就是 DirectWrite：{@code getFamilyName(i)} 能枚举
- * 系统装了哪些族，{@code matchFamilyStyle(族名, 字重)} 直接给回 Typeface。于是「电脑内字体」
- * 这条路完全不碰磁盘 —— 否则光是把 {@code msyh.ttc}（19MB，里面还装着两款字体）读进内存
- * 就要几十毫秒，还得自己挑 ttc 索引。外部字体文件才走「读字节 → makeFromData」。
- *
- * <h2>缺字怎么办</h2>
- * 换字体时回退链永远保留内置的 SF Pro + 苹方。用户挑的字体十有八九缺字（拉丁字体没有汉字、
- * 中文字体没有假名），缺的那一格由回退链接住，画出来是内置字形而不是豆腐块。列表里也会
- * 标出「无中文」，免得用户以为功能坏了。
- */
+/** 首选的首次运行系统字体族；不可用时回退到内置字体。 */
 public final class UiFontLibrary {
 
-    /** 扫描状态。字体目录不在启动时枚举 —— 打开选择界面才扫，省掉每次启动 300ms 的 AWT 字体管理器初始化。 */
+    // 没有持久化选择意味着首次运行：尝试首选系统字体族，但绝不能
     public enum State {
         IDLE,
         SCANNING,
         READY
     }
 
-    /**
-     * 排除的符号字体（族名小写）。
-     *
-     * <p>这些字体把拉丁码位映射成了图形，光靠「有没有 'A' 的字形」判断不出来 —— 它们都有，
-     * 只是画出来是个方块或者箭头。选中任何一款，整个界面会变成一堆符号，而用户很难反推
-     * 出「刚才点的那一行是什么」再点回来。所以直接不列。</p>
-     */
+    // 在本机没有该字体时导致启动失败。若用户明确选择内置字体则保持内置。
     private static final Set<String> SYMBOL_FAMILIES = new HashSet<String>(Arrays.asList(
             "wingdings", "wingdings 2", "wingdings 3", "webdings", "symbol", "marlett",
             "mt extra", "bookshelf symbol 7", "ms outlook", "ms reference specialty",

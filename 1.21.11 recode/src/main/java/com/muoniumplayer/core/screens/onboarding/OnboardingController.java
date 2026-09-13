@@ -5,7 +5,7 @@ import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.settings.HudSetting;
 
-/** Navigation and shared mutable state exposed to individual onboarding pages. */
+/** 暴露给各新手引导页的导航和共享可变状态。 */
 public interface OnboardingController {
     OnboardingStep step();
 

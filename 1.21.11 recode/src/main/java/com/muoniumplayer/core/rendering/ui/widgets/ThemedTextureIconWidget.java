@@ -13,10 +13,9 @@ import java.awt.Color;
 import java.util.function.Supplier;
 
 /**
- * A clickable, theme-tintable texture icon with the same hover/click feedback
- * used by {@link IconWidget}.  The supplied textures are white glyphs on a
- * transparent background, so the widget can safely tint them for every player
- * theme without introducing a rectangular image background.
+ * 可点击、可按主题着色的纹理图标，具有与 {@link IconWidget} 相同的
+ * 悬停/点击反馈。所提供的纹理是透明背景上的白色字形，因此该组件
+ * 可安全地为每个播放器主题着色，而不会引入矩形图像背景。
  */
 public class ThemedTextureIconWidget extends AbstractWidget<ThemedTextureIconWidget> {
 
@@ -59,9 +58,9 @@ public class ThemedTextureIconWidget extends AbstractWidget<ThemedTextureIconWid
         if (iconLocation != null) {
             try {
                 TextureManager.getInstance().bindTexture(iconLocation);
-                // 这些图标是 96×96 的画布，要缩进 ~20 逻辑像素的按钮里（约 4.8 倍缩小）。
-                // DynamicTexture 默认走 GL_NEAREST，那样 3 像素粗的描边会被整段抽掉，
-                // 图标看上去缺边少角、也比相邻的图标字体小一圈。改成线性采样后描边还在。
+                // 资源包或过期的开发 jar 可能缺失某个
+                // 可选纹理。保留既有字体图标回退，
+                // 而不是在渲染播放器界面时崩溃。
                 RenderSystem.linearFilter();
                 texture = TextureManager.getInstance().getTexture(iconLocation);
             } catch (Throwable ignored) {

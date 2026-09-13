@@ -107,13 +107,13 @@ class ID3Frame {
 
 		if(isInGroup()) groupID = in.read();
 		if(isEncrypted()) encryptionMethod = in.read();
-		//TODO: data length indicator, unsync
+		//TODO: 数据长度指示、unsync
 
 		data = new byte[(int) size];
 		in.readFully(data);
 	}
 
-	//header data
+	//头数据
 	public int getID() {
 		return id;
 	}
@@ -142,7 +142,7 @@ class ID3Frame {
 		return encryptionMethod;
 	}
 
-	//content data
+	//内容数据
 	public byte[] getData() {
 		return data;
 	}
@@ -152,10 +152,10 @@ class ID3Frame {
 	}
 
 	public String getEncodedText() {
-		//first byte indicates encoding
+		//第一个字节指明编码
 		final int enc = data[0];
 
-		//charsets 0,3 end with '0'; 1,2 end with '00'
+		//字符集 0、3 以 '0' 结尾；1、2 以 '00' 结尾
 		int t = -1;
 		for(int i = 1; i<data.length&&t<0; i++) {
 			if(data[i]==0&&(enc==0||enc==3||data[i+1]==0)) t = i;
@@ -168,7 +168,7 @@ class ID3Frame {
 	}
 
 	public int[] getNumbers() {
-		//multiple numbers separated by '/'
+		//多个数字以 '/' 分隔
 		final String x = new String(data, Charset.forName(TEXT_ENCODINGS[0]));
 		final int i = x.indexOf('/');
 		final int[] y;
@@ -178,7 +178,7 @@ class ID3Frame {
 	}
 
 	public Date getDate() {
-		//timestamp lengths: 4,7,10,13,16,19
+		//时间戳长度：4,7,10,13,16,19
 		final int i = (int) Math.floor(data.length/3)-1;
 		final Date date;
 		if(i>=0&&i<VALID_TIMESTAMPS.length) {
