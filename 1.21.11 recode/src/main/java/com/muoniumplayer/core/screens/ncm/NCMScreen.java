@@ -11,6 +11,7 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.OptionsUtil;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.FoliaModelNotice;
+import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.StencilClipManager;
@@ -832,6 +833,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     public void openAddToPlaylist(Music music) {
         if (music != null && music.isQQ()) {
             return; // QQ 曲目不可提交到网易云歌单。
+        }
+        // 酷狗曲目走酷狗歌单，前提是登录了——没登录时弹窗只会列出一片空白，不如直接提示。
+        if (music != null && music.isKuGou() && !KuGouMusicService.isLoggedIn()) {
+            openConfirmation("需要登录酷狗音乐", "加入歌单需要登录酷狗账号，请先在账号管理器里登录。",
+                    "知道了", () -> {
+                    });
+            return;
         }
         this.addToPlaylistOverlay = new AddToPlaylistOverlay(music);
         this.addToPlaylistOverlay.onInit();

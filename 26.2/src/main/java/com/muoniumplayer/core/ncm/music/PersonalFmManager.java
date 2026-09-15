@@ -158,6 +158,13 @@ public final class PersonalFmManager {
         if (!LOADING.compareAndSet(false, true)) {
             return;
         }
+        // 酷狗也有私人 FM，但它的接口是「猜你喜欢」流，没有网易云那套模式/场景参数。
+        // 分支放在这里而不是让调用方分叉：两个源共用同一套批处理、预取与播放衔接逻辑，
+        // 差别只在「怎么拿到一批歌」。
+        if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.KUGOU) {
+            requestKuGouBatch(startPlaybackAfterLoad);
+            return;
+        }
         if (CloudMusic.profile == null || CloudMusic.profile.getId() <= 0L) {
             status = "私人 FM 需要登录网易云账号";
             LOADING.set(false);
@@ -191,11 +198,54 @@ public final class PersonalFmManager {
     }
 
     /**
+     * 酷狗的私人 FM 分支。
+     *
+     * <p>{@code selectedMode} 仍然写进状态文案，但酷狗端不理解它——那边的接口没有模式参数。
+     * 与其禁掉整个模式选择器，不如照常接受并在文案里说明，用户至少能看出「当前不是网易云」。</p>
+     */
+    private static void requestKuGouBatch(boolean startPlaybackAfterLoad) {
+        if (!KuGouMusicService.isLoggedIn()) {
+            status = "酷狗私人 FM 需要登录酷狗账号";
+            LOADING.set(false);
+            notifyUi();
+            return;
+        }
+        status = "正在获取酷狗私人 FM 推荐…";
+        notifyUi();
+
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                // 传上一首的 hash，避免上游在短时间内又推回同一首。
+                String exclude = currentBatch.isEmpty() ? "" : currentBatch.get(currentBatch.size() - 1).getSourceId();
+                List<Music> loaded = KuGouMusicService.personalFm(BATCH_SIZE, exclude);
+                if (loaded.isEmpty()) throw new IllegalStateException("未返回可播放的酷狗推荐");
+                currentBatch = Collections.unmodifiableList(loaded);
+                status = "酷狗猜你喜欢 · " + loaded.size() + " 首推荐";
+                if (startPlaybackAfterLoad) {
+                    CloudMusic.playFm(loaded, 0);
+                }
+            } catch (Throwable throwable) {
+                status = "酷狗私人 FM 获取失败：" + safeMessage(throwable);
+                System.err.println("[NCM/FM] " + status);
+            } finally {
+                LOADING.set(false);
+                notifyUi();
+            }
+        });
+    }
+
+    /**
      * 按当前选中的模式拉一次推荐并解析。请求失败、响应状态异常、没有可播放曲目都直接抛出，由调用方
      * 决定怎么反馈。抽出来给"用户触发的整批请求"和"后台预备下一首"共用，避免两条路径的接口参数和
      * 解析行为日后慢慢分叉。
      */
     private static List<Music> fetchRecommendations() throws Exception {
+        if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.KUGOU) {
+            if (!KuGouMusicService.isLoggedIn()) throw new IllegalStateException("酷狗私人 FM 需要登录");
+            List<Music> loaded = KuGouMusicService.personalFm(BATCH_SIZE, "");
+            if (loaded.isEmpty()) throw new IllegalStateException("未返回可播放的酷狗推荐");
+            return loaded;
+        }
         String apiMode = selectedMode == Mode.AIDJ ? "aidj" : selectedMode.name();
         RequestUtil.RequestAnswer answer = selectedMode == Mode.DEFAULT && selectedSubMode.isEmpty()
                 ? CloudMusicApi.personalFm()
@@ -229,7 +279,9 @@ public final class PersonalFmManager {
     public static void prefetchNextAsync(List<Music> expectedQueue) {
         if (expectedQueue == null || !CloudMusic.isPersonalFmActive()) return;
         if (prefetchedNext != null || LOADING.get()) return;
-        if (CloudMusic.profile == null || CloudMusic.profile.getId() <= 0L) return;
+        boolean kuGou = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.KUGOU;
+        if (!kuGou && (CloudMusic.profile == null || CloudMusic.profile.getId() <= 0L)) return;
+        if (kuGou && !KuGouMusicService.isLoggedIn()) return;
         if (!PREFETCHING.compareAndSet(false, true)) return;
 
         MultiThreadingUtil.runAsync(() -> {

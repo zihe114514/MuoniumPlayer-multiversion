@@ -3,6 +3,7 @@ package com.muoniumplayer.core.screens.ncm.panels;
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
@@ -425,7 +426,14 @@ public class PlaylistPanel extends NCMPanel {
      * so displaying “取消收藏” there is both misleading and ineffective.
      */
     private boolean canToggleSubscription() {
-        if (playList == null || playList.getPlatform() != MusicPlatform.NETEASE) {
+        if (playList == null) return false;
+        if (playList.getPlatform() == MusicPlatform.KUGOU) {
+            // 酷狗要登录才能收藏；而且「自己的歌单」不该显示收藏按钮——那边收藏会复制一份新歌单，
+            // 点自己的歌单复制它没有意义。用户歌单在 platformPlaylistId 里带 #listid，用这个区分。
+            return KuGouMusicService.isLoggedIn()
+                    && KuGouMusicService.listIdOf(playList.getPlatformPlaylistId()).isEmpty();
+        }
+        if (playList.getPlatform() != MusicPlatform.NETEASE) {
             return false;
         }
         User creator = playList.getCreator();

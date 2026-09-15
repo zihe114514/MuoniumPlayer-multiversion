@@ -31,12 +31,12 @@ Minecraft 客户端 mod **MuoniumPlayer**（网易云音乐播放器 + 灵动岛
 **1.20.1 用 Forge 而不是 NeoForge**：1.20.1 是 Forge 的最后一个大版本，NeoForge 从
 1.20.2 才分家，1.20.1 的模组生态与整合包都在 Forge 上。
 
-四份工程共用：`mod_version=1.4.9`、`maven_group=com.muoniumplayer`、
+四份工程共用：`mod_version=1.4.11`、`maven_group=com.muoniumplayer`、
 `archives_base_name=MuoniumPlayer`、Skija `0.143.17`（Fabric 侧 `include` 进 jar，
 Forge/NeoForge 侧用 shadow 合并；原生库平台由 `skija_natives` 控制，发布时需要改成四平台全打）。
 
 产物命名：`MuoniumPlayer-<mc版本>-<加载器>-<mod版本>.jar`，
-例如 `MuoniumPlayer-1.21.11-neoforge-1.4.9.jar` / `MuoniumPlayer-1.20.1-forge-1.4.9.jar`。
+例如 `MuoniumPlayer-1.21.11-neoforge-1.4.11.jar` / `MuoniumPlayer-1.20.1-forge-1.4.11.jar`。
 名字里带 Minecraft 版本是必要的，不是好看：四个版本工程是四个独立构建，
 8 个 jar 要平铺进同一个 `dist/`，不带版本号的话 1.21.1 与 1.21.11 的 fabric 产物会同名互相覆盖。
 `buildAll` 跑完会把成品汇总到仓库根的 `dist/`（`collectDist` 任务，只收成品、不收源码包与改名前的旧 jar）。
@@ -155,17 +155,16 @@ HUD 画完 `onHudRender()`、Screen 画完 `onScreenRendered(Screen)`。
 
 ## 更新提示（四版共用一份实现）
 
-启动后在主菜单弹一次「有新版本」提示。实现刻意与既有的 ffmpeg 提示同构 —— 那套
-「守护线程探一次 + 每 tick 轮询该不该弹 + 原版控件画界面」的骨架已经在四个版本上跑通过，
-这里换掉的只是数据来源。
+启动后在主菜单弹一次提示：有新版本时提示更新，连续三次连不上清单服务器时提示检查网络。
+实现与 ffmpeg 提示同构 —— 「守护线程探一次 + 每 tick 轮询该不该弹 + Skija 画界面」。
 
 | 位置 | 职责 |
 | --- | --- |
 | `core/update/SemVer.java` | 版本号按段比数字（`String#compareTo` 会认为 1.10.0 比 1.9.0 旧） |
 | `core/update/UpdateManifest.java` | 解析远端 `update.json`，查表顺序 `<mc>-<loader>` → `<mc>` → `fallback` |
-| `core/update/UpdateChecker.java` | 守护线程拉清单、缓存 6 小时、下载页域名白名单、三个持久化开关 |
-| `core/screens/GuiUpdateNotice.java` | 主菜单提示界面（原版 GuiScreen + GuiButton，不碰 Skija） |
-| `ConfigPaths.UPDATE_NOTICE` | `config/muonium/update_notice.json`：`enabled` / `skipVersion` / 清单缓存 |
+| `core/update/UpdateChecker.java` | 守护线程拉清单、缓存 30 分钟、下载页域名白名单、额度与失败计数落盘 |
+| `core/screens/ncm/UpdateNoticeOverlay.java` | 提示界面本体（Skija 画）；宿主薄壳见 `core/screens/GuiUpdateNotice.java` |
+| `ConfigPaths.UPDATE_NOTICE` | `config/muonium/update_notice.json`：`skipCount` / `skipCountVersion` / `failureCount` / 清单缓存 |
 
 清单不在本仓库里 —— 本仓库是私有的，而客户端必须能匿名读到清单。清单在公开仓库
 [zihe114514/MuoniumPlayer-updates](https://github.com/zihe114514/MuoniumPlayer-updates)，
@@ -182,10 +181,12 @@ mod 侧不需要动。
   `minecraft_version` 一致（原版取版本号的入口四个版本各不相同）。
 - **下载页有域名白名单**（github / githubusercontent / jsdelivr / modrinth / gitee）。清单是公开仓库里的
   纯文本，万一被改，「点一下跳浏览器」就成了把用户导去任意站点。客户端永远不会自动下载或替换 jar。
-- **三个清单源**（raw + cdn.jsdelivr + gcore.jsdelivr，实测都是 200）。单一源在国内网络下不可靠。
-- **界面不缩放标题**：`RenderSystem.getModelViewStack()` 在 1.20.1 上是 `pushPose/popPose`、
-  1.21+ 是 JOML 的 `pushMatrix/popMatrix`，不缩放就能让四个版本共用完全相同的一份界面源码。
-  实际上整个 `GuiUpdateNotice` 四版只差「取/设当前界面」这两处（26.2 是 `mc.gui.screen()`）。
+- **五个清单源，全部同时拉，取版本号最高的那份**（jsdmirror + ghfast + raw + cdn.jsdelivr +
+  gcore.jsdelivr，实测都是 200）。单一源在国内网络下不可靠；而各源缓存策略不同，同一时刻可能一个给
+  新清单、一个给几小时前的旧清单，所以「谁先答」不代表「谁更新」—— 全部试一遍取最高才不会漏掉新版本。
+  前两个源（raw 的加速入口）CDN 只缓存 5 分钟，jsDelivr 对 `@main` 是 12 小时。
+- **界面是纯 Skija**（`UpdateNoticeOverlay extends NCMPanel`）：宿主 `GuiUpdateNotice` 只是薄壳，
+  负责开帧、灌尺寸、转发输入、收起。四版共用同一份界面源码，不再各写一份原生控件版。
 
 ## 目录职责
 
@@ -245,7 +246,7 @@ Gradle wrapper 与构建配置。
 .\build-all.bat
 
 # PowerShell 里直接调用；构建到指定目录而不是默认 dist/
-.\tools\build-all.ps1 -OutputDir releases\1.4.9
+.\tools\build-all.ps1 -OutputDir releases\1.4.11
 
 # 只构建部分版本 / 换任务 / 离线 / 不复用 Gradle daemon
 .\tools\build-all.ps1 -Versions '1.21.1','26.2' -Task ':fabric:build'

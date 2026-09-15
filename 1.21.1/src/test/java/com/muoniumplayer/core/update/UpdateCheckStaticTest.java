@@ -29,7 +29,7 @@ class UpdateCheckStaticTest {
     private static final Path SHARED_JAVA = ProjectPaths.sharedJava();
 
     private static final String MC_VERSION = "1.21.1";
-    private static final String MOD_VERSION = "1.4.10";
+    private static final String MOD_VERSION = "1.4.11";
     private static final String LOADER_ID = "neoforge";
 
     @Test
@@ -120,7 +120,12 @@ class UpdateCheckStaticTest {
         assertTrue(UpdateChecker.isAllowedPage("https://raw.githubusercontent.com/x/y/main/a.jar"),
                 "子域必须放行");
         assertTrue(UpdateChecker.isAllowedPage("https://modrinth.com/mod/x"));
-        assertTrue(UpdateChecker.isAllowedPage(UpdateChecker.HOME_PAGE), "兜底页自己必须在白名单里");
+        assertTrue(UpdateChecker.isAllowedPage(UpdateChecker.DOWNLOAD_PAGE), "兜底页自己必须在白名单里");
+        assertTrue(UpdateChecker.isAllowedPage("https://melodifymc.cc.cd/download"), "官网下载页");
+        assertTrue(UpdateChecker.isAllowedPage("https://www.melodifymc.cc.cd/download"),
+                "官网子域也要放行");
+        assertFalse(UpdateChecker.isAllowedPage("https://melodifymc.cc.cd.evil.com/download"),
+                "官网域名的后缀伪装不放行");
 
         assertFalse(UpdateChecker.isAllowedPage(null));
         assertFalse(UpdateChecker.isAllowedPage(""));
@@ -144,6 +149,45 @@ class UpdateCheckStaticTest {
             assertTrue(url.startsWith("https://"), "清单源必须是 https：" + url);
             assertTrue(url.endsWith("update.json"), "清单源指向的必须是 update.json：" + url);
         }
+        assertEquals(5, UpdateChecker.MANIFEST_URLS.length,
+                "五个源分属不同 CDN / 加速入口，少一个就少一层兜底；加源/删源时一起改这条");
+        assertTrue(UpdateChecker.MANIFEST_URLS[0].contains("jsdmirror"),
+                "jsdmirror 排第一位：它回源最快（max-age=300），别把 raw 挪回最前面");
+        assertTrue(String.join("\n", UpdateChecker.MANIFEST_URLS).contains("ghfast"),
+                "ghfast.top 是 raw 的加速入口（max-age=300），少了它国内就只剩 jsDelivr 的旧缓存");
+    }
+
+    @Test
+    @DisplayName("多个源同时拉取时取版本号最高的那份")
+    void 取最高版本() {
+        UpdateManifest.Entry stale = new UpdateManifest.Entry("1.3.0", "https://example.invalid/old", "旧", false);
+        UpdateManifest.Entry fresh = new UpdateManifest.Entry("1.4.11", "https://example.invalid/new", "新", true);
+
+        // 与顺序无关：不管哪个源先答，都取高的那个。CDN 里的旧缓存不能把版本号拉低。
+        assertEquals("1.4.11", UpdateChecker.pickNewest(stale, fresh).latest());
+        assertEquals("1.4.11", UpdateChecker.pickNewest(fresh, stale).latest());
+
+        // 要的是整条条目：page / notes / critical 都跟着最高版本走，不是只拼一个版本号。
+        UpdateManifest.Entry picked = UpdateChecker.pickNewest(stale, fresh);
+        assertEquals("https://example.invalid/new", picked.page());
+        assertEquals("新", picked.notes());
+        assertTrue(picked.critical());
+
+        // 挂掉的源是 null，不能影响结果。
+        assertEquals("1.4.11", UpdateChecker.pickNewest(null, fresh, null).latest());
+
+        // 全挂 / 没有源 → null，调用方按「这一次没有结论」处理（不弹提示）。
+        assertNull(UpdateChecker.pickNewest((UpdateManifest.Entry) null));
+        assertNull(UpdateChecker.pickNewest());
+
+        // 段级比较：1.10.0 比 1.9.0 新（字符串比较会反过来）。
+        assertEquals("1.10.0", UpdateChecker.pickNewest(
+                new UpdateManifest.Entry("1.9.0", "", "", false),
+                new UpdateManifest.Entry("1.10.0", "", "", false)).latest());
+
+        // 空版本号当作没有：别让它顶掉一份真实清单。
+        assertEquals("1.4.11", UpdateChecker.pickNewest(
+                new UpdateManifest.Entry("", "", "", false), fresh).latest());
     }
 
     @Test
@@ -185,13 +229,20 @@ class UpdateCheckStaticTest {
         assertTrue(checker.contains("CONNECT_TIMEOUT_MILLIS") && checker.contains("READ_TIMEOUT_MILLIS"),
                 "必须显式设超时，默认值会让启动期挂在一个不通的源上");
 
-        Path gui = SHARED_JAVA.resolve(Paths.get(
-                "com", "muoniumplayer", "core", "screens", "GuiUpdateNotice.java"));
-        String screen = stripComments(read(gui));
+        // 界面本体是 Skija 浮层，宿主只是个薄壳：这两条不变量都落在浮层上。
+        String screen = stripComments(read(SHARED_JAVA.resolve(Paths.get(
+                "com", "muoniumplayer", "core", "screens", "ncm", "UpdateNoticeOverlay.java"))));
         assertFalse(screen.contains("HttpUtils"),
                 "界面在渲染线程上跑，绝不能自己发网络请求");
-        assertTrue(screen.contains("setClipboardString("),
-                "「复制下载链接」必须走原版剪贴板通道（GuiScreen#setClipboardString）");
+        assertTrue(screen.contains("KeyboardUtils.setClipboardString("),
+                "「复制下载链接」必须走项目统一的剪贴板通道，不能自己碰 GLFW");
+
+        // 宿主薄壳只开帧、转发输入，绘制全部交给浮层；退回原版绘制栈就会重新踩空 alpha 的坑。
+        String host = stripComments(read(SHARED_JAVA.resolve(Paths.get(
+                "com", "muoniumplayer", "core", "screens", "GuiUpdateNotice.java"))));
+        assertFalse(host.contains("fontRendererObj") || host.contains("drawCenteredString(")
+                        || host.contains("new GuiButton(") || host.contains("drawRect("),
+                "更新提示的宿主不许再出现原版绘制调用");
     }
 
     @Test
@@ -225,8 +276,51 @@ class UpdateCheckStaticTest {
         String checker = stripComments(read(updateSource("UpdateChecker.java")));
         assertTrue(checker.contains("ConfigPaths.UPDATE_NOTICE"),
                 "UpdateChecker 必须用这个路径读写自己的状态");
-        assertTrue(checker.contains("\"enabled\""),
-                "必须有一个可关掉整个更新检查的开关");
+        assertFalse(checker.contains("\"enabled\""),
+                "更新检查不允许被关掉：配置里不该再有 enabled 开关");
+    }
+
+    @Test
+    @DisplayName("「先不更新」有次数上限、连不上服务器有失败阈值，两个计数都落盘")
+    void 先不更新与失败都有阈值() throws IOException {
+        assertEquals(3, UpdateChecker.MAX_SKIP_COUNT, "同一个版本最多先不更新 3 次");
+        assertEquals(3, UpdateChecker.MAX_FAILURE_COUNT, "连续 3 次启动都连不上就提醒用户检查网络");
+        assertTrue(UpdateChecker.STATE_CHECK_FAILED < 0, "连不上服务器必须是一个独立的结论");
+
+        String checker = stripComments(read(updateSource("UpdateChecker.java")));
+        assertTrue(checker.contains("\"skipCount\"") && checker.contains("\"failureCount\""),
+                "两个计数都必须落盘：只放内存等于每次重启都归零，限制形同虚设");
+        assertTrue(checker.contains("\"skipCountVersion\""),
+                "次数要按版本记账：清单出现更新的版本时额度必须重新给满");
+        // 「服务器有回应、只是没有本 channel 的条目」不能算网络故障，否则一个没发布的
+        // 渠道会把用户一路推到「检查网络」那个提示上。
+        assertTrue(checker.contains("reachedServer"),
+                "必须把「连没连上」与「清单里有没有本 channel」分开判断");
+
+        String overlay = stripComments(read(SHARED_JAVA.resolve(Paths.get(
+                "com", "muoniumplayer", "core", "screens", "ncm", "UpdateNoticeOverlay.java"))));
+        assertTrue(overlay.contains("UpdateChecker.mustUpdate()"),
+                "锁死状态必须由界面读 mustUpdate() 决定");
+        assertTrue(overlay.contains("UpdateChecker.noteSkippedOnce()"),
+                "收起提示要真的记账，否则次数永远用不完");
+        assertTrue(overlay.contains("UpdateChecker.retryCheck()"),
+                "连不上服务器那一套界面必须能重试");
+        // 更新检查不允许被关掉：界面上曾经有过一个「不再检查更新」的链接，已按要求移除。
+        assertFalse(overlay.contains("不再检查更新"),
+                "界面上不许再有「不再检查更新」这个出口");
+        assertFalse(overlay.contains("UpdateChecker.disable()"),
+                "「不再检查更新」的实现入口必须一起删掉");
+        // 额度用尽后「前往下载」只开浏览器，不许顺手把提示收掉 —— 那正是「点一下就能进游戏」的出口。
+        assertFalse(overlay.contains("escapeHatch"),
+                "锁死状态不许再留「放开锁」的逃生阀，它就是绕开更新进游戏的那条路");
+        assertTrue(overlay.contains("装好新版本再进游戏"),
+                "锁死状态下点「前往下载」必须留在界面上，只把浏览器打开");
+        // 公告必须另起一行：正文由「版本」「次数说明」「公告」三段组成，公告接在次数后面
+        // 会被读成同一句话 —— 而且它是最长的一段，挤在一起最容易看漏。
+        assertTrue(overlay.contains("PARAGRAPH_BREAK"),
+                "正文要有显式的段落分隔常量，公告才能真的另起一行");
+        assertTrue(overlay.contains("split(PARAGRAPH_BREAK"),
+                "折行必须先按段落切分：换行符直接丢给 fitWidth 会被当成普通字符留在行里");
     }
 
     private static Path clientSource() {

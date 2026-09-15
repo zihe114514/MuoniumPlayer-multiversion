@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.muoniumplayer.core.ncm.RequestUtil;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
+import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
 import java.util.ArrayList;
@@ -85,7 +86,7 @@ public final class NeteaseSearchSuggestService {
      * @return 已缓存的建议；没缓存过或已过期时返回空列表
      */
     public static List<Suggestion> peek(String keyword) {
-        String key = normalize(keyword);
+        String key = cacheKey(keyword);
         if (key.isEmpty()) return Collections.emptyList();
         Entry entry = CACHE.get(key);
         if (entry == null) return Collections.emptyList();
@@ -96,9 +97,20 @@ public final class NeteaseSearchSuggestService {
         return entry.suggestions;
     }
 
+    /**
+     * 缓存键 = 平台 + 关键词。
+     *
+     * <p>必须把平台带上：联想词是按平台取的（网易云走 {@code CloudMusicApi.searchSuggest}，
+     * 酷狗走 {@code KuGouMusicService.searchSuggest}），只按关键词做键的话，切一次音源就会
+     * 拿另一个源的结果当己方的联想词显示。</p>
+     */
+    private static String cacheKey(String keyword) {
+        return NeteaseMusicService.getCurrentPlatform() + "\u0000" + normalize(keyword);
+    }
+
     /** 这个关键词是否已经有结论（含"确认没有建议"），用来避免重复发请求。 */
     public static boolean isResolved(String keyword) {
-        String key = normalize(keyword);
+        String key = cacheKey(keyword);
         if (key.isEmpty()) return true;
         Entry entry = CACHE.get(key);
         return entry != null && entry.expiresAt > System.currentTimeMillis();
@@ -106,14 +118,14 @@ public final class NeteaseSearchSuggestService {
 
     /** 异步取一次并落缓存。已有结论或正在飞时直接返回，调用方可以放心每帧调。 */
     public static void prefetch(final String keyword) {
-        final String key = normalize(keyword);
-        if (key.isEmpty() || isResolved(key)) return;
+        final String key = cacheKey(keyword);
+        if (key.isEmpty() || isResolved(keyword)) return;
         if (!IN_FLIGHT.add(key)) return;
         MultiThreadingUtil.runAsync(new Runnable() {
             @Override
             public void run() {
                 try {
-                    store(key, fetch(key));
+                    store(key, fetch(keyword));
                 } catch (Throwable ignored) {
                     // 联想词是纯装饰：取不到就记一次空结果，不要把异常抬到 UI。
                     store(key, Collections.<Suggestion>emptyList());
@@ -151,6 +163,9 @@ public final class NeteaseSearchSuggestService {
      * {@code keyword} 明显更对，所以它是主路径。</p>
      */
     private static List<Suggestion> fetch(String keyword) {
+        if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.KUGOU) {
+            return fetchKuGou(keyword);
+        }
         List<Suggestion> keywords = parseKeyword(read(keyword, true));
         if (!keywords.isEmpty()) return keywords;
         return parseWeb(read(keyword, false));
@@ -165,6 +180,34 @@ public final class NeteaseSearchSuggestService {
             return root.getAsJsonObject("result");
         } catch (Throwable ignored) {
             return null;
+        }
+    }
+
+    /**
+     * 酷狗的联想词。
+     *
+     * <p>和网易云那条路径的差别不只是端点：酷狗返回的是已经摊平的
+     * {@code data[].RecordDatas[].HintInfo}，没有 {@code order} 分组那一层，
+     * 所以不走 {@link #parseKeyword} / {@link #parseWeb}，直接按顺序取。</p>
+     *
+     * <p>{@code mobile} 参数在这里没有意义（酷狗只有这一个端点），保留形参是为了和网易云
+     * 的两次尝试调用点同形。</p>
+     */
+    private static List<Suggestion> fetchKuGou(String keyword) {
+        try {
+            List<String> hints = KuGouMusicService.searchSuggest(keyword);
+            List<Suggestion> result = new ArrayList<>();
+            for (String hint : hints) {
+                if (hint == null || hint.trim().isEmpty()) continue;
+                // kind 留空：酷狗的联想词不带类型标签，硬填一个「关键词」反而和右侧栏的
+                // 「歌曲/歌手/专辑/歌单」不在一个语义层上。空串在这套 UI 里就是不显示标签。
+                result.add(new Suggestion(hint.trim(), "", ""));
+                if (result.size() >= MAX_SUGGESTIONS) break;
+            }
+            return result;
+        } catch (Throwable ignored) {
+            // 联想词是纯装饰，取不到就当没有。
+            return Collections.emptyList();
         }
     }
 

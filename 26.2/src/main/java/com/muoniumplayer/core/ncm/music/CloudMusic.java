@@ -1359,6 +1359,7 @@ public class CloudMusic implements SharedConstants {
                 AudioPlayer activePlayer = ownedPlayer;
                 NeteasePlaybackHistoryReporter.finish(activePlayer,
                         NeteasePlaybackHistoryReporter.EndReason.REPLACED);
+                KuGouPlaybackReporter.finish(activePlayer, KuGouPlaybackReporter.EndReason.REPLACED);
                 if (activePlayer != null && CloudMusic.player == activePlayer) {
                     try {
                         activePlayer.close();
@@ -1478,6 +1479,7 @@ public class CloudMusic implements SharedConstants {
                     CloudMusic.updateCurrentLyric(activePlayer.getCurrentTimeMillis());
                 }
                 NeteasePlaybackHistoryReporter.observe(activePlayer);
+                KuGouPlaybackReporter.observe(activePlayer);
 
                 // The 10 ms supervision tick doubles as the crossfade clock: fine-grained enough for a
                 // smooth ramp and already bound to the session/cancellation checks above.
@@ -1518,6 +1520,7 @@ public class CloudMusic implements SharedConstants {
 
             NeteasePlaybackHistoryReporter.finish(completedPlayer,
                     NeteasePlaybackHistoryReporter.EndReason.COMPLETED);
+            KuGouPlaybackReporter.finish(completedPlayer, KuGouPlaybackReporter.EndReason.COMPLETED);
 
             if (!dontAdd && playedFrom != null && curIdx >= 0 && curIdx < playList.size()) {
                 playList.get(curIdx).updPlayCount(playedFrom, completedPlayer.getCurrentTimeSeconds());
@@ -1606,6 +1609,7 @@ public class CloudMusic implements SharedConstants {
             if (!isSessionUsable(targetSession)) return false;
             playing.set(true);
             NeteasePlaybackHistoryReporter.start(song, currentPlaylistContext, activePlayer);
+            KuGouPlaybackReporter.start(song, activePlayer);
             final AudioPlayer callbackPlayer = activePlayer;
             callbackPlayer.setAfterPlayed(() -> {
                 // 已被下一首复用/替换的播放器回调不能结束新会话。
@@ -2311,6 +2315,13 @@ public class CloudMusic implements SharedConstants {
             ArmedTrack track = armed;
             if (track == null || track.plan == null || track.deck == null || !track.deck.isUsable()) return false;
             if (!armStillValid(track.generation, track.queueRevision)) return false;
+            // 已预卷的 deck 从预卷那一刻起就在静音地往前放，而预卷时刻是按
+            // plan.fireMillis 算的（见 maybePreRollArmedDeck）。手动切歌忽略 fireMillis、
+            // 立刻就要接缝，于是进场曲目会从 cue 点之后若干秒才出声 —— 预卷得越早，
+            // 被吃掉的开头越多。这种 deck 只能走普通切歌重新定位，不能拿来做无缝交接。
+            //
+            // 注意这里只拦手动切歌：自动路径恰好等到 fireMillis，preRolled 正是它想要的状态。
+            if (track.preRolled) return false;
             // The decoded deck has to be exactly the track the queue predicts right now, or a manual
             // "next" would land on a different song than the one the ordinary switch would have played.
             if (track.index != peekNextIndex()) return false;
@@ -2475,6 +2486,10 @@ public class CloudMusic implements SharedConstants {
                             NeteasePlaybackHistoryReporter.EndReason.COMPLETED);
                 } catch (Throwable ignored) {
                 }
+                try {
+                    KuGouPlaybackReporter.finish(outgoing, KuGouPlaybackReporter.EndReason.COMPLETED);
+                } catch (Throwable ignored) {
+                }
                 if (!dontAdd && playedFrom != null && curIdx >= 0 && curIdx < playList.size()) {
                     try {
                         playList.get(curIdx).updPlayCount(playedFrom, outgoing.getCurrentTimeSeconds());
@@ -2512,6 +2527,7 @@ public class CloudMusic implements SharedConstants {
             loadDynamicMusicCover(track.song);
             loadLyric(track.song, nextSession, track.file);
             NeteasePlaybackHistoryReporter.start(track.song, currentPlaylistContext, incoming);
+            KuGouPlaybackReporter.start(track.song, incoming);
             if (AutomixSettings.isTransitionAnimationEnabled() && effectiveOverlap >= 5_000L) {
                 if (AutomixSettings.isFoliaEngine() && plan.style != null
                         && plan.style != FoliaTransitionStyle.PLAIN_BLEND) {
@@ -2915,7 +2931,12 @@ public class CloudMusic implements SharedConstants {
         long songId = m == null ? -1L : m.getId();
         long rawPositionMs = (p == null || m == null) ? 0L : Math.round(p.getCurrentTimeMillis());
         long durationMs = (p == null || m == null) ? 0L : Math.round(p.getTotalTimeMillis());
-        boolean playing = (p != null && m != null) && !p.isFinished();
+        // This is "does it count as playing from the user's point of view", the same source the pause
+// icon reads (both ask isPausing()). It used to test only isFinished(), so a paused track - and
+// a decoded track that had not started yet - were both reported as playing == true: the field is
+// named playing but answered "there is a track and it has not ended", and any caller treating it
+// as "is it sounding" got the wrong answer.
+        boolean playing = p != null && m != null && !p.isFinished() && !p.isPausing();
         long positionMs = (p == null || m == null)
                 ? 0L
                 : smoothPositionMs(songId, rawPositionMs, durationMs, p.isPausing());

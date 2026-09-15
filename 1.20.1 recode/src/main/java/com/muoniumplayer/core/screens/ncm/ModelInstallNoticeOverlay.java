@@ -210,9 +210,12 @@ public final class ModelInstallNoticeOverlay extends NCMPanel {
             }, FontManager.pf12);
             dialog.addChild(rowLabel);
             rowLabel.setClickable(false);
-            rowLabel.setMaxWidth(Math.max(1, dialog.getWidth() - SIDE_INSET * 2 - ROW_TEXT_LEFT - 8));
             rowLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             rowLabel.setBeforeRenderCallback(() -> {
+                // 宽度必须在渲染前从已经定过尺寸的卡片上取：onInit() 时卡片宽度还是 0，
+                // 那时算出来的上限会被夹成 1px，而 TRIM_TO_WIDTH 在 1px 内连省略号都
+                // 放不下，于是整行文字静默地什么都不画（正文曾经就是这样消失的）。
+                rowLabel.setMaxWidth(Math.max(1, dialog.getWidth() - SIDE_INSET * 2 - ROW_TEXT_LEFT - 8));
                 rowLabel.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
                 double textHeight = rowLabel.getHeight();
                 rowLabel.setPosition(SIDE_INSET + ROW_TEXT_LEFT,
@@ -232,9 +235,12 @@ public final class ModelInstallNoticeOverlay extends NCMPanel {
             }, FontManager.pf12);
             dialog.addChild(infoLabel);
             infoLabel.setClickable(false);
-            infoLabel.setMaxWidth(Math.max(1, dialog.getWidth() - SIDE_INSET * 2));
             infoLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             infoLabel.setBeforeRenderCallback(() -> {
+                // 宽度必须在渲染前从已经定过尺寸的卡片上取：onInit() 时卡片宽度还是 0，
+                // 那时算出来的上限会被夹成 1px，而 TRIM_TO_WIDTH 在 1px 内连省略号都
+                // 放不下，于是整行文字静默地什么都不画（正文曾经就是这样消失的）。
+                infoLabel.setMaxWidth(Math.max(1, dialog.getWidth() - SIDE_INSET * 2));
                 infoLabel.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
                 infoLabel.setPosition(SIDE_INSET, infoTop() + lineIndex * lineHeight());
             });
@@ -255,9 +261,12 @@ public final class ModelInstallNoticeOverlay extends NCMPanel {
         }, FontManager.pf12);
         dialog.addChild(pathLabel);
         pathLabel.setClickable(false);
-        pathLabel.setMaxWidth(Math.max(1, dialog.getWidth() - SIDE_INSET * 2));
         pathLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
         pathLabel.setBeforeRenderCallback(() -> {
+            // 宽度必须在渲染前从已经定过尺寸的卡片上取：onInit() 时卡片宽度还是 0，
+            // 那时算出来的上限会被夹成 1px，而 TRIM_TO_WIDTH 在 1px 内连省略号都
+            // 放不下，于是整行文字静默地什么都不画（正文曾经就是这样消失的）。
+            pathLabel.setMaxWidth(Math.max(1, dialog.getWidth() - SIDE_INSET * 2));
             pathLabel.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             pathLabel.setAlpha(.72f);
             pathLabel.setPosition(SIDE_INSET, pathTop());
@@ -272,9 +281,12 @@ public final class ModelInstallNoticeOverlay extends NCMPanel {
         }, FontManager.pf12);
         dialog.addChild(statusLabel);
         statusLabel.setClickable(false);
-        statusLabel.setMaxWidth(Math.max(1, dialog.getWidth() - SIDE_INSET * 2));
         statusLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
         statusLabel.setBeforeRenderCallback(() -> {
+            // 宽度必须在渲染前从已经定过尺寸的卡片上取：onInit() 时卡片宽度还是 0，
+            // 那时算出来的上限会被夹成 1px，而 TRIM_TO_WIDTH 在 1px 内连省略号都
+            // 放不下，于是整行文字静默地什么都不画（正文曾经就是这样消失的）。
+            statusLabel.setMaxWidth(Math.max(1, dialog.getWidth() - SIDE_INSET * 2));
             statusLabel.setColor(statusError ? ERROR_COLOR
                     : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             statusLabel.setPosition(SIDE_INSET, statusTop());

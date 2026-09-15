@@ -67,6 +67,26 @@ public class AudioPlayer {
     /** 由 {@link #prepareStart(float)} 设置：读头已定位、搁架已接入、窗口已预热。 */
     private volatile boolean prepared;
 
+    /**
+     * 「这一路 deck 已经被要求播放」这一意图，在 {@link #play()} 排队的那一刻同步置位。
+     *
+     * <p><b>为什么需要它。</b>{@code AudioSample.isPlaying()} 读的是引擎线程的状态，而
+     * {@code play()} 只是在命令队列里排一条命令 —— 要到音频线程下一次 {@code generateNextBuffer()}
+     * 才真正生效。中间这段时间里 `isPlaying()` 仍是 false。播放器界面恰恰是用
+     * {@code !isPlaying()} 画暂停图标的，于是「解码已完成、命令已排队、声音马上就出来」
+     * 与「压根没在播」在界面上长得一模一样。</p>
+     *
+     * <p>首播时这个窗口格外长：解码完成到 {@code play()} 之间还隔着一次
+     * {@code loadLyric()} 的联网往返（首次还要跑多源歌词匹配），前面还有
+     * {@code stopPreviousPlayer()} 里 250 ms 的固定等待。用户看到的就是「已经开始响了，
+     * 但暂停图标和进度条都没动」。</p>
+     *
+     * <p>把「意图」与「引擎实际状态」分开之后，界面问 {@link #isPausing()} 得到的是
+     * 「用户视角下这条播放算不算在走」，不再随引擎命令队列的延迟抖动。它刻意<b>不</b>取代
+     * {@code isPlaying()}：真正要判断引擎是否在出声的地方仍然直接问引擎。</p>
+     */
+    private volatile boolean playRequested;
+
     public AudioPlayer(File file) {
         finished = false;
         this.player = loadUsableSoundFile(file);
@@ -87,6 +107,9 @@ public class AudioPlayer {
         finished = false;
         this.closed = false;
         this.prepared = false;
+        // 新曲目还没有被要求播放。此刻 deck 上挂的是上一首的播放意图，
+        // 留着它会让界面在新曲真正起播之前就报告「正在播放」——正是本次要修的那个错。
+        this.playRequested = false;
         this.bassGainDb = 0.0f;
         this.vocalDuckDepth = 0.0f;
         this.playbackRate = 1.0f;
@@ -115,6 +138,9 @@ public class AudioPlayer {
         attachAutomixChain();
 
         finished = false;
+        // 先置位再排队：这条命令之后无论引擎线程什么时候才处理，界面都已经知道
+        // 「这一路 deck 是被要求播放的」，不必等 isPlaying() 翻真。
+        this.playRequested = true;
         try {
             // 先调振幅：让播放从配置好的电平起步，
             // 而不是头几帧按引擎默认的满音量渲染。
@@ -123,9 +149,11 @@ public class AudioPlayer {
             this.player.amp(effectiveAmp());
         } catch (ChannelMismatchException mismatch) {
             // 为声道变化保留 CloudMusic 里既有的重试路径。
+            this.playRequested = false;
             throw mismatch;
         } catch (RuntimeException ignored) {
             // 解码器在校验与播放之间可能失效。
+            this.playRequested = false;
         }
     }
 
@@ -160,6 +188,7 @@ public class AudioPlayer {
             return;
 
         finished = false;
+        this.playRequested = true;
         try {
             this.player.amp(effectiveAmp());
             cueTo(millis);
@@ -171,9 +200,11 @@ public class AudioPlayer {
             this.player.play();
             this.player.amp(effectiveAmp());
         } catch (ChannelMismatchException mismatch) {
+            this.playRequested = false;
             throw mismatch;
         } catch (RuntimeException ignored) {
             // 解码器在校验与播放之间可能失效。
+            this.playRequested = false;
         }
     }
 
@@ -214,14 +245,17 @@ public class AudioPlayer {
             return;
         }
         finished = false;
+        this.playRequested = true;
         try {
             this.player.amp(effectiveAmp());
             attachAutomixChain();   // 幂等；这条链通常从 prepareStart() 起就一直活着。
             this.player.play();
             this.player.amp(effectiveAmp());
         } catch (ChannelMismatchException mismatch) {
+            this.playRequested = false;
             throw mismatch;
         } catch (RuntimeException ignored) {
+            this.playRequested = false;
         }
     }
 
@@ -576,6 +610,7 @@ public class AudioPlayer {
     public synchronized void close() {
         if (closed) return;
         closed = true;
+        this.playRequested = false;
         releaseAutomixChain();
         dispose(this.player);
     }
@@ -636,8 +671,27 @@ public class AudioPlayer {
         }
     }
 
+    /**
+     * 从用户视角看，这一路 deck 是否处于「没在播放」。
+     *
+     * <p>判据是<b>播放意图</b>（{@link #playRequested}）而不是引擎线程的 {@code isPlaying()}。
+     * 后者在 {@code play()} 排队之后仍会保持 false 一整个引擎缓冲，首播时前面还压着解码、
+     * 歌词联网往返与固定等待，于是界面上一条已经在出声的曲目会继续显示成暂停、
+     * 进度条停在 0 —— 这正是本方法要消除的错位。</p>
+     *
+     * <p>需要知道引擎此刻是否真的在出声时，直接问 {@link #isPlaying()}，不要用本方法反推。</p>
+     */
     public boolean isPausing() {
-        return !isUsable() || !this.player.isPlaying();
+        return !isUsable() || !this.playRequested;
+    }
+
+    /**
+     * 引擎线程当前是否真的在出声。<b>与 {@link #isPausing()} 不同</b>：这里的答案是引擎的
+     * 真实状态，会在 {@code play()} 排队后的第一个缓冲之前保持 false。
+     * 界面判断「要不要画暂停图标」请用 {@link #isPausing()}。
+     */
+    public boolean isPlaying() {
+        return isUsable() && this.player.isPlaying();
     }
 
     public void setVolume(float volume) {
@@ -646,6 +700,9 @@ public class AudioPlayer {
     }
 
     public void pause() {
+        // 意图与引擎一起停下。先清意图：否则在引擎真正停住之前，界面会有一段
+        // 「已按暂停、图标却还是播放」的反向错位，和本次修的是同一个量。
+        this.playRequested = false;
         if (isUsable()) {
             try {
                 this.player.pause();

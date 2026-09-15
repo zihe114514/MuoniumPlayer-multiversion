@@ -7,6 +7,7 @@ import lombok.Data;
 import com.muoniumplayer.core.ncm.RequestUtil;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
+import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.utils.Location;
@@ -276,11 +277,24 @@ public class PlayList {
 
     /**
      * 收藏/取消收藏本歌单。本地状态由 Lombok 生成的 setSubscribed 维护，
-     * 此方法仅负责调用原 API 链路（CloudMusicApi.subscribe → /weapi/playlist/subscribe|unsubscribe）。
+     * 此方法仅负责调用原 API 链路。
+     *
+     * <p>两个源在这里分派：网易云走 {@code /weapi/playlist/subscribe|unsubscribe}；
+     * 酷狗那边「收藏」和「取消收藏」是<b>两个不同的端点</b>
+     * （{@code cloudlist.service/v5/add_list} 带 {@code type=1} 与 {@code cloudlist/v2/delete_list}），
+     * 而且收藏时要带上原歌单的主键三元组，所以不能套用网易云那种「一个端点带布尔开关」的形态。</p>
      */
     public void subscribe(boolean subscribed) {
         if (getPlatform() == MusicPlatform.NETEASE) {
             CloudMusicApi.subscribe(this.id, subscribed);
+            return;
+        }
+        if (getPlatform() == MusicPlatform.KUGOU) {
+            if (subscribed) {
+                KuGouMusicService.subscribePlaylist(this);
+            } else {
+                KuGouMusicService.unsubscribePlaylist(this);
+            }
         }
     }
 

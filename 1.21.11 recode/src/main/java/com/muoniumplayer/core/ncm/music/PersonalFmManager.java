@@ -19,9 +19,9 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 拥有网易云私人 FM 的获取。FM 页面可能在播放开始前显示当前
- * 批次，但普通播放只有在使用 {@link CloudMusic#playFm(List, int)}
- * 时才成为 FM 会话。
+ * Owns NetEase personal-FM retrieval. The FM page may display the current
+ * batch before playback starts, but ordinary playback becomes an FM session
+ * only when {@link CloudMusic#playFm(List, int)} is used.
  */
 public final class PersonalFmManager {
 
@@ -53,7 +53,7 @@ public final class PersonalFmManager {
     public static final String SCENE_FOCUS = "FOCUS";
     public static final String SCENE_NIGHT_EMO = "NIGHT_EMO";
 
-    /** 私人 FM 刻意是拉模式：每次只取一条推荐。 */
+    /** Personal FM is intentionally pull-based: fetch exactly one recommendation at a time. */
     private static final int BATCH_SIZE = 1;
     private static final int RECENT_ID_LIMIT = 24;
     private static final AtomicBoolean LOADING = new AtomicBoolean(false);
@@ -62,7 +62,7 @@ public final class PersonalFmManager {
      * 让用户点刷新 / 换模式 / 跳过没反应，反过来也不能让用户操作被一次后台请求饿死。
      */
     private static final AtomicBoolean PREFETCHING = new AtomicBoolean(false);
-    /** 防止首次请求失败在每次面板重绘时递归地自行重开。 */
+    /** Prevents a failed first request from recursively reopening itself on every panel repaint. */
     private static final AtomicBoolean INITIAL_REQUEST_ISSUED = new AtomicBoolean(false);
     private static final Set<Long> RECENT_SONG_IDS = new LinkedHashSet<>();
 
@@ -102,14 +102,14 @@ public final class PersonalFmManager {
         return LOADING.get();
     }
 
-    /** FM 面板首次打开时加载一次；错误保持可见直到用户刷新。 */
+    /** Loads once when the FM panel is first opened; errors remain visible until the user refreshes. */
     public static void ensureInitialLoad() {
         if (currentBatch.isEmpty() && !LOADING.get() && INITIAL_REQUEST_ISSUED.compareAndSet(false, true)) {
             requestBatch(selectedMode, selectedSubMode, true);
         }
     }
 
-    /** 显式用户刷新：即使上次请求失败也重试。 */
+    /** Explicit user refresh: retry even if the previous request failed. */
     public static void openOrRefresh() {
         INITIAL_REQUEST_ISSUED.set(true);
         requestBatch(selectedMode, selectedSubMode, true);
@@ -122,7 +122,7 @@ public final class PersonalFmManager {
         requestBatch(selectedMode, selectedSubMode, CloudMusic.isPersonalFmActive());
     }
 
-    /** 由仅 FM 播放器按钮调用。这是唯一提交"电台垃圾"的路径。 */
+    /** Called by the FM-only player button. This is the only path that submits radio trash. */
     public static void skipCurrentAndRequestNext() {
         if (!CloudMusic.isPersonalFmActive() || !LOADING.compareAndSet(false, true)) {
             return;
@@ -134,7 +134,7 @@ public final class PersonalFmManager {
         MultiThreadingUtil.runAsync(() -> {
             try {
                 if (current != null && current.isNetease()) {
-                    // "垃圾"刻意是显式的：仅进入 FM 或按普通下一首绝不调用它。
+                    // Trash is intentionally explicit: merely entering FM or pressing normal next never calls it.
                     CloudMusicApi.personalFmTrash(current.getId());
                 }
             } catch (Throwable throwable) {
@@ -147,8 +147,8 @@ public final class PersonalFmManager {
     }
 
     /**
-     * 仅当小 FM 批次到达末尾或其全部
-     * 曲目失败时触发。它不把任何曲目标记为垃圾。
+     * Triggered only when the small FM batch reaches its end or all of its
+     * tracks fail. It does not mark any track as trash.
      */
     public static void requestNextBatchAsync() {
         requestBatch(selectedMode, selectedSubMode, true);
@@ -156,6 +156,13 @@ public final class PersonalFmManager {
 
     private static void requestBatch(Mode mode, String subMode, boolean startPlaybackAfterLoad) {
         if (!LOADING.compareAndSet(false, true)) {
+            return;
+        }
+        // 酷狗也有私人 FM，但它的接口是「猜你喜欢」流，没有网易云那套模式/场景参数。
+        // 分支放在这里而不是让调用方分叉：两个源共用同一套批处理、预取与播放衔接逻辑，
+        // 差别只在「怎么拿到一批歌」。
+        if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.KUGOU) {
+            requestKuGouBatch(startPlaybackAfterLoad);
             return;
         }
         if (CloudMusic.profile == null || CloudMusic.profile.getId() <= 0L) {
@@ -175,8 +182,8 @@ public final class PersonalFmManager {
                 List<Music> loaded = fetchRecommendations();
                 currentBatch = Collections.unmodifiableList(loaded);
                 status = selectedMode.getDisplayName() + " · " + loaded.size() + " 首推荐";
-                // playFm() 本身会建立隔离的 FM 会话，因此首次进入不能
-                // 要求已有活动的 FM 会话才能自动启动。
+                // playFm() establishes the isolated FM session itself, so first entry must not
+                // require an already-active FM session before it can auto-start.
                 if (startPlaybackAfterLoad) {
                     CloudMusic.playFm(loaded, 0);
                 }
@@ -191,11 +198,54 @@ public final class PersonalFmManager {
     }
 
     /**
+     * 酷狗的私人 FM 分支。
+     *
+     * <p>{@code selectedMode} 仍然写进状态文案，但酷狗端不理解它——那边的接口没有模式参数。
+     * 与其禁掉整个模式选择器，不如照常接受并在文案里说明，用户至少能看出「当前不是网易云」。</p>
+     */
+    private static void requestKuGouBatch(boolean startPlaybackAfterLoad) {
+        if (!KuGouMusicService.isLoggedIn()) {
+            status = "酷狗私人 FM 需要登录酷狗账号";
+            LOADING.set(false);
+            notifyUi();
+            return;
+        }
+        status = "正在获取酷狗私人 FM 推荐…";
+        notifyUi();
+
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                // 传上一首的 hash，避免上游在短时间内又推回同一首。
+                String exclude = currentBatch.isEmpty() ? "" : currentBatch.get(currentBatch.size() - 1).getSourceId();
+                List<Music> loaded = KuGouMusicService.personalFm(BATCH_SIZE, exclude);
+                if (loaded.isEmpty()) throw new IllegalStateException("未返回可播放的酷狗推荐");
+                currentBatch = Collections.unmodifiableList(loaded);
+                status = "酷狗猜你喜欢 · " + loaded.size() + " 首推荐";
+                if (startPlaybackAfterLoad) {
+                    CloudMusic.playFm(loaded, 0);
+                }
+            } catch (Throwable throwable) {
+                status = "酷狗私人 FM 获取失败：" + safeMessage(throwable);
+                System.err.println("[NCM/FM] " + status);
+            } finally {
+                LOADING.set(false);
+                notifyUi();
+            }
+        });
+    }
+
+    /**
      * 按当前选中的模式拉一次推荐并解析。请求失败、响应状态异常、没有可播放曲目都直接抛出，由调用方
      * 决定怎么反馈。抽出来给"用户触发的整批请求"和"后台预备下一首"共用，避免两条路径的接口参数和
      * 解析行为日后慢慢分叉。
      */
     private static List<Music> fetchRecommendations() throws Exception {
+        if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.KUGOU) {
+            if (!KuGouMusicService.isLoggedIn()) throw new IllegalStateException("酷狗私人 FM 需要登录");
+            List<Music> loaded = KuGouMusicService.personalFm(BATCH_SIZE, "");
+            if (loaded.isEmpty()) throw new IllegalStateException("未返回可播放的酷狗推荐");
+            return loaded;
+        }
         String apiMode = selectedMode == Mode.AIDJ ? "aidj" : selectedMode.name();
         RequestUtil.RequestAnswer answer = selectedMode == Mode.DEFAULT && selectedSubMode.isEmpty()
                 ? CloudMusicApi.personalFm()
@@ -229,7 +279,9 @@ public final class PersonalFmManager {
     public static void prefetchNextAsync(List<Music> expectedQueue) {
         if (expectedQueue == null || !CloudMusic.isPersonalFmActive()) return;
         if (prefetchedNext != null || LOADING.get()) return;
-        if (CloudMusic.profile == null || CloudMusic.profile.getId() <= 0L) return;
+        boolean kuGou = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.KUGOU;
+        if (!kuGou && (CloudMusic.profile == null || CloudMusic.profile.getId() <= 0L)) return;
+        if (kuGou && !KuGouMusicService.isLoggedIn()) return;
         if (!PREFETCHING.compareAndSet(false, true)) return;
 
         MultiThreadingUtil.runAsync(() -> {
@@ -313,7 +365,7 @@ public final class PersonalFmManager {
                 if (wasRecentlyReturned(music.getId())) duplicates.add(music);
                 else fresh.add(music);
             } catch (Throwable ignored) {
-                // 一条畸形推荐绝不能丢弃整个小批次。
+                // One malformed recommendation must never discard the whole small batch.
             }
         }
 
@@ -324,9 +376,9 @@ public final class PersonalFmManager {
 
 
     /**
-     * 私人 FM 载荷使用移动端字段名 artists/album/duration，
-     * 而既有的不可变 DTO 映射规范歌曲详情名 ar/al/dt。
-     * 在这个狭窄 API 边界归一化，而非改动每个音乐源。
+     * Personal-FM payloads use the mobile field names artists/album/duration,
+     * while the existing immutable DTO maps canonical song-detail names ar/al/dt.
+     * Normalize at this narrow API boundary instead of changing every music source.
      */
     private static JsonObject normalizeSongPayload(JsonObject source) {
         JsonObject normalized = new JsonObject();
@@ -359,7 +411,7 @@ public final class PersonalFmManager {
         return array(result, "songs", "data");
     }
 
-    /** 基本 /radio/get 端点以 data:{...} 返回一首歌。 */
+    /** The basic /radio/get endpoint returns one song as data:{...}. */
     private static JsonObject extractSingleSong(JsonObject root) {
         if (root == null) return null;
         JsonObject data = object(root, "data");

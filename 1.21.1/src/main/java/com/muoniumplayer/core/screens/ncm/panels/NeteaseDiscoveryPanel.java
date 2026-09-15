@@ -7,6 +7,7 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseRecentPlaysService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
@@ -166,6 +167,10 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
                     loadQQPage();
                     return;
                 }
+                if (platform == MusicPlatform.KUGOU) {
+                    loadKuGouPage();
+                    return;
+                }
                 // 这三页是"中转"：取完数据就把用户送到别处，自己不显示内容。导航栏现在走
                 // NCMScreen#navigateAsync 直达，正常不会再进到这里；仍然保留是因为它们还能被
                 // 历史记录、外部调用重新实例化。切页用 replaceCurrentPanel —— 用 setCurrentPanel
@@ -268,15 +273,127 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         MultiThreadingUtil.runOnMainThread(this::renderLayout);
     }
 
+    /**
+     * 酷狗分支。
+     *
+     * <p>酷狗的热搜/榜单/最近播放都能落到同一套 {@code Entry} 列表上，所以不走 QQ 那种
+     * 「整页替换成卡片墙」的路径——这里只填列表内容，布局仍由公共的 {@link #renderLayout} 负责。</p>
+     */
+    private void loadKuGouPage() {
+        if (page == Page.TOP_LISTS) {
+            NCMPanel target = loadKuGouTopListsPanel();
+            MultiThreadingUtil.runOnMainThread(() -> {
+                loading = false;
+                if (target == null) {
+                    status = "酷狗排行榜暂无内容";
+                    renderLayout();
+                } else {
+                    NCMScreen.getInstance().replaceCurrentPanel(target);
+                }
+            });
+            return;
+        }
+        if (page == Page.RECENT_SONGS) {
+            NCMPanel target = loadKuGouRecentSongsPanel();
+            MultiThreadingUtil.runOnMainThread(() -> {
+                loading = false;
+                if (target == null) {
+                    status = "暂无最近播放记录或登录状态已失效";
+                    renderLayout();
+                } else {
+                    NCMScreen.getInstance().replaceCurrentPanel(target);
+                }
+            });
+            return;
+        }
+        if (page == Page.DIGITAL_ALBUMS) {
+            // 酷狗没有「数字专辑」这个概念，用每日推荐顶上——它同样是「平台替用户挑的内容」。
+            NCMPanel target = loadKuGouDailyPanel();
+            MultiThreadingUtil.runOnMainThread(() -> {
+                loading = false;
+                if (target == null) {
+                    status = "酷狗每日推荐暂无内容";
+                    renderLayout();
+                } else {
+                    NCMScreen.getInstance().replaceCurrentPanel(target);
+                }
+            });
+            return;
+        }
+
+        List<String> keywords = KuGouMusicService.hotSearch();
+        List<Entry> hot = new ArrayList<>();
+        int rank = 1;
+        for (String keyword : keywords) {
+            final String selected = keyword;
+            hot.add(new Entry(rank++ + ". " + keyword, "点击搜索",
+                    () -> openKuGouSongSearch(selected)));
+        }
+        entries = hot;
+        status = hot.isEmpty() ? "酷狗热搜暂无内容" : "酷狗实时热搜 · 共 " + hot.size() + " 项";
+        loading = false;
+        MultiThreadingUtil.runOnMainThread(this::renderLayout);
+    }
+
+    /** 酷狗热搜点击后按关键词搜索，与网易云那条路径保持一致的单结果列表体验。 */
+    private static void openKuGouSongSearch(String keyword) {
+        if (keyword == null || keyword.trim().isEmpty()) return;
+        MultiThreadingUtil.runAsync(() -> {
+            List<Music> songs = KuGouMusicService.search(keyword.trim(), 100);
+            MultiThreadingUtil.runOnMainThread(() -> openSongs("搜索 · " + keyword.trim(), songs));
+        });
+    }
+
+    /** 酷狗排行榜卡片墙，与 {@link #loadQQTopListsPanel()} 同形。 */
+    public static NCMPanel loadKuGouTopListsPanel() {
+        List<PlayList> cards = KuGouMusicService.rankPlaylists();
+        if (cards.isEmpty()) return null;
+        return new HomePanel(cards, "酷狗排行榜 · " + cards.size());
+    }
+
+    /** 酷狗最近播放，与 {@link #loadRecentSongsPanel()} 同形。 */
+    public static NCMPanel loadKuGouRecentSongsPanel() {
+        List<Music> songs = KuGouMusicService.recentSongs(100);
+        if (songs.isEmpty()) return null;
+        return buildSongsPanel(songs, false);
+    }
+
+    /** 酷狗每日推荐。 */
+    public static NCMPanel loadKuGouDailyPanel() {
+        List<Music> songs = KuGouMusicService.dailyRecommend();
+        if (songs.isEmpty()) return null;
+        return buildSongsPanel(songs, false);
+    }
+
     private String pageTitle() {
         if (platform == MusicPlatform.QQ && page == Page.TOP_LISTS) return "QQ 音乐排行榜";
         if (platform == MusicPlatform.QQ && page == Page.HOT_SEARCH) return "QQ 音乐热搜";
+        if (platform == MusicPlatform.KUGOU) {
+            switch (page) {
+                case TOP_LISTS: return "酷狗排行榜";
+                case HOT_SEARCH: return "酷狗热搜";
+                case RECENT_SONGS: return "酷狗最近播放";
+                case DIGITAL_ALBUMS: return "酷狗每日推荐";
+                default: break;
+            }
+            return page.title;
+        }
         return page.title;
     }
 
     private String pageSubtitle() {
         if (platform == MusicPlatform.QQ && page == Page.TOP_LISTS) return "QQ 音乐巅峰榜 · 复用播放器现有列表与播放样式";
         if (platform == MusicPlatform.QQ && page == Page.HOT_SEARCH) return "QQ 音乐实时热搜 · 点击直接搜索";
+        if (platform == MusicPlatform.KUGOU) {
+            switch (page) {
+                case TOP_LISTS: return "酷狗榜单 · 数据来自酷狗官方排行";
+                case HOT_SEARCH: return "酷狗实时热搜 · 点击直接搜索";
+                case RECENT_SONGS: return "酷狗听歌历史 · 需要登录";
+                case DIGITAL_ALBUMS: return "酷狗每日推荐 · 每天更新";
+                default: break;
+            }
+            return page.subtitle;
+        }
         return page.subtitle;
     }
 

@@ -4,6 +4,8 @@ import today.opai.api.enums.EnumChatColor;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
+import com.muoniumplayer.core.ncm.music.KuGouLikedCache;
+import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.PlayerQueueIcons;
@@ -447,14 +449,17 @@ public class MusicWidget extends RoundedRectWidget {
         lblMusicDuration.setClickable(false);
 
         // ===== 收藏：歌曲喜欢/取消喜欢 + 加入歌单 =====
+        // 酷狗也走这两个按钮。原先它们被写死成 music.isNetease()，所以切到酷狗后整排收藏控件
+        // 直接消失——不是"点了没反应"，是根本没画出来。现在改成"当前源是否支持收藏"。
+        final boolean likeable = music.isNetease() || music.isKuGou();
         ThemedTextureIconWidget btnLike = new ThemedTextureIconWidget(
                 PlayerIconAssets.FAVORITE, "☆", FontManager.pf16bold, 0, 0, 20, 20);
         this.addChild(btnLike);
         btnLike.setShouldOverrideMouseCursor(true);
-        btnLike.setHidden(!music.isNetease());
-        btnLike.setClickable(music.isNetease());
+        btnLike.setHidden(!likeable);
+        btnLike.setClickable(likeable);
         btnLike.setBeforeRenderCallback(() -> {
-            boolean liked = CloudMusic.likeList != null && CloudMusic.likeList.contains(music.getId());
+            boolean liked = isLiked(music);
             btnLike.setColor(liked ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                     : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             btnLike.centerVertically();
@@ -464,15 +469,23 @@ public class MusicWidget extends RoundedRectWidget {
                     btnLike.getRelativeY());
         });
         btnLike.setOnClickCallback((x, y, button) -> {
-            if (button != 0 || !music.isNetease())
+            if (button != 0 || !likeable)
                 return false;
 
-            boolean liked = CloudMusic.likeList != null && CloudMusic.likeList.contains(music.getId());
+            boolean liked = isLiked(music);
             if (!liked) {
-                if (CloudMusic.likeList != null && !CloudMusic.likeList.contains(music.getId())) {
-                    CloudMusic.likeList.add(music.getId());
+                if (music.isNetease()) {
+                    if (CloudMusic.likeList != null && !CloudMusic.likeList.contains(music.getId())) {
+                        CloudMusic.likeList.add(music.getId());
+                    }
+                    MultiThreadingUtil.runAsync(() -> music.setLike(true));
+                } else {
+                    noteKuGouLiked(music, true);
+                    MultiThreadingUtil.runAsync(() -> {
+                        boolean ok = KuGouMusicService.likeTrack(music);
+                        if (!ok) noteKuGouLiked(music, false);
+                    });
                 }
-                MultiThreadingUtil.runAsync(() -> music.setLike(true));
                 return true;
             }
 
@@ -481,10 +494,18 @@ public class MusicWidget extends RoundedRectWidget {
                     "取消后，这首歌曲将从“我喜欢的音乐”中移除。",
                     "取消收藏",
                     () -> {
-                        if (CloudMusic.likeList != null) {
-                            CloudMusic.likeList.remove(music.getId());
+                        if (music.isNetease()) {
+                            if (CloudMusic.likeList != null) {
+                                CloudMusic.likeList.remove(music.getId());
+                            }
+                            MultiThreadingUtil.runAsync(() -> music.setLike(false));
+                        } else {
+                            noteKuGouLiked(music, false);
+                            MultiThreadingUtil.runAsync(() -> {
+                                boolean ok = KuGouMusicService.unlikeTrack(music);
+                                if (!ok) noteKuGouLiked(music, true);
+                            });
                         }
-                        MultiThreadingUtil.runAsync(() -> music.setLike(false));
                     }
             );
             return true;
@@ -495,8 +516,8 @@ public class MusicWidget extends RoundedRectWidget {
         IconWidget btnAddToPlaylist = PlayerQueueIcons.newAddToPlaylistButton(20);
         this.addChild(btnAddToPlaylist);
         btnAddToPlaylist.setShouldOverrideMouseCursor(true);
-        btnAddToPlaylist.setHidden(!music.isNetease());
-        btnAddToPlaylist.setClickable(music.isNetease());
+        btnAddToPlaylist.setHidden(!likeable);
+        btnAddToPlaylist.setClickable(likeable);
         btnAddToPlaylist.setBeforeRenderCallback(() -> {
             btnAddToPlaylist.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             btnAddToPlaylist.centerVertically();
@@ -504,7 +525,7 @@ public class MusicWidget extends RoundedRectWidget {
                     btnAddToPlaylist.getRelativeY());
         });
         btnAddToPlaylist.setOnClickCallback((x, y, button) -> {
-            if (button != 0 || !music.isNetease())
+            if (button != 0 || !likeable)
                 return false;
             NCMScreen.getInstance().openAddToPlaylist(music);
             return true;
@@ -523,11 +544,9 @@ public class MusicWidget extends RoundedRectWidget {
             btnPlayNext.setColor(queued ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                     : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             btnPlayNext.centerVertically();
-            // The two Netease-only controls are hidden for third-party tracks, and a hidden widget's
+            // The two collect controls are hidden for unsupported sources, and a hidden widget's
             // position is not a reliable anchor, so fall back to the fixed duration slot in that case.
-            double anchorX = music.isNetease()
-                    ? btnAddToPlaylist.getRelativeX()
-                    : actionsAnchorX(lblMusicDuration);
+            double anchorX = likeable ? btnAddToPlaylist.getRelativeX() : actionsAnchorX(lblMusicDuration);
             btnPlayNext.setPosition(anchorX - ACTION_GAP - btnPlayNext.getWidth(), btnPlayNext.getRelativeY());
         });
         btnPlayNext.setOnClickCallback((x, y, button) -> {
@@ -536,6 +555,34 @@ public class MusicWidget extends RoundedRectWidget {
             CloudMusic.playNext(music);
             return true;
         });
+    }
+
+    /**
+     * 这首歌当前是否已收藏。
+     *
+     * <p>网易云有 {@code CloudMusic.likeList} 这个全量 id 表可以直接查；酷狗那边「我喜欢」是一个
+     * 真实的歌单，逐首判断要拉整张表，代价太大，所以走本地乐观集合：点过就记下来，
+     * 失败时回滚。这样图标在点击后立刻变色，同时不必为了画一个图标去发请求。</p>
+     */
+    private static boolean isLiked(Music music) {
+        if (music == null) return false;
+        if (music.isNetease()) {
+            return CloudMusic.likeList != null && CloudMusic.likeList.contains(music.getId());
+        }
+        if (music.isKuGou()) {
+            return KuGouLikedCache.contains(music.getStableKey());
+        }
+        return false;
+    }
+
+    /** 记录/撤销「已经在「我喜欢」里」这个本地判断。失败回滚用得到。 */
+    private static void noteKuGouLiked(Music music, boolean liked) {
+        if (music == null) return;
+        if (liked) {
+            KuGouLikedCache.add(music.getStableKey());
+        } else {
+            KuGouLikedCache.remove(music.getStableKey());
+        }
     }
 
     /**

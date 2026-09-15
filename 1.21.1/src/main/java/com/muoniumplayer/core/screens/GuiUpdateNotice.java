@@ -1,84 +1,44 @@
 package com.muoniumplayer.core.screens;
 
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
-import com.muoniumplayer.compat.mc.GuiButton;
 import com.muoniumplayer.compat.mc.GuiScreen;
+import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
+import com.muoniumplayer.core.screens.ncm.UpdateNoticeOverlay;
 import com.muoniumplayer.core.update.UpdateChecker;
+import com.muoniumplayer.render.skija.SkijaGfx;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.TitleScreen;
-import net.minecraft.client.resources.sounds.SimpleSoundInstance;
-import net.minecraft.sounds.SoundEvents;
 
 import java.io.IOException;
-import java.net.URI;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
- * 「有新版本」的主菜单提示。
+ * 「有新版本」提示的宿主界面。
  *
- * <p>与 {@link GuiFfmpegNotice} 同构，理由也一样：这个提示要在<b>主菜单</b>就弹出来，那时播放器界面、
- * 主题色、离屏 framebuffer 都还没进入工作状态，所以用原版 {@link GuiScreen} + {@link GuiButton}，
- * 不碰 Mod 自己的渲染栈。刻意不用矩阵栈缩放标题：{@code getModelViewStack()} 在 1.20.1 上是
- * {@code pushPose/popPose}、在 1.21+ 上是 JOML 的 {@code pushMatrix/popMatrix}，
- * 不缩放就能让四个版本共用一份完全相同的源码。</p>
+ * <p>与 {@link GuiFfmpegNotice} 同构：这个提示要在<b>主菜单</b>就弹出来，而主菜单上没有播放器
+ * 界面可以承载浮层，所以用一个最薄的原版 {@code Screen} 当宿主，界面本体全部交给
+ * {@link UpdateNoticeOverlay}（它跑在模组的 Skija 渲染栈上，与播放器里的模态提示同一套组件）。
+ * 宿主只做四件事：</p>
+ * <ol>
+ *   <li>开一帧 Skija —— compat 的 {@link GuiScreen#render} 已经在做（它每帧
+ *       {@code SkijaHost.beginFrame/endFrame}，合成由帧末的 mixin 完成）；</li>
+ *   <li>每帧把窗口尺寸灌给浮层（窗口 resize / 改 GUI Scale 后布局与鼠标映射立即正确）；</li>
+ *   <li>把 1.8.9 形状的鼠标/按键事件转给浮层；</li>
+ *   <li>浮层收起后回到原来的界面。</li>
+ * </ol>
  *
- * <p>四条出口都不拦路：前往下载 / 复制下载链接 / 之后再说（ESC 等价）/ 跳过这个版本，
- * 另有「不再检查更新」彻底关掉联网检查。</p>
+ * <p>这里以前是「原版 GuiScreen + GuiButton + GuiGraphics 画字」的实现，有两个具体毛病：
+ * 整屏偏暗（原版背景暗化之上又叠了一层 75% 黑的面板），文字颜色常量又不带 alpha，
+ * 在 1.21 的原版文字链路里就是全透明，界面上只剩三个按钮的文字。现在整屏只走 Skija 一条链路。</p>
  */
 public class GuiUpdateNotice extends GuiScreen {
-
-    private static final int BUTTON_DOWNLOAD = 1;
-    private static final int BUTTON_COPY = 2;
-    private static final int BUTTON_LATER = 3;
-
-    private static final String HEADING = "MuoniumPlayer 有新版本啦喵~";
-    private static final String SKIP_LINK = "跳过这个版本";
-    private static final String NEVER_LINK = "不再检查更新";
-
-    private static final int MAX_TEXT_WIDTH = 340;
-    private static final int BUTTON_HEIGHT = 20;
-    private static final int WIDE_BUTTON_WIDTH = 200;
-    private static final int NARROW_BUTTON_WIDTH = 128;
-
-    private static final int PANEL_TOP_PAD = 18;
-    private static final int HEADING_GAP = 12;
-    private static final int BODY_GAP = 16;
-    private static final int BUTTON_GAP = 6;
-    private static final int LINK_GAP = 8;
-    private static final int LINK_SPACING = 24;
-    private static final int PANEL_BOTTOM_PAD = 8;
-    private static final int LINE_GAP = 2;
 
     /** 返回目标。主菜单弹出时是主菜单本身，游戏内弹出时是 {@code null}（即关闭界面）。 */
     private final net.minecraft.client.gui.screens.Screen parent;
 
-    private List<String> bodyLines = new ArrayList<String>();
-    private int wrappedForWidth = -1;
+    private final UpdateNoticeOverlay overlay = new UpdateNoticeOverlay();
 
-    private GuiButton downloadButton;
-    private GuiButton copyButton;
-    private GuiButton laterButton;
-
-    private int textWidth;
-    private int panelLeft;
-    private int panelTop;
-    private int panelRight;
-    private int panelBottom;
-    private int headingY;
-    private int bodyTop;
-    private int statusTop;
-    private int downloadButtonTop;
-    private int copyButtonTop;
-    private int laterButtonTop;
-    private int linkTop;
-    private int skipLeft;
-    private int skipRight;
-    private int neverLeft;
-    private int neverRight;
-
-    /** 点了「复制下载链接」或浏览器打不开时的一行反馈。 */
-    private String status;
+    /** 窗口 resize 会让原版重新调用 {@code init()}，界面本体只能搭一次，否则子组件会越挂越多。 */
+    private boolean overlayBuilt;
 
     public GuiUpdateNotice(net.minecraft.client.gui.screens.Screen parent) {
         this.parent = parent;
@@ -88,10 +48,10 @@ public class GuiUpdateNotice extends GuiScreen {
      * 每 tick 调一次：条件满足就把提示顶到最前面。
      *
      * <p>与 {@link GuiFfmpegNotice#tickAutoShow(Minecraft)} 同样用轮询而不是界面切换事件：
-     * 清单是在后台线程上拉的，主菜单出现的那一刻结论往往还没回来，换 GUI 只有一次机会。</p>
+     * 版本清单是在后台线程上拉的，主菜单出现的那一刻结论往往还没回来，换 GUI 只有一次机会。</p>
      *
-     * <p>ffmpeg 提示先弹的情况下这里读到的当前界面不是主菜单，于是本 tick 直接跳过，
-     * 等用户关掉那个提示回到主菜单再弹 —— 两个提示天然排队，不会互相盖掉。</p>
+     * <p>ffmpeg 提示先弹的情况下这里读到的当前界面不是主菜单，于是本 tick 直接跳过，等用户关掉
+     * 那个提示回到主菜单再弹 —— 两个提示天然排队，不会互相盖掉。</p>
      */
     public static void tickAutoShow(Minecraft mc) {
         if (mc == null) return;
@@ -108,262 +68,59 @@ public class GuiUpdateNotice extends GuiScreen {
 
     @Override
     public void initGui() {
-        this.buttonList.clear();
-        layout();
-
-        int centerX = this.width / 2;
-        this.downloadButton = new GuiButton(BUTTON_DOWNLOAD,
-                centerX - WIDE_BUTTON_WIDTH / 2, this.downloadButtonTop,
-                WIDE_BUTTON_WIDTH, BUTTON_HEIGHT, "前往下载");
-        this.copyButton = new GuiButton(BUTTON_COPY,
-                centerX - WIDE_BUTTON_WIDTH / 2, this.copyButtonTop,
-                WIDE_BUTTON_WIDTH, BUTTON_HEIGHT, "复制下载链接");
-        this.laterButton = new GuiButton(BUTTON_LATER,
-                centerX - NARROW_BUTTON_WIDTH / 2, this.laterButtonTop,
-                NARROW_BUTTON_WIDTH, BUTTON_HEIGHT, "之后再说");
-        this.buttonList.add(this.downloadButton);
-        this.buttonList.add(this.copyButton);
-        this.buttonList.add(this.laterButton);
-    }
-
-    /**
-     * 按当前窗口尺寸算出正文换行、面板范围、三个按钮与两条文字链接的位置。
-     *
-     * <p>自下而上摆按钮和链接、自上而下摆标题和正文，面板高度取两边之和：任何一段文字变长
-     * （换行多一行、或出现了「已复制」那行反馈）时面板跟着变高，不会让按钮压在正文上。</p>
-     */
-    private void layout() {
-        this.textWidth = Math.max(120, Math.min(MAX_TEXT_WIDTH, this.width - 60));
-        if (this.wrappedForWidth != this.textWidth) {
-            this.wrappedForWidth = this.textWidth;
-            this.bodyLines = wrap(buildBody());
-        }
-
-        int lineHeight = this.fontRendererObj.FONT_HEIGHT + LINE_GAP;
-        int bodyHeight = this.bodyLines.size() * lineHeight;
-        int statusHeight = this.status == null ? 0 : lineHeight + 2;
-        int linkHeight = this.fontRendererObj.FONT_HEIGHT + 4;
-
-        int contentHeight = PANEL_TOP_PAD + this.fontRendererObj.FONT_HEIGHT + HEADING_GAP
-                + bodyHeight + statusHeight + BODY_GAP
-                + BUTTON_HEIGHT + BUTTON_GAP + BUTTON_HEIGHT + BUTTON_GAP + BUTTON_HEIGHT
-                + LINK_GAP + linkHeight + PANEL_BOTTOM_PAD;
-
-        // 面板至少要装得下最宽的按钮（200px），否则窄窗口下按钮会横着穿出底板。
-        int panelWidth = Math.min(this.textWidth + 40, Math.max(80, this.width - 8));
-        panelWidth = Math.max(panelWidth, Math.min(Math.max(80, this.width - 8), WIDE_BUTTON_WIDTH + 16));
-        int panelHeight = Math.min(Math.max(40, this.height - 8), contentHeight);
-
-        this.panelLeft = this.width / 2 - panelWidth / 2;
-        this.panelRight = this.panelLeft + panelWidth;
-        this.panelTop = this.height / 2 - panelHeight / 2;
-        this.panelBottom = this.panelTop + panelHeight;
-
-        this.headingY = this.panelTop + PANEL_TOP_PAD;
-        this.bodyTop = this.headingY + this.fontRendererObj.FONT_HEIGHT + HEADING_GAP;
-        this.statusTop = this.bodyTop + bodyHeight;
-
-        this.linkTop = this.panelBottom - PANEL_BOTTOM_PAD - linkHeight;
-        this.laterButtonTop = this.linkTop - LINK_GAP - BUTTON_HEIGHT;
-        this.copyButtonTop = this.laterButtonTop - BUTTON_GAP - BUTTON_HEIGHT;
-        this.downloadButtonTop = this.copyButtonTop - BUTTON_GAP - BUTTON_HEIGHT;
-
-        int skipWidth = showSkipLink() ? this.fontRendererObj.getStringWidth(SKIP_LINK) : 0;
-        int neverWidth = this.fontRendererObj.getStringWidth(NEVER_LINK);
-        int spacing = showSkipLink() ? LINK_SPACING : 0;
-        int linksLeft = this.width / 2 - (skipWidth + spacing + neverWidth) / 2;
-        this.skipLeft = linksLeft;
-        this.skipRight = linksLeft + skipWidth;
-        this.neverLeft = this.skipRight + spacing;
-        this.neverRight = this.neverLeft + neverWidth;
-
-        if (this.downloadButton != null) {
-            this.downloadButton.xPosition = this.width / 2 - WIDE_BUTTON_WIDTH / 2;
-            this.downloadButton.yPosition = this.downloadButtonTop;
-        }
-        if (this.copyButton != null) {
-            this.copyButton.xPosition = this.width / 2 - WIDE_BUTTON_WIDTH / 2;
-            this.copyButton.yPosition = this.copyButtonTop;
-        }
-        if (this.laterButton != null) {
-            this.laterButton.xPosition = this.width / 2 - NARROW_BUTTON_WIDTH / 2;
-            this.laterButton.yPosition = this.laterButtonTop;
-        }
-    }
-
-    /** 关键更新不给「跳过这个版本」，只留「之后再说」与「不再检查更新」。 */
-    private static boolean showSkipLink() {
-        return !UpdateChecker.isCritical();
-    }
-
-    private String buildBody() {
-        StringBuilder body = new StringBuilder();
-        body.append("当前 ").append(UpdateChecker.currentVersion())
-                .append("，最新 ").append(UpdateChecker.latestVersion())
-                .append("（").append(UpdateChecker.channel()).append("）。");
-        String notes = UpdateChecker.releaseNotes();
-        if (notes != null && !notes.isEmpty()) {
-            body.append(" ").append(notes);
-        }
-        return body.toString();
-    }
-
-    private List<String> wrap(String text) {
-        List<String> lines;
-        try {
-            lines = this.fontRendererObj.listFormattedStringToWidth(text, this.textWidth);
-        } catch (Throwable ignored) {
-            // 换行只是排版：出问题也要让用户看得到出口按钮。
-            lines = null;
-        }
-        if (lines == null || lines.isEmpty()) {
-            lines = new ArrayList<String>();
-            lines.add(text);
-        }
-        return lines;
+        if (overlayBuilt) return;
+        overlayBuilt = true;
+        overlay.onInit();
     }
 
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
-        drawDefaultBackground();
-        // 每帧重算：出现「已复制」那一行反馈时面板要变高，按钮也要跟着往下走。
-        layout();
-
-        drawRect(this.panelLeft, this.panelTop, this.panelRight, this.panelBottom, 0xC0101010);
-        drawRect(this.panelLeft, this.panelTop, this.panelRight, this.panelTop + 1, 0x40FFFFFF);
-        drawRect(this.panelLeft, this.panelBottom - 1, this.panelRight, this.panelBottom, 0x40FFFFFF);
-
-        drawCenteredString(this.fontRendererObj, HEADING, this.width / 2, this.headingY, 0xFFFFFF);
-
-        int lineHeight = this.fontRendererObj.FONT_HEIGHT + LINE_GAP;
-        int y = this.bodyTop;
-        for (int index = 0; index < this.bodyLines.size(); index++) {
-            drawCenteredString(this.fontRendererObj, this.bodyLines.get(index), this.width / 2, y, 0xC8C8C8);
-            y += lineHeight;
+        // compat 的 render 只在 Skija 帧拿到 canvas 时才调 drawScreen，所以这里理论上一定在帧内；
+        // 再判一次是为了让「渲染层这一帧不可用」的情况整段跳过，而不是画一半。
+        if (!SkijaGfx.active()) {
+            return;
         }
-
-        if (this.status != null) {
-            drawCenteredString(this.fontRendererObj, this.status, this.width / 2, this.statusTop + 2, 0xFFB74D);
+        // 提示显示期间不渲染 HUD，RenderSystem 的分辨率会停在上一次游戏帧；不刷新的话窗口 resize
+        // 或改 GUI Scale 之后布局与鼠标映射都会错位（这是它自己在 javadoc 里写明的用法）。
+        RenderSystem.refreshResolution();
+        RenderSystem.FIXED_SCALE = false;
+        overlay.setBounds(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
+        overlay.renderWidget(mouseX, mouseY, 0);
+        if (overlay.shouldClose()) {
+            dismiss();
         }
-
-        if (showSkipLink()) {
-            drawLink(SKIP_LINK, this.skipLeft, this.skipRight, isOverSkip(mouseX, mouseY));
-        }
-        drawLink(NEVER_LINK, this.neverLeft, this.neverRight, isOverNever(mouseX, mouseY));
-
-        super.drawScreen(mouseX, mouseY, partialTicks);
-    }
-
-    /** 原版没有「文字链接」控件：悬停时补一条下划线表示这一行可以点。 */
-    private void drawLink(String text, int left, int right, boolean hovering) {
-        drawCenteredString(this.fontRendererObj, text, (left + right) / 2,
-                this.linkTop + 2, hovering ? 0xFFFFA0 : 0x909090);
-        if (hovering) {
-            drawRect(left, this.linkTop + 2 + this.fontRendererObj.FONT_HEIGHT,
-                    right, this.linkTop + 3 + this.fontRendererObj.FONT_HEIGHT, 0xFFFFFFA0);
-        }
-    }
-
-    private boolean isOverSkip(int mouseX, int mouseY) {
-        return showSkipLink() && isOverLinkRow(mouseX, mouseY, this.skipLeft, this.skipRight);
-    }
-
-    private boolean isOverNever(int mouseX, int mouseY) {
-        return isOverLinkRow(mouseX, mouseY, this.neverLeft, this.neverRight);
-    }
-
-    private boolean isOverLinkRow(int mouseX, int mouseY, int left, int right) {
-        int linkHeight = this.fontRendererObj.FONT_HEIGHT + 4;
-        return mouseX >= left && mouseX <= right
-                && mouseY >= this.linkTop && mouseY <= this.linkTop + linkHeight;
     }
 
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
-        if (mouseButton == 0 && isOverSkip(mouseX, mouseY)) {
-            playClick();
-            UpdateChecker.skipCurrentVersion();
-            dismiss();
-            return;
-        }
-        if (mouseButton == 0 && isOverNever(mouseX, mouseY)) {
-            playClick();
-            UpdateChecker.disable();
-            dismiss();
-            return;
-        }
-        super.mouseClicked(mouseX, mouseY, mouseButton);
-    }
-
-    /** 原版按钮自己会发这声，手写的文字链接得补一次，否则点上去毫无反馈。 */
-    private void playClick() {
-        this.mc.getSoundManager().play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.0F));
-    }
-
-    @Override
-    protected void actionPerformed(GuiButton button) throws IOException {
-        if (button.id == BUTTON_DOWNLOAD) {
-            if (openDownloadPage()) {
-                dismiss();
-            } else {
-                // 打不开浏览器（无桌面环境 / 被沙箱拦住）时把地址塞进剪贴板，别让用户照着抄。
-                copyDownloadPage("打不开浏览器喵…");
-            }
-            return;
-        }
-        if (button.id == BUTTON_COPY) {
-            copyDownloadPage("");
-            return;
-        }
-        if (button.id == BUTTON_LATER) {
-            dismiss();
-        }
-    }
-
-    private void copyDownloadPage(String prefix) {
-        String page = UpdateChecker.downloadPage();
-        // setClipboardString 走的是原版 KeyboardHandler（GLFW 剪贴板），headless 下也有效。
-        setClipboardString(page);
-        this.status = prefix + "地址已复制到剪贴板：" + page;
+        // 悬停状态是上一帧渲染时算出来的，所以派发要放在渲染之后——调用点本来就是这个顺序。
+        overlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
     }
 
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
-        // 必须覆盖：原版的 ESC 是把界面设成 null，在主菜单上那会把主菜单一起关掉、剩一个黑屏。
+        // 必须覆盖：compat 基类的 ESC 是 setScreen(null)，在主菜单上那会把主菜单一起关掉、剩一个黑屏。
+        // 这里 ESC 等价于「之后再说」，回到原来的界面。
         if (keyCode == Keyboard.KEY_ESCAPE) {
-            dismiss();
+            overlay.handleEscape();
+        }
+    }
+
+    /**
+     * 原版自己还有关闭界面的路径（{@code onClose()} 是 ESC 的默认落点）。
+     *
+     * <p>「必须更新」时在这里再兜一道：我们自己的 ESC 走 {@link UpdateNoticeOverlay#handleEscape()}，
+     * 但「关不关得成」不该只由那一条路径决定。</p>
+     */
+    @Override
+    public void onClose() {
+        if (overlay.blocksClosing()) {
             return;
         }
-        super.keyTyped(typedChar, keyCode);
+        dismiss();
     }
 
     private void dismiss() {
         this.mc.setScreen(this.parent);
-    }
-
-    /**
-     * 打开下载页。
-     *
-     * <p>与 {@link GuiFfmpegNotice} 同一条路：先反射 {@code java.awt.Desktop}（反射是为了不在错误的
-     * 时机把 AWT 类加载进来），失败退到 LWJGL 的 {@code Sys.openURL}，再失败由调用方退到剪贴板。
-     * 地址一定在 {@code UpdateChecker} 的域名白名单里，不会被清单牵去任意站点。</p>
-     */
-    private boolean openDownloadPage() {
-        String page = UpdateChecker.downloadPage();
-        if (!UpdateChecker.isAllowedPage(page)) {
-            return false;
-        }
-        try {
-            Class<?> desktopClass = Class.forName("java.awt.Desktop");
-            Object desktop = desktopClass.getMethod("getDesktop").invoke(null);
-            desktopClass.getMethod("browse", URI.class).invoke(desktop, new URI(page));
-            return true;
-        } catch (Throwable ignored) {
-        }
-        try {
-            return com.muoniumplayer.compat.lwjgl2.Sys.openURL(page);
-        } catch (Throwable ignored) {
-            return false;
-        }
     }
 }

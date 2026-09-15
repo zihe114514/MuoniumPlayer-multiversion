@@ -43,3 +43,19 @@ error-report-*/
 
 # Codex 临时上游源码参考（不参与项目构建）
 .codex-reference/
+
+# ---- 开发期草稿 / 本地参考资料（不入库）----
+# 会话临时脚本、探针结果与备份。注意 memory/ 是要入库的，所以只忽略这几个子目录
+/.workbuddy/tmp/
+# 酷狗 API 参考实现的两份本地副本（上游 zip 解包 + git clone），仅查阅用
+/.workbuddy/kugou-ref/
+/.workbuddy/kugou-zip/
+
+# 注释翻译 / 扫描用的一次性脚本与清单（长期保留的正式工具在 tools/ 下）
+/1.21.11 recode/*.py
+/1.21.11 recode/untranslated_files.txt
+
+# 脚本手滑产生的零字节文件（`-` 是重定向目标写漏；download.html 与 分析对象 同类）
+/-
+/download.html
+/分析对象

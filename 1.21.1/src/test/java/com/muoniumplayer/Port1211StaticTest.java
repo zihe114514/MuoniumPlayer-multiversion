@@ -108,7 +108,7 @@ class Port1211StaticTest {
     }
 
     @Test
-    @DisplayName("1.21.1 改过签名的三个调用点不许退回 1.20.1 写法")
+    @DisplayName("1.21.1 改过签名的调用点不许退回旧写法，GUI 文字不许再用模型视图栈")
     void 新签名不许回退() throws IOException {
         String guiScreen = stripComments(read(GUI_SCREEN));
         assertTrue(guiScreen.contains("renderBackground(currentDrawContext, 0, 0, 0.0F)"),
@@ -117,10 +117,14 @@ class Port1211StaticTest {
                 "GuiEventListener#mouseScrolled 在 1.21.1 拆成了水平/垂直两个分量");
 
         String notice = stripComments(read(FFMPEG_NOTICE));
-        assertTrue(notice.contains("getModelViewStack().pushMatrix()") && notice.contains("getModelViewStack().popMatrix()"),
-                "1.21.1 的 getModelViewStack() 返回 JOML 的 Matrix4fStack，方法名是 pushMatrix/popMatrix");
-        assertFalse(notice.contains("getModelViewStack().push()") || notice.contains("getModelViewStack().pop()"),
-                "MC 自己包的 push/pop 在 1.21.1 已经没有了");
+        // 这个提示整套界面在 Skija 上（FfmpegNoticeOverlay），宿主只开帧、转发输入、关闭时返回。
+        assertTrue(notice.contains("FfmpegNoticeOverlay"),
+                "提示界面必须由 Skija 浮层渲染（FfmpegNoticeOverlay），不要退回原版控件自绘");
+        // 曾经这里用 RenderSystem.getModelViewStack() 缩放标题。那是给 3D 世界用的 Matrix4fStack，
+        // 而 GUI 文字由 GuiGraphics 自己的 pose 栈（1.21.11 起是 org.joml.Matrix3x2fStack）定位，
+        // 两者不相干——于是标题按未变换坐标画到屏幕左上角、左半被裁掉，一直没被发现。
+        assertFalse(notice.contains("getModelViewStack()"),
+                "GUI 文字的变换只能压到 GuiGraphics 的 pose 栈上，模型视图栈对它无效");
     }
 
     @Test

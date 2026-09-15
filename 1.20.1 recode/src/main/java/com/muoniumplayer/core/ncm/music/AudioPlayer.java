@@ -67,6 +67,29 @@ public class AudioPlayer {
     /** Set by {@link #prepareStart(float)}: the reader is cued, the shelf is wired and the window warm. */
     private volatile boolean prepared;
 
+    /**
+     * The intent "this deck has been asked to play", latched synchronously at the moment
+     * {@link #play()} queues its command.
+     *
+     * <p><b>Why this exists.</b> {@code AudioSample.isPlaying()} reads the engine thread's state, while
+     * {@code play()} only queues a command - it takes effect at the audio thread's next
+     * {@code generateNextBuffer()}. Until then {@code isPlaying()} is still false. The player UI draws
+     * its pause icon from exactly {@code !isPlaying()}, so "decoded, command queued, sound arriving any
+     * moment" and "not playing at all" look identical on screen.</p>
+     *
+     * <p>First playback makes that window especially long: between the decode finishing and
+     * {@code play()} there is a {@code loadLyric()} network round trip (a multi-source lyric match on
+     * the first run), preceded by a fixed 250 ms wait in {@code stopPreviousPlayer()}. What the user
+     * sees is a track already audible while the pause icon and the progress bar have not moved.</p>
+     *
+     * <p>Splitting "intent" from "engine state" means the UI's question to {@link #isPausing()} is
+     * answered by whether this playback counts as running from the user's point of view, no longer
+     * jittering with the command queue's latency. It deliberately does <b>not</b> replace
+     * {@code isPlaying()}: code that truly needs to know whether the engine is sounding still asks the
+     * engine.</p>
+     */
+    private volatile boolean playRequested;
+
     public AudioPlayer(File file) {
         finished = false;
         this.player = loadUsableSoundFile(file);
@@ -87,6 +110,10 @@ public class AudioPlayer {
         finished = false;
         this.closed = false;
         this.prepared = false;
+        // The new track has not been asked to play yet. This deck still carries the previous
+        // track's play intent, and leaving it set would make the UI report "playing" before the
+        // new track has actually started - the very mismatch this change fixes.
+        this.playRequested = false;
         this.bassGainDb = 0.0f;
         this.vocalDuckDepth = 0.0f;
         this.playbackRate = 1.0f;
@@ -115,6 +142,9 @@ public class AudioPlayer {
         attachAutomixChain();
 
         finished = false;
+        // Latch before queueing: once this command is in, the UI already knows this deck has been
+        // asked to play, whatever the engine thread does next - it need not wait for isPlaying().
+        this.playRequested = true;
         try {
             // Amplitude first: playback starts at the configured level instead of at the engine's
             // default of full volume for the first few rendered frames.
@@ -123,9 +153,11 @@ public class AudioPlayer {
             this.player.amp(effectiveAmp());
         } catch (ChannelMismatchException mismatch) {
             // Preserve the existing retry path in CloudMusic for channel changes.
+            this.playRequested = false;
             throw mismatch;
         } catch (RuntimeException ignored) {
             // A decoder can become invalid between validation and playback.
+            this.playRequested = false;
         }
     }
 
@@ -160,6 +192,7 @@ public class AudioPlayer {
             return;
 
         finished = false;
+        this.playRequested = true;
         try {
             this.player.amp(effectiveAmp());
             cueTo(millis);
@@ -171,9 +204,11 @@ public class AudioPlayer {
             this.player.play();
             this.player.amp(effectiveAmp());
         } catch (ChannelMismatchException mismatch) {
+            this.playRequested = false;
             throw mismatch;
         } catch (RuntimeException ignored) {
             // A decoder can become invalid between validation and playback.
+            this.playRequested = false;
         }
     }
 
@@ -214,14 +249,17 @@ public class AudioPlayer {
             return;
         }
         finished = false;
+        this.playRequested = true;
         try {
             this.player.amp(effectiveAmp());
             attachAutomixChain();   // idempotent; the chain normally survives from prepareStart()
             this.player.play();
             this.player.amp(effectiveAmp());
         } catch (ChannelMismatchException mismatch) {
+            this.playRequested = false;
             throw mismatch;
         } catch (RuntimeException ignored) {
+            this.playRequested = false;
         }
     }
 
@@ -576,6 +614,7 @@ public class AudioPlayer {
     public synchronized void close() {
         if (closed) return;
         closed = true;
+        this.playRequested = false;
         releaseAutomixChain();
         dispose(this.player);
     }
@@ -636,8 +675,29 @@ public class AudioPlayer {
         }
     }
 
+    /**
+     * Whether this deck counts as "not playing" from the user's point of view.
+     *
+     * <p>The test is the <b>play intent</b> ({@link #playRequested}), not the engine thread's
+     * {@code isPlaying()}. The latter stays false for a whole engine buffer after {@code play()} is
+     * queued, and on first playback it also sits behind decoding, a lyric network round trip and a
+     * fixed wait - so on screen a track that is already audible keeps showing as paused with the
+     * progress bar stuck at zero. That mismatch is exactly what this method removes.</p>
+     *
+     * <p>Where code needs to know whether the engine is sounding right now, ask {@link #isPlaying()}
+     * rather than inferring it from this method.</p>
+     */
     public boolean isPausing() {
-        return !isUsable() || !this.player.isPlaying();
+        return !isUsable() || !this.playRequested;
+    }
+
+    /**
+     * Whether the engine thread is sounding right now. <b>Different from {@link #isPausing()}</b>:
+     * this is the engine's real state and stays false for a buffer after {@code play()} is queued.
+     * The UI should ask {@link #isPausing()} to decide whether to draw the pause icon.
+     */
+    public boolean isPlaying() {
+        return isUsable() && this.player.isPlaying();
     }
 
     public void setVolume(float volume) {
@@ -646,6 +706,10 @@ public class AudioPlayer {
     }
 
     public void pause() {
+        // Clear intent together with the engine. Intent first: otherwise, before the engine really
+        // stops, the UI has a window of the opposite mismatch (pause pressed, play icon still shown),
+        // which is the same quantity this change is about.
+        this.playRequested = false;
         if (isUsable()) {
             try {
                 this.player.pause();

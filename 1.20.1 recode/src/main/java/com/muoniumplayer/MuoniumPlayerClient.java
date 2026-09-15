@@ -56,7 +56,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "1.4.10";
+    public static final String MOD_VERSION = "1.4.11";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -159,8 +159,8 @@ public final class MuoniumPlayerClient {
         //    标签在用户放第一首歌之前就有结论。探测会创建子进程，绝不能放在主线程上。
         FfmpegNotice.beginProbe();
 
-        // 4. 更新检查：守护线程上最多拉一次远端版本清单（结果缓存 6 小时，失败静默），
-        //    有新版本时由 GuiUpdateNotice 在主菜单弹一次提示。用户可以在提示里彻底关掉。
+        // 4. 更新检查：守护线程上最多拉一次远端版本清单（结果缓存 30 分钟，失败静默），
+        //    有新版本时由 GuiUpdateNotice 在主菜单弹一次提示。检查不可关闭，用户只能「先不更新」有限几次。
         UpdateChecker.beginCheck(MOD_VERSION, MC_VERSION, loaderId);
     }
 
@@ -207,7 +207,7 @@ public final class MuoniumPlayerClient {
         GuiFfmpegNotice.tickAutoShow(mc);
 
         // ---- 有新版本的一次性主菜单提示 ----
-        // 与上面 ffmpeg 那条同构，闸门也一样在内部：本次启动只弹一次 / 跳过这个版本 / 不再检查更新。
+        // 与上面 ffmpeg 那条同构，闸门也一样在内部：本次启动只弹一次 / 先不更新有次数上限。
         // ffmpeg 提示已经占住界面时，这里读到的当前界面不是主菜单，本 tick 直接跳过 —— 两个提示天然排队。
         GuiUpdateNotice.tickAutoShow(mc);
 

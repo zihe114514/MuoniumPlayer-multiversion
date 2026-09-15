@@ -48,11 +48,11 @@ import java.util.Set;
 import org.w3c.dom.Node;
 
 /**
- * 异步音乐封面获取、纹理上传和歌词背景模糊生成。
+ * Asynchronous music-cover retrieval, texture upload and lyric-background blur generation.
  *
- * <p>本服务刻意保留既有的异步任务边界：主
- * 封面纹理一下载完即上传，而模糊的歌词纹理在
- * 另一个任务上生成。</p>
+ * <p>This service intentionally preserves the existing asynchronous task boundaries: the main
+ * cover texture is uploaded as soon as it downloads, while the blurred lyric texture is produced
+ * on a separate task.</p>
  */
 final class MusicCoverService {
 
@@ -104,8 +104,18 @@ final class MusicCoverService {
      * 不影响播放,也不会重试到打爆接口。</p>
      */
     static void loadDynamicMusicCover(final Music music) {
-        if (music == null || !music.isNetease() || music.getId() <= 0L) {
+        if (music == null || (!music.isNetease() && !music.isKuGou())) {
             return;
+        }
+        if (music.isNetease() && music.getId() <= 0L) {
+            return;
+        }
+        // 酷狗侧要求带 hash（它是取流与歌词的同一个主键）；没有就说明这条 Music 不是从酷狗接口来的。
+        if (music.isKuGou()) {
+            String hash = music.getKugouHash();
+            if (hash == null || hash.trim().isEmpty()) {
+                return;
+            }
         }
         if (!isDynamicCoverEnabled()) {
             return;
@@ -123,9 +133,18 @@ final class MusicCoverService {
         // 没有任何理由和渲染线程争 CPU。
         BackgroundWork.submit(() -> {
             try {
-                JsonObject response = CloudMusicApi.songDynamicCover(music.getId()).toJsonObject();
-                String imageUrl = findDynamicCoverUrl(response);
-                String videoUrl = findDynamicVideoUrl(response);
+                // 两个源拿「有没有动态封面 / 在哪」的方式完全不同，只有后面的解码与安装是共用的。
+                String imageUrl;
+                String videoUrl;
+                if (music.isKuGou()) {
+                    // 酷狗只给视频，没有图片型动态封面这一支。
+                    imageUrl = "";
+                    videoUrl = KuGouMusicService.dynamicCoverUrl(music);
+                } else {
+                    JsonObject response = CloudMusicApi.songDynamicCover(music.getId()).toJsonObject();
+                    imageUrl = findDynamicCoverUrl(response);
+                    videoUrl = findDynamicVideoUrl(response);
+                }
                 if (imageUrl.isEmpty() && videoUrl.isEmpty()) {
                     // 绝大多数曲目本来就没有动态封面(接口返回 data:{}),这不是失败,但日志里必须能和
                     // "取到了却用不上"区分开,否则无法判断是曲目问题还是功能坏了。
@@ -367,7 +386,7 @@ final class MusicCoverService {
         return textureManager.getTexture(coverLocation) == null || forceReload;
     }
 
-    /** 在后台线程解析 GD 曲目封面；官方曲目原样返回。 */
+    /** Resolves a GD track cover on the background thread; official tracks return as-is. */
     private static String coverUrl(Music music, int size) {
         if (music != null && music.isGd()) {
             return music.resolveGdCoverUrl(size);
@@ -497,7 +516,7 @@ final class MusicCoverService {
                 child = child.getNextSibling();
             }
         } catch (Throwable ignored) {
-            // 非 GIF 图像读取器不暴露 GIF 元数据树。
+            // Non-GIF image readers do not expose the GIF metadata tree.
         }
         return 100L;
     }

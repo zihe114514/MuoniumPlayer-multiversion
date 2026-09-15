@@ -3,6 +3,7 @@ package com.muoniumplayer.core.screens.ncm;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
@@ -144,7 +145,8 @@ public class AddToPlaylistOverlay extends NCMPanel {
             list.setBounds(12, listY, dialog.getWidth() - 24, dialog.getHeight() - listY - 12);
         });
 
-        List<PlayList> playLists = CloudMusic.playLists;
+        // 歌单来源按曲目所属音源取：酷狗曲目要加到酷狗歌单里，两边的 id 体系不能混。
+        List<PlayList> playLists = playListsForSource();
         if (playLists == null || playLists.isEmpty()) {
             LabelWidget empty = new LabelWidget("暂无可用歌单", FontManager.pf14bold);
             list.addChild(empty);
@@ -162,6 +164,32 @@ public class AddToPlaylistOverlay extends NCMPanel {
         }
     }
 
+    /**
+     * 弹窗该列哪些歌单。
+     *
+     * <p>网易云用 {@code CloudMusic.playLists}（登录时一次性拉全量）；酷狗那边用户歌单是懒加载的，
+     * 所以先读快照，没加载过就顺手触发一次，并在回调里重画列表——不然第一次打开弹窗只会看到「暂无可用歌单」。</p>
+     */
+    private List<PlayList> playListsForSource() {
+        if (music != null && music.isKuGou()) {
+            if (!KuGouMusicService.areUserPlaylistsLoaded()) {
+                KuGouMusicService.ensureUserPlaylistsAsync(() -> {
+                    // 回调在后台线程，重建 UI 必须回主线程。
+                    MultiThreadingUtil.runOnMainThread(() -> {
+                        if (closing) return;
+                        // 列表是构建期一次性铺出来的，没有增量刷新入口，所以只能整体重建：
+                        // 先丢掉旧的子组件（包括那个"暂无可用歌单"占位），再跑一遍 onInit。
+                        getChildren().clear();
+                        onInit();
+                    });
+                });
+            }
+            List<PlayList> snapshot = KuGouMusicService.getUserPlaylistsSnapshot();
+            return snapshot == null || snapshot.isEmpty() ? null : snapshot;
+        }
+        return CloudMusic.playLists;
+    }
+
     private void submitToPlaylist(PlayList playlist) {
         if (submitting || music == null || playlist == null) {
             return;
@@ -169,13 +197,20 @@ public class AddToPlaylistOverlay extends NCMPanel {
 
         selectedPlaylist = playlist;
         final String playlistName = getPlaylistName(playlist);
-        // 本弹窗只处理网易云歌曲与网易云目标歌单，避免把跨平台稳定哈希误提交给网易云接口。
-        if (!music.isNetease() || playlist.getPlatform() != MusicPlatform.NETEASE) {
+        // 曲目与目标歌单必须是同一个音源：两边的曲目 id 体系不同，跨源提交只会写进一首错误的歌。
+        boolean sameSource = (music.isNetease() && playlist.getPlatform() == MusicPlatform.NETEASE)
+                || (music.isKuGou() && playlist.getPlatform() == MusicPlatform.KUGOU);
+        if (!sameSource) {
             submitting = false;
             closeAfterMillis = -1L;
-            showStatus("仅支持把网易云歌曲加入网易云歌单", FeedbackState.ERROR);
-            DownloadDynamicIsland.showPlaylistTrackAddFailure(playlistName, "仅支持网易云歌曲和网易云歌单");
+            showStatus("仅支持把同源歌曲加入同源歌单", FeedbackState.ERROR);
+            DownloadDynamicIsland.showPlaylistTrackAddFailure(playlistName, "歌曲与歌单不是同一个音源");
             closing = true;
+            return;
+        }
+
+        if (music.isKuGou()) {
+            submitKuGou(playlist, playlistName);
             return;
         }
 
@@ -209,6 +244,37 @@ public class AddToPlaylistOverlay extends NCMPanel {
         });
 
         // 选择目标歌单即返回播放器页面；网络请求和结果校验仍在后台继续执行。
+        closing = true;
+    }
+
+    /**
+     * 酷狗分支：加歌走 {@code cloudlist.service/v6/add_song}。
+     *
+     * <p>结果一律按「提交成功 / 失败」处理并复用同一个结果回调：酷狗这个端点只回一个
+     * {@code status}，没有网易云那种「已存在」的独立语义，所以
+     * {@code alreadyExists} 恒为 false。</p>
+     */
+    private void submitKuGou(PlayList playlist, String playlistName) {
+        submitting = true;
+        closeAfterMillis = -1L;
+        showStatus("正在加入「" + playlistName + "」…", FeedbackState.PROCESSING);
+        DownloadDynamicIsland.showPlaylistTrackAddInProgress(playlistName);
+
+        final Music target = music;
+        MultiThreadingUtil.runAsync(() -> {
+            boolean ok;
+            try {
+                ok = KuGouMusicService.addTrackToPlaylist(playlist.getPlatformPlaylistId(), target);
+            } catch (Throwable ignored) {
+                ok = false;
+            }
+            final boolean finalOk = ok;
+            MultiThreadingUtil.runOnMainThread(() -> handleSubmitResult(playlist,
+                    new CloudMusicApi.PlaylistTrackOperationResult(
+                            finalOk, false, finalOk ? 200 : 502, -1,
+                            finalOk ? "已加入歌单" : "加入歌单失败")));
+        });
+
         closing = true;
     }
 

@@ -7,6 +7,7 @@ import lombok.Data;
 import com.muoniumplayer.core.ncm.RequestUtil;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
+import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.utils.Location;
@@ -51,7 +52,7 @@ public class PlayList {
     @SerializedName("createTime")
     private final long createTime;
 
-    // 唯一字段
+    // unique fields
     public transient List<Music> musics;
     private transient boolean searchMode = false;
     /**
@@ -68,7 +69,7 @@ public class PlayList {
     private transient MusicPlatform platform = MusicPlatform.NETEASE;
     /** QQ 的 dissid/tid 原始字符串，避免把跨平台标识强行压缩成网易云 long id。 */
     private transient String platformPlaylistId;
-    /** 私人 FM 会话拥有的临时队列时为 true。 */
+    /** True for the temporary queue owned by the personal FM session. */
     private transient boolean personalFm;
     public transient volatile boolean musicsQueried = false, musicsLoaded = false;
 
@@ -108,9 +109,9 @@ public class PlayList {
     }
 
     /**
-     * 为当前加载注册一个监听器，包括一个已由 {@link #getMusics()} 启动的加载。这防止面板
-     * 在大型歌单仍在下载时打开而错过
-     * 结果。
+     * Registers a listener for the current load, including a load that was already
+     * started by {@link #getMusics()}. This prevents a panel from missing the
+     * result when it opens while a large playlist is still downloading.
      */
     public void loadMusicsWithCallback(MusicsLoadedCallback callback) {
         if (callback == null) {
@@ -174,8 +175,8 @@ public class PlayList {
             return;
         }
 
-        // UI 面板在这些回调中创建组件，因此把它们分发到
-        //Minecraft 主线程，而非后台 HTTP 工作线程。
+        // UI panels create widgets in these callbacks, so dispatch them on the
+        // Minecraft main thread rather than the background HTTP worker.
         MultiThreadingUtil.runOnMainThread(() -> {
             for (MusicsLoadedCallback callback : callbacks) {
                 try {
@@ -222,9 +223,9 @@ public class PlayList {
                     throw new IllegalStateException("playlist song detail response does not contain songs");
                 }
 
-                // CopyOnWriteArrayList 在每次单个 add 时都复制其底层数组。
-                // 先解析，再在一次 addAll 调用中发布完整结果。网易云
-                //在并行的 privileges 数组中返回最高质量/权限数据。
+                // CopyOnWriteArrayList copies its backing array on every single add.
+                // Parse first, then publish the complete result in one addAll call. NetEase
+                // returns max quality/permission data in a parallel privileges array.
                 loadedMusics = new ArrayList<>(songs.size());
                 for (int index = 0; index < songs.size(); index++) {
                     JsonObject songObject = songs.get(index).getAsJsonObject();
@@ -276,11 +277,24 @@ public class PlayList {
 
     /**
      * 收藏/取消收藏本歌单。本地状态由 Lombok 生成的 setSubscribed 维护，
-     * 此方法仅负责调用原 API 链路（CloudMusicApi.subscribe → /weapi/playlist/subscribe|unsubscribe）。
+     * 此方法仅负责调用原 API 链路。
+     *
+     * <p>两个源在这里分派：网易云走 {@code /weapi/playlist/subscribe|unsubscribe}；
+     * 酷狗那边「收藏」和「取消收藏」是<b>两个不同的端点</b>
+     * （{@code cloudlist.service/v5/add_list} 带 {@code type=1} 与 {@code cloudlist/v2/delete_list}），
+     * 而且收藏时要带上原歌单的主键三元组，所以不能套用网易云那种「一个端点带布尔开关」的形态。</p>
      */
     public void subscribe(boolean subscribed) {
         if (getPlatform() == MusicPlatform.NETEASE) {
             CloudMusicApi.subscribe(this.id, subscribed);
+            return;
+        }
+        if (getPlatform() == MusicPlatform.KUGOU) {
+            if (subscribed) {
+                KuGouMusicService.subscribePlaylist(this);
+            } else {
+                KuGouMusicService.unsubscribePlaylist(this);
+            }
         }
     }
 

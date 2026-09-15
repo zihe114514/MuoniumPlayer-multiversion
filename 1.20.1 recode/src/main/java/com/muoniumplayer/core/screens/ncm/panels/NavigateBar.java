@@ -410,7 +410,25 @@ public class NavigateBar extends NCMPanel {
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "电台", () -> NCMScreen.getInstance().navigateAsync(
                         "汽水电台", this::loadQishuiRadioPanel)));
-            }            if (neteaseMode) {
+            }
+            if (kugouMode) {
+                // 酷狗这三项和网易云同一形态：热搜在发现页里出列表，另外两项先取数据再一次切页。
+                // 以前整块挂在 neteaseMode 下，所以切到酷狗后侧栏干脆没有这些入口。
+                this.playlistPanel.addChild(new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        () -> "热搜", () -> NCMScreen.getInstance().setCurrentPanel(
+                        new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.HOT_SEARCH, MusicPlatform.KUGOU))));
+                this.playlistPanel.addChild(new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        () -> "最近播放", () -> NCMScreen.getInstance()
+                        .navigateAsync("最近播放", NeteaseDiscoveryPanel::loadKuGouRecentSongsPanel)));
+                this.playlistPanel.addChild(new PlaylistItem("每", FontManager.pf12bold,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        () -> "每日推荐", () -> NCMScreen.getInstance()
+                        .navigateAsync("每日推荐", NeteaseDiscoveryPanel::loadKuGouDailyPanel)));
+                this.playlistPanel.addChild(new PlaylistItem(MusicBrandIcons.PERSONAL_FM, FontManager.musicBrand16,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                        () -> "私人 FM", () -> NCMScreen.getInstance().setCurrentPanel(new PersonalFmPanel())));
+            }
+            if (neteaseMode) {
                 // 热搜是真正在发现页里展示列表的，保持直接切页。
                 this.playlistPanel.addChild(new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "热搜", () -> NCMScreen.getInstance().setCurrentPanel(
@@ -1220,8 +1238,12 @@ public class NavigateBar extends NCMPanel {
             }
         }
 
-        boolean neteaseSource = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.NETEASE;
-        boolean eligible = neteaseSource && !text.isEmpty() && this.searchField.isFocused()
+        // 联想词此前只对网易云开放，酷狗的输入框因此永远弹不出面板。现在两个源都走
+        // NeteaseSearchSuggestService，由它按当前平台选端点；这里只判断"当前源有没有联想"。
+        MusicPlatform suggestPlatform = NeteaseMusicService.getCurrentPlatform();
+        boolean suggestSource = suggestPlatform == MusicPlatform.NETEASE
+                || suggestPlatform == MusicPlatform.KUGOU;
+        boolean eligible = suggestSource && !text.isEmpty() && this.searchField.isFocused()
                 && !text.equals(this.suggestDismissedFor);
 
         if (eligible && System.currentTimeMillis() - this.suggestQueryChangedAt >= SUGGEST_DEBOUNCE_MILLIS) {

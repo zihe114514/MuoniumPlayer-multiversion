@@ -3,6 +3,7 @@ package com.muoniumplayer.core.screens.ncm.panels;
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
@@ -40,7 +41,7 @@ public class PlaylistPanel extends NCMPanel {
         this(playlist, true);
     }
 
-    /** 被最近播放列表使用，其父发现页已拥有导航。 */
+    /** Used by the recent-play list, whose parent discovery page already owns navigation. */
     public PlaylistPanel(PlayList playlist, boolean showBackButton) {
         this.playList = playlist;
         this.showBackButton = showBackButton;
@@ -55,9 +56,9 @@ public class PlaylistPanel extends NCMPanel {
 
     @Override
     public void onInit() {
-        // 账号元数据（含云盘 ID）异步到达时也使用 onInit。
-        //使其幂等，使刷新替换
-        //旧行，而非在第一份之上再叠第二份。
+        // onInit is also used when account metadata (including cloud-drive IDs)
+        // arrives asynchronously. Make it idempotent so a refresh replaces the
+        // old rows instead of stacking a second copy over the first one.
         this.getChildren().clear();
         this.musicsLoading = true;
 
@@ -333,8 +334,8 @@ public class PlaylistPanel extends NCMPanel {
         this.addChild(rwMusicsContainer);
 
         rwMusicsContainer.setBeforeRenderCallback(() -> {
-            // 让最后可见行远离控件栏。嵌套 ScrollPanel
-            //把歌曲行裁剪到这个缩小视口，而非让文字碰到边缘。
+            // Keep the last visible row clear of the controls bar. The nested ScrollPanel
+            // clips song rows to this reduced viewport instead of letting text touch the edge.
             rwMusicsContainer.setBounds(
                     Math.max(0.0, this.getWidth() - 36),
                     Math.max(0.0, this.getHeight() - musicsContainerOffsetY - bottomSafeInset)
@@ -350,8 +351,8 @@ public class PlaylistPanel extends NCMPanel {
 
         musicsPanel.setBeforeRenderCallback(() -> musicsPanel.setMargin(0));
 
-        // 让加载反馈在被裁剪的歌曲列表之上。该组件
-        //在异步请求完成后自身淡出。
+        // Keep the loading feedback above the clipped song list. The widget fades
+        // itself out after the asynchronous request has finished.
         PanelLoadingWidget loadingWidget = new PanelLoadingWidget("正在加载曲目…");
         this.addChild(loadingWidget);
         loadingWidget
@@ -368,8 +369,8 @@ public class PlaylistPanel extends NCMPanel {
                 });
 
         playList.loadMusicsWithCallback(musics -> {
-            // 不要对每首歌调用 List#indexOf：那是 O(n²)，对大歌单会明显变慢。
-            //改为构建一个子批次。
+            // Do not call List#indexOf for every song: that is O(n²) and becomes
+            // noticeably slow for large playlists. Build one child batch instead.
             List<AbstractWidget<?>> musicWidgets = new ArrayList<>(musics == null ? 0 : musics.size());
             if (musics != null) {
                 for (int index = 0; index < musics.size(); index++) {
@@ -379,8 +380,8 @@ public class PlaylistPanel extends NCMPanel {
                 }
             }
 
-            // 在每个组件构建后开始进入动画。这
-            //使巨大歌单不会把淡入时间花在构建上。
+            // Start the entrance animation after every widget has been built. This
+            // keeps huge playlists from spending their fade-in time on construction.
             long entranceStartedAt = System.currentTimeMillis();
             for (int index = 0; index < musicWidgets.size(); index++) {
                 ((MusicWidget) musicWidgets.get(index)).setEntranceAnimation(
@@ -420,12 +421,19 @@ public class PlaylistPanel extends NCMPanel {
     }
 
     /**
-     * 仅外部网易云歌单支持收藏/取消收藏切换。
-     * 当前账号创建的歌单已经是“我的歌单”的一部分，
-     * 因此在那里显示“取消收藏”既具有误导性又无效。
+     * Only external NetEase playlists support the subscribe/unsubscribe toggle.
+     * A playlist created by the current account is already part of “我的歌单”,
+     * so displaying “取消收藏” there is both misleading and ineffective.
      */
     private boolean canToggleSubscription() {
-        if (playList == null || playList.getPlatform() != MusicPlatform.NETEASE) {
+        if (playList == null) return false;
+        if (playList.getPlatform() == MusicPlatform.KUGOU) {
+            // 酷狗要登录才能收藏；而且「自己的歌单」不该显示收藏按钮——那边收藏会复制一份新歌单，
+            // 点自己的歌单复制它没有意义。用户歌单在 platformPlaylistId 里带 #listid，用这个区分。
+            return KuGouMusicService.isLoggedIn()
+                    && KuGouMusicService.listIdOf(playList.getPlatformPlaylistId()).isEmpty();
+        }
+        if (playList.getPlatform() != MusicPlatform.NETEASE) {
             return false;
         }
         User creator = playList.getCreator();
