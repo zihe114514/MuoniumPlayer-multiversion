@@ -9,11 +9,11 @@ import com.google.gson.JsonPrimitive;
 import java.io.File;
 
 /**
- * The position, scale, and built-in editor appearance settings for the music HUDs.
+ * 音乐 HUD 的位置、缩放和内置编辑器外观设置。
  *
- * <p>Position is stored as a 0..1 fraction. Desktop-lyric appearance settings live
- * here so the built-in HUD editor can preview and persist them without depending on
- * the external ClickGUI value store.</p>
+ * <p>位置以 0..1 的分数存储。桌面歌词外观设置保存在此处，
+ * 使内置 HUD 编辑器可预览并持久化它们，而不必依赖外部的
+ * ClickGUI 值存储。</p>
  */
 public final class HudConfig {
 
@@ -38,38 +38,34 @@ public final class HudConfig {
     private static final File FILE = ConfigPaths.HUD;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    /** Song information card: top-left corner. */
+    // 当前歌词 / 正在唱的 KTV 字。
     public static float infoX = 0.00f;
     public static float infoY = 0.43429846f;
     public static float infoScale = 1.0f;
 
-    /**
-     * Player output volume, normalized to {@code 0.0..1.0}.  This is stored in
-     * the mod-owned HUD configuration rather than relying on the external value
-     * store, which may be recreated between Minecraft launches.
-     */
+    /** 当前行辉光、泛光和呼吸效果的总开关。 */
     public static float playerVolume = 1.00f;
 
-    /** Lyrics: horizontally centered near the bottom. */
+    /** OSD 逐字辉光和保持缩放强调的总开关。 */
     public static float lyricX = 0.5f;
     public static float lyricY = 0.8688119f;
     public static float lyricScale = 0.84999996f;
-    /** Desktop lyric viewport size in unscaled logical units. Text wraps inside this width. */
+    /** 普通歌词行辉光和泛光的总开关。 */
     public static float lyricWidth = 450.0f;
     public static float lyricHeight = 120.0f;
 
-    /** Appearance controls exposed in {@code GuiHudEditor}. */
+    /** 允许在不改变配置尺寸的情况下禁用视口边缘淡出。 */
     public static int lyricColorRgb = 0xFFFFFFFF;
     public static int currentLyricColorRgb = 0xFFFFFFFF;
 
-    // Current lyric / active KTV word.
-    /** Master switch for current-line glow, bloom and breathing. */
+    // OSD KTV 动画。这些值与全屏歌词渲染器相互独立。
+    // 普通（非当前）歌词行。
     public static boolean currentLyricEffectsEnabled = true;
-    /** Master switch for OSD per-character glow and retained scale emphasis. */
+    /** 全局下载 Dynamic Island。 */
     public static boolean osdKaraokeEmphasisEnabled = true;
-    /** Master switch for ordinary lyric-row glow and bloom. */
+    /** Dynamic Island 字体缩放。长内容在被截断前自动缩小。 */
     public static boolean normalLyricEffectsEnabled = true;
-    /** Allows the viewport-edge fade to be disabled without changing its configured size. */
+    /** 首选静止宽度。较长的通知可能动画变宽，以保持完整文本可见。 */
     public static boolean lyricEdgeFadeEnabled = true;
 
     public static float currentLineScale = 1.0115517f;
@@ -307,7 +303,7 @@ public final class HudConfig {
     /** 时计：是否画左侧的齿轮刻度装饰。 */
     public static boolean pendoloGearDecor = true;
 
-    // OSD KTV animation. These values are independent from the full-screen lyric renderer.
+    // OSD KTV 动画。这些值独立于全屏歌词渲染器。
     public static float osdKaraokeTransitionWidth = 14.0f;
     public static float osdKaraokePulseStrength = 0.00f;
     public static float osdKaraokeSmoothing = 0.85f;
@@ -323,7 +319,7 @@ public final class HudConfig {
      */
     public static float osdDuetSpread = 0.55f;
 
-    // Ordinary (non-current) lyric rows.
+    // 普通（非当前）歌词行。
     public static float normalOpacity = 0.48f;
     public static float normalScale = 0.94f;
     /** 非当前行的发光强度。口径与 {@link #currentGlowStrength} 完全相同，只是默认调得很淡。 */
@@ -333,21 +329,21 @@ public final class HudConfig {
     public static float scrollSmoothness = 0.65f;
     public static float secondaryOpacity = 0.78f;
 
-    /** Global download Dynamic Island. */
+    /** 全局下载灵动岛。 */
     public static boolean dynamicIslandEnabled = true;
     public static float dynamicIslandScale = 0.88f;
-    /** Dynamic Island typography scale. Long content is reduced automatically before it is truncated. */
+    /** 灵动岛排版缩放。长内容在被截断前自动缩小。 */
     public static float dynamicIslandTextScale = 1.0f;
-    /** Preferred resting width. Long notices may animate wider to keep their complete text visible. */
+    /** 首选静止宽度。长通知可能动画变宽以保持完整文字可见。 */
     public static float dynamicIslandMaxWidth = 280.68964f;
-    /** Progress bar thickness in logical pixels. */
+    /** 进度条厚度（逻辑像素）。 */
     public static float dynamicIslandProgressHeight = 1.35f;
-    /** Seconds to keep the completed state visible before hiding. */
+    /** 隐藏前保持完成状态可见的秒数。 */
     public static float dynamicIslandCompletionHoldSeconds = 2.1120691f;
-    /** When multiple notices are queued, seconds to show each queued notice. */
+    /** 多个通知排队时，每个排队通知的显示秒数。 */
     public static float dynamicIslandQueueIntervalSeconds = 1.9698277f;
     /**
-     * Visual preset for the global island: 0 pill, 1 glass, 2 compact, 3 card, 4 system card,
+     * 全局灵动岛的视觉预设：0 胶囊、1 玻璃、2 紧凑、3 卡片、4 系统卡片、
      * 5 music focus, 6 liquid glass.
      */
     public static int dynamicIslandStyle = 2;
@@ -461,7 +457,7 @@ public final class HudConfig {
         playerUiSwitchSpeed = 3.0f;
     }
 
-    /** Restores only desktop-lyric appearance, leaving HUD positions untouched. */
+    /** 仅恢复桌面歌词外观，不改动 HUD 位置。 */
     public static void resetLyricAppearance() {
         lyricColorRgb = 0xFFFFFFFF;
         currentLyricColorRgb = 0xFFFFFFFF;
@@ -539,7 +535,7 @@ public final class HudConfig {
         secondaryOpacity = 0.78f;
     }
 
-    /** Restores the global download-island appearance. */
+    /** 恢复全局下载灵动岛外观。 */
     public static void resetDynamicIslandAppearance() {
         dynamicIslandEnabled = true;
         dynamicIslandScale = 0.88f;
@@ -570,7 +566,7 @@ public final class HudConfig {
         animatedCoverEnabled = true;
     }
 
-    /** Loads saved settings; malformed or out-of-range values fall back safely. */
+    /** 加载已保存的设置；格式错误或超出范围的值安全回退。 */
     public static void load() {
         if (!FILE.exists()) {
             return;
@@ -734,7 +730,7 @@ public final class HudConfig {
         }
     }
 
-    /** Persists settings after an editor interaction. */
+    /** 编辑器交互后持久化设置。 */
     public static void save() {
         try {
             JsonObject o = new JsonObject();

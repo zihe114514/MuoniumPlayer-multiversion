@@ -1,6 +1,6 @@
 package repackage.net.sourceforge.jaad.aac.huffman;
 
-//codebooks: {bit length, codeword, values...}
+//码本：{位长，码字，取值...}
 interface Codebooks {
 
 	int[][] HCB1 = {

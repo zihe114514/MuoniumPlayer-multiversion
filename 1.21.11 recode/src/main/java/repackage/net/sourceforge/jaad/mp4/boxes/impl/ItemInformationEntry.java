@@ -40,7 +40,7 @@ public class ItemInformationEntry extends FullBox {
 	 * item ID 对主资源为 0（例如 'xml ' box 中所含的 XML），
 	 * 否则为定义了以下信息的条目 ID。
 	 *
-	 * @return item ID
+	  * @return 项目 ID
 	 */
 	public int getItemID() {
 		return itemID;

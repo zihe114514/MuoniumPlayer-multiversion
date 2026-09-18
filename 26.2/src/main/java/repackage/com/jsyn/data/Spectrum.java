@@ -1,33 +1,33 @@
 /*
- * Copyright 2013 Phil Burk, Mobileer Inc
+ * 版权所有2013 Phil Burk ， Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  * 
  *     http://www.apache.org/licenses/LICENSE-2.0
  * 
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.data;
 
 
 /**
- * Complex spectrum with real and imaginary parts. The frequency associated with each bin of the
- * spectrum is:
+ * 具有真实和虚构部分的复杂光谱。与每个箱柜关联的频率
+ * 频谱是：
  * 
  * <pre>
- * frequency = binIndex * sampleRate / size
+ * frequency = binIndex * sampleRate/size
  * </pre>
  * 
- * Note that the upper half of the spectrum is above the Nyquist frequency. Those frequencies are
- * mirrored around the Nyquist frequency. Note that this spectral API is experimental and may change
- * at any time.
+ * 请注意，频谱的上半部分在奈奎斯特频率之上。这些频率是
+ * 在奈奎斯特频率周围镜像。请注意，此频谱API是实验性的，可能会发生变化
+ * 在任意时刻。
  * 
  * @author Phil Burk (C) 2013 Mobileer Inc
  * @version 016
@@ -55,8 +55,8 @@ public class Spectrum {
     }
 
     /**
-     * If you change the size of the spectrum then the real and imaginary arrays will be
-     * reallocated.
+     * 若更改频谱大小，则实部和虚部数组将被
+     * 另行拨付*
      * 
      * @param size
      */
@@ -72,7 +72,7 @@ public class Spectrum {
     }
 
     /**
-     * Copy this spectrum to another spectrum of the same length.
+     * 将此频谱复制到另一个等长的频谱。
      * 
      * @param destination
      */

@@ -195,8 +195,105 @@ class KuGouStaticTest {
         assertTrue(api.contains("/v1/get_union_vip"), "会员状态查询端点");
     }
 
+    @Test
+    @DisplayName("取流必须核对交付身份：上游对取不到的 hash 会静默交付别人的歌")
+    void deliveredFileMustMatchRequest() throws Exception {
+        String api = read("KuGouMusicApi.java");
+        int call = api.indexOf("String delivered = deliveredHash(root, url)");
+        int guard = api.indexOf("!delivered.equals(KuGouSign.lower(hash))", call);
+        int format = api.indexOf("String format = text(root, \"extName\")", call);
+        assertTrue(call > 0 && guard > call && format > guard,
+                "校验必须夹在「取到 url」与「返回 Stream」之间：失败时返回 null，让降级链去试下一档");
+        // 换文件时上游的 status 仍是 1、fail_process 为空，只有交付 hash 与请求 hash 不一致这一条线索。
+        // std_hash 在正常交付时也可能不等于请求值（晴天 flac 档实测），拿它当判据会把好档位一起毙掉。
+        assertFalse(api.contains("\"std_hash\""),
+                "判据只能是响应顶层 hash 或地址里的 /v3/<hash>/ 段");
+    }
+
+    @Test
+    @DisplayName("交付校验上线后旧酷狗缓存必须失配，否则错文件会一直被命中")
+    void kuGouCacheEpochIsWired() throws Exception {
+        String api = read("KuGouMusicApi.java");
+        assertTrue(api.contains("public static final String AUDIO_CACHE_EPOCH"),
+                "缓存世代标记要有唯一出处，不能散落在播放侧");
+        String cloud = readService("CloudMusic.java");
+        assertTrue(cloud.contains("KuGouMusicApi.AUDIO_CACHE_EPOCH"), "缓存名要真的用上这个标记");
+        assertTrue(cloud.contains("song.isKuGou() ? KuGouMusicApi.AUDIO_CACHE_EPOCH"),
+                "只有酷狗丢缓存：别的音源没有静默换歌的问题，不该跟着重下");
+        assertTrue(cloud.contains("String cacheKey = audioCacheKey(song, quality.getQuality())"),
+                "缓存键必须走统一的构造函数");
+        assertTrue(cloud.contains("removeOtherQualityCaches(musicCacheDir, song, quality.getQuality())"),
+                "「删掉其它音质」的前缀也来自同一个构造函数，否则改名规则会与淘汰逻辑脱节");
+    }
+
+    @Test
+    @DisplayName("搜索端点不能用 Audioid 当 album_audio_id：那是另一套 ID，会把别首歌的文件交回来")
+    void searchTrackKeepsIdSpace() throws Exception {
+        String api = read("KuGouMusicApi.java");
+        String body = methodBody(api, "private static Track parseSearchTrack",
+                "private static Track parseAudioInfoTrack");
+        assertFalse(body.contains("track.albumAudioId = firstText(item, \"Audioid\""),
+                "Audioid 是老的 audio_id，与 album_audio_id 是两套 ID；传错会让服务端按那个 ID 解析文件，"
+                        + "交回另一首歌的完整文件（status 仍是 1、extName 仍按请求档位填）");
+        assertTrue(body.contains("track.albumAudioId = track.mixSongId"),
+                "album_audio_id 只能取 MixSongID 那一套 ID，拿不到就留空（取流时传 0）");
+        assertTrue(body.contains("track.audioId = firstText(item, \"Audioid\""),
+                "Audioid 仍然要填进 audioId，别顺手删掉");
+    }
+
+    @Test
+    @DisplayName("老 mobilecdn 条目的 album_audio_id 不许回落 audio_id")
+    void legacyTrackKeepsIdSpace() throws Exception {
+        String api = read("KuGouMusicApi.java");
+        String body = methodBody(api, "private static Track parseLegacyTrack",
+                "private static void splitArtistAndName");
+        assertTrue(body.contains("firstText(item, \"album_audio_id\", \"mixsongid\")"),
+                "兜底字段必须同属 album_audio_id 空间");
+        assertFalse(body.contains("\"album_audio_id\", \"audio_id\""),
+                "拿 audio_id 兜底等于把另一个 ID 空间的值交给取流端点");
+    }
+
+    @Test
+    @DisplayName("两个取流端点共用一个 album_audio_id 取值，缺失时传字面量 0")
+    void streamRequestSanitizesAlbumAudioId() throws Exception {
+        String api = read("KuGouMusicApi.java");
+        assertEquals(2, occurrences(api, "params.put(\"album_audio_id\", albumAudioIdForRequest(track))"),
+                "v5/url 与 i/v2 只能走同一个取值函数，否则两条链路迟早走散");
+        assertTrue(api.contains("return id.isEmpty() ? \"0\" : id;"),
+                "取不到就传 0：实测服务端会回落到按 hash 解析并交付正确文件");
+        assertFalse(api.contains("KuGouSign.isBlank(track.albumAudioId) ? \"0\" : track.albumAudioId"),
+                "旧的「有就传、没有才 0」放行了脏 ID，正是换文件的入口");
+    }
+
+    /** 截出一段方法源码：终点用下一个方法的签名当标记。 */
+    private static String methodBody(String source, String start, String end) {
+        int from = source.indexOf(start);
+        int to = source.indexOf(end, from + 1);
+        if (from < 0 || to <= from) {
+            throw new IllegalStateException("找不到方法段: " + start);
+        }
+        return source.substring(from, to);
+    }
+
+    private static int occurrences(String haystack, String needle) {
+        int count = 0;
+        for (int at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + needle.length())) {
+            count++;
+        }
+        return count;
+    }
+
     private static String read(String file) throws Exception {
         Path path = ROOT.resolve(file);
+        return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+    }
+
+    /** 播放侧在 {@code ncm/music} 下，不在 {@code ncm/kugou}。 */
+    private static String readService(String file) throws Exception {
+        Path path = ProjectPaths.sharedJava().resolve("com/muoniumplayer/core/ncm/music").resolve(file);
+        if (!Files.isRegularFile(path)) {
+            throw new IllegalStateException("missing " + path);
+        }
         return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
     }
 }

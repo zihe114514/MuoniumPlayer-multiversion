@@ -1,17 +1,17 @@
 /*
- * Copyright 1997 Phil Burk, Mobileer Inc
+ * 版权所有1997 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  * 
  *     http://www.apache.org/licenses/LICENSE-2.0
  * 
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.unitgen;
@@ -21,10 +21,10 @@ import repackage.com.jsyn.ports.UnitOutputPort;
 import repackage.com.jsyn.ports.UnitVariablePort;
 
 /**
- * Tracks the peaks of an input signal. This can be used to monitor the overall amplitude of a
- * signal. The output can be used to drive color organs, vocoders, VUmeters, etc. Output drops
- * exponentially when the input drops below the current output level. The output approaches zero
- * based on the value on the halfLife port.
+ * 跟踪输入信号的峰值。可用于监测
+ * 信号。输出可用于驱动颜色器官、声码器、VUmeters等。输出下降
+ * 当输入低于当前输出电平时呈指数级增长。输出接近零
+ * 基于 halfLife 端口上的值。
  * 
  * @author (C) 1997-2009 Phil Burk, SoftSynth.com
  */
@@ -37,7 +37,7 @@ public class PeakFollower extends UnitGenerator {
     private double previousHalfLife = -1.0;
     private double decayScalar = 0.99;
 
-    /* Define Unit Ports used by connect() and set(). */
+    /* 定义connect()和set()使用的单位端口。*/
     public PeakFollower() {
         addPort(input = new UnitInputPort("Input"));
         addPort(halfLife = new UnitInputPort(1, "HalfLife", 0.1));
@@ -62,7 +62,7 @@ public class PeakFollower extends UnitGenerator {
         for (int i = start; i < limit; i++) {
             double inputValue = inputs[i];
             if (inputValue < 0.0) {
-                inputValue = -inputValue; // absolute value
+                inputValue = -inputValue; // 绝对值
             }
 
             if (inputValue >= currentValue) {
@@ -75,8 +75,8 @@ public class PeakFollower extends UnitGenerator {
         }
 
         /*
-         * When current gets close to zero, set current to zero to prevent FP underflow, which can
-         * cause a severe performance degradation in 'C'.
+         * 当电流接近零时，将电流设置为零以防止FP下溢，这可以
+         * 会导致 'C' 语言中严重的性能下降。
          */
         if (currentValue < VERY_SMALL_FLOAT) {
             currentValue = 0.0;

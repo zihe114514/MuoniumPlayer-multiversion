@@ -108,7 +108,7 @@ public final class NCMTheme {
         return getLiquidGlassAmountLocked(System.nanoTime());
     }
 
-    /** Theme accent exposed without requiring global HUD elements to depend on NCMScreen. */
+    /** 暴露主题强调色，而不要求全局 HUD 元素依赖 NCMScreen。 */
     public static int getAccentColor() {
         return getColor(NCMScreen.ColorType.ACCENT);
     }

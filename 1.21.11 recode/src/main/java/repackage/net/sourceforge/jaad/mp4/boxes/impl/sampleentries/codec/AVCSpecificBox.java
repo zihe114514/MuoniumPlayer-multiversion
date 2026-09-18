@@ -51,7 +51,7 @@ public class AVCSpecificBox extends CodecSpecificBox {
 	/**
 	 * ISO/IEC 14496-10 中定义的 AVC profile 代码。
 	 *
-	 * @return AVC profile
+	  * @return AVC 档次
 	 */
 	public int getProfile() {
 		return profile;

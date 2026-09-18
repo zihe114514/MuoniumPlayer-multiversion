@@ -36,11 +36,11 @@ public final class NCMPlayerConfig {
      */
     private static boolean windowAdaptiveScale = true;
     private static Quality audioQuality = Quality.LOSSLESS;
-    /** Music source selected in the player / onboarding. Persisted so it survives restarts. */
+    /** 在播放器/新手引导中选择的音乐源。持久化以便重启后保留。 */
     private static MusicPlatform musicSourcePlatform = MusicPlatform.NETEASE;
     /**
-     * Opt-in only. When enabled, MuoniumPlayer submits a NetEase listening record
-     * only after the local audio state has actually played for the required time.
+     * 仅 opt-in。启用时，MuoniumPlayer 提交一条网易云收听记录，
+     * 且仅在本地音频实际播放满所需时长之后。
      */
     private static boolean neteaseListeningHistorySyncEnabled;
     /**
@@ -162,13 +162,13 @@ public final class NCMPlayerConfig {
         save();
     }
 
-    /** Returns whether real local NetEase playback sessions may be synchronized. */
+    /** 返回是否可同步真实的本地网易云播放会话。 */
     public static synchronized boolean isNeteaseListeningHistorySyncEnabled() {
         load();
         return neteaseListeningHistorySyncEnabled;
     }
 
-    /** Persists the user's explicit consent for real-play listening-history synchronization. */
+    /** 持久化用户对真实播放收听历史同步的显式同意。 */
     public static synchronized void setNeteaseListeningHistorySyncEnabled(boolean enabled) {
         load();
         neteaseListeningHistorySyncEnabled = enabled;

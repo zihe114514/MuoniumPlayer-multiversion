@@ -10,28 +10,26 @@ import repackage.net.sourceforge.jaad.mp4.od.Descriptor;
 import repackage.net.sourceforge.jaad.mp4.od.ObjectDescriptor;
 
 /**
- * The IPMPInfoBox contains IPMP Descriptors which document the protection
- * applied to the stream.
+ * IPMPInfoBox 包含 IPMP 描述符，记录应用于流的保护。
  *
- * The IPMP Descriptor is defined in ISO/IEC 14496-1. This is a part of the
- * MPEG-4 object descriptors (OD) that describe how an object can be accessed
- * and decoded. In the ISO Base Media File Format, IPMP Descriptor can be
- * carried directly in IPMPInfoBox without the need for OD stream.
+ * IPMP Descriptor 定义于 ISO/IEC 14496-1。它是
+ * MPEG-4 对象描述符（OD）的一部分，描述如何访问和解码
+ * 一个对象。在 ISO Base Media File Format 中，IPMP Descriptor
+ * 可直接携带于 IPMPInfoBox 中，无需 OD 流。
  *
- * The presence of IPMP Descriptor in this IPMPInfoBox indicates the associated
- * media stream is protected by the IPMP Tool described in the IPMP Descriptor.
+ * 此 IPMPInfoBox 中存在 IPMP Descriptor，表明相关媒体流受到
+ * IPMP Descriptor 中所述 IPMP 工具的保护。
  *
- * Each IPMP Descriptor has an IPMP-toolID, which identifies the required IPMP
- * tool for protection. An independent registration authority (RA) is used so
- * any party can register its own IPMP Tool and identify this without
- * collisions.
+ * 每个 IPMP Descriptor 都有一个 IPMP-toolID，标识所需的保护用 IPMP
+ * 工具。使用独立的注册机构（RA），任何一方都可注册自己的
+ * IPMP 工具并无冲突地标识它。
  *
- * The IPMP Descriptor carries IPMP information for one or more IPMP Tool
- * instances, it includes but not limited to IPMP Rights Data, IPMP Key Data,
- * Tool Configuration Data, etc.
+ * 该 IPMP Descriptor 携带一个或多个 IPMP 工具实例的 IPMP 信息，
+ * 包括但不限于 IPMP 权利数据、IPMP 密钥数据、
+ * 工具配置数据等。
  *
- * More than one IPMP Descriptors can be carried in this IPMPInfoBox if this
- * media stream is protected by more than one IPMP Tools.
+ * 若此媒体流受到多个 IPMP 工具保护，此 IPMPInfoBox 中可携带
+ * 多个 IPMP Descriptor。
  *
  * @author in-somnia
  */
@@ -56,9 +54,9 @@ public class IPMPInfoBox extends FullBox {
 	}
 
 	/**
-	 * The contained list of IPMP descriptors.
+	 * 所含 IPMP 描述符列表。
 	 *
-	 * @return the IPMP descriptors
+	 * @return IPMP 描述符
 	 */
 	public List</*IPMP*/Descriptor> getIPMPDescriptors() {
 		return Collections.unmodifiableList(ipmpDescriptors);

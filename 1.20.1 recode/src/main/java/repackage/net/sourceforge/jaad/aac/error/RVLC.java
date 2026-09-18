@@ -7,8 +7,8 @@ import repackage.net.sourceforge.jaad.aac.syntax.ICSInfo;
 import repackage.net.sourceforge.jaad.aac.syntax.ICStream;
 
 /**
- * Reversable variable length coding
- * Decodes scalefactors if error resilience is used.
+ * 可逆变长编码
+ * 当使用错误弹性时，解码比例因子。
  */
 public class RVLC implements RVLCTables {
 

@@ -1,6 +1,6 @@
 package com.muoniumplayer.core.ncm.music;
 
-/** Offline stem evidence produced by HTDemucs for one analysis window. */
+/** 由 HTDemucs 为一个分析窗口生成的离线音轨分离证据。 */
 final class FoliaStemProfile {
     static final int VERSION = 1;
     int version = VERSION;

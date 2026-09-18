@@ -8,16 +8,16 @@ import com.muoniumplayer.core.settings.JsonConfigStorage;
 import java.io.File;
 
 /**
- * Persisted automix (seamless track handover) preferences.
+ * 持久化的 automix（无缝曲目交接）偏好设置。
  *
- * <p>Automix keeps the outgoing track audible while the next one is already decoded and running on a
- * second deck, so a queue advance becomes an overlap instead of the old close-player/sleep(250ms)/
- * download/decode gap. Everything here is opt-out: with automix disabled the playback path is
- * byte-for-byte the original single-deck sequence.</p>
+ * <p>automix 让退出曲目仍可听见，而下一首已在第二个 deck 上解码并运行，
+ * 因此队列前进变成重叠，而非旧的关闭播放器/sleep(250ms)/
+ * 下载/解码间隙。这里全部为可关闭：禁用 automix 后，播放路径
+ * 与原始单 deck 序列逐字节一致。</p>
  */
 public final class AutomixSettings {
 
-    /** The transition engine the user selected in HUD settings. */
+    /** 用户在 HUD 设置中选择的过渡引擎。 */
     public enum Engine {
         LEGACY("原版智能淡化"),
         FOLIA("智能混音");
@@ -37,76 +37,74 @@ public final class AutomixSettings {
     }
 
     /**
-     * The engine a fresh installation gets.
+     * 出厂默认引擎。
      *
-     * <p>Folia degrades on its own: without the models it falls back to pure DSP analysis (see
-     * the {@code profile == null} branches in {@code FoliaAutomixPlanner}), so making it the
-     * default never turns a machine that lacks the models into a hard cut. Users who prefer the
-     * old chain can still switch back to {@link Engine#LEGACY} explicitly in HUD settings.</p>
+     * <p>Folia 在缺模型时会自行退回纯 DSP 分析（见 {@code FoliaAutomixPlanner} 里 profile 为 null
+     * 的那些分支），所以把它当默认不会让「没装模型」的电脑退化成硬切；想要旧链路的用户仍然可以
+     * 在 HUD 设置里显式切回 {@link Engine#LEGACY}。</p>
      *
-     * <p>Every "no explicit choice" fallback points here instead of hard-coding an enum
-     * constant, otherwise a change to the default always leaves a few call sites behind and the
-     * same concept ends up answering differently depending on where it is asked.</p>
+     * <p>所有「没有显式选择」的回退都指向这里，而不是各自写死一个枚举常量——否则默认值一改，
+     * 就总有几处漏改，表现成「同一个概念在不同场合给出不同答案」。</p>
      */
     public static final Engine DEFAULT_ENGINE = Engine.FOLIA;
 
 
-    /** Shortest overlap that still reads as a blend rather than a cut. */
+    /** 仍读作混音而非硬切的最短重叠。 */
     public static final float MIN_OVERLAP_SECONDS = 1.5f;
-    /** Longest overlap; beyond this the two tracks fight each other for too long. */
+    /** 最长重叠；超过此值两首曲子会互相打架太久。 */
     public static final float MAX_OVERLAP_SECONDS = 10.0f;
     public static final float DEFAULT_OVERLAP_SECONDS = 4.0f;
 
     /**
-     * Corner frequency of the automix low shelf. 200 Hz is where a kick drum's body and a bass line
-     * live: cutting below it takes the mud out of an overlap without thinning the vocals.
+     * automix 低 shelf 的截止频率。200 Hz 是底鼓躯体和贝斯线
+     * 所在之处：在它以下切掉可去除重叠中的浑浊，又不削薄人声。
      */
     public static final float BASS_SHELF_HZ = 200f;
-    /** How far the outgoing deck's bass is pulled down at the point where the incoming one takes over. */
+    /** 在接入方接管处，退出方 deck 的低音被拉下多少。 */
     public static final float BASS_CUT_DB = -18f;
-    /** How far the incoming deck's bass starts suppressed before it is allowed into the mix. */
+    /** 接入方 deck 在被允许进入混音之前低音先被压制多少。 */
     public static final float BASS_ENTRY_CUT_DB = -12f;
 
     /**
-     * Bounds on the playback rate the outgoing deck may be bent to. Shared by the planner (which picks
-     * the target) and the plan (which schedules the ramp and the phase correction on top of it), so the
-     * two can never disagree about what is reachable.
+     * 退出方 deck 可被弯曲到的播放速率上下限。规划器（挑选
+     * 目标）与计划（在其上安排渐变和相位修正）共享它，因此二者
+     * 绝不会对可达范围有分歧。
      *
-     * <p>±6 % is not arbitrary: one semitone is 2^(1/12) = +5.946 %, so the budget is exactly wide
-     * enough for a whole-semitone transposition and no wider. That is what makes the key snap either
-     * land in tune or not happen at all - a rate between two semitones is audibly out of tune, which is
-     * worse than leaving the track alone.</p>
+     * <p>±6 % 并非任意：一个半音是 2^(1/12) = +5.946 %，因此预算恰好宽到
+     * 够一次整半音转调、而不再宽。这正是调性对齐要么准、要么干脆不发生的原因——
+     * 介于两个半音之间的速率明显走调，
+     * 比不动曲目更糟。</p>
      */
     public static final float MIN_PLAYBACK_RATE = .94f;
     public static final float MAX_PLAYBACK_RATE = 1.06f;
-    /** Folia keeps pitch independent with WSOLA, so its tempo bend may use the full policy range. */
+    /** Folia 通过 WSOLA 保持音高独立，因此速度弯曲可以使用完整策略范围。 */
     public static final float FOLIA_MIN_TEMPO_RATE = .88f;
     public static final float FOLIA_MAX_TEMPO_RATE = 1.12f;
-    /** One semitone as a playback-rate factor. */
+    /** 以播放速率因子表示的一个半音。 */
     public static final float SEMITONE_RATIO = 1.0594630943592953f;
 
     /**
-     * How hard the incoming deck's vocal band is cancelled while it fades in.
+     * 接入方 deck 淡入时其人声频段被消除的强度。
      *
-     * <p>Two lead vocals on top of each other is the one artefact a listener can name, and unlike two
-     * kick drums it cannot be fixed by a shelf: voices live in the same band as everything else.
-     * Cancelling the band-limited centre of the arriving track lets it enter as an instrumental bed and
-     * only become a song once the outgoing vocal is gone. 1 would be full cancellation, which also eats
-     * the snare and the bass DI; a little over half keeps the entry musical.</p>
+     * <p>两个主唱叠在一起是听众能指出的唯一毛病，而且与两个底鼓不同，
+     * 它无法用 shelf 修好：人声与其他一切共用同一频段。
+     * 消除到达曲目的限带中央，让它以纯伴奏底进入，
+     * 只在退出人声消失后才成为歌曲。1 是完全消除，那会把
+     * 军鼓和贝斯 DI 也吃掉；略过一半则保持进入的音乐性。</p>
      */
     public static final float VOCAL_DUCK_DEPTH = .62f;
 
     /**
-     * How early the next track starts being resolved/downloaded/decoded, on top of the overlap.
-     * Decoding a normal track costs a few seconds; a fragmented-MP4 one can cost more, so the arm
-     * window is generous. An arm that is not ready in time simply degrades to the ordinary switch.
+     * 在重叠之上，下一首曲目提前多久开始解析/下载/解码。
+     * 解码一首普通曲目要几秒钟，分片 MP4 可能更久，因此 arm
+     * 窗口设得宽。未能及时就绪的 arm 直接退化为普通切换。
      */
     static final long ARM_LEAD_MILLIS = 30_000L;
 
     /**
-     * A second deck doubles the resident PCM, so automix refuses to arm oversized tracks. 120 MB of
-     * 16-bit CD audio is about 11 minutes — long enough for ordinary music, short enough that two
-     * live decks cannot exhaust the heap the way an hour-long upload would.
+     * 第二个 deck 使常驻 PCM 翻倍，因此 automix 拒绝 arm 过大的曲目。120 MB
+     * 16 位 CD 音频约 11 分钟——对普通音乐够长，又短到两个
+     * 实时 deck 不会像一小时上传那样耗尽堆。
      */
     private static final long ABSOLUTE_DECK_LIMIT_BYTES = 120L * 1024L * 1024L;
 
@@ -115,8 +113,8 @@ public final class AutomixSettings {
 
     private static boolean loaded;
     private static Engine engine = DEFAULT_ENGINE;
-    // Existing installations and loader-specific game directories without automix.json land on
-    // DEFAULT_ENGINE as well.
+    // 没有 automix.json 的旧安装和加载器专属游戏目录，同样落到 DEFAULT_ENGINE。
+    // 以及 DEFAULT_ENGINE。
     private static boolean enabled = true;
     private static boolean beatAlign = true;
     private static boolean bassSwap = true;
@@ -133,7 +131,7 @@ public final class AutomixSettings {
     private AutomixSettings() {
     }
 
-    /** Largest decoded file automix may hold on the idle deck. */
+    /** automix 在空闲 deck 上可持有的最大已解码文件。 */
     static long maxDeckBytes() {
         return Math.min(ABSOLUTE_DECK_LIMIT_BYTES, PlaybackMemoryLimits.maxDecodedPcmBytes() / 2L);
     }
@@ -167,7 +165,7 @@ public final class AutomixSettings {
         setEngine(getEngine() == Engine.FOLIA ? Engine.LEGACY : Engine.FOLIA);
     }
 
-    /** More aggressive build-up/stem gestures when the user asks for it. */
+    /** 用户要求时更激进的 build-up/音轨分离手势。 */
     public static boolean isPerformanceModeEnabled() {
         load();
         synchronized (LOCK) {
@@ -200,7 +198,7 @@ public final class AutomixSettings {
         }
     }
 
-    /** Whether Folia model inference publishes a live start/finish card to the dynamic island. */
+    /** Folia 模型推理是否向灵动岛发布实时的开始/结束卡片。 */
     public static boolean isModelInferenceStatusEnabled() {
         load();
         synchronized (LOCK) {
@@ -217,7 +215,7 @@ public final class AutomixSettings {
         }
     }
 
-    /** Persisted Folia model/runtime directory; an empty value means the default location. */
+    /** 持久化的 Folia 模型/运行时目录；为空表示默认位置。 */
     public static String getModelsDirectory() {
         load();
         synchronized (LOCK) {
@@ -250,7 +248,7 @@ public final class AutomixSettings {
         }
     }
 
-    /** Whether the handover may be nudged onto a detected bar boundary. */
+    /** 是否允许把交接推到检测到的小节边界上。 */
     public static boolean isBeatAlignEnabled() {
         load();
         synchronized (LOCK) {
@@ -268,12 +266,12 @@ public final class AutomixSettings {
     }
 
     /**
-     * Whether the blend swaps the low band between the two decks instead of only crossfading volume.
+     * 混音是否在两个 deck 之间交换低频段，而不只交叉淡化音量。
      *
-     * <p>Two tracks overlapping put two kick drums and two bass lines into the same octave, which sums
-     * into a boom that no volume curve can fix - it is the single most obvious "this is a crossfade"
-     * artefact. Pulling the low shelf out of the outgoing deck and holding the incoming one's bass back
-     * until it owns the mix is what club DJs do, and it is what makes the handover sound deliberate.</p>
+     * <p>两首重叠曲目会把两个底鼓和两条贝斯线放进同一个八度，叠加
+     * 成任何音量曲线都救不了的闷响——这是最明显的"这是个交叉淡化"
+     * 瑕疵。把退出方 deck 的低 shelf 抽出、压住接入方的低音
+     * 直到它掌控混音，正是俱乐部 DJ 所做，也正是让交接听起来像有意为之的关键。</p>
      */
     public static boolean isBassSwapEnabled() {
         load();
@@ -292,11 +290,11 @@ public final class AutomixSettings {
     }
 
     /**
-     * Whether the outgoing deck may be bent onto the incoming track's tempo for the length of the blend.
+     * 混音期间是否允许把退出方 deck 弯曲到接入曲目的速度。
      *
-     * <p>Without it, two tracks that are 4 % apart drift by a third of a beat over a four second
-     * overlap, so a handover that started beat matched ends up flamming. The correction is capped and
-     * only ever applied to the deck that is disappearing.</p>
+     * <p>没有它，相差 4 % 的两首曲子在四秒重叠内会漂移三分之一拍，
+     * 于是一个开始时对拍的交接最终变成 flamming。修正被钳制，
+     * 且只施加于正在消失的那个 deck。</p>
      */
     public static boolean isTempoLockEnabled() {
         load();
@@ -315,13 +313,13 @@ public final class AutomixSettings {
     }
 
     /**
-     * Whether the arriving deck's vocal band is cancelled while it fades in, and restored once it owns
-     * the mix.
+     * 到达方 deck 淡入时是否消除其人声频段，并在它掌控
+     * 混音后恢复。
      *
-     * <p>Off by preference rather than by safety: the cancellation is a band-limited centre subtraction,
-     * so on a mix whose lead is not centred it takes out less than it should, and on a mono file it
-     * degrades to a mid-band dip. Both are still an improvement over two vocals colliding, but a user
-     * who wants the plain equal-power blend can have it.</p>
+     * <p>出于偏好而非安全而默认关闭：消除是限带中央相减，
+     * 因此在主唱不居中的混音上它削得不够，在单声道文件上
+     * 又退化成中频凹陷。这两者仍比两个人声相撞好，但用户
+     * 想要普通等功率混音的可以关闭它。</p>
      */
     public static boolean isVocalDuckEnabled() {
         load();
@@ -340,11 +338,11 @@ public final class AutomixSettings {
     }
 
     /**
-     * Whether the outgoing deck may be transposed by a whole semitone to make the two keys agree.
+     * 是否允许把退出方 deck 转调整数个半音，使两个调性一致。
      *
-     * <p>Only ever used where the tempo lock has nothing to do - a mix-out that lands in an outro or a
-     * pad, i.e. where the beat grid is too weak to be worth locking. Both cannot be served at once:
-     * JSyn's rate port moves tempo and pitch together, and the whole ±6 % budget is one semitone.</p>
+     * <p>仅在速度锁定无事可做时使用——落在 outro 或
+     * 铺底上的混音退出，即节拍网格太弱不值得锁定之处。二者无法同时服务：
+     * JSyn 的速率端口同时移动速度和音高，而整个 ±6 % 预算就是一个半音。</p>
      */
     public static boolean isPitchMatchEnabled() {
         load();
@@ -455,10 +453,9 @@ public final class AutomixSettings {
                 if (!migrateEngine) {
                     engine = Engine.fromStored(root.get("engine").getAsString());
                 } else {
-                    // Configurations written before the engine selector existed never expressed an
-                    // engine choice, so they follow the current default. The migration is written
-                    // back immediately (saveLocked below), so from then on the file holds an
-                    // explicit record and later default changes cannot move it again.
+                    // 在引擎选择器存在之前写入的配置从来没有表达过引擎选择，所以它们跟随
+                    // 当前默认值；迁移结果马上就写回盘（下面的 saveLocked），从此这条配置就是
+                    // 一条显式记录了，不会再被后续的默认值变化影响。
                     engine = DEFAULT_ENGINE;
                 }
                 if (root.has("beatAlign") && !root.get("beatAlign").isJsonNull()) {
@@ -496,7 +493,7 @@ public final class AutomixSettings {
                 }
                 if (migrateEngine) saveLocked();
             } catch (Throwable ignored) {
-                // A damaged automix config must never stop playback from starting.
+                // 损坏的 automix 配置绝不能阻止播放启动。
             }
         }
     }

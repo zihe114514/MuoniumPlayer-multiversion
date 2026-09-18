@@ -28,19 +28,19 @@ import repackage.net.sourceforge.jaad.mp4.boxes.impl.sampleentries.SampleEntry;
 import repackage.net.sourceforge.jaad.mp4.od.Descriptor;
 
 /**
- * This class represents a track in a movie.
+ * 此类表示电影中的一个轨道。
  *
- * Each track contains either a decoder specific info as a byte array or a
- * <code>DecoderInfo</code> object that contains necessary information for the
- * decoder.
+ * 每个轨道要么包含一个字节数组形式的解码器特定信息，要么包含一个
+ * <code>DecoderInfo</code> 对象，后者包含解码器所需的
+ * 必要信息。
  *
  * @author in-somnia
  */
-//TODO: expand javadoc; use generics for subclasses?
+//TODO: 扩充 javadoc；子类是否使用泛型？
 public abstract class Track {
 
 	public interface Codec {
-		//TODO: currently only marker interface
+		//TODO: 目前仅是标记接口
 	}
 	private final MP4InputStream in;
 	protected final TrackHeaderBox tkhd;
@@ -49,7 +49,7 @@ public abstract class Track {
 	private final List<Frame> frames;
 	private URL location;
 	private int currentFrame;
-	//info structures
+	//信息结构
 	protected DecoderSpecificInfo decoderSpecificInfo;
 	protected DecoderInfo decoderInfo;
 	protected Protection protection;
@@ -65,7 +65,7 @@ public abstract class Track {
 
 		final Box dinf = minf.getChild(BoxTypes.DATA_INFORMATION_BOX);
 		final DataReferenceBox dref = (DataReferenceBox) dinf.getChild(BoxTypes.DATA_REFERENCE_BOX);
-		//TODO: support URNs
+		//TODO: 支持 URN
 		if(dref.hasChild(BoxTypes.DATA_ENTRY_URL_BOX)) {
 			DataEntryUrlBox url = (DataEntryUrlBox) dref.getChild(BoxTypes.DATA_ENTRY_URL_BOX);
 			inFile = url.isInFile();
@@ -89,7 +89,7 @@ public abstract class Track {
 			location = null;
 		}
 
-		//sample table
+		//采样表
 		final Box stbl = minf.getChild(BoxTypes.SAMPLE_TABLE_BOX);
 		if(stbl.hasChildren()) {
 			frames = new ArrayList<Frame>();
@@ -103,21 +103,21 @@ public abstract class Track {
 		final double timeScale = mdhd.getTimeScale();
 		final Type type = getType();
 
-		//sample sizes
+		//采样大小
 		final long[] sampleSizes = ((SampleSizeBox) stbl.getChild(BoxTypes.SAMPLE_SIZE_BOX)).getSampleSizes();
 
-		//chunk offsets
+		//块偏移
 		final ChunkOffsetBox stco;
 		if(stbl.hasChild(BoxTypes.CHUNK_OFFSET_BOX)) stco = (ChunkOffsetBox) stbl.getChild(BoxTypes.CHUNK_OFFSET_BOX);
 		else stco = (ChunkOffsetBox) stbl.getChild(BoxTypes.CHUNK_LARGE_OFFSET_BOX);
 		final long[] chunkOffsets = stco.getChunks();
 
-		//samples to chunks
+		//采样到块
 		final SampleToChunkBox stsc = ((SampleToChunkBox) stbl.getChild(BoxTypes.SAMPLE_TO_CHUNK_BOX));
 		final long[] firstChunks = stsc.getFirstChunks();
 		final long[] samplesPerChunk = stsc.getSamplesPerChunk();
 
-		//sample durations/timestamps
+		//采样时长/时间戳
 		final DecodingTimeToSampleBox stts = (DecodingTimeToSampleBox) stbl.getChild(BoxTypes.DECODING_TIME_TO_SAMPLE_BOX);
 		final long[] sampleCounts = stts.getSampleCounts();
 		final long[] sampleDeltas = stts.getSampleDeltas();
@@ -132,23 +132,23 @@ public abstract class Track {
 			off += sampleCounts[i];
 		}
 
-		//create samples
+		//创建采样
 		int current = 0;
 		int lastChunk;
 		double timeStamp;
 		long offset = 0;
-		//iterate over all chunk groups
+		//遍历所有块组
 		for(int i = 0; i<firstChunks.length; i++) {
 			if(i<firstChunks.length-1) lastChunk = (int) firstChunks[i+1]-1;
 			else lastChunk = chunkOffsets.length;
 
-			//iterate over all chunks in current group
+			//遍历当前组中的所有块
 			for(int j = (int) firstChunks[i]-1; j<lastChunk; j++) {
 				offset = chunkOffsets[j];
 
-				//iterate over all samples in current chunk
+				//遍历当前块中的所有采样
 				for(int k = 0; k<samplesPerChunk[i]; k++) {
-					//create samples
+					//创建采样
 					timeStamp = ((double) timeOffsets[current])/timeScale;
 					frames.add(new Frame(type, offset, sampleSizes[current], timeStamp));
 					offset += sampleSizes[current];
@@ -157,12 +157,12 @@ public abstract class Track {
 			}
 		}
 
-		//frames need not to be time-ordered: sort by timestamp
-		//TODO: is it possible to add them to the specific position?
+		//帧无需按时间排序：按时间戳排序
+		//TODO: 是否可以将它们添加到指定位置？
 		Collections.sort(frames);
 	}
 
-	//TODO: implement other entry descriptors
+	//TODO: 实现其他条目描述符
 	protected void findDecoderSpecificInfo(ESDBox esds) {
 		final Descriptor ed = esds.getEntryDescriptor();
 		final List<Descriptor> children = ed.getChildren();
@@ -202,41 +202,41 @@ public abstract class Track {
 
 	//tkhd
 	/**
-	 * Returns true if the track is enabled. A disabled track is treated as if
-	 * it were not present.
-	 * @return true if the track is enabled
+	 * 如果轨道已启用则返回 true。已禁用的轨道被视为
+	 * 不存在。
+	 * @return 如果轨道已启用则返回 true
 	 */
 	public boolean isEnabled() {
 		return tkhd.isTrackEnabled();
 	}
 
 	/**
-	 * Returns true if the track is used in the presentation.
-	 * @return true if the track is used
+	 * 如果轨道在放映中被使用则返回 true。
+	 * @return 如果轨道被使用则返回 true
 	 */
 	public boolean isUsed() {
 		return tkhd.isTrackInMovie();
 	}
 
 	/**
-	 * Returns true if the track is used in previews.
-	 * @return true if the track is used in previews
+	 * 如果轨道在预览中被使用则返回 true。
+	 * @return 如果轨道在预览中被使用则返回 true
 	 */
 	public boolean isUsedForPreview() {
 		return tkhd.isTrackInPreview();
 	}
 
 	/**
-	 * Returns the time this track was created.
-	 * @return the creation time
+	 * 返回此轨道的创建时间。
+	 * @return 创建时间
 	 */
 	public Date getCreationTime() {
 		return Utils.getDate(tkhd.getCreationTime());
 	}
 
 	/**
-	 * Returns the last time this track was modified.
-	 * @return the modification time
+	 * 返回此轨道的最后修改时间。
+	 * @return 修改时间
 	 */
 	public Date getModificationTime() {
 		return Utils.getDate(tkhd.getModificationTime());
@@ -244,86 +244,85 @@ public abstract class Track {
 
 	//mdhd
 	/**
-	 * Returns the language for this media.
-	 * @return the language
+	 * 返回此媒体的语言。
+	 * @return 语言
 	 */
 	public Locale getLanguage() {
 		return new Locale(mdhd.getLanguage());
 	}
 
 	/**
-	 * Returns true if the data for this track is present in this file (stream).
-	 * If not, <code>getLocation()</code> returns the URL where the data can be
-	 * found.
-	 * @return true if the data is in this file (stream), false otherwise
+	 * 如果此轨道的数据存在于本文件（流）中则返回 true。
+	 * 否则 <code>getLocation()</code> 返回数据所在的 URL。
+	 * @return 如果数据在本文件（流）中则返回 true，否则返回 false
 	 */
 	public boolean isInFile() {
 		return inFile;
 	}
 
 	/**
-	 * If the data for this track is not present in this file (if
-	 * <code>isInFile</code> returns false), this method returns the data's
-	 * location. Else null is returned.
-	 * @return the data's location or null if the data is in this file
+	 * 如果此轨道的数据不存在于本文件中（即
+	 * <code>isInFile</code> 返回 false），此方法返回数据的
+	 * 位置。否则返回 null。
+	 * @return 数据的位置；若数据在本文件中则返回 null
 	 */
 	public URL getLocation() {
 		return location;
 	}
 
-	//info structures
+	//信息结构
 	/**
-	 * Returns the decoder specific info, if present. It contains configuration
-	 * data for the decoder. If the decoder specific info is not present, the
-	 * track contains a <code>DecoderInfo</code>.
+	 * 返回解码器特定信息（若存在）。它包含解码器的配置
+	 * 数据。如果不存在解码器特定信息，则该
+	 * 轨道包含一个 <code>DecoderInfo</code>。
 	 *
 	 * @see #getDecoderInfo() 
-	 * @return the decoder specific info
+	 * @return 解码器特定信息
 	 */
 	public byte[] getDecoderSpecificInfo() {
 		return decoderSpecificInfo.getData();
 	}
 
 	/**
-	 * Returns the <code>DecoderInfo</code>, if present. It contains 
-	 * configuration information for the decoder. If the structure is not
-	 * present, the track contains a decoder specific info.
+	 * 返回 <code>DecoderInfo</code>（若存在）。它包含解码器的
+	 * 配置信息。如果不存在该结构，则该
+	 * 轨道包含解码器特定信息。
 	 *
 	 * @see #getDecoderSpecificInfo()
-	 * @return the codec specific structure
+	 * @return 编解码器特定结构
 	 */
 	public DecoderInfo getDecoderInfo() {
 		return decoderInfo;
 	}
 
 	/**
-	 * Returns the <code>ProtectionInformation</code> object that contains 
-	 * details about the DRM system used. If no protection is present this 
-	 * method returns null.
+	 * 返回 <code>ProtectionInformation</code> 对象，其中包含
+	 * 所用 DRM 系统的详细信息。如果不存在保护，此
+	 * 方法返回 null。
 	 * 
-	 * @return a <code>ProtectionInformation</code> object or null if no 
-	 * protection is used
+	 * @return 一个 <code>ProtectionInformation</code> 对象；若未使用
+	 * 保护则返回 null
 	 */
 	public Protection getProtection() {
 		return protection;
 	}
 
-	//reading
+	//读取
 	/**
-	 * Indicates if there are more frames to be read in this track.
+	 * 表明此轨道中是否还有更多帧待读取。
 	 * 
-	 * @return true if there is at least one more frame to read.
+	 * @return 如果至少还有一帧待读取则返回 true。
 	 */
 	public boolean hasMoreFrames() {
 		return currentFrame<frames.size();
 	}
 
 	/**
-	 * Reads the next frame from this track. If it contains no more frames to
-	 * read, null is returned.
+	 * 从此轨道读取下一帧。如果已无更多帧
+	 * 可读，则返回 null。
 	 * 
-	 * @return the next frame or null if there are no more frames to read
-	 * @throws IOException if reading fails
+	 * @return 下一帧；若无更多帧可读则返回 null
+	 * @throws IOException 如果读取失败
 	 */
 	public Frame readNextFrame() throws IOException {
 		Frame frame = null;
@@ -355,15 +354,14 @@ public abstract class Track {
 	}
 
 	/**
-	 * This method tries to seek to the frame that is nearest to the given
-	 * timestamp. It returns the timestamp of the frame it seeked to or -1 if
-	 * none was found.
+	 * 此方法尝试跳转到最接近给定
+	 * 时间戳的帧。它返回所跳转至帧的时间戳；若未找到则返回 -1。
 	 * 
-	 * @param timestamp a timestamp to seek to
-	 * @return the frame's timestamp that the method seeked to
+	 * @param timestamp 要跳转至的时间戳
+	 * @return 该方法跳转至的帧的时间戳
 	 */
 	public double seek(double timestamp) {
-		//find first frame > timestamp
+		//查找第一帧 > 时间戳
 		Frame frame = null;
 		for(int i = 0; i<frames.size(); i++) {
 			frame = frames.get(i++);
@@ -376,10 +374,10 @@ public abstract class Track {
 	}
 
 	/**
-	 * Returns the timestamp of the next frame to be read. This is needed to
-	 * read frames from a movie that contains multiple tracks.
+	 * 返回下一待读帧的时间戳。这是读取
+	 * 含多个轨道的电影中的帧所必需的。
 	 *
-	 * @return the next frame's timestamp
+	 * @return 下一帧的时间戳
 	 */
 	double getNextTimeStamp() {
 		return frames.get(currentFrame).getTime();

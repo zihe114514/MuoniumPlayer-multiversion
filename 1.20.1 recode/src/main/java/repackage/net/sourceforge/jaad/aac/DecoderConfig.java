@@ -5,9 +5,8 @@ import repackage.net.sourceforge.jaad.aac.syntax.Constants;
 import repackage.net.sourceforge.jaad.aac.syntax.PCE;
 
 /**
- * DecoderConfig that must be passed to the
- * <code>Decoder</code> constructor. Typically it is created via one of the
- * static parsing methods.
+ * 必须传入 <code>Decoder</code> 构造函数的 DecoderConfig。
+ * 它通常通过某个静态解析方法创建。
  *
  * @author in-somnia
  */
@@ -20,9 +19,9 @@ public class DecoderConfig implements Constants {
 	private boolean dependsOnCoreCoder;
 	private int coreCoderDelay;
 	private boolean extensionFlag;
-	//extension: SBR
+	//扩展：SBR
 	private boolean sbrPresent, downSampledSBR, sbrEnabled;
-	//extension: error resilience
+	//扩展：错误弹性（error resilience）
 	private boolean sectionDataResilience, scalefactorResilience, spectralDataResilience;
 
 	private DecoderConfig() {
@@ -132,10 +131,10 @@ public class DecoderConfig implements Constants {
 
 	/* ======== static builder ========= */
 	/**
-	 * Parses the input arrays as a DecoderSpecificInfo, as used in MP4
-	 * containers.
+	 * 将输入数组解析为 DecoderSpecificInfo，正如 MP4
+	 * 容器中所使用的那样。
 	 * 
-	 * @return a DecoderConfig
+	 * @return 一个 DecoderConfig
 	 */
 	static DecoderConfig parseMP4DecoderSpecificInfo(byte[] data) throws AACException {
 		final BitStream in = new BitStream(data);
@@ -154,9 +153,9 @@ public class DecoderConfig implements Constants {
 					config.extProfile = config.profile;
 					config.sbrPresent = true;
 					sf = in.readBits(4);
-					//TODO: 24 bits already read; read again?
+					//TODO: 已读取 24 位；需要重新读取吗？
 					//if(sf==0xF) config.sampleFrequency = SampleFrequency.forFrequency(in.readBits(24));
-					//if sample frequencies are the same: downsample SBR
+					//如果采样率相同：对 SBR 降采样
 					config.downSampledSBR = config.sampleFrequency.getIndex()==sf;
 					config.sampleFrequency = SampleFrequency.forInt(sf);
 					config.profile = readProfile(in);
@@ -168,9 +167,9 @@ public class DecoderConfig implements Constants {
 				case ER_AAC_LC:
 				case ER_AAC_LTP:
 				case ER_AAC_LD:
-					//ga-specific info:
+					//GA 专用信息：
 					config.frameLengthFlag = in.readBool();
-					if(config.frameLengthFlag) throw new AACException("config uses 960-sample frames, not yet supported"); //TODO: are 960-frames working yet?
+					if(config.frameLengthFlag) throw new AACException("config uses 960-sample frames, not yet supported"); //TODO: 960 帧目前能正常工作吗？
 					config.dependsOnCoreCoder = in.readBool();
 					if(config.dependsOnCoreCoder) config.coreCoderDelay = in.readBits(14);
 					else config.coreCoderDelay = 0;
@@ -187,7 +186,7 @@ public class DecoderConfig implements Constants {
 					}
 
 					if(config.channelConfiguration==ChannelConfiguration.CHANNEL_CONFIG_NONE) {
-						//TODO: is this working correct? -> ISO 14496-3 part 1: 1.A.4.3
+						//TODO: 这样做是否正确？-> ISO 14496-3 part 1: 1.A.4.3
 						in.skipBits(3); //PCE
 						PCE pce = new PCE();
 						pce.decode(in);

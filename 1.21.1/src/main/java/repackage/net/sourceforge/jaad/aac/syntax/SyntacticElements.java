@@ -10,13 +10,13 @@ import repackage.net.sourceforge.jaad.aac.tools.MS;
 
 public class SyntacticElements implements Constants {
 
-	//global properties
+	//全局属性
 	private DecoderConfig config;
 	private boolean sbrPresent, psPresent;
 	private int bitsRead;
-	//elements
+	//元素
 	private final PCE pce;
-	private final Element[] elements; //SCE, LFE and CPE
+	private final Element[] elements; //SCE、LFE 和 CPE
 	private final CCE[] cces;
 	private final DSE[] dses;
 	private final FIL[] fils;
@@ -46,7 +46,7 @@ public class SyntacticElements implements Constants {
 	}
 
 	public void decode(BitStream in) throws AACException {
-		final int start = in.getPosition(); //should be 0
+		final int start = in.getPosition(); //应为 0
 
 		int type;
 		Element prev = null;
@@ -90,7 +90,7 @@ public class SyntacticElements implements Constants {
 			prev = null;
 		}
 		else {
-			//error resilient raw data block
+			//错误弹性原始数据块
 			switch(config.getChannelConfiguration()) {
 				case CHANNEL_CONFIG_MONO:
 					decodeSCE_LFE(in);
@@ -189,7 +189,7 @@ public class SyntacticElements implements Constants {
 		int chs = config.getChannelConfiguration().getChannelCount();
 		if(chs==1&&psPresent) chs++;
 		final int mult = sbrPresent ? 2 : 1;
-		//only reallocate if needed
+		//仅在需要时重新分配
 		if(data==null||chs!=data.length||(mult*config.getFrameLength())!=data[0].length) data = new float[chs][mult*config.getFrameLength()];
 
 		int channel = 0;
@@ -209,7 +209,7 @@ public class SyntacticElements implements Constants {
 				channel += 2;
 			}
 			else if(e instanceof CCE) {
-				//applies invquant and save the result in the CCE
+				//应用逆量化并将结果保存到 CCE 中
 				((CCE) e).process();
 				channel++;
 			}
@@ -222,31 +222,31 @@ public class SyntacticElements implements Constants {
 		final LTPrediction ltp = info.getLTPrediction1();
 		final int elementID = scelfe.getElementInstanceTag();
 
-		//inverse quantization
+		//逆量化
 		final float[] iqData = ics.getInvQuantData();
 
-		//prediction
+		//预测
 		if(profile.equals(Profile.AAC_MAIN)&&info.isICPredictionPresent()) info.getICPrediction().process(ics, iqData, sf);
 		if(LTPrediction.isLTPProfile(profile)&&info.isLTPrediction1Present()) ltp.process(ics, iqData, filterBank, sf);
 
-		//dependent coupling
+		//从属耦合
 		processDependentCoupling(false, elementID, CCE.BEFORE_TNS, iqData, null);
 
 		//TNS
 		if(ics.isTNSDataPresent()) ics.getTNS().process(ics, iqData, sf, false);
 
-		//dependent coupling
+		//从属耦合
 		processDependentCoupling(false, elementID, CCE.AFTER_TNS, iqData, null);
 
-		//filterbank
+		//滤波器组
 		filterBank.process(info.getWindowSequence(), info.getWindowShape(ICSInfo.CURRENT), info.getWindowShape(ICSInfo.PREVIOUS), iqData, data[channel], channel);
 
 		if(LTPrediction.isLTPProfile(profile)) ltp.updateState(data[channel], filterBank.getOverlap(channel), profile);
 
-		//dependent coupling
+		//从属耦合
 		processIndependentCoupling(false, elementID, data[channel], null);
 
-		//gain control
+		//增益控制
 		if(ics.isGainControlPresent()) ics.getGainControl().process(iqData, info.getWindowShape(ICSInfo.CURRENT), info.getWindowShape(ICSInfo.PREVIOUS), info.getWindowSequence());
 
 		//SBR
@@ -272,13 +272,13 @@ public class SyntacticElements implements Constants {
 		final LTPrediction ltp2 = cpe.isCommonWindow() ? info1.getLTPrediction2() : info2.getLTPrediction1();
 		final int elementID = cpe.getElementInstanceTag();
 
-		//inverse quantization
+		//逆量化
 		final float[] iqData1 = ics1.getInvQuantData();
 		final float[] iqData2 = ics2.getInvQuantData();
 
 		//MS
 		if(cpe.isCommonWindow()&&cpe.isMSMaskPresent()) MS.process(cpe, iqData1, iqData2);
-		//main prediction
+		//主预测
 		if(profile.equals(Profile.AAC_MAIN)) {
 			if(info1.isICPredictionPresent()) info1.getICPrediction().process(ics1, iqData1, sf);
 			if(info2.isICPredictionPresent()) info2.getICPrediction().process(ics2, iqData2, sf);
@@ -293,17 +293,17 @@ public class SyntacticElements implements Constants {
 			else if(info2.isLTPrediction1Present()) ltp2.process(ics2, iqData2, filterBank, sf);
 		}
 
-		//dependent coupling
+		//从属耦合
 		processDependentCoupling(true, elementID, CCE.BEFORE_TNS, iqData1, iqData2);
 
 		//TNS
 		if(ics1.isTNSDataPresent()) ics1.getTNS().process(ics1, iqData1, sf, false);
 		if(ics2.isTNSDataPresent()) ics2.getTNS().process(ics2, iqData2, sf, false);
 
-		//dependent coupling
+		//从属耦合
 		processDependentCoupling(true, elementID, CCE.AFTER_TNS, iqData1, iqData2);
 
-		//filterbank
+		//滤波器组
 		filterBank.process(info1.getWindowSequence(), info1.getWindowShape(ICSInfo.CURRENT), info1.getWindowShape(ICSInfo.PREVIOUS), iqData1, data[channel], channel);
 		filterBank.process(info2.getWindowSequence(), info2.getWindowShape(ICSInfo.CURRENT), info2.getWindowShape(ICSInfo.PREVIOUS), iqData2, data[channel+1], channel+1);
 
@@ -312,10 +312,10 @@ public class SyntacticElements implements Constants {
 			ltp2.updateState(data[channel+1], filterBank.getOverlap(channel+1), profile);
 		}
 
-		//independent coupling
+		//独立耦合
 		processIndependentCoupling(true, elementID, data[channel], data[channel+1]);
 
-		//gain control
+		//增益控制
 		if(ics1.isGainControlPresent()) ics1.getGainControl().process(iqData1, info1.getWindowShape(ICSInfo.CURRENT), info1.getWindowShape(ICSInfo.PREVIOUS), info1.getWindowSequence());
 		if(ics2.isGainControlPresent()) ics2.getGainControl().process(iqData2, info2.getWindowShape(ICSInfo.CURRENT), info2.getWindowShape(ICSInfo.PREVIOUS), info2.getWindowSequence());
 

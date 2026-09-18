@@ -8,10 +8,10 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Byte-level audio container detection shared by the playback cache pipeline.
+ * 供播放缓存流水线共享的字节级音频容器检测。
  *
- * <p>Reported MIME types and URL suffixes are advisory only: callers must use
- * {@link #detectContainer(File)} before choosing a decoder.</p>
+ * <p>上报的 MIME 类型和 URL 后缀仅供参考：调用方在选择解码器前
+ * 必须先用 {@link #detectContainer(File)}。</p>
  */
 final class AudioContainerSupport {
 
@@ -34,9 +34,9 @@ final class AudioContainerSupport {
     }
 
     /**
-     * Normalizes an API MIME type/extension, but callers must still inspect the file bytes before
-     * playing it. Unknown values intentionally become {@code null}, so a valid CDN response with
-     * a bad Content-Type can still be recognized after download.
+     * 规范化 API 的 MIME 类型/扩展名，但调用方在播放前仍须检查文件字节。
+     * 未知值有意地变为 {@code null}，因此一个 Content-Type 错误但 CDN 响应有效
+     * 的文件仍能在下载后被识别出来。
      */
     static String normalizeReportedContainer(String reportedType) {
         if (reportedType == null) {
@@ -69,8 +69,8 @@ final class AudioContainerSupport {
     }
 
     /**
-     * Identifies the real container from its bytes rather than trusting a URL suffix or API type.
-     * AAC ADTS is checked before MPEG audio because both start with an {@code 0xFFF} sync word.
+     * 根据字节识别真实容器，而不是盲信 URL 后缀或 API 类型。
+     * AAC ADTS 在 MPEG 音频之前检查，因为两者都以 {@code 0xFFF} 同步字开头。
      */
     static String detectContainer(File file) {
         if (file == null || !file.isFile() || file.length() < 4L) {
@@ -143,7 +143,7 @@ final class AudioContainerSupport {
             return "mp4";
         }
 
-        // Major brand is at byte 8; compatible brands start at byte 16.
+        // 主 brand 在第 8 字节；兼容 brand 从第 16 字节开始。
         for (int brandOffset = 8; brandOffset + 4 <= boxSize; brandOffset += 4) {
             if (hasIsoAudioBrand(header, length, brandOffset)) {
                 return "m4a";
@@ -163,7 +163,7 @@ final class AudioContainerSupport {
         if (length < 7 || (header[0] & 0xFF) != 0xFF || (header[1] & 0xF0) != 0xF0) {
             return false;
         }
-        // ADTS has a zero Layer field; MPEG audio has a non-zero Layer field.
+        // ADTS 的 Layer 字段为零；MPEG 音频的 Layer 字段非零。
         if ((header[1] & 0x06) != 0) {
             return false;
         }

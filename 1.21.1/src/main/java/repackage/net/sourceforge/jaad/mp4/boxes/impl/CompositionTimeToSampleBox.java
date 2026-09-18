@@ -5,16 +5,15 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import java.io.IOException;
 
 /**
- * This box provides the offset between decoding time and composition time.
- * Since decoding time must be less than the composition time, the offsets are
- * expressed as unsigned numbers such that
+ * 此 box 提供解码时间与合成时间之间的偏移。
+ * 由于解码时间必须小于合成时间，偏移以无符号数表示，使得
  * CT(n) = DT(n) + CTTS(n)
- * where CTTS(n) is the (uncompressed) table entry for sample n.
+ * 其中 CTTS(n) 是采样 n 的（未压缩）表项。
  *
- * The composition time to sample table is optional and must only be present if
- * DT and CT differ for any samples.
+ * 采样表的合成时间为可选项，仅当
+ * 任何采样的 DT 与 CT 不同时才必须出现。
  *
- * Hint tracks do not use this box.
+ * Hint 轨道不使用此 box。
  * 
  * @author in-somnia
  */

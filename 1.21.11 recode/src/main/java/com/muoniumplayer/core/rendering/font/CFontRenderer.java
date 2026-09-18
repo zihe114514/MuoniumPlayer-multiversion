@@ -383,7 +383,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
             case 'd': return 0xFF55FF;
             case 'e': return 0xFFFF55;
             case 'f': return 0xFFFFFF;
-            default: return Integer.MIN_VALUE; // Default color or throw an exception
+            default: return Integer.MIN_VALUE; // 默认颜色，否则抛出异常
         }
     }
 
@@ -595,7 +595,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
     }
 
     /**
-     * @return true if all the chars in the string are loaded
+     * @return 当字符串中的所有字符都已加载时返回 true
      */
     public boolean _drawCenteredString(String s, double x, double y, int color) {
         float r = ((color >> 16) & 0xff) * RenderSystem.DIVIDE_BY_255;

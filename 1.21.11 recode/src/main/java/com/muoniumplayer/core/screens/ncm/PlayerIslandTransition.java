@@ -158,7 +158,7 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         deltaMs = Math.min(250.0, Math.max(0.0, deltaMs));
 
         // 完全打开后，普通面板拥有渲染权。仅刷新四个缓存输出；
-        // this avoids re-solving two bezier curves and rebuilding the pulse every idle player frame.
+        // 这样可避免在每个空闲的玩家帧上重新求解两条贝塞尔曲线并重建脉冲。
         if (state == OPEN) {
             // 屏幕调整大小/初始化可能在播放器已打开时再次调用 open()。完成任何
             // 重新武装的表面过渡，使通知不会被无限期阻塞。

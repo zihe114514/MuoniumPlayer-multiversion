@@ -1,32 +1,32 @@
 package repackage.com.jsyn.unitgen;
 
 /**
- * A second order low shelf filter (Robert Bristow-Johnson's audio EQ cookbook form) with a smoothed,
- * thread safe gain parameter.
+ * 二阶低架滤波器（ Robert Bristow-Johnson的音频均衡烹饪书形式）具有平滑，
+ * 螺纹安全增益参数。
  *
- * <p>It exists for the automix bass swap: when two tracks overlap, the one thing that instantly gives
- * the blend away is both of them putting their kick and bass into the same 20-250 Hz window, which sums
- * to a muddy boom no amount of volume fading can fix. A DJ solves this by pulling the low band out of
- * the outgoing track and only letting the incoming one's bass in once it owns the mix. That needs a
- * real filter, not a volume curve, so this is one.</p>
+ * <p>它的存在是为了自动混音的低音切换：当两个轨道重叠时，最容易立刻暴露
+ * 混音痕迹的，就是两者都把底鼓和低音塞进同一个 20-250 Hz 窗口，叠加后
+ * 变成浑浊的轰鸣，无论怎样做音量淡入淡出都无法挽回。DJ 的做法是把待切出轨道的低频段抽掉，
+ * 在新轨道掌控混音后才让它的低音进来。这需要一个
+ * 真实滤波器，而不是体积曲线，所以这是一个。</p>
  *
- * <h3>Two deliberate properties</h3>
+ * <h3>两个刻意为之的特性</h3>
  * <ul>
- *   <li><b>Bit-exact bypass.</b> At (or very near) 0 dB the filter copies its input and clears its
- *       state, so leaving one permanently attached to every deck cannot colour ordinary playback.</li>
- *   <li><b>Smoothed gain.</b> {@link #setGainDb(float)} is called from the player's 10 ms supervisor
- *       tick; stepping biquad coefficients at that rate would zipper. The gain follows the target with
- *       a one pole slew and the coefficients are only recomputed when it has actually moved.</li>
+ *   <li><b>比特精确的旁路。</b>在 0 dB（或极接近）处，滤波器直接复制输入并清空其
+ *       状态，因此将一个卡组永久连接到每个卡组不能为普通播放着色。</li>
+ *   <li> <b>平滑增益。</b>从玩家的10ms主管调用{@link #setGainDb(float)}
+ *       勾选；以该速率步进biquad系数会拉链。增益跟随目标与
+ *       a一极回转，系数仅在实际移动时重新计算， </li>
  * </ul>
  */
 public class FilterLowShelf extends UnitFilter {
 
-    /** Above this the shelf would start eating the low mids as well. */
+    /** 在这上面，架子也会开始吃低中音。*/
     private static final double MAX_FREQUENCY = 1_000.0;
     private static final double MIN_FREQUENCY = 30.0;
-    /** Gain changes below this are inaudible, and treated as "unchanged" to skip a coefficient update. */
+    /** 低于此值的增益变化是听不到的，并被视为“未更改”以跳过系数更新。*/
     private static final double GAIN_EPSILON_DB = .02;
-    /** Slew time constant. Long enough to be inaudible, short enough to track a 10 ms driver. */
+    /** 转换时间常数。长到听不见，又短到足以跟上 10 ms 的驱动。 */
     private static final double SLEW_SECONDS = .025;
 
     private volatile double targetGainDb;
@@ -37,9 +37,9 @@ public class FilterLowShelf extends UnitFilter {
     private double computedFrequency = Double.NaN;
 
     /**
-     * Frame rate, resolved on first use. {@code getFrameRate()} reads through the synthesis engine and
-     * throws while the unit is detached, which is exactly the state a unit test - or a filter that has
-     * been removed from the graph mid-block - is in.
+     * 帧速率，首次使用时解析。{@code getFrameRate()} 通过合成引擎读取，
+     * 在单元分离时抛出，这正是单元测试的状态-或具有
+     * 已从图形中间块中删除-已进入。
      */
     private int cachedRate;
 
@@ -47,7 +47,7 @@ public class FilterLowShelf extends UnitFilter {
     private double x1, x2, y1, y2;
 
     /**
-     * @param db shelf gain in dB for the low band; negative cuts the bass. 0 bypasses the filter.
+     * @param db 低频段货架增益（以dB为单位） ；负切割低音。0绕过滤波器。
      */
     public void setGainDb(float db) {
         if (Float.isNaN(db) || Float.isInfinite(db)) return;
@@ -58,13 +58,13 @@ public class FilterLowShelf extends UnitFilter {
         return (float) this.targetGainDb;
     }
 
-    /** Corner frequency of the shelf in Hz. */
+    /** 货架的角频率，以Hz为单位。*/
     public void setFrequency(float hz) {
         if (Float.isNaN(hz) || Float.isInfinite(hz)) return;
         this.frequency = Math.max(MIN_FREQUENCY, Math.min(MAX_FREQUENCY, hz));
     }
 
-    /** Drops the filter straight to unity without a slew, for a deck that is about to start. */
+    /** 将滤波器直接跳到单位增益而不做转换，用于即将启动的唱盘。 */
     public void resetTo(float db) {
         setGainDb(db);
         this.currentGainDb = this.targetGainDb;
@@ -99,8 +99,8 @@ public class FilterLowShelf extends UnitFilter {
             this.cachedRate = rate;
         }
 
-        // One pole slew towards the target, evaluated once per block: a block is a fraction of a
-        // millisecond, so per-sample interpolation would only cost cycles.
+        // 一极转向目标，每个区块评估一次：区块是
+        // 毫秒，因此每个样本的插值只会花费周期。
         double coefficient = 1.0 - Math.exp(-frames / (SLEW_SECONDS * rate));
         this.currentGainDb += (target - this.currentGainDb) * coefficient;
         if (Math.abs(target - this.currentGainDb) < GAIN_EPSILON_DB) {
@@ -108,8 +108,8 @@ public class FilterLowShelf extends UnitFilter {
         }
 
         if (Math.abs(this.currentGainDb) < GAIN_EPSILON_DB && Math.abs(target) < GAIN_EPSILON_DB) {
-            // Flat: pass the signal through untouched rather than through a unity biquad, so an
-            // always-attached filter is provably transparent for ordinary playback.
+            // 直通：信号原样通过，而非经过一个单位增益的双二阶滤波器，从而
+            // 始终接入的滤波器在普通播放时可证明是透明的。
             clearState();
             for (int i = start; i < limit; i++) {
                 outputs[i] = inputs[i];
@@ -129,8 +129,8 @@ public class FilterLowShelf extends UnitFilter {
             double y0 = this.b0 * x0 + this.b1 * this.x1 + this.b2 * this.x2
                     - this.a1 * this.y1 - this.a2 * this.y2;
             if (y0 != y0 || Double.isInfinite(y0)) {
-                // A denormal storm or a NaN arriving from a broken decoder must not lock the filter
-                // into producing silence (or worse) for the rest of the track.
+                // 来自损坏解码器的非规格化数风暴或 NaN，绝不能把滤波器锁死
+                // 在整首曲目剩余部分输出静音（甚至更糟）。
                 clearState();
                 y0 = x0;
             }
@@ -149,7 +149,7 @@ public class FilterLowShelf extends UnitFilter {
         double amplitude = Math.pow(10.0, gainDb / 40.0);
         double w0 = 2.0 * Math.PI * Math.max(MIN_FREQUENCY, Math.min(rate * .45, frequencyHz)) / rate;
         double cos = Math.cos(w0);
-        // Shelf slope S = 1, i.e. the steepest slope that still has no gain ripple.
+        // 货架斜率S = 1 ，即仍然没有增益波动的最陡斜率。
         double alpha = Math.sin(w0) * .5 * Math.sqrt(2.0);
         double sqrtA = Math.sqrt(amplitude);
         double shared = 2.0 * sqrtA * alpha;

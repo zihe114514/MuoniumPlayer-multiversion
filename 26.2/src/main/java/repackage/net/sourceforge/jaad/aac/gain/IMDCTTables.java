@@ -2,7 +2,7 @@ package repackage.net.sourceforge.jaad.aac.gain;
 
 interface IMDCTTables {
 
-	//pre-twiddling tables
+	//前 twiddle 表
 	float[][] IMDCT_TABLE_256 = {
 		{1.0f, -0.0f},
 		{0.9996988f, -0.024541229f},
@@ -151,7 +151,7 @@ interface IMDCTTables {
 		{-0.9238796f, -0.38268328f},
 		{-0.9807853f, -0.19509031f}
 	};
-	//post-twiddling tables
+	//后 twiddle 表
 	float[][] IMDCT_POST_TABLE_256 = {
 		{0.49232805f, 0.50766724f, 0.50147516f, 0.49840719f},
 		{0.47697723f, 0.5229804f, 0.50407255f, 0.4948688f},

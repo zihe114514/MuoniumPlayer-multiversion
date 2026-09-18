@@ -22,7 +22,7 @@ public class Movie {
 	public Movie(Box moov, MP4InputStream in) {
 		this.in = in;
 
-		//create tracks
+		//创建轨道
 		mvhd = (MovieHeaderBox) moov.getChild(BoxTypes.MOVIE_HEADER_BOX);
 		List<Box> trackBoxes = moov.getChildren(BoxTypes.TRACK_BOX);
 		tracks = new ArrayList<Track>(trackBoxes.size());
@@ -32,7 +32,7 @@ public class Movie {
 			if(track!=null) tracks.add(track);
 		}
 
-		//read metadata: moov.meta/moov.udta.meta
+		//读取元数据：moov.meta/moov.udta.meta
 		metaData = new MetaData();
 		if(moov.hasChild(BoxTypes.META_BOX)) metaData.parse(null, moov.getChild(BoxTypes.META_BOX));
 		else if(moov.hasChild(BoxTypes.USER_DATA_BOX)) {
@@ -40,7 +40,7 @@ public class Movie {
 			if(udta.hasChild(BoxTypes.META_BOX)) metaData.parse(udta, udta.getChild(BoxTypes.META_BOX));
 		}
 
-		//detect DRM
+		//检测 DRM
 		protections = new ArrayList<Protection>();
 		if(moov.hasChild(BoxTypes.ITEM_PROTECTION_BOX)) {
 			Box ipro = moov.getChild(BoxTypes.ITEM_PROTECTION_BOX);
@@ -50,7 +50,7 @@ public class Movie {
 		}
 	}
 
-	//TODO: support hint and meta
+	//TODO: 支持 hint 和 meta
 	private Track createTrack(Box trak) {
 		final HandlerBox hdlr = (HandlerBox) trak.getChild(BoxTypes.MEDIA_BOX).getChild(BoxTypes.HANDLER_BOX);
 		final Track track;
@@ -68,21 +68,21 @@ public class Movie {
 	}
 
 	/**
-	 * Returns an unmodifiable list of all tracks in this movie. The tracks are
-	 * ordered as they appeare in the file/stream.
+	 * 返回此电影中所有轨道的不可修改列表。轨道按其在
+	 * 文件/流中出现的顺序排列。
 	 *
-	 * @return the tracks contained by this movie
+	 * @return 此电影包含的轨道
 	 */
 	public List<Track> getTracks() {
 		return Collections.unmodifiableList(tracks);
 	}
 
 	/**
-	 * Returns an unmodifiable list of all tracks in this movie with the
-	 * specified type. The tracks are ordered as they appeare in the
-	 * file/stream.
+	 * 返回此电影中所有具有指定类型的轨道的不可修改列表。
+	 * 轨道按其在
+	 * 文件/流中出现的顺序排列。
 	 *
-	 * @return the tracks contained by this movie with the passed type
+	 * @return 此电影中具有指定类型的轨道
 	 */
 	public List<Track> getTracks(Type type) {
 		final List<Track> l = new ArrayList<Track>();
@@ -93,11 +93,10 @@ public class Movie {
 	}
 
 	/**
-	 * Returns an unmodifiable list of all tracks in this movie whose samples
-	 * are encoded with the specified codec. The tracks are ordered as they 
-	 * appeare in the file/stream.
+	 * 返回此电影中所有采样以指定编解码器编码的轨道的
+	 * 不可修改列表。轨道按其在文件/流中出现的顺序排列。
 	 *
-	 * @return the tracks contained by this movie with the passed type
+	 * @return 此电影中具有指定类型的轨道
 	 */
 	public List<Track> getTracks(Track.Codec codec) {
 		final List<Track> l = new ArrayList<Track>();
@@ -108,30 +107,30 @@ public class Movie {
 	}
 
 	/**
-	 * Indicates if this movie contains metadata. If false the <code>MetaData</code>
-	 * object returned by <code>getMetaData()</code> will not contain any field.
+	 * 表明此电影是否包含元数据。如果为 false，则 <code>getMetaData()</code>
+	 * 返回的 <code>MetaData</code> 对象不包含任何字段。
 	 * 
-	 * @return true if this movie contains any metadata
+	 * @return 如果此电影包含任何元数据则返回 true
 	 */
 	public boolean containsMetaData() {
 		return metaData.containsMetaData();
 	}
 
 	/**
-	 * Returns the MetaData object for this movie.
+	 * 返回此电影的 MetaData 对象。
 	 *
-	 * @return the MetaData for this movie
+	 * @return 此电影的 MetaData
 	 */
 	public MetaData getMetaData() {
 		return metaData;
 	}
 
 	/**
-	 * Returns the <code>ProtectionInformation</code> objects that contains 
-	 * details about the DRM systems used. If no protection is present the 
-	 * returned list will be empty.
+	 * 返回 <code>ProtectionInformation</code> 对象，其中包含
+	 * 所用 DRM 系统的详细信息。如果不存在保护，则
+	 * 返回的列表为空。
 	 * 
-	 * @return a list of protection informations
+	 * @return 保护信息列表
 	 */
 	public List<Protection> getProtections() {
 		return Collections.unmodifiableList(protections);
@@ -139,33 +138,33 @@ public class Movie {
 
 	//mvhd
 	/**
-	 * Returns the time this movie was created.
-	 * @return the creation time
+	 * 返回此电影的创建时间。
+	 * @return 创建时间
 	 */
 	public Date getCreationTime() {
 		return Utils.getDate(mvhd.getCreationTime());
 	}
 
 	/**
-	 * Returns the last time this movie was modified.
-	 * @return the modification time
+	 * 返回此电影的最后修改时间。
+	 * @return 修改时间
 	 */
 	public Date getModificationTime() {
 		return Utils.getDate(mvhd.getModificationTime());
 	}
 
 	/**
-	 * Returns the duration in seconds.
-	 * @return the duration
+	 * 返回时长（秒）。
+	 * @return 时长
 	 */
 	public double getDuration() {
 		return (double) mvhd.getDuration()/(double) mvhd.getTimeScale();
 	}
 
 	/**
-	 * Indicates if there are more frames to be read in this movie.
+	 * 表明此电影中是否还有更多帧待读取。
 	 *
-	 * @return true if there is at least one track in this movie that has at least one more frame to read.
+	 * @return 如果此电影中至少还有一个轨道尚有至少一帧待读取则返回 true。
 	 */
 	public boolean hasMoreFrames() {
 		for(Track track : tracks) {
@@ -175,12 +174,12 @@ public class Movie {
 	}
 
 	/**
-	 * Reads the next frame from this movie (from one of the contained tracks).
-	 * The frame is the next in time-order, thus the next for playback. If none
-	 * of the tracks contains any more frames, null is returned.
+	 * 从此电影读取下一帧（来自某个所含轨道）。
+	 * 该帧是时间顺序上的下一帧，即播放的下一帧。如果没有
+	 * 任何轨道还含有更多帧，则返回 null。
 	 *
-	 * @return the next frame or null if there are no more frames to read from this movie.
-	 * @throws IOException if reading fails
+	 * @return 下一帧；若此电影已无更多帧可读则返回 null。
+	 * @throws IOException 如果读取失败
 	 */
 	public Frame readNextFrame() throws IOException {
 		Track track = null;

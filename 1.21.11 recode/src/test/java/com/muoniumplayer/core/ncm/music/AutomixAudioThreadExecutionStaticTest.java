@@ -17,8 +17,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 交叉淡入淡出曲线的音频线程执行路径。
  *
- * <p>Half of this file is the usual source scan, because the interesting contracts are about
- * <em>where</em> code is and <em>what it must not call</em>: an audio thread may not push commands
+  * <p>此文件的一半是常规的源码扫描，因为真正重要的契约在于
+  * <em>代码在何处</em>以及<em>它不得调用什么</em>：音频线程不得推送命令
  * 到 JSyn 的队列，并且它不得在每个输出缓冲区清除一次滤波器状态。另一半是
  * 对 {@link AutomixPlan} 的真实数值检查：此设计无法完全消除的一个竞态是
  * 在混合刚完成后到达的帧，只有当每个输入通道曲线届时都已恢复到中性时，
@@ -236,7 +236,7 @@ class AutomixAudioThreadExecutionStaticTest {
     /**
      * 一个成员的文本，通过签名查找并在匹配的右大括号处截断。
      *
-     * <p>Braces inside string literals are not a concern for the members this file inspects, and a
+      * <p>字符串字面量中的大括号对于本文件所检查的成员而言无需关注，而
      * 试图处理它们的扫描器比这种做法更容易出错。</p>
      */
     private static String body(String source, String signature) {

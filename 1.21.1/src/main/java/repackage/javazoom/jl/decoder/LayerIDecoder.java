@@ -1,33 +1,33 @@
 /*
- * 09/26/08     throw exception on subbband alloc error: Christopher G. Jennings (cjennings@acm.org)
+ * 09/26/08抛出子带分配异常错误： Christopher G. Jennings(cjennings@acm.org)
  *
  * 11/19/04        1.0 moved to LGPL.
  *
- * 12/12/99        Initial version. Adapted from javalayer.java
- *                and Subband*.java. mdm@techie.com
+ * 1999年12月12日初始版本。改编自javalayer.java
+ *                和子带* .java. mdm@techie.com
  *
  * 02/28/99        Initial version : javalayer.java by E.B
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
 package repackage.javazoom.jl.decoder;
 
 /**
- * Implements decoding of MPEG Audio Layer I frames.
+ * 实现MPEG Audio Layer I帧的解码。
  */
 class LayerIDecoder implements FrameDecoder {
 
@@ -40,7 +40,7 @@ class LayerIDecoder implements FrameDecoder {
 
     protected int num_subbands;
     protected Subband[] subbands;
-    protected Crc16 crc; // new Crc16[1] to enable CRC checking.
+    protected Crc16 crc; // new Crc16[1] 以启用 CRC 校验。
 
     public LayerIDecoder() {
         crc = new Crc16();
@@ -93,13 +93,13 @@ class LayerIDecoder implements FrameDecoder {
     }
 
     protected void readAllocation() throws DecoderException {
-        // start to read audio data:
+        // 开始读取音频数据：
         for (int i = 0; i < num_subbands; ++i)
             subbands[i].readAllocation(stream, header, crc);
     }
 
     protected void readScaleFactorSelection() {
-        // scale factor selection not present for layer I.
+        // 第I层不存在比例因子选择。
     }
 
     protected void readScaleFactors() {
@@ -128,15 +128,15 @@ class LayerIDecoder implements FrameDecoder {
     }
 
     /**
-     * Abstract base class for subband classes of layer I and II
+     * layer I 和 II 子带类的抽象基类
      */
     static abstract class Subband {
         /*
-         * ScaleFactors for layer I and II, Annex 3-B.1 in ISO/IEC DIS 11172:
+         * ISO/IEC DIS 11172中附件3-B.1第I层和第II层的比例因子：
          *
-         * Changes from version 1.1 to 1.2:
-         *    - array size increased by one, although a scalefactor with index 63
-         *      is illegal (to prevent segmentation faults)
+         * 从1.1版更改为1.2版：
+         *    -数组大小增加了一个，虽然是索引为63的比例因子
+         *      是非法的（以防段错误）
          */
         public static final float[] scaleFactors = {
                 2.00000000000000f, 1.58740105196820f, 1.25992104989487f, 1.00000000000000f,
@@ -154,7 +154,7 @@ class LayerIDecoder implements FrameDecoder {
                 0.00003051757813f, 0.00002422181781f, 0.00001922486954f, 0.00001525878906f,
                 0.00001211090890f, 0.00000961243477f, 0.00000762939453f, 0.00000605545445f,
                 0.00000480621738f, 0.00000381469727f, 0.00000302772723f, 0.00000240310869f,
-                0.00000190734863f, 0.00000151386361f, 0.00000120155435f, 0.00000000000000f // illegal scaleFactor
+                0.00000190734863f, 0.00000151386361f, 0.00000120155435f, 0.00000000000000f // 非法 scaleFactor
         };
 
         public abstract void readAllocation(Bitstream stream, Header header, Crc16 crc) throws DecoderException;
@@ -167,13 +167,13 @@ class LayerIDecoder implements FrameDecoder {
     }
 
     /**
-     * Class for layer I subbands in single channel mode.
-     * Used for single channel mode
-     * and in derived class for intensity stereo mode
+     * 单声道模式下 layer I 子带的类。
+     * 用于单通道模式
+     * 在派生类中用于 intensity stereo 模式
      */
     static class SubbandLayer1 extends Subband {
 
-        // Factors and offsets for sample requantization
+        // 样品重量化的因子和偏移
         public static final float[] tableFactor = {
                 0.0f, (1.0f / 2.0f) * (4.0f / 3.0f), (1.0f / 4.0f) * (8.0f / 7.0f), (1.0f / 8.0f) * (16.0f / 15.0f),
                 (1.0f / 16.0f) * (32.0f / 31.0f), (1.0f / 32.0f) * (64.0f / 63.0f), (1.0f / 64.0f) * (128.0f / 127.0f),
@@ -201,7 +201,7 @@ class LayerIDecoder implements FrameDecoder {
         protected float factor, offset;
 
         /**
-         * Constructor.
+         * 制造商
          */
         public SubbandLayer1(int subbandNumber) {
             this.subbandNumber = subbandNumber;
@@ -214,9 +214,9 @@ class LayerIDecoder implements FrameDecoder {
         @Override
         public void readAllocation(Bitstream stream, Header header, Crc16 crc) throws DecoderException {
             if ((allocation = stream.getBits(4)) == 15) {
-                // CGJ: catch this condition and throw appropriate exception
+                // CGJ：捕获此情况并抛出相应异常
                 throw new DecoderException(DecoderErrors.ILLEGAL_SUBBAND_ALLOCATION, null);
-                // MPEG-stream is corrupted!
+                // MPEG流已损坏！
             }
 
             if (crc != null) crc.addBits(allocation, 4);
@@ -264,13 +264,13 @@ class LayerIDecoder implements FrameDecoder {
     }
 
     /**
-     * Class for layer I subbands in joint stereo mode.
+     * 关节立体声模式下的I层子带类。
      */
     static class SubbandLayer1IntensityStereo extends SubbandLayer1 {
         protected float channel2ScaleFactor;
 
         /**
-         * Constructor
+         * 构造函数
          */
         public SubbandLayer1IntensityStereo(int subbandNumber) {
             super(subbandNumber);
@@ -309,7 +309,7 @@ class LayerIDecoder implements FrameDecoder {
         @Override
         public boolean put_next_sample(int channels, SynthesisFilter filter1, SynthesisFilter filter2) {
             if (allocation != 0) {
-                sample = sample * factor + offset; // requantization
+                sample = sample * factor + offset; // 重量化
                 if (channels == OutputChannels.BOTH_CHANNELS) {
                     float sample1 = sample * scaleFactor,
                             sample2 = sample * channel2ScaleFactor;
@@ -328,7 +328,7 @@ class LayerIDecoder implements FrameDecoder {
     }
 
     /**
-     * Class for layer I subbands in stereo mode.
+     * 立体声模式下I层子带的类。
      */
     static class SubbandLayer1Stereo extends SubbandLayer1 {
 
@@ -339,7 +339,7 @@ class LayerIDecoder implements FrameDecoder {
         protected float channel2Factor, channel2Offset;
 
         /**
-         * Constructor
+         * 构造函数
          */
         public SubbandLayer1Stereo(int subbandNumber) {
             super(subbandNumber);

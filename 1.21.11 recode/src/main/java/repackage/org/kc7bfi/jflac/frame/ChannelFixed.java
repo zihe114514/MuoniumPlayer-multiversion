@@ -41,7 +41,7 @@ public class ChannelFixed extends Channel {
 
     /**
      * 构造函数。
-     * @param is InputBitStream
+      * @param is 输入位流
      * @param header FLAC帧标题
      * @param channelData 解码后的信道数据（输出）
      * @param bps 每秒位数

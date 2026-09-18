@@ -4,11 +4,10 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.utils.Location;
 
 /**
- * Static player-control icons imported from the supplied artwork.
+ * 从提供的美术资源导入的静态播放器控制图标。
  *
- * <p>Resource paths intentionally stay under the historical {@code muonium}
- * root because that root is part of the installed-mod resource compatibility
- * contract.</p>
+ * <p>资源路径有意保持在历史 {@code muonium} 根目录下，
+ * 因为该根目录是已安装 mod 资源兼容性契约的一部分。</p>
  *
  * <p><b>必须带前导斜杠。</b>{@link Location#getResourceStream()} 用的是
  * {@code Location.class.getResourceAsStream(path)}，不带斜杠会被当成相对
@@ -34,9 +33,9 @@ public final class PlayerIconAssets {
     }
 
     /**
-     * Returns {@code null} for legacy modes without supplied artwork.  The
-     * caller then keeps its established icon-font fallback instead of mapping
-     * a legacy state to the wrong visual icon.
+     * 对未提供封面的旧模式返回 {@code null}。
+     * 调用方随后保留其既有的图标字体回退，而非把
+     * 旧状态映射到错误的视觉图标。
      */
     public static Location forPlayMode(CloudMusic.PlayMode mode) {
         if (mode == null) {

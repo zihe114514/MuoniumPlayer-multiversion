@@ -19,17 +19,17 @@ public class AudioPlayer {
     public float volume = 0.25f;
 
     /**
-     * Crossfade multiplier applied on top of {@link #volume}. It exists so an automix handover can ramp
-     * one deck down while another ramps up without touching the persisted player volume, which both
-     * decks keep sharing.
+     * 叠加在 {@link #volume} 之上的交叉淡化倍率。它的存在，是为了让 automix 交接时
+     * 把一路 deck 降下、另一路升起，而全程不触碰两路 deck 共同持有的持久化播放器音量。
+     * 
      */
     private volatile float fadeGain = 1.0f;
 
     /**
-     * The automix processing chain (low shelf + vocal-band canceller) sitting in this deck's own signal
-     * path. Only attached when automix is actually going to use it, so a player with automix off keeps
-     * exactly the original graph. At 0 dB and depth 0 both stages are bit-exact pass-throughs, so the
-     * chain can stay attached for a whole track.
+     * 挂在这一路 deck 自己信号链路上的 automix 处理链（低搁架 + 人声频带抵消）。
+     * 只在 automix 真的要用它时才接上，关掉 automix 的播放器保持完全原始的信号图；
+     * 在 0 dB、深度为 0 时两级都是逐位精确的直通，
+     * 所以整条链可以一整曲挂着不拆。
      */
     private AutomixDeckChain automixChain;
     private volatile float bassGainDb = 0.0f;
@@ -49,44 +49,41 @@ public class AudioPlayer {
     private volatile boolean pitchPreserved;
 
     /**
-     * The decoded cache file this deck was built from, kept so offline analysis can open it again with
-     * its own handle. Reading the live JSyn sample instead is not an option: it streams from a shared
-     * sliding window, and moving that window under the audio thread breaks playback outright.
+     * 这一路 deck 构建时所用的解码缓存文件，留着它好让离线分析用自己的句柄再打开一次。
+     * 直接读活的 JSyn 采样不行：它从共享的滑动窗口流式读取，
+     * 在音频线程下去挪动那个窗口会直接毁掉播放。
      */
     private volatile File sourceFile;
-    /** Human-readable track metadata used by non-audio status surfaces. */
+    /** 供非音频状态界面使用的、人类可读的曲目元数据。 */
     private volatile String trackName;
 
     /**
-     * Some downloaded files can be opened by the decoder but contain no usable
-     * audio frames. AudioSample.position() performs a modulo by frames(), so an
-     * empty sample must never reach the playback or rendering paths.
+     * 有些下载下来的文件解码器能打开，却不含任何可用的音频帧；
+     * AudioSample.position() 会对 frames() 取模，
+     * 因此空采样绝不能流到播放或渲染路径上。
      */
     private boolean closed;
 
-    /** Set by {@link #prepareStart(float)}: the reader is cued, the shelf is wired and the window warm. */
+    /** 由 {@link #prepareStart(float)} 设置：读头已定位、搁架已接入、窗口已预热。 */
     private volatile boolean prepared;
 
     /**
-     * The intent "this deck has been asked to play", latched synchronously at the moment
-     * {@link #play()} queues its command.
+     * 「这一路 deck 已经被要求播放」这一意图，在 {@link #play()} 排队的那一刻同步置位。
      *
-     * <p><b>Why this exists.</b> {@code AudioSample.isPlaying()} reads the engine thread's state, while
-     * {@code play()} only queues a command - it takes effect at the audio thread's next
-     * {@code generateNextBuffer()}. Until then {@code isPlaying()} is still false. The player UI draws
-     * its pause icon from exactly {@code !isPlaying()}, so "decoded, command queued, sound arriving any
-     * moment" and "not playing at all" look identical on screen.</p>
+     * <p><b>为什么需要它。</b>{@code AudioSample.isPlaying()} 读的是引擎线程的状态，而
+     * {@code play()} 只是在命令队列里排一条命令 —— 要到音频线程下一次 {@code generateNextBuffer()}
+     * 才真正生效。中间这段时间里 `isPlaying()` 仍是 false。播放器界面恰恰是用
+     * {@code !isPlaying()} 画暂停图标的，于是「解码已完成、命令已排队、声音马上就出来」
+     * 与「压根没在播」在界面上长得一模一样。</p>
      *
-     * <p>First playback makes that window especially long: between the decode finishing and
-     * {@code play()} there is a {@code loadLyric()} network round trip (a multi-source lyric match on
-     * the first run), preceded by a fixed 250 ms wait in {@code stopPreviousPlayer()}. What the user
-     * sees is a track already audible while the pause icon and the progress bar have not moved.</p>
+     * <p>首播时这个窗口格外长：解码完成到 {@code play()} 之间还隔着一次
+     * {@code loadLyric()} 的联网往返（首次还要跑多源歌词匹配），前面还有
+     * {@code stopPreviousPlayer()} 里 250 ms 的固定等待。用户看到的就是「已经开始响了，
+     * 但暂停图标和进度条都没动」。</p>
      *
-     * <p>Splitting "intent" from "engine state" means the UI's question to {@link #isPausing()} is
-     * answered by whether this playback counts as running from the user's point of view, no longer
-     * jittering with the command queue's latency. It deliberately does <b>not</b> replace
-     * {@code isPlaying()}: code that truly needs to know whether the engine is sounding still asks the
-     * engine.</p>
+     * <p>把「意图」与「引擎实际状态」分开之后，界面问 {@link #isPausing()} 得到的是
+     * 「用户视角下这条播放算不算在走」，不再随引擎命令队列的延迟抖动。它刻意<b>不</b>取代
+     * {@code isPlaying()}：真正要判断引擎是否在出声的地方仍然直接问引擎。</p>
      */
     private volatile boolean playRequested;
 
@@ -99,8 +96,8 @@ public class AudioPlayer {
     }
 
     public void setAudio(File file) {
-        // Decode and validate before closing the currently playing song. A
-        // corrupt/empty replacement must not destroy an otherwise usable player.
+        // 在关掉当前正在播放的歌曲之前先解码并校验：
+        // 损坏或为空的替换曲绝不能毁掉原本还能用的播放器。
         SoundFile next = loadUsableSoundFile(file);
         next.setOnFinished(() -> finished = true);
 
@@ -110,9 +107,9 @@ public class AudioPlayer {
         finished = false;
         this.closed = false;
         this.prepared = false;
-        // The new track has not been asked to play yet. This deck still carries the previous
-        // track's play intent, and leaving it set would make the UI report "playing" before the
-        // new track has actually started - the very mismatch this change fixes.
+        // 新曲目还没有被要求播放。此刻 deck 上挂的是上一首的播放意图，
+        // 留着它会让界面在新曲真正起播之前就报告「正在播放」——正是本次要修的那个错。
+        // 新曲目已真正起播——正是本次改动所要修正的那种不匹配。
         this.playRequested = false;
         this.bassGainDb = 0.0f;
         this.vocalDuckDepth = 0.0f;
@@ -142,21 +139,21 @@ public class AudioPlayer {
         attachAutomixChain();
 
         finished = false;
-        // Latch before queueing: once this command is in, the UI already knows this deck has been
-        // asked to play, whatever the engine thread does next - it need not wait for isPlaying().
+        // 先置位再排队：这条命令之后无论引擎线程什么时候才处理，界面都已经知道
+        // 「这一路 deck 是被要求播放的」，不必等 isPlaying() 翻真。
         this.playRequested = true;
         try {
-            // Amplitude first: playback starts at the configured level instead of at the engine's
-            // default of full volume for the first few rendered frames.
+            // 先调振幅：让播放从配置好的电平起步，
+            // 而不是头几帧按引擎默认的满音量渲染。
             this.player.amp(effectiveAmp());
             this.player.play();
             this.player.amp(effectiveAmp());
         } catch (ChannelMismatchException mismatch) {
-            // Preserve the existing retry path in CloudMusic for channel changes.
+            // 为声道变化保留 CloudMusic 里既有的重试路径。
             this.playRequested = false;
             throw mismatch;
         } catch (RuntimeException ignored) {
-            // A decoder can become invalid between validation and playback.
+            // 解码器在校验与播放之间可能失效。
             this.playRequested = false;
         }
     }
@@ -176,16 +173,16 @@ public class AudioPlayer {
             this.player.resyncTimeStretch();
             this.player.amp(effectiveAmp());
         } catch (RuntimeException ignored) {
-            // Seeking is best-effort. A malformed stream must not crash the UI.
+            // 定位是尽力而为。畸形流绝不能让界面崩溃。
         }
     }
 
     /**
-     * Starts playback from an explicit offset. Used by the automix handover so the incoming deck can
-     * enter after a dead intro instead of always starting at zero.
+     * 从一个显式偏移开始播放。供 automix 交接使用，
+     * 让进来的 deck 能跳过死寂的前奏，而不是总从 0 开始。
      *
-     * <p>{@code cue()} stops the reader first, so the following {@code play()} re-uses the same JSyn
-     * voice rather than allocating a second concurrent one.</p>
+     * <p>{@code cue()} 会先停掉读头，因此随后的 {@code play()} 复用同一个 JSyn voice，
+     * 而不是再分配第二个并发的 voice。</p>
      */
     public void playFrom(float millis) {
         if (!isUsable())
@@ -196,10 +193,10 @@ public class AudioPlayer {
         try {
             this.player.amp(effectiveAmp());
             cueTo(millis);
-            // After cue(), never before: AudioSample.cue() goes through stop(), which rips the effect
-            // out of the circuit and never puts it back (JSyn's Processing wrapper has its own TODO
-            // about that). Attaching first meant the incoming deck of a blend played completely
-            // unfiltered - both tracks kept their full low end and the seam thumped.
+            // 要在 cue() 之后、绝不能在它之前：AudioSample.cue() 会走 stop()，
+            // 把效果从电路里扯掉且不再装回（JSyn 的 Processing 包装层对此有自己的 TODO）。
+            // 先接链的话，淡化中进来的 deck 会完全不经滤波地播放——
+            // 两首曲子都保留完整低频，接缝处就会咚地撞一下。
             attachAutomixChain();
             this.player.play();
             this.player.amp(effectiveAmp());
@@ -207,22 +204,22 @@ public class AudioPlayer {
             this.playRequested = false;
             throw mismatch;
         } catch (RuntimeException ignored) {
-            // A decoder can become invalid between validation and playback.
+            // 解码器在校验与播放之间可能失效。
             this.playRequested = false;
         }
     }
 
     /**
-     * Does everything a start needs <em>except</em> making a sound: cues the reader, wires the automix
-     * low shelf into the (idle) circuit and pulls the first streaming window off the disk.
+     * 做一次启动所需的一切，<em>唯独</em>不出声：定位读头、把 automix 低搁架接入（空闲的）电路、
+     * 并把第一个流式窗口从磁盘拉下来。
      *
-     * <p>This exists because of how a deck actually reads its audio. The decoded WAV is not held in
-     * RAM; a {@code RandomAccessFile} is read through a 4096-sample sliding window that is refilled
-     * <b>from the JSyn engine thread</b>. A deck that is started at the moment of a crossfade therefore
-     * pays for a file seek, an 8 KB read and a graph rewire inside the audio callback, right when the
-     * other deck also wants to be served - which is exactly the hitch a "seamless" handover must not
-     * have. Doing all of it on the arming thread, seconds early, leaves only the amplitude ramp for the
-     * seam itself.</p>
+     * <p>之所以有这个方法，是因为 deck 实际读取音频的方式。解码后的 WAV 并不常驻内存；
+     * 一个 {@code RandomAccessFile} 通过 4096 采样的滑动窗口读取，窗口由<b>JSyn 引擎线程</b>回填。
+     * 因此在交叉淡化那一刻才启动的 deck，会在音频回调里付出一次文件 seek、一次 8 KB 读、
+     * 一次信号图重接，偏偏另一路 deck 此刻也要被服务——
+     * 这正是「无缝」交接绝不该有的卡顿。
+     * 在预备线程上提前几秒把这些全做完，留给接缝本身的就只剩振幅斜坡。</p>
+     * 
      */
     public void prepareStart(float millis) {
         if (!isUsable()) return;
@@ -239,8 +236,8 @@ public class AudioPlayer {
     }
 
     /**
-     * Starts a deck made ready by {@link #prepareStart(float)}. Deliberately does not cue: cueing again
-     * would stop the reader, strip the low shelf back out and throw away the primed window.
+     * 启动一路已由 {@link #prepareStart(float)} 备好的 deck。刻意不再 cue：再次 cue
+     * 会停掉读头、把低搁架再扯出来，并丢掉已预热的窗口。
      */
     public void startPrepared() {
         if (!isUsable()) return;
@@ -252,7 +249,7 @@ public class AudioPlayer {
         this.playRequested = true;
         try {
             this.player.amp(effectiveAmp());
-            attachAutomixChain();   // idempotent; the chain normally survives from prepareStart()
+            attachAutomixChain();   // 幂等；这条链通常从 prepareStart() 起就一直活着。
             this.player.play();
             this.player.amp(effectiveAmp());
         } catch (ChannelMismatchException mismatch) {
@@ -263,12 +260,12 @@ public class AudioPlayer {
         }
     }
 
-    /** True once {@link #prepareStart(float)} has cued and warmed this deck. */
+    /** 一旦 {@link #prepareStart(float)} 完成定位并预热这一路 deck，即为 true。 */
     public boolean isPrepared() {
         return this.prepared;
     }
 
-    /** Clamps to the sample and cues the reader. Returns the position actually cued to, in millis. */
+    /** 夹到采样范围内并定位读头。返回实际定位到的位置，单位毫秒。 */
     private float cueTo(float millis) {
         float total = getTotalTimeMillis();
         float safeMillis = total <= 0.0f
@@ -282,10 +279,10 @@ public class AudioPlayer {
     }
 
     /**
-     * Forces the streaming window to the given position so the first read does not happen inside the
-     * audio callback. One sample is enough: the reader fills a whole window around the index it is
-     * asked for. Only ever called on a deck that is not sounding - moving the window of a playing
-     * sample is what used to crash the engine thread.
+     * 强制把流式窗口挪到给定位置，让首次读取不发生在音频回调内部。
+     * 一个采样就够了：读头会在被请求的下标周围填满一整个窗口。
+     * 只在未出声的 deck 上调用——挪动正在播放采样的窗口，
+     * 正是过去弄崩引擎线程的元凶。
      */
     private void primeStreamWindow(float millis) {
         try {
@@ -301,14 +298,14 @@ public class AudioPlayer {
             if (index > Integer.MAX_VALUE - channels) return;
             this.player.read((int) index);
         } catch (RuntimeException ignored) {
-            // Priming is an optimisation; a decoder that refuses it still plays.
+            // 预热只是优化；拒绝预热的解码器仍能正常播放。
         }
     }
 
     /**
-     * Sets the crossfade multiplier. {@code 0} is silent, {@code 1} is the configured player volume;
-     * values above 1 are allowed so a quiet incoming track can be loudness-matched, and the product is
-     * clamped to the engine's valid amplitude range.
+     * 设置交叉淡化倍率。{@code 0} 为静音，{@code 1} 为配置好的播放器音量；
+     * 允许大于 1 的值，好让偏小的进来曲目能做响度匹配，
+     * 最终乘积会夹到引擎合法的振幅范围内。
      */
     public void setFadeGain(float gain) {
         this.fadeGain = Float.isNaN(gain) || Float.isInfinite(gain) ? 0.0f : Math.max(0.0f, gain);
@@ -319,7 +316,7 @@ public class AudioPlayer {
         return this.fadeGain;
     }
 
-    /** Audio-thread variant used by automix automation; no command is queued back onto JSyn. */
+    /** 供 automix 自动化使用的音频线程版本；不会把任何命令排回 JSyn 的队列。 */
     void applyAutomixFrame(float fade, float bassDb, float vocalDepth, float midDb, float highDb) {
         this.fadeGain = Float.isFinite(fade) ? Math.max(0f, fade) : 0f;
         this.bassGainDb = Float.isFinite(bassDb) ? bassDb : 0f;
@@ -333,7 +330,7 @@ public class AudioPlayer {
                 this.midGainDb, this.highGainDb);
     }
 
-    /** Audio-thread variant for the outgoing deck, including the separated tempo/pitch controls. */
+    /** 淡出 deck 的音频线程版本，多带上已经解耦的速度与音高两条控制。 */
     void applyAutomixFrame(float fade, float bassDb, float tempo, float pitch) {
         applyAutomixFrame(fade, bassDb, 0f, 0f, 0f);
         applySpeedAndPitchNow(tempo, pitch);
@@ -357,12 +354,12 @@ public class AudioPlayer {
     }
 
     /**
-     * Attaches the automix processing chain if it is not already in the graph.
+     * 如果 automix 处理链还不在信号图里，就把它接上。
      *
-     * <p>Called just before the deck starts sounding, so the graph is never rewired while audio is
-     * running through it. The chain is only created when automix is actually allowed to use it: with
-     * automix off - or with both the bass swap and the vocal duck off - the deck keeps the original,
-     * effect-free graph.</p>
+     * <p>在 deck 即将出声之前调用，所以绝不会在音频流经信号图的中途重接。
+     * 这条链只在 automix 真被允许使用时才创建：关掉 automix——
+     * 或低音替换与人声闪避都关掉——deck 就保持原始的、无效果的信号图。</p>
+     * 
      */
     private void attachAutomixChain() {
         if (!AutomixSettings.isEnabled()) return;
@@ -374,21 +371,21 @@ public class AudioPlayer {
                 this.automixChain = new AutomixDeckChain();
                 this.automixChain.frequency(AutomixSettings.BASS_SHELF_HZ);
             }
-            // The centre canceller needs to know whether there is a real stereo image: a mono file is
-            // panned into two identical channels, where subtracting the centre would take the whole
-            // cancelled band with it.
+            // 中央抵消器需要知道是否真有立体声声场：单声道文件被声像摆进两条完全相同的声道，
+            // 这种情况下减去中央会把整个被抵消的频带一起带走。
+            // 
             this.automixChain.stereo(channelCount() >= 2);
             this.automixChain.resetTo(this.bassGainDb, this.vocalDuckDepth);
             this.automixChain.midGainDb(this.midGainDb);
             this.automixChain.highGainDb(this.highGainDb);
-            // Not isProcessing(): pause() rips the effect out of the circuit without telling the
-            // effect, so a resumed deck has to be re-wired or it would play unfiltered.
+            // 不能用 isProcessing() 判断：pause() 会不打招呼就把效果从电路里扯掉，
+            // 所以恢复的 deck 必须重新接链，否则会不经滤波就播放。
             if (!this.automixChain.isAttachedTo(this.player)) {
                 this.automixChain.forget(this.player);
                 this.automixChain.process(this.player);
             }
         } catch (Throwable ignored) {
-            // An engine that refuses the extra units must not stop the track from playing.
+            // 拒绝这些额外单元的引擎绝不能让曲目无法播放。
             this.automixChain = null;
         }
     }
@@ -402,11 +399,11 @@ public class AudioPlayer {
     }
 
     /**
-     * Sets the low shelf gain in dB for this deck. Negative values pull the bass out, which is how the
-     * handover keeps two overlapping tracks from stacking their kick drums into one boom.
+     * 为本路 deck 设置低搁架增益，单位 dB。负值把低音抽掉，
+     * 交接正是靠它防止两首重叠曲目的底鼓叠成一声闷响。
      *
-     * <p>A no-op when no shelf is attached (automix or the bass swap disabled), so callers do not have
-     * to know which decks are filtered.</p>
+     * <p>没接搁架时（automix 或低音替换被禁用）是空操作，调用方不必知道哪些 deck 被滤波。</p>
+     * 
      */
     public void setBassGainDb(float db) {
         float safe = Float.isNaN(db) || Float.isInfinite(db) ? 0.0f : db;
@@ -420,13 +417,13 @@ public class AudioPlayer {
     }
 
     /**
-     * Sets how hard this deck's vocal band is cancelled, 0 leaving it alone and 1 being full
-     * cancellation of the band-limited centre.
+     * 设置本路 deck 人声频带的抵消强度，0 不动它，1 对带限中央声道做完全抵消。
+     * 
      *
-     * <p>Used on the deck that is fading <em>in</em>: it enters as an instrumental bed so the outgoing
-     * track's vocal never has a second vocal on top of it, and the cancellation is released before the
-     * blend ends. A no-op when no chain is attached, so callers do not have to know which decks are
-     * processed.</p>
+     * <p>用在正在淡<em>入</em>的那一路 deck 上：它以纯器乐垫的身份进来，
+     * 好让出去曲目的人声头顶不会再叠第二个人声，并在淡化结束前松开抵消。
+     * 没接链时是空操作，调用方不必知道哪些 deck 被处理。</p>
+     * 
      */
     public void setMidGainDb(float db) {
         float safe = Float.isNaN(db) || Float.isInfinite(db) ? 0f : Math.max(-3f, Math.min(3f, db));
@@ -458,8 +455,8 @@ public class AudioPlayer {
         return this.vocalDuckDepth;
     }
 
-    /** The decoded file behind this deck, or {@code null} when it is not known. */
-    /** The display name of the track loaded on this deck, when known. */
+    /** 这一路 deck 背后的解码文件；未知时为 {@code null}。 */
+    /** 这一路 deck 上所加载曲目的显示名（若已知）。 */
     public String getTrackName() {
         return this.trackName;
     }
@@ -477,11 +474,11 @@ public class AudioPlayer {
     }
 
     /**
-     * Relative playback rate, 1.0 being the file's own tempo.
+     * 相对播放速率，1.0 即文件自身的速度。
      *
-     * <p>Used only on the deck that is fading <em>out</em> of a blend: nudging it onto the incoming
-     * track's tempo keeps the two beat grids locked for the whole overlap instead of letting them drift
-     * apart by a fraction of a beat.</p>
+     * <p>只用在正在淡<em>出</em>淡化的那一路 deck 上：把它轻轻推到进来曲目的速度，
+     * 让两套节拍网格在整个重叠期锁死，而不是差上小半拍慢慢漂开。</p>
+     * 
      *
      * <p><b>优先走时间伸缩，不走重采样。</b>{@code SoundFile.rate()} 拧的是 JSyn 读头的步进，速度和音高
      * 一起变 —— 1.03 倍就是升高约半个音，而且是那种"整首歌走调"的听感，用户反馈过。
@@ -521,8 +518,8 @@ public class AudioPlayer {
         if (Float.isNaN(pitch) || Float.isInfinite(pitch)) return;
         float safeTempo = Math.max(.5f, Math.min(2.0f, tempo));
         float safePitch = Math.max(.5f, Math.min(2.0f, pitch));
-        // The fade driver ticks every 10 ms and holds the rate flat for most of the blend; re-setting
-        // the port with an unchanged value every tick would be pure overhead.
+        // 淡化驱动器每 10 ms tick 一次，且在淡化大部分时间里把速率保持平坦；
+        // 每 tick 都用同一个没变的值重设端口纯属浪费。
         if (Math.abs(safeTempo - this.playbackRate) < .0005f
                 && Math.abs(safePitch - this.pitchRatio) < .0005f) {
             return;
@@ -567,7 +564,7 @@ public class AudioPlayer {
         return this.playbackRate;
     }
 
-    /** Returns the deck to flat response, full vocal and natural tempo. */
+    /** 把这一路 deck 恢复成平直响应、完整人声与自然速度。 */
     public void resetAutomixProcessing() {
         setBassGainDb(0.0f);
         setMidGainDb(0.0f);
@@ -589,7 +586,7 @@ public class AudioPlayer {
         }
     }
 
-    /** Effective amplitude handed to the engine: persisted volume scaled by the crossfade gain. */
+    /** 交给引擎的有效振幅：持久化音量乘以交叉淡化增益。 */
     private float effectiveAmp() {
         float amp = this.volume * this.fadeGain;
         if (Float.isNaN(amp) || Float.isInfinite(amp)) return 0.0f;
@@ -601,14 +598,14 @@ public class AudioPlayer {
         try {
             this.player.amp(effectiveAmp());
         } catch (RuntimeException ignored) {
-            // Re-applied on the next successful playback operation.
+            // 会在下一次成功的播放操作时重新施加。
         }
     }
 
     /**
-     * Idempotent on purpose. A deck can now be released from several places (the play loop, a cancelled
-     * switch, the end of a crossfade), and disposing a already cleaned-up sample would hand JSyn a null
-     * buffer to queue.
+     * 刻意做成幂等。现在一路 deck 可能从好几个地方被释放（播放循环、被取消的切歌、交叉淡化结束），
+     * 对已经清理过的采样再 dispose 一次，会把一个 null 缓冲塞给 JSyn 排队。
+     * 
      */
     @SneakyThrows
     public synchronized void close() {
@@ -669,32 +666,30 @@ public class AudioPlayer {
                 return 0.0f;
             return Math.max(0.0f, Math.min(total, position));
         } catch (RuntimeException ignored) {
-            // AudioSample.position() uses `% frames()` and can throw when a
-            // decoder produced an empty sample. Report a safe position.
+            // AudioSample.position() 用 `% frames()` 取模，当解码器
+            // 产出空采样时可能抛错。报一个安全的位置。
             return 0.0f;
         }
     }
 
     /**
-     * Whether this deck counts as "not playing" from the user's point of view.
+     * 从用户视角看，这一路 deck 是否处于「没在播放」。
      *
-     * <p>The test is the <b>play intent</b> ({@link #playRequested}), not the engine thread's
-     * {@code isPlaying()}. The latter stays false for a whole engine buffer after {@code play()} is
-     * queued, and on first playback it also sits behind decoding, a lyric network round trip and a
-     * fixed wait - so on screen a track that is already audible keeps showing as paused with the
-     * progress bar stuck at zero. That mismatch is exactly what this method removes.</p>
+     * <p>判据是<b>播放意图</b>（{@link #playRequested}）而不是引擎线程的 {@code isPlaying()}。
+     * 后者在 {@code play()} 排队之后仍会保持 false 一整个引擎缓冲，首播时前面还压着解码、
+     * 歌词联网往返与固定等待，于是界面上一条已经在出声的曲目会继续显示成暂停、
+     * 进度条停在 0 —— 这正是本方法要消除的错位。</p>
      *
-     * <p>Where code needs to know whether the engine is sounding right now, ask {@link #isPlaying()}
-     * rather than inferring it from this method.</p>
+     * <p>需要知道引擎此刻是否真的在出声时，直接问 {@link #isPlaying()}，不要用本方法反推。</p>
      */
     public boolean isPausing() {
         return !isUsable() || !this.playRequested;
     }
 
     /**
-     * Whether the engine thread is sounding right now. <b>Different from {@link #isPausing()}</b>:
-     * this is the engine's real state and stays false for a buffer after {@code play()} is queued.
-     * The UI should ask {@link #isPausing()} to decide whether to draw the pause icon.
+     * 引擎线程当前是否真的在出声。<b>与 {@link #isPausing()} 不同</b>：这里的答案是引擎的
+     * 真实状态，会在 {@code play()} 排队后的第一个缓冲之前保持 false。
+     * 界面判断「要不要画暂停图标」请用 {@link #isPausing()}。
      */
     public boolean isPlaying() {
         return isUsable() && this.player.isPlaying();
@@ -706,15 +701,14 @@ public class AudioPlayer {
     }
 
     public void pause() {
-        // Clear intent together with the engine. Intent first: otherwise, before the engine really
-        // stops, the UI has a window of the opposite mismatch (pause pressed, play icon still shown),
-        // which is the same quantity this change is about.
+        // 意图与引擎一起停下。先清意图：否则在引擎真正停住之前，界面会有一段
+        // 「已按暂停、图标却还是播放」的反向错位，和本次修的是同一个量。
         this.playRequested = false;
         if (isUsable()) {
             try {
                 this.player.pause();
             } catch (RuntimeException ignored) {
-                // Ignore malformed decoder state.
+                // 忽略畸形的解码器状态。
             }
         }
     }
@@ -724,7 +718,7 @@ public class AudioPlayer {
     }
 
     /**
-     * Returns whether the decoder exposed a non-empty, measurable sample.
+     * 返回解码器是否暴露了一个非空、可度量的采样。
      */
     public boolean isUsable() {
         if (closed || player == null)
@@ -736,9 +730,9 @@ public class AudioPlayer {
         if (file == null)
             throw new IllegalArgumentException("Audio file is null");
 
-        // Decoded PCM caches from an older build (or an unusually long stream) can exceed what the
-        // player may hold in RAM. Reject them up front and treat a failed allocation as a track
-        // failure rather than letting an OutOfMemoryError escape into the game loop.
+        // 旧构建（或异常长的流）留下的解码后 PCM 缓存，可能超出播放器在内存里允许持有的量。
+        // 事先拒收，并把分配失败当作一次曲目失败，
+        // 而不是让 OutOfMemoryError 逃进游戏循环。
         long pcmLimit = PlaybackMemoryLimits.maxDecodedPcmBytes();
         if (file.isFile() && file.length() > pcmLimit) {
             throw new IllegalStateException(PlaybackMemoryLimits.describeOverLimit(file.length()));
@@ -785,11 +779,11 @@ public class AudioPlayer {
         if (soundFile == null)
             return;
 
-        // Deliberately no jump(0) here. AudioSample.jump() clears the data queue and then *starts*
-        // playback: it adds the reader back into the running engine and queues a fresh data command,
-        // only for the stop() below to tear it down again. Harmless when a track ends on its own,
-        // but the outgoing deck of a crossfade is released while the incoming track is audible, so
-        // that pointless voice lands exactly on the seam.
+        // 这里刻意不调 jump(0)。AudioSample.jump() 会清空数据队列，然后*开始*播放：
+        // 它把读头重新加回正在跑的引擎并排一条新的数据命令，
+        // 结果下面的 stop() 又把它拆掉。曲目自然结束时这无害，
+        // 但交叉淡化里出去的那一路 deck 是在进来曲目还听得见时被释放的，
+        // 那条没用的 voice 正好落在接缝上。
         try {
             soundFile.stop();
         } catch (RuntimeException ignored) {

@@ -5,8 +5,8 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.BoxImpl;
 
 /**
- * The Original Format Box contains the four-character-code of the original
- * un-transformed sample description.
+ * Original Format Box 包含原始未变换采样描述的
+ * 四字代码。
  *
  * @author in-somnia
  */
@@ -24,11 +24,10 @@ public class OriginalFormatBox extends BoxImpl {
 	}
 
 	/**
-	 * The original format is the four-character-code of the original
-	 * un-transformed sample entry (e.g. 'mp4v' if the stream contains protected
-	 * MPEG-4 visual material).
+	 * 原始格式为原始未变换采样条目的四字代码
+	 *（例如若流含受保护的 MPEG-4 视觉素材则为 'mp4v'）。
 	 *
-	 * @return the stream's original format
+	 * @return 流的原始格式
 	 */
 	public long getOriginalFormat() {
 		return originalFormat;

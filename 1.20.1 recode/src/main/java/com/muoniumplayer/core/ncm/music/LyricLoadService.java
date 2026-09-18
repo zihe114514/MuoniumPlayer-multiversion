@@ -20,18 +20,18 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Network, embedded-tag and bundled-YRC lyric resolution.
+ * 网络、内嵌标签和内置 YRC 的歌词解析。
  *
- * <p>The result is intentionally not published here. CloudMusic retains session validation,
- * cross-thread state publication and main-thread timeline application.</p>
+ * <p>结果刻意不在此处发布。CloudMusic 保留会话校验、
+ * 跨线程状态发布和主线程时间线应用。</p>
  *
- * <p><b>Priority.</b> The AMLL TTML database is asked first: its entries are hand-checked
- * word-by-word timelines and beat every platform response, so once it answers nothing else is
- * requested at all. QQ Music's QRC comes second — still syllable-level, with much wider coverage
- * than any open database — and it short-circuits the rest of the chain the same way. Everything
- * below the two word-by-word sources (cloud-drive lyrics, embedded tags, the unified provider
- * model, the NetEase lyric API, the bundled YRC files) is line-level fallback, and each of those
- * steps is still skipped when the previous one already produced real word timing.</p>
+ * <p><b>优先级。</b>先问 AMLL TTML 数据库：其条目是人工逐字核对的
+ * 时间线，胜过任何平台响应，因此一旦它应答就完全不再请求其他源。
+ * QQ 音乐的 QRC 次之——仍是音节级，覆盖比任何开放数据库广得多——
+ * 并以同样方式短路链中其余部分。两个逐字源之下的一切
+ * （云盘歌词、内嵌标签、统一提供方
+ * 模型、网易云歌词 API、内置 YRC 文件）都是行级兜底，且
+ * 当前一步已产出真实逐字时间时，每一步仍会被跳过。</p>
  */
 final class LyricLoadService {
 

@@ -41,7 +41,7 @@ public class PlaylistPanel extends NCMPanel {
         this(playlist, true);
     }
 
-    /** Used by the recent-play list, whose parent discovery page already owns navigation. */
+    /** 供最近播放列表使用，其父级发现页面已负责导航。 */
     public PlaylistPanel(PlayList playlist, boolean showBackButton) {
         this.playList = playlist;
         this.showBackButton = showBackButton;
@@ -56,9 +56,9 @@ public class PlaylistPanel extends NCMPanel {
 
     @Override
     public void onInit() {
-        // onInit is also used when account metadata (including cloud-drive IDs)
-        // arrives asynchronously. Make it idempotent so a refresh replaces the
-        // old rows instead of stacking a second copy over the first one.
+        // onInit 也会在账户元数据（包括云盘 ID）
+        // 异步到达时被调用。使其具备幂等性，以便刷新时替换
+        // 旧行，而不是在第一份之上再叠加第二份。
         this.getChildren().clear();
         this.musicsLoading = true;
 
@@ -334,8 +334,8 @@ public class PlaylistPanel extends NCMPanel {
         this.addChild(rwMusicsContainer);
 
         rwMusicsContainer.setBeforeRenderCallback(() -> {
-            // Keep the last visible row clear of the controls bar. The nested ScrollPanel
-            // clips song rows to this reduced viewport instead of letting text touch the edge.
+            // 让最后一个可见行与控制栏保持间距。嵌套的 ScrollPanel
+            // 将歌曲行裁剪到这个缩小后的视口，而不是让文字贴边。
             rwMusicsContainer.setBounds(
                     Math.max(0.0, this.getWidth() - 36),
                     Math.max(0.0, this.getHeight() - musicsContainerOffsetY - bottomSafeInset)
@@ -351,8 +351,8 @@ public class PlaylistPanel extends NCMPanel {
 
         musicsPanel.setBeforeRenderCallback(() -> musicsPanel.setMargin(0));
 
-        // Keep the loading feedback above the clipped song list. The widget fades
-        // itself out after the asynchronous request has finished.
+        // 将加载反馈保持在被裁剪的歌曲列表上方。该控件会在
+        // 异步请求完成后自行淡出。
         PanelLoadingWidget loadingWidget = new PanelLoadingWidget("正在加载曲目…");
         this.addChild(loadingWidget);
         loadingWidget
@@ -369,8 +369,8 @@ public class PlaylistPanel extends NCMPanel {
                 });
 
         playList.loadMusicsWithCallback(musics -> {
-            // Do not call List#indexOf for every song: that is O(n²) and becomes
-            // noticeably slow for large playlists. Build one child batch instead.
+            // 不要对每首歌都调用 List#indexOf：那是 O(n²)，对大型
+            // 播放列表会明显变慢。改为一次性构建一批子控件。
             List<AbstractWidget<?>> musicWidgets = new ArrayList<>(musics == null ? 0 : musics.size());
             if (musics != null) {
                 for (int index = 0; index < musics.size(); index++) {
@@ -380,8 +380,8 @@ public class PlaylistPanel extends NCMPanel {
                 }
             }
 
-            // Start the entrance animation after every widget has been built. This
-            // keeps huge playlists from spending their fade-in time on construction.
+            // 在所有控件构建完成后再开始入场动画。这样
+            // 可避免超大播放列表把淡入时间耗费在构建上。
             long entranceStartedAt = System.currentTimeMillis();
             for (int index = 0; index < musicWidgets.size(); index++) {
                 ((MusicWidget) musicWidgets.get(index)).setEntranceAnimation(
@@ -421,9 +421,9 @@ public class PlaylistPanel extends NCMPanel {
     }
 
     /**
-     * Only external NetEase playlists support the subscribe/unsubscribe toggle.
-     * A playlist created by the current account is already part of “我的歌单”,
-     * so displaying “取消收藏” there is both misleading and ineffective.
+     * 仅外部网易云歌单支持订阅/取消订阅开关。
+     * 当前账号创建的歌单本身已属于“我的歌单”，
+     * 因此在那里显示“取消收藏”既具误导性又无实际作用。
      */
     private boolean canToggleSubscription() {
         if (playList == null) return false;

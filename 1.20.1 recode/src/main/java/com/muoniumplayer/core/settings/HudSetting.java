@@ -1,10 +1,10 @@
 package com.muoniumplayer.core.settings;
 
 /**
- * Describes one persisted floating-point HUD appearance setting.
+ * 描述一个已持久化的浮点 HUD 外观设置。
  *
- * <p>Metadata, validation and field access live with the settings layer so UI
- * surfaces do not need to duplicate switch-based mappings to {@link HudConfig}.</p>
+ * <p>元数据、校验和字段访问都位于设置层，使 UI 表面不必
+ * 复制基于 switch 到 {@link HudConfig} 的映射。</p>
  */
 public enum HudSetting {
     CURRENT_LINE_SCALE("整行缩放", 0.95f, 1.16f),

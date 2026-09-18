@@ -11,7 +11,7 @@ import repackage.net.sourceforge.jaad.aac.syntax.ICStream;
 import java.util.Arrays;
 
 /**
- * Long-term prediction
+ * 长期预测
  * @author in-somnia
  */
 public class LTPrediction implements Constants {

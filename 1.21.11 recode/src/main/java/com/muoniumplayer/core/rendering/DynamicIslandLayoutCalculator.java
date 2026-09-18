@@ -77,7 +77,7 @@ final class DynamicIslandLayoutCalculator {
 
         double screenMaxWidth = Math.max(compactWidth, (screenWidth - 12.0) / configuredScale);
         /*
-         * "灵动岛基础宽度" is a real base width, not a passive ceiling. Previously it was only
+         * "灵动岛基础宽度"是真正的基础宽度，而非被动的上限。此前它仅
          * 被输入 Math.max(configured, desired)，因此自然文本宽度总是胜出，拖动
          * 滑块毫无效果。因此它按样式缩放最小（静止）宽度。
          *

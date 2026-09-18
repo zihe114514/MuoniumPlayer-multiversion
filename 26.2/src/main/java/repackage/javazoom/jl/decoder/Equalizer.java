@@ -1,20 +1,20 @@
 /*
  * 11/19/04        1.0 moved to LGPL.
- * 12/12/99        Initial version.    mdm@techie.com
+ * 1999年12月12日初始版本。mdm@techie.com
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
@@ -24,14 +24,14 @@ import java.util.Arrays;
 
 
 /**
- * The <code>Equalizer</code> class can be used to specify
- * equalization settings for the MPEG audio decoder.
+ * <code>均衡器</code>类可用于指定
+ * mPEG音频解码器的均衡设置。
  * <p>
- * The equalizer consists of 32 band-pass filters.
- * Each band of the equalizer can take on a fractional value between
- * -1.0 and +1.0.
- * At -1.0, the input signal is attenuated by 6dB, at +1.0 the signal is
- * amplified by 6dB.
+ * 均衡器由 32 个带通滤波器组成。
+ * 均衡器的每个频段可以取小数值，介于
+ * -1.0和+1.0。
+ * 在-1.0时，输入信号衰减6dB ，在+1.0时，信号
+ * 放大6dB。
  *
  * @author MDM
  * @see Decoder
@@ -39,8 +39,8 @@ import java.util.Arrays;
 public final class Equalizer {
 
     /**
-     * Equalizer setting to denote that a given band will not be
-     * present in the output signal.
+     * 表示某一频段不参与
+     * 存在于输出信号中。
      */
     static public final float BAND_NOT_PRESENT = Float.NEGATIVE_INFINITY;
 
@@ -51,7 +51,7 @@ public final class Equalizer {
     private final float[] settings = new float[BANDS];
 
     /**
-     * Creates a new <code>Equalizer</code> instance.
+     * 创建新的<code>均衡器</code>实例。
      */
     public Equalizer() {
     }
@@ -82,8 +82,8 @@ public final class Equalizer {
     }
 
     /**
-     * Sets the bands of this equalizer to the value the bands of
-     * another equalizer. Bands that are not present in both equalizers are ignored.
+     * 将此均衡器各频段设为
+     * 另一个均衡器。两个均衡器中都不存在的频带将被忽略。
      */
     public void setFrom(Equalizer eq) {
         if (eq != this) {
@@ -92,14 +92,14 @@ public final class Equalizer {
     }
 
     /**
-     * Sets all bands to 0.0
+     * 将所有频带设置为0.0
      */
     public void reset() {
         Arrays.fill(settings, 0.0f);
     }
 
     /**
-     * Retrieves the number of bands present in this equalizer.
+     * 获取此均衡器中的频段数。
      */
     public int getBandCount() {
         return settings.length;
@@ -117,7 +117,7 @@ public final class Equalizer {
     }
 
     /**
-     * Retrieves the eq setting for a given band.
+     * 获取给定频段的 EQ 设置。
      */
     public float getBand(int band) {
         float eq = 0.0f;
@@ -138,13 +138,13 @@ public final class Equalizer {
     }
 
     /**
-     * Retrieves an array of floats whose values represent a
-     * scaling factor that can be applied to linear samples
-     * in each band to provide the equalization represented by
-     * this instance.
+     * 检索浮点数组，其值表示
+     * 可应用于线性采样的缩放因子，
+     * 在每个频段中，以提供由
+     * 此实例。
      *
-     * @return an array of factors that can be applied to the
-     * subbands.
+     * @return 一系列可以应用于
+     * 子带表示的均衡。
      */
     float[] getBandFactors() {
         float[] factors = new float[BANDS];
@@ -156,9 +156,9 @@ public final class Equalizer {
     }
 
     /**
-     * Converts an equalizer band setting to a sample factor.
-     * The factor is determined by the function f = 2^n where
-     * n is the equalizer band setting in the range [-1.0,1.0].
+     * 将均衡器频带设置转换为采样因子。
+     * 因子由函数f = 2 ^ n确定，其中
+     * n是在[-1.0,1.0]范围内的均衡器频带设置。
      */
     float getBandFactor(float eq) {
         if (eq == BAND_NOT_PRESENT)
@@ -169,12 +169,12 @@ public final class Equalizer {
 
     static abstract public class EQFunction {
         /**
-         * Returns the setting of a band in the equalizer.
+         * 返回均衡器中频带的设置。
          *
-         * @param band The index of the band to retrieve the setting
-         *             for.
-         * @return the setting of the specified band. This is a value between
-         * -1 and +1.
+         * @param band 检索设置的频带索引
+         *             用于。
+         * @return 指定频带的设置。这是一个值，介于
+         * 在+1和-1之间
          */
         public float getBand(int band) {
             return 0.0f;

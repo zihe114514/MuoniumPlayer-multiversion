@@ -196,15 +196,15 @@ public class ControlsBar extends NCMPanel {
                             .setPosition(next.getRelativeX() + next.getWidth() + 10, next.getRelativeY())
                             .setClickable(!personalFm)
                             .setAlpha(ControlsBar.this.getAlpha() * (personalFm ? .35f : 1.0f))
-                            // The supplied mode icons share one visual language; use one
-                            // consistent theme tint for sequential, random and single-loop.
+                            // 所给模式图标共享一种视觉语言；对顺序、随机和单曲循环使用一种
+                            //一致的主题着色。
                             .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
                 })
                 .setOnClickCallback((x, y, mouseButton) -> {
                     if (mouseButton == 0) {
                         if (!CloudMusic.isPersonalFmActive()) CloudMusic.cyclePlayMode();
                     } else if (mouseButton == 1) {
-                        // Right click toggles the seamless handover, next to the mode it applies to.
+                        // 右键切换无缝交接，就在它所应用的模式旁边。
                         boolean enabled = !AutomixSettings.isEnabled();
                         AutomixSettings.setEnabled(enabled);
                         DownloadDynamicIsland.showAutomixToggle(enabled, enabled
@@ -215,8 +215,8 @@ public class ControlsBar extends NCMPanel {
                     return true;
                 });
 
-        // Explicit personal-FM action. It is hidden entirely outside the FM session,
-        // so normal playlists never expose nor invoke the radio-trash endpoint.
+        // 显式私人 FM 动作。它在 FM 会话之外完全隐藏，
+        //因此普通播放列表从不暴露也不调用电台垃圾端点。
         RoundedButtonWidget fmSkip = new RoundedButtonWidget("换一首", FontManager.pf12bold);
         this.addChild(fmSkip);
         fmSkip.setShouldOverrideMouseCursor(true);
@@ -392,8 +392,8 @@ public class ControlsBar extends NCMPanel {
                         .setMaxWidth(Math.max(0.0,
                                 lblCurTime.getRelativeX() - lblMusicArtist.getRelativeX() - 4)));
 
-        // Right-aligned compact volume strip. It delegates all visual and input behavior to the
-        // full-screen control implementation, so both surfaces remain visually synchronized.
+        // 右对齐的紧凑音量条。它把所有视觉和输入行为委托给
+        //全屏控件实现，因此两个界面保持视觉同步。
         final VolumeControl compactVolumeControl = new VolumeControl();
         RoundedRectWidget compactVolumeWidget = new RoundedRectWidget() {
             @Override
@@ -416,10 +416,10 @@ public class ControlsBar extends NCMPanel {
                             .setAlpha(ControlsBar.this.getAlpha());
                 });
 
-        // Compact quality selector.  The available provider tiers are exposed in an upward
-        // pop-up so a user can select a known target instead of repeatedly cycling the button.
-        // Keeping all controls as direct children of ControlsBar also makes the pop-up render
-        // above the compact volume control and prevents it from being clipped by the selector.
+        // 紧凑质量选择器。可用的提供方档位在向上的
+        //弹出窗中暴露，使用户能选择已知目标，而非反复循环按钮。
+        // 把所有控件保持为 ControlsBar 的直接子级，也使弹出窗渲染
+        //在紧凑音量控件之上，并防止它被选择器裁剪。
         final Quality[] selectableQualities = Quality.values();
         final double qualityButtonHeight = 20.0;
         final double qualityOptionHeight = 18.0;
@@ -433,9 +433,9 @@ public class ControlsBar extends NCMPanel {
                 .setClickable(true)
                 .setShouldOverrideMouseCursor(true)
                 .setBeforeRenderCallback(() -> {
-                    // Dedicated footer slot: immediately left of the volume control, with a
-                    // fixed visual gap matching the player layout.  Do not let a transient
-                    // layout value hide this primary action.
+                    // 专用页脚槽：紧挨音量控件左侧，带一个
+                    //与播放器布局匹配的固定视觉间隙。不要让瞬时
+                    //布局值隐藏这个主要动作。
                     // 常驻回调：在这里推进展开动画，收起过程才有帧可用。
                     qualityMenuAnimation = Interpolations.interpolate(qualityMenuAnimation,
                             qualityMenuOpen ? 1.0 : 0.0, .3);
@@ -465,8 +465,8 @@ public class ControlsBar extends NCMPanel {
                     double selectorWidth = Math.max(56.0 * scale, Math.min(112.0 * scale, desiredWidth));
                     double selectorX = volumeX - selectorGap - selectorWidth;
 
-                    // On a very narrow player, shrink only enough to remain inside the footer;
-                    // the label itself trims safely instead of the whole quality action vanishing.
+                    // 在极窄的播放器上，仅收缩到足以留在页脚内；
+                    //标签本身安全裁剪，而非整个质量动作消失。
                     if (selectorX < 6.0) {
                         selectorWidth = Math.max(34.0 * scale, volumeX - selectorGap - 6.0);
                         selectorX = Math.max(6.0, volumeX - selectorGap - selectorWidth);
@@ -613,8 +613,8 @@ public class ControlsBar extends NCMPanel {
                     : shiftedTransportRight;
         });
 
-        // The menu is declared after the selector, therefore it is rendered and hit-tested on
-        // top of the bottom bar.  It grows upward so it never covers the compact controls.
+        // 菜单声明在选择器之后，因此它在底栏之上渲染并命中测试。
+        //它向上增长，因此从不覆盖紧凑控件。
         qualityMenuBackground = new RoundedRectWidget();
         this.addChild(qualityMenuBackground);
         qualityMenuBackground

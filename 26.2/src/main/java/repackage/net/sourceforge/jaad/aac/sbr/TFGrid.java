@@ -3,8 +3,8 @@ package repackage.net.sourceforge.jaad.aac.sbr;
 class TFGrid implements Constants {
 
 
-	/* function constructs new time border vector */
-	/* first build into temp vector to be able to use previous vector on error */
+	/* 函数构造新的时间边界向量 */
+	/* 先构建到临时向量，以便在出错时仍能使用先前的向量 */
 	public static int envelope_time_border_vector(SBR sbr, int ch) {
 		int l, border, temp;
 		int[] t_E_temp = new int[6];
@@ -90,7 +90,7 @@ class TFGrid implements Constants {
 				break;
 		}
 
-		/* no error occured, we can safely use this t_E vector */
+		/* 未发生错误，可以安全地使用此 t_E 向量 */
 		for(l = 0; l<6; l++) {
 			sbr.t_E[ch][l] = t_E_temp[l];
 		}

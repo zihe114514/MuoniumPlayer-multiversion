@@ -52,7 +52,7 @@ public class PlayList {
     @SerializedName("createTime")
     private final long createTime;
 
-    // unique fields
+    // 特有字段
     public transient List<Music> musics;
     private transient boolean searchMode = false;
     /**
@@ -69,7 +69,7 @@ public class PlayList {
     private transient MusicPlatform platform = MusicPlatform.NETEASE;
     /** QQ 的 dissid/tid 原始字符串，避免把跨平台标识强行压缩成网易云 long id。 */
     private transient String platformPlaylistId;
-    /** True for the temporary queue owned by the personal FM session. */
+    /** 当为私人 FM session 所拥有的临时队列时返回 true。 */
     private transient boolean personalFm;
     public transient volatile boolean musicsQueried = false, musicsLoaded = false;
 
@@ -109,9 +109,9 @@ public class PlayList {
     }
 
     /**
-     * Registers a listener for the current load, including a load that was already
-     * started by {@link #getMusics()}. This prevents a panel from missing the
-     * result when it opens while a large playlist is still downloading.
+     * 为当前加载注册一个监听器，包括已经由 {@link #getMusics()}
+     * 启动的加载。这可避免面板在大型播放列表仍在下载时打开而
+     * 错过加载结果。
      */
     public void loadMusicsWithCallback(MusicsLoadedCallback callback) {
         if (callback == null) {
@@ -175,8 +175,8 @@ public class PlayList {
             return;
         }
 
-        // UI panels create widgets in these callbacks, so dispatch them on the
-        // Minecraft main thread rather than the background HTTP worker.
+        // UI 面板会在这些回调中创建控件，因此要把它们派发到
+        // Minecraft 主线程上执行，而不是后台 HTTP 工作线程。
         MultiThreadingUtil.runOnMainThread(() -> {
             for (MusicsLoadedCallback callback : callbacks) {
                 try {
@@ -223,9 +223,9 @@ public class PlayList {
                     throw new IllegalStateException("playlist song detail response does not contain songs");
                 }
 
-                // CopyOnWriteArrayList copies its backing array on every single add.
-                // Parse first, then publish the complete result in one addAll call. NetEase
-                // returns max quality/permission data in a parallel privileges array.
+                // CopyOnWriteArrayList 在每次 add 时都会复制其底层数组。
+                // 先解析，再用一次 addAll 调用发布完整结果。网易云
+                // 在并行的权限数组中返回最高质量/权限数据。
                 loadedMusics = new ArrayList<>(songs.size());
                 for (int index = 0; index < songs.size(); index++) {
                     JsonObject songObject = songs.get(index).getAsJsonObject();

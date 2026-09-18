@@ -5,10 +5,9 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The Discrete Media headers box includes fields specific to the DCF format and
- * the Common Headers box, followed by an optional user-data box. There must be 
- * exactly one OMADiscreteHeaders box in a single OMA DRM Container box, as the 
- * first box in the container.
+ * Discrete Media headers box 包含 DCF 格式特有字段和 Common Headers box，
+ * 后跟一个可选的 user-data box。单个 OMA DRM Container box 中必须恰好有一个
+ * OMADiscreteHeaders box，且作为容器中第一个 box。
  * 
  * @author in-somnia
  */
@@ -31,11 +30,10 @@ public class OMADiscreteMediaHeadersBox extends FullBox {
 	}
 
 	/**
-	 * The content type indicates the original MIME media type of the Content 
-	 * Object i.e. what content type the result of a successful extraction of 
-	 * the OMAContentBox represents.
+	 * content type 指示内容对象的原始 MIME 媒体类型，
+	 * 即成功提取 OMAContentBox 后所得内容所代表的内容类型。
 	 * 
-	 * @return the content type
+	  * @return 内容类型
 	 */
 	public String getContentType() {
 		return contentType;

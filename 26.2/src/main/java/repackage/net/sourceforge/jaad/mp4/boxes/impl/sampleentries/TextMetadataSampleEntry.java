@@ -38,10 +38,10 @@ public class TextMetadataSampleEntry extends MetadataSampleEntry {
 	}
 
 	/**
-	 * Provides a MIME type which identifies the content format of the timed
-	 * metadata. Examples for this field are 'text/html' and 'text/plain'.
+	 * 提供 MIME 类型，标识定时元数据的内容格式。
+	 * 此字段示例为 'text/html' 和 'text/plain'。
 	 * 
-	 * @return the content's MIME type
+	 * @return 内容的 MIME 类型
 	 */
 	public String getMimeType() {
 		return mimeType;

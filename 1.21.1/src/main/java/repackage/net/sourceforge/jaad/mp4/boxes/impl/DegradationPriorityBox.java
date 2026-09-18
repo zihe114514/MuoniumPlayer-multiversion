@@ -6,9 +6,9 @@ import repackage.net.sourceforge.jaad.mp4.boxes.BoxTypes;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * This box contains the degradation priority of each sample. The values are
- * stored in the table, one for each sample. Specifications derived from this
- * define the exact meaning and acceptable range of the priority field.
+ * 此 box 包含每个采样的降级优先级。各值
+ * 存于表中，每个采样一个。由此派生的规范
+ * 定义了优先级字段的确切含义和可接受范围。
  * 
  * @author in-somnia
  */
@@ -24,7 +24,7 @@ public class DegradationPriorityBox extends FullBox {
 	public void decode(MP4InputStream in) throws IOException {
 		super.decode(in);
 
-		//get number of samples from SampleSizeBox
+		//从 SampleSizeBox 获取采样数
 		final int sampleCount = ((SampleSizeBox) parent.getChild(BoxTypes.SAMPLE_SIZE_BOX)).getSampleCount();
 
 		priorities = new int[sampleCount];
@@ -34,9 +34,8 @@ public class DegradationPriorityBox extends FullBox {
 	}
 
 	/**
-	 * The priority is integer specifying the degradation priority for each
-	 * sample.
-	 * @return the list of priorities
+	 * 该优先级为整数，指定每个采样的降级优先级。
+	 * @return 优先级列表
 	 */
 	public int[] getPriorities() {
 		return priorities;

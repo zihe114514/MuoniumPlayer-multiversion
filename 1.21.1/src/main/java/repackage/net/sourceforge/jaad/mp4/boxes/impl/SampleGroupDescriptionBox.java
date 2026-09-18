@@ -10,22 +10,19 @@ import java.io.IOException;
 import repackage.net.sourceforge.jaad.mp4.boxes.Box;
 
 /**
- * This description table gives information about the characteristics of sample
- * groups. The descriptive information is any other information needed to define
- * or characterize the sample group.
+ * 此描述表给出关于采样组特征的信息。描述性信息是定义或刻画
+ * 采样组所需的任何其他信息。
  *
- * There may be multiple instances of this box if there is more than one sample
- * grouping for the samples in a track. Each instance of the
- * SampleGroupDescriptionBox has a type code that distinguishes different sample
- * groupings. Within a track, there shall be at most one instance of this box
- * with a particular grouping type. The associated SampleToGroupBox shall
- * indicate the same value for the grouping type.
+ * 若轨道中的采样有多个采样分组，则此 box 可有多个实例。
+ * SampleGroupDescriptionBox 的每个实例都有一个类型代码，
+ * 区分不同的采样分组。在一个轨道内，特定分组类型的此 box
+ * 至多有一个实例。关联的 SampleToGroupBox 应对分组类型指示
+ * 相同的值。
  *
- * The information is stored in the sample group description box after the
- * entry-count. An abstract entry type is defined and sample groupings shall
- * define derived types to represent the description of each sample group. For
- * video tracks, an abstract VisualSampleGroupEntry is used with similar types
- * for audio and hint tracks.
+ * 该信息存于采样组描述 box 中 entry-count 之后。定义了一个抽象条目类型，
+ * 各采样分组应定义派生类型来表示每个采样组的描述。
+ * 对于视频轨道，使用抽象的 VisualSampleGroupEntry；
+ * 音频和提示轨道使用类似类型。
  *
  * @author in-somnia
  */
@@ -79,24 +76,23 @@ public class SampleGroupDescriptionBox extends FullBox {
 	}
 
 	/**
-	 * The grouping type is an integer that identifies the SampleToGroup box
-	 * that is associated with this sample group description.
+	 * 分组类型为整数，标识与此采样组描述关联的 SampleToGroup box。
 	 */
 	public long getGroupingType() {
 		return groupingType;
 	}
 
 	/**
-	 * The default length indicates the length of every group entry (if the
-	 * length is constant), or zero (0) if it is variable.
+	 * 默认长度指示每个组条目的长度（若长度恒定），
+	 * 若可变则为零（0）。
 	 */
 	public long getDefaultLength() {
 		return defaultLength;
 	}
 
 	/**
-	 * The description length indicates the length of an individual group entry,
-	 * in the case it varies from entry to entry and default length is therefore 0.
+	 * 描述长度指示单个组条目的长度，
+	 * 用于条目长度彼此不同、因而默认长度为 0 的情形。
 	 */
 	public long getDescriptionLength() {
 		return descriptionLength;

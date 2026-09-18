@@ -7,79 +7,78 @@ public interface Box {
 	Box getParent();
 
 	/**
-	 * Returns the size of this box including its header.
+	 * 返回此 box 的大小，包括其头。
 	 *
-	 * @return this box's size
+	 * @return 此 box 的大小
 	 */
 	long getSize();
 
 	/**
-	 * Returns the type of this box as a 4CC converted to a long.
+	 * 以转换为 long 的 4CC 形式返回此 box 的类型。
 	 * 
-	 * @return this box's type
+	 * @return 此 box 的类型
 	 */
 	long getType();
 
 	/**
-	 * Returns the offset of this box in the stream/file. This is needed as a
-	 * seek point for random access.
+	 * 返回此 box 在流/文件中的偏移。这作为随机访问的
+	 * 跳转点。
 	 *
-	 * @return this box's offset
+	 * @return 此 box 的偏移
 	 */
 	long getOffset();
 
 	/**
-	 * Returns the name of this box as a human-readable string 
-	 * (e.g. "Track Header Box").
+	 * 以人类可读字符串返回此 box 的名称
+	 *（例如 "Track Header Box"）。
 	 *
-	 * @return this box's name
+	 * @return 此 box 的名称
 	 */
 	String getName();
 
 	/**
-	 * Indicates if this box has children.
+	 * 表明此 box 是否有子级。
 	 *
-	 * @return true if this box contains at least one child
+	 * @return 如果此 box 至少包含一个子级则返回 true
 	 */
 	boolean hasChildren();
 
 	/**
-	 * Indicated if the box has a child with the given type.
+	 * 表明该 box 是否有指定类型的子级。
 	 *
-	 * @param type the type of child box to look for
-	 * @return true if this box contains at least one child with the given type
+	 * @param type 要查找的子 box 类型
+	 * @return 如果此 box 至少包含一个指定类型的子级则返回 true
 	 */
 	boolean hasChild(long type);
 
 	/**
-	 * Returns an ordered and unmodifiable list of all direct children of this
-	 * box. The list does not contain the children's children.
+	 * 返回此 box 所有直接子级的有序、不可修改列表。
+	 * 该列表不包含子级的子级。
 	 *
-	 * @return this box's children
+	 * @return 此 box 的子级
 	 */
 	List<Box> getChildren();
 
 	/**
-	 * Returns an ordered and unmodifiable list of all direct children of this
-	 * box with the specified type. The list does not contain the children's
-	 * children. If there is no child with the given type, the list will be
-	 * empty.
+	 * 返回此 box 所有指定类型的直接子级的有序、不可修改列表。
+	 * 该列表不包含子级的
+	 * 子级。如果没有指定类型的子级，列表将为
+	 * 空。
 	 *
-	 * @param type the type of child boxes to look for
-	 * @return this box's children with the given type
+	 * @param type 要查找的子 box 类型
+	 * @return 此 box 中指定类型的子级
 	 */
 	List<Box> getChildren(long type);
 
 	/**
-	 * Returns the child box with the specified type. If this box has no child
-	 * with the given type, null is returned. To check if there is such a child
-	 * <code>hasChild(type)</code> can be used.
-	 * If more than one child exists with the same type, the first one will
-	 * always be returned. A list of all children with that type can be received
-	 * via <code>getChildren(type)</code>.
+	 * 返回指定类型的子 box。如果此 box 没有指定类型的子级，
+	 * 则返回 null。要检查是否存在这样的子级，
+	 * 可使用 <code>hasChild(type)</code>。
+	 * 如果存在多个相同类型的子级，将始终返回第一个。
+	 * 可通过 <code>getChildren(type)</code> 获取该类型的所有子级列表。
 	 *
-	 * @param type the type of child box to look for
-	 * @return the first child box with the given type, or null if none is found
+	 * @param type 要查找的子 box 类型
+	 * @return 指定类型的第一个子 box；若未找到则返回 null
 	 */
 	Box getChild(long type);
 }

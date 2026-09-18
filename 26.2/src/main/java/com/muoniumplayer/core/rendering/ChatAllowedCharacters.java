@@ -2,7 +2,7 @@ package com.muoniumplayer.core.rendering;
 
 public class ChatAllowedCharacters {
     /**
-     * Array of the special characters that are allowed in any text drawing of Minecraft.
+     * Minecraft 任意文本绘制中允许使用的特殊字符数组。
      */
     public static final char[] allowedCharactersArray = new char[]{'/', '\n', '\r', '\t', '\u0000', '\f', '`', '?', '*', '\\', '<', '>', '|', '\"', ':'};
 
@@ -11,7 +11,7 @@ public class ChatAllowedCharacters {
     }
 
     /**
-     * Filter string by only keeping those characters for which isAllowedCharacter() returns true.
+     * 过滤字符串，仅保留 isAllowedCharacter() 返回 true 的字符。
      */
     public static String filterAllowedCharacters(String input) {
         StringBuilder stringbuilder = new StringBuilder();

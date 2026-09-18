@@ -24,21 +24,18 @@ import java.util.Deque;
 import com.muoniumplayer.render.skija.SkijaGfx;
 
 /**
- * Global, screen-independent download activity island.
+ * 全局、与界面无关的下载活动岛（Dynamic Island）。
  *
- * <p>This class owns both the small thread-safe download snapshot and its presentation. Forge
- * renders it as a global overlay above gameplay and every GuiScreen, so it does not depend on
- * the full-screen player or inherit the player's layout/scale animation.</p>
+ * <p>该类同时拥有小型的线程安全下载快照及其展示。Forge 将其渲染为覆盖在游戏
+ * 画面和所有 GuiScreen 之上的全局覆盖层，因此它不依赖全屏播放器，也不继承
+ * 播放器的布局/缩放动画。</p>
  */
 public final class DownloadDynamicIsland implements SharedConstants, SharedRenderingConstants {
 
     private static final DownloadDynamicIsland INSTANCE = new DownloadDynamicIsland();
 
     /** HUD 稳定后再预热播放器基础布局，避开客户端启动与首帧加载高峰。 */
-    /**
-     * Shared damped wave for the island impact. Both the live island and the compact anchor use it,
-     * so reopening during the rebound starts from exactly the shape on screen.
-     */
+    /** 在打开/关闭形变期间，播放器表面占据顶部居中区域。 */
     private static double absorbWave(double phase) {
         return Math.exp(-4.1 * phase) * Math.sin(Math.PI * 2.85 * phase);
     }
@@ -47,17 +44,17 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private static int hudFramesBeforePlayerPrewarm;
     private static boolean playerLayoutPrewarmed;
 
-    /** Player surface owns the top-center area during the open/close morph. */
-    private static boolean playerSurfaceTransition;
     /**
-     * The island's actual on-screen silhouette from the last HUD frame, already including
-     * configured scale, entry scale, visibility offset and the absorb rebound.
+     * 上一帧 HUD 中岛屿在屏幕上的实际轮廓，已包含配置缩放、入场缩放、
+     * 可见性偏移以及吸收回弹。
      */
+    private static boolean playerSurfaceTransition;
+    /** 播放器已抵达岛屿锚点；现在施加撞击形变。 */
     private static final double[] LIVE_ANCHOR_BOUNDS = {-1.0, -1.0, -1.0, -1.0, -1.0};
-    /** The player has reached the island anchor; apply the impact deformation now. */
+    /** 交接岛屿不得重播正常的从上方滑入的入场动画。 */
     private static boolean playerAbsorbImpact;
     private static long playerAbsorbStartedAt;
-    /** Handoff islands must not replay the normal slide-from-above entrance. */
+    /** 现代岛屿轮廓，灵感来自药丸、玻璃、紧凑状态和卡片表面。 */
     private static boolean suppressPlayerEntryAnimation;
     private static final long PLAYER_ABSORB_FEEDBACK_MS = 430L;
     private static final double COMPACT_WIDTH = 40.0;
@@ -90,7 +87,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     /** 玻璃色的高光变体，用于折射亮带与边缘光的基准色相。 */
     private static final int GLASS_TINT_BRIGHT = 0xCADEFB;
 
-    /** Modern island silhouettes inspired by pill, glass, compact status and card surfaces. */
+    /** 转码合理地可能持续数分钟，因此监控的是停滞而非总时长。 */
     public enum DynamicIslandStyle {
         PILL("经典胶囊"),
         GLASS("通透玻璃"),
@@ -120,7 +117,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         return getStyle().getDisplayName();
     }
 
-    /** Cycles only the island presentation; download state and notices remain untouched. */
+    /** 安全网：没有专属通道的持久卡片仍会自行结束。 */
     public static void cycleStyle() {
         DynamicIslandStyle[] styles = DynamicIslandStyle.values();
         HudConfig.dynamicIslandStyle = (HudConfig.clampInt(HudConfig.dynamicIslandStyle, 0, styles.length - 1) + 1) % styles.length;
@@ -135,7 +132,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private static volatile long downloadCompletedAt;
     private static volatile boolean transcoding;
     private static volatile double transcodeProgress;
-    /** Last moment {@link #transcodeProgress} actually moved; drives the transcode stall watchdog. */
+    /**
+     * 当前持久卡片放弃的绝对时刻。每个状态通道只捕获一次，因此重复的
+     * "仍在处理" 更新（再次点击刷新、重试解析）再也无法把截止时间往后推，
+     * 从而让岛屿永久卡在加载状态。
+     */
     private static volatile long transcodeProgressAdvancedAt;
 
     private static volatile IslandNoticeType noticeType = IslandNoticeType.NONE;
@@ -144,26 +145,28 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private static volatile long noticeShownAt;
     private static volatile long noticeRevision;
     private static volatile boolean noticePersistent;
-    /** Serializes notices arriving from async network/playback workers. */
+    /** 仅对属于多消息队列中的普通通知为 true。 */
     private static final Object NOTICE_QUEUE_LOCK = new Object();
     private static final Deque<QueuedNotice> NOTICE_QUEUE = new ArrayDeque<QueuedNotice>();
-    /** A missing refresh callback must not leave the island in a permanent loading state. */
+    /** 动画展开后的边界；紧凑入场/出场仍由 {@link #expansion} 驱动。 */
     private static final long PLAYLIST_REFRESH_NOTICE_TIMEOUT_MILLIS = 30_000L;
-    /** GD URL resolution has a longer network budget, but its loading card must still terminate. */
+    /** 在不打断岛屿表面的情况下淡入并轻微偏移替换内容。 */
     private static final long GD_SOURCE_NOTICE_TIMEOUT_MILLIS = 45_000L;
-    /** Playlist membership submits are short requests; a lost callback must not pin the card. */
+    /** 上一次通知快照，用于区分真正的替换与保持式刷新。 */
     private static final long PLAYLIST_TRACK_ADD_NOTICE_TIMEOUT_MILLIS = 20_000L;
-    /** Transcoding may legitimately run for minutes, so it is watched for stalls, not total time. */
+    /** 短暂保留退出中的文案，使更新流入最新通知而非重新入场。 */
     private static final long TRANSCODE_STALL_TIMEOUT_MILLIS = 30_000L;
-    /** Safety net: a persistent card without a dedicated channel still terminates on its own. */
+    /** 音量有独立的目标动画；它的轨道不会跳动或重启岛屿。 */
     private static final long DEFAULT_PERSISTENT_NOTICE_TIMEOUT_MILLIS = 30_000L;
-    /**
-     * Absolute moment the active persistent card gives up. It is captured once per status channel, so
-     * repeated "still working" updates (clicking refresh again, a retried resolve) can no longer slide
-     * the deadline forward and leave the island stuck in a loading state forever.
-     */
+    /** 绘制在普通游戏 HUD 之上。 */
     private static volatile long noticeDeadlineAt;
-    /** True only for ordinary notices that are part of a multi-message queue. */
+    /**
+     * 在播放器从岛屿开始展开时调用。
+     *
+     * <p>在播放器表面形变期间，真实岛屿被刻意隐藏：同时绘制两者会产生两个
+     * 顶部居中表面。其动画状态不会被重置，因此后续关闭时可把表面交回，
+     * 而不必重播正常的岛屿入场。</p>
+     */
     private static volatile boolean noticeUsesQueueInterval;
 
     private float visibility;
@@ -179,20 +182,26 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private long shownAt;
     private long completeAt;
     private long observedNoticeRevision = -1L;
-    /** Animated expanded bounds; compact entry/exit remains driven by {@link #expansion}. */
+    /**
+     * 将岛屿准备为关闭中播放器的落点目标。
+     *
+     * <p>在播放器抵达锚点之前把可见性设为 1。旧行为将其留为 0，导致关闭后
+     * 的第一帧从屏幕上方插值 y，看起来像第二次无关的入场。这里岛屿已处于
+     * 顶部锚点，只等待表面交接。</p>
+     */
     private double animatedExpandedWidth = -1.0;
     private double animatedExpandedHeight = -1.0;
-    /** Fades and gently offsets replacement content without interrupting the island surface. */
+    /** 将播放器表面移交到岛屿并启动撞击响应。 */
     private float contentTransition = 1f;
-    /** Last notification snapshot used to distinguish an actual replacement from a hold refresh. */
+    /** 当播放器在交接完成前被另一界面替换时取消交接。 */
     private IslandNoticeType observedNoticeType = IslandNoticeType.NONE;
     private String observedNoticeTitle = "";
     private String observedNoticeValue = "";
-    /** Outgoing copy is kept briefly so updates flow into the latest notice rather than re-entering. */
+    // 在吸收回弹期间重新打开时，会从当前已形变的药丸起步，而不是
     private String outgoingNoticeTitle = "";
     private String outgoingNoticeValue = "";
     private float noticeCopyTransition = 1f;
-    /** Volume has a separate target animation; its track never jumps or restarts the island. */
+    // 突然弹回静止胶囊形状。这与 drawIsland 使用的是同一个波。
     private double animatedNoticeProgress;
 
     /**
@@ -207,7 +216,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private DownloadDynamicIsland() {
     }
 
-    /** Render above the normal game HUD. */
+    // 始终使用未变换的 Minecraft GUI 宽度，以便调用方一次性完成换算。
     public static void render() {
         TransitionPerformanceBudget.tick();
         prewarmPlayerLayoutOnce();
@@ -226,13 +235,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
     }
 
-    /**
-     * Called when the player begins expanding from the island.
-     *
-     * <p>The real island is intentionally suppressed while the player surface is morphing: drawing
-     * both would create two top-center surfaces. Its animation state is not reset, so a later close
-     * can hand the surface back without replaying the normal island entrance.</p>
-     */
+    /** 紧凑岛屿的基础颜色，在 t=0 时被播放器形变使用。 */
     public static void beginPlayerSurfaceTransition() {
         playerSurfaceTransition = true;
         playerAbsorbImpact = false;
@@ -265,14 +268,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         INSTANCE.animatedExpandedHeight = -1.0;
     }
 
-    /**
-     * Prepares the island as the closing player's landing target.
-     *
-     * <p>Visibility is set to one before the player reaches the anchor. The old behavior left it at
-     * zero, so the first frame after closing interpolated y from above the screen and looked like a
-     * second, unrelated entrance. Here the island is already at its top anchor and only waits for
-     * the surface handoff.</p>
-     */
+    /** 即使没有正在进行的下载，HUD 编辑器也使用此实时尺寸预览。 */
     public static void preparePlayerAbsorb() {
         playerSurfaceTransition = true;
         playerAbsorbImpact = false;
@@ -288,7 +284,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         INSTANCE.shownAt = 0L;
     }
 
-    /** Transfers the player surface to the island and starts the impact response. */
+    /** 在使用紧凑图标后，于全局岛屿中显示当前主题。 */
     public static void beginPlayerAbsorbImpact() {
         playerSurfaceTransition = false;
         playerAbsorbImpact = true;
@@ -297,7 +293,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         INSTANCE.visibility = HudConfig.dynamicIslandEnabled ? 1f : 0f;
     }
 
-    /** Cancels a handoff when the player is replaced by another screen before it finishes. */
+    /** 在全局岛屿中显示实际生效的全屏播放器缩放。 */
     public static void cancelPlayerSurfaceTransition() {
         playerSurfaceTransition = false;
         playerAbsorbImpact = false;
@@ -317,8 +313,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 : (style == DynamicIslandStyle.MUSIC_FOCUS ? 48.0 : COMPACT_WIDTH);
         double localHeight = style == DynamicIslandStyle.COMPACT ? 14.0 : COMPACT_HEIGHT;
 
-        // A reopen during the absorb rebound starts from the currently deformed pill instead of
-        // snapping back to the resting capsule. This mirrors the same wave used by drawIsland.
+        /** 显示持久化的音乐音量及配套的进度指示。 */
+        /** 显示稳定的转码卡片；进度更新只移动进度条，不会重启入场动画。 */
         if (playerAbsorbImpact && playerAbsorbStartedAt > 0L) {
             double phase = DynamicIslandMath.clamp01((System.currentTimeMillis() - playerAbsorbStartedAt)
                     / (double) PLAYER_ABSORB_FEEDBACK_MS);
@@ -331,22 +327,15 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         double width = localWidth * configuredScale;
         double height = localHeight * configuredScale;
         double localRadius = compactRadius(style, localHeight);
-        // This anchor describes the global HUD island, not the player's adaptive layout.
-        // Always use the untransformed Minecraft GUI width so callers can convert it once.
+        /** 更新转码进度，但不发布新的通知版本。 */
+        // 停滞的解码器会停止移动进度条；下方的看门狗正是对此作出反应。
         double centerX = RenderSystem.getWidthNotScaled() * .5;
         double x = centerX - width * .5;
         double y = TOP_MARGIN;
         return new double[]{x, y, width, height, localRadius * configuredScale};
     }
 
-    /**
-     * Returns the island silhouette the user actually sees right now.
-     *
-     * <p>The theoretical compact pill is only a fallback. An always-on island is normally expanded
-     * while the player is invoked, so opening from {@link #getAnchorBounds()} made the resident
-     * island disappear and a smaller unrelated capsule appear. This live value includes the real
-     * layout, configured scale, entrance scale and current absorb deformation.</p>
-     */
+    /** 在配置的完成保持时长内显示已校验的转换结果。 */
     public static double[] getLiveAnchorBounds() {
         if (INSTANCE.visibility > .72
                 && LIVE_ANCHOR_BOUNDS[2] > 1.0 && LIVE_ANCHOR_BOUNDS[3] > 1.0) {
@@ -355,7 +344,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         return getAnchorBounds();
     }
 
-    /** The compact island's base color, used by the player morph at t=0. */
+    // 实时卡片是持久的，因此普通通知会排在它后面，无法替换
     public static int getAnchorSurfaceColor() {
         DynamicIslandStyle style = getStyle();
         if (style == DynamicIslandStyle.GLASS) return NCMTheme.getAccentColor();
@@ -374,30 +363,30 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         return height * .5;
     }
 
-    /** A live-size preview used by the HUD editor even when no download is active. */
+    // 它。直接完成该状态通道；否则岛屿会一直停留在"转码中"，
     public static void renderEditorPreview() {
         INSTANCE.renderPreviewInternal();
     }
 
-    /** Shows the active theme in the global island after the compact icon is used. */
+    // 直到停滞看门狗把成功的解码误报为无响应。
     public static void showTheme(String themeName) {
         publishNotice(IslandNoticeType.THEME, "当前主题", safeNoticeValue(themeName, "默认主题"));
     }
 
-    /** Shows the effective full-screen player scale in the global island. */
+    /** 在显示正常的播放失败通知之前移除被中断的转码卡片。 */
     public static void showPlayerScale(int scalePercent) {
         int safePercent = Math.max(50, Math.min(150, scalePercent));
         publishNotice(IslandNoticeType.SCALE, "播放器大小", safePercent + "%");
     }
 
-    /** Keeps the island visible until the asynchronous playlist request finishes. */
+    /** Folia 模型安装、扫描或删除操作的结果。 */
 
-    /** Shows the persisted music volume together with a matching progress indicator. */
+    /** 在 Folia 模型分析会话运行期间保持一张持久状态卡片。 */
     public static void showVolume(int percent) {
         int safePercent = Math.max(0, Math.min(100, percent));
         publishNotice(IslandNoticeType.VOLUME, "音乐音量", safePercent + "%");
     }
-    /** Shows the stable transcode card; progress updates only move the bar and do not restart entry animation. */
+    /** 仅在配置的模型返回可用证据后才完成实时卡片。 */
     public static void beginTranscode(String sourceName, String targetName) {
         transcoding = true;
         transcodeProgress = 0.0;
@@ -406,28 +395,31 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 formatTranscodeValue(sourceName, targetName), true);
     }
 
-    /** Updates the transcode progress without publishing a new notice revision. */
+    /** 模型尝试失败并回退到确定性分析后的终止状态。 */
     public static void updateTranscodeProgress(double progress) {
         double clamped = DynamicIslandMath.clamp01(progress);
-        // A stalled decoder stops moving the bar; that is what the watchdog below reacts to.
+        /** 在将选中曲目提交到歌单期间保持岛屿可见。 */
         if (clamped > transcodeProgress) transcodeProgressAdvancedAt = System.currentTimeMillis();
         transcodeProgress = clamped;
     }
 
-    /** Shows the verified conversion result for the configured completion hold duration. */
+    /** 通报一次已校验的新歌单收藏。 */
     public static void finishTranscode(String sourceName, String targetName, long elapsedMillis) {
         transcoding = false;
         transcodeProgress = 1.0;
         transcodeProgressAdvancedAt = 0L;
-        // The live card is persistent, so an ordinary notice is queued behind it and cannot replace
-        // it. Complete the status channel directly; otherwise the island stays on "transcoding"
-        // until the stall watchdog misreports a successful decode as unresponsive.
+        /** 通报单独校验过的空操作状态，而不声称新增成功。 */
+        /** 通报请求未被目标歌单的 trackIds 校验通过。 */
+        /** 显示刚启动曲目所解析出的流层级和容器格式。 */
         completePersistentNotice(IslandNoticeType.TRANSCODING, IslandNoticeType.TRANSCODE_SUCCESS,
                 "转码完成", formatTranscodeValue(sourceName, targetName) + " · "
                         + Math.max(0L, elapsedMillis) + " ms");
     }
 
-    /** Removes an interrupted transcode card before the normal playback-failure notice is shown. */
+    /**
+     * 报告从下载字节中检测到的通用 MP4 载荷。播放管线保留头部检查，
+     * 但有意不对该容器转码。
+     */
     public static void cancelTranscode() {
         transcoding = false;
         transcodeProgress = 0.0;
@@ -464,21 +456,26 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 success ? "缓存已清理" : "缓存清理失败", safeNoticeValue(detail, "没有可回收的缓存"));
     }
 
-    /** Result of a Folia model install, scan or delete operation. */
+    /** 显示最近播放立即上传的结果和请求延迟。 */
     public static void showModelOperationResult(String title, String detail, boolean success) {
         publishNotice(success ? IslandNoticeType.REFRESH_SUCCESS : IslandNoticeType.REFRESH_ERROR,
                 safeNoticeValue(title, success ? "模型操作完成" : "模型操作失败"),
                 safeNoticeValue(detail, success ? "操作已完成" : "请检查网络与模型目录"));
     }
 
-    /** Keeps one persistent status card alive while a Folia model analysis session is running. */
+    /** 显示累计收听时长心跳上报结果和请求延迟。 */
     public static void beginModelInference(String trackName, String modelNames) {
         publishNotice(IslandNoticeType.MODEL_INFERENCE, "模型推理中",
                 safeNoticeValue(trackName, "当前歌曲") + " · "
                         + safeNoticeValue(modelNames, "Folia 模型"), true);
     }
 
-    /** Completes the live card only after the configured model returned usable evidence. */
+    /**
+     * 确认某首曲目已被加入"下一首播放"队列。属于普通通知：由用户触发，但当前
+     * 不会改变任何可听内容，因此像其他确认一样礼貌排队。
+     *
+     * @param pending 当前等待的用户排队曲目数量，包含本次
+     */
     public static void finishModelInference(String trackName, String modelNames, long elapsedMillis) {
         completePersistentNotice(IslandNoticeType.MODEL_INFERENCE, IslandNoticeType.MODEL_INFERENCE_SUCCESS,
                 "模型推理完成", safeNoticeValue(trackName, "当前歌曲") + " · "
@@ -486,54 +483,54 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         + Math.max(0L, elapsedMillis) + " ms");
     }
 
-    /** Terminal state for a model attempt that failed and fell back to deterministic analysis. */
+    /** 报告"下一首播放"没有可插入的队列，直接开始播放该曲目。 */
     public static void failModelInference(String trackName, String modelNames) {
         completePersistentNotice(IslandNoticeType.MODEL_INFERENCE, IslandNoticeType.MODEL_INFERENCE_FAILURE,
                 "模型推理未完成", safeNoticeValue(trackName, "当前歌曲") + " · "
                         + safeNoticeValue(modelNames, "Folia 模型") + " · 已回退传统分析");
     }
-    /** Keeps the island visible while a selected track is submitted to a playlist. */
+    /** 报告 automix 开关本身被打开或关闭。 */
     public static void showPlaylistTrackAddInProgress(String playlistName) {
         publishNotice(IslandNoticeType.PLAYLIST_TRACK_ADDING, "加入歌单",
                 "正在加入「" + safeNoticeValue(playlistName, "目标歌单") + "」", true);
     }
 
-    /** Announces a verified new playlist membership. */
+    /** GD Studio API URL 解析的反馈。 */
     public static void showPlaylistTrackAddSuccess(String playlistName) {
         publishNotice(IslandNoticeType.PLAYLIST_TRACK_ADD_SUCCESS, "已加入歌单",
                 "网易云已确认「" + safeNoticeValue(playlistName, "目标歌单") + "」");
     }
 
-    /** Announces the separately verified no-op state without claiming a new add succeeded. */
+    // 这条普通的后续通知有意进入已有的通知队列。它提供
     public static void showPlaylistTrackAlreadyExists(String playlistName) {
         publishNotice(IslandNoticeType.PLAYLIST_TRACK_ALREADY_EXISTS, "歌曲已在歌单中",
                 "已确认「" + safeNoticeValue(playlistName, "目标歌单") + "」");
     }
 
-    /** Announces that the request was not verified by the target playlist's trackIds. */
+    // 明确的健康确认，而不打断实时加载器所保留的任何通知。
     public static void showPlaylistTrackAddFailure(String playlistName, String message) {
         String value = safeNoticeValue(message, "服务端未确认加入成功");
         publishNotice(IslandNoticeType.PLAYLIST_TRACK_ADD_ERROR, "加入歌单失败",
                 safeNoticeValue(playlistName, "目标歌单") + " · " + value);
     }
 
-    /** Shows the stream tier and container resolved for the track that just started. */
+    /**
+     * 搜索时通知：由另一个音源响应了查询。{@code requestedSourceFailed} 用于区分
+     * 真正的故障与音源只是没有匹配结果，因此卡片绝不会误报原因。
+     */
     public static void showPlaybackQuality(String quality, String format) {
         String safeQuality = safeNoticeValue(quality, "标准");
         String safeFormat = safeNoticeValue(format, "未知").toUpperCase(java.util.Locale.ROOT);
         publishNotice(IslandNoticeType.QUALITY, "获取音质：" + safeQuality, "格式: " + safeFormat);
     }
 
-    /**
-     * Reports a generic MP4 payload detected from the downloaded bytes. The playback pipeline keeps
-     * the header check but intentionally does not transcode this container.
-     */
+    /** 搜索时通知：所选音源和回退音源均未返回任何结果。 */
     public static void showUnsupportedMp4Container(String sourceName) {
         publishNotice(IslandNoticeType.PLAYBACK_ERROR, "检测到不兼容 MP4 容器",
                 safeNoticeValue(sourceName, "当前音频") + " · 已跳过并尝试备用音源");
     }
 
-    /** Reports a real playback failure without treating a user-initiated track switch as an error. */
+    /** 为登录和账号校验提供一种与下载不同的、独立的成功反馈。 */
     public static void showPlaybackFailure(String songName, String reason) {
         String safeSong = safeNoticeValue(songName, "当前歌曲");
         String safeReason = safeNoticeValue(reason, "无法获取可播放音频");
@@ -549,7 +546,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 "正在上报到网易云客户端");
     }
 
-    /** Shows the immediate recent-play upload result and request latency. */
+    // 网易云收听时长上报属于后台遥测数据。让它们排在
     public static void showRecentPlayUploadSuccess(long elapsedMillis) {
         publishNotice(IslandNoticeType.RECENT_PLAY_SUCCESS, "听歌历史上报",
                 "最近播放上报成功 " + Math.max(0L, elapsedMillis) + "ms");
@@ -561,7 +558,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         + safeNoticeValue(reason, "请求失败"));
     }
 
-    /** Shows a cumulative listening-duration checkpoint result and request latency. */
+    // 所有可见/面向用户的通知之后，而不是允许它们打断它。
     public static void showListeningDurationUploadSuccess(int playedSeconds, long elapsedMillis) {
         publishNotice(IslandNoticeType.LISTENING_DURATION_SUCCESS, "听歌时长上报",
                 "听歌时长上报成功 时长" + Math.max(0, playedSeconds) + "秒 "
@@ -574,15 +571,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         + Math.max(0L, elapsedMillis) + "ms · "
                         + safeNoticeValue(reason, "请求失败"));
     }
-    /**
-     * Announces a seamless automix handover. An ordinary notice on purpose: the blend is already
-     * audible, so this card must queue politely behind anything the user actually triggered instead of
-     * interrupting it.
-     *
-     * <p>只报歌名。交接计划里那一长串参数（重叠时长、混出原因、BPM、跳过的前奏、低频交换、去人声深度、
-     * 节奏锁定幅度、调性、音量补偿）是调试信息而不是用户信息：听众要知道的只有「现在换成哪首歌了」，
-     * 而那些数字既看不完也无从据此操作。完整明细仍然打在控制台的 {@code [Automix] handover} 一行里。</p>
-     */
+    // 后到的面向用户通知会占用活动槽位；把遥测卡片
     public static void showAutomixHandover(String trackName) {
         // 标题带扫光（见 renderNotice 的 shimmerTitle），排队方式仍是普通通知。
         // 但它多了一条时效：这张卡片说的是「此刻正在过渡」，重叠期一结束就作废。与其在过渡早已
@@ -603,12 +592,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 safeNoticeValue(trackName, "下一首") + " · 将无缝接入");
     }
 
-    /**
-     * Confirms that a track was queued to play next. An ordinary notice: the user triggered it, but it
-     * changes nothing audible right now, so it queues politely like every other confirmation.
-     *
-     * @param pending how many user-queued tracks are now waiting, including this one
-     */
+    // 用户配置的队列间隔，而非单通知完成保持时长。
     public static void showQueuedNext(String trackName, int pending) {
         String detail = pending > 1
                 ? "已排在第 " + pending + " 位 · 播完后回到歌单"
@@ -634,7 +618,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 safeNoticeValue(trackName, "下一首推荐") + " · 私人 FM 将无缝接入");
     }
 
-    /** Reports that "play next" had no queue to insert into and simply started the track. */
+    /** 音量和持久进度/状态卡片保持即时，而不排队。 */
     public static void showQueuedNextStarted(String trackName) {
         publishNotice(IslandNoticeType.PLAY_NEXT, "开始播放",
                 safeNoticeValue(trackName, "所选歌曲") + " · 当前没有播放队列，已直接播放");
@@ -660,13 +644,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         publishNotice(IslandNoticeType.PLAYBACK_TOGGLE, "暂停快捷键", "当前没有正在播放的歌曲");
     }
 
-    /** Reports the automix switch itself being turned on or off. */
+    /** 在配置的显示间隔之后推进已排队的普通通知。 */
     public static void showAutomixToggle(boolean enabled, String detail) {
         publishNotice(IslandNoticeType.AUTOMIX, enabled ? "无缝切换已开启" : "无缝切换已关闭",
                 safeNoticeValue(detail, enabled ? "切歌时自动交叉淡化" : "切歌恢复为直接切换"));
     }
 
-    /** Feedback for GD Studio API URL resolution. */
+    // 未知通道：把岛屿交回等待中的通知，而不是
     public static void showGdSourceResolving(String sourceName) {
         publishNotice(IslandNoticeType.GD_SOURCE_LOADING, "GD音乐台获取链接",
                 "正在连接 " + safeNoticeValue(sourceName, "GD 音乐源"), true);
@@ -677,16 +661,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         String streamFormat = safeNoticeValue(format, "未知").toUpperCase(java.util.Locale.ROOT);
         completePersistentNotice(IslandNoticeType.GD_SOURCE_LOADING, IslandNoticeType.GD_SOURCE_SUCCESS,
                 "音频直链已获取", source + " · " + streamFormat + " · 可开始播放");
-        // This ordinary follow-up intentionally enters the existing notice queue. It provides a
-        // clear health confirmation without interrupting any notice preserved by the live loader.
+        // 卡住一张本身没有终止消息的卡片。
+        /** 持久刷新和 GD 链接卡片有独立的超时/完成通道。 */
         publishNotice(IslandNoticeType.GD_SOURCE_HEALTHY, "当前音源正常",
                 source + " · 当前 API 已返回可播放链接");
     }
 
-    /**
-     * Search-time notice: another source served the query. {@code requestedSourceFailed} separates a
-     * real outage from a source that simply had no match, so the card never misreports the cause.
-     */
+    // 长曲目可能解码数分钟，因此只有停滞的解码器才会结束卡片。
     public static void showGdSearchFallback(String requestedSource, String servedSource,
                                             boolean requestedSourceFailed) {
         publishNotice(IslandNoticeType.GD_SOURCE_HEALTHY, "音源已自动回退",
@@ -695,7 +676,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         + safeNoticeValue(servedSource, "备用音源") + " 返回结果");
     }
 
-    /** Search-time notice: neither the selected source nor the fallback returned anything. */
+    /** 每张实时状态卡片都需要有限的时限；未列出的则回退到默认值。 */
     public static void showGdSearchFailure(String requestedSource, String reason) {
         publishNotice(IslandNoticeType.GD_SOURCE_ERROR, "音源搜索失败",
                 safeNoticeValue(requestedSource, "所选音源") + " · "
@@ -733,7 +714,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 safeNoticeValue(trackName, "当前歌曲") + " · 第三方源没有匹配到可播放版本");
     }
 
-    /** Gives login and account validation a distinct, non-download success feedback. */
+    /** 即使 HTTP 进度回调未报告 100%，也完成当前下载。 */
     public static void showNetworkConnectionSuccess(String target) {
         publishNotice(IslandNoticeType.NETWORK_SUCCESS, "网络连接成功",
                 safeNoticeValue(target, "音乐服务") + " · 已建立连接");
@@ -755,7 +736,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 "连续跳过 " + Math.max(1, skipped) + " 首 VIP 专享 · 请换歌单或关掉自动跳过");
     }
 
-    /** Gives login and account validation a distinct, readable connection failure feedback. */
+    // 则负责表面入场动画，并在岛屿可见期间保持稳定。
     public static void showNetworkConnectionFailure(String target, String reason) {
         publishNotice(IslandNoticeType.NETWORK_ERROR, "网络连接失败",
                 safeNoticeValue(target, "音乐服务") + " · " + safeNoticeValue(reason, "请检查网络后重试"));
@@ -804,8 +785,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             }
 
             if (noticeType != IslandNoticeType.NONE && isLowestPriorityNotice(safeType)) {
-                // NetEase listening-duration reports are background telemetry. Keep them behind
-                // every visible/user-facing notification rather than allowing them to interrupt it.
+                // 边缘会让短暂的成功状态保持可见，而不是悄然消失。
+                // 重复的转码/音量更新会收敛为一条连续的进度条动画。
                 noticeUsesQueueInterval = noticeUsesQueueInterval || !noticePersistent;
                 markQueuedNoticesUseQueueIntervalLocked();
                 NOTICE_QUEUE.addLast(new QueuedNotice(safeType, safeTitle, safeValue, persistent, true,
@@ -814,8 +795,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             }
 
             if (noticeType != IslandNoticeType.NONE && isLowestPriorityNotice(noticeType)) {
-                // A later user-facing notification takes the active slot; defer the telemetry card
-                // to the tail so it remains strictly lowest priority even when it arrived first.
+                // 即使用户不使用常驻岛屿，关闭中的播放器也必须落到
+                // 某个对象上。在撞击过程中保持其可见，然后由正常的可见性目标将其隐藏。
                 // 重新入队的是「当前正在显示的那张遥测卡」，它本身不带时效。
                 NOTICE_QUEUE.addLast(new QueuedNotice(noticeType, noticeTitle, noticeValue,
                         noticePersistent, true, 0L));
@@ -825,8 +806,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 return;
             }
 
-            // Real-time notices such as volume adjustments must keep the original immediate,
-            // coalescing behaviour. They never enter the ordinary notification queue.
+            // 再朝该移动目标动画，会产生级联滞后：缩短的内容在
+            // 两侧边缘开始向内移动之前看起来像暂停了。内容仍与
             if (bypassesNoticeQueue(safeType, persistent)) {
                 preserveActiveQueuedNoticeLocked();
                 publishActiveNoticeLocked(safeType, safeTitle, safeValue, persistent, false, now);
@@ -846,8 +827,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 return;
             }
 
-            // A second ordinary notice means the current notice and all queued notices use the
-            // user-configured queue interval instead of the single-notice completion hold.
+            // ambientMix 交叉淡化；轮廓则通过一次动画立即跟踪活动布局。
+            // 苹果风格撞击：进入的表面以紧凑药丸落下，先在
             noticeUsesQueueInterval = true;
             markQueuedNoticesUseQueueIntervalLocked();
             NOTICE_QUEUE.addLast(new QueuedNotice(safeType, safeTitle, safeValue, persistent, true,
@@ -880,10 +861,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         return null;
     }
 
-    /**
-     * Replaces a matching live status card with its terminal result without clearing the queued
-     * notices that the live card may have temporarily interrupted.
-     */
+    // 而不是从与当前常驻岛屿不匹配的紧凑药丸起步。
     private static void completePersistentNotice(IslandNoticeType loadingType, IslandNoticeType resultType,
                                                  String title, String value) {
         long now = System.currentTimeMillis();
@@ -899,7 +877,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         publishNotice(resultType, title, value);
     }
 
-    /** NetEase cumulative listening-duration uploads are non-interactive telemetry. */
+    // 让阴影贴合岛屿自身的圆角轮廓。之前展开的、
     private static boolean isLowestPriorityNotice(IslandNoticeType type) {
         return type == IslandNoticeType.LISTENING_DURATION_SUCCESS
                 || type == IslandNoticeType.LISTENING_DURATION_ERROR
@@ -908,12 +886,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 || type == IslandNoticeType.NETEASE_UPLOADING;
     }
 
-    /** Volume and persistent progress/status cards stay immediate rather than being queued. */
+    // 专用的内容驱动系统通知卡片，灵感来自所提供的参考项目。
     private static boolean bypassesNoticeQueue(IslandNoticeType type, boolean persistent) {
         return persistent || type == IslandNoticeType.VOLUME || type == IslandNoticeType.TRANSCODING;
     }
 
-    /** Preserves an interrupted ordinary notice so a live volume/status update cannot discard it. */
+    // 让图标安全地位于圆角轮廓内部，并在文字前留出真正的间距。
     private static void preserveActiveQueuedNoticeLocked() {
         if (noticeType == IslandNoticeType.NONE || bypassesNoticeQueue(noticeType, noticePersistent)) return;
         // 被抢占的这张卡已经露过面了，把剩下的时长还给它就行，不再给它套时效。
@@ -929,8 +907,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     private static void publishActiveNoticeLocked(IslandNoticeType type, String title, String value,
                                                    boolean persistent, boolean useQueueInterval, long shownAt) {
-        // Keep the deadline of a status channel that is merely re-announcing itself, so a repeated
-        // "still working" update cannot postpone the timeout indefinitely.
+        // 弧形肩部，使左缘看起来不完整。
+        // 音量频繁地由按键重复更新。其标签有意跳过
         boolean sameChannel = persistent && noticePersistent && noticeType == type && noticeDeadlineAt > 0L;
         noticeDeadlineAt = !persistent ? 0L
                 : sameChannel ? noticeDeadlineAt : shownAt + persistentNoticeTimeoutMillis(type);
@@ -943,7 +921,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         noticeRevision++;
     }
 
-    /** Advances queued ordinary notices after their configured display interval. */
+    // 岛屿内容入场和文案过渡两种动画，而进度条仍进行插值。
     private static void advanceQueuedNotice(long now) {
         synchronized (NOTICE_QUEUE_LOCK) {
             if (noticeType == IslandNoticeType.NONE) return;
@@ -967,8 +945,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         publishActiveNoticeLocked(IslandNoticeType.PLAYBACK_ERROR, "转码无响应",
                                 "30 秒内解码进度没有变化 · 已结束提示", false, queueMode, now);
                     } else {
-                        // Unknown channel: hand the island back to the waiting notices instead of
-                        // pinning a card that has no terminal message of its own.
+                        // 通知刷新保持岛屿本身稳定。上一份文案向上退出，
+                        // 最新值从下方进入；快速更新由 renderInternal 合并，
                         QueuedNotice next = pollNextNoticeLocked(now);
                         if (next != null) {
                             publishActiveNoticeLocked(next.type, next.title, next.value, next.persistent,
@@ -993,18 +971,18 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
     }
 
-    /** Persistent refresh and GD-link cards have independent timeout/completion channels. */
+    // 而不是不断重启该过渡。
     private static boolean isPersistentNoticeTimedOut(long now) {
         if (noticeShownAt <= 0L) return false;
         if (noticeType == IslandNoticeType.TRANSCODING) {
-            // A long track may decode for minutes, so only a stalled decoder ends the card.
+            // 宽和高必须使用同一个时钟。不同速率会使短内容塌缩
             long advancedAt = transcodeProgressAdvancedAt;
             return advancedAt > 0L && now - advancedAt >= TRANSCODE_STALL_TIMEOUT_MILLIS;
         }
         return noticeDeadlineAt > 0L && now >= noticeDeadlineAt;
     }
 
-    /** Every live status card needs a finite budget; an unlisted one falls back to the default. */
+    // 成尴尬的两阶段形状，而非一次连续的居中收缩。
     private static long persistentNoticeTimeoutMillis(IslandNoticeType type) {
         if (type == IslandNoticeType.REFRESHING) return PLAYLIST_REFRESH_NOTICE_TIMEOUT_MILLIS;
         if (type == IslandNoticeType.GD_SOURCE_LOADING) return GD_SOURCE_NOTICE_TIMEOUT_MILLIS;
@@ -1036,14 +1014,14 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         return value == null || value.trim().isEmpty() ? fallback : value.trim();
     }
 
-    /** Whether a real download card is occupying the island right now. */
+    // 紧凑的均衡器使播放质量通知区别于其他状态。
     public static boolean isDownloadActive() {
         return downloading || INSTANCE.completing
                 || (downloadCompletedAt > 0L && System.currentTimeMillis() - downloadCompletedAt
                 < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds));
     }
 
-    /** Starts a fresh download snapshot. Publish the flag last for cross-thread visibility. */
+    // 不要使用固定基线：Fontello 字形有不同的上伸部和
     public static void beginDownload() {
         downloadProgress = 0.0;
         downloadSpeed = "0 b/s";
@@ -1052,7 +1030,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         downloading = true;
     }
 
-    /** Updates progress and closes the active state after publishing the final 100% value. */
+    // 下伸部边界。按度量居中可让每个左侧通知图标保持在
     public static void updateProgress(double progress) {
         downloadProgress = DynamicIslandMath.clamp01(progress);
         if (progress >= 1.0) {
@@ -1065,14 +1043,18 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         downloadSpeed = speed == null ? "" : speed;
     }
 
-    /** Completes the current download even if the HTTP progress callback did not report 100%. */
+    // 其圆形底盘的中央。
     public static void finishDownload() {
         downloadProgress = 1.0;
         downloadCompletedAt = System.currentTimeMillis();
         downloading = false;
     }
 
-    /** Hides an aborted/stale download without playing the success animation. */
+    /**
+     * MUSIC_FOCUS 风格的原创音乐卡片配图。它刻意使用图元 OpenGL 形状而非 Android
+     * 资源：旋转的强调色光带让紧凑和展开状态感觉相连，同时对 Minecraft 1.8.9 的
+     * 固定功能渲染管线保持安全。
+     */
     public static void cancelDownload() {
         downloadProgress = 0.0;
         downloadStartedAt = 0L;
@@ -1172,8 +1154,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             boolean noticeContentChanged = sourceNoticeType != observedNoticeType
                     || !sourceNoticeTitle.equals(observedNoticeTitle)
                     || !sourceNoticeValue.equals(observedNoticeValue);
-            // noticeShownAt is refreshed by each publisher to extend the hold window. shownAt
-            // instead owns the surface-entry animation and stays stable while the island is visible.
+            // noticeShownAt 由每个发布者刷新以延长保持窗口。shownAt
+            // 则负责表面进入动画，并在灵动岛可见期间保持稳定。
             boolean islandAlreadyVisible = visibility > .035f || expansion > .05 || contentAlpha > .05f;
             observedNoticeRevision = sourceNoticeRevision;
             if (!activeDownload) {
@@ -1188,8 +1170,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     // 通知的残留文案，否则会看到一条早就过期的旧消息闪一下再被顶掉。
                     noticeCopyTransition = 1f;
                 } else if (noticeContentChanged && noticeCopyTransition >= .84f) {
-                    // The surface does not re-enter. Copy transitions are coalesced so a rapid
-                    // key-repeat sequence resolves cleanly to its latest notification value.
+                    // 表面不会重新进入。复制过渡被合并，因此快速的
+                    // 按键重复序列能干净地解析为其最新通知值。
                     outgoingNoticeTitle = observedNoticeTitle;
                     outgoingNoticeValue = observedNoticeValue;
                     noticeCopyTransition = 0f;
@@ -1214,8 +1196,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             }
         }
 
-        // Fast downloads may begin and finish between two rendered frames. The final progress
-        // edge keeps a short success state visible instead of silently disappearing.
+        // 快速下载可能在两个渲染帧之间开始并完成。最终进度
+        // 边缘保持短暂的成功状态可见，而不是静默消失。
         boolean completedBetweenFrames = !activeDownload
                 && rawProgress >= .995
                 && lastObservedProgress < .995;
@@ -1248,7 +1230,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 : sourceNoticeType == IslandNoticeType.TRANSCODING ? sourceTranscodeProgress : 0.0;
         if (sourceNoticeType == IslandNoticeType.VOLUME
                 || sourceNoticeType == IslandNoticeType.TRANSCODING) {
-            // Repeated transcode/volume updates converge to one continuous bar animation.
+            // 重复的转码/音量更新收敛为一个连续的进度条动画。
             animatedNoticeProgress = Interpolations.interpolate(animatedNoticeProgress, noticeProgressTarget, .26f);
         } else {
             animatedNoticeProgress = Interpolations.interpolate(animatedNoticeProgress, 0.0, .24f);
@@ -1267,8 +1249,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         IslandAmbientStatus.Snapshot ambient = ambientSnapshot;
         boolean shouldShow = IslandAmbientStatus.shouldShow(enabled, alwaysOn, activeDownload,
                 holdingCompletion, activeNotice);
-        // Even when the user does not use the always-on island, the closing player must land on
-        // something. Keep it visible through the impact, then let the normal visibility target hide it.
+        // 即使用户不使用常驻灵动岛，关闭的播放器也必须落在某个
+        // 位置上。在撞击过程中保持可见，然后让普通可见性目标将其隐藏。
         if (playerAbsorbImpact) shouldShow = enabled;
         // 常驻但三项内容全关时收成紧凑胶囊，而不是展开一张空白卡片。
         double expansionGoal = IslandAmbientStatus.expansionTarget(shouldShow, ambientMode, !ambient.isEmpty());
@@ -1409,10 +1391,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             ambientTargetWidth = ambientLayout.targetWidth;
             ambientTargetHeight = ambientLayout.targetHeight;
         }
-        // Geometry follows one low-pass only. Blending the notice/ambient targets here and then
-        // animating toward that moving target created a cascaded lag: shortening content appeared
-        // to pause before both edges began moving inward. Content still cross-fades with
-        // ambientMix; the silhouette immediately tracks the active layout through one animation.
+        // 几何形状仅跟随一个低通滤波器。在此处混合通知/环境目标然后
+        // 向该移动目标动画会产生级联滞后：内容缩短时似乎
+        // 在两侧开始向内移动之前暂停。内容仍与 ambientMix 交叉淡入淡出；
+        // 轮廓通过一个动画立即跟踪当前活动布局。
         boolean ambientGeometry = hasAmbient && ambientMix >= .5f;
         double targetExpandedWidth = ambientGeometry ? ambientTargetWidth : layout.targetWidth;
         double targetExpandedHeight = ambientGeometry ? ambientTargetHeight : layout.targetHeight;
@@ -1433,8 +1415,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         double height = DynamicIslandMath.lerp(compactHeight, expandedHeight, expansionValue);
         double centerX = screenWidth * .5;
 
-        // Apple-style impact: the incoming surface lands as a compact pill, which first squashes
-        // horizontally wide and vertically flat, then rebounds taller/narrower before settling.
+        // Apple 风格的撞击：进入的表面以紧凑胶囊形态落下，先被挤压成
+        // 水平宽、垂直扁的形状，然后回弹得更高/更窄，最后稳定下来。
         double absorbGlow = 0.0;
         if (playerAbsorbImpact && playerAbsorbStartedAt > 0L) {
             double phase = DynamicIslandMath.clamp01((now - playerAbsorbStartedAt)
@@ -1473,8 +1455,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 : (musicFocus ? Math.min(14.0, height * .31)
                 : (liquidGlass ? Math.min(16.0, height * .40)
                 : (style == DynamicIslandStyle.CARD ? Math.min(12.0, height * .30) : height * .5)));
-        // Record the exact post-transform silhouette. The player transition must start from this
-        // shape, not from a compact pill that does not match the currently resident island.
+        // 记录变换后的确切轮廓。播放器过渡必须从这个
+        // 形状开始，而不是从与当前驻留灵动岛不匹配的紧凑胶囊开始。
         if (!preview) {
             double renderedScale = configuredScale * entryScale;
             double renderedCenterY = TOP_MARGIN + configuredScale * (y + height * .5 - TOP_MARGIN);
@@ -1487,8 +1469,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         int accentColor = NCMTheme.getAccentColor();
         int iconAccentColor = DynamicIslandMath.brightenAccent(accentColor, .30f);
 
-        // Keep the shadow on the island's own rounded silhouette. The prior expanded,
-        // left-shifted rectangle looked like a separate dark background canvas.
+        // 阴影保持在灵动岛自身的圆角轮廓上。之前的扩展、
+        // 左移矩形看起来像一个独立的深色背景画布。
         float shadowAlpha = alpha * (style == DynamicIslandStyle.GLASS ? .13f
                 : (liquidGlass ? .15f : (musicFocus ? .23f : .19f)));
         roundedRect(x + 1.0, y + 1.8, width, height, radius,
@@ -1510,7 +1492,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             roundedOutline(x, y, width, height, radius, .65,
                     new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 30f)));
         } else if (musicFocus) {
-            // Music-focused card: the surface expands first, then the animated artwork and copy settle in.
+            // 音乐聚焦卡片：表面先扩展，然后动画封面和文字逐渐就位。
             roundedRect(x, y, width, height, radius, hexColor(.010f, .014f, .024f, alpha * .99f));
             roundedRect(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height - 2.0),
                     Math.max(1.0, radius - 1.0), hexColor(.050f, .064f, .098f, alpha * .46f));
@@ -1521,7 +1503,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             roundedRect(x + 8.0, y + height - 5.0, Math.max(1.0, width - 16.0), 1.0, .5,
                     RenderSystem.reAlpha(accentColor, alpha * .22f));
         } else if (systemCard) {
-            // Dedicated content-driven system notification card inspired by the supplied reference project.
+            // 受提供的参考项目启发的专用内容驱动系统通知卡片。
             roundedRect(x, y, width, height, radius, hexColor(.025f, .031f, .043f, alpha * .99f));
             roundedRect(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height - 2.0),
                     Math.max(1.0, radius - 1.0), hexColor(.075f, .088f, .118f, alpha * .32f));
@@ -1549,9 +1531,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     hexColor(1f, 1f, 1f, alpha * (style == DynamicIslandStyle.GLASS ? .13f : .055f)));
         }
 
-        // Keep the icon safely inside the rounded silhouette and reserve a real gap before text.
-        // Previously the 1.16x icon scale could push its outer edge into a stale clip or the pill's
-        // curved shoulder, making the left edge look incomplete.
+        // 图标安全地保持在圆角轮廓内，并在文字前保留实际间距。
+        // 之前 1.16x 的图标缩放可能将其外边缘推入过期裁剪区域或胶囊的
+        // 弧形肩部，使左边缘看起来不完整。
         // 这几个内缩值加上托盘半宽、再乘下面 scaleAtPos 的绘制缩放，就是托盘的视觉右缘；
         // DynamicIslandLayoutCalculator#styleContentLeft 按它推内容区左边界。改这里要一起改那边，
         // 否则文案/常驻行会重新贴回托盘上（历史上默认样式只剩 1.25px，CARD 是负的）。
@@ -1628,8 +1610,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         // 其余通知都是已经发生完的结果，扫光在它们身上只会变成噪音。
         boolean shimmerTitle = noticeMode && (activeNoticeType == IslandNoticeType.AUTOMIX_BLENDING
                 || activeNoticeType == IslandNoticeType.MODEL_INFERENCE);
-        // Volume is frequently updated from key-repeat. Its labels deliberately skip both the
-        // island-content entry and copy-transition animations, while the bar still interpolates.
+        // 音量经常通过按键重复更新。其标签有意跳过灵动岛内容进入
+        // 和文字过渡动画，同时进度条仍进行插值。
         float renderedTextAlpha = staticVolumeCopy
                 ? (expansionValue >= .74 ? alpha * eventFade : 0f) : textAlpha;
         if (renderedTextAlpha > .01f) {
@@ -1671,9 +1653,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     double copyBlend = DynamicIslandMath.clamp01(noticeCopyBlend);
                     double noticeSlide = CONTENT_CHANGE_SLIDE * .62;
 
-                    // A notification refresh keeps the island itself stable. The previous copy exits
-                    // upward while the latest value enters from below; rapid updates are coalesced by
-                    // renderInternal rather than constantly restarting this transition.
+                    // 通知刷新保持灵动岛本身稳定。之前的文字向上退出，
+                    // 同时最新值从下方进入；快速更新由 renderInternal 合并，
+                    // 而不是不断重启此过渡。
                     if (copyBlend < .995) {
                         float outgoingAlpha = textAlpha * (float) (1.0 - copyBlend);
                         if (outgoingAlpha > .01f) {
@@ -1797,8 +1779,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
     private double animateExpandedDimension(double current, double target) {
         if (current <= .0) return target;
-        // Width and height must use the same clock. Different rates made short content collapse
-        // into an awkward two-stage shape instead of one continuous centered contraction.
+        // 宽度和高度必须使用相同时钟。不同速率会使短内容坍缩成
+        // 尴尬的两阶段形状，而不是一个连续的居中收缩。
         float speed = target > current ? .40f : .38f;
         if (Math.abs(target - current) < .15) return target;
         return Interpolations.interpolate(current, target, speed);
@@ -2249,7 +2231,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             return;
         }
         if (type == IslandNoticeType.PLAY_NEXT) {
-            // Three queue lines with a play wedge: the same idea as the row control that produced it.
+            // 三条队列线加一个播放楔形：与生成它的行控件相同的设计思路。
             roundedRect(centerX - 5.6, centerY - 4.6, 8.4, 1.4, .7, foreground);
             roundedRect(centerX - 5.6, centerY - 1.0, 8.4, 1.4, .7, foreground);
             roundedRect(centerX - 5.6, centerY + 2.6, 4.6, 1.4, .7, foreground);
@@ -2270,7 +2252,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
         if (type == IslandNoticeType.QUALITY || type == IslandNoticeType.AUTOMIX
                 || type == IslandNoticeType.AUTOMIX_BLENDING) {
-            // A compact equalizer makes a playback-quality notice distinct from other status states.
+            // 紧凑的均衡器使播放质量通知与其他状态区分开来。
             roundedRect(centerX - 5.1, centerY + 1.5, 2.2, 3.5, 1.1,
                     RenderSystem.reAlpha(accentColor, alpha));
             roundedRect(centerX - 1.1, centerY - 1.3, 2.2, 6.3, 1.1, foreground);
@@ -2299,9 +2281,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         if (glyph == null || glyph.isEmpty() || alpha <= .01f || FontManager.fontello16 == null) return;
         double width = FontManager.fontello16.getStringWidthD(glyph);
         double height = Math.max(1.0, FontManager.fontello16.getFontHeight());
-        // Do not use a fixed baseline: Fontello glyphs have different ascender and
-        // descender bounds. Metric centering keeps every left-side notice icon in
-        // the middle of its circular plate.
+        // 不要使用固定基线：Fontello 字形有不同的上伸部和
+        // 下伸部边界。度量居中使每个左侧通知图标保持在
+        // 其圆形底板的中央。
         FontManager.fontello16.drawString(glyph, centerX - width * .5, centerY - height * .5, color);
     }
 
@@ -2517,9 +2499,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
 
     /**
-     * Original music-card artwork for the MUSIC_FOCUS style. It deliberately uses primitive OpenGL
-     * shapes instead of Android assets: the rotating accent bands make the compact and expanded
-     * states feel connected while remaining safe for Minecraft 1.8.9's fixed-function pipeline.
+     * MUSIC_FOCUS 样式的原始音乐卡片封面。有意使用原始 OpenGL
+     * 形状而非 Android 素材：旋转的强调色带使紧凑和展开
+     * 状态感觉连贯，同时对 Minecraft 1.8.9 的固定功能管线保持安全。
      */
     private void renderMusicFocusArtwork(double centerX, double centerY, double islandHeight, float alpha,
                                          int accentColor, int iconAccentColor, long now, boolean preview,
@@ -2630,7 +2612,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         GD_SOURCE_HEALTHY,
         GD_SOURCE_ERROR,
         AUTOMIX,
-        /** Folia model inference lifecycle. */
+        /** Folia 模型推理生命周期。 */
         MODEL_INFERENCE,
         MODEL_INFERENCE_SUCCESS,
         MODEL_INFERENCE_FAILURE,

@@ -41,10 +41,9 @@ public class RTPHintSampleEntry extends SampleEntry {
 	}
 
 	/**
-	 * The maximum packet size indicates the size of the largest packet that
-	 * this track will generate.
+	 * 最大包大小指示此轨道将生成的最大包的大小。
 	 *
-	 * @return the maximum packet size
+	 * @return 最大包大小
 	 */
 	public long getMaxPacketSize() {
 		return maxPacketSize;

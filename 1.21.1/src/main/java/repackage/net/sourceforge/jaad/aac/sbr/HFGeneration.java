@@ -28,16 +28,16 @@ class HFGeneration {
 		if((ch==0)&&(sbr.Reset))
 			patch_construction(sbr);
 
-		/* calculate the prediction coefficients */
+		/* 计算预测系数 */
 
-		/* actual HF generation */
+		/* 实际的高频生成 */
 		for(i = 0; i<sbr.noPatches; i++) {
 			for(x = 0; x<sbr.patchNoSubbands[i]; x++) {
 				float a0_r, a0_i, a1_r, a1_i;
 				float bw, bw2;
 				int q, p, k, g;
 
-				/* find the low and high band for patching */
+				/* 找出用于修补的低频带和高频带 */
 				k = sbr.kx+x;
 				for(q = 0; q<i; q++) {
 					k += sbr.patchNoSubbands[q];
@@ -49,8 +49,8 @@ class HFGeneration {
 				bw = sbr.bwArray[ch][g];
 				bw2 = bw*bw;
 
-				/* do the patching */
-				/* with or without filtering */
+				/* 执行修补 */
+				/* 带或不带滤波 */
 				if(bw2>0) {
 					float temp1_r, temp2_r, temp3_r;
 					float temp1_i, temp2_i, temp3_i;
@@ -113,7 +113,7 @@ class HFGeneration {
 		temp2_i = buffer[offset-2][bd][1];
 		temp3_r = buffer[offset-1][bd][0];
 		temp3_i = buffer[offset-1][bd][1];
-		// Save these because they are needed after loop
+		// 保存这些值，因为循环之后还会用到
 		temp4_r = temp2_r;
 		temp4_i = temp2_i;
 		temp5_r = temp3_r;
@@ -133,7 +133,7 @@ class HFGeneration {
 			r11r += temp2_r*temp2_r+temp2_i*temp2_i;
 		}
 
-		// These are actual values in temporary variable at this point
+		// 此处这些是临时变量中的实际值
 		// temp1_r = QMF_RE(buffer[len+offset-1-2][bd];
 		// temp1_i = QMF_IM(buffer[len+offset-1-2][bd];
 		// temp2_r = QMF_RE(buffer[len+offset-1-1][bd];
@@ -163,7 +163,7 @@ class HFGeneration {
 		ac.det = (ac.r11[0]*ac.r22[0])-(rel*((ac.r12[0]*ac.r12[0])+(ac.r12[1]*ac.r12[1])));
 	}
 
-	/* calculate linear prediction coefficients using the covariance method */
+	/* 用协方差方法计算线性预测系数 */
 	private static void calc_prediction_coef(SBR sbr, float[][][] Xlow,
 		float[][] alpha_0, float[][] alpha_1, int k) {
 		float tmp;
@@ -200,7 +200,7 @@ class HFGeneration {
 		}
 	}
 
-	/* FIXED POINT: bwArray = COEF */
+	/* 定点：bwArray = COEF */
 	private static float mapNewBw(int invf_mode, int invf_mode_prev) {
 		switch(invf_mode) {
 			case 1: /* LOW */
@@ -227,7 +227,7 @@ class HFGeneration {
 		}
 	}
 
-	/* FIXED POINT: bwArray = COEF */
+	/* 定点：bwArray = COEF */
 	private static void calc_chirp_factors(SBR sbr, int ch) {
 		int i;
 

@@ -1,36 +1,36 @@
 /*
- * 11/19/04  1.0 moved to LGPL.
+ * 2004年11月19日1.0移至LGPL。
  *
- * 29/05/01  Michael Scheerer,  Fixed some C++ to Java porting bugs.
+ * 29/05/01 Michael Scheerer ，修复了一些C + +到Java移植的错误。
  *
- * 16/07/01  Michael Scheerer, Caught a bug in method
- *           read_sampledata, which causes an outOfIndexException.
+ * 16/07/01 Michael Scheerer ，方法错误
+ *           read_sampledata，从而引发 outOfIndexException。
  *
- * 12/12/99  Initial version. Adapted from javalayer.java
- *             and Subband*.java. mdm@techie.com
+ * 1999年12月12日初始版本。改编自javalayer.java
+ *             和子带* .java. mdm@techie.com
  *
- * 02/28/99  Initial version : javalayer.java by E.B
+ * 1999年2月28日初始版本： javalayer.java by E.B
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
 package repackage.javazoom.jl.decoder;
 
 /**
- * Implements decoding of MPEG Audio Layer II frames.
+ * 实现 MPEG Audio Layer II 帧的解码。
  */
 class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
 
@@ -58,11 +58,11 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
     }
 
     /**
-     * Class for layer II subbands in single channel mode.
+     * 单声道模式下 layer II 子带的类。
      */
     static class SubbandLayer2 extends Subband {
-        // this table contains 3 requantized samples for each legal codeword
-        // when grouped in 5 bits, i.e. 3 quantizationsteps per sample
+        // 此表为每个合法码字包含 3 个反量化采样，
+        // 按 5 位分组时，即每个采样 3 个量化步长
         public static final float[] grouping_5bits = new float[] {
                 -2.0f / 3.0f, -2.0f / 3.0f, -2.0f / 3.0f,
                 0.0f, -2.0f / 3.0f, -2.0f / 3.0f,
@@ -93,8 +93,8 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
                 2.0f / 3.0f, 2.0f / 3.0f, 2.0f / 3.0f
         };
 
-        // this table contains 3 requantized samples for each legal codeword
-        // when grouped in 7 bits, i.e. 5 quantizationsteps per sample
+        // 此表为每个合法码字包含 3 个反量化采样，
+        // 按 7 位分组时，即每个采样 5 个量化步长
         public static final float[] grouping_7bits = new float[] {
                 -0.8f, -0.8f, -0.8f, -0.4f, -0.8f, -0.8f, 0.0f, -0.8f, -0.8f, 0.4f, -0.8f, -0.8f, 0.8f, -0.8f, -0.8f,
                 -0.8f, -0.4f, -0.8f, -0.4f, -0.4f, -0.8f, 0.0f, -0.4f, -0.8f, 0.4f, -0.4f, -0.8f, 0.8f, -0.4f, -0.8f,
@@ -123,8 +123,8 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
                 -0.8f, 0.8f, 0.8f, -0.4f, 0.8f, 0.8f, 0.0f, 0.8f, 0.8f, 0.4f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f
         };
 
-        // this table contains 3 requantized samples for each legal codeword
-        // when grouped in 10 bits, i.e. 9 quantizationsteps per sample
+        // 此表为每个合法码字包含 3 个反量化采样，
+        // 当分组为10位时，即每个样本9个量化步骤
         public static final float[] grouping_10bits = {
                 -8.0f / 9.0f, -8.0f / 9.0f, -8.0f / 9.0f, -6.0f / 9.0f, -8.0f / 9.0f, -8.0f / 9.0f, -4.0f / 9.0f, -8.0f / 9.0f, -8.0f / 9.0f,
                 -2.0f / 9.0f, -8.0f / 9.0f, -8.0f / 9.0f, 0.0f, -8.0f / 9.0f, -8.0f / 9.0f, 2.0f / 9.0f, -8.0f / 9.0f, -8.0f / 9.0f,
@@ -371,47 +371,47 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
                 4.0f / 9.0f, 8.0f / 9.0f, 8.0f / 9.0f, 6.0f / 9.0f, 8.0f / 9.0f, 8.0f / 9.0f, 8.0f / 9.0f, 8.0f / 9.0f, 8.0f / 9.0f
         };
 
-        // data taken from ISO/IEC DIS 11172, Annexes 3-B.2[abcd] and 3-B.4:
+        // 数据取自 ISO/IEC DIS 11172，附录 3-B.2[abcd] 和 3-B.4：
 
-        /** subbands 0-2 in tables 3-B.2a and 2b: (index is allocation) */
+        /** 表3-B.2a和2b中的子带0-2 ： （索引是分配）*/
         public static final int[] table_ab1_codelength = {
-                // bits per codeword
+                // 每个码字的位数
                 0, 5, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
         };
 
-        /** pointer to sample grouping table, or NULL-pointer if ungrouped */
+        /** 指向采样分组表的指针；若未分组则为 NULL 指针 */
         public static final float[][] table_ab1_groupingtables = {
                 null, grouping_5bits, null, null, null, null, null, null, null, null, null, null, null, null, null, null
         };
 
-        /** factor for requantization: (real)sample * factor - 1.0 gives requantized sample */
+        /** 重量化因子： （实际）样本*因子- 1.0给出重量化样本*/
         public static final float[] table_ab1_factor = {
                 0.0f, 1.0f / 2.0f, 1.0f / 4.0f, 1.0f / 8.0f, 1.0f / 16.0f, 1.0f / 32.0f, 1.0f / 64.0f,
                 1.0f / 128.0f, 1.0f / 256.0f, 1.0f / 512.0f, 1.0f / 1024.0f, 1.0f / 2048.0f,
                 1.0f / 4096.0f, 1.0f / 8192.0f, 1.0f / 16384.0f, 1.0f / 32768.0f
         };
 
-        /** factor c for requantization from table 3-B.4 */
+        /** 表3-B.4中重量化系数c*/
         public static final float[] table_ab1_c =
                 {0.0f, 1.33333333333f, 1.14285714286f, 1.06666666666f, 1.03225806452f,
                 1.01587301587f, 1.00787401575f, 1.00392156863f, 1.00195694716f, 1.00097751711f,
                 1.00048851979f, 1.00024420024f, 1.00012208522f, 1.00006103888f, 1.00003051851f,
                 1.00001525902f};
 
-        /** addend d for requantization from table 3-B.4 */
+        /** 表 3-B.4 的反量化加数 d */
         public static final float[] table_ab1_d =
                 {0.0f, 0.50000000000f, 0.25000000000f, 0.12500000000f, 0.06250000000f,
                 0.03125000000f, 0.01562500000f, 0.00781250000f, 0.00390625000f, 0.00195312500f,
                 0.00097656250f, 0.00048828125f, 0.00024414063f, 0.00012207031f, 0.00006103516f,
                 0.00003051758f};
 
-        /** subbands 3-... tables 3-B.2a and 2b */
+        /** 子带 3-... 表 3-B.2a 和 2b */
         public static final float[][] table_ab234_groupingtables = {
                 null, grouping_5bits, grouping_7bits, null, grouping_10bits, null, null, null,
                 null, null, null, null, null, null, null, null
         };
 
-        // subbands 3-10 in tables 3-B.2a and 2b
+        // 表3-B.2a和2b中的子带3-10
 
         public static final int[] table_ab2_codelength = {
                 0, 5, 7, 3, 10, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 16
@@ -435,7 +435,7 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
                 0.00003051758f
         };
 
-        // subbands 11-22 in tables 3-B.2a and 2b:
+        // 表3-B.2a和2b中的子带11-22 ：
 
         public static final int[] table_ab3_codelength = {
                 0, 5, 7, 3, 10, 4, 5, 16
@@ -452,13 +452,13 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
                 0.12500000000f, 0.06250000000f, 0.00003051758f
         };
 
-        // subbands 23-... in tables 3-B.2a and 2b:
+        // 子带 23-... 在表 3-B.2a 和 2b 中：
         public static final int[] table_ab4_codelength = {0, 5, 7, 16};
         public static final float[] table_ab4_factor = {0.0f, 1.0f / 2.0f, 1.0f / 4.0f, 1.0f / 32768.0f};
         public static final float[] table_ab4_c = {0.0f, 1.33333333333f, 1.60000000000f, 1.00001525902f};
         public static final float[] table_ab4_d = {0.0f, 0.50000000000f, 0.50000000000f, 0.00003051758f};
 
-        // subbands in tables 3-B.2c and 2d:
+        // 表3-B.2c和2d中的子带：
         public static final int[] table_cd_codelength = {
                 0, 5, 7, 10, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
         };
@@ -498,7 +498,7 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         protected float[] d = {0};
 
         /**
-         * Constructor
+         * 构造函数
          */
         public SubbandLayer2(int subbandNumber) {
             this.subbandNumber = subbandNumber;
@@ -512,7 +512,7 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
             if (header.version() == Header.MPEG1) {
                 int channelBitrate = header.bitrateIndex();
 
-                // calculate bitrate per channel:
+                // 计算每个通道的比特率：
                 if (header.mode() != Header.SINGLE_CHANNEL)
                     if (channelBitrate == 4)
                         channelBitrate = 1;
@@ -520,22 +520,22 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
                         channelBitrate -= 4;
 
                 if (channelBitrate == 1 || channelBitrate == 2)
-                    // table 3-B.2c or 3-B.2d
+                    // 表3-B.2c或3-B.2d
                     if (subbandNumber <= 1)
                         return 4;
                     else
                         return 3;
                 else
-                    // tables 3-B.2a or 3-B.2b
+                    // 表3-B.2a或3-B.2b
                     if (subbandNumber <= 10)
                         return 4;
                     else if (subbandNumber <= 22)
                         return 3;
                     else
                         return 2;
-            } else { // MPEG-2 LSF -- Jeff
+            } else { // MPEG-2 LSF - Jeff
 
-                // table B.1 of ISO/IEC 13818-3
+                // ISO/IEC 13818-3 的表 B.1
                 if (subbandNumber <= 3)
                     return 4;
                 else if (subbandNumber <= 10)
@@ -554,7 +554,7 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
                                               float[] factor, int[] codeLength,
                                               float[] c, float[] d) {
             int channelBitrate = header.bitrateIndex();
-            // calculate bitrate per channel:
+            // 计算每个通道的比特率：
             if (header.mode() != Header.SINGLE_CHANNEL)
                 if (channelBitrate == 4)
                     channelBitrate = 1;
@@ -562,14 +562,14 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
                     channelBitrate -= 4;
 
             if (channelBitrate == 1 || channelBitrate == 2) {
-                // table 3-B.2c or 3-B.2d
+                // 表3-B.2c或3-B.2d
                 groupingTable[channel] = table_cd_groupingtables[allocation];
                 factor[0] = table_cd_factor[allocation];
                 codeLength[0] = table_cd_codelength[allocation];
                 c[0] = table_cd_c[allocation];
                 d[0] = table_cd_d[allocation];
             } else {
-                // tables 3-B.2a or 3-B.2b
+                // 表3-B.2a或3-B.2b
                 if (subbandNumber <= 2) {
                     groupingTable[channel] = table_ab1_groupingtables[allocation];
                     factor[0] = table_ab1_factor[allocation];
@@ -655,11 +655,11 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
             if (allocation != 0)
                 if (groupingTable[0] != null) {
                     int samplecode = stream.getBits(codeLength[0]);
-                    // create requantized samples:
+                    // 创建重新定量化的样品：
                     samplecode += samplecode << 1;
                     float[] target = samples;
                     float[] source = groupingTable[0];
-                    //Bugfix:
+                    //错误修正
                     int tmp = 0;
                     int temp = samplecode;
 
@@ -708,7 +708,7 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
     }
 
     /**
-     * Class for layer II subbands in joint stereo mode.
+     * 关节立体声模式下II层子带的类别。
      */
     static class SubbandLayer2IntensityStereo extends SubbandLayer2 {
 
@@ -716,7 +716,7 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         protected float channel2ScaleFactor1, channel2ScaleFactor2, channel2ScaleFactor3;
 
         /**
-         * Constructor
+         * 构造函数
          */
         public SubbandLayer2IntensityStereo(int subbandNumber) {
             super(subbandNumber);
@@ -833,13 +833,13 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
     }
 
     /**
-     * Class for layer II subbands in stereo mode.
+     * 立体声模式下II层子带的类别。
      */
     static class SubbandLayer2Stereo extends SubbandLayer2 {
         protected int channel2Allocation;
         protected int channel2Scfsi;
         protected float channel2ScaleFactor1, channel2ScaleFactor2, channel2ScaleFactor3;
-        //protected boolean         channel2_grouping;  ???? Never used!
+        //protected boolean channel2_grouping;????从未使用过！
         protected int[] channel2CodeLength = {0};
         //protected float[][]     channel2_groupingtable = {{0},{0}};
         protected float[] channel2Factor = {0};
@@ -848,7 +848,7 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         protected float[] channel2D = {0};
 
         /**
-         * Constructor
+         * 构造函数
          */
         public SubbandLayer2Stereo(int subbandNumber) {
             super(subbandNumber);
@@ -933,7 +933,7 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
             if (channel2Allocation != 0)
                 if (groupingTable[1] != null) {
                     int sampleCode = stream.getBits(channel2CodeLength[0]);
-                    // create requantized samples:
+                    // 创建重新定量化的样品：
                     sampleCode += sampleCode << 1;
                     float[] target = channel2Samples;
                     float[] source = groupingTable[1];

@@ -62,7 +62,7 @@ public interface SequentialData {
     int getReleaseBegin();
 
     /***
-     * @return End of release loop or -1 if no loop.
+     * @return 释放循环的结束位置，若无循环则为 -1。
      */
     int getReleaseEnd();
 

@@ -44,7 +44,7 @@ public abstract class Analyzer {
 		}
 	}
 
-	// remove the current input
+	// 移除当前输入
 	public abstract void removeInput();
 
 	// 单元仅被分析而未外放 - 从合成器中移除

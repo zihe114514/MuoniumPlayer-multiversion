@@ -8,10 +8,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
 /**
- * Reads time-synchronised lyric text stored inside common local-audio metadata containers.
+ * 读取存储在常见本地音频元数据容器内的时间同步歌词文本。
  *
- * <p>The reader deliberately returns raw lyric text only.  The existing {@code LyricParser}
- * remains the single authority for LRC/YRC/enhanced-LRC timing and rendering semantics.</p>
+ * <p>本读取器刻意只返回原始歌词文本。既有的 {@code LyricParser}
+ * 仍是 LRC/YRC/增强 LRC 计时与渲染语义的唯一权威。</p>
  */
 final class EmbeddedLyricsReader {
     private static final int MAX_TAG_BYTES = 2 * 1024 * 1024;
@@ -38,7 +38,7 @@ final class EmbeddedLyricsReader {
                 return readM4aLyrics(input);
             }
         } catch (IOException ignored) {
-            // Embedded metadata is optional and must never interfere with audio playback.
+            // 嵌入元数据是可选的，绝不干扰音频播放。
         }
         return "";
     }
@@ -101,7 +101,7 @@ final class EmbeddedLyricsReader {
             return "";
         }
         int encoding = data[offset] & 0xFF;
-        int descriptionStart = offset + 4; // encoding + ISO-639 language code
+        int descriptionStart = offset + 4; // 编码 + ISO-639 语言代码
         int textStart = skipEncodedTerminator(data, descriptionStart, offset + length, encoding);
         return textStart < offset + length ? decodeText(data, textStart, offset + length - textStart, encoding) : "";
     }
@@ -224,7 +224,7 @@ final class EmbeddedLyricsReader {
                 return "";
             }
             if ("data".equals(type) && size > 16L) {
-                long textStart = position + 16L; // atom header + type/locale fields
+                long textStart = position + 16L; // atom 头 + 类型/区域字段
                 int textLength = (int) Math.min(MAX_TAG_BYTES, position + size - textStart);
                 byte[] text = new byte[textLength];
                 input.seek(textStart);

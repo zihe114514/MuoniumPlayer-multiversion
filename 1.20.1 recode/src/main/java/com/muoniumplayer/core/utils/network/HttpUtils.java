@@ -40,15 +40,15 @@ public class HttpUtils {
     }
 
     /**
-     * GET with explicit timeouts. Large audio transfers need a longer read window than the 8s
-     * default, otherwise a slow CDN stalls the transfer and the track is reported unplayable.
+     * 带显式超时的 GET。大型音频传输需要比默认 8 秒更长的读取窗口，
+     * 否则缓慢的 CDN 会使传输停滞，导致曲目被报为无法播放。
      */
     public static InputStream get(String url, Map<String, String> params, Map<String, String> headers,
                                   int connectTimeoutMillis, int readTimeoutMillis) throws IOException {
         return get(url, params, headers, connectTimeoutMillis, readTimeoutMillis, null);
     }
 
-    /** GET with an explicit proxy. Passing {@code null} preserves the historical direct connection. */
+    /** 带显式代理的 GET。传入 {@code null} 则保留历史行为的直连。 */
     public static InputStream get(String url, Map<String, String> params, Map<String, String> headers,
                                   int connectTimeoutMillis, int readTimeoutMillis,
                                   Proxy proxy) throws IOException {

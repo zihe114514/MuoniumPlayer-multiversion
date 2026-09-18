@@ -10,7 +10,7 @@ package repackage.org.kc7bfi.jflac;
 /**
  * @author kc7bfi
  * <p>
- * To change the template for this generated type comment go to
+ * 若要更改此生成类型注释的模板，请前往
  * Window - Preferences - Java - Code Generation - Code and Comments
  */
 public class FrameDecodeException extends Exception {

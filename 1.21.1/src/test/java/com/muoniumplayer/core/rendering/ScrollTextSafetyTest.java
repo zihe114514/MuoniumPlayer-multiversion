@@ -8,11 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
- * Regression probes for the client crash in error report d2c713e3.
+ * 针对错误报告 d2c713e3 中客户端崩溃的回归探针。
  *
- * A transitional ControlsBar layout produced a negative LabelWidget width, which reached
- * ScrollText and Skia's Rect::makeXYWH. These probes do not need a GL/Skija frame: the guard
- * must reject invalid input before any native rectangle is constructed.
+ * 过渡中的 ControlsBar 布局产生了负的 LabelWidget 宽度，
+ * 并传到 ScrollText 和 Skia 的 Rect::makeXYWH。这些探针不需要 GL/Skija
+ * 帧：守卫必须在构造任何本地矩形之前拒绝无效输入。
  */
 class ScrollTextSafetyTest {
 

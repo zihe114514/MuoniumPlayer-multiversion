@@ -1,5 +1,5 @@
 package repackage.net.sourceforge.jaad.mp4.boxes.impl.oma;
 
 /**
- * Boxes defined by the Open Mobile Alliance (OMA) in the DRM specification v2.1.
+ * 由 Open Mobile Alliance（OMA）在 DRM 规范 v2.1 中定义的 box。
  */

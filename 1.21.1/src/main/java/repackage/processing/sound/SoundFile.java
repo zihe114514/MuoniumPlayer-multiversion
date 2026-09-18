@@ -6,21 +6,21 @@ import repackage.com.jsyn.util.SampleLoader;
 import java.io.File;
 
 
-// calls to amp(), pan() etc affect both the LAST initiated and still running sample, AND all subsequently started ones
+// @webBrief 打印声音库当前内存和
 /**
- * This is a Soundfile player which allows to play back and manipulate sound
- * files. Supported formats are: WAV, AIF/AIFF, and MP3.
+ * 对 amp()、pan() 等的调用同时影响最后启动且仍在运行的采样，以及此后启动的所有采样
+ * 文件。支持的格式为： WAV、AIF/AIFF和MP3。
  * 
- * MP3 decoding can be very slow on ARM processors (Android/Raspberry Pi), we generally recommend you use lossless WAV or AIF files.
- * @webref Sampling:SoundFile
- * @webBrief This is a Soundfile Player which allows to play back and manipulate soundfiles.
+ * 这是一个声音文件播放器，允许播放和处理声音
+ * @ webref采样： SoundFile
+ * @ webBrief这是一个声音文件播放器，允许播放和操作声音文件。
  **/
 public class SoundFile extends AudioSample {
 
 	public SoundFile(String path) {
 		super();
 
-		// load WAV or AIF using JSyn
+		// 使用JSyn加载WAV或AIF
 		// 再包一层「变速不变调」。tempo=1 时是真直通（readDouble 直接转发内层），
 		// 所以正常听歌那条路和没有这层时逐采样一致；只有 automix 交接真的要变速时才会接管。
 		// 包不了（声道数不对、曲子太短）时 wrap() 原样还回来，链路完全不变。
@@ -113,41 +113,41 @@ public class SoundFile extends AudioSample {
 		return timeStretch(stretch);
 	}
 
-	// Below are just duplicated methods from the AudioSample superclass which
-	// are required for the reference to build the corresponding pages.
+	// 以下只是从 AudioSample 父类复制过来的方法，
+	// 是构建相应页面的参考所必需的。
 
 	/**
-	 * Returns the number of channels of the soundfile as an int (1 for mono, 2 for stereo).
+	 * 以int形式返回声音文件的通道数（单声道为1 ，立体声为2 ）。
 	 * 
-	 * @return Returns the number of channels of the soundfile (1 for mono, 2 for
-	 *         stereo)
-	 * @webref Sampling:SoundFile
-	 * @webBrief Returns the number of channels of the soundfile as an int (1 for mono, 2 for stereo).
+	 * @return 返回声音文件的通道数（单声道为1 ，
+	 *         立体声
+	 * @ webref采样： SoundFile
+	 * @ webBrief将声音文件的通道数返回为int （单声道为1 ，立体声为2 ）。
 	 **/
 	public int channels() {
 		return super.channels();
 	}
 
 	/**
-	 * Cues the playhead to a fixed position in the soundfile. Note that <b>cue()</b> only 
-	 * affects the playhead for future calls to <b>play()</b>, but not to <b>loop()</b>.
+	 * 将播放指针提示到声音文件中的固定位置。请注意， <b> cue()仅</b>
+	 * 影响将来调用<b> play() </b>的播放头，但不影响<b> loop() </b>的播放头。
 	 * 
 	 * @param time
-	 *            position in the soundfile that the next playback should start
-	 *            from, in seconds.
-	 * @webref Sampling:SoundFile
-	 * @webBrief Cues the playhead to a fixed position in the soundfile.
+	 *            在声音文件中的位置，下一次播放应该开始
+	 *            将播放头提示到 audiosample 中的固定位置。注意 <b>cue()</b> 只影响后续 <b>play()</b> 调用的播放头，不影响 <b>loop()</b>。
+	 * @ webref采样： SoundFile
+	 * @ webBrief将播放指针提示到声音文件中的固定位置。
 	 **/
 	public void cue(float time) {
 		super.cue(time);
 	}
 
 	/**
-	 * Returns the duration of the soundfile in seconds.
+	 * 以下仅是从 AudioSample 超类复制来的方法，
 	 * 
-	 * @webref Sampling:SoundFile
-	 * @webBrief Returns the duration of the soundfile in seconds.
-	 * @return The duration of the soundfile in seconds.
+	 * @ webref采样： SoundFile
+	 * @ webBrief以秒为单位返回声音文件的持续时间。
+	 * 以秒为单位返回声音文件的时长。
 	 **/
 	public float duration() {
 		return super.duration();
@@ -170,11 +170,11 @@ public class SoundFile extends AudioSample {
 	}
 
 	/**
-	 * Returns the number of frames of this soundfile.
+	 * 返回此声音文件的帧数。
 	 * 
-	 * @webref Sampling:SoundFile
-	 * @webBrief Returns the number of frames of this soundfile.
-	 * @return The number of frames of this soundfile.
+	 * @ webref采样： SoundFile
+	 * @ webBrief返回此声音文件的帧数。
+	 * @return 此声音文件的帧数。
 	 **/
 	public int frames() {
 		return super.frames();
@@ -219,27 +219,27 @@ public class SoundFile extends AudioSample {
 	}
 
 	/**
-	 * Starts the playback of the soundfile. Only plays to the end of the
-	 * audiosample once. If <b>cue()</b> or <b>pause()</b> were called previously, playback 
-	 * will resume from the cued position.
+	 * 开始播放声音文件。只播放到
+	 * 音频采样一次，如果先前调用了<b> cue() </b>或<b> pause() </b> ，则播放
+	 * 将从提示位置恢复。
 	 * 
-	 * @param rate
-	 *            relative playback rate to use. 1 is the original speed. 0.5 is
-	 *            half speed and one octave down. 2 is double the speed and one
-	 *            octave up.
-	 * @param amp
-	 *            the desired playback amplitude of the audiosample as a value from
-	 *            0.0 (complete silence) to 1.0 (full volume)
+	 * 由合成器开始执行此单元。输入端会从任何输出
+	 *            要使用的相对播放速率。1是原始速度。0.5是
+	 *            开始播放 audiosample。仅播放到 audiosample 末尾
+	 *            为半速并降一个八度。2 为双倍速度并升一个八度。
+	 * 距上次播放命令经过的时间
+	 *            （右）。仅适用于单声道 audiosample！
+	 *            0.0 （完全静音）至1.0 （全音量）
 	 * @param pos
-	 *            the panoramic position of this sound unit from -1.0 (left) to 1.0
-	 *            (right). Only works for mono soundfiles!
+	 *            此声音单元的全景位置从-1.0 （左）到1.0
+	 *            （右）。仅适用于单声道声音文件！
 	 * @param cue
-	 *            position in the audiosample that playback should start from, in
+	 *            在音频样本中的位置，播放应从开始，在
 	 *            seconds.
-	 * @param add
-	 *            offset the output of the generator by the given value
-	 * @webref Sampling:SoundFile
-	 * @webBrief Starts the playback of the soundfile.
+	 * @return 声音文件的时长（秒）。
+	  * 按给定值偏移发生器的输出
+	 * @ webref采样： SoundFile
+	 * @ webBrief开始播放声音文件。
 	 **/
 	public void play(float rate, float pos, float amp, float add, float cue) {
 		super.play(rate, pos, amp, add, cue);
@@ -247,36 +247,36 @@ public class SoundFile extends AudioSample {
 
 
 	/**
-	 * Jump to a specific position in the soundfile while continuing to play 
-	 * (or starting to play if it wasn't playing already).
+	 * 在继续播放的同时跳转到声音文件中的特定位置
+	 * 将生成器的输出偏移给定值
 	 * 
-	 * @webref Sampling:SoundFile
-	 * @webBrief Jump to a specific position in the soundfile while continuing to play (or starting to play if it wasn't playing already).
+	 * @ webref采样： SoundFile
+	 * （若原本未播放则开始播放）。
 	 * @param time
-	 *            position to jump to, in seconds.
+	 *            位置，在几秒钟内跳转到。
 	 **/
 	public void jump(float time) {
 		super.jump(time);
 	}
 
 	/**
-	 * Stop the playback of the file, but cue it to the current position. The
-	 * next call to <b>play()</b> will continue playing where it left off.
+	 * @webBrief 在继续播放的同时跳到声音文件中的特定位置（若原本未播放则开始播放）。
+	 * 停止文件播放，但将其提示到当前位置。
 	 * 
 	 * @see SoundFile#stop()
-	 * @webref Sampling:SoundFile
-	 * @webBrief Stop the playback of the file, but cue it to the current position.
+	 * @ webref采样： SoundFile
+	 * @ webBrief停止播放文件，但将其提示到当前位置。
 	 */
 	public void pause() {
 		super.pause();
 	}
 
 	/**
-	 * Check whether this soundfile is currently playing.
+	 * 下次调用 <b>play()</b> 将从暂停处继续播放。
 	 *
-	 * @return `true` if the soundfile is currently playing, `false` if it is not.
-	 * @webref Sampling:SoundFile
-	 * @webBrief Check whether this soundfile is currently playing.
+	 * 检查此声音文件当前是否正在播放。
+	 * @ webref采样： SoundFile
+	 * @ webBrief检查此声音文件当前是否正在播放。
 	 */
 	public boolean isPlaying() {
 		return super.isPlaying();
@@ -299,45 +299,45 @@ public class SoundFile extends AudioSample {
 	}
 
 	/**
-	 * Starts playback which will loop at the end of the soundfile.
+	 * @return 若声音文件正在播放则为 `true`，否则为 `false`。
 	 * 
-	 * @param rate
-	 *            relative playback rate to use. 1 is the original speed. 0.5 is
-	 *            half speed and one octave down. 2 is double the speed and one
-	 *            octave up.
+	 * 由合成器开始执行此单元。输入端会从任何输出
+	 *            要使用的相对播放速率。1是原始速度。0.5是
+	 *            开始播放 audiosample。仅播放到 audiosample 末尾
+	 *            为半速并降一个八度。2 为双倍速度并升一个八度。
 	 * @param pos
-	 *            the panoramic position of this sound unit from -1.0 (left) to 1.0
-	 *            (right). Only works for mono soundfiles!
-	 * @param amp
-	 *            the desired playback amplitude of the audiosample as a value from
-	 *            0.0 (complete silence) to 1.0 (full volume)
-	 * @param add
-	 *            offset the output of the generator by the given value
-	 * @webref Sampling:SoundFile
-	 * @webBrief Starts playback which will loop at the end of the soundfile.
+	 *            此声音单元的全景位置从-1.0 （左）到1.0
+	 *            （右）。仅适用于单声道声音文件！
+	 * 距上次播放命令经过的时间
+	 *            （右）。仅适用于单声道 audiosample！
+	 *            0.0 （完全静音）至1.0 （全音量）
+	 * @return 声音文件的时长（秒）。
+	  * 按给定值偏移发生器的输出
+	 * @ webref采样： SoundFile
+	 * @ webBrief开始播放，播放将在声音文件结束时循环。
 	 */
 	public void loop(float rate, float pos, float amp, float add) {
 		super.loop(rate, pos, amp, add);
 	}
 
 	/**
-	 * Changes the amplitude/volume of the player. Allowed values are between 0.0 and 1.0.
+	 * 更改玩家的振幅/音量。允许的值介于0.0和1.0之间。
 	 * 
 	 * @param cue
-	 *            position in the audiosample that the next playback or loop should
-	 *            start from, in seconds. public void loop(float rate, float pos,
-	 *            float amp, float add, float cue) { super.loop(rate, pos, amp, add,
-	 *            cue); }
+	 *            开始播放，播放到声音文件末尾后循环。
+	 *            下次播放或循环应起始的 audiosample 位置，
+	 *            float amp, float add, float cue) {super.loop(rate, pos, amp, add,
+	 *            配乐点
 	 */
 
 	/**
-	 * Change the amplitude/volume of this audiosample.
+	 * 更改此音频采样的振幅/音量。
 	 *
-	 * @param amp
-	 *            A float value between 0.0 (complete silence) and 1.0 (full volume)
-	 *            controlling the amplitude/volume of this sound.
-	 * @webref Sampling:SoundFile
-	 * @webBrief Changes the amplitude/volume of the player.
+	 * 距上次播放命令经过的时间
+	 *            浮点值介于0.0 （完全静音）和1.0 （满量）之间
+	 *            控制此声音的振幅/音量。
+	 * @ webref采样： SoundFile
+	 * @ webBrief更改播放器的振幅/音量。
 	 **/
 	public void amp(float amp) {
 		super.amp(amp);
@@ -348,29 +348,29 @@ public class SoundFile extends AudioSample {
 	public float volume = 1;
 
 	/**
-	 * Move the sound in a stereo panorama.-1.0 pans to the left channel and 1.0 to the 
-	 * right channel. Note that panning is only supported for mono (1 channel) soundfiles.
+	 * 将立体声全景中的声音移动。-1.0平移到左声道， 1.0平移到
+	 * 单位秒。
 	 * 
 	 * @param pos
-	 *            the panoramic position of this sound unit from -1.0 (left) to 1.0
-	 *            (right).
-	 * @webref Sampling:SoundFile
-	 * @webBrief Move the sound in a stereo panorama.
+	 *            此声音单元的全景位置从-1.0 （左）到1.0
+	 *            对吧？
+	 * @ webref采样： SoundFile
+	 * @ webBrief在立体全景中移动声音。
 	 **/
 	public void pan(float pos) {
 		super.pan(pos);
 	}
 
 	/**
-	 * Set the playback rate of the soundfile. 1 is the original speed. 0.5 is half speed 
-	 * and one octave down. 2 is double the speed and one octave up.
+	 * 右声道。注意声像仅支持单声道（1 声道）声音文件。 
+	 * 向下八度。2是速度的两倍，向上八度。
 	 * 
-	 * @param rate
-	 *            Relative playback rate to use. 1 is the original speed. 0.5 is
-	 *            half speed and one octave down. 2 is double the speed and one
-	 *            octave up.
-	 * @webref Sampling:SoundFile
-	 * @webBrief Set the playback rate of the soundfile.
+	 * 由合成器开始执行此单元。输入端会从任何输出
+	 *            要使用的相对播放速率。1是原始速度。0.5是
+	 *            开始播放 audiosample。仅播放到 audiosample 末尾
+	 *            为半速并降一个八度。2 为双倍速度并升一个八度。
+	 * @ webref采样： SoundFile
+	 * 设置声音文件的播放速率。1 为原速。0.5 为半速
 	 **/
 	public void rate(float rate) {
 		super.rate(rate);

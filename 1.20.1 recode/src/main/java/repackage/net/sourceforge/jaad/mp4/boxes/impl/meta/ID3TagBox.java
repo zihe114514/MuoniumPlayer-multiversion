@@ -5,7 +5,7 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 import repackage.net.sourceforge.jaad.mp4.boxes.Utils;
 
-//TODO: use nio ByteBuffer instead of array
+//TODO: 用 nio ByteBuffer 代替数组
 public class ID3TagBox extends FullBox {
 
 	private String language;
@@ -30,8 +30,7 @@ public class ID3TagBox extends FullBox {
 	}
 
 	/**
-	 * The language code for the following text. See ISO 639-2/T for the set of
-	 * three character codes.
+	 * 以下文本的语言代码。三个字符代码的集合见 ISO 639-2/T。
 	 */
 	public String getLanguage() {
 		return language;

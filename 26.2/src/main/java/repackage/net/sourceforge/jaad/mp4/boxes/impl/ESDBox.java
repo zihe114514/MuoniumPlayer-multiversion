@@ -7,9 +7,9 @@ import repackage.net.sourceforge.jaad.mp4.od.ESDescriptor;
 import repackage.net.sourceforge.jaad.mp4.od.ObjectDescriptor;
 
 /**
- * The entry sample descriptor (ESD) box is a container for entry descriptors.
- * If used, it is located in a sample entry. Instead of an <code>ESDBox</code> a
- * <code>CodecSpecificBox</code> may be present.
+ * entry sample descriptor (ESD) box 是条目描述符的容器。
+ * 若使用，它位于某个采样条目内。除 <code>ESDBox</code> 外，
+ * 也可能出现 <code>CodecSpecificBox</code>。
  * 
  * @author in-somnia
  */

@@ -29,11 +29,11 @@ public abstract class EntropyCodingMethod {
     protected EntropyPartitionedRiceContents contents; // 读取量化的 lp 系数
 
     /**
-     * Read compressed signal residual data.
+     * 读取压缩信号残差数据。
      *
      * 该上下文的 Rice 参数和/或原始位。
      * 读取压缩信号残差数据。
-     * @param is             InputBitStream
+      * @param is 输入位流
      * @param header FLAC帧标题
      * @param predictorOrder 预测器阶数
      * @throws IOException从InputBitStream读取时出错

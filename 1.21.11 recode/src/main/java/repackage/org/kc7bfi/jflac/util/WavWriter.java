@@ -53,7 +53,7 @@ public class WavWriter {
     /**
      * 构造函数。
      * @param os 输出流
-     * @param streamInfo    The FLAC stream info
+      * @param streamInfo    FLAC 流信息
      */
     public WavWriter(DataOutput os, StreamInfo streamInfo) {
         this.os = os;
@@ -76,7 +76,7 @@ public class WavWriter {
     /**
      * 构造函数。
      * @param os 输出流
-     * @param streamInfo    The FLAC stream info
+      * @param streamInfo    FLAC 流信息
      */
     public WavWriter(OutputStream os, StreamInfo streamInfo) {
         this.os = new DataOutputStream(os);
@@ -128,7 +128,7 @@ public class WavWriter {
 
     /**
      * 编写WAV文件标题。
-     * @param streamInfo    The FLAC stream info
+      * @param streamInfo    FLAC 流信息
      * 如果写入输出字符串时出错，则引发@throws IOException。
      */
     public void writeHeader(StreamInfo streamInfo) throws IOException {

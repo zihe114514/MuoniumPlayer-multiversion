@@ -15,26 +15,26 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The audio-thread execution path for the crossfade curves.
+ * 交叉淡入淡出曲线的音频线程执行路径。
  *
- * <p>Half of this file is the usual source scan, because the interesting contracts are about
- * <em>where</em> code is and <em>what it must not call</em>: an audio thread may not push commands
- * onto JSyn's queue, and it may not clear a filter's state once per output buffer. The other half is
- * a real numerical check on {@link AutomixPlan}: the one race this design cannot fully close is a
- * frame that lands just after the blend is finalised, and the answer is only sound if every
- * incoming-deck curve has returned to neutral by then.</p>
+  * <p>此文件的一半是常规的源码扫描，因为真正重要的契约在于
+  * <em>代码在何处</em>以及<em>它不得调用什么</em>：音频线程不得推送命令
+ * 到 JSyn 的队列，并且它不得在每个输出缓冲区清除一次滤波器状态。另一半是
+ * 对 {@link AutomixPlan} 的真实数值检查：此设计无法完全消除的一个竞态是
+ * 在混合刚完成后到达的帧，只有当每个输入通道曲线届时都已恢复到中性时，
+ * 答案才是正确的。</p>
  */
 class AutomixAudioThreadExecutionStaticTest {
 
     private static final Path JAVA = ProjectPaths.sharedJava();
 
     /**
-     * The finalize race, closed by arithmetic rather than by locking.
+     * 完成竞态，通过算术而非锁定来消除。
      *
      * <p>{@code driveAutomixFade()} clears {@code activeFade} and then flattens the incoming deck.
-     * A frame the audio task was already inside can still land after that, so the plan's own end state
-     * has to <em>be</em> the flattened state - otherwise a stray write could leave a bass cut or a
-     * vocal cancellation stuck on the deck the listener keeps.</p>
+     * 音频任务已经在处理的帧仍可能在之后到达，因此计划自身的结束状态
+     * 必须<em>就是</em>扁平化状态——否则一次意外写入可能导致低音切除或
+     * 人声消除卡在听众保留的通道上。</p>
      */
     @Test
     @DisplayName("斜坡终点的曲线全部回到中性，晚到的一帧不可能把进场 deck 掀平")
@@ -58,7 +58,7 @@ class AutomixAudioThreadExecutionStaticTest {
         }
     }
 
-    /** One curve writer, two clocks: a fallback frame must be the same shape as an audio-thread one. */
+    /** 一个曲线写入器，两个时钟：回退帧必须与音频线程帧具有相同的形状。 */
     @Test
     @DisplayName("曲线只有一份实现，tick 与音频任务都走它")
     void everyCurveWriteGoesThroughTheSharedFrameWriter() throws IOException {
@@ -70,8 +70,8 @@ class AutomixAudioThreadExecutionStaticTest {
         String tick = body(cloud, "private void driveAutomixFade()");
         assertTrue(tick.contains("writeTransitionFrame(fade, progress)"),
                 "tick 也必须走同一份实现，不能自己再写一遍曲线");
-        // The tick may still flatten the incoming deck once the blend is over; what it may not do is
-        // sample the plan itself, which is what makes it a second writer with a second clock.
+        // 混合结束后，tick 仍可将输入通道扁平化；它不能做的是
+        // 采样计划本身，因为那会使它成为带第二个时钟的第二个写入器。
         for (String direct : new String[]{"setFadeGain(fade.plan", "setBassGainDb(fade.plan",
                 "setVocalDuckDepth(fade.plan", "setMidGainDb(fade.plan", "setHighGainDb(fade.plan",
                 "setSpeedAndPitch("}) {
@@ -80,7 +80,7 @@ class AutomixAudioThreadExecutionStaticTest {
         }
     }
 
-    /** The higher-resolution writer exists only while there is something for it to write. */
+    /** 高分辨率写入器仅在有内容可写时存在。 */
     @Test
     @DisplayName("音频任务随一次淡化注册，两条结束路径都注销")
     void audioTaskLivesExactlyAsLongAsTheBlend() throws IOException {
@@ -101,8 +101,8 @@ class AutomixAudioThreadExecutionStaticTest {
     }
 
     /**
-     * Everything the audio thread reads has to be visible to it, and everything the tick reads back
-     * has to be visible to the tick.
+     * 音频线程读取的所有内容都必须对它可见，tick 回读的所有内容
+     * 都必须对 tick 可见。
      */
     @Test
     @DisplayName("跨线程共享的淡化状态都是 volatile")
@@ -120,7 +120,7 @@ class AutomixAudioThreadExecutionStaticTest {
                 "淡化对象本身的发布也必须是 volatile");
     }
 
-    /** High resolution may never turn a working transition into a stuck one. */
+    /** 高分辨率绝不能将正常工作的过渡变成卡住的过渡。 */
     @Test
     @DisplayName("音频任务不报数时 tick 自动收回写入权")
     void theTickTakesTheWritesBackWhenTheAudioThreadGoesQuiet() throws IOException {
@@ -143,7 +143,7 @@ class AutomixAudioThreadExecutionStaticTest {
                 "暂停期间必须按住进度，不能让墙钟在两次 tick 之间继续走");
     }
 
-    /** The whole reason the {@code *Now} family exists: port writes that do not queue a command. */
+    /** {@code *Now} 系列存在的全部原因：不排队命令的端口写入。 */
     @Test
     @DisplayName("音频线程的 setter 直写端口，不排 JSyn 命令")
     void audioThreadSettersWriteThePortDirectly() throws IOException {
@@ -161,12 +161,12 @@ class AutomixAudioThreadExecutionStaticTest {
     }
 
     /**
-     * The one thing the audio thread must not do to the chain.
+     * 音频线程对链路绝对不能做的一件事。
      *
      * <p>{@code resetTo} / {@code resetDepthTo} / {@code resetToneTo} clear filter state, which is
-     * only correct for a deck that has not started sounding yet. Running them per output buffer would
-     * zero the biquad history hundreds of times a second and the band canceller would never
-     * converge - and it would be inaudible in a unit test, which is exactly why it is pinned here.</p>
+     * 仅对尚未开始发声的通道正确。按每个输出缓冲区运行它们会
+     * 每秒数百次清零双二阶滤波器历史，频段消除器将永远无法
+     * 收敛——而且这在单元测试中是听不见的，这正是在此固定它的原因。</p>
      */
     @Test
     @DisplayName("每帧发布目标值不清滤波器状态")
@@ -184,7 +184,7 @@ class AutomixAudioThreadExecutionStaticTest {
         }
     }
 
-    /** The deck side of the handshake. */
+    /** 握手的通道侧。 */
     @Test
     @DisplayName("AudioPlayer 的音频线程帧用直写路径推四组参数与速度音高")
     void audioPlayerFrameUsesTheNonQueueingPath() throws IOException {
@@ -202,7 +202,7 @@ class AutomixAudioThreadExecutionStaticTest {
                 "没有伸缩层时必须退回单个重采样倍率");
     }
 
-    /** The hook the task is registered on. */
+    /** 任务注册所在的钩子。 */
     @Test
     @DisplayName("Engine 暴露音频线程钩子并指向 JSyn 的任务列表")
     void engineExposesTheAudioThreadHook() throws IOException {
@@ -234,10 +234,10 @@ class AutomixAudioThreadExecutionStaticTest {
     }
 
     /**
-     * The text of one member, found by signature and cut at its matching closing brace.
+     * 一个成员的文本，通过签名查找并在匹配的右大括号处截断。
      *
-     * <p>Braces inside string literals are not a concern for the members this file inspects, and a
-     * scanner that tried to handle them would be more likely to be wrong than this is.</p>
+      * <p>字符串字面量中的大括号对于本文件所检查的成员而言无需关注，而
+     * 试图处理它们的扫描器比这种做法更容易出错。</p>
      */
     private static String body(String source, String signature) {
         int start = source.indexOf(signature);

@@ -1,7 +1,7 @@
 package repackage.net.sourceforge.jaad.mp4.api;
 
 /**
- * Represents the data type of a <code>Frame</code> or <code>Track</code>.
+ * 表示 <code>Frame</code> 或 <code>Track</code> 的数据类型。
  * 
  * @author in-somnia
  */

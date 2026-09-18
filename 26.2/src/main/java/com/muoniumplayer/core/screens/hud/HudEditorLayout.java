@@ -1,6 +1,6 @@
 package com.muoniumplayer.core.screens.hud;
 
-/** Immutable geometry snapshot for one HUD editor frame. */
+/** 一个 HUD 编辑器帧的不可变几何快照。 */
 final class HudEditorLayout {
 
     private HudEditorLayout() {

@@ -92,7 +92,7 @@ public class Interpolations {
      * 插值动画的曲线
      *
      * @param t speed input
-     * @return curve value
+      * @return 曲线值
      */
     private static double interpolateCurve(double t) {
         double clampValue;

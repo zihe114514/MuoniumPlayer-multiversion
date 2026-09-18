@@ -42,24 +42,24 @@ public class FilterBank implements Constants, SineWindows, KBDWindows {
 		switch(windowSequence) {
 			case ONLY_LONG_SEQUENCE:
 				mdctLong.process(in, 0, buf, 0);
-				//add second half output of previous frame to windowed output of current frame
+				//将上一帧的后半段输出加到当前帧加窗后的输出上
 				for(i = 0; i<length; i++) {
 					out[i] = overlap[i]+(buf[i]*LONG_WINDOWS[windowShapePrev][i]);
 				}
 
-				//window the second half and save as overlap for next frame
+				//对后半段加窗，并保存为下一帧的重叠
 				for(i = 0; i<length; i++) {
 					overlap[i] = buf[length+i]*LONG_WINDOWS[windowShape][length-1-i];
 				}
 				break;
 			case LONG_START_SEQUENCE:
 				mdctLong.process(in, 0, buf, 0);
-				//add second half output of previous frame to windowed output of current frame
+				//将上一帧的后半段输出加到当前帧加窗后的输出上
 				for(i = 0; i<length; i++) {
 					out[i] = overlap[i]+(buf[i]*LONG_WINDOWS[windowShapePrev][i]);
 				}
 
-				//window the second half and save as overlap for next frame
+				//对后半段加窗，并保存为下一帧的重叠
 				for(i = 0; i<mid; i++) {
 					overlap[i] = buf[length+i];
 				}
@@ -75,7 +75,7 @@ public class FilterBank implements Constants, SineWindows, KBDWindows {
 					mdctShort.process(in, i*shortLen, buf, 2*i*shortLen);
 				}
 
-				//add second half output of previous frame to windowed output of current frame
+				//将上一帧的后半段输出加到当前帧加窗后的输出上
 				for(i = 0; i<mid; i++) {
 					out[i] = overlap[i];
 				}
@@ -87,7 +87,7 @@ public class FilterBank implements Constants, SineWindows, KBDWindows {
 					if(i<trans) out[mid+4*shortLen+i] = overlap[mid+shortLen*4+i]+(buf[shortLen*7+i]*SHORT_WINDOWS[windowShape][shortLen-1-i])+(buf[shortLen*8+i]*SHORT_WINDOWS[windowShape][i]);
 				}
 
-				//window the second half and save as overlap for next frame
+				//对后半段加窗，并保存为下一帧的重叠
 				for(i = 0; i<shortLen; i++) {
 					if(i>=trans) overlap[mid+4*shortLen+i-length] = (buf[shortLen*7+i]*SHORT_WINDOWS[windowShape][shortLen-1-i])+(buf[shortLen*8+i]*SHORT_WINDOWS[windowShape][i]);
 					overlap[mid+5*shortLen+i-length] = (buf[shortLen*9+i]*SHORT_WINDOWS[windowShape][shortLen-1-i])+(buf[shortLen*10+i]*SHORT_WINDOWS[windowShape][i]);
@@ -101,8 +101,8 @@ public class FilterBank implements Constants, SineWindows, KBDWindows {
 				break;
 			case LONG_STOP_SEQUENCE:
 				mdctLong.process(in, 0, buf, 0);
-				//add second half output of previous frame to windowed output of current frame
-				//construct first half window using padding with 1's and 0's
+				//将上一帧的后半段输出加到当前帧加窗后的输出上
+				//用 1 和 0 填充来构造前半段窗口
 				for(i = 0; i<mid; i++) {
 					out[i] = overlap[i];
 				}
@@ -112,7 +112,7 @@ public class FilterBank implements Constants, SineWindows, KBDWindows {
 				for(i = 0; i<mid; i++) {
 					out[mid+shortLen+i] = overlap[mid+shortLen+i]+buf[mid+shortLen+i];
 				}
-				//window the second half and save as overlap for next frame
+				//对后半段加窗，并保存为下一帧的重叠
 				for(i = 0; i<length; i++) {
 					overlap[i] = buf[length+i]*LONG_WINDOWS[windowShape][length-1-i];
 				}
@@ -120,7 +120,7 @@ public class FilterBank implements Constants, SineWindows, KBDWindows {
 		}
 	}
 
-	//only for LTP: no overlapping, no short blocks
+	//仅用于 LTP：不重叠，无短块
 	public void processLTP(WindowSequence windowSequence, int windowShape, int windowShapePrev, float[] in, float[] out) {
 		int i;
 

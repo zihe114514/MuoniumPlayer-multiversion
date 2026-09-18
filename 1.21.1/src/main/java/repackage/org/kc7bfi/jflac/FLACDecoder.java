@@ -1,23 +1,23 @@
 package repackage.org.kc7bfi.jflac;
 
 /**
- * libFLAC - Free Lossless Audio Codec library
- * Copyright (C) 2000,2001,2002,2003  Josh Coalson
+ * libFLAC -免费无损音频编解码器库
+ * 版权所有(C) 2000,2001,2002,2003 Josh Coalson
  * <p>
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * 此库是自由软件；您可以重新分发它和/或
+ * 根据GNU Library General Public的条款对其进行修改
+ * 由自由软件基金会发布的许可证；或者
+ * 许可证的第2版，或（根据您的选择）任何更高版本。
  * <p>
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
+ * 此程序被分布是希望它会是有益的，
+ * 基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ * 适销性或适合特定目的。请参阅 GNU，
+ * 带固定偏移。
  * <p>
- * You should have received a copy of the GNU Library General Public
- * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA  02111-1307, USA.
+ * 您应该已经收到了GNU Library General Public的副本
+ * 与该库一起的许可证；如果没有，请写信给
+ * 库通用公共许可证以了解更多细节。
+ * Boston, MA 02111-1307, USA.
  */
 
 import repackage.org.kc7bfi.jflac.frame.*;
@@ -34,7 +34,7 @@ import java.util.Arrays;
 import java.util.Vector;
 
 /**
- * A Java FLAC decoder.
+ * Java FLAC解码器。
  * @author kc7bfi
  */
 public class FLACDecoder {
@@ -48,13 +48,13 @@ public class FLACDecoder {
     private long samplesDecoded;
     private StreamInfo streamInfo;
     private Frame frame = new Frame();
-    private byte[] headerWarmup = new byte[2]; // contains the sync code and reserved bits
+    private byte[] headerWarmup = new byte[2]; // 包含同步代码和保留位
     //private int state;
     private int channels;
     private int channelAssignment;
     private int bitsPerSample;
-    private int sampleRate; // in Hz
-    private int blockSize; // in samples (per channel)
+    private int sampleRate; // 位
+    private int blockSize; // 单位 Hz
     private InputStream inputStream;
     private int metadataLength;
 
@@ -64,10 +64,10 @@ public class FLACDecoder {
     private FrameListeners frameListeners = new FrameListeners();
     private PCMProcessors pcmProcessors = new PCMProcessors();
 
-    // Decoder states
+    // 解码器状态
     //private static final int DECODER_SEARCH_FOR_METADATA = 0;
     //private static final int DECODER_READ_METADATA = 1;
-    //private static final int DECODER_SEARCH_FOR_FRAME_SYNC = 2;
+    //单位采样数（每声道）
     //private static final int DECODER_READ_FRAME = 3;
     //private static final int DECODER_END_OF_STREAM = 4;
     //private static final int DECODER_ABORTED = 5;
@@ -78,8 +78,8 @@ public class FLACDecoder {
     //private static final int STREAM_DECODER_UNINITIALIZED = 10;
 
     /**
-     * The constructor.
-     * @param inputStream    The input stream to read data from
+     * 构造函数。
+     * @param inputStream 要从中读取数据的输入流
      */
     public FLACDecoder(InputStream inputStream) {
         this.inputStream = inputStream;
@@ -90,71 +90,71 @@ public class FLACDecoder {
     }
 
     /**
-     * Return the parsed StreamInfo Metadata record.
-     * @return The StreamInfo
+     * 返回已解析的StreamInfo元数据记录。
+      * @return StreamInfo
      */
     public StreamInfo getStreamInfo() {
         return streamInfo;
     }
 
     /**
-     * Return the ChannelData object.
-     * @return The ChannelData object
+      * 返回 ChannelData 对象。
+     * 返回 ChannelData 对象。
      */
     public ChannelData[] getChannelData() {
         return channelData;
     }
 
     /**
-     * Return the input bit stream.
-     * @return The bit stream
+     * 返回输入位流。
+     * @return 位流
      */
     public BitInputStream getBitInputStream() {
         return bitStream;
     }
 
     /**
-     * Return the input stream.
-     * @return The input stream
+     * 返回输入流。
+     * @return 输入流
      */
     public InputStream getInputStream() {
         return inputStream;
     }
 
     /**
-     * Add a frame listener.
-     * @param listener  The frame listener to add
+     * @return ChannelData 对象
+     * @param listener 要添加的帧侦听器
      */
     public void addFrameListener(FrameListener listener) {
         frameListeners.addFrameListener(listener);
     }
 
     /**
-     * Remove a frame listener.
-     * @param listener  The frame listener to remove
+     * 添加帧监听器。
+     * 移除帧监听器。
      */
     public void removeFrameListener(FrameListener listener) {
         frameListeners.removeFrameListener(listener);
     }
 
     /**
-     * Add a PCM processor.
-     * @param processor  The processor listener to add
+     * 添加PCM处理器。
+     * @param listener  要移除的帧监听器
      */
     public void addPCMProcessor(PCMProcessor processor) {
         pcmProcessors.addPCMProcessor(processor);
     }
 
     /**
-     * Remove a PCM processor.
-     * @param processor  The processor listener to remove
+     * 卸下PCM处理器。
+     * @param processor 要删除的处理器监听程序
      */
     public void removePCMProcessor(PCMProcessor processor) {
         pcmProcessors.removePCMProcessor(processor);
     }
 
     /**
-     * return length of metadata, so can be considered as first frame offset
+     * 返回元数据的长度，因此可以视为第一帧偏移量
      * @return
      */
     public long getMetadataLength() {
@@ -168,14 +168,14 @@ public class FLACDecoder {
     }
 
     /**
-     * Fill the given ByteData object with PCM data from the frame.
+     * @param processor  要添加的处理器监听器
      *
-     * @param frame the frame to send to the PCM processors
-     * @param pcmData the byte data to be filled, or null if it should be allocated
-     * @return the ByteData that was filled (may be a new instance from <code>space</code>) 
+     * @param frame 发送到PCM处理器的帧
+     * 用帧的 PCM 数据填充给定的 ByteData 对象。
+     * @return 填充的ByteData （可能是<code>空间</code>中的新实例）
      */
     public ByteData decodeFrame(Frame frame, ByteData pcmData) {
-        // required size of the byte buffer
+        // 所需的字节缓冲区大小
         int byteSize = frame.header.blockSize * channels * ((streamInfo.getBitsPerSample() + 7) / 2);
         if (pcmData == null || pcmData.getData().length < byteSize) {
             pcmData = new ByteData(byteSize);
@@ -210,9 +210,9 @@ public class FLACDecoder {
     }
 
     /**
-     * Read the FLAC stream info.
-     * @return The FLAC Stream Info record
-     * @throws IOException On read error
+     * 阅读FLAC流信息。
+     * @return FLAC流信息记录
+     * @throws 读取时IOException错误
      */
     public StreamInfo readStreamInfo() throws IOException {
         readStreamSync();
@@ -222,9 +222,9 @@ public class FLACDecoder {
     }
 
     /**
-     * Read an array of metadata blocks.
-     * @return The array of metadata blocks
-     * @throws IOException  On read error
+     * 读取元数据块数组。
+     * @param pcmData 待填充的字节数据；若需自行分配则为 null
+     * @throws 读取时IOException错误
      */
     public Metadata[] readMetadata() throws IOException {
         readStreamSync();
@@ -240,10 +240,10 @@ public class FLACDecoder {
     }
 
     /**
-     * Read an array of metadata blocks.
-     * @param streamInfo    The StreamInfo metadata block previously read
-     * @return The array of metadata blocks
-     * @throws IOException  On read error
+     * 读取元数据块数组。
+     * @param streamInfo 之前读取的StreamInfo元数据块
+     * @param pcmData 待填充的字节数据；若需自行分配则为 null
+     * @throws 读取时IOException错误
      */
     public Metadata[] readMetadata(StreamInfo streamInfo) throws IOException {
         if (streamInfo.isLast()) return new Metadata[0];
@@ -258,32 +258,32 @@ public class FLACDecoder {
     }
 
     /**
-     * process a single metadata/frame.
-     * @return True of one processed
-     * @throws IOException  on read error
+     * 处理单个元数据/帧。
+     * @return 一个处理的TRUE
+     * 读取错误时出现@throws IOException
      */
     /*
-     public boolean processSingle() throws IOException {
+     @return 元数据块数组
      
-     while (true) {
+     <g id="37705">while </g><g id="37708">True</g>:
      switch (state) {
-     case DECODER_SEARCH_FOR_METADATA :
+     case DECODER_SEARCH_FOR_METADATA ：
      readStreamSync();
      break;
-     case DECODER_READ_METADATA :
-     readNextMetadata(); // above function sets the status for us
+     case DECODER_READ_METADATA:
+     readNextMetadata();//以上函数为我们设置状态
      return true;
-     case DECODER_SEARCH_FOR_FRAME_SYNC :
-     frameSync(); // above function sets the status for us
+     case DECODER_SEARCH_FOR_FRAME_SYNC ：
+     frameSync();//以上函数为我们设置状态
      break;
      case DECODER_READ_FRAME :
      readFrame();
-     return true; // above function sets the status for us
+     return true;//上述函数为我们设置状态
      //break;
       case DECODER_END_OF_STREAM :
-      case DECODER_ABORTED :
+      case DECODER_ABORTED:
       return true;
-      default :
+      默认
       return false;
       }
       }
@@ -291,34 +291,34 @@ public class FLACDecoder {
       */
 
     /**
-     * Process all the metadata records.
-     * @throws IOException On read error
+     * 处理所有元数据记录。
+     * @throws 读取时IOException错误
      */
     /*
      public void processMetadata() throws IOException {
      
-     while (true) {
+     <g id="37705">while </g><g id="37708">True</g>:
      switch (state) {
-     case DECODER_SEARCH_FOR_METADATA :
+     case DECODER_SEARCH_FOR_METADATA ：
      readStreamSync();
      break;
-     case DECODER_READ_METADATA :
-     readNextMetadata(); // above function sets the status for us
+     case DECODER_READ_METADATA:
+     readNextMetadata();//以上函数为我们设置状态
      break;
-     case DECODER_SEARCH_FOR_FRAME_SYNC :
+     case DECODER_SEARCH_FOR_FRAME_SYNC ：
      case DECODER_READ_FRAME :
      case DECODER_END_OF_STREAM :
-     case DECODER_ABORTED :
-     default :
-     return;
+     case DECODER_ABORTED:
+     默认
+     報酬
      }
      }
      }
      */
 
     /**
-     * Decode the FLAC file.
-     * @throws IOException  On read error
+     * 解码FLAC文件。
+     * @throws 读取时IOException错误
      */
     public void decode() throws IOException {
         readMetadata();
@@ -349,9 +349,9 @@ public class FLACDecoder {
                 //    break;
                 //case DECODER_END_OF_STREAM :
                 //case DECODER_ABORTED :
-                //    return;
-                //default :
-                //    throw new IOException("Unknown state: " + state);
+                //    報酬
+                //默认
+                //    throw new IOException("未知状态:" +状态);
                 //}
             }
         } catch (EOFException e) {
@@ -360,8 +360,8 @@ public class FLACDecoder {
     }
 
     /**
-     * Decode the data frames.
-     * @throws IOException  On read error
+     * 解码数据帧。
+     * @throws 读取时IOException错误
      */
     public void decodeFrames() throws IOException {
         //state = DECODER_SEARCH_FOR_FRAME_SYNC;
@@ -389,9 +389,9 @@ public class FLACDecoder {
                 //    break;
                 //case DECODER_END_OF_STREAM :
                 //case DECODER_ABORTED :
-                //    return;
-                //default :
-                //    throw new IOException("Unknown state: " + state);
+                //    報酬
+                //默认
+                //    throw new IOException("未知状态:" +状态);
                 //}
             }
         } catch (EOFException e) {
@@ -401,14 +401,14 @@ public class FLACDecoder {
 
     private final static boolean __SEEK_DEBUG = false;
 
-    /** Seeks for sample and provide seek data
+    /** 寻找样品并提供寻找数据
      *
      * @param sampleOffset
-     * @return SeekPoint of best match
+     * @return 最佳匹配的 SeekPoint
      * @throws IOException
      */
     public SeekPoint seek(long target_sample) throws IOException {
-        // Check if it can found using seek table first
+        // 检查是否可以先使用查找表找到它
         if (!(inputStream instanceof RandomFileInputStream))
             return null;
         RandomFileInputStream rf = (RandomFileInputStream) inputStream;
@@ -423,10 +423,10 @@ public class FLACDecoder {
         int bps = streamInfo.getBitsPerSample();
 
         int approx_bytes_per_frame = 0;
-        /* We are just guessing here, but we want to guess high, not low. */
+        /* 我们只是在猜测，但我们想猜测高，而不是低。*/
         if (max_framesize > 0)
             approx_bytes_per_frame = max_framesize;
-            /* Check if it's a known fixed-blocksize stream. */
+            /* 检查是否为已知的固定块大小流。 */
         else if (min_blocksize == max_blocksize && min_blocksize > 0)
             approx_bytes_per_frame = min_blocksize * channels * bps / 8 + 64;
         else
@@ -438,33 +438,33 @@ public class FLACDecoder {
             min_blocksize = max_blocksize / 2;
         if (min_framesize == 0)
             min_framesize = max_framesize / 2;
-        /* Set an upper and lower bound on where in the stream we will search. */
+        /* 为我们将在流中搜索的位置设置上限和下限。*/
 
         long upper_bound;
-        /* Calc the upper_bound, beyond which we never want to seek. */
+        /* 计算UPPER_BOUND ，超出此范围，我们永远不想寻找。*/
         if (max_framesize > 0)
-            /* 128 for a possible ID3V1 tag, 2 for indexing differences */
+            /* 128（可能的 ID3V1 标签），2（索引差异） */
             upper_bound = stream_length - (max_framesize + 128 + 2);
         else
             upper_bound = stream_length - ((channels * bps * Constants.MAX_BLOCK_SIZE) / 8 + 128 + 2);
 
         long pos = -1;
-        /* If there's no seek table, we need to use the metadata (if we
-         * have it) and the filelength to estimate the position of the
-         * frame with the correct sample.
+        /* 如果没有查找表，我们需要使用元数据（如果我们
+         * ）以及文件长度来估计
+         * 含正确采样的帧位置。
          */
         if (total_samples > 0) {
-            /* For max accuracy we should be using
-             * (stream_length-first_frame_offset-1) in the divisor, but the
-             * difference is trivial and (stream_length-first_frame_offset)
-             * has no chance of underflow.
+            /* 为了获得最大精度，我们应该使用
+             * (stream_length-first_frame_offset-1) ，但
+             * 差异微不足道且（ stream_length-first_frame_offset ）
+             * 没有下溢的可能性。
              */
             pos = first_frame_offset + ((target_sample * (stream_length - first_frame_offset)) / total_samples)
                     - approx_bytes_per_frame;
         }
-        /* If there's no seek table and total_samples is unknown, we
-         * don't even bother trying to figure out a target, we just use
-         * our current position.
+        /* 如果没有查找表，并且total_samples未知，我们
+         * 甚至不用费心去找出目标，我们只是使用
+         * 我们当前位置。
          */
         int i = 0;
         boolean needs_seek = pos >= 0;
@@ -473,7 +473,7 @@ public class FLACDecoder {
         int this_jump = 0, last_jump = 0;
         long last_pos = pos;
         int sample_skip = 0;
-        /// save current file position
+        //保存当前文件位置
         long savedPos = rf.getPosition();
         BitInputStream savedState = bitStream;
         bitStream = new BitInputStream(rf);
@@ -481,7 +481,7 @@ public class FLACDecoder {
         frame = new Frame();
 
         while (true) {
-            /* Clip the position to the bounds, lower bound takes precedence. */
+            /* 将位置剪切到边界，下限优先。*/
             if (pos >= upper_bound) {
                 pos = upper_bound - 1;
                 needs_seek = true;
@@ -498,14 +498,14 @@ public class FLACDecoder {
                 i++;
             }
 
-            /* Now we need to get a frame.  It is possible for our seek
-             * to land in the middle of audio data that looks exactly like
-             * a frame header from a future version of an encoder.  When
-             * that happens, frame_sync() will return false.
-             * But there is a remote possibility that it is properly
-             * synced at such a "future-codec frame", so to make sure,
-             * we wait to see several "unparseable" errors in a row before
-             * bailing out.
+            /* 现在我们需要一个框架。我们的追求是可能的
+             * 落在看起来完全相同的音频数据中间，
+             * 来自编码器未来版本的帧标头。当
+             * 这时 frame_sync() 会返回 false。
+             * 但有一个很小的可能性，它恰当地
+             * 在这样的“未来编解码器帧”上同步，所以为了确保，
+             * 我们要先连续出现若干个“不可解析”错误，才会
+             * 纾困。
              */
             boolean got_a_frame = false;
             for (int unparseable_count = 0; unparseable_count < 20; unparseable_count++) {
@@ -524,7 +524,7 @@ public class FLACDecoder {
                 return null;
             }
 
-            /* Break out if seeking somehow got caught in a loop. */
+            /* 若定位陷入循环则跳出。 */
             if (i >= 30) {
                 if (__SEEK_DEBUG)
                     System.err.printf("Nothing found after 30 iters ps %d%n", pos);
@@ -536,26 +536,26 @@ public class FLACDecoder {
             this_block_size = frame.header.blockSize;
 
             if (target_sample >= this_frame_sample && target_sample < this_frame_sample + this_block_size) {
-                /* Found the frame containing the target sample. */
+                /* 找到了含目标采样的帧。 */
                 sample_skip = (int) (target_sample - this_frame_sample);
                 break;
             } else if (target_sample < this_frame_sample) {
                 if (this_frame_sample - target_sample <= this_block_size * 10) {
-                    /* Target is no more than 10 frames back,
-                     * seek backwards a frame at a time.
+                    /* 目标在不超过 10 帧之前，
+                     * 一次向后寻找一个帧。
                      */
                     if (__SEEK_DEBUG)
                         System.err.printf("Look back few frames %d to %d%n", approx_bytes_per_frame, target_sample);
                     if (this_frame_sample == last_frame_sample && pos < last_pos) {
-                        /* Our last move backwards wasn't big enough, double it. */
+                        /* 上次回退幅度不够，加倍。 */
                         pos -= (last_pos - pos);
                     } else {
                         last_pos = pos;
-                        pos -= approx_bytes_per_frame; // framesize
+                        pos -= approx_bytes_per_frame; // 帧大小
                     }
                 } else {
-                    /* Target may be more than 10 frames back,
-                     * calculated new seek position.
+                    /* 目标可能超过10帧，
+                     * 计算出的新搜索位置。
                      */
                     last_pos = pos;
                     long min_bytes_to_frame = ((this_frame_sample - target_sample + min_blocksize - 1) / min_blocksize)
@@ -586,20 +586,20 @@ public class FLACDecoder {
                 if (target_sample - this_frame_sample <= min_blocksize * 10) {
                     if (__SEEK_DEBUG)
                         System.err.printf("Keep reading for %d%n", min_blocksize * 10);
-                    /* Target is no more than 10 frames ahead,
-                     * seek forwards a frame at a time.
+                    /* 目标前方不超过10帧，
+                     * 一次转发一个帧。
                      */
 
                     pos = rf.getPosition();
                     //needs_seek = true;
-                    // just keep reading
-                    /* If we haven't hit the target frame yet and our position
-                     * hasn't changed, it means we're at the end of the stream
-                     * and the seek target does not exist.
+                    // 继续读取即可
+                    /* 如果我们还没有达到目标框架和我们的位置
+                     * 未变化，说明已到流末尾，
+                     * 且定位目标不存在。
                      */
                 } else {
-                    /* Target may be more than 10 frames ahead,
-                     * calculated new seek position.
+                    /* 目标可能在前方超过10帧，
+                     * 计算出的新搜索位置。
                      */
 
                     long min_bytes_to_frame = ((target_sample - this_frame_sample + max_blocksize - 1) / max_blocksize)
@@ -646,13 +646,13 @@ public class FLACDecoder {
     }
 
     /**
-     * Decode the data frames between two seek points.
-     * @param from  The starting seek point
-     * @param to    The ending seek point (non-inclusive)
-     * @throws IOException  On read error
+     * 解码两个寻道点之间的数据帧。
+     * @param from  起始定位点
+     * @param to 终点（不含）
+     * @throws 读取时IOException错误
      */
     public void decode(SeekPoint from, SeekPoint to) throws IOException {
-        // position random access file
+        // 定位随机访问文件
         if (!(inputStream instanceof RandomFileInputStream))
             throw new IOException("Not a RandomFileInputStream: " + inputStream.getClass().getName());
         ((RandomFileInputStream) inputStream).seek(from.getStreamOffset());
@@ -688,9 +688,9 @@ public class FLACDecoder {
                 //    break;
                 //case DECODER_END_OF_STREAM :
                 //case DECODER_ABORTED :
-                //    return;
-                //default :
-                //    throw new IOException("Unknown state: " + state);
+                //    報酬
+                //默认
+                //    throw new IOException("未知状态:" +状态);
                 //}
             }
         } catch (EOFException e) {
@@ -699,28 +699,28 @@ public class FLACDecoder {
     }
     
     /*
-     private boolean processUntilEndOfStream() throws IOException {
+     private boolean processUntilEndOfStream()抛出IOException {
      //boolean got_a_frame;
       
-      while (true) {
+      <g id="37705">while </g><g id="37708">True</g>:
       switch (state) {
-      case DECODER_SEARCH_FOR_METADATA :
+      case DECODER_SEARCH_FOR_METADATA ：
       readStreamSync();
       break;
-      case DECODER_READ_METADATA :
-      readNextMetadata(); // above function sets the status for us
+      case DECODER_READ_METADATA:
+      readNextMetadata();//以上函数为我们设置状态
       break;
-      case DECODER_SEARCH_FOR_FRAME_SYNC :
-      frameSync(); // above function sets the status for us
+      case DECODER_SEARCH_FOR_FRAME_SYNC ：
+      frameSync();//以上函数为我们设置状态
       //System.exit(0);
        break;
        case DECODER_READ_FRAME :
        readFrame();
        break;
        case DECODER_END_OF_STREAM :
-       case DECODER_ABORTED :
+       case DECODER_ABORTED:
        return true;
-       default :
+       默认
        return false;
        }
        }
@@ -728,9 +728,9 @@ public class FLACDecoder {
        */
 
     /**
-     * Read the next data frame.
-     * @return The next frame
-     * @throws IOException  on read error
+     * 读取下一数据帧。
+     * @return 下一帧
+     * 读取错误时出现@throws IOException
      */
     public Frame readNextFrame() throws IOException {
         //boolean got_a_frame;
@@ -738,14 +738,14 @@ public class FLACDecoder {
         try {
             while (true) {
                 //switch (state) {
-                //case STREAM_DECODER_SEARCH_FOR_METADATA :
+                //案例STREAM_DECODER_SEARCH_FOR_METADATA ：
                 //    findMetadata();
                 //    break;
                 //case STREAM_DECODER_READ_METADATA :
-                //    readMetadata(); /* above function sets the status for us */
+                //    readMetadata();/*以上函数设置我们的状态*/
                 //    break;
                 //case DECODER_SEARCH_FOR_FRAME_SYNC :
-                findFrameSync(); /* above function sets the status for us */
+                findFrameSync(); /* 上述函数会为我们设置状态 */
                 //System.exit(0);
                 //break;
                 //case DECODER_READ_FRAME :
@@ -761,7 +761,7 @@ public class FLACDecoder {
                 //case DECODER_END_OF_STREAM :
                 //case DECODER_ABORTED :
                 //    return null;
-                //default :
+                //默认
                 //    return null;
                 //}
             }
@@ -772,16 +772,16 @@ public class FLACDecoder {
     }
 
     /**
-     * Bytes consumed.
-     * @return The number of bytes read
+     * 消耗的字节数。
+     * @return 读取的字节数
      */
     //public long getBytesConsumed() {
     //    return is.getConsumedBlurbs();
     //}
 
     /**
-     * Bytes read.
-     * @return The number of bytes read
+     * 已读取的字节数。
+     * @return 读取的字节数
      */
     public long getTotalBytesRead() {
         return bitStream.getTotalBytesRead();
@@ -807,8 +807,8 @@ public class FLACDecoder {
     }
 
     /**
-     * Read the stream sync string.
-     * @throws IOException  On read error
+     * 读取流同步字符串。
+     * @throws 读取时IOException错误
      */
     private void readStreamSync() throws IOException {
         int id = 0;
@@ -833,9 +833,9 @@ public class FLACDecoder {
     }
 
     /**
-     * Read a single metadata record.
-     * @return The next metadata record
-     * @throws IOException  on read error
+     * 读取一条元数据记录。
+     * @return 下一条元数据记录
+     * 读取错误时出现@throws IOException
      */
     public Metadata readNextMetadata() throws IOException {
         Metadata metadata = null;
@@ -873,12 +873,12 @@ public class FLACDecoder {
 
     private void skipID3v2Tag() throws IOException {
 
-        // skip the version and flags bytes 
+        // 跳过版本和标记字节
         int verMajor = bitStream.readRawInt(8);
         int verMinor = bitStream.readRawInt(8);
         int flags = bitStream.readRawInt(8);
 
-        // get the size (in bytes) to skip
+        // 获取要跳过的大小（字节）
         int skip = 0;
         for (int i = 0; i < 4; i++) {
             int x = bitStream.readRawUInt(8);
@@ -886,7 +886,7 @@ public class FLACDecoder {
             skip |= (x & 0x7f);
         }
 
-        // skip the rest of the tag
+        // 跳过标签的其余部分
         bitStream.readByteBlockAlignedNoCRC(null, skip);
     }
 
@@ -894,8 +894,8 @@ public class FLACDecoder {
         boolean first = true;
         //int cnt=0;
 
-        // If we know the total number of samples in the stream, stop if we've read that many.
-        // This will stop us, for example, from wasting time trying to sync on an ID3V1 tag.
+        // 如果我们知道流中的样本总数，那么如果我们读了那么多，请停止。
+        // 例如，这将阻止我们浪费时间尝试在ID3V1标签上同步。
         if (streamInfo != null && (streamInfo.getTotalSamples() > 0)) {
             if (samplesDecoded >= streamInfo.getTotalSamples()) {
                 //state = DECODER_END_OF_STREAM;
@@ -903,7 +903,7 @@ public class FLACDecoder {
             }
         }
 
-        // make sure we're byte aligned
+        // 确保我们的字节对齐
         if (!bitStream.isConsumedByteAligned()) {
             bitStream.readRawUInt(bitStream.bitsLeftForByteAlignment());
         }
@@ -912,13 +912,13 @@ public class FLACDecoder {
         try {
             while (true) {
                 x = bitStream.readRawUInt(8);
-                if (x == 0xff) { // MAGIC NUMBER for the first 8 frame sync bits
+                if (x == 0xff) { // 前8个帧同步位的幻数
                     headerWarmup[0] = (byte) x;
                     x = bitStream.peekRawUInt(8);
 
-                    /* we have to check if we just read two 0xff's in a row; the second may actually be the beginning of the sync code */
-                    /* else we have to check if the second byte is the end of a sync code */
-                    if (x >> 2 == 0x3e) { /* MAGIC NUMBER for the last 6 sync bits */
+                    /* 我们必须检查是否连续读取两个0xff ；第二个可能实际上是同步代码的开始*/
+                    /* 否则需检查第二个字节是否为同步码的结束 */
+                    if (x >> 2 == 0x3e) { /* 最后6个同步位的幻数*/
                         headerWarmup[1] = (byte) bitStream.readRawUInt(8);
                         //state = DECODER_READ_FRAME;
                         return;
@@ -936,15 +936,15 @@ public class FLACDecoder {
     }
 
     /**
-     * Read the next data frame.
-     * @throws IOException  On read error
-     * @throws FrameDecodeException On frame decoding error
+     * 读取下一数据帧。
+     * @throws 读取时IOException错误
+     * @throws FrameDecodeException帧解码错误
      */
     public void readFrame() throws IOException, FrameDecodeException {
         int channel;
         int i;
         int mid, side, left, right;
-        short frameCRC; /* the one we calculate from the input stream */
+        short frameCRC; /* 我们从输入流中计算出的一个*/
         //int x;
 
         /* init the CRC */
@@ -962,11 +962,11 @@ public class FLACDecoder {
         //if (state == DECODER_SEARCH_FOR_FRAME_SYNC) return false;
         allocateOutput(frame.header.blockSize, frame.header.channels);
         for (channel = 0; channel < frame.header.channels; channel++) {
-            // first figure the correct bits-per-sample of the subframe
+            // 先确定子帧正确的每采样位数
             int bps = frame.header.bitsPerSample;
             switch (frame.header.channelAssignment) {
                 case Constants.CHANNEL_ASSIGNMENT_INDEPENDENT:
-                    /* no adjustment needed */
+                    /* 无需调整 */
                     break;
                 case Constants.CHANNEL_ASSIGNMENT_LEFT_SIDE:
                     if (channel == 1)
@@ -982,7 +982,7 @@ public class FLACDecoder {
                     break;
                 default:
             }
-            // now read it
+            // 现在阅读它
             try {
                 readSubframe(channel, bps);
             } catch (IOException e) {
@@ -992,14 +992,14 @@ public class FLACDecoder {
         }
         readZeroPadding();
 
-        // Read the frame CRC-16 from the footer and check
+        // 从页脚读取框架CRC-16并检查
         frameCRC = bitStream.getReadCRC16();
         frame.setCRC((short) bitStream.readRawUInt(FRAME_FOOTER_CRC_LEN));
         if (frameCRC == frame.getCRC()) {
-            /* Undo any special channel coding */
+            /* 撤销任何特殊声道编码 */
             switch (frame.header.channelAssignment) {
                 case Constants.CHANNEL_ASSIGNMENT_INDEPENDENT:
-                    /* do nothing */
+                    /* 什么都不做 */
                     break;
                 case Constants.CHANNEL_ASSIGNMENT_LEFT_SIDE:
                     for (i = 0; i < frame.header.blockSize; i++)
@@ -1014,7 +1014,7 @@ public class FLACDecoder {
                         mid = channelData[0].getOutput()[i];
                         side = channelData[1].getOutput()[i];
                         mid <<= 1;
-                        if ((side & 1) != 0) // i.e. if 'side' is odd...
+                        if ((side & 1) != 0) // 即若 'side' 为奇数……
                             mid++;
                         left = mid + side;
                         right = mid - side;
@@ -1027,7 +1027,7 @@ public class FLACDecoder {
                     break;
             }
         } else {
-            // Bad frame, emit error and zero the output signal
+            // 坏帧，发出错误并将输出信号清零
             frameListeners.processError("CRC Error: " + Integer.toHexString((frameCRC & 0xffff)) + " vs " + Integer.toHexString((frame.getCRC() & 0xffff)));
             for (channel = 0; channel < frame.header.channels; channel++) {
                 for (int j = 0; j < frame.header.blockSize; j++)
@@ -1035,7 +1035,7 @@ public class FLACDecoder {
             }
         }
 
-        // put the latest values into the public section of the decoder instance
+        // 将最新值放入解码器实例的公共部分
         channels = frame.header.channels;
         channelAssignment = frame.header.channelAssignment;
         bitsPerSample = frame.header.bitsPerSample;
@@ -1047,13 +1047,13 @@ public class FLACDecoder {
         //System.out.println(samplesDecoded+" "+frame.header.sampleNumber + " "+frame.header.blockSize);
 
         //state = DECODER_SEARCH_FOR_FRAME_SYNC;
-        //return;
+        //報酬
     }
 
     private void readSubframe(int channel, int bps) throws IOException, FrameDecodeException {
         int x;
 
-        x = bitStream.readRawUInt(8); /* MAGIC NUMBER */
+        x = bitStream.readRawUInt(8); /* 魔術數字*/
 
         boolean haveWastedBits = ((x & 1) != 0);
         x &= 0xfe;
@@ -1064,7 +1064,7 @@ public class FLACDecoder {
             bps -= wastedBits;
         }
 
-        // Lots of magic numbers here
+        // 这里有很多魔法数字
         if ((x & 0x80) != 0) {
             frameListeners.processError("ReadSubframe LOST_SYNC: " + Integer.toHexString(x & 0xff));
             //state = DECODER_SEARCH_FOR_FRAME_SYNC;
@@ -1106,8 +1106,8 @@ public class FLACDecoder {
     }
 
     /**
-     * Get the number of samples decoded.
-     * @return Returns the samples Decoded.
+     * 获取已解码的采样数。
+     * @return 返回已解码的采样数。
      */
     public long getSamplesDecoded() {
         return samplesDecoded;
@@ -1118,14 +1118,14 @@ public class FLACDecoder {
     }
 
     /**
-     * @return Returns the number of bad frames decoded.
+     * @return 返回解码的坏帧数。
      */
     public int getBadFrames() {
         return badFrames;
     }
 
     /**
-     * @return Returns true if end-of-file.
+     * @return 到达文件末尾时返回 true。
      */
     public boolean isEOF() {
         return eof;

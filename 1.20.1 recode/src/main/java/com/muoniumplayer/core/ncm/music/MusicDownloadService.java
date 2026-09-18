@@ -15,14 +15,14 @@ import java.nio.file.StandardOpenOption;
 import java.util.Map;
 
 /**
- * Download implementation and its existing progress publication contract.
+ * 下载实现及其既有的进度发布契约。
  *
- * <p>Both the in-player download state and Dynamic Island notifications are
- * published at their original points in the transfer lifecycle.</p>
+ * <p>播放器内下载状态和灵动岛通知都
+ * 在传输生命周期中的原有点发布。</p>
  */
 final class MusicDownloadService {
 
-    /** Audio payloads are large; a stalled CDN read must not be treated as a failure after 8s. */
+    /** 音频载荷很大；停滞的 CDN 读取在 8 秒后不得视为失败。 */
     private static final int STREAM_CONNECT_TIMEOUT_MILLIS = 15_000;
     private static final int STREAM_READ_TIMEOUT_MILLIS = 45_000;
 
@@ -31,8 +31,8 @@ final class MusicDownloadService {
 
     @SneakyThrows
     static void downloadMusic(String playUrl, File music, Proxy proxy) {
-        // Some CDNs reject anonymous requests (Bilibili answers 403 without a browser
-        // User-Agent plus a bilibili Referer), so host-specific headers travel with the transfer.
+        // 一些 CDN 拒绝匿名请求（Bilibili 在没有浏览器
+        //User-Agent 加 bilibili Referer 时应答 403），因此主机特定头随传输一起发送。
         Map<String, String> streamHeaders = AudioStreamHeaders.forUrl(playUrl);
         MuoniumPlayerExtension.getInstance().musicInfo.downloading = true;
         MuoniumPlayerExtension.getInstance().musicInfo.downloadProgress = 0;

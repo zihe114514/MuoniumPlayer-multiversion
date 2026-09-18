@@ -10,6 +10,7 @@ import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseUnblockSettings;
 import com.muoniumplayer.core.ncm.music.YouTubeProxySettings;
+import com.muoniumplayer.core.rendering.BrandVectorIcons;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
@@ -937,6 +938,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         final boolean qishui = platform == MusicPlatform.QISHUI;
         // 品牌字形必须配对到自己那份字体：music-brand-icons 里没有 U+E888（QQ 音乐），
         // 拿错字体会落到兜底字体上、画出一片空白。酷狗两份字体里都没有，用正文字体画一枚汉字字标。
+        // 酷狗、哔哩哔哩与汽水现在有真标识了（brandMark 里的矢量分支），下面这对字形/字体只在矢量画不出来时兜底。
         final String mark = kugou ? MusicBrandIcons.KUGOU_MONOGRAM
                 : qq ? MusicBrandIcons.QQ_MUSIC
                 : youtube ? MusicBrandIcons.YOUTUBE
@@ -961,7 +963,8 @@ public final class MusicSourceOverlay extends NcmSheet {
                     : mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
                     platform.getBrandColor(), .18));
         });
-        glyph(disc, mark, font, () -> DISC * .5, () -> DISC * .5,
+        brandMark(disc, platform, DISC * BrandVectorIcons.MARK_RATIO, mark, font,
+                () -> DISC * .5, () -> DISC * .5,
                 () -> picked.getAsBoolean() ? 0xFFFFFF : platform.getBrandColor());
     }
 

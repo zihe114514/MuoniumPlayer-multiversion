@@ -14,16 +14,14 @@ import io.github.humbleui.skija.PaintMode;
 import io.github.humbleui.skija.PaintStrokeCap;
 
 /**
- * Folia-style full-screen Automix transition drawing.
+ * Folia 风格的全屏 Automix 过渡绘制。
  *
- * <p>One ring is shared by both tracks. Its moving seam is the real handover clock: the outgoing arc
- * disappears over exactly the same wall-clock span as the audio fade while the incoming accent arc
- * grows behind it. The external tick marks the planned handover point and the whole ring breathes at
- * the outgoing track's measured tempo.</p>
+ * <p>两段曲目共用同一个圆环。其移动的接缝才是真正的交接时钟：淡出的弧线
+ * 与音频淡出在完全相同的真实时间跨度内消失，同时淡入的强调弧线在其后方
+ * 增长。外部 tick 标记计划的交接点，整个圆环以当前播放曲目测得的节拍呼吸。</p>
  *
- * <p>The overlay is deliberately self-contained and input-transparent. It only samples the fade
- * started by {@code CloudMusic}, so a dropped frame or a screen change cannot move the seam away from
- * the audio.</p>
+ * <p>该覆盖层刻意保持自包含且对输入透明。它仅采样由 {@code CloudMusic}
+ * 启动的淡出，因此丢帧或界面切换都不会使接缝偏离音频。</p>
  */
 public final class AutomixTransitionAnimation {
     private static final long ENTER_NANOS = 760_000_000L;
@@ -43,7 +41,7 @@ public final class AutomixTransitionAnimation {
     private AutomixTransitionAnimation() {
     }
 
-    /** Starts the ring for a real Folia blend. Shorter/plain blends remain undecorated. */
+    /** 为真正的 Folia 融合启动圆环。更短/普通的融合保持无装饰。 */
     public static void start(long durationMillis, double crossover, double periodMillis) {
         if (durationMillis < MIN_DURATION_MILLIS) return;
         synchronized (LOCK) {
@@ -57,12 +55,12 @@ public final class AutomixTransitionAnimation {
         }
     }
 
-    /** Demonstrates the ring when the HUD switch is enabled. */
+    /** 在 HUD 开关启用时演示圆环。 */
     public static void preview() {
         start(10_000L, .55, 500.0);
     }
 
-    /** Starts the short interrupt fade; used when a handover is replaced or cancelled. */
+    /** 启动短暂的中断淡出；用于交接被替换或取消时。 */
     public static void cancel() {
         synchronized (LOCK) {
             if (active == null || dismissed) return;
@@ -71,7 +69,7 @@ public final class AutomixTransitionAnimation {
         }
     }
 
-    /** Pauses the visual clock with the audio deck instead of letting it run through a pause. */
+    /** 随音频播放台一起暂停视觉时钟，而不是让它在暂停期间继续运行。 */
     public static void setPaused(boolean value) {
         synchronized (LOCK) {
             if (active == null || paused == value) return;
@@ -87,7 +85,7 @@ public final class AutomixTransitionAnimation {
         }
     }
 
-    /** Draws above the normal HUD. Safe to call every frame. */
+    /** 绘制在普通 HUD 之上。每帧调用都是安全的。 */
     public static void render() {
         Snapshot snapshot;
         synchronized (LOCK) {
@@ -165,7 +163,7 @@ public final class AutomixTransitionAnimation {
                     (float) (scale * breath * enterScale * exitScale));
             canvas.translate(-100f, -100f);
 
-            // Soft bloom gathers toward the handover and lets go during the incoming half.
+            // 柔和的辉光在交接处汇聚，并在淡入的后半段释放。
             SkijaShapes.radialRing(100.0, 100.0, 0.0, RING_RADIUS * 1.48,
                     alpha(accent, bloom), 0x00000000);
 

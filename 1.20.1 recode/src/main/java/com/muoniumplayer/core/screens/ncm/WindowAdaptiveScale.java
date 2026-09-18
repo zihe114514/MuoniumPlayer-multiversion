@@ -60,11 +60,11 @@ public final class WindowAdaptiveScale {
     }
 
     /**
-     * Converts a Minecraft GUI coordinate into the player's window-adaptive layout.
+     * 把一个 Minecraft GUI 坐标转换为播放器窗口自适应布局。
      *
-     * <p>This is also safe when called outside {@link #begin()}: it temporarily enables the
-     * layout only long enough to obtain the correction factor. Transition code captures anchors
-     * from the global HUD coordinate system, which is not always inside the player render scope.</p>
+     * <p>在 {@link #begin()} 之外调用也安全：它临时启用
+     * 布局，仅长到足以取得修正因子。过渡代码从全局 HUD
+     * 坐标系捕获锚点，而该坐标系不总在播放器渲染作用域内。</p>
      */
     public static double toLayoutX(double x) {
         if (!isEnabled()) return x;

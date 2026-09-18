@@ -59,14 +59,14 @@ public class JsonUtils {
     }
 
     /**
-     * Does the given JsonObject contain a string field with the given name?
+     * 给定的 JsonObject 是否包含指定名称的字符串字段？
      */
     public static boolean isString(JsonObject jsonObject, String key) {
         return isJsonPrimitive(jsonObject, key) && jsonObject.getAsJsonPrimitive(key).isString();
     }
 
     /**
-     * Is the given JsonElement a string?
+     * 给定的 JsonElement 是否为字符串？
      */
     public static boolean isString(JsonElement jsonElement) {
         return jsonElement.isJsonPrimitive() && jsonElement.getAsJsonPrimitive().isString();
@@ -77,30 +77,30 @@ public class JsonUtils {
     }
 
     /**
-     * Does the given JsonObject contain an array field with the given name?
+     * 给定的 JsonObject 是否包含指定名称的数组字段？
      */
     public static boolean isJsonArray(JsonObject jsonObject, String key) {
         return hasField(jsonObject, key) && jsonObject.get(key).isJsonArray();
     }
 
     /**
-     * Does the given JsonObject contain a field with the given name whose type is primitive (String, Java primitive, or
-     * Java primitive wrapper)?
+     * 给定的 JsonObject 是否包含指定名称、且类型为基本类型（String、Java 基本类型或
+     * Java 基本类型包装类）的字段？
      */
     public static boolean isJsonPrimitive(JsonObject jsonObject, String key) {
         return hasField(jsonObject, key) && jsonObject.get(key).isJsonPrimitive();
     }
 
     /**
-     * Does the given JsonObject contain a field with the given name?
+     * 给定的 JsonObject 是否包含指定名称的字段？
      */
     public static boolean hasField(JsonObject jsonObject, String key) {
         return jsonObject != null && jsonObject.get(key) != null;
     }
 
     /**
-     * Gets the string value of the given JsonElement.  Expects the second parameter to be the name of the element's
-     * field if an error message needs to be thrown.
+     * 获取给定 JsonElement 的字符串值。若需要抛出错误信息，第二个参数应为该元素
+     * 所在字段的名称。
      */
     public static String getString(JsonElement jsonElement, String key) {
         if (jsonElement.isJsonPrimitive()) {
@@ -111,7 +111,7 @@ public class JsonUtils {
     }
 
     /**
-     * Gets the string value of the field on the JsonObject with the given name.
+     * 获取 JsonObject 上指定名称字段的字符串值。
      */
     public static String getString(JsonObject jsonObject, String key) {
         if (jsonObject.has(key)) {
@@ -122,16 +122,15 @@ public class JsonUtils {
     }
 
     /**
-     * Gets the string value of the field on the JsonObject with the given name, or the given default value if the field
-     * is missing.
+     * 获取 JsonObject 上指定名称字段的字符串值；若字段缺失则返回给定默认值。
      */
     public static String getString(JsonObject jsonObject, String key, String fallback) {
         return jsonObject.has(key) ? getString(jsonObject.get(key), key) : fallback;
     }
 
     /**
-     * Gets the boolean value of the given JsonElement.  Expects the second parameter to be the name of the element's
-     * field if an error message needs to be thrown.
+     * 获取给定 JsonElement 的布尔值。若需要抛出错误信息，第二个参数应为该元素
+     * 所在字段的名称。
      */
     public static boolean getBoolean(JsonElement jsonElement, String key) {
         if (jsonElement.isJsonPrimitive()) {
@@ -142,7 +141,7 @@ public class JsonUtils {
     }
 
     /**
-     * Gets the boolean value of the field on the JsonObject with the given name.
+     * 获取 JsonObject 上指定名称字段的布尔值。
      */
     public static boolean getBoolean(JsonObject jsonObject, String key) {
         if (jsonObject.has(key)) {
@@ -153,16 +152,15 @@ public class JsonUtils {
     }
 
     /**
-     * Gets the boolean value of the field on the JsonObject with the given name, or the given default value if the
-     * field is missing.
+     * 获取 JsonObject 上指定名称字段的布尔值；若字段缺失则返回给定默认值。
      */
     public static boolean getBoolean(JsonObject jsonObject, String key, boolean fallback) {
         return jsonObject.has(key) ? getBoolean(jsonObject.get(key), key) : fallback;
     }
 
     /**
-     * Gets the float value of the given JsonElement.  Expects the second parameter to be the name of the element's
-     * field if an error message needs to be thrown.
+     * 获取给定 JsonElement 的 float 值。若需要抛出错误信息，第二个参数应为该元素
+     * 所在字段的名称。
      */
     public static float getFloat(JsonElement jsonElement, String key) {
         if (jsonElement.isJsonPrimitive() && jsonElement.getAsJsonPrimitive().isNumber()) {
@@ -173,7 +171,7 @@ public class JsonUtils {
     }
 
     /**
-     * Gets the float value of the field on the JsonObject with the given name.
+     * 获取 JsonObject 上指定名称字段的 float 值。
      */
     public static float getFloat(JsonObject jsonObject, String key) {
         if (jsonObject.has(key)) {
@@ -184,16 +182,15 @@ public class JsonUtils {
     }
 
     /**
-     * Gets the float value of the field on the JsonObject with the given name, or the given default value if the field
-     * is missing.
+     * 获取 JsonObject 上指定名称字段的 float 值；若字段缺失则返回给定默认值。
      */
     public static float getFloat(JsonObject jsonObject, String key, float fallback) {
         return jsonObject.has(key) ? getFloat(jsonObject.get(key), key) : fallback;
     }
 
     /**
-     * Gets the integer value of the given JsonElement.  Expects the second parameter to be the name of the element's
-     * field if an error message needs to be thrown.
+     * 获取给定 JsonElement 的整数值。若需要抛出错误信息，第二个参数应为该元素
+     * 所在字段的名称。
      */
     public static int getInt(JsonElement jsonElement, String key) {
         if (jsonElement.isJsonPrimitive() && jsonElement.getAsJsonPrimitive().isNumber()) {
@@ -204,7 +201,7 @@ public class JsonUtils {
     }
 
     /**
-     * Gets the integer value of the field on the JsonObject with the given name.
+     * 获取 JsonObject 上指定名称字段的整数值。
      */
     public static int getInt(JsonObject jsonObject, String key) {
         if (jsonObject.has(key)) {
@@ -215,16 +212,15 @@ public class JsonUtils {
     }
 
     /**
-     * Gets the integer value of the field on the JsonObject with the given name, or the given default value if the
-     * field is missing.
+     * 获取 JsonObject 上指定名称字段的整数值；若字段缺失则返回给定默认值。
      */
     public static int getInt(JsonObject jsonObject, String key, int fallback) {
         return jsonObject.has(key) ? getInt(jsonObject.get(key), key) : fallback;
     }
 
     /**
-     * Gets the given JsonElement as a JsonObject.  Expects the second parameter to be the name of the element's field
-     * if an error message needs to be thrown.
+     * 将给定 JsonElement 作为 JsonObject 获取。若需要抛出错误信息，第二个参数应为
+     * 该元素所在字段的名称。
      */
     public static JsonObject getJsonObject(JsonElement jsonElement, String key) {
         if (jsonElement.isJsonObject()) {
@@ -243,16 +239,15 @@ public class JsonUtils {
     }
 
     /**
-     * Gets the JsonObject field on the JsonObject with the given name, or the given default value if the field is
-     * missing.
+     * 获取 JsonObject 上指定名称的 JsonObject 字段；若字段缺失则返回给定默认值。
      */
     public static JsonObject getJsonObject(JsonObject jsonObject, String key, JsonObject fallback) {
         return jsonObject.has(key) ? getJsonObject(jsonObject.get(key), key) : fallback;
     }
 
     /**
-     * Gets the given JsonElement as a JsonArray.  Expects the second parameter to be the name of the element's field if
-     * an error message needs to be thrown.
+     * 将给定 JsonElement 作为 JsonArray 获取。若需要抛出错误信息，第二个参数应为
+     * 该元素所在字段的名称。
      */
     public static JsonArray getJsonArray(JsonElement jsonElement, String key) {
         if (jsonElement.isJsonArray()) {
@@ -263,7 +258,7 @@ public class JsonUtils {
     }
 
     /**
-     * Gets the JsonArray field on the JsonObject with the given name.
+     * 获取 JsonObject 上指定名称的 JsonArray 字段。
      */
     public static JsonArray getJsonArray(JsonObject jsonObject, String key) {
         if (jsonObject.has(key)) {
@@ -274,15 +269,14 @@ public class JsonUtils {
     }
 
     /**
-     * Gets the JsonArray field on the JsonObject with the given name, or the given default value if the field is
-     * missing.
+     * 获取 JsonObject 上指定名称的 JsonArray 字段；若字段缺失则返回给定默认值。
      */
     public static JsonArray getJsonArray(JsonObject jsonObject, String key, JsonArray fallback) {
         return jsonObject.has(key) ? getJsonArray(jsonObject.get(key), key) : fallback;
     }
 
     /**
-     * Gets a human-readable description of the given JsonElement's type.  For example: "a number (4)"
+     * 获取给定 JsonElement 类型的可读描述。例如："a number (4)"
      */
     public static String toString(JsonElement jsonElement) {
         String s = org.apache.commons.lang3.StringUtils.abbreviateMiddle(String.valueOf(jsonElement), "...", 10);

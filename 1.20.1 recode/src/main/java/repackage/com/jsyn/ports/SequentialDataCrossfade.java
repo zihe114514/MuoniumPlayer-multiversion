@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.ports;
@@ -20,31 +20,31 @@ import repackage.com.jsyn.data.SequentialData;
 import repackage.com.jsyn.data.SequentialDataCommon;
 
 /**
- * A SequentialData object that will crossfade between two other SequentialData objects. The
- * crossfade is linear. This could, for example, be used to create a smooth transition between two
- * samples, or between two arbitrary regions in one sample. As an example, consider a sample that
- * has a length of 200000 frames. You could specify a sample loop that started arbitrarily at frame
- * 50000 and with a size of 30000 frames. Unless you got lucky with the zero crossings, it is likely
- * that you will hear a pop when this sample loops. To prevent the pop you could crossfade the
- * beginning of the loop with the region immediately after the end of the loop. To crossfade with
- * 5000 samples after the loop:
+ * 一个SequentialData对象，将在另外两个SequentialData对象之间交叉淡入淡出。
+ * 交叉淡入淡出是线性的。例如，这可以用于在两个
+ * 采样之间，或同一个采样中两个任意区域之间。例如，考虑这样一个采样：
+ * 的长度为200000帧。您可以指定在帧处任意启动的示例循环
+ * 50000，大小为 30000 帧。除非零点处恰好合适，否则很可能
+ * 当这个样本循环时，您会听到一个流行音。为了防止弹出，您可以交叉淡入淡出
+ * 循环的开始，紧接在循环结束后的区域。交叉淡入淡出
+ * 在循环后 5000 个采样处：
  *
  * <pre>
  * SequentialDataCrossfade xfade = new SequentialDataCrossfade(sample, (50000 + 30000), 5000, sample,
  *         50000, 30000);
  * </pre>
  *
- * After the crossfade you will hear the rest of the target at full volume. There are two regions
- * that determine what is returned from readDouble()
+ * 交叉淡入淡出后，您将听到目标的其余部分以全音量播放。有两个区域
+ * 决定 readDouble() 返回内容的因素
  * <ol>
- * <li>Crossfade region with size crossFadeFrames. It fades smoothly from source to target.</li>
- * <li>Steady region that is simply the target values with size (numFrames-crossFadeFrames).</li>
+ * <li>大小为 crossFadeFrames 的交叉淡入区。它从源平滑淡入到目标。</li>
+ * <li>稳定区，即纯目标值，大小为 (numFrames-crossFadeFrames)。</li>
  * </ol>
  *
  * <pre>
  *     "Crossfade Region"      "Steady Region"
  * |-- source fading out --|
- * |-- target fading in  --|-- remainder of target at original volume --|
+ * | --目标淡入-- | --目标在原始体积的剩余部分-- |
  * </pre>
  *
  * @author Phil Burk
@@ -60,13 +60,13 @@ class SequentialDataCrossfade extends SequentialDataCommon {
     private double frameScaler;
 
     /**
-     * @param source SequentialData that will be at full volume at the beginning of the crossfade
-     *            region.
-     * @param sourceStartFrame Frame in source to begin the crossfade.
-     * @param crossFadeFrames Number of frames in the crossfaded region.
-     * @param target SequentialData that will be at full volume at the end of the crossfade region.
-     * @param targetStartFrame Frame in target to begin the crossfade.
-     * @param numFrames total number of frames in this data object.
+     * @param source 在交叉淡入开始时为满音量的 SequentialData
+     *            地域
+     * @param sourceStartFrame 源中的帧开始交叉淡入淡出。
+     * @param crossFadeFrames 交叉淡入区域的帧数。
+     * @param target 在交叉淡入区域结束时为满音量的 SequentialData。
+     * @param targetStartFrame 在目标中开始淡入淡出。
+     * @param numFrames 此数据对象的总帧数。
      */
     public void setup(SequentialData source, int sourceStartFrame, int crossFadeFrames,
             SequentialData target, int targetStartFrame, int numFrames) {
@@ -74,18 +74,18 @@ class SequentialDataCrossfade extends SequentialDataCommon {
         assert ((sourceStartFrame + crossFadeFrames) <= source.getNumFrames());
         assert ((targetStartFrame + numFrames) <= target.getNumFrames());
 
-        // LOGGER.debug( "WARNING! sourceStartFrame = " + sourceStartFrame
+        // LOGGER.debug("警告! sourceStartFrame =" + sourceStartFrame
         // + ", crossFadeFrames = " + crossFadeFrames + ", maxFrame = "
         // + source.getNumFrames() + ", source = " + source );
         // LOGGER.debug( "  targetStartFrame = " + targetStartFrame
         // + ", numFrames = " + numFrames + ", maxFrame = "
         // + target.getNumFrames() + ", target = " + target );
 
-        // There is a danger that we might nest SequentialDataCrossfades deeply
-        // as source. If past crossfade region then pull out the target.
+        // 存在深度嵌套 SequentialDataCrossfade 的风险
+        // 作为源。如果经过交叉淡入淡出区域，则拉出目标。
         if (source instanceof SequentialDataCrossfade) {
             SequentialDataCrossfade crossfade = (SequentialDataCrossfade) source;
-            // If we are starting past the crossfade region then just use the
+            // 若我们从交叉淡入区之后才开始，则直接使用
             // target.
             if (sourceStartFrame >= crossfade.crossFadeFrames) {
                 source = crossfade.target;

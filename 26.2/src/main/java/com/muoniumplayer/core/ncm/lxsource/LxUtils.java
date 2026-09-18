@@ -30,7 +30,7 @@ public final class LxUtils {
     private LxUtils() {
     }
 
-    // ════════════════════════════ crypto ════════════════════════════
+    // ════════════════════════════ 加密 ════════════════════════════
 
     public static String md5(String text) {
         return hex(digest("MD5", text == null ? new byte[0] : text.getBytes(StandardCharsets.UTF_8)));

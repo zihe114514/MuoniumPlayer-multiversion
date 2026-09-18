@@ -33,15 +33,14 @@ public abstract class SampleEntry extends BoxImpl {
 
 	@Override
 	public void decode(MP4InputStream in) throws IOException {
-		in.skipBytes(6); //reserved
+		in.skipBytes(6); //保留
 		dataReferenceIndex = in.readBytes(2);
 	}
 
 	/**
-	 * The data reference index is an integer that contains the index of the
-	 * data reference to use to retrieve data associated with samples that use
-	 * this sample description. Data references are stored in Data Reference
-	 * Boxes. The index ranges from 1 to the number of data references.
+	 * data reference index 为整数，含数据引用的索引，
+	 * 用于检索使用此采样描述的采样所关联的数据。
+	 * 数据引用存于 Data Reference Box。索引范围从 1 到数据引用数。
 	 */
 	public long getDataReferenceIndex() {
 		return dataReferenceIndex;

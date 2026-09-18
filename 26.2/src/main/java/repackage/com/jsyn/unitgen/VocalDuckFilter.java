@@ -3,68 +3,68 @@ package repackage.com.jsyn.unitgen;
 import repackage.com.jsyn.ports.UnitInputPort;
 
 /**
- * The automix deck filter: {@link FilterLowShelf} plus a band-limited centre canceller that pulls the
- * lead vocal out of a track while it fades in.
+ * Automix卡组滤波器： {@link FilterLowShelf}加上带限中心抵消器，
+ * 在曲目淡入时将声音从曲目中引出。
  *
- * <h3>Why a second processor and not another volume curve</h3>
- * <p>The bass swap already stops two kick drums from stacking, but the artefact a listener can actually
- * name is two lead vocals at once. That one cannot be shelved away: a voice occupies the same band as
- * the guitars and the snare, so any EQ that removes it removes the arrangement with it. What does
- * separate a lead vocal from most of the rest of a mix is <em>where</em> it is - dead centre, identical in
- * both channels. Subtracting the (band-limited) mid signal therefore takes the vocal out while leaving
- * anything panned wide almost untouched, which is exactly the classic karaoke trick, and it is enough for
- * the arriving track to enter as an instrumental bed and only become a song once the outgoing vocal is
- * gone.</p>
+ * <h3>为什么再加一个处理器而不是另一条音量曲线</h3>
+ * <p>低音交换已经阻止了两个踢鼓堆叠，但听众实际上可以
+ * 名字是同时两个主唱。那个不能被搁置：一个声音占据了与
+ * 吉他和军鼓，因此任何把它消掉的 EQ 都会把编曲一并消掉。它的作用是让
+ * 将主唱与混音的其余部分分开是<em> ，其中</em>是-死点，在
+ * 两个通道。减去（带限） MID信号，从而在离开时消除声音
+ * 几乎没有触及的任何东西，这正是经典的卡拉OK技巧，它足以
+ * 进入的轨道以器乐垫底的形式进入，直到待切出轨道的人声退出后才成为歌曲。
+ * gone. </p>
  *
- * <h3>How the side channel gets here</h3>
- * <p>{@code Effect} runs two independent filter instances, one per channel, and each only sees its own
- * signal - so a centre estimate is impossible without the other channel. The extra {@link #side} input is
- * how it arrives: {@code UnitGenerator.pullData} walks every {@code ConnectableInput} port before calling
- * {@code generate}, so declaring the port is all that is needed for the framework to fetch it, and
- * because a unit generator only produces one block per frame count the shared source is not generated
- * twice.</p>
+ * <h3>侧通道如何到达此处</h3>
+ * <p> {@code Effect}运行两个独立的滤波器实例，每个通道一个，每个只看到自己的
+ * 信号-因此，如果没有另一个通道，就不可能进行中心估计。额外的{@link #side}输入是
+ * 它是如何到达的：{@code UnitGenerator.pullData} 在调用前会遍历每个 {@code ConnectableInput} 端口，
+ * {@code generate}，因此只需声明端口，框架就会自动获取它，并且
+ * 因为单元生成器每帧计数只生成一个块，所以不生成共享源
+ * 两次。</p>
  *
- * <h3>Three deliberate properties</h3>
+ * <h3>三个刻意为之的特性</h3>
  * <ul>
- *   <li><b>Bit-exact bypass.</b> At depth 0 nothing is added on top of the shelf's own output, so an
- *       always-attached chain still cannot colour ordinary playback.</li>
- *   <li><b>Smoothed depth.</b> The driver ticks every 10 ms; stepping the cancellation would be heard as
- *       the vocal being switched, so the depth follows its target with a one pole slew.</li>
- *   <li><b>Mono fallback.</b> A mono file is panned to two identical channels, where the centre <em>is</em>
- *       the signal and a full subtraction would silence the whole band. {@link #setMonoFallback(boolean)}
- *       switches to a partial mid-band dip instead, which is weaker but musical, and it is the default so
- *       a chain whose side channel could not be wired degrades quietly rather than eating the mix.</li>
+ *   <li><b>比特精确的旁路。</b>在深度 0 时，搁架自身输出之上不叠加任何东西，因此
+ *       始终接入的链路在普通播放时仍不会染色。</li>
+ *   <li> <b>平滑深度。</b>驾驶员每10毫秒刻度一次；步进取消将被听到
+ *       声音被切换，因此深度以一极旋转跟随其目标。</li>
+ *   <li> <b>单声道回退。</b>将单声道文件平移到两个相同的通道，其中中心<em>为</em>
+ *       信号和完全减法将使整个频带沉默。{@link #setMonoFallback(boolean)}
+ *       切换到部分中频DIP ，这是较弱的，但音乐，它是默认的，所以
+ *       侧通道无法接线的链条静静地退化，而不是吃掉混合物。</li>
  * </ul>
  */
 public class VocalDuckFilter extends FilterLowShelf {
 
     /**
-     * The cancelled band. Below ~180 Hz there is no vocal fundamental worth removing but there is all of
-     * the bass, and above ~4.2 kHz there is mostly sibilance and cymbals - taking either out is audible
-     * as the mix losing weight or air rather than as the vocal leaving.
+     * 被消除的频段。在约 180 Hz 以下，没有值得消除的人声基频，却有大量
+     * 低音，在~4.2 kHz以上，大多数是同音异音和音调-取出任一音调都可以听到
+     * 作为减肥或空气的混合物，而不是声带离开。
      */
     private static final double HIGH_PASS_HZ = 180.0;
     private static final double LOW_PASS_HZ = 4_200.0;
-    /** Butterworth Q for both band edges: the flattest response with no ripple. */
+    /** 两个频段边缘都用 Butterworth Q：最平坦、无波纹的响应。 */
     private static final double BAND_Q = .70710678;
-    /** Depth changes below this are inaudible, and treated as "unchanged". */
+    /** 低于此值的深度变化是听不到的，并被视为“不变”。*/
     private static final double DEPTH_EPSILON = .002;
-    /** Slew time constant. Long enough to be inaudible, short enough to track a 10 ms driver. */
+    /** 转换时间常数。长到听不见，又短到足以跟上 10 ms 的驱动。 */
     private static final double SLEW_SECONDS = .035;
     /**
-     * How much of the band a mono source has dipped at full depth. Less than the stereo path takes,
-     * because here there is no centre to isolate: this is an EQ notch on the whole signal, and going
-     * further just makes the track sound broken.
+     * 单声道源在最大深度时该频段被衰减多少。比立体声路径用得少，
+     * 因为这里没有可隔离的中心：这是对整个信号做的一个 EQ 陷波，而且深入
+     * 进一步只会使曲目声音破损。
      */
     private static final double MONO_DIP_SCALE = .55;
 
-    /** The other channel's pre-effect signal, used only to estimate the centre. */
+    /** 另一个通道的预效应信号，仅用于估计中心。*/
     public UnitInputPort side;
 
     private volatile double targetDepth;
     private volatile double targetMidGainDb;
     private volatile double targetHighGainDb;
-    /** Defaults to the safe mode: without a wired side channel a full subtraction would be wrong. */
+    /** 默认为安全模式：如果没有有线侧通道，则完全减法是错误的。*/
     private volatile boolean monoFallback = true;
 
     private double currentDepth;
@@ -85,7 +85,7 @@ public class VocalDuckFilter extends FilterLowShelf {
     }
 
     /**
-     * @param depth 0 leaves the signal alone, 1 is full cancellation of the band-limited centre.
+     * @param depth 0 保持信号不变，1 为完全消除该限带中心。
      */
     public void setDepth(float depth) {
         if (Float.isNaN(depth) || Float.isInfinite(depth)) return;
@@ -96,7 +96,7 @@ public class VocalDuckFilter extends FilterLowShelf {
         return (float) this.targetDepth;
     }
 
-    /** Jumps to a depth without slewing, for a deck that has not started sounding yet. */
+    /** 跳到一个没有回转的深度，对于尚未开始发声的卡组。*/
     public void resetDepthTo(float depth) {
         setDepth(depth);
         this.currentDepth = this.targetDepth;
@@ -123,7 +123,7 @@ public class VocalDuckFilter extends FilterLowShelf {
         this.lowState = 0.0; this.midState = 0.0;
     }
 
-    /** True when this channel has no usable side signal and has to fall back to a mid-band dip. */
+    /** 当此通道没有可用的侧面信号并且必须回落到中频带倾斜时为真。*/
     public void setMonoFallback(boolean mono) {
         this.monoFallback = mono;
     }
@@ -181,7 +181,7 @@ public class VocalDuckFilter extends FilterLowShelf {
             outputs[i] = value;
         }
     }
-    /** Cascaded high pass then low pass, i.e. the band the vocal lives in. */
+    /** 级联高通然后低通，即声乐所在的乐队。*/
     private double bandPass(double x0) {
         double high = this.highB0 * x0 + this.highB1 * this.highX1 + this.highB2 * this.highX2
                 - this.highA1 * this.highY1 - this.highA2 * this.highY2;
@@ -210,7 +210,7 @@ public class VocalDuckFilter extends FilterLowShelf {
         this.lowY2 = 0.0;
     }
 
-    /** Robert Bristow-Johnson cookbook high pass and low pass, derived for the actual frame rate. */
+    /** Robert Bristow-Johnson 配方书中的高通和低通，按实际帧速率推导。 */
     private void updateBand(int rate) {
         double highHz = Math.max(20.0, Math.min(rate * .45, HIGH_PASS_HZ));
         double w0 = 2.0 * Math.PI * highHz / rate;

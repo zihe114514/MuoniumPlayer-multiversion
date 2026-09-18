@@ -8,9 +8,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Lightweight animated image texture for remote dynamic album covers.
- * Frames are decoded off-thread and the texture advances only from the render
- * thread, keeping all OpenGL uploads on Minecraft's main thread.
+ * 用于远程动态专辑封面的轻量动画图像纹理。
+ * 帧在后台线程解码，纹理仅由渲染线程推进，
+ * 使所有 OpenGL 上传都保持在 Minecraft 主线程上。
  */
 public final class AnimatedCoverTexture extends DynamicTexture {
 

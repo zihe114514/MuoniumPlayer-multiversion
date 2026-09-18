@@ -120,7 +120,7 @@ public class Flac2PcmAudioInputStream extends RingedAudioInputStream implements
      * 处理解码的PCM字节。这从同步调用
      * 注入方法
      *
-     * @param pcm The decoded PCM data
+      * @param pcm 解码后的 PCM 数据
      * @see PCMProcessor#processPCM(ByteData)
      */
     public void processPCM(ByteData pcm) {
@@ -129,7 +129,7 @@ public class Flac2PcmAudioInputStream extends RingedAudioInputStream implements
     }
 
     /**
-     * @return the streamInfo
+     * @return streamInfo
      */
     public StreamInfo getStreamInfo() {
         return streamInfo;

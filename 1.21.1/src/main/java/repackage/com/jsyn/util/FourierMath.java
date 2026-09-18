@@ -1,22 +1,22 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  * 
  *     http://www.apache.org/licenses/LICENSE-2.0
  * 
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.util;
 
-//Simple Fast Fourier Transform.
+//简单的快速傅里叶变换。
 public class FourierMath {
     static private final int MAX_SIZE_LOG_2 = 16;
     static BitReverseTable[] reverseTables = new BitReverseTable[MAX_SIZE_LOG_2];
@@ -97,7 +97,7 @@ public class FourierMath {
     }
 
     /**
-     * Calculate the amplitude of the sine wave associated with each bin of a complex FFT result.
+     * 计算复数 FFT 结果每个 bin 对应正弦波的振幅。
      * 
      * @param ar
      * @param ai
@@ -110,7 +110,7 @@ public class FourierMath {
     }
 
     /**
-     * Calculate the amplitude of the sine wave associated with each bin of a complex FFT result.
+     * 计算复数 FFT 结果每个 bin 对应正弦波的振幅。
      * 
      * @param ar
      * @param ai
@@ -129,7 +129,7 @@ public class FourierMath {
         int[] reverseTable = getReverseTable(numBits);
         double[] sineTable = getDoubleSineTable(numBits);
         int mask = n - 1;
-        int cosineOffset = n / 4; // phase offset between cos and sin
+        int cosineOffset = n / 4; // cos 与 sin 之间的相位偏移
 
         int i, j;
         for (i = 0; i < n; i++) {
@@ -150,7 +150,7 @@ public class FourierMath {
             int phase = 0;
             int phaseIncrement = numerator / (2 * mmax);
             for (int m = 0; m < mmax; ++m) {
-                double wr = sineTable[(phase + cosineOffset) & mask]; // cosine
+                double wr = sineTable[(phase + cosineOffset) & mask]; // 余弦
                 double wi = sineTable[phase];
 
                 for (i = m; i < n; i += stride) {
@@ -176,7 +176,7 @@ public class FourierMath {
         int[] reverseTable = getReverseTable(numBits);
         float[] sineTable = getFloatSineTable(numBits);
         int mask = n - 1;
-        int cosineOffset = n / 4; // phase offset between cos and sin
+        int cosineOffset = n / 4; // cos 与 sin 之间的相位偏移
 
         int i, j;
         for (i = 0; i < n; i++) {
@@ -197,7 +197,7 @@ public class FourierMath {
             int phase = 0;
             int phaseIncrement = numerator / (2 * mmax);
             for (int m = 0; m < mmax; ++m) {
-                float wr = sineTable[(phase + cosineOffset) & mask]; // cosine
+                float wr = sineTable[(phase + cosineOffset) & mask]; // 余弦
                 float wi = sineTable[phase];
 
                 for (i = m; i < n; i += stride) {
@@ -217,38 +217,38 @@ public class FourierMath {
     }
 
     /**
-     * Calculate log2(n)
+     * 计算 log2(n)
      * 
-     * @param powerOf2 must be a power of two, for example 512 or 1024
-     * @return for example, 9 for an input value of 512
+     * @param powerOf2 必须是 2 的幂，例如 512 或 1024
+     * 例如， @return ，输入值为512为9
      */
     public static int numBits(int powerOf2) {
         int i;
-        assert ((powerOf2 & (powerOf2 - 1)) == 0); // is it a power of 2?
+        assert ((powerOf2 & (powerOf2 - 1)) == 0); // 是2的幂吗？
         for (i = -1; powerOf2 > 0; powerOf2 = powerOf2 >> 1, i++)
             ;
         return i;
     }
 
     /**
-     * Calculate an FFT in place, modifying the input arrays.
+     * 就地计算 FFT，修改输入数组。
      * 
      * @param n
      * @param ar
      * @param ai
      */
     public static void fft(int n, double[] ar, double[] ai) {
-        transform(1, n, ar, ai); // TODO -1 or 1
+        transform(1, n, ar, ai); // TODO -1 或 1
     }
 
     /**
-     * Calculate an inverse FFT in place, modifying the input arrays.
+     * 计算到位的逆FFT ，修改输入数组。
      * 
      * @param n
      * @param ar
      * @param ai
      */
     public static void ifft(int n, double[] ar, double[] ai) {
-        transform(-1, n, ar, ai); // TODO -1 or 1
+        transform(-1, n, ar, ai); // TODO -1 或 1
     }
 }

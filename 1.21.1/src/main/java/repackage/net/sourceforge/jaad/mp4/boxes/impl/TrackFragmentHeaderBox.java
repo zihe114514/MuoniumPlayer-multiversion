@@ -5,9 +5,9 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * Each movie fragment can add zero or more fragments to each track; and a track
- * fragment can add zero or more contiguous runs of samples. The track fragment
- * header sets up information and defaults used for those runs of samples.
+ * 每个 movie fragment 可向每个轨道添加零个或多个片段；
+ * 一个 track fragment 可添加零个或多个连续采样段。
+ * track fragment header 为这些采样段设置信息和默认值。
  * 
  * @author in-somnia
  */
@@ -31,7 +31,7 @@ public class TrackFragmentHeaderBox extends FullBox {
 
 		trackID = in.readBytes(4);
 
-		//optional fields
+		//可选字段
 		baseDataOffsetPresent = ((flags&1)==1);
 		baseDataOffset = baseDataOffsetPresent ? in.readBytes(8) : 0;
 

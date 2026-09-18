@@ -11,7 +11,7 @@ import java.util.logging.Handler;
 import java.util.logging.Level;
 
 /**
- * Main AAC decoder class
+ * AAC 解码器主类
  * @author in-somnia
  */
 public class Decoder implements Constants {
@@ -33,9 +33,9 @@ public class Decoder implements Constants {
 	private ADIFHeader adifHeader;
 
 	/**
-	 * The methods returns true, if a profile is supported by the decoder.
-	 * @param profile an AAC profile
-	 * @return true if the specified profile can be decoded
+	 * 如果解码器支持某个 profile，该方法返回 true。
+	 * @param profile 一个 AAC profile
+	 * @return 如果指定的 profile 可被解码则返回 true
 	 * @see Profile#isDecodingSupported()
 	 */
 	public static boolean canDecode(Profile profile) {
@@ -43,13 +43,13 @@ public class Decoder implements Constants {
 	}
 
 	/**
-	 * Initializes the decoder with a MP4 decoder specific info.
+	 * 使用 MP4 解码器特定信息初始化解码器。
 	 *
-	 * After this the MP4 frames can be passed to the
-	 * <code>decodeFrame(byte[], SampleBuffer)</code> method to decode them.
+	 * 此后即可将 MP4 帧传入
+	 * <code>decodeFrame(byte[], SampleBuffer)</code> 方法进行解码。
 	 * 
-	 * @param decoderSpecificInfo a byte array containing the decoder specific info from an MP4 container
-	 * @throws AACException if the specified profile is not supported
+	 * @param decoderSpecificInfo 一个字节数组，包含来自 MP4 容器的解码器特定信息
+	 * @throws AACException 如果指定的 profile 不受支持
 	 */
 	public Decoder(byte[] decoderSpecificInfo) throws AACException {
 		config = DecoderConfig.parseMP4DecoderSpecificInfo(decoderSpecificInfo);
@@ -72,11 +72,11 @@ public class Decoder implements Constants {
 	}
 
 	/**
-	 * Decodes one frame of AAC data in frame mode and returns the raw PCM
-	 * data.
-	 * @param frame the AAC frame
-	 * @param buffer a buffer to hold the decoded PCM data
-	 * @throws AACException if decoding fails
+	 * 在帧模式下解码一帧 AAC 数据，并返回原始 PCM
+	 * 数据。
+	 * @param frame 该 AAC 帧
+	 * @param buffer 用于保存解码后 PCM 数据的缓冲区
+	 * @throws AACException 如果解码失败
 	 */
 	public void decodeFrame(byte[] frame, SampleBuffer buffer) throws AACException {
 		if(frame!=null) in.setData(frame);
@@ -103,11 +103,11 @@ public class Decoder implements Constants {
 		syntacticElements.startNewFrame();
 
 		try {
-			//1: bitstream parsing and noiseless coding
+			//1: 比特流解析与无损编码
 			syntacticElements.decode(in);
-			//2: spectral processing
+			//2: 频谱处理
 			syntacticElements.process(filterBank);
-			//3: send to output buffer
+			//3: 发送到输出缓冲区
 			syntacticElements.sendToOutput(buffer);
 		}
 		catch(AACException e) {

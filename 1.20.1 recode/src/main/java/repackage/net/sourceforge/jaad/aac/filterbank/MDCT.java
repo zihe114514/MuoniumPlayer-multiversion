@@ -38,16 +38,16 @@ class MDCT implements MDCTTables {
 	void process(float[] in, int inOff, float[] out, int outOff) {
 		int k;
 
-		//pre-IFFT complex multiplication
+		//IFFT 前复乘
 		for(k = 0; k<N4; k++) {
 			buf[k][1] = (in[inOff+2*k]*sincos[k][0])+(in[inOff+N2-1-2*k]*sincos[k][1]);
 			buf[k][0] = (in[inOff+N2-1-2*k]*sincos[k][0])-(in[inOff+2*k]*sincos[k][1]);
 		}
 
-		//complex IFFT, non-scaling
+		//复数 IFFT，不缩放
 		fft.process(buf, false);
 
-		//post-IFFT complex multiplication
+		//IFFT 后复乘
 		for(k = 0; k<N4; k++) {
 			tmp[0] = buf[k][0];
 			tmp[1] = buf[k][1];
@@ -55,7 +55,7 @@ class MDCT implements MDCTTables {
 			buf[k][0] = (tmp[0]*sincos[k][0])-(tmp[1]*sincos[k][1]);
 		}
 
-		//reordering
+		//重排序
 		for(k = 0; k<N8; k += 2) {
 			out[outOff+2*k] = buf[N8+k][1];
 			out[outOff+2+2*k] = buf[N8+1+k][1];
@@ -85,7 +85,7 @@ class MDCT implements MDCTTables {
 
 	void processForward(float[] in, float[] out) {
 		int n, k;
-		//pre-FFT complex multiplication
+		//FFT 前复乘
 		for(k = 0; k<N8; k++) {
 			n = k<<1;
 			tmp[0] = in[N-N4-1-n]+in[N-N4+n];
@@ -107,10 +107,10 @@ class MDCT implements MDCTTables {
 			buf[k+N8][1] *= N;
 		}
 
-		//complex FFT, non-scaling
+		//复数 FFT，不缩放
 		fft.process(buf, true);
 
-		//post-FFT complex multiplication
+		//FFT 后复乘
 		for(k = 0; k<N4; k++) {
 			n = k<<1;
 

@@ -19,10 +19,10 @@ public class ThreeGPPAlbumBox extends ThreeGPPMetadataBox {
 	}
 
 	/**
-	 * The track number (order number) of the media on this album. This is an 
-	 * optional field. If the field is not present, -1 is returned.
+	 * 本专辑中该媒体的轨道号（序号）。这是可选字段。
+	 * 若字段不存在，返回 -1。
 	 * 
-	 * @return the track number
+	 * @return 轨道号
 	 */
 	public int getTrackNumber() {
 		return trackNumber;

@@ -21,11 +21,11 @@ import io.github.humbleui.types.Point;
 import io.github.humbleui.types.Rect;
 
 /**
- * Apple-style rotating greeting used by the welcome page.
+ * 欢迎页使用的 Apple 风格旋转问候。
  *
- * <p>The English word uses the traced “hello” centerline. Other languages are
- * converted to Skia glyph paths and revealed with the same PathMeasure technique,
- * so the animation stays vector-only and resolution independent.</p>
+ * <p>英文词用描摹的"hello"中心线。其他语言被
+ * 转换为 Skia 字形路径，并用相同的 PathMeasure 技术揭示，
+ * 使动画保持纯矢量且与分辨率无关。</p>
  */
 public final class OnboardingGreeting implements AutoCloseable {
     private static final long CYCLE_NANOS = 3_600_000_000L;
@@ -166,7 +166,7 @@ public final class OnboardingGreeting implements AutoCloseable {
                         222, 242, 255, (int) (210 * opacity * pulse));
             }
         } catch (Throwable ignored) {
-            // A platform Skia build without PathMeasure support must not block onboarding.
+            // 没有 PathMeasure 支持的平台 Skia 构建绝不能阻塞新手引导。
         }
     }
 

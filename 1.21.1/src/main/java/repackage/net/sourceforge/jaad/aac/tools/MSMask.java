@@ -3,7 +3,7 @@ package repackage.net.sourceforge.jaad.aac.tools;
 import repackage.net.sourceforge.jaad.aac.AACException;
 
 /**
- * The MSMask indicates, if MS is applied to a specific ICStream.
+ * MSMask 表明是否将 MS 应用于特定的 ICStream。
  * @author in-somnia
  */
 public enum MSMask {

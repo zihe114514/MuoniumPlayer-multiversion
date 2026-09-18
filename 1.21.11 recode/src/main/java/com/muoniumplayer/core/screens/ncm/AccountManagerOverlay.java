@@ -13,6 +13,7 @@ import com.muoniumplayer.core.ncm.music.NeteaseAccountProfiles;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.QRCodeGenerator;
 import com.muoniumplayer.core.ncm.music.dto.User;
+import com.muoniumplayer.core.rendering.BrandVectorIcons;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
@@ -226,7 +227,8 @@ public class AccountManagerOverlay extends NcmSheet {
         });
 
         final Panel brandLayer = veil(disc, () -> NeteaseMusicService.isLoggedIn(platform) ? 0.0 : 1.0);
-        glyph(brandLayer, brandGlyph(platform), brandFont(platform),
+        brandMark(brandLayer, platform, size * BrandVectorIcons.MARK_RATIO,
+                brandGlyph(platform), brandFont(platform),
                 () -> size * .5, () -> size * .5, platform::getBrandColor);
 
         final Panel letterLayer = veil(disc, () -> NeteaseMusicService.isLoggedIn(platform) ? 1.0 : 0.0);

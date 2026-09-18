@@ -13,10 +13,9 @@ import java.awt.Color;
 import java.util.function.Supplier;
 
 /**
- * A clickable, theme-tintable texture icon with the same hover/click feedback
- * used by {@link IconWidget}.  The supplied textures are white glyphs on a
- * transparent background, so the widget can safely tint them for every player
- * theme without introducing a rectangular image background.
+ * 可点击、可按主题着色的纹理图标，具有与 {@link IconWidget} 相同的
+ * 悬停/点击反馈。所提供的纹理是透明背景上的白色字形，因此该组件
+ * 可安全地为每个播放器主题着色，而不会引入矩形图像背景。
  */
 public class ThemedTextureIconWidget extends AbstractWidget<ThemedTextureIconWidget> {
 
@@ -65,9 +64,9 @@ public class ThemedTextureIconWidget extends AbstractWidget<ThemedTextureIconWid
                 RenderSystem.linearFilter();
                 texture = TextureManager.getInstance().getTexture(iconLocation);
             } catch (Throwable ignored) {
-                // A resource pack or an outdated development jar can omit an
-                // optional texture. Keep the established font-icon fallback
-                // rather than crashing while rendering the player screen.
+                // 资源包或过时的开发 jar 可能缺少某个
+                // 可选纹理。保持已有的字体图标回退机制，
+                // 而不是在渲染播放器界面时崩溃。
                 texture = null;
             }
         }

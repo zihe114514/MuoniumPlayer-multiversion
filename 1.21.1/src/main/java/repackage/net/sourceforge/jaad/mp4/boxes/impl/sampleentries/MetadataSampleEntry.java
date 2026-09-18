@@ -38,11 +38,10 @@ abstract class MetadataSampleEntry extends SampleEntry {
 	}
 
 	/**
-	 * A string providing a MIME type which identifies the content encoding of
-	 * the timed metadata. If not present (an empty string is supplied) the
-	 * timed metadata is not encoded.
-	 * An example for this field is 'application/zip'.
-	 * @return the encoding's MIME-type
+	 * 提供 MIME 类型的字符串，标识定时元数据的内容编码。
+	 * 若不存在（提供空字符串），则定时元数据未编码。
+	 * 此字段示例为 'application/zip'。
+	 * @return 编码的 MIME 类型
 	 */
 	public String getContentEncoding() {
 		return contentEncoding;

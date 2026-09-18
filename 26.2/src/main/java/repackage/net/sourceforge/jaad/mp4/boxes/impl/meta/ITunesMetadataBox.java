@@ -11,14 +11,14 @@ import repackage.net.sourceforge.jaad.mp4.boxes.BoxTypes;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * This box contains the data for a metadata tag. It is right below an
- * iTunes metadata box (e.g. '@nam') or a custom meta tag box ('----'). A custom
- * meta tag box also contains a 'name'-box declaring the tag's name.
+ * 此 box 包含某个元数据标签的数据。它紧接在一个
+ * iTunes 元数据 box（例如 '@nam'）或自定义元标签 box（'----'）之下。
+ * 自定义元标签 box 还包含一个声明该标签名称的 'name' box。
  *
  * @author in-somnia
  */
-/*TODO: use generics here? -> each DataType should return <T> corresponding to
-its class (String/Integer/...)*/
+/*TODO: 此处是否使用泛型？-> 每个 DataType 应返回与其类对应的 <T>
+	（String/Integer/...）*/
 public class ITunesMetadataBox extends FullBox {
 
 	private static final String[] TIMESTAMPS = {"yyyy", "yyyy-MM", "yyyy-MM-dd"};
@@ -75,7 +75,7 @@ public class ITunesMetadataBox extends FullBox {
 
 		dataType = DataType.forInt(flags);
 
-		in.skipBytes(4); //padding?
+		in.skipBytes(4); //填充？
 
 		data = new byte[(int) getLeft(in)];
 		in.readBytes(data);
@@ -86,30 +86,29 @@ public class ITunesMetadataBox extends FullBox {
 	}
 
 	/**
-	 * Returns an unmodifiable array with the raw content, that can be present
-	 * in different formats.
+	 * 返回一个不可修改的数组，含原始内容，可呈不同格式。
 	 * 
-	 * @return the raw metadata
+	 * @return 原始元数据
 	 */
 	public byte[] getData() {
 		return Arrays.copyOf(data, data.length);
 	}
 
 	/**
-	 * Returns the content as a text string.
-	 * @return the metadata as text
+	 * 以文本字符串返回内容。
+	 * @return 文本形式的元数据
 	 */
 	public String getText() {
-		//first four bytes are padding (zero)
+		//前四个字节为填充（零）
 		return new String(data, 0, data.length, Charset.forName("UTF-8"));
 	}
 
 	/**
-	 * Returns the content as an unsigned 8-bit integer.
-	 * @return the metadata as an integer
+	 * 以无符号 8 位整数返回内容。
+	 * @return 整数形式的元数据
 	 */
 	public long getNumber() {
-		//first four bytes are padding (zero)
+		//前四个字节为填充（零）
 		long l = 0;
 		for(int i = 0; i<data.length; i++) {
 			l <<= 8;
@@ -123,15 +122,15 @@ public class ITunesMetadataBox extends FullBox {
 	}
 
 	/**
-	 * Returns the content as a boolean (flag) value.
-	 * @return the metadata as a boolean
+	 * 以布尔（标志）值返回内容。
+	 * @return 布尔形式的元数据
 	 */
 	public boolean getBoolean() {
 		return getNumber()!=0;
 	}
 
 	public Date getDate() {
-		//timestamp lengths: 4,7,9
+		//时间戳长度：4,7,9
 		final int i = (int) Math.floor(data.length/3)-1;
 		final Date date;
 		if(i>=0&&i<TIMESTAMPS.length) {

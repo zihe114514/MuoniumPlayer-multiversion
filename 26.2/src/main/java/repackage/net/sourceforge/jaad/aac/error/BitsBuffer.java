@@ -18,8 +18,8 @@ public class BitsBuffer {
 	public int showBits(int bits) {
 		if(bits==0) return 0;
 		if(len<=32) {
-			//huffman_spectral_data_2 needs to read more than may be available,
-			//bits maybe > len, deliver 0 than
+			//huffman_spectral_data_2 需要读取的位数可能超过实际可用位数，
+			//读取的位数可能大于长度，宁可交付 0 也不
 			if(len>=bits) return ((bufa>>(len-bits))&(0xFFFFFFFF>>(32-bits)));
 			else return ((bufa<<(bits-len))&(0xFFFFFFFF>>(32-bits)));
 		}
@@ -60,7 +60,7 @@ public class BitsBuffer {
 		bufa = i[1];
 	}
 
-	//merge bits of a to b
+	//将 a 的位合并到 b
 	public void concatBits(BitsBuffer a) {
 		if(a.len==0) return;
 		int al = a.bufa;
@@ -68,10 +68,10 @@ public class BitsBuffer {
 
 		int bl, bh;
 		if(len>32) {
-			//mask off superfluous high b bits
+			//屏蔽多余的高位 b 位
 			bl = bufa;
 			bh = bufb&((1<<(len-32))-1);
-			//left shift a len bits
+			//将 a 左移 len 位
 			ah = al<<(len-32);
 			al = 0;
 		}
@@ -82,7 +82,7 @@ public class BitsBuffer {
 			al = al<<len;
 		}
 
-		//merge
+		//合并
 		bufa = bl|al;
 		bufb = bh|ah;
 

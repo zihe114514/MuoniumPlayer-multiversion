@@ -11,7 +11,7 @@ import repackage.org.kc7bfi.jflac.metadata.Metadata;
 
 /**
  * FrameListener接口。
- * This interface defines the singatures for a class to listen
+  * 该接口定义了供类实现的监听方法签名，
  * 用于解码器中的帧事件。
  *
  * @author kc7bfi

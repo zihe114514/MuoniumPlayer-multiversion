@@ -8,11 +8,10 @@ import repackage.net.sourceforge.jaad.aac.syntax.ICSInfo;
 import repackage.net.sourceforge.jaad.aac.syntax.ICStream;
 
 /**
- * Huffman Codeword Reordering
- * Decodes spectral data for ICStreams if error resilience is used for
- * section data.
+ * Huffman 码字重排序
+ * 当 section 数据使用错误弹性时，为 ICStreams 解码频谱数据。
  */
-//TODO: needs decodeSpectralDataER() in BitStream
+//TODO: 需要 BitStream 中的 decodeSpectralDataER() 方法
 public class HCR implements Constants {
 
 	private static class Codeword {
@@ -36,11 +35,11 @@ public class HCR implements Constants {
 	private static final int[] PRE_SORT_CB_ER = {11, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 9, 7, 5, 3, 1};
 	private static final int[] MAX_CW_LEN = {0, 11, 9, 20, 16, 13, 11, 14, 12, 17, 14, 49,
 		0, 0, 0, 0, 14, 17, 21, 21, 25, 25, 29, 29, 29, 29, 33, 33, 33, 37, 37, 41};
-	//bit-twiddling helpers
+	//位操作辅助函数
 	private static final int[] S = {1, 2, 4, 8, 16};
 	private static final int[] B = {0x55555555, 0x33333333, 0x0F0F0F0F, 0x00FF00FF, 0x0000FFFF};
 
-	//32 bit rewind and reverse
+	//32 位回退并反转
 	private static int rewindReverse(int v, int len) {
 		v = ((v>>S[0])&B[0])|((v<<S[0])&~B[0]);
 		v = ((v>>S[1])&B[1])|((v<<S[1])&~B[1]);
@@ -48,13 +47,13 @@ public class HCR implements Constants {
 		v = ((v>>S[3])&B[3])|((v<<S[3])&~B[3]);
 		v = ((v>>S[4])&B[4])|((v<<S[4])&~B[4]);
 
-		//shift off low bits
+		//移出低位
 		v >>= (32-len);
 
 		return v;
 	}
 
-	//64 bit rewind and reverse
+	//64 位回退并反转
 	static int[] rewindReverse64(int hi, int lo, int len) {
 		int[] i = new int[2];
 		if(len<=32) {
@@ -73,7 +72,7 @@ public class HCR implements Constants {
 			lo = ((lo>>S[4])&B[4])|((lo<<S[4])&~B[4]);
 			hi = ((hi>>S[4])&B[4])|((hi<<S[4])&~B[4]);
 
-			//shift off low bits
+			//移出低位
 			i[1] = (hi>>(64-len))|(lo<<(len-32));
 			i[1] = lo>>(64-len);
 		}
@@ -104,14 +103,14 @@ public class HCR implements Constants {
 		final int[][] sectCB = null; //sectData.getSectCB();
 		final int[][] sectSFBOffsets = null; //info.getSectSFBOffsets();
 
-		//check parameter
+		//检查参数
 		final int spDataLen = ics.getReorderedSpectralDataLength();
 		if(spDataLen==0) return;
 
 		final int longestLen = ics.getLongestCodewordLength();
 		if(longestLen==0||longestLen>=spDataLen) throw new AACException("length of longest HCR codeword out of range");
 
-		//create spOffsets
+		//创建 spOffsets
 		final int[] spOffsets = new int[8];
 		final int shortFrameLen = spectralData.length/8;
 		spOffsets[0] = 0;
@@ -140,9 +139,9 @@ public class HCR implements Constants {
 		int bitsread = 0;
 
 		int sfb, w_idx, i, thisCB, thisSectCB, cws;
-		//step 1: decode PCW's (set 0), and stuff data in easier-to-use format
+		//第 1 步：解码 PCW（set 0），并将数据整理为更易使用的格式
 		for(int sortloop = 0; sortloop<lastCB; sortloop++) {
-			//select codebook to process this pass
+			//选择本轮要处理的码本
 			thisCB = preSortCB[sortloop];
 
 			for(sfb = 0; sfb<maxSFB; sfb++) {
@@ -150,36 +149,36 @@ public class HCR implements Constants {
 					for(g = 0; g<windowGroupCount; g++) {
 						for(i = 0; i<numSec[g]; i++) {
 							if((sectStart[g][i]<=sfb)&&(sectEnd[g][i]>sfb)) {
-								/* check whether codebook used here is the one we want to process */
+								/* 检查此处使用的码本是否为我们要处理的码本 */
 								thisSectCB = sectCB[g][i];
 
 								if(isGoodCB(thisCB, thisSectCB)) {
-									//precalculation
+									//预计算
 									int sect_sfb_size = sectSFBOffsets[g][sfb+1]-sectSFBOffsets[g][sfb];
 									int inc = (thisSectCB<HCB.FIRST_PAIR_HCB) ? 4 : 2;
 									int group_cws_count = (4*info.getWindowGroupLength(g))/inc;
 									int segwidth = Math.min(MAX_CW_LEN[thisSectCB], longestLen);
 
-									//read codewords until end of sfb or end of window group
+									//读取码字，直到到达 sfb 末尾或窗口组末尾
 									for(cws = 0; (cws<group_cws_count)&&((cws+w_idx*group_cws_count)<sect_sfb_size); cws++) {
 										int sp = spOffsets[g]+sectSFBOffsets[g][sfb]+inc*(cws+w_idx*group_cws_count);
 
-										//read and decode PCW
+										//读取并解码 PCW
 										if(PCWs_done==0) {
-											//read in normal segments
+											//按常规段读取
 											if(bitsread+segwidth<=spDataLen) {
 												segment[segmentsCount].readSegment(segwidth, in);
 												bitsread += segwidth;
 
 												//Huffman.decodeSpectralDataER(segment[segmentsCount], thisSectCB, spectralData, sp);
 
-												//keep leftover bits
+												//保留剩余位
 												segment[segmentsCount].rewindReverse();
 
 												segmentsCount++;
 											}
 											else {
-												//remaining after last segment
+												//最后一段之后的剩余部分
 												if(bitsread<spDataLen) {
 													final int additional_bits = spDataLen-bitsread;
 
@@ -223,7 +222,7 @@ public class HCR implements Constants {
 
 		final int numberOfSets = numberOfCodewords/segmentsCount;
 
-		//step 2: decode nonPCWs
+		//第 2 步：解码 nonPCW
 		int trial, codewordBase, segmentID, codewordID;
 		for(int set = 1; set<=numberOfSets; set++) {
 			for(trial = 0; trial<segmentsCount; trial++) {
@@ -231,7 +230,7 @@ public class HCR implements Constants {
 					segmentID = (trial+codewordBase)%segmentsCount;
 					codewordID = codewordBase+set*segmentsCount-segmentsCount;
 
-					//data up
+					//数据向上
 					if(codewordID>=numberOfCodewords-segmentsCount) break;
 
 					if((codeword[codewordID].decoded==0)&&(segment[segmentID].len>0)) {

@@ -2,6 +2,7 @@ package com.muoniumplayer.core.screens.onboarding;
 
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.rendering.BrandVectorIcons;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
 import com.muoniumplayer.core.rendering.RGBA;
 import com.muoniumplayer.core.rendering.Rect;
@@ -174,6 +175,12 @@ public final class OnboardingUi {
 
     public static void drawPlatformIcon(MusicPlatform platform,
                                          double centerX, double centerY, double box, int color) {
+        // 有矢量字标的三家先走矢量：和音源卡、账号头像位共用同一份数据，尺寸同样折 box 的一半。
+        // 不在帧内或路径解析失败时它返回 false，继续往下走字形字标。
+        if (BrandVectorIcons.drawCentered(platform, centerX, centerY,
+                box * BrandVectorIcons.MARK_RATIO, color)) {
+            return;
+        }
         if (platform == MusicPlatform.NETEASE) {
             drawBrandIcon(MusicBrandIcons.NETEASE_CLOUD_MUSIC, FontManager.musicBrand18,
                     centerX, centerY, color);

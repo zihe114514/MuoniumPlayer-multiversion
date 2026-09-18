@@ -44,28 +44,23 @@ public class FDHintSampleEntry extends SampleEntry {
 	}
 
 	/**
-	 * The partition entry ID indicates the partition entry in the FD item
-	 * information box. A zero value indicates that no partition entry is
-	 * associated with this sample entry, e.g., for FDT. If the corresponding FD
-	 * hint track contains only overhead data this value should indicate the 
-	 * partition entry whose overhead data is in question. 
+	 * partition entry ID 指示 FD item information box 中的分区条目。
+	 * 零值表示此采样条目未关联分区条目，例如用于 FDT。
+	 * 若对应 FD 提示轨道只含开销数据，此值应指示其所讨论开销数据所在的分区条目。
 	 *
-	 * @return the partition entry ID
+	  * @return 分区条目 ID
 	 */
 	public int getPartitionEntryID() {
 		return partitionEntryID;
 	}
 
 	/**
-	 * The FEC overhead is a floating point value indicating the percentage
-	 * protection overhead used by the hint sample(s). The intention of
-	 * providing this value is to provide characteristics to help a server
-	 * select a session group (and corresponding FD hint tracks). If the 
-	 * corresponding FD hint track contains only overhead data this value should
-	 * indicate the protection overhead achieved by using all FD hint tracks in 
-	 * a session group up to the FD hint track in question.
+	 * FEC overhead 为浮点数，指示提示采样所用保护开销的百分比。
+	 * 提供此值的目的是给出特征，帮助服务器选择会话组（及对应 FD 提示轨道）。
+	 * 若对应 FD 提示轨道只含开销数据，此值应指示会话组中直到所讨论 FD 提示轨道、
+	 * 使用所有 FD 提示轨道所达到的保护开销。
 	 *
-	 * @return the FEC overhead
+	  * @return FEC 开销
 	 */
 	public double getFECOverhead() {
 		return fecOverhead;

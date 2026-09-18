@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Numerical contracts for Folia planning that source-presence tests cannot protect. */
+/** Folia 规划的数值契约，源存在性测试无法覆盖这些约束。 */
 class FoliaAutomixNumericTest {
 
     @Test

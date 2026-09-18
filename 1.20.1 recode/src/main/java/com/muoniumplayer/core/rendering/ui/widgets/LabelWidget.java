@@ -60,10 +60,10 @@ public class LabelWidget extends AbstractWidget<LabelWidget> {
         String lbl = this.getLabel();
         CFontRenderer activeFont = this.font != null ? this.font : FontManager.pf18;
 
-        // Labels are used extensively with asynchronous/state-backed Suppliers.
-        // A provider may temporarily return null while a page is being rebuilt, and
-        // a renderer can also be unavailable during the very first initialization
-        // frame. Never let either transient state abort the whole NCMScreen tree.
+        // 标签广泛与异步/状态驱动的 Supplier 配合使用。
+        // 在页面重建期间 provider 可能临时返回 null，而且
+        // 在第一帧初始化期间渲染器也可能不可用。
+        // 绝不让这两种瞬时状态中断整个 NCMScreen 树。
         if (activeFont == null) {
             this.setBounds(0, 0);
             return;
@@ -72,8 +72,8 @@ public class LabelWidget extends AbstractWidget<LabelWidget> {
         if (widthNotLimited) {
             activeFont.drawString(lbl, this.getX(), this.getY(), this.getHexColor());
         } else if (this.getMaxWidth() <= 0.0) {
-            // A collapsed parent or a transitional layout can ask for a negative width.
-            // There is no useful text to draw in that space; keep the widget alive instead.
+            // 折叠的父容器或过渡中的布局可能请求负宽度。
+            // 该空间内没有可绘制的有效文本；而是保持组件存活。
             this.setBounds(0, Math.max(0, activeFont.getStringHeight(lbl)));
             return;
         } else if (this.widthLimitType == WidthLimitType.SCROLL) {
@@ -89,9 +89,9 @@ public class LabelWidget extends AbstractWidget<LabelWidget> {
     }
 
     public LabelWidget setMaxWidth(double maxWidth) {
-        // -1 is the documented "unlimited" sentinel. Any other negative or non-finite value
-        // comes from a transient layout calculation and is normalized to zero so onRender can
-        // skip it safely instead of forwarding it to Skia.
+        // -1 是文档规定的"无限"哨兵值。其他任何负数或非有限值
+        // 都来自瞬时布局计算，并被归一化为 0，以便 onRender 可以
+        // 安全地跳过它，而不是转发给 Skia。
         if (maxWidth == -1.0) {
             this.maxWidth = -1.0;
         } else {
@@ -106,8 +106,8 @@ public class LabelWidget extends AbstractWidget<LabelWidget> {
     }
 
     public LabelWidget setFont(CFontRenderer font) {
-        // Keep a null value recoverable: FontManager.pf18 may not be ready when a
-        // widget is constructed, so onRender will resolve the fallback later.
+        // 让 null 值可恢复：构造组件时 FontManager.pf18 可能尚未就绪，
+        // 因此 onRender 会在之后解析回退字体。
         this.font = font;
         return this;
     }
@@ -121,7 +121,7 @@ public class LabelWidget extends AbstractWidget<LabelWidget> {
             String value = supplier.get();
             return value == null ? "" : value;
         } catch (RuntimeException ignored) {
-            // A transient provider failure must not crash rendering of every panel.
+            // 瞬时的 provider 失败绝不能导致所有面板渲染崩溃。
             return "";
         }
     }

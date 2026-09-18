@@ -1,8 +1,7 @@
 package repackage.net.sourceforge.jaad.aac;
 
 /**
- * An enumeration that represents all possible sample frequencies AAC data can 
- * have.
+ * 一个枚举，表示 AAC 数据可能具有的所有采样频率。
  * 
  * @author in-somnia
  */
@@ -23,9 +22,9 @@ public enum SampleFrequency {
 	SAMPLE_FREQUENCY_NONE(-1, 0, new int[]{0, 0}, new int[]{0, 0});
 
 	/**
-	 * Returns a sample frequency instance for the given index. If the index
-	 * is not between 0 and 11 inclusive, SAMPLE_FREQUENCY_NONE is returned.
-	 * @return a sample frequency with the given index
+	 * 返回给定索引对应的采样频率实例。如果索引
+	 * 不在 0 到 11（含）之间，则返回 SAMPLE_FREQUENCY_NONE。
+	 * @return 具有给定索引的采样频率
 	 */
 	public static SampleFrequency forInt(int i) {
 		final SampleFrequency freq;
@@ -56,57 +55,54 @@ public enum SampleFrequency {
 	}
 
 	/**
-	 * Returns this sample frequency's index between 0 (96000) and 11 (8000)
-	 * or -1 if this is SAMPLE_FREQUENCY_NONE.
-	 * @return the sample frequency's index
+	 * 返回此采样频率在 0 (96000) 到 11 (8000) 之间的
+	 * 索引；如果是 SAMPLE_FREQUENCY_NONE 则返回 -1。
+	 * @return 该采样频率的索引
 	 */
 	public int getIndex() {
 		return index;
 	}
 
 	/**
-	 * Returns the sample frequency as integer value. This may be a value
-	 * between 96000 and 8000, or 0 if this is SAMPLE_FREQUENCY_NONE.
-	 * @return the sample frequency
+	 * 以整数值返回采样频率。取值可能在
+	 * 96000 到 8000 之间；如果是 SAMPLE_FREQUENCY_NONE 则为 0。
+	 * @return 采样频率
 	 */
 	public int getFrequency() {
 		return frequency;
 	}
 
 	/**
-	 * Returns the highest scale factor band allowed for ICPrediction at this
-	 * sample frequency.
-	 * This method is mainly used internally.
-	 * @return the highest prediction SFB
+	 * 返回此采样频率下 ICPrediction 允许的最高预测 SFB。
+	 * 此方法主要供内部使用。
+	 * @return 最高预测 SFB
 	 */
 	public int getMaximalPredictionSFB() {
 		return prediction[0];
 	}
 
 	/**
-	 * Returns the number of predictors allowed for ICPrediction at this
-	 * sample frequency.
-	 * This method is mainly used internally.
-	 * @return the number of ICPredictors
+	 * 返回此采样频率下 ICPrediction 允许的预测器数量。
+	 * 此方法主要供内部使用。
+	 * @return ICPredictor 的数量
 	 */
 	public int getPredictorCount() {
 		return prediction[1];
 	}
 
 	/**
-	 * Returns the highest scale factor band allowed for TNS at this
-	 * sample frequency.
-	 * This method is mainly used internally.
-	 * @return the highest SFB for TNS
+	 * 返回此采样频率下 TNS 允许的最高比例因子频带（SFB）。
+	 * 此方法主要供内部使用。
+	 * @return TNS 的最高 SFB
 	 */
 	public int getMaximalTNS_SFB(boolean shortWindow) {
 		return maxTNS_SFB[shortWindow ? 1 : 0];
 	}
 
 	/**
-	 * Returns a string representation of this sample frequency.
-	 * The method is identical to <code>getDescription()</code>.
-	 * @return the sample frequency's description
+	 * 返回此采样频率的字符串表示。
+	 * 该方法与 <code>getDescription()</code> 相同。
+	 * @return 该采样频率的描述
 	 */
 	@Override
 	public String toString() {

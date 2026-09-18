@@ -1,8 +1,8 @@
 package repackage.net.sourceforge.jaad.aac.tools;
 
 /**
- * Tables of coefficients used for TNS.
- * The suffix indicates the values of coefCompress and coefRes.
+ * 用于 TNS 的系数表。
+ * 后缀表示 coefCompress 和 coefRes 的取值。
  * @author in-somnia
  */
 interface TNSTables {

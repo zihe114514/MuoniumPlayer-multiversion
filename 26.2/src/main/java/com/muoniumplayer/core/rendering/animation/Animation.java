@@ -47,9 +47,9 @@ public class Animation {
     }
 
     /**
-     * Updates the animation by using the easing function and time
+     * 通过缓动函数和时间更新动画
      *
-     * @param destinationValue the value that the animation is going to reach
+     * @param destinationValue 动画将要到达的值
      */
     public double run(final double destinationValue) {
         this.nanos = System.nanoTime();
@@ -75,9 +75,9 @@ public class Animation {
     }
 
     /**
-     * Returns the progress of the animation
+     * 返回动画的进度
      *
-     * @return value between 0 and 1
+     * @return 0 到 1 之间的值
      */
     public double getProgress() {
         return Math.min(1, (double) (System.nanoTime() - this.startTime) / (double) this.duration);
@@ -92,7 +92,7 @@ public class Animation {
     }
 
     /**
-     * Resets the animation to the start value
+     * 将动画重置为起始值
      */
     public void reset() {
         this.startTime = System.nanoTime();

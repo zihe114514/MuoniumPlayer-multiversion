@@ -8,17 +8,17 @@ import java.util.stream.IntStream;
 
 
 /**
- * This class can be used for configuring the Processing Sound library.
+  * 此类可用于配置 Processing Sound 库。
  *
- * The Sound class allows for configuring global properties of the sound
- * library's audio synthesis and playback, such as the output device, sample
- * rate or global output volume.
+ * 此类可用于配置 Processing Sound 库。
+ * 库的音频合成和回放，如输出设备、样本
+ * 速率或全局输出量。
  *
- * Information on available input and output devices can be obtained by calling
- * <b>Sound.list()</b>
+ * Sound 类允许配置声音的全局属性，
+ * 可用输入输出设备的信息可通过调用
  * 
- * @webref Configuration:Sound
- * @webBrief This class can be used for configuring the Processing Sound library.
+ * @ webref配置：声音
+ * @ webBrief此类可用于配置Processing Sound库。
  * @see MultiChannel
  */
 public class Sound {
@@ -31,13 +31,13 @@ public class Sound {
 	 * 
 	 * @param sampleRate
 	 *            the sample rate to be used by the synthesis engine (default 44100)
-	 * @param outputDevice
-	 *            the device id of the sound card that sound should be played on
+	 * 合成引擎使用的采样率（默认 44100）
+	 *            应播放声音的声卡的设备ID
 	 * @param inputDevice
-	 *            the device id of the sound card from which sound should be
-	 *            captured
+	 *            声音应来自的声卡的设备ID
+	 *            捕获
 	 * @param volume
-	 *            the overall output volume of the library (default 1.0)
+	 *            库的总输出体积（默认1.0 ）
 	 */
 	public Sound(int sampleRate, int outputDevice, int inputDevice, float volume) {
 		this();
@@ -60,21 +60,21 @@ public class Sound {
 	}
 
 	/**
-	 * Print and return information on available audio devices and their number of
+	 * 打印并返回有关可用音频设备及其数量的信息
 	 * input/output channels.
-	 * Under normal circumstances you will not want to call <b>Sound.list()</b> in 
-	 * your actual sketch code, but only for testing to figure out which sound cards 
-	 * are available on a new system and how to select them. However, if the order 
-	 * of devices on your system is prone to fluctuate from reboot to reboot, you 
-	 * can also use the device name array returned by the function to automate device 
-	 * selection by name in your own code.
+	 * 在正常情况下，您不会想调用<b> Sound.list() </b>
+	 * 输入/输出声道。 
+	 * 在新系统上可用，以及如何选择它们。但是，如果订单
+	 * 实际 sketch 代码，而仅用于测试以弄清哪些声卡 
+	 * 你系统上的设备列表容易在重启间波动，你 
+	 * 在您自己的代码中按名称选择。
 	 * 
-	 * @param filter only list audio devices whose device name contains this
-	 * string
-	 * @return an array giving the names of all audio devices available on this
-	 *         computer
-	 * @webref Configuration:Sound
-	 * @webBrief Shows information about available audio devices
+	 * @param filter 仅列出其设备名称包含此内容的音频设备
+	 * 也可使用该函数返回的设备名数组来自动化设备
+	 * 字符串
+	 *         @return 给出此计算机上所有可用音频设备名称的数组
+	 * @ webref配置：声音
+	 * @ webBrief显示有关可用音频设备的信息
 	 */
 	public static String[] list(String filter) {
 		String[] deviceNames = Sound.deviceNames();
@@ -103,7 +103,7 @@ public class Sound {
 	}
 
 	/**
-	 * Helper method for formatting
+	 * 用于格式化的帮助程序方法
 	 */
 	private static int longestDeviceNameLength(int[] deviceIds) {
 		int longestLength = "Output device name".length();
@@ -159,13 +159,13 @@ public class Sound {
 	}
 
 	/**
-	 * Get or set the internal sample rate of the synthesis engine.
+	 * 获取或设置合成引擎的内部采样率。
 	 * 
 	 * @param sampleRate
 	 *            the sample rate to be used by the synthesis engine (default 44100)
-	 * @return the internal sample rate used by the synthesis engine
-	 * @webref Configuration:Sound
-	 * @webBrief Get or set the internal sample rate of the synthesis engine.
+	  * @return 合成引擎所使用的内部采样率
+	 * @ webref配置：声音
+	 * @ webBrief获取或设置合成引擎的内部采样率。
 	 */
 	public static int sampleRate(int sampleRate) {
 		Engine.getEngine().setSampleRate(sampleRate);
@@ -173,17 +173,17 @@ public class Sound {
 	}
 
 	/**
-	 * Choose the device (sound card) which should be used for grabbing audio input
-	 * using AudioIn.  Note that this setting affects the choice of sound card, which 
-	 * is not necessarily the same as the number of the input channel. If your sound 
-	 * card has more than one input channel, you can specify which channel to use in
-	 * the constructor of the AudioIn class.
+	 * 选择应用于获取音频输入的设备（声卡）
+	 * @return 合成引擎使用的内部采样率 
+	 * 不一定与输入通道的数量相同。如果您的声音
+	 * 使用 AudioIn。注意此设置会影响声卡选择，若
+	 * 声卡有多个输入声道，你可在
 	 * 
-	 * @param deviceId
-	 *            the device id obtained from Sound.list()
+	 * AudioIn 类的构造函数中指定使用哪个声道。
+	 *            从Sound.list()获得的设备ID
 	 * @see Sound#list()
-	 * @webref Configuration:Sound
-	 * @webBrief Selects the audio device used for grabbing audio input.
+	 * @ webref配置：声音
+	 * @ webBrief选择用于获取音频输入的音频设备。
 	 */
 	public static int inputDevice(int deviceId) {
 		return Engine.getEngine().selectInputDevice(deviceId);
@@ -194,14 +194,14 @@ public class Sound {
 	}
 
 	/**
-	 * Choose the device (sound card) which the Sound library's audio output should
-	 * be sent to. The output device should support stereo output (2 channels).
+	 * 选择声音库音频输出应使用的设备（声卡）
+	 * 发送到。输出设备应支持立体声输出（2 通道）。
 	 * 
-	 * @param deviceId
-	 *            the device id obtained from Sound.list()
+	 * AudioIn 类的构造函数中指定使用哪个声道。
+	 *            从Sound.list()获得的设备ID
 	 * @see Sound#list()
-	 * @webref Configuration:Sound
-	 * @webBrief Selects which audio device audio output is sent to.
+	 * @ webref配置：声音
+	 * @ webBrief选择将音频输出发送到哪个音频设备。
 	 */
 	public static int outputDevice(int deviceId) {
 		return Engine.getEngine().selectOutputDevice(deviceId);
@@ -220,20 +220,20 @@ public class Sound {
 	}
 
 	/**
-	 * Set the overall output volume of the Processing sound library.
+	 * 发送到。输出设备应支持立体声输出（2 声道）。
 	 *
 	 * @param volume
-	 *            the desired output volume, normally between 0.0 and 1.0 (default
-	 *            is 1.0)
-	 * @webref Configuration:Sound
+	 *            所需的输出体积，通常在0.0到1.0之间（默认值
+	 *            设置 Processing 声音库的总输出音量。
+	 * @ webref配置：声音
 	 */
 	public static void volume(float volume) {
 		Engine.getEngine().setVolume(volume);
 	}
 
 	/**
-	 * Direct access to the underlying JSyn SynthesisEngine object. Use at your 
-	 * own risk.
+	 * 为 1.0） 
+	 * 个人风险
 	 * @see SynthesisEngine
 	 */
 	public static SynthesisEngine getSynthesisEngine() {
@@ -241,11 +241,11 @@ public class Sound {
 	}
 
 	/**
-	 * Prints information about the sound library's current memory and CPU usage 
-	 * to the console.
-	 * @webBrief Prints information about the sound library's current memory and 
-	 * CPU usage
-	 * @webref Configuration:Sound
+	 * 直接访问底层 JSyn SynthesisEngine 对象。自行承担 
+	 * 到控制台。
+	 * 打印声音库当前内存和 CPU 使用情况 
+	 * CPU使用率
+	 * @ webref配置：声音
 	 */
 	public static void status() {
 		SynthesisEngine e = Sound.getSynthesisEngine();

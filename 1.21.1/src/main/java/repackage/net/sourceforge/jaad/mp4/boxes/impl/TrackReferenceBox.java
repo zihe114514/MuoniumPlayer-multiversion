@@ -8,16 +8,14 @@ import java.util.List;
 import repackage.net.sourceforge.jaad.mp4.boxes.BoxImpl;
 
 /**
- * The Track Reference Box provides a reference from the containing track to
- * another track in the presentation. These references are typed. A 'hint'
- * reference links from the containing hint track to the media data that it
- * hints. A content description reference 'cdsc' links a descriptive or
- * metadata track to the content which it describes.
+ * Track Reference Box 提供从所在轨道到放映中另一轨道的引用。
+ * 这些引用是有类型的。'hint' 引用从所在提示轨道链接到它所提示的
+ * 媒体数据。内容描述引用 'cdsc' 将描述性或元数据轨道链接到它所描述的内容。
  *
- * Exactly one Track Reference Box can be contained within the Track Box.
+ * Track Box 内恰好可含一个 Track Reference Box。
  *
- * If this box is not present, the track is not referencing any other track in
- * any way. The reference array is sized to fill the reference type box.
+ * 若不存在此 box，则该轨道不以任何方式引用其他轨道。
+ * 引用数组的大小填满引用类型 box。
  * @author in-somnia
  */
 public class TrackReferenceBox extends BoxImpl {
@@ -40,24 +38,22 @@ public class TrackReferenceBox extends BoxImpl {
 	}
 
 	/**
-	 * The reference type shall be set to one of the following values: 
+	 * 引用类型应设为以下值之一：
 	 * <ul>
-	 * <li>'hint': the referenced track(s) contain the original media for this 
-	 * hint track.</li>
-	 * <li>'cdsc': this track describes the referenced track.</li>
-	 * <li>'hind': this track depends on the referenced hint track, i.e., it 
-	 * should only be used if the referenced hint track is used.</li>
-	 * @return the reference type
+	 * <li>'hint'：被引用轨道包含此提示轨道的原始媒体。</li>
+	 * <li>'cdsc'：此轨道描述被引用轨道。</li>
+	 * <li>'hind'：此轨道依赖被引用的提示轨道，即仅当被引用提示轨道
+	 * 被使用时才应使用它。</li>
+	 * @return 引用类型
 	 */
 	public String getReferenceType() {
 		return referenceType;
 	}
 
 	/**
-	 * The track IDs are integers that provide a reference from the containing
-	 * track to other tracks in the presentation. Track IDs are never re-used
-	 * and cannot be equal to zero.
-	 * @return the track IDs this box refers to
+	 * track ID 为整数，提供从所在轨道到放映中其他轨道的引用。
+	 * 轨道 ID 永不重用，且不能为零。
+	 * @return 此 box 引用的 track ID
 	 */
 	public List<Long> getTrackIDs() {
 		return Collections.unmodifiableList(trackIDs);

@@ -1,7 +1,7 @@
 package repackage.net.sourceforge.jaad.aac.syntax;
 
 /**
- * Scalefactor lookup table
+ * 比例因子查找表
  * @author in-somnia
  */
 interface ScaleFactorTable {

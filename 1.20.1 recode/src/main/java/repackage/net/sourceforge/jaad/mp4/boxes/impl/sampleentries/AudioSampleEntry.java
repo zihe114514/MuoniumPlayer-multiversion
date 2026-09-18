@@ -34,13 +34,13 @@ public class AudioSampleEntry extends SampleEntry {
 	public void decode(MP4InputStream in) throws IOException {
 		super.decode(in);
 
-		in.skipBytes(8); //reserved
+		in.skipBytes(8); //保留
 		channelCount = (int) in.readBytes(2);
 		sampleSize = (int) in.readBytes(2);
-		in.skipBytes(2); //pre-defined: 0
-		in.skipBytes(2); //reserved
+		in.skipBytes(2); //预定义：0
+		in.skipBytes(2); //保留
 		sampleRate = (int) in.readBytes(2);
-		in.skipBytes(2); //not used by samplerate
+		in.skipBytes(2); //samplerate 不使用
 
 		readChildren(in);
 	}

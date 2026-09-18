@@ -23,8 +23,8 @@ import java.io.IOException;
 import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 
 /**
- * The MPEG sample entry is used in MP4 streams other than video, audio and
- * hint. It contains only one <code>ESDBox</code>.
+ * MPEG sample entry 用于视频、音频和提示以外的 MP4 流。
+ * 它只含一个 <code>ESDBox</code>。
  * 
  * @author in-somnia
  */

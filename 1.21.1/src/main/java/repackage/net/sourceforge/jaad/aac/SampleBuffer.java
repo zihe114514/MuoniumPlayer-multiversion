@@ -1,8 +1,8 @@
 package repackage.net.sourceforge.jaad.aac;
 
 /**
- * The SampleBuffer holds the decoded AAC frame. It contains the raw PCM data
- * and its format.
+ * SampleBuffer 保存解码后的 AAC 帧。它包含原始 PCM 数据
+ * 及其格式。
  * @author in-somnia
  */
 public class SampleBuffer {
@@ -21,78 +21,78 @@ public class SampleBuffer {
 	}
 
 	/**
-	 * Returns the buffer's PCM data.
-	 * @return the audio data
+	 * 返回缓冲区的 PCM 数据。
+	 * @return 音频数据
 	 */
 	public byte[] getData() {
 		return data;
 	}
 
 	/**
-	 * Returns the data's sample rate.
-	 * @return the sample rate
+	 * 返回数据的采样率。
+	 * @return 采样率
 	 */
 	public int getSampleRate() {
 		return sampleRate;
 	}
 
 	/**
-	 * Returns the number of channels stored in the data buffer.
-	 * @return the number of channels
+	 * 返回数据缓冲区中存储的声道数量。
+	 * @return 声道数量
 	 */
 	public int getChannels() {
 		return channels;
 	}
 
 	/**
-	 * Returns the number of bits per sample. Usually this is 16, meaning a
-	 * sample is stored in two bytes.
-	 * @return the number of bits per sample
+	 * 返回每个采样的位数。通常为 16，意味着一个
+	 * 采样存储为两个字节。
+	 * @return 每个采样的位数
 	 */
 	public int getBitsPerSample() {
 		return bitsPerSample;
 	}
 
 	/**
-	 * Returns the length of the current frame in seconds.
+	 * 返回当前帧的长度（以秒为单位）。
 	 * length = samplesPerChannel / sampleRate
-	 * @return the length in seconds
+	 * @return 长度，单位为秒
 	 */
 	public double getLength() {
 		return length;
 	}
 
 	/**
-	 * Returns the bitrate of the decoded PCM data.
+	 * 返回解码后 PCM 数据的比特率。
 	 * <code>bitrate = (samplesPerChannel * bitsPerSample) / length</code>
-	 * @return the bitrate
+	 * @return 比特率
 	 */
 	public double getBitrate() {
 		return bitrate;
 	}
 
 	/**
-	 * Returns the AAC bitrate of the current frame.
-	 * @return the AAC bitrate
+	 * 返回当前帧的 AAC 比特率。
+	 * @return AAC 比特率
 	 */
 	public double getEncodedBitrate() {
 		return encodedBitrate;
 	}
 
 	/**
-	 * Indicates the endianness for the data.
+	 * 指明数据的字节序。
 	 * 
-	 * @return true if the data is in big endian, false if it is in little endian
+	 * @return 如果数据为大端序返回 true，小端序返回 false
 	 */
 	public boolean isBigEndian() {
 		return bigEndian;
 	}
 
 	/**
-	 * Sets the endianness for the data.
+	 * 设置数据的字节序。
 	 * 
-	 * @param bigEndian if true the data will be in big endian, else in little 
-	 * endian
+	 * @param bigEndian 如果为 true 数据将为大端序，否则为小端
+	 * 序
 	 */
 	public void setBigEndian(boolean bigEndian) {
 		if(bigEndian!=this.bigEndian) {
@@ -118,7 +118,7 @@ public class SampleBuffer {
 			encodedBitrate = 0;
 		}
 		else {
-			final int bytesPerSample = bitsPerSample/8; //usually 2
+			final int bytesPerSample = bitsPerSample/8; //通常为 2
 			final int samplesPerChannel = data.length/(bytesPerSample*channels); //=1024
 			length = (double) samplesPerChannel/(double) sampleRate;
 			bitrate = (double) (samplesPerChannel*bitsPerSample*channels)/length;

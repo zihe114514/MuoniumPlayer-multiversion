@@ -223,7 +223,7 @@ public final class BeatRootTracker {
                 tolerance, residual, best.phaseScore);
     }
 
-    // ================================================================== Peaks
+    // 波峰
 
     /** 上游 {@code Peaks.min}。 */
     private static double min(double[] data) {

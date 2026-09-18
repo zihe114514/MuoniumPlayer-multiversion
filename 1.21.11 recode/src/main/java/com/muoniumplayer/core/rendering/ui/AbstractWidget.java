@@ -257,11 +257,11 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
         double lineLength = Math.min(8, Math.min(this.getWidth() * .25, this.getHeight() * .25));
         double lineSize = 1;
         int lineColor = reAlpha(0x000090FF, this.getAlpha());
-        // left top
+        // 左上
         Rect.draw(this.getX(), this.getY(), lineLength, lineSize, lineColor);
         Rect.draw(this.getX(), this.getY(), lineSize, lineLength, lineColor);
 
-        // right top
+        // 右上
         Rect.draw(this.getX() + this.getWidth() - lineLength, this.getY(), lineLength, lineSize, lineColor);
         Rect.draw(this.getX() + this.getWidth() - lineSize, this.getY(), lineSize, lineLength, lineColor);
 

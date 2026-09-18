@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  * 
  *     http://www.apache.org/licenses/LICENSE-2.0
  * 
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.unitgen;
@@ -20,15 +20,15 @@ import repackage.com.jsyn.ports.UnitInputPort;
 import repackage.com.jsyn.ports.UnitOutputPort;
 
 /**
- * This unit multiplies its two inputs. <br>
+ * 此单元将其两个输入相乘。<br>
  * 
  * <pre>
  * output = inputA * inputB
  * </pre>
  * 
  * <br>
- * Note that some units have an amplitude port, which controls an internal multiply. So you may not
- * need this unit.
+ * 注意，有些单元有 amplitude 端口，它控制一个内部乘法。因此你可能不必
+ * 需要这个单元。
  * 
  * @author Phil Burk (C) 2009 Mobileer Inc
  * @version 016
@@ -37,13 +37,13 @@ public class Multiply extends UnitBinaryOperator {
     public Multiply() {
     }
 
-    /** Connect a to inputA and b to inputB. */
+    /** 将 a 接到 inputA，b 接到 inputB。 */
     public Multiply(UnitOutputPort a, UnitOutputPort b) {
         a.connect(inputA);
         b.connect(inputB);
     }
 
-    /** Connect a to inputA and b to inputB and connect output to c. */
+    /** 将 a 接到 inputA，b 接到 inputB，并将 output 接到 c。 */
     public Multiply(UnitOutputPort a, UnitOutputPort b, UnitInputPort c) {
         this(a, b);
         output.connect(c);

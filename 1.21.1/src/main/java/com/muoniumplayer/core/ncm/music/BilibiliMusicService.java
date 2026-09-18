@@ -23,9 +23,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Built-in Bilibili source adapter.
+ * 内置的 Bilibili 源适配器。
  *
- * current WBI query requirement, so the source works without asking users for a cookie.</p>
+ * 现行的 WBI 查询签名，因此该源无需向用户索取 cookie 即可工作。</p>
  */
 public final class BilibiliMusicService {
 
@@ -40,7 +40,7 @@ public final class BilibiliMusicService {
     private static final int REQUEST_TIMEOUT_MS = 25_000;
     private static final long WBI_KEY_TTL_MILLIS = 12L * 60L * 60L * 1000L;
 
-    /** Bilibili's public WBI mixin-key permutation. It is stable across key rotations. */
+    /** Bilibili 公开的 WBI mixin-key 排列。它在密钥轮换期间保持稳定。 */
     private static final int[] MIXIN_KEY_ENC_TAB = {
             46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
             27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
@@ -141,7 +141,7 @@ public final class BilibiliMusicService {
                 if (url.isEmpty()) continue;
                 if (fallback == null) fallback = stream;
 
-                // every HE-AAC variant. Prefer AAC-LC before falling back to the first stream.
+                // 所有 HE-AAC 变体。优先选 AAC-LC，再退回第一个流。
                 String codecs = string(stream, "codecs");
                 long bandwidth = longValue(stream, "bandwidth");
                 if (!"mp4a.40.2".equals(codecs)) continue;
@@ -155,8 +155,8 @@ public final class BilibiliMusicService {
             String url = firstNonBlank(string(chosen, "baseUrl"), string(chosen, "base_url"));
             if (url.isEmpty()) throw new IllegalStateException("Bilibili audio stream has no URL");
             long bandwidth = longValue(chosen, "bandwidth");
-            // Bilibili audio-only DASH is fragmented MP4. Returning "mp4" keeps the existing
-            // byte-level detector and AacAudioDecoder in charge of the actual container.
+            // Bilibili 纯音频 DASH 是分片 MP4。返回 "mp4" 可让现有的
+            // 字节级检测器和 AacAudioDecoder 继续负责真实容器。
             return new ResolveResult(url, "mp4", bandwidth);
         } catch (Throwable throwable) {
             System.err.println("[Music/Bilibili] Song URL failed for " + nonBlank(sourceId) + ": "

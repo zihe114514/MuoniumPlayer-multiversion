@@ -5,34 +5,29 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The shadow sync table provides an optional set of sync samples that can be
- * used when seeking or for similar purposes. In normal forward play they are
- * ignored.
+ * shadow sync 表提供一组可选的同步采样，可在跳转（seek）或类似
+ * 场合使用。正常正向播放时忽略它们。
  *
- * Each entry in the ShadowSyncTable consists of a pair of sample numbers. The
- * first entry (shadowed-sample-number) indicates the number of the sample that
- * a shadow sync will be defined for. This should always be a non-sync sample
- * (e.g. a frame difference). The second sample number (sync-sample-number)
- * indicates the sample number of the sync sample (i.e. key frame) that can be
- * used when there is a random access at, or before, the shadowed-sample-number.
+ * ShadowSyncTable 中每个条目由一对采样号组成。
+ * 第一个条目（shadowed-sample-number）指示要为其定义影子同步的采样号。
+ * 它应始终是非同步采样（例如一帧差分）。第二个采样号
+ *（sync-sample-number）指示同步采样（即关键帧）的采样号，
+ * 当在 shadowed-sample-number 处或之前进行随机访问时可使用它。
  *
- * The entries in the ShadowSyncBox shall be sorted based on the
- * shadowed-sample-number field. The shadow sync samples are normally placed in
- * an area of the track that is not presented during normal play (edited out by
- * means of an edit list), though this is not a requirement. The shadow sync
- * table can be ignored and the track will play (and seek) correctly if it is
- * ignored (though perhaps not optimally).
+ * ShadowSyncBox 中的条目应按 shadowed-sample-number 字段排序。
+ * 影子同步采样通常置于轨道中正常播放时不呈现的区域
+ *（通过编辑列表裁掉），但这并非强制要求。
+ * 影子同步表可被忽略，忽略后轨道仍能正确播放（和跳转）
+ *（尽管可能不是最优）。
  *
- * The ShadowSyncSample replaces, not augments, the sample that it shadows (i.e.
- * the next sample sent is shadowed-sample-number+1). The shadow sync sample is
- * treated as if it occurred at the time of the sample it shadows, having the
- * duration of the sample it shadows.
+ * ShadowSyncSample 替换、而非增补它所影子化的采样
+ *（即发送的下一个采样为 shadowed-sample-number+1）。影子同步采样
+ * 被视为发生在其影子化采样的时刻，具有该采样的时长。
  *
- * Hinting and transmission might become more complex if a shadow sample is used
- * also as part of normal playback, or is used more than once as a shadow. In
- * this case the hint track might need separate shadow syncs, all of which can
- * get their media data from the one shadow sync in the media track, to allow
- * for the different time-stamps etc. needed in their headers. 
+ * 若影子采样也用作正常播放的一部分，或被多次用作影子，
+ * 提示与传输可能变得更复杂。这种情况下提示轨道可能需要单独的影子同步，
+ * 它们都可从媒体轨道中的同一个影子同步获取媒体数据，
+ * 以满足其头部所需的不同时间戳等。
  *
  * @author in-somnia
  */
@@ -58,12 +53,11 @@ public class ShadowSyncSampleBox extends FullBox {
 	}
 
 	/**
-	 * A map of sample number pairs:
-	 * 0 (shadowed-sample-number): gives the number of a sample for which there
-	 * is an alternative sync sample.
-	 * 1 (sync-sample-number): gives the number of the alternative sync sample.
+	 * 采样号对的映射：
+	 * 0（shadowed-sample-number）：给出存在替代同步采样的采样号。
+	 * 1（sync-sample-number）：给出替代同步采样的采样号。
 	 *
-	 * @return the sample number pairs
+	 * @return 采样号对
 	 */
 	public long[][] getSampleNumbers() {
 		return sampleNumbers;

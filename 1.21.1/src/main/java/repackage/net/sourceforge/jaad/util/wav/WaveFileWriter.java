@@ -24,7 +24,7 @@ public class WaveFileWriter {
 		bytesWritten = 0;
 
 		out = new RandomAccessFile(output, "rw");
-		out.write(new byte[HEADER_LENGTH]); //space for the header
+		out.write(new byte[HEADER_LENGTH]); //为头留出空间
 	}
 
 	public void write(byte[] data) throws IOException {
@@ -32,7 +32,7 @@ public class WaveFileWriter {
 	}
 
 	public void write(byte[] data, int off, int len) throws IOException {
-		//convert to little endian
+		//转换为小端
 		byte tmp;
 		for(int i = off; i<off+data.length; i += 2) {
 			tmp = data[i+1];
@@ -64,17 +64,17 @@ public class WaveFileWriter {
 		out.seek(0);
 		final int bytesPerSec = (bitsPerSample+7)/8;
 
-		out.writeInt(RIFF); //wave label
-		out.writeInt(Integer.reverseBytes(bytesWritten+36)); //length in bytes without header
+		out.writeInt(RIFF); //wave 标签
+		out.writeInt(Integer.reverseBytes(bytesWritten+36)); //不含头的字节长度
 		out.writeLong(WAVE_FMT);
-		out.writeInt(Integer.reverseBytes(16)); //length of pcm format declaration area
-		out.writeShort(Short.reverseBytes((short) 1)); //is PCM
-		out.writeShort(Short.reverseBytes((short) channels)); //number of channels
-		out.writeInt(Integer.reverseBytes(sampleRate)); //sample rate
-		out.writeInt(Integer.reverseBytes(sampleRate*channels*bytesPerSec)); //bytes per second
-		out.writeShort(Short.reverseBytes((short) (channels*bytesPerSec))); //bytes per sample time
-		out.writeShort(Short.reverseBytes((short) bitsPerSample)); //bits per sample
-		out.writeInt(DATA); //data section label
-		out.writeInt(Integer.reverseBytes(bytesWritten)); //length of raw pcm data in bytes
+		out.writeInt(Integer.reverseBytes(16)); //pcm 格式声明区长度
+		out.writeShort(Short.reverseBytes((short) 1)); //是 PCM
+		out.writeShort(Short.reverseBytes((short) channels)); //声道数
+		out.writeInt(Integer.reverseBytes(sampleRate)); //采样率
+		out.writeInt(Integer.reverseBytes(sampleRate*channels*bytesPerSec)); //每秒字节数
+		out.writeShort(Short.reverseBytes((short) (channels*bytesPerSec))); //每采样时间字节数
+		out.writeShort(Short.reverseBytes((short) bitsPerSample)); //每采样位数
+		out.writeInt(DATA); //数据段标签
+		out.writeInt(Integer.reverseBytes(bytesWritten)); //原始 pcm 数据的字节长度
 	}
 }

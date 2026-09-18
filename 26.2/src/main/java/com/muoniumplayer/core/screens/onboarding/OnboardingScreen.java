@@ -30,8 +30,8 @@ import today.opai.api.features.ExtensionScreen;
 import java.util.List;
 
 /**
- * Standalone first-run surface. Existing player functionality is reused through
- * the account overlay, music service, theme and font configuration systems.
+ * 独立的首次运行界面。既有播放器功能通过
+ * 账号覆盖层、音乐服务、主题和字体配置系统复用。
  */
 public final class OnboardingScreen extends ExtensionScreen
         implements SharedConstants, OnboardingController {
@@ -185,8 +185,8 @@ public final class OnboardingScreen extends ExtensionScreen
         double t = (System.nanoTime() - openedAt) / 1_000_000_000.0;
         double breathe = .5 + .5 * Math.sin(t * .38);
 
-        // Official-site atmosphere: warm brand glow, cool aqua/violet counter-light,
-        // then a restrained 52 px grid which keeps the surface recognisably technical.
+        // 官网氛围：暖色品牌光晕、冷色 aqua/violet 逆光，
+        //然后是克制的 52 px 网格，使界面保持可辨识的技术感。
         OnboardingUi.roundedRect(-width * .18, -height * .34, width * .72, height * .92, height * .46,
                 216, 30, 58, (int) (22 + breathe * 13));
         OnboardingUi.roundedRect(width * .68, -height * .20, width * .48, height * .72, height * .36,
@@ -496,8 +496,8 @@ public final class OnboardingScreen extends ExtensionScreen
     private static double stepScale(double contentWidth, double contentHeight) {
         double available = Math.min(contentWidth / STEP_DESIGN_WIDTH,
                 contentHeight / STEP_DESIGN_HEIGHT);
-        // Below this threshold text becomes illegible. Keep type readable and let the
-        // fixed content viewport clip only on exceptionally small Minecraft windows.
+        // 低于此阈值文字变得不可读。保持字体可读，让
+        //固定内容视口裁剪仅在异常小的 Minecraft 窗口上生效。
         return Math.min(1.0, Math.max(MIN_READABLE_SCALE, available));
     }
 

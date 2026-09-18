@@ -37,7 +37,7 @@ public class BoxFactory implements BoxTypes {
 	private static final Map<Long, String[]> PARAMETER = new HashMap<Long, String[]>();
 
 	static {
-		//classes
+		//类
 		BOX_CLASSES.put(ADDITIONAL_METADATA_CONTAINER_BOX, BoxImpl.class);
 		BOX_CLASSES.put(APPLE_LOSSLESS_BOX, AppleLosslessBox.class);
 		BOX_CLASSES.put(BINARY_XML_BOX, BinaryXMLBox.class);
@@ -239,7 +239,7 @@ public class BoxFactory implements BoxTypes {
 		BOX_CLASSES.put(FAIRPLAY_USER_KEY_BOX, FairPlayDataBox.class);
 		BOX_CLASSES.put(FAIRPLAY_IV_BOX, FairPlayDataBox.class);
 		BOX_CLASSES.put(FAIRPLAY_PRIVATE_KEY_BOX, FairPlayDataBox.class);
-		//parameter
+		//参数
 		PARAMETER.put(ADDITIONAL_METADATA_CONTAINER_BOX, new String[]{"Additional Metadata Container Box"});
 		PARAMETER.put(DATA_INFORMATION_BOX, new String[]{"Data Information Box"});
 		PARAMETER.put(EDIT_BOX, new String[]{"Edit Box"});
@@ -341,7 +341,7 @@ public class BoxFactory implements BoxTypes {
 		if(size==1) size = in.readBytes(8);
 		if(type==EXTENDED_TYPE) in.skipBytes(16);
 
-		//error protection
+		//错误保护
 		if(parent!=null) {
 			final long parentLeft = (parent.getOffset()+parent.getSize())-offset;
 			if(size>parentLeft) throw new IOException("error while decoding box '"+typeToString(type)+"' at offset "+offset+": box too large for parent");
@@ -352,11 +352,11 @@ public class BoxFactory implements BoxTypes {
 		box.setParams(parent, size, type, offset);
 		box.decode(in);
 
-		//if box doesn't contain data it only contains children
+		//如果 box 不含数据，则它只包含子级
 		final Class<?> cl = box.getClass();
 		if(cl==BoxImpl.class||cl==FullBox.class) box.readChildren(in);
 
-		//check bytes left
+		//检查剩余字节
 		final long left = (box.getOffset()+box.getSize())-in.getOffset();
 		if(left>0
 				&&!(box instanceof MediaDataBox)
@@ -364,12 +364,12 @@ public class BoxFactory implements BoxTypes {
 				&&!(box instanceof FreeSpaceBox)) LOGGER.log(Level.INFO, "bytes left after reading box {0}: left: {1}, offset: {2}", new Object[]{typeToString(type), left, in.getOffset()});
 		else if(left<0) LOGGER.log(Level.SEVERE, "box {0} overread: {1} bytes, offset: {2}", new Object[]{typeToString(type), -left, in.getOffset()});
 
-		//if mdat found and no random access, don't skip
+		//如果找到 mdat 且无随机访问，不要跳过
 		if(box.getType()!=MEDIA_DATA_BOX||in.hasRandomAccess()) in.skipBytes(left);
 		return box;
 	}
 
-	//TODO: remove usages
+	//TODO: 移除用法
 	public static Box parseBox(MP4InputStream in, Class<? extends BoxImpl> boxClass) throws IOException {
 		final long offset = in.getOffset();
 

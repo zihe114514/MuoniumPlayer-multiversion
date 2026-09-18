@@ -3,7 +3,7 @@ package com.muoniumplayer.core.screens.onboarding;
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 
-/** Single entry point for the player-opening decision. */
+/** 播放器开启决策的唯一入口。 */
 public final class OnboardingManager implements SharedConstants {
     private OnboardingManager() {
     }
@@ -26,8 +26,8 @@ public final class OnboardingManager implements SharedConstants {
     }
 
     public static void skip(OnboardingScreen screen) {
-        // Skipping is an explicit opt-out from first-run setup. The existing settings
-        // and account entry points remain available from the regular player UI.
+        // 跳过是对首次运行设置的显式 opt-out。既有设置
+        //和账号入口仍可从普通播放器 UI 访问。
         OnboardingState.markCompleted();
         api.displayScreen(NCMScreen.getInstance());
     }

@@ -1,94 +1,94 @@
 /*
  * Copyright 2010 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  * 
  *     http://www.apache.org/licenses/LICENSE-2.0
  * 
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.devices;
 
 /**
- * Interface for an audio system. This may be implemented using JavaSound, or a native device
- * wrapper.
+ * 音频系统的接口。这可以使用JavaSound或本机设备实现
+ * 包裹
  * 
  * @author Phil Burk (C) 2010 Mobileer Inc
  */
 public interface AudioDeviceManager {
     /**
-     * Pass this value to the start method to request the default device ID.
+     * 将此值传递给start方法以请求默认设备ID。
      */
     int USE_DEFAULT_DEVICE = -1;
 
     /**
-     * @return The number of devices available.
+     * @return 可用设备的数量。
      */
     int getDeviceCount();
 
     /**
-     * Get the name of an audio device.
+     * 获取音频设备的名称。
      * 
-     * @param deviceID An index between 0 to deviceCount-1.
-     * @return A name that can be shown to the user.
+     * @param deviceID 取值在 0 到 deviceCount-1 之间的索引。
+     * @return 可向用户显示的名称。
      */
     String getDeviceName(int deviceID);
 
     /**
-     * @return A name of the device manager that can be shown to the user.
+     * @return 可显示给用户的设备管理器名称。
      */
     String getName();
 
     /**
-     * The user can generally select a default device using a control panel that is part of the
-     * operating system.
+     * 用户通常可以使用控制面板选择默认设备，该控制面板是
+     * 操作系统。
      * 
-     * @return The ID for the input device that the user has selected as the default.
+     * @return 用户选择为默认的输入设备的ID。
      */
     int getDefaultInputDeviceID();
 
     /**
-     * The user can generally select a default device using a control panel that is part of the
-     * operating system.
+     * 用户通常可以使用控制面板选择默认设备，该控制面板是
+     * 操作系统。
      * 
-     * @return The ID for the output device that the user has selected as the default.
+     * @return 用户默认选择的输出设备的ID。
      */
     int getDefaultOutputDeviceID();
 
     /**
      * @param deviceID
-     * @return The maximum number of channels that the device will support.
+     * @return 该设备支持的最大声道数。
      */
     int getMaxInputChannels(int deviceID);
 
     /**
-     * @param deviceID An index between 0 to numDevices-1.
-     * @return The maximum number of channels that the device will support.
+     * @param deviceID 介于0和numDevices-1之间的索引。
+     * @return 该设备支持的最大声道数。
      */
     int getMaxOutputChannels(int deviceID);
 
     /**
-     * This the lowest latency that the device can support reliably. It should be used for
-     * applications that require low latency such as live processing of guitar signals.
+     * 这是设备能够可靠支持的最低延迟。它应该用于
+     * 要求低延迟的应用，例如吉他信号的实时处理。
      * 
-     * @param deviceID An index between 0 to numDevices-1.
-     * @return Latency in seconds.
+     * @param deviceID 介于0和numDevices-1之间的索引。
+     * @return 延迟（以秒为单位）。
      */
     double getDefaultLowInputLatency(int deviceID);
 
     /**
-     * This the highest latency that the device can support. High latency is recommended for
-     * applications that are not time critical, such as recording.
+     * 这是设备可支持的最高延迟。建议将高延迟用于
+     * 非时间敏感的应用，例如录音。
      * 
-     * @param deviceID An index between 0 to numDevices-1.
-     * @return Latency in seconds.
+     * @param deviceID 介于0和numDevices-1之间的索引。
+     * @return 延迟（以秒为单位）。
      */
     double getDefaultHighInputLatency(int deviceID);
 
@@ -97,23 +97,23 @@ public interface AudioDeviceManager {
     double getDefaultHighOutputLatency(int deviceID);
 
     /**
-     * Set latency in seconds for the audio device. If set to zero then the DefaultLowLatency value
-     * for the device will be used. This is just a suggestion that will be used when the
-     * AudioDeviceInputStream is started.
+     * 设置音频设备的延迟（以秒为单位）。如果设置为零，则DefaultLowLatency值
+     * 将使用该设备。这只是一个建议，当
+     * AudioDeviceInputStream已启动。
      **/
     int setSuggestedInputLatency(double latency);
 
     int setSuggestedOutputLatency(double latency);
 
     /**
-     * Create a stream that can be used internally by JSyn for outputting audio data. Applications
-     * should not call this directly.
+     * 创建JSyn内部可用于输出音频数据的流。应用程序
+     * 不应该直接调用这个。
      */
     AudioDeviceOutputStream createOutputStream(int deviceID, int frameRate, int numOutputChannels);
 
     /**
-     * Create a stream that can be used internally by JSyn for acquiring audio input data.
-     * Applications should not call this directly.
+     * 创建JSyn内部可用于获取音频输入数据的流。
+     * 应用程序不应直接调用此方法。
      */
     AudioDeviceInputStream createInputStream(int deviceID, int frameRate, int numInputChannels);
 

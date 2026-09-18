@@ -6,8 +6,7 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The video media header contains general presentation information, independent
- * of the coding, for video media
+ * 视频媒体头包含与编码无关的、用于视频媒体的通用放映信息
  * @author in-somnia
  */
 public class VideoMediaHeaderBox extends FullBox {
@@ -24,7 +23,7 @@ public class VideoMediaHeaderBox extends FullBox {
 		super.decode(in);
 
 		graphicsMode = in.readBytes(2);
-		//6 byte RGB color
+		//6 字节 RGB 颜色
 		final int[] c = new int[3];
 		for(int i = 0; i<3; i++) {
 			c[i] = (in.read()&0xFF)|((in.read()<<8)&0xFF);
@@ -33,16 +32,16 @@ public class VideoMediaHeaderBox extends FullBox {
 	}
 
 	/**
-	 * The graphics mode specifies a composition mode for this video track.
-	 * Currently, only one mode is defined:
-	 * '0': copy over the existing image
+	 * graphics mode 指定此视频轨道的合成模式。
+	 * 目前只定义了一种模式：
+	 * '0'：覆盖到已有图像之上
 	 */
 	public long getGraphicsMode() {
 		return graphicsMode;
 	}
 
 	/**
-	 * A color available for use by graphics modes.
+	 * graphics mode 可使用的一种颜色。
 	 */
 	public Color getColor() {
 		return color;

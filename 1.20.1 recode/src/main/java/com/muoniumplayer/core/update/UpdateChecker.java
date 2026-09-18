@@ -61,24 +61,20 @@ public final class UpdateChecker {
      * —— 见 {@link #fetchEntry()} 与 {@link #pickNewest}。
      *
      * <p>为什么不是「第一个成功就用」：各源的缓存策略不一样，同一时刻可能一个给新清单、
-     * 一个给几小时前的旧清单（jsDelivr 对 {@code @main} 这种 branch 引用是 12 小时）。
-     * 又因为每一次谁快谁慢都可能变，所以「谁先答」并不能代表「谁的新」—— 全部试一遍取最高的，
-     * 才不会因为恰好先问到了缓存源而漏掉新版本。</p>
+     * 一个给几小时前的旧清单。又因为每一次谁快谁慢都可能变，所以「谁先答」并不能代表「谁的新」
+     * —— 全部试一遍取最高的，才不会因为恰好先问到了缓存源而漏掉新版本。</p>
      *
-     * <p>五个都实测过（curl 直连，本机在国内，2026-09-15）：cdn.jsdmirror.com 约 2.2s、
-     * ghfast.top 约 2.4s、raw 约 1.0s、cdn.jsdelivr.net 约 2.0s、gcore.jsdelivr.net 约 1.3s。
-     * raw 在部分网络下不可达（实测一小时之内会从「秒回」变成「连续超时」），所以必须有加速入口兜底。
-     * 顺序现在只决定「版本号相同时用谁那一条」，不再决定取到哪个版本。</p>
+     * <p>三个都实测过（curl 直连，本机在国内）：ghfast.top 约 2.4s、raw 约 1.0s、
+     * gcore.jsdelivr.net 约 1.3s。raw 在部分网络下不可达（实测一小时之内会从「秒回」变成
+     * 「连续超时」），所以必须有加速入口兜底。顺序现在只决定「版本号相同时用谁那一条」，
+     * 不再决定取到哪个版本。</p>
      *
-     * <p>{@code cdn.jsdmirror.com} 与 {@code ghfast.top} 都是 raw 的加速入口，响应头里的
-     * {@code Cache-Control} 是 {@code max-age=300}（5 分钟），比 jsDelivr 的 12 小时新得多，
-     * 所以排在最前面。</p>
+     * <p>{@code ghfast.top} 是 raw 的加速入口，响应头里的 {@code Cache-Control} 是
+     * {@code max-age=300}（5 分钟），比 jsDelivr 的 12 小时新得多，所以排在最前面。</p>
      */
     public static final String[] MANIFEST_URLS = {
-            "https://cdn.jsdmirror.com/gh/zihe114514/MuoniumPlayer-updates@main/update.json",
             "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/update.json",
             "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/update.json",
-            "https://cdn.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/update.json",
             "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/update.json",
     };
 
@@ -124,18 +120,18 @@ public final class UpdateChecker {
     /**
      * 【临时调试开关】强制把一个界面顶出来看效果，看完必须改回 {@code OFF}。
      *
-     * <p>清单里的版本号目前比本地旧（远端 1.4.9 / 本地 1.4.11），走真实链路根本弹不出来，
+     * <p>清单里的版本号目前比本地旧（远端 1.4.9 / 本地 1.4.12），走真实链路根本弹不出来，
      * 所以调试期直接指定要预览哪一套界面：</p>
      * <ul>
      *   <li>{@code OFF} —— 正常逻辑，只有这一个值是发布状态；</li>
      *   <li>{@code OUTDATED} —— 预览「有新版本」那一套（内容取 {@link #previewEntry()}，
-     *       版本号写死 1.4.12，断网也能稳定复现；可以连点三次「跳过」看锁死效果）；</li>
+     *       版本号写死 1.4.13，断网也能稳定复现；可以连点三次「跳过」看锁死效果）；</li>
      *   <li>{@code FAILED} —— 预览「连不上服务器」那一套（不联网，直接进失败状态）。</li>
      * </ul>
      *
      * <p>调试状态下检查线程不联网、失败计数也不写盘。注意 {@code OUTDATED} 预览会真的把
      * 额度用掉：测完请把 {@code config/muonium/update_notice.json} 删掉，否则里面记的
-     * {@code skipCountVersion=1.4.12} 会让以后真发 1.4.12 时的额度从 0 开始 ——
+     * {@code skipCountVersion=1.4.13} 会让以后真发 1.4.13 时的额度从 0 开始 ——
      * 用户一看到提示就是锁死状态。</p>
      */
     private enum Preview { OFF, OUTDATED, FAILED }
@@ -535,7 +531,7 @@ public final class UpdateChecker {
     /**
      * 把<b>全部</b>清单源同时拉一遍，然后取版本号最高的那一份。
      *
-     * <p>并发而不是排队：五个源串起来最坏要等 5 × 10 秒，并发只需要等最慢的那一个
+     * <p>并发而不是排队：三个源串起来最坏要等 3 × 10 秒，并发只需要等最慢的那一个
      * （实测约 2.4 秒）。等不齐也没关系——等不到的那个源按「这次不可用」处理，其它源的结果照用。
      * 工作线程与检查线程都是守护线程，到点收工也不会挡住游戏退出。</p>
      */
@@ -674,7 +670,7 @@ public final class UpdateChecker {
     /** 调试开关打开时用的演示条目：版本号故意比当前高一档，保证界面进入「有更新」的分支。 */
     private static UpdateManifest.Entry previewEntry() {
         return new UpdateManifest.Entry(
-                "1.4.12",
+                "1.4.13",
                 DOWNLOAD_PAGE,
                 "新增：重写 ffmpeg 缺失提示与更新提示的界面渲染；"
                         + "修复：界面文字因宽度上限被裁成空串而整行不显示；"

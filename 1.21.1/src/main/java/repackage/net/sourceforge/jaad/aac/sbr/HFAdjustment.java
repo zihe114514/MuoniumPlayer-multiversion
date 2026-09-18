@@ -47,8 +47,8 @@ class HFAdjustment implements Constants, NoiseTable {
 
 	private static int get_S_mapped(SBR sbr, int ch, int l, int current_band) {
 		if(sbr.f[ch][l]==HI_RES) {
-			/* in case of using f_table_high we just have 1 to 1 mapping
-			 * from bs_add_harmonic[l][k]
+			/* 若使用 f_table_high，我们只进行从 bs_add_harmonic[l][k]
+			 * 的一一映射
 			 */
 			if((l>=sbr.l_A[ch])
 				||(sbr.bs_add_harmonic_prev[ch][current_band]!=0&&sbr.bs_add_harmonic_flag_prev[ch])) {
@@ -58,18 +58,18 @@ class HFAdjustment implements Constants, NoiseTable {
 		else {
 			int b, lb, ub;
 
-			/* in case of f_table_low we check if any of the HI_RES bands
-			 * within this LO_RES band has bs_add_harmonic[l][k] turned on
-			 * (note that borders in the LO_RES table are also present in
-			 * the HI_RES table)
+			/* 若使用 f_table_low，则检查此 LO_RES 频带内是否有任何 HI_RES 频带
+			 * 开启了 bs_add_harmonic[l][k]
+			 *（注意 LO_RES 表中的边界也存在于
+			 * HI_RES 表中）
 			 */
 
-			/* find first HI_RES band in current LO_RES band */
+			/* 在当前 LO_RES 频带中查找第一个 HI_RES 频带 */
 			lb = 2*current_band-((sbr.N_high&1)!=0 ? 1 : 0);
-			/* find first HI_RES band in next LO_RES band */
+			/* 在下一个 LO_RES 频带中查找第一个 HI_RES 频带 */
 			ub = 2*(current_band+1)-((sbr.N_high&1)!=0 ? 1 : 0);
 
-			/* check all HI_RES bands in current LO_RES band for sinusoid */
+			/* 检查当前 LO_RES 频带内的所有 HI_RES 频带是否存在正弦波 */
 			for(b = lb; b<ub; b++) {
 				if((l>=sbr.l_A[ch])
 					||(sbr.bs_add_harmonic_prev[ch][b]!=0&&sbr.bs_add_harmonic_flag_prev[ch])) {
@@ -177,13 +177,13 @@ class HFAdjustment implements Constants, NoiseTable {
 					System.arraycopy(adj.G_lim_boost[l], 0, sbr.G_temp_prev[ch][n], 0, sbr.M);
 					System.arraycopy(adj.Q_M_lim_boost[l], 0, sbr.Q_temp_prev[ch][n], 0, sbr.M);
 				}
-				/* reset ringbuffer index */
+				/* 重置环形缓冲区索引 */
 				sbr.GQ_ringbuf_index[ch] = 4;
 				assembly_reset = false;
 			}
 
 			for(i = sbr.t_E[ch][l]; i<sbr.t_E[ch][l+1]; i++) {
-				/* load new values into ringbuffer */
+				/* 将新值加载到环形缓冲区 */
 				System.arraycopy(adj.G_lim_boost[l], 0, sbr.G_temp_prev[ch][sbr.GQ_ringbuf_index[ch]], 0, sbr.M);
 				System.arraycopy(adj.Q_M_lim_boost[l], 0, sbr.Q_temp_prev[ch][sbr.GQ_ringbuf_index[ch]], 0, sbr.M);
 
@@ -211,11 +211,11 @@ class HFAdjustment implements Constants, NoiseTable {
 
 					Q_filt = (adj.S_M_boost[l][m]!=0||no_noise) ? 0 : Q_filt;
 
-					/* add noise to the output */
+					/* 向输出添加噪声 */
 					fIndexNoise = (fIndexNoise+1)&511;
 
-					/* the smoothed gain values are applied to Xsbr */
-					/* V is defined, not calculated */
+					/* 平滑后的增益值应用于 Xsbr */
+					/* V 是定义出来的，而非计算出来的 */
 					Xsbr[i+sbr.tHFAdj][m+sbr.kx][0] = G_filt*Xsbr[i+sbr.tHFAdj][m+sbr.kx][0]
 						+(Q_filt*NOISE_TABLE[fIndexNoise][0]);
 					if(sbr.bs_extension_id==3&&sbr.bs_extension_data==42)
@@ -235,7 +235,7 @@ class HFAdjustment implements Constants, NoiseTable {
 
 				fIndexSine = (fIndexSine+1)&3;
 
-				/* update the ringbuffer index used for filtering G and Q with h_smooth */
+				/* 更新用于以 h_smooth 对 G 和 Q 进行滤波的环形缓冲区索引 */
 				sbr.GQ_ringbuf_index[ch]++;
 				if(sbr.GQ_ringbuf_index[ch]>=5)
 					sbr.GQ_ringbuf_index[ch] = 0;
@@ -284,7 +284,7 @@ class HFAdjustment implements Constants, NoiseTable {
 				ml2 = sbr.f_table_lim[sbr.bs_limiter_bands][k+1];
 
 
-				/* calculate the accumulated E_orig and E_curr over the limiter band */
+				/* 计算在限制器频带上累加的 E_orig 和 E_curr */
 				for(m = ml1; m<ml2; m++) {
 					if((m+sbr.kx)==sbr.f_table_res[sbr.f[ch][l]][current_res_band+1]) {
 						current_res_band++;
@@ -294,9 +294,9 @@ class HFAdjustment implements Constants, NoiseTable {
 				}
 
 
-				/* calculate the maximum gain */
-				/* ratio of the energy of the original signal and the energy
-				 * of the HF generated signal
+				/* 计算最大增益 */
+				/* 原始信号能量与高频生成信号能量之比
+				 * 的能量比
 				 */
 				G_max = ((EPS+acc1)/(EPS+acc2))*limGain[sbr.bs_limiter_gains];
 				G_max = Math.min(G_max, 1e10f);
@@ -307,40 +307,39 @@ class HFAdjustment implements Constants, NoiseTable {
 					int S_index_mapped;
 
 
-					/* check if m is on a noise band border */
+					/* 检查 m 是否位于噪声频带边界 */
 					if((m+sbr.kx)==sbr.f_table_noise[current_f_noise_band+1]) {
-						/* step to next noise band */
+						/* 步进到下一个噪声频带 */
 						current_f_noise_band++;
 					}
 
 
-					/* check if m is on a resolution band border */
+					/* 检查 m 是否位于分辨率频带边界 */
 					if((m+sbr.kx)==sbr.f_table_res[sbr.f[ch][l]][current_res_band2+1]) {
-						/* step to next resolution band */
+						/* 步进到下一个分辨率频带 */
 						current_res_band2++;
 
-						/* if we move to a new resolution band, we should check if we are
-						 * going to add a sinusoid in this band
-						 */
+						/* 如果我们移动到新的分辨率频带，应当检查是否
+					 * 要在此频带中添加正弦波
+					 */
 						S_mapped = get_S_mapped(sbr, ch, l, current_res_band2);
 					}
 
 
-					/* check if m is on a HI_RES band border */
+					/* 检查 m 是否位于 HI_RES 频带边界 */
 					if((m+sbr.kx)==sbr.f_table_res[HI_RES][current_hi_res_band+1]) {
-						/* step to next HI_RES band */
+						/* 步进到下一个 HI_RES 频带 */
 						current_hi_res_band++;
 					}
 
 
-					/* find S_index_mapped
-					 * S_index_mapped can only be 1 for the m in the middle of the
-					 * current HI_RES band
+					/* 查找 S_index_mapped
+					 * 对于位于当前 HI_RES 频带中间的 m，S_index_mapped 才可能为 1
 					 */
 					S_index_mapped = 0;
 					if((l>=sbr.l_A[ch])
 						||(sbr.bs_add_harmonic_prev[ch][current_hi_res_band]!=0&&sbr.bs_add_harmonic_flag_prev[ch])) {
-						/* find the middle subband of the HI_RES frequency band */
+						/* 查找 HI_RES 频带的中间子带 */
 						if((m+sbr.kx)==(sbr.f_table_res[HI_RES][current_hi_res_band+1]+sbr.f_table_res[HI_RES][current_hi_res_band])>>1)
 							S_index_mapped = sbr.bs_add_harmonic[ch][current_hi_res_band];
 					}
@@ -354,15 +353,15 @@ class HFAdjustment implements Constants, NoiseTable {
 					Q_div2 = sbr.Q_div2[ch][current_f_noise_band][current_t_noise_band];
 
 
-					/* Q_M only depends on E_orig and Q_div2:
-					 * since N_Q <= N_Low <= N_High we only need to recalculate Q_M on
-					 * a change of current noise band
+					/* Q_M 仅取决于 E_orig 和 Q_div2：
+					 * 由于 N_Q <= N_Low <= N_High，我们只需在当前噪声频带
+					 * 改变时重新计算 Q_M
 					 */
 					Q_M = sbr.E_orig[ch][current_res_band2][l]*Q_div2;
 
 
-					/* S_M only depends on E_orig, Q_div and S_index_mapped:
-					 * S_index_mapped can only be non-zero once per HI_RES band
+					/* S_M 仅取决于 E_orig、Q_div 和 S_index_mapped：
+					 * 每个 HI_RES 频带中 S_index_mapped 仅可能非零一次
 					 */
 					if(S_index_mapped==0) {
 						S_M[m] = 0;
@@ -370,14 +369,14 @@ class HFAdjustment implements Constants, NoiseTable {
 					else {
 						S_M[m] = sbr.E_orig[ch][current_res_band2][l]*Q_div;
 
-						/* accumulate sinusoid part of the total energy */
+						/* 累加总能量中的正弦波部分 */
 						den += S_M[m];
 					}
 
 
-					/* calculate gain */
-					/* ratio of the energy of the original signal and the energy
-					 * of the HF generated signal
+					/* 计算增益 */
+					/* 原始信号能量与高频生成信号能量之比
+					 * 的能量比
 					 */
 					G = sbr.E_orig[ch][current_res_band2][l]/(1.0f+sbr.E_curr[ch][m][l]);
 					if((S_mapped==0)&&(delta==1))
@@ -386,8 +385,8 @@ class HFAdjustment implements Constants, NoiseTable {
 						G *= Q_div2;
 
 
-					/* limit the additional noise energy level */
-					/* and apply the limiter */
+					/* 限制附加噪声能量电平 */
+					/* 并应用限制器 */
 					if(G_max>G) {
 						Q_M_lim[m] = Q_M;
 						G_lim[m] = G;
@@ -398,7 +397,7 @@ class HFAdjustment implements Constants, NoiseTable {
 					}
 
 
-					/* accumulate the total energy */
+					/* 累加总能量 */
 					den += sbr.E_curr[ch][m][l]*G_lim[m];
 					if((S_index_mapped==0)&&(l!=sbr.l_A[ch]))
 						den += Q_M_lim[m];
@@ -409,7 +408,7 @@ class HFAdjustment implements Constants, NoiseTable {
 				G_boost = Math.min(G_boost, 2.51188643f /* 1.584893192 ^ 2 */);
 
 				for(m = ml1; m<ml2; m++) {
-					/* apply compensation to gain, noise floor sf's and sinusoid levels */
+					/* 对增益、噪声底比例因子和正弦波电平应用补偿 */
 					adj.G_lim_boost[l][m] = (float) Math.sqrt(G_lim[m]*G_boost);
 					adj.Q_M_lim_boost[l][m] = (float) Math.sqrt(Q_M_lim[m]*G_boost);
 

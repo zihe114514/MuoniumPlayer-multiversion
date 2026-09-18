@@ -5,26 +5,25 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The item information box provides extra information about selected items,
- * including symbolic ('file') names. It may optionally occur, but if it does,
- * it must be interpreted, as item protection or content encoding may have
- * changed the format of the data in the item. If both content encoding and
- * protection are indicated for an item, a reader should first un-protect the
- * item, and then decode the item's content encoding. If more control is needed,
- * an IPMP sequence code may be used.
+ * item information box 提供关于所选条目的额外信息，
+ * 包括符号化的（'file'）名称。它可选用，但若出现，
+ * 必须加以解释，因为条目保护或内容编码可能已
+ * 改变了条目中数据的格式。若某条目同时指示内容编码和
+ * 保护，读取者应先解除该条目的保护，
+ * 再解码其内容编码。若需要更多控制，
+ * 可使用 IPMP 序列码。
  *
- * This box contains an array of entries, and each entry is formatted as a box.
- * This array is sorted by increasing item ID in the entry records.
+ * 此 box 包含一个条目数组，每个条目格式为一个 box。
+ * 该数组按条目记录中递增的 item ID 排序。
  *
- * Two versions of the item info entry are defined. Version 1 includes
- * additional information to version 0 as specified by an extension type. For
- * instance, it shall be used with extension type 'fdel' for items that are
- * referenced by the file partition box ('fpar'), which is defined for source
- * file partitionings and applies to file delivery transmissions.
+ * 定义了两个版本的 item info 条目。版本 1 在版本 0 基础上
+ * 增加了由扩展类型指定的信息。例如，对于由文件分区 box（'fpar'）
+ * 引用的条目，应与扩展类型 'fdel' 一起使用；'fpar' 为源
+ * 文件分区定义，适用于文件交付传输。
  *
- * If no extension is desired, the box may terminate without the extension type
- * field and the extension; if, in addition, content encoding is not desired,
- * that field also may be absent and the box terminate before it.
+ * 若不需要扩展，该 box 可在扩展类型字段和扩展之前终止；
+ * 此外若不需要内容编码，该字段也可缺省，
+ * 而 box 在其之前终止。
  *
  * @author in-somnia
  */

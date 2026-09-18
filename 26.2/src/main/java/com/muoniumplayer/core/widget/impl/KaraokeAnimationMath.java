@@ -4,10 +4,10 @@ import com.muoniumplayer.core.screens.ncm.LyricLine;
 import com.muoniumplayer.core.utils.math.Mth;
 
 /**
- * Stateless easing and progress calculations shared by the OSD KTV renderer.
+ * 供 OSD KTV 渲染器共享的无状态缓动与进度计算。
  *
- * <p>Keeping this math separate prevents rendering-state changes from altering
- * the configured karaoke timing curve.</p>
+ * <p>将这些数学计算独立出来，可防止渲染状态的改变影响
+ * 已配置的卡拉 OK 计时曲线。</p>
  */
 final class KaraokeAnimationMath {
 

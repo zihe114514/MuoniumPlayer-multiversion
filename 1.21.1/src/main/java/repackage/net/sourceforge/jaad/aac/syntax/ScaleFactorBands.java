@@ -2,8 +2,8 @@ package repackage.net.sourceforge.jaad.aac.syntax;
 
 interface ScaleFactorBands {
 
-	/* scalefactor-band tables end with -1, so that an error can be detected
-	by index[i+1] without an exception */
+	/* 比例因子频带表以 -1 结尾，以便在索引处检测错误
+	 * 通过 index[i+1] 而无需抛出异常 */
 	int[] SWB_LONG_WINDOW_COUNT = {
 		41, 41, 47, 49, 49, 51, 47, 47, 43, 43, 43, 40
 	};

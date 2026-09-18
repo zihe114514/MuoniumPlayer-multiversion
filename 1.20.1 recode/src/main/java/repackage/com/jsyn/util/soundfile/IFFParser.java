@@ -1,17 +1,17 @@
 /*
- * Copyright 1997 Phil Burk, Mobileer Inc
+ * 版权所有1997 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.util.soundfile;
@@ -22,10 +22,10 @@ import java.io.IOException;
 import java.io.InputStream;
 
 /**
- * Parse Electronic Arts style IFF File. IFF is a file format that allows "chunks" of data to be
- * placed in a hierarchical file. It was designed by Jerry Morrison at Electronic Arts for the Amiga
- * computer and is now used extensively by Apple Computer and other companies. IFF is an open
- * standard.
+ * 解析Electronic Arts风格的IFF文件。IFF是一种文件格式，允许“块”数据
+ * 放置在分层文件中。它是由Electronic Arts的Jerry Morrison为Amiga设计的
+ * 计算机，现被 Apple Computer 及其他公司广泛使用。IFF 是一种开放
+ * 这不会是标准SWATH。
  *
  * @see RIFFParser
  * @see AudioSampleAIFF
@@ -49,46 +49,46 @@ public class IFFParser extends FilterInputStream {
     }
 
     /**
-     * Size of file based on outermost chunk size plus 8. Can be used to report progress when
-     * loading samples.
+     * 基于最外层块大小加 8 得到的文件大小。可用于在
+     * 加载采样时报告进度。
      *
-     * @return Number of bytes in outer chunk plus header.
+     * @return 外块加标头中的字节数。
      */
     public long getFileSize() {
         return totalSize;
     }
 
     /**
-     * Since IFF files use chunks with explicit size, it is important to keep track of how many
-     * bytes have been read from the file. Can be used to report progress when loading samples.
+     * 由于IFF文件使用显式大小的块，因此跟踪
+     * 已从文件中读取字节。加载样品时可用于报告进度。
      *
-     * @return Number of bytes read from stream, or skipped.
+     * @return 从流读取的字节数，或跳过的字节数。
      */
     public long getOffset() {
         return numBytesRead;
     }
 
-    /** @return Next byte from stream. Increment offset by 1. */
+    /** @return 来自流的下一个字节。增量偏移1。*/
     @Override
     public int read() throws IOException {
         numBytesRead++;
         return super.read();
     }
 
-    /** @return Next byte array from stream. Increment offset by len. */
+    /** @return 来自流的下一个字节数组。增量被镜头偏移。*/
     @Override
     public int read(byte[] bar) throws IOException {
         return read(bar, 0, bar.length);
     }
 
-    /** @return Next byte array from stream. Increment offset by len. */
+    /** @return 来自流的下一个字节数组。增量被镜头偏移。*/
     @Override
     public int read(byte[] bar, int off, int len) throws IOException {
-        // Reading from a URL can return before all the bytes are available.
-        // So we keep reading until we get the whole thing.
+        // 从URL读取可以在所有字节可用之前返回。
+        // 所以我们继续阅读，直到我们得到全部内容。
         int cursor = off;
         int numLeft = len;
-        // keep reading data until we get it all
+        // 继续读取数据，直到我们获得所有数据
         while (numLeft > 0) {
             int numRead = super.read(bar, cursor, numLeft);
             if (numRead < 0)
@@ -102,14 +102,14 @@ public class IFFParser extends FilterInputStream {
         return cursor - off;
     }
 
-    /** @return Skip forward in stream and add numBytes to offset. */
+    /** @return 在流中向前跳过，并在偏移量中添加numBytes。*/
     @Override
     public long skip(long numBytes) throws IOException {
         numBytesRead += numBytes;
         return super.skip(numBytes);
     }
 
-    /** Read 32 bit signed integer assuming Big Endian byte order. */
+    /** 读取假设大端字节顺序的32位有符号整数。*/
     public int readIntBig() throws IOException {
         int result = read() & 0xFF;
         result = (result << 8) | (read() & 0xFF);
@@ -121,7 +121,7 @@ public class IFFParser extends FilterInputStream {
         return result;
     }
 
-    /** Read 32 bit signed integer assuming Little Endian byte order. */
+    /** 按小端字节序读取 32 位有符号整数。 */
     public int readIntLittle() throws IOException {
         int result = read() & 0xFF; // LSB
         result |= ((read() & 0xFF) << 8);
@@ -134,7 +134,7 @@ public class IFFParser extends FilterInputStream {
         return result;
     }
 
-    /** Read 16 bit signed short assuming Big Endian byte order. */
+    /** 按大端字节序读取 16 位有符号 short。 */
     public short readShortBig() throws IOException {
         short result = (short) ((read() << 8)); // MSB
         int data = read();
@@ -145,7 +145,7 @@ public class IFFParser extends FilterInputStream {
         return result;
     }
 
-    /** Read 16 bit signed short assuming Little Endian byte order. */
+    /** 假设Little Endian字节顺序，读取16位有符号短码。*/
     public short readShortLittle() throws IOException {
         short result = (short) (read() & 0xFF); // LSB
         int data = read(); // MSB
@@ -160,12 +160,12 @@ public class IFFParser extends FilterInputStream {
         return (readShortLittle()) & 0x0000FFFF;
     }
 
-    /** Read 8 bit signed byte. */
+    /** 读取8位带符号字节。*/
     public byte readByte() throws IOException {
         return (byte) read();
     }
 
-    /** Read 32 bit signed int assuming IFF order. */
+    /** 假设IFF顺序，读取32位有符号int。*/
     public int readChunkSize() throws IOException {
         if (isRIFF()) {
             return readIntLittle();
@@ -175,7 +175,7 @@ public class IFFParser extends FilterInputStream {
         }
     }
 
-    /** Convert a 4 character IFF ID to a String */
+    /** 将4个字符的IFF ID转换为字符串*/
     public static String IDToString(int ID) {
         byte[] bar = new byte[4];
         bar[0] = (byte) (ID >> 24);
@@ -186,7 +186,7 @@ public class IFFParser extends FilterInputStream {
     }
 
     /**
-     * Parse the stream after reading the first ID and pass the forms and chunks to the ChunkHandler
+     * 读取第一个 ID 后解析流，并把各个 form 和块传给 ChunkHandler
      */
     public void parseAfterHead(ChunkHandler handler) throws IOException {
         int numBytes = readChunkSize();
@@ -195,8 +195,8 @@ public class IFFParser extends FilterInputStream {
     }
 
     /**
-     * Parse the FORM and pass the chunks to the ChunkHandler The cursor should be positioned right
-     * after the type field.
+     * 解析表单并将块传递给ChunkHandler光标应位于右侧
+     * 在类型字段之后。
      */
     public void parseForm(ChunkHandler handler, int ID, int numBytes, int type) throws IOException {
         while (numBytes > 8) {
@@ -219,8 +219,8 @@ public class IFFParser extends FilterInputStream {
     }
 
     /*
-     * Parse one chunk from IFF file. After calling handler, make sure stream is positioned at end
-     * of chunk.
+     * 从IFF文件解析一个块。调用处理程序后，请确保流位于末尾
+     * 大块的。
      */
     public void parseChunk(ChunkHandler handler, int ckid, int numBytes) throws IOException {
         long startOffset, endOffset;
@@ -258,7 +258,7 @@ public class IFFParser extends FilterInputStream {
     }
 
     /**
-     * Does the following chunk ID correspond to a container type like FORM?
+     * 以下区块ID是否对应于类似表单的容器类型？
      */
     public boolean isForm(int ckid) {
         if (isRIFF()) {

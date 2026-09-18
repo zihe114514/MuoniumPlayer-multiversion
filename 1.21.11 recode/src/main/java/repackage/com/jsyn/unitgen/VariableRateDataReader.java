@@ -19,7 +19,7 @@ package repackage.com.jsyn.unitgen;
 import repackage.com.jsyn.ports.UnitInputPort;
 
 public abstract class VariableRateDataReader extends SequentialDataReader {
-    /** A scaler for playback rate. Nominally 1.0. */
+    /** 播放速率的缩放因子。名义上为 1.0。 */
     public UnitInputPort rate;
 
     public VariableRateDataReader() {

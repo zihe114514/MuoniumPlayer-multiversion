@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.devices.javasound;
@@ -24,7 +24,7 @@ import javax.sound.sampled.*;
 import java.util.ArrayList;
 
 /**
- * Use JavaSound to access the audio hardware.
+ * 使用JavaSound访问音频硬件。
  *
  * @author Phil Burk (C) 2009 Mobileer Inc
  */
@@ -55,7 +55,7 @@ public class JavaSoundAudioDevice implements AudioDeviceManager {
     }
 
     /**
-     * Build device info and determine default devices.
+     * 构建设备信息并确定默认设备。
      */
     private void sniffAvailableMixers() {
         Mixer.Info[] mixers = AudioSystem.getMixerInfo();
@@ -67,14 +67,14 @@ public class JavaSoundAudioDevice implements AudioDeviceManager {
 
             Line.Info[] lines = mixer.getTargetLineInfo();
             deviceInfo.maxInputs = scanMaxChannels(lines);
-            // Remember first device that supports input.
+            // 记住第一个支持输入的设备。
             if ((defaultInputDeviceID < 0) && (deviceInfo.maxInputs > 0)) {
                 defaultInputDeviceID = i;
             }
 
             lines = mixer.getSourceLineInfo();
             deviceInfo.maxOutputs = scanMaxChannels(lines);
-            // Remember first device that supports output.
+            // 记住第一个支持输出的设备。
             if ((defaultOutputDeviceID < 0) && (deviceInfo.maxOutputs > 0)) {
                 defaultOutputDeviceID = i;
             }
@@ -162,7 +162,7 @@ public class JavaSoundAudioDevice implements AudioDeviceManager {
         public void start() {
             DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
             if (!AudioSystem.isLineSupported(info)) {
-                // TODO Handle the error.
+                // TODO 处理该错误。
             } else {
                 try {
                     line = (SourceDataLine) getDataLine(info);
@@ -177,7 +177,7 @@ public class JavaSoundAudioDevice implements AudioDeviceManager {
             }
         }
 
-        /** Grossly inefficient. Call the array version instead. */
+        /** 效率极低。请改为调用数组版本。*/
         @Override
         public void write(double value) {
             double[] buffer = new double[1];
@@ -192,16 +192,16 @@ public class JavaSoundAudioDevice implements AudioDeviceManager {
 
         @Override
         public void write(double[] buffer, int start, int count) {
-            // Allocate byte buffer if needed.
+            // 如果需要，分配字节缓冲区。
             if ((bytes == null) || ((bytes.length * 2) < count)) {
                 bytes = new byte[count * 2];
             }
 
-            // Convert float samples to LittleEndian bytes.
+            // 将float示例转换为LittleEndian字节。
             int byteIndex = 0;
             for (int i = 0; i < count; i++) {
-                // Offset before casting so that we can avoid using floor().
-                // Also round by adding 0.5 so that very small signals go to zero.
+                // 在强制类型转换前先做偏移，以避免使用 floor()。
+                // 同时加上 0.5 进行四舍五入，使极小的信号归零。
                 double temp = (32767.0 * buffer[i + start]) + 32768.5;
                 int sample = ((int) temp) - 32768;
                 if (sample > Short.MAX_VALUE) {
@@ -209,8 +209,8 @@ public class JavaSoundAudioDevice implements AudioDeviceManager {
                 } else if (sample < Short.MIN_VALUE) {
                     sample = Short.MIN_VALUE;
                 }
-                bytes[byteIndex++] = (byte) sample; // little end
-                bytes[byteIndex++] = (byte) (sample >> 8); // big end
+                bytes[byteIndex++] = (byte) sample; // 小端
+                bytes[byteIndex++] = (byte) (sample >> 8); // 大端
             }
 
             line.write(bytes, 0, byteIndex);
@@ -256,7 +256,7 @@ public class JavaSoundAudioDevice implements AudioDeviceManager {
         public void start() {
             DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
             if (!AudioSystem.isLineSupported(info)) {
-                // TODO Handle the error.
+                // TODO 处理该错误。
             } else {
                 try {
                     line = (TargetDataLine) getDataLine(info);
@@ -284,17 +284,17 @@ public class JavaSoundAudioDevice implements AudioDeviceManager {
 
         @Override
         public int read(double[] buffer, int start, int count) {
-            // Allocate byte buffer if needed.
+            // 如果需要，分配字节缓冲区。
             if ((bytes == null) || ((bytes.length * 2) < count)) {
                 bytes = new byte[count * 2];
             }
             int bytesRead = line.read(bytes, 0, bytes.length);
 
-            // Convert BigEndian bytes to float samples
+            // 将BigEndian字节转换为浮点样本
             int bi = 0;
             for (int i = 0; i < count; i++) {
-                int sample = bytes[bi++] & 0x00FF; // little end
-                sample = sample + (bytes[bi++] << 8); // big end
+                int sample = bytes[bi++] & 0x00FF; // 小端
+                sample = sample + (bytes[bi++] << 8); // 大端
                 buffer[i + start] = sample * (1.0 / 32767.0);
             }
             return bytesRead / 4;

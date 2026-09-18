@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 1994, 2013, Oracle and/or its affiliates. All rights reserved.
- * ORACLE PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
+ * 版权所有(c) 1994, 2013 ，甲骨文和/或其附属公司。保留所有权利。
+ * Oracle 专有/机密。使用须遵守许可条款。
  *
  *
  *
@@ -32,15 +32,15 @@ import java.io.UnsupportedEncodingException;
 import java.util.Arrays;
 
 /**
- * This class implements an output stream in which the data is
- * written into a byte array. The buffer automatically grows as data
- * is written to it.
- * The data can be retrieved using <code>toByteArray()</code> and
+ * 此类实现一个输出流，其中数据
+ * 写入字节数组。缓冲区会随着数据自动增长
+ * 被写入其中。
+ * 可使用 <code>toByteArray()</code> 获取数据，
  * <code>toString()</code>.
  * <p>
- * Closing a <tt>ByteArrayOutputStream</tt> has no effect. The methods in
- * this class can be called after the stream has been closed without
- * generating an <tt>IOException</tt>.
+ * 关闭 <tt>ByteArrayOutputStream</tt> 没有效果。
+ * 可以在流关闭后调用此类，而无需
+ * 生成 <tt>IOException</tt>。
  *
  * @author  Arthur van Hoff
  * @since   JDK1.0
@@ -49,30 +49,30 @@ import java.util.Arrays;
 public class SeekableByteArrayOutputStream extends OutputStream {
 
     /**
-     * The buffer where data is stored.
+     * 存储数据的缓冲区。
      */
     protected byte[] buf;
 
     /**
-     * The number of valid bytes in the buffer.
+     * 缓冲区中的有效字节数。
      */
     @Getter
     protected int writePointer, count;
 
     /**
-     * Creates a new byte array output stream. The buffer capacity is
-     * initially 32 bytes, though its size increases if necessary.
+     * 创建新的字节数组输出流。缓冲区容量为
+     * 最初为32个字节，但如果需要，其大小会增加。
      */
     public SeekableByteArrayOutputStream() {
         this(32);
     }
 
     /**
-     * Creates a new byte array output stream, with a buffer capacity of
-     * the specified size, in bytes.
+     * 创建一个新的字节数组输出流，缓冲区容量为
+     * 指定大小，单位字节。
      *
-     * @param   size   the initial size.
-     * @exception  IllegalArgumentException if size is negative.
+     * @param   size   初始大小。
+     * @exception IllegalArgumentException （如果大小为负）。
      */
     public SeekableByteArrayOutputStream(int size) {
         if (size < 0) {
@@ -83,37 +83,37 @@ public class SeekableByteArrayOutputStream extends OutputStream {
     }
 
     /**
-     * Increases the capacity if necessary to ensure that it can hold
-     * at least the number of elements specified by the minimum
-     * capacity argument.
+     * 必要时增加容量，以确保它可以容纳
+     * 至少由最小值指定的元素数量
+     * 产能参数。
      *
-     * @param minCapacity the desired minimum capacity
-     * @throws OutOfMemoryError if {@code minCapacity < 0}.  This is
-     * interpreted as a request for the unsatisfiably large capacity
+     * @param minCapacity 所需的最小容量
+     * @throws OutOfMemoryError 若 {@code minCapacity < 0}。这是
+     * 解释为对无法满足的大容量的要求
      * {@code (long) Integer.MAX_VALUE + (minCapacity - Integer.MAX_VALUE)}.
      */
     private void ensureCapacity(int minCapacity) {
-        // overflow-conscious code
+        // 有溢出意识的代码
         if (minCapacity - buf.length > 0)
             grow(minCapacity);
     }
 
     /**
-     * The maximum size of array to allocate.
-     * Some VMs reserve some header words in an array.
-     * Attempts to allocate larger arrays may result in
-     * OutOfMemoryError: Requested array size exceeds VM limit
+     * 要分配的数组的最大大小。
+     * 有些 JVM 会在数组中预留一些头字。
+     * 尝试分配更大的数组可能导致
+     * OutOfMemoryError：请求的数组大小超出 JVM 限制
      */
     private static final int MAX_ARRAY_SIZE = Integer.MAX_VALUE - 8;
 
     /**
-     * Increases the capacity to ensure that it can hold at least the
-     * number of elements specified by the minimum capacity argument.
+     * 增加容量，以确保它至少可以容纳
+     * 最小容量参数指定的元素数。
      *
-     * @param minCapacity the desired minimum capacity
+     * @param minCapacity 所需的最小容量
      */
     private void grow(int minCapacity) {
-        // overflow-conscious code
+        // 有溢出意识的代码
         int oldCapacity = buf.length;
         int newCapacity = oldCapacity << 1;
         if (newCapacity - minCapacity < 0)
@@ -124,7 +124,7 @@ public class SeekableByteArrayOutputStream extends OutputStream {
     }
 
     private static int hugeCapacity(int minCapacity) {
-        if (minCapacity < 0) // overflow
+        if (minCapacity < 0) // 溢出
             throw new OutOfMemoryError();
         return (minCapacity > MAX_ARRAY_SIZE) ?
             Integer.MAX_VALUE :
@@ -132,9 +132,9 @@ public class SeekableByteArrayOutputStream extends OutputStream {
     }
 
     /**
-     * Writes the specified byte to this byte array output stream.
+     * 将指定的字节写入此字节数组输出流。
      *
-     * @param   b   the byte to be written.
+     * @param   b   要写入的字节。
      */
     public synchronized void write(int b) {
         ensureCapacity(count + 1);
@@ -144,12 +144,12 @@ public class SeekableByteArrayOutputStream extends OutputStream {
     }
 
     /**
-     * Writes <code>len</code> bytes from the specified byte array
-     * starting at offset <code>off</code> to this byte array output stream.
+     * 从指定字节数组写入 <code>len</code> 个字节，
+     * 从偏移量<code> off </code>开始到此字节数组输出流。
      *
-     * @param   b     the data.
-     * @param   off   the start offset in the data.
-     * @param   len   the number of bytes to write.
+     * @param   b     数据。
+     * @param off 数据中的起始偏移量。
+     * @param len 要写入的字节数。
      */
     public synchronized void write(byte[] b, int off, int len) {
         if ((off < 0) || (off > b.length) || (len < 0) ||
@@ -187,18 +187,18 @@ public class SeekableByteArrayOutputStream extends OutputStream {
     }
 
     /**
-     * Converts the buffer's contents into a string decoding bytes using the
-     * platform's default character set. The length of the new <tt>String</tt>
-     * is a function of the character set, and hence may not be equal to the
-     * size of the buffer.
+     * 将缓冲区的内容转换为字符串解码字节，使用
+     * 平台的默认字符集。新<tt>字符串</tt>的长度
+     * 取决于字符集，因此可能不等于
+     * 缓冲区的大小。
      *
-     * <p> This method always replaces malformed-input and unmappable-character
-     * sequences with the default replacement string for the platform's
-     * default character set. The {@linkplain java.nio.charset.CharsetDecoder}
-     * class should be used when more control over the decoding process is
-     * required.
+     * <p> 此方法始终用此字符集的默认替换字符串替换畸形输入和不可映射字符，
+     * 包含平台的默认替换字符串的序列
+     * 默认字符集。{@linkplain java.nio.charset.CharsetDecoder}
+     * 当需要对解码过程进行更多控制时，应使用该类。
+     * 需要。
      *
-     * @return String decoded from the buffer's contents.
+     * @return 从缓冲区内容解码的字符串。
      * @since  JDK1.1
      */
     public synchronized String toString() {
@@ -206,21 +206,21 @@ public class SeekableByteArrayOutputStream extends OutputStream {
     }
 
     /**
-     * Converts the buffer's contents into a string by decoding the bytes using
-     * the named {@link java.nio.charset.Charset charset}. The length of the new
-     * <tt>String</tt> is a function of the charset, and hence may not be equal
-     * to the length of the byte array.
+     * 通过使用指定字符集解码字节，将缓冲区内容转换为字符串，
+     * 命名为{@link java.nio.charset.Charset charset}。新
+     * <tt>String</tt> 的长度取决于字符集，因此可能不等于
+     * 字节数组的长度。
      *
-     * <p> This method always replaces malformed-input and unmappable-character
-     * sequences with this charset's default replacement string. The {@link
-     * java.nio.charset.CharsetDecoder} class should be used when more control
-     * over the decoding process is required.
+     * <p> 此方法始终用此字符集的默认替换字符串替换畸形输入和不可映射字符，
+     * 序列替换为此字符集的默认替换字符串。需要更多解码控制时，应使用 {@link
+     * 更多控制时应使用java.nio.charset.CharsetDecoder}类
+     * 该类。
      *
-     * @param      charsetName  the name of a supported
+     * @param charsetName 支持的名称
      *             {@link java.nio.charset.Charset charset}
-     * @return     String decoded from the buffer's contents.
-     * @exception  UnsupportedEncodingException
-     *             If the named charset is not supported
+     * @return 从缓冲区内容解码的字符串。
+     * @exception UnsupportedEncodingException
+     *             如果不支持命名字符集
      * @since      JDK1.1
      */
     public synchronized String toString(String charsetName)
@@ -230,23 +230,23 @@ public class SeekableByteArrayOutputStream extends OutputStream {
     }
 
     /**
-     * Creates a newly allocated string. Its size is the current size of
-     * the output stream and the valid contents of the buffer have been
-     * copied into it. Each character <i>c</i> in the resulting string is
-     * constructed from the corresponding element <i>b</i> in the byte
-     * array such that:
+     * 创建新分配的字符串。它的大小是当前的大小
+     * 输出流以及缓冲区的有效内容已被
+     * 复制到其中。结果字符串中的每个字符 <i>c</i>
+     * 由字节中对应的元素<i> b </i>构造
+     * 对应关系如下：
      * <blockquote><pre>
      *     c == (char)(((hibyte &amp; 0xff) &lt;&lt; 8) | (b &amp; 0xff))
-     * </pre></blockquote>
+     * </pre> </blockquote>
      *
-     * @deprecated This method does not properly convert bytes into characters.
-     * As of JDK&nbsp;1.1, the preferred way to do this is via the
-     * <code>toString(String enc)</code> method, which takes an encoding-name
-     * argument, or the <code>toString()</code> method, which uses the
-     * platform's default character encoding.
+     * @deprecated 此方法不能正确地将字节转换为字符。
+     * 从 JDK&nbsp;1.1 起，首选方式是通过
+     * <code>toString(String enc)</code> 方法，它接受编码名称
+     * 或<code> toString() </code>方法，该方法使用
+     * 平台的默认字符编码。
      *
-     * @param      hibyte    the high byte of each resulting Unicode character.
-     * @return     the current contents of the output stream, as a string.
+     * @param      hibyte    每个结果 Unicode 字符的高字节。
+     * @return 输出流的当前内容，作为字符串。
      * @see        java.io.ByteArrayOutputStream#size()
      * @see        java.io.ByteArrayOutputStream#toString(String)
      * @see        java.io.ByteArrayOutputStream#toString()
@@ -257,9 +257,9 @@ public class SeekableByteArrayOutputStream extends OutputStream {
     }
 
     /**
-     * Closing a <tt>ByteArrayOutputStream</tt> has no effect. The methods in
-     * this class can be called after the stream has been closed without
-     * generating an <tt>IOException</tt>.
+     * 关闭 <tt>ByteArrayOutputStream</tt> 没有效果。
+     * 可以在流关闭后调用此类，而无需
+     * 生成 <tt>IOException</tt>。
      */
     public void close() {
     }

@@ -79,7 +79,7 @@ public final class HudSettingsModel {
         /** CHOICE 的直写入口；没有时退化为循环点击。 */
         private final Consumer<String> choiceSetter;
         public final ColorTarget colorTarget;
-        /** Optional runtime visibility hook; legacy and Folia expose different controls. */
+        /** 可选的运行时可见性钩子；旧版与 Folia 暴露不同的控件。 */
         private final BooleanSupplier visibleWhen;
 
         private Entry(Kind kind, Supplier<String> label, String description, HudSetting setting,
@@ -382,14 +382,14 @@ public final class HudSettingsModel {
         }
     }
 
-    /** Keep the legacy module wrapper's dimension values aligned with the persisted viewport. */
+    /** 让旧版模块包装器的尺寸值与持久化视口保持一致。 */
     public static void syncLyricViewportModuleValues() {
         try {
             MusicLyricsWidget lyrics = MuoniumPlayerExtension.getInstance().musicLyrics;
             lyrics.width.setValue((double) HudConfig.lyricWidth);
             lyrics.height.setValue((double) HudConfig.lyricHeight);
         } catch (Throwable ignored) {
-            // The widget is not required for rendering; HudConfig remains authoritative.
+            // 渲染不需要该组件；HudConfig 仍是权威。
         }
     }
 

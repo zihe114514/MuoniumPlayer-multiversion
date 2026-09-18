@@ -1,17 +1,17 @@
 /*
- * Copyright 2001 Phil Burk, Mobileer Inc
+ * 版权所有2001 Phil Burk ， Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  * 
  *     http://www.apache.org/licenses/LICENSE-2.0
  * 
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.util.soundfile;
@@ -23,7 +23,7 @@ import java.io.IOException;
 import java.util.HashMap;
 
 /**
- * Base class for various types of audio specific file parsers.
+ * 用于各种类型的音频特定文件解析器的基类。
  * 
  * @author (C) 2001 Phil Burk, SoftSynth.com
  */
@@ -31,13 +31,13 @@ import java.util.HashMap;
 abstract class AudioFileParser implements ChunkHandler {
     public IFFParser parser;
     public byte[] byteData;
-    boolean ifLoadData = true; /* If true, load sound data into memory. */
+    boolean ifLoadData = true; /* 若为 true，将声音数据加载到内存。 */
     public long dataPosition; /*
-                        * Number of bytes from beginning of file where sound data resides.
+                        * 声音数据在文件中起始位置的字节数。
                         */
     public int bitsPerSample;
-    public int bytesPerFrame; // in the file
-    public int bytesPerSample; // in the file
+    public int bytesPerFrame; // 在文件中
+    public int bytesPerSample; // 在文件中
     public HashMap<Integer, SampleMarker> cueMap = new HashMap<>();
     public short samplesPerFrame;
     public double frameRate;
@@ -50,18 +50,18 @@ abstract class AudioFileParser implements ChunkHandler {
     }
 
     /**
-     * @return Number of bytes from beginning of stream where sound data resides.
+     * @return 声音数据所在的流开头的字节数。
      */
     public long getDataPosition() {
         return dataPosition;
     }
 
     /**
-     * This can be read by another thread when load()ing a sample to determine how many bytes have
-     * been read so far.
+     * 当加载样本以确定有多少字节时，可以由另一个线程读取
+     * 目前已读取。
      */
     public synchronized long getNumBytesRead() {
-        IFFParser p = parser; // prevent race
+        IFFParser p = parser; // 防止竞态
         if (p != null)
             return p.getOffset();
         else
@@ -69,11 +69,11 @@ abstract class AudioFileParser implements ChunkHandler {
     }
 
     /**
-     * This can be read by another thread when load()ing a sample to determine how many bytes need
-     * to be read.
+     * 当加载示例以确定需要多少字节时，这可以由另一个线程读取
+     * 待读取。
      */
     public synchronized long getFileSize() {
-        IFFParser p = parser; // prevent race
+        IFFParser p = parser; // 防止竞态
         if (p != null)
             return p.getFileSize();
         else
@@ -109,7 +109,7 @@ abstract class AudioFileParser implements ChunkHandler {
             floatSample.addMarker(marker);
         }
 
-        /* Set Sustain Loop by assuming first two markers are loop points. */
+        /* 通过假设前两个标记是循环点来设置维持循环。*/
         if (floatSample.getMarkerCount() >= 2) {
             floatSample.setSustainBegin(floatSample.getMarker(0).position);
             floatSample.setSustainEnd(floatSample.getMarker(1).position);

@@ -5,8 +5,8 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * This box is used in custom metadata tags (within the box-type '----'). It
- * contains the name of the custom tag, whose data is stored in the 'data'-box.
+ * 此 box 用于自定义元数据标签（位于 box 类型 '----' 内）。
+ * 它包含自定义标签的名称，其数据存于 'data' box。
  *
  * @author in-somnia
  */

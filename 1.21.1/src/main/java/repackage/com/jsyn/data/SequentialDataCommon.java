@@ -1,23 +1,23 @@
 /*
  * Copyright 2010 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.data;
 
 /**
- * Abstract base class for envelopes and samples that adds sustain and release loops.
+ * 增加维持和释放循环的信封和样本的抽象基类。
  *
  * @author Phil Burk (C) 2010 Mobileer Inc
  */
@@ -42,15 +42,15 @@ public abstract class SequentialDataCommon implements SequentialData {
     public abstract int getChannelsPerFrame();
 
     /**
-     * @return Maximum number of frames of data.
+     * @return 最大数据帧数。
      */
     public int getMaxFrames() {
         return maxFrames;
     }
 
     /**
-     * Set number of frames of data. Input will be clipped to maxFrames. This is useful when
-     * changing the contents of a sample or envelope.
+     * 设置数据帧数。输入将被剪辑到maxFrames。这在以下情况下非常有用：
+     * 改变采样或包络的内容时。
      */
     public void setNumFrames(int numFrames) {
         if (numFrames > maxFrames)
@@ -63,7 +63,7 @@ public abstract class SequentialDataCommon implements SequentialData {
         return numFrames;
     }
 
-    // JavaDocs will be copied from SequentialData
+    // JavaDocs 将从 SequentialData 复制过来
 
     @Override
     public int getSustainBegin() {
@@ -86,15 +86,15 @@ public abstract class SequentialDataCommon implements SequentialData {
     }
 
     /**
-     * Set beginning of a sustain loop. When UnitDataQueuePort.queueOn() is called,
-     * if the loop is set then the attack portion will be queued followed by this sustain
-     * region using queueLoop().
-     * The number of frames in the loop will be (SustainEnd - SustainBegin).
+     * 设置维持循环的开始。调用UnitDataQueuePort.queueOn()时，
+     * 若设置了循环，则先将起音部分入队，随后是该延音
+     * 使用queueLoop()的区域。
+     * 循环中的帧数为 (SustainEnd - SustainBegin)。
      * <p>
-     * For a steady sustain level, like in an ADSR envelope, set SustainBegin and
-     * SustainEnd to the same frame.
+     * 对于稳定的延音电平（如 ADSR 包络中），设置 SustainBegin 和
+     * SustainEnd到同一帧。
      * <p>
-     * For a sustain that is modulated, include two or more frames in the loop.
+     * 对于被调制的延音，在循环中包含两个或更多帧。
      *
      * @param sustainBegin
     */
@@ -103,8 +103,8 @@ public abstract class SequentialDataCommon implements SequentialData {
     }
 
     /**
-     * SustainEnd value is the frame index of the frame just past the end of the loop.
-     * The number of frames included in the loop is (SustainEnd - SustainBegin).
+     * SustainEnd 的值是循环结束位置之后那一帧的索引。
+     * 循环包含的帧数为 (SustainEnd - SustainBegin)。
      *
      * @param sustainEnd
      */
@@ -113,8 +113,8 @@ public abstract class SequentialDataCommon implements SequentialData {
     }
 
     /**
-     * The release loop behaves like the sustain loop but it is triggered
-     * by UnitDataQueuePort.queueOff().
+     * 释放循环的行为类似于维持循环，但它被触发
+     * 由UnitDataQueuePort.queueOff()。
      *
      * @param releaseBegin
      */
@@ -123,8 +123,8 @@ public abstract class SequentialDataCommon implements SequentialData {
     }
 
     /**
-     * ReleaseEnd value is the frame index of the frame just past the end of the loop.
-     * The number of frames included in the loop is (ReleaseEnd - ReleaseBegin).
+     * ReleaseEnd值是刚刚经过循环末尾的帧的帧索引。
+     * 循环中包含的帧数为（ ReleaseEnd - ReleaseBegin ）。
      *
      * @param releaseEnd
      */

@@ -23,9 +23,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Decodes the AAC streams that are commonly returned as ADTS (.aac) or
- * ISO-BMFF/M4A (.m4a) and audio-bearing MP4/DASH (.m4s) payloads into a standard
- * 16-bit PCM WAV cache. Files without a decodable AAC audio track fail closed.
+ * 把通常以 ADTS（.aac）、ISO-BMFF/M4A（.m4a）以及含音频的 MP4/DASH（.m4s）形式返回的 AAC 流
+ * 解码为标准的 16 位 PCM WAV 缓存。
+ * 不含可解码 AAC 音轨的文件将按失败处理（fail closed）。
  */
 final class AacAudioDecoder {
     private static final int WAV_HEADER_SIZE = 44;
@@ -62,11 +62,11 @@ final class AacAudioDecoder {
             if ("aac".equals(container)) {
                 decodeAdts(input, writer, progressListener);
             } else {
-                // Some JOOX M4A files contain a legacy QuickTime "tags" atom. JAAD's MP4
-                // demuxer miscalculates that atom's consumed length and seeks indefinitely.
-                // Re-labeling only this metadata atom as a same-sized free atom preserves every
-                // audio byte and every sample offset, while letting the embedded AAC decoder
-                // process the stream normally.
+                // 部分 JOOX M4A 文件包含旧版 QuickTime "tags" atom。JAAD 的 MP4
+                // 解复用器会错误计算该 atom 实际消耗的长度，从而无限期寻址。
+                // 仅把这个元数据 atom 重标记为等大小的 free atom，可保留每一个
+                // 音频字节和每个采样偏移，同时让内嵌的 AAC 解码器
+                // 正常处理该流。
                 decoderInput = sanitizeJaadIncompatibleMetadata(input, destination);
                 decodeIsoBaseMedia(decoderInput, writer, progressListener);
             }
@@ -115,8 +115,8 @@ final class AacAudioDecoder {
     }
 
     /**
-     * Transcodes the first decodable AAC audio track from an M4A file.
-     * DRM-protected and non-AAC files fail closed so the caller can request a standard MP3 fallback.
+     * 转码 M4A 文件中第一条可解码的 AAC 音轨。
+     * DRM 保护和非 AAC 文件按失败处理，以便调用方请求标准 MP3 降级。
      */
     private static void decodeIsoBaseMedia(File input, PcmWaveWriter writer,
                                            ProgressListener progressListener) throws IOException, AACException {
@@ -145,9 +145,9 @@ final class AacAudioDecoder {
                         ? 0.0 : (double) endOffset / (double) input.length());
             }
 
-            // Bilibili DASH audio is a fragmented MP4 (.m4s): the initial moov atom has an
-            // empty sample table, while the AAC frames are described by moof/trun fragments.
-            // JAAD can read the AAC decoder configuration from moov, but not those fragments.
+            // Bilibili DASH 音频是分片 MP4（.m4s）：初始 moov atom 中
+            // 采样表为空，而 AAC 帧由 moof/trun 分片描述。
+            // JAAD 能从 moov 读取 AAC 解码器配置，但读不到这些分片。
             if (!decodedFromSampleTable) {
                 decodeFragmentedMp4Aac(file, decoder, writer, progressListener);
             }
@@ -155,9 +155,9 @@ final class AacAudioDecoder {
     }
 
     /**
-     * Decodes unencrypted fragmented MP4 AAC streams such as Bilibili's audio-only DASH .m4s
-     * payloads. We intentionally support the common tfhd/trun subset emitted by Bilibili and
-     * fail closed for malformed/encrypted fragments instead of presenting a stalled transcode.
+     * 解码未加密的分片 MP4 AAC 流，例如 Bilibili 纯音频 DASH .m4s
+     * 载荷。我们有意只支持 Bilibili 常用的 tfhd/trun 子集，
+     * 对畸形/加密分片按失败处理，而不是输出一个卡死的转码结果。
      */
     private static void decodeFragmentedMp4Aac(RandomAccessFile file, Decoder decoder, PcmWaveWriter writer,
                                                ProgressListener progressListener) throws IOException, AACException {
@@ -188,7 +188,7 @@ final class AacAudioDecoder {
             Mp4Box box = readMp4Box(file, cursor, length);
             if (box == null) return null;
             if ("mdat".equals(box.type)) return box;
-            // A following fragment begins before media data: do not accidentally read it as samples.
+            // 下一个分片在媒体数据之前开始：切勿误把它当作采样读取。
             if ("moof".equals(box.type)) return null;
             cursor = box.end;
         }
@@ -245,7 +245,7 @@ final class AacAudioDecoder {
         file.seek(box.dataStart);
         int flags = readFullBoxFlags(file, box);
         requireRemaining(file, box.end, 4L, "tfhd track id");
-        readUnsignedInt(file); // track_ID; a Bilibili audio .m4s contains a single audio traf.
+        readUnsignedInt(file); // track_ID；Bilibili 音频 .m4s 只包含一个音频 traf。
         if ((flags & 0x000001) != 0) {
             requireRemaining(file, box.end, 8L, "tfhd base data offset");
             file.readLong();
@@ -300,8 +300,8 @@ final class AacAudioDecoder {
         List<Integer> sampleSizes = new ArrayList<>(sampleCount);
         long totalSampleBytes = 0L;
 
-        // Read the complete trun table before seeking into mdat. Mixing table parsing with frame
-        // reads moves RandomAccessFile away from trun and was the cause of truncated-table errors.
+        // 在寻址到 mdat 之前先读完整个 trun 表。把表解析与帧读取混在一起，
+        // 会让 RandomAccessFile 离开 trun，这正是表被截断错误的根因。
         for (int index = 0; index < sampleCount; index++) {
             if (hasSampleDuration) {
                 requireRemaining(file, box.end, 4L, "trun sample duration");
@@ -345,7 +345,7 @@ final class AacAudioDecoder {
     }
     private static int readFullBoxFlags(RandomAccessFile file, Mp4Box box) throws IOException {
         requireRemaining(file, box.end, 4L, "full box header");
-        file.readUnsignedByte(); // version
+        file.readUnsignedByte(); // 版本
         return (file.readUnsignedByte() << 16) | (file.readUnsignedByte() << 8) | file.readUnsignedByte();
     }
 
@@ -407,9 +407,9 @@ final class AacAudioDecoder {
     }
 
     /**
-     * Produces a temporary MP4/M4A copy only when the file contains JAAD's problematic legacy
-     * {@code udta/tags} metadata atom. The atom is metadata-only, so replacing its type with
-     * {@code free} leaves the ISO-BMFF layout, media data and all chunk offsets unchanged.
+     * 仅当文件包含 JAAD 有问题的旧版 {@code udta/tags} 元数据 atom 时，才生成一份临时 MP4/M4A 副本。
+     * 该 atom 仅为元数据，因此把其类型替换为
+     * {@code free} 后，ISO-BMFF 布局、媒体数据和所有 chunk 偏移都保持不变。
      */
     private static File sanitizeJaadIncompatibleMetadata(File input, File destination) throws IOException {
         List<Long> tagsBoxes = new ArrayList<>();
@@ -586,8 +586,8 @@ final class AacAudioDecoder {
             if (dataBytes + data.length > 0xFFFFFFFFL) {
                 throw new IOException("Decoded AAC WAV exceeds the 4 GiB RIFF limit");
             }
-            // A third-party link can point at an hours-long upload. Abort while decoding instead of
-            // filling the cache and then failing the player's single large heap allocation.
+            // 第三方链接可能指向长达数小时的上传。应在解码阶段中止，而不是
+            // 填满缓存后再让播放器那次巨大的堆分配失败。
             long pcmLimit = PlaybackMemoryLimits.maxDecodedPcmBytes();
             if (dataBytes + data.length > pcmLimit) {
                 throw new IOException("解码中止：" + PlaybackMemoryLimits.describeOverLimit(dataBytes)

@@ -187,7 +187,7 @@ class MultiLoaderStaticTest {
         // 1.20.1（BootstrapLauncher 1.1.2）与 1.21.1（2.0.2）的开发期运行会把
         // legacyClassPath 里每个 jar 变成 JPMS 自动模块，两个模块导出同一个包时 JVM 在
         // 解析阶段直接抛 ResolutionException，游戏一行日志都打不出来：
-        //   Modules com.google.gson and MuoniumPlayer.<loader>.embedded.libs
+        //   模块 com.google.gson 与 MuoniumPlayer.<loader>.embedded.libs
         //   export package com.google.gson to module org.lz4.java
         // 用「shadow 产物的包名集合 ∩ clientLegacyClasspath.txt 里各 jar 的包名集合」实测过，
         // 重合的只有这四个，全部由 Minecraft 提供。1.21.11 / 26.2 的开发期不走模块路径，

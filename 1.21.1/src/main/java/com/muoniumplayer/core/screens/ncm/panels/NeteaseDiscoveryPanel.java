@@ -28,10 +28,9 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * A small reusable NetEase discovery surface.  It deliberately keeps provider payloads at the
- * boundary and opens the existing PlaylistPanel for playable song collections, so discovery
- * features do not fork the player, lyric, or download pipelines.
- */
+* 一个小巧可复用的网易发现界面。它刻意将服务商负载保留在边界处，并为可播放的歌曲集合打开现有的
+* PlaylistPanel，从而使发现功能不会分叉出独立的播放器、歌词或下载流水线。
+*/
 public final class NeteaseDiscoveryPanel extends NCMPanel {
 
     public enum Page {
@@ -60,8 +59,8 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
     }
 
     /**
-     * Shared discovery surface: QQ routes use the same list, typography and
-     * playback pipeline as the existing NetEase page instead of duplicating UI.
+     * 共享发现界面：QQ 路由复用与现有网易页面相同的列表、排版和
+     * 播放流水线，而非复制一套 UI。
      */
     public NeteaseDiscoveryPanel(Page page, MusicPlatform platform) {
         this.page = page == null ? Page.HOT_SEARCH : page;
@@ -426,7 +425,7 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
     }
 
     /**
-     * Hot-search shortcuts deliberately reuse the same single-result-list search flow as the sidebar.
+     * 热搜快捷方式刻意复用与侧边栏相同的单结果列表搜索流程。
      */
     private static void openLegacySongSearch(String keyword) {
         if (keyword == null || keyword.trim().isEmpty()) return;
@@ -516,8 +515,8 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
     }
 
     private static void openSongs(String title, List<Music> songs, boolean showBackButton) {
-        // setCurrentPanel() invokes onInit() exactly once. Calling it again here
-        // duplicated every row and made the recent-play page render overlapping text.
+        // setCurrentPanel() 恰好只调用一次 onInit()。在此处再次调用它会
+        // 每行都重复，导致最近播放页面渲染出重叠文字。
         NCMScreen.getInstance().setCurrentPanel(buildSongsPanel(songs, showBackButton));
     }
 
@@ -624,7 +623,7 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
                 if (privilege == null && privileges != null && index < privileges.size() && privileges.get(index).isJsonObject()) {
                     privilege = privileges.get(index).getAsJsonObject();
                 }
-                // Reuse the existing highest-quality / VIP / album badge metadata path.
+                // 复用现有的最高音质 / VIP / 专辑徽章元数据路径。
                 music.applyNeteaseMetadata(actual, privilege);
                 result.add(music);
             } catch (Throwable ignored) {

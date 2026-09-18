@@ -40,7 +40,7 @@ public class VideoTrack extends Track {
 
 		final Box stbl = minf.getChild(BoxTypes.SAMPLE_TABLE_BOX);
 
-		//sample descriptions: 'mp4v' has an ESDBox, all others have a CodecSpecificBox
+		//采样描述：'mp4v' 有一个 ESDBox，其余均有 CodecSpecificBox
 		final SampleDescriptionBox stsd = (SampleDescriptionBox) stbl.getChild(BoxTypes.SAMPLE_DESCRIPTION_BOX);
 		if(stsd.getChildren().get(0) instanceof VideoSampleEntry) {
 			sampleEntry = (VideoSampleEntry) stsd.getChildren().get(0);

@@ -2,7 +2,7 @@ package com.muoniumplayer.core.rendering;
 
 import java.awt.Color;
 
-/** Stateless calculations used by Dynamic Island layout, color and timing code. */
+/** 供 Dynamic Island 布局、颜色和计时代码使用的无状态计算。 */
 final class DynamicIslandMath {
 
     private DynamicIslandMath() {

@@ -22,9 +22,9 @@ public class OMAContentObjectBox extends FullBox {
 	}
 
 	/**
-	 * Returns the data of this content object.
+	 * 返回此内容对象的数据。
 	 * 
-	 * @return the data
+	 * @return 数据
 	 */
 	public byte[] getData() {
 		return data;

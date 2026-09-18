@@ -3,7 +3,7 @@ package repackage.net.sourceforge.jaad.aac.huffman;
 import repackage.net.sourceforge.jaad.aac.AACException;
 import repackage.net.sourceforge.jaad.aac.syntax.BitStream;
 
-//TODO: implement decodeSpectralDataER
+//TODO: 实现 decodeSpectralDataER
 public class Huffman implements Codebooks {
 
 	private static final boolean[] UNSIGNED = {false, false, true, true, false, false, true, true, true, true, true};
@@ -55,10 +55,10 @@ public class Huffman implements Codebooks {
 	public static void decodeSpectralData(BitStream in, int cb, int[] data, int off) throws AACException {
 		final int[][] HCB = CODEBOOKS[cb-1];
 
-		//find index
+		//查找索引
 		final int offset = findOffset(in, HCB);
 
-		//copy data
+		//复制数据
 		data[off] = HCB[offset][2];
 		data[off+1] = HCB[offset][3];
 		if(cb<5) {
@@ -66,12 +66,12 @@ public class Huffman implements Codebooks {
 			data[off+3] = HCB[offset][5];
 		}
 
-		//sign & escape
+		//符号与转义
 		if(cb<11) {
 			if(UNSIGNED[cb-1]) signValues(in, data, off, cb<5 ? QUAD_LEN : PAIR_LEN);
 		}
 		else if(cb==11||cb>15) {
-			signValues(in, data, off, cb<5 ? QUAD_LEN : PAIR_LEN); //virtual codebooks are always unsigned
+			signValues(in, data, off, cb<5 ? QUAD_LEN : PAIR_LEN); //虚拟码本始终为无符号
 			if(Math.abs(data[off])==16) data[off] = getEscape(in, data[off]);
 			if(Math.abs(data[off+1])==16) data[off+1] = getEscape(in, data[off+1]);
 		}

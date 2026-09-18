@@ -6,18 +6,16 @@ import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 import repackage.net.sourceforge.jaad.mp4.od.Descriptor;
 
 /**
- * The IPMP Control Box may contain IPMP descriptors which may be referenced by
- * any stream in the file.
+ * IPMP Control Box 可包含 IPMP 描述符，文件中的任意流都可引用它们。
  *
- * The IPMP ToolListDescriptor is defined in ISO/IEC 14496-1, which conveys the
- * list of IPMP tools required to access the media streams in an ISO Base Media
- * File or meta-box, and may include a list of alternate IPMP tools or
- * parametric descriptions of tools required to access the content.
+ * IPMP ToolListDescriptor 定义于 ISO/IEC 14496-1，它传达
+ * 访问 ISO Base Media File 或 meta-box 中媒体流所需的
+ * IPMP 工具列表，并可包含备用 IPMP 工具列表或
+ * 访问内容所需工具的参数化描述。
  * 
- * The presence of IPMP Descriptor in this IPMPControlBox indicates that media
- * streams within the file or meta-box are protected by the IPMP Tool described
- * in the IPMP Descriptor. More than one IPMP Descriptors can be carried here,
- * if there are more than one IPMP Tools providing the global governance.
+ * 此 IPMPControlBox 中存在 IPMP Descriptor，表明文件
+ * 或 meta-box 内的媒体流受到 IPMP Descriptor 中所述 IPMP 工具的保护。
+ * 若有多个 IPMP 工具提供全局治理，此处可携带多个 IPMP Descriptor。
  *
  * @author in-somnia
  */
@@ -45,18 +43,18 @@ public class IPMPControlBox extends FullBox {
 	}
 
 	/**
-	 * The toollist is an IPMP ToolListDescriptor as defined in ISO/IEC 14496-1.
+	 * toollist 是 ISO/IEC 14496-1 中定义的 IPMP ToolListDescriptor。
 	 *
-	 * @return the toollist
+	 * @return toollist
 	 */
 	public Descriptor getToolList() {
 		return toolList;
 	}
 
 	/**
-	 * The list of contained IPMP Descriptors.
+	 * 所含 IPMP 描述符的列表。
 	 *
-	 * @return the IPMP descriptors
+	 * @return IPMP 描述符
 	 */
 	public Descriptor[] getIPMPDescriptors() {
 		return ipmpDescriptors;

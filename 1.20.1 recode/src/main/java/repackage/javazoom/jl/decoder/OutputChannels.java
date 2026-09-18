@@ -1,20 +1,20 @@
 /*
- * 11/19/04 1.0 moved to LGPL.
+ * 本程序为自由软件；你可以在自由软件基金会发布的
  * 12/12/99 Initial implementation.        mdm@techie.com.
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
@@ -22,10 +22,10 @@ package repackage.javazoom.jl.decoder;
 
 
 /**
- * A Type-safe representation of the supported output channel
- * constants.
+ * 支持的输出通道的类型安全表示
+ * 常量。
  * <p>
- * This class is immutable and, hence, is thread safe.
+ * 此类是不可变的，因此是线程安全的。
  *
  * @author Mat McGowan 12/12/99
  * @since 0.0.7
@@ -33,22 +33,22 @@ package repackage.javazoom.jl.decoder;
 public class OutputChannels {
 
     /**
-     * Flag to indicate output should include both channels.
+     * 指示输出的标志应包括两个通道。
      */
     public static final int BOTH_CHANNELS = 0;
 
     /**
-     * Flag to indicate output should include the left channel only.
+     * 指示输出的标志应仅包括左通道。
      */
     public static final int LEFT_CHANNEL = 1;
 
     /**
-     * Flag to indicate output should include the right channel only.
+     * 指示输出应只包含右声道的标志。
      */
     public static final int RIGHT_CHANNEL = 2;
 
     /**
-     * Flag to indicate output is mono.
+     * 用于指示输出为单声道的标志。
      */
     public static final int DOWNMIX_CHANNELS = 3;
 
@@ -60,12 +60,12 @@ public class OutputChannels {
     private int outputChannels;
 
     /**
-     * Creates an <code>OutputChannels</code> instance
-     * corresponding to the given channel code.
+     * 创建一个 <code>OutputChannels</code> 实例，
+     * 对应于给定的声道代码。
      *
-     * @param code one of the OutputChannels channel code constants.
-     * @throws IllegalArgumentException if code is not a valid
-     *                                  channel code.
+     * @param code OutputChannels 声道代码常量之一。
+     * @throws IllegalArgumentException （如果代码无效）
+     *                                  信道编码
      */
     static public OutputChannels fromInt(int code) {
         switch (code) {
@@ -90,23 +90,23 @@ public class OutputChannels {
     }
 
     /**
-     * Retrieves the code representing the desired output channels.
-     * Will be one of LEFT_CHANNEL, RIGHT_CHANNEL, BOTH_CHANNELS
-     * or DOWNMIX_CHANNELS.
+     * 获取表示所需输出声道的代码。
+     * 为 LEFT_CHANNEL、RIGHT_CHANNEL、BOTH_CHANNELS 之一
+     * 或DOWNMIX_CHANNELS。
      *
-     * @return the channel code represented by this instance.
+     * @return 此实例表示的频道代码。
      */
     public int getChannelsOutputCode() {
         return outputChannels;
     }
 
     /**
-     * Retrieves the number of output channels represented
-     * by this channel output type.
+     * 获取所表示的输出声道数，
+     * 按此通道输出类型。
      *
-     * @return The number of output channels for this channel output
-     * type. This will be 2 for BOTH_CHANNELS only, and 1
-     * for all other types.
+     * @return 此通道输出的输出通道数
+     * 仅 BOTH_CHANNELS 时为 2，其余类型为 1
+     * 。
      */
     public int getChannelCount() {
         return (outputChannels == BOTH_CHANNELS) ? 2 : 1;

@@ -5,12 +5,12 @@ import repackage.net.sourceforge.jaad.mp4.boxes.BoxTypes;
 import repackage.net.sourceforge.jaad.mp4.boxes.impl.sampleentries.codec.*;
 
 /**
- * The <code>DecoderInfo</code> object contains the neccessary data to 
- * initialize a decoder. A track either contains a <code>DecoderInfo</code> or a
- * byte-Array called the 'DecoderSpecificInfo', which is e.g. used for AAC.
+ * <code>DecoderInfo</code> 对象包含初始化解码器所需的
+ * 必要数据。一个轨道要么包含一个 <code>DecoderInfo</code>，要么包含一个
+ * 名为 'DecoderSpecificInfo' 的字节数组，后者例如用于 AAC。
  * 
- * The <code>DecoderInfo</code> object received from a track is a subclass of 
- * this class depending on the <code>Codec</code>.
+ * 从轨道获取的 <code>DecoderInfo</code> 对象是本类的子类，
+ * 具体取决于 <code>Codec</code>。
  * 
  * <code>
  * AudioTrack track = (AudioTrack) movie.getTrack(AudioCodec.AC3);

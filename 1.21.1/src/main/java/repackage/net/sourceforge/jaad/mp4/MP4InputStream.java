@@ -18,14 +18,13 @@ public class MP4InputStream {
 	private final InputStream in;
 	private final RandomAccessFile fin;
 	private final LinkedList<Byte> peeked = new LinkedList<Byte>();
-	private long offset; //only used with InputStream
+	private long offset; //仅与 InputStream 一起使用
 
 	/**
-	 * Constructs an <code>MP4InputStream</code> that reads from an 
-	 * <code>InputStream</code>. It will have no random access, thus seeking 
-	 * will not be possible.
+	 * 构造一个从 <code>InputStream</code> 读取的 <code>MP4InputStream</code>。
+	 * 它没有随机访问能力，因此无法进行跳转（seek）。
 	 * 
-	 * @param in an <code>InputStream</code> to read from
+	 * @param in 用于读取的 <code>InputStream</code>
 	 */
 	MP4InputStream(InputStream in) {
 		this.in = in;
@@ -34,11 +33,10 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Constructs an <code>MP4InputStream</code> that reads from a 
-	 * <code>RandomAccessFile</code>. It will have random access and seeking 
-	 * will be possible.
+	 * 构造一个从 <code>RandomAccessFile</code> 读取的 <code>MP4InputStream</code>。
+	 * 它具有随机访问能力，可以进行跳转（seek）。
 	 * 
-	 * @param in a <code>RandomAccessFile</code> to read from
+	 * @param in 用于读取的 <code>RandomAccessFile</code>
 	 */
 	MP4InputStream(RandomAccessFile fin) {
 		this.fin = fin;
@@ -46,14 +44,14 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Peeks the next byte of data from the input. The value byte is returned as
-	 * an int in the range 0 to 255. If no byte is available because the end of 
-	 * the stream has been reached, an EOFException is thrown. This method 
-	 * blocks until input data is available, the end of the stream is detected, 
-	 * or an I/O error occurs.
+	 * 预读输入流的下一个字节数据。该字节作为
+	 * 0 到 255 范围内的 int 返回。如果因到达流末尾而没有
+	 * 可用字节，则抛出 EOFException。此方法
+	 * 阻塞，直到输入数据可用、检测到流末尾
+	 * 或发生 I/O 错误。
 	 * 
-	 * @return the next byte of data
-	 * @throws IOException If the end of the stream is detected or any I/O error occurs.
+	 * @return 下一个字节数据
+	 * @throws IOException 如果检测到流末尾或发生任何 I/O 错误。
 	 */
 	public int peek() throws IOException {
 		int i = 0;
@@ -80,14 +78,14 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Reads the next byte of data from the input. The value byte is returned as
-	 * an int in the range 0 to 255. If no byte is available because the end of 
-	 * the stream has been reached, an EOFException is thrown. This method 
-	 * blocks until input data is available, the end of the stream is detected, 
-	 * or an I/O error occurs.
+	 * 读取输入流的下一个字节数据。该字节作为
+	 * 0 到 255 范围内的 int 返回。如果因到达流末尾而没有
+	 * 可用字节，则抛出 EOFException。此方法
+	 * 阻塞，直到输入数据可用、检测到流末尾
+	 * 或发生 I/O 错误。
 	 * 
-	 * @return the next byte of data
-	 * @throws IOException If the end of the stream is detected or any I/O error occurs.
+	 * @return 下一个字节数据
+	 * @throws IOException 如果检测到流末尾或发生任何 I/O 错误。
 	 */
 	public int read() throws IOException {
 		int i = 0;
@@ -111,20 +109,19 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Peeks <code>len</code> bytes of data from the input into the array 
-	 * <code>b</code>. If len is zero, then no bytes are read.
+	 * 从输入预读 <code>len</code> 个字节到数组
+	 * <code>b</code>。如果 len 为零，则不读取任何字节。
 	 * 
-	 * This method blocks until all bytes could be read, the end of the stream 
-	 * is detected, or an I/O error occurs.
+	 * 此方法阻塞，直到所有字节都已读取、检测到流末尾
+	 * 或发生 I/O 错误。
 	 * 
-	 * If the stream ends before <code>len</code> bytes could be read an 
-	 * EOFException is thrown.
+	 * 如果在读取 <code>len</code> 个字节之前流结束，则抛出
+	 * EOFException。
 	 * 
-	 * @param b the buffer into which the data is read.
-	 * @param off the start offset in array <code>b</code> at which the data is written.
-	 * @param len the number of bytes to read.
-	 * @throws IOException If the end of the stream is detected, the input 
-	 * stream has been closed, or if some other I/O error occurs.
+	 * @param b 读取数据所用的缓冲区。
+	 * @param off 数组 <code>b</code> 中写入数据的起始偏移。
+	 * @param len 要读取的字节数。
+	 * @throws IOException 如果检测到流末尾、输入流已关闭，或发生其他 I/O 错误。
 	 */
 	public void peek(final byte[] b, int off, int len) throws IOException {
 		int read = 0;
@@ -165,20 +162,19 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Reads <code>len</code> bytes of data from the input into the array 
-	 * <code>b</code>. If len is zero, then no bytes are read.
+	 * 从输入读取 <code>len</code> 个字节到数组
+	 * <code>b</code>。如果 len 为零，则不读取任何字节。
 	 * 
-	 * This method blocks until all bytes could be read, the end of the stream 
-	 * is detected, or an I/O error occurs.
+	 * 此方法阻塞，直到所有字节都已读取、检测到流末尾
+	 * 或发生 I/O 错误。
 	 * 
-	 * If the stream ends before <code>len</code> bytes could be read an 
-	 * EOFException is thrown.
+	 * 如果在读取 <code>len</code> 个字节之前流结束，则抛出
+	 * EOFException。
 	 * 
-	 * @param b the buffer into which the data is read.
-	 * @param off the start offset in array <code>b</code> at which the data is written.
-	 * @param len the number of bytes to read.
-	 * @throws IOException If the end of the stream is detected, the input 
-	 * stream has been closed, or if some other I/O error occurs.
+	 * @param b 读取数据所用的缓冲区。
+	 * @param off 数组 <code>b</code> 中写入数据的起始偏移。
+	 * @param len 要读取的字节数。
+	 * @throws IOException 如果检测到流末尾、输入流已关闭，或发生其他 I/O 错误。
 	 */
 	public void read(final byte[] b, int off, int len) throws IOException {
 		int read = 0;
@@ -200,16 +196,14 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Peeks up to eight bytes as a long value. This method blocks until all 
-	 * bytes could be read, the end of the stream is detected, or an I/O error 
-	 * occurs.
+	 * 预读至多八个字节并作为 long 值返回。此方法阻塞，直到所有
+	 * 字节都已读取、检测到流末尾或发生 I/O 错误。
 	 * 
-	 * @param n the number of bytes to read >0 and <=8
-	 * @return the read bytes as a long value
-	 * @throws IOException If the end of the stream is detected, the input 
-	 * stream has been closed, or if some other I/O error occurs.
-	 * @throws IndexOutOfBoundsException if <code>n</code> is not in the range 
-	 * [1...8] inclusive.
+	 * @param n 要读取的字节数，>0 且 <=8
+	 * @return 读取的字节作为 long 值
+	 * @throws IOException 如果检测到流末尾、输入流已关闭，或发生其他 I/O 错误。
+	 * @throws IndexOutOfBoundsException 如果 <code>n</code> 不在范围
+	 * [1...8]（含）内。
 	 */
 	public long peekBytes(int n) throws IOException {
 		if(n<1||n>8) throw new IndexOutOfBoundsException("invalid number of bytes to read: "+n);
@@ -224,16 +218,14 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Reads up to eight bytes as a long value. This method blocks until all 
-	 * bytes could be read, the end of the stream is detected, or an I/O error 
-	 * occurs.
+	 * 读取至多八个字节并作为 long 值返回。此方法阻塞，直到所有
+	 * 字节都已读取、检测到流末尾或发生 I/O 错误。
 	 * 
-	 * @param n the number of bytes to read >0 and <=8
-	 * @return the read bytes as a long value
-	 * @throws IOException If the end of the stream is detected, the input 
-	 * stream has been closed, or if some other I/O error occurs.
-	 * @throws IndexOutOfBoundsException if <code>n</code> is not in the range 
-	 * [1...8] inclusive.
+	 * @param n 要读取的字节数，>0 且 <=8
+	 * @return 读取的字节作为 long 值
+	 * @throws IOException 如果检测到流末尾、输入流已关闭，或发生其他 I/O 错误。
+	 * @throws IndexOutOfBoundsException 如果 <code>n</code> 不在范围
+	 * [1...8]（含）内。
 	 */
 	public long readBytes(int n) throws IOException {
 		if(n<1||n>8) throw new IndexOutOfBoundsException("invalid number of bytes to read: "+n);
@@ -248,44 +240,41 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Peeks data from the input stream and stores them into the buffer array b.
-	 * This method blocks until all bytes could be read, the end of the stream 
-	 * is detected, or an I/O error occurs.
-	 * If the length of b is zero, then no bytes are read.
+	 * 从输入流预读数据并存入缓冲数组 b。
+	 * 此方法阻塞，直到所有字节都已读取、检测到流末尾
+	 * 或发生 I/O 错误。
+	 * 如果 b 的长度为零，则不读取任何字节。
 	 * 
-	 * @param b the buffer into which the data is read.
-	 * @throws IOException If the end of the stream is detected, the input 
-	 * stream has been closed, or if some other I/O error occurs.
+	 * @param b 读取数据所用的缓冲区。
+	 * @throws IOException 如果检测到流末尾、输入流已关闭，或发生其他 I/O 错误。
 	 */
 	public void peekBytes(final byte[] b) throws IOException {
 		peek(b, 0, b.length);
 	}
 
 	/**
-	 * Reads data from the input stream and stores them into the buffer array b.
-	 * This method blocks until all bytes could be read, the end of the stream 
-	 * is detected, or an I/O error occurs.
-	 * If the length of b is zero, then no bytes are read.
+	 * 从输入流读取数据并存入缓冲数组 b。
+	 * 此方法阻塞，直到所有字节都已读取、检测到流末尾
+	 * 或发生 I/O 错误。
+	 * 如果 b 的长度为零，则不读取任何字节。
 	 * 
-	 * @param b the buffer into which the data is read.
-	 * @throws IOException If the end of the stream is detected, the input 
-	 * stream has been closed, or if some other I/O error occurs.
+	 * @param b 读取数据所用的缓冲区。
+	 * @throws IOException 如果检测到流末尾、输入流已关闭，或发生其他 I/O 错误。
 	 */
 	public void readBytes(final byte[] b) throws IOException {
 		read(b, 0, b.length);
 	}
 
 	/**
-	 * Reads <code>n</code> bytes from the input as a String. The bytes are 
-	 * directly converted into characters. If not enough bytes could be read, an
-	 * EOFException is thrown.
-	 * This method blocks until all bytes could be read, the end of the stream 
-	 * is detected, or an I/O error occurs.
+	 * 从输入读取 <code>n</code> 个字节并作为 String 返回。这些字节
+	 * 直接转换为字符。如果读取的字节不足，则抛出
+	 * EOFException。
+	 * 此方法阻塞，直到所有字节都已读取、检测到流末尾
+	 * 或发生 I/O 错误。
 	 * 
-	 * @param n the length of the String.
-	 * @return the String, that was read
-	 * @throws IOException If the end of the stream is detected, the input 
-	 * stream has been closed, or if some other I/O error occurs.
+	 * @param n 该 String 的长度。
+	 * @return 读取到的 String
+	 * @throws IOException 如果检测到流末尾、输入流已关闭，或发生其他 I/O 错误。
 	 */
 	public String readString(final int n) throws IOException {
 		int i = -1;
@@ -300,52 +289,46 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Reads a null-terminated UTF-encoded String from the input. The maximum 
-	 * number of bytes that can be read before the null must appear must be 
-	 * specified.
-	 * Although the method is preferred for unicode, the encoding can be any 
-	 * charset name, that is supported by the system.
+	 * 从输入读取一个以 null 结尾的 UTF 编码 String。必须指定
+	 * 在出现 null 之前最多可读取的字节数。
+	 * 尽管该方法偏向于 unicode，但编码可以是系统支持的
+	 * 任意字符集名称。
 	 * 
-	 * This method blocks until all bytes could be read, the end of the stream 
-	 * is detected, or an I/O error occurs.
+	 * 此方法阻塞，直到所有字节都已读取、检测到流末尾
+	 * 或发生 I/O 错误。
 	 * 
-	 * @param max the maximum number of bytes to read, before the null-terminator
-	 * must appear.
-	 * @param encoding the charset used to encode the String
-	 * @return the decoded String
-	 * @throws IOException If the end of the stream is detected, the input 
-	 * stream has been closed, or if some other I/O error occurs.
+	 * @param max 在 null 终止符必须出现之前最多可读取的字节数。
+	 * @param encoding 用于编码该 String 的字符集
+	 * @return 解码后的 String
+	 * @throws IOException 如果检测到流末尾、输入流已关闭，或发生其他 I/O 错误。
 	 */
 	public String readUTFString(int max, String encoding) throws IOException {
 		return new String(readTerminated(max, 0), Charset.forName(encoding));
 	}
 
 	/**
-	 * Reads a null-terminated UTF-encoded String from the input. The maximum 
-	 * number of bytes that can be read before the null must appear must be 
-	 * specified.
-	 * The encoding is detected automatically, it may be UTF-8 or UTF-16 
-	 * (determined by a byte order mask at the beginning).
+	 * 从输入读取一个以 null 结尾的 UTF 编码 String。必须指定
+	 * 在出现 null 之前最多可读取的字节数。
+	 * 编码自动检测，可能为 UTF-8 或 UTF-16
+	 * （由开头的字节序掩码决定）。
 	 * 
-	 * This method blocks until all bytes could be read, the end of the stream 
-	 * is detected, or an I/O error occurs.
+	 * 此方法阻塞，直到所有字节都已读取、检测到流末尾
+	 * 或发生 I/O 错误。
 	 * 
-	 * @param max the maximum number of bytes to read, before the null-terminator
-	 * must appear.
-	 * @return the decoded String
-	 * @throws IOException If the end of the stream is detected, the input 
-	 * stream has been closed, or if some other I/O error occurs.
+	 * @param max 在 null 终止符必须出现之前最多可读取的字节数。
+	 * @return 解码后的 String
+	 * @throws IOException 如果检测到流末尾、输入流已关闭，或发生其他 I/O 错误。
 	 */
 	public String readUTFString(int max) throws IOException {
-		//read byte order mask
+		//读取字节序掩码
 		final byte[] bom = new byte[2];
 		read(bom, 0, 2);
 		if(bom[0]==0||bom[1]==0) return new String();
 		final int i = (bom[0]<<8)|bom[1];
 
-		//read null-terminated
+		//读取以 null 结尾
 		final byte[] b = readTerminated(max-2, 0);
-		//copy bom
+		//复制 bom
 		byte[] b2 = new byte[b.length+bom.length];
 		System.arraycopy(bom, 0, b2, 0, bom.length);
 		System.arraycopy(b, 0, b2, bom.length, b.length);
@@ -354,21 +337,18 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Reads a byte array from the input that is terminated by a specific byte 
-	 * (the 'terminator'). The maximum number of bytes that can be read before 
-	 * the terminator must appear must be specified.
+	 * 从输入读取一个由特定字节终止的字节数组
+	 *（即'终止符'）。必须指定在终止符
+	 * 出现之前最多可读取的字节数。
+	 * 终止符本身不会包含在返回的数组中。
 	 * 
-	 * The terminator will not be included in the returned array.
+	 * 此方法阻塞，直到所有字节都已读取、检测到流末尾
+	 * 或发生 I/O 错误。
 	 * 
-	 * This method blocks until all bytes could be read, the end of the stream 
-	 * is detected, or an I/O error occurs.
-	 * 
-	 * @param max the maximum number of bytes to read, before the terminator 
-	 * must appear.
-	 * @param terminator the byte that indicates the end of the array
-	 * @return the buffer into which the data is read.
-	 * @throws IOException If the end of the stream is detected, the input 
-	 * stream has been closed, or if some other I/O error occurs.
+	 * @param max 在终止符必须出现之前最多可读取的字节数。
+	 * @param terminator 标示数组结束的字节
+	 * @return 读取数据所用的缓冲区。
+	 * @throws IOException 如果检测到流末尾、输入流已关闭，或发生其他 I/O 错误。
 	 */
 	public byte[] readTerminated(int max, int terminator) throws IOException {
 		final byte[] b = new byte[max];
@@ -382,17 +362,16 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Reads a fixed point number from the input. The number is read as a 
-	 * <code>m.n</code> value, that results from deviding an integer by 
-	 * 2<sup>n</sup>.
+	 * 从输入读取一个定点数。该数作为
+	 * <code>m.n</code> 值读取，由一个整数除以
+	 * 2<sup>n</sup> 得到。
 	 * 
-	 * @param m the number of bits before the point
-	 * @param n the number of bits after the point
-	 * @return a floating point number with the same value
-	 * @throws IOException If the end of the stream is detected, the input 
-	 * stream has been closed, or if some other I/O error occurs.
-	 * @throws IllegalArgumentException if the total number of bits (m+n) is not
-	 * a multiple of eight
+	 * @param m 小数点前的位数
+	 * @param n 小数点后的位数
+	 * @return 数值相同的浮点数
+	 * @throws IOException 如果检测到流末尾、输入流已关闭，或发生其他 I/O 错误。
+	 * @throws IllegalArgumentException 如果总位数（m+n）不是
+	 * 8 的倍数
 	 */
 	public double readFixedPoint(int m, int n) throws IOException {
 		final int bits = m+n;
@@ -404,13 +383,12 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Skips <code>n</code> bytes in the input. This method blocks until all 
-	 * bytes could be skipped, the end of the stream is detected, or an I/O 
-	 * error occurs.
+	 * 在输入中跳过 <code>n</code> 个字节。此方法阻塞，直到所有
+	 * 字节都已跳过、检测到流末尾
+	 * 或发生 I/O 错误。
 	 * 
-	 * @param n the number of bytes to skip
-	 * @throws IOException If the end of the stream is detected, the input 
-	 * stream has been closed, or if some other I/O error occurs.
+	 * @param n 要跳过的字节数
+	 * @throws IOException 如果检测到流末尾、输入流已关闭，或发生其他 I/O 错误。
 	 */
 	public void skipBytes(final long n) throws IOException {
 		long l = 0;
@@ -428,10 +406,10 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Returns the current offset in the stream.
+	 * 返回当前在流中的偏移。
 	 * 
-	 * @return the current offset
-	 * @throws IOException if an I/O error occurs (only when using a RandomAccessFile)
+	 * @return 当前偏移
+	 * @throws IOException 如果发生 I/O 错误（仅在使用 RandomAccessFile 时）
 	 */
 	public long getOffset() throws IOException {
 		long l = -1;
@@ -441,14 +419,14 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Seeks to a specific offset in the stream. This is only possible when 
-	 * using a RandomAccessFile. If an InputStream is used, this method throws 
-	 * an IOException.
+	 * 跳转到流中的指定偏移。这仅在
+	 * 使用 RandomAccessFile 时才可能。如果使用的是 InputStream，此方法将抛出
+	 * IOException。
 	 * 
-	 * @param pos the offset position, measured in bytes from the beginning of the
-	 * stream
-	 * @throws IOException if an InputStream is used, pos is less than 0 or an 
-	 * I/O error occurs
+	 * @param pos 偏移位置，以字节为单位，从流
+	 * 起点计
+	 * @throws IOException 如果使用 InputStream、pos 小于 0 或发生
+	 * I/O 错误
 	 */
 	public void seek(long pos) throws IOException {
 		peeked.clear();
@@ -457,21 +435,21 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Indicates, if random access is available. That is, if this 
-	 * <code>MP4InputStream</code> was constructed with a RandomAccessFile. If 
-	 * this method returns false, seeking is not possible.
+	 * 表明是否支持随机访问。也就是说，此
+	 * <code>MP4InputStream</code> 是否由 RandomAccessFile 构造。如果
+	 * 此方法返回 false，则无法跳转（seek）。
 	 * 
-	 * @return true if random access is available
+	 * @return 如果支持随机访问则返回 true
 	 */
 	public boolean hasRandomAccess() {
 		return fin!=null;
 	}
 
 	/**
-	 * Indicates, if the input has some data left.
+	 * 表明输入是否还有剩余数据。
 	 * 
-	 * @return true if there is at least one byte left
-	 * @throws IOException if an I/O error occurs
+	 * @return 如果至少还剩一个字节则返回 true
+	 * @throws IOException 如果发生 I/O 错误
 	 */
 	public boolean hasLeft() throws IOException {
 		final boolean b;
@@ -488,11 +466,11 @@ public class MP4InputStream {
 	}
 
 	/**
-	 * Closes the input and releases any system resources associated with it. 
-	 * Once the stream has been closed, further reading or skipping will throw 
-	 * an IOException. Closing a previously closed stream has no effect.
+	 * 关闭输入并释放与其关联的所有系统资源。
+	 * 流一旦关闭，进一步读取或跳过将抛出
+	 * IOException。关闭已关闭的流没有效果。
 	 * 
-	 * @throws IOException if an I/O error occurs
+	 * @throws IOException 如果发生 I/O 错误
 	 */
 	void close() throws IOException {
 		peeked.clear();

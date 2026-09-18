@@ -20,15 +20,14 @@ public class ThreeGPPMetadataBox extends FullBox {
 		data = in.readUTFString((int) getLeft(in));
 	}
 
-	//called directly by subboxes that don't contain the 'data' string
+	//由不含 'data' 字符串的子 box 直接调用
 	protected void decodeCommon(MP4InputStream in) throws IOException {
 		super.decode(in);
 		languageCode = Utils.getLanguageCode(in.readBytes(2));
 	}
 
 	/**
-	 * The language code for the following text. See ISO 639-2/T for the set of
-	 * three character codes.
+	 * 以下文本的语言代码。三个字符代码的集合见 ISO 639-2/T。
 	 */
 	public String getLanguageCode() {
 		return languageCode;

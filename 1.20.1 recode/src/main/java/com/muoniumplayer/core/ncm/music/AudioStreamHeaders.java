@@ -5,12 +5,12 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Per-host request headers required to actually fetch a third-party audio stream.
+ * 实际抓取第三方音频流时，按主机所需的请求头。
  *
- * <p>Most providers (NetEase, JOOX, QQ) serve their CDN links to any client. Bilibili's
- * {@code *.bilivideo.com} CDN is the exception: it answers HTTP 403 unless the request carries a
- * browser User-Agent <em>and</em> a bilibili Referer, which is why a resolved link could look valid
- * while playback failed at download time.</p>
+ * <p>大多数提供方（网易云、JOOX、QQ）会把 CDN 链接发给任意客户端。Bilibili 的
+ * {@code *.bilivideo.com} CDN 是例外：除非请求携带浏览器 User-Agent <em>且</em>
+ * bilibili Referer，否则返回 HTTP 403，这就是为什么解析出的链接看似有效、
+ * 却在下载播放时失败。</p>
  */
 final class AudioStreamHeaders {
 
@@ -21,7 +21,7 @@ final class AudioStreamHeaders {
     private AudioStreamHeaders() {
     }
 
-    /** Returns the headers a stream host requires, or {@code null} when no header is needed. */
+    /** 返回流主机所要求的请求头；不需要请求头时为 {@code null}。 */
     static Map<String, String> forUrl(String url) {
         String host = host(url);
         if (host.isEmpty()) return null;

@@ -60,7 +60,7 @@ class PCMProcessors implements PCMProcessor {
     /**
      * @param processor 要添加的处理器监听器
      *
-     * @param pcm The decoded PCM data
+      * @param pcm 解码后的 PCM 数据
      * @see PCMProcessor#processPCM(org.kc7bfi.jflac.util.ByteSpace)
      */
     public void processPCM(ByteData pcm) {

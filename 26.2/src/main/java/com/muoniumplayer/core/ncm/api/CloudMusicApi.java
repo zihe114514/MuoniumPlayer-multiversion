@@ -170,7 +170,7 @@ public class CloudMusicApi {
                 OptionsUtil.createOptions());
     }
 
-    /** Requests NetEase dynamic-cover metadata for a signed-in song. */
+    /** 请求已登录歌曲的网易云动态封面元数据。 */
     public RequestUtil.RequestAnswer songDynamicCover(long id) {
         Map<String, Object> data = new HashMap<>();
         data.put("songId", id);
@@ -258,9 +258,9 @@ public class CloudMusicApi {
     }
 
     /**
-     * Fetches lyrics embedded in a NetEase cloud-drive entry.
-     * The enhanced API exposes this as /cloud/lyric/get and expects eapi
-     * parameters named userId/songId (uid/sid are the public query names).
+     * 获取网易云云盘条目中内嵌的歌词。
+     * 增强 API 将其暴露为 /cloud/lyric/get，并要求 eapi
+     * 参数名为 userId/songId（uid/sid 是公开查询名）。
      */
     public static RequestUtil.RequestAnswer cloudLyricGet(long userId, long songId) {
         Map<String, Object> data = new HashMap<>();
@@ -271,7 +271,7 @@ public class CloudMusicApi {
         return RequestUtil.createRequest("/api/cloud/lyric/get", data, OptionsUtil.createOptions("eapi"));
     }
 
-    /** Returns the logged-in user's NetEase cloud-drive entries. */
+    /** 返回已登录用户的网易云云盘条目。 */
     public RequestUtil.RequestAnswer userCloudSongs(int limit, int offset) {
         Map<String, Object> data = new HashMap<>();
         data.put("limit", Math.max(1, Math.min(200, limit)));
@@ -302,12 +302,12 @@ public class CloudMusicApi {
 
     }
 
-    /** Fetches a small batch of recommendations for the logged-in personal FM. */
+    /** 获取已登录用户私人 FM 的一小批推荐。 */
     public RequestUtil.RequestAnswer personalFm() {
         return RequestUtil.createRequest("/api/v1/radio/get", new HashMap<>(), OptionsUtil.createOptions("weapi"));
     }
 
-    /** Fetches a small batch for a selected personal FM mode. */
+    /** 获取指定私人 FM 模式的一小批推荐。 */
     public RequestUtil.RequestAnswer personalFmMode(String mode, String submode, int limit) {
         Map<String, Object> data = new HashMap<>();
         data.put("mode", mode == null || mode.trim().isEmpty() ? "DEFAULT" : mode.trim());
@@ -316,7 +316,7 @@ public class CloudMusicApi {
         return RequestUtil.createRequest("/api/v1/radio/get", data, OptionsUtil.createOptions());
     }
 
-    /** Marks a personal FM track as skipped after an explicit user action. */
+    /** 在用户明确操作后将某首私人 FM 曲目标记为已跳过。 */
     public RequestUtil.RequestAnswer personalFmTrash(long songId) {
         Map<String, Object> data = new HashMap<>();
         data.put("songId", songId);
@@ -349,7 +349,7 @@ public class CloudMusicApi {
     }
 
     /**
-     * Stable top-list summary route documented by both supplied API sources.
+     * 两个 API 来源文档共同记载的稳定排行榜摘要路由。
      */
     public RequestUtil.RequestAnswer topListDetail() {
         return RequestUtil.createRequest("/api/toplist/detail", new HashMap<>(), OptionsUtil.createOptions("weapi"));
@@ -401,9 +401,9 @@ public class CloudMusicApi {
     }
 
     /**
-     * Submits a listening record for a song that has actually been played by the local player.
-     * The endpoint accepts a NetEase song id, an optional originating playlist id and real played
-     * seconds. Callers are responsible for consent, local timing and duplicate prevention.
+     * 为本地播放器实际播放过的歌曲提交一条收听记录。
+     * 该接口接受一个网易云歌曲 id、一个可选的来源播放列表 id 以及真实播放的
+     * 秒数。调用方负责获取用户授权、本地计时和去重。
      */
     public RequestUtil.RequestAnswer reportListeningHistory(long songId, long sourcePlaylistId, int playedSeconds) {
         Map<String, Object> data = new HashMap<>();
@@ -414,8 +414,8 @@ public class CloudMusicApi {
     }
 
     /**
-     * Validates an imported Cookie without mutating the active account state.  The caller only
-     * persists it after the response proves that a NetEase profile is available.
+     * 校验导入的 Cookie，但不改动当前账号状态。调用方仅在
+     * 响应证明存在有效的网易云账号后才持久化保存它。
      */
     public RequestUtil.RequestAnswer loginStatusWithCookie(String cookie) {
         RequestUtil.RequestOptions options = RequestUtil.RequestOptions.builder()
@@ -487,19 +487,19 @@ public class CloudMusicApi {
     }
 
     /**
-     * Resolves a NetEase Cloud Music playback URL using the currently selected
-     * quality. Existing callers keep their FLAC preference through this
-     * compatibility overload.
+     * 使用当前所选
+     * 音质解析网易云音乐播放 URL。既有调用方通过此
+     * 兼容重载保持其 FLAC 偏好。
      */
     public RequestUtil.RequestAnswer songUrlV1(long id, String level) {
         return songUrlV1(id, level, "flac");
     }
 
     /**
-     * Resolves a NetEase Cloud Music playback URL for a requested quality and
-     * container. Some album tracks do not expose the requested lossless stream
-     * even though their standard MP3 stream is playable, so callers can make a
-     * controlled MP3 fallback request without changing the selected quality.
+     * 解析指定音质与容器的网易云音乐播放 URL。部分专辑曲目并不提供请求的无损流，
+     * 尽管其标准 MP3 流仍可播放，调用方仍可
+     * 发起受控的 MP3 降级请求，
+     * 而无需改动当前所选音质。
      */
     public RequestUtil.RequestAnswer songUrlV1(long id, String level, String encodeType) {
         String requestedLevel = level == null || level.trim().isEmpty() ? "standard" : level.trim();
@@ -519,9 +519,9 @@ public class CloudMusicApi {
     }
 
     /**
-     * Stable playback fallback used when the selected quality has no playable
-     * URL. This mirrors the reference API's standard-MP3 request and is kept
-     * separate from the user's normal quality preference.
+     * 当所选音质没有可播放 URL 时使用的稳定播放降级方案。
+     * 它对齐参考 API 的标准 MP3 请求，
+     * 并与用户的常规音质偏好分开维护。
      */
     public RequestUtil.RequestAnswer songUrlStandardMp3(long id) {
         return songUrlV1(id, "standard", "mp3");
@@ -580,12 +580,12 @@ public class CloudMusicApi {
     }
 
     /**
-     * Loads all songs in a playlist without putting every track id into one request.
+     * 一次性加载播放列表中的所有歌曲，而不必把全部曲目 id 塞进单个请求。
      *
-     * <p>The v6 playlist response provides the ordered {@code trackIds} list, but
-     * {@code /api/v3/song/detail} rejects or times out on a very large {@code c}
-     * payload. Fetching details in bounded batches keeps large playlists reliable
-     * while the final response restores the playlist's original song order.</p>
+     * <p>v6 播放列表响应提供有序的 {@code trackIds} 列表，但
+     * {@code /api/v3/song/detail} 在 {@code c} 载荷过大时会拒绝或超时。
+     * 分批获取详情可保证大播放列表稳定，
+     * 而最终响应再恢复播放列表原有的歌曲顺序。</p>
      */
     public RequestUtil.RequestAnswer playlistTrackAll(long id, int s) {
         final int detailBatchSize = 200;
@@ -619,8 +619,8 @@ public class CloudMusicApi {
         }
 
         Map<Long, JsonObject> songsById = new HashMap<>();
-        // Retain the full privilege payload so playlist consumers can show the provider's
-        // advertised maximum quality and cloud-drive state, not only fee/payed flags.
+        // 保留完整的权益载荷，以便播放列表消费方展示提供方的
+        // 标称最高音质与云盘状态，而不只是 fee/payed 标志。
         Map<Long, JsonObject> privilegesById = new HashMap<>();
         for (int start = 0; start < orderedIds.size(); start += detailBatchSize) {
             int end = Math.min(start + detailBatchSize, orderedIds.size());
@@ -640,8 +640,8 @@ public class CloudMusicApi {
                         + detailAnswer.getStatus() + ")");
             }
 
-            // The endpoint returns licensing details separately from song metadata. Preserve fee/payed
-            // on each song before DTO parsing so the GUI can distinguish ordinary, VIP, and digital-album tracks.
+            // 该接口将授权信息与歌曲元数据分开返回。在 DTO 解析之前保留每首歌的 fee/payed，
+            // 以便 GUI 区分普通歌曲、VIP 歌曲和数字专辑曲目。
             JsonArray privileges = detailBody.getAsJsonArray("privileges");
             if (privileges != null) {
                 for (JsonElement privilegeElement : privileges) {
@@ -676,7 +676,7 @@ public class CloudMusicApi {
             if (song != null) {
                 orderedSongs.add(song);
                 JsonObject privilege = privilegesById.get(songId);
-                // Preserve song/privilege index alignment expected by PlayList.queryMusics().
+                // 保持 PlayList.queryMusics() 期望的歌曲/权限索引对齐。
                 orderedPrivileges.add(privilege == null ? new JsonObject() : privilege);
             }
         }
@@ -954,7 +954,7 @@ public class CloudMusicApi {
         private final boolean success;
         private final boolean alreadyExists;
         /**
-         * True only when /api/v6/playlist/detail confirmed the final trackIds state.
+         * 仅当 /api/v6/playlist/detail 确认最终 trackIds 状态时才为 true。
          */
         private final boolean verified;
         private final int httpStatus;

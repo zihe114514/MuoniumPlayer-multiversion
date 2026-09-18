@@ -8,11 +8,11 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Pure construction and lookup rules for a parsed lyric timeline.
+ * 已解析歌词时间线的纯构造与查找规则。
  *
- * <p>It does not access playback, rendering or GUI state. {@link CloudMusic}
- * remains the compatibility facade and publishes the prepared result to its
- * existing thread-safe lyric list.</p>
+ * <p>它不访问播放、渲染或 GUI 状态。{@link CloudMusic}
+ * 仍是兼容外观，并把准备好的结果发布到其
+ * 既有的线程安全歌词列表。</p>
  */
 final class LyricTimelineSupport {
 
@@ -36,8 +36,8 @@ final class LyricTimelineSupport {
 
         boolean haveNoWords = hasNoWords(timeline);
         addLongBreaks(timeline, haveNoWords);
-        // Overlapping lines only mean anything once the timeline is final: the break lines inserted
-        // above take part in the ordering, and a duet group must never straddle one.
+        // 重叠行只有在时间线最终确定后才有意义：上面插入的断行
+        //参与排序，一个对唱组绝不能横跨一条断行。
         LyricDuetGroups.mark(timeline);
         return new PreparedTimeline(timeline, haveNoWords);
     }

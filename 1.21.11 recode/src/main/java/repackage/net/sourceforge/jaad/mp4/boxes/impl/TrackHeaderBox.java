@@ -140,7 +140,7 @@ public class TrackHeaderBox extends FullBox {
 	 * 属于不同此类组的轨道应取不同值。alternate group 内任一时刻
 	 * 只应播放或串流一个轨道，且该轨道应能通过比特率、编解码器、
 	 * 语言、包大小等属性与组内其他轨道区分。一个组可以只有一个成员。
-	 * @return alternate group
+	  * @return 备用分组
 	 */
 	public int getAlternateGroup() {
 		return alternateGroup;

@@ -31,12 +31,12 @@ Minecraft 客户端 mod **MuoniumPlayer**（网易云音乐播放器 + 灵动岛
 **1.20.1 用 Forge 而不是 NeoForge**：1.20.1 是 Forge 的最后一个大版本，NeoForge 从
 1.20.2 才分家，1.20.1 的模组生态与整合包都在 Forge 上。
 
-四份工程共用：`mod_version=1.4.11`、`maven_group=com.muoniumplayer`、
+四份工程共用：`mod_version=1.4.12`、`maven_group=com.muoniumplayer`、
 `archives_base_name=MuoniumPlayer`、Skija `0.143.17`（Fabric 侧 `include` 进 jar，
 Forge/NeoForge 侧用 shadow 合并；原生库平台由 `skija_natives` 控制，发布时需要改成四平台全打）。
 
 产物命名：`MuoniumPlayer-<mc版本>-<加载器>-<mod版本>.jar`，
-例如 `MuoniumPlayer-1.21.11-neoforge-1.4.11.jar` / `MuoniumPlayer-1.20.1-forge-1.4.11.jar`。
+例如 `MuoniumPlayer-1.21.11-neoforge-1.4.12.jar` / `MuoniumPlayer-1.20.1-forge-1.4.12.jar`。
 名字里带 Minecraft 版本是必要的，不是好看：四个版本工程是四个独立构建，
 8 个 jar 要平铺进同一个 `dist/`，不带版本号的话 1.21.1 与 1.21.11 的 fabric 产物会同名互相覆盖。
 `buildAll` 跑完会把成品汇总到仓库根的 `dist/`（`collectDist` 任务，只收成品、不收源码包与改名前的旧 jar）。
@@ -181,10 +181,11 @@ mod 侧不需要动。
   `minecraft_version` 一致（原版取版本号的入口四个版本各不相同）。
 - **下载页有域名白名单**（github / githubusercontent / jsdelivr / modrinth / gitee）。清单是公开仓库里的
   纯文本，万一被改，「点一下跳浏览器」就成了把用户导去任意站点。客户端永远不会自动下载或替换 jar。
-- **五个清单源，全部同时拉，取版本号最高的那份**（jsdmirror + ghfast + raw + cdn.jsdelivr +
-  gcore.jsdelivr，实测都是 200）。单一源在国内网络下不可靠；而各源缓存策略不同，同一时刻可能一个给
-  新清单、一个给几小时前的旧清单，所以「谁先答」不代表「谁更新」—— 全部试一遍取最高才不会漏掉新版本。
-  前两个源（raw 的加速入口）CDN 只缓存 5 分钟，jsDelivr 对 `@main` 是 12 小时。
+- **三个清单源，全部同时拉，取版本号最高的那份**（ghfast + raw + gcore.jsdelivr，实测都是 200）。
+  单一源在国内网络下不可靠；而各源缓存策略不同，同一时刻可能一个给新清单、一个给几小时前的旧清单，
+  所以「谁先答」不代表「谁更新」—— 全部试一遍取最高才不会漏掉新版本。
+  源 1（raw 的加速入口）CDN 只缓存 5 分钟，jsDelivr 对 `@main` 是 12 小时。
+  2026-09-16 去掉了 `cdn.jsdmirror.com` 与 `cdn.jsdelivr.net` 两个源。
 - **界面是纯 Skija**（`UpdateNoticeOverlay extends NCMPanel`）：宿主 `GuiUpdateNotice` 只是薄壳，
   负责开帧、灌尺寸、转发输入、收起。四版共用同一份界面源码，不再各写一份原生控件版。
 
@@ -246,7 +247,7 @@ Gradle wrapper 与构建配置。
 .\build-all.bat
 
 # PowerShell 里直接调用；构建到指定目录而不是默认 dist/
-.\tools\build-all.ps1 -OutputDir releases\1.4.11
+.\tools\build-all.ps1 -OutputDir releases\1.4.12
 
 # 只构建部分版本 / 换任务 / 离线 / 不复用 Gradle daemon
 .\tools\build-all.ps1 -Versions '1.21.1','26.2' -Task ':fabric:build'

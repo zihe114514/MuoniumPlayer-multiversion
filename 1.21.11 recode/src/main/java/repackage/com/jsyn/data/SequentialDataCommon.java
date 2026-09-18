@@ -63,7 +63,7 @@ public abstract class SequentialDataCommon implements SequentialData {
         return numFrames;
     }
 
-    // JavaDocs will be copied from SequentialData
+    // JavaDocs 将从 SequentialData 复制过来
 
     @Override
     public int getSustainBegin() {

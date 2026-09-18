@@ -33,7 +33,7 @@ public class OMADiscreteMediaHeadersBox extends FullBox {
 	 * content type 指示内容对象的原始 MIME 媒体类型，
 	 * 即成功提取 OMAContentBox 后所得内容所代表的内容类型。
 	 * 
-	 * @return content type
+	  * @return 内容类型
 	 */
 	public String getContentType() {
 		return contentType;

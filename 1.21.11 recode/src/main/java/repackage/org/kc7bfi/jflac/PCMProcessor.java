@@ -12,13 +12,13 @@ import repackage.org.kc7bfi.jflac.util.ByteData;
 /**
  * PCMProcessor接口。
  * 此接口定义类侦听的签名
- * to PCM decode events.
+ * 到 PCM 解码事件。
  *
  * @author kc7bfi
  */
 public interface PCMProcessor {
     /**
-     * Called when StreamInfo read.
+     * 读取 StreamInfo 时调用。
      *
      * 到 PCM 解码事件。
      */

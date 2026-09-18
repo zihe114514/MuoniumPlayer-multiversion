@@ -734,7 +734,7 @@ final class SynthesisFilter {
         // V[16] 始终为 0.0：
         dest[256 + actualWritePos] = 0.0f;
 
-        // insert V[17-31] (== -newV[15-1]) into actual v:
+        // 将 V[17-31]（== -newV[15-1]）插入实际的 v 中：
         dest[272 + actualWritePos] = -x1[15];
         dest[288 + actualWritePos] = -x1[14];
         dest[304 + actualWritePos] = -x1[13];
@@ -1429,13 +1429,13 @@ final class SynthesisFilter {
     private static final float cos1_4 = (float) (1.0 / (2.0 * Math.cos(MY_PI / 4.0)));
 
     // 注意：这些值顺序不同
-    // as in Annex 3-B.3 of the ISO/IEC DIS 11172-3
+    // 与 ISO/IEC DIS 11172-3 的附录 3-B.3 相同
     // 如 ISO/IEC DIS 11172-3 附录 3-B.3 所述
 
     /**
      * d []拆分为长度为16的子数组。这提供了
      * 通过允许寻址16个区块来加快访问速度
-     * with constant offset.
+     * 且偏移量恒定。
      **/
     private static final float[][] d16 = {
             { 0.0f, -4.42505E-4f, 0.003250122f, -0.007003784f, 0.031082153f, -0.07862854f, 0.10031128f, -0.57203674f, 1.144989f, 0.57203674f, 0.10031128f, 0.07862854f, 0.031082153f, 0.007003784f, 0.003250122f, 4.42505E-4f },

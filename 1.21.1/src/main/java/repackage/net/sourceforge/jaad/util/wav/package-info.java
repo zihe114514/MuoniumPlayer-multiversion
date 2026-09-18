@@ -1,5 +1,5 @@
 package repackage.net.sourceforge.jaad.util.wav;
 
 /**
-* Utility package for writing raw PCM data to a wave file.
-*/
+ * 将原始 PCM 数据写入 wave 文件的工具包。
+ */

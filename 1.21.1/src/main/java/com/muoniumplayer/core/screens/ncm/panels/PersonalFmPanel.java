@@ -16,7 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-/** Personal-FM discovery surface backed by one-at-a-time recommendation pulls. */
+/** 私人 FM 发现界面，由一次一条的推荐拉取支撑。 */
 public final class PersonalFmPanel extends NCMPanel {
 
     private static final double MARGIN = 12.0;

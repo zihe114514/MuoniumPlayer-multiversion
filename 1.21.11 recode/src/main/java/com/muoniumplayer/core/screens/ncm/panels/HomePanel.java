@@ -537,7 +537,7 @@ public class HomePanel extends NCMPanel {
 
         // 字体图集在首次绘制前报告负高度。从第一帧起保持稳定的
         //头部预留，使响应式卡片网格永远不会盖住文字
-        // while the player opens or changes between 100/90/80/70 percent.
+        // ——即便播放器正在打开或在 100/90/80/70 之间切换。
         final double welcomeHeight = Math.max(12.0, FontManager.pf25bold.getStringHeight(welcomeText));
         final double recommendationsHeight = Math.max(7.0, FontManager.pf14bold.getStringHeight(recommendationsText));
         final double recommendationsY = margin + welcomeHeight + 2

@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.ports;
@@ -25,7 +25,7 @@ import repackage.com.softsynth.shared.time.TimeStamp;
 import java.util.LinkedList;
 
 /**
- * Queue for SequentialData, samples or envelopes
+ * 用于 SequentialData、采样或包络的队列
  *
  * @author Phil Burk (C) 2009 Mobileer Inc
  */
@@ -46,7 +46,7 @@ public class UnitDataQueuePort extends UnitPort {
         super(name);
     }
 
-    /** Hold a reference to part of a sample. */
+    /** 保持对样品部分的引用。*/
     @SuppressWarnings("serial")
     private class QueuedBlock extends QueueDataCommand {
 
@@ -57,7 +57,7 @@ public class UnitDataQueuePort extends UnitPort {
         @Override
         public void run() {
             synchronized (blocks) {
-                // Remove last block if it can be skipped.
+                // 若最后一块可跳过则将其移除。
                 if (!blocks.isEmpty()) {
                     QueueDataEvent lastBlock = blocks.getLast();
                     if (lastBlock.isSkipIfOthers()) {
@@ -65,15 +65,15 @@ public class UnitDataQueuePort extends UnitPort {
                     }
                 }
 
-                // If we are crossfading then figure out where to crossfade
-                // from.
+                // 若正在交叉淡入，则确定从何处开始交叉淡入
+                // 开始。
                 if (getCrossFadeIn() > 0) {
                     if (isImmediate()) {
-                        // Queue will be cleared so fade in from current.
+                        // 队列将被清除，因此从当前淡入。
                         if (currentBlock != null) {
                             setupCrossFade(currentBlock, frameIndex, this);
                         }
-                        // else nothing is playing so don't crossfade.
+                        // 否则没有任何在播放，故不做交叉淡入。
                     } else {
                         QueueDataCommand endBlock = getEndBlock();
                         if (endBlock != null) {
@@ -94,7 +94,7 @@ public class UnitDataQueuePort extends UnitPort {
         }
     }
 
-    // FIXME - determine crossfade on any transition between blocks or when looping back.
+    // FIXME 在块之间的任何切换或回环时确定交叉淡入。
 
     protected void setupCrossFade(QueueDataCommand sourceCommand, int sourceStartIndex,
             QueueDataCommand targetCommand) {
@@ -102,12 +102,12 @@ public class UnitDataQueuePort extends UnitPort {
         SequentialData sourceData = sourceCommand.getCurrentData();
         SequentialData targetData = targetCommand.getCurrentData();
         int remainingSource = sourceData.getNumFrames() - sourceStartIndex;
-        // clip to end of source
+        // 裁剪到源的末尾
         if (crossFrames > remainingSource)
             crossFrames = remainingSource;
         if (crossFrames > 0) {
-            // The SequentialDataCrossfade should continue to the end of the target
-            // so that we can crossfade from it to the target.
+            // SequentialDataCrossfade应继续到目标的末尾
+            // 这样我们就可以从它交叉淡入淡出到目标。
             int remainingTarget = targetData.getNumFrames() - targetCommand.getStartFrame();
             targetCommand.crossfadeData.setup(sourceData, sourceStartIndex, crossFrames,
                     targetData, targetCommand.getStartFrame(), remainingTarget);
@@ -154,7 +154,7 @@ public class UnitDataQueuePort extends UnitPort {
         if (finishingBlock != null) {
             if (finishingBlock.getCallback() != null) {
                 try {
-                    finishingBlock.getCallback().finished(currentBlock); // FIXME - Should this pass
+                    finishingBlock.getCallback().finished(currentBlock); // FIXME 这里是否应传递
                     // finishingBlock?!
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -184,18 +184,18 @@ public class UnitDataQueuePort extends UnitPort {
     private void advanceFrameIndex() {
         frameIndex += 1;
         framesMoved += 1;
-        // Are we done with this block?
+        // 我们完成这个街区了吗？
         if (frameIndex >= (currentBlock.getStartFrame() + currentBlock.getNumFrames())) {
-            // Should we loop on this block based on a counter?
+            // 我们是否应该根据计数器循环此块？
             if (currentBlock.loopsLeft > 0) {
                 currentBlock.loopsLeft -= 1;
                 loopToStart();
             }
-            // Should we loop forever on this block?
+            // 我们应该在这个街区永远循环吗？
             else if ((blocks.isEmpty()) && (currentBlock.loopsLeft < 0)) {
                 loopToStart();
             }
-            // We are done.
+            // 我們完了!
             else {
                 if (currentBlock.isAutoStop()) {
                     autoStopPending = true;
@@ -244,12 +244,12 @@ public class UnitDataQueuePort extends UnitPort {
         return value;
     }
 
-    /** Write directly to the port queue. This is only called by unit tests! */
+    /** 直接写入端口队列。这仅由单元测试调用！*/
     protected void addQueuedBlock(QueueDataEvent block) {
         blocks.add((QueuedBlock) block);
     }
 
-    /** Clear the queue. Internal use only. */
+    /** 清空队列。仅供内部使用。 */
     protected void clearQueue() {
         synchronized (blocks) {
             blocks.clear();
@@ -266,7 +266,7 @@ public class UnitDataQueuePort extends UnitPort {
         }
     }
 
-    /** Queue the data to the port at a future time. */
+    /** 在将来将数据排队到端口。*/
     public void queue(SequentialData queueableData, int startFrame, int numFrames,
             TimeStamp timeStamp) {
         QueueDataCommand command = createQueueDataCommand(queueableData, startFrame, numFrames);
@@ -274,7 +274,7 @@ public class UnitDataQueuePort extends UnitPort {
     }
 
     /**
-     * Queue the data to the port at a future time. Command will clear the queue before executing.
+     * 在未来某时刻将数据入队到端口。命令执行前会先清空队列。
      */
     public void queueImmediate(SequentialData queueableData, int startFrame, int numFrames,
             TimeStamp timeStamp) {
@@ -283,14 +283,14 @@ public class UnitDataQueuePort extends UnitPort {
         scheduleCommand(timeStamp, command);
     }
 
-    /** Queue the data to the port at a future time. */
+    /** 在将来将数据排队到端口。*/
     public void queueLoop(SequentialData queueableData, int startFrame, int numFrames,
             TimeStamp timeStamp) {
         queueLoop(queueableData, startFrame, numFrames, LOOP_IF_LAST, timeStamp);
     }
 
     /**
-     * Queue the data to the port at a future time with a specified number of loops.
+     * 在将来使用指定数量的循环将数据排队到端口。
      */
     public void queueLoop(SequentialData queueableData, int startFrame, int numFrames,
             int numLoops, TimeStamp timeStamp) {
@@ -306,18 +306,18 @@ public class UnitDataQueuePort extends UnitPort {
         return command;
     }
 
-    /** Queue the entire data object for looping. */
+    /** 将整个数据对象入队以循环播放。 */
     public void queueLoop(SequentialData queueableData) {
         queueLoop(queueableData, 0, queueableData.getNumFrames());
     }
 
-    /** Queue the data to the port for immediate use. */
+    /** 将数据排队到端口以便立即使用。*/
     public void queueLoop(SequentialData queueableData, int startFrame, int numFrames) {
         queueLoop(queueableData, startFrame, numFrames, LOOP_IF_LAST);
     }
 
     /**
-     * Queue the data to the port for immediate use with a specified number of loops.
+     * 将数据排队到端口，以便立即使用指定数量的循环。
      */
     public void queueLoop(SequentialData queueableData, int startFrame, int numFrames, int numLoops) {
         QueueDataCommand command = createQueueDataCommand(queueableData, startFrame, numFrames);
@@ -326,8 +326,8 @@ public class UnitDataQueuePort extends UnitPort {
     }
 
     /**
-     * Queue the data to the port at a future time. Request that the unit stop when this block is
-     * finished.
+     * 在将来将数据排队到端口。当此块为时，请求设备停止
+     * 已完成。
      */
     public void queueStop(SequentialData queueableData, int startFrame, int numFrames,
             TimeStamp timeStamp) {
@@ -337,7 +337,7 @@ public class UnitDataQueuePort extends UnitPort {
 //        queueCommand(command);
     }
 
-    /** Queue the data to the port through the command queue ASAP. */
+    /** 尽快通过命令队列将数据入队到端口。 */
     public void queue(SequentialData queueableData, int startFrame, int numFrames) {
         QueueDataCommand command = createQueueDataCommand(queueableData, startFrame, numFrames);
         queueCommand(command);
@@ -350,7 +350,7 @@ public class UnitDataQueuePort extends UnitPort {
     }
 
     /**
-     * Queue entire amount of data with no options.
+     * 在没有选项的情况下对整个数据量进行排队。
      *
      * @param queueableData
      */
@@ -362,17 +362,17 @@ public class UnitDataQueuePort extends UnitPort {
         queue(queueableData, 0, queueableData.getNumFrames(), callback);
     }
 
-    /** Schedule queueOn now! */
+    /** 立即调度 queueOn！ */
     public void queueOn(SequentialData queueableData) {
         queueOn(queueableData, getSynthesisEngine().createTimeStamp());
     }
 
-    /** Schedule queueOff now! */
+    /** 立即调度 queueOff！ */
     public void queueOff(SequentialData queueableData) {
         queueOff(queueableData, false);
     }
 
-    /** Schedule queueOff now! */
+    /** 立即调度 queueOff！ */
     public void queueOff(SequentialData queueableData, boolean ifStop) {
         SynthesisEngine engine = getSynthesisEngine();
 
@@ -380,15 +380,15 @@ public class UnitDataQueuePort extends UnitPort {
     }
 
     /**
-     * Convenience method that will queue the attack portion of a channelData and the sustain loop
-     * if it exists. This could be used to implement a NoteOn method.
+     * 便捷方法，将某个 channelData 的起音部分和延音循环
+     * （若存在）。可用于实现 NoteOn 方法。
      */
     public void queueOn(SequentialData queueableData, TimeStamp timeStamp) {
 
         if (queueableData.getSustainBegin() < 0) {
-            // no sustain loop, handle release
+            // 无延音循环，处理释放
             if (queueableData.getReleaseBegin() < 0) {
-                // No loops
+                // 无循环
                 queueImmediate(queueableData, 0, queueableData.getNumFrames(), timeStamp);
             } else {
                 queueImmediate(queueableData, 0, queueableData.getReleaseEnd(), timeStamp);
@@ -396,11 +396,11 @@ public class UnitDataQueuePort extends UnitPort {
                 queueLoop(queueableData, queueableData.getReleaseBegin(), size, timeStamp);
             }
         } else {
-            // yes sustain loop
+            // 是维持循环
             if (queueableData.getSustainEnd() > 0) {
                 int frontSize = queueableData.getSustainBegin();
                 int loopSize = queueableData.getSustainEnd() - queueableData.getSustainBegin();
-                // Is there an initial portion before the sustain loop?
+                // 延音循环之前是否有初始部分？
                 if (frontSize > 0) {
                     queueImmediate(queueableData, 0, frontSize, timeStamp);
                 }
@@ -414,22 +414,22 @@ public class UnitDataQueuePort extends UnitPort {
     }
 
     /**
-     * Convenience method that will queue the decay portion of a SequentialData object, or the gap
-     * and release loop portions if they exist. This could be used to implement a NoteOff method.
+     * 便捷方法，将 SequentialData 对象的衰减部分入队，或将间隙
+     * 并释放循环部分（如果存在）。这可用于实现NoteOff方法。
      *
-     * @param ifStop Will setAutostop(true) if release portion queued without a release loop. This will
-     *         stop execution of the unit.
+     * @param ifStop 若在无释放循环的情况下入队了释放部分，则 setAutostop(true)。这将
+     *         停止执行设备。
      */
     public void queueOff(SequentialData queueableData, boolean ifStop, TimeStamp timeStamp) {
-        if (queueableData.getSustainBegin() >= 0) /* Sustain loop? */
+        if (queueableData.getSustainBegin() >= 0) /* 维持循环？*/
         {
             int relSize = queueableData.getReleaseEnd() - queueableData.getReleaseBegin();
-            if (queueableData.getReleaseBegin() < 0) { /* Sustain loop, no release loop. */
+            if (queueableData.getReleaseBegin() < 0) { /* 维持循环，无释放循环。*/
                 int susEnd = queueableData.getSustainEnd();
                 int size = queueableData.getNumFrames() - susEnd;
                 // LOGGER.debug("queueOff: size = " + size );
                 if (size <= 0) {
-                    // always queue something so that we can stop the loop
+                    // 始终入队一些内容，以便我们能停止循环
                     // 20001117
                     size = 1;
                     susEnd = queueableData.getNumFrames() - 1;
@@ -440,17 +440,17 @@ public class UnitDataQueuePort extends UnitPort {
                     queue(queueableData, susEnd, size, timeStamp);
                 }
             } else if (queueableData.getReleaseBegin() > queueableData.getSustainEnd()) {
-                // Queue gap between sustain and release loop.
+                // 入队延音与释放循环之间的间隙。
                 queue(queueableData, queueableData.getSustainEnd(), queueableData.getReleaseEnd()
                         - queueableData.getSustainEnd(), timeStamp);
                 if (relSize > 0)
                     queueLoop(queueableData, queueableData.getReleaseBegin(), relSize, timeStamp);
             } else if (relSize > 0) {
-                // No gap between sustain and release.
+                // 维持和释放之间没有间隙。
                 queueLoop(queueableData, queueableData.getReleaseBegin(), relSize, timeStamp);
             }
         }
-        /* If no sustain loop, then nothing to do. */
+        /* 如果没有维持循环，则无事可做。*/
     }
 
     public void clear(TimeStamp timeStamp) {

@@ -1,23 +1,23 @@
 package repackage.org.kc7bfi.jflac.sound.spi;
 
 /**
- * libFLAC - Free Lossless Audio Codec library
- * Copyright (C) 2001,2002,2003  Josh Coalson
+ * libFLAC -免费无损音频编解码器库
+ * 版权所有(C) 2001,2002,2003 Josh Coalson
  * <p>
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * 此库是自由软件；您可以重新分发它和/或
+ * 根据GNU Library General Public的条款对其进行修改
+ * 由自由软件基金会发布的许可证；或者
+ * 许可证的第2版，或（根据您的选择）任何更高版本。
  * <p>
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
+ * 此程序被分布是希望它会是有益的，
+ * 基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ * 适销性或适合特定目的。请参阅 GNU，
+ * 带固定偏移。
  * <p>
- * You should have received a copy of the GNU Library General Public
- * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA  02111-1307, USA.
+ * 您应该已经收到了GNU Library General Public的副本
+ * 与该库一起的许可证；如果没有，请写信给
+ * 库通用公共许可证以了解更多细节。
+ * Boston, MA 02111-1307, USA.
  */
 
 import repackage.org.kc7bfi.jflac.FLACDecoder;
@@ -32,7 +32,7 @@ import java.io.IOException;
 import java.io.InputStream;
 
 /**
- * Converts an Flac bitstream into a PCM 16bits/sample audio stream.
+ * 读取注释
  *
  * @author Marc Gimpel, Wimba S.A. (marc@wimba.com)
  * @author Florian Bomers
@@ -41,23 +41,23 @@ import java.io.InputStream;
 public class Flac2PcmAudioInputStream extends RingedAudioInputStream implements
         PCMProcessor {
 
-    /** Flac Decoder. */
+    /** FLAC解码器。*/
     private FLACDecoder decoder;
 
     private ByteData pcmData;
 
-    /** StreamInfo MetaData. */
+    /** 将 Flac 比特流转换为 PCM 16 位/采样音频流。 */
     private StreamInfo streamInfo;
 
-    /** the meta data from the stream */
+    /** StreamInfo 元数据。 */
     private Metadata[] metaData;
 
     /**
-     * Constructor.
+     * 制造商
      *
-     * @param in the underlying input stream.
-     * @param format the target format of this stream's audio data.
-     * @param length the length in sample frames of the data in this stream.
+     * @param in 底层输入流。
+     * @param format 此流的音频数据的目标格式。
+     * 来自流的元数据
      */
     public Flac2PcmAudioInputStream(InputStream in, AudioFormat format,
                                     long length) {
@@ -65,12 +65,12 @@ public class Flac2PcmAudioInputStream extends RingedAudioInputStream implements
     }
 
     /**
-     * Constructor.
+     * 制造商
      *
-     * @param in the underlying input stream.
-     * @param format the target format of this stream's audio data.
-     * @param length the length in sample frames of the data in this stream.
-     * @param size the buffer size.
+     * @param in 底层输入流。
+     * @param format 此流的音频数据的目标格式。
+     * 来自流的元数据
+     * @param length 此流中数据的长度（采样帧数）。
      */
     public Flac2PcmAudioInputStream(InputStream in, AudioFormat format,
                                     long length, int size) {
@@ -78,7 +78,7 @@ public class Flac2PcmAudioInputStream extends RingedAudioInputStream implements
     }
 
     /**
-     * called from the super class whenever more PCM data is needed.
+     * 每当需要更多PCM数据时从超类调用。
      */
     protected void fill() throws IOException {
         if (decoder == null) {
@@ -96,7 +96,7 @@ public class Flac2PcmAudioInputStream extends RingedAudioInputStream implements
     }
 
     /**
-     * Initialize the Flac Decoder after reading the Header.
+     * @param size 缓冲区大小。
      *
      * @exception IOException
      */
@@ -107,9 +107,9 @@ public class Flac2PcmAudioInputStream extends RingedAudioInputStream implements
     }
 
     /**
-     * Process the StreamInfo block.
+     * 处理StreamInfo块。
      *
-     * @param streamInfo the StreamInfo block
+     * 读取帧头后初始化 Flac 解码器。
      * @see PCMProcessor#processStreamInfo(StreamInfo)
      */
     public void processStreamInfo(StreamInfo streamInfo) {
@@ -117,10 +117,10 @@ public class Flac2PcmAudioInputStream extends RingedAudioInputStream implements
     }
 
     /**
-     * Process the decoded PCM bytes. This is called synchronously from the
-     * fill() method.
+     * 处理解码的PCM字节。这从同步调用
+     * 注入方法
      *
-     * @param pcm The decoded PCM data
+      * @param pcm 解码后的 PCM 数据
      * @see PCMProcessor#processPCM(ByteData)
      */
     public void processPCM(ByteData pcm) {
@@ -129,14 +129,14 @@ public class Flac2PcmAudioInputStream extends RingedAudioInputStream implements
     }
 
     /**
-     * @return the streamInfo
+      * @return streamInfo
      */
     public StreamInfo getStreamInfo() {
         return streamInfo;
     }
 
     /**
-     * @return the metaData
+     * @return 元数据
      */
     public Metadata[] getMetaData() {
         return metaData;

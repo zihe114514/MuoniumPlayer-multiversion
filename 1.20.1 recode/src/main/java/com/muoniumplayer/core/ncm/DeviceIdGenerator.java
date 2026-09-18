@@ -13,8 +13,8 @@ import java.util.Map;
 import static com.sun.jna.platform.win32.WinReg.HKEY_LOCAL_MACHINE;
 
 /**
- * Generate a unique device ID from the device,
- * used for obtaining the anonymous user token for {@link CloudMusicApi#registerAnonimous()}.
+ * 从设备生成唯一的设备 ID，
+ * 用于获取 {@link CloudMusicApi#registerAnonimous()} 所需的匿名用户令牌。
  */
 public final class DeviceIdGenerator {
 
@@ -71,7 +71,7 @@ public final class DeviceIdGenerator {
         properties.put("OSVersion", System.getProperty("os.version"));
         properties.put("Arch", System.getProperty("os.arch"));
 
-        // cpu name
+        // CPU 名称
         try {
             String processorNameString = Advapi32Util.registryGetStringValue
                     (HKEY_LOCAL_MACHINE,
@@ -82,7 +82,7 @@ public final class DeviceIdGenerator {
                 properties.put("CPU", processorNameString);
         } catch (Exception ignored) {}
 
-        // adapter mac addr
+        // 适配器 MAC 地址
         try {
             Collections.list(NetworkInterface.getNetworkInterfaces()).forEach(networkInterface -> {
                 try {

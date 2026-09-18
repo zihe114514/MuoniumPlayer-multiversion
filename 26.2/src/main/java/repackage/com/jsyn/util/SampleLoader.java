@@ -1,17 +1,17 @@
 /*
  * Copyright 2011 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.util;
@@ -28,16 +28,16 @@ import java.net.URL;
 import java.nio.file.Files;
 
 /**
- * Load a FloatSample from various sources. The default loader uses custom code to load WAV or AIF
- * files. Supported data formats are 16, 24 and 32 bit PCM, and 32-bit float. Compressed formats
- * such as unsigned 8-bit, uLaw, A-Law and MP3 are not support. If you need to load one of those
- * files try setJavaSoundPreferred(true). Or convert it to a supported format using Audacity or Sox
- * or some other sample file tool. Here is an example of loading a sample from a file.
+ * 从各种来源加载FloatSample。默认加载器使用自定义代码加载WAV或AIF
+ * 文件。支持的数据格式为16位、24位和32位PCM ，以及32位浮点数。压缩格式
+ * 如无符号 8 位、uLaw、A-Law 和 MP3 等不受支持。若你需要加载其中之一
+ * files try setJavaSoundPreferred(true).或使用Audacity或SOX将其转换为受支持的格式
+ * 或其他示例文件工具。以下是从文件加载示例的示例。
  *
  * <pre>
  * <code>
  *     File sampleFile = new File("guitar.wav");
- *     FloatSample sample = SampleLoader.loadFloatSample( sampleFile );
+ *     FloatSample sample = SampleLoader.loadFloatSample(sampleFile);
  * </code>
  * </pre>
  *
@@ -48,16 +48,16 @@ public class SampleLoader {
     private static final String JS_LOADER_NAME = "com.jsyn.util.JavaSoundSampleLoader";
 
     /**
-     * Try to create an implementation of AudioSampleLoader.
+     * 尝试创建 AudioSampleLoader 的实现。
      *
-     * @return A device supported on this platform.
+     * 此平台支持@return A设备。
      */
     private static AudioSampleLoader createLoader() {
         return new CustomSampleLoader();
     }
 
     /**
-     * Load a FloatSample from a File object.
+     * 从 File 对象加载 FloatSample。
      */
     public static FloatSample loadFloatSample(File fileIn) throws IOException {
         AudioSampleLoader loader = SampleLoader.createLoader();
@@ -65,7 +65,7 @@ public class SampleLoader {
     }
 
     /**
-     * Load a FloatSample from an InputStream. This is handy when loading Resources from a JAR file.
+     * 从 InputStream 加载 FloatSample。从 JAR 文件加载资源时很方便。
      */
     public static FloatSample loadFloatSample(InputStream inputStream) throws IOException {
         AudioSampleLoader loader = SampleLoader.createLoader();
@@ -90,7 +90,7 @@ public class SampleLoader {
     }
 
     /**
-     * Load a FloatSample from a URL.. This is handy when loading Resources from a website.
+     * 从URL加载FloatSample。这在从网站加载资源时很方便。
      */
     public static FloatSample loadFloatSample(URL url) throws IOException {
         AudioSampleLoader loader = SampleLoader.createLoader();
@@ -102,11 +102,11 @@ public class SampleLoader {
     }
 
     /**
-     * If set true then the audio file parser from JavaSound will be used. Note that JavaSound
-     * cannot load audio files containing floating point data. But it may be able to load some
-     * compressed data formats such as uLaw.
+     * 如果设置为true ，则将使用来自JavaSound的音频文件解析器。请注意， JavaSound
+     * 无法加载包含浮点数据的音频文件。但它也许能加载一些
+     * 如 uLaw 之类的压缩数据格式。
      *
-     * Note: JavaSound is not supported on Android.
+     * 注意： Android不支持JavaSound。
      *
      * @param javaSoundPreferred
      */
@@ -115,14 +115,14 @@ public class SampleLoader {
     }
 
     /**
-     * Decode 24 bit samples from a BigEndian byte array into a float array. The samples will be
-     * normalized into the range -1.0 to +1.0.
+     * 从大端字节数组解码 24 位采样到 float 数组。采样将被
+     * 归一化到 -1.0 到 +1.0 范围。
      *
-     * @param audioBytes raw data from an audio file
-     * @param offset first element of byte array
-     * @param numBytes number of bytes to process
-     * @param data array to be filled with floats
-     * @param outputOffset first element of float array to be filled
+     * @param audioBytes 来自音频文件的原始数据
+     * @param offset 字节数组的第一个元素
+     * @param numBytes 要处理的字节数
+     * @param data 用于填充 float 的数组
+     * @param outputOffset 要填充的浮点数组的第一个元素
      */
     public static void decodeBigI24ToF32(byte[] audioBytes, int offset, int numBytes, float[] data,
             int outputOffset) {

@@ -51,7 +51,7 @@ public class VorbisComment extends Metadata {
         vendorString = new byte[len];
         is.readByteBlockAlignedNoCRC(vendorString, vendorString.length);
 
-        // read comments
+        // 读取注释
         numComments = is.readRawIntLittleEndian();
         if (numComments > 0) comments = new VorbisString[numComments];
         for (int i = 0; i < numComments; i++) {

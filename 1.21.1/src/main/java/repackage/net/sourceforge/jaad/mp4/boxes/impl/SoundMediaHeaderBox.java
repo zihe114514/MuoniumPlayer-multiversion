@@ -5,9 +5,8 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The sound media header contains general presentation information, independent
- * of the coding, for audio media. This header is used for all tracks containing
- * audio.
+ * 声音媒体头包含与编码无关的、用于音频媒体的通用放映信息。
+ * 此头用于所有含音频的轨道。
  *
  * @author in-somnia
  */
@@ -24,15 +23,15 @@ public class SoundMediaHeaderBox extends FullBox {
 		super.decode(in);
 
 		balance = in.readFixedPoint(8, 8);
-		in.skipBytes(2); //reserved
+		in.skipBytes(2); //保留
 	}
 
 	/**
-	 * The balance is a floating-point number that places mono audio tracks in a
-	 * stereo space: 0 is centre (the normal value), full left is -1.0 and full
-	 * right is 1.0.
+	 * 平衡度是一个浮点数，将单声道音频轨道置于
+	 * 立体声空间：0 为居中（正常值），最左为 -1.0，最右
+	 * 为 1.0。
 	 *
-	 * @return the stereo balance for a mono track
+	 * @return 单声道轨道的立体声平衡
 	 */
 	public double getBalance() {
 		return balance;

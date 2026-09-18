@@ -2,7 +2,7 @@ package com.muoniumplayer.core.screens.ncm;
 
 import java.util.Arrays;
 
-/** Stateless viewport, timing and sizing calculations for the full-screen lyric panel. */
+/** 全屏歌词面板的无状态视口、计时与尺寸计算。 */
 public final class LyricsPanelGeometry {
 
     private LyricsPanelGeometry() {

@@ -1,23 +1,23 @@
 package repackage.org.kc7bfi.jflac.frame;
 
 /**
- * libFLAC - Free Lossless Audio Codec library
- * Copyright (C) 2001,2002,2003  Josh Coalson
+ * libFLAC -免费无损音频编解码器库
+ * 版权所有(C) 2001,2002,2003 Josh Coalson
  * <p>
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * 此库是自由软件；您可以重新分发它和/或
+ * 根据GNU Library General Public的条款对其进行修改
+ * 由自由软件基金会发布的许可证；或者
+ * 许可证的第2版，或（根据您的选择）任何更高版本。
  * <p>
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
+ * 此程序被分布是希望它会是有益的，
+ * 基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ * 适销性或适合特定目的。请参阅 GNU，
+ * 带固定偏移。
  * <p>
- * You should have received a copy of the GNU Library General Public
- * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA  02111-1307, USA.
+ * 您应该已经收到了GNU Library General Public的副本
+ * 与该库一起的许可证；如果没有，请写信给
+ * 库通用公共许可证以了解更多细节。
+ * Boston, MA 02111-1307, USA.
  */
 
 import repackage.org.kc7bfi.jflac.ChannelData;
@@ -28,26 +28,26 @@ import repackage.org.kc7bfi.jflac.io.BitInputStream;
 import java.io.IOException;
 
 /**
- * Fixed FLAC subframe (channel).
+ * 解码子帧
  * @author kc7bfi
  */
 public class ChannelFixed extends Channel {
     private static final int MAX_FIXED_ORDER = 4;
 
-    private EntropyCodingMethod entropyCodingMethod; // The residual coding method.
-    private int order; // The polynomial order.
-    private int[] warmup = new int[MAX_FIXED_ORDER]; // Warmup samples to prime the predictor, length == order.
-    private int[] residual; // The residual signal, length == (blocksize minus order) samples.
+    private EntropyCodingMethod entropyCodingMethod; // 残差编码方法。
+    private int order; // 多项式顺序。
+    private int[] warmup = new int[MAX_FIXED_ORDER]; // toString 转换。
+    private int[] residual; // Fixed 类型 FLAC 子帧（声道）。
 
     /**
-     * The constructor.
-     * @param is            The InputBitStream
-     * @param header        The FLAC Frame Header
-     * @param channelData   The decoded channel data (output)
-     * @param bps           The bits-per-second
-     * @param wastedBits    The bits waisted in the frame
-     * @param order         The predicate order
-     * @throws IOException  Thrown if error reading from the InputBitStream
+     * 构造函数。
+      * @param is 输入位流
+     * @param header FLAC帧标题
+     * @param channelData 解码后的信道数据（输出）
+     * @param bps 每秒位数
+     * @param wastedBits 边框中的钻头
+     * @param order 谓词顺序
+     * FLAC 子帧（声道）类的基类。
      * @throws FrameDecodeException
      */
     public ChannelFixed(BitInputStream is, Header header, ChannelData channelData, int bps, int wastedBits, int order) throws IOException, FrameDecodeException {
@@ -56,12 +56,12 @@ public class ChannelFixed extends Channel {
         this.residual = channelData.getResidual();
         this.order = order;
 
-        // read warm-up samples
+        // 为预测器预热的采样，长度 == order。
         for (int u = 0; u < order; u++) {
             warmup[u] = is.readRawInt(bps);
         }
 
-        // read entropy coding method info
+        // 残差信号，长度 == (blocksize - order) 个采样。
         int type = is.readRawUInt(ENTROPY_CODING_METHOD_TYPE_LEN);
         EntropyCodingMethod pr;
         switch (type) {
@@ -79,7 +79,7 @@ public class ChannelFixed extends Channel {
         pr.contents = channelData.getPartitionedRiceContents();
         pr.readResidual(is, order, pr.order, header, channelData.getResidual());
 
-        // decode the subframe
+        // 帧中浪费的位数。
         System.arraycopy(warmup, 0, channelData.getOutput(), 0, order);
         FixedPredictor.restoreSignal(residual, header.blockSize - order, order, channelData.getOutput(), order);
     }

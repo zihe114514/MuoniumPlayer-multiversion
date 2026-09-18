@@ -90,7 +90,7 @@ public class ItemLocationBox extends FullBox {
 	 * item ID 是此资源的任意整数“名称”，可用于
 	 * 引用它（例如在 URL 中）。
 	 *
-	 * @return item ID
+	  * @return 项目 ID
 	 */
 	public int[] getItemID() {
 		return itemID;

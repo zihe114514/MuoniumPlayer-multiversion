@@ -3,7 +3,7 @@ package repackage.net.sourceforge.jaad.aac.gain;
 import repackage.net.sourceforge.jaad.aac.AACException;
 import repackage.net.sourceforge.jaad.aac.syntax.ICSInfo.WindowSequence;
 
-//inverse modified discrete cosine transform
+//逆改进离散余弦变换
 class IMDCT implements GCConstants, IMDCTTables, Windows {
 
 	private static final float[][] LONG_WINDOWS = {SINE_256, KBD_256};
@@ -53,7 +53,7 @@ class IMDCT implements GCConstants, IMDCTTables, Windows {
 		final float[] window1 = new float[lbShort*2];
 		final float[] window2 = new float[lbShort*2];
 
-		//init windows
+		//初始化窗口
 		int i;
 		switch(winSeq) {
 			case ONLY_LONG_SEQUENCE:
@@ -149,7 +149,7 @@ class IMDCT implements GCConstants, IMDCTTables, Windows {
 			tmp[i] = -in[2*n-1-2*i];
 		}
 
-		//pre-twiddle
+		//前 twiddle
 		final float[][] buf = new float[n2][2];
 		for(i = 0; i<n2; i++) {
 			buf[i][0] = (table[i][0]*tmp[2*i])-(table[i][1]*tmp[2*i+1]);
@@ -159,7 +159,7 @@ class IMDCT implements GCConstants, IMDCTTables, Windows {
 		//fft
 		FFT.process(buf, n2);
 
-		//post-twiddle and reordering
+		//后 twiddle 并重排序
 		for(i = 0; i<n2; i++) {
 			tmp[i] = table2[i][0]*buf[i][0]+table2[i][1]*buf[n2-1-i][0]
 					+table2[i][2]*buf[i][1]+table2[i][3]*buf[n2-1-i][1];
@@ -167,7 +167,7 @@ class IMDCT implements GCConstants, IMDCTTables, Windows {
 					-table2[i][0]*buf[i][1]+table2[i][1]*buf[n2-1-i][1];
 		}
 
-		//copy to output and apply window
+		//复制到输出并加窗
 		System.arraycopy(tmp, n2, out, 0, n2);
 		for(i = n2; i<n*3/2; ++i) {
 			out[i] = -tmp[n*3/2-1-i];

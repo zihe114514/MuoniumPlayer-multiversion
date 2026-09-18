@@ -1,6 +1,6 @@
 package repackage.net.sourceforge.jaad.mp4;
 
 /**
- * Package for demultiplexing MP4 containers.
- * See the {@link MP4Container} class for details.
+ * 用于解复用 MP4 容器的包。
+ * 详见 {@link MP4Container} 类。
  */

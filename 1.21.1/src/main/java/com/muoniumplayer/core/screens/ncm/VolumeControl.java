@@ -9,11 +9,11 @@ import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.utils.cursor.CursorUtils;
 
 /**
- * Shared volume slider used by both player surfaces.
+ * 两个播放器界面共用的音量滑块。
  *
- * <p>The control owns only interaction/animation state. The actual volume is
- * persisted and applied by {@link CloudMusic}, keeping the full-screen player,
- * compact controls and configurable hotkeys in sync.</p>
+ * <p>该控件只拥有交互/动画状态。实际音量由
+ * {@link CloudMusic} 持久化并应用，使全屏播放器、
+ * 紧凑控件和可配置热键保持同步。</p>
  */
 public final class VolumeControl implements SharedRenderingConstants {
 
@@ -26,11 +26,11 @@ public final class VolumeControl implements SharedRenderingConstants {
     private boolean dragging;
 
     /**
-     * Renders the common full-screen-player volume presentation: a low/high
-     * volume glyph framing one smoothly animated slider.
+     * 渲染通用的全屏播放器音量呈现：低/高
+     * 音量字形框住一个平滑动画的滑块。
      *
-     * @param x complete control left edge (including the two glyphs)
-     * @param width complete control width (including the two glyphs)
+     * @param x 完整控件左缘（含两个字形）
+     * @param width 完整控件宽度（含两个字形）
      */
     public boolean render(double mouseX, double mouseY, double x, double centerY,
                           double width, float alpha) {
@@ -76,8 +76,8 @@ public final class VolumeControl implements SharedRenderingConstants {
                     Math.min(radius, filledWidth * .5), fillColor);
         }
 
-        // A small thumb is only visible while interacting; the resting state stays as compact
-        // as the original full-screen control while the current value remains easy to target.
+        // 小拇指仅在交互时可见；静止状态保持紧凑，
+        //与原全屏控件一样，而当前值仍易于瞄准。
         if (hovering || dragging) {
             double thumbX = sliderX + Math.max(0.0, Math.min(sliderWidth, filledWidth));
             roundedRect(thumbX - 1.7, centerY - 1.7, 3.4, 3.4, 1.7,

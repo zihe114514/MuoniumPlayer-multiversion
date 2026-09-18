@@ -1,6 +1,6 @@
 package com.muoniumplayer.core.screens.onboarding;
 
-/** The six intentionally small first-run pages. */
+/** 刻意小型的六个首次运行页。 */
 public enum OnboardingStep {
     WELCOME("欢迎使用", "Welcome"),
     ACCOUNT("连接账号", "Account"),

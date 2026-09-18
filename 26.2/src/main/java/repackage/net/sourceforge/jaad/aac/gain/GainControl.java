@@ -87,30 +87,30 @@ public class GainControl implements GCConstants {
 	}
 
 	/**
-	 * gain compensation and overlap-add:
-	 * - the gain control function is calculated
-	 * - the gain control function applies to IMDCT output samples as a another IMDCT window
-	 * - the reconstructed time domain signal produces by overlap-add
+	 * 增益补偿与重叠相加：
+	 * - 计算增益控制函数
+	 * - 增益控制函数作为另一个 IMDCT 窗口应用于 IMDCT 输出采样
+	 * - 通过重叠相加重建时域信号
 	 */
 	private void compensate(float[] in, float[][] out, WindowSequence winSeq, int band) {
 		int j;
 		if(winSeq.equals(WindowSequence.EIGHT_SHORT_SEQUENCE)) {
 			int a, b;
 			for(int k = 0; k<8; k++) {
-				//calculation
+				//计算
 				calculateFunctionData(lbShort*2, band, winSeq, k);
-				//applying
+				//应用
 				for(j = 0; j<lbShort*2; j++) {
 					a = band*lbLong*2+k*lbShort*2+j;
 					in[a] *= function[j];
 				}
-				//overlapping
+				//重叠
 				for(j = 0; j<lbShort; j++) {
 					a = j+lbLong*7/16+lbShort*k;
 					b = band*lbLong*2+k*lbShort*2+j;
 					overlap[band][a] += in[b];
 				}
-				//store for next frame
+				//保存供下一帧使用
 				for(j = 0; j<lbShort; j++) {
 					a = j+lbLong*7/16+lbShort*(k+1);
 					b = band*lbLong*2+k*lbShort*2+lbShort+j;
@@ -124,17 +124,17 @@ public class GainControl implements GCConstants {
 			System.arraycopy(overlap[band], lbLong, overlap[band], 0, lbLong);
 		}
 		else {
-			//calculation
+			//计算
 			calculateFunctionData(lbLong*2, band, winSeq, 0);
-			//applying
+			//应用
 			for(j = 0; j<lbLong*2; j++) {
 				in[band*lbLong*2+j] *= function[j];
 			}
-			//overlapping
+			//重叠
 			for(j = 0; j<lbLong; j++) {
 				out[band][j] = overlap[band][j]+in[band*lbLong*2+j];
 			}
-			//store for next frame
+			//保存供下一帧使用
 			for(j = 0; j<lbLong; j++) {
 				overlap[band][j] = in[band*lbLong*2+lbLong+j];
 			}
@@ -144,7 +144,7 @@ public class GainControl implements GCConstants {
 		}
 	}
 
-	//produces gain control function data, stores it in 'function' array
+	//生成增益控制函数数据，并将其存入 'function' 数组
 	private void calculateFunctionData(int samples, int band, WindowSequence winSeq, int blockID) {
 		final int[] locA = new int[10];
 		final float[] levA = new float[10];
@@ -172,20 +172,20 @@ public class GainControl implements GCConstants {
 				break;
 		}
 
-		//calculate the fragment modification functions
-		//for the first half region
+		//计算片段修改函数
+		//针对前半区域
 		calculateFMD(band, 0, true, maxLocGain0, samples, locA, levA, buf1);
 
-		//for the latter half region
+		//针对后半区域
 		int block = (winSeq.equals(WindowSequence.EIGHT_SHORT_SEQUENCE)) ? blockID : 0;
 		float secLevel = calculateFMD(band, block, false, maxLocGain1, samples, locA, levA, buf2);
 
-		//for the non-overlapped region
+		//针对非重叠区域
 		if(winSeq.equals(WindowSequence.LONG_START_SEQUENCE)||winSeq.equals(WindowSequence.LONG_STOP_SEQUENCE)) {
 			calculateFMD(band, 1, false, maxLocGain2, samples, locA, levA, buf3);
 		}
 
-		//calculate a gain modification function
+		//计算一个增益修改函数
 		int i;
 		int flatLen = 0;
 		if(winSeq.equals(WindowSequence.LONG_STOP_SEQUENCE)) {
@@ -218,15 +218,14 @@ public class GainControl implements GCConstants {
 			}
 		}
 
-		//calculate a gain control function
+		//计算一个增益控制函数
 		for(i = 0; i<samples; i++) {
 			function[i] = 1.0f/modFunc[i];
 		}
 	}
 
 	/*
-	 * calculates a fragment modification function by interpolating the gain
-	 * values of the gain change positions
+	 * 通过对增益变化位置的增益值进行插值，计算一个片段修改函数
 	 */
 	private float calculateFMD(int bd, int wd, boolean prev, int maxLocGain, int samples,
 			int[] loc, float[] lev, float[] fmd) {
@@ -244,13 +243,13 @@ public class GainControl implements GCConstants {
 			else lev[i+1] = (float) Math.pow(2, lngain);
 		}
 
-		//set start point values
+		//设置起点值
 		loc[0] = 0;
 		if(length==0) lev[0] = 1.0f;
 		else lev[0] = lev[1];
 		float secLevel = lev[0];
 
-		//set end point values
+		//设置终点值
 		loc[length+1] = maxLocGain;
 		lev[length+1] = 1.0f;
 
@@ -271,20 +270,18 @@ public class GainControl implements GCConstants {
 	}
 
 	/**
-	 * transformes the exponent value of the gain to the id of the gain change
-	 * point
+	 * 将增益的指数值转换为增益变化点的 id
 	 */
 	private int getGainChangePointID(int lngain) {
 		for(int i = 0; i<ID_GAIN; i++) {
 			if(lngain==LN_GAIN[i]) return i;
 		}
-		return 0; //shouldn't happen
+		return 0; //不应发生
 	}
 
 	/**
-	 * calculates a fragment modification function
-	 * the interpolated gain value between the gain values of two gain change
-	 * positions is calculated by the formula:
+	 * 计算一个片段修改函数
+	 * 两个增益变化位置的增益值之间的插值增益值由以下公式计算：
 	 * f(a,b,j) = 2^(((8-j)log2(a)+j*log2(b))/8)
 	 */
 	private float interpolateGain(float alev0, float alev1, int iloc) {

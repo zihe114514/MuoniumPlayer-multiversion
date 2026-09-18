@@ -7,7 +7,7 @@ import com.muoniumplayer.core.screens.onboarding.OnboardingStepView;
 import com.muoniumplayer.core.screens.onboarding.OnboardingUi;
 import com.muoniumplayer.party.ui.PartyIcons;
 
-/** Music source page. Selection is applied immediately and persisted by the controller. */
+/** 音乐源页。选择立即应用并由控制器持久化。 */
 public final class SourceStep implements OnboardingStepView {
     private static final MusicPlatform[] PLATFORMS = {
             MusicPlatform.NETEASE, MusicPlatform.QQ, MusicPlatform.KUGOU,

@@ -9,8 +9,7 @@ import java.util.logging.Logger;
 import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 
 /**
- * The abstract base class and factory for all descriptors (defined in ISO
- * 14496-1 as 'ObjectDescriptors').
+ * 所有描述符的抽象基类与工厂（在 ISO 14496-1 中定义为 'ObjectDescriptors'）。
  *
  * @author in-somnia
  */
@@ -26,7 +25,7 @@ public abstract class Descriptor {
 	public static final int TYPE_MP4_INITIAL_OBJECT_DESCRIPTOR = 16;
 
 	public static Descriptor createDescriptor(MP4InputStream in) throws IOException {
-		//read tag and size
+		//读取 tag 和 size
 		final int type = in.read();
 		int read = 1;
 		int size = 0;
@@ -39,21 +38,21 @@ public abstract class Descriptor {
 		}
 		while((b&0x80)==0x80);
 
-		//create descriptor
+		//创建描述符
 		final Descriptor desc = forTag(type);
 		desc.type = type;
 		desc.size = size;
 		desc.start = in.getOffset();
 
-		//decode
+		//解码
 		desc.decode(in);
-		//skip remaining bytes
+		//跳过剩余字节
 		final long remaining = size-(in.getOffset()-desc.start);
 		if(remaining>0) {
 			Logger.getLogger("MP4 Boxes").log(Level.INFO, "Descriptor: bytes left: {0}, offset: {1}", new Long[]{remaining, in.getOffset()});
 			in.skipBytes(remaining);
 		}
-		desc.size += read; //include type and size fields
+		desc.size += read; //含 type 和 size 字段
 
 		return desc;
 	}
@@ -96,7 +95,7 @@ public abstract class Descriptor {
 
 	abstract void decode(MP4InputStream in) throws IOException;
 
-	//children
+	//子项
 	protected void readChildren(MP4InputStream in) throws IOException {
 		Descriptor desc;
 		while((size-(in.getOffset()-start))>0) {

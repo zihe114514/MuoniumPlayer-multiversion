@@ -7,7 +7,7 @@ import com.muoniumplayer.core.screens.onboarding.OnboardingStepView;
 import com.muoniumplayer.core.screens.onboarding.OnboardingUi;
 import com.muoniumplayer.party.ui.PartyIcons;
 
-/** Completion page with a compact summary of the actual setup result. */
+/** 完成页，带实际设置结果的紧凑摘要。 */
 public final class FinishStep implements OnboardingStepView {
     @Override
     public void render(OnboardingController controller,

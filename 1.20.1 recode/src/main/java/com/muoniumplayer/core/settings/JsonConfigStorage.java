@@ -14,7 +14,7 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
-/** Shared UTF-8 JSON object I/O for persisted player settings. */
+/** 供持久化播放器设置使用的共享 UTF-8 JSON 对象读写。 */
 public final class JsonConfigStorage {
 
     private JsonConfigStorage() {

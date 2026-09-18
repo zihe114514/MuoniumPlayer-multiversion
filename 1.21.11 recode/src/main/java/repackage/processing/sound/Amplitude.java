@@ -25,7 +25,7 @@ public class Amplitude extends Analyzer implements Modulator {
 	}
 
 	/**
-	 * Sets the half-life of this amplitude analyzer. The output approaches zero 
+	 * 设置此振幅分析器的半衰期。输出趋近于零
 	 * @webBrief 这是一个音量分析器。
 	 * @ webBrief设置此振幅分析仪的半衰期。
 	 */

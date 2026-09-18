@@ -94,7 +94,7 @@ public class Waveform extends Analyzer {
 	}
 
 	protected void setInput(UnitOutputPort input) {
-		// superclass makes sure that input unit is actually playing, just connect it
+		// 父类会确保输入单元确实在播放，直接连接它即可
 		Engine.getEngine().add(this.writer);
 		this.connectedInput = input;
 		this.writer.input.connect(0, input, 0);

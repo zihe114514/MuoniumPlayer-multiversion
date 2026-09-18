@@ -7,8 +7,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Builds responsive physical KTV rows while preserving each word's original timing.
- * Rendering, colour, glow and playback state remain in {@link MusicLyricsWidget}.
+ * 构建响应式物理 KTV 行，同时保留每个字的原始计时。
+ * 渲染、颜色、辉光和播放状态仍位于 {@link MusicLyricsWidget} 中。
  */
 final class KaraokeLayoutBuilder {
 

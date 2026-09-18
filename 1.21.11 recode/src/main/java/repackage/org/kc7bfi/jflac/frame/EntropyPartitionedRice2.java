@@ -16,18 +16,18 @@ public class EntropyPartitionedRice2 extends EntropyCodingMethod {
     private static final int ENTROPY_CODING_METHOD_PARTITIONED_RICE2_ESCAPE_PARAMETER = 31;
 
     /**
-     * Read compressed signal residual data.
+     * 读取压缩信号残差数据。
      *
      * 该上下文的 Rice 参数和/或原始位。
      * 读取压缩信号残差数据。
-     * @param is             InputBitStream
+      * @param is 输入位流
      * @param header FLAC帧标题
      * @param predictorOrder 预测器阶数
      * @throws IOException从InputBitStream读取时出错
      */
     void readResidual(BitInputStream is, int predictorOrder, int partitionOrder, Header header, int[] residual) throws IOException {
         // TODO 添加传播重新同步异常
-        //@param is                InputBitStream
+        // @param is                输入位流
         int sample = 0;
         int partitions = 1 << partitionOrder;
         int partitionSamples = partitionOrder > 0 ? header.blockSize >> partitionOrder : header.blockSize - predictorOrder;

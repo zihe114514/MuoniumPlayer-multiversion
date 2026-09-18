@@ -5,8 +5,8 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.BoxImpl;
 
 /**
- * This class is used for all boxes, that are known but don't contain necessary 
- * data and can be skipped. This is mainly used for 'skip', 'free' and 'wide'.
+ * 此类用于所有已知但不含必要数据、可跳过的 box。
+ * 主要用于 'skip'、'free' 和 'wide'。
  * 
  * @author in-somnia
  */
@@ -18,6 +18,6 @@ public class FreeSpaceBox extends BoxImpl {
 
 	@Override
 	public void decode(MP4InputStream in) throws IOException {
-		//no need to read, box will be skipped
+		//无需读取，该 box 将被跳过
 	}
 }

@@ -21,7 +21,7 @@ public class NeroMetadataTagsBox extends BoxImpl {
 
 		String key, val;
 		int len;
-		//TODO: what are the other skipped fields for?
+		//TODO: 其他被跳过的字段是做什么的？
 		while(getLeft(in)>0&&in.read()==0x80) {
 			in.skipBytes(2); //x80 x00 x06/x05
 			key = in.readUTFString((int) getLeft(in), MP4InputStream.UTF8);

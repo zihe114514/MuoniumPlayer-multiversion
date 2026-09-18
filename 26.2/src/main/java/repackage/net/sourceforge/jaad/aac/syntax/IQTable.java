@@ -1,11 +1,11 @@
 package repackage.net.sourceforge.jaad.aac.syntax;
 
 /**
- * Inverse quantization lookup table for all possible values
- * from 0<sup>4/3</sup> to 8191<sup>4/3</sup>.
+ * 逆量化查找表，涵盖所有可能取值
+ * 从 0<sup>4/3</sup> 到 8191<sup>4/3</sup>。
  * @author in-somnia
  */
-//TODO: list is too big, create at startup
+//TODO: 表太大，在启动时创建
 interface IQTable {
 
 	float[] IQ_TABLE = {

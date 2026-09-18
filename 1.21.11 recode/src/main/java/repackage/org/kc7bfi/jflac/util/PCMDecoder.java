@@ -44,7 +44,7 @@ public class PCMDecoder {
 
     /**
      * 构造函数。
-     * @param streamInfo    The FLAC stream info
+      * @param streamInfo    FLAC 流信息
      */
     public PCMDecoder(StreamInfo streamInfo) {
         this.totalSamples = streamInfo.getTotalSamples();

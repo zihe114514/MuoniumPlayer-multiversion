@@ -51,6 +51,18 @@ public final class KuGouMusicApi {
     private static final String STREAM_PPAGE_ID = "463467626,350369493,788954147";
     private static final String STREAM_PID = "2";
 
+    /**
+     * 交付校验上线时的酷狗音频缓存世代标记。
+     *
+     * <p>校验上线之前落盘的酷狗音频缓存可能装着<b>另一首歌</b>：上游对取不到的 hash 会静默交付别人的
+     * 文件，而缓存名只由「曲目 + 音质」决定，于是错文件会被一直命中，光修取流并不生效。
+     * 播放侧把这个标记拼进缓存名，旧文件因此自然失配，之后由容量兜底回收。</p>
+     *
+     * <p><b>只有酷狗需要它</b>：其它音源没有这种静默换歌的行为，不该跟着丢缓存。
+     * 改动取流判据本身不必动这个值，只有在又发现一批历史缓存不可信时才抬一档。</p>
+     */
+    public static final String AUDIO_CACHE_EPOCH = "kg2";
+
     /** {@code everyday_song_recommend} 的 {@code x-router}。 */
     private static final String ROUTER_EVERYDAY = "everydayrec.service.kugou.com";
 
@@ -85,6 +97,19 @@ public final class KuGouMusicApi {
         public int privilege;
         /** {@code privilege == 10} 的便捷判定。 */
         public boolean vip;
+
+        /**
+         * 取流时该传的 {@code album_audio_id}。
+         *
+         * <p>只认 {@code MixSongID} 那一套 ID 空间，取不到就返回空串、由调用方传 {@code 0}。
+         * 实测传 {@code 0} 会让服务端回落到按 {@code hash} 解析，交付的正是点的那首歌；而传一个
+         * <b>不属于这套空间</b>的 ID（例如搜索端点的 {@code Audioid}，其实是老的 {@code audio_id}）
+         * 会让它按那个 ID 去解析文件，交回<b>另一首歌</b>的完整文件。</p>
+         */
+        public String requestAlbumAudioId() {
+            String mix = KuGouSign.nonNull(mixSongId).trim();
+            return mix.isEmpty() ? KuGouSign.nonNull(albumAudioId).trim() : mix;
+        }
     }
 
     /**
@@ -859,7 +884,7 @@ public final class KuGouMusicApi {
         params.put("version", STREAM_CLIENT_VER);
         params.put("page_id", STREAM_PAGE_ID);
         params.put("quality", quality);
-        params.put("album_audio_id", KuGouSign.isBlank(track.albumAudioId) ? "0" : track.albumAudioId);
+        params.put("album_audio_id", albumAudioIdForRequest(track));
         params.put("behavior", "play");
         params.put("pid", STREAM_PID);
         params.put("cmd", "26");
@@ -885,8 +910,46 @@ public final class KuGouMusicApi {
         }
         String url = firstUrl(array(root, "url", "backupdownurl"));
         if (KuGouSign.isBlank(url)) return null;
+        // 「拿到 url」不等于「拿到这首歌」：请求的 hash 取不到文件时，上游不报错，而是把另一首歌
+        // 完整的文件交回来（status 仍是 1、fail_process 为空、extName 仍按请求的档位填）。
+        // 不核对交付身份的话，错文件会被当成成功采用，并一路写进缓存。
+        String delivered = deliveredHash(root, url);
+        if (!delivered.isEmpty() && !delivered.equals(KuGouSign.lower(hash))) {
+            System.err.println("[Music/KuGou] 上游换了文件，弃用这一档 " + track.name + " (" + quality
+                    + ")：请求 " + KuGouSign.lower(hash) + "，实得 " + delivered);
+            return null;
+        }
         String format = text(root, "extName");
         return new Stream(url, KuGouSign.isBlank(format) ? inferFormat(url) : format);
+    }
+
+    /**
+     * 上游实际交付的文件 hash。
+     *
+     * <p>响应顶层 {@code hash} 就是交付文件的 hash，实测它与 CDN 地址里的 {@code /v3/<hash>/} 段恒等；
+     * 上游偶尔不给这个字段，那时退而从地址段里取。两者都取不到时返回空串 —— 此时<b>保守放行</b>：
+     * 不能因为上游少给一个字段，就把一首本来能播的歌判成不可播。</p>
+     *
+     * <p><b>不要改用 {@code std_hash} 当判据。</b>实测正常交付时它也可能不等于请求的 hash
+     * （「晴天」flac 档请求 {@code 5e3dd2d1…}、交付内容核对无误、{@code std_hash} 却是
+     * {@code e53255bd…}），拿它比对会把好档位一起毙掉。</p>
+     */
+    private static String deliveredHash(JsonObject root, String url) {
+        String reported = KuGouSign.lower(text(root, "hash"));
+        if (!reported.isEmpty()) return reported;
+        String address = KuGouSign.lower(url);
+        int marker = address.indexOf("/v3/");
+        if (marker < 0) return "";
+        int start = marker + 4;
+        int end = address.length();
+        for (int index = start; index < address.length(); index++) {
+            char current = address.charAt(index);
+            if (current == '/' || current == '?' || current == '&') {
+                end = index;
+                break;
+            }
+        }
+        return address.substring(start, end);
     }
 
     /**
@@ -908,6 +971,18 @@ public final class KuGouMusicApi {
         return builder.toString();
     }
 
+    /**
+     * 两个取流端点共用的 {@code album_audio_id} 取值。
+     *
+     * <p>走 {@link Track#requestAlbumAudioId()}，缺失时传字面量 {@code "0"}。传 0 时服务端回落到
+     * 按 {@code hash} 解析，实测交付正确；<b>传一个不属于这套 ID 空间的值会换成别人的歌</b>，
+     * 所以这里宁可传 0，也不拿别的 id 顶上。</p>
+     */
+    private static String albumAudioIdForRequest(Track track) {
+        String id = track.requestAlbumAudioId();
+        return id.isEmpty() ? "0" : id;
+    }
+
     /** 老 trackercdn 兜底：部分免费曲仍能由 {@code /i/v2/} 直接返回。 */
     private static Stream resolveViaLegacyCdn(Track track, String hash, String br) {
         Map<String, String> params = KuGouHttp.params();
@@ -919,7 +994,7 @@ public final class KuGouMusicApi {
         params.put("cmd", "25");
         params.put("behavior", "play");
         params.put("album_id", KuGouSign.nonNull(track.albumId));
-        params.put("album_audio_id", KuGouSign.nonNull(track.albumAudioId));
+        params.put("album_audio_id", albumAudioIdForRequest(track));
         JsonObject root = KuGouHttp.get(KuGouHttp.TRACKER_CDN, "/i/v2/", params, KuGouHttp.Sign.NONE);
         if (root == null || integer(root, "status") != 1) return null;
         String url = firstUrl(array(root, "url", "backupdownurl"));
@@ -1573,9 +1648,13 @@ public final class KuGouMusicApi {
         if (KuGouSign.isBlank(track.artist)) track.artist = singerNames(item);
         track.album = firstText(item, "AlbumName", "OriAlbumName");
         track.albumId = firstText(item, "AlbumID", "AlbumId");
-        track.albumAudioId = firstText(item, "Audioid", "AudioID");
+        // `Audioid` 是老的 `audio_id`（Scid），**不是** `album_audio_id`。它和 `MixSongID` 是两套
+        // 不同的 ID 空间：把这个值当 `album_audio_id` 传到取流端点，服务端会按那个 ID 去解析文件，
+        // 交回**另一首歌**的完整文件，而 `status` 仍是 1、`extName` 仍按请求的档位填 —— 只有响应
+        // 顶层 `hash` 露馅。所以 `album_audio_id` 只能来自 `MixSongID`，拿不到就留空（取流时传 0）。
         track.audioId = firstText(item, "Audioid", "AudioID");
         track.mixSongId = firstText(item, "MixSongID", "MixSongId");
+        track.albumAudioId = track.mixSongId;
         track.durationMillis = normalizedDuration(item, "Duration", "TimeLength");
         track.coverTemplate = firstText(item, "Image", "AlbumImage", "sizable_cover");
         track.privilege = firstPrivilege(item, "Privilege");
@@ -1743,7 +1822,9 @@ public final class KuGouMusicApi {
         track.hash320 = KuGouSign.lower(text(item, "320hash"));
         track.hashLossless = KuGouSign.lower(text(item, "sqhash"));
         track.albumId = firstText(item, "album_id");
-        track.albumAudioId = firstText(item, "album_audio_id", "audio_id");
+        // 同 parseSearchTrack：`audio_id` 与 `album_audio_id` 不是一套 ID，不能当兜底，
+        // 宁可留空让取流传 0 —— 传错 ID 会拿到别人的文件。
+        track.albumAudioId = firstText(item, "album_audio_id", "mixsongid");
         track.audioId = text(item, "audio_id");
         track.durationMillis = normalizedDuration(item, "duration", "timelength");
         track.name = firstText(item, "songname", "filename");

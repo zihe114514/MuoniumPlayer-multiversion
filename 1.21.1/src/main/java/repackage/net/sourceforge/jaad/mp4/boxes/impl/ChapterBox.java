@@ -7,9 +7,9 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The chapter box allows to specify individual chapters along the main timeline
- * of a movie. The chapter box occurs within a movie box.
- * Defined in "Adobe Video File Format Specification v10".
+ * 章节 box 允许沿电影主时间轴指定独立章节。
+ * 章节 box 出现于 movie box 内。
+ * 定义见 "Adobe Video File Format Specification v10"。
  *
  * @author in-somnia
  */
@@ -42,9 +42,9 @@ public class ChapterBox extends FullBox {
 	}
 
 	/**
-	 * Returns a map that maps the timestamp of each chapter to its name.
+	 * 返回一个映射，将每个章节的时间戳映射到其名称。
 	 *
-	 * @return the chapters
+	 * @return 各章节
 	 */
 	public Map<Long, String> getChapters() {
 		return chapters;

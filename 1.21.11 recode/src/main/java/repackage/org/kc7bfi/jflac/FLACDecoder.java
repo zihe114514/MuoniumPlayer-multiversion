@@ -91,14 +91,14 @@ public class FLACDecoder {
 
     /**
      * 返回已解析的StreamInfo元数据记录。
-     * @return The StreamInfo
+      * @return StreamInfo
      */
     public StreamInfo getStreamInfo() {
         return streamInfo;
     }
 
     /**
-     * Return the ChannelData object.
+      * 返回 ChannelData 对象。
      * 返回 ChannelData 对象。
      */
     public ChannelData[] getChannelData() {
@@ -551,7 +551,7 @@ public class FLACDecoder {
                         pos -= (last_pos - pos);
                     } else {
                         last_pos = pos;
-                        pos -= approx_bytes_per_frame; // framesize
+                        pos -= approx_bytes_per_frame; // 帧大小
                     }
                 } else {
                     /* 目标可能超过10帧，

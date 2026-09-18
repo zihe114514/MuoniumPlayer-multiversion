@@ -327,7 +327,7 @@ public final class Keyboard {
      * 保留空实现，避免修改 8 处调用点。
      */
     public static void enableRepeatEvents(boolean enable) {
-        // no-op on 1.20.1
+        // no-op on 1.20.1 在 1.20.1 上为空操作
     }
 
     /** 1.8.9 里没有被真正用到（仅注释提到），此处显式不支持，防止今后误用事件队列语义。 */

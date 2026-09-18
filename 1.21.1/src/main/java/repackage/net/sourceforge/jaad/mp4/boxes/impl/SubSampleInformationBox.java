@@ -5,16 +5,13 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The Sub-Sample Information box is designed to contain sub-sample information.
- * A sub-sample is a contiguous range of bytes of a sample. The specific
- * definition of a sub-sample shall be supplied for a given coding system (e.g.
- * for ISO/IEC 14496-10, Advanced Video Coding). In the absence of such a
- * specific definition, this box shall not be applied to samples using that
- * coding system.
- * The table is sparsely coded; the table identifies which samples have
- * sub-sample structure by recording the difference in sample-number between
- * each entry. The first entry in the table records the sample number of the
- * first sample having sub-sample information.
+ * Sub-Sample Information box 用于容纳子采样信息。
+ * 子采样是一个采样的连续字节区间。子采样的具体定义应由
+ * 给定编码系统给出（例如对 ISO/IEC 14496-10 高级视频编码）。
+ * 若没有这种具体定义，则此 box 不应应用于使用该编码系统的采样。
+ * 表以稀疏方式编码；表通过记录每个条目之间采样号的差值，
+ * 标识哪些采样具有子采样结构。表中第一个条目记录
+ * 具有子采样信息的第一个采样的采样号。
  *
  * @author in-somnia
  */
@@ -52,55 +49,49 @@ public class SubSampleInformationBox extends FullBox {
 				subsampleSize[i][j] = in.readBytes(len);
 				subsamplePriority[i][j] = in.read();
 				discardable[i][j] = (in.read()&1)==1;
-				in.skipBytes(4); //reserved
+				in.skipBytes(4); //保留
 			}
 		}
 	}
 
 	/**
-	 * The sample delta for each entry is an integer that specifies the sample 
-	 * number of the sample having sub-sample structure. It is coded as the 
-	 * difference between the desired sample number, and the sample number
-	 * indicated in the previous entry. If the current entry is the first entry,
-	 * the value indicates the sample number of the first sample having
-	 * sub-sample information, that is, the value is the difference between the
-	 * sample number and zero.
+	 * 每个条目的采样增量为整数，指定具有子采样结构的
+	 * 采样的采样号。它编码为目标采样号与前一条目
+	 * 所指示采样号之差。若当前条目是第一个条目，
+	 * 该值指示具有子采样信息的第一个采样的采样号，
+	 * 即该值为采样号与零之差。
 	 *
-	 * @return the sample deltas for all entries
+	 * @return 所有条目的采样增量
 	 */
 	public long[] getSampleDelta() {
 		return sampleDelta;
 	}
 
 	/**
-	 * The subsample size is an integer that specifies the size, in bytes, of a
-	 * specific sub-sample in a specific entry.
+	 * 子采样大小为整数，指定特定条目中某个子采样的大小（字节）。
 	 *
-	 * @return the sizes of all subsamples
+	 * @return 所有子采样的大小
 	 */
 	public long[][] getSubsampleSize() {
 		return subsampleSize;
 	}
 
 	/**
-	 * The subsample priority is an integer specifying the degradation priority
-	 * for a specific sub-sample in a specific entry. Higher values indicate
-	 * sub-samples which are important to, and have a greater impact on, the
-	 * decoded quality.
+	 * 子采样优先级为整数，指定特定条目中某个子采样的降级优先级。
+	 * 值越大表示该子采样对解码质量越重要、影响越大。
 	 *
-	 * @return all subsample priorities
+	 * @return 所有子采样优先级
 	 */
 	public int[][] getSubsamplePriority() {
 		return subsamplePriority;
 	}
 
 	/**
-	 * If true, the sub-sample is required to decode the current sample, while
-	 * false means the sub-sample is not required to decode the current sample 
-	 * but may be used for enhancements, e.g., the sub-sample consists of
-	 * supplemental enhancement information (SEI) messages.
+	 * 若为 true，解码当前采样必须用到该子采样；
+	 * false 表示解码当前采样不需要该子采样，
+	 * 但可用于增强，例如该子采样由补充增强信息（SEI）消息组成。
 	 *
-	 * @return a list of flags indicating if a specific subsample is discardable
+	 * @return 标志列表，指示特定子采样是否可丢弃
 	 */
 	public boolean[][] getDiscardable() {
 		return discardable;

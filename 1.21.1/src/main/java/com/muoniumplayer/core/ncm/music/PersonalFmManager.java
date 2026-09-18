@@ -19,9 +19,9 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Owns NetEase personal-FM retrieval. The FM page may display the current
- * batch before playback starts, but ordinary playback becomes an FM session
- * only when {@link CloudMusic#playFm(List, int)} is used.
+ * 负责网易云私人 FM 的获取。FM 页面可能在播放开始前就显示当前批次，
+ * 但普通播放只有在调用 {@link CloudMusic#playFm(List, int)} 时
+ * 才会成为一个 FM session。
  */
 public final class PersonalFmManager {
 
@@ -53,7 +53,7 @@ public final class PersonalFmManager {
     public static final String SCENE_FOCUS = "FOCUS";
     public static final String SCENE_NIGHT_EMO = "NIGHT_EMO";
 
-    /** Personal FM is intentionally pull-based: fetch exactly one recommendation at a time. */
+    /** 私人 FM 刻意采用拉取模式：每次恰好只取一条推荐。 */
     private static final int BATCH_SIZE = 1;
     private static final int RECENT_ID_LIMIT = 24;
     private static final AtomicBoolean LOADING = new AtomicBoolean(false);
@@ -62,7 +62,7 @@ public final class PersonalFmManager {
      * 让用户点刷新 / 换模式 / 跳过没反应，反过来也不能让用户操作被一次后台请求饿死。
      */
     private static final AtomicBoolean PREFETCHING = new AtomicBoolean(false);
-    /** Prevents a failed first request from recursively reopening itself on every panel repaint. */
+    /** 防止一次失败的首次请求在每次面板重绘时递归地重新打开自身。 */
     private static final AtomicBoolean INITIAL_REQUEST_ISSUED = new AtomicBoolean(false);
     private static final Set<Long> RECENT_SONG_IDS = new LinkedHashSet<>();
 
@@ -102,14 +102,14 @@ public final class PersonalFmManager {
         return LOADING.get();
     }
 
-    /** Loads once when the FM panel is first opened; errors remain visible until the user refreshes. */
+    /** 在 FM 面板首次打开时加载一次；出错时错误会一直可见，直到用户刷新。 */
     public static void ensureInitialLoad() {
         if (currentBatch.isEmpty() && !LOADING.get() && INITIAL_REQUEST_ISSUED.compareAndSet(false, true)) {
             requestBatch(selectedMode, selectedSubMode, true);
         }
     }
 
-    /** Explicit user refresh: retry even if the previous request failed. */
+    /** 用户显式刷新：即使上一次请求失败也重试。 */
     public static void openOrRefresh() {
         INITIAL_REQUEST_ISSUED.set(true);
         requestBatch(selectedMode, selectedSubMode, true);
@@ -122,7 +122,7 @@ public final class PersonalFmManager {
         requestBatch(selectedMode, selectedSubMode, CloudMusic.isPersonalFmActive());
     }
 
-    /** Called by the FM-only player button. This is the only path that submits radio trash. */
+    /** 由仅 FM 播放器按钮调用。这是唯一提交电台“垃圾桶”的路径。 */
     public static void skipCurrentAndRequestNext() {
         if (!CloudMusic.isPersonalFmActive() || !LOADING.compareAndSet(false, true)) {
             return;
@@ -134,7 +134,7 @@ public final class PersonalFmManager {
         MultiThreadingUtil.runAsync(() -> {
             try {
                 if (current != null && current.isNetease()) {
-                    // Trash is intentionally explicit: merely entering FM or pressing normal next never calls it.
+                    // “垃圾桶”操作刻意做成显式：仅仅进入 FM 或按普通“下一首”绝不会调用它。
                     CloudMusicApi.personalFmTrash(current.getId());
                 }
             } catch (Throwable throwable) {
@@ -147,8 +147,8 @@ public final class PersonalFmManager {
     }
 
     /**
-     * Triggered only when the small FM batch reaches its end or all of its
-     * tracks fail. It does not mark any track as trash.
+     * 仅当 FM 小批次播到末尾、或其全部曲目都失败时触发。它不会
+     * 把任何曲目标记为垃圾桶。
      */
     public static void requestNextBatchAsync() {
         requestBatch(selectedMode, selectedSubMode, true);
@@ -182,8 +182,8 @@ public final class PersonalFmManager {
                 List<Music> loaded = fetchRecommendations();
                 currentBatch = Collections.unmodifiableList(loaded);
                 status = selectedMode.getDisplayName() + " · " + loaded.size() + " 首推荐";
-                // playFm() establishes the isolated FM session itself, so first entry must not
-                // require an already-active FM session before it can auto-start.
+                // playFm() 自身会建立隔离的 FM session，因此首次进入不得
+                // 需要一个已处于活跃状态的 FM session 才能自动启动。
                 if (startPlaybackAfterLoad) {
                     CloudMusic.playFm(loaded, 0);
                 }
@@ -365,7 +365,7 @@ public final class PersonalFmManager {
                 if (wasRecentlyReturned(music.getId())) duplicates.add(music);
                 else fresh.add(music);
             } catch (Throwable ignored) {
-                // One malformed recommendation must never discard the whole small batch.
+                // 一条格式错误的推荐绝不能让整个小批次被丢弃。
             }
         }
 
@@ -376,9 +376,9 @@ public final class PersonalFmManager {
 
 
     /**
-     * Personal-FM payloads use the mobile field names artists/album/duration,
-     * while the existing immutable DTO maps canonical song-detail names ar/al/dt.
-     * Normalize at this narrow API boundary instead of changing every music source.
+     * 私人 FM 的返回数据使用移动端字段名 artists/album/duration，
+     * 而现有的不可变 DTO 映射的是标准歌曲详情字段名 ar/al/dt。
+     * 在这个狭窄的 API 边界处做归一化，而不是改动每一个音乐源。
      */
     private static JsonObject normalizeSongPayload(JsonObject source) {
         JsonObject normalized = new JsonObject();
@@ -411,7 +411,7 @@ public final class PersonalFmManager {
         return array(result, "songs", "data");
     }
 
-    /** The basic /radio/get endpoint returns one song as data:{...}. */
+    /** 基础 /radio/get 接口以 data:{...} 的形式返回一首歌。 */
     private static JsonObject extractSingleSong(JsonObject root) {
         if (root == null) return null;
         JsonObject data = object(root, "data");

@@ -4,9 +4,8 @@ import java.io.IOException;
 import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 
 /**
- * The <code>InitialObjectDescriptor</code> is a variation of the
- * <code>ObjectDescriptor</code> that shall be used to gain initial access to
- * content.
+ * <code>InitialObjectDescriptor</code> 是 <code>ObjectDescriptor</code> 的变体，
+ * 用于获取对内容的初始访问。
  *
  * @author in-somnia
  */
@@ -19,8 +18,8 @@ public class InitialObjectDescriptor extends Descriptor {
 
 	@Override
 	void decode(MP4InputStream in) throws IOException {
-		//10 bits objectDescriptorID, 1 bit url flag, 1 bit
-		//includeInlineProfiles flag, 4 bits reserved
+		//10 位 objectDescriptorID，1 位 url 标志，1 位
+		//includeInlineProfiles 标志，4 位保留
 		final int x = (int) in.readBytes(2);
 		objectDescriptorID = (x>>6)&0x3FF;
 		urlPresent = ((x>>5)&1)==1;
@@ -39,53 +38,47 @@ public class InitialObjectDescriptor extends Descriptor {
 	}
 
 	/**
-	 * The ID uniquely identifies this ObjectDescriptor within its name scope.
-	 * It should be within 0 and 1023 exclusively. The value 0 is forbidden and
-	 * the value 1023 is reserved.
+	 * 该 ID 在其名称作用域内唯一标识此 ObjectDescriptor。
+	 * 应在 0 与 1023 之间（不含端点）。禁止使用 0，1023 保留。
 	 *
-	 * @return this ObjectDescriptor's ID
+	 * @return 此 ObjectDescriptor 的 ID
 	 */
 	public int getObjectDescriptorID() {
 		return objectDescriptorID;
 	}
 
 	/**
-	 * A flag that, if set, indicates that the subsequent profile indications
-	 * take into account the resources needed to process any content that may
-	 * be inlined.
+	 * 若设置此标志，表示后续 profile 指示考虑了处理任何可能内联的内容所需资源。
 	 *
-	 * @return true if this ObjectDescriptor includes inline profiles
+	 * @return 若此 ObjectDescriptor 含内联 profile 则返回 true
 	 */
 	public boolean includesInlineProfiles() {
 		return includeInlineProfiles;
 	}
 
 	/**
-	 * A flag that indicates the presence of a URL. If set, no profiles are
-	 * present.
+	 * 指示是否存在 URL 的标志。若设置，则不存在 profile。
 	 *
-	 * @return true if a URL is present
+	 * @return 若存在 URL 则返回 true
 	 */
 	public boolean isURLPresent() {
 		return urlPresent;
 	}
 
 	/**
-	 * A URL String that shall point to another InitialObjectDescriptor. If no
-	 * URL is present (if <code>isURLPresent()</code> returns false) this method
-	 * returns null.
+	 * URL String，应指向另一个 InitialObjectDescriptor。
+	 * 若不存在 URL（<code>isURLPresent()</code> 返回 false），此方法返回 null。
 	 *
-	 * @return a URL String or null if none is present
+	 * @return URL String；若不存在则返回 null
 	 */
 	public String getURL() {
 		return url;
 	}
 
 	/**
-	 * A flag that indicates the presence of profiles. If set, no URL is
-	 * present.
+	 * 指示是否存在 profile 的标志。若设置，则不存在 URL。
 	 *
-	 * @return true if profiles are present
+	 * @return 若存在 profile 则返回 true
 	 */
 	public boolean areProfilesPresent() {
 		return !urlPresent;
@@ -97,68 +90,64 @@ public class InitialObjectDescriptor extends Descriptor {
 	}
 
 	/**
-	 * An indication of the scene description profile required to process the
-	 * content associated with this InitialObjectDescriptor.<br />
-	 * The value should be one of the following:
-	 * 0x00: reserved for ISO use
+	 * 处理与此 InitialObjectDescriptor 关联内容所需场景描述 profile 的指示。<br />
+	 * 取值应为以下之一：
+	 * 0x00: 保留给 ISO 使用
 	 * 0x01: ISO 14496-1 XXXX profile
-	 * 0x02-0x7F: reserved for ISO use
-	 * 0x80-0xFD: user private
-	 * 0xFE: no scene description profile specified
-	 * 0xFF: no scene description capability required
+	 * 0x02-0x7F: 保留给 ISO 使用
+	 * 0x80-0xFD: 用户私有
+	 * 0xFE: 未指定场景描述 profile
+	 * 0xFF: 不需要场景描述能力
 	 *
-	 * @return the scene profile
+	 * @return 场景 profile
 	 */
 	public int getSceneProfile() {
 		return sceneProfile;
 	}
 
 	/**
-	 * An indication of the audio profile required to process the content
-	 * associated with this InitialObjectDescriptor.<br />
-	 * The value should be one of the following:
-	 * 0x00: reserved for ISO use
+	 * 处理与此 InitialObjectDescriptor 关联内容所需音频 profile 的指示。<br />
+	 * 取值应为以下之一：
+	 * 0x00: 保留给 ISO 使用
 	 * 0x01: ISO 14496-3 XXXX profile
-	 * 0x02-0x7F: reserved for ISO use
-	 * 0x80-0xFD: user private
-	 * 0xFE: no audio profile specified
-	 * 0xFF: no audio capability required
+	 * 0x02-0x7F: 保留给 ISO 使用
+	 * 0x80-0xFD: 用户私有
+	 * 0xFE: 未指定音频 profile
+	 * 0xFF: 不需要音频能力
 	 *
-	 * @return the audio profile
+	 * @return 音频 profile
 	 */
 	public int getAudioProfile() {
 		return audioProfile;
 	}
 
 	/**
-	 * An indication of the visual profile required to process the content
-	 * associated with this InitialObjectDescriptor.<br />
-	 * The value should be one of the following:
-	 * 0x00: reserved for ISO use
+	 * 处理与此 InitialObjectDescriptor 关联内容所需视觉 profile 的指示。<br />
+	 * 取值应为以下之一：
+	 * 0x00: 保留给 ISO 使用
 	 * 0x01: ISO 14496-2 XXXX profile
-	 * 0x02-0x7F: reserved for ISO use
-	 * 0x80-0xFD: user private
-	 * 0xFE: no visual profile specified
-	 * 0xFF: no visual capability required
+	 * 0x02-0x7F: 保留给 ISO 使用
+	 * 0x80-0xFD: 用户私有
+	 * 0xFE: 未指定视觉 profile
+	 * 0xFF: 不需要视觉能力
 	 *
-	 * @return the visual profile
+	 * @return 视觉 profile
 	 */
 	public int getVisualProfile() {
 		return visualProfile;
 	}
 
 	/**
-	 * An indication of the graphics profile required to process the content
-	 * associated with this InitialObjectDescriptor.<br />
-	 * The value should be one of the following:
-	 * 0x00: reserved for ISO use
+	 * 处理与此 InitialObjectDescriptor 关联内容所需图形 profile 的指示。<br />
+	 * 取值应为以下之一：
+	 * 0x00: 保留给 ISO 使用
 	 * 0x01: ISO 14496-1 XXXX profile
-	 * 0x02-0x7F: reserved for ISO use
-	 * 0x80-0xFD: user private
-	 * 0xFE: no graphics profile specified
-	 * 0xFF: no graphics capability required
+	 * 0x02-0x7F: 保留给 ISO 使用
+	 * 0x80-0xFD: 用户私有
+	 * 0xFE: 未指定图形 profile
+	 * 0xFF: 不需要图形能力
 	 *
-	 * @return the graphics profile
+	 * @return 图形 profile
 	 */
 	public int getGraphicsProfile() {
 		return graphicsProfile;

@@ -3,7 +3,7 @@ package repackage.net.sourceforge.jaad.mp4.boxes;
 public interface BoxTypes {
 
 	long EXTENDED_TYPE = 1970628964; //uuid
-	//standard boxes (ISO BMFF)
+	//标准 box（ISO BMFF）
 	long ADDITIONAL_METADATA_CONTAINER_BOX = 1835361135l; //meco
 	long APPLE_LOSSLESS_BOX = 1634492771l; //alac
 	long BINARY_XML_BOX = 1652059500l; //bxml
@@ -89,12 +89,12 @@ public interface BoxTypes {
 	long VIDEO_MEDIA_HEADER_BOX = 1986881636l; //vmhd
 	long WIDE_BOX = 2003395685l; //wide
 	long XML_BOX = 2020437024l; //xml 
-	//mp4 extension
+	//mp4 扩展
 	long OBJECT_DESCRIPTOR_BOX = 1768907891l; //iods
 	long SAMPLE_DEPENDENCY_BOX = 1935959408l; //sdep
-	//metadata: id3
+	//元数据：id3
 	long ID3_TAG_BOX = 1768174386l; //id32
-	//metadata: itunes
+	//元数据：itunes
 	long ITUNES_META_LIST_BOX = 1768715124l; //ilst
 	long CUSTOM_ITUNES_METADATA_BOX = 757935405l; //----
 	long ITUNES_METADATA_BOX = 1684108385l; //data
@@ -146,7 +146,7 @@ public interface BoxTypes {
 	long TV_SEASON_BOX = 1953919854l; //tvsn
 	long TV_SHOW_BOX = 1953919848l; //tvsh
 	long TV_SHOW_SORT_BOX = 1936683886l; //sosn
-	//metadata: 3gpp
+	//元数据：3gpp
 	long THREE_GPP_ALBUM_BOX = 1634493037l; //albm
 	long THREE_GPP_AUTHOR_BOX = 1635087464l; //auth
 	long THREE_GPP_CLASSIFICATION_BOX = 1668051814l; //clsf
@@ -156,14 +156,14 @@ public interface BoxTypes {
 	long THREE_GPP_PERFORMER_BOX = 1885696614l; //perf
 	long THREE_GPP_RECORDING_YEAR_BOX = 2037543523l; //yrrc
 	long THREE_GPP_TITLE_BOX = 1953068140l; //titl
-	//metadata: google/youtube
+	//元数据：google/youtube
 	long GOOGLE_HOST_HEADER_BOX = 1735616616l; //gshh
 	long GOOGLE_PING_MESSAGE_BOX = 1735618669l; //gspm
 	long GOOGLE_PING_URL_BOX = 1735618677l; //gspu
 	long GOOGLE_SOURCE_DATA_BOX = 1735619428l; //gssd
 	long GOOGLE_START_TIME_BOX = 1735619444l; //gsst
 	long GOOGLE_TRACK_DURATION_BOX = 1735619684l; //gstd
-	//sample entries
+	//采样条目
 	long MP4V_SAMPLE_ENTRY = 1836070006l; //mp4v
 	long H263_SAMPLE_ENTRY = 1932670515l; //s263
 	long ENCRYPTED_VIDEO_SAMPLE_ENTRY = 1701733238l; //encv
@@ -183,12 +183,12 @@ public interface BoxTypes {
 	long XML_METADATA_SAMPLE_ENTRY = 1835365496l; //metx
 	long RTP_HINT_SAMPLE_ENTRY = 1920233504l; //rtp 
 	long FD_HINT_SAMPLE_ENTRY = 1717858336l; //fdp 
-	//codec infos
+	//编解码器信息
 	long ESD_BOX = 1702061171l; //esds
-	//video codecs
+	//视频编解码器
 	long H263_SPECIFIC_BOX = 1681012275l; //d263
 	long AVC_SPECIFIC_BOX = 1635148611l; //avcC
-	//audio codecs
+	//音频编解码器
 	long AC3_SPECIFIC_BOX = 1684103987l; //dac3
 	long EAC3_SPECIFIC_BOX = 1684366131l; //dec3
 	long AMR_SPECIFIC_BOX = 1684106610l; //damr
@@ -211,7 +211,7 @@ public interface BoxTypes {
 	long OMA_RIGHTS_OBJECT_BOX = 1868853858l; //odrb
 	long OMA_TRANSACTION_TRACKING_BOX = 1868854388l; //odtt
 	//iTunes DRM (FairPlay)
-	long FAIRPLAY_USER_ID_BOX = 1970496882l; //user
+	long FAIRPLAY_USER_ID_BOX = 1970496882l; //用户
 	long FAIRPLAY_USER_NAME_BOX = 1851878757l; //name
 	long FAIRPLAY_USER_KEY_BOX = 1801812256l; //key 
 	long FAIRPLAY_IV_BOX = 1769367926l; //iviv

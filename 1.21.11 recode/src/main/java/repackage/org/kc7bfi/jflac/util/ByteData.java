@@ -21,13 +21,13 @@ package repackage.org.kc7bfi.jflac.util;
  */
 
 /**
- * Expandable byte data storage.
+ * 可扩展的字节数据存储。
  * @author kc7bfi
  */
 public class ByteData {
     private static final int DEFAULT_BUFFER_SIZE = 256;
 
-    /** The byte array where data is stored. */
+    /** 存储数据的字节数组。 */
     private byte[] data;
 
     /** 存储在数组中的字节数。*/

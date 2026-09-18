@@ -1,8 +1,8 @@
 package repackage.net.sourceforge.jaad.spi.javasound;
 
 /**
- * CircularBuffer for asynchronous reading.
- * Adopted from Tritonus (http://www.tritonus.org/).
+ * 用于异步读取的循环缓冲区（CircularBuffer）。
+ * 改编自 Tritonus（http://www.tritonus.org/）。
  * @author in-somnia
  */
 class CircularBuffer {

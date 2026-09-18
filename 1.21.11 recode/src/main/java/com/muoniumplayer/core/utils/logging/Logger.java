@@ -559,7 +559,7 @@ public class Logger {
     // 由于没有 TRACE，将 TRACE 映射为 DEBUG
     private LogLevel getLogLevel(Level level) {
         if (level == Level.TRACE) {
-            return LogLevel.DEBUG; // Map TRACE to DEBUG since we don't have TRACE
+            return LogLevel.DEBUG; // 将 TRACE 映射到 DEBUG，因为我们没有 TRACE。
         } else if (level == Level.DEBUG) {
             return LogLevel.DEBUG;
         } else if (level == Level.INFO) {

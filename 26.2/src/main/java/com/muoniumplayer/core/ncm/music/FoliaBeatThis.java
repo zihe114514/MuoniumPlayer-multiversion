@@ -14,7 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Arrays;
 
-/** Beat This! ONNX adapter. It runs in the downloaded Folia Python runtime. */
+/** Beat This! ONNX 适配器。它在下载的 Folia Python 运行时中运行。 */
 final class FoliaBeatThis {
     private static final int MODEL_RATE = 22_050;
 

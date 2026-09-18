@@ -6,7 +6,7 @@ import com.muoniumplayer.core.screens.onboarding.OnboardingGreeting;
 import com.muoniumplayer.core.screens.onboarding.OnboardingStepView;
 import com.muoniumplayer.core.screens.onboarding.OnboardingUi;
 
-/** Apple-inspired welcome page: one animated greeting, almost no copy. */
+/** 苹果风格的欢迎页：一句动态问候，几乎没有文案。 */
 public final class WelcomeStep implements OnboardingStepView {
     private final OnboardingGreeting greeting = new OnboardingGreeting();
 
@@ -18,7 +18,7 @@ public final class WelcomeStep implements OnboardingStepView {
         double greetingY = y + height * 0.38;
         greeting.render(centerX, greetingY, Math.min(width * 0.68, 620), 122, 1.0);
 
-        OnboardingUi.drawEyebrow("MINECRAFT MUSIC CLIENT · 1.4.11", centerX - 126, y + height * 0.13);
+        OnboardingUi.drawEyebrow("MINECRAFT MUSIC CLIENT · 1.4.12", centerX - 126, y + height * 0.13);
         OnboardingUi.drawText(FontManager.pf40bold, "把音乐装进 Minecraft", centerX - 174,
                 y + height * 0.64, OnboardingUi.WHITE);
         OnboardingUi.drawText(FontManager.pf14, "连接账号、选择音源、定制外观，再让 Automix 在本机理解节拍。",

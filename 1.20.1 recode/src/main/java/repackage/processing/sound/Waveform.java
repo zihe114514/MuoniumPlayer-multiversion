@@ -10,17 +10,17 @@ import repackage.com.jsyn.unitgen.FixedRateStereoWriterSpecial;
 
 
 /**
- * This is a Waveform analyzer. It returns the waveform of an
- * audio stream the moment it is queried with the <b>getAnalyzedData()</b>
- * method.<br/>
- * Note that by default all sound generators (including microphone capture from
- * <code>AudioIn</code>) have an amplitude of 1, which means that the values of
- * their waveform will be numbers in the range <code>[-0.5, 0.5]</code>.
+ * 此 SoundObject 的合成。
+ * 使用<b> getAnalyzedData() </b>查询的音频流
+ * 方法. <br/>
+ * 请注意，默认情况下，所有声音发生器（包括来自
+ * <code> AudioIn </code> ）的振幅为1 ，这意味着
+ * 他们的波形将是<code> [-0.5, 0.5] </code>范围内的数字。
  *
  * @author icalvin102
  *
- * @webref Analysis:Waveform
- * @webBrief Inspects the underlying soundwave of an audio signal.
+ * @ webref分析：波形
+ * @ webBrief检查音频信号的潜在声波。
  **/
 public class Waveform extends Analyzer {
 
@@ -32,13 +32,13 @@ public class Waveform extends Analyzer {
 	private int lastAnalysisOffset, lastAnalysisOffsetRight;
 
 	/**
-	 * @param nsamples
-	 *            number of waveform samples that you want to be able to read at once (a positive integer).
+	 * 这是一个波形分析器。它返回
+	 *            您希望能够一次读取的波形样本数（正整数）。
 	 */
 	public Waveform(float windowTime) {
 		super();
 		if (windowTime <= 0) {
-			// TODO throw RuntimeException?
+			// TODO 抛出运行时异常？
 			Engine.printError("number of waveform frames needs to be greater than 0");
 		} else {
 			int nsamples = (int) (Engine.getEngine().getSampleRate() * windowTime);
@@ -48,7 +48,7 @@ public class Waveform extends Analyzer {
 			this.writer = new FixedRateStereoWriterSpecial();
 			this.buffer = new FloatSample(nsamples);
 			this.bufferRight = new FloatSample(nsamples);
-			// write any connected input into the output buffer ad infinitum
+			// 将任何连接的输入无限地写入输出缓冲区
 			this.writer.dataQueueLeft.queueLoop(this.buffer);
 			this.writer.dataQueueRight.queueLoop(this.bufferRight);
 //			this.connect(this.writer.dataQueueLeft, this.buffer, this.data);
@@ -94,7 +94,7 @@ public class Waveform extends Analyzer {
 	}
 
 	protected void setInput(UnitOutputPort input) {
-		// superclass makes sure that input unit is actually playing, just connect it
+		// 父类会确保输入单元确实在播放，直接连接它即可
 		Engine.getEngine().add(this.writer);
 		this.connectedInput = input;
 		this.writer.input.connect(0, input, 0);
@@ -103,11 +103,11 @@ public class Waveform extends Analyzer {
 	}
 
 	/**
-	 * Gets the content of the current audiobuffer from the input source, writes it
-	 * into this Waveform's `data` array, and returns it.
+	 * 从输入源获取当前音频缓冲区的内容，并将其写入
+	 * 超类确保输入单元确实在播放，直接连接它
 	 *
-	 * @return the current audiobuffer of the input source. The array has as
-	 *         many elements as this Waveform analyzer's number of samples
+	 * @return 输入源的当前音频缓冲区。数组具有
+	 *         到此 Waveform 的 `data` 数组并返回。
 	 */
 	public float[] analyze() {
 		return this.analyze(this.data);
@@ -118,61 +118,61 @@ public class Waveform extends Analyzer {
 	}
 
 	/**
-	 * Gets the content of the current audiobuffer from the input source.
+	 * 从输入源获取当前音频缓冲区的内容。
 	 *
-	 * @param value
-	 *            an array with as many elements as this Waveform analyzer's number of
-	 *            samples
-	 * @return the current audiobuffer of the input source. The array has as
-	 *         many elements as this Waveform analyzer's number of samples
-	 * @webref Analysis:Waveform
-	 * @webBrief Gets the content of the current audiobuffer from the input source.
+	 * FIXME 检查立体声情形
+	 *            一个阵列的元素数量与此波形分析仪的数量一样多
+	 *            与该波形分析器的采样数同样多的元素
+	 * @return 输入源的当前音频缓冲区。数组具有
+	 *         到此 Waveform 的 `data` 数组并返回。
+	 * @ webref分析：波形
+	 * 采样
 	 **/
 	public float[] analyze(float[] value) {
 		if (this.input == null) {
-//			Engine.printWarning("this Waveform has no sound source connected to it, nothing to getAnalyzedData");
+//			Engine.printWarning("此波形没有连接到它的声源，没有要getAnalyzedData的声源");
 		}
 
-//		return data;
+//		将数据返回到 Excel
 
 		this.lastAnalysisOffset = (int) this.writer.dataQueueLeft.getFrameCount() % this.buffer.getNumFrames();
-		// if initiating this read takes too long the first couple samples might actually
-		// already be overwritten by the next loop, so fingers crossed...
+		// 如果初始化此读取需要太长时间，则前几个样本实际上可能
+		// 已经被下一个循环覆盖，所以手指交叉...
 		this.buffer.read(lastAnalysisOffset, value, 0, this.buffer.getNumFrames() - lastAnalysisOffset);
 		this.buffer.read(0, value, this.buffer.getNumFrames() - lastAnalysisOffset, lastAnalysisOffset);
-//		// the original implementation did a *2 on all values...?
+//		//最初的实现对所有值都做了* 2... ？
 		return value;
 	}
 
 	public float[] analyzeRight(float[] value) {
 		if (this.input == null) {
-//			Engine.printWarning("this Waveform has no sound source connected to it, nothing to getAnalyzedData");
+//			Engine.printWarning("此波形没有连接到它的声源，没有要getAnalyzedData的声源");
 		}
 
-//		return dataRight;
+//		将数据返回到 Excel
 
 		this.lastAnalysisOffsetRight = (int) this.writer.dataQueueRight.getFrameCount() % this.bufferRight.getNumFrames();
-		// if initiating this read takes too long the first couple samples might actually
-		// already be overwritten by the next loop, so fingers crossed...
+		// 如果初始化此读取需要太长时间，则前几个样本实际上可能
+		// 已经被下一个循环覆盖，所以手指交叉...
 		this.bufferRight.read(lastAnalysisOffsetRight, value, 0, this.bufferRight.getNumFrames() - lastAnalysisOffsetRight);
 		this.bufferRight.read(0, value, this.bufferRight.getNumFrames() - lastAnalysisOffsetRight, lastAnalysisOffsetRight);
-		// the original implementation did a *2 on all values...?
+		// 最初的实现对所有值都做了* 2... ？
 		return value;
 	}
 
 /*
-	public float[] analyzeCircular() {
-		return this.analyzeCircular(this.data);
+	@webBrief 从输入源获取当前音频缓冲区的内容。
+		返回this.analyzeCircular(this.data);
 	}
 
-	public float[] analyzeCircular(float[] value) {
-		if (this.input == null) {
-			Engine.printWarning("this Waveform has no sound source connected to it, nothing to getAnalyzedData");
+	public float [] analyzeCircular(float [] value) {
+		if(this.input = = null) {
+			Engine.printWarning("此波形没有连接到它的声源，没有要getAnalyzedData的声源");
 		}
 
 		this.lastAnalysisOffset = (int) this.writer.dataQueue.getFrameCount() % this.buffer.getNumFrames();
-		this.buffer.read(value);
-		return value;
+		this.buffer.read(值);
+		返回值
 	}
 
 	public int getLastAnalysisOffset() {
@@ -180,17 +180,17 @@ public class Waveform extends Analyzer {
 	}
 */
 
-	// Below are just duplicated methods from superclasses which are required
-	// for the online reference to build the corresponding pages.
+	// @return amp 一个 0-1 之间的振幅值。
+	// 用于在线参考，以构建相应的页面。
 
 	/**
-	 * Define the audio input for the analyzer.
+	 * TODO 检查输入是否存在，若否则打印警告
 	 *
 	 * @param input
-	 *            the input sound source. Can be an oscillator, noise generator,
-	 *            SoundFile or AudioIn.
-	 * @webref Analysis:Waveform
-	 * @webBrief Define the audio input for the analyzer.
+	 *            以下仅是从超类复制来的必要方法，
+	 *            SoundFile或AudioIn。
+	 * @ webref分析：波形
+	 * @ webBrief定义分析仪的音频输入。
 	 **/
 	public void input(SoundObject input) {
 		super.input(input);
@@ -211,7 +211,7 @@ public class Waveform extends Analyzer {
 		this.bufferRight.allocate(nsamples, 1);
 //		this.buffer = new FloatSample(nsamples);
 //		this.bufferRight = new FloatSample(nsamples);
-		// write any connected input into the output buffer ad infinitum
+		// 将任何连接的输入无限地写入输出缓冲区
 		this.writer.dataQueueLeft = new UnitDataQueuePort("Data");
 		this.writer.dataQueueRight = new UnitDataQueuePort("Data");
 		this.writer.dataQueueLeft.queueLoop(this.buffer);

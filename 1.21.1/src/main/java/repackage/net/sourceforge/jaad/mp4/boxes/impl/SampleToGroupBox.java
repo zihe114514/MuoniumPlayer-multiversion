@@ -5,19 +5,16 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * This table can be used to find the group that a sample belongs to and the
- * associated description of that sample group. The table is compactly coded
- * with each entry giving the index of the first sample of a run of samples with
- * the same sample group descriptor. The sample group description ID is an index
- * that refers to a SampleGroupDescription box, which contains entries
- * describing the characteristics of each sample group.
+ * 此表可用于查找某个采样所属的组以及该采样组的关联描述。
+ * 表以紧凑方式编码，每个条目给出具有相同采样组描述符的一段采样中
+ * 第一个采样的索引。采样组描述 ID 是一个索引，
+ * 指向 SampleGroupDescription box，其中包含描述各采样组特征的条目。
  *
- * There may be multiple instances of this box if there is more than one sample
- * grouping for the samples in a track. Each instance of the SampleToGroup box
- * has a type code that distinguishes different sample groupings. Within a
- * track, there shall be at most one instance of this box with a particular
- * grouping type. The associated SampleGroupDescription shall indicate the same
- * value for the grouping type.
+ * 若轨道中的采样有多个采样分组，则此 box 可有多个实例。
+ * SampleToGroup box 的每个实例都有一个类型代码，
+ * 区分不同的采样分组。在一个轨道内，特定分组类型的此 box
+ * 至多有一个实例。关联的 SampleGroupDescription 应对分组类型
+ * 指示相同的值。
  */
 public class SampleToGroupBox extends FullBox {
 
@@ -44,36 +41,30 @@ public class SampleToGroupBox extends FullBox {
 	}
 
 	/**
-	 * The grouping type is an integer that identifies the type (i.e. criterion
-	 * used to form the sample groups) of the sample grouping and links it to
-	 * its sample group description table with the same value for grouping type.
-	 * At most one occurrence of this box with the same value for 'grouping
-	 * type' shall exist for a track.
+	 * 分组类型为整数，标识采样分组的类型（即用于形成采样组的准则），
+	 * 并将其链接到分组类型值相同的采样组描述表。
+	 * 一个轨道中，特定 'grouping type' 的此 box 至多出现一次。
 	 */
 	public long getGroupingType() {
 		return groupingType;
 	}
 
 	/**
-	 * The sample count is an integer that gives the number of consecutive
-	 * samples with the same sample group descriptor for a specific entry. If
-	 * the sum of the sample count in this box is less than the total sample
-	 * count, then the reader should effectively extend it with an entry that
-	 * associates the remaining samples with no group.
-	 * It is an error for the total in this box to be greater than the sample
-	 * count documented elsewhere, and the reader behaviour would then be
-	 * undefined.
+	 * 采样数为整数，给出特定条目中具有相同采样组描述符的
+	 * 连续采样数量。若此 box 中采样数之和小于总采样数，
+	 * 则读取者应以一条将剩余采样关联到“无组”的条目有效地扩展它。
+	 * 此 box 中的总和大于别处记录的采样数是错误的，
+	 * 读取者行为将未定义。
 	 */
 	public long[] getSampleCount() {
 		return sampleCount;
 	}
 
 	/**
-	 * The group description index is an integer that gives the index of the
-	 * sample group entry which describes the samples in this group for a
-	 * specific entry. The index ranges from 1 to the number of sample group
-	 * entries in the SampleGroupDescriptionBox, or takes the value 0 to
-	 * indicate that this sample is a member of no group of this type.
+	 * 组描述索引为整数，给出特定条目中描述该组内采样的
+	 * 采样组条目的索引。索引范围为 1 到
+	 * SampleGroupDescriptionBox 中采样组条目数，
+	 * 或取 0 表示此采样不属于该类型的任何组。
 	 */
 	public long[] getGroupDescriptionIndex() {
 		return groupDescriptionIndex;

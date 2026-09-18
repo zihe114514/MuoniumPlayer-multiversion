@@ -5,13 +5,13 @@ import repackage.com.jsyn.data.FloatSample;
 
 /**
  * @author MuoniumPlayer Contributors
- * Date: 2025/5/5 12:48
+ * 日期： 2025/5/5 12:48
  */
 public class RafFloatSample extends FloatSample {
 
     public final RafWAVEFileParser.StreamedByteDataReader reader;
 
-    /** Constructor for multi-channel samples with data. */
+    /** 带数据的多声道采样构造函数。 */
     public RafFloatSample(RafWAVEFileParser.StreamedByteDataReader reader, int numFrames, int channelsPerFrame) {
         this.reader = reader;
         this.numFrames = numFrames;

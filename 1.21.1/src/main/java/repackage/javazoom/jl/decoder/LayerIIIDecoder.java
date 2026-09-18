@@ -1,41 +1,41 @@
 /*
- * 11/19/04     1.0 moved to LGPL.
+ * 2004年11月19日1.0移至LGPL。
  *
- * 18/06/01  Michael Scheerer,  Fixed bugs which causes
- *           negative indexes in method huffmann_decode and in method
+ * 18/06/01 Michael Scheerer ，修复了导致
+ *           方法huffmann_decode和方法中的负索引
  *           dequanisize_sample.
  *
- * 16/07/01  Michael Scheerer, Caught a bug in method
- *           huffmann_decode, which causes an outOfIndexException.
- *           Cause : Indexnumber of 24 at SfBandIndex,
- *           which has only a length of 22. I have simply and dirty
- *           fixed the index to <= 22, because I'm not really be able
- *           to fix the bug. The Indexnumber is taken from the MP3
- *           file and the origin Ma-Player with the same code works
- *           well.
+ * 16/07/01 Michael Scheerer ，方法错误
+ *           huffmann_decode ，这会导致outOfIndexException。
+ *           原因：SfBandIndex 为 24，
+ *           它的长度只有22英寸。我有简单而肮脏的
+ *           将索引固定为< = 22 ，因为我真的不能
+ *           来修复错误。Indexnumber取自MP3
+ *           文件和具有相同代码的原始Ma-Player有效
+ *           正常。
  *
- * 02/19/99  Java Conversion by E.B, javalayer@javazoom.net
+ * 1999年2月19日E.B.的Java转换， javalayer@javazoom.net
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
 package repackage.javazoom.jl.decoder;
 
 /**
- * Class Implementing Layer 3 Decoder.
+ * 类实现第3层解码器。
  *
  * @since 0.0
  */
@@ -73,10 +73,10 @@ final class LayerIIIDecoder implements FrameDecoder {
     private final int sfreq;
 
     /**
-     * Constructor.
+     * 制造商
      * <p>
-     * REVIEW: these constructor arguments should be moved to the
-     * decodeFrame() method, where possible, so that one
+     * 审阅：这些构造函数参数应移动到
+     * decodeFrame() 方法中，以便一个
      */
     public LayerIIIDecoder(Bitstream stream, Header header,
                            SynthesisFilter filterA, SynthesisFilter filterB,
@@ -98,7 +98,7 @@ final class LayerIIIDecoder implements FrameDecoder {
 
         // L3TABLE INIT
 
-        sfBandIndex = new SBI[9]; // SZD: MPEG2.5 +3 indices
+        sfBandIndex = new SBI[9]; // SZD ： MPEG2.5 +3索引
         int[] l0 = {0, 6, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 116, 140, 168, 200, 238, 284, 336, 396, 464, 522, 576};
         int[] s0 = {0, 4, 8, 12, 18, 24, 32, 42, 56, 74, 100, 132, 174, 192};
         int[] l1 = {0, 6, 12, 18, 24, 30, 36, 44, 54, 66, 80, 96, 114, 136, 162, 194, 232, 278, 330, 394, 464, 540, 576};
@@ -132,9 +132,9 @@ final class LayerIIIDecoder implements FrameDecoder {
         sfBandIndex[7] = new SBI(l7, s7);
         sfBandIndex[8] = new SBI(l8, s8);
 
-        // END OF L3TABLE INIT
+        // L3TABLE INIT结束
 
-        if (reorderTable == null) { // SZD: generate LUT
+        if (reorderTable == null) { // SZD ：生成LUT
             reorderTable = new int[9][];
             for (int i = 0; i < 9; i++)
                 reorderTable[i] = reorder(sfBandIndex[i].s);
@@ -144,11 +144,11 @@ final class LayerIIIDecoder implements FrameDecoder {
         int[] ll0 = {0, 6, 11, 16, 21};
         int[] ss0 = {0, 6, 12};
         sfTable = new SfTable(ll0, ss0);
-        // END OF SfTable
+        // SfTable 结束
 
         // scaleFacBuffer
         scaleFacBuffer = new int[54];
-        // END OF scaleFacBuffer
+        // 缩放结束FacBuffer
 
         this.stream = stream;
         this.header = header;
@@ -197,7 +197,7 @@ final class LayerIIIDecoder implements FrameDecoder {
     }
 
     /**
-     * Notify decoder that a seek is being made.
+     * 通知解码器正在进行寻道。
      */
     public void seek_notify() {
         frameStart = 0;
@@ -212,13 +212,13 @@ final class LayerIIIDecoder implements FrameDecoder {
         decode();
     }
 
-    // subband samples are buffered and passed to the
-    // SynthesisFilter in one go.
+    // 子带采样被缓冲后一次性传给
+    // SynthesisFilter。
     private float[] samples1 = new float[32];
     private float[] samples2 = new float[32];
 
     /**
-     * Decode one frame, filling the buffer with the output samples.
+     * 解码一帧，用输出采样填充缓冲区。
      */
     public void decode() {
         int nSlots = header.slots();
@@ -233,7 +233,7 @@ final class LayerIIIDecoder implements FrameDecoder {
         for (i = 0; i < nSlots; i++)
             br.hputbuf(stream.getBits(8));
 
-        mainDataEnd = br.hsstell() >>> 3; // of previous frame
+        mainDataEnd = br.hsstell() >>> 3; // 上一帧
 
         if ((flushMain = (br.hsstell() & 7)) != 0) {
             br.hgetbits(8 - flushMain);
@@ -282,12 +282,12 @@ final class LayerIIIDecoder implements FrameDecoder {
 
                 hybrid(ch, gr);
 
-                for (sb18 = 18; sb18 < 576; sb18 += 36) // Frequency inversion
+                for (sb18 = 18; sb18 < 576; sb18 += 36) // 频率反转
                     for (ss = 1; ss < SSLIMIT; ss += 2)
                         out1d[sb18 + ss] = -out1d[sb18 + ss];
 
                 if ((ch == 0) || (whichChannels == OutputChannels.RIGHT_CHANNEL)) {
-                    for (ss = 0; ss < SSLIMIT; ss++) { // Polyphase synthesis
+                    for (ss = 0; ss < SSLIMIT; ss++) { // 多相合成
                         sb = 0;
                         for (sb18 = 0; sb18 < 576; sb18 += 18) {
                             samples1[sb] = out1d[sb18 + ss];
@@ -297,7 +297,7 @@ final class LayerIIIDecoder implements FrameDecoder {
                         filter1.calculate_pcm_samples(buffer);
                     }
                 } else {
-                    for (ss = 0; ss < SSLIMIT; ss++) { // Polyphase synthesis
+                    for (ss = 0; ss < SSLIMIT; ss++) { // 多相合成
                         sb = 0;
                         for (sb18 = 0; sb18 < 576; sb18 += 18) {
                             samples2[sb] = out1d[sb18 + ss];
@@ -316,10 +316,10 @@ final class LayerIIIDecoder implements FrameDecoder {
     }
 
     /**
-     * Reads the side info from the stream, assuming the entire.
-     * frame has been read already.
-     * Mono   : 136 bits (= 17 bytes)
-     * Stereo : 256 bits (= 32 bytes)
+     * 从流中读取侧面信息，假设整个信息。
+     * 帧已读取。
+     * 单声道： 136位（ = 17字节）
+     * 立体声： 256位（ = 32字节）
      */
     private boolean getSideInfo() {
         int ch, gr;
@@ -355,10 +355,10 @@ final class LayerIIIDecoder implements FrameDecoder {
                         si.ch[ch].gr[gr].subblockGain[1] = stream.getBits(3);
                         si.ch[ch].gr[gr].subblockGain[2] = stream.getBits(3);
 
-                        // Set region_count parameters since they are implicit in this case.
+                        // 设置 region_count 参数，因为在此情况下它们是隐含的。
 
                         if (si.ch[ch].gr[gr].blockType == 0) {
-                            // Side info bad: blockType == 0 in split block
+                            // 侧面信息错误：拆分块中的blockType = = 0
                             return false;
                         } else if (si.ch[ch].gr[gr].blockType == 2
                                 && si.ch[ch].gr[gr].mixedBlockFlag == 0) {
@@ -406,10 +406,10 @@ final class LayerIIIDecoder implements FrameDecoder {
                     si.ch[ch].gr[0].subblockGain[1] = stream.getBits(3);
                     si.ch[ch].gr[0].subblockGain[2] = stream.getBits(3);
 
-                    // Set region_count parameters since they are implicit in this case.
+                    // 设置 region_count 参数，因为在此情况下它们是隐含的。
 
                     if (si.ch[ch].gr[0].blockType == 0) {
-                        // Side info bad: blockType == 0 in split block
+                        // 侧面信息错误：拆分块中的blockType = = 0
                         return false;
                     } else if (si.ch[ch].gr[0].blockType == 2
                             && si.ch[ch].gr[0].mixedBlockFlag == 0) {
@@ -462,7 +462,7 @@ final class LayerIIIDecoder implements FrameDecoder {
                 for (sfb = 12, window = 0; window < 3; window++)
                     scalefac[ch].s[window][sfb] = 0;
 
-            } else { // SHORT
+            } else { // 短
 
                 scalefac[ch].s[0][0] = br.hgetbits(length0);
                 scalefac[ch].s[1][0] = br.hgetbits(length0);
@@ -503,9 +503,9 @@ final class LayerIIIDecoder implements FrameDecoder {
                 scalefac[ch].s[0][12] = 0;
                 scalefac[ch].s[1][12] = 0;
                 scalefac[ch].s[2][12] = 0;
-            } // SHORT
+            } // 短
 
-        } else { // LONG types 0,1,3
+        } else { // 长型0、1、3
 
             if ((si.ch[ch].scfsi[0] == 0) || (gr == 0)) {
                 scalefac[ch].l[0] = br.hgetbits(length0);
@@ -542,8 +542,8 @@ final class LayerIIIDecoder implements FrameDecoder {
         }
     }
 
-    // MDM: newSlen is fully initialized before use, no need
-    // to reallocate array.
+    // MDM ： newSlen在使用前已完全初始化，无需
+    // 以重新分配数组。
     private final int[] newSlen = new int[4];
 
     /**
@@ -629,7 +629,7 @@ final class LayerIIIDecoder implements FrameDecoder {
             }
         }
 
-        for (int x = 0; x < 45; x++) // why 45, not 54?
+        for (int x = 0; x < 45; x++) // 为什么是45 ，而不是54 ？
             scaleFacBuffer[x] = 0;
 
         m = 0;
@@ -667,7 +667,7 @@ final class LayerIIIDecoder implements FrameDecoder {
                     }
                 }
 
-            } else { // SHORT
+            } else { // 短
 
                 for (sfb = 0; sfb < 12; sfb++) {
                     for (window = 0; window < 3; window++) {
@@ -679,7 +679,7 @@ final class LayerIIIDecoder implements FrameDecoder {
             }
             for (window = 0; window < 3; window++)
                 scalefac[ch].s[window][12] = 0;
-        } else { // LONG types 0,1,3
+        } else { // 长型0、1、3
 
             for (sfb = 0; sfb < 21; sfb++) {
                 scalefac[ch].l[sfb] = scaleFacBuffer[m];
@@ -714,17 +714,17 @@ final class LayerIIIDecoder implements FrameDecoder {
 
         HuffCodeTab h;
 
-        // Find region boundary for short block case
+        // 为短块情形查找区域边界
 
         if (((si.ch[ch].gr[gr].windowSwitchingFlag) != 0) &&
                 (si.ch[ch].gr[gr].blockType == 2)) {
 
             // Region2.
-            //MS: Extrahandling for 8KHZ
-            region1Start = (sfreq == 8) ? 72 : 36; // sfb[9/3]*3=36 or in case 8KHZ = 72
-            region2Start = 576; // No Region2 for short block case
+            //MS：8KHZ 的额外处理
+            region1Start = (sfreq == 8) ? 72 : 36; // sfb[9/3]*3=36，8KHZ 时为 72
+            region2Start = 576; // 短块大小写没有Region2
 
-        } else { // Find region boundary for long block case
+        } else { // 查找长块情况的区域边界
 
             buf = si.ch[ch].gr[gr].region0Count + 1;
             buf1 = buf + si.ch[ch].gr[gr].region1Count + 1;
@@ -736,7 +736,7 @@ final class LayerIIIDecoder implements FrameDecoder {
         }
 
         index = 0;
-        // Read big values area
+        // 读取BIG VALUES区域
         for (int i = 0; i < (si.ch[ch].gr[gr].bigValues << 1); i += 2) {
             if (i < region1Start) h = HuffCodeTab.ht[si.ch[ch].gr[gr].tableSelect[0]];
             else if (i < region2Start) h = HuffCodeTab.ht[si.ch[ch].gr[gr].tableSelect[1]];
@@ -750,7 +750,7 @@ final class LayerIIIDecoder implements FrameDecoder {
             checkSumHuff = checkSumHuff + x[0] + y[0];
         }
 
-        // Read count1 area
+        // 读取count1区域
         h = HuffCodeTab.ht[si.ch[ch].gr[gr].count1TableSelect + 32];
         num_bits = br.hsstell();
 
@@ -773,17 +773,17 @@ final class LayerIIIDecoder implements FrameDecoder {
 
         num_bits = br.hsstell();
 
-        // Dismiss stuffing bits
+        // 关闭填充位
         if (num_bits < part2_3_end)
             br.hgetbits(part2_3_end - num_bits);
 
-        // Zero out rest
+        // 将其余部分清零
 
         nonzero[ch] = Math.min(index, 576);
 
         if (index < 0) index = 0;
 
-        // may not be necessary
+        // 可能没必要
         for (; index < 576; index++)
             is1d[index] = 0;
     }
@@ -816,20 +816,20 @@ final class LayerIIIDecoder implements FrameDecoder {
         int index = 0, t_index, j;
         float g_gain;
 
-        // choose correct scalefactor band per block type, initalize boundary
+        // 按块类型选择正确的 scalefactor 频段，初始化边界
 
         if ((gr_info.windowSwitchingFlag != 0) && (gr_info.blockType == 2)) {
             if (gr_info.mixedBlockFlag != 0)
-                next_cb_boundary = sfBandIndex[sfreq].l[1]; // LONG blocks: 0,1,3
+                next_cb_boundary = sfBandIndex[sfreq].l[1]; // 长块： 0,1,3
             else {
                 cb_width = sfBandIndex[sfreq].s[1];
                 next_cb_boundary = (cb_width << 2) - cb_width;
             }
         } else {
-            next_cb_boundary = sfBandIndex[sfreq].l[1]; // LONG blocks: 0,1,3
+            next_cb_boundary = sfBandIndex[sfreq].l[1]; // 长块： 0,1,3
         }
 
-        // Compute overall (global) scaling.
+        // 计算整体（全局）扩展。
 
         g_gain = (float) Math.pow(2.0, (0.25 * (gr_info.globalGain - 210.0)));
 
@@ -840,7 +840,7 @@ final class LayerIIIDecoder implements FrameDecoder {
             if (is1d[j] == 0) xr[quotien][reste] = 0.0f;
             else {
                 int abv = is1d[j];
-                // Pow Array fix (11/17/04)
+                // Pow 数组修复 (11/17/04)
                 if (abv < t_43.length) {
                     if (is1d[j] > 0) xr[quotien][reste] = g_gain * t_43[abv];
                     else {
@@ -854,13 +854,13 @@ final class LayerIIIDecoder implements FrameDecoder {
             }
         }
 
-        // apply formula per block type
+        // 按块类型应用公式
         for (j = 0; j < nonzero[ch]; j++) {
             // Modif E.B 02/22/99
             int reste = j % SSLIMIT;
             int quotien = (j - reste) / SSLIMIT;
 
-            if (index == next_cb_boundary) { /* Adjust critical band boundary */
+            if (index == next_cb_boundary) { /* 调整临界带边界*/
                 if ((gr_info.windowSwitchingFlag != 0) && (gr_info.blockType == 2)) {
                     if (gr_info.mixedBlockFlag != 0) {
 
@@ -903,13 +903,13 @@ final class LayerIIIDecoder implements FrameDecoder {
                         cb_begin = (cb_begin << 2) - cb_begin;
                     }
 
-                } else { // long blocks
+                } else { // 长块
 
                     next_cb_boundary = sfBandIndex[sfreq].l[(++cb) + 1];
                 }
             }
 
-            // Do long/short dependent scaling operations
+            // 执行长/短相关缩放操作
 
             if (gr_info.windowSwitchingFlag != 0 && (gr_info.blockType == 2 && gr_info.mixedBlockFlag == 0 || gr_info.blockType == 2 && j >= 36)) {
 
@@ -920,7 +920,7 @@ final class LayerIIIDecoder implements FrameDecoder {
 
                 xr[quotien][reste] *= two_to_negative_half_pow[idx];
 
-            } else {   // LONG block types 0,1,3 & 1st 2 subbands of switched blocks
+            } else {   // 长块类型0、1、3和切换块的前2个子带
                 int idx = scalefac[ch].l[cb];
 
                 if (gr_info.preflag != 0)
@@ -958,7 +958,7 @@ final class LayerIIIDecoder implements FrameDecoder {
                 out1d[index] = 0.0f;
 
             if (gr_info.mixedBlockFlag != 0) {
-                // NO REORDER FOR LOW 2 SUBBANDS
+                // 低2子带无重新排序
                 for (index = 0; index < 36; index++) {
                     // Modif E.B 02/22/99
                     int reste = index % SSLIMIT;
@@ -998,7 +998,7 @@ final class LayerIIIDecoder implements FrameDecoder {
                     }
                 }
 
-            } else { // pure short
+            } else { // 纯短款
                 for (index = 0; index < 576; index++) {
                     int j = reorderTable[sfreq][index];
                     int reste = j % SSLIMIT;
@@ -1006,7 +1006,7 @@ final class LayerIIIDecoder implements FrameDecoder {
                     out1d[index] = xr[quotien][reste];
                 }
             }
-        } else { // long blocks
+        } else { // 长块
             for (index = 0; index < 576; index++) {
                 // Modif E.B 02/22/99
                 int reste = index % SSLIMIT;
@@ -1025,7 +1025,7 @@ final class LayerIIIDecoder implements FrameDecoder {
     private void stereo(int gr) {
         int sb, ss;
 
-        if (channels == 1) { // mono , bypass xr[0][][] to lr[0][][]
+        if (channels == 1) { // 单声道，绕过xr [0] [] []到lr [0] [] []
 
             for (sb = 0; sb < SBLIMIT; sb++)
                 for (ss = 0; ss < SSLIMIT; ss += 3) {
@@ -1048,7 +1048,7 @@ final class LayerIIIDecoder implements FrameDecoder {
 
             int io_type = (gr_info.scalefacCompress & 1);
 
-            // initialization
+            // 初始化
 
             for (i = 0; i < 576; i++) {
                 is_pos[i] = 7;
@@ -1072,8 +1072,8 @@ final class LayerIIIDecoder implements FrameDecoder {
 
                                 while (lines > 0) {
                                     if (ro[1][i / 18][i % 18] != 0.0f) {
-                                        // MDM: in java, array access is very slow.
-                                        // Is quicker to compute div and mod values.
+                                        // MDM：在 java 中，数组访问非常慢。
+                                        // 计算div和mod值更快。
                                         //if (ro[1][ss_div[i]][ss_mod[i]] != 0.0f) {
                                         sfbcnt = sfb;
                                         sfb = -10;
@@ -1172,8 +1172,8 @@ final class LayerIIIDecoder implements FrameDecoder {
 
                                 while (lines > 0) {
                                     if (ro[1][i / 18][i % 18] != 0.0f) {
-                                        // MDM: in java, array access is very slow.
-                                        // Is quicker to compute div and mod values.
+                                        // MDM：在 java 中，数组访问非常慢。
+                                        // 计算div和mod值更快。
                                         sfbcnt = sfb;
                                         sfb = -10;
                                         lines = -10;
@@ -1220,7 +1220,7 @@ final class LayerIIIDecoder implements FrameDecoder {
                             } // for (; sb>0 ...
                         } // for (sfb=12
                     } // for (j=0 ...
-                } else { // if (gr_info.windowSwitchingFlag ...
+                } else { // 如果（ gr_info.windowSwitchingFlag...
                     i = 31;
                     ss = 17;
                     sb = 0;
@@ -1256,7 +1256,7 @@ final class LayerIIIDecoder implements FrameDecoder {
                     }
                     sfb = sfBandIndex[sfreq].l[20];
                     for (sb = 576 - sfBandIndex[sfreq].l[21]; (sb > 0) && (i < 576); sb--) {
-                        is_pos[i] = is_pos[sfb]; // error here : i >=576
+                        is_pos[i] = is_pos[sfb]; // 此处有错误： i > = 576
 
                         if (lsf) {
                             k[0][i] = k[0][sfb];
@@ -1266,8 +1266,8 @@ final class LayerIIIDecoder implements FrameDecoder {
                         }
                         i++;
                     } // if (gr_info.mixedBlockFlag)
-                } // if (gr_info.windowSwitchingFlag ...
-            } // if (i_stereo)
+                } // 如果（ gr_info.windowSwitchingFlag...
+            } // 如果（ gr_info.windowSwitchingFlag...
 
             i = 0;
             for (sb = 0; sb < SBLIMIT; sb++)
@@ -1301,8 +1301,8 @@ final class LayerIIIDecoder implements FrameDecoder {
     private void antialias(int ch, int gr) {
         int sb18, ss, sb18lim;
         GrInfoS gr_info = (si.ch[ch].gr[gr]);
-        // 31 alias-reduction operations between each pair of sub-bands
-        // with 8 butterflies between each pair
+        // 每对子带之间的31个别名缩减操作
+        // 每对之间有 8 个蝶形运算
 
         if ((gr_info.windowSwitchingFlag != 0) && (gr_info.blockType == 2) &&
                 gr_info.mixedBlockFlag == 0)
@@ -1327,8 +1327,8 @@ final class LayerIIIDecoder implements FrameDecoder {
         }
     }
 
-    // MDM: tsOutCopy and rawout do not need initializing, so the arrays
-    // can be reused.
+    // MDM：tsOutCopy 和 rawout 无需初始化，因此这些数组
+    // 可被复用。
     float[] tsOutCopy = new float[18];
     float[] rawout = new float[36];
 
@@ -1357,7 +1357,7 @@ final class LayerIIIDecoder implements FrameDecoder {
             System.arraycopy(tsOutCopy, 0, tsOut, 0 + sb18, 18);
             // Fin Modif
 
-            // overlap addition
+            // 重叠加法
             prvblk = prevBlock;
 
             tsOut[0 + sb18] = rawout[0] + prvblk[ch][sb18 + 0];
@@ -1467,20 +1467,20 @@ final class LayerIIIDecoder implements FrameDecoder {
             int six_i = 0;
 
             for (i = 0; i < 3; i++) {
-                // 12 point IMDCT
-                // Begin 12 point IDCT
-                // Input aliasing for 12 pt IDCT
+                // 12点IMDCT
+                // 开始12点IDCT
+                // 12 点 IDCT 的输入混叠
                 in[15 + i] += in[12 + i];
                 in[12 + i] += in[9 + i];
                 in[9 + i] += in[6 + i];
                 in[6 + i] += in[3 + i];
                 in[3 + i] += in[0 + i];
 
-                // Input aliasing on odd indices (for 6 point IDCT)
+                // 奇数索引上的输入混叠（用于 6 点 IDCT）
                 in[15 + i] += in[9 + i];
                 in[9 + i] += in[3 + i];
 
-                // 3 point IDCT on even indices
+                // 偶数索引上的 3 点 IDCT
                 float pp1, pp2, sum;
                 pp2 = in[12 + i] * 0.500000000f;
                 pp1 = in[6 + i] * 0.866025403f;
@@ -1489,22 +1489,22 @@ final class LayerIIIDecoder implements FrameDecoder {
                 tmpf_0 = sum + pp1;
                 tmpf_2 = sum - pp1;
 
-                // End 3 point IDCT on even indices
-                // 3 point IDCT on odd indices (for 6 point IDCT)
+                // 在偶数指数上结束3点IDCT
+                // 奇数索引上的 3 点 IDCT（用于 6 点 IDCT）
                 pp2 = in[15 + i] * 0.500000000f;
                 pp1 = in[9 + i] * 0.866025403f;
                 sum = in[3 + i] + pp2;
                 tmpf_4 = in[3 + i] - in[15 + i];
                 tmpf_5 = sum + pp1;
                 tmpf_3 = sum - pp1;
-                // End 3 point IDCT on odd indices
-                // Twiddle factors on odd indices (for 6 point IDCT)
+                // 在奇数指数上结束3点IDCT
+                // 奇数指数上的Twiddle因子（对于6点IDCT ）
 
                 tmpf_3 *= 1.931851653f;
                 tmpf_4 *= 0.707106781f;
                 tmpf_5 *= 0.517638090f;
 
-                // Output butterflies on 2 3 point IDCT's (for 6 point IDCT)
+                // 在2 3点IDCT上输出蝴蝶（用于6点IDCT ）
                 float save = tmpf_0;
                 tmpf_0 += tmpf_5;
                 tmpf_5 = save - tmpf_5;
@@ -1515,8 +1515,8 @@ final class LayerIIIDecoder implements FrameDecoder {
                 tmpf_2 += tmpf_3;
                 tmpf_3 = save - tmpf_3;
 
-                // End 6 point IDCT
-                // Twiddle factors on indices (for 12 point IDCT)
+                // 6 点 IDCT 结束
+                // 指数上的Twiddle因子（针对12点IDCT ）
 
                 tmpf_0 *= 0.504314480f;
                 tmpf_1 *= 0.541196100f;
@@ -1525,9 +1525,9 @@ final class LayerIIIDecoder implements FrameDecoder {
                 tmpf_4 *= 1.306562965f;
                 tmpf_5 *= 3.830648788f;
 
-                // End 12 point IDCT
+                // 12 点 IDCT 结束
 
-                // Shift to 12 point modified IDCT, multiply by window type 2
+                // 移至12点修改的IDCT ，乘以窗口类型2
                 tmpf_8 = -tmpf_0 * 0.793353340f;
                 tmpf_9 = -tmpf_0 * 0.608761429f;
                 tmpf_7 = -tmpf_1 * 0.923879532f;
@@ -1561,8 +1561,8 @@ final class LayerIIIDecoder implements FrameDecoder {
                 six_i += 6;
             }
         } else {
-            // 36 point IDCT
-            // input aliasing for 36 point IDCT
+            // 36点IDCT
+            // 36点IDCT的输入别名
             in[17] += in[16];
             in[16] += in[15];
             in[15] += in[14];
@@ -1581,8 +1581,8 @@ final class LayerIIIDecoder implements FrameDecoder {
             in[2] += in[1];
             in[1] += in[0];
 
-            // 18 point IDCT for odd indices
-            // input aliasing for 18 point IDCT
+            // 奇数索引的 18 点 IDCT
+            // 18 点 IDCT 的输入混叠
             in[17] += in[15];
             in[15] += in[13];
             in[13] += in[11];
@@ -1595,20 +1595,20 @@ final class LayerIIIDecoder implements FrameDecoder {
             float tmp0, tmp1, tmp2, tmp3, tmp4, tmp0_, tmp1_, tmp2_, tmp3_;
             float tmp0o, tmp1o, tmp2o, tmp3o, tmp4o, tmp0_o, tmp1_o, tmp2_o, tmp3_o;
 
-            // Fast 9 Point Inverse Discrete Cosine Transform
+            // 快速9点逆离散余弦变换
             //
-            // By  Francois-Raymond Boyer
+            // 作者： Francois-Raymond Boyer
             //         mailto:boyerf@iro.umontreal.ca
             //         http://www.iro.umontreal.ca/~boyerf
             //
-            // The code has been optimized for Intel processors
-            //  (takes a lot of time to convert float to and from iternal FPU representation)
+            // 代码已针对 Intel 处理器优化
+            //  （float 与内部 FPU 表示之间的转换很耗时）
             //
-            // It is a simple "factorization" of the IDCT matrix.
+            // 它是IDCT矩阵的简单“分解”。
 
-            // 9 point IDCT on even indices
+            // 偶数指数的9点IDCT
 
-            // 5 points on odd indices (not realy an IDCT)
+            // 奇数指数上的5分（不是真正的IDCT ）
             float i00 = in[0] + in[0];
             float iip12 = i00 + in[12];
 
@@ -1618,7 +1618,7 @@ final class LayerIIIDecoder implements FrameDecoder {
             tmp3 = iip12 - in[4] * 1.532088886238f + in[8] * 0.34729635533386f - in[16] * 1.8793852415718f;
             tmp4 = in[0] - in[4] + in[8] - in[12] + in[16];
 
-            // 4 points on even indices
+            // 偶数指数4点
             float i66_ = in[6] * 1.732050808f; // Sqrt[3]
 
             tmp0_ = in[2] * 1.9696155060244f + i66_ + in[10] * 1.2855752193731f + in[14] * 0.68404028665134f;
@@ -1626,8 +1626,8 @@ final class LayerIIIDecoder implements FrameDecoder {
             tmp2_ = in[2] * 1.2855752193731f - i66_ - in[10] * 0.68404028665134f + in[14] * 1.9696155060244f;
             tmp3_ = in[2] * 0.68404028665134f - i66_ + in[10] * 1.9696155060244f - in[14] * 1.2855752193731f;
 
-            // 9 point IDCT on odd indices
-            // 5 points on odd indices (not realy an IDCT)
+            // 奇数指数上的9点IDCT
+            // 奇数指数上的5分（不是真正的IDCT ）
             float i0 = in[0 + 1] + in[0 + 1];
             float i0p12 = i0 + in[12 + 1];
 
@@ -1635,9 +1635,9 @@ final class LayerIIIDecoder implements FrameDecoder {
             tmp1o = i0 + in[4 + 1] - in[8 + 1] - in[12 + 1] - in[12 + 1] - in[16 + 1];
             tmp2o = i0p12 - in[4 + 1] * 0.34729635533386f - in[8 + 1] * 1.8793852415718f + in[16 + 1] * 1.532088886238f;
             tmp3o = i0p12 - in[4 + 1] * 1.532088886238f + in[8 + 1] * 0.34729635533386f - in[16 + 1] * 1.8793852415718f;
-            tmp4o = (in[0 + 1] - in[4 + 1] + in[8 + 1] - in[12 + 1] + in[16 + 1]) * 0.707106781f; // Twiddled
+            tmp4o = (in[0 + 1] - in[4 + 1] + in[8 + 1] - in[12 + 1] + in[16 + 1]) * 0.707106781f; // 旋转
 
-            // 4 points on even indices
+            // 偶数指数4点
             float i6_ = in[6 + 1] * 1.732050808f; // Sqrt[3]
 
             tmp0_o = in[2 + 1] * 1.9696155060244f + i6_ + in[10 + 1] * 1.2855752193731f + in[14 + 1] * 0.68404028665134f;
@@ -1645,11 +1645,11 @@ final class LayerIIIDecoder implements FrameDecoder {
             tmp2_o = in[2 + 1] * 1.2855752193731f - i6_ - in[10 + 1] * 0.68404028665134f + in[14 + 1] * 1.9696155060244f;
             tmp3_o = in[2 + 1] * 0.68404028665134f - i6_ + in[10 + 1] * 1.9696155060244f - in[14 + 1] * 1.2855752193731f;
 
-            // Twiddle factors on odd indices
-            // and
-            // Butterflies on 9 point IDCT's
-            // and
-            // twiddle factors for 36 point IDCT
+            // 奇数指数上的Twiddle因子
+            // 和
+            // 9 点 IDCT 的蝶形运算
+            // 和
+            // 36 点 IDCT 的旋转因子
 
             float e, o;
             e = tmp0 + tmp0_;
@@ -1687,8 +1687,8 @@ final class LayerIIIDecoder implements FrameDecoder {
             tmpf_8 = e + o;
             tmpf_9 = e - o;
 
-            // end 36 point IDCT */
-            // shift to modified IDCT
+            // 36 点 IDCT 结束 */
+            // 切换到改进 IDCT
             win_bt = win[block_type];
 
             out[0] = -tmpf_9 * win_bt[0];
@@ -1770,7 +1770,7 @@ final class LayerIIIDecoder implements FrameDecoder {
         public int count1TableSelect = 0;
 
         /**
-         * Dummy Constructor
+         * 哑构造函数
          */
         public GrInfoS() {
             tableSelect = new int[3];
@@ -1783,7 +1783,7 @@ final class LayerIIIDecoder implements FrameDecoder {
         public GrInfoS[] gr;
 
         /**
-         * Dummy Constructor
+         * 哑构造函数
          */
         public Temporaire() {
             scfsi = new int[4];
@@ -1800,7 +1800,7 @@ final class LayerIIIDecoder implements FrameDecoder {
         public Temporaire[] ch;
 
         /**
-         * Dummy Constructor
+         * 哑构造函数
          */
         public III_SideInfo() {
             ch = new Temporaire[2];
@@ -1816,7 +1816,7 @@ final class LayerIIIDecoder implements FrameDecoder {
         public int[][] s;
 
         /**
-         * Dummy Constructor
+         * 哑构造函数
          */
         public Temporaire2() {
             l = new int[23];
@@ -1833,7 +1833,7 @@ final class LayerIIIDecoder implements FrameDecoder {
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 3, 2, 0
     };
 
-    private SBI[] sfBandIndex; // Init in the constructor.
+    private SBI[] sfBandIndex; // 在构造函数中初始化。
 
     public static final float[] two_to_negative_half_pow = {
             1.0000000000E+00f, 7.0710678119E-01f, 5.0000000000E-01f, 3.5355339059E-01f,
@@ -1896,15 +1896,15 @@ final class LayerIIIDecoder implements FrameDecoder {
             0.0f, 0.26794919f, 0.57735027f, 1.0f
     };
 
-    // REVIEW: in java, the array lookup may well be slower than
-    // the actual calculation
+    // REVIEW：在 java 中，数组查找很可能比
+    // 实际计算更慢
     // 576 / 18
-    private static int[][] reorderTable; // SZD: will be generated on demand
+    private static int[][] reorderTable; // SZD ：将按需生成
 
     /**
-     * Loads the data for the reorder
+     * 加载用于重排的数据
      */
-    static int[] reorder(int[] scalefacBand) { // SZD: converted from LAME
+    static int[] reorder(int[] scalefacBand) { // SZD ：从LAME转换而来
         int j = 0;
         int[] ix = new int[576];
         for (int sfb = 0; sfb < 13; sfb++) {
@@ -1974,7 +1974,7 @@ final class LayerIIIDecoder implements FrameDecoder {
             }
     };
 
-    // END OF INV_MDCT
+    // INV_MDCT 结束
 
     static class SfTable {
         public int[] l;

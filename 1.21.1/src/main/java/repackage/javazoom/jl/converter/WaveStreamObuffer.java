@@ -1,25 +1,25 @@
 /*
- * 11/19/04  1.0 moved to LGPL.
+ * 2004年11月19日1.0移至LGPL。
  *
- * 12/12/99     0.0.7 Renamed class, additional constructor arguments
- *             and larger write buffers. mdm@techie.com.
+ * 1999年12月12日0.0.7重命名类，其他构造函数参数
+ *             以及更大的写缓冲区。mdm@techie.com。
  *
- * 15/02/99  Java Conversion by E.B ,javalayer@javazoom.net
+ * 1999年2月15日E.B.转换Java ， javalayer@javazoom.net
  *
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
@@ -30,8 +30,8 @@ import repackage.javazoom.jl.decoder.Obuffer;
 
 
 /**
- * Implements an {@link Obuffer} by writing the data to
- * a file in RIFF WAVE format.
+ * 通过将数据写入
+ * rIFF波格式的文件。
  *
  * @since 0.0
  */
@@ -44,12 +44,12 @@ public class WaveStreamObuffer extends Obuffer {
     private final WaveStream outWave;
 
     /**
-     * Creates a new WareFileObuffer instance.
+     * 创建新的WareFileObuffer实例。
      *
-     * @param number_of_channels The number of channels of audio data
-     *                           this buffer will receive.
-     * @param freq               The sample frequency of the samples in the buffer.
-     * @param fileName           The filename to write the data to.
+     * @param number_of_channels 音频数据的声道数
+     *                           此缓冲区将收到。
+     * @param freq 缓冲液中样品的采样频率。
+     * @param fileName           写入数据的文件名。
      */
     public WaveStreamObuffer(int number_of_channels, int freq) {
         buffer = new short[OBUFFERSIZE];
@@ -65,7 +65,7 @@ public class WaveStreamObuffer extends Obuffer {
     }
 
     /**
-     * Takes a 16 Bit PCM sample.
+     * 获取16位PCM样本。
      */
     @Override
     public void append(int channel, short value) {
@@ -74,7 +74,7 @@ public class WaveStreamObuffer extends Obuffer {
     }
 
     /**
-     * Write the samples to the file (Random Access).
+     * 将采样写入文件（随机访问）。
      */
     short[] myBuffer = new short[2];
 
@@ -82,7 +82,7 @@ public class WaveStreamObuffer extends Obuffer {
     public void writeBuffer(int val) {
 
         int rc = outWave.writeData(buffer, bufferP[0]);
-        // REVIEW: handle RiffFile errors.
+        // 审阅：处理RiffFile错误。
         for (int i = 0; i < channels; ++i) bufferP[i] = (short) i;
     }
 
@@ -106,7 +106,7 @@ public class WaveStreamObuffer extends Obuffer {
     }
 
 //    /**
-//     * Create STDOUT buffer
+//     *创建标准输出缓冲区
 //     */
 //    public static Obuffer create_stdout_obuffer(MPEG_Args maplay_args) {
 //        Obuffer thebuffer = null;

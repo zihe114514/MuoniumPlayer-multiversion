@@ -1,5 +1,5 @@
 package repackage.net.sourceforge.jaad.mp4.boxes.impl.fd;
 
 /**
-* Package for file delivery format support boxes (see ISO 14496-12: 8.13).
-*/
+ * 文件交付格式支持 box 的包（见 ISO 14496-12: 8.13）。
+ */

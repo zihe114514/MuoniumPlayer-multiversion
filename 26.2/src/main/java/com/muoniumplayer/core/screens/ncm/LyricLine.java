@@ -93,7 +93,7 @@ public class LyricLine {
 
     public final SpringAnimation spring = new SpringAnimation(new SpringParams(.9, 15, 90, false));
 
-    // MusicLyricsWidgets fields
+    // MusicLyricsWidgets 字段
     public double scrollWidth = 0;
     public double offsetX = 0;
     public double targetOffsetX = 0;
@@ -115,7 +115,7 @@ public class LyricLine {
         public final long timestamp, duration;
         public final double[] emphasizes;
 
-        // fields for MusicLyricsWidget
+        // MusicLyricsWidget 用的字段
         public float alpha = 0.0f;
         public double progress = 0.0;
 

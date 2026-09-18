@@ -9,7 +9,7 @@ import repackage.com.jsyn.unitgen.UnitFilter;
  * 噪音、音频样本甚至音频输入）。
  * @webBrief 设置声音文件的播放速率。
  */
-// Subclasses need to assign the 'amplitude' port, and also initiate a
+// 子类需要为 'amplitude' 端口赋值，并且还要发起一个
 // 子类需分配 'amplitude' 端口，并初始化一个
 // JSynProcessor ，如果他们想要支持PAN/ADD。
 public abstract class SoundObject {

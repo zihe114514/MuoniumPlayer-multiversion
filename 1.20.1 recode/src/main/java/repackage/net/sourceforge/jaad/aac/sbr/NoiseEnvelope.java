@@ -13,7 +13,7 @@ class NoiseEnvelope implements Constants {
 		4.61169E+018f, 9.22337E+018f, 1.84467E+019f, 3.68935E+019f, 7.3787E+019f, 1.47574E+020f, 2.95148E+020f, 5.90296E+020f
 	};
 
-	/* table for Q_div2 values when no coupling */
+	/* 无耦合时 Q_div2 值的表 */
 	private static final float[] Q_div2_tab = {
 		0.984615f, 0.969697f,
 		0.941176f, 0.888889f,
@@ -99,7 +99,7 @@ class NoiseEnvelope implements Constants {
 		{2.3836E-007f, 2.38186E-007f, 2.37491E-007f, 2.34751E-007f, 2.24394E-007f, 1.90735E-007f, 1.19209E-007f, 4.76837E-008f, 1.40246E-008f, 3.66798E-009f, 9.27699E-010f, 2.32603E-010f, 5.81935E-011f},
 		{1.1918E-007f, 1.19093E-007f, 1.18745E-007f, 1.17375E-007f, 1.12197E-007f, 9.53674E-008f, 5.96046E-008f, 2.38419E-008f, 7.01231E-009f, 1.83399E-009f, 4.63849E-010f, 1.16302E-010f, 2.90967E-011f}
 	};
-	/* table for Q_div values when no coupling */
+	/* 无耦合时 Q_div 值的表 */
 	private static final float[] Q_div_tab = {
 		0.0153846f, 0.030303f,
 		0.0588235f, 0.111111f,
@@ -277,17 +277,17 @@ class NoiseEnvelope implements Constants {
 		}
 	}
 
-	/* calculates 1/(1+Q) */
+	/* 计算 1/(1+Q) */
 	/* [0..1] */
 	public static float calc_Q_div(SBR sbr, int ch, int m, int l) {
 		if(sbr.bs_coupling) {
-			/* left channel */
+			/* 左声道 */
 			if((sbr.Q[0][m][l]<0||sbr.Q[0][m][l]>30)
 				||(sbr.Q[1][m][l]<0||sbr.Q[1][m][l]>24 /* 2*panOffset(1) */)) {
 				return 0;
 			}
 			else {
-				/* the pan parameter is always even */
+				/* pan 参数始终为偶数 */
 				if(ch==0) {
 					return Q_div_tab_left[sbr.Q[0][m][l]][sbr.Q[1][m][l]>>1];
 				}
@@ -297,7 +297,7 @@ class NoiseEnvelope implements Constants {
 			}
 		}
 		else {
-			/* no coupling */
+			/* 无耦合 */
 			if(sbr.Q[ch][m][l]<0||sbr.Q[ch][m][l]>30) {
 				return 0;
 			}
@@ -307,7 +307,7 @@ class NoiseEnvelope implements Constants {
 		}
 	}
 
-	/* calculates Q/(1+Q) */
+	/* 计算 Q/(1+Q) */
 	/* [0..1] */
 	public static float calc_Q_div2(SBR sbr, int ch, int m, int l) {
 		if(sbr.bs_coupling) {
@@ -316,7 +316,7 @@ class NoiseEnvelope implements Constants {
 				return 0;
 			}
 			else {
-				/* the pan parameter is always even */
+				/* pan 参数始终为偶数 */
 				if(ch==0) {
 					return Q_div2_tab_left[sbr.Q[0][m][l]][sbr.Q[1][m][l]>>1];
 				}
@@ -326,7 +326,7 @@ class NoiseEnvelope implements Constants {
 			}
 		}
 		else {
-			/* no coupling */
+			/* 无耦合 */
 			if(sbr.Q[ch][m][l]<0||sbr.Q[ch][m][l]>30) {
 				return 0;
 			}
@@ -344,8 +344,8 @@ class NoiseEnvelope implements Constants {
 
 			for(l = 0; l<sbr.L_E[ch]; l++) {
 				for(k = 0; k<sbr.n[sbr.f[ch][l]]; k++) {
-					/* +6 for the *64 and -10 for the /32 in the synthesis QMF (fixed)
-					 * since this is a energy value: (x/32)^2 = (x^2)/1024
+					/* 综合 QMF 中 +6 对应 *64，-10 对应 /32（固定）
+					 * 因为这是一个能量值：(x/32)^2 = (x^2)/1024
 					 */
 					/* exp = (sbr.E[ch][k][l] >> amp) + 6; */
 					exp = (sbr.E[ch][k][l]>>amp);
@@ -356,7 +356,7 @@ class NoiseEnvelope implements Constants {
 					else {
 						sbr.E_orig[ch][k][l] = E_deq_tab[exp];
 
-						/* save half the table size at the cost of 1 multiply */
+						/* 以一次乘法为代价节省一半表空间 */
 						if(amp!=0&&(sbr.E[ch][k][l]&1)!=0) {
 							sbr.E_orig[ch][k][l] = (sbr.E_orig[ch][k][l]*1.414213562f);
 						}
@@ -401,11 +401,13 @@ class NoiseEnvelope implements Constants {
 				/* +6: * 64 ; +1: * 2 ; */
 				exp0 = (sbr.E[0][k][l]>>amp0)+1;
 
-				/* UN_MAP removed: (x / 4096) same as (x >> 12) */
-				/* E[1] is always even so no need for compensating the divide by 2 with
-				 * an extra multiplication
+				/* 已移除 UN_MAP：(x / 4096) 等同于 (x >> 12) */
+				/* E[1] 始终为偶数，因此无需用额外的乘法来补偿除以 2
+				 * 
 				 */
-				/* exp1 = (sbr.E[1][k][l] >> amp1) - 12; */
+				/* E[1] 始终为偶数，因此无需用额外的乘法来补偿除以 2
+				 * 
+				 */
 				exp1 = (sbr.E[1][k][l]>>amp1);
 
 				if((exp0<0)||(exp0>=64)
@@ -419,7 +421,7 @@ class NoiseEnvelope implements Constants {
 						tmp *= 1.414213562;
 					}
 
-					/* panning */
+					/* 声像（panning） */
 					sbr.E_orig[0][k][l] = (tmp*E_pan_tab[exp1]);
 					sbr.E_orig[1][k][l] = (tmp*E_pan_tab[24-exp1]);
 				}

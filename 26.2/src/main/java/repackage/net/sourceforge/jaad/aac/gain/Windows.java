@@ -1,6 +1,6 @@
 package repackage.net.sourceforge.jaad.aac.gain;
 
-//sine and kbd windows
+//正弦窗与 kbd 窗
 interface Windows {
 
 	float[] SINE_256 = {

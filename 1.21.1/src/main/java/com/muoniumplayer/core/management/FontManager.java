@@ -37,11 +37,11 @@ public class FontManager extends AbstractManager {
     public static CFontRenderer pf12, pf14, pf18, pf20, pf25, pf32;
     public static CFontRenderer icon30;
     public static CFontRenderer music14, music18, music40;
-    /** Fontello icon font bundled with the player UI. */
+    /** 各音源品牌的 Fontello 字形使用独立字体，以避免私用区码位冲突。 */
     public static CFontRenderer fontello14, fontello16, fontello18, fontello22;
     /** 与 {@link #musicBrand52} 同一档视觉尺寸的 fontello 图标（在线聚合源卡片上的链条）。 */
     public static CFontRenderer fontello40;
-    /** Provider-brand Fontello glyphs use a separate font to avoid private-use code collisions. */
+    /** QQ 音乐品牌图标字体；有意与 Fontello 登录字形分开。 */
     public static CFontRenderer musicBrand16, musicBrand18;
     /**
      * 音乐来源二级菜单卡片上的品牌标记。
@@ -72,9 +72,9 @@ public class FontManager extends AbstractManager {
      * 才不会在私有区码位上互相覆盖。</p>
      */
     public static CFontRenderer actionIcon34, actionIcon38;
-    /** YouTube play-button brand mark; generated separately to avoid private-use code collisions. */
+    // Java 8u51 是受影响的目标环境。让更新的 Java 8
     public static CFontRenderer youtubeIcon24, youtubeIcon34;
-    /** QQ Music brand icon font; deliberately separate from Fontello login glyphs. */
+    // 运行时仍使用原本的 SF Pro 外观。
     public static CFontRenderer qqMusicIcon16, qqMusicIcon20;
     /** 与 {@link #musicBrand52} 配套：QQ 音乐的品牌字形在另一份字体里（music-brand-icons 没有 U+E888）。 */
     public static CFontRenderer qqMusicIcon68;
@@ -280,8 +280,8 @@ public class FontManager extends AbstractManager {
         youtubeIcon24 = create(24, "youtube-icons");
         youtubeIcon34 = create(34, "youtube-icons");
         qqMusicIcon16 = create(16, "qq-music-icons");
-        // The QQ Music brand glyph has more internal whitespace than the NetEase glyph.
-        // Use a dedicated larger renderer in the source switcher so both providers read at the same visual size.
+        // QQ 音乐品牌字形比网易云音乐字形有更多内部空白。
+        // 在源切换器中使用专门的更大渲染器，使两个提供方在相同视觉大小下显示。
         qqMusicIcon20 = create(20, "qq-music-icons");
         qqMusicIcon68 = create(68, "qq-music-icons");
         queueIcon34 = create(34, "player-queue-icons");
@@ -304,10 +304,10 @@ public class FontManager extends AbstractManager {
     }
 
     /**
-     * Font renderers are constructed synchronously in {@link #loadFonts()}; none
-     * are initialized by a later worker. The former endless polling loop therefore
-     * could never repair a missing assignment/resource and froze Forge's loading
-     * screen while spamming the log. Validate once and continue startup instead.
+     * 字体渲染器在 {@link #loadFonts()} 中同步构造；没有任何一个
+     * 由后续 worker 初始化。因此之前的无限轮询循环永远无法
+     * 修复缺失的赋值/资源，只会冻结 Forge 的加载界面
+     * 同时刷屏日志。改为一次性验证后继续启动。
      */
     public static void waitUntilAllLoaded() {
         List<String> missing = Arrays.stream(FontManager.class.getDeclaredFields())
@@ -480,8 +480,8 @@ public class FontManager extends AbstractManager {
             update = parseJava8Update(System.getProperty("java.runtime.version", ""));
         }
 
-        // Java 8u51 is the affected target environment.  Keep newer Java 8
-        // runtimes on the original SF Pro appearance.
+        // Java 8u51 是受影响的目标环境。让更新的 Java 8
+        // 运行时保持原始的 SF Pro 外观。
         return update >= 0 && update <= 60;
     }
 

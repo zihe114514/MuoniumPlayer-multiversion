@@ -56,7 +56,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "1.4.11";
+    public static final String MOD_VERSION = "1.4.12";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -124,8 +124,8 @@ public final class MuoniumPlayerClient {
     public static List<KeyMapping> createKeyMappings() {
         keyOpenMusic = key("key.muonium.open_music", Keyboard.KEY_RSHIFT);
         keyEditHud = key("key.muonium.edit_hud", Keyboard.KEY_H);
-        // Page Up / Page Down avoid collisions with the vanilla movement and inventory keys,
-        // while remaining fully rebindable through Options -> Controls.
+        // Page Up / Page Down 避开原版移动与物品栏按键，
+        // 同时仍可在「选项 → 控制」中完全重绑定。
         keyPreviousTrack = key("key.muonium.previous_track", Keyboard.KEY_PRIOR);
         keyNextTrack = key("key.muonium.next_track", Keyboard.KEY_NEXT);
         keyVolumeUp = key("key.muonium.volume_up", Keyboard.KEY_ADD);
@@ -225,8 +225,8 @@ public final class MuoniumPlayerClient {
                 openHudEditor(mc);
             }
 
-            // Reuse the exact player-control path used by the previous/next buttons.
-            // wasPressed() is edge-triggered, so holding a key never queues repeated track changes.
+            // 复用与上一曲/下一曲按钮完全相同的播放器控制路径。
+            // consumeClick() 是边沿触发，因此长按某个键绝不会排队重复切歌。
             if (keyPreviousTrack.consumeClick()
                     && CloudMusic.player != null
                     && CloudMusic.currentlyPlaying != null) {
@@ -238,8 +238,8 @@ public final class MuoniumPlayerClient {
                 CloudMusic.next();
             }
 
-            // The same persisted audio path is used by both player sliders, so a
-            // hotkey change survives track switches and reports its exact percentage.
+            // 两个播放器滑块共用同一条持久化音频路径，因此
+            // 快捷键的改动能跨曲目保留，并报出准确的百分比。
             if (keyVolumeUp.consumeClick()) {
                 CloudMusic.adjustVolume(.05f);
             }

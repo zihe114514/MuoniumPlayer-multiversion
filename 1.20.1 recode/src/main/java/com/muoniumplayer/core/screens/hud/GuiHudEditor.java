@@ -35,7 +35,7 @@ import com.muoniumplayer.render.skija.SkijaGfx;
 import com.muoniumplayer.render.skija.SkijaShapes;
 
 /**
- * Position and scale editor for the music HUDs, including live desktop-lyric effects.
+ * 音乐 HUD 的位置与缩放编辑器，包括实时桌面歌词特效。
  */
 public class GuiHudEditor extends GuiScreen {
 
@@ -166,11 +166,11 @@ public class GuiHudEditor extends GuiScreen {
 
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
-        // The rounded-rectangle shader intentionally disables alpha testing.
-        // This editor is rendered while the world remains visible, so any leaked GL
-        // state would carry into Forge overlays and the next world frame (transparent
-        // leaves, glass, scoreboards and third-party HUDs). Keep the complete editor,
-        // including live previews, inside one state boundary.
+        // 圆角矩形着色器刻意禁用 alpha 测试。
+        // 本编辑器在世界仍可见时渲染，因此任何泄漏的 GL
+        //状态都会带入 Forge 覆盖层和下一帧世界画面（透明
+        //树叶、玻璃、记分板和第三方 HUD）。把完整编辑器，
+        //包括实时预览，保持在一个状态边界内。
         SkijaGfx.pushAttrib();
         SkijaGfx.pushMatrix();
         boolean adaptive = false;
@@ -184,9 +184,9 @@ public class GuiHudEditor extends GuiScreen {
                 SharedConstants.api.getGLStateManager().scale(
                         WindowAdaptiveScale.correctionX(), WindowAdaptiveScale.correctionY(), 1);
             }
-            // Keep the current Minecraft frame visible behind the editor. GuiScreen already
-            // renders on top of the game because doesGuiPauseGame() is false; drawing the
-            // vanilla background here would replace that frame with an opaque gradient.
+            // 让当前 Minecraft 画面在编辑器后方保持可见。GuiScreen 已经
+            //在游戏之上渲染，因为 doesGuiPauseGame() 为 false；在此绘制
+            //原版背景会用不透明渐变替换那一帧。
 
             MusicInfoWidget info = MuoniumPlayerExtension.getInstance().musicInfo;
             MusicLyricsWidget lyrics = MuoniumPlayerExtension.getInstance().musicLyrics;
@@ -220,7 +220,7 @@ public class GuiHudEditor extends GuiScreen {
             boolean lmb = !resetConfirmationVisible && Mouse.isButtonDown(0);
             boolean mouseOverSettings = resetConfirmationVisible || overPanel || overPicker;
 
-            // ==== Song information HUD: draw the real card whenever a song is active. ====
+            // ==== 歌曲信息 HUD：有歌曲在播放时绘制真实卡片。 ====
             int infoW = (int) (INFO_BASE_W * HudConfig.infoScale);
             int infoH = (int) (INFO_BASE_H * HudConfig.infoScale);
             int infoX = (int) (HudConfig.infoX * (sw - infoW));
@@ -235,7 +235,7 @@ public class GuiHudEditor extends GuiScreen {
             }
             drawHudSelection(fr, "歌曲信息", infoX, infoY, infoW, infoH, 0xFF7DD3FC);
 
-            // ==== Lyrics HUD ====
+            // ==== 歌词 HUD ====
             int lrW = (int) (HudConfig.lyricWidth * HudConfig.lyricScale);
             int lrH = (int) (HudConfig.lyricHeight * HudConfig.lyricScale);
             int lrX = (int) (HudConfig.lyricX * (sw - lrW));
@@ -268,8 +268,8 @@ public class GuiHudEditor extends GuiScreen {
                 drawResetConfirmation(fr, mouseX, mouseY);
             }
         } finally {
-            // Scissor is normally closed by drawLyricsSettings, but explicitly closing it
-            // before restoring attributes also covers an interrupted drawing path.
+            // scissor 通常由 drawLyricsSettings 关闭，但在恢复属性之前显式关闭它
+            //也覆盖了被中断的绘制路径。
             endScissor();
             if (adaptive) {
                 SharedConstants.api.getGLStateManager().popMatrix();
@@ -299,8 +299,8 @@ public class GuiHudEditor extends GuiScreen {
         WindowAdaptiveScale.end();
     }
     private void drawEditorBackdrop(int panelX, int panelY, int panelH) {
-        // The game world is the editor canvas. Keep the shadow local, circular and on
-        // the lower-right only; the old left-shifted black duplicate looked like a canvas.
+        // 游戏世界是编辑器画布。让阴影保持局部、圆形，且
+        //仅在右下角；旧的左移黑色副本看起来像一块画布。
         drawSoftCardShadow(panelX, panelY, SETTINGS_W, panelH, 13);
     }
 
@@ -375,9 +375,9 @@ public class GuiHudEditor extends GuiScreen {
     private void drawHudSelection(CFontRenderer fr, String title, int x, int y, int w, int h,
                                   int accent) {
         drawDashedBorder(x, y, w, h, accent);
-        // Use a small marker and plain text instead of status/title pills. The actual
-        // HUD preview remains unchanged, while the editor no longer adds LIVE bubbles
-        // or other floating badges on top of the game view.
+        // 用小标记和纯文本，而非状态/标题胶囊。实际的
+        //HUD 预览保持不变，而编辑器不再在游戏视图之上添加 LIVE 气泡
+        //或其他浮动徽标。
         int labelY = Math.max(14, y - 5);
         drawRoundedRect(x + 10, labelY + 3, 5, 5, 2, accent);
         drawExternalText(fr, title, x + 21, labelY, 0xFFE8EDF6);
@@ -767,8 +767,8 @@ public class GuiHudEditor extends GuiScreen {
         Color preview = Color.getHSBColor(pickerHue, pickerSaturation, pickerBrightness);
         drawRoundedRect(x + 12, hueY + 23, 26, 18, 7, preview.getRGB() | 0xFF000000);
 
-        // Hex preview is also an editor: type #RRGGBB and apply the colour to the
-        // live lyric preview as soon as the six hexadecimal digits are valid.
+        // 十六进制预览也是编辑器：输入 #RRGGBB，并把颜色应用到
+        //六个十六进制数字一有效就应用到实时歌词预览。
         ensureHexColorInput();
         int inputX = x + 46;
         int inputY = hueY + 23;
@@ -795,8 +795,8 @@ public class GuiHudEditor extends GuiScreen {
         drawCenteredExternalText(fr, text, x + w / 2, y + 4, 0xFFF7F9FC);
     }
     /**
-     * The HUD editor intentionally uses the same external font pipeline as the player UI.
-     * GuiTextField is retained only for keyboard/cursor handling; its vanilla draw pass is bypassed.
+     * HUD 编辑器刻意使用与播放器 UI 相同的外部字体管线。
+     * GuiTextField 仅保留用于键盘/光标处理；其原版绘制过程被绕过。
      */
     private static void drawExternalText(CFontRenderer font, String text, double x, double y, int color) {
         if (font != null && text != null) {
@@ -987,7 +987,7 @@ public class GuiHudEditor extends GuiScreen {
         }
 
         if (isInside(mouseX, mouseY, panelX, panelY, SETTINGS_W, panelH)) {
-            // Header actions must be checked before the header itself consumes the click.
+            // 头部动作必须在头部自身消费点击之前检查。
             int toggleX = panelX + SETTINGS_W - SETTINGS_TOGGLE_W - 6;
             if (isInside(mouseX, mouseY, toggleX, panelY + 6, SETTINGS_TOGGLE_W, 17)) {
                 settingsCollapsed = !settingsCollapsed;
@@ -1444,7 +1444,7 @@ public class GuiHudEditor extends GuiScreen {
     }
 
     private void drawResetConfirmation(CFontRenderer fr, int mouseX, int mouseY) {
-        // A translucent dark mask preserves the live game preview without introducing the old white canvas.
+        // 一层半透明暗色遮罩保留实时游戏预览，而不引入旧的白色画布。
         Gui.drawRect(0, 0, width, height, 0x6D000000);
         int dialogW = Math.min(310, Math.max(238, width - 32));
         int dialogH = 126;
@@ -1484,7 +1484,7 @@ public class GuiHudEditor extends GuiScreen {
         if (isInside(mouseX, mouseY, confirmX, buttonY, confirmW, 23)) {
             applyAppearanceDefaults();
         }
-        // Cancel button and clicking outside the card both safely dismiss the confirmation.
+        // 取消按钮和点击卡片外部都能安全地关闭确认。
         resetConfirmationVisible = false;
     }
 

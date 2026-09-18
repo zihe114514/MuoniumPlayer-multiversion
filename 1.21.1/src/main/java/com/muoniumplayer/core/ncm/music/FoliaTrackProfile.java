@@ -2,7 +2,7 @@ package com.muoniumplayer.core.ncm.music;
 
 import java.util.Arrays;
 
-/** Cached musical evidence used by the Folia planner. */
+/** Folia 规划器使用的缓存音乐证据。 */
 final class FoliaTrackProfile {
     static final int VERSION = 4;
     int version = VERSION;

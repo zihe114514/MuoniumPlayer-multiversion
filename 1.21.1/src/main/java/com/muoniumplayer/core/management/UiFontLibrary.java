@@ -76,7 +76,7 @@ public final class UiFontLibrary {
 
     private static final Gson GSON = new Gson();
 
-    /** Preferred first-run system family; falls back to the bundled font when unavailable. */
+    /** 首选的首次运行系统字体；不可用时回退到内置字体。 */
     private static final String DEFAULT_FONT_ID = "system:思源黑体";
 
     private static volatile State state = State.IDLE;
@@ -154,8 +154,8 @@ public final class UiFontLibrary {
         } catch (Throwable failure) {
             return;
         }
-        // No persisted choice means first run: try the preferred system family, but never fail
-        // startup if this machine does not have it. An explicit built-in choice stays built-in.
+        // 没有持久化选择意味着首次运行：尝试首选系统字体，但如果本机没有该字体也绝不能
+        // 导致启动失败。显式选择的内置字体保持为内置字体。
         if (savedId == null || savedId.isEmpty()) {
             savedId = DEFAULT_FONT_ID;
         }

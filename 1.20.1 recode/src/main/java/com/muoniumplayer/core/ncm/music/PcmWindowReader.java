@@ -5,32 +5,32 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 
 /**
- * Reads mono analysis windows straight out of a decoded WAV cache file, with its own file handle.
+ * 用自己的文件句柄，直接从已解码的 WAV 缓存文件读取单声道分析窗口。
  *
- * <h3>Why this exists instead of reading the JSyn sample</h3>
- * <p>A {@code SoundFile} does <em>not</em> hold the decoded track in RAM: {@code SampleLoader
- * .loadStreamedFloatSample} builds a {@code BufferedFloatSample}, which streams from a shared
- * {@code RandomAccessFile} through one sliding window ({@code lastReadIndexOffset} plus a single
- * decode buffer). Reading an arbitrary position out of that sample <b>moves the window</b>. Doing that
- * to a deck that is currently playing repositions the buffer under the JSyn engine thread, which then
- * indexes the window with a stale offset and throws
- * {@code ArrayIndexOutOfBoundsException: -12666884} out of {@code SynthesisEngine.generateNextBuffer}
- * - audio stops being produced for as long as the analysis runs. That is exactly what automix analysis
- * used to do to the outgoing track.</p>
+ * <h3>为什么这样做，而不是读取 JSyn 采样</h3>
+ * <p>一个 {@code SoundFile} <em>不</em>把解码后的曲目保存在 RAM 中：{@code SampleLoader}
+ * .loadStreamedFloatSample} 构建一个 {@code BufferedFloatSample}，它从一个共享的
+ * {@code RandomAccessFile} 经由一个滑动窗口（{@code lastReadIndexOffset} 加单个
+ * 解码缓冲）。从该采样读取任意位置会<b>移动窗口</b>。对正在播放的 deck 这样做，
+ * 会在 JSyn 引擎线程下重定位缓冲，该线程随后
+ * 用陈旧偏移索引窗口并抛出
+ * {@code ArrayIndexOutOfBoundsException: -12666884}，来自 {@code SynthesisEngine.generateNextBuffer}
+ * ——只要分析在运行，音频就停止产出。这正是 automix 分析
+ * 过去对退出曲目所做的事。</p>
  *
- * <p>So analysis never touches a live sample. It opens the same cache file again, seeks, decodes and
- * closes, which is both race-free and much faster than a few hundred thousand single-value reads
- * through the streaming sample.</p>
+ * <p>因此分析绝不触碰实时采样。它重新打开同一缓存文件、seek、解码并
+ * 关闭，这既无竞争，又比经由流式采样读取几十万次单值
+ * 快得多。</p>
  *
- * <p>Every failure path returns {@code null} / an empty window: analysis is optional, and a file this
- * class cannot parse simply means the handover degrades to a plain equal-power crossfade.</p>
+ * <p>每条失败路径都返回 {@code null} / 空窗口：分析是可选的，本类无法解析的文件
+ * 只意味着交接退化为普通的等功率交叉淡化。</p>
  */
 final class PcmWindowReader implements AnalysisAudio {
 
     private static final int WAVE_FORMAT_PCM = 1;
     private static final int WAVE_FORMAT_IEEE_FLOAT = 3;
     private static final int WAVE_FORMAT_EXTENSIBLE = 0xFFFE;
-    /** Upper bound on one window, so a malformed request cannot allocate an arbitrary array. */
+    /** 一个窗口的上限，使畸形请求无法分配任意大小的数组。 */
     private static final long MAX_WINDOW_MILLIS = 60_000L;
     private static final int COPY_CHUNK_BYTES = 64 * 1024;
 
@@ -58,14 +58,14 @@ final class PcmWindowReader implements AnalysisAudio {
         this.frames = (int) Math.min(Integer.MAX_VALUE, Math.max(0L, frameCount));
     }
 
-    /** Opens the file for analysis, or returns {@code null} when it is not a WAV this can decode. */
+    /** 打开文件用于分析；若不是本类可解码的 WAV 则返回 {@code null}。 */
     static PcmWindowReader open(File source) {
         if (source == null || !source.isFile() || source.length() < 44L) return null;
         RandomAccessFile handle = null;
         try {
             handle = new RandomAccessFile(source, "r");
             if (readTag(handle) != 0x52494646) return null;          // "RIFF"
-            handle.readInt();                                         // riff size, unused
+            handle.readInt();                                         // riff 大小，未用
             if (readTag(handle) != 0x57415645) return null;          // "WAVE"
 
             int format = 0;
@@ -85,21 +85,21 @@ final class PcmWindowReader implements AnalysisAudio {
                     format = readShortLittle(handle);
                     channels = readShortLittle(handle);
                     sampleRate = readIntLittle(handle);
-                    readIntLittle(handle);                            // byte rate
+                    readIntLittle(handle);                            // 字节率
                     bytesPerFrame = readShortLittle(handle);
                     bitsPerSample = readShortLittle(handle);
                     if (format == WAVE_FORMAT_EXTENSIBLE && size >= 40L) {
-                        readShortLittle(handle);                      // extension size
-                        readShortLittle(handle);                      // valid bits
-                        readIntLittle(handle);                        // channel mask
-                        format = readShortLittle(handle);             // first field of the sub-format GUID
+                        readShortLittle(handle);                      // 扩展大小
+                        readShortLittle(handle);                      // 有效位数
+                        readIntLittle(handle);                        // 通道掩码
+                        format = readShortLittle(handle);             // 子格式 GUID 的第一个字段
                     }
                 } else if (id == 0x64617461) {                        // "data"
                     dataOffset = body;
                     dataBytes = Math.min(size, length - body);
                     if (dataBytes > 0L) break;
                 }
-                long next = body + size + (size & 1L);                // chunks are word aligned
+                long next = body + size + (size & 1L);                // 块按字对齐
                 if (next <= body || next > length) break;
                 handle.seek(next);
             }
@@ -116,7 +116,7 @@ final class PcmWindowReader implements AnalysisAudio {
             PcmWindowReader reader = new PcmWindowReader(handle, dataOffset, dataBytes, sampleRate,
                     channels, bitsPerSample, format, bytesPerFrame);
             if (reader.frames <= 0) return null;
-            handle = null;   // ownership handed to the reader
+            handle = null;   // 所有权移交到读取器
             return reader;
         } catch (Throwable ignored) {
             return null;
@@ -148,11 +148,11 @@ final class PcmWindowReader implements AnalysisAudio {
     }
 
     /**
-     * Copies a window of the file down to normalised mono.
+     * 把文件的一个窗口拷贝下来并归一化为单声道。
      *
-     * <p>Returns an empty array when the request falls outside the data chunk, so callers never have to
-     * bounds-check twice. Channels are averaged, which is what every measurement here wants: a beat or
-     * an envelope is a property of the mix, not of one side of the stereo image.</p>
+     * <p>请求落在数据块之外时返回空数组，因此调用方无需
+     * 两次边界检查。声道被平均，这正是这里每次测量所需要的：节拍或
+     * 包络是混音的属性，而非立体声图像某一侧的属性。</p>
      */
     @Override
     public float[] readMono(long startMillis, long lengthMillis) {
@@ -192,7 +192,7 @@ final class PcmWindowReader implements AnalysisAudio {
             System.arraycopy(mono, 0, trimmed, 0, produced);
             return trimmed;
         } catch (Throwable ignored) {
-            // A cache file can be deleted or truncated by a concurrent switch.
+            // 缓存文件可能被并发切换删除或截断。
             return new float[0];
         }
     }

@@ -31,7 +31,7 @@ public class TimeStamp implements Comparable<TimeStamp> {
     }
 
     /**
-     * @return -1 if(this &lt; t2), 0 if equal, or +1
+     * @return 若(this &lt; t2) 则为 -1，相等则为 0，否则为 +1
      */
     @Override
     public int compareTo(TimeStamp t2) {

@@ -34,7 +34,7 @@ public class ADTSDemultiplexer {
 	}
 
 	private boolean findNextFrame() throws IOException {
-		//find next ADTS ID
+		//查找下一个 ADTS ID
 		boolean found = false;
 		int left = MAXIMUM_FRAME_SIZE;
 		int i;

@@ -22,8 +22,8 @@ class CCE extends Element implements Constants {
 	private final boolean[] channelPair;
 	private final int[] idSelect;
 	private final int[] chSelect;
-	/*[0] shared list of gains; [1] list of gains for right channel;
-	 *[2] list of gains for left channel; [3] lists of gains for both channels
+	/*[0] 共享增益列表；[1] 右声道增益列表；
+	 *[2] 左声道增益列表；[3] 两个声道的增益列表
 	 */
 	private final float[][] gain;
 

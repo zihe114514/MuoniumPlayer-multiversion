@@ -32,7 +32,7 @@ public class Engine {
 	@SneakyThrows
 	private static AudioDeviceManager createDefaultAudioDeviceManager() {
 		Class.forName("javax.sound.sampled.AudioSystem");
-		// create a JavaSound device first
+		// 先创建一个 JavaSound 设备
 		return AudioDeviceFactory.createAudioDeviceManager();
 	}
 
@@ -339,7 +339,7 @@ public class Engine {
 				// 没事，往下走……
 			} catch (LineUnavailableException e) {
 				// 尝试对同一设备进行portaudio访问--需要获取
-				// old output device and re-select it on the new device manager
+				// 旧的输出设备，并在新的设备管理器上重新选择它
 				String targetDeviceName = this.getDeviceName(deviceId);
 				Engine.printMessage("Output device '" + targetDeviceName + "' did not work with the default audio driver, trying again with PortAudio...");
 				try {

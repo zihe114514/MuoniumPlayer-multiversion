@@ -4,8 +4,8 @@ import repackage.com.jsyn.ports.UnitOutputPort;
 import repackage.com.jsyn.unitgen.*;
 
 /**
- * Helper class wrapping a source unit generator, add/pan processor and effect 
- * into one circuit.
+ * 辅助类包装源单元生成器，添加/平移处理器和效果
+ * 整合成一个电路。
  */
 public class JSynCircuit extends Circuit implements UnitSource {
 
@@ -23,7 +23,7 @@ public class JSynCircuit extends Circuit implements UnitSource {
 		this.add(this.source);
 
 		if (input.getNumParts() == 2) {
-			// stereo source - no need for pan, so bypass processor
+			// 立体声源-无需平移，因此旁路处理器
 			this.preEffect = input;
 		} else {
 			this.processor = new JSynProcessor();

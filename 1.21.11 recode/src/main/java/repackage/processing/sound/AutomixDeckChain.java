@@ -10,7 +10,7 @@ import repackage.com.jsyn.unitgen.VocalDuckFilter;
  * {@link VocalDuckFilter} ，了解为什么混合需要真正的滤波器，而不是更多的体积曲线。</p>
  *
  * <p>这是{@code BassSwap} ，直到添加了声鸭。重命名不是外观：仅限电路
- * has one effect slot, so everything the handover wants to do to a deck's signal has to live in this one
+ * 只有一个效果槽，因此交接想要对播放牌信号做的所有处理都必须放在这一个
  * 对象，并将其称为“低音交换” ，使添加到它的下一件事看起来放错了地方。</p>
  */
 public class AutomixDeckChain extends Effect<VocalDuckFilter> {

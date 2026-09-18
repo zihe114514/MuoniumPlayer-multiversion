@@ -118,11 +118,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     public ConfirmationOverlay confirmationOverlay = null;
 
     /**
-     * One-shot notice for a machine that has not installed the Folia analysis models yet.
+     * 「还没装 Folia 分析模型」的一次性提示层。
      *
-     * <p>It sits on the same layer as the confirmation overlay and owns input the same way, but
-     * it is mounted at most once per launch: {@link FoliaModelNotice} owns both the decision and
-     * the "already shown this session" gate.</p>
+     * <p>与二次确认同层、同样独占输入。只在<b>本次启动第一次打开播放器</b>时挂上去一次，
+     * 判定与闸门都在 {@link FoliaModelNotice}。</p>
      */
     public ModelInstallNoticeOverlay modelInstallNoticeOverlay = null;
 
@@ -200,9 +199,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     public void onGuiClosed() {
         Keyboard.enableRepeatEvents(false);
         PlayerIslandTransition.abort();
-        // The notice layer does not survive a single opening of the player: the next open
-        // decides again via maybeShowModelNotice, and the "already shown this launch" gate
-        // lives in FoliaModelNotice, so clearing it here cannot cause a duplicate prompt.
+        // 提示层不跨「一次打开播放器」存活：下次打开时由 maybeShowModelNotice 重新决定要不要弹，
+        // 而「本次启动已弹过」的闸门在 FoliaModelNotice 里，所以这里清掉不会导致重复提示。
         this.modelInstallNoticeOverlay = null;
     }
 
@@ -314,9 +312,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         // 停留在上一次游戏帧值。每帧刷新 ScaledResolution，保证窗口 resize / GUI Scale 变化后
         // 布局与鼠标坐标映射立即正确。
         RenderSystem.refreshResolution();
-        // All player geometry and transition targets must be captured in the adaptive layout.
-        // Entering it after updatePanelScaleAnimation()/tick() left the morph target in Minecraft
-        // GUI coordinates while the render transform expected adaptive coordinates.
+        // 所有播放器几何和过渡目标都必须在自适应布局中捕获。
+        //在 updatePanelScaleAnimation()/tick() 把形变目标留在 Minecraft
+        //GUI 坐标后进入它，而渲染变换期望自适应坐标。
         WindowAdaptiveScale.begin();
         this.updatePanelScaleAnimation();
         // 两条时钟互不接管：外层从岛展开/收回，内部主页 -> 全屏歌词页。
@@ -336,11 +334,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         this.checkDirty();
 
-        // The "first time the player is opened this launch" model notice. It is driven from
-        // here rather than initGui because the island morph has to finish before the player
-        // counts as open - dropping a card mid-morph would fight the opening animation. The gate
-        // inside is "once per launch", "something really is missing" and "no other modal is
-        // up", so when the conditions do not hold this is nothing but a few boolean checks.
+        // 「本次启动第一次打开播放器」的模型提示。放在这里而不是 initGui：岛屿展开动画跑完
+        // 才算真的「打开了播放器」，在动画中间糊一张卡片会跟展开过程打架。内部自带
+        // 「本次启动只弹一次」「确实还缺组件」「没有别的模态占着」三道闸，条件不满足时
+        // 只是一次布尔判断。
         this.maybeShowModelNotice();
 
         int dWheel = Mouse.getDWheel();
@@ -387,13 +384,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.basePanel.setPosition(this.getPanelX(), this.getPanelY());
         final double cornerRadius = this.getPlayerCornerRadius();
 
-        // The surface must exist before content alpha becomes non-zero. Otherwise the first and
-        // last 10% of the island morph are geometrically moving but visually invisible.
+        // 表面必须在内容 alpha 变为非零之前存在。否则灵动岛形变的
+        //首尾 10% 在几何上在动，视觉上却不可见。
         PlayerIslandTransition.renderSurface();
 
-        // Below 3.5% the content is imperceptible. Skipping the whole widget tree here avoids
-        // paying for covers/lyrics/queue work during the first and last frames of the morph,
-        // which is exactly when music playback is most likely to pressure the frame budget.
+        // 低于 3.5% 时内容不可察觉。在此跳过整个组件树，避免
+        //在形变首尾帧支付封面/歌词/队列的工作，
+        //而那恰是音乐播放最可能挤压帧预算的时候。
         if (alpha > .035f) {
             // 裁剪必须在缩放矩阵外：surfaceBounds 已经是屏幕坐标；
             // 矩阵只负责把 target 面板内容压进这块 surface。
@@ -415,7 +412,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             if (this.musicLyricsPanel == null || this.musicLyricsPanel.alpha <= .9f) {
                 this.basePanel.setAlpha(alpha);
                 this.basePanel.renderWidget(mouseX, mouseY, baseDWheel);
-                // Re-assert the root rounded clip after child/framebuffer rendering.
+                // 在子组件/帧缓冲渲染后重新断言根圆角裁剪。
                 StencilClipManager.restoreActiveClip();
 
                 // 内容页切换的速度倍率由用户配置（HudConfig.playerUiSwitchSpeed，当前默认 3.0 =
@@ -626,8 +623,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             StencilClipManager.endClip();
         }
 
-        // One-shot notice for missing analysis models: same layer as the confirmation overlay,
-        // and it owns mouse/wheel input the same way.
+        // 未安装分析模型的一次性提示：与二次确认同层，同样独占鼠标/滚轮输入。
+        // 这组边框使用最终 basePanel 坐标。岛屿展开/收回期间内容被压进移动中的 surface，
         if (this.modelInstallNoticeOverlay != null) {
             StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
                     basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
@@ -788,9 +785,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     }
 
     /**
-     * Rebuilds the visible playlist panel after asynchronously loaded metadata
-     * changes its row badges. Other panels are intentionally left untouched so
-     * an account refresh cannot trigger duplicate home/search requests.
+     * 立即返回前一个内容页。现有鼠标侧键导航使用
+     * 同一历史，因此页面动画
+     * 和生命周期与播放器其余部分保持一致。
      */
     public void reloadCurrentPanel() {
         if (this.currentPanel instanceof PlaylistPanel || this.currentPanel instanceof PersonalFmPanel) {
@@ -812,11 +809,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         }
     }
 
-    /**
-     * Returns to the immediately preceding content page. The same history is
-     * used by the existing mouse side-button navigation, so the page animation
-     * and lifecycle remain consistent with the rest of the player.
-     */
+    // 独立的二级面板仍可提供有用的退路。
     public void navigateBack() {
         if (currentActionPointer > 0) {
             --currentActionPointer;
@@ -824,7 +817,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             return;
         }
 
-        // A standalone secondary panel can still offer a useful escape route.
+        /**
+     * 打开“加入歌单”弹窗。由 MusicWidget 的「+」按钮调用。
+     * 复用原项目 PlayList.addToList(musicId) → CloudMusicApi.playlistTracks("add", pid, musicId)。
+     */
         if (!(this.currentPanel instanceof HomePanel)) {
             this.setCurrentPanel(new HomePanel());
         }
@@ -849,29 +845,26 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.addToPlaylistOverlay.onInit();
     }
 
-    /** Opens a modal confirmation without running the action until the user explicitly confirms. */
+    /**
+     * 本次启动第一次打开播放器、且确实还有分析组件没装时，挂上安装提示。
+     *
+     * <p>判定与「本次启动只弹一次」的闸门都在 {@link FoliaModelNotice} 里；这里只负责挑时机：
+     * 岛屿展开动画已经跑完、没有别的模态占着、也不在全屏歌词页上。条件不满足时它只是一串
+     * 布尔判断，所以每帧问一次是安全的。</p>
+     */
     public void openConfirmation(String title, String message, String confirmText, Runnable onConfirm) {
         this.confirmationOverlay = new ConfirmationOverlay(title, message, confirmText, onConfirm);
         this.confirmationOverlay.onInit();
     }
 
-    /**
-     * Mounts the model-install notice the first time the player is opened this launch, when
-     * something really is missing.
-     *
-     * <p>The decision and the "shown once per launch" gate both live in {@link FoliaModelNotice};
-     * this only picks the moment: the island morph has finished, no other modal is up, and the
-     * player is not on the fullscreen lyrics page. When the conditions do not hold it is a short
-     * chain of boolean checks, so asking every frame is safe.</p>
-     */
+    /** 打开主题调色板；重复打开时先回收上一次的实例，避免两层叠在一起。 */
     private void maybeShowModelNotice() {
         if (this.modelInstallNoticeOverlay != null) return;
-        // The player surface is still moving during the morph; a centred card would drift with it.
+        // 展开动画期间播放器表面还在动，这时弹一张居中卡片会跟着一起漂。
         if (PlayerIslandTransition.isRunning()) return;
-        // A player that is already closing does not need one more card.
+        // 正在关闭的播放器不需要再来一张新卡片。
         if (this.closing) return;
-        // Do not interrupt the fullscreen lyrics page: like every other modal, only one layer
-        // gets to own the input at a time.
+        // 全屏歌词页上不打断；与其它模态浮层同理，一次只让一层独占输入。
         if (this.musicLyricsPanel != null) return;
         if (isModalOverlayActive()) return;
         if (!FoliaModelNotice.shouldShow()) return;
@@ -900,7 +893,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.fontPickerOverlay.onInit();
     }
 
-    /** Opens the second-level source center without changing the current content page. */
+    /** 打开一起听面板；重复打开时先回收上一次的实例，避免两层叠在一起。 */
     public void openMusicSourceManager() {
         if (this.musicSourceOverlay != null) this.musicSourceOverlay.dispose();
         this.musicSourceOverlay = new MusicSourceOverlay();
@@ -925,7 +918,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     public void keyTyped(char typedChar, int keyCode) {
 
         if (this.modelInstallNoticeOverlay != null) {
-            // ESC means "later", and must not also close the player.
+            // ESC 等价于「稍后再说」，不会顺手把播放器一起关掉。
             if (keyCode == Keyboard.KEY_ESCAPE) {
                 this.modelInstallNoticeOverlay.handleEscape();
             }
@@ -989,9 +982,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             return;
         }
         if (this.accountManagerOverlay != null) {
-            // The account overlay contains editable Cookie fields. Previously this
-            // modal consumed every key before its widget tree could see it, so both
-            // normal typing and Ctrl+V paste appeared to do nothing.
+            // 账号覆盖层包含可编辑的 Cookie 字段。此前这个模态
+            //在其组件树看到按键前就消费了每个键，因此
+            //正常输入和 Ctrl+V 粘贴都看似无效。
             if (this.accountManagerOverlay.onKeyTypedReceived(typedChar, keyCode)) {
                 return;
             }
@@ -1111,8 +1104,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         }
 
         if (musicLyricsPanel == null) {
-            // The quality pop-up visually overlaps the song list. Consume its
-            // full bounds before dispatching to the list to prevent click-through.
+            // 质量弹出窗在视觉上与歌曲列表重叠。在分发给列表之前
+            //消费其完整边界，防止点击穿透。
             if (this.controlsBar.consumeQualityMenuClick(mouseX, mouseY, mouseButton)) {
                 return;
             }
@@ -1134,10 +1127,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
             this.controlsBar.onMouseClickReceived(mouseX, mouseY, mouseButton);
 
-            // forward
+            // 前进
             if (mouseButton == 4) {
 
-                // is last
+                // 是否最后
                 if (currentActionPointer >= actions.size() - 1) {
                     currentActionPointer = actions.size() - 1;
                 } else {
@@ -1146,7 +1139,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 }
 
             }
-            // go back
+            /** 播放器主题的颜色语义；具体颜色由 {@link NCMTheme} 提供。 */
             else if (mouseButton == 3) {
                 this.navigateBack();
             }

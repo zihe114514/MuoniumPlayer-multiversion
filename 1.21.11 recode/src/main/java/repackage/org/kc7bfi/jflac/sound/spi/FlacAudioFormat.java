@@ -13,7 +13,7 @@ import java.util.Map;
 
 /**
  * 包装FLAC StreamInfo对象的AudioFormat实例。使用Java 5.0
- * style properties support.
+ * 风格的属性支持。
  *
  * @author Florian Bomers
  */

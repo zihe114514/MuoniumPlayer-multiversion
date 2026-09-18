@@ -17,6 +17,7 @@ import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.ncm.music.NeteaseSearchSuggestService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
+import com.muoniumplayer.core.rendering.BrandVectorIcons;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
@@ -54,7 +55,7 @@ public class NavigateBar extends NCMPanel {
 
     TextFieldWidget searchField = new TextFieldWidget(FontManager.pf14bold);
     /**
-     * NetEase cloud search supports both tracks and playlists; QQ Cadence currently exposes tracks only.
+     * 网易云搜索同时支持单曲和歌单；QQ Cadence 目前只提供单曲。
      */
     private boolean playlistSearchMode;
     ScrollPanel playlistPanel = new ScrollPanel();
@@ -300,8 +301,8 @@ public class NavigateBar extends NCMPanel {
             searchField.setDisabledTextColor(RenderSystem.reAlpha(this.getColor(NCMScreen.ColorType.PRIMARY_TEXT), .4f));
 //            Rect.draw(searchField.getX(), searchField.getY(), searchField.getWidth(), searchField.getHeight(), 0x800090ff);
         });
-        // A single second-level entry replaces the old two-button NetEase/QQ switcher and also
-        // exposes the GD Studio aggregated platforms without crowding this navigation rail.
+        // 单个二级入口取代了旧的“网易云/QQ 双按钮切换器”，同时还
+        // 在不挤占这条导航栏空间的情况下接入了 GD Studio 聚合平台。
         Panel sourceSwitcher = new Panel();
         this.addChild(sourceSwitcher);
         sourceSwitcher.setBeforeRenderCallback(() -> {
@@ -321,10 +322,10 @@ public class NavigateBar extends NCMPanel {
             return true;
         });
         sourceMenu.setBeforeRenderCallback(() -> {
-            // The menu lives inside a plain Panel, so give it an explicit hit box.
-            // Without this it can render with a zero-sized interactive area after the
-            // navigation bar is rebuilt, making it impossible to switch back to an
-            // official source from a GD source.
+            // 菜单位于一个普通 Panel 内部，因此要给它一个明确的点击区域。
+            // 否则在导航栏重建后，它可能渲染出一个零尺寸的交互区域，
+            // 导致无法从某个 GD 源切回
+            // 官方源。
             sourceMenu.setBounds(Math.max(1, sourceSwitcher.getWidth()), sourceSwitcher.getHeight());
             sourceMenu.setPosition(0, 0);
             sourceMenu.setMargin(0);
@@ -591,8 +592,8 @@ public class NavigateBar extends NCMPanel {
         this.addChild(quickActionsSurface);
         quickActionsSurface.setClickable(false);
         quickActionsSurface.setBeforeRenderCallback(() -> {
-            // Keep the original compact action rail dimensions; only the glyph rendering
-            // is strengthened so the sidebar layout and button size stay unchanged.
+            // 保留原有的紧凑操作栏尺寸；只对字形渲染
+            // 进行强化，使侧边栏布局和按钮尺寸保持不变。
             quickActionsSurface.setBounds(Math.max(1, this.getWidth() - 16), 32);
             quickActionsSurface.setPosition(8, this.getHeight() - 63);
             quickActionsSurface.setRadius(9);
@@ -658,8 +659,8 @@ public class NavigateBar extends NCMPanel {
                         btnRefresh.setSpinning(false);
                         if (result.isSuccess()) {
                             NCMScreen.getInstance().markDirty();
-                            // The cloud-song ID set is loaded asynchronously during
-                            // the refresh. Rebuild the visible playlist rows so the
+                            // 云盘歌曲 ID 集合在
+                            // 刷新期间异步加载。重建可见的播放列表行，以便
                             // newly available "网盘" badge is created immediately.
                             NCMScreen.getInstance().reloadCurrentPanel();
                             DownloadDynamicIsland.showPlaylistRefreshSuccess(
@@ -709,8 +710,8 @@ public class NavigateBar extends NCMPanel {
             btnRefresh.setBounds(actionWidth, 28);
             btnRefresh.setPosition(8 + actionWidth * 3, 2);
             btnRefresh.setRadius(7);
-            // This refreshes the signed-in NetEase account and its playlists, which is
-            // independent from the currently selected search/content provider.
+            // 这会刷新已登录的网易云账户及其歌单，这一操作
+            // 与当前所选的搜索/内容提供方无关。
             btnRefresh.setAlpha(1f);
             btnRefresh.setColor(btnRefresh.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
@@ -863,6 +864,14 @@ public class NavigateBar extends NCMPanel {
     private static final double VIP_ICON_BOX = 12.0;
 
     /**
+     * 来源按钮上那枚矢量字标的方格。
+     *
+     * <p>和音源卡的圆盘（46 → 23）一样按「容器的一半」取，只是这一排本身小得多。
+     * 不能照搬旧字形的高度：旧字标走 {@code pf12bold}，墨迹高只有 4.2，矢量按那个数画会小到看不见。</p>
+     */
+    private static final double SOURCE_ICON_BOX = 10.0;
+
+    /**
      * 当前是不是「网易云 + 已登录 + 会员」。
      *
      * <p>三个条件缺一不可：QQ 与酷狗没有对应的会员字段，而 {@code CloudMusic.profile} 在切到别的
@@ -894,8 +903,8 @@ public class NavigateBar extends NCMPanel {
         button.setOnClickCallback((x, y, mouseButton) -> {
             if (mouseButton != 0) return false;
             boolean changed = NeteaseMusicService.getCurrentPlatform() != platform;
-            // The setter also clears any stale persisted GD selection when an official source
-            // is chosen, even if the visible source already says NetEase/QQ.
+            // 该 setter 还会在选择官方源时清除任何残留的已持久化 GD 选择，
+            // 即使可见源已经显示为网易云/QQ。
             NeteaseMusicService.setCurrentPlatform(platform);
             if (changed) {
                 NCMScreen.getInstance().markDirty();
@@ -915,7 +924,7 @@ public class NavigateBar extends NCMPanel {
     private final class SourceButton extends Panel {
         private final MusicPlatform platform;
         private final RoundedRectWidget background = new RoundedRectWidget();
-        private final LabelWidget platformIcon;
+        private final AbstractWidget<?> platformIcon;
         private final LabelWidget label;
 
         private SourceButton(MusicPlatform platform) {
@@ -934,9 +943,12 @@ public class NavigateBar extends NCMPanel {
                 this.background.setAlpha(selected ? .96f : (this.isHovering() ? .45f : 0f));
             });
 
-            // QQ Music uses its own provider-brand glyph. Do not reuse the QQ login icon.
-            this.platformIcon = new LabelWidget(sourceGlyph(this.platform),
-                    sourceFont(this.platform));
+            // QQ 音乐使用其自有的服务商品牌字形。请勿复用 QQ 登录图标。
+            // 有矢量标识的那三家（BrandVectorIcons.has）就用矢量，和圆盘、引导页是同一份数据；
+            // 其余各家仍走各自的品牌字体字形。
+            this.platformIcon = BrandVectorIcons.has(this.platform)
+                    ? new BrandIconWidget(this.platform, SOURCE_ICON_BOX)
+                    : new LabelWidget(sourceGlyph(this.platform), sourceFont(this.platform));
             this.platformIcon.setClickable(false);
             this.addChild(this.platformIcon);
             this.label = new LabelWidget(
@@ -970,7 +982,7 @@ public class NavigateBar extends NCMPanel {
     }
 
     /**
-     * Compact vector icon button that stays legible at every player scale.
+     * 紧凑的矢量图标按钮，在任意播放器缩放比例下都保持清晰可读。
      */
     private static final class SidebarActionButton extends RoundedRectWidget {
         private final SidebarActionIcon icon;
@@ -1003,15 +1015,15 @@ public class NavigateBar extends NCMPanel {
             double centerY = getY() + getHeight() * .5;
             double iconScale = 1.13 + hoverAnimation * .08 - pressAnimation * .055;
             float alpha = getAlpha() * (.92f + hoverAnimation * .08f);
-            // Keep the source colors opaque here. The old implementation pre-applied alpha
-            // and then applied it again inside each primitive, which made the glyphs visibly
-            // fade into the dark action rail on several themes.
+            // 此处保持源颜色不透明。旧实现预先应用了 alpha
+            // 然后又在每个图元内部应用了一次，导致字形在
+            // 若干主题下明显淡出、融入深色操作栏。
             int accent = getIconAccentColor();
             int foreground = NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT);
 
-            // Every action now has a persistent contrasting icon plate and a colored bottom
-            // marker. This preserves the compact icon-only layout while making the three
-            // controls immediately distinguishable before the pointer hovers them.
+            // 现在每个操作都带有持久的对比色图标底板和彩色的底部
+            // 标记。这保留了紧凑的纯图标布局，同时使三个
+            // 控件，在指针悬停之前即可立即辨认。
             roundedRect(centerX - 8.6, centerY - 8.6, 17.2, 17.2, 8.6,
                     RenderSystem.reAlpha(accent, alpha * (.16f + hoverAnimation * .16f)));
             roundedRect(centerX - 7.4, centerY - 7.4, 14.8, 14.8, 7.4,
@@ -1042,8 +1054,8 @@ public class NavigateBar extends NCMPanel {
         }
 
         private void renderThemeIcon(double x, double y, float alpha, int accent, int foreground) {
-            // A four-color palette mark: larger dots and a bright center remain readable
-            // on both dark and liquid-glass themes without relying on a font glyph.
+            // 四色调色板标记：更大的圆点和明亮的中心依然可读
+            // 在深色与液态玻璃两种主题下均不依赖字体字形即可辨认。
             roundedRect(x - 2.15, y - 6.25, 4.3, 4.3, 2.15,
                     RenderSystem.reAlpha(accent, alpha));
             roundedRect(x - 6.25, y - 2.15, 4.3, 4.3, 2.15,
@@ -1079,7 +1091,7 @@ public class NavigateBar extends NCMPanel {
             double rotation = spinning ? (now / 6.0) % 360.0 : -28.0;
             final int segments = 8;
             for (int segment = 0; segment < segments; segment++) {
-                // Leave two gaps in the ring to make the refresh silhouette readable.
+                // 在圆环上留出两个缺口，使刷新轮廓清晰可辨。
                 if (segment == 2 || segment == 6) continue;
                 float segmentAlpha = alpha * (spinning
                         ? (.32f + .68f * (1f - segment / 8f))
@@ -1091,8 +1103,8 @@ public class NavigateBar extends NCMPanel {
                         RenderSystem.reAlpha(spinning ? accent : foreground, segmentAlpha));
                 api.getGLStateManager().popMatrix();
             }
-            // Small arrow tips close the two gaps and turn the ring into a clear
-            // refresh symbol rather than a generic loading spinner.
+            // 小箭头尖闭合这两个缺口，将圆环变成清晰的
+            // 刷新符号，而非普通的加载转圈。
             drawRotatedPill(x - 4.25, y - 4.05, 4.45, 1.65, -42f,
                     RenderSystem.reAlpha(spinning ? accent : foreground, alpha));
             drawRotatedPill(x + 4.25, y + 4.05, 4.45, 1.65, 138f,
@@ -1437,7 +1449,7 @@ public class NavigateBar extends NCMPanel {
                         new HomePanel(results, title)));
             });
         } else {
-            // Keep the original track-search flow and its independent temporary playlist.
+            // 保留原有的歌曲搜索流程及其独立的临时播放列表。
             PlayList playList = JsonUtils.parse("{}", PlayList.class);
             playList.setSearchMode(true);
             // 只有搜索框产生的列表才走"起播后接最近播放"，发现页复用 searchMode 的那些列表不受影响。
@@ -1492,7 +1504,7 @@ public class NavigateBar extends NCMPanel {
     }
 
     /**
-     * Re-selects the sidebar item that represents the currently visible content panel.
+     * 重新选中代表当前可见内容面板的侧边栏项。
      */
     public void selectCurrentPanel(NCMPanel panel) {
         PlaylistItem selectedItem = null;
@@ -1641,9 +1653,9 @@ public class NavigateBar extends NCMPanel {
             this.label = label;
             this.onClick = onClick;
             this.setBeforeRenderCallback(() -> {
-                // The item is inset by four pixels on both sides. Subtract the insets from
-                // its live width as the player scales so neither background nor text can
-                // extend past the navigation viewport.
+                // 该项两侧各内缩四个像素。播放器缩放时，将内缩量从
+                // 其实时宽度中减去，使背景和文字都不会
+                // 延伸到导航视口之外。
                 this.setBounds(Math.max(1, this.getParentWidth() - 8), 16);
                 this.setPosition(4, this.getRelativeY());
             });
@@ -1706,7 +1718,7 @@ public class NavigateBar extends NCMPanel {
     }
 
     /**
-     * Executes the documented NetEase cloud-search playlist endpoint (type 1000).
+     * 调用文档中记载的网易云搜索歌单接口（type 1000）。
      */
     private List<PlayList> searchNeteasePlaylists(String keyword) {
         List<PlayList> results = new ArrayList<>();
@@ -1744,7 +1756,7 @@ public class NavigateBar extends NCMPanel {
                     playlist.setPlatform(MusicPlatform.NETEASE);
                     results.add(playlist);
                 } catch (Throwable ignored) {
-                    // A malformed item cannot invalidate the remaining search results.
+                    // 单个畸形项不能使其余搜索结果失效。
                 }
             }
         } catch (Throwable throwable) {

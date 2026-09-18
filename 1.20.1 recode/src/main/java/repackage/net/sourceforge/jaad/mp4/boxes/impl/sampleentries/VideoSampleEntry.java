@@ -37,18 +37,18 @@ public class VideoSampleEntry extends SampleEntry {
 	public void decode(MP4InputStream in) throws IOException {
 		super.decode(in);
 
-		in.skipBytes(2); //pre-defined: 0
-		in.skipBytes(2); //reserved
+		in.skipBytes(2); //预定义：0
+		in.skipBytes(2); //保留
 		//3x32 pre_defined
-		in.skipBytes(4); //pre-defined: 0
-		in.skipBytes(4); //pre-defined: 0
-		in.skipBytes(4); //pre-defined: 0
+		in.skipBytes(4); //预定义：0
+		in.skipBytes(4); //预定义：0
+		in.skipBytes(4); //预定义：0
 
 		width = (int) in.readBytes(2);
 		height = (int) in.readBytes(2);
 		horizontalResolution = in.readFixedPoint(16, 16);
 		verticalResolution = in.readFixedPoint(16, 16);
-		in.skipBytes(4); //reserved
+		in.skipBytes(4); //保留
 		frameCount = (int) in.readBytes(2);
 
 		final int len = in.read();
@@ -62,55 +62,50 @@ public class VideoSampleEntry extends SampleEntry {
 	}
 
 	/**
-	 * The width is the maximum visual width of the stream described by this
-	 * sample description, in pixels.
+	 * 宽度为此采样描述所描述流的最大视觉宽度（像素）。
 	 */
 	public int getWidth() {
 		return width;
 	}
 
 	/**
-	 * The height is the maximum visual height of the stream described by this
-	 * sample description, in pixels.
+	 * 高度为此采样描述所描述流的最大视觉高度（像素）。
 	 */
 	public int getHeight() {
 		return height;
 	}
 
 	/**
-	 * The horizontal resolution of the image in pixels-per-inch, as a floating
-	 * point value.
+	 * 图像水平分辨率（每英寸像素数），以浮点数表示。
 	 */
 	public double getHorizontalResolution() {
 		return horizontalResolution;
 	}
 
 	/**
-	 * The vertical resolution of the image in pixels-per-inch, as a floating
-	 * point value.
+	 * 图像垂直分辨率（每英寸像素数），以浮点数表示。
 	 */
 	public double getVerticalResolution() {
 		return verticalResolution;
 	}
 
 	/**
-	 * The frame count indicates how many frames of compressed video are stored 
-	 * in each sample.
+	 * 帧计数指示每个采样中存储了多少压缩视频帧。
 	 */
 	public int getFrameCount() {
 		return frameCount;
 	}
 
 	/**
-	 * The compressor name, for informative purposes.
+	 * 压缩器名称，仅供参考。
 	 */
 	public String getCompressorName() {
 		return compressorName;
 	}
 
 	/**
-	 * The depth takes one of the following values
-	 * DEFAULT_DEPTH (0x18) – images are in colour with no alpha
+	 * depth 取以下值之一
+	 * DEFAULT_DEPTH（0x18）——图像为彩色、无 alpha
 	 */
 	public int getDepth() {
 		return depth;

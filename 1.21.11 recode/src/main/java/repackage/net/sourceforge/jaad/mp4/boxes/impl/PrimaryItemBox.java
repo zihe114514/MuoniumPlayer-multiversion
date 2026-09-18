@@ -32,7 +32,7 @@ public class PrimaryItemBox extends FullBox {
 	/**
 	 * item ID 是主条目的标识符。
 	 *
-	 * @return item ID
+	  * @return 项目 ID
 	 */
 	public int getItemID() {
 		return itemID;

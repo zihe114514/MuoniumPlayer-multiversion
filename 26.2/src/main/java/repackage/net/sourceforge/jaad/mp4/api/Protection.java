@@ -8,7 +8,7 @@ import repackage.net.sourceforge.jaad.mp4.boxes.impl.OriginalFormatBox;
 import repackage.net.sourceforge.jaad.mp4.boxes.impl.SchemeTypeBox;
 
 /**
- * This class contains information about a DRM system.
+ * 此类包含某个 DRM 系统的信息。
  */
 public abstract class Protection {
 
@@ -37,10 +37,10 @@ public abstract class Protection {
 	private final Codec originalFormat;
 
 	protected Protection(Box sinf) {
-		//original format
+		//原始格式
 		final long type = ((OriginalFormatBox) sinf.getChild(BoxTypes.ORIGINAL_FORMAT_BOX)).getOriginalFormat();
 		Codec c;
-		//TODO: currently it tests for audio and video codec, can do this any other way?
+		//TODO: 目前它检测音频和视频编解码器，是否有其他方式？
 		if(!(c = AudioTrack.AudioCodec.forType(type)).equals(AudioTrack.AudioCodec.UNKNOWN_AUDIO_CODEC)) originalFormat = c;
 		else if(!(c = VideoTrack.VideoCodec.forType(type)).equals(VideoTrack.VideoCodec.UNKNOWN_VIDEO_CODEC)) originalFormat = c;
 		else originalFormat = null;
@@ -52,7 +52,7 @@ public abstract class Protection {
 
 	public abstract Scheme getScheme();
 
-	//default implementation for unknown protection schemes
+	//未知保护方案的默认实现
 	private static class UnknownProtection extends Protection {
 
 		UnknownProtection(Box sinf) {

@@ -1,17 +1,17 @@
 /*
  * Copyright 2010 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  * 
  *     http://www.apache.org/licenses/LICENSE-2.0
  * 
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.data;
@@ -22,7 +22,7 @@ import repackage.com.jsyn.unitgen.VariableRateStereoReader;
 import repackage.com.jsyn.util.SampleLoader;
 
 /**
- * Store multi-channel short audio data in an interleaved buffer.
+ * 将多通道短音频数据存储在交错缓冲区中。
  * 
  * @author Phil Burk (C) 2010 Mobileer Inc
  * @see SampleLoader
@@ -39,13 +39,13 @@ public class ShortSample extends AudioSample {
         allocate(numFrames, channelsPerFrame);
     }
 
-    /** Constructor for mono samples with data. */
+    /** 具有数据的单样本的构造函数。*/
     public ShortSample(short[] data) {
         this(data.length, 1);
         write(data);
     }
 
-    /** Constructor for multi-channel samples with data. */
+    /** 带数据的多声道采样构造函数。 */
     public ShortSample(short[] data, int channelsPerFrame) {
         this(data.length / channelsPerFrame, channelsPerFrame);
         write(data);
@@ -59,11 +59,11 @@ public class ShortSample extends AudioSample {
     }
 
     /**
-     * Note that in a stereo sample, a frame has two values.
+     * 注意，在立体声采样中，一个帧有两个值。
      * 
-     * @param startFrame index of frame in the sample
-     * @param data data to be written
-     * @param startIndex index of first value in array
+     * 样本中框架的@param startFrame 索引
+     * @param data 待写入的数据
+     * 数组中第一个值的@param startIndex 索引
      * @param numFrames
      */
     public void write(int startFrame, short[] data, int startIndex, int numFrames) {
@@ -73,11 +73,11 @@ public class ShortSample extends AudioSample {
     }
 
     /**
-     * Note that in a stereo sample, a frame has two values.
+     * 注意，在立体声采样中，一个帧有两个值。
      * 
-     * @param startFrame index of frame in the sample
-     * @param data array to receive the data from the sample
-     * @param startIndex index of first location in array to start filling
+     * 样本中框架的@param startFrame 索引
+     * @param data 数组接收样本数据
+     * 要开始填充的数组中第一个位置的@param startIndex 索引
      * @param numFrames
      */
     public void read(int startFrame, short[] data, int startIndex, int numFrames) {
@@ -102,14 +102,14 @@ public class ShortSample extends AudioSample {
         buffer[index] = value;
     }
 
-    /** Read a sample converted to a double in the range -1.0 to almost 1.0. */
+    /** 读取一个采样并转换为 double，取值范围为 -1.0 到接近 1.0。 */
     @Override
     public double readDouble(int index) {
         return SynthesisEngine.convertShortToDouble(buffer[index]);
     }
 
     /**
-     * Write a double that will be clipped to the range -1.0 to almost 1.0 and converted to a short.
+     * 写一个双精度数，将被裁剪到-1.0到近1.0的范围并转换为短数。
      */
     @Override
     public void writeDouble(int index, double value) {

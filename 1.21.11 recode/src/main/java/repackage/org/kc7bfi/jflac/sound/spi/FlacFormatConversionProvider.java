@@ -45,7 +45,7 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
     /** 调试标志*/
     private static final boolean DEBUG = false;
 
-    /** to disable encoding */
+    /** 用于禁用编码 */
     private static final boolean HAS_ENCODING = false;
 
     /** */
@@ -69,7 +69,7 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
      * 服务由该提供商提供。
      *
      * 源格式编码的@return 数组。数组将始终具有
-     *         length of at least 1.
+     *         长度至少为 1。
      */
     public AudioFormat.Encoding[] getSourceEncodings() {
         AudioFormat.Encoding[] encodings;
@@ -86,11 +86,11 @@ public class FlacFormatConversionProvider extends FormatConversionProvider {
     }
 
     /**
-     * Obtains the set of target format encodings to which format conversion
+     * 获取进行格式转换的目标格式编码集合
      * 服务由该提供商提供。
      *
      * @return 目标格式编码数组。数组将始终具有
-     *         length of at least 1.
+     *         长度至少为 1。
      */
     public AudioFormat.Encoding[] getTargetEncodings() {
         AudioFormat.Encoding[] encodings;

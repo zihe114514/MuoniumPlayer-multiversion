@@ -85,7 +85,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     private final LyricScrollMotion scrollMotion = new LyricScrollMotion();
     /** 每帧算出的文档坐标，按行数复用；这是渲染热路径，不值得每帧新建一个数组。 */
     private double[] lyricDocTop = new double[0];
-    /** qplayer group model: first line, last line (exclusive-end convention is inclusive here). */
+    /** qplayer 组模型：首行、末行（排他结束约定在此为包含）。 */
     private int[] qplayerGroupStart = new int[0];
     private int[] qplayerGroupEnd = new int[0];
     private int[] qplayerLineToGroup = new int[0];
@@ -94,7 +94,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     private boolean qplayerInInterlude;
     private int qplayerInterludeNextGroup = -1;
     private long qplayerInterludeStartMs;
-    /** qplayer caches shaped rows; this is the equivalent cache for our word placements. */
+    /** qplayer 缓存塑形后的行；这是我们逐字放置的等价缓存。 */
     private final java.util.IdentityHashMap<LyricLine, WordPlacement> qplayerPlacementCache =
             new java.util.IdentityHashMap<>();
     private final java.util.IdentityHashMap<LyricLine, double[]> qplayerPlacementGeometry =
@@ -159,8 +159,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     private double lastViewportAnchorY = Double.NaN;
 
     /**
-     * The single authoritative viewport for all lyric layers. It is derived from the
-     * player''s live bounds each frame, so text, KTV composition and blur all follow resize.
+     * 所有歌词层的唯一权威视口。它每帧从
+     * 播放器的实时边界推导，因此文本、KTV 合成和模糊都跟随缩放。
      */
     private static final class LyricViewport {
         final double left;
@@ -204,24 +204,24 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     /**
-     * Keeps the animated lyric layer inside the player while it fades out.
+     * 在动画歌词层淡出期间把它保持在播放器内。
      *
-     * The old close animation used a maximum scale of 1.10, which made the
-     * background, blur and glyph quads exceed the dynamically sized player.
-     * At full opacity the content still uses the exact player size; during the
-     * transition it only contracts, so resizing the player cannot expose a
-     * second, larger lyric viewport.
+     * 旧的关闭动画用最大 1.10 缩放，使
+     * 背景、模糊和字形四边形超出动态尺寸的播放器。
+     * 全不透明时内容仍用确切的播放器尺寸；在
+     * 过渡期间它只收缩，因此缩放播放器不会暴露一个
+     * 更大的第二歌词视口。
      */
     private static double getContentScale(float alpha) {
         return LyricsPanelGeometry.contentScale(alpha);
     }
 
-    /** Smooths the KTV sweep without decoupling it from the actual audio position. */
+    /** 平滑 KTV 扫光，而不把它与实际音频位置解耦。 */
     private static double smoothKaraokeProgress(double value) {
         return LyricsPanelGeometry.smoothKaraokeProgress(value);
     }
 
-    /** Individual characters ease into the active state in a short cascading wave. */
+    /** 单个字符在短暂的级联波中渐入激活态。 */
     private static double getCharacterKaraokeProgress(double wordProgress, int characterIndex) {
         return LyricsPanelGeometry.characterKaraokeProgress(wordProgress, characterIndex);
     }
@@ -331,9 +331,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     /**
-     * The lyric column deliberately uses the current player bounds rather than a global
-     * screen fraction.  The right and vertical padding keep animated glyphs, their glow and
-     * the blur kernel inside the live player window at every configured player scale.
+     * 歌词列刻意使用当前播放器边界，而非全局
+     * 屏幕比例。右侧和垂直内边距让动效字形、其光晕和
+     * 模糊核在每个配置的播放器缩放下都保持在实时播放器窗口内。
      */
     private static LyricViewport createLyricViewport(double posX, double posY, double width, double height) {
         LyricsPanelGeometry.Viewport viewport = LyricsPanelGeometry.createViewport(posX, posY, width, height,
@@ -371,9 +371,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     /**
-     * Rebuilds the complete lyric layout around one anchor line. Seeking can change the
-     * active line by many entries at once, so every line must use the same anchor instead
-     * of leaving a mixture of coordinates from the old and new playback positions.
+     * 围绕一条锚点行重建完整歌词布局。seek 可一次改变活动行
+     * 多个条目，因此每行必须使用同一锚点，而非
+     * 留下新旧播放位置坐标的混合。
      */
     private static void layoutLyricPositionsImmediately(double width, double anchorY, LyricLine anchorLyric) {
         if (anchorLyric == null) return;
@@ -382,16 +382,16 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             int anchorIndex = CloudMusic.lyrics.indexOf(anchorLyric);
             if (anchorIndex < 0 || anchorIndex >= CloudMusic.lyrics.size()) return;
 
-            // Heights affect all following coordinates. Calculate them before assigning
-            // positions so a wrapped/translated line cannot overlap its neighbour.
+            // 高度影响其后所有坐标。在分配
+            //位置之前先计算高度，使折行/翻译行不会与其邻居重叠。
             for (LyricLine lyric : CloudMusic.lyrics) {
                 // 对唱行按自己那一列的宽度算高度，否则折行数与渲染时不一致，行与行会叠在一起。
                 lyric.computeHeight(qplayerWrapWidth(LyricDuetGroups.columnWidth(width, lyric.duetSlot)));
             }
 
-            // A duet is anchored as one block: its first line leads, and the block is lifted by
-            // half of the extra rows so the pair straddles the anchor instead of pushing the
-            // second singer out of the reading position.
+            // 对唱作为一个块锚定：其首行领先，块被上移
+            //额外行数的一半，使这对歌手横跨锚点，而非把
+            //第二位歌手推出阅读位置。
             int groupEnd = LyricDuetGroups.groupEnd(CloudMusic.lyrics, anchorIndex);
             anchorIndex = LyricDuetGroups.groupStart(CloudMusic.lyrics, anchorIndex);
             anchorY += groupAnchorLift(anchorIndex, groupEnd);
@@ -484,8 +484,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     private static void setLyricPosition(LyricLine lyric, double positionY) {
         lyric.posY = positionY;
-        // setPosition also clears the spring velocity/queued target. This is required for
-        // seeks, otherwise a line can keep interpolating from the previous timeline.
+        // setPosition 也清除弹簧速度/排队目标。seek 需要这样，
+        //否则一行可能继续从旧时间线插值。
         lyric.spring.setPosition(positionY);
     }
 
@@ -848,11 +848,11 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         }
     }
 
-    // ── qplayer full-screen lyric motion ───────────────────────────────────────
+    // ── qplayer 全屏歌词动效 ───────────────────────────────────────
 
     /**
-     * Reserve room for the active line's 1.14x emphasis. Without this divisor, a row that fits
-     * at 1.0x is clipped at the right edge as soon as it becomes the active row.
+     * 为活动行的 1.14x 强调预留空间。没有这个除数，一个在 1.0x 下合适的
+     * 行会在成为活动行时立即在右缘被裁剪。
      */
     private static double qplayerWrapWidth(double columnWidth) {
         return Math.max(1.0, columnWidth / 1.14);
@@ -941,8 +941,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     /**
-     * qplayer hands the scroll anchor to the next group at its first visible brightening,
-     * 450ms before it sings. The outgoing group keeps its own fade and sweep timeline.
+     * qplayer 在滚动锚点交给下一组时，是在它首次可见变亮、
+     * 早于它演唱 450ms 时。退出组保持自己的淡出和扫光时间线。
      */
     private LyricLine qplayerVisualAnchorLyric(double positionMs) {
         qplayerBuildGroups();
@@ -957,7 +957,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         return lines.get(qplayerGroupStart[resultGroup]);
     }
 
-    /** qplayer's underdamped syllable lift: 2px peak, ω0=3.7416574, ζ=0.935414. */
+    /** qplayer 的欠阻尼音节抬升：2px 峰值，ω0=3.7416574，ζ=0.935414。 */
     private static double qplayerSyllableLift(long startMs, double positionMs) {
         double elapsed = (positionMs - startMs) / 1000.0;
         if (elapsed <= 0.0) return 0.0;
@@ -972,7 +972,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         return 2.0 * Math.max(0.0, value);
     }
 
-    /** qplayer's extra 2px word-ribbon lift for sustained words, driven by word progress. */
+    /** qplayer 为持续词额外加的 2px 词带抬升，由词进度驱动。 */
     private static double qplayerWordRibbonLift(LyricLine.Word word, double positionMs, float activeK) {
         long end = word.timestamp + Math.max(0L, word.duration);
         long duration = Math.max(1L, end - word.timestamp);
@@ -981,7 +981,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         return 2.0 * Math.sin(Math.PI * progress) * Math.max(0f, Math.min(1f, activeK));
     }
 
-    /** Caches qplayer word wrapping by line and viewport geometry, avoiding per-frame allocations. */
+    /** 按行和视口几何缓存 qplayer 换行，避免逐帧分配。 */
     private WordPlacement qplayerPlacement(LyricLine lyric, List<LyricLine.Word> words,
                                            double columnLeft, double columnWidth, boolean rightAligned) {
         double[] geometry = qplayerPlacementGeometry.get(lyric);
@@ -1002,7 +1002,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         return placement;
     }
 
-    /** qplayer's row sweep front. Outside the row it is offset by two feather widths. */
+    /** qplayer 的行扫光前沿。在该行之外偏移两个羽化宽度。 */
     private static double qplayerSweepX(List<LyricLine.Word> words, WordPlacement placement,
                                         int first, int last, double rowLeft, double rowRight,
                                         double positionMs) {
@@ -1030,8 +1030,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     /**
-     * qplayer's 16px DST_IN sweep. The gradient itself is only 16px wide, but the DST_IN
-     * rectangle covers the complete row layer, exactly like qplayer's translated big rect.
+     * qplayer 的 16px DST_IN 扫光。渐变本身只有 16px 宽，但 DST_IN
+     * 矩形覆盖整行层，正如 qplayer 平移的大矩形。
      */
     private static void applyQplayerSweepMask(io.github.humbleui.skija.Canvas canvas,
                                               double sweepX, double layerLeft, double layerRight,
@@ -1052,12 +1052,12 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         }
     }
 
-    /** qplayer idle/active base brightness: 0.22 → 1.0, driven by the group timeline. */
+    /** qplayer 闲置/活动基础亮度：0.22 → 1.0，由组时间线驱动。 */
     private static float qplayerBaseAlpha(float activeK) {
         return .22f + .78f * Math.max(0f, Math.min(1f, activeK));
     }
 
-    /** qplayer depth emphasis adapted to MuoniumPlayer's native main-text box. */
+    /** 适配到 MuoniumPlayer 原生主文本框的 qplayer 深度强调。 */
     private static double qplayerLineScale(float activeK, double readingCenterY,
                                            double lineCenterY, double referenceHeight) {
         double reference = Math.max(40.0, referenceHeight);
@@ -1071,7 +1071,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         return (float) (progress * progress * (3.0 - 2.0 * progress));
     }
 
-    /** Project-native sidecar drawing helper: original top-coordinate semantics and +4 row pitch. */
+    /** 项目原生副车绘制助手：原始顶部坐标语义和 +4 行距。 */
     private double drawQplayerSubline(String text, double columnLeft, double columnWidth,
                                       boolean rightAligned, double subY, float alpha) {
         String[] rows = FontManager.pf34bold.fitWidth(text, columnWidth);
@@ -1087,7 +1087,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         return subY;
     }
 
-    /** qplayer's single 2.2px word glow; only words sustained for 1.5s receive it. */
+    /** qplayer 的单个 2.2px 词光晕；仅持续 1.5s 的词才获得它。 */
     private static void drawQplayerWordGlow(LyricLine.Word word, double x, double drawY, float alpha) {
         if (alpha <= .01f) return;
         io.github.humbleui.skija.BlendMode previous = SkijaGfx.blendMode();
@@ -1101,18 +1101,18 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     /**
-     * qplayer's interlude constants are tuned for a 28px lyric font. MuoniumPlayer's pf65 slot is
-     * created at 32.5px and reports a different line box, so scale the geometry instead of using
-     * raw pixel constants.
+     * qplayer 的间奏常量是为 28px 歌词字体调的。MuoniumPlayer 的 pf65 槽按
+     * 32.5px 创建并报告不同的行框，因此缩放几何，而非使用
+     * 原始像素常量。
      */
     private static double qplayerInterludeScale() {
         return Math.max(1.0, FontManager.pf65bold.getHeight() / 28.0);
     }
 
     /**
-     * Native lyric groups already include a 20px line gap. Subtract it from the scaled qplayer
-     * slot so the total distance between the two lyric blocks stays qplayer-sized instead of
-     * accidentally adding qplayer's slot on top of MuoniumPlayer's native spacing.
+     * 原生歌词组已含 20px 行间距。从缩放后的 qplayer
+     * 槽中减去它，使两个歌词块之间的总距离保持 qplayer 大小，而非
+     * 在 MuoniumPlayer 的原生间距之上意外再加上 qplayer 的槽。
      */
     private static double qplayerInterludeSlotHeight() {
         return Math.max(0.0, 40.0 * qplayerInterludeScale() - getLyricLineSpacing());
@@ -1127,8 +1127,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     /**
-     * Rebuilds qplayer's document layout. Interlude slots are dynamic and grow/collapse with the
-     * play head, so lineTops and targetScroll are intentionally recomputed every frame.
+     * 重建 qplayer 的文档布局。间奏槽是动态的，随播放头扩展/折叠，
+     * 因此 lineTops 和 targetScroll 刻意每帧重算。
      */
     private void updateLyricPositions(double posY, double height, double width,
                                       LyricLine currentLyric, double playheadMs, boolean manualScroll) {
@@ -1243,7 +1243,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         }
     }
 
-    /** qplayer/AMLL interlude slot: a 150ms smoothstep open at both edges. */
+    /** qplayer/AMLL 间奏槽：两端各 150ms smoothstep 展开。 */
     private static double qplayerInterludeSlot(double positionMs, long startMs, long endMs, double height) {
         if (positionMs < startMs || positionMs > endMs) return 0.0;
         double elapsed = positionMs - startMs;
@@ -1266,8 +1266,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
         LyricLine nextLine = lines.get(nextLineIndex);
         double nextTop = nextLine.posY + scrollOffset;
-        // MuoniumPlayer's line top is already the native text-top coordinate. qplayer's baseline
-        // offset must not be added here; doing so pushed the dots toward the following lyric.
+        // MuoniumPlayer 的行顶已是原生文本顶坐标。qplayer 的基线
+        //偏移不得在此添加；那样做会把点推向下一首歌词。
         double totalGap = slotHeight + getLyricLineSpacing();
         double prevTextBottom = nextTop - totalGap;
         double nextTextTop = nextTop;
@@ -1508,8 +1508,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         double volumeBarWidth = coverSizeMax - FontManager.music40.getStringWidthD("I")
                 - FontManager.music40.getStringWidthD("J");
         double volumeBarXOffset = elementsXOffset + FontManager.music40.getStringWidthD("I") - 2;
-        // Both player surfaces delegate to this exact control so drag behavior, theme colors,
-        // hover animation and Dynamic Island feedback stay synchronized.
+        // 两个播放器界面都委托到这个确切控件，使拖拽行为、主题颜色、
+        //悬停动画和灵动岛反馈保持同步。
         boolean hoveringVolumeBar = volumeControl.render(mouseX, mouseY, elementsXOffset - 8,
                 volumeBarYOffset, progressBarWidth + 12.0, alpha);
 
@@ -1623,10 +1623,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             coverAlpha = 0.0f;
         }
 
-        // The blurred cover is intentionally oversized to keep its crop stable while the
-        // player resizes.  Do not rely solely on the parent stencil: auxiliary FBO/shader
-        // passes may temporarily disable it.  A projected scissor is the hard boundary that
-        // keeps this oversized texture inside the live player rectangle at every scale.
+        // 模糊封面刻意超大，使裁剪在
+        //播放器缩放时保持稳定。不要仅依赖父模板：辅助 FBO/着色器
+        //过程可能暂时禁用它。一个投影 scissor 是硬边界，
+        //使这个超大纹理在每个缩放下都保持在实时播放器矩形内。
         StencilClipManager.restoreActiveClip();
         ScissorClipManager.begin(posX, posY, width, height);
         try {
@@ -1664,8 +1664,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             Rect.draw(posX, posY, width, height, hexColor(0, 0, 0, alpha * .35f));
         } finally {
             ScissorClipManager.end();
-            // Image rendering changes raw GL state; the enclosing rounded-player clip must
-            // remain valid for controls and lyric layers rendered afterwards.
+            // 图像渲染改变原始 GL 状态；外层圆角播放器裁剪必须
+            //对之后渲染的控件和歌词层保持有效。
             StencilClipManager.restoreActiveClip();
         }
     }

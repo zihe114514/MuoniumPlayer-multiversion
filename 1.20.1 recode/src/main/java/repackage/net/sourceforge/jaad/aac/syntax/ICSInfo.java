@@ -47,12 +47,12 @@ public class ICSInfo implements Constants, ScaleFactorBands {
 	private WindowSequence windowSequence;
 	private int[] windowShape;
 	private int maxSFB;
-	//prediction
+	//预测
 	private boolean predictionDataPresent;
 	private ICPrediction icPredict;
 	boolean ltpData1Present, ltpData2Present;
 	private LTPrediction ltPredict1, ltPredict2;
-	//windows/sfbs
+	//窗口/sfb
 	private int windowCount;
 	private int windowGroupCount;
 	private int[] windowGroupLength;
@@ -73,7 +73,7 @@ public class ICSInfo implements Constants, ScaleFactorBands {
 		final SampleFrequency sf = conf.getSampleFrequency();
 		if(sf.equals(SampleFrequency.SAMPLE_FREQUENCY_NONE)) throw new AACException("invalid sample frequency");
 
-		in.skipBit(); //reserved
+		in.skipBit(); //保留
 		windowSequence = WindowSequence.forInt(in.readBits(2));
 		windowShape[PREVIOUS] = windowShape[CURRENT];
 		windowShape[CURRENT] = in.readBit();

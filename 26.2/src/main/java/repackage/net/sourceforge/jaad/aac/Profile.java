@@ -1,10 +1,10 @@
 package repackage.net.sourceforge.jaad.aac;
 
 /**
- * Different AAC profiles.
- * The function <code>Decoder.canDecode</code> specifies if the decoder can
- * handle a given format.
- * More precisely, the ISO standard calls these 'object types'.
+ * 各种 AAC profile。
+ * <code>Decoder.canDecode</code> 函数指明解码器能否
+ * 处理给定格式。
+ * 更确切地说，ISO 标准称之为“object types”（对象类型）。
  * @author in-somnia
  */
 public enum Profile {
@@ -32,9 +32,9 @@ public enum Profile {
 	};
 
 	/**
-	 * Returns a profile instance for the given index. If the index is not
-	 * between 1 and 23 inclusive, UNKNOWN is returned.
-	 * @return a profile with the given index
+	 * 返回给定索引对应的 profile 实例。如果索引不在
+	 * 1 到 23（含）之间，则返回 UNKNOWN。
+	 * @return 具有给定索引的 profile
 	 */
 	public static Profile forInt(int i) {
 		Profile p;
@@ -53,26 +53,26 @@ public enum Profile {
 	}
 
 	/**
-	 * Returns this profile's index between 1 and 23 or -1 if this is the
-	 * <code>UNKNOWN</code> instance.
-	 * @return the profile's index
+	 * 返回此 profile 在 1 到 23 之间的索引；如果这是
+	 * <code>UNKNOWN</code> 实例则返回 -1。
+	 * @return 该 profile 的索引
 	 */
 	public int getIndex() {
 		return num;
 	}
 
 	/**
-	 * Returns a short description of this profile.
-	 * @return the profile's description
+	 * 返回此 profile 的简短描述。
+	 * @return 该 profile 的描述
 	 */
 	public String getDescription() {
 		return descr;
 	}
 
 	/**
-	 * Returns a string representation of this profile. The method is
-	 * identical to <code>getDescription()</code>.
-	 * @return the profile's description
+	 * 返回此 profile 的字符串表示。该方法与
+	 * <code>getDescription()</code> 相同。
+	 * @return 该 profile 的描述
 	 */
 	@Override
 	public String toString() {
@@ -80,21 +80,21 @@ public enum Profile {
 	}
 
 	/**
-	 * Returns a boolean, indicating if this profile can be decoded by the
-	 * <code>Decoder</code>.
+	 * 返回一个布尔值，表明此 profile 是否可由
+	 * <code>Decoder</code> 解码。
 	 * @see Decoder#canDecode(repackage.net.sourceforge.jaad.aac.Profile) 
-	 * @return true if the profile is supported
+	 * @return 如果该 profile 受支持则返回 true
 	 */
 	public boolean isDecodingSupported() {
 		return supported;
 	}
 
 	/**
-	 * Returns a boolean, indicating if this profile contains error resilient
-	 * tools. That is, if it's index is higher than 16, since the first error
-	 * resilient profile is ER_AAC_LC (17).
-	 * This method is mainly used internally.
-	 * @return true if the profile uses error resilience
+	 * 返回一个布尔值，表明此 profile 是否包含错误弹性
+	 * 工具。也就是说，如果其索引大于 16，因为第一个错误弹性
+	 * profile 是 ER_AAC_LC (17)。
+	 * 此方法主要供内部使用。
+	 * @return 如果该 profile 使用错误弹性则返回 true
 	 */
 	public boolean isErrorResilientProfile() {
 		return num>16;

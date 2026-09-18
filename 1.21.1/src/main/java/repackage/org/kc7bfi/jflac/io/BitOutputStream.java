@@ -1,22 +1,22 @@
 package repackage.org.kc7bfi.jflac.io;
 
 /**
- * libFLAC - Free Lossless Audio Codec library Copyright (C) 2000,2001,2002,2003
+ * libFLAC -免费无损音频编解码器库版权所有(C) 2000,2001,2002,2003
  * Josh Coalson
  * <p>
- * This library is free software; you can redistribute it and/or modify it under
- * the terms of the GNU Library General Public License as published by the Free
- * Software Foundation; either version 2 of the License, or (at your option) any
- * later version.
+ * 此库是自由软件；您可以重新分发和/或修改它
+ * @return 字符串描述
+ * 软件基础；许可证第2版，或（由您选择）任何
+ * 更高版本。
  * <p>
- * This library is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
- * FOR A PARTICULAR PURPOSE. See the GNU Library General Public License for more
- * details.
+ * 此库的分发是希望它有用，但没有
+ * 由 Free Software Foundation 发布的 GNU 库通用公共许可证的条款
+ * 用于特定目的。有关更多信息，请参阅GNU库通用公共许可证
+ * 详情。
  * <p>
- * You should have received a copy of the GNU Library General Public License
- * along with this library; if not, write to the Free Software Foundation, Inc.,
- * 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ * 您应该已经收到了GNU库通用公共许可证的副本
+ * 不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保
+ * （详见本库）；若没有，请致信 Free Software Foundation, Inc.,
  */
 
 import repackage.org.kc7bfi.jflac.util.CRC16;
@@ -27,14 +27,14 @@ import java.io.OutputStream;
 
 
 /**
- * Bit-wide output stream.
+ * 位宽输出流。
  * @author kc7bfi
  */
 public class BitOutputStream {
     private static final int BITS_PER_BLURB = 8;
     //private static final int BITS_PER_BLURB_LOG2 = 3;
     //private static final int BYTES_PER_BLURB = 1;
-    //private static final byte BLURB_TOP_BIT_ONE = ((byte) 0x80);
+    //位宽输出流。
     private static final long[] MASK32 = new long[]{0, 0x0000000000000001, 0x0000000000000003, 0x0000000000000007, 0x000000000000000F,
             0x000000000000001F, 0x000000000000003F, 0x000000000000007F, 0x00000000000000FF, 0x00000000000001FF, 0x00000000000003FF,
             0x00000000000007FF, 0x0000000000000FFF, 0x0000000000001FFF, 0x0000000000003FFF, 0x0000000000007FFF, 0x000000000000FFFF,
@@ -50,10 +50,10 @@ public class BitOutputStream {
             0xFFFFFFFFFFFFFFFFL};
 
     private byte[] buffer = new byte[0];
-    private int outCapacity = 0; // in blurbs
+    private int outCapacity = 0; // 以 blurb 为单位
     private int outBlurbs = 0;
     private int outBits = 0;
-    private int totalBits = 0; // must always == BITS_PER_BLURB*blurbs+bits
+    private int totalBits = 0; // 以 blurb 为单位
     private int consumedBlurbs = 0;
     private int consumedBits = 0;
     private int totalConsumedBits = 0;
@@ -61,11 +61,11 @@ public class BitOutputStream {
     private OutputStream os;
 
     /*
-     * WATCHOUT: The current implentation is not friendly to shrinking, i.e. it
-     * does not shift left what is consumed, it just chops off the end, whether
-     * there is unconsumed data there or not. This is OK because currently we
-     * never shrink the buffer, but if this ever changes, we'll have to do some
-     * fixups here.
+     * 必须始终 == BITS_PER_BLURB*blurbs+bits
+     * 注意：当前实现不适合收缩，即
+     * 是否有未消耗的数据。这没关系，因为目前我们
+     * 永远不要缩小缓冲区，但如果这种情况发生变化，我们必须做一些
+     * 此处修复。
      */
     private boolean resize(int newCapacity) {
         if (outCapacity >= newCapacity) return true;
@@ -99,65 +99,65 @@ public class BitOutputStream {
     }
     
     /*
-    private int readFromStream() throws IOException {
-        // first shift the unconsumed buffer data toward the front as much as possible
+    它不会将已消费部分左移，而只是直接截掉末尾，无论
+        //首先将未消耗的缓冲区数据尽可能向前移动
         if (totalConsumedBits >= BITS_PER_BLURB) {
             int l = 0;
             int r = consumedBlurbs;
             int r_end = inBlurbs + ((inBits != 0) ? 1 : 0);
             for (; r < r_end; l++, r++)
-                buffer[l] = buffer[r];
-            for (; l < r_end; l++)
+                buffer [l] = buffer [r];
+            for(; l < r_end; l + +)
                 buffer[l] = 0;
-            inBlurbs -= consumedBlurbs;
+            inBlurbs - = consumedBlurbs;
             totalBits -= consumedBlurbs << 3;
             consumedBlurbs = 0;
             totalConsumedBits = consumedBits;
         }
         
-        // grow if we need to
-        if (capacity <= 1) resize(16);
+        // 必要时扩容
+        // 必要时扩容
         
-        // set the target for reading, taking into account blurb alignment
+        //设置阅读目标，同时考虑模糊对齐
         // blurb == byte, so no gyrations necessary:
-        int bytes = capacity - inBlurbs;
+        // blurb == byte，因此无需复杂处理：
         
-        // finally, read in some data
-        bytes = is.read(buffer, inBlurbs, bytes);
-        if (bytes <= 0) throw new EOFException();
+        // 最后，读入一些数据
+        // 最后，读入一些数据
+        if(bytes < = 0)抛出新的EOFException() ；
         
-        // now we have to handle partial blurb cases:
+        //现在我们必须处理部分简报案例：
         // blurb == byte, so no gyrations necessary:
-        inBlurbs += bytes;
-        totalBits += bytes << 3;
+        inBlurbs + =字节；
+        totalBits + = bytes < < 3;
         return bytes;
     }
     */
 
     /**
-     * The constructor.
-     * @param os    The InputStream to read bits from
+     * 构造函数。
+      * @param os 从中读取位的 InputStream
      */
     public BitOutputStream(OutputStream os) {
         this.os = os;
     }
 
     /**
-     * The constructor.
+     * 构造函数。
      */
     public BitOutputStream() {
     }
 
     /** TODO
      */
-    //public void clear() {
+    //@param os    从中读取位的 InputStream
     //    
     //}
 
     /**
-     * Concatinate one InputBitStream to the end of this one.
-     * @param src   The inputBitStream to copy
-     * @return True if copy was successful
+     * 将一个InputBitStream连接到此InputBitStream的末尾。
+     * @param src 要复制的inputBitStream
+     * @return 如果复制成功，则为True
      */
     public boolean concatenateAligned(BitOutputStream src) {
         int bitsToAdd = src.totalBits - src.totalConsumedBits;
@@ -183,73 +183,73 @@ public class BitOutputStream {
     }
 
     /**
-     * Reset the read CRC-16 value.
-     * @param seed  The initial CRC-16 value
+     * 重置读取CRC-16值。
+     * @param seed CRC-16初始值
      */
     public void resetReadCRC16(short seed) {
         readCRC16 = seed;
     }
 
     /**
-     * return the read CRC-16 value.
-     * @return The read CRC-16 value
+     * blurb == byte，因此无需复杂处理：
+     * @return 读CRC-16值
      */
     public short getReadCRC16() {
         return readCRC16;
     }
 
     /**
-     * return the write CRC-16 value.
-     * @return The write CRC-16 value
+     * 返回写入CRC-16值。
+     * @return 写入CRC-16值
      */
     public short getWriteCRC16() {
         return CRC16.calc(buffer, outBlurbs);
     }
 
     /**
-     * return the write CRC-8 value.
-     * @return The write CRC-8 value
+     * 返回write CRC-8值。
+     * @return 写入CRC-8值
      */
     public byte getWriteCRC8() {
         return CRC8.calc(buffer, outBlurbs);
     }
 
     /**
-     * Test if the Bit Stream is byte aligned.
-     * @return True of bit stream is byte aligned
+     * 测试位流是否按字节对齐。
+     * 测试位流是否按字节对齐。
      */
     public boolean isByteAligned() {
         return ((outBits & 7) == 0);
     }
 
     /**
-     * Test if the Bit Stream consumed bits is byte aligned.
-     * @return True of bit stream consumed bits is byte aligned
+     * 测试比特流消耗的比特是否字节对齐。
+     * 返回读取到的 CRC-16 值。
      */
     public boolean isConsumedByteAligned() {
         return ((consumedBits & 7) == 0);
     }
 
     /**
-     * return the number of bits to read to align the byte.
-     * @return The number of bits to align the byte
+     * @return 位流已消费位按字节对齐时返回 true
+     * @return 对齐字节的位数
      */
     public int bitsLeftForByteAlignment() {
         return 8 - (consumedBits & 7);
     }
 
     /**
-     * return the number of bytes left to read.
-     * @return The number of bytes left to read
+     * 返回要读取的剩余字节数。
+     * @return 剩余可读字节数
      */
     public int getInputBytesUnconsumed() {
         return (totalBits - totalConsumedBits) >> 3;
     }
 
     /**
-     * Write zero bits.
-     * @param bits  The number of zero bits to write
-     * @throws IOException  On write error
+     * @return 位流按字节对齐时返回 true
+     * @param bits 要写入的零位数
+     * @throws 写入时IOException错误
      */
     public void writeZeroes(int bits) throws IOException {
         if (bits == 0) return;
@@ -268,10 +268,10 @@ public class BitOutputStream {
     }
 
     /**
-     * Write a true/false integer.
-     * @param val   The true/false value
-     * @param bits  The bit size to write
-     * @throws IOException  On write error
+     * 写入零位。
+     * 写入一个 true/false 整数。
+     * @param val   true/false 值
+     * @throws 写入时IOException错误
      */
     public void writeRawUInt(boolean val, int bits) throws IOException {
         writeRawUInt((val) ? 1 : 0, bits);
@@ -280,17 +280,17 @@ public class BitOutputStream {
     public void writeRawUInt(int val, int bits) throws IOException {
         if (bits == 0) return;
 
-        // inline the size check so we don't incure a function call unnecessarily
+        // 内联大小检查，这样我们就不会产生不必要的函数调用
         if ((outCapacity << 3) < totalBits + bits) {
             if (!ensureSize(bits)) throw new IOException("Memory allocation error");
         }
 
-        // zero-out unused bits; WATCHOUT: other code relies on this, so this needs to stay
-        if (bits < 32) val &= (~(0xffffffff << bits)); // zero-out unused bits
+        // zero-out unused bits; WATCHOUT:其他代码依赖于此，因此需要保留
+        if (bits < 32) val &= (~(0xffffffff << bits)); // 零输出未使用位
         totalBits += bits;
         while (bits > 0) {
             int n = BITS_PER_BLURB - outBits;
-            if (n == BITS_PER_BLURB) { // i.e. outBits == 0
+            if (n == BITS_PER_BLURB) { // 即outBits = = 0
                 if (bits < BITS_PER_BLURB) {
                     buffer[outBlurbs] = (byte) val;
                     outBits = bits;
@@ -302,7 +302,7 @@ public class BitOutputStream {
                     int k = bits - BITS_PER_BLURB;
                     buffer[outBlurbs++] = (byte) (val >> k);
 
-                    // we know k < 32 so no need to protect against the gcc bug mentioned above
+                    // 我们知道k < 32 ，因此无需防范上述gcc漏洞
                     val &= (~(0xffffffff << k));
                     bits -= BITS_PER_BLURB;
                 }
@@ -320,7 +320,7 @@ public class BitOutputStream {
                 buffer[outBlurbs] <<= n;
                 buffer[outBlurbs] |= (val >> k);
 
-                // we know n > 0 so k < 32 so no need to protect against the gcc bug mentioned above
+                // 我们知道n > 0 ，因此k < 32 ，因此无需防范上述gcc错误
                 val &= (~(0xffffffff << k));
                 bits -= n;
                 outBlurbs++;
@@ -351,7 +351,7 @@ public class BitOutputStream {
                     int k = bits - BITS_PER_BLURB;
                     buffer[outBlurbs++] = (byte) (val >> k);
 
-                    // we know k < 64 so no need to protect against the gcc bug mentioned above
+                    // @param bits  要写入的位数
                     val &= (~(0xffffffffffffffffL << k));
                     bits -= BITS_PER_BLURB;
                 }
@@ -361,7 +361,7 @@ public class BitOutputStream {
                 buffer[outBlurbs] <<= n;
                 buffer[outBlurbs] |= (val >> k);
 
-                // we know n > 0 so k < 64 so no need to protect against the gcc bug mentioned above
+                // 我们已知 k < 64，因此无需防范上述 gcc bug
                 val &= (~(0xffffffffffffffffL << k));
                 bits -= n;
                 outBits += n;
@@ -374,7 +374,7 @@ public class BitOutputStream {
     }
 
     public void writeRawUIntLittleEndian(int val) throws IOException {
-        // NOTE: we rely on the fact that write_raw_uint32() masks out the unused bits
+        // NOTE: 我们依赖于write_raw_uint32()掩蔽未使用的位
         writeRawUInt(val, 8);
         writeRawUInt(val >> 8, 8);
         writeRawUInt(val >> 16, 8);
@@ -382,7 +382,7 @@ public class BitOutputStream {
     }
 
     public void writeByteBlock(byte[] vals, int nvals) throws IOException {
-        // this could be faster but currently we don't need it to be
+        // 我们已知 n > 0 故 k < 64，因此无需防范上述 gcc bug
         for (int i = 0; i < nvals; i++) {
             writeRawUInt((int) (vals[i]), 8);
         }
@@ -401,9 +401,9 @@ public class BitOutputStream {
 
     public int riceBits(int val, int parameter) {
         int msbs, uval;
-        // fold signed to unsigned
+        // 已签名到未签名的折叠
         if (val < 0) {
-            // equivalent to (unsigned)(((--val) < < 1) - 1); but without the overflow problem at MININT
+            // 这可以更快，但目前我们不需要
             uval = ((-(++val)) << 1) + 1;
         } else {
             uval = val << 1;
@@ -412,39 +412,39 @@ public class BitOutputStream {
         return 1 + parameter + msbs;
     }
     /*
-     * DRR FIX # ifdef SYMMETRIC_RICE boolean
-     * write_symmetric_rice_signed(BitBuffer8 * bb, int val, unsigned parameter) {
-     * unsigned total_bits, interesting_bits, msbs; uint32 pattern;
+     * DRR修复# ifdef SYMMETRIC_RICE布尔值
+     * 等价于 (unsigned)(((--val) < < 1) - 1)；但没有 MININT 处的溢出问题
+     * unsigned total_bits, interesting_bits, msbs; uint32模式;
      *
      * ASSERT(0 != bb); ASSERT(0 != buffer); ASSERT(parameter <= 31); // init
-     * pattern with the unary end bit and the sign bit if (val < 0) { pattern =
-     * 3; val = -val; } else pattern = 2;
+     * 模式，具有一元结束位和符号位if(val < 0) {模式=
+     * 3; val = -val;} else pattern = 2;
      *
-     * msbs = val >> parameter; interesting_bits = 2 + parameter; total_bits =
+     * msbs = val > >参数； interesting_bits = 2 +参数； total_bits =
      * interesting_bits + msbs; pattern < <= parameter; pattern |= (val & ((1 < <
-     * parameter) - 1)); // the binary LSBs
+     * 参数） - 1 ） ）;//二进制LSB
      *
      * if (total_bits <= 32) { if (!write_raw_uint32(bb, pattern, total_bits))
-     * return false; } else { // write the unary MSBs if (!write_zeroes(bb,
-     * msbs)) return false; // write the unary end bit, the sign bit, and binary
+     * return false;} else {//写入一元MSB if(! write_zeroes(bb,
+     * msbs)) return false;//写入一元结束位、符号位和二进制
      * LSBs if (!write_raw_uint32(bb, pattern, interesting_bits)) return false; }
-     * return true; }
+     * 返回true
      *
      * boolean write_symmetric_rice_signed_escape(BitBuffer8 * bb, int val,
      * unsigned parameter) { unsigned total_bits, val_bits; uint32 pattern;
      *
-     * ASSERT(0 != bb); ASSERT(0 != buffer); ASSERT(parameter <= 31);
+     * ASSERT(0! = bb); ASSERT(0! = buffer); ASSERT(parameter < = 31);
      *
      * val_bits = bitmath_silog2(val); total_bits = 2 + parameter + 5 +
      * val_bits;
      *
-     * if (total_bits <= 32) { pattern = 3; pattern < <= (parameter + 5);
-     * pattern |= val_bits; pattern < <= val_bits; pattern |= (val & ((1 < <
-     * val_bits) - 1)); if (!write_raw_uint32(bb, pattern, total_bits)) return
-     * false; } else { // write the '-0' escape code first if
+     * if(total_bits < = 32) {pattern = 3; pattern < < = (parameter + 5);
+     * 模式| = val_bits;模式< < = val_bits;模式| = (val & ((1 < <
+     * val_bits) - 1)) ； if(! write_raw_uint32(bb, pattern, total_bits))返回
+     * false;} else {//如果
      * (!write_raw_uint32(bb, 3 u < < parameter, 2 + parameter)) return false; //
      * write the length if (!write_raw_uint32(bb, val_bits, 5)) return false; //
-     * write the value if (!write_raw_int32(bb, val, val_bits)) return false; }
+     * 写入值if(! write_raw_int32(bb, val, val_bits))返回false;}
      * return true; } # endif // ifdef SYMMETRIC_RICE
      */
 
@@ -455,9 +455,9 @@ public class BitOutputStream {
         int uval;
         int pattern;
 
-        // fold signed to unsigned
+        // 已签名到未签名的折叠
         if (val < 0) {
-            // equivalent to (unsigned)(((--val) < < 1) - 1); but without the overflow problem at MININT
+            // 这可以更快，但目前我们不需要
             uval = ((-(++val)) << 1) + 1;
         } else {
             uval = val << 1;
@@ -465,14 +465,14 @@ public class BitOutputStream {
         msbs = uval >> parameter;
         interestingBits = 1 + parameter;
         totalBits = interestingBits + msbs;
-        pattern = 1 << parameter; /* the unary end bit */
-        pattern |= (uval & ((1 << parameter) - 1)); /* the binary LSBs */
+        pattern = 1 << parameter; /* 一元端位*/
+        pattern |= (uval & ((1 << parameter) - 1)); /* 二进制LSB*/
         if (totalBits <= 32) {
             writeRawUInt(pattern, totalBits);
         } else {
-            /* write the unary MSBs */
+            /* 写入一元 MSB */
             writeZeroes(msbs);
-            /* write the unary end bit and binary LSBs */
+            /* 写入一元结束位和二元LSB*/
             writeRawUInt(pattern, interestingBits);
         }
     }
@@ -541,17 +541,17 @@ public class BitOutputStream {
     }
 
     /**
-     * Write zero bits to byte boundry.
-     * @throws IOException  On error writing to bit stream
+     * 将零位写入字节边界。
+     * 写入一元 MSB
      */
     public void zeroPadToByteBoundary() throws IOException {
-        // 0-pad to byte boundary
+        // @throws IOException 写入位流出错时抛出
         if ((outBits & 7) != 0) writeZeroes(8 - (outBits & 7));
     }
 
     /**
-     * Flush bit stream after aligning byte boundry.
-     * @throws IOException  On error writing.
+     * 零填充到字节边界
+     * 对齐字节边界后刷新位流。
      */
     public void flushByteAligned() throws IOException {
         zeroPadToByteBoundary();
@@ -561,13 +561,13 @@ public class BitOutputStream {
     }
 
     /*
-     * DRR FIX boolean peek_bit(unsigned * val, boolean(* read_callback) (byte
+     * @throws IOException 写入出错时抛出。
      * buffer[], unsigned * bytes, void * client_data), void * client_data) {
      *
      * while (1) { if (total_consumed_bits < total_bits) { val =
      * (buffer[consumed_blurbs] & BLURB_BIT_TO_MASK(consumed_bits)) ? 1 : 0;
-     * return true; } else { if (!read_from_client_(bb, read_callback,
-     * client_data)) return false; } } }
+     * return true;} else {if(! read_from_client_(bb, read_callback,
+     * client_data))返回false;}}}
      */
 
     /*
@@ -576,42 +576,42 @@ public class BitOutputStream {
      * buffer[], unsigned * bytes, void * client_data), void * client_data) {
      * uint32 sign = 0, lsbs = 0, msbs = 0;
      *
-     * ASSERT(0 != bb); ASSERT(0 != buffer); ASSERT(parameter <= 31); // read
-     * the unary MSBs and end bit if (!read_unary_unsigned(bb, & msbs,
+     * ASSERT(0! = bb); ASSERT(0! = buffer); ASSERT(参数< = 31);//读取
+     * 一元MSB和结束位if(! read_unary_unsigned(bb, & msbs,
      * read_callback, client_data)) return false; // read the sign bit if
-     * (!read_bit_to_uint32(bb, & sign, read_callback, client_data)) return
-     * false; // read the binary LSBs if (!read_raw_uint32(bb, & lsbs,
+     * (! read_bit_to_uint32(bb, & sign, read_callback, client_data))返回
+     * false;//读取二进制LSB if(! read_raw_uint32(bb, & lsbs,
      * parameter, read_callback, client_data)) return false; // compose the
-     * value val = (msbs < < parameter) | lsbs; if (sign) val = - (* val);
+     * value val = (msbs < < parameter) | lsbs; if(sign) val = - (* val);
      *
      * return true; } # endif // ifdef SYMMETRIC_RICE
      *
      * boolean read_rice_signed( BitBuffer8 * bb, int * val, unsigned parameter,
-     * boolean(* read_callback) (byte buffer[], unsigned * bytes, void *
-     * client_data), void * client_data) { uint32 lsbs = 0, msbs = 0; unsigned
+     * boolean(* read_callback) (字节缓冲区[],无符号*字节, void *
+     * client_data ） ， void * client_data ） {uint32 lsbs = 0 ， msbs = 0 ；无符号
      * uval;
      *
-     * ASSERT(0 != bb); ASSERT(0 != buffer); ASSERT(parameter <= 31); // read
-     * the unary MSBs and end bit if (!read_unary_unsigned(bb, & msbs,
+     * ASSERT(0! = bb); ASSERT(0! = buffer); ASSERT(参数< = 31);//读取
+     * 一元MSB和结束位if(! read_unary_unsigned(bb, & msbs,
      * read_callback, client_data)) return false; // read the binary LSBs if
      * (!read_raw_uint32(bb, & lsbs, parameter, read_callback, client_data))
-     * return false; // compose the value uval = (msbs < < parameter) | lsbs; if
-     * (uval & 1) val = - ((int) (uval >> 1)) - 1; else val = (int) (uval >> 1);
+     * return false;//compose the value uval = (msbs < < parameter) | lsbs; if
+     * (uval & 1) val = - ((int) (uval > > 1)) - 1 ；否则val = (int) (uval > > 1) ；
      *
-     * return true; }
+     * 返回true
      */
 
     /**
-     * Returns the totalBits.
-     * @return Returns the totalBits.
+     * 返回 totalBits。
+     * 返回 totalBits。
      */
     public int getTotalBits() {
         return totalBits;
     }
 
     /**
-     * Returns the totalBlurbs.
-     * @return Returns the totalBlurbs.
+     * 返回totalBlurbs。
+     * @return 返回totalBlurbs。
      */
     public int getTotalBlurbs() {
         return (totalBits + 7) / 8;

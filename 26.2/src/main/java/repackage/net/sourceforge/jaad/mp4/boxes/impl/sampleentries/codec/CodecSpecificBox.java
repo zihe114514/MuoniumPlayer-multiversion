@@ -5,8 +5,8 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.BoxImpl;
 
 /**
- * The <code>CodecSpecificBox</code> can be used instead of an <code>ESDBox</code>
- * in a sample entry. It contains <code>DecoderSpecificInfo</code>s.
+ * <code>CodecSpecificBox</code> 可在采样条目中代替 <code>ESDBox</code> 使用。
+ * 它含若干 <code>DecoderSpecificInfo</code>。
  *
  * @author in-somnia
  */

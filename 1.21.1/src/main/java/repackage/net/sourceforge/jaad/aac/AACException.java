@@ -3,8 +3,8 @@ package repackage.net.sourceforge.jaad.aac;
 import java.io.IOException;
 
 /**
- * Standard exception, thrown when decoding of an AAC frame fails.
- * The message gives more detailed information about the error.
+ * 标准异常，在 AAC 帧解码失败时抛出。
+ * 错误消息提供关于该错误的更多详细信息。
  * @author in-somnia
  */
 public class AACException extends IOException {

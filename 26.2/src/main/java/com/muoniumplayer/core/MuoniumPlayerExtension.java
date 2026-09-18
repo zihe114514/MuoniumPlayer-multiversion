@@ -28,7 +28,7 @@ public class MuoniumPlayerExtension {
 
     public static final String NAME = "MuoniumPlayer";
     public static final String AUTHOR = "MuoniumPlayer Contributors";
-    public static final String VERSION = "1.4.11";
+    public static final String VERSION = "1.4.12";
 
     @Getter
     private static final MuoniumPlayerExtension instance = new MuoniumPlayerExtension();
@@ -36,7 +36,7 @@ public class MuoniumPlayerExtension {
     @Getter
     private FontManager fontManager;
 
-    /** The music-player feature registered with the legacy OpenAPI bridge. */
+    /** 注册到旧版 OpenAPI 桥接上的音乐播放器功能。 */
     public OpenNCMScreen musicPlayerModule = new OpenNCMScreen();
     public MusicInfoWidget musicInfo = new MusicInfoWidget();
     public MusicLyricsWidget musicLyrics = new MusicLyricsWidget();
@@ -48,8 +48,8 @@ public class MuoniumPlayerExtension {
     public void init(OpenAPI api) {
         api.registerEvent(MuoniumPlayerEventHandler.getInstance());
 
-        // Restore all player preferences before the asynchronous account bootstrap
-        // can create an AudioPlayer. This includes the mod-owned persisted volume.
+        // 在异步账号引导可能创建 AudioPlayer 之前，先恢复所有播放器偏好。
+        // 这包括 mod 自有的持久化音量。
         HudConfig.load();
         this.musicInfo.volume.setValue((double) HudConfig.playerVolume);
         this.musicInfo.animatedCover.setValue(HudConfig.animatedCoverEnabled);

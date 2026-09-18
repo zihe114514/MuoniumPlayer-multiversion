@@ -1,36 +1,36 @@
 /*
  * 11/19/04        1.0 moved to LGPL.
- * 12/12/99        Initial version.    mdm@techie.com
+ * 1999年12月12日初始版本。mdm@techie.com
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
 package repackage.javazoom.jl.decoder;
 
 /**
- * Instances of <code>BitstreamException</code> are thrown
- * when operations on a <code>Bitstream</code> fail.
+ * 抛出<code> BitstreamException </code>实例
+ * 当<code>比特流</code>上的操作失败时。
  * <p>
- * The exception provides details of the exception condition
- * in two ways:
+ * 异常提供了异常条件的详细信息
+ * 有两种方式：
  * <ol><li>
- *        as an error-code describing the nature of the error
+ *        作为描述错误性质的错误码
  * </li><br></br><li>
- *        as the <code>Throwable</code> instance, if any, that was thrown
- *        indicating that an exceptional condition has occurred.
+ *        作为抛出的<code>可抛出的</code>实例（如果有）
+ *        指示发生了异常情况。
  * </li></ol></p>
  *
  * @author MDM    12/12/99
@@ -54,8 +54,8 @@ public class BitstreamException extends JavaLayerException implements BitstreamE
     }
 
     static public String getErrorString(int errorcode) {
-        // REVIEW: use resource bundle to map error codes
-        // to locale-sensitive strings.
+        // REVIEW：使用资源束把错误码映射
+        // 到本地化字符串。
 
         return "Bitstream errorCode " + Integer.toHexString(errorcode);
     }

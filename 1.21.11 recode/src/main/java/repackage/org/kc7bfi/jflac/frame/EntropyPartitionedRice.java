@@ -34,7 +34,7 @@ public class EntropyPartitionedRice extends EntropyCodingMethod {
     private static final int ENTROPY_CODING_METHOD_PARTITIONED_RICE_ESCAPE_PARAMETER = 15;
 
     /**
-     * Read compressed signal residual data.
+     * 读取压缩信号残差数据。
      *
      * @param partitionOrder 分区阶数
      * @param residual       残差信号（输出）
@@ -44,7 +44,7 @@ public class EntropyPartitionedRice extends EntropyCodingMethod {
      * @throws IOException从InputBitStream读取时出错
      */
     void readResidual(BitInputStream is, int predictorOrder, int partitionOrder, Header header, int[] residual) throws IOException {
-        //@param is                InputBitStream
+        // @param is                输入位流
         int sample = 0;
         int partitions = 1 << partitionOrder;
         int partitionSamples = partitionOrder > 0 ? header.blockSize >> partitionOrder : header.blockSize - predictorOrder;

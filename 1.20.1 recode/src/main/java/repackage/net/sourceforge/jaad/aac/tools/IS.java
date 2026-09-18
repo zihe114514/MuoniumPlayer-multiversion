@@ -7,7 +7,7 @@ import repackage.net.sourceforge.jaad.aac.syntax.ICSInfo;
 import repackage.net.sourceforge.jaad.aac.syntax.ICStream;
 
 /**
- * Intensity stereo
+ * 强度立体声
  * @author in-somnia
  */
 public final class IS implements Constants, ISScaleTable, HCB {

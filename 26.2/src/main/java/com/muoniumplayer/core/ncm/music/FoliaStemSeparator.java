@@ -13,7 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.concurrent.TimeUnit;
 
-/** HTDemucs ONNX adapter. It keeps the heavy separation in the downloaded Folia Python runtime. */
+/** HTDemucs ONNX 适配器。它把繁重的分离保留在下载的 Folia Python 运行时中。 */
 final class FoliaStemSeparator {
     private static final int MODEL_RATE = 44_100;
     private static final long TIMEOUT_SECONDS = 180L;
@@ -33,8 +33,8 @@ final class FoliaStemSeparator {
             input = File.createTempFile("folia-stems-", ".f32");
             output = File.createTempFile("folia-stems-", ".json");
             ByteBuffer bytes = ByteBuffer.allocate(samples.length * 8).order(ByteOrder.LITTLE_ENDIAN);
-            // The model is stereo. Analysis supplies mono, so both sides carry the same evidence;
-            // this preserves centre-vocal separation without pretending to invent a stereo image.
+            // 模型是立体声的。分析输入为单声道，因此两侧携带相同的证据；
+            // 这保留了中人声分离效果，而不会假装凭空构建立体声影像。
             for (float value : samples) bytes.putFloat(value);
             for (float value : samples) bytes.putFloat(value);
             Files.write(input.toPath(), bytes.array());

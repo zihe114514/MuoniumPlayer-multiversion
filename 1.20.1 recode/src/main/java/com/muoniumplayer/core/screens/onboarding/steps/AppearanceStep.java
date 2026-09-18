@@ -11,7 +11,7 @@ import com.muoniumplayer.core.screens.onboarding.OnboardingUi;
 import com.muoniumplayer.core.settings.HudSetting;
 import com.muoniumplayer.party.ui.PartyIcons;
 
-/** Appearance page built only from existing theme, font and animation settings. */
+/** 仅由既有主题、字体和动画设置构建的外观页。 */
 public final class AppearanceStep implements OnboardingStepView {
     @Override
     public void render(OnboardingController controller,

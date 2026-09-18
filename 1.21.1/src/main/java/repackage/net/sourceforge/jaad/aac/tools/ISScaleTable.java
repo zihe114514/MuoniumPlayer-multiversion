@@ -1,8 +1,7 @@
 package repackage.net.sourceforge.jaad.aac.tools;
 
 /**
- * Intensity stereo lookup table for all possible values for
- * 0.5<sup>0.25*scaleFactor</sup>.
+ * 强度立体声查找表，涵盖 0.5<sup>0.25*scaleFactor</sup> 的所有可能取值。
  * @author in-somnia
  */
 interface ISScaleTable {

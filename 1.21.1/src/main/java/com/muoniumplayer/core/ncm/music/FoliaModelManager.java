@@ -18,7 +18,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Downloads and verifies the two Folia analysis models plus the optional Python runtime. */
+/** 下载并校验两个 Folia 分析模型，外加可选的 Python 运行时。 */
 public final class FoliaModelManager {
     public enum Kind {
         BEAT_THIS("Beat This!", "beat_this.onnx", 83_077_778L,

@@ -50,6 +50,12 @@ error-report-*/
 # 酷狗 API 参考实现的两份本地副本（上游 zip 解包 + git clone），仅查阅用
 /.workbuddy/kugou-ref/
 /.workbuddy/kugou-zip/
+# 汽水 API 参考实现的上游 clone（自带 node_modules 与运行日志），仅查阅用
+/qishui-api-main/
+# 注释翻译用的四版本源码快照（约 3 500 个文件），随时可重新生成，不入库
+/src-zh/
+# 浏览器自动化调试期留下的会话日志
+/.playwright-cli/
 
 # 注释翻译 / 扫描用的一次性脚本与清单（长期保留的正式工具在 tools/ 下）
 /1.21.11 recode/*.py

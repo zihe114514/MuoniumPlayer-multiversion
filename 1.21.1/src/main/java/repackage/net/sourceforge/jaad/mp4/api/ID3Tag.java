@@ -16,21 +16,21 @@ class ID3Tag {
 	ID3Tag(DataInputStream in) throws IOException {
 		frames = new ArrayList<ID3Frame>();
 
-		//id3v2 header
+		//id3v2 头
 		tag = (in.read()<<16)|(in.read()<<8)|in.read(); //'ID3'
 		final int majorVersion = in.read();
-		in.read(); //revision
+		in.read(); //修订版本
 		flags = in.read();
 		len = readSynch(in);
 
 		if(tag==ID3_TAG&&majorVersion<=SUPPORTED_VERSION) {
 			if((flags&0x40)==0x40) {
-				//extended header; TODO: parse
+				//扩展头；TODO: 解析
 				final int extSize = readSynch(in);
 				in.skipBytes(extSize-6);
 			}
 
-			//read all id3 frames
+			//读取所有 id3 帧
 			int left = len;
 			ID3Frame frame;
 			while(left>0) {

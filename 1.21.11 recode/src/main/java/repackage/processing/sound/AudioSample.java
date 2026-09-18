@@ -137,7 +137,7 @@ public class AudioSample extends SoundObject {
 	 **/
 	public boolean isPlaying() {
 		// 仅依赖dataQueue.hasMore()是有问题的，因为它可以
-		// raise both false positives (return true for a split second after
+		// 会同时导致误报（在一瞬间返回 true
 		// dataQueue.clear()已被调用）以及假阴性
 		// 会同时产生误报（在
 		// 但尚未传输到队列中）。AudioSample类
@@ -163,7 +163,7 @@ public class AudioSample extends SoundObject {
 	 * @ webBrief更改播放器的振幅/音量。
 	 **/
 	public void amp(float amp) {
-		// Also keep the inherited field in step: SoundObject.play() re-applies it through
+		// 同时保持继承字段同步：SoundObject.play() 会通过
 		// setAmplitude() ，因此仅在端口上设置的振幅将被抛弃（并替换为
 		// 同时保持继承字段同步：SoundObject.play() 会通过
 		// 进入的卡组故意从零开始。
@@ -214,7 +214,7 @@ public class AudioSample extends SoundObject {
 	}
 
 	/**
-	 * Returns the duration of the audiosample in seconds.
+	  * 以秒为单位返回音频采样的持续时间。
 	 * 
 	 * @ webref采样： AudioSample
 	 * @ webBrief以秒为单位返回音频采样的持续时间。
@@ -376,7 +376,7 @@ public class AudioSample extends SoundObject {
 	}
 
 	/**
-	 * Starts the playback of the audiosample. Only plays to the end of the audiosample 
+	 * 开始播放 audiosample。仅播放到 audiosample 末尾
 	 * 如果之前调用了<b> cue() </b>或<b> pause() </b> ，则从提示位置恢复播放。
 	 * 
 	 * 由合成器开始执行此单元。输入端会从任何输出
@@ -385,7 +385,7 @@ public class AudioSample extends SoundObject {
 	 *            为半速并降一个八度。2 为双倍速度并升一个八度。
 	 * @param pos
 	 *            此声音单元的全景位置从-1.0 （左）到1.0
-	 *            (right). Only works for mono audiosamples!
+	 *            （右）。仅适用于单声道 audiosample！
 	 * 距上次播放命令经过的时间
 	 *            （右）。仅适用于单声道 audiosample！
 	 *            0.0 （完全静音）至1.0 （全音量）
@@ -432,7 +432,7 @@ public class AudioSample extends SoundObject {
 	 * FIXME 提示循环的位置必须以不同于
 	 * 简单的播放，因为向dataQueue.queueLoop()传递startFrame会导致
 	 * 循环的重复只能从该位置播放，而不是
-	 * jumping back to the very beginning of the sample after reaching the end
+	 * 到达末尾后跳回采样的最开始
 	 * 
 	 * @param cue 在循环应从开始的音频采样中的位置，在
 	 * 秒。public void loop （ float rate ， float pos ， float amp ， float add ， float
@@ -505,7 +505,7 @@ public class AudioSample extends SoundObject {
 	 */
 
 	/**
-	 * Starts the playback of the audiosample. Only plays to the end of the audiosample 
+	 * 开始播放 audiosample。仅播放到 audiosample 末尾
 	 * 如果之前调用了<b> cue() </b>或<b> pause() </b> ，则从提示位置恢复播放。
 	 * 
 	 * 由合成器开始执行此单元。输入端会从任何输出
@@ -517,7 +517,7 @@ public class AudioSample extends SoundObject {
 	 *            0.0 （完全静音）至1.0 （全音量）
 	 * @param pos
 	 *            此声音单元的全景位置从-1.0 （左）到1.0
-	 *            (right). Only works for mono audiosamples!
+	 *            （右）。仅适用于单声道 audiosample！
 	 * @param cue
 	 *            在音频样本中的位置，播放应从开始，在
 	 *            seconds.

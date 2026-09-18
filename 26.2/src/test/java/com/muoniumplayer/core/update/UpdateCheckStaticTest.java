@@ -29,7 +29,7 @@ class UpdateCheckStaticTest {
     private static final Path SHARED_JAVA = ProjectPaths.sharedJava();
 
     private static final String MC_VERSION = "26.2";
-    private static final String MOD_VERSION = "1.4.11";
+    private static final String MOD_VERSION = "1.4.12";
     private static final String LOADER_ID = "neoforge";
 
     @Test
@@ -149,12 +149,18 @@ class UpdateCheckStaticTest {
             assertTrue(url.startsWith("https://"), "清单源必须是 https：" + url);
             assertTrue(url.endsWith("update.json"), "清单源指向的必须是 update.json：" + url);
         }
-        assertEquals(5, UpdateChecker.MANIFEST_URLS.length,
-                "五个源分属不同 CDN / 加速入口，少一个就少一层兜底；加源/删源时一起改这条");
-        assertTrue(UpdateChecker.MANIFEST_URLS[0].contains("jsdmirror"),
-                "jsdmirror 排第一位：它回源最快（max-age=300），别把 raw 挪回最前面");
+        assertEquals(3, UpdateChecker.MANIFEST_URLS.length,
+                "三个源分属不同 CDN / 加速入口，少一个就少一层兜底；加源/删源时一起改这条");
+        assertTrue(UpdateChecker.MANIFEST_URLS[0].contains("ghfast"),
+                "ghfast 排第一位：它回源最快（max-age=300），别把 raw 挪回最前面");
         assertTrue(String.join("\n", UpdateChecker.MANIFEST_URLS).contains("ghfast"),
-                "ghfast.top 是 raw 的加速入口（max-age=300），少了它国内就只剩 jsDelivr 的旧缓存");
+                "ghfast.top 是 raw 的加速入口（max-age=300），国内得靠它和 gcore");
+        assertTrue(String.join("\n", UpdateChecker.MANIFEST_URLS).contains("raw.githubusercontent.com"),
+                "raw 直连必须留着：两个加速入口都被墙时它是最后一条路");
+        assertFalse(String.join("\n", UpdateChecker.MANIFEST_URLS).contains("jsdmirror"),
+                "cdn.jsdmirror.com 已从源里去掉，别再挂回来");
+        assertFalse(String.join("\n", UpdateChecker.MANIFEST_URLS).contains("cdn.jsdelivr.net"),
+                "cdn.jsdelivr.net 已从源里去掉（对 @main 是 12 小时缓存，会给旧清单）");
     }
 
     @Test

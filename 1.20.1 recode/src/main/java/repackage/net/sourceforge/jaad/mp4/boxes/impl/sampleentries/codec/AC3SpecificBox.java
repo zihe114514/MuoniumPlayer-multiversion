@@ -4,10 +4,9 @@ import java.io.IOException;
 import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 
 /**
- * This box contains parameters for AC-3 decoders. For more information see the
- * AC-3 specification "<code>ETSI TS 102 366 V1.2.1 (2008-08)</code>" at 
+ * 此 box 含 AC-3 解码器参数。更多信息见 AC-3 规范 "<code>ETSI TS 102 366 V1.2.1 (2008-08)</code>"，网址
  * <a href="http://www.etsi.org/deliver/etsi_ts/102300_102399/102366/01.02.01_60/ts_102366v010201p.pdf>
- * http://www.etsi.org/deliver/etsi_ts/102300_102399/102366/01.02.01_60/ts_102366v010201p.pdf</a>.
+ * http://www.etsi.org/deliver/etsi_ts/102300_102399/102366/01.02.01_60/ts_102366v010201p.pdf</a>。
  * 
  * @author in-somnia
  */
@@ -24,76 +23,70 @@ public class AC3SpecificBox extends CodecSpecificBox {
 	public void decode(MP4InputStream in) throws IOException {
 		final long l = in.readBytes(3);
 
-		//2 bits fscod
+		//2 位 fscod
 		fscod = (int) ((l>>22)&0x3);
-		//5 bits bsid
+		//5 位 bsid
 		bsid = (int) ((l>>17)&0x1F);
-		//3 bits bsmod
+		//3 位 bsmod
 		bsmod = (int) ((l>>14)&0x7);
-		//3 bits acmod
+		//3 位 acmod
 		acmod = (int) ((l>>11)&0x7);
-		//1 bit lfeon
+		//1 位 lfeon
 		lfeon = ((l>>10)&0x1)==1;
-		//5 bits bitRateCode
+		//5 位 bitRateCode
 		bitRateCode = (int) ((l>>5)&0x1F);
-		//5 bits reserved
+		//5 位保留
 	}
 
 	/**
-	 * This field has the same meaning and is set to the same value as the fscod
-	 * field in the AC-3 bitstream.
+	 * 此字段含义相同，并设为与 AC-3 比特流中 fscod 字段相同的值。
 	 * 
-	 * @return the value of the 'fscod' field
+	 * @return 'fscod' 字段的值
 	 */
 	public int getFscod() {
 		return fscod;
 	}
 
 	/**
-	 * This field has the same meaning and is set to the same value as the bsid 
-	 * field in the AC-3 bitstream.
+	 * 此字段含义相同，并设为与 AC-3 比特流中 bsid 字段相同的值。
 	 * 
-	 * @return the value of the 'bsid' field
+	 * @return 'bsid' 字段的值
 	 */
 	public int getBsid() {
 		return bsid;
 	}
 
 	/**
-	 * This field has the same meaning and is set to the same value as the bsmod
-	 * field in the AC-3 bitstream.
+	 * 此字段含义相同，并设为与 AC-3 比特流中 bsmod 字段相同的值。
 	 * 
-	 * @return the value of the 'acmod' field
+	 * @return 'acmod' 字段的值
 	 */
 	public int getBsmod() {
 		return bsmod;
 	}
 
 	/**
-	 * This field has the same meaning and is set to the same value as the acmod
-	 * field in the AC-3 bitstream.
+	 * 此字段含义相同，并设为与 AC-3 比特流中 acmod 字段相同的值。
 	 * 
-	 * @return the value of the 'acmod' field
+	 * @return 'acmod' 字段的值
 	 */
 	public int getAcmod() {
 		return acmod;
 	}
 
 	/**
-	 * This field has the same meaning and is set to the same value as the lfeon
-	 * field in the AC-3 bitstream.
+	 * 此字段含义相同，并设为与 AC-3 比特流中 lfeon 字段相同的值。
 	 * 
-	 * @return the value of the 'lfeon' field
+	 * @return 'lfeon' 字段的值
 	 */
 	public boolean isLfeon() {
 		return lfeon;
 	}
 
 	/**
-	 * This field indicates the data rate of the AC-3 bitstream in kbit/s, as 
-	 * shown in the following table:
+	 * 此字段指示 AC-3 比特流的数据率（kbit/s），如下表：
 	 * <table>
-	 * <tr><th>bit rate code</th><th>bit rate (kbit/s)</th></tr>
+	 * <tr><th>比特率代码</th><th>比特率（kbit/s）</th></tr>
 	 * <tr><td>0</td><td>32</td></tr>
 	 * <tr><td>1</td><td>40</td></tr>
 	 * <tr><td>2</td><td>48</td></tr>
@@ -115,7 +108,7 @@ public class AC3SpecificBox extends CodecSpecificBox {
 	 * <tr><td>18</td><td>640</td></tr>
 	 * </table>
 	 * 
-	 * @return the bit rate code
+	 * @return 比特率代码
 	 */
 	public int getBitRateCode() {
 		return bitRateCode;

@@ -5,13 +5,13 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The Movie Fragment Random Access Offset Box provides a copy of the length
- * field from the enclosing Movie Fragment Random Access Box. It is placed last
- * within that box, so that the size field is also last in the enclosing Movie
- * Fragment Random Access Box. When the Movie Fragment Random Access Box is also
- * last in the file this permits its easy location. The size field here must be
- * correct. However, neither the presence of the Movie Fragment Random Access
- * Box, nor its placement last in the file, are assured.
+ * Movie Fragment Random Access Offset Box 提供外层 Movie Fragment
+ * Random Access Box 中 length 字段的一份拷贝。它被置于该 box 的
+ * 末尾，使 size 字段也位于外层 Movie Fragment Random Access Box 的
+ * 末尾。当 Movie Fragment Random Access Box 也位于文件末尾时，
+ * 这便于其定位。此处的 size 字段必须正确。
+ * 但 Movie Fragment Random Access Box 的存在、或其位于文件末尾，
+ * 均不保证。
  *
  * @author in-somnia
  */

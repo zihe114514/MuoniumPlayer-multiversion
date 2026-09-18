@@ -8,7 +8,7 @@ import com.muoniumplayer.core.screens.onboarding.OnboardingStepView;
 import com.muoniumplayer.core.screens.onboarding.OnboardingUi;
 import com.muoniumplayer.party.ui.PartyIcons;
 
-/** Optional 智能混音 model installer shown during first-run setup. */
+/** 首次运行设置期间显示的可选 智能混音 模型安装器。 */
 public final class AutomixModelStep implements OnboardingStepView {
     private static final FoliaModelManager.Kind[] KINDS = {
             FoliaModelManager.Kind.BEAT_THIS,

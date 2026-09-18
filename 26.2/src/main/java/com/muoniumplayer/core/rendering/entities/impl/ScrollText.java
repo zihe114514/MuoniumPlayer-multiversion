@@ -53,9 +53,9 @@ public class ScrollText implements SharedConstants {
     public boolean isScrolling = false;
 
     public void render(CFontRenderer fr, String text, double x, double y, double width, int color) {
-        // Layout can transiently produce a negative max width while a panel is animating or being
-        // rebuilt. Skia Rect::makeXYWH rejects negative widths, and one bad label must not take down
-        // the whole screen, so treat every non-positive/non-finite width as "no drawable space".
+        // 在面板正在动画或重建期间，布局可能瞬时产生负的最大宽度，
+        // Skia Rect::makeXYWH 拒绝负宽度，而一个错误的标签绝不能拖垮
+        // 整个界面，因此把每个非正/非有限宽度都视为"无可绘制空间"。
         if (fr == null || text == null || text.isEmpty()
                 || !Double.isFinite(width) || width <= 0.0) {
             isScrolling = false;

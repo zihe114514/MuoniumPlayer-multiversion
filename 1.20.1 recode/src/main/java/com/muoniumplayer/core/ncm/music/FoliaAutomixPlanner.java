@@ -3,15 +3,15 @@ package com.muoniumplayer.core.ncm.music;
 import java.util.Locale;
 
 /**
- * Evidence-first Folia-style transition planner.
+ * 证据优先的 Folia 风格过渡规划器。
  *
- * <p>It deliberately separates selecting a transition family from scheduling gains. The legacy planner
- * remains available and is selected by {@link AutomixSettings.Engine}; this class never changes user
- * DSP preferences, it only chooses a musically safer plan for the measured pair.</p>
+ * <p>它刻意把选择过渡族与调度增益分开。旧规划器
+ * 仍可用，由 {@link AutomixSettings.Engine} 选择；本类绝不改变用户的
+ * DSP 偏好，只为测得的配对选择一个更安全的音乐计划。</p>
  *
- * <p>The implementation is repository-native Java and uses the existing offline analysis primitives.
- * The model-backed Beat This and stem phases are layered on later; when a model is unavailable the same
- * policy runs on the deterministic analysis fallback.</p>
+ * <p>实现是仓库原生 Java，使用既有的离线分析原语。
+ * 模型驱动的 Beat This 与音轨分离阶段在后续叠加；当模型不可用时，同一策略
+ * 在确定性分析回退上运行。</p>
  */
 final class FoliaAutomixPlanner {
 
@@ -279,7 +279,7 @@ final class FoliaAutomixPlanner {
         return Math.max(MIN_OVERLAP_MILLIS, Math.min(MAX_OVERLAP_MILLIS, (long) wanted));
     }
 
-    /** Folia rounds to whole phrases, bars or beats, largest unit that fits. */
+    /** Folia 按整句、小节或拍取整，取能容纳的最大单位。 */
     private static double quantiseToMusic(double seconds, double beatMillis, double maxMillis) {
         if (!(beatMillis > 0.0)) return Math.min(seconds, maxMillis);
         double wantedBeats = seconds / beatMillis;

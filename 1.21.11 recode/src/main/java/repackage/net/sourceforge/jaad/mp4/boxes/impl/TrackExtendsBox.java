@@ -43,7 +43,7 @@ public class TrackExtendsBox extends FullBox {
 	/**
 	 * track ID 标识该轨道；它应为 Movie Box 中某轨道的轨道 ID。
 	 *
-	 * @return track ID
+	  * @return 轨道 ID
 	 */
 	public long getTrackID() {
 		return trackID;

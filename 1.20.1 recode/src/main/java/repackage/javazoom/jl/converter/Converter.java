@@ -1,20 +1,20 @@
 /*
- * 11/19/04 1.0 moved to LGPL.
- * 12/12/99 Original version. mdm@techie.com.
+ * 本程序为自由软件；你可以在自由软件基金会发布的
+ * 1999年12月12日原始版本。mdm@techie.com。
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
@@ -27,12 +27,12 @@ import java.nio.file.Files;
 
 
 /**
- * The <code>Converter</code> class implements the conversion of
- * an MPEG audio file to a .WAV file. To convert an MPEG audio stream,
- * just create an instance of this class and call the convert()
- * method, passing in the names of the input and output files. You can
- * pass in optional <code>ProgressListener</code> and
- * <code>Decoder.Params</code> objects also to customize the conversion.
+ * <code> Converter </code>类实现了
+ * 方法，传入输入和输出文件名。你还可以
+ * 只需创建此类的实例并调用convert()
+ * <code>Decoder.Params</code> 对象来自定义转换。
+ * 传入可选的<code> ProgressListener </code>和
+ * 创建一个新的转换器实例。
  *
  * @author MDM 12/12/99
  * @since 0.0.7
@@ -40,7 +40,7 @@ import java.nio.file.Files;
 public class Converter {
 
     /**
-     * Creates a new converter instance.
+     * 解码器应提供已解码的
      */
     public Converter() {
     }
@@ -107,10 +107,10 @@ public class Converter {
                         progressListener.readFrame(frame, header);
 
                         if (output == null) {
-                            // REVIEW: Incorrect functionality.
-                            // the decoder should provide decoded
-                            // frequency and channels output as it may differ from
-                            // the source (e.g. when downmixing stereo to mono.)
+                            // 审核：功能不正确。
+                            // 对解码器的判断有点靠不住。尽管
+                            // 频率和信道输出，因为它可能与
+                            // 音源（例如，将立体声降混成单声道时。）
                             int channels = (header.mode() == Header.SINGLE_CHANNEL) ? 1 : 2;
                             int freq = header.frequency();
                             output = new WaveFileObuffer(channels, freq, destName);
@@ -119,9 +119,9 @@ public class Converter {
 
                         Obuffer decoderOutput = decoder.decodeFrame(header, stream);
 
-                        // REVIEW: the way the output buffer is set
-                        // on the decoder is a bit dodgy. Even though
-                        // this exception should never happen, we test to be sure.
+                        // 回顾：输出缓冲区的设置方式
+                        // 这个异常本不该发生，我们仍加以校验以确保。
+                        // 此接口供 Converter 用来提供
                         if (decoderOutput != output)
                             throw new InternalError("Output buffers are different.");
 
@@ -187,10 +187,10 @@ public class Converter {
                         progressListener.readFrame(frame, header);
 
                         if (output == null) {
-                            // REVIEW: Incorrect functionality.
-                            // the decoder should provide decoded
-                            // frequency and channels output as it may differ from
-                            // the source (e.g. when downmixing stereo to mono.)
+                            // 审核：功能不正确。
+                            // 对解码器的判断有点靠不住。尽管
+                            // 频率和信道输出，因为它可能与
+                            // 音源（例如，将立体声降混成单声道时。）
                             int channels = (header.mode() == Header.SINGLE_CHANNEL) ? 1 : 2;
                             int freq = header.frequency();
                             output = new WaveStreamObuffer(channels, freq);
@@ -199,9 +199,9 @@ public class Converter {
 
                         Obuffer decoderOutput = decoder.decodeFrame(header, stream);
 
-                        // REVIEW: the way the output buffer is set
-                        // on the decoder is a bit dodgy. Even though
-                        // this exception should never happen, we test to be sure.
+                        // 回顾：输出缓冲区的设置方式
+                        // 这个异常本不该发生，我们仍加以校验以确保。
+                        // 此接口供 Converter 用来提供
                         if (decoderOutput != output)
                             throw new InternalError("Output buffers are different.");
 
@@ -238,7 +238,7 @@ public class Converter {
     }
 
     protected InputStream openInput(String fileName) throws IOException {
-        // ensure name is abstract path name
+        // 确保名称是抽象路径名称
         File file = new File(fileName);
         InputStream fileIn = Files.newInputStream(file.toPath());
 
@@ -246,101 +246,101 @@ public class Converter {
     }
 
     /**
-     * This interface is used by the Converter to provide
-     * notification of tasks being carried out by the converter,
-     * and to provide new information as it becomes available.
+     * 转换任务执行情况的通知，
+     * 并在新信息可用时提供它。
+     * 转换完成。Param1 包含
      */
     public interface ProgressListener {
         int UPDATE_FRAME_COUNT = 1;
 
         /**
-         * Conversion is complete. Param1 contains the time
-         * to convert in milliseconds. Param2 contains the number
-         * of MPEG audio frames converted.
+         * 已转换 MPEG 音频帧的时间。
+         * 以毫秒为单位进行转换。Param2包含数字
+         * 通知监听器有新信息可用。
          */
         int UPDATE_CONVERT_COMPLETE = 2;
 
         /**
-         * Notifies the listener that new information is available.
+         * <code>updateID</code> 参数可取以下值：
          *
-         * @param updateID Code indicating the information that has been
-         *                 updated.
-         * @param param1   Parameter whose value depends upon the update code.
-         * @param param2   Parameter whose value depends upon the update code.
+         * @param updateID 代码，表示已
+         *                 已更新。
+         * @param param1 参数的值取决于更新代码。
+         * @param param2 参数的值取决于更新代码。
          *                 <p>
-         *                 The <code>updateID</code> parameter can take these values:
+         *                 UPDATE_CONVERT_COMPLETE：param1 为转换时间，
          *                 <p>
-         *                 UPDATE_FRAME_COUNT: param1 is the frame count, or -1 if
-         *                 not known.
-         *                 UPDATE_CONVERT_COMPLETE: param1 is the conversion time,
+         *                 UPDATE_FRAME_COUNT: param1是帧数，如果
+         *                 未知
+         *                 若转换器希望对
          *                 param2
-         *                 is the number of frames converted.
+         *                 是转换的帧数。
          */
         void converterUpdate(int updateID, int param1, int param2);
 
         /**
-         * If the converter wishes to make a first pass over the
-         * audio frames, this is called as each frame is parsed.
+         * 每读完一帧后调用此方法，
+         * 音频帧，这在解析每个帧时称为。
          */
         void parsedFrame(int frameNo, Header header);
 
         /**
-         * This method is called after each frame has been read,
-         * but before it has been decoded.
+         * 每解码完一帧后调用此方法。
+         * 但在解码之前。
          *
-         * @param frameNo The 0-based sequence number of the frame.
-         * @param header  The Header rerpesenting the frame just read.
+         * @param frameNo 基于0的帧序列号。
+         * @param header 重新输入刚刚读取的帧的Header。
          */
         void readFrame(int frameNo, Header header);
 
         /**
-         * This method is called after a frame has been decoded.
+         * @param t 该 <code>Throwable</code> 实例
          *
-         * @param frameNo The 0-based sequence number of the frame.
-         * @param header  The Header rerpesenting the frame just read.
-         * @param o       The Obuffer the deocded data was written to.
+         * @param frameNo 基于0的帧序列号。
+         * @param header 重新输入刚刚读取的帧的Header。
+         * @param o 写入去除数据的Obuffer。
          */
         void decodedFrame(int frameNo, Header header, Obuffer o);
 
         /**
-         * Called when an exception is thrown during while converting
-         * a frame.
+         * 转换期间抛出异常时调用
+         * 一帧。
          *
-         * @param t The <code>Throwable</code> instance that
-         *          was thrown.
-         * @return <code>true</code> to continue processing, or false
-         * to abort conversion.
+         * @return <code>true</code> 继续处理，或 false
+         *          被抛出。
+         * 以中止转换。
+         * 调试细节。显示所有帧读取通知。
          * <p>
-         * If this method returns <code>false</code>, the exception
-         * is propagated to the caller of the convert() method. If
-         * <code>true</code> is returned, the exception is silently
-         * ignored and the converter moves onto the next frame.
+         * 如果此方法返回<code> FALSE </code> ，则异常
+         * 被传播到convert()方法的调用者。如果
+         * <code> true返回</code> ，异常为无提示
+         * 忽略，转换器移到下一帧。
          */
         boolean converterException(Throwable t);
     }
 
     /**
-     * Implementation of <code>ProgressListener</code> that writes
-     * notification text to a <code>PrintWriter</code>.
+     * <code> ProgressListener </code>的实现
+     * zZQ0ZZQ PrintWriter </code>的通知文本。
      * <p>
-     * REVIEW: i18n of text and order required.
+     * 审核：需要I18N的文本和顺序。
      */
     static public class PrintWriterProgressListener implements ProgressListener {
         static public final int NO_DETAIL = 0;
 
         /**
-         * Level of detail typically expected of expert
-         * users.
+         * 专家通常期望的细节水平
+         * users
          */
         static public final int EXPERT_DETAIL = 1;
 
         /**
-         * Verbose detail.
+         * 详细的细节。
          */
         static public final int VERBOSE_DETAIL = 2;
 
         /**
-         * Debug detail. All frame read notifications are shown.
+         * 捕获除零错误。
          */
         static public final int DEBUG_DETAIL = 7;
 

@@ -21,7 +21,7 @@ package repackage.org.kc7bfi.jflac;
  */
 
 /**
- * Fixed Predictor utility class.
+ * 固定预测器工具类。
  * @author kc7bfi
  */
 public class FixedPredictor {
@@ -78,7 +78,7 @@ public class FixedPredictor {
 
         // Fixed 预测器工具类。
         // 'total_error *'与残差的方差线性相关
-        // signal, so we use it directly to compute E(|x|)
+        // 信号，因此我们直接用它来计算 E(|x|)
         residualBitsPerSample[0] = (totalError0 > 0) ? Math.log(M_LN2 * (double) totalError0 / (double) dataLen) / M_LN2 : 0.0;
         residualBitsPerSample[1] = (totalError1 > 0) ? Math.log(M_LN2 * (double) totalError1 / (double) dataLen) / M_LN2 : 0.0;
         residualBitsPerSample[2] = (totalError2 > 0) ? Math.log(M_LN2 * (double) totalError2 / (double) dataLen) / M_LN2 : 0.0;
@@ -142,7 +142,7 @@ public class FixedPredictor {
 
         // Fixed 预测器工具类。
         // 'total_error *'与残差的方差线性相关
-        // signal, so we use it directly to compute E(|x|)
+        // 信号，因此我们直接用它来计算 E(|x|)
         // 使用VC + + ，你必须用勺子喂它铸造
         residualBitsPerSample[0] = (totalError0 > 0) ? Math.log(M_LN2 * (double) totalError0 / (double) dataLen) / M_LN2 : 0.0;
         residualBitsPerSample[1] = (totalError1 > 0) ? Math.log(M_LN2 * (double) totalError1 / (double) dataLen) / M_LN2 : 0.0;

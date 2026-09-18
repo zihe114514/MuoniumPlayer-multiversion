@@ -33,8 +33,8 @@ public class User {
     }
 
     /**
-     * NetEase exposes account membership through login-status profile.vipType.
-     * This is an identity marker only; actual playback permission remains track-specific.
+     * 网易云通过登录状态 profile.vipType 暴露账号会员。
+     * 这只是身份标志；实际播放权限仍是逐曲目确定的。
      */
     public boolean isVipMember() {
         return vip > 0;
@@ -55,7 +55,7 @@ public class User {
         List<PlayList> playLists = new ArrayList<>();
         data.get("playlist").getAsJsonArray().forEach(playList -> {
             JsonObject obj = playList.getAsJsonObject();
-            // fix for missing @SerializedName(..., alternate = {})
+            // 修复缺失的 @SerializedName(..., alternate = {})
             if (obj.has("picUrl")) {
                 obj.addProperty("coverImgUrl", obj.get("picUrl").getAsString());
             }

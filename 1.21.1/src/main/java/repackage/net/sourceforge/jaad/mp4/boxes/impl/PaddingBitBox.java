@@ -5,10 +5,9 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * In some streams the media samples do not occupy all bits of the bytes given
- * by the sample size, and are padded at the end to a byte boundary. In some
- * cases, it is necessary to record externally the number of padding bits used.
- * This table supplies that information.
+ * 在某些流中，媒体采样并不占满采样大小所给字节的所有位，
+ * 末尾被填充到字节边界。在某些情况下，需要在外部记录
+ * 所使用的填充位数。此表提供该信息。
  * 
  * @author in-somnia
  */
@@ -31,26 +30,24 @@ public class PaddingBitBox extends FullBox {
 		byte b;
 		for(int i = 0; i<sampleCount; i++) {
 			b = (byte) in.read();
-			//1 bit reserved
-			//3 bits pad1
+			//1 位保留
+			//3 位 pad1
 			pad1[i] = (b>>4)&7;
-			//1 bit reserved
-			//3 bits pad2
+			//1 位保留
+			//3 位 pad2
 			pad2[i] = b&7;
 		}
 	}
 
 	/**
-	 * Integer values from 0 to 7, indicating the number of bits at the end of
-	 * sample (i*2)+1.
+	 * 0 到 7 的整数值，指示采样 (i*2)+1 末尾的位数。
 	 */
 	public int[] getPad1() {
 		return pad1;
 	}
 
 	/**
-	 * Integer values from 0 to 7, indicating the number of bits at the end of
-	 * sample (i*2)+2.
+	 * 0 到 7 的整数值，指示采样 (i*2)+2 末尾的位数。
 	 */
 	public int[] getPad2() {
 		return pad2;

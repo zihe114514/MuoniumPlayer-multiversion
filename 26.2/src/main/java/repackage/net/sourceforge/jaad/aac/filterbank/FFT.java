@@ -29,7 +29,7 @@ class FFT implements FFTTables {
 				throw new AACException("unexpected FFT length: "+length);
 		}
 
-		//processing buffers
+		//处理缓冲区
 		rev = new float[length][2];
 		a = new float[2];
 		b = new float[2];
@@ -42,7 +42,7 @@ class FFT implements FFTTables {
 	void process(float[][] in, boolean forward) {
 		final int imOff = (forward ? 2 : 1);
 		final int scale = (forward ? length: 1);
-		//bit-reversal
+		//位反转
 		int ii = 0;
 		for(int i = 0; i<length; i++) {
 			rev[i][0] = in[ii][0];
@@ -59,7 +59,7 @@ class FFT implements FFTTables {
 			in[i][1] = rev[i][1];
 		}
 
-		//bottom base-4 round
+		//底部 base-4 轮次
 		for(int i = 0; i<length; i += 4) {
 			a[0] = in[i][0]+in[i+1][0];
 			a[1] = in[i][1]+in[i+1][1];
@@ -92,7 +92,7 @@ class FFT implements FFTTables {
 			}
 		}
 
-		//iterations from bottom to top
+		//从底部到顶部迭代
 		int shift, m, km;
 		float rootRe, rootIm, zRe, zIm;
 		for(int i = 4; i<length; i <<= 1) {

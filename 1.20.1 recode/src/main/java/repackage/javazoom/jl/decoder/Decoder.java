@@ -2,27 +2,27 @@
  * 11/19/04        1.0 moved to LGPL.
  * 01/12/99        Initial version.    mdm@techie.com
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
 package repackage.javazoom.jl.decoder;
 
 /**
- * The <code>Decoder</code> class encapsulates the details of
- * decoding an MPEG audio frame.
+ * <code>Decoder</code> 类封装了
+ * 解码MPEG音频帧。
  *
  * @author MDM
  * @version 0.0.7 12/12/99
@@ -32,23 +32,23 @@ public class Decoder implements DecoderErrors {
     static private final Params DEFAULT_PARAMS = new Params();
 
     /**
-     * The Obuffer instance that will receive the decoded
-     * PCM samples.
+     * 将接收解码结果的 Obuffer 实例
+     * PCM样品。
      */
     private Obuffer output;
 
     /**
-     * Synthesis filter for the left channel.
+     * 左通道的合成滤波器。
      */
     private SynthesisFilter filter1;
 
     /**
-     * Synthesis filter for the right channel.
+     * 用于右通道的合成滤波器。
      */
     private SynthesisFilter filter2;
 
     /**
-     * The decoder used to decode layer III frames.
+     * 用于解码 Layer III 帧的解码器。
      */
     private LayerIIIDecoder l3decoder;
     private LayerIIDecoder l2decoder;
@@ -64,19 +64,19 @@ public class Decoder implements DecoderErrors {
     private boolean initialized;
 
     /**
-     * Creates a new <code>Decoder</code> instance with default
-     * parameters.
+     * 使用默认值创建新的<code>解码器</code>实例
+     * <g id="7497"><g id="7500">c </g></g><g id="7503">× </g><g id="7506">k </g><g id="7509">× </g><g id="7512">w </g><g id="7515">× </g><g id="7521">w</g>个参数。
      */
     public Decoder() {
         this(null);
     }
 
     /**
-     * Creates a new <code>Decoder</code> instance with default
-     * parameters.
+     * 使用默认值创建新的<code>解码器</code>实例
+     * <g id="7497"><g id="7500">c </g></g><g id="7503">× </g><g id="7506">k </g><g id="7509">× </g><g id="7512">w </g><g id="7515">× </g><g id="7521">w</g>个参数。
      *
-     * @param params The <code>Params</code> instance that describes
-     *               the customizable aspects of the decoder.
+     * @param params <code>参数</code>实例描述
+     *               解码器的可定制方面。
      */
     public Decoder(Params params) {
         if (params == null)
@@ -110,11 +110,11 @@ public class Decoder implements DecoderErrors {
     }
 
     /**
-     * Decodes one frame from an MPEG audio bitstream.
+     * 从 MPEG 音频比特流解码一帧。
      *
-     * @param header The header describing the frame to decode.
-     * @param stream The bit stream that provides the bits for te body of the frame.
-     * @return A SampleBuffer containing the decoded samples.
+     * @param header 描述要解码的帧的标题。
+     * @param stream 为帧体提供比特的比特流。
+     * @return 包含解码样本的SampleBuffer。
      */
     public Obuffer decodeFrame(Header header, Bitstream stream)
             throws DecoderException {
@@ -136,47 +136,47 @@ public class Decoder implements DecoderErrors {
     }
 
     /**
-     * Changes the output buffer. This will take effect the next time
-     * decodeFrame() is called.
+     * 更改输出缓冲区。这将在下次生效
+     * decodeFrame()被调用。
      */
     public void setOutputBuffer(Obuffer out) {
         output = out;
     }
 
     /**
-     * Retrieves the sample frequency of the PCM samples output
-     * by this decoder. This typically corresponds to the sample
-     * rate encoded in the MPEG audio stream.
+     * 检索PCM样本输出的采样频率
+     * 由此解码器解码。通常对应于采样
+     * mPEG音频流中编码的速率。
      *
-     * @return the sample rate (in Hz) of the samples written to the
-     * output buffer when decoding.
+     * @return 写入样本的采样率（以Hz为单位）
+     * 解码时输出缓冲区。
      */
     public int getOutputFrequency() {
         return outputFrequency;
     }
 
     /**
-     * Retrieves the number of channels of PCM samples output by
-     * this decoder. This usually corresponds to the number of
-     * channels in the MPEG audio stream, although it may differ.
+     * 检索PCM样本输出的通道数
+     * 由此解码器。通常对应于
+     * mPEG音频流中的频道，但可能会有所不同。
      *
-     * @return The number of output channels in the decoded samples: 1
-     * for mono, or 2 for stereo.
+     * @return 解码样本输出通道数： 1
+     * 用于单声道，或2个用于立体声。
      */
     public int getOutputChannels() {
         return outputChannels;
     }
 
     /**
-     * Retrieves the maximum number of samples that will be written to
-     * the output buffer when one frame is decoded. This can be used to
-     * help calculate the size of other buffers whose size is based upon
-     * the number of samples written to the output buffer. NB: this is
-     * an upper bound and fewer samples may actually be written, depending
-     * upon the sample rate and number of channels.
+     * 检索将被写入的最大样本数
+     * 解码一帧时输出缓冲区的（采样数）。可用于
+     * 帮助计算其他缓冲区的大小，这些缓冲区的大小基于
+     * 写入输出缓冲区的采样数。注意：这是
+     * 实际上可能会写入上限和更少的样本，这取决于
+     * 基于采样率和通道数。
      *
-     * @return The maximum number of samples that are written to the
-     * output buffer when decoding a single frame of MPEG audio.
+     * @return 写入
+     * 解码单帧MPEG音频时的输出缓冲区。
      */
     public int getOutputBlockSize() {
         return Obuffer.OBUFFERSIZE;
@@ -226,7 +226,7 @@ public class Decoder implements DecoderErrors {
             }
             default: decoder = null; break;
 
-            // REVIEW: allow channel output selection type
+            // REVIEW：允许声道输出选择类型
             // (LEFT, RIGHT, BOTH, DOWNMIX)
         }
 
@@ -239,7 +239,7 @@ public class Decoder implements DecoderErrors {
 
     private void initialize(Header header) {
 
-        // REVIEW: allow customizable scale factor
+        // 审阅：允许自定义比例因子
         float scalefactor = 32700.0f;
 
         int mode = header.mode();
@@ -248,14 +248,14 @@ public class Decoder implements DecoderErrors {
         int channels = mode == Header.SINGLE_CHANNEL ? 1 : 2;
 
 
-        // set up output buffer if not set up by client.
+        // 如果客户端未设置输出缓冲区，则设置输出缓冲区。
         if (output == null)
             output = new SampleBuffer(header.frequency(), channels);
 
         float[] factors = equalizer.getBandFactors();
         filter1 = new SynthesisFilter(0, scalefactor);
 
-        // REVIEW: allow mono output for stereo
+        // REVIEW：允许立体声的单声道输出
         if (channels == 2)
             filter2 = new SynthesisFilter(1, scalefactor);
 
@@ -266,10 +266,10 @@ public class Decoder implements DecoderErrors {
     }
 
     /**
-     * The <code>Params</code> class presents the customizable
-     * aspects of the decoder.
+     * <code> Params </code>类提供可定制的
+     * 解码器的各方面。
      * <p>
-     * Instances of this class are not thread safe.
+     * 此类的实例不是线程安全的。
      */
     public static class Params implements Cloneable {
 
@@ -301,18 +301,18 @@ public class Decoder implements DecoderErrors {
         }
 
         /**
-         * Retrieves the equalizer settings that the decoder's equalizer
-         * will be initialized from.
+         * 获取解码器均衡器初始化所用的均衡器设置。
+         * 将从中初始化。
          * <p>
-         * The <code>Equalizer</code> instance returned
-         * cannot be changed in real time to affect the
-         * decoder output as it is used only to initialize the decoders
-         * EQ settings. To affect the decoder's output in realtime,
-         * use the Equalizer returned from the getEqualizer() method on
-         * the decoder.
+         * <code>均衡器</code>实例返回
+         * 不能实时更改以影响
+         * 解码器输出，因为它仅用于初始化解码器
+         * EQ 设置。要实时影响解码器输出，
+         * 使用从getEqualizer()方法返回的均衡器
+         * 该解码器。
          *
-         * @return The <code>Equalizer</code> used to initialize the
-         * EQ settings of the decoder.
+         * @return 用于初始化解码器的 <code>Equalizer</code>
+         * 解码器的均衡器设置。
          */
         public Equalizer getInitialEqualizerSettings() {
             return equalizer;

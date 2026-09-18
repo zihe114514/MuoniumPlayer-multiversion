@@ -4,20 +4,15 @@ import java.io.IOException;
 import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 
 /**
- * The ESDescriptor conveys all information related to a particular elementary
- * stream and has three major parts:
+ * ESDescriptor 传达与某个特定原始流相关的全部信息，含三大部分：
  *
- * The first part consists of the ES_ID which is a unique reference to the
- * elementary stream within its name scope, a mechanism to group elementary
- * streams within this Descriptor and an optional URL String.
+ * 第一部分由 ES_ID（其名称作用域内对原始流的唯一引用）、
+ * 将本 Descriptor 内多个原始流分组的机制、以及一个可选 URL String 组成。
  *
- * The second part is a set of optional extension descriptors that support the
- * inclusion of future extensions as well as the transport of private data in a
- * backward compatible way.
+ * 第二部分为一组可选扩展描述符，支持以向后兼容方式纳入未来扩展并传输私有数据。
  *
- * The third part consists of the DecoderConfigDescriptor, SLConfigDescriptor,
- * IPIDescriptor and QoSDescriptor which convey the parameters and requirements
- * of the elementary stream.
+ * 第三部分由 DecoderConfigDescriptor、SLConfigDescriptor、
+ * IPIDescriptor 和 QoSDescriptor 组成，传达原始流的参数和需求。
  *
  * @author in-somnia
  */
@@ -30,7 +25,7 @@ public class ESDescriptor extends Descriptor {
 	void decode(MP4InputStream in) throws IOException {
 		esID = (int) in.readBytes(2);
 
-		//1 bit stream dependence flag, 1 it url flag, 1 reserved, 5 bits stream priority
+		//1 位流依赖标志，1 位 url 标志，1 位保留，5 位流优先级
 		final int flags = in.read();
 		streamDependency = ((flags>>7)&1)==1;
 		urlPresent = ((flags>>6)&1)==1;
@@ -48,68 +43,60 @@ public class ESDescriptor extends Descriptor {
 	}
 
 	/**
-	 * The ES_ID provides a unique label for each elementary stream within its
-	 * name scope. The value should be within 0 and 65535 exclusively. The
-	 * values 0 and 65535 are reserved.
+	 * ES_ID 在其名称作用域内为每个原始流提供唯一标签。
+	 * 值应在 0 与 65535 之间（不含端点）。0 和 65535 保留。
 	 *
-	 * @return the elementary stream's ID
+	 * @return 原始流的 ID
 	 */
 	public int getES_ID() {
 		return esID;
 	}
 
 	/**
-	 * Indicates if an ID of another stream is present, on which this stream
-	 * depends.
+	 * 指示是否存在此流所依赖的另一流的 ID。
 	 *
-	 * @return true if the dependingOnES_ID is present
+	 * @return 若 dependingOnES_ID 存在则返回 true
 	 */
 	public boolean hasStreamDependency() {
 		return streamDependency;
 	}
 
 	/**
-	 * The <code>dependingOnES_ID</code> is the ES_ID of another elementary
-	 * stream on which this elementary stream depends. The stream with the
-	 * <code>dependingOnES_ID</code> shall also be associated to this
-	 * Descriptor. If no value is present (if <code>hasStreamDependency()</code>
-	 * returns false) this method returns -1.
+	 * <code>dependingOnES_ID</code> 是此原始流所依赖的另一原始流的 ES_ID。
+	 * 具有该 <code>dependingOnES_ID</code> 的流也应关联到此 Descriptor。
+	 * 若不存在值（<code>hasStreamDependency()</code> 返回 false），此方法返回 -1。
 	 * 
-	 * @return the dependingOnES_ID value, or -1 if none is present
+	 * @return dependingOnES_ID 值；若不存在则返回 -1
 	 */
 	public int getDependingOnES_ID() {
 		return dependingOnES_ID;
 	}
 
 	/**
-	 * A flag that indicates the presence of a URL.
+	 * 指示是否存在 URL 的标志。
 	 *
-	 * @return true if a URL is present
+	 * @return 若存在 URL 则返回 true
 	 */
 	public boolean isURLPresent() {
 		return urlPresent;
 	}
 
 	/**
-	 * A URL String that shall point to the location of an SL-packetized stream
-	 * by name. The parameters of the SL-packetized stream that is retrieved
-	 * from the URL are fully specified in this ESDescriptor. 
-	 * If no URL is present (if <code>isURLPresent()</code> returns false) this
-	 * method returns null.
+	 * URL String，按名称指向 SL 分组流的位置。
+	 * 从该 URL 取回的 SL 分组流的参数在此 ESDescriptor 中完整规定。
+	 * 若不存在 URL（<code>isURLPresent()</code> 返回 false），此方法返回 null。
 	 *
-	 * @return a URL String or null if none is present
+	 * @return URL String；若不存在则返回 null
 	 */
 	public String getURL() {
 		return url;
 	}
 
 	/**
-	 * The stream priority indicates a relative measure for the priority of this
-	 * elementary stream. An elementary stream with a higher priority is more
-	 * important than one with a lower priority. The absolute values are not
-	 * normatively defined.
+	 * 流优先级指示此原始流优先级的相对度量。
+	 * 优先级高的原始流比优先级低的更重要。绝对值未作规范性定义。
 	 *
-	 * @return the stream priority
+	 * @return 流优先级
 	 */
 	public int getStreamPriority() {
 		return streamPriority;

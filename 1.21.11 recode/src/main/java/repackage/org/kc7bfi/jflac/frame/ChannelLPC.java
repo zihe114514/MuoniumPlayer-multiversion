@@ -47,7 +47,7 @@ public class ChannelLPC extends Channel {
 
     /**
      * 构造函数。
-     * @param is InputBitStream
+      * @param is 输入位流
      * @param header FLAC帧标题
      * @param channelData 解码后的信道数据（输出）
      * @param bps 每秒位数
@@ -81,7 +81,7 @@ public class ChannelLPC extends Channel {
         quantizationLevel = is.readRawInt(SUBFRAME_LPC_QLP_SHIFT_LEN);
         //所需的 qlp 系数移位。
 
-        // read quantized lp coefficiencts
+        // 读取量化后的 lp 系数
         for (int u = 0; u < order; u++) {
             qlpCoeff[u] = is.readRawInt(qlpCoeffPrecision);
         }

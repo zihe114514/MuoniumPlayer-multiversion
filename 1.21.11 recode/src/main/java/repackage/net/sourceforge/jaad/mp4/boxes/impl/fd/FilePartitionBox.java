@@ -42,7 +42,7 @@ public class FilePartitionBox extends FullBox {
 	/**
 	 * item ID 引用 item location box 中文件分区所应用的条目。
 	 *
-	 * @return item ID
+	  * @return 项目 ID
 	 */
 	public int getItemID() {
 		return itemID;
@@ -66,7 +66,7 @@ public class FilePartitionBox extends FullBox {
 	 * - 对于 0 到 127（含）范围内的值，FEC 方案为完全规定（Fully-Specified）；
 	 * 而对于 128 到 255（含）范围内的值，FEC 方案为规定不全（Under-Specified）。
 	 *
-	 * @return FEC encoding ID
+	  * @return FEC 编码 ID
 	 */
 	public int getFECEncodingID() {
 		return fecEncodingID;
@@ -79,7 +79,7 @@ public class FilePartitionBox extends FullBox {
 	 * FEC instance ID 的作用域由 FEC encoding ID 决定。
 	 * 详见 RFC 3452。
 	 *
-	 * @return FEC instance ID
+	  * @return FEC 实例 ID
 	 */
 	public int getFECInstanceID() {
 		return fecInstanceID;
@@ -121,7 +121,7 @@ public class FilePartitionBox extends FullBox {
 	 *（FEC-OTI-Scheme-Specific-Info）的字符串。
 	 * 该信息的定义取决于 EC encoding ID。
 	 * 
-	 * @return scheme specific info
+	  * @return 方案特定信息
 	 */
 	public String getSchemeSpecificInfo() {
 		return schemeSpecificInfo;

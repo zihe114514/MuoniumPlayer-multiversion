@@ -22,7 +22,7 @@ public class FilePartitionBox extends FullBox {
 
 		itemID = (int) in.readBytes(2);
 		packetPayloadSize = (int) in.readBytes(2);
-		in.skipBytes(1); //reserved
+		in.skipBytes(1); //保留
 		fecEncodingID = in.read();
 		fecInstanceID = (int) in.readBytes(2);
 		maxSourceBlockLength = (int) in.readBytes(2);
@@ -40,120 +40,110 @@ public class FilePartitionBox extends FullBox {
 	}
 
 	/**
-	 * The item ID references the item in the item location box that the file
-	 * partitioning applies to.
+	 * item ID 引用 item location box 中文件分区所应用的条目。
 	 *
-	 * @return the item ID
+	  * @return 项目 ID
 	 */
 	public int getItemID() {
 		return itemID;
 	}
 
 	/**
-	 * The packet payload size gives the target ALC/LCT or FLUTE packet payload
-	 * size of the partitioning algorithm. Note that UDP packet payloads are
-	 * larger, as they also contain ALC/LCT or FLUTE headers.
+	 * 包负载大小给出分区算法的目标 ALC/LCT 或 FLUTE 包负载大小。
+	 * 注意 UDP 包负载更大，因为它们还含 ALC/LCT 或 FLUTE 头。
 	 * 
-	 * @return the packet payload size
+	 * @return 包负载大小
 	 */
 	public int getPacketPayloadSize() {
 		return packetPayloadSize;
 	}
 
 	/**
-	 * The FEC encoding ID is subject to IANA registration (see RFC 3452). Note
-	 * that
-	 * - value zero corresponds to the "Compact No-Code FEC scheme" also known
-	 * as "Null-FEC" (RFC 3695);
-	 * - value one corresponds to the "MBMS FEC" (3GPP TS 26.346);
-	 * - for values in the range of 0 to 127, inclusive, the FEC scheme is
-	 * Fully-Specified, whereas for values in the range of 128 to 255,
-	 * inclusive, the FEC scheme is Under-Specified.
+	 * FEC encoding ID 需经 IANA 注册（见 RFC 3452）。注意：
+	 * - 值 0 对应“Compact No-Code FEC scheme”，也称
+	 * “Null-FEC”（RFC 3695）；
+	 * - 值 1 对应“MBMS FEC”（3GPP TS 26.346）；
+	 * - 对于 0 到 127（含）范围内的值，FEC 方案为完全规定（Fully-Specified）；
+	 * 而对于 128 到 255（含）范围内的值，FEC 方案为规定不全（Under-Specified）。
 	 *
-	 * @return the FEC encoding ID
+	  * @return FEC 编码 ID
 	 */
 	public int getFECEncodingID() {
 		return fecEncodingID;
 	}
 
 	/**
-	 * The FEC instance ID provides a more specific identification of the FEC
-	 * encoder being used for an Under-Specified FEC scheme. This value should
-	 * be set to zero for Fully-Specified FEC schemes and shall be ignored when
-	 * parsing a file with an FEC encoding ID in the range of 0 to 127,
-	 * inclusive. The FEC instance ID is scoped by the FEC encoding ID. See RFC
-	 * 3452 for further details.
+	 * FEC instance ID 对用于规定不全 FEC 方案的 FEC 编码器给出更具体的标识。
+	 * 对完全规定的 FEC 方案，此值应设为 0；当解析 FEC encoding ID 在
+	 * 0 到 127（含）范围内的文件时应忽略此值。
+	 * FEC instance ID 的作用域由 FEC encoding ID 决定。
+	 * 详见 RFC 3452。
 	 *
-	 * @return the FEC instance ID
+	  * @return FEC 实例 ID
 	 */
 	public int getFECInstanceID() {
 		return fecInstanceID;
 	}
 
 	/**
-	 * The maximum source block length gives the maximum number of source
-	 * symbols per source block.
+	 * 最大源块长度给出每个源块中源符号的最大数量。
 	 *
-	 * @return the maximum source block length
+	 * @return 最大源块长度
 	 */
 	public int getMaxSourceBlockLength() {
 		return maxSourceBlockLength;
 	}
 
 	/**
-	 * The encoding symbol length gives the size (in bytes) of one encoding
-	 * symbol. All encoding symbols of one item have the same length, except the
-	 * last symbol which may be shorter.
+	 * 编码符号长度给出一个编码符号的大小（字节）。
+	 * 一个条目的所有编码符号长度相同，最后一个符号可能较短。
 	 *
-	 * @return the encoding symbol length
+	 * @return 编码符号长度
 	 */
 	public int getEncodingSymbolLength() {
 		return encodingSymbolLength;
 	}
 
 	/**
-	 * The maximum number of encoding symbols  that can be generated for a
-	 * source block for those FEC schemes in which the maximum number of
-	 * encoding symbols is relevant, such as FEC encoding ID 129 defined in RFC
-	 * 3452. For those FEC schemes in which the maximum number of encoding
-	 * symbols is not relevant, the semantics of this field is unspecified.
+	 * 对那些“最大编码符号数”有意义的 FEC 方案，
+	 * 给出一个源块可生成的最大编码符号数，
+	 * 例如 RFC 3452 中定义的 FEC encoding ID 129。
+	 * 对“最大编码符号数”无意义的 FEC 方案，此字段语义未定义。
 	 *
-	 * @return the maximum number of encoding symbols
+	 * @return 最大编码符号数
 	 */
 	public int getMaxNumberOfEncodingSymbols() {
 		return maxNumberOfEncodingSymbols;
 	}
 
 	/**
-	 * The scheme specific info is a String of the scheme-specific object 
-	 * transfer information (FEC-OTI-Scheme-Specific-Info). The definition of 
-	 * the information depends on the EC encoding ID.
+	 * scheme specific info 是方案相关对象传输信息
+	 *（FEC-OTI-Scheme-Specific-Info）的字符串。
+	 * 该信息的定义取决于 EC encoding ID。
 	 * 
-	 * @return the scheme specific info
+	  * @return 方案特定信息
 	 */
 	public String getSchemeSpecificInfo() {
 		return schemeSpecificInfo;
 	}
 
 	/**
-	 * A block count indicates the number of consecutive source blocks with a
-	 * specified size.
+	 * block count 指示具有指定大小的连续源块数量。
 	 *
-	 * @return all block counts
+	 * @return 所有 block count
 	 */
 	public int[] getBlockCounts() {
 		return blockCounts;
 	}
 
 	/**
-	 * A block size indicates the size of a block (in bytes). A block_size that 
-	 * is not a multiple of the encoding symbol length indicates with Compact 
-	 * No-Code FEC that the last source symbols includes padding that is not 
-	 * stored in the item. With MBMS FEC (3GPP TS 26.346) the padding may extend
-	 * across multiple symbols but the size of padding should never be more than
-	 * the encoding symbol length.
+	 * block size 给出一个块的大小（字节）。
+	 * 若 block_size 不是编码符号长度的整数倍，
+	 * 则对 Compact No-Code FEC 表示最后一个源符号包含未存于条目中的填充。
+	 * 对 MBMS FEC（3GPP TS 26.346），填充可跨多个符号，
+	 * 但填充大小绝不应超过编码符号长度。
 	 *
-	 * @return all block sizes
+	 * @return 所有 block size
 	 */
 	public long[] getBlockSizes() {
 		return blockSizes;

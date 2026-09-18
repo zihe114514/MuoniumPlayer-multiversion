@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.ports;
@@ -21,7 +21,7 @@ import repackage.com.softsynth.shared.time.TimeStamp;
 import java.io.PrintStream;
 
 /**
- * A port that is used to pass values into a UnitGenerator.
+ * 用于将值传递到UnitGenerator的端口。
  *
  * @author Phil Burk 2009 Mobileer Inc
  */
@@ -33,8 +33,8 @@ public class UnitInputPort extends UnitBlockPort implements ConnectableInput, Se
     private boolean valueAdded = false;
 
     /**
-     * @param numParts typically 1, use 2 for stereo ports
-     * @param name name that may be used in GUIs
+     * @param numParts 通常为 1，立体声端口用 2
+     * 可以在GUI中使用的@param name 名称
      * @param defaultValue
      */
     public UnitInputPort(int numParts, String name, double defaultValue) {
@@ -67,7 +67,7 @@ public class UnitInputPort extends UnitBlockPort implements ConnectableInput, Se
     }
 
     /**
-     * This is used internally by the SynthesisEngine to execute units based on their connections.
+     * 这由SynthesisEngine内部使用，以根据其连接执行单元。
      *
      * @param frameCount
      * @param start
@@ -91,7 +91,7 @@ public class UnitInputPort extends UnitBlockPort implements ConnectableInput, Se
     }
 
     public void set(final int partNum, final double value) {
-        // Trigger exception now if out of range.
+        // 如果超出范围，立即触发异常。
         setValues[partNum] = value;
         queueCommand(() -> setValueInternal(partNum, value));
     }
@@ -110,16 +110,16 @@ public class UnitInputPort extends UnitBlockPort implements ConnectableInput, Se
 
     @Override
     public void set(final int partNum, final double value, TimeStamp timeStamp) {
-        // Trigger exception now if out of range.
+        // 如果超出范围，立即触发异常。
         getValue(partNum);
         scheduleCommand(timeStamp, () -> setValueInternal(partNum, value));
     }
 
     /**
-     * Value of a port based on the set() calls. Not affected by connected ports.
+     * 基于set()调用的端口值。不受已连接端口的影响。
      *
      * @param partNum
-     * @return value as set
+     * @return 值为设定值
      */
     @Override
     public double get(int partNum) {
@@ -131,8 +131,8 @@ public class UnitInputPort extends UnitBlockPort implements ConnectableInput, Se
     }
 
     /**
-     * The minimum and maximum are only used when setting up knobs or other control systems. The
-     * internal values are not clipped to this range.
+     * 最小值和最大值仅在配置旋钮或其他控制系统时使用。
+     * 内部数值不会被裁剪到此范围。
      *
      * @param maximum
      */
@@ -157,11 +157,11 @@ public class UnitInputPort extends UnitBlockPort implements ConnectableInput, Se
     }
 
     /**
-     * Convenience function for setting limits on a port. These limits are recommended values when
-     * setting up a GUI. It is possible to set a port to a value outside these limits.
+     * 为端口设置上下限的便捷函数。这些限制值是建议值，用于
+     * 设置GUI。可以将端口设置为超出这些限制的值。
      *
      * @param minimum
-     * @param value default value, will be clipped to min/max
+     * @param value 默认值，将被裁剪到 min/max
      * @param maximum
      */
     public void setup(double minimum, double value, double maximum) {
@@ -171,7 +171,7 @@ public class UnitInputPort extends UnitBlockPort implements ConnectableInput, Se
         set(value);
     }
 
-    // Grab min, max, default from another port.
+    // 从另一个端口抓取最小值、最大值和默认值。
     public void setup(UnitInputPort other) {
         setup(other.getMinimum(), other.getDefault(), other.getMaximum());
     }
@@ -181,13 +181,13 @@ public class UnitInputPort extends UnitBlockPort implements ConnectableInput, Se
     }
 
     /**
-     * If set false then the set() value will be ignored when other ports are connected to this port.
-     * The sum of the connected port values will be used instead.
+     * 如果设置为false ，则当其他端口连接到此端口时， set()值将被忽略。
+     * 将使用连接的端口值的总和。
      *
-     * If set true then the set() value will be added to the sum of the connected port values.
-     * This is useful when you want to modulate the set value.
+     * 若设为 true，则 set() 的值会加到所有已连接端口值的总和上。
+     * 当你想对 set 的值进行调制时很有用。
      *
-     * The default is false.
+     * =ד 1. array_chunk() =ד
      *
      * @param valueAdded
      */
@@ -200,10 +200,10 @@ public class UnitInputPort extends UnitBlockPort implements ConnectableInput, Se
         otherPort.connect(otherPartNum, this, thisPartNum, timeStamp);
     }
 
-    /** Connect an input to an output port. */
+    /** 将输入端口连接到输出端口。*/
     public void connect(int thisPartNum, UnitOutputPort otherPort, int otherPartNum) {
-        // Typically connections are made from output to input because it is
-        // more intuitive.
+        // 通常从输出到输入进行连接，因为它
+        // 更直观。
         otherPort.connect(otherPartNum, this, thisPartNum);
     }
 

@@ -98,7 +98,7 @@ public class Picture extends Metadata {
         is.readByteBlockAlignedNoCRC(data, mimeTypeByteCount);
         usedBits += mimeTypeByteCount * 8;
 
-        mimeString = new String(data);  // convert to a string
+        mimeString = new String(data);  // 转换为字符串
 
         descStringByteCount = is.readRawUInt(32);
         usedBits += 32;

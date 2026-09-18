@@ -2,8 +2,8 @@ package repackage.net.sourceforge.jaad.aac.ps;
 
 interface PSTables extends PSConstants {
 
-	/* type definitaions */
-	/* static data tables */
+	/* 类型定义 */
+	/* 静态数据表 */
 	int[] nr_iid_par_tab = {
 		10, 20, 34, 10, 20, 34, 0, 0
 	};
@@ -24,18 +24,18 @@ interface PSTables extends PSConstants {
 	};
 
 	int[] group_border20 = {
-		6, 7, 0, 1, 2, 3, /* 6 subqmf subbands */
-		9, 8, /* 2 subqmf subbands */
-		10, 11, /* 2 subqmf subbands */
+		6, 7, 0, 1, 2, 3, /* 6 个 subqmf 子带 */
+		9, 8, /* 2 个 subqmf 子带 */
+		10, 11, /* 2 个 subqmf 子带 */
 		3, 4, 5, 6, 7, 8, 9, 11, 14, 18, 23, 35, 64
 	};
 
 	int[] group_border34 = {
-		0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, /* 12 subqmf subbands */
-		12, 13, 14, 15, 16, 17, 18, 19, /*  8 subqmf subbands */
-		20, 21, 22, 23, /*  4 subqmf subbands */
-		24, 25, 26, 27, /*  4 subqmf subbands */
-		28, 29, 30, 31, /*  4 subqmf subbands */
+		0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, /* 12 个 subqmf 子带 */
+		12, 13, 14, 15, 16, 17, 18, 19, /*  8 个 subqmf 子带 */
+		20, 21, 22, 23, /*  4 个 subqmf 子带 */
+		24, 25, 26, 27, /*  4 个 subqmf 子带 */
+		28, 29, 30, 31, /*  4 个 subqmf 子带 */
 		32-27, 33-27, 34-27, 35-27, 36-27, 37-27, 38-27, 40-27, 42-27, 44-27, 46-27, 48-27, 51-27, 54-27, 57-27, 60-27, 64-27, 68-27, 91-27
 	};
 
@@ -54,8 +54,8 @@ interface PSTables extends PSConstants {
 	};
 
 	int[] delay_length_d = {3, 4, 5 /* d_48kHz */};
-	/* tables */
-	/* filters are mirrored in coef 6, second half left out */
+	/* 表 */
+	/* 滤波器在 coef 6 中镜像，省略后半部分 */
 	float[] p8_13_20 = {
 		0.00746082949812f,
 		0.02270420949825f,

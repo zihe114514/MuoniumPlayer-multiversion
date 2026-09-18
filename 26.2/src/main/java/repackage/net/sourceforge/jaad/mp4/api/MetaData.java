@@ -24,10 +24,10 @@ import repackage.net.sourceforge.jaad.mp4.boxes.impl.meta.ThreeGPPLocationBox;
 import repackage.net.sourceforge.jaad.mp4.boxes.impl.meta.ThreeGPPMetadataBox;
 
 /**
- * This class contains the metadata for a movie. It parses different metadata
- * types (iTunes tags, ID3).
- * The fields can be read via the <code>get(Field)</code> method using one of
- * the predefined <code>Field</code>s.
+ * 此类包含一部电影的元数据。它解析不同的元数据
+ * 类型（iTunes 标签、ID3）。
+ * 可通过 <code>get(Field)</code> 方法使用预定义的
+ * <code>Field</code> 之一来读取各字段。
  *
  * @author in-somnia
  */
@@ -76,7 +76,7 @@ public class MetaData {
 		public static final Field<String> GAPLESS_PLAYBACK = new Field<String>("Gapless Playback");
 		public static final Field<Boolean> HD_VIDEO = new Field<Boolean>("HD Video");
 		public static final Field<Locale> LANGUAGE = new Field<Locale>("Language");
-		//sorting
+		//排序
 		public static final Field<String> ARTIST_SORT_TEXT = new Field<String>("Artist Sort Text");
 		public static final Field<String> TITLE_SORT_TEXT = new Field<String>("Title Sort Text");
 		public static final Field<String> ALBUM_SORT_TEXT = new Field<String>("Album Sort Text");
@@ -92,7 +92,7 @@ public class MetaData {
 	}
 	private static final String[] STANDARD_GENRES = {
 		"undefined",
-		//IDv1 standard
+		//IDv1 标准
 		"blues",
 		"classic rock",
 		"country",
@@ -172,7 +172,7 @@ public class MetaData {
 		"retro",
 		"musical",
 		"rock and roll",
-		//winamp extension
+		//winamp 扩展
 		"hard rock",
 		"folk",
 		"folk rock",
@@ -232,34 +232,34 @@ public class MetaData {
 		contents = new HashMap<Field<?>, Object>();
 	}
 
-	/*moov.udta:
-	 * -3gpp boxes
+	/*moov.udta：
+	 * -3gpp box
 	 * -meta
 	 * --ilst
-	 * --tags
-	 * --meta (no container!)
+	 * --标签
+	 * --meta（无容器！）
 	 * --tseg
 	 * ---tshd
 	 */
 	void parse(Box udta, Box meta) {
-		//standard boxes
+		//标准 box
 		if(meta.hasChild(BoxTypes.COPYRIGHT_BOX)) {
 			CopyrightBox cprt = (CopyrightBox) meta.getChild(BoxTypes.COPYRIGHT_BOX);
 			put(Field.LANGUAGE, new Locale(cprt.getLanguageCode()));
 			put(Field.COPYRIGHT, cprt.getNotice());
 		}
-		//3gpp user data
+		//3gpp 用户数据
 		if(udta!=null) parse3GPPData(udta);
-		//id3, TODO: can be present in different languages
+		//id3，TODO: 可能以不同语言存在
 		if(meta.hasChild(BoxTypes.ID3_TAG_BOX)) parseID3((ID3TagBox) meta.getChild(BoxTypes.ID3_TAG_BOX));
 		//itunes
 		if(meta.hasChild(BoxTypes.ITUNES_META_LIST_BOX)) parseITunesMetaData(meta.getChild(BoxTypes.ITUNES_META_LIST_BOX));
-		//nero tags
+		//nero 标签
 		if(meta.hasChild(BoxTypes.NERO_METADATA_TAGS_BOX)) parseNeroTags((NeroMetadataTagsBox) meta.getChild(BoxTypes.NERO_METADATA_TAGS_BOX));
 	}
 
-	//parses specific children of 'udta': 3GPP
-	//TODO: handle language codes
+	//解析 'udta' 的特定子级：3GPP
+	//TODO: 处理语言代码
 	private void parse3GPPData(Box udta) {
 		if(udta.hasChild(BoxTypes.THREE_GPP_ALBUM_BOX)) {
 			ThreeGPPAlbumBox albm = (ThreeGPPAlbumBox) udta.getChild(BoxTypes.THREE_GPP_ALBUM_BOX);
@@ -284,7 +284,7 @@ public class MetaData {
 		if(udta.hasChild(BoxTypes.THREE_GPP_TITLE_BOX)) put(Field.TITLE, ((ThreeGPPMetadataBox) udta.getChild(BoxTypes.THREE_GPP_TITLE_BOX)).getData());
 	}
 
-	//parses children of 'ilst': iTunes
+	//解析 'ilst' 的子级：iTunes
 	private void parseITunesMetaData(Box ilst) {
 		final List<Box> boxes = ilst.getChildren();
 		long l;
@@ -352,7 +352,7 @@ public class MetaData {
 		}
 	}
 
-	//parses children of ID3
+	//解析 ID3 的子级
 	private void parseID3(ID3TagBox box) {
 		try {
 			final DataInputStream in = new DataInputStream(new ByteArrayInputStream(box.getID3Data()));
@@ -421,7 +421,7 @@ public class MetaData {
 		}
 	}
 
-	//parses children of 'tags': Nero
+	//解析 'tags' 的子级：Nero
 	private void parseNeroTags(NeroMetadataTagsBox tags) {
 		final Map<String, String> pairs = tags.getPairs();
 		String val;
@@ -445,7 +445,7 @@ public class MetaData {
 				if(key.equals(NERO_TAGS[10])) put(Field.COPYRIGHT, val);
 				if(key.equals(NERO_TAGS[11])) put(Field.COMMENTS, val);
 				if(key.equals(NERO_TAGS[12])) put(Field.LYRICS, val);
-				if(key.equals(NERO_TAGS[13])); //credits
+				if(key.equals(NERO_TAGS[13])); //制作人员（credits）
 				if(key.equals(NERO_TAGS[14])) put(Field.RATING, Integer.parseInt(val));
 				if(key.equals(NERO_TAGS[15])) put(Field.PUBLISHER, val);
 				if(key.equals(NERO_TAGS[16])) put(Field.COMPOSER, val);

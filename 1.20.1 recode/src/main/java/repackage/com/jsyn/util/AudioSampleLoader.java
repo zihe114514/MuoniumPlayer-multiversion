@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  * 
  *     http://www.apache.org/licenses/LICENSE-2.0
  * 
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.util;
@@ -25,17 +25,17 @@ import java.net.URL;
 
 public interface AudioSampleLoader {
     /**
-     * Load a FloatSample from a File object.
+     * 从 File 对象加载 FloatSample。
      */
     FloatSample loadFloatSample(File fileIn) throws IOException;
 
     /**
-     * Load a FloatSample from an InputStream. This is handy when loading Resources from a JAR file.
+     * 从 InputStream 加载 FloatSample。从 JAR 文件加载资源时很方便。
      */
     FloatSample loadFloatSample(InputStream inputStream) throws IOException;
 
     /**
-     * Load a FloatSample from a URL.. This is handy when loading Resources from a website.
+     * 从URL加载FloatSample。这在从网站加载资源时很方便。
      */
     FloatSample loadFloatSample(URL url) throws IOException;
 

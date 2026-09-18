@@ -3,13 +3,13 @@ package com.muoniumplayer.core.screens.ncm;
 import java.util.List;
 
 /**
- * qplayer / AMLL per-line lyric scroll spring.
+ * qplayer / AMLL 逐行歌词滚动弹簧。
  *
- * This is deliberately not a generic animation helper: it follows qplayer's
- * LyricRenderer model. Every visible line owns a position and velocity, unseen
- * lines are initialized at their rest position, and only the trailing side of
- * an anchor change is delayed. Layout targets are supplied every frame, so an
- * expanding interlude slot can move the column without resetting the springs.
+ * 这刻意不是通用动画助手：它跟随 qplayer 的
+ * LyricRenderer 模型。每个可见行拥有位置和速度，不可见
+ * 行初始化为其静止位置，只有锚点变化的尾侧
+ * 被延迟。布局目标每帧供给，因此一个
+ * 扩展的间奏槽可移动整列而不重置弹簧。
  */
 final class LyricScrollMotion {
 
@@ -42,7 +42,7 @@ final class LyricScrollMotion {
     private long trackFirstTimestamp = Long.MIN_VALUE;
     private long trackLastTimestamp = Long.MIN_VALUE;
 
-    /** qplayer's rigid explicit-seek spring, expressed in rest-offset space. */
+    /** qplayer 的刚性显式 seek 弹簧，以静止偏移空间表示。 */
     private boolean seekSpringActive;
     private double seekSpringValue;
     private double seekSpringVelocity;
@@ -160,7 +160,7 @@ final class LyricScrollMotion {
         lineSpringInit = true;
     }
 
-    /** qplayer cascade: leading side is zero-delay; trailing side starts at 50ms and decays by 1.05x. */
+    /** qplayer 级联：头侧零延迟；尾侧从 50ms 起，按 1.05x 衰减。 */
     private void qplayerCascadeDelays(int count, int start, int end, int anchorIndex, boolean enabled) {
         java.util.Arrays.fill(cascadeDelayBuf, 0, count, 0.0);
         if (!enabled) return;

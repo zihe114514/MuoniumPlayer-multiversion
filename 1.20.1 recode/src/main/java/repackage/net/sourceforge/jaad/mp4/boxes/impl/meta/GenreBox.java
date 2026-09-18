@@ -16,7 +16,7 @@ public class GenreBox extends FullBox {
 
 	@Override
 	public void decode(MP4InputStream in) throws IOException {
-		//3gpp or iTunes
+		//3gpp 或 iTunes
 		if(parent.getType()==BoxTypes.USER_DATA_BOX) {
 			super.decode(in);
 			languageCode = Utils.getLanguageCode(in.readBytes(2));

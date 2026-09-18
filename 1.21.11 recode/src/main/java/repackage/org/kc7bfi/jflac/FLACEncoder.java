@@ -121,7 +121,7 @@ public class FLACEncoder {
     private static final int STREAM_ENCODER_ALREADY_INITIALIZED = 20;
     /**< 编码器已初始化时又调用了 stream_encoder_init()，
      * 通常是因为未调用 stream_encoder_finish()。
-     * stream_encoder_finish() was not called.
+     * 未调用 stream_encoder_finish()。
      */
 
     private static final int STREAM_ENCODER_UNINITIALIZED = 21;
@@ -415,8 +415,8 @@ public class FLACEncoder {
      
      if(encoder- > protected_- > qlp_coeff_precision = = 0) {
      if(encoder- > protected_- > bits_per_sample < 16) {
-     // @@@ need some data about how to set this here w.r.t. blocksize and sample rate
-      // @@@ until then we'll make a guess
+     // @@@ 需要一些关于如何依据 blocksize 和采样率来设置此处的资料
+      // @@@ 在此之前我们先做个猜测
        encoder- > protected_- > qlp_coeff_precision = max(MIN_QLP_COEFF_PRECISION, 2 + encoder- > protected_- > bits_per_sample/2);
        }
        // @@@ 需要一些关于如何根据块大小和采样率设置此项的数据
@@ -560,7 +560,7 @@ public class FLACEncoder {
           encoder->private_->local_lpc_compute_residual_from_qlp_coefficients = lpc_compute_residual_from_qlp_coefficients;
           编码器- > private_- > local_lpc_compute_residual_from_qlp_coefficients_64bit = lpc_compute_residual_from_qlp_coefficients_wide ；
           编码器- > private_- > local_lpc_compute_residual_from_qlp_coefficients_16bit = lpc_compute_residual_from_qlp_coefficients ；
-          // now override with asm where appropriate 
+          // 必要时用汇编覆盖
            # ifndef NO_ASM
            if(encoder- > private_- > cpuinfo.use_asm) {
            #ifdef CPU_IA32
@@ -606,14 +606,14 @@ public class FLACEncoder {
              encoder- > private_- > precompute_partition_sums = (encoder- > protected_- > max_residual_partition_order > encoder- > protected_- > min_residual_partition_order) || encoder- > protected_- > do_escape_coding;
              
              if(! resize_buffers_(encoder- > protected_- > blocksize)) {
-             // the above function sets the state for us in case of an error 
+             // 出错时，上述函数会为我们设置状态
               返回编码器- > protected_- > state ；
               }
               
               if(! bitbuffer_init(encoder- > private_- > frame))
               return encoder- > protected_- > state = STREAM_ENCODER_MEMORY_ALLOCATION_ERROR;
               
-              // Set up the verify stuff if necessary
+              // 如有必要，设置校验相关内容
                if(encoder- > protected_- > verify) {
                // 出错时上述函数会为我们设置状态
                 // 必要时设置校验相关内容
@@ -643,7 +643,7 @@ public class FLACEncoder {
                  encoder->private_->verify.error_stats.expected = 0;
                  encoder->private_->verify.error_stats.got = 0;
                  
-                 // write the stream header
+                 // 写入流头
                   if(encoder->protected_->verify)
                   encoder- > private_- > verify.state_hint = ENCODER_IN_MAGIC;
                   if(! bitbuffer_write_raw_uint32(encoder- > private_- > frame, STREAM_SYNC, STREAM_SYNC_LEN))
@@ -680,7 +680,7 @@ public class FLACEncoder {
                      
                      //现在编写了STREAMINFO块，我们可以将其初始化为荒谬的高值...
                       编码器- > private_- > metadata.data.stream_info.min_framesize = (1u < < STREAM_METADATA_STREAMINFO_MIN_FRAME_SIZE_LEN) - 1;
-                      // ... and clear this to 0 
+                      // ……并将其清零
                        encoder- > private_- > metadata.data.stream_info.total_samples = 0 ；
                        
                        // Check to see if the supplied metadata contains a VORBIS_COMMENT;
@@ -700,12 +700,12 @@ public class FLACEncoder {
                           if(! add_metadata_block(& vorbis_comment, encoder- > private_- > frame))
                           // 写入流头
                           if(! write_bitbuffer_(0)) {
-                          // the above function sets the state for us in case of an error 
+                          // 出错时，上述函数会为我们设置状态
                            返回编码器- > protected_- > state ；
                            }
                            }
                            
-                           // write the user's metadata blocks 
+                           // 写入用户的元数据块
                             for(i = 0; i < encoder-> protected_- > num_metadata_blocks; i + +) {
                             encoder- > protected_- > metadata [i] - > is_last = (i = = encoder- > protected_- > num_metadata_blocks - 1);
                             if(! bitbuffer_clear(encoder- > private_- > frame))
@@ -874,8 +874,8 @@ public class FLACEncoder {
      */
 
     /*
-     * These three functions are not static, but not publically exposed in
-     * include/FLAC/ either.  They are used by the test suite.
+      * 这三个函数不是 static 的，但也未公开暴露在
+      * include/FLAC/ 中。它们供测试套件使用。
      */
     public void disableConstantSubframes(boolean value) {
         if (state != STREAM_ENCODER_UNINITIALIZED) return;
@@ -1337,7 +1337,7 @@ public class FLACEncoder {
          return false;
          }
          
-         // CRC-16 the whole thing
+         // 对整体做 CRC-16
           // 对整体做 CRC-16
           bitbuffer_write_raw_uint32(frame, bitbuffer_get_write_crc16(frame), FRAME_FOOTER_CRC_LEN);
           
@@ -1347,7 +1347,7 @@ public class FLACEncoder {
             return false;
             }
             
-            // Get ready for the next frame
+            // 为下一帧做准备
              current_sample_number = 0;
              current_frame_number + + ；
              metadata.data.stream_info.total_samples + = (uint64)块大小；
@@ -1362,7 +1362,7 @@ public class FLACEncoder {
      int channel, min_partition_order = min_residual_partition_order, max_partition_order;
      boolean do_independent, do_mid_side, precompute_partition_sums;
      
-     // Calculate the min,max Rice partition orders
+     // 计算最小、最大 Rice 分区阶数
       if(is_last_frame) {
       max_partition_order = 0;
       }
@@ -1471,7 +1471,7 @@ public class FLACEncoder {
            }
            }
            
-           // Compose the frame bitbuffer
+           // 组装帧 bitbuffer
             if(do_mid_side) {
             unsigned left_bps = 0, right_bps = 0;//仅初始化以防止多余的编译器警告
             ChannelBase left_subframe, right_subframe;//仅初始化以防止多余的编译器警告
@@ -1485,7 +1485,7 @@ public class FLACEncoder {
             int min_bits;
             int ca;
             
-            // We have to figure out which channel assignent results in the smallest frame
+            // 我们需确定哪种通道分配产生最小的帧
              // 我们需确定哪种声道分配产生最小的帧
              bits [CHANNEL_ASSIGNMENT_LEFT_SIDE] = best_subframe_bits [0] + best_subframe_bits_mid_side [1] ；
              bits[CHANNEL_ASSIGNMENT_RIGHT_SIDE ] = best_subframe_bits         [1] + best_subframe_bits_mid_side[1];
@@ -1548,7 +1548,7 @@ public class FLACEncoder {
              ɏһ¼¶
              }
              
-             // note that encoder_add_subframe_ sets the state for us in case of an error
+             // 注意，出错时 encoder_add_subframe_ 会为我们设置状态
               if(! add_subframe_(frame_header, left_bps, left_subframe, frame))
               return false;
               // 注意，出错时 encoder_add_subframe_ 会为我们设置状态
@@ -1606,7 +1606,7 @@ public class FLACEncoder {
      int _candidate_bits, _best_bits;
      int _best_subframe;
      
-     // verbatim subframe is the baseline against which we measure other compressed subframes
+     // 逐字子帧是衡量其他压缩子帧的基线
       // 逐字子帧是衡量其他压缩子帧的基线
       if(disable_verbatim_subframes & & frame_header.blocksize > = MAX_FIXED_ORDER)
       _best_bits = UINT_MAX;
@@ -1616,7 +1616,7 @@ public class FLACEncoder {
       if (frame_header.blocksize >= MAX_FIXED_ORDER) {
       unsigned signal_is_constant = false;
       guess_fixed_order = local_fixed_compute_best_predictor(integer_signal+MAX_FIXED_ORDER, frame_header.blocksize-MAX_FIXED_ORDER, fixed_residual_bits_per_sample);
-      // check for constant subframe
+      // 检查是否为常量子帧
        if(! disable_constant_subframes & & fixed_residual_bits_per_sample [1] = = 0.0) {
        //以上意味着INTEGER_SIGNAL + MAX_FIXED_ORDER是常量，现在我们只需要检查预热样本
         unsigned i;
@@ -1711,7 +1711,7 @@ public class FLACEncoder {
            }
            if(do_qlp_coeff_prec_search) {
            min_qlp_coeff_precision = MIN_QLP_COEFF_PRECISION;
-           // ensure a 32-bit datapath throughout for 16bps or less
+           // 对于 16bps 及以下，全程确保 32 位数据通路
             // 对于 16bps 及以下，全程确保 32 位数据通路
             max_qlp_coeff_precision = min(32 - subframe_bps - lpc_order, MAX_QLP_COEFF_PRECISION);
             else
@@ -2029,7 +2029,7 @@ public class FLACEncoder {
      unsigned from_partition, to_partition = 0;
      unsigned blocksize = residual_samples + predictor_order;
      
-     // first do max_partition_order
+     // 先处理 max_partition_order
       for(partition_order = (int)max_partition_order; partition_order >= 0; partition_order--) {
       long abs_residual_partition_sum ；
       int abs_r;
@@ -2083,7 +2083,7 @@ public class FLACEncoder {
      unsigned from_partition, to_partition = 0;
      unsigned blocksize = residual_samples + predictor_order;
      
-     // first do max_partition_order
+     // 先处理 max_partition_order
       for(partition_order = (int)max_partition_order; partition_order >= 0; partition_order--) {
       int r, residual_partition_min, residual_partition_max;
       int silog2_min, silog2_max;
@@ -2202,7 +2202,7 @@ public class FLACEncoder {
      for(partition_sample = 0; partition_sample < partition_samples; residual_sample + +, partition_sample + +)
      mean + = abs_residual [residual_sample] ；
      residual_sample = save_residual_sample;
-     //calc rice_parameter ala LOCO-I
+     // 按照 LOCO-I 方式计算 rice_parameter
       for(rice_parameter = 0, k = partition_samples; k < mean; rice_parameter + +, k < < = 1)
       ;
       if (rice_parameter >= ENTROPY_CODING_METHOD_PARTITIONED_RICE_ESCAPE_PARAMETER) {
@@ -2331,7 +2331,7 @@ public class FLACEncoder {
      partition_samples - = predictor_order ；
      }
      mean = abs_residual_partition_sums [分区] ；
-     //calc rice_parameter ala LOCO-I
+     // 按照 LOCO-I 方式计算 rice_parameter
       for(rice_parameter = 0, k = partition_samples; k < mean; rice_parameter + +, k < < = 1)
       ;
       if (rice_parameter >= ENTROPY_CODING_METHOD_PARTITIONED_RICE_ESCAPE_PARAMETER) {
@@ -2450,7 +2450,7 @@ public class FLACEncoder {
      }
      否则
      if(encoded_bytes = = 0) {
-     // If we get here, a FIFO underflow has occurred, which means there is a bug somewhere.
+     // 若执行到这里，说明发生了 FIFO 下溢，意味着某处存在 bug。
       ɏһ¼¶
       return STREAM_DECODER_READ_STATUS_ABORT;
       }
@@ -2499,7 +2499,7 @@ public class FLACEncoder {
      return STREAM_DECODER_WRITE_STATUS_ABORT;
      }
      }
-     // dequeue the frame from the fifo
+     // 从 FIFO 中出队该帧
       for(channel = 0; channel < channels; channel + +) {
       memmove(& verifyData.input_fifo.data [channel] [0], & verifyData.input_fifo.data [channel] [blocksize], verifyData.input_fifo.tail - blocksize);
       }

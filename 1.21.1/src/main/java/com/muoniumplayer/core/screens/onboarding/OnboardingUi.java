@@ -2,6 +2,7 @@ package com.muoniumplayer.core.screens.onboarding;
 
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.rendering.BrandVectorIcons;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
 import com.muoniumplayer.core.rendering.RGBA;
 import com.muoniumplayer.core.rendering.Rect;
@@ -15,10 +16,10 @@ import java.awt.Color;
 import java.util.IdentityHashMap;
 import java.util.Map;
 
-/** Shared low-level drawing helpers for the onboarding module. */
+/** 新手引导模块共享的低层绘制助手。 */
 public final class OnboardingUi {
-    // Tokens mirror the official site (stile/assets/css/style.css): obsidian background,
-    // low-alpha glass, warm red/orange brand gradient and restrained aqua/violet accents.
+    // token 镜像官网（stile/assets/css/style.css）：黑曜石背景、
+    //低 alpha 玻璃、暖红/橙品牌渐变和克制的 aqua/violet 强调。
     public static final int BACKDROP = RGBA.color(14, 16, 22, 255);
     public static final int GLASS = RGBA.color(25, 27, 35, 248);
     public static final int GLASS_2 = RGBA.color(38, 41, 51, 250);
@@ -174,6 +175,12 @@ public final class OnboardingUi {
 
     public static void drawPlatformIcon(MusicPlatform platform,
                                          double centerX, double centerY, double box, int color) {
+        // 有矢量字标的三家先走矢量：和音源卡、账号头像位共用同一份数据，尺寸同样折 box 的一半。
+        // 不在帧内或路径解析失败时它返回 false，继续往下走字形字标。
+        if (BrandVectorIcons.drawCentered(platform, centerX, centerY,
+                box * BrandVectorIcons.MARK_RATIO, color)) {
+            return;
+        }
         if (platform == MusicPlatform.NETEASE) {
             drawBrandIcon(MusicBrandIcons.NETEASE_CLOUD_MUSIC, FontManager.musicBrand18,
                     centerX, centerY, color);

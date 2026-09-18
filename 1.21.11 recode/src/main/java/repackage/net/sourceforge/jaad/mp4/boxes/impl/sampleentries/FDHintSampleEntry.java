@@ -48,7 +48,7 @@ public class FDHintSampleEntry extends SampleEntry {
 	 * 零值表示此采样条目未关联分区条目，例如用于 FDT。
 	 * 若对应 FD 提示轨道只含开销数据，此值应指示其所讨论开销数据所在的分区条目。
 	 *
-	 * @return partition entry ID
+	  * @return 分区条目 ID
 	 */
 	public int getPartitionEntryID() {
 		return partitionEntryID;
@@ -60,7 +60,7 @@ public class FDHintSampleEntry extends SampleEntry {
 	 * 若对应 FD 提示轨道只含开销数据，此值应指示会话组中直到所讨论 FD 提示轨道、
 	 * 使用所有 FD 提示轨道所达到的保护开销。
 	 *
-	 * @return FEC overhead
+	  * @return FEC 开销
 	 */
 	public double getFECOverhead() {
 		return fecOverhead;

@@ -32,7 +32,7 @@ import java.io.InputStream;
  * 以便对音频进行代码转换。第一个字节数组可以缓冲数据
  * 直到有足够的数据进行代码转换
  * @param targetFormat - 处理后期望的流数据格式。
- * read out by the stream user.
+  * 供流的使用者读取。
  *
  * @author Marc Gimpel, Wimba S.A. (marc@wimba.com)
  * @author Florian Bomers
@@ -48,7 +48,7 @@ public abstract class RingedAudioInputStream extends AudioInputStream {
 
     /**
      * 存储数据的内部缓冲区数组。必要时，
-     * may be replaced by another array of a different size.
+      * 可由另一个不同大小的数组替换。
      */
     //底层 inputStream。
 
@@ -67,7 +67,7 @@ public abstract class RingedAudioInputStream extends AudioInputStream {
      * <p>
      * <code>buf[count-1]</code> 包含从底层输入流获取并过滤后的缓冲输入数据。
      * 小于<code>计数</code> ，则<code> buf [pos] </code>为
-     * next byte to be supplied as input. If it is equal to <code>count</code>,
+      * 作为输入提供的下一字节。若它等于 <code>count</code>，
      * 则下一个<code>读取</code>或<code>跳过</code>操作将
      * 此值始终在 0 到 <code>count</code> 范围内。若它
      * 是作为输入提供的下一字节。若它等于 <code>count</code>，
@@ -99,11 +99,11 @@ public abstract class RingedAudioInputStream extends AudioInputStream {
     //可被移动到缓冲区数组的另一位置，并相应
 
     /**
-     * The maximum read ahead allowed after a call to the <code>mark</code>
+      * 调用 <code>mark</code> 方法后允许的最大预读量，
      * 方法，然后再调用<code>重置</code>方法失败。
      * 每当<code> pos </code>与
      * <code> markpos </code>超过<code> marklimit </code> ，则标记
-     * may be dropped by setting <code>markpos</code> to -1.
+      * 可通过将 <code>markpos</code> 设为 -1 来丢弃。
      *
      * @see #mark(int)
      * @see #reset()
@@ -116,7 +116,7 @@ public abstract class RingedAudioInputStream extends AudioInputStream {
     private final byte[] single = new byte[1];
 
     /**
-     * The internal buffer array where the unfiltered data is temporarily
+      * 临时存放未过滤数据的内部缓冲区数组
      * 收纳
      */
     //protected byte [] prebuf;
@@ -256,8 +256,8 @@ public abstract class RingedAudioInputStream extends AudioInputStream {
      * 请参阅<code>总承包</code>方法
      * <code>InputStream</code>.
      *
-     * @return the next byte of data, or <code>-1</code> if the end of the
-     *         stream is reached.
+      * @return 下一字节数据，或 <code>-1</code>；若到达
+     *         流末尾。
      * @exception IOException
      *                @return 下一字节数据；若到达流末尾则为 <code>-1</code>。
      * @see #in
@@ -272,7 +272,7 @@ public abstract class RingedAudioInputStream extends AudioInputStream {
     }
 
     /**
-     * Read characters into a portion of an array, reading from the underlying
+      * 将字符读入数组的一部分，并从底层
      * 如有必要，最多播放一次。
      */
     //若发生 I/O 错误。
@@ -288,7 +288,7 @@ public abstract class RingedAudioInputStream extends AudioInputStream {
      * <code> {@link InputStream#read(byte[], int, int) read} </code>方法
      * 将字符读入数组的一部分，从底层读取
      * 它试图通过反复读取尽可能多的字节，
-     * invoking the <code>read</code> method of the underlying stream. This
+     * 调用底层流的 <code>read</code> 方法。此
      * <code>{@link InputStream}</code> 类。作为额外的
      * 条件变为真：
      * <ul>
@@ -316,8 +316,8 @@ public abstract class RingedAudioInputStream extends AudioInputStream {
      * <code>-1</code> 表示文件结束，则此方法返回
      *            开始存储字节的偏移量。
      * 建议（但不要求）此类的子类尝试
-     *            maximum number of bytes to read.
-     * @return the number of bytes read, or <code>-1</code> if the end of the
+     *            读取的最大字节数。
+      * @return 读取的字节数，或 <code>-1</code>；若到达
      *         已到达流。
      * @exception IOException
      *                @return 下一字节数据；若到达流末尾则为 <code>-1</code>。

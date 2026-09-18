@@ -2,7 +2,7 @@ package repackage.net.sourceforge.jaad.aac.sbr;
 
 interface NoiseTable {
 
-	/* Table 1.A.13 Noise table V */
+	/* 表 1.A.13 噪声表 V */
 	float[][] NOISE_TABLE = {
 		{-0.99948155879974f, -0.59483414888382f},
 		{0.97113454341888f, -0.67528516054153f},

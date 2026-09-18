@@ -66,8 +66,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     public ExtensionWidget widget;
     WidgetWrapper.WidgetPosSizeInterface wpsInterface;
 
-    // The HUD editor reuses the production renderer at an editor-provided position.
-    // Keeping this state local avoids changing the persisted HUD configuration while previewing.
+    // 宽/高由 HudConfig 持有，使 HUD 编辑器和模块包装器都使用
+    // 同一个响应式视口。将 NumberValues 保留在此处可维持包装器兼容性。
     private boolean editorPreviewActive;
     private float editorPreviewX;
     private float editorPreviewY;
@@ -95,8 +95,12 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         showRoman.setHiddenPredicate(() -> !showTranslation.getValue());
         dynIsland.setHiddenPredicate(() -> !Reflection.DYNAMIC_ISLAND_SUPPORTED);
         
-        // Width/height are owned by HudConfig so both HUD editors and the module wrapper use the
-        // same responsive viewport. Keeping the NumberValues here preserves wrapper compatibility.
+        /**
+     * 拖动跳转绝不能复用来自无关时间戳的动画位置。
+     * 将缓存位置标记为无效，可使下一帧先把每个可见行布局到新位置，
+     * 然后再恢复平滑跟随动画。
+     */
+        // 相同的响应式视口。在此保留 NumberValues 以保持包装器兼容性。
         this.addValues(alignMode, lyricHeight, lyricColor, currentLyricColor, shadow, singleLine, graceScroll, showRoman, dynIsland, preferAmllLyrics, preferQqQrcLyrics);
 
         Tuple<ExtensionWidget, WidgetWrapper.WidgetPosSizeInterface> wrapped = WidgetWrapper.createWrapper(this, this::onRender);
@@ -105,7 +109,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         this.setEventHandler(this);
     }
 
-    /** Applies the lyric appearance settings stored by the built-in HUD editor. */
+    /** 应用内置 HUD 编辑器存储的歌词外观设置。 */
     public void loadHudEditorSettings() {
         lyricColor.setValue(new Color(HudConfig.lyricColorRgb, true));
         currentLyricColor.setValue(new Color(HudConfig.currentLyricColorRgb, true));
@@ -114,9 +118,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     /**
-     * Renders the same animated desktop-lyric path used in game, but at the
-     * position selected in the HUD editor. The persisted HudConfig position is
-     * intentionally not touched by this preview.
+     * 渲染与游戏中相同的动画桌面歌词路径，但位于 HUD 编辑器中
+     * 选择的位置。持久化的 HudConfig 位置有意不被此预览修改。
      */
     public void renderEditorPreview(float x, float y, float scale) {
         if (this.widget == null) {
@@ -152,9 +155,9 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     private static final double KARAOKE_GLOW_FLOOR = .35;
 
     /**
-     * Seeks must not reuse the animated positions from an unrelated timestamp.
-     * Marking the cached positions invalid lets the next frame lay every visible line
-     * out at its new location before it resumes the smooth follow animation.
+     * 跳转不得重用来自不相关时间戳的动画位置。
+     * 将缓存位置标记为无效，使下一帧在恢复平滑跟随动画之前，
+     * 将每个可见行布局到其新位置。
      */
     public static void resetProgress(float progress) {
         if (CloudMusic.lyrics.isEmpty()) return;
@@ -238,15 +241,15 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                     int leftEndIdx = wordInfo.currentIndex;
                     int rightStartIdx = wordInfo.currentIndex + 1;
 
-//                    if (rightStartIdx == 1) {
-//                        LyricLine.Word current = currentLine.words.get(wordInfo.currentIndex);
-//                        double value = (songProgress - current.timestamp) / (double) (current.duration);
-//
-//                        if (value < 0) {
-//                            rightStartIdx -= 1;
-//                            leftEndIdx -= 1;
-//                        }
-//                    }
+// 只高亮其中一行会让另一行看起来已唱完，而且"当前"行
+// 会在两位演唱者之间明显跳动。
+// 保持活动歌词块居中。在较窄的 HUD 将其折成多行
+// 文本时，这一点尤为重要。
+// 单行模式仍显示完整合唱：该模式的目的是隐藏
+// 未在演唱的行，而在合唱中两行都在唱。
+// 可见行数由视口高度而非固定数值设置决定。
+// 裁剪范围外的行仍保留在布局阶段，使其
+// 滚动时的运动和边缘淡出保持连续。
 
                     for (int i = 0; i <= leftEndIdx - 1; i++) {
                         left += currentLine.words.get(i).word;
@@ -340,10 +343,14 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                 return;
             }
 
-            // A duet section is two (rarely three) lines whose timelines genuinely overlap. All of
-            // them are the current line at once, so they are laid out and centered as one block:
-            // highlighting only one of them makes the other look already-sung, and the "current"
-            // line would visibly bounce between the two singers.
+            // 字 token，但没有持续时间时每个 token 会同时解析，
+            // 从而错误地给整行重新着色。
+            /**
+     * 保留每个 YRC 字的计时，同时生成与 HUD 所用相同的响应式物理行。
+     * 比 HUD 更宽的字会被拆成带计时的片段，因此组件调整大小时
+     * KTV 高亮绝不会溢出。
+     */
+            // KaraokeLayout 仅由解析出的字级计时创建。每当该计时可用时，
             int groupStart = LyricDuetGroups.groupStart(CloudMusic.lyrics, currentIndex);
             int groupEnd = LyricDuetGroups.groupEnd(CloudMusic.lyrics, currentIndex);
             int groupSize = groupEnd - groupStart + 1;
@@ -375,15 +382,15 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             }
             this.currentBlockOverflows = blockHeight > viewportHeight;
 
-            // Keep the active lyric block centered. This is especially important when
-            // a narrow HUD wraps it into multiple physical text rows.
+            // 绝不能替换其从左到右的填充。
+            // 基础文本、辉光、模板裁剪和移动高亮必须共用同一个变换。
             double blockTop = this.currentBlockOverflows
                     ? viewportTop
                     : viewportTop + (viewportHeight - blockHeight) * .5;
 
             if (singleLineMode) {
-                // Single-line mode still shows a whole duet: the point of the mode is to hide the
-                // lines that are not being sung, and in a duet both of them are.
+                // 否则当前行缩放会使着色层偏离字形。
+                /** 返回从带计时字的起点到某码点偏移处的渲染前进量。 */
                 double y = blockTop;
                 for (int i = 0; i < groupSize; i++) {
                     renderLyricLine(CloudMusic.lyrics.get(groupStart + i), true, y,
@@ -393,9 +400,17 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                 return;
             }
 
-            // The viewport height, not a fixed number setting, decides how many rows are
-            // visible. Lines just outside the clip are kept in the layout pass so their
-            // motion and edge fade remain continuous while scrolling.
+            /*
+         * 此处不要使用嵌套模板。桌面 OSD 渲染到 Minecraft 共享的 HUD 帧缓冲中，
+         * OptiFine/其他模组的一道渲染过程可能使模板附件或其测试状态不可用。
+         * 那种情况下整个高亮的字都会显示到屏幕上，看起来像瞬间整行换色。
+         *
+         * 投影裁剪矩形跟随当前 HUD 缩放矩阵，并与任何父级裁剪矩形取交集。
+         * 因此它将辉光和字形绘制裁剪到实际移动的 KTV 填充宽度，
+         * 而不改变外部视口裁剪或外来渲染状态。
+         */
+            // 翻译文本有意使用与原文相同的解析样式。
+            // 其更小的字体仍是唯一的视觉区别；没有隐藏的 0.45/0.34
             double fadePadding = getEdgeFadeSize();
             double y = blockTop;
             for (int i = groupStart - 1; i >= 0; i--) {
@@ -451,7 +466,11 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         if (line.offsetY == Double.MIN_VALUE || Math.abs(line.offsetY - targetY) > resetDistance) {
             line.offsetY = targetY;
         } else if (this.graceScroll.getValue()) {
-            // Higher smoothness follows more gently while still converging after a line change.
+            /**
+     * HUD 编辑器负责歌词外观的持久化。在绘制时从 HudConfig 解析颜色，
+     * 使当前颜色选择器绝不可能通过旧版 ClickGUI ColorValue 实例
+     * 修改普通歌词颜色。
+     */
             float follow = 0.35f - HudConfig.scrollSmoothness * 0.26f;
             line.offsetY = Interpolations.interpolate(line.offsetY, targetY, follow);
         } else {
@@ -469,12 +488,15 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         double center = y + visualHeight * .5;
         double distanceToEdge = Math.min(center - top, bottom - center);
         double progress = Math.max(0.0, Math.min(1.0, distanceToEdge / getEdgeFadeSize()));
-        // smoothstep removes the visible boundary created by a linear alpha ramp.
+        /** 当前颜色专门保留给被裁剪的、带计时的 KTV 前景字形。 */
         return progress * progress * (3.0 - 2.0 * progress);
     }
 
     private double getEdgeFadeSize() {
-        // Do not let the fade consume more than half of a compact viewport.
+        /**
+     * 解析当前正在播放的带计时字。保留此项是为了 Dynamic Island
+     * 文本桥接和诊断；OSD 绘制本身使用上面的逐码点 KTV 路径。
+     */
         return Math.max(6.0, Math.min(HudConfig.edgeFadeSize, wpsInterface.getHeight() * .48));
     }
 
@@ -516,9 +538,9 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     private LyricLayout createLyricLayout(LyricLine line, boolean allowSecondary) {
-        // Only real word timestamps may enter the KTV renderer. A plain LRC can carry
-        // word tokens after parsing, but without durations every token resolves at once and
-        // would incorrectly recolour the whole line.
+        // 只有真实的逐字时间戳可以进入 KTV 渲染器。普通 LRC 在解析后
+        // 可能携带词元，但没有时长时每个词元会同时解析，
+        // 会错误地将整行重新着色。
         KaraokeLayoutBuilder.Layout karaokeLayout = line.hasTimedWords() ? createKaraokeLayout(line) : null;
         String[] primaryLines = karaokeLayout == null
                 ? fitText(getFontRenderer(), line.getLyric()) : karaokeLayout.primaryLines;
@@ -529,9 +551,9 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     /**
-     * Keeps every YRC word's timing while producing the same responsive physical rows
-     * used by the HUD. A word that is wider than the HUD is split into timed fragments,
-     * so KTV highlighting never overflows when the widget is resized.
+     * 保留每个 YRC 词的时序，同时生成与 HUD 相同的响应式物理行。
+     * 比 HUD 更宽的词被拆分为带时序的片段，
+     * 因此在调整组件大小时 KTV 高亮永远不会溢出。
      */
     private KaraokeLayoutBuilder.Layout createKaraokeLayout(LyricLine line) {
         return KaraokeLayoutBuilder.build(getFontRenderer(), line, getContentWidth());
@@ -585,9 +607,9 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     private void renderLyricText(LyricLine line, LyricRenderInfo renderInfo,
                                  boolean isCurrent, LyricLayout layout,
                                  float songProgress) {
-        // A KaraokeLayout is created only from parsed word-level timing. Whenever that
-        // timing is available the current OSD line must use the one KTV renderer; an
-        // optional legacy effect must never be able to replace its left-to-right fill.
+        // KaraokeLayout 仅从解析的逐字时序创建。只要该时序可用，
+        // 当前 OSD 行必须使用唯一的 KTV 渲染器；可选的旧效果
+        // 绝不能替代其从左到右的填充。
         boolean useKaraoke = isCurrent && layout.karaokeLayout != null;
         int effectAlpha = (int) (255 * line.lineAlpha * renderInfo.visibilityAlpha);
 
@@ -596,8 +618,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         this.duetAlignOverride = duetAlignMode(line);
         try {
             if (useKaraoke) {
-                // Base text, glow, stencil clips and moving highlight must share one transform.
-                // Otherwise current-line scaling makes the coloured layer drift away from the glyphs.
+                // 基础文字、辉光、模板裁剪和移动高亮必须共享同一个变换。
+                // 否则当前行缩放会使着色层偏离字形。
                 renderKaraokeBlock(layout, renderInfo.yPosition, songProgress, effectAlpha);
             } else {
                 renderWrappedPrimary(layout.primaryLines, renderInfo.yPosition,
@@ -1103,7 +1125,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         return Math.max(.5, RenderSystem.getScaleFactor() * Math.max(.1, hudScale));
     }
 
-    /** Returns the rendered advance from the start of a timed word to a code-point offset. */
+    /** 返回从定时词开头到码点偏移的已渲染前进宽度。 */
     private double getWordPrefixWidth(String text, int codePointOffset) {
         if (text == null || text.isEmpty() || codePointOffset <= 0) {
             return 0.0;
@@ -1158,14 +1180,14 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         }
 
         /*
-         * Do not use a nested stencil here. The desktop OSD is rendered into Minecraft's
-         * shared HUD framebuffer, where an OptiFine/other-mod pass can leave the stencil
-         * attachment or its test state unavailable. In that case the full highlighted word
-         * reaches the screen and looks like an instant whole-line colour swap.
+         * 不要在此使用嵌套模板。桌面 OSD 渲染到 Minecraft 的
+         * 共享 HUD 帧缓冲区，OptiFine/其他 mod 的通道可能使模板附件
+         * 或其测试状态不可用。在这种情况下，整个高亮词
+         * 到达屏幕，看起来像瞬间的整行颜色切换。
          *
-         * The projected scissor follows the current HUD scale matrix and is intersected with
-         * any parent scissor. Therefore it clips the glow and glyph draw to the actual moving
-         * KTV fill width without changing the outer viewport clip or foreign render state.
+         * 投影裁剪矩形跟随当前 HUD 缩放矩阵，并与任何父裁剪矩形相交。
+         * 因此它将辉光和字形绘制裁剪到实际移动的 KTV 填充宽度，
+         * 而不改变外部视口裁剪或外部渲染状态。
          */
         ScissorClipManager.begin(x + clipLeft, y + KARAOKE_CLIP_TOP_OFFSET,
                 clipRight - clipLeft, karaokeClipHeight());
@@ -1245,15 +1267,15 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     private void renderSecondaryLine(String text, double y, int color, boolean isCurrent,
                                      float songProgress) {
         double x = calculateTextX(text, getSmallFontRenderer(), activeAlignMode());
-        // The translation intentionally uses the same resolved style as the original.
-        // Its smaller font remains the only visual distinction; no hidden 0.45/0.34
-        // multipliers may split the HUD editor sliders into two unrelated effects.
+        // 翻译有意使用与原文相同的已解析样式。
+        // 其较小的字体是唯一的视觉区别；不允许隐藏的 0.45/0.34
+        // 乘数将 HUD 编辑器滑块拆分为两个不相关的效果。
         LyricVisualStyle visualStyle = getLyricVisualStyle(isCurrent);
         renderScaledText(text, x, y, color, getSmallFontRenderer(), visualStyle.scale,
                 visualStyle.glowStrength, false);
     }
 
-    /** Resolves the shared current/ordinary visual configuration for original and translated text. */
+    /** 解析原文和翻译文字共享的当前/普通视觉配置。 */
     private LyricVisualStyle getLyricVisualStyle(boolean isCurrent) {
         if (isCurrent) {
             return new LyricVisualStyle(getCurrentLineScale(),
@@ -1327,15 +1349,15 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         return applyDuetSpread(getContentLeft(), textWidth);
     }
     /**
-     * The HUD editor owns lyric appearance persistence.  Resolve colours from HudConfig
-     * at paint time so the current-colour picker can never mutate the ordinary lyric
-     * colour through the legacy ClickGUI ColorValue instances.
+     * HUD 编辑器拥有歌词外观的持久化。在绘制时从 HudConfig 解析颜色，
+     * 使当前颜色选择器永远无法通过旧版 ClickGUI ColorValue 实例
+     * 修改普通歌词颜色。
      */
     private int getBaseLyricColor(int alpha) {
         return getHudConfiguredColor(HudConfig.lyricColorRgb, alpha);
     }
 
-    /** Current colour is reserved exclusively for clipped, timed KTV foreground glyphs. */
+    /** 当前颜色专用于已裁剪的、定时的 KTV 前景字形。 */
     private int getCurrentLyricColor(int alpha) {
         return getHudConfiguredColor(HudConfig.currentLyricColorRgb, alpha);
     }
@@ -1348,9 +1370,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     /**
-     * Resolves the timed word currently under playback. This is retained for the
-     * Dynamic Island text bridge and diagnostics; OSD painting itself uses the
-     * per-code-point KTV path above.
+     * 解析当前正在播放的定时词。保留此项用于灵动岛文字桥接
+     * 和诊断；OSD 绘制本身使用上述逐码点 KTV 路径。
      */
     private WordInfo calculateCurrentWordInfo(LyricLine line, float songProgress) {
         WordInfo info = new WordInfo();
@@ -1417,9 +1438,9 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     /**
-     * The active colour is reserved for the clipped KTV foreground layer. Rendering
-     * an entire current line with it would bypass word timing and look like a hard
-     * colour switch, so the unfilled base always uses the ordinary lyric colour.
+     * 活动颜色专用于已裁剪的 KTV 前景层。用它渲染整个当前行
+     * 会绕过词时序，看起来像硬切换颜色，因此未填充的基础
+     * 始终使用普通歌词颜色。
      */
     private int getConfiguredLyricColor(LyricLine line, int alpha) {
         return getBaseLyricColor(alpha);
@@ -1432,7 +1453,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     /**
-     * Immutable resolved style shared by primary and translation lyric rendering.
+     * 主歌词和翻译歌词渲染共享的不可变已解析样式。
      *
      * <p>发光只剩一个强度。「晕染」和「发光半径」是八向偏移时代的两个旋钮，真高斯下
      * 前者就是同一束光的外层、后者由字号 × 扩散倍率推出，留着只会让三个滑块互相抵消。</p>
@@ -1463,7 +1484,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         double visibilityAlpha = 1.0;
     }
 
-    /** Cached geometry for one logical lyric row after responsive wrapping. */
+    /** 响应式换行后一个逻辑歌词行的缓存几何数据。 */
     private static class LyricLayout {
         final String[] primaryLines;
         final String[] secondaryLines;

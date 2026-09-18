@@ -68,7 +68,7 @@ public class RandomFileInputStream extends InputStream {
     }
 
     /**
-     * Close the file.
+     * 关闭文件。
      *
      * IO错误时出现@throws IOException
      * @see InputStream#close()
@@ -108,7 +108,7 @@ public class RandomFileInputStream extends InputStream {
      * 跳过输入文件中的字节。
      *
      * @param bytes 要跳过的字节数
-     * @return the number of bytes skipped
+      * @return 跳过的字节数
      * IO错误时出现@throws IOException
      * @return 跳过的字节数
      */
@@ -119,7 +119,7 @@ public class RandomFileInputStream extends InputStream {
     }
 
     /**
-     * Read bytes into an array.
+     * 将字节读入数组。
      *
      * 将字节读入数组。
      * @return 字节读取
@@ -131,7 +131,7 @@ public class RandomFileInputStream extends InputStream {
     }
 
     /**
-     * Read bytes into an array.
+     * 将字节读入数组。
      *
      * 将字节读入数组。
      * @param pos 缓冲器中的起始位置

@@ -30,9 +30,9 @@ public class GroupIDToNameBox extends FullBox {
 	}
 
 	/**
-	 * Returns the map that contains the ID-name-pairs for all groups.
+	 * 返回包含所有组 ID-名称对的映射。
 	 *
-	 * @return the ID to name map
+	 * @return ID 到名称的映射
 	 */
 	public Map<Long, String> getMap() {
 		return map;

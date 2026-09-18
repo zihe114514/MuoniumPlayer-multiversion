@@ -12,14 +12,14 @@ import repackage.net.sourceforge.jaad.aac.tools.TNS;
 import java.util.logging.Level;
 import repackage.net.sourceforge.jaad.aac.Decoder;
 
-//TODO: apply pulse data
+//TODO: 应用脉冲数据
 public class ICStream implements Constants, HCB, ScaleFactorTable, IQTable {
 
 	private static final int SF_DELTA = 60;
 	private static final int SF_OFFSET = 200;
 	private static int randomState = 0x1F2E3D4C;
 	private final int frameLength;
-	//always needed
+	//始终需要
 	private final ICSInfo info;
 	private final int[] sfbCB;
 	private final int[] sectEnd;
@@ -27,13 +27,13 @@ public class ICStream implements Constants, HCB, ScaleFactorTable, IQTable {
 	private final float[] scaleFactors;
 	private int globalGain;
 	private boolean pulseDataPresent, tnsDataPresent, gainControlPresent;
-	//only allocated if needed
+	//仅在需要时才分配
 	private TNS tns;
 	private GainControl gainControl;
 	private int[] pulseOffset, pulseAmp;
 	private int pulseCount;
 	private int pulseStartSWB;
-	//error resilience
+	//错误弹性
 	private boolean noiseUsed;
 	private int reorderedSpectralDataLen, longestCodewordLen;
 	private RVLC rvlc;
@@ -59,7 +59,7 @@ public class ICStream implements Constants, HCB, ScaleFactorTable, IQTable {
 		decodeSectionData(in, conf.isSectionDataResilienceUsed());
 
 		//if(conf.isScalefactorResilienceUsed()) rvlc.decode(in, this, scaleFactors);
-		/*else*/ decodeScaleFactors(in);
+		/*否则*/ decodeScaleFactors(in);
 
 		pulseDataPresent = in.readBool();
 		if(pulseDataPresent) {
@@ -81,7 +81,7 @@ public class ICStream implements Constants, HCB, ScaleFactorTable, IQTable {
 			gainControl.decode(in, info.getWindowSequence());
 		}
 
-		//RVLC spectral data
+		//RVLC 频谱数据
 		//if(conf.isScalefactorResilienceUsed()) rvlc.decodeScalefactors(this, in, scaleFactors);
 
 		if(conf.isSpectralDataResilienceUsed()) {
@@ -130,7 +130,7 @@ public class ICStream implements Constants, HCB, ScaleFactorTable, IQTable {
 		if(pulseStartSWB>=info.getSWBCount()) throw new AACException("pulse SWB out of range: "+pulseStartSWB+" > "+info.getSWBCount());
 
 		if(pulseOffset==null||pulseCount!=pulseOffset.length) {
-			//only reallocate if needed
+			//仅在需要时重新分配
 			pulseOffset = new int[pulseCount];
 			pulseAmp = new int[pulseCount];
 		}
@@ -148,7 +148,7 @@ public class ICStream implements Constants, HCB, ScaleFactorTable, IQTable {
 	public void decodeScaleFactors(BitStream in) throws AACException {
 		final int windowGroups = info.getWindowGroupCount();
 		final int maxSFB = info.getMaxSFB();
-		//0: spectrum, 1: noise, 2: intensity
+		//0：频谱，1：噪声，2：强度
 		final int[] offset = {globalGain, globalGain-90, 0};
 
 		int tmp;
@@ -217,7 +217,7 @@ public class ICStream implements Constants, HCB, ScaleFactorTable, IQTable {
 					}
 				}
 				else if(hcb==NOISE_HCB) {
-					//apply PNS: fill with random values
+					//应用 PNS：用随机值填充
 					for(w = 0; w<groupLen; w++, off += 128) {
 						float energy = 0;
 
@@ -239,7 +239,7 @@ public class ICStream implements Constants, HCB, ScaleFactorTable, IQTable {
 						for(k = 0; k<width; k += num) {
 							Huffman.decodeSpectralData(in, hcb, buf, 0);
 
-							//inverse quantization & scaling
+							//逆量化与缩放
 							for(j = 0; j<num; j++) {
 								data[off+k+j] = (buf[j]>0) ? IQ_TABLE[buf[j]] : -IQ_TABLE[-buf[j]];
 								data[off+k+j] *= scaleFactors[idx];
@@ -254,10 +254,9 @@ public class ICStream implements Constants, HCB, ScaleFactorTable, IQTable {
 
 	/* =========== gets ============ */
 	/**
-	 * Does inverse quantization and applies the scale factors on the decoded
-	 * data. After this the noiseless decoding is finished and the decoded data
-	 * is returned.
-	 * @return the inverse quantized and scaled data
+	 * 执行逆量化，并将比例因子应用于解码后的数据。
+	 * 此后无损解码完成，并返回解码后的数据。
+	 * @return 逆量化并缩放后的数据
 	 */
 	public float[] getInvQuantData() throws AACException {
 		return data;

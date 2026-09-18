@@ -8,7 +8,7 @@ import java.util.stream.IntStream;
 
 
 /**
- * This class can be used for configuring the Processing Sound library.
+  * 此类可用于配置 Processing Sound 库。
  *
  * 此类可用于配置 Processing Sound 库。
  * 库的音频合成和回放，如输出设备、样本
@@ -163,7 +163,7 @@ public class Sound {
 	 * 
 	 * @param sampleRate
 	 *            the sample rate to be used by the synthesis engine (default 44100)
-	 * @return the internal sample rate used by the synthesis engine
+	  * @return 合成引擎所使用的内部采样率
 	 * @ webref配置：声音
 	 * @ webBrief获取或设置合成引擎的内部采样率。
 	 */
@@ -195,7 +195,7 @@ public class Sound {
 
 	/**
 	 * 选择声音库音频输出应使用的设备（声卡）
-	 * be sent to. The output device should support stereo output (2 channels).
+	 * 发送到。输出设备应支持立体声输出（2 通道）。
 	 * 
 	 * AudioIn 类的构造函数中指定使用哪个声道。
 	 *            从Sound.list()获得的设备ID

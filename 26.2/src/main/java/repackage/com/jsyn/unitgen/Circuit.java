@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.unitgen;
@@ -23,7 +23,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 
 /**
- * Contains a list of units that are executed together.
+ * 包含一起执行的单位列表。
  *
  * @author Phil Burk (C) 2009 Mobileer Inc
  */
@@ -40,8 +40,8 @@ public class Circuit extends UnitGenerator {
     }
 
     /**
-     * Call flattenOutputs on subunits. Flatten output ports so we don't output a changing signal
-     * when stopped.
+     * 对子单元调用flattenOutputs。扁平化输出端口，这样我们就不会输出变化的信号
+     * 当停止时。
      */
     @Override
     public void flattenOutputs() {
@@ -51,7 +51,7 @@ public class Circuit extends UnitGenerator {
     }
 
     /**
-     * Call setEnabled on subunits.
+     * 对子单元调用setEnabled。
      */
     @Override
     public void setEnabled(boolean enabled) {
@@ -62,7 +62,7 @@ public class Circuit extends UnitGenerator {
     }
 
     /**
-     * @deprecated ignored, frameRate comes from the SynthesisEngine
+     * @deprecated 已忽略， frameRate来自SynthesisEngine
      * @param frameRate
      */
     @Deprecated
@@ -82,11 +82,11 @@ public class Circuit extends UnitGenerator {
         }
     }
 
-    /** Add a unit to the circuit. */
+    /** 在电路中添加一个单元。*/
     public void add(UnitGenerator unit) {
         units.add(unit);
         unit.setCircuit(this);
-        // Propagate circuit properties down into subunits.
+        // 将电路属性向下传播到子单元。
         unit.setEnabled(isEnabled());
     }
 
@@ -95,20 +95,20 @@ public class Circuit extends UnitGenerator {
 
 
     /**
-     * Add an alternate name for looking up a port.
+     * 添加用于查找端口的备用名称。
      * @param port
      * @param alias
      */
     public void addPortAlias(UnitPort port, String alias) {
-        // Store in a hash table by an alternate name.
+        // 用别名存入哈希表。
         portAliases.put(alias.toLowerCase(), port);
     }
 
 
     /**
-     * Case-insensitive search for a port by its name or alias.
+     * 按名称或别名（不区分大小写）查找端口。
      * @param portName
-     * @return matching port or null
+     * @return 匹配端口或空
      */
     @Override
     public UnitPort getPortByName(String portName) {
@@ -120,10 +120,10 @@ public class Circuit extends UnitGenerator {
     }
 
     /**
-     * The units are guaranteed to be in the same order
-     * as they were added.
+     * 保证各单元保持相同顺序
+     * 正如它们被添加的那样。
      *
-     * @return an array of units that have been added to this circuit.
+     * @return 已添加到此电路的单元阵列。
      */
     UnitGenerator[] getUnits() {
         return units.toArray(new UnitGenerator[0]);

@@ -5,11 +5,10 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The FEC reservoir box associates the source file identified in the file
- * partition box with FEC reservoirs stored as additional items. It contains a
- * list that starts with the first FEC reservoir associated with the first
- * source block of the source file and continues sequentially through the source
- * blocks of the source file.
+ * FEC reservoir box 将文件分区 box 中标识的源文件与
+ * 作为附加条目存储的 FEC 储备库关联。它包含一个列表，
+ * 从与源文件第一个源块关联的第一个 FEC 储备库开始，
+ * 顺序遍历源文件的各源块。
  *
  * @author in-somnia
  */
@@ -36,20 +35,18 @@ public class FECReservoirBox extends FullBox {
 	}
 
 	/**
-	 * The item ID indicates the location of the FEC reservoir associated with a
-	 * source block.
+	 * item ID 指示与某个源块关联的 FEC 储备库的位置。
 	 *
-	 * @return all item IDs
+	 * @return 所有 item ID
 	 */
 	public int[] getItemIDs() {
 		return itemIDs;
 	}
 
 	/**
-	 * The symbol count indicates the number of repair symbols contained in the
-	 * FEC reservoir.
+	 * symbol count 指示 FEC 储备库中所含修复符号的数量。
 	 *
-	 * @return all symbol counts
+	 * @return 所有 symbol count
 	 */
 	public long[] getSymbolCounts() {
 		return symbolCounts;

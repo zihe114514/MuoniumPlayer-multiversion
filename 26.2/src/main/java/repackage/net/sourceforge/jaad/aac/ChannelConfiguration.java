@@ -1,7 +1,7 @@
 package repackage.net.sourceforge.jaad.aac;
 
 /**
- * All possible channel configurations for AAC.
+ * AAC 的所有可能声道配置。
  * @author in-somnia
  */
 public enum ChannelConfiguration {
@@ -59,24 +59,24 @@ public enum ChannelConfiguration {
 	}
 
 	/**
-	 * Returns the number of channels in this configuration.
+	 * 返回此配置中的声道数量。
 	 */
 	public int getChannelCount() {
 		return chCount;
 	}
 
 	/**
-	 * Returns a short description of this configuration.
-	 * @return the channel configuration's description
+	 * 返回此配置的简短描述。
+	 * @return 该声道配置的描述
 	 */
 	public String getDescription() {
 		return descr;
 	}
 
 	/**
-	 * Returns a string representation of this channel configuration.
-	 * The method is identical to <code>getDescription()</code>.
-	 * @return the channel configuration's description
+	 * 返回此声道配置的字符串表示。
+	 * 该方法与 <code>getDescription()</code> 相同。
+	 * @return 该声道配置的描述
 	 */
 	@Override
 	public String toString() {

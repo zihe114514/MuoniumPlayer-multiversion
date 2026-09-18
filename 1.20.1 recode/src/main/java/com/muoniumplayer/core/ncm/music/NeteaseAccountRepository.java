@@ -18,11 +18,11 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * NetEase account-data requests and response parsing.
+ * 网易云账号数据请求与响应解析。
  *
- * <p>The class deliberately has no GUI, playback or mutable player state. The
- * {@link CloudMusic} facade remains responsible for publishing returned data to
- * existing static fields and for preserving the current refresh lifecycle.</p>
+ * <p>该类刻意没有 GUI、播放或可变播放器状态。
+ * {@link CloudMusic} 外观仍负责把返回数据发布到
+ * 既有的静态字段，并保持当前刷新生命周期。</p>
  */
 final class NeteaseAccountRepository {
 
@@ -62,7 +62,7 @@ final class NeteaseAccountRepository {
     static List<PlayList> loadUserPlaylistsStrict(User user) {
         List<PlayList> userPlaylists = new ArrayList<>();
         int page = 0;
-        // A sane upper bound prevents a malformed API response from creating an endless loop.
+        // 一个合理的上限防止畸形 API 响应造成死循环。
         while (page < 1000) {
             List<PlayList> pagePlaylists = user.playLists(page, 30);
             if (pagePlaylists == null || pagePlaylists.isEmpty()) {
@@ -94,8 +94,8 @@ final class NeteaseAccountRepository {
     }
 
     /**
-     * Loads cloud-drive IDs separately from playlist details. Normal playlist responses do not
-     * reliably contain a cloud marker, even when the current account uploaded the same song.
+     * 单独从歌单详情加载云盘 ID。普通歌单响应并不可靠地包含
+     * 云标记，即使当前账号上传了同一首歌。
      */
     static Set<Long> loadCloudSongIds() {
         final int pageSize = 200;

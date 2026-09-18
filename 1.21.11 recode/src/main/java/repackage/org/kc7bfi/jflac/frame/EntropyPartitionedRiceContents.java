@@ -27,14 +27,14 @@ public class EntropyPartitionedRiceContents {
 
     /**
      * 指定为订单的参数和raw_bits数组的容量。
-     * i.e. the number of array elements allocated is 2 ^ capacity_by_order.
+     * 即分配的数组元素数量为 2 ^ capacity_by_order。
      */
     protected int capacityByOrder = 0;
 
     /**
      * 确保已分配足够的内存。
      *
-     * @param maxPartitionOrder The maximum partition order
+      * @param maxPartitionOrder 最大分区阶数
      */
     public void ensureSize(int maxPartitionOrder) {
         if (capacityByOrder >= maxPartitionOrder) return;

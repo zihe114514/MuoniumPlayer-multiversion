@@ -5,16 +5,15 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * Within the Track Fragment Box, there are zero or more Track Run Boxes. If the
- * duration-is-empty flag is set in the track fragment box, there are no track
- * runs. A track run documents a contiguous set of samples for a track.
+ * Track Fragment Box 内有零个或多个 Track Run Box。
+ * 若 track fragment box 中设置了 duration-is-empty 标志，则没有
+ * track run。一个 track run 记录轨道的一组连续采样。
  *
- * If the data-offset is not present, then the data for this run starts
- * immediately after the data of the previous run, or at the base-data-offset
- * defined by the track fragment header if this is the first run in a track
- * fragment.
- * If the data-offset is present, it is relative to the base-data-offset
- * established in the track fragment header.
+ * 若不存在 data-offset，则此段数据紧接前一段数据之后开始，
+ * 若这是 track fragment 中的第一段，则从 track fragment header
+ * 定义的 base-data-offset 开始。
+ * 若存在 data-offset，则它相对于 track fragment header
+ * 建立的 base-data-offset。
  * 
  * @author in-somnia
  */
@@ -37,14 +36,14 @@ public class TrackFragmentRunBox extends FullBox {
 
 		sampleCount = (int) in.readBytes(4);
 
-		//optional fields
+		//可选字段
 		dataOffsetPresent = ((flags&1)==1);
 		if(dataOffsetPresent) dataOffset = in.readBytes(4);
 
 		firstSampleFlagsPresent = ((flags&4)==4);
 		if(firstSampleFlagsPresent) firstSampleFlags = in.readBytes(4);
 
-		//all fields are optional
+		//所有字段均为可选
 		sampleDurationPresent = ((flags&0x100)==0x100);
 		if(sampleDurationPresent) sampleDuration = new long[sampleCount];
 		sampleSizePresent = ((flags&0x200)==0x200);

@@ -12,17 +12,17 @@ import java.awt.*;
 public class Interpolations {
 
     /**
-     * nano delta frame time for timing animations
+     * 用于动画计时的纳秒级帧时间差
      */
     public static long lastNanoFrame = System.nanoTime();
 
     /**
-     * interpolate animation
+     * 插值动画
      *
-     * @param startValue start
-     * @param endValue   end
-     * @param fraction   speed
-     * @return animation value
+     * @param startValue 起始
+     * @param endValue   结束
+     * @param fraction   进度
+     * @return 动画值
      */
     public static double interpolate(double startValue, double endValue,
                                      double fraction) {
@@ -87,10 +87,10 @@ public class Interpolations {
     }
 
     /**
-     * the curve of the interpolate animation
+     * 插值动画的曲线
      *
      * @param t speed input
-     * @return curve value
+      * @return 曲线值
      */
     private static double interpolateCurve(double t) {
         double clampValue;
@@ -102,7 +102,9 @@ public class Interpolations {
             // -3.125 * t² + 6.25 * t - 2.125
             clampValue = -3.125 * StrictMath.pow(t, 2) + 6.25 * t - 2.125;
         } else {
-            // 1.25 * (t - 0.1)
+            /**
+     * 计算帧时间差
+     */
             clampValue = 1.25 * (t - 0.1);
         }
 
@@ -114,7 +116,7 @@ public class Interpolations {
     }
 
     /**
-     * calculates the delta frame time
+     * 计算帧时间增量
      */
     public static void calcFrameDelta() {
 

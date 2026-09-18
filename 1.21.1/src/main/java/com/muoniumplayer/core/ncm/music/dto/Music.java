@@ -40,7 +40,7 @@ import java.util.stream.Collectors;
 public class Music {
 
     private static final long PLAY_URL_RESOLVE_TIMEOUT_SECONDS = 10L;
-    // GD Studio proxies can resolve a valid third-party CDN link more slowly than official APIs.
+    // GD Studio 代理解析一个有效第三方 CDN 链接可能比官方 API 慢。 
     private static final long GD_PLAY_URL_RESOLVE_TIMEOUT_SECONDS = 35L;
     private static final AtomicInteger URL_RESOLVER_THREAD_ID = new AtomicInteger();
     private static final ExecutorService URL_RESOLVER = Executors.newCachedThreadPool(new ThreadFactory() {
@@ -85,9 +85,9 @@ public class Music {
     private final long duration;
 
     /**
-     * Length measured from the decoded stream. GD Studio search responses carry no duration, so
-     * without this the list, Coverflow and progress readouts would stay at 00:00 for those tracks.
-     * {@code transient} keeps it out of Lombok equality and out of serialized playlist data.
+     * 从解码流测得的长度。GD Studio 搜索响应不带时长，因此
+     * 没有它，列表、Coverflow 和进度读数对这些曲目会停在 00:00。
+     * {@code transient} 把它排除在 Lombok 相等性和序列化播放列表数据之外。
      */
     private transient volatile long decodedDurationMillis;
 
@@ -101,8 +101,8 @@ public class Music {
     private final List<String> translatedName;
 
     /**
-     * NetEase song-detail privilege fields. They remain distinct from the resolved
-     * audio quality: membership/album restrictions are licensing metadata.
+     * 网易云歌曲详情特权字段。它们与解析出的
+     * 音频质量保持区分：会员/专辑限制是授权元数据。
      */
     @SerializedName("fee")
     private int fee;
@@ -131,7 +131,7 @@ public class Music {
     private transient String externalCoverUrl;
     /** 当前封面提取出的代表色，供「隐现」歌词背景实时取用；不进入歌单序列化。 */
     private transient volatile int[] coverPalette;
-    /** GD Studio aggregated source key (netease/joox/...) for freely selected GD tracks. */
+    /** 自由选择的 GD 曲目的 GD Studio 聚合源 key（netease/joox/...）。 */
     private transient String gdPlatform;
     private transient String gdPicId;
     private transient String gdLyricId;
@@ -159,22 +159,22 @@ public class Music {
     private transient volatile boolean greyDetected;
     private transient volatile String unblockedSourceLabel = "";
     private transient boolean vip;
-    /** True only when the NetEase payload explicitly marks this track as a cloud-drive track. */
+    /** 仅当网易云载荷显式把本曲目标记为云盘曲目时为 true。 */
     private transient boolean cloudSong;
-    /** Highest provider tier advertised by song/privilege metadata; empty means not supplied. */
+    /** 歌曲/特权元数据宣称的最高提供方档位；空表示未提供。 */
     private transient String highestQualityLabel = "";
     private transient Track cadenceTrack;
 
-    /** Actual stream quality resolved for the current playback request. */
+    /** 为当前播放请求解析出的实际流质量。 */
     private transient volatile PlaybackQuality playbackQuality = PlaybackQuality.UNKNOWN;
 
     /** 汽水登录流返回的一次性 play_auth；只在解析到下载完成之间使用，不写配置。 */
     private transient volatile String qishuiPlayAuth = "";
 
     /**
-     * Gson may allocate this DTO without running field initializers when it decodes
-     * the immutable NetEase response model. Keep the render-facing state non-null
-     * even for such deserialized instances.
+     * Gson 在解码不可变网易云响应模型时，可能不运行字段初始化器
+     * 就分配此 DTO。保持面向渲染的状态非空，
+     * 即使对这样反序列化的实例。
      */
     public PlaybackQuality getPlaybackQuality() {
         PlaybackQuality current = playbackQuality;
@@ -218,7 +218,7 @@ public class Music {
             return !badge.isEmpty();
         }
 
-        /** Human-readable resolved stream tier for runtime status notifications. */
+        /** 用于运行时状态通知的、人可读的解析流档位。 */
         public String getDisplayName() {
             switch (this) {
                 case LOSSLESS:
@@ -234,7 +234,7 @@ public class Music {
         }
     }
 
-    /** Applies optional NetEase song/privilege fields without assuming they exist for QQ/Cadence tracks. */
+    /** 应用可选的网易云歌曲/特权字段，而不假定它们对 QQ/Cadence 曲目存在。 */
     public void applyNeteaseMetadata(JsonObject song, JsonObject privilege) {
         if (!isNetease()) return;
         cloudSong = cloudSong || isCloudMarked(song) || isCloudMarked(privilege);
@@ -360,7 +360,7 @@ public class Music {
         return music;
     }
 
-    /** Builds a YouTube search result. YouTube video ids are stable and become the source key. */
+    /** 构建一条 YouTube 搜索结果。YouTube 视频 id 稳定，并成为源 key。 */
     public static Music fromYouTubeMusicTrack(YouTubeMusicService.Track track) {
         if (track == null) return null;
         String videoId = nonNull(track.videoId);
@@ -376,8 +376,8 @@ public class Music {
         }
 
         String cover = nonNull(track.coverUrl);
-        // Compact YouTube search results do not carry album metadata. Keep it empty instead of
-        // presenting the channel name as a fake album in the full-screen track details.
+        // 紧凑的 YouTube 搜索结果不带专辑元数据。保持它为空，而非
+        //在全屏曲目详情中把频道名当作假专辑呈现。
         Album album = new Album(stableLong("youtube:album:" + videoId), "", cover,
                 Collections.emptyList());
         Music music = new Music(nonNull(track.title), nonNull(track.title), "", stableId,
@@ -390,7 +390,7 @@ public class Music {
         return music;
     }
 
-    /** Builds a Qishui Music search result. Qishui track ids are globally stable. */
+    /** 构建一条汽水音乐搜索结果。汽水曲目 id 全局稳定。 */
     public static Music fromQishuiTrack(QishuiMusicService.Track track) {
         if (track == null) return null;
         String trackId = nonNull(track.trackId);
@@ -424,7 +424,7 @@ public class Music {
         return music;
     }
 
-    /** Builds a Bilibili search result. The BVID plus page number is the stable source key. */
+    /** 构建一条 Bilibili 搜索结果。BVID 加页码是稳定的源 key。 */
     public static Music fromBilibiliTrack(BilibiliMusicService.Track track) {
         if (track == null) return null;
         String bvid = nonNull(track.bvid);
@@ -517,7 +517,7 @@ public class Music {
         return track;
     }
 
-    /** Builds a freely selectable GD Studio track from a GD API search result. */
+    /** 从一条 GD API 搜索结果构建一条可自由选择的 GD Studio 曲目。 */
     public static Music fromGdTrack(GdStudioMusicService.GdTrack track, String platformKey) {
         if (track == null) return null;
         String id = nonNull(track.id);
@@ -556,12 +556,12 @@ public class Music {
         return music;
     }
 
-    /** Source metadata duration, falling back to the length measured while decoding. */
+    /** 源元数据时长，回退到解码时测得的长度。 */
     public long getDuration() {
         return duration > 0L ? duration : decodedDurationMillis;
     }
 
-    /** Records the decoder-reported length for a source that shipped no duration metadata. */
+    /** 为一个未携带时长元数据的源记录解码器报告的长度。 */
     public void applyDecodedDuration(long millis) {
         if (millis > 0L && duration <= 0L) {
             decodedDurationMillis = millis;
@@ -619,14 +619,14 @@ public class Music {
     }
 
     /**
-     * Returns whether the provider marks this track as membership or paid-content restricted.
-     * Cadence supplies the flag for QQ tracks; NetEase fee is copied from its privilege payload.
+     * 返回提供方是否把本曲目标记为会员或付费内容受限。
+     * Cadence 为 QQ 曲目提供该标志；网易云 fee 从其特权载荷复制。
      */
     public boolean hasVipRestriction() {
         return vip || (isNetease() && fee != 0);
     }
 
-    /** True only for NetEase digital-album purchase tracks, not ordinary album metadata. */
+    /** 仅对网易云数字专辑购买曲目为 true，而非普通专辑元数据。 */
     public boolean isDigitalAlbumTrack() {
         return isNetease() && fee == 4;
     }
@@ -643,7 +643,7 @@ public class Music {
         return Location.of("muonium/textures/music/" + getStableKey() + "/cover_blurred.png");
     }
 
-    /** Animated cover texture when NetEase provides a supported dynamic image; otherwise absent. */
+    /** 网易云提供受支持的动态图时为动画封面纹理；否则不存在。 */
     public final Location getDynamicCoverLocation() {
         return Location.of("muonium/textures/music/" + getStableKey() + "/cover_dynamic.png");
     }
@@ -698,8 +698,8 @@ public class Music {
     }
 
     /**
-     * Resolves the GD Studio album-art URL (network call). Safe to call from background
-     * cover-loading threads only; the render path uses the cached {@link #getCoverUrl(int)}.
+     * 解析 GD Studio 专辑封面 URL（网络调用）。仅可安全从后台
+     * 封面加载线程调用；渲染路径使用缓存的 {@link #getCoverUrl(int)}。
      */
     public String resolveGdCoverUrl(int size) {
         if (!isGd()) return getCoverUrl(size);
@@ -730,7 +730,7 @@ public class Music {
      * 备用解析器；QQ 仅能使用 Cadence，但同样执行无损到标准的降级。
      */
     public Tuple<String, String> getPlayUrl() {
-        // Never show a quality badge carried over from a previous failed resolve.
+        // 绝不显示从上一次失败解析带过来的质量徽标。
         this.playbackQuality = PlaybackQuality.UNKNOWN;
 
         // 一起听房间正在放的这一首，用房间共用的那条链接，不再各自解析：本机重新解析会让
@@ -914,8 +914,8 @@ public class Music {
     }
 
     /**
-     * Resolves a YouTube audio stream. YouTube only exposes lossy audio here; the resolved
-     * quality badge therefore intentionally remains standard/HQ instead of claiming lossless.
+     * 解析一条 YouTube 音频流。YouTube 在此只暴露有损音频；因此解析出的
+     * 质量徽标刻意保持 standard/HQ，而非声称无损。
      */
     private Tuple<String, String> resolveYouTubePlayUrl() {
         final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
@@ -933,9 +933,9 @@ public class Music {
     }
 
     /**
-     * Resolves Bilibili's audio-only DASH stream. The service prefers AAC-LC because the
-     * bundled JAAD decoder handles it reliably; fragmented MP4 then flows through the
-     * existing AAC decode cache pipeline.
+     * 解析 Bilibili 的纯音频 DASH 流。服务偏好 AAC-LC，因为
+     * 内置 JAAD 解码器可靠处理它；分片 MP4 随后流经
+     * 既有的 AAC 解码缓存管线。
      */
     private Tuple<String, String> resolveQishuiPlayUrl() {
         final Quality requestedQuality = CloudMusic.quality == null ? Quality.STANDARD : CloudMusic.quality;
@@ -969,8 +969,8 @@ public class Music {
     }
 
     /**
-     * Resolves a freely selected GD Studio track. When the preferred platform fails to parse or
-     * play, it sends the documented URL request to the exact platform/id returned by search.
+     * 解析一条可自由选择的 GD Studio 曲目。当首选平台解析或
+     * 播放失败时，它向搜索返回的确切平台/id 发送文档记载的 URL 请求。
      */
     private Tuple<String, String> resolveGdPlayUrl() {
         final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
@@ -979,8 +979,8 @@ public class Music {
             @Override
             public Tuple<String, String> call() throws Exception {
                 DownloadDynamicIsland.showGdSourceResolving("GD音乐台 · " + platform.toUpperCase(Locale.ROOT));
-                // Protected resolve: the documented bitrate ladder on the selected source first, then
-                // one healthy source re-matched by title/artist. Only a fully failed chain reports failure.
+                // 受保护解析：先走选中源上文档记载的码率阶梯，再
+                //按标题/艺术家在一个健康源重新匹配。只有整条链完全失败才上报失败。
                 GdStudioMusicService.ResolveResult result = GdStudioMusicService.resolveTrackWithFallback(
                         platform, getSourceId(), getName(), getArtistsName(), requestedQuality);
                 if (result == null) {
@@ -1000,8 +1000,8 @@ public class Music {
     }
 
     /**
-     * Re-resolves a GD Studio track on another healthy source after byte-level inspection rejects
-     * the stream the selected source handed out (DASH video, HTML error page, truncated payload).
+     * 在字节级检查拒绝选中源给出的流后，在另一个健康源上重新解析该 GD Studio 曲目
+     * （DASH 视频、HTML 错误页、截断载荷）。
      */
     public Tuple<String, String> getGdCrossSourceFallbackPlayUrl() {
         if (!isGd()) return null;
@@ -1023,8 +1023,8 @@ public class Music {
     }
 
     /**
-     * Re-resolves a NetEase song as a known-playable standard MP3 stream after
-     * byte-level inspection rejects the initially returned payload.
+     * 在字节级检查拒绝最初返回的载荷后，把一首网易云歌重新解析为
+     * 已知可播放的标准 MP3 流。
      */
     public Tuple<String, String> getStandardMp3PlayUrl() {
         if (!isNetease()) {
@@ -1060,7 +1060,7 @@ public class Music {
         }, "KuGou " + requestedQuality.getQuality());
     }
 
-    /** Tries the configured tier once, then a known-playable standard Cadence stream. */
+    /** 先按配置档位试一次，再试一条已知可播放的标准 Cadence 流。 */
     private Tuple<String, String> resolveCadenceWithStandardFallback() {
         final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
         Tuple<String, String> result = resolveWithTimeout(new Callable<Tuple<String, String>>() {
@@ -1089,9 +1089,9 @@ public class Music {
     }
 
     private Tuple<String, String> resolveWithBuiltInNeteaseApi() {
-        // The default configuration requests lossless first. If the user deliberately
-        // picks another tier in the module setting, honor that explicit preference; any
-        // unavailable/VIP-gated/failed primary request still falls back to standard MP3.
+        // 默认配置先请求无损。若用户刻意
+        //在模块设置中选了另一个档位，则遵从该显式偏好；任何
+        //不可用/VIP 受限/失败的主请求仍回退到标准 MP3。
         Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
         Tuple<String, String> preferred = resolveNeteasePlayUrl(
                 CloudMusicApi.songUrlV1(this.id, requestedQuality.getQuality().toLowerCase(Locale.ROOT)),
@@ -1191,8 +1191,8 @@ public class Music {
         if (isLosslessFormat(format)) {
             return PlaybackQuality.LOSSLESS;
         }
-        // Cadence does not provide a bitrate for every provider. A lossless request
-        // that returns a lossy container is treated as a real standard fallback.
+        // Cadence 不为每个提供方提供码率。一个无损请求
+        //返回有损容器的，被当作真正的标准兜底。
         return (requestedQuality == Quality.HIGHER
                 || requestedQuality == Quality.EXHIGH || requestedQuality == Quality.SKY)
                 ? PlaybackQuality.HQ : PlaybackQuality.STANDARD;
@@ -1242,8 +1242,8 @@ public class Music {
     }
 
     private static boolean isSupportedFormat(String type) {
-        // Downloaded bytes are still verified by CloudMusic before playback. AAC/M4A reaches
-        // the existing decoder; generic MP4 reaches the file-header rejection/notification path.
+        // 下载字节在播放前仍由 CloudMusic 校验。AAC/M4A 到达
+        //既有的解码器；通用 MP4 到达文件头拒绝/通知路径。
         return "mp3".equals(type) || "flac".equals(type) || "wav".equals(type)
                 || "aac".equals(type) || "m4a".equals(type) || "mp4".equals(type);
     }

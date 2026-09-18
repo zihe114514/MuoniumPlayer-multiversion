@@ -113,7 +113,7 @@ public class SoundFile extends AudioSample {
 		return timeStretch(stretch);
 	}
 
-	// Below are just duplicated methods from the AudioSample superclass which
+	// 以下只是从 AudioSample 父类复制过来的方法，
 	// 是构建相应页面的参考所必需的。
 
 	/**
@@ -237,7 +237,7 @@ public class SoundFile extends AudioSample {
 	 *            在音频样本中的位置，播放应从开始，在
 	 *            seconds.
 	 * @return 声音文件的时长（秒）。
-	 *            offset the output of the generator by the given value
+	  * 按给定值偏移发生器的输出
 	 * @ webref采样： SoundFile
 	 * @ webBrief开始播放声音文件。
 	 **/
@@ -312,7 +312,7 @@ public class SoundFile extends AudioSample {
 	 *            （右）。仅适用于单声道 audiosample！
 	 *            0.0 （完全静音）至1.0 （全音量）
 	 * @return 声音文件的时长（秒）。
-	 *            offset the output of the generator by the given value
+	  * 按给定值偏移发生器的输出
 	 * @ webref采样： SoundFile
 	 * @ webBrief开始播放，播放将在声音文件结束时循环。
 	 */

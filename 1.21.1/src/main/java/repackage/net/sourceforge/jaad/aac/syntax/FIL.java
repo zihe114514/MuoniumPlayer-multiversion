@@ -44,7 +44,7 @@ class FIL extends Element implements Constants {
 	void decode(BitStream in, Element prev, SampleFrequency sf, boolean sbrEnabled, boolean smallFrames) throws AACException {
 		int count = in.readBits(4);
 		if(count==15) count += in.readBits(8)-1;
-		count *= 8; //convert to bits
+		count *= 8; //转换为位
 
 		final int cpy = count;
 		final int pos = in.getPosition();
@@ -97,18 +97,18 @@ class FIL extends Element implements Constants {
 
 		int bandCount = 1;
 
-		//pce tag
+		//pce 标签
 		if(dri.pceTagPresent = in.readBool()) {
 			dri.pceInstanceTag = in.readBits(4);
 			dri.tagReservedBits = in.readBits(4);
 		}
 
-		//excluded channels
+		//被排除的声道
 		if(dri.excludedChannelsPresent = in.readBool()) {
 			ret -= decodeExcludedChannels(in);
 		}
 
-		//bands
+		//频带
 		if(dri.bandsPresent = in.readBool()) {
 			dri.bandsIncrement = in.readBits(4);
 			dri.interpolationScheme = in.readBits(4);
@@ -121,7 +121,7 @@ class FIL extends Element implements Constants {
 			}
 		}
 
-		//prog ref level
+		//节目参考电平
 		if(dri.progRefLevelPresent = in.readBool()) {
 			dri.progRefLevel = in.readBits(7);
 			dri.progRefLevelReservedBits = in.readBits(1);

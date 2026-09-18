@@ -62,7 +62,7 @@ public class LPCPredictor {
          err = autoc [0];
          
          for(i = 0; i < max_order; i + +) {
-         // Sum up this iteration's reflection coefficient.
+         // 累加本次迭代的反射系数。
           r = -autoc [i +1];
           for(j = 0; j < i; j++)
           // 累加本次迭代的反射系数。
@@ -125,7 +125,7 @@ public class LPCPredictor {
               
               if(* shift < min_shiftlimit || *shift > max_shiftlimit) {
               # if 0
-              //@@@ this does not seem to help at all, but was not extensively tested either:
+              // @@@ 这看起来完全没帮助，但也没有经过充分测试：
                if(* shift > max_shiftlimit)
                *shift = max_shiftlimit;
                else
@@ -202,8 +202,8 @@ public class LPCPredictor {
      */
 
     /**
-     * Restore the signal from the LPC compression.
-     * @param residual  The residual signal
+      * 从 LPC 压缩中恢复信号。
+      * @param residual 残差信号
      * @param dataLen 残差数据长度
      * 从 LPC 压缩恢复信号。
      * @param order 谓词顺序
@@ -228,8 +228,8 @@ public class LPCPredictor {
     }
 
     /**
-     * Restore the signal from the LPC compression.
-     * @param residual  The residual signal
+      * 从 LPC 压缩中恢复信号。
+      * @param residual 残差信号
      * @param dataLen 残差数据长度
      * 从 LPC 压缩恢复信号。
      * @param order 谓词顺序

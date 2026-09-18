@@ -8,16 +8,16 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 
 /**
- * Central registry for MuoniumPlayer persisted paths.
+ * MuoniumPlayer 持久化路径的集中注册表。
  *
- * <p>Mod-owned files never live directly in the game directory. Everything is kept under
- * {@code config/muonium/}, which is the layout expected by Minecraft mod launchers and
- * config backup tools. Legacy root files and directories are moved on first use; an existing
- * file in the new location always wins.</p>
+ * <p>本模组自有的文件从不直接放在游戏目录下。所有内容都保存在
+ * {@code config/muonium/} 下，这是 Minecraft 模组启动器和配置备份工具
+ * 所期望的布局。旧的根目录文件和目录在首次使用时迁移；新位置已存在的
+ * 文件始终优先。</p>
  */
 public final class ConfigPaths {
 
-    /** The only mod-owned root. All persisted state hangs off this directory. */
+    /** 唯一由本模组自有的根目录。所有持久化状态都挂在此目录下。 */
     private static final File CONFIG_DIRECTORY = new File("config", "muonium");
 
     public static final File HUD = new File(CONFIG_DIRECTORY, "hud.json");
@@ -27,7 +27,7 @@ public final class ConfigPaths {
     public static final Path MUSIC_AUTH = CONFIG_DIRECTORY.toPath().resolve("music_auth.json");
     public static final File NETEASE_ACCOUNTS = new File(CONFIG_DIRECTORY, "netease_accounts.json");
 
-    /** Legacy NetEase cookie fallback, kept separate from Cadence's credential store. */
+    /** 旧版网易云 cookie 回退，与 Cadence 的凭据存储分开保存。 */
     public static final File NETEASE_COOKIE = new File(CONFIG_DIRECTORY, "netease_cookie.txt");
 
     /**
@@ -37,7 +37,7 @@ public final class ConfigPaths {
      * 与更新检查不读取这个文件，避免用户为 YouTube 配置代理时改变全局网络行为。</p>
      */
     public static final File YOUTUBE_PROXY = new File(CONFIG_DIRECTORY, "youtube_proxy.json");
-    /** User-selected GD Studio aggregated platform (netease/joox/...), persisted separately. */
+    /** Automix（无缝曲目交接）偏好设置。 */
     public static final File GD_SOURCE = new File(CONFIG_DIRECTORY, "gd_source.json");
 
     /**
@@ -73,16 +73,19 @@ public final class ConfigPaths {
      */
     public static final File NETEASE_UNBLOCK = new File(CONFIG_DIRECTORY, "netease_unblock.json");
 
-    /** Automix (seamless track handover) preferences. */
+    /** 首次运行设置门控。单独保存，使引导状态不会损坏播放器偏好。 */
     public static final File AUTOMIX = new File(CONFIG_DIRECTORY, "automix.json");
 
-    /** User-supplied ffmpeg binaries. */
+    /**
+     * 仅在新文件不存在时迁移。已有的新文件始终优先，
+     * 因此用户可安全地在旁边保留旧配置的备份。
+     */
     public static final File BIN_DIR = new File(CONFIG_DIRECTORY, "bin");
 
-    /** Mod-owned caches. Keep this out of the game root, but separate from tiny JSON settings. */
+    // 由开发版构建产生的中间 Muonium 命名。
     public static final File CACHE_DIR = new File(CONFIG_DIRECTORY, "cache");
 
-    /** Downloaded and decoded audio files. This directory can grow to multiple gigabytes. */
+    // 归一化之前的发布名称，过去曾位于游戏根目录。
     public static final File MUSIC_CACHE = new File(CACHE_DIR, "music");
 
     /**
@@ -109,7 +112,7 @@ public final class ConfigPaths {
      */
     public static final File LYRIC_SOURCES = new File(CONFIG_DIRECTORY, "lyric_sources.json");
 
-    /** Deterministic fallback extraction directory for Skija native libraries. */
+    /** Skija 原生库的确定性回退解压目录。 */
     public static final File SKIJA_NATIVE_ROOT = new File(CONFIG_DIRECTORY, "native/skija");
 
     /**
@@ -158,7 +161,7 @@ public final class ConfigPaths {
      */
     public static final File LX_SOURCES = new File(CONFIG_DIRECTORY, "lx_sources.json");
 
-    /** First-run setup gate. Kept separate so onboarding state cannot corrupt player preferences. */
+    /** 首次运行设置门控。独立保存，使引导状态不会污染播放器偏好设置。 */
     public static final File ONBOARDING = new File(CONFIG_DIRECTORY, "onboarding.json");
 
     static {
@@ -169,20 +172,20 @@ public final class ConfigPaths {
     }
 
     /**
-     * Migrates only when the new file is absent. Existing new files always win,
-     * so a user can safely keep backups of the old configuration beside them.
+     * 仅在新文件不存在时迁移。已有的新文件始终优先，
+     * 因此用户可以安全地在旁边保留旧配置的备份。
      */
     private static void migrateLegacyFiles() {
         migrate(new File("music_hud.json"), HUD);
         migrate(new File("_player_config.json"), PLAYER);
         migrate(new File("_player_theme.json"), THEME);
 
-        // Intermediate Muonium names created by development builds.
+        // 开发构建创建的中间 Muonium 名称。
         migrate(new File("muonium_hud.json"), HUD);
         migrate(new File("muonium_player_config.json"), PLAYER);
         migrate(new File("muonium_player_theme.json"), THEME);
 
-        // Pre-normalization release names, which used to sit in the game root.
+        // 规范化之前的发布名称，过去位于游戏根目录。
         migrate(new File("muoniumplayer_hud.json"), HUD);
         migrate(new File("muoniumplayer_config.json"), PLAYER);
         migrate(new File("muoniumplayer_theme.json"), THEME);
@@ -204,8 +207,8 @@ public final class ConfigPaths {
     }
 
     /**
-     * Moves a legacy directory. If the target already exists, children are merged one by one;
-     * conflicts remain in the legacy location rather than being overwritten.
+     * 移动旧版目录。如果目标已存在，则逐个合并子项；
+     * 冲突项保留在旧位置而不是被覆盖。
      */
     private static void migrateDirectory(File legacy, File target) {
         if (legacy == null || target == null || !legacy.isDirectory()) {
@@ -236,7 +239,7 @@ public final class ConfigPaths {
         }
         File[] remaining = legacy.listFiles();
         if (remaining != null && remaining.length == 0) {
-            // Keep this best-effort: a locked file simply remains for the next startup.
+            // 保持尽力而为：被锁定的文件直接留到下次启动处理。
             // noinspection ResultOfMethodCallIgnored
             legacy.delete();
         }
@@ -249,7 +252,7 @@ public final class ConfigPaths {
             try {
                 Files.move(legacy.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
             } catch (IOException ignored) {
-                // A read-only/locked legacy file should not prevent the mod from loading.
+                // 只读/锁定的旧文件不应阻止 mod 加载。
             }
         }
     }

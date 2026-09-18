@@ -12,7 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
-/** Persisted first-run state. Kept separate from player settings so the onboarding gate is isolated. */
+/** 持久化的首次运行状态。与播放器设置分开，使新手引导门控隔离。 */
 public final class OnboardingState {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Object LOCK = new Object();
@@ -37,7 +37,7 @@ public final class OnboardingState {
         }
     }
 
-    /** Test/development hook; not exposed from the regular UI. */
+    /** 测试/开发钩子；不从普通 UI 暴露。 */
     public static void reset() {
         synchronized (LOCK) {
             completed = false;

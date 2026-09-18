@@ -1,6 +1,8 @@
 package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.core.management.FontManager;
+import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.rendering.BrandVectorIcons;
 import com.muoniumplayer.core.rendering.ScissorClipManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
@@ -8,6 +10,7 @@ import com.muoniumplayer.core.rendering.font.GlyphInkMetrics;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
+import com.muoniumplayer.core.rendering.ui.widgets.BrandIconWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
@@ -662,6 +665,31 @@ public abstract class NcmSheet extends NCMPanel {
             widget.setPosition(ink.alignCenterX(cx.getAsDouble()), ink.alignCenterY(cy.getAsDouble()));
         });
         return widget;
+    }
+
+    /**
+     * 一枚品牌标识：有矢量数据的走矢量（{@link BrandVectorIcons}），其余走字形字标。
+     *
+     * <p>尺寸按 {@link BrandVectorIcons#MARK_RATIO} 折 <b>容器</b>，而不是各自的字体实例 ——
+     * 改矢量之前两家没有品牌字形，三处界面各挑了一个字号不同的正文字体来顶替，实测同一枚标识
+     * 在引导页的小底盘里墨迹高 6.2、在音源卡的圆盘里 17.9，本来就对不齐。现在统一成容器的一半。</p>
+     *
+     * <p>兜底那条分支不是装饰：矢量数据解析不出来（Skija 路径不支持、字符串被改坏）时，
+     * 走它至少还能看见一枚字标，而不是一块空白。</p>
+     */
+    protected void brandMark(final AbstractWidget<?> host, final MusicPlatform platform, final double size,
+                             final String fallbackGlyph, final CFontRenderer fallbackFont,
+                             final DoubleSupplier cx, final DoubleSupplier cy, final IntSupplier color) {
+        if (!BrandVectorIcons.has(platform)) {
+            glyph(host, fallbackGlyph, fallbackFont, cx, cy, color);
+            return;
+        }
+        final BrandIconWidget mark = new BrandIconWidget(platform, size);
+        host.addChild(mark);
+        mark.setBeforeRenderCallback(() -> {
+            mark.setColor(color.getAsInt());
+            mark.setPosition(cx.getAsDouble() - size * .5, cy.getAsDouble() - size * .5);
+        });
     }
 
     protected LabelWidget label(final AbstractWidget<?> host, final String text, final CFontRenderer font) {

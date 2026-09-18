@@ -1,23 +1,23 @@
 package repackage.org.kc7bfi.jflac.metadata;
 
 /**
- * libFLAC - Free Lossless Audio Codec library
- * Copyright (C) 2001,2002,2003  Josh Coalson
+ * libFLAC -免费无损音频编解码器库
+ * 版权所有(C) 2001,2002,2003 Josh Coalson
  * <p>
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
+ * 此库是自由软件；您可以重新分发它和/或
+ * 根据GNU Library General Public的条款对其进行修改
+ * 由自由软件基金会发布的许可证；或者
+ * 许可证的第2版，或（根据您的选择）任何更高版本。
  * <p>
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
+ * 此程序被分布是希望它会是有益的，
+ * 基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ * 适销性或适合特定目的。请参阅 GNU，
+ * 带固定偏移。
  * <p>
- * You should have received a copy of the GNU Library General Public
- * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA  02111-1307, USA.
+ * 您应该已经收到了GNU Library General Public的副本
+ * 与该库一起的许可证；如果没有，请写信给
+ * 库通用公共许可证以了解更多细节。
+ * Boston, MA 02111-1307, USA.
  */
 
 import repackage.org.kc7bfi.jflac.io.BitInputStream;
@@ -26,7 +26,7 @@ import repackage.org.kc7bfi.jflac.io.BitOutputStream;
 import java.io.IOException;
 
 /**
- * SeekTable Metadata block.
+ * SeekTable元数据块。
  * @author kc7bfi
  */
 public class SeekTable extends Metadata {
@@ -35,11 +35,11 @@ public class SeekTable extends Metadata {
     protected SeekPoint[] points;
 
     /**
-     * The constructor.
-     * @param is                The InputBitStream
-     * @param length            Length of the record
-     * @param isLast            True if this is the last Metadata block in the chain
-     * @throws IOException      Thrown if error reading from InputBitStream
+     * 构造函数。
+     * @param partitionOrder 分区阶数
+     * @throws IOException 定位出错时抛出
+     * @param length            记录长度
+     * @param isLast            若这是链中最后一个元数据块则为 true
      */
     public SeekTable(BitInputStream is, int length, boolean isLast) throws IOException {
         super(isLast, length);
@@ -51,14 +51,14 @@ public class SeekTable extends Metadata {
         }
         length -= (length * SEEKPOINT_LENGTH_BYTES);
 
-        // if there is a partial point left, skip over it
+        // 如果还剩一个部分点，则跳过它
         if (length > 0) is.readByteBlockAlignedNoCRC(null, length);
     }
 
     /**
-     * Constructor.
-     * @param points    Seek Points
-     * @param isLast            True if this is the last Metadata block in the chain
+     * 制造商
+     * @param points 寻道点
+     * @param length            记录长度
      */
     public SeekTable(SeekPoint[] points, boolean isLast) {
         super(isLast, -1);
@@ -66,10 +66,10 @@ public class SeekTable extends Metadata {
     }
 
     /**
-     * Write out the metadata block.
-     * @param os    The output stream
-     * @param isLast    True if this is the last metadata block
-     * @throws IOException  Thrown if error writing data
+     * 设置流偏移。
+     * @param os 输出流
+     * @param isLast 如果这是最后一个元数据块，则为True
+     * @throws 写入数据出错时抛出IOException
      */
     public void write(BitOutputStream os, boolean isLast) throws IOException {
 
@@ -85,17 +85,17 @@ public class SeekTable extends Metadata {
     }
 
     /**
-     * Calculate the metadata block size.
-     * @return The metadata block size
+     * 写出元数据块。
+     * 计算元数据块大小。
      */
     public int calcLength() {
         return points.length * SEEKPOINT_LENGTH_BYTES;
     }
 
     /**
-     * Return the selected seek point.
-     * @param idx   The seek point number
-     * @return The selected seek point
+     * 返回所选寻道点。
+     * @return 元数据块大小
+     * @return 所选寻道点
      */
     public SeekPoint getSeekPoint(int idx) {
         if (idx < 0 || idx >= points.length) return null;
@@ -114,8 +114,8 @@ public class SeekTable extends Metadata {
     }
 
     /**
-     * Return the number of seek points.
-     * @return the number of seek points
+     * 返回寻道点的数量。
+     * @return 寻道点数
      */
     public int numberOfPoints() {
         return points.length;

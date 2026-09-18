@@ -27,7 +27,7 @@ import java.io.OutputStream;
 
 
 /**
- * Bit-wide output stream.
+ * 位宽输出流。
  * @author kc7bfi
  */
 public class BitOutputStream {
@@ -50,7 +50,7 @@ public class BitOutputStream {
             0xFFFFFFFFFFFFFFFFL};
 
     private byte[] buffer = new byte[0];
-    private int outCapacity = 0; // in blurbs
+    private int outCapacity = 0; // 以 blurb 为单位
     private int outBlurbs = 0;
     private int outBits = 0;
     private int totalBits = 0; // 以 blurb 为单位
@@ -115,14 +115,14 @@ public class BitOutputStream {
             totalConsumedBits = consumedBits;
         }
         
-        // grow if we need to
+        // 必要时扩容
         // 必要时扩容
         
         //设置阅读目标，同时考虑模糊对齐
         // blurb == byte, so no gyrations necessary:
         // blurb == byte，因此无需复杂处理：
         
-        // finally, read in some data
+        // 最后，读入一些数据
         // 最后，读入一些数据
         if(bytes < = 0)抛出新的EOFException() ；
         
@@ -136,7 +136,7 @@ public class BitOutputStream {
 
     /**
      * 构造函数。
-     * @param os    The InputStream to read bits from
+      * @param os 从中读取位的 InputStream
      */
     public BitOutputStream(OutputStream os) {
         this.os = os;
@@ -215,7 +215,7 @@ public class BitOutputStream {
     }
 
     /**
-     * Test if the Bit Stream is byte aligned.
+     * 测试位流是否按字节对齐。
      * 测试位流是否按字节对齐。
      */
     public boolean isByteAligned() {
@@ -470,7 +470,7 @@ public class BitOutputStream {
         if (totalBits <= 32) {
             writeRawUInt(pattern, totalBits);
         } else {
-            /* write the unary MSBs */
+            /* 写入一元 MSB */
             writeZeroes(msbs);
             /* 写入一元结束位和二元LSB*/
             writeRawUInt(pattern, interestingBits);
@@ -602,7 +602,7 @@ public class BitOutputStream {
      */
 
     /**
-     * Returns the totalBits.
+     * 返回 totalBits。
      * 返回 totalBits。
      */
     public int getTotalBits() {

@@ -5,19 +5,16 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The FD session group box is optional, although it is mandatory for files
- * containing more than one FD hint track. It contains a list of sessions as
- * well as all file groups and hint tracks that belong to each session. An FD
- * session sends simultaneously over all FD hint tracks (channels) that are
- * listed in the FD session group box for a particular FD session.
+ * FD session group box 为可选，但对含多个 FD 提示轨道的文件为必需。
+ * 它包含会话列表以及每个会话所属的所有文件组和提示轨道。
+ * 对某个 FD 会话，FD 会话在 FD session group box 中列出的所有
+ * FD 提示轨道（通道）上同时发送。
  *
- * Only one session group should be processed at any time. The first listed
- * hint track in a session group specifies the base channel. If the server has
- * no preference between the session groups, the default choice should be the
- * first session group. The group IDs of all file groups containing the files
- * referenced by the hint tracks shall be included in the list of file groups.
- * The file group IDs can in turn be translated into file group names (using the
- * group ID to name box) that can be included by the server in FDTs.
+ * 任一时刻只应处理一个会话组。会话组中列出的第一个提示轨道指定基础通道。
+ * 若服务器对会话组无偏好，默认应选第一个会话组。
+ * 含提示轨道所引用文件的所有文件组的组 ID 应列入文件组列表。
+ * 文件组 ID 又可转换为文件组名（使用 group ID to name box），
+ * 供服务器包含在 FDT 中。
  *
  * @author in-somnia
  */
@@ -54,20 +51,19 @@ public class FDSessionGroupBox extends FullBox {
 	}
 
 	/**
-	 * A group ID indicates a file group that the session group complies with.
+	 * 组 ID 指示该会话组所遵从的文件组。
 	 *
-	 * @return all group IDs for all session groups
+	 * @return 所有会话组的所有组 ID
 	 */
 	public long[][] getGroupIDs() {
 		return groupIDs;
 	}
 
 	/**
-	 * A hint track ID specifies the track ID of the FD hint track belonging to
-	 * a particular session group. Note that one FD hint track corresponds to
-	 * one LCT channel.
+	 * 提示轨道 ID 指定属于某会话组的 FD 提示轨道的轨道 ID。
+	 * 注意一个 FD 提示轨道对应一个 LCT 通道。
 	 *
-	 * @return all hint track IDs for all session groups
+	 * @return 所有会话组的所有提示轨道 ID
 	 */
 	public long[][] getHintTrackIDs() {
 		return hintTrackIDs;

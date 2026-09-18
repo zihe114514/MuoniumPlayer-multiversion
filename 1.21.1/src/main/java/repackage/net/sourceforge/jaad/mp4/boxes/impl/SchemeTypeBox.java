@@ -5,7 +5,7 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * The Scheme Type Box identifies the protection scheme.
+ * Scheme Type Box 标识保护方案。
  * 
  * @author in-somnia
  */
@@ -29,31 +29,29 @@ public class SchemeTypeBox extends FullBox {
 	}
 
 	/**
-	 * The scheme type is the code defining the protection scheme.
+	 * 方案类型是定义保护方案的代码。
 	 *
-	 * @return the scheme type
+	 * @return 方案类型
 	 */
 	public long getSchemeType() {
 		return schemeType;
 	}
 
 	/**
-	 * The scheme version is the version of the scheme used to create the
-	 * content.
+	 * 方案版本是用于创建内容的方案版本。
 	 *
-	 * @return the scheme version
+	 * @return 方案版本
 	 */
 	public long getSchemeVersion() {
 		return schemeVersion;
 	}
 
 	/**
-	 * The optional scheme URI allows for the option of directing the user to a
-	 * web-page if they do not have the scheme installed on their system. It is
-	 * an absolute URI.
-	 * If the scheme URI is not present, this method returns null.
+	 * 可选的方案 URI 允许在用户系统未安装该方案时，
+	 * 将其引导到一个网页。它是一个绝对 URI。
+	 * 若方案 URI 不存在，此方法返回 null。
 	 *
-	 * @return the scheme URI or null, if no URI is present
+	 * @return 方案 URI；若不存在则返回 null
 	 */
 	public String getSchemeURI() {
 		return schemeURI;

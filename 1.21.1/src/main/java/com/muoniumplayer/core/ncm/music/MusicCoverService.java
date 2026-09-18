@@ -48,11 +48,9 @@ import java.util.Set;
 import org.w3c.dom.Node;
 
 /**
- * Asynchronous music-cover retrieval, texture upload and lyric-background blur generation.
+ * 异步音乐封面获取、纹理上传与歌词背景模糊生成。
  *
- * <p>This service intentionally preserves the existing asynchronous task boundaries: the main
- * cover texture is uploaded as soon as it downloads, while the blurred lyric texture is produced
- * on a separate task.</p>
+ * <p>本服务刻意保留既有的异步任务边界：主封面纹理一下载完成就立即上传，而模糊歌词纹理则在另一个独立任务上生成。</p>
  */
 final class MusicCoverService {
 
@@ -386,7 +384,7 @@ final class MusicCoverService {
         return textureManager.getTexture(coverLocation) == null || forceReload;
     }
 
-    /** Resolves a GD track cover on the background thread; official tracks return as-is. */
+    /** 在后台线程上解析一条 GD 曲目的封面；官方曲目原样返回。 */
     private static String coverUrl(Music music, int size) {
         if (music != null && music.isGd()) {
             return music.resolveGdCoverUrl(size);
@@ -516,7 +514,7 @@ final class MusicCoverService {
                 child = child.getNextSibling();
             }
         } catch (Throwable ignored) {
-            // Non-GIF image readers do not expose the GIF metadata tree.
+            // 非 GIF 的图像读取器不会暴露 GIF 元数据树。
         }
         return 100L;
     }

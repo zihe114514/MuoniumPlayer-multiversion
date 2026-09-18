@@ -129,18 +129,18 @@ class DCT {
 
 	private static final int[] bit_rev_tab = {0, 16, 8, 24, 4, 20, 12, 28, 2, 18, 10, 26, 6, 22, 14, 30, 1, 17, 9, 25, 5, 21, 13, 29, 3, 19, 11, 27, 7, 23, 15, 31};
 
-	// FFT decimation in frequency
-	// 4*16*2+16=128+16=144 multiplications
-	// 6*16*2+10*8+4*16*2=192+80+128=400 additions
+	// FFT 频率抽取
+	// 4*16*2+16=128+16=144 次乘法
+	// 6*16*2+10*8+4*16*2=192+80+128=400 次加法
 	private static void fft_dif(float[] Real, float[] Imag) {
-		float w_real, w_imag; // For faster access
-		float point1_real, point1_imag, point2_real, point2_imag; // For faster access
-		int j, i, i2, w_index; // Counters
+		float w_real, w_imag; // 为加快访问
+		float point1_real, point1_imag, point2_real, point2_imag; // 为加快访问
+		int j, i, i2, w_index; // 计数器
 
-		// First 2 stages of 32 point FFT decimation in frequency
-		// 4*16*2=64*2=128 multiplications
-		// 6*16*2=96*2=192 additions
-		// Stage 1 of 32 point FFT decimation in frequency
+		// 32 点 FFT 频率抽取的前 2 级
+		// 4*16*2=64*2=128 次乘法
+		// 6*16*2=96*2=192 次加法
+		// 32 点 FFT 频率抽取的第 1 级
 		for(i = 0; i<16; i++) {
 			point1_real = Real[i];
 			point1_imag = Imag[i];
@@ -163,7 +163,7 @@ class DCT {
 			Real[i2] = ((point1_real*w_real)-(point1_imag*w_imag));
 			Imag[i2] = ((point1_real*w_imag)+(point1_imag*w_real));
 		}
-		// Stage 2 of 32 point FFT decimation in frequency
+		// 32 点 FFT 频率抽取的第 2 级
 		for(j = 0, w_index = 0; j<8; j++, w_index += 2) {
 			w_real = w_array_real[w_index];
 			w_imag = w_array_imag[w_index];
@@ -207,9 +207,9 @@ class DCT {
 			Imag[i2] = ((point1_real*w_imag)+(point1_imag*w_real));
 		}
 
-		// Stage 3 of 32 point FFT decimation in frequency
-		// 2*4*2=16 multiplications
-		// 4*4*2+6*4*2=10*8=80 additions
+		// 32 点 FFT 频率抽取的第 3 级
+		// 2*4*2=16 次乘法
+		// 4*4*2+6*4*2=10*8=80 次加法
 		for(i = 0; i<n; i += 8) {
 			i2 = i+4;
 			point1_real = Real[i];
@@ -287,8 +287,8 @@ class DCT {
 			Imag[i2] = (point1_real+point1_imag)*w_real;
 		}
 
-		// Stage 4 of 32 point FFT decimation in frequency (no multiplications)
-		// 16*4=64 additions
+		// 32 点 FFT 频率抽取的第 4 级（无乘法）
+		// 16*4=64 次加法
 		for(i = 0; i<n; i += 4) {
 			i2 = i+2;
 			point1_real = Real[i];
@@ -322,8 +322,8 @@ class DCT {
 			Imag[i2] = point2_real-point1_real;
 		}
 
-		// Stage 5 of 32 point FFT decimation in frequency (no multiplications)
-		// 16*4=64 additions
+		// 32 点 FFT 频率抽取的第 5 级（无乘法）
+		// 16*4=64 次加法
 		for(i = 0; i<n; i += 2) {
 			i2 = i+1;
 			point1_real = Real[i];
@@ -344,14 +344,14 @@ class DCT {
 		//FFTReorder(Real, Imag);
 	}
 
-	/* size 64 only! */
+	/* 仅大小为 64！ */
 	public static void dct4_kernel(float[] in_real, float[] in_imag, float[] out_real, float[] out_imag) {
-		// Tables with bit reverse values for 5 bits, bit reverse of i at i-th position
+		// 用于 5 位的位反转值表，第 i 个位置存放 i 的位反转
 		int i, i_rev;
 
-		/* Step 2: modulate */
-		// 3*32=96 multiplications
-		// 3*32=96 additions
+		/* 第 2 步：调制 */
+		// 3*32=96 次乘法
+		// 3*32=96 次加法
 		for(i = 0; i<32; i++) {
 			float x_re, x_im, tmp;
 			x_re = in_real[i];
@@ -361,12 +361,12 @@ class DCT {
 			in_imag[i] = (x_re*dct4_64_tab[i+32])+tmp;
 		}
 
-		/* Step 3: FFT, but with output in bit reverse order */
+		/* 第 3 步：FFT，但输出按位反转顺序 */
 		fft_dif(in_real, in_imag);
 
-		/* Step 4: modulate + bitreverse reordering */
-		// 3*31+2=95 multiplications
-		// 3*31+2=95 additions
+		/* 第 4 步：调制 + 位反转重排 */
+		// 3*31+2=95 次乘法
+		// 3*31+2=95 次加法
 		for(i = 0; i<16; i++) {
 			float x_re, x_im, tmp;
 			i_rev = bit_rev_tab[i];

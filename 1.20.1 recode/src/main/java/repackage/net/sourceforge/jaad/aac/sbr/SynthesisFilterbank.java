@@ -39,8 +39,8 @@ class SynthesisFilterbank implements FilterbankTable {
 		{0.715730825283819f, -0.698376249408973f}
 	};
 
-	private float[] v; //double ringbuffer
-	private int v_index; //ringbuffer index
+	private float[] v; //双环形缓冲区
+	private int v_index; //环形缓冲区索引
 	private final int channels;
 
 	public SynthesisFilterbank(int channels) {
@@ -61,14 +61,14 @@ class SynthesisFilterbank implements FilterbankTable {
 		int l;
 
 
-		/* qmf subsample l */
+		/* qmf 子采样 l */
 		for(l = 0; l<sbr.numTimeSlotsRate; l++) {
-			/* shift buffer v */
-			/* buffer is not shifted, we are using a ringbuffer */
-			//memmove(qmfs.v + 64, qmfs.v, (640-64)*sizeof(real_t));
+			/* 移动缓冲区 v */
+			/* 缓冲区不移动，我们使用环形缓冲区 */
+			/* 缓冲区不移动，我们使用环形缓冲区 */
 
-			/* calculate 64 samples */
-			/* complex pre-twiddle */
+			/* 计算 64 个采样 */
+			/* 复数前 twiddle */
 			for(k = 0; k<32; k++) {
 				x1[k] = (X[l][k][0]*qmf32_pre_twiddle[k][0])-(X[l][k][1]*qmf32_pre_twiddle[k][1]);
 				x2[k] = (X[l][k][1]*qmf32_pre_twiddle[k][0])+(X[l][k][0]*qmf32_pre_twiddle[k][1]);
@@ -77,7 +77,7 @@ class SynthesisFilterbank implements FilterbankTable {
 				x2[k] *= scale;
 			}
 
-			/* transform */
+			/* 变换 */
 			DCT4_32(x1, x1);
 			DST4_32(x2, x2);
 
@@ -86,7 +86,7 @@ class SynthesisFilterbank implements FilterbankTable {
 				this.v[this.v_index+63-n] = this.v[this.v_index+640+63-n] = x1[n]+x2[n];
 			}
 
-			/* calculate 32 output samples and window */
+			/* 计算 32 个输出采样并加窗 */
 			for(k = 0; k<32; k++) {
 				output[out++] = (this.v[this.v_index+k]*qmf_c[2*k])
 					+(this.v[this.v_index+96+k]*qmf_c[64+2*k])
@@ -100,7 +100,7 @@ class SynthesisFilterbank implements FilterbankTable {
 					+(this.v[this.v_index+608+k]*qmf_c[576+2*k]);
 			}
 
-			/* update ringbuffer index */
+			/* 更新环形缓冲区索引 */
 			this.v_index -= 64;
 			if(this.v_index<0)
 				this.v_index = (640-64);
@@ -117,13 +117,13 @@ class SynthesisFilterbank implements FilterbankTable {
 		int l;
 
 
-		/* qmf subsample l */
+		/* qmf 子采样 l */
 		for(l = 0; l<sbr.numTimeSlotsRate; l++) {
-			/* shift buffer v */
-			/* buffer is not shifted, we use double ringbuffer */
-			//memmove(qmfs.v + 128, qmfs.v, (1280-128)*sizeof(real_t));
+			/* 移动缓冲区 v */
+			/* 缓冲区不移动，我们使用双环形缓冲区 */
+			/* 缓冲区不移动，我们使用环形缓冲区 */
 
-			/* calculate 128 samples */
+			/* 计算 128 个采样 */
 			pX = X[l];
 
 			in_imag1[31] = scale*pX[1][0];
@@ -141,7 +141,7 @@ class SynthesisFilterbank implements FilterbankTable {
 			in_imag2[0] = scale*pX[63-63][1];
 			in_real2[31] = scale*pX[63-62][1];
 
-			// dct4_kernel is DCT_IV without reordering which is done before and after FFT
+			// dct4_kernel 是不带重排的 DCT_IV，重排在 FFT 前后进行
 			DCT.dct4_kernel(in_real1, in_imag1, out_real1, out_imag1);
 			DCT.dct4_kernel(in_real2, in_imag2, out_real2, out_imag2);
 
@@ -151,7 +151,7 @@ class SynthesisFilterbank implements FilterbankTable {
 			//        ptemp_2 = x2;
 
 			for(n = 0; n<32; n++) {
-				// pring_buffer_3 and pring_buffer_4 are needed only for double ring buffer
+				// pring_buffer_3 和 pring_buffer_4 仅用于双环形缓冲区
 				v[pring_buffer_1+2*n] = v[pring_buffer_3+2*n] = out_real2[n]-out_real1[n];
 				v[pring_buffer_1+127-2*n] = v[pring_buffer_3+127-2*n] = out_real2[n]+out_real1[n];
 				v[pring_buffer_1+2*n+1] = v[pring_buffer_3+2*n+1] = out_imag2[31-n]+out_imag1[31-n];
@@ -160,7 +160,7 @@ class SynthesisFilterbank implements FilterbankTable {
 
 			pring_buffer_1 = v_index; //*v
 
-			/* calculate 64 output samples and window */
+			/* 计算 64 个输出采样并加窗 */
 			for(k = 0; k<64; k++) {
 				output[out++]
 					= (v[pring_buffer_1+k+0]*qmf_c[k+0])
@@ -175,7 +175,7 @@ class SynthesisFilterbank implements FilterbankTable {
 					+(v[pring_buffer_1+k+(1024+192)]*qmf_c[k+576]);
 			}
 
-			/* update ringbuffer index */
+			/* 更新环形缓冲区索引 */
 			this.v_index -= 128;
 			if(this.v_index<0)
 				this.v_index = (1280-128);

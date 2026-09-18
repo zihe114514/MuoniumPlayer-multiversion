@@ -33,12 +33,12 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.InflaterInputStream;
 
 /**
- * Uploads real NetEase playback events through the same NCBL client-log transport
- * used by the desktop client. This replaces the incompatible direct weapi report
- * endpoint for this desktop-player feature.
+ * 通过桌面客户端所用的同一 NCBL 客户端日志传输上传真实的网易云播放事件。
+ * 这取代了为此桌面播放器功能所用的不兼容的直接 weapi 上报
+ * 端点。
  *
- * <p>The caller supplies only a session that has passed the local real-playback
- * threshold. This class never fabricates duration, source, or account data.</p>
+ * <p>调用方只提供一个已通过本地真实播放
+ * 阈值的会话。该类绝不伪造时长、源或账号数据。</p>
  */
 final class NeteaseClientLogUploader {
 
@@ -50,7 +50,7 @@ final class NeteaseClientLogUploader {
     private static final int META_BLOCK_TYPE = 0x4343;
     private static final int MAX_FRAME_LENGTH = 0x8000;
 
-    /* Values and byte ordering are from the provided desktop-client API sample. */
+    /* 数值和字节序均来自所提供的桌面客户端 API 样例。 */
     private static final BigInteger RSA_N = new BigInteger(
             "fd90bd466ff9bc8a3fec2fbcf263b90d5c564879fa5d7aab89b31c1d5cb4139d", 16);
     private static final BigInteger RSA_E = BigInteger.valueOf(65537L);
@@ -67,12 +67,12 @@ final class NeteaseClientLogUploader {
     private NeteaseClientLogUploader() {
     }
 
-    /** Sends the recent-play event immediately after local audio starts. */
+    /** 本地音频开始后立即发送最近播放事件。 */
     static UploadResult uploadPlayView(Music song, PlayList source) {
         return upload(song, source, 0, null, true);
     }
 
-    /** Sends a cumulative real-play duration checkpoint. */
+    /** 发送累计真实播放时长检查点。 */
     static UploadResult uploadPlayDuration(Music song, PlayList source, int playedSeconds,
                                            NeteasePlaybackHistoryReporter.EndReason endReason) {
         return upload(song, source, playedSeconds, endReason, false);
@@ -360,8 +360,8 @@ final class NeteaseClientLogUploader {
     }
 
     /**
-     * zstd-jni is bundled as a filtered Java 8-compatible JAR. Unlike the previous JNA bridge,
-     * it ships and loads its own native codec without touching Forge's relocated JNA runtime.
+     * zstd-jni 作为过滤后的 Java 8 兼容 JAR 打包。与之前的 JNA 桥不同，
+     * 它自带并加载自己的原生编解码器，而不触碰 Forge 重定位的 JNA 运行时。
      */
     private static byte[] compressZstd(byte[] source) throws IOException {
         try {
@@ -485,9 +485,9 @@ final class NeteaseClientLogUploader {
     }
 
     /**
-     * Creates a stable, Java-only client identifier. The previous implementation reused
-     * DeviceIdGenerator, which accesses Windows registry information through relocated JNA.
-     * In Forge clients that JNA class may fail during initialization, preventing every upload.
+     * 创建一个稳定的、纯 Java 的客户端标识符。之前的实现复用
+     * DeviceIdGenerator，它通过重定位的 JNA 访问 Windows 注册表信息。
+     * 在 Forge 客户端中该 JNA 类可能在初始化时失败，导致每次上传都无法进行。
      */
     private static String resolveDeviceId() {
         String current = deviceId;
@@ -513,7 +513,7 @@ final class NeteaseClientLogUploader {
                                 }
                                 fingerprint.append('\n');
                             } catch (Throwable ignored) {
-                                // One inaccessible adapter must not make logging unavailable.
+                                // 一个不可访问的适配器绝不能使日志不可用。
                             }
                         }
                     }

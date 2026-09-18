@@ -5,8 +5,8 @@ import repackage.com.jsyn.ports.UnitOutputPort;
 import repackage.com.jsyn.unitgen.UnitFilter;
 
 /**
- * A custom JSyn unit generator that takes care of adding and panning.
- * @deprecated
+ * 一个自定义JSyn单元生成器，负责添加和平移。
+ * 静态辅助方法，用于检查参数值或
  */
 class JSynProcessor extends UnitFilter {
 

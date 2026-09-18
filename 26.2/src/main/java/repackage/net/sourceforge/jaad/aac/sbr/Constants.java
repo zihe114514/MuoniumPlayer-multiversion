@@ -16,10 +16,10 @@ interface Constants {
 		{0, 1, 2, 3, 4, 5, 6, 7, 9, 11, 13, 16, 20, 24, 28, 33}
 	};
 	int EXTENSION_ID_PS = 2;
-	int MAX_NTSRHFG = 40; //maximum of number_time_slots * rate + HFGen. 16*2+8
-	int MAX_NTSR = 32; //max number_time_slots * rate, ok for DRM and not DRM mode
-	int MAX_M = 49; //maximum value for M
-	int MAX_L_E = 5; //maximum value for L_E
+	int MAX_NTSRHFG = 40; //number_time_slots * rate + HFGen 的最大值。16*2+8
+	int MAX_NTSR = 32; //number_time_slots * rate 的最大值，适用于 DRM 与非 DRM 模式
+	int MAX_M = 49; //M 的最大值
+	int MAX_L_E = 5; //L_E 的最大值
 	int EXT_SBR_DATA = 13;
 	int EXT_SBR_DATA_CRC = 14;
 	int FIXFIX = 0;

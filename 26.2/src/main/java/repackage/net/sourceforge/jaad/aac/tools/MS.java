@@ -7,7 +7,7 @@ import repackage.net.sourceforge.jaad.aac.syntax.ICSInfo;
 import repackage.net.sourceforge.jaad.aac.syntax.ICStream;
 
 /**
- * Mid/side stereo
+ * 中/边立体声（Mid/side）
  * @author in-somnia
  */
 public final class MS implements Constants, HCB {

@@ -50,7 +50,7 @@ public class AudioTrack extends Track {
 
 		final Box stbl = minf.getChild(BoxTypes.SAMPLE_TABLE_BOX);
 
-		//sample descriptions: 'mp4a' and 'enca' have an ESDBox, all others have a CodecSpecificBox
+		//采样描述：'mp4a' 和 'enca' 有一个 ESDBox，其余均有 CodecSpecificBox
 		final SampleDescriptionBox stsd = (SampleDescriptionBox) stbl.getChild(BoxTypes.SAMPLE_DESCRIPTION_BOX);
 		if(stsd.getChildren().get(0) instanceof AudioSampleEntry) {
 			sampleEntry = (AudioSampleEntry) stsd.getChildren().get(0);
@@ -82,35 +82,35 @@ public class AudioTrack extends Track {
 	}
 
 	/**
-	 * The balance is a floating-point number that places mono audio tracks in a
-	 * stereo space: 0 is centre (the normal value), full left is -1.0 and full
-	 * right is 1.0.
+	 * 平衡度是一个浮点数，用于将单声道音轨置于
+	 * 立体声空间中：0 为居中（正常值），最左为 -1.0，最右
+	 * 为 1.0。
 	 *
-	 * @return the stereo balance for a this track
+	 * @return 该音轨的立体声平衡
 	 */
 	public double getBalance() {
 		return smhd.getBalance();
 	}
 
 	/**
-	 * Returns the number of channels in this audio track.
-	 * @return the number of channels
+	 * 返回此音轨的声道数。
+	 * @return 声道数
 	 */
 	public int getChannelCount() {
 		return sampleEntry.getChannelCount();
 	}
 
 	/**
-	 * Returns the sample rate of this audio track.
-	 * @return the sample rate
+	 * 返回此音轨的采样率。
+	 * @return 采样率
 	 */
 	public int getSampleRate() {
 		return sampleEntry.getSampleRate();
 	}
 
 	/**
-	 * Returns the sample size in bits for this track.
-	 * @return the sample size
+	 * 返回此音轨的采样大小（位）。
+	 * @return 采样大小
 	 */
 	public int getSampleSize() {
 		return sampleEntry.getSampleSize();

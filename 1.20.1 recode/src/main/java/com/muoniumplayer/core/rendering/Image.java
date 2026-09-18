@@ -35,25 +35,25 @@ public class Image implements SharedConstants {
 
     private static void renderDbgInfo(String str, double x, double y, double width, double height) {
 
-        // show layout
+        // 左上
         RenderSystem.drawOutLine(x, y, width, height, 0.5, 0x40FF0000);
 
         double lineLength = Math.min(8, Math.min(width * .25, height * .25));
         double lineSize = 1;
         int lineColor = 0x400090FF;
-        // left top
+        // 右上
         Rect.draw(x, y, lineLength, lineSize, lineColor);
         Rect.draw(x, y, lineSize, lineLength, lineColor);
 
-        // right top
+        // 左下
         Rect.draw(x + width - lineLength, y, lineLength, lineSize, lineColor);
         Rect.draw(x + width - lineSize, y, lineSize, lineLength, lineColor);
 
-        // left bottom
+        // 右下
         Rect.draw(x, y + height - lineLength, lineSize, lineLength, lineColor);
         Rect.draw(x, y + height - lineSize, lineLength, lineSize, lineColor);
 
-        // right bottom
+        // 右下
         Rect.draw(x + width - lineLength, y + height - lineSize, lineLength, lineSize, lineColor);
         Rect.draw(x + width - lineSize, y + height - lineLength, lineSize, lineLength, lineColor);
 

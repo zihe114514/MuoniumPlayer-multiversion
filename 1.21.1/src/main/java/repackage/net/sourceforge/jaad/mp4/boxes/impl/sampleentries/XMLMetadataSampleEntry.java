@@ -39,21 +39,19 @@ public class XMLMetadataSampleEntry extends MetadataSampleEntry {
 	}
 
 	/**
-	 * Gives the namespace of the schema for the timed XML metadata. This is
-	 * needed for identifying the type of metadata, e.g. gBSD or AQoS
-	 * (MPEG-21-7) and for decoding using XML aware encoding mechanisms such as
-	 * BiM.
-	 * @return the namespace
+	 * 给出定时 XML 元数据的 schema 命名空间。
+	 * 这用于标识元数据类型，例如 gBSD 或 AQoS（MPEG-21-7），
+	 * 以及用 BiM 等 XML 感知编码机制解码。
+	 * @return 命名空间
 	 */
 	public String getNamespace() {
 		return namespace;
 	}
 
 	/**
-	 * Optionally provides an URL to find the schema corresponding to the
-	 * namespace. This is needed for decoding of the timed metadata by XML aware
-	 * encoding mechanisms such as BiM.
-	 * @return the schema's URL
+	 * 可选地提供 URL，以找到与命名空间对应的 schema。
+	 * 这对于用 BiM 等 XML 感知编码机制解码定时元数据是必需的。
+	 * @return schema 的 URL
 	 */
 	public String getSchemaLocation() {
 		return schemaLocation;

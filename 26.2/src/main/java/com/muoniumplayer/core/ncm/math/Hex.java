@@ -25,30 +25,30 @@ import java.nio.charset.StandardCharsets;
 public class Hex implements BinaryEncoder, BinaryDecoder {
 
     /**
-     * Default charset is {@link StandardCharsets#UTF_8}.
+     * 默认字符集为 {@link StandardCharsets#UTF_8}。
      *
      * @since 1.7
      */
     public static final Charset DEFAULT_CHARSET = StandardCharsets.UTF_8;
 
     /**
-     * Used to build output as hex.
+     * 用于把输出构建为十六进制。
      */
     private static final char[] DIGITS_LOWER = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
 
     /**
-     * Used to build output as hex.
+     * 用于把输出构建为十六进制。
      */
     private static final char[] DIGITS_UPPER = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
 
     /**
-     * Converts an array of characters representing hexadecimal values into an array of bytes of those same values. The
-     * returned array will be half the length of the passed array, as it takes two characters to represent any given
-     * byte. An exception is thrown if the passed char array has an odd number of elements.
+     * 把表示十六进制值的字符数组转换为具有相同值的字节数组。
+     * 返回数组长度为传入数组的一半，因为表示每个字节需要两个字符。
+     * 如果传入的字符数组元素数为奇数，则抛出异常。
      *
-     * @param data An array of characters containing hexadecimal digits
-     * @return A byte array containing binary data decoded from the supplied char array.
-     * @throws DecoderException Thrown if an odd number of characters or illegal characters are supplied
+     * @param data 包含十六进制数字的字符数组
+     * @return 从给定字符数组解码出的、包含二进制数据的字节数组。
+     * @throws DecoderException 当传入奇数个字符或非法字符时抛出
      */
     public static byte[] decodeHex(final char[] data) throws DecoderException {
         final byte[] out = new byte[data.length >> 1];
@@ -57,15 +57,15 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts an array of characters representing hexadecimal values into an array of bytes of those same values. The
-     * returned array will be half the length of the passed array, as it takes two characters to represent any given
-     * byte. An exception is thrown if the passed char array has an odd number of elements.
+     * 把表示十六进制值的字符数组转换为具有相同值的字节数组。
+     * 返回数组长度为传入数组的一半，因为表示每个字节需要两个字符。
+     * 如果传入的字符数组元素数为奇数，则抛出异常。
      *
-     * @param data An array of characters containing hexadecimal digits
-     * @param out A byte array to contain the binary data decoded from the supplied char array.
-     * @param outOffset The position within {@code out} to start writing the decoded bytes.
-     * @return the number of bytes written to {@code out}.
-     * @throws DecoderException Thrown if an odd number of characters or illegal characters are supplied
+     * @param data 包含十六进制数字的字符数组
+     * @param out 用于存放从给定字符数组解码出的二进制数据的字节数组。
+     * @param outOffset 在 {@code out} 中开始写入解码字节的位置。
+     * @return 写入 {@code out} 的字节数。
+     * @throws DecoderException 当传入奇数个字符或非法字符时抛出
      * @since 1.15
      */
     public static int decodeHex(final char[] data, final byte[] out, final int outOffset) throws DecoderException {
@@ -77,7 +77,7 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
         if (out.length - outOffset < outLen) {
             throw new DecoderException("Output array is not large enough to accommodate decoded data.");
         }
-        // two characters form the hex value.
+        // 两个字符构成十六进制值。
         for (int i = outOffset, j = 0; j < len; i++) {
             int f = toDigit(data[j], j) << 4;
             j++;
@@ -89,13 +89,13 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts a String representing hexadecimal values into an array of bytes of those same values. The returned array
-     * will be half the length of the passed String, as it takes two characters to represent any given byte. An
-     * exception is thrown if the passed String has an odd number of elements.
+     * 把表示十六进制值的 String 转换为具有相同值的字节数组。返回数组
+     * 长度为传入 String 的一半，因为表示每个字节需要两个字符。
+     * 如果传入的 String 元素数为奇数，则抛出异常。
      *
-     * @param data A String containing hexadecimal digits
-     * @return A byte array containing binary data decoded from the supplied char array.
-     * @throws DecoderException Thrown if an odd number of characters or illegal characters are supplied
+     * @param data 包含十六进制数字的 String
+     * @return 从给定字符序列解码出的、包含二进制数据的字节数组。
+     * @throws DecoderException 当传入奇数个字符或非法字符时抛出
      * @since 1.11
      */
     public static byte[] decodeHex(final String data) throws DecoderException {
@@ -103,25 +103,25 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts an array of bytes into an array of characters representing the hexadecimal values of each byte in order.
-     * The returned array will be double the length of the passed array, as it takes two characters to represent any
-     * given byte.
+     * 把字节数组按顺序转换为表示每个字节十六进制值的字符数组。
+     * 返回数组长度为传入数组的两倍，因为表示每个字节需要两个字符。
+     * 
      *
-     * @param data a byte[] to convert to hexadecimal characters
-     * @return A char[] containing lower-case hexadecimal characters
+     * @param data 待转换为十六进制字符的 byte[]
+     * @return 包含小写十六进制字符的 char[]
      */
     public static char[] encodeHex(final byte[] data) {
         return encodeHex(data, true);
     }
 
     /**
-     * Converts an array of bytes into an array of characters representing the hexadecimal values of each byte in order.
-     * The returned array will be double the length of the passed array, as it takes two characters to represent any
-     * given byte.
+     * 把字节数组按顺序转换为表示每个字节十六进制值的字符数组。
+     * 返回数组长度为传入数组的两倍，因为表示每个字节需要两个字符。
+     * 
      *
-     * @param data        a byte[] to convert to Hex characters
-     * @param toLowerCase {@code true} converts to lowercase, {@code false} to uppercase
-     * @return A char[] containing hexadecimal characters in the selected case
+     * @param data        待转换为十六进制字符的 byte[]
+     * @param toLowerCase {@code true} 转小写，{@code false} 转大写
+     * @return 按所选大小写包含十六进制字符的 char[]
      * @since 1.4
      */
     public static char[] encodeHex(final byte[] data, final boolean toLowerCase) {
@@ -129,14 +129,14 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts an array of bytes into an array of characters representing the hexadecimal values of each byte in order.
-     * The returned array will be double the length of the passed array, as it takes two characters to represent any
-     * given byte.
+     * 把字节数组按顺序转换为表示每个字节十六进制值的字符数组。
+     * 返回数组长度为传入数组的两倍，因为表示每个字节需要两个字符。
+     * 
      *
-     * @param data     a byte[] to convert to hexadecimal characters
-     * @param toDigits the output alphabet (must contain at least 16 chars)
-     * @return A char[] containing the appropriate characters from the alphabet For best results, this should be either
-     *         upper- or lower-case hex.
+     * @param data     待转换为十六进制字符的 byte[]
+     * @param toDigits 输出字母表（至少须含 16 个字符）
+     * @return 从字母表中选取相应字符构成的 char[]。为获得最佳效果，应使用
+     *         大写或小写的十六进制字母表。
      * @since 1.4
      */
     protected static char[] encodeHex(final byte[] data, final char[] toDigits) {
@@ -145,14 +145,14 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts an array of bytes into an array of characters representing the hexadecimal values of each byte in order.
+     * 把字节数组按顺序转换为表示每个字节十六进制值的字符数组。
      *
-     * @param data a byte[] to convert to hexadecimal characters
-     * @param dataOffset the position in {@code data} to start encoding from
-     * @param dataLen the number of bytes from {@code dataOffset} to encode
-     * @param toLowerCase {@code true} converts to lowercase, {@code false} to uppercase
-     * @return A char[] containing the appropriate characters from the alphabet For best results, this should be either
-     *         upper- or lower-case hex.
+     * @param data 待转换为十六进制字符的 byte[]
+     * @param dataOffset 在 {@code data} 中开始编码的位置
+     * @param dataLen 从 {@code dataOffset} 起要编码的字节数
+     * @param toLowerCase {@code true} 转小写，{@code false} 转大写
+     * @return 从字母表中选取相应字符构成的 char[]。为获得最佳效果，应使用
+     *         大写或小写的十六进制字母表。
      * @since 1.15
      */
     public static char[] encodeHex(final byte[] data, final int dataOffset, final int dataLen, final boolean toLowerCase) {
@@ -160,14 +160,14 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts an array of bytes into an array of characters representing the hexadecimal values of each byte in order.
+     * 把字节数组按顺序转换为表示每个字节十六进制值的字符数组。
      *
-     * @param data a byte[] to convert to hexadecimal characters
-     * @param dataOffset the position in {@code data} to start encoding from
-     * @param dataLen the number of bytes from {@code dataOffset} to encode
-     * @param toLowerCase {@code true} converts to lowercase, {@code false} to uppercase
-     * @param out a char[] which will hold the resultant appropriate characters from the alphabet.
-     * @param outOffset the position within {@code out} at which to start writing the encoded characters.
+     * @param data 待转换为十六进制字符的 byte[]
+     * @param dataOffset 在 {@code data} 中开始编码的位置
+     * @param dataLen 从 {@code dataOffset} 起要编码的字节数
+     * @param toLowerCase {@code true} 转小写，{@code false} 转大写
+     * @param out 用于存放从字母表中选出的相应字符的 char[]。
+     * @param outOffset 在 {@code out} 中开始写入编码字符的位置。
      * @since 1.15
      */
     public static void encodeHex(final byte[] data, final int dataOffset, final int dataLen, final boolean toLowerCase, final char[] out, final int outOffset) {
@@ -175,18 +175,18 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts an array of bytes into an array of characters representing the hexadecimal values of each byte in order.
+     * 把字节数组按顺序转换为表示每个字节十六进制值的字符数组。
      *
-     * @param data a byte[] to convert to hexadecimal characters
-     * @param dataOffset the position in {@code data} to start encoding from
-     * @param dataLen the number of bytes from {@code dataOffset} to encode
-     * @param toDigits the output alphabet (must contain at least 16 chars)
-     * @param out a char[] which will hold the resultant appropriate characters from the alphabet.
-     * @param outOffset the position within {@code out} at which to start writing the encoded characters.
-     * @return the given {@code out}.
+     * @param data 待转换为十六进制字符的 byte[]
+     * @param dataOffset 在 {@code data} 中开始编码的位置
+     * @param dataLen 从 {@code dataOffset} 起要编码的字节数
+     * @param toDigits 输出字母表（至少须含 16 个字符）
+     * @param out 用于存放从字母表中选出的相应字符的 char[]。
+     * @param outOffset 在 {@code out} 中开始写入编码字符的位置。
+     * @return 传入的 {@code out}。
      */
     private static char[] encodeHex(final byte[] data, final int dataOffset, final int dataLen, final char[] toDigits, final char[] out, final int outOffset) {
-        // two characters form the hex value.
+        // 两个字符构成十六进制值。
         for (int i = dataOffset, j = outOffset; i < dataOffset + dataLen; i++) {
             out[j++] = toDigits[(0xF0 & data[i]) >>> 4];
             out[j++] = toDigits[0x0F & data[i]];
@@ -195,15 +195,15 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts a byte buffer into an array of characters representing the hexadecimal values of each byte in order. The
-     * returned array will be double the length of the passed array, as it takes two characters to represent any given
-     * byte.
+     * 把字节缓冲区按顺序转换为表示每个字节十六进制值的字符数组。
+     * 返回数组长度为传入数组的两倍，因为表示每个字节需要两个字符。
+     * 
      *
-     * <p>All bytes identified by {@link ByteBuffer#remaining()} will be used; after this method
-     * the value {@link ByteBuffer#remaining() remaining()} will be zero.</p>
+     * <p>将使用 {@link ByteBuffer#remaining()} 标识的全部字节；调用本方法后，
+     * {@link ByteBuffer#remaining() remaining()} 的值将为零。</p>
      *
-     * @param data a byte buffer to convert to hexadecimal characters
-     * @return A char[] containing lower-case hexadecimal characters
+     * @param data 待转换为十六进制字符的字节缓冲区
+     * @return 包含小写十六进制字符的 char[]
      * @since 1.11
      */
     public static char[] encodeHex(final ByteBuffer data) {
@@ -211,16 +211,16 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts a byte buffer into an array of characters representing the hexadecimal values of each byte in order. The
-     * returned array will be double the length of the passed array, as it takes two characters to represent any given
-     * byte.
+     * 把字节缓冲区按顺序转换为表示每个字节十六进制值的字符数组。
+     * 返回数组长度为传入数组的两倍，因为表示每个字节需要两个字符。
+     * 
      *
-     * <p>All bytes identified by {@link ByteBuffer#remaining()} will be used; after this method
-     * the value {@link ByteBuffer#remaining() remaining()} will be zero.</p>
+     * <p>将使用 {@link ByteBuffer#remaining()} 标识的全部字节；调用本方法后，
+     * {@link ByteBuffer#remaining() remaining()} 的值将为零。</p>
      *
-     * @param data        a byte buffer to convert to hexadecimal characters
-     * @param toLowerCase {@code true} converts to lowercase, {@code false} to uppercase
-     * @return A char[] containing hexadecimal characters in the selected case
+     * @param data        待转换为十六进制字符的字节缓冲区
+     * @param toLowerCase {@code true} 转小写，{@code false} 转大写
+     * @return 按所选大小写包含十六进制字符的 char[]
      * @since 1.11
      */
     public static char[] encodeHex(final ByteBuffer data, final boolean toLowerCase) {
@@ -228,17 +228,17 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts a byte buffer into an array of characters representing the hexadecimal values of each byte in order. The
-     * returned array will be double the length of the passed array, as it takes two characters to represent any given
-     * byte.
+     * 把字节缓冲区按顺序转换为表示每个字节十六进制值的字符数组。
+     * 返回数组长度为传入数组的两倍，因为表示每个字节需要两个字符。
+     * 
      *
-     * <p>All bytes identified by {@link ByteBuffer#remaining()} will be used; after this method
-     * the value {@link ByteBuffer#remaining() remaining()} will be zero.</p>
+     * <p>将使用 {@link ByteBuffer#remaining()} 标识的全部字节；调用本方法后，
+     * {@link ByteBuffer#remaining() remaining()} 的值将为零。</p>
      *
-     * @param byteBuffer a byte buffer to convert to hexadecimal characters
-     * @param toDigits   the output alphabet (must be at least 16 characters)
-     * @return A char[] containing the appropriate characters from the alphabet For best results, this should be either
-     *         upper- or lower-case hex.
+     * @param byteBuffer 待转换为十六进制字符的字节缓冲区
+     * @param toDigits   输出字母表（至少须含 16 个字符）
+     * @return 从字母表中选取相应字符构成的 char[]。为获得最佳效果，应使用
+     *         大写或小写的十六进制字母表。
      * @since 1.11
      */
     protected static char[] encodeHex(final ByteBuffer byteBuffer, final char[] toDigits) {
@@ -246,11 +246,11 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts an array of bytes into a String representing the hexadecimal values of each byte in order. The returned
-     * String will be double the length of the passed array, as it takes two characters to represent any given byte.
+     * 把字节数组按顺序转换为表示每个字节十六进制值的 String。返回的
+     * String 长度为传入数组的两倍，因为表示每个字节需要两个字符。
      *
-     * @param data a byte[] to convert to hexadecimal characters
-     * @return A String containing lower-case hexadecimal characters
+     * @param data 待转换为十六进制字符的 byte[]
+     * @return 包含小写十六进制字符的 String
      * @since 1.4
      */
     public static String encodeHexString(final byte[] data) {
@@ -258,12 +258,12 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts an array of bytes into a String representing the hexadecimal values of each byte in order. The returned
-     * String will be double the length of the passed array, as it takes two characters to represent any given byte.
+     * 把字节数组按顺序转换为表示每个字节十六进制值的 String。返回的
+     * String 长度为传入数组的两倍，因为表示每个字节需要两个字符。
      *
-     * @param data        a byte[] to convert to hexadecimal characters
-     * @param toLowerCase {@code true} converts to lowercase, {@code false} to uppercase
-     * @return A String containing lower-case hexadecimal characters
+     * @param data        待转换为十六进制字符的 byte[]
+     * @param toLowerCase {@code true} 转小写，{@code false} 转大写
+     * @return 按所选大小写包含十六进制字符的 String
      * @since 1.11
      */
     public static String encodeHexString(final byte[] data, final boolean toLowerCase) {
@@ -271,14 +271,14 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts a byte buffer into a String representing the hexadecimal values of each byte in order. The returned
-     * String will be double the length of the passed array, as it takes two characters to represent any given byte.
+     * 把字节缓冲区按顺序转换为表示每个字节十六进制值的 String。返回的
+     * String 长度为传入数组的两倍，因为表示每个字节需要两个字符。
      *
-     * <p>All bytes identified by {@link ByteBuffer#remaining()} will be used; after this method
-     * the value {@link ByteBuffer#remaining() remaining()} will be zero.</p>
+     * <p>将使用 {@link ByteBuffer#remaining()} 标识的全部字节；调用本方法后，
+     * {@link ByteBuffer#remaining() remaining()} 的值将为零。</p>
      *
-     * @param data a byte buffer to convert to hexadecimal characters
-     * @return A String containing lower-case hexadecimal characters
+     * @param data 待转换为十六进制字符的字节缓冲区
+     * @return 包含小写十六进制字符的 String
      * @since 1.11
      */
     public static String encodeHexString(final ByteBuffer data) {
@@ -286,15 +286,15 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts a byte buffer into a String representing the hexadecimal values of each byte in order. The returned
-     * String will be double the length of the passed array, as it takes two characters to represent any given byte.
+     * 把字节缓冲区按顺序转换为表示每个字节十六进制值的 String。返回的
+     * String 长度为传入数组的两倍，因为表示每个字节需要两个字符。
      *
-     * <p>All bytes identified by {@link ByteBuffer#remaining()} will be used; after this method
-     * the value {@link ByteBuffer#remaining() remaining()} will be zero.</p>
+     * <p>将使用 {@link ByteBuffer#remaining()} 标识的全部字节；调用本方法后，
+     * {@link ByteBuffer#remaining() remaining()} 的值将为零。</p>
      *
-     * @param data        a byte buffer to convert to hexadecimal characters
-     * @param toLowerCase {@code true} converts to lowercase, {@code false} to uppercase
-     * @return A String containing lower-case hexadecimal characters
+     * @param data        待转换为十六进制字符的字节缓冲区
+     * @param toLowerCase {@code true} 转小写，{@code false} 转大写
+     * @return 按所选大小写包含十六进制字符的 String
      * @since 1.11
      */
     public static String encodeHexString(final ByteBuffer data, final boolean toLowerCase) {
@@ -302,25 +302,25 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts a boolean to an alphabet.
+     * 把 boolean 转换为一个字母表。
      *
-     * @param toLowerCase true for lowercase, false for uppercase.
-     * @return an alphabet.
+     * @param toLowerCase true 表示小写，false 表示大写。
+     * @return 一个字母表。
      */
     private static char[] toAlphabet(final boolean toLowerCase) {
         return toLowerCase ? DIGITS_LOWER : DIGITS_UPPER;
     }
 
     /**
-     * Convert the byte buffer to a byte array. All bytes identified by
-     * {@link ByteBuffer#remaining()} will be used.
+     * 把字节缓冲区转换为字节数组。将使用
+     * {@link ByteBuffer#remaining()} 标识的全部字节。
      *
-     * @param byteBuffer the byte buffer
-     * @return the byte[]
+     * @param byteBuffer 字节缓冲区
+     * @return 对应的 byte[]
      */
     private static byte[] toByteArray(final ByteBuffer byteBuffer) {
         final int remaining = byteBuffer.remaining();
-        // Use the underlying buffer if possible
+        // 尽可能使用底层缓冲区
         if (byteBuffer.hasArray()) {
             final byte[] byteArray = byteBuffer.array();
             if (remaining == byteArray.length) {
@@ -328,19 +328,19 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
                 return byteArray;
             }
         }
-        // Copy the bytes
+        // 复制字节
         final byte[] byteArray = new byte[remaining];
         byteBuffer.get(byteArray);
         return byteArray;
     }
 
     /**
-     * Converts a hexadecimal character to an integer.
+     * 把一个十六进制字符转换为整数。
      *
-     * @param ch    A character to convert to an integer digit
-     * @param index The index of the character in the source
-     * @return An integer
-     * @throws DecoderException Thrown if ch is an illegal hexadecimal character
+     * @param ch    待转换为整数数字的字符
+     * @param index 该字符在源中的位置
+     * @return 一个整数
+     * @throws DecoderException 当 ch 为非法十六进制字符时抛出
      */
     protected static int toDigit(final char ch, final int index) throws DecoderException {
         final int digit = Character.digit(ch, 16);
@@ -353,17 +353,17 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     private final Charset charset;
 
     /**
-     * Creates a new codec with the default charset name {@link #DEFAULT_CHARSET}
+     * 使用默认字符集名 {@link #DEFAULT_CHARSET} 创建新的 codec。
      */
     public Hex() {
-        // use default encoding
+        // 使用默认编码
         this.charset = DEFAULT_CHARSET;
     }
 
     /**
-     * Creates a new codec with the given Charset.
+     * 使用给定的 Charset 创建新的 codec。
      *
-     * @param charset the charset.
+     * @param charset 字符集。
      * @since 1.7
      */
     public Hex(final Charset charset) {
@@ -371,25 +371,25 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Creates a new codec with the given charset name.
+     * 使用给定的字符集名创建新的 codec。
      *
-     * @param charsetName the charset name.
-     * @throws java.nio.charset.UnsupportedCharsetException If the named charset is unavailable
+     * @param charsetName 字符集名。
+     * @throws java.nio.charset.UnsupportedCharsetException 如果指定字符集不可用
      * @since 1.4
-     * @since 1.7 throws UnsupportedCharsetException if the named charset is unavailable
+     * @since 1.7 当指定字符集不可用时抛出 UnsupportedCharsetException
      */
     public Hex(final String charsetName) {
         this(Charset.forName(charsetName));
     }
 
     /**
-     * Converts an array of character bytes representing hexadecimal values into an array of bytes of those same values.
-     * The returned array will be half the length of the passed array, as it takes two characters to represent any given
-     * byte. An exception is thrown if the passed char array has an odd number of elements.
+     * 把表示十六进制值的字符字节数组转换为具有相同值的字节数组。
+     * 返回数组长度为传入数组的一半，因为表示每个字节需要两个字符。
+     * 如果传入的数组元素数为奇数，则抛出异常。
      *
-     * @param array An array of character bytes containing hexadecimal digits
-     * @return A byte array containing binary data decoded from the supplied byte array (representing characters).
-     * @throws DecoderException Thrown if an odd number of characters is supplied to this function
+     * @param array 包含十六进制数字的字符字节数组
+     * @return 从给定字节数组（表示字符）解码出的、包含二进制数据的字节数组。
+     * @throws DecoderException 当向本函数传入奇数个字符时抛出
      * @see #decodeHex(char[])
      */
     @Override
@@ -398,16 +398,16 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts a buffer of character bytes representing hexadecimal values into an array of bytes of those same values.
-     * The returned array will be half the length of the passed array, as it takes two characters to represent any given
-     * byte. An exception is thrown if the passed char array has an odd number of elements.
+     * 把表示十六进制值的字符字节缓冲区转换为具有相同值的字节数组。
+     * 返回数组长度为传入数组的一半，因为表示每个字节需要两个字符。
+     * 如果传入的数组元素数为奇数，则抛出异常。
      *
-     * <p>All bytes identified by {@link ByteBuffer#remaining()} will be used; after this method
-     * the value {@link ByteBuffer#remaining() remaining()} will be zero.</p>
+     * <p>将使用 {@link ByteBuffer#remaining()} 标识的全部字节；调用本方法后，
+     * {@link ByteBuffer#remaining() remaining()} 的值将为零。</p>
      *
-     * @param buffer An array of character bytes containing hexadecimal digits
-     * @return A byte array containing binary data decoded from the supplied byte array (representing characters).
-     * @throws DecoderException Thrown if an odd number of characters is supplied to this function
+     * @param buffer 包含十六进制数字的字符字节缓冲区
+     * @return 从给定字节数组（表示字符）解码出的、包含二进制数据的字节数组。
+     * @throws DecoderException 当向本函数传入奇数个字符时抛出
      * @see #decodeHex(char[])
      * @since 1.11
      */
@@ -416,14 +416,14 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts a String or an array of character bytes representing hexadecimal values into an array of bytes of those
-     * same values. The returned array will be half the length of the passed String or array, as it takes two characters
-     * to represent any given byte. An exception is thrown if the passed char array has an odd number of elements.
+     * 把表示十六进制值的 String 或字符字节数组转换为具有相同值的字节
+     * 数组。返回数组长度为传入 String 或数组的一半，因为表示每个字节需要两个字符。
+     * 如果传入的数组元素数为奇数，则抛出异常。
      *
-     * @param object A String, ByteBuffer, byte[], or an array of character bytes containing hexadecimal digits
-     * @return A byte array containing binary data decoded from the supplied byte array (representing characters).
-     * @throws DecoderException Thrown if an odd number of characters is supplied to this function or the object is not
-     *                          a String or char[]
+     * @param object 一个 String、ByteBuffer、byte[]，或包含十六进制数字的字符字节数组
+     * @return 从给定字节数组（表示字符）解码出的、包含二进制数据的字节数组。
+     * @throws DecoderException 当向本函数传入奇数个字符，或该对象不是
+     *                          String 或 char[] 时抛出
      * @see #decodeHex(char[])
      */
     @Override
@@ -445,17 +445,17 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts an array of bytes into an array of bytes for the characters representing the hexadecimal values of each
-     * byte in order. The returned array will be double the length of the passed array, as it takes two characters to
-     * represent any given byte.
+     * 把字节数组按顺序转换为表示每个字节十六进制值的字符所对应的字节数组。
+     * 返回数组长度为传入数组的两倍，因为表示每个字节需要两个字符。
+     * 
      * <p>
-     * The conversion from hexadecimal characters to the returned bytes is performed with the charset named by
-     * {@link #getCharset()}.
+     * 从十六进制字符到返回字节的转换，使用
+     * {@link #getCharset()} 指定的字符集进行。
      * </p>
      *
-     * @param array a byte[] to convert to hexadecimal characters
-     * @return A byte[] containing the bytes of the lower-case hexadecimal characters
-     * @since 1.7 No longer throws IllegalStateException if the charsetName is invalid.
+     * @param array 待转换为十六进制字符的 byte[]
+     * @return 包含小写十六进制字符对应字节的 byte[]
+     * @since 1.7 当字符集名无效时不再抛出 IllegalStateException。
      * @see #encodeHex(byte[])
      */
     @Override
@@ -464,18 +464,18 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts byte buffer into an array of bytes for the characters representing the hexadecimal values of each byte
-     * in order. The returned array will be double the length of the passed array, as it takes two characters to
-     * represent any given byte.
+     * 把字节缓冲区按顺序转换为表示每个字节十六进制值的字符所对应的字节数组。
+     * 返回数组长度为传入数组的两倍，因为表示每个字节需要两个字符来
+     * 表示每个字节。
      *
-     * <p>The conversion from hexadecimal characters to the returned bytes is performed with the charset named by
-     * {@link #getCharset()}.</p>
+     * <p>从十六进制字符到返回字节的转换使用
+     * {@link #getCharset()} 指定的字符集进行。</p>
      *
-     * <p>All bytes identified by {@link ByteBuffer#remaining()} will be used; after this method
-     * the value {@link ByteBuffer#remaining() remaining()} will be zero.</p>
+     * <p>将使用 {@link ByteBuffer#remaining()} 标识的全部字节；调用本方法后，
+     * {@link ByteBuffer#remaining() remaining()} 的值将为零。</p>
      *
-     * @param array a byte buffer to convert to hexadecimal characters
-     * @return A byte[] containing the bytes of the lower-case hexadecimal characters
+     * @param array 待转换为十六进制字符的字节缓冲区
+     * @return 包含小写十六进制字符对应字节的 byte[]
      * @see #encodeHex(byte[])
      * @since 1.11
      */
@@ -484,17 +484,17 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Converts a String or an array of bytes into an array of characters representing the hexadecimal values of each
-     * byte in order. The returned array will be double the length of the passed String or array, as it takes two
-     * characters to represent any given byte.
+     * 把 String 或字节数组按顺序转换为表示每个字节十六进制值的字符数组。
+     * 返回数组长度为传入 String 或数组的两倍，因为表示每个字节
+     * 需要两个字符。
      * <p>
-     * The conversion from hexadecimal characters to bytes to be encoded to performed with the charset named by
-     * {@link #getCharset()}.
+     * 从十六进制字符到待编码字节的转换使用
+     * {@link #getCharset()} 指定的字符集进行。
      * </p>
      *
-     * @param object a String, ByteBuffer, or byte[] to convert to hexadecimal characters
-     * @return A char[] containing lower-case hexadecimal characters
-     * @throws EncoderException Thrown if the given object is not a String or byte[]
+     * @param object 待转换为十六进制字符的 String、ByteBuffer 或 byte[]
+     * @return 包含小写十六进制字符的 char[]
+     * @throws EncoderException 当给定对象不是 String 或 byte[] 时抛出
      * @see #encodeHex(byte[])
      */
     @Override
@@ -515,9 +515,9 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Gets the charset.
+     * 获取字符集。
      *
-     * @return the charset.
+     * @return 字符集。
      * @since 1.7
      */
     public Charset getCharset() {
@@ -525,9 +525,9 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Gets the charset name.
+     * 获取字符集名。
      *
-     * @return the charset name.
+     * @return 字符集名。
      * @since 1.4
      */
     public String getCharsetName() {
@@ -535,9 +535,9 @@ public class Hex implements BinaryEncoder, BinaryDecoder {
     }
 
     /**
-     * Returns a string representation of the object, which includes the charset name.
+     * 返回该对象的字符串表示，其中包含字符集名。
      *
-     * @return a string representation of the object.
+     * @return 该对象的字符串表示。
      */
     @Override
     public String toString() {

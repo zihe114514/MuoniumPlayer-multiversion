@@ -1,8 +1,8 @@
 package com.muoniumplayer.core.ncm.music;
 
 /**
- * 智能混音 transition families. This is a clean-room implementation of the strategy layer
- * documented by 本项目: a cut, a low-band handover, a decaying-tail ride, and a neutral blend.
+ * 智能混音 过渡族。这是对 本项目 所记载策略层的洁净室
+ * 实现：硬切、低频交接、衰减尾滑行、中性混音。
  */
 enum FoliaTransitionStyle {
     BEAT_CUT("beatCut", 0.0),
@@ -11,7 +11,7 @@ enum FoliaTransitionStyle {
     PLAIN_BLEND("plainBlend", 0.0);
 
     final String id;
-    /** Fraction of the ramp held with both decks at the same level. */
+    /** 两个 deck 同电平保持的渐变占比。 */
     final double together;
 
     FoliaTransitionStyle(String id, double together) {

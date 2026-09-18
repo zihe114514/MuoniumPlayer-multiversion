@@ -1,55 +1,55 @@
 /*
- * 11/19/04 1.0 moved to LGPL.
+ * 本程序为自由软件；你可以在自由软件基金会发布的
  *
- * 04/01/00 Fixes for running under build 23xx Microsoft JVM. mdm.
+ * 2000年4月1日用于在build 23xx Microsoft JVM. mdm下运行的修复。
  *
  * 19/12/99 Performance improvements to compute_pcm_samples().
- *            Mat McGowan. mdm@techie.com.
+ *            Mat McGowan. mdm@techie.com。
  *
- * 16/02/99 Java Conversion by E.B , javalayer@javazoom.net
+ * 1999年2月16日E.B.转换Java ， javalayer@javazoom.net
  *
- *  @(#) synthesis_filter.h 1.8, last edit: 6/15/94 16:52:00
- *  @(#) Copyright (C) 1993, 1994 Tobias Bading (bading@cs.tu-berlin.de)
- *  @(#) Berlin University of Technology
+ *  @ (#) synthesis_filter.h 1.8 ，最后编辑： 6/15/94 16:52:00
+ *  @ (#)版权所有(C) 1993, 1994 Tobias Bading(bading@cs.tu-berlin.de)
+ *  @ (#)柏林理工大学
  *
  *-----------------------------------------------------------------------
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU Library General Public License as published
- *   by the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *   GNU 库通用公共许可证条款下分发和/或修改它，许可证版本
+ *   为许可证第 2 版，或（由你选择）任何后续版本。
+ *   本程序的发布是希望它能有用，
+ *   （由您选择）任何后续版本。
  *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU Library General Public License for more details.
+ *   但不提供任何担保；甚至不包含对适销性或特定用途适用性的默示担保。
+ *   基金会，地址：675 Mass Ave, Cambridge, MA 02139, USA。
+ *   适销性或适合特定目的。请参阅 GNU，
+ *   有关更多详细信息，请参阅GNU库通用公共许可证。
  *
- *   You should have received a copy of the GNU Library General Public
- *   License along with this program; if not, write to the Free Software
- *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *   您应该已经收到了GNU Library General Public的副本
+ *   随着这一计划。如果没有，写信给自由软件基金会。
+ *   MPEG 音频文件转换为 .WAV 文件。要转换 MPEG 音频流，
  *----------------------------------------------------------------------
  */
 
 package repackage.javazoom.jl.decoder;
 
 /**
- * A class for the synthesis filter bank.
- * This class does a fast downsampling from 32, 44.1 or 48 kHz to 8 kHz, if ULAW is defined.
- * Frequencies above 4 kHz are removed by ignoring higher subbands.
+ * 用于合成滤波器组的类。
+ * 如果定义了ULAW ，此类从32、44.1或48 kHz快速降采样到8 kHz。
+ * 通过忽略较高子带，移除 4 kHz 以上的频率。
  */
 final class SynthesisFilter {
     private final float[] v1;
     private final float[] v2;
-    private float[] actualV;            // v1 or v2
+    private float[] actualV;            // v1或v2
     private int actualWritePos;    // 0-15
-    private final float[] samples;            // 32 new subband samples
+    private final float[] samples;            // 32 个新的子带采样
     private final int channel;
     private final float scaleFactor;
     private float[] eq;
 
     /**
-     * Contractor.
-     * The scaleFactor scales the calculated float pcm samples to short values
-     * (raw pcm samples are in [-1.0, 1.0], if no violations occur).
+     * 构造函数。
+     * ScaleFactor将计算的浮点PCM样本缩放为短值
+     * （如果没有发生违规，则原始pcm样品在[-1.0, 1.0]中）。
      */
     public SynthesisFilter(int channelNumber, float factor) {
         v1 = new float[512];
@@ -76,19 +76,19 @@ final class SynthesisFilter {
     }
 
     /**
-     * Reset the synthesis filter.
+     * 重置合成滤波器。
      */
     public void reset() {
         //float[] floatp;
         // float[] floatp2;
 
-        // initialize v1[] and v2[]:
+        // 初始化 v1[] 和 v2[]：
         //for (floatp = v1 + 512, floatp2 = v2 + 512; floatp > v1; )
         //   *--floatp = *--floatp2 = 0.0;
         for (int p = 0; p < 512; p++)
             v1[p] = v2[p] = 0.0f;
 
-        // initialize samples[]:
+        // 初始化 samples[]：
         //for (floatp = samples + 32; floatp > samples; )
         //  *--floatp = 0.0;
         for (int p2 = 0; p2 < 32; p2++)
@@ -100,7 +100,7 @@ final class SynthesisFilter {
 
 
     /**
-     * Inject Sample.
+     * 注入采样。
      */
     public void inputSample(float sample, int subbandnumber) {
         samples[subbandnumber] = eq[subbandnumber] * sample;
@@ -113,12 +113,12 @@ final class SynthesisFilter {
     }
 
     /**
-     * Compute new values via a fast cosine transform.
+     * 通过快速余弦变换计算新值。
      */
     private void computeNewV() {
-        // p is fully initialized from x1
+        // p从x1完全初始化
         //float[] p = _p;
-        // pp is fully initialized from p
+        // pp 由 p 完整初始化
 
         float new_v0, new_v1, new_v2, new_v3, new_v4, new_v5, new_v6, new_v7, new_v8, new_v9;
         float new_v10, new_v11, new_v12, new_v13, new_v14, new_v15, new_v16, new_v17, new_v18, new_v19;
@@ -246,7 +246,7 @@ final class SynthesisFilter {
         p14 = pp14 + pp15;
         p15 = (pp14 - pp15) * cos1_4;
 
-        // this is pretty insane coding
+        // 这是相当疯狂的编码
         float tmp1;
         new_v19 /* 36-17 */ = -(new_v4 = (new_v12 = p7) + p5) - p6;
         new_v27 /* 44-17 */ = -p6 - p7 - p4;
@@ -344,8 +344,8 @@ final class SynthesisFilter {
         p14 = pp14 + pp15;
         p15 = (pp14 - pp15) * cos1_4;
 
-        // manually doing something that a compiler should handle sucks
-        // coding like this is hard to read
+        // 手动做编译器应该处理的事情很糟糕
+        // 这样的代码很难阅读
         float tmp2;
         new_v5 = (new_v11 = (new_v13 = (new_v15 = p15) + p7) + p11) + p5 + p13;
         new_v7 = (new_v9 = p15 + p11 + p3) + p13;
@@ -359,7 +359,7 @@ final class SynthesisFilter {
         new_v30 /* 47-17 */ = (tmp1 = -p8 - p12 - p14 - p15) - p0;
         new_v28 /* 45-17 */ = tmp1 - tmp2;
 
-        // insert V[0-15] (== new_v[0-15]) into actual v:
+        // 将 V[0-15]（== new_v[0-15]）插入当前 v：
         // float[] x2 = actualV + actualWritePos;
         float[] dest = actualV;
 
@@ -382,10 +382,10 @@ final class SynthesisFilter {
         dest[224 + pos] = new_v14;
         dest[240 + pos] = new_v15;
 
-        // V[16] is always 0.0:
+        // V[16] 始终为 0.0：
         dest[256 + pos] = 0.0f;
 
-        // insert V[17-31] (== -new_v[15-1]) into actual v:
+        // 在实际v中插入V [17-31] (= = -new_v [15-1]) ：
         dest[272 + pos] = -new_v15;
         dest[288 + pos] = -new_v14;
         dest[304 + pos] = -new_v13;
@@ -402,11 +402,11 @@ final class SynthesisFilter {
         dest[480 + pos] = -new_v2;
         dest[496 + pos] = -new_v1;
 
-        // insert V[32] (== -new_v[0]) into other v:
+        // 将 V[32]（== -new_v[0]）插入另一个 v：
         dest = (actualV == v1) ? v2 : v1;
 
         dest[pos] = -new_v0;
-        // insert V[33-48] (== new_v[16-31]) into other v:
+        // 将 V[33-48]（== new_v[16-31]）插入另一个 v：
         dest[16 + pos] = new_v16;
         dest[32 + pos] = new_v17;
         dest[48 + pos] = new_v18;
@@ -424,7 +424,7 @@ final class SynthesisFilter {
         dest[240 + pos] = new_v30;
         dest[256 + pos] = new_v31;
 
-        // insert V[49-63] (== new_v[30-16]) into other v:
+        // 将 V[49-63]（== new_v[30-16]）插入另一个 v：
         dest[272 + pos] = new_v30;
         dest[288 + pos] = new_v29;
         dest[304 + pos] = new_v28;
@@ -445,54 +445,54 @@ final class SynthesisFilter {
     else
     {
         v1[0 + actualWritePos] = -new_v0;
-        // insert V[33-48] (== new_v[16-31]) into other v:
+        //在另一个v中插入V [33-48] (= = new_v [16-31]) ：
         v1[16 + actualWritePos] = new_v16;
-        v1[32 + actualWritePos] = new_v17;
+        v1 [32 + actualWritePos] = new_v17;
         v1[48 + actualWritePos] = new_v18;
         v1[64 + actualWritePos] = new_v19;
-        v1[80 + actualWritePos] = new_v20;
-        v1[96 + actualWritePos] = new_v21;
-        v1[112 + actualWritePos] = new_v22;
-        v1[128 + actualWritePos] = new_v23;
-        v1[144 + actualWritePos] = new_v24;
+        v1 [80 + actualWritePos] = new_v20;
+        v1 [96 + actualWritePos] = new_v21;
+        v1 [112 + actualWritePos] = new_v22;
+        v1 [128 + actualWritePos] = new_v23;
+        v1 [144 + actualWritePos] = new_v24;
         v1[160 + actualWritePos] = new_v25;
-        v1[176 + actualWritePos] = new_v26;
-        v1[192 + actualWritePos] = new_v27;
+        v1 [176 + actualWritePos] = new_v26;
+        v1 [192 + actualWritePos] = new_v27;
         v1[208 + actualWritePos] = new_v28;
-        v1[224 + actualWritePos] = new_v29;
-        v1[240 + actualWritePos] = new_v30;
+        v1 [224 + actualWritePos] = new_v29;
+        v1 [240 + actualWritePos] = new_v30;
         v1[256 + actualWritePos] = new_v31;
 
-        // insert V[49-63] (== new_v[30-16]) into other v:
+        //在另一个v中插入V [49-63] (= = new_v [30-16]) ：
         v1[272 + actualWritePos] = new_v30;
-        v1[288 + actualWritePos] = new_v29;
+        v1 [288 + actualWritePos] = new_v29;
         v1[304 + actualWritePos] = new_v28;
         v1[320 + actualWritePos] = new_v27;
-        v1[336 + actualWritePos] = new_v26;
+        v1 [336 + actualWritePos] = new_v26;
         v1[352 + actualWritePos] = new_v25;
-        v1[368 + actualWritePos] = new_v24;
-        v1[384 + actualWritePos] = new_v23;
+        v1 [368 + actualWritePos] = new_v24;
+        v1 [384 + actualWritePos] = new_v23;
         v1[400 + actualWritePos] = new_v22;
-        v1[416 + actualWritePos] = new_v21;
+        v1 [416 + actualWritePos] = new_v21;
         v1[432 + actualWritePos] = new_v20;
-        v1[448 + actualWritePos] = new_v19;
-        v1[464 + actualWritePos] = new_v18;
-        v1[480 + actualWritePos] = new_v17;
-        v1[496 + actualWritePos] = new_v16;
+        v1 [448 + actualWritePos] = new_v19;
+        v1 [464 + actualWritePos] = new_v18;
+        v1 [480 + actualWritePos] = new_v17;
+        v1 [496 + actualWritePos] = new_v16;
     }
 */
     }
 
     /**
-     * Compute new values via a fast cosine transform.
+     * 通过快速余弦变换计算新值。
      */
     @SuppressWarnings("unused")
     private void computeNewVOld() {
-        // p is fully initialized from x1
+        // p从x1完全初始化
         //float[] p = _p;
-        // pp is fully initialized from p
+        // pp 由 p 完整初始化
 
-        float[] newV = new float[32]; // new V[0-15] and V[33-48] of Figure 3-A.2 in ISO DIS 11172-3
+        float[] newV = new float[32]; // iSO DIS 11172-3中图3-A.2的新V [0-15]和V [33-48]
         float[] p = new float[16];
         float[] pp = new float[16];
 
@@ -589,7 +589,7 @@ final class SynthesisFilter {
         p[14] = pp[14] + pp[15];
         p[15] = (pp[14] - pp[15]) * cos1_4;
 
-        // this is pretty insane coding
+        // 这是相当疯狂的编码
         float tmp1;
         newV[36 - 17] = -(newV[4] = (newV[12] = p[7]) + p[5]) - p[6];
         newV[44 - 17] = -p[6] - p[7] - p[4];
@@ -692,8 +692,8 @@ final class SynthesisFilter {
         p[15] = (pp[14] - pp[15]) * cos1_4;
 
 
-        // manually doing something that a compiler should handle sucks
-        // coding like this is hard to read
+        // 手动做编译器应该处理的事情很糟糕
+        // 这样的代码很难阅读
         float tmp2;
         newV[5] = (newV[11] = (newV[13] = (newV[15] = p[15]) + p[7]) + p[11])
                 + p[5] + p[13];
@@ -709,7 +709,7 @@ final class SynthesisFilter {
         newV[47 - 17] = (tmp1 = -p[8] - p[12] - p[14] - p[15]) - p[0];
         newV[45 - 17] = tmp1 - tmp2;
 
-        // insert V[0-15] (== newV[0-15]) into actual v:
+        // 将V [0-15] (= = newV [0-15])插入实际v ：
         x1 = newV;
         // float[] x2 = actualV + actualWritePos;
         float[] dest = actualV;
@@ -731,10 +731,10 @@ final class SynthesisFilter {
         dest[224 + actualWritePos] = x1[14];
         dest[240 + actualWritePos] = x1[15];
 
-        // V[16] is always 0.0:
+        // V[16] 始终为 0.0：
         dest[256 + actualWritePos] = 0.0f;
 
-        // insert V[17-31] (== -newV[15-1]) into actual v:
+        // 将 V[17-31]（== -newV[15-1]）插入实际的 v 中：
         dest[272 + actualWritePos] = -x1[15];
         dest[288 + actualWritePos] = -x1[14];
         dest[304 + actualWritePos] = -x1[13];
@@ -751,22 +751,22 @@ final class SynthesisFilter {
         dest[480 + actualWritePos] = -x1[2];
         dest[496 + actualWritePos] = -x1[1];
 
-        // insert V[32] (== -newV[0]) into other v:
+        // 在另一个v中插入V [32] （ = = -newV [0] ） ：
 
     }
 
     /**
-     * Compute PCM Samples.
+     * 将 V[17-31]（== -newV[15-1]）插入当前 v：
      */
 
     private final float[] _tmpOut = new float[32];
 
     private void computePcmSamples0() {
         float[] vp = actualV;
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float pcmSample;
             float[] dp = d16[i];
@@ -796,10 +796,10 @@ final class SynthesisFilter {
 
     private void computePcmSamples1() {
         float[] vp = actualV;
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float[] dp = d16[i];
             float pcmSample;
@@ -831,10 +831,10 @@ final class SynthesisFilter {
     private void computePcmSamples2() {
         float[] vp = actualV;
 
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float[] dp = d16[i];
             float pcmSample;
@@ -868,10 +868,10 @@ final class SynthesisFilter {
 
         @SuppressWarnings("unused")
         int idx = 0;
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float[] dp = d16[i];
             float pcmSample;
@@ -903,10 +903,10 @@ final class SynthesisFilter {
     private void computePcmSamples4() {
         float[] vp = actualV;
 
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float[] dp = d16[i];
             float pcmSample;
@@ -938,10 +938,10 @@ final class SynthesisFilter {
     private void computePcmSamples5() {
         float[] vp = actualV;
 
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float[] dp = d16[i];
             float pcmSample;
@@ -972,10 +972,10 @@ final class SynthesisFilter {
 
     private void computePcmSamples6() {
         float[] vp = actualV;
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float[] dp = d16[i];
             float pcmSample;
@@ -1007,10 +1007,10 @@ final class SynthesisFilter {
     private void computePcmSamples7() {
         float[] vp = actualV;
 
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float[] dp = d16[i];
             float pcmSample;
@@ -1042,10 +1042,10 @@ final class SynthesisFilter {
     private void computePcmSamples8() {
         float[] vp = actualV;
 
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float[] dp = d16[i];
             float pcm_sample;
@@ -1077,10 +1077,10 @@ final class SynthesisFilter {
     private void computePcmSamples9() {
         float[] vp = actualV;
 
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float[] dp = d16[i];
             float pcm_sample;
@@ -1111,10 +1111,10 @@ final class SynthesisFilter {
 
     private void computePcmSamples10() {
         float[] vp = actualV;
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float[] dp = d16[i];
             float pcm_sample;
@@ -1146,10 +1146,10 @@ final class SynthesisFilter {
     private void computePcmSamples11() {
         float[] vp = actualV;
 
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float[] dp = d16[i];
             float pcm_sample;
@@ -1180,10 +1180,10 @@ final class SynthesisFilter {
 
     private void computePcmSamples12() {
         float[] vp = actualV;
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float[] dp = d16[i];
             float pcm_sample;
@@ -1215,10 +1215,10 @@ final class SynthesisFilter {
     private void computePcmSamples13() {
         float[] vp = actualV;
 
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float[] dp = d16[i];
             float pcm_sample;
@@ -1250,10 +1250,10 @@ final class SynthesisFilter {
     private void computePcmSamples14() {
         float[] vp = actualV;
 
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float[] dp = d16[i];
             float pcm_sample;
@@ -1285,10 +1285,10 @@ final class SynthesisFilter {
     private void computePcmSamples15() {
         float[] vp = actualV;
 
-        //int inc = v_inc;
+        //计算 PCM 采样。
         int dvp = 0;
 
-        // fat chance of having this loop unroll
+        // 这个循环展开的肥胖机会
         for (int i = 0; i < 32; i++) {
             float pcm_sample;
             float[] dp = d16[i];
@@ -1374,7 +1374,7 @@ final class SynthesisFilter {
     }
 
     /**
-     * Calculate 32 PCM samples and put the into the Obuffer-object.
+     * 计算32个PCM样本，并将放入Obuffer对象中。
      */
 
     public void calculate_pcm_samples(Obuffer buffer) {
@@ -1384,12 +1384,12 @@ final class SynthesisFilter {
         actualWritePos = (actualWritePos + 1) & 0xf;
         actualV = (actualV == v1) ? v2 : v1;
 
-        // initialize samples[]:
+        // 初始化 samples[]：
         //for (register float *floatp = samples + 32; floatp > samples; )
         // *--floatp = 0.0f;
 
-        // MDM: this may not be necessary. The Layer III decoder always
-        // outputs 32 subband samples, but I haven't checked layer I & II.
+        // MDM ：这可能不是必要的。Layer III解码器始终
+        // 输出32个子带样本，但我还没有检查第I层和第II层。
         for (int p = 0; p < 32; p++)
             samples[p] = 0.0f;
     }
@@ -1428,14 +1428,14 @@ final class SynthesisFilter {
     private static final float cos3_8 = (float) (1.0 / (2.0 * Math.cos(MY_PI * 3.0 / 8.0)));
     private static final float cos1_4 = (float) (1.0 / (2.0 * Math.cos(MY_PI / 4.0)));
 
-    // Note: These values are not in the same order
-    // as in Annex 3-B.3 of the ISO/IEC DIS 11172-3
-    // private float d[] = {0.000000000, -4.000442505};
+    // 注意：这些值顺序不同
+    // 与 ISO/IEC DIS 11172-3 的附录 3-B.3 相同
+    // 如 ISO/IEC DIS 11172-3 附录 3-B.3 所述
 
     /**
-     * d[] split into subarrays of length 16. This provides for
-     * faster access by allowing a block of 16 to be addressed
-     * with constant offset.
+     * d []拆分为长度为16的子数组。这提供了
+     * 通过允许寻址16个区块来加快访问速度
+     * 且偏移量恒定。
      **/
     private static final float[][] d16 = {
             { 0.0f, -4.42505E-4f, 0.003250122f, -0.007003784f, 0.031082153f, -0.07862854f, 0.10031128f, -0.57203674f, 1.144989f, 0.57203674f, 0.10031128f, 0.07862854f, 0.031082153f, 0.007003784f, 0.003250122f, 4.42505E-4f },

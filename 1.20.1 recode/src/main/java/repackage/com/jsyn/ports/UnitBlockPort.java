@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  * 
  *     http://www.apache.org/licenses/LICENSE-2.0
  * 
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.ports;
@@ -19,7 +19,7 @@ package repackage.com.jsyn.ports;
 import lombok.Getter;
 
 /**
- * A port that contains multiple parts with blocks of data.
+ * 包含具有数据块的多个部分的端口。
  * 
  * @author Phil Burk 2009 Mobileer Inc
  */
@@ -49,9 +49,9 @@ public class UnitBlockPort extends UnitPort {
     }
 
     /**
-     * Convenience call to get(0).
+     * 拨打方便电话即可获得(0)。
      * 
-     * @return value of 0th part as set
+     * 设置第0部分的@return 值
      */
     public double get() {
         return get(0);
@@ -62,8 +62,8 @@ public class UnitBlockPort extends UnitPort {
     }
 
     /**
-     * This is used inside UnitGenerators to get the current values for a port. It works regardless
-     * of whether the port is connected or not.
+     * 供 UnitGenerator 内部使用，用于获取某个端口的当前值。无论
+     * 端口是否已连接。
      * 
      * @return
      */
@@ -71,12 +71,12 @@ public class UnitBlockPort extends UnitPort {
         return parts[0].getValues();
     }
 
-    /** Only for use in the audio thread when implementing UnitGenerators. */
+    /** 仅适用于实现UnitGenerators时的音频线程。*/
     public double[] getValues(int partNum) {
         return parts[partNum].getValues();
     }
 
-    /** Get the immediate current value of the port. */
+    /** 获取端口的即时当前值。*/
     public double getValue(int partNum) {
         return parts[partNum].getValue();
     }
@@ -85,12 +85,12 @@ public class UnitBlockPort extends UnitPort {
         return parts[partNum].get();
     }
 
-    /** Only for use in the audio thread when implementing UnitGenerators. */
+    /** 仅适用于实现UnitGenerators时的音频线程。*/
     protected void setValueInternal(int partNum, double value) {
         parts[partNum].setValue(value);
     }
 
-    /** Only for use in the audio thread when implementing UnitGenerators. */
+    /** 仅适用于实现UnitGenerators时的音频线程。*/
     public void setValueInternal(double value) {
         setValueInternal(0, value);
     }

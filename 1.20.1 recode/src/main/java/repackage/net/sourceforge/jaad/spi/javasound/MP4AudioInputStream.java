@@ -37,7 +37,7 @@ class MP4AudioInputStream extends AsynchronousAudioInputStream {
 	@Override
 	public AudioFormat getFormat() {
 		if(audioFormat==null) {
-			//read first frame
+			//读取第一帧
 			decodeFrame();
 			audioFormat = new AudioFormat(sampleBuffer.getSampleRate(), sampleBuffer.getBitsPerSample(), sampleBuffer.getChannels(), true, true);
 			saved = sampleBuffer.getData();

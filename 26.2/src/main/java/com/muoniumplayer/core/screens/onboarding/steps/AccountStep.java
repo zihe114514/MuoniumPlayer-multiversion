@@ -8,7 +8,7 @@ import com.muoniumplayer.core.screens.onboarding.OnboardingStepView;
 import com.muoniumplayer.core.screens.onboarding.OnboardingUi;
 import com.muoniumplayer.party.ui.PartyIcons;
 
-/** Account login page; it opens the existing account manager overlay. */
+/** 账号登录页；它打开既有的账号管理器覆盖层。 */
 public final class AccountStep implements OnboardingStepView {
     private static final MusicPlatform[] PLATFORMS = {
             MusicPlatform.NETEASE, MusicPlatform.QQ, MusicPlatform.KUGOU

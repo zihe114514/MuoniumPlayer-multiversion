@@ -8,7 +8,7 @@ import java.io.OutputStream;
 import java.io.PushbackInputStream;
 
 /**
- * A BASE64 character decoder.
+ * BASE64 字符解码器。
  */
 class Base64Decoder {
 

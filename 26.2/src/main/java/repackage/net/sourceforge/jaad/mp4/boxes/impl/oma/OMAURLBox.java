@@ -5,8 +5,8 @@ import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 
 /**
- * This box is used for several sub-boxes of the user-data box in an OMA DRM 
- * file. These boxes have in common, that they only contain one String.
+ * 此 box 用于 OMA DRM 文件中 user-data box 的若干子 box。
+ * 这些 box 的共同点是都只含一个 String。
  * 
  * @author in-somnia
  */
@@ -28,10 +28,9 @@ public class OMAURLBox extends FullBox {
 	}
 
 	/**
-	 * Returns the String that this box contains. Its meaning depends on the 
-	 * type of this box.
+	 * 返回此 box 所含的 String。其含义取决于此 box 的类型。
 	 * 
-	 * @return the content of this box
+	 * @return 此 box 的内容
 	 */
 	public String getContent() {
 		return content;

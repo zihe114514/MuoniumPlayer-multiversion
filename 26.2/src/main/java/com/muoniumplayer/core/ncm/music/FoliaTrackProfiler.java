@@ -9,7 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Arrays;
 
-/** Persistent profile service for the Folia planner. */
+/** Folia 规划器的持久化 profile 服务。 */
 final class FoliaTrackProfiler {
     private static final long WINDOW_MILLIS = 30_000L;
     private static final Gson GSON = new Gson();

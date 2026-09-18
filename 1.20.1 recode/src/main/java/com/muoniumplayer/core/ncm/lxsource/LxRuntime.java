@@ -432,7 +432,7 @@ public final class LxRuntime {
                     + " Chrome/126.0.0.0 Safari/537.36";
         }
 
-        // ---- Buffer ----
+        // ---- 缓冲区 ----
 
         public LxBuffer bufferFrom(Object value, String encoding) {
             return LxBuffer.from(value, encoding);
@@ -460,7 +460,7 @@ public final class LxRuntime {
             return LxBuffer.of(out.toByteArray());
         }
 
-        // ---- crypto / zlib ----
+        // ---- 加密 / zlib ----
 
         public String md5(String text) {
             return LxUtils.md5(text);

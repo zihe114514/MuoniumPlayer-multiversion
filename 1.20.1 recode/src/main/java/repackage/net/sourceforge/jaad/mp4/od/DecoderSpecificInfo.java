@@ -4,12 +4,11 @@ import java.io.IOException;
 import repackage.net.sourceforge.jaad.mp4.MP4InputStream;
 
 /**
- * The <code>DecoderSpecificInfo</code> constitutes an opaque container with
- * information for a specific media decoder. Depending on the required amout of
- * data, two classes with a maximum of 255 and 2<sup>32</sup>-1 bytes of data
- * are provided. The existence and semantics of the
- * <code>DecoderSpecificInfo</code> depends on the stream type and object
- * profile of the parent <code>DecoderConfigDescriptor</code>.
+ * <code>DecoderSpecificInfo</code> 构成一个不透明容器，
+ * 含特定媒体解码器的信息。根据所需数据量，
+ * 提供两个分别最多 255 和 2<sup>32</sup>-1 字节数据的类。
+ * <code>DecoderSpecificInfo</code> 的存在和语义取决于父
+ * <code>DecoderConfigDescriptor</code> 的流类型和对象 profile。
  *
  * @author in-somnia
  */
@@ -24,9 +23,9 @@ public class DecoderSpecificInfo extends Descriptor {
 	}
 
 	/**
-	 * A byte array containing the decoder specific information.
+	 * 含解码器特定信息的字节数组。
 	 *
-	 * @return the decoder specific information
+	 * @return 解码器特定信息
 	 */
 	public byte[] getData() {
 		return data;

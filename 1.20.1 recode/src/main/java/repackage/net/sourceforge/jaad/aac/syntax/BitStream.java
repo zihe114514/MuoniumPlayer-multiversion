@@ -8,10 +8,10 @@ public class BitStream {
 	private static final int WORD_BYTES = 4;
 	private static final int BYTE_MASK = 0xff;
 	private byte[] buffer;
-	private int pos; //offset in the buffer array
-	private int cache; //current 4 bytes, that are read from the buffer
-	protected int bitsCached; //remaining bits in current cache
-	protected int position; //number of total bits read
+	private int pos; //缓冲区数组中的偏移
+	private int cache; //当前从缓冲区读取的 4 个字节
+	protected int bitsCached; //当前缓存中剩余的位
+	protected int position; //已读取的总位数
 
 	public BitStream() {
 	}
@@ -26,9 +26,9 @@ public class BitStream {
 	}
 
 	public final void setData(byte[] data) {
-		//make the buffer size an integer number of words
+		//使缓冲区大小为整数个字
 		final int size = WORD_BYTES*((data.length+WORD_BYTES-1)/WORD_BYTES);
-		//only reallocate if needed
+		//仅在需要时重新分配
 		if(buffer==null||buffer.length!=size) buffer = new byte[size];
 		System.arraycopy(data, 0, buffer, 0, data.length);
 		reset();
@@ -55,8 +55,8 @@ public class BitStream {
 	}
 
 	/**
-	 * Reads the next four bytes.
-	 * @param peek if true, the stream pointer will not be increased
+	 * 读取接下来的四个字节。
+	 * @param peek 如果为 true，流指针不会增加
 	 */
 	protected int readCache(boolean peek) throws AACException {
 		int i;
@@ -113,10 +113,10 @@ public class BitStream {
 			ret = (cache>>(bitsCached-n))&maskBits(n);
 		}
 		else {
-			//old cache
+			//旧缓存
 			final int c = cache&maskBits(bitsCached);
 			n -= bitsCached;
-			//read next & combine
+			//读取下一个并合并
 			ret = ((readCache(true)>>WORD_BITS-n)&maskBits(n))|(c<<n);
 		}
 		return ret;

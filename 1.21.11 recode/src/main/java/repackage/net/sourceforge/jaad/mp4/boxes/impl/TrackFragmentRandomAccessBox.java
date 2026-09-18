@@ -40,7 +40,7 @@ public class TrackFragmentRandomAccessBox extends FullBox {
 	/**
 	 * track ID 为整数，标识关联的轨道。
 	 *
-	 * @return track ID
+	  * @return 轨道 ID
 	 */
 	public long getTrackID() {
 		return trackID;

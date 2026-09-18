@@ -28,7 +28,7 @@ import java.io.InputStream;
 
 
 /**
- * Bit-wide input stream.
+ * 位宽输入流。
  * @author kc7bfi
  */
 public class BitInputStream {
@@ -63,7 +63,7 @@ public class BitInputStream {
 
     /**
      * 构造函数。
-     * @param is    The InputStream to read bits from
+      * @param is 从中读取位的 InputStream
      */
     public BitInputStream(InputStream is) {
         this.inStream = is;
@@ -90,7 +90,7 @@ public class BitInputStream {
     //}
 
     private int readFromStream() throws IOException {
-        // first shift the unconsumed buffer data toward the front as much as possible
+        // 首先尽可能将未消费的缓冲区数据向前移动
         if (getByte > 0 && putByte > getByte) {
             System.arraycopy(buffer, getByte, buffer, 0, putByte - getByte);
         }
@@ -402,7 +402,7 @@ public class BitInputStream {
 
     /**
      * 读取并计数零位数。
-     * @return The number of zero bits read
+      * @return 读取到的零位数
      * 读取单个位。
      */
     public int readUnaryUnsigned() throws IOException {
@@ -502,7 +502,7 @@ public class BitInputStream {
                         if (valI == nvals) {
                             // 如果我们退出for循环，则备份一个，因为我们
                             // 读取所有nvals ，但结尾在中间
-                            // a blurb
+                            // 一小段说明文字
                             i--;
                             break;
                         }
@@ -619,7 +619,7 @@ public class BitInputStream {
     }
 
     /**
-     * read UTF8 integer.
+     * 读取 UTF8 整数。
      * 读取 UTF8 整数。
      * 返回时，若 *val == 0xffffffff 则 utf-8 序列无效，但
      * @param raw 读取的原始字节（输出）。如果为空，则不返回字节

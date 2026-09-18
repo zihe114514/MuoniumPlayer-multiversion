@@ -66,7 +66,7 @@ public class Header {
     /**
      * 构造函数。
      * 包括同步码。
-     * @param is                    InputBitStream
+      * @param is 输入位流
      * @param streamInfo FLAC流信息
      * @param headerWarmup          帧头预热字节
      * @throws IOException          读取 InputBitStream 出错时抛出
@@ -237,7 +237,7 @@ public class Header {
                 break;
         }
 
-        if ((rawHeader.getData(3) & 0x01) != 0) { // this should be a zero padding bit
+        if ((rawHeader.getData(3) & 0x01) != 0) { // 这里应当是一个零填充位
             throw new BadHeaderException("this should be a zero padding bit");
         }
 

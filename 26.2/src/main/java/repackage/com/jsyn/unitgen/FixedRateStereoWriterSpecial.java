@@ -1,17 +1,17 @@
 /*
  * Copyright 2009 Phil Burk, Mobileer Inc
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 依据 Apache 许可证 2.0 版（下称“许可证”）授权；
+ * 除非符合许可规定，否则您不得使用此文件。
+ * 您可以通过以下网址获取许可证副本：
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 除非适用法律要求或书面同意，在许可证
+ * 根据许可证分发是“按原样”分发的，
+ * 在任何情况下，无论明示或默示，不提供任何担保或条件。
+ * 有关许可证项下的权限，请参见许可证；
+ * 许可项下的限制。
  */
 
 package repackage.com.jsyn.unitgen;
@@ -20,10 +20,10 @@ import repackage.com.jsyn.ports.UnitDataQueuePort;
 import repackage.com.jsyn.ports.UnitInputPort;
 
 /**
- * Simple stereo sample writer. Write two samples per audio frame with no interpolation. This can be
- * used to record audio or to build delay lines.
+ * 简单的立体声示例写入器。每个音频帧写入两个样本，没有插值。这可以是
+ * 用于录制音频或构建延迟线。
  *
- * Note that you must call start() on this unit because it does not have an output for pulling data.
+ * 注意，必须对该单元调用 start()，因为它没有用于拉取数据的输出。
  *
  * @author Phil Burk (C) 2009 Mobileer Inc
  */

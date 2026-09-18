@@ -9,7 +9,7 @@ import repackage.net.sourceforge.jaad.aac.syntax.ICStream;
 import java.util.logging.Level;
 
 /**
- * Intra-channel prediction used in profile Main
+ * profile Main 中使用的通道内预测
  * @author in-somnia
  */
 public class ICPrediction {

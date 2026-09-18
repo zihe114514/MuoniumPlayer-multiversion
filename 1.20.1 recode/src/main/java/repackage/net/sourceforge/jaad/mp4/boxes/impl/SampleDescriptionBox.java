@@ -5,8 +5,8 @@ import repackage.net.sourceforge.jaad.mp4.boxes.FullBox;
 import java.io.IOException;
 
 /**
- * The sample description table gives detailed information about the coding type
- * used, and any initialization information needed for that coding.
+ * 采样描述表给出所用编码类型的详细信息，
+ * 以及该编码所需的任何初始化信息。
  * @author in-somnia
  */
 public class SampleDescriptionBox extends FullBox {

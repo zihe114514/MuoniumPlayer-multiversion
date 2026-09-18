@@ -8,14 +8,14 @@ import repackage.net.sourceforge.jaad.aac.syntax.ICSInfo;
 import repackage.net.sourceforge.jaad.aac.syntax.ICStream;
 
 /**
- * Temporal Noise Shaping
+ * 瞬时噪声整形（Temporal Noise Shaping）
  * @author in-somnia
  */
 public class TNS implements Constants, TNSTables {
 
 	private static final int TNS_MAX_ORDER = 20;
 	private static final int[] SHORT_BITS = {1, 4, 3}, LONG_BITS = {2, 6, 5};
-	//bitstream
+	//比特流
 	private int[] nFilt;
 	private int[][] length, order;
 	private boolean[][] direction;

@@ -107,7 +107,7 @@ public class DecoderConfigDescriptor extends Descriptor {
 	 * <tr>0x20-0x3F<td></td><td>用户私有</td></tr>
 	 * </table>
 	 *
-	 * @return stream type
+	  * @return 流类型
 	 */
 	public int getStreamType() {
 		return streamType;

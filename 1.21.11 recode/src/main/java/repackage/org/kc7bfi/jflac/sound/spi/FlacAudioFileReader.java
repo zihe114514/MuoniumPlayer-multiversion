@@ -32,7 +32,7 @@ import java.io.*;
 import java.net.URL;
 
 /**
- * Provider for Flac audio file reading services. This implementation can parse
+ * Flac 音频文件读取服务的提供者。此实现可解析
  * 来自Flac音频文件的格式信息，可以生成音频输入
  * Flac 音频文件读取服务的提供者。此实现可解析
  *
@@ -51,11 +51,11 @@ public class FlacAudioFileReader extends AudioFileReader {
      * 来自此类型文件的流。
      *
      * 为有效的音频文件数据。
-     *            the File from which file format information should be
+      * 应从中提取文件格式信息的 File，
      *            应从中提取文件格式信息的 File，
      * @return 描述音频文件格式的AudioFileFormat对象。
      * @exception UnsupportedAudioFileException
-     *                if the File does not point to a valid audio file data
+      * 如果 File 未指向有效的音频文件数据
      *                由系统识别。
      * @exception IOException
      *                如果发生I/O异常。
@@ -75,7 +75,7 @@ public class FlacAudioFileReader extends AudioFileReader {
      * @return 基于指向的音频文件数据的AudioInputStream对象
      *         到URL。
      * @exception UnsupportedAudioFileException
-     *                if the File does not point to a valid audio file data
+      * 如果 File 未指向有效的音频文件数据
      *                由系统识别。
      * @exception IOException
      *                如果发生I/O异常。
@@ -92,10 +92,10 @@ public class FlacAudioFileReader extends AudioFileReader {
      * @param stream
      *            用于构造 AudioInputStream 的 URL。
      *            应从中构造 AudioInputStream 的输入流，
-     * @return an AudioInputStream object based on the audio file data contained
+      * @return 基于所包含的音频文件数据的 AudioInputStream 对象，
      *         在输入流中。
      * @exception UnsupportedAudioFileException
-     *                if the File does not point to a valid audio file data
+      * 如果 File 未指向有效的音频文件数据
      *                由系统识别。
      * @exception IOException
      *                如果发生I/O异常。
@@ -111,10 +111,10 @@ public class FlacAudioFileReader extends AudioFileReader {
      *            用于构造 AudioInputStream 的 URL。
      *            应从中构造 AudioInputStream 的输入流，
      * @param medialength
-     * @return an AudioInputStream object based on the audio file data contained
+      * @return 基于所包含的音频文件数据的 AudioInputStream 对象，
      *         在输入流中。
      * @exception UnsupportedAudioFileException
-     *                if the File does not point to a valid audio file data
+      * 如果 File 未指向有效的音频文件数据
      *                由系统识别。
      * @exception IOException
      *                如果发生I/O异常。
@@ -126,10 +126,10 @@ public class FlacAudioFileReader extends AudioFileReader {
      * @param bitStream
      * @param baos
      * @param mediaLength
-     * @return an AudioInputStream object based on the audio file data contained
+      * @return 基于所包含的音频文件数据的 AudioInputStream 对象，
      *         在输入流中。
      * @exception UnsupportedAudioFileException
-     *                if the File does not point to a valid audio file data
+      * 如果 File 未指向有效的音频文件数据
      *                由系统识别。
      * @exception IOException
      *                如果发生I/O异常。
@@ -209,7 +209,7 @@ public class FlacAudioFileReader extends AudioFileReader {
     }
 
     /**
-     * Obtains an audio input stream from the File provided. The File must point
+      * 从给定的 File 获取音频输入流。该 File 必须指向
      * 来自此类型文件的流。
      *
      * 为有效的音频文件数据。
@@ -217,7 +217,7 @@ public class FlacAudioFileReader extends AudioFileReader {
      * @return 基于指向的音频文件数据的AudioInputStream对象
      *         从所提供的 File 获取音频输入流。该 File 必须指向
      * @exception UnsupportedAudioFileException
-     *                if the File does not point to a valid audio file data
+      * 如果 File 未指向有效的音频文件数据
      *                由系统识别。
      * @exception IOException
      *                如果发生I/O异常。
@@ -241,7 +241,7 @@ public class FlacAudioFileReader extends AudioFileReader {
      * @return 基于指向的音频文件数据的AudioInputStream对象
      *         到URL。
      * @exception UnsupportedAudioFileException
-     *                if the File does not point to a valid audio file data
+      * 如果 File 未指向有效的音频文件数据
      *                由系统识别。
      * @exception IOException
      *                如果发生I/O异常。
@@ -263,10 +263,10 @@ public class FlacAudioFileReader extends AudioFileReader {
      * @param stream
      *            用于构造 AudioInputStream 的 URL。
      *            应从中构造 AudioInputStream 的输入流，
-     * @return an AudioInputStream object based on the audio file data contained
+      * @return 基于所包含的音频文件数据的 AudioInputStream 对象，
      *         在输入流中。
      * @exception UnsupportedAudioFileException
-     *                if the File does not point to a valid audio file data
+      * 如果 File 未指向有效的音频文件数据
      *                由系统识别。
      * @exception IOException
      *                如果发生I/O异常。
@@ -283,10 +283,10 @@ public class FlacAudioFileReader extends AudioFileReader {
      *            用于构造 AudioInputStream 的 URL。
      *            应从中构造 AudioInputStream 的输入流，
      * @param medialength
-     * @return an AudioInputStream object based on the audio file data contained
+      * @return 基于所包含的音频文件数据的 AudioInputStream 对象，
      *         在输入流中。
      * @exception UnsupportedAudioFileException
-     *                if the File does not point to a valid audio file data
+      * 如果 File 未指向有效的音频文件数据
      *                由系统识别。
      * @exception IOException
      *                如果发生I/O异常。

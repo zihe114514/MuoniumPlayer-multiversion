@@ -381,7 +381,7 @@ final class AutomixAnalyzer {
         if (hops < 16) return null;
 
         // 1. 起音包络：半波整流的能量通量足以跟踪打击乐起音
-        //    for beat spacing, and needs no FFT.
+        // 以获取节拍间距，且无需 FFT。
         float[] onset = new float[hops];
         float previousEnergy = 0f;
         double total = 0.0;
