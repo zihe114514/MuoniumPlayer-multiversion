@@ -638,6 +638,9 @@ public class GuiHudEditorPro extends GuiScreen {
         int[] classic = classicButton(panelX, panelY, panelW, panelH);
         drawGhostButton("header.classic", fr, HudSettingsIcons.CLASSIC_UI, "经典",
                 classic, mouseX, mouseY, TEXT_PRIMARY, active.accent);
+        int[] folia = foliaButton(panelX, panelY, panelW, panelH);
+        drawGhostButton("header.folia", fr, HudSettingsIcons.MODERN_UI, "Folia",
+                folia, mouseX, mouseY, TEXT_PRIMARY, active.accent);
         if (OneConfigHudBridge.isAvailable()) {
             int[] oneConfig = oneConfigButton(panelX, panelY, panelW, panelH);
             drawGhostButton("header.oneconfig", fr, HudSettingsIcons.MODERN_UI, "OneConfig",
@@ -667,18 +670,25 @@ public class GuiHudEditorPro extends GuiScreen {
         return new int[] { panelX + panelW - 14 - 22 - 6 - w, buttonRowY(panelY, panelH), w, 22 };
     }
 
+    /** 切到 Folia 样式界面的入口，排在「经典」左侧。 */
+    private int[] foliaButton(int panelX, int panelY, int panelW, int panelH) {
+        int w = ghostWidth(FontManager.pf12, "Folia");
+        int[] classic = classicButton(panelX, panelY, panelW, panelH);
+        return new int[] { classic[0] - 6 - w, classic[1], w, 22 };
+    }
+
     /** OneConfig 可用时才存在；点击后注册并打开 OneConfig 的 MuoniumPlayer HUD 页。 */
     private int[] oneConfigButton(int panelX, int panelY, int panelW, int panelH) {
         int w = ghostWidth(FontManager.pf12, "OneConfig");
-        int[] classic = classicButton(panelX, panelY, panelW, panelH);
-        return new int[] { classic[0] - 6 - w, classic[1], w, 22 };
+        int[] folia = foliaButton(panelX, panelY, panelW, panelH);
+        return new int[] { folia[0] - 6 - w, folia[1], w, 22 };
     }
 
     /** 只在面板被拖动过之后出现，用来把它送回默认摆位。 */
     private int[] restorePositionButton(int panelX, int panelY, int panelW, int panelH) {
         int[] anchorButton = OneConfigHudBridge.isAvailable()
                 ? oneConfigButton(panelX, panelY, panelW, panelH)
-                : classicButton(panelX, panelY, panelW, panelH);
+                : foliaButton(panelX, panelY, panelW, panelH);
         return new int[] { anchorButton[0] - 6 - 22, anchorButton[1], 22, 22 };
     }
 
@@ -1283,6 +1293,11 @@ public class GuiHudEditorPro extends GuiScreen {
                 switchToClassic();
                 return;
             }
+            int[] folia = foliaButton(panelX, panelY, panelW, panelH);
+            if (isInside(mouseX, mouseY, folia[0], folia[1], folia[2], folia[3])) {
+                switchToFolia();
+                return;
+            }
             if (panelMoved()) {
                 int[] home = restorePositionButton(panelX, panelY, panelW, panelH);
                 if (isInside(mouseX, mouseY, home[0], home[1], home[2], home[3])) {
@@ -1819,10 +1834,18 @@ public class GuiHudEditorPro extends GuiScreen {
 
     /** 切到经典界面，并把选择记到配置里，下次打开直接是这一套。 */
     private void switchToClassic() {
-        HudConfig.hudEditorModernUi = false;
+        HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_CLASSIC;
         HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_BUILTIN;
         HudConfig.save();
         mc.setScreen(new GuiHudEditor());
+    }
+
+    /** 切到 Folia 样式界面（居中大窗，移植自 本项目 的设置弹窗）。 */
+    private void switchToFolia() {
+        HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_FOLIA;
+        HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_BUILTIN;
+        HudConfig.save();
+        mc.setScreen(new GuiHudEditorFolia());
     }
 
     /** 切到 OneConfig 的真实 UI，并把选择记到配置里。 */

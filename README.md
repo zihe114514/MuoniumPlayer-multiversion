@@ -31,12 +31,12 @@ Minecraft 客户端 mod **MuoniumPlayer**（网易云音乐播放器 + 灵动岛
 **1.20.1 用 Forge 而不是 NeoForge**：1.20.1 是 Forge 的最后一个大版本，NeoForge 从
 1.20.2 才分家，1.20.1 的模组生态与整合包都在 Forge 上。
 
-四份工程共用：`mod_version=1.4.12`、`maven_group=com.muoniumplayer`、
+四份工程共用：`mod_version=1.5.0`、`maven_group=com.muoniumplayer`、
 `archives_base_name=MuoniumPlayer`、Skija `0.143.17`（Fabric 侧 `include` 进 jar，
 Forge/NeoForge 侧用 shadow 合并；原生库平台由 `skija_natives` 控制，发布时需要改成四平台全打）。
 
 产物命名：`MuoniumPlayer-<mc版本>-<加载器>-<mod版本>.jar`，
-例如 `MuoniumPlayer-1.21.11-neoforge-1.4.12.jar` / `MuoniumPlayer-1.20.1-forge-1.4.12.jar`。
+例如 `MuoniumPlayer-1.21.11-neoforge-1.5.0.jar` / `MuoniumPlayer-1.20.1-forge-1.5.0.jar`。
 名字里带 Minecraft 版本是必要的，不是好看：四个版本工程是四个独立构建，
 8 个 jar 要平铺进同一个 `dist/`，不带版本号的话 1.21.1 与 1.21.11 的 fabric 产物会同名互相覆盖。
 `buildAll` 跑完会把成品汇总到仓库根的 `dist/`（`collectDist` 任务，只收成品、不收源码包与改名前的旧 jar）。
@@ -247,7 +247,7 @@ Gradle wrapper 与构建配置。
 .\build-all.bat
 
 # PowerShell 里直接调用；构建到指定目录而不是默认 dist/
-.\tools\build-all.ps1 -OutputDir releases\1.4.12
+.\tools\build-all.ps1 -OutputDir releases\1.5.0
 
 # 只构建部分版本 / 换任务 / 离线 / 不复用 Gradle daemon
 .\tools\build-all.ps1 -Versions '1.21.1','26.2' -Task ':fabric:build'

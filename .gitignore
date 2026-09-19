@@ -44,6 +44,9 @@ error-report-*/
 # Codex 临时上游源码参考（不参与项目构建）
 .codex-reference/
 
+# 会话草稿区：解包上游 api-enhanced zip 供对照参数用，仅查阅、随时可重解包，不参与构建
+/.scratch/
+
 # ---- 开发期草稿 / 本地参考资料（不入库）----
 # 会话临时脚本、探针结果与备份。注意 memory/ 是要入库的，所以只忽略这几个子目录
 /.workbuddy/tmp/

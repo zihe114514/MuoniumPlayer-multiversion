@@ -376,18 +376,29 @@ public final class HudConfig {
     public static boolean animatedCoverEnabled = true;
 
     /**
-     * HUD 设置界面用哪一套外观:{@code true} 走现代界面(侧边栏分类 + 卡片分组 + 每行带说明),
-     * {@code false} 走经典界面(右侧一列可折叠长面板)。
+     * HUD 设置界面用哪一层：内置界面（外观见 {@link #hudEditorStyle}）或 OneConfig。
+     * OneConfig 未安装时自动回退内置界面。
      *
-     * <p>两套界面的设置项完全一样(都来自 {@code HudSettingsModel}),只是呈现不同;两边都有
-     * 互相切换的按钮,点了之后这里会被记住,下次打开直接是选中的那一套。刻意不做成"新界面替换旧界面":
-     * 经典界面把全部滑块平铺成一列,熟悉之后找某一项其实更快。</p>
+     * <p>内置的几套外观设置项完全一样(都来自 {@code HudSettingsModel}),只是呈现不同;
+     * 各界面都有互相切换的按钮,点了之后会被记住,下次打开直接是选中的那一套。刻意不做成
+     * "新界面替换旧界面":经典界面把全部滑块平铺成一列,熟悉之后找某一项其实更快。</p>
      */
     /** HUD 设置界面的选择：内置界面或 OneConfig。OneConfig 未安装时自动回退内置界面。 */
     public static final String HUD_EDITOR_UI_BUILTIN = "builtin";
     public static final String HUD_EDITOR_UI_ONECONFIG = "oneconfig";
 
-    public static boolean hudEditorModernUi = true;
+    /**
+     * 内置 HUD 设置界面的三套外观。
+     *
+     * <p>取代原来的布尔 {@code hudEditorModernUi}：引入 Folia 样式（居中大窗，移植自
+     * 本项目 的设置弹窗）之后布尔已经表达不了三种取值。旧配置文件里的布尔在
+     * {@code load()} 时迁移成这里的一个枚举值，字段本身不再保存。</p>
+     */
+    public static final String HUD_EDITOR_STYLE_CLASSIC = "classic";
+    public static final String HUD_EDITOR_STYLE_MODERN = "modern";
+    public static final String HUD_EDITOR_STYLE_FOLIA = "folia";
+
+    public static String hudEditorStyle = HUD_EDITOR_STYLE_MODERN;
     public static String hudEditorUi = HUD_EDITOR_UI_BUILTIN;
 
     /**
@@ -682,7 +693,14 @@ public final class HudConfig {
         dynamicIslandAmbientNowPlaying = getBoolean(o, "dynamicIslandAmbientNowPlaying", dynamicIslandAmbientNowPlaying);
         playerFadeSpeed = clamp(getFloat(o, "playerFadeSpeed", playerFadeSpeed), 0.30f, 3.00f);
         playerUiSwitchSpeed = clamp(getFloat(o, "playerUiSwitchSpeed", playerUiSwitchSpeed), 0.30f, 3.00f);
-        hudEditorModernUi = getBoolean(o, "hudEditorModernUi", hudEditorModernUi);
+        // 旧配置只有布尔 hudEditorModernUi：新键缺席时按它迁移，保证升级后打开的还是用户上次用的那套。
+        String legacyStyle = HUD_EDITOR_STYLE_MODERN;
+        if (o.has("hudEditorModernUi") && o.get("hudEditorModernUi").isJsonPrimitive()) {
+            legacyStyle = o.get("hudEditorModernUi").getAsBoolean()
+                    ? HUD_EDITOR_STYLE_MODERN : HUD_EDITOR_STYLE_CLASSIC;
+        }
+        hudEditorStyle = o.has("hudEditorStyle") && o.get("hudEditorStyle").isJsonPrimitive()
+                ? normalizeHudEditorStyle(o.get("hudEditorStyle").getAsString()) : legacyStyle;
         if (o.has("hudEditorUi") && o.get("hudEditorUi").isJsonPrimitive()) {
             hudEditorUi = normalizeHudEditorUi(o.get("hudEditorUi").getAsString());
         }
@@ -816,7 +834,7 @@ public final class HudConfig {
         o.addProperty("dynamicIslandAmbientRotate", dynamicIslandAmbientRotate);
         o.addProperty("playerFadeSpeed", playerFadeSpeed);
         o.addProperty("playerUiSwitchSpeed", playerUiSwitchSpeed);
-        o.addProperty("hudEditorModernUi", hudEditorModernUi);
+        o.addProperty("hudEditorStyle", hudEditorStyle);
         o.addProperty("hudEditorUi", hudEditorUi);
         o.addProperty("hudEditorPanelX", hudEditorPanelX);
         o.addProperty("hudEditorPanelY", hudEditorPanelY);
@@ -918,6 +936,13 @@ public final class HudConfig {
     private static String normalizeHudEditorUi(String value) {
         return HUD_EDITOR_UI_ONECONFIG.equalsIgnoreCase(value)
                 ? HUD_EDITOR_UI_ONECONFIG : HUD_EDITOR_UI_BUILTIN;
+    }
+
+    /** 界面外观只认三个值，其余（含手改坏的配置文件）一律回到现代样式。 */
+    private static String normalizeHudEditorStyle(String value) {
+        if (HUD_EDITOR_STYLE_CLASSIC.equalsIgnoreCase(value)) return HUD_EDITOR_STYLE_CLASSIC;
+        if (HUD_EDITOR_STYLE_FOLIA.equalsIgnoreCase(value)) return HUD_EDITOR_STYLE_FOLIA;
+        return HUD_EDITOR_STYLE_MODERN;
     }
 
     private static boolean getBoolean(JsonObject o, String key, boolean def) {

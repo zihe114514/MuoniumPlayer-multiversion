@@ -8,11 +8,14 @@ import lombok.Setter;
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
+import com.muoniumplayer.core.ncm.music.BilibiliFavoriteService;
+import com.muoniumplayer.core.ncm.music.BilibiliPlaylistService;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
+import com.muoniumplayer.core.ncm.music.QishuiLocalPlaylistStore;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.ncm.music.NeteaseSearchSuggestService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
@@ -214,7 +217,8 @@ public class NavigateBar extends NCMPanel {
             MusicPlatform currentPlatform = NeteaseMusicService.getCurrentPlatform();
             boolean supportsPlaylistSearch = currentPlatform == MusicPlatform.NETEASE
                     || currentPlatform == MusicPlatform.KUGOU
-                    || currentPlatform == MusicPlatform.QISHUI;
+                    || currentPlatform == MusicPlatform.QISHUI
+                    || currentPlatform == MusicPlatform.BILIBILI;
             searchTypeToggle.setHidden(!supportsPlaylistSearch);
             searchTypeToggle.setClickable(supportsPlaylistSearch);
             searchTypeToggle.setBounds(32, 13);
@@ -468,18 +472,52 @@ public class NavigateBar extends NCMPanel {
             } else {
                 PlaylistItem login = new PlaylistItem("·",
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                        () -> "登录汽水音乐后加载歌单",
+                        () -> "登录可同步账号歌单；未登录也能粘贴链接导入",
                         () -> NCMScreen.getInstance().openAccountManager());
                 login.setShouldOverrideMouseCursor(true);
                 this.playlistPanel.addChild(login);
             }
+
+            // 导入入口：点开二级导入面板（自由输入 / 粘贴均可），导入全程匿名、只存本地引用。
+            PlaylistItem importItem = new PlaylistItem("加", FontManager.pf12bold,
+                    () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                    () -> "导入歌单（输入/粘贴链接）",
+                    () -> NCMScreen.getInstance().openQishuiImport());
+            importItem.setShouldOverrideMouseCursor(true);
+            this.playlistPanel.addChild(importItem);
+
+            // 本地已导入的歌单：点开由 PlayList 匿名向上游拉曲目，右键移除本地引用。
+            for (PlayList imported : QishuiLocalPlaylistStore.list()) {
+                final PlayList ready = imported;
+                PlaylistItem item = new PlaylistItem("D",
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        ready::getName,
+                        () -> NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(ready)));
+                item.setPlaylist(ready);
+                item.setShouldOverrideMouseCursor(true);
+                item.setOnSecondaryClick(() -> removeImportedQishuiPlaylist(
+                        ready.getPlatformPlaylistId(), ready.getName()));
+                this.playlistItems.add(item);
+                this.playlistPanel.addChild(item);
+            }
         }
 
-        // QQ / 酷狗账号歌单都是异步加载的快照；网易云继续使用现有 CloudMusic 缓存。
+        // 导入入口：点开二级导入面板（自由输入 / 粘贴均可），解析出稿件所属的合集或分P后直接打开。
+        if (bilibiliMode) {
+            PlaylistItem importBilibili = new PlaylistItem("加", FontManager.pf12bold,
+                    () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                    () -> "导入稿件（输入/粘贴链接）",
+                    () -> NCMScreen.getInstance().openBilibiliImport());
+            importBilibili.setShouldOverrideMouseCursor(true);
+            this.playlistPanel.addChild(importBilibili);
+        }
+
+        // QQ / 酷狗 / B 站的账号歌单都是异步加载的快照；网易云继续使用现有 CloudMusic 缓存。
         List<PlayList> pl = qqMode
                 ? NeteaseMusicService.getQQUserPlaylistsSnapshot()
                 : kugouMode ? KuGouMusicService.getUserPlaylistsSnapshot()
-                : (youtubeMode || bilibiliMode || qishuiMode) ? Collections.emptyList() : CloudMusic.playLists;
+                : bilibiliMode ? BilibiliFavoriteService.getUserPlaylistsSnapshot()
+                : (youtubeMode || qishuiMode) ? Collections.emptyList() : CloudMusic.playLists;
 
         if (qqMode && NeteaseMusicService.isLoggedIn(MusicPlatform.QQ)
                 && !NeteaseMusicService.areQQUserPlaylistsLoaded()) {
@@ -491,11 +529,16 @@ public class NavigateBar extends NCMPanel {
             KuGouMusicService.ensureUserPlaylistsAsync(() ->
                     MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().markDirty()));
         }
+        if (bilibiliMode && NeteaseMusicService.isLoggedIn(MusicPlatform.BILIBILI)
+                && !BilibiliFavoriteService.areUserPlaylistsLoaded()) {
+            BilibiliFavoriteService.ensureUserPlaylistsAsync(() ->
+                    MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().markDirty()));
+        }
 
         // QQ 的创建/收藏歌单统一显示在“我的歌单”下，不再因为平台切换而隐藏整个入口。
         lblPlaylists.setHidden(false);
         if (pl != null && !pl.isEmpty()) {
-            if (qqMode || kugouMode) {
+            if (qqMode || kugouMode || bilibiliMode) {
                 for (PlayList playList : pl) {
                     PlaylistItem item = new PlaylistItem("D",
                             () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
@@ -522,16 +565,24 @@ public class NavigateBar extends NCMPanel {
                     this.playlistPanel.addChild(item);
                 }
             }
-        } else if (qqMode || kugouMode) {
-            String status = kugouMode
-                    ? (!NeteaseMusicService.isLoggedIn(MusicPlatform.KUGOU)
-                    ? "登录酷狗音乐后加载歌单"
-                    : (KuGouMusicService.areUserPlaylistsLoading()
-                    ? "正在加载酷狗歌单…" : "暂无可用酷狗歌单"))
-                    : (!NeteaseMusicService.isLoggedIn(MusicPlatform.QQ)
-                    ? "登录 QQ 音乐后加载歌单"
-                    : (NeteaseMusicService.areQQUserPlaylistsLoading()
-                    ? "正在加载 QQ 歌单…" : "暂无可用 QQ 歌单"));
+        } else if (qqMode || kugouMode || bilibiliMode) {
+            String status;
+            if (bilibiliMode) {
+                status = !NeteaseMusicService.isLoggedIn(MusicPlatform.BILIBILI)
+                        ? "登录哔哩哔哩后加载收藏夹"
+                        : (BilibiliFavoriteService.areUserPlaylistsLoading()
+                        ? "正在加载 B 站收藏夹…" : "暂无可用收藏夹");
+            } else if (kugouMode) {
+                status = !NeteaseMusicService.isLoggedIn(MusicPlatform.KUGOU)
+                        ? "登录酷狗音乐后加载歌单"
+                        : (KuGouMusicService.areUserPlaylistsLoading()
+                        ? "正在加载酷狗歌单…" : "暂无可用酷狗歌单");
+            } else {
+                status = !NeteaseMusicService.isLoggedIn(MusicPlatform.QQ)
+                        ? "登录 QQ 音乐后加载歌单"
+                        : (NeteaseMusicService.areQQUserPlaylistsLoading()
+                        ? "正在加载 QQ 歌单…" : "暂无可用 QQ 歌单");
+            }
             PlaylistItem statusItem = new PlaylistItem("·",
                     () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                     () -> status,
@@ -1432,18 +1483,23 @@ public class NavigateBar extends NCMPanel {
         });
 
         MusicPlatform searchPlatform = NeteaseMusicService.getCurrentPlatform();
+        final boolean bilibiliSearch = searchPlatform == MusicPlatform.BILIBILI;
         final boolean searchPlaylists = playlistSearchMode
                 && (searchPlatform == MusicPlatform.NETEASE || searchPlatform == MusicPlatform.KUGOU
-                || searchPlatform == MusicPlatform.QISHUI);
+                || searchPlatform == MusicPlatform.QISHUI || bilibiliSearch);
         if (searchPlaylists) {
             final boolean kugouSearch = searchPlatform == MusicPlatform.KUGOU;
             final boolean qishuiSearch = searchPlatform == MusicPlatform.QISHUI;
             MultiThreadingUtil.runAsync(() -> {
-                List<PlayList> results = qishuiSearch
+                List<PlayList> results = bilibiliSearch
+                        // B 站没有歌单库这个对象：搜的是稿件，再把其中带合集或分 P 数 >1 的筛成歌单。
+                        ? BilibiliPlaylistService.searchPlaylists(query, 30)
+                        : qishuiSearch
                         ? QishuiMusicService.searchPlaylists(query, 50)
                         : kugouSearch ? KuGouMusicService.searchPlaylists(query, 50)
                         : searchNeteasePlaylists(query);
-                String title = (qishuiSearch ? "汽水歌单搜索" : kugouSearch ? "酷狗歌单搜索" : "歌单搜索")
+                String title = (bilibiliSearch ? "B 站合集 / 分P搜索"
+                        : qishuiSearch ? "汽水歌单搜索" : kugouSearch ? "酷狗歌单搜索" : "歌单搜索")
                         + " · " + query + " · " + results.size();
                 MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().setCurrentPanel(
                         new HomePanel(results, title)));
@@ -1493,6 +1549,15 @@ public class NavigateBar extends NCMPanel {
         if (radios.isEmpty()) return null;
         return new HomePanel(radios, "汽水电台 · " + radios.size());
     }
+
+    /** 移除一条本地导入的汽水歌单引用（右键触发）；不影响上游，也不涉及账号。 */
+    private void removeImportedQishuiPlaylist(String playlistId, String name) {
+        QishuiLocalPlaylistStore.remove(playlistId);
+        NCMScreen.getInstance().markDirty();
+        DownloadDynamicIsland.showModelOperationResult("导入歌单",
+                "已移除「" + (name == null || name.isEmpty() ? playlistId : name) + "」", true);
+    }
+
     /** 列表里当前被选中的条目，没有选中项时返回 {@code null}。 */
     private PlaylistItem findSelectedItem() {
         for (AbstractWidget<?> child : this.playlistPanel.getChildren()) {
@@ -1632,6 +1697,14 @@ public class NavigateBar extends NCMPanel {
         @Setter
         private PlayList playlist;
 
+        /**
+         * 可选的右键（副键）动作。默认不设置时右键沿用旧行为——被吞掉、什么都不做。
+         * 目前只由「导入的汽水歌单」条目用来移除本地引用。
+         */
+        @Getter
+        @Setter
+        private Runnable onSecondaryClick;
+
         public PlaylistItem(String icon, Supplier<Integer> iconColorSupplier, Supplier<String> label, Runnable onClick) {
             this(icon, FontManager.music18, null, iconColorSupplier, label, onClick);
         }
@@ -1709,6 +1782,8 @@ public class NavigateBar extends NCMPanel {
                     NCMScreen.getInstance().getPlaylistsPanel().playlistPanel.getChildren().stream()
                             .filter(it -> it instanceof PlaylistItem && it != this)
                             .forEach(it -> ((PlaylistItem) it).setSelected(false));
+                } else if (mouseButton == 1 && this.onSecondaryClick != null) {
+                    this.onSecondaryClick.run();
                 }
 
                 return true;

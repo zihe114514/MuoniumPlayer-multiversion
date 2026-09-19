@@ -2,6 +2,8 @@ package com.muoniumplayer.core.screens.ncm.panels;
 
 import today.opai.api.enums.EnumChatColor;
 import com.muoniumplayer.core.management.FontManager;
+import com.muoniumplayer.core.ncm.music.BilibiliFavoriteService;
+import com.muoniumplayer.core.ncm.music.BilibiliMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.KuGouLikedCache;
@@ -451,7 +453,8 @@ public class MusicWidget extends RoundedRectWidget {
         // ===== 收藏：歌曲喜欢/取消喜欢 + 加入歌单 =====
         // 酷狗也走这两个按钮。原先它们被写死成 music.isNetease()，所以切到酷狗后整排收藏控件
         // 直接消失——不是"点了没反应"，是根本没画出来。现在改成"当前源是否支持收藏"。
-        final boolean likeable = music.isNetease() || music.isKuGou();
+        final boolean likeable = canFavourite(music);
+        final boolean playlistAddable = canAddToPlaylist(music);
         ThemedTextureIconWidget btnLike = new ThemedTextureIconWidget(
                 PlayerIconAssets.FAVORITE, "☆", FontManager.pf16bold, 0, 0, 20, 20);
         this.addChild(btnLike);
@@ -479,6 +482,13 @@ public class MusicWidget extends RoundedRectWidget {
                         CloudMusic.likeList.add(music.getId());
                     }
                     MultiThreadingUtil.runAsync(() -> music.setLike(true));
+                } else if (music.isBilibili()) {
+                    noteBilibiliFavoured(music, true);
+                    MultiThreadingUtil.runAsync(() -> {
+                        if (!BilibiliFavoriteService.setFavourite(music, true)) {
+                            noteBilibiliFavoured(music, false);
+                        }
+                    });
                 } else {
                     noteKuGouLiked(music, true);
                     MultiThreadingUtil.runAsync(() -> {
@@ -491,7 +501,9 @@ public class MusicWidget extends RoundedRectWidget {
 
             NCMScreen.getInstance().openConfirmation(
                     "取消收藏歌曲？",
-                    "取消后，这首歌曲将从“我喜欢的音乐”中移除。",
+                    music.isBilibili()
+                            ? "取消后，这首稿件将从你的默认收藏夹中移除。"
+                            : "取消后，这首歌曲将从“我喜欢的音乐”中移除。",
                     "取消收藏",
                     () -> {
                         if (music.isNetease()) {
@@ -499,6 +511,13 @@ public class MusicWidget extends RoundedRectWidget {
                                 CloudMusic.likeList.remove(music.getId());
                             }
                             MultiThreadingUtil.runAsync(() -> music.setLike(false));
+                        } else if (music.isBilibili()) {
+                            noteBilibiliFavoured(music, false);
+                            MultiThreadingUtil.runAsync(() -> {
+                                if (!BilibiliFavoriteService.setFavourite(music, false)) {
+                                    noteBilibiliFavoured(music, true);
+                                }
+                            });
                         } else {
                             noteKuGouLiked(music, false);
                             MultiThreadingUtil.runAsync(() -> {
@@ -516,8 +535,8 @@ public class MusicWidget extends RoundedRectWidget {
         IconWidget btnAddToPlaylist = PlayerQueueIcons.newAddToPlaylistButton(20);
         this.addChild(btnAddToPlaylist);
         btnAddToPlaylist.setShouldOverrideMouseCursor(true);
-        btnAddToPlaylist.setHidden(!likeable);
-        btnAddToPlaylist.setClickable(likeable);
+        btnAddToPlaylist.setHidden(!playlistAddable);
+        btnAddToPlaylist.setClickable(playlistAddable);
         btnAddToPlaylist.setBeforeRenderCallback(() -> {
             btnAddToPlaylist.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             btnAddToPlaylist.centerVertically();
@@ -525,7 +544,7 @@ public class MusicWidget extends RoundedRectWidget {
                     btnAddToPlaylist.getRelativeY());
         });
         btnAddToPlaylist.setOnClickCallback((x, y, button) -> {
-            if (button != 0 || !likeable)
+            if (button != 0 || !playlistAddable)
                 return false;
             NCMScreen.getInstance().openAddToPlaylist(music);
             return true;
@@ -544,9 +563,12 @@ public class MusicWidget extends RoundedRectWidget {
             btnPlayNext.setColor(queued ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                     : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             btnPlayNext.centerVertically();
-            // 对于不支持的源，两个收藏控件会被隐藏，而隐藏控件的
-            // 位置不是可靠的锚点，因此在这种情况下回退到固定的时长槽位。
-            double anchorX = likeable ? btnAddToPlaylist.getRelativeX() : actionsAnchorX(lblMusicDuration);
+            // 图标列从右往左是「时长槽位 ← 收藏 ← 加入歌单 ← 下一首」。取最靠右那个可见控件当锚点：
+            // 隐藏的控件位置不可靠（B 站就只有收藏没有加入歌单，全不支持的源两个都没有），
+            // 回退到固定的时长槽位会让下一首图标压到红心身上。
+            double anchorX = playlistAddable ? btnAddToPlaylist.getRelativeX()
+                    : likeable ? btnLike.getRelativeX()
+                    : actionsAnchorX(lblMusicDuration);
             btnPlayNext.setPosition(anchorX - ACTION_GAP - btnPlayNext.getWidth(), btnPlayNext.getRelativeY());
         });
         btnPlayNext.setOnClickCallback((x, y, button) -> {
@@ -562,7 +584,8 @@ public class MusicWidget extends RoundedRectWidget {
      *
      * <p>网易云有 {@code CloudMusic.likeList} 这个全量 id 表可以直接查；酷狗那边「我喜欢」是一个
      * 真实的歌单，逐首判断要拉整张表，代价太大，所以走本地乐观集合：点过就记下来，
-     * 失败时回滚。这样图标在点击后立刻变色，同时不必为了画一个图标去发请求。</p>
+     * 失败时回滚。这样图标在点击后立刻变色，同时不必为了画一个图标去发请求。B 站用的是同一套乐观
+     * 记忆（{@link BilibiliFavoriteService#isFavouredLocally}），因为每一行每一帧都要问一次。</p>
      */
     private static boolean isLiked(Music music) {
         if (music == null) return false;
@@ -572,7 +595,38 @@ public class MusicWidget extends RoundedRectWidget {
         if (music.isKuGou()) {
             return KuGouLikedCache.contains(music.getStableKey());
         }
+        if (music.isBilibili()) {
+            return BilibiliFavoriteService.isFavouredLocally(music);
+        }
         return false;
+    }
+
+    /**
+     * 红心该不该画出来。
+     *
+     * <p>B 站的收藏落在它自己的收藏夹上，和网易云那套是两条链路；而且没扫码时写入必然失败，
+     * 与其点了闪一下又弹回来，不如不画。这里读的是本地会话快照，不发请求 —— 这个方法会被
+     * {@code rightActionsReserve} 在布局阶段调用，挂上去就是每帧一次网络往返。</p>
+     */
+    private static boolean canFavourite(Music music) {
+        if (music == null) return false;
+        return music.isNetease() || music.isKuGou()
+                || (music.isBilibili() && BilibiliMusicService.isLoggedIn());
+    }
+
+    /**
+     * 「加入歌单」该不该画出来。
+     *
+     * <p>弹的是网易云歌单选择框，一首 B 站稿件塞不进去，所以只有落在网易云曲库里的源才开放。</p>
+     */
+    private static boolean canAddToPlaylist(Music music) {
+        return music != null && (music.isNetease() || music.isKuGou());
+    }
+
+    /** 记录/撤销 B 站红心的本地判断，语义同 {@link #noteKuGouLiked}。 */
+    private static void noteBilibiliFavoured(Music music, boolean favoured) {
+        if (music == null) return;
+        BilibiliFavoriteService.rememberFavoured(music.getSourceId(), favoured);
     }
 
     /** 记录/撤销「已经在「我喜欢」里」这个本地判断。失败回滚用得到。 */
@@ -667,7 +721,9 @@ public class MusicWidget extends RoundedRectWidget {
      */
     private double rightActionsReserve() {
         double slot = durationSlotWidth(this.music.getDuration() >= ONE_HOUR_MILLIS);
-        int iconCount = this.music.isNetease() ? 3 : 1;
+        // 「下一首」人人都有，另外两枚按各自的开关数。之前这里写死成 isNetease() ? 3 : 1，
+        // 于是酷狗/B 站画了三枚却只留一枚的宽度，长标题会滑到图标底下。
+        int iconCount = 1 + (canAddToPlaylist(this.music) ? 1 : 0) + (canFavourite(this.music) ? 1 : 0);
         return DURATION_RIGHT_MARGIN + slot + iconCount * (ACTION_GAP + ACTION_ICON_SIZE);
     }
 

@@ -353,7 +353,13 @@ public final class NeteaseMusicService {
 
     public static Lyric getLyric(Music music) {
         if (music == null) return null;
-        if (music.isYouTube() || music.isBilibili() || music.isQishui()) {
+        if (music.isBilibili()) {
+            // B 站的「歌词」就是播放器字幕，且未登录时上游恒返回空清单。
+            // 拿不到时必须返回 null 而不是空 Lyric —— 空 Lyric 会让 LyricLoadService
+            // 认为这一源已经有结果，从而跳过 AMLL 的按标题匹配兜底。
+            return getBilibiliLyric(music);
+        }
+        if (music.isYouTube() || music.isQishui()) {
             // 汽水音乐有自己的逐字提供方；其他匿名源使用兜底匹配器。
             return null;
         }
@@ -387,9 +393,33 @@ public final class NeteaseMusicService {
         }
     }
 
+    /**
+     * Bilibili 字幕 → {@link Lyric}。
+     *
+     * <p>字幕只有整句、没有逐字时间戳，所以 {@code parse(lrc, "", "")} 出来的
+     * {@code LyricLine} 只带行级时间 —— 逐字渲染器要能接受这种行，这已在
+     * {@code LyricLoadService} 的非逐字兜底路径上覆盖。</p>
+     */
+    private static Lyric getBilibiliLyric(Music music) {
+        try {
+            String lrc = BilibiliSubtitleService.getLyricText(music.getSourceId());
+            if (isBlank(lrc)) return null;
+            List<top.fpsmaster.music.LyricLine> lines =
+                    top.fpsmaster.music.lyric.LyricParser.INSTANCE.parse(lrc, "", "");
+            return new Lyric(lrc, "", "", lines);
+        } catch (Throwable throwable) {
+            System.err.println("[Music/Bilibili] Lyric failed for " + music.getStableKey() + ": "
+                    + throwable.getMessage());
+            return null;
+        }
+    }
+
     public static QrCode createQrCode(MusicPlatform platform) {
-        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) {
-            throw new UnsupportedOperationException("YouTube Music and Bilibili do not require login");
+        if (platform == MusicPlatform.YOUTUBE) {
+            throw new UnsupportedOperationException("YouTube Music does not require login");
+        }
+        if (platform == MusicPlatform.BILIBILI) {
+            return BilibiliLogin.createQrCode();
         }
         if (platform == MusicPlatform.QISHUI) {
             return QishuiMusicService.createQrCode();
@@ -481,8 +511,13 @@ public final class NeteaseMusicService {
         if (platform == null || qrCode == null) {
             return QrLoginState.ERROR;
         }
-        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) {
+        if (platform == MusicPlatform.YOUTUBE) {
             return QrLoginState.ERROR;
+        }
+        if (platform == MusicPlatform.BILIBILI) {
+            // BilibiliLogin 在返回 CONFIRMED 之前就把 Cookie 落盘并刷新了资料，
+            // 和汽水/酷狗一样不需要这里的 persistLogin 二次写入。
+            return BilibiliLogin.checkQrCode(qrCode);
         }
         if (platform == MusicPlatform.QISHUI) {
             QrLoginState state = QishuiMusicService.checkQrCode(qrCode);
@@ -534,7 +569,13 @@ public final class NeteaseMusicService {
     }
 
     public static synchronized void logout(MusicPlatform platform) {
-        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) {
+        if (platform == MusicPlatform.YOUTUBE) {
+            return;
+        }
+        if (platform == MusicPlatform.BILIBILI) {
+            // 必须挡在 initialize 之前返回：下面的 else 分支会清网易云 cookie，
+            // B 站掉进去就会把网易云账号一起注销。
+            BilibiliMusicService.logout();
             return;
         }
         if (platform == MusicPlatform.QISHUI) {
@@ -567,7 +608,8 @@ public final class NeteaseMusicService {
     }
 
     public static boolean isLoggedIn(MusicPlatform platform) {
-        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) return false;
+        if (platform == MusicPlatform.YOUTUBE) return false;
+        if (platform == MusicPlatform.BILIBILI) return BilibiliMusicService.isLoggedIn();
         if (platform == MusicPlatform.QISHUI) return QishuiMusicService.isLoggedIn();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.isLoggedIn();
         initializeIfNeeded();
@@ -578,7 +620,8 @@ public final class NeteaseMusicService {
     }
 
     public static String getAccountName(MusicPlatform platform) {
-        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) return "无需登录";
+        if (platform == MusicPlatform.YOUTUBE) return "无需登录";
+        if (platform == MusicPlatform.BILIBILI) return BilibiliMusicService.getAccountName();
         if (platform == MusicPlatform.QISHUI) return QishuiMusicService.getAccountName();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.getAccountName();
         if (platform == MusicPlatform.QQ) {
@@ -604,7 +647,8 @@ public final class NeteaseMusicService {
      * 而两处必须请出<b>同一个</b>地址：贴图位置是按账号定的，两处若请求不同尺寸就会互相覆盖。</p>
      */
     public static String getAccountAvatarUrl(MusicPlatform platform) {
-        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) return "";
+        if (platform == MusicPlatform.YOUTUBE) return "";
+        if (platform == MusicPlatform.BILIBILI) return BilibiliMusicService.getAvatarUrl();
         if (platform == MusicPlatform.QISHUI) return QishuiMusicService.getAvatarUrl();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.getAvatarUrl();
         if (platform == MusicPlatform.QQ) return getQQAvatarUrl();
@@ -625,7 +669,11 @@ public final class NeteaseMusicService {
      * 就绪判断交给 {@link com.muoniumplayer.core.rendering.texture.AccountAvatar}。</p>
      */
     public static Location getAccountAvatarLocation(MusicPlatform platform) {
-        if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) return null;
+        if (platform == MusicPlatform.YOUTUBE) return null;
+        if (platform == MusicPlatform.BILIBILI) {
+            return BilibiliMusicService.getAvatarUrl().isEmpty()
+                    ? null : Location.of("muonium/textures/account/bilibili_avatar.png");
+        }
         if (platform == MusicPlatform.QISHUI) {
             return QishuiMusicService.getAvatarUrl().isEmpty()
                     ? null : Location.of("muonium/textures/account/qishui_avatar.png");

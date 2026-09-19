@@ -12,6 +12,7 @@ import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.screens.GuiFfmpegNotice;
 import com.muoniumplayer.core.screens.GuiUpdateNotice;
 import com.muoniumplayer.core.screens.hud.GuiHudEditor;
+import com.muoniumplayer.core.screens.hud.GuiHudEditorFolia;
 import com.muoniumplayer.core.screens.hud.GuiHudEditorPro;
 import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
 import com.muoniumplayer.core.settings.HudConfig;
@@ -56,7 +57,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "1.4.12";
+    public static final String MOD_VERSION = "1.5.0";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -386,8 +387,13 @@ public final class MuoniumPlayerClient {
                 && OneConfigHudBridge.open()) {
             return;
         }
-        mc.setScreen(HudConfig.hudEditorModernUi
-                ? new GuiHudEditorPro() : new GuiHudEditor());
+        if (HudConfig.HUD_EDITOR_STYLE_CLASSIC.equals(HudConfig.hudEditorStyle)) {
+            mc.setScreen(new GuiHudEditor());
+        } else if (HudConfig.HUD_EDITOR_STYLE_FOLIA.equals(HudConfig.hudEditorStyle)) {
+            mc.setScreen(new GuiHudEditorFolia());
+        } else {
+            mc.setScreen(new GuiHudEditorPro());
+        }
     }
 
     /**

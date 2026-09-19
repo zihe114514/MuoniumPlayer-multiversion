@@ -282,6 +282,14 @@ public final class QishuiMusicService {
         return QishuiSessionStore.isLoggedIn();
     }
 
+    /**
+     * 本地留着凭据、但上游已经拒绝它。与「未登录」是两种状态：这种时候界面要说的是
+     * 「Cookie 过期了，去重扫或重新导入」，而不是假装账号从来没登录过、把昵称头像全抹掉。
+     */
+    public static boolean isReauthRequired() {
+        return QishuiSessionStore.isLoggedIn() && QishuiSessionStore.isReauthRequired();
+    }
+
     public static String getAccountName() {
         QishuiSessionStore.Session session = QishuiSessionStore.snapshot();
         if (!session.loggedIn) return "未登录";
@@ -323,11 +331,210 @@ public final class QishuiMusicService {
                     || !string(info, "vip_stage").isEmpty();
             QishuiSessionStore.saveProfile(userId, nickname, douyinId, avatar, vip,
                     string(info, "vip_stage"));
+            QishuiSessionStore.markVerified();
             return true;
         } catch (Throwable error) {
+            // 只有上游明确拒绝凭据时才标过期；网络抖动、超时、解析失败都不算，
+            // 否则一次断网就会把好好登录着的账号踢成「需要重新登录」。
+            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
             System.err.println("[Music/Qishui] Profile refresh failed: " + describe(error));
             return false;
         }
+    }
+
+    /**
+     * 手动导入 Cookie 的结果。失败时也带一句能直接显示给用户的话，
+     * 界面不需要自己去猜是哪一步崩的。
+     */
+    public static final class CookieImport {
+        public final boolean success;
+        public final String message;
+        public final String nickname;
+        public final boolean vip;
+
+        private CookieImport(boolean success, String message, String nickname, boolean vip) {
+            this.success = success;
+            this.message = message;
+            this.nickname = nickname;
+            this.vip = vip;
+        }
+
+        private static CookieImport fail(String message) {
+            return new CookieImport(false, message, "", false);
+        }
+    }
+
+    /**
+     * 用一份用户手上的 Cookie 文本换成本地会话。<b>必须在后台线程调用。</b>
+     *
+     * <p>顺序是刻意的：先解析、再判凭据名、然后拿它真打一次账号接口，三步全过才落盘。
+     * 任何一步失败都原样返回，本地已有的登录态一个字都不会被动过——导入失败的代价
+     * 不该是「把原来能用的账号弄没了」。
+     */
+    public static CookieImport importCookie(String rawInput) {
+        Map<String, String> parsed = parseCookieInput(rawInput);
+        if (parsed.isEmpty()) {
+            return CookieImport.fail("没认出任何 Cookie 字段。可以粘完整的 Cookie 字符串，"
+                    + "也可以只粘 sessionid=xxx");
+        }
+        if (!hasLoginCredential(parsed)) {
+            return CookieImport.fail("里面没有登录凭据（sessionid / sid_tt / uid_tt / sid_guard 至少一个）。"
+                    + "多半是只复制了匿名 cookie。");
+        }
+        String cookieHeader = joinCookieMap(parsed);
+        try {
+            JsonResponse response = getJsonResponse(buildAccountUrl(), PC_USER_AGENT,
+                    cookieHeader, pcHeaders());
+            JsonObject info = object(response.body, "my_info");
+            if (info.size() == 0) info = object(response.body, "user");
+            if (info.size() == 0) info = response.body;
+            String nickname = firstNonBlank(string(info, "nickname"), string(info, "name"));
+            if (nickname.isEmpty()) {
+                return CookieImport.fail("账号接口没返回昵称，这份 Cookie 大概已经失效了。");
+            }
+            String userId = firstNonBlank(string(info, "id"), string(info, "user_id"));
+            String douyinId = string(info, "douyin_id");
+            String avatar = firstNonBlank(string(info, "avatar_url"), string(info, "avatar"));
+            if (avatar.isEmpty()) avatar = firstUrl(info.get("avatar_thumb"));
+            if (avatar.isEmpty()) avatar = firstUrl(info.get("avatar_uri"));
+            boolean vip = truthy(info, "is_vip") || truthy(info, "isVip")
+                    || !string(info, "vip_stage").isEmpty();
+
+            // 上游可能在响应里轮换 sid_guard / sessionid，带回来就一并收下，
+            // 不然存下去的那份下一秒就过期了。
+            Map<String, String> merged = new LinkedHashMap<>(parsed);
+            for (Map.Entry<String, String> entry
+                    : parseCookieInput(response.cookieHeader).entrySet()) {
+                merged.put(entry.getKey(), entry.getValue());
+            }
+            QishuiSessionStore.replaceCookies(merged);
+            QishuiSessionStore.saveProfile(userId, nickname, douyinId, avatar, vip,
+                    string(info, "vip_stage"));
+            QishuiSessionStore.markVerified();
+            return new CookieImport(true, "Cookie 登录成功", nickname, vip);
+        } catch (Throwable error) {
+            if (looksLikeAuthRejection(error)) {
+                return CookieImport.fail("这份 Cookie 已被上游拒绝（过期、被顶下线或触发验证）。");
+            }
+            return CookieImport.fail("校验请求没打通：" + describe(error));
+        }
+    }
+
+    /**
+     * 容错解析。用户会从三个地方复制：浏览器 devtools 的 Cookie header 值、
+     * 「Copy as cURL」里 -b 的那串、或者只盯着 sessionid 抄一条。参考实现
+     * 的 normalizeQishuiCookieInput 也是同样思路（它还吃 JSON 数组形态），
+     * 所以这里三种都要认。
+     */
+    static Map<String, String> parseCookieInput(String rawInput) {
+        Map<String, String> out = new LinkedHashMap<>();
+        String text = nonBlank(rawInput).replace("\uFEFF", "");
+        if (text.isEmpty()) return out;
+
+        int colon = text.indexOf(':');
+        if (text.regionMatches(true, 0, "Cookie", 0, 6) && colon > 0 && colon < 12) {
+            text = text.substring(colon + 1);
+        }
+        int eq = text.toLowerCase(Locale.ROOT).indexOf("document.cookie");
+        if (eq == 0) {
+            int assign = text.indexOf('=');
+            if (assign > 0) text = text.substring(assign + 1);
+        }
+        text = text.trim();
+
+        // devtools / 插件导出的数组形态：[{"name":"sessionid","value":"..."}]
+        if (text.startsWith("[")) {
+            try {
+                JsonElement parsedJson = JsonParser.parseString(text);
+                if (parsedJson.isJsonArray()) {
+                    for (JsonElement element : parsedJson.getAsJsonArray()) {
+                        if (element == null || !element.isJsonObject()) continue;
+                        JsonObject item = element.getAsJsonObject();
+                        String name = nonBlank(string(item, "name"));
+                        String value = nonBlank(string(item, "value"));
+                        putCookie(out, name, value);
+                    }
+                }
+            } catch (Throwable ignored) {
+                // 当普通文本继续往下走，不因为一次猜错就报错。
+            }
+            if (!out.isEmpty()) return out;
+        }
+
+        for (String chunk : text.split("[;\r\n]+")) {
+            String pair = chunk.trim();
+            if (pair.isEmpty()) continue;
+            int separator = pair.indexOf('=');
+            if (separator <= 0) continue;
+            putCookie(out, pair.substring(0, separator).trim(),
+                    unquote(pair.substring(separator + 1).trim()));
+        }
+        return out;
+    }
+
+    /** 只收真正像 cookie 的键值对：属性名、空值、超长输入一律丢掉。 */
+    private static void putCookie(Map<String, String> target, String name, String value) {
+        if (target.size() >= 64) return;
+        if (name.isEmpty() || value.isEmpty()) return;
+        String lower = name.toLowerCase(Locale.ROOT);
+        switch (lower) {
+            case "domain":
+            case "path":
+            case "expires":
+            case "max-age":
+            case "httponly":
+            case "secure":
+            case "samesite":
+            case "partitioned":
+                return;
+            default:
+                break;
+        }
+        if (value.length() > 4096) return;
+        target.put(name, value);
+    }
+
+    private static String unquote(String value) {
+        if (value.length() >= 2) {
+            char first = value.charAt(0);
+            char last = value.charAt(value.length() - 1);
+            if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+                return value.substring(1, value.length() - 1);
+            }
+        }
+        return value;
+    }
+
+    /** 判定「这份 cookie 算不算登录态」，与参考实现的 qishuiCookieHasLogin 同一组名字。 */
+    static boolean hasLoginCredential(Map<String, String> cookies) {
+        if (cookies == null || cookies.isEmpty()) return false;
+        String[] names = {"sessionid", "sessionid_ss", "sid_tt", "uid_tt", "uid_tt_ss", "sid_guard"};
+        for (String name : names) {
+            if (!nonBlank(cookies.get(name)).isEmpty()) return true;
+        }
+        return false;
+    }
+
+    private static String joinCookieMap(Map<String, String> cookies) {
+        StringBuilder header = new StringBuilder();
+        for (Map.Entry<String, String> entry : cookies.entrySet()) {
+            if (header.length() > 0) header.append("; ");
+            header.append(entry.getKey()).append('=').append(entry.getValue());
+        }
+        return header.length() == 0 ? "" : header.append(';').toString();
+    }
+
+    /** 上游拒绝凭据的两种表现：HTTP 401/403，或 200 里带 1000016。 */
+    private static boolean looksLikeAuthRejection(Throwable error) {
+        for (Throwable cursor = error; cursor != null; cursor = cursor.getCause()) {
+            String message = nonBlank(cursor.getMessage());
+            if (message.isEmpty()) continue;
+            if (message.contains("HTTP 401") || message.contains("HTTP 403")
+                    || message.contains("1000016")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static void logout() {
@@ -443,6 +650,127 @@ public final class QishuiMusicService {
             }
         }
         return new ArrayList<>(unique.values());
+    }
+
+    private static final Pattern PLAYLIST_ID_PATH = Pattern.compile("playlist/(\\d{6,})");
+    private static final Pattern PLAYLIST_ID_PARAM = Pattern.compile("[?&](?:playlist_id|id)=(\\d{6,})");
+    private static final Pattern EMBEDDED_LONG_ID = Pattern.compile("(\\d{10,})");
+    private static final Pattern ANY_URL = Pattern.compile("https?://[^\\s\"'<>，。]+");
+
+    /** 只用于跟随抖音短链的 302：不自动重定向，逐跳读 Location，命中歌单 ID 即返回。 */
+    private static final HttpClient REDIRECT_NEVER_HTTP = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build();
+
+    /**
+     * 从用户粘贴的文本里提取汽水歌单 ID。兼容：纯数字 ID、{@code .../playlist/123}、
+     * {@code ?playlist_id=123}、{@code ?id=123}、分享口令里内嵌的一串长数字；对
+     * 抖音短链（{@code v.douyin.com}、{@code douyin.com/s/}、{@code qishui.douyin.com}）
+     * 会跟随一次 302 再用最终 URL 复提取。
+     *
+     * @return 歌单 ID；文本里找不到可用 ID 时返回 {@code null}
+     */
+    public static String extractPlaylistId(String input) {
+        String text = nonBlank(input);
+        if (text.isEmpty()) return null;
+
+        String id = firstGroupId(PLAYLIST_ID_PATH, text);
+        if (id != null) return id;
+        id = firstGroupId(PLAYLIST_ID_PARAM, text);
+        if (id != null) return id;
+        if (text.matches("\\d{6,}")) return text;
+        id = firstGroupId(EMBEDDED_LONG_ID, text);
+        if (id != null) return id;
+
+        Matcher urlMatcher = ANY_URL.matcher(text);
+        while (urlMatcher.find()) {
+            String url = urlMatcher.group();
+            if (!isQishuiShortLink(url)) continue;
+            String resolved = resolveRedirectPlaylistId(url);
+            if (resolved != null) return resolved;
+        }
+        return null;
+    }
+
+    private static boolean isQishuiShortLink(String url) {
+        String lower = url.toLowerCase(Locale.ROOT);
+        return lower.contains("douyin.com") || lower.contains("qishui");
+    }
+
+    private static String resolveRedirectPlaylistId(String url) {
+        String current = url;
+        for (int hop = 0; hop < 5 && current != null; hop++) {
+            try {
+                HttpRequest request = HttpRequest.newBuilder(URI.create(current))
+                        .timeout(Duration.ofMillis(REQUEST_TIMEOUT_MS))
+                        .header("User-Agent", WEB_USER_AGENT)
+                        .header("Accept", "text/html,application/xhtml+xml,*/*")
+                        .GET().build();
+                HttpResponse<Void> response = REDIRECT_NEVER_HTTP.send(request,
+                        HttpResponse.BodyHandlers.discarding());
+                String location = response.headers().firstValue("location").orElse("");
+                if (location.isEmpty()) return null;
+                current = URI.create(current).resolve(location).toString();
+                String id = firstGroupId(PLAYLIST_ID_PATH, current);
+                if (id == null) id = firstGroupId(PLAYLIST_ID_PARAM, current);
+                if (id != null) return id;
+                if (!isQishuiShortLink(current)) return null;
+            } catch (Throwable error) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private static String firstGroupId(Pattern pattern, String text) {
+        Matcher matcher = pattern.matcher(text);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    /**
+     * 匿名导入一个汽水歌单：解析 ID 后请求一次歌单详情（不带 Cookie）拿标题/封面/曲目数，
+     * 构造 platform=QISHUI 的 {@link PlayList} 引用返回。曲目列表不在此落地——UI 每次点开
+     * 时由 {@link #playlistTracks(String, int)} 匿名向上游拉取，因此导入与登录、账号完全解耦。
+     *
+     * @throws IllegalArgumentException 文本里解析不到有效歌单 ID
+     */
+    public static PlayList importPlaylist(String input) {
+        String id = extractPlaylistId(input);
+        if (id == null) {
+            throw new IllegalArgumentException(
+                    "没识别出汽水歌单 ID，请粘贴歌单分享链接或直接输入数字 ID");
+        }
+
+        String title = "";
+        String cover = "";
+        int count = 0;
+        try {
+            JsonObject payload = new JsonObject();
+            payload.addProperty("playlist_id", id);
+            payload.addProperty("playlist_type", 0);
+            payload.addProperty("count", 1);
+            JsonObject response = postJson(LUNA_PLAYLIST_DETAIL_ENDPOINT, payload.toString(),
+                    ANDROID_USER_AGENT, "", Collections.emptyMap());
+            JsonObject meta = object(response, "playlist");
+            if (meta.size() == 0) meta = object(object(response, "data"), "playlist");
+            title = firstNonBlank(string(meta, "title"), string(meta, "name"));
+            cover = coverUrl(object(meta, "url_cover"));
+            if (cover.isEmpty()) cover = firstUrl(meta.get("cover_url"));
+            long declared = longValue(meta, "count_tracks");
+            if (declared <= 0) declared = longValue(meta, "song_count");
+            count = checkedInt(declared, "playlist count");
+        } catch (Throwable error) {
+            // 元数据拿不到不阻断导入：曲目会在点开时匿名再拉，只是标题先兜底成 ID。
+            System.err.println("[Music/Qishui] Import metadata failed for " + id + ": "
+                    + describe(error));
+        }
+
+        PlayList playlist = new PlayList(stableLong("qishui:playlist:" + id),
+                title.isEmpty() ? "汽水歌单 " + id : title, cover, Math.max(0, count),
+                0L, null, "", 0L);
+        playlist.setPlatform(MusicPlatform.QISHUI);
+        playlist.setPlatformPlaylistId(id);
+        return playlist;
     }
 
     /** 电台歌曲。radio id 可以直接传入，也可使用 UI 的 radio: 前缀。 */

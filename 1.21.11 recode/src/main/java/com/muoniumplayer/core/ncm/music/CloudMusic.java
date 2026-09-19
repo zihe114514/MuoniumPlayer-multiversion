@@ -227,9 +227,9 @@ public class CloudMusic implements SharedConstants {
     }
 
     /**
-     * 重新加载已登录的网易云账号数据，不触发首次登录的副作用。
-     * 网络操作在调用方线程上执行；发布的快照只有在所有请求都成功完成后才会被替换，
-     * 因此瞬时失败会保留旧数据。
+     * 重新加载已登录网易云账号数据，且不触发初始登录的副作用。
+     * 网络工作在调用者的线程上执行。已发布的快照仅在
+     * 所有请求全部成功完成后才被替换，因此瞬时故障会保留旧数据。
      */
     public static NeteaseRefreshResult refreshNeteaseAccountData() {
         long startedAt = System.currentTimeMillis();
@@ -692,6 +692,74 @@ public class CloudMusic implements SharedConstants {
             queueRevision++;
         }
         return true;
+    }
+
+    /**
+     * 一起听房间：把房间预告的「下一首」接进本机队列当前曲目之后（传 null 则撤下来）。
+     *
+     * <p>房间的换歌是服务端一首一首下发的，{@code MpPlayback} 起播时队列只有一首，于是
+     * {@code peekNextIndex()} 恒为 -1，{@code maybeArmNextTrack} 直接把尝试次数打满 ——
+     * 无缝切换在房间里从来没有生效过。这里让队列真的长出下一格：automix 看到
+     * {@code queueRevision} 变化后会重新预测并提前预解码，换歌时才有东西可交叠。</p>
+     *
+     * <p>校验与 {@link #appendPrefetchedPersonalFmTrack} 同款：只在「当前曲目确实在播」
+     * 且队列还是那一条时才动它。一次迟到的调用因此绝不会去改用户自己的歌单 —— 房间之外
+     * 这个入口从来没有被调用过。</p>
+     *
+     * <p>多出来的格子一律先收回再放，保证队列永远是「当前 + 至多一首下一首」：房间的下一首
+     * 会随服务端广播变化，留着旧的那一首会让交接落到错误的曲目上。</p>
+     *
+     * @param next 房间的下一首；{@code null} 表示这一刻没有下一首
+     * @return 队列是否真的变了
+     */
+    public static boolean setRoomNextTrack(Music next) {
+        synchronized (PLAY_NEXT_LOCK) {
+            List<Music> queue = playList;
+            if (queue == null || curIdx < 0 || curIdx >= queue.size()) return false;
+            // 房间的「下一首」就是正在播的这一首：没有任何东西可预置。
+            if (next != null && next == queue.get(curIdx)) return false;
+
+            boolean changed = false;
+            // 已经正好是「当前 + 这一首」时什么都不做：重复调用会白白递增修订号，把刚预备好的
+            // 播放牌一次次作废（调用方每秒都会补装一次），结果每次换歌都来不及交叠。
+            if (queue.size() == curIdx + 2 && queue.get(curIdx + 1) == next) return false;
+            while (queue.size() > curIdx + 1) {
+                queue.remove(queue.size() - 1);
+                changed = true;
+            }
+            if (next != null) {
+                queue.add(next);
+                changed = true;
+            }
+            if (changed) queueRevision++;
+            return changed;
+        }
+    }
+
+    /**
+     * 一起听房间：服务端说「现在就换下一首」，让播放线程用已经预解码好的那一首立刻交叠交接。
+     *
+     * <p>帧才是权威时刻。本机位置与房间时钟之间始终有几十毫秒抖动，按本地位置推算交叠点会让
+     * 「帧先到还是本机先到」变成掷硬币；而帧先到时若走普通起播，本地刚叠上的尾巴会被整段掐掉。
+     * 所以帧一到就交接，本机推算的 {@code fire} 只作为帧丢了时的兜底。</p>
+     *
+     * <p>与 {@link #requestManualAutomixSkip()} 同款：这里只置位，真正的交接仍在播放线程的
+     * 10 ms 监督 tick 上完成，因此不会出现两个线程同时替换 player/session 的竞态。任一前置
+     * 条件不满足（没有预备好的播放牌、那一首不是房间的下一个、用户关掉了无缝切换）都返回
+     * false，调用方原样走旧的起播路径。</p>
+     *
+     * @return true 表示这次换歌已经交给交叠链路接走
+     */
+    public static boolean roomAutomixHandover() {
+        try {
+            if (!RoomAutomix.active()) return false;
+            Thread active = playThread;
+            if (!(active instanceof PlayThread)) return false;
+            return ((PlayThread) active).requestRoomHandover();
+        } catch (Throwable ignored) {
+            // 房间换歌绝不能因为无缝路径上的意外而卡住：失败就当没有这条捷径。
+            return false;
+        }
     }
 
     /**
@@ -1196,6 +1264,13 @@ public class CloudMusic implements SharedConstants {
  * 等待循环在下一个 tick 消费它，因此交接总是在播放线程上执行，即使请求来自界面线程。
  */
         private volatile boolean manualSkipRequested;
+        /**
+         * 一起听房间下发的换歌帧要求立刻做一次交叠交接，见 {@link #requestRoomHandover()}。
+         *
+         * <p>与手动切换同一套「置位 → 由播放线程在下一个 tick 消费」的做法：交接永远发生在
+         * 播放线程上，即使请求来自网络线程。</p>
+         */
+        private volatile boolean roomHandoverRequested;
         /** 当前曲目已进行的预取尝试次数：不稳定的 FM 响应会重试，但最终停止。 */
         private volatile int fmPrefetchAttempts;
         /** 下一次私人 FM 预取尝试可以开始的最早墙钟时间。 */
@@ -1920,6 +1995,18 @@ public class CloudMusic implements SharedConstants {
             /** 预测所依据的队列修订号；更新的修订号意味着预测错误。 */
             private final long queueRevision;
             private volatile AutomixPlan plan;
+            /**
+             * 该预备是为一起听房间准备的（计划来自 {@link RoomAutomix}）。
+             *
+             * <p>它同时意味着这份计划的来源是房主那一台：交接点、入口点与曲线都是房主用
+             * 真正的音频分析算出来的，本机只负责照做。这一点很重要 —— 房间里的位置由服务端的
+             * 权威时钟决定，本机若自己另算一条曲线，两台机器就会在同一刻叠出两条不同的波形。</p>
+             *
+             * <p>房间里的换歌点同样由服务端决定，本机按自己的音频位置推算会差出网络抖动，
+             * 因此这类预备的交接以服务端下发的帧为触发（见 {@link CloudMusic#roomAutomixHandover()}），
+             * 本地推算只作兜底。</p>
+             */
+            private volatile boolean roomMode;
             /** 实际可用的静默导入，即 min(PRE_ROLL_MILLIS, plan.incomingCueMillis)。 */
             private volatile long preRollMillis;
             /** 该播放牌已在（静默地）出声，不得再次入队或启动。 */
@@ -2041,6 +2128,7 @@ public class CloudMusic implements SharedConstants {
             // 因为用户要求退出的是另一首歌。
             manualSkipRequested = false;
             // 预备下一首同样按"每首歌一份预算"计：交接到新的一首之后要能重新预备。
+            roomHandoverRequested = false;
             fmPrefetchAttempts = 0;
             nextFmPrefetchAt = 0L;
         }
@@ -2126,6 +2214,11 @@ public class CloudMusic implements SharedConstants {
                 return;
             }
 
+            // 房间的下一首：房主的计划还没到就先不预备。入口点与曲线都该由房主那份计划决定，
+            // 先按本机自己的判据解一遍再作废，等于白跑一次最重的后台任务。这里不计入尝试次数，
+            // 于是计划一到（服务端广播）下一 tick 自然就开始预备，不需要任何唤醒机制。
+            if (RoomAutomix.awaitingPlan(nextSong)) return;
+
             armAttempts++;
             nextArmAt = now + ARM_RETRY_MILLIS;
             arming = true;
@@ -2168,8 +2261,27 @@ public class CloudMusic implements SharedConstants {
                 if (!armStillValid(armGeneration, armRevision)) return;
 
                 ArmedTrack track = new ArmedTrack(song, file, deck, index, armGeneration, armRevision);
-                track.plan = AutomixPlanner.plan(ownedPlayer, deck,
-                        estimateLastVocalEndMillis(ownedPlayer));
+                // 一起听房间：交接点由房主那台用它自己选的引擎（Folia 或内置信号处理）分析出来，
+                // 服务端裁决后广播给全房 —— 房间里跑分析的只有房主一台，所以几台机器拿到的是
+                // 同一份计划。计划还没到时本机不会自己编一条（那会让两台机器在同一刻叠出两条
+                // 不同的波形，比硬切更难听）：这一首先不预备，房主的计划一到就会开始预备。
+                long lastVocalEnd = estimateLastVocalEndMillis(ownedPlayer);
+                boolean roomOwns = RoomAutomix.handles(song);
+                track.plan = RoomAutomix.planWith(ownedPlayer, deck, song, lastVocalEnd);
+                track.roomMode = roomOwns && track.plan != null;
+                if (track.plan == null && !roomOwns) {
+                    // 本机自己的交接：先看之前算过的同一对曲目。列表循环、以及「同一首歌反复
+                    // 播放」这两种最常见的场景下，这一下直接省掉整轮分析（装了模型就是一次
+                    // Python 的 stem 分离）。键里带着两首歌的音频与全部相关设置，所以命中的
+                    // 计划与现在重算一遍得到的必然是同一条。
+                    track.plan = AutomixPlanCache.load(ownedPlayer, deck, lastVocalEnd);
+                }
+                if (track.plan == null && !roomOwns) {
+                    track.plan = AutomixPlanner.plan(ownedPlayer, deck, lastVocalEnd);
+                    // 只缓存算得出来的计划：null 里混着「这次音频没读到」这种暂时状态，
+                    // 把它记成命中会让这首曲子之后永远不交叠。
+                    AutomixPlanCache.store(ownedPlayer, deck, lastVocalEnd, track.plan);
+                }
                 if (track.plan == null || !armStillValid(armGeneration, armRevision)) return;
 
                 // 启动所需的一切（除了发声之外）都在预备线程上完成：
@@ -2335,6 +2447,21 @@ public class CloudMusic implements SharedConstants {
         }
 
         /**
+         * 一起听房间的换歌帧要求立即交叠交接：置位，由本线程的 10 ms 监督 tick 消费。
+         *
+         * <p>只有「房间模式下预备出来的那一首」才认这个请求 —— 本机自己的歌单不该被房间帧
+         * 提前拿走。不满足时返回 false，{@code MpPlayback} 随后照常走普通起播（硬切），
+         * 也就是房间没开交叠、或下一首还没解码完时的行为。</p>
+         */
+        private boolean requestRoomHandover() {
+            ArmedTrack track = armed;
+            if (track == null || track.plan == null || !track.roomMode) return false;
+            if (!armStillValid(track.generation, track.queueRevision)) return false;
+            roomHandoverRequested = true;
+            return true;
+        }
+
+        /**
          * 处理待处理的手动跳过。与自动路径不同，这里会忽略 {@code plan.fireMillis}：
          * 用户要求立即离开当前曲目，因此接缝在本 tick 发生，使用较短的
          * 渐变，而不是在计划的小节线处。
@@ -2399,7 +2526,12 @@ public class CloudMusic implements SharedConstants {
             // 暂停中的曲目不得交接：进入的播放牌会自行开始发声
             // 而界面仍显示播放处于暂停状态。
             if (!ended && activePlayer.isPausing()) return false;
-            if (!ended && position < track.plan.fireMillis) return false;
+            // 一起听房间：服务端的换歌帧就是交叠起点。各端本地位置与房间时钟之间有几十毫秒
+            // 抖动，按本地位置推算会让「帧先到还是本机先到」变成掷硬币 —— 而帧先到的那一刻这
+            // 里还没触发，随后那记 S_PLAY 会把刚叠上的尾巴整段掐掉。所以帧到了就立刻交接。
+            boolean byRoomFrame = track.roomMode && roomHandoverRequested;
+            if (byRoomFrame) roomHandoverRequested = false;
+            if (!byRoomFrame && !ended && position < track.plan.fireMillis) return false;
             return performAutomixHandover(activePlayer, track);
         }
 
@@ -2729,6 +2861,8 @@ public class CloudMusic implements SharedConstants {
             // 已没有可交接的对象，因此一个挂起的手动请求只能回退到
             // 普通切换，而不是等待一个已不复存在的播放牌。
             manualSkipRequested = false;
+            // 房间换歌请求同理：它只对「当时那一张」播放牌有意义。
+            roomHandoverRequested = false;
             if (track == null || track.deck == null) return;
             if (track.deck == ownedPlayer || track.deck == CloudMusic.player) return;
             closeQuietly(track.deck);

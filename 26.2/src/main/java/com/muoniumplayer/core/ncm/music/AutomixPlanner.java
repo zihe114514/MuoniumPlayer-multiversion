@@ -135,6 +135,58 @@ final class AutomixPlanner {
         if (AutomixSettings.isFoliaEngine()) {
             return FoliaAutomixPlanner.plan(outgoing, incoming, lastVocalEndMillis);
         }
+        return planClassic(outgoing, incoming, lastVocalEndMillis);
+    }
+
+    /**
+     * 一起听房间的交接计划：<b>按房主自己选的引擎</b>算，算不出来才逐级降级。
+     *
+     * <p>房间要的是「一份能下发的计划」，而且只由房主那一台算 —— 所以本地播放时那条
+     * 「本机引擎是听感偏好，别让它影响」的顾虑在房间里不存在了：全房执行的本来就是这一台
+     * 算出的结果。于是这里跟着用户的引擎走，Folia 也能用，装了模型的机器因此能把 stem 交接、
+     * 过渡族、频段倾斜一起带给全房。</p>
+     *
+     * <p>降级链是<b>逐级</b>的，每一步都仍然是真分析：</p>
+     * <ol>
+     *   <li>房主选 {@link AutomixSettings.Engine#FOLIA} → {@link FoliaAutomixPlanner}。
+     *       它自己就有「没装模型 → 退回纯 DSP 判据」的分支，所以缺模型不会退化成硬切；</li>
+     *   <li>Folia 连一条计划都给不出（曲目短于它的下限、音频读不到）→
+     *       {@link #planClassic}，仍是内置信号处理读 PCM 算出来的交接点；</li>
+     *   <li>连它也说不该混音 → {@code null}，房间这一首就<b>不交叠</b>，由服务端到点换歌。
+     *       这时本机单独播放同样不会交叠，房间里并没有更差。</li>
+     * </ol>
+     *
+     * <p>刻意<b>不</b>做「按曲末减一个固定值」的等功率尾巴：那种不读音频的假交叠会让全房
+     * 各自按同一个数去叠两条不同的波形，比硬切更难听，也把「分析真的在看内容」这句话变成空话。</p>
+     *
+     * @param lastVocalEndMillis 退出曲目最后一句歌词结束处的绝对位置，无定时歌词时为非正值
+     * @return 计划；两首曲子短到无法混音、或音频不可读时返回 {@code null}（调用方不交叠）
+     */
+    static AutomixPlan planForRoom(AudioPlayer outgoing, AudioPlayer incoming, long lastVocalEndMillis) {
+        if (AutomixSettings.isFoliaEngine()) {
+            AutomixPlan folia = FoliaAutomixPlanner.plan(outgoing, incoming, lastVocalEndMillis);
+            if (folia != null) return folia;
+            System.out.println("[Automix] 房间交接计划：Folia 给不出结果（缺模型 / 曲目太短 / 音频不可读），"
+                    + "降级到内置信号处理");
+        }
+        return planClassic(outgoing, incoming, lastVocalEndMillis);
+    }
+
+    /**
+     * 只用内置信号处理规划一次交接，<b>不</b>走 Folia 模型。
+     *
+     * <p>两条路会走到这里。一是用户把引擎选成 {@link AutomixSettings.Engine#LEGACY}；二是
+     * 一起听房间里房主选的 Folia 拿不出计划，由 {@link #planForRoom} 降级下来。所以它不再是
+     * 「房间专用入口」，而是<b>整套分析的基线</b>：判据只用已解码 PCM 与歌词边界，不看任何
+     * 需要额外下载的模型，因此同一份音频在任何一台机器上都会得到同一条计划。</p>
+     *
+     * <p>与 {@link #plan} 唯一的差别就是少了开头那次引擎分派，其余完全一致 ——
+     * 前奏扫描、节拍网格、调性估计、相位缓冲、人声闪避的判据一条都没少。</p>
+     *
+     * @param lastVocalEndMillis 退出曲目最后一句歌词结束处的绝对位置，无定时歌词时为非正值
+     * @return 计划；仅当两首曲子短到根本无法混音、或音频不可读时为 {@code null}
+     */
+    static AutomixPlan planClassic(AudioPlayer outgoing, AudioPlayer incoming, long lastVocalEndMillis) {
         if (outgoing == null || incoming == null) return null;
         if (!outgoing.isUsable() || !incoming.isUsable()) return null;
 

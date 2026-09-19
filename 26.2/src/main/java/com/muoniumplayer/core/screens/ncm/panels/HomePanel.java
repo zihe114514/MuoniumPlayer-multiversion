@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import lombok.Getter;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
+import com.muoniumplayer.core.ncm.music.BilibiliFavoriteService;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
@@ -81,6 +82,8 @@ public class HomePanel extends NCMPanel {
     private static final int QISHUI_HOME_TARGET = 120;
     private static volatile List<PlayList> qishuiHomePlaylists = Collections.emptyList();
     private static volatile boolean qishuiHomeLoading;
+    private static volatile List<PlayList> bilibiliHomePlaylists = Collections.emptyList();
+    private static volatile boolean bilibiliHomeLoading;
 
     @Override
     public void onInit() {
@@ -96,7 +99,7 @@ public class HomePanel extends NCMPanel {
         } else if (platform == MusicPlatform.YOUTUBE) {
             layout(Collections.emptyList(), "YouTube Music · 使用搜索开始播放");
         } else if (platform == MusicPlatform.BILIBILI) {
-            layout(Collections.emptyList(), "哔哩哔哩 · 搜索、粘贴 BV号或视频链接");
+            loadBilibiliHome();
         } else if (platform == MusicPlatform.QISHUI) {
             loadQishuiHome();
         } else {
@@ -462,6 +465,55 @@ public class HomePanel extends NCMPanel {
     private static String kugouRecommendationTitle(int count) {
         return count > 0 ? "酷狗音乐 · 推荐歌单 · " + count : "酷狗音乐 · 推荐歌单";
     }
+    /**
+     * B 站首页。
+     *
+     * <p>B 站没有推荐歌单这个接口，能拿得出手的是<b>自己的收藏夹</b>，所以这一页登录后就是收藏夹
+     * 卡片。未登录时保持原来的提示文案 —— 匿名浏览和播放本来就是通的，别写成「请先登录」。</p>
+     */
+    private void loadBilibiliHome() {
+        if (!NeteaseMusicService.isLoggedIn(MusicPlatform.BILIBILI)) {
+            layout(Collections.emptyList(), "哔哩哔哩 · 搜索、粘贴 BV号或视频链接");
+            return;
+        }
+
+        List<PlayList> cached = new ArrayList<>(bilibiliHomePlaylists);
+        if (!cached.isEmpty()) {
+            layout(cached, "我的收藏夹 · " + cached.size());
+            return;
+        }
+
+        layoutPlaceholder("正在获取 B 站收藏夹…", true);
+        synchronized (HomePanel.class) {
+            if (bilibiliHomeLoading) return;
+            bilibiliHomeLoading = true;
+        }
+
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                List<PlayList> result = BilibiliFavoriteService.userPlaylists();
+                bilibiliHomePlaylists = Collections.unmodifiableList(new ArrayList<>(result));
+                final List<PlayList> displayed = new ArrayList<>(result);
+                MultiThreadingUtil.runOnMainThread(() -> {
+                    if (NeteaseMusicService.getCurrentPlatform() != platform) return;
+                    if (!displayed.isEmpty()) {
+                        layout(displayed, "我的收藏夹 · " + displayed.size());
+                    } else {
+                        layoutPlaceholder("B 站收藏夹为空，或该账号还没建过收藏夹", false);
+                    }
+                });
+            } catch (Throwable throwable) {
+                System.err.println("[Music] B 站首页加载失败: " + throwable);
+                MultiThreadingUtil.runOnMainThread(() -> {
+                    if (NeteaseMusicService.getCurrentPlatform() == platform)
+                        layoutPlaceholder("B 站收藏夹获取失败，请稍后重试", false);
+                });
+            } finally {
+                bilibiliHomeLoading = false;
+            }
+        });
+    }
+
     /** 汽水首页：公开发现流直接铺成推荐歌单卡片墙。 */
     private void loadQishuiHome() {
         List<PlayList> cached = new ArrayList<>(qishuiHomePlaylists);

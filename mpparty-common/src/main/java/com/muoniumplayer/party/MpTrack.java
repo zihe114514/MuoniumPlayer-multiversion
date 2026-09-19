@@ -43,10 +43,18 @@ public final class MpTrack {
     /** 歌单条目句柄；不是队列条目时为 0。 */
     public final long entryId;
     public final String requesterName;
+    /**
+     * 这一首的交接计划是不是已经算好了。
+     *
+     * <p>只对队首那一首有意义 —— 计划描述的是「从正在播的这一首怎么进入它」。歌单列表据此
+     * 给这一行加一个标记，否则「分析」这件事在整个界面上完全不可见，用户只能从日志里猜。
+     * 老服务端不发这个字段，取到的就是 {@code false}（不显示标记），行为不变。</p>
+     */
+    public final boolean planReady;
 
     private MpTrack(String source, String songId, String name, String artist, String album,
                     String cover, long durationMs, String url, long urlExpiresAt,
-                    long urlDurationMs, long entryId, String requesterName) {
+                    long urlDurationMs, long entryId, String requesterName, boolean planReady) {
         this.source = source;
         this.songId = songId;
         this.name = name;
@@ -59,6 +67,7 @@ public final class MpTrack {
         this.urlDurationMs = urlDurationMs;
         this.entryId = entryId;
         this.requesterName = requesterName;
+        this.planReady = planReady;
     }
 
     public static MpTrack fromJson(JsonObject o) {
@@ -75,7 +84,8 @@ public final class MpTrack {
                 MpProto.num(o, "urlExpiresAt", 0L),
                 MpProto.num(o, "urlDuration", 0L),
                 MpProto.num(o, "entryId", 0L),
-                MpProto.str(o, "requesterName", ""));
+                MpProto.str(o, "requesterName", ""),
+                MpProto.bool(o, "planReady", false));
     }
 
     /**

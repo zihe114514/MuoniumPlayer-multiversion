@@ -25,6 +25,10 @@ final class QishuiSessionStore {
         final String avatarUrl;
         final boolean vip;
         final String vipStage;
+        /** 上一次成功打过账号接口的时刻；0 表示从没验证过。 */
+        final long verifiedAt;
+        /** 凭据仍在本地，但上游已判定过期——界面据此提示重登，而不是静默当未登录。 */
+        final boolean reauthRequired;
 
         private Session(Data data) {
             Map<String, String> cookies = data.cookies == null ? Collections.emptyMap() : data.cookies;
@@ -36,6 +40,8 @@ final class QishuiSessionStore {
             this.avatarUrl = nonBlank(data.avatarUrl);
             this.vip = data.vip;
             this.vipStage = nonBlank(data.vipStage);
+            this.verifiedAt = Math.max(0L, data.verifiedAt);
+            this.reauthRequired = data.reauthRequired;
         }
     }
 
@@ -72,8 +78,74 @@ final class QishuiSessionStore {
                 if (!name.isEmpty() && !value.isEmpty()) data.cookies.put(name, value);
             }
             data.updatedAt = System.currentTimeMillis();
+            // 新凭据到手就等于「待验证」：既不算已验证，也不该继续挂着过期标记。
+            data.verifiedAt = 0L;
+            data.reauthRequired = false;
             persistLocked();
         }
+    }
+
+    /**
+     * 整体替换本地凭据，供手动导入 Cookie 用。与 {@link #saveCookies} 的合并语义不同：
+     * 导入一份新 cookie 时如果和旧账号的 cookie 按名字合并，会得到一个两个账号字段混装的
+     * 畸形会话（旧的 uid_tt 配新的 sessionid），上游行为不可预测。所以这里先清空再写，
+     * 并且只在调用方已经拿这份 cookie 打过账号接口确认有效之后才调。
+     */
+    static void replaceCookies(Map<String, String> cookies) {
+        if (cookies == null || cookies.isEmpty()) return;
+        synchronized (LOCK) {
+            ensureLoaded();
+            data.cookies = new LinkedHashMap<>();
+            for (Map.Entry<String, String> entry : cookies.entrySet()) {
+                String name = nonBlank(entry.getKey());
+                String value = nonBlank(entry.getValue());
+                if (!name.isEmpty() && !value.isEmpty()) data.cookies.put(name, value);
+            }
+            // 换账号了，上一个账号的展示资料必须一起清掉，否则界面会显示错人的昵称头像。
+            data.userId = "";
+            data.nickname = "";
+            data.douyinId = "";
+            data.avatarUrl = "";
+            data.vip = false;
+            data.vipStage = "";
+            data.updatedAt = System.currentTimeMillis();
+            data.verifiedAt = 0L;
+            data.reauthRequired = false;
+            persistLocked();
+        }
+    }
+
+    /** 账号接口确认成功时记录时刻，并撤销之前的过期标记。 */
+    static void markVerified() {
+        synchronized (LOCK) {
+            ensureLoaded();
+            if (!containsSessionCookie(data.cookies)) return;
+            data.verifiedAt = System.currentTimeMillis();
+            data.reauthRequired = false;
+            persistLocked();
+        }
+    }
+
+    /**
+     * 上游判定凭据失效。<b>只打标记、绝不清空凭据</b>：读失败或被顶下线时把 cookie 删了，
+     * 用户就只能重新扫一次码，而他那份 cookie 可能本来还能救（比如只是临时风控）。
+     */
+    static void markReauthRequired() {
+        synchronized (LOCK) {
+            ensureLoaded();
+            if (!data.reauthRequired) {
+                data.reauthRequired = true;
+                persistLocked();
+            }
+        }
+    }
+
+    static boolean isReauthRequired() {
+        return snapshot().reauthRequired;
+    }
+
+    static long getVerifiedAt() {
+        return snapshot().verifiedAt;
     }
 
     static void saveProfile(String userId, String nickname, String douyinId,
@@ -180,6 +252,8 @@ final class QishuiSessionStore {
         boolean vip;
         String vipStage = "";
         long updatedAt;
+        long verifiedAt;
+        boolean reauthRequired;
 
         Data normalized() {
             if (cookies == null) cookies = new LinkedHashMap<>();

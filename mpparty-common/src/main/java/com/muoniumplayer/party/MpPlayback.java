@@ -1,11 +1,17 @@
 package com.muoniumplayer.party;
 
+import com.google.gson.JsonObject;
 import com.muoniumplayer.core.ncm.music.AudioPlayer;
+import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.FoliaModelManager;
+import com.muoniumplayer.core.ncm.music.RoomAutomix;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 
 /**
  * 房间指令与本机播放器之间的那一层：把服务端下发的「播这首、跳到这里、暂停」翻译成
@@ -39,6 +45,14 @@ public final class MpPlayback {
 
     /** 进房前的播放模式。单曲循环会让本机自己重播，和房间时钟对不上。 */
     private static volatile CloudMusic.PlayMode savedPlayMode;
+
+    /**
+     * 房间预告的「下一首」：服务端在换歌之前就把它连直链一起广播过来，好让本机在这首歌还没轮到
+     * 之前就把它解析、下载、解码完 —— 这正是房间里能交叠起来的前提。
+     */
+    private static volatile MpTrack stagedNext;
+    /** {@link #stagedNext} 对应的 {@code Music} 实例，同时也就是播放列表里的下一格。 */
+    private static volatile Music stagedNextMusic;
 
     /** 该实例是否就是房间正在放的那一首（供拦截逻辑放行自己的起播）。 */
     public static boolean isPartyMusic(Music music) {
@@ -86,7 +100,7 @@ public final class MpPlayback {
 
                 MpPartyClient.beginRemote();
                 try {
-                    CloudMusic.play(Collections.singletonList(music), 0);
+                    CloudMusic.play(roomQueue(music), 0);
                 } catch (Throwable throwable) {
                     System.err.println("[MpParty] 起播失败：" + throwable);
                     MpPartyClient.note("起播失败：" + track.display(), true);
@@ -96,6 +110,191 @@ public final class MpPlayback {
                 }
             }
         });
+    }
+
+    /**
+     * 起播时交给播放器的队列：房间当前这一首，外加（服务端已经预告、且本机开着交叠时）
+     * 还没轮到的那一首。
+     *
+     * <p>队列从「一首」变成「两首」是整件事的关键 —— automix 的 {@code peekNextIndex()} 只认
+     * 队列，队里没有第二格，它连尝试都不会尝试（这正是房间里从来没有无缝切换的原因）。
+     * 播放模式仍是顺序播放，这一点不变。</p>
+     */
+    private static List<Music> roomQueue(Music music) {
+        Music next = stagedNextMusic;
+        if (next == null || next == music) return Collections.singletonList(music);
+        List<Music> queue = new ArrayList<Music>(2);
+        queue.add(music);
+        queue.add(next);
+        return queue;
+    }
+
+    /**
+     * 收下房间预告的下一首。
+     *
+     * <p>由 {@code S_QUEUE} / {@code S_ROOM_STATE} 的 {@code next} 字段驱动。同一首重复预告
+     * 直接忽略：服务端每次广播队列都会带上一遍，重复处理会让已经解码好的播放牌反复作废，
+     * 结果每次换歌都来不及预置。</p>
+     *
+     * <p>房间没开交叠（老服务端、或服主把 {@code automixLeadMs} 设成 0）时整个方法短路，
+     * 房间行为与今天逐字节一致。</p>
+     */
+    public static void stageNext(final MpTrack next, final JsonObject plan) {
+        if (!RoomAutomix.active()) {
+            clearRoomAutomix();
+            return;
+        }
+        MpTrack current = stagedNext;
+        String currentUrl = current == null || current.url == null ? "" : current.url;
+        String nextUrl = next == null || next.url == null ? "" : next.url;
+        // 「同一首、同一条链接、同一份计划」才算重复。计划必须单列：房主分析完会把计划单独
+        // 广播一遍，那时曲目和链接都没变 —— 若短路掉，本机就永远等不到房主那份计划
+        // （本机不会自己算一条顶上，见 RoomAutomix#awaitingPlan）。
+        if (next != null && current != null
+                && current.key().equals(next.key()) && currentUrl.equals(nextUrl)
+                && RoomAutomix.sameSharedPlan(plan)) {
+            return;
+        }
+        // 没有直链就没有可预下载的东西（服务端只发了元数据，链接会随队列重发再来一次）。
+        if (next == null || nextUrl.isEmpty()) {
+            clearRoomAutomix();
+            return;
+        }
+
+        Music music;
+        try {
+            music = next.toMusic();
+        } catch (Throwable throwable) {
+            System.err.println("[MpParty] 预置下一首失败：构造曲目异常 " + throwable);
+            return;
+        }
+        music.setPartyStreamUrl(nextUrl);
+        music.setPartyStreamType("");
+
+        stagedNext = next;
+        stagedNextMusic = music;
+        RoomAutomix.arm(music, next.entryId, plan);
+        installRoomNext(music);
+        System.out.println("[MpParty] 已预置下一首 " + next.display()
+                + " key=" + next.key() + " url=" + brief(nextUrl)
+                + (plan == null ? "（计划未到：房主算完会单独广播一次，到之前本机不预备）" : " plan=" + plan));
+    }
+
+    /**
+     * 刷新房间角色与本机的分析能力。
+     *
+     * <p>房主身份只用于<b>老服务端</b>的兜底：那些服务端不会指派任何人，只能按老规矩让房主
+     * 自己算。新服务端会点名（{@code analyze_assign}），届时由指派决定谁算 —— 这也正是
+     * 「谁点的歌就用谁的电脑先算」能成立的地方。</p>
+     *
+     * <p>顺带把本机的分析能力报给 {@code RoomAutomix}，它会随下一次 profile 一起上传，
+     * 服务端据此决定要不要把任务派过来。只在身份可能变化时同步（{@code hello}、房间快照、
+     * 成员变化），不必每次都问。</p>
+     */
+    public static void refreshRoomRole() {
+        RoomAutomix.setOwner(MpPartyClient.isOwner());
+        RoomAutomix.setCapability(AutomixSettings.isEnabled(), capabilityEngine());
+    }
+
+    /**
+     * 本机自报的分析档位。
+     *
+     * <p>{@code "model"} = 走 Folia 且模型与运行时都已安装，能算出 stem 交接、过渡族、频段
+     * 倾斜这些；{@code "dsp"} = 只有内置信号处理。服务端选人时同优先级里先问档位高的，
+     * 所以装了模型的机器会被优先借走。</p>
+     *
+     * <p>这里刻意<b>不</b>因为「引擎选了 Folia 但模型没装」就报 {@code "model"}：那种情况下
+     * Folia 内部会退回纯 DSP，算出来的东西和内置信号处理没区别，谎报只会让服务端把任务
+     * 优先派给一台其实没有模型的机器。</p>
+     */
+    private static String capabilityEngine() {
+        try {
+            if (!AutomixSettings.isFoliaEngine()) return "dsp";
+            // 两套权重缺一不可：Beat This! 出节拍栅格，HTDemucs 出 stem 分离。
+            boolean beats = FoliaModelManager.isInstalled(FoliaModelManager.Kind.BEAT_THIS);
+            boolean stems = FoliaModelManager.isInstalled(FoliaModelManager.Kind.HTDEMUCS);
+            boolean runtime = FoliaModelManager.isInstalled(FoliaModelManager.Kind.RUNTIME);
+            return beats && stems && runtime ? "model" : "dsp";
+        } catch (Throwable ignored) {
+            // 探不到就按最低档报：宁可少被借，也不要被派了却给不出东西。
+            return "dsp";
+        }
+    }
+
+    /** 房间预告的下一首；没有则为 null。 */
+    public static MpTrack stagedNext() {
+        return stagedNext;
+    }
+
+    /**
+     * 换歌帧到了：本机若已经把这一首交叠进来，就只承认它，不要再起播一次。
+     *
+     * <p>两种次序都要认。<b>帧先到</b>：请播放线程用已预备好的播放牌立刻交接
+     * （{@link CloudMusic#roomAutomixHandover()}）。<b>本机先到</b>：本机的交叠点与服务端的
+     * 提前换歌点本来就是同一个数，本地已经淡入了，此时再走一遍 {@link CloudMusic#play} 会整条
+     * 替换播放列表，把刚叠上的尾巴整段掐掉 —— 这正是「不做这个保护就会尾巴被掐」的那一处。</p>
+     *
+     * @return true 表示这一帧已经被交叠链路消化，调用方不要再起播
+     */
+    public static boolean handoverToRoomFrame(final MpTrack track, final long posMs, final boolean playing) {
+        final MpTrack staged = stagedNext;
+        final Music music = stagedNextMusic;
+        if (staged == null || music == null) return false;
+        if (track == null || !staged.key().equals(track.key())) return false;
+
+        boolean blendedLocally = CloudMusic.currentlyPlaying == music;
+        if (!blendedLocally && !CloudMusic.roomAutomixHandover()) return false;
+
+        partyMusic = music;
+        stagedNext = null;
+        stagedNextMusic = null;
+        RoomAutomix.disarm();
+        // 交叠这一段本机与房间时钟「故意」不同（一条在淡出，另一条刚从 0 开始），
+        // 关掉漂移判定，别让心跳把刚开始的淡入硬跳一下。
+        MpSyncPolicy.markCommand();
+        System.out.println("[MpParty] 房间内交叠交接 " + track.display()
+                + (blendedLocally ? "（本机先到，帧后到）" : "（帧触发）")
+                + " pos=" + posMs + " playing=" + playing);
+        return true;
+    }
+
+    /** 撤下房间的下一首与交叠状态（离房、房间停了、房间关掉交叠）。 */
+    public static void clearRoomAutomix() {
+        stagedNext = null;
+        stagedNextMusic = null;
+        RoomAutomix.disarm();
+        installRoomNext(null);
+    }
+
+    /**
+     * 把还没落到队列里的「下一首」补装一次。
+     *
+     * <p>换歌帧先到时，起播那一刻队列里还只有一首，「下一首」要等随后的队列广播才到 —— 那时
+     * 房间这一首多半已经在播了，只有这里补装才能把预解码接上去。接上之后
+     * {@link CloudMusic#setRoomNextTrack} 会自行判定「已经是这一首」而不再动队列，所以每秒
+     * 来一次没有代价。</p>
+     */
+    private static void installStagedRoomNext() {
+        Music next = stagedNextMusic;
+        if (next == null || !RoomAutomix.active()) return;
+        installRoomNext(next);
+    }
+
+    /**
+     * 把下一首接进播放器队列当前曲目之后（传 {@code null} 则撤下来）。
+     *
+     * <p>只有房间这一首<b>确实在播</b>时才动队列：房间的下一首可能在起播之前就到了，那时队列
+     * 还不属于房间，交给起播时的 {@link #roomQueue(Music)} 带上更安全。</p>
+     */
+    private static void installRoomNext(Music music) {
+        if (music != null && !RoomAutomix.active()) return;
+        Music playing = partyMusic;
+        if (playing == null || CloudMusic.currentlyPlaying != playing) return;
+        try {
+            CloudMusic.setRoomNextTrack(music);
+        } catch (Throwable throwable) {
+            System.err.println("[MpParty] 预置下一首失败：" + throwable);
+        }
     }
 
     public static void pause(final long posMs) {
@@ -146,6 +345,10 @@ public final class MpPlayback {
      */
     public static void stop() {
         startPending = false;
+        // 队列里多出来的那一格是房间的下一首，房间停了就得收回去 —— 否则它会被当成
+        // 本机自己的队列继续往下播。必须在清 partyMusic 之前做（撤销要以「房间这一首
+        // 正在播」为判据）。
+        clearRoomAutomix();
         final Music music = partyMusic;
         partyMusic = null;
         restorePlayMode();
@@ -220,6 +423,9 @@ public final class MpPlayback {
      * 解析 + 下载 + 转码可能过去了十几秒，用旧值会一起播就落后。
      */
     public static void tick() {
+        // 服务端的队列广播与换歌帧谁先到是不定的：帧先到时起播那一刻队列里还只有一首，
+        // 「下一首」要等队列广播才到，而那时房间这一首多半已经在播了 —— 在这里补装一次。
+        installStagedRoomNext();
         if (!startPending) return;
 
         if (System.currentTimeMillis() - pendingSince > START_TIMEOUT_MS) {

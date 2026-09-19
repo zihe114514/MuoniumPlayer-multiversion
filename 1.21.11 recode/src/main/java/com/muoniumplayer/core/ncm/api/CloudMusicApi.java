@@ -311,7 +311,7 @@ public class CloudMusicApi {
     public RequestUtil.RequestAnswer personalFmMode(String mode, String submode, int limit) {
         Map<String, Object> data = new HashMap<>();
         data.put("mode", mode == null || mode.trim().isEmpty() ? "DEFAULT" : mode.trim());
-        if (submode != null && !submode.trim().isEmpty()) data.put("submode", submode.trim());
+        if (submode != null && !submode.trim().isEmpty()) data.put("subMode", submode.trim());
         data.put("limit", Math.max(1, Math.min(3, limit)));
         return RequestUtil.createRequest("/api/v1/radio/get", data, OptionsUtil.createOptions());
     }

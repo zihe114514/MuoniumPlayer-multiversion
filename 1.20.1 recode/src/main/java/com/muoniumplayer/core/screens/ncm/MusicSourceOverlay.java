@@ -1026,7 +1026,11 @@ public final class MusicSourceOverlay extends NcmSheet {
             return "无需登录 · 搜索并播放 YouTube 音频";
         }
         if (platform == MusicPlatform.BILIBILI) {
-            return "无需登录 · 搜索 / BV号 / 分P播放 B站音频";
+            if (NeteaseMusicService.isLoggedIn(platform)) {
+                return "已登录 · " + NeteaseMusicService.getAccountName(platform);
+            }
+            // 匿名就能搜与播，这一点不能写成「未登录不可用」；扫码换来的则是字幕歌词和收藏夹。
+            return "未登录 · 可搜索播放，扫码后解锁歌词与收藏夹";
         }
         if (platform == MusicPlatform.QISHUI) {
             if (NeteaseMusicService.isLoggedIn(platform)) {

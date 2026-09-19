@@ -6,6 +6,7 @@ import com.google.gson.annotations.SerializedName;
 import lombok.Data;
 import com.muoniumplayer.core.ncm.RequestUtil;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
+import com.muoniumplayer.core.ncm.music.BilibiliPlaylistService;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
@@ -213,6 +214,14 @@ public class PlayList {
                         : QishuiMusicService.playlistTracks(qishuiId, requested);
                 if (loadedMusics == null) {
                     throw new IllegalStateException("Qishui playlist track response is null");
+                }
+            } else if (getPlatform() == MusicPlatform.BILIBILI) {
+                // B 站没有「歌单」这个对象：分 P / 合集 / 收藏夹三种形态都编在 platformPlaylistId
+                // 的前缀里，由服务层按前缀分派。缺这一支的话 B 站歌单会掉进下面的 else，
+                // 拿一个字符串 id 去调网易云的 playlistTrackAll —— 静默返回空列表，界面一片空白。
+                loadedMusics = BilibiliPlaylistService.tracks(getPlatformPlaylistId());
+                if (loadedMusics == null) {
+                    throw new IllegalStateException("Bilibili playlist track response is null");
                 }
             } else {
                 RequestUtil.RequestAnswer requestAnswer = CloudMusicApi.playlistTrackAll(id, 8);

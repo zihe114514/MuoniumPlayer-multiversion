@@ -643,6 +643,19 @@ public final class HudSettingsModel {
                                 slider(HudSetting.DYNAMIC_ISLAND_SPINNER_SPEED, "加载转子的转速倍率。"))),
 
                 new Category("播放器", "播放器窗口自身的动画节奏", 0xFFFF8FB1, HudSettingsIcons.NOTE,
+                        new Group("界面外观", HudSettingsIcons.MODERN_UI,
+                                choice("HUD 设置界面", "按 H 打开 HUD 编辑器时用哪套外观。经典＝右侧一列可折叠长面板；"
+                                        + "现代＝侧栏分类 + 卡片分组双栏；Folia＝居中大窗 + 遮罩（移植自 本项目 的设置弹窗）。"
+                                        + "三套内容完全一样，切换在下次打开时生效。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return editorStyleLabel();
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                cycleEditorStyle();
+                                            }
+                                        }, new String[] {"经典", "现代", "Folia"}, HudSettingsModel::setEditorStyleChoice)),
                         new Group("窗口缩放", HudSettingsIcons.RULER,
                                 toggle("窗口自适应缩放",
                                         "按物理游戏窗口尺寸计算连续缩放，播放器大小不随 GUI Scale 整数档位跳动；关闭后跟随游戏内 GUI 缩放。",
@@ -1022,6 +1035,40 @@ public final class HudSettingsModel {
                     Integer.parseInt(value.replace("GB", "").trim()));
         } catch (RuntimeException ignored) {
         }
+    }
+
+    // ==================== HUD 设置界面样式 ====================
+
+    /** 当前内置界面样式的中文名，与 choice 条目的可选文案一一对应。 */
+    public static String editorStyleLabel() {
+        if (HudConfig.HUD_EDITOR_STYLE_CLASSIC.equals(HudConfig.hudEditorStyle)) return "经典";
+        if (HudConfig.HUD_EDITOR_STYLE_FOLIA.equals(HudConfig.hudEditorStyle)) return "Folia";
+        return "现代";
+    }
+
+    /** 经典 → 现代 → Folia 循环。点一下就能看到下一套，比打开时就换界面温和。 */
+    private static void cycleEditorStyle() {
+        String current = HudConfig.hudEditorStyle;
+        if (HudConfig.HUD_EDITOR_STYLE_CLASSIC.equals(current)) {
+            HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_MODERN;
+        } else if (HudConfig.HUD_EDITOR_STYLE_MODERN.equals(current)) {
+            HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_FOLIA;
+        } else {
+            HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_CLASSIC;
+        }
+        saveNow();
+    }
+
+    private static void setEditorStyleChoice(String value) {
+        if (value == null) return;
+        if ("经典".equals(value)) {
+            HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_CLASSIC;
+        } else if ("Folia".equalsIgnoreCase(value)) {
+            HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_FOLIA;
+        } else {
+            HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_MODERN;
+        }
+        saveNow();
     }
 
     private static String[] themeChoices() {

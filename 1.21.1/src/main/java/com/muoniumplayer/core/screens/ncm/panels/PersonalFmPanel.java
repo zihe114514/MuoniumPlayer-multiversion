@@ -20,6 +20,34 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public final class PersonalFmPanel extends NCMPanel {
 
     private static final double MARGIN = 12.0;
+    private static final double BUTTON_GAP = 6.0;
+
+    private static final PersonalFmManager.Mode[] MODES = {
+            PersonalFmManager.Mode.DEFAULT, PersonalFmManager.Mode.FAMILIAR,
+            PersonalFmManager.Mode.EXPLORE, PersonalFmManager.Mode.SCENE_RCMD,
+            PersonalFmManager.Mode.PUZZLE_MODE_RCMD, PersonalFmManager.Mode.AIDJ
+    };
+    private static final String[] MODE_LABELS = new String[MODES.length];
+
+    /** 场景子模式的分组展示：分组标题 + 组内中文名，成员顺序与 PersonalFmManager 的分组一致。 */
+    private static final String[][] SCENE_GROUP_LABELS = new String[PersonalFmManager.SCENE_GROUP_MODES.length][];
+
+    static {
+        for (int index = 0; index < MODES.length; index++) MODE_LABELS[index] = MODES[index].getDisplayName();
+        for (int group = 0; group < SCENE_GROUP_LABELS.length; group++) {
+            String[] modes = PersonalFmManager.SCENE_GROUP_MODES[group];
+            String[] labels = new String[modes.length];
+            for (int index = 0; index < modes.length; index++) labels[index] = PersonalFmManager.sceneLabel(modes[index]);
+            SCENE_GROUP_LABELS[group] = labels;
+        }
+    }
+
+    private static final double SCENE_TOP = 94.0;
+    private static final double HEADER_ROW = 17.0;
+    private static final double CHIP_H = 17.0;
+    private static final double CHIP_GAP = 6.0;
+    private static final double ROW_GAP = 5.0;
+    private static final double GROUP_GAP = 8.0;
 
     @Override
     public void onInit() {
@@ -82,25 +110,26 @@ public final class PersonalFmPanel extends NCMPanel {
             return true;
         });
 
-        PersonalFmManager.Mode[] modes = {
-                PersonalFmManager.Mode.DEFAULT, PersonalFmManager.Mode.FAMILIAR,
-                PersonalFmManager.Mode.EXPLORE, PersonalFmManager.Mode.SCENE_RCMD,
-                PersonalFmManager.Mode.AIDJ
-        };
-        for (int index = 0; index < modes.length; index++) addModeButton(modes[index], index);
+        for (int index = 0; index < MODES.length; index++) addModeButton(MODES[index], index);
 
-        if (PersonalFmManager.getSelectedMode() == PersonalFmManager.Mode.SCENE_RCMD) {
-            addSceneButton("运动", PersonalFmManager.SCENE_EXERCISE, 0);
-            addSceneButton("专注", PersonalFmManager.SCENE_FOCUS, 1);
-            addSceneButton("夜间", PersonalFmManager.SCENE_NIGHT_EMO, 2);
+        boolean sceneSelected = PersonalFmManager.getSelectedMode() == PersonalFmManager.Mode.SCENE_RCMD;
+        if (sceneSelected) {
+            for (int group = 0; group < SCENE_GROUP_LABELS.length; group++) {
+                addSceneGroupHeader(group);
+                for (int index = 0; index < SCENE_GROUP_LABELS[group].length; index++) {
+                    addSceneChip(group, index);
+                }
+            }
         }
 
-        final double controlsBottom = PersonalFmManager.getSelectedMode() == PersonalFmManager.Mode.SCENE_RCMD ? 112.0 : 92.0;
         ScrollPanel songs = new ScrollPanel();
         addChild(songs);
         songs.setSpacing(0).setScrollStrength(42).setAlignment(ScrollPanel.Alignment.VERTICAL);
-        songs.setBeforeRenderCallback(() -> songs.setBounds(MARGIN, controlsBottom,
-                Math.max(1.0, getWidth() - MARGIN * 2.0), Math.max(1.0, getHeight() - controlsBottom - 8.0)));
+        songs.setBeforeRenderCallback(() -> {
+            double bottom = sceneSelected ? sceneAreaBottom(getWidth()) : 92.0;
+            songs.setBounds(MARGIN, bottom, Math.max(1.0, getWidth() - MARGIN * 2.0),
+                    Math.max(1.0, getHeight() - bottom - 8.0));
+        });
 
         List<Music> batch = PersonalFmManager.getCurrentBatchSnapshot();
         if (batch.isEmpty()) {
@@ -135,8 +164,8 @@ public final class PersonalFmPanel extends NCMPanel {
         button.setShouldOverrideMouseCursor(true);
         button.setBeforeRenderCallback(() -> {
             boolean selected = PersonalFmManager.getSelectedMode() == mode;
-            double width = Math.max(31.0, FontManager.pf12bold.getStringWidth(mode.getDisplayName()) + 12.0);
-            button.setBounds(width, 17).setPosition(MARGIN + index * 47.0, 73).setRadius(4)
+            button.setBounds(labelWidth(mode.getDisplayName()), 17)
+                    .setPosition(rowStartX(MODE_LABELS, index), 73).setRadius(4)
                     .setClickable(!PersonalFmManager.isLoading())
                     .setColor(selected ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                             : (button.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
@@ -150,13 +179,26 @@ public final class PersonalFmPanel extends NCMPanel {
         });
     }
 
-    private void addSceneButton(String name, String subMode, int index) {
-        RoundedButtonWidget button = new RoundedButtonWidget(name, FontManager.pf12bold);
+    private void addSceneGroupHeader(int group) {
+        LabelWidget header = new LabelWidget(PersonalFmManager.SCENE_GROUP_TITLES[group], FontManager.pf12bold);
+        addChild(header);
+        header.setClickable(false);
+        header.setBeforeRenderCallback(() -> {
+            double[] at = scenePosition(group, -1, getWidth());
+            header.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT)).setPosition(at[0], at[1]);
+        });
+    }
+
+    private void addSceneChip(int group, int indexInGroup) {
+        String label = SCENE_GROUP_LABELS[group][indexInGroup];
+        String subMode = PersonalFmManager.SCENE_GROUP_MODES[group][indexInGroup];
+        RoundedButtonWidget button = new RoundedButtonWidget(label, FontManager.pf12bold);
         addChild(button);
         button.setShouldOverrideMouseCursor(true);
         button.setBeforeRenderCallback(() -> {
             boolean selected = subMode.equals(PersonalFmManager.getSelectedSubMode());
-            button.setBounds(38, 16).setPosition(MARGIN + index * 43.0, 94).setRadius(4)
+            double[] at = scenePosition(group, indexInGroup, getWidth());
+            button.setBounds(labelWidth(label), CHIP_H).setPosition(at[0], at[1]).setRadius(4)
                     .setClickable(!PersonalFmManager.isLoading())
                     .setColor(selected ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                             : (button.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
@@ -168,5 +210,61 @@ public final class PersonalFmPanel extends NCMPanel {
             PersonalFmManager.selectMode(PersonalFmManager.Mode.SCENE_RCMD, subMode);
             return true;
         });
+    }
+
+    private static double labelWidth(String label) {
+        return Math.max(31.0, FontManager.pf12bold.getStringWidth(label) + 12.0);
+    }
+
+    /** 行内第 index 个按钮的起点：累加前面每个按钮的实际宽度，名字变长也不会互相叠压。 */
+    private static double rowStartX(String[] labels, int index) {
+        double x = MARGIN;
+        for (int i = 0; i < index; i++) x += labelWidth(labels[i]) + BUTTON_GAP;
+        return x;
+    }
+
+    /**
+     * 重演从第一个分组起到目标控件为止的全部摆放，返回其左上角。chipIndex 为 -1 表示取分组标题。
+     * 每帧重算的代价是几十次加法，换来的是窗口宽度变化时场景区自己完成换行回流。
+     */
+    private static double[] scenePosition(int groupIndex, int chipIndex, double panelWidth) {
+        double y = SCENE_TOP;
+        for (int g = 0; g < groupIndex; g++) y += groupHeight(g, panelWidth);
+        if (chipIndex < 0) return new double[]{MARGIN, y};
+        y += HEADER_ROW;
+        double x = MARGIN;
+        String[] labels = SCENE_GROUP_LABELS[groupIndex];
+        for (int i = 0; i < chipIndex; i++) {
+            double w = labelWidth(labels[i]);
+            if (x > MARGIN && x + w > panelWidth - MARGIN) {
+                x = MARGIN;
+                y += CHIP_H + ROW_GAP;
+            }
+            x += w + CHIP_GAP;
+        }
+        return new double[]{x, y};
+    }
+
+    /** 单个分组（标题 + 换行后的全部 chip + 组间距）占用的总高度。 */
+    private static double groupHeight(int groupIndex, double panelWidth) {
+        double height = HEADER_ROW;
+        double x = MARGIN;
+        String[] labels = SCENE_GROUP_LABELS[groupIndex];
+        for (String label : labels) {
+            double w = labelWidth(label);
+            if (x > MARGIN && x + w > panelWidth - MARGIN) {
+                x = MARGIN;
+                height += CHIP_H + ROW_GAP;
+            }
+            x += w + CHIP_GAP;
+        }
+        return height + CHIP_H + GROUP_GAP;
+    }
+
+    /** 场景区（含最后一个分组）底缘的 y 坐标，歌曲列表从这里开始。 */
+    private static double sceneAreaBottom(double panelWidth) {
+        double y = SCENE_TOP;
+        for (int g = 0; g < SCENE_GROUP_LABELS.length; g++) y += groupHeight(g, panelWidth);
+        return y - GROUP_GAP + 4.0;
     }
 }

@@ -122,6 +122,19 @@ public final class MpProto {
     public static final String C_VOTE_START     = "vote_start";
     /** 对进行中的投票表态。 */
     public static final String C_VOTE_CAST      = "vote_cast";
+    /**
+     * 上报交接计划：当前这一首放完时怎么交给下一首。
+     *
+     * <p>分析只能在客户端做（音频在各机本地），但「唱到第几毫秒」必须全房统一，所以由
+     * <b>服务端指派的那一台</b>算一份、服务端存下并广播，其余成员直接执行。
+     * 字段见 {@code RoomAutomix#encode}。</p>
+     *
+     * <p>上报者不再是房主：服务端按「点歌人 → 房主 → 任何能算的人」指派
+     * （见 {@link #S_ANALYZE_ASSIGN}），被指派者用本帧交卷。</p>
+     */
+    public static final String C_AUTOMIX_PLAN   = "automix_plan";
+    /** 被指派人放弃这次分析，请服务端当场改派下一台（不必干等到超时）。 */
+    public static final String C_ANALYZE_DECLINE = "analyze_decline";
 
     // ── 服务端 → 客户端 ──────────────────────────────────────────────────────
     public static final String S_HELLO      = "hello";
@@ -139,6 +152,21 @@ public final class MpProto {
     public static final String S_NOTICE     = "notice";
     public static final String S_ERROR      = "error";
     public static final String S_URL_NEEDED = "url_needed";
+    /**
+     * 服务端指派本机去算这一首的交接计划。
+     *
+     * <p>{@code entryId} = 要算的是哪一首「下一首」，{@code attempt} = 第几轮指派，
+     * {@code deadlineMs} = 这个时刻前不交卷就改派下一台；{@code 0} = 没设期限（服务端已取消超时），
+     * 那就一直算下去，不被「等太久」打断。</p>
+     */
+    public static final String S_ANALYZE_ASSIGN = "analyze_assign";
+    /**
+     * 服务端告诉全房「这一首由谁在算」。
+     *
+     * <p>{@code analyst} 为空串表示房间里没有任何一台能算 —— 本机据此不再挂着等计划。
+     * 其余情况本机也能知道该不该自己动手：{@code analyst} 等于自己的 UUID 就是被指派了。</p>
+     */
+    public static final String S_ANALYZE_STATE  = "analyze_state";
 
     // ── v2 新增 S2C ──────────────────────────────────────────────────────────
     /** 全服在线玩家 + 正在听 + 客户端角标 + VIP。 */

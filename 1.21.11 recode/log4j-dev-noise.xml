@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+	开发环境（runClient）专用日志降噪，由 fabric/build.gradle 的 loom.log4jConfigs 追加，
+	与 Loom 自己生成的那份 log4j 配置合并（log4j2 支持逗号分隔的多份配置）。不参与打包，
+	只影响本地 runClient 的控制台与 logs/。
+
+	为什么需要它：dev 启动没有微软账号（日志里的 Setting user: PlayerXXX 就是离线会话），
+	而本机到 api.minecraftservices.com / sessionserver.mojang.com 的 TLS 直连会被拖到超时，
+	authlib 的 Yggdrasil Key Fetcher 是个每 5 分钟跑一次的后台线程，只要游戏开着就一直刷
+	"Failed to request yggdrasil public key"。Loom 自带的配置已经为同类 dev 鉴权噪音
+	（Failed to fetch user properties / Couldn't connect to realms 等）准备了过滤，
+	只是没跟上 1.21+ 新加的这两条。
+
+	这里只关掉两个纯失败上报的 logger，不动任何网络行为，也不影响其它日志。
+-->
+<Configuration status="WARN">
+	<Loggers>
+		<!-- Failed to request yggdrasil public key -->
+		<Logger name="com.mojang.authlib.yggdrasil.YggdrasilServicesKeyInfo" level="OFF" additivity="false"/>
+		<!-- Failed to retrieve profile key pair -->
+		<Logger name="net.minecraft.client.session.ProfileKeysImpl" level="OFF" additivity="false"/>
+	</Loggers>
+</Configuration>

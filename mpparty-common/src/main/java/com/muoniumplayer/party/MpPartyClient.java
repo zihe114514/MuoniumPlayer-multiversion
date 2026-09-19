@@ -8,6 +8,7 @@ import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.ListenTogetherSettings;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.RoomAutomix;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.utils.Tuple;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
@@ -143,6 +144,25 @@ public final class MpPartyClient {
 
     private static final CopyOnWriteArrayList<Runnable> LISTENERS = new CopyOnWriteArrayList<Runnable>();
 
+    static {
+        // 交接计划要交给服务端广播给全房。核心播放层不反向依赖一起听这一层，
+        // 所以上报通道从这里注入 —— 房间之外 RoomAutomix 根本走不到 planWith。
+        //
+        // 本机能不能算由服务端指派决定（点歌人优先 → 房主 → 任何能算的人），
+        // 所以这里回报的只是「算不算得出来」，不再有房主身份的门槛。
+        RoomAutomix.setPlanSink(new RoomAutomix.PlanSink() {
+            @Override
+            public void publish(long entryId, JsonObject plan) {
+                reportAutomixPlan(entryId, plan);
+            }
+
+            @Override
+            public void decline(long entryId) {
+                reportAutomixDecline(entryId);
+            }
+        });
+    }
+
     private static volatile ScheduledExecutorService ticker;
 
     // ── 注册 ─────────────────────────────────────────────────────────────────
@@ -179,6 +199,12 @@ public final class MpPartyClient {
     /**
      * 发一次握手。无条件发：普通服务器收到不认识的自定义负载会直接忽略，没有副作用，
      * 而这是 Paper 服务端唯一能被发现的途径（见 {@link #helloAcked}）。
+     *
+     * <p>这里的「无条件」指的是<b>不要求服务端先声明通道</b>（{@link #available()}）——
+     * 那恰恰是 Paper 上永远为 false 的东西。它并不表示「任何时候都能发」：调用方必须先
+     * 确认本机确实在一个世界里，否则发送端会当场抛 {@code IllegalStateException}。
+     * tick 的补发路径已经用 {@link #inGame()} 挡好；{@link #onWorldJoin()} 是刚进服的
+     * 明确信号，那时连接一定在，不必再挡。</p>
      */
     private static void probeHello() {
         if (helloProbes >= HELLO_PROBE_LIMIT) return;
@@ -186,9 +212,10 @@ public final class MpPartyClient {
         // hello 直接带上完整身份：服务端吸收之后紧接着发出的房间快照里就已经有 Mod 与 VIP，
         // 不必等第一次 profile / 心跳。
         fillProfile(hello);
-        // 只有真的发出去了才记一次配额。ticker 从 mod 初始化就开始跑，主菜单上每秒都会来一发，
-        // 而那时 Fabric 的发送会直接抛 "Cannot send packets when not in game!" —— 旧写法照样扣数，
-        // 于是在标题界面停留半分钟就把 30 次试探全烧掉了，真正进服之后一次招呼也发不出去。
+        // 只有真的发出去了才记一次配额。调用方已经挡过「不在世界里」的情况，但一秒一格的
+        // 补发循环与连接状态之间总有缝隙：这一发万一刚好撞上掉线，发送端会直接抛
+        // "Cannot send packets when not in game!" —— 旧写法照样扣数，于是在标题界面停留
+        // 半分钟就把 30 次试探全烧掉，真正进服之后一次招呼也发不出去。这一层是兜底。
         if (sendQuiet(hello)) helloProbes++;
     }
 
@@ -218,6 +245,14 @@ public final class MpPartyClient {
         publicRooms = Collections.emptyList();
         pendingInvites = Collections.emptyList();
         onlineCount = 0;
+        // 这是「这台服务器的」交叠开关，换服务器必须清掉：新服务端会在它自己的 hello 里
+        // 重新下发，收不到（老服务端）就保持 0 = 不交叠。
+        RoomAutomix.configure(0L);
+        // 分析任务同样跟着房间走：断开之后本机不再是任何房间的被指派者，也不再是房主。
+        // 两样都要清 —— 只要还留着「我是被指派的」，下一次进房就会抢着算一份没人要的计划。
+        RoomAutomix.setAssigned(false, 0L);
+        RoomAutomix.setNobodyCanAnalyze(false);
+        RoomAutomix.setOwner(false);
         reset();
         if (had) MpPlayback.stop();
         notifyListeners();
@@ -231,7 +266,13 @@ public final class MpPartyClient {
             MpPlayback.tick();
             // 通道声明有时比 JOIN 事件晚到一点，那一次 hello 就白发了；这里按秒补发，
             // 直到服务端回话或者试探次数用完。
-            if (!helloAcked) {
+            //
+            // 补发之前先过一道「在不在世界里」：ticker 从 mod 初始化就在跑，而标题界面 /
+            // 连接中 / 掉线画面上根本没有能发出去的连接（本机发送端会当场抛
+            // "Cannot send packets when not in game!"）。失败不计配额，因此不加这道门就会
+            // 以每秒一次的频率一直白抛、白构造 JSON，直到真的进服为止 —— 实测在标题界面
+            // 停留 5 分钟，就是三百多次。日志里那行「[MpParty] 发送失败」正是它刷出来的。
+            if (!helloAcked && inGame()) {
                 if (available()) serverPresent = true;
                 probeHello();
             }
@@ -279,6 +320,26 @@ public final class MpPartyClient {
     /** 能不能往服务端发东西：通道被声明了，或者服务端已经回过话。 */
     private static boolean usable() {
         return helloAcked || available();
+    }
+
+    /**
+     * 本机现在是不是处在一个世界里（标题界面、连接中、掉线画面都是 {@code false}）。
+     *
+     * <p>刻意<b>不</b>借道 {@link #available()}：那个问的是「服务端声明了 mpsync 通道吗」，
+     * 在 Paper 这类不声明通道的服务端上，进服之后它照样是 false —— 一个是问「能不能发」，
+     * 一个是问「有没有连接」，在这里要的答案完全不同。</p>
+     *
+     * <p>{@link MpHost#selfUuid()} 就是现成的答案：各版本的实现无一例外都是
+     * {@code mc.player == null ? null : mc.player.getUUID()}，玩家实体不在就等于不在世界里。</p>
+     */
+    private static boolean inGame() {
+        MpHost h = host;
+        if (h == null) return false;
+        try {
+            return h.selfUuid() != null;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     public static int serverProtocol() {
@@ -666,6 +727,13 @@ public final class MpPartyClient {
             }
         }
         m.add("vip", vip);
+        // 房间交接计划的分析能力。服务端据此指派「谁来算这一首的交接点」——
+        // 优先点歌人，其次房主，再次房间里任何一台自报能算的。
+        //
+        // 为什么必须自报、不能由服务端猜：这件事完全在本机进程里 —— 有没有那套分析代码、
+        // 装没装模型、音频解码器能不能用。服务端没有音频，也没有这些信息。
+        m.addProperty("automixCapable", RoomAutomix.capable());
+        m.addProperty("automixEngine", RoomAutomix.engine());
         Music now = localNowPlaying();
         m.addProperty("nowPlaying", now == null ? "" : safe(now.getName()));
         m.addProperty("nowArtist", now == null ? "" : safe(now.getArtistsName()));
@@ -1116,9 +1184,44 @@ public final class MpPartyClient {
             publicRoomsEnabled = MpProto.bool(msg, "publicRoomsEnabled", false);
             voteWindowMs = MpProto.num(msg, "voteWindowMs", voteWindowMs);
             serverResolve = MpProto.bool(msg, "serverResolve", false);
+            // 房间内无缝交接的提前量；0 = 没开（老服务端不发这个字段，取到的就是 0）。
+            // 这就是「房间里要不要交叠」的开关：服务端提前换歌、客户端提前预解码，
+            // 两边用的是同一个数，所以各端交叠点一致。
+            // 先复位「本条连接已见过指派」：新连接刚建立，这台服务端还没派过任何活。
+            // 若不复位，上一条连接里 onDisconnect 的 setAssigned(false,0L) 会把它锁成真，
+            // 重连到老服务端（从不指派）时房主兜底就永远失效 —— 房主不再自己算，整房退化成硬切。
+            RoomAutomix.resetAssignmentSeen();
+            RoomAutomix.configure(MpProto.num(msg, "automixLeadMs", 0L));
+            // 本机是不是房主要跟着身份走 —— 但分析权现在由服务端指派决定，房主身份只在
+            // 老服务端（它不会指派任何人）那里作兜底。
+            MpPlayback.refreshRoomRole();
             // 服务端刚认识我们，把身份补报一次：它紧接着发出的房间快照里就已经有 Mod 与 VIP。
+            // 这份 profile 同时带着分析能力位，服务端据此决定要不要把分析派到本机。
             reportProfile();
             notifyListeners();
+        } else if (MpProto.S_ANALYZE_ASSIGN.equals(op)) {
+            // 服务端点名让本机算这一首的交接计划。这是「谁点的歌就用谁的电脑先算」那套
+            // 指派的结果 —— 被点到的可能是点歌人、房主，也可能是房间里借来的第三台。
+            long entryId = MpProto.num(msg, "entryId", 0L);
+            System.out.println("[MpParty] 被指派分析交接计划 entry=" + entryId
+                    + "（第 " + MpProto.num(msg, "attempt", 0L) + " 次）");
+            RoomAutomix.setAssigned(true, entryId);
+            // 指派到得可能晚于本次预备，这一下负责把还没启动的那一次唤起来：
+            // 预备链路每秒都在跑，awaitingPlan 变 false 之后下一轮自然接上。
+        } else if (MpProto.S_ANALYZE_STATE.equals(op)) {
+            // 服务端告诉全房「这一首由谁在算」。analyst 为空 = 没有人能算，
+            // 此时不必再挂着一个永远等不到的计划。
+            String analyst = MpProto.str(msg, "analyst", "");
+            UUID me = selfUuid();
+            boolean mine = analyst != null && !analyst.isEmpty()
+                    && me != null && analyst.equals(me.toString());
+            long entryId = MpProto.num(msg, "entryId", 0L);
+            if (mine) {
+                RoomAutomix.setAssigned(true, entryId);
+            } else {
+                RoomAutomix.setAssigned(false, entryId);
+                RoomAutomix.setNobodyCanAnalyze(analyst == null || analyst.isEmpty());
+            }
         } else if (MpProto.S_ROOM_STATE.equals(op)) {
             applySnapshot(msg);
         } else if (MpProto.S_QUEUE.equals(op)) {
@@ -1127,6 +1230,11 @@ public final class MpPartyClient {
                 room = r.withQueue(MpProto.arr(msg, "queue"), MpProto.arr(msg, "history"));
                 notifyListeners();
             }
+            // 服务端把「下一首」连直链一起预告过来，好让本机在它轮到之前就下载解码完。
+            // 队列一改这里就重来一次，所以队首变了会自然换成新的那一首。
+            // next 里可能还带着房主算出的交接计划（plan），一起交给播放层。
+            JsonObject staged = MpProto.obj(msg, "next");
+            MpPlayback.stageNext(MpTrack.fromJson(staged), MpProto.obj(staged, "plan"));
         } else if (MpProto.S_PLAY.equals(op)) {
             MpTrack track = MpTrack.fromJson(MpProto.obj(msg, "track"));
             if (track == null) return;
@@ -1280,6 +1388,12 @@ public final class MpPartyClient {
     private static void applySnapshot(JsonObject msg) {
         MpRoom snapshot = MpRoom.fromJson(MpProto.obj(msg, "room"));
         room = snapshot;
+        // 快照里也带着「下一首」（服务端把它放在 room 对象里）：中途进房与断线重连的人
+        // 拿到快照的那一刻就该开始预解码，而不是等下一次队列广播。下一首里同样可能带计划。
+        JsonObject staged = MpProto.obj(MpProto.obj(msg, "room"), "next");
+        MpPlayback.stageNext(MpTrack.fromJson(staged), MpProto.obj(staged, "plan"));
+        // 快照是身份的权威来源（房主可能刚转让过），分析权跟着它刷新。
+        MpPlayback.refreshRoomRole();
         JsonObject playback = MpProto.obj(msg, "playback");
         waitingUrl = MpProto.bool(playback, "waitingUrl", false);
 
@@ -1330,6 +1444,12 @@ public final class MpPartyClient {
         waitingUrl = false;
         // 换歌是明确命令：清掉漂移确认计数并开静默期，接下来几秒在解析／下载，落后不算脱节。
         MpSyncPolicy.markCommand();
+        // 房间内的交叠交接：本机早就把这一首（服务端预告过的那一首）解析、下载、解码完，
+        // 交接不该再走一遍起播 —— 那会把刚叠上的尾巴整段掐掉。
+        if (!selfPaused && MpPlayback.handoverToRoomFrame(track, pos, isPlaying)) {
+            notifyListeners();
+            return;
+        }
         // 个人暂停期间只更新房间时钟，不开声。界面照常显示曲目和进度，恢复时才真的起播。
         if (!selfPaused) MpPlayback.play(track, track.url, pos, isPlaying);
         notifyListeners();
@@ -1457,6 +1577,56 @@ public final class MpPartyClient {
         return false;
     }
 
+    /**
+     * 把本机算出的交接计划报给服务端，由它广播给全房。
+     *
+     * <p>房间里的交接点必须全房一致，所以分析收归服务端指定的那一台，其余人执行。
+     * <b>上报者不要求是房主</b> —— 服务端可能把这件事派给点歌人，也可能派给房间里任意一台
+     * 装了模型的机器；这里只做一次「本机确实是当前被指派者」的本地判断，省掉一个注定被丢弃
+     * 的网络往返。发失败不重试 —— 这一首退回「等计划 / 不交叠」，下一首会再走一遍同样的流程。</p>
+     *
+     * <p>调用方是播放线程上的预备任务（那边正在读已解码缓存做分析），而网络发送只在主线程
+     * 安全，所以这里派发过去；指派状态也在那一刻重新确认一次，分析期间房间可能换了人算。</p>
+     */
+    private static void reportAutomixPlan(final long entryId, final JsonObject plan) {
+        if (entryId <= 0L || plan == null) return;
+        if (room == null || !RoomAutomix.assignedToUs()) return;
+        MultiThreadingUtil.runOnMainThread(new Runnable() {
+            @Override
+            public void run() {
+                if (room == null || !RoomAutomix.assignedToUs()) return;
+                JsonObject m = MpProto.msg(MpProto.C_AUTOMIX_PLAN);
+                m.addProperty("entryId", entryId);
+                m.add("plan", plan);
+                if (sendQuiet(m)) {
+                    System.out.println("[MpParty] 已上报房间交接计划 entry=" + entryId + " " + plan);
+                }
+            }
+        });
+    }
+
+    /**
+     * 告诉服务端「本机算不出这一首」，请它当场改派下一台。
+     *
+     * <p>没有这一帧的话，每问到一台算不出的机器都要白等一个指派超时 —— 而这类机器
+     * （曲目太短、音频拉不到、模型缺失）恰恰是常见的。走主线程的理由与上报计划相同。</p>
+     */
+    private static void reportAutomixDecline(final long entryId) {
+        if (entryId <= 0L) return;
+        if (room == null) return;
+        MultiThreadingUtil.runOnMainThread(new Runnable() {
+            @Override
+            public void run() {
+                if (room == null) return;
+                JsonObject m = MpProto.msg(MpProto.C_ANALYZE_DECLINE);
+                m.addProperty("entryId", entryId);
+                if (sendQuiet(m)) {
+                    System.out.println("[MpParty] 已放弃本次分析 entry=" + entryId + "，等服务端改派");
+                }
+            }
+        });
+    }
+
     private static boolean send(JsonObject msg) {
         if (!usable()) {
             note("当前服务器未安装一起听服务端模组", true);
@@ -1468,13 +1638,17 @@ public final class MpPartyClient {
     private static boolean sendQuiet(JsonObject msg) {
         MpHost h = host;
         if (h == null) return false;
+        // 不在世界里就没有可发之处：本机发送端会当场抛 "Cannot send packets when not in game!"。
+        // 这里是所有发送路径的唯一出口，挡在这里等于把「压根没有连接」这件事一次收敛 ——
+        // 除了 tick 的每秒试探，掉线那一瞬间正好撞上来的心跳、在线态查询、计划上报
+        // 走的是同一条路，都会静默失败而不是抛给日志。
+        if (!inGame()) return false;
         try {
             h.send(MpProto.encode(msg));
             lastSendFailure = "";
             return true;
         } catch (Throwable throwable) {
-            // 同一个原因只报一次。握手试探是每秒一发的，在主菜单上会连续几十次拿到
-            // "Cannot send packets when not in game!"，逐条打出来只是把日志刷满。
+            // 同一个原因只报一次。挡过上一条之后，走到这里已经是真的异常了。
             String reason = String.valueOf(throwable);
             if (!reason.equals(lastSendFailure)) {
                 lastSendFailure = reason;
@@ -1499,6 +1673,9 @@ public final class MpPartyClient {
         appliedSeq = -1L;
         waitingUrl = false;
         selfPaused = false;
+        // 离房：收走队列里多出来的那一格与已预置的下一首，别让它跟着本机自己的队列继续播。
+        // 交叠开关本身不动 —— 它来自服务端 hello，跟房间无关。
+        MpPlayback.clearRoomAutomix();
         MpSyncPolicy.reset();
     }
 

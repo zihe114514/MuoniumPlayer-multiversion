@@ -30,21 +30,66 @@ public final class ConfigPaths {
     /** 旧版网易云 cookie 回退，与 Cadence 的凭据存储分开保存。 */
     public static final File NETEASE_COOKIE = new File(CONFIG_DIRECTORY, "netease_cookie.txt");
 
-    /** 用户选择的 GD Studio 聚合平台（netease/joox/...），单独持久化。 */
+    /**
+     * YouTube 专用 HTTP 代理。
+     *
+     * <p>只作用于 YouTube InnerTube 请求、YouTube 音频 CDN 下载与 YouTube 封面下载；其他音源
+     * 与更新检查不读取这个文件，避免用户为 YouTube 配置代理时改变全局网络行为。</p>
+     */
     public static final File YOUTUBE_PROXY = new File(CONFIG_DIRECTORY, "youtube_proxy.json");
     /** Automix（无缝曲目交接）偏好设置。 */
     public static final File GD_SOURCE = new File(CONFIG_DIRECTORY, "gd_source.json");
 
-    /** 用户提供的 ffmpeg 可执行文件。 */
+    /**
+     * 酷狗的设备标识与登录凭证。
+     *
+     * <p>不能塞进 {@link #MUSIC_AUTH}：那个文件由 Cadence（{@code music-api} 库）的
+     * {@code MusicCredentialStore} 独占读写，它只认识网易云 cookie 与 QQ 的 musicid/musickey，
+     * 写进去的第三个平台会在它下一次保存时被整段丢掉。</p>
+     */
     public static final File KUGOU_AUTH = new File(CONFIG_DIRECTORY, "kugou_auth.json");
 
-    /** 本模组自有的缓存。将其放在游戏根目录之外，但与小型 JSON 设置分开。 */
+    /**
+     * 汽水音乐的 Passport Cookie 与本地账号资料。
+     *
+     * <p>同样不能写进 {@link #MUSIC_AUTH}；该文件由 Cadence 的凭据存储整段重写。汽水登录
+     * 由宿主自己完成，单独保存也便于退出登录时只清除汽水凭据。</p>
+     */
     public static final File QISHUI_AUTH = new File(CONFIG_DIRECTORY, "qishui_auth.json");
 
-    /** 已下载并解码的音频文件。该目录可能增长到数 GB。 */
+    /**
+     * 用户用「粘贴分享链接/ID」导入的汽水音乐歌单。
+     *
+     * <p>只存歌单引用（歌单 ID + 标题 + 封面 + 曲目数），曲目每次点开时才匿名向上游拉取，
+     * 所以天然与 {@link #QISHUI_AUTH} 的凭据解耦：导入不需要登录，退出登录也不会丢导入的歌单。
+     * 与 {@link #LX_SOURCES} 同理单开一个文件——一份可能不断追加的列表不该挤进每次改设置都重写的
+     * {@link #PLAYER} 主配置。</p>
+     */
+    public static final File QISHUI_PLAYLISTS = new File(CONFIG_DIRECTORY, "qishui_playlists.json");
+
+    /**
+     * Bilibili 的 Web Cookie 与本地账号资料（扫码登录后落盘）。
+     *
+     * <p>与 {@link #KUGOU_AUTH}、{@link #QISHUI_AUTH} 同样的理由单开一个文件：
+     * {@link #MUSIC_AUTH} 由 Cadence 的凭据存储整段重写，只认识网易云 cookie 与 QQ 的
+     * musicid/musickey。B 站的 {@code SESSDATA}/{@code bili_jct} 放进去会在下一次保存时被丢掉。</p>
+     */
+    public static final File BILIBILI_AUTH = new File(CONFIG_DIRECTORY, "bilibili_auth.json");
+
+    /**
+     * 一起听的行为开关。
+     *
+     * <p>单独一个文件而不是塞进 {@link #PLAYER}：这些开关只在房间里有意义，读失败的代价是
+     * 回到默认行为，不该有机会影响播放器主配置的读写。</p>
+     */
     public static final File LISTEN_TOGETHER = new File(CONFIG_DIRECTORY, "listen_together.json");
 
-    /** Skija 本地库的确定性回退解压目录。 */
+    /**
+     * 网易云灰色歌曲解灰的行为开关。
+     *
+     * <p>与 {@link #LISTEN_TOGETHER} 同理单独一个文件：这些开关只在「官方链路已经取不到流」
+     * 之后才生效，读失败的代价仅是回到默认行为，不该有机会影响播放器主配置的读写。</p>
+     */
     public static final File NETEASE_UNBLOCK = new File(CONFIG_DIRECTORY, "netease_unblock.json");
 
     /** 首次运行设置门控。单独保存，使引导状态不会损坏播放器偏好。 */
@@ -63,12 +108,32 @@ public final class ConfigPaths {
     public static final File MUSIC_CACHE = new File(CACHE_DIR, "music");
 
     /**
-     * 移动旧目录。若目标已存在，则逐个合并子项；
-     * 冲突项保留在旧位置，而不被覆盖。
+     * 已解析歌词时间轴的落盘缓存。
+     *
+     * <p>一首歌一个 JSON，按歌曲稳定键的哈希命名，<b>可以随时整个删掉</b>——删掉只会让下次播放
+     * 重新走一遍网络链路，不会丢任何用户数据。放在 cache 而不是配置根，就是为了让这个语义清楚。</p>
      */
     public static final File LYRIC_CACHE = new File(CACHE_DIR, "lyrics");
 
-    // 尽力而为即可：被锁定的文件直接留待下次启动处理。
+    /**
+     * 已算出的 automix 交接计划。
+     *
+     * <p>与 {@link #LYRIC_CACHE} 同一类东西：一首歌一份 JSON，按「退出曲目 → 接入曲目」这一对
+     * 稳定键命名，<b>可以随时整个删掉</b>——删掉只会让下次交接重新跑一遍音频分析，不丢任何
+     * 用户数据。放在 cache 而不是配置根，就是为了让这个语义清楚。</p>
+     *
+     * <p>它值得落盘的原因是分析本身很贵：装了模型的机器要跑一次 Folia（内含 Python 的 stem
+     * 分离进程），纯信号处理那一路也要把两首歌各解码一遍读 PCM。同一对曲目反复出现（列表循环、
+     * 一起听房间里轮流点歌、同一首歌在不同房间里被放）时，重复推理纯属白烧 CPU。</p>
+     */
+    public static final File AUTOMIX_PLAN_CACHE = new File(CACHE_DIR, "automix_plans");
+
+    /**
+     * 每首歌手动设置的歌词时间轴偏移（毫秒）。
+     *
+     * <p>与 {@link #FFMPEG_NOTICE} 同理单独一个文件：这是用户对某首歌的补偿值，读失败的代价只是
+     * 「这首歌回到零偏移」，不该有机会影响播放器主配置的读写。</p>
+     */
     public static final File LYRIC_OFFSETS = new File(CONFIG_DIRECTORY, "lyric_offsets.json");
 
     /**
@@ -82,7 +147,13 @@ public final class ConfigPaths {
     /** Skija 原生库的确定性回退解压目录。 */
     public static final File SKIJA_NATIVE_ROOT = new File(CONFIG_DIRECTORY, "native/skija");
 
-    // 只读/被锁定的旧文件不应阻止模组加载。
+    /**
+     * 「没装 ffmpeg」全屏提示的「永不展示」选择。
+     *
+     * <p>刻意单独一个文件而不是塞进 {@link #HUD}：这个提示要在<b>主菜单</b>就决定要不要弹，
+     * 那时 HUD 配置的读写路径还牵着一整套 HUD 组件；单独一个只有一个布尔值的小文件，读失败也
+     * 只是「再提示一次」，不会影响任何别的设置。</p>
+     */
     public static final File FFMPEG_NOTICE = new File(CONFIG_DIRECTORY, "ffmpeg_notice.json");
 
     /**
@@ -121,6 +192,14 @@ public final class ConfigPaths {
      * 更关键的是一份写坏的脚本存档不能有机会把整个主配置一起拘进去。</p>
      */
     public static final File LX_SOURCES = new File(CONFIG_DIRECTORY, "lx_sources.json");
+
+    /**
+     * 私人 FM 的模式选择（模式 + 场景子模式）。
+     *
+     * <p>与 {@link #FFMPEG_NOTICE} 同理单独一个文件：这只是「上次选了哪个推荐模式」两三个字符串，
+     * 读失败的代价仅是回到默认推荐，不该有机会影响播放器主配置的读写。</p>
+     */
+    public static final File PERSONAL_FM_MODE = new File(CONFIG_DIRECTORY, "personal_fm_mode.json");
 
     /** 首次运行设置门控。独立保存，使引导状态不会污染播放器偏好设置。 */
     public static final File ONBOARDING = new File(CONFIG_DIRECTORY, "onboarding.json");

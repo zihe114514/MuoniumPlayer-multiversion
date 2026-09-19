@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.OptionsUtil;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
+import com.muoniumplayer.core.ncm.music.BilibiliMusicService;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
@@ -30,6 +31,7 @@ import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedImageWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.TextFieldWidget;
+import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import com.muoniumplayer.party.ui.PartyIcons;
@@ -61,6 +63,7 @@ public class AccountManagerOverlay extends NcmSheet {
     private static final Location QQ_QR = Location.of("muonium/textures/account/qq_qr.png");
     private static final Location KUGOU_QR = Location.of("muonium/textures/account/kugou_qr.png");
     private static final Location QISHUI_QR = Location.of("muonium/textures/account/qishui_qr.png");
+    private static final Location BILIBILI_QR = Location.of("muonium/textures/account/bilibili_qr.png");
 
     /** 页眉占掉的高度：图标盘 / 返回键 34 见方 + 上下留白，标题与副标题都在这一段里。 */
     private static final double HEADER_H = 64.0;
@@ -134,9 +137,9 @@ public class AccountManagerOverlay extends NcmSheet {
         requestRunning = false;
         beginPage();
 
-        final Panel dialog = sheet(482, () -> HEADER_H + LEAD + ACCOUNT_ROW * 4 + 44);
+        final Panel dialog = sheet(482, () -> HEADER_H + LEAD + ACCOUNT_ROW * 5 + 44);
         header(dialog, PartyIcons.PERSON, "账号与登录",
-                () -> "凭据只保存在本地 · 四个来源各自独立",
+                () -> "凭据只保存在本地 · 五个来源各自独立",
                 () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
 
         final Panel body = body(dialog, () -> HEADER_H, () -> 44.0);
@@ -147,6 +150,7 @@ public class AccountManagerOverlay extends NcmSheet {
         accountCard(strip(feed, ACCOUNT_ROW), 1, MusicPlatform.QQ);
         accountCard(strip(feed, ACCOUNT_ROW), 2, MusicPlatform.KUGOU);
         accountCard(strip(feed, ACCOUNT_ROW), 3, MusicPlatform.QISHUI);
+        accountCard(strip(feed, ACCOUNT_ROW), 4, MusicPlatform.BILIBILI);
 
         tip(dialog, () -> PartyIcons.LOCK,
                 () -> "登录信息仅保存在本地配置中，界面不会显示 Cookie 内容",
@@ -282,17 +286,28 @@ public class AccountManagerOverlay extends NcmSheet {
         final boolean qqChannelPicker = platform == MusicPlatform.QQ && !loggedIn;
         final boolean wechat = platform == MusicPlatform.QQ && qqLoginChannel == QQLoginChannel.WECHAT;
 
+        final boolean qishuiExpired = platform == MusicPlatform.QISHUI && loggedIn
+                && QishuiMusicService.isReauthRequired();
         statusText = addAccountByQr ? "正在准备扫码添加账号…"
+                : qishuiExpired ? "Cookie 已被上游拒绝：重新扫码，或导入一份新的 Cookie"
                 : loggedIn ? "当前账号已登录"
                 : platform == MusicPlatform.QQ
                 ? (wechat ? "已选择微信登录，点下方按钮获取二维码" : "先选一种登录方式")
                 : "正在获取登录二维码…";
-        statusTone = !addAccountByQr && loggedIn ? 1 : 0;
+        statusTone = qishuiExpired ? 2 : !addAccountByQr && loggedIn ? 1 : 0;
 
         beginPage();
 
         // 页脚按钮排的高度随状态变。算不准的话，内容区要么被按钮盖住、要么白留一大块。
-        final int extras = addAccountByQr || platform != MusicPlatform.NETEASE ? 0 : (loggedIn ? 2 : 1);
+        final int extras;
+        if (addAccountByQr) {
+            extras = 0;
+        } else if (platform == MusicPlatform.NETEASE) {
+            extras = loggedIn ? 2 : 1;
+        } else {
+            // 汽水多一颗 Cookie 导入：手上已经有凭据的人，不必为了换设备再走一次扫码。
+            extras = platform == MusicPlatform.QISHUI ? 1 : 0;
+        }
         final double footer = 48.0 + extras * 36.0;
         final double content = LEAD + (qrVisible ? QR_BLOCK : IDENTITY_BLOCK) + STATUS_BLOCK
                 + (qqChannelPicker ? SEGMENT_BLOCK : 0.0);
@@ -332,11 +347,17 @@ public class AccountManagerOverlay extends NcmSheet {
                         this::showCookieLogin);
             }
         }
+        if (!addAccountByQr && platform == MusicPlatform.QISHUI) {
+            secondaryAction(dialog, 1, () -> PartyIcons.KEY,
+                    () -> loggedIn ? "导入新的 Cookie" : "Cookie 登录",
+                    () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                    this::showQishuiCookieLogin);
+        }
 
-        // 网易云、酷狗与汽水都只有一条扫码链路，进页面就直接取码。QQ 必须先定下走 QQ 还是微信，
+        // 网易云、酷狗、B 站与汽水都只有一条扫码链路，进页面就直接取码。QQ 必须先定下走 QQ 还是微信，
         // 否则会拿 QQ 的码去问微信的状态。
         if ((platform == MusicPlatform.NETEASE || platform == MusicPlatform.KUGOU
-                || platform == MusicPlatform.QISHUI) && qrVisible) {
+                || platform == MusicPlatform.QISHUI || platform == MusicPlatform.BILIBILI) && qrVisible) {
             startQrLogin(platform, token, addAccountByQr);
         }
         if (platform == MusicPlatform.NETEASE && loggedIn && !addAccountByQr) {
@@ -713,6 +734,156 @@ public class AccountManagerOverlay extends NcmSheet {
         return result.has("data") && result.get("data").isJsonObject()
                 && result.getAsJsonObject("data").has("profile")
                 && result.getAsJsonObject("data").get("profile").isJsonObject();
+    }
+
+    // ════════════════════════════ 三级页：汽水 Cookie 登录 ════════════════════════════
+
+    /** 「粘贴」这颗次按钮的固定宽度，剩下的都给「验证并登录」。 */
+    private static final double QISHUI_PASTE_W = 96.0;
+
+    /**
+     * 汽水音乐的手动 Cookie 入口。
+     *
+     * <p>为什么要有这一页：汽水 Passport 的扫码链路要在 Chromium 渲染进程里跑官方安全组件
+     * 生成 a_bogus / msToken，Java 侧复现不了，所以 mod 内不能做扫码。但拿到 cookie 之后的
+     * 全部 /luna/pc/* 接口都不需要签名——于是切成一前一后两个进程：外部工具负责扫码换
+     * cookie，这里负责把那段文本验一遍再用。两边只交换文本，不共享代码。
+     */
+    private void showQishuiCookieLogin() {
+        final long token = pageGeneration.incrementAndGet();
+        detailPlatform = MusicPlatform.QISHUI;
+        requestRunning = false;
+        statusText = "粘贴 Cookie 后会先打一次账号接口验证";
+        statusTone = 0;
+        beginPage();
+
+        final Panel dialog = sheet(452, () -> 200.0);
+        subHeader(dialog, () -> showDetail(MusicPlatform.QISHUI), () -> "Cookie 登录",
+                () -> "仅本地保存 · 校验失败不会覆盖当前登录状态",
+                MusicPlatform.QISHUI::getBrandColor);
+
+        final RoundedRectWidget field = new RoundedRectWidget();
+        dialog.addChild(field);
+        field.setClickable(false);
+        field.setRadius(9);
+        field.setBeforeRenderCallback(() -> {
+            field.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 36);
+            field.setPosition(PAD + CARD_INSET, HEADER_H + 4);
+            field.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+        });
+
+        final TextFieldWidget cookieField = new TextFieldWidget(FontManager.pf12);
+        dialog.addChild(cookieField);
+        cookieField.getTextField().setMaxStringLength(8192);
+        // 不遮成密码框：cookie 过期是常态，用户得能看清自己贴进去的到底是哪一份。
+        cookieField.setEnabled(true).setFocused(true);
+        cookieField.setPlaceholder("粘贴 sessionid=... 或完整 Cookie 字符串");
+        cookieField.drawUnderline(false);
+        cookieField.setBeforeRenderCallback(() -> {
+            cookieField.setBounds(Math.max(1, field.getWidth() - 20), Math.max(1, field.getHeight() - 10));
+            cookieField.setPosition(field.getRelativeX() + 10, field.getRelativeY() + 5);
+            cookieField.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            cookieField.setDisabledTextColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        });
+        stroke(field, 9.0, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                () -> cookieField.isFocused() ? .7 : 0.0);
+
+        tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> HEADER_H + 50);
+
+        // 显式给一颗粘贴按钮，而不是进页面就自动读剪贴板：剪贴板里可能是别的东西。
+        final RoundedButtonWidget paste = action(dialog, () -> PartyIcons.LINK, () -> "粘贴",
+                FontManager.pf12bold, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                () -> fillQishuiCookieFromClipboard(cookieField));
+        paste.setBeforeRenderCallback(() -> {
+            paste.setBounds(QISHUI_PASTE_W, 32);
+            paste.setPosition(PAD + CARD_INSET, dialog.getHeight() - 42);
+            paste.setColor(paste.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+
+        final RoundedButtonWidget confirm = action(dialog,
+                () -> requestRunning ? PartyIcons.HOURGLASS : PartyIcons.CHECK,
+                () -> requestRunning ? "正在校验…" : "验证并登录", FontManager.pf12bold, () -> 0xFFFFFF,
+                () -> submitQishuiCookie(cookieField, token));
+        confirm.setBeforeRenderCallback(() -> {
+            double full = Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2);
+            confirm.setBounds(Math.max(1, full - QISHUI_PASTE_W - 8), 32);
+            confirm.setPosition(paste.getRelativeX() + QISHUI_PASTE_W + 8, dialog.getHeight() - 42);
+            confirm.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF,
+                    confirm.isHovering() ? .16 : 0.0));
+        });
+    }
+
+    /** 填进输入框而不是直接提交：让用户先看见自己要导入的到底是什么。 */
+    private void fillQishuiCookieFromClipboard(final TextFieldWidget cookieField) {
+        String text = KeyboardUtils.getClipboardString();
+        if (text == null || text.trim().isEmpty()) {
+            statusText = "剪贴板是空的：先从汽水 Cookie 工具里复制那份 cookie";
+            statusTone = 2;
+            return;
+        }
+        cookieField.setText(text.trim());
+        statusText = "已填入剪贴板内容，可继续编辑，再点「验证并登录」";
+        statusTone = 1;
+    }
+
+    private void submitQishuiCookie(final TextFieldWidget cookieField, final long token) {
+        if (requestRunning) return;
+        final String cookie = cookieField.getText() == null ? "" : cookieField.getText().trim();
+        if (cookie.isEmpty()) {
+            statusText = "请先粘贴 Cookie";
+            statusTone = 2;
+            return;
+        }
+        requestRunning = true;
+        statusText = "正在验证 Cookie…";
+        statusTone = 3;
+        MultiThreadingUtil.runAsync(() -> {
+            final QishuiMusicService.CookieImport result;
+            try {
+                result = QishuiMusicService.importCookie(cookie);
+            } catch (Throwable throwable) {
+                MultiThreadingUtil.runOnMainThread(() -> {
+                    requestRunning = false;
+                    if (!isCurrent(MusicPlatform.QISHUI, token)) return;
+                    statusText = "Cookie 登录失败：" + safeMessage(throwable);
+                    statusTone = 2;
+                });
+                return;
+            }
+            // 失败路径什么都不写：本地原来登录着谁，就还是谁。
+            if (!result.success) {
+                MultiThreadingUtil.runOnMainThread(() -> {
+                    requestRunning = false;
+                    if (!isCurrent(MusicPlatform.QISHUI, token)) return;
+                    statusText = "Cookie 登录失败：" + result.message;
+                    statusTone = 2;
+                    DownloadDynamicIsland.showNetworkConnectionFailure("汽水音乐账号", result.message);
+                });
+                return;
+            }
+            MultiThreadingUtil.runOnMainThread(() -> {
+                if (!isCurrent(MusicPlatform.QISHUI, token)) return;
+                statusText = result.message + (result.nickname.isEmpty() ? "" : "：" + result.nickname);
+                statusTone = 1;
+                DownloadDynamicIsland.showNetworkConnectionSuccess("汽水音乐账号");
+            });
+            // 成功那一行停留一下再换页。这一觉只能睡在后台线程：主线程 sleep 会把整个游戏冻住半秒，
+            // 用户看到的是点完「验证并登录」之后界面卡死，而不是成功提示。
+            try {
+                Thread.sleep(SUCCESS_HOLD_MILLIS);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            MultiThreadingUtil.runOnMainThread(() -> {
+                requestRunning = false;
+                if (!isCurrent(MusicPlatform.QISHUI, token)) return;
+                NCMScreen.getInstance().markDirty();
+                showDetail(MusicPlatform.QISHUI);
+            });
+        });
     }
     // ════════════════════════════ 三级页：已保存账号 ════════════════════════════
 
@@ -1094,6 +1265,7 @@ public class AccountManagerOverlay extends NcmSheet {
     private Location getQrLocation(MusicPlatform platform) {
         if (platform == MusicPlatform.KUGOU) return KUGOU_QR;
         if (platform == MusicPlatform.QISHUI) return QISHUI_QR;
+        if (platform == MusicPlatform.BILIBILI) return BILIBILI_QR;
         return platform == MusicPlatform.QQ ? QQ_QR : NETEASE_QR;
     }
 
@@ -1104,6 +1276,7 @@ public class AccountManagerOverlay extends NcmSheet {
         if (platform == MusicPlatform.QQ && qqLoginChannel == QQLoginChannel.WECHAT) return "微信";
         if (platform == MusicPlatform.KUGOU) return "酷狗音乐客户端";
         if (platform == MusicPlatform.QISHUI) return "抖音 App";
+        if (platform == MusicPlatform.BILIBILI) return "哔哩哔哩 App";
         if (platform == MusicPlatform.QQ) return "手机 QQ";
         return "网易云音乐客户端";
     }
@@ -1119,12 +1292,19 @@ public class AccountManagerOverlay extends NcmSheet {
             String accountId = QishuiMusicService.getAccountId();
             if (!accountId.isEmpty()) return "汽水账号 " + accountId;
         }
+        if (platform == MusicPlatform.BILIBILI) {
+            String uid = BilibiliMusicService.getAccountId();
+            if (!uid.isEmpty()) return "B 站 UID " + uid;
+        }
         return platform.getDisplayName() + " · 已登录";
     }
 
     private boolean isAccountVip(MusicPlatform platform) {
         if (platform == MusicPlatform.QISHUI) {
             return NeteaseMusicService.isLoggedIn(platform) && QishuiMusicService.isVipAccount();
+        }
+        if (platform == MusicPlatform.BILIBILI) {
+            return NeteaseMusicService.isLoggedIn(platform) && BilibiliMusicService.isVipAccount();
         }
         return isNeteaseVip(platform);
     }
@@ -1158,6 +1338,7 @@ public class AccountManagerOverlay extends NcmSheet {
     private static String brandGlyph(MusicPlatform platform) {
         if (platform == MusicPlatform.KUGOU) return MusicBrandIcons.KUGOU_MONOGRAM;
         if (platform == MusicPlatform.QISHUI) return MusicBrandIcons.QISHUI_MONOGRAM;
+        if (platform == MusicPlatform.BILIBILI) return MusicBrandIcons.BILIBILI_MONOGRAM;
         return platform == MusicPlatform.QQ ? MusicBrandIcons.QQ_MUSIC : MusicBrandIcons.NETEASE_CLOUD_MUSIC;
     }
 
@@ -1166,9 +1347,12 @@ public class AccountManagerOverlay extends NcmSheet {
      *
      * <p>必须配对到自己那份字体：music-brand-icons 里没有 U+E888（QQ 音乐），拿错字体会落到
      * 兜底字体上、画出一片空白。酷狗两份图标字体里都没有，用正文字体画一枚汉字字标。</p>
+     *
+     * <p>这一对只在 {@link BrandVectorIcons} 画不出来时兜底：酷狗、B 站与汽水现在都有真矢量标识。</p>
      */
     private static CFontRenderer brandFont(MusicPlatform platform) {
-        if (platform == MusicPlatform.KUGOU || platform == MusicPlatform.QISHUI) return FontManager.pf34bold;
+        if (platform == MusicPlatform.KUGOU || platform == MusicPlatform.QISHUI
+                || platform == MusicPlatform.BILIBILI) return FontManager.pf34bold;
         return platform == MusicPlatform.QQ ? FontManager.qqMusicIcon68 : FontManager.musicBrand52;
     }
 

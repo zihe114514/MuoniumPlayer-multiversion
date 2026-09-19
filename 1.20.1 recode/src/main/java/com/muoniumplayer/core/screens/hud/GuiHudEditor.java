@@ -438,7 +438,7 @@ public class GuiHudEditor extends GuiScreen {
         if (lyricSettingsDirty) {
             lyricSettingsDirty = false;
         }
-        HudConfig.hudEditorModernUi = true;
+        HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_MODERN;
         HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_BUILTIN;
         HudConfig.save();
         mc.setScreen(new GuiHudEditorPro());

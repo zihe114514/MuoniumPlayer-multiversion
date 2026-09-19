@@ -114,6 +114,12 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     /** 界面字体选择：与主题调色板同层，换字体后整个界面（含本浮层）当帧生效。 */
     public FontPickerOverlay fontPickerOverlay = null;
 
+    /** 汽水歌单导入面板：侧栏「导入歌单」的二级界面，自由输入/粘贴链接，全程匿名。 */
+    public QishuiImportOverlay qishuiImportOverlay = null;
+
+    /** B 站稿件导入面板：侧栏「导入稿件」的二级界面，输入/粘贴链接后解析成合集或分P歌单打开。 */
+    public BilibiliImportOverlay bilibiliImportOverlay = null;
+
     /** 对取消收藏等破坏性操作的二次确认层。 */
     public ConfirmationOverlay confirmationOverlay = null;
 
@@ -596,6 +602,34 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             }
             StencilClipManager.endClip();
         }
+        // 汽水歌单导入面板：与字体选择同层的二级弹窗，含可编辑输入框，滚轮一并下发。
+        if (this.qishuiImportOverlay != null) {
+            StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+            this.qishuiImportOverlay.setBounds(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight());
+            this.qishuiImportOverlay.setAlpha(alpha);
+            this.qishuiImportOverlay.renderWidget(mouseX, mouseY, dWheel);
+            if (this.qishuiImportOverlay.shouldClose()) {
+                this.qishuiImportOverlay.dispose();
+                this.qishuiImportOverlay = null;
+            }
+            StencilClipManager.endClip();
+        }
+        // B 站稿件导入面板：与汽水导入同层的二级弹窗，同样含可编辑输入框，滚轮一并下发。
+        if (this.bilibiliImportOverlay != null) {
+            StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+            this.bilibiliImportOverlay.setBounds(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight());
+            this.bilibiliImportOverlay.setAlpha(alpha);
+            this.bilibiliImportOverlay.renderWidget(mouseX, mouseY, dWheel);
+            if (this.bilibiliImportOverlay.shouldClose()) {
+                this.bilibiliImportOverlay.dispose();
+                this.bilibiliImportOverlay = null;
+            }
+            StencilClipManager.endClip();
+        }
         // 账号管理始终位于最上层，并独占鼠标/滚轮输入。
         if (this.accountManagerOverlay != null) {
             StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
@@ -893,6 +927,20 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.fontPickerOverlay.onInit();
     }
 
+    /** 打开汽水歌单导入面板（二级界面）；同样先回收旧实例，避免两层叠在一起。 */
+    public void openQishuiImport() {
+        if (this.qishuiImportOverlay != null) this.qishuiImportOverlay.dispose();
+        this.qishuiImportOverlay = new QishuiImportOverlay();
+        this.qishuiImportOverlay.onInit();
+    }
+
+    /** 打开 B 站稿件导入面板（二级界面）；先回收旧实例，避免两层叠在一起。 */
+    public void openBilibiliImport() {
+        if (this.bilibiliImportOverlay != null) this.bilibiliImportOverlay.dispose();
+        this.bilibiliImportOverlay = new BilibiliImportOverlay();
+        this.bilibiliImportOverlay.onInit();
+    }
+
     /** 打开二级源中心，而不改变当前内容页。 */
     public void openMusicSourceManager() {
         if (this.musicSourceOverlay != null) this.musicSourceOverlay.dispose();
@@ -948,6 +996,28 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 return;
             }
             this.fontPickerOverlay.onKeyTypedReceived(typedChar, keyCode);
+            return;
+        }
+
+        if (this.qishuiImportOverlay != null) {
+            // 与字体选择同理：输入框聚焦时会吞掉所有按键，ESC 必须抢在控件树之前处理，
+            // 其余按键下发给输入框，否则打字与 Ctrl+V 粘贴都没有反应。
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                this.qishuiImportOverlay.handleEscape();
+                return;
+            }
+            this.qishuiImportOverlay.onKeyTypedReceived(typedChar, keyCode);
+            return;
+        }
+
+        if (this.bilibiliImportOverlay != null) {
+            // 同汽水导入面板：这是一层带可编辑输入框的模态，ESC 之外还要把按键原样下发，
+            // 否则只能靠「粘贴」按钮填链接，打字和 Ctrl+V 都会像没反应。
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                this.bilibiliImportOverlay.handleEscape();
+                return;
+            }
+            this.bilibiliImportOverlay.onKeyTypedReceived(typedChar, keyCode);
             return;
         }
 
@@ -1042,6 +1112,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 || this.confirmationOverlay != null
                 || this.themePaletteOverlay != null
                 || this.fontPickerOverlay != null
+                || this.qishuiImportOverlay != null
+                || this.bilibiliImportOverlay != null
                 || this.musicSourceOverlay != null
                 || this.listenTogetherOverlay != null
                 || this.mpPartyOverlay != null
@@ -1077,6 +1149,16 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         if (this.fontPickerOverlay != null) {
             this.fontPickerOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            return;
+        }
+
+        if (this.qishuiImportOverlay != null) {
+            this.qishuiImportOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            return;
+        }
+
+        if (this.bilibiliImportOverlay != null) {
+            this.bilibiliImportOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
             return;
         }
 

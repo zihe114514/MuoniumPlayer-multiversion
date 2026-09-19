@@ -120,18 +120,18 @@ public final class UpdateChecker {
     /**
      * 【临时调试开关】强制把一个界面顶出来看效果，看完必须改回 {@code OFF}。
      *
-     * <p>清单里的版本号目前比本地旧（远端 1.4.9 / 本地 1.4.12），走真实链路根本弹不出来，
+     * <p>清单里的版本号目前比本地旧（远端 1.4.12 / 本地 1.5.0），走真实链路根本弹不出来，
      * 所以调试期直接指定要预览哪一套界面：</p>
      * <ul>
      *   <li>{@code OFF} —— 正常逻辑，只有这一个值是发布状态；</li>
      *   <li>{@code OUTDATED} —— 预览「有新版本」那一套（内容取 {@link #previewEntry()}，
-     *       版本号写死 1.4.13，断网也能稳定复现；可以连点三次「跳过」看锁死效果）；</li>
+     *       版本号写死 1.5.1，断网也能稳定复现；可以连点三次「跳过」看锁死效果）；</li>
      *   <li>{@code FAILED} —— 预览「连不上服务器」那一套（不联网，直接进失败状态）。</li>
      * </ul>
      *
      * <p>调试状态下检查线程不联网、失败计数也不写盘。注意 {@code OUTDATED} 预览会真的把
      * 额度用掉：测完请把 {@code config/muonium/update_notice.json} 删掉，否则里面记的
-     * {@code skipCountVersion=1.4.13} 会让以后真发 1.4.13 时的额度从 0 开始 ——
+     * {@code skipCountVersion=1.5.1} 会让以后真发 1.5.1 时的额度从 0 开始 ——
      * 用户一看到提示就是锁死状态。</p>
      */
     private enum Preview { OFF, OUTDATED, FAILED }
@@ -670,7 +670,7 @@ public final class UpdateChecker {
     /** 调试开关打开时用的演示条目：版本号故意比当前高一档，保证界面进入「有更新」的分支。 */
     private static UpdateManifest.Entry previewEntry() {
         return new UpdateManifest.Entry(
-                "1.4.13",
+                "1.5.1",
                 DOWNLOAD_PAGE,
                 "新增：重写 ffmpeg 缺失提示与更新提示的界面渲染；"
                         + "修复：界面文字因宽度上限被裁成空串而整行不显示；"

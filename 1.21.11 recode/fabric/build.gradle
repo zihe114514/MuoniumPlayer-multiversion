@@ -13,6 +13,10 @@ loom {
     // 不启用 splitEnvironmentSourceSets，全部代码留在 main，与共享源树目录结构一一对应。
     accessWidenerPath = file('src/main/resources/muoniumplayer.accesswidener')
 
+    // 开发环境（runClient）日志降噪：见根目录 log4j-dev-noise.xml 的说明。
+    // Loom 会把自己的配置和这里追加的配置以逗号拼成 -Dlog4j.configurationFile，log4j2 自动合并。
+    log4jConfigs.from(rootProject.file('log4j-dev-noise.xml'))
+
     // 移植期验收辅助：设了 MU_QUICKPLAY=<存档文件夹名> 就直接进存档，
     // 不用在标题界面盲点鼠标（合成按键只在有焦点的窗口生效，标题界面点起来很不稳）。
     runs {

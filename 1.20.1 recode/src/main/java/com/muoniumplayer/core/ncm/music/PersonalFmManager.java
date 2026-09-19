@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -8,9 +9,12 @@ import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
+import com.muoniumplayer.core.settings.ConfigPaths;
+import com.muoniumplayer.core.settings.JsonConfigStorage;
 import com.muoniumplayer.core.utils.json.JsonUtils;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -29,7 +33,8 @@ public final class PersonalFmManager {
         DEFAULT("默认推荐", ""),
         FAMILIAR("熟悉模式", ""),
         EXPLORE("探索模式", ""),
-        SCENE_RCMD("场景推荐", ""),
+        SCENE_RCMD("场景推荐", SCENE_FOCUS),
+        PUZZLE_MODE_RCMD("拼图模式", ""),
         AIDJ("AI DJ", "");
 
         private final String displayName;
@@ -53,6 +58,59 @@ public final class PersonalFmManager {
     public static final String SCENE_FOCUS = "FOCUS";
     public static final String SCENE_NIGHT_EMO = "NIGHT_EMO";
 
+    /**
+     * 官方文档「私人 FM 模式选择」列出的全部 42 个场景子模式，按界面分组顺序排列。
+     * 分组标题与成员一一对应；每个子模式的展示中文名在 {@link #SCENE_LABELS}。
+     */
+    public static final String[] SCENE_GROUP_TITLES = {"流行热歌", "风格流派", "情绪心情", "生活场景"};
+    public static final String[][] SCENE_GROUP_MODES = {
+            {"CHINESE", "ENGLISH", "YUEYU", "K_POP", "JAPANESE", "GLOBAL", "FRANCH",
+                    "ACG", "JINGDIAN", "ORIGINAL_MUSICIAL"},
+            {"ROCK", "RAP", "RHYTHM_BLUES", "ELECTRONIC", "JAZZ", "BLUE", "PUNK", "LATIN",
+                    "COUNTRY", "GUDIAN", "LIGHT", "GUOFENG", "FOLK", "DANCE", "MANYAO",
+                    "MUSICAL", "YINGSHI", "GAMES"},
+            {"FOCUS", "NIGHT_EMO", "CHEERFUL", "LYRICAL", "CURE", "SWEET", "INSPIRATIONAL"},
+            {SCENE_EXERCISE, "SLEEP_HELP", "RELAX", "RAINY", "COMMUTE", "TAKE_SHOWER", "COFFEE_SHOP"}
+    };
+
+    /** 场景子模式 → 界面中文名。这份映射同时是子模式合法性的唯一白名单来源。 */
+    private static final java.util.Map<String, String> SCENE_LABELS = new java.util.LinkedHashMap<>();
+
+    static {
+        String[][] names = {
+                {"华语", "欧美", "粤语", "K-Pop", "日语", "全球", "法语", "二次元", "经典", "宝藏原创"},
+                {"摇滚", "说唱", "R&B", "电音", "爵士", "蓝调", "放克", "拉丁", "乡村乐", "古典",
+                        "轻音乐", "国风", "民谣", "舞蹈", "慢摇DJ", "音乐剧", "影视", "游戏"},
+                {"专注", "伤感", "欢快", "抒情", "治愈", "情歌", "励志"},
+                {"运动", "助眠", "放松", "雨天", "出行", "洗澡", "咖啡馆"}
+        };
+        for (int group = 0; group < SCENE_GROUP_MODES.length; group++) {
+            String[] modes = SCENE_GROUP_MODES[group];
+            if (modes.length != names[group].length) {
+                throw new IllegalStateException("私人 FM 场景分组与中文名数量不一致：group " + group);
+            }
+            for (int index = 0; index < modes.length; index++) SCENE_LABELS.put(modes[index], names[group][index]);
+        }
+    }
+
+    /** 场景子模式在界面上的短名；未登记的子模式返回空串。 */
+    public static String sceneLabel(String subMode) {
+        String label = subMode == null ? null : SCENE_LABELS.get(subMode);
+        return label == null ? "" : label;
+    }
+
+    /** 场景子模式总数（官方文档当前为 42 项），供测试与界面钉住。 */
+    public static int sceneCount() {
+        return SCENE_LABELS.size();
+    }
+
+    /** 当前选中模式（含场景子模式）的完整展示文案，如「场景推荐 · 专注」。 */
+    public static String getSelectionLabel() {
+        Mode mode = selectedMode;
+        String scene = sceneLabel(selectedSubMode);
+        return scene.isEmpty() ? mode.getDisplayName() : mode.getDisplayName() + " · " + scene;
+    }
+
     /** 私人 FM 刻意采用拉取模式：每次恰好只取一条推荐。 */
     private static final int BATCH_SIZE = 1;
     private static final int RECENT_ID_LIMIT = 24;
@@ -72,6 +130,11 @@ public final class PersonalFmManager {
     private static volatile Mode selectedMode = Mode.DEFAULT;
     private static volatile String selectedSubMode = "";
     private static volatile String status = "进入后获取 1 首私人 FM 推荐";
+
+    /** 模式选择的落盘状态。与 {@link #selectedMode} 分开加锁：读写只发生在用户切换与首次取数时。 */
+    private static final Gson SETTINGS_GSON = new Gson();
+    private static final Object SETTINGS_LOCK = new Object();
+    private static boolean settingsLoaded;
 
     private PersonalFmManager() {
     }
@@ -104,6 +167,7 @@ public final class PersonalFmManager {
 
     /** 在 FM 面板首次打开时加载一次；出错时错误会一直可见，直到用户刷新。 */
     public static void ensureInitialLoad() {
+        ensureSettingsLoaded();
         if (currentBatch.isEmpty() && !LOADING.get() && INITIAL_REQUEST_ISSUED.compareAndSet(false, true)) {
             requestBatch(selectedMode, selectedSubMode, true);
         }
@@ -117,8 +181,10 @@ public final class PersonalFmManager {
 
 
     public static void selectMode(Mode mode, String subMode) {
+        ensureSettingsLoaded();
         selectedMode = mode == null ? Mode.DEFAULT : mode;
         selectedSubMode = selectedMode == Mode.SCENE_RCMD ? normalizeSceneSubMode(subMode) : "";
+        persistSelection();
         requestBatch(selectedMode, selectedSubMode, CloudMusic.isPersonalFmActive());
     }
 
@@ -181,7 +247,7 @@ public final class PersonalFmManager {
             try {
                 List<Music> loaded = fetchRecommendations();
                 currentBatch = Collections.unmodifiableList(loaded);
-                status = selectedMode.getDisplayName() + " · " + loaded.size() + " 首推荐";
+                status = getSelectionLabel() + " · " + loaded.size() + " 首推荐";
                 // playFm() 自身会建立隔离的 FM session，因此首次进入不得
                 // 需要一个已处于活跃状态的 FM session 才能自动启动。
                 if (startPlaybackAfterLoad) {
@@ -328,7 +394,7 @@ public final class PersonalFmManager {
             return;
         }
         currentBatch = Collections.singletonList(song);
-        status = selectedMode.getDisplayName() + " · 正在播放推荐";
+        status = getSelectionLabel() + " · 正在播放推荐";
         notifyUi();
     }
 
@@ -460,10 +526,57 @@ public final class PersonalFmManager {
     }
 
     private static String normalizeSceneSubMode(String subMode) {
-        if (SCENE_EXERCISE.equals(subMode) || SCENE_FOCUS.equals(subMode) || SCENE_NIGHT_EMO.equals(subMode)) {
-            return subMode;
+        if (SCENE_LABELS.containsKey(subMode)) return subMode;
+        return Mode.SCENE_RCMD.getDefaultSubMode();
+    }
+
+    /** 首次触碰模式选择时读一次上次的选择；读失败一律当作「没用过，保持默认」。 */
+    private static void ensureSettingsLoaded() {
+        synchronized (SETTINGS_LOCK) {
+            if (settingsLoaded) return;
+            settingsLoaded = true;
+            try {
+                File file = ConfigPaths.PERSONAL_FM_MODE;
+                if (!file.isFile()) return;
+                JsonObject root = JsonConfigStorage.readObject(file, SETTINGS_GSON);
+                if (root == null) return;
+                Mode mode = parsePersistedMode(string(root, "mode"));
+                if (mode == null) return;
+                selectedMode = mode;
+                selectedSubMode = mode == Mode.SCENE_RCMD ? normalizeSceneSubMode(string(root, "subMode")) : "";
+            } catch (Throwable ignored) {
+            }
         }
-        return SCENE_FOCUS;
+    }
+
+    private static Mode parsePersistedMode(String name) {
+        if (name == null) return null;
+        try {
+            return Mode.valueOf(name);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private static String string(JsonObject object, String key) {
+        if (object == null || !object.has(key) || object.get(key).isJsonNull()) return null;
+        return object.get(key).getAsString();
+    }
+
+    /** 立刻落盘当前选择。写失败只会让下次启动回到上次的选择，不打扰用户。 */
+    private static void persistSelection() {
+        synchronized (SETTINGS_LOCK) {
+            settingsLoaded = true;
+            try {
+                File parent = ConfigPaths.PERSONAL_FM_MODE.getParentFile();
+                if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.isDirectory()) return;
+                JsonObject root = new JsonObject();
+                root.addProperty("mode", selectedMode.name());
+                if (!selectedSubMode.isEmpty()) root.addProperty("subMode", selectedSubMode);
+                JsonConfigStorage.writeObject(ConfigPaths.PERSONAL_FM_MODE, SETTINGS_GSON, root);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     private static String safeMessage(Throwable throwable) {

@@ -1489,7 +1489,13 @@ public final class MpPartyOverlay extends NCMPanel {
             MpTrack track = queueAt(list, slot);
             if (track == null) return "";
             StringBuilder sb = new StringBuilder();
-            if (has(track.artist)) sb.append(track.artist);
+            // 「交接点已算好」放在最前：它是这一行唯一一条关于「房间现在处于什么状态」的信息，
+            // 后面两句都是静态元数据。没有它，分析这件事在整个界面上完全不可见。
+            if (track.planReady) sb.append("无缝已就绪");
+            if (has(track.artist)) {
+                if (sb.length() > 0) sb.append("  ·  ");
+                sb.append(track.artist);
+            }
             if (has(track.requesterName)) {
                 if (sb.length() > 0) sb.append("  ·  ");
                 sb.append("点歌 ").append(track.requesterName);
@@ -1497,7 +1503,10 @@ public final class MpPartyOverlay extends NCMPanel {
             return sb.toString();
         }, FontManager.pf10bold);
         sub.setBeforeRenderCallback(() -> {
-            sub.setColor(secondary());
+            // 有标记时用强调色：这一行会在整列灰字里跳出来，用户一眼就能看到「这首已经准备好了」。
+            MpTrack track = queueAt(list, slot);
+            sub.setColor(track != null && track.planReady
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT) : secondary());
             sub.setMaxWidth(Math.max(1, bg.getWidth() - 230));
             sub.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             sub.setPosition(52, 26);
