@@ -140,6 +140,14 @@ final class QQQrcLyricService {
     }
 
     private static List<LyricLine> parse(Payload payload, String cacheKey) {
+        return parse(payload, cacheKey, true);
+    }
+
+    /**
+     * @param requireWordByWord 是否只要逐字。自动链路必须是 {@code true}（见下方判断处的注释），
+     *                          手动弹窗传 {@code false}——用户点的那一条就是他要的那一条。
+     */
+    private static List<LyricLine> parse(Payload payload, String cacheKey, boolean requireWordByWord) {
         if (payload == null || payload.qrc == null || payload.qrc.trim().isEmpty()) return Collections.emptyList();
         List<LyricLine> parsed = new ArrayList<LyricLine>();
         try {
@@ -148,7 +156,7 @@ final class QQQrcLyricService {
             System.err.println("[Music/QQ-QRC] QRC parse failed for " + cacheKey + ": " + failure.getMessage());
             return Collections.emptyList();
         }
-        if (!LyricParser.hasWordByWordTiming(parsed)) {
+        if (requireWordByWord && !LyricParser.hasWordByWordTiming(parsed)) {
             // 只有行级结果:平台兜底链路能给出带翻译的完整 LRC,没必要用这个替代。
             return Collections.emptyList();
         }
@@ -179,6 +187,47 @@ final class QQQrcLyricService {
     static void invalidate(Music music) {
         if (music == null) return;
         CACHE.remove(music.getStableKey());
+    }
+
+    // ── 手动搜索弹窗（LyricSearchService）──────────────────────────────────────
+
+    /**
+     * 按关键词搜一批 QQ 候选，原样交给调用方去显示与打分。
+     *
+     * <p>自动链路里那条 {@link #fetchBySearch(Music)} 不能拿来用：它把「搜 → 打分 → 只留最好一条 →
+     * 取词」一次做完了，而手动弹窗要的恰恰是<b>把候选摊开让人自己挑</b>——机器挑错过一次，
+     * 用户才进来的这一层。</p>
+     */
+    static JsonArray manualCandidates(String keyword, int limit) {
+        return search(keyword, limit);
+    }
+
+    /**
+     * 按用户点中的那一条候选取歌词：不搜、不打一分，也不看熔断之外任何脸色。
+     *
+     * <p>与 {@link #resolve(Music)} 唯一的区别是<b>不要求逐字</b>。自动链路宁可行级也不贴错版本，
+     * 所以 {@code parse} 会把只有行级的 QRC 丢掉；但这里"哪一版"已经由用户确认了，QQ 那份行级文本
+     * 连同翻译就是他要点的东西，再拒一次只会让他看见"点了保存却什么都没变"。</p>
+     */
+    static List<LyricLine> manualResolve(JsonObject candidate) {
+        if (candidate == null) return Collections.emptyList();
+        long songId = numeric(text(candidate, "songid"));
+        if (songId <= 0L) return Collections.emptyList();
+
+        Payload payload = fetchLyric(songId, text(candidate, "songname"), singerName(candidate),
+                text(candidate, "albumname"), Math.max(0, intOf(candidate, "interval")), "manual");
+        List<LyricLine> lines = parse(payload, "manual:" + songId, false);
+        if (lines.isEmpty() || LyricParser.hasWordByWordTiming(lines)) return lines;
+
+        // 逐字轨之外的曲目，接口在同一个 {@code lyric} 字段里给的是普通行级文本。按 QRC 语法解不出
+        // 音节≠没有歌词，这里按格式嗅探再解一遍（顺手把翻译/罗马音一并交进去）。
+        try {
+            List<LyricLine> sniffed = LyricParser.parseLyricText(payload.qrc, payload.translation,
+                    payload.romanization);
+            if (!sniffed.isEmpty()) return sniffed;
+        } catch (Throwable ignored) {
+        }
+        return lines;
     }
 
     // ── 直接命中 QQ songid ──────────────────────────────────────────────────
@@ -282,13 +331,17 @@ final class QQQrcLyricService {
     }
 
     private static JsonArray search(String keyword) {
+        return search(keyword, SEARCH_PAGE_SIZE);
+    }
+
+    private static JsonArray search(String keyword, int limit) {
         if (Thread.currentThread().isInterrupted()) return null;
         if (safe(keyword).trim().isEmpty()) return null;
         Map<String, String> params = new LinkedHashMap<String, String>();
         params.put("w", keyword.trim());
         params.put("format", "json");
         params.put("p", "1");
-        params.put("n", String.valueOf(SEARCH_PAGE_SIZE));
+        params.put("n", String.valueOf(Math.max(1, Math.min(limit, 50))));
 
         Map<String, String> headers = new HashMap<String, String>();
         headers.put("Accept", "application/json");

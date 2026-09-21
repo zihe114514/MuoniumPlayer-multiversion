@@ -102,14 +102,31 @@ class KuGouStaticTest {
     }
 
     @Test
-    @DisplayName("已失效的 v6/priv_url 与设备注册链路不再被调用")
+    @DisplayName("v6/priv_url 只允许当备选兜底，不许进主路径")
     void deadEndpointsAreGone() throws Exception {
         // 断言只看「代码里有没有真的引用它」，不看散文：KuGouDevice 的类注释里会解释
         // 「为什么放弃了设备注册」，用 contains 判断会把那段解释本身当成违规。
         // 所以匹配的是端点路径字面量与调用形式，而不是裸的接口名。
         String api = read("KuGouMusicApi.java");
-        assertFalse(api.contains("\"/v6/priv_url\""),
-                "v6/priv_url 恒返回 error_code=20010，不能再当主路径");
+        // /v6 现在是「开了开关、且前两级都拿不到地址」时才打的兜底。它没有任何定论：
+        // 本仓只在标准版身份下实测过失败，概念版没测过，所以既不删掉它，也不许它挤进主路径。
+        assertTrue(api.contains("\"/v6/priv_url\""), "备选取流要留着，概念版还没测过");
+        int start = api.indexOf("public static Stream privUrl(");
+        assertTrue(start > 0, "/v6 的实现必须收在 privUrl 里");
+        int end = api.indexOf("private static String albumAudioIdForRequest(");
+        assertTrue(end > 0 && end < start, "privUrl 写在取流辅助区之后");
+        int nextSection = api.indexOf("/** 一次递归找到的候选地址", start);
+        String outsidePrivUrl = api.substring(0, start)
+                + api.substring(nextSection < 0 ? api.length() : nextSection);
+        assertFalse(outsidePrivUrl.contains("\"/v6/priv_url\""),
+                "/v6 只许出现在 privUrl 一个方法里：主路径 /v5/url 与老 cdn 都不许改走它");
+
+        String service = readService("KuGouMusicService.java");
+        assertTrue(service.contains("isKuGouPrivUrlFallbackEnabled()"),
+                "备选取流必须受开关保护，默认关");
+        assertTrue(service.indexOf("privUrlFallback(") > service.indexOf("KuGouMusicApi.songUrl(track, tier("),
+                "兜底要排在 /v5 阶梯与旧三档链路之后，不能抢先");
+
         assertFalse(api.contains("tdrk.kugou.com") || api.contains("trackercdngz"),
                 "授权接口同样不可用，不应保留调用");
         String device = read("KuGouDevice.java");

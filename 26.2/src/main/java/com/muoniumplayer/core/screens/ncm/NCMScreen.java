@@ -117,8 +117,14 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     /** 汽水歌单导入面板：侧栏「导入歌单」的二级界面，自由输入/粘贴链接，全程匿名。 */
     public QishuiImportOverlay qishuiImportOverlay = null;
 
-    /** B 站稿件导入面板：侧栏「导入稿件」的二级界面，输入/粘贴链接后解析成合集或分P歌单打开。 */
-    public BilibiliImportOverlay bilibiliImportOverlay = null;
+    /**
+     * 歌词搜索弹窗：给正在放的这首歌手动挑一份歌词（四张源标签 + 候选列表 + 预览）。
+     *
+     * <p>它和导入面板是同一类东西 —— 带可编辑输入框的模态，所以键盘、滚轮、ESC 都按那套走。
+     * 层级放在导入面板之上、账号管理之下：从侧栏打开它时不该被导入面板挡住。</p>
+     */
+    public LyricSearchOverlay lyricSearchOverlay = null;
+
 
     /** 对取消收藏等破坏性操作的二次确认层。 */
     public ConfirmationOverlay confirmationOverlay = null;
@@ -616,17 +622,32 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             }
             StencilClipManager.endClip();
         }
-        // B 站稿件导入面板：与汽水导入同层的二级弹窗，同样含可编辑输入框，滚轮一并下发。
-        if (this.bilibiliImportOverlay != null) {
+        // 歌词搜索弹窗：两栏宽面板，同样有输入框，键盘/滚轮由它独占。
+        //
+        // 这一页的排版数值是照 folia 的 CSS px 抄来的（弹窗最大宽 1024、卡片高 92、正文 14），
+        // 只有在「1 单位 = 1 CSS px」那一档里才成立。播放器自己的轴是它的对折（见
+        // {@link WindowAdaptiveScale#designWidth()}），照抄的数值落在那条轴上就整体大一倍：
+        // {@code max-w-5xl} 永远夹不到，只剩 {@code 85vh} 那一档在夹，接近正方形的弹窗被压成一条
+        // 横幅。所以这一层单独换轴 —— 绕原点乘上倍率的倒数，边界与鼠标坐标一起乘上倍率。
+        // 三者必须一起改：只换绘制不换命中，就是看得见点不着。
+        //
+        // 倍率不是写死的对折，而是用户那一档「弹窗界面缩放」——见
+        // {@link WindowAdaptiveScale#lyricSearchUnitsPerLayout()}。那一层的 pf14 与播放器主界面
+        // 的 pf14 是否一样大，全看这一档；放大是整层等比，弹窗内部与 folia 的比例一点没动。
+        if (this.lyricSearchOverlay != null) {
             StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
                     basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
-            this.bilibiliImportOverlay.setBounds(basePanel.getX(), basePanel.getY(),
-                    basePanel.getWidth(), basePanel.getHeight());
-            this.bilibiliImportOverlay.setAlpha(alpha);
-            this.bilibiliImportOverlay.renderWidget(mouseX, mouseY, dWheel);
-            if (this.bilibiliImportOverlay.shouldClose()) {
-                this.bilibiliImportOverlay.dispose();
-                this.bilibiliImportOverlay = null;
+            final double unit = WindowAdaptiveScale.lyricSearchUnitsPerLayout();
+            api.getGLStateManager().pushMatrix();
+            api.getGLStateManager().scale(1.0 / unit, 1.0 / unit, 1);
+            this.lyricSearchOverlay.setBounds(basePanel.getX() * unit, basePanel.getY() * unit,
+                    basePanel.getWidth() * unit, basePanel.getHeight() * unit);
+            this.lyricSearchOverlay.setAlpha(alpha);
+            this.lyricSearchOverlay.renderWidget(mouseX * unit, mouseY * unit, dWheel);
+            api.getGLStateManager().popMatrix();
+            if (this.lyricSearchOverlay.shouldClose()) {
+                this.lyricSearchOverlay.dispose();
+                this.lyricSearchOverlay = null;
             }
             StencilClipManager.endClip();
         }
@@ -934,11 +955,26 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.qishuiImportOverlay.onInit();
     }
 
-    /** 打开 B 站稿件导入面板（二级界面）；先回收旧实例，避免两层叠在一起。 */
-    public void openBilibiliImport() {
-        if (this.bilibiliImportOverlay != null) this.bilibiliImportOverlay.dispose();
-        this.bilibiliImportOverlay = new BilibiliImportOverlay();
-        this.bilibiliImportOverlay.onInit();
+    /**
+     * 打开歌词搜索弹窗（二级界面），目标默认就是正在播的这一首。
+     *
+     * <p>它一次只服务一首歌：弹窗在构造时就把目标记死了，中途切歌不会让它变成另一首
+     * 的搜索，所以重复打开一律换成新实例，而不是复用旧的。</p>
+     */
+    public void openLyricSearch() {
+        openLyricSearch(CloudMusic.currentlyPlaying);
+    }
+
+    /**
+     * 给指定的一首歌开手动选词弹窗（歌单行上的入口）。
+     *
+     * <p>目标不一定是正在播的那首，所以弹窗里的预览时钟会停住，钉词也只写这一首的配置。</p>
+     */
+    public void openLyricSearch(Music target) {
+        if (target == null) return;
+        if (this.lyricSearchOverlay != null) this.lyricSearchOverlay.dispose();
+        this.lyricSearchOverlay = new LyricSearchOverlay(target);
+        this.lyricSearchOverlay.onInit();
     }
 
     /** 打开一起听面板；重复打开时先回收上一次的实例，避免两层叠在一起。 */
@@ -1010,14 +1046,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             return;
         }
 
-        if (this.bilibiliImportOverlay != null) {
-            // 同汽水导入面板：这是一层带可编辑输入框的模态，ESC 之外还要把按键原样下发，
-            // 否则只能靠「粘贴」按钮填链接，打字和 Ctrl+V 都会像没反应。
+        if (this.lyricSearchOverlay != null) {
+            // 同导入面板：ESC 必须抢在控件树之前，否则焦点在搜索框里时按 ESC 会先吃掉一层。
             if (keyCode == Keyboard.KEY_ESCAPE) {
-                this.bilibiliImportOverlay.handleEscape();
+                this.lyricSearchOverlay.handleEscape();
                 return;
             }
-            this.bilibiliImportOverlay.onKeyTypedReceived(typedChar, keyCode);
+            this.lyricSearchOverlay.onKeyTypedReceived(typedChar, keyCode);
             return;
         }
 
@@ -1113,7 +1148,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 || this.themePaletteOverlay != null
                 || this.fontPickerOverlay != null
                 || this.qishuiImportOverlay != null
-                || this.bilibiliImportOverlay != null
+                || this.lyricSearchOverlay != null
                 || this.musicSourceOverlay != null
                 || this.listenTogetherOverlay != null
                 || this.mpPartyOverlay != null
@@ -1157,8 +1192,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             return;
         }
 
-        if (this.bilibiliImportOverlay != null) {
-            this.bilibiliImportOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+        if (this.lyricSearchOverlay != null) {
+            // 这一层画在弹窗自己那条轴上（见 {@link #drawScreen} 里那次换轴），命中坐标必须
+            // 一起乘上去，否则点的是卡片、命中的是卡片左上角那一小块。
+            final double unit = WindowAdaptiveScale.lyricSearchUnitsPerLayout();
+            this.lyricSearchOverlay.onMouseClickReceived(mouseX * unit, mouseY * unit, mouseButton);
             return;
         }
 

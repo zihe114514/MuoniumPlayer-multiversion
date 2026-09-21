@@ -9,6 +9,7 @@ import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.BilibiliMusicService;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseAccountProfiles;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
@@ -43,6 +44,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.DoubleSupplier;
+import java.util.function.IntPredicate;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
@@ -105,6 +107,22 @@ public class AccountManagerOverlay extends NcmSheet {
      * 才能保证选了微信之后走的是微信那条会话、而不是误用 QQ 的二维码。
      */
     private volatile QQLoginChannel qqLoginChannel = QQLoginChannel.QQ;
+
+    /**
+     * 酷狗这一次要按<b>哪个身份</b>扫码：标准版（酷狗音乐）还是概念版。
+     *
+     * <p>与 QQ 的「QQ / 微信」同性质——都是一个必须在发起会话前定下来的选择，因为
+     * 两条链路签出来的是<b>两种凭证</b>（二维码里嵌的 appid 一个是 1005、一个是 3116），
+     * 拿到 token 之后所有请求的 appid、签名盐与取流参数都得跟着它走。中途换档会出现
+     * 「扫码成功但什么都放不出」。</p>
+     *
+     * <p>不落盘：它只是「下一次扫码用哪个身份」，而登录成功之后该用哪个身份记在凭证里
+     * （{@code kugou_auth.json} 的 {@code profile} 字段）。</p>
+     */
+    private volatile boolean kuGouConceptLogin;
+
+    /** 二段选择器里左/右两半的文案。 */
+    private static final String[] KUGOU_VARIANTS = {"酷狗音乐", "酷狗概念版"};
 
     private enum QQLoginChannel {
         QQ,
@@ -282,17 +300,26 @@ public class AccountManagerOverlay extends NcmSheet {
         qrReady = false;
 
         final boolean loggedIn = NeteaseMusicService.isLoggedIn(platform);
-        final boolean qrVisible = !loggedIn || addAccountByQr;
+        // 汽水的扫码链路已经坏在上游（Passport 取码/轮询都拿不到可用状态），二维码整块先下线，
+        // 登录只留 Cookie 这一条路：未登录时连身份卡都不摆，页面就是「说明 + 一颗 Cookie 登录按钮」。
+        final boolean qishuiCookieOnly = platform == MusicPlatform.QISHUI;
+        final boolean qrVisible = (!loggedIn || addAccountByQr) && !qishuiCookieOnly;
         final boolean qqChannelPicker = platform == MusicPlatform.QQ && !loggedIn;
         final boolean wechat = platform == MusicPlatform.QQ && qqLoginChannel == QQLoginChannel.WECHAT;
+        // 酷狗的身份要在取码之前就定下来（两种客户端签的是两种凭证），所以选择器与二维码同页。
+        final boolean kugouVariantPicker = platform == MusicPlatform.KUGOU && !loggedIn;
 
         final boolean qishuiExpired = platform == MusicPlatform.QISHUI && loggedIn
                 && QishuiMusicService.isReauthRequired();
         statusText = addAccountByQr ? "正在准备扫码添加账号…"
-                : qishuiExpired ? "Cookie 已被上游拒绝：重新扫码，或导入一份新的 Cookie"
+                : qishuiExpired ? "Cookie 已被上游拒绝：用外部工具重新获取一份 Cookie，再点下方按钮导入"
                 : loggedIn ? "当前账号已登录"
                 : platform == MusicPlatform.QQ
                 ? (wechat ? "已选择微信登录，点下方按钮获取二维码" : "先选一种登录方式")
+                : platform == MusicPlatform.KUGOU && kuGouConceptLogin
+                ? "已选酷狗概念版：请用概念版 App 扫码，标准版扫不开这张码"
+                : qishuiCookieOnly
+                ? "汽水音乐登录需要外部工具：可前往网盘或 QQ 群下载外部工具获取 Cookie"
                 : "正在获取登录二维码…";
         statusTone = qishuiExpired ? 2 : !addAccountByQr && loggedIn ? 1 : 0;
 
@@ -304,19 +331,27 @@ public class AccountManagerOverlay extends NcmSheet {
             extras = 0;
         } else if (platform == MusicPlatform.NETEASE) {
             extras = loggedIn ? 2 : 1;
+        } else if (platform == MusicPlatform.KUGOU) {
+            // 常有一颗「备选取流」开关；没登录时再多一颗 token 粘贴登录。
+            extras = loggedIn ? 1 : 2;
+        } else if (qishuiCookieOnly) {
+            // 未登录时「Cookie 登录」就是主按钮，不再单占次级排；已登录后保留一颗换 Cookie。
+            extras = loggedIn ? 1 : 0;
         } else {
-            // 汽水多一颗 Cookie 导入：手上已经有凭据的人，不必为了换设备再走一次扫码。
-            extras = platform == MusicPlatform.QISHUI ? 1 : 0;
+            extras = 0;
         }
         final double footer = 48.0 + extras * 36.0;
-        final double content = LEAD + (qrVisible ? QR_BLOCK : IDENTITY_BLOCK) + STATUS_BLOCK
-                + (qqChannelPicker ? SEGMENT_BLOCK : 0.0);
+        final double headBlock = qrVisible ? QR_BLOCK
+                : (loggedIn || !qishuiCookieOnly ? IDENTITY_BLOCK : 0.0);
+        final double content = LEAD + headBlock + STATUS_BLOCK
+                + (qqChannelPicker || kugouVariantPicker ? SEGMENT_BLOCK : 0.0);
 
         final Panel dialog = sheet(462, () -> HEADER_H + content + footer);
         subHeader(dialog, addAccountByQr ? this::showSavedNeteaseAccounts : this::showOverview,
                 () -> addAccountByQr ? "扫码添加网易云账号" : platform.getDisplayName() + "账号",
                 () -> addAccountByQr ? "扫码成功后自动回到已保存账号"
                         : loggedIn ? "本地已保存这个账号的登录凭据"
+                        : qishuiCookieOnly ? "扫码已下线 · 需用外部工具获取 Cookie（网盘 / QQ群）"
                         : "请使用" + scanClientName(platform) + "扫码并确认",
                 platform::getBrandColor);
 
@@ -325,12 +360,17 @@ public class AccountManagerOverlay extends NcmSheet {
         strip(feed, LEAD);
         if (qrVisible) {
             qrBlock(strip(feed, QR_BLOCK), 0, platform);
-        } else {
+        } else if (headBlock > 0.0) {
             identityBlock(strip(feed, IDENTITY_BLOCK), 0, platform);
+        } else {
+            strip(feed, 0.0);
         }
         tip(strip(feed, STATUS_BLOCK), this::statusGlyph, () -> statusText, this::statusColor, () -> 6.0);
         if (qqChannelPicker) {
             channelSegment(strip(feed, SEGMENT_BLOCK));
+        }
+        if (kugouVariantPicker) {
+            profileSegment(strip(feed, SEGMENT_BLOCK));
         }
 
         primaryAction(dialog, platform, loggedIn, addAccountByQr);
@@ -347,17 +387,28 @@ public class AccountManagerOverlay extends NcmSheet {
                         this::showCookieLogin);
             }
         }
-        if (!addAccountByQr && platform == MusicPlatform.QISHUI) {
-            secondaryAction(dialog, 1, () -> PartyIcons.KEY,
-                    () -> loggedIn ? "导入新的 Cookie" : "Cookie 登录",
+        if (!addAccountByQr && qishuiCookieOnly && loggedIn) {
+            // 未登录时 Cookie 已经升成主按钮；这一颗只服务「已登录、想换一份新 Cookie」。
+            secondaryAction(dialog, 1, () -> PartyIcons.KEY, () -> "导入新的 Cookie",
                     () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
                     this::showQishuiCookieLogin);
         }
+        if (!addAccountByQr && platform == MusicPlatform.KUGOU) {
+            // 手上已经有 App 抓到的 token 时，不必为了换设备再扫一次码。与网易云那侧的
+            // 「Cookie 登录」同性质，所以放在同一个位置上。
+            if (!loggedIn) {
+                secondaryAction(dialog, 1, () -> PartyIcons.KEY, () -> "Token 登录",
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                        this::showKuGouTokenLogin);
+            }
+            kuGouPrivUrlAction(dialog, loggedIn ? 1 : 2);
+        }
 
-        // 网易云、酷狗、B 站与汽水都只有一条扫码链路，进页面就直接取码。QQ 必须先定下走 QQ 还是微信，
-        // 否则会拿 QQ 的码去问微信的状态。
+        // 网易云与 B 站都只有一条扫码链路，进页面就直接取码。QQ 必须先定下走 QQ 还是微信，
+        // 否则会拿 QQ 的码去问微信的状态；酷狗要先看清选的是哪个身份（两种客户端签两种凭证）。
+        // 汽水的二维码已下线（链路坏在上游），不在这一条里。
         if ((platform == MusicPlatform.NETEASE || platform == MusicPlatform.KUGOU
-                || platform == MusicPlatform.QISHUI || platform == MusicPlatform.BILIBILI) && qrVisible) {
+                || platform == MusicPlatform.BILIBILI) && qrVisible) {
             startQrLogin(platform, token, addAccountByQr);
         }
         if (platform == MusicPlatform.NETEASE && loggedIn && !addAccountByQr) {
@@ -452,6 +503,74 @@ public class AccountManagerOverlay extends NcmSheet {
      * 「这是二选一」，而两颗独立按钮看上去像两个可以各自开关的选项。</p>
      */
     private void channelSegment(final Panel row) {
+        segmentChooser(row, () -> qqLoginChannel == QQLoginChannel.WECHAT ? 1 : 0,
+                MusicPlatform.QQ.getBrandColor(), 0x4CAF72,
+                new String[]{FontelloIcons.QQ, FontelloIcons.WECHAT},
+                new String[]{"QQ 扫码", "微信登录"},
+                index -> {
+                    // 一条会话正在跑就不换链路：否则会出现「用 QQ 的码去问微信的状态」。
+                    // 返回 false 与原来的写法等价——那一次点击不作数，继续往下透传。
+                    if (requestRunning) return false;
+                    qqLoginChannel = index == 0 ? QQLoginChannel.QQ : QQLoginChannel.WECHAT;
+                    statusText = index == 0
+                            ? "已选择 QQ 扫码，点下方按钮获取二维码"
+                            : "已选择微信登录，点下方按钮获取二维码";
+                    statusTone = 0;
+                    return true;
+                });
+    }
+
+    /**
+     * 酷狗的身份分段控件（标准版 / 概念版）。
+     *
+     * <p>与 QQ 那一档的<b>关键差别</b>：这条链路两边共用同一批端点，只是签出来的凭证不同，
+     * 所以换身份时不必等人去点「开始扫码登录」——直接把当前这张码作废、按新身份重取一张。
+     * 留着旧码的话，用户点了概念版却扫到一张标准版的码，是这条入口最容易踩的坑。</p>
+     */
+    private void profileSegment(final Panel row) {
+        segmentChooser(row, () -> kuGouConceptLogin ? 1 : 0,
+                MusicPlatform.KUGOU.getBrandColor(), MusicPlatform.KUGOU.getBrandColor(),
+                new String[]{"", ""}, KUGOU_VARIANTS,
+                index -> {
+                    boolean concept = index == 1;
+                    if (concept == kuGouConceptLogin) return true;
+                    kuGouConceptLogin = concept;
+                    restartKuGouQr();
+                    return true;
+                });
+    }
+
+    /**
+     * 换身份之后重开一次酷狗扫码会话。
+     *
+     * <p>不换页、不重建控件：只把 {@code pageGeneration} 抬一格，上一轮轮询在下一次
+     * {@link #isCurrent} 检查时自己退出，然后按新身份重新取码。{@code requestRunning}
+     * 在这里直接归零是<b>有意的</b>：老循环可能在它自己的失败分支里再写一次 false，
+     * 那只会让按钮文案闪一下，不会开出第二条并发会话（新会话已经把它置回 true，
+     * 而老循环退出前不会再取码）。</p>
+     */
+    private void restartKuGouQr() {
+        long token = pageGeneration.incrementAndGet();
+        requestRunning = false;
+        qrReady = false;
+        statusText = kuGouConceptLogin
+                ? "已切到酷狗概念版，正在重新获取二维码…"
+                : "已切回酷狗音乐，正在重新获取二维码…";
+        statusTone = 0;
+        startQrLogin(MusicPlatform.KUGOU, token);
+    }
+
+    /**
+     * 二段选择器：一条轨道 + 一颗滑动的滑块 + 两个透明命中区。
+     *
+     * <p>滑块位置每帧从 {@code selected} 读，所以外部那个 volatile 字段一改，滑块就自己滑过去，
+     * 不需要谁来通知；文字与图标的颜色跟着同一个插值走，落点才不会突然换个色。</p>
+     *
+     * @param onSelect 点了第几半（0 左、1 右）；返回 {@code false} 表示这一次点击不作数
+     */
+    private void segmentChooser(final Panel row, final IntSupplier selected, final int leftColor,
+                                final int rightColor, final String[] glyphs, final String[] texts,
+                                final IntPredicate onSelect) {
         final RoundedRectWidget track = new RoundedRectWidget();
         row.addChild(track);
         track.setClickable(false);
@@ -462,27 +581,27 @@ public class AccountManagerOverlay extends NcmSheet {
             track.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
 
-        final double[] slide = {qqLoginChannel == QQLoginChannel.WECHAT ? 1.0 : 0.0};
+        final double[] slide = {selected.getAsInt() == 1 ? 1.0 : 0.0};
         final RoundedRectWidget knob = new RoundedRectWidget();
         track.addChild(knob);
         knob.setClickable(false);
         knob.setRadius(9);
         knob.setBeforeRenderCallback(() -> {
             slide[0] = Interpolations.interpolate(slide[0],
-                    qqLoginChannel == QQLoginChannel.WECHAT ? 1.0 : 0.0, .26f);
+                    selected.getAsInt() == 1 ? 1.0 : 0.0, .26f);
             double half = Math.max(1, (track.getWidth() - 8) * .5);
             knob.setBounds(half, Math.max(1, track.getHeight() - 8));
             knob.setPosition(4 + half * slide[0], 4);
             // 颜色跟着滑块一起走：落点才不会突然换个色。
-            knob.setColor(mix(MusicPlatform.QQ.getBrandColor(), 0x4CAF72, slide[0]));
+            knob.setColor(mix(leftColor, rightColor, slide[0]));
         });
 
-        channelHalf(track, QQLoginChannel.QQ, FontelloIcons.QQ, "QQ 扫码", 0, slide);
-        channelHalf(track, QQLoginChannel.WECHAT, FontelloIcons.WECHAT, "微信登录", 1, slide);
+        segmentHalf(track, glyphs[0], texts[0], 0, slide, onSelect);
+        segmentHalf(track, glyphs[1], texts[1], 1, slide, onSelect);
     }
 
-    private void channelHalf(final RoundedRectWidget track, final QQLoginChannel channel, final String mark,
-                             final String text, final int index, final double[] slide) {
+    private void segmentHalf(final RoundedRectWidget track, final String mark, final String text,
+                             final int index, final double[] slide, final IntPredicate onSelect) {
         // [0] 图标左边缘、[1] 文字左边缘，都是相对轨道自身的坐标。
         final double[] slot = new double[2];
         final IntSupplier ink = () -> mix(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), 0xFFFFFF,
@@ -493,15 +612,7 @@ public class AccountManagerOverlay extends NcmSheet {
         track.addChild(hit);
         hit.setRadius(9);
         hit.setShouldOverrideMouseCursor(true);
-        hit.setOnClickCallback((x, y, button) -> {
-            if (button != 0 || requestRunning) return false;
-            qqLoginChannel = channel;
-            statusText = channel == QQLoginChannel.WECHAT
-                    ? "已选择微信登录，点下方按钮获取二维码"
-                    : "已选择 QQ 扫码，点下方按钮获取二维码";
-            statusTone = 0;
-            return true;
-        });
+        hit.setOnClickCallback((x, y, button) -> button == 0 && onSelect.test(index));
         hit.setBeforeRenderCallback(() -> {
             double half = Math.max(1, (track.getWidth() - 8) * .5);
             hit.setBounds(half, Math.max(1, track.getHeight() - 8));
@@ -530,11 +641,14 @@ public class AccountManagerOverlay extends NcmSheet {
     private void primaryAction(final Panel dialog, final MusicPlatform platform,
                                final boolean loggedIn, final boolean addAccountByQr) {
         final boolean signOut = loggedIn && !addAccountByQr;
+        // 汽水没登录时主按钮就是 Cookie 登录：它的扫码链路已下线，不该再挂一颗会取码的按钮。
+        final boolean qishuiCookie = platform == MusicPlatform.QISHUI && !loggedIn && !addAccountByQr;
         final RoundedButtonWidget button = action(dialog,
                 () -> signOut ? PartyIcons.LOGOUT : requestRunning ? PartyIcons.HOURGLASS : PartyIcons.KEY,
                 () -> signOut ? "退出登录"
                         : requestRunning ? "等待扫码…"
-                        : addAccountByQr ? "重新获取二维码" : "开始扫码登录",
+                        : addAccountByQr ? "重新获取二维码"
+                        : qishuiCookie ? "Cookie 登录" : "开始扫码登录",
                 FontManager.pf12bold, () -> 0xFFFFFF,
                 () -> {
                     if (addAccountByQr) {
@@ -546,6 +660,8 @@ public class AccountManagerOverlay extends NcmSheet {
                         }
                     } else if (NeteaseMusicService.isLoggedIn(platform)) {
                         logout(platform);
+                    } else if (qishuiCookie) {
+                        showQishuiCookieLogin();
                     } else if (!requestRunning) {
                         startQrLogin(platform, pageGeneration.get());
                     }
@@ -759,7 +875,7 @@ public class AccountManagerOverlay extends NcmSheet {
 
         final Panel dialog = sheet(452, () -> 200.0);
         subHeader(dialog, () -> showDetail(MusicPlatform.QISHUI), () -> "Cookie 登录",
-                () -> "仅本地保存 · 校验失败不会覆盖当前登录状态",
+                () -> "需要外部工具获取 Cookie：网盘 / QQ群下载 · 仅本地保存",
                 MusicPlatform.QISHUI::getBrandColor);
 
         final RoundedRectWidget field = new RoundedRectWidget();
@@ -819,7 +935,7 @@ public class AccountManagerOverlay extends NcmSheet {
     private void fillQishuiCookieFromClipboard(final TextFieldWidget cookieField) {
         String text = KeyboardUtils.getClipboardString();
         if (text == null || text.trim().isEmpty()) {
-            statusText = "剪贴板是空的：先从汽水 Cookie 工具里复制那份 cookie";
+            statusText = "剪贴板是空的：先用外部工具（网盘 / QQ群下载）换取汽水 Cookie，再复制过来";
             statusTone = 2;
             return;
         }
@@ -885,6 +1001,194 @@ public class AccountManagerOverlay extends NcmSheet {
             });
         });
     }
+    // ════════════════════════════ 三级页：酷狗 token 登录 ════════════════════════════
+
+    /**
+     * 酷狗的 {@code token} + {@code userid} 粘贴登录。
+     *
+     * <p><b>必须是 App 侧的 token。</b>浏览器 Cookie 里那个 {@code token} 是 Web 会话凭证
+     * （{@code a_id=1014}），在网关上稳定报 {@code 20006}——那不是参数写错，是两种凭证本就不同源。
+     * 占位符与状态行都写着这件事，否则用户会拿浏览器 Cookie 反复试。</p>
+     *
+     * <p>校验走「必须登录态」的只读请求，失败时<b>什么都不写</b>：本地原来登着谁就还是谁。</p>
+     */
+    private void showKuGouTokenLogin() {
+        final long token = pageGeneration.incrementAndGet();
+        detailPlatform = MusicPlatform.KUGOU;
+        requestRunning = false;
+        // 这一页内的身份选择单独一份：粘贴进来的 token 是哪个客户端签的，只有用户知道，
+        // 不能拿「上一次扫码选了谁」替它决定。
+        final boolean[] concept = {kuGouConceptLogin};
+        statusText = "只有酷狗 App 抓包或扫码得到的 token 才能通过校验";
+        statusTone = 0;
+        beginPage();
+
+        final Panel dialog = sheet(452, () -> 262.0);
+        subHeader(dialog, () -> showDetail(MusicPlatform.KUGOU), () -> "Token 登录",
+                () -> "仅本地保存 · 校验失败不会覆盖当前登录状态",
+                MusicPlatform.KUGOU::getBrandColor);
+
+        final TextFieldWidget tokenField = textField(dialog, HEADER_H + 4, 36,
+                "粘贴 App 侧 token（不是浏览器 Cookie 里的 token）", 4096, true);
+        final TextFieldWidget userIdField = textField(dialog, HEADER_H + 48, 34,
+                "userid（纯数字的酷狗 ID）", 32, false);
+
+        tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> HEADER_H + 96);
+
+        final RoundedButtonWidget paste = action(dialog, () -> PartyIcons.LINK, () -> "粘贴 token",
+                FontManager.pf12bold, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                () -> fillKuGouTokenFromClipboard(tokenField));
+        paste.setBeforeRenderCallback(() -> {
+            paste.setBounds(QISHUI_PASTE_W, 32);
+            paste.setPosition(PAD + CARD_INSET, dialog.getHeight() - 42);
+            paste.setColor(paste.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+
+        final RoundedButtonWidget confirm = action(dialog,
+                () -> requestRunning ? PartyIcons.HOURGLASS : PartyIcons.CHECK,
+                () -> requestRunning ? "正在校验…" : "验证并登录", FontManager.pf12bold, () -> 0xFFFFFF,
+                () -> submitKuGouToken(tokenField, userIdField, concept, token));
+        confirm.setBeforeRenderCallback(() -> {
+            double full = Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2);
+            confirm.setBounds(Math.max(1, full - QISHUI_PASTE_W - 8), 32);
+            confirm.setPosition(paste.getRelativeX() + QISHUI_PASTE_W + 8, dialog.getHeight() - 42);
+            confirm.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF,
+                    confirm.isHovering() ? .16 : 0.0));
+        });
+
+        // 身份选择放在按钮排上面一行：这张 token 属于哪个客户端，是提交之前最后一个能改的东西。
+        final RoundedButtonWidget variant = action(dialog, () -> PartyIcons.PERSON,
+                () -> "签发客户端：" + KUGOU_VARIANTS[concept[0] ? 1 : 0],
+                FontManager.pf12bold,
+                () -> concept[0] ? OK_COLOR : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                () -> {
+                    concept[0] = !concept[0];
+                    statusText = concept[0]
+                            ? "已按概念版身份校验：token 要抓自酷狗概念版 App"
+                            : "已按标准版身份校验：token 要抓自酷狗音乐 App";
+                    statusTone = 0;
+                });
+        variant.setBeforeRenderCallback(() -> {
+            variant.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 30);
+            variant.setPosition(PAD + CARD_INSET, dialog.getHeight() - 42 - 36);
+            variant.setColor(variant.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+    }
+
+    /**
+     * 一个「圆角底 + 输入框」的组合。
+     *
+     * <p>抽出来是因为 token 登录这一页有两个输入框，而这两处版式必须完全一致——
+     * 复制两份的结果通常是第二个框的描边忘了接、焦点看起来永远停在第一个上。</p>
+     */
+    private TextFieldWidget textField(final Panel dialog, final double y, final double height,
+                                      final String placeholder, final int maxLength,
+                                      final boolean autoFocus) {
+        final RoundedRectWidget backing = new RoundedRectWidget();
+        dialog.addChild(backing);
+        backing.setClickable(false);
+        backing.setRadius(9);
+        backing.setBeforeRenderCallback(() -> {
+            backing.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), height);
+            backing.setPosition(PAD + CARD_INSET, y);
+            backing.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+        });
+
+        final TextFieldWidget field = new TextFieldWidget(FontManager.pf12);
+        dialog.addChild(field);
+        field.getTextField().setMaxStringLength(maxLength);
+        // 不遮成密码框：凭证过期是常态，用户得能看清自己贴进去的到底是哪一份。
+        field.setEnabled(true);
+        if (autoFocus) field.setFocused(true);
+        field.setPlaceholder(placeholder);
+        field.drawUnderline(false);
+        field.setBeforeRenderCallback(() -> {
+            field.setBounds(Math.max(1, backing.getWidth() - 20), Math.max(1, backing.getHeight() - 10));
+            field.setPosition(backing.getRelativeX() + 10, backing.getRelativeY() + 5);
+            field.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            field.setDisabledTextColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        });
+        stroke(backing, 9.0, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                () -> field.isFocused() ? .7 : 0.0);
+        return field;
+    }
+
+    /** 填进输入框而不是直接提交：让用户先看见自己要导入的到底是什么。 */
+    private void fillKuGouTokenFromClipboard(final TextFieldWidget tokenField) {
+        String text = KeyboardUtils.getClipboardString();
+        if (text == null || text.trim().isEmpty()) {
+            statusText = "剪贴板是空的：先复制酷狗 App 的 token";
+            statusTone = 2;
+            return;
+        }
+        tokenField.setText(text.trim());
+        statusText = "已填入剪贴板内容，可继续编辑，再点「验证并登录」";
+        statusTone = 1;
+    }
+
+    private void submitKuGouToken(final TextFieldWidget tokenField, final TextFieldWidget userIdField,
+                                  final boolean[] concept, final long token) {
+        if (requestRunning) return;
+        final String value = tokenField.getText() == null ? "" : tokenField.getText().trim();
+        final String userId = userIdField.getText() == null ? "" : userIdField.getText().trim();
+        if (value.isEmpty() || userId.isEmpty()) {
+            statusText = "token 与 userid 都要填，缺一不可";
+            statusTone = 2;
+            return;
+        }
+        requestRunning = true;
+        statusText = "正在用这条凭证打一次只读请求…";
+        statusTone = 3;
+        MultiThreadingUtil.runAsync(() -> {
+            // loginWithToken 内部就是「先落盘 → 用必须登录态的接口验一次 → 不通就回滚」，
+            // 所以这里不需要自己再判一次权限；它返回 false 时本地状态没有被碰过。
+            final boolean ok = KuGouMusicService.loginWithToken(value, userId, concept[0]);
+            MultiThreadingUtil.runOnMainThread(() -> {
+                requestRunning = false;
+                if (!isCurrent(MusicPlatform.KUGOU, token)) return;
+                if (ok) {
+                    statusText = "登录成功：" + KuGouMusicService.getProfileLabel();
+                    statusTone = 1;
+                    DownloadDynamicIsland.showNetworkConnectionSuccess("酷狗账号");
+                } else {
+                    statusText = "校验失败：不是 App 侧 token、已失效，或签发客户端选错";
+                    statusTone = 2;
+                    DownloadDynamicIsland.showNetworkConnectionFailure("酷狗账号", "token 校验未通过");
+                    return;
+                }
+                NCMScreen.getInstance().markDirty();
+                showDetail(MusicPlatform.KUGOU);
+            });
+        });
+    }
+
+    /**
+     * 「备选取流 /v6」开关，放在酷狗账号页。
+     *
+     * <p>为什么不放进设置页而放这里：它只对酷狗有意义，而且是一条<b>没有定论</b>的路径——
+     * 本仓只在标准版身份下实测过它失败，概念版从没测过。默认关，开着也只会在
+     * {@code /v5/url} 阶梯与老 trackercdn 都拿不到地址时多打一次请求，所以它不会
+     * 拖慢正常播放，只是一个「什么都不行了再试它一下」的最后兜底。</p>
+     */
+    private void kuGouPrivUrlAction(final Panel dialog, final int index) {
+        secondaryAction(dialog, index, () -> PartyIcons.WARNING,
+                () -> "备选取流 /v6：" + (NCMPlayerConfig.isKuGouPrivUrlFallbackEnabled() ? "已开启" : "已关闭"),
+                () -> NCMPlayerConfig.isKuGouPrivUrlFallbackEnabled()
+                        ? OK_COLOR : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                () -> {
+                    boolean enabled = !NCMPlayerConfig.isKuGouPrivUrlFallbackEnabled();
+                    NCMPlayerConfig.setKuGouPrivUrlFallbackEnabled(enabled);
+                    statusText = enabled
+                            ? "已开启：前两级拿不到地址时再试 /v6/priv_url；结果会打在日志里（概念版未实测）"
+                            : "已关闭：取流只走实测可用的 /v5/url 与老 trackercdn";
+                    statusTone = enabled ? 2 : 0;
+                });
+    }
+
     // ════════════════════════════ 三级页：已保存账号 ════════════════════════════
 
     private void showSavedNeteaseAccounts() {
@@ -1114,11 +1418,14 @@ public class AccountManagerOverlay extends NcmSheet {
         // 微信是一条独立的会话：取码与轮询都必须成对地走微信那两个方法。在这里一次性定下来，
         // 循环里就不会出现「用 QQ 的码去问微信的状态」这类跨链路误用。
         final boolean wechat = platform == MusicPlatform.QQ && qqLoginChannel == QQLoginChannel.WECHAT;
+        // 酷狗同理：概念版与标准版签的是两种凭证。轮询这一侧不必再传一次——
+        // createQrSession 已经把身份记在 KuGouMusicService 的会话里，checkQr 跟着它走。
+        final boolean kuGouConcept = platform == MusicPlatform.KUGOU && kuGouConceptLogin;
         MultiThreadingUtil.runAsync(() -> {
             try {
                 QrCode qr = wechat
                         ? NeteaseMusicService.createQqWechatQrCode()
-                        : NeteaseMusicService.createQrCode(platform);
+                        : NeteaseMusicService.createQrCode(platform, kuGouConcept);
                 if (!isCurrent(platform, token)) return;
                 loadQrTexture(platform, qr.getQrContent(), token);
                 publishQrStatus(platform, token, "等待扫码 · 正在持续检查登录状态…", 3);
@@ -1236,7 +1543,14 @@ public class AccountManagerOverlay extends NcmSheet {
 
     private void loadQrTexture(MusicPlatform platform, String content, long token) throws Exception {
         BufferedImage image;
-        if (platform == MusicPlatform.QQ || platform == MusicPlatform.QISHUI) {
+        // 有的端点回一段可重新编码的文本，有的直接回一张画好的 PNG，这一句挑的是后者。
+        // <b>QQ 与汽水必须按平台写死</b>：它们回的是<b>不带 {@code data:} 前缀</b>的裸 base64，
+        // 只看前缀会把那段 base64 当成二维码文本去重画，画出来的码扫不出登录。
+        // 其余平台按内容前缀判断，于是「上游给图」与「本地生成」能共用一条路径——
+        // 酷狗概念版走前者（从没实测过，上游给什么图就用什么图），标准版仍是后者（实测能扫）。
+        boolean upstreamImage = platform == MusicPlatform.QQ || platform == MusicPlatform.QISHUI
+                || (content != null && content.startsWith("data:image"));
+        if (upstreamImage) {
             String encoded = content == null ? "" : content;
             int comma = encoded.indexOf(',');
             if (comma >= 0) encoded = encoded.substring(comma + 1);
@@ -1274,7 +1588,14 @@ public class AccountManagerOverlay extends NcmSheet {
     /** 扫码提示里该出现的客户端名。微信那条链路要扫的是微信，不是 QQ 音乐。 */
     private String scanClientName(MusicPlatform platform) {
         if (platform == MusicPlatform.QQ && qqLoginChannel == QQLoginChannel.WECHAT) return "微信";
-        if (platform == MusicPlatform.KUGOU) return "酷狗音乐客户端";
+        if (platform == MusicPlatform.KUGOU) {
+            // <b>没登录时问的是「这一次要扫哪个身份」，已登录时问的是「这张凭证是哪个客户端签的」</b>：
+            // 两者不是一回事——选了概念版还没扫，提示就该让人用概念版 App；已经登上了，
+            // 再按选择器说就成了假话（凭证可能是上次登的标准版）。
+            return (NeteaseMusicService.isLoggedIn(platform)
+                    ? KuGouMusicService.isConceptProfile() : kuGouConceptLogin)
+                    ? "酷狗概念版客户端" : "酷狗音乐客户端";
+        }
         if (platform == MusicPlatform.QISHUI) return "抖音 App";
         if (platform == MusicPlatform.BILIBILI) return "哔哩哔哩 App";
         if (platform == MusicPlatform.QQ) return "手机 QQ";
@@ -1295,6 +1616,13 @@ public class AccountManagerOverlay extends NcmSheet {
         if (platform == MusicPlatform.BILIBILI) {
             String uid = BilibiliMusicService.getAccountId();
             if (!uid.isEmpty()) return "B 站 UID " + uid;
+        }
+        if (platform == MusicPlatform.KUGOU) {
+            // 身份<b>跟着凭证走，不跟着选择器走</b>：一台机器上两种客户端的账号都可能登过，
+            // 而这次会话选的是「下一次扫码用哪个身份」，与已经登着的那个不是一回事。
+            String name = KuGouMusicService.getAccountName();
+            String label = KuGouMusicService.getProfileLabel();
+            return name == null || name.isEmpty() ? label + " · 已登录" : label + " · " + name;
         }
         return platform.getDisplayName() + " · 已登录";
     }

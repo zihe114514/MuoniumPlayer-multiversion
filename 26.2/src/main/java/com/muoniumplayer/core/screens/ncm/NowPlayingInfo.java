@@ -236,6 +236,10 @@ final class NowPlayingInfo implements SharedRenderingConstants {
                 return "QQ MUSIC";
             case KUGOU:
                 return "KUGOU";
+            case KUWO:
+                return "KUWO";
+            case MIGU:
+                return "MIGU";
             case YOUTUBE:
                 return "YOUTUBE";
             case BILIBILI:

@@ -45,6 +45,15 @@ public final class KuGouHttp {
     /** 老 trackercdn，只作最后兜底。 */
     public static final String TRACKER_CDN = "https://trackercdn.kugou.com";
 
+    /**
+     * {@code /v6/priv_url} 的域名。
+     *
+     * <p>它与 {@link #GATEWAY} 不是一回事：{@code /v5/url} 是「打到 gateway、用 {@code x-router}
+     * 转给 trackercdn」，而 {@code /v6/priv_url} 在参考实现里<b>直连 tracker 且不带任何
+     * {@code x-router}</b>。协议是 http 不是 https（参考实现原样），照搬不改。</p>
+     */
+    public static final String TRACKER = "http://tracker.kugou.com";
+
     /** 老移动端网关，免签。 */
     public static final String MOBILE_CDN = "http://mobilecdn.kugou.com";
 
@@ -72,6 +81,21 @@ public final class KuGouHttp {
     public static final String APP_ID = "1005";
     public static final String CLIENT_VER = "20489";
     public static final String SRC_APP_ID = "2919";
+
+    /**
+     * 当前身份的 {@code appid}。
+     *
+     * <p>写请求体里的 {@code appid} 字段、算 {@code key} 时都要用它，<b>不要</b>直接引用
+     * {@link #APP_ID}——那个常量是标准版的固定值，只有「与平台无关」的签名（动态封面）才该用它。</p>
+     */
+    public static String appId() {
+        return KuGouProfile.active().appId();
+    }
+
+    /** 当前身份的 {@code clientver}（取流端点另有固定的 {@code 11430}，见 {@code STREAM_CLIENT_VER}）。 */
+    public static String clientVer() {
+        return KuGouProfile.active().clientVer();
+    }
 
     /**
      * 搜索接口要求的「平台版本」参数。
@@ -114,12 +138,13 @@ public final class KuGouHttp {
      * 而不是报错）。</p>
      */
     public static Map<String, String> deviceParams() {
+        KuGouProfile profile = KuGouProfile.active();
         Map<String, String> params = params();
         params.put("dfid", KuGouDevice.dfid());
         params.put("mid", KuGouDevice.mid());
         params.put("uuid", "-");
-        params.put("appid", APP_ID);
-        params.put("clientver", CLIENT_VER);
+        params.put("appid", profile.appId());
+        params.put("clientver", profile.clientVer());
         params.put("clienttime", String.valueOf(System.currentTimeMillis() / 1000L));
         if (KuGouDevice.isLoggedIn()) {
             params.put("token", KuGouDevice.token());
@@ -248,7 +273,8 @@ public final class KuGouHttp {
     private static Map<String, String> signIfNeeded(Map<String, String> params, Sign sign, String body) {
         Map<String, String> copy = params == null ? params() : new LinkedHashMap<String, String>(params);
         if (sign == Sign.ANDROID) {
-            copy.put("signature", KuGouSign.android(copy, body));
+            // 跟随当前身份：概念版是另一把盐值，与 appid 必须成套。
+            copy.put("signature", KuGouSign.android(copy, body, KuGouProfile.active()));
         } else if (sign == Sign.WEB) {
             copy.put("signature", KuGouSign.web(copy, body));
         } else if (sign == Sign.REGISTER) {

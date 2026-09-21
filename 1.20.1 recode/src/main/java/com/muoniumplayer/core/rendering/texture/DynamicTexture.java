@@ -192,6 +192,44 @@ public class DynamicTexture extends AbstractTexture {
 
     @SneakyThrows
     public static BufferedImage readImage(InputStream is) {
-        return ImageIO.read(is);
+        byte[] bytes = is.readAllBytes();
+        BufferedImage decoded = ImageIO.read(new java.io.ByteArrayInputStream(bytes));
+        // ImageIO 不认 webp（咪咕封面、部分自定义源给的就是 webp），退回进程里已带的 skia。
+        return decoded != null ? decoded : decodeWithSkia(bytes);
+    }
+
+    /** 用 skija 兜底解码。native 不可用或数据损坏都当作「没有图」返回 null。 */
+    private static BufferedImage decodeWithSkia(byte[] bytes) {
+        if (bytes.length == 0) return null;
+        // 必须先过 SkijaNatives：仓里统一的加载入口带失败兜底（确定性解压路径），
+        // native 没起来时这里返回 false，我们按「没有图」处理，而不是去碰 skija 的类。
+        if (!com.muoniumplayer.render.skija.SkijaNatives.ensureLoaded()) return null;
+        try (io.github.humbleui.skija.Image image = io.github.humbleui.skija.Image.makeFromEncoded(bytes)) {
+            int width = image.getImageInfo().getWidth();
+            int height = image.getImageInfo().getHeight();
+            if (width <= 0 || height <= 0) return null;
+            io.github.humbleui.skija.ImageInfo target =
+                    new io.github.humbleui.skija.ImageInfo(width, height,
+                            io.github.humbleui.skija.ColorType.RGBA_8888,
+                            io.github.humbleui.skija.ColorAlphaType.UNPREMUL);
+            try (io.github.humbleui.skija.Bitmap bitmap = new io.github.humbleui.skija.Bitmap()) {
+                if (!bitmap.allocPixels(target) || !image.readPixels(bitmap)) return null;
+                byte[] pixels = bitmap.readPixels();
+                int rowPixels = bitmap.getRowBytesAsPixels();
+                BufferedImage out = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+                for (int y = 0; y < height; y++) {
+                    for (int x = 0; x < width; x++) {
+                        int i = (y * rowPixels + x) * 4;
+                        out.setRGB(x, y, ((pixels[i + 3] & 0xFF) << 24)
+                                | ((pixels[i] & 0xFF) << 16)
+                                | ((pixels[i + 1] & 0xFF) << 8)
+                                | (pixels[i + 2] & 0xFF));
+                    }
+                }
+                return out;
+            }
+        } catch (Throwable unavailable) {
+            return null;
+        }
     }
 }

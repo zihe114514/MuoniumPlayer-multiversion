@@ -16,6 +16,7 @@ import top.fpsmaster.music.Track;
 import top.fpsmaster.music.http.MusicHttp;
 import top.fpsmaster.music.store.MusicCredentialStore;
 import com.muoniumplayer.core.ncm.OptionsUtil;
+import com.muoniumplayer.core.ncm.kugou.KuGouProfile;
 import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
@@ -106,6 +107,10 @@ public final class NeteaseMusicService {
         if (isBlank(keyword)) {
             return Collections.emptyList();
         }
+        // 自定义源（LX 脚本）先答一次。没搜到就安静地落回下面的内置链路，而且连
+        // initialize() 都不必跑 —— 脚本能答上时不需要网易云会话。
+        List<Music> fromScript = searchViaLxSource(keyword, limit);
+        if (!fromScript.isEmpty()) return fromScript;
         initialize(OptionsUtil.getCookie());
         if (currentPlatform == MusicPlatform.GD) {
             return searchGd(keyword, limit);
@@ -122,6 +127,12 @@ public final class NeteaseMusicService {
         if (currentPlatform == MusicPlatform.QISHUI) {
             return searchQishui(keyword, limit);
         }
+        if (currentPlatform == MusicPlatform.KUWO) {
+            return KuwoMusicService.search(keyword, limit);
+        }
+        if (currentPlatform == MusicPlatform.MIGU) {
+            return MiguMusicService.search(keyword, limit);
+        }
         try {
             List<Track> tracks = SERVICE.search(currentPlatform.toCadenceSource(), keyword.trim(), Math.max(1, limit));
             return adaptTracks(tracks);
@@ -130,6 +141,47 @@ public final class NeteaseMusicService {
             return Collections.emptyList();
         }
     }
+    /**
+     * 问一次自定义源要搜索结果。
+     *
+     * <p><b>上游 lx 的搜索并不走自定义源</b>：{@code useInitUserApi.ts} 只把脚本包成
+     * {@code getMusicUrl} / {@code getLyric} / {@code getPic} 三个方法，搜索走的是内置
+     * {@code musicSdk/<源>/musicSearch.js}。所以这条是宿主加在上游之外的扩展：脚本要在
+     * 自己的 {@code inited} 里把 {@code search} 声明进 actions，宿主还要开着扩展开关。
+     * 返回结构照抄内置 musicSearch 的 {@code {list, allPage, total, limit}}，
+     * 脚本作者按自家那份 musicSearch.js 写就行。</p>
+     *
+     * <p>与取流一致，这里失败一律返回空列表让调用方继续走内置链路 —— 一份坏脚本
+     * 不该让人搜不到东西。</p>
+     */
+    private static List<Music> searchViaLxSource(String keyword, int limit) {
+        if (!com.muoniumplayer.core.ncm.lxsource.LxSourceService.isEnabled()) {
+            return Collections.emptyList();
+        }
+        String sourceKey = com.muoniumplayer.core.ncm.lxsource.LxSourceService
+                .sourceKeyFor(currentPlatform.name(), GdStudioSourceSettings.getPlatform());
+        if (sourceKey == null) return Collections.emptyList();
+        // 只接能反查回本播放器的源（wy / tx / kg / kw / mg）：kw 与 mg 的曲目取流只认
+        // 自定义源，脚本自己能搜自己就能播，闭环成立；反查不回来的 key（local 等）丢掉。
+        if (com.muoniumplayer.core.ncm.lxsource.LxSourceService.platformForSourceKey(sourceKey) == null) {
+            return Collections.emptyList();
+        }
+        com.muoniumplayer.core.ncm.lxsource.LxSourceService.SearchResult result =
+                com.muoniumplayer.core.ncm.lxsource.LxSourceService
+                        .resolveSearch(sourceKey, keyword, 1, limit);
+        if (result == null || result.hits.isEmpty()) return Collections.emptyList();
+        List<Music> out = new ArrayList<>();
+        for (com.muoniumplayer.core.ncm.lxsource.LxSourceService.SearchHit hit : result.hits) {
+            Music music = Music.fromLxSearchHit(hit);
+            if (music != null) out.add(music);
+        }
+        if (!out.isEmpty()) {
+            System.out.println("[Music/LX] 自定义源搜到 " + out.size() + " 条（源 " + sourceKey
+                    + "，共 " + result.total + " 条 / " + result.allPage + " 页）");
+        }
+        return out;
+    }
+
     private static List<Music> searchGd(String keyword, int limit) {
         String platform = GdStudioSourceSettings.getPlatform();
         if (platform.isEmpty()) return Collections.emptyList();
@@ -193,6 +245,10 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.YOUTUBE) return searchYouTube(keyword, limit);
         if (platform == MusicPlatform.BILIBILI) return searchBilibili(keyword, limit);
         if (platform == MusicPlatform.QISHUI) return searchQishui(keyword, limit);
+        // 酷我 / 咪咕没有 Cadence 通道，宿主照上游 musicSdk 内置了它们的搜索（供
+        // 换源流水线拿它们当候选）；取流则只认自定义源，见 Music#getPlayUrl 的早退。
+        if (platform == MusicPlatform.KUWO) return KuwoMusicService.search(keyword, limit);
+        if (platform == MusicPlatform.MIGU) return MiguMusicService.search(keyword, limit);
         if (!platform.isCadenceBacked()) return Collections.emptyList();
         initialize(OptionsUtil.getCookie());
         try {
@@ -335,6 +391,11 @@ public final class NeteaseMusicService {
                 return null;
             }
         }
+        if (music.isLxOnlyChannel()) {
+            // 酷我 / 咪咕没有内置取流：继续往下会把它们当成 Cadence 网易云曲目，
+            // 拿错平台的 id 解出别人的歌。这一路的活路是自定义源（Music#resolveLxPlayUrl）。
+            return null;
+        }
         initialize(OptionsUtil.getCookie());
         try {
             Track track = music.toCadenceTrack();
@@ -384,6 +445,11 @@ public final class NeteaseMusicService {
                 return null;
             }
         }
+        if (music.isLxOnlyChannel()) {
+            // 酷我 / 咪咕没有本家歌词通道；null 让调用方继续走标题匹配的 AMLL 兜底，
+            // 绝不能把酷我的数字 id 当网易云 id 送去拿词（会拿到别的歌的词）。
+            return null;
+        }
         initialize(OptionsUtil.getCookie());
         try {
             return SERVICE.getLyric(music.toCadenceTrack());
@@ -415,6 +481,23 @@ public final class NeteaseMusicService {
     }
 
     public static QrCode createQrCode(MusicPlatform platform) {
+        return createQrCode(platform, false);
+    }
+
+    /**
+     * 申请一次扫码登录的二维码。
+     *
+     * <p>{@code kuGouConcept} <b>只对酷狗有效</b>：概念版与标准版在同一个登录端点上签的是
+     * <b>两种凭证</b>（二维码文本里嵌的 {@code appid} 一个是 3116、一个是 1005），签完就得让
+     * 之后所有请求跟着这个身份走。身份由 {@link KuGouMusicService#createQrSession} 记在
+     * 会话里，轮询与落盘自动跟随，调用方不必再传第二次。</p>
+     *
+     * <p>酷狗概念版这一档<b>优先用上游回的二维码图</b>（塞进 {@link QrCode} 的内容位，
+     * 账号面板认 {@code data:image} 前缀）：概念版从没在真机上测过，本地按 URL 重画二维码等于
+     * 拿我们猜的形态去赌上游的判定；上游给的那张图就是它自己要给手机扫的东西。
+     * 标准版仍走本地生成——那是实测能扫通的一条，不为对齐参考实现去动它。</p>
+     */
+    public static QrCode createQrCode(MusicPlatform platform, boolean kuGouConcept) {
         if (platform == MusicPlatform.YOUTUBE) {
             throw new UnsupportedOperationException("YouTube Music does not require login");
         }
@@ -425,9 +508,15 @@ public final class NeteaseMusicService {
             return QishuiMusicService.createQrCode();
         }
         if (platform == MusicPlatform.KUGOU) {
-            String key = KuGouMusicService.createQrKey();
-            if (isBlank(key)) throw new IllegalStateException("酷狗未返回扫码 key");
-            return new QrCode(key, KuGouMusicService.qrContent(key));
+            KuGouMusicService.KuGouSession session = KuGouMusicService.createQrSession(
+                    kuGouConcept ? KuGouProfile.CONCEPT : KuGouProfile.STANDARD);
+            if (session == null || isBlank(session.key)) {
+                throw new IllegalStateException("酷狗未返回扫码 key");
+            }
+            if (kuGouConcept && !isBlank(session.imageDataUrl)) {
+                return new QrCode(session.key, session.imageDataUrl);
+            }
+            return new QrCode(session.key, KuGouMusicService.qrContent(session.key, kuGouConcept));
         }
         initialize(OptionsUtil.getCookie());
         return SERVICE.createQrCode(platform.toCadenceSource());

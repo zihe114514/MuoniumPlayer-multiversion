@@ -95,15 +95,31 @@ final class LyricLoadService {
         return result;
     }
 
-    /** 缓存键：歌曲稳定键 + 影响解析结果的用户开关 + 这首歌指定的来源。 */
+    /** 缓存键：歌曲稳定键 + 影响解析结果的用户开关 + 这首歌指定的来源 + 手动钉住的那一条。 */
     static String cacheKey(String trackKey) {
         return cacheKeyFor(trackKey, LyricSourceMemory.read(trackKey));
     }
 
     private static String cacheKeyFor(String trackKey, int source) {
+        return cacheKeyFor(trackKey, source, manualSuffix(trackKey));
+    }
+
+    private static String cacheKeyFor(String trackKey, int source, String manualSuffix) {
         return trackKey + "|a" + (AmllTtmlLyricService.isEnabled() ? 1 : 0)
                 + "q" + (QQQrcLyricService.isEnabled() ? 1 : 0)
-                + "s" + source;
+                + "s" + source + manualSuffix;
+    }
+
+    /**
+     * 手动钉词那一档也要进缓存键。
+     *
+     * <p>{@link #load} 在 {@link #resolve} <b>之前</b>查盘，键里不带钉住的那一条时，用户保存完之后
+     * 下一次播放命中的还是上一轮自动匹配留在盘上的结果——界面上看就是「改了没生效」。带上它之后，
+     * 换一条候选就是一个新键，自动那份原样留在原地，取消钉住时不必重新联网。</p>
+     */
+    private static String manualSuffix(String trackKey) {
+        LyricManualMemory.Pin pin = LyricManualMemory.read(trackKey);
+        return pin == null ? "" : "|m" + pin.source.id + ':' + pin.trackId;
     }
 
     /**
@@ -124,12 +140,17 @@ final class LyricLoadService {
     static void invalidateAll(Music music) {
         if (music == null) return;
         final String trackKey = music.getStableKey();
+        final String manual = manualSuffix(trackKey);
         for (int source : ALL_SOURCES) {
-            LyricCacheStore.invalidate(cacheKeyFor(trackKey, source));
+            // 钉住与未钉住两种键各清一遍:只清当前的那一种,取消钉住后就会命中另一份留在盘上的旧结果。
+            LyricCacheStore.invalidate(cacheKeyFor(trackKey, source, ""));
+            LyricCacheStore.invalidate(cacheKeyFor(trackKey, source, manual));
         }
         AmllTtmlLyricService.invalidate(music);
         QQQrcLyricService.invalidate(music);
         GdStudioMusicService.invalidateLyric(music.getGdPlatform(), music.getGdLyricId(), music.getName());
+        // 这里刻意<b>不</b>清 {@link LyricManualMemory}：换来源、改偏好都不该把用户亲手挑中的那条结果
+        // 抹掉。「重取」才是明确的丢弃动作，由 {@code CloudMusic.reloadLyrics} 自己清。
         SERVED.remove(trackKey);
     }
 
@@ -144,6 +165,20 @@ final class LyricLoadService {
     static int servedSource(String trackKey) {
         Integer value = trackKey == null ? null : SERVED.get(trackKey);
         return value == null ? -1 : value;
+    }
+
+    /**
+     * 手动搜索用的那四个源，映射到界面「这一首用的是什么来源」显示的那套编号。
+     *
+     * <p>网易云那一档就是平台自带的行级歌词，对应 {@link LyricSourceMemory#PLATFORM}；其余三个
+     * 与自动链路的同名源是同一批数据，直接复用。两套编号迟早该合并成一套，但在合并之前
+     * 这里必须显式写清楚，省得日后加源时漏掉一项。</p>
+     */
+    private static int servedSourceOf(LyricSearchSource source) {
+        if (source == LyricSearchSource.AMLL) return LyricSourceMemory.AMLL;
+        if (source == LyricSearchSource.QQ) return LyricSourceMemory.QQ;
+        if (source == LyricSearchSource.KUGOU) return LyricSourceMemory.KUGOU;
+        return LyricSourceMemory.PLATFORM;
     }
 
     /**
@@ -197,6 +232,22 @@ final class LyricLoadService {
         JsonObject rawJson = new JsonObject();
         List<LyricLine> parsed = Collections.emptyList();
         boolean cloudLyricsLoaded = false;
+
+        // ── 0) 用户手动选定的那一条 ────────────────────────────────────────────
+        // 人工确认过的结果压过一切自动判断:按钉住的源与候选 id 精确重取,不再走匹配、不再看别的源。
+        // 取不回来(候选下架、凭据过期)时才落回下面的正常链路,并留一行日志说明发生了什么。
+        final LyricManualMemory.Pin manualPin = LyricManualMemory.read(trackKey);
+        if (manualPin != null) {
+            List<LyricLine> pinnedLyrics = LyricSearchService.fetchLyrics(manualPin);
+            if (pinnedLyrics != null && !pinnedLyrics.isEmpty()) {
+                System.out.println("[Music/Manual] 使用手动钉住的歌词 " + manualPin.describe()
+                        + " for " + trackKey);
+                SERVED.put(trackKey, servedSourceOf(manualPin.source));
+                return new LyricLoadResult(rawJson, pinnedLyrics);
+            }
+            System.out.println("[Music/Manual] 钉住的那一条这次取不回来,回落正常链路: "
+                    + manualPin.describe() + " / " + trackKey);
+        }
 
         // ── 1) 用户给这首歌指定的来源 ──────────────────────────────────────────
         // 「指定」是偏好而非硬绑定：那一个源这次没有逐字结果时，记一行日志然后照常走自动链路。
@@ -333,6 +384,31 @@ final class LyricLoadService {
                     } catch (IOException ignored) {
                     }
                 }
+            }
+        }
+
+        // ── 最后一级：自定义源（LX 脚本）给的歌词 ──────────────────────────────
+        // 内置链路一条都没给出歌词时才问它，而且默认根本不问（宿主扩展开关，见
+        // LxSourceService#isExtraActionsEnabled）。与取流相反 —— 取流那边自定义源排在
+        // 最前面，因为用户导入它就是为了取流；歌词这边平台自己那份（带翻译）几乎总是更准。
+        // rlyric 是罗马音，正好对上 parseLyricText 的第三个参数；lxlyric 是洛雪自家的
+        // 逐字格式，本播放器没有解析器，交给 parseLyricText 的格式嗅探去认（认不出就按行级用）。
+        if (parsed.isEmpty()) {
+            try {
+                com.muoniumplayer.core.ncm.lxsource.LxSourceService.Lyrics scriptLyrics = music.resolveLxLyrics();
+                if (scriptLyrics != null && scriptLyrics.lyric != null && !scriptLyrics.lyric.trim().isEmpty()) {
+                    List<LyricLine> fromScript = LyricParser.parseLyricText(scriptLyrics.lyric,
+                            scriptLyrics.tlyric == null ? "" : scriptLyrics.tlyric,
+                            scriptLyrics.rlyric == null ? "" : scriptLyrics.rlyric);
+                    if (!fromScript.isEmpty()) {
+                        rawJson = createEmbeddedLyricJson(scriptLyrics.lyric);
+                        parsed = fromScript;
+                        System.out.println("[Music/LX] 自定义源给出了歌词 for " + trackKey);
+                    }
+                }
+            } catch (Throwable throwable) {
+                System.err.println("[Music/LX] 自定义源歌词失败 for " + trackKey + ": "
+                        + throwable.getMessage());
             }
         }
 

@@ -48,6 +48,14 @@ public final class KuGouDevice {
     private static volatile int vipType;
     /** 会员到期时间原文，仅用于展示。 */
     private static volatile String vipExpiresAt = "";
+    /**
+     * 当前凭证属于哪个客户端身份（完整版 / 概念版）。
+     *
+     * <p>记在设备而不是记成进程开关：{@code appid}、签名盐、取流盐、扫码二维码里嵌的 appid
+     * 四者必须与<b>签发这张 token 的身份</b>一致，而一台机器上先后登录过两种账号是正常情况。
+     * 默认 {@link KuGouProfile#STANDARD}，因为本仓历史上所有实测凭证与旧凭证都在标准版下签发。</p>
+     */
+    private static volatile KuGouProfile profile = KuGouProfile.STANDARD;
 
     private KuGouDevice() {
     }
@@ -113,14 +121,56 @@ public final class KuGouDevice {
         return !KuGouSign.isBlank(token) && !KuGouSign.isBlank(userId) && !"0".equals(userId.trim());
     }
 
-    /** 扫码成功后写入。{@code nickname}/{@code avatarUrl} 可以为空，随后由账号面板补齐。 */
+    /**
+     * 当前凭证的客户端身份。
+     *
+     * <p>未登录时也有意义：匿名请求同样要带 {@code appid}/{@code clientver}，
+     * 而签名盐跟着它走，所以这是「请求以谁的身份发出」而不只是「登录用的哪个客户端」。</p>
+     */
+    public static KuGouProfile profile() {
+        ensureLoaded();
+        return profile;
+    }
+
+    /**
+     * 切换客户端身份并落盘。
+     *
+     * @param persist {@code false} 时只改内存（用于启动阶段从凭证文件回填，避免自写自读）
+     */
+    public static void setProfile(KuGouProfile newProfile, boolean persist) {
+        ensureLoaded();
+        KuGouProfile next = newProfile == null ? KuGouProfile.STANDARD : newProfile;
+        synchronized (LOCK) {
+            if (profile == next) return;
+            profile = next;
+            // 换身份等于换客户端，旧的会员结论不再成立，清掉等下一次查询回填。
+            vipType = 0;
+            vipExpiresAt = "";
+            if (persist) persist();
+        }
+    }
+
+    /** 扫码成功后写入，身份沿用当前凭证的。 */
     public static void saveLogin(String newToken, String newUserId, String newNickname, String newAvatarUrl) {
+        saveLogin(newToken, newUserId, newNickname, newAvatarUrl, null);
+    }
+
+    /**
+     * 扫码 / token 登录成功后写入。
+     *
+     * <p>{@code newNickname} 与 {@code newAvatarUrl} 可以为空，随后由账号面板补齐。</p>
+     *
+     * @param newProfile 签发这张 token 的客户端身份；{@code null} 表示沿用当前的
+     */
+    public static void saveLogin(String newToken, String newUserId, String newNickname, String newAvatarUrl,
+                                 KuGouProfile newProfile) {
         ensureLoaded();
         synchronized (LOCK) {
             token = KuGouSign.nonNull(newToken).trim();
             userId = KuGouSign.nonNull(newUserId).trim();
             if (!KuGouSign.isBlank(newNickname)) nickname = newNickname.trim();
             if (!KuGouSign.isBlank(newAvatarUrl)) avatarUrl = newAvatarUrl.trim();
+            if (newProfile != null) profile = newProfile;
             // 换了账号，旧的会员状态一定不再适用，先清掉再让调用方去查。
             vipType = 0;
             vipExpiresAt = "";
@@ -181,6 +231,8 @@ public final class KuGouDevice {
                     avatarUrl = readString(root, "avatar");
                     vipType = readInt(root, "vip_type");
                     vipExpiresAt = readString(root, "vip_expires_at");
+                    // 旧凭证文件没有这个字段，fromKey 的空值兜底就是标准版——那正是它们签发时的身份。
+                    profile = KuGouProfile.fromKey(readString(root, "profile"));
                 }
             } catch (Throwable throwable) {
                 System.err.println("[Music/KuGou] 凭证读取失败，按未登录处理: " + throwable.getMessage());
@@ -218,6 +270,7 @@ public final class KuGouDevice {
             root.addProperty("avatar", avatarUrl);
             root.addProperty("vip_type", vipType);
             root.addProperty("vip_expires_at", vipExpiresAt);
+            root.addProperty("profile", profile.key());
             Files.write(file.toPath(), root.toString().getBytes(StandardCharsets.UTF_8));
         } catch (Throwable throwable) {
             System.err.println("[Music/KuGou] 凭证写入失败: " + throwable.getMessage());

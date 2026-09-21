@@ -153,6 +153,81 @@ final class AmllTtmlLyricService {
         if (music == null) return;
         CACHE.remove(music.getStableKey());
     }
+
+    // ── 手动搜索弹窗（LyricSearchService）──────────────────────────────────────
+
+    /**
+     * 按曲名搜词库条目，原样交给调用方去打分与显示。
+     *
+     * <p>检索词只能放曲名（见类注释：{@code musicName} 是严格标题匹配）。手动弹窗里用户输入的是
+     * 「标题 - 歌手 - 专辑」那种三段式，直接喂这里必然 0 条，所以调用方要自己把标题摘出来。</p>
+     */
+    static List<JsonObject> manualSearch(String title) {
+        List<JsonObject> result = new ArrayList<JsonObject>();
+        JsonArray items = search(safe(title).trim());
+        if (items == null) return result;
+        for (int i = 0; i < items.size(); i++) {
+            JsonElement element = items.get(i);
+            if (element != null && element.isJsonObject()) result.add(element.getAsJsonObject());
+        }
+        return result;
+    }
+
+    /**
+     * 探一次词库：这个平台 id 在词库里有没有条目。有就把那一条的元数据带回来，没有返回 {@code null}。
+     *
+     * <p>给 AMLLDB 那一档的搜索用。folia 同一档做的是「拿用户输入去网易云 + QQ 搜候选，再逐个回
+     * 词库探有没有 TTML」——词库自己不接受自由检索词，只有按平台 id 精确查。探过一遍之后调用方
+     * 只留条目 id，不把 {@code lyrics} 正文带走，免得一份 TTML 撑爆钉词配置文件的体积上限。</p>
+     */
+    static JsonObject manualProbe(String parameter, String id) {
+        String name = safe(parameter).trim();
+        String value = safe(id).trim();
+        if (name.isEmpty() || value.isEmpty()) return null;
+        Map<String, String> params = new LinkedHashMap<String, String>();
+        params.put(name, value);
+        JsonObject data = request(GET_ENDPOINT, params);
+        return lyricsOf(data) == null ? null : data;
+    }
+
+    /**
+     * 按用户挑中的那条词库条目取 TTML。
+     *
+     * <p>同样<b>不要求逐字</b>：这一条是人亲自点的，词库里偶尔有的行级条目也该照给。取不到就是取不到，
+     * 调用方会提示「这份歌词没能取回来」。</p>
+     */
+    static List<LyricLine> manualResolve(String entryId) {
+        String id = safe(entryId).trim();
+        if (id.isEmpty()) return Collections.emptyList();
+        Map<String, String> params = new LinkedHashMap<String, String>();
+        params.put("id", id);
+        String ttml = lyricsOf(request(GET_ENDPOINT, params));
+        if (ttml == null) return Collections.emptyList();
+        List<LyricLine> parsed = new ArrayList<LyricLine>();
+        try {
+            LyricParser.parseTtml(ttml, parsed);
+        } catch (Throwable failure) {
+            System.err.println("[AMLL] 手动选中的 TTML 解析失败 " + id + ": " + failure.getMessage());
+            return Collections.emptyList();
+        }
+        return parsed;
+    }
+
+    /** 平台 id → 词库精确取词，供钉住的那一条在 id 已经失效时回退使用。 */
+    static List<LyricLine> manualResolveByPlatformId(String parameter, String id) {
+        JsonObject data = manualProbe(parameter, id);
+        if (data == null) return Collections.emptyList();
+        String ttml = lyricsOf(data);
+        if (ttml == null) return Collections.emptyList();
+        List<LyricLine> parsed = new ArrayList<LyricLine>();
+        try {
+            LyricParser.parseTtml(ttml, parsed);
+        } catch (Throwable failure) {
+            return Collections.emptyList();
+        }
+        return parsed;
+    }
+
     // ── 平台 ID 精确匹配 ────────────────────────────────────────────────────
 
     private static String fetchByPlatformId(Music music) {

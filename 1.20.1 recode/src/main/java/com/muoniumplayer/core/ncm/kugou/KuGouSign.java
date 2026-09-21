@@ -120,9 +120,26 @@ public final class KuGouSign {
         }
     }
 
-    /** Android 版签名：按 key 排序后拼 {@code key=value}，前后夹盐值，请求体（若有）夹在末尾盐值之前。 */
+    /** Android 版签名：按 key 排序后拼 {@code key=value}，前后夹盐值，请求体（若有）夹在末尾盐值之前。
+     *
+     * <p>这一版<b>固定用标准版盐值</b>，不跟随当前身份。用在「签名与平台无关」的端点上
+     * （动态封面 CDN 就是实测结论），以及单元测试里要复现一个确定哈希的地方。
+     * 会随身份变的请求走 {@link #android(Map, String, KuGouProfile)}。</p>
+     */
     public static String android(Map<String, String> params, String body) {
-        return md5(ANDROID_SALT + joinSortedByKey(params) + (body == null ? "" : body) + ANDROID_SALT);
+        return android(params, body, KuGouProfile.STANDARD);
+    }
+
+    /**
+     * 按指定客户端身份签 Android 签名。
+     *
+     * <p>概念版（{@link KuGouProfile#CONCEPT}）的盐值是另一把，且必须与同一身份下的
+     * {@code appid}/{@code clientver} 一起用——只换盐值不换 appid 会得到一个「算得出来但
+     * 上游不认」的签名，而它的表现是静默不给数据，不是报错。</p>
+     */
+    public static String android(Map<String, String> params, String body, KuGouProfile profile) {
+        String salt = profile == null ? ANDROID_SALT : profile.signSalt();
+        return md5(salt + joinSortedByKey(params) + (body == null ? "" : body) + salt);
     }
 
     /** Web 版签名：排序的是拼好的 {@code key=value} 串本身，这是上游的行为，不要「顺手改成」按 key 排。 */
@@ -177,15 +194,40 @@ public final class KuGouSign {
     }
 
     /**
-     * {@code /v5/url} 取流需要的 {@code key} 参数。
+     * 按身份算「参数密钥」。
      *
-     * <p>对应参考实现的 {@code signKey}，标准版（非 lite）取的就是这个盐值。注意概念版用的是
-     * 另一个盐值 {@code 185672dd...}——<b>本项目只做标准版</b>，历史上曾经把那个概念版盐值
-     * 当成「现代接口的盐值」用在标准版上，结果每次取流都拿不到地址。要切双平台时必须把
-     * 盐值选择和 appid 一起按平台取，不能只换一个。</p>
+     * <p>参考实现里 {@code signParamsKey} 的盐值、{@code appid}、{@code clientver} 三者<b>同时</b>
+     * 跟随概念版开关（{@code util/helper.js}），所以这里不接受只换其中的 appid。
+     * FM、每日推荐、音效详情等端点的 {@code key} 用它。</p>
+     */
+    public static String paramsKey(String data, KuGouProfile profile) {
+        KuGouProfile used = profile == null ? KuGouProfile.STANDARD : profile;
+        return md5(used.appId() + used.signSalt() + used.clientVer() + nonNull(data));
+    }
+
+    /**
+     * {@code /v5/url} 取流需要的 {@code key} 参数，<b>固定标准版盐值</b>。
+     *
+     * <p>对应参考实现的 {@code signKey} 在标准版下取的值。历史上本仓曾把概念版那把
+     * {@code 185672dd…} 当成「现代接口的盐值」用标准版 appid 一起发出去，结果每次取流都拿不到
+     * 地址。要按身份取盐值请用 {@link #urlKey(String, String, String, KuGouProfile)}，
+     * <b>盐值与 appid 必须同时来自同一个 {@link KuGouProfile}</b>。</p>
      */
     public static String urlKey(String hash, String mid, String userId, String appId) {
         return md5(nonNull(hash) + URL_KEY_SALT + nonNull(appId) + nonNull(mid)
+                + (isBlank(userId) ? "0" : userId));
+    }
+
+    /**
+     * 按身份取流 {@code key}：盐值与 {@code appid} 都从同一个身份里取。
+     *
+     * <p>概念版用 {@code 185672dd44712f60bb1736df5a377e82} 这把盐、{@code appid=3116}；
+     * 标准版用 {@code 57ae12eb6890223e355ccfcb74edf70d} 与 {@code 1005}。
+     * 两把盐值都是<b>与平台无关地</b>被各自客户端使用——也就是说概念版客户端不会去试标准版那把。</p>
+     */
+    public static String urlKey(String hash, String mid, String userId, KuGouProfile profile) {
+        KuGouProfile used = profile == null ? KuGouProfile.STANDARD : profile;
+        return md5(nonNull(hash) + used.streamKeySalt() + used.appId() + nonNull(mid)
                 + (isBlank(userId) ? "0" : userId));
     }
 

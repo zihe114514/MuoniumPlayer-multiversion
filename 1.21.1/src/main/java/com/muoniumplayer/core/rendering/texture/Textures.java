@@ -63,9 +63,23 @@ public class Textures implements SharedConstants {
             return;
         }
 
+        // 上传是在主线程做的，而一次解码完成就会往主线程排一条。封面这类「一批同时到手」的
+        // 用法因此能把一整帧吃满。这里只做累加，供界面侧的性能日志读出「这一帧到底传了几张」。
+        long startedAt = System.nanoTime();
         DynamicTexture dynamicTexture = new DynamicTexture(img, clearable, linear);
         TextureManager.getInstance().loadTexture(location, dynamicTexture);
+        perfUploadNanos += System.nanoTime() - startedAt;
+        perfUploads++;
     }
+
+    /**
+     * 主线程贴图上传的累计张数与耗时。
+     *
+     * <p>只在主线程写、只在主线程读（性能日志出在渲染那一帧里），所以是普通 long，不需要原子类。
+     * 读法按「取差值」来用：谁想知道这一段传了几张，就先记一次再记一次。</p>
+     */
+    public static long perfUploads;
+    public static long perfUploadNanos;
 
     public void loadTextureAsyncly(Location location, BufferedImage img, boolean flush, boolean clearable, boolean linear, Runnable after) {
 

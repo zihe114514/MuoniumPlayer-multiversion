@@ -170,6 +170,12 @@ public class CloudMusic implements SharedConstants {
         } else {
             loadNCM(cookie);
         }
+
+        // 酷狗的红心索引是「可再生缓存」：启动时先从磁盘恢复（一次文件读、不发请求），
+        // 已登录时再在后台把服务端那份拉全。少了这一步，重启后所有已收藏的歌都会画成未收藏，
+        // 用户再点一次就是重复收藏——网易云那边由 likeList 天然不会有这个问题，这是酷狗补齐的对等项。
+        KuGouLikedCache.restoreFromDisk();
+        KuGouMusicService.warmLikedSongsAsync();
     }
 
     @SneakyThrows
@@ -1471,11 +1477,65 @@ public class CloudMusic implements SharedConstants {
             if (!isSessionUsable(session)) return false;
 
             if (playUrl == null) {
-                handleUnplayableSong(song);
-                return false;
+                // 官方链路与解灰都已扑空：最后试一次跨平台换源 —— 拿曲名 / 艺人去别的平台
+                // 重新匹配一条真正的曲目，换掉队列里的这一格。失败或不在候选半径内时
+                // 维持原行为（报「没有可用音频源」并停下等用户操作）。
+                CrossSourceSwitcher.Match replacement = null;
+                if (CrossSourceSwitcher.canAutoSwitch(song)) {
+                    DownloadDynamicIsland.showCrossSourceSearching(song.getName());
+                    try {
+                        replacement = CrossSourceSwitcher.findReplacementForAuto(song, CloudMusic.quality);
+                    } catch (Throwable failure) {
+                        System.err.println("[Music/Switch] 自动换源流水线异常 "
+                                + song.getStableKey() + ": " + failure);
+                    }
+                }
+                if (replacement == null || isPlaybackCancelled() || playListChanged()) {
+                    handleUnplayableSong(song);
+                    return false;
+                }
+                if (!adoptCrossSourceReplacement(song, replacement)) {
+                    handleUnplayableSong(song);
+                    return false;
+                }
+                song = replacement.music;
+                playUrl = replacement.url;
             }
 
             boolean started = initializeAndPlaySong(song, playUrl, session);
+            if (!started && isSessionUsable(session) && !isPlaybackCancelled() && !playListChanged()) {
+                // 直链拿到了却放不出来 —— 两种成因共用这一条换源救援：
+                // ① 下载 / 字节校验 / 解码抛错（CDN 直链过期、上游交付非音频载荷）；
+                // ② 播得出来但只是试听片段（非会员在本平台开不了 VIP，60/30 秒就到底）。
+                // 网易云与 GD 在 getMusicFile 内部已有各自的平台内兜底，那些也扑空之后才到这里；
+                // AUTO_ATTEMPTED 保证每首每进程最多试一次，不会连环烧整张候选表的额度。
+                boolean switchable = CrossSourceSwitcher.canAutoSwitch(song);
+                if (!switchable && lastStreamIncomplete) {
+                    // 不救场时至少说清为什么停下：试听不是网络故障。
+                    DownloadDynamicIsland.showPlaybackFailure(song.getName(),
+                            "当前账号只能拿到试听片段");
+                }
+                CrossSourceSwitcher.Match brokenStream = null;
+                if (switchable) {
+                    DownloadDynamicIsland.showCrossSourceSearching(song.getName());
+                    try {
+                        brokenStream = CrossSourceSwitcher.findReplacementForAuto(song, CloudMusic.quality);
+                    } catch (Throwable failure) {
+                        System.err.println("[Music/Switch] 流失败换源流水线异常 "
+                                + song.getStableKey() + ": " + failure);
+                    }
+                    if (brokenStream != null && !isPlaybackCancelled() && !playListChanged()
+                            && adoptCrossSourceReplacement(song, brokenStream)) {
+                        song = brokenStream.music;
+                        playUrl = brokenStream.url;
+                        started = initializeAndPlaySong(song, playUrl, session);
+                        if (!started && lastStreamIncomplete) {
+                            DownloadDynamicIsland.showPlaybackFailure(song.getName(),
+                                    "换到的平台同样只有试听片段");
+                        }
+                    }
+                }
+            }
             if (started && isSessionUsable(session)) {
                 DownloadDynamicIsland.showPlaybackQuality(
                         song.getPlaybackQuality().getDisplayName(), playUrl.getB());
@@ -1483,9 +1543,45 @@ public class CloudMusic implements SharedConstants {
             return started;
         }
 
+        /**
+         * 换源成功后接管播放状态：把队列里的这一格换成新曲目，重建 session，
+         * 并把封面 / 主题色 / FM 界面推进到新曲目上。返回 false 表示在接管过程中
+         * 播放又被取消或替换，调用方按解析失败收尾。
+         */
+        private boolean adoptCrossSourceReplacement(Music oldSong, CrossSourceSwitcher.Match replacement) {
+            try {
+                if (curIdx >= 0 && curIdx < playList.size()) {
+                    playList.set(curIdx, replacement.music);
+                }
+            } catch (Throwable ignored) {
+                // 队列正被面板遍历：换不上列表不该挡住这次的替身播放。
+            }
+            session = CloudMusic.beginNewSession(replacement.music);
+            if (!isSessionUsable(session)) {
+                session.invalidate();
+                return false;
+            }
+            // 队列是面板列表的浅拷贝，行 widget 还绑在 oldSong 上：替身若走的是脚本流，
+            // 徽标不回写这一行就永远显示不出来（验证关只写到了替身对象上）。
+            CrossSourceSwitcher.propagateUnblockLabel(oldSong, replacement.music);
+            currentlyPlaying = replacement.music;
+            CoverThemePalette.set(replacement.music.getCoverPalette());
+            if (personalFmActive) PersonalFmManager.noteFmTrackStarted(replacement.music);
+            loadMusicCover(replacement.music);
+            loadDynamicMusicCover(replacement.music);
+            System.out.printf("[NCM] 自动换源: %s(%s) → %s - %s [%s] 匹配度 %.2f\n",
+                    oldSong.getName(), oldSong.getSource(), replacement.music.getName(),
+                    replacement.music.getArtistsName(), replacement.platformLabel, replacement.score);
+            return true;
+        }
+
+        /** 上一次 {@link #initializeAndPlaySong} 是否因「只有试听片段」中止；只在 Play Thread 上读写。 */
+        private boolean lastStreamIncomplete;
+
         private boolean initializeAndPlaySong(Music song, Tuple<String, String> playUrl, PlaybackSession targetSession) {
             MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
             DownloadDynamicIsland.cancelDownload();
+            lastStreamIncomplete = false;
 
             File musicFile;
             try {
@@ -1524,8 +1620,37 @@ public class CloudMusic implements SharedConstants {
             // 第三方搜索响应（GD Studio）不带时长。解码器现在知道了真实
             // 长度，所以在歌词/进度消费者读取它之前记录下来。
             AudioPlayer startedPlayer = ownedPlayer;
+            long decodedMillis = startedPlayer == null ? 0L : (long) startedPlayer.getTotalTimeMillis();
             if (startedPlayer != null) {
-                song.applyDecodedDuration((long) startedPlayer.getTotalTimeMillis());
+                song.applyDecodedDuration(decodedMillis);
+            }
+
+            // 试听片段检测：非会员在别的平台也可能「取流成功、字节合法、解码无误」，只是
+            // 60/30 秒就到底 —— 前两级换源触发（取流失败 / 流是坏的）都看不见这种「完整地
+            // 播半首」。拿解码器报出的真实长度对上曲目声明时长，判据在 CrossSourceSwitcher，
+            // 与换源共享同一本 AUTO_ATTEMPTED 账，短歌与时长未知的曲目不会被误伤。
+            if (CrossSourceSwitcher.isIncompleteStream(song.getDuration(), decodedMillis)) {
+                lastStreamIncomplete = true;
+                if (startedPlayer != null) {
+                    synchronized (PLAYER_STATE_LOCK) {
+                        if (ownedPlayer == startedPlayer) {
+                            try {
+                                startedPlayer.close();
+                            } catch (Throwable ignored) {
+                                // 收尾失败不改变「这是不完整流」的判定。
+                            }
+                        }
+                    }
+                }
+                // 缓存键只有「曲目 + 音质」，不认直链：这份试听片段必须删掉，否则以后开了
+                // 会员、官方直链能拿到完整流了，点歌却还命中这份 60 秒的坏缓存。删除排在
+                // close 之后 —— 解码器拿着这个文件的 RandomAccessFile 句柄，Windows 上
+                // 打开中的文件删不掉（File.delete 只会静默返回 false）。
+                try {
+                    musicFile.delete();
+                } catch (Throwable ignored) {
+                }
+                return false;
             }
 
             // 歌词异步加载绑定本 Session（两阶段提交），歌词可先到或后到。
@@ -2131,6 +2256,8 @@ public class CloudMusic implements SharedConstants {
             roomHandoverRequested = false;
             fmPrefetchAttempts = 0;
             nextFmPrefetchAt = 0L;
+            // 试听救援的乒乓预算同样一首一份：交接落到新的一首之后要能再救。
+            armTrialSwitches = 0;
         }
 
         /**
@@ -2257,8 +2384,28 @@ public class CloudMusic implements SharedConstants {
                 deck.setVolume(CloudMusic.getVolume());
                 deck.setFadeGain(0.0f);
                 // 第三方搜索结果不带时长；解码器现在知道真实时长了。
-                song.applyDecodedDuration((long) deck.getTotalTimeMillis());
+                long decodedMillis = (long) deck.getTotalTimeMillis();
+                song.applyDecodedDuration(decodedMillis);
                 if (!armStillValid(armGeneration, armRevision)) return;
+
+                // 试听片段判定的第四条路径：开着 automix 时「下一曲」根本走不到 playSong ——
+                // 它在上面这里被解析、下载、解码，然后在交接点直接出声，三级换源触发谁也看不见
+                // 它。非会员在下一平台的试听流同样「合法」：能下、能解、无声异议。所以预备平台
+                // 的解码器报出真实长度之后做同一判定；是试听就丢掉这张牌，先去跨平台换源把队列
+                // 里这一格换成完整曲目，下一轮预备对着替身重来。
+                if (CrossSourceSwitcher.isIncompleteStream(song.getDuration(), decodedMillis)) {
+                    // 先放句柄再删文件：解码器正用 RandomAccessFile 读着这份缓存，Windows 上
+                    // 打开中的文件删不掉。删缓存与 playSong 路径同一本账 —— 缓存键只有
+                    // 「曲目 + 音质」不认直链，不删的话以后开了会员仍会预备命中这份试听坏缓存。
+                    closeQuietly(deck);
+                    deck = null;
+                    try {
+                        file.delete();
+                    } catch (Throwable ignored) {
+                    }
+                    armTrialClipRescue(song, index, armGeneration, armRevision);
+                    return;
+                }
 
                 ArmedTrack track = new ArmedTrack(song, file, deck, index, armGeneration, armRevision);
                 // 一起听房间：交接点由房主那台用它自己选的引擎（Folia 或内置信号处理）分析出来，
@@ -2306,6 +2453,51 @@ public class CloudMusic implements SharedConstants {
                 if (deck != null) closeQuietly(deck);
                 arming = false;
             }
+        }
+
+        /** 预备阶段每次交接给「新一首」都重新计数：试听换源救援的乒乓上限。 */
+        private int armTrialSwitches;
+
+        /**
+         * 「下一曲」是试听片段时在预备阶段救场：不预备半首歌，先跨平台换源。
+         *
+         * <p>本方法整体跑在 BackgroundWork 低优先级池上，允许网络。找到替身后直接换掉队列
+         * 里那一格并 bump {@code queueRevision}（丢弃按旧格做的计划与重试预算归零），
+         * 下一轮 arm 会对完整替身重新预备 —— 交接与出声走的是正常 automix 链路。
+         * 找不到替身时保持沉默：队列真正轮到这首歌时 {@code playSong} 的三级触发还会
+         * 兜底并给出提示。{@code armTrialSwitches} 防候选表试听版乒乓连环换（智能过度）。</p>
+         */
+        private void armTrialClipRescue(Music song, int index, long armGeneration, long armRevision) {
+            if (armTrialSwitches >= 2 || !CrossSourceSwitcher.canAutoSwitch(song)) {
+                DownloadDynamicIsland.showPlaybackFailure(song.getName(),
+                        "下一曲在该平台只有试听片段");
+                return;
+            }
+            DownloadDynamicIsland.showCrossSourceSearching(song.getName());
+            CrossSourceSwitcher.Match replacement = null;
+            try {
+                replacement = CrossSourceSwitcher.findReplacementForAuto(song, CloudMusic.quality);
+            } catch (Throwable failure) {
+                System.err.println("[Music/Switch] 预备期换源流水线异常 "
+                        + song.getStableKey() + ": " + failure);
+            }
+            if (replacement == null || !armStillValid(armGeneration, armRevision)) return;
+            armTrialSwitches++;
+            // 预备期换源同样只动队列格：面板行 widget 绑的还是 song 这个老对象，
+            // 替身是脚本解出来的流时把徽标回写过去。
+            CrossSourceSwitcher.propagateUnblockLabel(song, replacement.music);
+            try {
+                List<Music> queue = playList;
+                if (queue != null && index >= 0 && index < queue.size() && queue.get(index) == song) {
+                    queue.set(index, replacement.music);
+                    // automix：「接下来要放的」变了，丢弃按旧格做出的计划并重开预备预算。
+                    CloudMusic.queueRevision++;
+                }
+            } catch (Throwable ignored) {
+                // 队列正被遍历：换不上也不要丢换源结果，playSong 那边还会接管。
+            }
+            DownloadDynamicIsland.showCrossSourceSwitched(replacement.music.getName(),
+                    replacement.platformLabel);
         }
 
         /**
@@ -3246,16 +3438,33 @@ public class CloudMusic implements SharedConstants {
      * 检索词、打分规则）没变，输出必然一模一样。用户手里的错歌词属于这种情况时，唯一出路是换一个源，
      * 那由 {@link #setLyricSource(int)} 负责。两者刻意分开：换源是「这首歌用哪个库」的持久偏好，
      * 重取是「同一个库再问一次」的一次性动作。</p>
+     *
+     * <p><b>重取会把用户手动钉住的那一条一起丢掉。</b>这一条是「把上一份结果整个作废」的总开关，
+     * 手动结果同样是上一份结果；留着它的话，重取永远拿回同一份人工歌词，那个按钮就白点了。
+     * 改来源偏好（{@link #setLyricSource(int)}）不清它——钉住比偏好更具体，用户挑过的词不该被
+     * 一次「换库」顺带走。</p>
      */
     public static void reloadLyrics() {
+        reloadLyrics(true);
+    }
+
+    /**
+     * @param dropManualPin 是否连带丢掉用户手动钉住的那一条。界面上的「重取歌词」传 {@code true}
+     *                      （那就是「上一份结果整个作废」的入口）；换来源只是改偏好，传 {@code false}。
+     */
+    private static void reloadLyrics(boolean dropManualPin) {
         final Music music = currentlyPlaying;
         final PlaybackSession session = currentSession;
         if (music == null || session == null || !session.isActive()) return;
 
         int source = LyricSourceMemory.read(music.getStableKey());
         System.out.println("[Music] 重取歌词: " + music.getStableKey()
-                + "（来源 " + LyricSourceMemory.displayName(source) + "）");
+                + "（来源 " + LyricSourceMemory.displayName(source) + "）"
+                + (dropManualPin && LyricManualMemory.has(music.getStableKey())
+                ? "，并丢掉手动钉住的那一条" : ""));
+        // 先清缓存、后删钉住记录：缓存键里带着钉住的那一条，记录还在才算得出那个键。
         LyricLoadService.invalidateAll(music);
+        if (dropManualPin) LyricManualMemory.clear(music.getStableKey());
         loadLyric(music, session);
     }
 
@@ -3281,18 +3490,77 @@ public class CloudMusic implements SharedConstants {
      *
      * <p>写盘与重取一起做：来源是<b>按歌记住的偏好</b>，切歌回来、重启之后仍然有效，
      * 所以不能在内存里飘着。</p>
+     *
+     * <p>这里<b>不</b>清手动钉住的那一条：钉住是「这一首用哪份词」的人工确认，比来源偏好更具体，
+     * 换库不该把它顺带走。代价是钉住期间换源看不出效果——界面上「歌词同步」那一行会把「已手动
+     * 选择 …」显示出来，这本身就是解释。想丢掉那份结果有「取消钉住」与「重取歌词」两个入口。</p>
      */
     public static void setLyricSource(int source) {
         final Music music = currentlyPlaying;
         if (music == null) return;
         LyricSourceMemory.write(music.getStableKey(), LyricSourceMemory.clamp(source));
-        reloadLyrics();
+        reloadLyrics(false);
     }
 
     /** 在可选来源之间绕圈，{@code forward=false} 时往前一档。 */
     public static void cycleLyricSource(boolean forward) {
         int current = getLyricSource();
         setLyricSource(forward ? LyricSourceMemory.next(current) : LyricSourceMemory.previous(current));
+    }
+
+    /**
+     * 用户在歌词搜索弹窗里亲手挑中的那一条：钉住它，并立刻按它重取。
+     *
+     * <p>存的是「源 + 候选」而不是歌词正文本身（见 {@link LyricManualMemory}），所以这里走的是
+     * 正常的重取链路：钉住的那一条会在 {@code LyricLoadService.resolve} 的第 0 级被精确重取，
+     * 与其他歌词用同一套缓存、同一套上屏流程。</p>
+     *
+     * <p>顺序上先清缓存、再写新记录：清的那一步要把<b>旧</b>钉住留在盘上的那份结果一起抹掉，
+     * 而缓存键算得出来靠的还是旧记录。</p>
+     */
+    public static void pinLyric(LyricSearchHit hit) {
+        pinLyric(currentlyPlaying, hit);
+    }
+
+    /**
+     * 把某一条歌词钉给<b>指定</b>的那首歌。
+     *
+     * <p>存在的理由：选词弹窗也能从歌曲列表的某一行打开，而那一行通常不是正在放的歌。钉词记录
+     * 本来就是按 {@code stableKey} 存的，给没在放的歌提前钉一份词是合法的 —— 下次播到它时自然
+     * 生效。只有正在这首的时候才有会话可刷，别的歌只需落盘。</p>
+     *
+     * <p>顺序上先清缓存、再写新记录：清的那一步要把<b>旧</b>钉住留在盘上的那份结果一起抹掉，
+     * 而缓存键算得出来靠的还是旧记录。</p>
+     */
+    public static void pinLyric(Music music, LyricSearchHit hit) {
+        if (music == null || hit == null) return;
+
+        LyricLoadService.invalidateAll(music);
+        LyricManualMemory.Pin pin = hit.toPin();
+        LyricManualMemory.write(music.getStableKey(), pin);
+        System.out.println("[Music/Manual] 钉住歌词 " + pin.describe()
+                + " for " + music.getStableKey());
+
+        final PlaybackSession session = currentSession;
+        if (currentlyPlaying == music && session != null && session.isActive()) {
+            loadLyric(music, session);
+        }
+    }
+
+    /** 取消钉住，回到「指定来源 / 自动匹配」的正常链路。 */
+    public static void clearPinnedLyric() {
+        final Music music = currentlyPlaying;
+        if (music == null) return;
+        if (!LyricManualMemory.has(music.getStableKey())) return;
+        LyricManualMemory.clear(music.getStableKey());
+        System.out.println("[Music/Manual] 取消钉住歌词 for " + music.getStableKey());
+        reloadLyrics(false);
+    }
+
+    /** 当前这首歌钉住的那一条；没有钉过返回 {@code null}。 */
+    public static LyricManualMemory.Pin getPinnedLyric() {
+        Music current = currentlyPlaying;
+        return current == null ? null : LyricManualMemory.read(current.getStableKey());
     }
 
     public static void updateCurrentLyric(float songProgress) {

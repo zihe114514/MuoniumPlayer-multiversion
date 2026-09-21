@@ -6,6 +6,8 @@ import io.github.humbleui.skija.FilterBlurMode;
 import io.github.humbleui.skija.MaskFilter;
 import io.github.humbleui.skija.Paint;
 import io.github.humbleui.skija.PaintMode;
+import io.github.humbleui.skija.PaintStrokeCap;
+import io.github.humbleui.skija.PaintStrokeJoin;
 import io.github.humbleui.skija.Shader;
 
 import java.util.HashMap;
@@ -201,6 +203,10 @@ public final class SkijaGfx {
         p.setImageFilter(null);
         p.setMode(PaintMode.STROKE);
         p.setStrokeWidth((float) Math.max(width, 0.0));
+        // 端点与拐角也显式复位：描边画具是共享的那一支，矢量图标设过 ROUND 之后如果不清，
+        // 同一帧里后面的矩形描边就会带上圆角 —— 和 shader 一样是「随绘制顺序出现」的怪症状。
+        p.setStrokeCap(PaintStrokeCap.BUTT);
+        p.setStrokeJoin(PaintStrokeJoin.MITER);
         p.setColor(argb);
         p.setBlendMode(currentBlend);
         return p;
@@ -213,6 +219,8 @@ public final class SkijaGfx {
         p.setImageFilter(null);
         p.setMode(PaintMode.STROKE);
         p.setStrokeWidth((float) Math.max(width, 0.0));
+        p.setStrokeCap(PaintStrokeCap.BUTT);
+        p.setStrokeJoin(PaintStrokeJoin.MITER);
         p.setColor(0xFFFFFFFF);
         p.setShader(shader);
         p.setBlendMode(currentBlend);

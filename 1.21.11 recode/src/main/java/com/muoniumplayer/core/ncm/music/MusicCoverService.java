@@ -384,12 +384,29 @@ final class MusicCoverService {
         return textureManager.getTexture(coverLocation) == null || forceReload;
     }
 
-    /** 在后台线程上解析一条 GD 曲目的封面；官方曲目原样返回。 */
+    /**
+     * 在后台线程上解析一条曲目的封面。
+     *
+     * <p>GD 走聚合源；其余先取平台自带的那张，取不到（有些第三方源就是没有专辑图）才问
+     * 自定义源 —— 宿主扩展，默认关。酷我搜索响应里本来就没有封面（上游同样 img:null），
+     * 走宿主移植的上游 kw/pic.js 单点查询。调用点已经在 {@code MultiThreadingUtil.runAsync}
+     * 的后台线程上，问一次脚本/接口不会卡住渲染。</p>
+     */
     private static String coverUrl(Music music, int size) {
         if (music != null && music.isGd()) {
             return music.resolveGdCoverUrl(size);
         }
-        return music == null ? "" : music.getCoverUrl(size);
+        if (music == null) return "";
+        String base = music.getCoverUrl(size);
+        if (!base.isEmpty()) return base;
+        String custom = music.resolveLxCoverUrl();
+        if (!custom.isEmpty()) return custom;
+        if (music.isKuwo()) {
+            // 上游 pic.web 返回的就是最终直链（常见 http，酷我 star CDN 没配 TLS），原样用。
+            String pic = KuwoMusicService.getPicUrl(music.getSourceId());
+            if (!pic.isEmpty()) return pic;
+        }
+        return base;
     }
 
     private static void loadMainCoverAsync(Music music, Location musicCover, Location musicCoverBlur) {

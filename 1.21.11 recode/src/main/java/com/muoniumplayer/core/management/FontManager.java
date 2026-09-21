@@ -26,8 +26,8 @@ public class FontManager extends AbstractManager {
         super("FontManager");
     }
 
-    public static CFontRenderer pf10bold, pf12bold, pf14bold, pf16bold, pf18bold, pf20bold, pf25bold, pf28bold, pf34bold, pf40bold, pf65bold, pf50bold;
-    public static CFontRenderer pf12, pf14, pf18, pf20, pf25, pf32;
+    public static CFontRenderer pf10bold, pf12bold, pf14bold, pf16bold, pf18bold, pf20bold, pf24bold, pf25bold, pf28bold, pf34bold, pf40bold, pf65bold, pf50bold;
+    public static CFontRenderer pf11, pf12, pf14, pf16, pf18, pf20, pf25, pf32;
     public static CFontRenderer icon30;
     public static CFontRenderer music14, music18, music40;
     /** 各音源品牌的 Fontello 字形使用独立字体，以避免私用区码位冲突。 */
@@ -216,8 +216,10 @@ public class FontManager extends AbstractManager {
         // 重新加载字体时白名单要跟着重建，否则里面留着一批已经 close() 的渲染器。
         TEXT_SLOTS.clear();
 
+        pf11 = createText(11, normalName);
         pf12 = createText(12, normalName);
         pf14 = createText(14, normalName);
+        pf16 = createText(16, normalName);
         pf20 = createText(20, normalName);
         pf25 = createText(25, normalName);
         pf32 = createText(32, normalName);
@@ -229,6 +231,7 @@ public class FontManager extends AbstractManager {
         pf16bold = createText(16, boldName);
         pf18bold = createText(18, boldName);
         pf20bold = createText(20, boldName);
+        pf24bold = createText(24, boldName);
         pf25bold = createText(25, boldName);
         pf28bold = createText(28, boldName);
         pf34bold = createText(34, boldName);

@@ -4,18 +4,24 @@ import com.google.gson.JsonObject;
 import com.muoniumplayer.core.ncm.kugou.KrcLyrics;
 import com.muoniumplayer.core.ncm.kugou.KuGouDevice;
 import com.muoniumplayer.core.ncm.kugou.KuGouMusicApi;
+import com.muoniumplayer.core.ncm.kugou.KuGouProfile;
+import com.muoniumplayer.core.ncm.kugou.KuGouQuality;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
 import com.muoniumplayer.core.screens.ncm.LyricParser;
+import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.Tuple;
+import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /**
  * 酷狗音乐的宿主适配层。
@@ -107,8 +113,117 @@ public final class KuGouMusicService {
 
     /** 私人 FM（需要登录）。{@code excludeHash} 用来避免连续推同一首。 */
     public static List<Music> personalFm(int limit, String excludeHash) {
-        return adaptTracks(KuGouMusicApi.personalFm(limit, excludeHash));
+        return personalFm(KuGouMusicApi.FmMode.NORMAL, limit, excludeHash);
     }
+
+    /**
+     * 按模式请求一批私人 FM 推荐。
+     *
+     * <p>模式与歌曲池都是酷狗原生支持的：上一首的信息（hash / album_audio_id / 实际收听了多久）
+     * 会一起上报，推荐模型靠它前进。<b>不带的话推荐会停滞在第一批</b>，所以这里把
+     * {@link #lastFmResult} 记下的游标与上一条信息一并带回。</p>
+     */
+    public static List<Music> personalFm(KuGouMusicApi.FmMode mode, int limit, String excludeHash) {
+        return personalFm(mode, 0, limit, excludeHash);
+    }
+
+    /**
+     * 完整参数的 FM 请求。
+     *
+     * @param songPoolId 上游的歌曲池（0/1/2），换池等于换一批推荐来源
+     */
+    public static List<Music> personalFm(KuGouMusicApi.FmMode mode, int songPoolId, int limit,
+                                         String excludeHash) {
+        KuGouMusicApi.FmRequest request = new KuGouMusicApi.FmRequest();
+        request.mode = mode == null ? KuGouMusicApi.FmMode.NORMAL : mode;
+        request.songPoolId = songPoolId;
+        request.limit = limit;
+        request.excludeHash = excludeHash;
+        if (!isBlank(lastFmHash)) {
+            request.excludeAlbumAudioId = lastFmAlbumAudioId;
+            request.lastPlayMillis = lastFmPlayedMillis;
+        }
+        if (!isBlank(lastFmCurMark)) request.curMark = lastFmCurMark;
+        KuGouMusicApi.FmResult result = KuGouMusicApi.requestFm(request);
+        lastFmCurMark = result.curMark;
+        lastFmGarbageCount = result.garbageCount;
+        List<Music> adapted = adaptTracks(result.tracks);
+        if (!adapted.isEmpty()) {
+            KuGouMusicApi.Track first = result.tracks.get(0);
+            lastFmHash = nonNull(first.hash);
+            lastFmAlbumAudioId = first.requestAlbumAudioId();
+        }
+        return adapted;
+    }
+
+    /**
+     * 告诉 FM「这首不感兴趣」。
+     *
+     * <p>要带最近一次推荐的游标（{@code cur_mark}），否则反馈会打到别批推荐上，而且不报错。
+     * 与网易云的 {@code /api/FMTrash} 是同一件事：只影响后续推荐，不改收藏。</p>
+     */
+    public static boolean reportFmTrash(Music music) {
+        KuGouMusicApi.Track track = trackOf(music);
+        if (track == null) return false;
+        boolean ok = KuGouMusicApi.personalFmTrash(track, lastFmCurMark);
+        if (ok) lastFmPlayedMillis = 0L;
+        return ok;
+    }
+
+    /** 撤销「不感兴趣」。 */
+    public static boolean reportFmUndoTrash(Music music) {
+        KuGouMusicApi.Track track = trackOf(music);
+        return track != null && KuGouMusicApi.personalFmUndoTrash(track, lastFmCurMark);
+    }
+
+    /** FM 里点红心。与 {@link #likeTrack} 是两条链路：这条只喂推荐模型。 */
+    public static boolean reportFmRed(Music music) {
+        KuGouMusicApi.Track track = trackOf(music);
+        if (track == null) return false;
+        boolean ok = KuGouMusicApi.personalFmRed(track, lastFmCurMark);
+        if (ok) KuGouLikedCache.add(music.getStableKey());
+        return ok;
+    }
+
+    /** 拉黑歌手（账号级、持久）。 */
+    public static boolean reportFmBlackSinger(Music music, boolean cancel) {
+        KuGouMusicApi.Track track = trackOf(music);
+        return track != null && KuGouMusicApi.personalFmBlackSinger(track, cancel);
+    }
+
+    /** 记一条「这一首听了多久」，下一次 FM 请求要带它。 */
+    public static void noteFmPlayed(Music music, long playedMillis) {
+        if (music == null || !music.isKuGou()) return;
+        lastFmHash = nonNull(music.getSourceId());
+        lastFmAlbumAudioId = nonNull(music.getKugouAlbumAudioId());
+        lastFmPlayedMillis = Math.max(0L, playedMillis);
+    }
+
+    /** 已经标记「不感兴趣」的曲目数；还没请求过 FM 时为 0。 */
+    public static int getFmGarbageCount() {
+        return lastFmGarbageCount;
+    }
+
+    /** 酷狗支持的 FM 模式（宿主自己的模式集合比它多，映射在 {@code PersonalFmManager}）。 */
+    public static KuGouMusicApi.FmMode[] fmModes() {
+        return KuGouMusicApi.FmMode.values();
+    }
+
+    private static KuGouMusicApi.Track trackOf(Music music) {
+        if (music == null || !music.isKuGou()) return null;
+        try {
+            return music.toKuGouTrack();
+        } catch (Throwable throwable) {
+            return null;
+        }
+    }
+
+    /** 最近一批推荐的游标，反馈上报要原样带回。 */
+    private static volatile String lastFmCurMark = "";
+    private static volatile String lastFmHash = "";
+    private static volatile String lastFmAlbumAudioId = "";
+    private static volatile long lastFmPlayedMillis;
+    private static volatile int lastFmGarbageCount;
 
     /** 最近播放（需要登录）。 */
     public static List<Music> recentSongs(int limit) {
@@ -123,6 +238,58 @@ public final class KuGouMusicService {
     /** 专辑曲目。 */
     public static List<Music> albumSongs(String albumId, int limit) {
         return adaptTracks(KuGouMusicApi.albumSongs(albumId, limit));
+    }
+
+    /** 搜索专辑。结果的 id 已带 {@code album:} 前缀，可以直接交给 {@link #playlistTracks}。 */
+    public static List<PlayList> searchAlbums(String keyword, int limit) {
+        return adaptPlaylists(KuGouMusicApi.searchAlbums(keyword, limit));
+    }
+
+    /** 搜索歌手。结果的 id 已带 {@code artist:} 前缀，交给 {@link #playlistTracks} 就是该歌手的热播。 */
+    public static List<PlayList> searchArtists(String keyword, int limit) {
+        return adaptPlaylists(KuGouMusicApi.searchArtists(keyword, limit));
+    }
+
+    /** 按歌词搜歌。网易云的搜索页有这个类型，酷狗同样能出可直接播放的条目。 */
+    public static List<Music> searchByLyric(String keyword, int limit) {
+        return adaptTracks(KuGouMusicApi.searchLyricSongs(keyword, limit));
+    }
+
+    /** 歌手榜单（按类型/性别）。{@code type} 0 全部、1 男、2 女、3 组合。 */
+    public static List<PlayList> singerList(int type, int sexType, int limit) {
+        return adaptPlaylists(KuGouMusicApi.singerList(type, sexType, limit));
+    }
+
+    /** 新歌专辑榜。 */
+    public static List<PlayList> topAlbums(int page, int limit) {
+        return adaptPlaylists(KuGouMusicApi.topAlbums(page, limit));
+    }
+
+    /** 新歌榜曲目。{@code rankId} 传空用上游默认的那一档。 */
+    public static List<Music> newSongs(String rankId, int page, int limit) {
+        return adaptTracks(KuGouMusicApi.newSongs(rankId, page, limit));
+    }
+
+    /** 专辑详情（作为一个可点的条目返回，id 带 {@code album:} 前缀）。 */
+    public static PlayList albumInfo(String albumId) {
+        return adaptOne(KuGouMusicApi.albumInfo(albumId));
+    }
+
+    /** 歌手详情（id 带 {@code artist:} 前缀）。 */
+    public static PlayList artistInfo(String authorId) {
+        return adaptOne(KuGouMusicApi.artistInfo(authorId));
+    }
+
+    /** 单条详情到 {@link PlayList} 的换算：复用列表那条路径，避免两份字段映射。 */
+    private static PlayList adaptOne(KuGouMusicApi.Playlist source) {
+        if (source == null) return null;
+        List<PlayList> adapted = adaptPlaylists(Collections.singletonList(source));
+        return adapted.isEmpty() ? null : adapted.get(0);
+    }
+
+    /** 某位歌手的全部专辑。 */
+    public static List<PlayList> artistAlbums(String authorId, int limit) {
+        return adaptPlaylists(KuGouMusicApi.artistAlbums(authorId, limit));
     }
 
     /**
@@ -173,12 +340,196 @@ public final class KuGouMusicService {
     public static Tuple<String, String> getSongUrl(Music music, Quality requestedQuality) {
         if (music == null || !music.isKuGou()) return null;
         try {
-            KuGouMusicApi.Stream stream = KuGouMusicApi.songUrl(music.toKuGouTrack(), tier(requestedQuality));
+            KuGouMusicApi.Track track = music.toKuGouTrack();
+            KuGouQuality target = of(requestedQuality);
+            // 无损以上（高品无损 / 臻品系列 / 母带）的 hash 列表端点基本不给，
+            // 先花一次请求问清楚这首到底有什么档，再按阶梯取。探测结果按 hash 缓存，
+            // 同一首歌切音质不会重复问。
+            if (target.rank() > KuGouQuality.FLAC.rank()) probeQualities(track);
+            KuGouMusicApi.Stream stream = KuGouMusicApi.songUrl(track, target);
+            if (stream == null) {
+                // 高档探不到不等于这首放不出来：退回旧的三档链路，保证不比修复前差。
+                stream = KuGouMusicApi.songUrl(track, tier(requestedQuality));
+            }
+            if (stream == null) stream = privUrlFallback(track, target);
             return stream == null ? null : new Tuple<String, String>(stream.url, stream.format);
         } catch (Throwable throwable) {
             System.err.println("[Music/KuGou] 取流失败 " + music.getStableKey() + ": " + throwable.getMessage());
             return null;
         }
+    }
+
+    /**
+     * 最后一级备选：{@code /v6/priv_url}（{@link KuGouMusicApi#privUrl}）。
+     *
+     * <p><b>默认关</b>，要 {@code NCMPlayerConfig.setKuGouPrivUrlFallbackEnabled(true)} 才打。
+     * 这条路径没有任何定论：本仓只在<b>标准版身份</b>下实测过它失败（{@code error_code=20010}），
+     * 概念版从没测过，而参考实现恰好只按概念版身份跑过它。既不照「一定可用」接成默认路径，
+     * 也不照「一定失败」把它删掉——留一个显式开关，让它在真机上可试、可关。</p>
+     *
+     * <p>开着时按「目标档 → 无损 → 320 → 128」去重后逐档试。这个端点一次回多档，
+     * 但「回了 200 却没有可用地址」在未登录/非会员/参数错三种情况下长得一样，
+     * 逐档各打一次才分得清是哪一种（每次失败 {@code KuGouMusicApi} 都会把原始响应截断打进日志）。</p>
+     */
+    private static KuGouMusicApi.Stream privUrlFallback(KuGouMusicApi.Track track, KuGouQuality target) {
+        if (!NCMPlayerConfig.isKuGouPrivUrlFallbackEnabled()) return null;
+        List<KuGouQuality> ladder = new ArrayList<KuGouQuality>();
+        for (KuGouQuality quality : new KuGouQuality[]{
+                target, KuGouQuality.FLAC, KuGouQuality.HIGH, KuGouQuality.STANDARD}) {
+            if (quality != null && !ladder.contains(quality)) ladder.add(quality);
+        }
+        for (KuGouQuality quality : ladder) {
+            KuGouMusicApi.Stream stream = KuGouMusicApi.privUrl(track, quality);
+            if (stream != null) {
+                System.out.println("[Music/KuGou] /v6 备选拿到了 " + quality.key() + " 档（身份 "
+                        + KuGouProfile.active().label() + "）");
+                return stream;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 这首歌实际有哪些音质档。
+     *
+     * <p>网易云的音质选择器对八个档位是无差别显示的，酷狗里「有这一档」是个真问题：
+     * 母带与臻品系列只有少数曲目有。这里给 UI 一个判断依据，取不到探测结果时
+     * 退化成「按曲目自带的三个 hash 能拼出什么档就算什么档」。</p>
+     */
+    public static List<KuGouQuality> availableQualities(Music music) {
+        List<KuGouQuality> result = new ArrayList<KuGouQuality>();
+        if (music == null || !music.isKuGou()) return result;
+        try {
+            KuGouMusicApi.Track track = music.toKuGouTrack();
+            probeQualities(track);
+            for (KuGouQuality quality : KuGouQuality.values()) {
+                if (!isBlank(KuGouMusicApi.hashFor(track, quality))) result.add(quality);
+            }
+        } catch (Throwable throwable) {
+            System.err.println("[Music/KuGou] 音质探测失败: " + throwable.getMessage());
+        }
+        if (result.isEmpty()) result.add(KuGouQuality.STANDARD);
+        return result;
+    }
+
+    /**
+     * 宿主音质里，这一首在酷狗侧真的能取的那几个。给音质菜单置灰用。
+     *
+     * <p>判据就是把 {@link #of(Quality)} 正着用：某一档映射过去的酷狗档位有 hash，这一档就算可用。
+     * 于是 {@code higher} 与 {@code exhigh} 在界面上永远同进同退——那不是偷懒，
+     * 是酷狗那一侧本来就没有 192k 这一档，两档都折叠到 320。</p>
+     *
+     * <p><b>会打网络请求</b>（{@code get_res_privilege/lite} 档位探测，结果按曲目缓存），
+     * 所以只能在后台线程调，不要放进任何每帧回调。</p>
+     */
+    public static List<Quality> availableHostQualities(Music music) {
+        List<Quality> result = new ArrayList<Quality>();
+        List<KuGouQuality> tiers = availableQualities(music);
+        if (tiers.isEmpty()) return result;
+        for (Quality quality : Quality.values()) {
+            if (tiers.contains(of(quality))) result.add(quality);
+        }
+        return result;
+    }
+
+    /**
+     * 问一次 {@code get_res_privilege/lite}，把探到的档位 hash 合并进曲目。
+     *
+     * <p>按标准档 hash 做会话级缓存：同一首歌在音质之间来回切是常见操作，
+     * 而音质可用性在几分钟内不会变。缓存只存 hash→档位这一件事，不存会员状态。</p>
+     */
+    private static void probeQualities(KuGouMusicApi.Track track) {
+        if (track == null || isBlank(track.hash)) return;
+        if (PROBED_TRACKS.containsKey(probeKey(track))) {
+            mergeCached(track);
+            return;
+        }
+        List<KuGouMusicApi.Privilege> probed;
+        try {
+            probed = KuGouMusicApi.privilegeLite(Collections.singletonList(track.hash));
+        } catch (Throwable throwable) {
+            System.err.println("[Music/KuGou] 权限查询异常: " + throwable.getMessage());
+            return;
+        }
+        if (probed == null || probed.isEmpty()) return;
+        KuGouMusicApi.Privilege privilege = probed.get(0);
+        Map<String, String> copy = new LinkedHashMap<String, String>(privilege.hashesByQuality);
+        PROBED_TRACKS.put(probeKey(track), copy);
+        track.hashesByQuality.putAll(copy);
+    }
+
+    private static void mergeCached(KuGouMusicApi.Track track) {
+        Map<String, String> cached = PROBED_TRACKS.get(probeKey(track));
+        if (cached != null && !cached.isEmpty()) track.hashesByQuality.putAll(cached);
+    }
+
+    /** 缓存键用标准档 hash：它在任何曲目上都存在，且不随音质变化。 */
+    private static String probeKey(KuGouMusicApi.Track track) {
+        return track.hash.trim().toLowerCase(Locale.ROOT);
+    }
+
+    /** 会话级音质探测缓存。键是曲目的标准档 hash。 */
+    private static final Map<String, Map<String, String>> PROBED_TRACKS
+            = java.util.Collections.synchronizedMap(
+            new LinkedHashMap<String, Map<String, String>>() {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Map<String, String>> eldest) {
+                    return size() > PROBED_CACHE_LIMIT;
+                }
+            });
+
+    private static final int PROBED_CACHE_LIMIT = 256;
+
+    /**
+     * 宿主音质 → 酷狗档位。
+     *
+     * <p>两边不是一一对应，按「不低于就近」的原则折叠：</p>
+     * <ul>
+     *   <li>网易云 {@code higher}（192k）在酷狗没有对应档，就近取 320；</li>
+     *   <li>{@code lossless}→flac、{@code hires}→{@code high}（24bit 高品无损）；</li>
+     *   <li>三个「音效」类档位各对应酷狗臻品系列的一个：{@code sky}（空间音频）→全景声、
+     *       {@code jyeffect}→超清、{@code jymaster}→母带。</li>
+     * </ul>
+     * <p>取不到时由 {@link KuGouQuality#ladderFrom} 逐档降级，所以这里选高了不会导致放不出，
+     * 选低了才会让用户拿不到本该有的音质。</p>
+     */
+    public static KuGouQuality of(Quality quality) {
+        if (quality == null) return KuGouQuality.STANDARD;
+        switch (quality) {
+            case HIGHER:
+            case EXHIGH:
+                return KuGouQuality.HIGH;
+            case LOSSLESS:
+                return KuGouQuality.FLAC;
+            case HIRES:
+                return KuGouQuality.HI_RES;
+            case SKY:
+                return KuGouQuality.ATMOS;
+            case JYEFFECT:
+                return KuGouQuality.CLEAR;
+            case JYMASTER:
+                return KuGouQuality.TAPE;
+            case STANDARD:
+            default:
+                return KuGouQuality.STANDARD;
+        }
+    }
+
+    /**
+     * 旧的三档折叠，保留作兜底。
+     *
+     * <p>主路径已经改成 {@link #of(Quality)} + 按档取流。这里留着是因为老链路只用曲目自带的
+     * 三个 hash，在任何「新链路一个地址都没拿到」的情况下它都可能拿到（例如档位探测被限流）。</p>
+     */
+    private static int tier(Quality quality) {
+        if (quality == Quality.LOSSLESS || quality == Quality.HIRES
+                || quality == Quality.JYEFFECT || quality == Quality.JYMASTER) {
+            return 2;
+        }
+        if (quality == Quality.HIGHER || quality == Quality.EXHIGH || quality == Quality.SKY) {
+            return 1;
+        }
+        return 0;
     }
 
     /**
@@ -189,17 +540,6 @@ public final class KuGouMusicService {
     public static boolean needsVip(Music music) {
         if (music == null || !music.isKuGou()) return false;
         return KuGouMusicApi.needsVip(music.toKuGouTrack());
-    }
-
-    private static int tier(Quality quality) {
-        if (quality == Quality.LOSSLESS || quality == Quality.HIRES
-                || quality == Quality.JYEFFECT || quality == Quality.JYMASTER) {
-            return 2;
-        }
-        if (quality == Quality.HIGHER || quality == Quality.EXHIGH || quality == Quality.SKY) {
-            return 1;
-        }
-        return 0;
     }
 
     // ── 歌词 ────────────────────────────────────────────────────────────────
@@ -464,10 +804,52 @@ public final class KuGouMusicService {
         }
     }
 
-    /** 申请扫码会话；返回 {@code null} 表示这次没拿到。 */
-    public static KuGouMusicApi.QrSession createQrSession() {
-        return KuGouMusicApi.createQrSession();
+    /** 申请扫码会话（当前身份）；返回 {@code null} 表示这次没拿到。 */
+    public static KuGouSession createQrSession() {
+        return createQrSession(KuGouProfile.active());
     }
+
+    /**
+     * 按指定身份申请扫码会话。
+     *
+     * <p>概念版与标准版的二维码签发的是<b>两种凭证</b>，所以这里把会话身份记在
+     * {@link #pendingQrProfile} 而不是只回一个 key：后续 {@link #checkQr(String)} 轮询与落盘
+     * 都要用同一个身份，中途换档会出现「扫码成功但什么都放不出」。UI 只调
+     * {@code createQrSession()} + {@code checkQr(key)} 也不会丢这个信息。</p>
+     */
+    public static KuGouSession createQrSession(KuGouProfile profile) {
+        KuGouProfile used = profile == null ? KuGouProfile.STANDARD : profile;
+        KuGouMusicApi.QrSession session = KuGouMusicApi.createQrSession(used);
+        if (session == null) return null;
+        pendingQrProfile = used;
+        return new KuGouSession(session.key, session.imageDataUrl, used);
+    }
+
+    /**
+     * 用概念版身份登录（酷狗概念版 App 扫码）。
+     *
+     * <p>与 {@link #createQrSession()} 的差别只有一件：签发凭证的客户端不同，之后所有请求的
+     * {@code appid}、签名盐与取流参数都跟着它走。</p>
+     */
+    public static KuGouSession createConceptQrSession() {
+        return createQrSession(KuGouProfile.CONCEPT);
+    }
+
+    /** 一次登录会话：轮询用的 key、二维码图（{@code data:image/png;base64,...}）与签发身份。 */
+    public static final class KuGouSession {
+        public final String key;
+        public final String imageDataUrl;
+        public final KuGouProfile profile;
+
+        KuGouSession(String key, String imageDataUrl, KuGouProfile profile) {
+            this.key = key == null ? "" : key;
+            this.imageDataUrl = imageDataUrl == null ? "" : imageDataUrl;
+            this.profile = profile == null ? KuGouProfile.STANDARD : profile;
+        }
+    }
+
+    /** 最近一次发起扫码时用的身份；轮询与落盘都以它为准，避免中途换档把凭证签错。 */
+    private static volatile KuGouProfile pendingQrProfile = KuGouProfile.STANDARD;
 
     /** 申请扫码 key；返回空串表示这次没拿到。 */
     public static String createQrKey() {
@@ -479,25 +861,85 @@ public final class KuGouMusicService {
     }
 
     /**
+     * 按身份拼二维码内容。
+     *
+     * <p>概念版那一档必须带 {@code appid=3116}（参考实现里二维码文本里嵌的 appid 随身份变），
+     * 标准版沿用实测能扫的原样。判据与原因写在
+     * {@link KuGouMusicApi#qrContent(String, KuGouProfile)}。</p>
+     */
+    public static String qrContent(String key, boolean concept) {
+        return KuGouMusicApi.qrContent(key, concept ? KuGouProfile.CONCEPT : KuGouProfile.STANDARD);
+    }
+
+    /**
      * 轮询一次扫码状态，成功时落盘凭证。
      *
      * @return 上游原始状态码：0 过期、1 等待扫码、2 待确认、4 成功；{@code -1} 表示这次请求失败
      *         （调用方应重试，不要当成失效）
      */
     public static int checkQr(String key) {
-        KuGouMusicApi.QrStatus status = KuGouMusicApi.checkQr(key);
+        KuGouMusicApi.QrStatus status = KuGouMusicApi.checkQr(key, pendingQrProfile);
         if (status == null) return -1;
         if (status.code == 4) {
             if (status.token.isEmpty() || status.userId.isEmpty()) {
                 System.err.println("[Music/KuGou] 扫码成功但上游没给 token/userid");
                 return -1;
             }
-            KuGouDevice.saveLogin(status.token, status.userId, status.nickname, status.avatarUrl);
+            KuGouDevice.saveLogin(status.token, status.userId, status.nickname, status.avatarUrl,
+                    pendingQrProfile);
             // 会员状态决定高音质能不能拿到，登录后立刻补一次。
             refreshVipStatus();
             refreshUserPlaylists(true);
+            afterAccountChanged();
         }
         return status.code;
+    }
+
+    /**
+     * 用粘贴的 token + userid 登录，与网易云那边的「Cookie 登录」入口对等。
+     *
+     * <p><b>必须是 App 侧 token</b>：浏览器 Cookie 里的 {@code token} 是 Web 会话凭证
+     * （{@code a_id=1014}），在网关上稳定报 {@code 20006}——那不是参数写错，是两种凭证本就不同源。
+     * 入口文案要写清楚这点，否则用户会拿浏览器 Cookie 反复试。</p>
+     *
+     * @param concept {@code true} 时按概念版身份校验（凭证抓自酷狗概念版 App 就用它）
+     * @return 凭证可用并且已经落盘
+     */
+    public static boolean loginWithToken(String token, String userId, boolean concept) {
+        boolean ok = KuGouMusicApi.loginWithToken(token, userId,
+                concept ? KuGouProfile.CONCEPT : KuGouProfile.STANDARD);
+        if (!ok) {
+            System.err.println("[Music/KuGou] token 校验失败：不是 App 侧 token、已失效，或身份选错");
+            return false;
+        }
+        refreshVipStatus();
+        refreshUserPlaylists(true);
+        afterAccountChanged();
+        return true;
+    }
+
+    /** 当前凭证所属身份的展示名（「酷狗音乐」/「酷狗概念版」）。 */
+    public static String getProfileLabel() {
+        return KuGouProfile.active().label();
+    }
+
+    /** 当前是不是概念版身份。账号面板用它决定副标题；取流链路不读它，身份是自动跟随的。 */
+    public static boolean isConceptProfile() {
+        return KuGouProfile.active() == KuGouProfile.CONCEPT;
+    }
+
+    /**
+     * 换账号之后要清的东西。
+     *
+     * <p>收藏索引与音质探测缓存都按「曲目」而不是按「账号」记：留着会让新账号沿用旧账号的红心，
+     * 而音质可用性虽然与账号无关，会员状态却有关（同一首在会员号上能探到母带档），
+     * 所以一起清干净更省事。</p>
+     */
+    private static void afterAccountChanged() {
+        KuGouLikedCache.clear();
+        PROBED_TRACKS.clear();
+        // 清完就要重建，否则新账号在下次重启前都是「全部未收藏」——这正是要补齐的冷启动问题。
+        warmLikedSongsAsync();
     }
 
     // ── 动态封面 ────────────────────────────────────────────────────────────
@@ -553,6 +995,10 @@ public final class KuGouMusicService {
      * @param playedMillis 实际播放毫秒；非正数会被忽略
      */
     public static void reportPlaybackEnd(Music music, long playedMillis) {
+        // 顺手把「这一首听了多久」交给 FM：下一次取推荐时要把它报回去，
+        // 否则酷狗的推荐模型收不到收听进度，会一直停在第一批。放在这里而不是让播放侧多调一次，
+        // 是因为这个回调本来就是「一首播完」的唯一出处。
+        noteFmPlayed(music, playedMillis);
         String mixSongId = csccSongId(music);
         if (mixSongId.isEmpty()) return;
         com.muoniumplayer.core.ncm.kugou.KuGouCsccReporter.finish(mixSongId, playedMillis);
@@ -715,6 +1161,81 @@ public final class KuGouMusicService {
         return false;
     }
 
+    /**
+     * 收藏 / 取消收藏一首歌。
+     *
+     * <p>给 {@code Music.setLike} 用的分发入口：网易云是一句 {@code /api/like}，酷狗是
+     * 「查我喜欢歌单的 listid → 加曲 / 按 hash 找 fileid 再删」。两条链路的失败都表现为
+     * 返回 {@code false}，由调用方决定要不要回滚图标。</p>
+     */
+    public static boolean setLike(Music music, boolean like) {
+        return like ? likeTrack(music) : unlikeTrack(music);
+    }
+
+    /**
+     * 拉全「我喜欢」的 hash 并重建本地索引（<b>阻塞</b>，在后台线程调用）。
+     *
+     * <p>这是冷启动红心的唯一真值来源。原先只有本次会话点过的算收藏，于是重启后所有已收藏的歌
+     * 都显示成未收藏、再点一次就是重复收藏。酷狗没有轻量的「这首是否已收藏」接口，
+     * 一次全量拉取（每页 300，几十页封顶）比逐行问一遍便宜得多。</p>
+     *
+     * @return 索引是否成功建立；{@code false} 时调用方应保留现有的乐观状态，<b>不要</b>清空
+     */
+    public static boolean warmLikedSongs() {
+        if (!isLoggedIn()) return false;
+        try {
+            List<String> hashes = KuGouMusicApi.likedHashes(0);
+            if (hashes.isEmpty()) {
+                // 空列表有两种可能：真的没收藏，或者请求/解析失败。两者不可区分时保守处理：
+                // 不覆盖已有索引，只记下「还没建立过」。
+                System.err.println("[Music/KuGou] 收藏索引：没有拉到任何条目，保留现有状态");
+                return KuGouLikedCache.hasPersistedIndex();
+            }
+            KuGouLikedCache.replaceWithServerIndex(hashes);
+            System.out.println("[Music/KuGou] 已建立酷狗收藏索引 " + hashes.size() + " 条。");
+            return true;
+        } catch (Throwable throwable) {
+            System.err.println("[Music/KuGou] 收藏索引重建失败: " + throwable.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 在后台线程重建收藏索引。
+     *
+     * <p>启动与登录成功都调它，且<b>不阻塞调用方</b>：全量收藏可能有几千首，逐页拉要好几秒，
+     * 放在主线程会让界面开局卡住。同一时刻只允许一个在跑。</p>
+     */
+    public static void warmLikedSongsAsync() {
+        if (!isLoggedIn()) return;
+        if (!WARMING.compareAndSet(false, true)) return;
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                warmLikedSongs();
+            } finally {
+                WARMING.set(false);
+            }
+        });
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean WARMING
+            = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * 启动时从磁盘恢复收藏索引（不发请求）。
+     *
+     * <p>有了它，红心状态在第一次联网之前就是对的；{@link #warmLikedSongs()} 之后会覆盖成
+     * 服务端那份更新的结果。</p>
+     */
+    public static void restoreLikedSongs() {
+        KuGouLikedCache.restoreFromDisk();
+    }
+
+    /** 收藏索引是否已经建立过（区分「没收藏」与「还没拉到」）。 */
+    public static boolean hasLikedIndex() {
+        return KuGouLikedCache.hasPersistedIndex();
+    }
+
     // ── 我的歌单（缓存 + 异步） ──────────────────────────────────────────────
 
     public static List<PlayList> getUserPlaylistsSnapshot() {
@@ -866,5 +1387,15 @@ public final class KuGouMusicService {
 
     private static String nonNull(String value) {
         return value == null ? "" : value;
+    }
+
+    /**
+     * 空白判定。
+     *
+     * <p>本地实现而不是用 {@code KuGouSign.isBlank}：那个方法在 {@code kugou} 包里是包可见的，
+     * 本层的判空规则（{@code null} 与纯空白都算空）与它一致，但跨包不该依赖一个内部工具。</p>
+     */
+    private static boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 }

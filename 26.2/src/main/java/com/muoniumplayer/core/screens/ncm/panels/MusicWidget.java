@@ -5,6 +5,7 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.BilibiliFavoriteService;
 import com.muoniumplayer.core.ncm.music.BilibiliMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.CrossSourceSwitcher;
 import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.KuGouLikedCache;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
@@ -124,6 +125,15 @@ public class MusicWidget extends RoundedRectWidget {
                 } else {
                     CloudMusic.play(playList.getMusics(), index);
                 }
+            } else if (i == 1) {
+                // 右键 = 手动换源。流水线全在后台线程跑，结果回投主线程替换列表里的这一格；
+                // 同一首歌在结果回来之前的重复右键会被服务层的 in-flight 账吃掉。
+                CrossSourceSwitcher.requestManualSwitch(this.music, playList, index);
+            } else if (i == 2) {
+                // 中键 = 给这一行手动选词。右键已经被换源占了，这套 UI 框架里也没有行级上下文菜单，
+                // 中键是唯一一处不会和任何已有手势打架的按键（鼠标按键 0/1 之外没人用过）。
+                // 弹窗只认这一行的这首歌：预览时钟停住、钉词也只写它的 stableKey。
+                NCMScreen.getInstance().openLyricSearch(this.music);
             }
 
             return true;

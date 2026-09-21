@@ -286,7 +286,8 @@ public final class NCMTheme {
         dynamicThemeVersion = version;
     }
 
-    private static boolean isLightPreset() {
+    /** 当前主题是不是浅色（按背景亮度判定）。HUD 设置界面用它挑暗/日两套表面 token。 */
+    public static boolean isLightPreset() {
         int background = current.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND);
         return Color.RGBtoHSB((background >>> 16) & 0xFF, (background >>> 8) & 0xFF,
                 background & 0xFF, null)[2] > .62f;

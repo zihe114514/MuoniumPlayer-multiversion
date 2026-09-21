@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import org.mozilla.javascript.ClassShutter;
 import org.mozilla.javascript.Context;
 import org.mozilla.javascript.ContextFactory;
 import org.mozilla.javascript.Function;
@@ -25,6 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
@@ -51,6 +53,43 @@ public final class LxRuntime {
     public static final long INIT_TIMEOUT_MS = 30_000L;
     /** 单个任务（一次脚本调用）允许连续执行多久。防的是 while(true) 把 JS 线程永久占死。 */
     private static final long TASK_WALL_CLOCK_LIMIT_MS = 15_000L;
+
+    /*
+     * ── 脚本给进来的值一律带预算 ──────────────────────────────────────────────
+     * 指令观察器只能打断「脚本里跑的字节码」，管不到宿主自己在 Java 侧遍历脚本给的对象：
+     * 一个 {@code {length: 2000000000}} 的假数组就能让下面这些循环空转到天荒地老，而那条
+     * 唯一的 JS 线程一旦被占住，整套自定义源就废了（超时也救不回来，因为超时只让调用方放弃，
+     * 线程还在转）。所以每个入口都要自己封顶。参照的是 qplayer 的 {@code PluginRuntime.fromJs}
+     * （深度 / 节点数 / 字符串长度三重预算）。
+     */
+    /** {@code lx.utils.buffer.concat} 一次最多拼多少个元素。正常脚本是个位数。 */
+    static final int MAX_CONCAT_ELEMENTS = 65_536;
+    /** 拼出来的字节数上限。加密与 zlib 的中间产物顶多几 MB。 */
+    static final int MAX_CONCAT_BYTES = 32 * 1024 * 1024;
+    /** {@code setTimeout} 的额外参数个数上限。 */
+    static final int MAX_TIMER_ARGS = 64;
+    /** 请求头的条目数上限。 */
+    static final int MAX_HEADER_ENTRIES = 128;
+    /** 单个请求头值的字符上限。Cookie 是里面最长的那一个。 */
+    static final int MAX_HEADER_VALUE_CHARS = 8_192;
+    /** 脚本发来的 {@code inited} JSON 文本上限。上游那份只有几百字节。 */
+    static final int MAX_INITED_JSON_CHARS = 65_536;
+    /** 脚本发来的单次响应 JSON 文本上限。返回值本身已经在上游那套校验里限过长度。 */
+    static final int MAX_RESPONSE_JSON_CHARS = 256 * 1024;
+
+    /** 宿主桥在 Rhino 里的类名（{@code Context.javaToJS} 包装它时也要过 ClassShutter 这道门）。 */
+    private static final String HOST_BRIDGE_CLASS = LxRuntime.class.getName() + "$Host";
+
+    /**
+     * 允许被交给脚本的 Java 类。除此之外一律不可见 —— 特别是 {@code java.lang.Runtime}
+     * 这类「一句话拿到本机命令行」的。
+     *
+     * <p>新加一个会对脚本可见的 Java 返回类型时，要同时把它加进这里，否则脚本那边表现为
+     * 「Access to Java class ... is prohibited」。{@link LxRuntimeSandboxTest} 会立刻跑到。</p>
+     */
+    private static boolean javaClassVisibleToScripts(String className) {
+        return HOST_BRIDGE_CLASS.equals(className) || LxBuffer.class.getName().equals(className);
+    }
 
     public enum State { LOADING, READY, FAILED, CLOSED }
 
@@ -111,9 +150,20 @@ public final class LxRuntime {
 
     private Scriptable scope;
 
-    private LxRuntime(String scriptId, LxScriptInfo info) {
+    /**
+     * 宿主扩展开关：允许脚本为非 {@code local} 的源提供 {@code lyric} / {@code pic}。
+     *
+     * <p>上游的动作白名单只给 {@code local} 这两个动作，而 {@code local} 在洛雪里指的是本机文件，
+     * MuoniumPlayer 的曲目全来自远端平台，照抄那张表等于这两个动作永远用不上。开关默认关
+     * （与上游一字不差），打开后由引导脚本按它放宽白名单 —— 放宽的只是「宿主肯问」，
+     * 脚本没声明的动作照样不会被问到。</p>
+     */
+    private final boolean extraActions;
+
+    private LxRuntime(String scriptId, LxScriptInfo info, boolean extraActions) {
         this.scriptId = scriptId;
         this.info = info;
+        this.extraActions = extraActions;
         final int index = RUNTIME_SEQUENCE.incrementAndGet();
         this.loop = Executors.newSingleThreadScheduledExecutor(named("LX-Source-JS-" + index));
         this.httpPool = Executors.newCachedThreadPool(named("LX-Source-HTTP-" + index));
@@ -130,6 +180,21 @@ public final class LxRuntime {
                 // lx.utils.crypto.md5(x).length 拿到的是 Java 的 length() 方法而不是长度。
                 // 关掉之后这些值在脚本里就是普通的 JS 原始值。
                 cx.getWrapFactory().setJavaPrimitiveWrap(false);
+                // 断掉脚本对 Java 类的按名查找：默认的 initStandardObjects 会给出 java / Packages
+                // 这些顶层对象，脚本一句 java.lang.Runtime.getRuntime().exec(...) 就等于拿到了本机
+                // 的命令行。这道门只拦「把 Java 类交给脚本」，白名单以外的类一律不可见。
+                //
+                // 为什么不是像 qplayer 那样恒返回 false：那边的桥是 BaseFunction（纯 JS 函数对象），
+                // 从来不需要把 Java 对象交出去；这里的 __lxHost 是一个 Java 对象，Rhino 包它的时候
+                // 同样会问 ClassShutter，恒 false 会连宿主自己的桥一起挡掉（实测报错
+                // "Access to Java class ... LxRuntime$Host is prohibited"）。所以只放行确实要过界的
+                // 那两个类，其余全拒。
+                cx.setClassShutter(new ClassShutter() {
+                    @Override
+                    public boolean visibleToScripts(String className) {
+                        return javaClassVisibleToScripts(className);
+                    }
+                });
                 return cx;
             }
 
@@ -158,8 +223,9 @@ public final class LxRuntime {
     // ════════════════════════════ 生命周期 ════════════════════════════
 
     /** 立刻返回；加载在 JS 线程上进行，结果用 {@link #awaitReady(long)} 等。 */
-    public static LxRuntime start(String scriptId, LxScriptInfo info, final String rawSource) {
-        final LxRuntime runtime = new LxRuntime(scriptId, info);
+    public static LxRuntime start(String scriptId, LxScriptInfo info, final String rawSource,
+                                  boolean extraActions) {
+        final LxRuntime runtime = new LxRuntime(scriptId, info, extraActions);
         runtime.loop.execute(new Runnable() {
             @Override
             public void run() {
@@ -180,13 +246,18 @@ public final class LxRuntime {
     private void load(String rawSource) {
         Context cx = contextFactory.enterContext();
         try {
-            scope = cx.initStandardObjects();
+            // 安全版的标准对象：顶层没有 java / Packages / JavaAdapter 这些互操作入口。
+            // 与 makeContext 里那把 ClassShutter 是两道独立的门（一道拦「顶层就没有」，
+            // 一道拦「按名字去找」），qplayer 的 PluginRuntime 也是两道一起上。
+            scope = cx.initSafeStandardObjects(null, false);
             // Rhino 1.7 之前没有 globalThis，而引导脚本与绝大多数自定义源都按它来写。
             if (!ScriptableObject.hasProperty(scope, "globalThis")) {
                 ScriptableObject.putProperty(scope, "globalThis", scope);
             }
             ScriptableObject.putProperty(scope, "__lxHost", Context.javaToJS(host, scope));
             ScriptableObject.putProperty(scope, "__lxScriptInfo", scriptInfoJson(rawSource));
+            // 引导脚本据此决定动作白名单要不要放宽到 lyric / pic（默认不放宽，与上游一致）。
+            ScriptableObject.putProperty(scope, "__lxExtraActions", Boolean.valueOf(extraActions));
 
             String bootstrap = readBootstrap();
             beginTask();
@@ -263,6 +334,23 @@ public final class LxRuntime {
         httpPool.shutdownNow();
     }
 
+    /**
+     * 把一件事交到 JS 线程上跑。运行时已经停掉时静默丢弃，不把异常抛回调用方线程。
+     *
+     * <p>为什么必须有这道：HTTP 回调是在 {@code LX-Source-HTTP-n} 线程上回来的，而关掉一个源
+     * （重载、删除、改那颗扩展开关）只 {@code shutdownNow()} 各个池。正在路上的那个请求返回时
+     * 池已终止，{@code execute} 会抛 {@link RejectedExecutionException}，从 HTTP 工作线程上逃
+     * 出去 —— 拿真脚本边取流边重载时实测出现过。那一刻回调本来就该被丢掉（等结果的人已经走
+     * 了），所以只吞、不换成线程栈。</p>
+     */
+    private void postToJsLoop(Runnable body) {
+        try {
+            loop.execute(body);
+        } catch (RejectedExecutionException gone) {
+            // 运行时已经关了，没人等这个结果。
+        }
+    }
+
     // ════════════════════════════ 对外查询 ════════════════════════════
 
     public String getScriptId() {
@@ -287,6 +375,11 @@ public final class LxRuntime {
 
     public Map<String, SourceDecl> getSources() {
         return sources;
+    }
+
+    /** 这个运行时起来时，宿主的 lyric / pic 扩展开关是开还是关。 */
+    public boolean isExtraActionsEnabled() {
+        return extraActions;
     }
 
     /** 读一次就清掉：更新提示只该弹一次。 */
@@ -320,12 +413,17 @@ public final class LxRuntime {
         final String finalSource = source;
         final String finalAction = action;
         final String finalInfo = infoJson;
-        loop.execute(new Runnable() {
-            @Override
-            public void run() {
-                dispatch(key, finalSource, finalAction, finalInfo);
-            }
-        });
+        try {
+            loop.execute(new Runnable() {
+                @Override
+                public void run() {
+                    dispatch(key, finalSource, finalAction, finalInfo);
+                }
+            });
+        } catch (RejectedExecutionException gone) {
+            // 状态刚检查完就被关掉：这里必须报错，不能干等 20 秒的超时。
+            throw new LxSourceException("自定义源已停止");
+        }
         try {
             return future.get(REQUEST_TIMEOUT_MS, TimeUnit.MILLISECONDS);
         } catch (java.util.concurrent.TimeoutException timeout) {
@@ -450,11 +548,19 @@ public final class LxRuntime {
             if (!(list instanceof Scriptable)) return LxBuffer.of(new byte[0]);
             Scriptable array = (Scriptable) list;
             Object lengthValue = ScriptableObject.getProperty(array, "length");
-            int count = lengthValue == Scriptable.NOT_FOUND ? 0 : (int) Context.toNumber(lengthValue);
+            // length 是脚本自己填的：填个二十亿，下面这个循环就会在 Java 侧空转到天荒地老，
+            // 而指令观察器只数 JS 字节码，救不了这条线程。先按上限截断。
+            double rawLength = lengthValue == Scriptable.NOT_FOUND ? 0d : Context.toNumber(lengthValue);
+            int count = rawLength <= 0d || Double.isNaN(rawLength)
+                    ? 0 : (rawLength > MAX_CONCAT_ELEMENTS ? MAX_CONCAT_ELEMENTS : (int) rawLength);
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             for (int i = 0; i < count; i++) {
                 Object element = ScriptableObject.getProperty(array, i);
                 byte[] bytes = LxUtils.bytesOf(element == Scriptable.NOT_FOUND ? null : element);
+                if (out.size() + bytes.length > MAX_CONCAT_BYTES) {
+                    throw new IllegalArgumentException("buffer.concat 的结果超过 "
+                            + (MAX_CONCAT_BYTES / 1024 / 1024) + " MB，已拒绝");
+                }
                 out.write(bytes, 0, bytes.length);
             }
             return LxBuffer.of(out.toByteArray());
@@ -521,9 +627,14 @@ public final class LxRuntime {
                 Scriptable table = (Scriptable) headers;
                 for (Object key : table.getIds()) {
                     if (!(key instanceof String)) continue;
+                    // 请求头是脚本给的对象：条目数与单个值都要封顶，否则一份几万条的
+                    // 「请求头」会在 Java 侧把这条线程占住，指令观察器管不到。
+                    if (headerMap.size() >= MAX_HEADER_ENTRIES) break;
                     Object value = ScriptableObject.getProperty(table, (String) key);
                     if (value == null || value == Scriptable.NOT_FOUND || Undefined.isUndefined(value)) continue;
-                    headerMap.put((String) key, Context.toString(value));
+                    String text = Context.toString(value);
+                    headerMap.put((String) key, text.length() > MAX_HEADER_VALUE_CHARS
+                            ? text.substring(0, MAX_HEADER_VALUE_CHARS) : text);
                 }
             }
             byte[] body = payload == null || Undefined.isUndefined(payload) ? null : LxUtils.bytesOf(payload);
@@ -531,7 +642,7 @@ public final class LxRuntime {
                 @Override
                 public void finished(final String failure, final LxHttp.Response response) {
                     calls.remove(Integer.valueOf(id));
-                    loop.execute(new Runnable() {
+                    postToJsLoop(new Runnable() {
                         @Override
                         public void run() {
                             deliverHttp(callback, failure, response);
@@ -552,6 +663,10 @@ public final class LxRuntime {
         // ---- 事件回传 ----
 
         public void onInited(String json) {
+            if (json != null && json.length() > MAX_INITED_JSON_CHARS) {
+                fail("脚本发来的 inited 数据超过 " + (MAX_INITED_JSON_CHARS / 1024) + " KB，已拒绝");
+                return;
+            }
             try {
                 Map<String, SourceDecl> parsed = new LinkedHashMap<>();
                 JsonObject root = JsonParser.parseString(json).getAsJsonObject();
@@ -587,6 +702,13 @@ public final class LxRuntime {
         public void onResponse(String requestKey, boolean ok, String payload) {
             CompletableFuture<String> future = pending.get(requestKey);
             if (future == null) return;
+            // 返回值在引导脚本里已经按上游那套校验限过长度，这里再兜一道：脚本要是绕过了
+            // 引导脚本（比如自己拼了个超大 JSON），不能让它在 Java 堆上落地。
+            if (ok && payload != null && payload.length() > MAX_RESPONSE_JSON_CHARS) {
+                future.completeExceptionally(new LxSourceException("脚本返回的结果超过 "
+                        + (MAX_RESPONSE_JSON_CHARS / 1024) + " KB，已拒绝"));
+                return;
+            }
             if (ok) future.complete(payload);
             else future.completeExceptionally(new LxSourceException(payload == null ? "failed" : payload));
         }
@@ -608,8 +730,11 @@ public final class LxRuntime {
         if (!(extra instanceof Scriptable)) return new Object[0];
         Scriptable array = (Scriptable) extra;
         Object lengthValue = ScriptableObject.getProperty(array, "length");
-        int count = lengthValue == Scriptable.NOT_FOUND ? 0 : (int) Context.toNumber(lengthValue);
-        Object[] args = new Object[Math.max(0, count)];
+        // 同样是脚本给的 length：不截断就可能 new Object[二十亿] 直接把堆打穿。
+        double rawLength = lengthValue == Scriptable.NOT_FOUND ? 0d : Context.toNumber(lengthValue);
+        int count = rawLength <= 0d || Double.isNaN(rawLength)
+                ? 0 : (rawLength > MAX_TIMER_ARGS ? MAX_TIMER_ARGS : (int) rawLength);
+        Object[] args = new Object[count];
         for (int i = 0; i < args.length; i++) {
             Object element = ScriptableObject.getProperty(array, i);
             args[i] = element == Scriptable.NOT_FOUND ? Undefined.instance : element;

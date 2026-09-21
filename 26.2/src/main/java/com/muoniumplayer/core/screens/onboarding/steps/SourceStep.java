@@ -49,7 +49,7 @@ public final class SourceStep implements OnboardingStepView {
         }
 
         double noteY = y + 94 + ((PLATFORMS.length + 1) / 2) * 66 + 16;
-        OnboardingUi.drawText(FontManager.pf12, "YouTube 与哔哩哔哩无需登录；汽水音乐支持抖音 App 扫码；GD 沿用现有配置。",
+        OnboardingUi.drawText(FontManager.pf12, "YouTube 与哔哩哔哩无需登录；汽水音乐需用外部工具（网盘 / QQ群）获取 Cookie 登录；GD 沿用现有配置。",
                 x, noteY, OnboardingUi.DIM);
     }
 

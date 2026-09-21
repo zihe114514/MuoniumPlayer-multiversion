@@ -7,6 +7,8 @@ public enum MusicPlatform {
     NETEASE("网易云", 0xE94747),
     QQ("QQ音乐", 0x31C27C),
     KUGOU("酷狗音乐", 0x1F9CF0),
+    KUWO("酷我音乐", 0xFF7A1A),
+    MIGU("咪咕音乐", 0x00B8A9),
     YOUTUBE("YouTube Music", 0xFF0033),
     BILIBILI("哔哩哔哩", 0xFB7299),
     QISHUI("汽水音乐", 0x1ED6C8),

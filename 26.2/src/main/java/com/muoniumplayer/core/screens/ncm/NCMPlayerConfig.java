@@ -52,6 +52,19 @@ public final class NCMPlayerConfig {
      */
     private static boolean neteaseListeningHistorySyncAsked;
     /**
+     * 酷狗备选取流 {@code /v6/priv_url} 是否启用，默认<b>关闭</b>。
+     *
+     * <p>这是一条<b>没有定论</b>的路径，所以做成开关而不是直接接进阶梯：</p>
+     * <ul>
+     *   <li>本仓在<b>标准版身份</b>下实测它恒回 {@code error_code=20010}，但概念版身份从没测过，
+     *   <li>参考实现的接口说明自己写着「该接口存在音频加密（目前无法解码），请谨慎使用」，
+     *       并且要求先注册 {@code dfid}。</li>
+     * </ul>
+     * <p>开着它只会在 {@code /v5/url} 与老 trackercdn 都拿不到地址时多打一次请求，
+     * 所以关掉才是常态：默认路径不依赖任何未验证的行为。要试概念版的高档音质时再打开。</p>
+     */
+    private static boolean kuGouPrivUrlFallback;
+    /**
      * 磁盘音频缓存上限，单位 GB，0 表示不限制。
      *
      * <p>默认 16 GB：足够放下几百首无损，正常使用不会碰到，同时又能挡住「只增不减」
@@ -95,6 +108,9 @@ public final class NCMPlayerConfig {
             }
             if (object != null && object.has("neteaseListeningHistorySyncAsked")) {
                 neteaseListeningHistorySyncAsked = object.get("neteaseListeningHistorySyncAsked").getAsBoolean();
+            }
+            if (object != null && object.has("kuGouPrivUrlFallback")) {
+                kuGouPrivUrlFallback = object.get("kuGouPrivUrlFallback").getAsBoolean();
             }
             if (object != null && object.has("musicCacheLimitGigabytes")) {
                 musicCacheLimitGigabytes = normalizeCacheLimit(object.get("musicCacheLimitGigabytes").getAsInt());
@@ -190,6 +206,18 @@ public final class NCMPlayerConfig {
         load();
         if (neteaseListeningHistorySyncAsked) return;
         neteaseListeningHistorySyncAsked = true;
+        save();
+    }
+
+    /** 酷狗 {@code /v6/priv_url} 备选取流是否启用（默认关，见字段注释）。 */
+    public static synchronized boolean isKuGouPrivUrlFallbackEnabled() {
+        load();
+        return kuGouPrivUrlFallback;
+    }
+
+    public static synchronized void setKuGouPrivUrlFallbackEnabled(boolean enabled) {
+        load();
+        kuGouPrivUrlFallback = enabled;
         save();
     }
 
@@ -331,6 +359,8 @@ public final class NCMPlayerConfig {
             object.addProperty("musicCacheLimitGigabytes", musicCacheLimitGigabytes);
             object.addProperty("nowPlayingTagsInEnglish", nowPlayingTagsInEnglish);
             object.addProperty("musicSourcePlatform", getMusicSourcePlatform().name());
+            // 只在开着的时候写这一行：默认关是这条路径的常态，不必给配置文件添一个恒为 false 的键。
+            if (kuGouPrivUrlFallback) object.addProperty("kuGouPrivUrlFallback", true);
             JsonConfigStorage.writeObject(FILE, GSON, object);
 
         } catch (Throwable ignored) {

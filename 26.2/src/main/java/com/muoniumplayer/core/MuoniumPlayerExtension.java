@@ -13,6 +13,7 @@ import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
 import com.muoniumplayer.core.ncm.music.NeteaseUnblockSettings;
+import com.muoniumplayer.core.ncm.music.SwitchSourceSettings;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import com.muoniumplayer.core.widget.impl.MusicInfoWidget;
 import com.muoniumplayer.core.widget.impl.MusicLyricsWidget;
@@ -56,6 +57,7 @@ public class MuoniumPlayerExtension {
         NCMPlayerConfig.load();
         GdStudioSourceSettings.load();
         NeteaseUnblockSettings.load();
+        SwitchSourceSettings.load();
         // 异步起自定义源：启用了脚本时这一步要转译并执行一整份 JS（官方参考源约 2.7 秒），
         // 放在主线程上就是进游戏前多一次卡顿；没启用任何脚本时它连 Rhino 都不会去碰。
         MultiThreadingUtil.runAsync(LxSourceService::init);

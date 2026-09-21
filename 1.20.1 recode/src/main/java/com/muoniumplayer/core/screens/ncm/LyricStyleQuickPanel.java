@@ -10,6 +10,7 @@ import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.LyricManualMemory;
 import com.muoniumplayer.core.ncm.music.LyricSourceMemory;
 import com.muoniumplayer.core.rendering.animation.Easing;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
@@ -87,6 +88,18 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
      * 所以「换哪个库」必须有自己的一行，不能让用户在一次「重取」里猜为什么毫无变化。</p>
      */
     private static final int KIND_LYRIC_SOURCE = 18;
+
+    /**
+     * 「手动选词」：打开歌词搜索弹窗，给正在放的这首歌挑一份人确认过的歌词。
+     *
+     * <p>排在「歌词来源」之后、「重新匹配」之前，是按出问题的先后放的：先看这份词是哪个源给的
+     * （来源行），不对就自己挑一条（这一行），最后才轮到「重新匹配」——那一条只是把同一条确定性
+     * 链路原样再跑一遍，挑错了词的时候它连结果都不会变。</p>
+     *
+     * <p>右键是「取消钉住」。钉住之后「歌词来源」那一行就不再决定屏幕上出现哪份词了，所以退路
+     * 必须写在这一行上，否则用户只能永远停在自己上一次的选择里。</p>
+     */
+    private static final int KIND_LYRIC_SEARCH = 19;
 
     /** 偏移滑块的两端（毫秒）。与 {@code LyricOffsetMemory} 的夹取范围保持一致。 */
     private static final long OFFSET_SPAN_MILLIS = 10_000L;
@@ -769,6 +782,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         // 缩放裁掉，摆在那里会让这个功能在那种配置下直接够不到。
         addRow(KIND_SECTION, 2, SECTION_HEIGHT);
         addRow(KIND_LYRIC_SOURCE, 0, PICK_ROW_HEIGHT);
+        addRow(KIND_LYRIC_SEARCH, 0, PICK_ROW_HEIGHT);
         addRow(KIND_LYRIC_RELOAD, 0, PICK_ROW_HEIGHT);
         addRow(KIND_LYRIC_OFFSET, 0, ROW_HEIGHT);
         HudSetting[] styleSliders = styleSettings();
@@ -913,6 +927,16 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             // 左键往后一档、右键往前一档，与上面「样式 / 背景 / 配色来源」几条完全一致。
             // 切换本身就等于重取，所以这一行不需要再有第二个动作。
             CloudMusic.cycleLyricSource(!right);
+            return;
+        }
+        if (row.kind == KIND_LYRIC_SEARCH) {
+            if (right) {
+                // 右键只有「取消钉住」这一件事：没钉过时 clearPinnedLyric() 自己会直接返回。
+                CloudMusic.clearPinnedLyric();
+                return;
+            }
+            NCMScreen screen = NCMScreen.getInstance();
+            if (screen != null) screen.openLyricSearch();
             return;
         }
         if (row.kind == KIND_LYRIC_RELOAD) {
@@ -1308,6 +1332,15 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             renderPickRow(row, "歌词来源", lyricSourceValue(), mouseX, mouseY, panelAlpha);
             return;
         }
+        if (row.kind == KIND_LYRIC_SEARCH) {
+            // 右侧的值要跟着整首歌走，但一行放不下「歌手 - 歌名」那么长，所以按标签之后的余量裁。
+            String value = lyricPinValue();
+            double room = Math.max(24, trackWidth() - 12
+                    - FontManager.pf12bold.getStringWidthD("手动选词"));
+            renderPickRow(row, "手动选词", FontManager.pf12bold.trim(value, room),
+                    mouseX, mouseY, panelAlpha);
+            return;
+        }
         if (row.kind == KIND_LYRIC_RELOAD) {
             renderPickRow(row, "重新匹配", "再取一次", mouseX, mouseY, panelAlpha);
             return;
@@ -1382,6 +1415,19 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             return pinnedName + " · 未命中";
         }
         return served < 0 ? pinnedName : pinnedName + " · " + LyricSourceMemory.displayName(served);
+    }
+
+    /**
+     * 「手动选词」那一行右侧的文本。
+     *
+     * <p>钉过之后写的是<b>钉住了哪一条</b>（{@code 源 · 歌手 - 歌名}），不是「已钉住」四个字：
+     * 这一行存在的意义就是让人确认自己挑的那条生效了没有，只报状态等于没回答。没钉过给
+     * 「搜索匹配…」，它读起来是一个动作，正好是左键要做的事。</p>
+     */
+    private String lyricPinValue() {
+        LyricManualMemory.Pin pin = CloudMusic.getPinnedLyric();
+        if (pin == null) return "搜索匹配…";
+        return pin.source.label + " · " + pin.describe();
     }
 
     private void renderSettingRow(Row row, HudSetting setting,

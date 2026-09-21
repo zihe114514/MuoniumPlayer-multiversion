@@ -28,6 +28,13 @@ public final class LxSourceStore {
 
     private static boolean loaded;
     private static String activeId = "";
+    /**
+     * 宿主扩展：要不要放开上游动作白名单之外的 {@code lyric} / {@code pic} / {@code search}。
+     *
+     * <p>放在这份存档里而不是 {@code player.json}：它是自定义源自己的口径，跟着脚本走；
+     * 而且 {@code player.json} 每改一次设置都要整份重写，这个开关不该被卷进去。</p>
+     */
+    private static boolean extraActions;
     private static final List<Entry> ENTRIES = new ArrayList<>();
 
     private LxSourceStore() {
@@ -90,6 +97,22 @@ public final class LxSourceStore {
         }
     }
 
+    public static boolean isExtraActionsEnabled() {
+        load();
+        synchronized (LOCK) {
+            return extraActions;
+        }
+    }
+
+    public static void setExtraActions(boolean enabled) {
+        load();
+        synchronized (LOCK) {
+            if (extraActions == enabled) return;
+            extraActions = enabled;
+            save();
+        }
+    }
+
     /**
      * @throws IllegalArgumentException 头注释缺失，或正文与已导入的某个脚本完全相同
      */
@@ -148,6 +171,10 @@ public final class LxSourceStore {
                 if (root.has("activeId") && !root.get("activeId").isJsonNull()) {
                     activeId = root.get("activeId").getAsString();
                 }
+                // 缺这一项时保持默认（关）：老存档不该因为升级就悄悄放宽白名单。
+                if (root.has("extraActions") && !root.get("extraActions").isJsonNull()) {
+                    extraActions = root.get("extraActions").getAsBoolean();
+                }
                 JsonArray scripts = root.getAsJsonArray("scripts");
                 if (scripts == null) return;
                 for (JsonElement element : scripts) {
@@ -179,6 +206,7 @@ public final class LxSourceStore {
             if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.isDirectory()) return;
             JsonObject root = new JsonObject();
             root.addProperty("activeId", activeId);
+            root.addProperty("extraActions", extraActions);
             JsonArray scripts = new JsonArray();
             for (Entry entry : ENTRIES) {
                 JsonObject item = new JsonObject();

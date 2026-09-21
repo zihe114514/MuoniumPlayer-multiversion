@@ -624,6 +624,9 @@ public class CFontRenderer implements Closeable, SharedConstants {
 
     }
 
+    /** 折叠后仍要保留的省略号。单独一份是因为线性路径每步都要量它，别重复建字符串。 */
+    private static final String ELLIPSIS = "...";
+
     public String trim(String text, double width) {
         String name = text == null ? "" : text;
 
@@ -634,23 +637,86 @@ public class CFontRenderer implements Closeable, SharedConstants {
         }
 
         if (this.getStringWidthD(name) > width) {
-            int idx = name.length();
-            while (idx > 0) {
-                String substring = name.substring(0, idx);
+            // 绝大多数调用是「每帧把歌名折成一行」，走线性那一条；只有带控制码或换行的
+            // 退回老路径。判定用两次 indexOf 就够 —— 别拿正则问，那是每帧每个标签一次。
+            return name.indexOf('\u00a7') < 0 && name.indexOf('\n') < 0
+                    ? trimLinear(name, width)
+                    : trimByBackscan(name, width);
+        }
 
-                if (this.getStringWidthD(substring + "...") <= width) {
-                    return substring + "...";
-                }
+        return name;
+    }
 
-                idx--;
+    /**
+     * 逐字符累加的折叠：一次量完全长，之后每退一个字符只减掉那一步的步进。
+     *
+     * <p>与 {@link #trimByBackscan} 判定的是同一件事 —— 让 {@code 前缀 + "..."} 放得下的<b>最长</b>
+     * 前缀 —— 但不为每个候选前缀新建字符串，也就不再往字宽记忆表里塞 {@code n} 条一次性键。
+     * 每帧折十几条标题时，那些键会把整张表顶到上限、逼它整表清空，然后本屏所有文本在同一帧里重量一遍：
+     * 折行这件事自己把缓存打爆，正是打开长列表那一顿的来源。</p>
+     *
+     * <p>累加口径与 {@link #getStringWidthD(String)} 严格一致：{@code （}/{@code ）} 换成半角后才
+     * 查字宽，而字距项 {@code getCharWidth(c1, c2)} 的第二个参数仍是<b>未替换</b>的原字符。取「最长
+     * 放得下的前缀」也不需要单调性 —— 每个长度都真量了一遍，和从长往短扫到第一个放得下的是同一个结果。</p>
+     */
+    private String trimLinear(String name, double width) {
+        final char[] chars = name.toCharArray();
+        final int n = chars.length;
+
+        // 省略号自身：三个点连排，最后一个点后面没有下一个字符。
+        double ellipsisWidth = getCharWidth('.', '.') + getCharWidth('.', '.') + getCharWidth('.', '\0');
+
+        // inner 是「前缀内部」的步进与字距之和，即量 [0, i+1) 这一段时相邻字符之间的那部分，
+        // 不含末字符到第一个点的跨字步进 —— 那一项要单独加，因为它依赖省略号。
+        double inner = 0.0;
+        int bestFit = -1;             // 目前放得下的最长前缀长度，0 表示连一个字符都放不下
+        for (int i = 0; i < n; i++) {
+            char last = replaceForMeasurement(chars[i]);
+            double total = inner + getCharWidth(last, '.') + ellipsisWidth;
+            if (total <= width) {
+                bestFit = i + 1;      // 顺着往后走，最后一次点亮就是「最长的那个放得下」
             }
+            if (i + 1 < n) {
+                // 下一个前缀多出来的一步：前字符按替换后的形，后字符用原字符量字距。
+                inner += getCharWidth(last, chars[i + 1]);
+            }
+        }
 
+        if (bestFit <= 0) {
             // 即使省略号也放不下；保持渲染器安全，什么都不画，
             // 而不是让子串索引变为负数。
             return "";
         }
+        return name.substring(0, bestFit) + ELLIPSIS;
+    }
 
-        return name;
+    /** 与 {@link #getStringWidthD(String)} 同一套全角括号替换。 */
+    private static char replaceForMeasurement(char ch) {
+        if (ch == '（') return '(';
+        if (ch == '）') return ')';
+        return ch;
+    }
+
+    /**
+     * 原来那条一步一 {@code substring} 的折叠，只留给带控制码或换行的文本。
+     *
+     * <p>这类串上「前缀的宽」不等于「前缀各字宽之和」的口径太多（{@code §} 会连带吃掉下一个字符，
+     * 换行让宽度取最长行），逐字累加推不动，就让 {@link #getStringWidthD(String)} 自己一步步量。
+     * 歌词与歌名里基本见不到这两种字符，这条路径平时不点亮。</p>
+     */
+    private String trimByBackscan(String name, double width) {
+        int idx = name.length();
+        while (idx > 0) {
+            String substring = name.substring(0, idx);
+
+            if (this.getStringWidthD(substring + ELLIPSIS) <= width) {
+                return substring + ELLIPSIS;
+            }
+
+            idx--;
+        }
+
+        return "";
     }
 
     public int getStringWidth(String text) {
@@ -777,7 +843,34 @@ public class CFontRenderer implements Closeable, SharedConstants {
     }
 
     public double getStringHeight(String text) {
-        return text.split("\n").length * (getFontHeight() + 4) - 4;
+        return countSplitLines(text) * (getFontHeight() + 4) - 4;
+    }
+
+    /**
+     * {@code text.split("\n").length}，但不建数组。
+     *
+     * <p>每帧每个标签都会经 {@code LabelWidget} 问一次行高，而一次正则 split 就是「编译模式 + 分配
+     * 若干个子串」。这里逐字数换行，语义与 {@link String#split} 完全对齐：没有换行就是 1 段（空串也是
+     * 1 段，因为 split 无匹配时原样返回）；尾部那些空段不算数，所以整串全是换行时为 0 段。</p>
+     */
+    static int countSplitLines(String text) {
+        if (text.indexOf('\n') < 0) {
+            return 1;
+        }
+        int end = text.length() - 1;
+        while (end >= 0 && text.charAt(end) == '\n') {
+            end--;                    // 丢掉尾部的空段
+        }
+        if (end < 0) {
+            return 0;                 // 全是换行：所有段都是空的，一个都不留
+        }
+        int lines = 1;
+        for (int i = 0; i <= end; i++) {
+            if (text.charAt(i) == '\n') {
+                lines++;
+            }
+        }
+        return lines;
     }
 
     /**

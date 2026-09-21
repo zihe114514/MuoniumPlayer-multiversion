@@ -310,7 +310,27 @@ public class PlayList {
     public void removeFromList(long musicId) {
         if (getPlatform() == MusicPlatform.NETEASE) {
             CloudMusicApi.playlistTracks("del", this.id, String.valueOf(musicId));
+            return;
         }
+        if (getPlatform() == MusicPlatform.KUGOU) {
+            // 酷狗的删曲接口只认 fileid，而枚举曲目的那个端点不给它：要先按稳定 id 找到这一首，
+            // 再由适配层拿它的 hash 去 get_list_all_file_v3 的结果里换出 fileid。
+            // 只读已加载的 musics 而不是调 getMusics()——删除不该触发一次整单加载。
+            Music target = findKuGouMusic(musicId);
+            if (target != null) {
+                KuGouMusicService.removeTrackFromPlaylist(getPlatformPlaylistId(), target);
+            }
+        }
+    }
+
+    /** 在已加载的曲目里按稳定 id 找一首；没加载或找不到返回 {@code null}。 */
+    private Music findKuGouMusic(long musicId) {
+        List<Music> loaded = this.musics;
+        if (loaded == null) return null;
+        for (Music music : loaded) {
+            if (music != null && music.getId() == musicId) return music;
+        }
+        return null;
     }
 
     @Override

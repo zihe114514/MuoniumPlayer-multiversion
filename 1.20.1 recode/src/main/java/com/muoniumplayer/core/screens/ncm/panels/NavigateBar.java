@@ -502,16 +502,6 @@ public class NavigateBar extends NCMPanel {
             }
         }
 
-        // 导入入口：点开二级导入面板（自由输入 / 粘贴均可），解析出稿件所属的合集或分P后直接打开。
-        if (bilibiliMode) {
-            PlaylistItem importBilibili = new PlaylistItem("加", FontManager.pf12bold,
-                    () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
-                    () -> "导入稿件（输入/粘贴链接）",
-                    () -> NCMScreen.getInstance().openBilibiliImport());
-            importBilibili.setShouldOverrideMouseCursor(true);
-            this.playlistPanel.addChild(importBilibili);
-        }
-
         // QQ / 酷狗 / B 站的账号歌单都是异步加载的快照；网易云继续使用现有 CloudMusic 缓存。
         List<PlayList> pl = qqMode
                 ? NeteaseMusicService.getQQUserPlaylistsSnapshot()

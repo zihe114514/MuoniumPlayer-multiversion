@@ -92,6 +92,14 @@ public final class ConfigPaths {
      */
     public static final File NETEASE_UNBLOCK = new File(CONFIG_DIRECTORY, "netease_unblock.json");
 
+    /**
+     * 跨平台自动换源的行为开关。
+     *
+     * <p>与 {@link #NETEASE_UNBLOCK} 分开一个文件：解灰换的是取流地址，换源换的是曲目本体，
+     * 两者的失败半径不同，不该共用一次配置读写。</p>
+     */
+    public static final File SWITCH_SOURCE = new File(CONFIG_DIRECTORY, "switch_source.json");
+
     /** 首次运行设置门控。单独保存，使引导状态不会损坏播放器偏好。 */
     public static final File AUTOMIX = new File(CONFIG_DIRECTORY, "automix.json");
 
@@ -114,6 +122,17 @@ public final class ConfigPaths {
      * 重新走一遍网络链路，不会丢任何用户数据。放在 cache 而不是配置根，就是为了让这个语义清楚。</p>
      */
     public static final File LYRIC_CACHE = new File(CACHE_DIR, "lyrics");
+
+    /**
+     * 酷狗「我喜欢」的本地全量索引（按账号分键存 hash 列表）。
+     *
+     * <p>存在的理由：酷狗判断一首歌是否已收藏，只能把整张「我喜欢」拉下来比对，而收藏图标是每一行
+     * 都要画的。没有这份索引时冷启动会显示「全部未收藏」，用户再点一次就是重复收藏。</p>
+     *
+     * <p>与 {@link #LYRIC_CACHE} 同一类东西，<b>可以随时整个删掉</b>——删掉只是退化成「红心图标
+     * 初始不准，下次登录重新拉」，不丢任何用户数据。所以放在 cache 而不是配置目录。</p>
+     */
+    public static final File KUGOU_LIKED = new File(CACHE_DIR, "kugou_liked.json");
 
     /**
      * 已算出的 automix 交接计划。
@@ -143,6 +162,17 @@ public final class ConfigPaths {
      * 一样要跨切歌与重启存活，所以放同一个位置、同样的尽力而为语义。</p>
      */
     public static final File LYRIC_SOURCES = new File(CONFIG_DIRECTORY, "lyric_sources.json");
+
+    /**
+     * 每首歌<b>手动搜出来并确认</b>的那一条歌词。
+     *
+     * <p>与 {@link #LYRIC_SOURCES} 的区别是钉的粒度：换源只说「去哪个库拿」，库里同名不同版本照样
+     * 会挑错；这一份钉的是<b>某一首歌</b>——连候选的原始 JSON 一起存下来，下次加载直接按它精确重取。
+     * 自动链路永远到不了这一档，所以它必须是加载链最前面的一级。</p>
+     *
+     * <p>同样是「读失败的代价只是回到自动链路」的小文件，单独一份、互不影响。</p>
+     */
+    public static final File LYRIC_MANUAL = new File(CONFIG_DIRECTORY, "lyric_manual.json");
 
     /** Skija 原生库的确定性回退解压目录。 */
     public static final File SKIJA_NATIVE_ROOT = new File(CONFIG_DIRECTORY, "native/skija");

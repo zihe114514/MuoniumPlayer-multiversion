@@ -429,10 +429,8 @@ public final class BilibiliMusicService {
      * B 站的分享文案里经常只给短链。为什么要归一而不是把原文丢给 {@code view}：那只会换来
      * 一个必然失败的请求，报错里全是 URL 编码，谁都看不出是粘错了什么。</p>
      *
-     * <p>{@code public}：导入面板在 {@code screens.ncm} 里，要在真正发请求之前先判一眼
-     * 「这串东西到底像不像稿件号」，好把错误说成「没认出稿件号」而不是「解析失败」。</p>
      */
-    public static String canonicalVideoId(String text) {
+    static String canonicalVideoId(String text) {
         DirectVideo direct = parseDirectVideo(text);
         return direct == null ? "" : direct.bvid;
     }

@@ -81,6 +81,15 @@ public final class HudSettingsModel {
         public final ColorTarget colorTarget;
         /** 可选的运行时可见性钩子；旧版与 Folia 暴露不同的控件。 */
         private final BooleanSupplier visibleWhen;
+        /**
+         * ACTION 的两种形，语义区别不是像素而是「这行是什么」：
+         * false = folia {@code StorageSettingsSection} 那种独立大行（自己就是一块，带图标底板
+         * 与 ChevronRight）；true = 一组命令按钮里的一个，画成紧凑药丸与同伴并排换行
+         * （{@code flex flex-wrap gap-2}，如「从本机查找 / 更改位置 / 删除所有模型」）。
+         */
+        public final boolean inlineButton;
+        /** CHOICE 每个选项各自的一句话说明，与 {@link #choices} 同序；没有时为空数组。 */
+        private final String[] choiceHints;
 
         private Entry(Kind kind, Supplier<String> label, String description, HudSetting setting,
                       BooleanSupplier state, Runnable action, Supplier<String> value,
@@ -99,6 +108,14 @@ public final class HudSettingsModel {
                       BooleanSupplier state, Runnable action, Supplier<String> value,
                       ColorTarget colorTarget, String[] choices, Consumer<String> choiceSetter,
                       BooleanSupplier visibleWhen) {
+            this(kind, label, description, setting, state, action, value, colorTarget, choices,
+                    choiceSetter, visibleWhen, false, null);
+        }
+
+        private Entry(Kind kind, Supplier<String> label, String description, HudSetting setting,
+                      BooleanSupplier state, Runnable action, Supplier<String> value,
+                      ColorTarget colorTarget, String[] choices, Consumer<String> choiceSetter,
+                      BooleanSupplier visibleWhen, boolean inlineButton, String[] choiceHints) {
             this.kind = kind;
             this.label = label;
             this.description = description;
@@ -110,6 +127,8 @@ public final class HudSettingsModel {
             this.choiceSetter = choiceSetter;
             this.colorTarget = colorTarget;
             this.visibleWhen = visibleWhen;
+            this.inlineButton = inlineButton;
+            this.choiceHints = choiceHints;
         }
 
         public boolean isVisible() {
@@ -150,6 +169,20 @@ public final class HudSettingsModel {
         /** CHOICE 的可选文案；非 CHOICE 或旧条目返回空数组。 */
         public String[] getChoices() {
             return choices == null ? new String[0] : choices.clone();
+        }
+
+        /**
+         * CHOICE 每个选项各自那句说明，与 {@link #getChoices()} 同序；没有配置时返回空数组。
+         *
+         * <p>长度可能短于选项数（只给前几项写了说明），取用时要按下标判界。</p>
+         */
+        public String[] getChoiceHints() {
+            return choiceHints == null ? new String[0] : choiceHints.clone();
+        }
+
+        /** 有没有配逐项说明。渲染每帧都要问，别为它拷一遍数组。 */
+        public boolean hasChoiceHints() {
+            return choiceHints != null && choiceHints.length > 0;
         }
 
         /** 外部 UI 直写 CHOICE；没有直写实现时沿用循环动作。 */
@@ -322,6 +355,16 @@ public final class HudSettingsModel {
         }, description, null, null, next, value, ColorTarget.NONE, choices, setter, visibleWhen);
     }
 
+    /** 带逐项说明的那档瓦片：见 {@link Entry#getChoiceHints()}。 */
+    private static Entry choice(final String label, String description,
+                                Supplier<String> value, Runnable next,
+                                String[] choices, Consumer<String> setter, String[] hints) {
+        return new Entry(Kind.CHOICE, new Supplier<String>() {
+            public String get() { return label; }
+        }, description, null, null, next, value, ColorTarget.NONE, choices, setter, null,
+                false, hints);
+    }
+
     private static Entry themeGrid() {
         return new Entry(Kind.THEME_GRID, new Supplier<String>() {
             public String get() {
@@ -351,6 +394,37 @@ public final class HudSettingsModel {
         return new Entry(Kind.ACTION, new Supplier<String>() {
             public String get() { return label; }
         }, description, null, null, run, null, ColorTarget.NONE, null, null, visibleWhen);
+    }
+
+    /**
+     * 一组命令按钮里的一个：紧凑药丸，与同伴并排换行。
+     *
+     * <p>与 {@link #action} 的分别不是像素而是语义 —— {@code action} 是「这一行自己做一件事」
+     * （独立大行，图标底板 + ChevronRight），{@code button} 是「一组按钮里的一个」，
+     * 像 folia 分析模型下面那排「从本机查找 / 更改位置 / 删除所有模型」。</p>
+     */
+    private static Entry button(final String label, String description, Runnable run) {
+        return new Entry(Kind.ACTION, new Supplier<String>() {
+            public String get() {
+                return label;
+            }
+        }, description, null, null, run, null, ColorTarget.NONE, null, null, null, true, null);
+    }
+
+    private static Entry button(final String label, String description, Runnable run,
+                                BooleanSupplier visibleWhen) {
+        return new Entry(Kind.ACTION, new Supplier<String>() {
+            public String get() {
+                return label;
+            }
+        }, description, null, null, run, null, ColorTarget.NONE, null, null, visibleWhen,
+                true, null);
+    }
+
+    private static Entry button(Supplier<String> label, String description, Runnable run,
+                                BooleanSupplier visibleWhen) {
+        return new Entry(Kind.ACTION, label, description, null, null, run, null,
+                ColorTarget.NONE, null, null, visibleWhen, true, null);
     }
 
     private static MusicLyricsWidget lyrics() {
@@ -516,7 +590,9 @@ public final class HudSettingsModel {
                                                 BlossomLyricStyle.cycleStyle();
                                                 saveNow();
                                             }
-                                        }, blossomStyleChoices(), HudSettingsModel::setBlossomStyle),
+                                        }, blossomStyleChoices(), HudSettingsModel::setBlossomStyle,
+                                        new String[] {"旧版逐行描边歌词。",
+                                                "毛玻璃卡片，逐字扫光。"}),
                                 slider(HudSetting.BLOSSOM_LINES, "Blossom 卡片里同时显示几行。为 1 行时不滚动，当前行整块居中。")),
                         new Group("毛玻璃卡片", HudSettingsIcons.SPARKLE,
                                 slider(HudSetting.BLOSSOM_BLUR, "卡片背后实时模糊的强度。归零就是一块普通的半透明底。"),
@@ -655,12 +731,25 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 cycleEditorStyle();
                                             }
-                                        }, new String[] {"经典", "现代", "Folia"}, HudSettingsModel::setEditorStyleChoice)),
+                                        }, new String[] {"经典", "现代", "Folia"},
+                                                HudSettingsModel::setEditorStyleChoice,
+                                                new String[] {"右侧一列可折叠长面板。",
+                                                        "侧栏分类加卡片分组。",
+                                                        "居中大窗加遮罩。"})),
                         new Group("窗口缩放", HudSettingsIcons.RULER,
                                 toggle("窗口自适应缩放",
                                         "按物理游戏窗口尺寸计算连续缩放，播放器大小不随 GUI Scale 整数档位跳动；关闭后跟随游戏内 GUI 缩放。",
                                         NCMPlayerConfig::isWindowAdaptiveScaleEnabled,
-                                        NCMPlayerConfig::toggleWindowAdaptiveScale)),
+                                        NCMPlayerConfig::toggleWindowAdaptiveScale),
+                                slider(HudSetting.FOLIA_UI_SCALE,
+                                        "Folia 那套设置界面的整体大小。界面照抄的是网页的 CSS 像素，1.00× 就是「一个像素一个像素」地画，"
+                                        + "在游戏窗口里偏小；放大这一倍率，面板、文字、间距、控件一起等比走，排版比例不变。"
+                                        + "改完立刻生效，不用重开。"),
+                                slider(HudSetting.LYRIC_SEARCH_UI_SCALE,
+                                        "手动选词那页弹窗的整体大小。它照抄的是网页的 CSS 像素，1.00× 就是「一个像素一个像素」地画，"
+                                        + "正文只有 14 像素、比播放器其它界面小一半；放大这一倍率，弹窗、文字、卡片、间距一起等比走，"
+                                        + "内部排版比例不变。注意超过约 1.5× 之后弹窗宽度会先撞上「面板的 85%」那一档，形状会更扁一些，"
+                                        + "换来的是正文从 14 像素长到 21 像素。改完立刻生效，不用重开。")),
                         new Group("开关动画", HudSettingsIcons.SPEED,
                                 slider(HudSetting.PLAYER_FADE_SPEED,
                                         "按键打开与关闭播放器时那段淡入淡出的速度倍率，1.00× 是默认速度，"
@@ -697,7 +786,9 @@ public final class HudSettingsModel {
                                             public String get() { return AutomixSettings.getEngineLabel(); }
                                         }, new Runnable() {
                                             public void run() { AutomixSettings.cycleEngine(); }
-                                        }, engineChoices(), HudSettingsModel::setEngineChoice),
+                                        }, engineChoices(), HudSettingsModel::setEngineChoice,
+                                        new String[] {"等功率淡化与低架处理。",
+                                                "分析后挑切拍与交接方式。"}),
                                 toggle("表现模式", "Folia 模式下允许更主动的分轨/尾奏处理；关闭时始终走保守的自动过渡。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() { return AutomixSettings.isPerformanceModeEnabled(); }
@@ -812,13 +903,13 @@ public final class HudSettingsModel {
                                 action(() -> FoliaModelManager.statusLabel(FoliaModelManager.Kind.RUNTIME),
                                         "模型所需的 Python/ONNX 运行组件。安装 Beat This! 或 HTDemucs 前需要它。",
                                         () -> installModel(FoliaModelManager.Kind.RUNTIME), AutomixSettings::isFoliaEngine),
-                                action("从本机查找模型", "扫描下载目录、桌面和游戏目录，校验文件名与 SHA-256 后导入。", HudSettingsModel::scanModels, AutomixSettings::isFoliaEngine),
-                                action(FoliaModelManager::directoryLabel, "当前模型与运行时位置；点击选择新目录，不改变已经下载的音频缓存。", () -> {
+                                button("从本机查找模型", "扫描下载目录、桌面和游戏目录，校验文件名与 SHA-256 后导入。", HudSettingsModel::scanModels, AutomixSettings::isFoliaEngine),
+                                button(FoliaModelManager::directoryLabel, "当前模型与运行时位置；点击选择新目录，不改变已经下载的音频缓存。", () -> {
                                     String detail = FoliaModelManager.chooseDirectory();
                                     DownloadDynamicIsland.showCacheSweep(detail, true);
                                 }, AutomixSettings::isFoliaEngine),
-                                action("恢复默认模型位置", "恢复为 config/muonium/models。", () -> FoliaModelManager.resetDirectory(), AutomixSettings::isFoliaEngine),
-                                action("删除所有模型", "删除 Beat This!、HTDemucs 和运行组件，不会删除歌曲缓存。", HudSettingsModel::deleteModels, AutomixSettings::isFoliaEngine))),
+                                button("恢复默认模型位置", "恢复为 config/muonium/models。", () -> FoliaModelManager.resetDirectory(), AutomixSettings::isFoliaEngine),
+                                button("删除所有模型", "删除 Beat This!、HTDemucs 和运行组件，不会删除歌曲缓存。", HudSettingsModel::deleteModels, AutomixSettings::isFoliaEngine))),
 
                 new Category("全屏播放页", "封面下方那块曲目信息", 0xFF9AD0EC, HudSettingsIcons.FULLSCREEN,
                         new Group("信息标签", HudSettingsIcons.CAPTION,
@@ -833,7 +924,8 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 NCMPlayerConfig.toggleNowPlayingTagsInEnglish();
                                             }
-                                        }, tagLanguageChoices(), HudSettingsModel::setTagLanguage))),
+                                        }, tagLanguageChoices(), HudSettingsModel::setTagLanguage,
+                                        new String[] {"更直观。", "胶囊里更清楚。"}))),
 
                 new Category("存储", "已下载音频的磁盘占用与上限", 0xFFD8A657, HudSettingsIcons.STORAGE,
                         new Group("音频缓存", HudSettingsIcons.SWEEP,
@@ -1166,7 +1258,9 @@ public final class HudSettingsModel {
             case DYNAMIC_ISLAND_CONTENT_SPEED:
             case DYNAMIC_ISLAND_SPINNER_SPEED:
             case DYNAMIC_ISLAND_OVERSHOOT:
-            case LYRIC_GLOW_SPREAD:
+            case FOLIA_UI_SCALE:
+            case LYRIC_SEARCH_UI_SCALE:
+                case LYRIC_GLOW_SPREAD:
                 return String.format("%.2f×", value);
             case OSD_TRANSITION:
             case NORMAL_SPACING:

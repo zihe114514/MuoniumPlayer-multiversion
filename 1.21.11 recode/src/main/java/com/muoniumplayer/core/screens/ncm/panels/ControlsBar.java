@@ -6,15 +6,17 @@ import com.muoniumplayer.core.ncm.music.AudioPlayer;
 import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.KuGouMusicService;
+import com.muoniumplayer.core.ncm.music.ListenTogetherService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.dto.Music;
-import com.muoniumplayer.core.ncm.music.NeteaseListenTogetherService;
 import com.muoniumplayer.core.ncm.music.PersonalFmManager;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.PlayerQueueIcons;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
+import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import com.muoniumplayer.core.ncm.music.Quality;
 import com.muoniumplayer.core.rendering.ui.widgets.*;
 import com.muoniumplayer.core.screens.ncm.CoverHeroTransition;
@@ -26,6 +28,8 @@ import com.muoniumplayer.core.screens.ncm.PlayerIconAssets;
 import com.muoniumplayer.core.screens.ncm.VolumeControl;
 import com.muoniumplayer.core.widget.impl.MusicLyricsWidget;
 import com.muoniumplayer.party.MpPartyClient;
+
+import java.util.List;
 
 
 /**
@@ -62,6 +66,64 @@ public class ControlsBar extends NCMPanel {
     /** 弹出层在动画彻底结束前必须继续渲染，否则收起会变成瞬间消失。 */
     private boolean isQualityMenuVisible() {
         return qualityMenuOpen || qualityMenuAnimation > .004;
+    }
+
+    /**
+     * 当前这首酷狗曲<b>实际能取</b>的宿主音质；{@code null} 表示还不知道，或这一首不是酷狗。
+     *
+     * <p>为什么不能同步算：档位可用性要打一次 {@code get_res_privilege/lite}，而音质菜单是
+     * 每帧渲染的——在主线程等网络，表现就是「每次点开菜单游戏卡一下」。所以只在<b>打开菜单</b>
+     * 那一刻异步补一次，补到之前一律按「全都可用」画。宁可多点一次才发现没有这一档，
+     * 也不能为了置灰把界面卡住。</p>
+     *
+     * <p>{@link #kuGouQualityOptionsKey} 记下这份结论属于哪一首：换歌之后必须作废，
+     * 否则会把上一首的可用性糊在新歌上——臻品系列本来就只有少数曲目有。</p>
+     */
+    private volatile List<Quality> kuGouQualityOptions;
+    private volatile String kuGouQualityOptionsKey;
+
+    /** 打开音质菜单时补一次「这一首有哪些档」；不是酷狗就把上一次的结论清掉。 */
+    private void refreshKuGouQualityOptions() {
+        final Music playing = CloudMusic.currentlyPlaying;
+        if (playing == null || !playing.isKuGou()) {
+            kuGouQualityOptions = null;
+            kuGouQualityOptionsKey = "";
+            return;
+        }
+        final String key = playing.getStableKey();
+        if (key == null || key.isEmpty()) return;
+        if (kuGouQualityOptions != null && key.equals(kuGouQualityOptionsKey)) return;
+        // 换歌了就把上一次的结论立刻作废，而不是等新探测回来才覆盖：留着的话，新歌的菜单会在
+        // 探测那段路上先被上一首的可用性置灰一次——那是个假结论。
+        kuGouQualityOptions = null;
+        kuGouQualityOptionsKey = key;
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                List<Quality> options = KuGouMusicService.availableHostQualities(playing);
+                // 回来时可能已经换歌了：按对象身份认，别把上一首的结论写给这一首。
+                if (options.isEmpty() || CloudMusic.currentlyPlaying != playing) return;
+                kuGouQualityOptions = options;
+                kuGouQualityOptionsKey = key;
+            } catch (Throwable throwable) {
+                System.err.println("[ControlsBar] 酷狗音质可用性查询失败: " + throwable.getMessage());
+            }
+        });
+    }
+
+    /**
+     * 这一档现在能不能选。
+     *
+     * <p>三个条件缺一不可：已经探到、<b>这份结果就是当前这首歌的</b>、结果里不含这一档。
+     * 还没探到（{@code null}）一律放行，探到别的歌时也不许拿过来用——置灰是<b>结论</b>，
+     * 不能拿「还不知道」或者「另一首歌的知道」当结论。</p>
+     */
+    private boolean isQualityUnavailable(Quality option) {
+        List<Quality> options = kuGouQualityOptions;
+        if (options == null) return false;
+        Music playing = CloudMusic.currentlyPlaying;
+        String key = playing == null ? null : playing.getStableKey();
+        if (key == null || !key.equals(kuGouQualityOptionsKey)) return false;
+        return !options.contains(option);
     }
 
     /** 平滑线性进度，让展开的起步与收尾都不生硬。 */
@@ -486,6 +548,9 @@ public class ControlsBar extends NCMPanel {
                 })
                 .setOnClickCallback((relativeX, relativeY, mouseButton) -> {
                     if (mouseButton == 0) {
+                        // 打开的那一次顺手去问一次「这一首有哪些档」。这个请求只能挂在用户动作上
+                        // 异步发：菜单是每帧渲染的，放在渲染回调里就是每帧一次网络往返。
+                        if (!qualityMenuOpen) refreshKuGouQualityOptions();
                         // 只翻转状态：是否渲染交给动画进度判断，收起时弹出层要留到动画播完。
                         qualityMenuOpen = !qualityMenuOpen;
                     }
@@ -554,7 +619,12 @@ public class ControlsBar extends NCMPanel {
         this.addChild(listenTogether);
         listenTogether.setShouldOverrideMouseCursor(true);
         listenTogether.setBeforeRenderCallback(() -> {
-            boolean netease = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.NETEASE;
+            MusicPlatform currentPlatform = NeteaseMusicService.getCurrentPlatform();
+            boolean netease = currentPlatform == MusicPlatform.NETEASE;
+            // 酷狗也有官方房间实现，入口条件与网易云同形。注意这里<b>只看音源、不看登录态</b>：
+            // 没登录时这颗按钮照样要能点，人才看得到面板里那句「去登录」——原来网易云那侧
+            // 就是这个行为，别「顺手」改成 isAvailable()。
+            boolean kugou = currentPlatform == MusicPlatform.KUGOU;
             // 首选槽位在待播入口左边。这条右锚点链只跟面板宽度有关，可以回喂给让位计算。
             double primaryX = queueToggle.getRelativeX() - 8.0 - listenTogether.getWidth();
             ControlsBar.this.listenTogetherPrimaryX = primaryX;
@@ -562,16 +632,17 @@ public class ControlsBar extends NCMPanel {
             // 待播入口已经因为排不下退场了，这里接过它的槽位：一起听是主入口，不能跟着消失。
             double toggleX = pairFits ? primaryX : queueToggle.getRelativeX();
             boolean fits = pairFits || toggleX > ControlsBar.this.centerClusterRight + 6.0;
-            // 服务器装了一起听服务端时，即使当前音源不是网易云也要让入口可点：
-            // 房间面板本身要能进去看状态（房间只收网易云歌曲，这一点由房间面板自己说明）。
-            boolean usable = (netease || MpPartyClient.serverPresent()) && fits;
+            // 服务器装了一起听服务端时，即使当前音源没有官方房间也要让入口可点：
+            // 房间面板本身要能进去看状态。
+            boolean usable = (netease || kugou || MpPartyClient.serverPresent()) && fits;
             listenTogether
                     .setClickable(usable)
                     .setAlpha(usable ? ControlsBar.this.getAlpha() : 0f)
                     .centerVertically();
             listenTogether
                     .setPosition(toggleX, listenTogether.getRelativeY() - ControlsBar.this.iconBandLift)
-                    .setColor(NeteaseListenTogetherService.isActive() || MpPartyClient.inRoom()
+                    // 门面同时看得见两个源的房间：任一家的房间开着，图标就点亮。
+                    .setColor(ListenTogetherService.isActive() || MpPartyClient.inRoom()
                             ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                             : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
         });
@@ -646,6 +717,8 @@ public class ControlsBar extends NCMPanel {
                     .setHidden(true)
                     .setBeforeRenderCallback(() -> {
                         boolean selected = option == (CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality);
+                        // 探到「这一首没有这一档」才淡下去；还没探到一律按正常画。
+                        boolean unavailable = isQualityUnavailable(option);
                         double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
                         double optionHeight = qualityOptionHeight * scale;
                         // 与背景共用同一条固定底边，所以展开过程里选项不会整体滑动，只是逐个露出来。
@@ -662,13 +735,23 @@ public class ControlsBar extends NCMPanel {
                                 .setRadius(4.0 * scale)
                                 .setColor(qualityOption.isHovering()
                                         ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                                        : (selected ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT) : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)))
-                                .setAlpha((float) (ControlsBar.this.getAlpha() * (selected ? .72f : .98f) * reveal));
+                                        : (selected && !unavailable
+                                        ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
+                                        : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)))
+                                .setAlpha((float) (ControlsBar.this.getAlpha()
+                                        * (unavailable ? .38f : selected ? .72f : .98f) * reveal));
                         // 收起动画期间不再接受点击，避免"已经看不清"的选项还能被误中。
                         qualityOption.setClickable(qualityMenuOpen && reveal > .35);
                     })
                     .setOnClickCallback((relativeX, relativeY, mouseButton) -> {
                         if (mouseButton != 0) return true;
+                        if (isQualityUnavailable(option)) {
+                            // 不切、也不关菜单：用户多半是怀疑这一档被吞了，留在他看得见的位置上
+                            // 并说清楚原因，比换一个「看起来没反应」的界面有用得多。
+                            DownloadDynamicIsland.showPlaybackQuality("这首歌没有「" + formatQuality(option) + "」",
+                                    "酷狗没有给这一档，换一档或换一首");
+                            return true;
+                        }
                         CloudMusic.quality = option;
                         NCMPlayerConfig.setAudioQuality(option);
                         // 收起同样走动画，弹出层由 isQualityMenuVisible() 保留到播完。
@@ -683,7 +766,9 @@ public class ControlsBar extends NCMPanel {
             qualityOption.addChild(optionText);
             optionText.setClickable(false);
             optionText.setBeforeRenderCallback(() -> optionText
-                    .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
+                    .setColor(isQualityUnavailable(option)
+                            ? NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT)
+                            : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
                     .setPosition(5.0, Math.max(1.0, (qualityOption.getHeight() - optionText.getHeight()) * .5)));
         }
     }

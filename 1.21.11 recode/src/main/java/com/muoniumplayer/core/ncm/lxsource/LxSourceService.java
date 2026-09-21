@@ -1,5 +1,8 @@
 package com.muoniumplayer.core.ncm.lxsource;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -10,6 +13,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -99,7 +103,7 @@ public final class LxSourceService {
                 System.err.println("[LX] 启用的脚本正文读不出来，已忽略：" + entry.id);
                 return;
             }
-            runtime = LxRuntime.start(entry.id, entry.info, source);
+            runtime = LxRuntime.start(entry.id, entry.info, source, LxSourceStore.isExtraActionsEnabled());
         }
     }
 
@@ -144,6 +148,10 @@ public final class LxSourceService {
                 return "tx";
             case "KUGOU":
                 return "kg";
+            case "KUWO":
+                return "kw";
+            case "MIGU":
+                return "mg";
             case "GD":
                 String key = gdPlatform == null ? "" : gdPlatform.trim().toLowerCase(Locale.ROOT);
                 if ("netease".equals(key)) return "wy";
@@ -217,16 +225,162 @@ public final class LxSourceService {
         }
     }
 
+    /** 一条搜索命中。字段名跟着内置 musicSdk 的结果走，方便脚本作者照抄自家 musicSearch.js。 */
+    public static final class SearchHit {
+        public final String name;
+        public final String singer;
+        public final String source;
+        public final String songmid;
+        public final String albumId;
+        public final String albumName;
+        /** "mm:ss"，可能为空。 */
+        public final String interval;
+        public final String img;
+        public final String hash;
+        public final String strMediaMid;
+        public final String copyrightId;
+
+        SearchHit(JsonObject item, String fallbackSource) {
+            this.name = text(item, "name");
+            this.singer = text(item, "singer");
+            String source = text(item, "source");
+            // 脚本在结果里写错源 key 时以宿主问它的那个为准，否则反向映射会找错平台。
+            this.source = source.isEmpty() ? fallbackSource : source;
+            this.songmid = text(item, "songmid");
+            this.albumId = text(item, "albumId");
+            this.albumName = text(item, "albumName");
+            this.interval = text(item, "interval");
+            this.img = text(item, "img");
+            this.hash = text(item, "hash");
+            this.strMediaMid = text(item, "strMediaMid");
+            this.copyrightId = text(item, "copyrightId");
+        }
+
+        /**
+         * 从一条内置 musicSearch 形状的结果拼出命中。
+         *
+         * <p>宿主照抄上游 {@code musicSdk/kw|mg/musicSearch.js} 的内置搜索也用这个出口，
+         * 让脚本搜到的与内置搜到的走同一条 {@code Music.fromLxSearchHit} 拼装路。</p>
+         */
+        public static SearchHit of(JsonObject item, String fallbackSource) {
+            return new SearchHit(item, fallbackSource);
+        }
+
+        /** 有没有够拼出一条可播曲目的最低信息。 */
+        public boolean isUsable() {
+            return !name.isEmpty() && !primaryKey().isEmpty();
+        }
+
+        /** 传给脚本与曲目主键用：酷狗看 hash、QQ 看 strMediaMid、咪咕看 copyrightId。 */
+        public String primaryKey() {
+            if (!songmid.isEmpty()) return songmid;
+            if (!hash.isEmpty()) return hash;
+            if (!strMediaMid.isEmpty()) return strMediaMid;
+            return copyrightId;
+        }
+
+        private static String text(JsonObject item, String key) {
+            if (!item.has(key) || item.get(key).isJsonNull()) return "";
+            JsonElement value = item.get(key);
+            try {
+                return value.getAsString().trim();
+            } catch (Throwable notText) {
+                return String.valueOf(value).trim();
+            }
+        }
+    }
+
+    /** 一次搜索的完整结果（含分页信息，页面上「加载更多」要用）。 */
+    public static final class SearchResult {
+        public final List<SearchHit> hits;
+        public final int allPage;
+        public final int total;
+        public final String source;
+
+        SearchResult(List<SearchHit> hits, int allPage, int total, String source) {
+            this.hits = Collections.unmodifiableList(hits);
+            this.allPage = allPage;
+            this.total = total;
+            this.source = source;
+        }
+    }
+
+    private static final Gson GSON = new Gson();
+
+    /**
+     * 让脚本搜一次歌。
+     *
+     * <p><b>search 不是上游 userApi 的动作</b>：洛雪客户端的搜索走内置
+     * {@code musicSdk/<源>/musicSearch.js}，自定义源只有 musicUrl / lyric / pic 三个动作。
+     * 所以这条是宿主加的扩展，只在扩展开关打开、且脚本自己在 {@code inited} 里声明了
+     * search 时才会真的去问；载荷与返回结构照抄内置 musicSearch，脚本作者不需要学新东西。</p>
+     *
+     * @return null 表示不该由脚本出面（没启用、没就绪、没声明、失败）；空列表表示它确实没搜到
+     */
+    public static SearchResult resolveSearch(String sourceKey, String keyword, int page, int limit) {
+        if (!isExtraActionsEnabled()) return null;
+        if (keyword == null || keyword.trim().isEmpty()) return null;
+        LxRuntime current = ready(sourceKey, "search");
+        if (current == null) return null;
+        JsonObject query = new JsonObject();
+        query.addProperty("keyword", keyword.trim());
+        query.addProperty("page", Math.max(1, page));
+        query.addProperty("limit", Math.max(1, Math.min(limit, 60)));
+        try {
+            JsonObject payload = JsonParser.parseString(
+                    current.request(sourceKey, "search", GSON.toJson(query))).getAsJsonObject();
+            JsonArray list = payload.has("list") ? payload.getAsJsonArray("list") : null;
+            if (list == null) return null;
+            List<SearchHit> hits = new ArrayList<>();
+            for (JsonElement element : list) {
+                if (!element.isJsonObject()) continue;
+                SearchHit hit = new SearchHit(element.getAsJsonObject(), sourceKey);
+                if (hit.isUsable()) hits.add(hit);
+            }
+            int allPage = payload.has("allPage") ? payload.get("allPage").getAsInt() : 1;
+            int total = payload.has("total") ? payload.get("total").getAsInt() : hits.size();
+            return new SearchResult(hits, Math.max(1, allPage), Math.max(0, total), sourceKey);
+        } catch (LxSourceException failure) {
+            System.err.println("[LX] search 失败（" + sourceKey + " / " + keyword + "）："
+                    + failure.getMessage());
+            return null;
+        } catch (Throwable broken) {
+            System.err.println("[LX] search 返回值无法解析：" + broken);
+            return null;
+        }
+    }
+
+    /**
+     * LX 的源 key → MuoniumPlayer 的平台。{@link #sourceKeyFor} 的反向。
+     *
+     * <p>酷我（kw）与咪咕（mg）也是可反查的：宿主照上游 musicSdk 内置了它们的搜索，
+     * 取流则完全交给自定义源 —— 这两个平台的曲目只在脚本声明了对应渠道时可播。</p>
+     */
+    public static String platformForSourceKey(String lxSource) {
+        String key = lxSource == null ? "" : lxSource.trim().toLowerCase(Locale.ROOT);
+        if ("wy".equals(key)) return "NETEASE";
+        if ("tx".equals(key)) return "QQ";
+        if ("kg".equals(key)) return "KUGOU";
+        if ("kw".equals(key)) return "KUWO";
+        if ("mg".equals(key)) return "MIGU";
+        return null;
+    }
+
     /** 四道门：启用了、起来了、声明了这个源、声明了这个动作。 */
     private static LxRuntime ready(LxTrack track, String action) {
-        if (track == null || track.getSource().isEmpty()) return null;
+        if (track == null) return null;
+        return ready(track.getSource(), action);
+    }
+
+    private static LxRuntime ready(String sourceKey, String action) {
+        if (sourceKey == null || sourceKey.isEmpty()) return null;
         if (!isEnabled()) return null;
         ensureStarted();
         LxRuntime current = runtime;
         if (current == null) return null;
         if (current.getState() == LxRuntime.State.LOADING && !current.awaitReady(WAIT_READY_MS)) return null;
         if (current.getState() != LxRuntime.State.READY) return null;
-        LxRuntime.SourceDecl decl = current.getSources().get(track.getSource());
+        LxRuntime.SourceDecl decl = current.getSources().get(sourceKey);
         return decl != null && decl.supports(action) ? current : null;
     }
 
@@ -477,6 +631,35 @@ public final class LxSourceService {
         LxSourceStore.Entry entry = LxSourceStore.getActive();
         if (entry == null) return;
         LxSourceStore.setAllowUpdateAlert(entry.id, !entry.allowUpdateAlert);
+    }
+
+    /**
+     * 宿主扩展：要不要放开上游白名单之外的三个动作 {@code lyric} / {@code pic} / {@code search}。
+     *
+     * <p>默认关，此时动作白名单与上游 preload 一字不差。而上游只给 {@code local} 前两个动作，
+     * {@code local} 指的是洛雪的本机文件，本播放器的曲目全来自远端平台，照抄等于
+     * {@link #resolveLyric} / {@link #resolvePic} 永远等不到调用；{@code search} 更是上游
+     * 没有的动作（那边的搜索走内置 musicSdk），只能宿主自己加。</p>
+     *
+     * <p>打开后也只是「宿主肯问」：仍然与脚本在 {@code inited} 里自己声明的动作取交集，
+     * 没声明的一个都不会被问到。</p>
+     */
+    public static boolean isExtraActionsEnabled() {
+        return LxSourceStore.isExtraActionsEnabled();
+    }
+
+    /**
+     * 改这个开关必须重开运行时：动作白名单是脚本 {@code inited} 时过滤一次就定下来的，
+     * 正在跑的那一份不会自己变。
+     */
+    public static void setExtraActions(boolean enabled) {
+        if (LxSourceStore.isExtraActionsEnabled() == enabled) return;
+        LxSourceStore.setExtraActions(enabled);
+        notice = enabled
+                ? "已允许脚本提供搜索 / 歌词 / 封面，正在重新加载…"
+                : "已恢复上游白名单（脚本只接管取流），正在重新加载…";
+        noticeBad = false;
+        if (isEnabled()) reload();
     }
 
     /**

@@ -46,7 +46,11 @@ public final class QishuiMusicService {
 
     private static final String SEARCH_ENDPOINT = "https://api.qishui.com/luna/search/track";
     private static final String TRACK_ENDPOINT = "https://beta-luna.douyin.com/luna/h5/seo_track";
-    private static final String PC_TRACK_ENDPOINT = "https://api.qishui.com/luna/pc/track_v2";
+    private static final String PC_TRACK_PATH = "/luna/pc/track_v2";
+    /** PC 接口的容灾域名，顺序与参考实现一致。 */
+    private static final String[] PC_API_BASES = {
+            "https://api5-lq.qishui.com", "https://api.qishui.com"
+    };
     private static final String PC_SEARCH_PLAYLIST_ENDPOINT = "https://api.qishui.com/luna/pc/search/playlist";
     private static final String PC_SEARCH_MIXED_ENDPOINT = "https://api.qishui.com/luna/pc/search/mixed";
     private static final String PC_ME_PLAYLISTS_ENDPOINT = "https://api.qishui.com/luna/pc/me/playlist";
@@ -66,7 +70,7 @@ public final class QishuiMusicService {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     + "(KHTML, like Gecko) Chrome/120 Safari/537.36";
     private static final String PASSPORT_USER_AGENT = WEB_USER_AGENT;
-    private static final String PC_USER_AGENT = "LunaPC/3.0.0(290101097)";
+    private static final String PC_USER_AGENT = "LunaPC/3.3.0(359450208)";
     private static final int REQUEST_TIMEOUT_MS = 15_000;
     private static final int MAX_BYTES = 8 * 1024 * 1024;
 
@@ -155,18 +159,23 @@ public final class QishuiMusicService {
 
         try {
             boolean authenticated = QishuiSessionStore.isLoggedIn();
-            List<JsonObject> candidates = new ArrayList<>();
+            List<Stream> candidates = new ArrayList<>();
+            long declared = 0L;
             if (authenticated) {
                 JsonObject pc = fetchAuthenticatedTrack(id);
-                if (pc != null) candidates.addAll(collectCandidates(pc));
+                if (pc != null) {
+                    candidates.addAll(collectCandidates(pc));
+                    declared = Math.max(declared, declaredTrackDuration(pc));
+                }
             }
             try {
                 JsonObject web = fetchTrack(id, authenticated);
                 candidates.addAll(collectCandidates(web));
+                declared = Math.max(declared, declaredTrackDuration(web));
             } catch (Throwable webFailure) {
                 if (candidates.isEmpty()) throw webFailure;
             }
-            return selectAac(candidates, requestedQuality);
+            return selectAac(candidates, requestedQuality, declared);
         } catch (Throwable throwable) {
             System.err.println("[Music/Qishui] Song URL failed for " + id + ": " + describe(throwable));
             return null;
@@ -313,24 +322,89 @@ public final class QishuiMusicService {
         return QishuiSessionStore.snapshot().vip;
     }
 
+    /**
+     * 从 {@code /luna/pc/me} 的响应里定位账号信息本体。
+     *
+     * <p>实测当前上游把 {@code my_info} 放在<b>顶层</b>，而参考实现的历史 fixture 里它在
+     * {@code data} 下。层级是上游会改的东西，所以两种形状都认：先顶层、再 {@code data}，
+     * 都没有就退回整包（保留改造前「拿 envelope 兜底」的行为）。</p>
+     */
+    static JsonObject locateAccountInfo(JsonObject response) {
+        JsonObject data = object(response, "data");
+        JsonObject[] candidates = {
+                object(response, "my_info"), object(response, "user"),
+                object(data, "my_info"), object(data, "user"),
+        };
+        for (JsonObject candidate : candidates) {
+            if (candidate.size() > 0) return candidate;
+        }
+        return data.size() > 0 ? data : response;
+    }
+
+    /**
+     * 剥掉 PC 接口的响应信封。{@code track_v2}、歌单、收藏这一类把业务数据放在 {@code data}
+     * 里，而 H5 的 {@code seo_track} 直接放在顶层，所以 {@code data} 优先、顶层回退。
+     * 之前只在顶层找 {@code track_player}，等于登录后每次播放都白读一次。
+     */
+    static JsonObject envelope(JsonObject response) {
+        JsonObject data = object(response, "data");
+        return data.size() == 0 ? response : data;
+    }
+
+    /**
+     * 账号头像地址。
+     *
+     * <p>字段名是实测出来的：{@code /luna/pc/me} 返回的是 {@code my_info.medium_avatar_url} 与
+     * {@code larger_avatar_url}，形状 {@code {"uri":…,"urls":[…,…,…]}}，而 <b>没有</b>
+     * {@code avatar_url}、也 <b>没有</b> {@code avatar_thumb}。之前只找后两个名字，于是头像
+     * 永远存成空串，账号面板只能退回昵称首字。</p>
+     *
+     * <p>这些地址带 {@code x-signature} 与 {@code x-expires}，实测约两天后失效，所以它只是一份
+     * 会过期的缓存，不是可以永久落盘的 URL：{@link #refreshProfile()} 必须每次启动都跑一次。</p>
+     */
+    static String resolveAvatarUrl(JsonObject info) {
+        String avatar = firstUrl(info.get("medium_avatar_url"));
+        if (avatar.isEmpty()) avatar = firstUrl(info.get("larger_avatar_url"));
+        if (avatar.isEmpty()) avatar = firstNonBlank(string(info, "avatar_url"), string(info, "avatar"));
+        if (avatar.isEmpty()) avatar = firstUrl(info.get("url_avatar"));
+        if (avatar.isEmpty()) avatar = firstUrl(info.get("avatar_thumb"));
+        if (avatar.isEmpty()) avatar = firstUrl(info.get("avatar_uri"));
+        return avatar;
+    }
+
+    /**
+     * 是否会员。
+     *
+     * <p>不能再把「vip_stage 非空」当会员：实测<b>免费</b>账号也带这个字段，值是 {@code "free"}。
+     * 那一条让每个登录成功的用户都被标成会员，界面上挂一枚假会员标，而用户看到它之后自然会
+     * 以为「完整版取不出来」是取流环节的错。</p>
+     *
+     * <p>也不能反过来只排除 free/none/0 这几个已知非会员值：{@code vip_stage} 的取值域我们没测全，
+     * 排除法等于把任何陌生值（包括数字档位）都当成会员。这里用白名单——只有正面证据才挂标，
+     * 因为这个徽标只用于展示，漏标少张贴纸，假标则会把排查引到错的地方。</p>
+     */
+    static boolean resolveVip(JsonObject info) {
+        if (truthy(info, "is_vip") || truthy(info, "isVip")) return true;
+        String stage = string(info, "vip_stage").toLowerCase(Locale.ROOT);
+        return stage.contains("vip") || stage.contains("会员");
+    }
+
     public static boolean refreshProfile() {
         String cookie = QishuiSessionStore.getCookieHeader();
         if (cookie.isEmpty()) return false;
         try {
-            JsonObject response = getJson(buildAccountUrl(), PC_USER_AGENT, cookie, pcHeaders());
-            JsonObject info = object(response, "my_info");
-            if (info.size() == 0) info = object(response, "user");
-            if (info.size() == 0) info = response;
+            JsonObject response = requirePcStatus(
+                    getJson(buildAccountUrl(), PC_USER_AGENT, cookie, pcHeaders()), "账号接口");
+            JsonObject info = locateAccountInfo(response);
             String nickname = firstNonBlank(string(info, "nickname"), string(info, "name"));
             String userId = firstNonBlank(string(info, "id"), string(info, "user_id"));
             String douyinId = string(info, "douyin_id");
-            String avatar = firstNonBlank(string(info, "avatar_url"), string(info, "avatar"));
-            if (avatar.isEmpty()) avatar = firstUrl(info.get("avatar_thumb"));
-            if (avatar.isEmpty()) avatar = firstUrl(info.get("avatar_uri"));
-            boolean vip = truthy(info, "is_vip") || truthy(info, "isVip")
-                    || !string(info, "vip_stage").isEmpty();
-            QishuiSessionStore.saveProfile(userId, nickname, douyinId, avatar, vip,
-                    string(info, "vip_stage"));
+            String avatar = resolveAvatarUrl(info);
+            boolean vip = resolveVip(info);
+            if (!nickname.isEmpty() || !userId.isEmpty()) {
+                QishuiSessionStore.saveProfile(userId, nickname, douyinId, avatar, vip,
+                        string(info, "vip_stage"));
+            }
             QishuiSessionStore.markVerified();
             return true;
         } catch (Throwable error) {
@@ -385,20 +459,16 @@ public final class QishuiMusicService {
         try {
             JsonResponse response = getJsonResponse(buildAccountUrl(), PC_USER_AGENT,
                     cookieHeader, pcHeaders());
-            JsonObject info = object(response.body, "my_info");
-            if (info.size() == 0) info = object(response.body, "user");
-            if (info.size() == 0) info = response.body;
+            requirePcStatus(response.body, "账号接口");
+            JsonObject info = locateAccountInfo(response.body);
             String nickname = firstNonBlank(string(info, "nickname"), string(info, "name"));
             if (nickname.isEmpty()) {
                 return CookieImport.fail("账号接口没返回昵称，这份 Cookie 大概已经失效了。");
             }
             String userId = firstNonBlank(string(info, "id"), string(info, "user_id"));
             String douyinId = string(info, "douyin_id");
-            String avatar = firstNonBlank(string(info, "avatar_url"), string(info, "avatar"));
-            if (avatar.isEmpty()) avatar = firstUrl(info.get("avatar_thumb"));
-            if (avatar.isEmpty()) avatar = firstUrl(info.get("avatar_uri"));
-            boolean vip = truthy(info, "is_vip") || truthy(info, "isVip")
-                    || !string(info, "vip_stage").isEmpty();
+            String avatar = resolveAvatarUrl(info);
+            boolean vip = resolveVip(info);
 
             // 上游可能在响应里轮换 sid_guard / sessionid，带回来就一并收下，
             // 不然存下去的那份下一秒就过期了。
@@ -601,16 +671,16 @@ public final class QishuiMusicService {
         int target = Math.max(1, Math.min(100, limit));
         LinkedHashMap<String, PlayList> unique = new LinkedHashMap<>();
         try {
-            JsonObject response = getJson(buildPcSearchUrl(keyword, 0), PC_USER_AGENT,
-                    QishuiSessionStore.getCookieHeader(), pcHeaders());
+            JsonObject response = requirePcStatus(getJson(buildPcSearchUrl(keyword, 0),
+                    PC_USER_AGENT, QishuiSessionStore.getCookieHeader(), pcHeaders()), "歌单搜索");
             collectPlaylistsFromSearch(response, unique, target);
         } catch (Throwable error) {
             System.err.println("[Music/Qishui] Playlist search failed: " + describe(error));
         }
         if (unique.isEmpty()) {
             try {
-                JsonObject response = getJson(buildPcMixedSearchUrl(keyword, 0), PC_USER_AGENT,
-                        QishuiSessionStore.getCookieHeader(), pcHeaders());
+                JsonObject response = requirePcStatus(getJson(buildPcMixedSearchUrl(keyword, 0),
+                        PC_USER_AGENT, QishuiSessionStore.getCookieHeader(), pcHeaders()), "混合搜索");
                 collectPlaylistsFromSearch(response, unique, target);
             } catch (Throwable error) {
                 System.err.println("[Music/Qishui] Mixed playlist search failed: " + describe(error));
@@ -804,8 +874,8 @@ public final class QishuiMusicService {
     public static List<PlayList> userPlaylists(int limit) {
         if (!QishuiSessionStore.isLoggedIn()) return Collections.emptyList();
         try {
-            JsonObject response = getJson(buildPcMePlaylistsUrl(), PC_USER_AGENT,
-                    QishuiSessionStore.getCookieHeader(), pcHeaders());
+            JsonObject response = requirePcStatus(getJson(buildPcMePlaylistsUrl(), PC_USER_AGENT,
+                    QishuiSessionStore.getCookieHeader(), pcHeaders()), "自建歌单");
             return parsePlaylistArray(array(response, "playlists"), Math.max(1, Math.min(200, limit)));
         } catch (Throwable error) {
             System.err.println("[Music/Qishui] User playlists failed: " + describe(error));
@@ -837,8 +907,8 @@ public final class QishuiMusicService {
     private static JsonObject fetchUserCollection() {
         if (!QishuiSessionStore.isLoggedIn()) return new JsonObject();
         try {
-            return getJson(buildPcMeCollectionUrl(), PC_USER_AGENT,
-                    QishuiSessionStore.getCookieHeader(), pcHeaders());
+            return requirePcStatus(getJson(buildPcMeCollectionUrl(), PC_USER_AGENT,
+                    QishuiSessionStore.getCookieHeader(), pcHeaders()), "收藏");
         } catch (Throwable error) {
             System.err.println("[Music/Qishui] User collection failed: " + describe(error));
             return new JsonObject();
@@ -1031,20 +1101,56 @@ public final class QishuiMusicService {
                 Collections.emptyMap());
     }
 
+    /**
+     * 登录态的 {@code pc/track_v2}——参考实现里唯一能给完整流与权益字段的那条接口。
+     *
+     * <p>2026-09-20 实测：这条路由对我们的请求恒返回 <b>HTTP 200 + 0 字节</b>，而它的 H5 姊妹路由
+     * {@code /luna/h5/track_v2} 会明说 {@code status_code=1000062 应用版本有风险}。换域名、换
+     * 版本号的 6 种组合、换 app_name/device_platform/channel、带不带 cookie、伪造与真实设备标识、
+     * UA 与 curl 两套 TLS 栈全都试过了，一律空响应；同期 {@code /luna/pc/me}、{@code me/playlist}、
+     * {@code me/collection/mixed}、{@code pc/search/playlist} 都正常出数据，所以不是凭据问题，
+     * 而是上游对播放分发接口加了客户端风控。参考实现自己也留了「汽水接口暂时返回空响应」这条
+     * 错误分支，说明它同样撞得上。</p>
+     *
+     * <p>因此这里失败是<b>预期内</b>的：返回 null，由 {@link #getSongUrl} 继续用 H5 那条线，
+     * 免费版曲目能拿到完整流，受限曲目只有试听。</p>
+     */
     private static JsonObject fetchAuthenticatedTrack(String trackId) {
         if (!QishuiSessionStore.isLoggedIn()) return null;
-        try {
-            JsonObject payload = new JsonObject();
-            payload.addProperty("track_id", trackId);
-            payload.addProperty("media_type", "track");
-            payload.addProperty("queue_type", "favorite_track_playlist");
-            payload.addProperty("scene_name", "library");
-            return postJson(buildPcTrackUrl(), payload.toString(), PC_USER_AGENT,
-                    QishuiSessionStore.getCookieHeader(), pcHeaders());
-        } catch (Throwable error) {
-            System.err.println("[Music/Qishui] Authenticated track request failed: " + describe(error));
-            return null;
+        String cookie = QishuiSessionStore.getCookieHeader();
+        JsonObject payload = new JsonObject();
+        payload.addProperty("track_id", trackId);
+        payload.addProperty("media_type", "track");
+        payload.addProperty("queue_type", "favorite_track_playlist");
+        payload.addProperty("scene_name", "library");
+        String body = payload.toString();
+        Throwable last = null;
+        for (String base : PC_API_BASES) {
+            try {
+                return requirePcStatus(postJson(buildPcTrackUrl(base, ""), body, PC_USER_AGENT,
+                        cookie, pcHeaders()), "取流");
+            } catch (Throwable posted) {
+                last = posted;
+                // 凭据被拒不换域名重试——参考实现同样在 401/403 时立刻停手，
+                // 连着打只会让风控更快盯上这个会话。这里只标记，不清凭据。
+                if (looksLikeAuthRejection(posted)) {
+                    QishuiSessionStore.markReauthRequired();
+                    break;
+                }
+            }
+            try {
+                return requirePcStatus(getJson(buildPcTrackUrl(base, trackId), PC_USER_AGENT,
+                        cookie, pcHeaders()), "取流");
+            } catch (Throwable fallback) {
+                last = fallback;
+                if (looksLikeAuthRejection(fallback)) {
+                    QishuiSessionStore.markReauthRequired();
+                    break;
+                }
+            }
         }
+        System.err.println("[Music/Qishui] Authenticated track request failed: " + describe(last));
+        return null;
     }
 
     private static JsonObject fetchPlayerInfo(String url) throws IOException, InterruptedException {
@@ -1052,16 +1158,21 @@ public final class QishuiMusicService {
                 Collections.emptyMap());
     }
 
-    private static List<JsonObject> collectCandidates(JsonObject response) {
-        List<JsonObject> candidates = new ArrayList<>();
-        JsonObject player = object(response, "track_player");
-        JsonElement videoModel = player.get("video_model");
-        collectCandidateObjects(parseEmbeddedJson(videoModel), candidates, 0);
+    static List<Stream> collectCandidates(JsonObject response) {
+        List<Stream> candidates = new ArrayList<>();
+        if (response == null) return candidates;
+        JsonObject body = envelope(response);
+        // 一次遍历收全四处流来源：track.audio_info.play_info_list、track_player.video_model、
+        // bit_rates 兜底，以及 seo_track 顶层那套。它们的字段大小写不一致，所以统一交给
+        // audioUrl()/durationMillis()/playAuth() 各自认名字。
+        collectStreams(body, candidates, 0, 0L, "");
+        JsonObject player = locateTrackPlayer(body);
         String playerInfoUrl = firstNonBlank(string(player, "url_player_info"),
-                string(player, "urlPlayerInfo"));
+                string(player, "urlPlayerInfo"), string(player, "URLPlayerInfo"));
         if (!playerInfoUrl.isEmpty()) {
             try {
-                collectCandidateObjects(fetchPlayerInfo(playerInfoUrl), candidates, 0);
+                // 二跳的播放信息接口是 PascalCase 的 Result.Data.PlayInfoList，同样一次遍历即可。
+                collectStreams(envelope(fetchPlayerInfo(playerInfoUrl)), candidates, 0, 0L, "");
             } catch (Throwable error) {
                 System.err.println("[Music/Qishui] Player info request failed: " + describe(error));
             }
@@ -1069,56 +1180,94 @@ public final class QishuiMusicService {
         return candidates;
     }
 
-    private static void collectCandidateObjects(JsonElement element, List<JsonObject> output, int depth) {
+    /** 曲目本体：{@code data.track}、顶层 {@code track}、{@code seo_track.track} 都见过。 */
+    static JsonObject locateTrack(JsonObject body) {
+        JsonObject[] candidates = {
+                object(body, "track"), object(body, "track_info"), object(body, "trackInfo"),
+                object(object(body, "seo_track"), "track"),
+        };
+        for (JsonObject candidate : candidates) {
+            if (candidate.size() > 0) return candidate;
+        }
+        return body;
+    }
+
+    /** 播放信息本体：{@code track_player} 有时挂在信封上，有时挂在曲目里，命名还有大小写差异。 */
+    static JsonObject locateTrackPlayer(JsonObject body) {
+        JsonObject track = locateTrack(body);
+        JsonObject[] candidates = {
+                object(body, "track_player"), object(body, "trackPlayer"),
+                object(track, "track_player"), object(track, "trackPlayer"),
+        };
+        for (JsonObject candidate : candidates) {
+            if (candidate.size() > 0) return candidate;
+        }
+        return new JsonObject();
+    }
+
+    /**
+     * 遍历响应树，把带播放地址的节点收成候选流。
+     *
+     * <p>{@code inheritedDurationMillis} 与 {@code inheritedAuth} 是父节点上的
+     * {@code video_duration} 和 {@code play_auth}：实测 {@code video_model} 的时长在
+     * <b>父节点</b>上，而带 URL 的只有 {@code video_list[i]}，不继承的话候选时长恒为 0，
+     * 「时长不足声明值九成就算试听」这条判据在实战里一次都没生效过。</p>
+     */
+    private static void collectStreams(JsonElement element, List<Stream> output, int depth,
+                                       long inheritedDurationMillis, String inheritedAuth) {
         if (element == null || element.isJsonNull() || depth > 8) return;
         if (element.isJsonArray()) {
             for (JsonElement child : element.getAsJsonArray()) {
-                collectCandidateObjects(child, output, depth + 1);
+                collectStreams(child, output, depth + 1, inheritedDurationMillis, inheritedAuth);
             }
             return;
         }
         if (!element.isJsonObject()) return;
-        JsonObject object = element.getAsJsonObject();
-        if (!audioUrl(object).isEmpty()) output.add(object);
-        for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
-            collectCandidateObjects(entry.getValue(), output, depth + 1);
+        JsonObject node = element.getAsJsonObject();
+        long duration = durationMillis(node);
+        if (duration <= 0L) duration = inheritedDurationMillis;
+        String auth = playAuth(node);
+        if (auth.isEmpty()) auth = nonBlank(inheritedAuth);
+        if (!audioUrl(node).isEmpty()) output.add(new Stream(node, duration, auth));
+        for (Map.Entry<String, JsonElement> entry : node.entrySet()) {
+            // video_model 是「字符串再包一层 JSON」，边走边剥，不然整棵子树都看不见。
+            collectStreams(parseEmbeddedJson(entry.getValue()), output, depth + 1, duration, auth);
         }
     }
-    private static ResolveResult selectAac(List<JsonObject> candidates, Quality requestedQuality) {
+
+    static ResolveResult selectAac(List<Stream> candidates, Quality requestedQuality,
+                                   long declaredDurationMillis) {
         boolean preferHigher = requestedQuality != Quality.STANDARD;
-        JsonObject selected = null;
+        Stream selected = null;
         long selectedScore = preferHigher ? Long.MIN_VALUE : Long.MAX_VALUE;
         long selectedDuration = 0L;
-        for (JsonObject candidate : candidates) {
-            String url = audioUrl(candidate);
+        for (Stream candidate : candidates) {
+            String url = audioUrl(candidate.node);
             if (url.isEmpty()) continue;
-            JsonObject meta = object(candidate, "video_meta");
-            String codec = firstNonBlank(string(candidate, "codec_type"),
-                    string(meta, "codec_type")).toLowerCase(Locale.ROOT);
-            String format = firstNonBlank(string(candidate, "format"), string(candidate, "vtype"),
-                    string(candidate, "Format"), string(meta, "format"),
+            JsonObject meta = object(candidate.node, "video_meta");
+            String codec = firstNonBlank(string(candidate.node, "codec_type"),
+                    string(candidate.node, "Codec"), string(meta, "codec_type")).toLowerCase(Locale.ROOT);
+            String format = firstNonBlank(string(candidate.node, "format"), string(candidate.node, "vtype"),
+                    string(candidate.node, "Format"), string(meta, "format"),
                     string(meta, "vtype")).toLowerCase(Locale.ROOT);
-            String mime = firstNonBlank(string(candidate, "mime_type"),
-                    string(candidate, "MimeType"), string(meta, "mime_type")).toLowerCase(Locale.ROOT);
+            String mime = firstNonBlank(string(candidate.node, "mime_type"),
+                    string(candidate.node, "MimeType"), string(meta, "mime_type")).toLowerCase(Locale.ROOT);
             boolean aac = codec.contains("aac") || format.contains("m4a") || format.contains("aac")
                     || mime.contains("audio/mp4") || url.toLowerCase(Locale.ROOT).contains("audio_mp4");
             if (!aac || format.contains("flac") || format.contains("wav")) continue;
 
-            long bitrate = longValue(candidate, "bitrate");
-            if (bitrate <= 0L) bitrate = longValue(candidate, "Bitrate");
-            if (bitrate <= 0L) bitrate = longValue(candidate, "real_bitrate");
-            if (bitrate <= 0L) bitrate = longValue(candidate, "br");
-            if (bitrate <= 0L) bitrate = longValue(meta, "bitrate");
-            if (bitrate <= 0L) bitrate = qualityScore(string(candidate, "quality"));
-            long duration = longValue(candidate, "duration");
-            if (duration <= 0L) duration = longValue(candidate, "video_duration");
-            if (duration <= 0L) duration = longValue(meta, "duration");
-            if (duration > 0L && duration < 1000L) duration *= 1000L;
-            boolean fullStream = duration >= 60_000L;
-            boolean selectedFull = selected != null && selectedDuration >= 60_000L;
-            boolean better = selected == null || (fullStream && !selectedFull)
-                    || (fullStream == selectedFull
-                    && (preferHigher ? bitrate >= selectedScore : bitrate <= selectedScore));
+            long bitrate = streamBitrate(candidate.node);
+            long duration = candidate.durationMillis;
+            int rank = streamCompletenessRank(duration, declaredDurationMillis);
+            int selectedRank = selected == null ? Integer.MIN_VALUE
+                    : streamCompletenessRank(selectedDuration, declaredDurationMillis);
+            // 参考实现的排序键是「时长优先，差一秒以上才算压制」，之后才比音质与码率。
+            // 完整/未知/试听先分档：时长未知只是不作判据，不该压过一条已确认的完整流。
+            boolean better;
+            if (selected == null) better = true;
+            else if (rank != selectedRank) better = rank > selectedRank;
+            else if (Math.abs(duration - selectedDuration) > 1_000L) better = duration > selectedDuration;
+            else better = preferHigher ? bitrate >= selectedScore : bitrate <= selectedScore;
             if (better) {
                 selected = candidate;
                 selectedScore = bitrate;
@@ -1127,16 +1276,39 @@ public final class QishuiMusicService {
         }
         if (selected == null) return null;
 
-        String url = audioUrl(selected);
-        String format = firstNonBlank(string(selected, "format"), string(selected, "Format"),
-                string(selected, "vtype")).toLowerCase(Locale.ROOT);
+        String url = audioUrl(selected.node);
+        String format = firstNonBlank(string(selected.node, "format"), string(selected.node, "Format"),
+                string(selected.node, "vtype")).toLowerCase(Locale.ROOT);
         String normalized = format.contains("aac") && !format.contains("m4a") && !url.contains(".m4a")
                 ? "aac" : "m4a";
-        long bitrate = longValue(selected, "bitrate");
-        if (bitrate <= 0L) bitrate = longValue(selected, "Bitrate");
-        if (bitrate <= 0L) bitrate = longValue(selected, "real_bitrate");
-        if (bitrate <= 0L) bitrate = longValue(selected, "br");
-        return new ResolveResult(url, normalized, bitrate, playAuth(selected));
+        if (!isFullStream(selectedDuration, declaredDurationMillis)) {
+            System.err.println("[Music/Qishui] 上游只给到试听片段：" + (selectedDuration / 1000L)
+                    + "s / 声明 " + (declaredDurationMillis / 1000L) + "s，完整流需要上游放开的权益");
+        }
+        return new ResolveResult(url, normalized, streamBitrate(selected.node), selected.playAuth);
+    }
+
+    /**
+     * 候选流的完整度分档：2 完整、1 时长未知、0 试听。
+     *
+     * <p>{@link #isFullStream} 对时长未知是 fail-open 的（宁可放出声也不静默），但排序时
+     * 不能让「未知」和「已确认完整」同分——否则父节点时长没继承到的候选会凭 fail-open
+     * 永远压过真正的完整流，这正是审计里那条判据实战失效的原因。</p>
+     */
+    static int streamCompletenessRank(long durationMillis, long declaredMillis) {
+        if (durationMillis <= 0L) return 1;
+        return isFullStream(durationMillis, declaredMillis) ? 2 : 0;
+    }
+
+    /** 流码率：显式字段优先，其次按档位的代表码率兜底。字段大小写两套都见过。 */
+    private static long streamBitrate(JsonObject candidate) {
+        long bitrate = longValue(candidate, "bitrate");
+        if (bitrate <= 0L) bitrate = longValue(candidate, "Bitrate");
+        if (bitrate <= 0L) bitrate = longValue(candidate, "real_bitrate");
+        if (bitrate <= 0L) bitrate = longValue(candidate, "br");
+        if (bitrate <= 0L) bitrate = longValue(object(candidate, "video_meta"), "bitrate");
+        if (bitrate <= 0L) bitrate = qualityScore(string(candidate, "quality"));
+        return bitrate;
     }
 
     private static String audioUrl(JsonObject candidate) {
@@ -1295,8 +1467,14 @@ public final class QishuiMusicService {
         return form;
     }
 
-    private static String buildPcTrackUrl() {
-        return buildPcUrl(PC_TRACK_ENDPOINT).toString();
+    /** {@code trackId} 为空时是 POST 用的 URL（曲目 id 只在 body 里），非空时是 GET 回落用的。 */
+    private static String buildPcTrackUrl(String base, String trackId) {
+        StringBuilder url = buildPcUrl(base + PC_TRACK_PATH);
+        if (!nonBlank(trackId).isEmpty()) {
+            append(url, "track_id", trackId);
+            append(url, "media_type", "track");
+        }
+        return url.toString();
     }
 
     private static String buildPcSearchUrl(String keyword, int cursor) {
@@ -1362,9 +1540,14 @@ public final class QishuiMusicService {
         return ACCOUNT_ENDPOINT + "?aid=386088";
     }
 
+    /** PC 接口除 Content-Type 外还要那三个 Luna 自报家门的头，参考实现同样带 Referer。 */
     private static Map<String, String> pcHeaders() {
         Map<String, String> headers = new LinkedHashMap<>();
         headers.put("Content-Type", "application/json; charset=utf-8");
+        headers.put("Referer", "https://www.qishui.com/");
+        headers.put("x-luna-background-type", "foreground");
+        headers.put("x-luna-is-background-req", "0");
+        headers.put("x-luna-is-local-user", "1");
         return headers;
     }
 
@@ -1432,6 +1615,25 @@ public final class QishuiMusicService {
         JsonElement parsed = JsonParser.parseString(text);
         if (!parsed.isJsonObject()) throw new IOException("汽水音乐返回了非 JSON 对象");
         return new JsonResponse(parsed.getAsJsonObject(), cookieHeaderFromSetCookie(response));
+    }
+
+    /**
+     * PC 接口用「HTTP 200 + status_code」表达失败，只看 HTTP 状态码会把一条失败响应读成成功。
+     *
+     * <p>实测过的码：{@code 1000016} 凭据失效、{@code 1000062} 客户端风控（应用版本有风险）、
+     * {@code 1000004} 参数非法、{@code 1000005} 资源不存在。不校验的话 {@code 1000016}
+     * 会一路走到 {@code markVerified()}，把失效凭据标成「已验证」，而 {@code looksLikeAuthRejection}
+     * 因为压根没收到异常而永不触发。抛出去的消息里带上码值，凭据失效才能被认出来。
+     */
+    static JsonObject requirePcStatus(JsonObject response, String what) throws IOException {
+        if (response == null) return null;
+        long code = longValue(response, "status_code");
+        if (code == 0L) code = longValue(response, "error_code");
+        if (code == 0L) return response;
+        JsonObject info = object(response, "status_info");
+        String reason = info.size() == 0 ? "" : nonBlank(string(info, "status_msg"));
+        throw new IOException("汽水音乐 " + what + " 返回业务码 " + code
+                + (reason.isEmpty() ? "" : "：" + reason));
     }
 
     private static String cookieHeaderFromSetCookie(HttpResponse<?> response) {
@@ -1564,10 +1766,86 @@ public final class QishuiMusicService {
     private static long longValue(JsonObject parent, String property) {
         if (parent == null || !parent.has(property) || parent.get(property).isJsonNull()) return 0L;
         try {
-            return parent.get(property).getAsLong();
+            // 走上游实测存在的浮点写法（"Duration": 29.002、"Bitrate": 129895.0）。
+            // getAsLong() 对带小数点的 JSON 数字直接抛异常，以前这些字段一律静默读成 0。
+            return Math.round(parent.get(property).getAsDouble());
         } catch (Throwable ignored) {
             return 0L;
         }
+    }
+
+    private static double numberValue(JsonObject parent, String property) {
+        if (parent == null || !parent.has(property) || parent.get(property).isJsonNull()) return 0D;
+        try {
+            return parent.get(property).getAsDouble();
+        } catch (Throwable ignored) {
+            return 0D;
+        }
+    }
+
+    private static double firstPositiveNumber(JsonObject parent, String... properties) {
+        if (parent == null) return 0D;
+        for (String property : properties) {
+            double value = numberValue(parent, property);
+            if (value > 0D) return value;
+        }
+        return 0D;
+    }
+
+    /**
+     * 一条候选流的时长，单位毫秒；拿不到时返回 0。
+     *
+     * <p>两条上游的形状完全不同：{@code video_model} 里是小写整数字段，而
+     * {@code url_player_info} 返回的 PlayInfoList 用的是 <b>PascalCase 的浮点秒</b>
+     * （实测 {@code "Duration": 29.002} / {@code 279.918}）。原先只读小写名，播放信息接口的
+     * 时长就恒为 0，完整流与试听片段再也分不开。</p>
+     */
+    private static long durationMillis(JsonObject candidate) {
+        if (candidate == null) return 0L;
+        double raw = firstPositiveNumber(candidate, "duration", "Duration", "video_duration",
+                "videoDuration", "play_time");
+        if (raw <= 0D) raw = firstPositiveNumber(object(candidate, "video_meta"), "duration", "Duration");
+        if (raw <= 0D) return 0L;
+        // 小于 10000 的按秒解释：没有歌长过一万秒（近三小时），也没有试听短于十秒。
+        return Math.round(raw < 10_000D ? raw * 1000D : raw);
+    }
+
+    /**
+     * 这条候选是不是完整长度，而不是试听片段。
+     *
+     * <p>判据优先用曲目自己声明的总时长：流不足声明值的 95% 就是试听。之所以不能像参考实现
+     * 那样按「恰好 30 或 60 秒」判，是因为实测的试听是 <b>29.002 秒</b>，固定值匹配会漏掉它。</p>
+     *
+     * <p>声明时长未知时才退回固定试听规格；两者都不知道就当作完整，让它按码率正常竞争——
+     * 宁可放一段试听，也不该因为判不出长度而放不出声音。</p>
+     */
+    private static boolean isFullStream(long durationMillis, long declaredMillis) {
+        if (declaredMillis > 0L) {
+            return durationMillis <= 0L || durationMillis * 100L >= declaredMillis * 95L;
+        }
+        if (durationMillis <= 0L) return true;
+        return durationMillis != 30_000L && durationMillis != 60_000L;
+    }
+
+    /**
+     * 曲目声明的总时长（毫秒），用来把试听片段和完整流分开。
+     * 搜索响应、seo_track 与 pc/track_v2 里的挂载位置各不相同，所以逐个探后取最大值，
+     * 防止某一处给的是预览时长。注意不看 {@code preview.duration}——那正是要识别的东西。
+     */
+    private static long declaredTrackDuration(JsonObject response) {
+        if (response == null) return 0L;
+        JsonObject body = envelope(response);
+        JsonObject seo = object(body, "seo_track");
+        double best = 0D;
+        for (JsonObject container : new JsonObject[]{body, seo, locateTrack(body),
+                object(seo, "track"), object(body, "media_resource"),
+                object(object(body, "track"), "audio_info")}) {
+            double value = firstPositiveNumber(container, "duration", "duration_ms", "Duration",
+                    "video_duration");
+            if (value > best) best = value;
+        }
+        if (best <= 0D) return 0L;
+        return Math.round(best < 10_000D ? best * 1000D : best);
     }
 
     private static String firstNonBlank(String... values) {
@@ -1589,6 +1867,23 @@ public final class QishuiMusicService {
     private static String describe(Throwable throwable) {
         return throwable == null || throwable.getMessage() == null
                 ? String.valueOf(throwable) : throwable.getMessage();
+    }
+
+    /**
+     * 一条候选流：节点本体，加上从父节点继承来的时长与解密凭据。
+     * 上游把 {@code video_duration} 与 {@code play_auth} 放在 {@code video_list} 的父节点上，
+     * 只带节点本身就没法判断它是完整流还是试听片段。
+     */
+    static final class Stream {
+        final JsonObject node;
+        final long durationMillis;
+        final String playAuth;
+
+        Stream(JsonObject node, long durationMillis, String playAuth) {
+            this.node = node;
+            this.durationMillis = durationMillis;
+            this.playAuth = playAuth == null ? "" : playAuth;
+        }
     }
 
     private static final class JsonResponse {

@@ -2,9 +2,9 @@ package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
+import com.muoniumplayer.core.ncm.music.ListenTogetherService;
 import com.muoniumplayer.core.ncm.music.ListenTogetherSettings;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
-import com.muoniumplayer.core.ncm.music.NeteaseListenTogetherService;
 import com.muoniumplayer.core.ncm.music.QRCodeGenerator;
 import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.TextureManager;
@@ -31,14 +31,21 @@ import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 /**
- * 网易云「一起听」二级弹窗：建房 / 加入 / 房间态三合一。
+ * 「一起听」二级弹窗：建房 / 加入 / 房间态三合一，网易云与酷狗两种官方房间共用这一块面板。
  *
- * <p>房间状态由 {@link NeteaseListenTogetherService} 的后台线程推进，随时可能变化，因此这里
+ * <p>房间状态由 {@link ListenTogetherService} 的后台线程推进，随时可能变化，因此这里
  * <b>不按状态重建控件树</b>：四段内容一次性建好，每帧只切 {@code setHidden}。重建控件只发生在
  * 「总览 ↔ 加入房间」这一次用户主动换页时（在点击回调里，不在遍历子组件的过程中）。</p>
  *
  * <p>可见性由 {@code createDialog} 的每帧回调统一驱动，而不是各段自己判断 —— 被隐藏的组件不会
  * 再执行自己的回调，也就再没有机会把自己显示回来。</p>
+ *
+ * <p><b>为什么这一页只认门面、不直接叫某个源的服务。</b>两家的房间服务方法是照着彼此写的
+ * （状态机与角色枚举同名同集合），而面板只想问「能进吗、在哪个阶段、成员有谁」。若在三十多个
+ * 调用点上各判一次音源，最容易出的事故不是崩溃，而是<b>把网易云的房号拿去发酷狗的心跳</b>——
+ * 两边都不报错，只是静默失灵。归属由门面的 {@code ownedByKuGou()} 定：谁正开着房间就还是谁的，
+ * 没房间时才看当前音源。两家能力的差集（酷狗查不到他人会员状态、网易云没有房间聊天）
+ * 也集中写在那一层，界面上因此不会出现「看着像做了、其实没有」的开关。</p>
  */
 public final class ListenTogetherOverlay extends NCMPanel {
 
@@ -121,10 +128,10 @@ public final class ListenTogetherOverlay extends NCMPanel {
 
         final Panel[] sections = new Panel[4];
         Panel dialog = createDialog(474, this::targetOverviewHeight, () -> {
-            boolean available = NeteaseListenTogetherService.isAvailable();
-            NeteaseListenTogetherService.Phase phase = NeteaseListenTogetherService.getPhase();
-            boolean busy = phase == NeteaseListenTogetherService.Phase.CONNECTING;
-            boolean active = phase == NeteaseListenTogetherService.Phase.ACTIVE;
+            boolean available = ListenTogetherService.isAvailable();
+            ListenTogetherService.Phase phase = ListenTogetherService.getPhase();
+            boolean busy = phase == ListenTogetherService.Phase.CONNECTING;
+            boolean active = phase == ListenTogetherService.Phase.ACTIVE;
             sections[0].setHidden(available);
             sections[1].setHidden(!available || !busy);
             sections[2].setHidden(!available || busy || active);
@@ -135,7 +142,10 @@ public final class ListenTogetherOverlay extends NCMPanel {
             }
             ensureQrTexture();
         });
-        addTitle(dialog, "一起听", "与好友共享同一条播放进度 · 仅网易云官方源");
+        // 副标题写清楚是哪一家的房间：两个源的房间互不相通，界面上却共用这一块面板，
+        // 「和好友一起听」这句话单独看分不出对方要登的是哪个 App。
+        addTitle(dialog, "一起听", "与好友共享同一条播放进度 · "
+                + ListenTogetherService.backendLabel() + "官方房间");
         // 服务器房间入口常驻在标题右侧：它和网易云官方一起听是两套互不相干的实现，
         // 但对用户是同一件事，所以合并在这一个面板里。四种状态下都要能点到 ——
         // 网易云那半边不可用（没登录 / 非网易云源）时，服务器房间照样能用。
@@ -155,10 +165,10 @@ public final class ListenTogetherOverlay extends NCMPanel {
 
     /** 四段内容高矮不同；高度由状态决定，由 {@code createDialog} 每帧插值过去。 */
     private double targetOverviewHeight() {
-        if (!NeteaseListenTogetherService.isAvailable()) return 300.0;
-        NeteaseListenTogetherService.Phase phase = NeteaseListenTogetherService.getPhase();
-        if (phase == NeteaseListenTogetherService.Phase.CONNECTING) return 244.0;
-        if (phase == NeteaseListenTogetherService.Phase.ACTIVE) return 440.0;
+        if (!ListenTogetherService.isAvailable()) return 300.0;
+        ListenTogetherService.Phase phase = ListenTogetherService.getPhase();
+        if (phase == ListenTogetherService.Phase.CONNECTING) return 244.0;
+        if (phase == ListenTogetherService.Phase.ACTIVE) return 440.0;
         // 空闲态多了一张「服务器房间」卡片，比原来高 100。
         return 444.0;
     }
@@ -175,12 +185,12 @@ public final class ListenTogetherOverlay extends NCMPanel {
     }
 
     private void addStatusLine(final Panel dialog) {
-        LabelWidget status = new LabelWidget(NeteaseListenTogetherService::getStatusText, FontManager.pf12);
+        LabelWidget status = new LabelWidget(ListenTogetherService::getStatusText, FontManager.pf12);
         dialog.addChild(status);
         status.setClickable(false);
         status.setBeforeRenderCallback(() -> {
-            status.setColor(NeteaseListenTogetherService.isStatusError() ? ERROR_COLOR
-                    : NeteaseListenTogetherService.isActive() ? OK_COLOR
+            status.setColor(ListenTogetherService.isStatusError() ? ERROR_COLOR
+                    : ListenTogetherService.isActive() ? OK_COLOR
                     : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             status.setMaxWidth(Math.max(1, dialog.getWidth() - 32));
             status.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
@@ -249,7 +259,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
         action.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
             dispose();
-            if (NeteaseMusicService.getCurrentPlatform() != MusicPlatform.NETEASE) {
+            if (needsSourceSwitch()) {
                 NCMScreen.getInstance().openMusicSourceManager();
             } else {
                 NCMScreen.getInstance().openAccountManager();
@@ -325,21 +335,31 @@ public final class ListenTogetherOverlay extends NCMPanel {
     }
 
     private String unavailableReason() {
-        if (NeteaseMusicService.getCurrentPlatform() != MusicPlatform.NETEASE) {
-            return "当前音乐来源不是网易云音乐，一起听只在网易云官方源下可用。";
+        if (needsSourceSwitch()) {
+            return "一起听只有网易云与酷狗两种官方实现，当前来源没有房间接口。";
         }
-        return "需要先登录网易云音乐账号，房间与邀请都依赖登录态。";
+        return "需要先登录" + ListenTogetherService.backendLabel() + "账号，房间与邀请都依赖登录态。";
     }
 
     private String unavailableActionLabel() {
-        return NeteaseMusicService.getCurrentPlatform() != MusicPlatform.NETEASE
-                ? "切换到网易云音乐" : "登录网易云账号";
+        return needsSourceSwitch() ? "切换音乐来源" : "登录" + ListenTogetherService.backendLabel() + "账号";
+    }
+
+    /**
+     * 这一侧不可用，到底是「当前来源根本没有房间实现」还是「来源对了但没登录」。
+     *
+     * <p>分开的理由：两种情况要给的不是同一个入口——前者该去来源面板，后者该去账号面板。
+     * 合成一句「不是网易云就去换源」的话，酷狗登录着的时候点这颗按钮会被踢去换源。</p>
+     */
+    private boolean needsSourceSwitch() {
+        MusicPlatform platform = NeteaseMusicService.getCurrentPlatform();
+        return platform != MusicPlatform.NETEASE && platform != MusicPlatform.KUGOU;
     }
 
     // ──────────────────────────── 连接中 ────────────────────────────
 
     private void buildConnecting(final Panel host) {
-        PanelLoadingWidget loading = new PanelLoadingWidget(NeteaseListenTogetherService::getStatusText);
+        PanelLoadingWidget loading = new PanelLoadingWidget(ListenTogetherService::getStatusText);
         host.addChild(loading);
         loading.setClickable(false);
         loading.setBeforeRenderCallback(() -> {
@@ -351,8 +371,10 @@ public final class ListenTogetherOverlay extends NCMPanel {
 
     private void buildIdle(final Panel host) {
         addActionCard(host, 68, FontelloIcons.ACCOUNT_ADD, "创建房间",
-                "生成房间与分享链接，你的播放、暂停、切歌会同步给好友", true,
-                NeteaseListenTogetherService::createRoom);
+                ListenTogetherService.ownedByKuGou()
+                        ? "生成房间与邀请码，你的播放、暂停、切歌会同步给好友"
+                        : "生成房间与分享链接，你的播放、暂停、切歌会同步给好友", true,
+                ListenTogetherService::createRoom);
         addActionCard(host, 168, FontelloIcons.LINK, "加入房间",
                 "粘贴好友发来的分享链接或邀请码", false, this::showJoinPage);
         // 第三条路：本服的一起听服务端（mpsync）。它不依赖网易云的一起听接口，
@@ -470,7 +492,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
         });
 
         LabelWidget roomTitle = new LabelWidget(
-                () -> "房间 " + shortRoom(NeteaseListenTogetherService.getRoomId()), FontManager.pf14bold);
+                () -> "房间 " + shortRoom(ListenTogetherService.getRoomId()), FontManager.pf14bold);
         host.addChild(roomTitle);
         roomTitle.setClickable(false);
         roomTitle.setBeforeRenderCallback(() -> {
@@ -518,11 +540,16 @@ public final class ListenTogetherOverlay extends NCMPanel {
 
         // 左侧文本列必须在二维码底板之前收住，否则长链接会压到二维码底下。
         double textRight = 16 + QR_PLATE + 12;
-        addCopyRow(host, 132, textRight, "分享链接", NeteaseListenTogetherService::getShareLink, "复制链接");
-        addCopyRow(host, 178, textRight, "邀请码", NeteaseListenTogetherService::getInviteCode, "复制邀请码");
+        // 酷狗没有官方分享链接，这一行复制的就是那串短码本身，标题跟着改口才不会让人
+        // 以为粘出去的是个打不开的链接。
+        addCopyRow(host, 132, textRight,
+                ListenTogetherService.ownedByKuGou() ? "邀请码" : "分享链接",
+                ListenTogetherService::getShareLink,
+                ListenTogetherService.ownedByKuGou() ? "复制邀请码" : "复制链接");
+        addCopyRow(host, 178, textRight, "邀请码", ListenTogetherService::getInviteCode, "复制邀请码");
 
         LabelWidget membersLabel = new LabelWidget(() -> {
-            int count = NeteaseListenTogetherService.getMembers().size();
+            int count = ListenTogetherService.getMembers().size();
             return count > MEMBER_ROWS ? "房间成员 · " + count + "（仅显示前 " + MEMBER_ROWS + " 位）"
                     : "房间成员 · " + count;
         }, FontManager.pf12bold);
@@ -547,7 +574,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
             vipHint.setMaxWidth(Math.max(1, host.getWidth() - 32));
             vipHint.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             vipHint.setPosition(16, 348);
-            vipHint.setAlpha(NeteaseListenTogetherService.hasNonVipMember() ? host.getAlpha() : 0f);
+            vipHint.setAlpha(ListenTogetherService.hasNonVipMember() ? host.getAlpha() : 0f);
         });
 
         LabelWidget empty = new LabelWidget("还没有人加入，把链接或邀请码发给好友吧。", FontManager.pf12);
@@ -556,7 +583,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
         empty.setBeforeRenderCallback(() -> {
             empty.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             empty.setPosition(16, 256);
-            empty.setAlpha(NeteaseListenTogetherService.getMembers().isEmpty() ? host.getAlpha() : 0f);
+            empty.setAlpha(ListenTogetherService.getMembers().isEmpty() ? host.getAlpha() : 0f);
         });
 
         addFooterButtons(host);
@@ -596,7 +623,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
     }
 
     private String vipHintText() {
-        List<String> names = NeteaseListenTogetherService.getNonVipMemberNames();
+        List<String> names = ListenTogetherService.getNonVipMemberNames();
         if (names.isEmpty()) return "";
         String who = names.size() == 1 ? names.get(0) : names.get(0) + " 等 " + names.size() + " 人";
         return ListenTogetherSettings.isSkipVipWhenRoomHasNonVip()
@@ -610,9 +637,9 @@ public final class ListenTogetherOverlay extends NCMPanel {
     }
 
     private String roleDescription() {
-        NeteaseListenTogetherService.Role role = NeteaseListenTogetherService.getRole();
-        if (role == NeteaseListenTogetherService.Role.HOST) return "主机 · 你的播放进度正在同步给房间成员";
-        if (role == NeteaseListenTogetherService.Role.GUEST) return "参与者 · 需要手动「同步一次」对齐主机";
+        ListenTogetherService.Role role = ListenTogetherService.getRole();
+        if (role == ListenTogetherService.Role.HOST) return "主机 · 你的播放进度正在同步给房间成员";
+        if (role == ListenTogetherService.Role.GUEST) return "参与者 · 需要手动「同步一次」对齐主机";
         return "房间已就绪";
     }
     private void addCopyRow(final Panel host, final double y, final double reservedRight,
@@ -679,7 +706,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
         host.addChild(avatar);
         avatar.setClickable(false);
         avatar.setBeforeRenderCallback(() -> {
-            List<NeteaseListenTogetherService.Member> members = NeteaseListenTogetherService.getMembers();
+            List<ListenTogetherService.Member> members = ListenTogetherService.getMembers();
             boolean present = row < members.size();
             // 错峰淡入：上一行露出 35% 之后本行才开始，自上而下形成瀑布感。
             boolean gate = row == 0 || memberReveal[row - 1][0] > .35;
@@ -688,7 +715,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
                 avatar.setAlpha(0f);
                 return;
             }
-            NeteaseListenTogetherService.Member member = members.get(row);
+            ListenTogetherService.Member member = members.get(row);
             avatar.setIdentity(member.userId, member.nickname);
             avatar.setBounds(18, 18);
             avatar.setPosition(16, y + (1.0 - reveal[0]) * 6.0);
@@ -699,12 +726,12 @@ public final class ListenTogetherOverlay extends NCMPanel {
         host.addChild(name);
         name.setClickable(false);
         name.setBeforeRenderCallback(() -> {
-            List<NeteaseListenTogetherService.Member> members = NeteaseListenTogetherService.getMembers();
+            List<ListenTogetherService.Member> members = ListenTogetherService.getMembers();
             if (row >= members.size()) {
                 name.setAlpha(0f);
                 return;
             }
-            NeteaseListenTogetherService.Member member = members.get(row);
+            ListenTogetherService.Member member = members.get(row);
             String nickname = member.nickname == null || member.nickname.trim().isEmpty()
                     ? "用户 " + member.userId : member.nickname;
             name.setLabel(nickname);
@@ -722,9 +749,9 @@ public final class ListenTogetherOverlay extends NCMPanel {
         chip.setClickable(false);
         chip.setRadius(5);
         chip.setBeforeRenderCallback(() -> {
-            List<NeteaseListenTogetherService.Member> members = NeteaseListenTogetherService.getMembers();
+            List<ListenTogetherService.Member> members = ListenTogetherService.getMembers();
             boolean flag = row < members.size()
-                    && NeteaseListenTogetherService.isMemberNonVip(members.get(row).userId);
+                    && ListenTogetherService.isMemberNonVip(members.get(row).userId);
             if (!flag) {
                 chip.setAlpha(0f);
                 return;
@@ -752,11 +779,11 @@ public final class ListenTogetherOverlay extends NCMPanel {
         sync.setRadius(8);
         sync.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
-            NeteaseListenTogetherService.syncOnce();
+            ListenTogetherService.syncOnce();
             return true;
         });
         sync.setBeforeRenderCallback(() -> {
-            boolean visible = NeteaseListenTogetherService.getRole() == NeteaseListenTogetherService.Role.GUEST;
+            boolean visible = ListenTogetherService.getRole() == ListenTogetherService.Role.GUEST;
             syncHover[0] = Interpolations.interpolate(syncHover[0], visible && sync.isHovering() ? 1.0 : 0.0, .22f);
             double total = Math.max(1, host.getWidth() - 32);
             double width = visible ? (total - 8) * .5 : total;
@@ -773,17 +800,17 @@ public final class ListenTogetherOverlay extends NCMPanel {
 
         final double[] leaveHover = new double[1];
         RoundedButtonWidget leave = new RoundedButtonWidget(
-                () -> NeteaseListenTogetherService.getRole() == NeteaseListenTogetherService.Role.HOST
+                () -> ListenTogetherService.getRole() == ListenTogetherService.Role.HOST
                         ? "结束房间" : "退出房间", FontManager.pf12bold);
         host.addChild(leave);
         leave.setRadius(8);
         leave.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
-            NeteaseListenTogetherService.leave();
+            ListenTogetherService.leave();
             return true;
         });
         leave.setBeforeRenderCallback(() -> {
-            boolean guest = NeteaseListenTogetherService.getRole() == NeteaseListenTogetherService.Role.GUEST;
+            boolean guest = ListenTogetherService.getRole() == ListenTogetherService.Role.GUEST;
             leaveHover[0] = Interpolations.interpolate(leaveHover[0], leave.isHovering() ? 1.0 : 0.0, .22f);
             double total = Math.max(1, host.getWidth() - 32);
             double width = guest ? (total - 8) * .5 : total;
@@ -798,13 +825,19 @@ public final class ListenTogetherOverlay extends NCMPanel {
 
     private void showJoinPage() {
         joinPage = true;
-        joinHint = "支持整条分享链接、房间号#邀请人ID，或只有房间号";
+        // 两家的邀请形态不是一回事：网易云有官方分享链接（也能只填房间号#邀请人ID），
+        // 酷狗没有链接 scheme，只有本机面板上那串 kugou: 开头的短码。
+        boolean kugouRoom = ListenTogetherService.ownedByKuGou();
+        joinHint = kugouRoom
+                ? "粘贴好友面板上的邀请码（kugou: 开头那一串）"
+                : "支持整条分享链接、房间号#邀请人ID，或只有房间号";
         joinHintColor = 0xAEB5C4;
         getChildren().clear();
 
         final Panel dialog = createDialog(452, () -> 262.0, null);
         addBackButton(dialog, this::showOverview);
-        addDetailTitle(dialog, "加入房间", "粘贴好友发来的一起听分享链接或邀请码");
+        addDetailTitle(dialog, "加入房间",
+                ListenTogetherService.backendLabel() + "房间的加入页 · 粘贴对方发来的邀请码");
 
         final RoundedRectWidget surface = new RoundedRectWidget();
         dialog.addChild(surface);
@@ -820,7 +853,9 @@ public final class ListenTogetherOverlay extends NCMPanel {
         dialog.addChild(field);
         field.getTextField().setMaxStringLength(512);
         field.setEnabled(true).setFocused(true);
-        field.setPlaceholder("https://st.music.163.com/listen-together/share/?… 或 房间号#邀请人ID");
+        field.setPlaceholder(kugouRoom
+                ? "kugou:……"
+                : "https://st.music.163.com/listen-together/share/?… 或 房间号#邀请人ID");
         field.drawUnderline(false);
         field.setBeforeRenderCallback(() -> {
             field.setBounds(Math.max(1, surface.getWidth() - 12), Math.max(1, surface.getHeight() - 8));
@@ -852,7 +887,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
                 joinHintColor = ERROR_COLOR;
                 return true;
             }
-            NeteaseListenTogetherService.joinRoom(invite, 0L);
+            ListenTogetherService.joinRoom(invite, 0L);
             showOverview();
             return true;
         });
@@ -974,8 +1009,8 @@ public final class ListenTogetherOverlay extends NCMPanel {
      * 失败静默 —— 二维码只是便利入口，链接与邀请码照样能复制。</p>
      */
     private void ensureQrTexture() {
-        if (!NeteaseListenTogetherService.isActive()) return;
-        final String link = NeteaseListenTogetherService.getShareLink();
+        if (!ListenTogetherService.isActive()) return;
+        final String link = ListenTogetherService.getShareLink();
         if (link == null || link.isEmpty()) return;
         if (link.equals(bakedQrContent)) {
             qrReveal = Interpolations.interpolate(qrReveal, 1.0, .16f);

@@ -9,6 +9,7 @@ import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseUnblockSettings;
+import com.muoniumplayer.core.ncm.music.SwitchSourceSettings;
 import com.muoniumplayer.core.ncm.music.YouTubeProxySettings;
 import com.muoniumplayer.core.rendering.BrandVectorIcons;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
@@ -61,8 +62,8 @@ public final class MusicSourceOverlay extends NcmSheet {
      */
     private static final double LABEL_ROW = 22.0;
     private static final double LABEL_ROW_2 = 26.0;
-    /** 页脚：解灰开关一行 + 一行来源说明。这两项贴着弹窗底边，不参与滚动。 */
-    private static final double FOOTER_H = 80.0;
+    /** 页脚：解灰 + 自动换源两行开关、一行来源说明。这些贴着弹窗底边，不参与滚动。 */
+    private static final double FOOTER_H = 124.0;
     /** 卡片上文字块的左边缘 = 盘的左留白 + 盘宽 + 盘到文字的间距。 */
     private static final double TEXT_LEFT = 12.0 + DISC + 12.0;
     /** GD 平台列表的行高与卡高。 */
@@ -78,8 +79,8 @@ public final class MusicSourceOverlay extends NcmSheet {
     private static final int LX_COLOR = 0x9C7CF4;
     /** 自定义源页：页眉（返回键 + 标题 + 副标题）加一行状态，共 88。 */
     private static final double LX_HEADER_H = 88.0;
-    /** 自定义源页页脚：分隔线 + 三颗按钮 + 更新提示开关 + 一行安全说明。 */
-    private static final double LX_FOOTER_H = 108.0;
+    /** 自定义源页页脚：分隔线 + 三颗按钮 + 两行开关 + 一行安全说明。 */
+    private static final double LX_FOOTER_H = 138.0;
     private static final double LX_CARD_H = 58.0;
     private static final double LX_ROW_H = LX_CARD_H + 7.0;
     private static final double LX_DISC = 36.0;
@@ -171,6 +172,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         lxEntryCard(strip(feed, ROW_H), 7);
 
         unblockRow(dialog);
+        switchSourceRow(dialog);
         tip(dialog, () -> "GD音乐台来源由 music-api.gdstudio.xyz 提供，请遵循上游服务的使用要求",
                 () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                 () -> dialog.getHeight() - 30);
@@ -463,6 +465,50 @@ public final class MusicSourceOverlay extends NcmSheet {
 
         toggle(surface, NeteaseUnblockSettings::isEnabled,
                 () -> NeteaseUnblockSettings.setEnabled(!NeteaseUnblockSettings.isEnabled()),
+                () -> surface.getWidth() - 12, () -> 20.0,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+    }
+
+    /**
+     * 「跨平台自动换源」一行，紧贴在解灰行下面。
+     *
+     * <p>它管的是解灰也救不回来之后的最后一级兜底：按曲名 / 艺人去别的平台匹配一条真正的
+     * 曲目来替换播放。两行上下排开是因为顺序就是执行顺序 —— 先试着保住这首歌的身份，
+     * 保不住才换身份。</p>
+     */
+    private void switchSourceRow(final Panel dialog) {
+        final RoundedRectWidget surface = new RoundedRectWidget();
+        dialog.addChild(surface);
+        surface.setClickable(false);
+        surface.setRadius(11);
+        surface.setBeforeRenderCallback(() -> {
+            surface.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 40);
+            surface.setPosition(PAD + CARD_INSET, dialog.getHeight() - FOOTER_H + 48);
+            surface.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+
+        icon(surface, PartyIcons.SYNC, ICON_M, () -> 20.0, () -> 20.0,
+                () -> SwitchSourceSettings.isEnabled()
+                        ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
+                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+
+        final LabelWidget title = label(surface, "跨平台自动换源", FontManager.pf12bold);
+        title.setBeforeRenderCallback(() -> {
+            title.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            title.setPosition(38, inkTop(title, 13.0));
+        });
+
+        final LabelWidget hint = label(surface, "取不到流或只能拿到试听片段时，到其他平台按曲名匹配完整曲目替换播放；要会员的平台没会员不试（GD/B 站不限；LX 自定义源覆盖的平台免会员也试；汽水需汽水会员）", FontManager.pf12);
+        hint.setBeforeRenderCallback(() -> {
+            hint.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            // 96 = 开关宽 34 + 开关到右边缘 12 + 文字到开关 12 + 一点余量。
+            hint.setMaxWidth(Math.max(1, surface.getWidth() - 38 - 96));
+            hint.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            hint.setPosition(38, inkTop(hint, 28.0));
+        });
+
+        toggle(surface, SwitchSourceSettings::isEnabled,
+                () -> SwitchSourceSettings.setEnabled(!SwitchSourceSettings.isEnabled()),
                 () -> surface.getWidth() - 12, () -> 20.0,
                 () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
     }
@@ -793,28 +839,51 @@ public final class MusicSourceOverlay extends NcmSheet {
         lxFooterButton(dialog, 2, () -> PartyIcons.SYNC, () -> "重新加载",
                 LxSourceService::reloadActive);
 
-        // 更新提示是「这个脚本」的开关而不是全局设置，没有启用项时整行调暗。
-        final IntSupplier alertInk = () -> LxSourceService.isEnabled()
+        // 两行开关都是「有启用项才有意义」，没有启用项时整行调暗。
+        final IntSupplier footerInk = () -> LxSourceService.isEnabled()
                 ? NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT)
                 : mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND),
                 NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), .45);
-        icon(dialog, () -> PartyIcons.MAIL, ICON_S, () -> PAD + CARD_INSET + ICON_S * .5,
-                () -> dialog.getHeight() - 46.0, alertInk);
-        final LabelWidget alertLabel = label(dialog, "允许脚本弹出作者的更新提示", FontManager.pf12);
-        alertLabel.setBeforeRenderCallback(() -> {
-            alertLabel.setColor(alertInk.getAsInt());
-            alertLabel.setMaxWidth(Math.max(1, dialog.getWidth() - PAD * 2 - ICON_S - 60));
-            alertLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            alertLabel.setPosition(PAD + CARD_INSET + ICON_S + 7.0,
-                    inkTop(alertLabel, dialog.getHeight() - 46.0));
-        });
-        toggle(dialog, LxSourceService::isUpdateAlertAllowed, LxSourceService::flipUpdateAlert,
-                () -> dialog.getWidth() - PAD - CARD_INSET, () -> dialog.getHeight() - 46.0,
-                () -> LX_COLOR);
+
+        // 这一行是宿主自己的扩展，不是上游协议的一部分：上游只给 local 源放开 lyric / pic，
+        // 而 local 指的是洛雪的本机文件，这里的曲目全来自远端平台。默认关，与上游一字不差。
+        lxToggleRow(dialog, () -> PartyIcons.ALBUM, "允许脚本提供搜索 / 歌词 / 封面",
+                LxSourceService::isExtraActionsEnabled,
+                () -> LxSourceService.setExtraActions(!LxSourceService.isExtraActionsEnabled()),
+                -78.0, footerInk);
+        // 更新提示是「这个脚本」的开关而不是全局设置。
+        lxToggleRow(dialog, () -> PartyIcons.MAIL, "允许脚本弹出作者的更新提示",
+                LxSourceService::isUpdateAlertAllowed, LxSourceService::flipUpdateAlert,
+                -50.0, footerInk);
 
         tip(dialog, () -> PartyIcons.WARNING,
-                () -> "脚本在本机直接执行，没有沙箱：只导入你信得过的来源",
+                () -> "脚本在本机执行、能发任意网络请求（已断掉它访问 Java 类的路）：只导入你信得过的来源",
                 () -> WARN_COLOR, () -> dialog.getHeight() - 26.0);
+    }
+
+    /**
+     * 页脚上的一行开关：图标 + 一行字 + 右端的开关。
+     *
+     * @param offsetFromBottom 这一行的基线相对弹窗底边的偏移，负数
+     */
+    private void lxToggleRow(final Panel dialog, final Supplier<String> glyph, final String text,
+                             final BooleanSupplier state, final Runnable flip,
+                             final double offsetFromBottom, final IntSupplier ink) {
+        icon(dialog, glyph, ICON_S, () -> PAD + CARD_INSET + ICON_S * .5,
+                () -> dialog.getHeight() + offsetFromBottom, ink);
+
+        final LabelWidget caption = label(dialog, text, FontManager.pf12);
+        caption.setBeforeRenderCallback(() -> {
+            caption.setColor(ink.getAsInt());
+            caption.setMaxWidth(Math.max(1, dialog.getWidth() - PAD * 2 - ICON_S - 60));
+            caption.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            caption.setPosition(PAD + CARD_INSET + ICON_S + 7.0,
+                    inkTop(caption, dialog.getHeight() + offsetFromBottom));
+        });
+
+        toggle(dialog, state, flip,
+                () -> dialog.getWidth() - PAD - CARD_INSET, () -> dialog.getHeight() + offsetFromBottom,
+                () -> LX_COLOR);
     }
 
     private void lxFooterButton(final Panel dialog, final int index, final Supplier<String> glyph,
@@ -825,7 +894,8 @@ public final class MusicSourceOverlay extends NcmSheet {
             double span = Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2);
             double width = Math.max(1, (span - 16.0) / 3.0);
             button.setBounds(width, 30);
-            button.setPosition(PAD + CARD_INSET + (width + 8.0) * index, dialog.getHeight() - 96.0);
+            // 按钮下面还有两行开关与一行安全说明，所以从底边往上抬到 126。
+            button.setPosition(PAD + CARD_INSET + (width + 8.0) * index, dialog.getHeight() - 126.0);
             button.setColor(button.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
@@ -1036,7 +1106,7 @@ public final class MusicSourceOverlay extends NcmSheet {
             if (NeteaseMusicService.isLoggedIn(platform)) {
                 return "已登录 · " + NeteaseMusicService.getAccountName(platform);
             }
-            return "未登录 · 可试听，扫码登录后播放完整 AAC";
+            return "未登录 · 可试听，用外部工具获取 Cookie 登录后播放完整 AAC";
         }
         if (NeteaseMusicService.isLoggedIn(platform)) {
             return "已登录 · " + NeteaseMusicService.getAccountName(platform);

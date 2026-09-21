@@ -714,6 +714,24 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 safeNoticeValue(trackName, "当前歌曲") + " · 第三方源没有匹配到可播放版本");
     }
 
+    /** 跨平台换源：正在按曲名 / 艺人在别的平台找真正的替身曲目。 */
+    public static void showCrossSourceSearching(String trackName) {
+        publishNotice(IslandNoticeType.GD_SOURCE_LOADING, "正在换源",
+                safeNoticeValue(trackName, "当前歌曲") + " · 到其他音乐平台匹配这首歌");
+    }
+
+    /** 换源成功：说的是换到了哪家、换成了哪一条曲目。 */
+    public static void showCrossSourceSwitched(String trackName, String sourceLabel) {
+        publishNotice(IslandNoticeType.GD_SOURCE_SUCCESS, "已换源 · " + safeNoticeValue(sourceLabel, "其他平台"),
+                safeNoticeValue(trackName, "当前歌曲"));
+    }
+
+    /** 换源失败：带上为什么没换成，随后由既有的失败流程停下等用户操作。 */
+    public static void showCrossSourceFailure(String trackName, String reason) {
+        publishNotice(IslandNoticeType.GD_SOURCE_ERROR, "换源失败",
+                safeNoticeValue(trackName, "当前歌曲") + " · " + safeNoticeValue(reason, "没有匹配到可播放版本"));
+    }
+
     /** 即使 HTTP 进度回调未报告 100%，也完成当前下载。 */
     public static void showNetworkConnectionSuccess(String target) {
         publishNotice(IslandNoticeType.NETWORK_SUCCESS, "网络连接成功",

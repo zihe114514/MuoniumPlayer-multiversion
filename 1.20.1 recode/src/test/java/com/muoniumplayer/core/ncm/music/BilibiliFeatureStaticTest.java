@@ -325,22 +325,6 @@ class BilibiliFeatureStaticTest {
         String navigate = read(PANELS_DIR, "NavigateBar.java");
         assertTrue(navigate.contains("BilibiliPlaylistService.searchPlaylists"), "侧栏没有合集/分P搜索");
         assertTrue(navigate.contains("BilibiliFavoriteService.getUserPlaylistsSnapshot"), "侧栏没有收藏夹");
-        // 首页文案承诺了「粘贴 BV号或视频链接」，这条入口必须在；否则 playlistsOfVideo 就是死代码。
-        // 入口点开的是二级导入面板（可自由输入、也可粘贴），不是原来那个"点一下读剪贴板"的方法。
-        assertTrue(navigate.contains("openBilibiliImport"), "侧栏没有导入稿件入口");
-        assertFalse(navigate.contains("importBilibiliPlaylistFromClipboard"),
-                "盲读剪贴板的一键导入要摘掉：粘错东西时用户连看到原文的机会都没有");
-
-        String importSheet = read(SCREENS_DIR, "BilibiliImportOverlay.java");
-        assertTrue(importSheet.contains("BilibiliPlaylistService.playlistsOfVideo"), "导入面板没接稿件解析");
-        assertTrue(importSheet.contains("KeyboardUtils.getClipboardString"), "导入面板没有「粘贴」按钮");
-        assertTrue(importSheet.contains("setEnabled(true).setFocused(true)"),
-                "输入框没聚焦就是「打开还得先点一下才能打字」");
-        assertNoNetwork(importSheet, "public void onInit()", "面板搭骨架时不许碰网络");
-        assertTrue(between(importSheet, "private void submit()", "private void finish")
-                        .contains("MultiThreadingUtil.runAsync"),
-                "解析（含短链展开）必须在后台线程，放在点击回调里就是当帧卡住");
-
         String home = read(PANELS_DIR, "HomePanel.java");
         assertTrue(home.contains("BilibiliFavoriteService.userPlaylists"), "首页没有 B 站内容");
 

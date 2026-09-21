@@ -6,6 +6,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.muoniumplayer.core.ncm.RequestUtil;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
+import com.muoniumplayer.core.ncm.kugou.KuGouMusicApi;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
@@ -202,6 +203,10 @@ public final class PersonalFmManager {
                 if (current != null && current.isNetease()) {
                     // “垃圾桶”操作刻意做成显式：仅仅进入 FM 或按普通“下一首”绝不会调用它。
                     CloudMusicApi.personalFmTrash(current.getId());
+                } else if (current != null && current.isKuGou()) {
+                    // 酷狗是同一个语义、不同端点：/v2/personal_recommend 带 action=garbage，
+                    // 并且要回传最近一次推荐的游标，否则反馈会打到别批推荐上（且不报错）。
+                    KuGouMusicService.reportFmTrash(current);
                 }
             } catch (Throwable throwable) {
                 System.err.println("[NCM/FM] Skip feedback failed: " + safeMessage(throwable));
@@ -283,7 +288,7 @@ public final class PersonalFmManager {
             try {
                 // 传上一首的 hash，避免上游在短时间内又推回同一首。
                 String exclude = currentBatch.isEmpty() ? "" : currentBatch.get(currentBatch.size() - 1).getSourceId();
-                List<Music> loaded = KuGouMusicService.personalFm(BATCH_SIZE, exclude);
+                List<Music> loaded = KuGouMusicService.personalFm(kuGouMode(), BATCH_SIZE, exclude);
                 if (loaded.isEmpty()) throw new IllegalStateException("未返回可播放的酷狗推荐");
                 currentBatch = Collections.unmodifiableList(loaded);
                 status = "酷狗猜你喜欢 · " + loaded.size() + " 首推荐";
@@ -308,7 +313,7 @@ public final class PersonalFmManager {
     private static List<Music> fetchRecommendations() throws Exception {
         if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.KUGOU) {
             if (!KuGouMusicService.isLoggedIn()) throw new IllegalStateException("酷狗私人 FM 需要登录");
-            List<Music> loaded = KuGouMusicService.personalFm(BATCH_SIZE, "");
+            List<Music> loaded = KuGouMusicService.personalFm(kuGouMode(), BATCH_SIZE, "");
             if (loaded.isEmpty()) throw new IllegalStateException("未返回可播放的酷狗推荐");
             return loaded;
         }
@@ -325,6 +330,24 @@ public final class PersonalFmManager {
             throw new IllegalStateException("未返回可播放的私人 FM 歌曲");
         }
         return loaded;
+    }
+
+    /**
+     * 当前选中的网易云模式 → 酷狗私人 FM 的模式。
+     *
+     * <p>两边<b>不是一一对应</b>：网易云有六种模式（默认/熟悉/探索/场景/拼图/AI DJ），
+     * 酷狗只有三种（{@code normal} 常规、{@code small} 小众、{@code peak} 30 秒高潮）。
+     * 语义上唯一对得上的是「探索 ↔ 小众」，其余都落到常规那一档——<b>这不是妥协而是必须</b>：
+     * 酷狗对未知 mode 值不报错，静默按 {@code normal} 处理，硬凑映射表只会让 UI 上的模式名
+     * 变成一个骗人的开关。</p>
+     *
+     * <p>酷狗独有的 {@code PEAK}（30 秒高潮）在网易云的模式集合里没有对应项，因此从这条映射
+     * 永远走不到；要用它得在 UI 上单独加一个模式项，那属于界面改动、不在本协议层范围内。</p>
+     */
+    private static KuGouMusicApi.FmMode kuGouMode() {
+        return selectedMode == Mode.EXPLORE
+                ? KuGouMusicApi.FmMode.SMALL
+                : KuGouMusicApi.FmMode.NORMAL;
     }
 
     /**

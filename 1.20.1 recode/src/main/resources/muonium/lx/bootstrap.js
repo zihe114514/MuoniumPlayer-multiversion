@@ -224,6 +224,20 @@
     kw: ['musicUrl'], kg: ['musicUrl'], tx: ['musicUrl'], wy: ['musicUrl'], mg: ['musicUrl'],
     local: ['musicUrl', 'lyric', 'pic']
   };
+  // 宿主扩展开关：__lxExtraActions 为 true 时，非 local 的源也放开 lyric / pic / search。
+  // 默认 false，此时这张表与上游 preload.js 的 supportActions 一字不差 —— 上游只给
+  // local 这两个动作（lyric / pic），而 local 在洛雪里指本机文件，MuoniumPlayer 的曲目
+  // 全来自远端平台，照抄就等于它们永远用不上。search 更是上游没有的动作：那边的搜索
+  // 走内置 musicSdk（store/search/music/action.ts 里调 music[source].musicSearch.search），
+  // userApi 从头到尾只有 musicUrl / lyric / pic 三个动作，所以只能宿主自己加。
+  // 放宽的只是「宿主肯不肯问」：脚本没声明的动作照样会被下面那个 includes 过滤掉。
+  var EXTRA_ACTIONS = globalThis.__lxExtraActions === true;
+  var EXTRA_ACTION_LIST = ['musicUrl', 'lyric', 'pic', 'search'];
+
+  function allowedActions(source) {
+    if (EXTRA_ACTIONS && source !== 'local') return EXTRA_ACTION_LIST;
+    return SUPPORT_ACTIONS[source];
+  }
 
   function includes(list, value) {
     if (!list || typeof list.length !== 'number') return false;
@@ -247,9 +261,10 @@
         var source = ALL_SOURCES[i];
         var declared = info.sources[source];
         if (!declared || declared.type !== 'music') continue;
+        var allowed = allowedActions(source);
         var actions = [];
-        for (var a = 0; a < SUPPORT_ACTIONS[source].length; a++) {
-          if (includes(declared.actions, SUPPORT_ACTIONS[source][a])) actions.push(SUPPORT_ACTIONS[source][a]);
+        for (var a = 0; a < allowed.length; a++) {
+          if (includes(declared.actions, allowed[a])) actions.push(allowed[a]);
         }
         var qualitys = [];
         for (var q = 0; q < SUPPORT_QUALITYS[source].length; q++) {
@@ -299,6 +314,59 @@
     return response;
   }
 
+  // search 是宿主自己加的动作（上游 userApi 只有 musicUrl / lyric / pic）。
+  // 载荷形状照抄内置 musicSdk 的返回值 —— 脚本作者按 lx 那份 musicSearch.js 写就行，
+  // 不需要再学一套新东西：{ list: [{name, singer, source, songmid, albumId, albumName,
+  // interval, img, ...}], allPage, total, limit }。
+  function clip(text, max) {
+    text = String(text);
+    return text.length > max ? text.substring(0, max) : text;
+  }
+
+  function optionalText(value, max) {
+    return value === null || value === undefined ? '' : clip(value, max);
+  }
+
+  function positiveInt(value, fallback) {
+    var num = Number(value);
+    return isFinite(num) && num > 0 ? Math.min(Math.floor(num), 100000) : fallback;
+  }
+
+  function verifySearch(info) {
+    if (!info || typeof info !== 'object' || !Array.isArray(info.list)) throw new Error('failed');
+    var list = [];
+    for (var i = 0; i < info.list.length && list.length < 200; i++) {
+      var item = info.list[i];
+      if (!item || typeof item.name !== 'string' || !item.name) continue;
+      list.push({
+        name: clip(item.name, 200),
+        singer: optionalText(item.singer, 200),
+        // 源 key 以宿主问的那个为准：脚本在这里写错或写别的源，只会让宿主把结果丢回去
+        // 按内置映射找平台，白白浪费一条命。
+        source: optionalText(item.source, 12),
+        songmid: optionalText(item.songmid, 64),
+        albumId: optionalText(item.albumId, 64),
+        albumName: optionalText(item.albumName, 200),
+        // interval 是 "mm:ss"（与内置 musicSearch 一致），不是毫秒数。
+        interval: optionalText(item.interval, 12),
+        img: (typeof item.img === 'string' && /^https?:/.test(item.img) && item.img.length <= 2048)
+          ? item.img : '',
+        // 三个平台的私有主键：酷狗看 hash、QQ 看 strMediaMid、咪咕看 copyrightId。
+        hash: optionalText(item.hash, 64),
+        strMediaMid: optionalText(item.strMediaMid, 64),
+        copyrightId: optionalText(item.copyrightId, 64)
+      });
+    }
+    if (!list.length) throw new Error('failed');
+    var limit = positiveInt(info.limit, list.length);
+    return {
+      list: list,
+      allPage: positiveInt(info.allPage, 1),
+      total: positiveInt(info.total, list.length),
+      limit: limit
+    };
+  }
+
   globalThis.__lxDispatch = function (requestKey, source, action, infoJson) {
     if (!events.request) {
       host.onResponse(requestKey, false, 'Request event is not defined');
@@ -324,6 +392,9 @@
               break;
             case 'pic':
               payload = JSON.stringify({ url: verifyUrl(response) });
+              break;
+            case 'search':
+              payload = JSON.stringify(verifySearch(response));
               break;
             default:
               throw new Error('unsupported action: ' + action);

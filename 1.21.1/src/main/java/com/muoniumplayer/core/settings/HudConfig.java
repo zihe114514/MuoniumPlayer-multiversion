@@ -444,6 +444,25 @@ public final class HudConfig {
 
     public static String hudEditorStyle = HUD_EDITOR_STYLE_MODERN;
     public static String hudEditorUi = HUD_EDITOR_UI_BUILTIN;
+    /**
+     * Folia 那套 HUD 设置界面的整体缩放倍率。
+     *
+     * <p>界面照抄的是 folia 的 CSS px（面板 896、正文 14），1.0 倍就是「一单位 = 一个物理像素」，
+     * 与 dpr=1 的浏览器一模一样 —— 但在游戏窗口里偏小：Minecraft 的 GUI Scale 本来就是它的 dpr，
+     * 游戏自带文字是 9 个 GUI 像素（guiScale 3 下 27 物理像素）。这一档把设计空间的轴整体除一下，
+     * 1.5 倍相当于「假设浏览器跑在 150% 缩放上」：面板、文字、间距、控件一起等比走，
+     * folia 的排版比例不变。</p>
+     */
+    public static float foliaUiScale = 1.50f;
+
+    /**
+     * 歌词搜索弹窗（手动选词那一页）的整体缩放倍率。与 {@link #foliaUiScale} 同一条路子：
+     * 那一页照抄的是 folia 的 CSS px，1.0 就是「一单位一个物理像素」，在游戏窗口里正文只有
+     * 14 像素、比播放器其它界面小一半；这一档把弹窗所在的那条轴整体放大，面板、文字、间距、
+     * 控件一起等比走，弹窗内部与 folia 的比例不变。读数处是
+     * {@code WindowAdaptiveScale.lyricSearchUnitsPerLayout()}。
+     */
+    public static float lyricSearchUiScale = 1.50f;
 
     /**
      * 现代 HUD 设置面板左上角的位置,归一化到「可摆放范围」的 0..1。
@@ -712,6 +731,8 @@ public final class HudConfig {
             // 越界值必须在这里折回来，否则界面滑块位置与真实取值会对不上。
             playerFadeSpeed = clamp(getFloat(o, "playerFadeSpeed", playerFadeSpeed), 0.30f, 3.00f);
         playerUiSwitchSpeed = clamp(getFloat(o, "playerUiSwitchSpeed", playerUiSwitchSpeed), 0.30f, 3.00f);
+        foliaUiScale = clamp(getFloat(o, "foliaUiScale", foliaUiScale), 0.80f, 2.50f);
+        lyricSearchUiScale = clamp(getFloat(o, "lyricSearchUiScale", lyricSearchUiScale), 0.80f, 2.50f);
             dynamicIslandAlwaysOn = getBoolean(o, "dynamicIslandAlwaysOn", dynamicIslandAlwaysOn);
             dynamicIslandAmbientFps = getBoolean(o, "dynamicIslandAmbientFps", dynamicIslandAmbientFps);
             dynamicIslandAmbientPing = getBoolean(o, "dynamicIslandAmbientPing", dynamicIslandAmbientPing);
@@ -852,6 +873,8 @@ public final class HudConfig {
             o.addProperty("dynamicIslandSpinnerSpeed", dynamicIslandSpinnerSpeed);
             o.addProperty("playerFadeSpeed", playerFadeSpeed);
         o.addProperty("playerUiSwitchSpeed", playerUiSwitchSpeed);
+        o.addProperty("foliaUiScale", foliaUiScale);
+        o.addProperty("lyricSearchUiScale", lyricSearchUiScale);
             o.addProperty("dynamicIslandAlwaysOn", dynamicIslandAlwaysOn);
             o.addProperty("dynamicIslandAmbientFps", dynamicIslandAmbientFps);
             o.addProperty("dynamicIslandAmbientPing", dynamicIslandAmbientPing);

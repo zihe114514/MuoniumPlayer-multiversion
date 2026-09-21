@@ -129,6 +129,16 @@ public class Music {
     private transient String sourceId;
     private transient String sourceMid;
     private transient String externalCoverUrl;
+    /**
+     * 自定义源（LX 脚本）补出来的封面。{@code null} 是「还没问过」，空串是「问过了，它也没有」。
+     * 问一次要 20 秒起步，不能每帧都问。
+     */
+    private transient volatile String lxCoverUrl;
+    /**
+     * 封面是不是「已经是一条成品链接」。网易云那条链路会给裸链接追加 {@code ?param=NyN}
+     * 做尺寸缩放，而自定义源给的封面是别人家的直链，追加过去多半就是 404。
+     */
+    private transient boolean foreignCover;
     /** 当前封面提取出的代表色，供「隐现」歌词背景实时取用；不进入歌单序列化。 */
     private transient volatile int[] coverPalette;
     /** 自由选择的 GD 曲目的 GD Studio 聚合源 key（netease/joox/...）。 */
@@ -618,6 +628,21 @@ public class Music {
         return getSource() == MusicPlatform.KUGOU;
     }
 
+    /** 酷我渠道：只为 LX 自定义源而存在，没有本家取流链路。 */
+    public boolean isKuwo() {
+        return getSource() == MusicPlatform.KUWO;
+    }
+
+    /** 咪咕渠道：同 {@link #isKuwo()}，脚本声明 mg 渠道之外不可播。 */
+    public boolean isMigu() {
+        return getSource() == MusicPlatform.MIGU;
+    }
+
+    /** 酷我 / 咪咕：宿主只内置了它们的搜索（供换源匹配），取流完全依赖自定义源。 */
+    public boolean isLxOnlyChannel() {
+        return isKuwo() || isMigu();
+    }
+
     /**
      * 返回提供方是否把本曲目标记为会员或付费内容受限。
      * Cadence 为 QQ 曲目提供该标志；网易云 fee 从其特权载荷复制。
@@ -633,6 +658,24 @@ public class Music {
 
     public String getStableKey() {
         return getSource().name().toLowerCase() + '_' + Long.toUnsignedString(id);
+    }
+
+    /**
+     * 由酷狗 hash 反推它的稳定键。
+     *
+     * <p>存在的唯一理由：酷狗「我喜欢」的收藏索引里只有 hash（那是它的全局主键），
+     * 而收藏图标查的是 {@link #getStableKey()}。没有这个换算，冷启动索引就没法在
+     * <b>曲目还没被加载出来</b>的时候提前建好——那样等于仍然要逐行发请求。</p>
+     *
+     * <p>算法必须与 {@code fromKuGouTrack} 里那句 {@code stableLong("kugou:" + track.hash)}
+     * 完全一致，所以它复用同一个私有函数，而不是另写一份 FNV。</p>
+     */
+    public static String kuGouStableKey(String hash) {
+        // 统一转小写：Track.hash 是解析时 lowercase 过的，而上游不同端点给的大小写不一致
+        // （收藏列表那个端点给大写），不统一的话同一个 hash 会算出两个稳定键。
+        String value = nonNull(hash).trim().toLowerCase(Locale.ROOT);
+        if (value.isEmpty()) return "";
+        return "kugou_" + Long.toUnsignedString(stableLong("kugou:" + value));
     }
 
     public final Location getCoverLocation() {
@@ -690,8 +733,9 @@ public class Music {
             String resolved = com.muoniumplayer.core.ncm.kugou.KuGouMusicApi.cover(template, size);
             return (resolved.isEmpty() ? base : resolved).replace("http://", "https://");
         }
-        if (isQQ() || isGd() || isYouTube() || isBilibili() || isQishui()) {
-            // 这些平台的封面 URL 已带尺寸或模板，避免追加网易云专用 param 导致 404。
+        if (isQQ() || isGd() || isYouTube() || isBilibili() || isQishui() || foreignCover) {
+            // 这些平台的封面 URL 已带尺寸或模板（自定义源给的是别人家的直链，同理），
+            // 避免追加网易云专用 param 导致 404。
             return base.replace("http://", "https://");
         }
         return base + "?param=" + size + "y" + size;
@@ -742,6 +786,10 @@ public class Music {
         // 它拿不出链接时返回 null，下面的内置链路照旧跑 —— 不会因为一份坏脚本而没歌可听。
         Tuple<String, String> custom = resolveLxSource();
         if (custom != null) return custom;
+
+        // 酷我 / 咪咕渠道没有内置取流链路：上面那一跳（自定义源）就是它们唯一的活路。
+        // 绝不能继续往下掉 —— 那会把这些平台的 id 当网易云 id 喂给内置解析，放出别的歌。
+        if (isLxOnlyChannel()) return null;
 
         if (isYouTube()) {
             return resolveYouTubePlayUrl();
@@ -824,7 +872,13 @@ public class Music {
             // 上游的 songmid 放 mid、songId 放数字 id，albumMid 宓主没有就给空。
             String mid = nonNull(sourceMid).isEmpty() ? getSourceId() : nonNull(sourceMid);
             track.songmid(mid).qq(mid, "", getSourceId());
+        } else if ("mg".equals(key)) {
+            // 咪咕的脚本按 copyrightId 取流（上游 mg 的 getId 只读它）；songmid 位放 songId，
+            // 两个键都给上，按新结构写的脚本也读得到。copyrightId 缺失时退回主键本身。
+            track.songmid(getSourceId())
+                    .copyrightId(nonNull(sourceMid).isEmpty() ? getSourceId() : nonNull(sourceMid));
         } else {
+            // wy 与 kw 的脚本都读 musicInfo.songmid。
             track.songmid(getSourceId());
         }
         return track;
@@ -862,10 +916,131 @@ public class Music {
         }, "LX custom source", GD_PLAY_URL_RESOLVE_TIMEOUT_SECONDS);
     }
 
+    /**
+     * 换源流水线用它验证「自定义源能不能解出这一首」。
+     *
+     * <p>播放时 {@link #getPlayUrl()} 把自定义源排在整条内置链路之前，验证如果只看官方链路，
+     * 「脚本明明能播」的候选会全部死在验证关 —— 尤其网易云/QQ/酷狗上非会员够不着的 VIP 曲。
+     * 语义与 getPlayUrl 里那一跳完全一致：脚本没启用、源不覆盖本平台或解不出链接都返回 null。</p>
+     */
+    public Tuple<String, String> resolveLxPlayUrl() {
+        return resolveLxSource();
+    }
+
     /** 自定义源的音质徒标按脚本实际给出的档位判定，而不是按容器猜。 */
     private static PlaybackQuality lxPlaybackQuality(String lxQuality) {
         if ("flac".equals(lxQuality) || "flac24bit".equals(lxQuality)) return PlaybackQuality.LOSSLESS;
         return "320k".equals(lxQuality) ? PlaybackQuality.HQ : PlaybackQuality.STANDARD;
+    }
+
+    /**
+     * 问自定义源要歌词（宿主扩展，默认关，见
+     * {@link com.muoniumplayer.core.ncm.lxsource.LxSourceService#isExtraActionsEnabled()}）。
+     *
+     * <p><b>只能在后台线程上调</b>：脚本自己有 20 秒请求超时，首次还要等最多 8 秒初始化。
+     * {@code LyricLoadService.resolve} 正好跑在 {@code MultiThreadingUtil.runAsync} 里。</p>
+     *
+     * <p>与取流相反，歌词是<b>兜底</b>而不是优先：平台自己那份（含翻译）几乎总是更准，
+     * 只有内置链路一条都没给出歌词时才轮到脚本。拿不到返回 null，调用方照旧往下走。</p>
+     */
+    public com.muoniumplayer.core.ncm.lxsource.LxSourceService.Lyrics resolveLxLyrics() {
+        if (!com.muoniumplayer.core.ncm.lxsource.LxSourceService.isEnabled()) return null;
+        if (!com.muoniumplayer.core.ncm.lxsource.LxSourceService.isExtraActionsEnabled()) return null;
+        com.muoniumplayer.core.ncm.lxsource.LxTrack track = lxTrack();
+        if (track == null) return null;
+        return com.muoniumplayer.core.ncm.lxsource.LxSourceService.resolveLyric(track);
+    }
+
+    /**
+     * 问自定义源要一张封面（宿主扩展，同上）。<b>只能在后台封面线程上调。</b>
+     *
+     * <p>只在内置封面为空时才该问它：平台自己那张永远更对，而且问一次是秒级的网络往返。
+     * 结果缓存在 {@link #lxCoverUrl} 里，问过一次就不再问。</p>
+     *
+     * @return 空串表示拿不到（调用方保持原样）
+     */
+    public String resolveLxCoverUrl() {
+        String cached = lxCoverUrl;
+        if (cached != null) return cached;
+        String resolved = "";
+        if (com.muoniumplayer.core.ncm.lxsource.LxSourceService.isEnabled()
+                && com.muoniumplayer.core.ncm.lxsource.LxSourceService.isExtraActionsEnabled()) {
+            com.muoniumplayer.core.ncm.lxsource.LxTrack track = lxTrack();
+            if (track != null) {
+                String url = com.muoniumplayer.core.ncm.lxsource.LxSourceService.resolvePic(track);
+                if (url != null && !url.trim().isEmpty()) resolved = url.trim().replace("http://", "https://");
+            }
+        }
+        lxCoverUrl = resolved;
+        return resolved;
+    }
+
+    /**
+     * 把自定义源搜到的一条结果拼成曲目。
+     *
+     * <p>主键是纯数字时直接当 {@code id} 用 —— 网易云的内置解析读的是数字 id，编成哈希会让
+     * 「脚本挂了退回官方源」这条路断掉；不是纯数字才退回 {@code stableLong}。</p>
+     */
+    public static Music fromLxSearchHit(com.muoniumplayer.core.ncm.lxsource.LxSourceService.SearchHit hit) {
+        if (hit == null || !hit.isUsable()) return null;
+        String platformName = com.muoniumplayer.core.ncm.lxsource.LxSourceService
+                .platformForSourceKey(hit.source);
+        if (platformName == null) return null;
+        MusicPlatform platform;
+        try {
+            platform = MusicPlatform.valueOf(platformName);
+        } catch (IllegalArgumentException unknown) {
+            return null;
+        }
+        String primaryKey = hit.primaryKey();
+        long stableId;
+        try {
+            stableId = Long.parseLong(primaryKey);
+        } catch (NumberFormatException notNumeric) {
+            stableId = stableLong("lx:" + hit.source + ":" + primaryKey);
+        }
+
+        List<Artist> artistList = new ArrayList<>();
+        for (String artistName : hit.singer.split("\\s*[、,/]\\s*")) {
+            if (artistName.trim().isEmpty()) continue;
+            artistList.add(new Artist(stableLong("lx:artist:" + artistName), artistName.trim(),
+                    Collections.emptyList(), Collections.emptyList()));
+        }
+        if (artistList.isEmpty()) {
+            artistList.add(new Artist(0L, "Unknown", Collections.emptyList(), Collections.emptyList()));
+        }
+
+        Album album = new Album(stableLong("lx:album:" + hit.albumName), hit.albumName,
+                hit.img, Collections.emptyList());
+        Music music = new Music(hit.name, hit.name, "", stableId, artistList,
+                Collections.emptyList(), album, parseInterval(hit.interval), 0L, 0L,
+                Collections.emptyList());
+        music.source = platform;
+        music.sourceId = primaryKey;
+        // QQ 的 mid、咪咕的 copyrightId 都存在 sourceMid 里（两条取流链路各认这一个键）。
+        music.sourceMid = !hit.strMediaMid.isEmpty() ? hit.strMediaMid : hit.copyrightId;
+        if (!hit.hash.isEmpty()) music.kugouHash = hit.hash;
+        if (!hit.img.isEmpty()) {
+            music.externalCoverUrl = hit.img;
+            // 脚本给的封面是别人家的直链，不能再走网易云那套 ?param= 缩放。
+            music.foreignCover = true;
+        }
+        return music;
+    }
+
+    /** 脚本给的时长是 "mm:ss"（内置 musicSearch 的口径）；解析不出来就留 0，解码后会回填。 */
+    private static long parseInterval(String interval) {
+        String text = nonNull(interval).trim();
+        int colon = text.indexOf(':');
+        if (colon <= 0) return 0L;
+        try {
+            long minutes = Long.parseLong(text.substring(0, colon).trim());
+            long seconds = Long.parseLong(text.substring(colon + 1).trim());
+            if (minutes < 0L || seconds < 0L) return 0L;
+            return (minutes * 60L + seconds) * 1000L;
+        } catch (NumberFormatException broken) {
+            return 0L;
+        }
     }
 
     /**
@@ -906,6 +1081,17 @@ public class Music {
     public String getUnblockedSourceLabel() {
         String label = unblockedSourceLabel;
         return label == null ? "" : label;
+    }
+
+    /**
+     * 换源录取时把替身的「第三方流」标记回写到被替换掉的行对象上。
+     *
+     * <p>播放队列是面板列表的浅拷贝（{@code new ArrayList<>(songs)}），行 widget 绑定的还是
+     * 老对象；徽标若只写在替身上，界面永远看不见。写入方只在换源录取点调用，正常播放链路
+     * 依旧靠 {@code resolveLxSource} / {@code resolveNeteaseUnblock} 自己维护这个字段。</p>
+     */
+    public void setUnblockedSourceLabel(String label) {
+        this.unblockedSourceLabel = label == null ? "" : label;
     }
 
     /** 官方链路取不到流，且「音乐是否可用」也判定为不可用。 */
@@ -1258,8 +1444,17 @@ public class Music {
         return dot >= 0 && dot < clean.length() - 1 ? clean.substring(dot + 1) : "";
     }
 
+    /**
+     * 把收藏状态写到平台账号上。
+     *
+     * <p>酷狗走自己的适配层：它的「我喜欢」是一个普通歌单，加曲与删曲要的是数字 {@code listid}
+     * 和 {@code fileid}（后者还得先按 hash 去查），与网易云那句 {@code /api/like} 完全不是一回事。</p>
+     */
     public void setLike(boolean like) {
         if (isNetease()) CloudMusicApi.like(this.id, like);
+        else if (isKuGou()) {
+            com.muoniumplayer.core.ncm.music.KuGouMusicService.setLike(this, like);
+        }
     }
 
     public boolean isInstrumental() { return (this.featureFlag & INSTRUMENTAL) != 0; }
