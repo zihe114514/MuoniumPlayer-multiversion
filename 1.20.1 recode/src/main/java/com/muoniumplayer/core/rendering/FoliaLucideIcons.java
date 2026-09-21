@@ -398,6 +398,24 @@ public final class FoliaLucideIcons {
         "M14 18h6",
     };
 
+    /** 侧边栏「字体选择」按钮（lucide {@code a-large-small}）。 */
+    public static final String TYPOGRAPHY = "a-large-small";
+    static final String[] D_TYPOGRAPHY = {
+        "m15 16 2.536-7.328a1.02 1.02 1 0 1 1.928 0L22 16",
+        "M15.697 14h5.606",
+        "m2 16 4.039-9.69a.5.5 0 0 1 .923 0L11 16",
+        "M3.304 13h6.392",
+    };
+
+    /** 侧边栏「调整大小」按钮（lucide {@code scaling}）。 */
+    public static final String SCALING = "scaling";
+    static final String[] D_SCALING = {
+        "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7",
+        "M14 15H9v-5",
+        "M16 3h5v5",
+        "M21 3 9 15",
+    };
+
 
     /** 图标名 → 需要描边的图元路径。 */
     private static final Map<String, String[]> TABLE = new HashMap<>();
@@ -451,6 +469,8 @@ public final class FoliaLucideIcons {
         TABLE.put("music", D_MUSIC);
         TABLE.put("loader-2", D_LOADER);
         TABLE.put("languages", D_LANGUAGES);
+        TABLE.put("a-large-small", D_TYPOGRAPHY);
+        TABLE.put("scaling", D_SCALING);
         FILL.put("palette", FD_PALETTE);
     }
 

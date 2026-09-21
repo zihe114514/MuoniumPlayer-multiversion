@@ -22,6 +22,7 @@ import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.widgets.RectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.settings.HudConfig;
+import com.muoniumplayer.core.screens.GuiAnnouncements;
 import com.muoniumplayer.core.screens.ncm.panels.ControlsBar;
 import com.muoniumplayer.core.screens.ncm.panels.HomePanel;
 import com.muoniumplayer.core.screens.ncm.panels.NavigateBar;
@@ -114,8 +115,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     /** 界面字体选择：与主题调色板同层，换字体后整个界面（含本浮层）当帧生效。 */
     public FontPickerOverlay fontPickerOverlay = null;
 
-    /** 汽水歌单导入面板：侧栏「导入歌单」的二级界面，自由输入/粘贴链接，全程匿名。 */
-    public QishuiImportOverlay qishuiImportOverlay = null;
+    /** 全渠道歌单导入面板：侧栏「导入歌单」标题行「＋」打开，自动识别平台，全程匿名。 */
+    public PlaylistImportOverlay playlistImportOverlay = null;
 
     /**
      * 歌词搜索弹窗：给正在放的这首歌手动挑一份歌词（四张源标签 + 候选列表 + 预览）。
@@ -609,16 +610,16 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             StencilClipManager.endClip();
         }
         // 汽水歌单导入面板：与字体选择同层的二级弹窗，含可编辑输入框，滚轮一并下发。
-        if (this.qishuiImportOverlay != null) {
+        if (this.playlistImportOverlay != null) {
             StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
                     basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
-            this.qishuiImportOverlay.setBounds(basePanel.getX(), basePanel.getY(),
+            this.playlistImportOverlay.setBounds(basePanel.getX(), basePanel.getY(),
                     basePanel.getWidth(), basePanel.getHeight());
-            this.qishuiImportOverlay.setAlpha(alpha);
-            this.qishuiImportOverlay.renderWidget(mouseX, mouseY, dWheel);
-            if (this.qishuiImportOverlay.shouldClose()) {
-                this.qishuiImportOverlay.dispose();
-                this.qishuiImportOverlay = null;
+            this.playlistImportOverlay.setAlpha(alpha);
+            this.playlistImportOverlay.renderWidget(mouseX, mouseY, dWheel);
+            if (this.playlistImportOverlay.shouldClose()) {
+                this.playlistImportOverlay.dispose();
+                this.playlistImportOverlay = null;
             }
             StencilClipManager.endClip();
         }
@@ -928,6 +929,17 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         FoliaModelNotice.markShownThisSession();
     }
 
+    /**
+     * 打开公告中心。
+     *
+     * <p>它是一个独立的 Screen 而不是播放器浮层：主菜单那颗按钮与 HUD 设置里的入口都承载不了浮层，
+     * 三处共用同一个宿主，于是「关掉即整批已读」这一条行为只有一处实现，不必各写一遍。
+     * 走 {@code setScreen} 而不是共享的 {@code displayScreen}：后者只收 {@code ExtensionScreen}。</p>
+     */
+    public void openAnnouncements() {
+        GuiAnnouncements.open(this);
+    }
+
     public void openAccountManager() {
         if (this.accountManagerOverlay != null) this.accountManagerOverlay.dispose();
         this.accountManagerOverlay = new AccountManagerOverlay();
@@ -948,11 +960,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.fontPickerOverlay.onInit();
     }
 
-    /** 打开汽水歌单导入面板（二级界面）；同样先回收旧实例，避免两层叠在一起。 */
-    public void openQishuiImport() {
-        if (this.qishuiImportOverlay != null) this.qishuiImportOverlay.dispose();
-        this.qishuiImportOverlay = new QishuiImportOverlay();
-        this.qishuiImportOverlay.onInit();
+    /** 打开全渠道歌单导入面板（自动识别平台）；同样先回收旧实例，避免两层叠在一起。 */
+    public void openPlaylistImport() {
+        if (this.playlistImportOverlay != null) this.playlistImportOverlay.dispose();
+        this.playlistImportOverlay = new PlaylistImportOverlay();
+        this.playlistImportOverlay.onInit();
     }
 
     /**
@@ -1035,14 +1047,14 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             return;
         }
 
-        if (this.qishuiImportOverlay != null) {
+        if (this.playlistImportOverlay != null) {
             // 与字体选择同理：输入框聚焦时会吞掉所有按键，ESC 必须抢在控件树之前处理，
             // 其余按键下发给输入框，否则打字与 Ctrl+V 粘贴都没有反应。
             if (keyCode == Keyboard.KEY_ESCAPE) {
-                this.qishuiImportOverlay.handleEscape();
+                this.playlistImportOverlay.handleEscape();
                 return;
             }
-            this.qishuiImportOverlay.onKeyTypedReceived(typedChar, keyCode);
+            this.playlistImportOverlay.onKeyTypedReceived(typedChar, keyCode);
             return;
         }
 
@@ -1147,7 +1159,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 || this.confirmationOverlay != null
                 || this.themePaletteOverlay != null
                 || this.fontPickerOverlay != null
-                || this.qishuiImportOverlay != null
+                || this.playlistImportOverlay != null
                 || this.lyricSearchOverlay != null
                 || this.musicSourceOverlay != null
                 || this.listenTogetherOverlay != null
@@ -1187,8 +1199,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             return;
         }
 
-        if (this.qishuiImportOverlay != null) {
-            this.qishuiImportOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+        if (this.playlistImportOverlay != null) {
+            this.playlistImportOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
             return;
         }
 

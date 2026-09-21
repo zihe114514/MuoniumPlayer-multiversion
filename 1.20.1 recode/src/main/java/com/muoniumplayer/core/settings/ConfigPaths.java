@@ -68,6 +68,14 @@ public final class ConfigPaths {
     public static final File QISHUI_PLAYLISTS = new File(CONFIG_DIRECTORY, "qishui_playlists.json");
 
     /**
+     * 用户用「粘贴分享链接」导入的跨平台歌单引用（网易云 / QQ / 酷狗 / B 站 / 汽水）。
+     *
+     * <p>取代只服务汽水一个渠道的 {@link #QISHUI_PLAYLISTS}：键是 {@code 平台名:平台歌单ID}，
+     * 首次读取时若本文件不存在会把旧汽水存档合并进来（只此一次，之后删除的导入项不会复活）。</p>
+     */
+    public static final File IMPORTED_PLAYLISTS = new File(CONFIG_DIRECTORY, "imported_playlists.json");
+
+    /**
      * Bilibili 的 Web Cookie 与本地账号资料（扫码登录后落盘）。
      *
      * <p>与 {@link #KUGOU_AUTH}、{@link #QISHUI_AUTH} 同样的理由单开一个文件：
@@ -108,6 +116,14 @@ public final class ConfigPaths {
      * 因此用户可安全地在旁边保留旧配置的备份。
      */
     public static final File BIN_DIR = new File(CONFIG_DIRECTORY, "bin");
+
+    /**
+     * 汽水外部取码工具与模组之间的共享目录：工具写 {@code state.json}，模组写 {@code command.json}。
+     *
+     * <p>放在 {@link #BIN_DIR} 之外：那一层是放可执行文件的，塞一个每次登录都要反复读写的
+     * 目录进去，会让「这个 exe 是我自己放的还是工具生成的」变模糊。</p>
+     */
+    public static final File QISHUI_BRIDGE_DIR = new File(CONFIG_DIRECTORY, "qishui-bridge");
 
     // 由开发版构建产生的中间 Muonium 命名。
     public static final File CACHE_DIR = new File(CONFIG_DIRECTORY, "cache");
@@ -194,6 +210,25 @@ public final class ConfigPaths {
      * 把 {@code enabled} 改成 {@code false} 就是彻底关掉更新检查（连网络都不会打）。</p>
      */
     public static final File UPDATE_NOTICE = new File(CONFIG_DIRECTORY, "update_notice.json");
+
+    /**
+     * 公告中心的已读记账与清单缓存。
+     *
+     * <p>与 {@link #UPDATE_NOTICE} 分开两个文件，虽然它们读的是同一份远端清单：更新提示记的是
+     * 「这个版本跳过几次」，公告记的是「哪些 id 看过」。混在一个文件里，一次写坏就把两件事一起
+     * 丢了；而这两件事的写入时机也完全不同（一个是收起提示时，一个是关掉公告窗时）。</p>
+     */
+    public static final File ANNOUNCEMENTS = new File(CONFIG_DIRECTORY, "announcements.json");
+
+    /**
+     * 【开发者覆盖】存在就只用它、完全不联网的本地清单。
+     *
+     * <p>写这个文件是为了让「改公告 → 开游戏看效果」不必先推一次 GitHub：把清单正文放进
+     * {@code config/muonium/announcements_local.json} 即可，格式与远端那份完全一样。
+     * 普通用户不会有这个文件，所以它不是一条会被误触的路径，也不需要发布前回滚
+     * （对比 {@code UpdateChecker.Preview}：那个是编译期常量，必须改回去）。</p>
+     */
+    public static final File ANNOUNCEMENTS_LOCAL = new File(CONFIG_DIRECTORY, "announcements_local.json");
 
     /**
      * 界面字体的选择（哪一款系统字体或哪一个字体文件）。

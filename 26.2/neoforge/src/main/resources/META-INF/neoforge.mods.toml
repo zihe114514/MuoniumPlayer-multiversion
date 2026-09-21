@@ -8,11 +8,11 @@ issueTrackerURL = "https://github.com/zihe114514/MuoniumPlayer/issues"
 modId = "muonium"
 version = "${version}"
 displayName = "MuoniumPlayer"
-authors = "zihe, eyz2021"
+authors = "云杉, 心事抱抱, N0ne, eyz2021"
 description = '''
 Music player for Minecraft ${minecraft_version} NeoForge.
 '''
-displayURL = "https://github.com/zihe114514/MuoniumPlayer"
+displayURL = "https://melodifymc.cc.cd/"
 
 # 客户端专用：装到服务端上不需要、也不应该加载。
 [[dependencies.muonium]]

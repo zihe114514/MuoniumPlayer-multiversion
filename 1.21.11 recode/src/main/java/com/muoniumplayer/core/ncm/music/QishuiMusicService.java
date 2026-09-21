@@ -60,8 +60,6 @@ public final class QishuiMusicService {
     private static final String LUNA_PLAYLIST_DETAIL_ENDPOINT = "https://beta-luna.douyin.com/luna/playlist/detail";
     private static final String LUNA_RADIO_TRACKS_ENDPOINT = "https://beta-luna.douyin.com/luna/feed/radio/tracks";
     private static final String ACCOUNT_ENDPOINT = "https://api.qishui.com/luna/pc/me";
-    private static final String PASSPORT_QR_ENDPOINT = "https://api.qishui.com/passport/web/get_qrcode/";
-    private static final String PASSPORT_CHECK_ENDPOINT = "https://api.qishui.com/passport/web/check_qrconnect/";
     private static final String COVER_ROOT = "https://p3-luna.douyinpic.com/img/";
     private static final String ANDROID_USER_AGENT =
             "com.luna.music/100198030 (Linux; U; Android 15; zh_CN_#Hans; ABR-AL80; "
@@ -69,7 +67,6 @@ public final class QishuiMusicService {
     private static final String WEB_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     + "(KHTML, like Gecko) Chrome/120 Safari/537.36";
-    private static final String PASSPORT_USER_AGENT = WEB_USER_AGENT;
     private static final String PC_USER_AGENT = "LunaPC/3.3.0(359450208)";
     private static final int REQUEST_TIMEOUT_MS = 15_000;
     private static final int MAX_BYTES = 8 * 1024 * 1024;
@@ -78,7 +75,6 @@ public final class QishuiMusicService {
     private static final HttpClient HTTP = HttpClient.newBuilder()
             .followRedirects(HttpClient.Redirect.ALWAYS)
             .build();
-    private static final Map<String, PendingQr> QR_SESSIONS = new ConcurrentHashMap<>();
 
     private QishuiMusicService() {
     }
@@ -200,91 +196,81 @@ public final class QishuiMusicService {
             return Collections.emptyList();
         }
     }
+    /**
+     * 申请一次扫码登录的二维码。
+     *
+     * <p>码不是模组自己取的：Passport 那一步要 {@code a_bogus} / {@code msToken}，只有官方安全
+     * 组件在浏览器渲染进程里算得出来，Java 侧复现不了。这里只负责把外部取码工具拉起来，拿它
+     * 给的扫码链接（{@link QrCode#getQrContent()}），二维码仍由界面自己画。</p>
+     *
+     * <p><b>工具不在就直接说缺什么，不回落。</b>此前内置的那条直连请求没有签名，上游必然拒绝，
+     * 现象是「码出来了但永远扫不上」——比直接告诉用户该把 exe 放哪难查得多。上一版 sidecar
+     * 就是因为静默回落才当夜回滚的。</p>
+     */
     public static QrCode createQrCode() {
+        if (!QishuiLoginBridge.isAvailable()) {
+            throw new IllegalStateException("汽水扫码需要外部取码工具：把 QishuiCookieTool.exe 放到 "
+                    + QishuiLoginBridge.requiredPath());
+        }
         try {
-            JsonResponse response = getJsonResponse(buildQrCreateUrl(), PASSPORT_USER_AGENT,
-                    "", Collections.emptyMap());
-            JsonObject data = object(response.body, "data");
-            if (data.size() == 0) data = response.body;
-            String token = string(data, "token");
-            String content = string(data, "qrcode");
-            if (token.isEmpty() || content.isEmpty()) {
-                throw new IOException("汽水 Passport 未返回二维码");
-            }
-            long expiresAt = longValue(data, "expire_time");
-            if (expiresAt > 0L && expiresAt < 10_000_000_000L) expiresAt *= 1000L;
-            QR_SESSIONS.put(token, new PendingQr(response.cookieHeader, expiresAt, QrLoginState.WAITING));
-            return new QrCode(token, content);
+            return QishuiLoginBridge.start();
         } catch (IOException | InterruptedException error) {
             if (error instanceof InterruptedException) Thread.currentThread().interrupt();
             throw new IllegalStateException("获取汽水登录二维码失败: " + describe(error), error);
         }
     }
 
+    /**
+     * 读一次外部取码工具的状态。<b>必须在后台线程调用。</b>
+     *
+     * <p>确认之后走的是与「Cookie 登录」<b>同一条</b>收尾路径：工具给的是一份完整的 cookie 文本，
+     * 交给 {@link #importCookie} 真校验一遍才落盘。扫码与粘贴不该有第二种登录结果，也不该有
+     * 第二个写会话的地方。</p>
+     *
+     * <p>{@code MFA}（上游要求二次验证）映射到 {@link QrLoginState#WAITING} 而不是
+     * {@link QrLoginState#ERROR}：那一刻工具已经把验证窗口弹出来了，人是<b>在游戏外</b>解决它的，
+     * 游戏里改成「等待」才对得上；界面要照抄 {@link #getQrStatusHint()}，别自己编一句「等待扫码」。</p>
+     */
     public static QrLoginState checkQrCode(QrCode qrCode) {
-        if (qrCode == null || nonBlank(qrCode.getKey()).isEmpty()) return QrLoginState.ERROR;
-        String token = qrCode.getKey().trim();
-        PendingQr pending = QR_SESSIONS.get(token);
-        if (pending != null && pending.expiresAt > 0L && System.currentTimeMillis() > pending.expiresAt) {
-            QR_SESSIONS.remove(token);
-            return QrLoginState.EXPIRED;
-        }
-
-        try {
-            JsonResponse response = postFormResponse(buildQrCheckUrl(), qrCheckForm(token),
-                    pending == null ? "" : pending.cookieHeader, PASSPORT_USER_AGENT);
-            JsonObject data = object(response.body, "data");
-            if (data.size() == 0) data = response.body;
-            String sessionId = extractSessionIdFromCookieHeader(response.cookieHeader);
-            String status = string(data, "status").toLowerCase(Locale.ROOT);
-            String flow = string(data, "account_flow").toLowerCase(Locale.ROOT);
-            int errorCode = (int) longValue(data, "error_code");
-            if (flow.equals("verify") || errorCode == 2046) {
-                QR_SESSIONS.remove(token);
-                System.err.println("[Music/Qishui] Login requires upstream SMS verification for token "
-                        + token.substring(0, Math.min(8, token.length())) + "...");
-                return QrLoginState.ERROR;
-            }
-            if (!sessionId.isEmpty()) {
-                Map<String, String> cookies = new LinkedHashMap<>();
-                cookies.put("sessionid", sessionId);
-                QishuiSessionStore.saveCookies(cookies);
-                refreshProfile();
-                QR_SESSIONS.remove(token);
-                return QrLoginState.CONFIRMED;
-            }
-
-            QrLoginState state;
-            if (errorCode == 7) {
-                state = QrLoginState.WAITING;
-            } else if ("confirmed".equals(status)) {
-                state = QrLoginState.SCANNED;
-            } else if ("scanned".equals(status) || "scan".equals(status)) {
-                state = QrLoginState.SCANNED;
-            } else if ("new".equals(status) || status.isEmpty()) {
-                state = pending != null && pending.lastState == QrLoginState.SCANNED
-                        ? QrLoginState.SCANNED : QrLoginState.WAITING;
-            } else if ("expired".equals(status) || "canceled".equals(status)
-                    || "cancelled".equals(status) || "refused".equals(status)) {
-                state = QrLoginState.EXPIRED;
-            } else if (errorCode != 0 || "error".equals(status) || "failed".equals(status)) {
-                state = QrLoginState.ERROR;
-            } else {
-                state = QrLoginState.WAITING;
-            }
-
-            if (state == QrLoginState.EXPIRED) {
-                QR_SESSIONS.remove(token);
-            } else {
-                QR_SESSIONS.put(token, new PendingQr(pending == null ? "" : pending.cookieHeader,
-                        pending == null ? 0L : pending.expiresAt, state));
-            }
-            return state;
-        } catch (IOException | InterruptedException error) {
-            if (error instanceof InterruptedException) Thread.currentThread().interrupt();
-            System.err.println("[Music/Qishui] QR check failed: " + describe(error));
+        if (qrCode == null) return QrLoginState.ERROR;
+        QishuiLoginBridge.State state = QishuiLoginBridge.poll();
+        if (state == null) return QrLoginState.ERROR;
+        if (!state.isAlive()) {
+            System.err.println("[Music/Qishui] 外部取码工具停止刷新状态，按失败处理");
             return QrLoginState.ERROR;
         }
+        switch (state.phase) {
+            case STARTING:
+            case WAITING:
+            case MFA:
+                return QrLoginState.WAITING;
+            case SCANNED:
+                return QrLoginState.SCANNED;
+            case EXPIRED:
+                return QrLoginState.EXPIRED;
+            case CONFIRMED:
+                CookieImport imported = importCookie(state.cookie);
+                if (!imported.success) {
+                    System.err.println("[Music/Qishui] 扫码拿到的 Cookie 没通过校验: " + imported.message);
+                    return QrLoginState.ERROR;
+                }
+                return QrLoginState.CONFIRMED;
+            default:
+                return QrLoginState.ERROR;
+        }
+    }
+
+    /**
+     * 外部取码工具最近一次给人看的话（「请用抖音 App 扫码」「请在弹出的窗口里完成验证」等）。
+     * 风控弹窗那一步只能用得上它：工具此刻正卡在等待用户操作上，模组这边什么都没发生。
+     */
+    public static String getQrStatusHint() {
+        return QishuiLoginBridge.statusHint();
+    }
+
+    /** 放弃这一次扫码：让外部工具自己收摊退出，不留孤儿 Electron 进程。 */
+    public static void cancelQrLogin() {
+        QishuiLoginBridge.stop();
     }
 
     public static boolean isLoggedIn() {
@@ -481,6 +467,8 @@ public final class QishuiMusicService {
             QishuiSessionStore.saveProfile(userId, nickname, douyinId, avatar, vip,
                     string(info, "vip_stage"));
             QishuiSessionStore.markVerified();
+            // 换进来的可能压根是另一个账号：旧快照必须作废，侧栏才知道要重拉。
+            clearUserPlaylistsCache();
             return new CookieImport(true, "Cookie 登录成功", nickname, vip);
         } catch (Throwable error) {
             if (looksLikeAuthRejection(error)) {
@@ -608,8 +596,8 @@ public final class QishuiMusicService {
     }
 
     public static void logout() {
-        QR_SESSIONS.clear();
         QishuiSessionStore.clear();
+        clearUserPlaylistsCache();
     }
 
     public static void decryptDownloadedAudio(File file, String playAuth) throws IOException {
@@ -871,16 +859,107 @@ public final class QishuiMusicService {
         return new ArrayList<>(unique.values());
     }
 
-    public static List<PlayList> userPlaylists(int limit) {
+    /**
+     * 拉账号的自建歌单列表（带 Cookie）。<b>失败会抛</b>：快照刷新要靠异常与否区分
+     * 「账号真的没有歌单」与「这一次请求失败」，不能把两者都折叠成空列表。
+     */
+    private static List<PlayList> fetchUserPlaylists(int limit) throws Exception {
         if (!QishuiSessionStore.isLoggedIn()) return Collections.emptyList();
-        try {
-            JsonObject response = requirePcStatus(getJson(buildPcMePlaylistsUrl(), PC_USER_AGENT,
-                    QishuiSessionStore.getCookieHeader(), pcHeaders()), "自建歌单");
-            return parsePlaylistArray(array(response, "playlists"), Math.max(1, Math.min(200, limit)));
-        } catch (Throwable error) {
-            System.err.println("[Music/Qishui] User playlists failed: " + describe(error));
-            return Collections.emptyList();
+        JsonObject response = requirePcStatus(getJson(buildPcMePlaylistsUrl(), PC_USER_AGENT,
+                QishuiSessionStore.getCookieHeader(), pcHeaders()), "自建歌单");
+        return parsePlaylistArray(array(response, "playlists"), Math.max(1, Math.min(200, limit)));
+    }
+
+    // ── 我的歌单（快照 + 异步，与 QQ / 酷狗侧栏同一套加载形态） ──────────────
+    //
+    // 侧栏要的是「进页面先画缓存、后台拉完 markDirty 再画一次」，不能像二级页那样
+    // 打开时才同步打网络。状态机照抄酷狗那份：loading 闸门、失败后 15 秒内不重打。
+
+    private static final Object USER_PLAYLIST_LOCK = new Object();
+    private static final long USER_PLAYLIST_RETRY_DELAY_MS = 15_000L;
+
+    private static volatile List<PlayList> userPlaylistsSnapshot = Collections.emptyList();
+    private static volatile boolean userPlaylistsLoaded;
+    private static volatile boolean userPlaylistsLoading;
+    private static volatile long userPlaylistsLastAttempt;
+
+    public static List<PlayList> getUserPlaylistsSnapshot() {
+        return new ArrayList<>(userPlaylistsSnapshot);
+    }
+
+    public static boolean areUserPlaylistsLoaded() {
+        return userPlaylistsLoaded;
+    }
+
+    public static boolean areUserPlaylistsLoading() {
+        return userPlaylistsLoading;
+    }
+
+    /** 回调运行在后台线程；UI 调用方要自己切回主线程。 */
+    public static void ensureUserPlaylistsAsync(final Runnable callback) {
+        if (!QishuiSessionStore.isLoggedIn()) {
+            clearUserPlaylistsCache();
+            if (callback != null) callback.run();
+            return;
         }
+
+        long now = System.currentTimeMillis();
+        synchronized (USER_PLAYLIST_LOCK) {
+            if (userPlaylistsLoading) return;
+            if (userPlaylistsLoaded) {
+                if (callback != null) callback.run();
+                return;
+            }
+            // 失败后短时间内不重试：凭据已经死了的时候，每次重绘侧栏都重打一次毫无意义。
+            if (now - userPlaylistsLastAttempt < USER_PLAYLIST_RETRY_DELAY_MS) return;
+            userPlaylistsLoading = true;
+            userPlaylistsLastAttempt = now;
+        }
+
+        Thread thread = new Thread(() -> {
+            try {
+                if (!userPlaylistsLoaded) refreshUserPlaylistsSnapshot();
+            } finally {
+                synchronized (USER_PLAYLIST_LOCK) {
+                    userPlaylistsLoading = false;
+                }
+                if (callback != null) {
+                    try {
+                        callback.run();
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
+        }, "Qishui Account");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    private static void refreshUserPlaylistsSnapshot() {
+        if (!QishuiSessionStore.isLoggedIn()) {
+            clearUserPlaylistsCache();
+            return;
+        }
+        try {
+            List<PlayList> loaded = fetchUserPlaylists(100);
+            userPlaylistsSnapshot = Collections.unmodifiableList(new ArrayList<>(loaded));
+            userPlaylistsLoaded = true;
+            System.out.println("[Music/Qishui] 已加载 " + loaded.size() + " 个汽水账号歌单。");
+        } catch (Throwable error) {
+            userPlaylistsLoaded = false;
+            System.err.println("[Music/Qishui] 账号歌单加载失败: " + describe(error));
+        }
+    }
+
+    /**
+     * 凭据一换，快照必须作废：Cookie 导入可能登进来的是<b>另一个</b>抖音账号，
+     * 留着上一位的歌单会让侧栏指着拿不到的东西。退出登录同理。
+     */
+    public static void clearUserPlaylistsCache() {
+        userPlaylistsSnapshot = Collections.emptyList();
+        userPlaylistsLoaded = false;
+        userPlaylistsLoading = false;
+        userPlaylistsLastAttempt = 0L;
     }
 
     public static List<PlayList> collectionPlaylists(int limit) {
@@ -1433,39 +1512,6 @@ public final class QishuiMusicService {
         append(url, "count", String.valueOf(limit));
         return url.toString();
     }
-    private static String buildQrCreateUrl() {
-        StringBuilder url = new StringBuilder(PASSPORT_QR_ENDPOINT).append('?');
-        append(url, "passport_jssdk_version", "2.4.13");
-        append(url, "passport_jssdk_type", "normal");
-        append(url, "is_from_ttaccountsdk", "1");
-        append(url, "aid", "386088");
-        append(url, "next", "https://api.qishui.com");
-        append(url, "need_logo", "false");
-        append(url, "need_short_url", "false");
-        append(url, "is_new_login", "1");
-        return url.toString();
-    }
-
-    private static String buildQrCheckUrl() {
-        StringBuilder url = new StringBuilder(PASSPORT_CHECK_ENDPOINT).append('?');
-        append(url, "passport_jssdk_version", "2.4.13");
-        append(url, "passport_jssdk_type", "normal");
-        append(url, "is_from_ttaccountsdk", "1");
-        append(url, "aid", "386088");
-        append(url, "iid", "27960026095955");
-        return url.toString();
-    }
-
-    private static Map<String, String> qrCheckForm(String token) {
-        Map<String, String> form = new LinkedHashMap<>();
-        form.put("need_logo", "false");
-        form.put("need_short_url", "false");
-        form.put("is_frontier", "true");
-        form.put("token", token);
-        form.put("is_new_login", "1");
-        form.put("next", "https://api.qishui.com");
-        return form;
-    }
 
     /** {@code trackId} 为空时是 POST 用的 URL（曲目 id 只在 body 里），非空时是 GET 回落用的。 */
     private static String buildPcTrackUrl(String base, String trackId) {
@@ -1647,12 +1693,6 @@ public final class QishuiMusicService {
             header.append(pair);
         }
         return header.toString();
-    }
-
-    private static String extractSessionIdFromCookieHeader(String cookieHeader) {
-        Matcher matcher = Pattern.compile("(?:^|[;,]\\s*)sessionid=([^;,\\s]+)",
-                Pattern.CASE_INSENSITIVE).matcher(nonBlank(cookieHeader));
-        return matcher.find() ? matcher.group(1).trim() : "";
     }
 
     private static String encodeForm(Map<String, String> form) {
@@ -1896,15 +1936,4 @@ public final class QishuiMusicService {
         }
     }
 
-    private static final class PendingQr {
-        final String cookieHeader;
-        final long expiresAt;
-        final QrLoginState lastState;
-
-        PendingQr(String cookieHeader, long expiresAt, QrLoginState lastState) {
-            this.cookieHeader = cookieHeader == null ? "" : cookieHeader;
-            this.expiresAt = expiresAt;
-            this.lastState = lastState == null ? QrLoginState.WAITING : lastState;
-        }
-    }
 }

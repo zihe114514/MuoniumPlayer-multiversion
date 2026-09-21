@@ -111,15 +111,18 @@ class KuGouUiParityStaticTest {
     }
 
     @Test
-    @DisplayName("二维码渲染：QQ 与汽水仍按平台走裸 base64，酷狗按 data: 前缀")
+    @DisplayName("二维码渲染：QQ 仍按平台走裸 base64，汽水改本地生成，酷狗按 data: 前缀")
     void qrTextureRoutingStaysCorrect() throws Exception {
         String sheet = read(SCREENS, "AccountManagerOverlay.java");
-        // 这两家回的是<b>不带 data: 前缀</b>的 base64。只看前缀会把那段文本当成二维码内容去重画，
+        // QQ 回的是<b>不带 data: 前缀</b>的 base64。只看前缀会把那段文本当成二维码内容去重画，
         // 画出来的码扫不出登录——这是一次「顺手把平台名单改成通用判断」就会踩到的坑。
-        assertTrue(sheet.contains("boolean upstreamImage = platform == MusicPlatform.QQ "
-                + "|| platform == MusicPlatform.QISHUI"), "QQ/汽水必须仍按平台写死走图片分支");
+        assertTrue(sheet.contains("boolean upstreamImage = platform == MusicPlatform.QQ"),
+                "QQ 必须仍按平台写死走图片分支");
         assertTrue(sheet.contains("content.startsWith(\"data:image\")"),
                 "其余平台按内容前缀判断，概念版才能复用同一条渲染路径");
+        // 汽水现在拿的是外部工具给的 https:// 扫码链接，由界面自己画成码；把它留在图片分支里
+        // 会把那条链接当成 base64 去解码，连码都出不来。
+        assertTrue(sheet.contains("汽水现在走后者"), "汽水改走本地生成这件事要有注释说明");
     }
 
     @Test

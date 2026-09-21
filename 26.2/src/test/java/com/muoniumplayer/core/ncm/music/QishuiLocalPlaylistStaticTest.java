@@ -1,13 +1,10 @@
 package com.muoniumplayer.core.ncm.music;
 
-import com.google.gson.JsonObject;
-import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.testsupport.ProjectPaths;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,15 +15,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 汽水「歌单导入（只存引用、匿名、不进账号）」的离线回归测试。
+ * 汽水那条导入链（ID 解析 + 匿名详情）的离线回归测试。
  *
- * <p>分三层。<b>纯逻辑</b>钉住 {@link QishuiMusicService#extractPlaylistId(String)}：分享链接、
- * query 参数、口令内嵌长数字、纯数字都能提出正确 ID，而口令里没有可用 ID 时必须返回 null（绝不能
- * 把手机号、时间戳之类误当歌单 ID，也不触发联网解析短链）。<b>持久化</b>用反射直接跑 store 的
- * {@code serialize}/{@code deserialize}，钉住一条引用往返后仍带着 platform=QISHUI 与原始歌单 ID ——
- * 这正是「点开时能被 {@code PlayList#queryMusics} 路由回 {@code playlistTracks} 匿名取曲目」的前提。
- * <b>接线</b>静态扫源码，钉住最容易在后续改动里被拆掉的两条不变量：{@code importPlaylist} 的详情
- * 请求走的是空 Cookie（匿名），以及侧栏确实在汽水模式下渲染本地导入歌单并给条目挂了右键移除。</p>
+ * <p>全渠道导入的接线、存储与识别规则在 {@link PlaylistImportStaticTest}；这里只钉汽水自己
+ * 那段最容易被上游字段变化波及的逻辑。</p>
  *
  * <p>不启动 Minecraft、不联网、不写真实配置文件。</p>
  */
@@ -76,42 +68,7 @@ class QishuiLocalPlaylistStaticTest {
         assertNull(QishuiMusicService.extractPlaylistId("order 12345 done"));
     }
 
-    // ──────────────────────────── 持久化往返（引用） ────────────────────────────
-
-    @Test
-    @DisplayName("引用经 serialize→deserialize 往返后仍绑定 QISHUI 与原始歌单 ID")
-    void referenceRoundTrips() throws Exception {
-        PlayList original = new PlayList(987654321L, "深夜华语 · 收藏向", "https://p3-luna.douyinpic.com/img/x.png",
-                42, 0L, null, "", 0L);
-        original.setPlatform(MusicPlatform.QISHUI);
-        original.setPlatformPlaylistId(SAMPLE_ID);
-
-        JsonObject json = serialize(original);
-        assertTrue(json.has("playlistId"), "落盘必须带汽水歌单 ID，才能匿名再拉");
-        assertEquals(SAMPLE_ID, json.get("playlistId").getAsString());
-
-        PlayList restored = deserialize(json);
-        assertEquals(987654321L, restored.getId(), "派生 long id 必须原样回来，否则封面纹理路径漂移");
-        assertEquals("深夜华语 · 收藏向", restored.getName());
-        assertEquals("https://p3-luna.douyinpic.com/img/x.png", restored.getCoverUrl());
-        assertEquals(42, restored.getCount());
-        assertEquals(MusicPlatform.QISHUI, restored.getPlatform());
-        assertEquals(SAMPLE_ID, restored.getPlatformPlaylistId());
-    }
-
-    private static JsonObject serialize(PlayList playlist) throws Exception {
-        Method method = QishuiLocalPlaylistStore.class.getDeclaredMethod("serialize", PlayList.class);
-        method.setAccessible(true);
-        return (JsonObject) method.invoke(null, playlist);
-    }
-
-    private static PlayList deserialize(JsonObject item) throws Exception {
-        Method method = QishuiLocalPlaylistStore.class.getDeclaredMethod("deserialize", JsonObject.class);
-        method.setAccessible(true);
-        return (PlayList) method.invoke(null, item);
-    }
-
-    // ──────────────────────────── 匿名 & 接线（源码扫描） ────────────────────────────
+    // ──────────────────────────── 匿名与账号解耦（源码扫描） ────────────────────────────
 
     @Test
     @DisplayName("importPlaylist 走空 Cookie（匿名），并把结果打成 QISHUI 引用")
@@ -132,37 +89,32 @@ class QishuiLocalPlaylistStaticTest {
     }
 
     @Test
-    @DisplayName("侧栏汽水模式渲染本地导入歌单并提供导入与右键移除")
-    void sidebarWiresImportAndLocalList() throws IOException {
-        String source = read(ProjectPaths.sharedJava()
+    @DisplayName("账号歌单直接摊在侧栏「我的账号歌单」下，不再是点开才拉的二级页")
+    void qishuiUserPlaylistsRenderInlineInSidebar() throws IOException {
+        String sidebar = read(ProjectPaths.sharedJava()
                 .resolve(Path.of("com", "muoniumplayer", "core", "screens", "ncm", "panels")),
                 "NavigateBar.java");
-        assertTrue(source.contains("openQishuiImport"), "缺少导入入口（应打开二级导入面板）");
-        assertTrue(source.contains("QishuiLocalPlaylistStore.list()"), "侧栏未渲染本地导入歌单");
-        assertTrue(source.contains("setOnSecondaryClick"), "导入项未挂右键移除");
-        assertTrue(source.contains("removeImportedQishuiPlaylist"), "缺少移除逻辑");
-    }
+        assertTrue(sidebar.contains("QishuiMusicService.getUserPlaylistsSnapshot()"),
+                "侧栏没走快照：账号歌单大概又回到了点开才同步拉取的老路");
+        assertTrue(sidebar.contains("QishuiMusicService.ensureUserPlaylistsAsync"),
+                "侧栏未接线异步加载");
+        assertFalse(sidebar.contains("我的汽水歌单"), "跳二级页的旧入口还留在侧栏");
+        assertFalse(sidebar.contains("loadQishuiUserPlaylists"), "二级页加载方法没删干净");
 
-    @Test
-    @DisplayName("导入面板：可输入可粘贴，落点仍是匿名导入 + 本地引用，不碰账号")
-    void importPanelIsAnonymous() throws IOException {
-        String source = read(ProjectPaths.sharedJava()
-                .resolve(Path.of("com", "muoniumplayer", "core", "screens", "ncm")),
-                "QishuiImportOverlay.java");
-        assertTrue(source.contains("QishuiMusicService.importPlaylist"), "面板没有走匿名导入入口");
-        assertTrue(source.contains("QishuiLocalPlaylistStore.add"), "面板没有把引用存进本地库");
-        assertTrue(source.contains("fillFromClipboard"), "缺少「粘贴」按钮逻辑");
-        assertTrue(source.contains("Keyboard.KEY_RETURN"), "输入框回车没有接导入");
-        assertFalse(source.contains("getCookieHeader"), "面板不得携带登录 Cookie —— 需求是匿名、不进账号");
-        assertFalse(source.contains("QISHUI_AUTH"), "面板不得触碰账号凭据文件");
-    }
-
-    @Test
-    @DisplayName("ConfigPaths 注册了 qishui_playlists.json 落盘路径")
-    void configPathRegistered() throws IOException {
-        String source = read(ProjectPaths.sharedJava()
-                .resolve(Path.of("com", "muoniumplayer", "core", "settings")), "ConfigPaths.java");
-        assertTrue(source.contains("QISHUI_PLAYLISTS"), "未注册本地歌单路径常量");
-        assertTrue(source.contains("qishui_playlists.json"), "本地歌单文件名不符");
+        String service = read(ProjectPaths.sharedJava()
+                .resolve(Path.of("com", "muoniumplayer", "core", "ncm", "music")),
+                "QishuiMusicService.java");
+        assertTrue(service.contains("public static void ensureUserPlaylistsAsync"), "服务侧缺少异步快照入口");
+        assertTrue(service.contains("new Thread") && service.contains("setDaemon(true)"),
+                "快照拉取必须离开主线程：Minecraft 主线程打网络会卡死整个游戏");
+        // 凭据一变（导入新 Cookie / 退出登录），旧账号的歌单快照必须作废。
+        int logout = service.indexOf("public static void logout()");
+        assertTrue(service.indexOf("clearUserPlaylistsCache()", logout) > 0
+                && service.indexOf("clearUserPlaylistsCache()", logout) < logout + 240,
+                "logout 没有作废歌单快照");
+        int cookie = service.indexOf("public static CookieImport importCookie");
+        int cookieEnd = service.indexOf("/**", cookie + 10);
+        String cookieBody = service.substring(cookie, cookieEnd > cookie ? cookieEnd : service.length());
+        assertTrue(cookieBody.contains("clearUserPlaylistsCache()"), "Cookie 登录后没有作废歌单快照");
     }
 }

@@ -5,11 +5,13 @@
   "name": "MuoniumPlayer",
   "description": "Music player for Minecraft 1.20.1 Fabric",
   "authors": [
-    "zihe",
+    "云杉",
+    "心事抱抱",
+    "N0ne",
     "eyz2021"
   ],
   "contact": {
-    "homepage": "https://github.com/zihe114514/MuoniumPlayer",
+    "homepage": "https://melodifymc.cc.cd/",
     "sources": "https://github.com/zihe114514/MuoniumPlayer"
   },
   "license": "All-Rights-Reserved",

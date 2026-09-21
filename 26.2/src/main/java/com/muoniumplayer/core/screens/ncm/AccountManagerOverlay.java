@@ -12,6 +12,7 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseAccountProfiles;
+import com.muoniumplayer.core.ncm.music.QishuiLoginBridge;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.QRCodeGenerator;
 import com.muoniumplayer.core.ncm.music.dto.User;
@@ -300,9 +301,13 @@ public class AccountManagerOverlay extends NcmSheet {
         qrReady = false;
 
         final boolean loggedIn = NeteaseMusicService.isLoggedIn(platform);
-        // 汽水的扫码链路已经坏在上游（Passport 取码/轮询都拿不到可用状态），二维码整块先下线，
-        // 登录只留 Cookie 这一条路：未登录时连身份卡都不摆，页面就是「说明 + 一颗 Cookie 登录按钮」。
-        final boolean qishuiCookieOnly = platform == MusicPlatform.QISHUI;
+        // 汽水的 Passport 取码/轮询要 a_bogus / msToken，只有官方安全组件在浏览器渲染进程里
+        // 算得出来，Java 侧没有。所以码由外部取码工具出：工具在就照常摆二维码，工具不在才
+        // 退回只留 Cookie 这一条路。<b>不做静默回落</b>——内置那条无签名请求必然被上游拒绝，
+        // 现象是「码出来了但永远扫不上」，比直接说缺工具难查得多。
+        final boolean qishuiBridgeReady = platform == MusicPlatform.QISHUI
+                && QishuiLoginBridge.isAvailable();
+        final boolean qishuiCookieOnly = platform == MusicPlatform.QISHUI && !qishuiBridgeReady;
         final boolean qrVisible = (!loggedIn || addAccountByQr) && !qishuiCookieOnly;
         final boolean qqChannelPicker = platform == MusicPlatform.QQ && !loggedIn;
         final boolean wechat = platform == MusicPlatform.QQ && qqLoginChannel == QQLoginChannel.WECHAT;
@@ -319,7 +324,8 @@ public class AccountManagerOverlay extends NcmSheet {
                 : platform == MusicPlatform.KUGOU && kuGouConceptLogin
                 ? "已选酷狗概念版：请用概念版 App 扫码，标准版扫不开这张码"
                 : qishuiCookieOnly
-                ? "汽水音乐登录需要外部工具：可前往网盘或 QQ 群下载外部工具获取 Cookie"
+                ? "汽水扫码需要外部取码工具：把 QishuiCookieTool.exe 放到 "
+                        + QishuiLoginBridge.requiredPath() + "（网盘 / QQ 群可下载）"
                 : "正在获取登录二维码…";
         statusTone = qishuiExpired ? 2 : !addAccountByQr && loggedIn ? 1 : 0;
 
@@ -351,7 +357,7 @@ public class AccountManagerOverlay extends NcmSheet {
                 () -> addAccountByQr ? "扫码添加网易云账号" : platform.getDisplayName() + "账号",
                 () -> addAccountByQr ? "扫码成功后自动回到已保存账号"
                         : loggedIn ? "本地已保存这个账号的登录凭据"
-                        : qishuiCookieOnly ? "扫码已下线 · 需用外部工具获取 Cookie（网盘 / QQ群）"
+                        : qishuiCookieOnly ? "未找到外部取码工具 · 可改用 Cookie 登录"
                         : "请使用" + scanClientName(platform) + "扫码并确认",
                 platform::getBrandColor);
 
@@ -406,9 +412,9 @@ public class AccountManagerOverlay extends NcmSheet {
 
         // 网易云与 B 站都只有一条扫码链路，进页面就直接取码。QQ 必须先定下走 QQ 还是微信，
         // 否则会拿 QQ 的码去问微信的状态；酷狗要先看清选的是哪个身份（两种客户端签两种凭证）。
-        // 汽水的二维码已下线（链路坏在上游），不在这一条里。
+        // 汽水只有在外部取码工具在位时才会走到 qrVisible，所以可以直接进这一条。
         if ((platform == MusicPlatform.NETEASE || platform == MusicPlatform.KUGOU
-                || platform == MusicPlatform.BILIBILI) && qrVisible) {
+                || platform == MusicPlatform.BILIBILI || platform == MusicPlatform.QISHUI) && qrVisible) {
             startQrLogin(platform, token, addAccountByQr);
         }
         if (platform == MusicPlatform.NETEASE && loggedIn && !addAccountByQr) {
@@ -641,8 +647,9 @@ public class AccountManagerOverlay extends NcmSheet {
     private void primaryAction(final Panel dialog, final MusicPlatform platform,
                                final boolean loggedIn, final boolean addAccountByQr) {
         final boolean signOut = loggedIn && !addAccountByQr;
-        // 汽水没登录时主按钮就是 Cookie 登录：它的扫码链路已下线，不该再挂一颗会取码的按钮。
-        final boolean qishuiCookie = platform == MusicPlatform.QISHUI && !loggedIn && !addAccountByQr;
+        // 汽水没登录、又没装外部取码工具时，主按钮才是 Cookie 登录：不该挂一颗必然取码失败的按钮。
+        final boolean qishuiCookie = platform == MusicPlatform.QISHUI && !loggedIn && !addAccountByQr
+                && !QishuiLoginBridge.isAvailable();
         final RoundedButtonWidget button = action(dialog,
                 () -> signOut ? PartyIcons.LOGOUT : requestRunning ? PartyIcons.HOURGLASS : PartyIcons.KEY,
                 () -> signOut ? "退出登录"
@@ -1440,7 +1447,7 @@ public class AccountManagerOverlay extends NcmSheet {
                     if (!isCurrent(platform, token)) return;
                     if (state == QrLoginState.WAITING) {
                         transientErrors = 0;
-                        publishQrStatus(platform, token, "等待扫码 · 正在持续检查登录状态…", 3);
+                        publishQrStatus(platform, token, waitingText(platform), 3);
                     } else if (state == QrLoginState.SCANNED) {
                         transientErrors = 0;
                         publishQrStatus(platform, token, "已扫码，请在手机上确认…", 3);
@@ -1503,8 +1510,26 @@ public class AccountManagerOverlay extends NcmSheet {
                     DownloadDynamicIsland.showNetworkConnectionFailure(platform.getDisplayName() + "登录", safeMessage(throwable));
                     requestRunning = false;
                 }
+            } finally {
+                // 汽水的码是外部进程在替我们取的：不管是登上了、过期了还是人翻页走了，
+                // 都得让它收摊，否则每次点开汽水账号页都会攒一个 Electron 在后台。
+                if (platform == MusicPlatform.QISHUI) QishuiMusicService.cancelQrLogin();
             }
         });
+    }
+
+    /**
+     * 「等待扫码」那一行字。
+     *
+     * <p>汽水要照抄外部取码工具的话：上游要求二次验证时，工具已经把验证窗口弹出来了，
+     * 人正在<b>游戏外</b>操作，游戏里这句还写「等待扫码」就是在骗人。</p>
+     */
+    private String waitingText(MusicPlatform platform) {
+        if (platform == MusicPlatform.QISHUI) {
+            String hint = QishuiMusicService.getQrStatusHint();
+            if (hint != null && !hint.isEmpty()) return hint;
+        }
+        return "等待扫码 · 正在持续检查登录状态…";
     }
 
     private void publishQrStatus(MusicPlatform platform, long token, String text, int tone) {
@@ -1544,11 +1569,13 @@ public class AccountManagerOverlay extends NcmSheet {
     private void loadQrTexture(MusicPlatform platform, String content, long token) throws Exception {
         BufferedImage image;
         // 有的端点回一段可重新编码的文本，有的直接回一张画好的 PNG，这一句挑的是后者。
-        // <b>QQ 与汽水必须按平台写死</b>：它们回的是<b>不带 {@code data:} 前缀</b>的裸 base64，
+        // <b>QQ 必须按平台写死</b>：它回的是<b>不带 {@code data:} 前缀</b>的裸 base64，
         // 只看前缀会把那段 base64 当成二维码文本去重画，画出来的码扫不出登录。
         // 其余平台按内容前缀判断，于是「上游给图」与「本地生成」能共用一条路径——
         // 酷狗概念版走前者（从没实测过，上游给什么图就用什么图），标准版仍是后者（实测能扫）。
-        boolean upstreamImage = platform == MusicPlatform.QQ || platform == MusicPlatform.QISHUI
+        // 汽水现在走后者：外部取码工具给的是一条 {@code https://} 扫码链接，由这里自己画成码，
+        // 工具那张 PNG 根本不必传过来——少一次图片编解码，也少一处可能画歪的地方。
+        boolean upstreamImage = platform == MusicPlatform.QQ
                 || (content != null && content.startsWith("data:image"));
         if (upstreamImage) {
             String encoded = content == null ? "" : content;

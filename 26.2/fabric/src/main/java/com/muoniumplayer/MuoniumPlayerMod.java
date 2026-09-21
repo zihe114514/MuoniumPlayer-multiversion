@@ -1,11 +1,13 @@
 package com.muoniumplayer;
 
 import com.muoniumplayer.party.net.MpNetFabric;
+import com.muoniumplayer.core.screens.TitleMenuAnnouncementButton;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
+import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.resources.Identifier;
 
@@ -56,9 +58,16 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         // afterRender 在 26.2 改名 afterExtract：GUI 变成延迟批处理后，
         // 这个回调的实际语义是「Screen 已经把自己的元素录入 render state 之后」，
         // 而不是「已经画完」。对本渲染层没有影响，因为合成本来就推迟到帧末。
-        ScreenEvents.AFTER_INIT.register((minecraft, screen, scaledWidth, scaledHeight) ->
-                ScreenEvents.afterExtract(screen).register(
-                        (renderedScreen, extractor, mouseX, mouseY, tickDelta) ->
-                                client.onScreenRendered(renderedScreen)));
+        ScreenEvents.AFTER_INIT.register((minecraft, screen, scaledWidth, scaledHeight) -> {
+            ScreenEvents.afterExtract(screen).register(
+                    (renderedScreen, extractor, mouseX, mouseY, tickDelta) ->
+                            client.onScreenRendered(renderedScreen));
+            // 主菜单上的「公告」入口。AFTER_INIT 在原版 init() 之后派发，窗口 resize 时会再来一次，
+            // 而那时原版已经清空了自己的组件，所以这里 add 一次就是一次，不会越加越多。
+            // 26.2 把 Screens.getButtons 改名成了 getWidgets（返回的还是同一份活列表）。
+            if (TitleMenuAnnouncementButton.appliesTo(screen)) {
+                Screens.getWidgets(screen).add(TitleMenuAnnouncementButton.create());
+            }
+        });
     }
 }

@@ -168,7 +168,7 @@ public class PlaylistPanel extends NCMPanel {
                 }
                 NCMScreen.getInstance().openConfirmation(
                         "取消收藏歌单？",
-                        "取消后，该歌单将从“我的歌单”中移除。",
+                        "取消后，该歌单将从“我的账号歌单”中移除。",
                         "取消收藏",
                         () -> {
                             playList.setSubscribed(false);

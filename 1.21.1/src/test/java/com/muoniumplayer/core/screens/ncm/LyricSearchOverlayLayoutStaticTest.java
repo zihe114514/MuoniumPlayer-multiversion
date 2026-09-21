@@ -26,16 +26,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 而它又是播放器面板的子层，天然继承的是布局轴（那条轴是 CSS 的一半）。第一次真机就栽在这对矛盾
  * 上：弹窗从占屏 53% 变成占屏 94%，接近正方形被压成横幅。</p>
  *
- * <p>第二次真机栽在换成设计空间的<b>代价</b>上：字小了一半。原因不在几何，而在字体 ——
- * {@code CFontRenderer} 现在直接把 {@code sizePx} 交给 Skia（旧的「2 倍栅格化 + 0.5 倍绘制」已经
- * 没了），所以 pf14 占的是<b>当前那一档单位的</b> 14。folia 的 14 CSS px 落在浏览器里是 14 物理
- * 像素，落在播放器界面上却只等于播放器字号的一半，而播放器这一页是全屏的、观众离屏幕更远。</p>
+ * <p>第二次真机栽在换成设计空间的<b>代价</b>上：字小了一半。原因不在几何，而在字体的量纲 ——
+ * {@code FontManager.createText(N, …)} 造 {@code CFontRenderer} 时把 {@code N * 0.5f} 交给 Skia
+ * 当 {@code sizePx}（旧的「2 倍栅格化 + 0.5 倍绘制」没了，构造函数里那个 0.5 留了下来），所以
+ * {@code pf14} 实际画的是 7 格、{@code pf18} 是 9 格。folia 的 14 CSS px 落在浏览器里是 14 物理
+ * 像素，落在播放器界面上只等于名字里那个数字的一半。</p>
  *
  * <p>第三轮真机反馈「拉到最大那一档还是小」，把这件事定性成了排版问题而不是尺寸取舍：一档用户
- * 旋钮救不回来一整页的字。于是这一页的<b>字号档位</b>整体脱离 folia 原值，抬到正文 18 / 次级 16 /
- * 标题 20 / 徽标 12（默认倍率下约 27 物理像素，与播放器正文 {@code pf14}=28 同级），并把装饰性的
- * 纵向高度一起压下来换回候选卡的行数。钉在这里的就是这两件事：<b>字号只许走那四档常量</b>，
- * <b>居中只许用「行盒减字号」</b>。见 {@link #fontRampIsAtPlayerSizeAndChromeShrank()}。</p>
+ * 旋钮救不回来一整页的字。于是这一页的<b>字号档位</b>整体脱离 folia 原值，抬到正文 pf18 / 次级
+ * pf16 / 标题 pf20 / 徽标 pf12。按离屏量出的行盒折算，默认 1.5× 倍率下正文占 9.75 设计格
+ * ≈ 7.3 个布局单位，与播放器正文 pf14 的 6.75 布局单位同一量级；装饰性的纵向高度一起压下来，
+ * 换回候选卡的行数。</p>
+ *
+ * <p>最近一轮真机反馈「按钮里的字不居中、逐字/逐行标签的字不居中」，根因就是上一段那个数字：居中
+ * 原先写成 {@code (行盒 - 18) * .5}，减掉的是<b>渲染器名字里的 18</b>，而字真正只占 9 格，于是
+ * 每行字都被往上推了约 4.5 格 —— 30 高的页脚键里墨迹中心落在 10.7，键的中心是 15。现在减数只许
+ * 是字体自己报的行盒（{@code CFontRenderer#getFontHeight()}），也就是 {@code textY(…)} 这一个口子；
+ * 输入框 {@code TextField#getRenderOffsetY()} 本来用的就是同一个量，这一轮两处在同一个约定上对上了。
+ * 钉在这里的是这四件事：<b>字号只许走那四档具名渲染器</b>、<b>不许再有字号常量</b>、
+ * <b>文字居中只许走 {@code textY}</b>、<b>装饰高度跟着字号收</b>。
+ * 见 {@link #fontRampIsAtPlayerSizeAndChromeShrank()}。</p>
  *
  * <p>第二条同样来自真机：组件树只在行数变化时搭一次，搭建时把宽高抄成数值快照，而新 {@code new}
  * 出来的裁剪容器还没被自己的回调定过尺寸 —— 量回来是 0，被 {@code Math.max(1, …)} 夹成 1，整块
@@ -208,17 +218,20 @@ class LyricSearchOverlayLayoutStaticTest {
     }
 
     @Test
-    @DisplayName("字号在播放器那一档，居中只许用「行盒减字号」")
+    @DisplayName("字号只有四档具名渲染器，文字居中只许走 textY")
     void fontRampIsAtPlayerSizeAndChromeShrank() throws IOException {
         String overlay = read(OVERLAY);
 
-        // 四档字号有名有姓：所有居中都写成「(行盒 - 字号) * .5」，字号一改，行盒就得跟着改。
-        assertTrue(overlay.contains("FS_BADGE = 12.0, FS_SUB = 16.0, FS_BODY = 18.0, FS_TITLE = 20.0;"),
-                "字号档位要成一份常量，散在各处的 pf14 才是「字太小」改不动的原因");
+        // 行盒是一份常量：卡片、页眉、徽标那些「一条带多高」全从这里加起来。
         assertTrue(overlay.contains("LH_TITLE = 24.0, LH_BODY = 22.0, LH_SUB = 20.0, LH_BADGE = 18.0;"),
                 "行盒同样要成一份常量");
 
-        // 整页只许用这四档对应的字形：播放器正文是 pf14=28 物理像素，默认倍率下 pf18 才是同一量级。
+        // 字号不再有常量。上一轮的 FS_* 就是「(行盒 - FS_BODY) * .5」这种写法的入口，而 FS_BODY 是
+        // 渲染器名字里的 18、字实际只占 9 格 —— 减错数就是真机那句「按钮里的字贴着上沿」。
+        assertFalse(overlay.contains("FS_"), "字号常量会诱导出「拿名字当高度」的居中写法，居中只许走 textY");
+        assertEquals(0, count(overlay, "- FS"), "还有一处拿字号常量给文字居中");
+
+        // 整页只许用这四档字形：播放器正文 pf14=6.75 布局单位，默认倍率下 pf18≈7.3 才是同一量级。
         Matcher boldFonts = Pattern.compile("FontManager\\.pf([0-9]+)bold").matcher(overlay);
         int bold = 0;
         while (boldFonts.find()) {
@@ -235,6 +248,24 @@ class LyricSearchOverlayLayoutStaticTest {
         }
         assertTrue(bold > 0 && plain > 0, "锚点失效：这一页一个字都没画？");
 
+        // 文字居中的唯一入口，且减数必须是字体自己报的行盒。
+        assertTrue(overlay.contains(
+                        "private static double textY(CFontRenderer font, double rowTop, double rowHeight)"),
+                "文字居中要有唯一入口 textY(字体, 带上沿, 带高)");
+        assertTrue(overlay.contains("private static double textY(LabelWidget label"),
+                "挂在标签上的字也要走同一个入口，别在回调里各算各的");
+        assertTrue(methodBody(overlay, "private static double textY(CFontRenderer font")
+                        .contains("font.getFontHeight()"),
+                "减数必须是实际行盒；字体没解析出来时退回带上沿，不抛");
+
+        // 真机点出来的那几处：页脚两颗键、搜索键、两处逐字/逐行角标。
+        assertTrue(overlay.contains("textY(caption, 0, BUTTON_H)"), "页脚按钮里的字（取消 / 保存）");
+        assertTrue(overlay.contains("textY(caption, 0, SEARCH_H)"), "搜索键里的字");
+        assertTrue(overlay.contains("textY(badgeText, badge.getRelativeY(), LH_BADGE)"), "候选卡上的角标");
+        assertTrue(overlay.contains("textY(font, top, LH_BADGE)"), "右栏信息区的逐字 / 逐行徽标");
+        assertTrue(count(overlay, "textY(") >= 16,
+                "这一页有十几处文字居中，textY 的调用数掉下来了：又有字自己算对齐了？");
+
         // 居中的一律不许再用裸数字：那正是「改了字号却忘了改对齐」的那扇门。
         Matcher stray = Pattern.compile("\\([A-Z][A-Z_0-9]* - [0-9]+(?:\\.[0-9]+)?\\)").matcher(overlay);
         assertFalse(stray.find(), "还有写法拿裸数字给文字居中，行盒与字号会对不上");
@@ -249,11 +280,14 @@ class LyricSearchOverlayLayoutStaticTest {
         assertTrue(overlay.contains("PLACEHOLDER_H = 120.0;"), "空态那一格还得是压缩后的 120");
         assertTrue(overlay.contains("RIGHT_COVER = 96.0"), "右栏封面还得是压缩后的 96");
 
-        // 每开一次都留一行量纲日志：下次真机说「小」，先看这行再改代码。
+        // 每开一次都留一行量纲日志：下次真机说「小」，先看这行再改代码。日志里报的必须是行盒，
+        // 不是字号名字 —— 上一版在这里写了「正文 18 ≈ 27 物理像素」，量纲整个是错的，白看两行。
         assertTrue(overlay.contains("logAxisOnce(width, shownHeight);"),
                 "弹窗定型那一帧要把量纲打出来");
         assertTrue(overlay.contains("WindowAdaptiveScale.lyricSearchUnitsPerLayout()"),
                 "日志里的单位必须和宿主换轴用的是同一个入口");
+        assertTrue(overlay.contains("FontManager.pf18.getFontHeight() / unit"),
+                "日志要报「行盒折算成布局单位」，才能和播放器正文那 6.75 直接比");
     }
 
     @Test

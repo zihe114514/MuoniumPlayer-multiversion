@@ -65,20 +65,20 @@ public final class LyricSearchOverlay extends NcmSheet {
     // ──────────────────────────── folia 的档位 ────────────────────────────
 
     /**
-     * 字号档位 —— <b>这一页唯一一处偏离 folia 原值的东西</b>，其余结构、配色、圆角仍是照抄。
+     * 四档文字各自的行盒（垂直居时要套进去的那一条带）：标题 {@code pf20bold}、正文
+     * {@code pf18} / {@code pf18bold}、次级 {@code pf16}、徽标 {@code pf12bold}。
      *
-     * <p>偏离的理由是量纲：网页上 {@code text-sm} 的 14 是设备像素，而这一页的一格只是「弹窗单位」，
-     * 落到屏幕要乘 {@link WindowAdaptiveScale#lyricSearchUnitsPerLayout()}（默认那一档 1.50）。
-     * 播放器主界面的正文是 {@code pf14} = 28 物理像素；这一页 14 单位只有约 21 物理像素，又压在
-     * 满屏歌词上面，就是「字太小看不清」的全部来源。</p>
+     * <p><b>这里没有「字号」常量，也不该有。</b>渲染器名字里那个数不是它占的高度：
+     * {@code createText(18)} 走的是 {@code sizePx = 18 * 0.5}（旧的「2 倍栅格化 + 0.5 倍绘制」早就没了，
+     * 那个 0.5 却还留在构造函数里），所以 pf18 真正落屏只有 9 格。居中要减的是
+     * {@link CFontRenderer#getFontHeight()}，见 {@link #textY(CFontRenderer, double, double)}。</p>
      *
-     * <p>所以正文抬到 18、次级抬到 16（默认倍率下约 27 与 24 物理像素，与播放器同级），标题 20、
-     * 徽标 12。字抬上来腾不出地方，就把装饰性的高度压下去：页眉页脚的 {@code py-5} 收成 12、栏内边距
-     * 与 {@code gap-5} 收成 16/14、空态那一格 160 收成 120、右栏封面 128 收成 96。里外一算，
-     * 候选列表在默认窗口下能看见约三张卡，而原来只有一张半。</p>
+     * <p>字号本身仍是这一页唯一偏离 folia 原值之处（正文从 {@code text-sm} 抬到 18 那一档），
+     * 抬档的理由是量纲：这一页一格只是「弹窗单位」，播放器正文在布局轴上。按实测折算，这一页正文
+     * 约 7.3 个布局单位，播放器 {@code pf14} 是 6.75 —— 同级。字抬上来腾不出地方，就把装饰性的
+     * 高度压下去：页眉页脚的 {@code py-5} 收成 12、栏内边距与 {@code gap-5} 收成 16/14、空态那一格
+     * 160 收成 120、右栏封面 128 收成 96。里外一算，候选列表在默认窗口下能看见约三张卡。</p>
      */
-    private static final double FS_BADGE = 12.0, FS_SUB = 16.0, FS_BODY = 18.0, FS_TITLE = 20.0;
-    /** 与上面四档配套的行盒：字在盒里垂直居中，靠的就是 {@code (行盒 - 字号) * .5} 这个数。 */
     private static final double LH_TITLE = 24.0, LH_BODY = 22.0, LH_SUB = 20.0, LH_BADGE = 18.0;
 
     /** {@code max-w-5xl} / {@code max-h-[85vh]} / 遮罩的 {@code p-4}。 */
@@ -392,9 +392,39 @@ public final class LyricSearchOverlay extends NcmSheet {
                 + " 单位/布局=" + String.format("%.3f", unit)
                 + " 宿主=" + (int) getWidth() + "x" + (int) getHeight()
                 + " 弹窗=" + (int) width + "x" + (int) height
-                + " 正文=" + String.format("%.1f", FS_BODY * pxPerUnit) + "px"
-                + "(播放器正文 pf14=28px)"
+                + " 正文=pf18行盒" + String.format("%.1f", FontManager.pf18.getFontHeight())
+                + "单位≈" + String.format("%.1f", FontManager.pf18.getFontHeight() / unit) + "布局单位"
+                + "(播放器正文pf14=6.75布局单位)"
                 + " 可见候选=" + String.format("%.1f", (listH() + CARD_GAP) / (CARD_H + CARD_GAP)) + "张");
+    }
+
+
+    /**
+     * 让一行字在 {@code [rowTop, rowTop + rowHeight]} 这条行盒里垂直居中，返回该传给
+     * {@code drawString} / {@code setPosition} 的 y。
+     *
+     * <h3>为什么减数不能是「字号」</h3>
+     * <p>这一页原来写的是 {@code (行盒 - 18) * .5}，那个 18 是<b>渲染器名字里的数字</b>。
+     * {@code FontManager.createText(18, "pf_middleblack")} 交给 Skia 的字号是 {@code 18 * 0.5 = 9}，
+     * 中文墨迹离屏量出来占 {@code y+0.63 ~ y+8.75}。于是 30 高的页脚按钮里字被摆到 y=6，
+     * 墨迹中心落在 10.7，而键的中心是 15 —— 看着就是贴着上沿。</p>
+     *
+     * <p>换成 {@link CFontRenderer#getFontHeight()}（= 行盒 - 4.25）当减数：12 / 16 / 18 / 20 四档
+     * 与各自实测墨迹中心的差在 0.2 格以内，六分之一像素。输入框自己
+     * （{@code TextField#getRenderOffsetY}）用的也是这一个量。</p>
+     *
+     * <p>没有按「这一串字的墨迹」逐串居中（{@code NcmSheet#inkTop} 那套），是因为这里一屏排三十多张
+     * 候选卡：按内容居中会让「稻香」和「Starfall (Live)」各自找中心，同一列的基线跟着内容抖。
+     * 行盒与内容无关。字体还没解析出来时 {@code getFontHeight()} 是负数，那时退回带的上沿，不抛。</p>
+     */
+    private static double textY(CFontRenderer font, double rowTop, double rowHeight) {
+        double box = font == null ? 0.0 : font.getFontHeight();
+        return rowTop + (rowHeight - (box > 0.0 ? box : rowHeight)) * .5;
+    }
+
+    /** 同一件事，字体从标签自己身上取。 */
+    private static double textY(LabelWidget label, double rowTop, double rowHeight) {
+        return textY(label.getFont(), rowTop, rowHeight);
     }
 
     /** {@code w-full max-w-5xl} 再被遮罩的 {@code p-4} 夹一道。 */
@@ -562,7 +592,7 @@ public final class LyricSearchOverlay extends NcmSheet {
         final LabelWidget title = label(dialog, "匹配歌词", FontManager.pf20bold);
         title.setBeforeRenderCallback(() -> {
             title.setColor(textPrimary());
-            title.setPosition(PAD_X, PY_FOOTER + (LH_TITLE - FS_TITLE) * .5);
+            title.setPosition(PAD_X, textY(title, PY_FOOTER, LH_TITLE));
         });
 
         final LabelWidget subtitle = label(dialog, () -> track == null ? "" : track.getName(),
@@ -571,7 +601,7 @@ public final class LyricSearchOverlay extends NcmSheet {
             subtitle.setColor(textSecondary());
             subtitle.setMaxWidth(Math.max(1, dialogWidth() - PAD_X * 2 - 34 - 16));
             subtitle.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            subtitle.setPosition(PAD_X, PY_FOOTER + LH_TITLE + HEAD_GAP + (LH_BODY - FS_BODY) * .5);
+            subtitle.setPosition(PAD_X, textY(subtitle, PY_FOOTER + LH_TITLE + HEAD_GAP, LH_BODY));
         });
 
         final RoundedRectWidget close = new RoundedRectWidget();
@@ -673,7 +703,7 @@ public final class LyricSearchOverlay extends NcmSheet {
             if (source == value) ink = accentText();
             else ink = hit.isHovering() ? (isLight() ? ZINC_500 : ZINC_200) : ZINC_400;
             caption.setColor(ink);
-            caption.setPosition(x + TAB_PAD_X, top + (TAB_TEXT_H - FS_BODY) * .5);
+            caption.setPosition(x + TAB_PAD_X, textY(caption, top, TAB_TEXT_H));
         });
         if (activeNow) {
             final RectWidget underline = new RectWidget();
@@ -745,7 +775,8 @@ public final class LyricSearchOverlay extends NcmSheet {
         final LabelWidget caption = label(button, "搜索", bodyBold);
         caption.setBeforeRenderCallback(() -> {
             caption.setColor(accentText());
-            caption.setPosition((searchButtonW() - caption.getWidth()) * .5, (SEARCH_H - FS_BODY) * .5);
+            // 这颗 caption 挂在按钮底下，按钮的相对 y 就是 0。
+            caption.setPosition((searchButtonW() - caption.getWidth()) * .5, textY(caption, 0, SEARCH_H));
             caption.setHidden(searching);
         });
         spinner(button, FoliaLucideIcons.LOADER, PartyIcons.HOURGLASS, 16, () -> searchButtonW() * .5,
@@ -876,7 +907,7 @@ public final class LyricSearchOverlay extends NcmSheet {
             title.setColor(textPrimary());
             title.setMaxWidth(Math.max(10, cardTextRight(hit) - textLeft - 8 - badgeW));
             title.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            title.setPosition(textLeft, CARD_PAD + (CARD_LINE1 - FS_BODY) * .5);
+            title.setPosition(textLeft, textY(title, CARD_PAD, CARD_LINE1));
         });
 
         final RoundedRectWidget badge = new RoundedRectWidget();
@@ -891,7 +922,7 @@ public final class LyricSearchOverlay extends NcmSheet {
         badgeText.setBeforeRenderCallback(() -> {
             // {@code text-blue-400}：两套主题都是这一档，浅色并没有换成 blue-600。
             badgeText.setColor(BLUE_400);
-            badgeText.setPosition(badge.getRelativeX() + 6, badge.getRelativeY() + (LH_BADGE - FS_BADGE) * .5);
+            badgeText.setPosition(badge.getRelativeX() + 6, textY(badgeText, badge.getRelativeY(), LH_BADGE));
         });
 
         final LabelWidget artist = label(card, hit.artists.isEmpty() ? "-" : hit.artists, FontManager.pf16);
@@ -899,15 +930,15 @@ public final class LyricSearchOverlay extends NcmSheet {
             artist.setColor(textSecondary());
             artist.setMaxWidth(Math.max(10, cardTextRight(hit) - textLeft));
             artist.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            artist.setPosition(textLeft, CARD_PAD + CARD_LINE1 + CARD_SUB_MT + (CARD_SUB - FS_SUB) * .5);
+            artist.setPosition(textLeft, textY(artist, CARD_PAD + CARD_LINE1 + CARD_SUB_MT, CARD_SUB));
         });
         final LabelWidget album = label(card, hit.album.isEmpty() ? "-" : hit.album, FontManager.pf16);
         album.setBeforeRenderCallback(() -> {
             album.setColor(textSecondary());
             album.setMaxWidth(Math.max(10, cardTextRight(hit) - textLeft));
             album.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            album.setPosition(textLeft, CARD_PAD + CARD_LINE1 + CARD_SUB_MT + CARD_SUB + CARD_SUB_MT
-                    + (CARD_SUB - FS_SUB) * .5);
+            album.setPosition(textLeft, textY(album,
+                    CARD_PAD + CARD_LINE1 + CARD_SUB_MT + CARD_SUB + CARD_SUB_MT, CARD_SUB));
         });
 
         final LucideIcon mark = lucide(card, FoliaLucideIcons.CHECK, PartyIcons.CHECK, 18,
@@ -1024,7 +1055,7 @@ public final class LyricSearchOverlay extends NcmSheet {
             title.setColor(textPrimary());
             title.setMaxWidth(infoTextW());
             title.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            title.setPosition((width - title.getWidth()) * .5, infoTop + (INFO_LINE1 - FS_TITLE) * .5);
+            title.setPosition((width - title.getWidth()) * .5, textY(title, infoTop, INFO_LINE1));
         });
         final LabelWidget artist = label(row, this::selectedArtist, FontManager.pf18);
         artist.setBeforeRenderCallback(() -> {
@@ -1033,7 +1064,7 @@ public final class LyricSearchOverlay extends NcmSheet {
             artist.setMaxWidth(infoTextW());
             artist.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             artist.setPosition((rightContentW() - artist.getWidth()) * .5,
-                    infoTop + titleLines() * INFO_LINE1 + RIGHT_BLOCK_GAP + (INFO_LINE2 - FS_BODY) * .5);
+                    textY(artist, infoTop + titleLines() * INFO_LINE1 + RIGHT_BLOCK_GAP, INFO_LINE2));
         });
         final LabelWidget album = label(row, this::selectedAlbum, FontManager.pf16);
         album.setBeforeRenderCallback(() -> {
@@ -1042,8 +1073,8 @@ public final class LyricSearchOverlay extends NcmSheet {
             album.setMaxWidth(infoTextW());
             album.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             album.setPosition((rightContentW() - album.getWidth()) * .5,
-                    infoTop + titleLines() * INFO_LINE1 + RIGHT_BLOCK_GAP + INFO_LINE2 + RIGHT_BLOCK_GAP
-                            + (INFO_LINE3 - FS_SUB) * .5);
+                    textY(album, infoTop + titleLines() * INFO_LINE1 + RIGHT_BLOCK_GAP
+                            + INFO_LINE2 + RIGHT_BLOCK_GAP, INFO_LINE3));
         });
     }
 
@@ -1173,8 +1204,9 @@ public final class LyricSearchOverlay extends NcmSheet {
         final LabelWidget caption = label(button, text, FontManager.pf18bold);
         caption.setBeforeRenderCallback(() -> {
             caption.setColor(accent ? accentText() : textPrimary());
+            // 页脚那颗键的相对 y 就是 0，整颗键高即行盒。
             caption.setPosition((button.getWidth() - caption.getWidth()) * .5,
-                    (BUTTON_H - FS_BODY) * .5);
+                    textY(caption, 0, BUTTON_H));
         });
         return button;
     }
@@ -1674,14 +1706,14 @@ public final class LyricSearchOverlay extends NcmSheet {
 
             if (selected == null) {
                 centeredPlaceholder(width, height, PartyIcons.NOTE, FoliaLucideIcons.MUSIC, 24,
-                        "请在左侧选择一首歌曲", FS_SUB, 6, mix(textSecondary(), surface, .6));
+                        "请在左侧选择一首歌曲", 6, mix(textSecondary(), surface, .6));
                 primary.reset();
                 secondary.reset();
                 return;
             }
             if (previewLoading) {
                 centeredPlaceholder(width, height, PartyIcons.HOURGLASS, FoliaLucideIcons.LOADER, 20,
-                        "加载歌词中...", FS_SUB, 8, mix(textPrimary(), surface, .4));
+                        "加载歌词中...", 8, mix(textPrimary(), surface, .4));
                 primary.reset();
                 secondary.reset();
                 return;
@@ -1771,19 +1803,21 @@ public final class LyricSearchOverlay extends NcmSheet {
             CFontRenderer buttonFont = FontManager.pf16bold;
             reloadW = Math.max(56, buttonFont.getStringWidthD("重新加载") + 24);
             reloadH = 24;
-            // 错误行 + 8 + 重试键，整块在框里垂直居中。
-            double textTop = getY() + (height - FS_SUB - 8 - reloadH) * .5;
+            // 错误行 + 8 + 重试键，整块在框里垂直居中。那一行的带高就是它自己的行盒，
+            // 所以画在带顶上等于画在带里，不用再居中一次。
+            double lineH = font.getFontHeight();
+            double textTop = getY() + (height - lineH - 8 - reloadH) * .5;
             font.drawString(trimmed, getX() + (width - total) * .5, textTop,
                     reAlpha(textSecondary(), getAlpha()));
 
             reloadX = getX() + (width - reloadW) * .5;
-            reloadY = textTop + FS_SUB + 8;
+            reloadY = textTop + lineH + 8;
             reloadHover = mouseX >= reloadX && mouseX <= reloadX + reloadW
                     && mouseY >= reloadY && mouseY <= reloadY + reloadH;
             roundedRect(reloadX, reloadY, reloadW, reloadH, R_BUTTON, blueButton(reloadHover));
             double textW = buttonFont.getStringWidthD("重新加载");
             buttonFont.drawString("重新加载", reloadX + (reloadW - textW) * .5,
-                    reloadY + (reloadH - FS_SUB) * .5, reAlpha(accentText(), getAlpha()));
+                    textY(buttonFont, reloadY, reloadH), reAlpha(accentText(), getAlpha()));
         }
 
         @Override
@@ -1796,8 +1830,10 @@ public final class LyricSearchOverlay extends NcmSheet {
         }
 
         private void centeredPlaceholder(double width, double height, String glyph, String lucideName,
-                                         double iconSize, String text, double textSize, double gap, int ink) {
-            double total = iconSize + gap + textSize;
+                                         double iconSize, String text, double gap, int ink) {
+            CFontRenderer caption = FontManager.pf16;
+            // 文字那一条带就是它自己的行盒：拿字号数字（16）当带高会把整块往下多推 8 格。
+            double total = iconSize + gap + caption.getFontHeight();
             double top = getY() + (height - total) * .5;
             // 占位态的图标与文字都跟着整块一起淡（folia 在那里写了 opacity-40 / opacity-50）。
             if (FoliaLucideIcons.draw(lucideName, getX() + width * .5, top + iconSize * .5, iconSize,
@@ -1814,7 +1850,6 @@ public final class LyricSearchOverlay extends NcmSheet {
                             reAlpha(ink, getAlpha()));
                 }
             }
-            CFontRenderer caption = FontManager.pf16;
             double textW = caption.getStringWidthD(text);
             caption.drawString(text, getX() + (width - textW) * .5, top + iconSize + gap,
                     reAlpha(ink, getAlpha()));
@@ -1850,7 +1885,7 @@ public final class LyricSearchOverlay extends NcmSheet {
             }
         }
 
-        /** 一枚徽标；返回它左边缘的 x，好让前一枚接着排。字号用 {@link #FS_BADGE} 那一档。 */
+        /** 一枚徽标；返回它左边缘的 x，好让前一枚接着排。字是 {@code pf12bold} 那一档。 */
         private double badge(String name, String glyph, String text, int tint, int ink,
                              double right, double top) {
             CFontRenderer font = FontManager.pf12bold;
@@ -1870,7 +1905,7 @@ public final class LyricSearchOverlay extends NcmSheet {
                             square.alignCenterY(top + LH_BADGE * .5), argb);
                 }
             }
-            font.drawString(text, left + 6 + 7 + 2, top + (LH_BADGE - FS_BADGE) * .5, argb);
+            font.drawString(text, left + 6 + 7 + 2, textY(font, top, LH_BADGE), argb);
             return left - 6;
         }
     }

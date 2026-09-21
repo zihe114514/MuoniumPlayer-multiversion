@@ -9,6 +9,7 @@ import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
+import com.muoniumplayer.core.screens.GuiAnnouncements;
 import com.muoniumplayer.core.screens.GuiFfmpegNotice;
 import com.muoniumplayer.core.screens.GuiUpdateNotice;
 import com.muoniumplayer.core.screens.hud.GuiHudEditor;
@@ -16,6 +17,7 @@ import com.muoniumplayer.core.screens.hud.GuiHudEditorFolia;
 import com.muoniumplayer.core.screens.hud.GuiHudEditorPro;
 import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
 import com.muoniumplayer.core.settings.HudConfig;
+import com.muoniumplayer.core.update.AnnouncementChecker;
 import com.muoniumplayer.core.update.UpdateChecker;
 import com.muoniumplayer.render.skija.SkijaHost;
 import net.minecraft.client.Minecraft;
@@ -57,7 +59,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "1.5.0";
+    public static final String MOD_VERSION = "1.6.0";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -163,6 +165,10 @@ public final class MuoniumPlayerClient {
         // 4. 更新检查：守护线程上最多拉一次远端版本清单（结果缓存 30 分钟，失败静默），
         //    有新版本时由 GuiUpdateNotice 在主菜单弹一次提示。检查不可关闭，用户只能「先不更新」有限几次。
         UpdateChecker.beginCheck(MOD_VERSION, MC_VERSION, loaderId);
+
+        // 5. 公告：与更新检查读同一份远端清单，但自己拉、自己记「哪些看过」，两条路互不牵连。
+        //    有未读时由 GuiAnnouncements 在主菜单弹一次，关掉即整批记为已读；拉不到什么都不提示。
+        AnnouncementChecker.beginFetch(MOD_VERSION, MC_VERSION, loaderId);
     }
 
     /** 供加载器侧的事件回调判断初始化是否已完成（Forge 的事件可能早于 clientSetup 触发）。 */
@@ -211,6 +217,11 @@ public final class MuoniumPlayerClient {
         // 与上面 ffmpeg 那条同构，闸门也一样在内部：本次启动只弹一次 / 先不更新有次数上限。
         // ffmpeg 提示已经占住界面时，这里读到的当前界面不是主菜单，本 tick 直接跳过 —— 两个提示天然排队。
         GuiUpdateNotice.tickAutoShow(mc);
+
+        // ---- 有未读公告时的一次性主菜单提示 ----
+        // 排在更新提示后面调：前两个提示任一在屏幕上时，这里读到的当前界面不是主菜单，本 tick 跳过 ——
+        // 三个提示天然排队。公告自己只管「这批看过没有」，不参与更新提示那套次数额度。
+        GuiAnnouncements.tickAutoShow(mc);
 
         // ---- 可配置按键检测（仅在未打开 GUI 时响应，避免与界面内输入冲突）----
         // 1.8.9 的 KeyMapping.isPressed() 是上升沿触发；1.20.1 里同语义的方法叫 wasPressed()

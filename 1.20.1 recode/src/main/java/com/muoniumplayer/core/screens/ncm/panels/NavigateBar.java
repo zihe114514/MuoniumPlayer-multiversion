@@ -15,13 +15,15 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
-import com.muoniumplayer.core.ncm.music.QishuiLocalPlaylistStore;
+import com.muoniumplayer.core.ncm.music.ImportedPlaylistStore;
 import com.muoniumplayer.core.settings.HudConfig;
+import com.muoniumplayer.core.update.AnnouncementChecker;
 import com.muoniumplayer.core.ncm.music.NeteaseSearchSuggestService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.BrandVectorIcons;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
+import com.muoniumplayer.core.rendering.FoliaLucideIcons;
 import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
@@ -48,6 +50,7 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -75,6 +78,8 @@ public class NavigateBar extends NCMPanel {
     /** 第一帧直接落位，避免高亮条从侧栏顶部飞进来。 */
     private boolean indicatorPlaced;
     private PlaylistItem homeItem;
+    /** 快捷操作条上那颗公告按钮。让位判断挂在父组件的渲染里，见 {@link #onRender}。 */
+    private SidebarActionButton announcementButton;
     private final List<PlaylistItem> playlistItems = new CopyOnWriteArrayList<>();
 
     // ── 搜索联想 ────────────────────────────────────────────────────────────
@@ -446,23 +451,101 @@ public class NavigateBar extends NCMPanel {
                         () -> "私人 FM", () -> NCMScreen.getInstance().setCurrentPanel(new PersonalFmPanel())));
             }
         }
-        LabelWidget lblPlaylists = new LabelWidget("我的歌单", FontManager.pf14bold);
+        // 「导入歌单」独立成栏，排在账号歌单之上：栏名即内容，一眼看得出哪来的歌单是本地粘贴
+        // 导入的、哪些是登录账号带出来的。标题行右侧一颗「＋」是全渠道共用的导入入口——导入
+        // 面板自己会识别平台，所以这里没必要每个平台各配一颗。
+        Panel importHeader = new Panel();
+        importHeader.setBeforeRenderCallback(() -> {
+            importHeader.setBounds(Math.max(1, importHeader.getParentWidth() - 8), 16);
+            importHeader.setPosition(4, importHeader.getRelativeY());
+        });
+        LabelWidget lblImported = new LabelWidget("导入歌单", FontManager.pf14bold);
+        lblImported.setBeforeRenderCallback(() -> {
+            lblImported.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            lblImported.setPosition(2, NcmSheet.inkTop(lblImported, importHeader.getHeight() * .5));
+        });
+        importHeader.addChild(lblImported);
+
+        final Panel importHit = new Panel();
+        // 「＋」是画出来的一枚记号（两条圆头短条交叉），既不是文字也不是图标字体：文字「+」看着
+        // 就是个字、不成图标；party 图标字体最小一档是 15 逻辑像素的实心圆盘，压在一行墨迹高仅
+        // 6.5 的栏名上必然显重。臂长按栏名自己的墨迹高来，换字体换字号都跟着走；两条短条的中心
+        // 就是记号的中心，摆到行高的中点上，天然和 inkTop 那条基准重合。
+        final RoundedRectWidget plusH = new RoundedRectWidget();
+        final RoundedRectWidget plusV = new RoundedRectWidget();
+        plusH.setClickable(false);
+        plusV.setClickable(false);
+        importHit.addChild(plusH);
+        importHit.addChild(plusV);
+        importHit.setShouldOverrideMouseCursor(true);
+        importHit.setBeforeRenderCallback(() -> {
+            // 命中区比记号大一圈：一颗「+」原样点起来太考验瞄准。
+            importHit.setBounds(22, importHeader.getHeight());
+            importHit.setPosition(importHeader.getWidth() - 26, 0);
+            int color = NCMScreen.getColor(importHit.isHovering()
+                    ? NCMScreen.ColorType.PRIMARY_TEXT : NCMScreen.ColorType.ACCENT);
+            double arm = NcmSheet.labelInkHeight(lblImported) * 1.15;
+            // 粗细不跟着臂长线性缩：Material 的 add 是 2/18 ≈ .11，照搬到 8 高的记号上只剩
+            // 不到一个像素，画出来是虚的。给一个下限，宁可略粗也不要看不见。
+            double thick = Math.max(1.35, arm * .18);
+            double cx = importHit.getWidth() * .5;
+            double cy = importHit.getHeight() * .5;
+            plusH.setColor(color);
+            plusV.setColor(color);
+            plusH.setRadius(thick * .5);
+            plusV.setRadius(thick * .5);
+            plusH.setBounds(cx - arm * .5, cy - thick * .5, arm, thick);
+            plusV.setBounds(cx - thick * .5, cy - arm * .5, thick, arm);
+        });
+        importHit.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+            if (mouseButton != 0) return false;
+            NCMScreen.getInstance().openPlaylistImport();
+            return true;
+        });
+        importHeader.addChild(importHit);
+        this.playlistPanel.addChild(importHeader);
+
+        // 本地已导入的歌单不分平台展示：点开由 PlayList 按各自平台匿名拉曲目，右键移除本地引用。
+        List<PlayList> importedPlaylists = ImportedPlaylistStore.list();
+        if (importedPlaylists.isEmpty()) {
+            PlaylistItem hint = new PlaylistItem("·",
+                    () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                    () -> "点右上角「＋」粘贴歌单链接",
+                    () -> NCMScreen.getInstance().openPlaylistImport());
+            hint.setShouldOverrideMouseCursor(true);
+            this.playlistPanel.addChild(hint);
+        }
+        for (PlayList imported : importedPlaylists) {
+            final PlayList ready = imported;
+            PlaylistItem item = new PlaylistItem("D",
+                    () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                    ready::getName,
+                    () -> NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(ready)));
+            item.setPlaylist(ready);
+            item.setShouldOverrideMouseCursor(true);
+            item.setOnSecondaryClick(() -> removeImportedPlaylist(ready));
+            this.playlistItems.add(item);
+            this.playlistPanel.addChild(item);
+        }
+
+        Panel playlistsHeader = new Panel();
+        playlistsHeader.setBeforeRenderCallback(() -> {
+            playlistsHeader.setBounds(Math.max(1, playlistsHeader.getParentWidth() - 8), 16);
+            playlistsHeader.setPosition(4, playlistsHeader.getRelativeY());
+        });
+        LabelWidget lblPlaylists = new LabelWidget("我的账号歌单", FontManager.pf14bold);
         lblPlaylists.setBeforeRenderCallback(() -> {
             lblPlaylists.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            lblPlaylists.setPosition(6, lblPlaylists.getRelativeY());
+            // 两栏标题同一套基准，否则「导入歌单」和「我的账号歌单」会互相错开半像素到几像素。
+            lblPlaylists.setPosition(2, NcmSheet.inkTop(lblPlaylists, playlistsHeader.getHeight() * .5));
         });
-
-        this.playlistPanel.addChild(lblPlaylists);
+        playlistsHeader.addChild(lblPlaylists);
+        this.playlistPanel.addChild(playlistsHeader);
 
         if (qishuiMode) {
             if (NeteaseMusicService.isLoggedIn(MusicPlatform.QISHUI)) {
-                PlaylistItem mine = new PlaylistItem("D",
-                        () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                        () -> "我的汽水歌单", () -> NCMScreen.getInstance().navigateAsync(
-                        "我的汽水歌单", this::loadQishuiUserPlaylists));
-                mine.setShouldOverrideMouseCursor(true);
-                this.playlistPanel.addChild(mine);
-
+                // 账号歌单不再独占一行跳到二级页：走快照异步加载，
+                // 直接摊在下面「我的账号歌单」栏里（与 QQ / 酷狗一致）。
                 PlaylistItem favorites = new PlaylistItem("C",
                         () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
                         () -> "我收藏的歌曲", () -> NCMScreen.getInstance().navigateAsync(
@@ -472,42 +555,20 @@ public class NavigateBar extends NCMPanel {
             } else {
                 PlaylistItem login = new PlaylistItem("·",
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                        () -> "登录可同步账号歌单；未登录也能粘贴链接导入",
+                        () -> "登录可同步账号歌单",
                         () -> NCMScreen.getInstance().openAccountManager());
                 login.setShouldOverrideMouseCursor(true);
                 this.playlistPanel.addChild(login);
             }
-
-            // 导入入口：点开二级导入面板（自由输入 / 粘贴均可），导入全程匿名、只存本地引用。
-            PlaylistItem importItem = new PlaylistItem("加", FontManager.pf12bold,
-                    () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
-                    () -> "导入歌单（输入/粘贴链接）",
-                    () -> NCMScreen.getInstance().openQishuiImport());
-            importItem.setShouldOverrideMouseCursor(true);
-            this.playlistPanel.addChild(importItem);
-
-            // 本地已导入的歌单：点开由 PlayList 匿名向上游拉曲目，右键移除本地引用。
-            for (PlayList imported : QishuiLocalPlaylistStore.list()) {
-                final PlayList ready = imported;
-                PlaylistItem item = new PlaylistItem("D",
-                        () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                        ready::getName,
-                        () -> NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(ready)));
-                item.setPlaylist(ready);
-                item.setShouldOverrideMouseCursor(true);
-                item.setOnSecondaryClick(() -> removeImportedQishuiPlaylist(
-                        ready.getPlatformPlaylistId(), ready.getName()));
-                this.playlistItems.add(item);
-                this.playlistPanel.addChild(item);
-            }
         }
 
-        // QQ / 酷狗 / B 站的账号歌单都是异步加载的快照；网易云继续使用现有 CloudMusic 缓存。
+        // QQ / 酷狗 / B 站 / 汽水的账号歌单都是异步加载的快照；网易云继续使用现有 CloudMusic 缓存。
         List<PlayList> pl = qqMode
                 ? NeteaseMusicService.getQQUserPlaylistsSnapshot()
                 : kugouMode ? KuGouMusicService.getUserPlaylistsSnapshot()
                 : bilibiliMode ? BilibiliFavoriteService.getUserPlaylistsSnapshot()
-                : (youtubeMode || qishuiMode) ? Collections.emptyList() : CloudMusic.playLists;
+                : qishuiMode ? QishuiMusicService.getUserPlaylistsSnapshot()
+                : youtubeMode ? Collections.emptyList() : CloudMusic.playLists;
 
         if (qqMode && NeteaseMusicService.isLoggedIn(MusicPlatform.QQ)
                 && !NeteaseMusicService.areQQUserPlaylistsLoaded()) {
@@ -524,11 +585,16 @@ public class NavigateBar extends NCMPanel {
             BilibiliFavoriteService.ensureUserPlaylistsAsync(() ->
                     MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().markDirty()));
         }
+        if (qishuiMode && NeteaseMusicService.isLoggedIn(MusicPlatform.QISHUI)
+                && !QishuiMusicService.areUserPlaylistsLoaded()) {
+            QishuiMusicService.ensureUserPlaylistsAsync(() ->
+                    MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().markDirty()));
+        }
 
-        // QQ 的创建/收藏歌单统一显示在“我的歌单”下，不再因为平台切换而隐藏整个入口。
+        // QQ 的创建/收藏歌单统一显示在“我的账号歌单”下，不再因为平台切换而隐藏整个入口。
         lblPlaylists.setHidden(false);
         if (pl != null && !pl.isEmpty()) {
-            if (qqMode || kugouMode || bilibiliMode) {
+            if (qqMode || kugouMode || bilibiliMode || qishuiMode) {
                 for (PlayList playList : pl) {
                     PlaylistItem item = new PlaylistItem("D",
                             () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
@@ -555,7 +621,7 @@ public class NavigateBar extends NCMPanel {
                     this.playlistPanel.addChild(item);
                 }
             }
-        } else if (qqMode || kugouMode || bilibiliMode) {
+        } else if (qqMode || kugouMode || bilibiliMode || qishuiMode) {
             String status;
             if (bilibiliMode) {
                 status = !NeteaseMusicService.isLoggedIn(MusicPlatform.BILIBILI)
@@ -567,6 +633,11 @@ public class NavigateBar extends NCMPanel {
                         ? "登录酷狗音乐后加载歌单"
                         : (KuGouMusicService.areUserPlaylistsLoading()
                         ? "正在加载酷狗歌单…" : "暂无可用酷狗歌单");
+            } else if (qishuiMode) {
+                status = !NeteaseMusicService.isLoggedIn(MusicPlatform.QISHUI)
+                        ? "登录汽水音乐后加载歌单"
+                        : (QishuiMusicService.areUserPlaylistsLoading()
+                        ? "正在加载汽水歌单…" : "暂无可用汽水歌单");
             } else {
                 status = !NeteaseMusicService.isLoggedIn(MusicPlatform.QQ)
                         ? "登录 QQ 音乐后加载歌单"
@@ -587,7 +658,7 @@ public class NavigateBar extends NCMPanel {
             lblSubscribed.setPosition(6, lblSubscribed.getRelativeY());
         });
 
-        // 收藏歌单是网易云独有的分组：QQ 与酷狗的收藏歌单都已经并入上面的"我的歌单"。
+        // 收藏歌单是网易云独有的分组：QQ 与酷狗的收藏歌单都已经并入上面的"我的账号歌单"。
         lblSubscribed.setHidden(qqMode || kugouMode || youtubeMode || bilibiliMode || qishuiMode);
         this.playlistPanel.addChild(lblSubscribed);
 
@@ -646,7 +717,11 @@ public class NavigateBar extends NCMPanel {
         SidebarActionButton btnFont = new SidebarActionButton(SidebarActionIcon.FONT);
         SidebarActionButton btnPlayerSize = new SidebarActionButton(SidebarActionIcon.SCALE);
         SidebarActionButton btnRefresh = new SidebarActionButton(SidebarActionIcon.REFRESH);
-        quickActionsSurface.addChild(btnTheme, btnFont, btnPlayerSize, btnRefresh);
+        // 公告排在最后：这四颗的位置用户已经用熟了，新来的那颗排到末尾比插进中间好。
+        SidebarActionButton btnAnnouncement = new SidebarActionButton(SidebarActionIcon.ANNOUNCEMENT);
+        btnAnnouncement.setUnreadBadge(() -> AnnouncementChecker.hasUnread());
+        this.announcementButton = btnAnnouncement;
+        quickActionsSurface.addChild(btnTheme, btnFont, btnPlayerSize, btnRefresh, btnAnnouncement);
 
         btnFont.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
             if (mouseButton != 0) {
@@ -755,6 +830,23 @@ public class NavigateBar extends NCMPanel {
             // 与当前所选的搜索/内容提供方无关。
             btnRefresh.setAlpha(1f);
             btnRefresh.setColor(btnRefresh.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+        });
+        btnAnnouncement.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+            if (mouseButton != 0) {
+                // 右键什么都不做，但也不放过去：这颗按钮下面就是账号行，穿透过去会打开账号管理。
+                return mouseButton == 1;
+            }
+            NCMScreen.getInstance().openAnnouncements();
+            return true;
+        });
+        btnAnnouncement.setBeforeRenderCallback(() -> {
+            double actionWidth = railSlotWidth(quickActionsSurface.getWidth());
+            btnAnnouncement.setBounds(actionWidth, 28);
+            btnAnnouncement.setPosition(10 + actionWidth * 4, 2);
+            btnAnnouncement.setRadius(7);
+            btnAnnouncement.setColor(btnAnnouncement.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
@@ -869,6 +961,23 @@ public class NavigateBar extends NCMPanel {
         }
     }
 
+    /**
+     * 快捷操作条第五颗按钮的「让位」判断。
+     *
+     * <p>必须放在父组件的渲染里而不是那颗按钮自己的回调里：被 {@code setHidden(true)} 的组件整帧
+     * 跳过自己的回调，也就永远没有机会把自己再显示回来 —— 那样侧栏一收窄，公告图标就再也回不来了。</p>
+     *
+     * <p>让位的是最新加上的这颗：图标本身有 17.2 宽，五颗挤在窄侧栏上会互相叠边，而把四颗已经用惯
+     * 的按钮挤扁是更糟的失败（同 {@code ControlsBar} 那条图标让位链的教训）。</p>
+     */
+    @Override
+    public void onRender(double mouseX, double mouseY) {
+        if (this.announcementButton != null) {
+            this.announcementButton.setHidden(!railFitsAnnouncement(this.getWidth() - 16));
+        }
+        super.onRender(mouseX, mouseY);
+    }
+
     @Override
     public boolean onMouseClicked(double mouseX, double mouseY, int mouseButton) {
         return false;
@@ -892,12 +1001,30 @@ public class NavigateBar extends NCMPanel {
     /**
      * 快捷操作条上一颗按钮的宽度。
      *
-     * <p>四颗按钮、左右各 2 像素留白、每两颗之间 2 像素，所以扣掉的是 10 而不是 8。
-     * 收成一个方法是因为四处 {@code beforeRenderCallback} 必须用同一个公式：其中任何一处
+     * <p>左右各 2 像素留白、每两颗之间 2 像素，所以扣掉的是 {@code 4 + 2 * 颗数}。
+     * 收成一个方法是因为五处 {@code beforeRenderCallback} 必须用同一个公式：其中任何一处
      * 落后一版，那颗按钮就会和邻居错开或者叠上去。</p>
      */
     private static double railSlotWidth(double railWidth) {
-        return Math.max(1, (railWidth - 10) / 4.0);
+        int slots = railSlotCount(railWidth);
+        // 左右各 2 像素留白，n 颗之间有 n-1 条 2 像素的缝。
+        return Math.max(1, (railWidth - (4 + 2 * (slots - 1))) / slots);
+    }
+
+    /** 这一帧这条快捷操作条上有几颗按钮：窄到放不下第五颗时由公告让位。 */
+    private static int railSlotCount(double railWidth) {
+        return railFitsAnnouncement(railWidth) ? 5 : 4;
+    }
+
+    /**
+     * 第五颗按钮放不放得下。
+     *
+     * <p>门槛取 18.5：图标底板宽 17.2，再窄邻居之间就会重叠，而这条按钮排是横向并排的，
+     * 叠在一起的图标读起来就是「界面坏了」。侧栏收窄到 112 逻辑像素那一档正好落在门槛外侧，
+     * 于是那一档只显示原来那四颗。</p>
+     */
+    private static boolean railFitsAnnouncement(double railWidth) {
+        return (railWidth - 12) / 5.0 >= 18.5;
     }
 
     /** 会员徽标的胶囊高度与图标方格。方格必须是 partyIcon24 实际画出来的 12，填大了图标和字之间会空一块。 */
@@ -1019,18 +1146,31 @@ public class NavigateBar extends NCMPanel {
         THEME,
         FONT,
         SCALE,
-        REFRESH
+        REFRESH,
+        ANNOUNCEMENT
     }
+
+    /** 快捷操作条上那枚未读小圆点的颜色。 */
+    private static final int UNREAD_DOT_COLOR = 0xFFE05B66;
 
     /**
      * 紧凑的矢量图标按钮，在任意播放器缩放比例下都保持清晰可读。
      */
     private static final class SidebarActionButton extends RoundedRectWidget {
         private final SidebarActionIcon icon;
+        private BooleanSupplier badge;
         private float hoverAnimation;
         private float pressAnimation;
         private volatile boolean spinning;
         private long lastClickAt;
+
+        /**
+         * lucide 的 24 网格在这颗按钮里占的边长。
+         *
+         * <p>定成 16 是为了和换掉之前的手绘几何同大：lucide 的字形在网格里自带约 2 个单位的内边距，
+         * 实际墨迹约 13.3，正对着原来那圈 ±6.5 单位的作图范围，也就刚好落进 14.8 的那块内底板。</p>
+         */
+        private static final double LUCIDE_BOX = 16.0;
 
         private SidebarActionButton(SidebarActionIcon icon) {
             this.icon = icon;
@@ -1039,6 +1179,11 @@ public class NavigateBar extends NCMPanel {
 
         private void setSpinning(boolean spinning) {
             this.spinning = spinning;
+        }
+
+        /** 给这颗按钮挂一枚未读小圆点。判断每帧问一次，读完的那一刻就消失。 */
+        private void setUnreadBadge(BooleanSupplier badge) {
+            this.badge = badge;
         }
 
         @Override
@@ -1076,16 +1221,76 @@ public class NavigateBar extends NCMPanel {
 
             api.getGLStateManager().pushMatrix();
             scaleAtPos(centerX, centerY, iconScale);
+            if (!drawLucideIcon(centerX, centerY, alpha, accent, foreground)) {
+                renderHandDrawnIcon(centerX, centerY, alpha, accent, foreground);
+            }
+            api.getGLStateManager().popMatrix();
+
+            if (badge != null && badge.getAsBoolean()) {
+                // 未读小圆点压在图标底板上，所以先垫一圈底色把它从邻居图形里分离出来。
+                double size = 5.4;
+                double dotX = getX() + getWidth() - size - .5;
+                double dotY = getY() - .5;
+                roundedRect(dotX - .9, dotY - .9, size + 1.8, size + 1.8, (size + 1.8) * .5,
+                        RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND),
+                                Math.min(1f, alpha + .4f)));
+                roundedRect(dotX, dotY, size, size, size * .5, RenderSystem.reAlpha(UNREAD_DOT_COLOR, alpha));
+            }
+        }
+
+        /**
+         * 走 {@link FoliaLucideIcons} 那套矢量管线：图标几何是 lucide 的原始路径数据，
+         * 不再是这里手写的圆角矩形拼出来的。
+         *
+         * <p>主题用强调色、其余几颗用正文色。全染成强调色的话，按钮底下那条强调色底杠就白画了
+         * —— 它靠的正是「图标与底杠不同色」才分得出来。</p>
+         *
+         * @return 真的画了才返回 true。不在 Skija 帧内、路径解析失败、或这颗按钮没有对应的
+         *         lucide 字形都返回 false，由调用方退回 {@link #renderHandDrawnIcon}：
+         *         界面不能因为一枚图标画不出来而空一块。
+         */
+        private boolean drawLucideIcon(double centerX, double centerY, float alpha,
+                                       int accent, int foreground) {
+            String name;
+            int ink;
+            if (icon == SidebarActionIcon.THEME) {
+                name = FoliaLucideIcons.PALETTE;
+                ink = accent;
+            } else if (icon == SidebarActionIcon.FONT) {
+                name = FoliaLucideIcons.TYPOGRAPHY;
+                ink = foreground;
+            } else if (icon == SidebarActionIcon.SCALE) {
+                name = FoliaLucideIcons.SCALING;
+                ink = foreground;
+            } else if (icon == SidebarActionIcon.REFRESH) {
+                name = FoliaLucideIcons.REFRESH;
+                ink = spinning ? accent : foreground;
+                if (spinning) {
+                    // 只有转起来才转：绕图标中心自转，转速沿用原来那版环形图标的每 6 毫秒一度。
+                    rotateAtPos(centerX, centerY,
+                            (float) ((System.currentTimeMillis() / 6.0) % 360.0));
+                }
+            } else {
+                return false;
+            }
+            return FoliaLucideIcons.draw(name, centerX, centerY, LUCIDE_BOX,
+                    RenderSystem.reAlpha(ink, alpha));
+        }
+
+        /** 手绘兜底：矢量管线画不出来时退回换掉之前的那套几何。 */
+        private void renderHandDrawnIcon(double centerX, double centerY, float alpha,
+                                         int accent, int foreground) {
             if (icon == SidebarActionIcon.THEME) {
                 renderThemeIcon(centerX, centerY, alpha, accent, foreground);
             } else if (icon == SidebarActionIcon.FONT) {
                 renderFontIcon(centerX, centerY, alpha, accent, foreground);
             } else if (icon == SidebarActionIcon.SCALE) {
                 renderScaleIcon(centerX, centerY, alpha, accent, foreground);
+            } else if (icon == SidebarActionIcon.ANNOUNCEMENT) {
+                renderAnnouncementIcon(centerX, centerY, alpha, accent, foreground);
             } else {
                 renderRefreshIcon(centerX, centerY, alpha, accent, foreground);
             }
-            api.getGLStateManager().popMatrix();
         }
 
         @Override
@@ -1174,8 +1379,30 @@ public class NavigateBar extends NCMPanel {
                     RenderSystem.reAlpha(foreground, alpha * .92f));
         }
 
+        /**
+         * 一张贴着三条文字的公告纸。
+         *
+         * <p>画矢量而不是用 {@code PartyIcons.MAIL_UNREAD}：这条快捷操作条上另外四颗全是矢量图形，
+         * 混一枚字形进来，描边粗细与光学重心都对不上邻居；而这条按钮会跟着播放器缩放走，
+         * 矢量在任何倍率下都锐。</p>
+         */
+        private void renderAnnouncementIcon(double x, double y, float alpha, int accent, int foreground) {
+            double left = x - 6.1;
+            double top = y - 6.7;
+            double width = 11.2;
+            double height = 13.4;
+            roundedRect(left, top, width, height, 2.3, RenderSystem.reAlpha(accent, alpha * .30f));
+            // 三条文字线，最后一条短一截：读起来是「这里写着一段话」，而不是一块表格。
+            int ink = RenderSystem.reAlpha(foreground, alpha * .92f);
+            roundedRect(left + 2.0, top + 2.7, width - 4.0, 1.5, .75, ink);
+            roundedRect(left + 2.0, top + 5.6, width - 4.0, 1.5, .75, ink);
+            roundedRect(left + 2.0, top + 8.5, width - 6.6, 1.5, .75,
+                    RenderSystem.reAlpha(foreground, alpha * .74f));
+        }
+
         private int getIconAccentColor() {
             if (icon == SidebarActionIcon.FONT) return 0xFFB79BFF;
+            if (icon == SidebarActionIcon.ANNOUNCEMENT) return 0xFFFFC061;
             if (icon == SidebarActionIcon.SCALE) return 0xFF67D8FF;
             if (icon == SidebarActionIcon.REFRESH) return 0xFF59E3A5;
             return NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
@@ -1511,14 +1738,6 @@ public class NavigateBar extends NCMPanel {
         }
     }
 
-    private NCMPanel loadQishuiUserPlaylists() {
-        LinkedHashSet<PlayList> unique = new LinkedHashSet<>();
-        unique.addAll(QishuiMusicService.userPlaylists(200));
-        unique.addAll(QishuiMusicService.collectionPlaylists(200));
-        if (unique.isEmpty()) return null;
-        return new HomePanel(new ArrayList<>(unique), "我的汽水歌单 · " + unique.size());
-    }
-
     private NCMPanel loadQishuiCollectionPanel() {
         List<Music> tracks = QishuiMusicService.collectionTracks(500);
         if (tracks.isEmpty()) return null;
@@ -1540,12 +1759,13 @@ public class NavigateBar extends NCMPanel {
         return new HomePanel(radios, "汽水电台 · " + radios.size());
     }
 
-    /** 移除一条本地导入的汽水歌单引用（右键触发）；不影响上游，也不涉及账号。 */
-    private void removeImportedQishuiPlaylist(String playlistId, String name) {
-        QishuiLocalPlaylistStore.remove(playlistId);
+    /** 移除一条本地导入的歌单引用（右键触发）；不影响上游，也不涉及账号。 */
+    private void removeImportedPlaylist(PlayList playlist) {
+        ImportedPlaylistStore.remove(playlist);
         NCMScreen.getInstance().markDirty();
         DownloadDynamicIsland.showModelOperationResult("导入歌单",
-                "已移除「" + (name == null || name.isEmpty() ? playlistId : name) + "」", true);
+                "已移除「" + (playlist.getName() == null || playlist.getName().isEmpty()
+                        ? playlist.getPlatformPlaylistId() : playlist.getName()) + "」", true);
     }
 
     /** 列表里当前被选中的条目，没有选中项时返回 {@code null}。 */

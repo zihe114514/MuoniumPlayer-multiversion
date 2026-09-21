@@ -1,11 +1,13 @@
 package com.muoniumplayer;
 
 import com.muoniumplayer.party.net.MpNetFabric;
+import com.muoniumplayer.core.screens.TitleMenuAnnouncementButton;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
+import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.minecraft.client.KeyMapping;
 
 /**
@@ -41,9 +43,15 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         // 4. 事件挂点
         ClientTickEvents.END_CLIENT_TICK.register(client::onClientTick);
         HudRenderCallback.EVENT.register((drawContext, tickDelta) -> client.onHudRender());
-        ScreenEvents.AFTER_INIT.register((minecraft, screen, scaledWidth, scaledHeight) ->
-                ScreenEvents.afterRender(screen).register(
-                        (renderedScreen, drawContext, mouseX, mouseY, tickDelta) ->
-                                client.onScreenRendered(renderedScreen)));
+        ScreenEvents.AFTER_INIT.register((minecraft, screen, scaledWidth, scaledHeight) -> {
+            ScreenEvents.afterRender(screen).register(
+                    (renderedScreen, drawContext, mouseX, mouseY, tickDelta) ->
+                            client.onScreenRendered(renderedScreen));
+            // 主菜单上的「公告」入口。AFTER_INIT 在原版 init() 之后派发，窗口 resize 时会再来一次，
+            // 而那时原版已经清空了自己的组件，所以这里 add 一次就是一次，不会越加越多。
+            if (TitleMenuAnnouncementButton.appliesTo(screen)) {
+                Screens.getButtons(screen).add(TitleMenuAnnouncementButton.create());
+            }
+        });
     }
 }

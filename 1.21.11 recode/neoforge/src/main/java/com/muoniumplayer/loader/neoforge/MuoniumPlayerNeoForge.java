@@ -1,6 +1,7 @@
 package com.muoniumplayer.loader.neoforge;
 
 import com.muoniumplayer.MuoniumPlayerClient;
+import com.muoniumplayer.core.screens.TitleMenuAnnouncementButton;
 import com.muoniumplayer.party.net.MpNetNeoForge;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -47,6 +48,7 @@ public final class MuoniumPlayerNeoForge {
         gameBus.addListener(this::onClientTick);
         gameBus.addListener(this::onRenderGui);
         gameBus.addListener(this::onScreenRendered);
+        gameBus.addListener(this::onScreenInit);
     }
 
     /**
@@ -90,5 +92,19 @@ public final class MuoniumPlayerNeoForge {
     /** 对应 Fabric 的 ScreenEvents.afterRender：界面画完之后叠灵动岛。 */
     private void onScreenRendered(ScreenEvent.Render.Post event) {
         MuoniumPlayerClient.getInstance().onScreenRendered(event.getScreen());
+    }
+
+    /**
+     * 主菜单上的「公告」入口，对应 Fabric 侧 {@code Screens.getButtons(screen).add(...)}。
+     *
+     * <p>{@code ScreenEvent.Init.Post} 由原版 {@code Screen#init} 与 {@code rebuildWidgets} 在装配完
+     * 自己的按钮之后派发，而它的 add 消费者会同时写进 renderables / narratables / children，
+     * 所以这里只管 add 一颗就够：能被看见、能被点到、能被读屏念到。</p>
+     */
+    private void onScreenInit(ScreenEvent.Init.Post event) {
+        if (!TitleMenuAnnouncementButton.appliesTo(event.getScreen())) {
+            return;
+        }
+        event.addListener(TitleMenuAnnouncementButton.create());
     }
 }

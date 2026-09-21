@@ -1,8 +1,15 @@
 package com.muoniumplayer.core.update;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 /**
  * 远端版本清单（{@code update.json}）的解析结果。
@@ -18,7 +25,15 @@ import com.google.gson.JsonObject;
 public final class UpdateManifest {
 
     /** 本地认识的清单版本。清单声明得更高时仍然按已知字段读，未知字段忽略。 */
-    public static final int KNOWN_SCHEMA = 1;
+    public static final int KNOWN_SCHEMA = 2;
+
+    /**
+     * 一次最多读几条公告。
+     *
+     * <p>纯粹是防外部输入把界面撑坏：清单是公开仓库上的纯文本，理论上能写多少条写多少条，
+     * 而每一条都会在界面建一组组件。真要发更多条，说明该做分页而不是抬这个数。</p>
+     */
+    public static final int MAX_ANNOUNCEMENTS = 30;
 
     private static final Gson GSON = new Gson();
 
@@ -61,14 +76,17 @@ public final class UpdateManifest {
     private final int schema;
     private final JsonObject channels;
     private final Entry fallback;
+    private final List<Announcement> announcements;
 
-    private UpdateManifest(int schema, JsonObject channels, Entry fallback) {
+    private UpdateManifest(int schema, JsonObject channels, Entry fallback,
+                           List<Announcement> announcements) {
         this.schema = schema;
         this.channels = channels;
         this.fallback = fallback;
+        this.announcements = announcements;
     }
 
-    /** 解析失败、内容不是对象、既没有 channels 也没有可用 fallback 时返回 {@code null}。 */
+    /** 解析失败、内容不是对象、既没有 channels 也没有可用 fallback、也没有可用公告时返回 {@code null}。 */
     public static UpdateManifest parse(String json) {
         if (json == null) {
             return null;
@@ -93,10 +111,11 @@ public final class UpdateManifest {
             }
             JsonObject channels = childObject(root, "channels");
             Entry fallback = readEntry(childObject(root, "fallback"));
-            if (channels == null && fallback == null) {
+            List<Announcement> announcements = readAnnouncements(root.get("announcements"));
+            if (channels == null && fallback == null && announcements.isEmpty()) {
                 return null;
             }
-            return new UpdateManifest(schema, channels, fallback);
+            return new UpdateManifest(schema, channels, fallback, announcements);
         } catch (Throwable malformed) {
             return null;
         }
@@ -123,6 +142,51 @@ public final class UpdateManifest {
             }
         }
         return entry != null ? entry : this.fallback;
+    }
+
+    /**
+     * 公告列表，按清单数组里的顺序（约定是「最新的写在最前面」）。
+     *
+     * <p>永远不为 {@code null}，没有公告时是空表。返回的是不可变表：这份解析结果会被
+     * 守护线程产出、界面每帧读，共享一个可变列表迟早出事。</p>
+     */
+    public List<Announcement> announcements() {
+        return this.announcements;
+    }
+
+    /**
+     * 读公告数组。
+     *
+     * <p>逐条容错：不是数组、元素不是对象、缺 id 或标题正文全空的条目一律跳过，一条坏的连累不到
+     * 整批。id 重复时保留先出现的那条 —— 数组顺序就是显示顺序，重复本身就是清单写错了，
+     * 但已读记账必须稳定，不能两条抢同一个 id。</p>
+     */
+    private static List<Announcement> readAnnouncements(JsonElement element) {
+        if (element == null || !element.isJsonArray()) {
+            return Collections.emptyList();
+        }
+        List<Announcement> read = new ArrayList<Announcement>();
+        Set<String> seen = new HashSet<String>();
+        JsonArray array = element.getAsJsonArray();
+        for (int index = 0; index < array.size() && read.size() < MAX_ANNOUNCEMENTS; index++) {
+            JsonElement item = array.get(index);
+            if (!item.isJsonObject()) {
+                continue;
+            }
+            JsonObject object = item.getAsJsonObject();
+            String id = childString(object, "id");
+            String title = childString(object, "title");
+            String body = childString(object, "body");
+            if (id.isEmpty() || (title.isEmpty() && body.isEmpty())) {
+                continue;
+            }
+            if (!seen.add(id)) {
+                continue;
+            }
+            read.add(new Announcement(id, childString(object, "date"), childString(object, "kind"),
+                    title, body, childString(object, "link"), childString(object, "linkText")));
+        }
+        return Collections.unmodifiableList(read);
     }
 
     private static Entry readEntry(JsonObject object) {

@@ -12,6 +12,8 @@ import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.settings.HudSetting;
+import com.muoniumplayer.core.screens.GuiAnnouncements;
+import com.muoniumplayer.core.update.AnnouncementChecker;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import com.muoniumplayer.core.widget.impl.BlossomLyricStyle;
 import com.muoniumplayer.core.widget.impl.MusicLyricsWidget;
@@ -910,6 +912,12 @@ public final class HudSettingsModel {
                                                 sweepAudioCache();
                                             }
                                         }))),
+                new Category("公告", "远端清单上挂着的话，以及看过哪些", 0xFFFFC061, HudSettingsIcons.INFO,
+                        new Group("公告中心", HudSettingsIcons.INFO,
+                                action(AnnouncementChecker::unreadLabel,
+                                        "没读过的公告会在主菜单弹一次，看过之后就只能从这个入口进去回看。"
+                                                + "公告与更新检查读同一份远端清单，最多 30 分钟问一次。",
+                                        HudSettingsModel::openAnnouncements))),
 
                 new Category("播放器界面", "播放器窗口自身的开关动画", 0xFFE59AC8, HudSettingsIcons.NOTE,
                         new Group("界面外观", HudSettingsIcons.MODERN_UI,
@@ -997,6 +1005,17 @@ public final class HudSettingsModel {
                                             }
                                         })))
         };
+    }
+
+    /**
+     * 打开公告中心。
+     *
+     * <p>三套设置界面（Classic / Pro / Folia）与 OneConfig 都读同一份模型，所以这一行只在模型里
+     * 写一次就三处都有。公告窗是一个独立 Screen 而不是浮层：设置界面自己就是 {@code Screen}，
+     * 关掉时按 {@code parent} 回到打开它的那一屏。</p>
+     */
+    private static void openAnnouncements() {
+        GuiAnnouncements.open(net.minecraft.client.Minecraft.getInstance().gui.screen());
     }
 
     /** 「立即清理」那一行的标签，顺带把当前占用显示出来。 */

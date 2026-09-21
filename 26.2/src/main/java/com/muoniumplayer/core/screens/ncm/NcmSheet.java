@@ -715,6 +715,18 @@ public abstract class NcmSheet extends NCMPanel {
         return ink.alignCenterY(centerY);
     }
 
+    /**
+     * 一行文字的<b>墨迹</b>高度（逻辑像素），量不出来退回行盒高度。
+     *
+     * <p>给同一行里的图形记号定尺寸用：字号档位、中日韩与拉丁的字身差别都很大，写死一个
+     * "图标多大"迟早和某一行的文字对不上。按旁边那行文字自己的墨迹量，换字体换字号都跟着走。</p>
+     */
+    public static double labelInkHeight(final LabelWidget label) {
+        GlyphInkMetrics ink = GlyphInkMetrics.of(label.getFont(), inkProbe(label.getLabel()));
+        if (ink == null || ink.height <= 0) return label.getHeight();
+        return ink.height;
+    }
+
     /** 优先拿中日韩字符量墨迹带：它们占满字身，按它居中之后夹在中间的数字与拉丁字母也在带内。 */
     private static char inkProbe(final String text) {
         char latin = 0;

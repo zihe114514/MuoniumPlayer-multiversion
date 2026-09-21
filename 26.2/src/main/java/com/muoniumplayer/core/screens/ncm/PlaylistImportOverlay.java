@@ -2,9 +2,9 @@ package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.core.management.FontManager;
+import com.muoniumplayer.core.ncm.music.ImportedPlaylistStore;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
-import com.muoniumplayer.core.ncm.music.QishuiLocalPlaylistStore;
-import com.muoniumplayer.core.ncm.music.QishuiMusicService;
+import com.muoniumplayer.core.ncm.music.PlaylistImportService;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
@@ -19,16 +19,15 @@ import com.muoniumplayer.party.ui.PartyIcons;
 import java.util.function.IntSupplier;
 
 /**
- * 汽水歌单导入面板（侧栏「导入歌单」的二级界面）。
+ * 全渠道歌单导入面板（侧栏「导入歌单」标题行的「＋」打开）。
  *
- * <p>替代原先"点一下直接读剪贴板"的一键流程：打开后是一个可自由输入的文本框，
- * Ctrl+V 原生粘贴、回车即导入，另外给一颗「粘贴」按钮把剪贴板内容填进输入框
+ * 输入框可自由编辑，Ctrl+V 原生粘贴、回车即导入，另有一颗「粘贴」按钮把剪贴板内容填进来
  * （长链接里常带空格/中文文案，先看见再确认比盲读剪贴板稳妥）。</p>
  *
- * <p>导入全程匿名：解析与拉取都走 {@link QishuiMusicService#importPlaylist}（空 Cookie），
- * 结果只落在 {@link QishuiLocalPlaylistStore} 的本地 JSON，不碰任何账号凭据文件。</p>
+ * <p>导入全程匿名：解析走 {@link PlaylistImportService}，结果只落在
+ * {@link ImportedPlaylistStore} 的本地 JSON，不读写任何账号凭据。</p>
  */
-public final class QishuiImportOverlay extends NcmSheet {
+public final class PlaylistImportOverlay extends NcmSheet {
 
     private static final double HEADER_H = 64.0;
     /** 输入行的高度；与账号管理页的 Cookie 输入保持同一视觉尺寸。 */
@@ -46,10 +45,13 @@ public final class QishuiImportOverlay extends NcmSheet {
     private static final int TONE_BAD = 2;
     private static final int TONE_BUSY = 3;
 
+    private static final String IDLE_TEXT =
+            "自动识别平台 · 支持网易云 / QQ / 酷狗 / B 站 / 汽水 · YouTube 歌单暂不支持导入";
+
     private TextFieldWidget input;
     /** 后台解析进行中：挡住重复提交，也让按钮文案换成「正在导入…」。 */
     private volatile boolean running;
-    private String statusText = "支持分享链接、?playlist_id= 参数、抖音短链或直接输入数字 ID";
+    private String statusText = IDLE_TEXT;
     private int statusTone = TONE_IDLE;
 
     @Override
@@ -57,9 +59,9 @@ public final class QishuiImportOverlay extends NcmSheet {
         beginPage();
 
         final Panel dialog = sheet(452, () -> HEADER_H + FIELD_H + 8 + 26 + FOOTER_H + 16);
-        header(dialog, PartyIcons.LINK, "导入汽水歌单",
-                () -> "匿名导入 · 无需登录 · 只保存在本机",
-                (IntSupplier) MusicPlatform.QISHUI::getBrandColor);
+        header(dialog, PartyIcons.LINK, "导入歌单",
+                () -> "粘贴分享链接自动识别平台 · 匿名导入 · 只保存在本机",
+                (IntSupplier) () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
 
         final RoundedRectWidget field = new RoundedRectWidget();
         dialog.addChild(field);
@@ -88,7 +90,7 @@ public final class QishuiImportOverlay extends NcmSheet {
         dialog.addChild(input);
         input.getTextField().setMaxStringLength(4096);
         input.setEnabled(true).setFocused(true);
-        input.setPlaceholder("输入或粘贴歌单分享链接 / 数字 ID");
+        input.setPlaceholder("输入或粘贴任意平台的歌单分享链接 / 数字 ID");
         input.drawUnderline(false);
         input.setBeforeRenderCallback(() -> {
             input.setBounds(Math.max(1, field.getWidth() - 20), Math.max(1, field.getHeight() - 10));
@@ -120,8 +122,8 @@ public final class QishuiImportOverlay extends NcmSheet {
                     BUTTON_H);
             confirm.setPosition(paste.getRelativeX() + PASTE_W + BUTTON_GAP,
                     dialog.getHeight() - BUTTON_H - 10);
-            confirm.setColor(mix(MusicPlatform.QISHUI.getBrandColor(), 0xFFFFFF,
-                    confirm.isHovering() ? .16 : 0.0));
+            int accent = NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
+            confirm.setColor(mix(accent, 0xFFFFFF, confirm.isHovering() ? .16 : 0.0));
         });
     }
 
@@ -129,11 +131,11 @@ public final class QishuiImportOverlay extends NcmSheet {
         dispose();
     }
 
-    /** 把剪贴板内容填进输入框而不是直接导入：用户能先看到要导出的到底是什么。 */
+    /** 把剪贴板内容填进输入框而不是直接导入：用户能先看到要导入的到底是什么。 */
     private void fillFromClipboard() {
         String text = KeyboardUtils.getClipboardString();
         if (text == null || text.trim().isEmpty()) {
-            statusText = "剪贴板是空的：先复制汽水歌单分享链接或纯数字 ID";
+            statusText = "剪贴板是空的：先复制一份歌单分享链接或纯数字 ID";
             statusTone = TONE_BAD;
             return;
         }
@@ -151,12 +153,12 @@ public final class QishuiImportOverlay extends NcmSheet {
             return;
         }
         running = true;
-        statusText = "正在匿名拉取歌单信息…";
+        statusText = "正在识别平台并匿名拉取歌单信息…";
         statusTone = TONE_BUSY;
         MultiThreadingUtil.runAsync(() -> {
             final PlayList imported;
             try {
-                imported = QishuiMusicService.importPlaylist(pasted);
+                imported = PlaylistImportService.importPlaylist(pasted);
             } catch (IllegalArgumentException badInput) {
                 finish(badInput.getMessage(), false);
                 return;
@@ -168,7 +170,7 @@ public final class QishuiImportOverlay extends NcmSheet {
             }
             MultiThreadingUtil.runOnMainThread(() -> {
                 try {
-                    boolean isNew = QishuiLocalPlaylistStore.add(imported);
+                    boolean isNew = ImportedPlaylistStore.add(imported);
                     NCMScreen.getInstance().markDirty();
                     DownloadDynamicIsland.showModelOperationResult("导入歌单",
                             (isNew ? "已导入「" : "已更新「") + imported.getName() + "」", true);
