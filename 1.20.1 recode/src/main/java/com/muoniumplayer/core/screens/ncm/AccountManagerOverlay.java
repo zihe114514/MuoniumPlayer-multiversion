@@ -1512,7 +1512,9 @@ public class AccountManagerOverlay extends NcmSheet {
                 }
             } finally {
                 // 汽水的码是外部进程在替我们取的：不管是登上了、过期了还是人翻页走了，
-                // 都得让它收摊，否则每次点开汽水账号页都会攒一个 Electron 在后台。
+                // 都要通知它一声，让它从这一轮会话里退出来、转为空闲等下次复用。
+                // 注意是「转空闲」而不是「杀进程」——杀掉的话下次取码要重新自解压 88 MB；
+                // 而且风控那一次人是还在外部窗口里操作的，一杀就等于把他的验证作废。
                 if (platform == MusicPlatform.QISHUI) QishuiMusicService.cancelQrLogin();
             }
         });

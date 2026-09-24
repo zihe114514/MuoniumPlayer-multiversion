@@ -184,7 +184,18 @@
       console.warn('[lx.request] ' + method + ' 请求带了请求体，已忽略：' + url);
       payload = null;
     }
-    var id = host.httpSend(url, method, headers, payload, Number(settings.timeout) || 0, handler);
+    // 可观测性：把宿主替脚本发出的每一次 HTTP 记一行（成功带状态与字节，失败带原因）。
+    // 脚本内部常常把底层错误 catch 成一句 'Fail'，没有这条就没法反推真因。
+    var traced = function (error, response, body) {
+      if (error) {
+        host.log('warn', '[lx.request] ' + method + ' ' + url + ' 失败：' + (error.message || error));
+      } else {
+        host.log('log', '[lx.request] ' + method + ' ' + url + ' → ' + (response && response.statusCode)
+            + ' · ' + (response && response.bytes) + ' 字节');
+      }
+      return handler.apply(globalThis, arguments);
+    };
+    var id = host.httpSend(url, method, headers, payload, Number(settings.timeout) || 0, traced);
     return function () { host.httpAbort(id); };
   }
 
@@ -368,6 +379,17 @@
   }
 
   globalThis.__lxDispatch = function (requestKey, source, action, infoJson) {
+    // 脚本失败时把「哪个源 / 哪个动作 / 消息 / 调用行」记进日志：界面与文件里都能看到真因，
+    // 而不是只剩脚本自己抛的那句 'Fail'。交给宿主的响应仍只是消息，不掺日志。
+    var fail = function (where, error) {
+      var detail = '';
+      try {
+        detail = error && error.stack ? ' ' + String(error.stack).split('\n')[0] : '';
+      } catch (noStack) {}
+      host.log('warn', '[lx.' + action + ' ' + source + '] ' + where + '：'
+          + (error && (error.message || error)) + detail);
+      host.onResponse(requestKey, false, error && error.message ? error.message : String(error));
+    };
     if (!events.request) {
       host.onResponse(requestKey, false, 'Request event is not defined');
       return;
@@ -401,14 +423,14 @@
           }
           host.onResponse(requestKey, true, payload);
         }, function (error) {
-          host.onResponse(requestKey, false, error && error.message ? error.message : String(error));
+          fail('脚本拒绝', error);
         })
         .then(null, function (error) {
           // 校验函数自己抛出来的（返回值不合规），上面那个 onRejected 接不到。
-          host.onResponse(requestKey, false, error && error.message ? error.message : String(error));
+          fail('返回值校验未过', error);
         });
     } catch (thrown) {
-      host.onResponse(requestKey, false, thrown && thrown.message ? thrown.message : String(thrown));
+      fail('脚本同步抛错', thrown);
     }
   };
   // ════════════════════════════ globalThis.lx ════════════════════════════

@@ -323,7 +323,9 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
         double width = screen.getPanelWidth();
         double height = screen.getPanelHeight();
         double max = LyricsPanelGeometry.coverSizeMax(width, height);
-        boolean pausing = CloudMusic.player == null || CloudMusic.player.isPausing();
+        // 问的是「现在有没有在响」，不是「内部引擎在不在」：镜像态下出声的是外部播放器，
+        // 照 player 判会让封面在外部正常播放时也缩在暂停位（内部播放时两种写法逐字等价）。
+        boolean pausing = !CloudMusic.isAudibleNow();
         double size = pausing ? max * .8 : max;
         // 面板回报的落点（setTarget）是绕面板中心乘过 contentScale 的。contentScale 现在恒为 1
         // （入场已定稿为只走不透明度），这步换算是恒等，但两边必须继续走同一个函数：

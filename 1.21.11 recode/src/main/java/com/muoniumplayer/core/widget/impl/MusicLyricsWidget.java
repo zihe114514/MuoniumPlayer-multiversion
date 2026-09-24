@@ -203,7 +203,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         api.getGLStateManager().scale(hudScale, hudScale, 1);
         api.getGLStateManager().translate(-hudX, -hudY, 0);
 
-        float songProgress = CloudMusic.player.getCurrentTimeMillis();
+        // 镜像态下没有内部引擎：进度取快照，否则这一行先 NPE，桌面歌词也永远出不来。
+        float songProgress = (float) CloudMusic.positionMsNow();
 
         boolean shouldNotDisplayOtherLyrics = this.singleLine.getValue();
 
@@ -313,7 +314,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     private boolean shouldRender() {
         // 不要让淡出占用紧凑视口超过一半。
         // 只有真正的字级时间戳才能进入 KTV 渲染器。普通 LRC 解析后可能带有
-        return CloudMusic.player != null && !CloudMusic.player.isFinished()
+        return CloudMusic.hasLiveTrack()
                 && !CloudMusic.lyrics.isEmpty() && CloudMusic.lyricsMatchCurrentTrack();
     }
 

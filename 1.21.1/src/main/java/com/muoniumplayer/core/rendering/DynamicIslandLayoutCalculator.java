@@ -150,6 +150,8 @@ final class DynamicIslandLayoutCalculator {
     }
 
     private static double styleMinWidth(DynamicIslandStyle style, boolean noticeMode) {
+        // 回弹胶囊本身按"测出来的文字宽度"定尺寸，这里给的是静息地板值，基础宽度滑块仍从它缩放。
+        if (style == DynamicIslandStyle.BOUNCE) return noticeMode ? 118.0 : 140.0;
         if (style == DynamicIslandStyle.COMPACT) return noticeMode ? 118.0 : 146.0;
         if (style == DynamicIslandStyle.CARD) return noticeMode ? 146.0 : 170.0;
         if (style == DynamicIslandStyle.MUSIC_FOCUS) return noticeMode ? 172.0 : 194.0;
@@ -161,6 +163,8 @@ final class DynamicIslandLayoutCalculator {
     }
 
     private static double styleTargetHeight(DynamicIslandStyle style, boolean noticeMode) {
+        // 一款恒定的行高：多事件靠叠行变高，不靠把卡片拉高（见 drawIsland 的 bounce 分支）。
+        if (style == DynamicIslandStyle.BOUNCE) return BounceIslandMath.ROW_HEIGHT;
         if (style == DynamicIslandStyle.COMPACT) return noticeMode ? 30.0 : 32.0;
         if (style == DynamicIslandStyle.CARD) return noticeMode ? 38.0 : 42.0;
         if (style == DynamicIslandStyle.MUSIC_FOCUS) return noticeMode ? 50.0 : 56.0;
@@ -208,6 +212,11 @@ final class DynamicIslandLayoutCalculator {
      * 外面还套一层最大 1.01 的呼吸缩放。</p>
      */
     private static double stylePlateRight(DynamicIslandStyle style) {
+        // 回弹胶囊不走"托盘居中"那套推算：参考稿把文字左边界直接钉在 端距 + 托盘区宽 = 35，
+        // 于是这里反着补一个值，让 styleContentLeft 算回同一个 35，两套版式对得上。
+        if (style == DynamicIslandStyle.BOUNCE) {
+            return BounceIslandMath.SIDE_PADDING + BounceIslandMath.LOGO_AREA_WIDTH - CONTENT_GAP;
+        }
         if (style == DynamicIslandStyle.SYSTEM_CARD) return 20.0 + 17.0 * .5;
         if (style == DynamicIslandStyle.MUSIC_FOCUS) return 26.0 + 31.0 * .5 * 1.01;
         if (style == DynamicIslandStyle.LIQUID_GLASS) return 24.0 + 19.6 * .5 * 1.06;

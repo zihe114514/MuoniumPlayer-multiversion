@@ -259,6 +259,11 @@ public final class LxRuntime {
             // 引导脚本据此决定动作白名单要不要放宽到 lyric / pic（默认不放宽，与上游一致）。
             ScriptableObject.putProperty(scope, "__lxExtraActions", Boolean.valueOf(extraActions));
 
+            // Closure 只把用户脚本的「语法」降到 ES5，不负责补「运行期 built-in」。Rhino 1.7.15 缺
+            // Promise.any / AggregateError / String.matchAll 这类新标准库，上游脚本一句 Promise.any
+            // 就把初始化打死。先于引导脚本把这些垫片装进同一个作用域，宿主与用户脚本都吃得到。
+            installPolyfills(cx);
+
             String bootstrap = readBootstrap();
             beginTask();
             cx.evaluateString(scope, bootstrap, "lx-bootstrap.js", 1, null);
@@ -301,6 +306,42 @@ public final class LxRuntime {
             return new String(out.toByteArray(), StandardCharsets.UTF_8);
         } catch (Exception broken) {
             throw new IllegalStateException("读取内置引导脚本失败", broken);
+        } finally {
+            try {
+                stream.close();
+            } catch (Exception ignored) {
+                // 读完即弃，关不上也不影响。
+            }
+        }
+    }
+
+    /**
+     * 把现代 JS 垫片（{@code muonium/lx/polyfills.js}）装进脚本作用域。
+     *
+     * <p>整段是 best-effort：垫片缺失或内部抛错只降级为「没补上」并记一条 warn，绝不因为
+     * 想补新 API 反而把本来能跑的脚本一起弄崩。它跑在引导脚本之前、同一个 {@code scope} 里，
+     * 所以引导脚本与用户脚本都看得见这些补齐的 built-in。</p>
+     */
+    private void installPolyfills(Context cx) {
+        try {
+            String code = readPolyfillSource();
+            cx.evaluateString(scope, code, "muonium-polyfills.js", 1, null);
+        } catch (Throwable failure) {
+            log("warn", "现代 JS 垫片未装载（跳过，不影响脚本本身）：" + describe(failure));
+        }
+    }
+
+    private static String readPolyfillSource() {
+        InputStream stream = LxRuntime.class.getResourceAsStream("/muonium/lx/polyfills.js");
+        if (stream == null) throw new IllegalStateException("缺少内置资源 /muonium/lx/polyfills.js");
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] chunk = new byte[8192];
+            int read;
+            while ((read = stream.read(chunk)) > 0) out.write(chunk, 0, read);
+            return new String(out.toByteArray(), StandardCharsets.UTF_8);
+        } catch (Exception broken) {
+            throw new IllegalStateException("读取内置垫片脚本失败", broken);
         } finally {
             try {
                 stream.close();
@@ -508,6 +549,15 @@ public final class LxRuntime {
         if (message == null || message.isEmpty()) message = failure.getClass().getSimpleName();
         int newline = message.indexOf('\n');
         if (newline > 0) message = message.substring(0, newline);
+        // 脚本异常带源文件名与行号：贴上去，界面才知道崩在哪（转译后仍保留多行与行号）。
+        if (failure instanceof org.mozilla.javascript.RhinoException) {
+            org.mozilla.javascript.RhinoException re = (org.mozilla.javascript.RhinoException) failure;
+            String source = re.sourceName();
+            int line = re.lineNumber();
+            if (source != null && !source.isEmpty()) {
+                message = line > 0 ? message + "  [" + source + ":" + line + "]" : message + "  [" + source + "]";
+            }
+        }
         return message.length() > 400 ? message.substring(0, 400) + "..." : message;
     }
 

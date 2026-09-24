@@ -11,6 +11,7 @@ import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
+import com.muoniumplayer.core.ncm.music.YouTubeMusicService;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.json.JsonUtils;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
@@ -222,6 +223,31 @@ public class PlayList {
                 loadedMusics = BilibiliPlaylistService.tracks(getPlatformPlaylistId());
                 if (loadedMusics == null) {
                     throw new IllegalStateException("Bilibili playlist track response is null");
+                }
+            } else if (getPlatform() == MusicPlatform.YOUTUBE) {
+                // YouTube 的 platformPlaylistId 有两种：裸的 PL/RD/OLAK… 是歌单（内部再补 VL 前缀），
+                // radio:<videoId> 是「以某首为种子的电台」——与汽水电台同一套前缀约定。
+                String youtubeId = getPlatformPlaylistId();
+                List<YouTubeMusicService.Track> tracks;
+                if (youtubeId != null && youtubeId.startsWith("radio:")) {
+                    tracks = YouTubeMusicService.getRadio(youtubeId.substring("radio:".length()).trim(), 50);
+                } else {
+                    tracks = YouTubeMusicService.getPlaylist(youtubeId, 0).tracks;
+                }
+                if (tracks == null) {
+                    throw new IllegalStateException("YouTube playlist track response is null");
+                }
+                if (tracks.isEmpty()) {
+                    // 服务层把「解析失败」也归成空表，这里当成失败抛出去：静默给一片空白，
+                    // 用户会以为歌单真的没歌，而不是链接过期或网络被墙。
+                    throw new IllegalStateException("YouTube 没有解析出曲目（歌单可能是私有的，或链接已过期）");
+                }
+                loadedMusics = new ArrayList<>(tracks.size());
+                for (YouTubeMusicService.Track track : tracks) {
+                    Music music = Music.fromYouTubeMusicTrack(track);
+                    if (music != null) {
+                        loadedMusics.add(music);
+                    }
                 }
             } else {
                 RequestUtil.RequestAnswer requestAnswer = CloudMusicApi.playlistTrackAll(id, 8);

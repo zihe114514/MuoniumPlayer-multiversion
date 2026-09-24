@@ -36,6 +36,7 @@
     "java": ">=21"
   },
   "suggests": {
-    "oneconfigv1": "*"
+    "oneconfigv1": "*",
+    "modernui": "*"
   }
 }

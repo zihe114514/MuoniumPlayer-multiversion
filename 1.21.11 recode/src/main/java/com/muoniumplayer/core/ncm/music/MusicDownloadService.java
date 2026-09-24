@@ -3,6 +3,7 @@ package com.muoniumplayer.core.ncm.music;
 import lombok.SneakyThrows;
 import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
+import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.utils.network.HttpUtils;
 import com.muoniumplayer.core.utils.other.WrappedInputStream;
 
@@ -31,6 +32,18 @@ final class MusicDownloadService {
 
     @SneakyThrows
     static void downloadMusic(String playUrl, File music, Proxy proxy) {
+        downloadMusic(playUrl, music, proxy, null);
+    }
+
+    /**
+     * 把一首歌落到目标文件。
+     *
+     * <p>{@code song} 只用来判断「这条流要不要分片取」：YouTube 的 googlevideo 对单条链接
+     * 只放行 1 MiB 的字节窗口，裸 GET 更是直接 403，所以 YouTube 曲目走
+     * {@link YouTubeMusicService#openStream} 一段段拼，其余来源保持单次 GET。</p>
+     */
+    @SneakyThrows
+    static void downloadMusic(String playUrl, File music, Proxy proxy, Music song) {
         // 一些 CDN 拒绝匿名请求（Bilibili 在没有浏览器
         //User-Agent 加 bilibili Referer 时应答 403），因此主机特定头随传输一起发送。
         Map<String, String> streamHeaders = AudioStreamHeaders.forUrl(playUrl);
@@ -40,8 +53,11 @@ final class MusicDownloadService {
         DownloadDynamicIsland.beginDownload();
 
         try {
-            InputStream stream = new WrappedInputStream(HttpUtils.get(playUrl, null, streamHeaders,
-                    STREAM_CONNECT_TIMEOUT_MILLIS, STREAM_READ_TIMEOUT_MILLIS, proxy),
+            InputStream transfer = song != null && song.isYouTube()
+                    ? YouTubeMusicService.openStream(song.getSourceId(), playUrl)
+                    : HttpUtils.get(playUrl, null, streamHeaders,
+                            STREAM_CONNECT_TIMEOUT_MILLIS, STREAM_READ_TIMEOUT_MILLIS, proxy);
+            InputStream stream = new WrappedInputStream(transfer,
                     new WrappedInputStream.ProgressListener() {
                         com.muoniumplayer.core.utils.timing.Timer timer = new com.muoniumplayer.core.utils.timing.Timer();
 

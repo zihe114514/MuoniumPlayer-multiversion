@@ -209,7 +209,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         api.getGLStateManager().scale(hudScale, hudScale, 1);
         api.getGLStateManager().translate(-hudX, -hudY, 0);
 
-        float songProgress = CloudMusic.player.getCurrentTimeMillis();
+        // 镜像态下没有内部引擎：进度取快照，否则这一行先 NPE，桌面歌词也永远出不来。
+        float songProgress = (float) CloudMusic.positionMsNow();
 
         boolean shouldNotDisplayOtherLyrics = this.singleLine.getValue();
 
@@ -319,7 +320,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     private boolean shouldRender() {
         // lyricsMatchCurrentTrack()：切歌后歌词时间轴还属于上一首时整块不画，否则桌面歌词会用
         // 新歌的进度去填涂旧歌的字。
-        return CloudMusic.player != null && !CloudMusic.player.isFinished()
+        return CloudMusic.hasLiveTrack()
                 && !CloudMusic.lyrics.isEmpty() && CloudMusic.lyricsMatchCurrentTrack();
     }
 

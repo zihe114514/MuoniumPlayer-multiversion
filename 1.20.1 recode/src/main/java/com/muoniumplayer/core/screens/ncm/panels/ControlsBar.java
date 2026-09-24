@@ -198,7 +198,9 @@ public class ControlsBar extends NCMPanel {
 
         playPause
                 .setBeforeRenderCallback(() -> {
-                    boolean showPausingIcon = CloudMusic.player == null || CloudMusic.player.isPausing();
+                    // 镜像态下出声的是外部播放器，player 恒为 null：图标一律问「现在有没有在响」，
+                    // 它同时覆盖内部暂停与外部暂停两种情况。
+                    boolean showPausingIcon = !CloudMusic.isAudibleNow();
 
                     playPause
                             .center()
@@ -219,7 +221,7 @@ public class ControlsBar extends NCMPanel {
 
         prev
                 .setOnClickCallback((x, y, i) -> {
-                    if (CloudMusic.player != null && CloudMusic.currentlyPlaying != null)
+                    if (CloudMusic.hasPlaybackClock() && CloudMusic.currentlyPlaying != null)
                         CloudMusic.prev();
 
                     return true;
@@ -233,7 +235,7 @@ public class ControlsBar extends NCMPanel {
 
         next
                 .setOnClickCallback((x, y, i) -> {
-                    if (CloudMusic.player != null && CloudMusic.currentlyPlaying != null)
+                    if (CloudMusic.hasPlaybackClock() && CloudMusic.currentlyPlaying != null)
                         CloudMusic.next();
 
                     return true;
@@ -322,8 +324,10 @@ public class ControlsBar extends NCMPanel {
                     double xDelta = Math.max(0, Math.min(this.getWidth(), (mouseX - this.getX())));
                     double percent = xDelta / this.getWidth();
 
-                    if (CloudMusic.player != null) {
-                        float total = CloudMusic.player.getTotalTimeMillis();
+                    // 总时长与「能不能拖」都不能问 CloudMusic.player：镜像态下出声的是外部播放器，
+                    // 内部引擎是空的，照原样判就是进度条拖不动、进度也不显示。
+                    if (CloudMusic.hasPlaybackClock()) {
+                        float total = (float) CloudMusic.durationMsNow();
                         if (total > 0.0f) {
                             // 统一走 CloudMusic.seekToMillis()：里面既有一起听房间的拦截，
                             // 也负责 seek 后按真实音频时钟对齐歌词与进度。
@@ -355,18 +359,18 @@ public class ControlsBar extends NCMPanel {
                 .setBeforeRenderCallback(() -> {
                     progressBar.setMargin(0);
 
-                    AudioPlayer player = CloudMusic.player;
-                    if (player == null)
+                    // 镜像态下没有内部引擎，进度与总长都取自快照（见 CloudMusic 那两个 Now 方法）。
+                    if (!CloudMusic.hasPlaybackClock())
                         return;
 
-                    float total = player.getTotalTimeMillis();
+                    float total = (float) CloudMusic.durationMsNow();
                     if (total <= 0.0f) {
                         progressBar.setWidth(0).setRadius(0);
                         return;
                     }
 
                     float perc = Math.max(0.0f,
-                            Math.min(1.0f, player.getCurrentTimeMillis() / total));
+                            Math.min(1.0f, (float) CloudMusic.positionMsNow() / total));
                     progressBar
                             .setWidth(perc * progressBarBg.getWidth())
                             .setRadius(perc);
@@ -374,9 +378,9 @@ public class ControlsBar extends NCMPanel {
 
         LabelWidget lblCurTime = new LabelWidget(
                 () -> {
-                    if (CloudMusic.player == null)
+                    if (!CloudMusic.hasPlaybackClock())
                         return "00:00";
-                    return formatDuration(CloudMusic.player.getCurrentTimeMillis());
+                    return formatDuration((float) CloudMusic.positionMsNow());
                 },
                 FontManager.pf12
         );
@@ -393,13 +397,13 @@ public class ControlsBar extends NCMPanel {
 
         LabelWidget lblRemainingTime = new LabelWidget(
                 () -> {
-                    if (CloudMusic.player == null)
+                    if (!CloudMusic.hasPlaybackClock())
                         return "00:00";
-                    float total = CloudMusic.player.getTotalTimeMillis();
+                    float total = (float) CloudMusic.durationMsNow();
                     if (total <= 0.0f)
                         return "00:00";
                     return "-" + formatDuration(Math.max(0.0f,
-                            total - CloudMusic.player.getCurrentTimeMillis()));
+                            total - (float) CloudMusic.positionMsNow()));
                 },
                 FontManager.pf12
         );

@@ -5,6 +5,7 @@ import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.MusicHotkeys;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.ExternalPlayback;
 import com.muoniumplayer.core.ncm.music.FfmpegNotice;
 import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
@@ -16,6 +17,7 @@ import com.muoniumplayer.core.screens.GuiUpdateNotice;
 import com.muoniumplayer.core.screens.hud.GuiHudEditor;
 import com.muoniumplayer.core.screens.hud.GuiHudEditorFolia;
 import com.muoniumplayer.core.screens.hud.GuiHudEditorPro;
+import com.muoniumplayer.core.screens.hud.ModernUiHudBridge;
 import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.update.AnnouncementChecker;
@@ -57,7 +59,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "1.6.0";
+    public static final String MOD_VERSION = "1.6.1";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -232,6 +234,18 @@ public final class MuoniumPlayerClient {
         // 三个提示天然排队。公告自己只管「这批看过没有」，不参与更新提示那套次数额度。
         GuiAnnouncements.tickAutoShow(mc);
 
+        // ---- 系统播放器镜像（SMTC）----
+        // 主线程每 tick 问一次：换歌检测、解析结果落地、命令回执播报都在里面。真正的耗时
+        // 部分（起进程、联网搜曲库）都在这个调用返回之后由后台线程做，这里只是一次内存读
+        // 加几个布尔判断。放在按键检测之前，是因为按键那一段要求 mc.player != null，而镜像
+        // 在主菜单里也该继续跟随外部播放器（岛的常驻页在那儿也画）。
+        ExternalPlayback.onClientTick();
+
+        // ---- ModernUI 控制中心的页签注册 ----
+        // 每 tick 问一次、闸门在桥里（没装 / 本树没面板 / 已挂过 都是一次布尔比较）：
+        // ModernUI 的初始化时机不由我们掌握，注册晚了就赶不上第一次打开控制中心。
+        ModernUiHudBridge.registerActionCenterTab();
+
         // ---- 可配置按键检测（仅在未打开 GUI 时响应，避免与界面内输入冲突）----
         // 1.8.9 的 KeyMapping.isPressed() 是上升沿触发；现在同语义的方法叫 consumeClick()
         // （isDown() 表示「当前按住」，用它会导致按住时每 tick 重复触发）。
@@ -248,13 +262,17 @@ public final class MuoniumPlayerClient {
 
             // 复用与上一曲/下一曲按钮完全相同的播放器控制路径。
             // consumeClick() 是边沿触发，因此长按某个键绝不会排队重复切歌。
+            // 复用与上一曲/下一曲按钮完全相同的播放器控制路径。
+            // consumeClick() 是边沿触发，因此长按某个键绝不会排队重复切歌。
+            // 门禁问 hasPlaybackClock() 而不是 player != null：镜像态下出声的是外部播放器，
+            // 我们的音频引擎没参与，但这两个键的意义（让「正在播的那首」换一首）完全成立。
             if (keyPreviousTrack.consumeClick()
-                    && CloudMusic.player != null
+                    && CloudMusic.hasPlaybackClock()
                     && CloudMusic.currentlyPlaying != null) {
                 CloudMusic.prev();
             }
             if (keyNextTrack.consumeClick()
-                    && CloudMusic.player != null
+                    && CloudMusic.hasPlaybackClock()
                     && CloudMusic.currentlyPlaying != null) {
                 CloudMusic.next();
             }
@@ -393,8 +411,12 @@ public final class MuoniumPlayerClient {
         }
     }
 
-    /** 按用户选择打开 HUD 设置；OneConfig 不可用时自动回退到 MuoniumPlayer 内置界面。 */
+    /** 按用户选择打开 HUD 设置；外部界面（ModernUI / OneConfig）不可用时自动回退到内置界面。 */
     private void openHudEditor(Minecraft mc) {
+        if (HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)
+                && ModernUiHudBridge.open()) {
+            return;
+        }
         if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(HudConfig.hudEditorUi)
                 && OneConfigHudBridge.open()) {
             return;

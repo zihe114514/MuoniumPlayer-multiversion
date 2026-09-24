@@ -26,6 +26,13 @@ loom {
 }
 
 // 共享代码与资源在上一级目录，两个加载器子工程各自挂同一份，绝不复制。
+//
+// ModernUI 面板实现放在 external/modernui/java —— 它**不能**进 rootProject 的 src/main/java：
+// 那份是四棵树共用的，而 ModernUI 按 Minecraft 版本发版（26.2 / 1.21.11 根本没有对应构件），
+// 共享源一旦 import icyllis.modernui 就把另外几棵树一起编挂。
+// HudExternalUiStaticTest 里有一条断言专门守这件事。
+def modernUiEnabled = !project.hasProperty('skipModernUi')
+
 sourceSets {
     main {
         java.srcDirs = [
@@ -33,6 +40,9 @@ sourceSets {
                 rootProject.file('src/main/java'),                     // 共享主体
                 rootProject.file('../mpparty-common/src/main/java')    // 一起听共用源码
         ]
+        if (modernUiEnabled) {
+            java.srcDirs += rootProject.file('external/modernui/java') // ModernUI 版 HUD 设置面板
+        }
         resources.srcDirs = [
                 'src/main/resources',                                  // fabric.mod.json / accesswidener / mixins
                 rootProject.file('src/main/resources')                 // assets、字体、纹理
@@ -64,6 +74,12 @@ repositories {
     // 会报 "not a module component and has no capabilities"（file 依赖没有坐标）。
     // flatDir 按 <name>-<version>.jar 匹配，group 任意。
     flatDir { dirs rootProject.file('libs') }
+    // ModernUI 只在这里发布，且版本号与 CurseForge/Modrinth 上的不同（上游 README 明确要求走这个仓库）。
+    maven {
+        name 'IzzelAliz Maven'
+        url 'https://maven.izzel.io/releases/'
+        content { includeGroup 'icyllis.modernui' }
+    }
 }
 
 dependencies {
@@ -95,6 +111,23 @@ dependencies {
     implementation include('io.github.humbleui:types:0.2.0')
     implementation include("io.github.humbleui:skija-" + project.skija_natives + ":0.143.17")
     compileOnly 'org.jetbrains:annotations:20.1.0'
+
+    // ==================== ModernUI（HUD 设置面板的可选外部渲染层）====================
+    // 全部 compileOnly：成品 jar 里不含 ModernUI 一个字节，玩家装了才生效、没装零影响，
+    // 也满足它的 LGPL-3.0（库必须可被用户替换，见 docs/接入ModernUI可行性-HUD设置面板.md §四）。
+    // 面板实现在 external/modernui/java；探测与转交在共享的 ModernUiHudBridge。
+    // 构建时拿不到这个仓库可以用 -PskipModernUi=true 跳过，代价只是这一棵树没有面板。
+    if (modernUiEnabled) {
+        modCompileOnly("icyllis.modernui:ModernUI-Fabric:${project.minecraft_version}-3.13.0.1")
+        compileOnly('dev.icyllis:modernui-core:3.13.0') {
+            exclude group: 'org.slf4j', module: 'slf4j-api'
+            exclude group: 'org.apache.logging.log4j', module: 'log4j-core'
+            exclude group: 'org.apache.logging.log4j', module: 'log4j-api'
+            exclude group: 'com.google.code.findbugs', module: 'jsr305'
+            exclude group: 'org.jetbrains', module: 'annotations'
+        }
+        compileOnly 'icyllis.modernui:ModernUI-Markflow:3.13.0'
+    }
 
     // 离线探针（不需要 GL / 不需要启动客户端就能跑的断言）。
     testImplementation platform('org.junit:junit-bom:5.10.2')

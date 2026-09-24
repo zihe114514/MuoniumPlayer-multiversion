@@ -408,6 +408,10 @@ public class CloudMusic implements SharedConstants {
     public static volatile boolean dontAdd = false;
 
     public static void prev() {
+        if (ExternalPlayback.isMirroring()) {
+            ExternalPlayback.previous();
+            return;
+        }
         if (MpPartyClient.interceptPrev()) return;
         // 私人 FM 没有"上一首"。原先的 curIdx <= 0 在实践中等于永远拦住：FM 队列以前每首歌都是一条
         // 独立的单曲队列。现在预备下一首会让队列真的长出历史，如果不改成无条件拦住，FM 就凭空多出
@@ -446,6 +450,12 @@ public class CloudMusic implements SharedConstants {
     }
 
     public static void next() {
+        // 镜像态下「下一首」属于外部播放器：我们的队列是空的，走下面的路径会变成
+        // 在本机悄悄起播一首自己的歌，而玩家的意图是让外部播放器切歌。
+        if (ExternalPlayback.isMirroring()) {
+            ExternalPlayback.next();
+            return;
+        }
         if (MpPartyClient.interceptNext()) return;
         if (personalFmActive && curIdx + 1 >= playList.size()) {
             PersonalFmManager.requestNextBatchAsync();
@@ -777,6 +787,17 @@ public class CloudMusic implements SharedConstants {
     }
 
     /**
+     * 界面上该显示的音量：正在镜像且知道外部播放器那一格时用它，否则回落到模组自己的持久化值。
+     *
+     * <p>{@link #getVolume()} 的语义要保持不变：它在起播时被直接喂给真正的音频播放器
+     * （{@code player.setVolume(CloudMusic.getVolume())} 那几处），把它改成外部电平会让
+     * 内置播放器按外部音量出声，退出镜像后还会留下一份被悄悄改掉的玩家音量设置。</p>
+     */
+    public static float displayVolume() {
+        return ExternalPlayback.volumeOr(getVolume());
+    }
+
+    /**
  * 通过同一条路径为两个播放器界面和全局快捷键应用音量。
  * 数值会被量化到现有的百分之一配置精度。
  *
@@ -784,6 +805,14 @@ public class CloudMusic implements SharedConstants {
  */
     public static boolean setVolume(float volume, boolean showNotice) {
         float safeVolume = Math.round(clampVolume(volume) * 100.0f) / 100.0f;
+        // 镜像态下这根滑块管的是外部播放器在音量合成器里的那一格：既不写持久化配置，也不碰
+        // 内部播放器，否则玩家只是拖了一下外部音量，回来发现自己播放器的音量被改了。
+        if (ExternalPlayback.writeVolume(safeVolume)) {
+            if (showNotice) {
+                DownloadDynamicIsland.showVolume(Math.round(displayVolume() * 100.0f));
+            }
+            return true;
+        }
         float previousVolume = getVolume();
         if (Math.abs(previousVolume - safeVolume) < .0001f) {
             return false;
@@ -822,7 +851,7 @@ public class CloudMusic implements SharedConstants {
  * 按归一化的增量调整音量，并报告得到的百分比。
  */
     public static boolean adjustVolume(float delta) {
-        return setVolume(getVolume() + delta, true);
+        return setVolume(displayVolume() + delta, true);
     }
 
     private static float clampVolume(float volume) {
@@ -838,6 +867,15 @@ public class CloudMusic implements SharedConstants {
  */
     public static boolean seekByMillis(float deltaMillis) {
         if (MpPartyClient.interceptSeekBy(deltaMillis)) return true;
+        if (ExternalPlayback.isMirroring()) {
+            ExternalSnapshot external = ExternalPlayback.rawSnapshot();
+            long target = Math.max(0L, Math.min(external.durationMs(),
+                    external.positionMs() + (long) deltaMillis));
+            ExternalPlayback.seekTo(target);
+            // 本地不改位置：外部播放器真跳了才会报回新位置。先跳会在它不实现这条命令时
+            // 留下一个假进度（能力位说支持、播放器自己没做，这种播放器确实存在）。
+            return external.canSeek();
+        }
         AudioPlayer activePlayer = player;
         if (activePlayer == null || currentlyPlaying == null) {
             return false;
@@ -867,6 +905,10 @@ public class CloudMusic implements SharedConstants {
      */
     public static boolean seekToMillis(float absoluteMillis) {
         if (MpPartyClient.interceptSeekTo(absoluteMillis)) return true;
+        if (ExternalPlayback.isMirroring()) {
+            ExternalPlayback.seekTo((long) absoluteMillis);
+            return ExternalPlayback.rawSnapshot().canSeek();
+        }
         AudioPlayer activePlayer = player;
         if (activePlayer == null || currentlyPlaying == null) {
             return false;
@@ -936,6 +978,14 @@ public class CloudMusic implements SharedConstants {
      * @return 本次调用的实际结果；没有可操作的播放时返回 {@link PlayPauseResult#UNAVAILABLE}
      */
     public static PlayPauseResult togglePlayPause() {
+        // 镜像态下这条命令的对象是外部播放器，不是我们的音频引擎。结果按「当前是不是在响」
+        // 乐观回报：真正的状态下一拍（≤500ms）由 SMTC 快照纠正，而玩家点按钮那一下
+        // 必须立刻有一句反馈，否则会被当成按键没生效。
+        if (ExternalPlayback.isMirroring()) {
+            boolean wasPlaying = ExternalPlayback.rawSnapshot().isPlaying();
+            ExternalPlayback.toggle();
+            return wasPlaying ? PlayPauseResult.PAUSED : PlayPauseResult.RESUMED;
+        }
         // 一起听房间中：房主/管理员按一下变成房间指令；普通成员被挡住，按 UNAVAILABLE 反馈。
         int party = MpPartyClient.interceptToggleState();
         if (party == 1) return PlayPauseResult.PAUSED;
@@ -1128,6 +1178,11 @@ public class CloudMusic implements SharedConstants {
             System.err.println("[NCM] Ignoring empty playlist.");
             return;
         }
+
+        // 镜像模式开着时内部不起播：一个系统里只能有一个「正在播放」是真的，两个声源
+        // 同放是体验事故，而把镜像悄悄切回内部又是一次玩家没要求的模式变更。
+        // 这里是 play() 与 playFm() 的共用入口，拦这一处就够了，界面上不必各写一份。
+        if (ExternalPlayback.refuseInternalPlayback()) return;
 
         // 一起听房间里传输控制权归服务端：本地起播改成点歌，由服务端安排给全房同时播。
         // 房间自己下发的那一首会被放行（MpPlayback 起播时带着身份标记）。
@@ -1908,7 +1963,7 @@ public class CloudMusic implements SharedConstants {
                 // 命中也要记一笔：容量淘汰只看 lastModified 的话，一首常听但下载得早的歌
                 // 会被当成最冷的缓存删掉。
                 MusicAudioCache.touch(cachedMusic);
-                return resolvePlayableAudioFile(cachedMusic);
+                return resolvePlayableAudioFile(cachedMusic, song);
             }
 
             // 绝不把下载了一半的文件暴露给解码器或缓存查找。
@@ -1955,7 +2010,7 @@ public class CloudMusic implements SharedConstants {
             // 目录只会因为下载而变大，所以容量兜底只需要挂在这一处；解码边车在下一句产生，
             // 淘汰按组进行，所以这里先执行也不会把边车漏在外面。
             MusicAudioCache.enforceLimitAsync();
-            return resolvePlayableAudioFile(music);
+            return resolvePlayableAudioFile(music, song);
         }
 
         /**
@@ -1963,7 +2018,7 @@ public class CloudMusic implements SharedConstants {
  * 一次并写入经过校验的 WAV 边车。解码器只接受 AAC 音轨，因此纯视频、
  * DRM 保护或不支持的 MP4 流仍然会安全失败。
  */
-        private File resolvePlayableAudioFile(File sourceFile) {
+        private File resolvePlayableAudioFile(File sourceFile, Music song) {
             String container = AudioContainerSupport.detectContainer(sourceFile);
             if (!AudioContainerSupport.isSupportedContainer(container)) {
                 throw new IllegalStateException("Cached audio has an unsupported or invalid container: "
@@ -1983,7 +2038,11 @@ public class CloudMusic implements SharedConstants {
             }
 
             long transcodeStartedAt = System.currentTimeMillis();
-            DownloadDynamicIsland.beginTranscode(sourceFile.getName(), decodedFile.getName());
+            // 卡片上写歌名和真实容器，别再暴露 <缓存键>_<音质>.mp4 这种磁盘名；
+            // 拿不到歌名时 trackDisplayName 会退到「当前歌曲」。
+            String trackName = trackDisplayName(song, null);
+            String targetFormat = audioFileExtension(decodedFile.getName());
+            DownloadDynamicIsland.beginTranscode(trackName, container, targetFormat);
             try {
                 AacAudioDecoder.decodeToWav(sourceFile, container, decodedFile,
                         new AacAudioDecoder.ProgressListener() {
@@ -2005,9 +2064,21 @@ public class CloudMusic implements SharedConstants {
                 }
                 throw new IllegalStateException("Unable to decode AAC audio into a playable WAV cache", exception);
             }
-            DownloadDynamicIsland.finishTranscode(sourceFile.getName(), decodedFile.getName(),
+            DownloadDynamicIsland.finishTranscode(trackName, container, targetFormat,
                     System.currentTimeMillis() - transcodeStartedAt);
             return decodedFile;
+        }
+
+        /** 取缓存文件的后缀作为转码卡片上的格式标签，例如 ".decoded.wav" 取到 "wav"。 */
+        private static String audioFileExtension(String fileName) {
+            if (fileName == null) {
+                return null;
+            }
+            int extensionIndex = fileName.lastIndexOf('.');
+            if (extensionIndex < 0 || extensionIndex == fileName.length() - 1) {
+                return null;
+            }
+            return fileName.substring(extensionIndex + 1).toLowerCase(java.util.Locale.ROOT);
         }
 
         private void discardLegacyDecodedWav(File sourceFile) {
@@ -2364,8 +2435,27 @@ public class CloudMusic implements SharedConstants {
             try {
                 if (!armStillValid(armGeneration, armRevision)) return;
 
+                // 自定义源还在起的时候，先在这条允许阻塞的后台线程上把它等就绪，再去解析。
+                // getPlayUrl() 里的那一跳只敢等 8 秒（链的另一头可能是游戏主线程），而脚本发
+                // inited 的上限是 30 秒 —— 野花这类要先跑一次「检查更新」的源经常刚好差一点。
+                // 预备期弃权不等于「下一首再说」：交接点直接把这张牌提上去、不会重新解析，
+                // 于是这一首就这么按非 LX 的结果定死了。
+                long readyWaitMs = lxArmReadyWaitMillis();
+                if (readyWaitMs > 0L && !com.muoniumplayer.core.ncm.lxsource.LxSourceService
+                        .awaitReady(readyWaitMs)) {
+                    System.out.println("[Automix] arming " + song.getName() + ": custom source still"
+                            + " not ready after " + (readyWaitMs / 1000L) + "s, resolving without it");
+                }
+
                 Tuple<String, String> playUrl = song.getPlayUrl();
-                if (playUrl == null || !armStillValid(armGeneration, armRevision)) return;
+                if (playUrl == null) {
+                    // 预备路径也认「整条链路取不到流」这一路。只 return 的话，换源的搜索匹配就要
+                    // 等队列真轮到这一首才由 playSong 现搜现验 —— 那一下就是可听的卡顿加硬切，
+                    // automix 这一轮等于白预备。
+                    armNoStreamRescue(song, index, armGeneration, armRevision);
+                    return;
+                }
+                if (!armStillValid(armGeneration, armRevision)) return;
 
                 File file = getMusicFile(playUrl, song);
                 if (file == null || !file.isFile() || !armStillValid(armGeneration, armRevision)) return;
@@ -2455,22 +2545,88 @@ public class CloudMusic implements SharedConstants {
             }
         }
 
-        /** 预备阶段每次交接给「新一首」都重新计数：试听换源救援的乒乓上限。 */
+        /** 预备阶段每次交接给「新一首」都重新计数：换源救援的乒乓上限。 */
         private int armTrialSwitches;
 
         /**
-         * 「下一曲」是试听片段时在预备阶段救场：不预备半首歌，先跨平台换源。
+         * 预备期为「脚本还没起完」最多等多久。取 {@code LxRuntime.INIT_TIMEOUT_MS} 再减一截：
+         * 过了那个点脚本注定是失败了，继续等只是把这一轮的预备预算白白吃掉。
+         */
+        private static final long LX_ARM_READY_WAIT_CEILING_MS = 22_000L;
+
+        /** 等完脚本还要留给「解析 + 下载 + 解码」的时间；剩余跑道不够就干脆不等。 */
+        private static final long ARM_RESOLVE_BUDGET_MILLIS = 30_000L;
+
+        /**
+         * 这一轮预备愿意为脚本就绪等多久，返回 0 表示不等。
          *
-         * <p>本方法整体跑在 BackgroundWork 低优先级池上，允许网络。找到替身后直接换掉队列
-         * 里那一格并 bump {@code queueRevision}（丢弃按旧格做的计划与重试预算归零），
-         * 下一轮 arm 会对完整替身重新预备 —— 交接与出声走的是正常 automix 链路。
-         * 找不到替身时保持沉默：队列真正轮到这首歌时 {@code playSong} 的三级触发还会
-         * 兜底并给出提示。{@code armTrialSwitches} 防候选表试听版乒乓连环换（智能过度）。</p>
+         * <p>只有「启用了脚本、且它正在起」才有等的必要 —— 没启用是常态，起失败是既成事实，
+         * 两种都不该挡路。再按当前曲目的剩余跑道裁剪：等完已经来不及解析下载解码的等待没有意义，
+         * 那种情况本来就该退回普通切歌。</p>
+         */
+        private long lxArmReadyWaitMillis() {
+            if (!com.muoniumplayer.core.ncm.lxsource.LxSourceService.isEnabled()) return 0L;
+            if (!com.muoniumplayer.core.ncm.lxsource.LxSourceService.isLoading()) return 0L;
+            AudioPlayer active = ownedPlayer;
+            if (active == null) return 0L;
+            long total = (long) active.getTotalTimeMillis();
+            long position = (long) active.getCurrentTimeMillis();
+            if (total <= 0L) return 0L;
+            long runway = total - position
+                    - (AutomixSettings.getOverlapMillis() + AutomixSettings.ARM_LEAD_MILLIS
+                            + ARM_RESOLVE_BUDGET_MILLIS);
+            if (runway <= 0L) return 0L;
+            return Math.min(LX_ARM_READY_WAIT_CEILING_MS, runway);
+        }
+
+        /**
+         * 「下一曲」是试听片段时在预备阶段救场：不预备半首歌，先跨平台换源。
          */
         private void armTrialClipRescue(Music song, int index, long armGeneration, long armRevision) {
+            armCrossSourceRescue(song, index, armGeneration, armRevision,
+                    "下一曲在该平台只有试听片段");
+        }
+
+        /**
+         * 「下一曲」整条链路取不到流时在预备阶段救场 —— 和 {@code playSong} 的第一级触发同一件事，
+         * 只是提前到预备期做。换源的搜索匹配若等到真播这一首才开工，用户听到的就是切歌前那几秒
+         * 空白加一次硬切，automix 这一轮等于白预备。
+         *
+         * <p>脚本仍在 {@code LOADING} 时这一轮<b>不跑</b>：候选表里靠脚本解 VIP 的那几格此刻必然
+         * 解不出来，整条流水线跑一遍等于把这一首唯一一次自动换源机会（{@code AUTO_ATTEMPTED}）
+         * 烧在「脚本还没起完」上，等真能解的时候反而不再换 —— 那比不救更糟。留给下一轮预备
+         * （{@code ARM_RETRY_MILLIS} 之后）与 {@code playSong} 的兜底触发。</p>
+         */
+        private void armNoStreamRescue(Music song, int index, long armGeneration, long armRevision) {
+            if (com.muoniumplayer.core.ncm.lxsource.LxSourceService.isLoading()) {
+                System.out.println("[Automix] arm skipped for " + song.getName()
+                        + ": no stream yet and the custom source is still loading");
+                return;
+            }
+            System.out.println("[Automix] arm switching for " + song.getName()
+                    + ": no playable stream on " + song.getSource());
+            // 没换成时这一路不出灵动岛提示：队列真轮到它时 playSong 会把原因说清楚。
+            armCrossSourceRescue(song, index, armGeneration, armRevision, null);
+        }
+
+        /**
+         * 预备期跨平台换源的公共身体：跑流水线、把队列里那一格换成替身、作废旧计划。
+         *
+         * <p>整体跑在 BackgroundWork 低优先级池上，允许网络。找到替身后直接换掉队列里那一格并
+         * bump {@code queueRevision}（丢弃按旧格做的计划与重试预算归零），下一轮 arm 会对替身
+         * 重新预备 —— 交接与出声走的是正常 automix 链路。找不到替身时保持沉默：队列真正轮到
+         * 这首歌时 {@code playSong} 的三级触发还会兜底并给出提示。{@code armTrialSwitches}
+         * 防候选表乒乓连环换（智能过度）。</p>
+         *
+         * @param failureHint 本轮不救场时给灵动岛的一句话原因；{@code null} 表示这条路上不说话，
+         *                    留给 {@code playSong} 收尾
+         */
+        private void armCrossSourceRescue(Music song, int index, long armGeneration, long armRevision,
+                                          String failureHint) {
             if (armTrialSwitches >= 2 || !CrossSourceSwitcher.canAutoSwitch(song)) {
-                DownloadDynamicIsland.showPlaybackFailure(song.getName(),
-                        "下一曲在该平台只有试听片段");
+                if (failureHint != null) {
+                    DownloadDynamicIsland.showPlaybackFailure(song.getName(), failureHint);
+                }
                 return;
             }
             DownloadDynamicIsland.showCrossSourceSearching(song.getName());
@@ -2481,7 +2637,14 @@ public class CloudMusic implements SharedConstants {
                 System.err.println("[Music/Switch] 预备期换源流水线异常 "
                         + song.getStableKey() + ": " + failure);
             }
-            if (replacement == null || !armStillValid(armGeneration, armRevision)) return;
+            if (replacement == null) {
+                // 预备期没换成不报错：这一首真到队尾时 playSong 的三级触发还会再兜一次，
+                // 由那边给出用户看得懂的原因。这里只留一行日志，供事后查「为什么没提前换」。
+                System.out.println("[Automix] arm switch found no replacement for "
+                        + song.getStableKey());
+                return;
+            }
+            if (!armStillValid(armGeneration, armRevision)) return;
             armTrialSwitches++;
             // 预备期换源同样只动队列格：面板行 widget 绑的还是 song 这个老对象，
             // 替身是脚本解出来的流时把徽标回写过去。
@@ -3145,6 +3308,18 @@ public class CloudMusic implements SharedConstants {
     }
 
     /**
+     * 背景（全屏歌词页与桌面歌曲信息条那张底）该绑哪张模糊图。
+     *
+     * <p>镜像中且外部播放器自己给了封面时，用由那张图现算的模糊；否则用曲目自己那张
+     * {@code cover_blurred}。传 null 也返回 null，调用方不必先判空。</p>
+     */
+    public static Location preferredBlurredCoverLocation(Music music) {
+        if (music == null) return null;
+        Location external = ExternalArtwork.blurredLocation(music);
+        return external != null ? external : music.getBlurredCoverLocation();
+    }
+
+    /**
      * 动态封面所需的 ffmpeg 是否就绪。返回 1 已找到、-1 探测过但没找到、0 尚未探测。
      * 只读缓存结论,可以安全地在渲染线程里调用(HUD 编辑器用它给开关加一行提示)。
      */
@@ -3159,7 +3334,7 @@ public class CloudMusic implements SharedConstants {
     private static void downloadMusic(String playUrl, File music, Music song) {
         // 只有 YouTube 曲目读取 YouTubeProxySettings；按曲目来源分流，避免按 URL 猜域名。
         MusicDownloadService.downloadMusic(playUrl, music,
-                song != null && song.isYouTube() ? YouTubeProxySettings.createHttpProxy() : null);
+                song != null && song.isYouTube() ? YouTubeProxySettings.createHttpProxy() : null, song);
     }
 
     public static void writeTo(InputStream src, OutputStream dest) {
@@ -3241,6 +3416,16 @@ public class CloudMusic implements SharedConstants {
     }
 
     public static PlaybackSnapshot getSnapshot() {
+        // 系统播放器镜像：整条渲染时钟只在这里分叉一次。
+        //
+        // 之所以能只改这一处，是因为下面那套墙钟外推本来就是为「音频时钟只在解码回调里
+        // 前进、两次回调之间完全冻结」设计的；把 SMTC 每 500ms 报回来的位置喂进同一个
+        // 外推器，得到的仍然是逐帧连续的位置。桌面歌词、全屏歌词页、逐字高亮、灵动岛
+        // 常驻页因此一行都不用动。
+        if (ExternalPlayback.isMirroring()) {
+            PlaybackSnapshot mirrored = mirroredSnapshot();
+            if (mirrored != null) return mirrored;
+        }
         AudioPlayer p = player;
         Music m = currentlyPlaying;
         PlaybackSession s = currentSession;
@@ -3258,6 +3443,105 @@ public class CloudMusic implements SharedConstants {
                 ? 0L
                 : smoothPositionMs(songId, rawPositionMs, durationMs, p.isPausing());
         return new PlaybackSnapshot(sid, songId, positionMs, durationMs, playing, p, m);
+    }
+
+    /**
+     * 由系统媒体会话（SMTC）构造的一次快照。
+     *
+     * <p>{@code player} 恒为 {@code null}：镜像不产生任何声音，本模组的音频链路完全没参与。
+     * 因此凡是拿 {@code snapshot.player} 当「有没有播放时钟」用的地方都必须改问
+     * {@link #hasPlaybackClock()}，否则镜像态下进度条与歌词会一起停在 0。</p>
+     */
+    private static PlaybackSnapshot mirroredSnapshot() {
+        Music m = currentlyPlaying;
+        ExternalSnapshot external = ExternalPlayback.rawSnapshot();
+        if (m == null || external == null || !external.hasSession()) return null;
+        PlaybackSession s = currentSession;
+        long sid = s == null ? -1L : s.sessionId;
+        boolean playing = external.isPlaying();
+        long durationMs = external.durationMs() > 0L ? external.durationMs() : m.getDuration();
+        long positionMs = smoothPositionMs(m.getId(), external.positionMs(), durationMs, !playing);
+        return new PlaybackSnapshot(sid, m.getId(), positionMs, durationMs, playing, null, m);
+    }
+
+    /**
+     * 这一帧有没有一个可用的播放时钟。
+     *
+     * <p>界面上原先写的是 {@code CloudMusic.player != null}，那在镜像态下是假的：
+     * 外部播放器在响，只是不经过我们的音频引擎。这个判断就是给那几处用的。</p>
+     */
+    public static boolean hasPlaybackClock() {
+        return ExternalPlayback.isMirroring() || player != null;
+    }
+
+    /**
+     * 从玩家视角看「现在有没有声音在放」。暂停与没在放走同一支显示。
+     *
+     * <p>原先各处直接写 {@code player == null || player.isPausing()}。这里保留内部播放时
+     * 的逐字段语义（播完一首但引擎还在也算「在响」，跟旧行为一致），只额外接上镜像。</p>
+     */
+    public static boolean isAudibleNow() {
+        if (ExternalPlayback.isMirroring()) return ExternalPlayback.rawSnapshot().isPlaying();
+        AudioPlayer active = player;
+        return active != null && !active.isPausing();
+    }
+
+    /**
+     * 有没有一首「正在播或暂停中」的曲目 —— 内部引擎与外部镜像都算。
+     *
+     * <p>界面上原先写的是 {@code player != null && !player.isFinished()}。镜像态下没有内部
+     * 引擎，照原样判会让桌面歌词与歌曲信息条整块不画，表现成「镜像明明接管了，屏幕上却
+     * 什么都没多出来」。内部播放的语义这里一个字都不改：还是「引擎在且这首没放完」。</p>
+     */
+    public static boolean hasLiveTrack() {
+        if (ExternalPlayback.isMirroring()) {
+            ExternalSnapshot external = ExternalPlayback.rawSnapshot();
+            return external.hasSession() && !external.isStopped();
+        }
+        AudioPlayer active = player;
+        return active != null && !active.isFinished();
+    }
+
+    /**
+     * 这一帧该显示的位置，毫秒。
+     *
+     * <p>内部播放照旧直接读引擎，不改动逐字高亮现有的时序口径；镜像态下出声的是外部
+     * 播放器，只能取快照里那份（外报位置已经过同一套墙钟外推，逐帧仍然连续）。</p>
+     */
+    public static long positionMsNow() {
+        AudioPlayer active = player;
+        if (ExternalPlayback.isMirroring() || active == null) return getSnapshot().positionMs;
+        return Math.round(active.getCurrentTimeMillis());
+    }
+
+    /** 这一帧该显示的总时长，毫秒。口径与 {@link #positionMsNow()} 一致。 */
+    public static long durationMsNow() {
+        AudioPlayer active = player;
+        if (ExternalPlayback.isMirroring() || active == null) return getSnapshot().durationMs;
+        return Math.round(active.getTotalTimeMillis());
+    }
+
+    /**
+     * 镜像让出播放态时的清场。
+     *
+     * <p>歌词一定要跟着清：{@link #lyrics} 是全局的，只有加载成功才会被替换，留着上一首
+     * （很可能正是外部那首）的时间轴、而归属键 {@link #lyricsTrackKey} 还指得上的话，
+     * 关掉镜像后桌面歌词会继续按内部播放器的进度滚 external 的词。</p>
+     */
+    public static void clearExternalMirrorState() {
+        player = null;
+        currentlyPlaying = null;
+        currentSession = null;
+        playList = new ArrayList<Music>();
+        curIdx = 0;
+        synchronized (lyrics) {
+            lyrics.clear();
+        }
+        currentLyric = null;
+        lyricsTrackKey = null;
+        haveNoWords = false;
+        hasTransLyrics = false;
+        hasRomanization = false;
     }
 
     // ── 渲染侧平滑播放位置 ──────────────────────────────────────────────────────

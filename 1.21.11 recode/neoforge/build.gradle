@@ -36,6 +36,13 @@ neoForge {
 }
 
 // 与 fabric/ 子工程挂的是同一份共享源码，绝不复制。
+// 共享代码与资源在上一级目录，两个加载器子工程各自挂同一份，绝不复制。
+//
+// ModernUI 面板实现在 external/modernui/java —— 与同树 fabric 壳共用同一份源码（那边是 3.12 API 的
+// 两处改名/缺公开入口的适配都在文件注释里）。共享 src 一旦 import icyllis.modernui 就会把另外三棵
+// 树一起编挂，所以绝不能挪进 src/main/java；HudExternalUiStaticTest 有断言守这件事。
+def modernUiEnabled = !project.hasProperty('skipModernUi')
+
 sourceSets {
     main {
         java.srcDirs = [
@@ -43,6 +50,9 @@ sourceSets {
                 rootProject.file('src/main/java'),                     // 共享主体
                 rootProject.file('../mpparty-common/src/main/java')    // 一起听共用源码
         ]
+        if (modernUiEnabled) {
+            java.srcDirs += rootProject.file('external/modernui/java') // ModernUI 版 HUD 设置面板
+        }
         resources.srcDirs = [
                 'src/main/resources',                                  // neoforge.mods.toml / pack.mcmeta
                 rootProject.file('src/main/resources')                 // assets、字体、纹理
@@ -66,6 +76,26 @@ repositories {
     maven { url = 'https://maven.neoforged.net/releases' }
     maven { url = 'https://thedarkcolour.github.io/KotlinForForge/' }
     flatDir { dirs rootProject.file('libs') }
+
+    // ==================== ModernUI 的编译期构件（社区分支 mVUS，NeoForge 那份）====================
+    // 上游只发到 26.1.2 / 1.21.8 那一代，1.21.9~11 只有 Tealeste 的 mVUS 分支有构建，且它不进 Maven，
+    // 只挂在 GitHub Releases 上。这里用 ivy 仓库把 release 的资源名直接映射出来：下载与缓存交给 Gradle
+    // （第一次之后离线可用）、仓库里不躺 24MB 第三方二进制。
+    // 这边不用像 fabric 那样走 Loom 的 modCompileOnly：ModDevGradle 的编译类路径本来就是 Mojang 官方名，
+    // 而 NeoForge 版构件就是按这套名字编出来的，所以 compileOnly 直接对得上。
+    // 拉不到就 -PskipModernUi=true，代价只是这一棵树没有面板。
+    if (modernUiEnabled) {
+        ivy {
+            name 'ModernUI mVUS (GitHub Releases)'
+            url 'https://github.com/Tealeste/ModernUI-MC-mVUS/releases/download/'
+            patternLayout {
+                // 3.12.0.5-build.4 -> .../download/3.12.0.5-build.4/ModernUI-MC-3.12.0.5-build.4+mc1.21.11-neoforge.jar
+                artifact '[revision]/[module]-[revision]+mc1.21.11-neoforge.[ext]'
+            }
+            metadataSources { artifact() }
+            content { includeGroup 'mvus.icyllis.modernui' }
+        }
+    }
 }
 
 // ==================== 第三方库：shadow 打进 jar ====================
@@ -111,6 +141,12 @@ dependencies {
     compileOnly 'org.projectlombok:lombok:1.18.30'
     annotationProcessor 'org.projectlombok:lombok:1.18.30'
     compileOnly 'org.jetbrains:annotations:20.1.0'
+
+    // ModernUI 只 compileOnly：成品 jar 里不含它一个字节（LGPL 要求库能被用户单独替换，
+    // 而本项目是全版权保留，两边不能混包）。装了才生效、没装零影响，探测走共享的 ModernUiHudBridge。
+    if (modernUiEnabled) {
+        compileOnly 'mvus.icyllis.modernui:ModernUI-MC:3.12.0.5-build.4'
+    }
 }
 
 def shadeEmbeddedLibs = tasks.register('shadeEmbeddedLibs', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {

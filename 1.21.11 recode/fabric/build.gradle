@@ -30,6 +30,15 @@ loom {
 }
 
 // 共享代码与资源在上一级目录，两个加载器子工程各自挂同一份，绝不复制。
+//
+// ModernUI 面板实现在 external/modernui/java —— 与 1.21.1 那棵树同构，但**两份源码不通用**：
+// 本树编译期用的是社区分支 mVUS 的构件（上游止于 26.1.2 与 1.21.8，1.21.9~11 只有这个分支有），
+// 它跟的是 ModernUI 3.12 那一代 API，与 1.21.1 那份的 3.13 只差一个方法名
+// （ClampingScrollView.setMaxWidth ↔ setChildMaxWidth），细节写在那个文件的调用点注释里。
+// 共享 src 一旦 import icyllis.modernui 就会把另外三棵树一起编挂，所以这里绝不能挪进 src/main/java；
+// HudExternalUiStaticTest 有断言守这件事。
+def modernUiEnabled = !project.hasProperty('skipModernUi')
+
 sourceSets {
     main {
         java.srcDirs = [
@@ -37,6 +46,9 @@ sourceSets {
                 rootProject.file('src/main/java'),                     // 共享主体
                 rootProject.file('../mpparty-common/src/main/java')    // 一起听共用源码
         ]
+        if (modernUiEnabled) {
+            java.srcDirs += rootProject.file('external/modernui/java') // ModernUI 版 HUD 设置面板
+        }
         resources.srcDirs = [
                 'src/main/resources',                                  // fabric.mod.json / accesswidener / mixins
                 rootProject.file('src/main/resources')                 // assets、字体、纹理
@@ -68,6 +80,27 @@ repositories {
     // 会报 "not a module component and has no capabilities"（file 依赖没有坐标）。
     // flatDir 按 <name>-<version>.jar 匹配，group 任意。
     flatDir { dirs rootProject.file('libs') }
+
+    // ==================== ModernUI 的编译期构件（社区分支 mVUS）====================
+    // 上游只发到 26.1.2 / 1.21.8 那一代，1.21.9~11 只有 Tealeste 的 mVUS 分支有构建，
+    // 而它**不进 Maven**，只挂在 GitHub Releases 上。这里用 ivy 仓库把 release 的资源名直接映射出来：
+    // 下载与缓存都交给 Gradle（第一次之后离线可用）、仓库里不躺 24MB 第三方二进制，
+    // 而且它是以「模块」形式出现的 —— Loom 会按本树的 mojmap 把 jar 里的 intermediary 引用重映射一遍，
+    // ActionCenterTab 里那个 MuiModApi.OnScreenChangeListener#onScreenChange(Screen, Screen) 才编得过。
+    // 拉不到（没网、被墙、分支改版）就 -PskipModernUi=true，代价只是这一棵树没有面板。
+    if (modernUiEnabled) {
+        ivy {
+            name 'ModernUI mVUS (GitHub Releases)'
+            url 'https://github.com/Tealeste/ModernUI-MC-mVUS/releases/download/'
+            patternLayout {
+                // [revision] 既是 release 的 tag，也是资源名里版本那一段：
+                // 3.12.0.5-build.4 -> .../download/3.12.0.5-build.4/ModernUI-MC-3.12.0.5-build.4+mc1.21.11-fabric.jar
+                artifact '[revision]/[module]-[revision]+mc1.21.11-fabric.[ext]'
+            }
+            metadataSources { artifact() }
+            content { includeGroup 'mvus.icyllis.modernui' }
+        }
+    }
 }
 
 dependencies {
@@ -99,6 +132,15 @@ dependencies {
     implementation include('io.github.humbleui:types:0.2.0')
     implementation include("io.github.humbleui:skija-" + project.skija_natives + ":0.143.17")
     compileOnly 'org.jetbrains:annotations:20.1.0'
+
+    // ==================== ModernUI（HUD 设置面板的可选外部渲染层）====================
+    // 只 compileOnly：成品 jar 里不含 ModernUI 一个字节，玩家装了才生效、没装零影响，
+    // 也满足它的 LGPL-3.0（库必须能被用户单独替换，见 docs/接入ModernUI可行性-HUD设置面板.md §四）。
+    // mVUS 的包是自足的（framework 与 mc 两侧类都在同一个 jar 里），所以不像 1.21.1 那样
+    // 再补 modernui-core / Markflow —— 而且 core 在 Maven Central 上根本没有 3.12.0。
+    if (modernUiEnabled) {
+        modCompileOnly 'mvus.icyllis.modernui:ModernUI-MC:3.12.0.5-build.4'
+    }
 
     // 离线探针（不需要 GL / 不需要启动客户端就能跑的断言）。
     testImplementation platform('org.junit:junit-bom:5.10.2')

@@ -43,6 +43,12 @@ class AccountManagerQishuiLoginStaticTest {
         return new String(Files.readAllBytes(dir.resolve("QishuiMusicService.java")), StandardCharsets.UTF_8);
     }
 
+    private static String bridgeSource() throws IOException {
+        Path dir = ProjectPaths.sharedJava()
+                .resolve(Path.of("com", "muoniumplayer", "core", "ncm", "music"));
+        return new String(Files.readAllBytes(dir.resolve("QishuiLoginBridge.java")), StandardCharsets.UTF_8);
+    }
+
     @Test
     @DisplayName("工具在位时汽水照常摆二维码，只有缺工具才退回只留 Cookie")
     void qrIsGatedOnBridgeAvailability() throws IOException {
@@ -92,11 +98,29 @@ class AccountManagerQishuiLoginStaticTest {
     }
 
     @Test
-    @DisplayName("离开扫码页要让外部工具收摊，别攒下一堆 Electron 进程")
-    void leavingPageStopsTheTool() throws IOException {
+    @DisplayName("离开扫码页要通知工具收摊，但只转空闲、不杀进程")
+    void leavingPageReleasesButDoesNotKill() throws IOException {
         String source = accountManagerSource();
         assertTrue(source.contains("QishuiMusicService.cancelQrLogin()"), "没有调用收摊");
         assertTrue(source.contains("} finally {"), "收摊必须放在 finally 里，否则异常路径会漏掉");
+        // 收摊的<b>语义</b>变了：不是 kill，是让工具转空闲等复用。
+        String service = qishuiServiceSource();
+        int at = service.indexOf("public static void cancelQrLogin()");
+        assertTrue(at > 0, "找不到 cancelQrLogin");
+        String body = service.substring(at, service.indexOf('}', at));
+        assertTrue(body.contains("QishuiLoginBridge.releaseSession()"),
+                "结束会话必须走 releaseSession（转空闲等复用）");
+        assertFalse(body.contains("QishuiLoginBridge.stop()"),
+                "杀进程会让风控窗口里那次验证被作废，且下次取码要重等 88 MB 自解压");
+    }
+
+    @Test
+    @DisplayName("取码优先复用已在跑的实例：每次重启都要重等 88 MB 自解压")
+    void startReusesRunningInstance() throws IOException {
+        String bridge = bridgeSource();
+        assertTrue(bridge.contains("requestRefresh(dir)"), "start() 没有尝试复用已在跑的实例");
+        assertTrue(bridge.contains("hasLiveInstance()"), "复用前没有判断那个实例是否还活着");
+        assertTrue(bridge.contains("REUSE_WAIT_MILLIS"), "复用分支没有自己的等待时限");
     }
 
     @Test

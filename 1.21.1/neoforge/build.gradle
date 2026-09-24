@@ -36,6 +36,12 @@ neoForge {
 }
 
 // 与 fabric/ 子工程挂的是同一份共享源码，绝不复制。
+//
+// ModernUI 面板实现在 external/modernui/java：它**不能**进共享的 src/main/java，
+// 那份是四棵树共用的，而 ModernUI 按 Minecraft 版本发版（26.2 / 1.21.11 没有对应构件），
+// 共享源一旦 import icyllis.modernui 就把另外几棵树一起编挂。见 HudExternalUiStaticTest。
+def modernUiEnabled = !project.hasProperty('skipModernUi')
+
 sourceSets {
     main {
         java.srcDirs = [
@@ -43,6 +49,9 @@ sourceSets {
                 rootProject.file('src/main/java'),                     // 共享主体
                 rootProject.file('../mpparty-common/src/main/java')    // 一起听共用源码
         ]
+        if (modernUiEnabled) {
+            java.srcDirs += rootProject.file('external/modernui/java') // ModernUI 版 HUD 设置面板
+        }
         resources.srcDirs = [
                 'src/main/resources',                                  // neoforge.mods.toml / pack.mcmeta
                 rootProject.file('src/main/resources')                 // assets、字体、纹理
@@ -66,6 +75,12 @@ repositories {
     maven { url = 'https://maven.neoforged.net/releases' }
     maven { url = 'https://thedarkcolour.github.io/KotlinForForge/' }
     flatDir { dirs rootProject.file('libs') }
+    // ModernUI 只在这里发布，且版本号与 CurseForge/Modrinth 上的不同（上游 README 明确要求走这个仓库）。
+    maven {
+        name 'IzzelAliz Maven'
+        url 'https://maven.izzel.io/releases/'
+        content { includeGroup 'icyllis.modernui' }
+    }
 }
 
 // ==================== 第三方库：shadow 打进 jar ====================
@@ -104,6 +119,27 @@ dependencies {
     embeddedLibs 'io.github.humbleui:skija-shared:0.143.17'
     embeddedLibs 'io.github.humbleui:types:0.2.0'
     embeddedLibs "io.github.humbleui:skija-${project.skija_natives}:0.143.17"
+
+    // ==================== ModernUI（HUD 设置面板的可选外部渲染层）====================
+    // 只用 compileOnly，绝不进 embeddedLibs：
+    // 那一条会被 shade 进我们的 jar，而 ModernUI 是 LGPL-3.0 —— 库必须保持可由用户单独替换。
+    // 玩家装了才生效，没装零影响；探测与转交在共享的 ModernUiHudBridge。
+    // 拿不到那个仓库时用 -PskipModernUi=true 跳过，代价只是这一棵树没有面板。
+    if (modernUiEnabled) {
+        compileOnly "icyllis.modernui:ModernUI-NeoForge:${project.minecraft_version}-3.13.0.1"
+        compileOnly('dev.icyllis:modernui-core:3.13.0') {
+            exclude group: 'org.slf4j', module: 'slf4j-api'
+            exclude group: 'org.apache.logging.log4j', module: 'log4j-core'
+            exclude group: 'org.apache.logging.log4j', module: 'log4j-api'
+            exclude group: 'com.google.code.findbugs', module: 'jsr305'
+            exclude group: 'org.jetbrains', module: 'annotations'
+            // icu4j / fastutil 是 Minecraft 自带的，跟着 ModernUI 的 pom 再拉一份会撞版本，
+            // 而且这个镜像源上没有它要的那个版本。上游 README 的 NeoForge 配方排的也是这两个。
+            exclude group: 'com.ibm.icu', module: 'icu4j'
+            exclude group: 'it.unimi.dsi', module: 'fastutil'
+        }
+        compileOnly 'icyllis.modernui:ModernUI-Markflow:3.13.0'
+    }
 
     // Kotlin 运行时由前置统一提供，不再随本 mod 打包。
     implementation "thedarkcolour:kotlinforforge-neoforge:${project.kotlinforforge_version}"

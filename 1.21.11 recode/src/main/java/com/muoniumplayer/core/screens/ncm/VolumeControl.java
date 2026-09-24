@@ -70,7 +70,8 @@ public final class VolumeControl implements SharedRenderingConstants {
         roundedRect(sliderX, centerY - renderedBarHeight * .5, sliderWidth, renderedBarHeight,
                 radius, trackColor);
 
-        double filledWidth = sliderWidth * CloudMusic.getVolume();
+        // 显示走 displayVolume()：镜像时这根条画的是外部播放器在音量合成器里的那一格。
+        double filledWidth = sliderWidth * CloudMusic.displayVolume();
         if (filledWidth > .05) {
             roundedRect(sliderX, centerY - renderedBarHeight * .5, filledWidth, renderedBarHeight,
                     Math.min(radius, filledWidth * .5), fillColor);

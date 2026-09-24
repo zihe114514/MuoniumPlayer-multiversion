@@ -119,6 +119,8 @@ public final class PlaylistImportService {
                 return importKugou(cleaned);
             case BILIBILI:
                 return importBilibili(cleaned);
+            case YOUTUBE:
+                return importYouTube(cleaned);
             default:
                 throw new IllegalArgumentException("该平台暂不支持导入歌单");
         }
@@ -144,8 +146,18 @@ public final class PlaylistImportService {
         String haystack = (link.isEmpty() ? text : link).toLowerCase(Locale.ROOT);
 
         if (containsAny(haystack, "youtube.com", "youtu.be", "music.youtube")) {
-            // 上游 music-lib 同样没有 YouTube 的歌单解析：它没有对等的「歌单详情」匿名接口。
-            throw new IllegalArgumentException("YouTube 暂不支持导入歌单");
+            // 旧注释写的是「上游 music-lib 没有对等的匿名歌单接口」，这个前提已经不成立：
+            // browse + VL 前缀匿名就能拿到 100 曲行 + 分页（2026-09-23 实测，
+            String source = link.isEmpty() ? text : link;
+            String listId = YouTubeMusicService.normalizePlaylistId(source);
+            if (!listId.isEmpty()) return new Detection(MusicPlatform.YOUTUBE, listId);
+            // 单首视频的链接也收：它进不了「歌单」，但可以变成「这首歌的电台」。
+            String videoId = YouTubeMusicService.normalizeVideoId(source);
+            if (!videoId.isEmpty()) {
+                return new Detection(MusicPlatform.YOUTUBE, RADIO_PREFIX + videoId);
+            }
+            throw new IllegalArgumentException(
+                    "这是 YouTube 的链接，但里面既没有歌单编号（?list=…）也没有视频编号（?v=…）");
         }
         if (containsAny(haystack, "bilibili.com", "b23.tv") || BV_ID.matcher(text).find()
                 || AV_ID.matcher(haystack).find()) {
@@ -359,6 +371,60 @@ public final class PlaylistImportService {
         }
         // playlistsOfVideo 已按「合集优先、其次多 P 全集」排好序，取第一条即最优形态。
         return playlists.get(0);
+    }
+
+    /**
+     * YouTube 歌单 / 电台。
+     *
+     * <p>两种形态共用一条渠道：{@code PL…} 这类是歌单，{@code radio:<videoId>} 是
+     * 「以某首为种子的电台」，前缀编码在 platformPlaylistId 里、由
+     * {@link PlayList#queryMusics()} 分派——与汽水电台同一套做法。</p>
+     *
+     * <p>导入这一步只存引用：电台只要一个能显示的标题和封面，就单独问一次 {@code player}
+     * 那一跳（很小），不去拉整个电台面板（实测 10 MB）。</p>
+     */
+    private static PlayList importYouTube(String cleaned) {
+        String text = cleaned == null ? "" : cleaned.trim();
+        if (text.startsWith(RADIO_PREFIX)) {
+            String videoId = text.substring(RADIO_PREFIX.length()).trim();
+            if (videoId.isEmpty()) throw new IllegalArgumentException("电台种子视频 id 是空的");
+            YouTubeMusicService.Track seed = YouTubeMusicService.getVideo(videoId);
+            String title = seed == null || seed.title.isEmpty()
+                    ? "YouTube 电台 · " + videoId : "「" + seed.title + "」的电台";
+            String cover = seed == null ? "" : nonBlankText(seed.coverUrl);
+            PlayList radio = new PlayList(stableLong("youtube:radio:" + videoId),
+                    title, cover, 0, 0L, null, "以这一首为种子的自动电台", 0L);
+            radio.setPlatform(MusicPlatform.YOUTUBE);
+            radio.setPlatformPlaylistId(text);
+            return radio;
+        }
+
+        String id = YouTubeMusicService.normalizePlaylistId(text);
+        if (id.isEmpty()) throw new IllegalArgumentException("没识别出 YouTube 歌单编号");
+        String title = "";
+        String cover = "";
+        int count = 0;
+        try {
+            YouTubeMusicService.Playlist head = YouTubeMusicService.getPlaylist(id, 1);
+            title = nonBlankText(head.name);
+            cover = nonBlankText(head.coverUrl);
+            count = Math.max(0, head.declaredCount);
+        } catch (Throwable error) {
+            System.err.println("[Music/Import] YouTube metadata failed for " + id + ": " + error);
+        }
+        PlayList result = new PlayList(stableLong("youtube:playlist:" + id),
+                title.isEmpty() ? "YouTube 歌单 " + id : title, cover, count, 0L, null, "", 0L);
+        result.setPlatform(MusicPlatform.YOUTUBE);
+        result.setPlatformPlaylistId(id);
+        return result;
+    }
+
+    /** YouTube 电台的 platformPlaylistId 前缀，与汽水那份 {@code radio:} 同形。 */
+    private static final String RADIO_PREFIX = "radio:";
+
+    /** 服务层回来的字符串可能为 null，落进 PlayList 前统一成空串。 */
+    private static String nonBlankText(String value) {
+        return value == null ? "" : value.trim();
     }
 
     // ════════════════════════════ HTTP 与 JSON 小工具 ════════════════════════════

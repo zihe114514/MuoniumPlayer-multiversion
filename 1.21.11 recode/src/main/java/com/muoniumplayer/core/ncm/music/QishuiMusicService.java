@@ -55,6 +55,8 @@ public final class QishuiMusicService {
     private static final String PC_SEARCH_MIXED_ENDPOINT = "https://api.qishui.com/luna/pc/search/mixed";
     private static final String PC_ME_PLAYLISTS_ENDPOINT = "https://api.qishui.com/luna/pc/me/playlist";
     private static final String PC_ME_COLLECTION_ENDPOINT = "https://api.qishui.com/luna/pc/me/collection/mixed";
+    /** 带 Cookie 的歌单详情：账号歌单只有这条接口给得出完整曲目，见 {@link #accountPlaylistTracks}。 */
+    private static final String PC_PLAYLIST_DETAIL_ENDPOINT = "https://api.qishui.com/luna/pc/playlist/detail";
     private static final String LUNA_DISCOVER_ENDPOINT = "https://beta-luna.douyin.com/luna/discover";
     private static final String LUNA_DISCOVER_MIX_ENDPOINT = "https://beta-luna.douyin.com/luna/discover/mix";
     private static final String LUNA_PLAYLIST_DETAIL_ENDPOINT = "https://beta-luna.douyin.com/luna/playlist/detail";
@@ -70,6 +72,28 @@ public final class QishuiMusicService {
     private static final String PC_USER_AGENT = "LunaPC/3.3.0(359450208)";
     private static final int REQUEST_TIMEOUT_MS = 15_000;
     private static final int MAX_BYTES = 8 * 1024 * 1024;
+
+    /**
+     * 分页页长。PC 与匿名 Android 两条列表/详情接口都照数给：实测 {@code count=100} 就是满
+     * 100 条，而<b>不带 count 时上游回的是短页</b>（{@code /me/playlist} 只回 5 条），
+     * 看着像到底了 —— 所以每个分页请求都必须显式带上它。
+     */
+    private static final int PAGE_SIZE = 100;
+    /**
+     * 翻页闸门。按 {@link #PAGE_SIZE} 算是两万条，正常账号一辈子用不到；留着的唯一目的是
+     * 上游哪天把 {@code next_cursor} 写成不前进的值时，别把客户端熬成死循环。
+     */
+    private static final int MAX_PAGES = 200;
+    /** 侧栏「我的账号歌单」的条数上限：自建 + 收藏合并后再掐，实际账号远到不了这个数。 */
+    private static final int ACCOUNT_PLAYLIST_CAP = 500;
+    /**
+     * 账号歌单 ID 的前缀，决定取曲目走哪条接口（见 {@link #playlistTracks(String, int)}）。
+     *
+     * <p>同一份歌单在两条接口上给的不是同一个列表：实测一份 {@code count_tracks} 标 186 首的
+     * 收藏歌单，匿名 Android 接口逐页翻完只有 116 首，带 Cookie 的 PC 接口给到 238 首。
+     * 侧栏里那条既然来自账号，就必须按账号的身份去取。</p>
+     */
+    private static final String ACCOUNT_PLAYLIST_PREFIX = "acct:";
 
     private static final Pattern SODA_WORD = Pattern.compile("<(\\d+),(\\d+),(\\d+)>([^<]*)");
     private static final HttpClient HTTP = HttpClient.newBuilder()
@@ -268,9 +292,16 @@ public final class QishuiMusicService {
         return QishuiLoginBridge.statusHint();
     }
 
-    /** 放弃这一次扫码：让外部工具自己收摊退出，不留孤儿 Electron 进程。 */
+    /**
+     * 结束这一次扫码：让外部工具转入空闲等复用，<b>不杀进程</b>。
+     *
+     * <p>不管人是登上了、过期了还是翻页走了都会走到这里。以前这里是直接把进程 kill 掉，
+     * 于是每点开一次汽水账号页都要重等一遍 88 MB 自解压；更要命的是风控那一次——人正在
+     * 外部窗口里收验证码，工具被判「停止刷新」后我们反手把它 kill 了，人验完回到游戏
+     * 只剩一句登录失败。工具空闲时会自己倒计时退出，孤儿进程由它自己负责。</p>
+     */
     public static void cancelQrLogin() {
-        QishuiLoginBridge.stop();
+        QishuiLoginBridge.releaseSession();
     }
 
     public static boolean isLoggedIn() {
@@ -681,16 +712,70 @@ public final class QishuiMusicService {
     public static List<Music> playlistTracks(String playlistId, int limit) {
         String id = nonBlank(playlistId);
         if (id.isEmpty()) return Collections.emptyList();
-        int target = Math.max(1, Math.min(500, limit));
+        if (id.startsWith(ACCOUNT_PLAYLIST_PREFIX)) {
+            return accountPlaylistTracks(id.substring(ACCOUNT_PLAYLIST_PREFIX.length()), limit);
+        }
+        return anonymousPlaylistTracks(id, limit);
+    }
+
+    /**
+     * 账号歌单取曲目：带 Cookie 走 {@code GET /luna/pc/playlist/detail}，按游标翻到底。
+     *
+     * <p>终止条件只有 {@code has_more} 不为真、或 {@code next_cursor} 缺失 / 不前进 / 重复，
+     * <b>不能以「这一页是空的」收尾</b>：实测上游会在中间页回 0 条却仍然 {@code has_more=true}
+     * （不可见的条目被跳过了），空页收尾会把后半段整段丢掉。请求的条数也不看
+     * {@code count_tracks}：那个字段实测会偏小（标 186 首、实际 238 首），游标才是准的。</p>
+     *
+     * <p>凭据失效或这条接口出错时退回 {@link #anonymousPlaylistTracks}：宁可少几首，
+     * 也别把已经点开的面板变成一片空白。</p>
+     */
+    private static List<Music> accountPlaylistTracks(String playlistId, int limit) {
+        // 调用方给的 limit 来自 count_tracks，而这个字段实测会偏小（标 186 首、游标翻完 238 首）：
+        // 拿它当上限，「歌单里歌曲数量不全」就还在。这里只把 MAX_PAGES 当闸门，收尾交给 has_more。
+        int target = MAX_PAGES * PAGE_SIZE;
+        LinkedHashMap<String, Music> unique = new LinkedHashMap<>();
+        String cursor = "";
+        Set<String> cursors = new HashSet<>();
+        for (int page = 0; page < MAX_PAGES && unique.size() < target; page++) {
+            try {
+                JsonObject response = requirePcStatus(getJson(
+                        buildPcPlaylistDetailUrl(playlistId, cursor), PC_USER_AGENT,
+                        QishuiSessionStore.getCookieHeader(), pcHeaders()), "歌单详情");
+                collectFeedTracks(array(response, "media_resources"), unique, target);
+                if (!truthy(response, "has_more")) break;
+                String next = string(response, "next_cursor");
+                if (next.isEmpty() || next.equals(cursor) || !cursors.add(next)) break;
+                cursor = next;
+            } catch (Throwable error) {
+                System.err.println("[Music/Qishui] Account playlist detail failed for "
+                        + playlistId + ": " + describe(error));
+                if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+                break;
+            }
+        }
+        if (!unique.isEmpty()) return new ArrayList<>(unique.values());
+        return anonymousPlaylistTracks(playlistId, limit);
+    }
+
+    /**
+     * 匿名取曲目：{@code POST beta-luna.douyin.com/luna/playlist/detail}，<b>一处凭据都不带</b>。
+     *
+     * <p>导入的歌单走这一条。带上 Cookie 反而会被这条接口拒掉（实测返回业务码 {@code 1000006}），
+     * 而且导入本身要求与登录、账号解耦 —— 见 {@link #importPlaylist(String)}。</p>
+     */
+    private static List<Music> anonymousPlaylistTracks(String playlistId, int limit) {
+        String id = nonBlank(playlistId);
+        if (id.isEmpty()) return Collections.emptyList();
+        int target = Math.max(1, limit);
         LinkedHashMap<String, Music> unique = new LinkedHashMap<>();
         String cursor = "";
         String sessionId = "";
-        for (int page = 0; page < 12 && unique.size() < target; page++) {
+        for (int page = 0; page < MAX_PAGES && unique.size() < target; page++) {
             try {
                 JsonObject payload = new JsonObject();
                 payload.addProperty("playlist_id", id);
                 payload.addProperty("playlist_type", 0);
-                payload.addProperty("count", Math.min(50, target - unique.size()));
+                payload.addProperty("count", Math.min(PAGE_SIZE, target - unique.size()));
                 if (!cursor.isEmpty()) payload.addProperty("cursor", cursor);
                 if (!sessionId.isEmpty()) payload.addProperty("session_id", sessionId);
                 JsonObject response = postJson(LUNA_PLAYLIST_DETAIL_ENDPOINT, payload.toString(),
@@ -860,14 +945,98 @@ public final class QishuiMusicService {
     }
 
     /**
-     * 拉账号的自建歌单列表（带 Cookie）。<b>失败会抛</b>：快照刷新要靠异常与否区分
-     * 「账号真的没有歌单」与「这一次请求失败」，不能把两者都折叠成空列表。
+     * 拉账号侧栏要的歌单：<b>自建 + 收藏</b>，各自按游标翻到底，再按平台 ID 去重（带 Cookie）。
+     *
+     * <p>为什么要合两条接口：{@code /me/playlist} 只有<b>自己建的</b>歌单，收藏别人的歌单在
+     * {@code /me/collection/mixed} 里，两边实测无交集（本账号 5 + 6 首 playlists）。以前侧栏
+     * 只读前者且只读一页，所以「收藏的歌单不显示」。</p>
+     *
+     * <p>收藏那条是<b>混合</b>列表，条目按 {@code item_type} 分成 playlist 与 album；本轮按
+     * 约定只显示歌单，专辑条目跳过（专辑的卡片字段是 {@code album}，标题在 {@code name} 里，
+     * 和歌单的 {@code title} 不同形，硬接进来会画出一堆无名条目）。</p>
+     *
+     * <p>自建那条<b>失败会抛</b>：快照刷新要靠异常与否区分「账号真的没有歌单」与「这一次
+     * 请求失败」，不能把两者都折叠成空列表。收藏那条挂了则只记日志 —— 半张桌子好过一张空桌。</p>
      */
     private static List<PlayList> fetchUserPlaylists(int limit) throws Exception {
         if (!QishuiSessionStore.isLoggedIn()) return Collections.emptyList();
-        JsonObject response = requirePcStatus(getJson(buildPcMePlaylistsUrl(), PC_USER_AGENT,
-                QishuiSessionStore.getCookieHeader(), pcHeaders()), "自建歌单");
-        return parsePlaylistArray(array(response, "playlists"), Math.max(1, Math.min(200, limit)));
+        int cap = Math.max(1, limit);
+        LinkedHashMap<String, PlayList> unique = new LinkedHashMap<>();
+        collectPlaylistCards(fetchAllPcPages(buildPcMePlaylistsUrl(), "playlists", "自建歌单"),
+                "", unique, cap);
+        // 收藏那条挂了只会在自己里面记日志：半张桌子好过一张空桌。
+        for (PlayList playlist : collectionPlaylists(cap)) {
+            if (unique.size() >= cap) break;
+            unique.putIfAbsent(playlist.getPlatformPlaylistId(), playlist);
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    /**
+     * 把一页页捞回来的条目打成 {@link PlayList}，键与 ID 都带上 {@link #ACCOUNT_PLAYLIST_PREFIX}，
+     * 让取曲目时能分派到带 Cookie 的 PC 详情接口。
+     *
+     * @param cardKey 歌单卡片在条目里的字段名：自建接口每条<b>本身就是</b>歌单卡片（传空串），
+     *                收藏接口每条要先按 {@code item_type} 钻一层
+     */
+    private static void collectPlaylistCards(JsonArray items, String cardKey,
+                                             LinkedHashMap<String, PlayList> output, int limit) {
+        if (items == null) return;
+        int cap = Math.max(1, limit);
+        for (JsonElement element : items) {
+            if (output.size() >= cap) break;
+            if (!element.isJsonObject()) continue;
+            JsonObject item = element.getAsJsonObject();
+            JsonObject raw;
+            if (cardKey.isEmpty()) {
+                raw = item;
+            } else {
+                // 只认得出来的非歌单条目（专辑）才跳过：字段哪天不上来时，宁可按歌单试一次。
+                String kind = string(item, "item_type");
+                if (!kind.isEmpty() && !"playlist".equals(kind)) continue;
+                raw = object(item, cardKey);
+                if (raw.size() == 0) raw = object(object(item, "media"), cardKey);
+            }
+            PlayList playlist = parsePlaylistCard(raw, object(item, "style"));
+            if (playlist == null || playlist.getPlatformPlaylistId().isEmpty()) continue;
+            String keyed = ACCOUNT_PLAYLIST_PREFIX + playlist.getPlatformPlaylistId();
+            playlist.setPlatformPlaylistId(keyed);
+            output.put(keyed, playlist);
+        }
+    }
+
+    /**
+     * 按游标把一个 PC 列表接口翻到底，把每页的数组原样接起来。
+     *
+     * <p>两个实测过、不看一眼就会踩的坑：</p>
+     * <ul>
+     *   <li><b>空页不等于到底。</b>{@code /me/playlist} 在 {@code count=2} 时第二页回 0 条，
+     *       但 {@code has_more} 仍是 true、{@code next_cursor} 照旧往后走。</li>
+     *   <li><b>最后一页不带 {@code has_more} 字段</b>（不是 false，是压根没有），
+     *       所以下面用 {@code !truthy(...)} 收尾，而不是比较它等于 false。</li>
+     * </ul>
+     */
+    private static JsonArray fetchAllPcPages(String url, String arrayKey, String what)
+            throws Exception {
+        JsonArray collected = new JsonArray();
+        String cursor = "";
+        Set<String> cursors = new HashSet<>();
+        for (int page = 0; page < MAX_PAGES; page++) {
+            StringBuilder paged = new StringBuilder(url);
+            append(paged, "count", String.valueOf(PAGE_SIZE));
+            append(paged, "cursor", cursor);
+            JsonObject response = requirePcStatus(getJson(paged.toString(), PC_USER_AGENT,
+                    QishuiSessionStore.getCookieHeader(), pcHeaders()), what);
+            JsonArray items = array(response, arrayKey);
+            if (items != null) {
+                for (JsonElement item : items) collected.add(item);
+            }
+            if (!truthy(response, "has_more")) break;
+            String next = string(response, "next_cursor");
+            if (next.isEmpty() || next.equals(cursor) || !cursors.add(next)) break;
+            cursor = next;
+        }
+        return collected;
     }
 
     // ── 我的歌单（快照 + 异步，与 QQ / 酷狗侧栏同一套加载形态） ──────────────
@@ -941,7 +1110,7 @@ public final class QishuiMusicService {
             return;
         }
         try {
-            List<PlayList> loaded = fetchUserPlaylists(100);
+            List<PlayList> loaded = fetchUserPlaylists(ACCOUNT_PLAYLIST_CAP);
             userPlaylistsSnapshot = Collections.unmodifiableList(new ArrayList<>(loaded));
             userPlaylistsLoaded = true;
             System.out.println("[Music/Qishui] 已加载 " + loaded.size() + " 个汽水账号歌单。");
@@ -962,8 +1131,22 @@ public final class QishuiMusicService {
         userPlaylistsLastAttempt = 0L;
     }
 
+    /**
+     * 收藏列表里的<b>歌单</b>（专辑条目跳过），按游标翻到底。
+     *
+     * <p>侧栏快照并不直接调这里 —— {@link #fetchUserPlaylists(int)} 会把这条和自建并起来；
+     * 这一条留给只要收藏那一半的调用方。</p>
+     */
     public static List<PlayList> collectionPlaylists(int limit) {
-        return parseCollectionPlaylists(fetchUserCollection(), limit);
+        if (!QishuiSessionStore.isLoggedIn()) return Collections.emptyList();
+        LinkedHashMap<String, PlayList> unique = new LinkedHashMap<>();
+        try {
+            collectPlaylistCards(fetchAllPcPages(buildPcMeCollectionUrl(), "mixed_collections", "收藏"),
+                    "playlist", unique, Math.max(1, Math.min(ACCOUNT_PLAYLIST_CAP, limit)));
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] User collection failed: " + describe(error));
+        }
+        return new ArrayList<>(unique.values());
     }
 
     public static List<Music> collectionTracks(int limit) {
@@ -992,23 +1175,6 @@ public final class QishuiMusicService {
             System.err.println("[Music/Qishui] User collection failed: " + describe(error));
             return new JsonObject();
         }
-    }
-
-    private static List<PlayList> parseCollectionPlaylists(JsonObject response, int limit) {
-        LinkedHashMap<String, PlayList> unique = new LinkedHashMap<>();
-        JsonArray collections = array(response, "mixed_collections");
-        if (collections != null) {
-            for (JsonElement element : collections) {
-                if (!element.isJsonObject()) continue;
-                JsonObject item = element.getAsJsonObject();
-                JsonObject raw = object(item, "playlist");
-                if (raw.size() == 0) raw = object(object(item, "media"), "playlist");
-                PlayList playlist = parsePlaylistCard(raw, object(item, "style"));
-                if (playlist != null) unique.put(playlist.getPlatformPlaylistId(), playlist);
-                if (unique.size() >= Math.max(1, Math.min(200, limit))) break;
-            }
-        }
-        return new ArrayList<>(unique.values());
     }
 
     private static void collectPlaylistResources(JsonArray blocks, Map<String, PlayList> output, int limit) {
@@ -1081,18 +1247,6 @@ public final class QishuiMusicService {
                 if (playlist != null) output.put(playlist.getPlatformPlaylistId(), playlist);
             }
         }
-    }
-
-    private static List<PlayList> parsePlaylistArray(JsonArray array, int limit) {
-        LinkedHashMap<String, PlayList> unique = new LinkedHashMap<>();
-        if (array == null) return Collections.emptyList();
-        for (JsonElement element : array) {
-            if (!element.isJsonObject()) continue;
-            PlayList playlist = parsePlaylistCard(element.getAsJsonObject(), new JsonObject());
-            if (playlist != null) unique.put(playlist.getPlatformPlaylistId(), playlist);
-            if (unique.size() >= limit) break;
-        }
-        return new ArrayList<>(unique.values());
     }
 
     private static PlayList parsePlaylistCard(JsonObject raw, JsonObject style) {
@@ -1537,6 +1691,18 @@ public final class QishuiMusicService {
 
     private static String buildPcMePlaylistsUrl() {
         return buildPcUrl(PC_ME_PLAYLISTS_ENDPOINT).toString();
+    }
+
+    /**
+     * 带 Cookie 的歌单详情 URL。这条接口按<b>纯偏移</b>走游标（实测 {@code cursor} 依次是
+     * 100 / 200 / 300），也不需要 Android 那条的 {@code playlist_type} 与 {@code session_id}。
+     */
+    private static String buildPcPlaylistDetailUrl(String playlistId, String cursor) {
+        StringBuilder url = buildPcUrl(PC_PLAYLIST_DETAIL_ENDPOINT);
+        append(url, "playlist_id", playlistId);
+        append(url, "count", String.valueOf(PAGE_SIZE));
+        append(url, "cursor", nonBlank(cursor));
+        return url.toString();
     }
 
     private static String buildPcMeCollectionUrl() {

@@ -499,7 +499,11 @@ public final class NeteaseMusicService {
      */
     public static QrCode createQrCode(MusicPlatform platform, boolean kuGouConcept) {
         if (platform == MusicPlatform.YOUTUBE) {
-            throw new UnsupportedOperationException("YouTube Music does not require login");
+            // YouTube 没有可用的扫码端点，登录方式是粘贴浏览器 Cookie
+            // （OAuth 设备码要自备 Google Cloud 的 client 凭据，不适合公开分发）。
+            // 这里不能只说「不需要登录」——那是在骗人，歌词与私人歌单确实要登录。
+            throw new UnsupportedOperationException(
+                    "YouTube Music 用粘贴 Cookie 登录：音乐来源 → YouTube Music → 登录");
         }
         if (platform == MusicPlatform.BILIBILI) {
             return BilibiliLogin.createQrCode();
@@ -659,6 +663,8 @@ public final class NeteaseMusicService {
 
     public static synchronized void logout(MusicPlatform platform) {
         if (platform == MusicPlatform.YOUTUBE) {
+            // 用户主动退出才清凭据；上游判定过期走的是 markReauthRequired，只打标记。
+            YouTubeSessionStore.clear();
             return;
         }
         if (platform == MusicPlatform.BILIBILI) {
@@ -697,7 +703,7 @@ public final class NeteaseMusicService {
     }
 
     public static boolean isLoggedIn(MusicPlatform platform) {
-        if (platform == MusicPlatform.YOUTUBE) return false;
+        if (platform == MusicPlatform.YOUTUBE) return YouTubeSessionStore.isLoggedIn();
         if (platform == MusicPlatform.BILIBILI) return BilibiliMusicService.isLoggedIn();
         if (platform == MusicPlatform.QISHUI) return QishuiMusicService.isLoggedIn();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.isLoggedIn();
@@ -709,7 +715,12 @@ public final class NeteaseMusicService {
     }
 
     public static String getAccountName(MusicPlatform platform) {
-        if (platform == MusicPlatform.YOUTUBE) return "无需登录";
+        if (platform == MusicPlatform.YOUTUBE) {
+            // 匿名能搜能播，所以「未登录」不是错误状态，只是能力受限：歌词与私人歌单要登录。
+            if (!YouTubeSessionStore.isLoggedIn()) return "无需登录（匿名）";
+            String name = YouTubeSessionStore.snapshot().accountName;
+            return name.isEmpty() ? "YouTube 账号" : name;
+        }
         if (platform == MusicPlatform.BILIBILI) return BilibiliMusicService.getAccountName();
         if (platform == MusicPlatform.QISHUI) return QishuiMusicService.getAccountName();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.getAccountName();
@@ -736,7 +747,7 @@ public final class NeteaseMusicService {
      * 而两处必须请出<b>同一个</b>地址：贴图位置是按账号定的，两处若请求不同尺寸就会互相覆盖。</p>
      */
     public static String getAccountAvatarUrl(MusicPlatform platform) {
-        if (platform == MusicPlatform.YOUTUBE) return "";
+        if (platform == MusicPlatform.YOUTUBE) return YouTubeSessionStore.snapshot().avatarUrl;
         if (platform == MusicPlatform.BILIBILI) return BilibiliMusicService.getAvatarUrl();
         if (platform == MusicPlatform.QISHUI) return QishuiMusicService.getAvatarUrl();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.getAvatarUrl();

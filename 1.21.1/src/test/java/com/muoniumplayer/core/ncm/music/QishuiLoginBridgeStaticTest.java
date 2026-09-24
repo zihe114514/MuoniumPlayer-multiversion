@@ -19,10 +19,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class QishuiLoginBridgeStaticTest {
 
     private static QishuiLoginBridge.State parse(String phase, long updatedAt) {
-        return QishuiLoginBridge.parseState("{\"protocol\":1,\"phase\":\"" + phase + "\","
+        return QishuiLoginBridge.parseState("{\"protocol\":2,\"phase\":\"" + phase + "\","
                 + "\"token\":\"T1\",\"scanUrl\":\"https://bff-pc.qishui.com/light/invoke/scan_login?token=T1\","
                 + "\"cookie\":\"sessionid=abc; sid_tt=def\",\"message\":\"提示\","
-                + "\"errorCode\":2046,\"updatedAt\":" + updatedAt + "}");
+                + "\"errorCode\":2046,\"updatedAt\":" + updatedAt + ",\"pid\":4242}");
     }
 
     @Test
@@ -49,6 +49,26 @@ class QishuiLoginBridgeStaticTest {
     @DisplayName("风控那一档要单独有枚举值：它是「人在游戏外处理」，不是失败也不是等待")
     void mfaIsItsOwnPhase() {
         assertEquals(QishuiLoginBridge.Phase.MFA, parse("mfa", System.currentTimeMillis()).phase);
+    }
+
+    @Test
+    @DisplayName("空闲那一档也要单独有：它是「这个实例可以复用」，不是失败")
+    void idleIsItsOwnPhase() {
+        assertEquals(QishuiLoginBridge.Phase.IDLE, parse("idle", System.currentTimeMillis()).phase);
+    }
+
+    @Test
+    @DisplayName("pid 要读得出来：复用判据靠它认出上一次会话留下的实例")
+    void pidIsParsed() {
+        assertEquals(4242L, parse("idle", System.currentTimeMillis()).pid, "pid 丢了就复用不了旧实例");
+    }
+
+    @Test
+    @DisplayName("空闲中的实例仍按新鲜度判活：它还在心跳才算能复用")
+    void idleStillNeedsFreshness() {
+        long now = System.currentTimeMillis();
+        assertTrue(parse("idle", now).isAlive(), "还在心跳的空闲实例可以复用");
+        assertFalse(parse("idle", now - 60000L).isAlive(), "断更一分钟的空闲实例不该被复用");
     }
 
     @Test

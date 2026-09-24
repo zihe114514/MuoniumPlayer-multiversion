@@ -402,16 +402,22 @@ public final class HudConfig {
     public static boolean animatedCoverEnabled = true;
 
     /**
-     * HUD 设置界面用哪一层：内置界面（外观见 {@link #hudEditorStyle}）或 OneConfig。
-     * OneConfig 未安装时自动回退内置界面。
+     * HUD 设置界面用哪一层：内置界面（外观见 {@link #hudEditorStyle}）、OneConfig 或 ModernUI。
+     * 外部那两层不可用时自动回退内置界面。
      *
      * <p>内置的几套外观设置项完全一样(都来自 {@code HudSettingsModel}),只是呈现不同;
      * 各界面都有互相切换的按钮,点了之后会被记住,下次打开直接是选中的那一套。刻意不做成
      * "新界面替换旧界面":经典界面把全部滑块平铺成一列,熟悉之后找某一项其实更快。</p>
      */
-    /** HUD 设置界面的选择：内置界面或 OneConfig。OneConfig 未安装时自动回退内置界面。 */
+    /** HUD 设置界面的选择：内置界面、OneConfig 或 ModernUI。外部界面不可用时自动回退内置界面。 */
     public static final String HUD_EDITOR_UI_BUILTIN = "builtin";
     public static final String HUD_EDITOR_UI_ONECONFIG = "oneconfig";
+    /**
+     * 交给 ModernUI 渲染。它只需要玩家装了 ModernUI 就算「可用」的一半，另一半是本版本树
+     * 编入了面板实现 —— 后者取决于该 Minecraft 版本有没有对应的 ModernUI 构件。
+     * 缺任何一半都回退内置界面，见 {@code ModernUiHudBridge}。
+     */
+    public static final String HUD_EDITOR_UI_MODERNUI = "modernui";
 
     /**
      * 内置 HUD 设置界面的三套外观。
@@ -426,6 +432,19 @@ public final class HudConfig {
 
     public static String hudEditorStyle = HUD_EDITOR_STYLE_MODERN;
     public static String hudEditorUi = HUD_EDITOR_UI_BUILTIN;
+
+    /**
+     * 播放态由谁供给：内部播放器，还是系统里正在播的外部播放器（Windows SMTC）。
+     *
+     * <p>镜像模式下本模组不出声：它把外部播放器的曲名、进度与状态写成自己的播放态，
+     * 于是桌面歌词、全屏歌词页、灵动岛与封面链路全部原样可用，而歌词与封面走的是
+     * 本模组自己的跨平台匹配（外部那两样 SMTC 本来也不给）。两个取值互斥而不是叠加，
+     * 理由很直接：一个系统里同时有两个「正在播放」会让人分不清进度条是谁的。</p>
+     */
+    public static final String HUD_PLAYBACK_FEED_INTERNAL = "internal";
+    public static final String HUD_PLAYBACK_FEED_MIRROR = "mirror";
+
+    public static String playbackFeed = HUD_PLAYBACK_FEED_INTERNAL;
     /**
      * Folia 那套 HUD 设置界面的整体缩放倍率。
      *
@@ -751,6 +770,9 @@ public final class HudConfig {
         if (o.has("hudEditorUi") && o.get("hudEditorUi").isJsonPrimitive()) {
             hudEditorUi = normalizeHudEditorUi(o.get("hudEditorUi").getAsString());
         }
+        if (o.has("playbackFeed") && o.get("playbackFeed").isJsonPrimitive()) {
+            playbackFeed = normalizePlaybackFeed(o.get("playbackFeed").getAsString());
+        }
         hudEditorPanelX = clamp(getFloat(o, "hudEditorPanelX", hudEditorPanelX), -1.0f, 1.0f);
         hudEditorPanelY = clamp(getFloat(o, "hudEditorPanelY", hudEditorPanelY), -1.0f, 1.0f);
         dynamicIslandAmbientRotate = getBoolean(o, "dynamicIslandAmbientRotate", dynamicIslandAmbientRotate);
@@ -885,6 +907,7 @@ public final class HudConfig {
         o.addProperty("lyricSearchUiScale", lyricSearchUiScale);
         o.addProperty("hudEditorStyle", hudEditorStyle);
         o.addProperty("hudEditorUi", hudEditorUi);
+        o.addProperty("playbackFeed", playbackFeed);
         o.addProperty("hudEditorPanelX", hudEditorPanelX);
         o.addProperty("hudEditorPanelY", hudEditorPanelY);
         o.addProperty("dynamicIslandAmbientStatusSeconds", dynamicIslandAmbientStatusSeconds);
@@ -983,8 +1006,9 @@ public final class HudConfig {
     }
 
     private static String normalizeHudEditorUi(String value) {
-        return HUD_EDITOR_UI_ONECONFIG.equalsIgnoreCase(value)
-                ? HUD_EDITOR_UI_ONECONFIG : HUD_EDITOR_UI_BUILTIN;
+        if (HUD_EDITOR_UI_ONECONFIG.equalsIgnoreCase(value)) return HUD_EDITOR_UI_ONECONFIG;
+        if (HUD_EDITOR_UI_MODERNUI.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MODERNUI;
+        return HUD_EDITOR_UI_BUILTIN;
     }
 
     /** 界面外观只认三个值，其余（含手改坏的配置文件）一律回到现代样式。 */
@@ -992,6 +1016,18 @@ public final class HudConfig {
         if (HUD_EDITOR_STYLE_CLASSIC.equalsIgnoreCase(value)) return HUD_EDITOR_STYLE_CLASSIC;
         if (HUD_EDITOR_STYLE_FOLIA.equalsIgnoreCase(value)) return HUD_EDITOR_STYLE_FOLIA;
         return HUD_EDITOR_STYLE_MODERN;
+    }
+
+    /**
+     * 播放态来源只认两个值。
+     *
+     * <p>默认回到「内部播放器」而不是镜像：这一档不需要任何额外条件就能工作，而镜像
+     * 依赖 Windows、一个外部播放器和一个现场编译出来的助手。配置文件被手改坏、或者
+     * 用户在非 Windows 上打开别人分享的配置时，不该得到一个静默失效的模式。</p>
+     */
+    private static String normalizePlaybackFeed(String value) {
+        if (HUD_PLAYBACK_FEED_MIRROR.equalsIgnoreCase(value)) return HUD_PLAYBACK_FEED_MIRROR;
+        return HUD_PLAYBACK_FEED_INTERNAL;
     }
 
     private static boolean getBoolean(JsonObject o, String key, boolean def) {

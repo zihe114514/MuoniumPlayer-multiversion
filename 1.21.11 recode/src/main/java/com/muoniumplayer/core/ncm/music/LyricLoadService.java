@@ -265,6 +265,17 @@ final class LyricLoadService {
                     + " 这次没有逐字结果,回落自动链路: " + trackKey);
         }
 
+        // ── 1.6) YouTube 自己的歌词 ────────────────────────────────────────────
+        // 排在自动逐字匹配<b>之前</b>：这是「正在放的这条视频」的官方歌词，而 AMLL / QQ QRC /
+        // 酷狗 KRC 都是拿歌名加歌手去别的库里猜。内容对不对得上，比有没有逐字更要紧——
+        // 现场版、翻唱与录音室版同名不同曲时，逐字匹配给出的是另一版的词。
+        if (music.isYouTube()) {
+            LyricLoadResult youtube = youTubeLyrics(music);
+            if (youtube != null) {
+                return youtube;
+            }
+        }
+
         // ── 2) 自动：逐字歌词永远优先于普通歌词 ────────────────────────────────
         // 指定「平台官方」时整段跳过——那正是用户点这一档想要的效果（逐字源匹配错了，
         // 就要一份平台自己的行级歌词，逐字再漂亮也是错的）。
@@ -420,6 +431,36 @@ final class LyricLoadService {
     }
 
     /** 只问用户指定的那一个逐字源，别的源一个都不碰。 */
+    /**
+     * YouTube 官方歌词。
+     *
+     * <p>实测留了个前提：匿名态下那一跳拿到的全是「没有歌词」的占位面板（连参考实现自己
+     * 测试用的 videoId 也一样），所以这里<b>未登录就直接跳过</b>，不去白打两个请求。
+     * 用户粘好 Cookie 之后这条才真正亮起来。</p>
+     *
+     * @return 拿不到歌词时返回 null，调用方继续走正常链路
+     */
+    private static LyricLoadResult youTubeLyrics(Music music) {
+        if (!YouTubeSessionStore.isLoggedIn()) return null;
+        String videoId = music.getSourceId();
+        if (videoId == null || videoId.trim().isEmpty()) return null;
+        try {
+            YouTubeMusicService.Lyrics lyrics = YouTubeMusicService.getLyrics(videoId);
+            if (lyrics == null || lyrics.isEmpty()) return null;
+            String text = lyrics.timed ? lyrics.lrc : lyrics.plainText;
+            if (text == null || text.trim().isEmpty()) return null;
+            JsonObject json = createEmbeddedLyricJson(text);
+            List<LyricLine> lines = LyricParser.parse(json);
+            if (lines.isEmpty()) return null;
+            System.out.println("[Music/YouTube] 官方歌词 " + lines.size() + " 行（"
+                    + (lyrics.timed ? "带时间戳" : "纯文本") + "）for " + music.getStableKey());
+            return new LyricLoadResult(json, lines);
+        } catch (Throwable throwable) {
+            System.err.println("[Music/YouTube] 歌词取回失败 " + videoId + ": " + throwable);
+            return null;
+        }
+    }
+
     private static List<LyricLine> wordSource(int source, Music music) {
         try {
             List<LyricLine> lines;

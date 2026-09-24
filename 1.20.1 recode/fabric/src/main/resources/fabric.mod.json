@@ -34,5 +34,8 @@
     "fabric-api": "*",
     "minecraft": "${minecraft_version}",
     "java": ">=17"
+  },
+  "suggests": {
+    "modernui": "*"
   }
 }

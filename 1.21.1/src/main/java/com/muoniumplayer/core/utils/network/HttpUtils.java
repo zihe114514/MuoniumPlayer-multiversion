@@ -19,6 +19,20 @@ public class HttpUtils {
     private static final int DEFAULT_CONNECT_TIMEOUT_MILLIS = 5000;
     private static final int DEFAULT_READ_TIMEOUT_MILLIS = 8000;
 
+    /**
+     * 手动跟随重定向的跳数上限。
+     *
+     * <p>{@link HttpURLConnection} 的自动跟随只在<b>同一协议内</b>生效，跨 http↔https 的 3xx
+     * 会被原样抛给调用方。很多取流中继正是靠一条 301 把 http 升级成 https（例如长青这类
+     * 脚本返回的 {@code http://…/wy.php?…}），不手动跟随就会把那 162 字节的跳转页当成音频
+     * 写进缓存，最终表现为「一直播放失败」。</p>
+     */
+    private static final int MAX_REDIRECT_HOPS = 8;
+
+    private static boolean isRedirect(int code) {
+        return code == 301 || code == 302 || code == 303 || code == 307 || code == 308;
+    }
+
     public static InputStream get(String url, Map<String, String> params) throws IOException {
         return get(url, params, null);
     }
@@ -53,7 +67,7 @@ public class HttpUtils {
                                   int connectTimeoutMillis, int readTimeoutMillis,
                                   Proxy proxy) throws IOException {
         return request(mapToString(url, params, "?"), null, headers, "GET",
-                "application/x-www-form-urlencoded", connectTimeoutMillis, readTimeoutMillis, proxy);
+                "application/x-www-form-urlencoded", connectTimeoutMillis, readTimeoutMillis, proxy, 0);
     }
 
     public static String getString(String url, Map<String, String> params, Map<String, String> headers) throws IOException {
@@ -136,12 +150,12 @@ public class HttpUtils {
     public static InputStream request(String url, String params, Map<String, String> headers, String method,
                                       String mediaType, int connectTimeoutMillis, int readTimeoutMillis) throws IOException {
         return request(url, params, headers, method, mediaType,
-                connectTimeoutMillis, readTimeoutMillis, null);
+                connectTimeoutMillis, readTimeoutMillis, null, 0);
     }
 
     private static InputStream request(String url, String params, Map<String, String> headers, String method,
                                        String mediaType, int connectTimeoutMillis, int readTimeoutMillis,
-                                       Proxy proxy) throws IOException {
+                                       Proxy proxy, int redirectDepth) throws IOException {
         if (url == null || url.trim().isEmpty()) {
             return null;
         }
@@ -180,7 +194,19 @@ public class HttpUtils {
         BufferedInputStream bin;
         // 判断连接状�??
         if (conn.getResponseCode() >= 300) {
-            throw new RuntimeException("HTTP Request is not success, Response code is " + conn.getResponseCode());
+            int responseCode = conn.getResponseCode();
+            String location = conn.getHeaderField("Location");
+            // GET/HEAD 幂等：手动跟随跨协议或跨域的 3xx（见 MAX_REDIRECT_HOPS 注释）。
+            // POST/PUT 保持原来的「非 2xx 直接抛」语义，不改既有调用方的错误处理。
+            boolean followable = (method.equals("GET") || method.equals("HEAD"))
+                    && isRedirect(responseCode) && location != null && !location.trim().isEmpty()
+                    && redirectDepth < MAX_REDIRECT_HOPS;
+            if (followable) {
+                conn.disconnect();
+                return request(new URL(httpUrl, location).toString(), params, headers, method,
+                        mediaType, connectTimeoutMillis, readTimeoutMillis, proxy, redirectDepth + 1);
+            }
+            throw new RuntimeException("HTTP Request is not success, Response code is " + responseCode);
 //            bin = new BufferedInputStream(conn.getErrorStream());
         }
         // 获取返回数据

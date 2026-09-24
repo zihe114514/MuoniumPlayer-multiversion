@@ -64,7 +64,12 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     Timer scrollOffsetResetTimer = new Timer();
 
-    double coverSize = (CloudMusic.player == null || CloudMusic.player.isPausing()) ? this.getCoverSizeMin() : this.getCoverSizeMax();
+    /**
+     * 封面在「没出声」时缩到最小。问 {@link CloudMusic#isAudibleNow()} 而不是
+     * {@code player == null || player.isPausing()}：系统播放器镜像态下我们的音频引擎
+     * 根本没参与，按旧写法封面会一直停在最小档。
+     */
+    double coverSize = CloudMusic.isAudibleNow() ? this.getCoverSizeMax() : this.getCoverSizeMin();
     float coverAlpha = 1f;
 
     boolean progressBarDragging = false;
@@ -574,7 +579,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         if (CloudMusic.lyrics.isEmpty()) return;
         if (!CloudMusic.lyricsMatchCurrentTrack()) return;
 
-        boolean playerNotReady = snapshot.player == null;
+        // 「有没有可用的播放时钟」不能问 snapshot.player：镜像态下出声的是外部播放器，
+        // player 恒为 null，而进度与歌词都要照常走。
+        boolean playerNotReady = !CloudMusic.hasPlaybackClock();
         double totalTimeMillis = snapshot.durationMs;
         double overridePlaybackProgress = progressBarProgressOverride * totalTimeMillis;
         double songProgress = playerNotReady ? 0 : (progressBarDragging ? overridePlaybackProgress : snapshot.positionMs);
@@ -643,7 +650,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                 if (isHovering) CursorUtils.setOverride(CursorUtils.HAND);
                 if (isHovering && Mouse.isButtonDown(0) && !prevMouse) {
                     prevMouse = true;
-                    if (snapshot.player != null && CloudMusic.seekToMillis(lyric.timestamp)) {
+                    if (CloudMusic.hasPlaybackClock() && CloudMusic.seekToMillis(lyric.timestamp)) {
                         resetLyricStatus();
                     }
                     scrollTarget = 0;
@@ -1372,7 +1379,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         float alpha = alphaIn * (float) CoverHeroTransition.chromeFade();
         TextureManager textureManager = TextureManager.getInstance();
 
-        AudioPlayer player = snapshot.player;
+        // 这里不再取 snapshot.player：镜像态下它恒为 null，进度与拖动都改问 hasPlaybackClock()。
         // 播完最后一首、或者被停止之后 currentlyPlaying 就是 null，而这一层还在淡出、仍要画好几帧。
         // renderBackground 早就按 null 处理了，这里漏了整整三处 —— 于是「一起听最后一曲结束」直接
         // 崩渲染线程。没有曲目时封面与曲名整组让位（这也正是曲名本该消失的样子），进度条与控制键
@@ -1383,7 +1390,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         double coverSizeMin = coverSizeMax * .8;
         double coverCenterX = posX + width * .24;
         double coverCenterY = posY + height * .30;
-        coverSize = Interpolations.interpolate(coverSize, player == null || player.isPausing() ? coverSizeMin : coverSizeMax, 0.2f);
+        coverSize = Interpolations.interpolate(coverSize, !CloudMusic.isAudibleNow() ? coverSizeMin : coverSizeMax, 0.2f);
 
         double coverSizePerc = coverSize / coverSizeMax;
         double coverRadius = 7;
@@ -1458,7 +1465,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
         double currentTimeMillis = snapshot.positionMs;
         double totalTimeMillis = snapshot.durationMs;
-        double perc = player == null ? 0 : (progressBarDragging ? progressBarProgressOverride : currentTimeMillis / Math.max(1.0, totalTimeMillis));
+        // 「有没有可用的播放时钟」不能问 snapshot.player：镜像态下出声的是外部播放器，
+        // player 恒为 null，而进度条会因此整条停在 0、拖动也没反应。
+        boolean clockReady = CloudMusic.hasPlaybackClock();
+        double perc = !clockReady ? 0 : (progressBarDragging ? progressBarProgressOverride : currentTimeMillis / Math.max(1.0, totalTimeMillis));
 
         // 播放进度条填充：MC 1.8.9 主 framebuffer 无 stencil，stencil 裁剪失效，改为按 perc 直接画 partial 宽度圆角矩形。
         double fillWidth = progressBarWidth * perc;
@@ -1485,7 +1495,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
                 double percent = this.progressBarProgressOverride;
 
-                if (player != null) {
+                if (clockReady) {
                     // 与控制栏共用 CloudMusic.seekToMillis()：房间拦截与歌词对齐都在那里统一处理。
                     if (CloudMusic.seekToMillis((float) (percent * totalTimeMillis))) {
                         scrollTarget = scrollOffset = 0;
@@ -1524,7 +1534,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         playPauseButton.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
 
         playPauseButton.setBeforeRenderCallback(() -> {
-            if (CloudMusic.player == null || CloudMusic.player.isPausing()) {
+            if (!CloudMusic.isAudibleNow()) {
                 playPauseButton.setIcon("G");
             } else {
                 playPauseButton.setIcon("F");
@@ -1554,7 +1564,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         prev.setOnClickCallback((x, y, i) -> {
 
             if (i == 0) {
-                if (CloudMusic.player != null && CloudMusic.currentlyPlaying != null) CloudMusic.prev();
+                if (CloudMusic.hasPlaybackClock() && CloudMusic.currentlyPlaying != null) CloudMusic.prev();
             }
 
             return true;
@@ -1572,7 +1582,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         next.setOnClickCallback((x, y, i) -> {
 
             if (i == 0) {
-                if (CloudMusic.player != null && CloudMusic.currentlyPlaying != null) CloudMusic.next();
+                if (CloudMusic.hasPlaybackClock() && CloudMusic.currentlyPlaying != null) CloudMusic.next();
             }
 
             return true;
@@ -1610,7 +1620,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         }
 
         TextureManager textureManager = TextureManager.getInstance();
-        Location musicCoverBlurred = current == null ? null : current.getBlurredCoverLocation();
+        // 镜像中且外部播放器给了封面时，这张底由那张图现算（CloudMusic 那一处统一分叉）。
+        Location musicCoverBlurred = CloudMusic.preferredBlurredCoverLocation(current);
         ITextureObject texBg = current == null ? null : textureManager.getTexture(musicCoverBlurred);
 
         if (current != null && current != prevMusic) {

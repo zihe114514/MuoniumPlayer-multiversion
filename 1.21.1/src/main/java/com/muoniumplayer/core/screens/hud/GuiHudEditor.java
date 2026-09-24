@@ -321,9 +321,7 @@ public class GuiHudEditor extends GuiScreen {
     }
 
     private boolean hasLiveInfoPreview() {
-        return CloudMusic.currentlyPlaying != null
-                && CloudMusic.player != null
-                && !CloudMusic.player.isFinished();
+        return CloudMusic.currentlyPlaying != null && CloudMusic.hasLiveTrack();
     }
 
     private void renderLiveInfoPreview(MusicInfoWidget info) {
@@ -339,9 +337,7 @@ public class GuiHudEditor extends GuiScreen {
     }
 
     private boolean hasLiveLyricsPreview() {
-        return CloudMusic.player != null
-                && !CloudMusic.player.isFinished()
-                && !CloudMusic.lyrics.isEmpty();
+        return CloudMusic.hasLiveTrack() && !CloudMusic.lyrics.isEmpty();
     }
 
     private void renderLiveLyricsPreview(MusicLyricsWidget lyrics, int x, int y) {

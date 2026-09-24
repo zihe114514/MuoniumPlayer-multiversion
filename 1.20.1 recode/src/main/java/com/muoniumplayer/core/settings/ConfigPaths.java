@@ -37,6 +37,15 @@ public final class ConfigPaths {
      * 与更新检查不读取这个文件，避免用户为 YouTube 配置代理时改变全局网络行为。</p>
      */
     public static final File YOUTUBE_PROXY = new File(CONFIG_DIRECTORY, "youtube_proxy.json");
+    /**
+     * YouTube 的浏览器 Cookie 与账号展示资料。
+     *
+     * <p>只做 Cookie 这一种登录（OAuth 设备码要自备 Google Cloud 的 client 凭据，
+     * 不适合公开分发）。只影响 YouTube 的元数据链路：歌词、歌单详情、账号信息。
+     * 取流仍然走匿名的那条 Android 客户端——实测登录态对它没必要，而把 Cookie
+     * 发给每一个 CDN 请求反而是多余的暴露面。</p>
+     */
+    public static final File YOUTUBE_AUTH = new File(CONFIG_DIRECTORY, "youtube_auth.json");
     /** Automix（无缝曲目交接）偏好设置。 */
     public static final File GD_SOURCE = new File(CONFIG_DIRECTORY, "gd_source.json");
 
@@ -116,6 +125,15 @@ public final class ConfigPaths {
      * 因此用户可安全地在旁边保留旧配置的备份。
      */
     public static final File BIN_DIR = new File(CONFIG_DIRECTORY, "bin");
+
+    /**
+     * 系统媒体（SMTC）助手的编译与存放目录。
+     *
+     * <p>仓库里只带 {@code muonium/external/SmtcWatcher.cs} 这份 C# 源码，第一次需要它时用
+     * Windows 自带的 {@code csc.exe} 现场编成 exe 放在这里。二进制不进仓库：既省掉「每个版本
+     * 手工重编一次」这道必然被忘记的工序，也让用户机上不存在一个来路不明的可执行文件。</p>
+     */
+    public static final File SMTC_DIR = new File(CONFIG_DIRECTORY, "smtc");
 
     /**
      * 汽水外部取码工具与模组之间的共享目录：工具写 {@code state.json}，模组写 {@code command.json}。

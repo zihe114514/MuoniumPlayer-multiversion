@@ -1128,11 +1128,13 @@ public final class LyricSearchOverlay extends NcmSheet {
         }
     }
 
-    /** 右栏那格封面：选中候选就用它的封面，否则用正在放的这一首。 */
+    /** 右栏那格封面：选中候选就用它的封面，否则用正在放的这一首（镜像中则是外部播放器那张）。 */
     private Location currentCover() {
         LyricSearchHit hit = selected;
         if (hit != null) return coverLocation(hit.coverUrl);
-        return track == null ? null : track.getSmallCoverLocation();
+        // 走 preferredCoverLocation 而不是直接取静态封面：系统播放器镜像下这一首可能压根没有
+        // 曲库封面，而外部那张图已经装在另一个命名空间里了。
+        return track == null ? null : CloudMusic.preferredCoverLocation(track, track.getSmallCoverLocation());
     }
 
     // ──────────────────────────── 页脚 ────────────────────────────

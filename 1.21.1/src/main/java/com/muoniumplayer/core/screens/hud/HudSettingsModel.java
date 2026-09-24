@@ -3,6 +3,7 @@ package com.muoniumplayer.core.screens.hud;
 import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.ExternalPlayback;
 import com.muoniumplayer.core.ncm.music.FoliaModelManager;
 import com.muoniumplayer.core.ncm.music.MusicAudioCache;
 import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
@@ -625,7 +626,7 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         }),
-                                choice("灵动岛样式", "在紧凑、卡片、液态玻璃、系统卡片、音乐焦点之间循环。",
+                                choice("灵动岛样式", "在紧凑、卡片、液态玻璃、系统卡片、音乐焦点、回弹胶囊之间循环。",
                                         new Supplier<String>() {
                                             public String get() {
                                                 return DownloadDynamicIsland.getStyleName();
@@ -737,7 +738,51 @@ public final class HudSettingsModel {
                                                 HudSettingsModel::setEditorStyleChoice,
                                                 new String[] {"右侧一列可折叠长面板。",
                                                         "侧栏分类加卡片分组。",
-                                                        "居中大窗加遮罩。"})),
+                                                        "居中大窗加遮罩。"}),
+                                choice("设置界面由谁渲染", "内置＝本项目自绘的上面那三套；OneConfig / ModernUI＝交给已安装的外部界面。"
+                                        + "选中的外部界面不可用时自动回退内置，不报错也不弹提示，切换在下次按 H 时生效。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return uiLayerLabel();
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                cycleUiLayer();
+                                            }
+                                        }, new String[] {"内置", "OneConfig", "ModernUI"},
+                                                HudSettingsModel::setUiLayerChoice,
+                                                new String[] {"自绘，不依赖任何 mod。",
+                                                        "OneConfig 的 MuoniumPlayer HUD 页，需已安装 OneConfig v1。",
+                                                        "ModernUI 的面板，需已安装 ModernUI 且本 Minecraft 版本有对应构件。"})),
+                        new Group("外部播放器镜像", HudSettingsIcons.NOTE,
+                                choice("播放态来源", "内置＝只播本模组自己队列里的歌（默认）。"
+                                        + "系统镜像＝不发声，改由系统里正在播的外部播放器供态：曲名、进度、播放状态取自 Windows 的系统媒体控制，"
+                                        + "歌词与封面则按曲名歌手回本模组的曲库匹配，匹配上就与平常听歌完全一样（含全屏歌词页与逐字）。"
+                                        + "镜像开着时本模组队列不会起播。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return playbackFeedLabel();
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                cyclePlaybackFeed();
+                                            }
+                                        }, new String[] {"内置播放器", "系统播放器镜像"},
+                                                HudSettingsModel::setPlaybackFeedChoice,
+                                                new String[] {"只播本模组自己队列里的歌。",
+                                                        "跟随 Windows 正在播的外部播放器，需要 Windows 10/11 与一个支持系统媒体控制的播放器。"}),
+                                action(new Supplier<String>() {
+                                            public String get() {
+                                                return "系统媒体状态";
+                                            }
+                                        },
+                                        "当前镜像取数链路的状态；异常时这里会写明原因（缺编译器 / 播放器没注册会话 / 助手反复退出）。",
+                                        HudSettingsModel::probeExternalMedia,
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return ExternalPlayback.supportsPlatform();
+                                            }
+                                        })),
                         new Group("窗口缩放", HudSettingsIcons.RULER,
                                 toggle("窗口自适应缩放",
                                         "按物理游戏窗口尺寸计算连续缩放，播放器大小不随 GUI Scale 整数档位跳动；关闭后跟随游戏内 GUI 缩放。",
@@ -1178,6 +1223,97 @@ public final class HudSettingsModel {
             HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_FOLIA;
         } else {
             HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_MODERN;
+        }
+        saveNow();
+    }
+
+    /**
+     * 播放态来源的当前取值。
+     *
+     * <p>选了镜像时把取数状态一并写在值上，理由与 {@link #uiLayerLabel()} 一样：
+     * 「开了却没效果」是最难自查的坏状态，而原因有三种完全不同的处理办法 ——
+     * 系统里没有正在播放的媒体、播放器压根不注册系统媒体控制、缺编译器。</p>
+     */
+    public static String playbackFeedLabel() {
+        if (!HudConfig.HUD_PLAYBACK_FEED_MIRROR.equals(HudConfig.playbackFeed)) return "内置播放器";
+        if (!ExternalPlayback.supportsPlatform()) return "系统镜像（仅 Windows）";
+        return "系统镜像 · " + ExternalPlayback.statusLabel();
+    }
+
+    /** 内置 ↔ 系统镜像。两档循环，没有第三种取值。 */
+    private static void cyclePlaybackFeed() {
+        setPlaybackFeedChoice(HudConfig.HUD_PLAYBACK_FEED_MIRROR.equals(HudConfig.playbackFeed)
+                ? HudConfig.HUD_PLAYBACK_FEED_INTERNAL : HudConfig.HUD_PLAYBACK_FEED_MIRROR);
+    }
+
+    /**
+     * 直写播放态来源，并立刻让镜像链路跟上。
+     *
+     * <p>认中文标签也认存储值：外部 UI（OneConfig / ModernUI 的下拉）递回来的是标签文案，
+     * 而 {@code cyclePlaybackFeed()} 递回来的是常量。两种都要能用，否则外部那两层
+     * 界面上选了没反应。</p>
+     */
+    private static void setPlaybackFeedChoice(String value) {
+        if (value == null) return;
+        boolean mirror = HudConfig.HUD_PLAYBACK_FEED_MIRROR.equalsIgnoreCase(value)
+                || value.contains("镜像");
+        HudConfig.playbackFeed = mirror
+                ? HudConfig.HUD_PLAYBACK_FEED_MIRROR : HudConfig.HUD_PLAYBACK_FEED_INTERNAL;
+        saveNow();
+        ExternalPlayback.syncFromSettings();
+        try {
+            DownloadDynamicIsland.showExternalMedia(mirror
+                    ? "已交给系统里正在播的外部播放器" : "已切回内置播放器", true);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 设置页那一行的动作：丢掉缓存的失败结论，重新探一遍系统媒体助手。 */
+    private static void probeExternalMedia() {
+        ExternalPlayback.retryProbe();
+        try {
+            DownloadDynamicIsland.showExternalMedia("正在重新探测系统媒体助手", true);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 当前由哪一层渲染 HUD 设置界面。选中的外部层不可用时把原因跟着写在值上：
+     * 玩家看到「按了 H 界面没换」时，得能自己分清是「没装」还是「装了但这棵版本树没有对应构件」，
+     * 这两种情况的处理办法完全不同。
+     */
+    public static String uiLayerLabel() {
+        if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(HudConfig.hudEditorUi)) {
+            return OneConfigHudBridge.isAvailable() ? "OneConfig" : "OneConfig（未安装·回退内置）";
+        }
+        if (HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)) {
+            String status = ModernUiHudBridge.statusLabel();
+            return "可用".equals(status) ? "ModernUI" : "ModernUI（" + status + "·回退内置）";
+        }
+        return "内置";
+    }
+
+    /** 内置 → OneConfig → ModernUI 循环。不可用的那层照旧能选中，只是打开时回退并写明原因。 */
+    private static void cycleUiLayer() {
+        String current = HudConfig.hudEditorUi;
+        if (HudConfig.HUD_EDITOR_UI_BUILTIN.equals(current)) {
+            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
+        } else if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(current)) {
+            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MODERNUI;
+        } else {
+            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_BUILTIN;
+        }
+        saveNow();
+    }
+
+    private static void setUiLayerChoice(String value) {
+        if (value == null) return;
+        if ("OneConfig".equalsIgnoreCase(value)) {
+            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
+        } else if ("ModernUI".equalsIgnoreCase(value)) {
+            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MODERNUI;
+        } else {
+            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_BUILTIN;
         }
         saveNow();
     }

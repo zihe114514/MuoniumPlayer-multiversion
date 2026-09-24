@@ -25,6 +25,14 @@ loom {
 }
 
 // 共享代码与资源在上一级目录，两个加载器子工程各自挂同一份，绝不复制。
+//
+// ModernUI 面板实现在 external/modernui/java —— 与 1.21.1 / 1.21.11 两棵树同构，但源码不通用：
+// 本树编译期用的是上游 1.20.1-3.12.0.1，跟的是 ModernUI 3.12 那一代 API（与 1.21.11 那棵树同代，
+// 差异只有 ClampingScrollView.setMaxWidth 与「没有公开的取 drawable 入口」两处，都写在调用点注释里）。
+// 共享 src 一旦 import icyllis.modernui 就会把另外三棵树一起编挂，所以绝不能挪进 src/main/java；
+// HudExternalUiStaticTest 有断言守这件事。
+def modernUiEnabled = !project.hasProperty('skipModernUi')
+
 sourceSets {
     main {
         java.srcDirs = [
@@ -32,6 +40,9 @@ sourceSets {
                 rootProject.file('src/main/java'),                     // 共享主体
                 rootProject.file('../mpparty-common/src/main/java')    // 一起听共用源码
         ]
+        if (modernUiEnabled) {
+            java.srcDirs += rootProject.file('external/modernui/java') // ModernUI 版 HUD 设置面板
+        }
         resources.srcDirs = [
                 'src/main/resources',                                  // fabric.mod.json / accesswidener / mixins
                 rootProject.file('src/main/resources')                 // assets、字体、纹理
@@ -64,6 +75,30 @@ repositories {
     // 会报 "not a module component and has no capabilities"（file 依赖没有坐标）。
     // flatDir 按 <name>-<version>.jar 匹配，group 任意。
     flatDir { dirs rootProject.file('libs') }
+
+    // ==================== ModernUI 的编译期构件（上游 1.20.1 那一版）====================
+    // maven.izzel.io 上确实有 ModernUI-Fabric:1.20.1-3.12.0.1，但那是 807KB 的「只有 MC 侧类」的壳，
+    // 框架类在 dev.icyllis:modernui-core 里 —— 而 core 在 Maven Central 上只发了 3.13.0，没有 3.12.0。
+    // 所以这一棵树要的是带 core 的那份 universal jar（24MB）。它有两个家：Modrinth CDN 与上游
+    // GitHub Releases（BloCamLimb/ModernUI-MC，tag 3.12.0.4 里放着 1.20.1 的 fabric 与 forge 两份）。
+    // 这里选 GitHub：cdn.modrinth.com 会 307 跳到签名临时地址，Gradle 那侧拿不到（实测解析失败），
+    // 而 GitHub 的 release 资源重定向 Gradle 处理得好 —— 1.21.11 那棵树用同形状的 ivy 块已经编过。
+    // 好处还是那三条：下载与缓存交给 Gradle（第一次之后离线可用）、仓库里不留第三方二进制、
+    // 以「模块」形式出现所以 Loom 会按本树的 mojmap 重映射它（ActionCenterTab 里那个
+    // onScreenChange(Screen, Screen) 才编得过）。拉不到就 -PskipModernUi=true，代价只是这棵树没有面板。
+    if (modernUiEnabled) {
+        ivy {
+            name 'ModernUI universal (GitHub Releases)'
+            url 'https://github.com/BloCamLimb/ModernUI-MC/releases/download/'
+            patternLayout {
+                // [revision] 是 release 的 tag，资源名整段写死：
+                // 3.12.0.4 -> .../download/3.12.0.4/ModernUI-Fabric-1.20.1-3.12.0.1-universal.jar
+                artifact '[revision]/[module]-1.20.1-3.12.0.1-universal.[ext]'
+            }
+            metadataSources { artifact() }
+            content { includeGroup 'upstream.icyllis.modernui' }
+        }
+    }
 }
 
 dependencies {
@@ -114,6 +149,15 @@ dependencies {
     implementation include("io.github.humbleui:skija-" + project.skija_natives + ":0.143.17")
     // skija-shared 的 provided 依赖，只在编译期需要（@Nullable 之类）。
     compileOnly 'org.jetbrains:annotations:20.1.0'
+
+    // ==================== ModernUI（HUD 设置面板的可选外部渲染层）====================
+    // 只 compileOnly：成品 jar 里不含 ModernUI 一个字节，玩家装了才生效、没装零影响，
+    // 也满足它的 LGPL-3.0（库必须能被用户单独替换，见 docs/接入ModernUI可行性-HUD设置面板.md §四）。
+    // 直链与「为什么不走 maven.izzel.io」都写在 repositories 里那个 ivy 块的注释上。
+    // 这一份 universal jar 自带 framework 与 mc 两侧全部类，所以不像 1.21.1 那样再补 core / Markflow。
+    if (modernUiEnabled) {
+        modCompileOnly 'upstream.icyllis.modernui:ModernUI-Fabric:3.12.0.4'
+    }
 
     // 离线探针（不需要 GL / 不需要启动客户端就能跑的断言）。
     testImplementation platform('org.junit:junit-bom:5.10.2')

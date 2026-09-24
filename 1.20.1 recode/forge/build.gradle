@@ -36,6 +36,13 @@ legacyForge {
 }
 
 // 与 fabric/ 子工程挂的是同一份共享源码，绝不复制。
+// 共享代码与资源在上一级目录，两个加载器子工程各自挂同一份，绝不复制。
+//
+// ModernUI 面板实现在 external/modernui/java —— 与同树 fabric 壳共用同一份源码（3.12 那一代 API 的
+// 两处适配都写在文件注释里）。共享 src 一旦 import icyllis.modernui 就会把另外三棵树一起编挂，
+// 所以绝不能挪进 src/main/java；HudExternalUiStaticTest 有断言守这件事。
+def modernUiEnabled = !project.hasProperty('skipModernUi')
+
 sourceSets {
     main {
         java.srcDirs = [
@@ -43,6 +50,9 @@ sourceSets {
                 rootProject.file('src/main/java'),                     // 共享主体
                 rootProject.file('../mpparty-common/src/main/java')    // 一起听共用源码
         ]
+        if (modernUiEnabled) {
+            java.srcDirs += rootProject.file('external/modernui/java') // ModernUI 版 HUD 设置面板
+        }
         resources.srcDirs = [
                 'src/main/resources',                                  // mods.toml / pack.mcmeta
                 rootProject.file('src/main/resources')                 // assets、字体、纹理
@@ -67,6 +77,27 @@ repositories {
     maven { url = 'https://thedarkcolour.github.io/KotlinForForge/' }
     maven { url = 'https://maven.neoforged.net/releases' }
     flatDir { dirs rootProject.file('libs') }
+
+    // ==================== ModernUI 的编译期构件（上游 1.20.1 那一版，Forge 那份）====================
+    // maven.izzel.io 上的 ModernUI-Forge:1.20.1-3.12.0.1 是 807KB 的「只有 MC 侧类」的壳，框架类在
+    // dev.icyllis:modernui-core 里，而 core 在 Maven Central 上只发了 3.13.0、没有 3.12.0，
+    // 所以这一棵树要的是带 core 的 universal jar（24MB）。它在上游 GitHub Releases 的 tag 3.12.0.4 里
+    // （同一个 tag 还放着 fabric 那份）。用 ivy 仓库映射直链：下载与缓存交给 Gradle、仓库里不留二进制。
+    // 这里不需要 Loom 那种 modCompileOnly：MDG(legacy) 的编译类路径本来就是 Mojang 官方名，
+    // 而 Forge 版构件就是按这套名字编出来的，compileOnly 直接对得上。
+    // 拉不到就 -PskipModernUi=true，代价只是这一棵树没有面板。
+    if (modernUiEnabled) {
+        ivy {
+            name 'ModernUI universal (GitHub Releases)'
+            url 'https://github.com/BloCamLimb/ModernUI-MC/releases/download/'
+            patternLayout {
+                // 3.12.0.4 -> .../download/3.12.0.4/ModernUI-Forge-1.20.1-3.12.0.1-universal.jar
+                artifact '[revision]/[module]-1.20.1-3.12.0.1-universal.[ext]'
+            }
+            metadataSources { artifact() }
+            content { includeGroup 'upstream.icyllis.modernui' }
+        }
+    }
 }
 
 // ==================== 第三方库：shadow 打进 jar ====================
@@ -112,6 +143,13 @@ dependencies {
     compileOnly 'org.projectlombok:lombok:1.18.30'
     annotationProcessor 'org.projectlombok:lombok:1.18.30'
     compileOnly 'org.jetbrains:annotations:20.1.0'
+
+    // ModernUI 只 compileOnly：成品 jar 里不含它一个字节（LGPL 要求库能被用户单独替换，
+    // 而本项目是全版权保留，两边不能混包；也绝不能出现在 embeddedLibs / shadow 那一套里）。
+    // 装了才生效、没装零影响，探测与转交都在共享的 ModernUiHudBridge。
+    if (modernUiEnabled) {
+        compileOnly 'upstream.icyllis.modernui:ModernUI-Forge:3.12.0.4'
+    }
 }
 
 def shadeEmbeddedLibs = tasks.register('shadeEmbeddedLibs', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {

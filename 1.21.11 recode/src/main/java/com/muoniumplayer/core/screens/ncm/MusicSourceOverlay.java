@@ -10,7 +10,9 @@ import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseUnblockSettings;
 import com.muoniumplayer.core.ncm.music.SwitchSourceSettings;
+import com.muoniumplayer.core.ncm.music.YouTubeMusicService;
 import com.muoniumplayer.core.ncm.music.YouTubeProxySettings;
+import com.muoniumplayer.core.ncm.music.YouTubeSessionStore;
 import com.muoniumplayer.core.rendering.BrandVectorIcons;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
@@ -22,6 +24,7 @@ import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.TextFieldWidget;
 import com.muoniumplayer.core.screens.ncm.panels.HomePanel;
 import com.muoniumplayer.core.utils.KeyboardUtils;
+import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import com.muoniumplayer.party.ui.PartyIcons;
 
 import java.util.List;
@@ -96,6 +99,10 @@ public final class MusicSourceOverlay extends NcmSheet {
     private static final int PAGE_GD = 1;
     private static final int PAGE_LX = 2;
     private static final int PAGE_YOUTUBE_PROXY = 3;
+    private static final int PAGE_YOUTUBE_LOGIN = 4;
+
+    /** Cookie 校验要联网（最坏 25 秒），期间把按钮钉成「正在验证…」，不让人连点。 */
+    private boolean youtubeLoginBusy;
 
     /**
      * 当前在哪一页。
@@ -214,7 +221,10 @@ public final class MusicSourceOverlay extends NcmSheet {
                 () -> platform == MusicPlatform.YOUTUBE ? 74.0 : (picked.getAsBoolean() ? 46.0 : 16.0));
 
         checkBadge(card, picked, platform::getBrandColor, () -> card.getWidth() - 23);
-        if (platform == MusicPlatform.YOUTUBE) youtubeProxyButton(card);
+        if (platform == MusicPlatform.YOUTUBE) {
+            youtubeProxyButton(card);
+            youtubeLoginButton(card);
+        }
     }
 
     /** YouTube 专属设置入口。代理只作用于 YouTube 链路，所以留在 YouTube 卡上而不是全局设置。 */
@@ -264,6 +274,186 @@ public final class MusicSourceOverlay extends NcmSheet {
         final TextFieldWidget input = youtubeProxyInputRow(strip(feed, 46.0));
 
         youtubeProxyFooter(dialog, input);
+    }
+
+    /**
+     * YouTube 的登录入口。
+     *
+     * <p>YouTube 是唯一「不登录也能搜能播」的源，所以这颗按钮不是主流程而是一颗能力增强：
+     * 登录之后才亮起来的是歌词与私人歌单。挂在这张卡上而不是账号页，是因为账号页那颗主按钮
+     * 的整条状态机是围着扫码转的，硬塞一个不能扫码的平台会把那边搞脏。</p>
+     */
+    private void youtubeLoginButton(final Card card) {
+        final RoundedButtonWidget button = new RoundedButtonWidget("", FontManager.pf12bold);
+        card.addChild(button);
+        button.setRadius(10);
+        button.setShouldOverrideMouseCursor(true);
+        button.setOnClickCallback((x, y, mouse) -> {
+            if (mouse != 0) return false;
+            showYouTubeLogin();
+            return true;
+        });
+        button.setBeforeRenderCallback(() -> {
+            button.setBounds(32, 32);
+            // 代理那颗按钮占着 card.getWidth()-64，这一颗排在它左边，两张卡图标不重叠。
+            button.setPosition(card.getWidth() - 104, card.getHeight() * .5 - 16);
+            button.setColor(button.isHovering()
+                    ? mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER),
+                            MusicPlatform.YOUTUBE.getBrandColor(), .16)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+        icon(button, PartyIcons.KEY, ICON_M, () -> 16.0, () -> 16.0,
+                () -> YouTubeSessionStore.isLoggedIn() ? MusicPlatform.YOUTUBE.getBrandColor()
+                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+    }
+
+    /** 二级页：YouTube 登录（粘贴浏览器 Cookie）。 */
+    private void showYouTubeLogin() {
+        page = PAGE_YOUTUBE_LOGIN;
+        beginPage();
+
+        statusText = YouTubeSessionStore.describe();
+        statusTone = YouTubeSessionStore.isLoggedIn() ? 1 : 0;
+
+        final Panel dialog = sheet(476, () -> 300.0);
+        subHeader(dialog, this::showOverview, () -> "YouTube · 登录",
+                () -> "匿名就能搜与播；登录之后才有的是歌词与私人歌单",
+                MusicPlatform.YOUTUBE::getBrandColor);
+        tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> 60.0);
+
+        final Panel body = body(dialog, () -> 88.0, () -> 54.0);
+        final ScrollPanel feed = feed(body);
+        sectionLabel(strip(feed, 20.0), "粘贴 Cookie", () -> 4.0,
+                MusicPlatform.YOUTUBE::getBrandColor);
+        final TextFieldWidget input = youtubeCookieInputRow(strip(feed, 46.0));
+        youtubeLoginFooter(dialog, input);
+    }
+
+    /**
+     * Cookie 输入行。
+     *
+     * <p>Cookie 是一整行上千个字符，所以按单行长文本用，并在旁边留一颗「填入剪贴板」——
+     * 不然用户得在聊天框里选中上千字再粘贴。</p>
+     */
+    private TextFieldWidget youtubeCookieInputRow(final Panel row) {
+        final RoundedRectWidget field = new RoundedRectWidget();
+        row.addChild(field);
+        field.setClickable(false);
+        field.setRadius(9);
+        field.setBeforeRenderCallback(() -> {
+            field.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 40);
+            field.setPosition(PAD + CARD_INSET, 4.0);
+            field.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+        });
+
+        final TextFieldWidget input = new TextFieldWidget(FontManager.pf12);
+        row.addChild(input);
+        input.setEnabled(true).setFocused(true);
+        input.setPlaceholder("从已登录 music.youtube.com 的浏览器复制整串 Cookie");
+        input.drawUnderline(false);
+        input.setBeforeRenderCallback(() -> {
+            input.setBounds(Math.max(1, field.getWidth() - 22), 24);
+            input.setPosition(field.getRelativeX() + 11, field.getRelativeY() + 8);
+            input.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            input.setDisabledTextColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        });
+        stroke(field, 9.0, MusicPlatform.YOUTUBE::getBrandColor, () -> input.isFocused() ? .62 : 0.0);
+        return input;
+    }
+
+    private void youtubeLoginFooter(final Panel dialog, final TextFieldWidget input) {
+        final RoundedButtonWidget paste = action(dialog, () -> PartyIcons.LINK,
+                () -> "填入剪贴板", FontManager.pf12bold,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), () -> {
+                    String text = KeyboardUtils.getClipboardString();
+                    if (text == null || text.trim().isEmpty()) {
+                        statusText = "剪贴板是空的";
+                        statusTone = 2;
+                        return;
+                    }
+                    input.setText(text.trim());
+                    statusText = "已填入剪贴板内容，再点「验证并登录」";
+                    statusTone = 1;
+                });
+        paste.setBeforeRenderCallback(() -> {
+            paste.setBounds(96, 30);
+            paste.setPosition(PAD + CARD_INSET, dialog.getHeight() - 46);
+            paste.setColor(paste.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+
+        final RoundedButtonWidget verify = action(dialog, () -> PartyIcons.CHECK,
+                () -> youtubeLoginBusy ? "正在验证…" : "验证并登录", FontManager.pf12bold,
+                () -> 0xFFFFFF, () -> submitYouTubeCookie(input));
+        verify.setBeforeRenderCallback(() -> {
+            verify.setBounds(118, 30);
+            verify.setPosition(paste.getRelativeX() + 104, dialog.getHeight() - 46);
+            verify.setColor(verify.isHovering()
+                    ? mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF, .16)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        });
+
+        final RoundedButtonWidget signOut = action(dialog, () -> PartyIcons.LOGOUT, () -> "退出登录",
+                FontManager.pf12bold, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                () -> {
+                    if (!YouTubeSessionStore.isLoggedIn()) {
+                        statusText = "现在本来就是未登录状态";
+                        statusTone = 0;
+                        return;
+                    }
+                    // 走账号分派那一层，别在这里直接清文件：账号名与头像的缓存要一起失效。
+                    NeteaseMusicService.logout(MusicPlatform.YOUTUBE);
+                    statusText = YouTubeSessionStore.describe();
+                    statusTone = 0;
+                    input.setText("");
+                });
+        signOut.setBeforeRenderCallback(() -> {
+            signOut.setBounds(96, 30);
+            signOut.setPosition(verify.getRelativeX() + 126, dialog.getHeight() - 46);
+            signOut.setColor(signOut.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+    }
+
+    /**
+     * 后台校验 Cookie。
+     *
+     * <p>必须开在后台线程：这一步要打一次账号接口，最坏 25 秒，放主线程等于把整个游戏冻住。
+     * 回写状态再切回主线程做。</p>
+     */
+    private void submitYouTubeCookie(final TextFieldWidget input) {
+        if (youtubeLoginBusy) return;
+        final String cookie = input.getText() == null ? "" : input.getText().trim();
+        if (cookie.isEmpty()) {
+            statusText = "请先粘贴 Cookie";
+            statusTone = 2;
+            return;
+        }
+        youtubeLoginBusy = true;
+        statusText = "正在验证 Cookie…";
+        statusTone = 3;
+        MultiThreadingUtil.runAsync(() -> {
+            final YouTubeMusicService.LoginResult result;
+            try {
+                result = YouTubeMusicService.loginWithCookie(cookie);
+            } catch (Throwable throwable) {
+                final String message = throwable.getMessage() == null
+                        ? throwable.getClass().getSimpleName() : throwable.getMessage();
+                MultiThreadingUtil.runOnMainThread(() -> {
+                    youtubeLoginBusy = false;
+                    statusText = "Cookie 登录失败：" + message;
+                    statusTone = 2;
+                });
+                return;
+            }
+            MultiThreadingUtil.runOnMainThread(() -> {
+                youtubeLoginBusy = false;
+                statusText = result.ok ? "已登录：" + result.accountName : result.message;
+                statusTone = result.ok ? 1 : 2;
+            });
+        });
     }
 
     private void youtubeProxyToggleRow(final Panel row) {

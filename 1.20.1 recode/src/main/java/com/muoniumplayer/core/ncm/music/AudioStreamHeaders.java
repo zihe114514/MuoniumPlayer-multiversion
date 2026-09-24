@@ -11,6 +11,13 @@ import java.util.Map;
  * {@code *.bilivideo.com} CDN 是例外：除非请求携带浏览器 User-Agent <em>且</em>
  * bilibili Referer，否则返回 HTTP 403，这就是为什么解析出的链接看似有效、
  * 却在下载播放时失败。</p>
+ *
+ * <p>YouTube 的 {@code *.googlevideo.com} 是第二种例外，而且补头补不好：裸 GET 直接 403，
+ * 带上 {@code Range} 才给 206，但服务端对每个「出口 IP × 视频」只放行 1 MiB 的字节窗口 ——
+ * 单请求要得多大就 403（实测 1 MiB 整给、1 MiB+1 字节给、1.25 MiB 就已经不给），
+ * 重新解析一条新链接也不会续。所以那条主机的处理放在
+ * {@link YouTubeMusicService#openStream(String, String)} 里按窗口拼接，这里刻意不返回
+ * 任何东西，免得两处各写一半 {@code Range} 互相打架。</p>
  */
 final class AudioStreamHeaders {
 

@@ -10,6 +10,7 @@ import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.ExternalPlayback;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.RGBA;
 import com.muoniumplayer.core.rendering.TextureManager;
@@ -50,6 +51,10 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
 
         volume.setHiddenPredicate(() -> true);
         volume.setValueCallback(val -> {
+            if (val == null) return;
+            // 镜像时这根音量管的是外部播放器在音量合成器里的那一格，不该去碰内部播放器。
+            if (ExternalPlayback.writeVolume(val.floatValue())) return;
+            // 内部这条路保持与改之前逐字一致：只喂正在播的播放器，不写持久化配置。
             if (CloudMusic.player != null)
                 CloudMusic.player.setVolume(val.floatValue());
         });
@@ -101,7 +106,7 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
 
         Music playingMusic = CloudMusic.currentlyPlaying;
 
-        boolean playing = playingMusic != null && CloudMusic.player != null && !CloudMusic.player.isFinished();
+        boolean playing = playingMusic != null && CloudMusic.hasLiveTrack();
 
         alpha = Interpolations.interpolate(alpha, playing ? 1 : 0, playing ? 0.15f : 0.2f);
 
@@ -152,7 +157,8 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
 
                 // 用上面那个已经判过空的局部量，别再读一遍 CloudMusic.currentlyPlaying：
                 // 「先判空再取值」这种写法在停播那一帧就会读到 null。
-                Location musicCoverBlurred = playingMusic.getBlurredCoverLocation();
+                // 镜像中且外部播放器给了封面时，这张底由那张图现算（CloudMusic 那一处统一分叉）。
+                Location musicCoverBlurred = CloudMusic.preferredBlurredCoverLocation(playingMusic);
 
                 TextureManager textureManager = TextureManager.getInstance();
                 ITextureObject texBg = textureManager.getTexture(musicCoverBlurred);
@@ -220,7 +226,7 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
 
             String secondaryText = playingMusic.getArtistsName();
 
-            if (this.turnComposerIntoLyric.getValue() && CloudMusic.player != null) {
+            if (this.turnComposerIntoLyric.getValue() && CloudMusic.hasPlaybackClock()) {
                 LyricLine currentDisplaying = CloudMusic.currentLyric;
                 LyricLine next = null;
 
@@ -239,7 +245,7 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
                     if (next != null) {
                         artists.anim.setDuration(Duration.ofMillis(next.timestamp - currentDisplaying.timestamp - 500));
                     } else {
-                        artists.anim.setDuration(Duration.ofMillis((long) (CloudMusic.player.getCurrentTimeMillis() - currentDisplaying.timestamp - 500)));
+                        artists.anim.setDuration(Duration.ofMillis(CloudMusic.positionMsNow() - currentDisplaying.timestamp - 500));
                     }
 
                 } else {
@@ -266,22 +272,23 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
 
             this.roundedRect(imgX + imgSize + imgSpacing, progressBarOffsetY, progressBarWidth, 5, 1, 1f, 1f, 1f, alpha * 0.3f);
 
-            if (CloudMusic.player != null) {
-                double totalTimeMillis = CloudMusic.player.getTotalTimeMillis();
+            if (CloudMusic.hasPlaybackClock()) {
+                double totalTimeMillis = CloudMusic.durationMsNow();
+                double positionMillis = CloudMusic.positionMsNow();
                 double playbackFillWidth = 0.0;
                 if (totalTimeMillis > 0.0) {
                     double progress = Math.max(0.0,
-                            Math.min(1.0, CloudMusic.player.getCurrentTimeMillis() / totalTimeMillis));
+                            Math.min(1.0, positionMillis / totalTimeMillis));
                     playbackFillWidth = progressBarWidth * progress;
                 }
                 if (playbackFillWidth > 0)
                     this.roundedRect(imgX + imgSize + imgSpacing, progressBarOffsetY, playbackFillWidth, 5, Math.min(1, playbackFillWidth * .5), 233, 233, 233, (int) (alpha * 255));
 
-                int cMin = (int) (CloudMusic.player.getCurrentTimeSeconds() / 60);
-                int cSec = (int) (CloudMusic.player.getCurrentTimeSeconds() - cMin * 60);
+                int cMin = (int) (positionMillis / 1000.0 / 60);
+                int cSec = (int) (positionMillis / 1000.0 - cMin * 60);
                 String currentTime = (cMin < 10 ? "0" + cMin : cMin) + ":" + (cSec < 10 ? "0" + cSec : cSec);
-                int tMin = (int) (CloudMusic.player.getTotalTimeSeconds() / 60);
-                int tSec = (int) (CloudMusic.player.getTotalTimeSeconds() - tMin * 60);
+                int tMin = (int) (totalTimeMillis / 1000.0 / 60);
+                int tSec = (int) (totalTimeMillis / 1000.0 - tMin * 60);
                 String totalTime = (tMin < 10 ? "0" + tMin : tMin) + ":" + (tSec < 10 ? "0" + tSec : tSec);
 
                 int textColor = RGBA.color(255, 255, 255, (int) (alpha * 128));

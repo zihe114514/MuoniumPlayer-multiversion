@@ -258,7 +258,7 @@ public final class BlossomLyricStyle implements SharedConstants, SharedRendering
 
         invalidateOnTrackChange();
 
-        long posMs = (long) CloudMusic.player.getCurrentTimeMillis();
+        long posMs = CloudMusic.positionMsNow();
         double px = bw * PAD_X_RATIO;
         double wrapW = Math.max(1.0, (bw - px * 2.0) * WRAP_RATIO);
         double mainStep = glyphH * MAIN_STEP_RATIO;
@@ -542,7 +542,7 @@ public final class BlossomLyricStyle implements SharedConstants, SharedRendering
      * 每帧调用等于每帧把时钟归零。</p>
      */
     private void updateScaleTargets(int n, int activeIdx) {
-        boolean playing = CloudMusic.player != null && !CloudMusic.player.isPausing();
+        boolean playing = CloudMusic.isAudibleNow();
         double emphasis = HudConfig.currentLineScale;
         for (int i = 0; i < n; i++) {
             double target = !playing ? 1.0 : (i == activeIdx ? emphasis : SCALE_ASPECT);
@@ -578,7 +578,7 @@ public final class BlossomLyricStyle implements SharedConstants, SharedRendering
         double activeK = computeActiveK(line, posMs, prevEnd);
         double baseAlpha = Math.max(MIN_ALPHA, IDLE_ALPHA + (1.0 - IDLE_ALPHA) * activeK);
 
-        boolean playing = CloudMusic.player != null && !CloudMusic.player.isPausing();
+        boolean playing = CloudMusic.isAudibleNow();
         double target = playing ? HudConfig.currentLineScale : 1.0;
         if (!singleScaleInit) {
             singleScaleSpring.setPosition(target);

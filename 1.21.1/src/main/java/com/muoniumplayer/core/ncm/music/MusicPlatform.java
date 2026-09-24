@@ -12,7 +12,16 @@ public enum MusicPlatform {
     YOUTUBE("YouTube Music", 0xFF0033),
     BILIBILI("哔哩哔哩", 0xFB7299),
     QISHUI("汽水音乐", 0x1ED6C8),
-    GD("GD音乐台", 0x3D5AFE);
+    GD("GD音乐台", 0x3D5AFE),
+    /**
+     * 系统媒体会话（Windows SMTC）：外部播放器正在播的那首。
+     *
+     * <p>它不是一个可取流的平台 —— {@link #isCadenceBacked()} 为假，播放列表与取流链路都不该
+     * 认它。存在意义是「身份与来源标记」：稳定键前缀、徽标显示、以及设置页能说清这一首
+     * 是从外面进来的。<b>追加在末尾</b>：稳定键里带着 {@code name()}，插在中间会让已经
+     * 落盘的歌词与封面缓存整体错行。</p>
+     */
+    SMTC("系统播放器", 0x8E6BD6);
 
     private final String displayName;
     private final int brandColor;

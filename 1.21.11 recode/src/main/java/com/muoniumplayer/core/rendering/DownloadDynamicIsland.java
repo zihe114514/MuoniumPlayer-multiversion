@@ -20,8 +20,11 @@ import com.muoniumplayer.core.utils.Location;
 
 import java.awt.Color;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
+import java.util.List;
 import com.muoniumplayer.render.skija.SkijaGfx;
+import com.muoniumplayer.render.skija.SkijaHost;
 
 /**
  * 全局、与界面无关的下载活动岛（Dynamic Island）。
@@ -34,10 +37,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     private static final DownloadDynamicIsland INSTANCE = new DownloadDynamicIsland();
 
-    /**
-     * 供岛屿撞击效果使用的共享阻尼波。实时岛屿和紧凑锚点都使用它，
-     * 因此在回弹期间重新打开时会从屏幕上当前的形状精确起步。
-     */
+    /** HUD 稳定后再预热播放器基础布局，避开客户端启动与首帧加载高峰。 */
     /** 在打开/关闭形变期间，播放器表面占据顶部居中区域。 */
     private static double absorbWave(double phase) {
         return Math.exp(-4.1 * phase) * Math.sin(Math.PI * 2.85 * phase);
@@ -66,17 +66,28 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private static final double MIN_AUTO_TEXT_SCALE = .62;
     private static final double MAX_TEXT_SCALE = 1.18;
     private static final double CONTENT_CHANGE_SLIDE = 4.5;
-    /** 仅循环切换岛屿外观；下载状态和通知保持不变。 */
+    /** 文案扫光一轮的时长。慢到不抢注意力，快到能看出是在动。 */
     private static final long SHIMMER_PERIOD_MILLIS = 1600L;
-    /** {@link #transcodeProgress} 上一次实际变动的时刻；用于驱动转码停滞看门狗。 */
+    /** 亮带宽度占整行宽度的比例。 */
     private static final double SHIMMER_BAND = .34;
-    /** 将来自异步网络/播放工作线程的通知串行化。 */
+    /** 亮带之外的基础不透明度；亮带中心补到 1.0。 */
     private static final double SHIMMER_BASE_ALPHA = .80;
-    /** 缺失的刷新回调绝不能让岛屿永久停留在加载状态。 */
+    /**
+     * 智能过渡卡片在重叠时长之外多给的宽限，毫秒。
+     *
+     * <p>时效 = 本次重叠时长 + 这点宽限。宽限是为了覆盖「排在前面那张卡刚好还差半秒就播完」这种
+     * 临界情况：过渡刚结束时卡片仍算有效，再晚就作废。</p>
+     */
     private static final long AUTOMIX_BLENDING_TTL_SLACK_MILLIS = 1_500L;
-    /** GD URL 解析有更长的网络时限，但其加载卡片仍必须结束。 */
+    /**
+     * 液态玻璃的中性玻璃色，刻意<b>不</b>读 {@link NCMTheme#getAccentColor()}。
+     *
+     * <p>玻璃是一种材质而不是一处强调。用主题强调色去染整块表面的结果就是"液态玻璃被染色"：主题一换，
+     * 玻璃体、折射亮带、底部反射和边缘光会一起偏成同一个色调，看起来像有色塑料而不是玻璃。这里固定
+     * 一组偏冷的玻璃色；边缘光仍然按时间在色相环上转，所以"动态取色"的观感保留，只是不再被主题牵着走。</p>
+     */
     private static final int GLASS_TINT = 0x8FB4EC;
-    /** 歌单收藏提交是短请求；丢失的回调绝不能把卡片卡死。 */
+    /** 玻璃色的高光变体，用于折射亮带与边缘光的基准色相。 */
     private static final int GLASS_TINT_BRIGHT = 0xCADEFB;
 
     /** 转码合理地可能持续数分钟，因此监控的是停滞而非总时长。 */
@@ -87,7 +98,16 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         CARD("浮层卡片"),
         SYSTEM_CARD("系统通知"),
         MUSIC_FOCUS("音乐聚焦"),
-        LIQUID_GLASS("液态玻璃");
+        LIQUID_GLASS("液态玻璃"),
+        /**
+         * 回弹胶囊：把作者另一份 Hypixel 端的 Dynamic Island 稿子 1:1 搬过来的一款。
+         *
+         * <p>和其他七款的差别全在"动起来是什么样"：尺寸是带速度的弹簧（会过冲再回弹），
+         * 整块表面按事件语义染成绿/红/蓝，多事件时按行堆叠而不是只留最新一条，
+         * 坐标吸附到物理像素网格。因此它必须<b>追加</b>在枚举末尾——
+         * {@code HudConfig.dynamicIslandStyle} 存的是序号，中间插一项会把所有人已选的样式改掉。</p>
+         */
+        BOUNCE("回弹胶囊");
 
         private final String displayName;
 
@@ -183,6 +203,25 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
      */
     private double animatedExpandedWidth = -1.0;
     private double animatedExpandedHeight = -1.0;
+
+    /*
+     * 以下一组状态只服务「回弹胶囊」一款样式。刻意不复用上面那条低通通道，也不给它加任何
+     * 全局开关：现有七款的动画数值全部走原路径，这一款在 drawIsland 里单独分叉。
+     */
+    /** 宽高弹簧。带速度，所以尺寸目标突变时会先冲过头再回弹，这是它最主要的观感来源。 */
+    private final BounceIslandMath.Spring bounceWidth = new BounceIslandMath.Spring(0.0);
+    private final BounceIslandMath.Spring bounceHeight = new BounceIslandMath.Spring(0.0);
+    /** 进度条的临界阻尼平滑：下载速度本来就是跳变的，条不能跟着跳。 */
+    private final BounceIslandMath.DampedValue bounceProgress = new BounceIslandMath.DampedValue();
+    /** 整块表面的当前底色，按事件语义逐通道逼近目标色。 */
+    private final BounceIslandMath.Tint bounceTint = new BounceIslandMath.Tint();
+    /** 上一帧的纳秒时刻；0 表示还没跑过第一帧。弹簧按真实 dt 积分，帧率无关。 */
+    private long bounceLastFrameNanos;
+    /** 堆叠通知行的到达时刻，按「类型+文案」对齐，每行算自己的淡入淡出。 */
+    private final List<BounceRow> bounceRows = new ArrayList<BounceRow>();
+    /** 本帧的秒级帧间隔；弹簧与底色渐变共用，一帧只能推进一次时间戳。 */
+    private double bounceFrameDelta = 1.0 / 60.0;
+
     /** 将播放器表面移交到岛屿并启动撞击响应。 */
     private float contentTransition = 1f;
     /** 当播放器在交接完成前被另一界面替换时取消交接。 */
@@ -196,7 +235,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     // 突然弹回静止胶囊形状。这与 drawIsland 使用的是同一个波。
     private double animatedNoticeProgress;
 
-    // 此锚点描述的是全局 HUD 岛屿，而非播放器的自适应布局。
+    /**
+     * 常驻内容与通知内容之间的交叉淡入进度：1 为常驻状态栏，0 为通知/下载卡片。
+     * 常驻不是一种通知，因此它只参与这一层内容混合，完全不进 {@link #NOTICE_QUEUE}。
+     */
     private float ambientBlend;
     private boolean previousAlwaysOn;
     private IslandAmbientStatus.Snapshot ambientSnapshot = IslandAmbientStatus.EMPTY;
@@ -219,14 +261,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         try {
             NCMScreen.prewarmLayout();
         } catch (Throwable t) {
-            /**
-     * 返回用户此刻实际看到的岛屿轮廓。
-     *
-     * <p>理论上的紧凑药丸只是回退。常驻开启的岛屿在播放器被调用时通常处于
-     * 展开状态，因此从 {@link #getAnchorBounds()} 打开会让常驻岛屿消失、
-     * 出现一个更小的无关胶囊。此实时值包含真实布局、配置缩放、入场缩放和
-     * 当前吸收形变。</p>
-     */
+            // 预热永远不允许影响 HUD；真正打开播放器时 initGui 仍会走完整布局。
             System.err.println("[MuoniumPlayer] 播放器布局预热失败: " + t);
         }
     }
@@ -297,12 +332,21 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         suppressPlayerEntryAnimation = false;
     }
 
-    /** 在异步歌单请求完成前保持岛屿可见。 */
+    /**
+     * 返回当前样式的紧凑锚点：x、y、width、height、radius。
+     *
+     * <p>播放器展开动画只需要“岛在哪里、有多大”，不需要知道岛里现在显示的是下载、通知还是常驻
+     * 状态。这里按当前样式与用户缩放重新推一遍紧凑胶囊，和真实渲染使用同一组常量。</p>
+     */
     public static double[] getAnchorBounds() {
         DynamicIslandStyle style = getStyle();
-        double localWidth = style == DynamicIslandStyle.COMPACT ? 46.0
-                : (style == DynamicIslandStyle.MUSIC_FOCUS ? 48.0 : COMPACT_WIDTH);
-        double localHeight = style == DynamicIslandStyle.COMPACT ? 14.0 : COMPACT_HEIGHT;
+        boolean bounceStyle = style == DynamicIslandStyle.BOUNCE;
+        double localWidth = bounceStyle
+                ? BounceIslandMath.SIDE_PADDING * 2.0 + BounceIslandMath.LOGO_AREA_WIDTH
+                : (style == DynamicIslandStyle.COMPACT ? 46.0
+                : (style == DynamicIslandStyle.MUSIC_FOCUS ? 48.0 : COMPACT_WIDTH));
+        double localHeight = bounceStyle ? BounceIslandMath.ROW_HEIGHT
+                : (style == DynamicIslandStyle.COMPACT ? 14.0 : COMPACT_HEIGHT);
 
         /** 显示持久化的音乐音量及配套的进度指示。 */
         /** 显示稳定的转码卡片；进度更新只移动进度条，不会重启入场动画。 */
@@ -322,7 +366,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         // 停滞的解码器会停止移动进度条；下方的看门狗正是对此作出反应。
         double centerX = RenderSystem.getWidthNotScaled() * .5;
         double x = centerX - width * .5;
-        double y = TOP_MARGIN;
+        double y = bounceStyle ? BounceIslandMath.TOP : TOP_MARGIN;
         return new double[]{x, y, width, height, localRadius * configuredScale};
     }
 
@@ -338,6 +382,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     // 实时卡片是持久的，因此普通通知会排在它后面，无法替换
     public static int getAnchorSurfaceColor() {
         DynamicIslandStyle style = getStyle();
+        if (style == DynamicIslandStyle.BOUNCE) {
+            // 播放器面板要从岛"当前那一层底色"接上去，而这一款的底色是跟着事件语义走的。
+            BounceIslandMath.Tint tint = INSTANCE.bounceTint;
+            return BounceIslandMath.argb(255, tint.redChannel(), tint.greenChannel(), tint.blueChannel());
+        }
         if (style == DynamicIslandStyle.GLASS) return NCMTheme.getAccentColor();
         if (style == DynamicIslandStyle.CARD) return INSTANCE.hexColor(.028f, .034f, .046f, 1f);
         if (style == DynamicIslandStyle.SYSTEM_CARD) return INSTANCE.hexColor(.025f, .031f, .043f, 1f);
@@ -347,6 +396,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
 
     private static double compactRadius(DynamicIslandStyle style, double height) {
+        if (style == DynamicIslandStyle.BOUNCE) return BounceIslandMath.pillRadius(height);
         if (style == DynamicIslandStyle.SYSTEM_CARD) return Math.min(11.0, height * .25);
         if (style == DynamicIslandStyle.MUSIC_FOCUS) return Math.min(14.0, height * .31);
         if (style == DynamicIslandStyle.LIQUID_GLASS) return Math.min(16.0, height * .40);
@@ -378,12 +428,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         publishNotice(IslandNoticeType.VOLUME, "音乐音量", safePercent + "%");
     }
     /** 仅在配置的模型返回可用证据后才完成实时卡片。 */
-    public static void beginTranscode(String sourceName, String targetName) {
+    public static void beginTranscode(String trackName, String sourceFormat, String targetFormat) {
         transcoding = true;
         transcodeProgress = 0.0;
         transcodeProgressAdvancedAt = System.currentTimeMillis();
         publishNotice(IslandNoticeType.TRANSCODING, "音频转码",
-                formatTranscodeValue(sourceName, targetName), true);
+                formatTranscodeValue(trackName, sourceFormat, targetFormat), true);
     }
 
     /** 模型尝试失败并回退到确定性分析后的终止状态。 */
@@ -395,7 +445,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
 
     /** 通报一次已校验的新歌单收藏。 */
-    public static void finishTranscode(String sourceName, String targetName, long elapsedMillis) {
+    public static void finishTranscode(String trackName, String sourceFormat, String targetFormat,
+                                       long elapsedMillis) {
         transcoding = false;
         transcodeProgress = 1.0;
         transcodeProgressAdvancedAt = 0L;
@@ -403,7 +454,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         /** 通报请求未被目标歌单的 trackIds 校验通过。 */
         /** 显示刚启动曲目所解析出的流层级和容器格式。 */
         completePersistentNotice(IslandNoticeType.TRANSCODING, IslandNoticeType.TRANSCODE_SUCCESS,
-                "转码完成", formatTranscodeValue(sourceName, targetName) + " · "
+                "转码完成", formatTranscodeValue(trackName, sourceFormat, targetFormat) + " · "
                         + Math.max(0L, elapsedMillis) + " ms");
     }
 
@@ -419,8 +470,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
     }
 
-    private static String formatTranscodeValue(String sourceName, String targetName) {
-        return safeNoticeValue(sourceName, "输入音频") + " → " + safeNoticeValue(targetName, "WAV");
+    /** 转码卡片给人看的是「歌名 输入容器→输出容器」，例如「晴天 mp4→wav」。 */
+    private static String formatTranscodeValue(String trackName, String sourceFormat, String targetFormat) {
+        return safeNoticeValue(trackName, "当前歌曲") + " "
+                + safeNoticeValue(sourceFormat, "?") + "→" + safeNoticeValue(targetFormat, "wav");
     }
     public static void showPlaylistRefreshInProgress() {
         publishNotice(IslandNoticeType.REFRESHING, "歌单同步", "正在刷新…", true);
@@ -438,10 +491,25 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 "歌单同步失败", safeNoticeValue(message, "网络请求失败"));
     }
 
-    /** 报告真正的播放失败，而不把用户主动切歌当作错误。 */
+    /**
+     * 音频缓存清理结果。刻意沿用歌单同步的成功/失败外观：这是一次性结果提示，
+     * 不值得为它新增一种通知类型与图标，也因此自动遵循既有的排队与优先级。
+     */
     public static void showCacheSweep(String detail, boolean success) {
         publishNotice(success ? IslandNoticeType.REFRESH_SUCCESS : IslandNoticeType.REFRESH_ERROR,
                 success ? "缓存已清理" : "缓存清理失败", safeNoticeValue(detail, "没有可回收的缓存"));
+    }
+
+    /**
+     * 系统播放器镜像（Windows SMTC）的接管、失败与命令结果。
+     *
+     * <p>刻意沿用成功/失败那一对外观而不新增通知类型：这一族的文案本身就分「接管成功」与
+     * 「外部播放器不接受这条命令」两类，图标语义完全对得上，为它加一个新类型只会让
+     * 岛上的图标表再多一行而没有任何视觉差别。</p>
+     */
+    public static void showExternalMedia(String detail, boolean success) {
+        publishNotice(success ? IslandNoticeType.REFRESH_SUCCESS : IslandNoticeType.REFRESH_ERROR,
+                "系统播放器镜像", safeNoticeValue(detail, success ? "已接管" : "操作未完成"));
     }
 
     /** 显示最近播放立即上传的结果和请求延迟。 */
@@ -525,7 +593,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         publishNotice(IslandNoticeType.PLAYBACK_ERROR, "播放失败", safeSong + " · " + safeReason);
     }
 
-    /** 为登录和账号校验提供一种独立、可读的连接失败反馈。 */
+    /**
+     * 网易云上报进行中的提示。刻意和上报结果同属最低优先级并走排队通道：它是后台遥测，
+     * 不能抢占任何用户主动触发的反馈，也不做 persistent（否则会插队并需要超时兜底）。
+     */
     public static void showNeteaseUploadStarted(String label) {
         publishNotice(IslandNoticeType.NETEASE_UPLOADING, safeNoticeValue(label, "网易云上报"),
                 "正在上报到网易云客户端");
@@ -558,15 +629,20 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
     // 后到的面向用户通知会占用活动槽位；把遥测卡片
     public static void showAutomixHandover(String trackName) {
-        // 推迟到队尾，使其即便先到达也始终保持最低优先级。
-        // 诸如音量调节之类的实时通知必须保持原有的即时、
-        // 合并行为。它们从不进入普通通知队列。
+        // 标题带扫光（见 renderNotice 的 shimmerTitle），排队方式仍是普通通知。
+        // 但它多了一条时效：这张卡片说的是「此刻正在过渡」，重叠期一结束就作废。与其在过渡早已
+        // 完成之后才从队尾冒出来误导人，不如干脆不显示 —— 这就是「不抢优先级，但也不留过期卡」。
         publishNotice(IslandNoticeType.AUTOMIX_BLENDING, "智能过渡中",
                 safeNoticeValue(trackName, "下一首"), false,
                 AutomixSettings.getOverlapMillis() + AUTOMIX_BLENDING_TTL_SLACK_MILLIS);
     }
 
-    // 第二条普通通知意味着当前通知和所有排队通知都使用
+    /**
+     * 下一首已经解码好、静静等在备用轨上。
+     *
+     * <p>只报歌名 + 一句结论，同样不带交接计划里那串参数：这条的作用是让人知道「下一首会平滑接进来」，
+     * 而不是解释它将怎么接。</p>
+     */
     public static void showAutomixArmed(String trackName) {
         publishNotice(IslandNoticeType.AUTOMIX, "下一首已就绪",
                 safeNoticeValue(trackName, "下一首") + " · 将无缝接入");
@@ -582,15 +658,17 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
 
     /**
-     * 用终止结果替换匹配的实时状态卡片，而不清除该实时卡片可能临时打断的
-     * 已排队通知。
+     * 搜索结果起播后，队列已经接上"最近播放"的提示。普通通道：歌已经在放了，这只是解释后面会播什么。
      */
     public static void showSearchQueueFromRecentPlays(int count) {
         publishNotice(IslandNoticeType.PLAY_NEXT, "已接入最近播放",
                 Math.max(0, count) + " 首 · 播完当前歌曲后继续");
     }
 
-    /** 网易云累计收听时长上报是非交互式遥测数据。 */
+    /**
+     * 私人 FM 已经把下一首推荐预备进队列的提示。普通通道：这只是解释接下来会播什么，必须老实排在用户
+     * 主动触发的反馈后面，不能抢占正在显示的下载 / 转码卡片。
+     */
     public static void showPersonalFmPrefetched(String trackName) {
         publishNotice(IslandNoticeType.PLAY_NEXT, "已预备下一首",
                 safeNoticeValue(trackName, "下一首推荐") + " · 私人 FM 将无缝接入");
@@ -602,19 +680,22 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 safeNoticeValue(trackName, "所选歌曲") + " · 当前没有播放队列，已直接播放");
     }
 
-    /** 保留被中断的普通通知，使实时的音量/状态更新不会将其丢弃。 */
+    /**
+     * 全局快捷键切换暂停/继续后的提示。刻意用普通通道（非 persistent）：这只是一次状态确认，必须
+     * 老实排在用户触发的其它反馈后面，不能抢占正在显示的下载/转码卡片。
+     */
     public static void showPlaybackPaused(String trackName) {
         publishNotice(IslandNoticeType.PLAYBACK_TOGGLE, "已暂停",
                 safeNoticeValue(trackName, "当前播放") + " · 再按一次继续");
     }
 
-    // 对只是在重复自报的状态通道保留其截止时间，使重复的
+    /** 与 {@link #showPlaybackPaused(String)} 成对，报告播放已恢复。 */
     public static void showPlaybackResumed(String trackName) {
         publishNotice(IslandNoticeType.PLAYBACK_TOGGLE, "继续播放",
                 safeNoticeValue(trackName, "当前播放"));
     }
 
-    // "仍在处理" 更新无法无限期推迟超时。
+    /** 快捷键按下但当前没有可暂停的播放时的提示，避免用户以为按键没生效。 */
     public static void showPlaybackToggleUnavailable() {
         publishNotice(IslandNoticeType.PLAYBACK_TOGGLE, "暂停快捷键", "当前没有正在播放的歌曲");
     }
@@ -665,20 +746,25 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
 
 
-    /** 当前是否有真正的下载卡片正占据岛屿。 */
+    /**
+     * 网易云灰色歌曲解灰：开始找第三方源。
+     *
+     * <p>走普通通知通道（不抢队、不做常驻）：这一步之前官方链路已经失败了，用户只需要知道
+     * 播放器还在尝试，不该压掉正在展示的别的卡片。</p>
+     */
     public static void showNeteaseUnblockSearching(String trackName) {
         publishNotice(IslandNoticeType.GD_SOURCE_LOADING, "正在尝试解灰",
                 safeNoticeValue(trackName, "当前歌曲") + " · 官方链路无可播放流");
     }
 
-    /** 开始新的下载快照。最后发布该标志以保证跨线程可见性。 */
+    /** 网易云灰色歌曲解灰成功，说清是哪一家给的流。 */
     public static void showNeteaseUnblocked(String trackName, String sourceLabel, String format) {
         publishNotice(IslandNoticeType.GD_SOURCE_SUCCESS, "已解灰 · " + safeNoticeValue(sourceLabel, "第三方源"),
                 safeNoticeValue(trackName, "当前歌曲") + " · "
                         + safeNoticeValue(format, "未知").toUpperCase(java.util.Locale.ROOT));
     }
 
-    /** 在发布最终的 100% 值之后更新进度并关闭活动状态。 */
+    /** 解灰也没找到；随后由既有的「没有可用音频源」流程停下等用户操作。 */
     public static void showNeteaseUnblockFailure(String trackName) {
         publishNotice(IslandNoticeType.GD_SOURCE_ERROR, "解灰失败",
                 safeNoticeValue(trackName, "当前歌曲") + " · 第三方源没有匹配到可播放版本");
@@ -708,13 +794,17 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 safeNoticeValue(target, "音乐服务") + " · 已建立连接");
     }
 
-    /** 隐藏中止/过期的下载，不播放成功动画。 */
+    /**
+     * 一起听：房里有非会员，VIP 专享曲在起播前被跳过。
+     *
+     * <p>走普通通知通道（不抢队）：歌已经换掉了，这条只是解释为什么。</p>
+     */
     public static void showListenTogetherVipSkip(String trackName, String reason) {
         publishNotice(IslandNoticeType.PLAY_NEXT, "一起听 · 已跳过本曲",
                 safeNoticeValue(trackName, "当前歌曲") + " · " + safeNoticeValue(reason, "房内有成员无法完整播放"));
     }
 
-    // noticeShownAt 由每个发布者刷新以延长保持窗口。shownAt
+    /** 一起听：连着跳了几首之后整条列表都放不了，停下等用户处理。 */
     public static void showListenTogetherNothingPlayable(int skipped) {
         publishNotice(IslandNoticeType.NETWORK_ERROR, "一起听 · 没有可播曲目",
                 "连续跳过 " + Math.max(1, skipped) + " 首 VIP 专享 · 请换歌单或关掉自动跳过");
@@ -739,7 +829,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         publishNotice(type, title, value, persistent, 0L);
     }
 
-    // 表面不会重新入场。文案过渡被合并，使快速的
+    /**
+     * @param ttlMillis 这条通知的有效期，{@code <= 0} 表示永不过期。只对<b>排队等待中</b>的副本生效：
+     *                  超时的副本在出队时被丢弃，而不是过期了还照样弹出来
+     */
     private static void publishNotice(IslandNoticeType type, String title, String value,
                                       boolean persistent, long ttlMillis) {
         IslandNoticeType safeType = type == null ? IslandNoticeType.NONE : type;
@@ -755,8 +848,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             }
 
             if (safeType == IslandNoticeType.AUTOMIX_BLENDING) {
-                // 按键重复序列能干净地收敛到最新的通知值。
-                // 快速下载可能在两帧渲染之间就开始并完成。最终进度
+                // 一次交接只该有一张卡。自动接一次、用户紧接着又手动跳一次时，后来的信息更新，
+                // 先前那张直接作废；正在显示的同类卡片就地换成新歌名，而不是再排一张。
                 dropQueuedNoticesOfTypeLocked(safeType);
                 if (noticeType == safeType && !noticePersistent) {
                     publishActiveNoticeLocked(safeType, safeTitle, safeValue, false,
@@ -778,7 +871,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             if (noticeType != IslandNoticeType.NONE && isLowestPriorityNotice(noticeType)) {
                 // 即使用户不使用常驻岛屿，关闭中的播放器也必须落到
                 // 某个对象上。在撞击过程中保持其可见，然后由正常的可见性目标将其隐藏。
-                // 几何形状只经过一次低通。在此处混合通知/环境目标，然后
+                // 重新入队的是「当前正在显示的那张遥测卡」，它本身不带时效。
                 NOTICE_QUEUE.addLast(new QueuedNotice(noticeType, noticeTitle, noticeValue,
                         noticePersistent, true, 0L));
                 markQueuedNoticesUseQueueIntervalLocked();
@@ -817,7 +910,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
     }
 
-    // 水平方向压扁变宽、垂直方向变扁，然后回弹得更高/更窄，最后稳定。
+    /** 丢掉队列里所有同类通知。用于「同一件事只保留最新那一张卡」。 */
     private static void dropQueuedNoticesOfTypeLocked(IslandNoticeType type) {
         java.util.Iterator<QueuedNotice> iterator = NOTICE_QUEUE.iterator();
         while (iterator.hasNext()) {
@@ -825,7 +918,15 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
     }
 
-    // 记录精确的变换后轮廓。播放器过渡必须从此形状起步，
+    /**
+     * 取下一条<b>仍然有效</b>的排队通知。
+     *
+     * <p>带时效的通知（目前只有智能过渡）过期就直接丢弃：它描述的是一件正在发生的事，等它排到时
+     * 事情已经结束了，弹出来只会误导。丢弃发生在出队这一刻，所以它既不会抢别人的位置，也不会
+     * 因为前面排了几张卡就把自己变成一张过期卡。</p>
+     *
+     * @return 下一条可显示的通知，队列里已经没有有效通知时返回 {@code null}
+     */
     private static QueuedNotice pollNextNoticeLocked(long now) {
         while (!NOTICE_QUEUE.isEmpty()) {
             QueuedNotice next = NOTICE_QUEUE.removeFirst();
@@ -854,8 +955,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private static boolean isLowestPriorityNotice(IslandNoticeType type) {
         return type == IslandNoticeType.LISTENING_DURATION_SUCCESS
                 || type == IslandNoticeType.LISTENING_DURATION_ERROR
-                // 左移的矩形看起来像一块独立的深色背景画布。
-                // 音乐聚焦卡片：表面先展开，然后动画封面和文案就位。
+                // 上报进行中与上报结果是同一条遥测链路，优先级必须一致，否则"上报中"会插到
+                // 用户触发的反馈前面，而它的结果卡片还老实排在后面。
                 || type == IslandNoticeType.NETEASE_UPLOADING;
     }
 
@@ -867,7 +968,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     // 让图标安全地位于圆角轮廓内部，并在文字前留出真正的间距。
     private static void preserveActiveQueuedNoticeLocked() {
         if (noticeType == IslandNoticeType.NONE || bypassesNoticeQueue(noticeType, noticePersistent)) return;
-        // 以前 1.16 倍的图标缩放可能把其外缘推进过期的裁剪区或药丸的
+        // 被抢占的这张卡已经露过面了，把剩下的时长还给它就行，不再给它套时效。
         NOTICE_QUEUE.addFirst(new QueuedNotice(noticeType, noticeTitle, noticeValue,
                 noticePersistent, noticeUsesQueueInterval, 0L));
     }
@@ -969,7 +1070,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         private final String value;
         private final boolean persistent;
         private boolean useQueueInterval;
-        // 三条队列线加一个播放楔形：与生成它的行控件思路相同。
+        /** 出队后仍然有效的截止时刻；{@code <= 0} 表示永不过期。 */
         private final long expiresAt;
 
         private QueuedNotice(IslandNoticeType type, String title, String value,
@@ -1057,7 +1158,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         boolean sourceNoticePersistent = noticePersistent;
         boolean sourceNoticeQueueMode = noticeUsesQueueInterval;
 
-        /** Folia 模型推理生命周期。 */
+        // 场合门控：游戏外（主菜单/未进世界）与玩家列表打开时整块不画；播放器界面里只放通知，
         // 常驻状态栏让位。判定见 IslandVisibilityGate。
         IslandVisibilityGate.Scene scene = IslandVisibilityGate.capture();
         if (!IslandVisibilityGate.allowSurface(scene)) {
@@ -1341,6 +1442,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         double configuredScale = DynamicIslandMath.clamp(HudConfig.dynamicIslandScale, .60, 1.35);
         double screenWidth = RenderSystem.getWidth();
         DynamicIslandStyle style = getStyle();
+        boolean bounce = style == DynamicIslandStyle.BOUNCE;
+        // 回弹胶囊把所有事件按行堆出来，所以先要问出本帧到底有几行；其他样式不读这个列表。
+        List<BounceRow> bounceStack = bounce
+                ? bounceCollectRows(now, noticeMode, activeNoticeType, activeNoticeTitle,
+                activeNoticeValue, preview)
+                : java.util.Collections.<BounceRow>emptyList();
         IslandLayout layout = createIslandLayout(style, noticeMode, activeNoticeType, activeNoticeTitle,
                 activeNoticeValue, speedValue, preview, configuredScale, screenWidth);
         float ambientMix = DynamicIslandMath.clamp01f(ambientBlendValue);
@@ -1371,14 +1478,52 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         boolean ambientGeometry = hasAmbient && ambientMix >= .5f;
         double targetExpandedWidth = ambientGeometry ? ambientTargetWidth : layout.targetWidth;
         double targetExpandedHeight = ambientGeometry ? ambientTargetHeight : layout.targetHeight;
+        if (bounce) {
+            // 参考稿的行高恒定：一个事件一行、每行 32，多事件把胶囊往上叠，而不是换一张更高的卡。
+            double rowScale = bounceRowTextScale(layout);
+            targetExpandedWidth = Math.max(targetExpandedWidth, bounceStackWidth(bounceStack, rowScale));
+            if (hasAmbient && ambientMix >= .5f) {
+                // 静息行是「品牌 - 数值 - 数值」串起来的，比通用排版宽，必须自己报一个宽度，
+                // 否则弹簧会按通用宽度收，正文最后一项被裁掉。
+                targetExpandedWidth = Math.max(targetExpandedWidth,
+                        bounceIdleRowWidth(ambient, bouncePlainRowTextScale(layout)));
+            }
+            targetExpandedHeight = BounceIslandMath.ROW_HEIGHT * Math.max(1, bounceStack.size());
+            // 参考稿自带的一条上限：窄屏上宁可让渲染层裁字，也不许顶到屏幕两边。
+            targetExpandedWidth = Math.min(targetExpandedWidth,
+                    Math.max(BounceIslandMath.MIN_WIDTH, screenWidth / Math.max(.2, configuredScale) - 16.0));
+        }
 
-        double compactWidth = style == DynamicIslandStyle.COMPACT ? 46.0
-                : (style == DynamicIslandStyle.MUSIC_FOCUS ? 48.0 : COMPACT_WIDTH);
-        double compactHeight = style == DynamicIslandStyle.COMPACT ? 14.0 : COMPACT_HEIGHT;
-        double expandedWidth = preview ? targetExpandedWidth
-                : animateExpandedDimension(animatedExpandedWidth, targetExpandedWidth);
-        double expandedHeight = preview ? targetExpandedHeight
-                : animateExpandedDimension(animatedExpandedHeight, targetExpandedHeight);
+        double compactWidth = bounce ? BounceIslandMath.SIDE_PADDING * 2.0 + BounceIslandMath.LOGO_AREA_WIDTH
+                : (style == DynamicIslandStyle.COMPACT ? 46.0
+                : (style == DynamicIslandStyle.MUSIC_FOCUS ? 48.0 : COMPACT_WIDTH));
+        double compactHeight = bounce ? BounceIslandMath.ROW_HEIGHT
+                : (style == DynamicIslandStyle.COMPACT ? 14.0 : COMPACT_HEIGHT);
+        double expandedWidth;
+        double expandedHeight;
+        if (bounce) {
+            /*
+             * 弹簧通道。低通那一路（{@link #animateExpandedDimension}）对这一款完全不参与，
+             * 但结果仍写回 {@link #animatedExpandedWidth}：那三处「归零到 -1」的哨兵于是
+             * 一并管住了弹簧的重新起跳，不需要在每处再补一遍重置。
+             */
+            boolean primed = animatedExpandedWidth > 0.0 && animatedExpandedHeight > 0.0;
+            double springDt = bounceFrameSeconds();
+            if (preview || !primed) {
+                bounceWidth.snapTo(targetExpandedWidth);
+                bounceHeight.snapTo(targetExpandedHeight);
+            } else {
+                bounceWidth.stepTo(targetExpandedWidth, springDt);
+                bounceHeight.stepTo(targetExpandedHeight, springDt);
+            }
+            expandedWidth = bounceWidth.value();
+            expandedHeight = bounceHeight.value();
+        } else {
+            expandedWidth = preview ? targetExpandedWidth
+                    : animateExpandedDimension(animatedExpandedWidth, targetExpandedWidth);
+            expandedHeight = preview ? targetExpandedHeight
+                    : animateExpandedDimension(animatedExpandedHeight, targetExpandedHeight);
+        }
         if (!preview) {
             animatedExpandedWidth = expandedWidth;
             animatedExpandedHeight = expandedHeight;
@@ -1402,7 +1547,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
 
         double visibilityEase = DynamicIslandMath.smoothStep(alpha);
-        double y = TOP_MARGIN - (height + 11.0) * (1.0 - visibilityEase);
+        // 回弹胶囊的静息位置比其他样式低 1px；入场滑动的起点跟着一起挪，否则收起高度会出现两套。
+        double topMargin = bounce ? BounceIslandMath.TOP : TOP_MARGIN;
+        double y = topMargin - (height + 11.0) * (1.0 - visibilityEase);
 
         double entryScale = 1.0;
         if (!preview && animationStart > 0L && !suppressPlayerEntryAnimation) {
@@ -1417,22 +1564,35 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
 
         api.getGLStateManager().pushMatrix();
-        scaleAtPos(centerX, TOP_MARGIN, configuredScale);
+        scaleAtPos(centerX, topMargin, configuredScale);
         scaleAtPos(centerX, y + height * .5, entryScale);
 
         double x = centerX - width * .5;
+        if (bounce) {
+            /*
+             * 吸附到物理像素网格。其他样式的表面靠抗锯齿渐变收尾，缩放 2/3 档时那根半透明灰线
+             * 被当成高光看不出来；这一款是纯色平面，同样的半像素就会显形成上下各一道边。
+             * 半径必须在吸附之后才算：参考稿用的正是吸附后的高度。
+             */
+            double pixelScale = SkijaHost.guiScale();
+            x = BounceIslandMath.alignFloor(x, pixelScale);
+            y = BounceIslandMath.alignFloor(y, pixelScale);
+            width = BounceIslandMath.alignSize(width, pixelScale);
+            height = BounceIslandMath.alignUp(height, pixelScale);
+        }
         boolean systemCard = style == DynamicIslandStyle.SYSTEM_CARD;
         boolean musicFocus = style == DynamicIslandStyle.MUSIC_FOCUS;
         boolean liquidGlass = style == DynamicIslandStyle.LIQUID_GLASS;
-        double radius = systemCard ? Math.min(11.0, height * .25)
+        double radius = bounce ? BounceIslandMath.pillRadius(height)
+                : (systemCard ? Math.min(11.0, height * .25)
                 : (musicFocus ? Math.min(14.0, height * .31)
                 : (liquidGlass ? Math.min(16.0, height * .40)
-                : (style == DynamicIslandStyle.CARD ? Math.min(12.0, height * .30) : height * .5)));
+                : (style == DynamicIslandStyle.CARD ? Math.min(12.0, height * .30) : height * .5))));
         // 记录变换后的确切轮廓。播放器过渡必须从这个
         // 形状开始，而不是从与当前驻留灵动岛不匹配的紧凑胶囊开始。
         if (!preview) {
             double renderedScale = configuredScale * entryScale;
-            double renderedCenterY = TOP_MARGIN + configuredScale * (y + height * .5 - TOP_MARGIN);
+            double renderedCenterY = topMargin + configuredScale * (y + height * .5 - topMargin);
             LIVE_ANCHOR_BOUNDS[0] = centerX - width * renderedScale * .5;
             LIVE_ANCHOR_BOUNDS[1] = renderedCenterY - height * renderedScale * .5;
             LIVE_ANCHOR_BOUNDS[2] = width * renderedScale;
@@ -1446,10 +1606,20 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         // 左移矩形看起来像一个独立的深色背景画布。
         float shadowAlpha = alpha * (style == DynamicIslandStyle.GLASS ? .13f
                 : (liquidGlass ? .15f : (musicFocus ? .23f : .19f)));
-        roundedRect(x + 1.0, y + 1.8, width, height, radius,
-                hexColor(0f, 0f, 0f, shadowAlpha));
-        roundedRect(x + 2.0, y + 3.0, width, height, radius,
-                hexColor(0f, 0f, 0f, shadowAlpha * .42f));
+        if (!bounce) {
+            roundedRect(x + 1.0, y + 1.8, width, height, radius,
+                    hexColor(0f, 0f, 0f, shadowAlpha));
+            roundedRect(x + 2.0, y + 3.0, width, height, radius,
+                    hexColor(0f, 0f, 0f, shadowAlpha * .42f));
+        }
+        if (bounce) {
+            drawBounceIsland(x, y, width, height, radius, alpha, expansionValue, contentFade,
+                    now, preview, noticeMode, activeNoticeType, activeNoticeTitle, activeNoticeValue,
+                    noticeProgress, ambient, ambientMix, layout, bounceStack, progress, success,
+                    configuredScale, accentColor);
+            api.getGLStateManager().popMatrix();
+            return;
+        }
         if (liquidGlass) {
             renderLiquidGlassSurface(x, y, width, height, radius, alpha, now);
         } else if (style == DynamicIslandStyle.GLASS) {
@@ -2554,6 +2724,462 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         api.getGLStateManager().rotate(rotation, 0, 0, 1);
         roundedRect(-width * .5, -height * .5, width, height, height * .5, color);
         api.getGLStateManager().popMatrix();
+    }
+
+    /*
+     * ============================== 回弹胶囊（BOUNCE）==============================
+     *
+     * 参考实现是作者自己另一份 Hypixel 端的 Dynamic Island 脚本，几何常量按它逐项抄齐。
+     * 这一款借的只有「动起来是什么样」和「怎么排版」：弹簧尺寸、按事件语义染整块表面、
+     * 多事件按行堆叠、坐标吸附到物理像素。内容仍然是本项目自己的事件源（下载进度、
+     * 通知队列、常驻状态行），没有新造任何数据。
+     *
+     * 下面每个方法都只在 style == BOUNCE 时经 drawIsland 调用，现有七款的绘制路径一行未动。
+     */
+
+    /** 回弹样式下贴顶居中的品牌字样；参考稿那里是脚本作者的 ID。 */
+    private static final String BOUNCE_BRAND = "Muonium";
+
+    /** 本帧的秒级帧间隔。弹簧与底色渐变共用同一个值，所以一帧只能推进一次时间戳。 */
+    private double bounceFrameSeconds() {
+        long nowNanos = System.nanoTime();
+        bounceFrameDelta = BounceIslandMath.frameSeconds(nowNanos, bounceLastFrameNanos);
+        bounceLastFrameNanos = nowNanos;
+        return bounceFrameDelta;
+    }
+
+    /** 静息行与进度行的字号：参考稿那两档不跟着通知行缩到 0.8，只用通用的降级比例。 */
+    private static double bouncePlainRowTextScale(IslandLayout layout) {
+        return DynamicIslandMath.clamp(layout.textScale, MIN_AUTO_TEXT_SCALE, MAX_TEXT_SCALE);
+    }
+
+    /** 这一款的正文天生比其他样式小一档（参考稿的 NOTICE_SCALE），再乘上通用的降级比例。 */
+    private static double bounceRowTextScale(IslandLayout layout) {
+        return BounceIslandMath.NOTICE_TEXT_SCALE * bouncePlainRowTextScale(layout);
+    }
+
+    /**
+     * 收集本帧要堆叠的行：当前正在显示的通知，加上队列里排在后面的几条。
+     *
+     * <p>这是这一款和其他七款在信息量上的唯一差别——别的样式一条盖一条，它按到达顺序
+     * 往上叠。每行的到达时刻按「类型 + 标题 + 正文」从上一帧的结果里对齐取回，所以行
+     * 往上挪的时候不会把自己那条淡入动画重置掉。</p>
+     */
+    private List<BounceRow> bounceCollectRows(long now, boolean noticeMode, IslandNoticeType type,
+                                              String title, String value, boolean preview) {
+        List<BounceRow> fresh = new ArrayList<BounceRow>(BounceIslandMath.MAX_ROWS);
+        if (preview) {
+            // 预览里必须看得见「堆叠」这件事，否则这一款在编辑器里和其他样式没有区别，没人会选它。
+            fresh.add(new BounceRow(IslandNoticeType.STYLE, "回弹胶囊", "弹簧尺寸 + 逐行堆叠", now, 0L));
+            fresh.add(new BounceRow(IslandNoticeType.REFRESH_SUCCESS, "音源刷新完成",
+                    "已更新 12 首", now, now + 2_600L));
+            fresh.add(new BounceRow(IslandNoticeType.VOLUME, "音量", "62%", now, 0L));
+            return bounceSwapRows(fresh);
+        }
+        if (noticeMode && type != IslandNoticeType.NONE) {
+            long activeExpiry = noticeShownAt > 0L
+                    ? noticeShownAt + noticeHoldMillis(noticeUsesQueueInterval) : 0L;
+            fresh.add(new BounceRow(type, safeNoticeValue(title, "状态"), safeNoticeValue(value, "—"),
+                    bounceRowArrivedAt(now, type, title, value), activeExpiry));
+        }
+        synchronized (NOTICE_QUEUE_LOCK) {
+            for (QueuedNotice queued : NOTICE_QUEUE) {
+                if (fresh.size() >= BounceIslandMath.MAX_ROWS) break;
+                if (queued.expiresAt > 0L && now >= queued.expiresAt) continue;
+                fresh.add(new BounceRow(queued.type, queued.title, queued.value,
+                        bounceRowArrivedAt(now, queued.type, queued.title, queued.value),
+                        queued.expiresAt));
+            }
+        }
+        return bounceSwapRows(fresh);
+    }
+
+    /** 上一帧同一行文案的到达时刻；没对上就当作本帧新到。 */
+    private long bounceRowArrivedAt(long now, IslandNoticeType type, String title, String value) {
+        String key = BounceRow.key(type, title, value);
+        for (int i = 0; i < bounceRows.size(); i++) {
+            BounceRow previous = bounceRows.get(i);
+            if (key.equals(previous.key)) return previous.arrivedAt;
+        }
+        return now;
+    }
+
+    private List<BounceRow> bounceSwapRows(List<BounceRow> fresh) {
+        bounceRows.clear();
+        bounceRows.addAll(fresh);
+        return fresh;
+    }
+
+    /** 堆叠态需要的最小宽度：左栏（徽标 / 开关那一列）+ 最宽的一行正文 + 端距。 */
+    private double bounceStackWidth(List<BounceRow> rows, double rowScale) {
+        if (rows.isEmpty()) return 0.0;
+        double ns = BounceIslandMath.NOTICE_TEXT_SCALE;
+        double textLeft = (BounceIslandMath.SIDE_PADDING + 31.0) * ns;
+        double widest = 0.0;
+        for (int i = 0; i < rows.size(); i++) {
+            BounceRow row = rows.get(i);
+            double titleWidth = FontManager.pf12.getStringWidthD(row.title);
+            double valueWidth = FontManager.pf12.getStringWidthD(row.value);
+            widest = Math.max(widest, Math.max(titleWidth, valueWidth) * rowScale);
+        }
+        return textLeft + widest + 8.0 * ns;
+    }
+
+    /** 静息态那一行（品牌 + 各枚常驻数值）按「短横线串接」排版量出来的宽度。 */
+    private double bounceIdleRowWidth(IslandAmbientStatus.Snapshot ambient, double rowScale) {
+        if (ambient == null || ambient.isEmpty()) return 0.0;
+        double width = BounceIslandMath.SIDE_PADDING + BounceIslandMath.LOGO_AREA_WIDTH
+                + FontManager.pf12.getStringWidthD(BOUNCE_BRAND) * rowScale;
+        for (int i = 0; i < ambient.chips.length; i++) {
+            width += bounceDividerWidth() + measureAmbientChip(ambient.chips[i]) * rowScale;
+        }
+        return width + BounceIslandMath.SIDE_PADDING;
+    }
+
+    private double bounceDividerWidth() {
+        return BounceIslandMath.DIVIDER_GAP * 2.0 + FontManager.pf12.getStringWidthD("-");
+    }
+
+    /** 堆叠通知的一行。到达时刻跨帧保留，用于逐行淡入淡出。 */
+    private static final class BounceRow {
+        final IslandNoticeType type;
+        final String title;
+        final String value;
+        final long arrivedAt;
+        /** 到期时刻；{@code <= 0} 表示这条没有时效（常驻卡片、音量这类）。 */
+        final long expiresAt;
+        final String key;
+
+        BounceRow(IslandNoticeType type, String title, String value, long arrivedAt, long expiresAt) {
+            this.type = type;
+            this.title = title;
+            this.value = value;
+            this.arrivedAt = arrivedAt;
+            this.expiresAt = expiresAt;
+            this.key = key(type, title, value);
+        }
+
+        static String key(IslandNoticeType type, String title, String value) {
+            return type.name() + '\u0000' + title + '\u0000' + value;
+        }
+    }
+
+    /** 事件语义 -> 底色分类。参考稿是「内容决定整座岛的气质」，不是只染一个图标。 */
+    private static int bounceTintCategory(boolean noticeMode, IslandNoticeType type,
+                                          boolean progressMode, boolean completed) {
+        if (completed) return BounceIslandMath.TINT_CATEGORY_SUCCESS;
+        if (progressMode) return BounceIslandMath.TINT_CATEGORY_PROGRESS;
+        if (!noticeMode || type == null) return BounceIslandMath.TINT_CATEGORY_NEUTRAL;
+        switch (type) {
+            case REFRESH_SUCCESS:
+            case PLAYLIST_TRACK_ADD_SUCCESS:
+            case PLAYLIST_TRACK_ALREADY_EXISTS:
+            case TRANSCODE_SUCCESS:
+            case NETWORK_SUCCESS:
+            case RECENT_PLAY_SUCCESS:
+            case LISTENING_DURATION_SUCCESS:
+            case GD_SOURCE_SUCCESS:
+            case GD_SOURCE_HEALTHY:
+            case MODEL_INFERENCE_SUCCESS:
+                return BounceIslandMath.TINT_CATEGORY_SUCCESS;
+            case REFRESH_ERROR:
+            case PLAYLIST_TRACK_ADD_ERROR:
+            case PLAYBACK_ERROR:
+            case NETWORK_ERROR:
+            case RECENT_PLAY_ERROR:
+            case LISTENING_DURATION_ERROR:
+            case GD_SOURCE_ERROR:
+            case MODEL_INFERENCE_FAILURE:
+                return BounceIslandMath.TINT_CATEGORY_DANGER;
+            case REFRESHING:
+            case PLAYLIST_TRACK_ADDING:
+            case TRANSCODING:
+            case NETEASE_UPLOADING:
+            case GD_SOURCE_LOADING:
+            case MODEL_INFERENCE:
+            case AUTOMIX_BLENDING:
+            case VOLUME:
+                return BounceIslandMath.TINT_CATEGORY_PROGRESS;
+            default:
+                return BounceIslandMath.TINT_CATEGORY_NEUTRAL;
+        }
+    }
+
+    /** 这一行的开关状态：+1 成功/开，-1 失败/关，0 不画开关而画类型字形。 */
+    private static int bounceRowState(IslandNoticeType type) {
+        switch (type) {
+            case REFRESH_SUCCESS:
+            case PLAYLIST_TRACK_ADD_SUCCESS:
+            case TRANSCODE_SUCCESS:
+            case NETWORK_SUCCESS:
+            case RECENT_PLAY_SUCCESS:
+            case LISTENING_DURATION_SUCCESS:
+            case GD_SOURCE_SUCCESS:
+            case GD_SOURCE_HEALTHY:
+            case MODEL_INFERENCE_SUCCESS:
+            case PLAY_NEXT:
+                return 1;
+            case REFRESH_ERROR:
+            case PLAYLIST_TRACK_ADD_ERROR:
+            case PLAYLIST_TRACK_ALREADY_EXISTS:
+            case PLAYBACK_ERROR:
+            case NETWORK_ERROR:
+            case RECENT_PLAY_ERROR:
+            case LISTENING_DURATION_ERROR:
+            case GD_SOURCE_ERROR:
+            case MODEL_INFERENCE_FAILURE:
+                return -1;
+            default:
+                return 0;
+        }
+    }
+
+    /**
+     * 回弹胶囊的整块表面与内容。进来时矩阵已经在 {@code scaleAtPos} 之下，调用方负责 popMatrix。
+     */
+    private void drawBounceIsland(double x, double y, double width, double height, double radius,
+                                  float alpha, double expansionValue, double contentFade, long now,
+                                  boolean preview, boolean noticeMode, IslandNoticeType type,
+                                  String title, String value, double noticeProgress,
+                                  IslandAmbientStatus.Snapshot ambient, float ambientMix,
+                                  IslandLayout layout, List<BounceRow> stack, double progress,
+                                  float success, double configuredScale, int accentColor) {
+        if (alpha <= .01f) return;
+        bounceTint.stepTo(bounceTintCategory(noticeMode, type,
+                progress > .0001 && !noticeMode, success > .52f), bounceFrameDelta);
+        // 参考稿只有一层纯色平面：没有阴影、没有描边、没有顶部高光条。这三样恰恰是
+        // 其他七款看起来"精致"的来源，去掉它才像那块屏——所以整款自己走这条分支。
+        roundedRect(x, y, width, height, radius, BounceIslandMath.argb(
+                (int) Math.round(BounceIslandMath.SURFACE_ALPHA * DynamicIslandMath.clamp01(alpha)),
+                bounceTint.redChannel(), bounceTint.greenChannel(), bounceTint.blueChannel()));
+
+        double rowScale = bounceRowTextScale(layout);
+        double plainScale = bouncePlainRowTextScale(layout);
+        boolean hasAmbient = ambient != null && !ambient.isEmpty();
+        float ambientBlendValue = hasAmbient ? DynamicIslandMath.clamp01f(ambientMix) : 0f;
+        boolean stacked = noticeMode && !stack.isEmpty();
+        float contentAlpha = alpha * (float) DynamicIslandMath.clamp01(contentFade);
+
+        /*
+         * 内容无条件裁进当前这一帧的圆角轮廓里。弹簧会过冲，收起过程中胶囊一度比正文还窄，
+         * 而 glScissor 吃的是窗口像素、不跟这里的缩放矩阵——所以走裁剪，它和形状记录在同一套
+         * 变换下，岛外面那层 scaleAtPos 会被一起带上，位置对得上。
+         *
+         * 别拿 {@code StencilClipManager.stencilClipping()} 当"能不能裁"的能力门：它的实现是
+         * {@code SkijaClip.hasActiveClip()}，语义是"当前已经有一层裁剪生效"，正常情况下恒为
+         * false，用它当门等于这段永远不执行。真正的兜底是下面每段文字自己按可用宽度补省略号，
+         * 那条一直在，不依赖这层裁剪。
+         */
+        final double clipX = x;
+        final double clipY = y;
+        final double clipW = width;
+        final double clipH = height;
+        final double clipR = radius;
+        StencilClipManager.beginClip(() ->
+                roundedRect(clipX, clipY, clipW, clipH, clipR, 0xFFFFFFFF));
+        drawBounceTray(x, y, alpha, expansionValue, now, preview, noticeMode, type, value,
+                ambient, ambientBlendValue, success, accentColor, stacked);
+        if (stacked) {
+            drawBounceStack(x, y, width, contentAlpha, now, stack, rowScale);
+        } else if (ambientBlendValue > .5f && hasAmbient) {
+            drawBounceIdleRow(x, y, width, contentAlpha, ambient, plainScale);
+        } else {
+            // 参考稿的进度行是 0.90 号字，通知行 0.80，静息行 1.00 —— 三档不一样，照抄。
+            drawBounceProgressRow(x, y, width, contentAlpha, layout, plainScale * .90, progress,
+                    success, noticeProgress);
+        }
+        StencilClipManager.endClip();
+    }
+
+    /**
+     * 左侧那一栏。参考稿放的是脚本作者的头像图，这里换成项目自己的矢量品牌图形，
+     * 位置、尺寸、底下那层半透明圆角衬板都按它来。
+     */
+    private void drawBounceTray(double x, double y, float alpha, double expansionValue, long now,
+                                boolean preview, boolean noticeMode, IslandNoticeType type, String value,
+                                IslandAmbientStatus.Snapshot ambient, float ambientMix, float success,
+                                int accentColor, boolean stacked) {
+        if (stacked) {
+            // 参考稿在通知态是刻意不画左上徽标的：首行自己的开关就落在那一格，
+            // 徽标压上去只会被盖掉半张脸。这一条照抄。
+            return;
+        }
+        double iconSize = BounceIslandMath.ICON_SIZE;
+        double plateLeft = x + BounceIslandMath.SIDE_PADDING
+                + (BounceIslandMath.LOGO_AREA_WIDTH - iconSize) * .5;
+        double plateTop = y + (BounceIslandMath.ROW_HEIGHT - iconSize) * .5;
+        // 收起态只剩一枚徽标那么宽，托盘按展开度淡入，免得在小胶囊里糊成一团高对比色块。
+        float reveal = (float) DynamicIslandMath.smoothStep(DynamicIslandMath.clamp01(expansionValue));
+        drawBouncePlate(plateLeft, plateTop, iconSize, alpha * (.35f + .65f * reveal));
+        drawBounceGlyph(plateLeft + iconSize * .5, plateTop + iconSize * .5, iconSize,
+                alpha * reveal, ambient, ambientMix, type, value, noticeMode, now, preview, success,
+                accentColor);
+    }
+
+    private void drawBouncePlate(double left, double top, double size, float alpha) {
+        if (alpha <= .01f) return;
+        double plate = size * .8;
+        roundedRect(left + (size - plate) * .5, top + (size - plate) * .5, plate, plate, plate * .5,
+                BounceIslandMath.alphaOf(BounceIslandMath.COL_BRAND, alpha * .43f));
+    }
+
+    private void drawBounceGlyph(double centerX, double centerY, double size, float alpha,
+                                 IslandAmbientStatus.Snapshot ambient, float ambientMix,
+                                 IslandNoticeType type, String value, boolean noticeMode, long now,
+                                 boolean preview, float success, int accentColor) {
+        if (alpha <= .01f) return;
+        if (ambientMix > .5f && ambient != null && !ambient.isEmpty()) {
+            renderAmbientIcon(ambient, centerX, centerY, size, size * .5, .8, alpha, accentColor, now);
+            return;
+        }
+        if (noticeMode) {
+            renderNoticeIcon(type, value, centerX, centerY, alpha, accentColor, now);
+            return;
+        }
+        renderSpinner(centerX, centerY, alpha * (1f - success), accentColor, now, preview);
+        if (success > .01f) {
+            renderSuccess(centerX, centerY, alpha * success);
+        }
+    }
+
+    /** 逐行堆叠的通知：每行自己算淡入淡出，行与行之间一条细分隔线。 */
+    private void drawBounceStack(double x, double y, double width, float alpha, long now,
+                                 List<BounceRow> stack, double rowScale) {
+        double rowHeight = BounceIslandMath.ROW_HEIGHT;
+        double ns = BounceIslandMath.NOTICE_TEXT_SCALE;
+        double textX = x + 38.0 * ns;
+        double textRight = x + width - 8.0 * ns;
+        for (int i = 0; i < stack.size(); i++) {
+            BounceRow row = stack.get(i);
+            double rowY = y + i * rowHeight;
+            double lifetime = row.expiresAt > 0L ? Math.max(1L, row.expiresAt - row.arrivedAt) : 0L;
+            // 没有时效的行（常驻卡片、音量）不淡出，交给整块表面的可见性统一收。
+            float rowAlpha = lifetime > 0L
+                    ? (float) (alpha * BounceIslandMath.rowAlpha(now - row.arrivedAt, (long) lifetime))
+                    : alpha;
+            if (rowAlpha <= .01f) continue;
+            int state = bounceRowState(row.type);
+            double toggleX = x + 7.0 * ns;
+            double toggleY = rowY + 13.0 * ns;
+            if (state != 0) {
+                drawBounceToggle(toggleX, toggleY, state > 0, now - row.arrivedAt, rowAlpha);
+            } else {
+                drawBouncePlate(toggleX - 2.0 * ns, toggleY - 7.0 * ns, 22.0 * ns, rowAlpha);
+            }
+            drawBounceLeftText(FontManager.pf12, row.title, textX, rowY + 7.0 * ns, rowScale,
+                    BounceIslandMath.alphaOf(BounceIslandMath.COL_TEXT, rowAlpha), textRight - textX);
+            int detailColor;
+            if (state > 0) {
+                detailColor = BounceIslandMath.argb((int) (rowAlpha * 255), 105, 220, 137);
+            } else if (state < 0) {
+                detailColor = BounceIslandMath.argb((int) (rowAlpha * 255), 240, 105, 112);
+            } else {
+                detailColor = BounceIslandMath.alphaOf(BounceIslandMath.COL_SECONDARY, rowAlpha * .84f);
+            }
+            drawBounceLeftText(FontManager.pf12, row.value, textX, rowY + 22.0 * ns, rowScale,
+                    detailColor, textRight - textX);
+            if (i < stack.size() - 1) {
+                roundedRect(textX, rowY + rowHeight - ns, textRight - textX, ns, .5 * ns,
+                        BounceIslandMath.alphaOf(BounceIslandMath.COL_TEXT, rowAlpha * .14f));
+            }
+        }
+    }
+
+    /** iOS 那颗开关：轨道 24x14、滑块 10x10，行到达后 280ms 内把滑块推到位。 */
+    private void drawBounceToggle(double x, double y, boolean on, long age, float alpha) {
+        double ns = BounceIslandMath.NOTICE_TEXT_SCALE;
+        double motion = BounceIslandMath.easeOutCubic(age / 280.0);
+        double position = on ? motion : 1.0 - motion;
+        int track = on ? BounceIslandMath.COL_TRACK_ON : BounceIslandMath.COL_TRACK_OFF;
+        roundedRect(x, y, 24.0 * ns, 14.0 * ns, 7.0 * ns,
+                BounceIslandMath.alphaOf(track, alpha * .75f));
+        double knobX = x + 2.0 * ns + 10.0 * ns * position;
+        roundedRect(knobX, y + 2.0 * ns, 10.0 * ns, 10.0 * ns, 5.0 * ns,
+                BounceIslandMath.alphaOf(BounceIslandMath.COL_KNOB, alpha));
+    }
+
+    /** 静息那一行：品牌 + 各枚常驻数值，用短横线串起来，单行居中在 32px 行高里。 */
+    private void drawBounceIdleRow(double x, double y, double width, float alpha,
+                                   IslandAmbientStatus.Snapshot ambient, double rowScale) {
+        double right = x + width - BounceIslandMath.SIDE_PADDING;
+        double textY = y + (BounceIslandMath.ROW_HEIGHT - FontManager.pf12.getFontHeight() * rowScale) * .5;
+        double cursor = x + BounceIslandMath.SIDE_PADDING + BounceIslandMath.LOGO_AREA_WIDTH;
+        cursor += drawBounceLeftText(FontManager.pf12, BOUNCE_BRAND, cursor, textY, rowScale,
+                BounceIslandMath.alphaOf(BounceIslandMath.COL_BRAND, alpha), right - cursor);
+        for (int i = 0; i < ambient.chips.length && cursor < right - 6.0; i++) {
+            // 放不下就整段丢掉剩下的条目，而不是把最后一条挤成省略号：这一行是状态栏，半句话最没用。
+            cursor += BounceIslandMath.DIVIDER_GAP;
+            double dividerWidth = drawBounceLeftText(FontManager.pf12, "-", cursor, textY, rowScale,
+                    BounceIslandMath.alphaOf(BounceIslandMath.COL_DIVIDER, alpha), right - cursor);
+            if (dividerWidth <= 0.0) return;
+            cursor += dividerWidth + BounceIslandMath.DIVIDER_GAP;
+            IslandAmbientStatus.Chip chip = ambient.chips[i];
+            int color;
+            if (chip.health == IslandAmbientStatus.Health.BAD) {
+                color = BounceIslandMath.argb((int) (alpha * 255), 240, 105, 112);
+            } else if (chip.health == IslandAmbientStatus.Health.WARN) {
+                color = BounceIslandMath.argb((int) (alpha * 255), 233, 190, 96);
+            } else {
+                color = BounceIslandMath.alphaOf(BounceIslandMath.COL_IDLE, alpha);
+            }
+            cursor += drawBounceLeftText(FontManager.pf12, chip.value, cursor, textY, rowScale, color,
+                    right - cursor);
+            if (!chip.unit.isEmpty()) {
+                cursor += drawBounceLeftText(FontManager.pf12, " " + chip.unit, cursor, textY, rowScale,
+                        BounceIslandMath.alphaOf(BounceIslandMath.COL_FAINT, alpha * .9f), right - cursor);
+            }
+        }
+    }
+
+    /**
+     * 下载/转码那一行：标题 + 百分比同排，下面一条 6px 的进度槽。
+     *
+     * <p>百分比颜色沿参考稿那条梯度从近白走到青蓝，进度值本身过一层临界阻尼平滑——
+     * 网络速度天生跳变，条跟着跳就没有"在推进"的观感了。</p>
+     */
+    private void drawBounceProgressRow(double x, double y, double width, float alpha, IslandLayout layout,
+                                       double rowScale, double progress, float success,
+                                       double noticeProgress) {
+        double target = DynamicIslandMath.clamp01(noticeProgress > .0001 ? noticeProgress : progress);
+        boolean done = success > .52f;
+        if (target <= .0001 && !done) {
+            bounceProgress.snapTo(0.0);
+        } else {
+            bounceProgress.stepTo(done ? 1.0 : target, bounceFrameDelta);
+        }
+        double shown = done ? 1.0 : bounceProgress.value();
+        double textX = x + BounceIslandMath.SIDE_PADDING + BounceIslandMath.LOGO_AREA_WIDTH;
+        double right = x + width - BounceIslandMath.SIDE_PADDING;
+        double textY = y + (BounceIslandMath.ROW_HEIGHT - FontManager.pf12.getFontHeight() * rowScale) * .5;
+        String head = done ? "已完成 - " : layout.title + " - ";
+        float headAlpha = alpha * (done ? success : 1f - success);
+        double headWidth = drawBounceLeftText(FontManager.pf12, head, textX, textY, rowScale,
+                BounceIslandMath.alphaOf(BounceIslandMath.COL_TEXT, headAlpha), right - textX);
+        String percent = done ? "可以播放了" : Math.max(0, Math.min(100,
+                (int) Math.round(shown * 100.0))) + "%";
+        drawBounceLeftText(FontManager.pf12, percent, textX + headWidth, textY, rowScale,
+                done ? BounceIslandMath.argb((int) (alpha * 255), 105, 220, 137)
+                        : BounceIslandMath.percentColor(shown), right - textX - headWidth);
+        double barY = y + BounceIslandMath.ROW_HEIGHT - 14.0;
+        double barHeight = 6.0;
+        double barWidth = Math.max(0.0, right - textX);
+        roundedRect(textX, barY, barWidth, barHeight, barHeight * .5,
+                BounceIslandMath.alphaOf(BounceIslandMath.COL_BAR_TRACK, alpha));
+        double fillWidth = barWidth * shown;
+        if (fillWidth > .1) {
+            roundedRect(textX, barY, fillWidth, barHeight, Math.min(barHeight * .5, fillWidth * .5),
+                    BounceIslandMath.alphaOf(BounceIslandMath.COL_BAR_FILL, alpha));
+        }
+    }
+
+    /** 左对齐画一段文字，放不下就补省略号；返回这一段的实际绘制宽度，供下一段接着排。 */
+    private double drawBounceLeftText(CFontRenderer font, String text, double x, double y,
+                                      double scale, int color, double maxWidth) {
+        if (text == null || text.isEmpty() || maxWidth <= 1.0) return 0.0;
+        String drawn = trimIslandText(font, text, maxWidth / scale);
+        if (drawn.isEmpty()) return 0.0;
+        font.drawString(drawn, x, y, scale, color);
+        return font.getStringWidthD(drawn) * scale;
     }
 
     private enum IslandNoticeType {

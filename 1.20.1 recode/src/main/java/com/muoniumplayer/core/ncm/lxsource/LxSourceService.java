@@ -115,6 +115,43 @@ public final class LxSourceService {
         return !LxSourceStore.getActiveId().isEmpty();
     }
 
+    /**
+     * 脚本还在「正在起」的路上：启用了、运行时已经拉起来、且仍处于 {@link LxRuntime.State#LOADING}。
+     *
+     * <p>给预备（automix）与换源链路用来判断「现在做换源判定是不是太早」。脚本没就绪时候选表里
+     * 靠脚本解 VIP 的那几格必然解不出来，整条流水线跑一遍等于把这一首<b>唯一一次</b>自动换源机会
+     * （{@code CrossSourceSwitcher.AUTO_ATTEMPTED}）烧在「脚本还没起完」上，等真能解的时候反而不再换了。
+     * 没启用脚本时恒为 false —— 那种情况下根本不该为 LX 等待。</p>
+     */
+    public static boolean isLoading() {
+        if (!isEnabled()) return false;
+        ensureStarted();
+        LxRuntime current = runtime;
+        return current != null && current.getState() == LxRuntime.State.LOADING;
+    }
+
+    /**
+     * 在<b>调用线程</b>上有界等待脚本就绪。只给允许阻塞的后台线程用（预备、换源流水线），
+     * 主线程与点击链路一律走 {@code ready()} 里那 8 秒的弃权预算。
+     *
+     * <p>和 {@code ready()} 的区别只有等待时长：那条链的一头可能是游戏主线程，只敢等
+     * {@link #WAIT_READY_MS}；而脚本自己发 {@code inited} 的上限是
+     * {@link LxRuntime#INIT_TIMEOUT_MS} —— 像野花这类要先跑一次「检查更新」的源能到十几秒，
+     * 8 秒经常刚好差一点。预备期这一等不到，{@code Music.getPlayUrl()} 就会安静地降到内置链路，
+     * 而 automix 的交接点不会重新解析，这一首就此按非 LX 的结果定死。</p>
+     *
+     * @return true 表示脚本已就绪；false 表示没启用、没有可用脚本、已失败或超时
+     */
+    public static boolean awaitReady(long timeoutMs) {
+        if (!isEnabled()) return false;
+        ensureStarted();
+        LxRuntime current = runtime;
+        if (current == null) return false;
+        if (current.getState() == LxRuntime.State.READY) return true;
+        if (current.getState() != LxRuntime.State.LOADING) return false;
+        return current.awaitReady(Math.max(0L, timeoutMs));
+    }
+
     /** 面板上的一行状态。 */
     public static String statusLabel() {
         if (!isEnabled()) return "";
