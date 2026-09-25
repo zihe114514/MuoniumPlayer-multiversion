@@ -1,0 +1,2105 @@
+package com.muoniumplayer.core.ncm.music;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.muoniumplayer.core.ncm.music.dto.Music;
+import com.muoniumplayer.core.ncm.music.dto.PlayList;
+import com.muoniumplayer.core.screens.ncm.LyricLine;
+import com.muoniumplayer.core.screens.ncm.LyricParser;
+import top.fpsmaster.music.QrCode;
+import top.fpsmaster.music.QrLoginState;
+
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * 汽水音乐（Luna）内置音源。
+ *
+ * <p>搜索沿用 music-lib 的 Android 客户端请求形状；匿名播放与歌词走 qishui-api 已验证的
+ * H5 {@code seo_track} 接口。登录使用官方 Passport 二维码，仅接受抖音 App 扫码，确认后把
+ * Cookie 存在宿主自己的配置文件中。登录后优先请求带 Cookie 的 PC/播放信息接口，并继续只
+ * 选择 AAC/M4A；加密样本在进入现有 AAC 解码器前于本机解密。</p>
+ */
+public final class QishuiMusicService {
+
+    private static final String SEARCH_ENDPOINT = "https://api.qishui.com/luna/search/track";
+    private static final String TRACK_ENDPOINT = "https://beta-luna.douyin.com/luna/h5/seo_track";
+    private static final String PC_TRACK_PATH = "/luna/pc/track_v2";
+    /** PC 接口的容灾域名，顺序与参考实现一致。 */
+    private static final String[] PC_API_BASES = {
+            "https://api5-lq.qishui.com", "https://api.qishui.com"
+    };
+    private static final String PC_SEARCH_PLAYLIST_ENDPOINT = "https://api.qishui.com/luna/pc/search/playlist";
+    private static final String PC_SEARCH_MIXED_ENDPOINT = "https://api.qishui.com/luna/pc/search/mixed";
+    private static final String PC_ME_PLAYLISTS_ENDPOINT = "https://api.qishui.com/luna/pc/me/playlist";
+    private static final String PC_ME_COLLECTION_ENDPOINT = "https://api.qishui.com/luna/pc/me/collection/mixed";
+    /** 带 Cookie 的歌单详情：账号歌单只有这条接口给得出完整曲目，见 {@link #accountPlaylistTracks}。 */
+    private static final String PC_PLAYLIST_DETAIL_ENDPOINT = "https://api.qishui.com/luna/pc/playlist/detail";
+    private static final String LUNA_DISCOVER_ENDPOINT = "https://beta-luna.douyin.com/luna/discover";
+    private static final String LUNA_DISCOVER_MIX_ENDPOINT = "https://beta-luna.douyin.com/luna/discover/mix";
+    private static final String LUNA_PLAYLIST_DETAIL_ENDPOINT = "https://beta-luna.douyin.com/luna/playlist/detail";
+    private static final String LUNA_RADIO_TRACKS_ENDPOINT = "https://beta-luna.douyin.com/luna/feed/radio/tracks";
+    private static final String ACCOUNT_ENDPOINT = "https://api.qishui.com/luna/pc/me";
+    private static final String COVER_ROOT = "https://p3-luna.douyinpic.com/img/";
+    private static final String ANDROID_USER_AGENT =
+            "com.luna.music/100198030 (Linux; U; Android 15; zh_CN_#Hans; ABR-AL80; "
+                    + "Build/V417IR;tt-ok/3.12.13.19)";
+    private static final String WEB_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    + "(KHTML, like Gecko) Chrome/120 Safari/537.36";
+    private static final String PC_USER_AGENT = "LunaPC/3.3.0(359450208)";
+    private static final int REQUEST_TIMEOUT_MS = 15_000;
+    private static final int MAX_BYTES = 8 * 1024 * 1024;
+
+    /**
+     * 分页页长。PC 与匿名 Android 两条列表/详情接口都照数给：实测 {@code count=100} 就是满
+     * 100 条，而<b>不带 count 时上游回的是短页</b>（{@code /me/playlist} 只回 5 条），
+     * 看着像到底了 —— 所以每个分页请求都必须显式带上它。
+     */
+    private static final int PAGE_SIZE = 100;
+    /**
+     * 翻页闸门。按 {@link #PAGE_SIZE} 算是两万条，正常账号一辈子用不到；留着的唯一目的是
+     * 上游哪天把 {@code next_cursor} 写成不前进的值时，别把客户端熬成死循环。
+     */
+    private static final int MAX_PAGES = 200;
+    /** 侧栏「我的账号歌单」的条数上限：自建 + 收藏合并后再掐，实际账号远到不了这个数。 */
+    private static final int ACCOUNT_PLAYLIST_CAP = 500;
+    /**
+     * 账号歌单 ID 的前缀，决定取曲目走哪条接口（见 {@link #playlistTracks(String, int)}）。
+     *
+     * <p>同一份歌单在两条接口上给的不是同一个列表：实测一份 {@code count_tracks} 标 186 首的
+     * 收藏歌单，匿名 Android 接口逐页翻完只有 116 首，带 Cookie 的 PC 接口给到 238 首。
+     * 侧栏里那条既然来自账号，就必须按账号的身份去取。</p>
+     */
+    private static final String ACCOUNT_PLAYLIST_PREFIX = "acct:";
+
+    private static final Pattern SODA_WORD = Pattern.compile("<(\\d+),(\\d+),(\\d+)>([^<]*)");
+    private static final HttpClient HTTP = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.ALWAYS)
+            .build();
+
+    private QishuiMusicService() {
+    }
+
+    public static final class Track {
+        public final String trackId;
+        public final String title;
+        public final String artist;
+        public final String album;
+        public final long durationMillis;
+        public final String coverUrl;
+        public final boolean vip;
+
+        Track(String trackId, String title, String artist, String album, long durationMillis,
+              String coverUrl, boolean vip) {
+            this.trackId = trackId;
+            this.title = title;
+            this.artist = artist;
+            this.album = album;
+            this.durationMillis = durationMillis;
+            this.coverUrl = coverUrl;
+            this.vip = vip;
+        }
+    }
+
+    public static final class ResolveResult {
+        public final String url;
+        public final String format;
+        public final long bitrate;
+        public final String playAuth;
+
+        ResolveResult(String url, String format, long bitrate, String playAuth) {
+            this.url = url;
+            this.format = format;
+            this.bitrate = bitrate;
+            this.playAuth = playAuth;
+        }
+    }
+
+    public static List<Track> search(String query, int limit) {
+        if (query == null || query.trim().isEmpty()) return List.of();
+        int effectiveLimit = Math.max(1, Math.min(50, limit));
+
+        try {
+            JsonObject response = getJson(buildSearchUrl(query.trim(), effectiveLimit),
+                    ANDROID_USER_AGENT, "", Collections.emptyMap());
+            JsonArray groups = array(response, "result_groups");
+            if (groups == null) return List.of();
+
+            List<Track> tracks = new ArrayList<>();
+            Set<String> seen = new HashSet<>();
+            for (JsonElement groupElement : groups) {
+                if (!groupElement.isJsonObject()) continue;
+                JsonArray data = array(groupElement.getAsJsonObject(), "data");
+                if (data == null) continue;
+                for (JsonElement itemElement : data) {
+                    if (!itemElement.isJsonObject()) continue;
+                    JsonObject entity = object(itemElement.getAsJsonObject(), "entity");
+                    JsonObject rawTrack = object(entity, "track");
+                    String trackId = string(rawTrack, "id");
+                    if (trackId.isEmpty() || !seen.add(trackId)) continue;
+                    Track track = parseTrack(rawTrack);
+                    if (track != null) tracks.add(track);
+                    if (tracks.size() >= effectiveLimit) return tracks;
+                }
+            }
+            return tracks;
+        } catch (Throwable throwable) {
+            System.err.println("[Music/Qishui] Search failed for " + query.trim() + ": "
+                    + describe(throwable));
+            return List.of();
+        }
+    }
+
+    public static ResolveResult getSongUrl(String trackId, Quality requestedQuality) {
+        String id = nonBlank(trackId);
+        if (id.isEmpty()) return null;
+
+        try {
+            boolean authenticated = QishuiSessionStore.isLoggedIn();
+            List<Stream> candidates = new ArrayList<>();
+            long declared = 0L;
+            if (authenticated) {
+                JsonObject pc = fetchAuthenticatedTrack(id);
+                if (pc != null) {
+                    candidates.addAll(collectCandidates(pc));
+                    declared = Math.max(declared, declaredTrackDuration(pc));
+                }
+            }
+            try {
+                JsonObject web = fetchTrack(id, authenticated);
+                candidates.addAll(collectCandidates(web));
+                declared = Math.max(declared, declaredTrackDuration(web));
+            } catch (Throwable webFailure) {
+                if (candidates.isEmpty()) throw webFailure;
+            }
+            return selectAac(candidates, requestedQuality, declared);
+        } catch (Throwable throwable) {
+            System.err.println("[Music/Qishui] Song URL failed for " + id + ": " + describe(throwable));
+            return null;
+        }
+    }
+
+    /** 汽水 H5 歌词已是逐字时间轴；转换为项目现有 QRC 解析器能识别的文本。 */
+    public static List<LyricLine> getWordByWordLyrics(Music music) {
+        if (music == null || !music.isQishui()) return Collections.emptyList();
+        String trackId = nonBlank(music.getSourceId());
+        if (trackId.isEmpty()) return Collections.emptyList();
+
+        try {
+            String content = lyricContent(fetchTrack(trackId, QishuiSessionStore.isLoggedIn()));
+            if (content.isEmpty()) return Collections.emptyList();
+            String qrc = sodaWordsToQrc(content);
+            List<LyricLine> lines = new ArrayList<>();
+            LyricParser.parseQrc(qrc, lines);
+            return lines;
+        } catch (Throwable throwable) {
+            System.err.println("[Music/Qishui] Lyric failed for " + trackId + ": " + describe(throwable));
+            return Collections.emptyList();
+        }
+    }
+    /**
+     * 申请一次扫码登录的二维码。
+     *
+     * <p>码不是模组自己取的：Passport 那一步要 {@code a_bogus} / {@code msToken}，只有官方安全
+     * 组件在浏览器渲染进程里算得出来，Java 侧复现不了。这里只负责把外部取码工具拉起来，拿它
+     * 给的扫码链接（{@link QrCode#getQrContent()}），二维码仍由界面自己画。</p>
+     *
+     * <p><b>工具不在就直接说缺什么，不回落。</b>此前内置的那条直连请求没有签名，上游必然拒绝，
+     * 现象是「码出来了但永远扫不上」——比直接告诉用户该把 exe 放哪难查得多。上一版 sidecar
+     * 就是因为静默回落才当夜回滚的。</p>
+     */
+    public static QrCode createQrCode() {
+        if (!QishuiLoginBridge.isAvailable()) {
+            throw new IllegalStateException("汽水扫码需要外部取码工具：把 QishuiCookieTool.exe 放到 "
+                    + QishuiLoginBridge.requiredPath());
+        }
+        try {
+            return QishuiLoginBridge.start();
+        } catch (IOException | InterruptedException error) {
+            if (error instanceof InterruptedException) Thread.currentThread().interrupt();
+            throw new IllegalStateException("获取汽水登录二维码失败: " + describe(error), error);
+        }
+    }
+
+    /**
+     * 读一次外部取码工具的状态。<b>必须在后台线程调用。</b>
+     *
+     * <p>确认之后走的是与「Cookie 登录」<b>同一条</b>收尾路径：工具给的是一份完整的 cookie 文本，
+     * 交给 {@link #importCookie} 真校验一遍才落盘。扫码与粘贴不该有第二种登录结果，也不该有
+     * 第二个写会话的地方。</p>
+     *
+     * <p>{@code MFA}（上游要求二次验证）映射到 {@link QrLoginState#WAITING} 而不是
+     * {@link QrLoginState#ERROR}：那一刻工具已经把验证窗口弹出来了，人是<b>在游戏外</b>解决它的，
+     * 游戏里改成「等待」才对得上；界面要照抄 {@link #getQrStatusHint()}，别自己编一句「等待扫码」。</p>
+     */
+    public static QrLoginState checkQrCode(QrCode qrCode) {
+        if (qrCode == null) return QrLoginState.ERROR;
+        QishuiLoginBridge.State state = QishuiLoginBridge.poll();
+        if (state == null) return QrLoginState.ERROR;
+        if (!state.isAlive()) {
+            System.err.println("[Music/Qishui] 外部取码工具停止刷新状态，按失败处理");
+            return QrLoginState.ERROR;
+        }
+        switch (state.phase) {
+            case STARTING:
+            case WAITING:
+            case MFA:
+                return QrLoginState.WAITING;
+            case SCANNED:
+                return QrLoginState.SCANNED;
+            case EXPIRED:
+                return QrLoginState.EXPIRED;
+            case CONFIRMED:
+                CookieImport imported = importCookie(state.cookie);
+                if (!imported.success) {
+                    System.err.println("[Music/Qishui] 扫码拿到的 Cookie 没通过校验: " + imported.message);
+                    return QrLoginState.ERROR;
+                }
+                return QrLoginState.CONFIRMED;
+            default:
+                return QrLoginState.ERROR;
+        }
+    }
+
+    /**
+     * 外部取码工具最近一次给人看的话（「请用抖音 App 扫码」「请在弹出的窗口里完成验证」等）。
+     * 风控弹窗那一步只能用得上它：工具此刻正卡在等待用户操作上，模组这边什么都没发生。
+     */
+    public static String getQrStatusHint() {
+        return QishuiLoginBridge.statusHint();
+    }
+
+    /**
+     * 结束这一次扫码：让外部工具转入空闲等复用，<b>不杀进程</b>。
+     *
+     * <p>不管人是登上了、过期了还是翻页走了都会走到这里。以前这里是直接把进程 kill 掉，
+     * 于是每点开一次汽水账号页都要重等一遍 88 MB 自解压；更要命的是风控那一次——人正在
+     * 外部窗口里收验证码，工具被判「停止刷新」后我们反手把它 kill 了，人验完回到游戏
+     * 只剩一句登录失败。工具空闲时会自己倒计时退出，孤儿进程由它自己负责。</p>
+     */
+    public static void cancelQrLogin() {
+        QishuiLoginBridge.releaseSession();
+    }
+
+    public static boolean isLoggedIn() {
+        return QishuiSessionStore.isLoggedIn();
+    }
+
+    /**
+     * 本地留着凭据、但上游已经拒绝它。与「未登录」是两种状态：这种时候界面要说的是
+     * 「Cookie 过期了，去重扫或重新导入」，而不是假装账号从来没登录过、把昵称头像全抹掉。
+     */
+    public static boolean isReauthRequired() {
+        return QishuiSessionStore.isLoggedIn() && QishuiSessionStore.isReauthRequired();
+    }
+
+    public static String getAccountName() {
+        QishuiSessionStore.Session session = QishuiSessionStore.snapshot();
+        if (!session.loggedIn) return "未登录";
+        if (!session.nickname.isEmpty()) return session.nickname;
+        return "汽水音乐账号";
+    }
+
+    public static String getAccountId() {
+        return QishuiSessionStore.snapshot().userId;
+    }
+
+    public static String getDouyinId() {
+        return QishuiSessionStore.snapshot().douyinId;
+    }
+
+    public static String getAvatarUrl() {
+        return QishuiSessionStore.snapshot().avatarUrl;
+    }
+
+    public static boolean isVipAccount() {
+        return QishuiSessionStore.snapshot().vip;
+    }
+
+    /**
+     * 从 {@code /luna/pc/me} 的响应里定位账号信息本体。
+     *
+     * <p>实测当前上游把 {@code my_info} 放在<b>顶层</b>，而参考实现的历史 fixture 里它在
+     * {@code data} 下。层级是上游会改的东西，所以两种形状都认：先顶层、再 {@code data}，
+     * 都没有就退回整包（保留改造前「拿 envelope 兜底」的行为）。</p>
+     */
+    static JsonObject locateAccountInfo(JsonObject response) {
+        JsonObject data = object(response, "data");
+        JsonObject[] candidates = {
+                object(response, "my_info"), object(response, "user"),
+                object(data, "my_info"), object(data, "user"),
+        };
+        for (JsonObject candidate : candidates) {
+            if (candidate.size() > 0) return candidate;
+        }
+        return data.size() > 0 ? data : response;
+    }
+
+    /**
+     * 剥掉 PC 接口的响应信封。{@code track_v2}、歌单、收藏这一类把业务数据放在 {@code data}
+     * 里，而 H5 的 {@code seo_track} 直接放在顶层，所以 {@code data} 优先、顶层回退。
+     * 之前只在顶层找 {@code track_player}，等于登录后每次播放都白读一次。
+     */
+    static JsonObject envelope(JsonObject response) {
+        JsonObject data = object(response, "data");
+        return data.size() == 0 ? response : data;
+    }
+
+    /**
+     * 账号头像地址。
+     *
+     * <p>字段名是实测出来的：{@code /luna/pc/me} 返回的是 {@code my_info.medium_avatar_url} 与
+     * {@code larger_avatar_url}，形状 {@code {"uri":…,"urls":[…,…,…]}}，而 <b>没有</b>
+     * {@code avatar_url}、也 <b>没有</b> {@code avatar_thumb}。之前只找后两个名字，于是头像
+     * 永远存成空串，账号面板只能退回昵称首字。</p>
+     *
+     * <p>这些地址带 {@code x-signature} 与 {@code x-expires}，实测约两天后失效，所以它只是一份
+     * 会过期的缓存，不是可以永久落盘的 URL：{@link #refreshProfile()} 必须每次启动都跑一次。</p>
+     */
+    static String resolveAvatarUrl(JsonObject info) {
+        String avatar = firstUrl(info.get("medium_avatar_url"));
+        if (avatar.isEmpty()) avatar = firstUrl(info.get("larger_avatar_url"));
+        if (avatar.isEmpty()) avatar = firstNonBlank(string(info, "avatar_url"), string(info, "avatar"));
+        if (avatar.isEmpty()) avatar = firstUrl(info.get("url_avatar"));
+        if (avatar.isEmpty()) avatar = firstUrl(info.get("avatar_thumb"));
+        if (avatar.isEmpty()) avatar = firstUrl(info.get("avatar_uri"));
+        return avatar;
+    }
+
+    /**
+     * 是否会员。
+     *
+     * <p>不能再把「vip_stage 非空」当会员：实测<b>免费</b>账号也带这个字段，值是 {@code "free"}。
+     * 那一条让每个登录成功的用户都被标成会员，界面上挂一枚假会员标，而用户看到它之后自然会
+     * 以为「完整版取不出来」是取流环节的错。</p>
+     *
+     * <p>也不能反过来只排除 free/none/0 这几个已知非会员值：{@code vip_stage} 的取值域我们没测全，
+     * 排除法等于把任何陌生值（包括数字档位）都当成会员。这里用白名单——只有正面证据才挂标，
+     * 因为这个徽标只用于展示，漏标少张贴纸，假标则会把排查引到错的地方。</p>
+     */
+    static boolean resolveVip(JsonObject info) {
+        if (truthy(info, "is_vip") || truthy(info, "isVip")) return true;
+        String stage = string(info, "vip_stage").toLowerCase(Locale.ROOT);
+        return stage.contains("vip") || stage.contains("会员");
+    }
+
+    public static boolean refreshProfile() {
+        String cookie = QishuiSessionStore.getCookieHeader();
+        if (cookie.isEmpty()) return false;
+        try {
+            JsonObject response = requirePcStatus(
+                    getJson(buildAccountUrl(), PC_USER_AGENT, cookie, pcHeaders()), "账号接口");
+            JsonObject info = locateAccountInfo(response);
+            String nickname = firstNonBlank(string(info, "nickname"), string(info, "name"));
+            String userId = firstNonBlank(string(info, "id"), string(info, "user_id"));
+            String douyinId = string(info, "douyin_id");
+            String avatar = resolveAvatarUrl(info);
+            boolean vip = resolveVip(info);
+            if (!nickname.isEmpty() || !userId.isEmpty()) {
+                QishuiSessionStore.saveProfile(userId, nickname, douyinId, avatar, vip,
+                        string(info, "vip_stage"));
+            }
+            QishuiSessionStore.markVerified();
+            return true;
+        } catch (Throwable error) {
+            // 只有上游明确拒绝凭据时才标过期；网络抖动、超时、解析失败都不算，
+            // 否则一次断网就会把好好登录着的账号踢成「需要重新登录」。
+            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            System.err.println("[Music/Qishui] Profile refresh failed: " + describe(error));
+            return false;
+        }
+    }
+
+    /**
+     * 手动导入 Cookie 的结果。失败时也带一句能直接显示给用户的话，
+     * 界面不需要自己去猜是哪一步崩的。
+     */
+    public static final class CookieImport {
+        public final boolean success;
+        public final String message;
+        public final String nickname;
+        public final boolean vip;
+
+        private CookieImport(boolean success, String message, String nickname, boolean vip) {
+            this.success = success;
+            this.message = message;
+            this.nickname = nickname;
+            this.vip = vip;
+        }
+
+        private static CookieImport fail(String message) {
+            return new CookieImport(false, message, "", false);
+        }
+    }
+
+    /**
+     * 用一份用户手上的 Cookie 文本换成本地会话。<b>必须在后台线程调用。</b>
+     *
+     * <p>顺序是刻意的：先解析、再判凭据名、然后拿它真打一次账号接口，三步全过才落盘。
+     * 任何一步失败都原样返回，本地已有的登录态一个字都不会被动过——导入失败的代价
+     * 不该是「把原来能用的账号弄没了」。
+     */
+    public static CookieImport importCookie(String rawInput) {
+        Map<String, String> parsed = parseCookieInput(rawInput);
+        if (parsed.isEmpty()) {
+            return CookieImport.fail("没认出任何 Cookie 字段。可以粘完整的 Cookie 字符串，"
+                    + "也可以只粘 sessionid=xxx");
+        }
+        if (!hasLoginCredential(parsed)) {
+            return CookieImport.fail("里面没有登录凭据（sessionid / sid_tt / uid_tt / sid_guard 至少一个）。"
+                    + "多半是只复制了匿名 cookie。");
+        }
+        String cookieHeader = joinCookieMap(parsed);
+        try {
+            JsonResponse response = getJsonResponse(buildAccountUrl(), PC_USER_AGENT,
+                    cookieHeader, pcHeaders());
+            requirePcStatus(response.body, "账号接口");
+            JsonObject info = locateAccountInfo(response.body);
+            String nickname = firstNonBlank(string(info, "nickname"), string(info, "name"));
+            if (nickname.isEmpty()) {
+                return CookieImport.fail("账号接口没返回昵称，这份 Cookie 大概已经失效了。");
+            }
+            String userId = firstNonBlank(string(info, "id"), string(info, "user_id"));
+            String douyinId = string(info, "douyin_id");
+            String avatar = resolveAvatarUrl(info);
+            boolean vip = resolveVip(info);
+
+            // 上游可能在响应里轮换 sid_guard / sessionid，带回来就一并收下，
+            // 不然存下去的那份下一秒就过期了。
+            Map<String, String> merged = new LinkedHashMap<>(parsed);
+            for (Map.Entry<String, String> entry
+                    : parseCookieInput(response.cookieHeader).entrySet()) {
+                merged.put(entry.getKey(), entry.getValue());
+            }
+            QishuiSessionStore.replaceCookies(merged);
+            QishuiSessionStore.saveProfile(userId, nickname, douyinId, avatar, vip,
+                    string(info, "vip_stage"));
+            QishuiSessionStore.markVerified();
+            // 换进来的可能压根是另一个账号：旧快照必须作废，侧栏才知道要重拉。
+            clearUserPlaylistsCache();
+            return new CookieImport(true, "Cookie 登录成功", nickname, vip);
+        } catch (Throwable error) {
+            if (looksLikeAuthRejection(error)) {
+                return CookieImport.fail("这份 Cookie 已被上游拒绝（过期、被顶下线或触发验证）。");
+            }
+            return CookieImport.fail("校验请求没打通：" + describe(error));
+        }
+    }
+
+    /**
+     * 容错解析。用户会从三个地方复制：浏览器 devtools 的 Cookie header 值、
+     * 「Copy as cURL」里 -b 的那串、或者只盯着 sessionid 抄一条。参考实现
+     * 的 normalizeQishuiCookieInput 也是同样思路（它还吃 JSON 数组形态），
+     * 所以这里三种都要认。
+     */
+    static Map<String, String> parseCookieInput(String rawInput) {
+        Map<String, String> out = new LinkedHashMap<>();
+        String text = nonBlank(rawInput).replace("\uFEFF", "");
+        if (text.isEmpty()) return out;
+
+        int colon = text.indexOf(':');
+        if (text.regionMatches(true, 0, "Cookie", 0, 6) && colon > 0 && colon < 12) {
+            text = text.substring(colon + 1);
+        }
+        int eq = text.toLowerCase(Locale.ROOT).indexOf("document.cookie");
+        if (eq == 0) {
+            int assign = text.indexOf('=');
+            if (assign > 0) text = text.substring(assign + 1);
+        }
+        text = text.trim();
+
+        // devtools / 插件导出的数组形态：[{"name":"sessionid","value":"..."}]
+        if (text.startsWith("[")) {
+            try {
+                JsonElement parsedJson = JsonParser.parseString(text);
+                if (parsedJson.isJsonArray()) {
+                    for (JsonElement element : parsedJson.getAsJsonArray()) {
+                        if (element == null || !element.isJsonObject()) continue;
+                        JsonObject item = element.getAsJsonObject();
+                        String name = nonBlank(string(item, "name"));
+                        String value = nonBlank(string(item, "value"));
+                        putCookie(out, name, value);
+                    }
+                }
+            } catch (Throwable ignored) {
+                // 当普通文本继续往下走，不因为一次猜错就报错。
+            }
+            if (!out.isEmpty()) return out;
+        }
+
+        for (String chunk : text.split("[;\r\n]+")) {
+            String pair = chunk.trim();
+            if (pair.isEmpty()) continue;
+            int separator = pair.indexOf('=');
+            if (separator <= 0) continue;
+            putCookie(out, pair.substring(0, separator).trim(),
+                    unquote(pair.substring(separator + 1).trim()));
+        }
+        return out;
+    }
+
+    /** 只收真正像 cookie 的键值对：属性名、空值、超长输入一律丢掉。 */
+    private static void putCookie(Map<String, String> target, String name, String value) {
+        if (target.size() >= 64) return;
+        if (name.isEmpty() || value.isEmpty()) return;
+        String lower = name.toLowerCase(Locale.ROOT);
+        switch (lower) {
+            case "domain":
+            case "path":
+            case "expires":
+            case "max-age":
+            case "httponly":
+            case "secure":
+            case "samesite":
+            case "partitioned":
+                return;
+            default:
+                break;
+        }
+        if (value.length() > 4096) return;
+        target.put(name, value);
+    }
+
+    private static String unquote(String value) {
+        if (value.length() >= 2) {
+            char first = value.charAt(0);
+            char last = value.charAt(value.length() - 1);
+            if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+                return value.substring(1, value.length() - 1);
+            }
+        }
+        return value;
+    }
+
+    /** 判定「这份 cookie 算不算登录态」，与参考实现的 qishuiCookieHasLogin 同一组名字。 */
+    static boolean hasLoginCredential(Map<String, String> cookies) {
+        if (cookies == null || cookies.isEmpty()) return false;
+        String[] names = {"sessionid", "sessionid_ss", "sid_tt", "uid_tt", "uid_tt_ss", "sid_guard"};
+        for (String name : names) {
+            if (!nonBlank(cookies.get(name)).isEmpty()) return true;
+        }
+        return false;
+    }
+
+    private static String joinCookieMap(Map<String, String> cookies) {
+        StringBuilder header = new StringBuilder();
+        for (Map.Entry<String, String> entry : cookies.entrySet()) {
+            if (header.length() > 0) header.append("; ");
+            header.append(entry.getKey()).append('=').append(entry.getValue());
+        }
+        return header.length() == 0 ? "" : header.append(';').toString();
+    }
+
+    /** 上游拒绝凭据的两种表现：HTTP 401/403，或 200 里带 1000016。 */
+    private static boolean looksLikeAuthRejection(Throwable error) {
+        for (Throwable cursor = error; cursor != null; cursor = cursor.getCause()) {
+            String message = nonBlank(cursor.getMessage());
+            if (message.isEmpty()) continue;
+            if (message.contains("HTTP 401") || message.contains("HTTP 403")
+                    || message.contains("1000016")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static void logout() {
+        QishuiSessionStore.clear();
+        clearUserPlaylistsCache();
+    }
+
+    public static void decryptDownloadedAudio(File file, String playAuth) throws IOException {
+        if (file == null || playAuth == null || playAuth.trim().isEmpty()) return;
+        QishuiAudioDecryptor.decryptInPlace(file.toPath(), playAuth);
+    }
+    /** 汽水发现页推荐歌单。接口为公开 App 流，返回卡片所需的最小元数据。 */
+    public static List<PlayList> recommendPlaylists(int limit) {
+        int target = Math.max(1, Math.min(120, limit));
+        LinkedHashMap<String, PlayList> unique = new LinkedHashMap<>();
+        String cursor = "";
+        String sessionId = "";
+        for (int page = 0; page < 4 && unique.size() < target; page++) {
+            try {
+                JsonObject payload = new JsonObject();
+                payload.addProperty("count", Math.min(50, target - unique.size()));
+                if (!cursor.isEmpty()) payload.addProperty("cursor", cursor);
+                if (!sessionId.isEmpty()) payload.addProperty("session_id", sessionId);
+                JsonObject response = postJson(LUNA_DISCOVER_MIX_ENDPOINT, payload.toString(),
+                        ANDROID_USER_AGENT, "", Collections.emptyMap());
+                collectPlaylistResources(array(response, "inner_block"), unique, target);
+                if (unique.isEmpty()) collectPlaylistResources(array(response, "blocks"), unique, target);
+                String nextCursor = string(response, "next_cursor");
+                String nextSession = string(response, "session_id");
+                boolean hasMore = truthy(response, "has_more");
+                if (!hasMore || nextCursor.isEmpty()
+                        || (nextCursor.equals(cursor) && nextSession.equals(sessionId))) break;
+                cursor = nextCursor;
+                sessionId = nextSession;
+            } catch (Throwable error) {
+                System.err.println("[Music/Qishui] Recommend playlists failed: " + describe(error));
+                break;
+            }
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    /** 汽水发现页电台。当前上游有时把电台放在 blocks，有时放在 discover/mix 的 inner_block。 */
+    public static List<PlayList> recommendRadios(int limit) {
+        int target = Math.max(1, Math.min(80, limit));
+        LinkedHashMap<String, PlayList> unique = new LinkedHashMap<>();
+        try {
+            JsonObject payload = new JsonObject();
+            payload.addProperty("first_request", true);
+            JsonObject response = postJson(LUNA_DISCOVER_ENDPOINT, payload.toString(),
+                    ANDROID_USER_AGENT, "", Collections.emptyMap());
+            collectRadioResources(array(response, "blocks"), unique, target);
+            if (unique.isEmpty()) collectRadioResources(array(response, "inner_block"), unique, target);
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Recommend radios failed: " + describe(error));
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    /** PC 歌单搜索，失败时回退到混合搜索中的歌单分组。 */
+    public static List<PlayList> searchPlaylists(String query, int limit) {
+        String keyword = nonBlank(query);
+        if (keyword.isEmpty()) return Collections.emptyList();
+        int target = Math.max(1, Math.min(100, limit));
+        LinkedHashMap<String, PlayList> unique = new LinkedHashMap<>();
+        try {
+            JsonObject response = requirePcStatus(getJson(buildPcSearchUrl(keyword, 0),
+                    PC_USER_AGENT, QishuiSessionStore.getCookieHeader(), pcHeaders()), "歌单搜索");
+            collectPlaylistsFromSearch(response, unique, target);
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Playlist search failed: " + describe(error));
+        }
+        if (unique.isEmpty()) {
+            try {
+                JsonObject response = requirePcStatus(getJson(buildPcMixedSearchUrl(keyword, 0),
+                        PC_USER_AGENT, QishuiSessionStore.getCookieHeader(), pcHeaders()), "混合搜索");
+                collectPlaylistsFromSearch(response, unique, target);
+            } catch (Throwable error) {
+                System.err.println("[Music/Qishui] Mixed playlist search failed: " + describe(error));
+            }
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    /** 歌单详情。只保留 feed 中的曲目实体，视频/播客条目会被忽略。 */
+    public static List<Music> playlistTracks(String playlistId, int limit) {
+        String id = nonBlank(playlistId);
+        if (id.isEmpty()) return Collections.emptyList();
+        if (id.startsWith(ACCOUNT_PLAYLIST_PREFIX)) {
+            return accountPlaylistTracks(id.substring(ACCOUNT_PLAYLIST_PREFIX.length()), limit);
+        }
+        return anonymousPlaylistTracks(id, limit);
+    }
+
+    /**
+     * 账号歌单取曲目：带 Cookie 走 {@code GET /luna/pc/playlist/detail}，按游标翻到底。
+     *
+     * <p>终止条件只有 {@code has_more} 不为真、或 {@code next_cursor} 缺失 / 不前进 / 重复，
+     * <b>不能以「这一页是空的」收尾</b>：实测上游会在中间页回 0 条却仍然 {@code has_more=true}
+     * （不可见的条目被跳过了），空页收尾会把后半段整段丢掉。请求的条数也不看
+     * {@code count_tracks}：那个字段实测会偏小（标 186 首、实际 238 首），游标才是准的。</p>
+     *
+     * <p>凭据失效或这条接口出错时退回 {@link #anonymousPlaylistTracks}：宁可少几首，
+     * 也别把已经点开的面板变成一片空白。</p>
+     */
+    private static List<Music> accountPlaylistTracks(String playlistId, int limit) {
+        // 调用方给的 limit 来自 count_tracks，而这个字段实测会偏小（标 186 首、游标翻完 238 首）：
+        // 拿它当上限，「歌单里歌曲数量不全」就还在。这里只把 MAX_PAGES 当闸门，收尾交给 has_more。
+        int target = MAX_PAGES * PAGE_SIZE;
+        LinkedHashMap<String, Music> unique = new LinkedHashMap<>();
+        String cursor = "";
+        Set<String> cursors = new HashSet<>();
+        for (int page = 0; page < MAX_PAGES && unique.size() < target; page++) {
+            try {
+                JsonObject response = requirePcStatus(getJson(
+                        buildPcPlaylistDetailUrl(playlistId, cursor), PC_USER_AGENT,
+                        QishuiSessionStore.getCookieHeader(), pcHeaders()), "歌单详情");
+                collectFeedTracks(array(response, "media_resources"), unique, target);
+                if (!truthy(response, "has_more")) break;
+                String next = string(response, "next_cursor");
+                if (next.isEmpty() || next.equals(cursor) || !cursors.add(next)) break;
+                cursor = next;
+            } catch (Throwable error) {
+                System.err.println("[Music/Qishui] Account playlist detail failed for "
+                        + playlistId + ": " + describe(error));
+                if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+                break;
+            }
+        }
+        if (!unique.isEmpty()) return new ArrayList<>(unique.values());
+        return anonymousPlaylistTracks(playlistId, limit);
+    }
+
+    /**
+     * 匿名取曲目：{@code POST beta-luna.douyin.com/luna/playlist/detail}，<b>一处凭据都不带</b>。
+     *
+     * <p>导入的歌单走这一条。带上 Cookie 反而会被这条接口拒掉（实测返回业务码 {@code 1000006}），
+     * 而且导入本身要求与登录、账号解耦 —— 见 {@link #importPlaylist(String)}。</p>
+     */
+    private static List<Music> anonymousPlaylistTracks(String playlistId, int limit) {
+        String id = nonBlank(playlistId);
+        if (id.isEmpty()) return Collections.emptyList();
+        int target = Math.max(1, limit);
+        LinkedHashMap<String, Music> unique = new LinkedHashMap<>();
+        String cursor = "";
+        String sessionId = "";
+        for (int page = 0; page < MAX_PAGES && unique.size() < target; page++) {
+            try {
+                JsonObject payload = new JsonObject();
+                payload.addProperty("playlist_id", id);
+                payload.addProperty("playlist_type", 0);
+                payload.addProperty("count", Math.min(PAGE_SIZE, target - unique.size()));
+                if (!cursor.isEmpty()) payload.addProperty("cursor", cursor);
+                if (!sessionId.isEmpty()) payload.addProperty("session_id", sessionId);
+                JsonObject response = postJson(LUNA_PLAYLIST_DETAIL_ENDPOINT, payload.toString(),
+                        ANDROID_USER_AGENT, "", Collections.emptyMap());
+                collectFeedTracks(array(response, "media_resources"), unique, target);
+                String nextCursor = string(response, "next_cursor");
+                String nextSession = string(response, "session_id");
+                if (nextCursor.isEmpty()
+                        || (nextCursor.equals(cursor) && nextSession.equals(sessionId))) break;
+                cursor = nextCursor;
+                sessionId = nextSession;
+            } catch (Throwable error) {
+                System.err.println("[Music/Qishui] Playlist detail failed for " + id + ": " + describe(error));
+                break;
+            }
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    private static final Pattern PLAYLIST_ID_PATH = Pattern.compile("playlist/(\\d{6,})");
+    private static final Pattern PLAYLIST_ID_PARAM = Pattern.compile("[?&](?:playlist_id|id)=(\\d{6,})");
+    private static final Pattern EMBEDDED_LONG_ID = Pattern.compile("(\\d{10,})");
+    private static final Pattern ANY_URL = Pattern.compile("https?://[^\\s\"'<>，。]+");
+
+    /** 只用于跟随抖音短链的 302：不自动重定向，逐跳读 Location，命中歌单 ID 即返回。 */
+    private static final HttpClient REDIRECT_NEVER_HTTP = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build();
+
+    /**
+     * 从用户粘贴的文本里提取汽水歌单 ID。兼容：纯数字 ID、{@code .../playlist/123}、
+     * {@code ?playlist_id=123}、{@code ?id=123}、分享口令里内嵌的一串长数字；对
+     * 抖音短链（{@code v.douyin.com}、{@code douyin.com/s/}、{@code qishui.douyin.com}）
+     * 会跟随一次 302 再用最终 URL 复提取。
+     *
+     * @return 歌单 ID；文本里找不到可用 ID 时返回 {@code null}
+     */
+    public static String extractPlaylistId(String input) {
+        String text = nonBlank(input);
+        if (text.isEmpty()) return null;
+
+        String id = firstGroupId(PLAYLIST_ID_PATH, text);
+        if (id != null) return id;
+        id = firstGroupId(PLAYLIST_ID_PARAM, text);
+        if (id != null) return id;
+        if (text.matches("\\d{6,}")) return text;
+        id = firstGroupId(EMBEDDED_LONG_ID, text);
+        if (id != null) return id;
+
+        Matcher urlMatcher = ANY_URL.matcher(text);
+        while (urlMatcher.find()) {
+            String url = urlMatcher.group();
+            if (!isQishuiShortLink(url)) continue;
+            String resolved = resolveRedirectPlaylistId(url);
+            if (resolved != null) return resolved;
+        }
+        return null;
+    }
+
+    private static boolean isQishuiShortLink(String url) {
+        String lower = url.toLowerCase(Locale.ROOT);
+        return lower.contains("douyin.com") || lower.contains("qishui");
+    }
+
+    private static String resolveRedirectPlaylistId(String url) {
+        String current = url;
+        for (int hop = 0; hop < 5 && current != null; hop++) {
+            try {
+                HttpRequest request = HttpRequest.newBuilder(URI.create(current))
+                        .timeout(Duration.ofMillis(REQUEST_TIMEOUT_MS))
+                        .header("User-Agent", WEB_USER_AGENT)
+                        .header("Accept", "text/html,application/xhtml+xml,*/*")
+                        .GET().build();
+                HttpResponse<Void> response = REDIRECT_NEVER_HTTP.send(request,
+                        HttpResponse.BodyHandlers.discarding());
+                String location = response.headers().firstValue("location").orElse("");
+                if (location.isEmpty()) return null;
+                current = URI.create(current).resolve(location).toString();
+                String id = firstGroupId(PLAYLIST_ID_PATH, current);
+                if (id == null) id = firstGroupId(PLAYLIST_ID_PARAM, current);
+                if (id != null) return id;
+                if (!isQishuiShortLink(current)) return null;
+            } catch (Throwable error) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private static String firstGroupId(Pattern pattern, String text) {
+        Matcher matcher = pattern.matcher(text);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    /**
+     * 匿名导入一个汽水歌单：解析 ID 后请求一次歌单详情（不带 Cookie）拿标题/封面/曲目数，
+     * 构造 platform=QISHUI 的 {@link PlayList} 引用返回。曲目列表不在此落地——UI 每次点开
+     * 时由 {@link #playlistTracks(String, int)} 匿名向上游拉取，因此导入与登录、账号完全解耦。
+     *
+     * @throws IllegalArgumentException 文本里解析不到有效歌单 ID
+     */
+    public static PlayList importPlaylist(String input) {
+        String id = extractPlaylistId(input);
+        if (id == null) {
+            throw new IllegalArgumentException(
+                    "没识别出汽水歌单 ID，请粘贴歌单分享链接或直接输入数字 ID");
+        }
+
+        String title = "";
+        String cover = "";
+        int count = 0;
+        try {
+            JsonObject payload = new JsonObject();
+            payload.addProperty("playlist_id", id);
+            payload.addProperty("playlist_type", 0);
+            payload.addProperty("count", 1);
+            JsonObject response = postJson(LUNA_PLAYLIST_DETAIL_ENDPOINT, payload.toString(),
+                    ANDROID_USER_AGENT, "", Collections.emptyMap());
+            JsonObject meta = object(response, "playlist");
+            if (meta.size() == 0) meta = object(object(response, "data"), "playlist");
+            title = firstNonBlank(string(meta, "title"), string(meta, "name"));
+            cover = coverUrl(object(meta, "url_cover"));
+            if (cover.isEmpty()) cover = firstUrl(meta.get("cover_url"));
+            long declared = longValue(meta, "count_tracks");
+            if (declared <= 0) declared = longValue(meta, "song_count");
+            count = checkedInt(declared, "playlist count");
+        } catch (Throwable error) {
+            // 元数据拿不到不阻断导入：曲目会在点开时匿名再拉，只是标题先兜底成 ID。
+            System.err.println("[Music/Qishui] Import metadata failed for " + id + ": "
+                    + describe(error));
+        }
+
+        PlayList playlist = new PlayList(stableLong("qishui:playlist:" + id),
+                title.isEmpty() ? "汽水歌单 " + id : title, cover, Math.max(0, count),
+                0L, null, "", 0L);
+        playlist.setPlatform(MusicPlatform.QISHUI);
+        playlist.setPlatformPlaylistId(id);
+        return playlist;
+    }
+
+    /** 电台歌曲。radio id 可以直接传入，也可使用 UI 的 radio: 前缀。 */
+    public static List<Music> radioTracks(String radioId, int limit) {
+        String id = nonBlank(radioId);
+        if (id.startsWith("radio:")) id = id.substring("radio:".length()).trim();
+        if (id.isEmpty()) return Collections.emptyList();
+        int target = Math.max(1, Math.min(500, limit));
+        LinkedHashMap<String, Music> unique = new LinkedHashMap<>();
+        String cursor = "";
+        for (int page = 0; page < 12 && unique.size() < target; page++) {
+            try {
+                JsonObject payload = new JsonObject();
+                payload.addProperty("radio_id", id);
+                payload.addProperty("count", Math.min(50, target - unique.size()));
+                if (!cursor.isEmpty()) payload.addProperty("cursor", cursor);
+                JsonObject response = postJson(LUNA_RADIO_TRACKS_ENDPOINT, payload.toString(),
+                        ANDROID_USER_AGENT, "", Collections.emptyMap());
+                collectFeedTracks(array(response, "items"), unique, target);
+                String nextCursor = firstNonBlank(string(response, "next_cursor"), string(response, "cursor"));
+                if (nextCursor.isEmpty() || nextCursor.equals(cursor)) break;
+                cursor = nextCursor;
+            } catch (Throwable error) {
+                System.err.println("[Music/Qishui] Radio tracks failed for " + id + ": " + describe(error));
+                break;
+            }
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    /**
+     * 拉账号侧栏要的歌单：<b>自建 + 收藏</b>，各自按游标翻到底，再按平台 ID 去重（带 Cookie）。
+     *
+     * <p>为什么要合两条接口：{@code /me/playlist} 只有<b>自己建的</b>歌单，收藏别人的歌单在
+     * {@code /me/collection/mixed} 里，两边实测无交集（本账号 5 + 6 首 playlists）。以前侧栏
+     * 只读前者且只读一页，所以「收藏的歌单不显示」。</p>
+     *
+     * <p>收藏那条是<b>混合</b>列表，条目按 {@code item_type} 分成 playlist 与 album；本轮按
+     * 约定只显示歌单，专辑条目跳过（专辑的卡片字段是 {@code album}，标题在 {@code name} 里，
+     * 和歌单的 {@code title} 不同形，硬接进来会画出一堆无名条目）。</p>
+     *
+     * <p>自建那条<b>失败会抛</b>：快照刷新要靠异常与否区分「账号真的没有歌单」与「这一次
+     * 请求失败」，不能把两者都折叠成空列表。收藏那条挂了则只记日志 —— 半张桌子好过一张空桌。</p>
+     */
+    private static List<PlayList> fetchUserPlaylists(int limit) throws Exception {
+        if (!QishuiSessionStore.isLoggedIn()) return Collections.emptyList();
+        int cap = Math.max(1, limit);
+        LinkedHashMap<String, PlayList> unique = new LinkedHashMap<>();
+        collectPlaylistCards(fetchAllPcPages(buildPcMePlaylistsUrl(), "playlists", "自建歌单"),
+                "", unique, cap);
+        // 收藏那条挂了只会在自己里面记日志：半张桌子好过一张空桌。
+        for (PlayList playlist : collectionPlaylists(cap)) {
+            if (unique.size() >= cap) break;
+            unique.putIfAbsent(playlist.getPlatformPlaylistId(), playlist);
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    /**
+     * 把一页页捞回来的条目打成 {@link PlayList}，键与 ID 都带上 {@link #ACCOUNT_PLAYLIST_PREFIX}，
+     * 让取曲目时能分派到带 Cookie 的 PC 详情接口。
+     *
+     * @param cardKey 歌单卡片在条目里的字段名：自建接口每条<b>本身就是</b>歌单卡片（传空串），
+     *                收藏接口每条要先按 {@code item_type} 钻一层
+     */
+    private static void collectPlaylistCards(JsonArray items, String cardKey,
+                                             LinkedHashMap<String, PlayList> output, int limit) {
+        if (items == null) return;
+        int cap = Math.max(1, limit);
+        for (JsonElement element : items) {
+            if (output.size() >= cap) break;
+            if (!element.isJsonObject()) continue;
+            JsonObject item = element.getAsJsonObject();
+            JsonObject raw;
+            if (cardKey.isEmpty()) {
+                raw = item;
+            } else {
+                // 只认得出来的非歌单条目（专辑）才跳过：字段哪天不上来时，宁可按歌单试一次。
+                String kind = string(item, "item_type");
+                if (!kind.isEmpty() && !"playlist".equals(kind)) continue;
+                raw = object(item, cardKey);
+                if (raw.size() == 0) raw = object(object(item, "media"), cardKey);
+            }
+            PlayList playlist = parsePlaylistCard(raw, object(item, "style"));
+            if (playlist == null || playlist.getPlatformPlaylistId().isEmpty()) continue;
+            String keyed = ACCOUNT_PLAYLIST_PREFIX + playlist.getPlatformPlaylistId();
+            playlist.setPlatformPlaylistId(keyed);
+            output.put(keyed, playlist);
+        }
+    }
+
+    /**
+     * 按游标把一个 PC 列表接口翻到底，把每页的数组原样接起来。
+     *
+     * <p>两个实测过、不看一眼就会踩的坑：</p>
+     * <ul>
+     *   <li><b>空页不等于到底。</b>{@code /me/playlist} 在 {@code count=2} 时第二页回 0 条，
+     *       但 {@code has_more} 仍是 true、{@code next_cursor} 照旧往后走。</li>
+     *   <li><b>最后一页不带 {@code has_more} 字段</b>（不是 false，是压根没有），
+     *       所以下面用 {@code !truthy(...)} 收尾，而不是比较它等于 false。</li>
+     * </ul>
+     */
+    private static JsonArray fetchAllPcPages(String url, String arrayKey, String what)
+            throws Exception {
+        JsonArray collected = new JsonArray();
+        String cursor = "";
+        Set<String> cursors = new HashSet<>();
+        for (int page = 0; page < MAX_PAGES; page++) {
+            StringBuilder paged = new StringBuilder(url);
+            append(paged, "count", String.valueOf(PAGE_SIZE));
+            append(paged, "cursor", cursor);
+            JsonObject response = requirePcStatus(getJson(paged.toString(), PC_USER_AGENT,
+                    QishuiSessionStore.getCookieHeader(), pcHeaders()), what);
+            JsonArray items = array(response, arrayKey);
+            if (items != null) {
+                for (JsonElement item : items) collected.add(item);
+            }
+            if (!truthy(response, "has_more")) break;
+            String next = string(response, "next_cursor");
+            if (next.isEmpty() || next.equals(cursor) || !cursors.add(next)) break;
+            cursor = next;
+        }
+        return collected;
+    }
+
+    // ── 我的歌单（快照 + 异步，与 QQ / 酷狗侧栏同一套加载形态） ──────────────
+    //
+    // 侧栏要的是「进页面先画缓存、后台拉完 markDirty 再画一次」，不能像二级页那样
+    // 打开时才同步打网络。状态机照抄酷狗那份：loading 闸门、失败后 15 秒内不重打。
+
+    private static final Object USER_PLAYLIST_LOCK = new Object();
+    private static final long USER_PLAYLIST_RETRY_DELAY_MS = 15_000L;
+
+    private static volatile List<PlayList> userPlaylistsSnapshot = Collections.emptyList();
+    private static volatile boolean userPlaylistsLoaded;
+    private static volatile boolean userPlaylistsLoading;
+    private static volatile long userPlaylistsLastAttempt;
+
+    public static List<PlayList> getUserPlaylistsSnapshot() {
+        return new ArrayList<>(userPlaylistsSnapshot);
+    }
+
+    public static boolean areUserPlaylistsLoaded() {
+        return userPlaylistsLoaded;
+    }
+
+    public static boolean areUserPlaylistsLoading() {
+        return userPlaylistsLoading;
+    }
+
+    /** 回调运行在后台线程；UI 调用方要自己切回主线程。 */
+    public static void ensureUserPlaylistsAsync(final Runnable callback) {
+        if (!QishuiSessionStore.isLoggedIn()) {
+            clearUserPlaylistsCache();
+            if (callback != null) callback.run();
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        synchronized (USER_PLAYLIST_LOCK) {
+            if (userPlaylistsLoading) return;
+            if (userPlaylistsLoaded) {
+                if (callback != null) callback.run();
+                return;
+            }
+            // 失败后短时间内不重试：凭据已经死了的时候，每次重绘侧栏都重打一次毫无意义。
+            if (now - userPlaylistsLastAttempt < USER_PLAYLIST_RETRY_DELAY_MS) return;
+            userPlaylistsLoading = true;
+            userPlaylistsLastAttempt = now;
+        }
+
+        Thread thread = new Thread(() -> {
+            try {
+                if (!userPlaylistsLoaded) refreshUserPlaylistsSnapshot();
+            } finally {
+                synchronized (USER_PLAYLIST_LOCK) {
+                    userPlaylistsLoading = false;
+                }
+                if (callback != null) {
+                    try {
+                        callback.run();
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
+        }, "Qishui Account");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    private static void refreshUserPlaylistsSnapshot() {
+        if (!QishuiSessionStore.isLoggedIn()) {
+            clearUserPlaylistsCache();
+            return;
+        }
+        try {
+            List<PlayList> loaded = fetchUserPlaylists(ACCOUNT_PLAYLIST_CAP);
+            userPlaylistsSnapshot = Collections.unmodifiableList(new ArrayList<>(loaded));
+            userPlaylistsLoaded = true;
+            System.out.println("[Music/Qishui] 已加载 " + loaded.size() + " 个汽水账号歌单。");
+        } catch (Throwable error) {
+            userPlaylistsLoaded = false;
+            System.err.println("[Music/Qishui] 账号歌单加载失败: " + describe(error));
+        }
+    }
+
+    /**
+     * 凭据一换，快照必须作废：Cookie 导入可能登进来的是<b>另一个</b>抖音账号，
+     * 留着上一位的歌单会让侧栏指着拿不到的东西。退出登录同理。
+     */
+    public static void clearUserPlaylistsCache() {
+        userPlaylistsSnapshot = Collections.emptyList();
+        userPlaylistsLoaded = false;
+        userPlaylistsLoading = false;
+        userPlaylistsLastAttempt = 0L;
+    }
+
+    /**
+     * 收藏列表里的<b>歌单</b>（专辑条目跳过），按游标翻到底。
+     *
+     * <p>侧栏快照并不直接调这里 —— {@link #fetchUserPlaylists(int)} 会把这条和自建并起来；
+     * 这一条留给只要收藏那一半的调用方。</p>
+     */
+    public static List<PlayList> collectionPlaylists(int limit) {
+        if (!QishuiSessionStore.isLoggedIn()) return Collections.emptyList();
+        LinkedHashMap<String, PlayList> unique = new LinkedHashMap<>();
+        try {
+            collectPlaylistCards(fetchAllPcPages(buildPcMeCollectionUrl(), "mixed_collections", "收藏"),
+                    "playlist", unique, Math.max(1, Math.min(ACCOUNT_PLAYLIST_CAP, limit)));
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] User collection failed: " + describe(error));
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    public static List<Music> collectionTracks(int limit) {
+        if (!QishuiSessionStore.isLoggedIn()) return Collections.emptyList();
+        JsonObject response = fetchUserCollection();
+        int target = Math.max(1, Math.min(500, limit));
+        LinkedHashMap<String, Music> unique = new LinkedHashMap<>();
+        JsonArray collections = array(response, "mixed_collections");
+        if (collections != null) {
+            for (JsonElement element : collections) {
+                if (!element.isJsonObject()) continue;
+                Music music = parseFeedTrack(element);
+                if (music != null) unique.put(music.getSourceId(), music);
+                if (unique.size() >= target) break;
+            }
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    private static JsonObject fetchUserCollection() {
+        if (!QishuiSessionStore.isLoggedIn()) return new JsonObject();
+        try {
+            return requirePcStatus(getJson(buildPcMeCollectionUrl(), PC_USER_AGENT,
+                    QishuiSessionStore.getCookieHeader(), pcHeaders()), "收藏");
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] User collection failed: " + describe(error));
+            return new JsonObject();
+        }
+    }
+
+    private static void collectPlaylistResources(JsonArray blocks, Map<String, PlayList> output, int limit) {
+        if (blocks == null) return;
+        for (JsonElement blockElement : blocks) {
+            if (!blockElement.isJsonObject() || output.size() >= limit) return;
+            JsonObject block = blockElement.getAsJsonObject();
+            JsonArray resources = array(block, "resources");
+            if (resources == null) continue;
+            for (JsonElement resourceElement : resources) {
+                if (!resourceElement.isJsonObject() || output.size() >= limit) return;
+                JsonObject resource = resourceElement.getAsJsonObject();
+                JsonObject entity = object(resource, "entity");
+                JsonObject raw = object(entity, "playlist");
+                if (raw.size() == 0) raw = object(resource, "playlist");
+                PlayList playlist = parsePlaylistCard(raw, object(resource, "style"));
+                if (playlist != null) output.put(playlist.getPlatformPlaylistId(), playlist);
+            }
+        }
+    }
+
+    private static void collectRadioResources(JsonArray blocks, Map<String, PlayList> output, int limit) {
+        if (blocks == null) return;
+        for (JsonElement blockElement : blocks) {
+            if (!blockElement.isJsonObject() || output.size() >= limit) return;
+            JsonObject block = blockElement.getAsJsonObject();
+            JsonArray resources = array(block, "resources");
+            if (resources != null) {
+                for (JsonElement resourceElement : resources) {
+                    if (!resourceElement.isJsonObject() || output.size() >= limit) return;
+                    JsonObject resource = resourceElement.getAsJsonObject();
+                    JsonObject style = object(resource, "style");
+                    JsonObject radio = object(object(resource, "entity"), "radio");
+                    String type = string(resource, "type");
+                    if (!"radio".equals(type) && radio.size() == 0) continue;
+                    String id = firstNonBlank(string(resource, "resource_id"), string(radio, "radio_id"));
+                    if (id.isEmpty()) continue;
+                    String title = firstNonBlank(string(style, "title"), string(radio, "radio_name"),
+                            string(resource, "title"));
+                    if (title.isEmpty()) title = "汽水电台";
+                    String cover = firstUrl(style.get("cover_url_list"));
+                    if (cover.isEmpty()) cover = firstUrl(style.get("cover_url"));
+                    String description = firstNonBlank(string(style, "desc"), string(radio, "description"));
+                    PlayList playlist = new PlayList(stableLong("qishui:radio:" + id), title, cover,
+                            0, 0L, null, description, 0L);
+                    playlist.setPlatform(MusicPlatform.QISHUI);
+                    playlist.setPlatformPlaylistId("radio:" + id);
+                    output.put(id, playlist);
+                }
+            }
+            collectRadioResources(array(block, "inner_block"), output, limit);
+        }
+    }
+
+    private static void collectPlaylistsFromSearch(JsonObject response, Map<String, PlayList> output, int limit) {
+        JsonArray groups = array(response, "result_groups");
+        if (groups == null) return;
+        for (JsonElement groupElement : groups) {
+            if (!groupElement.isJsonObject() || output.size() >= limit) return;
+            JsonObject group = groupElement.getAsJsonObject();
+            JsonArray data = array(group, "data");
+            if (data == null) continue;
+            for (JsonElement itemElement : data) {
+                if (!itemElement.isJsonObject() || output.size() >= limit) return;
+                JsonObject item = itemElement.getAsJsonObject();
+                JsonObject entity = object(item, "entity");
+                JsonObject raw = object(entity, "playlist");
+                if (raw.size() == 0) raw = object(item, "playlist");
+                PlayList playlist = parsePlaylistCard(raw, object(item, "style"));
+                if (playlist != null) output.put(playlist.getPlatformPlaylistId(), playlist);
+            }
+        }
+    }
+
+    private static PlayList parsePlaylistCard(JsonObject raw, JsonObject style) {
+        if (raw == null || raw.size() == 0) return null;
+        String id = firstNonBlank(string(raw, "id"), string(raw, "playlist_id"));
+        String title = firstNonBlank(string(raw, "title"), string(raw, "name"), string(style, "title"));
+        if (id.isEmpty() || title.isEmpty()) return null;
+        String cover = coverUrl(object(raw, "url_cover"));
+        if (cover.isEmpty()) cover = firstUrl(raw.get("cover_url"));
+        if (cover.isEmpty()) cover = firstUrl(style.get("cover_url"));
+        if (cover.isEmpty()) cover = firstUrl(style.get("cover_url_list"));
+        int count = checkedInt(longValue(raw, "count_tracks"), "playlist count");
+        if (count <= 0) count = checkedInt(longValue(raw, "track_count"), "playlist count");
+        if (count <= 0) count = checkedInt(longValue(raw, "song_count"), "playlist count");
+        String description = firstNonBlank(string(raw, "desc"), string(raw, "description"),
+                string(style, "desc"));
+        PlayList playlist = new PlayList(stableLong("qishui:playlist:" + id), title, cover,
+                Math.max(0, count), 0L, null, description, 0L);
+        playlist.setPlatform(MusicPlatform.QISHUI);
+        playlist.setPlatformPlaylistId(id);
+        return playlist;
+    }
+
+    private static void collectFeedTracks(JsonArray items, Map<String, Music> output, int limit) {
+        if (items == null) return;
+        for (JsonElement item : items) {
+            if (output.size() >= limit) return;
+            Music music = parseFeedTrack(item);
+            if (music != null && !music.getSourceId().isEmpty()) output.put(music.getSourceId(), music);
+        }
+    }
+
+    private static Music parseFeedTrack(JsonElement element) {
+        if (element == null || !element.isJsonObject()) return null;
+        JsonObject item = element.getAsJsonObject();
+        JsonObject entity = object(item, "entity");
+        JsonObject wrapper = object(entity, "track_wrapper");
+        JsonObject raw = object(wrapper, "track");
+        if (raw.size() == 0) raw = object(entity, "track");
+        if (raw.size() == 0) raw = object(item, "track");
+        if (raw.size() == 0) raw = object(object(item, "media"), "track");
+        if (raw.size() == 0) raw = item;
+        Track track = parseTrack(raw);
+        return track == null ? null : Music.fromQishuiTrack(track);
+    }
+
+    private static int checkedInt(long value, String name) {
+        if (value <= 0L) return 0;
+        return value > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) value;
+    }
+
+    private static long stableLong(String value) {
+        String safe = value == null ? "" : value;
+        try {
+            long parsed = Long.parseLong(safe);
+            if (parsed > 0L) return parsed;
+        } catch (NumberFormatException ignored) {
+        }
+        long hash = 1125899906842597L;
+        for (int index = 0; index < safe.length(); index++) {
+            hash = 31L * hash + safe.charAt(index);
+        }
+        return hash & Long.MAX_VALUE;
+    }
+    private static Track parseTrack(JsonObject rawTrack) {
+        String trackId = string(rawTrack, "id");
+        String title = string(rawTrack, "name");
+        if (trackId.isEmpty() || title.isEmpty()) return null;
+
+        String artist = joinArtists(array(rawTrack, "artists"));
+        JsonObject album = object(rawTrack, "album");
+        String albumName = string(album, "name");
+        String cover = coverUrl(object(album, "url_cover"));
+        long duration = longValue(rawTrack, "duration");
+        if (duration > 0L && duration < 1000L) duration *= 1000L;
+        JsonObject label = object(rawTrack, "label_info");
+        boolean vip = truthy(label, "only_vip_playable");
+        return new Track(trackId, title, artist, albumName, duration, cover, vip);
+    }
+
+    private static JsonObject fetchTrack(String trackId, boolean authenticated)
+            throws IOException, InterruptedException {
+        return getJson(TRACK_ENDPOINT + "?track_id=" + urlEncode(trackId) + "&device_platform=web",
+                WEB_USER_AGENT, authenticated ? QishuiSessionStore.getCookieHeader() : "",
+                Collections.emptyMap());
+    }
+
+    /**
+     * 登录态的 {@code pc/track_v2}——参考实现里唯一能给完整流与权益字段的那条接口。
+     *
+     * <p>2026-09-20 实测：这条路由对我们的请求恒返回 <b>HTTP 200 + 0 字节</b>，而它的 H5 姊妹路由
+     * {@code /luna/h5/track_v2} 会明说 {@code status_code=1000062 应用版本有风险}。换域名、换
+     * 版本号的 6 种组合、换 app_name/device_platform/channel、带不带 cookie、伪造与真实设备标识、
+     * UA 与 curl 两套 TLS 栈全都试过了，一律空响应；同期 {@code /luna/pc/me}、{@code me/playlist}、
+     * {@code me/collection/mixed}、{@code pc/search/playlist} 都正常出数据，所以不是凭据问题，
+     * 而是上游对播放分发接口加了客户端风控。参考实现自己也留了「汽水接口暂时返回空响应」这条
+     * 错误分支，说明它同样撞得上。</p>
+     *
+     * <p>因此这里失败是<b>预期内</b>的：返回 null，由 {@link #getSongUrl} 继续用 H5 那条线，
+     * 免费版曲目能拿到完整流，受限曲目只有试听。</p>
+     */
+    private static JsonObject fetchAuthenticatedTrack(String trackId) {
+        if (!QishuiSessionStore.isLoggedIn()) return null;
+        String cookie = QishuiSessionStore.getCookieHeader();
+        JsonObject payload = new JsonObject();
+        payload.addProperty("track_id", trackId);
+        payload.addProperty("media_type", "track");
+        payload.addProperty("queue_type", "favorite_track_playlist");
+        payload.addProperty("scene_name", "library");
+        String body = payload.toString();
+        Throwable last = null;
+        for (String base : PC_API_BASES) {
+            try {
+                return requirePcStatus(postJson(buildPcTrackUrl(base, ""), body, PC_USER_AGENT,
+                        cookie, pcHeaders()), "取流");
+            } catch (Throwable posted) {
+                last = posted;
+                // 凭据被拒不换域名重试——参考实现同样在 401/403 时立刻停手，
+                // 连着打只会让风控更快盯上这个会话。这里只标记，不清凭据。
+                if (looksLikeAuthRejection(posted)) {
+                    QishuiSessionStore.markReauthRequired();
+                    break;
+                }
+            }
+            try {
+                return requirePcStatus(getJson(buildPcTrackUrl(base, trackId), PC_USER_AGENT,
+                        cookie, pcHeaders()), "取流");
+            } catch (Throwable fallback) {
+                last = fallback;
+                if (looksLikeAuthRejection(fallback)) {
+                    QishuiSessionStore.markReauthRequired();
+                    break;
+                }
+            }
+        }
+        System.err.println("[Music/Qishui] Authenticated track request failed: " + describe(last));
+        return null;
+    }
+
+    private static JsonObject fetchPlayerInfo(String url) throws IOException, InterruptedException {
+        return getJson(url, WEB_USER_AGENT, QishuiSessionStore.getCookieHeader(),
+                Collections.emptyMap());
+    }
+
+    static List<Stream> collectCandidates(JsonObject response) {
+        List<Stream> candidates = new ArrayList<>();
+        if (response == null) return candidates;
+        JsonObject body = envelope(response);
+        // 一次遍历收全四处流来源：track.audio_info.play_info_list、track_player.video_model、
+        // bit_rates 兜底，以及 seo_track 顶层那套。它们的字段大小写不一致，所以统一交给
+        // audioUrl()/durationMillis()/playAuth() 各自认名字。
+        collectStreams(body, candidates, 0, 0L, "");
+        JsonObject player = locateTrackPlayer(body);
+        String playerInfoUrl = firstNonBlank(string(player, "url_player_info"),
+                string(player, "urlPlayerInfo"), string(player, "URLPlayerInfo"));
+        if (!playerInfoUrl.isEmpty()) {
+            try {
+                // 二跳的播放信息接口是 PascalCase 的 Result.Data.PlayInfoList，同样一次遍历即可。
+                collectStreams(envelope(fetchPlayerInfo(playerInfoUrl)), candidates, 0, 0L, "");
+            } catch (Throwable error) {
+                System.err.println("[Music/Qishui] Player info request failed: " + describe(error));
+            }
+        }
+        return candidates;
+    }
+
+    /** 曲目本体：{@code data.track}、顶层 {@code track}、{@code seo_track.track} 都见过。 */
+    static JsonObject locateTrack(JsonObject body) {
+        JsonObject[] candidates = {
+                object(body, "track"), object(body, "track_info"), object(body, "trackInfo"),
+                object(object(body, "seo_track"), "track"),
+        };
+        for (JsonObject candidate : candidates) {
+            if (candidate.size() > 0) return candidate;
+        }
+        return body;
+    }
+
+    /** 播放信息本体：{@code track_player} 有时挂在信封上，有时挂在曲目里，命名还有大小写差异。 */
+    static JsonObject locateTrackPlayer(JsonObject body) {
+        JsonObject track = locateTrack(body);
+        JsonObject[] candidates = {
+                object(body, "track_player"), object(body, "trackPlayer"),
+                object(track, "track_player"), object(track, "trackPlayer"),
+        };
+        for (JsonObject candidate : candidates) {
+            if (candidate.size() > 0) return candidate;
+        }
+        return new JsonObject();
+    }
+
+    /**
+     * 遍历响应树，把带播放地址的节点收成候选流。
+     *
+     * <p>{@code inheritedDurationMillis} 与 {@code inheritedAuth} 是父节点上的
+     * {@code video_duration} 和 {@code play_auth}：实测 {@code video_model} 的时长在
+     * <b>父节点</b>上，而带 URL 的只有 {@code video_list[i]}，不继承的话候选时长恒为 0，
+     * 「时长不足声明值九成就算试听」这条判据在实战里一次都没生效过。</p>
+     */
+    private static void collectStreams(JsonElement element, List<Stream> output, int depth,
+                                       long inheritedDurationMillis, String inheritedAuth) {
+        if (element == null || element.isJsonNull() || depth > 8) return;
+        if (element.isJsonArray()) {
+            for (JsonElement child : element.getAsJsonArray()) {
+                collectStreams(child, output, depth + 1, inheritedDurationMillis, inheritedAuth);
+            }
+            return;
+        }
+        if (!element.isJsonObject()) return;
+        JsonObject node = element.getAsJsonObject();
+        long duration = durationMillis(node);
+        if (duration <= 0L) duration = inheritedDurationMillis;
+        String auth = playAuth(node);
+        if (auth.isEmpty()) auth = nonBlank(inheritedAuth);
+        if (!audioUrl(node).isEmpty()) output.add(new Stream(node, duration, auth));
+        for (Map.Entry<String, JsonElement> entry : node.entrySet()) {
+            // video_model 是「字符串再包一层 JSON」，边走边剥，不然整棵子树都看不见。
+            collectStreams(parseEmbeddedJson(entry.getValue()), output, depth + 1, duration, auth);
+        }
+    }
+
+    static ResolveResult selectAac(List<Stream> candidates, Quality requestedQuality,
+                                   long declaredDurationMillis) {
+        boolean preferHigher = requestedQuality != Quality.STANDARD;
+        Stream selected = null;
+        long selectedScore = preferHigher ? Long.MIN_VALUE : Long.MAX_VALUE;
+        long selectedDuration = 0L;
+        for (Stream candidate : candidates) {
+            String url = audioUrl(candidate.node);
+            if (url.isEmpty()) continue;
+            JsonObject meta = object(candidate.node, "video_meta");
+            String codec = firstNonBlank(string(candidate.node, "codec_type"),
+                    string(candidate.node, "Codec"), string(meta, "codec_type")).toLowerCase(Locale.ROOT);
+            String format = firstNonBlank(string(candidate.node, "format"), string(candidate.node, "vtype"),
+                    string(candidate.node, "Format"), string(meta, "format"),
+                    string(meta, "vtype")).toLowerCase(Locale.ROOT);
+            String mime = firstNonBlank(string(candidate.node, "mime_type"),
+                    string(candidate.node, "MimeType"), string(meta, "mime_type")).toLowerCase(Locale.ROOT);
+            boolean aac = codec.contains("aac") || format.contains("m4a") || format.contains("aac")
+                    || mime.contains("audio/mp4") || url.toLowerCase(Locale.ROOT).contains("audio_mp4");
+            if (!aac || format.contains("flac") || format.contains("wav")) continue;
+
+            long bitrate = streamBitrate(candidate.node);
+            long duration = candidate.durationMillis;
+            int rank = streamCompletenessRank(duration, declaredDurationMillis);
+            int selectedRank = selected == null ? Integer.MIN_VALUE
+                    : streamCompletenessRank(selectedDuration, declaredDurationMillis);
+            // 参考实现的排序键是「时长优先，差一秒以上才算压制」，之后才比音质与码率。
+            // 完整/未知/试听先分档：时长未知只是不作判据，不该压过一条已确认的完整流。
+            boolean better;
+            if (selected == null) better = true;
+            else if (rank != selectedRank) better = rank > selectedRank;
+            else if (Math.abs(duration - selectedDuration) > 1_000L) better = duration > selectedDuration;
+            else better = preferHigher ? bitrate >= selectedScore : bitrate <= selectedScore;
+            if (better) {
+                selected = candidate;
+                selectedScore = bitrate;
+                selectedDuration = duration;
+            }
+        }
+        if (selected == null) return null;
+
+        String url = audioUrl(selected.node);
+        String format = firstNonBlank(string(selected.node, "format"), string(selected.node, "Format"),
+                string(selected.node, "vtype")).toLowerCase(Locale.ROOT);
+        String normalized = format.contains("aac") && !format.contains("m4a") && !url.contains(".m4a")
+                ? "aac" : "m4a";
+        if (!isFullStream(selectedDuration, declaredDurationMillis)) {
+            System.err.println("[Music/Qishui] 上游只给到试听片段：" + (selectedDuration / 1000L)
+                    + "s / 声明 " + (declaredDurationMillis / 1000L) + "s，完整流需要上游放开的权益");
+        }
+        return new ResolveResult(url, normalized, streamBitrate(selected.node), selected.playAuth);
+    }
+
+    /**
+     * 候选流的完整度分档：2 完整、1 时长未知、0 试听。
+     *
+     * <p>{@link #isFullStream} 对时长未知是 fail-open 的（宁可放出声也不静默），但排序时
+     * 不能让「未知」和「已确认完整」同分——否则父节点时长没继承到的候选会凭 fail-open
+     * 永远压过真正的完整流，这正是审计里那条判据实战失效的原因。</p>
+     */
+    static int streamCompletenessRank(long durationMillis, long declaredMillis) {
+        if (durationMillis <= 0L) return 1;
+        return isFullStream(durationMillis, declaredMillis) ? 2 : 0;
+    }
+
+    /** 流码率：显式字段优先，其次按档位的代表码率兜底。字段大小写两套都见过。 */
+    private static long streamBitrate(JsonObject candidate) {
+        long bitrate = longValue(candidate, "bitrate");
+        if (bitrate <= 0L) bitrate = longValue(candidate, "Bitrate");
+        if (bitrate <= 0L) bitrate = longValue(candidate, "real_bitrate");
+        if (bitrate <= 0L) bitrate = longValue(candidate, "br");
+        if (bitrate <= 0L) bitrate = longValue(object(candidate, "video_meta"), "bitrate");
+        if (bitrate <= 0L) bitrate = qualityScore(string(candidate, "quality"));
+        return bitrate;
+    }
+
+    private static String audioUrl(JsonObject candidate) {
+        String url = firstNonBlank(string(candidate, "main_url"), string(candidate, "backup_url"),
+                string(candidate, "main_play_url"), string(candidate, "backup_play_url"),
+                string(candidate, "MainPlayUrl"), string(candidate, "BackupPlayUrl"),
+                string(candidate, "play_url"), string(candidate, "PlayURL"));
+        if (!url.isEmpty()) return url;
+        JsonArray urls = array(candidate, "url_list");
+        if (urls != null) {
+            for (JsonElement item : urls) if (item.isJsonPrimitive()) return item.getAsString();
+        }
+        return "";
+    }
+
+    private static String playAuth(JsonObject candidate) {
+        String auth = firstNonBlank(string(candidate, "play_auth"), string(candidate, "PlayAuth"),
+                string(candidate, "spade_a"), string(candidate, "SpadeA"));
+        if (!auth.isEmpty()) return auth;
+        JsonObject encrypt = object(candidate, "encrypt_info");
+        return firstNonBlank(string(encrypt, "spade_a"), string(encrypt, "SpadeA"),
+                string(encrypt, "play_auth"), string(encrypt, "PlayAuth"));
+    }
+
+    private static long qualityScore(String quality) {
+        String value = nonBlank(quality).toLowerCase(Locale.ROOT);
+        if (value.contains("hires") || value.contains("hi_res")) return 2000L;
+        if (value.contains("lossless") || value.contains("flac") || value.contains("sq")) return 1500L;
+        if (value.contains("higher") || value.contains("exhigh") || value.contains("highest")) return 320L;
+        if (value.contains("standard") || value.contains("normal")) return 128L;
+        return 0L;
+    }
+
+    private static JsonElement parseEmbeddedJson(JsonElement value) {
+        JsonElement current = value;
+        for (int depth = 0; depth < 3 && current != null && current.isJsonPrimitive()
+                && current.getAsJsonPrimitive().isString(); depth++) {
+            String text = current.getAsString();
+            try {
+                current = JsonParser.parseString(text);
+            } catch (Throwable ignored) {
+                return null;
+            }
+        }
+        return current;
+    }
+
+    private static String lyricContent(JsonObject response) {
+        JsonObject seo = object(response, "seo_track");
+        String content = string(object(seo, "lyric"), "content");
+        if (!content.isEmpty()) return content;
+        return string(object(response, "lyric"), "content");
+    }
+
+    private static String sodaWordsToQrc(String raw) {
+        StringBuilder converted = new StringBuilder(raw.length() + 32);
+        String[] lines = raw.replace("\r", "").split("\n");
+        for (String line : lines) {
+            int firstTag = line.indexOf('<');
+            if (firstTag > 0) converted.append(line, 0, firstTag);
+            Matcher matcher = SODA_WORD.matcher(line);
+            boolean appended = false;
+            while (matcher.find()) {
+                String text = matcher.group(4);
+                if (text.isEmpty()) continue;
+                converted.append(text).append('(').append(matcher.group(1)).append(',')
+                        .append(matcher.group(2)).append(')');
+                appended = true;
+            }
+            if (appended) converted.append('\n');
+        }
+        return converted.toString();
+    }
+    private static String buildSearchUrl(String query, int limit) {
+        StringBuilder url = new StringBuilder(SEARCH_ENDPOINT).append('?');
+        append(url, "device_platform", "android");
+        append(url, "os", "android");
+        append(url, "ssmix", "a");
+        append(url, "cdid", "46556f98-1720-4248-83da-62b74b60b46a");
+        append(url, "channel", "xiaomi_8478_64");
+        append(url, "aid", "386088");
+        append(url, "app_name", "luna");
+        append(url, "version_code", "100198030");
+        append(url, "version_name", "19.8.0");
+        append(url, "manifest_version_code", "100198030");
+        append(url, "update_version_code", "100198030");
+        append(url, "resolution", "1080*1920");
+        append(url, "dpi", "480");
+        append(url, "device_type", "ABR-AL80");
+        append(url, "device_brand", "HUAWEI");
+        append(url, "language", "zh");
+        append(url, "os_api", "35");
+        append(url, "os_version", "15");
+        append(url, "ac", "wifi");
+        append(url, "device_model", "ABR-AL80");
+        append(url, "save_power", "0");
+        append(url, "font_size", "1.00");
+        append(url, "luna_first_launch_apk_type", "normal_apk");
+        append(url, "diversion_channel_name", "xiaomi_8478_64");
+        append(url, "is_car_play", "0");
+        append(url, "battery", "0.99");
+        append(url, "network_speed", "10156");
+        append(url, "hybrid_version_code", "100198030");
+        append(url, "tz_name", "Asia/Shanghai");
+        append(url, "tz_offset", "28800");
+        append(url, "luna_register_time", "1784311292");
+        append(url, "package", "com.luna.music");
+        append(url, "charge", "0");
+        append(url, "luna_apk_type", "normal_apk");
+        append(url, "output_device_type", "Phone");
+        append(url, "volume", "1.00");
+        append(url, "brightness", "0.08");
+        append(url, "need_personal_recommend", "1");
+        append(url, "is_teen_mode", "0");
+        append(url, "sim_region", "cn");
+        append(url, "android_device_type", "default");
+        append(url, "iid", "2204957404569386");
+        append(url, "device_id", "2204957404565290");
+        append(url, "_rticket", String.valueOf(System.currentTimeMillis()));
+        append(url, "q", query);
+        append(url, "cursor", "0");
+        append(url, "count", String.valueOf(limit));
+        return url.toString();
+    }
+
+    /** {@code trackId} 为空时是 POST 用的 URL（曲目 id 只在 body 里），非空时是 GET 回落用的。 */
+    private static String buildPcTrackUrl(String base, String trackId) {
+        StringBuilder url = buildPcUrl(base + PC_TRACK_PATH);
+        if (!nonBlank(trackId).isEmpty()) {
+            append(url, "track_id", trackId);
+            append(url, "media_type", "track");
+        }
+        return url.toString();
+    }
+
+    private static String buildPcSearchUrl(String keyword, int cursor) {
+        StringBuilder url = buildPcUrl(PC_SEARCH_PLAYLIST_ENDPOINT);
+        appendPcSearchParams(url, keyword, cursor);
+        return url.toString();
+    }
+
+    private static String buildPcMixedSearchUrl(String keyword, int cursor) {
+        StringBuilder url = buildPcUrl(PC_SEARCH_MIXED_ENDPOINT);
+        appendPcSearchParams(url, keyword, cursor);
+        return url.toString();
+    }
+
+    private static String buildPcMePlaylistsUrl() {
+        return buildPcUrl(PC_ME_PLAYLISTS_ENDPOINT).toString();
+    }
+
+    /**
+     * 带 Cookie 的歌单详情 URL。这条接口按<b>纯偏移</b>走游标（实测 {@code cursor} 依次是
+     * 100 / 200 / 300），也不需要 Android 那条的 {@code playlist_type} 与 {@code session_id}。
+     */
+    private static String buildPcPlaylistDetailUrl(String playlistId, String cursor) {
+        StringBuilder url = buildPcUrl(PC_PLAYLIST_DETAIL_ENDPOINT);
+        append(url, "playlist_id", playlistId);
+        append(url, "count", String.valueOf(PAGE_SIZE));
+        append(url, "cursor", nonBlank(cursor));
+        return url.toString();
+    }
+
+    private static String buildPcMeCollectionUrl() {
+        return buildPcUrl(PC_ME_COLLECTION_ENDPOINT).toString();
+    }
+
+    private static StringBuilder buildPcUrl(String endpoint) {
+        long now = System.currentTimeMillis();
+        String deviceId = String.valueOf(now);
+        String iid = String.valueOf(now + 1L);
+        StringBuilder url = new StringBuilder(endpoint).append('?');
+        append(url, "aid", "386088");
+        append(url, "app_name", "luna_pc");
+        append(url, "region", "cn");
+        append(url, "geo_region", "cn");
+        append(url, "os_region", "cn");
+        append(url, "sim_region", "");
+        append(url, "device_id", deviceId);
+        append(url, "cdid", "");
+        append(url, "iid", iid);
+        append(url, "version_name", "3.3.0");
+        append(url, "version_code", "30030000");
+        append(url, "channel", "official");
+        append(url, "build_mode", "master");
+        append(url, "network_carrier", "");
+        append(url, "ac", "wifi");
+        append(url, "tz_name", "Asia/Shanghai");
+        append(url, "resolution", "");
+        append(url, "device_platform", "windows");
+        append(url, "device_type", "Windows");
+        append(url, "os_version", "Windows 11");
+        append(url, "fp", deviceId);
+        return url;
+    }
+
+    private static void appendPcSearchParams(StringBuilder url, String keyword, int cursor) {
+        append(url, "q", keyword);
+        append(url, "cursor", String.valueOf(Math.max(0, cursor)));
+        append(url, "search_id", "");
+        append(url, "search_method", "input");
+        append(url, "debug_params", "");
+        append(url, "from_search_id", "");
+        append(url, "search_scene", "");
+    }
+
+    private static String buildAccountUrl() {
+        return ACCOUNT_ENDPOINT + "?aid=386088";
+    }
+
+    /** PC 接口除 Content-Type 外还要那三个 Luna 自报家门的头，参考实现同样带 Referer。 */
+    private static Map<String, String> pcHeaders() {
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Content-Type", "application/json; charset=utf-8");
+        headers.put("Referer", "https://www.qishui.com/");
+        headers.put("x-luna-background-type", "foreground");
+        headers.put("x-luna-is-background-req", "0");
+        headers.put("x-luna-is-local-user", "1");
+        return headers;
+    }
+
+    private static void append(StringBuilder url, String key, String value) {
+        if (url.charAt(url.length() - 1) != '?') url.append('&');
+        url.append(urlEncode(key)).append('=').append(urlEncode(value));
+    }
+    private static JsonObject getJson(String url, String userAgent, String cookie,
+                                      Map<String, String> extraHeaders)
+            throws IOException, InterruptedException {
+        return getJsonResponse(url, userAgent, cookie, extraHeaders).body;
+    }
+
+    private static JsonResponse getJsonResponse(String url, String userAgent, String cookie,
+                                                Map<String, String> extraHeaders)
+            throws IOException, InterruptedException {
+        return execute(request(url, userAgent, cookie, extraHeaders).GET().build());
+    }
+
+    private static JsonObject postJson(String url, String body, String userAgent, String cookie,
+                                       Map<String, String> extraHeaders)
+            throws IOException, InterruptedException {
+        HttpRequest request = request(url, userAgent, cookie, extraHeaders)
+                .header("Content-Type", "application/json; charset=utf-8")
+                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                .build();
+        return execute(request).body;
+    }
+
+    private static JsonResponse postFormResponse(String url, Map<String, String> form,
+                                                 String cookie, String userAgent)
+            throws IOException, InterruptedException {
+        HttpRequest request = request(url, userAgent, cookie, Collections.emptyMap())
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString(encodeForm(form), StandardCharsets.UTF_8))
+                .build();
+        return execute(request);
+    }
+
+    private static HttpRequest.Builder request(String url, String userAgent, String cookie,
+                                               Map<String, String> extraHeaders) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
+                .timeout(Duration.ofMillis(REQUEST_TIMEOUT_MS))
+                .header("Accept", "application/json, text/plain, */*")
+                .header("User-Agent", userAgent);
+        if (cookie != null && !cookie.trim().isEmpty()) builder.header("Cookie", cookie);
+        if (extraHeaders != null) {
+            for (Map.Entry<String, String> header : extraHeaders.entrySet()) {
+                if (header.getKey() != null && header.getValue() != null) {
+                    builder.header(header.getKey(), header.getValue());
+                }
+            }
+        }
+        return builder;
+    }
+
+    private static JsonResponse execute(HttpRequest request) throws IOException, InterruptedException {
+        HttpResponse<InputStream> response = HTTP.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        String text = new String(readLimited(response.body()), StandardCharsets.UTF_8);
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IOException("汽水音乐 HTTP " + response.statusCode()
+                    + (text.isEmpty() ? "" : ": " + text));
+        }
+        if (text.trim().isEmpty()) throw new IOException("汽水音乐返回了空响应");
+        JsonElement parsed = JsonParser.parseString(text);
+        if (!parsed.isJsonObject()) throw new IOException("汽水音乐返回了非 JSON 对象");
+        return new JsonResponse(parsed.getAsJsonObject(), cookieHeaderFromSetCookie(response));
+    }
+
+    /**
+     * PC 接口用「HTTP 200 + status_code」表达失败，只看 HTTP 状态码会把一条失败响应读成成功。
+     *
+     * <p>实测过的码：{@code 1000016} 凭据失效、{@code 1000062} 客户端风控（应用版本有风险）、
+     * {@code 1000004} 参数非法、{@code 1000005} 资源不存在。不校验的话 {@code 1000016}
+     * 会一路走到 {@code markVerified()}，把失效凭据标成「已验证」，而 {@code looksLikeAuthRejection}
+     * 因为压根没收到异常而永不触发。抛出去的消息里带上码值，凭据失效才能被认出来。
+     */
+    static JsonObject requirePcStatus(JsonObject response, String what) throws IOException {
+        if (response == null) return null;
+        long code = longValue(response, "status_code");
+        if (code == 0L) code = longValue(response, "error_code");
+        if (code == 0L) return response;
+        JsonObject info = object(response, "status_info");
+        String reason = info.size() == 0 ? "" : nonBlank(string(info, "status_msg"));
+        throw new IOException("汽水音乐 " + what + " 返回业务码 " + code
+                + (reason.isEmpty() ? "" : "：" + reason));
+    }
+
+    private static String cookieHeaderFromSetCookie(HttpResponse<?> response) {
+        StringBuilder header = new StringBuilder();
+        for (String raw : response.headers().allValues("set-cookie")) {
+            if (raw == null) continue;
+            int separator = raw.indexOf(';');
+            String pair = (separator < 0 ? raw : raw.substring(0, separator)).trim();
+            if (pair.isEmpty()) continue;
+            if (header.length() > 0) header.append("; ");
+            header.append(pair);
+        }
+        return header.toString();
+    }
+
+    private static String encodeForm(Map<String, String> form) {
+        StringBuilder encoded = new StringBuilder();
+        if (form != null) {
+            for (Map.Entry<String, String> entry : form.entrySet()) {
+                if (encoded.length() > 0) encoded.append('&');
+                encoded.append(urlEncode(entry.getKey())).append('=')
+                        .append(urlEncode(entry.getValue()));
+            }
+        }
+        return encoded.toString();
+    }
+
+    private static byte[] readLimited(InputStream input) throws IOException {
+        if (input == null) return new byte[0];
+        try (InputStream stream = input; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = stream.read(buffer)) >= 0) {
+                if (output.size() + read > MAX_BYTES) throw new IOException("汽水音乐响应过大");
+                output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
+        }
+    }
+    private static String joinArtists(JsonArray artists) {
+        if (artists == null) return "";
+        List<String> names = new ArrayList<>();
+        for (JsonElement element : artists) {
+            if (element == null || !element.isJsonObject()) continue;
+            String name = string(element.getAsJsonObject(), "name");
+            if (!name.isEmpty()) names.add(name);
+        }
+        return String.join(" / ", names);
+    }
+
+    private static String coverUrl(JsonObject image) {
+        if (image == null) return "";
+        String uri = string(image, "uri");
+        String templatePrefix = string(image, "template_prefix");
+        if (!uri.isEmpty() && !templatePrefix.isEmpty()) {
+            return COVER_ROOT + uri + "~" + templatePrefix + "-resize:960:960.png";
+        }
+        JsonArray urls = array(image, "urls");
+        if (urls == null || urls.size() == 0) return "";
+        String base = urls.get(0).isJsonNull() ? "" : urls.get(0).getAsString();
+        if (!uri.isEmpty() && !base.contains(uri)) base += uri;
+        return base;
+    }
+
+    private static String firstUrl(JsonElement element) {
+        if (element == null || element.isJsonNull()) return "";
+        if (element.isJsonPrimitive()) {
+            String value = nonBlank(element.getAsString());
+            return value.startsWith("http://") || value.startsWith("https://") ? value : "";
+        }
+        if (element.isJsonArray()) {
+            for (JsonElement child : element.getAsJsonArray()) {
+                String value = firstUrl(child);
+                if (!value.isEmpty()) return value;
+            }
+            return "";
+        }
+        if (element.isJsonObject()) {
+            JsonObject object = element.getAsJsonObject();
+            String uri = string(object, "uri");
+            JsonArray urls = array(object, "urls");
+            if (urls != null && urls.size() > 0) {
+                String base = firstUrl(urls.get(0));
+                if (!base.isEmpty()) return uri.isEmpty() || base.contains(uri) ? base : base + uri;
+            }
+            for (String key : List.of("url_list", "urls", "url", "uri", "cover_url_list")) {
+                String value = firstUrl(object.get(key));
+                if (!value.isEmpty()) return value;
+            }
+        }
+        return "";
+    }
+
+    private static boolean truthy(JsonObject object, String property) {
+        if (object == null || !object.has(property) || object.get(property).isJsonNull()) return false;
+        try {
+            return object.get(property).getAsBoolean();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static JsonObject object(JsonObject parent, String property) {
+        if (parent == null || !parent.has(property) || !parent.get(property).isJsonObject()) {
+            return new JsonObject();
+        }
+        return parent.getAsJsonObject(property);
+    }
+
+    private static JsonArray array(JsonObject parent, String property) {
+        if (parent == null || !parent.has(property) || !parent.get(property).isJsonArray()) return null;
+        return parent.getAsJsonArray(property);
+    }
+
+    private static String string(JsonObject parent, String property) {
+        if (parent == null || !parent.has(property) || parent.get(property).isJsonNull()) return "";
+        try {
+            return nonBlank(parent.get(property).getAsString());
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    private static long longValue(JsonObject parent, String property) {
+        if (parent == null || !parent.has(property) || parent.get(property).isJsonNull()) return 0L;
+        try {
+            // 走上游实测存在的浮点写法（"Duration": 29.002、"Bitrate": 129895.0）。
+            // getAsLong() 对带小数点的 JSON 数字直接抛异常，以前这些字段一律静默读成 0。
+            return Math.round(parent.get(property).getAsDouble());
+        } catch (Throwable ignored) {
+            return 0L;
+        }
+    }
+
+    private static double numberValue(JsonObject parent, String property) {
+        if (parent == null || !parent.has(property) || parent.get(property).isJsonNull()) return 0D;
+        try {
+            return parent.get(property).getAsDouble();
+        } catch (Throwable ignored) {
+            return 0D;
+        }
+    }
+
+    private static double firstPositiveNumber(JsonObject parent, String... properties) {
+        if (parent == null) return 0D;
+        for (String property : properties) {
+            double value = numberValue(parent, property);
+            if (value > 0D) return value;
+        }
+        return 0D;
+    }
+
+    /**
+     * 一条候选流的时长，单位毫秒；拿不到时返回 0。
+     *
+     * <p>两条上游的形状完全不同：{@code video_model} 里是小写整数字段，而
+     * {@code url_player_info} 返回的 PlayInfoList 用的是 <b>PascalCase 的浮点秒</b>
+     * （实测 {@code "Duration": 29.002} / {@code 279.918}）。原先只读小写名，播放信息接口的
+     * 时长就恒为 0，完整流与试听片段再也分不开。</p>
+     */
+    private static long durationMillis(JsonObject candidate) {
+        if (candidate == null) return 0L;
+        double raw = firstPositiveNumber(candidate, "duration", "Duration", "video_duration",
+                "videoDuration", "play_time");
+        if (raw <= 0D) raw = firstPositiveNumber(object(candidate, "video_meta"), "duration", "Duration");
+        if (raw <= 0D) return 0L;
+        // 小于 10000 的按秒解释：没有歌长过一万秒（近三小时），也没有试听短于十秒。
+        return Math.round(raw < 10_000D ? raw * 1000D : raw);
+    }
+
+    /**
+     * 这条候选是不是完整长度，而不是试听片段。
+     *
+     * <p>判据优先用曲目自己声明的总时长：流不足声明值的 95% 就是试听。之所以不能像参考实现
+     * 那样按「恰好 30 或 60 秒」判，是因为实测的试听是 <b>29.002 秒</b>，固定值匹配会漏掉它。</p>
+     *
+     * <p>声明时长未知时才退回固定试听规格；两者都不知道就当作完整，让它按码率正常竞争——
+     * 宁可放一段试听，也不该因为判不出长度而放不出声音。</p>
+     */
+    private static boolean isFullStream(long durationMillis, long declaredMillis) {
+        if (declaredMillis > 0L) {
+            return durationMillis <= 0L || durationMillis * 100L >= declaredMillis * 95L;
+        }
+        if (durationMillis <= 0L) return true;
+        return durationMillis != 30_000L && durationMillis != 60_000L;
+    }
+
+    /**
+     * 曲目声明的总时长（毫秒），用来把试听片段和完整流分开。
+     * 搜索响应、seo_track 与 pc/track_v2 里的挂载位置各不相同，所以逐个探后取最大值，
+     * 防止某一处给的是预览时长。注意不看 {@code preview.duration}——那正是要识别的东西。
+     */
+    private static long declaredTrackDuration(JsonObject response) {
+        if (response == null) return 0L;
+        JsonObject body = envelope(response);
+        JsonObject seo = object(body, "seo_track");
+        double best = 0D;
+        for (JsonObject container : new JsonObject[]{body, seo, locateTrack(body),
+                object(seo, "track"), object(body, "media_resource"),
+                object(object(body, "track"), "audio_info")}) {
+            double value = firstPositiveNumber(container, "duration", "duration_ms", "Duration",
+                    "video_duration");
+            if (value > best) best = value;
+        }
+        if (best <= 0D) return 0L;
+        return Math.round(best < 10_000D ? best * 1000D : best);
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) return "";
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) return value.trim();
+        }
+        return "";
+    }
+
+    private static String urlEncode(String value) {
+        return URLEncoder.encode(nonBlank(value), StandardCharsets.UTF_8);
+    }
+
+    private static String nonBlank(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private static String describe(Throwable throwable) {
+        return throwable == null || throwable.getMessage() == null
+                ? String.valueOf(throwable) : throwable.getMessage();
+    }
+
+    /**
+     * 一条候选流：节点本体，加上从父节点继承来的时长与解密凭据。
+     * 上游把 {@code video_duration} 与 {@code play_auth} 放在 {@code video_list} 的父节点上，
+     * 只带节点本身就没法判断它是完整流还是试听片段。
+     */
+    static final class Stream {
+        final JsonObject node;
+        final long durationMillis;
+        final String playAuth;
+
+        Stream(JsonObject node, long durationMillis, String playAuth) {
+            this.node = node;
+            this.durationMillis = durationMillis;
+            this.playAuth = playAuth == null ? "" : playAuth;
+        }
+    }
+
+    private static final class JsonResponse {
+        final JsonObject body;
+        final String cookieHeader;
+
+        JsonResponse(JsonObject body, String cookieHeader) {
+            this.body = body;
+            this.cookieHeader = cookieHeader == null ? "" : cookieHeader;
+        }
+    }
+
+}

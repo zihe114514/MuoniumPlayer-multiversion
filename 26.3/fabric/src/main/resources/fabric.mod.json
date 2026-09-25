@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "id": "muonium",
+  "version": "${version}",
+  "name": "MuoniumPlayer",
+  "description": "Music player for Minecraft 26.3 Fabric",
+  "authors": [
+    "云杉",
+    "心事抱抱",
+    "N0ne",
+    "eyz2021"
+  ],
+  "contact": {
+    "homepage": "https://melodifymc.cc.cd/",
+    "sources": "https://github.com/zihe114514/MuoniumPlayer"
+  },
+  "license": "All-Rights-Reserved",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.muoniumplayer.MuoniumPlayerMod"
+    ]
+  },
+  "mixins": [
+    {
+      "config": "muonium.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabric-language-kotlin": ">=${fabric_language_kotlin_version}",
+    "fabricloader": ">=${loader_min_version}",
+    "fabric-api": "*",
+    "minecraft": "~${minecraft_version}",
+    "java": ">=25"
+  },
+  "suggests": {
+    "oneconfigv1": "*"
+  }
+}

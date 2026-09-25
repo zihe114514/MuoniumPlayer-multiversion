@@ -103,6 +103,10 @@ public final class UpdateNoticeOverlay extends NCMPanel {
     private final boolean forcedUpdate;
 
     private boolean closing;
+    /** 进出场那一条时钟，和 {@code NcmSheet} 那六个浮层共用同一个 {@link SheetClock}。 */
+    private final SheetClock clock = new SheetClock();
+    /** 遮罩与卡片共同读的那一档进度（已经过缓动）。 */
+    private double presentation;
     private boolean resolved;
 
     /** 已经点了「重试检查」、正在等结论。 */
@@ -145,8 +149,15 @@ public final class UpdateNoticeOverlay extends NCMPanel {
         }
     }
 
-    public boolean shouldClose() {
+    /** 正在退场：还画得着，但 {@link NCMPanel} 会把它这一帧的输入整个吞掉。 */
+    @Override
+    protected boolean isDismissing() {
         return closing;
+    }
+
+    public boolean shouldClose() {
+        // 退场播完才回收，理由见 createDialog 里那条遮罩。
+        return clock.isGone();
     }
 
     /** 收起提示，不记账。非锁死状态下「前往下载」、以及重试连上之后走这里。 */
@@ -154,6 +165,7 @@ public final class UpdateNoticeOverlay extends NCMPanel {
         if (resolved) return;
         resolved = true;
         closing = true;
+        clock.requestDismiss();
     }
 
     /**
@@ -193,8 +205,15 @@ public final class UpdateNoticeOverlay extends NCMPanel {
         RectWidget mask = new RectWidget();
         addChild(mask);
         mask.setClickable(false);
-        mask.setColor(0x000000).setAlpha(.45f);
-        mask.setBeforeRenderCallback(() -> mask.setMargin(0));
+        mask.setColor(0x000000);
+        // 遮罩跟着卡片同一条进度淡。写死 .45f 的话，卡片还没出现整屏已经先黑了，
+        // 关掉时又是卡片啪一下没了、遮罩还黑着。
+        mask.setBeforeRenderCallback(() -> {
+            mask.setMargin(0);
+            mask.setAlpha((float) (presentation * .45));
+        });
+        // 时钟跑在根组件这一格：它先于所有子组件，遮罩和卡片于是读到同一个值。
+        setBeforeRenderCallback(() -> presentation = TransitionCurveCache.MOTION.at(clock.tick()));
 
         // 点在卡片外面只是被这里吃掉（防止点到下层的原版界面）：额度是有限资源，
         // 误触一下就用掉一格太亏，想收起提示请走「先不更新」或 ESC。
@@ -420,6 +439,8 @@ public final class UpdateNoticeOverlay extends NCMPanel {
         dialog.setBounds(width, Math.min(Math.max(170.0, contentHeight()),
                 Math.max(170.0, getHeight() - 28)));
         dialog.center();
+        dialog.setPosition(dialog.getRelativeX(), dialog.getRelativeY() + (1.0 - presentation) * 10.0);
+        dialog.setAlpha((float) presentation);
     }
 
     private void layoutActions() {

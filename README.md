@@ -1,7 +1,7 @@
 # MuoniumPlayer —— 多版本单仓（private）
 
 Minecraft 客户端 mod **MuoniumPlayer**（网易云音乐播放器 + 灵动岛 UI + 一起听房间）
-的四个版本移植工程，统一放在这一个私有仓库里管理。
+的五个版本移植工程，统一放在这一个私有仓库里管理。
 
 每个版本都是**一个多加载器工程**：共享源码在 `<版本>/src/`，加载器外壳在
 `<版本>/fabric/` 与 `<版本>/neoforge/`（1.20.1 是 `forge/`）。结构参照
@@ -15,6 +15,15 @@ Minecraft 客户端 mod **MuoniumPlayer**（网易云音乐播放器 + 灵动岛
 | `1.21.1` | 1.21.1 | Fabric + NeoForge | 21.1.249 | MDG 2.0.144 | 0.116.15+1.21.1 | 0.15.11 | 21 | JDK 21 |
 | `1.21.11 recode` | 1.21.11 | Fabric + NeoForge | 21.11.45 | MDG 2.0.144 | 0.141.6+1.21.11 | 0.17.3 | 21 | JDK 21 |
 | `26.2` | 26.2 | Fabric + NeoForge | 26.2.0.72 | MDG 2.0.144 | 0.158.0+26.2 | 0.18.4 | 25 | JDK 25 |
+| `26.3` | 26.3 | Fabric + NeoForge | 26.3.0.16-beta（26.3 线全是 -beta） | **MDG 2.0.147** | 0.161.0+26.3 | 0.19.3 | 25 | JDK 25 |
+
+**只有 26.3 的 NeoForge 壳用 MDG 2.0.147，这是刻意不一致，别改回去。**
+NeoForge 从 26.2.0.87 起改了 `HolderSet#contents()` 的访问修饰符生成方式，
+2.0.144 在 `createMinecraftArtifacts` 的 recompile 节点上直接编不过**原版**
+`net/minecraft/core/HolderSet.java`（报「weaker access privileges」），
+看起来像本工程坏了，其实共享源码一行都没开始编；上游
+issue `neoforged/NeoForge#3518` 的答复就是升级插件（NeoGradle 对应 7.1.39）。
+其余四棵树的 NeoForge 版本都早于 26.2.0.87，继续用统一的 2.0.144。
 
 ### 运行期 Kotlin / 加载器下限
 
@@ -23,37 +32,38 @@ Minecraft 客户端 mod **MuoniumPlayer**（网易云音乐播放器 + 灵动岛
   - `1.21.1 NeoForge`：`Kotlin for Forge 5.4.0+`
   - `1.21.11 NeoForge`：`Kotlin for Forge 6.0.0+`
   - `26.2 NeoForge`：`Kotlin for Forge 6.3.0+`
+  - `26.3 NeoForge`：`Kotlin for Forge 6.3.0+`
   - Fabric 侧：`Fabric Language Kotlin 1.13.12+kotlin.2.4.0+`
 - 加载器最低支持版本不再跟随构建时的最新版：
   - `Forge 47.0.0+`
-  - `NeoForge 21.1.0+ / 21.11.0+ / 26.2.0+`
+  - `NeoForge 21.1.0+ / 21.11.0+ / 26.2.0+ / 26.3.0.0-beta+`
 
 **1.20.1 用 Forge 而不是 NeoForge**：1.20.1 是 Forge 的最后一个大版本，NeoForge 从
 1.20.2 才分家，1.20.1 的模组生态与整合包都在 Forge 上。
 
-四份工程共用：`mod_version=1.6.1`、`maven_group=com.muoniumplayer`、
+五份工程共用：`mod_version=1.6.1`、`maven_group=com.muoniumplayer`、
 `archives_base_name=MuoniumPlayer`、Skija `0.143.17`（Fabric 侧 `include` 进 jar，
 Forge/NeoForge 侧用 shadow 合并；原生库平台由 `skija_natives` 控制，发布时需要改成四平台全打）。
 
 产物命名：`MuoniumPlayer-<mc版本>-<加载器>-<mod版本>.jar`，
 例如 `MuoniumPlayer-1.21.11-neoforge-1.6.1.jar` / `MuoniumPlayer-1.20.1-forge-1.6.1.jar`。
-名字里带 Minecraft 版本是必要的，不是好看：四个版本工程是四个独立构建，
-8 个 jar 要平铺进同一个 `dist/`，不带版本号的话 1.21.1 与 1.21.11 的 fabric 产物会同名互相覆盖。
+名字里带 Minecraft 版本是必要的，不是好看：五个版本工程是五个独立构建，
+10 个 jar 要平铺进同一个 `dist/`，不带版本号的话 1.21.1 与 1.21.11 的 fabric 产物会同名互相覆盖。
 `buildAll` 跑完会把成品汇总到仓库根的 `dist/`（`collectDist` 任务，只收成品、不收源码包与改名前的旧 jar）。
 （1.20.1 是 `-forge`），各约 55～57 MB。
 
-## 映射：四个版本统一 Mojang 官方名（mojmap）
+## 映射：五个版本统一 Mojang 官方名（mojmap）
 
-共享源码只能有一套类名，而 Forge/NeoForge 侧**只有** mojmap 一种命名，所以四个版本
+共享源码只能有一套类名，而 Forge/NeoForge 侧**只有** mojmap 一种命名，所以五个版本
 的共享源码都写官方名：
 
-* Fabric 侧显式 `mappings loom.officialMojangMappings()`（26.2 除外，见下），
+* Fabric 侧显式 `mappings loom.officialMojangMappings()`（26.2 / 26.3 除外，见下），
   `gradle.properties` 里已无 `yarn_mappings`；
-* 26.2 的官方 jar 本来就不混淆（`version_manifest` 里没有 `client_mappings`，
-  Yarn 与 intermediary 都停在 1.21.11），因此那一版连 `mappings` 声明都没有；
+* 26.2 起的官方 jar 本来就不混淆（version json 里没有 `client_mappings`，
+  Yarn 与 intermediary 都停在 1.21.11），因此 26.2 / 26.3 两版连 `mappings` 声明都没有；
 * 不用 architectury-loom（它能把 yarn 搬到 Forge）的原因有两条：它最高只发到
   `1.11.454`，跟不上本仓统一的 Gradle 9.6.1；`yarn-mappings-patch-neoforge`
-  最高只到 `1.21+build.6`，覆盖不到 1.21.11 与 26.2。
+  最高只到 `1.21+build.6`，覆盖不到 1.21.11 与 26.x。
 
 **铁律：API 名一律用 `javap` 对着实际 jar 核实，禁止凭记忆写。**
 各版本 `build.gradle` 里的 `dumpCompileClasspath` 任务就是为此准备的。
@@ -92,6 +102,20 @@ HUD 画完 `onHudRender()`、Screen 画完 `onScreenRendered(Screen)`。
 | access widener | 空 | 空 | 空 | 无此文件 |
 | 开发期运行 | BootstrapLauncher，走 JPMS 模块路径 | 同 1.20.1 | 纯 classpath，无模块路径 | 同 1.21.11 |
 
+### 26.3 相对 26.2 的实测差异（同样都经 `javap` 核实）
+
+上表 26.3 那一列没写的维度与 26.2 一致；只有下面这几条真的变了：
+
+| 主题 | 26.2 | 26.3 |
+| --- | --- | --- |
+| GPU 后端层 | `com.mojang.blaze3d.opengl.*` / `blaze3d.systems.GpuDevice`（具体类） | 整层搬进 **`com.mojang.renderpearl.*`**：后端实现在 `renderpearl.backend.opengl.*`，后端无关门面在 `renderpearl.api.device.*`，`GpuDevice` 变成**接口**。`RenderSystem` 仍在 `com.mojang.blaze3d.systems` |
+| GL 状态缓存 | `blaze3d.opengl.GlStateManager` | `renderpearl.backend.opengl.GlStateManager`，方法签名逐条一致（`_bindTexture/_genTexture/_deleteTexture/_texParameter/_pixelStore/_activeTexture/_viewport`） |
+| 窗口/输入后端 | GLFW（`lwjgl-glfw` 在库里） | **换成 SDL**（`lwjgl-sdl`，库里没有 glfw 了）：`Window#handle()` 现在是 SDL 窗口指针，`GlSurface#present()` 内部是 `SDL_GL_SwapWindow`，事件走 `Window#handleEvent(SDL_Event)` 与 `blaze3d.platform.SDLEventHandler` |
+| 键码空间 | `InputConstants.KEY_*` == GLFW 键码（`KEY_A=65`） | `InputConstants.KEY_*` == SDL 码（`KEY_A=4`、`KEY_ESCAPE=41`），且名字也跟着 SDL 走（`KEY_RETURN` 取代 `KEY_ENTER`，`KEY_LGUI/KEY_RGUI` 取代 `KEY_LSUPER/KEY_RSUPER`）。`lwjgl-glfw` 不在编译类路径上，`compat/lwjgl2` 的键码表与鼠标查询都要换后端 |
+| 滚轮输入 | `glfwSetScrollCallback` 返回旧回调，在外面再套一层 | 没有可套的回调，改挂 `MouseHandler#onScroll(long, double, double)` 的入口（`MouseScrollMixin`），照样不吞 MC 自己的滚轮 |
+| 帧末合成 | `GlSurfaceMixin` 挂 `com.mojang.blaze3d.opengl.GlSurface#present()` 入口 | 同一个钩子，目标类改名为 `com.mojang.renderpearl.backend.opengl.GlSurface`；链路不变（`GpuSurface#blitFromTexture` → `GlSurface#blitFromTexture` → `GlCommandEncoder#presentTexture` → `present()`） |
+| Vulkan 后端 | `blaze3d.vulkan.*` | `renderpearl.backend.vulkan.*`；`PreferredGraphicsApi` 仍在 `net.minecraft.client`，`DeviceInfo#backendName()` 仍写死 `OpenGL` / `Vulkan`（探测逻辑不用改） |
+
 六条容易踩的坑，已写成测试钉住：
 
 * **1.20.1 的 Forge 通道必须用 `EventNetworkChannel`，不能用 `SimpleChannel`。**
@@ -125,13 +149,16 @@ HUD 画完 `onHudRender()`、Screen 画完 `onScreenRendered(Screen)`。
   `min_format`=`max_format`=`[94, 1]`——这也正是 NeoForge 自己 jar 里那份 `pack.mcmeta` 的写法。
 * **剪贴板不能用 AWT。**
   Minecraft 在 `net.minecraft.client.main.Main` 的静态初始化里写死了
-  `System.setProperty("java.awt.headless", "true")`（四个版本的 `Main.class` 都能反编译出这三条字节码）。
+  `System.setProperty("java.awt.headless", "true")`（五个版本的 `Main.class` 都能反编译出这三条字节码，
+  26.3 复核过）。
   headless 下 `Toolkit#getSystemClipboard()` 必抛 `HeadlessException`，
   原来的 `KeyboardUtils` 又是 `catch (Exception) {}` 全吞，于是复制/粘贴静默变成空操作 ——
   「一起听」的复制链接、复制邀请码按钮照样亮「已复制」，剪贴板里什么都没有。
   正解是走原版自己的 `Minecraft#keyboardHandler`（`getClipboard()` / `setClipboard(String)`，
-  内部是 GLFW 剪贴板函数）；这两个方法名与字段名在四个版本上完全一致，共享源码只需要一份实现。
-  GLFW 剪贴板只能在渲染线程调用，所以写入时先判 `Minecraft#isSameThread()`，
+  内部在 26.2 及以早是 GLFW 剪贴板函数，26.3 起换成了 SDL——原版把剪贴板收进了
+  `com.mojang.blaze3d.platform.ClipboardManager`，`KeyboardHandler` 自己已经不再直接引用 GLFW）；
+  这两个方法名与字段名在五个版本上完全一致，共享源码只需要一份实现。
+  后端剪贴板只能在渲染线程调用，所以写入时先判 `Minecraft#isSameThread()`，
   非渲染线程排到 `Minecraft#execute`。
 * **加载器侧绝不能重复打包 Minecraft 自己就带的库。**
   1.20.1（BootstrapLauncher 1.1.2）与 1.21.1（2.0.2）的开发期运行会把 `legacyClassPath`
@@ -141,7 +168,7 @@ HUD 画完 `onHudRender()`、Screen 画完 `onScreenRendered(Screen)`。
   用「shadow 产物的包名集合 ∩ `clientLegacyClasspath.txt` 里各 jar 的包名集合」实测，
   重合的只有 `gson` / `jna` / `jna-platform` / `error_prone_annotations` 四个，
   全部由 Minecraft 提供，因此从 `embeddedLibs` 里 `exclude` 掉（编译期直接用原版那几个版本）。
-  1.21.11 / 26.2 开发期不走模块路径，原本不暴露这个问题，但发布 jar 里同样不该塞重复库，四个版本统一排除。
+  1.21.11 / 26.2 / 26.3 开发期不走模块路径，原本不暴露这个问题，但发布 jar 里同样不该塞重复库，五个版本统一排除。
 
 ## 全屏歌词背景 / 主题配色
 
@@ -178,7 +205,7 @@ mod 侧不需要动。
 - **加载器 id 由入口外壳登记**（`MuoniumPlayerClient.setLoaderId`，在 `init()` 之前）。共享源码不许
   引用加载器 API，没法自己判断跑在哪个加载器上，而清单是按「MC 版本 + 加载器」分桶的。
 - **MC 版本写死成 `MuoniumPlayerClient.MC_VERSION`**，静态测试钉住它与 `gradle.properties` 的
-  `minecraft_version` 一致（原版取版本号的入口四个版本各不相同）。
+  `minecraft_version` 一致（原版取版本号的入口五个版本各不相同）。
 - **下载页有域名白名单**（github / githubusercontent / jsdelivr / modrinth / gitee）。清单是公开仓库里的
   纯文本，万一被改，「点一下跳浏览器」就成了把用户导去任意站点。客户端永远不会自动下载或替换 jar。
 - **三个清单源，全部同时拉，取版本号最高的那份**（ghfast + raw + gcore.jsdelivr，实测都是 200）。
@@ -242,7 +269,7 @@ Gradle wrapper 与构建配置。
 
 ```powershell
 # 全版本构建（默认任务 buildAll = 两个加载器各出一个 jar，并汇总到仓库根 dist/；
-# 日志写 _build_all.log，末尾打印 dist/ 里的 8 个 jar，任一版本失败退出码为 1）
+# 日志写 _build_all.log，末尾打印 dist/ 里的 10 个 jar，任一版本失败退出码为 1）
 # 默认会清理输出目录中旧的 MuoniumPlayer-*.jar；需要保留时加 -KeepOldJars
 .\build-all.bat
 
@@ -294,7 +321,7 @@ http.sslBackend = openssl
 Gradle 侧同一个代理会偶发 `Remote host terminated the handshake`，
 `maven.neoforged.net` / `maven.minecraftforge.net` 上尤其容易碰到。实测这两个域名**直连**
 稳定 200 且约 1s，走 7890 代理 `curl -I` 三次里有两次是 `000`，所以正解是把它们放进直连白名单
-（四个版本的 `gradle.properties` 都已加）：
+（五个版本的 `gradle.properties` 都已加）：
 
 ```properties
 systemProp.http.nonProxyHosts=…|maven.minecraftforge.net|maven.neoforged.net

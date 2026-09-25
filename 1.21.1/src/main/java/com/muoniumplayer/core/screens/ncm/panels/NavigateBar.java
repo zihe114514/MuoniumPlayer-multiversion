@@ -16,7 +16,6 @@ import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.ImportedPlaylistStore;
-import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.update.AnnouncementChecker;
 import com.muoniumplayer.core.ncm.music.NeteaseSearchSuggestService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
@@ -39,6 +38,10 @@ import com.muoniumplayer.core.screens.ncm.NcmSheet;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
+import com.muoniumplayer.core.screens.ncm.SegmentControl;
+import com.muoniumplayer.core.screens.ncm.SheetClock;
+import com.muoniumplayer.core.screens.ncm.SheetHeroRelay;
+import com.muoniumplayer.core.screens.ncm.TransitionCurveCache;
 import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.json.JsonUtils;
@@ -67,16 +70,59 @@ public class NavigateBar extends NCMPanel {
     ScrollPanel playlistPanel = new ScrollPanel();
 
     /**
+     * 这个来源有没有「歌单」这一档搜索。
+     *
+     * <p>这件事原来被写了三遍而且互相对不上：决定可见性的名单含 BILIBILI，决定可点击的那份不含
+     * （于是 B 站下这颗控件看着能点、点了没反应，而 B 站歌单搜索的分支其实早就写好了），
+     * 输入框让宽那一份又只认网易云与酷狗（于是汽水和 B 站下它直接压在输入框文字上）。
+     * 现在只有这一份，可见、可点、让宽三处全部从它推。</p>
+     */
+    private static boolean supportsPlaylistSearch(final MusicPlatform platform) {
+        return platform == MusicPlatform.NETEASE || platform == MusicPlatform.KUGOU
+                || platform == MusicPlatform.QISHUI || platform == MusicPlatform.BILIBILI;
+    }
+
+    /**
+     * 高亮条从一栏跳到另一栏的基准时长。默认动画速度档（3.0，即最快那一档）下实际走约 300ms。
+     *
+     * <p>写这个数的时候按<b>除完倍率</b>那一档估观感：{@link SheetClock#speed()} 的默认值就是
+     * 上限，所以基础常量天然要写大三倍，否则「300ms」在真机上只有 100ms。</p>
+     */
+    private static final double INDICATOR_MS = 900.0;
+    /** 没有选中项时它淡出要多少毫秒（同样按除完那一档估：默认档下 60ms）。 */
+    private static final double INDICATOR_PRESENCE_MS = 180.0;
+    /** 单帧最多补这么多毫秒：与换页那条同一档，掉帧时整段变慢而不是一帧跨过小半条曲线。 */
+    private static final double INDICATOR_MAX_FRAME_MS = 40.0;
+    /** 过冲最多越过目标这么多逻辑像素：长距离跳转时 9.7% 的过冲会变成十几像素的过火。 */
+    private static final double INDICATOR_OVERSHOOT_CAP = 5.0;
+
+    /**
      * 侧栏选中项的高亮条。它是共享的一条，而不是每个条目自己画一块：只有共享的一条才能在切换栏目时
      * 从旧位置滑到新位置。放在 {@link #playlistPanel} 之前加入，因此绘制在条目文字之下。
      */
     private final RoundedRectWidget selectionIndicator = new RoundedRectWidget();
-    /** 高亮条当前的上下边沿（相对侧栏），两条边用不同速度跟随，移动时会被拉长。 */
-    private double indicatorTop, indicatorBottom;
-    private double indicatorLeft, indicatorWidth;
-    private float indicatorAlpha;
+    /** 高亮条此刻摆在哪（相对侧栏）。每帧由「目标 + 残差 × (1 - 缓动)」算出来。 */
+    private double indicatorTop, indicatorBottom, indicatorLeft, indicatorWidth;
+    /**
+     * 四条通道各自相对<b>当前目标</b>的残差，也就是这一趟的起点离目标有多远。
+     *
+     * <p>存残差而不是存起点，是为了让「列表滚动」这件事根本不需要处理：位置是相对目标算的，
+     * 目标被滚动带着走，条子就跟着走。旧写法存的是绝对坐标，所以滚列表时高亮条在慢慢追自己
+     * 那一行，追的过程就是一条肉眼可见的漂移。</p>
+     */
+    private double residualTop, residualBottom, residualLeft, residualWidth;
+    /** 本趟进度 0..1。1 = 已经贴住目标。 */
+    private double indicatorLegT = 1.0;
+    /** 这一趟往下走：下边沿是前缘（快、带过冲），上边沿是后缘（慢），于是条子被拉长。 */
+    private boolean indicatorLeadBottom;
+    /** 淡入淡出 0..1。只服务「这一格没有选中项了」，所以位移期间恒为 1，不会落位之后还在变亮。 */
+    private double indicatorPresence;
     /** 第一帧直接落位，避免高亮条从侧栏顶部飞进来。 */
     private boolean indicatorPlaced;
+    /** 高亮条现在属于哪一行。换行才起新的一趟，滚动与改宽度都不算。 */
+    private PlaylistItem indicatorOwner;
+    /** 上一帧的时刻，用来把进度换算成真实毫秒。 */
+    private long indicatorLastNanos;
     private PlaylistItem homeItem;
     /** 快捷操作条上那颗公告按钮。让位判断挂在父组件的渲染里，见 {@link #onRender}。 */
     private SidebarActionButton announcementButton;
@@ -214,39 +260,32 @@ public class NavigateBar extends NCMPanel {
             lblSearchIcon.setPosition(lblSearchIcon.getRelativeY(), lblSearchIcon.getRelativeY());
         });
 
-        RoundedButtonWidget searchTypeToggle = new RoundedButtonWidget(
-                () -> playlistSearchMode ? "歌单" : "歌曲", FontManager.pf12bold);
-        searchBar.addChild(searchTypeToggle);
-        searchTypeToggle.setShouldOverrideMouseCursor(true);
-        searchTypeToggle.setBeforeRenderCallback(() -> {
-            MusicPlatform currentPlatform = NeteaseMusicService.getCurrentPlatform();
-            boolean supportsPlaylistSearch = currentPlatform == MusicPlatform.NETEASE
-                    || currentPlatform == MusicPlatform.KUGOU
-                    || currentPlatform == MusicPlatform.QISHUI
-                    || currentPlatform == MusicPlatform.BILIBILI;
-            searchTypeToggle.setHidden(!supportsPlaylistSearch);
-            searchTypeToggle.setClickable(supportsPlaylistSearch);
-            searchTypeToggle.setBounds(32, 13);
-            searchTypeToggle.setPosition(Math.max(0, searchBar.getWidth() - searchTypeToggle.getWidth() - 2), 1.5);
-            searchTypeToggle.setRadius(3);
-            searchTypeToggle.setColor(playlistSearchMode
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            searchTypeToggle.setTextColor(playlistSearchMode
-                    ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)
-                    : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-        });
-        searchTypeToggle.setOnClickCallback((x, y, button) -> {
-            MusicPlatform togglePlatform = NeteaseMusicService.getCurrentPlatform();
-            if (button != 0 || (togglePlatform != MusicPlatform.NETEASE
-                    && togglePlatform != MusicPlatform.KUGOU
-                    && togglePlatform != MusicPlatform.QISHUI)) {
-                return false;
-            }
-            playlistSearchMode = !playlistSearchMode;
-            searchField.setPlaceholder(playlistSearchMode ? "搜索歌单..." : "搜索歌曲...");
-            return true;
-        });
+        // 「歌曲 / 歌单」两半常驻可读，滑块从一侧滑到另一侧。原来那颗 pill 只写着当前这一头，
+        // 要点下去才知道另一头是什么，而且文字、底色、占位提示三处各跳各的。
+        final SegmentControl.Spec modeSpec = new SegmentControl.Spec();
+        modeSpec.y = 1.0;
+        modeSpec.height = 14;
+        modeSpec.radius = 3.5;
+        modeSpec.inset = 1.5;
+        modeSpec.durationMs = 240.0;
+        modeSpec.font = FontManager.pf10bold;
+        // 两半等宽是滑块能滑的前提，所以宽度按两个词里较宽的那个算；只按「歌单」算的话，
+        // 哪天「歌曲」比它宽就会溢出自己那一半。
+        final double modeLabel = Math.max(FontManager.pf10bold.getStringWidthD("歌曲"),
+                FontManager.pf10bold.getStringWidthD("歌单"));
+        final double modeWidth = 2 * (modeLabel + 8.0) + modeSpec.inset * 2;
+        final SegmentControl searchMode = SegmentControl.attach(searchBar, () -> {
+            modeSpec.width = modeWidth;
+            modeSpec.x = Math.max(0, searchBar.getWidth() - modeWidth - 1);
+            return modeSpec;
+        }, () -> playlistSearchMode ? 1 : 0,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                new String[]{"", ""}, new String[]{"歌曲", "歌单"},
+                index -> {
+                    playlistSearchMode = index == 1;
+                    return true;
+                });
 
         searchBar.addChild(searchField);
 
@@ -301,11 +340,13 @@ public class NavigateBar extends NCMPanel {
             searchField.drawUnderline(false);
             searchField.setMargin(2);
             double xSpacing = lblSearchIcon.getRelativeX() + lblSearchIcon.getWidth() + 4;
-            MusicPlatform reservePlatform = NeteaseMusicService.getCurrentPlatform();
-            double typeToggleReserve = (reservePlatform == MusicPlatform.NETEASE
-                    || reservePlatform == MusicPlatform.KUGOU) ? 36.0 : 0.0;
+            searchMode.setEnabled(supportsPlaylistSearch(NeteaseMusicService.getCurrentPlatform()));
+            // 让宽跟着淡出程度走：这一格淡出去的同时输入框就长回来，不会留下「控件没了、框还是窄的」。
+            double typeToggleReserve = (modeWidth + 3.0) * searchMode.presence();
             searchField.setBounds(xSpacing, searchField.getRelativeY(),
                     Math.max(1.0, searchBar.getWidth() - xSpacing - typeToggleReserve), searchField.getHeight());
+            // 占位提示里的词跟着滑块走、过半才换：在点击那一刻就改会出现「词换了、滑块还在半路」。
+            searchField.setPlaceholder(searchMode.progress() > .5 ? "搜索歌单..." : "搜索歌曲...");
             searchField.setColor(this.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             searchField.setDisabledTextColor(RenderSystem.reAlpha(this.getColor(NCMScreen.ColorType.PRIMARY_TEXT), .4f));
 //            Rect.draw(searchField.getX(), searchField.getY(), searchField.getWidth(), searchField.getHeight(), 0x800090ff);
@@ -327,7 +368,11 @@ public class NavigateBar extends NCMPanel {
         sourceMenu.setRadius(7);
         sourceMenu.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
-            NCMScreen.getInstance().openMusicSourceManager();
+            // 起点必须在这一刻量：浮层里那一行的排版要到下一帧才有，而这颗按钮下一帧就会被
+            // 悬停态改颜色、甚至被侧栏重建掉。
+            NCMScreen.getInstance().openMusicSourceManager(SheetHeroRelay.from(sourceMenu.getX(),
+                    sourceMenu.getY(), sourceMenu.getWidth(), sourceMenu.getHeight(), 7.0,
+                    () -> NeteaseMusicService.getCurrentPlatform().getBrandColor()));
             return true;
         });
         sourceMenu.setBeforeRenderCallback(() -> {
@@ -681,7 +726,9 @@ public class NavigateBar extends NCMPanel {
         accountButton.setShouldOverrideMouseCursor(true);
         accountButton.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
-            NCMScreen.getInstance().openAccountManager();
+            NCMScreen.getInstance().openAccountManager(SheetHeroRelay.from(accountButton.getX(),
+                    accountButton.getY(), accountButton.getWidth(), accountButton.getHeight(), 6.0,
+                    () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT)));
             return true;
         });
         accountButton.setBeforeRenderCallback(() -> {
@@ -1430,13 +1477,26 @@ public class NavigateBar extends NCMPanel {
     /**
      * 把高亮条摆到当前选中的条目上。
      *
-     * <p>上下两条边用不同的速度跟随目标：朝下切换时下边沿快、上边沿慢，朝上切换时相反，于是高亮条在
-     * 移动途中被拉长、落位时收回原来的高度，而不是生硬地在两个位置之间闪现。</p>
+     * <p>上下两条边读<b>同一条</b>真毫秒时钟、但不同的曲线：前缘走 {@code SPRING_LAND}
+     * （30% 时长走完 90% 行程，在 60% 时长处越过目标 9.7% 再收回来），后缘走
+     * {@code MOTION_LAGGING}（同一时刻才走到 37%）。于是条子先被拽长、前缘弹过一点、
+     * 后缘跟上，最后精确落在行高上 —— 是「弹过去钉住」，不是旧写法那种「漂过去停下」。</p>
+     *
+     * <p>旧写法是 {@code Interpolations.interpolate} 的帧耦合指数，既没有时长也没有终点：
+     * 尾巴无限逼近，最后几帧还在动；而且默认动画速度 3.0 会把前后缘的系数同时顶到 .95 的
+     * 钳位上限，本该 1 : 0.52 的拉伸比被压成 1 : 0.82 —— 形变几乎看不见，只剩瞬移。
+     * 连点两行时两段指数还会叠在一起，先窜后糊。</p>
      *
      * <p>高亮条不是列表的子组件（列表会把所有可见子组件重新排到垂直流里），所以它拿不到列表的裁剪，
      * 这里手动把它和列表视口求交：选中项滚出可见区域时高亮条跟着被裁掉，而不是画到列表外面去。</p>
      */
     private void layoutSelectionIndicator() {
+        final long now = System.nanoTime();
+        // 单帧最多补 40ms：与换页那条同一档。掉帧时整段变慢，而不是一帧跨过小半条曲线。
+        final double frameMs = indicatorLastNanos == 0L ? 0.0
+                : Math.min(INDICATOR_MAX_FRAME_MS, (now - indicatorLastNanos) / 1_000_000.0);
+        indicatorLastNanos = now;
+
         PlaylistItem selected = findSelectedItem();
         double panelTop = this.playlistPanel.getRelativeY();
         double panelHeight = this.playlistPanel.getHeight();
@@ -1446,7 +1506,7 @@ public class NavigateBar extends NCMPanel {
         // 否则高亮条会把一组全 0 的坐标当成起点，之后再从侧栏左上角滑进来。
         boolean geometryReady = panelHeight > .5 && selected != null && selected.getWidth() > .5;
 
-        if (selected != null && geometryReady) {
+        if (geometryReady) {
             double targetTop = panelTop + selected.getRelativeY();
             double targetBottom = targetTop + selected.getHeight();
             double targetLeft = this.playlistPanel.getRelativeX() + selected.getRelativeX();
@@ -1458,28 +1518,38 @@ public class NavigateBar extends NCMPanel {
                 indicatorLeft = targetLeft;
                 indicatorWidth = targetWidth;
                 indicatorPlaced = true;
-            } else {
-                boolean movingDown = targetTop > indicatorTop;
-                // 指示条的追赶速度吃用户配置的「界面切换动画速度」倍率；前缘快、后缘慢的
-                // 比例保持不变，整体只是更快地完成同一段拉伸。系数同样钳在 .95 以下：
-                // 指数逼近到 1 就是一帧到位，再大反而越过目标。
-                double switchSpeed = Math.min(.95, HudConfig.playerUiSwitchSpeed);
-                double leading = Math.min(.95, .5 * switchSpeed), trailing = Math.min(.95, .26 * switchSpeed);
-                indicatorTop = Interpolations.interpolate(indicatorTop, targetTop,
-                        movingDown ? trailing : leading);
-                indicatorBottom = Interpolations.interpolate(indicatorBottom, targetBottom,
-                        movingDown ? leading : trailing);
-                indicatorLeft = Interpolations.interpolate(indicatorLeft, targetLeft, Math.min(.95, .5 * switchSpeed));
-                indicatorWidth = Interpolations.interpolate(indicatorWidth, targetWidth, Math.min(.95, .5 * switchSpeed));
+                indicatorOwner = selected;
+            } else if (selected != indicatorOwner) {
+                // 换行才起新趟，并且以条子<b>此刻</b>的位置为起点：中途再点第三行时从半路上
+                // 另起一趟，而不是跳回上一行重走一遍。
+                indicatorOwner = selected;
+                residualTop = indicatorTop - targetTop;
+                residualBottom = indicatorBottom - targetBottom;
+                residualLeft = indicatorLeft - targetLeft;
+                residualWidth = indicatorWidth - targetWidth;
+                indicatorLeadBottom = residualTop < 0;   // 目标在下方 → 下边沿是前缘
+                indicatorLegT = 0.0;
             }
-            indicatorAlpha = Interpolations.interpolate(indicatorAlpha, 1f, .4f);
-        } else if (selected == null) {
-            indicatorAlpha = Interpolations.interpolate(indicatorAlpha, 0f, .4f);
+            // 同一行被滚动带着走时这里什么都不做：残差是相对目标算的，目标一动条子就跟着动。
+
+            if (indicatorLegT < 1.0) {
+                indicatorLegT = Math.min(1.0, indicatorLegT + frameMs / indicatorLegMillis());
+            }
+            final double lead = TransitionCurveCache.SPRING_LAND.at(indicatorLegT);
+            final double trail = TransitionCurveCache.MOTION_LAGGING.at(indicatorLegT);
+            indicatorTop = targetTop + capped(residualTop, indicatorLeadBottom ? trail : lead);
+            indicatorBottom = targetBottom + capped(residualBottom, indicatorLeadBottom ? lead : trail);
+            // 横向不过冲：一条左对齐的条子往左右各弹一下，读起来像错位而不是弹性。
+            indicatorLeft = targetLeft + capped(residualLeft, trail);
+            indicatorWidth = targetWidth + capped(residualWidth, trail);
         }
+
+        indicatorPresence = ramp(indicatorPresence, geometryReady ? 1.0 : 0.0,
+                frameMs, INDICATOR_PRESENCE_MS / SheetClock.speed());
 
         double top = Math.max(panelTop, indicatorTop);
         double bottom = Math.min(panelBottom, indicatorBottom);
-        boolean visible = indicatorPlaced && indicatorAlpha > .01f
+        boolean visible = indicatorPlaced && indicatorPresence > .01
                 && bottom - top > .5 && indicatorWidth > .5;
         // 隐藏是安全的：这个方法由侧栏的回调驱动，下一帧照样会跑到，可以再把它显示回来。
         this.selectionIndicator.setHidden(!visible);
@@ -1493,7 +1563,34 @@ public class NavigateBar extends NCMPanel {
                 .setRadius(4)
                 // 选中项用主题强调色，而不是和悬停一样的中性灰，否则"选中"和"鼠标经过"看起来一样。
                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT))
-                .setAlpha(this.getAlpha() * .22f * indicatorAlpha);
+                .setAlpha(this.getAlpha() * .22f * (float) indicatorPresence);
+    }
+
+    /**
+     * 残差在这一帧的位移量：{@code residual * (1 - 缓动)}，并把过冲那段夹住。
+     *
+     * <p>缓动大于 1 才是过冲段，此时乘出来与残差反号，意思是条子越过了目标。越过幅度按像素
+     * 封顶，不然跨四行跳转时 9.7% 的过冲就是十几像素，看着像没停住而不是有弹性。</p>
+     */
+    private static double capped(final double residual, final double ease) {
+        double value = residual * (1.0 - ease);
+        if (ease > 1.0 && Math.abs(value) > INDICATOR_OVERSHOOT_CAP) {
+            return Math.copySign(INDICATOR_OVERSHOOT_CAP, value);
+        }
+        return value;
+    }
+
+    /** 高亮条这一趟真正走多少毫秒。默认动画速度档（3.0，也就是最快那一档）下约 300ms。 */
+    private static double indicatorLegMillis() {
+        return Math.max(1.0, INDICATOR_MS / SheetClock.speed());
+    }
+
+    /** 线性爬升到目标值，走真实毫秒。与 {@code SegmentControl#ramp} 同一口径。 */
+    private static double ramp(final double value, final double target, final double deltaMs,
+                               final double durationMs) {
+        if (durationMs <= 0.0) return target;
+        double step = deltaMs / durationMs;
+        return target > value ? Math.min(target, value + step) : Math.max(target, value - step);
     }
 
     /**

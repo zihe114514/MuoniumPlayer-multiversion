@@ -47,10 +47,15 @@ final class MusicDownloadService {
         // 一些 CDN 拒绝匿名请求（Bilibili 在没有浏览器
         //User-Agent 加 bilibili Referer 时应答 403），因此主机特定头随传输一起发送。
         Map<String, String> streamHeaders = AudioStreamHeaders.forUrl(playUrl);
-        MuoniumPlayerExtension.getInstance().musicInfo.downloading = true;
-        MuoniumPlayerExtension.getInstance().musicInfo.downloadProgress = 0;
-        MuoniumPlayerExtension.getInstance().musicInfo.downloadSpeed = "0 b/s";
-        DownloadDynamicIsland.beginDownload();
+        // 房间的提前下载：不碰 musicInfo.downloading（那是当前曲目的下载进度面板的数据源），
+        // 也不弹下载卡片。见 CloudMusic#quietDownload 为什么必须按线程记。
+        final boolean quiet = CloudMusic.quietDownload();
+        if (!quiet) {
+            MuoniumPlayerExtension.getInstance().musicInfo.downloading = true;
+            MuoniumPlayerExtension.getInstance().musicInfo.downloadProgress = 0;
+            MuoniumPlayerExtension.getInstance().musicInfo.downloadSpeed = "0 b/s";
+            DownloadDynamicIsland.beginDownload();
+        }
 
         try {
             InputStream transfer = song != null && song.isYouTube()
@@ -63,10 +68,12 @@ final class MusicDownloadService {
 
                         @Override
                         public void onProgress(double progress) {
-                            MuoniumPlayerExtension.getInstance().musicInfo.downloadProgress = progress;
-                            DownloadDynamicIsland.updateProgress(progress);
-                            if (progress >= 1) {
-                                MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
+                            if (!quiet) {
+                                MuoniumPlayerExtension.getInstance().musicInfo.downloadProgress = progress;
+                                DownloadDynamicIsland.updateProgress(progress);
+                                if (progress >= 1) {
+                                    MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
+                                }
                             }
                         }
 
@@ -104,8 +111,10 @@ final class MusicDownloadService {
                                 timer.reset();
                                 int diff = (bytesRead - lastBytesRead) * (1000 / checkDelay);
                                 String speed = getSize(diff) + "/s";
-                                MuoniumPlayerExtension.getInstance().musicInfo.downloadSpeed = speed;
-                                DownloadDynamicIsland.updateSpeed(speed);
+                                if (!quiet) {
+                                    MuoniumPlayerExtension.getInstance().musicInfo.downloadSpeed = speed;
+                                    DownloadDynamicIsland.updateSpeed(speed);
+                                }
                                 lastBytesRead = bytesRead;
                             }
                         }
@@ -125,13 +134,17 @@ final class MusicDownloadService {
                 closeQuietly(output);
                 closeQuietly(stream);
             }
-            MuoniumPlayerExtension.getInstance().musicInfo.downloadProgress = 1.0;
-            MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
-            DownloadDynamicIsland.finishDownload();
+            if (!quiet) {
+                MuoniumPlayerExtension.getInstance().musicInfo.downloadProgress = 1.0;
+                MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
+                DownloadDynamicIsland.finishDownload();
+            }
         } catch (Throwable throwable) {
             throwable.printStackTrace();
-            MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
-            DownloadDynamicIsland.cancelDownload();
+            if (!quiet) {
+                MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
+                DownloadDynamicIsland.cancelDownload();
+            }
             music.delete();
         }
     }

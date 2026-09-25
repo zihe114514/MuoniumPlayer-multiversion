@@ -72,8 +72,6 @@ public final class AnnouncementOverlay extends NcmSheet {
     private static final double DOT_SLOT = 9.0;
     /** 正文里的显式换行 = 分段。段内折行由 {@code fitWidth} 负责，它不认换行符。 */
     private static final String PARAGRAPH_BREAK = "\n";
-    /** 入场错峰最多排到第几张（见 {@link #buildCard}）。 */
-    private static final int MAX_REVEAL_SLOT = 8;
     /** 页脚那两颗按钮合计要占掉的宽度，说明文字据此让位。 */
     private static final double FOOTER_BUTTONS = 150.0;
 
@@ -142,7 +140,9 @@ public final class AnnouncementOverlay extends NcmSheet {
     @Override
     public void dispose() {
         AnnouncementChecker.markAllRead();
-        closing = true;
+        // 必须走基类：那一格除了置 closing，还要让进出场时钟开始倒着走。自己只置 closing 的话
+        // shouldClose() 读到的时钟永远到不了零 —— 这个界面就会再也关不掉。
+        super.dispose();
     }
 
     /** 宿主的 ESC 转发到这里。 */
@@ -422,9 +422,10 @@ public final class AnnouncementOverlay extends NcmSheet {
         view.row = new Panel();
         feed.addChild(view.row);
 
-        // 超过 MAX_REVEAL_SLOT 就再也开不了闸（pageFade 只会渐近到 1），所以后面的卡片共用最后一档，
-        // 一起出现 —— 宁可少一点错峰，也不能让第一条之后的整列永远透明。
-        view.plate = card(view.row, Math.min(index, MAX_REVEAL_SLOT), () -> 0.0, () -> view.height,
+        // 错峰由 NcmSheet 的卡片闸门负责：超出它那一档上限的序号自动并到最后一档一起到场，
+        // 所以这里直接把序号交出去。旧写法要在这里自己钳一道，是因为那时 pageFade 只会渐近到 1，
+        // 第十四张之后的卡永远开不了闸。
+        view.plate = card(view.row, index, () -> 0.0, () -> view.height,
                 () -> mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
                         NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), view.plate.hover));
         view.plate.setShouldOverrideMouseCursor(true);

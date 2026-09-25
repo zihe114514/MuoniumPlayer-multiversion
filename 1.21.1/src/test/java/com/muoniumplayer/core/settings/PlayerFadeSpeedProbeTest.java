@@ -118,8 +118,10 @@ class PlayerFadeSpeedProbeTest {
                 "转场必须把用户倍率夹在安全区间内，避免极端配置把动画变成一帧跳变");
         assertTrue(transition.contains("OPEN_MS / speed"),
                 "展开时长必须按用户倍率缩放，倍率越大动画越快");
-        assertTrue(screen.contains("float alphaInterpolateSpeed = Math.min(.95f, .4f * HudConfig.playerUiSwitchSpeed)"),
-                "页面切换的交叉淡入必须继续走 playerUiSwitchSpeed，而不是播放器开关动画速度");
+        assertTrue(screen.contains("PANEL_TRANSITION_MS / Math.max(.30, HudConfig.playerUiSwitchSpeed)"),
+                "页面切换的交叉淡入必须继续走 playerUiSwitchSpeed，而不是播放器开关动画速度。"
+                        + "它现在的作用是给转场总时长分档（基准毫秒 / 倍率），不再是指数逼近的插值系数 —— "
+                        + "那个系数在默认倍率下被钳到 .95，两三帧就吃光，等于没有动画。");
         assertTrue(screen.contains("interpolate(this.animatedPanelScale, targetScale, .18f)"),
                 "窗口尺寸档位的动画必须仍是写死的 .18，不受这个配置影响");
     }

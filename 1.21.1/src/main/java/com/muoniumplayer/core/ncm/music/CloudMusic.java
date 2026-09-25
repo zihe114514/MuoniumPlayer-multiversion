@@ -24,6 +24,7 @@ import com.muoniumplayer.core.rendering.texture.Textures;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
 import com.muoniumplayer.core.screens.ncm.LyricParser;
 import com.muoniumplayer.core.screens.ncm.MusicLyricsPanel;
+import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.settings.ConfigPaths;
 import com.muoniumplayer.core.settings.HudConfig;
@@ -1336,6 +1337,17 @@ public class CloudMusic implements SharedConstants {
         private volatile int fmPrefetchAttempts;
         /** 下一次私人 FM 预取尝试可以开始的最早墙钟时间。 */
         private volatile long nextFmPrefetchAt;
+        /**
+         * 下一首「只下载不解播放牌」的预取是否在跑，见 {@link #maybePrefetchNextTrackAudio}。
+         *
+         * <p>与 {@link #arming} 分开记：这一条是挂在逐首预备没做成的那些场合后面的（用户关了
+         * 无缝切换、或它这一首三份预算都用完了），两者不该共用一个开关。</p>
+         */
+        private volatile boolean prefetchingAudio;
+        /** 当前曲目已进行的音频预取尝试次数（与 {@link #armAttempts} 同一本账，各自一首一份）。 */
+        private volatile int audioPrefetchAttempts;
+        /** 下一次音频预取可以开始的最早墙钟时间。 */
+        private volatile long nextAudioPrefetchAt;
         private volatile AutomixFade activeFade;
 
         /**
@@ -1744,6 +1756,9 @@ public class CloudMusic implements SharedConstants {
                 // 紧接着的那次 arm 正好看到长出来的队列并立刻开始预解码。
                 maybePrefetchPersonalFm(activePlayer);
                 maybeArmNextTrack(activePlayer);
+                // 必须排在 arm 之后同一 tick：arm 刚把这一首接下来时 arming/armed 已经置位，
+                // 这一条看见就让路。它只补 arm 没做成的场合（见方法注释）。
+                maybePrefetchNextTrackAudio(activePlayer);
                 maybePreRollArmedDeck(activePlayer);
                 if (tryAutomixHandover(activePlayer)) {
                     automixHandover = true;
@@ -1950,8 +1965,35 @@ public class CloudMusic implements SharedConstants {
  * CDN URL 声明的格式并不总是服务器实际返回的容器。尤其是观察到一些无损
  * 网易云 URL 在报告 MP3 类型的同时返回 FLAC 字节。SoundFile 按扩展名选择解码器，
  * 所以缓存扩展名必须跟随下载到的字节，而不是上报的 URL 类型。
+ *
+ * <p>本方法只剩委托：真正的落盘序列在 {@link #cachedAudioFile}，与房间的提前下载共用同一条。
+ * 实播比那条序列多出来的唯一一步是 {@link #resolvePlayableAudioFile}（AAC/MP4 转 WAV 边车），
+ * 那是「能不能出声」的事，提前下载不做。</p>
  */
         private File getCachedOrTempFile(String playUrl, String type, Music song) {
+            return resolvePlayableAudioFile(cachedAudioFile(playUrl, type, song, quality, true), song);
+        }
+
+        /**
+ * 把一首歌按实播的缓存键落到磁盘：<b>实播与房间提前下载共用的唯一一条序列</b>。
+ *
+ * <p>为什么收成一个静态方法：缓存键由「曲目 + 音质」决定，提前下载只要在这里之外另写一份
+ * 算法，哪怕只差一个字节，实播就永远命中不上那份预下载，功能整体退化成「白下一遍」。
+ * 所以 {@link #audioCacheKey} 的调用点全文件只有这一处；容器探测命名、{@code touch}、
+ * {@link #removeOtherQualityCaches}、容量兜底、汽水 DRM 解密也全在这里，谁都不再第二遍。</p>
+ *
+ * <p>音质由调用方<b>显式传进来</b>，本方法不读 {@code CloudMusic.quality} 那一个全局：原写法
+ * 在同一次调用里读了两次（算键一次、删其余音质一次），中途换音质会留下一个删不掉的孤儿缓存。
+ * 参数名刻意沿用 {@code quality}（遮蔽那个全局）正是为了这件事 —— 整条序列自始至终只有调用方
+ * 取走的那一档，读到第二遍的口子被关掉了。看到 {@code quality.getQuality()} 别以为在读全局。</p>
+ *
+ * @param quality           这一首要按哪一档音质落盘 —— 也就是缓存键里的音质那一段
+ * @param downloadIfMissing {@code false} = 只问磁盘，没有缓存就回 {@code null}，
+ *                          一个网络请求都不发（提前下载问「下好了吗」、profile 预热问「文件在哪」用）。
+ *                          {@code true} = 实播那一条路，没有就下。
+ */
+        static File cachedAudioFile(String playUrl, String type, Music song, Quality quality,
+                                    boolean downloadIfMissing) {
             File musicCacheDir = MusicAudioCache.directory();
             if (!musicCacheDir.exists() && !musicCacheDir.mkdirs()) {
                 throw new IllegalStateException("Unable to create music cache directory: " + musicCacheDir.getAbsolutePath());
@@ -1963,7 +2005,10 @@ public class CloudMusic implements SharedConstants {
                 // 命中也要记一笔：容量淘汰只看 lastModified 的话，一首常听但下载得早的歌
                 // 会被当成最冷的缓存删掉。
                 MusicAudioCache.touch(cachedMusic);
-                return resolvePlayableAudioFile(cachedMusic, song);
+                return cachedMusic;
+            }
+            if (!downloadIfMissing) {
+                return null;
             }
 
             // 绝不把下载了一半的文件暴露给解码器或缓存查找。
@@ -1973,6 +2018,8 @@ public class CloudMusic implements SharedConstants {
             }
 
             downloadMusic(playUrl, temporaryMusic, song);
+            // 汽水 DRM：房间队列里的曲目是从协议元数据重造出来的 Music，playAuth 是 transient
+            // 字段，压根不会随队列下发 —— 这个分支对提前下载天然不成立，留着是因为实播要它。
             if (song != null && song.isQishui() && !song.getQishuiPlayAuth().isEmpty()) {
                 try {
                     QishuiMusicService.decryptDownloadedAudio(temporaryMusic, song.getQishuiPlayAuth());
@@ -2007,10 +2054,10 @@ public class CloudMusic implements SharedConstants {
 
             removeOtherQualityCaches(musicCacheDir, song, quality.getQuality());
             MusicAudioCache.touch(music);
-            // 目录只会因为下载而变大，所以容量兜底只需要挂在这一处；解码边车在下一句产生，
+            // 目录只会因为下载而变大，所以容量兜底只需要挂在这一处；解码边车在实播那一句产生，
             // 淘汰按组进行，所以这里先执行也不会把边车漏在外面。
             MusicAudioCache.enforceLimitAsync();
-            return resolvePlayableAudioFile(music, song);
+            return music;
         }
 
         /**
@@ -2018,7 +2065,7 @@ public class CloudMusic implements SharedConstants {
  * 一次并写入经过校验的 WAV 边车。解码器只接受 AAC 音轨，因此纯视频、
  * DRM 保护或不支持的 MP4 流仍然会安全失败。
  */
-        private File resolvePlayableAudioFile(File sourceFile, Music song) {
+        static File resolvePlayableAudioFile(File sourceFile, Music song) {
             String container = AudioContainerSupport.detectContainer(sourceFile);
             if (!AudioContainerSupport.isSupportedContainer(container)) {
                 throw new IllegalStateException("Cached audio has an unsupported or invalid container: "
@@ -2042,20 +2089,28 @@ public class CloudMusic implements SharedConstants {
             // 拿不到歌名时 trackDisplayName 会退到「当前歌曲」。
             String trackName = trackDisplayName(song, null);
             String targetFormat = audioFileExtension(decodedFile.getName());
-            DownloadDynamicIsland.beginTranscode(trackName, container, targetFormat);
+            // 房间预热走到这里时不给当前曲目挂「转码中」卡片：转的不是正在播的这一首。
+            final boolean quietTranscode = quietDownload();
+            if (!quietTranscode) {
+                DownloadDynamicIsland.beginTranscode(trackName, container, targetFormat);
+            }
             try {
                 AacAudioDecoder.decodeToWav(sourceFile, container, decodedFile,
                         new AacAudioDecoder.ProgressListener() {
                             @Override
                             public void onProgress(double progress) {
-                                DownloadDynamicIsland.updateTranscodeProgress(progress);
+                                if (!quietTranscode) {
+                                    DownloadDynamicIsland.updateTranscodeProgress(progress);
+                                }
                             }
                         });
                 if (!AudioCacheFiles.isReusableDecodedWav(sourceFile, decodedFile)) {
                     throw new IOException("Decoded AAC cache is invalid: " + sourceFile.getName());
                 }
             } catch (Throwable exception) {
-                DownloadDynamicIsland.cancelTranscode();
+                if (!quietTranscode) {
+                    DownloadDynamicIsland.cancelTranscode();
+                }
                 if (decodedFile.exists()) {
                     decodedFile.delete();
                 }
@@ -2064,8 +2119,10 @@ public class CloudMusic implements SharedConstants {
                 }
                 throw new IllegalStateException("Unable to decode AAC audio into a playable WAV cache", exception);
             }
-            DownloadDynamicIsland.finishTranscode(trackName, container, targetFormat,
-                    System.currentTimeMillis() - transcodeStartedAt);
+            if (!quietTranscode) {
+                DownloadDynamicIsland.finishTranscode(trackName, container, targetFormat,
+                        System.currentTimeMillis() - transcodeStartedAt);
+            }
             return decodedFile;
         }
 
@@ -2088,7 +2145,7 @@ public class CloudMusic implements SharedConstants {
             }
         }
 
-        private void removeOtherQualityCaches(File musicCacheDir, Music song, String currentQuality) {
+        private static void removeOtherQualityCaches(File musicCacheDir, Music song, String currentQuality) {
             MultiThreadingUtil.runAsync(() -> {
                 File[] cacheFiles = musicCacheDir.listFiles();
                 if (cacheFiles == null) {
@@ -2153,6 +2210,19 @@ public class CloudMusic implements SharedConstants {
         private static final int MAX_ARM_ATTEMPTS = 3;
         /** 预备尝试之间的冷却时间，避免每个 tick 都敲打一个失败的源。 */
         private static final long ARM_RETRY_MILLIS = 20_000L;
+        /**
+         * 音频预取最早开始的位置。设得很早，但它真正的开始时间不由这里决定：automix 开着时，
+         * 它要等逐首预备把自己那三份预算用完（一份冷却 20 秒）才让过来，那道闸才是实际下限。
+         * 这里只管「别在开播第一秒就去抢」。
+         *
+         * <p>为什么值得提前：YouTube 那一份配额是一台出口 IP 的字节余额，约「一秒攒一秒播放量」，
+         * 一首四分钟的歌最坏要等将近曲长才取得完。这段等待消不掉，但能挪到上一首还在响的时候花掉。</p>
+         */
+        private static final long AUDIO_PREFETCH_AFTER_MILLIS = 3_000L;
+        /** 每首歌允许的音频预取次数；失败几次就认了，真轮到它时实播那条链会自己重走。 */
+        private static final int MAX_AUDIO_PREFETCH_ATTEMPTS = 2;
+        /** 音频预取失败后的冷却（预取本身可能跑几分钟，冷却给得比 arm 宽）。 */
+        private static final long AUDIO_PREFETCH_RETRY_MILLIS = 60_000L;
         /** 交接触发时（几乎）没有剩余离场曲目时使用的渐变。 */
         private static final long LATE_FIRE_FADE_MILLIS = 700L;
         /**
@@ -2329,6 +2399,9 @@ public class CloudMusic implements SharedConstants {
             nextFmPrefetchAt = 0L;
             // 试听救援的乒乓预算同样一首一份：交接落到新的一首之后要能再救。
             armTrialSwitches = 0;
+            // 音频预取的预算也按「一首一份」重开：交接落到新的一首，就要能再替它的下一首选一次。
+            audioPrefetchAttempts = 0;
+            nextAudioPrefetchAt = 0L;
         }
 
         /**
@@ -2366,6 +2439,88 @@ public class CloudMusic implements SharedConstants {
             fmPrefetchAttempts++;
             nextFmPrefetchAt = now + FM_PREFETCH_RETRY_MILLIS;
             PersonalFmManager.prefetchNextAsync(queue);
+        }
+
+        /**
+         * 当前这首还在放的时候，把下一首的音频按实播那套缓存键提前落到磁盘。
+         *
+         * <p><b>逐首预备</b>那条链（{@link #maybeArmNextTrack} → {@code armTrack}）本来就在做这件事，
+         * 而且做得更多：它还顺手解码并持有第二张播放牌。所以这一条只补它没做成的那些场合 ——
+         * 用户关掉了无缝切换、它这一首三次尝试都没成、或它下一首根本猜不出来。判定就用它自己的
+         * 那几个状态位，不加第二套协商：</p>
+         *
+         * <ul>
+         *   <li>{@code arming}／{@code armed} 有一个活着 → 让路，那张牌已经在下了；</li>
+         *   <li>automix 开着而 {@code armAttempts} 还没用完 → 也让路，先让 arm 把它那三份预算
+         *       试完（它一次冷却 20 秒，最晚约在开播一分钟后交棒给这里）。</li>
+         * </ul>
+         *
+         * <p>只做「落到磁盘」这一步，不建播放牌、不碰 {@code curIdx} 与队列，也绝不改动正在播的
+         * 这一首的任何状态：解析下一首时写入的是它自己那个 {@code Music} 对象上的播放侧字段，
+         * 与逐首预备那条链做的是同一件事。</p>
+         */
+        private void maybePrefetchNextTrackAudio(AudioPlayer activePlayer) {
+            if (prefetchingAudio || arming || armed != null) return;
+            if (AutomixSettings.isEnabled() && armAttempts < MAX_ARM_ATTEMPTS) return;
+            if (audioPrefetchAttempts >= MAX_AUDIO_PREFETCH_ATTEMPTS) return;
+            if (dontAdd || awaitingPlaybackAction || manualSkipRequested) return;
+            if (activePlayer == null || !isSessionUsable(session)) return;
+
+            long now = System.currentTimeMillis();
+            if (now < nextAudioPrefetchAt) return;
+
+            long total = (long) activePlayer.getTotalTimeMillis();
+            long position = (long) activePlayer.getCurrentTimeMillis();
+            if (total <= 0L) return;
+            if (position < AUDIO_PREFETCH_AFTER_MILLIS) return;
+
+            int nextIndex = peekNextIndex();
+            if (nextIndex < 0 || nextIndex >= playList.size()) return;
+            final Music song = playList.get(nextIndex);
+            if (!worthAudioPrefetch(song)) return;
+            // 磁盘上已经有了就别再占那份余额 —— 实播会直接命中同一份缓存（缓存键只有曲目加音质）。
+            if (cachedAudioFileFor(song) != null) return;
+
+            audioPrefetchAttempts++;
+            nextAudioPrefetchAt = now + AUDIO_PREFETCH_RETRY_MILLIS;
+            prefetchingAudio = true;
+            final long armGeneration = generation.get();
+            final long armRevision = queueRevision;
+            // 低优先级池：整首歌取字节 + 一次整首解码，是后台最重的一类活，用户并没在等它。
+            BackgroundWork.submit(() -> prefetchTrackAudio(song, armGeneration, armRevision));
+        }
+
+        /**
+         * 后台跑一次「解析 → 下载 → 解码」，把结果留在磁盘上就走。
+         *
+         * <p>失败只留一行日志：提前取没取到，正确的处理是「等真轮到它时按实播再走一遍完整链路」
+         * （包括超 4 分钟放弃、跨源换轨那些），预取没有资格替这首歌判定能不能播。</p>
+         */
+        private void prefetchTrackAudio(Music song, long expectedGeneration, long expectedRevision) {
+            QUIET_DOWNLOAD.set(Boolean.TRUE);
+            try {
+                if (!prefetchStillValid(expectedGeneration, expectedRevision)) return;
+                Tuple<String, String> playUrl = song.getPlayUrl();
+                if (playUrl == null) return;      // 解析不出直链：留给实播那条链去换源
+                if (!prefetchStillValid(expectedGeneration, expectedRevision)) return;
+                File file = getMusicFile(playUrl, song);
+                if (file != null && file.isFile()) {
+                    System.out.println("[Music/Prefetch] 已提前取满 " + song.getName()
+                            + "：" + PlaybackMemoryLimits.megabytes(file.length()) + "MB");
+                }
+            } catch (Throwable failure) {
+                System.out.println("[Music/Prefetch] 提前取流未命中 " + song.getName() + "：" + failure);
+            } finally {
+                QUIET_DOWNLOAD.remove();
+                prefetchingAudio = false;
+            }
+        }
+
+        /** 预取只有在播放世代与队列预测都没变时才有意义（用户可能已经把下一首选成了别的）。 */
+        private boolean prefetchStillValid(long expectedGeneration, long expectedRevision) {
+            return !isPlaybackCancelled() && !playListChanged() && !doBreak
+                    && generation.get() == expectedGeneration
+                    && CloudMusic.queueRevision == expectedRevision;
         }
 
         /**
@@ -2432,6 +2587,9 @@ public class CloudMusic implements SharedConstants {
         /** 解析、下载、解码并持有下一首曲目。运行于播放线程之外。 */
         private void armTrack(Music song, int index, long armGeneration, long armRevision) {
             AudioPlayer deck = null;
+            // 真人要的那一次交接开始了：房间 profile 预热看到这一位就让路，不再启动新的一首
+            // （见 CloudMusic#automixAnalysisBusy）。只置一个位，不改下面任何判断。
+            AUTOMIX_ANALYSIS_BUSY.set(true);
             try {
                 if (!armStillValid(armGeneration, armRevision)) return;
 
@@ -2542,6 +2700,7 @@ public class CloudMusic implements SharedConstants {
             } finally {
                 if (deck != null) closeQuietly(deck);
                 arming = false;
+                AUTOMIX_ANALYSIS_BUSY.set(false);
             }
         }
 
@@ -3335,6 +3494,234 @@ public class CloudMusic implements SharedConstants {
         // 只有 YouTube 曲目读取 YouTubeProxySettings；按曲目来源分流，避免按 URL 猜域名。
         MusicDownloadService.downloadMusic(playUrl, music,
                 song != null && song.isYouTube() ? YouTubeProxySettings.createHttpProxy() : null, song);
+    }
+
+    // ─────────────────── 房间队列的提前下载与 automix profile 预热 ───────────────────
+    //
+    // 给 mpparty-common 的 MpRoomPrefetch 用：收到房间歌单后，把「当前这首之后」的若干首按实播
+    // 那套缓存键提前落到磁盘，再把已经下好的那几首的交接 profile 先算出来。
+    //
+    // 三条约束，都是这套东西能成立的前提：
+    //   1. 缓存键只有一份实现（PlayThread#cachedAudioFile）。提前下载算出另一个键，实播就永远
+    //      命中不上那份预下载，功能整体退化成「同一首歌下两遍」。
+    //   2. 直链由调用方给。房间队列条目本身就带着点歌人解析好的 url，这里绝不再去解析一次
+    //      —— 解析是「代解析」那套链路的活，而且 Music#getPlayUrl() 会真发网络请求、会动
+    //      playbackQuality 这类播放侧状态。
+    //   3. 不建常驻播放牌、不碰队列与 curIdx。这两个方法跑在调用方自己的低优先级线程上，
+    //      和播放线程唯一的交集就是磁盘。
+
+    /**
+     * 提前下载的去重集：{@code 稳定键 + 音质}，与缓存键同构（不含直链 —— 同一条曲目的直链
+     * 每次解析都不一样，拿它去重等于没去）。一次队列刷新会排下几份同样的下载，CDN 连接与
+     * 上行带宽一起被打爆，所以同一个键同时只允许一个在跑。
+     */
+    private static final Set<String> PREFETCH_IN_FLIGHT =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * 本线程正在做「提前下载 / profile 预热」这一类后台取流，下载卡片与
+     * {@code musicInfo.downloading} 一律不许因此打到<b>正在播放的那一首</b>上。
+     *
+     * <p>刻意按线程记：预热线程与播放线程会同时在下载不同的歌，共用一位就会把真人那一次的
+     * 进度条一起吞掉，那比多弹一张卡更糟。只在这两条链的入口置位，出口必清除。
+     */
+    private static final ThreadLocal<Boolean> QUIET_DOWNLOAD = new ThreadLocal<>();
+
+    /** 后台预取链路自己问一句：这一趟的下载/转码要不要免扰界面。 */
+    static boolean quietDownload() {
+        return Boolean.TRUE.equals(QUIET_DOWNLOAD.get());
+    }
+
+    /**
+     * 这一首值不值得在后台先替它把音频取满。
+     *
+     * <p>只挑 YouTube：其余源的直链是普通 CDN，一两秒就落盘，提前取与现取没差别，白占用户的
+     * 上行与缓存。YouTube 不一样 —— 它的字节由那台出口 IP 的余额配给（约一秒攒一秒播放量），
+     * 现取最坏要等接近曲长。把这段时间挪到「上一首还在响」的时候花掉，点下去就是本地秒开。</p>
+     */
+    static boolean worthAudioPrefetch(Music song) {
+        return song != null && song.isYouTube();
+    }
+
+    /**
+     * 真人那一次交接的分析此刻是不是正在跑（{@code armTrack} 从取流到出计划的全过程）。
+     *
+     * <p>房间 profile 预热挂在这个位子上让路：它每次要开动一首之前先看一眼，正在忙就不启动新的
+     * 一首。预热是「可能白烧一次 Python」的活，真人交接是「几秒后就要出声」的活，两者抢同一套
+     * 串行的 Python 子进程时永远让后者先走。</p>
+     */
+    private static final AtomicBoolean AUTOMIX_ANALYSIS_BUSY = new AtomicBoolean(false);
+
+    /**
+     * 把房间队列里的一首按<b>与实播完全相同</b>的缓存键落到磁盘。
+     *
+     * <p>语义就是「等它真轮到时，播放线程直接命中磁盘」：命中已有缓存时立刻返回，不发任何网络
+     * 请求；没命中才走 {@link PlayThread#cachedAudioFile} 那条序列（容器探测命名、touch、
+     * 删同曲其余音质、容量兜底、汽水 DRM）。不建播放牌、不碰播放状态、不改队列。</p>
+     *
+     * <p>与实播的两处有意差异：① 不做 AAC→WAV 转码（那是「能不能出声」的一步，实播与 profile
+     * 预热各自按需做，见 {@link #warmAutomixProfile}）；② 失败只回 {@code false} 并留一行日志，
+     * 绝不抛给调用方 —— 提前下载失败的正确处理是「等真轮到时按实播再下一遍」。</p>
+     *
+     * <p>调用方必须在<b>非渲染帧</b>的线程上（这里会真的下载）。失败/进行中的同一首由调用方自己
+     * 记账，本方法只保证不会同时跑两份。</p>
+     *
+     * @param playUrl       点歌人给好的直链；为空即拒绝，本方法不解析、不调 {@code Music#getPlayUrl}
+     * @param reportedType  协议里报的容器类型，可空。按 {@code getMusicFile} 同样的方式归一化，
+     *                      只影响「先试哪个扩展名」的顺序，落盘文件名恒由真实字节决定
+     * @return 结束时磁盘上有没有这份缓存
+     */
+    public static boolean prefetchRoomTrackAudio(String playUrl, String reportedType, Music song) {
+        if (song == null || playUrl == null || playUrl.trim().isEmpty()) {
+            return false;   // 没有可用直链：跳过，绝不为它去解析
+        }
+        // 取一次当前音质，去重槽与落盘用同一档：中途换音质不会让两份下载错开键。
+        final Quality selected = quality;
+        String slot = song.getStableKey() + '|' + selected.getQuality();
+        if (!PREFETCH_IN_FLIGHT.add(slot)) {
+            return false;   // 同一首已经有一份在下了
+        }
+        QUIET_DOWNLOAD.set(Boolean.TRUE);
+        try {
+            return PlayThread.cachedAudioFile(playUrl,
+                    AudioContainerSupport.normalizeReportedContainer(reportedType),
+                    song, selected, true) != null;
+        } catch (Throwable failure) {
+            // 坏链接、CDN 抽风、容器校验拒绝都走这里：留一行日志，队列真轮到它时实播会重走一遍
+            // 完整链路（包括按字节的换源兜底），提前下载没有资格替它判定「这首歌不能播」。
+            System.out.println("[MpPrefetch] 提前下载未命中 " + song.getName() + "：" + failure);
+            return false;
+        } finally {
+            QUIET_DOWNLOAD.remove();
+            PREFETCH_IN_FLIGHT.remove(slot);
+        }
+    }
+
+    /**
+     * 这一首在实播会用的那个缓存键上是不是已经有文件了。
+     *
+     * <p>只问磁盘，绝不联网、绝不下载。命中时顺手 {@code touch} 一笔（那是共用序列的一部分），
+     * 所以房间反复问同一份歌单就等于把这几首在容量淘汰的最近使用账本上<b>置顶</b>：淘汰按
+     * 「最冷的组」下手，房间即将播到的那些因此排在别人后面被删。</p>
+     *
+     * <p>缓存目录还不存在／权限异常等一律当作「没有缓存」：这是一个探测，不是播放步骤，
+     * 没有资格抛异常把预热整条链路带崩。</p>
+     */
+    public static File cachedAudioFileFor(Music song) {
+        if (song == null) return null;
+        try {
+            return PlayThread.cachedAudioFile(null, null, song, quality, false);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /** 音频缓存目录当前占用（字节）。目录不存在时为 0。 */
+    public static long audioCacheUsedBytes() {
+        try {
+            return MusicAudioCache.totalBytes();
+        } catch (Throwable ignored) {
+            return Long.MAX_VALUE;      // 问不出来就别下新东西
+        }
+    }
+
+    /** 用户设置的音频缓存上限（字节）；{@code 0} = 不限制。 */
+    public static long audioCacheLimitBytes() {
+        try {
+            return NCMPlayerConfig.getMusicCacheLimitBytes();
+        } catch (Throwable ignored) {
+            return 0L;
+        }
+    }
+
+    /** 缓存所在分区的剩余空间（字节）；问不出来时按 0 处理（宁可不预热）。 */
+    public static long audioCacheFreeSpaceBytes() {
+        try {
+            return MusicAudioCache.directory().getUsableSpace();
+        } catch (Throwable ignored) {
+            return 0L;
+        }
+    }
+
+    /**
+     * 本机此刻能不能做 profile 预热。
+     *
+     * <p>判据与 {@code MpPlayback.capabilityEngine()} 报 {@code "model"} 的那一条一致：
+     * 引擎选了 Folia <b>且</b>运行时与两套权重（Beat This! 出节拍栅格、HTDemucs 出 stem 分离）
+     * 都在盘上。缺一样时 Folia 内部会退回纯信号处理，那套根本不用 Python，预热它没有任何意义，
+     * 只是白起一次子进程。多加一条「用户开着无缝切换」：关了 automix 就没有任何东西会用这份 profile。</p>
+     */
+    public static boolean automixProfileWarmupReady() {
+        try {
+            if (!AutomixSettings.isEnabled()) return false;
+            if (!AutomixSettings.isFoliaEngine()) return false;
+            return FoliaModelManager.isInstalled(FoliaModelManager.Kind.BEAT_THIS)
+                    && FoliaModelManager.isInstalled(FoliaModelManager.Kind.HTDEMUCS)
+                    && FoliaModelManager.isInstalled(FoliaModelManager.Kind.RUNTIME);
+        } catch (Throwable ignored) {
+            return false;   // 问不出来就按「不能跑」处理，绝不为预热去惊动模型下载
+        }
+    }
+
+    /** 真人那一次交接的分析是不是正在跑。见 {@link #AUTOMIX_ANALYSIS_BUSY}。 */
+    public static boolean automixAnalysisBusy() {
+        return AUTOMIX_ANALYSIS_BUSY.get();
+    }
+
+    /**
+     * 预热这一首的 <b>automix 单曲 profile</b>：把 Folia 那套 Python 分析（节拍栅格 + stem 分离）
+     * 的结果落进 {@code config/cache/automix-profiles}，等它真轮到交接时直接读盘。
+     *
+     * <h3>刻意不算配对计划（pair plan）</h3>
+     * {@code AutomixPlanCache.keyOf} 的键带着「退出曲的最后一句人声位置」与两路 deck 的缓存文件名，
+     * 前者要歌词、后者要正在预备的那对 deck —— 提前算必然算出不命中的键，还会因歌词没加载而
+     * 白烧一次 Python。所以这里只做 {@code FoliaTrackProfiler.loadOrAnalyse(deck, false)}
+     * 那一半（这一首将来是「进来」的那一首），pair 计划留给交接点前那次真正的预备。
+     *
+     * <h3>profile 键必须和实播算出来的那个是同一个</h3>
+     * profile 的盘键是「音频文件绝对路径 + 长度 + mtime + 模型集」，而实播 deck 建在
+     * {@link PlayThread#resolvePlayableAudioFile} 的结果上（AAC/MP4 是 {@code .decoded.wav} 边车，
+     * 不是下载到的原始文件）。所以这里也先解析再建牌：直接用原始文件建牌会写出一份键不同的
+     * profile，看着像预热过了，真交接时照样重跑一遍。
+     *
+     * <p>调用方必须在非渲染帧的低优先级线程上：这里会解码整曲、起 Python 子进程（一次 120–180 秒）。
+     * 播放牌是局部的、用完即关，不挂进 {@link #player}，也不碰 {@code armed}。</p>
+     *
+     * @return 这一首的 profile 现在是不是已经在盘上（命中缓存也算 true）
+     */
+    public static boolean warmAutomixProfile(Music song) {
+        if (!automixProfileWarmupReady()) return false;
+        File cached = cachedAudioFileFor(song);
+        if (cached == null) return false;   // 还没下载好：什么都不做，更不联网
+        AudioPlayer deck = null;
+        QUIET_DOWNLOAD.set(Boolean.TRUE);
+        try {
+            File playable = PlayThread.resolvePlayableAudioFile(cached, song);
+            long limit = AutomixSettings.maxDeckBytes();
+            if (playable.length() > limit) {
+                // 与预备同一道闸：两个活跃播放牌的常驻 PCM 会翻倍，预热没有资格把它抬高。
+                System.out.println("[MpPrefetch] 跳过 profile 预热 " + song.getName() + "："
+                        + PlaybackMemoryLimits.megabytes(playable.length()) + "MB 超出 "
+                        + PlaybackMemoryLimits.megabytes(limit) + "MB 的播放牌预算");
+                return false;
+            }
+            deck = new AudioPlayer(playable);
+            deck.setTrackName(PlayThread.trackDisplayName(song, playable));
+            FoliaTrackProfiler.loadOrAnalyse(deck, false);
+            return true;
+        } catch (Throwable failure) {
+            System.out.println("[MpPrefetch] profile 预热失败 " + song.getName() + "：" + failure);
+            return false;
+        } finally {
+            QUIET_DOWNLOAD.remove();
+            if (deck != null) {
+                try {
+                    deck.close();
+                } catch (Throwable ignored) {
+                    // 一个从未完成初始化的播放牌绝不能阻塞预热。
+                }
+            }
+        }
     }
 
     public static void writeTo(InputStream src, OutputStream dest) {

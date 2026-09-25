@@ -69,6 +69,27 @@ public abstract class NcmSheet extends NCMPanel {
      */
     protected static final double CARD_INSET = 3.0;
 
+    // ──────────────────────────── 分层到场时机 ────────────────────────────
+    //
+    // 全是「本页内容时钟走到第几成」这个无量纲数，不是毫秒：时长由 SheetClock 决定，这里只排先后。
+    // 用同一个数排，退场时才会严格反序收回去 —— 各层自己计时的话，退场就是同时消失，白排。
+
+    /** 第一张卡开始到场的时刻。页眉在它的左边一档，于是顺序是「底板 → 页眉 → 卡 → 页脚」。 */
+    private static final double CARD_FIRST = .26;
+    /** 相邻两张卡之间的间隔。 */
+    private static final double CARD_STEP = .04;
+    /** 单张卡从起闸到落位要走过多长一段。 */
+    private static final double CARD_TRAVEL = .54;
+    /** 超过这个序号的卡并到最后一档一起到场：长列表不能永远排在窗口外面。 */
+    private static final int CARD_STAGGER_LIMIT = 12;
+
+    private static final double HEADER_FIRST = .16;
+    private static final double HEADER_TRAVEL = .48;
+    private static final double FOOTER_FIRST = .50;
+
+    /** 翻页时内容沿水平方向偏移这么多逻辑像素。只在场外存在，落位为零，不影响点击判定。 */
+    private static final double PAGE_SLIDE_DISTANCE = 12.0;
+
     protected static final int OK_COLOR = 0x6EDAA0;
     protected static final int WARN_COLOR = 0xE0B268;
     protected static final int BAD_COLOR = 0xF1767D;
@@ -79,30 +100,98 @@ public abstract class NcmSheet extends NCMPanel {
 
     protected volatile boolean closing;
 
-    /** 弹窗整体的出场进度：0 → 1 期间整块淡入并上浮。 */
-    private double presentation;
+    /**
+     * 弹窗整体这一档的进度：遮罩暗下去、底板上浮起来都读它。
+     *
+     * <p>由 {@link #onRender} 每帧从 {@link #clock} 写一次，所以 {@code sheet()} 里那些回调只是
+     * 读数 —— 谁都不许再自己 {@code interpolate} 一遍，两条曲线叠在一起就是「先窜后糊」。</p>
+     */
+    protected double presentation;
     /** 弹窗高度自身也补间：换页时高度不同，直接跳会「咔」一下。 */
     private double sheetHeight;
     /**
-     * 当前页的入场进度。
+     * 当前<b>这一页</b>内容的入场进度（未经缓动的原始值，各层在它上面开时间窗）。
      *
-     * <p>卡片按 {@code slot} 依次开闸（见 {@link #card}），于是换页是一条条落下来而不是整块闪出来。
-     * 这一项每帧在弹窗的 beforeRender 里推进，所以只要页面在画就一定在走。</p>
+     * <p>和 {@link #presentation} 分两条是有原因的：这一层第一次建起来时两条一起从 0 走，之后
+     * 每翻一页只重跑 {@link #page} 那一条。合成一条的话，点进一级账号详情就连遮罩和底板都要
+     * 重新淡一遍，看着像整个界面又开了一次。</p>
      */
     protected double pageFade;
 
+    /**
+     * 这一层进出场的时钟。
+     *
+     * <p>必须和 {@link #page} 同一档时长：{@link SheetHeroRelay} 的不透明度是「1 − 落点那张卡的
+     * {@code reveal}」，两条互补。各走各的秒数会让接力先收手、卡片后到场，中间那一帧什么都没有。</p>
+     */
+    private final SheetClock clock = SheetClock.cascade();
+    /** 当前页内容那一条：换页重新走，进出场跟着整层一起走。 */
+    private final SheetClock page = SheetClock.cascade();
+    /** 内容往哪一侧滑进来：-1 回翻、+1 前进、0 第一次建页（那就只做纵向落位，不给水平位移）。 */
+    private int pageDirection;
+    /** 由 {@link #back(Runnable)} 立起、{@link #beginPage()} 读完就清的换页方向。 */
+    private boolean nextPageBackward;
+
+    /**
+     * 什么时候可以回收这一层：退场播完，而不是「用户已经点了关闭」。
+     *
+     * <p>关闭请求和真正回收之间隔着这一段动画，所以 {@link #closing} 不能直接当返回值 ——
+     * 那样 {@code NCMScreen} 下一帧就把这一层抹掉，退场动画一帧都播不出来。</p>
+     */
     public boolean shouldClose() {
+        return clock.isGone();
+    }
+
+    /** 已经收到关闭请求、正在退场。吃掉输入那条规则在 {@link NCMPanel} 里。 */
+    @Override
+    protected boolean isDismissing() {
         return closing;
     }
 
     public void dispose() {
         closing = true;
+        clock.requestDismiss();
+        page.requestDismiss();
     }
 
-    /** 换页：清空子组件并把入场进度归零。所有 {@code showXxx()} 的第一行都该调它。 */
+    /**
+     * 把一趟「往回翻」包成 {@code Runnable}，交给 {@code subHeader()} / {@code backButton()} 那类返回键。
+     *
+     * <p>为什么是一个一次性标记而不是给每个 {@code showXxx()} 加一个 boolean 参数：同一批页面里
+     * {@code showDetail(platform)} 既是从总览点进去（前进）、也是从 Cookie 页退回来（后退），
+     * 传参就得给每条调用都改一遍签名 —— {@code AccountManagerOverlay} 里有七处。而「谁按下返回键
+     * 谁知道方向」这个信息本来就在调用点上。{@code NCMScreen} 的 {@code pendingNavigationBackward}
+     * 用的是同一个套路。</p>
+     */
+    protected Runnable back(final Runnable action) {
+        return () -> {
+            nextPageBackward = true;
+            action.run();
+        };
+    }
+
+    /** 换页：清空子组件，只把内容那一档重新走一遍。所有 {@code showXxx()} 的第一行都该调它。 */
     protected void beginPage() {
-        pageFade = 0.0;
+        if (closing) return;
+        pageDirection = nextPageBackward ? -1 : 1;
+        nextPageBackward = false;
+        page.restart();
         getChildren().clear();
+    }
+
+    /**
+     * 每帧把两条时钟各推进一次。
+     *
+     * <p>放在 {@code onRender} 而不是 {@code sheet()} 的回调里：{@code renderWidget} 的顺序是
+     * 宿主回调 → 宿主 onRender → 子组件，所以在这一格里写的值，同一帧里所有子组件都读得到。
+     * 更要紧的是<b>自己建弹窗骨架</b>的那一层（{@code LyricSearchOverlay} 不走 {@code sheet()}）
+     * 也照样在走钟 —— 退场进度没人推的话，那一层就永远回收不掉。</p>
+     */
+    @Override
+    public void onRender(double mouseX, double mouseY) {
+        super.onRender(mouseX, mouseY);
+        presentation = TransitionCurveCache.MOTION.at(clock.tick());
+        pageFade = page.tick();
     }
 
     // ──────────────────────────── 弹窗骨架 ────────────────────────────
@@ -111,11 +200,12 @@ public abstract class NcmSheet extends NCMPanel {
      * 遮罩 + 弹窗 + 圆角底 + 顶部高光，返回可以往里塞内容的弹窗面板。
      *
      * <p>点遮罩关闭；点弹窗本体不关闭（{@code setOnClickCallback} 直接吃掉）。</p>
+     *
+     * <p>这里<b>不</b>重置任何进度：进出场那一条走 {@link #clock}，翻页那一条走 {@link #page}，
+     * 都由 {@link #onRender} 推。连弹窗高度也不重置 —— 重置就等于每次点进一级都从 0 撑开，
+     * 而那正是「高度变化直接跳会咔一下」这句话要避免的东西。让它从上一版的高度补间过去。</p>
      */
     protected Panel sheet(final double preferredWidth, final DoubleSupplier preferredHeight) {
-        presentation = 0.0;
-        sheetHeight = 0.0;
-
         final RectWidget mask = new RectWidget();
         addChild(mask);
         mask.setClickable(false);
@@ -133,9 +223,6 @@ public abstract class NcmSheet extends NCMPanel {
         addChild(dialog);
         dialog.setOnClickCallback((x, y, button) -> true);
         dialog.setBeforeRenderCallback(() -> {
-            presentation = Interpolations.interpolate(presentation, 1.0, .2f);
-            // 入场进度推到 1 之前不推页面进度，两段动画叠在一起会显得毛躁。
-            pageFade = Interpolations.interpolate(pageFade, 1.0, .16f);
             double width = Math.max(1, Math.min(preferredWidth, getWidth() - 24));
             double target = Math.max(1, Math.min(preferredHeight.getAsDouble(), getHeight() - 24));
             sheetHeight = sheetHeight <= 0.0 ? target : Interpolations.interpolate(sheetHeight, target, .22f);
@@ -274,11 +361,11 @@ public abstract class NcmSheet extends NCMPanel {
         host.addChild(bg);
         bg.setRadius(12);
         bg.setBeforeRenderCallback(() -> {
-            double gate = clamp01((pageFade - slot * .07) / .55);
-            bg.reveal = Interpolations.interpolate(bg.reveal, gate, .3f);
+            bg.reveal = cardGate(slot);
             bg.setBounds(Math.max(1, host.getWidth() - (PAD + CARD_INSET) * 2), Math.max(1, height.getAsDouble()));
-            // 入场时从下方 7 像素处落上来；只在入场那几帧有位移，稳定后就是 top 本身。
-            bg.setPosition(PAD + CARD_INSET, top.getAsDouble() + (1.0 - bg.reveal) * 7.0);
+            // 入场时从下方 7 像素处落上来，再沿翻页方向偏一档；稳定后位移为零，就是 top/left 本身。
+            bg.setPosition(PAD + CARD_INSET + pageSlide() * (1.0 - bg.reveal),
+                    top.getAsDouble() + (1.0 - bg.reveal) * 7.0);
             bg.setColor(color.getAsInt());
             bg.setAlpha((float) bg.reveal);
         });
@@ -291,6 +378,39 @@ public abstract class NcmSheet extends NCMPanel {
     }
 
     /**
+     * 第 {@code slot} 张卡这一帧该有多实。
+     *
+     * <p>窗口在 {@link #pageFade} 上按序号平移，长度都一样 —— 于是这是一条<b>等间距的瀑布</b>，
+     * 而不是越往后越慢。超过 {@link #CARD_STAGGER_LIMIT} 的序号并到最后一档一起到场：
+     * 宁可少一点错峰，也不能让长列表底部的卡片永远排在窗口外面（旧的 {@code pageFade} 只会渐近
+     * 到 1，第十四张之后的卡就是这么被永久留在透明状态的，公告页当年得专门写个钳位绕开它）。</p>
+     */
+    protected double cardGate(final int slot) {
+        double from = CARD_FIRST + Math.min(slot, CARD_STAGGER_LIMIT) * CARD_STEP;
+        // 窗口右端必须钉在 1.0 以内。第 12 档的 from 是 .74，加上 .54 的行程就是 1.28，
+        // 而 pageFade 最多只走到 1.0 —— 那一档就永久停在 MOTION(.48)≈87% 不透明度、
+        // 低 0.9 像素的位置上，正是上面这段注释承诺要避免的事。以前整条瀑布只有 153ms，
+        // 没人看得见这个尾巴；时长放开到 383ms 之后它就藏不住了。
+        double to = Math.min(from + CARD_TRAVEL, 1.0);
+        return TransitionCurveCache.MOTION.at(SheetClock.window(pageFade, from, to));
+    }
+
+    /** 页眉那一档：比底板晚到场，比第一张卡更早。 */
+    protected double headerGate() {
+        return TransitionCurveCache.MOTION.at(SheetClock.window(pageFade, HEADER_FIRST, HEADER_TRAVEL));
+    }
+
+    /** 页脚那一档（说明行、主操作按钮）：整页最后落位的东西。 */
+    protected double footerGate() {
+        return TransitionCurveCache.MOTION.at(SheetClock.window(pageFade, FOOTER_FIRST, 1.0));
+    }
+
+    /** 翻页给内容那一级带来的水平位移；第一次建页时为零，只做纵向落位。 */
+    protected double pageSlide() {
+        return pageDirection * PAGE_SLIDE_DISTANCE;
+    }
+
+    /**
      * 关掉悬停生长。纯展示的卡片必须调一下：会跟着鼠标长大的卡片看着就像能点。
      *
      * <p>还有一层副作用：放大是绕着卡片中心做的，滚动区第一行的卡片一长就会越过
@@ -300,6 +420,43 @@ public abstract class NcmSheet extends NCMPanel {
         card.setClickable(false);
         card.setTransformations(null);
         return card;
+    }
+
+    // ──────────────────────────── 触发点接力 ────────────────────────────
+
+    /** 触发它的那颗按钮交出来的起点；没有就是这一层不是从某个控件点开的，接力整趟放弃。 */
+    private SheetHeroRelay.Origin heroOrigin;
+    /** 这块飞行板要落进的那张卡，由 {@link #hero(Card)} 标出来。 */
+    private Card heroPlate;
+
+    /**
+     * 认领一次接力。<b>必须在 {@code onInit()} 之前调</b> —— 那之后 {@code sheet()} 已经建好了，
+     * 起点就没有地方可去了。
+     */
+    public void claimHero(final SheetHeroRelay.Origin from) {
+        if (from != null && this.heroOrigin == null) this.heroOrigin = from;
+    }
+
+    /** 标出接力板要落进的那张卡，原样返回它，所以能直接套在 {@code card(...)} 外面写。 */
+    protected <T extends Card> T hero(final T plate) {
+        this.heroPlate = plate;
+        return plate;
+    }
+
+    /**
+     * 飞行板画在<b>所有子组件之后</b>：它起飞时要压过自己那层遮罩（那块按钮本来就在遮罩底下），
+     * 落位时又要盖在自己那张卡的底板上，直到卡片自己淡满才交棒。
+     *
+     * <p>{@code heroOrigin} 不清空：回程还得用它。进度走到 1 时 {@link SheetHeroRelay#render}
+     * 自己就不画了，所以翻页那一档（底板已经停在全亮）不会把它重新放出来。</p>
+     */
+    @Override
+    protected void afterRenderChildren(double mouseX, double mouseY) {
+        super.afterRenderChildren(mouseX, mouseY);
+        if (heroOrigin == null || heroPlate == null) return;
+        SheetHeroRelay.render(heroOrigin, heroPlate.getX(), heroPlate.getY(),
+                heroPlate.getWidth(), heroPlate.getHeight(), heroPlate.getRadius(),
+                presentation, heroPlate.reveal);
     }
 
     /** 铺满宿主的一圈描边。用来标「这一块是当前选中的」，比整块换色轻。 */
@@ -370,22 +527,27 @@ public abstract class NcmSheet extends NCMPanel {
     /** 一级页的页眉：左侧图标盘 + 标题 + 副标题。 */
     protected void header(final Panel dialog, final String glyph, final String titleText,
                           final Supplier<String> subtitleText, final IntSupplier accent) {
+        // 整组套一层只读进度的容器：页眉必须比底板早、比第一张卡更早就落位，
+        // 一件件给 alpha 是做不到「一组同时」的，而标题和它的图标盘显然该同时。
+        final Panel crown = veil(dialog, this::headerGate);
+
         final RoundedRectWidget plate = new RoundedRectWidget();
-        dialog.addChild(plate);
+        crown.addChild(plate);
         plate.setClickable(false).setRadius(11).setBeforeRenderCallback(() -> {
             plate.setBounds(34, 34);
             plate.setPosition(PAD, 18);
             plate.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND), accent.getAsInt(), .28));
         });
+        // 字形必须留在 plate 底下：那两个 17 是「34 见方的盘子的中心」，换成弹窗坐标系就跑到盘子外面去了。
         icon(plate, glyph, ICON_M, () -> 17.0, () -> 17.0, accent);
 
-        final LabelWidget title = label(dialog, () -> titleText, FontManager.pf18bold);
+        final LabelWidget title = label(crown, () -> titleText, FontManager.pf18bold);
         title.setBeforeRenderCallback(() -> {
             title.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             title.setPosition(PAD + 45, inkTop(title, 28.0));
         });
 
-        final LabelWidget subtitle = label(dialog, subtitleText, FontManager.pf12);
+        final LabelWidget subtitle = label(crown, subtitleText, FontManager.pf12);
         subtitle.setBeforeRenderCallback(() -> {
             subtitle.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             subtitle.setMaxWidth(Math.max(1, dialog.getWidth() - PAD * 2 - 45));
@@ -397,9 +559,11 @@ public abstract class NcmSheet extends NCMPanel {
     /** 二级页的页眉：返回键 + 标题 + 副标题。标题左边缘让给返回键。 */
     protected void subHeader(final Panel dialog, final Runnable back, final Supplier<String> titleText,
                              final Supplier<String> subtitleText, final IntSupplier accent) {
+        // 返回键不套进 veil：那一层是不吃点击的，把它留在弹窗上，按钮自己跟着底板淡入。
         backButton(dialog, back);
+        final Panel crown = veil(dialog, this::headerGate);
 
-        final LabelWidget title = label(dialog, titleText, FontManager.pf18bold);
+        final LabelWidget title = label(crown, titleText, FontManager.pf18bold);
         title.setBeforeRenderCallback(() -> {
             title.setColor(accent.getAsInt());
             title.setMaxWidth(Math.max(1, dialog.getWidth() - PAD - 52 - PAD));
@@ -407,7 +571,7 @@ public abstract class NcmSheet extends NCMPanel {
             title.setPosition(PAD + 40, inkTop(title, 28.0));
         });
 
-        final LabelWidget subtitle = label(dialog, subtitleText, FontManager.pf12);
+        final LabelWidget subtitle = label(crown, subtitleText, FontManager.pf12);
         subtitle.setBeforeRenderCallback(() -> {
             subtitle.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             subtitle.setMaxWidth(Math.max(1, dialog.getWidth() - PAD * 2 - 40));

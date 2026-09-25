@@ -23,11 +23,15 @@ import com.muoniumplayer.core.rendering.MusicBrandIcons;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
+import com.muoniumplayer.core.rendering.svg.AnimatedIcons;
+import com.muoniumplayer.core.rendering.svg.SmilSvg;
+import com.muoniumplayer.core.rendering.svg.SvgPlayback;
 import com.muoniumplayer.core.rendering.texture.AccountAvatar;
 import com.muoniumplayer.core.rendering.texture.DynamicTexture;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
+import com.muoniumplayer.core.rendering.ui.widgets.AnimatedSvgWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedImageWidget;
@@ -104,6 +108,16 @@ public class AccountManagerOverlay extends NcmSheet {
     /** 二维码贴图是否已就绪。没就绪时盘里放占位图标，而不是露出一片空白。 */
     private volatile boolean qrReady;
     /**
+     * 已经扫上了。盖在盘上的扫码动画要在此刻让位给成功动画 —— 两枚同时转就是两团糊在一起。
+     */
+    private volatile boolean loginSucceeded;
+    /**
+     * 盘上那枚成功动画。{@link #qrBlock} 在建这一行时把它交出来，后台线程点名起播。
+     *
+     * <p>volatile：写它的是渲染线程（建控件），读它的是登录轮询那条后台线程。</p>
+     */
+    private volatile AnimatedSvgWidget loginSuccessIcon;
+    /**
      * QQ 音乐有两条互不相干的扫码链路（QQ 的 ptlogin、微信开放平台的 OAuth）。这个选择必须显式保存，
      * 才能保证选了微信之后走的是微信那条会话、而不是误用 QQ 的二维码。
      */
@@ -143,7 +157,7 @@ public class AccountManagerOverlay extends NcmSheet {
 
     public void handleEscape() {
         if (detailPlatform != null) {
-            showOverview();
+            back(this::showOverview).run();
         } else {
             dispose();
         }
@@ -183,6 +197,8 @@ public class AccountManagerOverlay extends NcmSheet {
                 () -> mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
                         NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), self[0].hover));
         self[0] = card;
+        // 侧栏那颗账号控件报的是当前来源，于是接力板落在「你正在用的那个账号」这一行。
+        if (NeteaseMusicService.getCurrentPlatform() == platform) hero(card);
         card.setShouldOverrideMouseCursor(true);
         card.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -299,6 +315,8 @@ public class AccountManagerOverlay extends NcmSheet {
         detailPlatform = platform;
         requestRunning = false;
         qrReady = false;
+        // 成功动画的旗标也要跟着清：不清的话翻回来重看这张码时，盘上还压着一面对勾。
+        loginSucceeded = false;
 
         final boolean loggedIn = NeteaseMusicService.isLoggedIn(platform);
         // 汽水的 Passport 取码/轮询要 a_bogus / msToken，只有官方安全组件在浏览器渲染进程里
@@ -427,14 +445,6 @@ public class AccountManagerOverlay extends NcmSheet {
         row.addChild(board);
         board.setClickable(false);
         board.setRadius(14);
-        board.setBeforeRenderCallback(() -> {
-            double gate = clamp01((pageFade - slot * .07) / .55);
-            board.setBounds(QR_PLATE, QR_PLATE);
-            board.setPosition(row.getWidth() * .5 - QR_PLATE * .5, 8 + (1.0 - gate) * 7.0);
-            // 二维码必须画在浅底上：扫码靠的是明暗对比，深色主题下铺主题底色会扫不出来。
-            board.setColor(0xF6F7F9);
-            board.setAlpha((float) gate);
-        });
 
         final RoundedImageWidget image = new RoundedImageWidget(
                 () -> qrReady ? getQrLocation(platform) : null, 0, 0, QR_PLATE - 16, QR_PLATE - 16);
@@ -445,6 +455,41 @@ public class AccountManagerOverlay extends NcmSheet {
         image.setBeforeRenderCallback(() -> {
             image.setBounds(QR_PLATE - 16, QR_PLATE - 16);
             image.setPosition(8, 8);
+        });
+
+        // 码到手、等手机扫的这一段，盘上盖一层扫码动画：红色取景框 + 一条走完整轮的扫描带。
+        // 原来这里什么都不盖，一张静止的码摆七八秒，用户分不清是还在等扫码还是已经超时。
+        // 次序有意义：同层控件按加入顺序画，所以这两枚必须在码图<b>之后</b> addChild，
+        // 否则一张不透明的码图正好把整层动画糊在下面。
+        final AnimatedSvgWidget scan = new AnimatedSvgWidget(AnimatedIcons.qrScan());
+        board.addChild(scan);
+        scan.setBeforeRenderCallback(() -> {
+            scan.setBounds(QR_PLATE, QR_PLATE);
+            scan.setPosition(0, 0);
+        });
+
+        // 登录成功那一枚只播一轮，走完一整轮才换页 —— 见 startLoginSuccessAnimation()。
+        final AnimatedSvgWidget success = new AnimatedSvgWidget(AnimatedIcons.loginSafe());
+        board.addChild(success);
+        success.setBeforeRenderCallback(() -> {
+            success.setBounds(QR_PLATE, QR_PLATE);
+            success.setPosition(0, 0);
+        });
+        this.loginSuccessIcon = success;
+
+        // 两枚动画的显隐统一写在 board 这一格里：board 永远可见，这一格每帧都跑。
+        // 不能让控件自己 setHidden 自己 —— renderWidget 在 isHidden() 时连
+        // beforeRenderCallback 都不执行，藏下去就再也没机会翻回来。
+        board.setBeforeRenderCallback(() -> {
+            double gate = cardGate(slot);
+            board.setBounds(QR_PLATE, QR_PLATE);
+            board.setPosition(row.getWidth() * .5 - QR_PLATE * .5 + pageSlide() * (1.0 - gate),
+                    8 + (1.0 - gate) * 7.0);
+            // 二维码必须画在浅底上：扫码靠的是明暗对比，深色主题下铺主题底色会扫不出来。
+            board.setColor(0xF6F7F9);
+            board.setAlpha((float) gate);
+            scan.setHidden(!qrReady || loginSucceeded);
+            success.setHidden(!loginSucceeded);
         });
 
         // 码还没到手时盘里不能是一片空白：一枚随状态变的图标加一行说明，用户才分得清
@@ -509,8 +554,12 @@ public class AccountManagerOverlay extends NcmSheet {
      * 「这是二选一」，而两颗独立按钮看上去像两个可以各自开关的选项。</p>
      */
     private void channelSegment(final Panel row) {
-        segmentChooser(row, () -> qqLoginChannel == QQLoginChannel.WECHAT ? 1 : 0,
-                MusicPlatform.QQ.getBrandColor(), 0x4CAF72,
+        final SegmentControl.Spec spec = accountRowSpec(row);
+        SegmentControl.attach(row, () -> {
+            spec.width = Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2);
+            return spec;
+        }, () -> qqLoginChannel == QQLoginChannel.WECHAT ? 1 : 0,
+                MusicPlatform.QQ::getBrandColor, () -> 0x4CAF72,
                 new String[]{FontelloIcons.QQ, FontelloIcons.WECHAT},
                 new String[]{"QQ 扫码", "微信登录"},
                 index -> {
@@ -534,8 +583,12 @@ public class AccountManagerOverlay extends NcmSheet {
      * 留着旧码的话，用户点了概念版却扫到一张标准版的码，是这条入口最容易踩的坑。</p>
      */
     private void profileSegment(final Panel row) {
-        segmentChooser(row, () -> kuGouConceptLogin ? 1 : 0,
-                MusicPlatform.KUGOU.getBrandColor(), MusicPlatform.KUGOU.getBrandColor(),
+        final SegmentControl.Spec spec = accountRowSpec(row);
+        SegmentControl.attach(row, () -> {
+            spec.width = Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2);
+            return spec;
+        }, () -> kuGouConceptLogin ? 1 : 0,
+                MusicPlatform.KUGOU::getBrandColor, MusicPlatform.KUGOU::getBrandColor,
                 new String[]{"", ""}, KUGOU_VARIANTS,
                 index -> {
                     boolean concept = index == 1;
@@ -544,6 +597,16 @@ public class AccountManagerOverlay extends NcmSheet {
                     restartKuGouQr();
                     return true;
                 });
+    }
+
+    /** 账号页里这两格共用同一套摆位：整行宽、34 高、圆角 11，左右各让出一档卡片内缩。 */
+    private static SegmentControl.Spec accountRowSpec(final Panel row) {
+        final SegmentControl.Spec spec = new SegmentControl.Spec();
+        spec.x = PAD + CARD_INSET;
+        spec.y = 8;
+        spec.height = 34;
+        spec.radius = 11;
+        return spec;
     }
 
     /**
@@ -566,82 +629,6 @@ public class AccountManagerOverlay extends NcmSheet {
         startQrLogin(MusicPlatform.KUGOU, token);
     }
 
-    /**
-     * 二段选择器：一条轨道 + 一颗滑动的滑块 + 两个透明命中区。
-     *
-     * <p>滑块位置每帧从 {@code selected} 读，所以外部那个 volatile 字段一改，滑块就自己滑过去，
-     * 不需要谁来通知；文字与图标的颜色跟着同一个插值走，落点才不会突然换个色。</p>
-     *
-     * @param onSelect 点了第几半（0 左、1 右）；返回 {@code false} 表示这一次点击不作数
-     */
-    private void segmentChooser(final Panel row, final IntSupplier selected, final int leftColor,
-                                final int rightColor, final String[] glyphs, final String[] texts,
-                                final IntPredicate onSelect) {
-        final RoundedRectWidget track = new RoundedRectWidget();
-        row.addChild(track);
-        track.setClickable(false);
-        track.setRadius(11);
-        track.setBeforeRenderCallback(() -> {
-            track.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 34);
-            track.setPosition(PAD + CARD_INSET, 8);
-            track.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
-        });
-
-        final double[] slide = {selected.getAsInt() == 1 ? 1.0 : 0.0};
-        final RoundedRectWidget knob = new RoundedRectWidget();
-        track.addChild(knob);
-        knob.setClickable(false);
-        knob.setRadius(9);
-        knob.setBeforeRenderCallback(() -> {
-            slide[0] = Interpolations.interpolate(slide[0],
-                    selected.getAsInt() == 1 ? 1.0 : 0.0, .26f);
-            double half = Math.max(1, (track.getWidth() - 8) * .5);
-            knob.setBounds(half, Math.max(1, track.getHeight() - 8));
-            knob.setPosition(4 + half * slide[0], 4);
-            // 颜色跟着滑块一起走：落点才不会突然换个色。
-            knob.setColor(mix(leftColor, rightColor, slide[0]));
-        });
-
-        segmentHalf(track, glyphs[0], texts[0], 0, slide, onSelect);
-        segmentHalf(track, glyphs[1], texts[1], 1, slide, onSelect);
-    }
-
-    private void segmentHalf(final RoundedRectWidget track, final String mark, final String text,
-                             final int index, final double[] slide, final IntPredicate onSelect) {
-        // [0] 图标左边缘、[1] 文字左边缘，都是相对轨道自身的坐标。
-        final double[] slot = new double[2];
-        final IntSupplier ink = () -> mix(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), 0xFFFFFF,
-                index == 0 ? 1.0 - slide[0] : slide[0]);
-
-        // 命中区单独一层且完全透明：图标与文字必须挂在轨道上，挂在这一层里会被它的 alpha 乘掉。
-        final RoundedRectWidget hit = new RoundedRectWidget();
-        track.addChild(hit);
-        hit.setRadius(9);
-        hit.setShouldOverrideMouseCursor(true);
-        hit.setOnClickCallback((x, y, button) -> button == 0 && onSelect.test(index));
-        hit.setBeforeRenderCallback(() -> {
-            double half = Math.max(1, (track.getWidth() - 8) * .5);
-            hit.setBounds(half, Math.max(1, track.getHeight() - 8));
-            hit.setPosition(4 + half * index, 4);
-            hit.setAlpha(0f);
-            double glyphWidth = FontManager.fontello16.getStringWidthD(mark);
-            double total = glyphWidth + 6.0 + FontManager.pf12bold.getStringWidthD(text);
-            double left = 4 + half * index + (half - total) * .5;
-            slot[0] = left;
-            slot[1] = left + glyphWidth + 6.0;
-        });
-
-        final LabelWidget markLabel = label(track, mark, FontManager.fontello16);
-        markLabel.setBeforeRenderCallback(() -> {
-            markLabel.setColor(ink.getAsInt());
-            markLabel.setPosition(slot[0], inkTop(markLabel, track.getHeight() * .5));
-        });
-        final LabelWidget caption = label(track, text, FontManager.pf12bold);
-        caption.setBeforeRenderCallback(() -> {
-            caption.setColor(ink.getAsInt());
-            caption.setPosition(slot[1], inkTop(caption, track.getHeight() * .5));
-        });
-    }
     // ════════════════════════════ 页脚按钮 ════════════════════════════
 
     private void primaryAction(final Panel dialog, final MusicPlatform platform,
@@ -757,7 +744,7 @@ public class AccountManagerOverlay extends NcmSheet {
         beginPage();
 
         final Panel dialog = sheet(452, () -> 200.0);
-        subHeader(dialog, () -> showDetail(MusicPlatform.NETEASE), () -> "Cookie 登录",
+        subHeader(dialog, back(() -> showDetail(MusicPlatform.NETEASE)), () -> "Cookie 登录",
                 () -> "仅本地保存 · 校验失败不会覆盖当前登录状态",
                 MusicPlatform.NETEASE::getBrandColor);
 
@@ -834,7 +821,7 @@ public class AccountManagerOverlay extends NcmSheet {
                     requestRunning = false;
                     if (!isCurrent(MusicPlatform.NETEASE, token)) return;
                     NCMScreen.getInstance().markDirty();
-                    showOverview();
+                    back(this::showOverview).run();
                     maybePromptListeningHistorySync();
                 });
             } catch (InterruptedException ignored) {
@@ -881,7 +868,7 @@ public class AccountManagerOverlay extends NcmSheet {
         beginPage();
 
         final Panel dialog = sheet(452, () -> 200.0);
-        subHeader(dialog, () -> showDetail(MusicPlatform.QISHUI), () -> "Cookie 登录",
+        subHeader(dialog, back(() -> showDetail(MusicPlatform.QISHUI)), () -> "Cookie 登录",
                 () -> "需要外部工具获取 Cookie：网盘 / QQ群下载 · 仅本地保存",
                 MusicPlatform.QISHUI::getBrandColor);
 
@@ -1031,7 +1018,7 @@ public class AccountManagerOverlay extends NcmSheet {
         beginPage();
 
         final Panel dialog = sheet(452, () -> 262.0);
-        subHeader(dialog, () -> showDetail(MusicPlatform.KUGOU), () -> "Token 登录",
+        subHeader(dialog, back(() -> showDetail(MusicPlatform.KUGOU)), () -> "Token 登录",
                 () -> "仅本地保存 · 校验失败不会覆盖当前登录状态",
                 MusicPlatform.KUGOU::getBrandColor);
 
@@ -1168,7 +1155,7 @@ public class AccountManagerOverlay extends NcmSheet {
                     return;
                 }
                 NCMScreen.getInstance().markDirty();
-                showDetail(MusicPlatform.KUGOU);
+                back(() -> showDetail(MusicPlatform.KUGOU)).run();
             });
         });
     }
@@ -1211,7 +1198,7 @@ public class AccountManagerOverlay extends NcmSheet {
         final double listHeight = accounts.isEmpty()
                 ? 84.0 : Math.min(accounts.size() * SAVED_ROW, 4 * SAVED_ROW);
         final Panel dialog = sheet(468, () -> HEADER_H + LEAD + listHeight + 84.0);
-        subHeader(dialog, () -> showDetail(MusicPlatform.NETEASE), () -> "已保存账号",
+        subHeader(dialog, back(() -> showDetail(MusicPlatform.NETEASE)), () -> "已保存账号",
                 () -> "本地切换 · 最多保存 8 个",
                 MusicPlatform.NETEASE::getBrandColor);
 
@@ -1388,7 +1375,7 @@ public class AccountManagerOverlay extends NcmSheet {
                 }
                 NCMScreen.getInstance().markDirty();
                 // 成功回上一级（网易云账号页）：这一页的任务已经完成了。
-                showDetail(MusicPlatform.NETEASE);
+                back(() -> showDetail(MusicPlatform.NETEASE)).run();
             });
         });
     }
@@ -1420,6 +1407,9 @@ public class AccountManagerOverlay extends NcmSheet {
         if (requestRunning || closing || detailPlatform != platform || token != pageGeneration.get()) return;
         requestRunning = true;
         qrReady = false;
+        // 上一轮的成功动画要收回去：不收回的话重新取码时盘上还压着一面对勾。
+        // 两枚动画的显隐都由 board 那一格按这两个标志摆，这里只改标志。
+        loginSucceeded = false;
         publishQrStatus(platform, token, "正在获取登录二维码…", 0);
 
         // 微信是一条独立的会话：取码与轮询都必须成对地走微信那两个方法。在这里一次性定下来，
@@ -1469,9 +1459,9 @@ public class AccountManagerOverlay extends NcmSheet {
                         requestRunning = false;
                         publishQrStatus(platform, token, addAccountByQr ? "扫码成功，账号已添加" : "登录成功", 1);
                         DownloadDynamicIsland.showNetworkConnectionSuccess(platform.getDisplayName() + "账号");
-                        // 让成功那一行字停留一下再换页。立刻跳走的话用户只看到界面闪了一下，
+                        // 让成功动画整轮走完再换页。亮一下就跳走的话用户只看到界面闪了一下，
                         // 分不清是登上了还是被关掉了。
-                        Thread.sleep(SUCCESS_HOLD_MILLIS);
+                        Thread.sleep(startLoginSuccessAnimation());
                         MultiThreadingUtil.runOnMainThread(() -> {
                             if (!isCurrent(platform, token)) return;
                             NCMScreen.getInstance().markDirty();
@@ -1532,6 +1522,33 @@ public class AccountManagerOverlay extends NcmSheet {
             if (hint != null && !hint.isEmpty()) return hint;
         }
         return "等待扫码 · 正在持续检查登录状态…";
+    }
+
+    /**
+     * 点名让盘上的成功动画开播，并返回<b>它走完一整轮还要多少毫秒</b>。
+     *
+     * <p>登录轮询跑在后台线程，而控件只能由渲染线程动，所以这里把「起播」投回主线程，
+     * 自己只负责算出要等多久。时间轴走墙上时钟（见 {@link SvgPlayback}），因此这个等待
+     * 和帧率无关 —— 界面卡一下、掉几帧，都不会让它提前跳页，也不会让它拖长。</p>
+     *
+     * <p>素材读不到时退回原来那个固定停留时长：换页这件事不该因为一枚图标而卡住。</p>
+     */
+    private long startLoginSuccessAnimation() {
+        final SmilSvg icon = AnimatedIcons.loginSafe();
+        if (icon == null) {
+            return SUCCESS_HOLD_MILLIS;
+        }
+        final SvgPlayback playback = SvgPlayback.once(icon);
+        MultiThreadingUtil.runOnMainThread(() -> {
+            // 只换时钟。显隐不用在这儿管：board 那一格每帧按 loginSucceeded 摆这两枚动画。
+            loginSucceeded = true;
+            AnimatedSvgWidget widget = loginSuccessIcon;
+            if (widget != null) {
+                widget.setPlayback(playback);
+            }
+        });
+        // 等的是「这一轮实际要播多久」，不是整轮时长：素材带停住相位时两者不一样。
+        return Math.round(playback.span() * 1000.0);
     }
 
     private void publishQrStatus(MusicPlatform platform, long token, String text, int tone) {

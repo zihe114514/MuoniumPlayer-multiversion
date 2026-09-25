@@ -12,6 +12,7 @@ import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
+import com.muoniumplayer.core.rendering.svg.AnimatedIcons;
 import com.muoniumplayer.core.rendering.texture.Textures;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
@@ -19,6 +20,7 @@ import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.*;
 import com.muoniumplayer.core.screens.ncm.CoverflowOverlay;
 import com.muoniumplayer.core.screens.ncm.NCMPanel;
+import com.muoniumplayer.core.screens.ncm.PlaylistCoverHero;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.core.utils.Location;
@@ -47,8 +49,37 @@ public class PlaylistPanel extends NCMPanel {
         this.showBackButton = showBackButton;
     }
 
-    private static final int MUSIC_ENTRANCE_STAGGER_LIMIT = 28;
-    private static final long MUSIC_ENTRANCE_STAGGER_MILLIS = 16L;
+    /**
+     * 曲目行的进场错峰号。
+     *
+     * <p>号是在行<b>第一次被渲染</b>时领的，不是建页时发好的：{@code ScrollPanel} 不渲染视口外的行，
+     * 建页就发号等于只有首屏那几行有动画，往下滚什么也看不见。这里只负责每帧把头一批重新计数，
+     * 见 {@link PanelItemEntrance.RevealQueue}。</p>
+     */
+    private final PanelItemEntrance.RevealQueue revealQueue = new PanelItemEntrance.RevealQueue();
+
+    /** 左上角那张大封面。返回时要问它现在在屏幕上的哪儿，好把接力交回主页卡片。 */
+    private RoundedImageWidget heroCover;
+
+    @Override
+    public void onRender(double mouseX, double mouseY) {
+        super.onRender(mouseX, mouseY);
+        this.revealQueue.beginFrame();
+    }
+
+    /**
+     * 返回时把这张大封面交给接力：起点就是它此刻在屏幕上的矩形，落点是主页里同一个歌单的那张卡片。
+     *
+     * <p>只在目标确实是主页时调用 —— 主页可能把这张卡片滚在视口外，那样没人认领落点，
+     * {@code PlaylistCoverHero} 会在第一帧自己收手，退化成纯交叉位移。</p>
+     */
+    public void handCoverBack() {
+        if (this.heroCover == null) return;
+        // 视口传 null：详情页这张大封面直接挂在面板上，不在任何滚动容器里，永远全须全尾。
+        PlaylistCoverHero.begin(this, null, this.playList, this.playList.getCoverLocation(),
+                this.heroCover.getX(), this.heroCover.getY(),
+                this.heroCover.getWidth(), this.heroCover.getRadius(), null);
+    }
 
     private TextFieldWidget tfSearch;
     private double tfOpenAnimation = 20;
@@ -95,9 +126,17 @@ public class PlaylistPanel extends NCMPanel {
             cover.setLinearFilter(true);
 
             this.addChild(cover);
+            this.heroCover = cover;
             this.loadCover();
 
-            cover.setBeforeRenderCallback(() -> cover.setRadius(4));
+            cover.setBeforeRenderCallback(() -> {
+                cover.setRadius(4);
+                // 每帧回报落点：接力封面要朝这里飞，而这一帧封面本身让位（纹理供给换成 null，
+                // 控件照常跑回调），所以屏幕上任何时刻只有一张封面。
+                PlaylistCoverHero.setTarget(this, this.playList, cover.getX(), cover.getY(),
+                        cover.getWidth(), cover.getRadius(), null);
+            });
+            cover.setLocImg(() -> PlaylistCoverHero.coversYield(this) ? null : this.playList.getCoverLocation());
 
 //        LabelWidget lblPlaylistName = new LabelWidget(playList.name, FontManager.pf);
             RoundedButtonWidget btnPlay = new RoundedButtonWidget("播放歌单", FontManager.pf16bold);
@@ -354,6 +393,11 @@ public class PlaylistPanel extends NCMPanel {
         // 将加载反馈保持在被裁剪的歌曲列表上方。该控件会在
         // 异步请求完成后自行淡出。
         PanelLoadingWidget loadingWidget = new PanelLoadingWidget("正在加载曲目…");
+        // 只把搜索结果页换成 search.svg 那枚取景框动画。同一份控件也服务歌单详情、主页、发现页
+        // 与导航等待遮罩，那边等的是"一批曲目"而不是"一次搜索"，换成放大镜是在骗人。
+        if (playList.isSearchResultList()) {
+            loadingWidget.setAnimatedIcon(AnimatedIcons.search(), true);
+        }
         this.addChild(loadingWidget);
         loadingWidget
                 .setClickable(false)
@@ -380,14 +424,11 @@ public class PlaylistPanel extends NCMPanel {
                 }
             }
 
-            // 在所有控件构建完成后再开始入场动画。这样
-            // 可避免超大播放列表把淡入时间耗费在构建上。
-            long entranceStartedAt = System.currentTimeMillis();
-            for (int index = 0; index < musicWidgets.size(); index++) {
-                ((MusicWidget) musicWidgets.get(index)).setEntranceAnimation(
-                        entranceStartedAt,
-                        Math.min(index, MUSIC_ENTRANCE_STAGGER_LIMIT) * MUSIC_ENTRANCE_STAGGER_MILLIS
-                );
+            // 建完再挂进场：超大歌单不该把淡入时间耗在构建上。挂上的是发号器而不是起始时刻 ——
+            // 每一行在自己第一次被渲染（= 刚进视口）的那一帧才领号。
+            this.revealQueue.restart();
+            for (AbstractWidget<?> musicWidget : musicWidgets) {
+                ((MusicWidget) musicWidget).setEntranceAnimation(this.revealQueue);
             }
             musicsPanel.addChild(musicWidgets);
             musicsLoading = false;

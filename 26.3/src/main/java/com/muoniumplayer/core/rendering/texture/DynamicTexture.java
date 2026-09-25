@@ -1,0 +1,235 @@
+package com.muoniumplayer.core.rendering.texture;
+
+import lombok.Getter;
+import lombok.Setter;
+import lombok.SneakyThrows;
+import com.muoniumplayer.compat.gl.GL11;
+import org.lwjgl.opengl.GL12;
+import com.muoniumplayer.compat.gl.GL14;
+import com.muoniumplayer.core.MuoniumPlayerExtension;
+import com.muoniumplayer.core.rendering.TextureUtil;
+import com.muoniumplayer.core.utils.Location;
+import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
+
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.IntBuffer;
+
+@Getter
+public class DynamicTexture extends AbstractTexture {
+    public int[] dynamicTextureData;
+
+    /**
+     * 此图标的宽度（像素）
+     */
+    protected int width;
+
+    /**
+     * 此图标的高度（像素）
+     */
+    protected int height;
+
+    @Getter
+    @Setter
+    protected boolean clearable = true;
+
+    public DynamicTexture(Location img) {
+        this(readImage(img.getResourceStream()));
+    }
+
+    public DynamicTexture(BufferedImage bufferedImage) {
+        this(bufferedImage.getWidth(), bufferedImage.getHeight(), bufferedImage.getType());
+        bufferedImage.getRGB(0, 0, bufferedImage.getWidth(), bufferedImage.getHeight(), this.dynamicTextureData, 0, bufferedImage.getWidth());
+        this.updateDynamicTexture();
+    }
+
+    public DynamicTexture(BufferedImage bufferedImage, boolean clearable) {
+        this(bufferedImage.getWidth(), bufferedImage.getHeight(), bufferedImage.getType());
+        bufferedImage.getRGB(0, 0, bufferedImage.getWidth(), bufferedImage.getHeight(), this.dynamicTextureData, 0, bufferedImage.getWidth());
+        this.clearable = clearable;
+        this.updateDynamicTexture();
+    }
+
+    public DynamicTexture(BufferedImage bufferedImage, boolean clearable, boolean linear) {
+        this(bufferedImage.getWidth(), bufferedImage.getHeight(), bufferedImage.getType());
+        bufferedImage.getRGB(0, 0, bufferedImage.getWidth(), bufferedImage.getHeight(), this.dynamicTextureData, 0, bufferedImage.getWidth());
+        this.clearable = clearable;
+        this.linear = linear;
+        this.updateDynamicTexture();
+    }
+
+    public DynamicTexture(int textureWidth, int textureHeight) {
+        this(textureWidth, textureHeight, BufferedImage.TYPE_INT_ARGB);
+    }
+
+    public DynamicTexture(int textureWidth, int textureHeight, int imgType) {
+        this.width = textureWidth;
+        this.height = textureHeight;
+        this.dynamicTextureData = new int[textureWidth * textureHeight];
+
+        this.allocateTexture(textureWidth, textureHeight);
+    }
+
+    private void extractAlphaData(BufferedImage img) {
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int pixel = img.getRGB(x, y);
+                int alpha = (pixel >> 24) & 0xFF;
+                dynamicTextureData[y * width + x] = (byte) alpha;
+            }
+        }
+    }
+
+    public void allocateTexture(int textureWidth, int textureHeight) {
+
+        if (!MuoniumPlayerExtension.isCallingFromMainThread()) {
+            MultiThreadingUtil.runOnMainThreadBlocking(() -> {
+                this.allocateTextureImpl(0, textureWidth, textureHeight);
+                return null;
+            });
+            return;
+        }
+
+        this.allocateTextureImpl(0, textureWidth, textureHeight);
+    }
+
+    public void allocateTextureImpl(int levels, int width, int height) {
+
+        this.deleteTexture();
+        this.bindTexture();
+        // 真实纹理尺寸登记给 Skia，理由见 TextureUtil.allocateTextureImpl。
+        // 必须在 bindTexture 之后：getGlTextureId() 会在需要时先生成纹理名。
+        com.muoniumplayer.render.skija.SkijaImages.rememberSize(this.getGlTextureId(), width, height);
+
+        if (levels >= 0) {
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL12.GL_TEXTURE_MAX_LEVEL, levels);
+            GL11.glTexParameterf(GL11.GL_TEXTURE_2D, GL12.GL_TEXTURE_MIN_LOD, 0.0F);
+            GL11.glTexParameterf(GL11.GL_TEXTURE_2D, GL12.GL_TEXTURE_MAX_LOD, (float) levels);
+            GL11.glTexParameterf(GL11.GL_TEXTURE_2D, GL14.GL_TEXTURE_LOD_BIAS, 0.0F);
+        }
+
+        for (int i = 0; i <= levels; ++i) {
+            GL11.glTexImage2D(GL11.GL_TEXTURE_2D, i, GL11.GL_RGBA, width >> i, height >> i, 0, GL12.GL_BGRA, GL12.GL_UNSIGNED_INT_8_8_8_8_REV, (IntBuffer) null);
+        }
+
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+
+    }
+
+    @Getter
+    @Setter
+    protected boolean linear = false;
+
+    @SneakyThrows
+    public void updateDynamicTexture() {
+
+        if (!MuoniumPlayerExtension.isCallingFromMainThread()) {
+            MultiThreadingUtil.runOnMainThreadBlocking(() -> {
+                this.updateDynamicTexture();
+                return null;
+            });
+            return;
+        }
+
+        this.bindTexture();
+
+        TextureUtil.setTextureBlurMipmap(isLinear(), false);
+        TextureUtil.setTextureClamped(false);
+
+        int maxBufferSize = 2097152;
+        int bytesPerPixel = 4;
+        int maxPixels = maxBufferSize / bytesPerPixel;
+        int chunkHeight = Math.max(1, Math.min(maxPixels / width, height));
+
+        int optimalBufferSize = width * chunkHeight * bytesPerPixel;
+
+        ByteBuffer dataBuffer = ByteBuffer.allocateDirect(optimalBufferSize);
+
+        GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 4);
+
+        try {
+            int[] aint = this.dynamicTextureData;
+
+            for (int l = 0; l < height; l += chunkHeight) {
+                int j = Math.min(chunkHeight, height - l);
+                int k = l * width;
+                int pixelCount = width * j;
+
+                dataBuffer.clear();
+
+                for (int i = 0; i < pixelCount; i++) {
+                    int pixel = aint[k + i];
+                    dataBuffer.put((byte) (pixel & 0xFF));
+                    dataBuffer.put((byte) ((pixel >> 8) & 0xFF));
+                    dataBuffer.put((byte) ((pixel >> 16) & 0xFF));
+                    dataBuffer.put((byte) ((pixel >> 24) & 0xFF));
+                }
+
+                dataBuffer.flip();
+
+                GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, l, width, j,
+                        GL12.GL_BGRA, GL11.GL_UNSIGNED_BYTE, dataBuffer);
+            }
+        } finally {
+        }
+
+        if (this.clearable)
+            this.dynamicTextureData = null;
+
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+    }
+
+    public void clear() {
+        this.dynamicTextureData = null;
+    }
+
+    public int[] getTextureData() {
+        return this.dynamicTextureData;
+    }
+
+    @SneakyThrows
+    public static BufferedImage readImage(InputStream is) {
+        byte[] bytes = is.readAllBytes();
+        BufferedImage decoded = ImageIO.read(new java.io.ByteArrayInputStream(bytes));
+        // ImageIO 不认 webp（咪咕封面、部分自定义源给的就是 webp），退回进程里已带的 skia。
+        return decoded != null ? decoded : decodeWithSkia(bytes);
+    }
+
+    /** 用 skija 兜底解码。native 不可用或数据损坏都当作「没有图」返回 null。 */
+    private static BufferedImage decodeWithSkia(byte[] bytes) {
+        if (bytes.length == 0) return null;
+        // 必须先过 SkijaNatives：仓里统一的加载入口带失败兜底（确定性解压路径），
+        // native 没起来时这里返回 false，我们按「没有图」处理，而不是去碰 skija 的类。
+        if (!com.muoniumplayer.render.skija.SkijaNatives.ensureLoaded()) return null;
+        try (io.github.humbleui.skija.Image image = io.github.humbleui.skija.Image.makeFromEncoded(bytes)) {
+            int width = image.getImageInfo().getWidth();
+            int height = image.getImageInfo().getHeight();
+            if (width <= 0 || height <= 0) return null;
+            io.github.humbleui.skija.ImageInfo target =
+                    new io.github.humbleui.skija.ImageInfo(width, height,
+                            io.github.humbleui.skija.ColorType.RGBA_8888,
+                            io.github.humbleui.skija.ColorAlphaType.UNPREMUL);
+            try (io.github.humbleui.skija.Bitmap bitmap = new io.github.humbleui.skija.Bitmap()) {
+                if (!bitmap.allocPixels(target) || !image.readPixels(bitmap)) return null;
+                byte[] pixels = bitmap.readPixels();
+                int rowPixels = bitmap.getRowBytesAsPixels();
+                BufferedImage out = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+                for (int y = 0; y < height; y++) {
+                    for (int x = 0; x < width; x++) {
+                        int i = (y * rowPixels + x) * 4;
+                        out.setRGB(x, y, ((pixels[i + 3] & 0xFF) << 24)
+                                | ((pixels[i] & 0xFF) << 16)
+                                | ((pixels[i + 1] & 0xFF) << 8)
+                                | (pixels[i + 2] & 0xFF));
+                    }
+                }
+                return out;
+            }
+        } catch (Throwable unavailable) {
+            return null;
+        }
+    }
+}

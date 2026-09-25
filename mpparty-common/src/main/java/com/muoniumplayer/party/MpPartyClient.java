@@ -4,7 +4,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.muoniumplayer.MuoniumPlayerClient;
-import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
+import com.muoniumplayer.core.ncm.music.CrossSourceSwitcher;
+import com.muoniumplayer.core.ncm.music.PlatformAccess;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.ListenTogetherSettings;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
@@ -701,9 +702,21 @@ public final class MpPartyClient {
     /**
      * 填入这台客户端的自报信息。
      *
-     * <p>VIP 的判据是「这个平台的会话在」（{@link NeteaseMusicService#isLoggedIn}）—— 客户端能
-     * 给出的最可靠信号就是它；真要确认「能不能解析出完整音频」得发一次请求才知道，不可能为了填
-     * 一个字段去挨个平台试一遍。
+     * <p><b>三档身份分开报，不再混为一谈。</b>以前只有一个 {@code vip}，填的其实是登录态，
+     * 于是「登录了但不是会员」的成员会被服务端当成最可能答上的人问到，而他答出来必然是试听片段
+     * —— 整房的求助窗口白等一轮。现在：
+     * <ul>
+     *   <li>{@code vip} —— 该平台会话在。语义与老版本一致，服务端仍拿它做兜底；</li>
+     *   <li>{@code member} —— 该平台<b>真会员</b>。查不到档位的平台（QQ 的上游就没给会员字段、
+     *       YouTube Music 同理）宁可两边都不出现，也不谎报一个猜出来的值；</li>
+     *   <li>{@code resolvable} —— 本机现在能给出<b>完整版</b>音频的平台，含「这个平台本来就不卖
+     *       会员」与「靠 LX 脚本能解」两路，判据与换源闸门同一份代码；</li>
+     *   <li>{@code viaLx} —— {@code resolvable} 的子集：只有靠本机导入的 LX 自定义源才解得出的平台。</li>
+     * </ul>
+     *
+     * <p>取用<b>零网络</b>：本方法在房间心跳（每 5 秒）里跑，任何一次查询都不许发请求，
+     * 会员档位读的都是登录时就落在内存/凭证里的快照。LX 的渠道键（wy/tx/kg/kw/mg）在这里
+     * 已经翻成房间认识的平台令牌 —— 自定义源是本机的私事，服务端不必认识那套词表。
      *
      * <p><b>只报平台名，不报任何凭据。</b>cookie 一律留在本机 —— 需要时是本机解析出一条带签名的
      * 临时直链再上传（{@code url_supply}），账号本身永远不出这台机器。
@@ -718,15 +731,26 @@ public final class MpPartyClient {
         m.addProperty("modName", MpProto.CLIENT_NAME);
         m.addProperty("modVersion", MuoniumPlayerClient.MOD_VERSION + " / MC " + MuoniumPlayerClient.MC_VERSION);
         m.addProperty("contributeVip", contributeVip());
+        m.addProperty("contributeLx", contributeLx());
         JsonArray vip = new JsonArray();
+        JsonArray member = new JsonArray();
+        JsonArray resolvable = new JsonArray();
+        JsonArray viaLx = new JsonArray();
         for (MusicPlatform platform : MusicPlatform.values()) {
             try {
-                if (NeteaseMusicService.isLoggedIn(platform)) vip.add(sourceOf(platform));
+                String token = MpTrack.token(platform);
+                if (PlatformAccess.loggedIn(platform)) vip.add(token);
+                if (Boolean.TRUE.equals(PlatformAccess.memberTier(platform))) member.add(token);
+                if (CrossSourceSwitcher.hasVipAccess(platform)) resolvable.add(token);
+                if (CrossSourceSwitcher.lxCovers(platform)) viaLx.add(token);
             } catch (Throwable ignored) {
-                // 某个平台的登录态查询抛了，不该拖垮心跳。
+                // 某个平台的会话状态查询抛了，不该拖垮整条心跳。
             }
         }
         m.add("vip", vip);
+        m.add("member", member);
+        m.add("resolvable", resolvable);
+        m.add("viaLx", viaLx);
         // 房间交接计划的分析能力。服务端据此指派「谁来算这一首的交接点」——
         // 优先点歌人，其次房主，再次房间里任何一台自报能算的。
         //
@@ -758,12 +782,29 @@ public final class MpPartyClient {
         }
     }
 
-    /** 平台 → 协议里的 source 令牌。必须和服务端认识的那套一致。 */
+    /**
+     * 是否愿意让本机<b>用 LX 自定义源</b>替房间解歌（与贡献本家会员互相独立）。
+     *
+     * <p>关掉它只影响「替别人答」这一路：本机自己播放时照常使用自定义源。
+     */
+    public static boolean contributeLx() {
+        try {
+            return ListenTogetherSettings.isPartyContributeLx();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * 平台 → 协议里的 source 令牌。必须和服务端认识的那套一致。
+     *
+     * <p>以前这里只认 QQ / 酷狗 / GD，其余一律落到 {@code netease} —— 于是 B 站、汽水、YouTube
+     * 的登录态会被报成「我是网易云的人」，服务端的分层求助就把本该问别人家的歌问到网易云贡献者
+     * 头上。现在直接复用 {@link MpTrack#token}：它就是曲目上报用的那套令牌，两处必须同源，
+     * 否则「上报我能解什么」和「这条曲目是哪个平台」会各说各话。
+     */
     private static String sourceOf(MusicPlatform platform) {
-        if (platform == MusicPlatform.QQ) return MpProto.SOURCE_QQ;
-        if (platform == MusicPlatform.KUGOU) return MpProto.SOURCE_KUGOU;
-        if (platform == MusicPlatform.GD) return MpProto.SOURCE_GD;
-        return MpProto.SOURCE_NETEASE;
+        return MpTrack.token(platform);
     }
 
     private static String safe(String value) {
@@ -912,18 +953,25 @@ public final class MpPartyClient {
             @Override
             public void run() {
                 if (song.isNetease() && song.getId() > 0L) {
+                    // 本家这一跳留着，不是因为它比脚本好，而是因为它会报「这条链接实际服务了
+                    // 多长」—— 只有拿得到这个长度才识破得了 30/60 秒试听片段，而服务端采纳别人
+                    // 应答的那条链路也按这个数拒试听。会员本家解出的完整版仍然优先于脚本解出的
+                    // 「长度未知」的链接。
                     MpNetease.Resolved resolved = MpNetease.resolve(song.getId());
-                    if (resolved == null) {
-                        delegateResolve(op, song, playNext, "本机拿不到播放链接");
+                    if (resolved != null && !isTrialClip(resolved.servedMs, song.getDuration())) {
+                        sendTrack(op, song, resolved.url, resolved.servedMs, playNext);
                         return;
                     }
-                    if (isTrialClip(resolved.servedMs, song.getDuration())) {
-                        // 房间给所有人下发的就是这一条链接，试听片段会让整房都听不全，所以这条
-                        // 链接不能上传 —— 但歌可以点：交给房间里的会员成员代为解析。
-                        delegateResolve(op, song, playNext, "本机只解析到试听片段");
+                    // 本家给不出完整版（没登录、不是会员、只解到试听片段）时先问自己的自定义源：
+                    // 用户导入并启用它就是为了用它取流，房间里有没有会员跟这一首能不能放无关。
+                    String viaCustom = customSourceUrl(song);
+                    if (viaCustom != null) {
+                        // 脚本不报实际长度，传 0 = 未知，服务端按放行处理。
+                        sendTrack(op, song, viaCustom, 0L, playNext);
                         return;
                     }
-                    sendTrack(op, song, resolved.url, resolved.servedMs, playNext);
+                    delegateResolve(op, song, playNext,
+                            resolved == null ? "本机拿不到播放链接" : "本机只解析到试听片段");
                     return;
                 }
                 String url = resolveByPlayer(song);
@@ -969,6 +1017,22 @@ public final class MpPartyClient {
     private static void delegateResolve(String op, Music song, boolean playNext, String why) {
         note(why + "，已把《" + song.getName() + "》交给房间里的会员成员代为解析", false);
         sendTrack(op, song, "", 0L, playNext);
+
+        // 广播问别人的<b>同时</b>，本机把自己还没试过的那一路（自定义源）跑完 —— 谁先给出完整流
+        // 谁应答，服务端那一关照旧会拒掉试听片段，所以两条一起跑不会把差的顶上去。
+        // 为什么不等求助超时再试：那一轮空白是全房一起听的，歌都还没出声；先答先受益。
+        final String src = MpTrack.token(song.getSource());
+        final String id = song.getSourceId();
+        final String title = song.getName();
+        MultiThreadingUtil.runAsync(new Runnable() {
+            @Override
+            public void run() {
+                String url = customSourceUrl(song);
+                if (url == null) return;
+                sendUrlSupply(src, id, url, 0L);
+                note("本机用自定义源补上了《" + title + "》的播放地址", false);
+            }
+        });
     }
 
     private static void sendTrack(String op, Music song, String url, long servedMs, boolean playNext) {
@@ -1224,6 +1288,7 @@ public final class MpPartyClient {
             }
         } else if (MpProto.S_ROOM_STATE.equals(op)) {
             applySnapshot(msg);
+            MpRoomPrefetch.onQueue(queue());
         } else if (MpProto.S_QUEUE.equals(op)) {
             MpRoom r = room;
             if (r != null) {
@@ -1235,6 +1300,7 @@ public final class MpPartyClient {
             // next 里可能还带着房主算出的交接计划（plan），一起交给播放层。
             JsonObject staged = MpProto.obj(msg, "next");
             MpPlayback.stageNext(MpTrack.fromJson(staged), MpProto.obj(staged, "plan"));
+            MpRoomPrefetch.onQueue(queue());
         } else if (MpProto.S_PLAY.equals(op)) {
             MpTrack track = MpTrack.fromJson(MpProto.obj(msg, "track"));
             if (track == null) return;
@@ -1493,10 +1559,17 @@ public final class MpPartyClient {
     }
 
     /**
-     * 回应服务端的 {@code url_needed}：用本机会话重新解析一条直链。
+     * 回应服务端的 {@code url_needed}：用本机的一切手段重新解析一条<b>完整</b>音频的直链。
      *
-     * <p>两种情况下宁可<b>保持沉默</b>让别人来答：本机没有这个平台（根本解析不出来），以及
-     * 解析出来的只是试听片段 —— 非会员账号替会员曲目应答，那条链接会成为整房共用的那一条。
+     * <p>三种情况下宁可<b>保持沉默</b>让别人来答：本机没有这个平台（根本解析不出来）、重建不出
+     * 这首歌的元数据、以及解析出来的只是试听片段 —— 非会员账号替会员曲目应答，那条链接会成为
+     * 整房共用的那一条。
+     *
+     * <p>本家链路之外还要<b>补问一次自定义源</b>。以前网易云这一路只走 {@link MpNetease#resolve}
+     * （挑它是因为它会报出「这条链接实际能取到多长」，据此才识破试听片段），代价是绕过了
+     * {@code Music.getPlayUrl()} 里排在最前的自定义源那一跳；再叠上「非会员拿到试听就沉默」，
+     * 结果就是房间里那个<b>没有会员、但脚本明明能解</b>的人跟着一起闭嘴 —— 全房等一轮超时，
+     * 然后这首歌被跳过。这一跳补上之后，代解析的判据才是真的「谁能解出来」，而不是「谁是会员」。
      */
     private static void supplyUrl(final String source, final String songId) {
         if (songId == null || songId.trim().isEmpty()) return;
@@ -1508,27 +1581,58 @@ public final class MpPartyClient {
         MultiThreadingUtil.runAsync(new Runnable() {
             @Override
             public void run() {
-                if (MpProto.SOURCE_NETEASE.equals(src)) {
-                    long id;
-                    try {
-                        id = Long.parseLong(songId);
-                    } catch (Throwable ignored) {
-                        return;
-                    }
-                    MpNetease.Resolved resolved = MpNetease.resolve(id);
-                    if (resolved == null) return;                     // 别的成员也许还能答
-                    if (isTrialClip(resolved.servedMs, expected)) return;
-                    sendUrlSupply(src, songId, resolved.url, resolved.servedMs);
-                    return;
-                }
-                if (known == null) return;                            // 不认识这首歌，答不了
-                // 用房间元数据重建曲目再解析。刻意不带 partyStreamUrl —— 带了 getPlayUrl()
+                // 用房间元数据重建曲目。刻意不带 partyStreamUrl —— 带了 getPlayUrl()
                 // 会把那条已经过期的链接原样返回。
-                String url = resolveByPlayer(known.toMusic());
-                if (url == null) return;
+                Music target = known == null ? null : known.toMusic();
+                if (MpProto.SOURCE_NETEASE.equals(src)) {
+                    long id = parseSongId(songId);
+                    if (id > 0L) {
+                        MpNetease.Resolved resolved = MpNetease.resolve(id);
+                        boolean usable = resolved != null && !isTrialClip(resolved.servedMs, expected);
+                        if (usable) {
+                            sendUrlSupply(src, songId, resolved.url, resolved.servedMs);
+                            return;
+                        }
+                        // 本家给不出完整版（没登录 / 不是会员 / 只解到试听）。脚本元数据不在这条
+                        // 分支的已知曲目里，所以按 id 补查一次元数据才有办法问脚本 —— 这一步只在
+                        // 「本家已经失败」之后发生，正常会员路径一次网络都不多烧。
+                        if (target == null && contributeLx()) target = MpNetease.songById(id);
+                    }
+                }
+                String url = target == null ? null : customSourceUrl(target);
+                if (url == null) return;                                // 沉默，让别人答
                 sendUrlSupply(src, songId, url, 0L);
             }
         });
+    }
+
+    /** 房间下发的 songId 不一定能当数字用（酷狗是 hash）；解不出来返回 0。 */
+    private static long parseSongId(String songId) {
+        try {
+            return Long.parseLong(songId.trim());
+        } catch (Throwable ignored) {
+            return 0L;
+        }
+    }
+
+    /**
+     * 只用本机的 LX 自定义源解这一首，拿不到返回 null。
+     *
+     * <p>{@code contributeLx} 关掉之后这里一律沉默：替房间解出来的那条链接是全房共用的，
+     * 用户没同意贡献就不能把脚本的调用量记到他头上去答别人。本机自己播放不受这个开关影响
+     * （那条路走的是 {@code Music.getPlayUrl()}）。
+     */
+    private static String customSourceUrl(Music song) {
+        if (song == null || !contributeLx()) return null;
+        try {
+            Tuple<String, String> resolved = song.resolveLxPlayUrl();
+            if (resolved == null) return null;
+            String url = resolved.getA();
+            return url == null || url.trim().isEmpty() ? null : url.trim();
+        } catch (Throwable ignored) {
+            // 脚本没起、没声明这个源、抛错 —— 都当「答不上」，别把心跳与求助链路带崩。
+            return null;
+        }
     }
 
     private static void sendUrlSupply(String source, String songId, String url, long servedMs) {

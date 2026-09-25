@@ -23,6 +23,7 @@ import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedImageWidget;
 import com.muoniumplayer.core.screens.ncm.NCMPanel;
+import com.muoniumplayer.core.screens.ncm.PlaylistCoverHero;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.json.JsonUtils;
@@ -629,9 +630,30 @@ public class HomePanel extends NCMPanel {
         this.addChild(lblRecommendations);
 
         // 标题刻意加在被裁剪网格之后，因此它们始终在最上。
-        displayedPlayLists.forEach(pl -> scrollPanel.addChild(new PlaylistWidget(pl, fixedPlaylistActions.get(pl.getId())).setShouldOverrideMouseCursor(true)));
+        //
+        // 卡片按网格顺序错峰落进来，和歌单页的曲目行用的是同一套动作（PanelItemEntrance）：
+        // 主页以前完全没有进场，切回主页就是整屏内容凭空出现，和旁边那些有动画的页面比很突兀。
+        // 号是卡片第一次被渲染时领的（网格同样是 ScrollPanel，视口外的卡片不渲染），所以往下滚
+        // 露出来的那几行也会补一次进场，而不是只有首屏有动画。
+        this.revealQueue.restart();
+        for (PlayList playList : displayedPlayLists) {
+            PlaylistWidget card = new PlaylistWidget(playList, fixedPlaylistActions.get(playList.getId()));
+            card.setShouldOverrideMouseCursor(true);
+            card.setEntranceAnimation(this.revealQueue);
+            scrollPanel.addChild(card);
+        }
 
     }
+
+    /** 卡片进场的错峰发号器，见 {@link PanelItemEntrance.RevealQueue}。 */
+    private final PanelItemEntrance.RevealQueue revealQueue = new PanelItemEntrance.RevealQueue();
+
+    @Override
+    public void onRender(double mouseX, double mouseY) {
+        super.onRender(mouseX, mouseY);
+        this.revealQueue.beginFrame();
+    }
+
     private static class PlaylistWidget extends AbstractWidget<PlaylistWidget> {
 
         /** 网易云首页网格中两条标题行之间的额外空隙。 */
@@ -648,9 +670,27 @@ public class HomePanel extends NCMPanel {
         private final double titleLineGap;
         private final PlaylistTitleWidget titleWidget;
 
+        /** 卡片封面。接力起飞那一帧要问它现在真正落在哪儿。 */
+        private RoundedImageWidget coverWidget;
+
         double emphasizeAnim = 0;
 
         boolean coverLoaded = false;
+
+        /** 与曲目行同一套进场：淡入 + 从下方落进来 + 微微放大。 */
+        private final PanelItemEntrance entrance = new PanelItemEntrance();
+        private double entranceEased = 1.0;
+        /** 第一次被渲染（= 刚滚进网格视口）时向它领一个错峰号。 */
+        private PanelItemEntrance.RevealQueue entranceQueue;
+
+        /** 由 {@code HomePanel} 在建网格时挂上：号是卡片第一次被渲染那一帧领的，不是现在发好的。 */
+        void setEntranceAnimation(PanelItemEntrance.RevealQueue queue) {
+            this.entranceQueue = queue;
+            this.entranceEased = 0.0;
+            this.setAlpha(0f);
+            this.setTransformations(() -> PanelItemEntrance.applyTransform(this.entranceEased,
+                    this.getX() + this.getWidth() * .5, this.getY() + this.getHeight() * .5));
+        }
 
         public PlaylistWidget(PlayList playList) {
             this(playList, null);
@@ -675,6 +715,11 @@ public class HomePanel extends NCMPanel {
             RoundedImageWidget cover = new RoundedImageWidget(this::getCoverLocation, 0, 0, size, size);
 
             this.addChild(cover);
+            this.coverWidget = cover;
+
+            // 接力飞行期间这张封面让位：把纹理供给换成 null，而不是 setHidden —— 后者会让
+            // renderWidget 直接 return，控件自己的回调再也跑不到，也就没人把它取消隐藏。
+            cover.setLocImg(() -> PlaylistCoverHero.coversYield(this) ? null : this.getCoverLocation());
 
             cover
                     .setClickable(false)
@@ -694,6 +739,13 @@ public class HomePanel extends NCMPanel {
                                 .setRadius(4)
                                 .centerHorizontally()
                                 .setBounds(cover.getRelativeX(), this.getWidth() * .5 - size * .5 - emphasizeAnim * .5, cover.getWidth(), cover.getHeight());
+
+                        // 回程的落点：从歌单页按返回时，飞回来的那张封面要落在同一首歌单的这张卡片上。
+                        // 视口就是本卡片的父级（网格那块 ScrollPanel），卡片被滚出去一半时这里不认领，
+                        // 接力会在第一帧自己收手 —— 落点得是屏幕上真实存在的那块矩形，不然飞回来的
+                        // 封面会画到列表视口之外的页眉带上。
+                        PlaylistCoverHero.setTarget(this, this.playList, cover.getX(), cover.getY(),
+                                cover.getWidth(), cover.getRadius(), getParent());
                     });
 
             PlaylistTitleWidget lblName = this.titleWidget;
@@ -707,7 +759,18 @@ public class HomePanel extends NCMPanel {
 
                 if (mouseButton == 0) {
                     if (customAction != null) customAction.run();
-                    else NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playList));
+                    else {
+                        // 接力要赶在换页之前交起点：那一刻卡片还画在它自己的位置上，矩形才是准的。
+                        // 落点也在这里点名 —— 面板已经构造出来了，只有它能把这张封面接走，
+                        // 上一页（同样是卡片在回报）抢不走。
+                        // 视口交给接力自己判：卡片被网格滚出视口一半时，这张封面的绝对矩形已经在
+                        // 列表上方那条页眉带里了，照它起飞就是一条盖住页眉的巨型封面。
+                        PlaylistPanel panel = new PlaylistPanel(playList);
+                        PlaylistCoverHero.begin(this, panel, playList, this.getCoverLocation(),
+                                cover.getX(), cover.getY(), cover.getWidth(), cover.getRadius(),
+                                getParent());
+                        NCMScreen.getInstance().setCurrentPanel(panel);
+                    }
                 }
 
                 return true;
@@ -718,6 +781,21 @@ public class HomePanel extends NCMPanel {
 
         @Override
         public void onRender(double mouseX, double mouseY) {
+            if (!entrance.isStarted()) {
+                // 第一次被渲染 = 刚被网格让进视口。号在这里领，往下滚露出来的卡片才有进场。
+                if (this.entranceQueue != null) {
+                    entrance.begin(System.currentTimeMillis(), this.entranceQueue.nextDelayMillis());
+                }
+            }
+            if (!entrance.isFinished()) {
+                this.entranceEased = entrance.tick();
+                this.setAlpha((float) this.entranceEased);
+                if (entrance.isFinished()) {
+                    // 摘掉变换：停在原地的卡片不该继续每帧付一次 pushMatrix。
+                    this.setTransformations(null);
+                }
+            }
+
             // 在本卡片的子级之前运行。一旦首帧加载了
             //标题字形，就在网格布局下一帧的行之前
             //重新测量并预留每个折行。

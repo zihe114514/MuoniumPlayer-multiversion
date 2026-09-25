@@ -34,9 +34,10 @@ import java.util.concurrent.TimeoutException;
  * 请求形态，但对播放器所需的两个操作使用 YouTube 的 Android 客户端：
  * 搜索和音频流解析。</p>
  *
- * <p>播放刻意只选 {@code audio/mp4} 流。宿主音频管线已
- * 理解 AAC/M4A，而 YouTube 的 Opus 流到达 WebM 容器，该管线
- * 刻意拒绝。</p>
+ * <p>播放链路只吃 AAC-LC：YouTube 的 Opus 流装在 WebM 容器里过不了容器这一关，而
+ * {@code audio/mp4} 里的 HE-AAC（{@code mp4a.40.5}，itag 139/599）会在解码那一步抛
+ * {@code FIL element overread}。两道闸都在 {@link #selectAudioFormat} 里，见
+ * {@link #isDecodableAudioFormat}。</p>
  */
 public final class YouTubeMusicService {
 
@@ -259,14 +260,22 @@ public final class YouTubeMusicService {
     /**
      * 被拒之后往下退的档位：一次要不满，就退而求其次要小的那截。
      *
-     * <p>配额是按出口 IP 攒出来的（实测约每 60～70 秒攒够 1 MiB），刚点下一首时余额常常只有
-     * 几百 KB；死磕 1 MiB 会连着吃几发 403、白等一分钟，而缩到 256 KiB / 64 KiB 就能立刻把
-     * 已经攒下的那部分取走，进度条也就一直在动。拿到一段之后下一段重新从最大档试起。</p>
+     * <p>2026-09-23 晚上量到一件此前判错的事：**没有「单发最多 1 MiB」这个上限**。一发
+     * {@code bytes=0-4194303}（4 MiB）的要法当场给了整首 1 631 333 字节，2.6 秒走完
+     * （≈640 KB/s）。也就是说卡我们的只有「这台出口 IP 此刻攒下多少余额」，要得比余额多就整发拒，
+     * 而不是每次只能要 1 MiB。所以顶档直接要「剩下的全部」：空闲一会儿之后的第一首通常一发就拿完，
+     * 被拒再降档，一路降到 64 KiB 总能把刚攒下的那点取走。</p>
      */
-    static final int[] WINDOW_LADDER = {1024 * 1024, 256 * 1024, 64 * 1024};
+    static final long[] WINDOW_LADDER = {
+            Long.MAX_VALUE,          // 顶档：剩下的全要
+            4L * 1024 * 1024,
+            1024L * 1024,
+            256L * 1024,
+            64L * 1024,
+    };
 
     /** 这一档该要多少字节；档位走完就停在最小档，不再往下缩。 */
-    static int windowSpanFor(int step) {
+    static long windowSpanFor(int step) {
         return WINDOW_LADDER[Math.min(Math.max(step, 0), WINDOW_LADDER.length - 1)];
     }
 
@@ -274,11 +283,21 @@ public final class YouTubeMusicService {
      * 这一段要到哪个字节为止（闭区间右端）：既不越过总长度，也不越过当前档位。
      *
      * <p>单独拆成纯函数是为了让「最后一段要短一截」「降档不能越过总长」这两件事能被静态测试
-     * 直接断言 —— 这一处写错过一次，就会变成每段都多发一字节、然后每发都吃 403。</p>
+     * 直接断言 —— 这一处写错过一次，就会变成每段都多发一字节、然后每发都吃 403。
+     * 顶档是「剩下的全要」，用一个不可能达到的跨度表示；总长度未知时不拿它当档位，
+     * 退回一个窗口的大小，否则会发出一条没有边界的 Range。</p>
      */
     static long windowHighFor(long offset, long total, int step) {
         long span = windowSpanFor(step);
-        long end = total > 0 ? Math.min(offset + span, total) : offset + span;
+        long end;
+        if (span == Long.MAX_VALUE) {
+            // 顶档「剩下的全要」也要有个天花板：一次交换最多收 AUDIO_EXCHANGE_MAX_BYTES，
+            // 不然遇到一个把 Range 当摆设、直接回整首 200 的节点，就会把不该吃的东西吸进堆里。
+            long ceiling = total > 0 ? total : offset + STREAM_WINDOW_BYTES;
+            end = Math.min(ceiling, offset + (long) AUDIO_EXCHANGE_MAX_BYTES);
+        } else {
+            end = total > 0 ? Math.min(offset + span, total) : offset + span;
+        }
         return Math.max(offset, end - 1L);
     }
 
@@ -289,8 +308,11 @@ public final class YouTubeMusicService {
      * 播放量」。所以等待步长取 20 秒，够余额挪一小截又不至于白等。</p>
      */
     static final long WINDOW_RETRY_DELAY_MS = 20_000L;
-    /** 单段最多试几发（含降档那几发），乘上步长就是单段的等待上限。 */
-    static final int MAX_WINDOW_WAITS = 6;
+    /**
+     * 单段最多试几发。里面既有降档（{@link #WINDOW_LADDER} 有 5 档，即 4 次降档），
+     * 也有到最小档之后的等待轮次（4 轮 × 20 秒），加起来才是「一段的等待上限」。
+     */
+    static final int MAX_WINDOW_WAITS = 9;
     /**
      * 整首的累计等待上限。超过它就不如让 {@code CrossSourceSwitcher} 换到别的源：
      * 用户已经点下播放，五分钟以上才出声音不算能用。
@@ -305,9 +327,10 @@ public final class YouTubeMusicService {
     /**
      * 选流默认「秒开优先」：先要一段窗口就装得下的那条，装不下才按音质档节奏化取。
      *
-     * <p>因为配额是按实时回血的，「选哪条流」在 YouTube 上不只在选音质，还在选等待：
-     * 一首四分钟的歌，32 kbps 约 960 KB 一段拿完（点了就响），130 kbps 约 4 MB 要四段
-     * （等将近四分钟才出声）。播放器里 YouTube 是备用源，先要能立刻听，再要音质。</p>
+     * <p>因为配额是按实时回血的，「选哪条流」在 YouTube 上不只在选音质，还在选等待。但这条策略
+     * 只能在**宿主解得了的编码**里挑快的：YouTube 给的短流是 HE-AAC（139/599），一条都解不了，
+     * 所以常见的四分钟歌只剩 140 一条 AAC-LC 可选 —— 秒开优先此时与按档选同解，不牺牲音质。
+     * 它真正起作用的地方是短歌与「同一首歌有两条 LC 流」的情况。</p>
      *
      * <p>改成 false 就完全照 {@link Quality} 档选（高码率优先，接受等待）。选表本身以参数
      * 传给 {@code selectAudioFormat}，两条路都有静态测试钉着。</p>
@@ -911,6 +934,45 @@ public final class YouTubeMusicService {
 
     // ──────────────────────────── 响应解析小工具 ────────────────────────────
 
+    /** 播放链路只认这一种编码：AAC-LC。写法照 {@code BilibiliMusicService.CODECS_AAC_LC}。 */
+    static final String CODECS_AAC_LC = "mp4a.40.2";
+
+    /**
+     * 这条流的编码宿主解不解得了。
+     *
+     * <p>YouTube 把同一首歌做成三条 AAC 流：140 是 {@code mp4a.40.2}（AAC-LC，130 kbps），
+     * 139/599 是 {@code mp4a.40.5}（HE-AAC，50/32 kbps）。宿主的解码路径是 JAAD 的分段 MP4
+     * 分支，只吃 LC —— HE-AAC 的 SBR/PS 载荷装在 FIL element 里，实测解到就抛
+     * {@code AACException: FIL element overread}（2026-09-24：同一条 599 取满 839 415 字节
+     * == clen，报错 -756；139 取满 1 329 292 字节，报错 -700；140 完整解出 43 MB WAV），
+     * 整首歌放不出来。截断流报的是另一个签名（{@code moof has no following mdat}），
+     * 所以这不是取流取坏了，是选流选错了编码。</p>
+     *
+     * <p>{@code codecs} 参数缺失时按可解处理：那一档历史上一直在播，不该由这条闸拦下来。
+     * 但只要有编码信息，就只放 AAC-LC 过去 —— 挑一条注定解不了的流省下等待，
+     * 不如让上层现在就得出「这个源放不出来」的结论。</p>
+     */
+    static boolean isDecodableAudioFormat(JsonObject format) {
+        String codecs = codecsOf(format);
+        return codecs.isEmpty() || CODECS_AAC_LC.equals(codecs);
+    }
+
+    /**
+     * 从 {@code mimeType} 里摘出 {@code codecs} 参数的值：
+     * {@code audio/mp4; codecs="mp4a.40.5"} → {@code mp4a.40.5}。没有这个参数时返回空串。
+     */
+    static String codecsOf(JsonObject format) {
+        String mimeType = string(format, "mimeType");
+        int at = mimeType.toLowerCase(Locale.ROOT).indexOf("codecs=");
+        if (at < 0) return "";
+        String value = mimeType.substring(at + "codecs=".length()).trim();
+        if (value.startsWith("\"") || value.startsWith("'")) value = value.substring(1);
+        int end = value.indexOf('"');
+        if (end < 0) end = value.indexOf('\'');
+        if (end >= 0) value = value.substring(0, end);
+        return value.trim().toLowerCase(Locale.ROOT);
+    }
+
     /**
      * 从一组格式里挑出要播的那条（策略取 {@link #PREFER_INSTANT_STREAM}）。
      *
@@ -926,6 +988,10 @@ public final class YouTubeMusicService {
      * <p>只认 {@code audio/mp4}：宿主管线懂 AAC/M4A，而 YouTube 的 Opus 流装在 WebM 里，
      * 目前解不了（见类注释）。这里单独拆出来是为了能被静态测试直接喂一份
      * {@code adaptiveFormats} 进去断言档位——itag 599 那个缺陷就是这么抓到的。</p>
+     *
+     * <p>容器对还不够，编码档也要对：{@link #isDecodableAudioFormat} 之外的一条都跳过。
+     * 秒开优先只看「几段窗口取得完」，而 YouTube 上短的正是 HE-AAC 那两条，于是三档音质
+     * 会一起落到 {@code mp4a.40.5} 上——那才是「无法播放」的真因，见常量注释。</p>
      *
      * <p>选表策略以参数传入，「秒开优先」与「按音质档选」两条都要能被静态测试钉死，
      * 写法照 {@code CrossSourceSwitcher.candidatePlatforms(platform, vipGate)}。</p>
@@ -943,6 +1009,7 @@ public final class YouTubeMusicService {
             String mimeType = string(format, "mimeType").toLowerCase(Locale.ROOT);
             String url = string(format, "url");
             if (!mimeType.startsWith("audio/mp4") || url.trim().isEmpty()) continue;
+            if (!isDecodableAudioFormat(format)) continue;
 
             long bitrate = longValue(format, "bitrate");
             if (selected == null) {
@@ -956,8 +1023,10 @@ public final class YouTubeMusicService {
                 /*
                  * 秒开优先：先比「这条流要几段窗口才取完」，段数一样再比码率。googlevideo 的配额
                  * 是按实时回血的（约每 64 秒放行 1 MiB），所以段数就是等待时间 —— 一首 4 分钟的歌，
-                 * 32 kbps 那条 960 KB 一段装得下（不用等），130 kbps 那条 4.4 MB 要四段（等四分钟）。
-                 * 短到一段就装得下的 130 kbps 会直接赢，这条规则并不牺牲这类流。
+                 * 能一段装下的只有 32/50 kbps 那两条，而它们恰好是 HE-AAC（已由
+                 * {@link #isDecodableAudioFormat} 挡在门外），130 kbps 那条 AAC-LC 要四段。
+                 * 也就是说这条策略在 YouTube 上通常挑不出更快的东西，它只在「同一首歌有两条 LC 流」
+                 * 或短歌（一首就装得下）时才真的省时间。
                  */
                 int windows = streamWindows(longValue(format, "contentLength"));
                 if (windows < selectedWindows || (windows == selectedWindows && bitrate > selectedBitrate)) {
@@ -985,7 +1054,11 @@ public final class YouTubeMusicService {
     }
 
     /**
-     * 这条流要几段窗口才取得完；一段窗口约等于一分多钟的等待。
+     * 这条流大约要「几个 1 MiB」才取得完；一个 1 MiB ≈ 一秒给一秒的播放量 ≈ 一分多钟的等待。
+     *
+     * <p>它估的是**字节数换算出来的时间**，不是实际请求次数：余额够时一发就能拿走整首（实测
+     * 1.63 MB 一发 2.6 秒），余额紧张时才会一段一段降档去取。选流用它，是因为两条流之间比的
+     * 本来就是「谁少要字节」。</p>
      *
      * <p>长度未知时不判成 1 段，否则「没声明 clen」会被当成最省时间的选项插队。</p>
      */

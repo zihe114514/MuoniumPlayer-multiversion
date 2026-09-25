@@ -67,10 +67,33 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     RectWidget currentPanelBg = new RectWidget();
 
-    float prevAnimatingPanelAlpha = 0f;
+    /**
+     * 换页转场的历史基准时长（毫秒）。实际时长还要除以用户配置的「界面切换动画速度」
+     * （{@link HudConfig#playerUiSwitchSpeed}，默认 3.0），与 {@code CoverHeroTransition} 同一口径：
+     * 默认观感约 173ms，把倍率调回 1.0 就是这条基准值。
+     */
+    private static final double PANEL_TRANSITION_MS = 520.0;
+    /** 横向推入/推出的幅度（设计像素）。整页位移靠它交代「这一页是从哪边来的」。 */
+    private static final double PANEL_SLIDE_DISTANCE = 26.0;
+    /** 新页落位前残余的放大余量：给位移一点纵深，又不退回成原来那种「缩放淡入」。 */
+    private static final double PANEL_ENTER_SCALE_OVERSHOOT = .02;
+
+    /** 转场期间被换下去的那张旧页。它和新页<b>同时</b>画，见渲染里的换页段。 */
     NCMPanel prevAnimatingPanel = null;
     NCMPanel currentPanel = null;
-    float curPanelAlphaAnimation = 0f;
+    /** 旧页被换下去那一刻的不透明度。中途再切页时它小于 1，转场就从这里接着往下淡。 */
+    float prevAnimatingPanelAlpha = 0f;
+    /** 本次换页的进度：0 = 刚切页，1 = 已经停稳。没有旧页时它就是 1。 */
+    private double panelTransitionT = 1.0;
+    /** 这次换页是「后退」。位移方向要镜像，否则返回键看起来像又前进了一页。 */
+    private boolean panelTransitionBackward;
+    /**
+     * 下一次换页按后退播。
+     *
+     * <p>历史栈里的条目是 {@link #actions} 存的 {@code Runnable}，它们不知道自己是被点出来的还是被
+     * 返回键退出来的，所以方向只能由调用方先声明、换页时取走并清掉。</p>
+     */
+    private boolean pendingNavigationBackward;
 
     @Getter
     ControlsBar controlsBar;
@@ -428,35 +451,76 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 // 在子组件/帧缓冲渲染后重新断言根圆角裁剪。
                 StencilClipManager.restoreActiveClip();
 
-                // 内容页切换的速度倍率由用户配置（HudConfig.playerUiSwitchSpeed，当前默认 3.0 =
-                // 明显快于历史速度）。指数逼近系数必须钳在 .95 以下：到 1 就是一帧到位，再大反而越过目标。
-                float alphaInterpolateSpeed = Math.min(.95f, .4f * HudConfig.playerUiSwitchSpeed);
+                // 换页转场：一条真时钟，两页<b>同时</b>画。
+                //
+                // 原来这两支是 if / else if 串行的 —— 旧页淡完才轮到新页淡进来，中间必然露一帧空底，
+                // 看着像「关一页再开一页」；而且两边的 alpha 都走 Interpolations 的指数逼近，既没有
+                // 时长也没有缓动，默认速度倍率 3.0 下那个插值系数已经被钳到 .95，一两帧就吃光，
+                // 整段动画实际上看不见。现在照 CoverHeroTransition 的写法：t 按帧间隔累加到 1，
+                // 位移与不透明度读同一条 MOTION 曲线，旧页向左推出去、新页从右边推进来。
                 if (this.prevAnimatingPanel != null) {
-                    this.prevAnimatingPanel.setAlpha(this.prevAnimatingPanelAlpha = Interpolations.interpolate(this.prevAnimatingPanelAlpha, 0f, alphaInterpolateSpeed));
-                    this.prevAnimatingPanel.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY(), this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
+                    this.panelTransitionT = Math.min(1.0,
+                            this.panelTransitionT + panelTransitionStepMillis() / panelTransitionMillis());
+                }
+                final double transitionEased = TransitionCurveCache.MOTION.at(this.panelTransitionT);
+                final double slideDistance = PANEL_SLIDE_DISTANCE * (this.panelTransitionBackward ? -1.0 : 1.0);
+                double panelCenterX = this.currentPanelBg.getX() + this.currentPanelBg.getWidth() * .5;
+                double panelCenterY = this.currentPanelBg.getY() + this.currentPanelBg.getHeight() * .5;
+
+                if (this.prevAnimatingPanel != null) {
+                    // 中途再切一次页时，这张旧页可能还在自己淡进来的半路上。从它<b>当前</b>的不透明度
+                    // 接着往下淡（prevAnimatingPanelAlpha 记的就是被换下去那一刻的值），而不是先跳回
+                    // 全亮再淡 —— 后者连点两个歌单就会看见上一页闪一下。
+                    this.prevAnimatingPanel.setAlpha(Math.min(this.basePanel.getAlpha(),
+                            this.prevAnimatingPanelAlpha * (float) (1.0 - transitionEased)));
+                    this.prevAnimatingPanel.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
+                            this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
+
+                    // 位移必须裁在内容区里：旧页原来不裁，是因为它压根不位移；现在推出去 26 像素
+                    // 不裁就会糊到左侧导航栏上。
+                    StencilClipManager.beginClip(() -> Rect.draw(this.currentPanelBg.getX(),
+                            this.currentPanelBg.getY(), this.currentPanelBg.getWidth(),
+                            this.currentPanelBg.getHeight(), -1));
 
                     api.getGLStateManager().pushMatrix();
-                    this.scaleAtPos(this.currentPanelBg.getX() + this.currentPanelBg.getWidth() * .5, this.currentPanelBg.getY() + this.currentPanelBg.getHeight() * .5, 0.9 + (this.prevAnimatingPanel.getAlpha() * 0.1));
+                    api.getGLStateManager().translate(-slideDistance * transitionEased, 0.0, 0.0);
                     this.prevAnimatingPanel.renderWidget(mouseX, mouseY, baseDWheel);
                     api.getGLStateManager().popMatrix();
 
-                    if (this.prevAnimatingPanelAlpha <= 0.02f)
+                    StencilClipManager.endClip();
+
+                    if (this.panelTransitionT >= 1.0) {
                         this.prevAnimatingPanel = null;
-                } else if (this.currentPanel != null) {
-                    curPanelAlphaAnimation = Interpolations.interpolate(curPanelAlphaAnimation, 1f, alphaInterpolateSpeed);
-                    this.currentPanel.setAlpha(Math.min(this.basePanel.getAlpha(), curPanelAlphaAnimation));
-                    this.currentPanel.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY(), this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
+                    }
+                }
+
+                if (this.currentPanel != null) {
+                    this.currentPanel.setAlpha(Math.min(this.basePanel.getAlpha(), (float) transitionEased));
+                    this.currentPanel.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
+                            this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
 
                     StencilClipManager.beginClip(() -> Rect.draw(this.currentPanelBg.getX(), this.currentPanelBg.getY(), this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight(), -1));
 
                     api.getGLStateManager().pushMatrix();
-                    this.scaleAtPos(this.currentPanelBg.getX() + this.currentPanelBg.getWidth() * .5, this.currentPanelBg.getY() + this.currentPanelBg.getHeight() * .5, 1.1 - (curPanelAlphaAnimation * 0.1));
+                    api.getGLStateManager().translate(slideDistance * (1.0 - transitionEased), 0.0, 0.0);
+                    // 只留一点点放大余量：原来那 1.1→1.0 的整页缩放是「缩放淡入」显呆的另一半原因，
+                    // 它和位移叠在一起会让文字在转场里发糊。2% 收到 1 只给纵深，不抢位移。
+                    this.scaleAtPos(panelCenterX, panelCenterY,
+                            1.0 + PANEL_ENTER_SCALE_OVERSHOOT * (1.0 - transitionEased));
 
                     this.currentPanel.renderWidget(mouseX, mouseY, baseDWheel);
                     api.getGLStateManager().popMatrix();
 
                     StencilClipManager.endClip();
                 }
+
+                // 接力封面画在两页之上、仍裁在内容区里。这层裁剪是最后一道保险，不是主要手段：
+                // 真正保证画面不漏出去的是 PlaylistCoverHero 自己拒绝对不上视口的起落点（见它的
+                // {@code viewport} 参数）。进度直接喂转场那条 eased，封面才和新页同一次落地。
+                StencilClipManager.beginClip(() -> Rect.draw(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
+                        this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight(), -1));
+                PlaylistCoverHero.render(transitionEased);
+                StencilClipManager.endClip();
 
                 // 导航等待遮罩：盖在内容页之上，并且裁在内容区里 —— 失败提示可能比内容区还宽，
                 // 不裁会糊到左侧导航栏或控制栏上。
@@ -680,6 +744,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         }
 
         // 未安装分析模型的一次性提示：与二次确认同层，同样独占鼠标/滚轮输入。
+        // 这组边框使用最终 basePanel 坐标。岛屿展开/收回期间内容被压进移动中的 surface，
         if (this.modelInstallNoticeOverlay != null) {
             StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
                     basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
@@ -840,9 +905,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     }
 
     /**
-     * 在异步加载的元数据改变其行徽标后，重建可见的播放列表面板。
-     * 其他面板刻意保持不动，使一次
-     * 账号刷新不会触发重复的首页/搜索请求。
+     * 立即返回前一个内容页。现有鼠标侧键导航使用
+     * 同一历史，因此页面动画
+     * 和生命周期与播放器其余部分保持一致。
      */
     public void reloadCurrentPanel() {
         if (this.currentPanel instanceof PlaylistPanel || this.currentPanel instanceof PersonalFmPanel) {
@@ -850,35 +915,75 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         }
     }
     private void innerSetCurrentPanel(NCMPanel panel, boolean shouldCallInit) {
+        this.prevAnimatingPanelAlpha = this.currentPanel == null ? 0f : this.currentPanel.getAlpha();
         this.prevAnimatingPanel = this.currentPanel;
-        this.prevAnimatingPanelAlpha = 1.0f;
         this.currentPanel = panel;
+        this.panelTransitionBackward = this.pendingNavigationBackward;
+        this.pendingNavigationBackward = false;
+        // 没有上一页、或者上一页几乎还没露脸（连点两个歌单时很常见），就没有什么可交代的：
+        // 时钟直接给到终点，新页按停稳态画，不硬凑一次转场。
+        this.panelTransitionT = this.prevAnimatingPanel == null || this.prevAnimatingPanelAlpha <= .02f
+                ? 1.0 : 0.0;
         if (panel != null) {
             if (shouldCallInit)
                 this.currentPanel.onInit();
             this.currentPanel.setAlpha(0);
-            this.curPanelAlphaAnimation = 0f;
         }
         if (this.playlistsPanel != null) {
             this.playlistsPanel.selectCurrentPanel(panel);
         }
     }
 
+    /** 本次转场该走多久：基准时长除以用户的「界面切换动画速度」倍率。 */
+    private static double panelTransitionMillis() {
+        return PANEL_TRANSITION_MS / Math.max(.30, HudConfig.playerUiSwitchSpeed);
+    }
+
     /**
-     * 立即返回前一个内容页。现有鼠标侧键导航使用
-     * 同一历史，因此页面动画
-     * 和生命周期与播放器其余部分保持一致。
+     * 本帧推进的毫秒数。抄 {@code CoverHeroTransition#step}：{@code getFrameDeltaTime()} 的单位是
+     * 10ms，并且它在帧间隔过大时会把值压小，所以卡顿时转场是整体变慢而不是跳过去 —— 一帧跨掉
+     * 小半条曲线就是「一顿一顿」的由来。这里再夹一道 40ms 上限，低于 25fps 宁可慢也不要跳。
      */
+    private static double panelTransitionStepMillis() {
+        return Math.min(40.0, Math.max(0.0, RenderSystem.getFrameDeltaTime() * 10.0));
+    }
+
+    // 独立的二级面板仍可提供有用的退路。
     public void navigateBack() {
+        // 两条出口（退历史、退回主页）都是后退。方向标志只能紧挨着真正那次换页设：
+        // 它在 innerSetCurrentPanel 里被取走并清零，所以在「已经在主页、按了个空」这条
+        // 什么都不做的分支上提前置位，会一路留到下一次前进，把该往右推的页推成往左。
         if (currentActionPointer > 0) {
+            NCMPanel from = this.currentPanel;
             --currentActionPointer;
+            this.pendingNavigationBackward = true;
             actions.get(currentActionPointer).run();
+            this.handCoverBackIfNeeded(from);
             return;
         }
 
-        // 独立的二级面板仍可提供有用的退路。
+        /**
+     * 打开“加入歌单”弹窗。由 MusicWidget 的「+」按钮调用。
+     * 复用原项目 PlayList.addToList(musicId) → CloudMusicApi.playlistTracks("add", pid, musicId)。
+     */
         if (!(this.currentPanel instanceof HomePanel)) {
+            NCMPanel from = this.currentPanel;
+            this.pendingNavigationBackward = true;
             this.setCurrentPanel(new HomePanel());
+            this.handCoverBackIfNeeded(from);
+        }
+    }
+
+    /**
+     * 返回这一趟的封面接力：把详情页那张大封面交回主页里同一个歌单的卡片。
+     *
+     * <p>只有「详情页 → 主页」这一趟有落点可飞，而且必须等换页之后再交起点 —— 此刻才知道目标
+     * 是不是主页；主页的卡片也要等它自己排版完才认得出该接住谁。目标主页可能把这张卡片滚在
+     * 视口外，那没人认领落点，{@code PlaylistCoverHero} 会在第一帧自己收手。</p>
+     */
+    private void handCoverBackIfNeeded(NCMPanel from) {
+        if (from instanceof PlaylistPanel && this.currentPanel instanceof HomePanel) {
+            ((PlaylistPanel) from).handCoverBack();
         }
     }
 
@@ -887,6 +992,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
      * 复用原项目 PlayList.addToList(musicId) → CloudMusicApi.playlistTracks("add", pid, musicId)。
      */
     public void openAddToPlaylist(Music music) {
+        openAddToPlaylist(music, null);
+    }
+
+    /** @param heroFrom 歌曲行那枚「+」在按下那一刻的矩形，飞进弹窗顶部那一行。 */
+    public void openAddToPlaylist(Music music, SheetHeroRelay.Origin heroFrom) {
         if (music != null && music.isQQ()) {
             return; // QQ 曲目不可提交到网易云歌单。
         }
@@ -898,13 +1008,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             return;
         }
         this.addToPlaylistOverlay = new AddToPlaylistOverlay(music);
+        this.addToPlaylistOverlay.claimHero(heroFrom);
         this.addToPlaylistOverlay.onInit();
-    }
-
-    /** 打开模态确认，在用户显式确认前不执行该操作。 */
-    public void openConfirmation(String title, String message, String confirmText, Runnable onConfirm) {
-        this.confirmationOverlay = new ConfirmationOverlay(title, message, confirmText, onConfirm);
-        this.confirmationOverlay.onInit();
     }
 
     /**
@@ -914,6 +1019,12 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
      * 岛屿展开动画已经跑完、没有别的模态占着、也不在全屏歌词页上。条件不满足时它只是一串
      * 布尔判断，所以每帧问一次是安全的。</p>
      */
+    public void openConfirmation(String title, String message, String confirmText, Runnable onConfirm) {
+        this.confirmationOverlay = new ConfirmationOverlay(title, message, confirmText, onConfirm);
+        this.confirmationOverlay.onInit();
+    }
+
+    /** 打开主题调色板；重复打开时先回收上一次的实例，避免两层叠在一起。 */
     private void maybeShowModelNotice() {
         if (this.modelInstallNoticeOverlay != null) return;
         // 展开动画期间播放器表面还在动，这时弹一张居中卡片会跟着一起漂。
@@ -941,8 +1052,20 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     }
 
     public void openAccountManager() {
+        openAccountManager(null);
+    }
+
+    /**
+     * 打开账号管理。
+     *
+     * @param heroFrom 触发它的那颗侧栏控件在<b>按下那一刻</b>的矩形，接力板从那儿飞进来；
+     *                 没有起点就只走普通的进出场。必须在 {@code onInit()} 之前交到 ——
+     *                 那之后弹窗骨架已经建好了。
+     */
+    public void openAccountManager(SheetHeroRelay.Origin heroFrom) {
         if (this.accountManagerOverlay != null) this.accountManagerOverlay.dispose();
         this.accountManagerOverlay = new AccountManagerOverlay();
+        this.accountManagerOverlay.claimHero(heroFrom);
         this.accountManagerOverlay.onInit();
     }
 
@@ -989,10 +1112,16 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.lyricSearchOverlay.onInit();
     }
 
-    /** 打开一起听面板；重复打开时先回收上一次的实例，避免两层叠在一起。 */
+    /** 打开音乐来源面板；重复打开时先回收上一次的实例，避免两层叠在一起。 */
     public void openMusicSourceManager() {
+        openMusicSourceManager(null);
+    }
+
+    /** @param heroFrom 见 {@link #openAccountManager(SheetHeroRelay.Origin)}：侧栏那枚来源按钮的矩形。 */
+    public void openMusicSourceManager(SheetHeroRelay.Origin heroFrom) {
         if (this.musicSourceOverlay != null) this.musicSourceOverlay.dispose();
         this.musicSourceOverlay = new MusicSourceOverlay();
+        this.musicSourceOverlay.claimHero(heroFrom);
         this.musicSourceOverlay.onInit();
     }
 
@@ -1271,7 +1400,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 }
 
             }
-            // 返回
+            /** 播放器主题的颜色语义；具体颜色由 {@link NCMTheme} 提供。 */
             else if (mouseButton == 3) {
                 this.navigateBack();
             }

@@ -63,6 +63,8 @@ public final class ListenTogetherOverlay extends NCMPanel {
 
     private boolean closing;
     private boolean joinPage;
+    /** 进出场那一条时钟；遮罩与弹窗共用同一个 progress。 */
+    private final SheetClock clock = new SheetClock();
 
     /** 弹窗入场进度；同时驱动上浮位移与整体淡入。 */
     private double presentation;
@@ -91,12 +93,20 @@ public final class ListenTogetherOverlay extends NCMPanel {
         showOverview();
     }
 
-    public boolean shouldClose() {
+    /** 正在退场：还画得着，但 {@link NCMPanel} 会把它这一帧的输入整个吞掉。 */
+    @Override
+    protected boolean isDismissing() {
         return closing;
+    }
+
+    public boolean shouldClose() {
+        // 退场播完才回收。房间状态由后台线程推，所以这一段动画期间它照常自己更新，不用额外照看。
+        return clock.isGone();
     }
 
     public void dispose() {
         closing = true;
+        clock.requestDismiss();
     }
 
     public void handleEscape() {
@@ -904,14 +914,18 @@ public final class ListenTogetherOverlay extends NCMPanel {
 
     private Panel createDialog(final double preferredWidth, final DoubleSupplier preferredHeight,
                                final Runnable perFrame) {
-        presentation = 0.0;
-        dialogHeight = 0.0;
-
         RectWidget mask = new RectWidget();
         addChild(mask);
-        mask.setColor(0).setAlpha(.48f);
+        mask.setColor(0);
         mask.setClickable(false);
-        mask.setBeforeRenderCallback(() -> mask.setMargin(0));
+        // 遮罩跟着弹窗同一条进度淡。原来它是写死的 .48f，于是总览 ↔ 加入房间之间翻页时
+        // 弹窗重新淡入、遮罩却一直是全黑的。dialogHeight 也不再重置：换页时高度朝新值补间，
+        // 而不是从 1 像素拉开。第一次那一帧仍会直接落在目标高度（见下面那个 <= 0 的分支）。
+        mask.setBeforeRenderCallback(() -> {
+            mask.setMargin(0);
+            mask.setAlpha((float) (presentation * .48));
+        });
+        setBeforeRenderCallback(() -> presentation = TransitionCurveCache.MOTION.at(clock.tick()));
         setOnClickCallback((x, y, button) -> {
             if (button == 0) dispose();
             return button == 0;
@@ -921,7 +935,6 @@ public final class ListenTogetherOverlay extends NCMPanel {
         addChild(dialog);
         dialog.setOnClickCallback((x, y, button) -> true);
         dialog.setBeforeRenderCallback(() -> {
-            presentation = Interpolations.interpolate(presentation, 1.0, .18f);
             double width = Math.max(1, Math.min(preferredWidth, getWidth() - 24));
             double target = Math.max(1, Math.min(preferredHeight.getAsDouble(), getHeight() - 24));
             // 第一帧直接落在目标高度，之后才插值；否则入场会从 1px 拉开，像卷帘门。

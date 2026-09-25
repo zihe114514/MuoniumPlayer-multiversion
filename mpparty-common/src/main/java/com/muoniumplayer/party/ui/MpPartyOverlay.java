@@ -127,6 +127,34 @@ public final class MpPartyOverlay extends NCMPanel {
     private static final double ICON_GAP = 5.0;
 
     /**
+     * 标题栏右上角那一排（两颗贡献胶囊 + 「‹ 一起听」）的尺寸口径。
+     *
+     * <p>胶囊高度从 26 收到 20 是给第二颗让路：这一排压在副标题（{@code y = 36}）上面，26 高的
+     * 时候它的下边缘已经探进副标题的字身里，只能靠把副标题裁短来躲。收成 20 之后整排落在 35
+     * 以上，副标题就能用满整行 —— 两颗胶囊要的是横向空间，不该拿副标题的信息量去换。</p>
+     */
+    private static final double TOGGLE_TOP = 15.0;
+    private static final double TOGGLE_HEIGHT = 20.0;
+    /** 一颗胶囊的舒展宽（放得下「贡献会员解析 · 开」）。 */
+    private static final double PILL_STRETCH = 154.0;
+    /** 收缩到这一档以下，就宁可先让房名角标 / 返回按钮的文字让路，也别继续削胶囊。 */
+    private static final double PILL_KEEP = 104.0;
+    /** 再窄也不许低于这一档：低了图标和滑块就要在胶囊里打架。 */
+    private static final double PILL_FLOOR = 56.0;
+    private static final double PILL_GAP = 10.0;
+    /** 右侧滑块那一段占掉的文字禁区：槽 22 宽贴着右端留 9，再留 7 的呼吸位。 */
+    private static final double PILL_RAIL_ZONE = 38.0;
+    /** 「‹ 一起听」那颗粒：带字的宽 / 只剩箭头的宽。 */
+    private static final double BACK_LABELLED = 74.0;
+    private static final double BACK_ICON = 30.0;
+    /** 标题那一段文字与右上角这一排之间的呼吸位。 */
+    private static final double HEAD_GAP = 8.0;
+    private static final int TOGGLE_COUNT = 2;
+
+    /** 能力标记里文字左右各留的边距（一颗标记的宽 = 字宽 + 两枚边距）。 */
+    private static final double MARK_PAD = 7.0;
+
+    /**
      * 列表行左右各预留的空隙，悬停放大就往这块空隙里长。
      *
      * <p>原来悬停是按<b>百分比</b>放大（1.2%）的，行宽 560 就意味着左右各溢出 3.4 像素，
@@ -348,31 +376,46 @@ public final class MpPartyOverlay extends NCMPanel {
             if (room == null) return "服务器房间";
             return room.kindLabel();
         }, FontManager.pf12bold);
+        // 这一排的位置要按「标题 + 角标」的右边界让位，所以角标本身也得先建出来再排。
+        final HeaderBar bar = new HeaderBar(dialog, title, kicker);
+        final double[] kickerFade = new double[1];
         kicker.setBeforeRenderCallback(() -> {
+            bar.layout();
             kicker.setColor(MpPartyClient.inRoom() ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                     : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            // 挤不下时第一个让位的就是它：房间页顶上本来就写着房间名，这一排却是唯一的入口。
+            kickerFade[0] = Interpolations.interpolate(kickerFade[0], bar.kickerFits ? 1.0 : 0.0, .3f);
+            kicker.setAlpha((float) kickerFade[0]);
             kicker.setPosition(PAD + title.getWidth() + 10, 21);
         });
 
         LabelWidget subtitle = label(dialog, this::headerSubtitle, FontManager.pf12);
         subtitle.setBeforeRenderCallback(() -> {
             subtitle.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            // 右上角被「贡献会员解析」和「‹ 一起听」两颗胶囊占着。
-            subtitle.setMaxWidth(Math.max(1, dialog.getWidth() - PAD - 264));
+            // 两颗胶囊收在副标题上面那一行（见 TOGGLE_HEIGHT 的说明），这里只用避开「‹ 一起听」
+            // 那一列 —— 换成两颗胶囊之前它是按「整排控件」让位的，所以副标题一直短了一截。
+            bar.layout();
+            subtitle.setMaxWidth(Math.max(1, bar.bandRight - PAD - 6));
             subtitle.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             subtitle.setPosition(PAD, 36);
         });
 
         // 双向入口：这一层是从「一起听」面板点进来的，右上角给一条回去的路。
-        btn(dialog, () -> PartyIcons.CHEVRON_LEFT, () -> "一起听", null, () -> {
+        // 它和两颗胶囊共用同一条带，所以宽与位置都听 HeaderBar 的：挤不动时先丢掉「一起听」三字，
+        // 「‹」本身已经说明这是回去。
+        btn(dialog, () -> PartyIcons.CHEVRON_LEFT, () -> {
+            bar.layout();
+            return bar.backLabelled ? "一起听" : "";
+        }, null, () -> {
             dispose();
             NCMScreen.getInstance().openListenTogether();
         }, STYLE_GHOST, b -> {
-            b.setBounds(74, 26);
-            b.setPosition(Math.max(1, dialog.getWidth() - PAD - 74), 15);
+            bar.layout();
+            b.setBounds(bar.backWidth, TOGGLE_HEIGHT);
+            b.setPosition(Math.max(1, dialog.getWidth() - PAD - bar.backWidth), TOGGLE_TOP);
         });
 
-        addContributeToggle(dialog);
+        addContributeToggles(dialog, bar);
     }
 
     private String headerSubtitle() {
@@ -394,42 +437,81 @@ public final class MpPartyOverlay extends NCMPanel {
     }
 
     /**
-     * 「贡献会员解析」开关。
+     * 标题栏右上角的两颗贡献胶囊：本家会员解析、LX 自定义源解歌。
      *
      * <p>放在标题栏而不是某一页里：这是账号级别的授权，跟当前在哪个房间无关，而且要让人随时
-     * 一眼看见自己有没有在替别人解析。</p>
+     * 一眼看见自己有没有在替别人解歌。</p>
+     *
+     * <p>两颗各开各的，因为交出去的东西不一样：会员那颗交出去的是「我这个平台的会员身份能解出来
+     * 的流」，自定义源那颗交出去的是「我那个脚本能解出来的流」。后者不动用任何账号会员权益，
+     * 但第三方接口的调用量会记到这台机器头上 —— 所以它必须是一扇单独关得上的门，而不是跟着前者走。</p>
      */
-    private void addContributeToggle(final Panel dialog) {
+    private void addContributeToggles(final Panel dialog, final HeaderBar bar) {
+        addContributeToggle(dialog, bar, 0,
+                ListenTogetherSettings::isPartyContributeVip,
+                ListenTogetherSettings::setPartyContributeVip,
+                PartyIcons.VIP, "贡献会员解析", "会员解析", VIP_COLOR);
+        // 放大镜：自定义源干的事就是「去别处找一条能播的流」。不选链条 —— LINK 在点歌页里已经
+        // 表示「链接点歌」，同一套图标里一枚字形只讲一件事。语义再往下压就只有自绘新图标，那不在这一版里做。
+        addContributeToggle(dialog, bar, 1,
+                ListenTogetherSettings::isPartyContributeLx,
+                ListenTogetherSettings::setPartyContributeLx,
+                PartyIcons.SEARCH, "贡献自定义源", "自定义源", OK_COLOR);
+    }
+
+    /**
+     * 一颗贡献胶囊。{@code slot} 是它在这一排里的位置（0 = 靠返回按钮那颗），宽度与左边距都由
+     * {@link HeaderBar} 按当帧的弹窗宽度算出来。
+     *
+     * <p>绑定的那一头只给 getter / setter：翻完立刻重报档案这件事留在这一层做一次，
+     * 免得多一颗胶囊就多一处「忘了跟一句 {@code reportProfile()}」的余地 —— 房友要马上在成员列表里
+     * 看到这颗徽标变化，不该等下一发五秒心跳。</p>
+     *
+     * <p>{@code glyph} 给 null 就是没有图标的一颗（纯文案 + 滑块），左侧缩进会跟着收。</p>
+     */
+    private void addContributeToggle(final Panel dialog, final HeaderBar bar, final int slot,
+                                     final BooleanSupplier enabled, final BooleanWrite write,
+                                     final String glyph, final String fullText,
+                                     final String shortText, final int accent) {
         final double[] hover = new double[1];
         final double[] on = new double[1];
+        // 图标要不要占位、文案从哪儿起笔：两颗都按同一套口径算，别写两份数字。
+        final double textLeft = glyph == null ? 9.0 : 9.0 + ICON_S + ICON_GAP;
+        // 这一格当帧还剩多少文字位。胶囊每帧写一次，文案与 maxWidth 两处共用同一个数，
+        // 免得「挑哪条文案」和「裁到哪」用了两套口径。
+        final double[] room = new double[1];
+        final double centerY = TOGGLE_HEIGHT * .5;
 
         final RoundedRectWidget pill = new RoundedRectWidget();
         dialog.addChild(pill);
-        pill.setRadius(13).setShouldOverrideMouseCursor(true);
+        pill.setRadius(centerY).setShouldOverrideMouseCursor(true);
         pill.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
-            ListenTogetherSettings.setPartyContributeVip(!ListenTogetherSettings.isPartyContributeVip());
-            // 立刻上报，不等下一发心跳：服主和房友要马上在成员列表里看到这颗徽标变化。
+            write.set(!enabled.getAsBoolean());
             MpPartyClient.reportProfile();
             return true;
         });
         pill.setBeforeRenderCallback(() -> {
-            boolean enabled = ListenTogetherSettings.isPartyContributeVip();
+            bar.layout();
+            boolean opened = enabled.getAsBoolean();
             hover[0] = Interpolations.interpolate(hover[0], pill.isHovering() ? 1.0 : 0.0, .25f);
-            on[0] = Interpolations.interpolate(on[0], enabled ? 1.0 : 0.0, .3f);
-            pill.setBounds(154, 26);
-            pill.setPosition(Math.max(1, dialog.getWidth() - PAD - 74 - 10 - 154), 15);
-            pill.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND), VIP_COLOR,
+            on[0] = Interpolations.interpolate(on[0], opened ? 1.0 : 0.0, .3f);
+            pill.setBounds(bar.pillWidth, TOGGLE_HEIGHT);
+            pill.setPosition(Math.max(1, bar.pillX[slot]), TOGGLE_TOP);
+            pill.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND), accent,
                     on[0] * (.62 + hover[0] * .2) + (1.0 - on[0]) * hover[0] * .1));
+            room[0] = bar.pillWidth - textLeft - PILL_RAIL_ZONE;
         });
-        stroke(pill, 13, () -> mix(NCMScreen.getColor(NCMScreen.ColorType.BORDER), VIP_COLOR, on[0]),
+        stroke(pill, centerY, () -> mix(NCMScreen.getColor(NCMScreen.ColorType.BORDER), accent, on[0]),
                 () -> .45 + on[0] * .35);
 
-        // 版式：会员图标 → 文案 → 最右边的滑块。原来滑块在最左、文案紧跟着它，右边空出一大片，
+        // 版式：图标 → 文案 → 最右边的滑块。原来滑块在最左、文案紧跟着它，右边空出一大片，
         // 看着像「文字没居中」；把滑块推到右端，这颗胶囊才读得出是个开关。
-        icon(pill, PartyIcons.VIP, ICON_S, () -> 9.0 + ICON_S * .5, () -> 13.0,
-                () -> mix(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), VIP_COLOR,
-                        .35 + Math.max(on[0], hover[0] * .5) * .65));
+        if (glyph != null) {
+            icon(pill, glyph, ICON_S, () -> 9.0 + ICON_S * .5, () -> centerY,
+                    () -> mix(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), accent,
+                            .35 + Math.max(on[0], hover[0] * .5) * .65));
+        }
 
         // 滑块下面垫一条槽：没有槽的话那颗圆点挪几个像素几乎看不出来。槽与滑块都是胶囊的直接
         // 子组件，不是父子 —— 子组件的 alpha 会乘上父级的，滑块挂在半透明的槽里会一起变灰。
@@ -437,30 +519,131 @@ public final class MpPartyOverlay extends NCMPanel {
         pill.addChild(rail);
         rail.setClickable(false).setRadius(6).setBeforeRenderCallback(() -> {
             rail.setBounds(22, 12);
-            rail.setPosition(Math.max(1, pill.getWidth() - 31.0), 7);
-            rail.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND), VIP_COLOR,
+            rail.setPosition(Math.max(1, pill.getWidth() - 31.0), (TOGGLE_HEIGHT - 12.0) * .5);
+            rail.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND), accent,
                     on[0] * .6));
             rail.setAlpha(.6f);
         });
 
-        // 滑块的位置本身就说明了开与关，比只换颜色好认。
+        // 滑块的位置本身就说明了开与关，比只换颜色好认 —— 也正因为如此，窄到放不下文案时
+        // 文案可以先走，这颗胶囊仍然读得出是个开关。
         final RoundedRectWidget knob = new RoundedRectWidget();
         pill.addChild(knob);
         knob.setClickable(false).setRadius(5).setBeforeRenderCallback(() -> {
             knob.setBounds(10, 10);
-            knob.setPosition(Math.max(1, pill.getWidth() - 30.0) + on[0] * 10.0, 8);
+            knob.setPosition(Math.max(1, pill.getWidth() - 30.0) + on[0] * 10.0,
+                    (TOGGLE_HEIGHT - 10.0) * .5);
             knob.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), 0xFFFFFF, on[0]));
         });
 
-        LabelWidget caption = label(pill, () -> ListenTogetherSettings.isPartyContributeVip()
-                ? "贡献会员解析 · 开" : "贡献会员解析 · 关", FontManager.pf10bold);
+        LabelWidget caption = label(pill, () -> fitToggleCaption(room[0], fullText, shortText,
+                enabled.getAsBoolean()), FontManager.pf10bold);
         caption.setBeforeRenderCallback(() -> {
             caption.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), 0xFFFFFF,
                     Math.max(on[0], hover[0] * .5)));
-            caption.setMaxWidth(Math.max(1, pill.getWidth() - (9.0 + ICON_S + ICON_GAP) - 38.0));
+            caption.setMaxWidth(Math.max(1, room[0]));
             caption.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            caption.setPosition(9.0 + ICON_S + ICON_GAP, inkTop(caption, 13.0));
+            caption.setPosition(textLeft, inkTop(caption, centerY));
         });
+    }
+
+    /**
+     * 按当帧剩下的文字位，从文案阶梯上挑一条写得下的。
+     *
+     * <p>胶囊是这一排里该先收缩的那一颗（见 {@link HeaderBar}），而「· 开 / · 关」本来就只是滑块
+     * 位置的文字复述，所以它第一个被扔：写全 → 去掉「贡献」→ 只留名字 → 只留开关字。</p>
+     */
+    private static String fitToggleCaption(double room, String fullText, String shortText,
+                                           boolean opened) {
+        if (room <= 1.0) return "";
+        CFontRenderer font = FontManager.pf10bold;
+        String tail = opened ? " · 开" : " · 关";
+        if (font.getStringWidthD(fullText + tail) <= room) return fullText + tail;
+        if (font.getStringWidthD(shortText + tail) <= room) return shortText + tail;
+        if (font.getStringWidthD(shortText) <= room) return shortText;
+        String state = opened ? "开" : "关";
+        return font.getStringWidthD(state) <= room ? state : "";
+    }
+
+    /**
+     * 一个布尔设置项的写入口。
+     *
+     * <p>{@code java.util.function} 里有 {@link BooleanSupplier}，却没有对偶的那个 —— 不想为了凑
+     * 参数退到 {@code Consumer<Boolean>}（每次点击都白装一个包），就地一个窄接口。</p>
+     */
+    private interface BooleanWrite {
+        void set(boolean value);
+    }
+
+    /**
+     * 标题栏右上角那一排的当帧排布：两颗贡献胶囊 + 「‹ 一起听」挤在同一条带上。
+     *
+     * <p>弹窗宽度是按视口收的（{@code createDialog} 里那句 {@code min(608, 视口宽 - 24)}），GUI
+     * 缩放一大就装不下「两颗舒展宽的胶囊 + 带字的返回按钮 + 房名角标」。所以按信息量从小到大
+     * 逐级让位：胶囊先收缩（文案有阶梯，滑块位置本身也说得出开关）→ 房名角标淡掉（房间页顶上
+     * 本来就写着房间名）→ 返回按钮收成纯箭头。每一级都重新问一遍「这下两颗胶囊能用舒展宽吗」，
+     * 于是拉窗口时是滑进下一档，而不是在两个档位之间来回抖。</p>
+     *
+     * <p>三条硬规矩：两颗胶囊<b>等宽</b>、彼此留 {@code PILL_GAP}、整排右边界锁在
+     * {@code 弹窗宽 - PAD}，位置一律从右往左推 —— 于是它们既不会叠在一起，也不会越过右边界。</p>
+     *
+     * <p>「放不下就换行」在这一排里做不成：标题栏统共 52 高，两行 20 的胶囊加上呼吸位就顶到
+     * 56 起的页签条，副标题也还压在下面那一行里。所以这里走的是收缩，代价是窄到约 280 逻辑像素
+     * 以下时最左那颗会开始往标题那一段里挤。</p>
+     *
+     * <p>{@link #layout()} 只是当帧宽度的函数，用到这一排的控件各自调一次，不依赖「谁先渲染」。</p>
+     */
+    private static final class HeaderBar {
+
+        private final Panel dialog;
+        private final LabelWidget title;
+        private final LabelWidget kicker;
+
+        /** 第 {@code i} 颗胶囊的左边界 x：0 = 靠近返回按钮那颗。 */
+        private final double[] pillX = new double[TOGGLE_COUNT];
+        private double pillWidth = PILL_STRETCH;
+        private double backWidth = BACK_LABELLED;
+        private boolean backLabelled = true;
+        private boolean kickerFits = true;
+        /** 这一排最右边那颗粒的右边界：副标题按它让位，免得文字钻进返回按钮底下。 */
+        private double bandRight = 0.0;
+
+        private HeaderBar(Panel dialog, LabelWidget title, LabelWidget kicker) {
+            this.dialog = dialog;
+            this.title = title;
+            this.kicker = kicker;
+        }
+
+        /** 三档：留角标带字按钮 → 收角标 → 再把返回按钮收成箭头。最后一档无论如何都要落定。 */
+        private void layout() {
+            double right = dialog.getWidth() - PAD;
+            double titleEdge = PAD + title.getWidth() + HEAD_GAP;
+            double kickerEdge = titleEdge + kicker.getWidth() + HEAD_GAP;
+            for (int tier = 0; tier <= 2; tier++) {
+                kickerFits = tier == 0;
+                backLabelled = tier < 2;
+                backWidth = backLabelled ? BACK_LABELLED : BACK_ICON;
+                double left = kickerFits ? kickerEdge : titleEdge;
+                double per = (right - backWidth - PILL_GAP - left
+                        - PILL_GAP * (TOGGLE_COUNT - 1)) / TOGGLE_COUNT;
+                if (tier == 2) {
+                    // 挤到这份上不再让位：宁可细到贴住标题那一段，也不让胶囊削到图标打架。
+                    pillWidth = Math.min(PILL_STRETCH, Math.max(PILL_FLOOR, per));
+                    break;
+                }
+                if (per >= PILL_KEEP) {
+                    pillWidth = Math.min(PILL_STRETCH, per);
+                    break;
+                }
+            }
+            bandRight = right - backWidth - PILL_GAP;
+            double x = bandRight;
+            for (int i = 0; i < TOGGLE_COUNT; i++) {
+                x -= pillWidth;
+                pillX[i] = x;
+                x -= PILL_GAP;
+            }
+        }
     }
 
     // ──────────────────────────── 页签条 ────────────────────────────
@@ -1618,7 +1801,12 @@ public final class MpPartyOverlay extends NCMPanel {
             name.setColor(member != null && member.controls()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                     : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            name.setMaxWidth(Math.max(1, bg.getWidth() - 380));
+            // automix 标记就挂在名字这一行的右端，它这一帧真的画出来才给名字让位；
+            // 老服务端没下发那一档时标记是空的，名字该用满原来的宽度。
+            String mark = member == null ? "" : member.automixLabel();
+            double reserve = has(mark)
+                    ? FontManager.pf10bold.getStringWidthD(mark) + MARK_PAD * 2 + 8.0 : 0.0;
+            name.setMaxWidth(Math.max(1, bg.getWidth() - 380 - reserve));
             name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             name.setPosition(54, 9);
         });
@@ -1669,6 +1857,15 @@ public final class MpPartyOverlay extends NCMPanel {
             MpMember member = memberAt(list, slot);
             return member != null && member.vip;
         }, b -> b.setPosition(Math.max(1, bg.getWidth() - 262), 15));
+
+        // automix 能力标记：这一台能不能替房间算下一首的交接点。挑了「贡献 / VIP」那颗左边那块
+        // —— 那一列本来就是「这个人能给房间什么」的位置，右边三颗按钮与徽标都各占一格，只有它是
+        // 一条按右边界锚死的空档。没下发这一档时文案为空，整颗淡掉，什么都不画。
+        automixMark(bg, () -> {
+            MpMember member = memberAt(list, slot);
+            return member == null ? "" : member.automixLabel();
+        }, () -> automixTint(memberAt(list, slot)),
+                b -> b.setPosition(Math.max(1, bg.getWidth() - 262 - 6 - b.getWidth()), 15));
 
         final Panel tools = rowTools(bg);
 
@@ -2624,6 +2821,49 @@ public final class MpPartyOverlay extends NCMPanel {
             caption.setColor(VIP_COLOR);
             caption.setPosition(place[1], inkTop(caption, 8.0));
         });
+    }
+
+    /**
+     * 一枚 automix 能力标记：跟 {@link #chip} 同一档字号、同一套描边口径，只是没有图标。
+     *
+     * <p>文案一律来自服务端下发的成员档案。这里<b>不许</b>顺手去问本机或 {@code RoomAutomix}
+     * 「他到底能不能算」：这条回调每帧、每个行槽都要跑一遍，而那件事的背面是模型装没装、
+     * 解码器起不起 —— 在渲染帧里现算能力是这套界面出过的真事故，不是假想的讲究。</p>
+     */
+    private void automixMark(final AbstractWidget<?> host, final Supplier<String> text,
+                             final IntSupplier color, final Placement placement) {
+        final double[] fade = new double[1];
+        final RoundedRectWidget bg = new RoundedRectWidget();
+        host.addChild(bg);
+        bg.setClickable(false).setRadius(5).setBeforeRenderCallback(() -> {
+            String label = text.get();
+            fade[0] = Interpolations.interpolate(fade[0], has(label) ? 1.0 : 0.0, .3f);
+            // 宽度跟着字数走：「模型」两个字不该占掉「信号处理」那么一格，行里横向本来就紧。
+            bg.setBounds(Math.max(1, FontManager.pf10bold.getStringWidthD(label) + MARK_PAD * 2), 16);
+            placement.apply(bg);
+            bg.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND),
+                    color.getAsInt(), .16));
+            bg.setAlpha((float) fade[0]);
+        });
+        stroke(bg, 5, color, () -> .6);
+
+        LabelWidget caption = label(bg, text, FontManager.pf10bold);
+        caption.setBeforeRenderCallback(() -> {
+            caption.setColor(color.getAsInt());
+            caption.setPosition((bg.getWidth() - caption.getWidth()) * .5, inkTop(caption, 8.0));
+        });
+    }
+
+    /**
+     * automix 档位的配色。
+     *
+     * <p>「不支持」用次要色而不是警告色：那是个事实，不是谁做错了什么，标红了房主就会去踢人。
+     * 能算的两档留在成功色那一族里，模型档实、信号处理档淡，扫一行就分得出谁高谁低。</p>
+     */
+    private static int automixTint(MpMember member) {
+        if (member == null || !member.automixCapable) return secondary();
+        return "model".equals(member.automixEngine)
+                ? OK_COLOR : mix(OK_COLOR, secondary(), .45);
     }
 
     /**

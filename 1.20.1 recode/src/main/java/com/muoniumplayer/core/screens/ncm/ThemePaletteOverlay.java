@@ -30,6 +30,8 @@ public final class ThemePaletteOverlay extends NCMPanel {
     private static final double CELL_HEIGHT = 30.0;
 
     private boolean closing;
+    /** 进出场那一条时钟；遮罩与弹窗共用同一个 progress，不再各自渐近。 */
+    private final SheetClock clock = new SheetClock();
     private double presentation;
 
     private NCMScreen.ColorType editing = NCMScreen.ColorType.ACCENT;
@@ -43,12 +45,20 @@ public final class ThemePaletteOverlay extends NCMPanel {
         build();
     }
 
+    /** 正在退场：还画得着，但 {@link NCMPanel} 会把它这一帧的输入整个吞掉。 */
+    @Override
+    protected boolean isDismissing() {
+        return closing;
+    }
+
     public boolean shouldClose() {
-        return this.closing;
+        // 退场播完才回收：原来 closing 一置位，下一帧 NCMScreen 就把这一层抹掉，退场根本没有画面。
+        return this.clock.isGone();
     }
 
     public void dispose() {
         this.closing = true;
+        this.clock.requestDismiss();
     }
 
     public void handleEscape() {
@@ -230,12 +240,19 @@ public final class ThemePaletteOverlay extends NCMPanel {
     }
 
     private Panel createDialog() {
-        this.presentation = 0.0;
         RectWidget mask = new RectWidget();
         addChild(mask);
-        mask.setColor(0).setAlpha(.48f);
+        mask.setColor(0);
         mask.setClickable(false);
-        mask.setBeforeRenderCallback(() -> mask.setMargin(0));
+        // 遮罩跟着弹窗同一条进度。原来它是写死的 .48f：切一栏颜色（build 会重建整棵树）时
+        // 弹窗重新淡入，遮罩却一直是全黑的，两层不同步就很好看不过去。
+        mask.setBeforeRenderCallback(() -> {
+            mask.setMargin(0);
+            mask.setAlpha((float) (presentation * .48));
+        });
+        // 时钟跑在根组件这一格：先于所有子组件，遮罩与弹窗于是读到同一个值。
+        // 这里也不再重置 presentation —— 换栏是重排内容，不是把整个界面重开一遍。
+        setBeforeRenderCallback(() -> presentation = TransitionCurveCache.MOTION.at(clock.tick()));
         setOnClickCallback((x, y, button) -> {
             if (button == 0) dispose();
             return button == 0;
@@ -245,7 +262,6 @@ public final class ThemePaletteOverlay extends NCMPanel {
         addChild(dialog);
         dialog.setOnClickCallback((x, y, button) -> true);
         dialog.setBeforeRenderCallback(() -> {
-            this.presentation = Interpolations.interpolate(this.presentation, 1.0, .18f);
             double width = Math.max(1.0, Math.min(DIALOG_WIDTH, getWidth() - 24.0));
             double height = Math.max(1.0, Math.min(DIALOG_HEIGHT, getHeight() - 24.0));
             dialog.setBounds(width, height);

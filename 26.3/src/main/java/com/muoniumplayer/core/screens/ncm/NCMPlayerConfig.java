@@ -1,0 +1,369 @@
+package com.muoniumplayer.core.screens.ncm;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+
+import java.io.File;
+import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.Quality;
+import com.muoniumplayer.core.settings.ConfigPaths;
+import com.muoniumplayer.core.settings.JsonConfigStorage;
+
+
+/** 持久化播放器窗口尺寸。布局使用真实逻辑尺寸，避免额外 GL 缩放造成点击和裁剪错位。 */
+public final class NCMPlayerConfig {
+
+    public static final float MIN_SCALE = 0.70f;
+    public static final float MAX_SCALE = 1.00f;
+    public static final float SCALE_STEP = 0.05f;
+
+    /** 缓存上限的可选档位，0 为不限制。界面按这个顺序循环。 */
+    public static final int[] MUSIC_CACHE_LIMIT_OPTIONS = {0, 2, 4, 8, 16, 32, 64};
+
+    public static final int DEFAULT_MUSIC_CACHE_LIMIT_GB = 16;
+
+    private static final File FILE = ConfigPaths.PLAYER;
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+
+    private static float playerScale = 1.0f;
+    /**
+     * 播放器与播放器设置页是否按“物理游戏窗口尺寸”推导一套连续缩放。
+     *
+     * <p>默认开启：布局先换算到窗口坐标系，再由渲染层一次性变换回屏幕，
+     * 因此不随 Minecraft GUI Scale 的整数档位跳动。关闭则回到旧行为，
+     * 直接使用当前 GUI Scale 下的逻辑宽高。</p>
+     */
+    private static boolean windowAdaptiveScale = true;
+    private static Quality audioQuality = Quality.LOSSLESS;
+    /** 在播放器/新手引导中选择的音乐源。持久化以便重启后保留。 */
+    private static MusicPlatform musicSourcePlatform = MusicPlatform.NETEASE;
+    /**
+     * 仅 opt-in。启用时，MuoniumPlayer 提交一条网易云收听记录，
+     * 且仅在本地音频实际播放满所需时长之后。
+     */
+    private static boolean neteaseListeningHistorySyncEnabled;
+    /**
+     * 是否已经就听歌历史同步征求过一次同意。
+     *
+     * <p>问过就不再问：这是一次隐私授权，反复弹只会被顺手点掉，反而让人以为自己没答应过。
+     * 标记在弹窗出现那一刻就落盘，所以"点取消"和"直接关掉窗口"都算问过——两者表达的都是
+     * 不同意，之后想开还能在账号管理里开。</p>
+     */
+    private static boolean neteaseListeningHistorySyncAsked;
+    /**
+     * 酷狗备选取流 {@code /v6/priv_url} 是否启用，默认<b>关闭</b>。
+     *
+     * <p>这是一条<b>没有定论</b>的路径，所以做成开关而不是直接接进阶梯：</p>
+     * <ul>
+     *   <li>本仓在<b>标准版身份</b>下实测它恒回 {@code error_code=20010}，但概念版身份从没测过，
+     *   <li>参考实现的接口说明自己写着「该接口存在音频加密（目前无法解码），请谨慎使用」，
+     *       并且要求先注册 {@code dfid}。</li>
+     * </ul>
+     * <p>开着它只会在 {@code /v5/url} 与老 trackercdn 都拿不到地址时多打一次请求，
+     * 所以关掉才是常态：默认路径不依赖任何未验证的行为。要试概念版的高档音质时再打开。</p>
+     */
+    private static boolean kuGouPrivUrlFallback;
+    /**
+     * 磁盘音频缓存上限，单位 GB，0 表示不限制。
+     *
+     * <p>默认 16 GB：足够放下几百首无损，正常使用不会碰到，同时又能挡住「只增不减」
+     * 涨到几十 GB 的情况。真正的清理逻辑在 {@link com.muoniumplayer.core.ncm.music.MusicAudioCache}。</p>
+     */
+    private static int musicCacheLimitGigabytes = DEFAULT_MUSIC_CACHE_LIMIT_GB;
+    /**
+     * 全屏播放页封面下方那排标签用英文还是中文。
+     *
+     * <p>默认中文，与当前发行版的界面语言保持一致。那排是音源 / 音质 / 歌词类型；
+     * 英文短词在 10 像素高的胶囊里更易读，想切换可在 HUD 设置里调整。</p>
+     */
+    private static boolean nowPlayingTagsInEnglish = false;
+    private static boolean loaded;
+
+    private NCMPlayerConfig() {
+    }
+
+    public static synchronized void load() {
+        if (loaded) return;
+        loaded = true;
+
+        if (!FILE.exists()) return;
+        try {
+            JsonObject object = JsonConfigStorage.readObject(FILE, GSON);
+            if (object != null && object.has("playerScale")) {
+                playerScale = normalize(object.get("playerScale").getAsFloat());
+            }
+            if (object != null && object.has("windowAdaptiveScale")) {
+                windowAdaptiveScale = object.get("windowAdaptiveScale").getAsBoolean();
+            }
+            if (object != null && object.has("audioQuality")) {
+                try {
+                    audioQuality = Quality.valueOf(object.get("audioQuality").getAsString());
+                } catch (Throwable ignored) {
+                    audioQuality = Quality.LOSSLESS;
+                }
+            }
+            if (object != null && object.has("neteaseListeningHistorySyncEnabled")) {
+                neteaseListeningHistorySyncEnabled = object.get("neteaseListeningHistorySyncEnabled").getAsBoolean();
+            }
+            if (object != null && object.has("neteaseListeningHistorySyncAsked")) {
+                neteaseListeningHistorySyncAsked = object.get("neteaseListeningHistorySyncAsked").getAsBoolean();
+            }
+            if (object != null && object.has("kuGouPrivUrlFallback")) {
+                kuGouPrivUrlFallback = object.get("kuGouPrivUrlFallback").getAsBoolean();
+            }
+            if (object != null && object.has("musicCacheLimitGigabytes")) {
+                musicCacheLimitGigabytes = normalizeCacheLimit(object.get("musicCacheLimitGigabytes").getAsInt());
+            }
+            if (object != null && object.has("nowPlayingTagsInEnglish")) {
+                nowPlayingTagsInEnglish = object.get("nowPlayingTagsInEnglish").getAsBoolean();
+            }
+            if (object != null && object.has("musicSourcePlatform")) {
+                try {
+                    musicSourcePlatform = MusicPlatform.valueOf(object.get("musicSourcePlatform").getAsString());
+                } catch (Throwable ignored) {
+                    musicSourcePlatform = MusicPlatform.NETEASE;
+                }
+            }
+        } catch (Throwable ignored) {
+            playerScale = 1.0f;
+        }
+    }
+
+    public static synchronized float getPlayerScale() {
+        load();
+        return playerScale;
+    }
+
+    public static synchronized int getPlayerScalePercent() {
+        return Math.round(getPlayerScale() * 100.0f);
+    }
+
+    public static synchronized boolean isWindowAdaptiveScaleEnabled() {
+        load();
+        return windowAdaptiveScale;
+    }
+
+    public static synchronized void setWindowAdaptiveScaleEnabled(boolean enabled) {
+        load();
+        if (windowAdaptiveScale == enabled) return;
+        windowAdaptiveScale = enabled;
+        save();
+    }
+
+    public static synchronized boolean toggleWindowAdaptiveScale() {
+        setWindowAdaptiveScaleEnabled(!windowAdaptiveScale);
+        return windowAdaptiveScale;
+    }
+
+    public static synchronized Quality getAudioQuality() {
+        load();
+        return audioQuality == null ? Quality.LOSSLESS : audioQuality;
+    }
+
+    public static synchronized void setAudioQuality(Quality quality) {
+        load();
+        audioQuality = quality == null ? Quality.LOSSLESS : quality;
+        save();
+    }
+
+    public static synchronized MusicPlatform getMusicSourcePlatform() {
+        load();
+        return musicSourcePlatform == null ? MusicPlatform.NETEASE : musicSourcePlatform;
+    }
+
+    public static synchronized void setMusicSourcePlatform(MusicPlatform platform) {
+        load();
+        musicSourcePlatform = platform == null ? MusicPlatform.NETEASE : platform;
+        save();
+    }
+
+    /** 返回是否可同步真实的本地网易云播放会话。 */
+    public static synchronized boolean isNeteaseListeningHistorySyncEnabled() {
+        load();
+        return neteaseListeningHistorySyncEnabled;
+    }
+
+    /** 持久化用户对真实播放收听历史同步的显式同意。 */
+    public static synchronized void setNeteaseListeningHistorySyncEnabled(boolean enabled) {
+        load();
+        neteaseListeningHistorySyncEnabled = enabled;
+        save();
+    }
+
+    /**
+     * 登录时是否还需要问一次听歌历史同步。
+     *
+     * <p>已经开着的老用户直接算问过：他们当年是在账号管理里手动点开的，再弹一次没有意义。</p>
+     */
+    public static synchronized boolean shouldAskNeteaseListeningHistorySync() {
+        load();
+        return !neteaseListeningHistorySyncAsked && !neteaseListeningHistorySyncEnabled;
+    }
+
+    /** 记下"已经问过"。弹窗一出现就调用，不等用户作答。 */
+    public static synchronized void markNeteaseListeningHistorySyncAsked() {
+        load();
+        if (neteaseListeningHistorySyncAsked) return;
+        neteaseListeningHistorySyncAsked = true;
+        save();
+    }
+
+    /** 酷狗 {@code /v6/priv_url} 备选取流是否启用（默认关，见字段注释）。 */
+    public static synchronized boolean isKuGouPrivUrlFallbackEnabled() {
+        load();
+        return kuGouPrivUrlFallback;
+    }
+
+    public static synchronized void setKuGouPrivUrlFallbackEnabled(boolean enabled) {
+        load();
+        kuGouPrivUrlFallback = enabled;
+        save();
+    }
+
+    public static synchronized float increaseScale() {
+        load();
+        return setPlayerScale(playerScale + SCALE_STEP);
+    }
+
+    public static synchronized float decreaseScale() {
+        load();
+        return setPlayerScale(playerScale - SCALE_STEP);
+    }
+
+    /** 单按钮严格按 100% → 90% → 80% → 70% → 100% 循环切换。 */
+    public static synchronized float cycleScale() {
+        load();
+
+        // 不直接比较 float。旧 normalize() 会产生 0.90000004，导致 90% 每次都再次命中
+        // “大于 90%”分支，按钮因此永远无法进入 80% 和 70%。
+        int percent = Math.round(playerScale * 100.0f);
+        if (percent >= 95) return setPlayerScale(.90f);
+        if (percent >= 85) return setPlayerScale(.80f);
+        if (percent >= 75) return setPlayerScale(.70f);
+        return setPlayerScale(1.0f);
+    }
+
+    public static synchronized float resetScale() {
+        return setPlayerScale(1.0f);
+    }
+    public static synchronized float setPlayerScale(float scale) {
+        load();
+        playerScale = normalize(scale);
+        save();
+        return playerScale;
+    }
+
+    /** 缓存上限，单位 GB；0 表示不限制。 */
+    public static synchronized int getMusicCacheLimitGigabytes() {
+        load();
+        return musicCacheLimitGigabytes;
+    }
+
+    /** 缓存上限的字节数；不限制时返回 0，调用方据此跳过淘汰。 */
+    public static synchronized long getMusicCacheLimitBytes() {
+        return getMusicCacheLimitGigabytes() * 1073741824L;
+    }
+
+    /** 设置界面显示的当前档位。 */
+    public static synchronized String getMusicCacheLimitLabel() {
+        int gigabytes = getMusicCacheLimitGigabytes();
+        return gigabytes <= 0 ? "不限制" : gigabytes + " GB";
+    }
+
+    /** 外部配置 UI 直写缓存上限；非法值会被折到最近的合法档位。 */
+    public static synchronized void setMusicCacheLimitGigabytes(int gigabytes) {
+        load();
+        int normalized = gigabytes <= 0 ? 0 : normalizeCacheLimit(gigabytes);
+        if (musicCacheLimitGigabytes == normalized) return;
+        musicCacheLimitGigabytes = normalized;
+        save();
+    }
+
+    /** 在 {@link #MUSIC_CACHE_LIMIT_OPTIONS} 之间循环，返回新档位。 */
+    public static synchronized int cycleMusicCacheLimit() {
+        load();
+        int current = musicCacheLimitGigabytes;
+        int index = 0;
+        for (int i = 0; i < MUSIC_CACHE_LIMIT_OPTIONS.length; i++) {
+            if (MUSIC_CACHE_LIMIT_OPTIONS[i] == current) {
+                index = i;
+                break;
+            }
+        }
+        musicCacheLimitGigabytes = MUSIC_CACHE_LIMIT_OPTIONS[(index + 1) % MUSIC_CACHE_LIMIT_OPTIONS.length];
+        save();
+        return musicCacheLimitGigabytes;
+    }
+
+    /**
+     * 把任意数值折到最近的合法档位。
+     *
+     * <p>配置文件是用户可以手改的，写进一个 7 或者 -3 不该让淘汰逻辑用一个界面上
+     * 显示不出来的上限工作。</p>
+     */
+    static int normalizeCacheLimit(int gigabytes) {
+        if (gigabytes <= 0) return 0;
+        int best = MUSIC_CACHE_LIMIT_OPTIONS[MUSIC_CACHE_LIMIT_OPTIONS.length - 1];
+        int bestDistance = Integer.MAX_VALUE;
+        for (int option : MUSIC_CACHE_LIMIT_OPTIONS) {
+            if (option <= 0) continue;
+            int distance = Math.abs(option - gigabytes);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = option;
+            }
+        }
+        return best;
+    }
+
+    /** 全屏播放页的标签是否用英文。 */
+    public static synchronized boolean isNowPlayingTagsInEnglish() {
+        load();
+        return nowPlayingTagsInEnglish;
+    }
+
+    /** 设置界面显示的当前档位。 */
+    public static synchronized String getNowPlayingTagLanguageLabel() {
+        return isNowPlayingTagsInEnglish() ? "English" : "中文";
+    }
+
+    public static synchronized void toggleNowPlayingTagsInEnglish() {
+        load();
+        nowPlayingTagsInEnglish = !nowPlayingTagsInEnglish;
+        save();
+    }
+
+    /** 外部配置 UI 直写标签语言。 */
+    public static synchronized void setNowPlayingTagsInEnglish(boolean enabled) {
+        load();
+        if (nowPlayingTagsInEnglish == enabled) return;
+        nowPlayingTagsInEnglish = enabled;
+        save();
+    }
+
+    private static float normalize(float scale) {
+        float clamped = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+        int steppedPercent = Math.round(clamped * 100.0f / 5.0f) * 5;
+        return Math.max(MIN_SCALE, Math.min(MAX_SCALE, steppedPercent / 100.0f));
+    }
+
+    private static void save() {
+        try {
+            JsonObject object = new JsonObject();
+            object.addProperty("playerScale", playerScale);
+            object.addProperty("windowAdaptiveScale", windowAdaptiveScale);
+            object.addProperty("audioQuality", getAudioQuality().name());
+            object.addProperty("neteaseListeningHistorySyncEnabled", neteaseListeningHistorySyncEnabled);
+        object.addProperty("neteaseListeningHistorySyncAsked", neteaseListeningHistorySyncAsked);
+            object.addProperty("musicCacheLimitGigabytes", musicCacheLimitGigabytes);
+            object.addProperty("nowPlayingTagsInEnglish", nowPlayingTagsInEnglish);
+            object.addProperty("musicSourcePlatform", getMusicSourcePlatform().name());
+            // 只在开着的时候写这一行：默认关是这条路径的常态，不必给配置文件添一个恒为 false 的键。
+            if (kuGouPrivUrlFallback) object.addProperty("kuGouPrivUrlFallback", true);
+            JsonConfigStorage.writeObject(FILE, GSON, object);
+
+        } catch (Throwable ignored) {
+        }
+    }
+}

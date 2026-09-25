@@ -7,10 +7,13 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.dto.Music;
+import com.muoniumplayer.party.ui.PartyIcons;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
-import com.muoniumplayer.core.rendering.texture.DynamicTexture;
+import com.muoniumplayer.core.rendering.svg.AnimatedIcons;
+import com.muoniumplayer.core.rendering.svg.SmilSvg;
+import com.muoniumplayer.core.rendering.svg.SvgPlayback;
 import com.muoniumplayer.core.rendering.texture.ITextureObject;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.TransitionPerformanceBudget;
@@ -847,6 +850,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 return;
             }
 
+            if (isInstantStateChannel(safeType)) {
+                // 状态镜像只认最新那一份。它一般根本不会进队列（下面直接顶掉当前卡），但当前
+                // 那张是音量这类同族通道时它会先排上队 —— 不清掉旧副本的话，来回点主题就会
+                // 攒出好几张过期主题名，一张一张慢慢放给人看。
+                dropQueuedNoticesOfTypeLocked(safeType);
+            }
+
             if (safeType == IslandNoticeType.AUTOMIX_BLENDING) {
                 // 一次交接只该有一张卡。自动接一次、用户紧接着又手动跳一次时，后来的信息更新，
                 // 先前那张直接作废；正在显示的同类卡片就地换成新歌名，而不是再排一张。
@@ -960,9 +970,29 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 || type == IslandNoticeType.NETEASE_UPLOADING;
     }
 
-    // 专用的内容驱动系统通知卡片，灵感来自所提供的参考项目。
+    /**
+     * 状态镜像通道：这条通知报的是「某样东西<b>现在</b>是什么」，不是「刚刚发生了什么」。
+     *
+     * <p>判据只有一条：同一通道永远只有一份真相，旧值不是「已经播过了的历史」，而是「已经
+     * 不成立了的假消息」。主题、灵动岛样式、播放器大小、当前音质、暂停/继续全是这一类 ——
+     * 它们原先走的是普通事件通道，于是连点五次主题就是 5 × 2.1 秒把五个早已作废的主题名挨个
+     * 放给人看（回弹胶囊那款还会把它们叠成五行一起显示）。这里把它们改成：顶掉当前那张卡，
+     * 并且队列里同类的过期副本当场作废。</p>
+     *
+     * <p>反面清单：一次下载、一次上报、一次加入歌单、一次播放失败都是<b>事件</b>，发生了 N 件
+     * 就该看见 N 件，不许进这个集合。</p>
+     */
+    private static boolean isInstantStateChannel(IslandNoticeType type) {
+        return type == IslandNoticeType.THEME
+                || type == IslandNoticeType.STYLE
+                || type == IslandNoticeType.SCALE
+                || type == IslandNoticeType.VOLUME
+                || type == IslandNoticeType.QUALITY
+                || type == IslandNoticeType.PLAYBACK_TOGGLE;
+    }
+
     private static boolean bypassesNoticeQueue(IslandNoticeType type, boolean persistent) {
-        return persistent || type == IslandNoticeType.VOLUME || type == IslandNoticeType.TRANSCODING;
+        return persistent || type == IslandNoticeType.TRANSCODING || isInstantStateChannel(type);
     }
 
     // 让图标安全地位于圆角轮廓内部，并在文字前留出真正的间距。
@@ -1706,7 +1736,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             float glyphAlpha = alpha * .98f * (.40f + .60f * (float) iconReveal);
             // 这一帧会盖上歌曲封面时，托盘只留深色底衬、不再刷强调色。封面是半透明画上去的，
             // 底下那层强调色会透过来，看起来就是「整张封面被主题色染了」。
-            float artworkMix = ambientMix > .005f && hasAmbientArtwork(ambient) ? ambientMix : 0f;
+            float artworkMix = ambientMix > .005f && hasAmbientArtwork() ? ambientMix : 0f;
             scaleAtPos(iconX, iconY, (systemCard ? 1.0 : 1.06) * iconFit);
             // 深色底衬：液态玻璃这类亮表面上，只靠一层薄强调色会让字形糊进背景里。
             roundedRect(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
@@ -1736,8 +1766,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             if (ambientMix > .005f) {
                 // 托盘是个整圆（圆角 = 半径），封面必须沿用同一个圆角才能铺满，
                 // 否则圆托盘里塞一枚小圆角方封面，四周各露一道月牙形的空隙。
-                renderAmbientIcon(ambient, iconX, iconY, iconPlate, iconPlate * .5, 1.0,
-                        glyphAlpha * ambientMix, iconAccentColor, now);
+                renderAmbientIcon(iconX, iconY, iconPlate, iconPlate * .5, 1.0,
+                        glyphAlpha * ambientMix, iconAccentColor);
             }
         }
         api.getGLStateManager().popMatrix();
@@ -2143,10 +2173,20 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 : IslandStatusIcons.CLOCK, centerX, centerY, AMBIENT_ICON_WIDTH * scale, color);
     }
 
-    /** 把一枚图标字形等比缩放到目标边长并居中绘制。 */
+    /** 把一枚图标字形等比缩放到目标边长并居中绘制（默认是 island-status-icons 那一份）。 */
     private void drawAmbientGlyph(String glyph, double centerX, double centerY, double targetSize,
                                   int color) {
-        CFontRenderer font = FontManager.islandIcon12;
+        drawAmbientGlyph(FontManager.islandIcon12, glyph, centerX, centerY, targetSize, color);
+    }
+
+    /**
+     * 同上，但点名用哪份字体。
+     *
+     * <p>fontello 那几批导出各自从私用区重新编号，同一个码位在不同字体里是完全不同的字形，
+     * 所以字形必须和自己的字体一起传进来，不能只给码位。</p>
+     */
+    private void drawAmbientGlyph(CFontRenderer font, String glyph, double centerX, double centerY,
+                                  double targetSize, int color) {
         if (font == null || glyph == null || glyph.isEmpty() || targetSize <= .5) return;
         double rawWidth = font.getStringWidthD(glyph);
         double rawHeight = Math.max(1.0, font.getFontHeight());
@@ -2156,46 +2196,64 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 centerY - rawHeight * glyphScale * .5, glyphScale, color);
     }
 
-    /** 跑步精灵条资源：14 帧竖排，每格 24×24，白色字形 + alpha 遮罩，可整体染色。 */
-    private static final Location RUNNING_SPRITE =
-            Location.of("/muonium/textures/player/icons/running-strip.png");
-    private static final int RUNNING_SPRITE_FRAMES = 14;
-    private static final int RUNNING_SPRITE_CELL = 24;
-    /** 每帧停留时长：源 GIF 是 28 帧 ≈ 43ms/帧，抽掉一半后每帧约 87ms，一个跑步循环 1.2 秒。 */
-    private static final long RUNNING_SPRITE_FRAME_MILLIS = 87L;
+    /** 通知图标位上那枚动画矢量的显示边长。16 是接着 {@code islandIcon16} 那套字形的口径。 */
+    private static final double NOTICE_ICON_BOX = 16.0;
 
     /**
-     * 常驻态的左侧标记。三种形态：
+     * 通知图标位上正在放的那枚动画矢量，和它自己的时钟。
+     *
+     * <p>只留一份：同一时刻托盘上最多一枚动画图标，而时钟必须跨帧活着（每帧新建的话
+     * 动画永远停在第 0 帧）。换素材时重开一条时间轴，见 {@link #drawNoticeIcon}。</p>
+     */
+    private SmilSvg noticeIconSource;
+    private SvgPlayback noticeIconPlayback;
+
+    /**
+     * 画一枚带动画的矢量图标，占住通知的左侧图标位。
+     *
+     * <p>素材本身就是动画 SVG，所以逐帧在 Skia 上求值而不是烘成精灵条 —— 后者要么丢分辨率、
+     * 要么丢帧率，而这里一帧真正要画的叶子只有几个，实时画得起。</p>
+     *
+     * @return 画出来了才 true。素材读不到时 false，由调用方退回转子 —— 状态位不能空着。
+     */
+    private boolean drawNoticeIcon(SmilSvg icon, double centerX, double centerY, float alpha) {
+        if (icon == null || alpha <= .01f) return false;
+        if (noticeIconSource != icon) {
+            noticeIconSource = icon;
+            noticeIconPlayback = SvgPlayback.looping(icon);
+        }
+        return icon.drawCentered(centerX, centerY, NOTICE_ICON_BOX, noticeIconPlayback.time(), alpha, 0);
+    }
+
+    /**
+     * 常驻态的左侧标记。两种形态，没有第三种：
      * <ul>
-     *   <li>正在播放页 → 当前歌曲封面（有动态封面时优先用它）；</li>
-     *   <li>状态页 + 玩家在移动 → 跑步精灵动画；</li>
-     *   <li>状态页 + 玩家静止 → 仪表盘字形（island-volume-icons 的 U+E902）。</li>
+     *   <li>有歌（{@code CloudMusic.currentlyPlaying} 在、封面纹理也就绪）→ 当前歌曲封面；</li>
+     *   <li>没歌 → 一枚静止的黑胶唱片（{@code party-icons} 的 U+E430）。</li>
      * </ul>
-     * 刻意不复用加载转子——常驻并不代表有任务在跑，用转子会误导成"正在加载"。
+     * <p>这一格说的是"在听什么"，所以有歌就该一直是封面：原来只有「正在播放」那一页才铺，
+     * 切到状态页就换成别的标记，等于同一件事在两个页面上各说一遍。玩家是否在走路也不再参与
+     * —— 走路时画一个跑步小人，读起来像"这个应用在跟着我动"，而不是"我在听歌"。</p>
+     * <p>刻意不复用加载转子：常驻并不代表有任务在跑，用转子会误导成"正在加载"。</p>
      *
      * @param plateSize   托盘边长。封面按它铺满整块托盘，不再自己先缩一圈
      * @param plateRadius 托盘圆角。封面沿用它才能严丝合缝：圆托盘传半径，方砖传方砖的圆角
      * @param glyphScale  退回字形时相对托盘的缩放。封面是满幅位图、字形自带大片空白边距，
      *                    两者不能共用一个尺寸口径（MUSIC_FOCUS 那块 31px 的方砖需要 .64）
      */
-    private void renderAmbientIcon(IslandAmbientStatus.Snapshot ambient, double centerX, double centerY,
+    private void renderAmbientIcon(double centerX, double centerY,
                                    double plateSize, double plateRadius, double glyphScale,
-                                   float alpha, int accentColor, long now) {
+                                   float alpha, int accentColor) {
         if (alpha <= .01f) return;
-        if (ambient != null && ambient.isNowPlaying()
-                && drawAmbientArtwork(centerX, centerY, plateSize, plateRadius, alpha)) {
+        if (drawAmbientArtwork(centerX, centerY, plateSize, plateRadius, alpha)) {
             return;
         }
         // 只有字形分支才吃 glyphScale：封面已经在上面按整块托盘铺完并 return 了。
         api.getGLStateManager().pushMatrix();
         scaleAtPos(centerX, centerY, glyphScale);
-        double glyphSize = Math.max(6.0, plateSize * .68);
-        if (!(ambient != null && ambient.moving && drawRunningSprite(centerX, centerY, glyphSize * 1.12,
-                alpha, hexColor(.96f, .97f, 1f, alpha), now))) {
-            drawVolumeFontIcon(FontManager.islandVolumeIcon24, FontManager.ISLAND_VOLUME_ICON_LARGE,
-                    IslandVolumeIcons.GAUGE, centerX, centerY, glyphSize,
-                    RenderSystem.reAlpha(DynamicIslandMath.brightenAccent(accentColor, .18f), alpha));
-        }
+        drawAmbientGlyph(FontManager.partyIcon24, PartyIcons.ALBUM, centerX, centerY,
+                Math.max(6.0, plateSize * .68),
+                RenderSystem.reAlpha(DynamicIslandMath.brightenAccent(accentColor, .18f), alpha));
         api.getGLStateManager().popMatrix();
     }
 
@@ -2261,47 +2319,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
 
     /** 这一帧常驻岛左侧会不会画歌曲封面。托盘配色要据此决定，所以必须在绘制前问一次。 */
-    private boolean hasAmbientArtwork(IslandAmbientStatus.Snapshot ambient) {
-        return ambient != null && ambient.isNowPlaying() && ambientArtworkTexture() != null;
-    }
-
-    /**
-     * 画跑步精灵动画的当前帧。
-     *
-     * <p>自己写四边形而不是用 {@code Image.draw}：需要"四边形尺寸"和"采样区域"解耦
-     * （从 24×336 的竖排里只取一格），而现有助手把这两者绑在一起。线性过滤 + 半像素内缩
-     * 保证缩到 10 像素左右时不会串到相邻帧。</p>
-     *
-     * @return 纹理可用时返回 true
-     */
-    private boolean drawRunningSprite(double centerX, double centerY, double size, float alpha,
-                                      int color, long now) {
-        if (size <= 2.0 || alpha <= .01f) return false;
-        ITextureObject texture = TextureManager.getInstance().getTexture(RUNNING_SPRITE);
-        if (texture == null) {
-            // 首次使用时按需加载；这一帧先交给调用方兜底画字形，下一帧就能用上。
-            TextureManager.getInstance().loadTexture(RUNNING_SPRITE, new DynamicTexture(RUNNING_SPRITE));
-            return false;
-        }
-        int frame = (int) ((now / RUNNING_SPRITE_FRAME_MILLIS) % RUNNING_SPRITE_FRAMES);
-        double sheetHeight = (double) RUNNING_SPRITE_CELL * RUNNING_SPRITE_FRAMES;
-        // 上下各内缩半个纹素：相邻帧在线性过滤下会互相渗色，缩小显示时尤其明显。
-        double v0 = (frame * (double) RUNNING_SPRITE_CELL + .5) / sheetHeight;
-        double v1 = ((frame + 1) * (double) RUNNING_SPRITE_CELL - .5) / sheetHeight;
-        api.getGLStateManager().bindTexture(texture.getGlTextureId());
-        RenderSystem.linearFilter();
-        RenderSystem.color(color);
-        double left = centerX - size * .5;
-        double top = centerY - size * .5;
-        // 竖向排布的逐帧精灵图：整张图宽 RUNNING_SPRITE_CELL、高 cell × 帧数。
-        // v0/v1 上面已经按「上下各内缩半个纹素」算好，原样交给 Skia。
-        com.muoniumplayer.render.skija.SkijaImages.drawTextured(
-                left, top, size, size, 0.0, v0, 1.0, v1,
-                texture.getGlTextureId(), RUNNING_SPRITE_CELL, (int) Math.round(sheetHeight),
-                SkijaGfx.color(), true);
-        api.getGLStateManager().bindTexture(0);
-        SkijaGfx.setColor(1f, 1f, 1f, 1f);
-        return true;
+    private boolean hasAmbientArtwork() {
+        return ambientArtworkTexture() != null;
     }
 
     /**
@@ -2313,9 +2332,16 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                                   float alpha, int accentColor, long now) {
         if (alpha <= .01f) return;
         int foreground = hexColor(.94f, .95f, .98f, alpha);
+        if (type == IslandNoticeType.MODEL_INFERENCE) {
+            // 模型推理换 inference.svg 那组星光：这个状态一停就是好几秒，转子转久了像在卡死，
+            // 而星光一下一下亮起来正好是"在算"的读感。素材读不到时仍退回转子，状态位不能空。
+            if (!drawNoticeIcon(AnimatedIcons.inference(), centerX, centerY, alpha)) {
+                renderSpinner(centerX, centerY, alpha, accentColor, now, false);
+            }
+            return;
+        }
         if (type == IslandNoticeType.REFRESHING || type == IslandNoticeType.PLAYLIST_TRACK_ADDING
-                || type == IslandNoticeType.TRANSCODING || type == IslandNoticeType.GD_SOURCE_LOADING
-                || type == IslandNoticeType.MODEL_INFERENCE) {
+                || type == IslandNoticeType.TRANSCODING || type == IslandNoticeType.GD_SOURCE_LOADING) {
             renderSpinner(centerX, centerY, alpha, accentColor, now, false);
             return;
         }
@@ -2655,7 +2681,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         double beat = .985 + .025 * (.5 + .5 * Math.sin((preview ? now / 8.0 : now / 290.0)));
         // 同 drawIsland 的托盘：封面会盖在这块砖上，砖上那层 66% 的强调色会透过半透明的封面，
         // 把封面染成主题色。要盖封面就把强调色让出来，只留下面那层深色。
-        float tileArtworkMix = ambientMix > .005f && hasAmbientArtwork(ambient) ? ambientMix : 0f;
+        float tileArtworkMix = ambientMix > .005f && hasAmbientArtwork() ? ambientMix : 0f;
         scaleAtPos(centerX, centerY, beat);
         roundedRect(centerX - tileSize * .5, centerY - tileSize * .5, tileSize, tileSize, tileRadius,
                 RenderSystem.reAlpha(accentColor, alpha * .66f * (1f - tileArtworkMix)));
@@ -2700,8 +2726,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         if (ambientMix > .005f) {
             // 封面按整砖的边长和圆角铺满；.64 只留给退回的字形 —— 原来这层缩放套在封面上，
             // 叠上封面自己的 82%，封面就只有砖的一半大（31 → 16.3），四周整圈都是砖。
-            renderAmbientIcon(ambient, centerX, centerY, tileSize, tileRadius, .64,
-                    alpha * ambientMix, iconAccentColor, now);
+            renderAmbientIcon(centerX, centerY, tileSize, tileRadius, .64,
+                    alpha * ambientMix, iconAccentColor);
         }
     }
     private void renderSuccess(double centerX, double centerY, float alpha) {
@@ -3029,7 +3055,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                                  boolean preview, float success, int accentColor) {
         if (alpha <= .01f) return;
         if (ambientMix > .5f && ambient != null && !ambient.isEmpty()) {
-            renderAmbientIcon(ambient, centerX, centerY, size, size * .5, .8, alpha, accentColor, now);
+            renderAmbientIcon(centerX, centerY, size, size * .5, .8, alpha, accentColor);
             return;
         }
         if (noticeMode) {

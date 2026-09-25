@@ -75,6 +75,10 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
     private static final int LINK_HOVER_COLOR = 0xFFD08A;
 
     private boolean closing;
+    /** 进出场那一条时钟，和 {@code NcmSheet} 那六个浮层共用同一个 {@link SheetClock}。 */
+    private final SheetClock clock = new SheetClock();
+    /** 遮罩与卡片共同读的那一档进度（已经过缓动）。 */
+    private double presentation;
     private boolean resolved;
 
     /** 浏览器打不开时显示的兜底说明（地址已复制到剪贴板）。 */
@@ -88,8 +92,16 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
     /** 标题是否已经降到小一号字体；只在需要变化时才换字体。 */
     private boolean titleCompact;
 
-    public boolean shouldClose() {
+    /** 正在退场：还画得着，但 {@link NCMPanel} 会把它这一帧的输入整个吞掉。 */
+    @Override
+    protected boolean isDismissing() {
         return closing;
+    }
+
+    public boolean shouldClose() {
+        // 退场播完才回收。原来是 closing 一置位下一帧就把这一层抹掉，所以「打开有淡入、
+        // 关掉啪一下没了」。
+        return clock.isGone();
     }
 
     /** 「我才不管呢喵」、点遮罩、ESC 都走这里：收起提示，本次启动不再弹（由 FfmpegNotice 记）。 */
@@ -97,6 +109,7 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
         if (resolved) return;
         resolved = true;
         closing = true;
+        clock.requestDismiss();
     }
 
     public void handleEscape() {
@@ -108,8 +121,14 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
         RectWidget mask = new RectWidget();
         addChild(mask);
         mask.setClickable(false);
-        mask.setColor(0x000000).setAlpha(.5f);
-        mask.setBeforeRenderCallback(() -> mask.setMargin(0));
+        mask.setColor(0x000000);
+        // 遮罩和卡片同一条进度：原来它是写死的 .5f，于是卡片还没出现整屏已经先黑了。
+        mask.setBeforeRenderCallback(() -> {
+            mask.setMargin(0);
+            mask.setAlpha((float) (presentation * .5f));
+        });
+        // 时钟在根组件这一格里推进：它跑在所有子组件之前，遮罩和卡片于是读到同一个值。
+        setBeforeRenderCallback(() -> presentation = TransitionCurveCache.MOTION.at(clock.tick()));
 
         // 点在卡片外面等价于「我才不管呢喵」，并且必须被这里吃掉：我们的宿主是一个独立的
         // Screen，落不到别处，但这个回调仍然要拦下右键以外的点击，避免往下透传。
@@ -286,6 +305,8 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
         dialog.setBounds(width, Math.min(Math.max(160.0, contentHeight()),
                 Math.max(160.0, getHeight() - 28)));
         dialog.center();
+        dialog.setPosition(dialog.getRelativeX(), dialog.getRelativeY() + (1.0 - presentation) * 10.0);
+        dialog.setAlpha((float) presentation);
     }
 
     private void layoutActions(Panel dialog, RoundedButtonWidget ignore, RoundedButtonWidget download) {

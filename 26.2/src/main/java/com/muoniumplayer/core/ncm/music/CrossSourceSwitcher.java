@@ -653,7 +653,7 @@ public final class CrossSourceSwitcher {
      * 只要它启用并声明能吃下某平台，该平台就没有「本家会员」一说的必要 —— 没会员也进候选，
      * 换过去的候选在 {@code Music.getPlayUrl} / {@link #tryPlayable} 里脚本优先。</p>
      */
-    static boolean hasVipAccess(MusicPlatform platform) {
+    public static boolean hasVipAccess(MusicPlatform platform) {
         if (platform == MusicPlatform.GD || platform == MusicPlatform.BILIBILI) return true;
         // LX 通道优先：自定义源已启用且声明覆盖该平台时，本家会员与否都不再是门槛。
         if (lxCovers(platform)) return true;
@@ -685,7 +685,7 @@ public final class CrossSourceSwitcher {
      *
      * <p>对 kw / mg 这一票就是生死判：它们的曲目没有本家流，脚本解不出的渠道不值得进候选。</p>
      */
-    static boolean lxCovers(MusicPlatform platform) {
+    public static boolean lxCovers(MusicPlatform platform) {
         if (!LxSourceService.isEnabled()) return false;
         String key = LxSourceService.sourceKeyFor(platform.name(), GdStudioSourceSettings.getPlatform());
         if (key == null || LxSourceService.platformForSourceKey(key) == null) return false;

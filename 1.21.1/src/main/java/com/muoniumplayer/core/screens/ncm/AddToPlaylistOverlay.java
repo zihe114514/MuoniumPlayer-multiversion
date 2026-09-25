@@ -29,7 +29,14 @@ public class AddToPlaylistOverlay extends NCMPanel {
     private static final int STATUS_ERROR_COLOR = 0xF1767D;
 
     public Music music;
+    /** 接力板的落点：标题下面那一行「将《歌名》加入歌单」。 */
+    private LabelWidget heroTarget;
+    private SheetHeroRelay.Origin heroOrigin;
     private boolean closing = false;
+    /** 进出场那一条时钟，和 {@code NcmSheet} 那六个浮层共用同一个 {@link SheetClock}。 */
+    private final SheetClock clock = new SheetClock();
+    /** 遮罩与弹窗共同读的那一档进度（已经过缓动）。 */
+    private double presentation;
     private boolean submitting = false;
     private PlayList selectedPlaylist;
     private String statusMessage = "";
@@ -48,24 +55,63 @@ public class AddToPlaylistOverlay extends NCMPanel {
         this.music = music;
     }
 
-    public boolean shouldClose() {
+    /** 正在退场：还画得着，但 {@link NCMPanel} 会把它这一帧的输入整个吞掉。 */
+    @Override
+    protected boolean isDismissing() {
         return closing;
+    }
+
+    public boolean shouldClose() {
+        // 退场播完才回收：closing 一置位下一帧就把这一层抹掉，等于没有退场动画。
+        return clock.isGone();
+    }
+
+    /** @param from 侧栏/列表里那枚「+」在按下那一刻的矩形；由 {@code NCMScreen#openAddToPlaylist} 转交。 */
+    public void claimHero(SheetHeroRelay.Origin from) {
+        if (from != null && this.heroOrigin == null) this.heroOrigin = from;
+    }
+
+    /**
+     * 飞行板画在所有子组件之后，好让它起飞时压得住自己那层遮罩。
+     *
+     * <p>这一层没有「一张卡」可以落，落点是顶部那行歌名，所以起飞与淡出都跟整块弹窗同一条
+     * 进度 —— 不像 {@code NcmSheet} 那样和某张卡自己的入场进度互补。</p>
+     */
+    @Override
+    protected void afterRenderChildren(double mouseX, double mouseY) {
+        super.afterRenderChildren(mouseX, mouseY);
+        if (heroOrigin == null || heroTarget == null) return;
+        double ink = NcmSheet.labelInkHeight(heroTarget);
+        SheetHeroRelay.render(heroOrigin, heroTarget.getX() - 6, heroTarget.getY() + (heroTarget.getHeight() - ink) * .5 - 4,
+                Math.max(1, heroTarget.getWidth()) + 12, ink + 8, 5.0, presentation, presentation);
+    }
+
+    /** 收到关闭请求：置位 closing 让在途请求作废，同时让退场动画开始播。 */
+    private void requestClose() {
+        this.closing = true;
+        clock.requestDismiss();
     }
 
     @Override
     public void onInit() {
+        // 时钟跑在根组件这一格：它先于所有子组件，遮罩和弹窗于是读到同一个值。
         this.setBeforeRenderCallback(() -> {
+            presentation = TransitionCurveCache.MOTION.at(clock.tick());
             if (!submitting && closeAfterMillis > 0L && System.currentTimeMillis() >= closeAfterMillis) {
-                closing = true;
+                requestClose();
             }
         });
 
         // 半透明遮罩只负责弱化下方 UI。关闭逻辑由 overlay 根组件处理，避免吞掉歌单行点击。
         RectWidget mask = new RectWidget();
         this.addChild(mask);
-        mask.setColor(0x000000).setAlpha(.45f);
+        mask.setColor(0x000000);
         mask.setClickable(false);
-        mask.setBeforeRenderCallback(() -> mask.setMargin(0));
+        // 原来整层没有任何进度：mask 写死 .45f，弹窗也没有淡入，点「加入歌单」是硬切出一张卡片。
+        mask.setBeforeRenderCallback(() -> {
+            mask.setMargin(0);
+            mask.setAlpha((float) (presentation * .45));
+        });
 
         // 提交期间保留弹窗，防止用户误以为请求已结束，也避免离开后无法看到结果。
         this.setOnClickCallback((x, y, button) -> {
@@ -76,7 +122,7 @@ public class AddToPlaylistOverlay extends NCMPanel {
                 showStatus("正在加入「" + getPlaylistName(selectedPlaylist) + "」…", FeedbackState.PROCESSING);
                 return true;
             }
-            closing = true;
+            requestClose();
             return true;
         });
 
@@ -87,6 +133,9 @@ public class AddToPlaylistOverlay extends NCMPanel {
             double h = Math.min(440, this.getHeight() - 80);
             dialog.setBounds(w, h);
             dialog.center();
+            // 上浮 10 像素落位，和模态确认、主题调色板同一档动作。
+            dialog.setPosition(dialog.getRelativeX(), dialog.getRelativeY() + (1.0 - presentation) * 10.0);
+            dialog.setAlpha((float) presentation);
         });
 
         RoundedRectWidget dialogBg = new RoundedRectWidget();
@@ -108,6 +157,7 @@ public class AddToPlaylistOverlay extends NCMPanel {
                 FontManager.pf12
         );
         dialog.addChild(lblHint);
+        this.heroTarget = lblHint;
         lblHint.setClickable(false);
         lblHint.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
         lblHint.setBeforeRenderCallback(() -> {
@@ -205,7 +255,7 @@ public class AddToPlaylistOverlay extends NCMPanel {
             closeAfterMillis = -1L;
             showStatus("仅支持把同源歌曲加入同源歌单", FeedbackState.ERROR);
             DownloadDynamicIsland.showPlaylistTrackAddFailure(playlistName, "歌曲与歌单不是同一个音源");
-            closing = true;
+            requestClose();
             return;
         }
 
@@ -220,7 +270,7 @@ public class AddToPlaylistOverlay extends NCMPanel {
             closeAfterMillis = -1L;
             showStatus("歌曲 ID 无效，无法加入歌单", FeedbackState.ERROR);
             DownloadDynamicIsland.showPlaylistTrackAddFailure(playlistName, "歌曲 ID 无效");
-            closing = true;
+            requestClose();
             return;
         }
 
@@ -244,7 +294,7 @@ public class AddToPlaylistOverlay extends NCMPanel {
         });
 
         // 选择目标歌单即返回播放器页面；网络请求和结果校验仍在后台继续执行。
-        closing = true;
+        requestClose();
     }
 
     /**
@@ -275,7 +325,7 @@ public class AddToPlaylistOverlay extends NCMPanel {
                             finalOk ? "已加入歌单" : "加入歌单失败")));
         });
 
-        closing = true;
+        requestClose();
     }
 
     private void handleSubmitResult(PlayList playlist, CloudMusicApi.PlaylistTrackOperationResult result) {

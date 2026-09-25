@@ -15,7 +15,10 @@ import com.muoniumplayer.core.rendering.PlayerQueueIcons;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
+import com.muoniumplayer.core.rendering.svg.AnimatedIcons;
 import com.muoniumplayer.core.rendering.texture.Textures;
+import com.muoniumplayer.core.rendering.ui.AbstractWidget;
+import com.muoniumplayer.core.rendering.ui.widgets.AnimatedSvgWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.IconWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedImageWidget;
@@ -23,6 +26,7 @@ import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.ThemedTextureIconWidget;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.PlayerIconAssets;
+import com.muoniumplayer.core.screens.ncm.SheetHeroRelay;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
@@ -34,23 +38,31 @@ import java.awt.*;
  */
 public class MusicWidget extends RoundedRectWidget {
 
-    private static final long ENTRANCE_DURATION_MILLIS = 280L;
-
     /** 时长文本与行右边缘之间的留白。 */
     private static final double DURATION_RIGHT_MARGIN = 8.0;
     /** 右侧每一枚操作图标的边长。 */
     private static final double ACTION_ICON_SIZE = 20.0;
     /** 右侧控件彼此之间的间距。 */
     private static final double ACTION_GAP = 4.0;
+    /**
+     * 已喜欢那颗红心相对图标槽的放大倍率。
+     *
+     * <p>客户端里量过：同一格 1:1 画，未喜欢那枚描边心 22 设备像素宽，like.svg 的红心只有
+     * 19.2 —— 一列里两种心大小不一致，用户一眼就看出来了。1.15 是把宽度对齐取的
+     * （19.2 × 1.15 ≈ 22），高度也跟着从 17 回到 19.6，对上了描边心的 20。</p>
+     */
+    private static final double LIKE_ICON_SCALE = 1.15;
     /** 一小时的毫秒数：到这个长度 {@link #formatDuration(long)} 才会多出小时位。 */
     private static final long ONE_HOUR_MILLIS = 3600_000L;
 
     public PlayList playList;
     public Music music;
     boolean coverLoaded = false;
-    private long entranceStartedAt = -1L;
-    private long entranceDelayMillis;
-    private boolean entranceAnimationFinished = true;
+    /** 进场进度与那段落位矩阵，见 {@link PanelItemEntrance}。 */
+    private final PanelItemEntrance entrance = new PanelItemEntrance();
+    private double entranceEased = 1.0;
+    /** 第一次被渲染时向它领一个错峰号；{@code null} 表示这一行不做进场。 */
+    private PanelItemEntrance.RevealQueue entranceQueue;
 
     public MusicWidget(Music music, PlayList playList, int index) {
         super(0, 0, 0, 30);
@@ -471,22 +483,55 @@ public class MusicWidget extends RoundedRectWidget {
         btnLike.setShouldOverrideMouseCursor(true);
         btnLike.setHidden(!likeable);
         btnLike.setClickable(likeable);
+        // 已喜欢态用 like.svg 那颗实心红心，未喜欢态仍用上面那枚描边图标配主题色。
+        // 为什么不让静态图标染色来当「已喜欢」：favorite.png 本身就是一圈线框，染成强调色
+        // 还是一颗空心心 —— 用户要的「亮」是实心。素材 .47 那一帧正好是一颗画全的实心红心，
+        // 墨迹盒 275/512 也和 favorite.png 的 52/96 同尺寸，换上去不会跳大小。
+        AnimatedSvgWidget btnLikeAnimated = new AnimatedSvgWidget(AnimatedIcons.like());
+        this.addChild(btnLikeAnimated);
+        btnLikeAnimated.setShouldOverrideMouseCursor(true);
+        btnLikeAnimated.setClickable(likeable);
+        // 先按未喜欢收起来，等下面那个每帧都跑的回调来翻 —— 别让它自己藏自己，
+        // renderWidget 在 isHidden() 时连 beforeRenderCallback 都不跑，藏了就没机会回来。
+        btnLikeAnimated.setHidden(true);
+        // 平时冻在实心那一帧，而不是从 .3 起播：列表一开有 209 行，全都从起播相位走的话
+        // 整列红心会跟着一起爆心。爆心只在点下去那一刻发一条新时钟（见 likeClick）。
+        btnLikeAnimated.setPlayback(AnimatedIcons.likeSolid());
+        btnLikeAnimated.setBeforeRenderCallback(() -> {
+            // 素材在各自画布里占的比例不一样：like.svg 那颗实心红心只撑到画布的 54%，
+            // favorite.png 那圈描边却占到 70%。同一格 20px 里直接画，红心就比未喜欢那枚小一圈
+            // （用户量的实测是 21px 对 28px）。按 4/3 放大，再对齐到静态那枚的中心。
+            double box = btnLike.getWidth() * LIKE_ICON_SCALE;
+            btnLikeAnimated.setBounds(box, btnLike.getHeight() * LIKE_ICON_SCALE);
+            btnLikeAnimated.setPosition(
+                    btnLike.getRelativeX() + (btnLike.getWidth() - btnLikeAnimated.getWidth()) * .5,
+                    btnLike.getRelativeY() + (btnLike.getHeight() - btnLikeAnimated.getHeight()) * .5);
+        });
         btnLike.setBeforeRenderCallback(() -> {
             boolean liked = isLiked(music);
-            btnLike.setColor(liked ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
-                    : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            // 让位给红心：不能 setHidden —— 这一格藏起来之后 renderWidget 连 beforeRenderCallback
+            // 都不跑，动画那枚就再没人把它翻回去了。只能把整枚控件的 alpha 压成 0。
+            // 别改回 setColor(0x00FFFFFF)：AbstractWidget#getColor 会拿控件自己的 alpha 顶掉颜色里
+            // 那个 alpha 字节，于是 favorite.png 那圈白描边照样画出来，从红心底下透出一圈毛边。
+            btnLike.setAlpha(liked ? 0f : 1f);
+            btnLike.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             btnLike.centerVertically();
             // 挂在固定的时长槽位左边缘上，而不是时长标签的左边缘：后者的宽度随数字变化，
             // 会让每一行的图标列各自漂移，上下两行对不齐。
             btnLike.setPosition(actionsAnchorX(lblMusicDuration) - ACTION_GAP - btnLike.getWidth(),
                     btnLike.getRelativeY());
+            // 动画那枚的显隐统一由这里管：这一格每帧都跑，两个方向都还有机会翻回来。
+            btnLikeAnimated.setHidden(!likeable || !liked);
         });
-        btnLike.setOnClickCallback((x, y, button) -> {
+        final AbstractWidget.OnClickCallback likeClick = (x, y, button) -> {
             if (button != 0 || !likeable)
                 return false;
 
             boolean liked = isLiked(music);
             if (!liked) {
+                // 换一条新的一次性时钟：这一枚控件记的是自己那条墙上时钟的起点，不重开的话
+                // 第二次点心就不会再有粒子。走完停在 .47，正好就是平时那张常驻的实心帧。
+                btnLikeAnimated.setPlayback(AnimatedIcons.likeBurst());
                 if (music.isNetease()) {
                     if (CloudMusic.likeList != null && !CloudMusic.likeList.contains(music.getId())) {
                         CloudMusic.likeList.add(music.getId());
@@ -538,7 +583,11 @@ public class MusicWidget extends RoundedRectWidget {
                     }
             );
             return true;
-        });
+        };
+        // 同一份处理挂在两枚图标上：未喜欢点静态那枚，已喜欢点动画那枚，行为完全一致
+        // （取消收藏仍要走二次确认）。
+        btnLike.setOnClickCallback(likeClick);
+        btnLikeAnimated.setOnClickCallback(likeClick);
 
         // 图标走字体（player-action-icons U+E113 方框加号）而不是 playlist.png：字形按实际字号
         // 运行时生成，不再受离线烘图的尺寸/裁切影响，也和相邻的「下一首播放」共用同一套墨迹对齐。
@@ -556,7 +605,12 @@ public class MusicWidget extends RoundedRectWidget {
         btnAddToPlaylist.setOnClickCallback((x, y, button) -> {
             if (button != 0 || !playlistAddable)
                 return false;
-            NCMScreen.getInstance().openAddToPlaylist(music);
+            // 这块板从「+」飞到弹窗顶部那行歌名上：它要说的是「你要动的是这一首」，
+            // 而那枚「+」本身就是「给这一首加进去」—— 两者是同一个操作的两端。
+            NCMScreen.getInstance().openAddToPlaylist(music, SheetHeroRelay.from(
+                    btnAddToPlaylist.getX(), btnAddToPlaylist.getY(),
+                    btnAddToPlaylist.getWidth(), btnAddToPlaylist.getHeight(), 5.0,
+                    () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT)));
             return true;
         });
 
@@ -650,36 +704,37 @@ public class MusicWidget extends RoundedRectWidget {
     }
 
     /**
-     * 让新拉取的曲目有一个短暂、交错的淡入入场效果，而不改变
-     * 它们真实的布局边界（从而保持滚动和点击检测的稳定）。
+     * 让曲目行有一次进场：淡入 + 从下方落进来 + 微微放大。
+     *
+     * <p>动作本身在 {@link PanelItemEntrance} 里（主页的歌单卡片用的是同一套）。位移与缩放全走
+     * 矩阵，不改动它们真实的布局边界（从而保持滚动和点击检测的稳定）。</p>
+     *
+     * <p>这里只挂发号器，不立刻起算：{@code ScrollPanel} 不渲染视口外的行，所以本控件第一次被
+     * 渲染就是它刚滚进视口的那一帧。建页时就把号发完的话，下面的行在你滚到它之前早演完了。</p>
      */
-    public MusicWidget setEntranceAnimation(long startedAt, long delayMillis) {
-        this.entranceStartedAt = startedAt;
-        this.entranceDelayMillis = Math.max(0L, delayMillis);
-        this.entranceAnimationFinished = false;
+    public MusicWidget setEntranceAnimation(PanelItemEntrance.RevealQueue queue) {
+        this.entranceQueue = queue;
+        this.entranceEased = 0.0;
         this.setAlpha(0f);
+        this.setTransformations(() -> PanelItemEntrance.applyTransform(this.entranceEased,
+                this.getX() + this.getWidth() * .5, this.getY() + this.getHeight() * .5));
         return this;
     }
 
     private void updateEntranceAnimation() {
-        if (entranceAnimationFinished) {
+        if (!this.entrance.isStarted()) {
+            if (this.entranceQueue == null) return;
+            this.entrance.begin(System.currentTimeMillis(), this.entranceQueue.nextDelayMillis());
+        }
+        if (entrance.isFinished()) {
             return;
         }
 
-        long elapsed = System.currentTimeMillis() - entranceStartedAt - entranceDelayMillis;
-        if (elapsed <= 0L) {
-            this.setAlpha(0f);
-            return;
-        }
-
-        float progress = Math.min(1f, elapsed / (float) ENTRANCE_DURATION_MILLIS);
-        // 三次缓出曲线让淡入淡出平缓收尾，而不是呈线性。
-        float easedProgress = 1f - (float) Math.pow(1f - progress, 3f);
-        this.setAlpha(easedProgress);
-
-        if (progress >= 1f) {
-            this.setAlpha(1f);
-            this.entranceAnimationFinished = true;
+        this.entranceEased = entrance.tick();
+        this.setAlpha((float) this.entranceEased);
+        if (entrance.isFinished()) {
+            // 摘掉变换：一首 200 行的歌单不该为已经停住的行一直付一次 pushMatrix。
+            this.setTransformations(null);
         }
     }
     /**

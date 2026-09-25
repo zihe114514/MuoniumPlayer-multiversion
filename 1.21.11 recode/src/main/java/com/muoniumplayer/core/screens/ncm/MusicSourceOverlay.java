@@ -131,7 +131,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         if (page == PAGE_OVERVIEW) {
             dispose();
         } else {
-            showOverview();
+            back(this::showOverview).run();
         }
     }
 
@@ -196,6 +196,8 @@ public final class MusicSourceOverlay extends NcmSheet {
                 : mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
                 NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), self[0].hover));
         self[0] = card;
+        // 侧栏那枚来源按钮上写着的就是当前来源，所以接力板落在当前来源这一行。
+        if (NeteaseMusicService.getCurrentPlatform() == platform) hero(card);
         card.setShouldOverrideMouseCursor(true);
         card.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -259,7 +261,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         statusTone = YouTubeProxySettings.isEnabled() ? 1 : 0;
 
         final Panel dialog = sheet(476, () -> 300.0);
-        subHeader(dialog, this::showOverview, () -> "YouTube · 网络代理",
+        subHeader(dialog, back(this::showOverview), () -> "YouTube · 网络代理",
                 () -> "仅影响 YouTube 搜索、取流、音频下载与封面下载",
                 MusicPlatform.YOUTUBE::getBrandColor);
         tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> 60.0);
@@ -316,7 +318,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         statusTone = YouTubeSessionStore.isLoggedIn() ? 1 : 0;
 
         final Panel dialog = sheet(476, () -> 300.0);
-        subHeader(dialog, this::showOverview, () -> "YouTube · 登录",
+        subHeader(dialog, back(this::showOverview), () -> "YouTube · 登录",
                 () -> "匿名就能搜与播；登录之后才有的是歌词与私人歌单",
                 MusicPlatform.YOUTUBE::getBrandColor);
         tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> 60.0);
@@ -712,7 +714,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         final List<GdStudioMusicService.Platform> platforms = GdStudioMusicService.getPlatforms();
         final Panel dialog = sheet(516,
                 () -> 88 + 6 + Math.min(platforms.size() * PLATFORM_ROW, 280.0) + 44);
-        subHeader(dialog, this::showOverview, () -> "GD音乐台 · 在线聚合",
+        subHeader(dialog, back(this::showOverview), () -> "GD音乐台 · 在线聚合",
                 () -> "选一个平台作为独立内容源；再点当前平台即可关闭",
                 MusicPlatform.GD::getBrandColor);
         tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> 60.0);
@@ -820,7 +822,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         final List<LxSourceStore.Entry> scripts = LxSourceStore.list();
         final Panel dialog = sheet(524,
                 () -> LX_HEADER_H + Math.min(lxContentHeight(scripts.size()), 300.0) + LX_FOOTER_H);
-        subHeader(dialog, this::showOverview, () -> "自定义音源 · LX Music 脚本",
+        subHeader(dialog, back(this::showOverview), () -> "自定义音源 · LX Music 脚本",
                 () -> "导入 .js 脚本由它来解析播放链接；与上游一致，同时只启用一个",
                 () -> LX_COLOR);
         tip(dialog, this::lxStatusGlyph, this::lxStatusText, this::lxStatusColor, () -> 60.0);

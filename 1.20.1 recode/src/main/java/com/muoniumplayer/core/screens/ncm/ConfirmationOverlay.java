@@ -27,8 +27,11 @@ public final class ConfirmationOverlay extends NCMPanel {
     private final String message;
     private final String confirmText;
     private final Runnable onConfirm;
-    private boolean closing;
     private boolean resolved;
+    /** 进出场那一条时钟，和 {@code NcmSheet} 那六个浮层共用同一个 {@link SheetClock}。 */
+    private final SheetClock clock = new SheetClock();
+    /** 遮罩与卡片共同读的那一档进度（已经过缓动）。 */
+    private double presentation;
 
     /** 按当前卡片宽度换行后的说明文字。 */
     private String[] messageLines = new String[0];
@@ -47,8 +50,15 @@ public final class ConfirmationOverlay extends NCMPanel {
         this.onConfirm = onConfirm;
     }
 
+    /** 退场播完才回收：一按下确认就把这一层抹掉，等于没有退场动画。 */
+    /** 正在退场：还画得着，但 {@link NCMPanel} 会把它这一帧的输入整个吞掉。 */
+    @Override
+    protected boolean isDismissing() {
+        return clock.isDismissing();
+    }
+
     public boolean shouldClose() {
-        return closing;
+        return clock.isGone();
     }
 
     public void cancel() {
@@ -60,8 +70,13 @@ public final class ConfirmationOverlay extends NCMPanel {
         RectWidget mask = new RectWidget();
         addChild(mask);
         mask.setClickable(false);
-        mask.setColor(0x000000).setAlpha(.48f);
-        mask.setBeforeRenderCallback(() -> mask.setMargin(0));
+        mask.setColor(0x000000);
+        // 遮罩跟着卡片一起淡。原来它是写死的 .48f，于是卡片还没出现、底下整块界面已经先黑了；
+        // 关掉时又是「卡片啪一下没了、遮罩还黑着」。
+        mask.setBeforeRenderCallback(() -> {
+            mask.setMargin(0);
+            mask.setAlpha((float) (presentation * .48));
+        });
 
         // 点击外部关闭对话框，绝不落到其下方的面板。
         setOnClickCallback((x, y, button) -> {
@@ -85,8 +100,13 @@ public final class ConfirmationOverlay extends NCMPanel {
             wrapMessage(Math.max(1, width - MESSAGE_INSET * 2));
             double height = Math.max(124, Math.min(Math.max(124, getHeight() - 28),
                     MESSAGE_TOP + messageBlockHeight + 12 + ACTIONS_HEIGHT));
+            // 时钟只在这里推进：这一格每帧必跑（弹窗不画就没有任何东西需要回收），
+            // 而遮罩和卡片读的是同一个 presentation，不会各走一条。
+            presentation = TransitionCurveCache.MOTION.at(clock.tick());
             dialog.setBounds(width, height);
             dialog.center();
+            dialog.setPosition(dialog.getRelativeX(), dialog.getRelativeY() + (1.0 - presentation) * 10.0);
+            dialog.setAlpha((float) presentation);
         });
 
         RoundedRectWidget background = new RoundedRectWidget();
@@ -244,7 +264,7 @@ public final class ConfirmationOverlay extends NCMPanel {
     private void resolve(boolean confirmed) {
         if (resolved) return;
         resolved = true;
-        closing = true;
+        clock.requestDismiss();
         if (confirmed && onConfirm != null) {
             onConfirm.run();
         }

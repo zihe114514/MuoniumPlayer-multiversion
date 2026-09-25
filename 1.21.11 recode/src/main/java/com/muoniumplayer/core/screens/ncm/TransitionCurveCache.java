@@ -1,29 +1,42 @@
 package com.muoniumplayer.core.screens.ncm;
 
 /**
- * 播放器两条转场共用的曲线缓存。
+ * 播放器各条转场共用的曲线缓存。
  *
  * <p>cubic-bezier 需要按 x 反解参数 u。原实现每读一次曲线都可能走牛顿法 + 二分，
  * 而一条转场一帧会读十几条通道；低配机器上这些小计算会和大量绘制调用叠在一起，
  * GC 与分支预测的代价都被放大。</p>
  *
- * <p>这里在类加载时把两条固定曲线各采样成 512 段的查找表，运行期只做一次数组插值。
- * 512 段的最大线性插值误差远小于 0.5/255，肉眼不可见；两张表合计不到 9 KB，常驻内存可以忽略。</p>
+ * <p>这里在类加载时把每条固定曲线各采样成 512 段的查找表，运行期只做一次数组插值。
+ * 512 段的最大线性插值误差远小于 0.5/255，肉眼不可见；三张表合计约 6 KB，常驻内存可以忽略。</p>
+ *
+ * <p>类本身是 public：侧栏的高亮条在 {@code ncm.panels} 那一层，它要的落位手感必须和换页、
+ * 浮层是<b>同一条</b>曲线，否则「同一个播放器里两套动效语言」迟早又长出来。</p>
  */
-final class TransitionCurveCache {
+public final class TransitionCurveCache {
 
     private static final int SAMPLES = 513;
 
     /** Material 3 emphasized。承担绝大多数位移与不透明度通道。 */
-    static final CachedBezier MOTION = new CachedBezier(0.2, 0.0, 0.0, 1.0);
+    public static final CachedBezier MOTION = new CachedBezier(0.2, 0.0, 0.0, 1.0);
 
     /** Material 2 standard。只承担水平轴的滞后通道。 */
-    static final CachedBezier MOTION_LAGGING = new CachedBezier(0.4, 0.0, 0.2, 1.0);
+    public static final CachedBezier MOTION_LAGGING = new CachedBezier(0.4, 0.0, 0.2, 1.0);
+
+    /**
+     * 带过冲的落位（back-out）。侧栏高亮条的前缘走它：30% 时长走完 90% 行程，
+     * 在 60% 时长处越过目标 <b>9.7%</b>，然后收回来 —— 「弹过去钉住」而不是「漂过去停下」。
+     *
+     * <p>纵轴控制点取在 1 以外是安全的：{@link CachedBezier#at(double)} 只把<b>入参</b>钳在
+     * 0..1，表里存的是贝塞尔纵轴的原始值，所以中段本就可以大于 1，而 {@code t = 1} 那一格
+     * 恒等于 1.0 —— 终点仍然精确落位，不会停在过冲上。</p>
+     */
+    public static final CachedBezier SPRING_LAND = new CachedBezier(0.34, 1.56, 0.64, 1.0);
 
     private TransitionCurveCache() {
     }
 
-    static final class CachedBezier {
+    public static final class CachedBezier {
         private final float[] values = new float[SAMPLES];
 
         CachedBezier(double x1, double y1, double x2, double y2) {
@@ -33,7 +46,7 @@ final class TransitionCurveCache {
             }
         }
 
-        double at(double time) {
+        public double at(double time) {
             if (time <= 0.0) return 0.0;
             if (time >= 1.0) return 1.0;
 

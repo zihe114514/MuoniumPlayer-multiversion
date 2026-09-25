@@ -135,7 +135,13 @@ class YouTubeStaticTest {
         assertEquals(140, itag, "音质标签 MEDIUM 应该赢过 LOW 与 ULTRALOW");
     }
 
-    /** 同一组实测格式，但每条都带上服务端声明的 contentLength（秒开判定靠它）。 */
+    /**
+     * 同一组实测格式，但每条都带上服务端声明的 contentLength（秒开判定靠它）。
+     *
+     * <p>这里故意把 {@code codecs} 抹掉：这条测试要单独钉「段数优先」这一条规则，
+     * 编码闸的分支由 {@link #heAacNeverSelected} 那组带真实编码的夹具去钉。
+     * 真机上 YouTube 是每条都标 {@code codecs} 的，见上面那份 09-24 的表。</p>
+     */
     private static JsonArray measuredFormatsWithLength() {
         return array("["
                 + "{\"itag\":139,\"mimeType\":\"audio/mp4\",\"bitrate\":50180,"
@@ -207,6 +213,85 @@ class YouTubeStaticTest {
                 + "\"bitrate\":151037,\"url\":\"http://x/251\"}]");
         assertEquals(null, YouTubeMusicService.selectAudioFormat(onlyOpus, Quality.LOSSLESS),
                 "宿主管线没有 WebM demuxer，给出去只会变成一个下载后放不出来的文件");
+    }
+
+    /**
+     * 2026-09-24 实测 {@code KLVq0IAzh1A}（Sting – Fields Of Gold，218 秒）的完整音频表，
+     * 连 {@code codecs} 与 {@code contentLength} 一起照抄 —— 这一组是「无法播放」那个 bug 的现场。
+     */
+    private static JsonArray measuredFormsWithCodecsAndLength() {
+        return array("["
+                + "{\"itag\":139,\"mimeType\":\"audio/mp4; codecs=\\\"mp4a.40.5\\\"\","
+                + "\"bitrate\":50063,\"audioQuality\":\"AUDIO_QUALITY_LOW\","
+                + "\"contentLength\":1329292,\"url\":\"http://x/139\"},"
+                + "{\"itag\":140,\"mimeType\":\"audio/mp4; codecs=\\\"mp4a.40.2\\\"\","
+                + "\"bitrate\":130639,\"audioQuality\":\"AUDIO_QUALITY_MEDIUM\","
+                + "\"contentLength\":3524977,\"url\":\"http://x/140\"},"
+                + "{\"itag\":249,\"mimeType\":\"audio/webm; codecs=\\\"opus\\\"\","
+                + "\"bitrate\":58694,\"audioQuality\":\"AUDIO_QUALITY_LOW\","
+                + "\"contentLength\":1424452,\"url\":\"http://x/249\"},"
+                + "{\"itag\":251,\"mimeType\":\"audio/webm; codecs=\\\"opus\\\"\","
+                + "\"bitrate\":148392,\"audioQuality\":\"AUDIO_QUALITY_MEDIUM\","
+                + "\"contentLength\":3734053,\"url\":\"http://x/251\"},"
+                + "{\"itag\":599,\"mimeType\":\"audio/mp4; codecs=\\\"mp4a.40.5\\\"\","
+                + "\"bitrate\":32132,\"audioQuality\":\"AUDIO_QUALITY_ULTRALOW\","
+                + "\"contentLength\":839415,\"url\":\"http://x/599\"},"
+                + "{\"itag\":600,\"mimeType\":\"audio/webm; codecs=\\\"opus\\\"\","
+                + "\"bitrate\":39480,\"audioQuality\":\"AUDIO_QUALITY_ULTRALOW\","
+                + "\"contentLength\":963335,\"url\":\"http://x/600\"}"
+                + "]");
+    }
+
+    @Test
+    @DisplayName("HE-AAC 一条都不许选：秒开优先曾把三档音质全送到解不了的编码上")
+    void heAacNeverSelected() {
+        /*
+         * 日志里的「FIL element overread: -756」就是这么来的：秒开优先只比「几段窗口取得完」，
+         * 而 YouTube 上最短的恰好是 599（839 415 字节，一段就装下）与 139 —— 两条都是
+         * mp4a.40.5。实测取满字节后生产解码器对 599 报 -756、对 139 报 -700，对 140 能解出
+         * 43 MB WAV，截断文件报的却是「moof has no following mdat」（所以不是取流取坏了）。
+         */
+        for (Quality quality : new Quality[] {Quality.STANDARD, Quality.HIGHER, Quality.LOSSLESS}) {
+            assertEquals(140, YouTubeMusicService.selectAudioFormat(
+                    measuredFormsWithCodecsAndLength(), quality, true).get("itag").getAsInt(),
+                    quality + " 档在秒开策略下也必须落到宿主解得了的那条");
+            assertEquals(140, YouTubeMusicService.selectAudioFormat(
+                    measuredFormsWithCodecsAndLength(), quality, false).get("itag").getAsInt(),
+                    quality + " 档在按音质档选下同样只能是 140");
+        }
+    }
+
+    @Test
+    @DisplayName("codecs 从 mimeType 里摘：带引号、只写档名、缺失都算对")
+    void codecsParameterParsing() {
+        assertEquals("mp4a.40.2", YouTubeMusicService.codecsOf(
+                json("{\"mimeType\":\"audio/mp4; codecs=\\\"mp4a.40.2\\\"\"}")));
+        assertEquals("mp4a.40.5", YouTubeMusicService.codecsOf(
+                json("{\"mimeType\":\"audio/mp4; codecs=mp4a.40.5\"}")), "引号不是必需的");
+        assertEquals("", YouTubeMusicService.codecsOf(json("{\"mimeType\":\"audio/mp4\"}")),
+                "有的客户端只给容器不给编码");
+        // 编码闸本身：LC 放行，两个 HE 档拦下，未知（没有 codecs）按历史上一直在播处理。
+        assertTrue(YouTubeMusicService.isDecodableAudioFormat(
+                json("{\"mimeType\":\"audio/mp4; codecs=\\\"mp4a.40.2\\\"\"}")));
+        assertFalse(YouTubeMusicService.isDecodableAudioFormat(
+                json("{\"mimeType\":\"audio/mp4; codecs=\\\"mp4a.40.5\\\"\"}")), "HE-AAC v1");
+        assertFalse(YouTubeMusicService.isDecodableAudioFormat(
+                json("{\"mimeType\":\"audio/mp4; codecs=\\\"mp4a.40.29\\\"\"}")), "HE-AAC v2");
+        assertTrue(YouTubeMusicService.isDecodableAudioFormat(json("{\"mimeType\":\"audio/mp4\"}")),
+                "服务端没标编码时不该由这条闸拦下来");
+    }
+
+    @Test
+    @DisplayName("整首歌只有 HE-AAC 时返回 null，让跨源换轨去别家拿")
+    void refusesHeAacOnly() {
+        JsonArray onlyHe = array("["
+                + "{\"itag\":139,\"mimeType\":\"audio/mp4; codecs=\\\"mp4a.40.5\\\"\","
+                + "\"bitrate\":50063,\"contentLength\":1329292,\"url\":\"http://x/139\"},"
+                + "{\"itag\":599,\"mimeType\":\"audio/mp4; codecs=\\\"mp4a.40.5\\\"\","
+                + "\"bitrate\":32132,\"contentLength\":839415,\"url\":\"http://x/599\"}"
+                + "]");
+        assertEquals(null, YouTubeMusicService.selectAudioFormat(onlyHe, Quality.HIGHER, true),
+                "下载完再解码炸掉 = 白等一场还白扣字节余额，不如现在就判「这个源放不出来」");
     }
 
     // ════════════════════════════ 歌单与电台 ════════════════════════════
@@ -359,41 +444,51 @@ class YouTubeStaticTest {
     // ════════════════════════ 取流：googlevideo 的字节窗口 ════════════════════════
 
     @Test
-    @DisplayName("窗口大小钉在实测值：1 MiB 整给，多一字节就不给")
+    @DisplayName("取字节的时间常数钉在实测值上")
     void streamWindowMatchesMeasurement() {
-        // 实测：余额够时 1 MiB 整给满，多一字节就不给；余额不足时 1 MiB 吃 403 而 256 KiB 给 206。
+        // 1 MiB 是「一个时间单位」而不是「单发上限」：实测一发 4 MiB 的要法当场给了整首
+        // 1 631 333 字节、2.6 秒走完。所以这里只钉节奏相关的常数。
         assertEquals(1024 * 1024, YouTubeMusicService.STREAM_WINDOW_BYTES);
         assertEquals(512, YouTubeMusicService.MAX_STREAM_WINDOWS);
-        // 配额按时钟回血（1 MiB / ~64 秒 ≈ itag 140 的 16.3 KB/s），所以被拒之后要等而不是猛重试。
+        // 配额按实时回血（1 MiB / ~64 秒 ≈ itag 140 的 16.3 KB/s），所以被拒之后要等而不是猛重试。
         assertEquals(20_000L, YouTubeMusicService.WINDOW_RETRY_DELAY_MS);
-        assertEquals(6, YouTubeMusicService.MAX_WINDOW_WAITS);
+        assertEquals(9, YouTubeMusicService.MAX_WINDOW_WAITS);
         assertTrue(YouTubeMusicService.MAX_STREAM_WAIT_MS <= 4 * 60_000L,
                 "整首的等待上限不能超过 4 分钟：再久就该让跨源换轨接管，而不是让用户干等");
     }
 
     @Test
-    @DisplayName("被拒先降档再等：1 MiB 要不到就立刻试 256 KiB、64 KiB")
-    void windowLadderShrinksBeforeItWaits() {
-        // 实测过一个从没请求过的视频：bytes=0-65535 与 0-262143 都回 206，同一条 0-1048575 回 403。
-        // 所以「一段 = 1 MiB」不是给多少，而是单发上限；真正要处理的是余额。
-        assertEquals(1048576, YouTubeMusicService.windowSpanFor(0));
-        assertEquals(262144, YouTubeMusicService.windowSpanFor(1));
-        assertEquals(65536, YouTubeMusicService.windowSpanFor(2));
-        assertEquals(65536, YouTubeMusicService.windowSpanFor(99), "档位走完要停在最小档，不要越界");
-        assertEquals(1048576, YouTubeMusicService.windowSpanFor(-3),
+    @DisplayName("顶档一次要完剩下的，被拒才逐档缩小")
+    void windowLadderStartsBigAndShrinksBeforeItWaits() {
+        // 实测一个从没请求过的视频：1 MiB 被拒时 64 KiB 与 256 KiB 当场 206 —— 卡的是余额，
+        // 不是 request 形状。所以顶档直接要「剩下的全部」，把空闲后的一发拿满；被拒再逐档缩。
+        assertEquals(Long.MAX_VALUE, YouTubeMusicService.windowSpanFor(0));
+        assertEquals(4L * 1024 * 1024, YouTubeMusicService.windowSpanFor(1));
+        assertEquals(1024L * 1024, YouTubeMusicService.windowSpanFor(2));
+        assertEquals(262144L, YouTubeMusicService.windowSpanFor(3));
+        assertEquals(65536L, YouTubeMusicService.windowSpanFor(4));
+        assertEquals(65536L, YouTubeMusicService.windowSpanFor(99),
+                "档位走完要停在最小档，不要越界");
+        assertEquals(Long.MAX_VALUE, YouTubeMusicService.windowSpanFor(-3),
                 "负数档位是调用方写错，按最大档处理而不是抛出来把播放线程炸掉");
     }
 
     @Test
     @DisplayName("段的右端点不能越过总长，也不能比起点还小")
     void windowHighStaysInsideTheTrack() {
-        assertEquals(1048575L, YouTubeMusicService.windowHighFor(0L, 4496340L, 0));
-        assertEquals(262143L, YouTubeMusicService.windowHighFor(0L, 4496340L, 1));
+        // 顶档：整首一发（今晚实测到的那条）
+        assertEquals(1631332L, YouTubeMusicService.windowHighFor(0L, 1631333L, 0));
+        assertEquals(4194303L, YouTubeMusicService.windowHighFor(0L, 4496340L, 1));
+        assertEquals(1048575L, YouTubeMusicService.windowHighFor(0L, 4496340L, 2));
+        assertEquals(262143L, YouTubeMusicService.windowHighFor(0L, 4496340L, 3));
         // 最后一段只剩 10 字节时，high 必须正好落在 total-1，多发一字节就是整发 403。
         assertEquals(4496339L, YouTubeMusicService.windowHighFor(4496330L, 4496340L, 0));
-        // 服务端没声明长度（total = 0）时按整档要，且永远不许出现 high < offset。
+        // 顶档也有天花板：一次交换不收超过 32 MiB 的东西（防止 200 回整首时把堆撑爆）。
+        assertEquals(32L * 1024 * 1024 - 1L,
+                YouTubeMusicService.windowHighFor(0L, 40L * 1024 * 1024, 0));
+        // 服务端没声明长度（total = 0）时按一个窗口要，而不是发出无界请求。
         assertEquals(1048575L, YouTubeMusicService.windowHighFor(0L, 0L, 0));
-        assertEquals(1048576L, YouTubeMusicService.windowHighFor(1048576L, 1048577L, 5));
+        assertEquals(1048576L, YouTubeMusicService.windowHighFor(1048576L, 1048577L, 9));
     }
 
     @Test

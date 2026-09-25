@@ -152,6 +152,27 @@ public final class LxSourceService {
         return current.awaitReady(Math.max(0L, timeoutMs));
     }
 
+    /**
+     * 本机脚本真正能取流的 LX 源键：运行时已 READY、该源在 {@code inited} 里声明过、且声明了
+     * {@code musicUrl} 动作。返回的是不可变列表，按 key 排序以便上报值稳定。
+     *
+     * <p>给「一起听」房间上报本机能替谁解歌用（需求：不盲猜）。所以这里<b>不</b>顺手
+     * {@code ensureStarted()}，也不按映射放行：还没起来、起失败、只声明了歌词/封面的脚本，
+     * 报出去的都是答不上的承诺。宁可报空表，让服务端去问别人。</p>
+     */
+    public static List<String> musicUrlCapableKeys() {
+        LxRuntime current = runtime;
+        if (!isEnabled() || current == null || current.getState() != LxRuntime.State.READY) {
+            return Collections.emptyList();
+        }
+        List<String> keys = new ArrayList<>();
+        for (LxRuntime.SourceDecl decl : current.getSources().values()) {
+            if (decl != null && decl.supports("musicUrl")) keys.add(decl.key);
+        }
+        Collections.sort(keys);
+        return Collections.unmodifiableList(keys);
+    }
+
     /** 面板上的一行状态。 */
     public static String statusLabel() {
         if (!isEnabled()) return "";

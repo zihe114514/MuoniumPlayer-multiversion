@@ -153,8 +153,7 @@ public final class LyricSearchOverlay extends NcmSheet {
     /** 重建时保住输入框的焦点与内容，否则每次搜索回来光标就没了。 */
     private boolean inputHadFocus = true;
     private TextFieldWidget input;
-    /** 遮罩 + 弹窗的入场进度；弹窗高度单独补间，换标签页时高度会变（AMLL 那一档少一行）。 */
-    private double presentation;
+    /** 弹窗高度单独补间，换标签页时高度会变（AMLL 那一档少一行）。遮罩与弹窗的入场进度用基类那一条时钟。 */
     private double shownHeight;
     /** 结构版本号：只有它变了才重搭组件树。 */
     private int revision = 1;
@@ -328,8 +327,9 @@ public final class LyricSearchOverlay extends NcmSheet {
         addChild(dialog);
         dialog.setOnClickCallback((x, y, button) -> true);
         dialog.setBeforeRenderCallback(() -> {
-            presentation = Interpolations.interpolate(presentation, 1.0, .2f);
-            pageFade = 1.0;
+            // presentation 由 NcmSheet#onRender 从那条进出场时钟写，这里只读数。
+            // 原来这一格自己 interpolate 一遍，于是重建组件树（每收到一次搜索结果都要重建）
+            // 会把入场进度按住在 .2 那一档，退场更是没有任何东西在推进度。
             double width = dialogWidth();
             double target = dialogHeight();
             shownHeight = shownHeight <= 0.0 ? target : Interpolations.interpolate(shownHeight, target, .22f);

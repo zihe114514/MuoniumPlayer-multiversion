@@ -1,0 +1,56 @@
+package com.muoniumplayer.core.screens.ncm;
+
+import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.utils.Location;
+
+/**
+ * 从提供的美术资源导入的静态播放器控制图标。
+ *
+ * <p>资源路径有意保持在历史 {@code muonium} 根目录下，
+ * 因为该根目录是已安装 mod 资源兼容性契约的一部分。</p>
+ *
+ * <p><b>必须带前导斜杠。</b>{@link Location#getResourceStream()} 用的是
+ * {@code Location.class.getResourceAsStream(path)}，不带斜杠会被当成相对
+ * {@code com/muoniumplayer/core/utils/} 的路径解析，于是这七张图一张都找不到：
+ * 每个 {@code ThemedTextureIconWidget} 每帧都会抛一次 {@code MissingResourceException}
+ * 并静默退回字体兜底字形。那些兜底字形与相邻的图标字体不同形状、也不同大小
+ * （歌曲行的"收藏"就因此比旁边两枚小了约三成），看上去就是右侧控件对不齐。
+ * 项目里另外两处真实的 classpath 贴图（{@code MusicToast} 的 hud 图、着色器）
+ * 一直是带斜杠写的；{@code muonium/textures/album|music|playlist|user/...} 那些
+ * 不带斜杠的 Location 只是网络封面的缓存键，从不读 classpath，所以没暴露这个问题。</p>
+ */
+public final class PlayerIconAssets {
+
+    public static final Location FAVORITE = Location.of("/muonium/textures/player/icons/favorite.png");
+    public static final Location PLAYLIST = Location.of("/muonium/textures/player/icons/playlist.png");
+    public static final Location HISTORY = Location.of("/muonium/textures/player/icons/history.png");
+    public static final Location PERSONAL_FM = Location.of("/muonium/textures/player/icons/personal-fm.png");
+    public static final Location PLAY_MODE_SEQUENTIAL = Location.of("/muonium/textures/player/icons/play-mode-sequential.png");
+    public static final Location PLAY_MODE_RANDOM = Location.of("/muonium/textures/player/icons/play-mode-random.png");
+    public static final Location PLAY_MODE_SINGLE_LOOP = Location.of("/muonium/textures/player/icons/play-mode-single-loop.png");
+
+    private PlayerIconAssets() {
+    }
+
+    /**
+     * 对未提供封面的旧模式返回 {@code null}。
+     * 调用方随后保留其既有的图标字体回退，而非把
+     * 旧状态映射到错误的视觉图标。
+     */
+    public static Location forPlayMode(CloudMusic.PlayMode mode) {
+        if (mode == null) {
+            return null;
+        }
+        switch (mode) {
+            case Sequential:
+                return PLAY_MODE_SEQUENTIAL;
+            case Random:
+                return PLAY_MODE_RANDOM;
+            case LoopSingle:
+                return PLAY_MODE_SINGLE_LOOP;
+            case LoopInList:
+            default:
+                return null;
+        }
+    }
+}

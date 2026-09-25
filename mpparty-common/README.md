@@ -1,7 +1,7 @@
 # mpparty-common —— 一起听（服务端房间）客户端
 
 MuoniumPlayer 接入服务端 mod **MusicParty / mpsync** 的那一份共用源码。
-四个版本工程（`1.20.1 recode` / `1.21.1` / `1.21.11 recode` / `26.2`）
+五个版本工程（`1.20.1 recode` / `1.21.1` / `1.21.11 recode` / `26.2` / `26.3`）
 都在自己的 build.gradle 里挂上这一个目录：
 
 ```gradle
@@ -37,7 +37,7 @@ sourceSets.main.java.srcDirs += ['../mpparty-common/src/main/java']
   `openMpParty()`；
 * `MuoniumPlayerMod#onInitializeClient`：`MpNet.register()`。
 
-`ui/MpPartyOverlay` 放在共用模块里的前提是：四个版本工程的控件框架
+`ui/MpPartyOverlay` 放在共用模块里的前提是：五个版本工程的控件框架
 （`core.rendering.ui.*`、`NCMPanel`、`FontManager`、`compat.lwjgl2.Keyboard/Mouse` 的 API）
 目前一致。哪天某个版本的控件框架分叉了，就把这个文件拆回各工程自己的 `screens/ncm` 下。
 

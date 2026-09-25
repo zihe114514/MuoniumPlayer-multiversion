@@ -10,11 +10,12 @@ import java.io.File;
 /**
  * 一起听的行为开关。
  *
- * <p>两项：
+ * <p>三项：
  * <ol>
  *   <li>{@code skipVipWhenRoomHasNonVip} —— 网易云官方一起听：房间里有非会员时，
  *       是否在起播前跳过「VIP 专享」曲目；</li>
- *   <li>{@code partyContributeVip} —— 服务端房间（mpsync）：是否愿意替别人解析会员曲。</li>
+ *   <li>{@code partyContributeVip} —— 服务端房间（mpsync）：是否愿意用本家会员身份替别人解析；</li>
+ *   <li>{@code partyContributeLx} —— 服务端房间：是否愿意用本机 LX 自定义源替别人解析。</li>
  * </ol>
  *
  * <p>第一项默认开启 ——
@@ -28,10 +29,12 @@ public final class ListenTogetherSettings {
 
     private static final String KEY_SKIP_VIP = "skipVipWhenRoomHasNonVip";
     private static final String KEY_PARTY_CONTRIBUTE_VIP = "partyContributeVip";
+    private static final String KEY_PARTY_CONTRIBUTE_LX = "partyContributeLx";
 
     private static volatile boolean loaded;
     private static boolean skipVipWhenRoomHasNonVip = true;
     private static boolean partyContributeVip;
+    private static boolean partyContributeLx = true;
 
     private ListenTogetherSettings() {
     }
@@ -43,6 +46,7 @@ public final class ListenTogetherSettings {
             JsonObject root = readRootLocked();
             skipVipWhenRoomHasNonVip = flagOf(root, KEY_SKIP_VIP, true);
             partyContributeVip = flagOf(root, KEY_PARTY_CONTRIBUTE_VIP, false);
+            partyContributeLx = flagOf(root, KEY_PARTY_CONTRIBUTE_LX, true);
         }
     }
 
@@ -86,6 +90,32 @@ public final class ListenTogetherSettings {
         }
     }
 
+    /**
+     * 服务端房间（mpsync 一起听）里，是否愿意用<b>本机导入的 LX 自定义源</b>替别人解歌。
+     *
+     * <p>与 {@link #isPartyContributeVip()} 是两件独立的事：那一格交出去的是「我这个平台的会员
+     * 身份能解出来的流」，这一格交出去的是「我那个脚本能解出来的流」。后者不动用任何账号会员权益，
+     * 但会把脚本所依赖的第三方接口的调用量记到这台机器头上，所以单独给一个可以关的门。</p>
+     *
+     * <p>默认开：房间里没人贡献会员时，这是让 VIP 曲还能整房播完的唯一一路；不想贡献的人
+     * 在房间面板里关掉那一格即可。关掉它不影响本机自己播放时使用自定义源取流。</p>
+     */
+    public static boolean isPartyContributeLx() {
+        load();
+        synchronized (LOCK) {
+            return partyContributeLx;
+        }
+    }
+
+    public static void setPartyContributeLx(boolean value) {
+        load();
+        synchronized (LOCK) {
+            if (partyContributeLx == value) return;
+            partyContributeLx = value;
+            saveLocked();
+        }
+    }
+
     private static JsonObject readRootLocked() {
         try {
             File file = ConfigPaths.LISTEN_TOGETHER;
@@ -112,6 +142,7 @@ public final class ListenTogetherSettings {
             JsonObject root = new JsonObject();
             root.addProperty(KEY_SKIP_VIP, skipVipWhenRoomHasNonVip);
             root.addProperty(KEY_PARTY_CONTRIBUTE_VIP, partyContributeVip);
+            root.addProperty(KEY_PARTY_CONTRIBUTE_LX, partyContributeLx);
             JsonConfigStorage.writeObject(ConfigPaths.LISTEN_TOGETHER, GSON, root);
         } catch (Throwable ignored) {
         }
