@@ -329,7 +329,10 @@ class BilibiliFeatureStaticTest {
         assertTrue(home.contains("BilibiliFavoriteService.userPlaylists"), "首页没有 B 站内容");
 
         String widget = read(PANELS_DIR, "MusicWidget.java");
-        assertTrue(widget.contains("BilibiliFavoriteService.setFavourite"), "红心没接收藏写入");
+        // 红心那颗（含 B 站/酷狗的收藏写入与回滚）已经从曲行里抽出去成 LikeButton，
+        // 私人 FM 的 hero 卡与每一行曲行共用同一份 —— 契约没变，只是搬了家。
+        String like = read(PANELS_DIR, "LikeButton.java");
+        assertTrue(like.contains("BilibiliFavoriteService.setFavourite"), "红心没接收藏写入");
         assertTrue(widget.contains("canAddToPlaylist"), "「加入歌单」没按源分开（B 站该隐藏它）");
 
         String cadence = read(MUSIC_DIR, "NeteaseMusicService.java");

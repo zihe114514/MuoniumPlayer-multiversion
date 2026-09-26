@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 二段选择器（搜索栏的「歌曲 / 歌单」、账号页的 QQ 链路与酷狗身份）的离线契约测试。
+ * 分段选择器（搜索栏的「歌曲 / 歌单」、账号页的 QQ 链路与酷狗身份、私人 FM 的六种模式）的离线契约测试。
  *
  * <p>和 {@link SheetMotionStaticTest} 同一条理由：这类东西改坏了不会崩，只会难看 —— 滑块还在
  * 半路颜色已经换完、连点时两段指数叠在一起先窜后糊、控件淡出了输入框却没长回来。而且它一加载
@@ -51,8 +51,9 @@ class SegmentControlStaticTest {
         String control = read(NCM.resolve(CONTROL));
         assertTrue(control.contains("SheetClock.speed()"),
                 "分段控件不再读全局动画速度：把那条设置拉满时，只有这颗滑块还按自己的秒数走");
-        assertTrue(control.contains("frameMs / dur(spec.durationMs)"),
-                "滑块的时长没走倍率换算");
+        assertTrue(control.contains("dur(legDuration())"),
+                "滑块的时长没走倍率换算：legDuration() 算出来的毫秒必须再过 dur()，"
+                        + "否则把「动画速度」拉满时只有这颗滑块还按自己的秒数走");
         // 倍率只该有一份 clamp，第二份迟早和 HUD 编辑器里那档对不上。
         assertFalse(control.contains("playerUiSwitchSpeed"),
                 "共享控件里自己写了一份 playerUiSwitchSpeed：该复用 SheetClock.speed() 那一份");
@@ -150,6 +151,66 @@ class SegmentControlStaticTest {
         // 命中区那半本来就读的是活 spec，两处必须同源。
         assertTrue(slice(control, "hit.setBeforeRenderCallback(").contains("inkSpan(spec.font"),
                 "居中算的是活 spec 的字体，标签却画另一份：这两处一旦分叉就永远对不齐");
+    }
+
+    @Test
+    @DisplayName("段数由标签长度决定，两格那一档的时长一个字不改")
+    void cellCountComesFromTheLabels() throws IOException {
+        String control = read(NCM.resolve(CONTROL));
+        assertTrue(control.contains("this.cells = Math.max(2, texts.length)"),
+                "段数又写死成 2：私人 FM 的六种模式接不上这套，只能再抄一份控件");
+        String cell = slice(control, "private double cellWidth()");
+        assertTrue(cell.contains("/ cells"),
+                "轨道宽度又按两半等分：三格以上滑块对不齐每一段的中心");
+        String leg = slice(control, "private double legDuration()");
+        assertTrue(leg.contains("spec.durationMs *"),
+                "这一趟不再以宿主给的时长为基准：私人 FM 那一档 1150ms 会失去落点");
+        assertTrue(leg.contains("Math.abs(legTo - legFrom) / Math.max(1, cells - 1)"),
+                "这一趟的位移没有按段数归一：六格跳五格会和相邻一跳同样快，读不出「从哪来到哪去」");
+        // 两格时距离恒为一格，系数落在 1.0 —— 搜索栏那一条 280ms 的观感不能因为推广而变。
+        assertTrue(leg.contains("0.55 + 0.45 * Math.min(1.0, distance)"),
+                "时长系数改了：请连带核对搜索栏那两格的观感，两格时系数必须正好是 1.0");
+
+        String build = slice(control, "final IntSupplier ink = ()");
+        assertTrue(build.contains("1.0 - Math.abs(slide - index)"),
+                "文字亮度不再是「离滑块几格」：三格以上会出现隔着一段还跟着一起变白");
+    }
+
+    @Test
+    @DisplayName("宿主整棵重排时滑块从记忆里接上，不许瞬移")
+    void slideSurvivesTheHostRebuildingIt() throws IOException {
+        String control = read(NCM.resolve(CONTROL));
+        assertTrue(control.contains("public interface SlideMemory"),
+                "没有跨重建交递滑块位置的口子：「数据一到就重排子组件」的宿主每次点击都会看到瞬移");
+        String tick = slice(control, "if (legTo < 0)");
+        assertTrue(tick.contains("slide = carried()"),
+                "第一帧又直接钉在目标上：重排之后新实例没有起点，滑块就是瞬移");
+        assertTrue(slice(control, "private double carried()").contains("Double.isNaN"),
+                "记忆读不到值时（第一次打开）必须退回「钉住目标」，否则白演一趟从 0 滑过来");
+    }
+
+    @Test
+    @DisplayName("每格可以不等宽；没有选中项时滑块淡出而不是滑回第一格")
+    void cellsMayVaryAndSelectionMayBeNone() throws IOException {
+        String control = read(NCM.resolve(CONTROL));
+        assertTrue(control.contains("public IntToDoubleFunction cellWidth"),
+                "每格一样宽的口径没了：场景标签按文字长短排，等分会把长标签挤出去");
+        String box = slice(control, "private double[] boxAt(");
+        assertTrue(box.contains("cellWidthAt(from) + (cellWidthAt(to) - cellWidthAt(from)) * f"),
+                "滑块在两格之间只插值了左边缘：宽度不变，走一半会突然从窄格跳到宽格的尺寸");
+        assertTrue(box.contains("Math.min(cells - 1, from + 1)"),
+                "最后一格没有退路：插值会读到不存在的下一格");
+        // 等分那一族代进去必须退化成原来那条算式，不然搜索栏与模式行的观感会被连带改掉。
+        assertTrue(control.contains("if (spec.cellWidth == null) return spec.inset + cellWidth() * index"),
+                "等分口径不再走 inset + cellWidth * index：两格那一档的摆位会跟着变");
+
+        String tick = slice(control, "private void tick()");
+        assertTrue(tick.contains("chosen < 0"),
+                "宿主没法报「这一组没有选中项」：四组场景标签会各自点亮一枚没被选中的");
+        assertTrue(tick.contains("spec.memory.remember(slide)"),
+                "没有选中态时把滑块位置悄悄归零：换回这一组会从第一格再滑一趟");
+        assertTrue(control.contains("public boolean positionsItself"),
+                "轨道不能关掉自报位置：放进 ScrollPanel 时它会把滚动偏移写回零");
     }
 
     private static String slice(final String source, final String signature) {

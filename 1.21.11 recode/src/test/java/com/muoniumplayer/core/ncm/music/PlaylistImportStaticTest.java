@@ -174,23 +174,26 @@ class PlaylistImportStaticTest {
     // ──────────────────────────── 侧栏分区与面板接线 ────────────────────────────
 
     @Test
-    @DisplayName("侧栏：导入歌单栏在账号歌单之上，且账号栏已改名")
+    @DisplayName("侧栏：本地歌单栏在账号歌单之上，且账号栏已改名")
     void sidebarSectionsAreOrdered() throws IOException {
         String source = read(ProjectPaths.sharedJava()
                 .resolve(Path.of("com", "muoniumplayer", "core", "screens", "ncm", "panels")),
                 "NavigateBar.java");
-        int importLabel = source.indexOf("\"导入歌单\"");
+        // 这一栏后来扩成了「Mu本地歌单」：上面几张是用户自建的（曲目存本机），下面几张才是粘贴链接
+        // 带进来的引用。分区顺序没变，所以这一条仍然归在这里测（建单/移除那条链见 LocalPlaylistStaticTest）。
+        int importLabel = source.indexOf("\"Mu本地歌单\"");
         int accountLabel = source.indexOf("\"我的账号歌单\"");
         int playlistSource = source.indexOf("List<PlayList> pl = qqMode");
-        assertTrue(importLabel >= 0, "侧栏没有「导入歌单」栏");
+        assertTrue(importLabel >= 0, "侧栏没有「Mu本地歌单」栏");
         assertTrue(accountLabel >= 0, "「我的歌单」没改成「我的账号歌单」");
-        assertTrue(importLabel < accountLabel, "导入歌单栏没有排在账号歌单之上");
+        assertTrue(importLabel < accountLabel, "本地歌单栏没有排在账号歌单之上");
         assertTrue(accountLabel < playlistSource, "账号歌单标题与账号歌单列表被拆开了");
         assertFalse(source.contains("\"我的歌单\""), "还残留旧栏名");
 
         assertTrue(source.contains("ImportedPlaylistStore.list()"), "侧栏未渲染本地导入歌单");
         assertTrue(source.contains("setOnSecondaryClick"), "导入项未挂右键移除");
         assertTrue(source.contains("removeImportedPlaylist"), "缺少移除逻辑");
+        assertTrue(source.contains("removeLocalPlaylist"), "自建单没有自己的移除逻辑（删的和导入的不是同一件事）");
         assertTrue(source.contains("RoundedRectWidget plusH") && source.contains("RoundedRectWidget plusV"),
                 "「＋」又退回成一个文字字符（那不是图标）");
         assertTrue(source.contains("importHit.setOnClickCallback"), "「＋」没有接上点击导入");

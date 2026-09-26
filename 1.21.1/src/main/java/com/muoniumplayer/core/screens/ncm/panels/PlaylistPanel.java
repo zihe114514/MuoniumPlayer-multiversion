@@ -216,6 +216,26 @@ public class PlaylistPanel extends NCMPanel {
                 );
                 return true;
             });
+            // 本地单占的是上面「收藏歌单」那一格：那张单子没有任何上游可以收藏，那一格对它没有
+            // 意义，而它确实需要一个改名字的地方（名字是这张单在本机上唯一的标识）。
+            RoundedButtonWidget btnRename = new RoundedButtonWidget("重命名", FontManager.pf16bold);
+            this.addChild(btnRename);
+            btnRename.setBeforeRenderCallback(() -> {
+                boolean local = playList != null && playList.isLocalPlaylist();
+                btnRename.setBounds(57, 17);
+                btnRename.setPosition(btnCoverflow.getRelativeX() + btnCoverflow.getWidth() + 8,
+                        cover.getRelativeY() + cover.getHeight() - btnRename.getHeight());
+                btnRename.setRadius(3);
+                btnRename.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+                btnRename.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                btnRename.setHidden(!local);
+            });
+            btnRename.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+                if (mouseButton != 0) return false;
+                NCMScreen.getInstance().openPlaylistRename(playList);
+                return true;
+            });
+
             RoundedRectWidget searchBar = new RoundedRectWidget();
             this.addChild(searchBar);
 
@@ -237,9 +257,14 @@ public class PlaylistPanel extends NCMPanel {
                         this.tfSearch.setHidden(!this.tfSearch.isFocused() && tfOpenAnimation < 21);
 
                         boolean canToggleSubscription = canToggleSubscription();
-                        double searchAnchorX = canToggleSubscription
-                                ? btnSubscribe.getRelativeX() + btnSubscribe.getWidth()
-                                : btnCoverflow.getRelativeX() + btnCoverflow.getWidth();
+                        double searchAnchorX = btnCoverflow.getRelativeX() + btnCoverflow.getWidth();
+                        // 收藏与重命名共用同一格、互斥出现，所以两边都要参与取最右；隐藏的控件不能读
+                        // 它的位置（它的回调不再跑，那里停的是上一次的值），只能按各自的可见条件判。
+                        if (canToggleSubscription) {
+                            searchAnchorX = btnSubscribe.getRelativeX() + btnSubscribe.getWidth();
+                        } else if (playList != null && playList.isLocalPlaylist()) {
+                            searchAnchorX = btnRename.getRelativeX() + btnRename.getWidth();
+                        }
                         searchBar
                                 .setAlpha(1f)
                                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.BORDER))
@@ -326,9 +351,16 @@ public class PlaylistPanel extends NCMPanel {
                 });
             }
 
-            String creatorName = creator == null || creator.getName() == null || creator.getName().trim().isEmpty()
-                    ? playList.getPlatform().getDisplayName()
-                    : creator.getName();
+            // 没有创建者时退到「这张单来自哪个平台」。本地单不能这么退：它的 platform 字段顶着
+            // NETEASE（那只是它被造出来时所处的世界），照抄就会在本机自建的单子上写「网易云」。
+            String creatorName;
+            if (playList.isLocalPlaylist()) {
+                creatorName = "Mu本地";
+            } else {
+                creatorName = creator == null || creator.getName() == null || creator.getName().trim().isEmpty()
+                        ? playList.getPlatform().getDisplayName()
+                        : creator.getName();
+            }
             LabelWidget lblCreator = new LabelWidget(creatorName, FontManager.pf16bold);
             this.addChild(lblCreator);
 
@@ -431,6 +463,18 @@ public class PlaylistPanel extends NCMPanel {
                 ((MusicWidget) musicWidget).setEntranceAnimation(this.revealQueue);
             }
             musicsPanel.addChild(musicWidgets);
+            // 空白的列表区看上去像没加载出来。本地单新建出来就是空的，这一句是它唯一的说明。
+            if (musicWidgets.isEmpty() && playList.isLocalPlaylist()) {
+                LabelWidget empty = new LabelWidget("这张单还是空的 · 到任意列表点歌曲行右侧的「＋」，选它就能收进来",
+                        FontManager.pf14bold);
+                empty.setClickable(false);
+                empty.setBeforeRenderCallback(() -> {
+                    empty.setBounds(Math.max(1, musicsPanel.getWidth()), 28);
+                    empty.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+                    empty.setPosition(10, 7);
+                });
+                musicsPanel.addChild(empty);
+            }
             musicsLoading = false;
         });
 
@@ -468,6 +512,9 @@ public class PlaylistPanel extends NCMPanel {
      */
     private boolean canToggleSubscription() {
         if (playList == null) return false;
+        // 本地单没有「收藏」这个动作可以对上游做：它的 platform 字段顶着 NETEASE（那只是它被造出来时
+        // 所处的世界），拿一个负数 id 去调 /weapi/playlist/subscribe 是一次发给网易云的垃圾写请求。
+        if (playList.isLocalPlaylist()) return false;
         if (playList.getPlatform() == MusicPlatform.KUGOU) {
             // 酷狗要登录才能收藏；而且「自己的歌单」不该显示收藏按钮——那边收藏会复制一份新歌单，
             // 点自己的歌单复制它没有意义。用户歌单在 platformPlaylistId 里带 #listid，用这个区分。
@@ -517,7 +564,9 @@ public class PlaylistPanel extends NCMPanel {
         if (lastSize != musics.size()) {
             lastSize = musics.size();
             if (musics.isEmpty()) {
-                cached = playList.getCount() + "首歌曲";
+                // 本地单没有「上游那张单里有几首」这个数：它的曲目就是它的全部，空的就是 0 首。
+                // （{@code count} 是 final，删空之后它在本次会话里仍停在加载时那个值。）
+                cached = (playList.isLocalPlaylist() ? 0 : playList.getCount()) + "首歌曲";
             } else {
                 cached = musics.size() + "首歌曲 · " + this.formatDuration(musics.stream().mapToLong(Music::getDuration).sum());
             }

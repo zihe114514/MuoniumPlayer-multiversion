@@ -85,6 +85,16 @@ public final class ConfigPaths {
     public static final File IMPORTED_PLAYLISTS = new File(CONFIG_DIRECTORY, "imported_playlists.json");
 
     /**
+     * 用户在本机自建的歌单，以及<b>收进来的每一首歌</b>（网易云 / QQ / 酷狗 / 汽水 / B 站 / GD 混在一张单子里）。
+     *
+     * <p>与 {@link #IMPORTED_PLAYLISTS} 分成两个文件是刻意的：导入的那份<b>只存引用</b>，点开时拿
+     * {@code 平台:歌单ID} 去上游重新拉，所以它跟随上游、体积恒定；本地自建的那份必须<b>存曲目本身</b>，
+     * 因为这些歌没有任何上游歌单可以拉回去。两者的生命周期也完全不同 —— 上游删了歌单，导入项还在；
+     * 本地单里的歌一首都不会自己消失。</p>
+     */
+    public static final File LOCAL_PLAYLISTS = new File(CONFIG_DIRECTORY, "local_playlists.json");
+
+    /**
      * Bilibili 的 Web Cookie 与本地账号资料（扫码登录后落盘）。
      *
      * <p>与 {@link #KUGOU_AUTH}、{@link #QISHUI_AUTH} 同样的理由单开一个文件：

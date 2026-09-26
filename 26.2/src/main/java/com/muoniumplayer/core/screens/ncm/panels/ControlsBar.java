@@ -14,8 +14,10 @@ import com.muoniumplayer.core.ncm.music.PersonalFmManager;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.FontelloIcons;
+import com.muoniumplayer.core.rendering.FoliaLucideIcons;
 import com.muoniumplayer.core.rendering.PlayerQueueIcons;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
+import com.muoniumplayer.core.rendering.font.GlyphInk;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import com.muoniumplayer.core.ncm.music.Quality;
 import com.muoniumplayer.core.rendering.ui.widgets.*;
@@ -25,6 +27,8 @@ import com.muoniumplayer.core.screens.ncm.NCMPanel;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.screens.ncm.PlayerIconAssets;
+import com.muoniumplayer.core.screens.ncm.SheetClock;
+import com.muoniumplayer.core.screens.ncm.TransitionCurveCache;
 import com.muoniumplayer.core.screens.ncm.VolumeControl;
 import com.muoniumplayer.core.widget.impl.MusicLyricsWidget;
 import com.muoniumplayer.party.MpPartyClient;
@@ -44,8 +48,64 @@ public class ControlsBar extends NCMPanel {
      * 而弹出层收起后会被隐藏、回调不再执行，进度放在弹出层里就没有帧可以播完收起动画。
      */
     private double qualityMenuAnimation;
+    /** 上一帧的时刻。音质菜单和待播抽屉一样按实时毫秒推进，不再用帧耦合的指数逼近。 */
+    private long qualityMenuLastFrameNanos;
     private RoundedRectWidget qualityMenuBackground;
     private RoundedRectWidget[] qualityOptions;
+
+    /**
+     * 弹出菜单的排版常量，单位都是「GUI 缩放 1 时的逻辑像素」，摆布局时再乘缩放。
+     *
+     * <p>两列而不是八行一列：一列要把整条页脚上方都占满，展开时盖住进度条一大截；两列只有四行，
+     * 横向又正好落在按钮自己那一片，视觉上是一块小方板而不是一条横幅。</p>
+     */
+    private static final int QUALITY_COLUMNS = 2;
+    private static final double QUALITY_OPTION_HEIGHT = 20.0;
+    private static final double QUALITY_MENU_PADDING = 3.0;
+    private static final double QUALITY_COLUMN_GAP = 3.0;
+    private static final double QUALITY_ROW_INSET = 6.0;
+    private static final double QUALITY_ICON_SIZE = 12.0;
+    private static final double QUALITY_ICON_GAP = 5.0;
+    private static final double QUALITY_CHECK_SIZE = 10.0;
+    private static final double QUALITY_CHECK_GAP = 4.0;
+    /** 基准毫秒，运行时还要除以「界面切换动画速度」倍率（默认 3.0，也就是实际 200/120ms）。 */
+    private static final double QUALITY_OPEN_MS = 600.0;
+    private static final double QUALITY_CLOSE_MS = 360.0;
+    /** 一帧最多折算这么多毫秒：只挡切后台回来这类断档，正常卡顿照常按实时走。 */
+    private static final double QUALITY_MAX_FRAME_MS = 40.0;
+
+    /**
+     * 这一档用哪枚等级图标。
+     *
+     * <p>前四档是一条递增的信号阶梯（一格、两格、三格、满格），说的就是「码率一档比一档高」；
+     * 后四档不再是码率而是<b>另一种东西</b>——Hi-Res 是采样规格、环绕/沉浸是渲染出来的声场、
+     * 母带是来源级别——所以各自用自己那一枚，硬塞进阶梯反而会说谎。</p>
+     *
+     * <p>包内可见是给 {@code QualityMenuStaticTest} 的：那份契约要真的把八个档位各要一枚图标，
+     * 而不是在源码里数字符串。</p>
+     */
+    static String qualityTierIcon(Quality quality) {
+        if (quality == null) return FoliaLucideIcons.SIGNAL;
+        switch (quality) {
+            case STANDARD: return FoliaLucideIcons.SIGNAL_LOW;
+            case HIGHER: return FoliaLucideIcons.SIGNAL_MEDIUM;
+            case EXHIGH: return FoliaLucideIcons.SIGNAL_HIGH;
+            case LOSSLESS: return FoliaLucideIcons.SIGNAL;
+            case HIRES: return FoliaLucideIcons.AUDIO_LINES;
+            case JYEFFECT: return FoliaLucideIcons.WAVES;
+            case SKY: return FoliaLucideIcons.ORBIT;
+            case JYMASTER: return FoliaLucideIcons.CROWN;
+            default: return FoliaLucideIcons.SIGNAL;
+        }
+    }
+
+    /** 一行选项需要的宽度：档位图标 + 间距 + 文字 + 勾选位。勾选位无论选没选中都留，切档时列宽才不跳。 */
+    private static double qualityRowWidth(String label) {
+        return QUALITY_ROW_INSET + QUALITY_ICON_SIZE + QUALITY_ICON_GAP
+                + FontManager.pf12bold.getStringWidthD(label)
+                + QUALITY_CHECK_GAP + QUALITY_CHECK_SIZE + QUALITY_ROW_INSET;
+    }
+
     /**
      * 窄面板下传输簇（上一首/播放/下一首/播放模式）整体左移的量，0 表示宽度够用、版式不变。
      * 传输簇按面板中线排，一起听/待播/音质/音量贴右边缘，面板一窄两者必然重叠；原来的处理是把
@@ -251,6 +311,15 @@ public class ControlsBar extends NCMPanel {
                 FontManager.icon30, 0, 0, 20, 20);
         this.addChild(playMode);
 
+        // 这一排四颗里只有播放模式走贴图，而它的画布留白和图标字体对不上：整张 96×96 拉满
+        // 20×20 的框，墨迹是 10.8×8.75，相邻三颗 icomoon 字形却只有 6.2×6.9 —— 用户看到的
+        // 「大小不一样、不在一个水平面上」就是这个 74% 的宽度差。按邻居的<b>实测</b>墨迹高把
+        // 贴图往里缩，交互框与悬停底仍然吃满 20×20，所以点击范围一点没变。
+        GlyphInk transportInk = GlyphInk.measure(FontManager.icon30, 'H');
+        double transportHeight = transportInk == null ? 7.0 : transportInk.inkHeight() * .5;
+        playMode.setContentInset((playMode.getHeight()
+                - transportHeight / PlayerIconAssets.PLAY_MODE_INK_HEIGHT_RATIO) * .5);
+
         playMode
                 .setBeforeRenderCallback(() -> {
                     CloudMusic.PlayMode mode = CloudMusic.playMode;
@@ -260,9 +329,12 @@ public class ControlsBar extends NCMPanel {
                             .setPosition(next.getRelativeX() + next.getWidth() + 10, next.getRelativeY())
                             .setClickable(!personalFm)
                             .setAlpha(ControlsBar.this.getAlpha() * (personalFm ? .35f : 1.0f))
-                            // 所给模式图标共享一种视觉语言；对顺序、随机和单曲循环使用一种
-                            //一致的主题着色。
-                            .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                            // 顺序播放是这一排的「没开任何东西」，所以它和邻居同色；随机与单曲循环
+                            // 是用户特意拧出来的状态，用强调色标出来 —— 原来四档一律正文色，
+                            // 换了模式界面没有任何回应。
+                            .setColor(mode == CloudMusic.PlayMode.Sequential
+                                    ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)
+                                    : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
                 })
                 .setOnClickCallback((x, y, mouseButton) -> {
                     if (mouseButton == 0) {
@@ -482,15 +554,19 @@ public class ControlsBar extends NCMPanel {
                             .setAlpha(ControlsBar.this.getAlpha());
                 });
 
-        // 紧凑质量选择器。可用的提供方档位在向上的
-        //弹出窗中暴露，使用户能选择已知目标，而非反复循环按钮。
-        // 把所有控件保持为 ControlsBar 的直接子级，也使弹出窗渲染
-        //在紧凑音量控件之上，并防止它被选择器裁剪。
+        // 紧凑音质选择器：可用的档位在向上生长的弹出菜单里摆出来，用户看得见全部选项，
+        // 而不是对着一颗按钮反复循环。所有控件都保持为 ControlsBar 的直接子级，弹出层才不会被
+        // 选择器裁剪，也才能压在音量控件之上。
         final Quality[] selectableQualities = Quality.values();
         final double qualityButtonHeight = 20.0;
-        final double qualityOptionHeight = 18.0;
-        final double qualityMenuPadding = 3.0;
-
+        final int qualityRows = (selectableQualities.length + QUALITY_COLUMNS - 1) / QUALITY_COLUMNS;
+        // 每一列按自己最宽的那一行定宽，两列不必一样宽：「沉浸音质」和「母带」差着一倍。
+        final double[] qualityColumnWidths = new double[QUALITY_COLUMNS];
+        for (int index = 0; index < selectableQualities.length; index++) {
+            int column = index % QUALITY_COLUMNS;
+            qualityColumnWidths[column] = Math.max(qualityColumnWidths[column],
+                    qualityRowWidth(formatQuality(selectableQualities[index])));
+        }
 
         qualityOptions = new RoundedRectWidget[selectableQualities.length];
         RoundedRectWidget qualitySelector = new RoundedRectWidget();
@@ -503,10 +579,16 @@ public class ControlsBar extends NCMPanel {
                     //与播放器布局匹配的固定视觉间隙。不要让瞬时
                     //布局值隐藏这个主要动作。
                     // 常驻回调：在这里推进展开动画，收起过程才有帧可用。
-                    qualityMenuAnimation = Interpolations.interpolate(qualityMenuAnimation,
-                            qualityMenuOpen ? 1.0 : 0.0, .3);
-                    if (qualityMenuOpen && qualityMenuAnimation > .996) qualityMenuAnimation = 1.0;
-                    if (!qualityMenuOpen && qualityMenuAnimation < .004) qualityMenuAnimation = 0.0;
+                    // 实时毫秒而不是帧耦合的指数逼近：后者在默认 3x 倍率下两三帧就吃掉九成，
+                    // 读起来是「先窜一下再慢慢糊住」，而不是「落到位」。中途反悔从当前位置折回。
+                    long clockNow = System.nanoTime();
+                    double frameMs = qualityMenuLastFrameNanos == 0L ? 0.0
+                            : Math.min(QUALITY_MAX_FRAME_MS, (clockNow - qualityMenuLastFrameNanos) / 1_000_000.0);
+                    qualityMenuLastFrameNanos = clockNow;
+                    double animationDuration = Math.max(1.0,
+                            (qualityMenuOpen ? QUALITY_OPEN_MS : QUALITY_CLOSE_MS) / SheetClock.speed());
+                    qualityMenuAnimation = Math.max(0.0, Math.min(1.0, qualityMenuAnimation
+                            + (qualityMenuOpen ? frameMs : -frameMs) / animationDuration));
 
                     // 隐藏状态只在这里统一维护：被隐藏的组件不再执行自己的回调，没法自己复活。
                     boolean menuVisible = isQualityMenuVisible();
@@ -526,8 +608,12 @@ public class ControlsBar extends NCMPanel {
                         volumeX = parentWidth - volumeWidth - 8.0;
                     }
                     double selectorGap = Math.min(38.0, Math.max(14.0, parentWidth * .045));
-                    String selectorLabel = "音质 · " + formatQuality(CloudMusic.quality) + (qualityMenuOpen ? " ︿" : " ﹀");
-                    double desiredWidth = (scale < .9 ? FontManager.pf10bold : FontManager.pf12bold).getStringWidthD(selectorLabel) + 14.0 * scale;
+                    // 箭头交给矢量画，文字里就不该再留那枚全角「﹀」：它既占宽又和文字基线对不齐，
+                    // 而 LucideIconWidget 那一枚是随缩放算出来的，和菜单里的勾选/档位图标同一套笔画。
+                    String selectorLabel = "音质 · " + formatQuality(CloudMusic.quality);
+                    double chevronWidth = 10.0 * scale;
+                    double desiredWidth = (scale < .9 ? FontManager.pf10bold : FontManager.pf12bold)
+                            .getStringWidthD(selectorLabel) + 7.0 * scale + chevronWidth + 6.0 * scale;
                     double selectorWidth = Math.max(56.0 * scale, Math.min(112.0 * scale, desiredWidth));
                     double selectorX = volumeX - selectorGap - selectorWidth;
 
@@ -561,14 +647,29 @@ public class ControlsBar extends NCMPanel {
                     return true;
                 });
 
-        LabelWidget qualityText = new LabelWidget(() -> "音质 · " + formatQuality(CloudMusic.quality) + (qualityMenuOpen ? " ︿" : " ﹀"), FontManager.pf12bold);
+        LabelWidget qualityText = new LabelWidget(() -> "音质 · " + formatQuality(CloudMusic.quality), FontManager.pf12bold);
         qualitySelector.addChild(qualityText);
         qualityText.setClickable(false);
         qualityText.setBeforeRenderCallback(() -> qualityText
                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
                 .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
-                .setMaxWidth(Math.max(0.0, qualitySelector.getWidth() - 14.0 * Math.max(.82, NCMPlayerConfig.getPlayerScale())))
+                .setMaxWidth(Math.max(0.0, qualitySelector.getWidth() - 13.0 * Math.max(.82, NCMPlayerConfig.getPlayerScale()) - 10.0))
                 .setPosition(7.0, Math.max(2.0, (qualitySelector.getHeight() - qualityText.getHeight()) * .5)));
+
+        LucideIconWidget qualityChevron = new LucideIconWidget(
+                () -> qualityMenuOpen ? FoliaLucideIcons.CHEVRON_UP : FoliaLucideIcons.CHEVRON_DOWN,
+                () -> qualityMenuOpen ? "︿" : "﹀", FontManager.pf12bold, 0, 0, 10, 10);
+        qualitySelector.addChild(qualityChevron);
+        qualityChevron.setClickable(false);
+        qualityChevron.setBeforeRenderCallback(() -> {
+            double chevronScale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
+            double chevronSize = 10.0 * chevronScale;
+            qualityChevron
+                    .setBounds(chevronSize, chevronSize)
+                    .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
+                    .setPosition(qualitySelector.getWidth() - chevronSize - 6.0 * chevronScale,
+                            Math.max(0.0, (qualitySelector.getHeight() - chevronSize) * .5));
+        });
 
         // 下一首播放列表：队列抽屉的开关排在音质按钮左边，沿用右下角次级控件的同一条锚点链。
         // 用「播放三角 + 列表」（player-action-icons U+E144）而不是歌曲行那枚「下一首播放」
@@ -595,6 +696,11 @@ public class ControlsBar extends NCMPanel {
                     .setColor(opened || CloudMusic.getQueuedNextCount() > 0
                             ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                             : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            // 把按钮的右边缘交给抽屉，抽屉据此右对齐 —— 点开之后视线不用再横穿半屏去找它。
+            // 两者共用同一个 x 原点（都按 currentPanelBg.getX() 摆），所以绝对坐标直接可比。
+            if (queuePanel != null) {
+                queuePanel.setAnchorRight(queueToggle.getX() + queueToggle.getWidth());
+            }
         });
         queueToggle.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
             if (mouseButton != 0) return false;
@@ -697,25 +803,68 @@ public class ControlsBar extends NCMPanel {
                 .setHidden(true)
                 .setBeforeRenderCallback(() -> {
                     double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
-                    double menuHeight = selectableQualities.length * qualityOptionHeight * scale + qualityMenuPadding * 2.0 * scale;
+                    double menuWidth = qualityMenuWidth(scale, qualityColumnWidths);
+                    double menuHeight = qualityRows * QUALITY_OPTION_HEIGHT * scale
+                            + QUALITY_MENU_PADDING * 2.0 * scale;
                     // 底边固定贴在按钮上方，只有上边沿随进度向上展开，看起来是从按钮里长出来的。
                     double progress = smoothProgress(qualityMenuAnimation);
                     double bottom = qualitySelector.getRelativeY() - 4.0;
                     double visibleHeight = Math.max(.01, menuHeight * progress);
+                    // 两列比那颗按钮宽得多，所以对齐的是<b>右</b>边缘：按钮贴在页脚右侧，
+                    // 菜单往左长才一直看得见；只有窄到左边放不下时才整体顶回去。
                     qualityMenuBackground
-                            .setBounds(qualitySelector.getWidth(), visibleHeight)
-                            .setPosition(qualitySelector.getRelativeX(), bottom - visibleHeight)
-                            .setRadius(6.0 * Math.max(.82, NCMPlayerConfig.getPlayerScale()))
+                            .setBounds(menuWidth, visibleHeight)
+                            .setPosition(Math.max(4.0, qualitySelector.getRelativeX()
+                                    + qualitySelector.getWidth() - menuWidth), bottom - visibleHeight)
+                            .setRadius(6.0 * scale)
                             .setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND))
                             .setAlpha((float) (ControlsBar.this.getAlpha() * .98f * progress));
                 });
 
         for (int index = 0; index < selectableQualities.length; index++) {
             final Quality option = selectableQualities[index];
-            final int optionIndex = index;
+            // 行优先：左列是「标准 → 极高 → Hi-Res → 沉浸音质」，右列是「高品质 → 无损 → 高清环绕 → 母带」，
+            // 读的顺序和 Quality 枚举的档位顺序一致，不用在脑子里重排一遍。
+            final int optionColumn = index % QUALITY_COLUMNS;
+            final int optionRow = index / QUALITY_COLUMNS;
             qualityOptions[index] = new RoundedRectWidget();
             RoundedRectWidget qualityOption = qualityOptions[index];
             this.addChild(qualityOption);
+
+            // 档位图标。墨迹按 24 格网原样落到 12 逻辑像素的盒子里（drawScale 1.0），
+            // 和出图时用户看过的那一张是同一档尺寸。
+            LucideIconWidget qualityOptionIcon = new LucideIconWidget(() -> qualityTierIcon(option),
+                    () -> "", FontManager.pf12bold, 0, 0, QUALITY_ICON_SIZE, QUALITY_ICON_SIZE);
+            qualityOption.addChild(qualityOptionIcon);
+            qualityOptionIcon.setClickable(false).setDrawScale(1.0);
+            qualityOptionIcon.setBeforeRenderCallback(() -> {
+                double iconScale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
+                double iconSize = QUALITY_ICON_SIZE * iconScale;
+                qualityOptionIcon
+                        .setBounds(iconSize, iconSize)
+                        .setColor(isQualityUnavailable(option)
+                                ? NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT)
+                                : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
+                        .setPosition(QUALITY_ROW_INSET * iconScale,
+                                Math.max(0.0, (qualityOption.getHeight() - iconSize) * .5));
+            });
+
+            // 勾选改成矢量：以前那个「✓」是塞在文字前面的字形，既占宽、和中文基线又对不齐，
+            // 未选中的行还得补三个空格才不跳字。空位现在由列宽一次性留好。
+            LucideIconWidget qualityOptionCheck = new LucideIconWidget(() -> FoliaLucideIcons.CHECK,
+                    () -> "✓", FontManager.pf12bold, 0, 0, QUALITY_CHECK_SIZE, QUALITY_CHECK_SIZE);
+            qualityOption.addChild(qualityOptionCheck);
+            qualityOptionCheck.setClickable(false).setDrawScale(1.0);
+            qualityOptionCheck.setBeforeRenderCallback(() -> {
+                double checkScale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
+                double checkSize = QUALITY_CHECK_SIZE * checkScale;
+                qualityOptionCheck
+                        .setBounds(checkSize, checkSize)
+                        .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
+                        .setPosition(qualityOption.getWidth() - checkSize - QUALITY_ROW_INSET * checkScale,
+                                Math.max(0.0, (qualityOption.getHeight() - checkSize) * .5));
+            });
+
             qualityOption
                     .setShouldOverrideMouseCursor(true)
                     .setHidden(true)
@@ -724,18 +873,21 @@ public class ControlsBar extends NCMPanel {
                         // 探到「这一首没有这一档」才淡下去；还没探到一律按正常画。
                         boolean unavailable = isQualityUnavailable(option);
                         double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
-                        double optionHeight = qualityOptionHeight * scale;
-                        // 与背景共用同一条固定底边，所以展开过程里选项不会整体滑动，只是逐个露出来。
+                        double optionHeight = QUALITY_OPTION_HEIGHT * scale;
+                        // 与背景共用同一条固定底边，所以展开过程里选项不会整体滑动，只是逐行露出来。
                         double bottom = qualitySelector.getRelativeY() - 4.0;
-                        double slotY = bottom - qualityMenuPadding * scale
-                                - (selectableQualities.length - optionIndex) * optionHeight;
+                        double slotY = bottom - QUALITY_MENU_PADDING * scale
+                                - (qualityRows - optionRow) * optionHeight;
                         // 背景的上边沿扫过这一项时它才显形：任何时候都不会有选项浮在面板之外。
                         double reveal = smoothProgress((slotY + optionHeight - qualityMenuBackground.getRelativeY())
                                 / Math.max(1.0, optionHeight));
+                        double slotX = qualityMenuBackground.getRelativeX() + QUALITY_MENU_PADDING * scale;
+                        for (int previous = 0; previous < optionColumn; previous++) {
+                            slotX += qualityColumnWidths[previous] * scale + QUALITY_COLUMN_GAP * scale;
+                        }
                         qualityOption
-                                .setBounds(Math.max(0.0, qualitySelector.getWidth() - qualityMenuPadding * 2.0), optionHeight)
-                                .setPosition(qualitySelector.getRelativeX() + qualityMenuPadding,
-                                        slotY + (1.0 - reveal) * 3.0)
+                                .setBounds(qualityColumnWidths[optionColumn] * scale, optionHeight - 2.0 * scale)
+                                .setPosition(slotX, slotY + (1.0 - reveal) * 3.0)
                                 .setRadius(4.0 * scale)
                                 .setColor(qualityOption.isHovering()
                                         ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
@@ -746,6 +898,7 @@ public class ControlsBar extends NCMPanel {
                                         * (unavailable ? .38f : selected ? .72f : .98f) * reveal));
                         // 收起动画期间不再接受点击，避免"已经看不清"的选项还能被误中。
                         qualityOption.setClickable(qualityMenuOpen && reveal > .35);
+                        qualityOptionCheck.setHidden(!selected);
                     })
                     .setOnClickCallback((relativeX, relativeY, mouseButton) -> {
                         if (mouseButton != 0) return true;
@@ -764,17 +917,29 @@ public class ControlsBar extends NCMPanel {
                         return true;
                     });
 
-            LabelWidget optionText = new LabelWidget(() -> option == (CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality)
-                    ? "✓  " + formatQuality(option)
-                    : "   " + formatQuality(option), FontManager.pf12bold);
+            LabelWidget optionText = new LabelWidget(() -> formatQuality(option), FontManager.pf12bold);
             qualityOption.addChild(optionText);
             optionText.setClickable(false);
-            optionText.setBeforeRenderCallback(() -> optionText
-                    .setColor(isQualityUnavailable(option)
-                            ? NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT)
-                            : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
-                    .setPosition(5.0, Math.max(1.0, (qualityOption.getHeight() - optionText.getHeight()) * .5)));
+            optionText.setBeforeRenderCallback(() -> {
+                double textScale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
+                double textX = (QUALITY_ROW_INSET + QUALITY_ICON_SIZE + QUALITY_ICON_GAP) * textScale;
+                optionText
+                        .setColor(isQualityUnavailable(option)
+                                ? NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT)
+                                : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
+                        .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
+                        .setMaxWidth(Math.max(0.0, qualityOption.getWidth() - textX
+                                - (QUALITY_CHECK_GAP + QUALITY_CHECK_SIZE + QUALITY_ROW_INSET) * textScale))
+                        .setPosition(textX, Math.max(1.0, (qualityOption.getHeight() - optionText.getHeight()) * .5));
+            });
         }
+    }
+
+    /** 整块菜单的宽度：两列各自加自己那一列的宽，再算上列间距与四周留白。 */
+    private static double qualityMenuWidth(double scale, double[] columnWidths) {
+        double width = QUALITY_MENU_PADDING * 2.0 + QUALITY_COLUMN_GAP * (QUALITY_COLUMNS - 1);
+        for (double columnWidth : columnWidths) width += columnWidth;
+        return width * scale;
     }
 
     private static String formatQuality(Quality quality) {

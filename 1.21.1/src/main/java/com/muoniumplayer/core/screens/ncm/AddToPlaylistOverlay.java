@@ -4,6 +4,7 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
+import com.muoniumplayer.core.ncm.music.LocalPlaylistStore;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
@@ -17,6 +18,7 @@ import com.muoniumplayer.core.rendering.ui.widgets.RectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -215,12 +217,17 @@ public class AddToPlaylistOverlay extends NCMPanel {
     }
 
     /**
-     * 弹窗该列哪些歌单。
+     * 弹窗该列哪些歌单：本地自建单永远排在最前，后面接当前音源的账号歌单。
      *
      * <p>网易云用 {@code CloudMusic.playLists}（登录时一次性拉全量）；酷狗那边用户歌单是懒加载的，
      * 所以先读快照，没加载过就顺手触发一次，并在回调里重画列表——不然第一次打开弹窗只会看到「暂无可用歌单」。</p>
+     *
+     * <p>本地单要排在同源限制之外：下面 {@link #submitToPlaylist} 那道闸说的是「提交给某个平台云端的
+     * 歌单，曲目 id 必须与该平台的体系一致」，而本地单的曲目存在本机、取流按逐曲的 {@code source}
+     * 分支走，所以它是跨源歌曲唯一还能落地的目标 —— 一个没登录任何账号的用户，这里也得有地方放歌。</p>
      */
     private List<PlayList> playListsForSource() {
+        List<PlayList> combined = new ArrayList<>(LocalPlaylistStore.list());
         if (music != null && music.isKuGou()) {
             if (!KuGouMusicService.areUserPlaylistsLoaded()) {
                 KuGouMusicService.ensureUserPlaylistsAsync(() -> {
@@ -235,9 +242,11 @@ public class AddToPlaylistOverlay extends NCMPanel {
                 });
             }
             List<PlayList> snapshot = KuGouMusicService.getUserPlaylistsSnapshot();
-            return snapshot == null || snapshot.isEmpty() ? null : snapshot;
+            if (snapshot != null) combined.addAll(snapshot);
+            return combined.isEmpty() ? null : combined;
         }
-        return CloudMusic.playLists;
+        if (CloudMusic.playLists != null) combined.addAll(CloudMusic.playLists);
+        return combined.isEmpty() ? null : combined;
     }
 
     private void submitToPlaylist(PlayList playlist) {
@@ -247,6 +256,11 @@ public class AddToPlaylistOverlay extends NCMPanel {
 
         selectedPlaylist = playlist;
         final String playlistName = getPlaylistName(playlist);
+        // 本地单先走：它没有任何上游，也就没有「同源」这回事。
+        if (playlist.isLocalPlaylist()) {
+            submitToLocal(playlist, playlistName);
+            return;
+        }
         // 曲目与目标歌单必须是同一个音源：两边的曲目 id 体系不同，跨源提交只会写进一首错误的歌。
         boolean sameSource = (music.isNetease() && playlist.getPlatform() == MusicPlatform.NETEASE)
                 || (music.isKuGou() && playlist.getPlatform() == MusicPlatform.KUGOU);
@@ -294,6 +308,26 @@ public class AddToPlaylistOverlay extends NCMPanel {
         });
 
         // 选择目标歌单即返回播放器页面；网络请求和结果校验仍在后台继续执行。
+        requestClose();
+    }
+
+    /**
+     * 本地单分支：不联网、没有服务端校验，写完 JSON 就算成了。
+     *
+     * <p>所以这里既不需要 {@code submitting} 那套「在途」状态机，也不用等回调 —— 结果当场就给得出来。
+     * 唯一的「失败」是这首歌本来就在单里，那是去重不是错误，所以用的是 ALREADY_EXISTS 那一档语气。</p>
+     */
+    private void submitToLocal(PlayList playlist, String playlistName) {
+        closeAfterMillis = -1L;
+        if (LocalPlaylistStore.addTrack(playlist, music)) {
+            showStatus("已存进本地单「" + playlistName + "」", FeedbackState.SUCCESS);
+            DownloadDynamicIsland.showPlaylistTrackAddSuccess(playlistName);
+        } else {
+            showStatus("「" + playlistName + "」里已经有这首歌了", FeedbackState.ALREADY_EXISTS);
+            DownloadDynamicIsland.showPlaylistTrackAlreadyExists(playlistName);
+        }
+        NCMScreen.getInstance().markDirty();
+        // 和平台分支一样，选完目标就回播放器页：结果已经写进灵动岛了，这一层没有留下来的理由。
         requestClose();
     }
 
@@ -395,7 +429,10 @@ public class AddToPlaylistOverlay extends NCMPanel {
             hover.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER));
             hover.setBeforeRenderCallback(() -> hover.setMargin(0));
 
-            LabelWidget lbl = new LabelWidget(playlist.getName(), FontManager.pf14bold);
+            // 名字后缀一枚「本地」：这张列表里账号歌单和本自建的歌单是混着排的，而两者对
+            // 「这首歌存到哪儿去了」的回答完全不同 —— 前者把 id 交给平台云端，后者写进本机文件。
+            LabelWidget lbl = new LabelWidget(() -> playlist.getName()
+                    + (playlist.isLocalPlaylist() ? " · 本地" : ""), FontManager.pf14bold);
             this.addChild(lbl);
             lbl.setClickable(false);
             lbl.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);

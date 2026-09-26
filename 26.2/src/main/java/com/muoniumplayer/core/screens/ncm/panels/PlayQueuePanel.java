@@ -20,6 +20,8 @@ import com.muoniumplayer.core.rendering.ui.widgets.RoundedImageWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.screens.ncm.NCMPanel;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
+import com.muoniumplayer.core.screens.ncm.SheetClock;
+import com.muoniumplayer.core.screens.ncm.TransitionCurveCache;
 import com.muoniumplayer.core.utils.Location;
 
 import java.util.ArrayList;
@@ -39,19 +41,46 @@ import java.util.List;
  */
 public class PlayQueuePanel extends NCMPanel {
 
-    private static final double ROW_HEIGHT = 26.0;
+    /** 行高与槽距。包内可见是给 {@code PlayQueueDragStaticTest} 的：那条夹取要按「一整行留在视口里」
+     *  断言，把这两个数在测试里再抄一份迟早和实现对不上。 */
+    static final double ROW_HEIGHT = 26.0;
     private static final double ROW_GAP = 2.0;
-    private static final double SLOT_HEIGHT = ROW_HEIGHT + ROW_GAP;
+    static final double SLOT_HEIGHT = ROW_HEIGHT + ROW_GAP;
     private static final double HEADER_HEIGHT = 20.0;
     private static final double DRAWER_INSET = 8.0;
     private static final double DRAWER_PADDING = 6.0;
     /** 展开时逐行错峰出现的间隔，让整列像被铺开而不是整块闪现。 */
     private static final long ROW_STAGGER_MILLIS = 45L;
     private static final long ROW_FADE_MILLIS = 190L;
+    /**
+     * 抽屉展开/收起各自的基准毫秒（再除以「动画速度」倍率）。
+     *
+     * <p>默认倍率是 3.0，也就是最快那一档，所以这两个数要按<b>除完</b>那一档估观感：
+     * 展开约 260ms、收起约 140ms。原来那条 {@code Interpolations.interpolate(…, .32)}
+     * 在 60fps 下约 135ms 走完，但它没有时长也没有终点，掉到 30fps 整段翻倍。</p>
+     */
+    private static final double OPEN_MS = 780.0;
+    private static final double CLOSE_MS = 420.0;
+    /** 单帧最多补这么多毫秒：与换页、侧栏高亮条同一档。 */
+    private static final double MAX_FRAME_MS = 40.0;
+    /** 提起来的这一行放大多少（相对自身），{@link QueueRow} 的变换与裁剪外扩都用这一个数。 */
+    private static final double DRAG_LIFT_SCALE = .045;
+    /** 指针停在列表上下多少像素以内开始自动滚动。 */
+    private static final double DRAG_EDGE = 14.0;
+    /** 自动滚动的速度，像素/秒（越靠近边缘越快）。原来是每帧 2.5 像素：220fps 下是 550px/s。 */
+    private static final double DRAG_AUTO_SCROLL_PPS = 320.0;
 
     private boolean open;
-    /** 抽屉滑入/滑出的进度，0 为完全收起、1 为完全展开。 */
+    /** 抽屉滑入/滑出的进度，0 为完全收起、1 为完全展开。线性推进，曲线在读的时候才套。 */
     private double openAnimation;
+    private long lastFrameNanos;
+    /**
+     * 触发这颗抽屉的按钮在<b>本面板坐标系</b>里的右边缘，由 {@code ControlsBar} 每帧推进来。
+     *
+     * <p>抽屉原来写死相对内容区居中，和那颗按钮零几何关系 —— 于是点开之后视线要从按钮横穿
+     * 半屏去找面板。现在右边缘贴着按钮，展开也就像是从按钮那里长出来的。</p>
+     */
+    private double anchorRight = Double.NaN;
 
     private final RoundedRectWidget drawer = new RoundedRectWidget();
     private final QueueList list = new QueueList();
@@ -64,6 +93,13 @@ public class PlayQueuePanel extends NCMPanel {
 
     private QueueRow draggingRow;
     private double dragGrabOffset;
+    /**
+     * 提起来的那一行超出列表框多少：放大 {@link #DRAG_LIFT_SCALE} 之后，行会比列表还宽一圈，
+     * 而列表用 scissor/stencil 把子组件裁在自己的框里 —— 于是被拖的这张「卡片」左右两边各被
+     * 削掉约 3 像素。裁剪矩形按这个量外扩，行就完整了；外扩上限是抽屉自己的内边距，绝不越出抽屉。
+     */
+    private double dragOverhangX;
+    private double dragOverhangY;
 
     /** 平滑线性进度，让起步与收尾都不生硬。 */
     private static double smooth(double value) {
@@ -73,6 +109,16 @@ public class PlayQueuePanel extends NCMPanel {
 
     public boolean isOpen() {
         return this.open;
+    }
+
+    /**
+     * 由 {@code ControlsBar} 每帧推进来：触发这颗抽屉的按钮在本面板坐标系里的右边缘。
+     *
+     * <p>两者共用同一个 x 原点（都按 {@code currentPanelBg.getX()} 摆），所以按钮的绝对 x
+     * 减去面板的绝对 x 就是本面板坐标系里的位置。</p>
+     */
+    public void setAnchorRight(double right) {
+        this.anchorRight = right;
     }
 
     /** 收起动画播完前仍然需要渲染，否则关闭会变成瞬间消失。 */
@@ -206,9 +252,15 @@ public class PlayQueuePanel extends NCMPanel {
 
     @Override
     public void onRender(double mouseX, double mouseY) {
-        this.openAnimation = Interpolations.interpolate(this.openAnimation, this.open ? 1.0 : 0.0, .32);
-        if (this.open && this.openAnimation > .996) this.openAnimation = 1.0;
-        if (!this.open && this.openAnimation < .004) this.openAnimation = 0.0;
+        long clockNow = System.nanoTime();
+        double frameMs = this.lastFrameNanos == 0L ? 0.0
+                : Math.min(MAX_FRAME_MS, (clockNow - this.lastFrameNanos) / 1_000_000.0);
+        this.lastFrameNanos = clockNow;
+        // 线性推进到 0 或 1，曲线留到用的时候再套：中途反悔（连点开关）就从当前位置往回走，
+        // 而不是先跳回端点重来。
+        double duration = Math.max(1.0, (this.open ? OPEN_MS : CLOSE_MS) / SheetClock.speed());
+        this.openAnimation = Math.max(0.0, Math.min(1.0,
+                this.openAnimation + (this.open ? frameMs : -frameMs) / duration));
 
         if (!this.isVisible()) {
             this.drawer.setHidden(true);
@@ -220,11 +272,21 @@ public class PlayQueuePanel extends NCMPanel {
         this.syncRows();
 
         double progress = smooth(this.openAnimation);
+        // 抽屉走的是位移，不是缩放：表头与列表是抽屉的子组件，缩抽屉的 bounds 不会缩它们，
+        // 半路上内容就会溢出到圆角外面。所以这里只平移，让前缘（上沿）带一点过冲。
+        double lead = TransitionCurveCache.SPRING_LAND.at(this.openAnimation);
         double panelWidth = this.getWidth();
         double panelHeight = this.getHeight();
-        // 抽屉只占播放器约 3/5：宽度按比例收窄并保持居中，高度连表头一起封顶。
+        // 抽屉收窄到不到一半，并把右边缘贴到触发它的那颗按钮上：原来它相对内容区居中，
+        // 和按钮零几何关系，点开之后视线要从按钮横穿半屏去找这块面板。
         double drawerWidth = Math.max(150.0,
-                Math.min(panelWidth - DRAWER_INSET * 2.0, panelWidth * .62));
+                Math.min(panelWidth - DRAWER_INSET * 2.0, panelWidth * .46));
+        // 锚点进来的是那枚按钮的绝对 x，而这一层所有坐标都是「相对本面板」的：不减掉面板自己的
+        // 绝对 x，抽屉就会整体往右跑一个面板宽度的距离（客户端里量过一次，右边缘落在按钮右边约 300）。
+        double drawerRight = Double.isNaN(this.anchorRight)
+                ? (panelWidth - drawerWidth) * .5 + drawerWidth               // 没收到锚点就退回居中
+                : Math.max(DRAWER_INSET + drawerWidth,
+                Math.min(panelWidth - DRAWER_INSET, this.anchorRight - this.getX()));
 
         int rowCount = this.rows.size();
         double contentHeight = Math.max(0.0, rowCount * SLOT_HEIGHT - ROW_GAP);
@@ -234,12 +296,13 @@ public class PlayQueuePanel extends NCMPanel {
                 ? 26.0
                 : Math.max(SLOT_HEIGHT, Math.min(maxListHeight, contentHeight));
         double drawerHeight = DRAWER_PADDING * 2.0 + HEADER_HEIGHT + listHeight;
-        // 收起时整块滑到内容区下沿之外，由内容区的裁剪吃掉，看起来就是抽屉缩回底部。
-        double drawerBottom = panelHeight - 4.0 + (1.0 - progress) * (drawerHeight + 8.0);
+        // 收起时整块滑到内容区下沿之外，由内容区的裁剪吃掉，看起来就是抽屉缩回底部；
+        // 前缘走过冲曲线，于是它会稍微弹过头一点再落回槽位。
+        double drawerBottom = panelHeight - 4.0 + (1.0 - lead) * (drawerHeight + 8.0);
 
         this.drawer
                 .setBounds(drawerWidth, drawerHeight)
-                .setPosition((panelWidth - drawerWidth) * .5, drawerBottom - drawerHeight)
+                .setPosition(drawerRight - drawerWidth, drawerBottom - drawerHeight)
                 .setAlpha((float) (.99f * (.25 + .75 * progress)));
 
         this.list
@@ -248,7 +311,7 @@ public class PlayQueuePanel extends NCMPanel {
         this.list.contentHeight = contentHeight;
         this.emptyHint.setAlpha(rowCount == 0 ? 1.0f : 0.0f);
 
-        this.updateDrag(mouseX, mouseY);
+        this.updateDrag(mouseX, mouseY, frameMs);
 
         double frameDelta = RenderSystem.getFrameDeltaTime();
         long now = System.currentTimeMillis();
@@ -280,6 +343,17 @@ public class PlayQueuePanel extends NCMPanel {
                 this.fadingRows.remove(index);
             }
         }
+
+        // 裁剪外扩量跟着抬起程度走，所以排在 lift 这一帧插值之后算。没在拖的时候是 0，
+        // 列表的裁剪和以前一模一样。父 onRender 先于子组件渲染，这里写完列表这帧就能用上。
+        // 取的是「所有行里抬得最高的那一行」而不是「正在被拖的那一行」：松手之后 draggingRow
+        // 立刻清空，可那一行还要带着放大后的尺寸回落好几帧，按被拖的那行算就会在松手的一瞬间
+        // 把它重新削掉一截。
+        double lifted = 0.0;
+        for (QueueRow row : this.rows) lifted = Math.max(lifted, row.lift);
+        for (QueueRow row : this.fadingRows) lifted = Math.max(lifted, row.lift);
+        this.dragOverhangX = Math.min(DRAWER_PADDING, this.list.getWidth() * DRAG_LIFT_SCALE * lifted * .5);
+        this.dragOverhangY = Math.min(DRAWER_PADDING, ROW_HEIGHT * DRAG_LIFT_SCALE * lifted * .5);
     }
 
     /** 把一行搬到它这一帧该在的位置，并处理视口内外的可见性与命中框。 */
@@ -289,9 +363,11 @@ public class PlayQueuePanel extends NCMPanel {
 
         boolean offscreen = y + ROW_HEIGHT < -.5 || y > this.list.getHeight() + .5;
         boolean fullyInside = y >= -.5 && y + ROW_HEIGHT <= this.list.getHeight() + .5;
-        // 完全滚出视口的行必须真正隐藏：只被裁掉画面却留着命中框，会把抽屉外的点击吃掉。
-        row.setHidden(offscreen);
-        row.setClickable(fullyInside && !row.removing);
+        // 手里那一行永远要看得见：它被 {@link #updateDrag} 夹在视口里，正常不会走到这条分支，
+        // 但一旦因为边界情况被判成「滚出去了」，表现就是拖着拖着行凭空消失，比裁切还糟。
+        boolean dragging = row == this.draggingRow;
+        row.setHidden(offscreen && !dragging);
+        row.setClickable((fullyInside || dragging) && !row.removing);
 
         double entrance = row.removing ? 1.0 : Math.max(0.0, Math.min(1.0,
                 (now - row.appearedAt) / (double) ROW_FADE_MILLIS));
@@ -372,7 +448,7 @@ public class PlayQueuePanel extends NCMPanel {
         this.list.getChildren().add(row);
     }
 
-    private void updateDrag(double mouseX, double mouseY) {
+    private void updateDrag(double mouseX, double mouseY, double frameMs) {
         QueueRow row = this.draggingRow;
         if (row == null) return;
 
@@ -382,16 +458,21 @@ public class PlayQueuePanel extends NCMPanel {
         }
 
         int rowCount = this.rows.size();
-        double maxY = Math.max(0.0, (rowCount - 1) * SLOT_HEIGHT);
+        double contentHigh = Math.max(0.0, (rowCount - 1) * SLOT_HEIGHT);
+        double grow = ROW_HEIGHT * DRAG_LIFT_SCALE * row.lift * .5;
         double desired = mouseY - this.list.getY() + this.list.scrollActual - this.dragGrabOffset;
-        row.dragY = Math.max(0.0, Math.min(maxY, desired));
+        row.dragY = clampDragToViewport(desired, this.list.scrollActual, this.list.getHeight(),
+                contentHigh, grow);
 
-        // 拖到列表上下边缘时自动滚动，长队列才能一路拖到头或拖到底。
-        double edge = 10.0;
-        if (mouseY < this.list.getY() + edge) {
-            this.list.scrollTarget -= 2.5;
-        } else if (mouseY > this.list.getY() + this.list.getHeight() - edge) {
-            this.list.scrollTarget += 2.5;
+        // 拖到列表上下边缘时自动滚动，长队列才能一路拖到头或拖到底。速度按毫秒折算：
+        // 原来写的是「每帧 2.5 像素」，220fps 下是 550px/s、60fps 下只有 150px/s，帧率一改手感就变。
+        double top = this.list.getY();
+        double bottom = top + this.list.getHeight();
+        double scrollStep = DRAG_AUTO_SCROLL_PPS * frameMs / 1000.0;
+        if (mouseY < top + DRAG_EDGE) {
+            this.list.scrollTarget -= scrollStep * edgeStrength(top + DRAG_EDGE - mouseY);
+        } else if (mouseY > bottom - DRAG_EDGE) {
+            this.list.scrollTarget += scrollStep * edgeStrength(mouseY - bottom + DRAG_EDGE);
         }
 
         int from = this.rows.indexOf(row);
@@ -402,6 +483,35 @@ public class PlayQueuePanel extends NCMPanel {
             this.rows.remove(from);
             this.rows.add(target, row);
         }
+    }
+
+    /** 越出边缘带多少就使多大劲：刚进带子是四分之一速，越到边界外越满。 */
+    private static double edgeStrength(double over) {
+        return .25 + .75 * Math.max(0.0, Math.min(1.0, over / DRAG_EDGE));
+    }
+
+    /**
+     * 把被拖那一行的<b>内容</b>坐标夹进「此刻看得见的那一段内容」里。
+     *
+     * <p>行在屏幕上的位置是 {@code dragY - scroll}，所以只按内容范围 {@code [0, contentHigh]} 夹
+     * 是不够的：边缘自动滚动一把内容挪走，或者指针冲得比滚动快，行就会跑到视口之外，被列表的
+     * scissor 削掉半张卡片，更糟的是被 {@link #applyRowLayout} 判成「完全滚出视口」而整行隐藏 ——
+     * 手里那张卡片就这么凭空消失，松手才发现自己拖了个空。</p>
+     *
+     * <p>两段范围取交集：内容范围保证下标换算不出界，视口范围保证看得见。空集时（比如只剩一行）
+     * 退化成视口下界，行仍然钉在看得见的位置上。{@code overhang} 是提起来后放大溢出的一边，
+     * 留出来才不会被裁剪矩形削到。</p>
+     *
+     * <p>包内可见是给 {@code PlayQueueDragStaticTest} 的：这一段是纯算术，也正是「手里的行会不会
+     * 消失」这个问题的全部答案，能在内存里真跑，不该只留在源码里被字符串比对。</p>
+     */
+    static double clampDragToViewport(double desired, double scroll, double viewportHeight,
+                                      double contentHigh, double overhang) {
+        double viewLow = scroll + overhang;
+        double viewHigh = scroll + Math.max(0.0, viewportHeight - ROW_HEIGHT - overhang);
+        double low = Math.max(0.0, Math.min(contentHigh, viewLow));
+        double high = Math.max(low, Math.min(contentHigh, viewHigh));
+        return Math.max(low, Math.min(high, desired));
     }
 
     /**
@@ -499,9 +609,16 @@ public class PlayQueuePanel extends NCMPanel {
 
         @Override
         protected void beforeRenderChildren(double mouseX, double mouseY) {
-            ScissorClipManager.begin(this.getX(), this.getY(), this.getWidth(), this.getHeight());
-            StencilClipManager.beginClip(() ->
-                    Rect.draw(this.getX(), this.getY(), this.getWidth(), this.getHeight(), -1));
+            // 裁剪矩形跟着被提起来的那一行外扩：放大之后的行比列表宽一圈，不扩就会被削掉左右两边。
+            // 上限是抽屉自己的内边距（父面板里已经夹过一次），所以最多是长到抽屉边缘为止。
+            double inflateX = PlayQueuePanel.this.dragOverhangX;
+            double inflateY = PlayQueuePanel.this.dragOverhangY;
+            double x = this.getX() - inflateX;
+            double y = this.getY() - inflateY;
+            double width = this.getWidth() + inflateX * 2.0;
+            double height = this.getHeight() + inflateY * 2.0;
+            ScissorClipManager.begin(x, y, width, height);
+            StencilClipManager.beginClip(() -> Rect.draw(x, y, width, height, -1));
         }
 
         @Override
@@ -546,11 +663,12 @@ public class PlayQueuePanel extends NCMPanel {
                                 : NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND)));
             });
 
-            // 拖起来的一行略微放大浮起，放手后 lift 归零就自己恢复原样。
+            // 拖起来的一行略微放大浮起，放手后 lift 归零就自己恢复原样。放大比例必须和
+            // 面板算裁剪外扩用的那一个数是同一个，不然削掉的还是会被削掉。
             this.setTransformations(() -> {
                 if (this.lift <= .002) return;
                 this.scaleAtPos(this.getX() + this.getWidth() * .5,
-                        this.getY() + this.getHeight() * .5, 1.0 + .045 * this.lift);
+                        this.getY() + this.getHeight() * .5, 1.0 + DRAG_LIFT_SCALE * this.lift);
             });
 
             this.setOnClickCallback((relativeX, relativeY, mouseButton) -> {

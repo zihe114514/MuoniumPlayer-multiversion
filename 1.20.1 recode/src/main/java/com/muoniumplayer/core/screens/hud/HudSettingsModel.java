@@ -278,13 +278,23 @@ public final class HudSettingsModel {
         public final int accent;
         /** 侧边栏与标题上代表这一分类的图标码位，取 {@link HudSettingsIcons} 的常量。 */
         public final String icon;
+        /**
+         * 这一分类在侧栏里归到哪一大块。只有 Folia 那套界面用得到它：它的侧栏是
+         * 「大块标签 → 分类按钮 → 分组锚点」三级，标签以前按 {@link #categories()} 的下标区间
+         * 硬编码，加一个分类就得回去数下标，数错一次就静默错位（第 12 项「HUD 位置」当年就是这么
+         * 掉进「其他设置」的）。现在标签跟着分类自己带，顺序仍按模型里的出现次序渲染，
+         * 所以**同一块的分类要相邻摆放**，静态测试钉着这一点。
+         */
+        public final String navGroup;
         public final Group[] groups;
 
-        private Category(String title, String subtitle, int accent, String icon, Group... groups) {
+        private Category(String title, String subtitle, int accent, String icon, String navGroup,
+                         Group... groups) {
             this.title = title;
             this.subtitle = subtitle;
             this.accent = accent;
             this.icon = icon;
+            this.navGroup = navGroup;
             this.groups = groups;
         }
 
@@ -508,8 +518,8 @@ public final class HudSettingsModel {
 
     private static Category[] build() {
         return new Category[] {
-                new Category("当前歌词", "正在演唱那一行的颜色、发光与逐字强调", 0xFF8C7CFF, HudSettingsIcons.MIC,
-                        new Group("基础", HudSettingsIcons.TUNE,
+                new Category("歌词样式", "桌面歌词与全屏页的文字：颜色、发光、逐字强调与排版", 0xFF8C7CFF, HudSettingsIcons.MIC, "歌词与画面",
+                        new Group("当前行", HudSettingsIcons.MIC,
                                 color("当前歌词颜色", "逐字填涂之后那部分文字的颜色。", ColorTarget.CURRENT),
                                 toggle("当前歌词特效", "关掉之后当前行只做普通描边，不再放大与发光。",
                                         new BooleanSupplier() {
@@ -532,21 +542,9 @@ public final class HudSettingsModel {
                                                 HudConfig.osdKaraokeEmphasisEnabled = !HudConfig.osdKaraokeEmphasisEnabled;
                                                 saveNow();
                                             }
-                                        })),
-                        new Group("发光", HudSettingsIcons.SPARKLE,
-                                slider(HudSetting.CURRENT_GLOW, "桌面歌词当前行的发光强度，读数就是唱到那个字时的亮度。"),
-                                slider(HudSetting.FULLSCREEN_GLOW, "全屏歌词页逐字发光的强度，全部样式共用。"),
-                                slider(HudSetting.LYRIC_GLOW_SPREAD, "光晕铺多远。桌面与全屏按各自字号成比例缩放。")),
-                        new Group("整行效果", HudSettingsIcons.TUNE,
+                                        }),
                                 slider(HudSetting.CURRENT_LINE_SCALE, "当前行整体比其它行大多少，桌面歌词与全屏页共用。")),
-                        new Group("逐字效果 (OSD)", HudSettingsIcons.CAPTION,
-                                slider(HudSetting.OSD_TRANSITION, "桌面歌词填涂边缘的软化宽度。"),
-                                slider(HudSetting.OSD_PULSE, "桌面歌词正在唱的那个字放大多少。"),
-                                slider(HudSetting.OSD_SMOOTHNESS, "桌面歌词逐字动画的平滑程度。"),
-                                slider(HudSetting.OSD_DUET_SPREAD, "对唱段落左右分列的间距，0 为完全居中。"))),
-
-                new Category("普通歌词", "还没唱到与已经唱过的那些行", 0xFF65C9B5, HudSettingsIcons.SUBTITLES,
-                        new Group("基础", HudSettingsIcons.TUNE,
+                        new Group("其它行", HudSettingsIcons.SUBTITLES,
                                 color("普通歌词颜色", "非当前行的文字颜色。", ColorTarget.NORMAL),
                                 toggle("普通歌词特效", "关掉之后其它行不再发光。",
                                         new BooleanSupplier() {
@@ -559,6 +557,22 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         }),
+                                slider(HudSetting.NORMAL_OPACITY, "非当前行的整体不透明度。"),
+                                slider(HudSetting.NORMAL_SCALE, "非当前行的字号缩放。"),
+                                slider(HudSetting.NORMAL_GLOW, "非当前行的发光强度，与当前行同一套光晕、只是更淡。")),
+                        new Group("发光", HudSettingsIcons.SPARKLE,
+                                slider(HudSetting.CURRENT_GLOW, "桌面歌词当前行的发光强度，读数就是唱到那个字时的亮度。"),
+                                slider(HudSetting.FULLSCREEN_GLOW, "全屏歌词页逐字发光的强度，全部样式共用。"),
+                                slider(HudSetting.LYRIC_GLOW_SPREAD, "光晕铺多远。桌面与全屏按各自字号成比例缩放。")),
+                        new Group("逐字效果 (OSD)", HudSettingsIcons.CAPTION,
+                                slider(HudSetting.OSD_TRANSITION, "桌面歌词填涂边缘的软化宽度。"),
+                                slider(HudSetting.OSD_PULSE, "桌面歌词正在唱的那个字放大多少。"),
+                                slider(HudSetting.OSD_SMOOTHNESS, "桌面歌词逐字动画的平滑程度。"),
+                                slider(HudSetting.OSD_DUET_SPREAD, "对唱段落左右分列的间距，0 为完全居中。")),
+                        new Group("排版与滚动", HudSettingsIcons.RULER,
+                                slider(HudSetting.NORMAL_SPACING, "相邻两行之间的间距。"),
+                                slider(HudSetting.SCROLL_SMOOTHNESS, "换行滚动的柔和程度，越大越慢越顺。"),
+                                slider(HudSetting.SECONDARY_OPACITY, "译文/音译那一行的不透明度。"),
                                 toggle("边缘淡出", "歌词滚动到上下边界时是否渐隐，而不是被硬切掉。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
@@ -569,21 +583,14 @@ public final class HudSettingsModel {
                                                 HudConfig.lyricEdgeFadeEnabled = !HudConfig.lyricEdgeFadeEnabled;
                                                 saveNow();
                                             }
-                                        })),
-                        new Group("排版与动效", HudSettingsIcons.SPARKLE,
-                                slider(HudSetting.NORMAL_OPACITY, "非当前行的整体不透明度。"),
-                                slider(HudSetting.NORMAL_SCALE, "非当前行的字号缩放。"),
-                                slider(HudSetting.NORMAL_GLOW, "非当前行的发光强度，与当前行同一套光晕、只是更淡。"),
-                                slider(HudSetting.NORMAL_SPACING, "相邻两行之间的间距。"),
-                                slider(HudSetting.EDGE_FADE, "上下边缘渐隐区域的高度。"),
-                                slider(HudSetting.SCROLL_SMOOTHNESS, "换行滚动的柔和程度，越大越慢越顺。"),
-                                slider(HudSetting.SECONDARY_OPACITY, "译文/音译那一行的不透明度。"))),
+                                        }),
+                                slider(HudSetting.EDGE_FADE, "上下边缘渐隐区域的高度。"))),
 
-                new Category("桌面面板", "桌面歌词的整体样式与毛玻璃卡片", 0xFFE087C0, HudSettingsIcons.CAPTION,
+                new Category("面板与卡片", "桌面歌词的视口尺寸与 Blossom 毛玻璃卡片", 0xFFE087C0, HudSettingsIcons.CAPTION, "歌词与画面",
                         new Group("大小与换行", HudSettingsIcons.RULER,
                                 slider(HudSetting.OSD_WIDTH, "桌面歌词视口的基础宽度。超出这一宽度的原文、译文和逐字歌词都会自动换行。"),
                                 slider(HudSetting.OSD_HEIGHT, "桌面歌词视口的基础高度。对唱或长行换行后放不下时会优先保留原文。")),
-                        new Group("样式", HudSettingsIcons.PALETTE,
+                        new Group("卡片样式", HudSettingsIcons.PALETTE,
                                 choice("桌面歌词样式", "在「经典」与「Blossom」之间切换。Blossom 是 modernMP 那套毛玻璃卡片：面板自带背景模糊，滚动走弹簧级联，逐字扫光而不画光晕。",
                                         new Supplier<String>() {
                                             public String get() {
@@ -614,8 +621,8 @@ public final class HudSettingsModel {
                                         }),
                                 slider(HudSetting.BLOSSOM_BORDER, "描边的强度，同时影响它的透明度与线宽。"))),
 
-                new Category("灵动岛", "顶部胶囊的外观、常驻内容与动画时序", 0xFF65A9FF, HudSettingsIcons.ISLAND,
-                        new Group("基础", HudSettingsIcons.TUNE,
+                new Category("灵动岛", "顶部胶囊的外观、常驻内容与动画时序", 0xFF65A9FF, HudSettingsIcons.ISLAND, "歌词与画面",
+                        new Group("外观与尺寸", HudSettingsIcons.TUNE,
                                 toggle("下载灵动岛", "总开关。关掉之后下载、通知与常驻都不再显示。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
@@ -641,7 +648,7 @@ public final class HudSettingsModel {
                                 slider(HudSetting.DYNAMIC_ISLAND_TEXT_SCALE, "岛内文字的字号缩放。"),
                                 slider(HudSetting.DYNAMIC_ISLAND_MAX_WIDTH, "基础宽度。文案更长时仍会自动伸展。"),
                                 slider(HudSetting.DYNAMIC_ISLAND_PROGRESS_HEIGHT, "下载进度条的粗细。")),
-                        new Group("常驻显示", HudSettingsIcons.TIMER,
+                        new Group("常驻内容", HudSettingsIcons.TIMER,
                                 toggle("常驻灵动岛", "没有下载与通知时也留在屏幕顶部。通知到来只做内容淡入，不重播入场动画。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
@@ -722,27 +729,18 @@ public final class HudSettingsModel {
                                 slider(HudSetting.DYNAMIC_ISLAND_OVERSHOOT, "入场结束时的回弹幅度，0 为不回弹。"),
                                 slider(HudSetting.DYNAMIC_ISLAND_SPINNER_SPEED, "加载转子的转速倍率。"))),
 
-                new Category("封面", "歌曲封面的静态与动态来源", 0xFFFFA971, HudSettingsIcons.ALBUM,
-                        new Group("动态封面", HudSettingsIcons.ALBUM,
-                                toggle(new Supplier<String>() {
-                                    public String get() {
-                                        return animatedCoverLabel();
-                                    }
-                                }, "打开后桌面歌曲信息、全屏歌词页与播放条使用 ffmpeg 抽帧的动态封面；关掉或没有 ffmpeg 时一律用静态封面。",
+                new Category("无缝切换", "两首歌之间的交接方式与衔接处理", 0xFF5FD3E8, HudSettingsIcons.SPEED, "播放与切换",
+                        new Group("模式与开关", HudSettingsIcons.SPEED,
+                                toggle("无缝切换", "打开后提前解码下一首并交叉淡化；关掉则切歌时先停下再重新下载解码，中间有静音间隙。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
-                                                return HudConfig.animatedCoverEnabled;
+                                                return AutomixSettings.isEnabled();
                                             }
                                         }, new Runnable() {
                                             public void run() {
-                                                HudConfig.animatedCoverEnabled = !HudConfig.animatedCoverEnabled;
-                                                syncAnimatedCoverModuleValue();
-                                                saveNow();
+                                                AutomixSettings.setEnabled(!AutomixSettings.isEnabled());
                                             }
-                                        }))),
-
-                new Category("无缝切换", "两首歌之间的交接方式与衔接处理", 0xFF5FD3E8, HudSettingsIcons.SPEED,
-                        new Group("过渡模式", HudSettingsIcons.SPEED,
+                                        }),
                                 choice("处理方案", "原版保留现有等功率淡化与低架处理；智能混音 会分析结构、节奏和调性后选择切拍、低频交接、尾奏滑入或普通淡化。",
                                         new Supplier<String>() {
                                             public String get() { return AutomixSettings.getEngineLabel(); }
@@ -765,17 +763,6 @@ public final class HudSettingsModel {
                                                 boolean enabled = !AutomixSettings.isTransitionAnimationEnabled();
                                                 AutomixSettings.setTransitionAnimationEnabled(enabled);
                                                 if (enabled) AutomixTransitionAnimation.preview();
-                                            }
-                                        })),
-                        new Group("基础", HudSettingsIcons.TUNE,
-                                toggle("无缝切换", "打开后提前解码下一首并交叉淡化；关掉则切歌时先停下再重新下载解码，中间有静音间隙。",
-                                        new BooleanSupplier() {
-                                            public boolean getAsBoolean() {
-                                                return AutomixSettings.isEnabled();
-                                            }
-                                        }, new Runnable() {
-                                            public void run() {
-                                                AutomixSettings.setEnabled(!AutomixSettings.isEnabled());
                                             }
                                         }),
                                 choice("原版重叠时长", "仅原版处理使用；Folia 会按拍数、结构与人声尾音动态决定重叠长度。",
@@ -873,55 +860,8 @@ public final class HudSettingsModel {
                                 button("恢复默认模型位置", "恢复为 config/muonium/models。", () -> FoliaModelManager.resetDirectory(), AutomixSettings::isFoliaEngine),
                                 button("删除所有模型", "删除 Beat This!、HTDemucs 和运行组件，不会删除歌曲缓存。", HudSettingsModel::deleteModels, AutomixSettings::isFoliaEngine))),
 
-                new Category("全屏播放页", "封面下方那块曲目信息", 0xFF9AD0EC, HudSettingsIcons.FULLSCREEN,
-                        new Group("信息标签", HudSettingsIcons.CAPTION,
-                                choice("标签语言",
-                                        "封面下方那排标签（音源 / 音质 / 歌词类型）用英文还是中文。点击切换。"
-                                        + "英文在 10 像素高的胶囊里更清楚，中文更直观。",
-                                        new Supplier<String>() {
-                                            public String get() {
-                                                return NCMPlayerConfig.getNowPlayingTagLanguageLabel();
-                                            }
-                                        }, new Runnable() {
-                                            public void run() {
-                                                NCMPlayerConfig.toggleNowPlayingTagsInEnglish();
-                                            }
-                                        }, tagLanguageChoices(), HudSettingsModel::setTagLanguage,
-                                        new String[] {"更直观。", "胶囊里更清楚。"}))),
-
-                new Category("存储", "已下载音频的磁盘占用与上限", 0xFFD8A657, HudSettingsIcons.STORAGE,
-                        new Group("音频缓存", HudSettingsIcons.SWEEP,
-                                choice("缓存上限",
-                                        "音频缓存目录（config/muonium/cache/music）最多占多少磁盘。超出后从最久没听的歌开始整首删除，正在播放与预备播放的歌不会被删。",
-                                        new Supplier<String>() {
-                                            public String get() {
-                                                return NCMPlayerConfig.getMusicCacheLimitLabel();
-                                            }
-                                        }, new Runnable() {
-                                            public void run() {
-                                                NCMPlayerConfig.cycleMusicCacheLimit();
-                                                MusicAudioCache.enforceLimitAsync();
-                                            }
-                                        }, cacheLimitChoices(), HudSettingsModel::setCacheLimit),
-                                action(new Supplier<String>() {
-                                    public String get() {
-                                        return cacheSweepLabel();
-                                    }
-                                }, "现在就按上限清一次，同时删掉中断的下载与转码残片。上限为「不限制」时只清残片。",
-                                        new Runnable() {
-                                            public void run() {
-                                                sweepAudioCache();
-                                            }
-                                        }))),
-                new Category("公告", "远端清单上挂着的话，以及看过哪些", 0xFFFFC061, HudSettingsIcons.INFO,
-                        new Group("公告中心", HudSettingsIcons.INFO,
-                                action(AnnouncementChecker::unreadLabel,
-                                        "没读过的公告会在主菜单弹一次，看过之后就只能从这个入口进去回看。"
-                                                + "公告与更新检查读同一份远端清单，最多 30 分钟问一次。",
-                                        HudSettingsModel::openAnnouncements))),
-
-                new Category("播放器界面", "播放器窗口自身的动画节奏", 0xFFE59AC8, HudSettingsIcons.NOTE,
-                        new Group("界面外观", HudSettingsIcons.MODERN_UI,
+                new Category("界面与主题", "设置界面本身、外部播放器镜像、窗口缩放与配色", 0xFFE59AC8, HudSettingsIcons.NOTE, "界面与外观",
+                        new Group("设置界面", HudSettingsIcons.MODERN_UI,
                                 choice("HUD 设置界面", "按 H 打开 HUD 编辑器时用哪套外观。经典＝右侧一列可折叠长面板；"
                                         + "现代＝侧栏分类 + 卡片分组双栏；Folia＝居中大窗 + 遮罩（移植自 本项目 的设置弹窗）。"
                                         + "三套内容完全一样，切换在下次打开时生效。",
@@ -982,7 +922,7 @@ public final class HudSettingsModel {
                                                 return ExternalPlayback.supportsPlatform();
                                             }
                                         })),
-                        new Group("窗口缩放", HudSettingsIcons.RULER,
+                        new Group("窗口与缩放", HudSettingsIcons.RULER,
                                 toggle("窗口自适应缩放",
                                         "按物理游戏窗口尺寸计算连续缩放，播放器大小不随 GUI Scale 整数档位跳动；关闭后跟随游戏内 GUI 缩放。",
                                         NCMPlayerConfig::isWindowAdaptiveScaleEnabled,
@@ -996,17 +936,14 @@ public final class HudSettingsModel {
                                         + "正文只有 14 像素、比播放器其它界面小一半；放大这一倍率，弹窗、文字、卡片、间距一起等比走，"
                                         + "内部排版比例不变。注意超过约 1.5× 之后弹窗宽度会先撞上「面板的 85%」那一档，形状会更扁一些，"
                                         + "换来的是正文从 14 像素长到 21 像素。改完立刻生效，不用重开。")),
-                        new Group("开关动画", HudSettingsIcons.SPEED,
+                        new Group("动画", HudSettingsIcons.SPEED,
                                 slider(HudSetting.PLAYER_FADE_SPEED,
-                                        "按键打开与关闭播放器时，界面从灵动岛展开 / 收回的速度倍率。"
-                                        + "1.00 是默认速度，越大越快；只影响这一段。")),
-                        new Group("切换动画", HudSettingsIcons.SPEED,
+                                        "播放器界面打开与关闭那一下整屏淡入淡出的快慢，1.0 是默认速度。"
+                                        + "只影响这层淡入淡出，界面内部各元素的动画节奏保持原样。"),
                                 slider(HudSetting.PLAYER_UI_SWITCH_SPEED,
                                         "左侧导航换栏目时内容页的淡入缩放与选中指示条滑动的快慢。"
-                                        + "1.25 是出厂默认（比早期版本略快），1.0 是历史速度，越大越快。"))),
-
-                new Category("主题", "播放器与灵动岛的整体配色", 0xFFB68CFF, HudSettingsIcons.PALETTE,
-                        new Group("配色预设", HudSettingsIcons.PALETTE,
+                                        + "1.25 是出厂默认（比早期版本略快），1.0 是历史速度，越大越快。")),
+                        new Group("配色", HudSettingsIcons.PALETTE,
                                 choice("播放器主题", "点击在全部预设之间依次切换。",
                                         new Supplier<String>() {
                                             public String get() {
@@ -1019,8 +956,8 @@ public final class HudSettingsModel {
                                         }, themeChoices(), HudSettingsModel::setThemeChoice),
                                 themeGrid())),
 
-                new Category("HUD 位置", "桌面上两块 HUD 的开关与摆放", 0xFF7FD4A0, HudSettingsIcons.MOVE,
-                        new Group("显示", HudSettingsIcons.VISIBILITY,
+                new Category("信息栏与封面", "桌面信息栏的显隐与摆放，以及封面与全屏页标签", 0xFFFFA971, HudSettingsIcons.ALBUM, "界面与外观",
+                        new Group("显示与摆放", HudSettingsIcons.VISIBILITY,
                                 toggle("歌曲信息栏", "桌面左上角那块封面 + 歌名的卡片。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
@@ -1040,15 +977,74 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 setLyricsEnabled(!lyricsEnabled());
                                             }
-                                        })),
-                        new Group("摆放", HudSettingsIcons.RULER,
+                                        }),
                                 action("恢复默认位置与缩放",
                                         "把信息栏放回左上、歌词放回底部中间，缩放都回到 100%。在界面外的空白处直接拖动也可以调整位置，滚轮调缩放。",
                                         new Runnable() {
                                             public void run() {
                                                 resetHudPlacement();
                                             }
-                                        })))
+                                        })),
+                        new Group("封面与标签", HudSettingsIcons.ALBUM,
+                                toggle(new Supplier<String>() {
+                                    public String get() {
+                                        return animatedCoverLabel();
+                                    }
+                                }, "打开后桌面歌曲信息、全屏歌词页与播放条使用 ffmpeg 抽帧的动态封面；关掉或没有 ffmpeg 时一律用静态封面。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.animatedCoverEnabled;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.animatedCoverEnabled = !HudConfig.animatedCoverEnabled;
+                                                syncAnimatedCoverModuleValue();
+                                                saveNow();
+                                            }
+                                        }),
+                                choice("标签语言",
+                                        "封面下方那排标签（音源 / 音质 / 歌词类型）用英文还是中文。点击切换。"
+                                        + "英文在 10 像素高的胶囊里更清楚，中文更直观。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return NCMPlayerConfig.getNowPlayingTagLanguageLabel();
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                NCMPlayerConfig.toggleNowPlayingTagsInEnglish();
+                                            }
+                                        }, tagLanguageChoices(), HudSettingsModel::setTagLanguage,
+                                        new String[] {"更直观。", "胶囊里更清楚。"}))),
+
+                new Category("缓存与公告", "已下载音频的占用上限，以及远端公告", 0xFFD8A657, HudSettingsIcons.STORAGE, "系统",
+                        new Group("音频缓存", HudSettingsIcons.SWEEP,
+                                choice("缓存上限",
+                                        "音频缓存目录（config/muonium/cache/music）最多占多少磁盘。超出后从最久没听的歌开始整首删除，正在播放与预备播放的歌不会被删。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return NCMPlayerConfig.getMusicCacheLimitLabel();
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                NCMPlayerConfig.cycleMusicCacheLimit();
+                                                MusicAudioCache.enforceLimitAsync();
+                                            }
+                                        }, cacheLimitChoices(), HudSettingsModel::setCacheLimit),
+                                action(new Supplier<String>() {
+                                    public String get() {
+                                        return cacheSweepLabel();
+                                    }
+                                }, "现在就按上限清一次，同时删掉中断的下载与转码残片。上限为「不限制」时只清残片。",
+                                        new Runnable() {
+                                            public void run() {
+                                                sweepAudioCache();
+                                            }
+                                        })),
+                        new Group("公告中心", HudSettingsIcons.INFO,
+                                action(AnnouncementChecker::unreadLabel,
+                                        "没读过的公告会在主菜单弹一次，看过之后就只能从这个入口进去回看。"
+                                                + "公告与更新检查读同一份远端清单，最多 30 分钟问一次。",
+                                        HudSettingsModel::openAnnouncements)))
         };
     }
 

@@ -251,6 +251,9 @@ public final class ExternalPlayback {
         // 给一个 Collections.emptyList() 会让它们在下一次追加时抛 UnsupportedOperationException。
         CloudMusic.playList = new java.util.ArrayList<Music>();
         CloudMusic.curIdx = 0;
+        // 队列整条换成了一条空列表：用户那份「下一首播放」的账也跟着作废，留着只会让下一次
+        // 读数凭空长出一段待播。
+        CloudMusic.clearQueuedNext();
         mirroring = true;
         appliedTrackKey = resolution.trackKey;
         resolvingTrackKey = "";

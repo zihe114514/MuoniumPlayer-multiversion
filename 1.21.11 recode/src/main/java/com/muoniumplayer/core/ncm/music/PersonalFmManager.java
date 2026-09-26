@@ -126,6 +126,15 @@ public final class PersonalFmManager {
     private static final Set<Long> RECENT_SONG_IDS = new LinkedHashSet<>();
 
     private static volatile List<Music> currentBatch = Collections.emptyList();
+    /**
+     * 这一轮里已经被换下去的推荐，新的在头。hero 卡只画 {@link #currentBatch} 那一首，
+     * 「刚才推荐过」那一列读这里。
+     *
+     * <p>私人 FM 一次只拉一首（{@link #BATCH_SIZE}），所以没有这份历史的话，整个界面就只有
+     * 一行可看，剩下大半屏是空的。上限只是防一手长时间挂机把它撑大，取数那一侧并不用它。</p>
+     */
+    private static volatile List<Music> history = Collections.emptyList();
+    private static final int HISTORY_LIMIT = 20;
     /** 已经接进活队列、但还没播到的下一首；播到它时由 {@link #noteFmTrackStarted(Music)} 清掉。 */
     private static volatile Music prefetchedNext;
     private static volatile Mode selectedMode = Mode.DEFAULT;
@@ -142,6 +151,34 @@ public final class PersonalFmManager {
 
     public static List<Music> getCurrentBatchSnapshot() {
         return new ArrayList<>(currentBatch);
+    }
+
+    public static List<Music> getHistorySnapshot() {
+        return new ArrayList<>(history);
+    }
+
+    /**
+     * 把即将被替换掉的那一批压进历史，然后交给新的一批。
+     *
+     * <p>去重按 {@link Music#getStableKey()} 而不是 id：上游在短时间内把同一首推回来是常事
+     * （换模式又换回来尤其明显），历史里出现两行同名同艺人的歌，看着像是这个界面坏了。</p>
+     */
+    private static void retireToHistory() {
+        List<Music> leaving = currentBatch;
+        if (leaving.isEmpty()) return;
+
+        List<Music> merged = new ArrayList<>(leaving.size() + history.size());
+        Set<String> seen = new LinkedHashSet<>();
+        for (Music song : leaving) {
+            if (song != null && seen.add(song.getStableKey())) merged.add(song);
+        }
+        for (Music song : history) {
+            if (song != null && seen.add(song.getStableKey())) merged.add(song);
+        }
+        while (merged.size() > HISTORY_LIMIT) {
+            merged.remove(merged.size() - 1);
+        }
+        history = Collections.unmodifiableList(merged);
     }
 
     public static Mode getSelectedMode() {
@@ -251,6 +288,7 @@ public final class PersonalFmManager {
         MultiThreadingUtil.runAsync(() -> {
             try {
                 List<Music> loaded = fetchRecommendations();
+                retireToHistory();
                 currentBatch = Collections.unmodifiableList(loaded);
                 status = getSelectionLabel() + " · " + loaded.size() + " 首推荐";
                 // playFm() 自身会建立隔离的 FM session，因此首次进入不得
@@ -290,6 +328,7 @@ public final class PersonalFmManager {
                 String exclude = currentBatch.isEmpty() ? "" : currentBatch.get(currentBatch.size() - 1).getSourceId();
                 List<Music> loaded = KuGouMusicService.personalFm(kuGouMode(), BATCH_SIZE, exclude);
                 if (loaded.isEmpty()) throw new IllegalStateException("未返回可播放的酷狗推荐");
+                retireToHistory();
                 currentBatch = Collections.unmodifiableList(loaded);
                 status = "酷狗猜你喜欢 · " + loaded.size() + " 首推荐";
                 if (startPlaybackAfterLoad) {
@@ -416,6 +455,7 @@ public final class PersonalFmManager {
         if (shown.size() == 1 && shown.get(0) != null && shown.get(0).getId() == song.getId()) {
             return;
         }
+        retireToHistory();
         currentBatch = Collections.singletonList(song);
         status = getSelectionLabel() + " · 正在播放推荐";
         notifyUi();

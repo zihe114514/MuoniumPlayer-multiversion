@@ -56,25 +56,23 @@ public final class NeteaseRecentPlaysService {
     }
 
     /**
-     * 用最近播放拼出一条播放队列：用户点的那一首永远排第一，后面接最近播放里剩下的曲目。
+     * 最近播放里去掉用户刚点的那一首，剩下的按接口返回的顺序当队列尾部。
      *
      * <p>去重按 {@link Music#equals(Object)}（来源 + 来源内 id），所以同一首歌不会因为最近播放里
-     * 出现过而在队列里排两次。{@code selected} 为空时直接返回空列表，调用方据此回退。</p>
+     * 出现过而在队列里排两次。队头那一首在起播那一刻就已经装进活队列了，所以这里只交尾部 ——
+     * 拼一条完整队列的旧写法会让调用方拿到一个自己用不上的第 0 格。</p>
      */
-    public static List<Music> buildQueue(Music selected, List<Music> recent) {
-        if (selected == null) return Collections.emptyList();
+    public static List<Music> buildTail(Music selected, List<Music> recent) {
+        if (recent == null || recent.isEmpty()) return Collections.emptyList();
 
-        List<Music> queue = new ArrayList<>();
+        List<Music> tail = new ArrayList<>(recent.size());
         Set<Music> seen = new HashSet<>();
-        queue.add(selected);
-        seen.add(selected);
-        if (recent == null) return queue;
-
+        if (selected != null) seen.add(selected);
         for (Music song : recent) {
             if (song == null || !seen.add(song)) continue;
-            queue.add(song);
+            tail.add(song);
         }
-        return queue;
+        return tail;
     }
 
     private static int clampLimit(int limit) {

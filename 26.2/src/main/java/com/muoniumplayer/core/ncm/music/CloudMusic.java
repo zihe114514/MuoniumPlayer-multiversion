@@ -504,11 +504,14 @@ public class CloudMusic implements SharedConstants {
     /** 保护插入操作，防止两次快速点击交错导致顺序错乱。 */
     private static final Object PLAY_NEXT_LOCK = new Object();
     /**
- * 通过 {@link #playNext(Music)} 加入队列、尚未播放到的最后一首曲目的绝对下标。
- * 队列块会自愈：一旦播放越过队尾，该值就会重新低于 {@link #curIdx}，
- * 于是下一次插入会在当前曲目之后开启一个新的队列块。
+ * 用户「下一首播放」的账本，只记曲目身份，一格位置都不记。
+ *
+ * <p>这里没有绝对下标可维护，正是这一处改动要买的东西：上一版记的是用户块在 {@code playList}
+ * 里的尾下标，而队列会被整条换掉、被随机模式就地重洗、也会在列表循环走到头时让播放指针跳回 0，
+ * 那些地方没有一个会去挪它。它一旦停在很远处，{@code 尾下标 - curIdx} 就把几十上百格正常歌序
+ * 报成用户排过的队。现在待播段每次从活队列现算，见 {@link PlayNextLedger}。</p>
  */
-    private static volatile int playNextTail = -1;
+    private static final PlayNextLedger playNextLedger = new PlayNextLedger();
     /**
  * 每次队列变化时递增。Automix 会预解码它预测的下一首，所以用户改变主意之前
  * 预备好的播放牌必须被丢弃。
@@ -517,30 +520,37 @@ public class CloudMusic implements SharedConstants {
 
     /** 用户加入队列的曲目是否仍在等待播放。 */
     static boolean hasQueuedNext() {
-        int tail = playNextTail;
-        return tail > curIdx && tail < playList.size();
+        synchronized (PLAY_NEXT_LOCK) {
+            return playNextLedger.pendingRun(playList, curIdx) > 0;
+        }
     }
 
     /** 仍在等待播放的用户队列曲目数量；用户队列为空时为 0。 */
     public static int getQueuedNextCount() {
-        int tail = playNextTail;
-        int current = curIdx;
-        if (tail <= current || tail >= playList.size()) return 0;
-        return tail - current;
+        synchronized (PLAY_NEXT_LOCK) {
+            return playNextLedger.pendingRun(playList, curIdx);
+        }
     }
 
     /** 该曲目是否是当前用户队列中正在等待播放的曲目之一。 */
     public static boolean isQueuedNext(Music song) {
-        if (song == null) return false;
-        List<Music> queue = playList;
-        int tail = playNextTail;
-        int current = curIdx;
-        if (queue == null || tail <= current || tail >= queue.size()) return false;
-        for (int index = Math.max(0, current + 1); index <= tail; index++) {
-            Music queued = queue.get(index);
-            if (queued != null && queued.equals(song)) return true;
+        synchronized (PLAY_NEXT_LOCK) {
+            return playNextLedger.isPending(playList, curIdx, song);
         }
-        return false;
+    }
+
+    /**
+     * 一首歌开播了，顺手把它从待播账上销掉。由播放线程在每个起播点调用。
+     *
+     * <p>账本记的是身份而不是位置，所以「播过的歌还留在账上」通常不会立刻出问题：它已经不在
+     * 当前曲目后面那一段里，读数自然不算它。真正会被它坑到的只有一种情况——同一首歌在队列里
+     * 出现两次，前一首刚播完，后一首恰好紧跟在当前曲目后面，那一格就会被误认成用户排过的队。
+     * 在起播这一刻销账，就把这个口子一起堵上。</p>
+     */
+    static void noteQueuedTrackStarted(Music song) {
+        synchronized (PLAY_NEXT_LOCK) {
+            playNextLedger.forget(song);
+        }
     }
 
     /**
@@ -552,27 +562,34 @@ public class CloudMusic implements SharedConstants {
         if (song == null) return false;
         if (MpPartyClient.interceptPlayNext(song)) return true;
 
-        List<Music> queue = playList;
-        if (queue == null || queue.isEmpty() || currentlyPlaying == null || curIdx < 0) {
+        int rank;
+        boolean startDirectly;
+        synchronized (PLAY_NEXT_LOCK) {
+            // 队列在锁里重读一次：上面那行拦截回调可能已经把整条 playList 换掉了。旧写法拿着
+            // 锁外捕获的实例往里插，歌单换得快的话那一首就进了一条没人播的孤儿列表，
+            // 而通知照样告诉用户「已排在第 N 位」。
+            List<Music> queue = playList;
+            startDirectly = queue == null || queue.isEmpty() || currentlyPlaying == null || curIdx < 0;
+            if (startDirectly) {
+                rank = 1;
+            } else {
+                int insertAt = playNextLedger.insertIndex(queue, curIdx);
+                queue.add(insertAt, song);
+                playNextLedger.remember(song);
+                queueRevision++;
+                // 通知里那个「第几位」数的是真正的待播段，不再是从 curIdx 到某个尾下标的距离。
+                rank = Math.max(1, insertAt - Math.max(0, curIdx));
+            }
+        }
+
+        if (startDirectly) {
             // 当前没有在播放，所以没有"下一首"可以插入。直接开始播放这首歌正是主流播放器
             // 在这里的做法，比什么都不做更有用。
             play(Collections.singletonList(song), 0);
             DownloadDynamicIsland.showQueuedNextStarted(song.getName());
             return true;
         }
-
-        int pending;
-        synchronized (PLAY_NEXT_LOCK) {
-            int current = Math.max(0, curIdx);
-            int tail = playNextTail;
-            int insertAt = (tail > current && tail < queue.size()) ? tail + 1 : current + 1;
-            if (insertAt > queue.size()) insertAt = queue.size();
-            queue.add(insertAt, song);
-            playNextTail = insertAt;
-            queueRevision++;
-            pending = Math.max(1, insertAt - current);
-        }
-        DownloadDynamicIsland.showQueuedNext(song.getName(), pending);
+        DownloadDynamicIsland.showQueuedNext(song.getName(), rank);
         return true;
     }
 
@@ -581,25 +598,19 @@ public class CloudMusic implements SharedConstants {
      * 不能拿到会被后台修改的活列表。
      */
     public static List<Music> getQueuedNextSongs() {
-        List<Music> queue = playList;
-        int tail = playNextTail;
-        int current = curIdx;
-        if (queue == null || tail <= current || tail >= queue.size()) return Collections.emptyList();
-        List<Music> result = new ArrayList<>(Math.max(1, tail - current));
-        for (int index = current + 1; index <= tail && index < queue.size(); index++) {
-            Music song = queue.get(index);
-            if (song != null) result.add(song);
+        synchronized (PLAY_NEXT_LOCK) {
+            return playNextLedger.pending(playList, curIdx);
         }
-        return result;
     }
 
     /**
      * 在用户队列内部重新排序：把第 {@code fromOffset} 个待播曲目移动到第 {@code toOffset} 个位置
      * （下标都相对于队列自身，0 就是下一首要播的那个）。
      *
-     * <p>只搬动 {@code curIdx} 之后、{@code playNextTail} 之内的元素，所以当前播放位置和队列长度都
-     * 不变，正在播的曲目不受影响。整个搬动持有 {@link #PLAY_NEXT_LOCK}，与 {@link #playNext} 的插入
-     * 互斥；{@code queueRevision} 递增会让 automix 丢弃按旧顺序预备好的那一路。</p>
+     * <p>只搬动紧跟在 {@code curIdx} 之后那一段里的元素，所以当前播放位置和队列长度都不变，
+     * 正在播的曲目不受影响。整个搬动持有 {@link #PLAY_NEXT_LOCK}，与 {@link #playNext} 的插入互斥；
+     * {@code queueRevision} 递增会让 automix 丢弃按旧顺序预备好的那一路。段内都是用户排过的歌，
+     * 所以账本（记身份）不需要跟着改。</p>
      *
      * @return 是否真的发生了移动
      */
@@ -608,15 +619,13 @@ public class CloudMusic implements SharedConstants {
         synchronized (PLAY_NEXT_LOCK) {
             List<Music> queue = playList;
             int current = curIdx;
-            int tail = playNextTail;
-            if (queue == null || tail <= current || tail >= queue.size()) return false;
-
-            int size = tail - current;
+            int size = pendingRunLocked();
             if (fromOffset < 0 || fromOffset >= size) return false;
             if (toOffset < 0 || toOffset >= size) return false;
 
-            Music song = queue.remove(current + 1 + fromOffset);
-            if (song == null) return false;
+            int from = current + 1 + fromOffset;
+            if (queue == null || from >= queue.size() || queue.get(from) == null) return false;
+            Music song = queue.remove(from);
             queue.add(current + 1 + toOffset, song);
             queueRevision++;
             return true;
@@ -626,9 +635,9 @@ public class CloudMusic implements SharedConstants {
     /**
      * 从用户队列里移除第 {@code offset} 个待播曲目（0 就是下一首要播的那个）。
      *
-     * <p>被移除的曲目是当初 {@link #playNext(Music)} 插进来的那一条，所以直接从 {@code playList} 里
-     * 删掉就回到了插入前的顺序；队列块因此短一格，{@code playNextTail} 同步下移。正在播放的曲目和
-     * {@code curIdx} 都不受影响，队列清空后 {@code playNextTail} 复位为 -1。</p>
+     * <p>被移除的曲目是当初 {@link #playNext(Music)} 插进来的那一条，所以从 {@code playList} 里删掉
+     * 就回到了插入前的顺序；同时要把它的身份从账上销掉，否则同一首歌在列表里别处再出现时会被当成
+     * 用户还排着队。正在播放的曲目和 {@code curIdx} 都不受影响。</p>
      *
      * @return 是否真的移除了一条
      */
@@ -636,14 +645,11 @@ public class CloudMusic implements SharedConstants {
         synchronized (PLAY_NEXT_LOCK) {
             List<Music> queue = playList;
             int current = curIdx;
-            int tail = playNextTail;
-            if (queue == null || tail <= current || tail >= queue.size()) return false;
+            if (offset < 0 || offset >= pendingRunLocked()) return false;
+            int index = current + 1 + offset;
+            if (queue == null || index >= queue.size()) return false;
 
-            int size = tail - current;
-            if (offset < 0 || offset >= size) return false;
-
-            queue.remove(current + 1 + offset);
-            playNextTail = tail - 1 > current ? tail - 1 : -1;
+            playNextLedger.forget(queue.remove(index));
             queueRevision++;
             return true;
         }
@@ -656,26 +662,29 @@ public class CloudMusic implements SharedConstants {
      */
     public static int clearQueuedNextSongs() {
         synchronized (PLAY_NEXT_LOCK) {
-            List<Music> queue = playList;
-            int current = curIdx;
-            int tail = playNextTail;
-            if (queue == null || tail <= current || tail >= queue.size()) return 0;
-
-            int removed = 0;
-            for (int index = tail; index > current; index--) {
-                queue.remove(index);
-                removed++;
-            }
-            playNextTail = -1;
-            queueRevision++;
+            int removed = playNextLedger.dropPending(playList, curIdx);
+            if (removed > 0) queueRevision++;
             return removed;
         }
     }
 
-    /** 忘记用户队列；曲目本身保留在被插入的位置。 */
-    private static void clearQueuedNext() {
-        playNextTail = -1;
+    /**
+     * 忘记用户队列；曲目本身保留在被插入的位置。
+     *
+     * <p>包内可见是因为「整条队列被换掉」这件事不止 {@link #startPlaybackList} 一处会做（镜像接管
+     * 也会把 {@code playList} 换成一条空列表），而每一处都必须同时作废账本 —— 留着一批指向已经
+     * 不存在的格子的身份，下一次读数就可能在那儿凭空长出一段待播。</p>
+     */
+    static void clearQueuedNext() {
+        synchronized (PLAY_NEXT_LOCK) {
+            playNextLedger.clear();
+        }
         queueRevision++;
+    }
+
+    /** 当前待播段有几格。调用方必须已经持有 {@link #PLAY_NEXT_LOCK}。 */
+    private static int pendingRunLocked() {
+        return playNextLedger.pendingRun(playList, curIdx);
     }
 
     /**
@@ -1082,50 +1091,97 @@ public class CloudMusic implements SharedConstants {
     public static PlayList playedFrom = null;
 
     /**
-     * 从搜索结果起播：只把用户点的那一首装进队列，随后用刷新过的"最近播放"续上后面的曲目。
+     * 从搜索结果起播。
      *
-     * <p>搜索结果不是歌单，顺着它一路往下播是搜索关键词的排序，不是用户在听的东西。主流播放器在这
-     * 里接的都是用户自己的播放上下文，本项目最接近的就是网易云的"最近播放"。</p>
+     * <p>主流播放器在这里接的都是用户自己的播放上下文：点的是网易云的歌、而网易云确实登着时，
+     * 只把用户点的那一首装进队列起播，随后用刷新过的"最近播放"续上后面的曲目 —— 搜索结果不是
+     * 歌单，顺着它一路往下播是搜索关键词的排序，不是用户在听的东西。</p>
+     *
+     * <p><b>但这个上下文不是谁都有的，所以另一条路必须先判</b>：换别的音源（酷狗 / 汽水 / B 站 /
+     * GD）点一首歌，或者网易云根本没登录时，退回与普通歌单完全同一条路 —— 整条列表当队列、
+     * 从这一首往后播。原来这里不看音源也不看登录态，固定去拉网易云的最近播放，于是在酷狗的搜索
+     * 结果里点一首，队列变成「1 首酷狗 + 上百首网易云听歌历史」；Cookie 过期时接口只回一份空历史，
+     * 它又一声不吭地把整份搜索结果塞进队列。用户看到的症状就是「通知有时冒出来有时没有，
+     * 而队列已经不是我点的那份了」。</p>
      *
      * <p>刻意先起播、再异步补队列：拉一次最近播放要走一次网络，让点击等它回来会有几百毫秒的"点了
      * 没反应"。补队列时会校验队列还是刚装进去的那一条，用户在这段时间里点了别的歌或者用了"下一首
-     * 播放"就直接放弃追加。最近播放为空（未登录 / Cookie 失效 / 接口变更）时退回用搜索结果本身续，
-     * 也就是旧行为。</p>
+     * 播放"就直接放弃追加。</p>
      *
      * @param selected      用户点的那一首
-     * @param searchResults 当前搜索结果，作为最近播放不可用时的兜底队列
-     * @param selectedIndex {@code selected} 在搜索结果里的下标，仅在完全无法起播时使用
+     * @param searchResults 当前搜索结果；没有续播上下文时它就是队列本身
+     * @param selectedIndex {@code selected} 在搜索结果里的下标
      */
     public static void playFromSearchSelection(Music selected, List<Music> searchResults, int selectedIndex) {
-        if (selected == null) {
-            play(searchResults, selectedIndex);
+        List<Music> results = searchResults == null
+                ? Collections.<Music>emptyList() : new ArrayList<>(searchResults);
+        // 搜索结果不是歌单，播放时长上报没有来源歌单可归属，与旧行为一致。
+        currentPlaylistContext = null;
+
+        if (selected == null || results.isEmpty()) {
+            if (selected != null) play(Collections.singletonList(selected), 0);
+            else play(results, selectedIndex);
             return;
         }
 
-        // 搜索结果不是歌单，播放时长上报没有来源歌单可归属，与旧行为一致。
-        currentPlaylistContext = null;
+        if (!hasRecentPlayContext(selected)) {
+            play(results, Math.max(0, Math.min(selectedIndex, results.size() - 1)));
+            return;
+        }
+
         play(Collections.singletonList(selected), 0);
 
         final List<Music> installedQueue = playList;
-        final List<Music> fallback = searchResults == null
-                ? Collections.<Music>emptyList() : new ArrayList<>(searchResults);
+        final List<Music> fallbackTail = tailAfterSelected(results, selectedIndex);
         MultiThreadingUtil.runAsync(() -> {
             List<Music> recent = NeteaseRecentPlaysService.fetchRecentSongs(
                     NeteaseRecentPlaysService.MAX_RECENT_SONGS);
             final boolean usedRecent = !recent.isEmpty();
-            final List<Music> queue = NeteaseRecentPlaysService.buildQueue(selected,
-                    usedRecent ? recent : fallback);
+            final List<Music> tail = usedRecent
+                    ? NeteaseRecentPlaysService.buildTail(selected, recent)
+                    : fallbackTail;
             MultiThreadingUtil.runOnMainThread(() ->
-                    appendSearchSelectionTail(installedQueue, selected, queue, usedRecent));
+                    appendSearchSelectionTail(installedQueue, selected, tail, usedRecent));
         });
     }
 
     /**
+     * 这次起播有没有「用户自己的续播上下文」可接。
+     *
+     * <p>判据用<b>曲目自己的来源</b>，不用 {@code NeteaseMusicService.getCurrentPlatform()}：当前音源
+     * 是个全局设置，而用户完全可能挂着网易云音源去点一张汽水收藏的列表（那个列表就复用了
+     * {@code searchResultList} 标记），那时候该接的是那份列表自己的后面，不是网易云的历史。</p>
+     *
+     * <p>登录态只查本地有没有 Cookie，不发请求：这一步在渲染线程上，一次点击多一次网络往返就是
+     * 卡顿。Cookie 在但服务端已经作废的情况下，异步那趟只会回一份空历史，于是接的是搜索列表自己
+     * 的后面 —— 与不接的效果一致。</p>
+     */
+    private static boolean hasRecentPlayContext(Music selected) {
+        return selected.isNetease() && NeteaseMusicService.isLoggedIn(MusicPlatform.NETEASE);
+    }
+
+    /**
+     * 普通歌单语义下「这一首后面还跟着什么」：从它的下一格一直到列表末尾，一格不多一格不少。
+     *
+     * <p>顺序必须正好是这样。旧写法兜底时把<b>整份</b>搜索结果接到后面，等于把用户点的那一首之前
+     * 的那些歌塞到了它后面，跟直接点歌单里一行的行为不一致，也正是这里要修掉的一条。</p>
+     */
+    private static List<Music> tailAfterSelected(List<Music> results, int selectedIndex) {
+        int from = selectedIndex + 1;
+        if (from < 0 || from >= results.size()) return Collections.emptyList();
+        return new ArrayList<>(results.subList(from, results.size()));
+    }
+
+    /**
      * 把 {@link #playFromSearchSelection} 拉到的队列尾部接到活队列上。必须在主线程调用。
+     *
+     * @param tail       要接上的曲目；空则什么都不做
+     * @param usedRecent 尾部来自网易云最近播放而非搜索结果本身。只有前者会告诉用户，
+     *                   因为后者就是这个列表本来该有的顺序，说一句"已接入"反而是在骗人
      */
     private static void appendSearchSelectionTail(List<Music> installedQueue, Music selected,
-                                                  List<Music> queue, boolean usedRecent) {
-        if (installedQueue == null || selected == null || queue == null || queue.size() <= 1) return;
+                                                  List<Music> tail, boolean usedRecent) {
+        if (installedQueue == null || selected == null || tail == null || tail.isEmpty()) return;
 
         int appended;
         synchronized (PLAY_NEXT_LOCK) {
@@ -1135,9 +1191,12 @@ public class CloudMusic implements SharedConstants {
             Music head = installedQueue.get(0);
             if (head == null || !head.equals(selected)) return;
 
-            List<Music> tail = queue.subList(1, queue.size());
-            installedQueue.addAll(tail);
-            appended = tail.size();
+            List<Music> rest = new ArrayList<>(tail);
+            // 用户点的这首如果就在历史里，它不该在队列里排两遍。
+            rest.removeIf(head::equals);
+            if (rest.isEmpty()) return;
+            installedQueue.addAll(rest);
+            appended = rest.size();
             // automix 之前按"没有下一首"预测过一次，递增 revision 让它重新预测并重新预解码。
             queueRevision++;
         }
@@ -1532,6 +1591,8 @@ public class CloudMusic implements SharedConstants {
                 return false;
             }
             currentlyPlaying = song;
+            // 起播即销账：这一首已经轮到它播了，用户为它点的那次"下一首播放"到此兑现。
+            noteQueuedTrackStarted(song);
             // 封面可能已经由上一轮预加载完成；切歌这一刻才把它提升为活动主题色。
             CoverThemePalette.set(song.getCoverPalette());
             // 有了 FM 预备之后，推进不再每首都经过 PersonalFmManager.requestBatch，界面同步必须在这里补。
@@ -1632,6 +1693,10 @@ public class CloudMusic implements SharedConstants {
             // 徽标不回写这一行就永远显示不出来（验证关只写到了替身对象上）。
             CrossSourceSwitcher.propagateUnblockLabel(oldSong, replacement.music);
             currentlyPlaying = replacement.music;
+            // 这里刻意不动待播账。两件事分开看：oldSong 就是正在开播的这一首，它在 {@link #playSong}
+            // 起播那一刻已经销过账了；而这一格的身份是「正在播」，替身更不该继承任何待播位。
+            // 更要紧的是二次换源（直链放不出来那一路）时 oldSong 可能是上一轮的替身，而那个身份
+            // 恰好是用户在后面排着队的那首 —— 在这里 forget 一次就会把真待播的那格弄断。
             CoverThemePalette.set(replacement.music.getCoverPalette());
             if (personalFmActive) PersonalFmManager.noteFmTrackStarted(replacement.music);
             loadMusicCover(replacement.music);
@@ -2811,6 +2876,10 @@ public class CloudMusic implements SharedConstants {
             try {
                 List<Music> queue = playList;
                 if (queue != null && index >= 0 && index < queue.size() && queue.get(index) == song) {
+                    // 这一格可能正是用户「下一首播放」排出来的那一格：替身是个陌生身份，不迁移的话
+                    // 待播段数到这里就断了，界面看起来就是换一次源把待播列表清空了，单曲循环还会
+                    // 因此假报「没有下一首」而重播当前这首。迁移的语义见 PlayNextLedger。
+                    playNextLedger.replacePendingIdentity(song, replacement.music);
                     queue.set(index, replacement.music);
                     // automix：「接下来要放的」变了，丢弃按旧格做出的计划并重开预备预算。
                     CloudMusic.queueRevision++;
@@ -3149,6 +3218,8 @@ public class CloudMusic implements SharedConstants {
 
                 curIdx = track.index;
                 currentlyPlaying = track.song;
+                // 无缝交接是一条独立起播路径，销账得在这也做一次，否则用户排过的歌会一直挂在账上。
+                noteQueuedTrackStarted(track.song);
                 nextSession = CloudMusic.beginNewSession(track.song);
                 session = nextSession;
                 nextSession.player = incoming;
@@ -3414,6 +3485,8 @@ public class CloudMusic implements SharedConstants {
 
                 if (curIdx < 0 || curIdx >= playList.size()) {
                     curIdx = 0;
+                    // 指针被拽回队首，那块插入就不再"紧跟当前曲目"了，账本跟着作废。
+                    clearQueuedNext();
                 }
                 return;
             }
@@ -3428,12 +3501,19 @@ public class CloudMusic implements SharedConstants {
                 if (curIdx >= playList.size()) {
                     reshuffleRandomQueueForNextCycle(songs);
                     curIdx = 0;
+                    // 整条列表刚被就地重洗，用户那点"下一首播放"排出来的顺序已经不存在了：账本作废。
+                    // 曲目本身留在列表里，会按新的随机顺序被播到，这里不清它。
+                    clearQueuedNext();
                 }
                 return;
             }
 
             if (playMode == PlayMode.LoopInList && curIdx >= playList.size()) {
                 curIdx = 0;
+                // 回到队首就是新一轮歌单，旧的那块插入已经落在播放指针后面了。
+                // 这一处正是原来那个绝对尾下标会算出「待播 99」的地方：指针跳回 0，
+                // 而下标还停在很远处，中间那几十格正常歌序全被读成了用户排过的队。
+                clearQueuedNext();
             }
         }
 

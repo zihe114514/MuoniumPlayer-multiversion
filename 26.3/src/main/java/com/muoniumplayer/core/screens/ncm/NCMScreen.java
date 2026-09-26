@@ -13,6 +13,7 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.FoliaModelNotice;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
+import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.StencilClipManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
@@ -140,6 +141,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     /** 全渠道歌单导入面板：侧栏「导入歌单」标题行「＋」打开，自动识别平台，全程匿名。 */
     public PlaylistImportOverlay playlistImportOverlay = null;
+
+    /** 建一张本地歌单：只要一个名字，曲目之后从任意音源加进来。与导入面板互斥打开。 */
+    public PlaylistCreateSheet playlistCreateSheet = null;
 
     /**
      * 歌词搜索弹窗：给正在放的这首歌手动挑一份歌词（四张源标签 + 候选列表 + 预览）。
@@ -687,6 +691,20 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             }
             StencilClipManager.endClip();
         }
+        // 建单页与导入面板同层：两者互斥、都是「往本机上落一张单子」的两种说法。
+        if (this.playlistCreateSheet != null) {
+            StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+            this.playlistCreateSheet.setBounds(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight());
+            this.playlistCreateSheet.setAlpha(alpha);
+            this.playlistCreateSheet.renderWidget(mouseX, mouseY, dWheel);
+            if (this.playlistCreateSheet.shouldClose()) {
+                this.playlistCreateSheet.dispose();
+                this.playlistCreateSheet = null;
+            }
+            StencilClipManager.endClip();
+        }
         // 歌词搜索弹窗：两栏宽面板，同样有输入框，键盘/滚轮由它独占。
         //
         // 这一页的排版数值是照 folia 的 CSS px 抄来的（弹窗最大宽 1024、卡片高 92、正文 14），
@@ -1085,9 +1103,30 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     /** 打开全渠道歌单导入面板（自动识别平台）；同样先回收旧实例，避免两层叠在一起。 */
     public void openPlaylistImport() {
+        if (this.playlistCreateSheet != null) this.playlistCreateSheet.dispose();
+        this.playlistCreateSheet = null;
         if (this.playlistImportOverlay != null) this.playlistImportOverlay.dispose();
         this.playlistImportOverlay = new PlaylistImportOverlay();
         this.playlistImportOverlay.onInit();
+    }
+
+    /** 打开建单页。它和导入面板回答的是同一个问题（「我要一张单子」），所以互斥打开。 */
+    public void openPlaylistCreate() {
+        openPlaylistSheet(new PlaylistCreateSheet());
+    }
+
+    /** 把建单页换成「重命名这一张」：同一份表单，落盘的动作不同（见 {@link PlaylistCreateSheet}）。 */
+    public void openPlaylistRename(PlayList playlist) {
+        if (playlist == null) return;
+        openPlaylistSheet(new PlaylistCreateSheet(playlist));
+    }
+
+    private void openPlaylistSheet(PlaylistCreateSheet sheet) {
+        if (this.playlistImportOverlay != null) this.playlistImportOverlay.dispose();
+        this.playlistImportOverlay = null;
+        if (this.playlistCreateSheet != null) this.playlistCreateSheet.dispose();
+        this.playlistCreateSheet = sheet;
+        this.playlistCreateSheet.onInit();
     }
 
     /**
@@ -1184,6 +1223,16 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 return;
             }
             this.playlistImportOverlay.onKeyTypedReceived(typedChar, keyCode);
+            return;
+        }
+
+        if (this.playlistCreateSheet != null) {
+            // 建单页的输入框同样会吞掉所有按键，ESC 要抢在控件树之前。
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                this.playlistCreateSheet.handleEscape();
+                return;
+            }
+            this.playlistCreateSheet.onKeyTypedReceived(typedChar, keyCode);
             return;
         }
 
@@ -1289,6 +1338,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 || this.themePaletteOverlay != null
                 || this.fontPickerOverlay != null
                 || this.playlistImportOverlay != null
+                || this.playlistCreateSheet != null
                 || this.lyricSearchOverlay != null
                 || this.musicSourceOverlay != null
                 || this.listenTogetherOverlay != null
@@ -1330,6 +1380,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         if (this.playlistImportOverlay != null) {
             this.playlistImportOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            return;
+        }
+
+        if (this.playlistCreateSheet != null) {
+            this.playlistCreateSheet.onMouseClickReceived(mouseX, mouseY, mouseButton);
             return;
         }
 

@@ -507,19 +507,17 @@ public class GuiHudEditorFolia extends GuiScreen {
     // ==================== 侧栏分组（folia: 分组标签 → 分区按钮） ====================
 
     /**
-     * 侧栏的「分组标签 → 分区」两级结构。按 {@link HudSettingsModel#categories()} 的下标区间
-     * 硬编码：模型加新分类时它会落进「其他设置」标签下而不是消失，这里不追求与模型完全同生死。
+     * 侧栏上这一分类所属大块的标签。标签由模型带过来（{@link HudSettingsModel.Category#navGroup}）：
+     * 这里以前是按分类下标区间硬编码四块，模型加一个分类就得回来数一遍下标 —— 数错一次不报错，
+     * 那一块只是静默挂到别的标签下（旧的第 12 项「HUD 位置」就是这么掉进「其他设置」的）。
+     * 渲染顺序仍然跟着 {@link HudSettingsModel#categories()} 的出现次序，所以同一块的分类要相邻摆放，
+     * 这一点由 HudSettingsTaxonomyStaticTest 钉住。
      */
-    private static final String[] NAV_GROUP_NAMES = { "歌词与画面", "播放与界面", "外观与系统", "其他设置" };
-    private static final int[][] NAV_GROUP_RANGES = { {0, 4}, {5, 8}, {9, 10}, {-1, -1} };
-
     private static String navGroupLabel(int categoryIndex) {
-        for (int i = 0; i < NAV_GROUP_RANGES.length; i++) {
-            int[] r = NAV_GROUP_RANGES[i];
-            if (r[0] >= 0 && categoryIndex >= r[0] && categoryIndex <= r[1]) return NAV_GROUP_NAMES[i];
-            if (r[0] < 0) return NAV_GROUP_NAMES[i];
-        }
-        return NAV_GROUP_NAMES[0];
+        HudSettingsModel.Category[] categories = HudSettingsModel.categories();
+        if (categoryIndex < 0 || categoryIndex >= categories.length) return "";
+        String label = categories[categoryIndex].navGroup;
+        return label == null ? "" : label;
     }
 
     // ==================== 行表（渲染与命中共用的唯一坐标来源） ====================

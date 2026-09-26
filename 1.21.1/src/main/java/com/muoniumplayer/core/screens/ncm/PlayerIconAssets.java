@@ -33,6 +33,15 @@ public final class PlayerIconAssets {
     }
 
     /**
+     * play-mode 那三张图在 96×96 画布里的<b>墨迹高度</b>占比（实测 52×42，随机那张 52×44）。
+     *
+     * <p>调用方拿它反推 {@code ThemedTextureIconWidget#setContentInset}：中间那一排另外三颗是
+     * icomoon 字形，墨迹高约 7 逻辑像素，而这张图画满 20×20 的框会得到 10.8×8.75 的墨迹 ——
+     * 宽出 74%，看上去就是「第四颗大一号、而且不在同一条线上」。</p>
+     */
+    public static final double PLAY_MODE_INK_HEIGHT_RATIO = 42.0 / 96.0;
+
+    /**
      * 对未提供封面的旧模式返回 {@code null}。
      * 调用方随后保留其既有的图标字体回退，而非把
      * 旧状态映射到错误的视觉图标。

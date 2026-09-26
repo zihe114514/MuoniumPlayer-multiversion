@@ -23,9 +23,25 @@ public class ThemedTextureIconWidget extends AbstractWidget<ThemedTextureIconWid
     private final Supplier<String> fallbackIconSupplier;
     private final CFontRenderer fallbackFont;
 
+    /**
+     * 贴图往里缩多少逻辑像素再画。交互框、悬停底、点击底仍然吃满 bounds，只有画出来的那张图变小。
+     *
+     * <p>存在的理由是<b>画布留白不一致</b>。播放器那批 PNG 是 96×96 的画布，墨迹只占中间一小块，
+     * 画满 20×20 的框时墨迹就比同一排相邻的图标字体大一圈，看上去就是「这一颗大一号、没对齐」。
+     * 相邻字形（icomoon 那几颗）的墨迹是量得出来的，所以内缩量由调用方按邻居反推，
+     * 见 {@code ControlsBar} 里播放模式那一颗。</p>
+     */
+    private double contentInset;
+
     private float hoverAlpha;
     private float clickAlpha;
     private boolean clicked;
+
+    /** 设置贴图的内缩量。真正的夹取放在绘制时，因为 bounds 是宿主每帧重写的。 */
+    public ThemedTextureIconWidget setContentInset(double inset) {
+        this.contentInset = Math.max(0.0, inset);
+        return this;
+    }
 
     public ThemedTextureIconWidget(Supplier<Location> iconLocationSupplier,
                                     Supplier<String> fallbackIconSupplier,
@@ -79,7 +95,11 @@ public class ThemedTextureIconWidget extends AbstractWidget<ThemedTextureIconWid
                     tint.getBlue() / 255.0f,
                     tint.getAlpha() / 255.0f
             );
-            Image.draw(texture, this.getX(), this.getY(), this.getWidth(), this.getHeight(), Image.Type.NoColor);
+            // 内缩只作用在贴图上：字体兜底那条路径的墨迹本来就是参照物（相邻几颗都是图标字体），
+            // 把同一份内缩加到它身上会把它压成比邻居还小。
+            double inset = Math.min(contentInset, Math.min(getWidth(), getHeight()) * .5 - 1.0);
+            Image.draw(texture, this.getX() + inset, this.getY() + inset,
+                    this.getWidth() - inset * 2.0, this.getHeight() - inset * 2.0, Image.Type.NoColor);
             api.getGLStateManager().color(1.0f, 1.0f, 1.0f, 1.0f);
             return;
         }

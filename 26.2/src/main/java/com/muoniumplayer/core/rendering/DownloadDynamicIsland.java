@@ -83,6 +83,15 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
      */
     private static final long AUTOMIX_BLENDING_TTL_SLACK_MILLIS = 1_500L;
     /**
+     * 「已接入最近播放」这张卡的时效，毫秒。
+     *
+     * <p>它说的是「刚才那一下点击顺带接上了多少首」，而这句话有两处天然延迟：拉最近播放要走一次
+     * 网络，卡片本身又要排在用户主动触发的下载/转码反馈后面。按排队间隔的上限（6 秒一张）算，
+     * 这个值够它在前面顶着一张卡的情况下照常露脸，而两张以上就作废 —— 那时候用户早换队列了，
+     * 再冒出一张「已接入最近播放 100 首」只会像是随机蹦出来的 bug。</p>
+     */
+    private static final long SEARCH_QUEUE_NOTICE_TTL_MILLIS = 8_000L;
+    /**
      * 液态玻璃的中性玻璃色，刻意<b>不</b>读 {@link NCMTheme#getAccentColor()}。
      *
      * <p>玻璃是一种材质而不是一处强调。用主题强调色去染整块表面的结果就是"液态玻璃被染色"：主题一换，
@@ -653,8 +662,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     // 用户配置的队列间隔，而非单通知完成保持时长。
     public static void showQueuedNext(String trackName, int pending) {
+        // 这里说的「第几位」是<b>排在当前这首之后的第几位</b>，不是列表行号：曲目插在待播段末尾，
+        // 而当前播放的那一首仍然占着它前面那一格。写成「队列第 N 位」会被读成行号，用户按行号去找
+        // 下一首就永远差一格。
         String detail = pending > 1
-                ? "已排在第 " + pending + " 位 · 播完后回到歌单"
+                ? "已排在当前这首之后第 " + pending + " 位 · 播完后回到歌单"
                 : "下一首就播 · 播完后回到歌单";
         publishNotice(IslandNoticeType.PLAY_NEXT, "已加入下一首播放",
                 safeNoticeValue(trackName, "所选歌曲") + " · " + detail);
@@ -664,8 +676,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
      * 搜索结果起播后，队列已经接上"最近播放"的提示。普通通道：歌已经在放了，这只是解释后面会播什么。
      */
     public static void showSearchQueueFromRecentPlays(int count) {
+        // 带时效（见 SEARCH_QUEUE_NOTICE_TTL_MILLIS）：这条说的是一次已经过去的点击，
+        // 迟了好几秒再冒出来就不是解释而是惊吓，用户那时候早就换成别的队列了。
         publishNotice(IslandNoticeType.PLAY_NEXT, "已接入最近播放",
-                Math.max(0, count) + " 首 · 播完当前歌曲后继续");
+                Math.max(0, count) + " 首 · 播完当前歌曲后继续", false,
+                SEARCH_QUEUE_NOTICE_TTL_MILLIS);
     }
 
     /**

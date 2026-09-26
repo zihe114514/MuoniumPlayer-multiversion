@@ -73,6 +73,15 @@ public class PlayList {
     private transient String platformPlaylistId;
     /** 当为私人 FM session 所拥有的临时队列时返回 true。 */
     private transient boolean personalFm;
+    /**
+     * 用户在本机自建的歌单，曲目由 {@code LocalPlaylistStore} 直接带在 {@link #musics} 上。
+     *
+     * <p>它改变的是<b>这一张单子的歌从哪来、加/删歌去哪儿</b>：线上单走上游接口，本地单只动本机
+     * JSON。曲目已经在手上这件事由 {@link #musicsQueried}/{@link #musicsLoaded} 表达，
+     * 所以 {@code getMusics()}/{@link #loadMusicsWithCallback} 会在它们面前早返回，
+     * {@code queryMusics()} 那条按平台分派的链根本不会被调到 —— 这里不需要再加分叉。</p>
+     */
+    private transient boolean localPlaylist;
     public transient volatile boolean musicsQueried = false, musicsLoaded = false;
 
     public final Location getCoverLocation() {

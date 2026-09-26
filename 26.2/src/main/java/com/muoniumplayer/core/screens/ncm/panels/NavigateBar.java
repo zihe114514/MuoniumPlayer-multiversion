@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import lombok.Getter;
 import lombok.Setter;
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
+import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.BilibiliFavoriteService;
@@ -16,6 +17,7 @@ import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.ImportedPlaylistStore;
+import com.muoniumplayer.core.ncm.music.LocalPlaylistStore;
 import com.muoniumplayer.core.update.AnnouncementChecker;
 import com.muoniumplayer.core.ncm.music.NeteaseSearchSuggestService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
@@ -49,9 +51,12 @@ import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import com.muoniumplayer.party.ui.PartyIcons;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
@@ -128,6 +133,42 @@ public class NavigateBar extends NCMPanel {
     private SidebarActionButton announcementButton;
     private final List<PlaylistItem> playlistItems = new CopyOnWriteArrayList<>();
 
+    /**
+     * 上一次侧栏摆出来的那一批行：签名 → 当时那个行控件。
+     *
+     * <p>侧栏不是就地更新的：账号歌单异步落地、换音源，走的都是 {@code NCMScreen#markDirty}
+     * → {@code NCMScreen#layout} → {@code new NavigateBar()}，整棵控件树重建。所以新行天生
+     * 「第一帧就画满」，而旧行则是凭空消失。留的不只是签名、连控件一起留，退场才有东西可演：
+     * 被换下去的那几行交给新一棵侧栏继续画完（见 {@link #retiringRows}）。</p>
+     *
+     * <p>常驻行（主页/排行榜）两边签名相同，既不重亮也不退场 —— 它们根本没换。</p>
+     *
+     * <p>静态字段是刻意的：这一棵树整个生命周期里只会有一个侧栏活着，旧的连同它的字段一起被丢掉，
+     * 跨重建能留下的只有类上的东西。</p>
+     */
+    private static Map<String, PlaylistItem> announcedRows = Collections.emptyMap();
+    /** 侧栏装配过几次了 —— 第一次那一趟既不演进场也不演退场，见 {@link #addSidebarRow}。 */
+    private static boolean rowsAnnounced = false;
+    /** 这一次重建摆出来的行，{@link #layout()} 末尾交还给 {@link #announcedRows}。 */
+    private final Map<String, PlaylistItem> sidebarRows = new LinkedHashMap<>();
+    /**
+     * 错峰号由「这一帧第一次被看见」决定，和曲目行、首页卡片共用同一套（{@link PanelItemEntrance}）。
+     * 侧栏本身是个 {@link ScrollPanel}，视口外的行整个不渲染，所以号要现场领而不是建页时发好。
+     */
+    private final PanelItemEntrance.RevealQueue entranceReveal = new PanelItemEntrance.RevealQueue();
+
+    /** 被换下去、正在退场的行。它们挂在侧栏自己身上（不是列表容器），所以不占槽位、不推新行。 */
+    private final List<PlaylistItem> retiringRows = new ArrayList<>();
+    /** 退场起算时刻；{@code <= 0} 表示这一批还没开始（第一次推进回调时记，避免装配到渲染之间的空档算进时长）。 */
+    private long retiringStartedAt;
+    /** 退场基准毫秒。不除「界面切换动画速度」：进场那一条（{@link PanelItemEntrance}）也没除，两条必须同速才配成一对。 */
+    private static final long RETIRE_MILLIS = 150L;
+    /** 往左带出这一格这么多像素：新一列正占着同一格，只淡不移位会叠成一片认不出的字。 */
+    private static final double RETIRE_SLIDE_X = 12.0;
+    /** 逐行错开的间隔，与退场时长同量级：十二行也就多拖 132ms，不会变成排队等消失。 */
+    private static final long RETIRE_STAGGER_MILLIS = 11L;
+    private static final int RETIRE_STAGGER_LIMIT = 14;
+
     // ── 搜索联想 ────────────────────────────────────────────────────────────
     /** 一条联想行的行高。 */
     private static final double SUGGEST_ROW_HEIGHT = 17.0;
@@ -176,6 +217,107 @@ public class NavigateBar extends NCMPanel {
         this.layout();
     }
 
+    /**
+     * 把一行挂进侧栏，并且只在「上一次侧栏里没有这一行」时给它装一次进场。
+     *
+     * <p>侧栏走的是整树重建，所以判断新旧只能靠行签名，见 {@link #announcedRowKeys}。</p>
+     */
+    private PlaylistItem addSidebarRow(String key, PlaylistItem item) {
+        this.sidebarRows.put(key, item);
+        // 第一次装配既不演进场也不演退场：那一趟是 prewarm 建的（{@code NCMScreen#prewarmLayout}
+        // 之后紧跟的那次 checkDirty 会跳过重建，所以开界面用的就是这一棵）。用户还没见过任何一行，
+        // 「新出现的行」和「被换下去的行」在这里都没有意义，而打开播放器自己有转场负责。
+        if (rowsAnnounced && !announcedRows.containsKey(key)) item.armEntrance(this.entranceReveal);
+        this.playlistPanel.addChild(item);
+        return item;
+    }
+
+    /**
+     * 把上一次有、这一次没有的行交给新侧栏继续画完退场。
+     *
+     * <p>照换页转场那条老路（{@code NCMScreen} 里的 {@code prevAnimatingPanel}）：旧的不是「消失」，
+     * 而是被留住、和新的一起画，各自淡。原来这里只有后者 —— 换音源时旧那一列是<b>凭空不见</b>的。</p>
+     *
+     * <p>它们挂到侧栏自己身上而不是列表容器里：列表是自动堆叠的，多挂一行就会把新行往下顶一格。
+     * 挂在自己身上就只是「按上一次的绝对 y 再画一遍」，不占槽位；点击也一并收掉，退场中的行不该还能按。</p>
+     */
+    private void retireRows(Collection<PlaylistItem> leaving) {
+        if (leaving.isEmpty()) return;
+        // 连点两次换音源：上一批还没淡完就又有新的要退。直接把还在半路的丢掉重记一批，
+        // 而不是让它们各自带着旧起点继续 —— 否则越叠越多，最后满屏是透明的幽灵行。
+        for (PlaylistItem stale : new ArrayList<>(this.retiringRows)) this.getChildren().remove(stale);
+        this.retiringRows.clear();
+        this.retiringStartedAt = 0L;
+
+        for (PlaylistItem row : leaving) {
+            if (row == null) continue;
+            // 只存<b>绝对</b> y，相对位置留到每一帧再算。装配这一趟里 {@code this.getY()} 还不可信：
+            // 新侧栏要等 {@code NCMScreen} 的 basePanel 在自己的渲染回调里 center() 才落到最终位置，
+            // 而 retireRows 跑在 new NavigateBar() 里面 —— 拿这个还没摆正的原点去做减法，
+            // 实测整批幽灵会往下错位一百多像素，退场演到了列表外面。
+            row.retireAbsY = row.getY();
+            row.setClickable(false);
+            row.setShouldOverrideMouseCursor(false);
+            row.setTransformations(() -> {
+                PanelItemEntrance.applyTransform(row.entranceEased,
+                        row.getX() + row.getWidth() * .5, row.getY() + row.getHeight() * .5);
+                // 再往左带一段。上下方向没有余地：新一列就占在它那一格上，两行字会正正叠成一片
+                // 认不出的糊字（实测「Mu本地歌单」压住「最近播放」）。位移要和淡出用<b>同一条</b>
+                // 先掉后缓的曲线 —— 按缓动值算的话，还画满的那头两帧恰好一点没挪开。
+                SharedConstants.api.getGLStateManager().translate(-RETIRE_SLIDE_X * row.retireOut, 0.0, 0.0);
+            });
+            this.retiringRows.add(row);
+            // 插到列表容器<b>前面</b>，不是往后 append。渲染顺序就是层次：退场的行留在旧格子里，
+            // 新一列已经把它那一格占了 —— 画在上面就是两行字叠在一起，实测换音源那一帧整个糊掉。
+            // 画在下面则让新行自己的字把它盖住，只在两行之间的缝里透出一点残影。
+            int behind = this.getChildren().indexOf(this.playlistPanel);
+            this.getChildren().add(behind < 0 ? this.getChildren().size() : behind, row);
+            // addChild 会顺手 setParent，这里为了插到指定位置绕过了它，父亲就得自己换。
+            // 不换的话 getY() 仍然按<b>旧</b>列表容器算，幽灵会整批往下跑出侧栏一大截。
+            row.setParent(this);
+            row.setPosition(4, 0);
+        }
+    }
+
+    /** 每帧推进退场：淡出 + 往下沉回它来的那一格，演完就从树上摘掉。 */
+    private void advanceRetiringRows() {
+        if (this.retiringRows.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        if (this.retiringStartedAt <= 0L) this.retiringStartedAt = now;
+        long elapsed = now - this.retiringStartedAt;
+
+        for (int index = this.retiringRows.size() - 1; index >= 0; index--) {
+            PlaylistItem row = this.retiringRows.get(index);
+            // 每一帧重新钉一次：这一句跑在子组件渲染之前，所以 {@code this.getY()} 是它<b>这一帧</b>
+            // 真正所在的位置，幽灵才会留在用户看见的那一格上。
+            row.setPosition(4, row.retireAbsY - this.getY());
+            long delay = Math.min(index, RETIRE_STAGGER_LIMIT) * RETIRE_STAGGER_MILLIS;
+            double progress = Math.max(0.0, Math.min(1.0, (elapsed - delay) / (double) RETIRE_MILLIS));
+            double eased = progress * progress * (3.0 - 2.0 * progress);
+            row.entranceEased = 1.0 - eased;
+            // 不透明度<b>先掉后缓</b>：线性淡出的头两三帧还接近满的，而那正是和新列叠在一起的时候。
+            // 幂次取 .35 是让第一帧就落到一半以下，剩下的时间慢慢收干净 —— 残影只当余光里的一点动静。
+            row.retireOut = Math.pow(Math.max(0.0, progress), .35);
+            row.setAlpha((float) (1.0 - row.retireOut));
+            if (progress >= 1.0) {
+                this.retiringRows.remove(index);
+                this.getChildren().remove(row);
+            }
+        }
+    }
+
+    /**
+     * 一张歌单在这一次侧栏里的签名。
+     *
+     * <p>平台必须写进来：网易云和酷狗完全可能给出同一个数字 id，签名撞上了换音源就演不出来 ——
+     * 而换音源正是这次要治的两个症状之一。用<b>当前</b>音源而不是 {@code playlist.getPlatform()}，
+     * 因为那个字段是 transient 的、各家服务填得不一定齐。</p>
+     */
+    private static String playlistRowKey(String kind, PlayList playlist) {
+        return kind + ':' + NeteaseMusicService.getCurrentPlatform()
+                + ':' + playlist.getId() + ':' + playlist.getName();
+    }
+
     private void layout() {
         RectWidget bg = new RectWidget();
         this.addChild(bg);
@@ -199,6 +341,8 @@ public class NavigateBar extends NCMPanel {
             // 联想面板同理必须由侧栏驱动：它在没有建议时要把自己隐藏起来，而隐藏之后自己的回调就不会
             // 再被调用，只有父组件的回调能把它显示回来。
             this.layoutSuggestions();
+            // 退场中的旧行同理：它们已经不属于任何列表，没人推进就会永远停在半透明上。
+            this.advanceRetiringRows();
         });
 
         this.setOnKeyTypedCallback((character, keyCode) -> {
@@ -266,14 +410,14 @@ public class NavigateBar extends NCMPanel {
         modeSpec.y = 1.0;
         modeSpec.height = 14;
         modeSpec.radius = 3.5;
-        modeSpec.inset = 1.5;
+        modeSpec.inset = 2.0;
         modeSpec.durationMs = 240.0;
         modeSpec.font = FontManager.pf10bold;
         // 两半等宽是滑块能滑的前提，所以宽度按两个词里较宽的那个算；只按「歌单」算的话，
         // 哪天「歌曲」比它宽就会溢出自己那一半。
         final double modeLabel = Math.max(FontManager.pf10bold.getStringWidthD("歌曲"),
                 FontManager.pf10bold.getStringWidthD("歌单"));
-        final double modeWidth = 2 * (modeLabel + 8.0) + modeSpec.inset * 2;
+        final double modeWidth = 2 * (modeLabel + 7.0) + modeSpec.inset * 2;
         final SegmentControl searchMode = SegmentControl.attach(searchBar, () -> {
             modeSpec.width = modeWidth;
             modeSpec.x = Math.max(0, searchBar.getWidth() - modeWidth - 1);
@@ -342,7 +486,9 @@ public class NavigateBar extends NCMPanel {
             double xSpacing = lblSearchIcon.getRelativeX() + lblSearchIcon.getWidth() + 4;
             searchMode.setEnabled(supportsPlaylistSearch(NeteaseMusicService.getCurrentPlatform()));
             // 让宽跟着淡出程度走：这一格淡出去的同时输入框就长回来，不会留下「控件没了、框还是窄的」。
-            double typeToggleReserve = (modeWidth + 3.0) * searchMode.presence();
+            // 只让出轨道自己那一格（内缩是轨道内部的留白，本来就画在输入框那 8 像素边距里），
+            // 再多让 2 像素就够：这一列只有 74 逻辑像素宽，多让 3 像素占位提示就要被切成「搜索歌」。
+            double typeToggleReserve = modeWidth * searchMode.presence() + 2.0;
             searchField.setBounds(xSpacing, searchField.getRelativeY(),
                     Math.max(1.0, searchBar.getWidth() - xSpacing - typeToggleReserve), searchField.getHeight());
             // 占位提示里的词跟着滑块走、过半才换：在点击那一刻就改会出现「词换了、滑块还在半路」。
@@ -412,7 +558,7 @@ public class NavigateBar extends NCMPanel {
 
             item.setShouldOverrideMouseCursor(true);
 
-            this.playlistPanel.addChild(item);
+            this.addSidebarRow("nav:home", item);
         }
 
         boolean qqMode = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QQ;
@@ -437,7 +583,7 @@ public class NavigateBar extends NCMPanel {
             // 否则会先闪一个空的中转页、历史栈里也会多出一条回不去的记录。
             // QQ 的榜单不一样 —— 它是真的留在 NeteaseDiscoveryPanel 里按歌曲行展示，所以照旧直接切页。
             if (!youtubeMode && !bilibiliMode && !qishuiMode) {
-                this.playlistPanel.addChild(new PlaylistItem(FontelloIcons.LEADERBOARD, FontManager.fontello16,
+                this.addSidebarRow("nav:chart", new PlaylistItem(FontelloIcons.LEADERBOARD, FontManager.fontello16,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "排行榜", () -> {
                     if (qqMode) {
@@ -456,12 +602,12 @@ public class NavigateBar extends NCMPanel {
             }
             if (qqMode) {
                 // QQ 也有自己的热搜端点，和网易云一样在发现页里展示列表，保持直接切页。
-                this.playlistPanel.addChild(new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                this.addSidebarRow("nav:hot", new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "热搜", () -> NCMScreen.getInstance().setCurrentPanel(
                         new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.HOT_SEARCH, MusicPlatform.QQ))));
             }
             if (qishuiMode) {
-                this.playlistPanel.addChild(new PlaylistItem("台", FontManager.pf12bold,
+                this.addSidebarRow("nav:qishui-radio", new PlaylistItem("台", FontManager.pf12bold,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "电台", () -> NCMScreen.getInstance().navigateAsync(
                         "汽水电台", this::loadQishuiRadioPanel)));
@@ -469,42 +615,42 @@ public class NavigateBar extends NCMPanel {
             if (kugouMode) {
                 // 酷狗这三项和网易云同一形态：热搜在发现页里出列表，另外两项先取数据再一次切页。
                 // 以前整块挂在 neteaseMode 下，所以切到酷狗后侧栏干脆没有这些入口。
-                this.playlistPanel.addChild(new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                this.addSidebarRow("nav:hot", new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "热搜", () -> NCMScreen.getInstance().setCurrentPanel(
                         new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.HOT_SEARCH, MusicPlatform.KUGOU))));
-                this.playlistPanel.addChild(new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                this.addSidebarRow("nav:recent", new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "最近播放", () -> NCMScreen.getInstance()
                         .navigateAsync("最近播放", NeteaseDiscoveryPanel::loadKuGouRecentSongsPanel)));
-                this.playlistPanel.addChild(new PlaylistItem("每", FontManager.pf12bold,
+                this.addSidebarRow("nav:daily", new PlaylistItem("每", FontManager.pf12bold,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "每日推荐", () -> NCMScreen.getInstance()
                         .navigateAsync("每日推荐", NeteaseDiscoveryPanel::loadKuGouDailyPanel)));
-                this.playlistPanel.addChild(new PlaylistItem(MusicBrandIcons.PERSONAL_FM, FontManager.musicBrand16,
+                this.addSidebarRow("nav:fm", new PlaylistItem(MusicBrandIcons.PERSONAL_FM, FontManager.musicBrand16,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
                         () -> "私人 FM", () -> NCMScreen.getInstance().setCurrentPanel(new PersonalFmPanel())));
             }
             if (neteaseMode) {
                 // 热搜是真正在发现页里展示列表的，保持直接切页。
-                this.playlistPanel.addChild(new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                this.addSidebarRow("nav:hot", new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "热搜", () -> NCMScreen.getInstance().setCurrentPanel(
                         new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.HOT_SEARCH))));
-                this.playlistPanel.addChild(new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                this.addSidebarRow("nav:recent", new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "最近播放", () -> NCMScreen.getInstance()
                         .navigateAsync("最近播放", NeteaseDiscoveryPanel::loadRecentSongsPanel)));
-                this.playlistPanel.addChild(new PlaylistItem(MusicBrandIcons.PERSONAL_FM, FontManager.musicBrand16,
+                this.addSidebarRow("nav:fm", new PlaylistItem(MusicBrandIcons.PERSONAL_FM, FontManager.musicBrand16,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
                         () -> "私人 FM", () -> NCMScreen.getInstance().setCurrentPanel(new PersonalFmPanel())));
             }
         }
-        // 「导入歌单」独立成栏，排在账号歌单之上：栏名即内容，一眼看得出哪来的歌单是本地粘贴
-        // 导入的、哪些是登录账号带出来的。标题行右侧一颗「＋」是全渠道共用的导入入口——导入
-        // 面板自己会识别平台，所以这里没必要每个平台各配一颗。
+        // 「Mu本地歌单」独立成栏，排在账号歌单之上：这一栏里的单子只活在本机 —— 上面几张是用户
+        // 自己新建的（连曲目一起存），下面几张是粘贴链接带进来的引用。标题行右侧那颗「＋」开建单页，
+        // 建单页里另有一颗「从链接导入」：建单和导入回答的是同一个问题，不必各占一个入口。
         Panel importHeader = new Panel();
         importHeader.setBeforeRenderCallback(() -> {
             importHeader.setBounds(Math.max(1, importHeader.getParentWidth() - 8), 16);
             importHeader.setPosition(4, importHeader.getRelativeY());
         });
-        LabelWidget lblImported = new LabelWidget("导入歌单", FontManager.pf14bold);
+        LabelWidget lblImported = new LabelWidget("Mu本地歌单", FontManager.pf14bold);
         lblImported.setBeforeRenderCallback(() -> {
             lblImported.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             lblImported.setPosition(2, NcmSheet.inkTop(lblImported, importHeader.getHeight() * .5));
@@ -544,21 +690,35 @@ public class NavigateBar extends NCMPanel {
         });
         importHit.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
             if (mouseButton != 0) return false;
-            NCMScreen.getInstance().openPlaylistImport();
+            NCMScreen.getInstance().openPlaylistCreate();
             return true;
         });
         importHeader.addChild(importHit);
         this.playlistPanel.addChild(importHeader);
 
-        // 本地已导入的歌单不分平台展示：点开由 PlayList 按各自平台匿名拉曲目，右键移除本地引用。
+        // 自建单排在前、导入引用排在后：前者是「我造的容器」，后者是「别人家的单子借个座」。
+        // 两者点开都是 PlaylistPanel，右键都只动本机 —— 差别只在曲目是存下来的还是要回上游拉的。
+        List<PlayList> localPlaylists = LocalPlaylistStore.list();
         List<PlayList> importedPlaylists = ImportedPlaylistStore.list();
-        if (importedPlaylists.isEmpty()) {
+        if (localPlaylists.isEmpty() && importedPlaylists.isEmpty()) {
             PlaylistItem hint = new PlaylistItem("·",
                     () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                    () -> "点右上角「＋」粘贴歌单链接",
-                    () -> NCMScreen.getInstance().openPlaylistImport());
+                    () -> "点「＋」新建一张",
+                    () -> NCMScreen.getInstance().openPlaylistCreate());
             hint.setShouldOverrideMouseCursor(true);
-            this.playlistPanel.addChild(hint);
+            this.addSidebarRow("hint:local-empty", hint);
+        }
+        for (PlayList local : localPlaylists) {
+            final PlayList ready = local;
+            PlaylistItem item = new PlaylistItem("D",
+                    () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                    ready::getName,
+                    () -> NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(ready)));
+            item.setPlaylist(ready);
+            item.setShouldOverrideMouseCursor(true);
+            item.setOnSecondaryClick(() -> removeLocalPlaylist(ready));
+            this.playlistItems.add(item);
+            this.addSidebarRow(playlistRowKey("local", ready), item);
         }
         for (PlayList imported : importedPlaylists) {
             final PlayList ready = imported;
@@ -570,7 +730,7 @@ public class NavigateBar extends NCMPanel {
             item.setShouldOverrideMouseCursor(true);
             item.setOnSecondaryClick(() -> removeImportedPlaylist(ready));
             this.playlistItems.add(item);
-            this.playlistPanel.addChild(item);
+            this.addSidebarRow(playlistRowKey("imported", ready), item);
         }
 
         Panel playlistsHeader = new Panel();
@@ -581,7 +741,7 @@ public class NavigateBar extends NCMPanel {
         LabelWidget lblPlaylists = new LabelWidget("我的账号歌单", FontManager.pf14bold);
         lblPlaylists.setBeforeRenderCallback(() -> {
             lblPlaylists.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            // 两栏标题同一套基准，否则「导入歌单」和「我的账号歌单」会互相错开半像素到几像素。
+            // 两栏标题同一套基准，否则「Mu本地歌单」和「我的账号歌单」会互相错开半像素到几像素。
             lblPlaylists.setPosition(2, NcmSheet.inkTop(lblPlaylists, playlistsHeader.getHeight() * .5));
         });
         playlistsHeader.addChild(lblPlaylists);
@@ -596,14 +756,14 @@ public class NavigateBar extends NCMPanel {
                         () -> "我收藏的歌曲", () -> NCMScreen.getInstance().navigateAsync(
                         "我收藏的歌曲", this::loadQishuiCollectionPanel));
                 favorites.setShouldOverrideMouseCursor(true);
-                this.playlistPanel.addChild(favorites);
+                this.addSidebarRow("nav:qishui-fav", favorites);
             } else {
                 PlaylistItem login = new PlaylistItem("·",
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "登录可同步账号歌单",
                         () -> NCMScreen.getInstance().openAccountManager());
                 login.setShouldOverrideMouseCursor(true);
-                this.playlistPanel.addChild(login);
+                this.addSidebarRow("nav:qishui-login", login);
             }
         }
 
@@ -648,7 +808,7 @@ public class NavigateBar extends NCMPanel {
                     item.setPlaylist(playList);
                     this.playlistItems.add(item);
                     item.setShouldOverrideMouseCursor(true);
-                    this.playlistPanel.addChild(item);
+                    this.addSidebarRow(playlistRowKey("account", playList), item);
                 }
             } else {
                 List<PlayList> playLists = pl.stream()
@@ -663,7 +823,7 @@ public class NavigateBar extends NCMPanel {
                     item.setPlaylist(playList);
                     this.playlistItems.add(item);
                     item.setShouldOverrideMouseCursor(true);
-                    this.playlistPanel.addChild(item);
+                    this.addSidebarRow(playlistRowKey("account", playList), item);
                 }
             }
         } else if (qqMode || kugouMode || bilibiliMode || qishuiMode) {
@@ -694,7 +854,7 @@ public class NavigateBar extends NCMPanel {
                     () -> status,
                     () -> NCMScreen.getInstance().openAccountManager());
             statusItem.setShouldOverrideMouseCursor(true);
-            this.playlistPanel.addChild(statusItem);
+            this.addSidebarRow("status:" + status, statusItem);
         }
 
         LabelWidget lblSubscribed = new LabelWidget("收藏歌单", FontManager.pf14bold);
@@ -717,7 +877,7 @@ public class NavigateBar extends NCMPanel {
                 item.setPlaylist(playList);
                 this.playlistItems.add(item);
                 item.setShouldOverrideMouseCursor(true);
-                this.playlistPanel.addChild(item);
+                this.addSidebarRow(playlistRowKey("subscribed", playList), item);
             });
         }
         RoundedRectWidget accountButton = new RoundedRectWidget();
@@ -956,6 +1116,18 @@ public class NavigateBar extends NCMPanel {
                     NcmSheet.inkTop(vipText, vipPlate.getRelativeY() + VIP_PLATE_H * .5));
         });
 
+        // 上一次有、这一次没有的那些行交给退场。签名要在装配<b>全部</b>做完之后才交还：只记到一半
+        // 会让没记上的那批无辜重亮一次，或者反过来把该退的那批漏掉。
+        if (rowsAnnounced) {
+            List<PlaylistItem> leaving = new ArrayList<>();
+            for (Map.Entry<String, PlaylistItem> previous : announcedRows.entrySet()) {
+                if (!this.sidebarRows.containsKey(previous.getKey())) leaving.add(previous.getValue());
+            }
+            this.retireRows(leaving);
+        }
+        announcedRows = Collections.unmodifiableMap(new LinkedHashMap<>(this.sidebarRows));
+        rowsAnnounced = true;
+
         // 联想面板最后加入：渲染顺序即层次，而 iterateChildrenMouseClick 是倒序遍历子组件的，
         // 所以最后加入的既画在最上面、也最先拿到点击。否则它下面的歌单条目会把点击抢走。
         this.buildSuggestionPanel();
@@ -1019,6 +1191,9 @@ public class NavigateBar extends NCMPanel {
      */
     @Override
     public void onRender(double mouseX, double mouseY) {
+        // 错峰号每帧重发：这一帧里第一次被看见的那几行才是同一批。放在这里（父组件的 onRender
+        // 跑在子组件之前）和曲目列表那一条规则完全一致。
+        this.entranceReveal.beginFrame();
         if (this.announcementButton != null) {
             this.announcementButton.setHidden(!railFitsAnnouncement(this.getWidth() - 16));
         }
@@ -1865,6 +2040,19 @@ public class NavigateBar extends NCMPanel {
                         ? playlist.getPlatformPlaylistId() : playlist.getName()) + "」", true);
     }
 
+    /**
+     * 删掉一张自建本地单（右键触发）。和上面那条的区别只在代价：导入的单子这里断的只是一个引用，
+     * 本地单的曲目本来就只存在这份 JSON 里，删了就真没了。正打开着的那页不受影响 —— 它握着的是
+     * {@link PlayList} 对象本身，曲目列表挂在对象上，不在这张表里也照样能放完。
+     */
+    private void removeLocalPlaylist(PlayList playlist) {
+        LocalPlaylistStore.remove(playlist);
+        NCMScreen.getInstance().markDirty();
+        DownloadDynamicIsland.showModelOperationResult("本地歌单",
+                "已删除「" + playlist.getName() + "」及其 "
+                        + (playlist.getMusics() == null ? 0 : playlist.getMusics().size()) + " 首曲目", true);
+    }
+
     /** 列表里当前被选中的条目，没有选中项时返回 {@code null}。 */
     private PlaylistItem findSelectedItem() {
         for (AbstractWidget<?> child : this.playlistPanel.getChildren()) {
@@ -2005,6 +2193,23 @@ public class NavigateBar extends NCMPanel {
         private PlayList playlist;
 
         /**
+         * 进场。侧栏是整树重建出来的（{@code NCMScreen#markDirty} → {@code new NavigateBar()}），
+         * 所以「这一行是新来的」只能由 {@link NavigateBar#addSidebarRow} 按行签名判出来，判中了
+         * 才调 {@link #armEntrance}。动作本身复用曲目行、首页卡片那同一套 {@link PanelItemEntrance}：
+         * 从下方 6 逻辑像素落进来 + .97→1 缩放 + 淡入，280ms，逐行错峰。
+         *
+         * <p>位移与缩放全走矩阵，行的真实边界一动不动 —— 侧栏的高亮条、滚动位置、点击判定都按
+         * 落位后的几何算，进场期间不会跟着抖。</p>
+         */
+        private final PanelItemEntrance entrance = new PanelItemEntrance();
+        private PanelItemEntrance.RevealQueue entranceQueue;
+        private double entranceEased = 1.0;
+        /** 退场时要钉住的那一格（上一次渲染留下的绝对 y），见 {@link NavigateBar#retireRows}。 */
+        private double retireAbsY;
+        /** 退场进度（0 = 还在原位画满，1 = 已经让开）：淡出与左移共用这一条，见 {@link NavigateBar#advanceRetiringRows}。 */
+        private double retireOut;
+
+        /**
          * 可选的右键（副键）动作。默认不设置时右键沿用旧行为——被吞掉、什么都不做。
          * 目前只由「导入的汽水歌单」条目用来移除本地引用。
          */
@@ -2033,6 +2238,7 @@ public class NavigateBar extends NCMPanel {
             this.label = label;
             this.onClick = onClick;
             this.setBeforeRenderCallback(() -> {
+                this.updateEntrance();
                 // 该项两侧各内缩四个像素。播放器缩放时，将内缩量从
                 // 其实时宽度中减去，使背景和文字都不会
                 // 延伸到导航视口之外。
@@ -2095,6 +2301,34 @@ public class NavigateBar extends NCMPanel {
 
                 return true;
             }));
+        }
+
+        /**
+         * 装上一次性进场。只有被 {@link NavigateBar#addSidebarRow} 判定为「上一次没有的这一行」才会
+         * 走到这里 —— 常驻行装了进场，异步数据落地那一刻整列会重亮一遍，那是闪不是入场。
+         */
+        PlaylistItem armEntrance(PanelItemEntrance.RevealQueue queue) {
+            this.entranceQueue = queue;
+            this.entranceEased = 0.0;
+            this.setAlpha(0f);
+            this.setTransformations(() -> PanelItemEntrance.applyTransform(this.entranceEased,
+                    this.getX() + this.getWidth() * .5, this.getY() + this.getHeight() * .5));
+            return this;
+        }
+
+        private void updateEntrance() {
+            if (this.entranceQueue == null) return;
+            if (!this.entrance.isStarted()) {
+                this.entrance.begin(System.currentTimeMillis(), this.entranceQueue.nextDelayMillis());
+            }
+            if (this.entrance.isFinished()) return;
+
+            this.entranceEased = this.entrance.tick();
+            this.setAlpha((float) this.entranceEased);
+            if (this.entrance.isFinished()) {
+                // 演完就把变换摘掉：侧栏是常驻的一列，不该为已经停住的行一直付一次 pushMatrix。
+                this.setTransformations(null);
+            }
         }
 
     }

@@ -416,6 +416,78 @@ public final class FoliaLucideIcons {
         "M21 3 9 15",
     };
 
+    /** 音质·标准（lucide {@code signal-low}）。 */
+    public static final String SIGNAL_LOW = "signal-low";
+    static final String[] D_SIGNAL_LOW = {
+        "M2 20h.01",
+        "M7 20v-4",
+    };
+
+    /** 音质·高品质（lucide {@code signal-medium}）。 */
+    public static final String SIGNAL_MEDIUM = "signal-medium";
+    static final String[] D_SIGNAL_MEDIUM = {
+        "M2 20h.01",
+        "M7 20v-4",
+        "M12 20v-8",
+    };
+
+    /** 音质·极高（lucide {@code signal-high}）。 */
+    public static final String SIGNAL_HIGH = "signal-high";
+    static final String[] D_SIGNAL_HIGH = {
+        "M2 20h.01",
+        "M7 20v-4",
+        "M12 20v-8",
+        "M17 20V8",
+    };
+
+    /** 音质·无损（lucide {@code signal}）。 */
+    public static final String SIGNAL = "signal";
+    static final String[] D_SIGNAL = {
+        "M2 20h.01",
+        "M7 20v-4",
+        "M12 20v-8",
+        "M17 20V8",
+        "M22 4v16",
+    };
+
+    /** 音质·Hi-Res（lucide {@code audio-lines}）。 */
+    public static final String AUDIO_LINES = "audio-lines";
+    static final String[] D_AUDIO_LINES = {
+        "M2 10v3",
+        "M6 6v11",
+        "M10 3v18",
+        "M14 8v7",
+        "M18 5v13",
+        "M22 10v3",
+    };
+
+    /** 音质·高清环绕（lucide {@code waves}）。 */
+    public static final String WAVES = "waves";
+    static final String[] D_WAVES = {
+        "M2 12q2.5 2 5 0t5 0 5 0 5 0",
+        "M2 19q2.5 2 5 0t5 0 5 0 5 0",
+        "M2 5q2.5 2 5 0t5 0 5 0 5 0",
+    };
+
+    /** 音质·沉浸音质（lucide {@code orbit}）。 */
+    public static final String ORBIT = "orbit";
+    static final String[] D_ORBIT = {
+        "M20.341 6.484A10 10 0 0 1 10.266 21.85",
+        "M3.659 17.516A10 10 0 0 1 13.74 2.152",
+        "M9 12 a3 3 0 1 0 6 0 a3 3 0 1 0 -6 0",
+        "M17 5 a2 2 0 1 0 4 0 a2 2 0 1 0 -4 0",
+        "M3 19 a2 2 0 1 0 4 0 a2 2 0 1 0 -4 0",
+    };
+
+    /** 音质·母带（lucide {@code crown}）。 */
+    public static final String CROWN = "crown";
+    static final String[] D_CROWN = {
+                    "M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.51"
+            +             "9l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4"
+            +             ".276 3.664a1 1 0 0 0 1.516-.294z",
+        "M5 21h14",
+    };
+
 
     /** 图标名 → 需要描边的图元路径。 */
     private static final Map<String, String[]> TABLE = new HashMap<>();
@@ -471,6 +543,14 @@ public final class FoliaLucideIcons {
         TABLE.put("languages", D_LANGUAGES);
         TABLE.put("a-large-small", D_TYPOGRAPHY);
         TABLE.put("scaling", D_SCALING);
+        TABLE.put("signal-low", D_SIGNAL_LOW);
+        TABLE.put("signal-medium", D_SIGNAL_MEDIUM);
+        TABLE.put("signal-high", D_SIGNAL_HIGH);
+        TABLE.put("signal", D_SIGNAL);
+        TABLE.put("audio-lines", D_AUDIO_LINES);
+        TABLE.put("waves", D_WAVES);
+        TABLE.put("orbit", D_ORBIT);
+        TABLE.put("crown", D_CROWN);
         FILL.put("palette", FD_PALETTE);
     }
 
