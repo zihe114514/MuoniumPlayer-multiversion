@@ -1056,6 +1056,10 @@ public final class MpPartyClient {
     /**
      * 播放器要起播一条列表。
      *
+     * <p>在房间里这就是一次<b>点歌</b>：排到已经排着的歌后面。它不是插队 —— 用户点一行只是想听这首，
+     * 而房间里可能已经有好几个人在排队，把每一行点击都变成「下一首播放」会让他们全部被挤到后面去。
+     * 参考实现 modernMP 也只把那枚派对按钮才发的 {@code queueNext} 挂在按钮上，普通行点击不插队。</p>
+     *
      * @return true 表示本次起播已被房间消化（改成了点歌），调用方必须直接返回
      */
     public static boolean interceptStartPlayback(List<Music> songs, int startIdx) {
@@ -1063,11 +1067,14 @@ public final class MpPartyClient {
         Music song = pick(songs, startIdx);
         if (song != null && MpPlayback.isPartyMusic(song)) return false;   // 房间自己下发的那一首
         if (song == null) return true;
-        return enqueueInstead(song);
+        return enqueueInstead(song, false);
     }
 
     /**
      * 播放器的「下一首播放」。
+     *
+     * <p>带插队意图发给房间：服务端只对房主/管理员认这个标志，普通成员会被降级成追加
+     * （见 {@code Room#enqueue}），所以这里不必自己判断权限。</p>
      *
      * @return true 表示已改成房间点歌
      */
@@ -1075,11 +1082,15 @@ public final class MpPartyClient {
         if (applyingRemote || room == null) return false;
         if (song != null && MpPlayback.isPartyMusic(song)) return false;
         if (song == null) return true;
-        return enqueueInstead(song);
+        return enqueueInstead(song, true);
     }
 
-    /** 把一次本地起播/插播改成房间点歌，并给出提示。 */
-    private static boolean enqueueInstead(Music song) {
+    /**
+     * 把一次本地起播/插播改成房间点歌，并给出提示。
+     *
+     * @param playNext true = 用户明确按了「下一首播放」，带插队意图；false = 普通点歌，排队尾
+     */
+    private static boolean enqueueInstead(Music song, boolean playNext) {
         if (!canQueue(song)) {
             note("这首歌没有可以分享给房间的曲目信息，已忽略本次播放", true);
             return true;
@@ -1088,7 +1099,8 @@ public final class MpPartyClient {
         // requireChannel() 失败 —— 于是聊天栏里连着出现「已加入一起听歌单：X」和
         // 「当前服务器未安装一起听服务端模组」，前一句是假的，而且掩盖了真正的故障。
         if (!requireChannel()) return true;
-        queueNext(song);
+        if (playNext) queueNext(song);
+        else requestSong(song);
         return true;
     }
 

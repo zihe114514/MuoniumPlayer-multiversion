@@ -59,7 +59,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "1.6.1";
+    public static final String MOD_VERSION = "1.7.0";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -235,6 +235,12 @@ public final class MuoniumPlayerClient {
         // 排在更新提示后面调：前两个提示任一在屏幕上时，这里读到的当前界面不是主菜单，本 tick 跳过 ——
         // 三个提示天然排队。公告自己只管「这批看过没有」，不参与更新提示那套次数额度。
         GuiAnnouncements.tickAutoShow(mc);
+
+        // ---- 【只给开发验证】一个文件等价于按一次右 Shift ----
+        // 自动化环境里合成按键驱动不了 KeyMapping（要等 tick 循环里的 consumeClick），
+        // 而首启的覆盖层与引导必须真的开出来才看得到效果。这条只补「按那一下」，
+        // 走的还是同一个 OnboardingManager.openPlayerEntry()，不绕任何状态闸；文件用完即删。
+        devOpenPlayerEntry(mc);
 
         // ---- 系统播放器镜像（SMTC）----
         // 主线程每 tick 问一次：换歌检测、解析结果落地、命令回执播报都在里面。真正的耗时
@@ -412,6 +418,71 @@ public final class MuoniumPlayerClient {
             }
         }
     }
+
+    /**
+     * 【只给开发验证】存在 {@code config/muonium/dev_open_player} 就等价于按了一次右 Shift。
+     *
+     * <p>见 {@link com.muoniumplayer.core.settings.ConfigPaths#DEV_OPEN_PLAYER} 的注释：
+     * 自动化环境驱动不了 {@code KeyMapping}，而覆盖层与引导只有真的开出来才看得见。
+     * 本次启动最多触发一次——删文件失败也不能让它每 tick 重开一次界面。</p>
+     */
+    private void devOpenPlayerEntry(Minecraft mc) {
+        if (devTriggerUsed) {
+            return;
+        }
+        java.io.File trigger = com.muoniumplayer.core.settings.ConfigPaths.DEV_OPEN_PLAYER;
+        if (!trigger.isFile()) {
+            return;
+        }
+        // 与 GuiAnnouncements.tickAutoShow 同一道闸：主菜单真的挂在屏幕上才换界面。
+        // 第一个 tick 就换会被原版随后的 setScreen(TitleScreen) 顶掉，
+        // 症状是「触发文件被吃了，但一个画面都没出现过」——排查时极易误判成界面本身坏了。
+        Screen current = mc.gui.screen();
+        boolean atMainMenu = current instanceof net.minecraft.client.gui.screens.TitleScreen;
+        boolean inGameIdle = current == null && mc.level != null && mc.player != null;
+        if (!atMainMenu && !inGameIdle) {
+            return;
+        }
+        // 文件内容可选写一个秒数，让触发推迟到那一刻发生（无人值守截图要能把快门压在
+        // 只有四秒的覆盖层上；当场触发只会拍到它自动翻过去之后的向导）。
+        if (!devTriggerReadyToFire(trigger)) {
+            return;
+        }
+        devTriggerUsed = true;
+        try {
+            java.nio.file.Files.delete(trigger.toPath());
+        } catch (java.io.IOException stuck) {
+            System.out.println("[MuoniumPlayer] dev_open_player 删不掉，本次启动不再触发: " + stuck);
+        }
+        com.muoniumplayer.core.screens.onboarding.OnboardingManager.openPlayerEntry();
+    }
+
+    /** 第一次看见触发文件时记下时刻；等到文件里写的秒数走完才放行。 */
+    private boolean devTriggerReadyToFire(java.io.File trigger) {
+        if (devTriggerSeenAt == 0L) {
+            devTriggerSeenAt = System.nanoTime();
+            devTriggerDelayNanos = readDelaySeconds(trigger) * 1_000_000_000L;
+        }
+        return System.nanoTime() - devTriggerSeenAt >= devTriggerDelayNanos;
+    }
+
+    private static long readDelaySeconds(java.io.File trigger) {
+        try {
+            String text = new String(java.nio.file.Files.readAllBytes(trigger.toPath()),
+                    java.nio.charset.StandardCharsets.UTF_8).trim();
+            if (text.isEmpty()) {
+                return 0;
+            }
+            return Math.max(0L, Math.min(600L, Long.parseLong(text)));
+        } catch (Throwable unreadable) {
+            // 读不到内容就当「立刻触发」，与空文件同义。
+            return 0;
+        }
+    }
+
+    private boolean devTriggerUsed;
+    private long devTriggerSeenAt;
+    private long devTriggerDelayNanos;
 
     /** 按用户选择打开 HUD 设置；外部界面（ModernUI / OneConfig）不可用时自动回退到内置界面。 */
     private void openHudEditor(Minecraft mc) {

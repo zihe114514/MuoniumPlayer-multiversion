@@ -17,6 +17,19 @@ package com.muoniumplayer.party;
  * 次心跳都超、并且距上次硬跳已过 {@code cooldownMs}、且不在命令静默期内，才真的跳一次。
  * 命令帧（换歌／暂停／恢复／房主拖进度）不走这套判定，永远立刻执行。
  *
+ * <p><b>另外两道闸。</b>三档判定默认「本地位置和房间位置量的是同一条时间轴」，房间里有两种
+ * 场合不成立：
+ * <ul>
+ *   <li><b>automix 交叠进行中</b> —— 一条在淡出、另一条刚从入口点淡进来，两边「故意」不同步。
+ *       此时心跳量出来的偏差其实是本机开始淡入的时刻比房间晚了几秒（帧延迟 + 一条落在软档里
+ *       没纠的漂移 + 新 deck 的缓冲），拿它去比硬阈值会把刚叠上的尾巴薅回去，听感上就是交叠被
+ *       截断。所以{@link #markCommand(long)} 允许按<b>实际交叠长度</b>开静默窗，而不是只按
+ *       服务端那个配置提前量。</li>
+ *   <li><b>流卡住</b> —— 播放头冻着不走而房间照常在走，于是每发心跳都像脱节，硬跳又要重开
+ *       解码器、于是更卡。{@link #isStalled} 把这种读数判成缓冲；只有连冻约 6 秒（那时确实
+ *       只剩重开这一条自救路）才把判定放回去。</li>
+ * </ul>
+ *
  * <p>阈值由服务端 {@code hello} 下发（{@link #configure}），所以同一房间里所有客户端 ——
  * MuoniumPlayer 和 modernMP、各个游戏版本 —— 用的是同一套口径。收不到就用这里的默认值，
  * 它们与服务端 {@code MpConfig} 的默认值一致。
@@ -57,6 +70,48 @@ public final class MpSyncPolicy {
     private static long lastHardSeekAt;
     private static long graceUntil;
 
+    /**
+     * 一次保护窗的上限。
+     *
+     * <p>交叠长度是内容决定的（{@code plan.overlapMillis}，Folia 能挑出一段 20 秒以上的长尾奏），
+     * 但「完全不校准」这件事本身也有代价：真脱节的机器要靠心跳拉回来。30 秒是两者都能接受的
+     * 上界 —— 比任何一段实际的混音都长，比一首歌的剩余部分短得多。</p>
+     */
+    private static final long MAX_PROTECT_MS = 30_000L;
+
+    /** 交叠淡完之后再多给的落地时间：两条 deck 刚收成一条，缓冲正是不稳的时候。 */
+    public static final long BLEND_SETTLE_MS = 1500L;
+
+    // ── 卡流：位置冻住 ≠ 落后 ─────────────────────────────────────────────────
+    //
+    // 流卡住时本机位置停着不走，房间时钟照常在走，于是每一发心跳量出来的偏差都更像「脱节」，
+    // 硬跳 → 重开解码器 → 更卡。这是正反馈，也是「网络差的时候被强行拉到播放进度」的主要来源。
+    // 真卡住时该等它自己缓过来，而不是拿播放头去追一个它还没取到的位置。
+    //
+    // 但也不能无限等：连冻 {@link #STALL_RELEASE_HITS} 发（约 6 秒完全没出声）就说明这条流已经
+    // 死了，此时重新开流正是唯一自救手段 —— 把判定放回去，让正常的硬跳路径去救它。
+
+    /** 两次采样的最小间隔：太密的采样量不出「这一段时间里它到底走没走」。 */
+    private static final long STALL_MIN_GAP_MS = 800L;
+
+    /** 这么长的间隔里位置只推进了这么多以内，判为冻住。 */
+    private static final long STALL_MAX_ADVANCE_MS = 150L;
+
+    /** 连冻几发之后不再当缓冲、放行硬跳去重开这条流。 */
+    private static final int STALL_RELEASE_HITS = 3;
+
+    private static long stallSample = -1L;
+    private static long stallSampleAt;
+    private static int stallHits;
+    /**
+     * 已经判过「这条流死了」。
+     *
+     * <p>置位之后就不再把冻住的读数当缓冲 —— 否则每三发释放一次、每一发释放前又拿缓冲当借口
+     * 重开静默窗，一条真死了的流永远等不到那次「重开解码器」的自救。清掉它的唯一条件是
+     * 播放头真的又开始往前走了。</p>
+     */
+    private static boolean stallReleased;
+
     /** 应用服务端下发的阈值；任一项 &lt;= 0 视为「未下发」，保留当前值。 */
     public static void configure(long soft, long hard, long cooldown, int wantHits, long grace) {
         if (soft > 0L) softDriftMs = soft;
@@ -82,9 +137,25 @@ public final class MpSyncPolicy {
      * <p>清空确认计数并开一段静默期：命令刚下去时播放器正在解析／下载／重设播放头，本地位置
      * 必然落后，这段时间量出来的偏差不是「脱节」而是「还没开起来」。</p>
      */
-    public static synchronized void markCommand() {
+    public static void markCommand() {
+        markCommand(0L);
+    }
+
+    /**
+     * 同上，但把静默期按一次<b>已知的过渡长度</b>来开：取 {@code protectMs} 与
+     * {@code graceMs} 里较远的那个，并夹到 {@link #MAX_PROTECT_MS}。
+     *
+     * <p><b>为什么固定窗盖不住 automix。</b>房间里的交叠长度由音频内容决定（{@code overlapMillis}，
+     * 长尾奏能挑到 20 秒以上），而 {@code graceMs} 跟着服务端的配置提前量走（默认 4000 → 抬到
+     * 5000）。窗只开 5 秒、淡入还在继续时心跳就恢复了：此时量出来的「偏差」其实是本机比房间
+     * 晚了几秒开始淡入（帧延迟 + 一条本来就落在软档里没纠的漂移 + 新 deck 的缓冲），不是脱节，
+     * 拿去比硬阈值就会把刚叠上的那一条薅回去 —— 听感上正是交叠被截断。</p>
+     */
+    public static synchronized void markCommand(long protectMs) {
         hits = 0;
-        graceUntil = System.currentTimeMillis() + graceMs;
+        long window = graceMs;
+        if (protectMs > window) window = Math.min(protectMs, MAX_PROTECT_MS);
+        graceUntil = System.currentTimeMillis() + window;
     }
 
     /** 换房间／断线：策略状态和时钟偏移都要清掉，别把上一台服务器的偏移带过来。 */
@@ -92,6 +163,10 @@ public final class MpSyncPolicy {
         hits = 0;
         lastHardSeekAt = 0L;
         graceUntil = 0L;
+        stallSample = -1L;
+        stallSampleAt = 0L;
+        stallHits = 0;
+        stallReleased = false;
         curMin = Long.MAX_VALUE;
         prevMin = Long.MAX_VALUE;
         windowStart = 0L;
@@ -100,6 +175,62 @@ public final class MpSyncPolicy {
     /** 当前是否处在命令静默期内（此期间不做任何漂移判定）。 */
     public static boolean inGrace() {
         return System.currentTimeMillis() < graceUntil;
+    }
+
+    /**
+     * 静默期还剩多久（毫秒）；已经不在窗内时为 0。
+     *
+     * <p>诊断用：交接那一下打一行，就能在真机日志里看出这段保护到底盖住了多长的交叠 ——
+     * 窗开短了就是「淡入还没结束就被心跳薅断」。</p>
+     */
+    public static synchronized long graceRemainingMs() {
+        long left = graceUntil - System.currentTimeMillis();
+        return left > 0L ? left : 0L;
+    }
+
+    /**
+     * 采一次本机播放头，问一句「这条流真的在走吗」。
+     *
+     * <p>判据只有位置本身：要求它播着（调用方负责别在暂停态问），却在一发心跳的间隔里几乎
+     * 没推进。这种情况把偏差拿去比硬阈值是自伤 —— 缓冲期的位置本来就还没取到，跳过去只是
+     * 把解码器重开一遍，然后下一发量出更大的偏差。详见上面的卡流注释。</p>
+     *
+     * @param localMs 本机当前位置；负数（读不到）当没有样本
+     * @return true 表示这一发的偏差是缓冲造成的，不要拿去判脱节
+     */
+    public static synchronized boolean isStalled(long localMs) {
+        long now = System.currentTimeMillis();
+        if (localMs < 0L) {
+            stallSample = -1L;
+            stallHits = 0;
+            stallReleased = false;
+            return false;
+        }
+        long previous = stallSample;
+        long gap = now - stallSampleAt;
+        stallSample = localMs;
+        stallSampleAt = now;
+        // 没有前一发、或者这一发离上一发太近：量不出「这段时间里到底走了几步」。
+        if (previous < 0L || gap < STALL_MIN_GAP_MS) {
+            stallHits = 0;
+            return false;
+        }
+        long advanced = localMs - previous;
+        if (advanced > STALL_MAX_ADVANCE_MS) {
+            // 真的在推进 —— 缓冲到货、以及那次自救硬跳重新开起来都算，判死的账在这里清。
+            stallHits = 0;
+            stallReleased = false;
+            return false;
+        }
+        if (advanced < 0L) {
+            stallHits = 0;            // 往回走是拖进度或换曲（新曲目从 0 起），不是卡住
+            return false;
+        }
+        if (stallReleased) return false;
+        if (++stallHits < STALL_RELEASE_HITS) return true;
+        stallReleased = true;         // 连冻三轮：剩下的自救路只有把流重开一遍
+        stallHits = 0;
+        return false;
     }
 
     /**

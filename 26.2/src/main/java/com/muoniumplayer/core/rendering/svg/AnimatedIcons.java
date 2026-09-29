@@ -23,6 +23,23 @@ public final class AnimatedIcons {
     public static final String LIKE = "/muonium/svg/like.svg";
     /** 登录安全确认：粒子收拢成一面带锁的盾。素材自带颜色。 */
     public static final String LOGIN_SAFE = "/muonium/svg/login-safe.svg";
+    /**
+     * 引导覆盖层那枚「hello」：七段彩虹描边，一轮 3.45 秒。
+     *
+     * <p>和五枚图标不同，它不是「界面角落的一枚指示」，而是占满屏幕中央的主体，
+     * 所以尺寸与泛光由 {@code OnboardingGreeting} 决定，这里只管素材与它的时间轴怪癖。</p>
+     */
+    public static final String HELLO = "/muonium/svg/hello.svg";
+    /**
+     * 引导覆盖层那枚「welcome」：和 hello 同一套导出（{@code pathLength="100"} 的虚线描字 +
+     * 挂在 stroke 上的彩虹渐变），一轮 8.217 秒。
+     *
+     * <p>它自己那一条时间轴比 hello 长，是因为作者在里面多留了两段：3.27 秒字就画满了，
+     * 4.87 秒之后虚线反过来缩回 0（素材自带一次「擦掉」），最后 0.4 秒空着。
+     * 覆盖层只取「画满」之前那一段，擦与停都交给外面那条按帧走的来回放，
+     * 这样两枚字的节奏是一样的（见 {@code OnboardingGreeting}）。</p>
+     */
+    public static final String WELCOME = "/muonium/svg/welcome.svg";
 
     /**
      * 爆心的起播相位。素材一轮 7.133 秒，开头约 1.4 秒整枝是 {@code display:none}（导出器把这一段
@@ -37,6 +54,43 @@ public final class AnimatedIcons {
      * 爆心也收在这一帧，见 {@link #likeSolid()}。
      */
     private static final double LIKE_END_PHASE = .47;
+
+    /**
+     * hello 该在哪儿收手。
+     *
+     * <p>素材四个动画（{@code stroke-dasharray} / {@code stroke-dashoffset} /
+     * {@code stroke-width} / 一条不播的 {@code d}）一律写的是
+     * {@code repeatCount="indefinite" + fill="freeze"}。按 SMIL，无限循环的动画永远不「结束」，
+     * 所以 {@code fill="freeze"} 在这张稿子上是导出的模板话，不起作用——时间轴走到 {@code dur}
+     * 就回卷到 0，而 0 那一帧的基底 {@code stroke-dasharray="0 100"} 是「一笔都不画」。
+     * 症状：描完整字之后约一帧的工夫，字整条消失。</p>
+     *
+     * <p>.999 拿到的就是作者设计的那一帧（收尾是 99/1，本来也不画满 100），所以它既是「描完」
+     * 也是「倒着擦回去的起点」——来回放的两个顶点都不许越过它。
+     * 和爱心那枚的 {@code LIKE_END_PHASE} 是同一类口子：素材两头有空档时，起播与停住
+     * 都由素材自己说，不交给解释器去猜。</p>
+     */
+    private static final double HELLO_END_PHASE = .999;
+
+    /**
+     * hello 第一笔落地之前有多长。
+     *
+     * <p>素材开头 {@code 0 → .060386} 那一段虚线一直是 {@code "0 100"}——一个像素都不该有。
+     * 但 Skia 画零长虚线时按 {@code stroke-linecap="round"} 在<b>每一段零长划的位置补一个圆头</b>，
+     * 于是 {@code pathLength="100"} 的那两个端点（0 与 100）上各冒出一颗点，
+     * 看着像「字还没写，先落了两滴墨」。覆盖层在时间轴低于这一相位时干脆什么都不画。</p>
+     */
+    private static final double HELLO_FIRST_INK_PHASE = .072464;
+
+    /**
+     * welcome 画满那一帧。素材的 {@code stroke-dasharray} 走到 .397566 就是 {@code "100 0"}
+     * （整条字全露出来），之后 .592292 起反过来缩回 {@code "0 100"}——那是作者自己留的一次擦除，
+     * 但节奏和 hello 对不上，所以来回放只用它画满之前那一段。
+     */
+    private static final double WELCOME_END_PHASE = .397566;
+
+    /** welcome 第一笔落地之前有多长，同 {@code HELLO_FIRST_INK_PHASE}：素材开头 {@code "0 100"} 会冒两颗圆头点。 */
+    private static final double WELCOME_FIRST_INK_PHASE = .030426;
 
     private AnimatedIcons() {
     }
@@ -92,5 +146,40 @@ public final class AnimatedIcons {
         SmilSvg like = like();
         return like == null ? null
                 : SvgPlayback.settled(like, LIKE_START_PHASE, LIKE_END_PHASE);
+    }
+
+    /** {@link #HELLO}：引导覆盖层那枚描字。素材自带彩虹，不染色。 */
+    public static SmilSvg hello() {
+        return SmilSvg.load(HELLO);
+    }
+
+    /**
+     * {@link #hello()} 描完一遍的终点（占整轮的比例），理由见 {@code HELLO_END_PHASE}。
+     *
+     * <p>引导覆盖层那枚字<b>不走</b> {@link SvgPlayback}：它按帧自己累加时间轴并来回放
+     * （见 {@code OnboardingGreeting}），这里只负责回答「一遍有多长」。</p>
+     */
+    public static double helloEndPhase() {
+        return HELLO_END_PHASE;
+    }
+
+    /** {@link #hello()} 第一笔落地的相位；低于它这一帧是一个像素都没有的（理由见字段注释）。 */
+    public static double helloFirstInkPhase() {
+        return HELLO_FIRST_INK_PHASE;
+    }
+
+    /** {@link #WELCOME}：引导覆盖层那枚「welcome」。素材自带彩虹，不染色。 */
+    public static SmilSvg welcome() {
+        return SmilSvg.load(WELCOME);
+    }
+
+    /** {@link #welcome()} 画满那一帧（占整轮的比例），之后素材自己开始擦回去。 */
+    public static double welcomeEndPhase() {
+        return WELCOME_END_PHASE;
+    }
+
+    /** {@link #welcome()} 第一笔落地的相位，同 {@link #helloFirstInkPhase()}。 */
+    public static double welcomeFirstInkPhase() {
+        return WELCOME_FIRST_INK_PHASE;
     }
 }

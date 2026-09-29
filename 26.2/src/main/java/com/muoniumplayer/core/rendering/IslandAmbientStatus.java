@@ -251,6 +251,17 @@ final class IslandAmbientStatus {
         return captureStatus(now, moving);
     }
 
+    /**
+     * 播放器交接回来时用的采样：只问「现在在放什么」。
+     *
+     * <p>不参与状态页/歌曲页轮换，也不受常驻那三项开关影响——交接只有几百毫秒，用户要看到的是
+     * 刚关掉的那首歌，而不是一枚帧率读数。没有在放任何东西时返回 {@link #EMPTY}，
+     * 让灵动岛收成紧凑胶囊，而不是展开一张空卡片。</p>
+     */
+    static Snapshot captureHandoff(long now) {
+        return captureNowPlaying(now, sampleMoving(now));
+    }
+
     /** 当前是否有正在播放的歌曲。任何异常都当作"没有"。 */
     private static boolean hasCurrentTrack() {
         try {

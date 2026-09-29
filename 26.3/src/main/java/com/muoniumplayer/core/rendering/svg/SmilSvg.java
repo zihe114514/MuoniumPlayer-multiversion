@@ -188,6 +188,26 @@ public final class SmilSvg {
         return parsed;
     }
 
+    /**
+     * 只给测试：从一段 SVG 文本造一份，走的还是 {@link #load} 里那条解析路径。
+     *
+     * <p>为的是钉住「规范写得清、但这批素材一条都没用到」的规则——{@code fill="freeze"} 与
+     * {@code fill="remove"} 的分别、没写 {@code repeatCount} 该算演一遍。为这两条造两份真素材
+     * 不划算：素材要进 jar，还要跟着五棵树同步。</p>
+     */
+    static SmilSvg parseForTest(String text) {
+        try {
+            Element root = SmilXml.parse(text);
+            if (!"svg".equals(root.localTag())) {
+                return null;
+            }
+            SmilSvg svg = new SmilSvg(root);
+            return svg.roots.isEmpty() ? null : svg;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     private static String readResource(String path) {
         try (InputStream input = SmilSvg.class.getResourceAsStream(path)) {
             if (input == null) {
@@ -406,6 +426,7 @@ public final class SmilSvg {
         int fill = node.fill;
         int stroke = node.stroke;
         Gradient gradient = node.fillGradient;
+        Gradient strokeGradient = node.strokeGradient;
         for (Channel channel : node.channels) {
             if (!channel.evaluate(time)) {
                 continue;
@@ -440,6 +461,7 @@ public final class SmilSvg {
                     break;
                 case Channel.STROKE:
                     stroke = channel.color;
+                    strokeGradient = null;   // 与 FILL 同理：动画写死颜色之后引用的渐变作废
                     break;
                 default:
                     break;
@@ -458,7 +480,8 @@ public final class SmilSvg {
             canvas.clipPath(clip, ClipMode.INTERSECT, true);
         }
         if (node.geometry != null) {
-            paintLeaf(canvas, node, paint, alpha, strokeWidth, dashArray, dashOffset, fill, stroke, tint, gradient);
+            paintLeaf(canvas, node, paint, alpha, strokeWidth, dashArray, dashOffset,
+                    fill, stroke, tint, gradient, strokeGradient);
         }
         for (Node child : node.children) {
             draw(canvas, child, time, alpha, paint, tint);
@@ -468,7 +491,7 @@ public final class SmilSvg {
 
     private void paintLeaf(Canvas canvas, Node node, Paint paint, float alpha, double strokeWidth,
                            String dashArray, String dashOffset, int fill, int stroke, int tint,
-                           Gradient gradient) {
+                           Gradient gradient, Gradient strokeGradient) {
         boolean tinted = tint != 0;
         Path geometry = node.geometry;
         if (fill != 0 || gradient != null) {
@@ -483,16 +506,53 @@ public final class SmilSvg {
                 shader.close();
             }
         }
-        if (stroke != 0 && strokeWidth > 0) {
+        if ((stroke != 0 || strokeGradient != null) && strokeWidth > 0) {
+            // 描边也要能挂渐变。原来这里写死 setShader(null)，于是 stroke="url(#…)"
+            // 的素材整条笔画都不出现——彩虹 hello 正是这一类。
+            Shader shader = tinted ? null : shaderOf(strokeGradient, geometry, alpha);
             paint.setMode(PaintMode.STROKE);
-            paint.setShader(null);
-            paint.setColor(withAlpha(tinted ? tint : stroke, alpha));
+            paint.setShader(shader);
+            paint.setColor(shader != null ? 0xFFFFFFFF
+                    : withAlpha(tinted ? tint : stroke, alpha));
             paint.setStrokeWidth((float) strokeWidth);
             paint.setStrokeCap(node.lineCap);
             paint.setStrokeJoin(node.lineJoin);
-            applyDash(paint, dashArray, dashOffset);
+            applyDash(paint, dashArray, dashOffset, dashUnit(node));
             canvas.drawPath(geometry, paint);
             paint.setPathEffect(null);
+            paint.setShader(null);
+        }
+    }
+
+    /**
+     * dash 的单位换算：{@code pathLength} 声明了多少，就把「实测全长 / 声明全长」乘进
+     * dasharray 与 dashoffset。没写 pathLength 的素材恒为 1，行为与改动前逐字节一致。
+     */
+    private static float dashUnit(Node node) {
+        if (node.dashUnit != null) {
+            return node.dashUnit;
+        }
+        float unit = 1f;
+        if (node.pathLength > 0 && node.geometry != null) {
+            float length = totalLength(node.geometry);
+            if (length > 0) {
+                unit = length / (float) node.pathLength;
+            }
+        }
+        node.dashUnit = unit;
+        return unit;
+    }
+
+    /** 路径全长（所有轮廓相加）。{@link PathMeasure#getLength()} 只给第一段，多段路径必须自己走一遍。 */
+    private static float totalLength(Path path) {
+        try (PathMeasure measure = new PathMeasure(path, false)) {
+            float total = 0;
+            do {
+                total += measure.getLength();
+            } while (measure.nextContour());
+            return total;
+        } catch (Throwable unavailable) {
+            return 0f;
         }
     }
 
@@ -526,7 +586,7 @@ public final class SmilSvg {
                 GradientStyle.DEFAULT.withTileMode(FilterTileMode.CLAMP));
     }
 
-    private void applyDash(Paint paint, String dashArray, String dashOffset) {
+    private void applyDash(Paint paint, String dashArray, String dashOffset, float unit) {
         double[] intervals = parseFloats(dashArray);
         if (intervals.length == 0) {
             return;
@@ -537,14 +597,15 @@ public final class SmilSvg {
         float[] dashes = new float[length];
         double total = 0;
         for (int i = 0; i < length; i++) {
-            dashes[i] = (float) Math.max(0, intervals[i % intervals.length]);
+            dashes[i] = (float) Math.max(0, intervals[i % intervals.length] * unit);
             total += dashes[i];
         }
         if (total <= 0) {
             return;
         }
         double[] offsets = parseFloats(dashOffset);
-        float offset = offsets.length > 0 ? (float) offsets[0] : 0f;
+        // 偏移同样按 pathLength 计份，否则描字动画会整体错位。
+        float offset = offsets.length > 0 ? (float) (offsets[0] * unit) : 0f;
         PathEffect effect = PathEffect.makeDash(dashes, offset);
         paint.setPathEffect(effect);
         effect.close();
@@ -657,10 +718,21 @@ public final class SmilSvg {
         node.matrix = parseTransform(element.attr("transform"));
         node.clip = resolveRef(element.attr("clip-path"), clips);
         node.geometry = geometryOf(element);
+        // SVG 规范：写了 pathLength 之后，stroke-dasharray / dashoffset 的单位换成
+        // 「作者声明的全长」的份数，而不是用户单位。描字动画全靠这条成立 ——
+        // hello.svg 用 pathLength="100" 把「已画出多少」直接写成百分比，
+        // 不认的话 0.877/99.123 会被当成 0.877 个用户单位，画出来的是一串锯齿而不是笔画。
+        node.pathLength = parseNumber(element.attr("pathLength", "0"), 0);
         String gradientId = referenceId(state.fillRaw);
         node.fillGradient = gradientId == null ? null : gradients.get(gradientId);
         node.fill = node.fillGradient != null ? 0 : state.fill;
         node.stroke = state.stroke;
+        // 描边渐变与填充渐变同一套判据：看原文是不是 url(#…)，因为 parseColor 会把引用读成 0。
+        String strokeRef = referenceId(state.strokeRaw);
+        node.strokeGradient = strokeRef == null ? null : gradients.get(strokeRef);
+        if (node.strokeGradient != null) {
+            node.stroke = 0;   // 颜色由渐变负责，留着 0 才不会被当成「另一个要画的实心描边」
+        }
         node.strokeWidth = state.strokeWidth;
         node.lineCap = state.lineCap;
         node.lineJoin = state.lineJoin;
@@ -1131,6 +1203,8 @@ public final class SmilSvg {
         Path geometry;
         Path clip;
         Gradient fillGradient;
+        /** {@code stroke="url(#…)"} 解出来的渐变；彩虹描边靠它。 */
+        Gradient strokeGradient;
         int fill;
         int stroke;
         double strokeWidth;
@@ -1138,6 +1212,19 @@ public final class SmilSvg {
         PaintStrokeJoin lineJoin = PaintStrokeJoin.MITER;
         String dashArray;
         String dashOffset;
+        /**
+         * {@code path/@pathLength}；0 表示没写，dash 按用户单位算。
+         *
+         * <p>只在 Node 上而不在 State 上：规范里 pathLength 是几何属性，不继承。</p>
+         */
+        double pathLength;
+        /**
+         * dash 单位换算系数 = 实测全长 / pathLength，量一次存住。
+         *
+         * <p>和 {@code Channel.measure} 同一个道理：每帧新建原生测量器去量同一条路，
+         * 是白付一次 JNI 与一块原生内存。</p>
+         */
+        Float dashUnit;
         PathFillMode fillMode = PathFillMode.WINDING;
         Matrix33 matrix = Matrix33.IDENTITY;
         double opacity = 1;
@@ -1158,6 +1245,12 @@ public final class SmilSvg {
          */
         String fillRaw = "#000000";
         int stroke;
+        /**
+         * {@code stroke} 的<b>原文</b>，理由与 {@link #fillRaw} 完全一样：
+         * {@code stroke="url(#i0)"} 过 {@link #parseColor} 得到 0，于是整条笔画直接不画。
+         * 作者那份 hello.svg 的彩虹就是挂在 stroke 上的。
+         */
+        String strokeRaw;
         double strokeWidth = 1;
         PaintStrokeCap lineCap = PaintStrokeCap.BUTT;
         PaintStrokeJoin lineJoin = PaintStrokeJoin.MITER;
@@ -1170,6 +1263,7 @@ public final class SmilSvg {
             next.fill = fill;
             next.fillRaw = fillRaw;
             next.stroke = stroke;
+            next.strokeRaw = strokeRaw;
             next.strokeWidth = strokeWidth;
             next.lineCap = lineCap;
             next.lineJoin = lineJoin;
@@ -1183,6 +1277,7 @@ public final class SmilSvg {
             }
             if ((value = element.attr("stroke")) != null) {
                 next.stroke = parseColor(value);
+                next.strokeRaw = value;
             }
             if ((value = element.attr("stroke-width")) != null) {
                 next.strokeWidth = parseNumber(value, strokeWidth);
@@ -1260,6 +1355,15 @@ public final class SmilSvg {
         double begin;
         double dur = 1;
         boolean indefinite = true;
+        /**
+         * {@code fill="freeze"}：一次性动画走完之后停在末帧。
+         *
+         * <p>SMIL 里 {@code fill} 这个属性在 {@code <animate>} 上<b>不是</b>颜色，而是
+         * 「演完之后怎么办」——缺省 {@code remove}（回落基底值），{@code freeze} 才是冻在末帧。
+         * 元素上的 presentation {@code fill="…"}（颜色）走的是 {@link #FILL} 那条通道，两者不冲突，
+         * 因为这里读的是动画元素自己的属性。</p>
+         */
+        boolean freeze;
         boolean discrete;
         boolean spline;
         double[] keyTimes;
@@ -1288,8 +1392,12 @@ public final class SmilSvg {
             channel.begin = parseTime(attributes.get("begin"), 0);
             channel.dur = parseTime(attributes.get("dur"), 0);
             String repeat = attributes.get("repeatCount");
-            channel.indefinite = repeat == null || "indefinite".equals(repeat)
-                    || parseNumber(repeat, 1) > 1_000_000;
+            // 规范里「没写 repeatCount」＝只演一遍，不是无限循环。以前缺省当成 indefinite，
+            // 于是任何一张没写 repeatCount 的一次性动画会被永远重播——本仓这六张素材都显式
+            // 写了 indefinite，所以改默认值对它们没有影响，只是不再把一次性动画播成循环。
+            channel.indefinite = repeat != null
+                    && ("indefinite".equals(repeat.trim()) || parseNumber(repeat, 1) > 1_000_000);
+            channel.freeze = "freeze".equals(attributes.get("fill"));
             String calcMode = attributes.get("calcMode");
             channel.discrete = "discrete".equals(calcMode);
             channel.spline = "spline".equals(calcMode);
@@ -1377,8 +1485,18 @@ public final class SmilSvg {
                 return channel;
             }
             channel.target = targetOf(attributeName);
+            if (channel.target == UNSUPPORTED) {
+                // 不认识的属性就整条丢掉。回退成某个能动的属性等于「猜」：
+                // 作者那份 hello.svg 里有一条 animate attributeName="d"（笔画末端的微变形），
+                // 猜成 OPACITY 的话路径字符串会被 parseFloats 抠出一串数字当不透明度用，
+                // 字没变形，倒是整条笔画跟着乱闪。
+                return null;
+            }
             return channel;
         }
+
+        /** 不在这批口子内的动画目标。丢整条，不参与求值。 */
+        private static final int UNSUPPORTED = -1;
 
         private static int targetOf(String attributeName) {
             if (attributeName == null) {
@@ -1387,6 +1505,8 @@ public final class SmilSvg {
             switch (attributeName.trim()) {
                 case "display":
                     return DISPLAY;
+                case "opacity":
+                    return OPACITY;
                 case "stroke-dasharray":
                     return DASH_ARRAY;
                 case "stroke-dashoffset":
@@ -1398,7 +1518,7 @@ public final class SmilSvg {
                 case "stroke":
                     return STROKE;
                 default:
-                    return OPACITY;
+                    return UNSUPPORTED;
             }
         }
 
@@ -1411,7 +1531,9 @@ public final class SmilSvg {
         }
 
         double end() {
-            return begin + (indefinite ? dur : dur);
+            // 素材总时长取「最后一轮的末尾」：无限循环的按一轮算，这跟浏览器里时间轴的
+            // 重复周期一致，也是 SvgPlayback 拿去把相位换算成秒数的依据。
+            return begin + dur;
         }
 
         /** 求 t 时刻的值，写进自己的 out/outString/color。t 早于 begin 返回 false（用基底值）。 */
@@ -1425,9 +1547,15 @@ public final class SmilSvg {
             }
             double progress = local / dur;
             if (indefinite) {
+                // 无限循环按规范是回卷：一轮结束回到该轮起点。这也是素材写
+                // repeatCount="indefinite" + fill="freeze" 时 freeze 不生效的原因——动画永不「结束」。
                 progress = progress - Math.floor(progress);
             } else if (progress > 1) {
-                progress = 1;   // fill="freeze" 就是停在末帧；这批素材全是 indefinite，这条是给以后留的。
+                if (!freeze) {
+                    // fill="remove"（缺省）：演完就把值还给元素自己，不能赖在末帧上。
+                    return false;
+                }
+                progress = 1;   // fill="freeze"：停在末帧。
             }
             int index = segmentFor(progress);
             if (discrete || strings != null && keys == null) {

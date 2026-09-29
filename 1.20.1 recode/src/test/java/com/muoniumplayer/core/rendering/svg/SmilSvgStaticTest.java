@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class SmilSvgStaticTest {
 
-    /** 光栅边长。128 够把「两帧不一样」量出来，五枚素材跑一轮也不至于慢。 */
+    /** 光栅边长。128 够把「两帧不一样」量出来，七枚素材跑一轮也不至于慢。 */
     private static final int SIZE = 128;
 
     /** 沿时间轴采多少个点来找「最热闹的那一帧」。 */
@@ -59,7 +59,7 @@ class SmilSvgStaticTest {
     }
 
     @Test
-    @DisplayName("五枚素材都读得到，且时长就是各自时间轴写的那个数")
+    @DisplayName("七枚素材都读得到，且时长就是各自时间轴写的那个数")
     void everyAssetLoadsAndReportsItsOwnDuration() {
         // 这几个秒数直接来自素材里的 dur="…"：读错、算错、或者素材被换过，都会在这里露出来。
         assertEquals(5.167, duration(AnimatedIcons.SEARCH), 1e-3, "search.svg 的时长");
@@ -67,6 +67,8 @@ class SmilSvgStaticTest {
         assertEquals(2.000, duration(AnimatedIcons.QR_SCAN), 1e-3, "qr-scan.svg 的时长");
         assertEquals(7.133, duration(AnimatedIcons.LIKE), 1e-3, "like.svg 的时长");
         assertEquals(5.000, duration(AnimatedIcons.LOGIN_SAFE), 1e-3, "login-safe.svg 的时长");
+        assertEquals(3.450, duration(AnimatedIcons.HELLO), 1e-3, "hello.svg 的时长");
+        assertEquals(8.217, duration(AnimatedIcons.WELCOME), 1e-3, "welcome.svg 的时长");
     }
 
     private static double duration(String resource) {
@@ -113,7 +115,8 @@ class SmilSvgStaticTest {
     @DisplayName("动画真的在动：同一枚素材不同时间的画面不一样")
     void eachAssetChangesAcrossItsTimeline() {
         for (String resource : new String[]{AnimatedIcons.SEARCH, AnimatedIcons.INFERENCE,
-                AnimatedIcons.QR_SCAN, AnimatedIcons.LIKE, AnimatedIcons.LOGIN_SAFE}) {
+                AnimatedIcons.QR_SCAN, AnimatedIcons.LIKE, AnimatedIcons.LOGIN_SAFE,
+                AnimatedIcons.HELLO, AnimatedIcons.WELCOME}) {
             SmilSvg svg = SmilSvg.load(resource);
             assertNotNull(svg, resource + " 没解析出来");
             Ink first = raster(svg, 0, 0);
@@ -129,7 +132,8 @@ class SmilSvgStaticTest {
     @DisplayName("墨迹盒落在画布内，而且把图标撑起来了")
     void contentBoxCropsTightlyInsideTheCanvas() {
         for (String resource : new String[]{AnimatedIcons.SEARCH, AnimatedIcons.INFERENCE,
-                AnimatedIcons.QR_SCAN, AnimatedIcons.LIKE, AnimatedIcons.LOGIN_SAFE}) {
+                AnimatedIcons.QR_SCAN, AnimatedIcons.LIKE, AnimatedIcons.LOGIN_SAFE,
+                AnimatedIcons.HELLO, AnimatedIcons.WELCOME}) {
             SmilSvg svg = SmilSvg.load(resource);
             assertNotNull(svg, resource + " 没解析出来");
             double[] view = svg.viewBoxForTest();
@@ -254,10 +258,112 @@ class SmilSvgStaticTest {
     }
 
     @Test
+    @DisplayName("一次性动画：fill=\"freeze\" 停在末帧，缺省的 remove 回落基底值")
+    void freezeHoldsTheLastFrameWhileRemoveFallsBack() {
+        // 这批素材全都写着 repeatCount="indefinite"，于是 fill 这一条规范谁都没碰过。
+        // 用一段最小 SVG 走同一套解析（SmilSvg.parseForTest），钉的是解释器本身：
+        // 哪天有人把 freeze 又当成「无限循环」的别名，这两半会立刻画成同一个东西。
+        SmilSvg frozen = SmilSvg.parseForTest(opacityAsset(" fill=\"freeze\""));
+        SmilSvg removed = SmilSvg.parseForTest(opacityAsset(""));
+        assertNotNull(frozen, "freeze 那份没解析出来");
+        assertNotNull(removed, "remove 那份没解析出来");
+        assertEquals(2.0, frozen.duration(), 1e-6, "dur=\"2s\" 没读成 2 秒");
+
+        // 演到一半（不透明度 0.6，压在白底上是 102 的灰）：两种写法该长得一样。
+        assertTrue(raster(frozen, 1.0, 0).neutralDark > 8000, "freeze 那份演到一半就不动了");
+        assertTrue(raster(removed, 1.0, 0).neutralDark > 8000, "remove 那份演到一半就不动了");
+
+        // 演完之后：freeze 停在末帧（纯黑），remove 把值还给元素自己（基底 0.2 → 204 的浅灰，
+        // 还在画，只是淡回去）。用 neutralDark 而不是 ink 来分，因为这两种情况下都满屏是墨。
+        assertTrue(raster(frozen, 3.0, 0).neutralDark > 8000,
+                "fill=\"freeze\" 没停在末帧：一次性动画演完会塌回基底值");
+        Ink fallen = raster(removed, 3.0, 0);
+        assertEquals(0, fallen.neutralDark,
+                "缺省的 fill=\"remove\" 演完还赖在末帧：规范说这时候要回落基底值");
+        assertTrue(fallen.ink > 8000, "回落之后方块整个不见了：remove 是还值，不是删元素");
+    }
+
+    /** 一张 2 秒从 0.2 淡到 1 的方块，末尾拼上想测的那个 {@code fill} 写法。 */
+    private static String opacityAsset(String fillAttribute) {
+        return "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\">"
+                + "<rect x=\"0\" y=\"0\" width=\"100\" height=\"100\" fill=\"#000000\" opacity=\"0.2\">"
+                + "<animate attributeName=\"opacity\" values=\"0.2;1\" dur=\"2s\""
+                + fillAttribute + "/>"
+                + "</rect></svg>";
+    }
+
+    @Test
     @DisplayName("读不到的资源安静失败，不抛异常")
     void missingResourceFailsQuietly() {
         assertNull(SmilSvg.load("/muonium/svg/does-not-exist.svg"));
         assertNull(SmilSvg.load(null));
+    }
+
+    @Test
+    @DisplayName("招呼字 hello / welcome：画满那一帧是实的，走满一轮回卷成空白，倒着放有东西可擦")
+    void greetingAssetsDrawMonotonicallyInBothDirections() {
+        assertGreetingAsset(AnimatedIcons.hello(), "hello",
+                AnimatedIcons.helloEndPhase(), AnimatedIcons.helloFirstInkPhase());
+        assertGreetingAsset(AnimatedIcons.welcome(), "welcome",
+                AnimatedIcons.welcomeEndPhase(), AnimatedIcons.welcomeFirstInkPhase());
+    }
+
+    /**
+     * 一枚招呼字的四根钉子。两枚字是同一套导出（{@code pathLength="100"} 的虚线描字 +
+     * 挂在 stroke 上的彩虹渐变），所以过一遍同样的账即可，不必各写一份。
+     */
+    private static void assertGreetingAsset(SmilSvg svg, String name,
+                                            double endPhase, double firstInkPhase) {
+        assertNotNull(svg, name + ".svg 读不到，覆盖层中央就是空屏");
+        double duration = svg.duration();
+
+        Ink frozen = raster(svg, duration * endPhase, 0);
+        assertTrue(frozen.ink > 300,
+                name + " 画满那一帧只有 " + frozen.ink + " 个像素有墨：覆盖层停在了一笔没画完的字上");
+
+        // 素材写的是 repeatCount="indefinite"，所以时间轴走到 dur 就回卷到 0，而 0 那一帧
+        // 的基底 stroke-dasharray="0 100" 是一个字都不画。这根钉子钉的是「为什么必须有画满相位」：
+        // 哪天有人把它改成 1，来回放会在描完的那一瞬间把整条字抹掉，玩家看到的是一闪一闪的字。
+        Ink wrapped = raster(svg, duration, 0);
+        assertTrue(wrapped.ink * 4 < frozen.ink,
+                name + " 走满一轮回卷之后字还剩 " + wrapped.ink + "，和画满帧（" + frozen.ink
+                        + "）差不多：素材改了，画满相位得跟着重挑");
+
+        // 开头那一截「看着是空的、其实不是」：dasharray 一直是 "0 100"，可 Skia 会按 round linecap
+        // 在两个零长划上各补一个圆头，于是画面里有两颗点（实测 hello 242 个像素、welcome 187 个）。
+        // 玩家报的「首帧错误展示起始点」就是它。这根钉子钉的是那道闸必须有东西可挡：哪天 Skia 不画
+        // 这两个圆头了（ink 变 0），OnboardingGreeting#visibleFrame 那一步就可以简化成 time > 0。
+        Ink blank = raster(svg, 0, 0);
+        assertTrue(blank.ink > 0 && blank.ink * 20 < frozen.ink,
+                name + " 第 0 帧的墨迹量是 " + blank.ink + "（画满帧 " + frozen.ink
+                        + "）：既不是「两颗圆头点」也不是全空，那两颗点的处理方式得重看");
+
+        // 描字是「来回放」的：倒着走必须能看到正着走见过的同一批帧，而且越擦越少。
+        // 这两根钉子钉的是同一件事——解释器对时间是纯函数（给几秒画几秒，不记上一帧），
+        // 哪天有人给它加了累加器或缓存，倒放就会变成「继续往前演」，玩家看到的是字越擦越完整。
+        double span = duration * endPhase;
+        Ink quarterInk = raster(svg, span * .25, 0);
+        Ink halfInk = raster(svg, span * .5, 0);
+        assertTrue(quarterInk.ink < halfInk.ink && halfInk.ink < frozen.ink,
+                name + " 的墨迹不是一笔一笔攒出来的（1/4 帧 " + quarterInk.ink + "、1/2 帧 "
+                        + halfInk.ink + "、画满帧 " + frozen.ink + "）：倒着擦回去没有东西可擦");
+        assertEquals(quarterInk.ink, raster(svg, span * .25, 0).ink,
+                name + " 同一个时间点两次画出来的墨迹不一样：素材里还留着逐帧累加的状态，倒放会穿帮");
+
+        // 描到四分之一时，最右边那滴墨必须还留在字的左半边。虚线模式（dash + gap）的周期只要
+        // 等于 pathLength，第二次划就正好落在路径终点上，圆头线帽把它画成一颗脱离笔画的圆点，
+        // 挂在还没描到的字尾——welcome 原来就是这样（它的 dashoffset 全程为 0，没有东西把第二次
+        // 划推出路径外）。素材里把 gap 撑到 200 之后这一颗就没了；哪天换稿子又冒出这颗点，这里红。
+        assertTrue(quarterInk.maxX < SIZE * .5,
+                name + " 描到四分之一时最右边的墨出现在第 " + quarterInk.maxX + " 列（画布 "
+                        + SIZE + "）：字尾那颗脱离笔画的圆点又回来了，虚线周期得重新撑开");
+
+        // 第一笔落地的相位得真的落在「两颗点」与「四分之一」之间，否则那道闸要么挡早了
+        // （凭空少描一笔），要么挡晚了（玩家还是先看见两颗点）。
+        assertTrue(firstInkPhase > 0 && firstInkPhase < endPhase * .25,
+                name + " 的第一笔相位登记成了 " + firstInkPhase + "，和 1/4 帧的位置对不上");
+        assertTrue(raster(svg, duration * firstInkPhase, 0).ink > blank.ink,
+                name + " 在第一笔相位那一帧还是只有两颗点：这道闸的相位挑早了或挑晚了");
     }
 
     // ==================================================================
@@ -273,6 +379,8 @@ class SmilSvgStaticTest {
         int neutralDark;
         /** 画布正中那块（边长 {@code SIZE/4}）里有多少个墨点：实心的心才会把这里填满。 */
         int centerInk;
+        /** 最右边那滴墨在第几列。描字描到四分之一时它不该跑到字尾——那是「终点圆点」的坐标。 */
+        int maxX;
 
         boolean sameAs(Ink other) {
             return ink == other.ink
@@ -303,6 +411,7 @@ class SmilSvgStaticTest {
                         result.ink++;
                         result.sumX += x;
                         result.sumY += y;
+                        result.maxX = Math.max(result.maxX, x);
                         if (Math.abs(x - SIZE / 2) <= SIZE / 8 && Math.abs(y - SIZE / 2) <= SIZE / 8) {
                             result.centerInk++;
                         }
@@ -327,10 +436,11 @@ class SmilSvgStaticTest {
     }
 
     @Test
-    @DisplayName("五枚素材的叶子都在画布附近，没有飘到画外")
+    @DisplayName("七枚素材的叶子都在画布附近，没有飘到画外")
     void leavesStayNearTheCanvas() {
         for (String resource : new String[]{AnimatedIcons.SEARCH, AnimatedIcons.INFERENCE,
-                AnimatedIcons.QR_SCAN, AnimatedIcons.LIKE, AnimatedIcons.LOGIN_SAFE}) {
+                AnimatedIcons.QR_SCAN, AnimatedIcons.LIKE, AnimatedIcons.LOGIN_SAFE,
+                AnimatedIcons.HELLO, AnimatedIcons.WELCOME}) {
             SmilSvg svg = SmilSvg.load(resource);
             assertNotNull(svg, resource + " 没解析出来");
             double[] view = svg.viewBoxForTest();

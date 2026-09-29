@@ -249,12 +249,18 @@ public final class MpPlayback {
         stagedNext = null;
         stagedNextMusic = null;
         RoomAutomix.disarm();
-        // 交叠这一段本机与房间时钟「故意」不同（一条在淡出，另一条刚从 0 开始），
-        // 关掉漂移判定，别让心跳把刚开始的淡入硬跳一下。
-        MpSyncPolicy.markCommand();
+        // 交叠这一段本机与房间时钟「故意」不同（一条在淡出，另一条刚从入口点淡进来），
+        // 关掉漂移判定，别让心跳把刚开始的淡入硬跳一下。窗按这段交叠还剩多长来开 ——
+        // 固定 4~5 秒盖不住 Folia 那种二十秒的长尾奏，而淡入没结束就恢复心跳正是「截断」的
+        // 来源。帧比本机先到时交叠还没起（交接要等播放线程那一 tick），那里读到 0，
+        // 但随后每一发心跳都会用剩下的淡入长度把窗口续上（见 decideSeek）。
+        MpSyncPolicy.markCommand(CloudMusic.roomBlendRemainingMillis() + MpSyncPolicy.BLEND_SETTLE_MS);
         System.out.println("[MpParty] 房间内交叠交接 " + track.display()
                 + (blendedLocally ? "（本机先到，帧后到）" : "（帧触发）")
-                + " pos=" + posMs + " playing=" + playing);
+                + " pos=" + posMs + " playing=" + playing
+                // 这段保护到底盖住了多长的交叠，真机日志里就靠这一行看：开短了就是「淡入还没
+                // 结束就被心跳薅断」，也是用户报的那个截断唯一能被事后确认的证据。
+                + " 漂移静默=" + MpSyncPolicy.graceRemainingMs() + "ms");
         return true;
     }
 
@@ -398,7 +404,8 @@ public final class MpPlayback {
     /**
      * 这一帧心跳要不要硬跳播放头。
      *
-     * <p>暂停时位置是死的，不存在「越对越乱」，超过软阈值就直接对齐。正在播放时交给
+     * <p>暂停时位置是死的，不存在「越对越乱」，超过软阈值就直接对齐。正在播放时先过两道
+     * 「这一刻量不出脱节」的闸 —— 交叠进行中、以及播放头冻住的卡流 —— 过了才交给
      * {@link MpSyncPolicy#shouldHardSeek}：只有连续多次超硬阈值、且过了冷却，才真的跳一次；
      * 软档（软阈值~硬阈值）刻意什么都不做 —— 宁可差几秒，也不要为了对齐而反复扯动播放头。</p>
      */
@@ -409,6 +416,22 @@ public final class MpPlayback {
         // 房间在放而本机还是暂停态：先把播放按下去，这一帧不动位置（下面会 unpause），
         // 让它跑起来再谈对齐。
         if (pausing) {
+            MpSyncPolicy.markCommand();
+            return false;
+        }
+        // 交叠还没淡完：本机与房间时钟在这段里「故意」不同 —— 一条在淡出、另一条刚从入口点
+        // 淡进来，而本机开始淡入的时刻天然比房间晚几秒（帧延迟 + 一条落在软档里没纠的漂移 +
+        // 新播放牌的缓冲）。这段读数拿去比硬阈值，跳的就是刚叠上的那一条，听到的正是「交叠被
+        // 截断」。窗口按剩下的淡入长度开，淡完再多给一段落地时间。
+        long blend = CloudMusic.roomBlendRemainingMillis();
+        if (blend > 0L) {
+            MpSyncPolicy.markCommand(blend + MpSyncPolicy.BLEND_SETTLE_MS);
+            return false;
+        }
+        // 播放头冻着不走：那是没取到数据，不是落后。这一发不计入确认次数，也不跳（跳只会
+        // 重开解码器、把缓冲时间再拉长一轮）；连冻约 6 秒后策略自己会放行，那时重开正是
+        // 唯一自救手段，见 MpSyncPolicy#isStalled。
+        if (MpSyncPolicy.isStalled(local)) {
             MpSyncPolicy.markCommand();
             return false;
         }

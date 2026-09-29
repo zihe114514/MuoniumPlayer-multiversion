@@ -488,6 +488,97 @@ public final class FoliaLucideIcons {
         "M5 21h14",
     };
 
+    /** 向导「连接账号」条目、完成页账号摘要（lucide {@code circle-user}）。 */
+    public static final String USER = "circle-user";
+    static final String[] D_USER = {
+        "M2 12 a10 10 0 1 0 20 0 a10 10 0 1 0 -20 0",
+        "M9 10 a3 3 0 1 0 6 0 a3 3 0 1 0 -6 0",
+        "M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662",
+    };
+
+    /** 向导「选择音源」条目、完成页音源摘要（lucide {@code radio}）。 */
+    public static final String SOURCES = "radio";
+    static final String[] D_SOURCES = {
+        "M16.247 7.761a6 6 0 0 1 0 8.478",
+        "M19.075 4.933a10 10 0 0 1 0 14.134",
+        "M4.925 19.067a10 10 0 0 1 0-14.134",
+        "M7.753 16.239a6 6 0 0 1 0-8.478",
+        "M10 12 a2 2 0 1 0 4 0 a2 2 0 1 0 -4 0",
+    };
+
+    /** 向导「Automix 模型」条目（lucide {@code brain-circuit}）。 */
+    public static final String AUTOMIX = "brain-circuit";
+    static final String[] D_AUTOMIX = {
+        "M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z",
+        "M9 13a4.5 4.5 0 0 0 3-4",
+        "M6.003 5.125A3 3 0 0 0 6.401 6.5",
+        "M3.477 10.896a4 4 0 0 1 .585-.396",
+        "M6 18a4 4 0 0 1-1.967-.516",
+        "M12 13h4",
+        "M12 18h6a2 2 0 0 1 2 2v1",
+        "M12 8h8",
+        "M16 8V5a2 2 0 0 1 2-2",
+        "M15.5 13 a0.5 0.5 0 1 0 1 0 a0.5 0.5 0 1 0 -1 0",
+        "M17.5 3 a0.5 0.5 0 1 0 1 0 a0.5 0.5 0 1 0 -1 0",
+        "M19.5 21 a0.5 0.5 0 1 0 1 0 a0.5 0.5 0 1 0 -1 0",
+        "M19.5 8 a0.5 0.5 0 1 0 1 0 a0.5 0.5 0 1 0 -1 0",
+    };
+
+    /** 向导「设置完成」条目（lucide {@code check-check}）。 */
+    public static final String DONE = "check-check";
+    static final String[] D_DONE = {
+        "M18 6 7 17l-5-5",
+        "m22 10-7.5 7.5L13 16",
+    };
+
+    /** 账号页那条登录/未登录状态（lucide {@code shield-check}）。 */
+    public static final String SHIELD = "shield-check";
+    static final String[] D_SHIELD = {
+                    "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1."
+            +             "2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z",
+        "m9 12 2 2 4-4",
+    };
+
+    /** Automix·Beat This!（节拍与乐段）（lucide {@code activity}）。 */
+    public static final String BEAT = "activity";
+    static final String[] D_BEAT = {
+                    "M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l"
+            +             "-2.35 8.36A2 2 0 0 1 4.49 12H2",
+    };
+
+    /** Automix·HTDemucs（人声与伴奏）（lucide {@code wand-sparkles}）。 */
+    public static final String SEPARATION = "wand-sparkles";
+    static final String[] D_SEPARATION = {
+                    "m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2"
+            +             " 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72",
+        "m14 7 3 3",
+        "M5 6v4",
+        "M19 14v4",
+        "M10 2v2",
+        "M7 8H3",
+        "M21 16h-4",
+        "M11 3H9",
+    };
+
+    /** Automix·必要运行组件（本机推理）（lucide {@code cpu}）。 */
+    public static final String RUNTIME = "cpu";
+    static final String[] D_RUNTIME = {
+        "M12 20v2",
+        "M12 2v2",
+        "M17 20v2",
+        "M17 2v2",
+        "M2 12h2",
+        "M2 17h2",
+        "M2 7h2",
+        "M20 12h2",
+        "M20 17h2",
+        "M20 7h2",
+        "M7 20v2",
+        "M7 2v2",
+        "M6 4 H18 A2 2 0 0 1 20 6 V18 A2 2 0 0 1 18 20 H6 A2 2 0 0 1 4 18 V6 A2 2 0 0 1 6 4 Z",
+        "M9 8 H15 A1 1 0 0 1 16 9 V15 A1 1 0 0 1 15 16 H9 A1 1 0 0 1 8 15 V9 A1 1 0 0 1 9 8 Z",
+    };
+
 
     /** 图标名 → 需要描边的图元路径。 */
     private static final Map<String, String[]> TABLE = new HashMap<>();
@@ -551,6 +642,14 @@ public final class FoliaLucideIcons {
         TABLE.put("waves", D_WAVES);
         TABLE.put("orbit", D_ORBIT);
         TABLE.put("crown", D_CROWN);
+        TABLE.put("circle-user", D_USER);
+        TABLE.put("radio", D_SOURCES);
+        TABLE.put("brain-circuit", D_AUTOMIX);
+        TABLE.put("check-check", D_DONE);
+        TABLE.put("shield-check", D_SHIELD);
+        TABLE.put("activity", D_BEAT);
+        TABLE.put("wand-sparkles", D_SEPARATION);
+        TABLE.put("cpu", D_RUNTIME);
         FILL.put("palette", FD_PALETTE);
     }
 

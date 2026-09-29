@@ -1224,10 +1224,20 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         boolean enabled = HudConfig.dynamicIslandEnabled;
         boolean alwaysOn = enabled && HudConfig.dynamicIslandAlwaysOn
                 && (IslandVisibilityGate.allowAmbient(scene) || playerAbsorbImpact);
+        /*
+         * 播放器交接回来的那一小段（PLAYER_ABSORB_FEEDBACK_MS）是岛唯一「没有任何事件也必须显示」
+         * 的场合——下面有一句 if (playerAbsorbImpact) shouldShow = enabled。常驻开着时这段走的
+         * 就是正常的常驻内容；常驻<b>关</b>着时上面那条 alwaysOn 是 false，ambientSnapshot 压根
+         * 没采样，内容于是落进 createIslandLayout 的下载兜底：表现就是「一关播放器，岛里冒出
+         * 正在下载 0 b/s」。这里给交接单独采一次「正在播放」，不参与状态页轮换。
+         */
+        boolean handoffAmbient = enabled && !alwaysOn && playerAbsorbImpact;
         // 常驻内容按固定节拍采样：帧率和延迟每帧都在抖，直接跟帧读会让数字闪烁得没法看。
-        if (alwaysOn) {
+        if (alwaysOn || handoffAmbient) {
             if (ambientSampledAt <= 0L || now - ambientSampledAt >= IslandAmbientStatus.SAMPLE_INTERVAL_MILLIS) {
-                ambientSnapshot = IslandAmbientStatus.capture(now);
+                ambientSnapshot = handoffAmbient
+                        ? IslandAmbientStatus.captureHandoff(now)
+                        : IslandAmbientStatus.capture(now);
                 ambientSampledAt = now;
             }
         } else {
@@ -1363,8 +1373,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         boolean noticeMode = !activeDownload && !holdingCompletion && activeNotice;
         // 常驻只是多了一条"没有任何事件也留在屏幕上"的显示理由；下载、完成停留、通知这三条
         // 原有理由与判定顺序都没有改动，所以通知排队的时序与关闭常驻时完全一致。
-        boolean ambientMode = IslandAmbientStatus.isAmbient(enabled, alwaysOn, activeDownload,
-                holdingCompletion, activeNotice);
+        // 交接段、且下载/完成/通知这三条真都没在发生时，才让「正在播放」顶上；三者任一在发生
+        // 都按原来的内容走，交接不抢它们的展示位。采到的快照是 EMPTY（没歌）时
+        // expansionTarget 会返回 0，于是收成紧凑胶囊，而不是展开一张假的下载卡片。
+        boolean handoffShowsAmbient = handoffAmbient && !activeDownload && !holdingCompletion
+                && !activeNotice;
+        boolean ambientMode = handoffShowsAmbient || IslandAmbientStatus.isAmbient(enabled, alwaysOn,
+                activeDownload, holdingCompletion, activeNotice);
         IslandAmbientStatus.Snapshot ambient = ambientSnapshot;
         boolean shouldShow = IslandAmbientStatus.shouldShow(enabled, alwaysOn, activeDownload,
                 holdingCompletion, activeNotice);

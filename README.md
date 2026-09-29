@@ -41,12 +41,12 @@ issue `neoforged/NeoForge#3518` 的答复就是升级插件（NeoGradle 对应 7
 **1.20.1 用 Forge 而不是 NeoForge**：1.20.1 是 Forge 的最后一个大版本，NeoForge 从
 1.20.2 才分家，1.20.1 的模组生态与整合包都在 Forge 上。
 
-五份工程共用：`mod_version=1.6.1`、`maven_group=com.muoniumplayer`、
+五份工程共用：`mod_version=1.7.0`、`maven_group=com.muoniumplayer`、
 `archives_base_name=MuoniumPlayer`、Skija `0.143.17`（Fabric 侧 `include` 进 jar，
 Forge/NeoForge 侧用 shadow 合并；原生库平台由 `skija_natives` 控制，发布时需要改成四平台全打）。
 
 产物命名：`MuoniumPlayer-<mc版本>-<加载器>-<mod版本>.jar`，
-例如 `MuoniumPlayer-1.21.11-neoforge-1.6.1.jar` / `MuoniumPlayer-1.20.1-forge-1.6.1.jar`。
+例如 `MuoniumPlayer-1.21.11-neoforge-1.7.0.jar` / `MuoniumPlayer-1.20.1-forge-1.7.0.jar`。
 名字里带 Minecraft 版本是必要的，不是好看：五个版本工程是五个独立构建，
 10 个 jar 要平铺进同一个 `dist/`，不带版本号的话 1.21.1 与 1.21.11 的 fabric 产物会同名互相覆盖。
 `buildAll` 跑完会把成品汇总到仓库根的 `dist/`（`collectDist` 任务，只收成品、不收源码包与改名前的旧 jar）。

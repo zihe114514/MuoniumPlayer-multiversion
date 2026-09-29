@@ -18,9 +18,11 @@ import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.font.GlyphInkMetrics;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
-import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
+import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
+import com.muoniumplayer.core.screens.ncm.SheetClock;
+import com.muoniumplayer.core.screens.ncm.TransitionCurveCache;
 import com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.settings.HudSetting;
@@ -111,8 +113,55 @@ public class GuiHudEditorPro extends GuiScreen {
 
     /** 入场时面板从「低 10 像素」升上来。位移量刻意小：大幅度滑入在只有半秒的界面里显得拖沓。 */
     private static final int INTRO_RISE = 10;
-    /** 切分类时内容从右侧 8 像素滑入。只作用于绘制，不动命中矩形。 */
-    private static final int CONTENT_SLIDE = 8;
+    /** 切分类时内容从行进方向那一侧滑入的幅度。只作用于绘制，不动命中矩形。 */
+    private static final int CONTENT_SLIDE = 14;
+    /** 逐块落位时额外往下掉的几个像素：配合淡入才有「落进来」，而不是一句「淡出来」。 */
+    private static final int CONTENT_DROP = 6;
+
+    // ==================== 动效时长 ====================
+    //
+    // 这一页以前所有通道都是 {@code Interpolations.interpolate}：那是「每帧走剩下的
+    // 几成」，没有「这段动画多长」这个概念，也完全不理玩家的「界面切换动画速度」那一档。
+    // 现在统一成定长补间（{@link #motion}），时长一律除以 {@link SheetClock#speed()} —— 和换页、
+    // 浮层、分段滑块、侧栏高亮条走同一个旋钮。默认 3.0 档下这些数字实际都被除了 3。
+
+    /** 悬停：跟手的那一档，太长会显得按钮黏。 */
+    private static final double HOVER_MS = 150.0;
+    /** 开关旋钮走完一次行程。 */
+    private static final double KNOB_MS = 200.0;
+    /** 搜索框聚焦（底色 + 下划线 + 光标）。 */
+    private static final double FOCUS_MS = 160.0;
+    /**
+     * 侧栏高亮条换行的行程。播放器侧栏那一族用的是同一个数字同一条款曲线（越过目标再收回来），
+     * 这一页和它是同一个应用里的同一套动效语言，不该漂成两档。
+     */
+    private static final double INDICATOR_MS = 420.0;
+    /** 确认框与取色器这类「凭空出现的一层」的到场时长。 */
+    private static final double POP_MS = 170.0;
+
+    /**
+     * 内容逐块落位的窗口排布：起点、间距、单块行程、并档上限。
+     *
+     * <p>照 {@code NcmSheet} 那一族的卡位比例（页眉之后开始、每档 4% 行程 50%），只是这一页的
+     * 「块」是一张卡而不是一个浮层。超过上限的序号并到最后一档一起到场 —— 宁可少一点错峰，
+     * 也不能让长列表底部的卡永远排在窗口外面。</p>
+     */
+    private static final double ROW_FIRST = .26;
+    private static final double ROW_STEP = .04;
+    private static final double ROW_TRAVEL = .54;
+    private static final int ROW_STAGGER_LIMIT = 12;
+    /** 侧栏行的错峰起点比内容列早半档：这一列是「导航」，它先站好，内容再落。 */
+    private static final double NAV_FIRST = .12;
+    private static final double NAV_STEP = .035;
+    private static final double NAV_TRAVEL = .40;
+    private static final int NAV_STAGGER_LIMIT = 8;
+    /** 页眉与页脚各自的时间窗（在 {@link #page} 这条 t 上开的洞）。 */
+    private static final double HEADER_FIRST = .04;
+    private static final double HEADER_TRAVEL = .40;
+    private static final double FOOTER_FIRST = .52;
+    /** 底板（含阴影与那圈高光边）走完自己那一段的时机：整条 t 的前这么多。 */
+    private static final double PLATE_TRAVEL = .34;
+
     /** 双击标题栏复位的判定窗口（毫秒）。 */
     private static final long DOUBLE_CLICK_MS = 320L;
 
@@ -152,9 +201,12 @@ public class GuiHudEditorPro extends GuiScreen {
         final boolean lastInCard;
         /** 搜索无结果时的那一行：画法完全不同（大图标 + 居中提示）。 */
         final boolean emptyState;
+        /** 属于第几张卡 —— 进场时它要和自己的卡同一档到场，不能各走各的。 */
+        final int slot;
 
         Row(HudSettingsModel.Entry entry, String title, String icon, int accent,
-            int x, int y, int w, int h, boolean firstInCard, boolean lastInCard, boolean emptyState) {
+            int x, int y, int w, int h, boolean firstInCard, boolean lastInCard, boolean emptyState,
+            int slot) {
             this.entry = entry;
             this.title = title;
             this.icon = icon;
@@ -166,6 +218,7 @@ public class GuiHudEditorPro extends GuiScreen {
             this.firstInCard = firstInCard;
             this.lastInCard = lastInCard;
             this.emptyState = emptyState;
+            this.slot = slot;
         }
 
         boolean isGroupHeader() {
@@ -248,13 +301,66 @@ public class GuiHudEditorPro extends GuiScreen {
      */
     private float layerAlpha = 1f;
 
-    private boolean introStarted;
-    /** 面板入场进度 0..1。既做淡入也做位移，位移折进 {@link #panelBounds()} 所以裁剪区跟着走。 */
-    private float introProgress;
+    /**
+     * 外壳时钟：整页进场、退场，以及页眉 / 侧栏 / 页脚在它上面各自开一个时间窗。
+     *
+     * <p>只有这一条 t。进场没播完就按 ESC 时，各层从自己当前的位置原路退回，不需要另写一套
+     * 退场编排 —— 这也是这一页以前做不到的事（它只有一个只会单调逼近 1 的 {@code introProgress}，
+     * 所以关闭是「直接没有」）。</p>
+     */
+    private final SheetClock page = SheetClock.cascade();
+    /**
+     * 内容列表自己的时钟。换分类、进出搜索都重播它一次，而外壳不跟着重放。
+     *
+     * <p>为什么不并进 {@link #page}：这一页是个可以待很久的界面，切分类是它最主要的一个动作。
+     * 让整页（含侧栏）跟着每次换分类重进场，看起来就像界面被重建了一遍。</p>
+     */
+    private final SheetClock list = SheetClock.cascade();
 
-    /** 内容区淡入进度 0..1。切分类或切换搜索状态时归零。 */
-    private float contentFade = 1f;
+    /** 面板这一帧该有多实（0..1）。既做淡入也做位移，位移折进 {@link #panelBounds()} 所以裁剪区跟着走。 */
+    private float plate = 1f;
+    /**
+     * 两条时钟这一帧的<b>原始</b> t。错峰窗口必须开在它上面而不是开在缓动后的进度上：
+     * 缓动过的值已经不等间距，按序号平移窗口会让越靠后的块走得越慢。
+     */
+    private double pageFade;
+    private double listFade;
+
+    /**
+     * 确认框与取色器这两层「凭空出现的板子」的到场进度。
+     *
+     * <p>每帧无条件推进（而不是只在要画它的那一帧才第一次见到这个键），否则通道创建时就落在
+     * 目标上，永远看不到那 170 毫秒。</p>
+     */
+    private float dialogGate;
+    private float pickerGate;
+
+    private boolean introStarted;
+
+    /**
+     * 这一次内容重播从哪一侧进场：{@code +1} 往下一个分类（新的从右边来）、{@code -1} 往上、
+     * {@code 0} 首次到场不偏。方向由新旧分类的下标差决定，和播放器换页同一套读法。
+     */
+    private int listDirection;
     private int contentOwner = Integer.MIN_VALUE;
+
+    /**
+     * 定长补间的通道表：键是部件名（悬停、按下、聚焦……），值记住这一段从哪起、到哪去、什么时候开始。
+     *
+     * <p>表里只会攒下几十个键（按钮 + 侧栏行 + 条目 + 色卡），随界面生命周期一起释放，不需要清理。</p>
+     */
+    private final Map<String, Channel> channels = new HashMap<String, Channel>();
+    /**
+     * 条目行的动画状态：{@code [0]} 悬停、{@code [1]} 开关位置、{@code [2]} 滑块把手放大。
+     *
+     * <p>按 {@code Entry} 的身份存：条目声明是静态常量，身份天然稳定，不需要额外的 id。
+     * 三个值各自的 {@link Channel} 存在 {@link #rowChannels} 里 —— 通道要的是「从当前值重新起一段」，
+     * 光有数值做不到。</p>
+     */
+    private final Map<HudSettingsModel.Entry, float[]> rowProgress =
+            new IdentityHashMap<HudSettingsModel.Entry, float[]>();
+    private final Map<HudSettingsModel.Entry, Channel[]> rowChannels =
+            new IdentityHashMap<HudSettingsModel.Entry, Channel[]>();
 
     /**
      * 平滑滚动用的显示位置。
@@ -266,17 +372,6 @@ public class GuiHudEditorPro extends GuiScreen {
     private float displayScroll;
     private int scrollOwner = Integer.MIN_VALUE;
 
-    private float searchFocus;
-
-    /** 命名部件（按钮、搜索框……）的悬停进度。每帧最多查十几次，用普通 HashMap 就够。 */
-    private final Map<String, Float> namedProgress = new HashMap<String, Float>();
-    /**
-     * 条目行的动画状态：{@code [0]} 悬停、{@code [1]} 开关位置、{@code [2]} 滑块把手放大。
-     *
-     * <p>按 {@code Entry} 的身份存：条目声明是静态常量，身份天然稳定，不需要额外的 id。</p>
-     */
-    private final Map<HudSettingsModel.Entry, float[]> rowProgress =
-            new IdentityHashMap<HudSettingsModel.Entry, float[]>();
     /** 每个图标字号的 em 方格度量缓存，见 {@link #drawIcon}。 */
     private static final Map<CFontRenderer, GlyphInkMetrics> GRID_CACHE =
             new IdentityHashMap<CFontRenderer, GlyphInkMetrics>();
@@ -294,7 +389,8 @@ public class GuiHudEditorPro extends GuiScreen {
         // initGui 在窗口缩放时也会被调用。入场动画只在真正打开时播一次，否则每次改分辨率都要重新淡入。
         if (!introStarted) {
             introStarted = true;
-            introProgress = 0f;
+            page.restart();
+            list.restart();
         }
     }
 
@@ -334,14 +430,28 @@ public class GuiHudEditorPro extends GuiScreen {
             CFontRenderer fr = FontManager.pf12;
             if (fr == null) return;
 
-            introProgress = Interpolations.interpolate(introProgress, 1f, 17f);
-            if (introProgress > 0.995f) introProgress = 1f;
+            pageFade = page.tick();
+            listFade = list.tick();
+            // 底板只占这条 t 的前三分之一：它先落定，侧栏与内容才有「往一块儿聚」的感觉。
+            // 退场是同一串窗口的倒放 —— 内容先撤，底板最后走。
+            plate = (float) TransitionCurveCache.MOTION.at(
+                    SheetClock.window(pageFade, 0.0, PLATE_TRAVEL));
+            dialogGate = motion("dialog.in", resetConfirmationVisible ? 1f : 0f, POP_MS);
+            pickerGate = motion("picker.in",
+                    editingColor != HudSettingsModel.ColorTarget.NONE ? 1f : 0f, POP_MS);
+            if (page.isGone()) {
+                // 退场播完才真的把界面收掉：这一帧只剩一个全透明的面板，画它没有意义。
+                mc.setScreen(null);
+                return;
+            }
+            // 退场途中这一层已经不再接受任何输入：拖动、滚动、点控件都不该再改状态。
+            boolean retiring = page.isDismissing();
 
             MusicInfoWidget info = MuoniumPlayerExtension.getInstance().musicInfo;
             MusicLyricsWidget lyrics = MuoniumPlayerExtension.getInstance().musicLyrics;
 
             // 面板尺寸与位置无关，先更新拖动再取矩形，这一帧的绘制与命中就都是新位置。
-            updatePanelDrag(mouseX, mouseY, panelWidth(), panelHeight());
+            if (!retiring) updatePanelDrag(mouseX, mouseY, panelWidth(), panelHeight());
             int[] panel = panelBounds();
             int panelX = panel[0];
             int panelY = panel[1];
@@ -350,18 +460,19 @@ public class GuiHudEditorPro extends GuiScreen {
 
             if (!DownloadDynamicIsland.isDownloadActive()) DownloadDynamicIsland.renderEditorPreview();
 
-            int wheel = resetConfirmationVisible ? 0 : Mouse.getDWheel();
+            int wheel = Mouse.getDWheel();
+            if (retiring || resetConfirmationVisible) wheel = 0;
             boolean overPanel = isInside(mouseX, mouseY, panelX, panelY, panelW, panelH);
             boolean overPicker = editingColor != HudSettingsModel.ColorTarget.NONE
                     && isInside(mouseX, mouseY, pickerX(panelX, panelW), pickerY(panelY, panelH), PICKER_W, PICKER_H);
-            boolean uiBusy = resetConfirmationVisible || overPanel || overPicker || draggingPanel;
+            boolean uiBusy = retiring || resetConfirmationVisible || overPanel || overPicker || draggingPanel;
 
-            if (!resetConfirmationVisible) {
+            if (!retiring && !resetConfirmationVisible) {
                 updateColorPickerWhileDragging(mouseX, mouseY, panelX, panelY, panelW, panelH);
                 updateSliderWhileDragging(mouseX);
             }
 
-            boolean lmb = !resetConfirmationVisible && !draggingPanel && Mouse.isButtonDown(0);
+            boolean lmb = !retiring && !resetConfirmationVisible && !draggingPanel && Mouse.isButtonDown(0);
 
             // ==== 两块 HUD 的实时预览与拖拽（面板之外的区域） ====
             int infoW = (int) (INFO_BASE_W * HudConfig.infoScale);
@@ -389,7 +500,7 @@ public class GuiHudEditorPro extends GuiScreen {
             drawHudSelection(fr, "桌面歌词", lyricX, lyricY, lyricW, lyricH, 0xFFA78BFA);
 
             // ==== 设置面板 ====
-            layerAlpha = introProgress;
+            layerAlpha = plate;
             try {
                 drawPanel(fr, panelX, panelY, panelW, panelH, mouseX, mouseY, wheel, overPanel);
             } finally {
@@ -397,7 +508,15 @@ public class GuiHudEditorPro extends GuiScreen {
             }
 
             if (editingColor != HudSettingsModel.ColorTarget.NONE) {
-                drawColorPicker(fr, panelX, panelY, panelW, panelH, mouseX, mouseY);
+                float outer = pushAlpha(pickerGate);
+                SkijaGfx.pushMatrix();
+                SkijaGfx.translate(0f, slideY(pickerGate));
+                try {
+                    drawColorPicker(fr, panelX, panelY, panelW, panelH, mouseX, mouseY);
+                } finally {
+                    SkijaGfx.popMatrix();
+                    layerAlpha = outer;
+                }
             }
 
             if (showSnapGuide) {
@@ -407,7 +526,15 @@ public class GuiHudEditorPro extends GuiScreen {
 
             super.drawScreen(mouseX, mouseY, partialTicks);
             if (resetConfirmationVisible) {
-                drawResetConfirmation(fr, mouseX, mouseY);
+                float outer = pushAlpha(dialogGate);
+                SkijaGfx.pushMatrix();
+                SkijaGfx.translate(0f, slideY(dialogGate));
+                try {
+                    drawResetConfirmation(fr, mouseX, mouseY);
+                } finally {
+                    SkijaGfx.popMatrix();
+                    layerAlpha = outer;
+                }
             }
         } finally {
             layerAlpha = 1f;
@@ -472,8 +599,8 @@ public class GuiHudEditorPro extends GuiScreen {
         }
         panelX = Math.max(0, Math.min(maxX, panelX));
         panelY = Math.max(0, Math.min(maxY, panelY));
-        if (introProgress < 1f) {
-            panelY += Math.round((1f - introProgress) * INTRO_RISE);
+        if (plate < 1f) {
+            panelY += Math.round((1f - plate) * INTRO_RISE);
         }
         return new int[] { panelX, panelY, panelW, panelH };
     }
@@ -531,7 +658,12 @@ public class GuiHudEditorPro extends GuiScreen {
         HudSettingsModel.Category[] categories = HudSettingsModel.categories();
         HudSettingsModel.Category active = categories[clampCategory()];
 
-        drawHeader(fr, panelX, panelY, panelW, panelH, active, mouseX, mouseY);
+        float headerOuter = pushAlpha(gate(HEADER_FIRST, HEADER_TRAVEL));
+        try {
+            drawHeader(fr, panelX, panelY, panelW, panelH, active, mouseX, mouseY);
+        } finally {
+            layerAlpha = headerOuter;
+        }
         if (collapsed) {
             return;
         }
@@ -543,7 +675,13 @@ public class GuiHudEditorPro extends GuiScreen {
 
         int contentX = panelX + navW;
         int contentW = panelW - navW;
-        drawSearch(fr, contentX, bodyY + 8, contentW, active.accent, mouseX, mouseY);
+        // 搜索框是内容列的第一块，它跟着列表那条时钟走，换分类时和底下的卡一起重播。
+        float searchOuter = pushAlpha(revealOf(0));
+        try {
+            drawSearch(fr, contentX, bodyY + 8, contentW, active.accent, mouseX, mouseY);
+        } finally {
+            layerAlpha = searchOuter;
+        }
 
         int listY = bodyY + 8 + SEARCH_H + 8;
         int listH = Math.max(24, bodyY + bodyH - listY);
@@ -555,11 +693,12 @@ public class GuiHudEditorPro extends GuiScreen {
             displayScroll = scroll();
         }
         if (owner != contentOwner) {
+            // 方向从「上一个内容归属」的下标差推出来：往下一个分类走新的从右边来，往上是左边，
+            // 进出搜索（那一条 key 是 -1）也走同一条判据。第一次到场没有「上一个」，就直落。
+            listDirection = contentOwner == Integer.MIN_VALUE ? 0 : Integer.compare(owner, contentOwner);
             contentOwner = owner;
-            contentFade = 0f;
+            list.restart();
         }
-        contentFade = Interpolations.interpolate(contentFade, 1f, 15f);
-        if (contentFade > 0.995f) contentFade = 1f;
 
         layoutRows(contentX, listY, contentW, active);
         int maxScroll = Math.max(0, contentHeight - listH);
@@ -576,24 +715,37 @@ public class GuiHudEditorPro extends GuiScreen {
         beginScissor(contentX, listY, contentW, listH);
         float outerAlpha = layerAlpha;
         try {
-            layerAlpha = outerAlpha * contentFade;
-            float slide = (1f - contentFade) * CONTENT_SLIDE;
-            SkijaGfx.pushMatrix();
-            SkijaGfx.translate(slide, 0f);
-            try {
-                for (int index = 0; index < cards.size(); index++) {
-                    Card card = cards.get(index);
-                    if (card.y + card.h < listY - 4 || card.y > listY + listH + 4) continue;
+            // 一块一块地落位，而不是整列一起淡：卡与它自己的行共用同一个序号，
+            // 否则会出现「字已经到了、底下的板还在路上」。
+            for (int index = 0; index < cards.size(); index++) {
+                Card card = cards.get(index);
+                if (card.y + card.h < listY - 4 || card.y > listY + listH + 4) continue;
+                float reveal = revealOf(index);
+                SkijaGfx.pushMatrix();
+                SkijaGfx.translate(slideX(reveal), slideY(reveal));
+                try {
+                    layerAlpha = outerAlpha * reveal;
                     drawRoundedRect(card.x, card.y, card.w, card.h, CARD_RADIUS, CARD_BG);
                     drawRoundedRect(card.x + CARD_RADIUS, card.y, card.w - CARD_RADIUS * 2, 1, 1, CARD_EDGE);
+                } finally {
+                    SkijaGfx.popMatrix();
                 }
-                for (int index = 0; index < rows.size(); index++) {
-                    Row row = rows.get(index);
-                    if (row.y + row.h < listY - 4 || row.y > listY + listH + 4) continue;
-                    drawRow(fr, row, mouseX - Math.round(slide), mouseY);
+            }
+            for (int index = 0; index < rows.size(); index++) {
+                Row row = rows.get(index);
+                if (row.y + row.h < listY - 4 || row.y > listY + listH + 4) continue;
+                float reveal = revealOf(row.slot);
+                float dx = slideX(reveal);
+                float dy = slideY(reveal);
+                SkijaGfx.pushMatrix();
+                SkijaGfx.translate(dx, dy);
+                try {
+                    layerAlpha = outerAlpha * reveal;
+                    // 鼠标坐标反向补偿：悬停高亮跟着滑进来的视觉走，命中矩形本身不动。
+                    drawRow(fr, row, mouseX - Math.round(dx), mouseY - Math.round(dy));
+                } finally {
+                    SkijaGfx.popMatrix();
                 }
-            } finally {
-                SkijaGfx.popMatrix();
             }
         } finally {
             layerAlpha = outerAlpha;
@@ -609,7 +761,12 @@ public class GuiHudEditorPro extends GuiScreen {
             drawRoundedRect(contentX + contentW - 8, thumbY, 5, thumbH, 3, 0x66FFFFFF);
         }
 
-        drawFooter(fr, panelX, panelY + panelH - FOOTER_H, panelW, mouseX, mouseY);
+        float footerOuter = pushAlpha(gate(FOOTER_FIRST, 1.0 - FOOTER_FIRST));
+        try {
+            drawFooter(fr, panelX, panelY + panelH - FOOTER_H, panelW, mouseX, mouseY);
+        } finally {
+            layerAlpha = footerOuter;
+        }
     }
 
     // ==================== 头部 / 侧栏 / 搜索 / 底栏 ====================
@@ -721,35 +878,62 @@ public class GuiHudEditorPro extends GuiScreen {
 
         int selected = clampCategory();
         float targetY = navY + 6 + selected * rowH;
-        if (navIndicator < 0f) navIndicator = targetY;
-        navIndicator = Interpolations.interpolate(navIndicator, targetY, 14f);
+        // 橡皮筋：30% 行程就走完 90%，在 60% 处越过目标再收回来 —— 「弹过去钉住」而不是「漂过去停下」，
+        // 和播放器侧栏那条高亮是同一档手感。第一次见到这个键时通道直接落在目标上，不会从 0 飞过来。
+        navIndicator = motion("nav.indicator", targetY, INDICATOR_MS, TransitionCurveCache.SPRING_LAND);
+        // 过冲要钳在侧栏里：最后那一行往下弹 40 多像素，条子就会压到分隔线底下的页脚上。
+        navIndicator = Math.max(navY + 6f, Math.min(navY + navH - rowH + 2f, navIndicator));
 
         // 指示器先画，条目图标与文字画在它上面：切分类时看到的是一块背景滑过去。
-        drawRoundedRect(navX + 6, navIndicator, navW - 12, rowH - 4, 9, NAV_SELECTED);
-        drawRoundedRect(navX + 6, navIndicator + Math.max(3, rowH / 4.5),
-                3, Math.max(4, rowH - 20), 2, categories[selected].accent);
+        float plateOuter = pushAlpha(navGate(selected));
+        try {
+            drawRoundedRect(navX + 6, navIndicator, navW - 12, rowH - 4, 9, NAV_SELECTED);
+            drawRoundedRect(navX + 6, navIndicator + Math.max(3, rowH / 4.5),
+                    3, Math.max(4, rowH - 20), 2, categories[selected].accent);
+        } finally {
+            layerAlpha = plateOuter;
+        }
 
         for (int index = 0; index < categories.length; index++) {
             HudSettingsModel.Category category = categories[index];
-            int rowY = navY + 6 + index * rowH;
-            boolean hovered = isInside(mouseX, mouseY, navX + 6, rowY, navW - 12, rowH - 4);
-            float hp = named("nav." + index, hovered && index != selected);
-            if (hp > 0.02f) {
-                drawRoundedRect(navX + 6, rowY, navW - 12, rowH - 4, 9, fade(NAV_HOVER, hp));
+            float reveal = navGate(index);
+            if (reveal <= 0.002f) continue;
+            int drop = Math.round((1f - reveal) * CONTENT_DROP);
+            float rowOuter = pushAlpha(reveal);
+            SkijaGfx.pushMatrix();
+            SkijaGfx.translate(0f, drop);
+            try {
+                drawNavRow(fr, category, index, selected, compact, twoLines,
+                        navX, navY, navW, rowH, mouseX, mouseY - drop);
+            } finally {
+                SkijaGfx.popMatrix();
+                layerAlpha = rowOuter;
             }
-            boolean current = index == selected;
-            // 图标替代原来的色点：色点只能表达「这一类是紫色的」，图标能表达「这一类是歌词」。
-            double iconCx = compact ? navX + navW / 2.0 : navX + 21;
-            drawIcon(FontManager.settingsIcon32, category.icon, iconCx, rowY + (rowH - 4) / 2.0,
-                    current ? category.accent : mix(0xFF7E8A9C, category.accent, hp));
-            if (compact) continue;
-            int titleColor = current ? TEXT_PRIMARY : mix(TEXT_SECONDARY, TEXT_PRIMARY, hp);
-            if (twoLines) {
-                drawText(FontManager.pf12bold, category.title, navX + 36, rowY + 9, titleColor);
-                drawText(fr, category.entryCount() + " 项", navX + 36, rowY + 21, TEXT_TERTIARY);
-            } else {
-                drawText(FontManager.pf12bold, category.title, navX + 36, rowY + (rowH - 4) / 2 - 5, titleColor);
-            }
+        }
+    }
+
+    /** 侧栏的一行：底色、图标、标题与项数。纵向偏移由调用方用矩阵叠上，命中矩形本身不动。 */
+    private void drawNavRow(CFontRenderer fr, HudSettingsModel.Category category, int index,
+                            int selected, boolean compact, boolean twoLines,
+                            int navX, int navY, int navW, int rowH, int mouseX, int mouseY) {
+        int rowY = navY + 6 + index * rowH;
+        boolean hovered = isInside(mouseX, mouseY, navX + 6, rowY, navW - 12, rowH - 4);
+        float hp = named("nav." + index, hovered && index != selected);
+        if (hp > 0.02f) {
+            drawRoundedRect(navX + 6, rowY, navW - 12, rowH - 4, 9, fade(NAV_HOVER, hp));
+        }
+        boolean current = index == selected;
+        // 图标替代原来的色点：色点只能表达「这一类是紫色的」，图标能表达「这一类是歌词」。
+        double iconCx = compact ? navX + navW / 2.0 : navX + 21;
+        drawIcon(FontManager.settingsIcon32, category.icon, iconCx, rowY + (rowH - 4) / 2.0,
+                current ? category.accent : mix(0xFF7E8A9C, category.accent, hp));
+        if (compact) return;
+        int titleColor = current ? TEXT_PRIMARY : mix(TEXT_SECONDARY, TEXT_PRIMARY, hp);
+        if (twoLines) {
+            drawText(FontManager.pf12bold, category.title, navX + 36, rowY + 9, titleColor);
+            drawText(fr, category.entryCount() + " 项", navX + 36, rowY + 21, TEXT_TERTIARY);
+        } else {
+            drawText(FontManager.pf12bold, category.title, navX + 36, rowY + (rowH - 4) / 2 - 5, titleColor);
         }
     }
 
@@ -758,7 +942,7 @@ public class GuiHudEditorPro extends GuiScreen {
         int boxW = w - CONTENT_PAD * 2;
         ensureSearchInput();
         boolean focused = searchInput.isFocused();
-        searchFocus = Interpolations.interpolate(searchFocus, focused ? 1f : 0f, 20f);
+        float searchFocus = motion("search.focus", focused ? 1f : 0f, FOCUS_MS);
 
         float hp = named("search.box", isInside(mouseX, mouseY, boxX, y, boxW, SEARCH_H));
         drawRoundedRect(boxX, y, boxW, SEARCH_H, SEARCH_H * 0.5,
@@ -862,7 +1046,7 @@ public class GuiHudEditorPro extends GuiScreen {
             if (!any) {
                 rows.add(new Row(null, "没有匹配「" + searchQuery.trim() + "」的设置项",
                         HudSettingsIcons.SEARCH, active.accent,
-                        rowX, cursor, rowW, EMPTY_STATE_H, true, true, true));
+                        rowX, cursor, rowW, EMPTY_STATE_H, true, true, true, cards.size()));
                 cursor += EMPTY_STATE_H;
             }
         }
@@ -878,9 +1062,11 @@ public class GuiHudEditorPro extends GuiScreen {
         }
         if (visible.isEmpty()) return cursor;
 
+        // 这一组的行落在哪张卡上，在卡片真正入表之前就能确定：cards 只在本方法末尾追加。
+        int slot = cards.size();
         String title = searching ? categoryTitle + " · " + group.title : group.title;
         rows.add(new Row(null, title, group.icon, accent, rowX, cursor, rowW, GROUP_HEADER_H,
-                false, false, false));
+                false, false, false, slot));
         cursor += GROUP_HEADER_H;
 
         int cardTop = cursor;
@@ -888,7 +1074,7 @@ public class GuiHudEditorPro extends GuiScreen {
             HudSettingsModel.Entry entry = visible.get(index);
             int h = entry.kind == HudSettingsModel.Kind.THEME_GRID ? themeGridHeight() + 14 : ROW_H;
             rows.add(new Row(entry, entry.getLabel(), null, accent, rowX, cursor, rowW, h,
-                    index == 0, index == visible.size() - 1, false));
+                    index == 0, index == visible.size() - 1, false, slot));
             cursor += h;
         }
         cards.add(new Card(rowX, cardTop, rowW, cursor - cardTop));
@@ -911,9 +1097,10 @@ public class GuiHudEditorPro extends GuiScreen {
         boolean hovered = isInside(mouseX, mouseY, row.x, row.y, row.w, row.h);
         boolean dragging = row.entry.kind == HudSettingsModel.Kind.SLIDER
                 && draggingSlider == row.entry.setting;
-        float[] state = progressOf(row.entry, row.entry.kind == HudSettingsModel.Kind.TOGGLE && row.entry.isOn());
-        state[0] = Interpolations.interpolate(state[0], hovered || dragging ? 1f : 0f, 20f);
-        state[2] = Interpolations.interpolate(state[2], dragging ? 1f : (hovered ? 0.6f : 0f), 22f);
+        float[] state = progressOf(row.entry);
+        Channel[] chan = channelsOf(row.entry);
+        state[0] = motion(chan[0], hovered || dragging ? 1f : 0f, HOVER_MS);
+        state[2] = motion(chan[2], dragging ? 1f : (hovered ? 0.6f : 0f), HOVER_MS);
         float hp = state[0];
 
         // 分隔线画在卡片上、悬停高亮之下：卡片背景已经由 drawPanel 一次画完，这里不再补背景，
@@ -952,7 +1139,7 @@ public class GuiHudEditorPro extends GuiScreen {
                 drawSliderControl(fr, row.entry.setting, rowRight, centerY, row.accent, state[2]);
                 break;
             case TOGGLE: {
-                state[1] = Interpolations.interpolate(state[1], row.entry.isOn() ? 1f : 0f, 21f);
+                state[1] = motion(chan[1], row.entry.isOn() ? 1f : 0f, KNOB_MS);
                 drawSwitch(rowRight - SWITCH_W, centerY - SWITCH_H / 2, state[1], row.accent, hp);
                 break;
             }
@@ -1245,6 +1432,7 @@ public class GuiHudEditorPro extends GuiScreen {
     }
 
     private void mouseClickedImpl(int mouseX, int mouseY, int button) throws IOException {
+        if (page.isDismissing()) return;
         if (resetConfirmationVisible) {
             if (button == 0) handleResetConfirmationClick(mouseX, mouseY);
             return;
@@ -1570,6 +1758,7 @@ public class GuiHudEditorPro extends GuiScreen {
 
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
+        if (page.isDismissing()) return;
         if (resetConfirmationVisible) {
             if (keyCode == Keyboard.KEY_ESCAPE || keyCode == Keyboard.KEY_RCONTROL) {
                 resetConfirmationVisible = false;
@@ -1611,10 +1800,22 @@ public class GuiHudEditorPro extends GuiScreen {
             return;
         }
         if (keyCode == Keyboard.KEY_ESCAPE || keyCode == Keyboard.KEY_RCONTROL) {
-            mc.setScreen(null);
+            beginRetire();
             return;
         }
         super.keyTyped(typedChar, keyCode);
+    }
+
+    /**
+     * 请求关闭：先播完退场，再由 {@link #drawScreen} 真的把界面回收掉。
+     *
+     * <p>直接 {@code setScreen(null)} 的话这一页是「啪一下消失」—— 进场有动画、退场没有，
+     * 是这类界面最常见的失衡。两条时钟一起退，内容先撤、底板最后走。</p>
+     */
+    private void beginRetire() {
+        if (page.isDismissing()) return;
+        page.requestDismiss();
+        list.requestDismiss();
     }
 
     private void applyHexColorInput() {
@@ -1643,7 +1844,8 @@ public class GuiHudEditorPro extends GuiScreen {
     // ==================== 恢复默认确认 ====================
 
     private void drawResetConfirmation(CFontRenderer fr, int mouseX, int mouseY) {
-        Gui.drawRect(0, 0, width, height, 0x6D000000);
+        // 压暗层走的是原版绘制管线，吃不到 layerAlpha，也不跟着那趟矩阵走 —— 想让它跟着淡就得自己乘。
+        Gui.drawRect(0, 0, width, height, fade(0x6D000000, dialogGate));
         int[] box = resetDialogBounds();
         drawSoftShadow(box[0], box[1], box[2], box[3], 13);
         drawRoundedRect(box[0], box[1], box[2], box[3], 13, 0xF41A202A);
@@ -1898,34 +2100,146 @@ public class GuiHudEditorPro extends GuiScreen {
     }
 
     // ==================== 动画工具 ====================
+    //
+    // 这一页以前只有两种动：帧率相关的指数逼近（{@code Interpolations}）和干脆没有（切分类、
+    // 确认框、取色器）。前者读起来是「先窜一下然后慢慢糊住」，而且完全不理玩家的动画速度档位；
+    // 后者让最主要的动作（换分类）看起来像界面被重建了一遍。现在一律换成真毫秒定长补间，
+    // 曲线与播放器换页、浮层共用 {@link TransitionCurveCache}。
 
-    /**
-     * 命名部件的悬停进度，帧率无关地趋向 0 或 1。
-     *
-     * <p>{@code key} 必须每帧稳定，否则每帧都会从头开始动。表里只会攒下几十个键（按钮 + 侧栏行 +
-     * 色卡），随界面生命周期一起释放，不需要清理。</p>
-     */
-    private float named(String key, boolean active) {
-        Float stored = namedProgress.get(key);
-        float now = stored == null ? (active ? 1f : 0f) : stored.floatValue();
-        now = Interpolations.interpolate(now, active ? 1f : 0f, 22f);
-        namedProgress.put(key, Float.valueOf(now));
-        return now;
+    /** 一段定长过渡的状态：从哪个值起、到哪个值去、什么时候起的、现在走到哪。 */
+    private static final class Channel {
+        float from;
+        float to;
+        float current;
+        long startNanos;
     }
 
     /**
-     * 条目行的动画状态，见 {@link #rowProgress}。
+     * 定长补间。方向中途反转时从<b>当前值</b>重新起一段完整的定长补间，而不是接着剩余时间跑 ——
+     * 这正是 CSS {@code transition} 的行为，也是「悬停还没淡完就移开」不跳变的条件。
      *
-     * <p>{@code on} 只在第一次见到这个条目时用：开关的初始位置要等于它当前的状态，
-     * 否则每次打开界面都会看到所有已开启的开关一起从左滑到右。</p>
+     * <p>第一次见到某个键时直接把通道落在目标上：侧栏高亮条、开关旋钮都不该在打开界面的那一帧
+     * 从 0 飞过来。</p>
      */
-    private float[] progressOf(HudSettingsModel.Entry entry, boolean on) {
+    private float motion(Channel chan, float target, double durationMs,
+                         TransitionCurveCache.CachedBezier curve) {
+        long now = System.nanoTime();
+        double span = Math.max(1.0, durationMs / SheetClock.speed());
+        double elapsed = (now - chan.startNanos) / 1_000_000.0;
+        chan.current = elapsed >= span ? chan.to
+                : (float) (chan.from + (chan.to - chan.from) * curve.at(elapsed / span));
+        if (target != chan.to) {
+            chan.from = chan.current;
+            chan.to = target;
+            chan.startNanos = now;
+        }
+        return chan.current;
+    }
+
+    private float motion(Channel chan, float target, double durationMs) {
+        return motion(chan, target, durationMs, TransitionCurveCache.MOTION);
+    }
+
+    /** 按名字取一条 {@code 0..1} 的通道，见 {@link #channels}。 */
+    private float motion(String key, float target, double durationMs,
+                         TransitionCurveCache.CachedBezier curve) {
+        Channel chan = channels.get(key);
+        if (chan == null) {
+            chan = new Channel();
+            chan.from = chan.to = chan.current = target;
+            chan.startNanos = System.nanoTime();
+            channels.put(key, chan);
+            return target;
+        }
+        return motion(chan, target, durationMs, curve);
+    }
+
+    private float motion(String key, float target, double durationMs) {
+        return motion(key, target, durationMs, TransitionCurveCache.MOTION);
+    }
+
+    /**
+     * 命名部件的悬停进度。
+     *
+     * <p>{@code key} 必须每帧稳定，否则每帧都会从头开始动。</p>
+     */
+    private float named(String key, boolean active) {
+        return motion(key, active ? 1f : 0f, HOVER_MS);
+    }
+
+    /**
+     * 条目行的三条通道：{@code [0]} 悬停、{@code [1]} 开关旋钮、{@code [2]} 滑块把手。
+     * 与 {@link #rowProgress} 一一对应，见那里的说明。
+     *
+     * <p>旋钮通道在第一次见到这个条目时就落在它当前的状态上：否则每次打开界面都会看到所有
+     * 已开启的开关一起从左滑到右。</p>
+     */
+    private Channel[] channelsOf(HudSettingsModel.Entry entry) {
+        Channel[] chans = rowChannels.get(entry);
+        if (chans == null) {
+            chans = new Channel[] { new Channel(), new Channel(), new Channel() };
+            chans[1].from = chans[1].to = chans[1].current = entry.isOn() ? 1f : 0f;
+            rowChannels.put(entry, chans);
+        }
+        return chans;
+    }
+
+    /** 条目行的动画状态，见 {@link #rowProgress}。真正的「走到哪了」在 {@link #channelsOf} 那三条通道里。 */
+    private float[] progressOf(HudSettingsModel.Entry entry) {
         float[] state = rowProgress.get(entry);
         if (state == null) {
-            state = new float[] { 0f, on ? 1f : 0f, 0f };
+            state = new float[] { 0f, 0f, 0f };
             rowProgress.put(entry, state);
         }
         return state;
+    }
+
+    /**
+     * 把 {@link #layerAlpha} 临时压到 {@code outer * gate}，返回进入前的值。
+     *
+     * <p>调用方必须在 {@code finally} 里还回去：这一层的淡入涉及几十个绘制调用，漏一处就是
+     * 「有一块不跟着淡」的破口。</p>
+     */
+    private float pushAlpha(float gate) {
+        float outer = layerAlpha;
+        layerAlpha = outer * clamp01(gate);
+        return outer;
+    }
+
+    /** 在 {@link #pageFade} 这条 t 上开一个缓动过的时间窗。 */
+    private float gate(double first, double travel) {
+        return (float) TransitionCurveCache.MOTION.at(SheetClock.window(pageFade, first,
+                Math.min(first + travel, 1.0)));
+    }
+
+    /** 侧栏第 {@code index} 行的到场进度。行与行等间距错峰，超过上限的并到最后一档。 */
+    private float navGate(int index) {
+        double first = NAV_FIRST + Math.min(index, NAV_STAGGER_LIMIT) * NAV_STEP;
+        return (float) TransitionCurveCache.MOTION.at(SheetClock.window(pageFade, first,
+                Math.min(first + NAV_TRAVEL, 1.0)));
+    }
+
+    /**
+     * 内容列第 {@code slot} 块（一张卡连同它里面的行）这一帧该有多实。
+     *
+     * <p>窗口右端必须钉在 1.0 以内：第 12 档的起点是 .74，加上 .54 的行程就是 1.28，而这条 t
+     * 最多只走到 1.0 —— 那一块就会永久停在半透明、偏几个像素的位置上，正是「切到某个分类
+     * 底下有几张卡一直是虚的」那种查起来最费劲的错。</p>
+     */
+    private float revealOf(int slot) {
+        double first = ROW_FIRST + Math.min(slot, ROW_STAGGER_LIMIT) * ROW_STEP;
+        return (float) TransitionCurveCache.MOTION.at(SheetClock.window(listFade, first,
+                Math.min(first + ROW_TRAVEL, 1.0)));
+    }
+
+    /** 进场那一段横向偏移：往下一个分类时新的从右边来，往上一个是左边；首次到场不偏。 */
+    private float slideX(float gate) {
+        return listDirection * (1f - gate) * CONTENT_SLIDE;
+    }
+
+    /** 进场那一段下坠：和淡入一起才有「落进来」，只淡入就是一块布亮起。 */
+    private float slideY(float gate) {
+        return (1f - gate) * CONTENT_DROP;
     }
 
     /** 把颜色的 alpha 按比例压低（保留原有 alpha 作为上限）。 */

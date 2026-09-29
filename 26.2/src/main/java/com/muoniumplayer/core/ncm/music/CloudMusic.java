@@ -787,6 +787,28 @@ public class CloudMusic implements SharedConstants {
             return false;
         }
     }
+    /**
+     * 房间里的 automix 交叠还剩多少毫秒；本机没在交叠时为 0。
+     *
+     * <p>存在的唯一理由是让一起听那一层知道「此刻这条时间轴正被两段播放着」。服务端心跳量的是
+     * 本机播放头与房间位置之差，而交叠期间这两者本来就不该相等：一条在淡出，另一条刚从入口点
+     * 淡进来，本机开始淡入的时刻又天然比房间晚几秒（帧延迟 + 一条落在软档里没纠的漂移 + 新
+     * 播放牌的缓冲）。把那段读数拿去比硬阈值，就会在淡入还没结束时对刚进来的播放牌做一次硬跳
+     * —— 用户报的「automix 听感被截断」正是这么来的。</p>
+     *
+     * <p>读的是渐变自己的进度：{@code AutomixFade.startedAt} 在暂停时会被平移，所以暂停中的
+     * 混音不会一边不动、一边把保护窗越推越长。</p>
+     */
+    public static long roomBlendRemainingMillis() {
+        try {
+            Thread active = playThread;
+            if (!(active instanceof PlayThread)) return 0L;
+            return ((PlayThread) active).blendRemainingMillis();
+        } catch (Throwable ignored) {
+            // 问不出长度就当没有交叠：纠偏照旧跑，最多是少了一层保护。
+            return 0L;
+        }
+    }
 
     /**
  * 返回归一化到 {@code 0.0..1.0} 的持久化播放器音量。
@@ -3042,6 +3064,21 @@ public class CloudMusic implements SharedConstants {
             if (!armStillValid(track.generation, track.queueRevision)) return false;
             roomHandoverRequested = true;
             return true;
+        }
+        /**
+         * 当前交叠还剩多少毫秒；没有在交叠、或渐变已经走完时为 0。
+         *
+         * <p>用 {@link #progressAt} 而不是「墙钟减 {@code startedAt}」：暂停时渐变时钟被冻住，
+         * 剩余长度必须跟着冻住，否则调用方（一起听的纠偏那层）会按一个跑得更快的时钟去延长
+         * 它的保护窗。</p>
+         */
+        long blendRemainingMillis() {
+            AutomixFade fade = activeFade;
+            if (fade == null) return 0L;
+            double progress = progressAt(fade, System.currentTimeMillis());
+            if (progress >= 1.0) return 0L;
+            if (progress <= 0.0) return fade.overlapMillis;
+            return (long) Math.ceil((1.0 - progress) * fade.overlapMillis);
         }
 
         /**

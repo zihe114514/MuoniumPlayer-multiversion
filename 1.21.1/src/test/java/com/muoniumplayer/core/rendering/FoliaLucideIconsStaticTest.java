@@ -70,23 +70,51 @@ class FoliaLucideIconsStaticTest {
         for (String name : names) {
             Path path = FoliaLucideIcons.pathForTest(name);
             assertNotNull(path, name + " 的路径解析不出来，多半是 d 字符串坏了");
-            Rect bounds = path.getBounds();
-            assertTrue(bounds.getWidth() > 0 && bounds.getHeight() > 0,
-                    name + " 的包围盒是空的");
-            assertTrue(bounds.getLeft() >= -GRID_SLACK && bounds.getTop() >= -GRID_SLACK
-                            && bounds.getRight() <= FoliaLucideIcons.GRID + GRID_SLACK
-                            && bounds.getBottom() <= FoliaLucideIcons.GRID + GRID_SLACK,
-                    name + " 的墨迹跑到了 24 网格外（" + bounds + "）—— 图元换算错了");
 
             int[][] grid = raster(path);
-            int ink = 0;
+            // 量的是**光栅出来的那块墨**，不是 path.getBounds()。Skia 那个盒对圆弧给的是
+            // 控制点盒，比真墨迹大一圈：向导新加的 radio 是两段 r=10 的大弧，控制点盒量出来
+            // 是 left=-2.13 / right=26.13（看着像换算错了），而屏幕上的墨其实落在 2..22 里。
+            // 这根钉子说的是「墨迹没跑出网格」，那就只能按像素量。
+            Rect ink = inkBox(grid);
+            assertTrue(ink.getWidth() > 0 && ink.getHeight() > 0, name + " 光栅之后没有一像素墨迹");
+            assertTrue(ink.getLeft() >= -GRID_SLACK && ink.getTop() >= -GRID_SLACK
+                            && ink.getRight() <= FoliaLucideIcons.GRID + GRID_SLACK
+                            && ink.getBottom() <= FoliaLucideIcons.GRID + GRID_SLACK,
+                    name + " 的墨迹跑到了 24 网格外（" + ink + "）—— 图元换算错了");
+
+            int cells = 0;
             for (int[] row : grid) {
                 for (int cell : row) {
-                    ink += cell;
+                    cells += cell;
                 }
             }
-            assertTrue(ink > 60, name + " 光栅之后几乎没有墨迹（" + ink + " 像素）");
+            assertTrue(cells > 60, name + " 光栅之后几乎没有墨迹（" + cells + " 像素）");
         }
+    }
+
+    /** 光栅格里那块墨的包围盒，换算回 24 网格单位（右下那条边算进去，所以 +1 格）。 */
+    private static Rect inkBox(int[][] grid) {
+        int left = SIZE;
+        int right = -1;
+        int top = SIZE;
+        int bottom = -1;
+        for (int y = 0; y < SIZE; y++) {
+            for (int x = 0; x < SIZE; x++) {
+                if (grid[y][x] == 0) {
+                    continue;
+                }
+                left = Math.min(left, x);
+                right = Math.max(right, x);
+                top = Math.min(top, y);
+                bottom = Math.max(bottom, y);
+            }
+        }
+        if (right < left || bottom < top) {
+            return Rect.makeLTRB(0, 0, 0, 0);
+        }
+        return Rect.makeLTRB((float) (left / (double) SCALE), (float) (top / (double) SCALE),
+                (float) ((right + 1) / (double) SCALE), (float) ((bottom + 1) / (double) SCALE));
     }
 
     @Test

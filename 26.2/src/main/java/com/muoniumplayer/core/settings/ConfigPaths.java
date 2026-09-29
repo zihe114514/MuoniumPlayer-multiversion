@@ -297,6 +297,26 @@ public final class ConfigPaths {
     /** 首次运行设置门控。独立保存，使引导状态不会污染播放器偏好设置。 */
     public static final File ONBOARDING = new File(CONFIG_DIRECTORY, "onboarding.json");
 
+    /**
+     * 首启引导那张「当前画面」抓帧的落盘草稿。
+     *
+     * <p>之所以真的落一次盘：五棵树的 {@code NativeImage} 像素打包方式不是一套
+     * （1.20.1 / 1.21.1 只有 {@code getPixelsRGBA()}，1.21.11 起才有 {@code getPixels()} /
+     * {@code getPixelsABGR()}），而 {@code writeToByteArray} 哪一版都没有。走 PNG 就没有通道顺序
+     * 可猜。用完即删；{@code -Dmuonium.debug.capture=true} 时留着给人直接打开看。</p>
+     */
+    public static final File INTRO_CAPTURE = new File(CONFIG_DIRECTORY, "intro_capture.png");
+
+    /**
+     * 【只给开发验证】存在就在下一个 tick 等价于「按了一次右 Shift」，文件本身随即被删掉。
+     *
+     * <p>自动化环境里合成按键驱动不了 {@code KeyMapping}（那一类要等 tick 循环里的
+     * {@code consumeClick()}，实测 vanilla 的 E 与 Esc 同样收不到），而覆盖层与引导的视觉验证
+     * 必须真的把界面开出来。这条只补「按那一下」，走的还是同一个
+     * {@code OnboardingManager.openPlayerEntry()}，不绕任何闸门。普通用户不会有这个文件。</p>
+     */
+    public static final File DEV_OPEN_PLAYER = new File(CONFIG_DIRECTORY, "dev_open_player");
+
     static {
         migrateLegacyFiles();
     }

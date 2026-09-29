@@ -18,6 +18,15 @@ public final class OnboardingState {
     private static final Object LOCK = new Object();
     private static boolean loaded;
     private static boolean completed;
+    /**
+     * 覆盖层是否已经放过。
+     *
+     * <p>与 {@code completed} 分开记，是因为这两件事的退出方式不同：覆盖层描完字就收，
+     * 玩家可以在引导里随时跳过（那算 completed）；但他在覆盖层上按 ESC 是「连引导一起不要」。
+     * 合成一个布尔的话，收掉覆盖层的人永远看不到引导，而放过覆盖层又退出游戏的人
+     * 下次进来还得再看一遍描字。</p>
+     */
+    private static boolean introSeen;
 
     private OnboardingState() {
     }
@@ -29,9 +38,29 @@ public final class OnboardingState {
         }
     }
 
+    public static boolean isIntroSeen() {
+        synchronized (LOCK) {
+            loadLocked();
+            return introSeen;
+        }
+    }
+
+    /** 覆盖层已经放过（或被玩家点开/ESC 掉），此后不再重复放。 */
+    public static void markIntroSeen() {
+        synchronized (LOCK) {
+            if (introSeen) {
+                return;
+            }
+            introSeen = true;
+            loaded = true;
+            saveLocked();
+        }
+    }
+
     public static void markCompleted() {
         synchronized (LOCK) {
             completed = true;
+            introSeen = true;
             loaded = true;
             saveLocked();
         }
@@ -41,6 +70,7 @@ public final class OnboardingState {
     public static void reset() {
         synchronized (LOCK) {
             completed = false;
+            introSeen = false;
             loaded = true;
             saveLocked();
         }
@@ -53,9 +83,16 @@ public final class OnboardingState {
         if (!file.isFile()) return;
         try {
             JsonObject root = JsonConfigStorage.readObject(file, GSON);
-            completed = root != null && root.has("completed") && root.get("completed").getAsBoolean();
+            if (root == null) {
+                return;
+            }
+            completed = root.has("completed") && root.get("completed").getAsBoolean();
+            // 旧档（schemaVersion 1）没有这个字段：那时根本没有这层描字，看过就等于看过。
+            // 按 false 处理会让所有人重看一遍 4 秒动画，按 true 处理才对老用户成立。
+            introSeen = !root.has("introSeen") || root.get("introSeen").getAsBoolean();
         } catch (Throwable ignored) {
             completed = false;
+            introSeen = false;
         }
     }
 
@@ -66,8 +103,9 @@ public final class OnboardingState {
         Path target = file.toPath();
         Path temp = target.resolveSibling(file.getName() + ".tmp");
         JsonObject root = new JsonObject();
-        root.addProperty("schemaVersion", 1);
+        root.addProperty("schemaVersion", 2);
         root.addProperty("completed", completed);
+        root.addProperty("introSeen", introSeen);
         try {
             JsonConfigStorage.writeObject(temp.toFile(), GSON, root);
             try {
