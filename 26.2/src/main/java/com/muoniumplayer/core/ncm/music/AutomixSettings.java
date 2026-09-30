@@ -150,6 +150,14 @@ public final class AutomixSettings {
      */
     private static boolean advancedMode = false;
     private static boolean transitionAnimation = true;
+    /**
+     * 把接缝画在进度条上：一条竖线标出「从哪里开始切」，一段半透明带子标出「这一段是
+     * 两首歌叠在一起」。见 {@link AutomixCueMarker}。
+     *
+     * <p>出厂打开，因为它只读一份<b>已经算好</b>的计划，不参与任何时序决策。关掉之后
+     * 计划照旧算、交接照旧发生，只是玩家看不见。</p>
+     */
+    private static boolean cueMarker = true;
     private static boolean modelInferenceStatus = true;
     private static String modelsDirectory = "";
     private static float overlapSeconds = DEFAULT_OVERLAP_SECONDS;
@@ -240,6 +248,29 @@ public final class AutomixSettings {
         synchronized (LOCK) {
             if (transitionAnimation == value) return;
             transitionAnimation = value;
+            saveLocked();
+        }
+    }
+
+    /**
+     * 进度条上要不要画出接缝（切点竖线 + 交叠带）。出厂打开。
+     *
+     * <p>它与「过渡动画」不重复：那一件只在<b>交接正在进行</b>时于屏幕中央画圆环，且交叠
+     * 短于五秒干脆不出现；这一件在<b>交接之前</b>就把位置告诉玩家，跟着进度条走。两者共用
+     * 同一份计划，各自独立可关。</p>
+     */
+    public static boolean isCueMarkerEnabled() {
+        load();
+        synchronized (LOCK) {
+            return cueMarker;
+        }
+    }
+
+    public static void setCueMarkerEnabled(boolean value) {
+        load();
+        synchronized (LOCK) {
+            if (cueMarker == value) return;
+            cueMarker = value;
             saveLocked();
         }
     }
@@ -531,6 +562,9 @@ public final class AutomixSettings {
                 if (root.has("transitionAnimation") && !root.get("transitionAnimation").isJsonNull()) {
                     transitionAnimation = root.get("transitionAnimation").getAsBoolean();
                 }
+                if (root.has("cueMarker") && !root.get("cueMarker").isJsonNull()) {
+                    cueMarker = root.get("cueMarker").getAsBoolean();
+                }
                 if (root.has("modelInferenceStatus") && !root.get("modelInferenceStatus").isJsonNull()) {
                     modelInferenceStatus = root.get("modelInferenceStatus").getAsBoolean();
                 }
@@ -557,6 +591,7 @@ public final class AutomixSettings {
             root.addProperty("performanceMode", performanceMode);
             root.addProperty("advancedMode", advancedMode);
             root.addProperty("transitionAnimation", transitionAnimation);
+            root.addProperty("cueMarker", cueMarker);
             root.addProperty("modelInferenceStatus", modelInferenceStatus);
             root.addProperty("beatAlign", beatAlign);
             root.addProperty("bassSwap", bassSwap);

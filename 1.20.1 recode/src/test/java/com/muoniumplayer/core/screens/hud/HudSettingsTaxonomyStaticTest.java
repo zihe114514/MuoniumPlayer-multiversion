@@ -38,12 +38,14 @@ class HudSettingsTaxonomyStaticTest {
     private static final List<String> TITLES = Arrays.asList(
             "歌词样式", "面板与卡片", "灵动岛", "无缝切换", "界面与主题", "信息栏与封面", "缓存与公告");
 
+// 切点标记：2026-10-01「无缝切换」那页多一条（把 automix 的接缝画在进度条上的开关），条目数 20 → 21，总数 106 → 107。
     /** 与 {@link #TITLES} 同序的条目数；总和必须等于 {@link #TOTAL}。 */
-    private static final List<Integer> COUNTS = Arrays.asList(21, 8, 22, 20, 21, 5, 3);
+    private static final List<Integer> COUNTS = Arrays.asList(21, 8, 22, 21, 27, 5, 3);
 
     /** 「界面与主题」那页 2026-09-30 从 19 条长到 21 条：真玻璃材质组多了「实时背景采集」与
-     *  「帧率不够时自动摘玻璃」两个开关。 */
-    private static final int TOTAL = 100;
+     *  「帧率不够时自动摘玻璃」两个开关；同日傍晚又长到 26 条：多了四面各自的模糊倍率
+     *  与「玻璃亮部溢出」；夜里再到 27 条：多了「玻璃融合半径」。 */
+    private static final int TOTAL = 107;
 
     /** 侧栏一大块的名字。分类要按块相邻摆放，见 {@code GuiHudEditorFolia#navGroupLabel}。 */
     private static final List<String> NAV_GROUPS =
@@ -88,7 +90,7 @@ class HudSettingsTaxonomyStaticTest {
     }
 
     @Test
-    @DisplayName("滑块条目不重复，且正好覆盖 42 个 HudSetting")
+    @DisplayName("滑块条目不重复，且正好覆盖 47 个 HudSetting")
     void slidersAppearExactlyOnce() {
         List<String> settings = new ArrayList<String>();
         for (HudSettingsModel.Category category : HudSettingsModel.categories()) {
@@ -100,7 +102,7 @@ class HudSettingsTaxonomyStaticTest {
                 }
             }
         }
-        assertEquals(42, settings.size(), "滑块条目数变了：每个 HudSetting 应该恰好出现一次");
+        assertEquals(48, settings.size(), "滑块条目数变了：每个 HudSetting 应该恰好出现一次");
         assertEquals(settings.size(), new HashSet<String>(settings).size(),
                 "同一个 HudSetting 被塞进了两个组：" + duplicates(settings));
     }

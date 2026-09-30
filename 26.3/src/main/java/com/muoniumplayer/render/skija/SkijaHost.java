@@ -349,6 +349,9 @@ public final class SkijaHost {
         try {
             // 业务代码可能压了变换却没弹（异常路径、或者 push/pop 数量写错）。
             // 只 restore 一层的话，本帧的坐标系会残留到下一帧。这里先把上层压的层数收干净。
+            // 融合组必须在调用点自己那套矩阵下收尾（见 GlassEdgeBatch 的类注释）。
+            // 到这一行还开着的组已经没有正确的坐标系可用，只能丢掉并说一声。
+            GlassEdgeBatch.abandonIfOpen();
             SkijaGfx.restoreDepthTo(0);
             SkijaGfx.endFrame();
             SkijaClip.resetFrame();

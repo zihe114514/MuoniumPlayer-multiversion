@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Clean-room HTDemucs feature runner for MuoniumPlayer Folia mode.
-# Input: flat float32 [left(total), right(total)]. Output: JSON transition evidence.
+# Input: flat float32 [left(total), right(total)]. Output: JSON transition evidence,
+# plus (可选 argv[4]) 窗口长度那么长的人声素材 float32，供交接期按位置减掉人声。
 import json
 import os
 import sys
@@ -123,8 +124,51 @@ def seconds(cell):
     return round(cell * CELL_SECONDS, 4) if cell >= 0 else -1.0
 
 
+def write_vocal_material(path, vocal):
+    """人声素材落盘：交错度=1 的 float32，样本位置与送进来的窗口逐帧对齐。
+
+    交接期要把这个人声从播放素材里减掉（{@code out = raw + vocal * (level - 1)}），所以它必须
+    是单声道折下来的那一份 —— 输入本来就是把单声道写到左右两侧，立体声人声在这里没有信息，
+    写成两声道只会把缓存翻倍。
+    """
+    if not path or path == "-":
+        return
+    np.ascontiguousarray(vocal, dtype="<f4").tofile(path)
+
+
+def vocal_projection(mix, vocal, env, threshold, hop):
+    """人声在混音里的实际比例：把 mix 投影到 vocal 方向上的最小二乘系数。
+
+    分离模型给出的不是「混音里那一份人声」的严格副本，直接相减会留下残留或者把伴奏一起削掉。
+    这个系数就是让残差能量最小的那个缩放，交接期用它把素材对回原曲的响度。
+    只统计确实有人在唱的时间格 —— 把静音段算进来会把系数拉向 0。
+
+    {@code hop} 由调用方按 envelope() 同一个式子算并传进来：用
+    {@code vocal.size // env.size} 反推会在除不尽时逐格累积漂移，把窗口罩到错的样本上。
+    """
+    if hop <= 0:
+        return 1.0
+    usable = min(env.shape[0], vocal.shape[0] // hop, mix.shape[0] // hop)
+    numerator = 0.0
+    denominator = 0.0
+    for index in range(usable):
+        if env[index] < threshold:
+            continue
+        start = index * hop
+        window = vocal[start:start + hop]
+        reference = mix[start:start + hop]
+        if window.size != hop or reference.size != hop:
+            continue
+        numerator += float(np.dot(reference, window))
+        denominator += float(np.dot(window, window))
+    if denominator <= 1e-12:
+        return 1.0
+    return float(numerator / denominator)
+
+
 def main():
     input_path, output_path, model_path = sys.argv[1:4]
+    material_path = sys.argv[4] if len(sys.argv) > 4 else "-"
     raw = np.fromfile(input_path, dtype=np.float32)
     if raw.size < 2:
         raise RuntimeError("input is empty")
@@ -163,6 +207,12 @@ def main():
     )
     confidence = max(0.0, min(1.0, stem_energy / mix_energy))
 
+    # 人声素材：交接期把这一段按位置减回原曲，让进来的歌先只剩伴奏。
+    # 只在调用方给了路径时才写（出场侧只要时间戳，写一份用不上的缓存要 5 MB）。
+    write_vocal_material(material_path, vocal)
+    projection = vocal_projection(mix, vocal, vocal_env, vocal_threshold,
+                                 max(1, int(round(sample_rate * CELL_SECONDS))))
+
     json.dump({
         "vocal_start": seconds(vocal_start),
         "vocal_end": seconds(vocal_end),
@@ -170,6 +220,7 @@ def main():
         "bass_end": seconds(bass_end),
         "sustained_vocal_end": seconds(release),
         "confidence": round(confidence, 5),
+        "vocal_projection": round(projection, 5),
         "sample_rate": sample_rate,
         "samples": total,
     }, open(output_path, "w", encoding="utf-8"), ensure_ascii=False)

@@ -771,6 +771,12 @@ public final class HudSettingsModel {
                                                 if (enabled) AutomixTransitionAnimation.preview();
                                             }
                                         }),
+                                toggle("切点标记", "在游戏内歌曲信息条、播放页与歌词页的进度条上画出这次交接的位置：竖线是「从哪里开始切」，半透明带子是「这一段两首歌叠在一起」。只在系统真的排出了交接时才显示——还没预备好、或者一起听那一份计划还没到，就什么都不画，不猜一个位置。接缝本身照常发生，关掉只是看不见。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() { return AutomixSettings.isCueMarkerEnabled(); }
+                                        }, new Runnable() {
+                                            public void run() { AutomixSettings.setCueMarkerEnabled(!AutomixSettings.isCueMarkerEnabled()); }
+                                        }, AutomixSettings::isEnabled),
                                 choice("原版重叠时长", "仅原版处理使用；Folia 会按拍数、结构与人声尾音动态决定重叠长度。",
                                         new Supplier<String>() {
                                             public String get() {
@@ -1059,7 +1065,25 @@ public final class HudSettingsModel {
                                 slider(HudSetting.GLASS_TINT, "玻璃自身颜色多浓。往 0 拖是干净透明，"
                                         + "往 1 拖背景基本看不见，字最好读。"),
                                 slider(HudSetting.GLASS_EDGE_GLOW, "边缘那一圈光的强度。真玻璃下这一档同时决定"
-                                                + "背景被折射多少：推到 0 就只剩糊、不折。"))),
+                                                + "背景被折射多少：推到 0 就只剩糊、不折。"),
+                                slider(HudSetting.GLASS_BLUR_PLAYER, "播放器面板这一面的模糊倍率，乘在上面"
+                                        + "「玻璃模糊」之上。1 就是与全局同档；这一面通常是最大的那块玻璃，"
+                                        + "所以拿它当基准。"),
+                                slider(HudSetting.GLASS_BLUR_ISLAND, "灵动岛的模糊倍率。岛只有几十像素高，"
+                                        + "糊到与面板同档会把轮廓一起吃掉（边缘光与折射都读不出来），"
+                                        + "所以默认比面板轻一档。"),
+                                slider(HudSetting.GLASS_BLUR_LYRIC, "桌面歌词卡片的模糊倍率。卡片背后通常是"
+                                        + "亮天空与树叶，糊得重一点字才立得住。"),
+                                slider(HudSetting.GLASS_BLUR_EDITORS, "三套 HUD 编辑器面板的模糊倍率。"
+                                        + "编辑器里要看的是控件本身，往低了调会更清楚。"),
+                                slider(HudSetting.GLASS_BLOOM, "亮部溢出：玻璃后面那团亮的东西（天空、火、"
+                                        + "霓虹）会往面内软软地晕开多少。0 完全不画，也一格开销都不付出。"
+                                        + "亮背景上想要「玻璃发烫」的那股味道才需要它。"),
+                                slider(HudSetting.GLASS_FUSION, "相邻玻璃的融合半径，单位是屏幕像素。"
+                                        + "歌曲列表那一排挨着的行会攒成一张距离场一起画边，于是两行之间"
+                                        + "鼓出一道颈、整片列表读起来是一块玻璃而不是一排。0 就是各画各的；"
+                                        + "两块要隔得比它的一半还近才连得上，所以不留缝的列表也得推到十几"
+                                        + "才看得出变化，推太大整排会糊成一坨。"))),
 
                 new Category("信息栏与封面", "桌面信息栏的显隐与摆放，以及封面与全屏页标签", 0xFFFFA971, HudSettingsIcons.ALBUM, "界面与外观",
                         new Group("显示与摆放", HudSettingsIcons.VISIBILITY,

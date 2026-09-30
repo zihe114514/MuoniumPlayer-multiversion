@@ -27,7 +27,7 @@ final class HudEditorLayout {
         if (coverExpanded) contentHeight += colorRowHeight;
         // 无缝切换分组：总开关、重叠时长、跳过前奏、小节对齐、低频交换、去人声淡入、节奏锁定、
         // 音高跳跃，共 8 行等高控件。
-        if (automixExpanded) contentHeight += sectionHeight + colorRowHeight * 16;
+        if (automixExpanded) contentHeight += sectionHeight + colorRowHeight * 17;  // 2026-10-01 多一行「切点标记」
         // 存储分组：缓存上限、立即清理，两行等高控件。
         if (storageExpanded) contentHeight += colorRowHeight * 2;
         // 播放器界面分组：窗口自适应缩放开关 + 淡入淡出速度滑块。

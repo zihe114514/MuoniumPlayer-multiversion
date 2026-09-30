@@ -478,6 +478,11 @@ public class PlaylistPanel extends NCMPanel {
 
         rwMusicsContainer.addChild(musicsPanel);
         musicsPanel.setSpacing(0);
+        // 行与行挨着，就按<em>一块</em>玻璃收尾：这一组里每行登记自己的轮廓，画完子控件之后
+        // 由一趟着色器按整张距离场画边（设置里「玻璃融合半径」推到十几才看得见变化，0 就是
+        // 原来那样每行一圈）。为什么点名的这个容器而不是那一排行：融合必须括在<em>同一层裁剪</em>
+        // 里，ScrollPanel 的 begin/endClip 正好就是那一层（见 AbstractWidget#renderWidget）。
+        musicsPanel.setGlassFusion(GlassLook.Surface.PLAYER);
 
         musicsPanel.setBeforeRenderCallback(() -> musicsPanel.setMargin(0));
 

@@ -325,8 +325,61 @@ public class AudioPlayer {
         if (!isUsable()) return;
         this.player.setAmplitudeNow(this.volume * this.fadeGain);
         AutomixDeckChain chain = this.automixChain;
-        if (chain != null) chain.setTargetsNow(this.bassGainDb, this.vocalDuckDepth,
+        if (chain != null) chain.setTargetsNow(this.bassGainDb, routeVocalDepth(this.vocalDuckDepth),
                 this.midGainDb, this.highGainDb);
+    }
+
+    /**
+     * 这一路 deck 的人声让路由谁来做，并把深度发给做得了的那一个。
+     *
+     * <p>两条实现做的是同一件事（让进来的那首先只剩伴奏），只是精度差一个量级：素材淡入是逐采样
+     * 把分离出来的人声减掉，带限抵消只能压正中间那一块。手上有人声素材时<b>整条交给素材</b>、
+     * 滤波链深度归零 —— 不是「素材为主、抵消器补一点」，两条同时全开会在人声原本所在的位置上
+     * 减两遍，那是一段中空的下陷，比少减一点难听得多。</p>
+     *
+     * <p>字段 {@code vocalDuckDepth} 里留的仍然是计划给的值：日志、界面与回退都按那条曲线说话，
+     * 只有落到信号图上的那一份被改写。</p>
+     *
+     * @return 该写进滤波链的深度（素材接管时恒为 0，即滤波链的位精确直通分支）
+     */
+    private float routeVocalDepth(float depth) {
+        SoundFile deck = this.player;
+        if (deck == null || !deck.hasVocalMaterial()) return depth;
+        deck.setVocalMaterialLevel(1.0 - depth);
+        return 0f;
+    }
+
+    /**
+     * 把离线分好的人声素材接到这路 deck。
+     *
+     * <p>只在预备线程上调用（那里可以同步读盘），且必须在交接出声之前：接上之后这条 deck 的
+     * 人声控制就换了执行者，所以要拿当前的深度值重新分派一次，把已经按抵消器设下去的那一份交还。</p>
+     *
+     * @return 是否接上了；接不上时后续一切照旧走抵消器
+     */
+    public boolean attachVocalMaterial(FoliaVocalStem stem) {
+        SoundFile deck = this.player;
+        if (deck == null || stem == null) return false;
+        if (!deck.attachVocalMaterial(stem.samples, stem.firstFrame,
+                FoliaStemProfile.MATERIAL_RATE, stem.ratio)) return false;
+        AutomixDeckChain chain = this.automixChain;
+        if (chain != null) chain.duckDepth(routeVocalDepth(this.vocalDuckDepth));
+        return true;
+    }
+
+    /** 卸下这一路的人声素材，把深度交还给滤波链；一次交接用完就该调它（素材有几 MB）。 */
+    public void releaseVocalMaterial() {
+        SoundFile deck = this.player;
+        if (deck == null || !deck.hasVocalMaterial()) return;
+        deck.detachVocalMaterial();
+        AutomixDeckChain chain = this.automixChain;
+        if (chain != null) chain.duckDepth(this.vocalDuckDepth);
+    }
+
+    /** 这条接缝的人声让路是否已经由素材接管。 */
+    public boolean hasVocalMaterial() {
+        SoundFile deck = this.player;
+        return deck != null && deck.hasVocalMaterial();
     }
 
     /**
@@ -382,7 +435,10 @@ public class AudioPlayer {
             // 这种情况下减去中央会把整个被抵消的频带一起带走。
             // 
             this.automixChain.stereo(channelCount() >= 2);
-            this.automixChain.resetTo(this.bassGainDb, this.vocalDuckDepth);
+            // 走 routeVocalDepth 而不是直接读字段：素材接得上时这条链的深度必须是 0，
+            // 否则预卷好的 deck 在 prepareStart 里会被重新 resetTo 一次，把已经在用素材减的
+            // 那条人声又用抵消器减一遍 —— 症状是交接中段人声所在的那个位置整段中空。
+            this.automixChain.resetTo(this.bassGainDb, routeVocalDepth(this.vocalDuckDepth));
             this.automixChain.midGainDb(this.midGainDb);
             this.automixChain.highGainDb(this.highGainDb);
             // 不能用 isProcessing() 判断：pause() 会不打招呼就把效果从电路里扯掉，
@@ -451,9 +507,15 @@ public class AudioPlayer {
                 ? 0.0f : Math.max(0.0f, Math.min(1.0f, depth));
         this.vocalDuckDepth = safe;
         AutomixDeckChain chain = this.automixChain;
-        if (chain == null) return;
+        if (chain == null) {
+            // 链还没接上（预备阶段就是这样：深度要在 prepareStart 之前就位，链在那一步才建）。
+            // 素材这一路不依赖链，所以照样要分派出去，否则接了素材的 deck 只有等第一帧曲线
+            // 落下来才开始减人声，第一个音节就漏了。
+            routeVocalDepth(safe);
+            return;
+        }
         try {
-            chain.duckDepth(safe);
+            chain.duckDepth(routeVocalDepth(safe));
         } catch (RuntimeException ignored) {
         }
     }
@@ -474,6 +536,20 @@ public class AudioPlayer {
 
     public File getSourceFile() {
         return this.sourceFile;
+    }
+
+    /**
+     * 这一路播放素材自身的采样率；deck 还没建好或已经释放时为 {@code 0}。
+     *
+     * <p>人声素材按它判断能不能对齐：分离出来的那份固定在 44.1k，跟播放素材不同率时相减留下的是
+     * 错位的残差，所以要么先问这个数，要么根本别接。</p>
+     */
+    public int sampleRate() {
+        try {
+            return isUsable() ? this.player.sampleRate() : 0;
+        } catch (RuntimeException ignored) {
+            return 0;
+        }
     }
 
     public float getBassGainDb() {
@@ -577,6 +653,9 @@ public class AudioPlayer {
         setMidGainDb(0.0f);
         setHighGainDb(0.0f);
         setVocalDuckDepth(0.0f);
+        // 素材只在交接那一段有用：先归位（setVocalDuckDepth 已经把它拉回 1，也就是恒等直通）,
+        // 再把那几 MB 交出去。留在 deck 上会跟着这首歌一直活到下一首，而下一首的接缝要的是另一份。
+        releaseVocalMaterial();
         if (Math.abs(this.playbackRate - 1.0f) > .0005f
                 || Math.abs(this.pitchRatio - 1.0f) > .0005f) {
             setSpeedAndPitch(1.0f, 1.0f);

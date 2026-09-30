@@ -599,6 +599,9 @@ public class GuiHudEditor extends GuiScreen {
                 drawToggleRow(fr, "过渡动画", AutomixSettings.isTransitionAnimationEnabled(),
                         x + 6, rowY, mouseX, mouseY);
                 rowY += COLOR_ROW_H;
+                drawToggleRow(fr, "切点标记", AutomixSettings.isCueMarkerEnabled(),
+                        x + 6, rowY, mouseX, mouseY);
+                rowY += COLOR_ROW_H;
                 if (!AutomixSettings.isFoliaEngine()) {
                     drawChoiceRow(fr, "原版重叠时长", AutomixSettings.getOverlapLabel(),
                             x + 6, rowY, mouseX, mouseY);
@@ -1220,6 +1223,11 @@ public class GuiHudEditor extends GuiScreen {
                         return;
                     }
                     rowY += COLOR_ROW_H;
+                    if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                        AutomixSettings.setAdvancedModeEnabled(!AutomixSettings.isAdvancedModeEnabled());
+                        return;
+                    }
+                    rowY += COLOR_ROW_H;
                 }
                 if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
                     boolean enabled = !AutomixSettings.isTransitionAnimationEnabled();
@@ -1228,14 +1236,16 @@ public class GuiHudEditor extends GuiScreen {
                     return;
                 }
                 rowY += COLOR_ROW_H;
+                // 「切点标记」那一行。命中必须紧跟在过渡动画之后、原版重叠时长之前，
+                // 与上面绘制的顺序逐行对齐 —— 这一段的行号全靠手工同步，错一位就会点到隔壁。
+                if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                    AutomixSettings.setCueMarkerEnabled(!AutomixSettings.isCueMarkerEnabled());
+                    return;
+                }
+                rowY += COLOR_ROW_H;
                 if (!AutomixSettings.isFoliaEngine()) {
                     if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
                         AutomixSettings.cycleOverlapSeconds();
-                        return;
-                    }
-                    rowY += COLOR_ROW_H;
-                    if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
-                        AutomixSettings.setAdvancedModeEnabled(!AutomixSettings.isAdvancedModeEnabled());
                         return;
                     }
                     rowY += COLOR_ROW_H;

@@ -6,6 +6,7 @@ import io.github.humbleui.skija.Canvas;
 import io.github.humbleui.skija.ColorAlphaType;
 import io.github.humbleui.skija.ColorSpace;
 import io.github.humbleui.skija.ColorType;
+import io.github.humbleui.skija.Data;
 import io.github.humbleui.skija.DirectContext;
 import io.github.humbleui.skija.FilterTileMode;
 import io.github.humbleui.skija.FramebufferFormat;
@@ -13,6 +14,8 @@ import io.github.humbleui.skija.GLTextureInfo;
 import io.github.humbleui.skija.Image;
 import io.github.humbleui.skija.ImageFilter;
 import io.github.humbleui.skija.Paint;
+import io.github.humbleui.skija.RuntimeEffect;
+import io.github.humbleui.skija.Shader;
 import io.github.humbleui.skija.Surface;
 import io.github.humbleui.skija.SurfaceOrigin;
 import org.lwjgl.opengl.GL11;
@@ -107,23 +110,38 @@ public final class GlassBackdrop {
     private static Image image;
 
     /**
-     * 预糊那一层（见 {@link #blurred(float)}）：第二张纹理 + 自己的 FBO + 包出来的画布 + 借给
-     * Skia 的视图。尺寸永远跟 {@link #textureWidth} 一致，所以映射与源矩形两头通用。
+     * 预糊那一层：最多 {@link GlassBlurLevels#SLOTS} 个槽，每个槽是「一张自己的纹理 + FBO +
+     * 包出来的画布 + 借给 Skia 的视图」，按半径分档（一处一档模糊强度）。尺寸永远跟
+     * {@link #textureWidth} 一致，所以映射与源矩形两头通用。
      *
      * <p>为什么不用 {@code makeImageSnapshot}：快照是<b>带生命周期的副本</b>，下一次绘制会触发
      * copy-on-write，而 {@code GlassRefraction} 把背景当子 shader 缓存着跨帧用——快照一旦被回收，
      * 缓存里的 shader 就指向一个死对象。借来的外部纹理没有这个问题：内容原地换，视图不动。
+     * 同一句话对多槽版成立，只是「原地换」的范围从一张变成每档一张。</p>
+     *
+     * <p>哪一格命中、往哪一格重建、预算花完借谁，全在 {@link GlassBlurLevels} 里算，
+     * 这里只负责持有 GL 对象。</p>
      */
-    private static int blurTextureId;
-    private static int blurFramebufferId;
-    private static BackendRenderTarget blurBackend;
-    private static Surface blurSurface;
-    private static Image blurImage;
-    private static int blurWidth;
-    private static int blurHeight;
-    /** 预糊是按哪一档半径做的；与 {@link #blurBuiltAtCapture} 一起决定「这一帧要不要重糊」。 */
-    private static float blurSigmaKey = -1f;
-    private static long blurBuiltAtCapture = -1L;
+    private static final BlurSlot[] blurSlots = new BlurSlot[GlassBlurLevels.SLOTS];
+    private static final GlassBlurLevels blurLevels = new GlassBlurLevels();
+
+    static {
+        for (int i = 0; i < blurSlots.length; i++) {
+            blurSlots[i] = new BlurSlot();
+        }
+    }
+
+    /** 一个预糊槽位的裸资源。字段留成包内可见，好让策略与探针直接读，不做封装。 */
+    static final class BlurSlot {
+        int textureId;
+        int framebufferId;
+        BackendRenderTarget backend;
+        Surface surface;
+        Image image;
+        int width;
+        int height;
+    }
+
     /** 预糊这一层建不起来（只影响开销，不影响有没有玻璃）。 */
     private static boolean blurBroken;
 
@@ -369,63 +387,76 @@ public final class GlassBackdrop {
         }
         // 半高斯半径一档就够：滑块是连续的，按整数分档会让「拖滑块的过程中」每帧重建一次。
         float key = Math.round(sigma * 2f);
-        if (blurImage != null && key == blurSigmaKey && blurBuiltAtCapture == captures) {
-            return blurImage;
+        blurLevels.beginCapture(captures);
+        int hit = blurLevels.find(key, captures);
+        if (hit >= 0) {
+            blurLevels.touch(hit);
+            return borrowBlur(SkijaHost.context(), blurSlots[hit]);
         }
-        return rebuildBlur(raw, sigma, key);
+        // 预算花完就不糊新一档了，借本代数里已经糊好的那一档：差半档半径看不出来，
+        // 多一遍全屏高斯看得出来（实时档下每一档都是每付一次的钱）。
+        if (blurLevels.overBudget()) {
+            int borrowed = blurLevels.nearest(key, captures);
+            if (borrowed >= 0) {
+                blurLevels.touch(borrowed);
+                return borrowBlur(SkijaHost.context(), blurSlots[borrowed]);
+            }
+            // 一档都没建过（第一次请求就撞上预算为 0 的边界）→ 往下照常建，绝不能返回 null，
+            // 那等于让玻璃整层消失。
+        }
+        return rebuildBlur(raw, sigma, key, blurLevels.allocate(key, captures));
     }
 
-    /** 建（或重建）预糊那张。任何一步不对都只置 {@link #blurBroken}，不影响没预糊时的旧画法。 */
-    private static Image rebuildBlur(Image raw, float sigma, float key) {
+    /** 建（或重建）第 {@code slot} 档预糊。任何一步不对都只置 {@link #blurBroken}，不影响没预糊时的旧画法。 */
+    private static Image rebuildBlur(Image raw, float sigma, float key, int slot) {
         DirectContext context = SkijaHost.context();
-        if (context == null || textureWidth <= 0 || textureHeight <= 0) {
+        if (context == null || textureWidth <= 0 || textureHeight <= 0 || slot < 0) {
             return null;
         }
         try {
-            if (!ensureBlurTarget()) {
+            if (!ensureBlurTarget(blurSlots[slot])) {
                 return null;
             }
             try (ImageFilter blur = ImageFilter.makeBlur(sigma, sigma, FilterTileMode.CLAMP);
                  Paint paint = new Paint().setImageFilter(blur)) {
-                Canvas canvas = blurSurface.getCanvas();
+                Canvas canvas = blurSlots[slot].surface.getCanvas();
                 // CLAMP 的糊是在图内做的，整张图铺满画一次就是完整结果，不需要先 clear。
                 canvas.drawImage(raw, 0f, 0f, paint);
             }
-            context.flush(blurSurface);
-            blurSigmaKey = key;
-            blurBuiltAtCapture = captures;
-            return borrowBlur(context);
+            context.flush(blurSlots[slot].surface);
+            blurLevels.markBuilt(slot, key, captures);
+            return borrowBlur(context, blurSlots[slot]);
         } catch (Throwable failure) {
             blurBroken = true;
-            releaseBlurTarget();
+            releaseAllBlurTargets();
             System.out.println(TAG + "预糊背景建不出来，玻璃退回逐面板自己糊（功能不受影响）: " + failure);
             return null;
         }
     }
 
     /**
-     * 预糊目标：第二张同尺寸纹理 + 自己的 FBO，包成一块 Skia 画布。
+     * 第 {@code slot} 档预糊目标：一张同尺寸纹理 + 自己的 FBO，包成一块 Skia 画布。
      *
      * <p>尺寸跟着采集目标走，所以倍率与窗口一改就要整组重建。纹理所有权仍在 GL 这边
      * （{@code borrow} 而不是 {@code adopt}），Skia 只借看，不会替我们删。</p>
      */
-    private static boolean ensureBlurTarget() {
-        if (blurSurface != null && blurWidth == textureWidth && blurHeight == textureHeight) {
+    private static boolean ensureBlurTarget(BlurSlot target) {
+        if (target.surface != null && target.width == textureWidth && target.height == textureHeight) {
             return true;
         }
-        releaseBlurTarget();
-        blurTextureId = GL11.glGenTextures();
-        blurFramebufferId = GL30.glGenFramebuffers();
-        if (blurTextureId == 0 || blurFramebufferId == 0) {
+        releaseBlurTarget(target);
+        target.textureId = GL11.glGenTextures();
+        target.framebufferId = GL30.glGenFramebuffers();
+        if (target.textureId == 0 || target.framebufferId == 0) {
             blurBroken = true;
-            releaseBlurTarget();
+            releaseBlurTarget(target);
             System.out.println(TAG + "预糊目标的 GL 对象建不出来，玻璃退回逐面板自己糊");
             return false;
         }
         int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
         int previousFramebuffer = GL11.glGetInteger(GL30.GL_FRAMEBUFFER_BINDING);
         try {
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, blurTextureId);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, target.textureId);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
@@ -433,13 +464,13 @@ public final class GlassBackdrop {
             GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, internalFormat(),
                     textureWidth, textureHeight, 0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE,
                     (java.nio.ByteBuffer) null);
-            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, blurFramebufferId);
+            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, target.framebufferId);
             GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0,
-                    GL11.GL_TEXTURE_2D, blurTextureId, 0);
+                    GL11.GL_TEXTURE_2D, target.textureId, 0);
             if (GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER)
                     != GL30.GL_FRAMEBUFFER_COMPLETE) {
                 blurBroken = true;
-                releaseBlurTarget();
+                releaseBlurTarget(target);
                 System.out.println(TAG + "预糊目标不完整，玻璃退回逐面板自己糊");
                 return false;
             }
@@ -448,63 +479,254 @@ public final class GlassBackdrop {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
         }
         DirectContext context = SkijaHost.context();
-        blurBackend = BackendRenderTarget.makeGL(textureWidth, textureHeight, 0, 0,
-                blurFramebufferId, FramebufferFormat.GR_GL_RGBA8);
-        blurSurface = Surface.wrapBackendRenderTarget(context, blurBackend,
+        target.backend = BackendRenderTarget.makeGL(textureWidth, textureHeight, 0, 0,
+                target.framebufferId, FramebufferFormat.GR_GL_RGBA8);
+        target.surface = Surface.wrapBackendRenderTarget(context, target.backend,
                 // 与采集目标同一个原点约定：这块 FBO 是 Skia 画出来的，而它写的那张纹理
                 // 之后要按 BOTTOM_LEFT 借给 Skia 读（见 wrapIntoSkia），两头必须同一套朝向。
                 SurfaceOrigin.BOTTOM_LEFT, ColorType.RGBA_8888, ColorSpace.getSRGB());
-        if (blurSurface == null) {
+        if (target.surface == null) {
             blurBroken = true;
-            releaseBlurTarget();
+            releaseBlurTarget(target);
             System.out.println(TAG + "预糊目标包不成 Skia 画布，玻璃退回逐面板自己糊");
             return false;
         }
-        blurWidth = textureWidth;
-        blurHeight = textureHeight;
+        target.width = textureWidth;
+        target.height = textureHeight;
         return true;
     }
 
     /** 预糊纹理借给 Skia 的视图：只在尺寸变化后重建，理由同 {@link #wrapIntoSkia()}。 */
-    private static Image borrowBlur(DirectContext context) {
-        if (blurImage != null || blurTextureId == 0 || context == null) {
-            return blurImage;
+    private static Image borrowBlur(DirectContext context, BlurSlot target) {
+        if (target.image != null || target.textureId == 0 || context == null) {
+            return target.image;
         }
-        BackendTexture backend = BackendTexture.makeGL(blurWidth, blurHeight, false,
-                new GLTextureInfo(GL11.GL_TEXTURE_2D, blurTextureId, internalFormat()));
-        blurImage = Image.borrowTextureFrom(context, backend, SurfaceOrigin.BOTTOM_LEFT,
+        BackendTexture backend = BackendTexture.makeGL(target.width, target.height, false,
+                new GLTextureInfo(GL11.GL_TEXTURE_2D, target.textureId, internalFormat()));
+        target.image = Image.borrowTextureFrom(context, backend, SurfaceOrigin.BOTTOM_LEFT,
                 ColorType.RGBA_8888, ColorAlphaType.UNPREMUL, ColorSpace.getSRGB(), null);
-        if (blurImage == null) {
+        if (target.image == null) {
             blurBroken = true;
         }
-        return blurImage;
+        return target.image;
     }
 
-    private static void releaseBlurTarget() {
-        if (blurImage != null) {
-            blurImage.close();
-            blurImage = null;
+    private static void releaseBlurTarget(BlurSlot target) {
+        if (target.image != null) {
+            target.image.close();
+            target.image = null;
         }
-        if (blurSurface != null) {
-            blurSurface.close();
-            blurSurface = null;
+        if (target.surface != null) {
+            target.surface.close();
+            target.surface = null;
         }
-        if (blurBackend != null) {
-            blurBackend.close();
-            blurBackend = null;
+        if (target.backend != null) {
+            target.backend.close();
+            target.backend = null;
         }
-        if (blurFramebufferId != 0) {
-            GL30.glDeleteFramebuffers(blurFramebufferId);
-            blurFramebufferId = 0;
+        if (target.framebufferId != 0) {
+            GL30.glDeleteFramebuffers(target.framebufferId);
+            target.framebufferId = 0;
         }
-        if (blurTextureId != 0) {
-            GL11.glDeleteTextures(blurTextureId);
-            blurTextureId = 0;
+        if (target.textureId != 0) {
+            GL11.glDeleteTextures(target.textureId);
+            target.textureId = 0;
         }
-        blurWidth = 0;
-        blurHeight = 0;
-        blurSigmaKey = -1f;
-        blurBuiltAtCapture = -1L;
+        target.width = 0;
+        target.height = 0;
+    }
+
+    /** 所有会占一张纹理的层：四档预糊 + bloom 那一层。回收与作废都走这一份清单。 */
+    private static BlurSlot[] blurTargets() {
+        BlurSlot[] all = new BlurSlot[blurSlots.length + 1];
+        System.arraycopy(blurSlots, 0, all, 0, blurSlots.length);
+        all[blurSlots.length] = bloomSlot;
+        return all;
+    }
+
+    /** 全丢：预糊这一层整体作废时（停用、上下文没了、建不起来）没有理由留任何一档。 */
+    private static void releaseAllBlurTargets() {
+        for (BlurSlot slot : blurTargets()) {
+            releaseBlurTarget(slot);
+        }
+        bloomBuiltAtCapture = -1L;
+        blurLevels.reset();
+    }
+
+    // ------------------------------------------------------------------
+    // bloom：亮部溢出
+    // ------------------------------------------------------------------
+
+    /**
+     * bloom 那张图（亮部提取 + 糊过），与采集目标同尺寸，所以 {@code frostedBackdrop} 那边
+     * 算好的源矩形原样可用。
+     */
+    private static final BlurSlot bloomSlot = new BlurSlot();
+    private static long bloomBuiltAtCapture = -1L;
+    /** bloom 这一层建不起来：只少一股亮晕，玻璃本身一点不变。 */
+    private static boolean bloomBroken;
+    private static RuntimeEffect bloomEffect;
+    private static boolean bloomEffectUnavailable;
+    /** 采下来的原图当子 shader 用：与 {@code GlassRefraction} 同一套「认对象不认句柄」的缓存。 */
+    private static Shader bloomChild;
+    private static Image bloomChildImage;
+
+    /** 亮度阈值（sRGB 相对亮度 0..1）：低于这条的一律不参与 bloom。 */
+    static final float BLOOM_THRESHOLD = 0.55f;
+    /** 阈值到全亮之间的窗口宽度；窗口内做平方衰减，所以没有硬边。 */
+    static final float BLOOM_WINDOW = 0.45f;
+    /**
+     * bloom 的高斯半径 = 这一面的模糊档 × 系数，并且<em>有下限</em>。
+     *
+     * <p>下限是给「背景模糊推到 0」那台机器留的：那一档为 0 时预糊整层不存在，
+     * 但 bloom 要的只是一团散开的亮斑，跟磨砂没关系。</p>
+     */
+    private static final float BLOOM_SIGMA_FACTOR = 1.6f;
+    private static final float BLOOM_SIGMA_FLOOR = 6f;
+
+    /**
+     * 亮部提取：按相对亮度开一道窗口，窗口内平方衰减。
+     *
+     * <p>为什么在 SkSL 里做而不用 {@code ColorFilter.makeMatrix}：Skia 那份颜色矩阵的偏移列
+     * 到底是 0..1 还是 0..255，五棵树与两次 Skia 版本的说法不一样，写错了的症状是
+     * 「整张 bloom 全黑」或「整张都是灰」——两种都在糊着的底上看不出来。自己写就不可能有这种歧义。</p>
+     */
+    private static final String BLOOM_SKSL = """
+            uniform shader uRaw;
+            uniform float4 uParams;   // x = 阈值, y = 窗口宽度, zw 备用
+
+            half4 main(float2 xy) {
+                float4 c = uRaw.eval(xy);
+                float l = dot(c.rgb, float3(0.2126, 0.7152, 0.0722));
+                float k = clamp((l - uParams.x) / max(uParams.y, 1e-4), 0.0, 1.0);
+                k *= k;
+                return half4(half3(clamp(c.rgb, float3(0.0), float3(1.0)) * k), 1.0);
+            }
+            """;
+
+    /**
+     * 设置里那一档「玻璃亮部溢出」，钳过之后的值。
+     *
+     * <p>0 = 整条链路一格都不许多画：不建纹理、不做亮部提取、不做高斯，
+     * {@link #bloom()} 直接返回 null，{@code SkijaEffects} 那边连一次 drawImage 都不发。
+     * 这一条是被 {@code GlassBloomStaticTest} 钉着的——「新加的开销默认必须是零」。</p>
+     */
+    public static float bloomStrength() {
+        float strength = com.muoniumplayer.core.settings.HudConfig.glassBloom;
+        return strength > 0f && strength <= 1f ? strength : 0f;
+    }
+
+    /**
+     * 本帧可用的 bloom 图；没有背景、强度为 0、或这一层建不起来时为 null。
+     *
+     * <p>与预糊同一个刷新节奏：每次采集之后重做一次，而不是每帧（{@link #captures()} 就是判据）。
+     * 强度滑块拖动时<b>不</b>重建——滑块只改最后叠加那一层的 alpha，图本身与强度无关，
+     * 这一点和预糊相反（预糊的半径就是它的身份）。</p>
+     */
+    public static Image bloom() {
+        if (bloomBroken || bloomStrength() <= 0f) {
+            return null;
+        }
+        Image raw = image();
+        if (raw == null || SkijaHost.isDisabled()) {
+            return null;
+        }
+        if (bloomSlot.image != null && bloomBuiltAtCapture == captures) {
+            return bloomSlot.image;
+        }
+        return rebuildBloom(raw);
+    }
+
+    private static Image rebuildBloom(Image raw) {
+        DirectContext context = SkijaHost.context();
+        if (context == null || textureWidth <= 0 || textureHeight <= 0) {
+            return null;
+        }
+        RuntimeEffect effect = bloomEffect();
+        Shader child = bloomChild(raw);
+        if (effect == null || child == null) {
+            return null;
+        }
+        float sigma = Math.max(BLOOM_SIGMA_FLOOR, blurSigma() * BLOOM_SIGMA_FACTOR);
+        try {
+            if (!ensureBlurTarget(bloomSlot)) {
+                return null;
+            }
+            try (Data uniforms = bloomUniforms(effect);
+                 Shader bright = effect.makeShader(uniforms, new Shader[]{child});
+                 ImageFilter spread = ImageFilter.makeBlur(sigma, sigma, FilterTileMode.CLAMP);
+                 Paint paint = new Paint().setImageFilter(spread)) {
+                if (bright == null) {
+                    bloomBroken = true;
+                    return null;
+                }
+                paint.setShader(bright);
+                Canvas canvas = bloomSlot.surface.getCanvas();
+                canvas.drawRect(io.github.humbleui.types.Rect.makeXYWH(0f, 0f,
+                        (float) textureWidth, (float) textureHeight), paint);
+            }
+            context.flush(bloomSlot.surface);
+            bloomBuiltAtCapture = captures;
+            return borrowBlur(context, bloomSlot);
+        } catch (Throwable failure) {
+            bloomBroken = true;
+            releaseBlurTarget(bloomSlot);
+            System.out.println(TAG + "亮部溢出那层建不出来，玻璃少一圈亮晕（功能不受影响）: " + failure);
+            return null;
+        }
+    }
+
+    private static RuntimeEffect bloomEffect() {
+        if (bloomEffect == null && !bloomEffectUnavailable) {
+            try {
+                bloomEffect = RuntimeEffect.makeForShader(BLOOM_SKSL);
+            } catch (Throwable failure) {
+                bloomEffectUnavailable = true;
+                System.out.println(TAG + "亮部提取着色器编译失败，这一层停用: " + failure);
+            }
+        }
+        return bloomEffect;
+    }
+
+    /** uniform 就一个 float4：阈值、窗口，后两格是留的位（Skia 要 16 字节对齐）。 */
+    private static Data bloomUniforms(RuntimeEffect effect) {
+        java.nio.ByteBuffer buf = java.nio.ByteBuffer
+                .allocate(Math.max(16, effect.getUniformSize()))
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        buf.putFloat(BLOOM_THRESHOLD).putFloat(BLOOM_WINDOW).putFloat(0f).putFloat(0f);
+        return Data.makeFromBytes(buf.array());
+    }
+
+    private static Shader bloomChild(Image raw) {
+        if (bloomChild != null && bloomChildImage == raw) {
+            return bloomChild;
+        }
+        if (bloomChild != null) {
+            bloomChild.close();
+            bloomChild = null;
+            bloomChildImage = null;
+        }
+        try {
+            // 1:1 画到同一张尺寸的 FBO 上，所以不需要局部矩阵；朝向与预糊那一层同一套约定
+            // （两头都是 BOTTOM_LEFT，见 borrowBlur）。
+            bloomChild = raw.makeShader(FilterTileMode.CLAMP, FilterTileMode.CLAMP);
+            bloomChildImage = raw;
+            return bloomChild;
+        } catch (Throwable failure) {
+            bloomBroken = true;
+            System.out.println(TAG + "背景图包不成 shader，亮部溢出停用: " + failure);
+            return null;
+        }
+    }
+
+    /** 给探针与静态测试：亮部提取的 SkSL 源码。 */
+    public static String bloomSource() {
+        return BLOOM_SKSL;
+    }
+
+    /** bloom 那层此刻活着吗（建不起来时 false，玻璃照样画）。 */
+    public static boolean bloomBroken() {
+        return bloomBroken;
     }
 
     /** 背景纹理尺寸（设备像素）。 */
@@ -549,6 +771,21 @@ public final class GlassBackdrop {
             logOnce("画布矩阵给不出轴对齐的背景取样（旋转/错切/镜像），玻璃退回假玻璃画法");
         }
         return mapped;
+    }
+
+    /**
+     * 同一件事，只问的对象换成<em>一份矩阵</em>而不是活画布。
+     *
+     * <p>给融合批次用：那一组的条目坐标活在开组那一刻那套坐标系里，而收尾可能发生在
+     * 别的矩阵下（组里最后那块控件的 push 还没 pop 干净、或容器又平移了一段）。取样档必须
+     * 跟着<em>坐标那套</em>矩阵算，否则「这一圈折的是画面别处」——而它只有几像素、背后又糊着，
+     * 截图上判不出来。</p>
+     */
+    static Mapping mapping(float[] deviceMatrix) {
+        if (image() == null || deviceMatrix == null) {
+            return null;
+        }
+        return mappingFromMatrix(deviceMatrix, Math.max(1, downscale()));
     }
 
     /**
@@ -649,7 +886,7 @@ public final class GlassBackdrop {
      */
     public static void invalidate() {
         try {
-            releaseBlurTarget();
+            releaseAllBlurTargets();
             releaseTarget();
         } catch (Throwable ignored) {
             image = null;
@@ -657,14 +894,24 @@ public final class GlassBackdrop {
             framebufferId = 0;
             textureWidth = 0;
             textureHeight = 0;
-            blurImage = null;
-            blurSurface = null;
-            blurBackend = null;
-            blurTextureId = 0;
-            blurFramebufferId = 0;
+            for (BlurSlot slot : blurTargets()) {
+                // 上下文可能已经没了：这里只丢引用，不再发 GL 删除调用（发出去是崩在原生层）。
+                slot.image = null;
+                slot.surface = null;
+                slot.backend = null;
+                slot.textureId = 0;
+                slot.framebufferId = 0;
+                slot.width = 0;
+                slot.height = 0;
+            }
+            blurLevels.reset();
+            bloomBuiltAtCapture = -1L;
+            bloomChild = null;
+            bloomChildImage = null;
         }
         broken = false;
         blurBroken = false;
+        bloomBroken = false;
         firstCaptureUnlogged = false;
         mappingWarned = false;
     }

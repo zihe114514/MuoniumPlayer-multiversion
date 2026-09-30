@@ -6,6 +6,7 @@ import com.muoniumplayer.core.ncm.music.PersonalFmManager;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.FontelloIcons;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
@@ -918,6 +919,10 @@ public final class PersonalFmPanel extends NCMPanel {
         ScrollPanel list = new ScrollPanel();
         addChild(list);
         list.setSpacing(0).setScrollStrength(42).setAlignment(ScrollPanel.Alignment.VERTICAL);
+        // 与歌单详情那一列同一档：历史里的行也挨着，收尾时按一整张距离场画边。
+        // 这一列每来一首新的只淡入<em>新来的那一行</em>，它自己那套进场缩放正需要
+        // 「组内各块矩阵不同也画得对」这条（见 GlassEdgeBatch#bakeIntoGroup）。
+        list.setGlassFusion(GlassLook.Surface.PLAYER);
         list.setBeforeRenderCallback(() -> list.setBounds(MARGIN, historyTop() + 18.0,
                 Math.max(1.0, getWidth() - MARGIN * 2.0),
                 Math.max(1.0, getHeight() - historyTop() - 26.0)));

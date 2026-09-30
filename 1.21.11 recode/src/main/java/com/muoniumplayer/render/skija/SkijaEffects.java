@@ -1,5 +1,6 @@
 package com.muoniumplayer.render.skija;
 
+import io.github.humbleui.skija.BlendMode;
 import io.github.humbleui.skija.Canvas;
 import io.github.humbleui.skija.Data;
 import io.github.humbleui.skija.FilterTileMode;
@@ -343,10 +344,35 @@ public final class SkijaEffects {
                 // 这里要的是「铺满面板」，不是「不许形变」。
                 canvas.drawImageRect(backdrop, source, bounds, SamplingMode.LINEAR, paint, false);
             }
+            paintBloom(canvas, source, bounds, opacity);
         } finally {
             canvas.restoreToCount(depth);
         }
         return true;
+    }
+
+    /**
+     * 亮部溢出那一层：贴在磨砂底<em>之上</em>、面板自己的底色与文字之下，用相加混出来一圈亮晕。
+     *
+     * <p>为什么画在 frosted 里而不是各调用点自己贴：这层的意思就是「玻璃后面那团亮的东西透过来」，
+     * 它必须与底用同一块剪形、同一份源矩形，两处各算一遍就会在面板贴屏幕边时错位半像素——
+     * 而那个位置正好是 bloom 最亮的地方，错半像素就是一条白边。</p>
+     *
+     * <p>强度为 0 时 {@link GlassBackdrop#bloom()} 给 null，这里<em>一次绘制都不发</em>：
+     * 新开销默认必须是零，不然「默认关着」只是话术。</p>
+     */
+    private static void paintBloom(Canvas canvas, Rect source, Rect bounds, float opacity) {
+        Image bloom = GlassBackdrop.bloom();
+        if (bloom == null) {
+            return;
+        }
+        float alpha = GlassBackdrop.bloomStrength() * Math.min(1f, opacity);
+        if (alpha <= 0.004f) {
+            return;
+        }
+        try (Paint paint = new Paint().setBlendMode(BlendMode.PLUS).setAlphaf(alpha)) {
+            canvas.drawImageRect(bloom, source, bounds, SamplingMode.LINEAR, paint, false);
+        }
     }
 
     /**

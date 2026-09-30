@@ -11,21 +11,26 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.concurrent.TimeUnit;
 
 /** HTDemucs ONNX 适配器。它把繁重的分离保留在下载的 Folia Python 运行时中。 */
 final class FoliaStemSeparator {
-    private static final int MODEL_RATE = 44_100;
+    /** 模型只认这个采样率；素材缓存也按它落盘，两处必须是同一个数（{@link FoliaStemProfile#MATERIAL_RATE}）。 */
+    private static final int MODEL_RATE = FoliaStemProfile.MATERIAL_RATE;
+    /** 素材缓存的编码宽度：模型输出 float32，逐字节写盘，没有头。 */
+    private static final int FLOAT_BYTES = 4;
     private static final long TIMEOUT_SECONDS = 180L;
 
     private FoliaStemSeparator() {}
 
     static FoliaStemProfile analyse(File source, long startMillis, long lengthMillis,
-                                    AnalysisAudio audio, boolean outgoing) {
+                                    AnalysisAudio audio, boolean outgoing, File material) {
         if (source == null || audio == null || lengthMillis <= 0L
                 || !FoliaModelManager.isInstalled(FoliaModelManager.Kind.HTDEMUCS)
                 || !FoliaModelManager.isInstalled(FoliaModelManager.Kind.RUNTIME)) return null;
         File input = null, output = null, script = null;
+        File materialPart = material == null ? null : new File(material.getAbsolutePath() + ".part");
         try {
             float[] mono = audio.readMono(startMillis, lengthMillis);
             if (mono.length < MODEL_RATE / 2) return null;
@@ -41,7 +46,8 @@ final class FoliaStemSeparator {
             script = materialiseScript();
             Process process = new ProcessBuilder(FoliaModelManager.pythonExecutable().getAbsolutePath(),
                     script.getAbsolutePath(), input.getAbsolutePath(), output.getAbsolutePath(),
-                    FoliaModelManager.path(FoliaModelManager.Kind.HTDEMUCS).getAbsolutePath())
+                    FoliaModelManager.path(FoliaModelManager.Kind.HTDEMUCS).getAbsolutePath(),
+                    materialPart == null ? "-" : materialPart.getAbsolutePath())
                     .redirectErrorStream(true).start();
             boolean exited = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
             if (!exited) {
@@ -68,15 +74,55 @@ final class FoliaStemSeparator {
             profile.drumEndMillis = absolute(startMillis, root, "drum_end");
             profile.bassEndMillis = absolute(startMillis, root, "bass_end");
             profile.confidence = number(root, "confidence");
-            return profile.isUsable() ? profile : null;
+            // 老 profile 没这个键：number() 还 -1，于是落在可信区间之外，素材这一路自动不启用，
+            // 时间戳证据照旧。不必为此作废整份缓存、把每首歌重新推理一遍。
+            profile.vocalProjection = number(root, "vocal_projection");
+            profile.materialFrames = longOr(root, "samples", -1L);
+            if (!profile.isUsable()) {
+                delete(materialPart);
+                return null;
+            }
+            if (materialPart == null) {
+                profile.materialFrames = 0L;              // 出场侧只要时间戳，没有素材可发布
+            } else if (!publishMaterial(materialPart, material, profile)) {
+                delete(materialPart);
+                profile.materialFrames = 0L;
+            }
+            return profile;
         } catch (Throwable failure) {
             System.err.println("[Automix/Folia] HTDemucs unavailable: " + failure.getMessage());
+            delete(materialPart);
             return null;
         } finally {
             delete(input);
             delete(output);
             delete(script);
         }
+    }
+
+    /**
+     * 把模型写好的素材从 {@code .part} 落成正式缓存文件。
+     *
+     * <p>先量长度再换名，是因为这份缓存的正确性完全建立在「素材第 0 帧 = 窗口第 0 帧」上：
+     * 半截文件（进程被超时杀在写的中途、磁盘满）一旦当成好的用下去，交接期减掉的就是错位的人声，
+     * 听起来是伴奏被啃掉一块，比没有素材严重得多。缓存头里记的是帧数，按 float32 折成字节校验。</p>
+     */
+    private static boolean publishMaterial(File part, File target, FoliaStemProfile profile) {
+        try {
+            if (!profile.hasVocalMaterial()) return false;
+            if (!part.isFile() || part.length() != profile.materialFrames * FLOAT_BYTES) return false;
+            File parent = target.getParentFile();
+            if (parent != null && !parent.isDirectory() && !parent.mkdirs()) return false;
+            Files.move(part.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            return target.isFile();
+        } catch (Throwable failure) {
+            System.err.println("[Automix/Folia] 人声素材落盘失败: " + failure.getMessage());
+            return false;
+        }
+    }
+
+    private static long longOr(JsonObject root, String name, long missing) {
+        return root.has(name) && !root.get(name).isJsonNull() ? root.get(name).getAsLong() : missing;
     }
 
     private static long absolute(long origin, JsonObject root, String name) {

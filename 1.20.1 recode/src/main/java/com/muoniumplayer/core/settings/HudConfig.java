@@ -516,6 +516,39 @@ public final class HudConfig {
     /** 玻璃背后画面的模糊强度，单位 GUI 像素的 sigma。0 就是不糊，只压暗。 */
     public static float glassBlurSigma = 12.0f;
 
+    /**
+     * 四处界面各自在「玻璃模糊」之上的<em>倍率</em>，1 = 与全局同档。
+     *
+     * <p>为什么是倍率而不是四个绝对值：全局那一档还要决定采集下来那张底糊成什么样，
+     * 玩家拖它是一次「整页风格」的操作；绝对值会让「把全局模糊调到 0」这件事
+     * 只关掉其中三面，读起来像 bug。倍率之下 0 就是全 0，语义只有一处。
+     *
+     * <p>默认值不等：岛只有几十像素高，用到与面板同档的糊会把轮廓整个吃掉（看不出色散与边缘光）；
+     * 桌面歌词卡片背后通常是亮天空，糊得比面板重一点字才立得住。
+     */
+    public static float glassBlurPlayer = 1.0f;
+    public static float glassBlurIsland = 0.75f;
+    public static float glassBlurDesktopLyric = 1.15f;
+    public static float glassBlurEditors = 1.0f;
+
+    /**
+     * 亮部溢出（bloom）强度：玻璃后面那团亮东西（天空、火、霓虹）会往面内软软地晕开多少。
+     *
+     * <p>默认 0 是故意的——这一项要真机看才知道多大算过，先让功能可开，出厂值等观感定。
+     * 0 的时候整条 bloom 链路一格像素都不许多画（不建纹理、不重糊、不挂 shader）。
+     */
+    public static float glassBloom = 0.0f;
+
+    /**
+     * 相邻玻璃的<em>融合半径</em>，画布局部像素；0 = 每块玻璃各画各的边。
+     *
+     * <p>&gt; 0 之后，被容器点名的那几组（歌曲列表的可见行等）在同一次绘制里登记各自的轮廓，
+     * 收尾时按一整张 soft-min 距离场画边缘，于是挨着的那些块中间会鼓出一道颈。
+     * 默认 0 是故意的：这一档改的是「整片列表看起来是一块还是一排」，属于观感取向，
+     * 出厂值要等真机截图定（与 {@link #glassBloom} 同一判据）。</p>
+     */
+    public static float glassFusion = 0.0f;
+
     /** 玻璃自身颜色的浓度：0 完全透出背景，1 背景基本看不见。 */
     public static float glassTintStrength = 0.55f;
 
@@ -738,6 +771,14 @@ public final class HudConfig {
             // 采集倍数钳在 1~4：0 或负数会让「除以倍数」直接炸，5 以上糊到没法看。
             glassBackdropScale = clampInt(getInt(o, "glassBackdropScale", glassBackdropScale), 1, 4);
             glassBlurSigma = clamp(getFloat(o, "glassBlurSigma", glassBlurSigma), 0f, 32f);
+            // 四个倍率钳在 0.25~2：再往下就糊到等于没有背景，再往上这一块玻璃什么都读不出来了。
+            glassBlurPlayer = clamp(getFloat(o, "glassBlurPlayer", glassBlurPlayer), 0.25f, 2f);
+            glassBlurIsland = clamp(getFloat(o, "glassBlurIsland", glassBlurIsland), 0.25f, 2f);
+            glassBlurDesktopLyric = clamp(getFloat(o, "glassBlurDesktopLyric", glassBlurDesktopLyric),
+                    0.25f, 2f);
+            glassBlurEditors = clamp(getFloat(o, "glassBlurEditors", glassBlurEditors), 0.25f, 2f);
+            glassBloom = clamp(getFloat(o, "glassBloom", glassBloom), 0f, 1f);
+            glassFusion = clamp(getFloat(o, "glassFusion", glassFusion), 0f, 32f);
             glassTintStrength = clamp01(getFloat(o, "glassTintStrength", glassTintStrength));
             glassEdgeGlow = clamp(getFloat(o, "glassEdgeGlow", glassEdgeGlow), 0f, 1.5f);
             glassRealtimeCapture = getBoolean(o, "glassRealtimeCapture", glassRealtimeCapture);
@@ -898,6 +939,12 @@ public final class HudConfig {
             o.addProperty("glassSurfaceEditors", glassSurfaceEditors);
             o.addProperty("glassBackdropScale", glassBackdropScale);
             o.addProperty("glassBlurSigma", glassBlurSigma);
+            o.addProperty("glassBlurPlayer", glassBlurPlayer);
+            o.addProperty("glassBlurIsland", glassBlurIsland);
+            o.addProperty("glassBlurDesktopLyric", glassBlurDesktopLyric);
+            o.addProperty("glassBlurEditors", glassBlurEditors);
+            o.addProperty("glassBloom", glassBloom);
+            o.addProperty("glassFusion", glassFusion);
             o.addProperty("glassTintStrength", glassTintStrength);
             o.addProperty("glassEdgeGlow", glassEdgeGlow);
             o.addProperty("glassRealtimeCapture", glassRealtimeCapture);

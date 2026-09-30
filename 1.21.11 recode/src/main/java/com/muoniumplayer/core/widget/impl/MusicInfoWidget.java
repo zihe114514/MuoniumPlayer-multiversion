@@ -9,9 +9,11 @@ import today.opai.api.interfaces.modules.values.NumberValue;
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
+import com.muoniumplayer.core.ncm.music.AutomixCueMarker;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.ExternalPlayback;
 import com.muoniumplayer.core.ncm.music.dto.Music;
+import com.muoniumplayer.core.rendering.AutomixCuePainter;
 import com.muoniumplayer.core.rendering.RGBA;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
@@ -85,6 +87,10 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
     ITextureObject prevBlurredBg = null;
     ITextureObject prevBg = null;
     Music prevMusic = null;
+
+    /** automix 接缝记号的平滑与换歌记号，见 {@link AutomixCueMarker.Glide}。 */
+    private final AutomixCueMarker.Glide cueGlide = new AutomixCueMarker.Glide();
+    private long cueSongId = Long.MIN_VALUE;
 
     public void onRender() {
 
@@ -284,6 +290,8 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
                 if (playbackFillWidth > 0)
                     this.roundedRect(imgX + imgSize + imgSpacing, progressBarOffsetY, playbackFillWidth, 5, Math.min(1, playbackFillWidth * .5), 233, 233, 233, (int) (alpha * 255));
 
+                drawAutomixCue(imgX + imgSize + imgSpacing, progressBarWidth, progressBarOffsetY, 5, alpha);
+
                 int cMin = (int) (positionMillis / 1000.0 / 60);
                 int cSec = (int) (positionMillis / 1000.0 - cMin * 60);
                 String currentTime = (cMin < 10 ? "0" + cMin : cMin) + ":" + (cSec < 10 ? "0" + cSec : cSec);
@@ -305,6 +313,33 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
         posInterface.setHeight((float) (height + downloadProgHeight));
 
         api.getGLStateManager().popMatrix();
+    }
+
+    /**
+     * 把 automix 的接缝画在这条进度条上。
+     *
+     * <p>位置取本帧那份已经算好的计划（{@link CloudMusic#automixCueNow()}），画不出来的时候
+     * 就是真画不出来：没预备、预备作废、系统播放器镜像态、或设置里关掉了。这里<b>不</b>自己
+     * 推一条「大概在这儿切」——未预备的场合下一次切换根本不会交叠，报一个位置等于骗人。</p>
+     *
+     * <p>记号经过一层平滑：交接之前计划会被换掉（包络到货的回头重算、拖过切点的顶住重算，
+     * 一共三次预算），直接落最新值会让线在歌中间瞬移。换了一首歌则立刻吸附，不做跨越两首的
+     * 补间。</p>
+     */
+    private void drawAutomixCue(double barX, double barWidth, double barTop, double barHeight, float alpha) {
+        AutomixCueMarker cue = CloudMusic.automixCueNow();
+        Music track = CloudMusic.currentlyPlaying;
+        long songId = track == null ? Long.MIN_VALUE : track.getId();
+        if (songId != cueSongId) {
+            cueSongId = songId;
+            cueGlide.reset();
+        }
+        if (cue == null) {
+            cueGlide.reset();
+            return;
+        }
+        AutomixCuePainter.paint(barX, barTop, barWidth, barHeight,
+                cueGlide.update(cue), cue.fading, alpha);
     }
 
 }

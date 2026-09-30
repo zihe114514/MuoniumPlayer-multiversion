@@ -3,6 +3,7 @@ package com.muoniumplayer.core.screens.ncm.panels;
 import com.muoniumplayer.compat.lwjgl2.Mouse;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.AudioPlayer;
+import com.muoniumplayer.core.ncm.music.AutomixCueMarker;
 import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
@@ -12,6 +13,7 @@ import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.PersonalFmManager;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
+import com.muoniumplayer.core.rendering.AutomixCuePainter;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.FoliaLucideIcons;
@@ -124,9 +126,41 @@ public class ControlsBar extends NCMPanel {
      */
     private double listenTogetherPrimaryX;
 
+    /** automix 接缝记号在这条进度条上的平滑，见 {@link AutomixCueMarker.Glide}。 */
+    private final AutomixCueMarker.Glide automixCueGlide = new AutomixCueMarker.Glide();
+    /** 上一次画记号时归属的那一首；换歌时让记号吸附而不是从上一首飘过来。 */
+    private long automixCueSongId = Long.MIN_VALUE;
+
     /** 弹出层在动画彻底结束前必须继续渲染，否则收起会变成瞬间消失。 */
     private boolean isQualityMenuVisible() {
         return qualityMenuOpen || qualityMenuAnimation > .004;
+    }
+
+    /**
+     * 把 automix 的接缝画在这条进度条上：一根竖线是「从这里开始切」，一段半透明带子是
+     * 「这一段两首叠在一起」。
+     *
+     * <p>数据只有这一个来源 {@link CloudMusic#automixCueNow()}，它返回 {@code null} 的几种情况
+     * （没预备、预备作废、镜像态、设置里关掉）这里一律<b>不补一个猜测位置</b>：没在交叠的场合
+     * 画一条线，等于向玩家预报一次不会发生的混音。</p>
+     *
+     * <p>带一层平滑，因为计划在真正交接之前会被换掉（整曲包络到货后的回头重算、拖过切点时
+     * 顶住交接的那次重算）；换歌那一瞬不做补间，直接吸附。</p>
+     */
+    private void drawAutomixCue(double barX, double barY, double barWidth, double barHeight) {
+        AutomixCueMarker cue = CloudMusic.automixCueNow();
+        Music track = CloudMusic.currentlyPlaying;
+        long songId = track == null ? Long.MIN_VALUE : track.getId();
+        if (songId != automixCueSongId) {
+            automixCueSongId = songId;
+            automixCueGlide.reset();
+        }
+        if (cue == null) {
+            automixCueGlide.reset();
+            return;
+        }
+        AutomixCuePainter.paint(barX, barY, barWidth, barHeight,
+                automixCueGlide.update(cue), cue.fading, getAlpha());
     }
 
     /**
@@ -414,6 +448,10 @@ public class ControlsBar extends NCMPanel {
                         }
                     }
                 }
+
+                // automix 的接缝画在这条进度条上。位置刻意排在拖拽判定<b>之后</b>：新代码与那条
+                // 命中逻辑物理隔开，命中的条件与顺序一个字都不动（记号本身不可点）。
+                drawAutomixCue(this.getX(), this.getY(), this.getWidth(), this.getHeight());
             }
         };
 

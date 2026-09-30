@@ -12,6 +12,13 @@ import repackage.com.jsyn.unitgen.VocalDuckFilter;
  * <p>这是{@code BassSwap} ，直到添加了声鸭。重命名不是外观：仅限电路
  * 只有一个效果槽，因此交接想要对播放牌信号做的所有处理都必须放在这一个
  * 对象，并将其称为“低音交换” ，使添加到它的下一件事看起来放错了地方。</p>
+ *
+ * <p><b>但这个槽不再是唯一的可能。</b>交接期「把进来那首的人声先减掉」这件事已经换了地方做：
+ * {@link VocalMaterialSample} 坐在素材层（读头之下、伸缩层之内），按帧把离线分离的人声减掉，
+ * 比这个槽里的带限中央声道抵消准一个量级。素材只在离线模型跑得出结果时才有，所以两条实现并存，
+ * 由 {@code AudioPlayer.routeVocalDepth} 每次选一 — — 选素材时这条链收到的深度恒为 0。
+ * 往后要在<b>采样值</b>上做文章（比如整段预渲染）就照素材层那样往下走；在这个槽里继续叠第二个
+ * 效果仍然是错的 —— 它只有一个位置，叠进来的东西会互相顶掉。</p>
  */
 public class AutomixDeckChain extends Effect<VocalDuckFilter> {
 

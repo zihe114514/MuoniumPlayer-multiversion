@@ -72,7 +72,7 @@ public final class WelcomeStep implements OnboardingStepView {
         // 块比带子高时贴着顶走（超出部分由内容带裁掉），不要算出负数把标题推到带外。
         double top = y + Math.max(0.0, (height - blockHeight) * .5);
 
-        OnboardingUi.drawEyebrowCentered("MINECRAFT MUSIC CLIENT · 1.7.0", centerX, top);
+        OnboardingUi.drawEyebrowCentered("MINECRAFT MUSIC CLIENT · 1.8.0", centerX, top);
         double titleY = top + EYEBROW_H + GAP_EYEBROW_TITLE;
         OnboardingUi.drawCentered(FontManager.pf40bold, "把音乐装进 Minecraft", centerX, titleY,
                 OnboardingUi.textPrimary());

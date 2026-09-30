@@ -2515,6 +2515,15 @@ public class CloudMusic implements SharedConstants {
              */
             private volatile AutomixPlan replannedPlan;
 
+            /**
+             * 已经接到这张牌上的<b>人声素材</b>；没接上时为 {@code null}。
+             *
+             * <p>留着它只为一件事：证据到货后重算的接缝可能换一个入点，而素材只覆盖歌曲开头那一窗。
+             * 入点跑出窗口时要把素材整个退掉 —— 接了素材就意味着带限抵消器被按在 0，留着一份读不到
+             * 的素材等于两条路同时不管这条 deck 的人声。</p>
+             */
+            private volatile FoliaVocalStem vocalMaterial;
+
             private ArmedTrack(Music song, File file, AudioPlayer deck, int index, long generation,
                                long queueRevision) {
                 this.song = song;
@@ -2950,6 +2959,11 @@ public class CloudMusic implements SharedConstants {
                 // 给读取器设入点、接好低搁架滤波、从磁盘拉取第一个流式窗口。
                 track.preRollMillis = Math.min(PRE_ROLL_MILLIS, Math.max(0L, track.plan.incomingCueMillis));
                 deck.setBassGainDb(track.plan.incomingBassDb(0.0));
+                // 人声素材：量得出、也对得上就接上，之后这条 deck 的人声让路整个改由素材来做
+                // （分派在 AudioPlayer.routeVocalDepth，接上时它会把带限抵消器的深度按在 0）。
+                // 这一步必须在 setVocalDuckDepth 之前，也要在 prepareStart 之前 —— 预卷一旦开始
+                // 读盘，素材就要已经在那儿等着，否则第一个音节是用抵消器减的，接缝中段才换成素材。
+                track.vocalMaterial = attachVocalMaterial(deck, track.plan);
                 // 在 prepareStart 之前调用，这样链路会直接采用这两个值而无需渐变过渡：预卷好的
                 // 播放牌早在接缝之前就已（静默地）渲染数据块，而一个直到交接时才开始淡入的闪避
                 // 会让第一个音节漏出来。
@@ -3398,6 +3412,41 @@ public class CloudMusic implements SharedConstants {
         }
 
         /**
+         * 给进场播放牌接上离线分好的人声素材；接上了才把那份素材还回去。
+         *
+         * <p>整条路是尽力而为，任何一种「对不上」都直接不要素材：没跑过分离模型、缓存被清、
+         * 采样率跟播放素材不一致、接缝落在素材覆盖之外。退回来就是今天已经验证过的那条路
+         * （带限中央声道抵消器），它永远可用，只是没那么准。</p>
+         *
+         * <p>这里可以同步读盘（一份素材约 5 MB），因为调用点在预备线程上，那条线程本来就要为
+         * {@code prepareStart} 从磁盘拉第一个流式窗口。监督 tick 与音频线程都不许走到这儿。</p>
+         */
+        private FoliaVocalStem attachVocalMaterial(AudioPlayer deck, AutomixPlan plan) {
+            try {
+                // 闸在消费侧，不在生产侧：素材是离线分析顺手写的（写了就有 5 MB），而 profile
+                // 一旦落盘就不会重算 —— 把「写」也挂在进阶模式后面，就等于「先关着进阶模式听过
+                // 的歌，以后打开进阶模式永远没有素材」。关掉时这条 deck 保持今天的信号图，逐位一致。
+                if (!AutomixSettings.isAdvancedModeEnabled()) return null;
+                int rate = deck.sampleRate();
+                FoliaVocalStem stem = FoliaVocalStem.load(deck.getSourceFile(), rate);
+                if (stem == null) return null;
+                if (!stem.covers(plan.incomingCueMillis, plan.overlapMillis, rate)) {
+                    System.out.println("[Automix/VocalMaterial] 接缝在素材窗口之外，退回抵消器 · 入点 "
+                            + plan.incomingCueMillis + "ms 交叠 " + plan.overlapMillis
+                            + "ms · 素材 " + stem.firstMillis(rate) + "-" + stem.endMillis(rate) + "ms");
+                    return null;
+                }
+                if (!deck.attachVocalMaterial(stem)) return null;
+                System.out.println("[Automix/VocalMaterial] 人声走素材淡入 · " + rate + "Hz · 投影 "
+                        + stem.ratio + " · 自第 " + stem.firstFrame + " 帧起 " + stem.samples.length + " 帧");
+                return stem;
+            } catch (Throwable failure) {
+                System.err.println("[Automix/VocalMaterial] 接料失败: " + failure.getMessage());
+                return null;
+            }
+        }
+
+        /**
          * 把后台算好的新计划装上：换入点、换曲线，然后照旧交给预卷与交接那两步。
          *
          * <p>装不上就整个丢掉、沿用旧接缝 —— 旧接缝再差也是今天已经验证过的行为，一个装到一半
@@ -3429,6 +3478,15 @@ public class CloudMusic implements SharedConstants {
 
             AudioPlayer deck = track.deck;
             try {
+                // 入点换了，素材可能就不盖住新接缝了。盖不住要整个退掉再往下设深度：留着那份
+                // 读不到的素材，抵消器还按在 0，交接期就变成两个人一起唱。
+                if (track.vocalMaterial != null && !track.vocalMaterial
+                        .covers(fresh.incomingCueMillis, fresh.overlapMillis, deck.sampleRate())) {
+                    System.out.println("[Automix/VocalMaterial] 重算后的接缝出了素材窗口，退回抵消器 · "
+                            + track.song.getName());
+                    deck.releaseVocalMaterial();
+                    track.vocalMaterial = null;
+                }
                 track.preRollMillis = preRoll;
                 deck.setBassGainDb(fresh.incomingBassDb(0.0));
                 deck.setVocalDuckDepth(fresh.incomingVocalDepth(0.0));
@@ -3590,6 +3648,47 @@ public class CloudMusic implements SharedConstants {
          * 将已预备的播放牌提升为活动播放器：退出曲目在淡出期间持续发声，
          * 进入曲目则立即接管队列索引、session、歌词和历史上报。
          */
+        /**
+         * 本帧该画在进度条上的接缝位置，没有则 {@code null}。渲染线程每帧调一次
+         * （经 {@link CloudMusic#automixCueNow()}）。
+         *
+         * <p>两个来源、两种归属，顺序不能反：交接<b>已经发生</b>时进度条显示的是进场那一首，
+         * 位置只能取计划的 {@code incomingCueMillis}；还没交接时进度条是出场曲的，取
+         * {@code fireMillis}。先问 {@code activeFade} 也正是这个意思——交接一旦开始，
+         * {@code currentlyPlaying} 就已经换成新歌了。</p>
+         *
+         * <p>读的全是 {@code volatile} 引用与 {@code final} 字段，不加锁也不写任何东西：
+         * 计划由预备线程与播放线程换手的规矩（见 {@link #installReplannedPlan}）不归这里管，
+         * 界面只可能被滞后一帧看见，不可能看见半个计划。</p>
+         */
+        private AutomixCueMarker automixCueView() {
+            AutomixFade fade = activeFade;
+            if (fade != null && fade.plan != null) {
+                long duration = deckDurationMillis(fade.incoming);
+                if (duration <= 0L) return null;
+                return new AutomixCueMarker(fade.plan.incomingCueMillis,
+                        fade.plan.incomingCueMillis + fade.overlapMillis, duration, true);
+            }
+            ArmedTrack track = armed;
+            if (track == null || track.plan == null) return null;
+            // 预备已经作废（换了一首、队列动了、播放换了世代）就别预报：那份计划描述的
+            // 是一次不会发生的交接。判据与预卷与点火用的是同一条，不另立一套。
+            if (!armStillValid(track.generation, track.queueRevision)) return null;
+            long duration = deckDurationMillis(ownedPlayer);
+            if (duration <= 0L) return null;
+            AutomixPlan plan = track.plan;
+            return new AutomixCueMarker(plan.fireMillis,
+                    plan.fireMillis + plan.overlapMillis, duration, false);
+        }
+
+        /** 这张牌已知的总时长，毫秒；牌不可用或时长还没落地时为 0。 */
+        private static long deckDurationMillis(AudioPlayer deck) {
+            AudioPlayer active = deck;
+            if (active == null || !active.isUsable()) return 0L;
+            long duration = Math.round(active.getTotalTimeMillis());
+            return duration > 0L ? duration : 0L;
+        }
+
         private boolean performAutomixHandover(AudioPlayer outgoing, ArmedTrack track) {
             return performAutomixHandover(outgoing, track, 0L);
         }
@@ -4487,6 +4586,31 @@ public class CloudMusic implements SharedConstants {
      */
     public static boolean hasPlaybackClock() {
         return ExternalPlayback.isMirroring() || player != null;
+    }
+
+    /**
+     * 本帧进度条该不该画出 automix 的接缝，画在哪儿；不该画时返回 {@code null}。
+     *
+     * <p>界面原本对 automix 一无所知：进度条在交接前后长得一模一样，玩家听得到接缝却看不见
+     * 它。这里把已经算好的那份计划（{@code AutomixPlan} 与其字段都是包内可见的，界面跨着包
+     * 读不到）转成四个进度条用得上的数，三处绘制点只问这一处。</p>
+     *
+     * <p>四道短路，都是「宁可不画也不要画错」：</p>
+     * <ul>
+     *   <li>设置里关了「切点标记」；</li>
+     *   <li>关着「无缝切换」——这时根本不会有交接，标记会预报一件不会发生的事；</li>
+     *   <li>系统播放器镜像态（{@link ExternalPlayback#isMirroring()}）——出声的是外部播放器，
+     *       本机的音频链路完全没参与，一份本机计划都不存在；</li>
+     *   <li>播放线程还没换到这一代（{@code playThread} 声明成 {@code Thread}，拿不到
+     *       {@code PlayThread} 上的 {@code armed} / {@code activeFade}）。</li>
+     * </ul>
+     */
+    public static AutomixCueMarker automixCueNow() {
+        if (!AutomixSettings.isCueMarkerEnabled() || !AutomixSettings.isEnabled()) return null;
+        if (ExternalPlayback.isMirroring()) return null;
+        Thread thread = playThread;
+        if (!(thread instanceof PlayThread)) return null;
+        return ((PlayThread) thread).automixCueView();
     }
 
     /**

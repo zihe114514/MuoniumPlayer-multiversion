@@ -169,6 +169,18 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
         boolean childHovering = false;
 
         this.beforeRenderChildren(mouseX, mouseY);
+        // 融合组的窗口开在 beforeRenderChildren 之后、收尾在 afterRenderChildren 之前：
+        // ScrollPanel 那一类容器正是在这两个钩子里 begin/end 裁剪的，边缘必须落在视口<em>里面</em>
+        // 画，否则滚出界的那几行会把一整排亮边盖到面板别处。
+        // 半径在画的那一刻才读设置，用户拖滑块立刻生效。
+        float fusionRadius = this.glassFusionSurface == null ? 0f
+                : GlassLook.fusionRadius();
+        if (fusionRadius > 0f) {
+            // 嵌套时外层那一组先收掉再开我们的。不收的症状不是「少一道颈」而是「画到界外」：
+            // 我们的边缘会被拖到外层的收尾去画，而那时我们这一层的裁剪已经收了。
+            GlassLook.endFusion();
+            GlassLook.beginFusion(this.glassFusionSurface, fusionRadius);
+        }
         try {
             // 渲染所有子组件
             for (AbstractWidget<?> child : this.getChildren()) {
@@ -190,6 +202,11 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
                 }
             }
         } finally {
+            // 放在 finally：子控件中途抛异常时这一组也必须收掉，否则下一帧、下一个界面
+            // 会把上一组的边缘接过来画（SkijaHost 那道帧末兜底只能丢掉整组）。
+            if (fusionRadius > 0f) {
+                GlassLook.endFusion();
+            }
             this.afterRenderChildren(mouseX, mouseY);
         }
 
@@ -715,6 +732,34 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
 
     public GlassMode getGlassMode() {
         return this.glassMode;
+    }
+
+    /**
+     * 这个容器的<em>子控件</em>们挨着的那些玻璃，收尾时按一整张距离场一起画（融合）。
+     * null = 各块各画各的。只有 {@link com.muoniumplayer.core.rendering.GlassLook.Surface}
+     * 为 PLAYER 一类的成片容器才该点名它。
+     */
+    private GlassLook.Surface glassFusionSurface;
+
+    /**
+     * 把这一块<em>容器</em>标成融合组：它画完所有子控件之后，子控件那些登记过的玻璃边缘
+     * 由一趟着色器按一整张 soft-min 距离场画出来，于是挨着的两块中间会鼓出一道颈。
+     *
+     * <p>半径不在这里传，画的那一刻才读设置（{@code GlassLook.fusionRadius}），
+     * 于是用户拖动滑块立刻生效，不必重建控件树。</p>
+     *
+     * <p>只有 <b>PLATE</b> 那一档的子控件会入组（见 {@code GlassRefraction#joined}）：
+     * RIM 的小片本来就在别人那块玻璃<em>里面</em>，把它们也连起来等于在玻璃上又焊一层壳。
+     * 所以点名一个容器之前要先数清它的子控件里有几块挨着的 PLATE，一块都没有就等于没接。</p>
+     *
+     * <p>可以嵌套，代价要说清：内层容器开组之前会把外层那一组<em>先收掉画完</em>，
+     * 于是外层里排在内层之后的那些兄弟各自退回逐矩形画边（少几道颈，不会画错位置）。
+     * 之所以不能让外层继续攒着——外层的收尾发生在内层的裁剪之外，
+     * 症状是滚出视口的行把一整排亮边盖到面板别处。</p>
+     */
+    public SELF setGlassFusion(GlassLook.Surface surface) {
+        this.glassFusionSurface = surface;
+        return (SELF) this;
     }
 
     /**

@@ -17,6 +17,15 @@ import java.io.File;
  **/
 public class SoundFile extends AudioSample {
 
+	/**
+	 * 人声素材那一层，永远装着。
+	 *
+	 * <p>没接素材时它是恒等直通，一次多余的 {@code volatile} 读之外不改任何一个采样值；之所以
+	 * 一路都在，是因为素材要等到交接临近才可能到货（离线分离在后台跑），那时候这首歌早就载入了,
+	 * 没有预留的层就只能重新解码整首曲子。</p>
+	 */
+	private final VocalMaterialSample vocalMaterial;
+
 	public SoundFile(String path) {
 		super();
 
@@ -24,9 +33,49 @@ public class SoundFile extends AudioSample {
 		// 再包一层「变速不变调」。tempo=1 时是真直通（readDouble 直接转发内层），
 		// 所以正常听歌那条路和没有这层时逐采样一致；只有 automix 交接真的要变速时才会接管。
 		// 包不了（声道数不对、曲子太短）时 wrap() 原样还回来，链路完全不变。
-		this.sample = WsolaStretchSample.wrap(SampleLoader.loadStreamedFloatSample(new File(path)));
+		//
+		// 人声素材层必须在伸缩层*里面*：交接期的变速要作用在已经减过人声的素材上，
+		// 反过来则会让 WSOLA 的接缝把残差搬来搬去，减的位置每块都不一样。
+		this.vocalMaterial = new VocalMaterialSample(SampleLoader.loadStreamedFloatSample(new File(path)));
+		this.sample = WsolaStretchSample.wrap(this.vocalMaterial);
 
 		this.initiatePlayer();
+	}
+
+	/**
+	 * 把这首歌的人声素材接上（交接期用它把人声减掉）。
+	 *
+	 * @param samples    单声道素材，第 0 个采样对应播放素材的 {@code firstFrame}
+	 * @param firstFrame 素材起点的帧号
+	 * @param frameRate  素材采样率，必须与播放素材一致
+	 * @param ratio      素材对回原曲人声音量的投影系数
+	 * @return 是否接上了；接不上时这层保持直通，调用方退回带限抵消器即可
+	 */
+	public boolean attachVocalMaterial(float[] samples, long firstFrame, double frameRate, double ratio) {
+		return this.vocalMaterial.attach(samples, firstFrame, frameRate, ratio);
+	}
+
+	/** 卸下素材并恢复直通。 */
+	public void detachVocalMaterial() {
+		this.vocalMaterial.detach();
+	}
+
+	/** 这一路 deck 现在手上有没有人声素材。 */
+	public boolean hasVocalMaterial() {
+		return this.vocalMaterial.hasMaterial();
+	}
+
+	/**
+	 * 人声在输出里占几份：{@code 1} 原样，{@code 0} 完全减掉。
+	 *
+	 * <p>音频线程安全（一次 {@code volatile} 写），与 {@link #setAmplitudeNow(float)} 同一类调用。</p>
+	 */
+	public void setVocalMaterialLevel(double level) {
+		this.vocalMaterial.setLevel(level);
+	}
+
+	public double vocalMaterialLevel() {
+		return this.vocalMaterial.getLevel();
 	}
 
 	/**

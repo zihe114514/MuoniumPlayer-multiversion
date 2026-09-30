@@ -25,9 +25,10 @@ final class HudEditorLayout {
         // 共 8 行等高控件。
         if (islandExpanded) contentHeight += colorRowHeight * 8 + islandSliderCount * sliderRowHeight;
         if (coverExpanded) contentHeight += colorRowHeight;
-        // 无缝切换分组：总开关、重叠时长、跳过前奏、小节对齐、低频交换、去人声淡入、节奏锁定、
-        // 音高跳跃，共 8 行等高控件。
-        if (automixExpanded) contentHeight += sectionHeight + colorRowHeight * 16;
+        // 无缝切换分组：总开关、处理方案、表现模式与进阶模式、过渡动画、切点标记、重叠时长、
+        // 六个衔接处理开关，再加上 Folia 那一支的「分析模型」子标题与它的几行安装入口。
+        // 2026-10-01 多了「切点标记」一行。
+        if (automixExpanded) contentHeight += sectionHeight + colorRowHeight * 17;
         // 存储分组：缓存上限、立即清理，两行等高控件。
         if (storageExpanded) contentHeight += colorRowHeight * 2;
         // 播放器界面分组：目前只有淡入淡出速度这一条滑块。

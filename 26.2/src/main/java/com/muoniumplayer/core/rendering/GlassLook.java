@@ -4,6 +4,7 @@ import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.screens.ncm.TransitionPerformanceBudget;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.render.skija.GlassBackdrop;
+import com.muoniumplayer.render.skija.GlassEdgeBatch;
 import com.muoniumplayer.render.skija.GlassRefraction;
 import com.muoniumplayer.render.skija.SkijaEffects;
 
@@ -130,7 +131,7 @@ public final class GlassLook {
         if (amount <= 0.001f) {
             return false;
         }
-        return SkijaEffects.frostedBackdrop(x, y, width, height, radius, blurSigma(), amount);
+        return SkijaEffects.frostedBackdrop(x, y, width, height, radius, blurSigma(surface), amount);
     }
 
     /**
@@ -148,7 +149,7 @@ public final class GlassLook {
         if (amount <= 0.001f) {
             return false;
         }
-        return SkijaEffects.dimmedBackdrop(x, y, width, height, radius, blurSigma(), amount);
+        return SkijaEffects.dimmedBackdrop(x, y, width, height, radius, blurSigma(surface), amount);
     }
 
     /**
@@ -167,7 +168,7 @@ public final class GlassLook {
         if (amount <= 0.001f || strength <= 0.002f) {
             return;
         }
-        GlassRefraction.drawEdge(x, y, width, height, radius, strength, amount);
+        GlassRefraction.drawEdge(x, y, width, height, radius, strength, amount, blurSigma(surface));
     }
 
     public static void paintEdge(Surface surface, double x, double y, double width, double height,
@@ -188,9 +189,126 @@ public final class GlassLook {
         return amount(surface) > 0.001f ? Math.min(1f, glow) : 0f;
     }
 
-    /** 背景模糊强度，单位 GUI。设置里 0 就是「只压暗不糊」。 */
+    /** 背景模糊强度（全局那一档），单位 GUI。设置里 0 就是「只压暗不糊」。 */
     public static float blurSigma() {
         return GlassBackdrop.blurSigma();
+    }
+
+    /**
+     * <b>这一面</b>该糊多狠 = 全局档 × 这一面的倍率。
+     *
+     * <p>倍率读的是 {@code HudConfig.glassBlur*} 那四档，理由与默认值不等都写在那儿。
+     * 关键是<b>贴背景与折边缘必须问同一个值</b>：两头各读一次配置就会出现
+     * 「面板糊成一片、元素边缘却折着清晰画面」这种一半生效的怪相（历史上真出现过，
+     * 见 {@code GlassBackdrop.blurSigma()} 的注释）。</p>
+     */
+    public static float blurSigma(Surface surface) {
+        return blurFor(surface, GlassBackdrop.blurSigma());
+    }
+
+    /**
+     * {@link #blurSigma(Surface)} 的那一步乘法，单独拎出来是因为钳位要能在 JVM 里钉：
+     * 倍率被写坏（0、负数、NaN、手改 json 写成 9）时的症状是「这一面整层没有玻璃」
+     * 或者「糊到认不出背后是什么」，两种都不该出现。
+     *
+     * <p>全局档为 0 时结果就是 0，<b>倍率再大也不糊</b>——那是有意的：「背景模糊」推到 0
+     * 是用户明确说了不要糊，四面的倍率不能翻案。</p>
+     */
+    static float blurFor(Surface surface, float globalSigma) {
+        if (!(globalSigma > 0f)) {
+            return 0f;   // 含 NaN
+        }
+        float factor;
+        switch (surface) {
+            case ISLAND:
+                factor = HudConfig.glassBlurIsland;
+                break;
+            case DESKTOP_LYRIC:
+                factor = HudConfig.glassBlurDesktopLyric;
+                break;
+            case EDITORS:
+                factor = HudConfig.glassBlurEditors;
+                break;
+            case PLAYER:
+            default:
+                factor = HudConfig.glassBlurPlayer;
+                break;
+        }
+        if (!(factor > 0f)) {
+            factor = 1f;   // NaN / 0 / 负数：退回与全局同档，而不是把这一面的玻璃整层弄没
+        }
+        float sigma = globalSigma * Math.min(2f, factor);
+        return sigma <= 64f ? sigma : 64f;
+    }
+
+    /**
+     * 开一组<b>融合边缘</b>：从这里到 {@link #endFusion()} 之间画的所有玻璃边缘，
+     * 收尾时由一趟着色器按<em>一整张距离场</em>画完，于是挨得近的两块会在中间鼓出一道颈
+     * （两滴水银碰到一起那个样子）。
+     *
+     * <p>为什么要调用点自己括组，而不是整帧一批：我们的边缘必须压在自己那块底色之上、
+     * 别人那块底色之下。攒到帧末统一画，后落下来的弹窗就会被先画的按钮边缘光打穿。
+     * 组里各块控件<em>可以</em>各自带进场位移与缩放——每条登记都烘回开组那一刻那套坐标系
+     * （见 {@code GlassEdgeBatch#bakeIntoGroup}），取样平移则一组一份，两件事的代价与取舍
+     * 都写在那边的类注释里。</p>
+     *
+     * <p>没开成功（这一面没玻璃、这一帧没背景、矩阵带旋转）时什么都不做，
+     * 中间的 {@link #paintEdge} 与 {@link #paintElementEdge} 自动退回逐矩形各画各的。</p>
+     *
+     * @param smoothing 融合半径，画布局部单位：两块间隙小于它才连得起来。0 等于不开融合。
+     */
+    public static void beginFusion(Surface surface, float smoothing) {
+        if (amount(surface) <= 0.001f || refractionStrength(surface) <= 0.002f
+                || !(smoothing > 0f)) {
+            GlassEdgeBatch.clear();
+            return;
+        }
+        io.github.humbleui.skija.Canvas canvas = com.muoniumplayer.render.skija.SkijaGfx.canvas();
+        GlassBackdrop.Mapping map = canvas == null ? null : GlassBackdrop.mapping(canvas);
+        if (map == null) {
+            GlassEdgeBatch.clear();
+            return;
+        }
+        GlassEdgeBatch.begin(smoothing, map.offsetX / map.scaleX, map.offsetY / map.scaleY,
+                deviceMatrix(canvas));
+    }
+
+    /** 开组这一刻的画布矩阵（行主序 9 位）。读不到就返回 null，融合退回「组内不换矩阵」那条老路。 */
+    private static float[] deviceMatrix(io.github.humbleui.skija.Canvas canvas) {
+        try {
+            return canvas.getLocalToDeviceAsMatrix33().getMat();
+        } catch (Throwable failure) {
+            return null;
+        }
+    }
+
+    /**
+     * 融合半径，单位是<em>画布局部像素</em>。0 = 不融合，各块玻璃各画各的边。
+     *
+     * <p>两块之间的间隙要小于它两倍才连得出颈（soft-min 把表面往外拉 {@code k/4}），
+     * 所以歌曲列表那种「行与行不留缝」的排布也得推到十几才看得见效果；
+     * 推太大则整排控件会糊成一坨，这一档故意留给用户自己拧。</p>
+     *
+     * <p>只有一档而不是每面一档：融合只在<em>挨着的一排</em>上有意义，而哪几排该融合是
+     * 接线时逐个容器点名的（见 {@code AbstractWidget#setGlassFusion}），生效面开关与主题
+     * 强度也在那一刻由各面自己判。再给每一面配一个半径，就成了「四个滑块里两个永远用不上」。</p>
+     */
+    public static float fusionRadius() {
+        float radius = HudConfig.glassFusion;
+        if (!(radius > 0f)) {
+            return 0f;   // NaN 与负数都当关掉
+        }
+        return radius > 32f ? 32f : radius;
+    }
+
+    /** 收尾这一组并画掉。没开着时什么都不做。 */
+    public static void endFusion() {
+        GlassEdgeBatch.flush();
+    }
+
+    /** 现在有没有开着的一组（给调用点与探针看）。 */
+    public static boolean fusing() {
+        return GlassEdgeBatch.isOpen();
     }
 
     /**
@@ -210,7 +328,8 @@ public final class GlassLook {
         if (amount <= 0.001f || strength <= 0.002f) {
             return;
         }
-        GlassRefraction.drawElementEdge(x, y, width, height, radius, strength, amount);
+        GlassRefraction.drawElementEdge(x, y, width, height, radius, strength, amount,
+                blurSigma(surface));
     }
 
     /**

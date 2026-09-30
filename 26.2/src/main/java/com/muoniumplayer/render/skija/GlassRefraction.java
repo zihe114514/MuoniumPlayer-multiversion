@@ -162,12 +162,18 @@ public final class GlassRefraction {
      *
      * @param strength 折射强度（0 = 不画）。设置里那一档「玻璃边缘光」同时喂这里与假玻璃高光。
      * @param alpha 这一层此刻的出场浓度，用于主题切换与界面淡入。
+     * @param sigma <b>这一面</b>的模糊档（{@code GlassLook.blurSigma(Surface)}）：边缘要折的那张
+     *        背景必须与铺底用的是同一档，否则会出现「面板糊成一片、边缘却折着清晰画面」。
      * @return 画了；false = 没有可用背景或着色器不可用
      */
     public static boolean drawEdge(double x, double y, double width, double height,
-                                   double radius, float strength, float alpha) {
+                                   double radius, float strength, float alpha, float sigma) {
         // 面板级：边够长，折射带可以宽到 28，中央留一大片「只糊不折」的平玻璃。
-        return draw(x, y, width, height, radius, strength, alpha, 6.0, 28.0, 0.45);
+        float thickness = edgeThickness(width, height, 6.0, 28.0, 0.45);
+        if (joined(x, y, width, height, radius, thickness, strength, alpha, sigma)) {
+            return true;
+        }
+        return draw(x, y, width, height, radius, strength, alpha, sigma, 6.0, 28.0, 0.45);
     }
 
     /**
@@ -178,8 +184,31 @@ public final class GlassRefraction {
      * 是一整行果冻。元素这一档封顶 9，且按 34% 取，保证再小的按钮也留出一条不折的中央。</p>
      */
     public static boolean drawElementEdge(double x, double y, double width, double height,
-                                          double radius, float strength, float alpha) {
-        return draw(x, y, width, height, radius, strength, alpha, 2.5, 9.0, 0.34);
+                                          double radius, float strength, float alpha, float sigma) {
+        float thickness = edgeThickness(width, height, 2.5, 9.0, 0.34);
+        if (joined(x, y, width, height, radius, thickness, strength, alpha, sigma)) {
+            return true;
+        }
+        return draw(x, y, width, height, radius, strength, alpha, sigma, 2.5, 9.0, 0.34);
+    }
+
+    /**
+     * 这一条边有没有<em>入组</em>：正开着融合组（见 {@code GlassLook.beginFusion}）就登记，
+     * 由那一组在收尾时一趟画完整张距离场；没开组、或组已满，返回 {@code false}，
+     * 调用点紧接着逐矩形各画各的。
+     *
+     * <p>为什么在入组这一步判而不是在 {@code GlassLook}：厚度那一档（面板 28 / 元素 9）
+     * 与逐矩形那条路必须同源，两处各写一份常量的结果是同一块玻璃的两条边一条宽一条窄。</p>
+     */
+    private static boolean joined(double x, double y, double width, double height, double radius,
+                                  float thickness, float strength, float alpha, float sigma) {
+        return GlassEdgeBatch.isOpen() && GlassEdgeBatch.add(x, y, width, height, radius, thickness,
+                strength, DISPERSION, phase(), FRESNEL, alpha, sigma);
+    }
+
+    /** 呼吸相位：两条路共用一份，否则一组里有的边亮有的边暗。 */
+    private static float phase() {
+        return (float) ((System.nanoTime() / 1_000_000_000.0) * 0.9 % (Math.PI * 2));
     }
 
     /**
@@ -194,13 +223,15 @@ public final class GlassRefraction {
     }
 
     private static boolean draw(double x, double y, double width, double height,
-                                double radius, float strength, float alpha,
+                                double radius, float strength, float alpha, float sigma,
                                 double minThickness, double maxThickness, double ratio) {
         RuntimeEffect shader = effect();
         Canvas canvas = SkijaGfx.canvas();
         // 折射要折<em>糊过</em>的那张：面板里外都是磨砂画面，元素边缘却把清晰的世界折进来，
-        // 读起来就是「这块贴了张别的图」。预糊拿不到时才退回原图（那时整块玻璃也在退回旧画法）。
-        Image backdrop = GlassBackdrop.blurred(GlassBackdrop.blurSigma());
+        // 读起来就是「这块贴了张别的图」。档由调用点给（这一面自己那一档），
+        // 因为底板与边缘必须糊得一样，否则一半生效的怪相就在同一块玻璃上出现。
+        // 预糊拿不到时才退回原图（那时整块玻璃也在退回旧画法）。
+        Image backdrop = GlassBackdrop.blurred(sigma);
         if (backdrop == null) {
             backdrop = GlassBackdrop.image();
         }
@@ -226,7 +257,7 @@ public final class GlassRefraction {
         buf.putFloat((float) Math.max(0.0, radius)).putFloat(thickness)
                 .putFloat(REFRACTIVE_INDEX).putFloat(strength);
         buf.putFloat(DISPERSION)
-                .putFloat((float) ((System.nanoTime() / 1_000_000_000.0) * 0.9 % (Math.PI * 2)))
+                .putFloat(phase())
                 .putFloat(FRESNEL).putFloat(Math.min(1f, alpha));
         // 平移量换算成局部单位：图像素上的 offset 除以该轴倍率。
         buf.putFloat(map.offsetX / map.scaleX).putFloat(map.offsetY / map.scaleY)
@@ -284,6 +315,20 @@ public final class GlassRefraction {
             backdropShaderScaleX = 0f;
             backdropShaderScaleY = 0f;
         }
+    }
+
+    /* 三个折射常数给同包的 GlassEdgeBatch 用：两边各抄一份的话，
+       「一块玻璃」与「一组玻璃」的边缘就会差一点点，而那种差别正好在最显眼的那圈上。 */
+    static float refractiveIndex() {
+        return REFRACTIVE_INDEX;
+    }
+
+    static float dispersion() {
+        return DISPERSION;
+    }
+
+    static float fresnel() {
+        return FRESNEL;
     }
 
     /** 编译自检，只给静态测试用。 */

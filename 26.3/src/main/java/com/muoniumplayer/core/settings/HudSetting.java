@@ -90,7 +90,25 @@ public enum HudSetting {
     /** 玻璃自身颜色多浓：0 完全透出背景，1 基本看不见背景。 */
     GLASS_TINT("玻璃浓度", 0.00f, 1.00f),
     /** 边缘那圈光的强度。 */
-    GLASS_EDGE_GLOW("玻璃边缘光", 0.00f, 1.50f);
+    GLASS_EDGE_GLOW("玻璃边缘光", 0.00f, 1.50f),
+    // 四处界面各自的模糊倍率：乘在 GLASS_BLUR 那一档之上，1 = 与全局同档。
+    /** 播放器主面板的模糊倍率。 */
+    GLASS_BLUR_PLAYER("面板模糊倍率", 0.25f, 2.00f),
+    /** 灵动岛的模糊倍率。岛小，默认比面板轻。 */
+    GLASS_BLUR_ISLAND("灵动岛模糊倍率", 0.25f, 2.00f),
+    /** 桌面歌词卡片的模糊倍率。 */
+    GLASS_BLUR_LYRIC("歌词卡模糊倍率", 0.25f, 2.00f),
+    /** 三套 HUD 编辑器的模糊倍率。 */
+    GLASS_BLUR_EDITORS("编辑器模糊倍率", 0.25f, 2.00f),
+    /** 亮部溢出：玻璃后面那团亮的东西往面内晕开多少。0 = 整条链路一格都不画。 */
+    GLASS_BLOOM("玻璃亮部溢出", 0.00f, 1.00f),
+    /**
+     * 相邻玻璃的融合半径，画布局部像素。0 = 每块各画各的边。
+     *
+     * <p>接在枚举<em>末尾</em>：这一套条目的 id 有按序号落盘的历史，插在中间会让老配置的
+     * 滑块对错位，症状是「用户没动过的设置变了值」。</p>
+     */
+    GLASS_FUSION("玻璃融合半径", 0.00f, 32.00f);
 
     private final String label;
     private final float min;
@@ -175,6 +193,12 @@ public enum HudSetting {
             case GLASS_BLUR: return HudConfig.glassBlurSigma;
             case GLASS_TINT: return HudConfig.glassTintStrength;
             case GLASS_EDGE_GLOW: return HudConfig.glassEdgeGlow;
+            case GLASS_BLUR_PLAYER: return HudConfig.glassBlurPlayer;
+            case GLASS_BLUR_ISLAND: return HudConfig.glassBlurIsland;
+            case GLASS_BLUR_LYRIC: return HudConfig.glassBlurDesktopLyric;
+            case GLASS_BLUR_EDITORS: return HudConfig.glassBlurEditors;
+            case GLASS_BLOOM: return HudConfig.glassBloom;
+            case GLASS_FUSION: return HudConfig.glassFusion;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }
@@ -243,6 +267,12 @@ public enum HudSetting {
             case GLASS_BLUR: HudConfig.glassBlurSigma = clamped; break;
             case GLASS_TINT: HudConfig.glassTintStrength = clamped; break;
             case GLASS_EDGE_GLOW: HudConfig.glassEdgeGlow = clamped; break;
+            case GLASS_BLUR_PLAYER: HudConfig.glassBlurPlayer = clamped; break;
+            case GLASS_BLUR_ISLAND: HudConfig.glassBlurIsland = clamped; break;
+            case GLASS_BLUR_LYRIC: HudConfig.glassBlurDesktopLyric = clamped; break;
+            case GLASS_BLUR_EDITORS: HudConfig.glassBlurEditors = clamped; break;
+            case GLASS_BLOOM: HudConfig.glassBloom = clamped; break;
+            case GLASS_FUSION: HudConfig.glassFusion = clamped; break;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }

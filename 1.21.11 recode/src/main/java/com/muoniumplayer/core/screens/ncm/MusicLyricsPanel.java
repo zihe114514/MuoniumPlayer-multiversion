@@ -8,6 +8,7 @@ import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.AudioPlayer;
+import com.muoniumplayer.core.ncm.music.AutomixCueMarker;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.*;
@@ -78,6 +79,11 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     private final VolumeControl volumeControl = new VolumeControl();
 
     boolean prevMouse = false;
+
+    /** automix 接缝记号在这条进度条上的平滑，见 {@link AutomixCueMarker.Glide}。 */
+    private final AutomixCueMarker.Glide automixCueGlide = new AutomixCueMarker.Glide();
+    /** 上一次画记号时归属的那一首；换歌时让记号吸附而不是从上一首飘过来。 */
+    private long automixCueSongId = Long.MIN_VALUE;
 
     /** 左上角「A-Z」逐字特效快捷面板；只影响全屏歌词页的两项配置，实时预览。 */
     private final LyricStyleQuickPanel styleQuickPanel = new LyricStyleQuickPanel();
@@ -1372,6 +1378,32 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         return getCoverSizeMax() * .8;
     }
 
+    /**
+     * 把 automix 的接缝画在这条进度条上：竖线是「从这里开始切」，半透明带子是「这一段两首叠着」。
+     *
+     * <p>读数只有 {@link CloudMusic#automixCueNow()} 这一个来源，它返回 {@code null} 的几种情况
+     * （还没预备、预备已作废、系统播放器镜像态、设置里关掉）一律不画，也不补一个「大概在曲尾」的
+     * 猜测位置 —— 那些场合下一次切换根本不会交叠，画出来就是预报一件不会发生的事。</p>
+     *
+     * <p>本帧的播放位置用传进来的 {@code snapshot}，与进度条自身同一个时钟；记号归属的那一首也
+     * 从同一份快照取 id，换歌时直接吸附而不是从上一首的位置飘过来。</p>
+     */
+    private void drawAutomixCue(double barX, double barTop, double barWidth, double barHeight,
+                                float alpha, CloudMusic.PlaybackSnapshot snapshot) {
+        AutomixCueMarker cue = CloudMusic.automixCueNow();
+        long songId = snapshot == null ? Long.MIN_VALUE : snapshot.songId;
+        if (songId != automixCueSongId) {
+            automixCueSongId = songId;
+            automixCueGlide.reset();
+        }
+        if (cue == null) {
+            automixCueGlide.reset();
+            return;
+        }
+        AutomixCuePainter.paint(barX, barTop, barWidth, barHeight,
+                automixCueGlide.update(cue), cue.fading, alpha);
+    }
+
     private void renderControlsPart(double mouseX, double mouseY, double posX, double posY, double width, double height, float alphaIn, CloudMusic.PlaybackSnapshot snapshot) {
         // 左栏这一簇（信息块 / 进度条 / 音量 / 控制键）比页面底色再晚一档到场：接力封面正飞在
         // 它们头上，一起冒出来会糊成一片。用局部量而不是就地改参数，理由同 renderLyrics ——
@@ -1474,6 +1506,11 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         double fillWidth = progressBarWidth * perc;
         if (fillWidth > 0)
             roundedRect(elementsXOffset, progressBarYOffset - progressBarHeight * .5, fillWidth, progressBarHeight, Math.min((this.progressBarHeight / 8.0f) * 2.5, fillWidth * .5), hexColor(1, 1, 1, alpha));
+
+        // automix 的接缝画在这条进度条上。画在时间标签之前，所以后面那两句 00:00 压在记号之上，
+        // 竖线出头的一小截不会盖住数字。
+        drawAutomixCue(elementsXOffset, progressBarYOffset - progressBarHeight * .5,
+                progressBarWidth, progressBarHeight, alpha, snapshot);
 
         boolean hoveringProgressBar = progressBarDragging || this.isHovered(mouseX, mouseY, elementsXOffset, progressBarYOffset - progressBarHeight * .5, progressBarWidth, 8);
         this.progressBarHeight = Interpolations.interpolate(this.progressBarHeight, hoveringProgressBar ? 8 : 5, 0.3f);

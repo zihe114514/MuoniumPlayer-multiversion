@@ -14,6 +14,11 @@ final class FoliaTrackProfiler {
     private static final long WINDOW_MILLIS = 30_000L;
     private static final Gson GSON = new Gson();
     private static final File DIR = new File(ConfigPaths.CACHE_DIR, "automix-profiles");
+    /**
+     * 人声素材缓存的总量上限。约 50 首歌的开头一段 —— 一次分析要跑 120–180 秒，
+     * 所以这个数决定的是「往前听多少首不必再等模型」，而不是省磁盘。
+     */
+    private static final long MATERIAL_CACHE_BYTES = 256L * 1024 * 1024;
 
     private FoliaTrackProfiler() {}
 
@@ -23,12 +28,23 @@ final class FoliaTrackProfiler {
         String key = cacheKey(source);
         FoliaTrackProfile cached = read(key);
         if (cached != null && cached.isUsable()) return cached;
-        FoliaTrackProfile profile = analyse(player, source, outgoing);
+        FoliaTrackProfile profile = analyse(player, source, key, outgoing);
         if (profile != null) write(key, profile);
         return profile;
     }
 
-    private static FoliaTrackProfile analyse(AudioPlayer player, File source, boolean outgoing) {
+    /**
+     * 这份 profile 的人声素材缓存。
+     *
+     * <p>键直接跟着 profile 走（同一份 {@link #cacheKey}），所以换模型、换文件、歌曲被替换掉
+     * 都会让素材和它的时间戳一起失效 —— 素材单独搞一套键迟早会出现「时间戳是新的、减的人声是旧的」。</p>
+     */
+    static File stemFile(String cacheKey) {
+        return new File(DIR, cacheKey + ".voc.f32");
+    }
+
+    private static FoliaTrackProfile analyse(AudioPlayer player, File source, String profileKey,
+                                             boolean outgoing) {
         AnalysisAudio audio = AnalysisAudioSource.open(source);
         if (audio == null || audio.sampleRate() <= 0) return null;
         InferenceStatus inference = null;
@@ -43,7 +59,7 @@ final class FoliaTrackProfiler {
             boolean stemModel = hasStemModel();
             inference = InferenceStatus.of(player, source, beatModel, stemModel);
             FoliaTrackProfile profile = new FoliaTrackProfile();
-            profile.cacheKey = cacheKey(source);
+            profile.cacheKey = profileKey;
             profile.durationMillis = duration;
             profile.tailStartMillis = start;
             AutomixAnalyzer.BeatGrid grid = AutomixAnalyzer.analyzeBeats(mono, audio.sampleRate());
@@ -92,7 +108,10 @@ final class FoliaTrackProfiler {
             profile.toneLow = tone[0]; profile.toneMid = tone[1]; profile.toneHigh = tone[2];
             if (stemModel) {
                 inference.begin();
-                profile.stems = FoliaStemSeparator.analyse(source, start, window, audio, outgoing);
+                // 只有进场侧需要人声素材：交接期把进来的那首按位置减成「先出器乐、人声再长回来」，
+                // 出场侧只吃时间戳。30 秒单声道 float32 是 5 MB，不值得在没人读它的分析里顺手写一份。
+                profile.stems = FoliaStemSeparator.analyse(source, start, window, audio, outgoing,
+                        outgoing ? null : stemFile(profileKey));
                 if (profile.stems != null) inference.success();
                 else inference.failure();
             }
@@ -191,7 +210,33 @@ final class FoliaTrackProfiler {
             File target=new File(DIR,key+".json"), part=new File(DIR,key+".json.part");
             Files.write(part.toPath(),GSON.toJson(profile).getBytes(StandardCharsets.UTF_8));
             Files.move(part.toPath(),target.toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            trimVocalMaterial();
         } catch(Throwable ignored){}
+    }
+
+    /**
+     * 把人声素材缓存压回上限。
+     *
+     * <p>素材是这份缓存里唯一<b>大</b>的东西：一份 profile JSON 几 KB，一首歌开头 30 秒的人声素材
+     * 5 MB。不封顶的话「把播放列表听完一遍」等于往配置目录里塞几个 G，而它换不来 profile 换不来的
+     * 东西 —— 大不了重新分离一次。所以按最旧的先删，删到总量回到上限。</p>
+     *
+     * <p>删素材<b>不</b>动对应的 profile：那些时间戳仍然有效，交接期发现素材不在就退回抵消器。
+     * 淘汰只看落盘时间（读一次不续期），所以被删的可能是「很久以前分析过、最近正要播」的那首 ——
+     * 代价是那一次接缝少一点精度，不是播放失败。</p>
+     */
+    private static void trimVocalMaterial() {
+        File[] files = DIR.listFiles((dir, name) -> name.endsWith(".voc.f32"));
+        if (files == null || files.length == 0) return;
+        long total = 0L;
+        for (File file : files) total += file.length();
+        if (total <= MATERIAL_CACHE_BYTES) return;
+        Arrays.sort(files, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+        for (File file : files) {
+            if (total <= MATERIAL_CACHE_BYTES) return;
+            long size = file.length();
+            if (file.delete()) total -= size;
+        }
     }
 
     private static boolean hasBeatModel() {
