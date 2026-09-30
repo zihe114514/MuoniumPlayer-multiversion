@@ -4,6 +4,7 @@
   "version": "${version}",
   "name": "MuoniumPlayer",
   "description": "Music player for Minecraft 1.21.1 Fabric",
+  "icon": "assets/muonium/icon.png",
   "authors": [
     "云杉",
     "心事抱抱",

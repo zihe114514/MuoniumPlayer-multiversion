@@ -3,6 +3,7 @@ package com.muoniumplayer.core.screens.ncm;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.rendering.BrandVectorIcons;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.ScissorClipManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
@@ -237,7 +238,15 @@ public abstract class NcmSheet extends NCMPanel {
         background.setClickable(false).setRadius(14).setBeforeRenderCallback(() -> {
             background.setMargin(0);
             background.setColor(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
+            // 底板自己那层深色要压薄，否则它把刚贴上去的糊背景整个盖死——那正是
+            // 2026-09-30「二级菜单没有液态玻璃」的后半段：接了背景，但背景在底色底下。
+            background.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
+        // 七张二级菜单（音乐来源、账号管理、公告、字体、歌词检索、新建与导入歌单）都从这里长出来，
+        // 所以玻璃接在这一处就全覆盖。走 SHEET 而不是 PLATE：弹窗背后是我们自己的面板加一层遮罩，
+        // 这两样都不在背景采集里，所以贴真背景时要按遮罩那一档压暗（见 GlassLook.paintSheetFrost）——
+        // 不压就是「在压暗的桌面上开一扇透着大晴天的窗」，压过头又变回一块不透明的板。
+        background.setGlassSheet(GlassLook.Surface.PLAYER);
 
         // 顶部一道极淡的白，把标题那一段轻轻托起来。没有它整块弹窗是一片死板的纯色。
         final Wash gloss = new Wash(false, 14.0);
@@ -360,6 +369,7 @@ public abstract class NcmSheet extends NCMPanel {
         final Card bg = new Card();
         host.addChild(bg);
         bg.setRadius(12);
+        bg.setGlassRim(GlassLook.Surface.PLAYER);
         bg.setBeforeRenderCallback(() -> {
             bg.reveal = cardGate(slot);
             bg.setBounds(Math.max(1, host.getWidth() - (PAD + CARD_INSET) * 2), Math.max(1, height.getAsDouble()));
@@ -367,6 +377,9 @@ public abstract class NcmSheet extends NCMPanel {
             bg.setPosition(PAD + CARD_INSET + pageSlide() * (1.0 - bg.reveal),
                     top.getAsDouble() + (1.0 - bg.reveal) * 7.0);
             bg.setColor(color.getAsInt());
+            // 卡落在弹窗那块玻璃里面：只上自己那道边缘光，底色压薄。给它再贴一层真背景，
+            // 等于在同一处风景上再开一扇窗，读起来是「这块没上色」而不是「这是一块玻璃」。
+            bg.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             bg.setAlpha((float) bg.reveal);
         });
         bg.setTransformations(() -> {
@@ -497,6 +510,9 @@ public abstract class NcmSheet extends NCMPanel {
         final RoundedRectWidget plate = new RoundedRectWidget();
         host.addChild(plate);
         plate.setClickable(false).setRadius(height * .5);
+        // 胶囊落在弹窗那块玻璃<em>里面</em>：再给它贴一层真背景，等于在同一处风景上再开一扇窗，
+        // 形状完全重合，读起来是「这块没上色」。所以它只上自己那道边缘光。
+        plate.setGlassRim(GlassLook.Surface.PLAYER);
         // [0] 图标中心 x、[1] 文字左边缘，都是相对胶囊自身的坐标。
         final double[] slot = new double[2];
         plate.setBeforeRenderCallback(() -> {
@@ -538,6 +554,7 @@ public abstract class NcmSheet extends NCMPanel {
             plate.setPosition(PAD, 18);
             plate.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND), accent.getAsInt(), .28));
         });
+        plate.setGlassRim(GlassLook.Surface.PLAYER);
         // 字形必须留在 plate 底下：那两个 17 是「34 见方的盘子的中心」，换成弹窗坐标系就跑到盘子外面去了。
         icon(plate, glyph, ICON_M, () -> 17.0, () -> 17.0, accent);
 
@@ -667,6 +684,8 @@ public abstract class NcmSheet extends NCMPanel {
         final RoundedButtonWidget button = new RoundedButtonWidget("", font);
         host.addChild(button);
         button.setRadius(9);
+        // 弹窗里的这颗也是玻璃面：文字是它的子控件，边缘光不会把它一起淡掉。
+        button.setGlassRim(GlassLook.Surface.PLAYER);
         button.setShouldOverrideMouseCursor(true);
         button.setOnClickCallback((x, y, mouseButton) -> {
             if (mouseButton != 0) return false;

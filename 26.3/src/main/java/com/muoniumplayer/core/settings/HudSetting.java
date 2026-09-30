@@ -83,7 +83,14 @@ public enum HudSetting {
     BLOSSOM_LINES("可见行数", 1.00f, 5.00f),
     BLOSSOM_BLUR("面板模糊", 0.00f, 1.00f),
     BLOSSOM_OPACITY("面板底色", 0.00f, 1.00f),
-    BLOSSOM_BORDER("踩点描边", 0.00f, 1.00f);
+    BLOSSOM_BORDER("踩点描边", 0.00f, 1.00f),
+    // 真玻璃材质三项。区间与 HudConfig 读档时的钳位一致，改一边要改另一边。
+    /** 背后画面糊多狠，单位 GUI 像素的 sigma；0 就是不糊，只压暗。 */
+    GLASS_BLUR("玻璃模糊", 0.00f, 32.00f),
+    /** 玻璃自身颜色多浓：0 完全透出背景，1 基本看不见背景。 */
+    GLASS_TINT("玻璃浓度", 0.00f, 1.00f),
+    /** 边缘那圈光的强度。 */
+    GLASS_EDGE_GLOW("玻璃边缘光", 0.00f, 1.50f);
 
     private final String label;
     private final float min;
@@ -165,6 +172,9 @@ public enum HudSetting {
             case BLOSSOM_BLUR: return HudConfig.blossomBackdropBlur;
             case BLOSSOM_OPACITY: return HudConfig.blossomPanelOpacity;
             case BLOSSOM_BORDER: return HudConfig.blossomBorderStrength;
+            case GLASS_BLUR: return HudConfig.glassBlurSigma;
+            case GLASS_TINT: return HudConfig.glassTintStrength;
+            case GLASS_EDGE_GLOW: return HudConfig.glassEdgeGlow;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }
@@ -230,6 +240,9 @@ public enum HudSetting {
             case BLOSSOM_BLUR: HudConfig.blossomBackdropBlur = clamped; break;
             case BLOSSOM_OPACITY: HudConfig.blossomPanelOpacity = clamped; break;
             case BLOSSOM_BORDER: HudConfig.blossomBorderStrength = clamped; break;
+            case GLASS_BLUR: HudConfig.glassBlurSigma = clamped; break;
+            case GLASS_TINT: HudConfig.glassTintStrength = clamped; break;
+            case GLASS_EDGE_GLOW: HudConfig.glassEdgeGlow = clamped; break;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }

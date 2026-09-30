@@ -2,6 +2,7 @@ package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.rendering.FontelloIcons;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RectWidget;
@@ -115,6 +116,9 @@ public final class ConfirmationOverlay extends NCMPanel {
         background.setRadius(11);
         background.setColor(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
         background.setBeforeRenderCallback(() -> background.setMargin(0));
+        background.setGlassSheet(GlassLook.Surface.PLAYER);
+        // 底板自己那层深色压薄：不压的话刚贴上去的糊背景仍然在它底下，弹窗读起来就是一块实色板。
+        background.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
 
         RoundedRectWidget warningBadge = new RoundedRectWidget();
         dialog.addChild(warningBadge);

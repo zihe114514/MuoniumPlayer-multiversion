@@ -1,5 +1,8 @@
 package com.muoniumplayer.core.screens.ncm;
 
+import com.muoniumplayer.core.rendering.GlassLook;
+
+
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.font.GlyphInkMetrics;
@@ -149,6 +152,9 @@ public final class SegmentControl {
 
         host.addChild(track);
         track.setClickable(false);
+        // 分段条贴在搜索框那块玻璃<em>里面</em>，所以它只上自己那道边缘光，不再贴一层真背景：
+        // 同一处风景开两扇窗，读起来是「这块没上色」，不是「这是一块玻璃」。
+        track.setGlassRim(GlassLook.Surface.PLAYER);
         // 时钟只在轨道这一格推进：它是整块的最外层，淡出到零也还在画，所以不会有「进度停住、
         // 于是永远淡不完」那种卡死。子组件一律只读，不许自己再走一遍。
         track.setBeforeRenderCallback(() -> {
@@ -157,6 +163,8 @@ public final class SegmentControl {
             if (spec.positionsItself) track.setPosition(spec.x, spec.y);
             track.setRadius(spec.radius);
             track.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+            // 底色压薄，让底下那块搜索框玻璃透上来；不压就是一颗浮在玻璃上的实心深色胶囊。
+            track.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             track.setAlpha((float) presence);
             tick();
         });

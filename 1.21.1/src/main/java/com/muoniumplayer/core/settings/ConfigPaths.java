@@ -317,6 +317,17 @@ public final class ConfigPaths {
      */
     public static final File DEV_OPEN_PLAYER = new File(CONFIG_DIRECTORY, "dev_open_player");
 
+    /**
+     * 【只给开发验证】存在就打开<b>背景采集探针</b>：每帧把「此刻还不含我们 HUD 的游戏画面」
+     * 拷成一张纹理，并在屏幕左下角贴原图与糊过一档的对比块，日志里带采集耗时与纹理尺寸。
+     * 删掉这个文件即关。
+     *
+     * <p>与 {@link #DEV_OPEN_PLAYER} 同一个理由：{@code runClient} 塞 JVM 参数不方便，而自动化
+     * 环境只能操作文件与鼠标。等价开关是 {@code -Dmuonium.debug.glass=true}（那个是常量，
+     * 本文件是运行中可开关）。</p>
+     */
+    public static final File DEV_GLASS_PROBE = new File(CONFIG_DIRECTORY, "dev_glass_probe");
+
     static {
         migrateLegacyFiles();
     }

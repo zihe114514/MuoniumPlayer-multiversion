@@ -10,6 +10,7 @@ import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.FoliaLucideIcons;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.PlayerQueueIcons;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
@@ -88,6 +89,13 @@ public class MusicWidget extends RoundedRectWidget {
 
             this.setBounds(this.getParentWidth(), 30);
             this.setColor(NCMScreen.getColor(index % 2 == 0 ? NCMScreen.ColorType.ELEMENT_BACKGROUND : NCMScreen.ColorType.GENERIC_BACKGROUND));
+            // 行底是压在内容区底之上的第三张底，而且是这一页面积最大的一块——它原本是全不透明，
+            // 于是整片列表在玻璃主题下仍然是一块实心的深色。走 setFillAlpha：歌名、歌手、
+            // 徽标与右侧图标都是子控件，setAlpha 会把它们连同进场动画一起淡掉。
+            this.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+            // 每一行都是<em>一块自己的玻璃</em>：贴预糊背景、压本行底色、绕一圈薄折射与边缘高光。
+            // 这一页面积最大的就是这些行，它们不成玻璃，整页就还是一张贴图。
+            this.setGlassPlate(GlassLook.Surface.PLAYER);
             this.updateEntranceAnimation();
 
             if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.equals(music)) {

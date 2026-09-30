@@ -330,9 +330,17 @@ public class AudioPlayer {
                 this.midGainDb, this.highGainDb);
     }
 
-    /** 淡出 deck 的音频线程版本，多带上已经解耦的速度与音高两条控制。 */
-    void applyAutomixFrame(float fade, float bassDb, float tempo, float pitch) {
-        applyAutomixFrame(fade, bassDb, 0f, 0f, 0f);
+    /**
+     * 淡出 deck 的音频线程版本，多带上已经解耦的速度与音高两条控制，以及<b>出场方的人声让路</b>。
+     *
+     * <p>{@code vocalDepth} 是后来加的：只压进场方时，出场曲那一句如果越过交叠窗还没唱完，
+     * 中段就是两个人同时唱。深度 0 走 {@code VocalDuckFilter} 的位精确直通分支，
+     * 所以旧计划与关闭进阶模式时这一条不改任何一个采样值。方法名不沿用
+     * {@code applyAutomixFrame} 是因为它已经有一个五浮点参数的重载（进场方的曲线），
+     * Java 只按参数类型区分，两个五参重载会撞成一个。</p>
+     */
+    void applyOutgoingAutomixFrame(float fade, float bassDb, float vocalDepth, float tempo, float pitch) {
+        applyAutomixFrame(fade, bassDb, vocalDepth, 0f, 0f);
         applySpeedAndPitchNow(tempo, pitch);
     }
 

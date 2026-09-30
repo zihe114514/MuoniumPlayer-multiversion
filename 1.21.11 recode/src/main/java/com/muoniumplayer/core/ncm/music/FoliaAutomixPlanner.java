@@ -23,7 +23,14 @@ final class FoliaAutomixPlanner {
     private static final long MIN_OVERLAP_MILLIS = 800L;
     private static final long MAX_OVERLAP_MILLIS = 25_000L;
     private static final long BEAT_CUT_MILLIS = 40L;
-    private static final float MIN_GRID_CONFIDENCE = .28f;
+    /**
+     * 进阶模式的退场点必须落在播放头<b>之后</b>这么多毫秒。见
+     * {@link #advancedCue} 里对 {@code minimumFireMillis} 的说明：计划会被缓存复用，
+     * 复用时的播放头比算它的时候更靠后。
+     */
+    private static final long MIN_ADVANCED_FIRE_LEAD_MILLIS = 5_000L;
+    /** 包内可见：{@link AutomixAutoCue} 用同一道置信度闸决定要不要按小节铺候选。 */
+    static final float MIN_GRID_CONFIDENCE = .28f;
     private static final float MIN_KEY_CONFIDENCE = .25f;
     private static final float MIN_GAIN = .65f;
     private static final float MAX_GAIN = 1.60f;
@@ -172,6 +179,27 @@ final class FoliaAutomixPlanner {
             }
         }
 
+        // 进阶模式：把上面那对「启发式位置」当成候选之一，交给整曲包络上的配对搜索去比。
+        // 必须放在相位误差、响度匹配、分轨让路点<b>之前</b>——那些全都按最终这一对点求值，
+        // 先改点后算曲线，才不会「按 A 点打分、按 B 点播放」。
+        String advancedNote = "";
+        AutomixEnvelope outgoingEnvelope = null;
+        if (AutomixSettings.isAdvancedModeEnabled()) {
+            outgoingEnvelope = AutomixEnvelope.load(outgoing.getSourceFile());
+            AutomixEnvelope incomingEnvelope = AutomixEnvelope.load(incoming.getSourceFile());
+            AutomixAutoCue.Result adopted = advancedCue(outgoingEnvelope, incomingEnvelope,
+                    outgoingProfile, outgoingGrid, incomingGrid, introEndMillis,
+                    lastVocalEndMillis, fire, cue, overlap, (long) outgoing.getCurrentTimeMillis());
+            if (adopted != null) {
+                fire = adopted.fireMillis;
+                cue = adopted.cueMillis;
+                overlap = adopted.overlapMillis;
+                advancedNote = ", " + adopted.note;
+            } else {
+                advancedNote = ", autocue 未采纳";
+            }
+        }
+
         long phaseError = AutomixSettings.isBeatAlignEnabled() && outgoingUsable && incomingUsable
                 ? residualPhaseMillis(outgoingGrid, outgoingWindowStart, fire, incomingGrid, 0L, cue) : 0L;
         if (Math.abs(phaseError) > MAX_PHASE_ERROR_MILLIS) phaseError = 0L;
@@ -204,16 +232,34 @@ final class FoliaAutomixPlanner {
         boolean bassSwap = AutomixSettings.isBassSwapEnabled() && style.usesBassSwap();
         float vocalDuck = AutomixSettings.isVocalDuckEnabled()
                 ? (keyRelation == KeyRelation.CLASHING ? .74f : AutomixSettings.VOCAL_DUCK_DEPTH) : 0f;
+
+        // 进阶模式的人声证据。整曲包络能回答两件事：「这一句越过交叠窗了没有」和
+        // 「出场侧在窗内的哪一处掉的」。于是进场方从哪里长回人声按实测来，出场侧如果还在唱
+        // 也要让路——只压进场方时，中段是两个主唱同时唱。
+        // 没有包络（没预热到、外部格式还没扫完）时两个都是默认值，曲线与今天逐位一致。
+        float outgoingVocalDuck = 0f;
+        double vocalReleaseAt = 0.0;
+        if (outgoingEnvelope != null && vocalDuck > 0f) {
+            double body = outgoingEnvelope.meanLevel(fire, fire + overlap);
+            double tail = outgoingEnvelope.meanLevel(fire + overlap, fire + overlap + 2_000L);
+            if (body > 1e-4 && tail / body > .55) outgoingVocalDuck = vocalDuck;
+            vocalReleaseAt = outgoingEnvelope.releaseFraction(fire, overlap);
+            if (outgoingVocalDuck > 0f) {
+                advancedNote += ", 出场人声让路";
+            } else if (vocalReleaseAt > 0.0) {
+                advancedNote += String.format(Locale.ROOT, ", 人声释放点 %.2f", vocalReleaseAt);
+            }
+        }
         float midTilt = outgoingProfile == null || incomingProfile == null ? 0f
                 : toneTilt(outgoingProfile.toneMid, incomingProfile.toneMid);
         float highTilt = outgoingProfile == null || incomingProfile == null ? 0f
                 : toneTilt(outgoingProfile.toneHigh, incomingProfile.toneHigh);
         boolean beatMatched = AutomixSettings.isBeatAlignEnabled() && outgoingUsable && incomingUsable && tempoRatio != 1f;
         String summary = String.format(Locale.ROOT,
-                "%s %.2fs overlap, %s keys, %s, fire %dms cue %dms%s%s%s",
+                "%s %.2fs overlap, %s keys, %s, fire %dms cue %dms%s%s%s%s",
                 style.id, overlap / 1000.0, keyRelation.id, tempo.relation.id, fire, cue,
                 bassSwap ? ", bass swap" : "", vocalDuck > 0f ? ", vocal hold" : "",
-                stemDriven ? ", stem timing" : "");
+                stemDriven ? ", stem timing" : "", advancedNote);
 
         double animationPeriod = outgoingUsable && outgoingGrid != null && outgoingGrid.bpm > 1f
                 ? 60_000.0 / outgoingGrid.bpm : 500.0;
@@ -222,11 +268,74 @@ final class FoliaAutomixPlanner {
         return new AutomixPlan(fire, overlap, cue, gain, beatMatched, bassSwap, tempoRatio,
                 false, phaseError, vocalDuck, summary, style,
                 midTilt, highTilt, false,
-                drumAt, bassAt, vocalEntry, stemDriven, animationPeriod);
+                drumAt, bassAt, vocalEntry, stemDriven, animationPeriod,
+                outgoingVocalDuck, vocalReleaseAt);
     }
+
+    // 「窗口内均值」与「这一段什么时候掉的」两条量都在 AutomixEnvelope 上：选点时的第 ⑧ 项打分
+    // 与这里播放侧的释放曲线必须问同一个地方，否则会出现「按一条曲线挑的接缝、按另一条曲线执行」。
 
     private static boolean usableStems(FoliaStemProfile stems) {
         return AutomixSettings.isPerformanceModeEnabled() && stems != null && stems.isUsable();
+    }
+
+    /**
+     * 进阶模式的选点入口。<b>只读缓存，绝不扫描。</b>整曲包络必须已经由预热线程
+     * （{@link AutomixEnvelope#ensure}）扫好落在盘上；这里如果现场扫，会在预备期起若干个
+     * ffmpeg 进程解码整首歌，而那条窗口本来只有 30 秒、且此前是<b>零 IO</b> 的。
+     * 读不到就返回 null，启发式照常跑——「没预热」的表现与「没开进阶模式」完全一致。
+     */
+    private static AutomixAutoCue.Result advancedCue(AutomixEnvelope a, AutomixEnvelope b,
+                                                     FoliaTrackProfile outgoingProfile,
+                                                     AutomixAnalyzer.BeatGrid outgoingGrid,
+                                                     AutomixAnalyzer.BeatGrid incomingGrid,
+                                                     long introEndMillis, long lastVocalEndMillis,
+                                                     long fire, long cue, long overlap,
+                                                     long playheadMillis) {
+        if (a == null || b == null) {
+            System.out.println("[Automix/Folia] 进阶选点未采纳：整曲包络未就绪");
+            return null;
+        }
+        AutomixAutoCue.Request request = new AutomixAutoCue.Request();
+        request.outgoing = a;
+        request.incoming = b;
+        request.outgoingGrid = outgoingGrid;
+        request.incomingGrid = incomingGrid;
+        request.introEndMillis = introEndMillis;
+        request.lastVocalEndMillis = lastVocalEndMillis;
+        request.stemVocalEndMillis = stemVocalGuardMillis(outgoingProfile);
+        request.outgoingSectionMillis = sectionMillis(outgoingProfile);
+        request.heuristicFireMillis = fire;
+        request.heuristicCueMillis = cue;
+        request.heuristicOverlapMillis = overlap;
+        request.preferredOverlapMillis = overlap;
+        request.beatAlignEnabled = AutomixSettings.isBeatAlignEnabled();
+        // 播放头之后至少留出这些毫秒才允许当退场点。计划会被 AutomixPlanCache 按「这一对歌」
+        // 复用，同一对第二次播放时预备可能比第一次晚几秒——不留余量就会复用一个「已经过去了」
+        // 的退场点，交接当场开始，听起来像在中段硬切。
+        request.minimumFireMillis = Math.max(0L, playheadMillis + MIN_ADVANCED_FIRE_LEAD_MILLIS);
+
+        AutomixAutoCue.Result result = AutomixAutoCue.plan(request);
+        if (result == null) {
+            System.out.println("[Automix/Folia] 进阶选点：两首歌放不下任何候选窗口，沿用启发式");
+            return null;
+        }
+        System.out.println("[Automix/Folia] 进阶选点 " + result.detail + " → " + result.note);
+        if (!result.isAdopted()) return null;
+        // 采纳前再自证一次范围。搜索里已经保证了，但这一条结论直接决定什么时候开始淡出，
+        // 而一处算错的候选是「好好的歌提前二十秒退场」这种最难查的投诉。
+        if (result.fireMillis < request.minimumFireMillis) return null;   // 不许选已经播过去的位置
+        if (result.fireMillis < 0L || result.fireMillis + result.overlapMillis > a.durationMillis - 500L) return null;
+        if (result.cueMillis < 0L || result.cueMillis + result.overlapMillis > b.durationMillis - 500L) return null;
+        if (result.overlapMillis < MIN_OVERLAP_MILLIS || result.overlapMillis > MAX_OVERLAP_MILLIS) return null;
+        return result;
+    }
+
+    private static long[] sectionMillis(FoliaTrackProfile profile) {
+        if (profile == null || profile.sectionMillis == null || profile.sectionMillis.length == 0) return null;
+        long[] out = new long[profile.sectionMillis.length];
+        for (int i = 0; i < out.length; i++) out[i] = (long) profile.sectionMillis[i];
+        return out;
     }
 
     private static long stemVocalGuardMillis(FoliaTrackProfile profile) {

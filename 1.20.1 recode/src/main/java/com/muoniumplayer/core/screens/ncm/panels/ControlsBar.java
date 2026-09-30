@@ -15,6 +15,7 @@ import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.FoliaLucideIcons;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.PlayerQueueIcons;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.GlyphInk;
@@ -227,7 +228,10 @@ public class ControlsBar extends NCMPanel {
         bg.setBeforeRenderCallback(() -> {
             bg.setMargin(0);
             bg.setColor(NCMScreen.getColor(NCMScreen.ColorType.NAVIGATION_BACKGROUND));
-            bg.setAlpha(.95f - NCMTheme.getLiquidGlassAmount() * .22f);
+            // 底栏这块底同样压在面板根底之上，属于内层：不接玻璃的话，整页从上到下就它最黑，
+            // 玩家会读成「玻璃只做了上半截」。setFillAlpha 只动这张底，bg 后面的封面与控件不跟。
+            bg.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER,
+                    .95f - NCMTheme.getLiquidGlassAmount() * .22f));
             playingCover.setHidden(CoverHeroTransition.hidesSmallCover());
         });
 
@@ -354,6 +358,9 @@ public class ControlsBar extends NCMPanel {
         // 显式私人 FM 动作。它在 FM 会话之外完全隐藏，
         //因此普通播放列表从不暴露也不调用电台垃圾端点。
         RoundedButtonWidget fmSkip = new RoundedButtonWidget("换一首", FontManager.pf12bold);
+        // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
+        fmSkip.setGlassPlate(GlassLook.Surface.PLAYER)
+                .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         this.addChild(fmSkip);
         fmSkip.setShouldOverrideMouseCursor(true);
         // 显示与否必须由播放条来判定，不能写在按钮自己的回调里：AbstractWidget#renderWidget
@@ -632,6 +639,11 @@ public class ControlsBar extends NCMPanel {
                             .setColor(qualitySelector.isHovering()
                                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND))
+                            // 这颗按钮和它弹出的那圈选项是同一块玻璃：贴在面板上，背后就是这一帧
+                            // 采进来的画面，所以走 PLATE（贴真背景 + 薄折射 + 边光），底色按浓度压薄。
+                            // 不压的话它还是一页脚那颗实心深色胶囊，跟刚上玻璃的播放键不是一套。
+                            .setGlassPlate(GlassLook.Surface.PLAYER)
+                            .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f))
                             .setAlpha(ControlsBar.this.getAlpha() * .94f)
                             .setPosition(selectorX,
                                     Math.max(1.0, (qualitySelector.getParentHeight() - buttonHeight) * .5));
@@ -801,6 +813,9 @@ public class ControlsBar extends NCMPanel {
         qualityMenuBackground
                 .setClickable(false)
                 .setHidden(true)
+                // 那圈「音质」选项是从按钮里长出来的一块小玻璃：它背后就是这一帧采进来的画面，
+                // 所以贴真背景 + 薄折射 + 边光，而不是一块浮在界面之上的实心深色板。
+                .setGlassPlate(GlassLook.Surface.PLAYER)
                 .setBeforeRenderCallback(() -> {
                     double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
                     double menuWidth = qualityMenuWidth(scale, qualityColumnWidths);
@@ -818,6 +833,8 @@ public class ControlsBar extends NCMPanel {
                                     + qualitySelector.getWidth() - menuWidth), bottom - visibleHeight)
                             .setRadius(6.0 * scale)
                             .setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND))
+                            // 底色压薄，让刚贴上去的糊背景透出来（不压就仍然是一块实心深色菜单）。
+                            .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f))
                             .setAlpha((float) (ControlsBar.this.getAlpha() * .98f * progress));
                 });
 
@@ -889,6 +906,15 @@ public class ControlsBar extends NCMPanel {
                                 .setBounds(qualityColumnWidths[optionColumn] * scale, optionHeight - 2.0 * scale)
                                 .setPosition(slotX, slotY + (1.0 - reveal) * 3.0)
                                 .setRadius(4.0 * scale)
+                                // 选项排在菜单那块玻璃<em>里面</em>，不能再各自去贴一遍真背景：
+                                // 那样每格透的是比周围更清楚的画面，读起来是一排挖在玻璃上的洞。
+                                // 所以走 RIM —— 只上那一圈边缘光，靠底色深浅分档。
+                                // 选中与探到的那一格不压薄：选中靠的就是这块实心强调色，
+                                // 压成玻璃会让「现在用的是哪一档」看不出来。
+                                .setGlassRim(GlassLook.Surface.PLAYER)
+                                .setFillAlpha(qualityOption.isHovering() || (selected && !unavailable)
+                                        ? 1.0f
+                                        : GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f))
                                 .setColor(qualityOption.isHovering()
                                         ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                                         : (selected && !unavailable

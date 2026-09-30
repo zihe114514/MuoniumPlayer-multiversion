@@ -438,7 +438,11 @@ public final class NeteaseListenTogetherService {
         pendingSeekMillis = 0L;
         MultiThreadingUtil.runOnMainThread(() -> {
             AudioPlayer active = CloudMusic.player;
-            if (active != null && active.isUsable()) active.setPlaybackTime(target);
+            if (active == null || !active.isUsable()) return;
+            active.setPlaybackTime(target);
+            // 对齐到房间的进度就是一次真的位置移动：正在交叉淡化时得让 automix 收尾，
+            // 否则旧歌还会照着墙钟把剩下那几秒淡完。
+            CloudMusic.onSeekApplied();
         });
     }
 

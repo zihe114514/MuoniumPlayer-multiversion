@@ -245,7 +245,8 @@ final class AutomixPlanCache {
                     + "," + AutomixSettings.isVocalDuckEnabled()
                     + "," + AutomixSettings.isPitchMatchEnabled()
                     + "," + AutomixSettings.isSkipIntroEnabled()
-                    + "," + AutomixSettings.isPerformanceModeEnabled();
+                    + "," + AutomixSettings.isPerformanceModeEnabled()
+                    + "," + AutomixSettings.isAdvancedModeEnabled();
         } catch (Throwable unavailable) {
             // 设置读不到就不给键：缓存整个失效，比拿一份「不知道按什么设置算的」计划安全。
             return "";

@@ -83,6 +83,28 @@ public final class MpProto {
     public static final String C_LEAVE      = "leave";
     public static final String C_DISBAND    = "disband";
     public static final String C_ENQUEUE    = "enqueue";
+    /**
+     * 整张歌单灌进房间队列，服务端把这一批全部落在<b>最低优先级档</b>（排在插队与排队歌之后）。
+     *
+     * <p>负载：{@code playlist}（歌单名）+ {@code tracks}（曲目对象数组，形状同 {@link #C_ENQUEUE}
+     * 的 {@code track}，但<b>不带</b> {@code url}）。与服务端 {@code Proto.C_ENQUEUE_BATCH} 同名同形。</p>
+     *
+     * <p>为什么要单独一帧，而不是循环发 {@link #C_ENQUEUE}：服务端每收到一条点歌就重发<b>整份</b>
+     * 歌单快照，还会给每条没有直链的曲目当场向全房要一次链接。一首一首点时那无所谓，一次灌一百首
+     * 就是上百帧全量快照加一百次真取流 —— 所以批量在服务端只做一次广播，链接交给它的前瞻窗按需问。</p>
+     *
+     * <p>追加式改动：老服务端不认识这个 op，只会回一句「操作失败」，所以客户端要靠
+     * {@code hello.playlistBatchLimit} 判断能不能发（见 {@link MpPartyClient#canPlaylist()}）。</p>
+     */
+    public static final String C_ENQUEUE_BATCH = "enqueue_batch";
+    /**
+     * 撤回某张歌单<b>还没播</b>的那批（{@code playlist} = 当初灌进来时带的那个名字）。
+     *
+     * <p>它是 {@link #C_ENQUEUE_BATCH} 的退路。少了这一帧，灌完 100 首想收回来只剩两个选择：
+     * 一首一首点「移除」（一百次全量广播），或者「清空歌单」把别人排的歌一起清掉 —— 两个都不是
+     * 用户按「播放歌单」时想干的事。服务端会再按 requester 判一次权，普通成员撤不动别人的批次。</p>
+     */
+    public static final String C_CLEAR_PLAYLIST = "clear_playlist";
     public static final String C_PLAY_NOW   = "play_now";
     public static final String C_PLAY_INDEX = "play_index";
     public static final String C_REMOVE     = "remove";

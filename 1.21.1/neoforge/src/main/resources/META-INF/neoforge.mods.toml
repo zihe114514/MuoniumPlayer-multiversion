@@ -13,6 +13,7 @@ description = '''
 Music player for Minecraft ${minecraft_version} NeoForge.
 '''
 displayURL = "https://melodifymc.cc.cd/"
+logoFile = "assets/muonium/icon.png"
 
 # 客户端专用：装到服务端上不需要、也不应该加载。
 [[dependencies.muonium]]

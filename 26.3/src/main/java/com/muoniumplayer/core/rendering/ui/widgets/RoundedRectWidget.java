@@ -19,7 +19,13 @@ public class RoundedRectWidget extends AbstractWidget<RoundedRectWidget> {
 
     @Override
     public void onRender(double mouseX, double mouseY) {
+        // 标了玻璃底板的控件走这三步：先贴预糊背景，再画自己那层底色，最后压边缘。
+        // 顺序不能换 —— 边缘折射是「玻璃这个表面」的效应，画在底色之前会被底色盖掉。
+        boolean frosted = this.glassPlateBase(this.getX(), this.getY(),
+                this.getWidth(), this.getHeight(), this.radius);
         this.roundedRect(this.getX(), this.getY(), this.getWidth(), this.getHeight(), this.radius, this.getHexColor());
+        this.glassPlateEdge(frosted, this.getX(), this.getY(),
+                this.getWidth(), this.getHeight(), this.radius);
     }
 
     public RoundedRectWidget setRadius(double radius) {

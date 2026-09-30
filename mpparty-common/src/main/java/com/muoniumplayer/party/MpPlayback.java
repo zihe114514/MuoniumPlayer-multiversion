@@ -329,13 +329,25 @@ public final class MpPlayback {
         });
     }
 
+    /**
+     * 房间里有人（房主/管理员）把进度条拖到了 {@code posMs}。
+     *
+     * <p>落本地位置之后要通知 automix：正在交叉淡化时，曲线读的是墙钟，位置一改这次接缝就
+     * 作废了，不收尾就会让旧歌在新歌已经跑远的地方继续淡出。各端收到的是同一帧，所以每台都
+     * 自己收自己的，不会有人多叠一段。</p>
+     *
+     * <p>心跳纠偏（{@code time(...)}）<b>不</b>走这一条：那是按偏差阈值触发的修正，交叠期本来
+     * 就该让路，把它当成一次拖进度条会把正在叠的接缝一次次薅断。</p>
+     */
     public static void seek(final long posMs) {
         MpSyncPolicy.markCommand();
         onMainThread(new Runnable() {
             @Override
             public void run() {
                 AudioPlayer player = usablePlayer();
-                if (player != null) player.setPlaybackTime(posMs);
+                if (player == null) return;
+                player.setPlaybackTime(posMs);
+                CloudMusic.onSeekApplied();
             }
         });
     }

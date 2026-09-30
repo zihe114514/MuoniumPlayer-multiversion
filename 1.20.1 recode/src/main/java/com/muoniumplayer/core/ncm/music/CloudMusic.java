@@ -511,7 +511,13 @@ public class CloudMusic implements SharedConstants {
  * 那些地方没有一个会去挪它。它一旦停在很远处，{@code 尾下标 - curIdx} 就把几十上百格正常歌序
  * 报成用户排过的队。现在待播段每次从活队列现算，见 {@link PlayNextLedger}。</p>
  */
-    private static final PlayNextLedger playNextLedger = new PlayNextLedger();
+    /**
+     * 「下一首播放」的账本。
+     *
+     * <p>包可见只为测试能把「用户排过的歌」登记上（{@code QueueReorderIdentityTest} 要在不启动
+     * Minecraft、不碰灵动岛的前提下搭出一段真实待播队列）；运行期没有任何外部访问。</p>
+     */
+    static final PlayNextLedger playNextLedger = new PlayNextLedger();
     /**
  * 每次队列变化时递增。Automix 会预解码它预测的下一首，所以用户改变主意之前
  * 预备好的播放牌必须被丢弃。
@@ -627,6 +633,58 @@ public class CloudMusic implements SharedConstants {
             if (queue == null || from >= queue.size() || queue.get(from) == null) return false;
             Music song = queue.remove(from);
             queue.add(current + 1 + toOffset, song);
+            queueRevision++;
+            return true;
+        }
+    }
+
+    /**
+     * 一次性按给定排布重排待播队列<b>的前 {@code order.length} 格</b>——进阶模式「一键排列」
+     * （{@link QueueFlowSorter}）的落地口。
+     *
+     * <p>{@code order[i] = j} 表示新的第 i 格放扫描快照里的第 j 首，必须是 0..n-1 的一个<b>全排列</b>。
+     * 逐对调用 {@link #moveQueuedNext(int, int)} 也能排出来，但每搬一次都会递增
+     * {@code queueRevision}，而预备线程每一次看到版本号变化就丢掉一张已经解码到一半的牌——
+     * 一次排列会被烧成几十次重下重解。所以这里整份持有同一把锁、只递增一次。</p>
+     *
+     * <p>拒绝半排列：接受它之后队列里会凭空少几首歌或多出 null，而这两样都要等下一首才暴露。</p>
+     *
+     * <h3>{@code expected} 是这份排布的有效期</h3>
+     * 排布是在后台按<b>几十秒前</b>的那份队列算出来的，中间用户完全可能又插了一首「下一首播放」、
+     * 或者当前曲目刚好结束让 {@code curIdx} 前移一格。只比长度挡不住「少一首又多一首」那种变化，
+     * 所以逐格比<b>身份</b>：任何一格对不上就整个不改。同一段快照也决定了改动的范围 —— 排了
+     * 前 n 格，第 n 格之后的歌原位不动。
+     *
+     * @param order    新的第 i 格取快照里的第几首
+     * @param expected 算出这份排布时那份待播前缀的快照，长度与 {@code order} 一致
+     * @return 是否真的改了顺序
+     */
+    public static boolean reorderQueuedNext(int[] order, List<Music> expected) {
+        if (order == null || order.length < 2) return false;
+        if (expected == null || expected.size() != order.length) return false;
+        synchronized (PLAY_NEXT_LOCK) {
+            List<Music> queue = playList;
+            int current = curIdx;
+            int size = pendingRunLocked();
+            if (queue == null || size < order.length) return false;
+            for (int i = 0; i < order.length; i++) {
+                int slot = current + 1 + i;
+                if (slot >= queue.size()) return false;
+                if (queue.get(slot) != expected.get(i)) return false;
+            }
+            boolean[] seen = new boolean[order.length];
+            for (int index : order) {
+                if (index < 0 || index >= order.length || seen[index]) return false;
+                seen[index] = true;
+            }
+            java.util.ArrayList<Music> reordered = new java.util.ArrayList<>(order.length);
+            for (int index : order) {
+                Music song = queue.get(current + 1 + index);
+                if (song == null) return false;
+                reordered.add(song);
+            }
+            // 只覆盖前 order.length 格：后面的那些这次没量，搬它们就等于凭猜测改用户的顺序。
+            for (int i = 0; i < order.length; i++) queue.set(current + 1 + i, reordered.get(i));
             queueRevision++;
             return true;
         }
@@ -925,6 +983,7 @@ public class CloudMusic implements SharedConstants {
         float actual = activePlayer.getCurrentTimeMillis();
         MusicLyricsWidget.resetProgress(actual);
         MusicLyricsPanel.resetProgress(actual);
+        onSeekApplied();
         return true;
     }
 
@@ -957,7 +1016,37 @@ public class CloudMusic implements SharedConstants {
         float actual = activePlayer.getCurrentTimeMillis();
         MusicLyricsWidget.resetProgress(actual);
         MusicLyricsPanel.resetProgress(actual);
+        onSeekApplied();
         return true;
+    }
+
+    /**
+     * 本地播放头<b>已经</b>移动之后通知 automix。
+     *
+     * <h2>为什么进度条必须过这一道</h2>
+     *
+     * <p>交叉淡化的曲线读的是<b>墙钟</b>（{@code (now − startedAt) / overlapMillis}），不是任何一张
+     * 牌的位置。所以把新歌拖到 1:20 之后，那几条曲线还会照着「新歌刚从入点进来」继续跑完剩下的
+     * 几秒：旧歌不停、新歌被低搁架与人声让路压着、音量从一半慢慢抬起来。用户听见的就是
+     * 「我都拖走了那首还在响」。</p>
+     *
+     * <p>已经预备、还没点火的那一段不需要这里操心：{@code maybePreRollArmedDeck} 早就按位置复核过
+     * 预卷牌有没有跑过头，而点火点被甩到身后由监督 tick 自己发现（{@code holdSeamForFreshCue}）——
+     * 那一条判的是播放头与计划，与是谁移动了它无关。所以这里<b>不传位置</b>：本方法只能保证
+     * 「动过」，真正该照哪个位置算，永远以本线程下一次读到的那个为准。</p>
+     *
+     * <p>本方法只做记账，<b>一张牌都不碰</b>：它会被界面线程、房间的帧处理线程、官方一起听的同步
+     * 线程调到，而收尾要动两张牌、还要撤过渡动画，那些都归播放线程管。于是收尾排在它自己的
+     * 10 ms tick 上，与自然结束时的交接同一根线程同一把锁。</p>
+     */
+    public static void onSeekApplied() {
+        try {
+            Thread active = playThread;
+            if (!(active instanceof PlayThread)) return;
+            ((PlayThread) active).recordSeek();
+        } catch (Throwable ignored) {
+            // 进度条是用户操作：automix 这边出任何意外都不能让它不生效。
+        }
     }
 
     private static boolean canPlayNext() {
@@ -1430,6 +1519,21 @@ public class CloudMusic implements SharedConstants {
         /** 下一次音频预取可以开始的最早墙钟时间。 */
         private volatile long nextAudioPrefetchAt;
         private volatile AutomixFade activeFade;
+        /**
+         * 混音进行中有人拖了进度条，见 {@link #recordSeek()}。
+         *
+         * <p>与 {@link #manualSkipRequested} 同一套「别的线程只置位，本线程的 10 ms tick 消费」：
+         * 收尾要动两张牌（把进场方拉平、把出场方放掉）还要撤掉过渡动画，那些都归这根线程管。
+         * 从界面线程直接 {@code finishAutomixFade()} 会跟正在跑的 {@code driveAutomixFade} 抢
+         * 同一个 {@code activeFade}，最坏的情况是两张牌各自被释放一次。</p>
+         */
+        private volatile boolean seekDuringFadeRequested;
+        /**
+         * 顶住交接、等一条新接缝的截止墙钟时间；{@code 0} 表示没在顶。见
+         * {@link #holdSeamForFreshCue(AudioPlayer)}。
+         */
+        private volatile long seamHoldUntil;
+
 
         /**
  * 在监督 tick 收回曲线写入权之前，{@link AutomixFade#audioDrivenAt} 可以陈旧多久。
@@ -1831,6 +1935,12 @@ public class CloudMusic implements SharedConstants {
 
                 // 10 ms 监督 tick 兼任交叉淡化时钟：粒度足以
                 // 平滑渐变，并且已经绑定了上面的会话/取消检查。
+                // 拖进度条的收尾排在推进曲线之前：同一 tick 里先推进再收尾，等于明知这次混音
+                // 已经作废还要再按旧曲线写一帧。
+                if (seekDuringFadeRequested) {
+                    seekDuringFadeRequested = false;
+                    finishAutomixFade();
+                }
                 driveAutomixFade();
                 // 在预备簿记之前处理：maybeArmNextTrack 内部的队列修订号变化
                 // 会丢弃已预备的播放牌，而早一个 tick 到达的请求不能连同它一起
@@ -1846,10 +1956,18 @@ public class CloudMusic implements SharedConstants {
                 // 必须排在 arm 之后同一 tick：arm 刚把这一首接下来时 arming/armed 已经置位，
                 // 这一条看见就让路。它只补 arm 没做成的场合（见方法注释）。
                 maybePrefetchNextTrackAudio(activePlayer);
-                maybePreRollArmedDeck(activePlayer);
-                if (tryAutomixHandover(activePlayer)) {
-                    automixHandover = true;
-                    return;
+                // 复查接缝必须排在预卷之前：它可能在这一个 tick 里换掉入点，而预卷是按
+                // plan.fireMillis − preRollMillis 判的。顺序反了就会先按旧入点出声、再被换掉。
+                maybeReplanArmedTrack(activePlayer);
+                // 顶住交接只跳过这两步（预卷 + 点火），其余照旧：预备、歌词、上报都不该因为
+                // 多等一条新接缝就停一停。预卷也要跳——它按旧点火点算，这时候卷了等新计划
+                // 装上还得重新定位一次，等于白做一遍。
+                if (!holdSeamForFreshCue(activePlayer)) {
+                    maybePreRollArmedDeck(activePlayer);
+                    if (tryAutomixHandover(activePlayer)) {
+                        automixHandover = true;
+                        return;
+                    }
                 }
 
                 // 在交接尝试之后检查，这样刚结束的曲目仍可以交接给已预备的
@@ -1959,6 +2077,10 @@ public class CloudMusic implements SharedConstants {
 
             if (!isSessionUsable(targetSession)) return false;
             playing.set(true);
+            // 进阶模式：这首歌<b>现在是出场方</b>了，下一条交接要的是它的整曲包络。起播这一刻
+            // 起扫，预算就是整首歌的播放时长——这是唯一来得及的时机，预备窗只有 30 秒。
+            // 总开关关闭时这个方法第一行就返回：不排队、不起线程、不读盘。
+            warmAdvancedEnvelope(activePlayer);
             NeteasePlaybackHistoryReporter.start(song, currentPlaylistContext, activePlayer);
             KuGouPlaybackReporter.start(song, activePlayer);
             final AudioPlayer callbackPlayer = activePlayer;
@@ -2366,6 +2488,32 @@ public class CloudMusic implements SharedConstants {
             private volatile boolean preRolled;
             /** 当播放本身暂停时，预卷播放牌被保持暂停期间为 true。 */
             private volatile boolean preRollPaused;
+            /**
+             * 规划那一刻<b>两份整曲包络都在</b>（进阶模式）。
+             *
+             * <p>它为「要不要回头重算一次」而存在：配对选点要读整曲包络，而包络是起播之后才在
+             * 后台扫的。预备发生得很早（出场曲播到 10 秒就开始了），于是第一次播的一对歌很可能
+             * 踩着<b>没证据的那次规划</b>定下来。这个位就是「那次没证据」的记账；进阶模式关闭时
+             * 它恒为 true，因为那时候根本不存在需要等的证据。</p>
+             */
+            private volatile boolean advancedEvidence = true;
+            /** 证据到货那一次复查的记号（不论结果）——补算只许一遍，不许每 tick 抖一次接缝。 */
+            private volatile boolean replanned;
+            /**
+             * 这条预备一共重算过几次（两个触发源合在一起记）：证据到货与「播放头越过点火点」
+             * 都要花这份预算，拖十次进度条不该烧十趟整曲分析。
+             */
+            private volatile int replanCount;
+            /** 复查正在后台算：算完把结果放进 {@link #replannedPlan}，由播放线程决定装不装。 */
+            private volatile boolean replanning;
+            /**
+             * 后台算好的新计划，等播放线程装上；没有就为 {@code null}。
+             *
+             * <p>为什么绕这一道：换接缝要按新入点重新 {@code prepareStart}，而这张牌的入点归
+             * 播放线程管（预卷、提升都在这里）。后台只算不改，装上时就不需要任何锁，也不可能
+             * 出现「后台正在改入点、播放线程同时开始出声」这种两边都以为自己在负责的事。</p>
+             */
+            private volatile AutomixPlan replannedPlan;
 
             private ArmedTrack(Music song, File file, AudioPlayer deck, int index, long generation,
                                long queueRevision) {
@@ -2742,7 +2890,19 @@ public class CloudMusic implements SharedConstants {
                     return;
                 }
 
+                // 进阶模式：进场这一首的整曲包络必须在这次规划<b>之前</b>就位。上一轮这里只是把
+                // 它提交给后台池，而规划就在同一根线程上紧随其后 —— 于是第一次播的一对歌永远
+                // 拿不到进场侧的证据，配对选点等于没开（出场侧还能靠上一次播留下的缓存侥幸命中，
+                // 进场侧是彻底不可能）。这条链本来就在低优先级池上、已经付过一次下载加解码，
+                // 多解一遍整曲是它自己该干的活；总开关关闭时这个方法第一行就返回。
+                boolean incomingEnvelope = warmAdvancedEnvelopeNow(file, decodedMillis);
+
                 ArmedTrack track = new ArmedTrack(song, file, deck, index, armGeneration, armRevision);
+                // 这次规划到底有没有证据，记在预备上：回头复查（{@link #maybeReplanArmedTrack}）
+                // 只看这一位。出场侧的包络是它自己起播时扫的，此刻可能还在队列里排队。
+                track.advancedEvidence = !AutomixSettings.isAdvancedModeEnabled()
+                        || (incomingEnvelope && AutomixEnvelope.isPresent(
+                                ownedPlayer == null ? null : ownedPlayer.getSourceFile()));
                 // 一起听房间：交接点由房主那台用它自己选的引擎（Folia 或内置信号处理）分析出来，
                 // 服务端裁决后广播给全房 —— 房间里跑分析的只有房主一台，所以几台机器拿到的是
                 // 同一份计划。计划还没到时本机不会自己编一条（那会让两台机器在同一刻叠出两条
@@ -2757,12 +2917,32 @@ public class CloudMusic implements SharedConstants {
                     // Python 的 stem 分离）。键里带着两首歌的音频与全部相关设置，所以命中的
                     // 计划与现在重算一遍得到的必然是同一条。
                     track.plan = AutomixPlanCache.load(ownedPlayer, deck, lastVocalEnd);
+                    // 缓存那一份是按<b>上一次</b>预备时的播放头成立的，重放时它不再自证。预备晚几秒
+                    // （前几次尝试失败、自定义源脚本起得慢）就会拿到一个已经过去的退场点，
+                    // 「位置已过点火点」当场为假 → 混音在歌的中段立刻开始，听起来就是一次硬切。
+                    // 计算路径上这条复查在规划器里（FoliaAutomixPlanner 的 5 秒余量），复用路径补在这里。
+                    if (track.plan != null && ownedPlayer != null) {
+                        long playhead = (long) ownedPlayer.getCurrentTimeMillis();
+                        if (track.plan.fireMillis < playhead + REUSED_PLAN_FIRE_LEAD_MILLIS) {
+                            System.out.println("[Automix] 复用计划已过期：fire " + track.plan.fireMillis
+                                    + " < 播放头 " + playhead + " + " + REUSED_PLAN_FIRE_LEAD_MILLIS
+                                    + "，改为重算");
+                            track.plan = null;
+                        }
+                    }
                 }
                 if (track.plan == null && !roomOwns) {
                     track.plan = AutomixPlanner.plan(ownedPlayer, deck, lastVocalEnd);
                     // 只缓存算得出来的计划：null 里混着「这次音频没读到」这种暂时状态，
                     // 把它记成命中会让这首曲子之后永远不交叠。
-                    AutomixPlanCache.store(ownedPlayer, deck, lastVocalEnd, track.plan);
+                    //
+                    // 进阶模式开着而这一次没证据时同样不落盘。这条计划其实只是启发式兜底，写进
+                    // 缓存等于把「这次包络没扫到」钉成「这对歌就这样」：同一对歌第二次播放会直接
+                    // 命中这份没证据的计划，配对选点永远轮不到，症状是「功能明明开了却从来没生效
+                    // 过」。让它只在内存里活这一次。
+                    if (track.advancedEvidence) {
+                        AutomixPlanCache.store(ownedPlayer, deck, lastVocalEnd, track.plan);
+                    }
                 }
                 if (track.plan == null || !armStillValid(armGeneration, armRevision)) return;
 
@@ -2778,6 +2958,9 @@ public class CloudMusic implements SharedConstants {
                 if (!armStillValid(armGeneration, armRevision)) return;
 
                 armed = track;
+                // 上一张牌的记账不该跟着新牌活下来（顶住交接的截止时间、拖进度条的收尾位）。
+                seamHoldUntil = 0L;
+                seekDuringFadeRequested = false;
                 deck = null;   // 所有权移交给已预备的曲目
                 System.out.println("[Automix] armed " + song.getName() + " · " + track.plan.summary);
                 DownloadDynamicIsland.showAutomixArmed(song.getName());
@@ -3015,6 +3198,254 @@ public class CloudMusic implements SharedConstants {
                 track.preRollPaused = false;
             }
         }
+
+        /**
+         * 复查一条接缝需要的最小跑道：换了退场点要按新入点重新预卷，贴着接缝改计划只会把这一次
+         * 交接做成错位。取预备窗的同一量级，宁可少改一次，也不要改在半道上。
+         */
+        private static final long REPLAN_MIN_LEAD_MILLIS = 12_000L;
+
+        /**
+         * 旧接缝<b>已经作废</b>时只要这么点跑道。
+         *
+         * <p>常规复查的对照物是「什么都不做」，那很安全；播放头越过点火点之后的对照物是
+         * 「当场在一个任意位置叠起来」，那不安全。所以这一类允许用更短的跑道，代价是新入点只能
+         * 少预卷一点。与规划器自己那条 {@code MIN_ADVANCED_FIRE_LEAD_MILLIS} 同量级。</p>
+         */
+        private static final long STALE_REPLAN_MIN_LEAD_MILLIS = 5_000L;
+
+        /**
+         * 顶住交接、等新接缝算出来的最长时间。到点还没结果就照今天的行为交接 ——
+         * 「晚一点接」永远胜过「静默空隙」，但也不许为了等一条更好的接缝把出场曲拖到播完。
+         */
+        private static final long SEAM_HOLD_MILLIS = 1_500L;
+
+        /** 一条预备最多重算几次：拖十次进度条不该烧十趟整曲分析。 */
+        private static final int MAX_REPLAN_PER_ARM = 3;
+
+        /**
+         * 复用缓存计划时要求的余量：点火点至少要落在当前播放头之后这么多毫秒，否则那份计划
+         * 描述的是一个<b>已经过去</b>的位置，照它执行就等于在歌的中段硬切。与规划器里那条
+         * {@code MIN_ADVANCED_FIRE_LEAD_MILLIS} 同量级，那条只管算出来的计划，这条管捡回来的计划。
+         */
+        private static final long REUSED_PLAN_FIRE_LEAD_MILLIS = 5_000L;
+
+        /**
+         * 证据到货后把接缝<b>回头重算一次</b>（一条预备只许一遍）。
+         *
+         * <h2>为什么需要这一条</h2>
+         *
+         * <p>预备发生得出奇地早：{@code position >= EARLY_ARM_MILLIS}（10 秒）就开始了，而不是等到
+         * 曲尾。而出场那一首的整曲包络是它自己起播时才提交去扫的 —— 于是第一次播的一对歌，
+         * 规划经常踩着「没有包络」那条兜底路径定下来，之后 <b>没人再算第二遍</b>：包络二十秒后
+         * 落盘了，接缝却还是那条没证据的。名义上是整曲配对，实际一次都没跑过。</p>
+         *
+         * <p>这里在接缝还没动之前补一次。刻意保守，四个条件同时成立才走：进阶模式开着；这一条
+         * 不是房间的（房主那份计划全房共用，本机另算会让两台机器在同一刻叠出两条不同的波形）；
+         * 两份包络<b>此刻</b>都在；离点火点还有足够跑道。装的时候还要再按新计划的点火点复验一次
+         * —— 因为「跑道够」是相对于<b>旧</b>计划判的，而新计划的退场点可能更早。</p>
+         *
+         * <p>本方法只做两件事：把后台算好的结果装上（同一根线程，与预卷改入点同一套动作），
+         * 或者把重算提交给低优先级池。算本身绝不在这根线程上跑。</p>
+         *
+         * <p>播放头越过点火点之后的那一次重算是另一条路（{@link #holdSeamForFreshCue}）：那条的
+         * 判据是「旧计划已经作废」，跟证据有没有到货无关，也不要求这一条还没走过。</p>
+         */
+        private void maybeReplanArmedTrack(AudioPlayer activePlayer) {
+            if (!AutomixSettings.isAdvancedModeEnabled()) return;
+            ArmedTrack track = armed;
+            if (track == null || track.plan == null || track.deck == null) return;
+            // 装结果排在所有「要不要再算」的判据之前：预算位（replanned / replanCount）在提交时
+            // 就已经花掉了，把它放在下面的早退里会让后台算好的那份永远没人装。
+            if (track.replannedPlan != null) {
+                installReplannedPlan(track, activePlayer);
+                return;
+            }
+            if (track.replanned || track.roomMode) return;
+            if (activePlayer == null || !activePlayer.isUsable()) return;
+            if (track.advancedEvidence || track.replanning || track.preRolled) return;
+            long position = (long) activePlayer.getCurrentTimeMillis();
+            if (position + REPLAN_MIN_LEAD_MILLIS > track.plan.fireMillis - track.preRollMillis) return;
+            // 没到货就别白跑一趟：重算的动机就是证据，证据没来只会算出同一条兜底结论。
+            if (!AutomixEnvelope.isPresent(track.file)) return;
+            if (!AutomixEnvelope.isPresent(activePlayer.getSourceFile())) return;
+
+            requestReplan(track, activePlayer);
+        }
+
+        /**
+         * 提交一次后台重算。谁该重算是调用方的事（证据到货、还是接缝作废），这里只管预算、
+         * 互斥与「别在播放线程上算」。
+         */
+        private void requestReplan(ArmedTrack track, AudioPlayer activePlayer) {
+            if (track.replanning || track.replanCount >= MAX_REPLAN_PER_ARM) return;
+            if (!armStillValid(track.generation, track.queueRevision)) return;
+            track.replanning = true;
+            track.replanCount++;
+            final long generation = track.generation;
+            final long revision = track.queueRevision;
+            try {
+                BackgroundWork.submit(() -> replanArmedTrack(track, generation, revision));
+            } catch (Throwable rejected) {
+                // 池子拒了（关服、队列满）就当这次没复查，绝不留一个永远为真的进行中位。
+                track.replanning = false;
+                track.replanned = true;
+            }
+        }
+
+        /** {@link #maybeReplanArmedTrack} 的算的那一半，跑在低优先级池上，一个采样都不改。 */
+        private void replanArmedTrack(ArmedTrack track, long armGeneration, long armRevision) {
+            try {
+                if (!armStillValid(armGeneration, armRevision) || armed != track) return;
+                AudioPlayer outgoing = ownedPlayer;
+                if (outgoing == null) return;
+                long lastVocalEnd = estimateLastVocalEndMillis(outgoing);
+                AutomixPlan plan = AutomixPlanner.plan(outgoing, track.deck, lastVocalEnd);
+                if (plan == null) return;
+                // 落盘放在这条后台线程上：install 跑在 10 ms 监督 tick 里，那里一次都不许写文件。
+                // 存了之后万一装不上（跑道不够、已经预卷），这份计划也只是多缓存了一对
+                // 有证据的位置 —— 它按同一对歌与同样的设置算出来，下次命中是对的。
+                AutomixPlanCache.store(outgoing, track.deck, lastVocalEnd, plan);
+                track.replannedPlan = plan;
+            } catch (Throwable failure) {
+                System.err.println("[Automix] unable to re-plan " + track.song.getName() + ": "
+                        + failure.getMessage());
+            } finally {
+                track.replanning = false;
+                track.replanned = true;
+            }
+        }
+
+        /**
+         * 见 {@link CloudMusic#onSeekApplied()}：别的线程只留个记号，收尾排在这根线程的 tick 上。
+         */
+        void recordSeek() {
+            if (activeFade != null) seekDuringFadeRequested = true;
+        }
+
+        /**
+         * 播放头已经赶上或越过点火点时，<b>顶住这次交接</b>等新接缝算出来（最多
+         * {@link #SEAM_HOLD_MILLIS} 毫秒）。返回 true 表示本 tick 不许预卷、不许点火。
+         *
+         * <h2>这是「拖进度条」真正缺的那一半</h2>
+         *
+         * <p>接缝定的是<b>出场曲里的绝对位置</b>。用户把出场曲往后拖过那个位置，计划就作废了：
+         * {@code tryAutomixHandover} 看见 {@code position >= fireMillis} 立刻点火，两首歌就在用户
+         * 随手拖到的那一句中间叠起来 —— 对拍、低频互补、人声让路在那个位置全都谈不上。上一轮给
+         * 规划器加了 {@code minimumFireMillis}（不许选已经播过去的位置），可那是<b>算的时候</b>的
+         * 约束；拖完进度条没人再算一遍，那条约束也就没人再遵守。这里补的就是「再算一遍」。</p>
+         *
+         * <h2>顶住不等于静音</h2>
+         *
+         * <p>顶住的这段时间里出场曲照常出声（它本来就在播），只是这一次不点火，所以最坏的情况
+         * 「白等一趟、接缝也没了」并不存在：到点照今天的行为交接。这也意味着顶住的时间不能长 ——
+         * 它上限 1.5 秒，且要求剩余长度还放得下一次交叠加上这 1.5 秒。</p>
+         *
+         * <h2>六道闸</h2>
+         *
+         * <p>进阶模式开着（默认关时普通路径的行为一字不改）、不是房间（点火点归服务端）、两份整曲
+         * 包络都在（否则重算只会得出同一条启发式结论，白等）、还没预卷（预卷了改动就太晚了）、
+         * 出场曲没播完也没暂停、重算预算没花完。</p>
+         */
+        private boolean holdSeamForFreshCue(AudioPlayer activePlayer) {
+            if (!AutomixSettings.isAdvancedModeEnabled()) return false;
+            if (seamHoldUntil == 0L) return startSeamHold(activePlayer);
+
+            ArmedTrack track = armed;
+            if (track == null || track.plan == null || track.deck == null) {
+                seamHoldUntil = 0L;
+                return false;
+            }
+            if (track.replannedPlan != null) {
+                // 结果到了但还没装：安装在前面那一步（maybeReplanArmedTrack）里做，它装完会把
+                // 这个位清掉。这里继续顶一个 tick，避免出现「一边装一边点火」。
+                return true;
+            }
+            if (activePlayer == null || activePlayer.isFinished()) {
+                seamHoldUntil = 0L;
+                return false;
+            }
+            if (!track.replanning || System.currentTimeMillis() >= seamHoldUntil) {
+                // 那一趟结束了却没给出结果（算失败、或池子拒了），或者等过头了：别再拖。
+                seamHoldUntil = 0L;
+                return false;
+            }
+            return true;
+        }
+
+        /** {@link #holdSeamForFreshCue} 的第一次判定：条件全成立才起顶，起顶必须先真的把活儿交出去。 */
+        private boolean startSeamHold(AudioPlayer activePlayer) {
+            ArmedTrack track = armed;
+            if (track == null || track.plan == null || track.deck == null || track.roomMode) return false;
+            if (track.preRolled || track.replanning || track.replannedPlan != null) return false;
+            if (activePlayer == null || !activePlayer.isUsable() || activePlayer.isFinished()
+                    || activePlayer.isPausing()) return false;
+            if (!AutomixEnvelope.isPresent(track.file)
+                    || !AutomixEnvelope.isPresent(activePlayer.getSourceFile())) return false;
+
+            long position = (long) activePlayer.getCurrentTimeMillis();
+            if (position + track.preRollMillis < track.plan.fireMillis) return false;   // 计划还赶得上
+            // 剩下的长度还得放得下一次交叠 + 这段等待，否则更好的接缝根本不存在。
+            long remaining = (long) activePlayer.getTotalTimeMillis() - position;
+            if (remaining <= track.plan.overlapMillis + SEAM_HOLD_MILLIS + 2_000L) return false;
+
+            requestReplan(track, activePlayer);
+            if (!track.replanning && track.replannedPlan == null) return false;   // 没提交成功就别顶
+            seamHoldUntil = System.currentTimeMillis() + SEAM_HOLD_MILLIS;
+            System.out.println("[Automix] 播放头越过点火点，顶住交接等新接缝 · " + track.song.getName()
+                    + " · fire " + track.plan.fireMillis + "ms position " + position + "ms");
+            return true;
+        }
+
+        /**
+         * 把后台算好的新计划装上：换入点、换曲线，然后照旧交给预卷与交接那两步。
+         *
+         * <p>装不上就整个丢掉、沿用旧接缝 —— 旧接缝再差也是今天已经验证过的行为，一个装到一半
+         * 的新接缝不是。<b>例外</b>是旧接缝已经作废（播放头越过点火点，见
+         * {@link #holdSeamForFreshCue}）：那时候「沿用」等于在一个任意位置当场叠起来，
+         * 所以这一类只要求 {@link #STALE_REPLAN_MIN_LEAD_MILLIS} 那么点跑道。</p>
+         */
+        private void installReplannedPlan(ArmedTrack track, AudioPlayer activePlayer) {
+            AutomixPlan fresh = track.replannedPlan;
+            track.replannedPlan = null;
+            AutomixPlan old = track.plan;
+            // 顶住交接是为了等这一份：不管装不装得上，等都有了结论，先把位清掉。
+            seamHoldUntil = 0L;
+            if (fresh == null || old == null || armed != track) return;
+            // 结论一样就别动：换入点要重新预卷，代价远大于「原地不动」，而原地不动正是结果。
+            if (fresh.fireMillis == old.fireMillis && fresh.incomingCueMillis == old.incomingCueMillis
+                    && fresh.overlapMillis == old.overlapMillis) {
+                track.advancedEvidence = true;
+                return;
+            }
+            if (track.preRolled) return;
+            long position = (long) activePlayer.getCurrentTimeMillis();
+            long preRoll = Math.min(PRE_ROLL_MILLIS, Math.max(0L, fresh.incomingCueMillis));
+            // 「跑道够」上次是按旧计划判的，新计划的退场点可能更早，这里按它自己再复验一次。
+            // 判据也按旧计划是否已经作废分两档：不作废时不动是安全选项，作废时不动才是危险选项。
+            long requiredLead = old.fireMillis - track.preRollMillis <= position
+                    ? STALE_REPLAN_MIN_LEAD_MILLIS : REPLAN_MIN_LEAD_MILLIS;
+            if (position + requiredLead > fresh.fireMillis - preRoll) return;
+
+            AudioPlayer deck = track.deck;
+            try {
+                track.preRollMillis = preRoll;
+                deck.setBassGainDb(fresh.incomingBassDb(0.0));
+                deck.setVocalDuckDepth(fresh.incomingVocalDepth(0.0));
+                deck.prepareStart(fresh.incomingCueMillis - preRoll);
+            } catch (Throwable failure) {
+                System.err.println("[Automix] re-cue for the re-planned handover failed for "
+                        + track.song.getName() + ": " + failure.getMessage());
+                return;
+            }
+            track.plan = fresh;
+            track.advancedEvidence = true;
+            // 这一条在 10 ms 监督 tick 上跑：只改内存与播放牌，落盘已经在后台做完了。
+            System.out.println("[Automix] 整曲包络到货，接缝重算 -> " + track.song.getName()
+                    + " · 旧 fire " + old.fireMillis + "ms cue " + old.incomingCueMillis
+                    + "ms → " + fresh.summary);
+            DownloadDynamicIsland.showAutomixArmed(track.song.getName());
+        }
         /**
          * 用户按下的"下一首"能否由已预备的播放牌来服务，而不是走常规的
          * 关闭/解析/下载/解码切换流程。本方法从界面线程调用，因此它只检查状态并置位标志——
@@ -3172,6 +3603,8 @@ public class CloudMusic implements SharedConstants {
         private boolean performAutomixHandover(AudioPlayer outgoing, ArmedTrack track,
                                                long overlapOverrideMillis) {
             armed = null;
+            // 交接已经开始，等一条更好的接缝这件事到此为止（预算与截止时间都归零）。
+            seamHoldUntil = 0L;
             AutomixPlan plan = track.plan;
             AudioPlayer incoming = track.deck;
             if (incoming == null || !incoming.isUsable()) {
@@ -3391,8 +3824,9 @@ public class CloudMusic implements SharedConstants {
                 // 绝不能把一个半音的 tempo 锁定压缩到区区几百毫秒内。
                 // 速度与音高分开给：节奏锁定只动速度（WSOLA，音高不变），整半音吸附只动音高
                 // （重采样 + WSOLA 把时长还原）。合成一个数会让 WSOLA 把「移调」当成「变速」。
-                fade.outgoing.applyAutomixFrame(fade.plan.outgoingGain(progress),
+                fade.outgoing.applyOutgoingAutomixFrame(fade.plan.outgoingGain(progress),
                         fade.plan.outgoingBassDb(progress),
+                        fade.plan.outgoingVocalDepth(progress),
                         fade.plan.outgoingTempo(progress, fade.overlapMillis),
                         fade.plan.outgoingPitch(progress, fade.overlapMillis));
             }
@@ -3485,6 +3919,8 @@ public class CloudMusic implements SharedConstants {
             manualSkipRequested = false;
             // 房间换歌请求同理：它只对「当时那一张」播放牌有意义。
             roomHandoverRequested = false;
+            // 顶住交接等的是「这一张牌的新接缝」：牌没了，等也没有意义，立刻放行。
+            seamHoldUntil = 0L;
             if (track == null || track.deck == null) return;
             if (track.deck == ownedPlayer || track.deck == CloudMusic.player) return;
             closeQuietly(track.deck);
@@ -3786,6 +4222,74 @@ public class CloudMusic implements SharedConstants {
     }
 
     /**
+     * 只找<b>已经存在</b>的可播文件，绝不转码、绝不删文件。
+     *
+     * <p>与 {@link PlayThread#resolvePlayableAudioFile} 的区别就在这儿：那一条发现边车无效时会
+     * 删掉重转一遍，是播放路径的活儿；本方法是「现在就想知道有没有」，读不到就算没有。
+     * AAC/MP4 容器认那张可复用的 {@code .decoded.wav} 边车，其它容器就是缓存本体。</p>
+     */
+    static File existingPlayableAudioFile(Music song) {
+        File cached = cachedAudioFileFor(song);
+        if (cached == null || !cached.isFile()) return null;
+        try {
+            String container = AudioContainerSupport.detectContainer(cached);
+            if (!AudioContainerSupport.requiresAacDecode(container)) return cached;
+            File decoded = AudioCacheFiles.getDecodedWavFile(cached);
+            return AudioCacheFiles.isReusableDecodedWav(cached, decoded) ? decoded : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * 进阶模式包络的<b>同步</b>版：就在调用线程上扫完、落盘，返回「此刻能不能读到」。
+     *
+     * <p>只给预备线程用（{@code armTrack} 在规划进场侧之前）。那条链本来就在低优先级池上、
+     * 已经付过一次下载与解码，多解一遍整曲是它自己该干的活。异步的
+     * {@link #warmAdvancedEnvelope(AudioPlayer)} 只能用于「以后再来拿」的场合：规划紧跟在同一段
+     * 代码后面，提交完就走等于没提交。</p>
+     *
+     * @return 总开关关闭时返回 {@code true}（那时候不存在需要等的证据，缓存与复查都不该被它牵动）；
+     *         否则返回这份包络此刻是否可用。
+     */
+    static boolean warmAdvancedEnvelopeNow(File source, long durationMillis) {
+        if (!AutomixSettings.isAdvancedModeEnabled()) return true;
+        if (source == null || !source.isFile() || durationMillis <= 0L) return false;
+        if (AutomixEnvelope.isPresent(source)) return true;
+        try {
+            AutomixEnvelope.ensure(source, durationMillis);
+        } catch (Throwable failure) {
+            System.out.println("[Automix/Envelope] 预备期扫描失败 " + source.getName() + "：" + failure);
+        }
+        return AutomixEnvelope.isPresent(source);
+    }
+
+    /**
+     * 进阶模式的整曲包络预热：把这一首的 {@link AutomixEnvelope} 丢进后台池扫一遍并落盘。
+     *
+     * <p>调用方可以是任何线程——本方法自己只做两次判空加一次入队，绝不解码、绝不起进程。</p>
+     *
+     * <p>总开关关闭时它<b>第一行就返回</b>：不入队、不读盘、不写第二份缓存。进阶模式关掉
+     * 必须等价于「这个功能不存在」，而不是「存在但每首歌都白扫一遍」——一次整曲扫描是
+     * 几百万次滤波，摊到几百首缓存上不是可以忽略的开销。</p>
+     */
+    static void warmAdvancedEnvelope(AudioPlayer deck) {
+        if (!AutomixSettings.isAdvancedModeEnabled()) return;
+        if (deck == null) return;
+        final File source = deck.getSourceFile();
+        final long duration = (long) deck.getTotalTimeMillis();
+        if (source == null || !source.isFile() || duration <= 0L) return;
+        if (AutomixEnvelope.isPresent(source)) return;   // 早就扫好了：连入队都不必
+        BackgroundWork.submit(() -> {
+            try {
+                AutomixEnvelope.ensure(source, duration);
+            } catch (Throwable failure) {
+                System.out.println("[Automix/Envelope] 预热失败 " + source.getName() + "：" + failure);
+            }
+        });
+    }
+
+    /**
      * 预热这一首的 <b>automix 单曲 profile</b>：把 Folia 那套 Python 分析（节拍栅格 + stem 分离）
      * 的结果落进 {@code config/cache/automix-profiles}，等它真轮到交接时直接读盘。
      *
@@ -3803,6 +4307,8 @@ public class CloudMusic implements SharedConstants {
      *
      * <p>调用方必须在非渲染帧的低优先级线程上：这里会解码整曲、起 Python 子进程（一次 120–180 秒）。
      * 播放牌是局部的、用完即关，不挂进 {@link #player}，也不碰 {@code armed}。</p>
+     *
+     * <p>「一键排列」里量不出特征的那些就走这一条补料，见 {@link QueueFlowSorter}。</p>
      *
      * @return 这一首的 profile 现在是不是已经在盘上（命中缓存也算 true）
      */
@@ -3825,6 +4331,11 @@ public class CloudMusic implements SharedConstants {
             deck = new AudioPlayer(playable);
             deck.setTrackName(PlayThread.trackDisplayName(song, playable));
             FoliaTrackProfiler.loadOrAnalyse(deck, false);
+            // 进阶模式的整曲包络就在这条<b>已经付过成本</b>的预热里一起扫：同一个低优先级线程、
+            // 同一个已经解析好的可播文件。另起一条预热链只会让同一首歌被解码两遍。
+            if (AutomixSettings.isAdvancedModeEnabled()) {
+                AutomixEnvelope.ensure(playable, (long) deck.getTotalTimeMillis());
+            }
             return true;
         } catch (Throwable failure) {
             System.out.println("[MpPrefetch] profile 预热失败 " + song.getName() + "：" + failure);

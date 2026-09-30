@@ -9,6 +9,7 @@ import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
@@ -145,6 +146,9 @@ public class AddToPlaylistOverlay extends NCMPanel {
         dialogBg.setRadius(6);
         dialogBg.setColor(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
         dialogBg.setBeforeRenderCallback(() -> dialogBg.setMargin(0));
+        dialogBg.setGlassSheet(GlassLook.Surface.PLAYER);
+        // 底板自己那层深色压薄：不压的话刚贴上去的糊背景仍然在它底下，弹窗读起来就是一块实色板。
+        dialogBg.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
 
         LabelWidget lblTitle = new LabelWidget("加入歌单", FontManager.pf18bold);
         dialog.addChild(lblTitle);

@@ -34,10 +34,12 @@ import com.muoniumplayer.party.MpPartyClient;
 import com.muoniumplayer.party.MpPresence;
 import com.muoniumplayer.party.MpPublicRoom;
 import com.muoniumplayer.party.MpRoom;
+import com.muoniumplayer.party.MpRoomPlaylists;
 import com.muoniumplayer.party.MpTrack;
 import com.muoniumplayer.party.MpVote;
 
 import java.awt.Color;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.HashSet;
@@ -92,6 +94,9 @@ public final class MpPartyOverlay extends NCMPanel {
     private static final int PRESENCE_ROWS = 6;
     private static final int PUBLIC_ROWS = 4;
     private static final int INVITE_ROWS = 4;
+    /** 选单页那几行：弹窗比主页矮，四行已经够把「Mu本地 + 导入 + 账号」三段各露出一条。 */
+    private static final int PLAYLIST_ROWS = 4;
+    private static final double PLAYLIST_STRIDE = 46.0;
 
     private static final double QUEUE_STRIDE = 48.0;
     private static final double MEMBER_STRIDE = 52.0;
@@ -174,7 +179,7 @@ public final class MpPartyOverlay extends NCMPanel {
     private static final int STYLE_ROW_PRIMARY = 5;
     private static final int STYLE_GHOST = 6;
 
-    private enum Page { OVERVIEW, CREATE, JOIN, INVITE, LINK }
+    private enum Page { OVERVIEW, CREATE, JOIN, INVITE, LINK, PLAYLIST }
 
     private enum Tab { ROOM, QUEUE, MEMBERS, ONLINE, DISCOVER, INVITES }
 
@@ -1590,6 +1595,13 @@ public final class MpPartyOverlay extends NCMPanel {
             if (room != null && room.perMemberCap > 0) {
                 sb.append("每人同时最多 ").append(room.perMemberCap).append(" 首");
             }
+            // 挂着几张歌单要说出来：一张 100 首的单子灌进来之后，队列里「谁的排队歌在前面」这件事
+            // 全靠行副标题那一句「歌单 …」，而页眉给一个总数才看得出这批是分几次倒进来的。
+            int lists = MpPartyClient.playlistLabelsInQueue().size();
+            if (lists > 0) {
+                if (sb.length() > 0) sb.append("  ·  ");
+                sb.append("含 ").append(lists).append(" 张歌单");
+            }
             if (MpPartyClient.queue().size() > shown(shelf)) {
                 if (sb.length() > 0) sb.append("  ·  ");
                 sb.append("滚轮翻页");
@@ -1609,20 +1621,57 @@ public final class MpPartyOverlay extends NCMPanel {
             buildQueueRow(list, index);
         }
 
-        final String[] labels = {"链接点歌", "同步一次", "清空歌单"};
-        final String[] glyphs = {PartyIcons.LINK, PartyIcons.SYNC, PartyIcons.SWEEP};
-        final Runnable[] actions = {this::showLinkPage, MpPartyClient::sync, MpPartyClient::clearQueue};
-        final BooleanSupplier[] enabled = {null, null, MpPartyClient::hasControl};
-        for (int index = 0; index < labels.length; index++) {
+        // 底部那一排按钮是<b>按数量平分宽度</b>的，因为「播放歌单」这颗只在服务端支持时才出现：
+        // 老服务端上是三颗、支持了是四颗，写死三份坐标的话，少一颗就留下一块谁都不属于的空位。
+        final List<String> labels = new ArrayList<String>();
+        final List<String> glyphs = new ArrayList<String>();
+        final List<Runnable> actions = new ArrayList<Runnable>();
+        final List<BooleanSupplier> enabled = new ArrayList<BooleanSupplier>();
+        final List<Integer> styles = new ArrayList<Integer>();
+
+        labels.add("链接点歌");
+        glyphs.add(PartyIcons.LINK);
+        actions.add(this::showLinkPage);
+        enabled.add(null);
+        styles.add(STYLE_PRIMARY);
+
+        if (MpPartyClient.playlistSupported()) {
+            // 出现条件只看「这台服务端认不认这个 op、在不在房间、是不是频道」，<b>不看权限</b>：
+            // 看得见但置灰，别人才知道功能是有的、只是这台服务器把它收给了管理组；
+            // 直接藏掉的话，普通成员会以为这局房间坏了。
+            labels.add("播放歌单");
+            glyphs.add(PartyIcons.GROUP);
+            actions.add(this::showPlaylistPage);
+            enabled.add(MpPartyClient::canPlaylist);
+            styles.add(STYLE_GHOST);
+        }
+
+        labels.add("同步一次");
+        glyphs.add(PartyIcons.SYNC);
+        actions.add(MpPartyClient::sync);
+        enabled.add(null);
+        styles.add(STYLE_GHOST);
+
+        labels.add("清空歌单");
+        glyphs.add(PartyIcons.SWEEP);
+        actions.add(MpPartyClient::clearQueue);
+        enabled.add(MpPartyClient::hasControl);
+        styles.add(STYLE_GHOST);
+
+        final int count = labels.size();
+        for (int index = 0; index < count; index++) {
             final int slot = index;
-            btn(host, () -> glyphs[slot], () -> labels[slot], enabled[slot], actions[slot],
-                    slot == 0 ? STYLE_PRIMARY : STYLE_GHOST, b -> {
-                        double total = Math.max(1, host.getWidth() - PAD * 2);
-                        double w = (total - 8 * 2) / 3.0;
-                        b.setBounds(w, 32);
-                        // 贴着页面底边，而不是写死的 272：弹窗被视口夹矮时这排按钮要跟着上来。
-                        b.setPosition(PAD + (w + 8) * slot, host.getHeight() - 34);
-                    });
+            final String glyph = glyphs.get(slot);
+            final String label = labels.get(slot);
+            final Runnable action = actions.get(slot);
+            final BooleanSupplier gate = enabled.get(slot);
+            btn(host, () -> glyph, () -> label, gate, action, styles.get(slot).intValue(), b -> {
+                double total = Math.max(1, host.getWidth() - PAD * 2);
+                double w = (total - 8 * (count - 1)) / count;
+                b.setBounds(w, 32);
+                // 贴着页面底边，而不是写死的 272：弹窗被视口夹矮时这排按钮要跟着上来。
+                b.setPosition(PAD + (w + 8) * slot, host.getHeight() - 34);
+            });
         }
     }
 
@@ -1679,7 +1728,13 @@ public final class MpPartyOverlay extends NCMPanel {
                 if (sb.length() > 0) sb.append("  ·  ");
                 sb.append(track.artist);
             }
-            if (has(track.requesterName)) {
+            if (track.fromPlaylist()) {
+                // 灌进来的那批<b>不写「点歌 某人」</b>：一行行全是「点歌 张三」时，别人看不出
+                // 后面几十首是自动排的，更不知道自己刚点的那首其实插在那批歌前面 —— 看起来就像
+                // 排序坏了。这里换成歌单名，优先级这件事才在界面上看得见。
+                if (sb.length() > 0) sb.append("  ·  ");
+                sb.append("歌单 ").append(track.playlist);
+            } else if (has(track.requesterName)) {
                 if (sb.length() > 0) sb.append("  ·  ");
                 sb.append("点歌 ").append(track.requesterName);
             }
@@ -2338,6 +2393,125 @@ public final class MpPartyOverlay extends NCMPanel {
             b.setBounds(w, 34);
             b.setPosition(20 + w + 10, dialog.getHeight() - 54);
         });
+    }
+
+    /**
+     * 选单页：把本机选得到的歌单列出来，一行一张，按下去就是「排进房间」。
+     *
+     * <p>这一页的话术全部围绕<b>优先级</b>，因为用户按下这颗按钮时唯一的意外就是「我灌的 100 首
+     * 把别人的排队挤到哪去了」。所以副标题、页脚、按钮文字三处都在说同一件事：这批歌排在最后，
+     * 谁点歌谁就先到它前面去；而它<b>不会</b>打断眼下正在播的那一首。</p>
+     *
+     * <p>列表是打开这一页时<b>取一次快照</b>的：账号歌单本来就是异步加载的内存快照，为了「刷新一下
+     * 多出一行」而每帧去碰那些服务类既不划算也不安全（五棵树上各家的加载状态还不一样）。
+     * 想要新的单子，回上一页再进来 —— 那正好也是用户在播放器侧栏里刚看过新单子的时机。</p>
+     */
+    private void showPlaylistPage() {
+        page = Page.PLAYLIST;
+        field = null;
+        getChildren().clear();
+
+        final List<MpRoomPlaylists.Item> items = MpRoomPlaylists.collect();
+
+        final Panel dialog = createDialog(560, () -> 330.0, null);
+        addBackButton(dialog, this::showOverview);
+        addDetailTitle(dialog, "播放歌单",
+                "整张单子排在最后：插队与别人的点歌都在它前面，正在播的那一首不会被打断");
+
+        emptyNote(dialog, PartyIcons.GROUP,
+                () -> "这里一张歌单都没有。可以先在播放器里建一张本地歌单，或者粘贴一段歌单分享链接导入。",
+                () -> items.isEmpty(), 96.0);
+
+        final ListView list = listView(dialog, () -> 76.0, PLAYLIST_ROWS, PLAYLIST_STRIDE,
+                () -> items.size(), 52.0);
+        for (int index = 0; index <= PLAYLIST_ROWS; index++) {
+            buildPlaylistRow(list, index, items);
+        }
+
+        paneTip(dialog, () -> MpPartyClient.hasControl()
+                        ? "想插到别人前面，用曲行上的「下一首播放」；这里排进去的一律垫在最后。"
+                        : "这批歌排在所有人的点歌之后。谁按一次「下一首播放」都会到它前面。",
+                MpPartyOverlay::secondary, () -> dialog.getHeight() - 22.0);
+    }
+
+    /** 选单页的一行：分组图标 + 歌单名 + 「来源 · 曲目数」+ 一颗排入/撤回按钮。 */
+    private void buildPlaylistRow(final ListView list, final int slot,
+                                  final List<MpRoomPlaylists.Item> items) {
+        final Row bg = row(list, slot, PLAYLIST_STRIDE, 42.0,
+                () -> playlistAt(list, slot, items) != null);
+
+        icon(bg, () -> {
+            // 已经在队列里的那批换个图标：这时候按「排入房间」只会换来一串「跳过 N 首已在队列」，
+            // 而用户真想做的多半是收回来。
+            MpRoomPlaylists.Item item = playlistAt(list, slot, items);
+            return item != null && pendingCount(item) > 0
+                    ? PartyIcons.QUEUE_MUSIC : PartyIcons.GROUP;
+        }, ICON_M, () -> 24.0, () -> 21.0, MpPartyOverlay::secondary);
+
+        LabelWidget name = label(bg, () -> {
+            MpRoomPlaylists.Item item = playlistAt(list, slot, items);
+            return item == null ? "" : item.title;
+        }, FontManager.pf12bold);
+        name.setBeforeRenderCallback(() -> {
+            name.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            name.setMaxWidth(Math.max(1, bg.getWidth() - 190));
+            name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            name.setPosition(40, 8);
+        });
+
+        LabelWidget sub = label(bg, () -> {
+            MpRoomPlaylists.Item item = playlistAt(list, slot, items);
+            if (item == null) return "";
+            StringBuilder sb = new StringBuilder(item.group);
+            if (has(item.subtitle)) sb.append("  ·  ").append(item.subtitle);
+            int pending = pendingCount(item);
+            if (pending > 0) sb.append("  ·  已排 ").append(pending).append(" 首");
+            return sb.toString();
+        }, FontManager.pf10bold);
+        sub.setBeforeRenderCallback(() -> {
+            sub.setColor(secondary());
+            sub.setMaxWidth(Math.max(1, bg.getWidth() - 190));
+            sub.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            sub.setPosition(40, 25);
+        });
+
+        final Panel tools = rowTools(bg);
+
+        btn(tools, () -> PartyIcons.PLAY_NEXT,
+                () -> pendingCountOf(list, slot, items) > 0 ? "撤回" : "排入房间",
+                MpPartyClient::canPlaylist, () -> {
+            MpRoomPlaylists.Item item = playlistAt(list, slot, items);
+            if (item == null) return;
+            if (pendingCount(item) > 0) MpPartyClient.clearPlaylist(item.title);
+            else MpPartyClient.requestPlaylist(item.playlist);
+        }, STYLE_ROW_PRIMARY, b -> {
+            b.setBounds(78, 26);
+            b.setPosition(bg.getWidth() - 92, 8);
+        });
+    }
+
+    private MpRoomPlaylists.Item playlistAt(final ListView list, final int slot,
+                                            final List<MpRoomPlaylists.Item> items) {
+        int index = list.base() + slot;
+        return index >= 0 && index < items.size() ? items.get(index) : null;
+    }
+
+    /** 这一槽那张单子当前在队列里挂着多少首（槽位空着时 0）。 */
+    private int pendingCountOf(final ListView list, final int slot,
+                               final List<MpRoomPlaylists.Item> items) {
+        MpRoomPlaylists.Item item = playlistAt(list, slot, items);
+        return item == null ? 0 : pendingCount(item);
+    }
+
+    /**
+     * 这张歌单在房间队列里还挂着多少首没播。
+     *
+     * <p>按<b>名字</b>比对，因为服务端认的就是名字（队列条目上的 {@code playlist}）。两张同名的
+     * 单子会在界面上合并成「已排 N 首」，撤回时也会一起撤走 —— 这是拿名字当键的固有代价，换来的是
+     * 服务端不必额外记「第几批」，而批次 id 在客户端本来就不存在。</p>
+     */
+    private int pendingCount(MpRoomPlaylists.Item item) {
+        return item == null ? 0 : MpPartyClient.pendingOfPlaylist(item.title);
     }
 
     private void inputPage(final Page target, final String title, final String subtitle,

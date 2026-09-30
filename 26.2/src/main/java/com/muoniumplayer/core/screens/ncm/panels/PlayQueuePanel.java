@@ -52,6 +52,10 @@ public class PlayQueuePanel extends NCMPanel {
     /** 展开时逐行错峰出现的间隔，让整列像被铺开而不是整块闪现。 */
     private static final long ROW_STAGGER_MILLIS = 45L;
     private static final long ROW_FADE_MILLIS = 190L;
+    /** 「排列」按钮的宽度，与「清空」之间同样隔 4px。 */
+    private static final double FLOW_BUTTON_WIDTH = 34.0;
+    /** 排列结果那一句话在提示位上停留多久。 */
+    private static final long FLOW_NOTICE_MILLIS = 4_000L;
     /**
      * 抽屉展开/收起各自的基准毫秒（再除以「动画速度」倍率）。
      *
@@ -90,6 +94,25 @@ public class PlayQueuePanel extends NCMPanel {
     private final List<QueueRow> rows = new ArrayList<>();
     /** 已经离开队列、正在淡出的行；它们不参与排位，只是别让列表凭空少一行。 */
     private final List<QueueRow> fadingRows = new ArrayList<>();
+    /**
+     * 「排列」按下去之后的那一句回显，以及它该消失的时刻（墙钟毫秒）。
+     *
+     * <p>回显借用表头那条「拖动可调整顺序」的位置：抽屉里没有第二个能放一句话的地方，
+     * 而为一条临时提示再加一个组件，就要再算一次它和「清空」「×」的避让关系。</p>
+     */
+    private String flowNotice = "";
+    private long flowNoticeUntil;
+    /**
+     * 后台排列每出一句新话就把这个序号 +1；界面靠「序号变了」而不是「文案变了」来重新计那 4 秒。
+     *
+     * <p>每帧刷倒计时会让那句结论永远不消失，而结论到货的时刻又不在本帧里 —— 只有批次自己知道
+     * 什么时候换了一句话。</p>
+     */
+    private long flowNoticeSerial;
+    /** 「排列 / 取消」那颗按钮此刻写的字，只在真的换字时才 setLabel。 */
+    private String flowSortLabel = "排列";
+    /** 提示标签上当前那句文案；只在真的换字时才动它，避免每帧重建一个 supplier。 */
+    private String hintText = "拖动可调整顺序";
 
     private QueueRow draggingRow;
     private double dragGrabOffset;
@@ -182,10 +205,85 @@ public class PlayQueuePanel extends NCMPanel {
         LabelWidget hint = new LabelWidget("拖动可调整顺序", FontManager.pf10bold);
         this.drawer.addChild(hint);
         hint.setClickable(false);
-        hint.setBeforeRenderCallback(() -> hint
-                .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
-                .setPosition(title.getRelativeX() + title.getWidth() + 8.0,
-                        DRAWER_PADDING + Math.max(0.0, (HEADER_HEIGHT - hint.getHeight()) * .5)));
+        hint.setBeforeRenderCallback(() -> {
+            // 刚按过「排列」就把这句换成结果，几秒后自动换回来。换文案而不是加组件：
+            // 表头只有 20px 高，挤不进第三个东西，而每条临时提示都要重新算一遍与
+            // 「清空」「×」的避让关系——那才是这个抽屉里最容易错位的代码。
+            //
+            // 排列已经改到后台跑了，所以这里每帧读一次它的状态：正在扫就显示进度，
+            // 扫完显示那一句结论（靠序号判断是不是新结论，不能每帧刷新倒计时）。
+            long serial = com.muoniumplayer.core.ncm.music.QueueFlowSorter.noticeSerial();
+            if (serial != this.flowNoticeSerial) {
+                this.flowNoticeSerial = serial;
+                this.flowNotice = com.muoniumplayer.core.ncm.music.QueueFlowSorter.lastNotice();
+                this.flowNoticeUntil = System.currentTimeMillis() + FLOW_NOTICE_MILLIS;
+            }
+            String wanted;
+            if (com.muoniumplayer.core.ncm.music.QueueFlowSorter.isRunning()) {
+                wanted = com.muoniumplayer.core.ncm.music.QueueFlowSorter.notice();
+            } else if (System.currentTimeMillis() < this.flowNoticeUntil) {
+                wanted = this.flowNotice;
+            } else {
+                wanted = "拖动可调整顺序";
+            }
+            if (!wanted.equals(this.hintText)) {
+                this.hintText = wanted;
+                hint.setLabel(wanted);
+            }
+            hint.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
+                    .setPosition(title.getRelativeX() + title.getWidth() + 8.0,
+                            DRAWER_PADDING + Math.max(0.0, (HEADER_HEIGHT - hint.getHeight()) * .5));
+        });
+
+        // 进阶模式的「一键排列」：只在总开关开着时出现。关掉它就等于这个功能不存在——
+        // 而不是留一个按下去什么都不做的按钮。
+        RoundedRectWidget flowSort = new RoundedRectWidget();
+        this.drawer.addChild(flowSort);
+        flowSort.setShouldOverrideMouseCursor(true);
+        flowSort.setBeforeRenderCallback(() -> {
+            // 少于两首待播没有「相邻」可言，与「清空」同一个做法：连同命中框一起收掉。
+            // 正在排的时候不收：那时它写的是「取消」，收掉就没法停了。
+            flowSort.setHidden(!com.muoniumplayer.core.ncm.music.QueueFlowSorter.isRunning()
+                    && (this.rows.size() < 2
+                    || !com.muoniumplayer.core.ncm.music.AutomixSettings.isAdvancedModeEnabled()));
+            flowSort.setBounds(FLOW_BUTTON_WIDTH, 14.0)
+                    .setPosition(this.drawer.getWidth() - DRAWER_PADDING - 16.0 - 4.0 - 34.0
+                                    - 4.0 - FLOW_BUTTON_WIDTH,
+                            DRAWER_PADDING + Math.max(0.0, (HEADER_HEIGHT - 14.0) * .5))
+                    .setRadius(3.0)
+                    .setColor(flowSort.isHovering()
+                            ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                            : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+        flowSort.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+            if (mouseButton == 0) {
+                // 正在拖的时候先取消拖：一次排列会整段改顺序，而拖拽记的是<b>按下时</b>的那一格，
+                // 不先收掉的话松手会按旧下标再搬一次，把刚排好的顺序搅乱。
+                this.cancelDrag();
+                // 跑着的时候这一记点击是「别排了」；空闲时才是一次新请求。两句都走
+                // QueueFlowSorter 的结论通道（序号一变提示条自己会显示 4 秒），这里不自己存文案。
+                if (!com.muoniumplayer.core.ncm.music.QueueFlowSorter.cancel()) {
+                    com.muoniumplayer.core.ncm.music.QueueFlowSorter.request();
+                }
+            }
+            return true;
+        });
+
+        LabelWidget flowSortText = new LabelWidget("排列", FontManager.pf10bold);
+        flowSort.addChild(flowSortText);
+        flowSortText.setClickable(false);
+        flowSortText.setBeforeRenderCallback(() -> {
+            // 同一颗按钮两种意思，写在字上而不是再加一颗：表头那一排已经挤满了
+            // 「标题 / 提示 / 排列 / 清空 / ×」，多一颗就得重新算一遍避让。
+            String wanted = com.muoniumplayer.core.ncm.music.QueueFlowSorter.isRunning()
+                    ? "取消" : "排列";
+            if (!wanted.equals(this.flowSortLabel)) {
+                this.flowSortLabel = wanted;
+                flowSortText.setLabel(wanted);
+            }
+            flowSortText.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
+                    .center();
+        });
 
         RoundedRectWidget clearAll = new RoundedRectWidget();
         this.drawer.addChild(clearAll);

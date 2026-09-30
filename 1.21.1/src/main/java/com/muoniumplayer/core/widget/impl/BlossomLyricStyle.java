@@ -5,6 +5,7 @@ import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.PlaybackPulse;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.StencilClipManager;
 import com.muoniumplayer.core.rendering.animation.spring.SpringAnimation;
 import com.muoniumplayer.core.rendering.animation.spring.SpringParams;
@@ -304,14 +305,26 @@ public final class BlossomLyricStyle implements SharedConstants, SharedRendering
      */
     private void drawPanel(double x, double y, double w, double h, double corner, int accentRgb) {
         float blur = (float) clamp01(HudConfig.blossomBackdropBlur);
-        if (blur > .004f) {
+        // 真玻璃优先：这一层糊的是<b>屏幕里这块卡片背后</b>的画面；下面那条
+        // backdropBlurRounded 只能糊到我们自己那一层 Skia 像素，而桌面歌词平时那层是空的，
+        // 等于糊了个"什么都没有"。两条路径互斥：铺上真背景就不走旧的模糊。
+        boolean frosted = GlassLook.paintFrost(GlassLook.Surface.DESKTOP_LYRIC, x, y, w, h, corner);
+        if (!frosted && blur > .004f) {
             SkijaEffects.backdropBlurRounded(x, y, w, h, corner, BACKDROP_SIGMA, blur);
         }
 
         int surfaceAlpha = (int) Math.round(SURFACE_MAX_ALPHA * clamp01(HudConfig.blossomPanelOpacity));
+        if (frosted) {
+            // 只有真背景确实铺上来了才压薄这层深色底：采不到画面还压薄，症状是
+            // 卡片变成一块透出裸画面的脏斑，比原来"糊不动"还难看。
+            surfaceAlpha = (int) Math.round(surfaceAlpha
+                    * GlassLook.tintedAlpha(GlassLook.Surface.DESKTOP_LYRIC, 1.0f));
+        }
         if (surfaceAlpha > 0) {
             roundedRect(x, y, w, h, corner, (surfaceAlpha << 24) | SURFACE_RGB);
         }
+        // 折射压在底色之上（同播放器面板那条理由）
+        GlassLook.paintEdge(GlassLook.Surface.DESKTOP_LYRIC, x, y, w, h, corner, 1.0f);
 
         double strength = clamp01(HudConfig.blossomBorderStrength);
         if (!HudConfig.blossomRhythmBorder || strength <= 0) {

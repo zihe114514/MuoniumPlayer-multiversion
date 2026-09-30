@@ -44,6 +44,16 @@ public final class MpTrack {
     public final long entryId;
     public final String requesterName;
     /**
+     * 这一首来自哪张被整张灌进来的歌单；不是灌单的就是空串。
+     *
+     * <p>界面靠它把「歌单待播」那一档标出来。没有这个标记的话，一张 100 首的单子灌进来之后
+     * 列表里全是「点歌 张三」，谁也不知道后面那几十首是自动排的 —— 更关键的是不知道自己刚点的那首
+     * <b>其实插在那批歌前面</b>，看起来就像歌单没生效。</p>
+     *
+     * <p>老服务端不发这个键，取到 {@code ""}，界面就不画那段副标题，行为和改造前一致。</p>
+     */
+    public final String playlist;
+    /**
      * 这一首的交接计划是不是已经算好了。
      *
      * <p>只对队首那一首有意义 —— 计划描述的是「从正在播的这一首怎么进入它」。歌单列表据此
@@ -54,7 +64,8 @@ public final class MpTrack {
 
     private MpTrack(String source, String songId, String name, String artist, String album,
                     String cover, long durationMs, String url, long urlExpiresAt,
-                    long urlDurationMs, long entryId, String requesterName, boolean planReady) {
+                    long urlDurationMs, long entryId, String requesterName, boolean planReady,
+                    String playlist) {
         this.source = source;
         this.songId = songId;
         this.name = name;
@@ -68,6 +79,12 @@ public final class MpTrack {
         this.entryId = entryId;
         this.requesterName = requesterName;
         this.planReady = planReady;
+        this.playlist = playlist == null ? "" : playlist;
+    }
+
+    /** 这一首是整张歌单灌进来的吗。 */
+    public boolean fromPlaylist() {
+        return !playlist.isEmpty();
     }
 
     public static MpTrack fromJson(JsonObject o) {
@@ -85,7 +102,8 @@ public final class MpTrack {
                 MpProto.num(o, "urlDuration", 0L),
                 MpProto.num(o, "entryId", 0L),
                 MpProto.str(o, "requesterName", ""),
-                MpProto.bool(o, "planReady", false));
+                MpProto.bool(o, "planReady", false),
+                MpProto.str(o, "playlist", ""));
     }
 
     /**

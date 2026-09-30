@@ -64,8 +64,14 @@ class AutomixAudioThreadExecutionStaticTest {
     void everyCurveWriteGoesThroughTheSharedFrameWriter() throws IOException {
         String cloud = read(music("CloudMusic.java"));
 
-        assertEquals(2, count(cloud, "applyAutomixFrame("),
-                "曲线写入必须只有 writeTransitionFrame 里那两处（进场 / 出场），多一处就是有了第二个写入者");
+        // 两条曲线、两个名字：进场方走 applyAutomixFrame(fade, bass, vocal, mid, high)，
+        // 出场方走 applyOutgoingAutomixFrame(fade, bass, vocal, tempo, pitch)——后者必须另起名字
+        // 是因为它前面已经占了五个 float 参数的那条重载，Java 只看参数类型分不开。
+        // 要守的不变量没变：写曲线的位置只有 writeTransitionFrame 这一处，各一次。
+        assertEquals(1, count(cloud, ".applyAutomixFrame("),
+                "进场方的曲线写入必须只有 writeTransitionFrame 里那一处");
+        assertEquals(1, count(cloud, ".applyOutgoingAutomixFrame("),
+                "出场方的曲线写入必须只有 writeTransitionFrame 里那一处，多一处就是有了第二个写入者");
 
         String tick = body(cloud, "private void driveAutomixFade()");
         assertTrue(tick.contains("writeTransitionFrame(fade, progress)"),

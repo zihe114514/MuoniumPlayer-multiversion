@@ -3,10 +3,12 @@ package com.muoniumplayer.render.skija;
 import io.github.humbleui.skija.Canvas;
 import io.github.humbleui.skija.Data;
 import io.github.humbleui.skija.FilterTileMode;
+import io.github.humbleui.skija.Image;
 import io.github.humbleui.skija.ImageFilter;
 import io.github.humbleui.skija.Paint;
 import io.github.humbleui.skija.RuntimeEffect;
 import io.github.humbleui.skija.SaveLayerRec;
+import io.github.humbleui.skija.SamplingMode;
 import io.github.humbleui.skija.Shader;
 import io.github.humbleui.types.RRect;
 import io.github.humbleui.types.Rect;
@@ -251,6 +253,140 @@ public final class SkijaEffects {
         } finally {
             canvas.restoreToCount(depth);
         }
+    }
+
+    /**
+     * 真毛玻璃的底色：把 {@link GlassBackdrop} 每帧从游戏画面采下来那张图<b>糊过</b>再铺进圆角矩形。
+     *
+     * <h2>它和 {@link #backdropBlurRounded} 的差别就是这个方法存在的理由</h2>
+     * 我们的 Skia 画在自己的透明离屏上，{@code saveLayer} 的 backdrop 只糊得到 Skia 这一层
+     * 已经画过的像素——对一块刚开画、底下一个像素都没有的面板来说，等于什么都没糊。
+     * 这里吃的则是 GPU 上那份真实的画面拷贝。所以四处调用点的写法统一是
+     * 「先试这里，返回 {@code false} 再退回原来那套渐变高光」：采集停用、Skia 不可用、
+     * 主题没选琉璃这三种情况下，界面必须还是玩家熟悉的那张脸，而不是凭空少一层底。
+     *
+     * <h2>为什么源和目的都要往外扩一圈</h2>
+     * 磨砂玻璃在边缘处本来就要吃进面板<em>外面</em>的像素。只按面板矩形取源再糊，
+     * {@link FilterTileMode#CLAMP} 会让圆角那一圈拿"自己的边"去补，糊出一圈比画面更淡的壳，
+     * 看着像玻璃上又贴了张磨砂膜。于是两侧都按 3σ 外扩，再由 {@code clipRRect} 裁回来。
+     *
+     * <h2>坐标空间：问画布，不问调用方</h2>
+     * x/y/width/height 是<b>画布局部</b>坐标，背景图是设备像素，两者之间隔着当前矩阵。
+     * 这个映射以前由每个调用点各自报一档倍率，而报错了的症状是「面板透出屏幕别处的画面」——
+     * 底图整块糊着，截图上根本读不出来，于是错了也没人知道（灵动岛在尺寸档位不是 1 的时候
+     * 就是这么错的，而它的 {@code scaleAtPos} 带轴心，纯倍率压根表达不出来）。现在直接读
+     * {@link GlassBackdrop#mapping(io.github.humbleui.skija.Canvas)}：Skia 把这块矩形画到
+     * 屏幕上用的就是那个矩阵，玻璃采的也就是同一块。矩阵带旋转/错切时映射给不出轴对齐的源
+     * 矩形，这里返回 {@code false}，调用点照旧画它那套假玻璃。
+     *
+     * <p>开销：默认走的是「一帧一次预糊」——整张背景在每次采集后被糊一遍（采集本身压在 ≤30Hz），
+     * 这里每次调用就退化成一块贴图，所以<em>逐元素</em>铺玻璃（曲目行、按钮、二级菜单）
+     * 与铺一整块面板是一个量级的价钱。退回自己挂滤镜那条路时才真的是「一块一次」：
+     * Skia 要为每次 saveLayer 分配一块临时纹理并跑两趟可分离高斯，那种画法只适合面板级。</p>
+     *
+     * @param sigma 模糊强度，单位是<b>画布局部</b>坐标（GUI 单位）。Skia 会把它乘上当前矩阵的
+     *        缩放再落到设备像素上，所以同一数值在不同 guiScale 下糊出来的相对宽度一致。
+     * @param opacity 这一层背景的出场浓度，用于主题切换时的淡入淡出。
+     * @return 真的铺了一层背景；{@code false} = 没有可用背景，调用方该走原来的假玻璃
+     */
+    public static boolean frostedBackdrop(double x, double y, double width, double height,
+                                          double radius, float sigma, float opacity) {
+        Canvas canvas = SkijaGfx.canvas();
+        if (canvas == null || width <= 0.0 || height <= 0.0 || opacity <= 0.004f) {
+            return false;
+        }
+        // 优先吃「一帧一次预糊」那张：它已经把整张背景糊好了，这里贴一块就是纯贴图。
+        // 拿不到（预糊目标建不起来、或还没采到过）就退回自己挂 blur 滤镜的旧画法——
+        // 预糊是优化，不是依赖，退回去只是贵一点，玻璃本身不受影响。
+        Image backdrop = GlassBackdrop.blurred(sigma);
+        boolean preblurred = backdrop != null;
+        if (!preblurred) {
+            backdrop = GlassBackdrop.image();
+        }
+        if (backdrop == null) {
+            return false;
+        }
+        GlassBackdrop.Mapping map = GlassBackdrop.mapping(canvas);
+        if (map == null) {
+            return false;
+        }
+        // 只有「自己糊」这一条路需要外扩一圈（见类注释）：预糊是在整张图上做的，
+        // 面板这一块取的是已经糊好的内部像素，边缘没有可补的洞。
+        float pad = preblurred || sigma <= 0f ? 0f : sigma * 3f;
+        RRect rounded = RRect.makeXYWH((float) x, (float) y, (float) width, (float) height,
+                (float) Math.max(0.0, radius));
+        double left = x - pad, top = y - pad;
+        double right = x + width + pad, bottom = y + height + pad;
+        float imageWidth = backdrop.getWidth();
+        float imageHeight = backdrop.getHeight();
+        // 越界的一边夹到图上：面板贴屏幕边时这一侧会有极轻微的比例失真，
+        // 换来的是「永远不会取到图外的空像素」。
+        Rect source = Rect.makeLTRB(
+                clampF(map.textureX((float) left), 0f, imageWidth),
+                clampF(map.textureY((float) top), 0f, imageHeight),
+                clampF(map.textureX((float) right), 0f, imageWidth),
+                clampF(map.textureY((float) bottom), 0f, imageHeight));
+        if (source.getWidth() <= 0f || source.getHeight() <= 0f) {
+            return false;
+        }
+        Rect bounds = Rect.makeLTRB((float) left, (float) top, (float) right, (float) bottom);
+        int depth = canvas.save();
+        try {
+            canvas.clipRRect(rounded, true);
+            try (ImageFilter blur = !preblurred && sigma > 0f
+                         ? ImageFilter.makeBlur(sigma, sigma, FilterTileMode.CLAMP) : null;
+                 Paint paint = new Paint().setAlphaf(Math.min(1f, opacity))) {
+                if (blur != null) {
+                    paint.setImageFilter(blur);
+                }
+                // strict=false：外扩与夹边让源、目的两个矩形比例未必完全相等，
+                // 这里要的是「铺满面板」，不是「不许形变」。
+                canvas.drawImageRect(backdrop, source, bounds, SamplingMode.LINEAR, paint, false);
+            }
+        } finally {
+            canvas.restoreToCount(depth);
+        }
+        return true;
+    }
+
+    /**
+     * 弹窗那一档的「压暗过的真背景」：先按 {@link #frostedBackdrop} 贴一块糊过的真画面，
+     * 再在同一条圆角里压一层黑纱。
+     *
+     * <h2>为什么弹窗不能直接吃真背景</h2>
+     * 一块贴在面板上的行或按钮，背后就是这一帧采进来的那块画面，贴上去自然对得上。弹窗不是：
+     * 它背后是我们自己的面板加一层 52% 黑遮罩，而这两样都不在采集里。直接贴真背景，等于
+     * 在一张压暗的桌面上开一扇透着大晴天的窗——<b>弹窗会比它周围更亮</b>，那读起来不是玻璃，
+     * 是贴图穿帮。2026-09-30 玩家反馈「二级菜单没有液态玻璃」，当时的做法是干脆只描一道边，
+     * 那是把这一档整个跳过，不是解决。
+     *
+     * <h2>那层黑纱补的就是遮罩的暗度</h2>
+     * {@link #SHEET_VEIL} 跟的是遮罩那一档，于是透出去的是「压暗过的真画面」：形状还在
+     * （那是玻璃），亮度已经落回遮罩下面那一层。它仍然比周围那块被遮罩压住的面板略亮——
+     * 这正对：iOS 那张抽屉板从来就比它底下的暗背景亮一档，读作「一块干净的玻璃盖在上面」。
+     *
+     * <p>两层用同一个圆角、同一个 {@code opacity}，所以弹窗淡入时是一起淡入的，
+     * 不会出现「先看见一块亮玻璃，黑纱才跟上」。</p>
+     *
+     * @return 真铺上了；{@code false} = 这一帧没有可用背景，调用方该画它自己那套假玻璃
+     */
+    public static boolean dimmedBackdrop(double x, double y, double width, double height,
+                                         double radius, float sigma, float opacity) {
+        if (!frostedBackdrop(x, y, width, height, radius, sigma, opacity)) {
+            return false;
+        }
+        int veil = Math.round(SHEET_VEIL * Math.max(0f, Math.min(1f, opacity)) * 255f);
+        SkijaShapes.roundedRect(x, y, width, height, radius, (veil & 0xFF) << 24);
+        return true;
+    }
+
+    /** 弹窗那层黑纱的浓度，跟的是 {@code NcmSheet} 遮罩那一档（0.52）略低一点。 */
+    private static final float SHEET_VEIL = 0.46f;
+
+    /** 换算全程走 double，只在最后落进 Skia 的 float 矩形时收一次口。 */
+    private static float clampF(double value, float min, float max) {
+        float clamped = (float) value;
+        return clamped < min ? min : (clamped > max ? max : clamped);
     }
 
     /**

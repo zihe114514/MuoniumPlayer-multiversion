@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -93,6 +94,23 @@ class RoomBlendSyncGuardStaticTest {
                 "必须用渐变自己的进度：startedAt 在暂停时会被平移，直接减墙钟会算出一条跑得更快的时钟");
         assertTrue(!body.contains("System.currentTimeMillis() - fade.startedAt"),
                 "同上：这一句绕过了渐变时钟");
+    }
+
+    @Test
+    @DisplayName("房间里的拖动要收尾本次混音，心跳纠偏不要")
+    void userSeekEndsTheBlendWhileDriftCorrectionDoesNot() throws IOException {
+        String source = read(PARTY.resolve("MpPlayback.java"));
+
+        String seek = region(source, "public static void seek(final long posMs)", "房间停了（队列播完");
+        assertTrue(seek.contains("CloudMusic.onSeekApplied()"),
+                "房主拖了进度条，各端这次交叠都作废：不收尾就会让旧歌在新歌已经跑远的地方继续淡出");
+        assertTrue(seek.indexOf("setPlaybackTime(posMs)") < seek.indexOf("onSeekApplied()"),
+                "先动位置再通知——反过来 automix 读到的还是旧播放头");
+
+        String time = region(source, "public static void time(final long posMs", "这一帧心跳要不要硬跳播放头");
+        assertFalse(time.contains("onSeekApplied"),
+                "纠偏是按偏差阈值触发的修正，交叠期本来就让路（见 decideSeek 那两道闸）。"
+                        + "把它当成一次拖进度条，正在叠的接缝会被每一次心跳薅断——就是这一类故障的老根");
     }
 
     // ════════════════════════ 共用工具 ════════════════════════

@@ -755,6 +755,12 @@ public final class HudSettingsModel {
                                         }, new Runnable() {
                                             public void run() { AutomixSettings.setPerformanceModeEnabled(!AutomixSettings.isPerformanceModeEnabled()); }
                                         }, AutomixSettings::isFoliaEngine),
+                                toggle("进阶模式", "把交接点从曲尾这几秒放开到整首歌：扫完整曲包络后，在「从哪退、从哪进」的所有候选里按八项打分挑一对，分不够就不挑（照旧按现在的启发式切）；同时打开队列的「排列」按钮，和按实测人声决定让路时机的双侧人声处理。代价是每首歌第一次播放时要在后台多解一遍整曲（进场那一首在预备线程上现扫，不等下一轮）；包络到货比第一次规划晚时，接缝会在真正交接前回头改一次。关闭时这三件事一次都不发生。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() { return AutomixSettings.isAdvancedModeEnabled(); }
+                                        }, new Runnable() {
+                                            public void run() { AutomixSettings.setAdvancedModeEnabled(!AutomixSettings.isAdvancedModeEnabled()); }
+                                        }, AutomixSettings::isFoliaEngine),
                                 toggle("过渡动画", "Folia 切歌时在屏幕中央显示与真实混合同步的圆环动画；原版继续使用动态岛提示。关闭后只保留音频处理。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() { return AutomixSettings.isTransitionAnimationEnabled(); }
@@ -954,7 +960,106 @@ public final class HudSettingsModel {
                                                 applyTheme(NCMTheme.next());
                                             }
                                         }, themeChoices(), HudSettingsModel::setThemeChoice),
-                                themeGrid())),
+                                themeGrid()),
+                        new Group("真玻璃材质", HudSettingsIcons.SPARKLE,
+                                toggle("播放器面板", "主面板背后那块画面改成实时采下来的游戏画面糊出来的玻璃。"
+                                        + "关掉就退回原来的渐变高光。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.glassSurfacePlayer;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.glassSurfacePlayer = !HudConfig.glassSurfacePlayer;
+                                                saveNow();
+                                            }
+                                        }),
+                                toggle("灵动岛", "顶部那颗岛也用真背景，八款样式里有七款吃这一档"
+                                        + "（回弹胶囊是纯色平面，保持原样）。岛面积小，折射读不出来，"
+                                        + "吃到的是背景透色与边缘光。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.glassSurfaceIsland;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.glassSurfaceIsland = !HudConfig.glassSurfaceIsland;
+                                                saveNow();
+                                            }
+                                        }),
+                                toggle("桌面歌词", "屏幕下方那张歌词卡片改用真背景。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.glassSurfaceDesktopLyric;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.glassSurfaceDesktopLyric = !HudConfig.glassSurfaceDesktopLyric;
+                                                saveNow();
+                                            }
+                                        }),
+                                toggle("HUD 设置界面", "三套设置界面自己的面板也改成真玻璃。"
+                                        + "那三块面板平时是不透明的，这一项同时决定它们压不压薄。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.glassSurfaceEditors;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.glassSurfaceEditors = !HudConfig.glassSurfaceEditors;
+                                                saveNow();
+                                            }
+                                        }),
+                                toggle("实时背景采集", "每一帧都重新采一次游戏画面，玻璃背后那一层就跟着画面一起走"
+                                        + "——走位、转视角、水波与树叶都是连续的，而不是默认那样最多 30Hz 更新、"
+                                        + "动起来偶尔跳一帧。<b>这是给好电脑的</b>：采集本身只花一毫秒上下，"
+                                        + "贵的是它逼着背后那张图每帧重糊一遍全屏。低配机开着会觉得整体掉帧，"
+                                        + "关掉即可，玻璃其它参数不受影响。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.glassRealtimeCapture;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.glassRealtimeCapture = !HudConfig.glassRealtimeCapture;
+                                                saveNow();
+                                            }
+                                        }),
+                                toggle("帧率不够时自动摘玻璃", "画面持续吃紧时把真玻璃淡出成原来的实色面板，"
+                                        + "腾出帧预算保流畅，缓回来以后再淡回来。关掉它就是「永远按主题画玻璃」，"
+                                        + "不管掉多少帧——配合上一项一起开，就是高配机上的「我要一直实时、别替我降载」。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.glassAutoDegrade;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.glassAutoDegrade = !HudConfig.glassAutoDegrade;
+                                                saveNow();
+                                            }
+                                        }),
+                                choice("背景采集分辨率", "每帧从游戏画面拷下来那张底按多大比例采。"
+                                        + "越小越省，但放大回面板本身就带糊——低配机往小了调，"
+                                        + "比把下面的模糊拉低更划算。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return glassScaleName(HudConfig.glassBackdropScale);
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                setGlassScale(glassScaleName(HudConfig.glassBackdropScale == 1
+                                                        ? 2 : (HudConfig.glassBackdropScale == 2 ? 4 : 1)));
+                                            }
+                                        }, GLASS_SCALE_CHOICES, new Consumer<String>() {
+                                            public void accept(String value) {
+                                                setGlassScale(value);
+                                            }
+                                        }),
+                                slider(HudSetting.GLASS_BLUR, "玻璃背后画面糊多狠。0 就是不糊，只压暗。"),
+                                slider(HudSetting.GLASS_TINT, "玻璃自身颜色多浓。往 0 拖是干净透明，"
+                                        + "往 1 拖背景基本看不见，字最好读。"),
+                                slider(HudSetting.GLASS_EDGE_GLOW, "边缘那一圈光的强度。真玻璃下这一档同时决定"
+                                                + "背景被折射多少：推到 0 就只剩糊、不折。"))),
 
                 new Category("信息栏与封面", "桌面信息栏的显隐与摆放，以及封面与全屏页标签", 0xFFFFA971, HudSettingsIcons.ALBUM, "界面与外观",
                         new Group("显示与摆放", HudSettingsIcons.VISIBILITY,
@@ -1094,6 +1199,24 @@ public final class HudSettingsModel {
         int style = "Blossom".equalsIgnoreCase(value) ? 1 : 0;
         if (HudConfig.osdLyricStyle == style) return;
         HudConfig.osdLyricStyle = style;
+        saveNow();
+    }
+
+    /** 背景采集倍率的三档显示名，顺序就是 {@code 1 / 2 / 4}。 */
+    private static final String[] GLASS_SCALE_CHOICES = {"原始", "一半", "四分之一"};
+
+    private static String glassScaleName(int scale) {
+        if (scale <= 1) return GLASS_SCALE_CHOICES[0];
+        return scale <= 2 ? GLASS_SCALE_CHOICES[1] : GLASS_SCALE_CHOICES[2];
+    }
+
+    /** 按显示名写回倍率；认不出的名字退回 2（出厂默认），不抛。 */
+    private static void setGlassScale(String value) {
+        int scale = GLASS_SCALE_CHOICES[0].equals(value) ? 1
+                : (GLASS_SCALE_CHOICES[1].equals(value) ? 2
+                : (GLASS_SCALE_CHOICES[2].equals(value) ? 4 : 2));
+        if (HudConfig.glassBackdropScale == scale) return;
+        HudConfig.glassBackdropScale = scale;
         saveNow();
     }
 

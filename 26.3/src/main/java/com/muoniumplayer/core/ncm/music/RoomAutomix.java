@@ -474,6 +474,11 @@ public final class RoomAutomix {
         o.addProperty("vocalEntryAt", plan.vocalEntryAt);
         o.addProperty("stemDriven", plan.stemDriven);
         o.addProperty("animationPeriodMillis", plan.animationPeriodMillis);
+        // 进阶模式的人声两条。必须上协议：房主压了出场方的人声而其他人没压，
+        // 全房中段就是「一边一个人唱、一边两个人唱」——这比响度差 1 dB 难解释得多。
+        // 旧版本解不到这两个键会取默认 0，等于「不压出场方」，是一次可听但安全的退化。
+        o.addProperty("outgoingVocalDuckDepth", plan.outgoingVocalDuckDepth);
+        o.addProperty("vocalReleaseAt", plan.vocalReleaseAt);
         return o;
     }
 
@@ -514,7 +519,9 @@ public final class RoomAutomix {
                     bool(o, "echoThrow", false),
                     decimal(o, "drumHandoverAt", .42), decimal(o, "bassHandoverAt", .42),
                     decimal(o, "vocalEntryAt", .45), bool(o, "stemDriven", false),
-                    decimal(o, "animationPeriodMillis", 500.0));
+                    decimal(o, "animationPeriodMillis", 500.0),
+                    (float) decimal(o, "outgoingVocalDuckDepth", 0.0),
+                    decimal(o, "vocalReleaseAt", 0.0));
         } catch (Throwable malformed) {
             return null;
         }
@@ -535,7 +542,8 @@ public final class RoomAutomix {
                 + "/" + (plan.style == null ? "-" : plan.style.id)
                 + "/" + plan.midTiltDb + "/" + plan.highTiltDb + "/" + plan.echoThrow
                 + "/" + plan.drumHandoverAt + "/" + plan.bassHandoverAt + "/" + plan.vocalEntryAt
-                + "/" + plan.stemDriven + "/" + plan.animationPeriodMillis;
+                + "/" + plan.stemDriven + "/" + plan.animationPeriodMillis
+                + "/" + plan.outgoingVocalDuckDepth + "/" + plan.vocalReleaseAt;
     }
 
     /** 按过渡族的 id 还原；未知 id 或没有该字段时返回 {@code null}（回到普通等功率曲线）。 */

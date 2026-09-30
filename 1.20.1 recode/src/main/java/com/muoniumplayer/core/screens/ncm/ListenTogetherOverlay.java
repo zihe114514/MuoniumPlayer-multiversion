@@ -7,6 +7,7 @@ import com.muoniumplayer.core.ncm.music.ListenTogetherSettings;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.QRCodeGenerator;
 import com.muoniumplayer.core.rendering.FontelloIcons;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
@@ -954,6 +955,9 @@ public final class ListenTogetherOverlay extends NCMPanel {
             background.setColor(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
             background.setMargin(0);
         });
+        background.setGlassSheet(GlassLook.Surface.PLAYER);
+        // 底板自己那层深色压薄：不压的话刚贴上去的糊背景仍然在它底下，弹窗读起来就是一块实色板。
+        background.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         return dialog;
     }
 

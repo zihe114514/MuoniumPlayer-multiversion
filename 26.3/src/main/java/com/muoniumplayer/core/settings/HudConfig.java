@@ -497,6 +497,58 @@ public final class HudConfig {
      */
     public static float playerUiSwitchSpeed = 3.0f;
 
+    // ------------------------------------------------------------------ 真玻璃材质
+    // 只有主题带「真玻璃」（NCMTheme.isTrueGlass()）时这一组才起作用；普通主题下
+    // 采集整条链路都不会启动（GlassBackdrop.wanted() 直接返回 false），零开销。
+
+    /** 真玻璃生效在播放器主面板上。关掉后那块面板退回原来的渐变高光。 */
+    public static boolean glassSurfacePlayer = true;
+    /** 真玻璃生效在顶部灵动岛上。岛面积小，折射读不出来，主要吃的是背景透色与边缘光。 */
+    public static boolean glassSurfaceIsland = true;
+    /** 真玻璃生效在桌面歌词卡片上。 */
+    public static boolean glassSurfaceDesktopLyric = true;
+    /** 真玻璃生效在三套 HUD 设置界面的面板上。这几块面板平时是不透明的，所以它同时决定底色压不压薄。 */
+    public static boolean glassSurfaceEditors = true;
+
+    /**
+     * 背景采集的降采样倍数：1 原尺寸、2 一半、4 四分之一。
+     *
+     * <p>这个值同时决定<b>成本</b>与<b>底噪</b>：倍数越大，每帧 blit 与随后模糊要处理的像素越少，
+     * 而放大回面板尺寸本身就是糊的——所以低配机往大了调，比把模糊强度调低更划算。
+     * 只接受 1/2/4 三档（设置面板里是选项而不是滑块）。</p>
+     */
+    public static int glassBackdropScale = 2;
+
+    /** 玻璃背后画面的模糊强度，单位 GUI 像素的 sigma。0 就是不糊，只压暗。 */
+    public static float glassBlurSigma = 12.0f;
+
+    /** 玻璃自身颜色的浓度：0 完全透出背景，1 背景基本看不见。 */
+    public static float glassTintStrength = 0.55f;
+
+    /** 边缘那一圈光的强度。P1 用在描边上，P2 接折射后就是 fresnel 权重。 */
+    public static float glassEdgeGlow = 0.65f;
+
+    /**
+     * <b>每帧</b>采背景（实时渲染），而不是压在 30Hz。
+     *
+     * <p>默认关：正式档那次 blit 实测 0.4~1.1ms，而这块画面出门就要整个糊一遍，30Hz 与
+     * 144Hz 的糊底在静止画面上看不出区别。打开之后多出来的东西是<b>动起来的那部分</b>——
+     * 走位、转视角、树叶与水波在玻璃后面跟着一起走，而不是隔一两帧跳一下。代价按两笔算：
+     * 采集每帧一次，预糊那一层也每帧重建一次（它按采集代数重做，见 {@code GlassBackdrop.blurred}），
+     * 后者是全屏两趟高斯，比 blit 贵得多。所以这一项是给高配机手动开的，不是默认更"高级"。</p>
+     */
+    public static boolean glassRealtimeCapture = false;
+
+    /**
+     * 帧率持续掉到极低档时，自动把真玻璃摘掉（淡出到原来的实色面板）。
+     *
+     * <p>关掉它，玻璃就<em>永远</em>按主题强度画，不再看帧时闸 {@code TransitionPerformanceBudget}
+     * 的脸色。默认开——低配机上「糊不动」比「掉帧」更难读。而这一档和上面那档是可以对撞的：
+     * 实时采集每帧多送一次全屏糊，恰恰最容易把帧时推过那道门槛，于是"我要实时"的机器上
+     * 应该把这里关掉，否则就会看见玻璃自己一开一关。</p>
+     */
+    public static boolean glassAutoDegrade = true;
+
     private HudConfig() {
     }
 
@@ -686,6 +738,17 @@ public final class HudConfig {
             osdLyricStyle = clampInt(getInt(o, "osdLyricStyle", osdLyricStyle), 0,
                     OSD_LYRIC_STYLE_MAX);
             blossomBackdropBlur = clamp01(getFloat(o, "blossomBackdropBlur", blossomBackdropBlur));
+            glassSurfacePlayer = getBoolean(o, "glassSurfacePlayer", glassSurfacePlayer);
+            glassSurfaceIsland = getBoolean(o, "glassSurfaceIsland", glassSurfaceIsland);
+            glassSurfaceDesktopLyric = getBoolean(o, "glassSurfaceDesktopLyric", glassSurfaceDesktopLyric);
+            glassSurfaceEditors = getBoolean(o, "glassSurfaceEditors", glassSurfaceEditors);
+            // 采集倍数钳在 1~4：0 或负数会让「除以倍数」直接炸，5 以上糊到没法看。
+            glassBackdropScale = clampInt(getInt(o, "glassBackdropScale", glassBackdropScale), 1, 4);
+            glassBlurSigma = clamp(getFloat(o, "glassBlurSigma", glassBlurSigma), 0f, 32f);
+            glassTintStrength = clamp01(getFloat(o, "glassTintStrength", glassTintStrength));
+            glassEdgeGlow = clamp(getFloat(o, "glassEdgeGlow", glassEdgeGlow), 0f, 1.5f);
+            glassRealtimeCapture = getBoolean(o, "glassRealtimeCapture", glassRealtimeCapture);
+            glassAutoDegrade = getBoolean(o, "glassAutoDegrade", glassAutoDegrade);
             blossomPanelOpacity = clamp01(getFloat(o, "blossomPanelOpacity", blossomPanelOpacity));
             blossomVisibleLines = clampInt(getInt(o, "blossomVisibleLines", blossomVisibleLines), 1, 5);
             blossomRhythmBorder = getBoolean(o, "blossomRhythmBorder", blossomRhythmBorder);
@@ -836,6 +899,16 @@ public final class HudConfig {
             o.addProperty("themeColorSource", themeColorSource);
             o.addProperty("osdLyricStyle", osdLyricStyle);
             o.addProperty("blossomBackdropBlur", blossomBackdropBlur);
+            o.addProperty("glassSurfacePlayer", glassSurfacePlayer);
+            o.addProperty("glassSurfaceIsland", glassSurfaceIsland);
+            o.addProperty("glassSurfaceDesktopLyric", glassSurfaceDesktopLyric);
+            o.addProperty("glassSurfaceEditors", glassSurfaceEditors);
+            o.addProperty("glassBackdropScale", glassBackdropScale);
+            o.addProperty("glassBlurSigma", glassBlurSigma);
+            o.addProperty("glassTintStrength", glassTintStrength);
+            o.addProperty("glassEdgeGlow", glassEdgeGlow);
+            o.addProperty("glassRealtimeCapture", glassRealtimeCapture);
+            o.addProperty("glassAutoDegrade", glassAutoDegrade);
             o.addProperty("blossomPanelOpacity", blossomPanelOpacity);
             o.addProperty("blossomVisibleLines", blossomVisibleLines);
             o.addProperty("blossomRhythmBorder", blossomRhythmBorder);

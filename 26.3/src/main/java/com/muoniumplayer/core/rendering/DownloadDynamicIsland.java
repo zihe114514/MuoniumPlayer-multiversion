@@ -1680,36 +1680,48 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             api.getGLStateManager().popMatrix();
             return;
         }
+        /*
+         * 真背景铺进岛的轮廓，然后让样式自己那层深色底按「玻璃浓度」压薄——这一步以前只有
+         * 液态玻璃那一款有。2026-09-30 玩家报「灵动岛不是实时渲染」，根因就在这：八款样式里
+         * 只有 LIQUID_GLASS 调过 paintFrost，而他用的是默认的经典胶囊，看到的从来就是那套
+         * 按时间摆动的假渐变——它当然不会跟着身后的画面走。
+         * 铺不上（没选琉璃、生效面关了、这一帧没有背景）时 frosted=false、thin 恒等于 1，
+         * 六款画法一个像素都不变；回弹胶囊在上面就 return 了，那是作者另一份稿子的 1:1 复刻，
+         * 纯色平面是它造型的一部分，不在这次改动里。
+         */
+        boolean frosted = !liquidGlass
+                && GlassLook.paintFrost(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha);
+        float thin = frosted ? GlassLook.tintedAlpha(GlassLook.Surface.ISLAND, 1.0f) : 1.0f;
         if (liquidGlass) {
             renderLiquidGlassSurface(x, y, width, height, radius, alpha, now);
         } else if (style == DynamicIslandStyle.GLASS) {
-            roundedRect(x, y, width, height, radius, RenderSystem.reAlpha(accentColor, alpha * .20f));
+            roundedRect(x, y, width, height, radius, RenderSystem.reAlpha(accentColor, alpha * .20f * thin));
             roundedRect(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height * .46),
-                    Math.max(1.0, radius - 1.0), hexColor(1f, 1f, 1f, alpha * .075f));
+                    Math.max(1.0, radius - 1.0), hexColor(1f, 1f, 1f, alpha * .075f * thin));
             roundedOutline(x, y, width, height, radius, .75,
                     new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 62f)));
         } else if (style == DynamicIslandStyle.CARD) {
-            roundedRect(x, y, width, height, radius, hexColor(.028f, .034f, .046f, alpha * .985f));
+            roundedRect(x, y, width, height, radius, hexColor(.028f, .034f, .046f, alpha * .985f * thin));
             roundedRect(x, y + radius, 2.2, Math.max(1.0, height - radius * 2.0), 1.1,
                     RenderSystem.reAlpha(accentColor, alpha * .90f));
             roundedOutline(x, y, width, height, radius, .65,
                     new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 30f)));
         } else if (musicFocus) {
             // 音乐聚焦卡片：表面先扩展，然后动画封面和文字逐渐就位。
-            roundedRect(x, y, width, height, radius, hexColor(.010f, .014f, .024f, alpha * .99f));
+            roundedRect(x, y, width, height, radius, hexColor(.010f, .014f, .024f, alpha * .99f * thin));
             roundedRect(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height - 2.0),
-                    Math.max(1.0, radius - 1.0), hexColor(.050f, .064f, .098f, alpha * .46f));
+                    Math.max(1.0, radius - 1.0), hexColor(.050f, .064f, .098f, alpha * .46f * thin));
             roundedRect(x + 1.2, y + 1.2, Math.max(1.0, width - 2.4), Math.max(1.0, height * .36),
-                    Math.max(1.0, radius - 1.2), RenderSystem.reAlpha(accentColor, alpha * .10f));
+                    Math.max(1.0, radius - 1.2), RenderSystem.reAlpha(accentColor, alpha * .10f * thin));
             roundedOutline(x, y, width, height, radius, .80,
                     new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 54f)));
             roundedRect(x + 8.0, y + height - 5.0, Math.max(1.0, width - 16.0), 1.0, .5,
                     RenderSystem.reAlpha(accentColor, alpha * .22f));
         } else if (systemCard) {
             // 受提供的参考项目启发的专用内容驱动系统通知卡片。
-            roundedRect(x, y, width, height, radius, hexColor(.025f, .031f, .043f, alpha * .99f));
+            roundedRect(x, y, width, height, radius, hexColor(.025f, .031f, .043f, alpha * .99f * thin));
             roundedRect(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height - 2.0),
-                    Math.max(1.0, radius - 1.0), hexColor(.075f, .088f, .118f, alpha * .32f));
+                    Math.max(1.0, radius - 1.0), hexColor(.075f, .088f, .118f, alpha * .32f * thin));
             roundedOutline(x, y, width, height, radius, .80,
                     new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 46f)));
             double tileSize = Math.min(24.0, Math.max(16.0, height - 16.0));
@@ -1719,9 +1731,16 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     Math.min(7.0, tileSize * .30), .65,
                     new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 36f)));
         } else {
-            roundedRect(x, y, width, height, radius, hexColor(.012f, .014f, .020f, alpha * .985f));
+            // 经典胶囊与紧凑状态共用这一张底。
+            roundedRect(x, y, width, height, radius, hexColor(.012f, .014f, .020f, alpha * .985f * thin));
             roundedOutline(x, y, width, height, radius, .65,
                     new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 20f)));
+        }
+        // 边缘折射压在底色之上，与播放器面板、液态玻璃那一款同一个顺序：底色是「玻璃有多脏」，
+        // 折射是「玻璃这个表面」，画反了最外圈那几像素会被自己刚铺的深色吃掉。
+        // 「边缘光」滑块推到 0 时这里自己不出画（见 GlassLook.refractionStrength）。
+        if (frosted) {
+            GlassLook.paintEdge(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha);
         }
         if (absorbGlow > .01) {
             roundedOutline(x - 1.0, y - 1.0, width + 2.0, height + 2.0, radius + .7, .82,
@@ -1730,8 +1749,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     new Color(RenderSystem.reAlpha(accentColor, (float) (alpha * absorbGlow * .52f)), true));
         }
         if (!systemCard && !musicFocus && !liquidGlass) {
+            // 顶部那条镜面高光也跟着浓度走：铺上真背景之后它还按原强度亮着，读起来就像胶囊
+            // 上面又贴了一条不透明的膜，把刚透出来的画面重新挡回去。
             roundedRect(x + radius * .70, y + .8, Math.max(2.0, width - radius * 1.40), .75, .38,
-                    hexColor(1f, 1f, 1f, alpha * (style == DynamicIslandStyle.GLASS ? .13f : .055f)));
+                    hexColor(1f, 1f, 1f, alpha * (style == DynamicIslandStyle.GLASS ? .13f : .055f) * thin));
         }
 
         // 图标安全地保持在圆角轮廓内，并在文字前保留实际间距。
@@ -2612,11 +2633,20 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         int accentBright = GLASS_TINT_BRIGHT;
         double innerRadius = Math.max(1.0, radius - 1.0);
 
+        // 真玻璃：先把糊过的游戏画面铺进岛形，再让下面那层深色底按「玻璃浓度」压薄。
+        // 铺不上（没选琉璃主题、生效面关了、采集停用）时一行都不改原样，
+        // 所以这里刻意用返回值的布尔而不是强度去决定压不压薄——采不到却把底压薄，
+        // 症状会是「岛变成一块半透明的脏斑」。
+        boolean frosted = GlassLook.paintFrost(GlassLook.Surface.ISLAND, x, y, width, height,
+                radius, alpha);
+        float thin = frosted ? GlassLook.tintedAlpha(GlassLook.Surface.ISLAND, 1.0f) : 1.0f;
+        float glow = GlassLook.edgeGlow(GlassLook.Surface.ISLAND);
+
         // 玻璃本体：偏冷的深色基底压住背景，再叠一层玻璃色的竖向渐变当作体积感。
-        roundedRect(x, y, width, height, radius, hexColor(.043f, .055f, .078f, alpha * .82f));
+        roundedRect(x, y, width, height, radius, hexColor(.043f, .055f, .078f, alpha * .82f * thin));
         roundedRectGradientVertical(x, y, width, height, radius,
-                DynamicIslandMath.colorWithAlpha(accentBright, alpha * .17f),
-                DynamicIslandMath.colorWithAlpha(GLASS_TINT, alpha * .07f));
+                DynamicIslandMath.colorWithAlpha(accentBright, alpha * .17f * thin),
+                DynamicIslandMath.colorWithAlpha(GLASS_TINT, alpha * .07f * thin));
         // 冷白到紫蓝的横向色散。这里不用 drawGradientCornerLR：它的混合角会被算成完全不透明，
         // 放在半透明的玻璃上会糊成两块实色。
         roundedRectGradientHorizontal(x, y, width, height, radius,
@@ -2633,18 +2663,24 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 new Color(255, 255, 255, 0),
                 DynamicIslandMath.colorWithAlpha(accentBright, alpha * .13f));
 
+        // 真玻璃的边缘折射：把背后那块画面沿岛形轮廓的法线掰一下再采，三通道各掰不同距离。
+        // 画在底色与亮带之后，否则最外圈那几像素会被自己刚压上去的深色吃掉。
+        GlassLook.paintEdge(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha);
+
         // 原来这里有一条来回横扫的镜面反光（扫光）。已按要求移除：它在读字时会周期性压过文案，
         // 而玻璃的体积感由上面的折射亮带与下面的边缘光已经交代清楚了。
 
         // 边缘动态取色：四角取自玻璃色的四个色相相位，整圈随时间缓慢转动。
+        // 「玻璃边缘光」那一档滑块只乘在这一圈和里面的白细边上——它们就是这块玻璃的边缘光，
+        // 而折射亮带属于「体积感」，跟着一起调会把岛画成忽明忽暗。
         float phase = (float) ((seconds * 26.0) % 360.0);
         roundedOutlineGradient(x, y, width, height, radius, 1.0,
-                DynamicIslandMath.colorWithAlpha(DynamicIslandMath.shiftHue(accentBright, phase), alpha * .80f),
-                DynamicIslandMath.colorWithAlpha(DynamicIslandMath.shiftHue(accentBright, phase + 70f), alpha * .92f),
-                DynamicIslandMath.colorWithAlpha(DynamicIslandMath.shiftHue(accentBright, phase + 140f), alpha * .74f),
-                DynamicIslandMath.colorWithAlpha(DynamicIslandMath.shiftHue(accentBright, phase + 210f), alpha * .90f));
+                DynamicIslandMath.colorWithAlpha(DynamicIslandMath.shiftHue(accentBright, phase), alpha * .80f * glow),
+                DynamicIslandMath.colorWithAlpha(DynamicIslandMath.shiftHue(accentBright, phase + 70f), alpha * .92f * glow),
+                DynamicIslandMath.colorWithAlpha(DynamicIslandMath.shiftHue(accentBright, phase + 140f), alpha * .74f * glow),
+                DynamicIslandMath.colorWithAlpha(DynamicIslandMath.shiftHue(accentBright, phase + 210f), alpha * .90f * glow));
         roundedOutline(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height - 2.0),
-                innerRadius, .55, new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 30f)));
+                innerRadius, .55, new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 30f * glow)));
     }
 
     /**

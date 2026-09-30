@@ -14,6 +14,7 @@ import com.muoniumplayer.core.ncm.music.FoliaModelNotice;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.StencilClipManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
@@ -247,13 +248,24 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     public void layout() {
         this.basePanel.getChildren().clear();
 
+        // 真玻璃的底色必须排在面板底色<em>之前</em>：它是「糊过的游戏画面」，下面那张
+        // GENERIC_BACKGROUND 是压在它上面的主题色。顺序反了就等于拿实色盖住背景，
+        // 玩家只会看到「开了琉璃什么也没变」。
+        ThemeGlassBackdropWidget glassBackdrop = new ThemeGlassBackdropWidget();
+        glassBackdrop.setBeforeRenderCallback(() -> glassBackdrop.setBounds(
+                0, 0, glassBackdrop.getParentWidth(), glassBackdrop.getParentHeight()));
+        this.basePanel.addChild(glassBackdrop);
+
         RoundedRectWidget bg = new RoundedRectWidget();
         bg.setBeforeRenderCallback(() -> {
             bg.setBounds(0, 0, bg.getParentWidth(), bg.getParentHeight());
             bg.setRadius(this.getPlayerCornerRadius());
             bg.setColor(getColor(ColorType.GENERIC_BACKGROUND));
             // 液态玻璃保留足够实体感，同时让游戏画面能轻微透入形成材质层次。
-            bg.setAlpha(1.0f - NCMTheme.getLiquidGlassAmount() * 0.14f);
+            // 真玻璃那一档再把这层按「玻璃浓度」压薄，让背后那张真画面透出来；
+            // 浓度推到 1 时压薄系数正好是 1，也就是完全退回上面这个数。
+            bg.setAlpha(GlassLook.tintedAlpha(GlassLook.Surface.PLAYER,
+                    1.0f - NCMTheme.getLiquidGlassAmount() * 0.14f));
         });
         this.basePanel.addChild(bg);
 
@@ -278,7 +290,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                     Math.max(0.0, this.getPanelHeight() - controlsHeight)
             );
             this.currentPanelBg.setColor(getColor(ColorType.GENERIC_BACKGROUND));
-            this.currentPanelBg.setAlpha(1.0f - NCMTheme.getLiquidGlassAmount() * 0.24f);
+            // 这一层是<em>叠在 bg 之上</em>的第二张底，走内层那一档：两档共用一条曲线时，
+            // 两张 0.6 的深色叠完就是 0.85，玩家管这个叫「外面是玻璃，页面里面一块黑斑」。
+            this.currentPanelBg.setAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER,
+                    1.0f - NCMTheme.getLiquidGlassAmount() * 0.24f));
         });
 
         this.controlsBar = new ControlsBar();
@@ -782,7 +797,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             roundedOutline(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(),
                     cornerRadius, getPlayerBorderThickness(), new Color(255, 255, 255,
                             Math.max(0, Math.min(255, (int) (alpha * 25)))));
-            float glassAmount = NCMTheme.getLiquidGlassAmount();
+            float glassAmount = NCMTheme.getLiquidGlassAmount()
+                    * GlassLook.edgeGlow(GlassLook.Surface.PLAYER);
             if (glassAmount > 0.001f) {
                 int glassBorderAlpha = Math.max(0, Math.min(255, (int) (alpha * glassAmount * 88)));
                 roundedOutlineGradient(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(),
@@ -820,10 +836,38 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         @Override
         public void onRender(double mouseX, double mouseY) {
             if (TransitionPerformanceBudget.skipLiquidGlass()) return;
-            float amount = NCMTheme.getLiquidGlassAmount() * this.getAlpha();
+            // 边缘光滑块只在真玻璃铺上来的时候吃：没有真背景时这套高光就是「玻璃」本身，
+            // 拿它去压暗会让原来那几款液态玻璃主题凭空变淡。
+            float amount = NCMTheme.getLiquidGlassAmount() * this.getAlpha()
+                    * GlassLook.edgeGlow(GlassLook.Surface.PLAYER);
             if (amount <= 0.001f) return;
             themeTransitionRenderer.renderLiquidGlassSurface(this.getX(), this.getY(),
                     this.getWidth(), this.getHeight(), getPlayerCornerRadius(), amount);
+            // 折射压在高光之上：它是「玻璃表面」的效应，跟在底色后面会被那层深色压掉。
+            GlassLook.paintEdge(GlassLook.Surface.PLAYER, this.getX(), this.getY(),
+                    this.getWidth(), this.getHeight(), getPlayerCornerRadius(), this.getAlpha());
+        }
+    }
+
+    /**
+     * 真玻璃的底色层：把每帧从游戏画面采下来的那张图糊过，铺满整块面板。
+     *
+     * <p>刻意做成一个单独的不接收点击的控件，而不是在 {@link ThemeGlassWidget} 里顺手画：
+     * 那个控件的高光必须压在主题底色<em>之上</em>，而这一层在底色<em>之下</em>，
+     * 两者中间隔着 {@code bg}。合成一个控件就得在里面自己排两遍层序，反而读不出来。</p>
+     *
+     * <p>没有背景可采时（主题不是琉璃、采集失败、Skia 停用）这一层什么都不画，
+     * 面板于是和改动前一模一样——它只加一层，永远不接管任何既有绘制。</p>
+     */
+    private final class ThemeGlassBackdropWidget extends AbstractWidget<ThemeGlassBackdropWidget> {
+        private ThemeGlassBackdropWidget() {
+            this.setClickable(false);
+        }
+
+        @Override
+        public void onRender(double mouseX, double mouseY) {
+            GlassLook.paintFrost(GlassLook.Surface.PLAYER, this.getX(), this.getY(),
+                    this.getWidth(), this.getHeight(), getPlayerCornerRadius(), this.getAlpha());
         }
     }
     public LoginRenderer loginRenderer = null;

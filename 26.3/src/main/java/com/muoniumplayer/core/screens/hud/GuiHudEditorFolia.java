@@ -13,6 +13,7 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.FoliaLucideIcons;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.HudSettingsIcons;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.font.GlyphInkMetrics;
@@ -815,7 +816,17 @@ public class GuiHudEditorFolia extends GuiScreen {
             updateChipDrag(mouseX);
 
             drawPanelShadow(panelX, panelY, panelW, panelH);
-            drawRoundedRect(panelX, panelY, panelW, panelH, PANEL_RADIUS, panelBg());
+            // 真玻璃：铺一层糊过的游戏画面，再把面板底色按「玻璃浓度」压薄。
+            // 这一层画在设计空间里，外面还套着面板自己的入场位移与缩放，但都不必报给玻璃：
+            // 采哪一块背景问的是画布当前矩阵，那两层缩放本来就在矩阵里。
+            boolean frosted = GlassLook.paintFrost(GlassLook.Surface.EDITORS, panelX, panelY,
+                    panelW, panelH, PANEL_RADIUS, layerAlpha);
+            drawRoundedRect(panelX, panelY, panelW, panelH, PANEL_RADIUS,
+                    frosted ? GlassLook.tintedArgb(GlassLook.Surface.EDITORS, panelBg()) : panelBg());
+            if (frosted) {
+                GlassLook.paintEdge(GlassLook.Surface.EDITORS, panelX, panelY, panelW, panelH,
+                        PANEL_RADIUS, layerAlpha);
+            }
             drawBlobs(panelX, panelY, panelW, panelH);
             drawRoundedOutline(panelX, panelY, panelW, panelH, PANEL_RADIUS, 1, panelEdge());
 

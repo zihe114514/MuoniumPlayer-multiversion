@@ -18,6 +18,7 @@ import com.muoniumplayer.core.ncm.music.FoliaModelManager;
 import com.muoniumplayer.core.ncm.music.MusicAudioCache;
 import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
@@ -451,7 +452,17 @@ public class GuiHudEditor extends GuiScreen {
     }
     private void drawLyricsSettings(CFontRenderer fr, MusicLyricsWidget lyrics,
                                      int x, int y, int h, int mouseX, int mouseY) {
-        drawRoundedRect(x, y, SETTINGS_W, h, 13, 0xF0171C26);
+        // 真玻璃：先铺一层糊过的游戏画面，再把面板底色按「玻璃浓度」压薄。
+        // 铺不上（没选琉璃主题 / 生效面关了 / 采集停用）就一位不改，还是原来那张实色面板。
+        // 这一套画在窗口自适应布局里，但不用再报倍率给玻璃：采哪一块背景问的是画布当前矩阵，
+        // 而外面那句 api.scale(correctionX, correctionY) 已经在这个矩阵里了。
+        boolean frosted = GlassLook.paintFrost(GlassLook.Surface.EDITORS,
+                x, y, SETTINGS_W, h, 13, 1.0f);
+        drawRoundedRect(x, y, SETTINGS_W, h, 13,
+                frosted ? GlassLook.tintedArgb(GlassLook.Surface.EDITORS, 0xF0171C26) : 0xF0171C26);
+        if (frosted) {
+            GlassLook.paintEdge(GlassLook.Surface.EDITORS, x, y, SETTINGS_W, h, 13, 1.0f);
+        }
         drawRoundedRect(x + 1, y + 1, SETTINGS_W - 2, SETTINGS_HEADER_H, 11, 0xFF202A37);
         drawRoundedRect(x + 12, y + 9, 6, 6, 3, 0xFF8AD7FF);
         drawExternalText(fr, "音乐 HUD 设置", x + 27, y + 8, 0xFFF4F7FB);
@@ -563,6 +574,9 @@ public class GuiHudEditor extends GuiScreen {
                 rowY += COLOR_ROW_H;
                 if (AutomixSettings.isFoliaEngine()) {
                     drawToggleRow(fr, "表现模式", AutomixSettings.isPerformanceModeEnabled(),
+                            x + 6, rowY, mouseX, mouseY);
+                    rowY += COLOR_ROW_H;
+                    drawToggleRow(fr, "进阶模式", AutomixSettings.isAdvancedModeEnabled(),
                             x + 6, rowY, mouseX, mouseY);
                     rowY += COLOR_ROW_H;
                 }
@@ -1192,6 +1206,11 @@ public class GuiHudEditor extends GuiScreen {
                 if (!AutomixSettings.isFoliaEngine()) {
                     if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
                         AutomixSettings.cycleOverlapSeconds();
+                        return;
+                    }
+                    rowY += COLOR_ROW_H;
+                    if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                        AutomixSettings.setAdvancedModeEnabled(!AutomixSettings.isAdvancedModeEnabled());
                         return;
                     }
                     rowY += COLOR_ROW_H;

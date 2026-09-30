@@ -13,6 +13,7 @@ import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.HudSettingsIcons;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
@@ -651,7 +652,16 @@ public class GuiHudEditorPro extends GuiScreen {
     private void drawPanel(CFontRenderer fr, int panelX, int panelY, int panelW, int panelH,
                            int mouseX, int mouseY, int wheel, boolean overPanel) {
         drawSoftShadow(panelX, panelY, panelW, panelH, 16);
-        drawRoundedRect(panelX, panelY, panelW, panelH, 16, PANEL_BG);
+        // 真玻璃：先铺一层糊过的游戏画面，再把面板底色按「玻璃浓度」压薄。三套编辑器共用
+        // 同一个生效面开关——它们本来就是同一件事的三种画法，分开开关只会出现
+        // 「同一台机器上两个设置页长得不一样」。铺不上就一位不改，走原来那层实色底。
+        boolean frosted = GlassLook.paintFrost(GlassLook.Surface.EDITORS,
+                panelX, panelY, panelW, panelH, 16, layerAlpha);
+        drawRoundedRect(panelX, panelY, panelW, panelH, 16,
+                frosted ? GlassLook.tintedArgb(GlassLook.Surface.EDITORS, PANEL_BG) : PANEL_BG);
+        if (frosted) {
+            GlassLook.paintEdge(GlassLook.Surface.EDITORS, panelX, panelY, panelW, panelH, 16, layerAlpha);
+        }
         // 顶部一条高光边：纯色圆角矩形在游戏画面上会显得「贴」上去，一道 1px 亮边就有玻璃的厚度感。
         drawRoundedRect(panelX + 6, panelY, panelW - 12, 1, 1, PANEL_EDGE);
 

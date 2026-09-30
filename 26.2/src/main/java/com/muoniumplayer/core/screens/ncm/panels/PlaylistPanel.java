@@ -9,6 +9,7 @@ import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.ncm.music.dto.User;
 import com.muoniumplayer.core.rendering.FontelloIcons;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
@@ -25,6 +26,7 @@ import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
+import com.muoniumplayer.party.MpPartyClient;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -97,6 +99,9 @@ public class PlaylistPanel extends NCMPanel {
         // 没有对应的"上一页"，只会把内容区右上角挤掉一块。歌单详情、发现页曲目列表照旧保留。
         boolean backButtonAllowed = showBackButton && !playList.isSearchResultList();
         RoundedButtonWidget btnBack = new RoundedButtonWidget(FontelloIcons.BACK, FontManager.fontello18);
+        // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
+        btnBack.setGlassPlate(GlassLook.Surface.PLAYER)
+                .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         this.addChild(btnBack);
         btnBack.setShouldOverrideMouseCursor(true);
         btnBack.setBeforeRenderCallback(() -> {
@@ -140,6 +145,9 @@ public class PlaylistPanel extends NCMPanel {
 
 //        LabelWidget lblPlaylistName = new LabelWidget(playList.name, FontManager.pf);
             RoundedButtonWidget btnPlay = new RoundedButtonWidget("播放歌单", FontManager.pf16bold);
+            // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
+            btnPlay.setGlassPlate(GlassLook.Surface.PLAYER)
+                    .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             this.addChild(btnPlay);
 
             btnPlay.setBeforeRenderCallback(() -> {
@@ -163,12 +171,54 @@ public class PlaylistPanel extends NCMPanel {
             });
 
 
+            // 「排进房间」= 把这一整张单子挂到一起听的队列后面。它只在<b>真的在一间房间里、
+            // 而且这台服务端认识这个功能</b>时才出现（频道里不出现：全服共用的房间不该被一个人
+            // 倒进一百首）。判据每帧重算，所以中途建房、进房、退房都会让这颗按钮自己长出来或收回去。
+            //
+            // 按钮文字用「排进」而不是「播放」是有意的：它不会动正在播的那首歌，也不会插到别人
+            // 前面 —— 说「播放」会让人以为按下去立刻换歌，而实际要到队列排空才听得见。
+            RoundedButtonWidget btnParty = new RoundedButtonWidget("排进房间", FontManager.pf16bold);
+            // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
+            btnParty.setGlassPlate(GlassLook.Surface.PLAYER)
+                    .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+            this.addChild(btnParty);
+
+            btnParty.setBeforeRenderCallback(() -> {
+                boolean show = MpPartyClient.playlistSupported();
+                btnParty.setHidden(!show);
+                btnParty.setBounds(57, 17);
+                btnParty.setPosition(btnPlay.getRelativeX() + btnPlay.getWidth() + 8,
+                        cover.getRelativeY() + cover.getHeight() - btnParty.getHeight());
+                btnParty.setRadius(3);
+                btnParty.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+                btnParty.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            });
+
+            btnParty.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+                if (mouseButton == 0) {
+                    // 曲目没在手上的单子（导入单、没点开过的账号单）由 requestPlaylist 内部先去加载，
+                    // 加载回来再分帧发；这里不需要照抄「播放歌单」那一段 loadMusicsWithCallback。
+                    MpPartyClient.requestPlaylist(playList);
+                }
+                return true;
+            });
+
+
             RoundedButtonWidget btnCoverflow = new RoundedButtonWidget("Coverflow", FontManager.pf16bold);
+            // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
+            btnCoverflow.setGlassPlate(GlassLook.Surface.PLAYER)
+                    .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             this.addChild(btnCoverflow);
 
             btnCoverflow.setBeforeRenderCallback(() -> {
                 btnCoverflow.setBounds(57, 17);
-                btnCoverflow.setPosition(btnPlay.getRelativeX() + btnPlay.getWidth() + 8, cover.getRelativeY() + cover.getHeight() - btnCoverflow.getHeight());
+                // 这一排按钮是<b>链式</b>定位的，所以「排进房间」收起时要让 Coverflow 自己顶回那个位置，
+                // 否则不在一起听的界面上会留一块谁都不属于的空位。
+                double anchor = MpPartyClient.playlistSupported()
+                        ? btnParty.getRelativeX() + btnParty.getWidth()
+                        : btnPlay.getRelativeX() + btnPlay.getWidth();
+                btnCoverflow.setPosition(anchor + 8,
+                        cover.getRelativeY() + cover.getHeight() - btnCoverflow.getHeight());
                 btnCoverflow.setRadius(3);
                 btnCoverflow.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
                 btnCoverflow.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
@@ -185,6 +235,9 @@ public class PlaylistPanel extends NCMPanel {
 
             RoundedButtonWidget btnSubscribe = new RoundedButtonWidget(
                     () -> playList.isSubscribed() ? "取消收藏" : "收藏歌单", FontManager.pf16bold);
+                    // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
+                    btnSubscribe.setGlassPlate(GlassLook.Surface.PLAYER)
+                            .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             this.addChild(btnSubscribe);
             btnSubscribe.setBeforeRenderCallback(() -> {
                 boolean canToggleSubscription = canToggleSubscription();
@@ -219,6 +272,9 @@ public class PlaylistPanel extends NCMPanel {
             // 本地单占的是上面「收藏歌单」那一格：那张单子没有任何上游可以收藏，那一格对它没有
             // 意义，而它确实需要一个改名字的地方（名字是这张单在本机上唯一的标识）。
             RoundedButtonWidget btnRename = new RoundedButtonWidget("重命名", FontManager.pf16bold);
+            // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
+            btnRename.setGlassPlate(GlassLook.Surface.PLAYER)
+                    .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             this.addChild(btnRename);
             btnRename.setBeforeRenderCallback(() -> {
                 boolean local = playList != null && playList.isLocalPlaylist();
@@ -281,7 +337,10 @@ public class PlaylistPanel extends NCMPanel {
                     .setBeforeRenderCallback(() -> {
                         searchBarBg
                                 .setMargin(.5)
-                                .setAlpha(.6f)
+                                // 只压这块底：搜索框里的文字与图标是 searchBar 的子控件，不归它管。
+                                .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, .6f))
+                                // 这一格本身是一块小玻璃（贴背景 + 薄折射 + 边缘高光）。
+                                .setGlassPlate(GlassLook.Surface.PLAYER)
                                 .setRadius(searchBar.getRadius() - .5);
                         searchBarBg.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
                     });

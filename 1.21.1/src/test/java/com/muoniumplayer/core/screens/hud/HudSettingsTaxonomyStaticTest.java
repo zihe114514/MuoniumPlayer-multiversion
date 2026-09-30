@@ -18,6 +18,7 @@ import static com.muoniumplayer.testsupport.ProjectPaths.sharedJava;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+// glass-taxonomy: 真玻璃这组给「界面与主题」页加了 8 条（4 个生效面 + 采集分辨率 + 3 个滑块），HudSetting 加 3 个滑块
 
 /**
  * HUD 设置分类结构的不变量。
@@ -25,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>为什么单独钉这个：分类只是呈现层的分组，条目本身读的是 {@code HudConfig} 的字段，
  * 所以「重新分类」在功能上应该是零风险的 —— 而它最容易出的事故恰恰是搬运时漏掉一条、
  * 或者把同一条塞进两个组。这两件事都不会让任何一套界面报错，只会让用户某天发现某个滑块不见了。
- * 于是这里把「有几页、每页几条、总共 89 条」钉死：改结构时这几个数字要一起改，改的人会被迫
+ * 于是这里把「有几页、每页几条、总共 97 条」钉死：改结构时这几个数字要一起改，改的人会被迫
  * 想清楚自己动的是分组还是条目。</p>
  *
  * <p>另外钉两条与呈现耦合的点：Folia 那套界面的侧栏大标签现在读 {@code Category#navGroup}
@@ -38,9 +39,11 @@ class HudSettingsTaxonomyStaticTest {
             "歌词样式", "面板与卡片", "灵动岛", "无缝切换", "界面与主题", "信息栏与封面", "缓存与公告");
 
     /** 与 {@link #TITLES} 同序的条目数；总和必须等于 {@link #TOTAL}。 */
-    private static final List<Integer> COUNTS = Arrays.asList(21, 8, 22, 19, 11, 5, 3);
+    private static final List<Integer> COUNTS = Arrays.asList(21, 8, 22, 20, 21, 5, 3);
 
-    private static final int TOTAL = 89;
+    /** 「界面与主题」那页 2026-09-30 从 19 条长到 21 条：真玻璃材质组多了「实时背景采集」与
+     *  「帧率不够时自动摘玻璃」两个开关。 */
+    private static final int TOTAL = 100;
 
     /** 侧栏一大块的名字。分类要按块相邻摆放，见 {@code GuiHudEditorFolia#navGroupLabel}。 */
     private static final List<String> NAV_GROUPS =
@@ -85,7 +88,7 @@ class HudSettingsTaxonomyStaticTest {
     }
 
     @Test
-    @DisplayName("滑块条目不重复，且正好覆盖 39 个 HudSetting")
+    @DisplayName("滑块条目不重复，且正好覆盖 42 个 HudSetting")
     void slidersAppearExactlyOnce() {
         List<String> settings = new ArrayList<String>();
         for (HudSettingsModel.Category category : HudSettingsModel.categories()) {
@@ -97,7 +100,7 @@ class HudSettingsTaxonomyStaticTest {
                 }
             }
         }
-        assertEquals(39, settings.size(), "滑块条目数变了：每个 HudSetting 应该恰好出现一次");
+        assertEquals(42, settings.size(), "滑块条目数变了：每个 HudSetting 应该恰好出现一次");
         assertEquals(settings.size(), new HashSet<String>(settings).size(),
                 "同一个 HudSetting 被塞进了两个组：" + duplicates(settings));
     }

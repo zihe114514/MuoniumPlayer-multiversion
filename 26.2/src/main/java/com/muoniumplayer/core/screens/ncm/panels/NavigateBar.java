@@ -26,6 +26,7 @@ import com.muoniumplayer.core.rendering.BrandVectorIcons;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.FoliaLucideIcons;
 import com.muoniumplayer.core.rendering.FontelloIcons;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
@@ -330,7 +331,11 @@ public class NavigateBar extends NCMPanel {
 
             bg.setMargin(0);
             bg.setColor(this.getColor(NCMScreen.ColorType.NAVIGATION_BACKGROUND));
-            bg.setAlpha(0.9f - NCMTheme.getLiquidGlassAmount() * 0.22f);
+            // 侧栏这块底是<em>压在面板根底之上</em>的第二张底，走玻璃的内层那一档：
+            // 它自己那套「液态玻璃减 0.22」只把 0.9 压到 0.68，叠上根底之后仍然是一块不透的黑斑，
+            // 而且完全不理设置里的「玻璃浓度」滑块——玩家说的「页面内部有暗色部分」就是这么来的。
+            bg.setAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER,
+                    0.9f - NCMTheme.getLiquidGlassAmount() * 0.22f));
 
             // 高亮条的布局必须由侧栏来跑，不能挂在高亮条自己的 beforeRenderCallback 上：
             // AbstractWidget#renderWidget 在调用 beforeRenderCallback 之前就会因为 isHidden()
@@ -390,7 +395,10 @@ public class NavigateBar extends NCMPanel {
 
         searchBarBg.setBeforeRenderCallback(() -> {
             searchBarBg.setMargin(.5);
-            searchBarBg.setAlpha(.6f);
+            // 压的是这一层自己的底（setFillAlpha 不传给子控件），搜索图标与输入文字保持原样。
+            searchBarBg.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, .6f));
+            // 再往前一步：这一格本身就是一块小玻璃（贴背景 + 薄折射 + 一道边缘高光）。
+            searchBarBg.setGlassPlate(GlassLook.Surface.PLAYER);
             searchBarBg.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
             searchBarBg.setRadius(searchBar.getRadius() - .5);
         });
@@ -532,6 +540,10 @@ public class NavigateBar extends NCMPanel {
             sourceMenu.setColor(sourceMenu.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            // 只压那颗按钮的底：它是 RoundedButtonWidget，文字是子控件，
+            // 用 setAlpha 会把「音乐来源 · 网易云」这行字一起淡掉。
+            sourceMenu.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+            sourceMenu.setGlassPlate(GlassLook.Surface.PLAYER);
             sourceMenu.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
 
@@ -898,6 +910,10 @@ public class NavigateBar extends NCMPanel {
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
             accountButton.setAlpha(accountButton.isHovering() ? .85f : .38f);
+            // 这一层压在侧栏那块底之上，属于内层：不接玻璃的话，账号行就是截图里
+            // 侧栏最下面那条读不出边界的深色横带。
+            accountButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+            accountButton.setGlassPlate(GlassLook.Surface.PLAYER);
         });
 
         RoundedImageWidget creatorAvatar = new RoundedImageWidget(this::getUserAvatarLocation, 0, 0, 0, 0);
@@ -918,6 +934,10 @@ public class NavigateBar extends NCMPanel {
             quickActionsSurface.setRadius(9);
             quickActionsSurface.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
             quickActionsSurface.setAlpha(.90f);
+            // 这条按钮栏压的是侧栏那块底，属于内层。走 setFillAlpha 而不是再动 setAlpha：
+            // 五颗按钮是它的子控件，setAlpha 会连着图标一起淡掉（那是所有主题共用的历史强度）。
+            quickActionsSurface.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+            quickActionsSurface.setGlassPlate(GlassLook.Surface.PLAYER);
         });
 
         SidebarActionButton btnTheme = new SidebarActionButton(SidebarActionIcon.THEME);
@@ -1397,6 +1417,9 @@ public class NavigateBar extends NCMPanel {
         private SidebarActionButton(SidebarActionIcon icon) {
             this.icon = icon;
             this.setShouldOverrideMouseCursor(true);
+            // 五颗按钮共用这一处：底板本身是一块小玻璃（onRender 里 setColor 之后
+            // super 那一笔会把背景、折射与边缘光一次画完）。
+            this.setGlassPlate(GlassLook.Surface.PLAYER);
         }
 
         private void setSpinning(boolean spinning) {
@@ -1417,6 +1440,10 @@ public class NavigateBar extends NCMPanel {
             int base = NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND);
             int hover = NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER);
             setColor(mixColor(base, hover, .18f + hoverAnimation * .58f));
+            // 只有外面这块底板走玻璃的内层档。里面那圈图标底板、底部强调色横杠与字形用的
+            // 是下面自己算的 alpha（getAlpha() 那条），不经过 getHexColor()，所以不受影响：
+            // 玻璃下按钮会变薄，但图标该多清楚还多清楚。
+            setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             super.onRender(mouseX, mouseY);
 
             double centerX = getX() + getWidth() * .5;

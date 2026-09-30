@@ -388,6 +388,9 @@ public final class MuoniumPlayerClient {
                     widget.render();
                 }
             }
+
+            // 【只给开发验证】背景采集探针，-Dmuonium.debug.glass=false（默认）时整段不执行。
+            com.muoniumplayer.render.skija.GlassBackdropProbe.renderIfDebugging();
         } finally {
             // 收尾本身也可能抛异常；不能让它盖住上面真正的根因。
             try {

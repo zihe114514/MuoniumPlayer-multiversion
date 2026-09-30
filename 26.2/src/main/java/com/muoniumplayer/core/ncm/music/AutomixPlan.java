@@ -64,10 +64,22 @@ final class AutomixPlan {
      */
     private static final long MIN_RATE_CORRECTION_OVERLAP_MILLIS = 1_500L;
 
-    /** 人声消除在达到全深之前一直保持，然后释放。 */
-    private static final double VOCAL_DUCK_RELEASE_START = .45;
+    /** 人声消除在达到全深之前一直保持，然后释放。
+     *
+     * <p>包内可见而不是 private：{@link AutomixAutoCue} 的第 ⑧ 项要按<b>同一条曲线</b>判断
+     * 「尾句唱到哪儿才算让开了」。这个数在这里写两遍，选点就会按一条曲线打分、播放时按另一条执行。</p>
+     */
+    static final double VOCAL_DUCK_RELEASE_START = .45;
     /** ……到这里完全消失，使混音中不再有任何东西残留进曲目。 */
     private static final double VOCAL_DUCK_RELEASE_COMPLETE = .92;
+    /**
+     * 进阶模式下<b>出场方</b>人声开始让路之处。
+     *
+     * <p>出场方的人声在整个前半段都必须完整——听众要跟的是这一句。只有当包络证据显示
+     * <b>这一句越过了窗口还没唱完</b>时才启用这条曲线，否则它恒为 0，两侧听感与今天逐位一致。</p>
+     */
+    static final double OUTGOING_VOCAL_DUCK_START = .5;
+    private static final double OUTGOING_VOCAL_DUCK_COMPLETE = .96;
 
     final long fireMillis;
     final long overlapMillis;
@@ -122,6 +134,23 @@ final class AutomixPlan {
      * 并在结束前释放。
      */
     final float vocalDuckDepth;
+    /**
+     * 进阶模式下<b>出场方</b>的人声让路深度，0 表示不启用这条曲线。
+     *
+     * <p>它只在整曲包络显示出场曲这一句越过交叠窗还没唱完时才非零——那种情况下
+     * 只压进场方会留下两个人同时唱，压出场方才是对的（听众跟的那一句已经过了落点）。
+     * 默认 0，因此旧计划、房间里的旧版本、以及关闭进阶模式时，出场方的这条口一直是
+     * {@code VocalDuckFilter} 的位精确直通分支。</p>
+     */
+    final float outgoingVocalDuckDepth;
+    /**
+     * 人声让路的释放点，交叠窗的分数；{@code <= 0} 表示没有整曲包络证据，用默认常数。
+     *
+     * <p>与 {@link #vocalEntryAt} 分工：那个是 ONNX 分轨测出来的，只有装了模型且
+     * 表现模式打开才有；这个是包络上量出来的「出场曲掉到哪儿为止还在唱」，
+     * 没有模型时也照样能用。分轨证据优先。</p>
+     */
+    final double vocalReleaseAt;
     final String summary;
 
     AutomixPlan(long fireMillis, long overlapMillis, long incomingCueMillis, float matchGain,
@@ -138,6 +167,18 @@ final class AutomixPlan {
                 FoliaTransitionStyle style, float midTiltDb, float highTiltDb, boolean echoThrow,
                 double drumHandoverAt, double bassHandoverAt, double vocalEntryAt, boolean stemDriven,
                 double animationPeriodMillis) {
+        this(fireMillis, overlapMillis, incomingCueMillis, matchGain, barAligned, bassSwap,
+                tempoRatio, pitchShift, phaseErrorMillis, vocalDuckDepth, summary, style,
+                midTiltDb, highTiltDb, echoThrow, drumHandoverAt, bassHandoverAt, vocalEntryAt,
+                stemDriven, animationPeriodMillis, 0f, 0.0);
+    }
+
+    AutomixPlan(long fireMillis, long overlapMillis, long incomingCueMillis, float matchGain,
+                boolean barAligned, boolean bassSwap, float tempoRatio, boolean pitchShift,
+                long phaseErrorMillis, float vocalDuckDepth, String summary,
+                FoliaTransitionStyle style, float midTiltDb, float highTiltDb, boolean echoThrow,
+                double drumHandoverAt, double bassHandoverAt, double vocalEntryAt, boolean stemDriven,
+                double animationPeriodMillis, float outgoingVocalDuckDepth, double vocalReleaseAt) {
         this.pitchShift = pitchShift;
         this.fireMillis = fireMillis;
         this.overlapMillis = overlapMillis;
@@ -161,6 +202,11 @@ final class AutomixPlan {
         this.stemDriven = stemDriven;
         this.animationPeriodMillis = Double.isFinite(animationPeriodMillis)
                 ? Math.max(120.0, Math.min(4_000.0, animationPeriodMillis)) : 500.0;
+        this.outgoingVocalDuckDepth = Float.isNaN(outgoingVocalDuckDepth)
+                ? 0f : Math.max(0f, Math.min(1f, outgoingVocalDuckDepth));
+        // 0 或负数是「没有包络证据」，不是「在第 0 帧释放」——后者会让进场方一进来就开人声。
+        this.vocalReleaseAt = Double.isFinite(vocalReleaseAt) && vocalReleaseAt > 0.0
+                ? Math.max(.20, Math.min(.85, vocalReleaseAt)) : 0.0;
     }
 
     /** Folia 只降低混音中段，并让两端保持精确单位增益。 */
@@ -294,13 +340,35 @@ final class AutomixPlan {
     float incomingVocalDepth(double progress) {
         if (vocalDuckDepth <= 0f) return 0f;
         double p = clamp(progress);
-        double releaseStart = stemDriven ? vocalEntryAt : VOCAL_DUCK_RELEASE_START;
-        double releaseComplete = stemDriven ? Math.min(.96, Math.max(.72, releaseStart + .18))
+        // 分轨证据（ONNX）优先，其次是整曲包络量出来的释放点，两者都没有才用默认常数。
+        double releaseStart = stemDriven ? vocalEntryAt
+                : (vocalReleaseAt > 0.0 ? vocalReleaseAt : VOCAL_DUCK_RELEASE_START);
+        double releaseComplete = stemDriven || vocalReleaseAt > 0.0
+                ? Math.min(.96, Math.max(.72, releaseStart + .18))
                 : VOCAL_DUCK_RELEASE_COMPLETE;
         if (p <= releaseStart) return vocalDuckDepth;
         if (p >= releaseComplete) return 0f;
         double share = (p - releaseStart) / (releaseComplete - releaseStart);
         return (float) (vocalDuckDepth * (1.0 - smoothstep(share)));
+    }
+
+    /**
+     * 出场方 deck 的人声让路深度，0..1。与进场方<b>反向</b>：进场方是先没声音再长回来，
+     * 出场方是前半段必须完整（听众跟的是这一句），到窗口后半段才逐渐让开。
+     *
+     * <p>恒为 0 除非规划器确认「这一句越过了交叠窗还没唱完」。所以关闭进阶模式、
+     * 房间里的旧版本、以及所有旧计划，这一条都是 {@code VocalDuckFilter} 的位精确直通分支，
+     * 听感与今天逐位一致。</p>
+     */
+    float outgoingVocalDepth(double progress) {
+        if (outgoingVocalDuckDepth <= 0f) return 0f;
+        double p = clamp(progress);
+        double start = stemDriven ? Math.min(.85, Math.max(.35, vocalEntryAt)) : OUTGOING_VOCAL_DUCK_START;
+        double complete = Math.min(OUTGOING_VOCAL_DUCK_COMPLETE, start + .30);
+        if (p <= start) return 0f;
+        if (p >= complete) return outgoingVocalDuckDepth;
+        double share = (p - start) / Math.max(.01, complete - start);
+        return (float) (outgoingVocalDuckDepth * smoothstep(share));
     }
 
     /**

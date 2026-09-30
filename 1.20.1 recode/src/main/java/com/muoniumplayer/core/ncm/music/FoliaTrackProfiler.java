@@ -164,6 +164,18 @@ final class FoliaTrackProfiler {
     private static float[] prefix(float[] input,int rate,int seconds){return Arrays.copyOf(input,Math.min(input.length,rate*seconds));}
     private static float[] tail(float[] input,int rate,int seconds){int len=Math.min(input.length,rate*seconds);return Arrays.copyOfRange(input,input.length-len,input.length);}
 
+    /**
+     * 只读一份已经存在的 profile；<b>绝不分析、绝不起 Python、绝不写盘</b>。
+     *
+     * <p>给「一键排列」这类要批量看很多首歌的地方用：那里在 UI 线程上，一次模型推理
+     * 是 120–180 秒的事，读不到就必须立刻返回，让那一首歌留在原位。</p>
+     */
+    static FoliaTrackProfile peek(File source) {
+        if (source == null || !source.isFile()) return null;
+        FoliaTrackProfile profile = read(cacheKey(source));
+        return profile != null && profile.isUsable() ? profile : null;
+    }
+
     private static FoliaTrackProfile read(String key) {
         try {
             File file=new File(DIR,key+".json"); if(!file.isFile()) return null;

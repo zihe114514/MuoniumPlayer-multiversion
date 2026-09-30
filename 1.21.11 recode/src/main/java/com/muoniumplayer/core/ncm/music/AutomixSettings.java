@@ -95,16 +95,28 @@ public final class AutomixSettings {
     public static final float VOCAL_DUCK_DEPTH = .62f;
 
     /**
-     * 在重叠之上，下一首曲目提前多久开始解析/下载/解码。
-     * 解码一首普通曲目要几秒钟，分片 MP4 可能更久，因此 arm
-     * 窗口设得宽。未能及时就绪的 arm 直接退化为普通切换。
+     * 预备（解析 / 下载 / 解码 / 规划）的<b>兜底触发线</b>：出场曲剩余时间少到「交叠 + 本值」时，
+     * 不管已经播到哪一段都必须立刻开始预备。
+     *
+     * <p>它<b>不是</b>「提前多久开始预备」。真正的触发条件在
+     * {@code CloudMusic.PlayThread#maybeArmNextTrack}：「出场曲已播过 10 秒<b>或</b>剩余少于本值加
+     * 交叠」，两者先到先算 —— 所以预备通常在实际起播 10 秒后就开始了。整曲配对选点能看见的退场
+     * 候选范围因此本来就是整首歌，不受这个常量约束（别按「预备窗只有 30 秒」去推算可选范围）。</p>
+     *
+     * <p>它真正管的是两件半事：头 10 秒内的抢跑线；以及预备期还剩多少跑道，用来决定要不要等
+     * 自定义音源的脚本（{@code lxArmReadyWaitMillis}）。未能及时就绪的预备直接退化为普通切换。</p>
      */
     static final long ARM_LEAD_MILLIS = 30_000L;
 
     /**
-     * 第二个 deck 使常驻 PCM 翻倍，因此 automix 拒绝 arm 过大的曲目。120 MB
-     * 16 位 CD 音频约 11 分钟——对普通音乐够长，又短到两个
-     * 实时 deck 不会像一小时上传那样耗尽堆。
+     * 第二张播放牌可以持有的最大已解码文件。
+     *
+     * <p>JSyn 把整段采样一次性放在堆里（见 {@link PlaybackMemoryLimits}），所以这张牌占多少内存
+     * 与<b>什么时候建它</b>无关：早建不多占一个字节，只是多常驻一会儿。这条上限管的是「两张牌
+     * 同时在堆里」这件事本身，不是预备窗的宽窄——把预备提前不会抬高内存峰值。</p>
+     *
+     * <p>120 MB 的 16 位 CD 音频约 11 分钟：对普通音乐够长，又短到两张实时牌不会像一小时的
+     * 上传那样耗尽堆。</p>
      */
     private static final long ABSOLUTE_DECK_LIMIT_BYTES = 120L * 1024L * 1024L;
 
@@ -114,6 +126,7 @@ public final class AutomixSettings {
     private static boolean loaded;
     private static Engine engine = DEFAULT_ENGINE;
     // 没有 automix.json 的旧安装和加载器专属游戏目录，同样落到 DEFAULT_ENGINE。
+    // 以及 DEFAULT_ENGINE。
     private static boolean enabled = true;
     private static boolean beatAlign = true;
     private static boolean bassSwap = true;
@@ -122,6 +135,20 @@ public final class AutomixSettings {
     private static boolean pitchMatch = true;
     private static boolean skipIntro = true;
     private static boolean performanceMode = false;
+    /**
+     * 进阶模式：整套「先算再切」的增强，出厂关闭。
+     *
+     * <p>它一次打开三件事——整曲包络扫描 + 出口×入口候选配对打分（{@link AutomixAutoCue}）、
+     * 队列一键排列（{@link AutomixFlowPlanner}）、以及按实测人声证据决定的<b>双侧</b>人声让路
+     * （{@code AutomixPlan#outgoingVocalDepth}）。关掉时这三件事一件都不发生：不扫包络、不起
+     * 线程、不排队列，交接退回到 {@link FoliaAutomixPlanner} 原本的启发式路径，规划器读到的
+     * 每个默认值都与「这个功能不存在」时逐位相同。</p>
+     *
+     * <p>之所以要一个总开关而不是三个独立开关：这三件事共用同一份整曲包络缓存，也共用同一条
+     * 「预备期算不完就推迟」的时间预算。单独关其中一件，剩下两件仍要为它维护缓存与降级分支，
+     * 而那只会让「这次为什么没 blend」更难解释。</p>
+     */
+    private static boolean advancedMode = false;
     private static boolean transitionAnimation = true;
     private static boolean modelInferenceStatus = true;
     private static String modelsDirectory = "";
@@ -177,6 +204,26 @@ public final class AutomixSettings {
         synchronized (LOCK) {
             if (performanceMode == value) return;
             performanceMode = value;
+            saveLocked();
+        }
+    }
+
+    /**
+     * 进阶模式是否打开。见 {@link #advancedMode} 的字段注释：它是三件事的总闸，
+     * 关闭时这三件事一次都不发生。
+     */
+    public static boolean isAdvancedModeEnabled() {
+        load();
+        synchronized (LOCK) {
+            return advancedMode;
+        }
+    }
+
+    public static void setAdvancedModeEnabled(boolean value) {
+        load();
+        synchronized (LOCK) {
+            if (advancedMode == value) return;
+            advancedMode = value;
             saveLocked();
         }
     }
@@ -478,6 +525,9 @@ public final class AutomixSettings {
                 if (root.has("performanceMode") && !root.get("performanceMode").isJsonNull()) {
                     performanceMode = root.get("performanceMode").getAsBoolean();
                 }
+                if (root.has("advancedMode") && !root.get("advancedMode").isJsonNull()) {
+                    advancedMode = root.get("advancedMode").getAsBoolean();
+                }
                 if (root.has("transitionAnimation") && !root.get("transitionAnimation").isJsonNull()) {
                     transitionAnimation = root.get("transitionAnimation").getAsBoolean();
                 }
@@ -505,6 +555,7 @@ public final class AutomixSettings {
             root.addProperty("enabled", enabled);
             root.addProperty("engine", engine.name());
             root.addProperty("performanceMode", performanceMode);
+            root.addProperty("advancedMode", advancedMode);
             root.addProperty("transitionAnimation", transitionAnimation);
             root.addProperty("modelInferenceStatus", modelInferenceStatus);
             root.addProperty("beatAlign", beatAlign);

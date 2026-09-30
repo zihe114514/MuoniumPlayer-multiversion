@@ -128,6 +128,9 @@ public final class SkijaHost {
             // 不 reset 的话它会基于错误假设省略状态切换，画出来的东西随机出错。
             // 顺序很重要：先拍快照（此刻的真实 GL 状态就是 Minecraft 期望的状态），
             // 再让 Skia 忘掉它自己的状态缓存，最后才为 Skia 的字形图集上传清像素解包布局。
+            // 【版本差异】这两棵是即时合成，没有帧末合成钩子：Minecraft 要到帧末才把主渲染目标 blit 到窗口默认帧缓冲，
+            // 所以此刻唯一干净的背景就是它当前绑定的主目标（savedFbo）。放在 Skia 绑自己的离屏目标之前，裸 GL 不会踩到 Skia 的状态缓存。
+            GlassBackdrop.captureNow(savedFbo, pixelWidth, pixelHeight);
             SNAPSHOT.capture();
             context.resetAll();
             resetPixelUnpackLayout();
@@ -636,6 +639,16 @@ public final class SkijaHost {
         return context;
     }
 
+    /**
+     * 渲染层是否已停用（原生库缺失、初始化失败、后端不对等）。
+     *
+     * <p>给 {@link GlassBackdrop} 用：停用那一刻就没有任何消费者会去读背景图，
+     * 每帧再拷一次纹理纯属白干。
+     */
+    static boolean isDisabled() {
+        return disabled;
+    }
+
     /** 帧内当前 canvas；不在帧内时为 null。 */
     public static Canvas canvas() {
         return canvas;
@@ -647,6 +660,11 @@ public final class SkijaHost {
 
     /** 游戏关闭 / 渲染层重载时释放 GPU 资源。 */
     public static void shutdown() {
+        // 背景采集与折射各自持有一个绑在<b>当前</b> GL 上下文 / DirectContext 上的对象：
+        // 上下文没了之后那些 id 就是别人的了，必须在这里一起丢掉（GL 还是 current 的，
+        // 所以现在删才删得掉）。丢掉之后 broken 也复位，重载完成的那一帧会重新建。
+        GlassBackdrop.invalidate();
+        GlassRefraction.release();
         SkijaGfx.dispose();
         SkijaText.dispose();
         SkijaImages.clear();

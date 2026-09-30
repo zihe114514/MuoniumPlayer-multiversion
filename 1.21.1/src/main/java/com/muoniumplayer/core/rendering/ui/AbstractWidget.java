@@ -4,6 +4,7 @@ import lombok.Getter;
 
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.RGBA;
 import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
@@ -37,46 +38,28 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
         void onRender();
     }
 
-    /**
-     * 父组件，可为空
-     */
+    // 左上
     @Getter
     AbstractWidget<?> parent = null;
 
-    /**
-     * 子组件列表
-     */
+    // 右上
     @Getter
     List<AbstractWidget<?>> children = new CopyOnWriteArrayList<>();
 
     public static class Bounds {
-        /**
-         * 这个组件相对于父组件的坐标的偏移.
-         * 比如说, 有一个坐标为 (100, 100) 的矩形组件,
-         * 然后有一个新的组件作为这个矩形组件的子组件,
-         * 然后设置子组件 x, y 都为 2,
-         * 那么子组件的 {@link AbstractWidget#getX()} 将返回 父组件的屏幕 X 坐标 100 加上子组件的偏移 X 坐标 2, 结果为 102. Y 轴同理.
-         * 子组件的 {@link AbstractWidget#getRelativeX()} 将返回 2.
-         * 如果该组件没有父组件, 则 x, y 字段代表的是屏幕坐标.
-         */
+        // 左下
         private double x, y;
         private double width, height;
     }
 
-    /**
-     * 组件 (偏移) 位置
-     */
+    // 右下
     @Getter
     private final Bounds bounds = new Bounds();
 
-    /**
-     * 渲染回调
-     */
+    // 边界检查
     private RenderCallback beforeRenderCallback = () -> {};
 
-    /**
-     * 组件是否可点击
-     */
+    // 后添加的子控件渲染在更上层，因此必须优先接收输入。
     @Getter
     private boolean clickable = true;
 
@@ -120,6 +103,16 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
      * 组件的半透明度
      */
     private float alpha = 1.0f;
+
+    /**
+     * 只有本控件<em>自己那一层填充</em>的不透明度，默认 1（即完全不参与）。
+     *
+     * <p>与 {@link #setAlpha} 的区别是这条存在的唯一理由：{@code alpha} 会顺父子关系往下乘
+     * （{@link #getAlpha()}），所以拿它压一块按钮底，按钮上的文字、图标、徽标会跟着一起淡。
+     * 液态玻璃要压的恰恰只是<em>那一层深色底</em>——字必须保持原样，否则一整页会糊成灰雾。
+     * 它只作用于 {@link #getHexColor()} 这一次取色，因此对文字类控件、图标类控件毫无影响。</p>
+     */
+    private float fillAlpha = 1.0f;
 
     /**
      * 在此处编写组件的渲染代码.
@@ -549,7 +542,7 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
         int red = this.color.getRed();
         int green = this.color.getGreen();
         int blue = this.color.getBlue();
-        return RGBA.color(red, green, blue, (int) (this.getAlpha() * 255));
+        return RGBA.color(red, green, blue, (int) (this.getAlpha() * this.fillAlpha * 255));
     }
 
     public SELF setTransformations(Runnable transformations) {
@@ -614,6 +607,165 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
         this.alpha = alpha;
         this.color = new Color(this.color.getRed(), this.color.getGreen(), this.color.getBlue(), (int) (alpha * 255));
         return (SELF) this;
+    }
+
+    /**
+     * 只压本控件自己那一层填充的不透明度，<b>不</b>传给子控件。
+     *
+     * <p>给「一块底要变薄、但压在它上面的字与图标不许跟着变薄」这种场合用：
+     * 液态玻璃压的就是这种底（见 {@code GlassLook.washAlpha}）。传 NaN、负数或大于 1 按 1 处理，
+     * 也就是当作没开——这类系数一旦被算错，宁可看见原来的实色底，也不要一块消失的按钮。</p>
+     *
+     * <p><b>0 是合法值，必须原样收下。</b>这条判据以前写的是 {@code > 0f}，于是「浓度=0」
+     * 算出来的 0 被当成坏值顶回 1，玩家把「玻璃浓度」往左拖到底反而得到一片<em>全不透明</em>的
+     * 深色底块：曲目行、搜索框、来源按钮、底栏一起变黑，而面板根底那一层走的是另一条
+     * 带下限的曲线（{@code GlassLook.rootFactor} 最低 0.18）还留着透——症状就是
+     * 「外面是玻璃，页面里面一块块黑斑，而且越调越黑」。2026-09-30 真机查出来的就是这一句。</p>
+     */
+    public SELF setFillAlpha(float fillAlpha) {
+        this.fillAlpha = sanitizeFillAlpha(fillAlpha);
+        return (SELF) this;
+    }
+
+    /**
+     * {@link #setFillAlpha} 那一步判据，单独拎出来是因为它错了的症状（整页黑斑）比这里任何
+     * 一行代码都贵，而它又完全不需要真机：喂几个数就能算清。
+     *
+     * <p>钉住的边界是 <b>0 必须原样收下</b>：它不是坏值，它是「玻璃浓度」推到 0 时
+     * {@code GlassLook.washAlpha} 的正确结果。</p>
+     */
+    static float sanitizeFillAlpha(float fillAlpha) {
+        return fillAlpha >= 0f && fillAlpha <= 1f ? fillAlpha : 1.0f;
+    }
+
+    public float getFillAlpha() {
+        return this.fillAlpha;
+    }
+
+    /**
+     * 这块控件要不要画成<em>一块自己的玻璃</em>，以及画成哪一种。
+     *
+     * <p>之所以要三档而不是两档：一块贴在面板上的按钮、一张盖在遮罩上的二级菜单、
+     * 和那张菜单<em>里面</em>的一行卡片，它们背后的东西根本不是一回事。</p>
+     * <ul>
+     *   <li><b>PLATE</b>：背后就是这一帧采下来的游戏画面，直接贴上去对得上。</li>
+     *   <li><b>SHEET</b>：背后是我们自己的面板加一层遮罩，这两样都不在采集里。所以贴真背景
+     *       之前要先按遮罩那一档压暗（{@code SkijaEffects.dimmedBackdrop}）——不压的话
+     *       等于在一张压暗的桌面上开一扇透着大晴天的窗，弹窗会比它周围<em>更亮</em>，
+     *       读起来不像玻璃，像贴图穿帮。2026-09-30 玩家反馈「二级菜单没有液态玻璃」，
+     *       当时的做法是干脆只给一道边光，那是把这一档整个跳过，不是解决。</li>
+     *   <li><b>RIM</b>：已经在玻璃<em>里面</em>的小片（弹窗里的卡、胶囊、图标盘）。
+     *       给它再贴一层真背景，等于在玻璃上再开一扇看同一处风景的窗——形状完全重合，
+     *       只是把那块玻璃又擦干净一遍，读起来是「这块没上色」而不是「这是一块玻璃」。
+     *       所以它只上自己那道边缘光。</li>
+     * </ul>
+     */
+    public enum GlassMode {
+        /** 不画。 */
+        NONE,
+        /** 完整一块小玻璃：贴预糊背景 + 自己那层底色 + 薄折射 + 边缘高光。 */
+        PLATE,
+        /** 弹窗那一张：贴<em>压暗过的</em>预糊背景 + 自己那层底色 + 边缘高光，不折。 */
+        SHEET,
+        /** 只上<em>表面</em>：一道边缘高光。给已经落在某块玻璃里的小片用。 */
+        RIM
+    }
+
+    /** 与 {@link #glassMode} 配对：这块属于哪个生效面（开关与主题强度由 GlassLook 判）。 */
+    private GlassLook.Surface glassSurface;
+    private GlassMode glassMode = GlassMode.NONE;
+
+    /** 元素级那一层贴的预糊背景占多少：1 = 完全把底下的面板画面顶掉，行就会亮成一片。 */
+    private static final float ELEMENT_FROST_MIX = 0.55f;
+    /**
+     * 弹窗那一层贴的预糊背景占多少。比元素档高，是因为它后面还压一层黑纱
+     * （{@code SkijaEffects.SHEET_VEIL}），一减一加之后透出来的量才和面板上那些行相当。
+     */
+    private static final float SHEET_FROST_MIX = 0.80f;
+
+    /**
+     * 把这块控件标成一块完整的玻璃（贴在面板上的行、按钮、输入框用这个）。
+     *
+     * <p>传的是「哪一面」而不是「要不要」：生效面开关与主题强度都由 {@code GlassLook} 判。</p>
+     */
+    public SELF setGlassPlate(GlassLook.Surface surface) {
+        this.glassSurface = surface;
+        this.glassMode = GlassMode.PLATE;
+        return (SELF) this;
+    }
+
+    /**
+     * 弹窗那一张玻璃：贴<em>压暗过的</em>真背景 + 一道边缘高光。
+     *
+     * <p>给盖在遮罩之上的二级菜单用。它不折边——折射吃的是背景本身，而这一块「背景」
+     * 是压暗补出来的，绕一圈亮边会把那层纱顶穿，读回「透着晴天的窗」。</p>
+     */
+    public SELF setGlassSheet(GlassLook.Surface surface) {
+        this.glassSurface = surface;
+        this.glassMode = GlassMode.SHEET;
+        return (SELF) this;
+    }
+
+    /** 只上玻璃<em>表面</em>那一圈高光，不贴背景。给弹窗里面的卡与胶囊用，理由见 {@link GlassMode}。 */
+    public SELF setGlassRim(GlassLook.Surface surface) {
+        this.glassSurface = surface;
+        this.glassMode = GlassMode.RIM;
+        return (SELF) this;
+    }
+
+    public GlassMode getGlassMode() {
+        return this.glassMode;
+    }
+
+    /**
+     * 画在<em>自己的底色之前</em>：把预糊过的真背景按这一块的位置贴一层
+     * （弹窗那一档再在其上压一层黑纱，见 {@code GlassLook.paintSheetFrost}）。
+     *
+     * <p>返回 false 表示这一层没铺上背景（没标、RIM 档、或这一帧根本没有背景），
+     * {@link #glassPlateEdge} 据此决定要不要折那一圈。</p>
+     */
+    protected final boolean glassPlateBase(double x, double y, double width, double height,
+                                           double radius) {
+        if (this.glassMode == GlassMode.NONE || this.glassMode == GlassMode.RIM) {
+            return false;
+        }
+        if (this.glassMode == GlassMode.SHEET) {
+            return GlassLook.paintSheetFrost(this.glassSurface, x, y, width, height, radius,
+                    this.getAlpha() * SHEET_FROST_MIX);
+        }
+        return GlassLook.paintFrost(this.glassSurface, x, y, width, height, radius,
+                this.getAlpha() * ELEMENT_FROST_MIX);
+    }
+
+
+    /** 画在<em>自己的底色之后</em>：一圈薄折射（只有 PLATE 折）加一道边缘高光。 */
+    protected final void glassPlateEdge(boolean frosted, double x, double y,
+                                        double width, double height, double radius) {
+        if (this.glassMode == GlassMode.NONE) {
+            return;
+        }
+        // 折射只给 PLATE：它吃的是背景本身，而弹窗那一档的背景是「压暗补出来」的，绕一圈
+        // 亮边会把那层纱顶穿，读回「透着晴天的窗」。RIM 那一档连背景都没有，更不折。
+        if (frosted && this.glassMode == GlassMode.PLATE) {
+            GlassLook.paintElementEdge(this.glassSurface, x, y, width, height, radius,
+                    this.getAlpha());
+        }
+        float rim = GlassLook.elementRim(this.glassSurface, this.getAlpha());
+        if (rim <= 0.002f || width <= 1.0 || height <= 1.0) {
+            return;
+        }
+        int alpha = (int) Math.max(0, Math.min(255, rim * 52f));
+        if (this.glassMode == GlassMode.SHEET || this.glassMode == GlassMode.RIM) {
+            // 一张屏最多一个弹窗，给它一道「上亮下暗」的渐变描边：那是玻璃受光的样子，
+            // 只有一圈均匀白边的话读起来更像描了个框。弹窗里面的卡与胶囊同一条画法。
+            int cool = (int) (alpha * .42f);
+            roundedOutlineGradient(x, y, width, height, radius, .7,
+                    new Color(186, 216, 255, cool), new Color(255, 255, 255, alpha),
+                    new Color(186, 216, 255, cool), new Color(255, 255, 255, alpha));
+            return;
+        }
+        // 行与按钮一屏就是几十个，这里用单色描边（一次成型的实线），不走四角渐变那个 shader。
+        roundedOutline(x, y, width, height, radius, .5, new Color(255, 255, 255, alpha));
     }
 
     public SELF setOnClickCallback(OnClickCallback callback) {

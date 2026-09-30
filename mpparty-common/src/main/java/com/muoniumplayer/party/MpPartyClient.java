@@ -11,6 +11,7 @@ import com.muoniumplayer.core.ncm.music.ListenTogetherSettings;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.RoomAutomix;
 import com.muoniumplayer.core.ncm.music.dto.Music;
+import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.utils.Tuple;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
@@ -94,6 +95,17 @@ public final class MpPartyClient {
     private static volatile long voteWindowMs = 30_000L;
     /** 服主配了平台 Token：没有会员的人也能点会员曲，界面应该把这件事说出来。 */
     private static volatile boolean serverResolve;
+
+    /**
+     * 「播放歌单」这台服务端认不认。
+     *
+     * <p>取的是 {@code hello.playlistBatchLimit}：{@code >0} 才会出现那颗按钮，{@code 0}（以及
+     * 老服务端根本不发这个字段时 {@link MpProto#num} 的缺省 0）就是没有这个功能。<b>绝不能</b>
+     * 让界面出现一颗按下去只换来聊天栏一句 error 的按钮 —— 那是把一个协议版本问题伪装成用户操作。</p>
+     */
+    private static volatile int playlistBatchLimit;
+    /** 灌单是不是只有房主/管理员能做（服务端配置，界面只负责把按钮置灰）。 */
+    private static volatile boolean playlistAdminOnly = true;
 
     // ── v2：封禁 ─────────────────────────────────────────────────────────────
     private static volatile boolean banned;
@@ -887,6 +899,134 @@ public final class MpPartyClient {
         fromLink(link, MpProto.C_PLAY_NOW);
     }
 
+    // ── 播放歌单：把一整张单子排进房间 ────────────────────────────────────────
+    //
+    // 与一首一首点歌是三处不同，每一处都是必要的：
+    //   ① 只发<b>元数据</b>，不在本机逐首取流。一首一首点时点歌人顺手把自己解得出的直链带上是
+    //      省事；一次灌 100 首再这么做，就是拿自己的账号（或者房间里那几个会员的账号）按着一张
+    //      单子猛抽一遍，而其中大部分要等几十分钟才轮到，那时链接早过期了。链接改由服务端按
+    //      前瞻窗逐首按需向房间要（{@code Room#resolveLookahead}）。
+    //   ② 分帧发。单帧有上限，而一张 500 首的单子在本机是一次就凑得齐的。
+    //   ③ <b>永不打断正在播的那一首</b>：这里没有任何 playNow 路径，整批全部落最低优先级档。
+
+    /** 一帧带多少首。服务端一帧封顶 200，这里留足余量又不至于把帧拼得太碎。 */
+    private static final int BATCH_CHUNK = 50;
+
+    /**
+     * 这台服务端认不认识「播放歌单」，以及<b>当前这个人</b>能不能按那颗按钮。
+     *
+     * <p>三个条件缺一不可，而且每一个都可能单独不成立：</p>
+     * <ul>
+     *   <li>{@code playlistBatchLimit > 0}：老服务端不发这个字段（取 0），服主也可以把它配成 0
+     *       明确关掉。这时候按钮必须<b>不出现</b>，而不是出现之后按出一句 error —— 界面不能把
+     *       「服务端版本不够」伪装成「你这个操作不行」。</li>
+     *   <li>在房间里，且<b>不是</b>服务器频道：频道是全服共用的，那里一个人倒进一百首会把所有人的
+     *       排队压到几个小时之后，而频道本来就有「人均 3 首」这一档在管着逐首点歌。</li>
+     *   <li>权限：服务端配了 {@code playlistAdminOnly}（默认开）时只有房主/管理员能灌。
+     *       这一条只影响按钮的 enabled，不影响它显不显示 —— 看得见但按不动，别人才知道功能是有的、
+     *       只是这台服务器把它收给了管理组。</li>
+     * </ul>
+     */
+    public static boolean canPlaylist() {
+        // 先过「出现」那一关再看权限。两条判据分开写迟早会分叉 —— 而分叉的表征是「按钮出现了但
+        // 按下去没反应」或者「服务端明明支持却整颗看不见」，两种都最难查。
+        if (!playlistSupported()) return false;
+        return !playlistAdminOnly || hasControl();
+    }
+
+    /** 这颗按钮该不该出现（不看权限，只看功能存不存在）。 */
+    public static boolean playlistSupported() {
+        return room != null && playlistBatchLimit > 0 && !inChannel();
+    }
+
+    /**
+     * 把一张歌单排进房间：先确保曲目真的在手上，再分帧发。
+     *
+     * <p>一律走 {@link PlayList#loadMusicsWithCallback} 而不是直接读 {@code getMusics()}：
+     * 那个 getter 顺手会启动一次上游查询并<b>立刻返回当下有的那一点</b>。灌一张还在加载中的单子
+     * 却只排进前 12 首，比报一句错难查得多 —— 界面上看起来一切都对，只是「歌单没灌完」。
+     * 曲目已经在手上时（本地单、点开过的账号单）它自己就立刻回调，所以这里不多等一轮。</p>
+     *
+     * @return true 表示这个请求被房间接下了（不代表已经发出去 —— 单子可能还在下载）
+     */
+    public static boolean requestPlaylist(PlayList playlist) {
+        if (playlist == null) return false;
+        if (!canPlaylist()) {
+            note(inChannel() ? "服务器频道不支持播放整张歌单，请一首一首点"
+                    : playlistBatchLimit <= 0 ? "当前服务器未开启播放歌单功能"
+                    : "这个房间只有房主与管理员能播放整张歌单", true);
+            return true;
+        }
+        if (!requireChannel()) return true;
+        final String label = playlistTitle(playlist);
+        note("正在读取歌单《" + label + "》…", false);
+        try {
+            playlist.loadMusicsWithCallback(new PlayList.MusicsLoadedCallback() {
+                @Override
+                public void onMusicsLoaded(List<Music> musics) {
+                    // 回调可能在查询线程上跑，而 sendBatch 自己会再转一次后台线程，这里不额外处理。
+                    sendBatch(musics, label);
+                }
+            });
+        } catch (Throwable throwable) {
+            note("读取这张歌单失败了：" + throwable, true);
+        }
+        return true;
+    }
+
+    private static String playlistTitle(PlayList playlist) {
+        // 和选单页显示的是同一个标签（含同一套 80 字裁剪），否则「已排 N 首」与「撤回」会各自
+        // 比着一个不同的字符串，长名单子就会出现「看得见、撤不动」。
+        return MpRoomPlaylists.labelOf(playlist);
+    }
+
+    /**
+     * 分帧把这批歌排进房间，全部落在「歌单待播」那一档。
+     *
+     * <p>客户端也按 {@code playlistBatchLimit} 截一次：服务端会截，但让它截意味着我们要多发
+     * 十几帧注定只被读前半段的负载。上限取<b>两边较小</b>的那个，谁的配置 tighter 就用谁的。</p>
+     */
+    private static void sendBatch(final List<Music> songs, final String label) {
+        if (songs == null || songs.isEmpty()) {
+            note("歌单《" + label + "》是空的，什么也没排", true);
+            return;
+        }
+        MultiThreadingUtil.runAsync(new Runnable() {
+            @Override
+            public void run() {
+                List<Music> usable = new ArrayList<Music>();
+                for (Music song : songs) {
+                    if (!canQueue(song)) continue;   // 拿不出平台主键的条目服务端本来就会拒
+                    usable.add(song);
+                }
+                if (usable.isEmpty()) {
+                    note("歌单《" + label + "》里没有能分享给房间的曲目", true);
+                    return;
+                }
+                int limit = playlistBatchLimit > 0 ? Math.min(playlistBatchLimit, usable.size())
+                        : usable.size();
+                int sent = 0;
+                for (int from = 0; from < limit; from += BATCH_CHUNK) {
+                    int to = Math.min(limit, from + BATCH_CHUNK);
+                    JsonObject m = MpProto.msg(MpProto.C_ENQUEUE_BATCH);
+                    m.addProperty("playlist", label);
+                    JsonArray tracks = new JsonArray();
+                    for (int i = from; i < to; i++) {
+                        // url 传空串：见上面第 ① 条，链接不由点歌人一次性备齐。
+                        tracks.add(MpTrack.toJson(usable.get(i), "", 0L, 0L));
+                    }
+                    m.add("tracks", tracks);
+                    send(m);
+                    sent += to - from;
+                }
+                note(sent < usable.size()
+                        ? "已把歌单《" + label + "》的前 " + sent + " 首排进房间（这张单有 "
+                                + usable.size() + " 首，按单次上限截断）"
+                        : "已把歌单《" + label + "》的 " + sent + " 首排进房间", false);
+            }
+        });
+    }
+
     /** 房间是否正在接管播放：为真时播放器不得自己起播。 */
     public static boolean blocksLocalPlayback() {
         return room != null;
@@ -1052,6 +1192,42 @@ public final class MpPartyClient {
     // 播放器自己的播放/暂停/上一首/下一首/进度全都先过这里。在房间里传输控制权归服务端：
     // 房主/管理员按一下就变成一条房间指令，普通成员按一下则被挡住并给出提示，
     // 而不是让他一个人从全房进度里脱队。
+
+    /**
+     * 撤回这张歌单还没播的那批。
+     *
+     * <p>正在播的那一首即使也属于这张单，服务端也不会动它 —— 那已经是一半人在听的歌了，
+     * 撤走它等于给全房硬切一刀。</p>
+     */
+    public static void clearPlaylist(String playlist) {
+        if (playlist == null || playlist.isEmpty() || !requireChannel()) return;
+        JsonObject m = MpProto.msg(MpProto.C_CLEAR_PLAYLIST);
+        m.addProperty("playlist", playlist);
+        send(m);
+    }
+
+    /**
+     * 队列里现在挂着哪几张歌单（按第一次出现的顺序）。
+     *
+     * <p>选单页用它决定一行显示「排入房间」还是「已在队列里 · 撤回」—— 一张已经灌过的单子再显示
+     * 成可以重复灌，就是在邀请用户把同一批歌再排一遍（服务端会逐条拒掉，但那是一屏的「跳过 N 首」）。</p>
+     */
+    public static List<String> playlistLabelsInQueue() {
+        List<String> out = new ArrayList<String>();
+        for (MpTrack track : queue()) {
+            if (!track.fromPlaylist() || out.contains(track.playlist)) continue;
+            out.add(track.playlist);
+        }
+        return out;
+    }
+
+    /** 这张歌单在队列里还挂着多少首没播。 */
+    public static int pendingOfPlaylist(String playlist) {
+        if (playlist == null || playlist.isEmpty()) return 0;
+        int n = 0;
+        for (MpTrack track : queue()) if (playlist.equals(track.playlist)) n++;
+        return n;
+    }
 
     /**
      * 播放器要起播一条列表。
@@ -1260,6 +1436,10 @@ public final class MpPartyClient {
             publicRoomsEnabled = MpProto.bool(msg, "publicRoomsEnabled", false);
             voteWindowMs = MpProto.num(msg, "voteWindowMs", voteWindowMs);
             serverResolve = MpProto.bool(msg, "serverResolve", false);
+            // 「播放歌单」的能力位。老服务端不发 → 取 0 → 那颗按钮根本不出现，
+            // 不会出现「按下去服务端回一句不认识这个 op」。
+            playlistBatchLimit = (int) MpProto.num(msg, "playlistBatchLimit", 0L);
+            playlistAdminOnly = MpProto.bool(msg, "playlistAdminOnly", true);
             // 房间内无缝交接的提前量；0 = 没开（老服务端不发这个字段，取到的就是 0）。
             // 这就是「房间里要不要交叠」的开关：服务端提前换歌、客户端提前预解码，
             // 两边用的是同一个数，所以各端交叠点一致。

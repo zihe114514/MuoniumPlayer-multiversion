@@ -25,6 +25,8 @@ public final class NCMTheme {
     private static boolean loaded;
     private static int[] transitionFromColors;
     private static float transitionFromGlass;
+    /** 真玻璃强度的动画起点，与 {@link #transitionFromGlass} 同一条时钟。 */
+    private static float transitionFromTrueGlass;
     private static long transitionStartedAt = -1L;
     /** 每套预设各自保存一份用户调色覆盖，切换主题时不会互相污染。 */
     private static final Map<String, EnumMap<NCMScreen.ColorType, Integer>> CUSTOM_BY_THEME = new HashMap<String, EnumMap<NCMScreen.ColorType, Integer>>();
@@ -90,8 +92,10 @@ public final class NCMTheme {
             visualSnapshot[type.ordinal()] = getAnimatedColorLocked(type, now);
         }
         float glassSnapshot = getLiquidGlassAmountLocked(now);
+        float trueGlassSnapshot = getTrueGlassAmountLocked(now);
         transitionFromColors = visualSnapshot;
         transitionFromGlass = glassSnapshot;
+        transitionFromTrueGlass = trueGlassSnapshot;
         transitionStartedAt = System.nanoTime();
     }
 
@@ -111,6 +115,29 @@ public final class NCMTheme {
     /** 暴露主题强调色，而不要求全局 HUD 元素依赖 NCMScreen。 */
     public static int getAccentColor() {
         return getColor(NCMScreen.ColorType.ACCENT);
+    }
+
+    /**
+     * 当前主题是否要真玻璃：面板背后那块画面是每帧从游戏画面采下来的，而不是渐变高光。
+     *
+     * <p>这是整条采集链路的总闸——{@code GlassBackdrop.wanted()} 读它，普通主题下
+     * 一次纹理拷贝都不会发生。</p>
+     */
+    public static synchronized boolean isTrueGlass() {
+        load();
+        return current.isTrueGlass();
+    }
+
+    /**
+     * 真玻璃此刻的<b>强度</b>（0~1），切换主题时与配色共用同一条 0.95 秒过渡。
+     *
+     * <p>渲染侧要的是这个而不是 {@link #isTrueGlass()}：布尔在切走的那一刻就翻了，
+     * 玻璃会在玩家眼前硬消失，而背景采集也会当场停掉，淡出途中铺着的将是一帧过期画面。
+     * 读这个数就能让「淡出」和「继续采」同时成立。</p>
+     */
+    public static synchronized float getTrueGlassAmount() {
+        load();
+        return getTrueGlassAmountLocked(System.nanoTime());
     }
 
     /** 当前预设在忽略用户调色覆盖时的原始颜色。 */
@@ -323,6 +350,13 @@ public final class NCMTheme {
         return lerp(transitionFromGlass, target, smoothstep(getTransitionProgressLocked(now)));
     }
 
+    /** 与上面同一条时钟，只是问的是「真玻璃」而不是「玻璃质感的高光」。 */
+    private static float getTrueGlassAmountLocked(long now) {
+        float target = current.isTrueGlass() ? 1.0f : 0.0f;
+        if (transitionFromColors == null || transitionStartedAt < 0L) return target;
+        return lerp(transitionFromTrueGlass, target, smoothstep(getTransitionProgressLocked(now)));
+    }
+
     private static float getTransitionProgressLocked(long now) {
         if (transitionStartedAt < 0L) return 1.0f;
         return Math.max(0.0f, Math.min(1.0f,
@@ -374,7 +408,17 @@ public final class NCMTheme {
         CANGMING_YUYOU("cangming_yuyou", "沧溟玉釉", 0xFAF2E0, 0xFFFBF1, 0xF0E4CB, 0x16283C, 0x6E7C8B, 0x0E61AC, 0x1D7ACE, 0xF5EBD5, 0xF2E7CF, 0xDCCFB4, false),
         SHUANGWAN_XIUYAN("shuangwan_xiuyan", "霜纨岫烟", 0xFCF9E8, 0xFFFEF6, 0xF1EDD8, 0x1E2A2B, 0x6F7C7D, 0x00808C, 0x00B7C7, 0xF7F2DE, 0xF5F1DC, 0xDCD8C0, false),
         MEIGUI_YUEBAI("meigui_yuebai", "玫瑰月白", 0xE8F0F2, 0xF6FAFB, 0xDCE7EA, 0x262E31, 0x6B7A7F, 0xB44E60, 0xD87888, 0xE1EBEE, 0xDEE9EC, 0xC3D3D7, false),
-        QINGLAN_YUNZHI("qinglan_yunzhi", "青岚云脂", 0xFBF1D7, 0xFFFAEA, 0xF0E4C4, 0x232A1D, 0x6F7A60, 0x4E7C36, 0x73AE52, 0xF6ECD0, 0xF4EACD, 0xDCD0AE, false);
+        QINGLAN_YUNZHI("qinglan_yunzhi", "青岚云脂", 0xFBF1D7, 0xFFFAEA, 0xF0E4C4, 0x232A1D, 0x6F7A60, 0x4E7C36, 0x73AE52, 0xF6ECD0, 0xF4EACD, 0xDCD0AE, false),
+        /**
+         * 琉璃：唯一一款<b>真</b>玻璃——面板背后那块画面是实时采下来的游戏画面糊出来的，
+         * 而不是叠在深色底上的渐变高光。
+         *
+         * <p>刻意排在最后：{@code theme.json} 存的是 id 字符串而不是序号，插中间其实不会串位，
+         * 但配色类枚举一律「只往末尾追加」，读档顺序、主题网格与「点击轮换」的观感才对得上。
+         * 与 {@link #LIQUID_GLASS} 的差别就在「透出去的是不是真画面」：那两款是假玻璃
+         * （渐变 + 径向光斑），这一款走 {@code GlassBackdrop} 的每帧采集。</p>
+         */
+        CRYSTAL("crystal", "琉璃", 0x141E2B, 0x1F2E42, 0x3A5570, 0xF5FAFF, 0xA9BCD2, 0x7FC4FF, 0xA8DAFF, 0x18293C, 0x0E1825, 0x9DB8D6, true);
 
         private final String id, displayName;
         private final int genericBackground, elementBackground, elementHover, primaryText, secondaryText;
@@ -402,6 +446,14 @@ public final class NCMTheme {
         public String getId() { return id; }
         public String getDisplayName() { return displayName; }
         public boolean isLiquidGlass() { return liquidGlass; }
+
+        /**
+         * 这一款要不要<b>真</b>采样背后那块画面。
+         *
+         * <p>做成方法而不是第十三个构造参数，是为了不动上面那十五行配色——每加一个参数就要
+         * 重排十五个预设的实参，那种改动读不出对错，也不值得为一款主题付。</p>
+         */
+        public boolean isTrueGlass() { return this == CRYSTAL; }
 
         public int getColor(NCMScreen.ColorType type) {
             switch (type) {
