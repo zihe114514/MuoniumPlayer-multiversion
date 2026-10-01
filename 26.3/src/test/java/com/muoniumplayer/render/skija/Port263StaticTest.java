@@ -57,9 +57,9 @@ class Port263StaticTest {
     private static final Path FABRIC_RESOURCES =
             ProjectPaths.fabric().resolve(Paths.get("src", "main", "resources"));
     private static final Path SKIJA_HOST =
-            MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "render", "skija", "SkijaHost.java"));
+            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "render", "skija", "SkijaHost.java"));
     private static final Path COMPOSITE_MIXIN =
-            MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "mixin", "GlSurfaceMixin.java"));
+            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "mixin", "GlSurfaceMixin.java"));
     private static final Path MIXIN_CONFIG = FABRIC_RESOURCES.resolve("muonium.mixins.json");
     private static final Path NEOFORGE_MIXIN_CONFIG = ProjectPaths.neoforge()
             .resolve(Paths.get("src", "main", "resources", "muonium.mixins.json"));
@@ -201,8 +201,8 @@ class Port263StaticTest {
     void GlStateManager包名已更新() throws IOException {
         for (Path file : new Path[]{
                 SKIJA_HOST,
-                MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "compat", "gl", "GL11.java")),
-                MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "compat", "gl", "GL14.java")),
+                ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "gl", "GL11.java")),
+                ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "gl", "GL14.java")),
         }) {
             String code = read(file);
             assertFalse(code.contains("blaze3d.platform.GlStateManager"),
@@ -219,7 +219,7 @@ class Port263StaticTest {
     @DisplayName("已从 26.2 删除的 API 没有被引用")
     void 不引用已删除的类() throws IOException {
         java.util.List<String> offenders = new java.util.ArrayList<>();
-        try (var stream = Files.walk(MAIN_JAVA)) {
+        { java.util.stream.Stream<Path> stream = ProjectPaths.allJavaFiles().stream();
             for (Path file : stream.filter(Files::isRegularFile)
                     .filter(p -> p.getFileName().toString().endsWith(".java"))
                     .toList()) {
@@ -301,7 +301,7 @@ class Port263StaticTest {
                 "net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper");
 
         java.util.List<String> offenders = new java.util.ArrayList<>();
-        try (var stream = Files.walk(MAIN_JAVA)) {
+        { java.util.stream.Stream<Path> stream = ProjectPaths.allJavaFiles().stream();
             for (Path file : stream.filter(Files::isRegularFile)
                     .filter(p -> p.getFileName().toString().endsWith(".java"))
                     // repackage/ 是第三方源码原样内嵌，不属于本项目的移植范围。
@@ -374,7 +374,7 @@ class Port263StaticTest {
     @DisplayName("26.3 的窗口/输入后端是 SDL：源码里不许再有 lwjgl-glfw")
     void 不再有GLFW依赖() throws IOException {
         java.util.List<String> offenders = new java.util.ArrayList<>();
-        try (var stream = Files.walk(MAIN_JAVA)) {
+        { java.util.stream.Stream<Path> stream = ProjectPaths.allJavaFiles().stream();
             for (Path file : stream.filter(Files::isRegularFile)
                     .filter(p -> p.getFileName().toString().endsWith(".java"))
                     .toList()) {
@@ -400,7 +400,7 @@ class Port263StaticTest {
 
         // 键码表必须落在 SDL 的命名空间上：值对了才有意义，
         // 而 Lwjgl2KeycodeProbeTest 那 89 条与 InputConstants.KEY_* 的逐条对照已经钉住值。
-        String keyboard = stripComments(read(MAIN_JAVA.resolve(Paths.get(
+        String keyboard = stripComments(read(ProjectPaths.sourceFile(Paths.get(
                 "com", "muoniumplayer", "compat", "lwjgl2", "Keyboard.java"))));
         assertTrue(keyboard.contains("import org.lwjgl.sdl.SDLScancode;"),
                 "Keyboard 的键码表必须引用 org.lwjgl.sdl.SDLScancode");
@@ -409,7 +409,7 @@ class Port263StaticTest {
     @Test
     @DisplayName("滚轮累加器有投料口：MouseHandler#onScroll 的 mixin 已写好并注册")
     void 滚轮钩子完整() throws IOException {
-        Path scrollMixin = MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "mixin", "MouseScrollMixin.java"));
+        Path scrollMixin = ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "mixin", "MouseScrollMixin.java"));
         assertTrue(Files.exists(scrollMixin),
                 "MouseScrollMixin 不见了；26.3 没有可套的 GLFW 滚轮回调，"
                         + "少了它 getDWheel() 永远是 0，表现为「滚轮在列表里划不动」");
@@ -429,9 +429,9 @@ class Port263StaticTest {
     @Test
     @DisplayName("鼠标按钮编号只在 compat 边界换算（SDL 1/2/3 → LWJGL2 0/1/2）")
     void 按钮编号在边界换算() throws IOException {
-        Path mouse = MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "compat", "lwjgl2", "Mouse.java"));
-        Path guiScreen = MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "compat", "mc", "GuiScreen.java"));
-        Path guiTextField = MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "compat", "mc", "GuiTextField.java"));
+        Path mouse = ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "lwjgl2", "Mouse.java"));
+        Path guiScreen = ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "mc", "GuiScreen.java"));
+        Path guiTextField = ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "mc", "GuiTextField.java"));
         String m = stripComments(read(mouse));
 
         int from = m.indexOf("static int fromSdlButton(int sdlButton)");

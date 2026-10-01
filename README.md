@@ -224,34 +224,42 @@ C:\MUSIC
 ├─ 1.21.1/             1.21.1（Fabric + NeoForge）
 ├─ 1.21.11 recode/     1.21.11（Fabric + NeoForge）
 ├─ 26.2/               26.2（Fabric + NeoForge，官方名 + Java 25）
-├─ mpparty-common/     四个工程共用的「一起听」客户端源码，禁止出现 Minecraft 类型
-├─ tools/              跨版本管理脚本（build-all / diff-versions）
+├─ 26.3/               26.3（Fabric + NeoForge，日常开发用的那一棵）
+├─ muonium-common/     五棵树共用的主体源码与资源（版本中立，见该目录 README）
+├─ mpparty-common/     五个工程共用的「一起听」客户端源码，禁止出现 Minecraft 类型
+├─ tools/              跨版本管理脚本（build-all / share-trees / diff-versions）
 ├─ .gitignore          全仓统一忽略规则
 └─ .gitattributes      换行与二进制规则
 ```
 
-每个版本目录内部：
+每个版本目录内部（**主体已经搬到 muonium-common，这里只剩版本差异**）：
 
 ```
 <版本>/
 ├─ settings.gradle       pluginManagement（Fabric / NeoForged / Forge / 阿里云）+ include 'fabric','neoforge'
 ├─ build.gradle          聚合：allprojects 的 group/version + buildAll / collectDist 任务
 ├─ gradle.properties     版本号、加载器版本、代理与 JDK 登记
-├─ src/main/{java,resources}   共享源码与资源（assets、字体、纹理），只用原版 API
-├─ src/test/java         离线静态/探针测试（挂在 fabric 子工程上跑）
+├─ src/main/java         本树版本差异层：compat/、mixin/、以及功能集没对齐的那几个文件（共 34 个）
+├─ src/main/resources    只剩 assets/muonium/lang/*.json（键位随版本 API 变）
+├─ src/test/java         只留各树自己的移植/探针测试（13 个）
 ├─ fabric/               fabric-loom：入口外壳、通道实现、fabric.mod.json、mixins.json、accesswidener
 └─ neoforge/（1.20.1 是 forge/）  MDG + shadow：入口外壳、通道实现、mods.toml、pack.mcmeta
 ```
 
-两个加载器子工程各自把共享源树挂进自己的 source set（**绝不复制**）：
+两个加载器子工程各自把三棵共享源树挂进自己的 source set（**绝不复制**）：
 
 ```gradle
 sourceSets.main.java.srcDirs = [
-        'src/main/java',                                       // 本加载器外壳
-        rootProject.file('src/main/java'),                     // 共享主体
-        rootProject.file('../mpparty-common/src/main/java')    // 一起听共用源码
+        'src/main/java',                                          // 本加载器外壳
+        rootProject.file('../muonium-common/src/main/java'),      // 五树共享主体
+        rootProject.file('src/main/java'),                        // 本树版本差异层
+        rootProject.file('../mpparty-common/src/main/java')       // 一起听共用源码
 ]
 ```
+
+挂接与搬运都由 `tools/share-trees.py` 做（`classify` / `apply` / `wire` / `verify`），
+`SharedLayoutStaticTest` 钉着三件事：两边不许有同名类、共享层不许 import 加载器符号、
+留守名单不许悄悄变胖。
 
 ## 不入库的东西
 
@@ -292,14 +300,18 @@ cd '1.21.11 recode'; .\gradlew.bat :fabric:runClient      # 或 :neoforge:runCli
 
 # 看两个版本之间的源码漂移（只在一边的文件 / 两边都有但内容不同的文件）
 .\tools\diff-versions.ps1 -Left '1.21.1' -Right '1.21.11 recode'
-.\tools\diff-versions.ps1 -Left '1.21.1' -Right '26.2' -SubPath 'src/main/java/com/muoniumplayer/core' -ShowSame
+.\tools\diff-versions.ps1 -Left '1.21.1' -Right '26.2' -SubPath 'src/main/java/com/muoniumplayer/compat'
+
+# 共享层的搬运与核对（详见 muonium-common/README.md）
+python tools\share-trees.py classify        # 五树体检：SAME / DRIFT / FORK / ONLY
+python tools\share-trees.py apply --confirm # 按底片搬运，并重新生成 SHARE-MANIFEST.md
+python tools\share-trees.py wire            # 把三个共享根挂进 10 个加载器构建（幂等）
+python tools\share-trees.py verify          # 核对：共享 + 留守 == 底片并集，不丢不重
 ```
 
-实测 `1.21.1` 与 `1.21.11 recode` 的 `src/`：748 / 750 个文件里 720 个内容完全相同，
-26 个不同，只在一边的各 2 / 4 个 —— 版本差异的实际面积就这么大。
-
-多加载器化之后，每个版本 707 个 java 文件里只有 20 个左右会碰 `net.minecraft`；
-真正的加载器差异压缩到了 2 个文件（入口外壳 + 通道实现）。
+多加载器化之后，每个版本 861 个 java 文件里只有 20 个左右会碰 `net.minecraft`；
+真正的加载器差异压缩到了 2 个文件（入口外壳 + 通道实现），版本差异压缩到了
+`compat/` 的 12 个文件 —— 剩下的都在 `muonium-common/` 里只存一份。
 
 **首次构建 Forge/NeoForge 侧要等**：MDG 的 `createMinecraftArtifacts`（反编译 + 打补丁 +
 重编译整个 Minecraft）单版本约 10～15 分钟，之后走缓存。
@@ -349,15 +361,26 @@ systemProp.https.protocols=TLSv1.3,TLSv1.2
 `_legacy-git/1.20.1-recode.git`。`main` 的首个提交是四个版本迁入时的磁盘现状
 （含当时 1.20.1 未提交的工作区改动）。
 
-## 待办：跨版本去重
+## 跨版本去重（已落地）
 
-加载器维度的重复已经消掉了（同一份 `src/` 同时喂给两个加载器）。剩下的是**版本维度**：
-四份 `src/` 各约 28 MB、707 个 java 文件，彼此高度重复（字体资源 21.5 MB 完全相同，
-Git 侧已按内容去重，但源码层面没有）。
+加载器维度的重复先消掉（同一份源码同时喂给两个加载器），然后是版本维度：
+五份 `src/` 各约 12 MB、861 个 java 路径，字体资源 21.5 MB 完全重复。
+2026-10-01 按 `mpparty-common` 的模式把中立部分抽成了 `muonium-common/`：
 
-下一步可把与 Minecraft 无关的部分（`repackage/`、`core/ncm/`、编解码器）按
-`mpparty-common` 的模式抽成跨版本共享 source set，版本相关的只留 `compat/` 与 `mixin/`。
-改动前先用 `tools\diff-versions.ps1` 确认漂移面积。
+| | 搬家前 | 搬家后 |
+| --- | --- | --- |
+| 主源码 | 861 路径 × 5 份 | 共享 827 + 各树留守 30~33 |
+| 资源 | 55 路径 × 5 份 | 共享 52 + 各树 lang 2 |
+| 测试 | 121 路径 × 5 份 | 共享 108 + 各树 4~9（另加一份新写的共享守卫 `SharedLayoutStaticTest`） |
+
+留守的 34 个主源码文件（`compat/` 12 个、mixin 3 个、API 世代差异 12 个、
+功能集没对齐的 3 个 + `party/net/MpPayloads`）逐条登记在
+`muonium-common/SHARE-MANIFEST.md`，并由 `SharedLayoutStaticTest` 钉住。
+
+以后再要缩小这张表，路子只有一个：把差异**下沉成 compat 的同名方法**，
+而不是把文件从共享层搬回各树。搬家前的实测数据（`tools\diff-versions.ps1`）留在这里作参照：
+`1.21.1` 与 `1.21.11 recode` 的 748 / 750 个文件里 720 个逐字节相同，
+26 个不同 —— 版本差异的实际面积一直就这么大。
 
 ## 分支
 

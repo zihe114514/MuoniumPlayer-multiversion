@@ -48,9 +48,9 @@ class Port262StaticTest {
     private static final Path FABRIC_RESOURCES =
             ProjectPaths.fabric().resolve(Paths.get("src", "main", "resources"));
     private static final Path SKIJA_HOST =
-            MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "render", "skija", "SkijaHost.java"));
+            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "render", "skija", "SkijaHost.java"));
     private static final Path COMPOSITE_MIXIN =
-            MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "mixin", "GlSurfaceMixin.java"));
+            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "mixin", "GlSurfaceMixin.java"));
     private static final Path MIXIN_CONFIG = FABRIC_RESOURCES.resolve("muonium.mixins.json");
     private static final Path NEOFORGE_MIXIN_CONFIG = ProjectPaths.neoforge()
             .resolve(Paths.get("src", "main", "resources", "muonium.mixins.json"));
@@ -192,8 +192,8 @@ class Port262StaticTest {
     void GlStateManager包名已更新() throws IOException {
         for (Path file : new Path[]{
                 SKIJA_HOST,
-                MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "compat", "gl", "GL11.java")),
-                MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "compat", "gl", "GL14.java")),
+                ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "gl", "GL11.java")),
+                ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "gl", "GL14.java")),
         }) {
             String code = read(file);
             assertFalse(code.contains("blaze3d.platform.GlStateManager"),
@@ -205,7 +205,7 @@ class Port262StaticTest {
     @DisplayName("已从 26.2 删除的 API 没有被引用")
     void 不引用已删除的类() throws IOException {
         java.util.List<String> offenders = new java.util.ArrayList<>();
-        try (var stream = Files.walk(MAIN_JAVA)) {
+        { java.util.stream.Stream<Path> stream = ProjectPaths.allJavaFiles().stream();
             for (Path file : stream.filter(Files::isRegularFile)
                     .filter(p -> p.getFileName().toString().endsWith(".java"))
                     .toList()) {
@@ -286,7 +286,7 @@ class Port262StaticTest {
                 "net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper");
 
         java.util.List<String> offenders = new java.util.ArrayList<>();
-        try (var stream = Files.walk(MAIN_JAVA)) {
+        { java.util.stream.Stream<Path> stream = ProjectPaths.allJavaFiles().stream();
             for (Path file : stream.filter(Files::isRegularFile)
                     .filter(p -> p.getFileName().toString().endsWith(".java"))
                     // repackage/ 是第三方源码原样内嵌，不属于本项目的移植范围。

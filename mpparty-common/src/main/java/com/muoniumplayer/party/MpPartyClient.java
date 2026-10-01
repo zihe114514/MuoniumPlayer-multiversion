@@ -78,6 +78,20 @@ public final class MpPartyClient {
     private static volatile boolean membersCanEnqueue = true;
     private static volatile boolean waitingUrl;
 
+    /**
+     * 一条 HEAD 的预算。拿不到就当「长度未知」，绝不因为估不出时长而把一条本来能播的链接废掉。
+     *
+     * <p>压到 1.2 秒是照着<b>最窄的那一格</b>定的：服务端一个层窗默认 3 秒，代解析这一路在
+     * 取流之后只剩这一格。真跑超时了也只是少一只识破试听片段的眼睛。</p>
+     */
+    private static final long ESTIMATE_BUDGET_MS = 1_200L;
+
+    /** 正在跑跨平台救援的队列格，防止服务端因队列变动把同一首反复问过来。 */
+    private static final java.util.Set<Long> RESCUE_IN_FLIGHT =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** 只防泄漏，不防正确性：救援一格的窗最长 12 秒，64 格早滚完了。 */
+    private static final int RESCUE_SET_LIMIT = 64;
+
     // ── v2：服务端能力（hello 下发） ──────────────────────────────────────────
     //
     // 这些都由服务端说了算，客户端不自己推断：同一个房间里 modernMP 和 MuoniumPlayer
@@ -770,6 +784,10 @@ public final class MpPartyClient {
         // 装没装模型、音频解码器能不能用。服务端没有音频，也没有这些信息。
         m.addProperty("automixCapable", RoomAutomix.capable());
         m.addProperty("automixEngine", RoomAutomix.engine());
+        // 本机有没有「换到别的平台的同一首歌」那条流水线。服务端全层落空之后要不要专门问一句
+        // 点歌人，看的就是这一位 —— 没有这条流水线的人（modernMP 只有各平台自己的解析链路）
+        // 收到那一句只会让整房多等一个救援窗，什么也换不来，所以宁可不问。
+        m.addProperty("switchRescue", CrossSourceSwitcher.rescueCapable());
         Music now = localNowPlaying();
         m.addProperty("nowPlaying", now == null ? "" : safe(now.getName()));
         m.addProperty("nowArtist", now == null ? "" : safe(now.getArtistsName()));
@@ -1106,8 +1124,10 @@ public final class MpPartyClient {
                     // 用户导入并启用它就是为了用它取流，房间里有没有会员跟这一首能不能放无关。
                     String viaCustom = customSourceUrl(song);
                     if (viaCustom != null) {
-                        // 脚本不报实际长度，传 0 = 未知，服务端按放行处理。
-                        sendTrack(op, song, viaCustom, 0L, playNext);
+                        // 脚本不报「这条链接实际多长」，估一个并报成估算值（见 estimateServedMs）；
+                        // 什么都不报的话，服务端连「这是不是 30 秒试听」都无从判断。
+                        long est = estimateServedMs(song, viaCustom, song.getDuration());
+                        sendTrack(op, song, viaCustom, est, playNext, est > 0L);
                         return;
                     }
                     delegateResolve(op, song, playNext,
@@ -1119,8 +1139,11 @@ public final class MpPartyClient {
                     delegateResolve(op, song, playNext, "本机拿不到播放链接");
                     return;
                 }
-                // 其他平台不报「链接实际时长」，传 0 = 未知，服务端按放行处理。
-                sendTrack(op, song, url, 0L, playNext);
+                // 其他平台不报「链接实际时长」，只能估一个（估不出来就传 0 = 未知，服务端按放行处理）。
+                // 不估的代价是实打实的：非会员在酷狗拿到的试听片段，会作为整房共用的那一条链接
+                // 一路畅通地放给所有人听 30 秒。
+                long est = estimateServedMs(song, url, song.getDuration());
+                sendTrack(op, song, url, est, playNext, est > 0L);
             }
         });
     }
@@ -1169,15 +1192,21 @@ public final class MpPartyClient {
             public void run() {
                 String url = customSourceUrl(song);
                 if (url == null) return;
-                sendUrlSupply(src, id, url, 0L);
+                long est = estimateServedMs(song, url, song.getDuration());
+                sendUrlSupply(src, id, url, est, est > 0L, 0L);
                 note("本机用自定义源补上了《" + title + "》的播放地址", false);
             }
         });
     }
 
     private static void sendTrack(String op, Music song, String url, long servedMs, boolean playNext) {
+        sendTrack(op, song, url, servedMs, playNext, false);
+    }
+
+    private static void sendTrack(String op, Music song, String url, long servedMs, boolean playNext,
+                                  boolean estimated) {
         JsonObject m = MpProto.msg(op);
-        m.add("track", MpTrack.toJson(song, url, urlDeadline(), servedMs));
+        m.add("track", MpTrack.toJson(song, url, urlDeadline(), servedMs, estimated));
         if (playNext) m.addProperty("next", true);
         send(m);
     }
@@ -1559,7 +1588,13 @@ public final class MpPartyClient {
             notifyListeners();
         } else if (MpProto.S_URL_NEEDED.equals(op)) {
             supplyUrl(MpProto.str(msg, "source", MpProto.SOURCE_NETEASE),
-                    MpProto.str(msg, "songId", ""));
+                    MpProto.str(msg, "songId", ""),
+                    MpProto.num(msg, "entryId", 0L),
+                    (int) MpProto.num(msg, "tier", MpProto.TIER_UNKNOWN),
+                    MpProto.num(msg, "deadlineMs", 0L));
+        } else if (MpProto.S_SWITCH_RESCUE.equals(op)) {
+            // 全房都答不上，服务端单播问点歌人「能不能换到别的平台的同一首歌」。
+            supplyRescue(msg);
         } else if (MpProto.S_PRESENCE.equals(op)) {
             presenceList = presenceOf(MpProto.arr(msg, "players"));
             onlineCount = (int) MpProto.num(msg, "online", presenceList.size());
@@ -1753,21 +1788,40 @@ public final class MpPartyClient {
     /**
      * 回应服务端的 {@code url_needed}：用本机的一切手段重新解析一条<b>完整</b>音频的直链。
      *
-     * <p>三种情况下宁可<b>保持沉默</b>让别人来答：本机没有这个平台（根本解析不出来）、重建不出
-     * 这首歌的元数据、以及解析出来的只是试听片段 —— 非会员账号替会员曲目应答，那条链接会成为
-     * 整房共用的那一条。
+     * <p>答不上就当场<b>弃权</b>（{@link #declineUrl}），不再像以前那样保持沉默。老规矩「解不出就
+     * 闭嘴」是给<b>并行竞速</b>写的 —— 反正没人等，闭嘴不花钱；服务端改成按层串行问人之后，
+     * 沉默等于让被点名的这一层白等一个层窗口（默认 3 秒），而这一层的窗走不完就轮不到下一层，
+     * 整房跟着一起等。每一句弃权都带一个「为什么」，服务端收齐就立刻往下问。
      *
      * <p>本家链路之外还要<b>补问一次自定义源</b>。以前网易云这一路只走 {@link MpNetease#resolve}
      * （挑它是因为它会报出「这条链接实际能取到多长」，据此才识破试听片段），代价是绕过了
      * {@code Music.getPlayUrl()} 里排在最前的自定义源那一跳；再叠上「非会员拿到试听就沉默」，
      * 结果就是房间里那个<b>没有会员、但脚本明明能解</b>的人跟着一起闭嘴 —— 全房等一轮超时，
      * 然后这首歌被跳过。这一跳补上之后，代解析的判据才是真的「谁能解出来」，而不是「谁是会员」。
+     *
+     * <p><b>换平台的救援不在这里跑。</b>同一份 LX 脚本往往声明了五六个渠道，别的渠道上大概率有
+     * 这首歌 —— 但换渠道就是换曲目身份，得走 {@code track_replace}，而服务端只认<b>点歌人</b>
+     * （或管理员）发的替换，别人换过去只会吃一句拒绝，那一趟搜索纯属白烧额度。就算发了，整条跨平台
+     * 流水线要跑十几秒，塞进一个 3 秒的层窗必然把这一层拖没。所以这一路只弃权，救援留给全层落空之后
+     * 服务端单播来的 {@code switch_rescue} —— 那里给的是 12 秒的窗，而且只问一个人。
+     *
+     * @param entryId    服务端问的是队列里哪一格；应答与弃权都原样带回去。0 = 老服务端不发这一位
+     * @param tier       服务端当前在问第几层（见 {@link MpProto} 的 {@code TIER_*}）；
+     *                   {@link MpProto#TIER_UNKNOWN} = 老服务端，此时一帧新的都不追加
+     * @param deadlineMs 这一层什么时候换人。唯一的用处：给那一次可选的 HEAD 探长度<b>留出预算</b>
+     *                   （见 {@link #estimateServedMs(Music, String, long, long)}）。
+     *                   不拿它掐断任何一次在途解析 —— 迟到的合格答案服务端照样按层号采纳
      */
-    private static void supplyUrl(final String source, final String songId) {
+    private static void supplyUrl(final String source, final String songId,
+                                  final long entryId, final int tier, final long deadlineMs) {
         if (songId == null || songId.trim().isEmpty()) return;
         final String src = MpProto.sourceOf(source);
         final MpTrack known = trackOf(src, songId);
-        if (MpTrack.platformOf(src) == null) return;      // 本机没有这个播放源
+        if (MpTrack.platformOf(src) == null) {
+            // 本机压根没有这个播放源 —— 这一格对这台机器是死题，说一声让别人接。
+            declineUrl(entryId, tier, src, songId, "no-platform");
+            return;
+        }
         final long expected = known == null ? 0L : known.durationMs;
 
         MultiThreadingUtil.runAsync(new Runnable() {
@@ -1776,24 +1830,35 @@ public final class MpPartyClient {
                 // 用房间元数据重建曲目。刻意不带 partyStreamUrl —— 带了 getPlayUrl()
                 // 会把那条已经过期的链接原样返回。
                 Music target = known == null ? null : known.toMusic();
+                String why = "no-metadata";
                 if (MpProto.SOURCE_NETEASE.equals(src)) {
                     long id = parseSongId(songId);
-                    if (id > 0L) {
-                        MpNetease.Resolved resolved = MpNetease.resolve(id);
-                        boolean usable = resolved != null && !isTrialClip(resolved.servedMs, expected);
-                        if (usable) {
-                            sendUrlSupply(src, songId, resolved.url, resolved.servedMs);
-                            return;
-                        }
-                        // 本家给不出完整版（没登录 / 不是会员 / 只解到试听）。脚本元数据不在这条
-                        // 分支的已知曲目里，所以按 id 补查一次元数据才有办法问脚本 —— 这一步只在
-                        // 「本家已经失败」之后发生，正常会员路径一次网络都不多烧。
-                        if (target == null && contributeLx()) target = MpNetease.songById(id);
+                    if (id <= 0L) {
+                        declineUrl(entryId, tier, src, songId, "netease-id");
+                        return;
                     }
+                    MpNetease.Resolved resolved = MpNetease.resolve(id);
+                    boolean usable = resolved != null && !isTrialClip(resolved.servedMs, expected);
+                    if (usable) {
+                        sendUrlSupply(src, songId, resolved.url, resolved.servedMs, false, entryId);
+                        return;
+                    }
+                    why = resolved == null ? "netease-failed" : "netease-trial";
+                    // 本家给不出完整版（没登录 / 不是会员 / 只解到试听）。脚本元数据不在这条
+                    // 分支的已知曲目里，所以按 id 补查一次元数据才有办法问脚本 —— 这一步只在
+                    // 「本家已经失败」之后发生，正常会员路径一次网络都不多烧。
+                    if (target == null && contributeLx()) target = MpNetease.songById(id);
                 }
                 String url = target == null ? null : customSourceUrl(target);
-                if (url == null) return;                                // 沉默，让别人答
-                sendUrlSupply(src, songId, url, 0L);
+                if (url == null) {
+                    // 脚本没答上才是 lx 那一路的原因；压根没曲目元数据可问，就是上面那句。
+                    declineUrl(entryId, tier, src, songId, target == null ? why : lxReason(src));
+                    return;
+                }
+                // 脚本不报「这条链接实际多长」，估一个并报成估算值；估不出（HEAD 拿不到字节数
+                // 或者本机说不清码率）就传 0 = 未知，服务端按放行处理。
+                long est = estimateServedMs(target, url, expected, deadlineMs);
+                sendUrlSupply(src, songId, url, est, est > 0L, entryId);
             }
         });
     }
@@ -1827,14 +1892,204 @@ public final class MpPartyClient {
         }
     }
 
-    private static void sendUrlSupply(String source, String songId, String url, long servedMs) {
+    /**
+     * 交一条直链上去。{@code entryId} 是服务端问的那一格，原样带回它才对得上号；
+     * 0 = 这一条不是应答某一帧 {@code url_needed} 的（点歌时并行补答就是这种），
+     * 服务端退回按 {@code source + songId} 认。
+     */
+    private static void sendUrlSupply(String source, String songId, String url, long servedMs,
+                                      boolean estimated, long entryId) {
         JsonObject m = MpProto.msg(MpProto.C_URL_SUPPLY);
         m.addProperty("source", source);
         m.addProperty("songId", songId);
         m.addProperty("url", url);
         m.addProperty("urlExpiresAt", urlDeadline());
-        if (servedMs > 0L) m.addProperty("urlDuration", servedMs);
+        if (servedMs > 0L) {
+            m.addProperty("urlDuration", servedMs);
+            if (estimated) m.addProperty("urlDurationEstimated", true);
+        }
+        if (entryId > 0L) m.addProperty("entryId", entryId);
         sendQuiet(m);
+    }
+
+    /**
+     * 弃权：「这一层我不答，别再等我的窗」。
+     *
+     * <p>{@code entryId} 与 {@code tier} 任一缺失，说明对面是不认识这一帧的老服务端 —— 发过去
+     * 只会换回一句「不支持的操作」打在聊天栏里，所以这里干脆闭嘴：那一层由服务端自己等满窗口，
+     * 行为与改造前逐字一致。这就是这套分层改动的兼容口，判据用「服务端有没有先把新字段发过来」，
+     * 不猜版本号。</p>
+     *
+     * <p>{@code reason} 给人看，服务端不据此分支（它对上层的 {@code tier} 才是判据），
+     * 所以写错、写漏都不会把链路带坏；但写清了渠道键，日志里才分得出「这台没这个渠道」
+     * 和「这个渠道当场死了」。</p>
+     */
+    private static void declineUrl(long entryId, int tier, String source, String songId, String reason) {
+        if (entryId <= 0L || tier < 0) return;
+        JsonObject m = MpProto.msg(MpProto.C_URL_DECLINE);
+        m.addProperty("entryId", entryId);
+        m.addProperty("tier", tier);
+        m.addProperty("source", source);
+        m.addProperty("songId", songId);
+        m.addProperty("reason", reason == null ? "" : reason);
+        sendQuiet(m);
+    }
+
+    /**
+     * 脚本那一路的弃权原因，带上<b>本机脚本用哪个渠道键称呼这个平台</b>。
+     *
+     * <p>一份脚本常常同时声明 wy/tx/kg/kw/mg 五六个渠道，光一句「lx 失败」分不出三种完全不同的
+     * 情况：用户不让贡献、这台压根没这个渠道、渠道当场没解出来。这三种在玩家那边是三件事，
+     * 在服务端日志里也应该是三行。</p>
+     */
+    private static String lxReason(String sourceToken) {
+        if (!contributeLx()) return "lx-off";
+        String key = channelKeyOf(sourceToken);
+        return key == null ? "no-lx-channel" : "lx-" + key + "-failed";
+    }
+
+    /** 平台令牌 → 本机脚本的渠道键；映射不到（B 站 / 汽水 / 本机没这个平台）返回 null。 */
+    private static String channelKeyOf(String sourceToken) {
+        try {
+            return CrossSourceSwitcher.lxChannelKey(MpTrack.platformOf(sourceToken));
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * 给「不报实际长度」的那几路估一个长度：HEAD 拿字节数 ÷ 本机判定的码率。
+     *
+     * <p>为什么要估：整个房间共用同一条直链，非会员解出来的 30 秒试听片段一旦被采纳，就是全房
+     * 听 30 秒。网易云会在响应里报「这条链接实际服务了多长」，酷狗 / QQ / 脚本这几路都不报 ——
+     * 于是它们原本<b>永远不会</b>被试听检测拦下，这是共享直链模型一直欠着的一块。估一个数报出去，
+     * 检测就有一只半瞎的眼睛总好过完全没有。</p>
+     *
+     * <p>估出来的一律标成估算值，服务端对估算值的阈值放宽（0.5 而不是实测那一路的 0.8），
+     * 因为猜码率是有误差的；而且误差要往「估长了」那一边偏（见 {@link #declaredKbps}）——
+     * 估短了会把完整版判成试听片段，代价是整房白等一轮再跳过一首本来能放的歌。</p>
+     *
+     * @param expectedMs 曲目声明的时长；没有参照系就不估（返回 0）
+     */
+    private static long estimateServedMs(Music song, String url, long expectedMs) {
+        return estimateServedMs(song, url, expectedMs, 0L);
+    }
+
+    /**
+     * 同上，但把这一次 HEAD 压进<b>服务端留给这一层的窗</b>。
+     *
+     * <p>{@code deadlineMs} 为 0 表示没有窗（点歌那一跳，没人等）。有窗时剩余时间连最小预算都不到
+     * 就干脆不发：估不出来只是少一只识破试听片段的眼睛，而把这一层的窗吃光是把整房往后拖。
+     * 探测本身另有 {@link #ESTIMATE_BUDGET_MS} 的上限，两个取小的那个才动手。</p>
+     */
+    private static long estimateServedMs(Music song, String url, long expectedMs, long deadlineMs) {
+        if (song == null || url == null || expectedMs <= 0L) return 0L;
+        long budget = ESTIMATE_BUDGET_MS;
+        if (deadlineMs > 0L) {
+            long left = deadlineMs - System.currentTimeMillis();
+            if (left < MpStreamEstimate.MIN_BUDGET_MS) return 0L;
+            budget = Math.min(budget, left);
+        }
+        int kbps = declaredKbps(song);
+        if (kbps <= 0) return 0L;
+        long bytes = MpStreamEstimate.headBytes(url, budget);
+        return MpStreamEstimate.durationMs(bytes, kbps);
+    }
+
+    /**
+     * 本机认为这条链接交付的是什么码率（kbps），说不清就返回 0 = 别估。
+     *
+     * <p>读的是解析时已经落在 {@link Music#getPlaybackQuality()} 上的那一档，不再发任何请求。
+     * 无损族按 400kbps 计是<b>故意往低压</b>的：真实 FLAC 在 700~1100kbps，把码率当小会让估出来的
+     * 时长偏长，也就是宁可漏判一条试听片段，也不误杀一条完整版。</p>
+     */
+    private static int declaredKbps(Music song) {
+        switch (song.getPlaybackQuality()) {
+            case LOSSLESS:
+                return 400;
+            case HQ:
+                return 320;
+            case STANDARD:
+                return 128;
+            case UNKNOWN:
+            default:
+                return 0;
+        }
+    }
+
+    /**
+     * 服务端全层落空之后单播给点歌人的那一句：「你本机能不能换到别的平台的同一首歌」。
+     *
+     * <p>走的是播放器里现成的那套跨平台换源流水线（并行搜索 + 相似度打分 + 时长闸门 + 取流验证），
+     * 换到的那一首用 {@code track_replace} 交回去。服务端改的是<b>队列里那一格</b>再广播，
+     * 全房一起换 —— 与「本机偷偷换一首」不是一件事，这也是 {@link CrossSourceSwitcher#canAutoSwitch}
+     * 允许在房间里跑这一条的理由（它挡的是脱队，这里没有脱队可言）。
+     *
+     * <p>换不到就<b>什么都不发</b>：这首歌由服务端在总闸到点时跳过，并在聊天栏说明原因。
+     * 同一格只跑一次（{@link #RESCUE_IN_FLIGHT}），因为流水线一次就是十几秒，而服务端可能
+     * 因为队列变动把同一首再问一遍。</p>
+     */
+    private static void supplyRescue(JsonObject msg) {
+        final long entryId = MpProto.num(msg, "entryId", 0L);
+        final String src = MpProto.sourceOf(MpProto.str(msg, "source", MpProto.SOURCE_NETEASE));
+        final String songId = MpProto.str(msg, "songId", "");
+        final long deadline = MpProto.num(msg, "deadlineMs", 0L);
+        if (entryId <= 0L || songId.isEmpty() || !inRoom()) return;
+        // 队列快照通常已经认识这首歌；不认得时这一帧的键名与曲目对象一致，直接复用那套映射。
+        MpTrack known = trackOf(src, songId);
+        final MpTrack track = known != null ? known : MpTrack.fromJson(msg);
+        if (track == null || MpTrack.platformOf(track.source) == null) return;
+        if (RESCUE_IN_FLIGHT.size() > RESCUE_SET_LIMIT) RESCUE_IN_FLIGHT.clear();
+        if (!RESCUE_IN_FLIGHT.add(Long.valueOf(entryId))) return;
+        final Music origin = track.toMusic();
+        final String display = track.display();
+        MultiThreadingUtil.runAsync(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    runRescue(entryId, origin, deadline, display);
+                } finally {
+                    RESCUE_IN_FLIGHT.remove(Long.valueOf(entryId));
+                }
+            }
+        });
+    }
+
+    /** 流水线的实体：找到就交 {@code track_replace}，找不到就一句说明白。只能在后台线程上调。 */
+    private static void runRescue(long entryId, Music origin, long deadline, String display) {
+        if (!CrossSourceSwitcher.canAutoSwitch(origin, true)) {
+            System.out.println("[MpParty] 救援跳过《" + display
+                    + "》：换源开关关着、没有够得着的候选平台，或这首歌刚搜过一遍/已有失败结论");
+            return;
+        }
+        CrossSourceSwitcher.Match match;
+        try {
+            match = CrossSourceSwitcher.findReplacementForAuto(origin, CloudMusic.quality);
+        } catch (Throwable failure) {
+            System.err.println("[MpParty] 救援流水线异常 entry=" + entryId + "：" + failure);
+            return;
+        }
+        String url = match == null || match.url == null ? null : match.url.getA();
+        if (match == null || match.music == null || url == null || url.trim().isEmpty()) {
+            note("没在别的平台找到《" + display + "》能播的版本", true);
+            return;
+        }
+        url = url.trim();
+        if (deadline > 0L && System.currentTimeMillis() > deadline) {
+            // 服务端多半已经把这一格跳掉了，替换帧会被判「不在队列里」。仍然要说清楚：
+            // 本机确实换到了，玩家自己再点一次就有 —— 一句「没找到」反而是假话。
+            note("换到了《" + display + "》的 " + match.platformLabel + " 版本，但房间已经跳过这首歌了", true);
+            return;
+        }
+        // 判过窗再估：过点了连替换帧都不发，那次 HEAD 就是纯浪费。
+        // 参照时长取**替身自己**声明的那一个，不是原曲的：服务端拿 urlDuration 与这一格的
+        // duration 比，而替换之后这一格的 duration 就是替身的（跨平台的同一首歌常差一两秒，
+        // 拿原曲当参照会在边界上判错方向）。
+        long est = estimateServedMs(match.music, url, match.music.getDuration(), deadline);
+        JsonObject m = MpProto.msg(MpProto.C_TRACK_REPLACE);
+        m.addProperty("entryId", entryId);
+        m.add("track", MpTrack.toJson(match.music, url, urlDeadline(), est, est > 0L));
+        if (send(m)) note("已把《" + display + "》换成 " + match.platformLabel + " 版本", false);
     }
 
     /**

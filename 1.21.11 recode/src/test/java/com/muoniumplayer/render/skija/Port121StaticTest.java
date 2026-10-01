@@ -37,9 +37,9 @@ class Port121StaticTest {
     private static final Path MAIN_JAVA = ProjectPaths.sharedJava();
     private static final Path MAIN_RESOURCES = ProjectPaths.sharedResources();
     private static final Path SKIJA_HOST =
-            MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "render", "skija", "SkijaHost.java"));
+            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "render", "skija", "SkijaHost.java"));
     private static final Path COMPOSITE_MIXIN =
-            MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "mixin", "FramebufferMixin.java"));
+            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "mixin", "FramebufferMixin.java"));
     // mixin 配置与 access widener 是 Fabric 侧独有的资源，多加载器化之后从共享的
     // src/main/resources 搬到了 fabric/src/main/resources（NeoForge 侧另有一份 mixins.json）。
     private static final Path FABRIC_RESOURCES =
@@ -176,8 +176,8 @@ class Port121StaticTest {
     void GlStateManager包名已更新() throws IOException {
         for (Path file : new Path[]{
                 SKIJA_HOST,
-                MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "compat", "gl", "GL11.java")),
-                MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "compat", "gl", "GL14.java")),
+                ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "gl", "GL11.java")),
+                ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "gl", "GL14.java")),
         }) {
             String code = read(file);
             assertFalse(code.contains("blaze3d.platform.GlStateManager"),
@@ -189,7 +189,7 @@ class Port121StaticTest {
     @DisplayName("已从 1.21.11 删除的类没有被引用")
     void 不引用已删除的类() throws IOException {
         java.util.List<String> offenders = new java.util.ArrayList<>();
-        try (var stream = Files.walk(MAIN_JAVA)) {
+        { java.util.stream.Stream<Path> stream = ProjectPaths.allJavaFiles().stream();
             for (Path file : stream.filter(Files::isRegularFile)
                     .filter(p -> p.getFileName().toString().endsWith(".java"))
                     .toList()) {

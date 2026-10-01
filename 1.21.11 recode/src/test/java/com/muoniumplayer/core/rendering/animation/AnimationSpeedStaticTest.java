@@ -45,7 +45,7 @@ class AnimationSpeedStaticTest {
     void 没有全局倍率() throws IOException {
         // 这里只能做文本扫描：Interpolations 的插值要读 RenderSystem 的帧间隔，
         // 而 RenderSystem 的静态初始化需要真实的客户端（离线跑会 ExceptionInInitializerError）。
-        String interpolations = read(MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "core",
+        String interpolations = read(ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core",
                 "rendering", "animation", "Interpolations.java")));
         assertFalse(interpolations.contains("speedScale"),
                 "Interpolations 不许再有全局动画倍率：它会把一屏里所有动画一起缩放，"
@@ -53,8 +53,7 @@ class AnimationSpeedStaticTest {
         assertFalse(interpolations.contains("PLAYER_UI_ANIMATION_SPEED"),
                 "整屏提速的常量已经撤掉，不要再引入");
 
-        String guiScreen = read(MAIN_JAVA.resolve(
-                Paths.get("com", "muoniumplayer", "compat", "mc", "GuiScreen.java")));
+        String guiScreen = read(ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "mc", "GuiScreen.java")));
         assertFalse(guiScreen.contains("animationSpeedScale"),
                 "GuiScreen#render 不许再按屏设置动画倍率");
         assertFalse(guiScreen.contains("SpeedScale"),
@@ -67,7 +66,7 @@ class AnimationSpeedStaticTest {
         for (String screen : new String[]{
                 "core/screens/ncm/NCMScreen.java",
                 "core/screens/ncm/CoverflowOverlay.java"}) {
-            String code = read(MAIN_JAVA.resolve("com/muoniumplayer").resolve(screen));
+            String code = read(ProjectPaths.sourceFile(Paths.get("com/muoniumplayer", screen)));
 
             int at = code.indexOf("HudConfig.playerFadeSpeed");
             assertTrue(at > 0, screen + " 没有读 HudConfig.playerFadeSpeed，"
@@ -126,7 +125,7 @@ class AnimationSpeedStaticTest {
         assertTrue(found, "设置声明里没有这一项，新版设置界面（GuiHudEditorPro）就看不到它");
 
         // 经典界面的分组是硬编码的，不走上面的声明，所以要单独钉一次。
-        String classic = read(MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "core",
+        String classic = read(ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core",
                 "screens", "hud", "GuiHudEditor.java")));
         assertTrue(classic.contains("HudSetting.PLAYER_FADE_SPEED"),
                 "经典设置界面里没有这一项，切到经典界面的用户就改不了");
@@ -135,7 +134,7 @@ class AnimationSpeedStaticTest {
     @Test
     @DisplayName("配置会落盘，重启不会丢")
     void 配置会持久化() throws IOException {
-        String config = read(MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "core",
+        String config = read(ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core",
                 "settings", "HudConfig.java")));
         assertTrue(config.contains("getFloat(o, \"playerFadeSpeed\""),
                 "HudConfig.load 没有读这一项，重启之后又回到默认速度");

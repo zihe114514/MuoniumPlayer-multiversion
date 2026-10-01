@@ -50,7 +50,7 @@ class MultiLoaderStaticTest {
     @Test
     @DisplayName("共享源码里没有任何加载器 API")
     void 共享源码与加载器无关() throws IOException {
-        try (Stream<Path> files = Files.walk(SHARED_JAVA)) {
+        { Stream<Path> files = ProjectPaths.allJavaFiles().stream();
             List<Path> offenders = files
                     .filter(p -> p.toString().endsWith(".java"))
                     .filter(MultiLoaderStaticTest::mentionsLoaderApi)
@@ -96,20 +96,17 @@ class MultiLoaderStaticTest {
     @Test
     @DisplayName("1.21.9 起改名的几个调用点不许退回 1.21.1 写法")
     void 新签名不许回退() throws IOException {
-        String display = stripComments(read(SHARED_JAVA.resolve(
-                Paths.get("com", "muoniumplayer", "compat", "lwjgl2", "Display.java"))));
+        String display = stripComments(read(ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "lwjgl2", "Display.java"))));
         assertTrue(display.contains("window.handle()"),
                 "Window 的 GLFW 句柄 getter 在 1.21.11 叫 handle()（1.21.1 是 getWindow()）");
 
-        String button = stripComments(read(SHARED_JAVA.resolve(
-                Paths.get("com", "muoniumplayer", "compat", "mc", "GuiButton.java"))));
+        String button = stripComments(read(ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "mc", "GuiButton.java"))));
         assertTrue(button.contains("protected void renderContents("),
                 "AbstractButton#renderWidget 在 1.21.11 是 final，画法必须实现 renderContents");
         assertTrue(button.contains("onPress(net.minecraft.client.input.InputWithModifiers"),
                 "1.21.11 的 onPress 带 InputWithModifiers 形参");
 
-        String ambient = stripComments(read(SHARED_JAVA.resolve(
-                Paths.get("com", "muoniumplayer", "core", "rendering", "IslandAmbientStatus.java"))));
+        String ambient = stripComments(read(ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "rendering", "IslandAmbientStatus.java"))));
         assertTrue(ambient.contains("mc.player.xo"),
                 "Entity 的上一 tick 坐标在官方名里是 xo/yo/zo");
     }
@@ -236,7 +233,7 @@ class MultiLoaderStaticTest {
         // 复制 / 粘贴会静默退化成空操作 —— 「一起听」里复制链接、复制邀请码两个按钮
         // 就是这么坏的：按钮照样亮「已复制」，剪贴板里什么都没有。
         // 正确通道是原版自己的 Minecraft#keyboardHandler（内部是 GLFW 剪贴板函数）。
-        Path keyboardUtils = SHARED_JAVA.resolve(Paths.get(
+        Path keyboardUtils = ProjectPaths.sourceFile(Paths.get(
                 "com", "muoniumplayer", "core", "utils", "KeyboardUtils.java"));
         String body = stripComments(read(keyboardUtils));
         assertTrue(body.contains("keyboardHandler.setClipboard("),
@@ -246,7 +243,7 @@ class MultiLoaderStaticTest {
         assertTrue(body.contains("isSameThread()"),
                 "GLFW 剪贴板函数只能在渲染线程调用，必须先判线程");
 
-        try (Stream<Path> files = Files.walk(SHARED_JAVA)) {
+        { Stream<Path> files = ProjectPaths.allJavaFiles().stream();
             List<Path> offenders = files
                     .filter(p -> p.toString().endsWith(".java"))
                     .filter(MultiLoaderStaticTest::usesAwtClipboard)

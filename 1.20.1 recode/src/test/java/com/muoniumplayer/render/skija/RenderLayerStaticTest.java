@@ -75,7 +75,7 @@ class RenderLayerStaticTest {
     @DisplayName("业务代码里不再引用任何旧渲染门面")
     void 业务代码不再调用旧门面() throws IOException {
         List<String> offenders = new ArrayList<>();
-        for (Path file : javaSources(MAIN_JAVA)) {
+        for (Path file : ProjectPaths.allJavaFiles()) {
             String code = stripComments(Files.readString(file, StandardCharsets.UTF_8));
             for (String forbidden : FORBIDDEN_USAGES) {
                 if (code.contains(forbidden)) {
@@ -90,7 +90,7 @@ class RenderLayerStaticTest {
     @DisplayName("渲染层里只有 SkijaHost 认识 Minecraft")
     void 只有宿主层耦合Minecraft() throws IOException {
         List<String> offenders = new ArrayList<>();
-        for (Path file : javaSources(SKIJA_PACKAGE)) {
+        for (Path file : ProjectPaths.javaFilesIn("com/muoniumplayer/render/skija")) {
             String name = file.getFileName().toString();
             if (name.equals("SkijaHost.java")) {
                 continue;
@@ -118,14 +118,6 @@ class RenderLayerStaticTest {
                 "全部 uniform 必须声明为 float4：SkSL 对 float2/float3 的对齐规则不是 16 字节，"
                         + "混用会让 Java 侧算错偏移量");
         assertEquals(96, uniforms * 16, "6 个 float4 应当正好是 96 字节");
-    }
-
-    private static List<Path> javaSources(Path root) throws IOException {
-        try (var stream = Files.walk(root)) {
-            return stream.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().endsWith(".java"))
-                    .toList();
-        }
     }
 
     /**

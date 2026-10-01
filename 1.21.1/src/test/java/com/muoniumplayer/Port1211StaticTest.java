@@ -38,11 +38,11 @@ class Port1211StaticTest {
     private static final Path FABRIC_RESOURCES =
             ProjectPaths.fabric().resolve(Paths.get("src", "main", "resources"));
     private static final Path GUI_SCREEN =
-            SHARED_JAVA.resolve(Paths.get("com", "muoniumplayer", "compat", "mc", "GuiScreen.java"));
+            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "mc", "GuiScreen.java"));
     private static final Path FFMPEG_NOTICE =
-            SHARED_JAVA.resolve(Paths.get("com", "muoniumplayer", "core", "screens", "GuiFfmpegNotice.java"));
+            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "screens", "GuiFfmpegNotice.java"));
     private static final Path SKIJA_HOST =
-            SHARED_JAVA.resolve(Paths.get("com", "muoniumplayer", "render", "skija", "SkijaHost.java"));
+            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "render", "skija", "SkijaHost.java"));
 
     @Test
     @DisplayName("版本声明一致：1.21.1 / fabric-api / neoforge 21.1 / Java 21")
@@ -65,7 +65,7 @@ class Port1211StaticTest {
     @Test
     @DisplayName("共享源码里没有任何加载器 API")
     void 共享源码与加载器无关() throws IOException {
-        try (Stream<Path> files = Files.walk(SHARED_JAVA)) {
+        { Stream<Path> files = ProjectPaths.allJavaFiles().stream();
             List<Path> offenders = files
                     .filter(p -> p.toString().endsWith(".java"))
                     .filter(Port1211StaticTest::mentionsLoaderApi)
@@ -264,7 +264,7 @@ class Port1211StaticTest {
         // 复制 / 粘贴会静默退化成空操作 —— 「一起听」里复制链接、复制邀请码两个按钮
         // 就是这么坏的：按钮照样亮「已复制」，剪贴板里什么都没有。
         // 正确通道是原版自己的 Minecraft#keyboardHandler（内部是 GLFW 剪贴板函数）。
-        Path keyboardUtils = SHARED_JAVA.resolve(Paths.get(
+        Path keyboardUtils = ProjectPaths.sourceFile(Paths.get(
                 "com", "muoniumplayer", "core", "utils", "KeyboardUtils.java"));
         String body = stripComments(read(keyboardUtils));
         assertTrue(body.contains("keyboardHandler.setClipboard("),
@@ -274,7 +274,7 @@ class Port1211StaticTest {
         assertTrue(body.contains("isSameThread()"),
                 "GLFW 剪贴板函数只能在渲染线程调用，必须先判线程");
 
-        try (Stream<Path> files = Files.walk(SHARED_JAVA)) {
+        { Stream<Path> files = ProjectPaths.allJavaFiles().stream();
             List<Path> offenders = files
                     .filter(p -> p.toString().endsWith(".java"))
                     .filter(Port1211StaticTest::usesAwtClipboard)

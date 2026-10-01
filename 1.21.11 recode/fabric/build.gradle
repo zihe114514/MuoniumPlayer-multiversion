@@ -43,7 +43,8 @@ sourceSets {
     main {
         java.srcDirs = [
                 'src/main/java',                                       // Fabric 外壳
-                rootProject.file('src/main/java'),                     // 共享主体
+                rootProject.file('../muonium-common/src/main/java'),   // 五树共享主体（版本中立）
+                rootProject.file('src/main/java'),                     // 本树版本差异层（compat / mixin / 功能集）
                 rootProject.file('../mpparty-common/src/main/java')    // 一起听共用源码
         ]
         if (modernUiEnabled) {
@@ -51,11 +52,15 @@ sourceSets {
         }
         resources.srcDirs = [
                 'src/main/resources',                                  // fabric.mod.json / accesswidener / mixins
-                rootProject.file('src/main/resources')                 // assets、字体、纹理
+                rootProject.file('../muonium-common/src/main/resources'), // 五树共享资源（字体、纹理、svg、lx、automix）
+                rootProject.file('src/main/resources')                 // 本树资源（lang 随版本 API 变动）
         ]
     }
     test {
-        java.srcDirs = [rootProject.file('src/test/java')]
+        java.srcDirs = [
+                rootProject.file('../muonium-common/src/test/java'),   // 五树共享测试
+                rootProject.file('src/test/java')                      // 本树版本差异测试
+        ]
     }
 }
 

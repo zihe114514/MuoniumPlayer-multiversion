@@ -68,3 +68,14 @@ error-report-*/
 /-
 /download.html
 /分析对象
+/out.txt
+/err.txt
+
+# ---- 本地留档但绝不入库的产物 ----
+# 发版交付目录：十个加载器 jar + 真机截图，1.1 GB。发布走 MuoniumPlayer-updates 与官网，
+# 这里只是本机备着查的副本，进库会把仓库撑爆
+/交付/
+# buildAll 过程中 gradle 的临时 classes 输出（每棵一份，内容与 build/ 重叠）
+/MUSIC.scratchout-*/
+# 工具自己写的额度/会话记录目录
+/.qoder-credits/

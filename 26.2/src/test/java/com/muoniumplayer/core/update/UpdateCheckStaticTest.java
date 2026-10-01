@@ -236,7 +236,7 @@ class UpdateCheckStaticTest {
                 "必须显式设超时，默认值会让启动期挂在一个不通的源上");
 
         // 界面本体是 Skija 浮层，宿主只是个薄壳：这两条不变量都落在浮层上。
-        String screen = stripComments(read(SHARED_JAVA.resolve(Paths.get(
+        String screen = stripComments(read(ProjectPaths.sourceFile(Paths.get(
                 "com", "muoniumplayer", "core", "screens", "ncm", "UpdateNoticeOverlay.java"))));
         assertFalse(screen.contains("HttpUtils"),
                 "界面在渲染线程上跑，绝不能自己发网络请求");
@@ -244,7 +244,7 @@ class UpdateCheckStaticTest {
                 "「复制下载链接」必须走项目统一的剪贴板通道，不能自己碰 GLFW");
 
         // 宿主薄壳只开帧、转发输入，绘制全部交给浮层；退回原版绘制栈就会重新踩空 alpha 的坑。
-        String host = stripComments(read(SHARED_JAVA.resolve(Paths.get(
+        String host = stripComments(read(ProjectPaths.sourceFile(Paths.get(
                 "com", "muoniumplayer", "core", "screens", "GuiUpdateNotice.java"))));
         assertFalse(host.contains("fontRendererObj") || host.contains("drawCenteredString(")
                         || host.contains("new GuiButton(") || host.contains("drawRect("),
@@ -272,7 +272,7 @@ class UpdateCheckStaticTest {
     @Test
     @DisplayName("更新提示的状态单独一个配置文件")
     void 状态独立落盘() throws IOException {
-        String configPaths = read(SHARED_JAVA.resolve(Paths.get(
+        String configPaths = read(ProjectPaths.sourceFile(Paths.get(
                 "com", "muoniumplayer", "core", "settings", "ConfigPaths.java")));
         assertTrue(configPaths.contains("UPDATE_NOTICE"),
                 "必须有独立的 UPDATE_NOTICE 路径");
@@ -303,7 +303,7 @@ class UpdateCheckStaticTest {
         assertTrue(checker.contains("reachedServer"),
                 "必须把「连没连上」与「清单里有没有本 channel」分开判断");
 
-        String overlay = stripComments(read(SHARED_JAVA.resolve(Paths.get(
+        String overlay = stripComments(read(ProjectPaths.sourceFile(Paths.get(
                 "com", "muoniumplayer", "core", "screens", "ncm", "UpdateNoticeOverlay.java"))));
         assertTrue(overlay.contains("UpdateChecker.mustUpdate()"),
                 "锁死状态必须由界面读 mustUpdate() 决定");
@@ -330,11 +330,11 @@ class UpdateCheckStaticTest {
     }
 
     private static Path clientSource() {
-        return SHARED_JAVA.resolve(Paths.get("com", "muoniumplayer", "MuoniumPlayerClient.java"));
+        return ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "MuoniumPlayerClient.java"));
     }
 
     private static Path updateSource(String fileName) {
-        return SHARED_JAVA.resolve(Paths.get("com", "muoniumplayer", "core", "update", fileName));
+        return ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "update", fileName));
     }
 
     private static String read(Path path) throws IOException {

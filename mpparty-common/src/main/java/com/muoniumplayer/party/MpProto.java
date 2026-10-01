@@ -122,6 +122,26 @@ public final class MpProto {
     public static final String C_PROGRESS   = "progress";
     public static final String C_SYNC       = "sync";
     public static final String C_URL_SUPPLY = "url_supply";
+    /**
+     * 对 {@link #S_URL_NEEDED} 的<b>弃权</b>：「这一层我不答，别再等我的窗口」。
+     *
+     * <p>负载：{@code entryId} + {@code tier}（必须是服务端当前那一层，对不上服务端按过期帧丢弃）
+     * + {@code source}/{@code songId} + {@code reason}。与服务端 {@code Proto.C_URL_DECLINE} 同名同形。</p>
+     *
+     * <p>为什么不能像以前那样「解不出就闭嘴」：以前全房并行竞速，沉默只是没人理你；
+     * 现在服务端按层串行问人，被点名的这一层里沉默等于让整房白等一个层窗口。
+     * 老服务端不认识这一帧，会回一句「不支持的操作」，所以只在收到过带 {@code entryId}/{@code tier}
+     * 的新帧之后才发（见 {@code MpPartyClient#declineUrl}）。</p>
+     */
+    public static final String C_URL_DECLINE = "url_decline";
+    /**
+     * 跨平台救援的答卷：把队列里那一格换成<b>另一平台的同一首歌</b>。
+     *
+     * <p>负载 {@code entryId} + {@code track}（形状同 {@link #C_ENQUEUE}）。服务端只认这首歌的
+     * <b>点歌人</b>（或管理员）发来的替换，位置、档位与点歌人都保持不变，换完按新平台重新走一遍
+     * 分层。判据由 {@link #S_URL_NEEDED} 的 {@code mine} 与 {@code tier} 提供，别猜。</p>
+     */
+    public static final String C_TRACK_REPLACE = "track_replace";
 
     // ── v2 新增 C2S ──────────────────────────────────────────────────────────
     /** 自报身份：客户端名/版本、能解析哪些平台、是否愿意贡献会员解析能力。 */
@@ -173,7 +193,20 @@ public final class MpProto {
     public static final String S_LEFT       = "left";
     public static final String S_NOTICE     = "notice";
     public static final String S_ERROR      = "error";
+    /**
+     * 服务端向本机重新要一条直链。字段见 {@code yun.shan.mpsync.net.Proto.S_URL_NEEDED}：
+     * {@code source}/{@code songId}/{@code name} + {@code entryId}/{@code tier}/
+     * {@code deadlineMs}/{@code mine}。后四个都是追加式的，老服务端一个都不发。
+     */
     public static final String S_URL_NEEDED = "url_needed";
+    /**
+     * 全房没人答得上这一首，服务端单播<b>问点歌人</b>：能不能换到别的平台的同一首歌。
+     *
+     * <p>负载：{@code entryId} + 原曲目的 {@code source}/{@code songId}/{@code name}/
+     * {@code artist}/{@code duration} + {@code deadlineMs}。答卷是 {@link #C_TRACK_REPLACE}；
+     * 换不到就什么都不发，服务端在总闸到点时跳过这首歌。</p>
+     */
+    public static final String S_SWITCH_RESCUE = "switch_rescue";
     /**
      * 服务端指派本机去算这一首的交接计划。
      *
@@ -211,6 +244,27 @@ public final class MpProto {
     /** 投票类型。 */
     public static final String VOTE_SKIP = "skip";
     public static final String VOTE_KICK = "kick";
+
+    /**
+     * {@code url_needed.tier}：服务端正在问的是哪一层，与服务端 {@code Room.ASK_*} 一一对应。
+     *
+     * <p>层号就是<b>可信度顺序</b>：越小说明答上来的那条链越稳（真会员 &gt; 贡献的脚本 &gt;
+     * 只登录的平台 &gt; 点歌人自己 &gt; 装了该平台的 &gt; 全房）。客户端用它做两件事：
+     * 弃权时把层号原样带回去（对不上服务端的当前层就是过期帧），以及判断「这一层值不值得我
+     * 跑一次跨平台搜索」——只有 {@link #TIER_REQUESTER} 或 {@code mine} 为真时换来的版本
+     * 才发得动 {@link #C_TRACK_REPLACE}。</p>
+     *
+     * <p>{@link #TIER_UNKNOWN} 不是协议里的值，是客户端给「老服务端压根不发 tier」准备的哨兵：
+     * 见到它就什么都别追加，行为与改造前逐字一致。</p>
+     */
+    public static final int TIER_SERVER_TOKEN = 0;
+    public static final int TIER_MEMBER = 1;
+    public static final int TIER_CONTRIBUTED_LX = 2;
+    public static final int TIER_RESOLVABLE = 3;
+    public static final int TIER_REQUESTER = 4;
+    public static final int TIER_INSTALLED = 5;
+    public static final int TIER_EVERYONE = 6;
+    public static final int TIER_UNKNOWN = -1;
 
     /** 客户端令牌。服务端拿它决定成员列表里显示的角标（MP / Mu / ??）。 */
     public static final String CLIENT_ID = "muoniumplayer";

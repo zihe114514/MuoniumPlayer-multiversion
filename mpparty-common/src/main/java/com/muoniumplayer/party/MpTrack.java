@@ -110,14 +110,23 @@ public final class MpTrack {
      * 拼出点歌 / 切歌请求里的 {@code track} 对象。
      *
      * <p>{@code servedDurationMs} 是链接实际提供的音频长度。整个房间共用这一条解析好的 CDN 链接，
-     * 所以服务端要靠它识别「非会员解析到的试听片段」。只有网易云会在同一次响应里给出这个值，
-     * 其他平台传 0（未知，服务端放行）。
+     * 所以服务端要靠它识别「非会员解析到的试听片段」。网易云给的是<b>测出来</b>的长度；
+     * 其他平台只有<b>估出来</b>的（HEAD 字节数 ÷ 声明码率，见 {@code MpPartyClient#estimateServedMs}），
+     * 那种必须把 {@code estimated} 一起报出去，服务端对估算值用的是放宽后的阈值 —— 拿实测的标准
+     * 去卡估算值会把完整版判成试听片段，代价是整房白等一轮再跳过一首本来能放的歌。
+     * 两个都没有时传 0（未知，服务端放行）。
      *
      * <p>{@code songId} 用 {@link Music#getSourceId()} 而不是 {@code getId()}：后者是本机为了缓存
      * 与相等性算出来的哈希，别的客户端拿它既查不到歌也对不上号；前者才是该平台真正的主键
      * （网易云数字 id、酷狗文件 hash、GD 的聚合 id）。
      */
-    public static JsonObject toJson(Music song, String streamUrl, long urlExpiresAt, long servedDurationMs) {
+    public static JsonObject toJson(Music song, String streamUrl, long urlExpiresAt,
+                                    long servedDurationMs) {
+        return toJson(song, streamUrl, urlExpiresAt, servedDurationMs, false);
+    }
+
+    public static JsonObject toJson(Music song, String streamUrl, long urlExpiresAt,
+                                    long servedDurationMs, boolean estimated) {
         JsonObject o = new JsonObject();
         o.addProperty("source", token(song.getSource()));
         o.addProperty("songId", song.getSourceId());
@@ -130,7 +139,11 @@ public final class MpTrack {
         if (streamUrl != null && !streamUrl.trim().isEmpty()) {
             o.addProperty("url", streamUrl);
             o.addProperty("urlExpiresAt", urlExpiresAt);
-            if (servedDurationMs > 0) o.addProperty("urlDuration", servedDurationMs);
+            if (servedDurationMs > 0) {
+                o.addProperty("urlDuration", servedDurationMs);
+                // 只有报了长度才需要报「这个长度是怎么来的」，老服务端两个都当未知。
+                if (estimated) o.addProperty("urlDurationEstimated", true);
+            }
         }
         return o;
     }

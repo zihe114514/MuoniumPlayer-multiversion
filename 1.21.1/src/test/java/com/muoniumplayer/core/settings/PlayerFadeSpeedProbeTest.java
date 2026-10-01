@@ -31,11 +31,11 @@ class PlayerFadeSpeedProbeTest {
 
     private static final Path MAIN_JAVA = ProjectPaths.sharedJava();
     private static final Path NCM_SCREEN =
-            MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "core", "screens", "ncm", "NCMScreen.java"));
+            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "screens", "ncm", "NCMScreen.java"));
     private static final Path SETTINGS_MODEL =
-            MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "core", "screens", "hud", "HudSettingsModel.java"));
+            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "screens", "hud", "HudSettingsModel.java"));
     private static final Path CLASSIC_EDITOR =
-            MAIN_JAVA.resolve(Paths.get("com", "muoniumplayer", "core", "screens", "hud", "GuiHudEditor.java"));
+            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "screens", "hud", "GuiHudEditor.java"));
 
     @Test
     @DisplayName("配置项：默认 3.00×，区间 0.30×~3.00×，越界被夹住")
@@ -75,7 +75,7 @@ class PlayerFadeSpeedProbeTest {
     void 唯一消费者() throws IOException {
         List<String> referencing = new ArrayList<String>();
         final List<String> hits = referencing;
-        Files.walkFileTree(MAIN_JAVA, new SimpleFileVisitor<Path>() {
+        for (Path shareWalkRoot : ProjectPaths.javaRoots()) Files.walkFileTree(shareWalkRoot, new SimpleFileVisitor<Path>() {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
                 if (!file.toString().endsWith(".java")) return FileVisitResult.CONTINUE;
@@ -107,7 +107,7 @@ class PlayerFadeSpeedProbeTest {
     @DisplayName("NCMScreen：开关动画交给灵动岛转场，页面切换仍走 playerUiSwitchSpeed")
     void 消费点与非消费点() throws IOException {
         String screen = stripComments(read(NCM_SCREEN));
-        String transition = stripComments(read(MAIN_JAVA.resolve(Paths.get(
+        String transition = stripComments(read(ProjectPaths.sourceFile(Paths.get(
                 "com", "muoniumplayer", "core", "screens", "ncm", "PlayerIslandTransition.java"))));
 
         assertTrue(screen.contains("PlayerIslandTransition.open(HudConfig.playerFadeSpeed)"),
