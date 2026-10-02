@@ -908,8 +908,9 @@ public final class SkijaHost {
         // 背景采集与折射各自持有一个绑在<b>当前</b> GL 上下文 / DirectContext 上的对象：
         // 上下文没了之后那些 id 就是别人的了，必须在这里一起丢掉（GL 还是 current 的，
         // 所以现在删才删得掉）。丢掉之后 broken 也复位，重载完成的那一帧会重新建。
-        GlassBackdrop.invalidate();
+        GlassLiquidSurface.release();
         GlassRefraction.release();
+        GlassBackdrop.invalidate();
         SkijaGfx.dispose();
         SkijaText.dispose();
         SkijaImages.clear();

@@ -73,6 +73,7 @@ public final class SkijaHost {
     /** 本帧是否有内容等着在帧末合成。见 {@link #compositeFrame()}。 */
     private static boolean pendingComposite;
 
+
     /**
      * 窗口默认帧缓冲的 FBO 名。合成目标恒为它，理由见 {@link #compositeFrame()}。
      *
@@ -334,8 +335,7 @@ public final class SkijaHost {
      * 否则下一帧会在旧内容上继续画。
      */
     public static void compositeFrame() {
-        // 背景采集排在合成之前：这一刻窗口默认帧缓冲里正好是「本帧游戏最终画面 + 还不含我们的 HUD」，
-        // 那就是玻璃要折射的底。放到合成之后采，抄进去的背景就带上我们自己的界面，玻璃会变成「透自己」。
+        // Capture immediately before the HUD composite so our own HUD is not sampled.
         GlassBackdrop.captureNow(0, offscreenWidth, offscreenHeight);
         boolean hadContent = pendingComposite;
         pendingComposite = false;
@@ -838,8 +838,9 @@ public final class SkijaHost {
         // 背景采集与折射各自持有一个绑在<b>当前</b> GL 上下文 / DirectContext 上的对象：
         // 上下文没了之后那些 id 就是别人的了，必须在这里一起丢掉（GL 还是 current 的，
         // 所以现在删才删得掉）。丢掉之后 broken 也复位，重载完成的那一帧会重新建。
-        GlassBackdrop.invalidate();
+        GlassLiquidSurface.release();
         GlassRefraction.release();
+        GlassBackdrop.invalidate();
         SkijaGfx.dispose();
         SkijaText.dispose();
         SkijaImages.clear();

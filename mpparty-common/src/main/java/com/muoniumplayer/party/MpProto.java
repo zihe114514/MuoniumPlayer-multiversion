@@ -143,6 +143,16 @@ public final class MpProto {
      */
     public static final String C_TRACK_REPLACE = "track_replace";
 
+    /**
+     * {@link #S_SWITCH_RESCUE} 的<b>弃权</b>：「我这台换不到，别等我的窗，去问下一台」。
+     *
+     * <p>负载 {@code entryId} + {@code reason}（只进服务端日志）。服务端只在「这一格当前派的就是
+     * 本机」时才改派，所以迟到的、或者自己压根没被派过的弃权都会被丢掉 —— 发多了不会改坏状态。
+     * 不发这一帧的代价是实打实的：服务端要为这台白等满一个救援窗（默认 12 秒）才换下一台，
+     * 而本机其实一开始就知道自己做不了（开关关着、这首歌刚搜过一遍）。</p>
+     */
+    public static final String C_SWITCH_DECLINE = "switch_decline";
+
     // ── v2 新增 C2S ──────────────────────────────────────────────────────────
     /** 自报身份：客户端名/版本、能解析哪些平台、是否愿意贡献会员解析能力。 */
     public static final String C_PROFILE        = "profile";
@@ -290,15 +300,20 @@ public final class MpProto {
     /**
      * 解一帧。
      *
-     * <p>兼容没有 varint 头的裸 JSON（某些代理/协议转换会把负载原样递过来）：
-     * 首字节是 '{' 时整个数组按 JSON 解析。
+     * <p>兼容没有 varint 头的裸 JSON（某些代理/协议转换会把负载原样递过来）：单看首字节并不
+     * 可靠——长度为 123 的 varint 字节是 0x7B，恰好也是 '{'，所以带头的合法帧首字节也可能是
+     * '{'。改用「试解析」区分：裸 JSON 能整段解析成功，而带头帧不能（给 '{...}' 对象前面补一个
+     * 长度字节会变成 '{{...}'，永远不是合法 JSON），因此这里解析失败就意味着「落回 varint 分帧」。
      *
      * @return 解析结果；帧不合法时返回 {@code null}
      */
     public static JsonObject decode(byte[] data) {
         if (data == null || data.length == 0) return null;
         try {
-            if (data[0] == '{') return parse(new String(data, StandardCharsets.UTF_8));
+            if (data[0] == '{') {
+                JsonObject bare = tryParse(new String(data, StandardCharsets.UTF_8));
+                if (bare != null) return bare;
+            }
             int len = 0, shift = 0, i = 0;
             while (i < data.length) {
                 byte b = data[i++];
@@ -317,6 +332,15 @@ public final class MpProto {
     private static JsonObject parse(String json) {
         JsonElement el = JsonParser.parseString(json);
         return el != null && el.isJsonObject() ? el.getAsJsonObject() : null;
+    }
+
+    /** 不抛异常的解析：负载不合法时返回 {@code null}。 */
+    private static JsonObject tryParse(String json) {
+        try {
+            return parse(json);
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     /** Minecraft 风格 varint，手写以保证各平台产出同样的字节。 */

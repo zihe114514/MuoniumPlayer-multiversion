@@ -1134,10 +1134,10 @@ public final class MpPartyOverlay extends NCMPanel {
                 () -> System.currentTimeMillis() - copiedAt < COPIED_HINT_MILLIS
                 ? "已复制" : "复制邀请码", () -> {
             MpRoom room = MpPartyClient.room();
-            return room != null && !room.channel;
+            return room != null && !room.channel && has(room.code);
         }, () -> {
             MpRoom room = MpPartyClient.room();
-            if (room == null) return;
+            if (room == null || !has(room.code)) return;
             KeyboardUtils.setClipboardString(room.code);
             copiedAt = System.currentTimeMillis();
         }, STYLE_GHOST, b -> {

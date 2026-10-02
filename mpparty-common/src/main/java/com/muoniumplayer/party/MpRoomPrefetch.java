@@ -108,6 +108,7 @@ public final class MpRoomPrefetch {
     private static final Object POOL_LOCK = new Object();
     private static ExecutorService downloads;
     private static ExecutorService profiles;
+    private static ExecutorService passes;
 
     // ───────────────────────────── 入口 ─────────────────────────────
 
@@ -127,7 +128,7 @@ public final class MpRoomPrefetch {
         }
         final long token = generation.get();
         try {
-            downloadPool().execute(new Runnable() {
+            passPool().execute(new Runnable() {
                 @Override
                 public void run() {
                     pass(token);
@@ -433,6 +434,24 @@ public final class MpRoomPrefetch {
                 profiles = newPool(1, "mp-prefetch-profile-");
             }
             return profiles;
+        }
+    }
+
+    /**
+     * 盘点池：恒为 1 条线程，和下载池分开。
+     *
+     * <p>盘点（{@link #pass(long)}）里最要紧的一步是 {@code pinRoomTracks} —— 把房间马上要播的
+     * 那几首在缓存淘汰账本上置顶。它本身只碰磁盘、很快，但以前和下载共用并发只有 2 的下载池：
+     * 两条线程被几十兆的大文件下载占满时（一首 5–30 秒），{@code S_QUEUE} 一秒可能来好几份、
+     * 每份都排一次盘点，全堆在下载后面，置顶被推迟 —— 缓存吃紧时「马上要播那首」可能先被淘汰，
+     * 正是预取要消除的硬切。单独一条线程让盘点永不排在下载后面。</p>
+     */
+    private static ExecutorService passPool() {
+        synchronized (POOL_LOCK) {
+            if (passes == null) {
+                passes = newPool(1, "mp-prefetch-pass-");
+            }
+            return passes;
         }
     }
 

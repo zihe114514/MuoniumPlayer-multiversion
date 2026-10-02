@@ -29,11 +29,16 @@ public final class ListenTogetherSettings {
 
     private static final String KEY_SKIP_VIP = "skipVipWhenRoomHasNonVip";
     private static final String KEY_PARTY_CONTRIBUTE_VIP = "partyContributeVip";
+    private static final String KEY_PARTY_CONTRIBUTE_VIP_TOUCHED = "partyContributeVipTouched";
     private static final String KEY_PARTY_CONTRIBUTE_LX = "partyContributeLx";
 
     private static volatile boolean loaded;
     private static boolean skipVipWhenRoomHasNonVip = true;
-    private static boolean partyContributeVip;
+    private static boolean partyContributeVip = true;
+    // 玩家有没有<b>亲手</b>动过贡献会员那一格。saveLocked 是整份写盘的，于是老配置文件里已经
+    // 躺着一行 partyContributeVip=false —— 那是旧默认值，不是他关的。这一格把两种 false 分开：
+    // 没碰过的人吃新的默认（开），碰过的人尊重他留下的值。
+    private static boolean partyContributeVipTouched;
     private static boolean partyContributeLx = true;
 
     private ListenTogetherSettings() {
@@ -45,7 +50,10 @@ public final class ListenTogetherSettings {
             loaded = true;
             JsonObject root = readRootLocked();
             skipVipWhenRoomHasNonVip = flagOf(root, KEY_SKIP_VIP, true);
-            partyContributeVip = flagOf(root, KEY_PARTY_CONTRIBUTE_VIP, false);
+            partyContributeVipTouched = flagOf(root, KEY_PARTY_CONTRIBUTE_VIP_TOUCHED, false);
+            partyContributeVip = partyContributeVipTouched
+                    ? flagOf(root, KEY_PARTY_CONTRIBUTE_VIP, true)
+                    : true;   // 从没碰过 → 新的默认：开
             partyContributeLx = flagOf(root, KEY_PARTY_CONTRIBUTE_LX, true);
         }
     }
@@ -72,7 +80,10 @@ public final class ListenTogetherSettings {
      * <p>打开后<b>只</b>上报一个「我有这个能力」的标记；真要解析时是本机解析出一条带签名、
      * 有时效的临时直链再上传。<b>cookie 永远不离开这台机器</b>，服务端和其他玩家都拿不到账号。
      *
-     * <p>默认关：这件事会消耗你的账号配额、也会让别人听到你解析出来的音频，必须显式同意。
+     * <p><b>默认开。</b>交出去的只有一条<b>带签名、有时效</b>的临时音频地址，cookie 与登录态
+     * 一步都不出这台机器；而且房间的分层是「先问真会员」，关掉它不等于「别人问不到我」，而是
+     * 把我排到最后一档，让整房多等几层窗。第一次进房会给一条提示说明这件事，一起听面板右上角那两颗
+     * 胶囊（「贡献会员解析」/「贡献自定义源」）随时可以关。
      */
     public static boolean isPartyContributeVip() {
         load();
@@ -86,6 +97,7 @@ public final class ListenTogetherSettings {
         synchronized (LOCK) {
             if (partyContributeVip == value) return;
             partyContributeVip = value;
+            partyContributeVipTouched = true;   // 这一下是玩家按的，不是默认值
             saveLocked();
         }
     }
@@ -142,6 +154,7 @@ public final class ListenTogetherSettings {
             JsonObject root = new JsonObject();
             root.addProperty(KEY_SKIP_VIP, skipVipWhenRoomHasNonVip);
             root.addProperty(KEY_PARTY_CONTRIBUTE_VIP, partyContributeVip);
+            root.addProperty(KEY_PARTY_CONTRIBUTE_VIP_TOUCHED, partyContributeVipTouched);
             root.addProperty(KEY_PARTY_CONTRIBUTE_LX, partyContributeLx);
             JsonConfigStorage.writeObject(ConfigPaths.LISTEN_TOGETHER, GSON, root);
         } catch (Throwable ignored) {

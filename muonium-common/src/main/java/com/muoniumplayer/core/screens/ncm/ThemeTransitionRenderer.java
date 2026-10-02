@@ -2,6 +2,7 @@ package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.compat.gl.GL11;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
+import com.muoniumplayer.core.rendering.GlassLook;
 
 import java.awt.Color;
 import com.muoniumplayer.render.skija.SkijaGfx;
@@ -72,6 +73,9 @@ public final class ThemeTransitionRenderer implements SharedRenderingConstants {
                                          double radius, float opacity) {
         opacity = clamp01(opacity);
         if (opacity <= 0.001f || width <= 0.0 || height <= 0.0) return;
+        if (GlassLook.paintFrost(GlassLook.Surface.PLAYER, x, y, width, height, radius, opacity)) {
+            return;
+        }
 
         drawGradientCornerLR(x, y, width, height, radius,
                 color(218, 239, 255, 28.0f * opacity),

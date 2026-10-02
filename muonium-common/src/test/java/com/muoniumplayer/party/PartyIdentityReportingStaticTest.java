@@ -138,7 +138,7 @@ class PartyIdentityReportingStaticTest {
         assertTrue(delegated > custom, "问完脚本还没结果才轮得到委托全房");
 
         String delegate = region(client, "private static void delegateResolve(String op, Music song, boolean playNext, String why) {",
-                "private static void sendTrack(String op, Music song, String url, long servedMs, boolean playNext)");
+                "private static boolean switchLocally(String op, Music song, boolean playNext) {");
         int sendFirst = delegate.indexOf("sendTrack(op, song, \"\", 0L, playNext)");
         int supplyAgain = delegate.indexOf("sendUrlSupply(src, id, url, est, est > 0L, 0L)");
         assertTrue(supplyAgain > sendFirst,

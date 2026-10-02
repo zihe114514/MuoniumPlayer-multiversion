@@ -968,7 +968,7 @@ public final class HudSettingsModel {
                                         }, themeChoices(), HudSettingsModel::setThemeChoice),
                                 themeGrid()),
                         new Group("真玻璃材质", HudSettingsIcons.SPARKLE,
-                                toggle("播放器面板", "主面板背后那块画面改成实时采下来的游戏画面糊出来的玻璃。"
+                                toggle("播放器面板", "实时采集游戏画面，用非线性透镜重采样还原液态玻璃；不再使用磨砂底。"
                                         + "关掉就退回原来的渐变高光。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
@@ -1061,11 +1061,10 @@ public final class HudSettingsModel {
                                                 setGlassScale(value);
                                             }
                                         }),
-                                slider(HudSetting.GLASS_BLUR, "玻璃背后画面糊多狠。0 就是不糊，只压暗。"),
+                                slider(HudSetting.GLASS_BLUR, "折射背景的柔化强度，默认 0.75；0 为清晰透镜，不是关闭折射。"),
                                 slider(HudSetting.GLASS_TINT, "玻璃自身颜色多浓。往 0 拖是干净透明，"
                                         + "往 1 拖背景基本看不见，字最好读。"),
-                                slider(HudSetting.GLASS_EDGE_GLOW, "边缘那一圈光的强度。真玻璃下这一档同时决定"
-                                                + "背景被折射多少：推到 0 就只剩糊、不折。"),
+                                slider(HudSetting.GLASS_EDGE_GLOW, "透镜边缘的方向性亮暗强度；推到 0 仍保留真实折射，不叠加白框。"),
                                 slider(HudSetting.GLASS_BLUR_PLAYER, "播放器面板这一面的模糊倍率，乘在上面"
                                         + "「玻璃模糊」之上。1 就是与全局同档；这一面通常是最大的那块玻璃，"
                                         + "所以拿它当基准。"),
@@ -1075,15 +1074,7 @@ public final class HudSettingsModel {
                                 slider(HudSetting.GLASS_BLUR_LYRIC, "桌面歌词卡片的模糊倍率。卡片背后通常是"
                                         + "亮天空与树叶，糊得重一点字才立得住。"),
                                 slider(HudSetting.GLASS_BLUR_EDITORS, "三套 HUD 编辑器面板的模糊倍率。"
-                                        + "编辑器里要看的是控件本身，往低了调会更清楚。"),
-                                slider(HudSetting.GLASS_BLOOM, "亮部溢出：玻璃后面那团亮的东西（天空、火、"
-                                        + "霓虹）会往面内软软地晕开多少。0 完全不画，也一格开销都不付出。"
-                                        + "亮背景上想要「玻璃发烫」的那股味道才需要它。"),
-                                slider(HudSetting.GLASS_FUSION, "相邻玻璃的融合半径，单位是屏幕像素。"
-                                        + "歌曲列表那一排挨着的行会攒成一张距离场一起画边，于是两行之间"
-                                        + "鼓出一道颈、整片列表读起来是一块玻璃而不是一排。0 就是各画各的；"
-                                        + "两块要隔得比它的一半还近才连得上，所以不留缝的列表也得推到十几"
-                                        + "才看得出变化，推太大整排会糊成一坨。"))),
+                                        + "编辑器里要看的是控件本身，往低了调会更清楚。"))),
 
                 new Category("信息栏与封面", "桌面信息栏的显隐与摆放，以及封面与全屏页标签", 0xFFFFA971, HudSettingsIcons.ALBUM, "界面与外观",
                         new Group("显示与摆放", HudSettingsIcons.VISIBILITY,

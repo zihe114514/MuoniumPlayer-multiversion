@@ -4,6 +4,7 @@ import com.muoniumplayer.core.rendering.RGBA;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.screens.ncm.ThemeTransitionRenderer;
 import com.muoniumplayer.render.skija.SkijaClip;
 import com.muoniumplayer.render.skija.SkijaShapes;
@@ -161,17 +162,17 @@ public final class OnboardingChrome {
         try {
             OnboardingUi.roundedRect(panel.x, panel.y, panel.width, panel.height, 0,
                     OnboardingUi.themed(NCMScreen.ColorType.GENERIC_BACKGROUND,
-                            alpha * (1.0f - glass * .14f)));
+                            GlassLook.tintedAlpha(GlassLook.Surface.PLAYER, alpha)));
             GLASS.renderLiquidGlassSurface(panel.x, panel.y, panel.width, panel.height,
                     panel.radius, glass * alpha);
             OnboardingUi.roundedRect(panel.x, panel.y, panel.sidebarWidth,
                     panel.height - panel.controlsHeight, 0,
                     OnboardingUi.themed(NCMScreen.ColorType.NAVIGATION_BACKGROUND,
-                            alpha * (.9f - glass * .22f)));
+                            GlassLook.washAlpha(GlassLook.Surface.PLAYER, alpha * .9f)));
             OnboardingUi.roundedRect(panel.controlsX(), panel.controlsY(), panel.controlsWidth(),
                     panel.controlsHeight, 0,
                     OnboardingUi.themed(NCMScreen.ColorType.NAVIGATION_BACKGROUND,
-                            alpha * (.95f - glass * .22f)));
+                            GlassLook.washAlpha(GlassLook.Surface.PLAYER, alpha * .95f)));
         } finally {
             SkijaClip.endClip();
         }

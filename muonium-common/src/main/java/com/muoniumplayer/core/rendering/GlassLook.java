@@ -6,6 +6,7 @@ import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.render.skija.GlassBackdrop;
 import com.muoniumplayer.render.skija.GlassEdgeBatch;
 import com.muoniumplayer.render.skija.GlassRefraction;
+import com.muoniumplayer.render.skija.GlassLiquidSurface;
 import com.muoniumplayer.render.skija.SkijaEffects;
 
 /**
@@ -84,7 +85,8 @@ public final class GlassLook {
         if (!toggleOf(surface)) {
             return 0f;
         }
-        return NCMTheme.getTrueGlassAmount() * guardWeight();
+        float theme = NCMTheme.getTrueGlassAmount() * guardWeight();
+        return theme > 0.001f && GlassLiquidSurface.available() ? theme : 0f;
     }
 
     /**
@@ -102,7 +104,7 @@ public final class GlassLook {
     }
 
     /**
-     * 铺一层糊过的真背景。
+     * 兼容的历史方法名；现在绘制整面透镜折射，不再绘制磨砂底。
      *
      * @return 真的铺上了；{@code false} = 这一面不该有玻璃、或者这一帧根本没有背景图，
      *         调用方应当紧接着画自己原来那套假玻璃
@@ -131,7 +133,7 @@ public final class GlassLook {
         if (amount <= 0.001f) {
             return false;
         }
-        return SkijaEffects.frostedBackdrop(x, y, width, height, radius, blurSigma(surface), amount);
+        return SkijaEffects.liquidBackdrop(x, y, width, height, radius, blurSigma(surface), amount);
     }
 
     /**
@@ -149,26 +151,13 @@ public final class GlassLook {
         if (amount <= 0.001f) {
             return false;
         }
-        return SkijaEffects.dimmedBackdrop(x, y, width, height, radius, blurSigma(surface), amount);
+        return SkijaEffects.dimmedLiquidBackdrop(x, y, width, height, radius, blurSigma(surface), amount);
     }
 
-    /**
-     * 画玻璃的<b>边缘折射</b>那一圈，调用点要压在自己的主题底色<em>之上</em>。
-     *
-     * <p>顺序是有理由的：折射是「玻璃这个表面」的效应，而底色是「玻璃有多脏」。
-     * 把边缘画在底色之前，面板那层 60% 的深色会正好把最外圈那几像素压掉，
-     * 读者只看得见糊、看不见折。</p>
-     *
-     * <p>与 {@link #paintFrost} 成对出现：没有铺上真背景的那一层，边缘也就没有东西可折。</p>
-     */
+    /** Compatibility call: directional edges are already inside the full-surface lens. */
     public static void paintEdge(Surface surface, double x, double y, double width, double height,
                                  double radius, float opacityScale) {
-        float amount = amount(surface) * Math.max(0f, Math.min(1f, opacityScale));
-        float strength = refractionStrength(surface);
-        if (amount <= 0.001f || strength <= 0.002f) {
-            return;
-        }
-        GlassRefraction.drawEdge(x, y, width, height, radius, strength, amount, blurSigma(surface));
+        // Retained for callers: the full-surface lens owns the edge now.
     }
 
     public static void paintEdge(Surface surface, double x, double y, double width, double height,
@@ -189,7 +178,7 @@ public final class GlassLook {
         return amount(surface) > 0.001f ? Math.min(1f, glow) : 0f;
     }
 
-    /** 背景模糊强度（全局那一档），单位 GUI。设置里 0 就是「只压暗不糊」。 */
+    /** 可选的背景柔化强度；0 仍然保留折射，默认只做亚像素级柔化。 */
     public static float blurSigma() {
         return GlassBackdrop.blurSigma();
     }
@@ -311,37 +300,16 @@ public final class GlassLook {
         return GlassEdgeBatch.isOpen();
     }
 
-    /**
-     * 画一块<em>元素级</em>玻璃的边缘：薄折射 + 一圈高光。调用点要压在自己的底色之上。
-     *
-     * <p>与 {@link #paintEdge} 的唯一区别是那圈有多宽 —— 见
-     * {@code GlassRefraction.drawElementEdge} 的注释：按面板那一档的比例放到 30 高的曲目行上，
-     * 上下两圈会在中间撞上，整行都在折，那就是一行果冻而不是一块小玻璃。</p>
-     *
-     * <p>边缘高光的强度仍走「玻璃边缘光」那一档（与面板同源，不给元素单开滑块）。</p>
-     */
     public static void paintElementEdge(Surface surface, double x, double y,
                                         double width, double height, double radius,
                                         float opacityScale) {
-        float amount = amount(surface) * Math.max(0f, Math.min(1f, opacityScale));
-        float strength = refractionStrength(surface);
-        if (amount <= 0.001f || strength <= 0.002f) {
-            return;
-        }
-        GlassRefraction.drawElementEdge(x, y, width, height, radius, strength, amount,
-                blurSigma(surface));
+        // Retained for callers: the full-surface lens owns the edge now.
     }
 
-    /**
-     * 元素级那一圈<em>边缘高光</em>的浓度（一块小玻璃自己那道亮边）。
-     * 与 {@link #edgeGlow} 同源，但没有玻璃时直接给 0，调用点据此一位都不画。
-     */
+    /** No additional solid white border over the reference lens. */
     public static float elementRim(Surface surface, float opacityScale) {
-        float amount = amount(surface) * Math.max(0f, Math.min(1f, opacityScale));
-        if (amount <= 0.001f) {
-            return 0f;
-        }
-        return amount * edgeGlow(surface);
+        return 0f; // No additional frame painted over the lens.
+
     }
 
     /** 玻璃浓度：0 = 底色完全让位给真画面，1 = 完全退回原来的实色面板。 */
@@ -392,11 +360,11 @@ public final class GlassLook {
     }
 
     /**
-     * 根底那一档的剩余系数。下限 0.18：浓度拉到 0 也还留一点底，
+     * 根底那一档的剩余系数。下限 0.035：浓度拉到 0 也还留一点底，
      * 否则白字直接压在亮画面上就读不出来了。浓度 = 1 时正好是 1，也就是完全退回实色。
      */
     static float rootFactor(float tint) {
-        return 0.18f + 0.82f * tint;
+        return 0.035f + 0.965f * tint * tint;
     }
 
     /**
@@ -404,7 +372,7 @@ public final class GlassLook {
      *
      * <p>为什么是乘上去而不是另写一条曲线：这样两档在浓度 = 1 处<em>同时</em>回到 1，
      * 「滑块推到顶就是原来的样子」这句话对整页成立，不是只对外圈那层成立。
-     * 浓度 = 0 时内层归零、根底留 0.18，正是「底色让位给真画面，但字还读得出」。</p>
+     * 浓度 = 0 时内层归零、根底留 0.035，正是「底色让位给真画面，但字还读得出」。</p>
      */
     static float interiorFactor(float tint) {
         float root = rootFactor(tint);

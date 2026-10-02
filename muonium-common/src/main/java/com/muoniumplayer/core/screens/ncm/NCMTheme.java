@@ -409,15 +409,7 @@ public final class NCMTheme {
         SHUANGWAN_XIUYAN("shuangwan_xiuyan", "霜纨岫烟", 0xFCF9E8, 0xFFFEF6, 0xF1EDD8, 0x1E2A2B, 0x6F7C7D, 0x00808C, 0x00B7C7, 0xF7F2DE, 0xF5F1DC, 0xDCD8C0, false),
         MEIGUI_YUEBAI("meigui_yuebai", "玫瑰月白", 0xE8F0F2, 0xF6FAFB, 0xDCE7EA, 0x262E31, 0x6B7A7F, 0xB44E60, 0xD87888, 0xE1EBEE, 0xDEE9EC, 0xC3D3D7, false),
         QINGLAN_YUNZHI("qinglan_yunzhi", "青岚云脂", 0xFBF1D7, 0xFFFAEA, 0xF0E4C4, 0x232A1D, 0x6F7A60, 0x4E7C36, 0x73AE52, 0xF6ECD0, 0xF4EACD, 0xDCD0AE, false),
-        /**
-         * 琉璃：唯一一款<b>真</b>玻璃——面板背后那块画面是实时采下来的游戏画面糊出来的，
-         * 而不是叠在深色底上的渐变高光。
-         *
-         * <p>刻意排在最后：{@code theme.json} 存的是 id 字符串而不是序号，插中间其实不会串位，
-         * 但配色类枚举一律「只往末尾追加」，读档顺序、主题网格与「点击轮换」的观感才对得上。
-         * 与 {@link #LIQUID_GLASS} 的差别就在「透出去的是不是真画面」：那两款是假玻璃
-         * （渐变 + 径向光斑），这一款走 {@code GlassBackdrop} 的每帧采集。</p>
-         */
+        /** Real lens material with a cool palette; crystal id is retained for saved themes. */
         CRYSTAL("crystal", "琉璃", 0x141E2B, 0x1F2E42, 0x3A5570, 0xF5FAFF, 0xA9BCD2, 0x7FC4FF, 0xA8DAFF, 0x18293C, 0x0E1825, 0x9DB8D6, true);
 
         private final String id, displayName;
@@ -453,7 +445,7 @@ public final class NCMTheme {
          * <p>做成方法而不是第十三个构造参数，是为了不动上面那十五行配色——每加一个参数就要
          * 重排十五个预设的实参，那种改动读不出对错，也不值得为一款主题付。</p>
          */
-        public boolean isTrueGlass() { return this == CRYSTAL; }
+        public boolean isTrueGlass() { return this == LIQUID_GLASS || this == CRYSTAL; }
 
         public int getColor(NCMScreen.ColorType type) {
             switch (type) {

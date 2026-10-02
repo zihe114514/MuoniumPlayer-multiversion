@@ -92,6 +92,14 @@ public final class MpPartyClient {
     /** 只防泄漏，不防正确性：救援一格的窗最长 12 秒，64 格早滚完了。 */
     private static final int RESCUE_SET_LIMIT = 64;
 
+    /**
+     * 本机这次进房有没有提示过「我在替房间解析什么」。
+     *
+     * <p>贡献会员现在是默认开的，玩家第一次被问到时应该知道自己被排在了「先被问到」那一档，
+     * 以及能不能关掉。只在<b>进房那一次</b>说：快照会因为重连、转让房主、重新同步反复到来。</p>
+     */
+    private static volatile boolean contributionHintShown;
+
     // ── v2：服务端能力（hello 下发） ──────────────────────────────────────────
     //
     // 这些都由服务端说了算，客户端不自己推断：同一个房间里 modernMP 和 MuoniumPlayer
@@ -680,7 +688,9 @@ public final class MpPartyClient {
      */
     public static void setSelfPause(boolean paused) {
         if (!requireChannel()) return;
-        selfPaused = paused;
+        // 标记只在「进入暂停」这一下置起来；解除交给服务端那帧 play（分发里见 resync 就清），
+        // 否则下一发 S_TIME 心跳会抢在权威位置之前、从本地暂停点开声，进度先跳一下再被纠正。
+        if (paused) selfPaused = true;
         if (paused) MpPlayback.pause(positionMs());
         JsonObject m = MpProto.msg(MpProto.C_SELF_PAUSE);
         m.addProperty("paused", paused);
@@ -803,7 +813,7 @@ public final class MpPartyClient {
         }
     }
 
-    /** 是否愿意替别人解析（贡献会员解析能力）。默认关，必须玩家显式打开。 */
+    /** 是否愿意替别人解析（贡献会员解析能力）。默认开，账号凭证仍然一步都不出本机。 */
     public static boolean contributeVip() {
         try {
             return ListenTogetherSettings.isPartyContributeVip();
@@ -1130,12 +1140,16 @@ public final class MpPartyClient {
                         sendTrack(op, song, viaCustom, est, playNext, est > 0L);
                         return;
                     }
+                    // 问别人之前先在<b>本机</b>换一次平台：这条流水线是用户自己装的，
+                    // 一台机器上十几秒的搜索比问遍全房便宜，而换到了就没有任何人需要为此答一次。
+                    if (switchLocally(op, song, playNext)) return;
                     delegateResolve(op, song, playNext,
                             resolved == null ? "本机拿不到播放链接" : "本机只解析到试听片段");
                     return;
                 }
                 String url = resolveByPlayer(song);
                 if (url == null) {
+                    if (switchLocally(op, song, playNext)) return;
                     delegateResolve(op, song, playNext, "本机拿不到播放链接");
                     return;
                 }
@@ -1178,7 +1192,7 @@ public final class MpPartyClient {
      * <p>刻意不在这里判断「房间里有没有会员」：客户端看不到别人的会员状态，问一句比猜一句可靠。
      */
     private static void delegateResolve(String op, Music song, boolean playNext, String why) {
-        note(why + "，已把《" + song.getName() + "》交给房间里的会员成员代为解析", false);
+        note(why + "，已把《" + song.getName() + "》交给房间里的别人代为解析", false);
         sendTrack(op, song, "", 0L, playNext);
 
         // 广播问别人的<b>同时</b>，本机把自己还没试过的那一路（自定义源）跑完 —— 谁先给出完整流
@@ -1197,6 +1211,43 @@ public final class MpPartyClient {
                 note("本机用自定义源补上了《" + title + "》的播放地址", false);
             }
         });
+    }
+
+    /**
+     * 求助房间之前，先在<b>本机</b>换一次平台：换到了就以换到的那一版点进房间，换不到才交给别人。
+     *
+     * <p>排在「问全房」前面有两个理由：这条流水线本来就在本机开着（用户装了脚本、打了自动换源），
+     * 而一次本机搜索比一轮分层便宜得多 —— 分层是六层窗 + 别人机器上的往返，换源只是自己跑一遍。
+     * 更重要的是<b>换到之后这一首根本不需要任何人参与</b>：{@code track_add} 带着可用直链入队时，
+     * 服务端采纳它、不问任何人。</p>
+     *
+     * <p>{@code allowInRoom = true} 放开的是「在房间里不许偷偷换一首」那一道闸：这里换的是
+     * <b>要点进房间的那一首</b>，服务端把换到的版本收进队列，全房听到的就是这一版，不存在本机
+     * 脱队。网易云 / 酷狗的官方一起听照旧拦死（那两个房间按曲目本体或 hash 同步，本机的队列
+     * 不受我们控制）。{@code AUTO_ATTEMPTED} 与十分钟负缓存对这条路同样生效：本机刚搜过一遍
+     * 还没找到，服务端再把同一首派回来也搜不出什么，那一格由 {@link #switchDecline} 当场回绝。</p>
+     *
+     * @return true = 换到了，并且已经按替换后的曲目入队
+     */
+    private static boolean switchLocally(String op, Music song, boolean playNext) {
+        if (!CrossSourceSwitcher.canAutoSwitch(song, true)) return false;
+        CrossSourceSwitcher.Match match;
+        try {
+            match = CrossSourceSwitcher.findReplacementForAuto(song, CloudMusic.quality);
+        } catch (Throwable failure) {
+            System.err.println("[MpParty] 点歌前的本机换源异常 " + song.getSourceId() + "：" + failure);
+            return false;
+        }
+        String url = match == null || match.url == null ? null : match.url.getA();
+        if (match == null || match.music == null || url == null || url.trim().isEmpty()) return false;
+        url = url.trim();
+        // 替身那一版多半来自脚本或另一平台，报不出「实际服务多长」，估一个并报成估算值：
+        // 参照时长取<b>替身自己</b>声明的那一个（服务端拿它与新曲目的 duration 比）。
+        long est = estimateServedMs(match.music, url, match.music.getDuration());
+        sendTrack(op, match.music, url, est, playNext, est > 0L);
+        note("本机没有《" + song.getName() + "》的完整版，已按 " + match.platformLabel
+                + " 的同名版本点进房间", false);
+        return true;
     }
 
     private static void sendTrack(String op, Music song, String url, long servedMs, boolean playNext) {
@@ -1346,7 +1397,7 @@ public final class MpPartyClient {
     /** @return true 表示进度调整已被房间消化 */
     public static boolean interceptSeekBy(float deltaMillis) {
         if (!engaged()) return false;
-        if (!isController()) {
+        if (!hasControl()) {
             noteThrottled("一起听房间中：只有房主或管理员可以调整播放进度", true);
             return true;
         }
@@ -1365,7 +1416,7 @@ public final class MpPartyClient {
      */
     public static boolean interceptSeekTo(float absoluteMillis) {
         if (!engaged()) return false;
-        if (!isController()) {
+        if (!hasControl()) {
             noteThrottled("一起听房间中：只有房主或管理员可以调整播放进度", true);
             return true;
         }
@@ -1396,8 +1447,10 @@ public final class MpPartyClient {
     }
 
     private static boolean requireControl() {
-        if (isController()) return true;
-        noteThrottled("只有房主或管理员可以控制一起听的播放", true);
+        // 频道里控制权归服务器管理员（他的房间角色仍是 member，isController 看不出来）。
+        if (hasControl()) return true;
+        noteThrottled(inChannel() ? "只有服务器管理员可以控制频道的播放"
+                : "只有房主或管理员可以控制一起听的播放", true);
         return false;
     }
 
@@ -1527,8 +1580,11 @@ public final class MpPartyClient {
             if (track == null) return;
             // resync = 服务端单独补给我一份权威位置（个人暂停恢复时用），不是新曲目。
             // 「立即同步播放进度」就落在这里：见到它就清掉个人暂停并直接跳到那个位置，
-            // 不用等下一发心跳。
-            if (MpProto.bool(msg, "resync", false)) selfPaused = false;
+            // 不用等下一发心跳。普通 play（换歌广播）同样把暂停落地 —— 帧里带的就是权威
+            // 位置与权威播放态；留着标记不清，resync 帧万一没来（服务端重启丢了会话）就会
+            // 永久静默卡死，而后果只是「自动恢复播放」，轻得多。
+            if (MpProto.bool(msg, "resync", false) || MpProto.bool(msg, "playing", true))
+                selfPaused = false;
             long seq = MpProto.num(msg, "seq", 0L);
             long pos = compensate(MpProto.num(msg, "pos", 0L), MpProto.num(msg, "serverTime", 0L));
             startTrack(track, pos, MpProto.bool(msg, "playing", true), seq);
@@ -1681,6 +1737,7 @@ public final class MpPartyClient {
     private static void applySnapshot(JsonObject msg) {
         MpRoom snapshot = MpRoom.fromJson(MpProto.obj(msg, "room"));
         room = snapshot;
+        hintContributionOnce();
         // 快照里也带着「下一首」（服务端把它放在 room 对象里）：中途进房与断线重连的人
         // 拿到快照的那一刻就该开始预解码，而不是等下一次队列广播。下一首里同样可能带计划。
         JsonObject staged = MpProto.obj(MpProto.obj(msg, "room"), "next");
@@ -1718,9 +1775,34 @@ public final class MpPartyClient {
             startTrack(track, pos, isPlaying, seq);
         } else {
             stamp(pos, isPlaying, seq);
-            MpPlayback.time(pos, durationMs, isPlaying);
+            // 与 S_TIME 心跳一致：个人暂停期间不许被房间快照重新开声。这一分支之前漏了守卫，
+            // 而 setSelfPause 会让服务端无条件 broadcastState（收听人数变了），于是一按个人暂停
+            // 就被下一帧 room_state 当场解除 —— 按钮还亮着却照常出声。
+            if (!selfPaused) MpPlayback.time(pos, durationMs, isPlaying);
             notifyListeners();
         }
+    }
+
+    /**
+     * 进房那一次说清本机在替房间做什么，只说一次。
+     *
+     * <p>「贡献会员」与「贡献自定义源」现在都是默认开的，而这两件事烧的是这台机器的账号配额与
+     * 脚本额度。玩家第一次被排在「先被问到」那一档时应该知道自己可以关，也要知道关掉的代价是
+     * 整房多等几层窗 —— 一句话讲完，不弹窗。</p>
+     */
+    private static void hintContributionOnce() {
+        if (contributionHintShown) return;
+        contributionHintShown = true;
+        boolean vip = contributeVip();
+        boolean lx = contributeLx();
+        if (!vip && !lx) {
+            note("一起听：本机没有向房间贡献任何解析能力，别人点的会员曲只能等房间里的会员播放；"
+                    + "想帮就点一起听面板右上角的「贡献会员解析」/「贡献自定义源」那两颗胶囊", false);
+            return;
+        }
+        String what = vip && lx ? "会员身份与自定义源" : (vip ? "会员身份" : "自定义源");
+        note("一起听：本机默认用" + what + "替房间里的别人解析完整音频"
+                + "（只上传带签名、有时效的临时地址，账号不出本机；不想帮就点面板右上角那两颗胶囊关掉）", false);
     }
 
     private static void startTrack(MpTrack track, long pos, boolean isPlaying, long seq) {
@@ -2034,6 +2116,10 @@ public final class MpPartyClient {
         final String src = MpProto.sourceOf(MpProto.str(msg, "source", MpProto.SOURCE_NETEASE));
         final String songId = MpProto.str(msg, "songId", "");
         final long deadline = MpProto.num(msg, "deadlineMs", 0L);
+        // 服务端现在派的是「房间里最可能换成功的那台」，收件人常常不是点歌人：MP 玩家点的歌
+        // 只有装了脚本的 Mu 救得回来。这一位由服务端说清，本机据此换文案 —— 替别人搜一首
+        // 烧的是自己的额度，玩家得知道自己为什么忽然多了几条搜索。
+        final boolean mine = MpProto.bool(msg, "mine", false);
         if (entryId <= 0L || songId.isEmpty() || !inRoom()) return;
         // 队列快照通常已经认识这首歌；不认得时这一帧的键名与曲目对象一致，直接复用那套映射。
         MpTrack known = trackOf(src, songId);
@@ -2047,7 +2133,7 @@ public final class MpPartyClient {
             @Override
             public void run() {
                 try {
-                    runRescue(entryId, origin, deadline, display);
+                    runRescue(entryId, origin, deadline, display, mine);
                 } finally {
                     RESCUE_IN_FLIGHT.remove(Long.valueOf(entryId));
                 }
@@ -2056,10 +2142,14 @@ public final class MpPartyClient {
     }
 
     /** 流水线的实体：找到就交 {@code track_replace}，找不到就一句说明白。只能在后台线程上调。 */
-    private static void runRescue(long entryId, Music origin, long deadline, String display) {
+    private static void runRescue(long entryId, Music origin, long deadline, String display,
+                                  boolean mine) {
+        // 每一条「这台做不了」都要当场说一声：服务端为收到派单的这一首把总闸多放宽了一个救援窗，
+        // 沉默等于让它把这一窗白等完才去问下一台，而那些机器里可能正好有一台换得到。
         if (!CrossSourceSwitcher.canAutoSwitch(origin, true)) {
             System.out.println("[MpParty] 救援跳过《" + display
                     + "》：换源开关关着、没有够得着的候选平台，或这首歌刚搜过一遍/已有失败结论");
+            switchDecline(entryId, "switch-off");
             return;
         }
         CrossSourceSwitcher.Match match;
@@ -2067,11 +2157,14 @@ public final class MpPartyClient {
             match = CrossSourceSwitcher.findReplacementForAuto(origin, CloudMusic.quality);
         } catch (Throwable failure) {
             System.err.println("[MpParty] 救援流水线异常 entry=" + entryId + "：" + failure);
+            switchDecline(entryId, "pipeline-failed");
             return;
         }
         String url = match == null || match.url == null ? null : match.url.getA();
         if (match == null || match.music == null || url == null || url.trim().isEmpty()) {
-            note("没在别的平台找到《" + display + "》能播的版本", true);
+            note(mine ? "没在别的平台找到《" + display + "》能播的版本"
+                    : "没替《" + display + "》在本机找到别的平台的可播版本", true);
+            switchDecline(entryId, "no-candidate");
             return;
         }
         url = url.trim();
@@ -2089,7 +2182,23 @@ public final class MpPartyClient {
         JsonObject m = MpProto.msg(MpProto.C_TRACK_REPLACE);
         m.addProperty("entryId", entryId);
         m.add("track", MpTrack.toJson(match.music, url, urlDeadline(), est, est > 0L));
-        if (send(m)) note("已把《" + display + "》换成 " + match.platformLabel + " 版本", false);
+        if (send(m)) note(mine ? "已把《" + display + "》换成 " + match.platformLabel + " 版本"
+                : "已替房间把《" + display + "》换成 " + match.platformLabel + " 版本", false);
+    }
+
+    /**
+     * 回一句「这台换不到」，让服务端立刻改派下一台。
+     *
+     * <p>{@code entryId} 缺失说明对面是不认这一帧的老服务端，闭嘴即可 —— 那一台由服务端等满
+     * 窗口再换，行为只是慢一点。老服务端收到不认识的 op 会往聊天栏回一句「不支持的操作」，
+     * 所以这里走 {@link #sendQuiet}。</p>
+     */
+    private static void switchDecline(long entryId, String reason) {
+        if (entryId <= 0L) return;
+        JsonObject m = MpProto.msg(MpProto.C_SWITCH_DECLINE);
+        m.addProperty("entryId", entryId);
+        m.addProperty("reason", reason == null ? "" : reason);
+        sendQuiet(m);
     }
 
     /**
@@ -2228,6 +2337,7 @@ public final class MpPartyClient {
         // 交叠开关本身不动 —— 它来自服务端 hello，跟房间无关。
         MpPlayback.clearRoomAutomix();
         MpSyncPolicy.reset();
+        contributionHintShown = false;      // 下次进房重新说一次
     }
 
     static void note(String text, boolean error) {

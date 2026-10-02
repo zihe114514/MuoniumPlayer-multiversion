@@ -3,6 +3,7 @@ package com.muoniumplayer.core.screens.ncm;
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 
 import java.awt.Color;
@@ -325,8 +326,10 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
             GFX.roundedRect(x + 1.0, y + 1.8, width, height, radius, SHADOW_STRONG);
             GFX.roundedRect(x + 2.0, y + 3.0, width, height, radius, SHADOW_SOFT);
         }
-        GFX.roundedRect(x, y, width, height, radius, color);
-        GFX.roundedOutline(x, y, width, height, radius, .72, SURFACE_EDGE);
+        boolean liquid = GlassLook.paintFrost(GlassLook.Surface.PLAYER, x, y, width, height, radius, 1f);
+        GFX.roundedRect(x, y, width, height, radius,
+                liquid ? new Color(GlassLook.tintedArgb(GlassLook.Surface.PLAYER, color.getRGB()), true) : color);
+        if (!liquid) GFX.roundedOutline(x, y, width, height, radius, .72, SURFACE_EDGE);
     }
     /** 收起末段的边界光：只服务于胶囊撞击前的压缩，不再给打开动画叠加落地回弹。 */
     public static void renderSurfaceDetail() {
@@ -462,11 +465,3 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
     }
 
 }
-
-
-
-
-
-
-
-

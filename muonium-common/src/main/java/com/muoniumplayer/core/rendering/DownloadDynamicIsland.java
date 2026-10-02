@@ -2640,6 +2640,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         boolean frosted = GlassLook.paintFrost(GlassLook.Surface.ISLAND, x, y, width, height,
                 radius, alpha);
         float thin = frosted ? GlassLook.tintedAlpha(GlassLook.Surface.ISLAND, 1.0f) : 1.0f;
+        if (frosted) {
+            // The reference lens already supplies the whole surface, directional gain and edge behaviour.
+            // Never paint the old opaque island fill on top of it.
+            return;
+        }
         float glow = GlassLook.edgeGlow(GlassLook.Surface.ISLAND);
 
         // 玻璃本体：偏冷的深色基底压住背景，再叠一层玻璃色的竖向渐变当作体积感。

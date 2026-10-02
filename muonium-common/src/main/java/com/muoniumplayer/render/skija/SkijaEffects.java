@@ -376,6 +376,29 @@ public final class SkijaEffects {
     }
 
     /**
+     * 全表面液态玻璃：不是把一张模糊图贴进圆角，而是让背景在整块玻璃内部
+     * 按 squircle 距离场发生非线性折射。失败时返回 false，让调用点走旧的假玻璃。
+     */
+    public static boolean liquidBackdrop(double x, double y, double width, double height,
+                                         double radius, float sigma, float opacity) {
+        if (opacity <= 0.004f || width <= 0.0 || height <= 0.0) {
+            return false;
+        }
+        return GlassLiquidSurface.draw(x, y, width, height, radius,
+                1f, Math.min(1f, Math.max(0f, opacity)), sigma);
+    }
+
+    /** 液态玻璃的弹窗版本：同一套整面折射，再压一层与弹窗背景匹配的暗纱。 */
+    public static boolean dimmedLiquidBackdrop(double x, double y, double width, double height,
+                                                double radius, float sigma, float opacity) {
+        if (!liquidBackdrop(x, y, width, height, radius, sigma, opacity)) {
+            return false;
+        }
+        int veil = Math.round(SHEET_VEIL * Math.max(0f, Math.min(1f, opacity)) * 255f);
+        SkijaShapes.roundedRect(x, y, width, height, radius, (veil & 0xFF) << 24);
+        return true;
+    }
+    /**
      * 弹窗那一档的「压暗过的真背景」：先按 {@link #frostedBackdrop} 贴一块糊过的真画面，
      * 再在同一条圆角里压一层黑纱。
      *

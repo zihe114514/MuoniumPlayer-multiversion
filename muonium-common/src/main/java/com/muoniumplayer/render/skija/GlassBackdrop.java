@@ -311,6 +311,8 @@ public final class GlassBackdrop {
 
         int previousRead = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
         int previousDraw = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+        int previousReadBuffer = GL11.glGetInteger(GL11.GL_READ_BUFFER);
+        int previousDrawBuffer = GL11.glGetInteger(GL11.GL_DRAW_BUFFER);
         int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
         // 先把自己欠下的错误清干净：glGetError 是「取走并清零」，别处的残留会被下面的检查
         // 当成 blit 失败，症状是日志里来一句「停用背景采集」而画面其实好着。
@@ -319,7 +321,13 @@ public final class GlassBackdrop {
         }
         try {
             GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, sourceFramebuffer);
+            // Minecraft changes the default framebuffer's read buffer during the live world
+            // pipeline. If we inherit GL_NONE / a stale attachment, the blit succeeds but copies
+            // black. Pause/menu rendering happens to leave GL_BACK selected, which is why this bug
+            // only appears while the world is running. Select the correct buffer explicitly.
+            GL11.glReadBuffer(sourceFramebuffer == 0 ? GL11.GL_BACK : GL30.GL_COLOR_ATTACHMENT0);
             GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, framebufferId);
+            GL11.glDrawBuffer(GL30.GL_COLOR_ATTACHMENT0);
             GL30.glBlitFramebuffer(0, 0, sourceWidth, sourceHeight,
                     0, 0, targetWidth, targetHeight,
                     GL11.GL_COLOR_BUFFER_BIT, GL11.GL_LINEAR);
@@ -328,6 +336,8 @@ public final class GlassBackdrop {
             // 残留成我们的目标就会把 HUD 贴进背景纹理里，症状是「玻璃越来越亮地糊住自己」。
             GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, previousRead);
             GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, previousDraw);
+            GL11.glReadBuffer(previousReadBuffer);
+            GL11.glDrawBuffer(previousDrawBuffer);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
         }
 
@@ -885,6 +895,7 @@ public final class GlassBackdrop {
      * 那时删纹理不是「失败」而是崩在原生层——丢掉引用即可，反正上下文都没了。</p>
      */
     public static void invalidate() {
+        GlassLiquidSurface.release();
         try {
             releaseAllBlurTargets();
             releaseTarget();
@@ -974,6 +985,7 @@ public final class GlassBackdrop {
     }
 
     private static void releaseTarget() {
+        GlassLiquidSurface.release();
         if (image != null) {
             image.close();
             image = null;

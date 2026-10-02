@@ -516,8 +516,8 @@ public final class HudConfig {
      */
     public static int glassBackdropScale = 2;
 
-    /** 玻璃背后画面的模糊强度，单位 GUI 像素的 sigma。0 就是不糊，只压暗。 */
-    public static float glassBlurSigma = 12.0f;
+    /** 可选的透镜背景柔化，单位背景图像素；默认 0.75，0 仍保留清晰折射。 */
+    public static float glassBlurSigma = 0.75f;
 
     /**
      * 四处界面各自在「玻璃模糊」之上的<em>倍率</em>，1 = 与全局同档。
@@ -553,31 +553,16 @@ public final class HudConfig {
     public static float glassFusion = 0.0f;
 
     /** 玻璃自身颜色的浓度：0 完全透出背景，1 背景基本看不见。 */
-    public static float glassTintStrength = 0.55f;
+    public static float glassTintStrength = 0.12f;
 
-    /** 边缘那一圈光的强度。P1 用在描边上，P2 接折射后就是 fresnel 权重。 */
-    public static float glassEdgeGlow = 0.65f;
+    /** 参考透镜的方向性亮暗强度；0 关闭光照增益，不关闭背景折射。 */
+    public static float glassEdgeGlow = 0.90f;
 
-    /**
-     * <b>每帧</b>采背景（实时渲染），而不是压在 30Hz。
-     *
-     * <p>默认关：正式档那次 blit 实测 0.4~1.1ms，而这块画面出门就要整个糊一遍，30Hz 与
-     * 144Hz 的糊底在静止画面上看不出区别。打开之后多出来的东西是<b>动起来的那部分</b>——
-     * 走位、转视角、树叶与水波在玻璃后面跟着一起走，而不是隔一两帧跳一下。代价按两笔算：
-     * 采集每帧一次，预糊那一层也每帧重建一次（它按采集代数重做，见 {@code GlassBackdrop.blurred}），
-     * 后者是全屏两趟高斯，比 blit 贵得多。所以这一项是给高配机手动开的，不是默认更"高级"。</p>
-     */
-    public static boolean glassRealtimeCapture = false;
+    /** 实时刷新透镜背景，默认开启；采集仍受防重复的帧间闸保护。 */
+    public static boolean glassRealtimeCapture = true;
 
-    /**
-     * 帧率持续掉到极低档时，自动把真玻璃摘掉（淡出到原来的实色面板）。
-     *
-     * <p>关掉它，玻璃就<em>永远</em>按主题强度画，不再看帧时闸 {@code TransitionPerformanceBudget}
-     * 的脸色。默认开——低配机上「糊不动」比「掉帧」更难读。而这一档和上面那档是可以对撞的：
-     * 实时采集每帧多送一次全屏糊，恰恰最容易把帧时推过那道门槛，于是"我要实时"的机器上
-     * 应该把这里关掉，否则就会看见玻璃自己一开一关。</p>
-     */
-    public static boolean glassAutoDegrade = true;
+    /** 可选的性能降级，默认不把透镜自动摘成实色面板；用户仍可手动开启。 */
+    public static boolean glassAutoDegrade = false;
 
     private HudConfig() {
     }
@@ -767,6 +752,7 @@ public final class HudConfig {
             osdLyricStyle = clampInt(getInt(o, "osdLyricStyle", osdLyricStyle), 0,
                     OSD_LYRIC_STYLE_MAX);
             blossomBackdropBlur = clamp01(getFloat(o, "blossomBackdropBlur", blossomBackdropBlur));
+            com.muoniumplayer.core.rendering.GlassMaterialProfile.migrate(o);
             glassSurfacePlayer = getBoolean(o, "glassSurfacePlayer", glassSurfacePlayer);
             glassSurfaceIsland = getBoolean(o, "glassSurfaceIsland", glassSurfaceIsland);
             glassSurfaceDesktopLyric = getBoolean(o, "glassSurfaceDesktopLyric", glassSurfaceDesktopLyric);
@@ -938,6 +924,7 @@ public final class HudConfig {
             o.addProperty("themeColorSource", themeColorSource);
             o.addProperty("osdLyricStyle", osdLyricStyle);
             o.addProperty("blossomBackdropBlur", blossomBackdropBlur);
+            o.addProperty("glassMaterialVersion", com.muoniumplayer.core.rendering.GlassMaterialProfile.VERSION);
             o.addProperty("glassSurfacePlayer", glassSurfacePlayer);
             o.addProperty("glassSurfaceIsland", glassSurfaceIsland);
             o.addProperty("glassSurfaceDesktopLyric", glassSurfaceDesktopLyric);

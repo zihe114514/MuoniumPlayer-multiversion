@@ -79,3 +79,6 @@ error-report-*/
 /MUSIC.scratchout-*/
 # 工具自己写的额度/会话记录目录
 /.qoder-credits/
+
+# 开源快照目录（tools/make-opensource.py 生成，发布走开源仓库，不入本库）
+/opensource/

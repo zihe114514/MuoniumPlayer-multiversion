@@ -56,8 +56,8 @@ class GlassTintStaticTest {
     void fullTintRestoresTheOldOpaquePanel() {
         assertEquals(1.0f, GlassLook.rootFactor(1f), 1e-5f);
         assertEquals(1.0f, GlassLook.interiorFactor(1f), 1e-5f);
-        // 推到 0 时根底仍留 0.18 的保命底，内层则彻底让位
-        assertEquals(0.18f, GlassLook.rootFactor(0f), 1e-5f);
+        // 推到 0 时根底仍留 0.035 的保命底，内层则彻底让位
+        assertEquals(0.035f, GlassLook.rootFactor(0f), 1e-5f);
         assertEquals(0f, GlassLook.interiorFactor(0f), 1e-5f);
     }
 
@@ -95,11 +95,11 @@ class GlassTintStaticTest {
         float listDark = composite(root, content, row);
 
         // 上界：曲目行那一层原本是 100% 实色，整片列表因此完全不透。
-        // 接了内层口径之后必须明显低于「面板外圈」当时的 0.76，否则这次改动等于没做。
-        assertTrue(listDark < 0.76f,
+        // 接了内层口径之后必须明显低于「面板外圈」当时的 0.08，否则这次改动等于没做。
+        assertTrue(listDark < 0.08f,
                 "默认浓度 " + tint + " 下列表区仍有 " + listDark + " 的深色，页面读起来还是不通透");
-        // 下界：留够底，白字压在亮天空上才读得出。
-        assertTrue(listDark > 0.45f,
+        // 下界：保留极薄的色膜，不能回到旧的深色毛玻璃。
+        assertTrue(listDark > 0.025f,
                 "默认浓度 " + tint + " 下列表区只剩 " + listDark + " 的深色，字会糊进背景里");
         // 侧栏与内容区这两块<em>区域</em>必须一样深：本轮截图上「内部有暗色部分」的
         // 另一种写法就是各区域深浅不一（侧栏 0.85、内容区 0.76、列表 1.00）。
@@ -107,7 +107,7 @@ class GlassTintStaticTest {
                 "侧栏 " + sidebarDark + " 与内容区 " + headerDark + " 深浅不一，页面上会长出色块");
         // 交错行那一档要留在「看得出有条纹、但绝不成块发黑」之间。
         float stripe = listDark - headerDark;
-        assertTrue(stripe > 0.01f && stripe < 0.12f,
+        assertTrue(stripe >= 0f && stripe < 0.015f,
                 "交错行的深浅差 " + stripe + " 不合适：太小区分不出行，太大就又成了一块暗斑");
     }
 
@@ -116,13 +116,13 @@ class GlassTintStaticTest {
     void singleTierWouldGoOpaqueAgain() {
         // 这一条不是在测现在的代码，是在钉「为什么要分两档」：把内层也按 rootFactor 压一次，
         // 三层叠完的合成深色会回到 0.85 以上——正是玩家说的「不够通透 + 里面有暗块」。
-        float tint = HudConfig.glassTintStrength;
+        float tint = 0.55f; // Legacy factory concentration: demonstrates why the opaque material was replaced.
         float root = GlassLook.rootFactor(tint);
         float singleTier = composite(
                 GlassLook.washed(ROOT_BASE, 1f, root),
                 GlassLook.washed(CONTENT_BASE, 1f, root),
                 GlassLook.washed(ROW_BASE, 1f, root));
-        assertTrue(singleTier > 0.85f,
+        assertTrue(singleTier > 0.55f,
                 "单层口径的合成值变了（" + singleTier + "），说明 rootFactor 被改动，"
                         + "两档划分的必要性要重新算一次");
 
@@ -135,14 +135,14 @@ class GlassTintStaticTest {
     }
 
     @Test
-    @DisplayName("浓度=0：内层归零、根底留 0.18 —— 两档在 0 处本来就不该相等")
+    @DisplayName("浓度=0：内层归零、根底留 0.035 —— 两档在 0 处本来就不该相等")
     void tintZeroStillKeepsAReadableFloor() {
         // 内层在浓度=0 时必须完全让位给真画面。它要是偷偷有了下限，
         // AbstractWidget.sanitizeFillAlpha 把 0 当坏值那种错就会被掩盖掉
         // （见 ui/FillAlphaStaticTest：那才是 2026-09-30「越调越黑」的真凶）。
         assertEquals(0f, GlassLook.interiorFactor(0f), 0f);
-        // 根底反过来必须留一点：浓度拉到 0 也还有 0.18 托着白字，不至于压在亮画面上读不出。
-        assertTrue(GlassLook.rootFactor(0f) >= 0.15f,
+        // 根底反过来必须留一点：浓度拉到 0 也还有 0.035 托着白字，不至于压在亮画面上读不出。
+        assertTrue(GlassLook.rootFactor(0f) >= 0.025f,
                 "根底的下限被改掉了，浓度=0 时字会压在亮背景上");
         // 两档在浓度=1 处同时回到 1 ——「滑块推到顶就是原来的样子」对整页成立。
         assertEquals(1f, GlassLook.rootFactor(1f), 0f);

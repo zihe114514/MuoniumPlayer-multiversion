@@ -203,7 +203,7 @@ class PartyTieredResolveStaticTest {
                 "重建曲目必须复用房间那套映射，别为救援另写一份");
 
         String run = region(client, "private static void runRescue(long entryId, Music origin,",
-                "在当前曲目和歌单里找这首歌");
+                "回一句「这台换不到」，让服务端立刻改派下一台");
         assertTrue(run.contains("CrossSourceSwitcher.canAutoSwitch(origin, true)"),
                 "必须走 allowInRoom 那一档判定：这里换的是队列里那一格，不是本机偷偷换");
         assertTrue(run.contains("findReplacementForAuto(origin, CloudMusic.quality)"),
@@ -297,6 +297,121 @@ class PartyTieredResolveStaticTest {
         assertTrue(proto.contains("public static final int TIER_REQUESTER = 4;"));
         assertTrue(proto.contains("public static final int TIER_INSTALLED = 5;"));
         assertTrue(proto.contains("public static final int TIER_EVERYONE = 6;"));
+    }
+
+
+    // ═══════════════ 三条路的客户端侧：求助之前先自己试、弃权要回帧、进房要说清 ═══════════════
+
+    @Test
+    @DisplayName("点歌路径：本机换平台排在「交给全房」之前")
+    void requesterSwitchesPlatformBeforeAskingTheRoom() throws IOException {
+        String client = read(PARTY.resolve("MpPartyClient.java"));
+        String upload = region(client,
+                "private static void upload(final Music song, final String op, final boolean playNext) {",
+                "private static String resolveByPlayer(Music song) {");
+        int custom = upload.indexOf("customSourceUrl(song)");
+        int localSwitch = upload.indexOf("switchLocally(op, song, playNext)");
+        int delegated = upload.indexOf("delegateResolve(op, song,");
+        assertTrue(custom > 0 && localSwitch > custom,
+                "本家与脚本都失败之后，先在自己这台机器上换一次平台 —— 一次本机搜索比一轮分层便宜");
+        assertTrue(delegated > localSwitch, "本机换不到才轮到向全房求助");
+        int nonNeteaseSwitch = upload.indexOf("switchLocally", upload.indexOf("String url = resolveByPlayer(song)"));
+        int nonNeteaseAsk = upload.indexOf("delegateResolve(op, song, playNext, \"本机拿不到播放链接\")");
+        assertTrue(nonNeteaseSwitch > 0 && nonNeteaseSwitch < nonNeteaseAsk,
+                "非网易云那一路也要先换平台再求助：那一路上原来是直接取消点歌，房间根本不知道这首歌存在");
+
+        String helper = region(client, "private static boolean switchLocally(String op, Music song,",
+                "private static void sendTrack(String op, Music song, String url, long servedMs, boolean playNext)");
+        assertTrue(helper.contains("CrossSourceSwitcher.canAutoSwitch(song, true)"),
+                "必须走 allowInRoom 那一档：这里换的是要点进房间的那一首，不是本机偷偷换");
+        assertTrue(helper.contains("findReplacementForAuto(song, CloudMusic.quality)"),
+                "复用打分 + 时长闸门 + 取流验证那条流水线");
+        assertTrue(helper.contains("sendTrack(op, match.music, url, est, playNext, est > 0L)"),
+                "入队的是**换到的那一版**，并且把估算长度一起带上去");
+        assertTrue(helper.contains("estimateServedMs(match.music, url, match.music.getDuration())"),
+                "参照时长取替身自己声明的那一个");
+    }
+
+    @Test
+    @DisplayName("被派到却做不了时回一句 switch_decline，并分清是不是自己点的歌")
+    void rescueGivesUpOutLoudAndKnowsWhoseSongItIs() throws IOException {
+        String client = read(PARTY.resolve("MpPartyClient.java"));
+        String rescue = region(client, "private static void supplyRescue(JsonObject msg) {",
+                "private static void runRescue(long entryId,");
+        assertTrue(rescue.contains("MpProto.bool(msg, \"mine\", false)"),
+                "服务端现在派的是「最可能换成功的那台」，收件人常常不是点歌人，文案要分开");
+        assertTrue(rescue.contains("runRescue(entryId, origin, deadline, display, mine)"));
+
+        String run = region(client, "private static void runRescue(long entryId, Music origin,",
+                "private static void switchDecline(long entryId, String reason) {");
+        assertTrue(run.contains("switchDecline(entryId, \"switch-off\")"),
+                "开关关着 / 没有够得着的平台 / 刚搜过一遍：当场说一声，别让服务端等满一个救援窗");
+        assertTrue(run.contains("switchDecline(entryId, \"pipeline-failed\")"));
+        assertTrue(run.contains("switchDecline(entryId, \"no-candidate\")"),
+                "真搜不到也要说：那台换不到的机器不改派，就是把这一首的命交给一次白等");
+        assertTrue(run.indexOf("switchDecline(entryId, \"switch-off\")")
+                        < run.indexOf("findReplacementForAuto"),
+                "弃权要排在跑流水线之前：能做不了就早点回，别先烧十几秒");
+        assertTrue(run.contains("mine ? \"没在别的平台找到《\""), "替别人换一首与换自己点的歌是两件事");
+        assertTrue(run.contains("\"没替《\""), "被派去替别人换一首时不该说成自己没找到");
+
+        String decline = region(client, "private static void switchDecline(long entryId, String reason) {",
+                "在当前曲目和歌单里找这首歌");
+        assertTrue(decline.contains("if (entryId <= 0L) return;"),
+                "老服务端不认这一帧，发过去只换回一句「不支持的操作」");
+        assertTrue(decline.contains("sendQuiet(m)"), "弃权是后台应答，不该打进聊天栏");
+
+        String proto = read(PARTY.resolve("MpProto.java"));
+        assertTrue(proto.contains("public static final String C_SWITCH_DECLINE = \"switch_decline\";"),
+                "op 名与服务端 Proto.C_SWITCH_DECLINE 必须逐字一致");
+    }
+
+    @Test
+    @DisplayName("进房那一次说清本机在替房间解析什么，且只说一次")
+    void joiningARoomExplainsTheContributionOnce() throws IOException {
+        String client = read(PARTY.resolve("MpPartyClient.java"));
+        assertTrue(client.contains("private static volatile boolean contributionHintShown;"));
+        int apply = client.indexOf("private static void applySnapshot(JsonObject msg) {");
+        assertTrue(apply >= 0);
+        assertTrue(client.indexOf("hintContributionOnce();", apply)
+                        < client.indexOf("private static void startTrack(MpTrack track", apply),
+                "提示挂在快照那一条路上：重连、转让房主、重新同步都会再来快照");
+        String hint = region(client, "private static void hintContributionOnce() {",
+                "private static void startTrack(MpTrack track, long pos, boolean isPlaying, long seq) {");
+        assertTrue(hint.contains("if (contributionHintShown) return;"));
+        assertTrue(hint.contains("账号不出本机"),
+                "贡献会员现在是默认开的，这一句必须把「只上传带签名的临时地址」说清，否则像要交账号");
+        assertTrue(hint.contains("contributeVip()") && hint.contains("contributeLx()"),
+                "两个开关各自独立，提示要按实际开着的那一个说话");
+        assertTrue(hint.contains("面板右上角") && hint.contains("胶囊"), "要给出关得掉的路径，而且是真存在的那两处控件");
+        int reset = client.indexOf("private static void reset() {");
+        assertTrue(client.indexOf("contributionHintShown = false;", reset) > reset,
+                "离房必须复位，否则下次进房不再说");
+    }
+
+    @Test
+    @DisplayName("贡献会员改成默认开：关着它等于把自己排到最后一档")
+    void contributingVipIsOnByDefault() throws IOException {
+        String settings = read(ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "ncm", "music",
+                "ListenTogetherSettings.java")));
+        assertTrue(settings.contains("private static boolean partyContributeVip = true;"),
+                "服务端第 1、3 层按 contributesVip 筛人，默认关让真会员排到「装了该平台」之后");
+        assertTrue(settings.contains("flagOf(root, KEY_PARTY_CONTRIBUTE_VIP, true)"),
+                "老配置文件里没这一格时也必须仍是开");
+
+        // saveLocked 是整份写盘的：老玩家的配置里已经躺着一行 partyContributeVip=false，
+        // 那是**旧默认值**而不是他关的。只翻代码里的默认值对老玩家完全无效；而无条件把
+        // false 顶成 true 又会推翻「他确实亲手关过」这件事。所以「有没有碰过」必须单独一格。
+        assertTrue(settings.contains("KEY_PARTY_CONTRIBUTE_VIP_TOUCHED = \"partyContributeVipTouched\""),
+                "没有这一格的话，翻默认值只对新装的人有效");
+        assertTrue(settings.contains("partyContributeVipTouched = flagOf(root, KEY_PARTY_CONTRIBUTE_VIP_TOUCHED, false)"),
+                "老配置里没有这一格 = 从没碰过 → 吃新的默认");
+        assertTrue(settings.contains("? flagOf(root, KEY_PARTY_CONTRIBUTE_VIP, true)"),
+                "碰过的人必须尊重他留下的那一个值");
+        assertTrue(settings.contains("partyContributeVipTouched = true;"),
+                "setter 被调过就要记下来 —— 那一下是玩家按的");
+        assertTrue(settings.contains("root.addProperty(KEY_PARTY_CONTRIBUTE_VIP_TOUCHED, partyContributeVipTouched)"),
+                "不落盘的话每次启动都把他的选择重新当成没碰过");
     }
 
     // ════════════════════════════════ 取数辅助 ════════════════════════════════

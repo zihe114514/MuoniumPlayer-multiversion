@@ -799,7 +799,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                             Math.max(0, Math.min(255, (int) (alpha * 25)))));
             float glassAmount = NCMTheme.getLiquidGlassAmount()
                     * GlassLook.edgeGlow(GlassLook.Surface.PLAYER);
-            if (glassAmount > 0.001f) {
+            if (glassAmount > 0.001f && GlassLook.amount(GlassLook.Surface.PLAYER) <= 0.001f) {
                 int glassBorderAlpha = Math.max(0, Math.min(255, (int) (alpha * glassAmount * 88)));
                 roundedOutlineGradient(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(),
                         cornerRadius, .72,
@@ -835,6 +835,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         @Override
         public void onRender(double mouseX, double mouseY) {
+            if (GlassLook.amount(GlassLook.Surface.PLAYER) > 0.001f) return;
             if (TransitionPerformanceBudget.skipLiquidGlass()) return;
             // 边缘光滑块只在真玻璃铺上来的时候吃：没有真背景时这套高光就是「玻璃」本身，
             // 拿它去压暗会让原来那几款液态玻璃主题凭空变淡。
