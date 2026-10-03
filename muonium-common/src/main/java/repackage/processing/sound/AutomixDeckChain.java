@@ -55,6 +55,12 @@ public class AutomixDeckChain extends Effect<VocalDuckFilter> {
     public void highGainDb(float db) { this.left.setHighGainDb(db); this.right.setHighGainDb(db); }
     public float highGainDb() { return (float) this.left.getHighGainDb(); }
 
+    /** 手动交接时中频和高频分别让位；自动计划继续使用原有音色补偿。 */
+    public void transitionToneBands(boolean enabled) {
+        this.left.setTransitionToneBands(enabled);
+        this.right.setTransitionToneBands(enabled);
+    }
+
     /** 两个声道的声带消除深度， 0.. 1 ； 0为透明。*/
     public void duckDepth(float depth) {
         this.left.setDepth(depth);

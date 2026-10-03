@@ -169,7 +169,15 @@ final class MusicDownloadService {
     static void writeTo(InputStream source, OutputStream destination) {
         byte[] buffer = new byte[TRANSFER_BUFFER_BYTES];
         int length;
-        while ((length = source.read(buffer)) != -1) {
+        while (true) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new java.io.InterruptedIOException("Music download cancelled");
+            }
+            length = source.read(buffer);
+            if (length == -1) break;
+            if (Thread.currentThread().isInterrupted()) {
+                throw new java.io.InterruptedIOException("Music download cancelled");
+            }
             destination.write(buffer, 0, length);
         }
         destination.flush();

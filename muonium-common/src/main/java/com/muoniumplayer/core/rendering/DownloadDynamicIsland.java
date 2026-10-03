@@ -649,6 +649,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 AutomixSettings.getOverlapMillis() + AUTOMIX_BLENDING_TTL_SLACK_MILLIS);
     }
 
+    /** 手动切歌先反馈加载意图，实际交接前仍保留旧歌及其播放时钟。 */
+    public static void showManualTrackLoading(String trackName) {
+        publishNotice(IslandNoticeType.AUTOMIX, "正在准备切歌",
+                safeNoticeValue(trackName, "所选歌曲") + " · 原曲继续播放，就绪后淡入", false, 3_000L);
+    }
+
     /**
      * 下一首已经解码好、静静等在备用轨上。
      *

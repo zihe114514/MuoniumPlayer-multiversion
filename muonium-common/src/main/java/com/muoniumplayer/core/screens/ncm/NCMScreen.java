@@ -276,7 +276,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         this.basePanel.setBeforeRenderCallback(() -> this.basePanel.center());
 
-        this.playlistsPanel = new NavigateBar();
+        this.playlistsPanel = new NavigateBar(this.playlistsPanel);
         this.basePanel.addChild(this.playlistsPanel);
 
         this.basePanel.addChild(this.currentPanelBg);
@@ -878,6 +878,18 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     /** 导航等待遮罩。见 {@link #navigateAsync}。 */
     private final NavigationLoadingOverlay navigationLoading = new NavigationLoadingOverlay();
+    private final NavigationRequestGate navigationRequests = new NavigationRequestGate();
+    private String pendingNavigationLabel = "";
+
+    /** 新搜索使旧请求失效；仅重建控件树不算离开当前内容页。 */
+    public long beginContentRequest() {
+        this.navigationLoading.clear();
+        return this.navigationRequests.begin();
+    }
+
+    public boolean isContentRequestCurrent(long ticket) {
+        return this.navigationRequests.isCurrent(ticket);
+    }
 
     public void setCurrentPanel(NCMPanel panel) {
         this.innerSetCurrentPanel(panel, true);
@@ -938,10 +950,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
      */
     public void navigateAsync(String label, Supplier<NCMPanel> loader) {
         if (loader == null) return;
-        // 等待期间忽略重复点击：连点会并发发出好几个同样的请求，最后还会互相覆盖切页。
-        if (this.navigationLoading.isLoading()) return;
-
         final String targetName = label == null ? "" : label;
+        // 同一入口去重；点击别的栏目则以新请求为准，不能被慢音源锁住。
+        if (this.navigationLoading.isLoading() && targetName.equals(this.pendingNavigationLabel)) return;
+        final long ticket = this.navigationRequests.begin();
+        this.pendingNavigationLabel = targetName;
         this.navigationLoading.beginLoading(targetName);
         MultiThreadingUtil.runAsync(() -> {
             NCMPanel loaded = null;
@@ -955,6 +968,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             final NCMPanel panel = loaded;
             final String error = failure;
             MultiThreadingUtil.runOnMainThread(() -> {
+                if (!this.navigationRequests.isCurrent(ticket)) return;
                 if (panel != null) {
                     this.navigationLoading.clear();
                     this.setCurrentPanel(panel);
@@ -978,6 +992,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         }
     }
     private void innerSetCurrentPanel(NCMPanel panel, boolean shouldCallInit) {
+        this.navigationRequests.invalidate();
+        this.navigationLoading.clear();
+        this.pendingNavigationLabel = "";
         this.prevAnimatingPanelAlpha = this.currentPanel == null ? 0f : this.currentPanel.getAlpha();
         this.prevAnimatingPanel = this.currentPanel;
         this.currentPanel = panel;

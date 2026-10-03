@@ -11,6 +11,9 @@ import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.AutomixCueMarker;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.PlaybackPresentation;
+import com.muoniumplayer.core.screens.ncm.TrackSelectionMotion;
+import com.muoniumplayer.core.screens.ncm.SheetClock;
 import com.muoniumplayer.core.ncm.music.ExternalPlayback;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.AutomixCuePainter;
@@ -90,6 +93,7 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
 
     /** automix 接缝记号的平滑与换歌记号，见 {@link AutomixCueMarker.Glide}。 */
     private final AutomixCueMarker.Glide cueGlide = new AutomixCueMarker.Glide();
+    private final TrackSelectionMotion selectionMotion = new TrackSelectionMotion();
     private long cueSongId = Long.MIN_VALUE;
 
     public void onRender() {
@@ -110,9 +114,12 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
         double width = 230;
         double height = 56;
 
-        Music playingMusic = CloudMusic.currentlyPlaying;
+        PlaybackPresentation presentation = CloudMusic.playbackPresentation();
+        Music playingMusic = presentation.displayTrack;
+        selectionMotion.update(presentation.displayKey(), presentation.requestNanos,
+                presentation.preparing, System.nanoTime(), SheetClock.speed());
 
-        boolean playing = playingMusic != null && CloudMusic.hasLiveTrack();
+        boolean playing = playingMusic != null && (presentation.preparing || CloudMusic.hasLiveTrack());
 
         alpha = Interpolations.interpolate(alpha, playing ? 1 : 0, playing ? 0.15f : 0.2f);
 
@@ -230,9 +237,10 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
                 this.roundedRectTextured(imgX - exp, imgY - exp, imgSize + exp * 2, imgSize + exp * 2, coverRound, this.musicBgAlpha * alpha);
             }
 
-            String secondaryText = playingMusic.getArtistsName();
+            String secondaryText = presentation.preparing
+                    ? "准备播放 · " + playingMusic.getArtistsName() : playingMusic.getArtistsName();
 
-            if (this.turnComposerIntoLyric.getValue() && CloudMusic.hasPlaybackClock()) {
+            if (!presentation.preparing && this.turnComposerIntoLyric.getValue() && CloudMusic.hasPlaybackClock()) {
                 LyricLine currentDisplaying = CloudMusic.currentLyric;
                 LyricLine next = null;
 
@@ -269,7 +277,7 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
 
             String name1 = playingMusic.getName();
 
-            double musicNameY = imgY + 3;
+            double musicNameY = imgY + 3 + selectionMotion.offset() * .5;
             musicName.render(FontManager.pf25bold, name1, imgX + imgSize + imgSpacing, musicNameY, progressBarWidth, new Color(1f, 1f, 1f, alpha).getRGB());
 
             double progressBarOffsetY = y + height - imgSpacing - 3 - FontManager.pf14bold.getFontHeight() - 8;
@@ -278,7 +286,14 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
 
             this.roundedRect(imgX + imgSize + imgSpacing, progressBarOffsetY, progressBarWidth, 5, 1, 1f, 1f, 1f, alpha * 0.3f);
 
-            if (CloudMusic.hasPlaybackClock()) {
+            if (presentation.preparing) {
+                double travel = .5 - .5 * Math.cos(selectionMotion.travel() * Math.PI * 2);
+                double span = progressBarWidth * .24;
+                this.roundedRect(imgX + imgSize + imgSpacing + (progressBarWidth - span) * travel,
+                        progressBarOffsetY, span, 5, 1, 1f, 1f, 1f, alpha * .85f);
+                FontManager.pf14bold.drawString("准备中 · 原曲继续播放", imgX + imgSize + imgSpacing,
+                        progressBarOffsetY + 9, RGBA.color(255, 255, 255, (int) (alpha * 180)));
+            } else if (CloudMusic.hasPlaybackClock()) {
                 double totalTimeMillis = CloudMusic.durationMsNow();
                 double positionMillis = CloudMusic.positionMsNow();
                 double playbackFillWidth = 0.0;
@@ -290,7 +305,7 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
                 if (playbackFillWidth > 0)
                     this.roundedRect(imgX + imgSize + imgSpacing, progressBarOffsetY, playbackFillWidth, 5, Math.min(1, playbackFillWidth * .5), 233, 233, 233, (int) (alpha * 255));
 
-                drawAutomixCue(imgX + imgSize + imgSpacing, progressBarWidth, progressBarOffsetY, 5, alpha);
+                drawAutomixCue(imgX + imgSize + imgSpacing, progressBarWidth, progressBarOffsetY, 5, alpha, totalTimeMillis <= 0.0 ? -1.0 : positionMillis / totalTimeMillis);
 
                 int cMin = (int) (positionMillis / 1000.0 / 60);
                 int cSec = (int) (positionMillis / 1000.0 - cMin * 60);
@@ -326,7 +341,7 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
      * 一共三次预算），直接落最新值会让线在歌中间瞬移。换了一首歌则立刻吸附，不做跨越两首的
      * 补间。</p>
      */
-    private void drawAutomixCue(double barX, double barWidth, double barTop, double barHeight, float alpha) {
+    private void drawAutomixCue(double barX, double barWidth, double barTop, double barHeight, float alpha, double playbackFraction) {
         AutomixCueMarker cue = CloudMusic.automixCueNow();
         Music track = CloudMusic.currentlyPlaying;
         long songId = track == null ? Long.MIN_VALUE : track.getId();
@@ -339,7 +354,7 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
             return;
         }
         AutomixCuePainter.paint(barX, barTop, barWidth, barHeight,
-                cueGlide.update(cue), cue.fading, alpha);
+                cueGlide.update(cue), cue.fading, alpha, playbackFraction);
     }
 
 }

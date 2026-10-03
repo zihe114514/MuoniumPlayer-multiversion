@@ -7,6 +7,7 @@ import com.muoniumplayer.core.ncm.music.AutomixCueMarker;
 import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.PlaybackPresentation;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.ListenTogetherService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
@@ -31,6 +32,7 @@ import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.screens.ncm.PlayerIconAssets;
 import com.muoniumplayer.core.screens.ncm.SheetClock;
+import com.muoniumplayer.core.screens.ncm.TrackSelectionMotion;
 import com.muoniumplayer.core.screens.ncm.TransitionCurveCache;
 import com.muoniumplayer.core.screens.ncm.VolumeControl;
 import com.muoniumplayer.core.widget.impl.MusicLyricsWidget;
@@ -44,6 +46,9 @@ import java.util.List;
  * Date: 2025/10/17 21:24
  */
 public class ControlsBar extends NCMPanel {
+
+    private PlaybackPresentation presentation = new PlaybackPresentation(null, null, 0L);
+    private final TrackSelectionMotion selectionMotion = new TrackSelectionMotion();
 
     private boolean qualityMenuOpen;
     /**
@@ -147,7 +152,7 @@ public class ControlsBar extends NCMPanel {
      * <p>带一层平滑，因为计划在真正交接之前会被换掉（整曲包络到货后的回头重算、拖过切点时
      * 顶住交接的那次重算）；换歌那一瞬不做补间，直接吸附。</p>
      */
-    private void drawAutomixCue(double barX, double barY, double barWidth, double barHeight) {
+    private void drawAutomixCue(double barX, double barY, double barWidth, double barHeight, double playbackFraction) {
         AutomixCueMarker cue = CloudMusic.automixCueNow();
         Music track = CloudMusic.currentlyPlaying;
         long songId = track == null ? Long.MIN_VALUE : track.getId();
@@ -246,13 +251,25 @@ public class ControlsBar extends NCMPanel {
         this.addChild(bg);
 
         RoundedImageWidget playingCover = new RoundedImageWidget(() -> {
-            if (CloudMusic.currentlyPlaying == null)
-                return null;
-
-            // 正在播放的曲目有动态封面时,播放条上的这张也跟着动;没有则仍是静态小封面。
-            return CloudMusic.preferredCoverLocation(CloudMusic.currentlyPlaying,
-                    CloudMusic.currentlyPlaying.getSmallCoverLocation());
-        }, 0 , 0, 0, 0);
+            Music displayed = presentation.displayTrack;
+            return displayed == null ? null : CloudMusic.preferredCoverLocation(displayed,
+                    displayed.getSmallCoverLocation());
+        }, 0, 0, 0, 0) {
+            @Override public void onRender(double mouseX, double mouseY) {
+                int accent = NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
+                // 新封面未到也显示目标曲目的独立占位，不能拿旧封面冒充新歌。
+                roundedRect(getX(), getY(), getWidth(), getHeight(), getRadius(), reAlpha(accent, getAlpha() * .17f));
+                if (presentation.preparing) {
+                    for (int dot = 0; dot < 3; dot++) roundedRect(
+                            getX() + getWidth() * .5 - 5 + dot * 4, getY() + getHeight() * .5 - 1,
+                            2, 2, 1, reAlpha(accent, (float) (getAlpha() * (.4 + .6 * selectionMotion.pulse(dot)))));
+                }
+                super.onRender(mouseX, mouseY);
+                double light = selectionMotion.burst() * .6 + selectionMotion.settledGlow() * .65;
+                if (light > .01) roundedOutline(getX(), getY(), getWidth(), getHeight(), getRadius(), .8,
+                        new java.awt.Color(reAlpha(accent, (float) (getAlpha() * light)), true));
+            }
+        };
 
         this.addChild(playingCover);
 
@@ -260,6 +277,9 @@ public class ControlsBar extends NCMPanel {
         // 不再执行，写在 playingCover 上就再也取消不掉隐藏。bg 永远可见，而且它是第一个子组件、
         // 每帧都排在 playingCover 之前，是这条链上唯一安全的挂点。
         bg.setBeforeRenderCallback(() -> {
+            presentation = CloudMusic.playbackPresentation();
+            selectionMotion.update(presentation.displayKey(), presentation.requestNanos,
+                    presentation.preparing, System.nanoTime(), SheetClock.speed());
             bg.setMargin(0);
             bg.setColor(NCMScreen.getColor(NCMScreen.ColorType.NAVIGATION_BACKGROUND));
             // 底栏这块底同样压在面板根底之上，属于内层：不接玻璃的话，整页从上到下就它最黑，
@@ -269,16 +289,26 @@ public class ControlsBar extends NCMPanel {
             playingCover.setHidden(CoverHeroTransition.hidesSmallCover());
         });
 
+        playingCover.setTransformations(() -> {
+            double centerX = playingCover.getX() + playingCover.getWidth() * .5;
+            double centerY = playingCover.getY() + playingCover.getHeight() * .5;
+            double scale = .94 + .06 * selectionMotion.reveal();
+            api.getGLStateManager().translate(centerX, centerY + selectionMotion.offset() * .3, 0);
+            api.getGLStateManager().scale(scale, scale, 1);
+            api.getGLStateManager().translate(-centerX, -centerY, 0);
+        });
         playingCover
-                .fadeIn()
                 .setLinearFilter(true)
                 .setShouldOverrideMouseCursor(true)
                 .setBeforeRenderCallback(() -> playingCover
+                        .setClickable(presentation.displayTrack != null && !presentation.preparing)
+                        .setShouldOverrideMouseCursor(!presentation.preparing)
+                        .setAlpha(selectionMotion.contentAlpha())
                         .setMargin(5)
                         .setBounds(playingCover.getHeight(), playingCover.getHeight())
                         .setRadius(2))
                 .setOnClickCallback((relativeX, relativeY, mouseButton) -> {
-                    if (CloudMusic.currentlyPlaying != null) {
+                    if (!presentation.preparing && CloudMusic.currentlyPlaying != null) {
                         // 起点必须在造面板之前交出去：面板构造函数会兜底启动转场时钟，那之后再报
                         // 起点就晚了一帧，封面会从上一次的位置起飞。
                         CoverHeroTransition.open(playingCover.getX(), playingCover.getY(),
@@ -429,6 +459,16 @@ public class ControlsBar extends NCMPanel {
             public void onRender(double mouseX, double mouseY) {
                 super.onRender(mouseX, mouseY);
 
+                if (presentation.preparing) {
+                    prevMouse = Mouse.isButtonDown(0);
+                    // 不把旧歌的 01:14 显示成新歌进度，也不让点击这根等待轨去 seek 旧歌。
+                    double travel = .5 - .5 * Math.cos(selectionMotion.travel() * Math.PI * 2);
+                    double span = getWidth() * .24;
+                    roundedRect(getX() + (getWidth() - span) * travel, getY(), span, getHeight(), 1,
+                            reAlpha(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), getAlpha() * .8f));
+                    return;
+                }
+
                 if (prevMouse && !Mouse.isButtonDown(0))
                     prevMouse = false;
 
@@ -451,7 +491,9 @@ public class ControlsBar extends NCMPanel {
 
                 // automix 的接缝画在这条进度条上。位置刻意排在拖拽判定<b>之后</b>：新代码与那条
                 // 命中逻辑物理隔开，命中的条件与顺序一个字都不动（记号本身不可点）。
-                drawAutomixCue(this.getX(), this.getY(), this.getWidth(), this.getHeight());
+                drawAutomixCue(this.getX(), this.getY(), this.getWidth(), this.getHeight(),
+                        CloudMusic.hasPlaybackClock() && CloudMusic.durationMsNow() > 0.0
+                                ? CloudMusic.positionMsNow() / CloudMusic.durationMsNow() : -1.0);
             }
         };
 
@@ -484,8 +526,10 @@ public class ControlsBar extends NCMPanel {
                     progressBar.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
 
                     // 镜像态下没有内部引擎，进度与总长都取自快照（见 CloudMusic 那两个 Now 方法）。
-                    if (!CloudMusic.hasPlaybackClock())
+                    if (presentation.preparing || !CloudMusic.hasPlaybackClock()) {
+                        progressBar.setWidth(0).setRadius(0);
                         return;
+                    }
 
                     float total = (float) CloudMusic.durationMsNow();
                     if (total <= 0.0f) {
@@ -502,6 +546,7 @@ public class ControlsBar extends NCMPanel {
 
         LabelWidget lblCurTime = new LabelWidget(
                 () -> {
+                    if (presentation.preparing) return "准备中";
                     if (!CloudMusic.hasPlaybackClock())
                         return "00:00";
                     return formatDuration((float) CloudMusic.positionMsNow());
@@ -521,6 +566,7 @@ public class ControlsBar extends NCMPanel {
 
         LabelWidget lblRemainingTime = new LabelWidget(
                 () -> {
+                    if (presentation.preparing) return "--:--";
                     if (!CloudMusic.hasPlaybackClock())
                         return "00:00";
                     float total = (float) CloudMusic.durationMsNow();
@@ -539,28 +585,30 @@ public class ControlsBar extends NCMPanel {
                         .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
                         .setPosition(progressBarBg.getRelativeX() + progressBarBg.getWidth() + 4, lblCurTime.getRelativeY()));
 
-        LabelWidget lblMusicName = new LabelWidget(() -> CloudMusic.currentlyPlaying == null ? "未在播放" : CloudMusic.currentlyPlaying.getName(), FontManager.pf14bold);
+        LabelWidget lblMusicName = new LabelWidget(() -> presentation.displayTrack == null ? "未在播放" : presentation.displayTrack.getName(), FontManager.pf14bold);
         this.addChild(lblMusicName);
 
         lblMusicName
                 .setClickable(false)
                 .setBeforeRenderCallback(() -> lblMusicName
+                        .setAlpha(selectionMotion.contentAlpha())
                         .centerVertically()
                         .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
                         .setPosition(
                                 playingCover.getRelativeX() + playingCover.getWidth() + 4,
-                                lblMusicName.getRelativeY() - lblMusicName.getHeight() * .5 - 2
+                                lblMusicName.getRelativeY() - lblMusicName.getHeight() * .5 - 2 + selectionMotion.offset()
                         )
                         .setMaxWidth(Math.max(0.0,
                                 lblCurTime.getRelativeX() - lblMusicName.getRelativeX() - 4)));
 
         LabelWidget lblMusicArtist = new LabelWidget(
                 () -> {
-                    if (CloudMusic.currentlyPlaying == null)
+                    if (presentation.displayTrack == null)
                         return "无";
                     // 专辑可以是 null（单曲、电台、以及一起听下发的曲目都可能没有专辑），
                     // 那时只显示歌手，不要为了拼一个「 - 」把整条播放条崩掉。
-                    Music playing = CloudMusic.currentlyPlaying;
+                    Music playing = presentation.displayTrack;
+                    if (presentation.preparing) return "准备播放 · " + playing.getArtistsName() + " · 原曲继续播放";
                     String album = playing.getAlbum() == null ? null : playing.getAlbum().getName();
                     return album == null || album.isEmpty()
                             ? playing.getArtistsName()
@@ -573,11 +621,12 @@ public class ControlsBar extends NCMPanel {
         lblMusicArtist
                 .setClickable(false)
                 .setBeforeRenderCallback(() -> lblMusicArtist
+                        .setAlpha(selectionMotion.contentAlpha())
                         .centerVertically()
-                        .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
+                        .setColor(NCMScreen.getColor(presentation.preparing ? NCMScreen.ColorType.ACCENT : NCMScreen.ColorType.SECONDARY_TEXT))
                         .setPosition(
                                 playingCover.getRelativeX() + playingCover.getWidth() + 4,
-                                lblMusicArtist.getRelativeY() + lblMusicArtist.getHeight() * .5 + 2
+                                lblMusicArtist.getRelativeY() + lblMusicArtist.getHeight() * .5 + 2 + selectionMotion.offset()
                         )
                         .setMaxWidth(Math.max(0.0,
                                 lblCurTime.getRelativeX() - lblMusicArtist.getRelativeX() - 4)));

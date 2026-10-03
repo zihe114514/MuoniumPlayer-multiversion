@@ -151,7 +151,19 @@ final class AutomixPlan {
      * 没有模型时也照样能用。分轨证据优先。</p>
      */
     final double vocalReleaseAt;
+    /** 手动切歌的轻量频谱交接，不借用自动规划的节拍、分轨或变速参数。 */
+    final boolean manualQuickMix;
     final String summary;
+
+    static AutomixPlan manualQuickMix(long overlapMillis) {
+        return manualQuickMix(overlapMillis, true);
+    }
+
+    static AutomixPlan manualQuickMix(long overlapMillis, boolean processing) {
+        return new AutomixPlan(0L, overlapMillis, 0L, 1f, false, processing, 1f, false,
+                0L, 0f, processing ? "manual spectral mix" : "manual plain mix", null, 0f, 0f, false,
+                .42, .42, .45, false, 500.0, 0f, 0.0, processing);
+    }
 
     AutomixPlan(long fireMillis, long overlapMillis, long incomingCueMillis, float matchGain,
                 boolean barAligned, boolean bassSwap, float tempoRatio, boolean pitchShift,
@@ -179,6 +191,20 @@ final class AutomixPlan {
                 FoliaTransitionStyle style, float midTiltDb, float highTiltDb, boolean echoThrow,
                 double drumHandoverAt, double bassHandoverAt, double vocalEntryAt, boolean stemDriven,
                 double animationPeriodMillis, float outgoingVocalDuckDepth, double vocalReleaseAt) {
+        this(fireMillis, overlapMillis, incomingCueMillis, matchGain, barAligned, bassSwap,
+                tempoRatio, pitchShift, phaseErrorMillis, vocalDuckDepth, summary, style,
+                midTiltDb, highTiltDb, echoThrow, drumHandoverAt, bassHandoverAt, vocalEntryAt,
+                stemDriven, animationPeriodMillis, outgoingVocalDuckDepth, vocalReleaseAt, false);
+    }
+
+    private AutomixPlan(long fireMillis, long overlapMillis, long incomingCueMillis, float matchGain,
+                        boolean barAligned, boolean bassSwap, float tempoRatio, boolean pitchShift,
+                        long phaseErrorMillis, float vocalDuckDepth, String summary,
+                        FoliaTransitionStyle style, float midTiltDb, float highTiltDb, boolean echoThrow,
+                        double drumHandoverAt, double bassHandoverAt, double vocalEntryAt, boolean stemDriven,
+                        double animationPeriodMillis, float outgoingVocalDuckDepth, double vocalReleaseAt,
+                        boolean manualQuickMix) {
+        this.manualQuickMix = manualQuickMix;
         this.pitchShift = pitchShift;
         this.fireMillis = fireMillis;
         this.overlapMillis = overlapMillis;
@@ -238,6 +264,11 @@ final class AutomixPlan {
     }
 
     private double blendHeadroom(double progress) {
+        if (manualQuickMix) {
+            // 未经响度分析的曲目叠加时留 1.25 dB 余量，端点仍回到单位增益。
+            double hump = Math.sin(progress * Math.PI);
+            return Math.pow(10.0, -1.25 * hump * hump / 20.0);
+        }
         if (style == null) return 1.0;
         double attenuationDb = -FOLIA_BLEND_HEADROOM_DB * Math.sin(progress * Math.PI);
         return Math.pow(10.0, attenuationDb / 20.0);
@@ -272,6 +303,7 @@ final class AutomixPlan {
      * 和 DJ 拧低频旋钮是同一个动作。</p>
      */
     float outgoingBassDb(double progress) {
+        if (manualQuickMix) return manualExit(-12f, progress, 0.0, .55);
         if (!bassSwap) return 0f;
         double p = clamp(progress);
         if (stemDriven) {
@@ -293,6 +325,7 @@ final class AutomixPlan {
      * 使新曲独自播放时永远不会显得单薄。</p>
      */
     float incomingBassDb(double progress) {
+        if (manualQuickMix) return manualEntry(-9f, progress, .28, .78);
         if (!bassSwap) return 0f;
         double p = clamp(progress);
         if (stemDriven) {
@@ -308,21 +341,39 @@ final class AutomixPlan {
         return (float) (AutomixSettings.BASS_ENTRY_CUT_DB * (1.0 - share));
     }
 
-    /**
-     * 接入方 deck 的人声频段消除深度，0..1。
-     *
-     * <p>退出曲目仍在唱时保持全深，然后沿 smoothstep 释放，使
-     * 到达的曲目逐渐长成完整混音，而不是突然打开人声。在渐变的
-     * {@value #VOCAL_DUCK_RELEASE_COMPLETE} 处归零：听众保留的那个 deck 必须平直，
-     * 且要在混音结束前——而不是驱动器恰好注意到时。</p>
-     */
+    /** 旧歌让出主体和明亮度；自动规划仍保留原来的出场音色。 */
+    float outgoingMidDb(double progress) {
+        return manualQuickMix ? manualExit(-2.5f, progress, .12, .65) : 0f;
+    }
+
+    float outgoingHighDb(double progress) {
+        return manualQuickMix ? manualExit(-3f, progress, .08, .70) : 0f;
+    }
+
+    /** 仅做轻量 EQ，不消除中央人声；新歌在过渡结束前恢复原始音色。 */
+    private static float manualEntry(float cutDb, double progress, double start, double complete) {
+        double p = clamp(progress);
+        if (p <= start) return cutDb;
+        if (p >= complete) return 0f;
+        return (float) (cutDb * (1.0 - smoothstep((p - start) / (complete - start))));
+    }
+
+    private static float manualExit(float cutDb, double progress, double start, double complete) {
+        double p = clamp(progress);
+        if (p <= start) return 0f;
+        if (p >= complete) return cutDb;
+        return (float) (cutDb * smoothstep((p - start) / (complete - start)));
+    }
+
     /** 接入方 deck 的中频补偿，在混音结束前缓回平直。 */
     float incomingMidDb(double progress) {
+        if (manualQuickMix) return manualEntry(-1f, progress, .20, .75);
         return toneEntry(midTiltDb, progress, stemDriven ? drumHandoverAt : .85);
     }
 
     /** 接入方 deck 的高频补偿，在混音结束前缓回平直。 */
     float incomingHighDb(double progress) {
+        if (manualQuickMix) return manualEntry(-2f, progress, .15, .85);
         return toneEntry(highTiltDb, progress, .85);
     }
 
@@ -337,6 +388,14 @@ final class AutomixPlan {
         if (p >= end) return 0f;
         return (float) (tiltDb * (1.0 - smoothstep(p / end)));
     }
+    /**
+     * 接入方 deck 的人声频段消除深度，0..1。
+     *
+     * <p>退出曲目仍在唱时保持全深，然后沿 smoothstep 释放，使
+     * 到达的曲目逐渐长成完整混音，而不是突然打开人声。在渐变的
+     * {@value #VOCAL_DUCK_RELEASE_COMPLETE} 处归零：听众保留的那个 deck 必须平直，
+     * 且要在混音结束前——而不是驱动器恰好注意到时。</p>
+     */
     float incomingVocalDepth(double progress) {
         if (vocalDuckDepth <= 0f) return 0f;
         double p = clamp(progress);

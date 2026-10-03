@@ -10,6 +10,7 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.AudioPlayer;
 import com.muoniumplayer.core.ncm.music.AutomixCueMarker;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.PlaybackPresentation;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.*;
 import com.muoniumplayer.core.rendering.Image;
@@ -77,6 +78,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     double progressBarProgressOverride = 0;
     double progressBarHeight = 8, volumeBarHeight = 8;
     private final VolumeControl volumeControl = new VolumeControl();
+    /** 全屏播放页手动上一曲/下一曲的即时方向反馈，不参与音频状态。 */
+    private final TrackNavigationMotion navigationMotion = new TrackNavigationMotion();
 
     boolean prevMouse = false;
 
@@ -555,13 +558,14 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
         // 渲染一帧只获取一次播放快照：本帧歌词、进度条、逐字高亮、时间文字共享同一 positionMs/durationMs
         CloudMusic.PlaybackSnapshot snapshot = CloudMusic.getSnapshot();
+        PlaybackPresentation presentation = CloudMusic.playbackPresentation();
 
         api.getGLStateManager().pushMatrix();
         double contentScale = getContentScale(alpha);
         scaleAtPos(posX + width * .5, posY + height * .5, contentScale);
 
         this.renderBackground(posX, posY, width, height, alpha, snapshot);
-        this.renderControlsPart(mouseX, mouseY, posX, posY, width, height, alpha, snapshot);
+        this.renderControlsPart(mouseX, mouseY, posX, posY, width, height, alpha, snapshot, presentation);
 
         // 歌词整列在转场里最后入场，除了 alpha 还带一小段自下而上的浮起：位移与 lyricsFade
         // 读同一个时钟，稳态严格归零。只影响绘制矩阵，不动任何交互矩形；模糊区域与文字在
@@ -570,13 +574,43 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         int lyricWheel = this.styleQuickPanel.handleScroll(dWheel, mouseX, mouseY) ? 0 : dWheel;
         api.getGLStateManager().pushMatrix();
         api.getGLStateManager().translate(0, lyricRise, 0);
-        this.renderLyrics(mouseX, mouseY, posX, posY, width, height, lyricWheel, alpha, snapshot);
+        if (presentation.preparing) {
+            renderPendingLyricStatus(lyricViewport, alpha);
+        } else {
+            this.renderLyrics(mouseX, mouseY, posX, posY, width, height, lyricWheel, alpha, snapshot);
+        }
         api.getGLStateManager().popMatrix();
         // 快捷面板画在最后：它是浮层，必须盖在封面与歌词之上。
         if (!TransitionPerformanceBudget.skipLyricQuickPanel()) {
             this.styleQuickPanel.render(mouseX, mouseY, posX, posY, width, height, alpha);
         }
         api.getGLStateManager().popMatrix();
+    }
+
+    private void renderPendingLyricStatus(LyricViewport viewport, float alphaIn) {
+        float opacity = alphaIn * (float) CoverHeroTransition.lyricsFade();
+        if (opacity <= .01f || viewport.width <= 1.0) return;
+        int accent = NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
+        double phase = System.nanoTime() / 1_000_000_000.0;
+        String title = "正在准备下一曲";
+        String subtitle = "当前歌曲继续播放";
+        double titleWidth = FontManager.pf18bold.getStringWidthD(title);
+        double subtitleWidth = FontManager.pf14.getStringWidthD(subtitle);
+        double contentWidth = Math.max(titleWidth, subtitleWidth) + 28.0;
+        double contentHeight = 42.0;
+        double x = viewport.left + (viewport.width - contentWidth) * .5;
+        double y = viewport.top + (viewport.height - contentHeight) * .5;
+        double iconX = x;
+        double textX = x + 28.0;
+        for (int index = 0; index < 3; index++) {
+            double barHeight = 8.0 + (4.0 + 4.0 * Math.sin(phase * 5.0 - index * .8));
+            roundedRect(iconX + index * 6.0, y + 7.0 + (18.0 - barHeight) * .5,
+                    3.0, barHeight, 1.5, reAlpha(accent, opacity * .72f));
+        }
+        FontManager.pf18bold.drawString(title, textX, y + 11.0,
+                hexColor(1, 1, 1, opacity * .94f));
+        FontManager.pf14.drawString(subtitle, textX, y + 34.0,
+                hexColor(1, 1, 1, opacity * .54f));
     }
 
     private void renderLyrics(double mouseX, double mouseY, double posX, double posY, double width, double height, int dWheel, float alphaIn, CloudMusic.PlaybackSnapshot snapshot) {
@@ -1404,7 +1438,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                 automixCueGlide.update(cue), cue.fading, alpha);
     }
 
-    private void renderControlsPart(double mouseX, double mouseY, double posX, double posY, double width, double height, float alphaIn, CloudMusic.PlaybackSnapshot snapshot) {
+    private void renderControlsPart(double mouseX, double mouseY, double posX, double posY, double width, double height,
+                                    float alphaIn, CloudMusic.PlaybackSnapshot snapshot, PlaybackPresentation presentation) {
         // 左栏这一簇（信息块 / 进度条 / 音量 / 控制键）比页面底色再晚一档到场：接力封面正飞在
         // 它们头上，一起冒出来会糊成一片。用局部量而不是就地改参数，理由同 renderLyrics ——
         // 封面阴影那个 bloom lambda 捕获了它。
@@ -1416,7 +1451,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         // renderBackground 早就按 null 处理了，这里漏了整整三处 —— 于是「一起听最后一曲结束」直接
         // 崩渲染线程。没有曲目时封面与曲名整组让位（这也正是曲名本该消失的样子），进度条与控制键
         // 照常画：它们只依赖 snapshot 里的时间与 player，和曲目对象无关。
-        Music music = snapshot.music;
+        Music music = presentation.displayTrack;
 
         double coverSizeMax = this.getCoverSizeMax(width, height);
         double coverSizeMin = coverSizeMax * .8;
@@ -1457,8 +1492,12 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         api.getGLStateManager().disableAlpha();
 
         // 没有新曲目时也不要留着上一张封面淡出：那是换歌交叉淡入用的，停播时它只会挂在原地。
-        if (!heroOwnsCover && music != null && prevCover != null && coverAlpha <= .9f) {
-            api.getGLStateManager().bindTexture(prevCover.getGlTextureId());
+        ITextureObject outgoingCover = presentation.preparing && snapshot.music != null
+                ? textureManager.getTexture(CloudMusic.preferredCoverLocation(snapshot.music,
+                        snapshot.music.getCoverLocation())) : prevCover;
+        if (!heroOwnsCover && music != null && outgoingCover != null
+                && (presentation.preparing || coverAlpha <= .9f)) {
+            api.getGLStateManager().bindTexture(outgoingCover.getGlTextureId());
             this.roundedRectTextured(coverLeft, coverTop, coverSize, coverSize, coverRadius * coverSizePerc, alpha);
         }
 
@@ -1469,11 +1508,15 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         if (tex != null) {
             // coverAlpha 是换歌交叉淡入的进度，让位期间也得照常推进；停住的话转场一结束
             // 会从上一首的封面重新淡入一次。
-            coverAlpha = Interpolations.interpolate(coverAlpha, 1.0f, 0.2f);
+            if (!presentation.preparing) coverAlpha = Interpolations.interpolate(coverAlpha, 1.0f, 0.2f);
             if (!heroOwnsCover) {
                 api.getGLStateManager().bindTexture(tex.getGlTextureId());
                 tex.linearFilter();
-                this.roundedRectTextured(coverLeft, coverTop, coverSize, coverSize, coverRadius * coverSizePerc, alpha * coverAlpha);
+                float coverOpacity = presentation.preparing
+                        ? alpha * (float) Math.min(1.0, navigationMotion.progress(System.nanoTime()) * 3.0)
+                        : alpha * coverAlpha;
+                this.roundedRectTextured(coverLeft, coverTop, coverSize, coverSize,
+                        coverRadius * coverSizePerc, coverOpacity);
             }
         }
 
@@ -1484,6 +1527,19 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         // 有没有专辑名"变化，让进度条跟着它排版就会每次换歌上下跳一下。
         double volumeBarYOffset = posY + height - Math.max(18, height * .08);
         double progressBarYOffset = volumeBarYOffset - Math.max(TRANSPORT_ZONE_MIN, height * .175);
+
+        if (presentation.preparing && !heroOwnsCover && tex == null) {
+            int accent = NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
+            roundedRect(coverLeft, coverTop, coverSize, coverSize, coverRadius * coverSizePerc,
+                    reAlpha(accent, alpha * .14f));
+            double center = coverLeft + coverSize * .5;
+            double phase = System.nanoTime() / 1_000_000_000.0;
+            for (int index = 0; index < 3; index++) {
+                double pulse = .5 + .5 * Math.sin(phase * 5.0 - index * .8);
+                roundedRect(center - 11 + index * 8, coverTop + coverSize * .5 - 2 - pulse * 5,
+                        4, 4 + pulse * 10, 2, reAlpha(accent, alpha * .75f));
+            }
+        }
 
         double infoBottom = nowPlaying.render(music, elementsXOffset, elementsYOffset, coverSizeMax,
                 alpha, progressBarYOffset - INFO_BAR_GAP);
@@ -1499,24 +1555,34 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         double totalTimeMillis = snapshot.durationMs;
         // 「有没有可用的播放时钟」不能问 snapshot.player：镜像态下出声的是外部播放器，
         // player 恒为 null，而进度条会因此整条停在 0、拖动也没反应。
-        boolean clockReady = CloudMusic.hasPlaybackClock();
+        boolean clockReady = !presentation.preparing && CloudMusic.hasPlaybackClock();
         double perc = !clockReady ? 0 : (progressBarDragging ? progressBarProgressOverride : currentTimeMillis / Math.max(1.0, totalTimeMillis));
 
         // 播放进度条填充：MC 1.8.9 主 framebuffer 无 stencil，stencil 裁剪失效，改为按 perc 直接画 partial 宽度圆角矩形。
         double fillWidth = progressBarWidth * perc;
-        if (fillWidth > 0)
-            roundedRect(elementsXOffset, progressBarYOffset - progressBarHeight * .5, fillWidth, progressBarHeight, Math.min((this.progressBarHeight / 8.0f) * 2.5, fillWidth * .5), hexColor(1, 1, 1, alpha));
+        if (presentation.preparing) {
+            double travel = .5 - .5 * Math.cos(System.nanoTime() / 440_000_000.0 * Math.PI * 2);
+            double span = progressBarWidth * .22;
+            roundedRect(elementsXOffset + (progressBarWidth - span) * travel,
+                    progressBarYOffset - progressBarHeight * .5, span, progressBarHeight,
+                    Math.min(2.5, progressBarHeight * .5),
+                    reAlpha(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), alpha * .85f));
+        } else if (fillWidth > 0) {
+            roundedRect(elementsXOffset, progressBarYOffset - progressBarHeight * .5, fillWidth,
+                    progressBarHeight, Math.min((this.progressBarHeight / 8.0f) * 2.5, fillWidth * .5),
+                    hexColor(1, 1, 1, alpha));
+        }
 
         // automix 的接缝画在这条进度条上。画在时间标签之前，所以后面那两句 00:00 压在记号之上，
         // 竖线出头的一小截不会盖住数字。
-        drawAutomixCue(elementsXOffset, progressBarYOffset - progressBarHeight * .5,
+        if (!presentation.preparing) drawAutomixCue(elementsXOffset, progressBarYOffset - progressBarHeight * .5,
                 progressBarWidth, progressBarHeight, alpha, snapshot);
 
         boolean hoveringProgressBar = progressBarDragging || this.isHovered(mouseX, mouseY, elementsXOffset, progressBarYOffset - progressBarHeight * .5, progressBarWidth, 8);
         this.progressBarHeight = Interpolations.interpolate(this.progressBarHeight, hoveringProgressBar ? 8 : 5, 0.3f);
 
         boolean lmbDown = Mouse.isButtonDown(0);
-        if (hoveringProgressBar && lmbDown && !prevMouse) {
+        if (clockReady && hoveringProgressBar && lmbDown && !prevMouse) {
             prevMouse = true;
             progressBarDragging = true;
 
@@ -1526,6 +1592,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                     posY + height * lyricFraction(), progressBarProgressOverride * totalTimeMillis);
         }
 
+        if (!clockReady) progressBarDragging = false;
         if (progressBarDragging) {
             if (!lmbDown) {
                 progressBarDragging = false;
@@ -1548,8 +1615,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
         // curTime
         float curTime = progressBarDragging ? (float) (progressBarProgressOverride * totalTimeMillis) : (float) currentTimeMillis;
-        FontManager.pf12bold.drawString(formatDuration(curTime), elementsXOffset, progressBarYOffset + 8, hexColor(1, 1, 1, alpha * .5f));
-        String remainingTime = "-" + formatDuration((float) (totalTimeMillis - curTime));
+        FontManager.pf12bold.drawString(presentation.preparing ? "准备中" : formatDuration(curTime), elementsXOffset, progressBarYOffset + 8, hexColor(1, 1, 1, alpha * .5f));
+        String remainingTime = presentation.preparing ? "--:--" : "-" + formatDuration((float) (totalTimeMillis - curTime));
         FontManager.pf12bold.drawString(remainingTime, elementsXOffset + progressBarWidth - FontManager.pf12bold.getStringWidthD(remainingTime), progressBarYOffset + 8, hexColor(1, 1, 1, alpha * .5f));
 
         double volumeBarWidth = coverSizeMax - FontManager.music40.getStringWidthD("I")
@@ -1601,7 +1668,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         prev.setOnClickCallback((x, y, i) -> {
 
             if (i == 0) {
-                if (CloudMusic.hasPlaybackClock() && CloudMusic.currentlyPlaying != null) CloudMusic.prev();
+                if (CloudMusic.hasPlaybackClock() && CloudMusic.currentlyPlaying != null) {
+                    navigationMotion.trigger(-1);
+                    CloudMusic.prev();
+                }
             }
 
             return true;
@@ -1619,11 +1689,46 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         next.setOnClickCallback((x, y, i) -> {
 
             if (i == 0) {
-                if (CloudMusic.hasPlaybackClock() && CloudMusic.currentlyPlaying != null) CloudMusic.next();
+                if (CloudMusic.hasPlaybackClock() && CloudMusic.currentlyPlaying != null) {
+                    navigationMotion.trigger(1);
+                    CloudMusic.next();
+                }
             }
 
             return true;
         });
+
+        renderNavigationFeedback(playPauseButton.getX() + playPauseButton.getWidth() * .5,
+                playPauseButton.getY() + playPauseButton.getHeight() + 4, alpha);
+    }
+
+    /** 只在点击后的短窗口出现：方向箭头 + 一条轻量滑入胶囊，随后自动淡出。 */
+    private void renderNavigationFeedback(double centerX, double topY, float alpha) {
+        if (!navigationMotion.active()) return;
+        long now = System.nanoTime();
+        float motionAlpha = alpha * navigationMotion.alpha(now);
+        if (motionAlpha <= .01f) return;
+
+        int accent = NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
+        String label = navigationMotion.direction() < 0 ? "上一曲" : "下一曲";
+        String icon = navigationMotion.direction() < 0 ? "E" : "H";
+        double labelWidth = FontManager.pf12bold.getStringWidthD(label);
+        double chipWidth = 47.0 + labelWidth;
+        double chipHeight = 21.0;
+        double chipX = centerX - chipWidth * .5 + navigationMotion.travel(now);
+        double chipY = topY;
+
+        roundedRect(chipX, chipY, chipWidth, chipHeight, 10.5,
+                reAlpha(accent, motionAlpha * .16f));
+        roundedOutline(chipX, chipY, chipWidth, chipHeight, 10.5, .75,
+                new Color(reAlpha(accent, motionAlpha * .62f), true));
+        FontManager.music40.drawString(icon, chipX + 8.0,
+                chipY + chipHeight * .5 - FontManager.music40.getFontHeight() * .5 + 2.0,
+                reAlpha(accent, motionAlpha));
+        FontManager.pf12bold.drawString(label,
+                chipX + 31.0 + Math.max(0.0, (chipWidth - 31.0 - labelWidth) * .5),
+                chipY + chipHeight * .5 - FontManager.pf12bold.getFontHeight() * .5 + 1.0,
+                hexColor(1, 1, 1, motionAlpha * .92f));
     }
 
     public void mouseClicked(double mouseX, double mouseY, int mouseButton) {

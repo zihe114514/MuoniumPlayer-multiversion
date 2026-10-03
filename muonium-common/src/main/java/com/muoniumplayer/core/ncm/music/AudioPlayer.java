@@ -32,6 +32,7 @@ public class AudioPlayer {
      * 所以整条链可以一整曲挂着不拆。
      */
     private AutomixDeckChain automixChain;
+    private volatile boolean manualTransitionProcessing;
     private volatile float bassGainDb = 0.0f;
     private volatile float vocalDuckDepth = 0.0f;
     private volatile float midGainDb = 0.0f;
@@ -271,7 +272,7 @@ public class AudioPlayer {
         float safeMillis = total <= 0.0f
                 ? 0.0f
                 : Math.max(0.0f, Math.min(Math.max(0.0f, total - 50.0f), millis));
-        if (safeMillis > 0.0f) this.player.cue(safeMillis / 1000F);
+        this.player.cue(safeMillis / 1000F); // 0 也必须重定位，手动下一首不能沿用自动 cue。
         // 定位之后必须让时间伸缩层重新对齐：它的输出时间轴是自己往前长的，
         // 不重锚就会在跳转后继续放跳转前那一段。
         this.player.resyncTimeStretch();
@@ -393,7 +394,13 @@ public class AudioPlayer {
      * Java 只按参数类型区分，两个五参重载会撞成一个。</p>
      */
     void applyOutgoingAutomixFrame(float fade, float bassDb, float vocalDepth, float tempo, float pitch) {
-        applyAutomixFrame(fade, bassDb, vocalDepth, 0f, 0f);
+        applyOutgoingAutomixFrame(fade, bassDb, vocalDepth, 0f, 0f, tempo, pitch);
+    }
+
+    /** 出场方同样可让出中高频；保留五参入口供原有自动混音调用。 */
+    void applyOutgoingAutomixFrame(float fade, float bassDb, float vocalDepth,
+                                   float midDb, float highDb, float tempo, float pitch) {
+        applyAutomixFrame(fade, bassDb, vocalDepth, midDb, highDb);
         applySpeedAndPitchNow(tempo, pitch);
     }
 
@@ -414,17 +421,27 @@ public class AudioPlayer {
         }
     }
 
+    /** 手动切歌独立使用轻量 EQ，不要求开启自动混音的人声抵消或低音替换。 */
+    void enableManualTransitionProcessing() {
+        this.manualTransitionProcessing = true;
+        // 正在出声的旧牌只更新目标，不能每次切歌重置它的滤波历史。
+        if (this.automixChain == null || !this.automixChain.isAttachedTo(this.player)) {
+            attachAutomixChain();
+        }
+        if (this.automixChain != null) this.automixChain.transitionToneBands(true);
+    }
+
     /**
      * 如果 automix 处理链还不在信号图里，就把它接上。
      *
      * <p>在 deck 即将出声之前调用，所以绝不会在音频流经信号图的中途重接。
      * 这条链只在 automix 真被允许使用时才创建：关掉 automix——
-     * 或低音替换与人声闪避都关掉——deck 就保持原始的、无效果的信号图。</p>
+     * 或低音替换与人声闪避都关掉且没有手动交接——deck 就保持原始的、无效果的信号图。</p>
      * 
      */
     private void attachAutomixChain() {
         if (!AutomixSettings.isEnabled()) return;
-        if (!AutomixSettings.isFoliaEngine() && !AutomixSettings.isBassSwapEnabled()
+        if (!this.manualTransitionProcessing && !AutomixSettings.isFoliaEngine() && !AutomixSettings.isBassSwapEnabled()
                 && !AutomixSettings.isVocalDuckEnabled()) return;
         if (!isUsable()) return;
         try {
@@ -436,6 +453,7 @@ public class AudioPlayer {
             // 这种情况下减去中央会把整个被抵消的频带一起带走。
             // 
             this.automixChain.stereo(channelCount() >= 2);
+            this.automixChain.transitionToneBands(this.manualTransitionProcessing);
             // 走 routeVocalDepth 而不是直接读字段：素材接得上时这条链的深度必须是 0，
             // 否则预卷好的 deck 在 prepareStart 里会被重新 resetTo 一次，把已经在用素材减的
             // 那条人声又用抵消器减一遍 —— 症状是交接中段人声所在的那个位置整段中空。
@@ -650,6 +668,8 @@ public class AudioPlayer {
 
     /** 把这一路 deck 恢复成平直响应、完整人声与自然速度。 */
     public void resetAutomixProcessing() {
+        this.manualTransitionProcessing = false;
+        if (this.automixChain != null) this.automixChain.transitionToneBands(false);
         setBassGainDb(0.0f);
         setMidGainDb(0.0f);
         setHighGainDb(0.0f);
@@ -664,6 +684,7 @@ public class AudioPlayer {
     }
 
     private void releaseAutomixChain() {
+        this.manualTransitionProcessing = false;
         AutomixDeckChain chain = this.automixChain;
         this.automixChain = null;
         if (chain == null) return;

@@ -36,12 +36,11 @@ class SidebarEntranceStaticTest {
         String body = read(NAVIGATE);
         assertFalse(body.contains("playlistPanel.addChild(new PlaylistItem"),
                 "还有一行是直接 addChild 的：它没被记签名，也就永远不会演进场");
-        // 允许直接挂进列表的只有栏目标题那几块 —— 它们不是「行」，重亮只会像闪。
-        assertEquals(4, count(body.replace("this.playlistPanel.addChild(item);", ""),
-                        "this.playlistPanel.addChild("),
-                "侧栏里出现了新的直接 addChild：新增一行必须走 addSidebarRow 交签名");
-        assertTrue(body.contains("this.playlistPanel.addChild(item)"),
-                "helper 本身不见了");
+        // 行和栏目标题都经过统一的装配 helper；列表容器只在 helper 内接收控件。
+        assertEquals(2, count(body, "this.playlistPanel.addChild("),
+                "侧栏里出现了新的直接 addChild：新增一行必须走统一装配 helper");
+        assertTrue(body.contains("this.playlistPanel.addChild(item)"), "行装配 helper 本身不见了");
+        assertTrue(body.contains("this.playlistPanel.addChild(widget)"), "栏目装配 helper 本身不见了");
     }
 
     @Test
@@ -62,12 +61,14 @@ class SidebarEntranceStaticTest {
     void leavingRowsAreKeptAndFaded() throws IOException {
         String body = read(NAVIGATE);
         String retire = between(body, "private void retireRows", "private void advanceRetiringRows");
-        assertTrue(retire.contains("this.getChildren().indexOf(this.playlistPanel)"),
+        assertTrue(retire.contains("this.retirementLayer.addChild(row)"),
                 "退场的行没有被挂回侧栏：整树重建之后旧行直接消失，这就是「没有退场动画」");
-        assertTrue(retire.contains("row.setParent(this)"),
+        assertTrue(retire.contains("this.retirementLayer.addChild(row)"),
                 "为了插到指定位置绕过了 addChild，却没换父亲：getY() 还按旧列表容器算，幽灵整批跑出侧栏");
         assertFalse(retire.contains("playlistPanel.addChild"),
                 "退场的行挂进了列表容器：列表是自动堆叠的，多挂一行就会把新行往下顶一格");
+        assertTrue(retire.contains("row.entranceQueue = null"),
+                "旧进场回调不能在退场期间把透明度写回，造成动画竞争");
         assertTrue(retire.contains("row.setClickable(false)"),
                 "退场中的行还在吃点击：按到一行已经不存在的东西上");
         // 装配这一趟里侧栏自己的绝对 y 还不可信（basePanel 要到渲染回调才 center()），
@@ -92,15 +93,15 @@ class SidebarEntranceStaticTest {
     void retiringBatchIsDrivenAndBounded() throws IOException {
         String body = read(NAVIGATE);
         String advance = between(body, "private void advanceRetiringRows", "private static String playlistRowKey");
-        assertTrue(advance.contains("this.getChildren().remove(row)"),
+        assertTrue(advance.contains("this.retirementLayer.getChildren().remove(row)"),
                 "演完没从树上摘掉：幽灵行会永远挂在侧栏上，越攒越多");
         assertTrue(advance.contains("System.currentTimeMillis()"), "退场没有真实时间来源");
-        assertTrue(advance.contains("row.setPosition(4, row.retireAbsY - this.getY())"),
+        assertTrue(advance.contains("row.setPosition(4, row.retireAbsY - this.retirementLayer.getY())"),
                 "退场没有每帧重新钉住那一格：幽灵会停在装配那一刻算出来的错位置上");
         // 不透明度要「先掉后缓」：线性会在头两三帧还接近满的，那正是和新列叠在一起的时候。
         assertTrue(advance.contains("row.retireOut = Math.pow(Math.max(0.0, progress), .35)"),
                 "退场按缓动值线性淡出：最该让位的那几帧它还画满，新一列被压在下面糊成两行字");
-        assertTrue(advance.contains("row.setAlpha((float) (1.0 - row.retireOut))"),
+        assertTrue(advance.contains("row.setAlpha((float) (row.retireAlpha * (1.0 - row.retireOut)))"),
                 "淡出没有跟着那条先掉后缓的进度走");
         assertTrue(body.contains("this.advanceRetiringRows();"),
                 "退场没挂在侧栏自己的每帧回调上：它们不属于任何列表，没人推进就会停在半透明上");
@@ -114,9 +115,9 @@ class SidebarEntranceStaticTest {
     void rowKeysCarryThePlatform() throws IOException {
         String body = read(NAVIGATE);
         String key = between(body, "private static String playlistRowKey", "private void layout()");
-        assertTrue(key.contains("NeteaseMusicService.getCurrentPlatform()"),
+        assertTrue(key.contains("currentSourceIdentity()") || key.contains("NeteaseMusicService.getCurrentPlatform()"),
                 "签名里没有当前音源：网易云和酷狗撞同一个数字 id 时换音源就演不出来");
-        assertFalse(key.contains("playlist.getPlatform()"),
+        assertFalse(key.contains("playlist.getPlatform()") && !key.contains("local"),
                 "用的是 playlist 自己那个 transient 平台字段，各家服务填得不一定齐");
         // 账号歌单、本地单、导入引用、收藏四类都要各归各的 kind，撞名才会互相顶掉签名。
         for (String kind : new String[]{"\"local\"", "\"imported\"", "\"account\"", "\"subscribed\""}) {

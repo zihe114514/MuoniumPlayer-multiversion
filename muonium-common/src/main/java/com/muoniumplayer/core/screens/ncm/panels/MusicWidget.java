@@ -3,6 +3,7 @@ package com.muoniumplayer.core.screens.ncm.panels;
 import today.opai.api.enums.EnumChatColor;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.PlaybackPresentation;
 import com.muoniumplayer.core.ncm.music.CrossSourceSwitcher;
 import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.LocalPlaylistStore;
@@ -24,6 +25,8 @@ import com.muoniumplayer.core.rendering.ui.widgets.RoundedImageWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.SheetHeroRelay;
+import com.muoniumplayer.core.screens.ncm.SheetClock;
+import com.muoniumplayer.core.screens.ncm.TrackSelectionMotion;
 import com.muoniumplayer.core.utils.Location;
 
 import java.awt.*;
@@ -42,6 +45,12 @@ public class MusicWidget extends RoundedRectWidget {
     private static final double ACTION_GAP = 4.0;
     /** 一小时的毫秒数：到这个长度 {@link #formatDuration(long)} 才会多出小时位。 */
     private static final long ONE_HOUR_MILLIS = 3600_000L;
+
+    private final TrackSelectionMotion selectionMotion = new TrackSelectionMotion();
+    private PlaybackPresentation presentation = new PlaybackPresentation(null, null, 0L);
+    private boolean displaySelected;
+    private double selectionEmphasis;
+    private long feedbackNanos;
 
     public PlayList playList;
     public Music music;
@@ -67,18 +76,46 @@ public class MusicWidget extends RoundedRectWidget {
                 .setRadius(this.getRadius())
                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)));
 
-        RoundedRectWidget rrPlayingIndicator = new RoundedRectWidget();
+        RoundedRectWidget rrPlayingIndicator = new RoundedRectWidget() {
+            @Override public void onRender(double mouseX, double mouseY) {
+                float opacity = getAlpha();
+                if (opacity < .01f) return;
+                int accent = NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
+                double glow = selectionMotion.burst() * .10 + selectionMotion.settledGlow() * .12;
+                roundedRect(getX(), getY(), getWidth(), getHeight(), 3,
+                        reAlpha(accent, (float) (opacity * (.17 + glow))));
+                roundedOutline(getX() + .5, getY() + .5, getWidth() - 1, getHeight() - 1, 3, .6,
+                        new Color(reAlpha(accent, opacity * .35f), true));
+                // 左侧光轨是持续的选中标记，不再用一整块高饱和蓝色遮住玻璃与文本。
+                roundedRect(getX() + 1, getY() + 6, 2, getHeight() - 12, 1,
+                        reAlpha(accent, opacity * .95f));
+                // 只在点击后扫过一次；所有光片夹在本行内部，不溢出滚动区。
+                double sweep = selectionMotion.sweep();
+                if (sweep < 1.0) {
+                    double head = (getWidth() + 100) * sweep - 100;
+                    for (int part = 0; part < 12; part++) {
+                        double left = Math.max(4, head + part * 7);
+                        double right = Math.min(getWidth() - 4, head + part * 7 + 7);
+                        if (right > left) roundedRect(getX() + left, getY() + 2, right - left,
+                                getHeight() - 4, 0, reAlpha(accent,
+                                (float) (opacity * .13 * Math.sin((part + 1) / 13.0 * Math.PI) * (1 - sweep))));
+                    }
+                }
+                // 序号位让给状态动画：准备中为三颗呼吸点，起播后为三根均衡器音柱。
+                boolean moving = CloudMusic.isAudibleNow();
+                for (int bar = 0; bar < 3; bar++) {
+                    double wave = selectionMotion.pulse(bar);
+                    double height = presentation.preparing ? 2.5 : moving ? 3 + wave * 7 : 3;
+                    roundedRect(getX() + 16 + bar * 3.5, getY() + (getHeight() - height) * .5,
+                            2, height, 1, reAlpha(accent,
+                            (float) (opacity * (presentation.preparing ? .4 + wave * .6 : 1))));
+                }
+            }
+        };
         this.addChild(rrPlayingIndicator);
-        rrPlayingIndicator
-                .setAlpha(0f)
-                .setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT))
-                .setClickable(false);
-        if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.equals(music)) {
-            rrPlayingIndicator.setAlpha(1f);
-        }
+        rrPlayingIndicator.setClickable(false);
         rrPlayingIndicator.setBeforeRenderCallback(() -> rrPlayingIndicator
-                .setMargin(0)
-                .setRadius(this.getRadius()));
+                .setMargin(0).setRadius(3));
 
         this.setBeforeRenderCallback(() -> {
 
@@ -98,24 +135,25 @@ public class MusicWidget extends RoundedRectWidget {
             this.setGlassPlate(GlassLook.Surface.PLAYER);
             this.updateEntranceAnimation();
 
-            if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.equals(music)) {
-//                this.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-                rrPlayingIndicator.setAlpha(Interpolations.interpolate(rrPlayingIndicator.getWidgetAlpha(), .9f, .4f));
-                rrPlayingIndicator.setHidden(false);
-            } else if (this.isHovering()) {
-//                this.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER));
-                rrHoverIndicator.setAlpha(Interpolations.interpolate(rrHoverIndicator.getWidgetAlpha(), 1, .3f));
-                rrHoverIndicator.setHidden(false);
-            } else {
-                rrPlayingIndicator.setAlpha(Interpolations.interpolate(rrPlayingIndicator.getWidgetAlpha(), 0, .4f));
-                rrHoverIndicator.setAlpha(Interpolations.interpolate(rrHoverIndicator.getWidgetAlpha(), 0, .3f));
-
-                if (rrPlayingIndicator.getWidgetAlpha() <= .05f)
-                    rrPlayingIndicator.setHidden(true);
-
-                if (rrHoverIndicator.getWidgetAlpha() <= .05f)
-                    rrHoverIndicator.setHidden(true);
+            presentation = CloudMusic.playbackPresentation();
+            boolean selected = presentation.isSelected(music);
+            long now = System.nanoTime();
+            double elapsed = feedbackNanos == 0 ? 16 : Math.min(100, Math.max(0, (now - feedbackNanos) / 1_000_000.0));
+            feedbackNanos = now;
+            if (selected) {
+                selectionMotion.update(presentation.displayKey(), presentation.requestNanos,
+                        presentation.preparing, now, SheetClock.speed());
+                // 点击第一帧就亮，而不是等若干帧指数逼近才知道自己选中了。
+                if (!displaySelected) selectionEmphasis = Math.max(.72, selectionEmphasis);
             }
+            displaySelected = selected;
+            double target = selected ? 1 : 0;
+            selectionEmphasis = target + (selectionEmphasis - target) * Math.exp(-elapsed / 80.0);
+            rrPlayingIndicator.setAlpha((float) selectionEmphasis);
+            // 两条状态独立收尾：鼠标仍悬停在旧行时，旧行也必须退掉选中高光。
+            float hoverTarget = !selected && this.isHovering() ? 1f : 0f;
+            rrHoverIndicator.setAlpha(Interpolations.interpolate(rrHoverIndicator.getWidgetAlpha(), hoverTarget, .3f));
+            rrHoverIndicator.setHidden(false);
 
             this.setRadius(2);
         });
@@ -162,7 +200,8 @@ public class MusicWidget extends RoundedRectWidget {
         this.addChild(lblMusicIndex);
 
         lblMusicIndex.setBeforeRenderCallback(() -> {
-            if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.equals(music))
+            lblMusicIndex.setAlpha(displaySelected ? 0f : (float) (1.0 - selectionEmphasis));
+            if (displaySelected)
                 lblMusicIndex.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             else
                 lblMusicIndex.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
@@ -441,7 +480,7 @@ public class MusicWidget extends RoundedRectWidget {
         lblMusicArtist
                 .setWidthLimitType(LabelWidget.WidthLimitType.SCROLL)
                 .setBeforeRenderCallback(() -> {
-                    if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.equals(music))
+                    if (displaySelected)
                         lblMusicArtist.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
                     else
                         lblMusicArtist.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
@@ -458,7 +497,7 @@ public class MusicWidget extends RoundedRectWidget {
                 () -> formatDuration(music.getDuration()), FontManager.pf14bold);
         this.addChild(lblMusicDuration);
         lblMusicDuration.setBeforeRenderCallback(() -> {
-            if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.equals(music))
+            if (displaySelected)
                 lblMusicDuration.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             else
                 lblMusicDuration.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));

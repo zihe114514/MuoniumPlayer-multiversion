@@ -64,6 +64,8 @@ public class VocalDuckFilter extends FilterLowShelf {
     private volatile double targetDepth;
     private volatile double targetMidGainDb;
     private volatile double targetHighGainDb;
+    /** 手动切歌使用 280 Hz / 4.2 kHz 分频；自动计划保留原有音色算法。 */
+    private volatile boolean transitionToneBands;
     /** 默认为安全模式：如果没有有线侧通道，则完全减法是错误的。*/
     private volatile boolean monoFallback = true;
 
@@ -117,6 +119,11 @@ public class VocalDuckFilter extends FilterLowShelf {
 
     public float getHighGainDb() { return (float) this.targetHighGainDb; }
 
+    /** 只改变分频目标，不清除正在出声的滤波历史。 */
+    public void setTransitionToneBands(boolean enabled) {
+        this.transitionToneBands = enabled;
+    }
+
     public void resetToneTo(float midDb, float highDb) {
         setMidGainDb(midDb); setHighGainDb(highDb);
         this.currentMidGainDb = this.targetMidGainDb; this.currentHighGainDb = this.targetHighGainDb;
@@ -158,8 +165,13 @@ public class VocalDuckFilter extends FilterLowShelf {
         double[] other = this.side.getValues();
         boolean mono = this.monoFallback;
         double depth = this.currentDepth;
-        double lowAlpha = 1.0 - Math.exp(-1.0 / (.004 * rate));
-        double midAlpha = 1.0 - Math.exp(-1.0 / (.012 * rate));
+        boolean manualBands = this.transitionToneBands;
+        double lowAlpha = manualBands
+                ? 1.0 - Math.exp(-2.0 * Math.PI * Math.min(4_200.0, rate * .45) / rate)
+                : 1.0 - Math.exp(-1.0 / (.004 * rate));
+        double midAlpha = manualBands
+                ? 1.0 - Math.exp(-2.0 * Math.PI * Math.min(280.0, rate * .20) / rate)
+                : 1.0 - Math.exp(-1.0 / (.012 * rate));
         double midGain = Math.pow(10.0, this.currentMidGainDb / 20.0);
         double highGain = Math.pow(10.0, this.currentHighGainDb / 20.0);
         for (int i = start; i < limit; i++) {

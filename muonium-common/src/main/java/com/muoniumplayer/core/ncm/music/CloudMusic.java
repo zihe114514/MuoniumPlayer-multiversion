@@ -418,6 +418,8 @@ public class CloudMusic implements SharedConstants {
         // 独立的单曲队列。现在预备下一首会让队列真的长出历史，如果不改成无条件拦住，FM 就凭空多出
         // 一个官方客户端里并不存在的回退按钮。
         if (personalFmActive) return;
+        if (!awaitingPlaybackAction && requestManualAutomixStep(-1)) return;
+
         updatePlayCountIfNeeded();
 
         if (!canPlayPrevious() || playList.isEmpty()) {
@@ -472,6 +474,8 @@ public class CloudMusic implements SharedConstants {
         if (!awaitingPlaybackAction && player != null && requestManualAutomixSkip()) {
             return;
         }
+
+        if (!awaitingPlaybackAction && requestManualAutomixStep(1)) return;
 
         if (!canPlayNext()) {
             return;
@@ -1092,6 +1096,36 @@ public class CloudMusic implements SharedConstants {
         }
     }
 
+    /** 未预备的手动上一首/下一首，不先改 curIdx，更不先停掉仍在出声的歌。 */
+    private static boolean requestManualAutomixStep(int direction) {
+        Thread active = playThread;
+        return active instanceof PlayThread && ((PlayThread) active).requestManualStep(direction);
+    }
+
+    /** 渲染只读的选曲快照；真正的 currentlyPlaying/session 仍等音频交接才变。 */
+    public static PlaybackPresentation playbackPresentation() {
+        Music audible = currentlyPlaying;
+        Thread active = playThread;
+        if (active instanceof PlayThread) {
+            PlayThread owner = (PlayThread) active;
+            PlayThread.ManualSelection selection = owner.manualSelection;
+            if (selection != null && owner.isSessionUsable(selection.session)) {
+                return new PlaybackPresentation(audible, selection.selectedSong, selection.requestNanos);
+            }
+        }
+        return new PlaybackPresentation(audible, null, 0L);
+    }
+
+    /** 搜索续播结果可能先于音频回来，此时应追加到待交接队列，而不是旧歌的队列。 */
+    private static List<Music> selectedPlaybackQueue() {
+        Thread active = playThread;
+        if (active instanceof PlayThread) {
+            PlayThread.ManualSelection selection = ((PlayThread) active).manualSelection;
+            if (selection != null) return selection.songs;
+        }
+        return playList;
+    }
+
     /**
      * 切换当前播放的暂停/继续。播放器界面的空格键与全局快捷键共用这一条路径，避免两处各写一份判空
      * 逻辑之后行为慢慢分叉；正在进行的无缝淡化由 {@code driveAutomixFade} 一并挂起，这里不必特殊处理。
@@ -1242,7 +1276,7 @@ public class CloudMusic implements SharedConstants {
 
         play(Collections.singletonList(selected), 0);
 
-        final List<Music> installedQueue = playList;
+        final List<Music> installedQueue = selectedPlaybackQueue();
         final List<Music> fallbackTail = tailAfterSelected(results, selectedIndex);
         MultiThreadingUtil.runAsync(() -> {
             List<Music> recent = NeteaseRecentPlaysService.fetchRecentSongs(
@@ -1298,7 +1332,7 @@ public class CloudMusic implements SharedConstants {
         synchronized (PLAY_NEXT_LOCK) {
             // 队列必须还是当初装进去的那一条实例，并且仍然只有那一首：用户在这几百毫秒里换了歌、
             // 换了歌单、或者用"下一首播放"插了曲目，都不能再往里追加。
-            if (playList != installedQueue || installedQueue.size() != 1) return;
+            if (selectedPlaybackQueue() != installedQueue || installedQueue.size() != 1) return;
             Music head = installedQueue.get(0);
             if (head == null || !head.equals(selected)) return;
 
@@ -1366,13 +1400,16 @@ public class CloudMusic implements SharedConstants {
 
         // 深拷贝一份以避免打乱时影响来源列表；FM 会话始终保持接口返回顺序。
         List<Music> safeSongList = new ArrayList<>(songs);
-        stopExistingPlayThread();
-
         if (!personalFmActive && playMode == PlayMode.Random) {
             startIdx = handleRandomPlayMode(safeSongList, startIdx);
         }
 
-        startIdx = normalizeStartIndex(startIdx);
+        startIdx = Math.max(0, Math.min(normalizeStartIndex(startIdx), safeSongList.size() - 1));
+        Thread active = playThread;
+        if (active instanceof PlayThread
+                && ((PlayThread) active).requestManualSelection(safeSongList, startIdx, true)) return;
+
+        stopExistingPlayThread();
         loadMusicCover(safeSongList.get(Math.min(startIdx, safeSongList.size() - 1)));
         playList = safeSongList;
         clearQueuedNext();
@@ -1474,13 +1511,15 @@ public class CloudMusic implements SharedConstants {
     static AtomicBoolean playing = new AtomicBoolean(true);
 
     private static class PlayThread extends Thread {
-        private final List<Music> songs;
+        private volatile List<Music> songs;
         private final int startIdx;
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
         private PlaybackSession session;
         private volatile AudioPlayer ownedPlayer;
         /** 下一首曲目已解码完成，正在空闲播放牌上静默等待。 */
         private volatile ArmedTrack armed;
+        /** 点击只提交意图；下载/解码不占用 UI、监督 tick 或低优先级分析队列。 */
+        private volatile ManualSelection manualSelection;
         /** 后台预备任务运行期间为 true，确保同一时间只有一次预备在进行。 */
         private volatile boolean arming;
         /** 当前曲目已进行的预备尝试次数：瞬时失败会重试，而彻底损坏则停止。 */
@@ -1653,6 +1692,7 @@ public class CloudMusic implements SharedConstants {
                 playing.set(false);
             } finally {
                 // 正在混音中途的播放牌不是活动播放器，所以其他任何路径都不会释放它。
+                cancelManualSelection();
                 cancelArmedTrack();
                 finishAutomixFade();
             }
@@ -1673,6 +1713,7 @@ public class CloudMusic implements SharedConstants {
 
         private void cancelPlayback() {
             cancelled.set(true);
+            cancelManualSelection();
             PlaybackSession activeSession = session;
             if (activeSession != null) activeSession.invalidate();
             interrupt();
@@ -1942,6 +1983,22 @@ public class CloudMusic implements SharedConstants {
                     finishAutomixFade();
                 }
                 driveAutomixFade();
+                if (manualSelection != null) {
+                    if (tryManualSelectionHandover(activePlayer)) {
+                        automixHandover = true;
+                        return;
+                    }
+                    // 用户选择优先于自动点火。暂停期间不提交，旧歌自然结束也不偷播队列下一首。
+                    if (manualSelection != null) {
+                        try {
+                            Thread.sleep(10L);
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                        continue;
+                    }
+                }
                 // 在预备簿记之前处理：maybeArmNextTrack 内部的队列修订号变化
                 // 会丢弃已预备的播放牌，而早一个 tick 到达的请求不能连同它一起
                 // 被丢弃，必须改为执行普通切换。
@@ -2170,6 +2227,16 @@ public class CloudMusic implements SharedConstants {
             return audioCachePrefix(song) + qualityId;
         }
 
+        private static final Object[] AUDIO_PREPARATION_LOCKS = new Object[64];
+        static {
+            Arrays.setAll(AUDIO_PREPARATION_LOCKS, index -> new Object());
+        }
+
+        private static Object audioPreparationLock(Music song, String fallback) {
+            String key = song == null ? fallback : song.getStableKey();
+            return AUDIO_PREPARATION_LOCKS[(key.hashCode() & Integer.MAX_VALUE) % AUDIO_PREPARATION_LOCKS.length];
+        }
+
         /**
  * CDN URL 声明的格式并不总是服务器实际返回的容器。尤其是观察到一些无损
  * 网易云 URL 在报告 MP3 类型的同时返回 FLAC 字节。SoundFile 按扩展名选择解码器，
@@ -2203,6 +2270,17 @@ public class CloudMusic implements SharedConstants {
  */
         static File cachedAudioFile(String playUrl, String type, Music song, Quality quality,
                                     boolean downloadIfMissing) {
+            // 只读探测不能被后台下载挡住；半成品不会以音频扩展名暴露。
+            if (!downloadIfMissing) return cachedAudioFileLocked(playUrl, type, song, quality, false);
+            // 手动点歌可能与自动预取命中同一曲；复用在途缓存，而不是互删同一个 .download。
+            synchronized (audioPreparationLock(song, playUrl)) {
+                if (Thread.currentThread().isInterrupted()) throw new IllegalStateException("Audio preparation cancelled");
+                return cachedAudioFileLocked(playUrl, type, song, quality, downloadIfMissing);
+            }
+        }
+
+        private static File cachedAudioFileLocked(String playUrl, String type, Music song, Quality quality,
+                                                  boolean downloadIfMissing) {
             File musicCacheDir = MusicAudioCache.directory();
             if (!musicCacheDir.exists() && !musicCacheDir.mkdirs()) {
                 throw new IllegalStateException("Unable to create music cache directory: " + musicCacheDir.getAbsolutePath());
@@ -2275,6 +2353,14 @@ public class CloudMusic implements SharedConstants {
  * DRM 保护或不支持的 MP4 流仍然会安全失败。
  */
         static File resolvePlayableAudioFile(File sourceFile, Music song) {
+            // AAC/WAV 边车也只能有一个写入者；锁在转码结束就释放，不包含模型分析。
+            synchronized (audioPreparationLock(song, sourceFile.getAbsolutePath())) {
+                if (Thread.currentThread().isInterrupted()) throw new IllegalStateException("Audio preparation cancelled");
+                return resolvePlayableAudioFileLocked(sourceFile, song);
+            }
+        }
+
+        private static File resolvePlayableAudioFileLocked(File sourceFile, Music song) {
             String container = AudioContainerSupport.detectContainer(sourceFile);
             if (!AudioContainerSupport.isSupportedContainer(container)) {
                 throw new IllegalStateException("Cached audio has an unsupported or invalid container: "
@@ -2441,7 +2527,7 @@ public class CloudMusic implements SharedConstants {
  * 但对按钮按压来说太慢，后者必须感觉立即响应。略低于一秒
  * 足够短以读作"已切换"，又足够长以保持增益渐变而不是接缝处的咔嗒声。</p>
  */
-        private static final long MANUAL_SKIP_FADE_MILLIS = 900L;
+        private static final long MANUAL_SKIP_FADE_MILLIS = 1_200L;
         /**
  * 在计划的交接前多久，静默启动已预备的播放牌。
  *
@@ -2625,6 +2711,7 @@ public class CloudMusic implements SharedConstants {
          */
         private boolean armStillValid(long armGeneration, long armRevision) {
             return !isPlaybackCancelled() && !playListChanged() && !doBreak
+                    && manualSelection == null
                     && generation.get() == armGeneration
                     && CloudMusic.queueRevision == armRevision
                     && AutomixSettings.isEnabled();
@@ -2971,7 +3058,11 @@ public class CloudMusic implements SharedConstants {
                 deck.prepareStart(track.plan.incomingCueMillis - track.preRollMillis);
                 if (!armStillValid(armGeneration, armRevision)) return;
 
-                armed = track;
+                synchronized (PLAYER_STATE_LOCK) {
+                    if (!armStillValid(armGeneration, armRevision)) return;
+                    armed = track;
+                    deck = null; // 在取消路径可见之前完成所有权交接。
+                }
                 // 上一张牌的记账不该跟着新牌活下来（顶住交接的截止时间、拖进度条的收尾位）。
                 seamHoldUntil = 0L;
                 seekDuringFadeRequested = false;
@@ -3504,6 +3595,204 @@ public class CloudMusic implements SharedConstants {
                     + "ms → " + fresh.summary);
             DownloadDynamicIsland.showAutomixArmed(track.song.getName());
         }
+        /** 独立于自动预备的用户意图。所有权发布/撤销与播放器提交共用 PLAYER_STATE_LOCK。 */
+        private static final class ManualSelection {
+            final List<Music> songs;
+            final int index;
+            final Music selectedSong;
+            final long requestNanos = System.nanoTime();
+            final boolean replaceQueue;
+            final PlaybackSession session;
+            volatile Thread worker;
+            volatile ArmedTrack ready;
+            volatile Throwable failure;
+
+            ManualSelection(List<Music> songs, int index, boolean replaceQueue, PlaybackSession session) {
+                this.songs = songs;
+                this.index = index;
+                this.selectedSong = songs.get(index);
+                this.replaceQueue = replaceQueue;
+                this.session = session;
+            }
+        }
+
+        private boolean requestManualStep(int direction) {
+            synchronized (PLAYER_STATE_LOCK) {
+                ManualSelection pending = manualSelection;
+                List<Music> queue = pending == null ? songs : pending.songs;
+                int index = (pending == null ? curIdx : pending.index) + direction;
+                if (queue.isEmpty()) return false;
+                if (index < 0 || index >= queue.size()) {
+                    if (playMode == PlayMode.Sequential) return pending != null;
+                    index = Math.floorMod(index, queue.size());
+                }
+                return requestManualSelection(queue, index, pending != null && pending.replaceQueue);
+            }
+        }
+
+        private boolean requestManualSelection(List<Music> queue, int index, boolean replaceQueue) {
+            synchronized (PLAYER_STATE_LOCK) {
+                if (!AutomixSettings.isEnabled() || awaitingPlaybackAction || personalFmActive
+                        || MpPartyClient.inRoom() || NeteaseListenTogetherService.isActive()
+                        || KuGouListenTogetherService.isActive()
+                        || doBreak || !isSessionUsable(session)) return false;
+                AudioPlayer outgoing = ownedPlayer;
+                if (outgoing == null || outgoing != player || !outgoing.isUsable()
+                        || (manualSelection == null && (outgoing.isFinished() || outgoing.isPausing()))) return false;
+                if (index < 0 || index >= queue.size() || queue.get(index) == null) return false;
+
+                cancelManualSelection();
+                ManualSelection selection = new ManualSelection(queue, index, replaceQueue, session);
+                // 点击的正好是已解码的下一首时直接复用备用轨，不能因「视觉上先选中」而退化成重新下载。
+                ArmedTrack ready = armed;
+                if (ready != null && ready.index == index && !ready.preRolled
+                        && ready.deck != null && ready.deck.isUsable()
+                        && armStillValid(ready.generation, ready.queueRevision)) {
+                    armed = null;
+                    selection.ready = ready;
+                } else {
+                    queueRevision++;
+                }
+                manualSelection = selection;
+                manualSkipRequested = false;
+                // 使已经在分析/下载的自动预备永远失效，即使手动加载很快失败也不能重新发布旧牌。
+                queueRevision++;
+                Thread worker = new Thread(() -> prepareManualSelection(selection), "Manual track preparation");
+                worker.setDaemon(true);
+                selection.worker = worker;
+                worker.start();
+                // 封面与音频并行准备，显示层立刻认新曲，但歌词与音频会话仍属于旧曲。
+                try { loadMusicCover(selection.selectedSong); } catch (Throwable ignored) { }
+                DownloadDynamicIsland.showManualTrackLoading(selection.selectedSong.getName());
+                return true;
+            }
+        }
+
+        private boolean manualSelectionCurrent(ManualSelection selection) {
+            return manualSelection == selection && !Thread.currentThread().isInterrupted()
+                    && isSessionUsable(selection.session);
+        }
+
+        /** 不等模型、stem、节拍或队尾：只做新歌出声所需的取流、解码和首窗口预热。 */
+        private void prepareManualSelection(ManualSelection selection) {
+            AudioPlayer deck = null;
+            Music song = selection.selectedSong;
+            try {
+                if (!manualSelectionCurrent(selection)) return;
+                Tuple<String, String> url = song.getPlayUrl();
+                if (!manualSelectionCurrent(selection)) return;
+                for (int attempt = 0; attempt < 2; attempt++) {
+                    Throwable streamFailure = null;
+                    if (url != null) {
+                        try {
+                            File file = getMusicFile(url, song);
+                            if (!manualSelectionCurrent(selection)) return;
+                            deck = new AudioPlayer(file);
+                            deck.setTrackName(trackDisplayName(song, file));
+                            deck.setVolume(CloudMusic.getVolume());
+                            deck.setFadeGain(0.0f);
+                            long duration = (long) deck.getTotalTimeMillis();
+                            song.applyDecodedDuration(duration);
+                            if (!manualSelectionCurrent(selection)) return;
+                            if (CrossSourceSwitcher.isIncompleteStream(song.getDuration(), duration)) {
+                                closeQuietly(deck);
+                                deck = null;
+                                file.delete();
+                                throw new IllegalStateException("当前账号只能拿到试听片段");
+                            }
+                            deck.enableManualTransitionProcessing();
+                            deck.prepareStart(0f);
+                            if (!deck.isUsable()) throw new IllegalStateException("音频解码失败");
+                            ArmedTrack track = new ArmedTrack(song, file, deck, selection.index,
+                                    generation.get(), queueRevision);
+                            track.plan = manualSelectionPlan();
+                            synchronized (PLAYER_STATE_LOCK) {
+                                if (!manualSelectionCurrent(selection)) return;
+                                selection.ready = track;
+                                deck = null;
+                            }
+                            return;
+                        } catch (Throwable failure) {
+                            closeQuietly(deck);
+                            deck = null;
+                            streamFailure = failure;
+                        }
+                    }
+                    if (!manualSelectionCurrent(selection)) return;
+                    // 保留普通起播的跨平台救援，但绝不为失败而关掉旧歌，也不循环尝试整张队列。
+                    CrossSourceSwitcher.Match replacement = attempt == 0 && CrossSourceSwitcher.canAutoSwitch(song)
+                            ? CrossSourceSwitcher.findReplacementForAuto(song, CloudMusic.quality) : null;
+                    if (replacement == null) {
+                        if (streamFailure != null) throw streamFailure;
+                        throw new IllegalStateException("没有可用音频源");
+                    }
+                    song = replacement.music;
+                    url = replacement.url;
+                    if (!manualSelectionCurrent(selection)) return;
+                }
+            } catch (Throwable failure) {
+                synchronized (PLAYER_STATE_LOCK) {
+                    if (manualSelectionCurrent(selection)) selection.failure = failure;
+                }
+            } finally {
+                closeQuietly(deck);
+            }
+        }
+
+        /** 固定短频谱交接：从歌曲开头起播，轻量 EQ，不等待分析、变速或移调。 */
+        private static AutomixPlan manualSelectionPlan() {
+            return AutomixPlan.manualQuickMix(MANUAL_SKIP_FADE_MILLIS);
+        }
+
+        private boolean tryManualSelectionHandover(AudioPlayer outgoing) {
+            synchronized (PLAYER_STATE_LOCK) {
+                ManualSelection selection = manualSelection;
+                if (selection == null) return false;
+                cancelArmedTrack();
+                if (selection.failure != null) {
+                    handlePlayerInitializationError(selection.selectedSong, selection.failure);
+                    cancelManualSelection();
+                    return false;
+                }
+                ArmedTrack track = selection.ready;
+                if (track == null) return false;
+                // 加载期间用户按了暂停，准备好的新歌也等用户恢复，不能自行开始出声。
+                if (!outgoing.isFinished() && outgoing.isPausing()) return false;
+                if (!selection.replaceQueue) {
+                    int index = songs.indexOf(selection.selectedSong);
+                    if (index < 0) {
+                        cancelManualSelection();
+                        return false;
+                    }
+                    if (index != track.index) {
+                        ArmedTrack moved = new ArmedTrack(track.song, track.file, track.deck, index,
+                                track.generation, track.queueRevision);
+                        moved.plan = track.plan;
+                        track = moved;
+                    }
+                }
+                if (performAutomixHandover(outgoing, track,
+                        AutomixSettings.isEnabled() ? MANUAL_SKIP_FADE_MILLIS : 1L, selection)) return true;
+                if (manualSelection == selection) {
+                    DownloadDynamicIsland.showPlaybackFailure(selection.selectedSong.getName(), "新歌启动失败，保留原曲");
+                    cancelManualSelection();
+                }
+                return false;
+            }
+        }
+
+        private void cancelManualSelection() {
+            synchronized (PLAYER_STATE_LOCK) {
+                ManualSelection selection = manualSelection;
+                manualSelection = null;
+                if (selection == null) return;
+                if (selection.worker != null) selection.worker.interrupt();
+                ArmedTrack ready = selection.ready;
+                selection.ready = null;
+                if (ready != null) closeQuietly(ready.deck);
+            }
+        }
+
         /**
          * 用户按下的"下一首"能否由已预备的播放牌来服务，而不是走常规的
          * 关闭/解析/下载/解码切换流程。本方法从界面线程调用，因此它只检查状态并置位标志——
@@ -3514,7 +3803,7 @@ public class CloudMusic implements SharedConstants {
         boolean requestManualSkip() {
             if (doBreak || isPlaybackCancelled() || !isSessionUsable(session)) return false;
             // 已经请求过了；待处理请求将在下一个 tick 被服务。
-            if (manualSkipRequested) return false;
+            if (manualSkipRequested || manualSelection != null) return false;
             // 混音仍在进行。现在提升第三个播放牌会让两首曲目与新的一首同时可闻，
             // 因此这次切换必须走常规的硬切。
             if (activeFade != null) return false;
@@ -3607,7 +3896,7 @@ public class CloudMusic implements SharedConstants {
          * 监督循环开始下一首曲目。
          */
         private void performOrdinaryNextAfterFailedHandover() {
-            if (doBreak || isPlaybackCancelled() || !isSessionUsable(session)) return;
+            if (doBreak || isPlaybackCancelled() || !isSessionUsable(session) || manualSelection != null) return;
             if (playList.isEmpty() || player == null || !canPlayNext()) return;
             updatePlayCountIfNeeded();
             prepareForTrackChange();
@@ -3701,10 +3990,21 @@ public class CloudMusic implements SharedConstants {
          */
         private boolean performAutomixHandover(AudioPlayer outgoing, ArmedTrack track,
                                                long overlapOverrideMillis) {
+            return performAutomixHandover(outgoing, track, overlapOverrideMillis, null);
+        }
+
+        private boolean performAutomixHandover(AudioPlayer outgoing, ArmedTrack track,
+                                               long overlapOverrideMillis, ManualSelection selection) {
             armed = null;
             // 交接已经开始，等一条更好的接缝这件事到此为止（预算与截止时间都归零）。
             seamHoldUntil = 0L;
-            AutomixPlan plan = track.plan;
+            // 手动下一首与选歌用同一套短 EQ 曲线，不能继承自动计划的 cue/分轨参数。
+            boolean manualTransition = overlapOverrideMillis > 0L;
+            AutomixPlan plan = manualTransition ? manualSelectionPlan() : track.plan;
+            // 下载期间关闭总开关时，已挂好的链也不能继续收到 EQ/人声处理目标。
+            if (manualTransition && !AutomixSettings.isEnabled()) {
+                plan = AutomixPlan.manualQuickMix(MANUAL_SKIP_FADE_MILLIS, false);
+            }
             AudioPlayer incoming = track.deck;
             if (incoming == null || !incoming.isUsable()) {
                 closeQuietly(incoming);
@@ -3733,11 +4033,18 @@ public class CloudMusic implements SharedConstants {
 
             PlaybackSession nextSession;
             synchronized (PLAYER_STATE_LOCK) {
-                if (!isSessionUsable(session) || ownedPlayer != outgoing) {
+                if (!isSessionUsable(session) || ownedPlayer != outgoing
+                        || (selection == null ? manualSelection != null : manualSelection != selection)) {
                     closeQuietly(incoming);
                     return false;
                 }
                 incoming.setVolume(CloudMusic.getVolume());
+                if (manualTransition) {
+                    incoming.resetAutomixProcessing();
+                    if (AutomixSettings.isEnabled()) incoming.enableManualTransitionProcessing();
+                    // 自动预备已定位到分析 cue；手动切歌必须保留新歌开头。
+                    if (selection == null || !track.plan.manualQuickMix) incoming.prepareStart(0f);
+                }
                 // 在播放牌发声之前设置：它会直接取该值而不做渐变过渡，因此进入的
                 // 曲目在切换生效前绝不会先出现一声响亮的低音冲击。
                 incoming.setBassGainDb(plan.incomingBassDb(0.0));
@@ -3766,6 +4073,16 @@ public class CloudMusic implements SharedConstants {
                     return false;
                 }
 
+                // AudioPlayer 会吞掉某些引擎异常；没有接受播放命令就不能淡出旧歌。
+                if (incoming.isPausing()) {
+                    closeQuietly(incoming);
+                    return false;
+                }
+
+                // 新牌已接受静音起播后，才收尾上一次渐变，避免连续点歌留下第三路声音。
+                if (selection != null) finishAutomixFade();
+                if (manualTransition && AutomixSettings.isEnabled()) outgoing.enableManualTransitionProcessing();
+
                 // 在此处归属，而不是在播放牌启动之前：上面的每个提前返回
                 // 都会让退出曲目继续播放，而普通完成路径随后会上报
                 // 并再次将其计数。
@@ -3785,6 +4102,20 @@ public class CloudMusic implements SharedConstants {
                     }
                 }
 
+                if (selection != null) {
+                    if (selection.replaceQueue) {
+                        songs = selection.songs;
+                        playList = songs;
+                        clearQueuedNext();
+                    }
+                    if (!selection.replaceQueue) {
+                        playNextLedger.replacePendingIdentity(selection.selectedSong, track.song);
+                    }
+                    songs.set(track.index, track.song);
+                    manualSelection = null;
+                    selection.ready = null; // 所有权交给活动播放器，不再归取消路径释放。
+                    dontAdd = false;
+                }
                 curIdx = track.index;
                 currentlyPlaying = track.song;
                 // 无缝交接是一条独立起播路径，销账得在这也做一次，否则用户排过的歌会一直挂在账上。
@@ -3816,6 +4147,8 @@ public class CloudMusic implements SharedConstants {
             loadMusicCover(track.song);
             loadDynamicMusicCover(track.song);
             loadLyric(track.song, nextSession, track.file);
+            // 手动切歌不等分析；已出声后才为后续自动交接异步预热。
+            if (selection != null) warmAdvancedEnvelope(incoming);
             NeteasePlaybackHistoryReporter.start(track.song, currentPlaylistContext, incoming);
             KuGouPlaybackReporter.start(track.song, incoming);
             if (AutomixSettings.isTransitionAnimationEnabled() && effectiveOverlap >= 5_000L) {
@@ -3926,6 +4259,8 @@ public class CloudMusic implements SharedConstants {
                 fade.outgoing.applyOutgoingAutomixFrame(fade.plan.outgoingGain(progress),
                         fade.plan.outgoingBassDb(progress),
                         fade.plan.outgoingVocalDepth(progress),
+                        fade.plan.outgoingMidDb(progress),
+                        fade.plan.outgoingHighDb(progress),
                         fade.plan.outgoingTempo(progress, fade.overlapMillis),
                         fade.plan.outgoingPitch(progress, fade.overlapMillis));
             }

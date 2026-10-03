@@ -24,6 +24,7 @@ import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.TextFieldWidget;
 import com.muoniumplayer.core.screens.ncm.panels.HomePanel;
+import com.muoniumplayer.core.screens.ncm.panels.NavigateBar;
 import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import com.muoniumplayer.party.ui.PartyIcons;
@@ -1368,6 +1369,7 @@ public final class MusicSourceOverlay extends NcmSheet {
      * <p>先回主页再重建导航栏，而不是把上一个来源的搜索 / 发现面板留在屏幕上。</p>
      */
     private void resetToHomeForCurrentSource() {
+        // 换源会重建左栏，但搜索框本身会被 NavigateBar 复用；旧源的异步结果同时失效。
         NCMScreen screen = NCMScreen.getInstance();
         screen.setCurrentPanel(new HomePanel());
         screen.markDirty();

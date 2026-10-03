@@ -15,6 +15,7 @@ import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.ImportedPlaylistStore;
 import com.muoniumplayer.core.ncm.music.LocalPlaylistStore;
@@ -28,6 +29,7 @@ import com.muoniumplayer.core.rendering.FoliaLucideIcons;
 import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
+import com.muoniumplayer.core.rendering.ScissorClipManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
@@ -68,7 +70,26 @@ import java.util.function.Supplier;
  */
 public class NavigateBar extends NCMPanel {
 
-    TextFieldWidget searchField = new TextFieldWidget(FontManager.pf14bold);
+    // 同一播放器重建时复用输入控件，文字、光标、选区、横向滚动与焦点一起保留。
+    final TextFieldWidget searchField;
+    private final String sourceIdentity;
+    private final boolean sourceChanged;
+    private final Map<String, SidebarLayoutMotion.Snapshot> previousGeometry;
+    private final Map<String, AbstractWidget<?>> sidebarEntries = new LinkedHashMap<>();
+    private final Map<String, SidebarLayoutMotion> relocations = new LinkedHashMap<>();
+    private final Map<String, AbstractWidget<?>> previousSections;
+    private final Map<String, AbstractWidget<?>> sidebarSections = new LinkedHashMap<>();
+    private final List<RetiringSection> retiringSections = new ArrayList<>();
+    private final double previousViewportTop, previousViewportBottom;
+
+    private final Panel retirementLayer = new Panel() {
+        @Override protected void beforeRenderChildren(double x, double y) {
+            ScissorClipManager.begin(getX(), getY(), getWidth(), getHeight());
+        }
+        @Override protected void afterRenderChildren(double x, double y) {
+            ScissorClipManager.end();
+        }
+    };
     /**
      * 网易云搜索同时支持单曲和歌单；QQ Cadence 目前只提供单曲。
      */
@@ -215,20 +236,122 @@ public class NavigateBar extends NCMPanel {
     private double searchBarBottom = 24.0;
 
     public NavigateBar() {
+        this(null);
+    }
+
+    public NavigateBar(NavigateBar previous) {
+        this.sourceIdentity = currentSourceIdentity();
+        this.sourceChanged = previous != null && !this.sourceIdentity.equals(previous.sourceIdentity);
+        this.searchField = previous == null ? new TextFieldWidget(FontManager.pf14bold) : previous.searchField;
+        this.playlistSearchMode = previous != null && previous.playlistSearchMode;
+        this.previousGeometry = previous == null ? Collections.emptyMap() : previous.captureGeometry();
+        this.previousSections = previous == null ? new LinkedHashMap<>()
+                : new LinkedHashMap<>(previous.sidebarSections);
+        this.previousViewportTop = previous == null ? 0 : previous.playlistPanel.getY();
+        this.previousViewportBottom = previous == null ? 0
+                : previousViewportTop + previous.playlistPanel.getHeight();
+        if (previous != null && !this.sourceChanged) {
+            this.playlistPanel.actualScrollOffset = previous.playlistPanel.actualScrollOffset;
+            this.playlistPanel.targetScrollOffset = previous.playlistPanel.targetScrollOffset;
+            this.suggestDismissedFor = previous.suggestDismissedFor;
+        }
         this.layout();
+        if (previous != null && previous.indicatorPlaced) {
+            this.indicatorTop = previous.indicatorTop;
+            this.indicatorBottom = previous.indicatorBottom;
+            this.indicatorLeft = previous.indicatorLeft;
+            this.indicatorWidth = previous.indicatorWidth;
+            this.indicatorPresence = previous.indicatorPresence;
+            this.indicatorPlaced = true;
+            // 新树的第一帧从原来的高亮位置接续，不持有旧条目的整棵树。
+            this.indicatorOwner = null;
+        }
+    }
+
+    private static String currentSourceIdentity() {
+        MusicPlatform platform = NeteaseMusicService.getCurrentPlatform();
+        return platform.name() + (platform == MusicPlatform.GD ? ":" + GdStudioSourceSettings.getPlatform() : "");
+    }
+
+    private Map<String, SidebarLayoutMotion.Snapshot> captureGeometry() {
+        Map<String, SidebarLayoutMotion.Snapshot> result = new LinkedHashMap<>();
+        for (Map.Entry<String, AbstractWidget<?>> entry : this.sidebarEntries.entrySet()) {
+            AbstractWidget<?> widget = entry.getValue();
+            if (widget.isHidden() || widget.getHeight() <= 0) continue;
+            SidebarLayoutMotion motion = this.relocations.get(entry.getKey());
+            double offset = motion == null ? 0 : motion.offset();
+            if (widget instanceof PlaylistItem) offset += 6.0 * (1.0 - ((PlaylistItem) widget).entranceEased);
+            result.put(entry.getKey(), new SidebarLayoutMotion.Snapshot(
+                    widget.getRelativeY() + offset, widget.getWidgetAlpha()));
+        }
+        return result;
+    }
+
+    private void armRelocation(String key, AbstractWidget<?> widget, boolean enterIfNew) {
+        SidebarLayoutMotion.Snapshot old = this.previousGeometry.get(key);
+        if (old == null && (!rowsAnnounced || !enterIfNew)) return;
+        SidebarLayoutMotion motion = new SidebarLayoutMotion(old);
+        this.relocations.put(key, motion);
+        if (old == null) widget.setAlpha(0f);
+        widget.setTransformations(() -> {
+            motion.tick(System.currentTimeMillis(), widget.getRelativeY(), 900.0 / SheetClock.speed());
+            widget.setAlpha(motion.alpha());
+            SharedConstants.api.getGLStateManager().translate(0.0, motion.offset(), 0.0);
+            if (motion.isFinished()) widget.setTransformations(null);
+        });
+    }
+
+    private void addSidebarSection(String key, AbstractWidget<?> widget) {
+        key = SidebarLayoutMotion.rowKey(key, this.sourceIdentity);
+        this.sidebarSections.put(key, widget);
+        this.sidebarEntries.put(key, widget);
+        this.armRelocation(key, widget, true);
+        this.playlistPanel.addChild(widget);
+    }
+
+    private static final class RetiringSection {
+        final AbstractWidget<?> widget;
+        final double absoluteY;
+        final float alpha;
+        RetiringSection(AbstractWidget<?> widget) {
+            this.widget = widget;
+            this.absoluteY = widget.getY();
+            this.alpha = widget.getWidgetAlpha();
+        }
+    }
+
+    private void retireSections() {
+        for (Map.Entry<String, AbstractWidget<?>> entry : this.previousSections.entrySet()) {
+            AbstractWidget<?> widget = entry.getValue();
+            if (this.sidebarSections.containsKey(entry.getKey()) || widget.isHidden()
+                    || widget.getY() + widget.getHeight() <= this.previousViewportTop
+                    || widget.getY() >= this.previousViewportBottom) continue;
+            RetiringSection section = new RetiringSection(widget);
+            widget.setClickable(false);
+            widget.setTransformations(null);
+            widget.setParent(this.retirementLayer);
+            this.retirementLayer.addChild(widget);
+            this.retiringSections.add(section);
+        }
+        // 已交接的幽灵只有裁剪层临时持有；不能长期保留整棵旧侧栏。
+        this.previousSections.clear();
     }
 
     /**
      * 把一行挂进侧栏，并且只在「上一次侧栏里没有这一行」时给它装一次进场。
      *
-     * <p>侧栏走的是整树重建，所以判断新旧只能靠行签名，见 {@link #announcedRowKeys}。</p>
+     * <p>侧栏走的是整树重建，所以判断新旧只能靠行签名，见 {@link #announcedRows}。</p>
      */
     private PlaylistItem addSidebarRow(String key, PlaylistItem item) {
+        key = SidebarLayoutMotion.rowKey(key, this.sourceIdentity);
         this.sidebarRows.put(key, item);
+        this.sidebarEntries.put(key, item);
+        item.setBounds(Math.max(1, this.getWidth() - 8), 16);
         // 第一次装配既不演进场也不演退场：那一趟是 prewarm 建的（{@code NCMScreen#prewarmLayout}
         // 之后紧跟的那次 checkDirty 会跳过重建，所以开界面用的就是这一棵）。用户还没见过任何一行，
         // 「新出现的行」和「被换下去的行」在这里都没有意义，而打开播放器自己有转场负责。
         if (rowsAnnounced && !announcedRows.containsKey(key)) item.armEntrance(this.entranceReveal);
+        else this.armRelocation(key, item, false);
         this.playlistPanel.addChild(item);
         return item;
     }
@@ -246,17 +369,22 @@ public class NavigateBar extends NCMPanel {
         if (leaving.isEmpty()) return;
         // 连点两次换音源：上一批还没淡完就又有新的要退。直接把还在半路的丢掉重记一批，
         // 而不是让它们各自带着旧起点继续 —— 否则越叠越多，最后满屏是透明的幽灵行。
-        for (PlaylistItem stale : new ArrayList<>(this.retiringRows)) this.getChildren().remove(stale);
+        for (PlaylistItem stale : new ArrayList<>(this.retiringRows)) this.retirementLayer.getChildren().remove(stale);
         this.retiringRows.clear();
         this.retiringStartedAt = 0L;
 
         for (PlaylistItem row : leaving) {
-            if (row == null) continue;
+            if (row == null || row.isHidden() || row.getWidgetAlpha() <= .01f
+                    || row.getY() + row.getHeight() <= this.previousViewportTop
+                    || row.getY() >= this.previousViewportBottom) continue;
             // 只存<b>绝对</b> y，相对位置留到每一帧再算。装配这一趟里 {@code this.getY()} 还不可信：
             // 新侧栏要等 {@code NCMScreen} 的 basePanel 在自己的渲染回调里 center() 才落到最终位置，
             // 而 retireRows 跑在 new NavigateBar() 里面 —— 拿这个还没摆正的原点去做减法，
             // 实测整批幽灵会往下错位一百多像素，退场演到了列表外面。
             row.retireAbsY = row.getY();
+            row.retireAlpha = row.getWidgetAlpha();
+            // 退场期间不能再被原来的进场回调写回亮度，否则两条动画会互相覆盖。
+            row.entranceQueue = null;
             row.setClickable(false);
             row.setShouldOverrideMouseCursor(false);
             row.setTransformations(() -> {
@@ -268,41 +396,45 @@ public class NavigateBar extends NCMPanel {
                 SharedConstants.api.getGLStateManager().translate(-RETIRE_SLIDE_X * row.retireOut, 0.0, 0.0);
             });
             this.retiringRows.add(row);
-            // 插到列表容器<b>前面</b>，不是往后 append。渲染顺序就是层次：退场的行留在旧格子里，
-            // 新一列已经把它那一格占了 —— 画在上面就是两行字叠在一起，实测换音源那一帧整个糊掉。
-            // 画在下面则让新行自己的字把它盖住，只在两行之间的缝里透出一点残影。
-            int behind = this.getChildren().indexOf(this.playlistPanel);
-            this.getChildren().add(behind < 0 ? this.getChildren().size() : behind, row);
-            // addChild 会顺手 setParent，这里为了插到指定位置绕过了它，父亲就得自己换。
-            // 不换的话 getY() 仍然按<b>旧</b>列表容器算，幽灵会整批往下跑出侧栏一大截。
-            row.setParent(this);
+            // 独立裁剪层排在新列表之前，不占列表槽位，也不会越过搜索栏/底部操作区。
+            this.retirementLayer.addChild(row);
             row.setPosition(4, 0);
         }
     }
 
-    /** 每帧推进退场：淡出 + 往下沉回它来的那一格，演完就从树上摘掉。 */
+    /** 每帧推进退场：旧行向左淡出，旧标题淡出；演完就从裁剪层摘掉。 */
     private void advanceRetiringRows() {
-        if (this.retiringRows.isEmpty()) return;
+        if (this.retiringRows.isEmpty() && this.retiringSections.isEmpty()) return;
         long now = System.currentTimeMillis();
         if (this.retiringStartedAt <= 0L) this.retiringStartedAt = now;
         long elapsed = now - this.retiringStartedAt;
 
         for (int index = this.retiringRows.size() - 1; index >= 0; index--) {
             PlaylistItem row = this.retiringRows.get(index);
-            // 每一帧重新钉一次：这一句跑在子组件渲染之前，所以 {@code this.getY()} 是它<b>这一帧</b>
-            // 真正所在的位置，幽灵才会留在用户看见的那一格上。
-            row.setPosition(4, row.retireAbsY - this.getY());
+            // 裁剪层此时已经完成本帧布局，重新钉住原来的绝对位置。
+            row.setPosition(4, row.retireAbsY - this.retirementLayer.getY());
             long delay = Math.min(index, RETIRE_STAGGER_LIMIT) * RETIRE_STAGGER_MILLIS;
             double progress = Math.max(0.0, Math.min(1.0, (elapsed - delay) / (double) RETIRE_MILLIS));
-            double eased = progress * progress * (3.0 - 2.0 * progress);
-            row.entranceEased = 1.0 - eased;
+            // 保留退场起点的进场姿态，只向左淡出，不让旧行突然上下跳动。
             // 不透明度<b>先掉后缓</b>：线性淡出的头两三帧还接近满的，而那正是和新列叠在一起的时候。
             // 幂次取 .35 是让第一帧就落到一半以下，剩下的时间慢慢收干净 —— 残影只当余光里的一点动静。
             row.retireOut = Math.pow(Math.max(0.0, progress), .35);
-            row.setAlpha((float) (1.0 - row.retireOut));
+            row.setAlpha((float) (row.retireAlpha * (1.0 - row.retireOut)));
             if (progress >= 1.0) {
                 this.retiringRows.remove(index);
-                this.getChildren().remove(row);
+                this.retirementLayer.getChildren().remove(row);
+            }
+        }
+        for (int index = this.retiringSections.size() - 1; index >= 0; index--) {
+            RetiringSection section = this.retiringSections.get(index);
+            double progress = Math.max(0.0, Math.min(1.0, elapsed / (double) RETIRE_MILLIS));
+            double out = Math.pow(progress, .35);
+            section.widget.setPosition(section.widget.getRelativeX(),
+                    section.absoluteY - this.retirementLayer.getY());
+            section.widget.setAlpha((float) (section.alpha * (1.0 - out)));
+            if (progress >= 1.0) {
+                this.retirementLayer.getChildren().remove(section.widget);
+                this.retiringSections.remove(index);
             }
         }
     }
@@ -311,12 +443,14 @@ public class NavigateBar extends NCMPanel {
      * 一张歌单在这一次侧栏里的签名。
      *
      * <p>平台必须写进来：网易云和酷狗完全可能给出同一个数字 id，签名撞上了换音源就演不出来 ——
-     * 而换音源正是这次要治的两个症状之一。用<b>当前</b>音源而不是 {@code playlist.getPlatform()}，
-     * 因为那个字段是 transient 的、各家服务填得不一定齐。</p>
+     * 而换音源正是这次要治的两个症状之一。账号/收藏行用当前内容源；本地与导入行属于自己的存储身份，
+     * 切换音源时它们仍是同一张歌单，不应重亮或退场。</p>
      */
     private static String playlistRowKey(String kind, PlayList playlist) {
-        return kind + ':' + NeteaseMusicService.getCurrentPlatform()
-                + ':' + playlist.getId() + ':' + playlist.getName();
+        String owner = ("local".equals(kind) || "imported".equals(kind))
+                ? String.valueOf(playlist.getPlatform()) + ':' + playlist.getPlatformPlaylistId()
+                : currentSourceIdentity();
+        return kind + ':' + owner + ':' + playlist.getId() + ':' + playlist.getName();
     }
 
     private void layout() {
@@ -347,7 +481,7 @@ public class NavigateBar extends NCMPanel {
             // 再被调用，只有父组件的回调能把它显示回来。
             this.layoutSuggestions();
             // 退场中的旧行同理：它们已经不属于任何列表，没人推进就会永远停在半透明上。
-            this.advanceRetiringRows();
+            // 退场由裁剪层自己的布局回调推进，确保这一帧的视口坐标已经就位。
         });
 
         this.setOnKeyTypedCallback((character, keyCode) -> {
@@ -500,7 +634,8 @@ public class NavigateBar extends NCMPanel {
             searchField.setBounds(xSpacing, searchField.getRelativeY(),
                     Math.max(1.0, searchBar.getWidth() - xSpacing - typeToggleReserve), searchField.getHeight());
             // 占位提示里的词跟着滑块走、过半才换：在点击那一刻就改会出现「词换了、滑块还在半路」。
-            searchField.setPlaceholder(searchMode.progress() > .5 ? "搜索歌单..." : "搜索歌曲...");
+            searchField.setPlaceholder(supportsPlaylistSearch(NeteaseMusicService.getCurrentPlatform())
+                    && searchMode.progress() > .5 ? "搜索歌单..." : "搜索歌曲...");
             searchField.setColor(this.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             searchField.setDisabledTextColor(RenderSystem.reAlpha(this.getColor(NCMScreen.ColorType.PRIMARY_TEXT), .4f));
 //            Rect.draw(searchField.getX(), searchField.getY(), searchField.getWidth(), searchField.getHeight(), 0x800090ff);
@@ -551,6 +686,24 @@ public class NavigateBar extends NCMPanel {
         this.addChild(selectionIndicator);
         this.selectionIndicator.setClickable(false);
 
+        this.addChild(this.retirementLayer);
+        this.retirementLayer.setClickable(false);
+        this.retirementLayer.setBeforeRenderCallback(() -> {
+            double top = sourceSwitcher.getRelativeY() + sourceSwitcher.getHeight() + 7;
+            this.retirementLayer.setBounds(0, top, this.getWidth(), Math.max(0, this.getHeight() - top - 70));
+            this.advanceRetiringRows();
+        });
+        if (this.sourceChanged) {
+            SidebarLayoutMotion sourceMotion = new SidebarLayoutMotion(null);
+            sourceMenu.setAlpha(0f);
+            sourceMenu.setTransformations(() -> {
+                sourceMotion.tick(System.currentTimeMillis(), 0.0, 600.0 / SheetClock.speed());
+                sourceMenu.setAlpha(sourceMotion.alpha());
+                SharedConstants.api.getGLStateManager().translate(0.0, sourceMotion.offset() * .5, 0.0);
+                if (sourceMotion.isFinished()) sourceMenu.setTransformations(null);
+            });
+        }
+
         this.addChild(playlistPanel);
         this.playlistPanel.setBeforeRenderCallback(() -> {
             this.playlistPanel.setMargin(0);
@@ -589,7 +742,7 @@ public class NavigateBar extends NCMPanel {
                 lblDiscovery.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
                 lblDiscovery.setPosition(6, lblDiscovery.getRelativeY());
             });
-            this.playlistPanel.addChild(lblDiscovery);
+            this.addSidebarSection("section:discovery", lblDiscovery);
 
             // 排行榜：网易云的榜单页最终展示的是 HomePanel 卡片墙，先取数据再一次切页（navigateAsync），
             // 否则会先闪一个空的中转页、历史栈里也会多出一条回不去的记录。
@@ -706,7 +859,8 @@ public class NavigateBar extends NCMPanel {
             return true;
         });
         importHeader.addChild(importHit);
-        this.playlistPanel.addChild(importHeader);
+        importHeader.setHeight(16);
+        this.addSidebarSection("section:local", importHeader);
 
         // 自建单排在前、导入引用排在后：前者是「我造的容器」，后者是「别人家的单子借个座」。
         // 两者点开都是 PlaylistPanel，右键都只动本机 —— 差别只在曲目是存下来的还是要回上游拉的。
@@ -757,7 +911,8 @@ public class NavigateBar extends NCMPanel {
             lblPlaylists.setPosition(2, NcmSheet.inkTop(lblPlaylists, playlistsHeader.getHeight() * .5));
         });
         playlistsHeader.addChild(lblPlaylists);
-        this.playlistPanel.addChild(playlistsHeader);
+        playlistsHeader.setHeight(16);
+        this.addSidebarSection("section:account", playlistsHeader);
 
         if (qishuiMode) {
             if (NeteaseMusicService.isLoggedIn(MusicPlatform.QISHUI)) {
@@ -877,7 +1032,7 @@ public class NavigateBar extends NCMPanel {
 
         // 收藏歌单是网易云独有的分组：QQ 与酷狗的收藏歌单都已经并入上面的"我的账号歌单"。
         lblSubscribed.setHidden(qqMode || kugouMode || youtubeMode || bilibiliMode || qishuiMode);
-        this.playlistPanel.addChild(lblSubscribed);
+        this.addSidebarSection("section:subscribed", lblSubscribed);
 
         if (neteaseMode && pl != null) {
             List<PlayList> subscribedPlaylists = pl.stream()
@@ -1145,6 +1300,7 @@ public class NavigateBar extends NCMPanel {
             }
             this.retireRows(leaving);
         }
+        this.retireSections();
         announcedRows = Collections.unmodifiableMap(new LinkedHashMap<>(this.sidebarRows));
         rowsAnnounced = true;
 
@@ -1989,6 +2145,9 @@ public class NavigateBar extends NCMPanel {
     private void submitSearch(final String keyword) {
         if (keyword == null || keyword.trim().isEmpty()) return;
         final String query = keyword.trim();
+        final NCMScreen screen = NCMScreen.getInstance();
+        final MusicPlatform searchPlatform = NeteaseMusicService.getCurrentPlatform();
+        final boolean searchPlaylistMode = this.playlistSearchMode;
         this.dismissSuggestions();
         this.searchField.setFocused(false);
 
@@ -1998,12 +2157,12 @@ public class NavigateBar extends NCMPanel {
             }
         });
 
-        MusicPlatform searchPlatform = NeteaseMusicService.getCurrentPlatform();
         final boolean bilibiliSearch = searchPlatform == MusicPlatform.BILIBILI;
-        final boolean searchPlaylists = playlistSearchMode
+        final boolean searchPlaylists = searchPlaylistMode
                 && (searchPlatform == MusicPlatform.NETEASE || searchPlatform == MusicPlatform.KUGOU
                 || searchPlatform == MusicPlatform.QISHUI || bilibiliSearch);
         if (searchPlaylists) {
+            final long ticket = screen.beginContentRequest();
             final boolean kugouSearch = searchPlatform == MusicPlatform.KUGOU;
             final boolean qishuiSearch = searchPlatform == MusicPlatform.QISHUI;
             MultiThreadingUtil.runAsync(() -> {
@@ -2017,8 +2176,11 @@ public class NavigateBar extends NCMPanel {
                 String title = (bilibiliSearch ? "B 站合集 / 分P搜索"
                         : qishuiSearch ? "汽水歌单搜索" : kugouSearch ? "酷狗歌单搜索" : "歌单搜索")
                         + " · " + query + " · " + results.size();
-                MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().setCurrentPanel(
-                        new HomePanel(results, title)));
+                MultiThreadingUtil.runOnMainThread(() -> {
+                    if (!screen.isContentRequestCurrent(ticket)
+                            || NeteaseMusicService.getCurrentPlatform() != searchPlatform) return;
+                    NCMScreen.getInstance().setCurrentPanel(new HomePanel(results, title));
+                });
             });
         } else {
             // 保留原有的歌曲搜索流程及其独立的临时播放列表。
@@ -2028,11 +2190,17 @@ public class NavigateBar extends NCMPanel {
             playList.setSearchResultList(true);
             playList.musics = new CopyOnWriteArrayList<>();
             PlaylistPanel panel = new PlaylistPanel(playList);
-            NCMScreen.getInstance().setCurrentPanel(panel);
+            screen.setCurrentPanel(panel);
+            final long ticket = screen.beginContentRequest();
             MultiThreadingUtil.runAsync(() -> {
                 List<Music> search = CloudMusic.search(query);
-                playList.musics.addAll(search);
-                panel.onInit();
+                MultiThreadingUtil.runOnMainThread(() -> {
+                    if (!screen.isContentRequestCurrent(ticket)
+                            || NeteaseMusicService.getCurrentPlatform() != searchPlatform) return;
+                    playList.musics.clear();
+                    playList.musics.addAll(search);
+                    panel.onInit();
+                });
             });
         }
     }
@@ -2233,6 +2401,7 @@ public class NavigateBar extends NCMPanel {
         private double entranceEased = 1.0;
         /** 退场时要钉住的那一格（上一次渲染留下的绝对 y），见 {@link NavigateBar#retireRows}。 */
         private double retireAbsY;
+        private float retireAlpha;
         /** 退场进度（0 = 还在原位画满，1 = 已经让开）：淡出与左移共用这一条，见 {@link NavigateBar#advanceRetiringRows}。 */
         private double retireOut;
 
