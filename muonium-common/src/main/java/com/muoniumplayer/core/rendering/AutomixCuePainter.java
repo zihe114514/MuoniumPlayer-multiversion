@@ -74,28 +74,87 @@ public final class AutomixCuePainter {
      */
     public static void paint(double barX, double barY, double barWidth, double barHeight,
                             AutomixCueMarker.Positions positions, boolean fading, float alpha) {
+        paint(barX, barY, barWidth, barHeight, positions, fading, alpha, -1.0);
+    }
+
+    /**
+     * 画一处带有「预告 → 切入 → 交叠中」层次的接缝标记。
+     * playbackFraction 为当前播放头分数；小于 0 表示调用方暂时没有可靠时钟。
+     */
+    public static void paint(double barX, double barY, double barWidth, double barHeight,
+                             AutomixCueMarker.Positions positions, boolean fading, float alpha,
+                             double playbackFraction) {
         if (positions == null || !positions.valid()) return;
         if (barWidth <= 0.0 || barHeight <= 0.0 || alpha <= 0.0f) return;
 
-        // 一帧只问一次主题色。主题是随时间渐变的，取两次会让带子与竖线落在同一帧的两种颜色上；
-        // 顺带把每帧两次取色（每次都要过一遍动画计算）压成一次。
         int accent = accentColor();
+        double now = System.nanoTime() / 1_000_000_000.0;
+        double pulse = .5 + .5 * Math.sin(now * (fading ? 7.2 : 3.8));
         double cue = positions.cueFraction;
         double bandWidth = positions.bandWidth();
-        // 带子宽度按<b>宽度</b>判而不是按终点判：切点落在曲尾最后一段时终点会被钳到 1.0，
-        // 那一段本来就所剩无几，宽度为 0 的圆角矩形画出来是一个点，不如不画。
+        double bandX = barX + cue * barWidth;
+        double bandW = bandWidth * barWidth;
+        double centerY = barY + barHeight * .5;
+
+        // 交叠窗：外层柔光 + 内层玻璃带 + 细描边。带子不是简单的色块，读起来更像一段能量窗口。
         if (bandWidth > 0.0015) {
-            double bandX = barX + cue * barWidth;
-            double bandW = bandWidth * barWidth;
-            SkijaShapes.roundedRect(bandX, barY - BAND_SPREAD, bandW,
-                    barHeight + BAND_SPREAD * 2.0, Math.min(barHeight * .5 + BAND_SPREAD, bandW * .5),
-                    scaleAlpha(accent, alpha * (fading ? BAND_ALPHA_FADING : BAND_ALPHA_IDLE)));
+            double spread = fading ? BAND_SPREAD + pulse * .9 : BAND_SPREAD;
+            SkijaShapes.radialRing(bandX + bandW * .5, centerY, 0.0,
+                    Math.max(3.0, bandW * .52),
+                    scaleAlpha(accent, alpha * (fading ? .16 : .07)),
+                    scaleAlpha(accent, 0));
+            SkijaShapes.roundedRect(bandX, barY - spread, bandW,
+                    barHeight + spread * 2.0,
+                    Math.min(barHeight * .5 + spread, bandW * .5),
+                    scaleAlpha(accent, alpha * (fading ? .48 : .22)));
+            SkijaShapes.roundedOutline(bandX, barY - spread, bandW,
+                    barHeight + spread * 2.0,
+                    Math.min(barHeight * .5 + spread, bandW * .5), .65,
+                    scaleAlpha(accent, alpha * (fading ? .72 : .32)));
+
+            // 流光沿交叠窗移动；交接中更快、更亮，交接前只留下轻微呼吸。
+            double travel = (now / (fading ? 1.25 : 2.8)) % 1.0;
+            double scanX = bandX + bandW * travel;
+            double scanWidth = Math.max(1.0, Math.min(5.0, bandW * .08));
+            SkijaShapes.roundedRect(scanX - scanWidth * .5, barY - spread + .7,
+                    scanWidth, barHeight + spread * 2.0 - 1.4, scanWidth * .5,
+                    scaleAlpha(accent, alpha * (fading ? .72 : .26)));
+            for (int dot = 0; dot < 3; dot++) {
+                double dotT = (travel + .18 * dot) % 1.0;
+                double dotX = bandX + bandW * dotT;
+                double dotAlpha = (1.0 - dot * .24) * (fading ? .42 : .18);
+                SkijaShapes.radialDisc(dotX, centerY, Math.max(1.0, barHeight * .42),
+                        scaleAlpha(accent, alpha * dotAlpha), 0);
+            }
         }
 
-        double lineX = barX + cue * barWidth - LINE_WIDTH * .5;
-        SkijaShapes.roundedRect(lineX, barY - LINE_OVERHANG, LINE_WIDTH,
-                barHeight + LINE_OVERHANG * 2.0, LINE_WIDTH * .5,
-                scaleAlpha(accent, alpha * (fading ? LINE_ALPHA_FADING : LINE_ALPHA_IDLE)));
+        // 当前播放头再加一枚微光圆点，让「标记在哪里」和「现在播到哪里」可以同时读懂。
+        if (playbackFraction >= 0.0 && playbackFraction <= 1.0) {
+            double playX = barX + playbackFraction * barWidth;
+            SkijaShapes.radialRing(playX, centerY, .5, 2.8 + pulse * 1.4,
+                    scaleAlpha(accent, alpha * (fading ? .68 : .24)),
+                    scaleAlpha(accent, 0));
+        }
+
+        double lineX = bandX - LINE_WIDTH * .5;
+        double overhang = LINE_OVERHANG + (fading ? pulse * 1.8 : pulse * .65);
+        SkijaShapes.radialRing(lineX + LINE_WIDTH * .5, centerY, 0.0,
+                3.2 + pulse * (fading ? 2.6 : 1.2),
+                scaleAlpha(accent, alpha * (fading ? .42 : .16)),
+                scaleAlpha(accent, 0));
+        SkijaShapes.roundedRect(lineX, barY - overhang, LINE_WIDTH,
+                barHeight + overhang * 2.0, LINE_WIDTH * .5,
+                scaleAlpha(accent, alpha * (fading ? .98 : .76)));
+
+        // 切入点的小型「定位铆钉」：比一根线更容易被注意，但不会盖住进度条。
+        double markerRadius = Math.max(1.7, Math.min(3.2, barHeight * .72));
+        SkijaShapes.radialDisc(lineX + LINE_WIDTH * .5, centerY, markerRadius,
+                scaleAlpha(accent, alpha * (fading ? .95 : .66)),
+                scaleAlpha(accent, alpha * (fading ? .22 : .08)));
+        SkijaShapes.radialRing(lineX + LINE_WIDTH * .5, centerY, markerRadius + 1.0,
+                markerRadius + 2.6 + pulse * (fading ? 2.2 : .8),
+                scaleAlpha(accent, alpha * (fading ? .64 : .24)),
+                scaleAlpha(accent, 0));
     }
 
     /** 记号用的强调色，ARGB。界面层只关心几何，颜色在这里定一处。 */

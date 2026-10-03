@@ -170,6 +170,35 @@ public final class AutomixTransitionAnimation {
             drawArc(canvas, 0.0, 360.0, track, 1.25f);
             drawArc(canvas, -90.0 + progress * 360.0, 360.0 * (1.0 - progress), neutral, 1.5f);
             drawArc(canvas, -90.0, 360.0 * progress, accentPaint, 2.25f);
+            // 接缝头部带一段流光尾迹：听感进入交叠时，视觉上也有明确的「正在前进」方向。
+            double trailSweep = 18.0 + 16.0 * tickPulse;
+            drawArc(canvas, -90.0 + progress * 360.0 - trailSweep, trailSweep,
+                    alpha(accent, (.16 + .28 * tickPulse) * snapshot.opacity), 4.4f);
+
+            // 十枚轻量轨道粒子围绕圆环缓慢运行；靠近接缝时亮起，形成从「预告」到「切入」的细节层。
+            try (Paint particle = new Paint()) {
+                particle.setAntiAlias(true);
+                for (int index = 0; index < 10; index++) {
+                    double particleAngle = Math.toRadians(-90.0 + progress * 360.0
+                            + index * 36.0 + elapsedSeconds * (8.0 + index * .35));
+                    double distance = RING_RADIUS + 9.0 + 1.8 * Math.sin(elapsedSeconds * 3.0 + index);
+                    double closeness = .5 + .5 * Math.cos(Math.toRadians(index * 36.0));
+                    double particleAlpha = (.08 + .22 * closeness + .18 * tickPulse * closeness)
+                            * snapshot.opacity;
+                    particle.setColor(alpha(accent, particleAlpha));
+                    float radius = (float) (1.0 + .8 * closeness + .5 * tickPulse * closeness);
+                    canvas.drawCircle((float) (100.0 + Math.cos(particleAngle) * distance),
+                            (float) (100.0 + Math.sin(particleAngle) * distance), radius, particle);
+                }
+            }
+
+            // 交接关键帧产生一次克制的内环闪光，让「两首歌正在交换位置」有明确的视觉落点。
+            if (tickPulse > .0) {
+                SkijaShapes.radialRing(100.0, 100.0, RING_RADIUS * .55,
+                        RING_RADIUS * (.78 + .08 * tickPulse),
+                        alpha(accent, .02 * snapshot.opacity),
+                        alpha(accent, (.22 + .24 * tickPulse) * snapshot.opacity));
+            }
 
             try (Paint tick = new Paint()) {
                 tick.setAntiAlias(true);

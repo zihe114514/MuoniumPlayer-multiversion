@@ -69,6 +69,18 @@ public final class SkijaHost {
     /** 帧缓冲像素 / GUI 单位。等价于 Minecraft 的 guiScale，但不需要业务层碰 MC 类。 */
     private static double frameGuiScale = 1.0;
 
+    /**
+     * HUD 与 Screen 的即时回调在 1.21.1 可能在同一显示帧内各进一次。每个 beginFrame 都
+     * 采一次的话，后进来的那个采到的就是「本帧已经即时合成上去的我们自己的 HUD」，
+     * 透镜一放大就是整面板的拉丝，时有时无就是闪烁。
+     *
+     * <p>所以采集按<b>显示帧</b>闸：用 {@code getFrameTime()}（partialTick）当帧号——
+     * 同一显示帧内它不变，第二次 beginFrame 一看帧号相同就跳过采集，沿用本帧开头
+     * 采到的那张干净背景。暂停时 partialTick 冻结，背景跟着冻结也正合适（单机暂停
+     * 场景本来就是静止的）。1.20.1 同一份修法，见那棵的同名字段。
+     */
+    private static float lastImmediateBackdropFrameTime = Float.NaN;
+
     private SkijaHost() {
     }
 
@@ -130,7 +142,13 @@ public final class SkijaHost {
             // 再让 Skia 忘掉它自己的状态缓存，最后才为 Skia 的字形图集上传清像素解包布局。
             // 【版本差异】这两棵是即时合成，没有帧末合成钩子：Minecraft 要到帧末才把主渲染目标 blit 到窗口默认帧缓冲，
             // 所以此刻唯一干净的背景就是它当前绑定的主目标（savedFbo）。放在 Skia 绑自己的离屏目标之前，裸 GL 不会踩到 Skia 的状态缓存。
-            GlassBackdrop.captureNow(savedFbo, pixelWidth, pixelHeight);
+            // 帧号闸：同一显示帧内只有第一个 beginFrame 采集，见 lastImmediateBackdropFrameTime 的注释。
+            // 1.21.1 的计时器换成了 DeltaTracker（没有 1.20.1 的 getFrameTime），取当帧 partialTick 当帧号。
+            float frameTime = client.getTimer().getGameTimeDeltaPartialTick(true);
+            if (frameTime != lastImmediateBackdropFrameTime) {
+                GlassBackdrop.captureNow(savedFbo, pixelWidth, pixelHeight);
+                lastImmediateBackdropFrameTime = frameTime;
+            }
             SNAPSHOT.capture();
             context.resetAll();
             resetPixelUnpackLayout();

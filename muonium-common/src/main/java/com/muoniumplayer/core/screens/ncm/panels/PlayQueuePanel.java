@@ -5,6 +5,7 @@ import com.muoniumplayer.compat.lwjgl2.Mouse;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.dto.Music;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.ScissorClipManager;
 import com.muoniumplayer.core.rendering.StencilClipManager;
@@ -184,11 +185,13 @@ public class PlayQueuePanel extends NCMPanel {
         this.list.scrollActual = 0.0;
 
         this.addChild(this.drawer);
+        this.drawer.setGlassSheet(GlassLook.Surface.PLAYER);
         this.drawer
                 .setShouldOverrideMouseCursor(false)
                 .setBeforeRenderCallback(() -> this.drawer
                         .setRadius(9.0)
-                        .setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)));
+                        .setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND))
+                        .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f)));
         // 抽屉盖住了下面的歌曲列表，落在空白处的点击必须由它吃掉，不能穿透触发播放。
         this.drawer.setOnClickCallback((relativeX, relativeY, mouseButton) -> true);
 
@@ -748,6 +751,7 @@ public class PlayQueuePanel extends NCMPanel {
         private QueueRow(Music music) {
             this.music = music;
             this.setShouldOverrideMouseCursor(true);
+            this.setGlassRim(GlassLook.Surface.PLAYER);
 
             this.setBeforeRenderCallback(() -> {
                 if (!this.coverLoaded) this.coverLoaded = loadCover(this.music);
@@ -759,6 +763,7 @@ public class PlayQueuePanel extends NCMPanel {
                         : (this.isHovering()
                                 ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                                 : NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND)));
+                        this.setFillAlpha(dragging ? 1.0f : GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             });
 
             // 拖起来的一行略微放大浮起，放手后 lift 归零就自己恢复原样。放大比例必须和

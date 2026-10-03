@@ -214,12 +214,14 @@ public final class ListenTogetherOverlay extends NCMPanel {
     private void buildUnavailable(final Panel host) {
         RoundedRectWidget card = new RoundedRectWidget();
         host.addChild(card);
+        card.setGlassRim(GlassLook.Surface.PLAYER);
         card.setClickable(false);
         card.setRadius(10);
         card.setBeforeRenderCallback(() -> {
             card.setBounds(Math.max(1, host.getWidth() - 32), 76);
             card.setPosition(16, 68);
             card.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            card.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
 
         LabelWidget icon = new LabelWidget(FontelloIcons.WARNING, FontManager.fontello22);
@@ -266,6 +268,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
         final double[] hover = new double[1];
         RoundedButtonWidget action = new RoundedButtonWidget(this::unavailableActionLabel, FontManager.pf12bold);
         host.addChild(action);
+        action.setGlassRim(GlassLook.Surface.PLAYER);
         action.setRadius(8);
         action.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -300,6 +303,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
         RoundedButtonWidget pill = new RoundedButtonWidget(
                 () -> MpPartyClient.inRoom() ? "服务器房间 · 在房" : "服务器房间", FontManager.pf12bold);
         dialog.addChild(pill);
+        pill.setGlassRim(GlassLook.Surface.PLAYER);
         pill.setRadius(8);
         pill.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -320,6 +324,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
                 pill.setTextColor(present ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)
                         : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             }
+            pill.setFillAlpha(MpPartyClient.inRoom() ? 1.0f : GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             // 服务端没装也照样可点：房间面板会把「这台服务器没装服务端 mod」直接写在脸上，
             // 比让入口凭空消失、用户以为功能不存在要好。
         });
@@ -423,6 +428,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
 
         RoundedButtonWidget card = new RoundedButtonWidget("", FontManager.pf14bold);
         host.addChild(card);
+        card.setGlassRim(GlassLook.Surface.PLAYER);
         card.setRadius(10);
         card.setOnClickCallback((x, yy, button) -> {
             if (button != 0) return false;
@@ -440,6 +446,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
                 card.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
                         NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), hover[0]));
             }
+            card.setFillAlpha(primary ? 1.0f : GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             card.setTextColor(0x00FFFFFF);
         });
 
@@ -486,12 +493,14 @@ public final class ListenTogetherOverlay extends NCMPanel {
     private void buildActive(final Panel host) {
         RoundedRectWidget card = new RoundedRectWidget();
         host.addChild(card);
+        card.setGlassRim(GlassLook.Surface.PLAYER);
         card.setClickable(false);
         card.setRadius(10);
         card.setBeforeRenderCallback(() -> {
             card.setBounds(Math.max(1, host.getWidth() - 32), 58);
             card.setPosition(16, 64);
             card.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            card.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
 
         PulseDot dot = new PulseDot();
@@ -613,6 +622,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
                         ? "自动跳过 VIP 专享 · 开" : "自动跳过 VIP 专享 · 关",
                 FontManager.pf10bold);
         host.addChild(toggle);
+        toggle.setGlassRim(GlassLook.Surface.PLAYER);
         toggle.setRadius(6);
         toggle.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -630,6 +640,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
             toggle.setColor(mix(base, on ? 0xFFFFFF : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER),
                     on ? hover[0] * .14 : hover[0]));
             toggle.setTextColor(on ? 0xFFFFFF : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            toggle.setFillAlpha(on ? 1.0f : GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
     }
 
@@ -678,6 +689,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
         RoundedButtonWidget copy = new RoundedButtonWidget(
                 () -> isCopiedHintVisible(labelText) ? "已复制" : buttonText, FontManager.pf12bold);
         host.addChild(copy);
+        copy.setGlassRim(GlassLook.Surface.PLAYER);
         copy.setRadius(7);
         copy.setOnClickCallback((x, yy, button) -> {
             if (button != 0) return false;
@@ -701,6 +713,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
                         NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), hover[0]));
                 copy.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             }
+            copy.setFillAlpha(copied ? 1.0f : GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
     }
 
@@ -787,6 +800,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
         final double[] syncHover = new double[1];
         RoundedButtonWidget sync = new RoundedButtonWidget("同步一次", FontManager.pf12bold);
         host.addChild(sync);
+        sync.setGlassRim(GlassLook.Surface.PLAYER);
         sync.setRadius(8);
         sync.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -803,6 +817,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
             sync.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
                     NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), syncHover[0]));
             sync.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            sync.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             // 主机没有"同步"这个动作。用 alpha + clickable 而不是 setHidden：
             // 被隐藏的组件不再执行自己的回调，也就没机会把自己显示回来。
             sync.setAlpha(visible ? host.getAlpha() : 0f);
@@ -814,6 +829,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
                 () -> ListenTogetherService.getRole() == ListenTogetherService.Role.HOST
                         ? "结束房间" : "退出房间", FontManager.pf12bold);
         host.addChild(leave);
+        leave.setGlassRim(GlassLook.Surface.PLAYER);
         leave.setRadius(8);
         leave.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -830,6 +846,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
             leave.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND), ERROR_COLOR,
                     .3 + leaveHover[0] * .55));
             leave.setTextColor(0xFFFFFF);
+            leave.setFillAlpha(leave.isHovering() ? 1.0f : GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
     }
     // ──────────────────────────── 加入房间页 ────────────────────────────
@@ -852,12 +869,14 @@ public final class ListenTogetherOverlay extends NCMPanel {
 
         final RoundedRectWidget surface = new RoundedRectWidget();
         dialog.addChild(surface);
+        surface.setGlassRim(GlassLook.Surface.PLAYER);
         surface.setClickable(false);
         surface.setRadius(7);
         surface.setBeforeRenderCallback(() -> {
             surface.setBounds(Math.max(1, dialog.getWidth() - 32), 34);
             surface.setPosition(16, 86);
             surface.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+            surface.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
 
         final TextFieldWidget field = new TextFieldWidget(FontManager.pf12);
@@ -889,6 +908,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
         final double[] hover = new double[1];
         final RoundedButtonWidget confirm = new RoundedButtonWidget("加入房间", FontManager.pf12bold);
         dialog.addChild(confirm);
+        confirm.setGlassRim(GlassLook.Surface.PLAYER);
         confirm.setRadius(8);
         confirm.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -984,6 +1004,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
     private void addBackButton(final Panel dialog, final Runnable action) {
         RoundedButtonWidget back = new RoundedButtonWidget(FontelloIcons.BACK, FontManager.fontello18);
         dialog.addChild(back);
+        back.setGlassRim(GlassLook.Surface.PLAYER);
         back.setRadius(7);
         back.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -995,6 +1016,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
             back.setPosition(16, 13);
             back.setColor(back.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            back.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             back.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
     }

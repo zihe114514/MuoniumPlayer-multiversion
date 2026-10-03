@@ -314,6 +314,13 @@ public final class GlassBackdrop {
         int previousReadBuffer = GL11.glGetInteger(GL11.GL_READ_BUFFER);
         int previousDrawBuffer = GL11.glGetInteger(GL11.GL_DRAW_BUFFER);
         int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        java.nio.ByteBuffer maskBuffer = java.nio.ByteBuffer.allocateDirect(4);
+        GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK, maskBuffer);
+        boolean[] previousColorMask = {maskBuffer.get(0) != 0, maskBuffer.get(1) != 0,
+                maskBuffer.get(2) != 0, maskBuffer.get(3) != 0};
+        float[] previousClearColor = new float[4];
+        GL11.glGetFloatv(GL11.GL_COLOR_CLEAR_VALUE, previousClearColor);
+        boolean previousScissor = GL11.glGetBoolean(GL11.GL_SCISSOR_TEST);
         // 先把自己欠下的错误清干净：glGetError 是「取走并清零」，别处的残留会被下面的检查
         // 当成 blit 失败，症状是日志里来一句「停用背景采集」而画面其实好着。
         while (GL11.glGetError() != 0) {
@@ -331,6 +338,7 @@ public final class GlassBackdrop {
             GL30.glBlitFramebuffer(0, 0, sourceWidth, sourceHeight,
                     0, 0, targetWidth, targetHeight,
                     GL11.GL_COLOR_BUFFER_BIT, GL11.GL_LINEAR);
+            forceOpaqueAlpha();
         } finally {
             // 绑定必须原样还回去：合成随后要把写侧绑到窗口默认帧缓冲，
             // 残留成我们的目标就会把 HUD 贴进背景纹理里，症状是「玻璃越来越亮地糊住自己」。
@@ -339,6 +347,15 @@ public final class GlassBackdrop {
             GL11.glReadBuffer(previousReadBuffer);
             GL11.glDrawBuffer(previousDrawBuffer);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
+            GL11.glColorMask(previousColorMask[0], previousColorMask[1],
+                    previousColorMask[2], previousColorMask[3]);
+            GL11.glClearColor(previousClearColor[0], previousClearColor[1],
+                    previousClearColor[2], previousClearColor[3]);
+            if (previousScissor) {
+                GL11.glEnable(GL11.GL_SCISSOR_TEST);
+            } else {
+                GL11.glDisable(GL11.GL_SCISSOR_TEST);
+            }
         }
 
         int error = GL11.glGetError();
@@ -357,6 +374,29 @@ public final class GlassBackdrop {
                     + " → " + targetWidth + "x" + targetHeight
                     + "（1/" + downscale() + "，" + (SRGB_INTERNAL ? "sRGB" : "RGBA8") + "）");
         }
+    }
+
+    /**
+     * 把刚 blit 进来的这一帧的 alpha 通道强制刷成 1（RGB 原样保留）。
+     *
+     * <h2>为什么必须这么做</h2>
+     * 1.21.11 的世界渲染往帧缓冲里写的 alpha 不是 1：天空这类纯背景像素 alpha=0，
+     * 只有几何才是 1（2026-10-02 实测：岛后面那块天 = 160,194,255,<b>a0</b>）。这张纹理按
+     * UNPREMUL 借给 Skia 之后，采样会先做预乘——a=0 的像素无论 RGB 多亮，到透镜
+     * 着色器手里都是 (0,0,0,0)，折射出来的就是一块黑。暂停/编辑器预览之所以一直正常，
+     * 是原版菜单那层压暗把整屏 alpha 抬回了 1；26.2/26.3 的世界管线写 alpha 1，
+     * 所以那两棵从来见不到这个症状。把 alpha 刷成 1 对本来就不透明的树是无操作。
+     *
+     * <p>用 colorMask 只开 alpha 位清屏：RGB 已经在图里，再走一遍全屏 blit 就白花了。
+     * 调用点处于 DRAW 绑定还是本类目标的时刻；colorMask/clearColor/scissor 由
+     * {@link #captureNow(int, int, int)} 的 finally 统一还回去。</p>
+     */
+    private static void forceOpaqueAlpha() {
+        // glClear 受 scissor 裁剪：MC 游戏内常留着 scissor，不关会把整张图刷漏。
+        GL11.glDisable(GL11.GL_SCISSOR_TEST);
+        GL11.glColorMask(false, false, false, true);
+        GL11.glClearColor(0f, 0f, 0f, 1f);
+        GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
     }
 
     /**

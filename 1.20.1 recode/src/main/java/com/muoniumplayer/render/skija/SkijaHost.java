@@ -70,11 +70,17 @@ public final class SkijaHost {
     private static double frameGuiScale = 1.0;
 
     /**
-     * HUD 与 Screen 的即时回调在 1.20.1 可能在同一显示帧内各进一次。
-     * 采集/合成两次会把上一层自己的玻璃再次采回去，表现为界面闪烁。
+     * HUD 与 Screen 的即时回调在 1.20.1 可能在同一显示帧内各进一次。每个 beginFrame 都
+     * 采一次的话，后进来的那个采到的就是「本帧已经即时合成上去的我们自己的 HUD」，
+     * 透镜一放大就是整面板的拉丝，时有时无就是闪烁。
+     *
+     * <p>所以采集按<b>显示帧</b>闸：用 {@code getFrameTime()}（partialTick）当帧号——
+     * 同一显示帧内它不变，第二次 beginFrame 一看帧号相同就跳过采集，沿用本帧开头
+     * 采到的那张干净背景。原先的 16ms 时间闸只在 &gt;62fps 时拦得住同帧的两次回调，
+     * 低帧率形同虚设。暂停时 partialTick 冻结，背景跟着冻结也正合适（单机暂停场景
+     * 本来就是静止的）。
      */
-    private static long lastImmediateBackdropCapture;
-    private static final long IMMEDIATE_BACKDROP_CAPTURE_INTERVAL_NANOS = 16_000_000L;
+    private static float lastImmediateBackdropFrameTime = Float.NaN;
 
     private SkijaHost() {
     }
@@ -137,10 +143,11 @@ public final class SkijaHost {
             // 再让 Skia 忘掉它自己的状态缓存，最后才为 Skia 的字形图集上传清像素解包布局。
             // 【版本差异】这两棵是即时合成，没有帧末合成钩子：Minecraft 要到帧末才把主渲染目标 blit 到窗口默认帧缓冲，
             // 所以此刻唯一干净的背景就是它当前绑定的主目标（savedFbo）。放在 Skia 绑自己的离屏目标之前，裸 GL 不会踩到 Skia 的状态缓存。
-            long captureStarted = System.nanoTime();
-            if (captureStarted - lastImmediateBackdropCapture >= IMMEDIATE_BACKDROP_CAPTURE_INTERVAL_NANOS) {
+            // 帧号闸：同一显示帧内只有第一个 beginFrame 采集，见 lastImmediateBackdropFrameTime 的注释。
+            float frameTime = client.getFrameTime();
+            if (frameTime != lastImmediateBackdropFrameTime) {
                 GlassBackdrop.captureNow(savedFbo, pixelWidth, pixelHeight);
-                lastImmediateBackdropCapture = captureStarted;
+                lastImmediateBackdropFrameTime = frameTime;
             }
             SNAPSHOT.capture();
             context.resetAll();

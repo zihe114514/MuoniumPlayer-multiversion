@@ -609,6 +609,7 @@ public final class PersonalFmPanel extends NCMPanel {
         // 所以往文字色提亮一点，才读得出这是一张卡。
         RoundedRectWidget card = new RoundedRectWidget();
         addChild(card);
+        card.setGlassPlate(GlassLook.Surface.PLAYER);
         card.setClickable(false);
         card.setBeforeRenderCallback(() -> card
                 .setBounds(heroWidth(), HERO_H)
@@ -616,7 +617,8 @@ public final class PersonalFmPanel extends NCMPanel {
                 .setRadius(6)
                 .setColor(NcmSheet.mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND),
                         NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), .055))
-                .setAlpha(.9f));
+                .setAlpha(.9f)
+                .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f)));
 
         // 交接是一进一出同一趟：内容淡出的那两百多毫秒里骨架淡进来，中间不会出现
         // 「两张都在」或者「两张都没有」那一帧。
@@ -866,11 +868,13 @@ public final class PersonalFmPanel extends NCMPanel {
 
         RoundedButtonWidget play = new RoundedButtonWidget("播放", FontManager.pf12bold);
         actions.addChild(play);
+        play.setGlassPlate(GlassLook.Surface.PLAYER);
         play.setShouldOverrideMouseCursor(true);
         play.setBeforeRenderCallback(() -> play.setBounds(52, 20)
                 .setPosition(actions.getWidth() - 52.0, 1).setRadius(4)
                 .setColor(play.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                        : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)));
+                        : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND))
+                        .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f)));
         play.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         play.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -880,6 +884,7 @@ public final class PersonalFmPanel extends NCMPanel {
 
         RoundedButtonWidget skip = new RoundedButtonWidget("换一首", FontManager.pf12bold);
         actions.addChild(skip);
+        skip.setGlassRim(GlassLook.Surface.PLAYER);
         skip.setShouldOverrideMouseCursor(true);
         skip.setBeforeRenderCallback(() -> skip.setBounds(52, 20)
                 .setPosition(play.getRelativeX() - BUTTON_GAP - 52.0, 1).setRadius(4)

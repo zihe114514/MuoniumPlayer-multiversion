@@ -82,3 +82,13 @@ error-report-*/
 
 # 开源快照目录（tools/make-opensource.py 生成，发布走开源仓库，不入本库）
 /opensource/
+
+# ---- 排查用临时转储（GL 命令 / javap 字节码 / 版本 diff 草稿），用完即弃 ----
+/tmp-*.txt
+/diff*.txt
+
+# ZCode 工具的本地索引配置
+/.zcodeignore
+
+# ZCode 工具的本地状态目录（会话/工作区数据）
+/.zcode/

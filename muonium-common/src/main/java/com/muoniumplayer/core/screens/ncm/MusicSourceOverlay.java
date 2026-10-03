@@ -14,6 +14,7 @@ import com.muoniumplayer.core.ncm.music.YouTubeMusicService;
 import com.muoniumplayer.core.ncm.music.YouTubeProxySettings;
 import com.muoniumplayer.core.ncm.music.YouTubeSessionStore;
 import com.muoniumplayer.core.rendering.BrandVectorIcons;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
@@ -233,6 +234,7 @@ public final class MusicSourceOverlay extends NcmSheet {
     private void youtubeProxyButton(final Card card) {
         final RoundedButtonWidget button = new RoundedButtonWidget("", FontManager.pf12bold);
         card.addChild(button);
+        button.setGlassRim(GlassLook.Surface.PLAYER);
         button.setRadius(10);
         button.setShouldOverrideMouseCursor(true);
         button.setOnClickCallback((x, y, mouse) -> {
@@ -246,6 +248,7 @@ public final class MusicSourceOverlay extends NcmSheet {
             button.setColor(button.isHovering()
                     ? mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), MusicPlatform.YOUTUBE.getBrandColor(), .16)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            button.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
         icon(button, PartyIcons.LINK, ICON_M, () -> 16.0, () -> 16.0,
                 () -> YouTubeProxySettings.isEnabled() ? MusicPlatform.YOUTUBE.getBrandColor()
@@ -288,6 +291,7 @@ public final class MusicSourceOverlay extends NcmSheet {
     private void youtubeLoginButton(final Card card) {
         final RoundedButtonWidget button = new RoundedButtonWidget("", FontManager.pf12bold);
         card.addChild(button);
+        button.setGlassRim(GlassLook.Surface.PLAYER);
         button.setRadius(10);
         button.setShouldOverrideMouseCursor(true);
         button.setOnClickCallback((x, y, mouse) -> {
@@ -303,6 +307,7 @@ public final class MusicSourceOverlay extends NcmSheet {
                     ? mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER),
                             MusicPlatform.YOUTUBE.getBrandColor(), .16)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            button.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
         icon(button, PartyIcons.KEY, ICON_M, () -> 16.0, () -> 16.0,
                 () -> YouTubeSessionStore.isLoggedIn() ? MusicPlatform.YOUTUBE.getBrandColor()
@@ -340,12 +345,14 @@ public final class MusicSourceOverlay extends NcmSheet {
     private TextFieldWidget youtubeCookieInputRow(final Panel row) {
         final RoundedRectWidget field = new RoundedRectWidget();
         row.addChild(field);
+        field.setGlassRim(GlassLook.Surface.PLAYER);
         field.setClickable(false);
         field.setRadius(9);
         field.setBeforeRenderCallback(() -> {
             field.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 40);
             field.setPosition(PAD + CARD_INSET, 4.0);
             field.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+            field.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
 
         final TextFieldWidget input = new TextFieldWidget(FontManager.pf12);
@@ -461,12 +468,14 @@ public final class MusicSourceOverlay extends NcmSheet {
     private void youtubeProxyToggleRow(final Panel row) {
         final RoundedRectWidget surface = new RoundedRectWidget();
         row.addChild(surface);
+        surface.setGlassRim(GlassLook.Surface.PLAYER);
         surface.setClickable(false);
         surface.setRadius(11);
         surface.setBeforeRenderCallback(() -> {
             surface.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 40);
             surface.setPosition(PAD + CARD_INSET, 4.0);
             surface.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            surface.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
 
         icon(surface, PartyIcons.LINK, ICON_M, () -> 20.0, () -> 24.0,
@@ -502,12 +511,14 @@ public final class MusicSourceOverlay extends NcmSheet {
     private TextFieldWidget youtubeProxyInputRow(final Panel row) {
         final RoundedRectWidget field = new RoundedRectWidget();
         row.addChild(field);
+        field.setGlassRim(GlassLook.Surface.PLAYER);
         field.setClickable(false);
         field.setRadius(9);
         field.setBeforeRenderCallback(() -> {
             field.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 40);
             field.setPosition(PAD + CARD_INSET, 4.0);
             field.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+            field.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
 
         final TextFieldWidget input = new TextFieldWidget(FontManager.pf12);
@@ -591,6 +602,7 @@ public final class MusicSourceOverlay extends NcmSheet {
                 ? 0xFFFFFF : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT);
         final RoundedRectWidget disc = new RoundedRectWidget();
         card.addChild(disc);
+        disc.setGlassRim(GlassLook.Surface.PLAYER);
         disc.setClickable(false);
         disc.setRadius(14);
         disc.setBeforeRenderCallback(() -> {
@@ -627,12 +639,14 @@ public final class MusicSourceOverlay extends NcmSheet {
     private void unblockRow(final Panel dialog) {
         final RoundedRectWidget surface = new RoundedRectWidget();
         dialog.addChild(surface);
+        surface.setGlassRim(GlassLook.Surface.PLAYER);
         surface.setClickable(false);
         surface.setRadius(11);
         surface.setBeforeRenderCallback(() -> {
             surface.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 40);
             surface.setPosition(PAD + CARD_INSET, dialog.getHeight() - FOOTER_H + 4);
             surface.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            surface.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
 
         icon(surface, PartyIcons.SWEEP, ICON_M, () -> 20.0, () -> 20.0,
@@ -671,12 +685,14 @@ public final class MusicSourceOverlay extends NcmSheet {
     private void switchSourceRow(final Panel dialog) {
         final RoundedRectWidget surface = new RoundedRectWidget();
         dialog.addChild(surface);
+        surface.setGlassRim(GlassLook.Surface.PLAYER);
         surface.setClickable(false);
         surface.setRadius(11);
         surface.setBeforeRenderCallback(() -> {
             surface.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 40);
             surface.setPosition(PAD + CARD_INSET, dialog.getHeight() - FOOTER_H + 48);
             surface.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            surface.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
 
         icon(surface, PartyIcons.SYNC, ICON_M, () -> 20.0, () -> 20.0,
@@ -753,6 +769,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         // 左侧状态盘：选中 / 冷却 / 可用各有自己的图标，不必去读右边那行小字才知道能不能用。
         final RoundedRectWidget dot = new RoundedRectWidget();
         card.addChild(dot);
+        dot.setGlassRim(GlassLook.Surface.PLAYER);
         dot.setClickable(false);
         dot.setRadius(9);
         dot.setBeforeRenderCallback(() -> {
@@ -876,6 +893,7 @@ public final class MusicSourceOverlay extends NcmSheet {
 
         final RoundedRectWidget disc = new RoundedRectWidget();
         card.addChild(disc);
+        disc.setGlassRim(GlassLook.Surface.PLAYER);
         disc.setClickable(false);
         disc.setRadius(14);
         disc.setBeforeRenderCallback(() -> {
@@ -922,6 +940,7 @@ public final class MusicSourceOverlay extends NcmSheet {
 
         final RoundedRectWidget disc = new RoundedRectWidget();
         card.addChild(disc);
+        disc.setGlassRim(GlassLook.Surface.PLAYER);
         disc.setClickable(false);
         disc.setBeforeRenderCallback(() -> {
             disc.setRadius(11);
@@ -966,6 +985,7 @@ public final class MusicSourceOverlay extends NcmSheet {
     private void deleteButton(final Card card, final LxSourceStore.Entry entry) {
         final RoundedButtonWidget button = new RoundedButtonWidget("", FontManager.pf12bold);
         card.addChild(button);
+        button.setGlassRim(GlassLook.Surface.PLAYER);
         button.setRadius(9);
         button.setShouldOverrideMouseCursor(true);
         button.setOnClickCallback((x, y, mouse) -> {
@@ -1215,6 +1235,7 @@ public final class MusicSourceOverlay extends NcmSheet {
 
         final RoundedRectWidget disc = new RoundedRectWidget();
         card.addChild(disc);
+        disc.setGlassRim(GlassLook.Surface.PLAYER);
         disc.setClickable(false);
         disc.setRadius(14);
         disc.setBeforeRenderCallback(() -> {
