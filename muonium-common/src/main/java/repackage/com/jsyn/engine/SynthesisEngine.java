@@ -56,6 +56,25 @@ import java.util.logging.Logger;
  */
 public class SynthesisEngine implements Synthesizer {
 
+    /** Read-only output observer. The observer must not block or mutate the supplied PCM buffer. */
+    public interface OutputObserver {
+        void observe(double[] interleaved, int channels, int sampleRate);
+    }
+    private volatile OutputObserver outputObserver;
+    public void setOutputObserver(OutputObserver observer) { outputObserver = observer; }
+
+    private void observeOutput() {
+        OutputObserver observer = outputObserver;
+        if (observer == null || outputBuffer == null) return;
+        try {
+            observer.observe(outputBuffer.interleavedBuffer, outputBuffer.blockBuffers.length, getFrameRate());
+        } catch (Throwable failure) {
+            // A visualizer must never reach the playback loop's error path or silence music.
+            outputObserver = null;
+        }
+    }
+
+
     private final static int BLOCKS_PER_BUFFER = 8;
     private final static int FRAMES_PER_BUFFER = Synthesizer.FRAMES_PER_BLOCK * BLOCKS_PER_BUFFER;
     // 我实测 JavaSound 关闭设备耗时 1200 毫秒。
@@ -386,6 +405,7 @@ public class SynthesisEngine implements Synthesizer {
             }
             frameCount += Synthesizer.FRAMES_PER_BLOCK;
         }
+        observeOutput();
     }
 
     @Override

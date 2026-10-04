@@ -8,7 +8,21 @@ import com.muoniumplayer.core.rendering.ui.container.Panel;
  */
 public abstract class NCMPanel extends Panel {
 
+    /**
+     * 侧栏入口给这张内容页留下的语义键。它比 instanceof 更可靠：排行榜、热搜、每日推荐
+     * 等页面可能复用 HomePanel 或 NeteaseDiscoveryPanel，但仍然要让同一条侧栏高亮保持连贯。
+     */
+    private String navigationKey;
+
     public abstract void onInit();
+
+    public String getNavigationKey() {
+        return this.navigationKey;
+    }
+
+    public void setNavigationKey(String navigationKey) {
+        this.navigationKey = navigationKey;
+    }
 
     protected int getColor(NCMScreen.ColorType type) {
         return 0xFF000000 | NCMScreen.getColor(type);

@@ -26,10 +26,12 @@ final class PanelItemEntrance {
     private long delayMillis;
     private boolean started = false;
     private boolean finished = true;
+    private boolean skipAnimation;
 
-    /** 开始一次进场。{@code delayMillis} 是这一条相对同批起点的错峰延迟。 */
+    /** 开始一次进场。负延迟是滚动期间的轻量模式：直接落位，不创建矩阵动画。 */
     void begin(long startedAt, long delayMillis) {
         this.startedAt = startedAt;
+        this.skipAnimation = delayMillis < 0L;
         this.delayMillis = Math.max(0L, delayMillis);
         this.started = true;
         this.finished = false;
@@ -48,6 +50,18 @@ final class PanelItemEntrance {
      */
     double tick() {
         if (finished) return 1.0;
+        if (skipAnimation) {
+            this.finished = true;
+            return 1.0;
+        }
+
+        // 栏目切换已经有整页淡入与短距离位移。条目在同一帧再做落入矩阵会让主页、歌单
+        // 和私人 FM 同时堆叠大量 pushMatrix；直接落位既省开销，也让所有栏目使用同一套节奏。
+        // 滚动到新视口的条目仍会在切换结束后按原规则进场。
+        if (com.muoniumplayer.core.screens.ncm.NCMScreen.isPanelTransitionRunning()) {
+            this.finished = true;
+            return 1.0;
+        }
 
         long elapsed = System.currentTimeMillis() - startedAt - delayMillis;
         if (elapsed <= 0L) return 0.0;
@@ -96,6 +110,12 @@ final class PanelItemEntrance {
 
         private int revealedThisFrame;
         private boolean firstBatch = true;
+        private boolean animationsSuppressed;
+
+        /** 快速滚动时只保留内容落位，不给新视口条目叠加 alpha/矩阵动画。 */
+        void setAnimationsSuppressed(boolean animationsSuppressed) {
+            this.animationsSuppressed = animationsSuppressed;
+        }
 
         /** 每帧开头调用：这一帧里新看见的条目重新从 0 号排起。 */
         void beginFrame() {
@@ -111,6 +131,9 @@ final class PanelItemEntrance {
 
         /** 领一个错峰延迟（毫秒）。 */
         long nextDelayMillis() {
+            if (this.animationsSuppressed) {
+                return -1L;
+            }
             long delay = (this.firstBatch ? FIRST_BATCH_LEAD_MILLIS : 0L)
                     + Math.min(this.revealedThisFrame++, STAGGER_LIMIT) * STAGGER_MILLIS;
             return delay;

@@ -136,6 +136,8 @@ public class CloudMusic implements SharedConstants {
  * 唱词选取混出点——都必须知道这些歌词属于谁，否则就会悄悄把一首歌的结构套到另一首上。</p>
  */
     public static volatile String lyricsTrackKey = null;
+    /** Increments on timeline publication/clear, including reloading the same song. */
+    public static volatile long lyricsRevision;
 
     /**
      * 当前提交的歌词时间轴是否真的属于正在出声的那首歌。
@@ -2395,7 +2397,7 @@ public class CloudMusic implements SharedConstants {
                             @Override
                             public void onProgress(double progress) {
                                 if (!quietTranscode) {
-                                    DownloadDynamicIsland.updateTranscodeProgress(progress);
+                                    DownloadDynamicIsland.updateTranscodeProgress(trackName, progress);
                                 }
                             }
                         });
@@ -2404,7 +2406,7 @@ public class CloudMusic implements SharedConstants {
                 }
             } catch (Throwable exception) {
                 if (!quietTranscode) {
-                    DownloadDynamicIsland.cancelTranscode();
+                    DownloadDynamicIsland.cancelTranscode(trackName);
                 }
                 if (decodedFile.exists()) {
                     decodedFile.delete();
@@ -4136,6 +4138,22 @@ public class CloudMusic implements SharedConstants {
                 playing.set(true);
             }
 
+            // 在封面、歌词与上报工作之前对齐视觉时钟；UI 不等待这些异步内容。
+            boolean curveAnimation = AutomixSettings.getTransitionAnimationStyle()
+                    == AutomixSettings.TransitionAnimationStyle.CURVE;
+            if (AutomixSettings.isTransitionAnimationEnabled()
+                    && (effectiveOverlap >= 5_000L || curveAnimation
+                    && effectiveOverlap >= AutomixTransitionAnimation.MIN_ISLAND_DURATION_MILLIS)) {
+                if (curveAnimation || AutomixSettings.isFoliaEngine() && plan.style != null
+                        && plan.style != FoliaTransitionStyle.PLAIN_BLEND) {
+                    AutomixTransitionCurve curve = AutomixTransitionCurve.from(plan);
+                    AutomixTransitionAnimation.start(effectiveOverlap, curve.crossover(),
+                            plan.animationPeriodMillis, curve);
+                } else if (!AutomixSettings.isFoliaEngine()) {
+                    DownloadDynamicIsland.showAutomixHandover(track.song.getName());
+                }
+            }
+
             final AudioPlayer callbackPlayer = incoming;
             final PlaybackSession callbackSession = nextSession;
             incoming.setAfterPlayed(() -> {
@@ -4151,17 +4169,6 @@ public class CloudMusic implements SharedConstants {
             if (selection != null) warmAdvancedEnvelope(incoming);
             NeteasePlaybackHistoryReporter.start(track.song, currentPlaylistContext, incoming);
             KuGouPlaybackReporter.start(track.song, incoming);
-            if (AutomixSettings.isTransitionAnimationEnabled() && effectiveOverlap >= 5_000L) {
-                if (AutomixSettings.isFoliaEngine() && plan.style != null
-                        && plan.style != FoliaTransitionStyle.PLAIN_BLEND) {
-                    double crossover = plan.style == FoliaTransitionStyle.BASS_SWAP
-                            ? plan.bassHandoverAt
-                            : plan.style == FoliaTransitionStyle.TAIL_RIDE ? plan.drumHandoverAt : .5;
-                    AutomixTransitionAnimation.start(effectiveOverlap, crossover, plan.animationPeriodMillis);
-                } else if (!AutomixSettings.isFoliaEngine()) {
-                    DownloadDynamicIsland.showAutomixHandover(track.song.getName());
-                }
-            }
             // 无缝交接同样是"一首 FM 曲目开始出声"，面板与预备标记都要跟着走。
             if (personalFmActive) PersonalFmManager.noteFmTrackStarted(track.song);
             return true;
@@ -4811,6 +4818,7 @@ public class CloudMusic implements SharedConstants {
             currentLyric = lyrics.get(0);
             haveNoWords = timeline.haveNoWords;
             lyricsTrackKey = music == null ? null : music.getStableKey();
+            lyricsRevision++;
         }
 
         MusicLyricsPanel.updateLyricPositionsImmediate(NCMScreen.getInstance().getPanelWidth() * MusicLyricsPanel.getLyricWidthFactor());
@@ -5010,6 +5018,7 @@ public class CloudMusic implements SharedConstants {
         curIdx = 0;
         synchronized (lyrics) {
             lyrics.clear();
+            lyricsRevision++;
         }
         currentLyric = null;
         lyricsTrackKey = null;

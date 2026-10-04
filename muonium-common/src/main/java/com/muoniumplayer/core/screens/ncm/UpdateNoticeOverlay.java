@@ -329,9 +329,11 @@ public final class UpdateNoticeOverlay extends NCMPanel {
         leftButton = new RoundedButtonWidget(networkFailure ? OK : LATER, FontManager.pf12bold);
         dialog.addChild(leftButton);
         leftButton.setRadius(6);
+        leftButton.setGlassRim(GlassLook.Surface.PLAYER);
         rightButton = new RoundedButtonWidget(networkFailure ? RETRY : DOWNLOAD, FontManager.pf12bold);
         dialog.addChild(rightButton);
         rightButton.setRadius(6);
+        rightButton.setGlassRim(GlassLook.Surface.PLAYER);
 
         // 两个按钮共用一次宽度计算，保证左右对齐、中间间隙一致。
         leftButton.setBeforeRenderCallback(() -> {
@@ -339,6 +341,7 @@ public final class UpdateNoticeOverlay extends NCMPanel {
             leftButton.setColor(leftButton.isHovering()
                     ? getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            leftButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             leftButton.setTextColor(getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
         leftButton.setOnClickCallback((x, y, button) -> {
@@ -350,6 +353,7 @@ public final class UpdateNoticeOverlay extends NCMPanel {
         rightButton.setBeforeRenderCallback(() -> {
             layoutActions();
             rightButton.setColor(rightButton.isHovering() ? PRIMARY_HOVER_COLOR : PRIMARY_COLOR);
+            rightButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             rightButton.setTextColor(0xFFFFFF);
         });
         rightButton.setOnClickCallback((x, y, button) -> {

@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.rendering;
 
+import com.muoniumplayer.core.ncm.music.AutomixTransitionCurve;
 import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
@@ -14,7 +15,7 @@ import io.github.humbleui.skija.PaintMode;
 import io.github.humbleui.skija.PaintStrokeCap;
 
 /**
- * Folia 风格的全屏 Automix 过渡绘制。
+ * Automix 过渡时钟与视觉：圆环覆盖层 / 灵动岛内的滚动曲线。
  *
  * <p>两段曲目共用同一个圆环。其移动的接缝才是真正的交接时钟：淡出的弧线
  * 与音频淡出在完全相同的真实时间跨度内消失，同时淡入的强调弧线在其后方
@@ -28,6 +29,7 @@ public final class AutomixTransitionAnimation {
     private static final long EXIT_NANOS = 700_000_000L;
     private static final long DISMISS_NANOS = 520_000_000L;
     private static final long MIN_DURATION_MILLIS = 5_000L;
+    public static final long MIN_ISLAND_DURATION_MILLIS = 800L;
     private static final float RING_RADIUS = 66f;
 
     private static final Object LOCK = new Object();
@@ -41,12 +43,20 @@ public final class AutomixTransitionAnimation {
     private AutomixTransitionAnimation() {
     }
 
-    /** 为真正的 Folia 融合启动圆环。更短/普通的融合保持无装饰。 */
+    /** 为真正的 Folia 融合启动动画。更短/普通的融合保持无装饰。 */
     public static void start(long durationMillis, double crossover, double periodMillis) {
-        if (durationMillis < MIN_DURATION_MILLIS) return;
+        start(durationMillis, crossover, periodMillis, null);
+    }
+
+    /** 启动与实际 AutomixPlan 同源的动画；曲线样式直接使用这份不可变快照。 */
+    public static void start(long durationMillis, double crossover, double periodMillis,
+                             AutomixTransitionCurve curve) {
+        boolean island = curve != null && AutomixSettings.getTransitionAnimationStyle()
+                == AutomixSettings.TransitionAnimationStyle.CURVE;
+        if (durationMillis < (island ? MIN_ISLAND_DURATION_MILLIS : MIN_DURATION_MILLIS)) return;
         synchronized (LOCK) {
             active = new Run(System.nanoTime(), durationMillis,
-                    clamp(crossover, .15, .85), clamp(periodMillis, 120.0, 4_000.0));
+                    clamp(crossover, .15, .85), clamp(periodMillis, 120.0, 4_000.0), curve);
             paused = false;
             pauseStartedAt = 0L;
             pausedNanos = 0L;
@@ -55,9 +65,10 @@ public final class AutomixTransitionAnimation {
         }
     }
 
-    /** 在 HUD 开关启用时演示圆环。 */
+    /** 在 HUD 设置中演示当前样式，不改动音频。 */
     public static void preview() {
-        start(10_000L, .55, 500.0);
+        start(10_000L, .55, 500.0,
+                AutomixTransitionCurve.preview());
     }
 
     /** 启动短暂的中断淡出；用于交接被替换或取消时。 */
@@ -85,34 +96,50 @@ public final class AutomixTransitionAnimation {
         }
     }
 
-    /** 绘制在普通 HUD 之上。每帧调用都是安全的。 */
+    /** 圆环仍是独立覆盖层；曲线只由灵动岛画布绘制，绝不再在屏幕中央弹面板。 */
     public static void render() {
-        Snapshot snapshot;
+        Snapshot snapshot = snapshot();
+        if (snapshot == null || AutomixSettings.getTransitionAnimationStyle()
+                == AutomixSettings.TransitionAnimationStyle.CURVE) return;
+        draw(snapshot);
+    }
+
+    /** 同一份暂停/取消/退场时钟的只读帧，供灵动岛参与其自身布局与裁剪。 */
+    static AutomixIslandRenderer.Frame islandFrame() {
+        if (AutomixSettings.getTransitionAnimationStyle()
+                != AutomixSettings.TransitionAnimationStyle.CURVE) return null;
+        Snapshot snapshot = snapshot();
+        if (snapshot == null || snapshot.run.curve == null) return null;
+        return new AutomixIslandRenderer.Frame(snapshot.run.curve,
+                clamp(snapshot.elapsed / (double) snapshot.total, 0.0, 1.0),
+                snapshot.elapsed / 1_000_000_000.0, snapshot.opacity);
+    }
+
+    private static Snapshot snapshot() {
         synchronized (LOCK) {
             if (!AutomixSettings.isTransitionAnimationEnabled()) {
                 active = null;
-                return;
+                return null;
             }
             Run run = active;
-            if (run == null) return;
+            if (run == null) return null;
             long now = System.nanoTime();
             long elapsed = elapsedNanos(run, now);
             long total = run.durationMillis * 1_000_000L;
             double opacity = transitionOpacity(elapsed, total);
             if (dismissed) {
                 double left = 1.0 - clamp((now - dismissedAt) / (double) DISMISS_NANOS, 0.0, 1.0);
-                opacity *= left;
+                opacity *= smooth(left);
                 if (left <= 0.0) {
                     active = null;
-                    return;
+                    return null;
                 }
             } else if (elapsed >= total + EXIT_NANOS) {
                 active = null;
-                return;
+                return null;
             }
-            snapshot = new Snapshot(run, elapsed, total, opacity);
+            return new Snapshot(run, elapsed, total, opacity);
         }
-        draw(snapshot);
     }
 
     private static void draw(Snapshot snapshot) {
@@ -254,7 +281,7 @@ public final class AutomixTransitionAnimation {
     }
 
     private static double transitionOpacity(long elapsed, long total) {
-        double enter = smooth(Math.min(1.0, elapsed / (double) ENTER_NANOS));
+        double enter = smooth(Math.min(1.0, elapsed / (double) Math.min(ENTER_NANOS, total / 4L)));
         if (elapsed >= total) {
             return smooth(Math.max(0.0, 1.0 - (elapsed - total) / (double) EXIT_NANOS));
         }
@@ -282,12 +309,15 @@ public final class AutomixTransitionAnimation {
         final long durationMillis;
         final double crossover;
         final double periodMillis;
+        final AutomixTransitionCurve curve;
 
-        Run(long startedAt, long durationMillis, double crossover, double periodMillis) {
+        Run(long startedAt, long durationMillis, double crossover, double periodMillis,
+            AutomixTransitionCurve curve) {
             this.startedAt = startedAt;
             this.durationMillis = durationMillis;
             this.crossover = crossover;
             this.periodMillis = periodMillis;
+            this.curve = curve;
         }
     }
 

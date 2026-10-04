@@ -74,7 +74,7 @@ class SheetGlassCoverageStaticTest {
         String src = source(PARTY, "ListenTogetherOverlay.java");
         String plate = blockOf(src, "RoundedRectWidget plate = new RoundedRectWidget();");
         assertFalse(plate.contains("setGlass"), "二维码底板是白底，压薄或贴背景都会让手机扫不出来");
-        String mask = blockOf(src, "RectWidget mask = new RectWidget();");
+        String mask = blockOf(source(PARTY, "NcmSheet.java"), "final RectWidget mask = new RectWidget();");
         assertFalse(mask.contains("setGlass"), "遮罩必须实：它负责把底下那一页压暗");
     }
 

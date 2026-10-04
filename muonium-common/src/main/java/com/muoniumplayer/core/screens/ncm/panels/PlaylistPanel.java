@@ -65,8 +65,10 @@ public class PlaylistPanel extends NCMPanel {
 
     @Override
     public void onRender(double mouseX, double mouseY) {
-        super.onRender(mouseX, mouseY);
         this.revealQueue.beginFrame();
+        this.revealQueue.setAnimationsSuppressed(this.musicsPanel != null && this.musicsPanel.isScrollActive());
+        this.buildPendingMusicWidgets();
+        super.onRender(mouseX, mouseY);
     }
 
     /**
@@ -87,6 +89,14 @@ public class PlaylistPanel extends NCMPanel {
     private double tfOpenAnimation = 20;
     private volatile boolean musicsLoading = true;
 
+    /** 歌曲行分帧构建：先发布首屏，余下行在后续渲染帧里补齐，避免大歌单回调卡住主线程。 */
+    private static final int MUSIC_WIDGET_BUILD_BATCH = 32;
+    private ScrollPanel musicsPanel;
+    private List<Music> pendingMusicBuild;
+    private int pendingMusicIndex;
+    private String musicFilterText = "";
+    private boolean emptyMusicMessageAdded;
+
     @Override
     public void onInit() {
         // onInit 也会在账户元数据（包括云盘 ID）
@@ -94,6 +104,11 @@ public class PlaylistPanel extends NCMPanel {
         // 旧行，而不是在第一份之上再叠加第二份。
         this.getChildren().clear();
         this.musicsLoading = true;
+        this.musicsPanel = null;
+        this.pendingMusicBuild = null;
+        this.pendingMusicIndex = 0;
+        this.musicFilterText = "";
+        this.emptyMusicMessageAdded = false;
 
         // 搜索结果页不放返回按钮：搜索是从左侧导航栏的搜索框直接进入的，右上角这枚返回键在那里
         // 没有对应的"上一页"，只会把内容区右上角挤掉一块。歌单详情、发现页曲目列表照旧保留。
@@ -135,6 +150,9 @@ public class PlaylistPanel extends NCMPanel {
             this.loadCover();
 
             cover.setBeforeRenderCallback(() -> {
+                if (PlaylistCoverHero.consumeHandoff(this)) {
+                    cover.setAlpha(1.0f);
+                }
                 cover.setRadius(4);
                 // 每帧回报落点：接力封面要朝这里飞，而这一帧封面本身让位（纹理供给换成 null，
                 // 控件照常跑回调），所以屏幕上任何时刻只有一张封面。
@@ -474,10 +492,12 @@ public class PlaylistPanel extends NCMPanel {
             rwMusicsContainer.setPosition(rwMusicsContainer.getRelativeX(), musicsContainerOffsetY);
         });
 
-        ScrollPanel musicsPanel = new ScrollPanel();
+        final ScrollPanel musicsPanel = new ScrollPanel();
+        this.musicsPanel = musicsPanel;
 
         rwMusicsContainer.addChild(musicsPanel);
-        musicsPanel.setSpacing(0);
+        musicsPanel.setSpacing(0)
+                .setUniformVerticalItemHeight(30.0);
         // 行与行挨着，就按<em>一块</em>玻璃收尾：这一组里每行登记自己的轮廓，画完子控件之后
         // 由一趟着色器按整张距离场画边（设置里「玻璃融合半径」推到十几才看得见变化，0 就是
         // 原来那样每行一圈）。为什么点名的这个容器而不是那一排行：融合必须括在<em>同一层裁剪</em>
@@ -509,64 +529,94 @@ public class PlaylistPanel extends NCMPanel {
                 });
 
         playList.loadMusicsWithCallback(musics -> {
-            // 不要对每首歌都调用 List#indexOf：那是 O(n²)，对大型
-            // 播放列表会明显变慢。改为一次性构建一批子控件。
-            List<AbstractWidget<?>> musicWidgets = new ArrayList<>(musics == null ? 0 : musics.size());
-            if (musics != null) {
-                for (int index = 0; index < musics.size(); index++) {
-                    MusicWidget musicWidget = new MusicWidget(musics.get(index), playList, index);
-                    musicWidget.setShouldOverrideMouseCursor(true);
-                    musicWidgets.add(musicWidget);
-                }
-            }
-
-            // 建完再挂进场：超大歌单不该把淡入时间耗在构建上。挂上的是发号器而不是起始时刻 ——
-            // 每一行在自己第一次被渲染（= 刚进视口）的那一帧才领号。
+            // 不在网络回调里一次性构建整张歌单。先复制快照，再由 onRender 每帧补一小批，
+            // 让首屏先出来，滚动和播放器其它动画不被几百个控件的构造阻塞。
+            this.pendingMusicBuild = musics == null ? new ArrayList<>() : new ArrayList<>(musics);
+            this.pendingMusicIndex = 0;
             this.revealQueue.restart();
-            for (AbstractWidget<?> musicWidget : musicWidgets) {
-                ((MusicWidget) musicWidget).setEntranceAnimation(this.revealQueue);
-            }
-            musicsPanel.addChild(musicWidgets);
-            // 空白的列表区看上去像没加载出来。本地单新建出来就是空的，这一句是它唯一的说明。
-            if (musicWidgets.isEmpty() && playList.isLocalPlaylist()) {
-                LabelWidget empty = new LabelWidget("这张单还是空的 · 到任意列表点歌曲行右侧的「＋」，选它就能收进来",
-                        FontManager.pf14bold);
-                empty.setClickable(false);
-                empty.setBeforeRenderCallback(() -> {
-                    empty.setBounds(Math.max(1, musicsPanel.getWidth()), 28);
-                    empty.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-                    empty.setPosition(10, 7);
-                });
-                musicsPanel.addChild(empty);
-            }
-            musicsLoading = false;
+            this.musicsLoading = false;
+            this.buildPendingMusicWidgets();
         });
 
         if (this.tfSearch != null) {
             this.tfSearch.setTextChangedCallback(text -> {
-                if (text.isEmpty()) {
-                    musicsPanel.getChildren().forEach(child -> child.setHidden(false));
-                } else {
-                    musicsPanel.getChildren()
-                            .stream()
-                            .filter(child -> child instanceof MusicWidget)
-                            .map(child -> (MusicWidget) child)
-                            .forEach(widget -> {
-                                    if (
-                                            widget.music.getName().toLowerCase().contains(text.toLowerCase()) ||
-                                            widget.music.getTranslatedNames().toLowerCase().contains(text.toLowerCase()) ||
-                                            widget.music.getArtists().stream().anyMatch(artist -> artist != null && artist.getName() != null && artist.getName().toLowerCase().contains(text.toLowerCase())) ||
-                                            (widget.music.getAlbum() != null && widget.music.getAlbum().getName() != null && widget.music.getAlbum().getName().toLowerCase().contains(text.toLowerCase()))
-                                    ) {
-                                        widget.setHidden(false);
-                                    } else {
-                                        widget.setHidden(true);
-                                    }
-                            });
-                }
-
+                this.musicFilterText = text == null ? "" : text.trim().toLowerCase();
+                this.applyMusicFilter();
             });
         }
+    }
+
+    /**
+     * 每帧只构建一小批歌曲行。歌曲对象已经在后台线程准备好，真正昂贵的是 MusicWidget
+     * 及其子控件树的创建和首次布局；把它摊到渲染帧之间可以避免大歌单打开/滚动时长帧。
+     */
+    private void buildPendingMusicWidgets() {
+        if (this.musicsPanel == null || this.pendingMusicBuild == null) return;
+
+        int total = this.pendingMusicBuild.size();
+        int end = Math.min(total, this.pendingMusicIndex + MUSIC_WIDGET_BUILD_BATCH);
+        if (this.pendingMusicIndex < end) {
+            List<AbstractWidget<?>> batch = new ArrayList<>(end - this.pendingMusicIndex);
+            for (int index = this.pendingMusicIndex; index < end; index++) {
+                MusicWidget musicWidget = new MusicWidget(this.pendingMusicBuild.get(index), this.playList, index);
+                musicWidget.setShouldOverrideMouseCursor(true);
+                musicWidget.setEntranceAnimation(this.revealQueue);
+                if (!this.musicFilterText.isEmpty()) {
+                    musicWidget.setHidden(!matchesMusicFilter(musicWidget.music, this.musicFilterText));
+                }
+                batch.add(musicWidget);
+            }
+            this.musicsPanel.addChild(batch);
+            this.pendingMusicIndex = end;
+        }
+
+        if (this.pendingMusicIndex >= total) {
+            this.pendingMusicBuild = null;
+            if (total == 0 && this.playList.isLocalPlaylist()) {
+                addEmptyMusicMessage();
+            }
+        }
+    }
+
+    private void addEmptyMusicMessage() {
+        if (this.emptyMusicMessageAdded || this.musicsPanel == null) return;
+        this.musicsPanel.setUniformVerticalItemHeight(-1.0);
+        this.emptyMusicMessageAdded = true;
+        LabelWidget empty = new LabelWidget("这张单还是空的 · 到任意列表点歌曲行右侧的「＋」，选它就能收进来",
+                FontManager.pf14bold);
+        empty.setClickable(false);
+        empty.setBeforeRenderCallback(() -> {
+            empty.setBounds(Math.max(1, this.musicsPanel.getWidth()), 28);
+            empty.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            empty.setPosition(10, 7);
+        });
+        this.musicsPanel.addChild(empty);
+    }
+
+    private void applyMusicFilter() {
+        if (this.musicsPanel == null) return;
+        // 无筛选时歌曲行恒为 30px，恢复等高快速路径；筛选会隐藏行，必须回到通用排版。
+        this.musicsPanel.setUniformVerticalItemHeight(this.musicFilterText.isEmpty() ? 30.0 : -1.0);
+        for (AbstractWidget<?> child : this.musicsPanel.getChildren()) {
+            if (child instanceof MusicWidget) {
+                MusicWidget widget = (MusicWidget) child;
+                widget.setHidden(!matchesMusicFilter(widget.music, this.musicFilterText));
+            }
+        }
+    }
+
+    private static boolean matchesMusicFilter(Music music, String filter) {
+        if (music == null || filter == null || filter.isEmpty()) return true;
+        String name = music.getName() == null ? "" : music.getName().toLowerCase();
+        String translated = music.getTranslatedNames() == null ? "" : music.getTranslatedNames().toLowerCase();
+        if (name.contains(filter) || translated.contains(filter)) return true;
+        if (music.getArtists() != null && music.getArtists().stream()
+                .anyMatch(artist -> artist != null && artist.getName() != null
+                        && artist.getName().toLowerCase().contains(filter))) {
+            return true;
+        }
+        return music.getAlbum() != null && music.getAlbum().getName() != null
+                && music.getAlbum().getName().toLowerCase().contains(filter);
     }
 
     /**

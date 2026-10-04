@@ -292,6 +292,21 @@ public final class SkijaEffects {
      */
     public static boolean frostedBackdrop(double x, double y, double width, double height,
                                           double radius, float sigma, float opacity) {
+        return frostedBackdrop(x, y, width, height, radius, sigma, opacity, false);
+    }
+
+    /**
+     * 转场专用的预糊贴图路径：只使用已经存在的背景档，不在动画帧里创建新的全屏高斯。
+     * 没有可用预糊档时仍会贴原始背景，但不会为了补模糊而触发 saveLayer + blur。
+     */
+    public static boolean frostedBackdropCached(double x, double y, double width, double height,
+                                                double radius, float sigma, float opacity) {
+        return frostedBackdrop(x, y, width, height, radius, sigma, opacity, true);
+    }
+
+    private static boolean frostedBackdrop(double x, double y, double width, double height,
+                                           double radius, float sigma, float opacity,
+                                           boolean cachedOnly) {
         Canvas canvas = SkijaGfx.canvas();
         if (canvas == null || width <= 0.0 || height <= 0.0 || opacity <= 0.004f) {
             return false;
@@ -299,10 +314,16 @@ public final class SkijaEffects {
         // 优先吃「一帧一次预糊」那张：它已经把整张背景糊好了，这里贴一块就是纯贴图。
         // 拿不到（预糊目标建不起来、或还没采到过）就退回自己挂 blur 滤镜的旧画法——
         // 预糊是优化，不是依赖，退回去只是贵一点，玻璃本身不受影响。
-        Image backdrop = GlassBackdrop.blurred(sigma);
+        Image backdrop = cachedOnly
+                ? GlassBackdrop.blurredCached(sigma)
+                : GlassBackdrop.blurred(sigma);
         boolean preblurred = backdrop != null;
         if (!preblurred) {
             backdrop = GlassBackdrop.image();
+            // 转场路径没有可借用的预糊档时只贴原图，绝不现场挂高斯滤镜。
+            if (cachedOnly) {
+                preblurred = true;
+            }
         }
         if (backdrop == null) {
             return false;
@@ -344,7 +365,7 @@ public final class SkijaEffects {
                 // 这里要的是「铺满面板」，不是「不许形变」。
                 canvas.drawImageRect(backdrop, source, bounds, SamplingMode.LINEAR, paint, false);
             }
-            paintBloom(canvas, source, bounds, opacity);
+            paintBloom(canvas, source, bounds, opacity, cachedOnly);
         } finally {
             canvas.restoreToCount(depth);
         }
@@ -361,8 +382,8 @@ public final class SkijaEffects {
      * <p>强度为 0 时 {@link GlassBackdrop#bloom()} 给 null，这里<em>一次绘制都不发</em>：
      * 新开销默认必须是零，不然「默认关着」只是话术。</p>
      */
-    private static void paintBloom(Canvas canvas, Rect source, Rect bounds, float opacity) {
-        Image bloom = GlassBackdrop.bloom();
+    private static void paintBloom(Canvas canvas, Rect source, Rect bounds, float opacity, boolean cachedOnly) {
+        Image bloom = cachedOnly ? GlassBackdrop.bloomCached() : GlassBackdrop.bloom();
         if (bloom == null) {
             return;
         }

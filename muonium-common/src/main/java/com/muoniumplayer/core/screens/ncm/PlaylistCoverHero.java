@@ -54,6 +54,8 @@ public final class PlaylistCoverHero implements SharedRenderingConstants, Shared
     private static Object targetOwner;
     /** 回程用来认落点的身份：同一个 {@code PlayList} 实例。 */
     private static Object targetElement;
+    /** 终点帧画完后，下一帧由目标控件无缝接管，供其跳过自己的 fadeIn。 */
+    private static Object handoffOwner;
 
     private static Location coverLocation;
     private static ITextureObject cachedTexture;
@@ -77,6 +79,7 @@ public final class PlaylistCoverHero implements SharedRenderingConstants, Shared
                              Location cover, double x, double y, double size, double radius,
                              AbstractWidget<?> viewport) {
         end();
+        handoffOwner = null;
         if (sourceOwner == null || cover == null || size <= .5) return;
         // 封面还没下完就飞，会先飞出一个空白圆角块。让页面自己那张淡入进来就够了。
         if (TextureManager.getInstance().getTexture(cover) == null) return;
@@ -90,6 +93,13 @@ public final class PlaylistCoverHero implements SharedRenderingConstants, Shared
         startY = y;
         startSize = size;
         startRadius = radius;
+    }
+
+    /** 消费一次终点交接，让目标控件跳过自己的淡入并从完整不透明度接管。 */
+    public static boolean consumeHandoff(Object owner) {
+        if (owner == null || handoffOwner != owner) return false;
+        handoffOwner = null;
+        return true;
     }
 
     /**
@@ -137,10 +147,10 @@ public final class PlaylistCoverHero implements SharedRenderingConstants, Shared
      */
     public static void render(double eased) {
         if (sourceOwner == null) return;
-        // 走完（或者压根没走起来，例如连点两次、转场被跳过）就收尾：下一帧起由页面自己画那张封面。
         // 一帧都没人认领落点也立刻收手 —— 落点不存在（例如返回到一个把这张卡片滚出视口的主页），
-        // 而起点那侧已经让位了，继续留着就是一个透明的洞。
-        if (eased >= 1.0 || !hasTarget) {
+        // 而起点那侧已经让位了，继续留着就是一个透明的洞。注意不能再把
+        // eased >= 1.0 || !hasTarget 作为同一个提前返回条件：终点帧仍要先画接力封面。
+        if (!hasTarget) {
             end();
             return;
         }
@@ -151,7 +161,9 @@ public final class PlaylistCoverHero implements SharedRenderingConstants, Shared
             return;
         }
 
-        double m = TransitionCurveCache.MOTION.at(eased);
+        // 终点帧也必须先画一次再收尾。原来在 eased >= 1 时直接 end，
+        // 但落点控件本帧仍处于 coversYield 状态，于是会出现一个空帧，表现为封面接力结束时闪烁一下。
+        double m = TransitionCurveCache.MOTION.at(Math.min(1.0, Math.max(0.0, eased)));
         double size = startSize + (targetSize - startSize) * m;
         double radius = startRadius + (targetRadius - startRadius) * m;
         // 按中心插值再回推左上角：直接插左上角的话，尺寸变化会被读成一半位移。
@@ -164,6 +176,12 @@ public final class PlaylistCoverHero implements SharedRenderingConstants, Shared
         api.getGLStateManager().bindTexture(texture.getGlTextureId());
         texture.linearFilter();
         GFX.roundedRectTextured(centerX - size * .5, centerY - size * .5, size, size, radius, 1f);
+
+        // 让目标控件从下一帧开始重新接管封面，避免「英雄层」与页面封面同时画一帧。
+        if (eased >= 1.0) {
+            handoffOwner = targetOwner;
+            end();
+        }
     }
 
     public static void end() {

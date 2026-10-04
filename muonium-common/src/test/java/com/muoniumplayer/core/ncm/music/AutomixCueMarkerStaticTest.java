@@ -155,7 +155,7 @@ class AutomixCueMarkerStaticTest {
                 "AutomixSettings.cycleOverlapSeconds();");
 
         String layout = read(CLASSIC_LAYOUT);
-        assertTrue(layout.contains("colorRowHeight * 17"),
+        assertTrue(layout.contains("colorRowHeight * 18"),
                 "经典编辑器多了一行却没抬分段高度：这一页的滚动条会比内容短一格");
     }
 

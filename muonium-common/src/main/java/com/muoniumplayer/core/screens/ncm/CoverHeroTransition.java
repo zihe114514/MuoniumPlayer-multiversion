@@ -8,7 +8,6 @@ import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.rendering.texture.ITextureObject;
 import com.muoniumplayer.core.settings.HudConfig;
-import com.muoniumplayer.render.skija.SkijaEffects;
 
 /**
  * 控制栏小封面 到 全屏歌词页大封面 的接力转场（shared element / hero transition）。
@@ -22,8 +21,8 @@ import com.muoniumplayer.render.skija.SkijaEffects;
  *       不会因为退场换了另一组曲线而跳一下。退场的「更利落」由更短的时长给，不靠换曲线。</li>
  * </ul>
  *
- * <p>分层节奏（进场自下而上依次到场，退场因为是同一组纯函数而自动反序）：
- * 页面底色 → 接力封面 → 面板内容 → 左栏信息与传送带 → 歌词。四层各有自己的时间窗。
+ * <p>进场只使用一条连续曲线：页面与歌词逐渐显现，接力封面沿最短路径落位；退场沿同一条曲线反向返回。
+ * 不叠加额外的弧线、过冲、分层延迟或整页缩放，优先保证低配机器上的帧时间稳定。
  *
  * <p>封面为什么必须拿到面板外面画：它要同时跨越「控制栏坐标系」和「歌词页坐标系」，还要盖在
  * 压暗层之上；留在 {@code MusicLyricsPanel} 里既跨不过去，也会被面板自己的 {@code contentScale}
@@ -52,38 +51,29 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
 
     private static int state = IDLE;
 
-    /** 1 = 完全展开。全部曲线都读它，一帧只推进一次（{@link #tick(boolean)}）。 */
+    /** 1 = 完全展开。所有动画通道共享这一条时间轴。 */
     private static double t = 0.0;
 
     private static boolean hasHero = false;
     private static double startX, startY, startSize, startRadius;
     private static double targetX, targetY, targetSize, targetRadius;
 
-    /** 本帧曲线缓存。tick 一次，多个图层复用，避免同一帧重复反解贝塞尔。 */
+    /** 本帧唯一运动值。所有图层与 Hero 都复用它，避免分层时间轴造成视觉断层。 */
     private static double cachedMotion = 0.0;
-    private static double cachedMotionLagging = 0.0;
     private static double cachedScrimAlpha = 0.0;
     private static double cachedContentAlpha = 0.0;
     private static double cachedChromeFade = 0.0;
     private static double cachedLyricsFade = 0.0;
-    private static double cachedMainScale = 1.0;
 
     /** 接力封面在这一首歌内的纹理缓存，避免每帧查两次 ConcurrentHashMap。 */
     private static Music cachedTextureMusic;
     private static ITextureObject cachedTexture;
 
     /**
-     * 两条缓动。括号里的数字是<b>规范值</b>（{@code MOTION} = Material 3 emphasized，
-     * {@code MOTION_LAGGING} = Material 2 standard），不要凭手感改：项目里其它动画迟早要统一到
-     * 同一套口径上，改了这里就散了。
-     *
-     * <p>{@code MOTION} 承担绝大多数通道；{@code MOTION_LAGGING} 只用在接力封面的水平轴上，
-     * 它在前半程明显慢一档（t=0.25 处 0.24 对 0.61），同一时刻两者的差值就是弧线的弯度来源。
-     * 之所以换曲线而不是简单地给 X 轴加一段延迟，是因为延迟会造出一段"X 完全不动"的死区，
-     * 起步那一下看起来像卡了一帧。
+     * 转场只保留一条 emphasized cubic-bezier：起步柔和、中段连续、末尾自然收住。
+     * Hero 的位置、尺寸、圆角、页面透明度全部读取同一个值，避免层级错位。
      */
     private static final TransitionCurveCache.CachedBezier MOTION = TransitionCurveCache.MOTION;
-    private static final TransitionCurveCache.CachedBezier MOTION_LAGGING = TransitionCurveCache.MOTION_LAGGING;
 
     // ------------------------------------------------------------------ 生命周期
 
@@ -216,26 +206,18 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
         return cachedLyricsFade;
     }
 
-    /**
-     * 播放器主界面在转场期间的缩放。
-     *
-     * <p>是<b>放大</b>而不是缩小，这一点反直觉但必须如此：Stencil 裁的是面板矩形，把主界面缩小
-     * 会在圆角外框内侧漏出一圈游戏画面（面板底色自带液态玻璃透明度，补不回来）。放大只会被裁掉，
-     * 永远不漏。观感上它和歌词页的 {@code contentScale}（.952 到 1）连成一次「穿过图层往里推」
-     * 的镜头运动，比缩小更贴合「小封面胀成大封面」这件事。
-     */
+    /** 转场期间不再对整页做额外缩放，避免文字和玻璃层重复采样。 */
     public static double mainScale() {
-        return cachedMainScale;
+        return 1.0;
     }
 
     private static void refreshFrameCache() {
         cachedMotion = MOTION.at(t);
-        cachedMotionLagging = MOTION_LAGGING.at(t);
-        cachedScrimAlpha = MOTION.at(sub(t, .05, 1.0));
-        cachedContentAlpha = MOTION.at(sub(t, .16, 1.0));
-        cachedChromeFade = MOTION.at(sub(t, .36, .98));
-        cachedLyricsFade = MOTION.at(sub(t, .48, 1.0));
-        cachedMainScale = 1.0 + .016 * cachedMotion;
+        // 统一时间轴：少一组曲线查询，也让背景、控制区和歌词同时连续出现。
+        cachedScrimAlpha = cachedMotion;
+        cachedContentAlpha = cachedMotion;
+        cachedChromeFade = cachedMotion;
+        cachedLyricsFade = cachedMotion;
     }
 
     // ------------------------------------------------------------------ 接力封面
@@ -254,31 +236,15 @@ public final class CoverHeroTransition implements SharedRenderingConstants, Shar
     public static void render() {
         if (!isFlying()) return;
 
-        // 弧线运动：X 与 Y 走两条不同的曲线，两轴不同步才有弧。竖直轴用较快的 MOTION 先到位、
-        // 水平轴用慢一档的 MOTION_LAGGING 跟上 —— 小封面在控制栏左下、大封面在面板上方，主位移
-        // 是竖直方向，于是轨迹是「先抬起来再横过去」的弓形（典型面板下峰值离直线约 27px），
-        // 符合 Material 对「向上跨越」的规定。退场时 t 反向递减，同一条弧自动变成「先横过去
-        // 再落下来」，正是「向下跨越」该有的方向 —— 这就是坚持纯函数换来的便宜。
-        // 尺寸跟竖直轴同一条曲线：封面是一边升一边长大，两者错开会看出「先飞后胀」。
-        double fx = cachedMotionLagging;
-        double fy = cachedMotion;
-        double fs = fy;
+        // 单一 eased 直线：没有水平滞后、弧线和过冲，封面始终沿最短路径连续移动。
+        double motion = cachedMotion;
+        double size = lerp(startSize, targetSize, motion);
+        double radius = lerp(startRadius, targetRadius, motion);
+        double x = lerp(startX + startSize * .5, targetX + targetSize * .5, motion) - size * .5;
+        double y = lerp(startY + startSize * .5, targetY + targetSize * .5, motion) - size * .5;
 
-        // 落地微过冲：两端严格为 0，峰值约 2.4% 落在 t≈0.68。那时尺寸曲线已经基本到位，读起来
-        // 是「停住之后轻轻呼了一口气」，而不是一路弹过去。
-        double bulge = 1.0 + Math.sin(Math.PI * t) * Math.pow(t, 1.7) * .055;
-
-        double size = lerp(startSize, targetSize, fs) * bulge;
-        double radius = lerp(startRadius, targetRadius, fs);
-        // 按中心插值再回推左上角：直接插左上角的话，过冲会变成从左上角单向长出去。
-        double x = lerp(startX + startSize * .5, targetX + targetSize * .5, fx) - size * .5;
-        double y = lerp(startY + startSize * .5, targetY + targetSize * .5, fy) - size * .5;
-
-        // 阴影：起点的小封面本来没有阴影，落点的面板封面是 alpha .4 的 bloom，所以要淡入。
-        // 飞行中途额外抬高、外扩一点，这是「卡片离开桌面」的高度暗示；两个附加量在两端都归零，
-        // 落地那一帧和面板自己画的那圈阴影完全重合，交接看不出来。
-        // 转场快路径：飞行封面本体保留，阴影 bloom（一次 saveLayer + Gaussian blur）跳过。
-        // 阴影只服务半秒钟的飞行过程；动画结束后面板自己的 bloom 会立即恢复完整观感。
+        // Hero 只绘制封面本体。转场期间不额外创建阴影、模糊或离屏层，
+        // 让 GPU 只承担一次圆角纹理绘制，落地后再恢复页面自身的视觉效果。
 
         ITextureObject tex = texture();
         if (tex == null) return;

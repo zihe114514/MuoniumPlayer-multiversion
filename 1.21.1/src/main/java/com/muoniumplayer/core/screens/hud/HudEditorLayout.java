@@ -29,7 +29,7 @@ final class HudEditorLayout {
         if (coverExpanded) contentHeight += colorRowHeight;
         // 无缝切换按引擎显示不同条目；Folia 还包含 7 个模型/运行组件动作和分组标题。
         // 取两个引擎中较长的一侧，保证经典 HUD 能滚到最后一个模型动作。
-        if (automixExpanded) contentHeight += sectionHeight + colorRowHeight * 17;  // 2026-10-01 多一行「切点标记」
+        if (automixExpanded) contentHeight += sectionHeight + colorRowHeight * 18;  // 包含「切点标记」与「动画样式」
         // 存储分组：缓存上限、立即清理，两行等高控件。
         if (storageExpanded) contentHeight += colorRowHeight * 2;
         if (themeExpanded) contentHeight += colorRowHeight + themeGridHeight;

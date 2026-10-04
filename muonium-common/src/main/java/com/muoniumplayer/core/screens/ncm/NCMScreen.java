@@ -72,13 +72,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     /**
      * 换页转场的历史基准时长（毫秒）。实际时长还要除以用户配置的「界面切换动画速度」
      * （{@link HudConfig#playerUiSwitchSpeed}，默认 3.0），与 {@code CoverHeroTransition} 同一口径：
-     * 默认观感约 173ms，把倍率调回 1.0 就是这条基准值。
+     * 默认观感约 140ms，把倍率调回 1.0 就是这条基准值。
      */
-    private static final double PANEL_TRANSITION_MS = 520.0;
-    /** 横向推入/推出的幅度（设计像素）。整页位移靠它交代「这一页是从哪边来的」。 */
-    private static final double PANEL_SLIDE_DISTANCE = 26.0;
-    /** 新页落位前残余的放大余量：给位移一点纵深，又不退回成原来那种「缩放淡入」。 */
-    private static final double PANEL_ENTER_SCALE_OVERSHOOT = .02;
+    private static final double PANEL_TRANSITION_MS = 420.0;
+    /** 横向推入/推出的幅度（设计像素）。短距离只交代方向，不制造拖拽感。 */
+    private static final double PANEL_SLIDE_DISTANCE = 18.0;
+    /** 旧页透明到这个程度以后不再跑整棵控件树，避免为不可见内容付渲染成本。 */
+    private static final double PANEL_OLD_PAGE_RENDER_CUTOFF = .045;
 
     /** 转场期间被换下去的那张旧页。它和新页<b>同时</b>画，见渲染里的换页段。 */
     NCMPanel prevAnimatingPanel = null;
@@ -87,6 +87,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     float prevAnimatingPanelAlpha = 0f;
     /** 本次换页的进度：0 = 刚切页，1 = 已经停稳。没有旧页时它就是 1。 */
     private double panelTransitionT = 1.0;
+    /** 当前帧是否正在绘制栏目切换。面板条目据此跳过自己的二级进场，避免动画套动画。 */
+    private boolean panelTransitionActive;
     /** 这次换页是「后退」。位移方向要镜像，否则返回键看起来像又前进了一页。 */
     private boolean panelTransitionBackward;
     /**
@@ -96,6 +98,17 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
      * 返回键退出来的，所以方向只能由调用方先声明、换页时取走并清掉。</p>
      */
     private boolean pendingNavigationBackward;
+
+    /**
+     * 面板切换帧的轻量渲染闸门。
+     *
+     * <p>栏目切换本身已经负责整页的淡入与位移，主页卡片、曲目行再各自做一遍落入动画会
+     * 同时增加矩阵和透明度层，而且看起来像两套动画互相抢节奏。进场条目在切换帧直接
+     * 落位，滚动到新视口的条目仍然保留自己的进场。</p>
+     */
+    public static boolean isPanelTransitionRunning() {
+        return instance != null && instance.panelTransitionActive;
+    }
 
     @Getter
     ControlsBar controlsBar;
@@ -388,6 +401,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 //        }));
 
         this.checkDirty();
+        this.panelTransitionActive = false;
 
         // 「本次启动第一次打开播放器」的模型提示。放在这里而不是 initGui：岛屿展开动画跑完
         // 才算真的「打开了播放器」，在动画中间糊一张卡片会跟展开过程打架。内部自带
@@ -446,7 +460,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         // 低于 3.5% 时内容不可察觉。在此跳过整个组件树，避免
         //在形变首尾帧支付封面/歌词/队列的工作，
         //而那恰是音乐播放最可能挤压帧预算的时候。
-        if (alpha > .035f) {
+        // 表面先完成一小段展开，再让整棵控件树进入裁剪区。
+        // 这样开合首尾不会为几乎看不见的内容支付封面、字体和列表渲染成本。
+        if (alpha > .075f) {
             // 裁剪必须在缩放矩阵外：surfaceBounds 已经是屏幕坐标；
             // 矩阵只负责把 target 面板内容压进这块 surface。
             StencilClipManager.beginClip(() -> roundedRect(surfaceX, surfaceY,
@@ -457,12 +473,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             api.getGLStateManager().scale(contentScale, contentScale, 1);
             api.getGLStateManager().translate(-targetCenterX, -targetCenterY, 0);
 
-            // 转场期间主界面内容整体微微放大（见 CoverHeroTransition#mainScale，最高 +1.6%）。
-            // 放大而不是缩小：裁剪形状在上面已经录成面板矩形，缩小会让圆角内侧漏出游戏画面，
-            // 放大只会被裁掉，永远不漏。飞行封面与歌词页不在这层矩阵里，各自走自己的缩放。
-            api.getGLStateManager().pushMatrix();
-            this.scaleAtPos(basePanel.getX() + basePanel.getWidth() * .5,
-                    basePanel.getY() + basePanel.getHeight() * .5, CoverHeroTransition.mainScale());
+            // 简化后的 Hero 转场不再缩放整棵主界面树；只保留一层播放器内容矩阵，
+            // 避免文字、玻璃和控件在进场时重复采样。
 
             if (this.musicLyricsPanel == null || this.musicLyricsPanel.alpha <= .9f) {
                 this.basePanel.setAlpha(alpha);
@@ -472,41 +484,40 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
                 // 换页转场：一条真时钟，两页<b>同时</b>画。
                 //
-                // 原来这两支是 if / else if 串行的 —— 旧页淡完才轮到新页淡进来，中间必然露一帧空底，
-                // 看着像「关一页再开一页」；而且两边的 alpha 都走 Interpolations 的指数逼近，既没有
-                // 时长也没有缓动，默认速度倍率 3.0 下那个插值系数已经被钳到 .95，一两帧就吃光，
-                // 整段动画实际上看不见。现在照 CoverHeroTransition 的写法：t 按帧间隔累加到 1，
-                // 位移与不透明度读同一条 MOTION 曲线，旧页向左推出去、新页从右边推进来。
+                // 旧页淡完才画新页会露空底；两页各自再套一套条目进场又会让矩阵和透明度层
+                // 成倍增加。这里保留一次交叉淡入，但把距离收短、去掉整页缩放，并在旧页已经
+                // 几乎不可见时停止遍历它的整棵控件树。
                 if (this.prevAnimatingPanel != null) {
                     this.panelTransitionT = Math.min(1.0,
                             this.panelTransitionT + panelTransitionStepMillis() / panelTransitionMillis());
                 }
                 final double transitionEased = TransitionCurveCache.MOTION.at(this.panelTransitionT);
                 final double slideDistance = PANEL_SLIDE_DISTANCE * (this.panelTransitionBackward ? -1.0 : 1.0);
-                double panelCenterX = this.currentPanelBg.getX() + this.currentPanelBg.getWidth() * .5;
-                double panelCenterY = this.currentPanelBg.getY() + this.currentPanelBg.getHeight() * .5;
+                this.panelTransitionActive = this.prevAnimatingPanel != null;
 
                 if (this.prevAnimatingPanel != null) {
                     // 中途再切一次页时，这张旧页可能还在自己淡进来的半路上。从它<b>当前</b>的不透明度
-                    // 接着往下淡（prevAnimatingPanelAlpha 记的就是被换下去那一刻的值），而不是先跳回
-                    // 全亮再淡 —— 后者连点两个歌单就会看见上一页闪一下。
+                    // 接着往下淡，而不是先跳回全亮。旧页透明到阈值以下后不再遍历它，最后这段只画新页。
                     this.prevAnimatingPanel.setAlpha(Math.min(this.basePanel.getAlpha(),
                             this.prevAnimatingPanelAlpha * (float) (1.0 - transitionEased)));
                     this.prevAnimatingPanel.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
                             this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
 
-                    // 位移必须裁在内容区里：旧页原来不裁，是因为它压根不位移；现在推出去 26 像素
-                    // 不裁就会糊到左侧导航栏上。
-                    StencilClipManager.beginClip(() -> Rect.draw(this.currentPanelBg.getX(),
-                            this.currentPanelBg.getY(), this.currentPanelBg.getWidth(),
-                            this.currentPanelBg.getHeight(), -1));
+                    if (this.prevAnimatingPanelAlpha * (float) (1.0 - transitionEased)
+                            > PANEL_OLD_PAGE_RENDER_CUTOFF) {
+                        // 位移必须裁在内容区里：旧页推出去不允许糊到左侧导航栏上。
+                        StencilClipManager.beginClip(() -> Rect.draw(this.currentPanelBg.getX(),
+                                this.currentPanelBg.getY(), this.currentPanelBg.getWidth(),
+                                this.currentPanelBg.getHeight(), -1));
 
-                    api.getGLStateManager().pushMatrix();
-                    api.getGLStateManager().translate(-slideDistance * transitionEased, 0.0, 0.0);
-                    this.prevAnimatingPanel.renderWidget(mouseX, mouseY, baseDWheel);
-                    api.getGLStateManager().popMatrix();
+                        api.getGLStateManager().pushMatrix();
+                        api.getGLStateManager().translate(-slideDistance * transitionEased, 0.0, 0.0);
+                        // 旧页只做视觉退场，不参与悬停、滚轮或光标命中，避免两个页面同时跑交互状态。
+                        this.prevAnimatingPanel.renderWidget(-1000000.0, -1000000.0, 0);
+                        api.getGLStateManager().popMatrix();
 
-                    StencilClipManager.endClip();
+                        StencilClipManager.endClip();
+                    }
 
                     if (this.panelTransitionT >= 1.0) {
                         this.prevAnimatingPanel = null;
@@ -522,11 +533,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
                     api.getGLStateManager().pushMatrix();
                     api.getGLStateManager().translate(slideDistance * (1.0 - transitionEased), 0.0, 0.0);
-                    // 只留一点点放大余量：原来那 1.1→1.0 的整页缩放是「缩放淡入」显呆的另一半原因，
-                    // 它和位移叠在一起会让文字在转场里发糊。2% 收到 1 只给纵深，不抢位移。
-                    this.scaleAtPos(panelCenterX, panelCenterY,
-                            1.0 + PANEL_ENTER_SCALE_OVERSHOOT * (1.0 - transitionEased));
-
+                    // 栏目切换只保留一条短距离位移 + 淡入曲线，文字始终使用原始尺寸，避免缩放采样发糊。
                     this.currentPanel.renderWidget(mouseX, mouseY, baseDWheel);
                     api.getGLStateManager().popMatrix();
 
@@ -540,6 +547,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                         this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight(), -1));
                 PlaylistCoverHero.render(transitionEased);
                 StencilClipManager.endClip();
+                this.panelTransitionActive = false;
 
                 // 导航等待遮罩：盖在内容页之上，并且裁在内容区里 —— 失败提示可能比内容区还宽，
                 // 不裁会糊到左侧导航栏或控制栏上。
@@ -835,7 +843,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         @Override
         public void onRender(double mouseX, double mouseY) {
-            if (GlassLook.amount(GlassLook.Surface.PLAYER) > 0.001f) return;
+            if (PlayerIslandTransition.isRunning()
+                    || GlassLook.amount(GlassLook.Surface.PLAYER) > 0.001f) return;
             if (TransitionPerformanceBudget.skipLiquidGlass()) return;
             // 边缘光滑块只在真玻璃铺上来的时候吃：没有真背景时这套高光就是「玻璃」本身，
             // 拿它去压暗会让原来那几款液态玻璃主题凭空变淡。
@@ -880,6 +889,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     private final NavigationLoadingOverlay navigationLoading = new NavigationLoadingOverlay();
     private final NavigationRequestGate navigationRequests = new NavigationRequestGate();
     private String pendingNavigationLabel = "";
+    /** 侧栏点击到异步结果落地之间暂存的语义键；由目标面板接管后进入历史。 */
+    private String pendingPanelNavigationKey;
 
     /** 新搜索使旧请求失效；仅重建控件树不算离开当前内容页。 */
     public long beginContentRequest() {
@@ -889,6 +900,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     public boolean isContentRequestCurrent(long ticket) {
         return this.navigationRequests.isCurrent(ticket);
+    }
+
+    /**
+     * 侧栏在启动同步/异步导航前声明目标语义，避免多个入口复用同一面板类型时选中条丢失。
+     */
+    public void setPendingPanelNavigationKey(String key) {
+        this.pendingPanelNavigationKey = key == null || key.trim().isEmpty() ? null : key;
     }
 
     public void setCurrentPanel(NCMPanel panel) {
@@ -974,6 +992,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                     this.setCurrentPanel(panel);
                     return;
                 }
+                this.pendingPanelNavigationKey = null;
                 this.navigationLoading.showMessage(error == null || error.trim().isEmpty()
                         ? (targetName.isEmpty() ? "暂无可显示内容" : targetName + "暂无可显示内容")
                         : "获取失败：" + error.trim());
@@ -1004,7 +1023,12 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         // 时钟直接给到终点，新页按停稳态画，不硬凑一次转场。
         this.panelTransitionT = this.prevAnimatingPanel == null || this.prevAnimatingPanelAlpha <= .02f
                 ? 1.0 : 0.0;
+        this.panelTransitionActive = this.prevAnimatingPanel != null;
         if (panel != null) {
+            if (this.pendingPanelNavigationKey != null) {
+                panel.setNavigationKey(this.pendingPanelNavigationKey);
+            }
+            this.pendingPanelNavigationKey = null;
             if (shouldCallInit)
                 this.currentPanel.onInit();
             this.currentPanel.setAlpha(0);

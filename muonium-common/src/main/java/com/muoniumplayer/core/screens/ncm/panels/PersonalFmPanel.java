@@ -211,6 +211,7 @@ public final class PersonalFmPanel extends NCMPanel {
         RoundedButtonWidget back = new RoundedButtonWidget(FontelloIcons.BACK, FontManager.fontello18);
         addChild(back);
         back.setShouldOverrideMouseCursor(true);
+        back.setGlassPlate(GlassLook.Surface.PLAYER);
         back.setBeforeRenderCallback(() -> {
             back.setBounds(28, 22)
                     .setPosition(Math.max(MARGIN, getWidth() - back.getWidth() - MARGIN),
@@ -218,6 +219,7 @@ public final class PersonalFmPanel extends NCMPanel {
                     .setRadius(6)
                     .setColor(back.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                             : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            back.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             back.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
         back.setOnClickCallback((x, y, button) -> {
@@ -276,6 +278,7 @@ public final class PersonalFmPanel extends NCMPanel {
         RoundedButtonWidget refresh = new RoundedButtonWidget("刷新", FontManager.pf12bold);
         addChild(refresh);
         refresh.setShouldOverrideMouseCursor(true);
+        refresh.setGlassPlate(GlassLook.Surface.PLAYER);
         refresh.setBeforeRenderCallback(() -> {
             boolean loading = PersonalFmManager.isLoading();
             refresh.setBounds(40, 17)
@@ -290,6 +293,7 @@ public final class PersonalFmPanel extends NCMPanel {
                     .setAlpha(loading ? .35f : 1.0f)
                     .setColor(refresh.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                             : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            refresh.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             refresh.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
         refresh.setOnClickCallback((x, y, button) -> {

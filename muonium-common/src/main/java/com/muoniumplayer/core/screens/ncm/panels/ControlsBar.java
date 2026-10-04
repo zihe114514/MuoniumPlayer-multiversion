@@ -31,6 +31,7 @@ import com.muoniumplayer.core.screens.ncm.NCMPanel;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.screens.ncm.PlayerIconAssets;
+import com.muoniumplayer.core.screens.ncm.PlayerIslandTransition;
 import com.muoniumplayer.core.screens.ncm.SheetClock;
 import com.muoniumplayer.core.screens.ncm.TrackSelectionMotion;
 import com.muoniumplayer.core.screens.ncm.TransitionCurveCache;
@@ -49,6 +50,9 @@ public class ControlsBar extends NCMPanel {
 
     private PlaybackPresentation presentation = new PlaybackPresentation(null, null, 0L);
     private final TrackSelectionMotion selectionMotion = new TrackSelectionMotion();
+    /** 主界面稳定后分帧预热全屏歌词页，避免点击瞬间同步量整首歌词。 */
+    private int lyricPrewarmStableFrames;
+    private String lyricPrewarmTrackKey;
 
     private boolean qualityMenuOpen;
     /**
@@ -246,7 +250,14 @@ public class ControlsBar extends NCMPanel {
 
     @Override
     public void onInit() {
-        RectWidget bg = new RectWidget();
+        RectWidget bg = new RectWidget() {
+            @Override public void onRender(double mouseX, double mouseY) {
+                super.onRender(mouseX, mouseY);
+                // After the bar background, before any labels/buttons; inherits player clip and motion.
+                com.muoniumplayer.core.rendering.MusicSpectrumRenderer.renderPlayer(
+                        getX(), getY(), getWidth(), getHeight(), getAlpha());
+            }
+        };
 
         this.addChild(bg);
 
@@ -265,6 +276,24 @@ public class ControlsBar extends NCMPanel {
                             2, 2, 1, reAlpha(accent, (float) (getAlpha() * (.4 + .6 * selectionMotion.pulse(dot)))));
                 }
                 super.onRender(mouseX, mouseY);
+                // Exactly one cooperative preparation slice per idle frame. Hover can start
+                // it sooner, but never adds a second slice or competes with the player entrance.
+                if (!presentation.preparing && presentation.displayTrack != null
+                        && NCMScreen.getInstance().musicLyricsPanel == null
+                        && !PlayerIslandTransition.isRunning() && !CoverHeroTransition.isRunning()) {
+                    String trackKey = presentation.displayTrack.getStableKey();
+                    if (!trackKey.equals(lyricPrewarmTrackKey)) {
+                        lyricPrewarmTrackKey = trackKey;
+                        lyricPrewarmStableFrames = 0;
+                    }
+                    lyricPrewarmStableFrames = Math.min(6, lyricPrewarmStableFrames + 1);
+                    if (lyricPrewarmStableFrames >= 6 || this.testHovered(mouseX, mouseY)) {
+                        MusicLyricsPanel.prewarm(presentation.displayTrack);
+                    }
+                } else {
+                    lyricPrewarmTrackKey = null;
+                    lyricPrewarmStableFrames = 0;
+                }
                 double light = selectionMotion.burst() * .6 + selectionMotion.settledGlow() * .65;
                 if (light > .01) roundedOutline(getX(), getY(), getWidth(), getHeight(), getRadius(), .8,
                         new java.awt.Color(reAlpha(accent, (float) (getAlpha() * light)), true));
@@ -280,6 +309,7 @@ public class ControlsBar extends NCMPanel {
             presentation = CloudMusic.playbackPresentation();
             selectionMotion.update(presentation.displayKey(), presentation.requestNanos,
                     presentation.preparing, System.nanoTime(), SheetClock.speed());
+
             bg.setMargin(0);
             bg.setColor(NCMScreen.getColor(NCMScreen.ColorType.NAVIGATION_BACKGROUND));
             // 底栏这块底同样压在面板根底之上，属于内层：不接玻璃的话，整页从上到下就它最黑，
@@ -313,7 +343,8 @@ public class ControlsBar extends NCMPanel {
                         // 起点就晚了一帧，封面会从上一次的位置起飞。
                         CoverHeroTransition.open(playingCover.getX(), playingCover.getY(),
                                 playingCover.getWidth(), playingCover.getRadius());
-                        NCMScreen.getInstance().musicLyricsPanel = new MusicLyricsPanel(CloudMusic.currentlyPlaying);
+                        NCMScreen.getInstance().musicLyricsPanel =
+                                MusicLyricsPanel.takePrewarmed(CloudMusic.currentlyPlaying);
                     }
 
                     return true;

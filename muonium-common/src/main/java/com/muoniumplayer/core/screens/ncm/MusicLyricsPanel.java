@@ -17,6 +17,7 @@ import com.muoniumplayer.core.rendering.Image;
 import com.muoniumplayer.core.rendering.animation.Easing;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.TextGlow;
+import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.render.skija.SkijaEffects;
 import com.muoniumplayer.render.skija.SkijaGfx;
@@ -109,9 +110,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     private int qplayerInterludeNextGroup = -1;
     private long qplayerInterludeStartMs;
     /** qplayer 缓存塑形后的行；这是我们逐字放置的等价缓存。 */
-    private final java.util.IdentityHashMap<LyricLine, WordPlacement> qplayerPlacementCache =
-            new java.util.IdentityHashMap<>();
-    private final java.util.IdentityHashMap<LyricLine, double[]> qplayerPlacementGeometry =
+    private final java.util.IdentityHashMap<LyricLine, LyricWordPlacement> qplayerPlacementCache =
             new java.util.IdentityHashMap<>();
     /**
      * 除「逐行滚动」以外的各套样式的渲染器，下标与 {@link FullscreenLyricStyle} 的序号一一对应
@@ -172,6 +171,15 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     private double lastViewportLyricWidth = -1;
     private double lastViewportAnchorY = Double.NaN;
 
+    // 歌词分组只随时间轴变化，不随播放位置变化。原先每帧都扫描整首歌词并重建
+    // line -> group 映射；接力转场最短只有约 170ms，这个重复工作会和首帧字体/图片
+    // 上传叠在一起，低配机尤其容易出现「封面已经起飞、歌词却卡住」的感觉。
+    private boolean qplayerGroupsDirty = true;
+    private String qplayerGroupsTrackKey;
+    private long qplayerGroupsRevision = -1;
+    private long[] qplayerGroupStartTimes = new long[0];
+    private long[] qplayerGroupEndTimes = new long[0];
+
     /**
      * 所有歌词层的唯一权威视口。它每帧从
      * 播放器的实时边界推导，因此文本、KTV 合成和模糊都跟随缩放。
@@ -198,13 +206,125 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         }
     }
 
+    /** Only one future page is retained. All preparation stays on the render thread. */
+    private static MusicLyricsPanel preparedPanel;
+    private static final int PREWARM_LINES_PER_FRAME = 8;
+    private static final long PREWARM_BUDGET_NANOS = 750_000L;
     private final Music music;
+    private boolean handoffPrewarmed;
+    private final LyricPreparationQueue preparation = new LyricPreparationQueue();
+    private long preparedRevision = -1;
+    private double preparedWidth = -1;
+    private int preparedCount = -1, preparedAnchor = -1;
+    private LyricLine preparedFirst, preparedLast;
+    private CFontRenderer preparedFont, preparedTranslationFont;
+    private long preparedFontRevision, preparedTranslationFontRevision;
+
     public MusicLyricsPanel(Music music) {
+        this(music, false);
+    }
+
+    private MusicLyricsPanel(Music music, boolean prepareOnly) {
         this.music = music;
-        // 兜底启动进场时钟。本层的 alpha 现在完全由转场给，少了这一句、又没走小封面那条入口的话，
-        // 面板会永远停在完全透明。
-        CoverHeroTransition.ensureOpen();
-        updateLyricPositionsImmediate(getCurrentLyricViewportWidth());
+        if (!prepareOnly) {
+            CoverHeroTransition.ensureOpen();
+            // Cold fallback remains correct, while the cooperative path normally removes this work
+            // from the click entirely. The immediate layout only measures the reading window.
+            updateLyricPositionsImmediate(getCurrentLyricViewportWidth());
+        }
+    }
+
+    private static boolean sameTrack(Music a, Music b) {
+        return a != null && b != null && a.getStableKey().equals(b.getStableKey());
+    }
+
+    public static void prewarm(Music target) {
+        if (target == null || target != CloudMusic.currentlyPlaying
+                || !CloudMusic.lyricsMatchCurrentTrack()) {
+            preparedPanel = null;
+            return;
+        }
+        if (preparedPanel == null || !sameTrack(preparedPanel.music, target)) {
+            preparedPanel = new MusicLyricsPanel(target, true);
+        }
+        NCMScreen screen = NCMScreen.getInstance();
+        preparedPanel.prepareFrame(createLyricViewport(screen.getPanelX(), screen.getPanelY(),
+                screen.getPanelWidth(), screen.getPanelHeight()));
+    }
+
+    public static MusicLyricsPanel takePrewarmed(Music target) {
+        MusicLyricsPanel candidate = preparedPanel;
+        preparedPanel = null;
+        // A partially prepared page is useful too: finish missing work in the invisible entrance
+        // frames, rather than throw it away and synchronously rebuild it inside the click handler.
+        if (candidate == null || !sameTrack(candidate.music, target)) {
+            candidate = new MusicLyricsPanel(target, false);
+        } else {
+            candidate.handoffPrewarmed = true;
+            CoverHeroTransition.ensureOpen();
+        }
+        scrollOffset = scrollTarget = 0;
+        return candidate;
+    }
+
+    private void prepareFrame(LyricViewport viewport) {
+        if (viewport.width <= 1 || !CloudMusic.lyricsMatchCurrentTrack()) return;
+        synchronized (CloudMusic.lyrics) {
+            List<LyricLine> lines = CloudMusic.lyrics;
+            int count = lines.size();
+            if (count == 0) return;
+            CFontRenderer font = FontManager.pf65bold, translationFont = FontManager.pf34bold;
+            long revision = CloudMusic.lyricsRevision;
+            boolean changed = preparedRevision != revision || preparedCount != count
+                    || preparedFirst != lines.get(0) || preparedLast != lines.get(count - 1)
+                    || preparedFont != font || preparedTranslationFont != translationFont
+                    || preparedFontRevision != font.metricsRevision()
+                    || preparedTranslationFontRevision != translationFont.metricsRevision()
+                    || Math.abs(preparedWidth - viewport.width) >= 1.0;
+            int anchor = changed || preparedAnchor < 0 || lines.get(preparedAnchor) != CloudMusic.currentLyric
+                    ? Math.max(0, lines.indexOf(CloudMusic.currentLyric)) : preparedAnchor;
+            if (changed || preparedAnchor != anchor) {
+                if (changed) {
+                    qplayerGroupsDirty = true;
+                    qplayerPlacementCache.clear();
+                }
+                preparedRevision = revision;
+                preparedCount = count;
+                preparedFirst = lines.get(0);
+                preparedLast = lines.get(count - 1);
+                preparedWidth = viewport.width;
+                preparedFont = font;
+                preparedTranslationFont = translationFont;
+                preparedFontRevision = font.metricsRevision();
+                preparedTranslationFontRevision = translationFont.metricsRevision();
+                preparedAnchor = anchor;
+                preparation.reset(count, anchor);
+            }
+            if (preparation.finished()) return;
+            preparation.advance(PREWARM_LINES_PER_FRAME, PREWARM_BUDGET_NANOS, index -> {
+                LyricLine line = lines.get(index);
+                if (line.isBreakLine) return;
+                double columnWidth = LyricDuetGroups.columnWidth(viewport.width, line.duetSlot);
+                line.computeHeight(qplayerWrapWidth(columnWidth));
+                // Only warm native text geometry for the reading window, not thousands of offscreen glyphs.
+                if (Math.abs(index - preparedAnchor) <= LyricPreparationQueue.RADIUS) {
+                    if (!line.words.isEmpty()) {
+                        double left = LyricDuetGroups.columnLeft(viewport.left, viewport.width, line.duetSlot);
+                        qplayerPlacement(line, line.words, left, qplayerWrapWidth(columnWidth),
+                                LyricDuetGroups.rightAligned(line.duetSlot));
+                        for (LyricLine.Word word : line.words) font.prepareText(word.word);
+                        LyricGraphemeTimeline.of(line);
+                    } else {
+                        for (String row : line.wrappedRows(font, line.lyric, qplayerWrapWidth(columnWidth))) font.prepareText(row);
+                    }
+                    if (line.translationText != null) {
+                        for (String row : line.wrappedRows(translationFont, line.translationText, columnWidth)) {
+                            translationFont.prepareText(row);
+                        }
+                    }
+                }
+            });
+        }
     }
 
     public static void resetProgress(float progress) {
@@ -396,11 +516,11 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             int anchorIndex = CloudMusic.lyrics.indexOf(anchorLyric);
             if (anchorIndex < 0 || anchorIndex >= CloudMusic.lyrics.size()) return;
 
-            // 高度影响其后所有坐标。在分配
-            //位置之前先计算高度，使折行/翻译行不会与其邻居重叠。
+            // 高度影响其后所有坐标。在同步 seek / 歌词提交路径上保留完整布局语义；
+            // 打开页面的热路径不走这里，而是由 prepareFrame + updateLyricPositions 分帧处理。
             for (LyricLine lyric : CloudMusic.lyrics) {
-                // 对唱行按自己那一列的宽度算高度，否则折行数与渲染时不一致，行与行会叠在一起。
-                lyric.computeHeight(qplayerWrapWidth(LyricDuetGroups.columnWidth(width, lyric.duetSlot)));
+                lyric.computeHeight(qplayerWrapWidth(
+                        LyricDuetGroups.columnWidth(width, lyric.duetSlot)));
             }
 
             // 对唱作为一个块锚定：其首行领先，块被上移
@@ -440,62 +560,6 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         return -extra * .5;
     }
 
-    /**
-     * 一行歌词里每个字词的落点：{@code x} 是绝对横坐标，{@code row} 是它落在这一行的第几个折行。
-     * 预先整行算好而不是边画边推进，是右对齐（对唱右列）能成立的前提。
-     */
-    private static final class WordPlacement {
-        final double[] x;
-        final int[] row;
-
-        private WordPlacement(double[] x, int[] row) {
-            this.x = x;
-            this.row = row;
-        }
-    }
-
-    /**
-     * 贪心折行并算出每个字词的落点。
-     *
-     * <p>折行规则与改动前完全一致（累计宽度加上下一个字词就超过列宽时换行），所以独唱行的
-     * 排版结果不变；差别只在于右对齐的行会整体推到列右边界。</p>
-     */
-    private static WordPlacement layoutWords(List<LyricLine.Word> words, double columnLeft,
-                                             double columnWidth, boolean rightAligned) {
-        int count = words.size();
-        double[] widths = new double[count];
-        int[] rows = new int[count];
-        double[] rowWidths = new double[count + 1];
-        int row = 0;
-        double cursor = 0.0;
-        for (int i = 0; i < count; i++) {
-            LyricLine.Word word = words.get(i);
-            widths[i] = FontManager.pf65bold.getStringWidthD(word.word);
-            if (cursor > 0.0 && cursor + widths[i] > columnWidth) {
-                rowWidths[row] = cursor;
-                row++;
-                cursor = 0.0;
-            }
-            rows[i] = row;
-            cursor += widths[i];
-        }
-        rowWidths[row] = cursor;
-
-        double[] xs = new double[count];
-        double[] rowCursor = new double[row + 1];
-        for (int i = 0; i <= row; i++) {
-            // 右列按行宽右对齐；左列（含独唱）一律从列左边界开始，和改动前逐字推进的结果一致。
-            rowCursor[i] = rightAligned
-                    ? columnLeft + columnWidth - Math.min(rowWidths[i], columnWidth)
-                    : columnLeft;
-        }
-        for (int i = 0; i < count; i++) {
-            xs[i] = rowCursor[rows[i]];
-            rowCursor[rows[i]] += widths[i];
-        }
-        return new WordPlacement(xs, rows);
-    }
-
     private static void setLyricPosition(LyricLine lyric, double positionY) {
         lyric.posY = positionY;
         // setPosition 也清除弹簧速度/排队目标。seek 需要这样，
@@ -508,14 +572,36 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     public void onInit() {
-        resetLyricStatus();
-        qplayerPlacementCache.clear();
-        qplayerPlacementGeometry.clear();
+        if (handoffPrewarmed) {
+            resetVisibleLyricStatus();
+        } else {
+            resetLyricStatus();
+            qplayerPlacementCache.clear();
+            // A cold panel has no valid group cache yet.
+            qplayerGroupsDirty = true;
+            qplayerGroupsTrackKey = null;
+            qplayerGroupsRevision = -1;
+        }
         // 上一首的锚点与布局指纹留着的话，新歌第一帧会被当成一次"布局变了"，整屏歌词飞一次。
         scrollMotion.reset();
         // 换歌重开歌词页时清掉各样式的上一行状态，否则会看到上一首的内容退场一次。
         for (int i = 0; i < styleRenderers.length; i++) {
             if (styleRenderers[i] != null) styleRenderers[i].reset();
+        }
+        handoffPrewarmed = false;
+    }
+
+    /** Reset only the reading window; keep the height/word geometry prepared before the click. */
+    private void resetVisibleLyricStatus() {
+        List<LyricLine> lines = CloudMusic.lyrics;
+        int anchor = Math.max(0, lines.indexOf(CloudMusic.currentLyric));
+        int from = 0;
+        int to = lines.size();
+        for (int i = from; i < to; i++) {
+            LyricLine line = lines.get(i);
+            line.shouldUpdatePosition = false;
+            line.delayTimer.reset();
+            for (LyricLine.Word word : line.words) java.util.Arrays.fill(word.emphasizes, 0);
         }
     }
 
@@ -540,18 +626,20 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         // CoverHeroTransition 统一编排（页面底色、接力封面、本层内容、左栏、歌词各有时间窗），
         // 这里自己算一份就会和接力封面的落地时刻错开，交接那一帧看得出跳变。
         alpha = (float) CoverHeroTransition.contentAlpha();
+        LyricViewport lyricViewport = createLyricViewport(posX, posY, width, height);
+        if (!closing) prepareFrame(lyricViewport);
         // 进场前 16% 与退场末段本层都是全透明的。此前只有退场会跳过，进场仍会完整画一遍
         // 背景、控制栏与歌词；低配机上这就是开头连续掉帧的来源之一。
         if (alpha <= CLOSE_ALPHA_EPSILON) return;
 
         // 面板尺寸动画过程中按真实视口重排。阈值可避免亚像素变化导致每帧重建全部歌词。
-        LyricViewport lyricViewport = createLyricViewport(posX, posY, width, height);
         double viewportLyricWidth = lyricViewport.width;
         double viewportAnchorY = posY + height * lyricFraction();
         if (Math.abs(viewportLyricWidth - this.lastViewportLyricWidth) >= 2.0
                 || Double.isNaN(this.lastViewportAnchorY)
                 || Math.abs(viewportAnchorY - this.lastViewportAnchorY) >= 1.0) {
-            layoutLyricPositionsImmediately(viewportLyricWidth, viewportAnchorY, CloudMusic.currentLyric);
+            // First layout is anchored by scrollMotion.apply; do not rescan fonts here.
+            // Non-classic styles own their layout and never need classic row heights.
             this.lastViewportLyricWidth = viewportLyricWidth;
             this.lastViewportAnchorY = viewportAnchorY;
         }
@@ -564,22 +652,31 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         double contentScale = getContentScale(alpha);
         scaleAtPos(posX + width * .5, posY + height * .5, contentScale);
 
-        this.renderBackground(posX, posY, width, height, alpha, snapshot);
-        this.renderControlsPart(mouseX, mouseY, posX, posY, width, height, alpha, snapshot, presentation);
+        // The first few transition frames are below perceptual visibility. Keep the hero/scrim,
+        // but do not bind a blurred cover or build the chrome until those layers can contribute pixels.
+        if (alpha > .012f) {
+            this.renderBackground(posX, posY, width, height, alpha, snapshot);
+        }
+        if (CoverHeroTransition.chromeFade() > .004) {
+            this.renderControlsPart(mouseX, mouseY, posX, posY, width, height, alpha, snapshot, presentation);
+        }
 
         // 歌词整列在转场里最后入场，除了 alpha 还带一小段自下而上的浮起：位移与 lyricsFade
-        // 读同一个时钟，稳态严格归零。只影响绘制矩阵，不动任何交互矩形；模糊区域与文字在
-        // 同一矩阵里，一起平移，合成不会错位。快捷面板是浮层，不跟着走。
-        double lyricRise = (1.0 - CoverHeroTransition.lyricsFade()) * height * .014;
-        int lyricWheel = this.styleQuickPanel.handleScroll(dWheel, mouseX, mouseY) ? 0 : dWheel;
-        api.getGLStateManager().pushMatrix();
-        api.getGLStateManager().translate(0, lyricRise, 0);
-        if (presentation.preparing) {
-            renderPendingLyricStatus(lyricViewport, alpha);
-        } else {
-            this.renderLyrics(mouseX, mouseY, posX, posY, width, height, lyricWheel, alpha, snapshot);
+        // 读同一个时钟，稳态严格归零。歌词窗口尚未开始显现时直接跳过整列布局/绘制；
+        // 这不改变任何可见像素，却避免进场前半段在低配机上白算一整首歌词。
+        double lyricsFade = CoverHeroTransition.lyricsFade();
+        if (lyricsFade > .002) {
+            double lyricRise = (1.0 - lyricsFade) * height * .014;
+            int lyricWheel = this.styleQuickPanel.handleScroll(dWheel, mouseX, mouseY) ? 0 : dWheel;
+            api.getGLStateManager().pushMatrix();
+            api.getGLStateManager().translate(0, lyricRise, 0);
+            if (presentation.preparing) {
+                renderPendingLyricStatus(lyricViewport, alpha);
+            } else {
+                this.renderLyrics(mouseX, mouseY, posX, posY, width, height, lyricWheel, alpha, snapshot);
+            }
+            api.getGLStateManager().popMatrix();
         }
-        api.getGLStateManager().popMatrix();
         // 快捷面板画在最后：它是浮层，必须盖在封面与歌词之上。
         if (!TransitionPerformanceBudget.skipLyricQuickPanel()) {
             this.styleQuickPanel.render(mouseX, mouseY, posX, posY, width, height, alpha);
@@ -702,18 +799,16 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                 double renderBaseY = lyric.posY + scrollOffset;
 
                 List<LyricLine.Word> words = lyric.words;
-                WordPlacement placement = null;
+                LyricWordPlacement placement = null;
                 String[] plainRows = null;
                 int rowCount;
                 if (!words.isEmpty()) {
                     placement = qplayerPlacement(lyric, words, columnLeft,
                             qplayerWrapWidth(columnWidth), columnRightAligned);
-                    rowCount = 1;
-                    for (int wordIndex = 0; wordIndex < words.size(); wordIndex++) {
-                        rowCount = Math.max(rowCount, placement.row[wordIndex] + 1);
-                    }
+                    rowCount = placement.first.length;
                 } else {
-                    plainRows = FontManager.pf65bold.fitWidth(lyric.lyric, qplayerWrapWidth(columnWidth));
+                    plainRows = lyric.wrappedRows(FontManager.pf65bold, lyric.lyric, qplayerWrapWidth(columnWidth));
+                    if (plainRows.length == 0) continue;
                     rowCount = Math.max(1, plainRows.length);
                 }
 
@@ -733,18 +828,13 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                     double rowRenderY = renderBaseY + row * lineStep;
 
                     if (placement != null) {
-                        int first = -1;
-                        int last = -1;
-                        for (int wordIndex = 0; wordIndex < words.size(); wordIndex++) {
-                            if (placement.row[wordIndex] != row) continue;
-                            if (first < 0) first = wordIndex;
-                            last = wordIndex;
-                        }
+                        int first = placement.first[row];
+                        int last = placement.last[row];
                         if (first < 0) continue;
 
                         double rowLeft = placement.x[first];
                         double rowRight = placement.x[last]
-                                + FontManager.pf65bold.getStringWidthD(words.get(last).word);
+                                + placement.widths[last];
                         maxRowRightX = Math.max(maxRowRightX, rowRight);
                         double rowWidth = Math.max(1.0, rowRight - rowLeft);
                         double rowHScale = Math.min(1.0,
@@ -770,14 +860,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
                         for (int wordIndex = first; wordIndex <= last; wordIndex++) {
                             LyricLine.Word word = words.get(wordIndex);
-                            // 字形级提升:整词共用一个提升量时，长音节（"真"、"風"这类一拍唱很久的字）
-                            // 只能整块一起弹；改成逐 char 用自己字形的起始时刻求提升，纹波才细到一个字。
-                            // 对齐、时长归一化都交给共享的字形时间轴，这里只提供曲线。
-                            final double wordLift = qplayerSyllableLift(word.timestamp, songProgress);
-                            // 第五个参数是兜底：字形表覆盖不到的位置（理论上不该有）整格回落到按词求的提升量，
-                            // 免得画出来一个 0 提升量的字孤零零杵在原地。
-                            LyricGraphemeTimeline.fillCharLifts(lyric, wordIndex, word.emphasizes,
-                                    start -> qplayerSyllableLift((long) start, songProgress), wordLift);
+                            long[] starts = placement.charStarts[wordIndex];
+                            for (int c = 0; c < word.emphasizes.length; c++) {
+                                word.emphasizes[c] = qplayerSyllableLift(starts[c], songProgress);
+                            }
                         }
 
                         int glowPad = TextGlow.padding(FontManager.pf65bold, .034);
@@ -793,18 +879,17 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                         try {
                             for (int wordIndex = first; wordIndex <= last; wordIndex++) {
                                 LyricLine.Word word = words.get(wordIndex);
+                                String[] glyphs = placement.glyphs[wordIndex];
+                                double[] advances = placement.charAdvances[wordIndex];
                                 double x = placement.x[wordIndex];
-                                char[] chars = word.word.toCharArray();
-                                for (int charIndex = 0; charIndex < chars.length; charIndex++) {
-                                    char c = chars[charIndex];
+                                for (int charIndex = 0; charIndex < glyphs.length; charIndex++) {
                                     double y = rowRenderY - word.emphasizes[Math.min(charIndex, word.emphasizes.length - 1)]
                                             - qplayerWordRibbonLift(word, songProgress, activeK);
-                                    String glyph = String.valueOf(c);
+                                    String glyph = glyphs[charIndex];
                                     FontManager.pf65bold.drawString(glyph, x, y + 2.0,
                                             hexColor(0, 0, 0, alpha * qBaseAlpha * .48f));
                                     FontManager.pf65bold.drawString(glyph, x, y, qplayerTextColor(alpha * qBaseAlpha));
-                                    x += FontManager.pf65bold.getCharWidth(c,
-                                            charIndex + 1 < chars.length ? chars[charIndex + 1] : '\0');
+                                    x += advances[charIndex];
                                 }
                             }
                             if (ktvCanvas != null) {
@@ -870,7 +955,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                 if (lyric.translationText != null && !lyric.translationText.trim().isEmpty()) {
                     double translationY = renderBaseY + (rowCount - 1) * lineStep
                             + fontHeight * .85 + 8.0;
-                    String[] strings = FontManager.pf34bold.fitWidth(lyric.translationText, qplayerWrapWidth(columnWidth));
+                    String[] strings = lyric.wrappedRows(FontManager.pf34bold, lyric.translationText, qplayerWrapWidth(columnWidth));
                     for (String string : strings) {
                         double translationX = columnRightAligned
                                 ? columnLeft + columnWidth - FontManager.pf34bold.getStringWidthD(string)
@@ -912,6 +997,12 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     private void qplayerBuildGroups() {
         List<LyricLine> lines = CloudMusic.lyrics;
         int size = lines.size();
+        String trackKey = CloudMusic.lyricsTrackKey;
+        if (!qplayerGroupsDirty && java.util.Objects.equals(qplayerGroupsTrackKey, trackKey)
+                && qplayerGroupsRevision == CloudMusic.lyricsRevision
+                && qplayerLineToGroup.length == size) {
+            return;
+        }
         if (qplayerGroupStart.length != size || qplayerGroupEnd.length != size
                 || qplayerLineToGroup.length != size || qplayerInterludeBefore.length != size) {
             qplayerGroupStart = new int[size];
@@ -941,25 +1032,32 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             index = end + 1;
         }
         qplayerGroupCount = groupCount;
+        if (qplayerGroupStartTimes.length < groupCount) {
+            qplayerGroupStartTimes = new long[groupCount];
+            qplayerGroupEndTimes = new long[groupCount];
+        }
+        for (int group = 0; group < groupCount; group++) {
+            long startMs = Long.MAX_VALUE;
+            long endMs = Long.MIN_VALUE;
+            for (int i = qplayerGroupStart[group]; i <= qplayerGroupEnd[group]; i++) {
+                LyricLine line = lines.get(i);
+                startMs = Math.min(startMs, line.timestamp);
+                endMs = Math.max(endMs, line.timestamp + Math.max(line.duration, 0L));
+            }
+            qplayerGroupStartTimes[group] = startMs == Long.MAX_VALUE ? 0L : startMs;
+            qplayerGroupEndTimes[group] = endMs == Long.MIN_VALUE ? 0L : endMs;
+        }
+        qplayerGroupsTrackKey = trackKey;
+        qplayerGroupsRevision = CloudMusic.lyricsRevision;
+        qplayerGroupsDirty = false;
     }
 
     private long qplayerGroupStartMs(int groupIndex) {
-        if (groupIndex < 0 || groupIndex >= qplayerGroupCount) return 0L;
-        long value = Long.MAX_VALUE;
-        for (int i = qplayerGroupStart[groupIndex]; i <= qplayerGroupEnd[groupIndex]; i++) {
-            value = Math.min(value, CloudMusic.lyrics.get(i).timestamp);
-        }
-        return value == Long.MAX_VALUE ? 0L : value;
+        return groupIndex < 0 || groupIndex >= qplayerGroupCount ? 0L : qplayerGroupStartTimes[groupIndex];
     }
 
     private long qplayerGroupEndMs(int groupIndex) {
-        if (groupIndex < 0 || groupIndex >= qplayerGroupCount) return 0L;
-        long value = Long.MIN_VALUE;
-        for (int i = qplayerGroupStart[groupIndex]; i <= qplayerGroupEnd[groupIndex]; i++) {
-            LyricLine line = CloudMusic.lyrics.get(i);
-            value = Math.max(value, line.timestamp + Math.max(line.duration, 0L));
-        }
-        return value == Long.MIN_VALUE ? 0L : value;
+        return groupIndex < 0 || groupIndex >= qplayerGroupCount ? 0L : qplayerGroupEndTimes[groupIndex];
     }
 
     private static long qplayerFadeInStart(long groupStartMs) {
@@ -1029,28 +1127,20 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     /** 按行和视口几何缓存 qplayer 换行，避免逐帧分配。 */
-    private WordPlacement qplayerPlacement(LyricLine lyric, List<LyricLine.Word> words,
+    private LyricWordPlacement qplayerPlacement(LyricLine lyric, List<LyricLine.Word> words,
                                            double columnLeft, double columnWidth, boolean rightAligned) {
-        double[] geometry = qplayerPlacementGeometry.get(lyric);
-        if (geometry == null || geometry.length != 2
-                || Math.abs(geometry[0] - columnLeft) > .5
-                || Math.abs(geometry[1] - columnWidth) > .5) {
-            geometry = new double[]{columnLeft, columnWidth};
-            qplayerPlacementGeometry.put(lyric, geometry);
-            WordPlacement placement = layoutWords(words, columnLeft, columnWidth, rightAligned);
-            qplayerPlacementCache.put(lyric, placement);
-            return placement;
-        }
-        WordPlacement placement = qplayerPlacementCache.get(lyric);
-        if (placement == null) {
-            placement = layoutWords(words, columnLeft, columnWidth, rightAligned);
+        LyricWordPlacement placement = qplayerPlacementCache.get(lyric);
+        if (placement == null || !placement.matches(lyric, FontManager.pf65bold,
+                columnLeft, columnWidth, rightAligned)) {
+            placement = LyricWordPlacement.build(lyric, FontManager.pf65bold,
+                    columnLeft, columnWidth, rightAligned);
             qplayerPlacementCache.put(lyric, placement);
         }
         return placement;
     }
 
     /** qplayer 的行扫光前沿。在该行之外偏移两个羽化宽度。 */
-    private static double qplayerSweepX(List<LyricLine.Word> words, WordPlacement placement,
+    private static double qplayerSweepX(List<LyricLine.Word> words, LyricWordPlacement placement,
                                         int first, int last, double rowLeft, double rowRight,
                                         double positionMs) {
         LyricLine.Word firstWord = words.get(first);
@@ -1068,7 +1158,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             if (positionMs < start) return placement.x[index];
 
             double left = placement.x[index];
-            double right = left + FontManager.pf65bold.getStringWidthD(word.word);
+            double right = left + placement.widths[index];
             if (positionMs < end) {
                 return left + (right - left) * ((positionMs - start) / (double) (end - start));
             }
@@ -1119,9 +1209,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     /** 项目原生副车绘制助手：原始顶部坐标语义和 +4 行距。 */
-    private double drawQplayerSubline(String text, double columnLeft, double columnWidth,
+    private double drawQplayerSubline(LyricLine lyric, String text, double columnLeft, double columnWidth,
                                       boolean rightAligned, double subY, float alpha) {
-        String[] rows = FontManager.pf34bold.fitWidth(text, columnWidth);
+        String[] rows = lyric.wrappedRows(FontManager.pf34bold, text, columnWidth);
         for (String row : rows) {
             double x = rightAligned
                     ? columnLeft + columnWidth - FontManager.pf34bold.getStringWidthD(row)
@@ -1136,7 +1226,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     /** qplayer 的单个 2.2px 词光晕；仅持续 1.5s 的词才获得它。 */
     private static void drawQplayerWordGlow(LyricLine.Word word, double x, double drawY, float alpha) {
-        if (alpha <= .01f) return;
+        if (alpha <= .01f || FullscreenLyricStage.transitionFastPath()) return;
         io.github.humbleui.skija.BlendMode previous = SkijaGfx.blendMode();
         SkijaGfx.setBlendMode(io.github.humbleui.skija.BlendMode.PLUS);
         try {
@@ -1190,11 +1280,14 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             if (lyricDocTop.length != size) lyricDocTop = new double[size];
             double[] docTop = lyricDocTop;
 
-            for (int i = 0; i < size; i++) {
+            int anchorIndex = Math.max(0, lines.indexOf(currentLyric));
+            int visibleStart = Math.max(0, LyricDuetGroups.groupStart(lines, anchorIndex) - LyricPreparationQueue.RADIUS);
+            int visibleEnd = Math.min(size, LyricDuetGroups.groupEnd(lines, anchorIndex) + LyricPreparationQueue.RADIUS + 1);
+            // Far-away heights are filled cooperatively by prepareFrame. Their prefix contribution
+            // cancels out in docTop + restOffset, so the visible window keeps the identical geometry.
+            for (int i = visibleStart; i < visibleEnd; i++) {
                 LyricLine lyric = lines.get(i);
-                if (!lyric.isBreakLine) {
-                    lyric.computeHeight(qplayerWrapWidth(LyricDuetGroups.columnWidth(width, lyric.duetSlot)));
-                }
+                if (!lyric.isBreakLine) lyric.computeHeight(qplayerWrapWidth(LyricDuetGroups.columnWidth(width, lyric.duetSlot)));
             }
 
             for (int group = 0; group < qplayerGroupCount; group++) {

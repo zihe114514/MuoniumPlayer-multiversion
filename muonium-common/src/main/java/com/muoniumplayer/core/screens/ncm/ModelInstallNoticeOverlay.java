@@ -327,6 +327,7 @@ public final class ModelInstallNoticeOverlay extends NCMPanel {
         RoundedButtonWidget laterButton = new RoundedButtonWidget(LATER, FontManager.pf12bold);
         dialog.addChild(laterButton);
         laterButton.setRadius(6);
+        laterButton.setGlassRim(GlassLook.Surface.PLAYER);
         RoundedButtonWidget installButton = new RoundedButtonWidget(new Supplier<String>() {
             @Override
             public String get() {
@@ -335,6 +336,7 @@ public final class ModelInstallNoticeOverlay extends NCMPanel {
         }, FontManager.pf12bold);
         dialog.addChild(installButton);
         installButton.setRadius(6);
+        installButton.setGlassRim(GlassLook.Surface.PLAYER);
 
         // 两个按钮共用一次宽度计算，保证左右对齐、中间间隙一致。
         laterButton.setBeforeRenderCallback(() -> {
@@ -342,6 +344,7 @@ public final class ModelInstallNoticeOverlay extends NCMPanel {
             laterButton.setColor(laterButton.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            laterButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             laterButton.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
         laterButton.setOnClickCallback((x, y, button) -> {
@@ -355,6 +358,7 @@ public final class ModelInstallNoticeOverlay extends NCMPanel {
             // 安装中按钮变暗：再点一次不会有第二条下载，但要让用户看出「已经在做了」。
             installButton.setColor(installing ? 0x8A6A33
                     : (installButton.isHovering() ? 0xE5B24E : 0xD2913A));
+            installButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             installButton.setTextColor(installing ? 0xD8D8D8 : 0xFFFFFF);
         });
         installButton.setOnClickCallback((x, y, button) -> {

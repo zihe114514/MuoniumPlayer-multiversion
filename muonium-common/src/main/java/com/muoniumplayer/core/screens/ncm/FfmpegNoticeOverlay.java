@@ -250,9 +250,11 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
         RoundedButtonWidget ignoreButton = new RoundedButtonWidget(IGNORE, FontManager.pf12bold);
         dialog.addChild(ignoreButton);
         ignoreButton.setRadius(6);
+        ignoreButton.setGlassRim(GlassLook.Surface.PLAYER);
         RoundedButtonWidget downloadButton = new RoundedButtonWidget(DOWNLOAD, FontManager.pf12bold);
         dialog.addChild(downloadButton);
         downloadButton.setRadius(6);
+        downloadButton.setGlassRim(GlassLook.Surface.PLAYER);
 
         // 两个按钮共用一次宽度计算，保证左右对齐、中间间隙一致。
         ignoreButton.setBeforeRenderCallback(() -> {
@@ -260,6 +262,7 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
             ignoreButton.setColor(ignoreButton.isHovering()
                     ? getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            ignoreButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             ignoreButton.setTextColor(getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
         ignoreButton.setOnClickCallback((x, y, button) -> {
@@ -271,6 +274,7 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
         downloadButton.setBeforeRenderCallback(() -> {
             layoutActions(dialog, ignoreButton, downloadButton);
             downloadButton.setColor(downloadButton.isHovering() ? PRIMARY_HOVER_COLOR : PRIMARY_COLOR);
+            downloadButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             downloadButton.setTextColor(0xFFFFFF);
         });
         downloadButton.setOnClickCallback((x, y, button) -> {

@@ -148,18 +148,65 @@ public class LyricLine {
     }
 
     private boolean heightComputed = false;
+    /** Width used for the last successful height calculation; line wrapping is width-dependent. */
+    private double heightComputedWidth = Double.NaN;
+    private CFontRenderer heightFont, heightTranslationFont;
+    private long heightFontRevision, heightTranslationFontRevision;
+    private String heightText, heightTranslation;
+    private int heightWordCount;
+    private long layoutRevision;
+
+    long layoutRevision() { return layoutRevision; }
 
     public void markDirty() {
         heightComputed = false;
+        heightComputedWidth = Double.NaN;
+        layoutRevision++;
         // 词表可能被解析层改写（normalizeWordDurations / addWords），字形时间轴必须一起失效。
         glyphTimeline = null;
     }
 
+    private final WrappedRows[] wrappedRows = new WrappedRows[4];
+    private int nextWrappedRow;
+
+    private static final class WrappedRows {
+        final CFontRenderer font;
+        final long fontRevision;
+        final String text;
+        final double width;
+        final String[] rows;
+        WrappedRows(CFontRenderer font, String text, double width) {
+            this.font = font;
+            this.fontRevision = font.metricsRevision();
+            this.text = text;
+            this.width = width;
+            this.rows = font.fitWidth(text, width);
+        }
+    }
+
+    /** Borrowed immutable rows; four slots bound memory for lyric/translation/romanization layouts. */
+    String[] wrappedRows(CFontRenderer font, String text, double width) {
+        for (WrappedRows entry : wrappedRows) {
+            if (entry != null && entry.font == font && entry.fontRevision == font.metricsRevision()
+                    && Math.abs(entry.width - width) < 0.5 && entry.text.equals(text)) return entry.rows;
+        }
+        WrappedRows entry = new WrappedRows(font, text, width);
+        wrappedRows[nextWrappedRow] = entry;
+        nextWrappedRow = (nextWrappedRow + 1) % wrappedRows.length;
+        return entry.rows;
+    }
+
     public void computeHeight(double width) {
 
-        if (heightComputed) return;
-
         CFontRenderer fr = FontManager.pf65bold;
+        CFontRenderer frTranslation = FontManager.pf34bold;
+        if (heightComputed && Math.abs(heightComputedWidth - width) < 0.5
+                && heightFont == fr && heightTranslationFont == frTranslation
+                && heightFontRevision == fr.metricsRevision()
+                && heightTranslationFontRevision == frTranslation.metricsRevision()
+                && java.util.Objects.equals(heightText, lyric)
+                && java.util.Objects.equals(heightTranslation, translationText)
+                && heightWordCount == words.size()) return;
 
         boolean canSetComputed = true;
 
@@ -191,7 +238,7 @@ public class LyricLine {
                 canSetComputed = false;
             }
 
-            int length = fr.fitWidth(lyric, width).length;
+            int length = wrappedRows(fr, lyric, width).length;
             this.height = length * fr.getHeight() * .85 + length * 4;
         }
 
@@ -200,12 +247,19 @@ public class LyricLine {
                 canSetComputed = false;
             }
 
-            CFontRenderer frTranslation = FontManager.pf34bold;
-            String[] strings = frTranslation.fitWidth(translationText, width);
+            String[] strings = wrappedRows(frTranslation, translationText, width);
             height += frTranslation.getHeight() * strings.length + 4 * (strings.length - 1) + 8;
         }
 
         heightComputed = canSetComputed;
+        heightComputedWidth = canSetComputed ? width : Double.NaN;
+        heightFont = fr;
+        heightTranslationFont = frTranslation;
+        heightFontRevision = fr.metricsRevision();
+        heightTranslationFontRevision = frTranslation.metricsRevision();
+        heightText = lyric;
+        heightTranslation = translationText;
+        heightWordCount = words.size();
     }
 
 }

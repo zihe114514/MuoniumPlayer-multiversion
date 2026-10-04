@@ -234,21 +234,37 @@ public final class TransitionPerformanceBudget {
         return STATE.glassWeight;
     }
 
-    /** 低配档下，播放器落地光保留一层白边，跳过强调色描边和扫光。 */
+    /**
+     * 播放器从灵动岛展开/收回时只关闭高成本的材质分支。
+     *
+     * <p>交接期间仍保留预糊背景、轻量亮部和圆角边界；只有低配档才额外收掉多层阴影、
+     * 扫光等次要细节。这样既不在动画帧里启动逐像素液态折射或融合重建，也不会把表面
+     * 突然变成一块没有层次的纯色。</p>
+     */
     public static boolean simplifySurfaceDetail() {
+        // 几何阴影和边缘光很便宜；真正需要降载的是液态玻璃和融合 shader，
+        // 不能为了省一点矩形绘制把转场的层次感一起删掉。
         return isLow();
     }
 
     /**
-     * 极低档下，液态玻璃表面在转场期间退化为普通底色。
+     * 灵动岛交接的硬实时路径。与根据帧率慢慢换档的 {@link #isMinimal()} 不同，
+     * 这里从转场第一帧就生效，避免第一帧先支付整面液态玻璃的成本。
+     */
+    public static boolean isPlayerIslandTransitionActive() {
+        return PlayerIslandTransition.isRunning();
+    }
+
+    /**
+     * 过渡期间跳过播放器外层的高成本液态特效叠加。
      *
-     * <p>判据就是 {@link #liquidGlassWeight()} 走到头了，所以它和整页其它玻璃层<em>同时</em>
-     * 消失、<em>同时</em>回来——原来这里看的是「转场中 + 极低档」而别处看的是强度，
-     * 两者不同步就会画出「背景还糊着、边缘光没了」的半层玻璃。
-     * 这一项归设置里的「帧率不够时自动摘玻璃」管：关掉就是「不管掉多少帧都要画玻璃」。</p>
+     * <p>播放器表面本身不再走逐像素折射，而由 {@code paintPlayerTransitionSurface} 使用
+     * 已缓存的预糊背景接管；这个开关只负责阻止外层主题高光重复采样。动画结束后恢复正常
+     * 的液态玻璃路径。</p>
      */
     public static boolean skipLiquidGlass() {
-        return com.muoniumplayer.core.settings.HudConfig.glassAutoDegrade
+        return isPlayerIslandTransitionActive()
+                || com.muoniumplayer.core.settings.HudConfig.glassAutoDegrade
                 && STATE.glassWeight <= 0.001f;
     }
 

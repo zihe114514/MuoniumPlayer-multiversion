@@ -16,11 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 灵动岛通知通道的离线契约测试。
  *
- * <p>队列的语义全在 {@code DownloadDynamicIsland} 那几 private 个判定里，而这个类一加载就要
- * 建实例、碰渲染，跑不起来。偏偏这里的错法不会崩、只会难看：把一条状态镜像当成事件排进队列，
- * 用户连点五次主题就是 5 × 2.1 秒把五个早已作废的主题名挨个放出来（回弹胶囊那款还会叠成五行），
- * 而「谁在什么时候把哪条通道挪错了」正是这种没人会去读第二遍的代码。所以用读源码的方式钉住
- * 这张决策表。</p>
+ * <p>这里守住通知类型与界面调用点的契约。抢占、恢复、并发发布等运行时行为
+ * 另由 IslandNoticeQueueTest 验证，避免只靠源码字符串断言调度正确性。</p>
  */
 class IslandNoticeChannelStaticTest {
 
@@ -51,7 +48,7 @@ class IslandNoticeChannelStaticTest {
     };
 
     @Test
-    @DisplayName("状态镜像走即时通道：顶掉当前卡，队列里同类的过期副本当场作废")
+    @DisplayName("状态镜像允许即时抢占：只合并同类旧值，不绕过高优先级事件")
     void stateMirrorsReplaceInsteadOfQueueing() throws IOException {
         String source = read(ISLAND);
         String instant = body(source, "private static boolean isInstantStateChannel(IslandNoticeType type)");
@@ -60,20 +57,13 @@ class IslandNoticeChannelStaticTest {
             assertTrue(instant.contains(channel), "即时通道少了 " + channel + "：它报的是当前值，不该排队");
         }
 
-        // 即时 = 不进队列 + 抢占。这两条都挂在 bypassesNoticeQueue 上，缺一条就退化成排队。
-        String bypass = body(source, "private static boolean bypassesNoticeQueue(IslandNoticeType type, boolean persistent)");
-        assertTrue(bypass.contains("isInstantStateChannel(type)"),
-                "即时通道没接进 bypassesNoticeQueue，等于还在排队");
-
-        // 只有「顶掉」还不够：当前那张是另一条即时通道时，新来的这条会先排上队（见 publishNotice
-        // 里 bypassesNoticeQueue(noticeType) 那一支），所以同类的旧副本必须清掉。
-        // 注意取的是那条五参重载：三个同名重载里只有它带 ttlMillis，用方法名去截会截到
-        // 上面那条四参的转发体，那里当然什么判定都没有。
-        String publish = body(source, "boolean persistent, long ttlMillis)");
-        int guard = publish.indexOf("if (isInstantStateChannel(safeType))");
-        int drop = publish.indexOf("dropQueuedNoticesOfTypeLocked(safeType)");
-        assertTrue(guard >= 0 && drop > guard && drop - guard < 600,
-                "publishNotice 没在即时通道进来时清掉队列里的同类过期副本");
+        // 即时状态仍会在优先级规则允许时抢占，但它们只清理自己的同类副本，
+        // 不会把高优先级事件或其他状态通道一并吞掉。
+        String publish = body(source, "boolean persistent, long ttlMillis, String channelKey)");
+        assertTrue(publish.contains("boolean latestOnly = isInstantStateChannel(safeType)"));
+        assertTrue(publish.contains("dropQueuedNoticesOfTypeLocked(safeType)"));
+        assertTrue(publish.contains("IslandNoticeRules.preempts"));
+        assertTrue(publish.contains("protectedResume"));
     }
 
     @Test

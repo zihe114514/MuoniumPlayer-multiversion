@@ -23,6 +23,17 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
     private double scrollStrength = 12;
     public double actualScrollOffset = 0, targetScrollOffset = 0;
 
+    /** 最近一次滚轮输入，用于在快速滚动时跳过新条目的二级进场矩阵。 */
+    private long lastScrollInputNanos;
+
+    /**
+     * 垂直等高列表的快速路径。歌曲行都是固定高度时，不需要每帧给几千个子项重新排版；
+     * 只维护当前视口附近的子项，其余子项放到裁剪区外。
+     */
+    private double uniformVerticalItemHeight = -1.0;
+    private int uniformFirstVisible = -1;
+    private int uniformLastVisible = -1;
+
     @Getter
     private Alignment alignment = Alignment.VERTICAL;
 
@@ -50,19 +61,93 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
             throw new IllegalArgumentException("Alignment cannot be null!");
 
         this.alignment = alignment;
+        this.resetUniformLayoutState();
         return this;
+    }
+
+    /**
+     * 为固定高度的垂直条目启用排版快速路径。传入非正数可关闭。
+     * 隐藏/筛选条目时应关闭此模式，因为隐藏项会改变实际行高。
+     */
+    public ScrollPanel setUniformVerticalItemHeight(double height) {
+        this.uniformVerticalItemHeight = height > 0.0 ? height : -1.0;
+        this.resetUniformLayoutState();
+        if (this.uniformVerticalItemHeight > 0.0) {
+            this.placeUniformChildrenOutsideViewport();
+        }
+        return this;
+    }
+
+    private boolean hasUniformVerticalLayout() {
+        return this.alignment == Alignment.VERTICAL && this.uniformVerticalItemHeight > 0.0;
+    }
+
+    private void resetUniformLayoutState() {
+        this.uniformFirstVisible = -1;
+        this.uniformLastVisible = -1;
+    }
+
+    private double uniformContentLength() {
+        int count = this.getChildren().size();
+        if (count <= 0) return 0.0;
+        return count * this.uniformVerticalItemHeight + Math.max(0, count - 1) * this.spacing;
+    }
+
+    private void placeUniformChildrenOutsideViewport() {
+        this.placeUniformChildrenOutsideViewport(this.getChildren());
+    }
+
+    private void placeUniformChildrenOutsideViewport(List<AbstractWidget<?>> children) {
+        for (AbstractWidget<?> child : children) {
+            child.setPosition(child.getRelativeX(), this.getHeight() + 1.0);
+        }
+    }
+
+    private void placeUniformChildrenOutsideViewport(AbstractWidget<?>[] children) {
+        for (AbstractWidget<?> child : children) {
+            child.setPosition(child.getRelativeX(), this.getHeight() + 1.0);
+        }
+    }
+
+
+    @Override
+    public void addChild(AbstractWidget<?>... children) {
+        super.addChild(children);
+        if (this.hasUniformVerticalLayout()) {
+            this.placeUniformChildrenOutsideViewport(children);
+        }
+    }
+
+    @Override
+    public void addChild(List<AbstractWidget<?>> children) {
+        super.addChild(children);
+        if (this.hasUniformVerticalLayout()) {
+            this.placeUniformChildrenOutsideViewport(children);
+        }
     }
 
     @Override
     public void onRender(double mouseX, double mouseY) {
-        // 播放器尺寸动画会逐帧改变滚动区域和每行可容纳的控件数量。
-        // 先按新边界修正偏移，避免尺寸切换时使用上一帧的无效滚动位置而冲出面板。
-        this.clampScrollOffset();
+        // 以前这一帧会为 clamp、actual 再 clamp、align 各自扫描一遍全部子项。
+        // 歌单几百/几千行时，滚轮期间这类重复 O(n) 会和可见行绘制叠在一起。
+        // 等高歌曲行走固定高度快速路径，只计算数量并更新视口附近的行。
+        if (this.hasUniformVerticalLayout()) {
+            double maximumScrollOffset = Math.max(0.0, this.uniformContentLength() - this.getHeight());
+            this.clampScrollOffset(maximumScrollOffset);
+            this.actualScrollOffset = Interpolations.interpolate(this.actualScrollOffset, this.targetScrollOffset, 1f);
+            this.actualScrollOffset = Math.max(0, Math.min(this.actualScrollOffset, maximumScrollOffset));
+            this.alignUniformChildren();
+            return;
+        }
+
+        // 非固定高度容器每帧只计算一次内容高度，再复用结果完成偏移修正与排版。
+        double maximumScrollOffset = this.getMaximumScrollOffset();
+        this.clampScrollOffset(maximumScrollOffset);
         this.actualScrollOffset = Interpolations.interpolate(this.actualScrollOffset, this.targetScrollOffset, 1f);
-        this.actualScrollOffset = Math.max(0, Math.min(this.actualScrollOffset, this.getMaximumScrollOffset()));
+        this.actualScrollOffset = Math.max(0, Math.min(this.actualScrollOffset, maximumScrollOffset));
 
         // 设置子组件的垂直位置
-        this.alignChildren();
+        this.alignChildren(maximumScrollOffset);
     }
 
     @Override
@@ -89,10 +174,17 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
     public boolean onDWheel(double mouseX, double mouseY, int dWheel) {
 
         // 垂直滑动
+        if (dWheel != 0) this.lastScrollInputNanos = System.nanoTime();
         this.performScroll(dWheel);
         super.onDWheel(mouseX, mouseY, dWheel);
 
         return true;
+    }
+
+    /** 在滚轮后的短窗口内认为用户正在快速浏览，不为刚进入视口的条目叠加动画。 */
+    public boolean isScrollActive() {
+        return this.lastScrollInputNanos != 0L
+                && System.nanoTime() - this.lastScrollInputNanos < 140_000_000L;
     }
 
     private void performScroll(int dWheel) {
@@ -114,10 +206,18 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
     }
 
     private void clampScrollOffset() {
-        this.targetScrollOffset = Math.max(0, Math.min(this.targetScrollOffset, this.getMaximumScrollOffset()));
+        this.clampScrollOffset(this.getMaximumScrollOffset());
+    }
+
+    private void clampScrollOffset(double maximumScrollOffset) {
+        this.targetScrollOffset = Math.max(0, Math.min(this.targetScrollOffset, maximumScrollOffset));
     }
 
     private double getMaximumScrollOffset() {
+        if (this.hasUniformVerticalLayout()) {
+            return Math.max(0.0, this.uniformContentLength() - this.getHeight());
+        }
+
         double contentLength;
         switch (this.alignment) {
             case HORIZONTAL:
@@ -214,6 +314,48 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
     }
 
     public void alignChildren() {
+        if (this.hasUniformVerticalLayout()) {
+            this.alignUniformChildren();
+            return;
+        }
+        this.alignChildren(this.getMaximumScrollOffset());
+    }
+
+    private void alignUniformChildren() {
+        List<AbstractWidget<?>> children = this.getChildren();
+        int count = children.size();
+        if (count == 0) {
+            this.resetUniformLayoutState();
+            return;
+        }
+
+        double stride = this.uniformVerticalItemHeight + this.spacing;
+        int first = Math.max(0, (int) Math.floor(this.actualScrollOffset / stride) - 1);
+        int last = Math.min(count - 1,
+                (int) Math.ceil((this.actualScrollOffset + Math.max(0.0, this.getHeight())) / stride) + 1);
+
+        // 把刚离开视口的那一小段旧范围移出裁剪区；不再遍历整张歌单。
+        if (this.uniformFirstVisible >= 0) {
+            int oldFirst = this.uniformFirstVisible;
+            int oldLast = this.uniformLastVisible;
+            for (int index = oldFirst; index <= oldLast; index++) {
+                if (index < first || index > last) {
+                    AbstractWidget<?> child = children.get(index);
+                    child.setPosition(child.getRelativeX(), this.getHeight() + 1.0);
+                }
+            }
+        }
+
+        for (int index = first; index <= last; index++) {
+            AbstractWidget<?> child = children.get(index);
+            child.setPosition(child.getRelativeX(), index * stride - this.actualScrollOffset);
+        }
+
+        this.uniformFirstVisible = first;
+        this.uniformLastVisible = last;
+    }
+
+    private void alignChildren(double maximumScrollOffset) {
         double offsetX = 0;
         double offsetY = 0;
         double rowHeight = 0;
@@ -223,38 +365,8 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
         else
             offsetX = -this.actualScrollOffset;
 
-        switch (this.alignment) {
-            case VERTICAL: {
-                double childrenHeightSum = this.getChildrenHeightSum();
-
-                if (childrenHeightSum < this.getHeight())
-                    this.targetScrollOffset = 0;
-                else if (this.targetScrollOffset > childrenHeightSum - this.getHeight()) {
-                    this.targetScrollOffset = childrenHeightSum - this.getHeight();
-                }
-                break;
-            }
-            case HORIZONTAL: {
-                double childrenWidthSum = this.getChildrenWidthSum();
-
-                if (childrenWidthSum < this.getWidth())
-                    this.targetScrollOffset = 0;
-                else if (this.targetScrollOffset > childrenWidthSum - this.getWidth()) {
-                    this.targetScrollOffset = childrenWidthSum - this.getWidth();
-                }
-                break;
-            }
-            case VERTICAL_WITH_HORIZONTAL_FILL: {
-                double childrenHeightSum = this.getChildrenHeightSumHorizontalFill();
-
-                if (childrenHeightSum < this.getHeight())
-                    this.targetScrollOffset = 0;
-                else if (this.targetScrollOffset > childrenHeightSum - this.getHeight()) {
-                    this.targetScrollOffset = childrenHeightSum - this.getHeight();
-                }
-                break;
-            }
-        }
+        // maxScrollOffset 已经在本帧计算过，避免在这里再次扫描全部子项。
+        this.targetScrollOffset = Math.max(0, Math.min(this.targetScrollOffset, maximumScrollOffset));
 
         for (AbstractWidget<?> child : this.getChildren()) {
 

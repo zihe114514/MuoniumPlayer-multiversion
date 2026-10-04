@@ -108,7 +108,9 @@ public enum HudSetting {
      * <p>接在枚举<em>末尾</em>：这一套条目的 id 有按序号落盘的历史，插在中间会让老配置的
      * 滑块对错位，症状是「用户没动过的设置变了值」。</p>
      */
-    GLASS_FUSION("玻璃融合半径", 0.00f, 32.00f);
+    GLASS_FUSION("玻璃融合半径", 0.00f, 32.00f),
+    SPECTRUM_OPACITY("频谱透明度", 0.15f, 0.85f),
+    SPECTRUM_HEIGHT("频谱高度", 0.50f, 1.50f);
 
     private final String label;
     private final float min;
@@ -199,6 +201,8 @@ public enum HudSetting {
             case GLASS_BLUR_EDITORS: return HudConfig.glassBlurEditors;
             case GLASS_BLOOM: return HudConfig.glassBloom;
             case GLASS_FUSION: return HudConfig.glassFusion;
+            case SPECTRUM_OPACITY: return HudConfig.spectrumOpacity;
+            case SPECTRUM_HEIGHT: return HudConfig.spectrumHeight;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }
@@ -273,6 +277,8 @@ public enum HudSetting {
             case GLASS_BLUR_EDITORS: HudConfig.glassBlurEditors = clamped; break;
             case GLASS_BLOOM: HudConfig.glassBloom = clamped; break;
             case GLASS_FUSION: HudConfig.glassFusion = clamped; break;
+            case SPECTRUM_OPACITY: HudConfig.spectrumOpacity = clamped; break;
+            case SPECTRUM_HEIGHT: HudConfig.spectrumHeight = clamped; break;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }

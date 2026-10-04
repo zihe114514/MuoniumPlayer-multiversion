@@ -511,6 +511,14 @@ public final class SkijaImages {
      * {@link ColorFilter#makeBlend}。纯白调制是恒等变换，这种常见情形直接省掉 filter。
      */
     private static Paint tintPaint(int tintArgb) {
+        // 封面/头像的常见路径只是白色调制 + alpha。不要为每一帧创建 native
+        // ColorFilter；直接设置 Paint alpha 在视觉上等价，而且不会给 Skia 的
+        // filter 管线增加一次 JNI/native 对象分配。
+        if ((tintArgb & 0x00FFFFFF) == 0x00FFFFFF) {
+            Paint paint = SkijaGfx.fill(0xFFFFFFFF);
+            paint.setAlphaf((tintArgb >>> 24) / 255f);
+            return paint;
+        }
         Paint paint = SkijaGfx.fill(0xFFFFFFFF);
         if (tintArgb != 0xFFFFFFFF) {
             paint.setColorFilter(ColorFilter.makeBlend(tintArgb, io.github.humbleui.skija.BlendMode.MODULATE));

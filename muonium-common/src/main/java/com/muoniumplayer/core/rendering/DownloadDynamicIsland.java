@@ -40,10 +40,15 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     private static final DownloadDynamicIsland INSTANCE = new DownloadDynamicIsland();
 
-    /** HUD 稳定后再预热播放器基础布局，避开客户端启动与首帧加载高峰。 */
-    /** 在打开/关闭形变期间，播放器表面占据顶部居中区域。 */
+    /**
+     * 关闭播放器后的单次轻量落地脉冲。
+     *
+     * <p>只保留一次正向压缩/回弹，不再做多周期摆动。这样从播放器表面交给胶囊时
+     * 轮廓是连续的，且只需很短的反馈窗口，不会把收尾阶段拖成第二段重动画。</p>
+     */
     private static double absorbWave(double phase) {
-        return Math.exp(-4.1 * phase) * Math.sin(Math.PI * 2.85 * phase);
+        double clamped = DynamicIslandMath.clamp01(phase);
+        return Math.sin(Math.PI * clamped) * (1.0 - clamped);
     }
 
     private static final int PLAYER_LAYOUT_PREWARM_DELAY_FRAMES = 45;
@@ -62,7 +67,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private static long playerAbsorbStartedAt;
     /** 现代岛屿轮廓，灵感来自药丸、玻璃、紧凑状态和卡片表面。 */
     private static boolean suppressPlayerEntryAnimation;
-    private static final long PLAYER_ABSORB_FEEDBACK_MS = 430L;
+    /** 关闭交接的轻量反馈；结束后立即交给常驻岛的正常可见性动画。 */
+    private static final long PLAYER_ABSORB_FEEDBACK_MS = 260L;
     private static final double COMPACT_WIDTH = 40.0;
     private static final double COMPACT_HEIGHT = 16.0;
     private static final double TOP_MARGIN = 6.0;
@@ -172,6 +178,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     /** 仅对属于多消息队列中的普通通知为 true。 */
     private static final Object NOTICE_QUEUE_LOCK = new Object();
     private static final Deque<QueuedNotice> NOTICE_QUEUE = new ArrayDeque<QueuedNotice>();
+    private enum NoticePriority {
+        LOW(0), NORMAL(1), INSTANT(2), HIGH(3);
+        final int rank;
+        NoticePriority(int rank) { this.rank = rank; }
+    }
     /** 动画展开后的边界；紧凑入场/出场仍由 {@link #expansion} 驱动。 */
     private static final long PLAYLIST_REFRESH_NOTICE_TIMEOUT_MILLIS = 30_000L;
     /** 在不打断岛屿表面的情况下淡入并轻微偏移替换内容。 */
@@ -184,6 +195,14 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private static final long DEFAULT_PERSISTENT_NOTICE_TIMEOUT_MILLIS = 30_000L;
     /** 绘制在普通游戏 HUD 之上。 */
     private static volatile long noticeDeadlineAt;
+    private static volatile long noticeExpiresAt;
+    private static final IslandVisibleClock NOTICE_VISIBLE_CLOCK = new IslandVisibleClock();
+    private static volatile long noticeBudgetMillis;
+    private static boolean noticeProtectedResume;
+    private static String noticeChannelKey="";
+    private static volatile String transcodeChannelKey="TRANSCODING";
+    private final IslandVisibleClock completionVisibleClock = new IslandVisibleClock();
+    private volatile long acknowledgedCompletionAt;
     /**
      * 在播放器从岛屿开始展开时调用。
      *
@@ -441,17 +460,33 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
     /** 仅在配置的模型返回可用证据后才完成实时卡片。 */
     public static void beginTranscode(String trackName, String sourceFormat, String targetFormat) {
-        transcoding = true;
-        transcodeProgress = 0.0;
-        transcodeProgressAdvancedAt = System.currentTimeMillis();
-        publishNotice(IslandNoticeType.TRANSCODING, "音频转码",
-                formatTranscodeValue(trackName, sourceFormat, targetFormat), true);
+        synchronized (NOTICE_QUEUE_LOCK) {
+            transcoding = true;
+            transcodeProgress = 0.0;
+            transcodeProgressAdvancedAt = System.currentTimeMillis();
+            transcodeChannelKey=operationKey(IslandNoticeType.TRANSCODING,trackName);
+            publishOperation(IslandNoticeType.TRANSCODING,"音频转码",
+                    formatTranscodeValue(trackName,sourceFormat,targetFormat),trackName);
+        }
     }
 
     /** 模型尝试失败并回退到确定性分析后的终止状态。 */
     public static void updateTranscodeProgress(double progress) {
+        synchronized (NOTICE_QUEUE_LOCK) { updateTranscodeProgressLocked(progress); }
+    }
+
+    /** Late callbacks from an older track cannot drive the current track's loader. */
+    public static void updateTranscodeProgress(String trackName, double progress) {
+        synchronized (NOTICE_QUEUE_LOCK) {
+            if (operationKey(IslandNoticeType.TRANSCODING,trackName).equals(transcodeChannelKey)) {
+                updateTranscodeProgressLocked(progress);
+            }
+        }
+    }
+
+    private static void updateTranscodeProgressLocked(double progress) {
+        if (!transcoding) return;
         double clamped = DynamicIslandMath.clamp01(progress);
-        /** 在将选中曲目提交到歌单期间保持岛屿可见。 */
         if (clamped > transcodeProgress) transcodeProgressAdvancedAt = System.currentTimeMillis();
         transcodeProgress = clamped;
     }
@@ -459,15 +494,19 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     /** 通报一次已校验的新歌单收藏。 */
     public static void finishTranscode(String trackName, String sourceFormat, String targetFormat,
                                        long elapsedMillis) {
-        transcoding = false;
-        transcodeProgress = 1.0;
-        transcodeProgressAdvancedAt = 0L;
+        synchronized (NOTICE_QUEUE_LOCK) {
+            if (operationKey(IslandNoticeType.TRANSCODING,trackName).equals(transcodeChannelKey)) {
+                transcoding = false;
+                transcodeProgress = 1.0;
+                transcodeProgressAdvancedAt = 0L;
+            }
+        }
         /** 通报单独校验过的空操作状态，而不声称新增成功。 */
         /** 通报请求未被目标歌单的 trackIds 校验通过。 */
         /** 显示刚启动曲目所解析出的流层级和容器格式。 */
         completePersistentNotice(IslandNoticeType.TRANSCODING, IslandNoticeType.TRANSCODE_SUCCESS,
                 "转码完成", formatTranscodeValue(trackName, sourceFormat, targetFormat) + " · "
-                        + Math.max(0L, elapsedMillis) + " ms");
+                        + Math.max(0L, elapsedMillis) + " ms",operationKey(IslandNoticeType.TRANSCODING,trackName));
     }
 
     /**
@@ -475,10 +514,27 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
      * 但有意不对该容器转码。
      */
     public static void cancelTranscode() {
-        transcoding = false;
-        transcodeProgress = 0.0;
-        if (noticeType == IslandNoticeType.TRANSCODING) {
-            publishNotice(IslandNoticeType.NONE, "", "");
+        synchronized (NOTICE_QUEUE_LOCK) { cancelTranscodeLocked(transcodeChannelKey); }
+    }
+
+    public static void cancelTranscode(String trackName) {
+        synchronized (NOTICE_QUEUE_LOCK) {
+            cancelTranscodeLocked(operationKey(IslandNoticeType.TRANSCODING,trackName));
+        }
+    }
+
+    private static void cancelTranscodeLocked(String channelKey) {
+        if (channelKey.equals(transcodeChannelKey)) {
+            transcoding = false;
+            transcodeProgress = 0.0;
+            transcodeProgressAdvancedAt = 0L;
+        }
+        dropQueuedOperationLocked(channelKey);
+        if (noticeType == IslandNoticeType.TRANSCODING && noticeChannelKey.equals(channelKey)) {
+            long now=System.currentTimeMillis();
+            QueuedNotice next=pollNextNoticeLocked(now);
+            if (next != null) restoreQueuedNoticeLocked(next,now);
+            else publishActiveNoticeLocked(IslandNoticeType.NONE,"","",false,false,now);
         }
     }
 
@@ -533,9 +589,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     /** 显示累计收听时长心跳上报结果和请求延迟。 */
     public static void beginModelInference(String trackName, String modelNames) {
-        publishNotice(IslandNoticeType.MODEL_INFERENCE, "模型推理中",
-                safeNoticeValue(trackName, "当前歌曲") + " · "
-                        + safeNoticeValue(modelNames, "Folia 模型"), true);
+        publishOperation(IslandNoticeType.MODEL_INFERENCE,"模型推理中",
+                safeNoticeValue(trackName,"当前歌曲") + " · " + safeNoticeValue(modelNames,"Folia 模型"),trackName);
     }
 
     /**
@@ -548,38 +603,38 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         completePersistentNotice(IslandNoticeType.MODEL_INFERENCE, IslandNoticeType.MODEL_INFERENCE_SUCCESS,
                 "模型推理完成", safeNoticeValue(trackName, "当前歌曲") + " · "
                         + safeNoticeValue(modelNames, "Folia 模型") + " · "
-                        + Math.max(0L, elapsedMillis) + " ms");
+                        + Math.max(0L, elapsedMillis) + " ms",operationKey(IslandNoticeType.MODEL_INFERENCE,trackName));
     }
 
     /** 报告"下一首播放"没有可插入的队列，直接开始播放该曲目。 */
     public static void failModelInference(String trackName, String modelNames) {
         completePersistentNotice(IslandNoticeType.MODEL_INFERENCE, IslandNoticeType.MODEL_INFERENCE_FAILURE,
                 "模型推理未完成", safeNoticeValue(trackName, "当前歌曲") + " · "
-                        + safeNoticeValue(modelNames, "Folia 模型") + " · 已回退传统分析");
+                        + safeNoticeValue(modelNames, "Folia 模型") + " · 已回退传统分析",operationKey(IslandNoticeType.MODEL_INFERENCE,trackName));
     }
     /** 报告 automix 开关本身被打开或关闭。 */
     public static void showPlaylistTrackAddInProgress(String playlistName) {
-        publishNotice(IslandNoticeType.PLAYLIST_TRACK_ADDING, "加入歌单",
-                "正在加入「" + safeNoticeValue(playlistName, "目标歌单") + "」", true);
+        publishOperation(IslandNoticeType.PLAYLIST_TRACK_ADDING,"加入歌单",
+                "正在加入「" + safeNoticeValue(playlistName,"目标歌单") + "」",playlistName);
     }
 
     /** GD Studio API URL 解析的反馈。 */
     public static void showPlaylistTrackAddSuccess(String playlistName) {
-        publishNotice(IslandNoticeType.PLAYLIST_TRACK_ADD_SUCCESS, "已加入歌单",
-                "网易云已确认「" + safeNoticeValue(playlistName, "目标歌单") + "」");
+        completePersistentNotice(IslandNoticeType.PLAYLIST_TRACK_ADDING,IslandNoticeType.PLAYLIST_TRACK_ADD_SUCCESS,"已加入歌单",
+                "网易云已确认「" + safeNoticeValue(playlistName,"目标歌单") + "」",operationKey(IslandNoticeType.PLAYLIST_TRACK_ADDING,playlistName));
     }
 
     // 这条普通的后续通知有意进入已有的通知队列。它提供
     public static void showPlaylistTrackAlreadyExists(String playlistName) {
-        publishNotice(IslandNoticeType.PLAYLIST_TRACK_ALREADY_EXISTS, "歌曲已在歌单中",
-                "已确认「" + safeNoticeValue(playlistName, "目标歌单") + "」");
+        completePersistentNotice(IslandNoticeType.PLAYLIST_TRACK_ADDING,IslandNoticeType.PLAYLIST_TRACK_ALREADY_EXISTS,"歌曲已在歌单中",
+                "已确认「" + safeNoticeValue(playlistName,"目标歌单") + "」",operationKey(IslandNoticeType.PLAYLIST_TRACK_ADDING,playlistName));
     }
 
     // 明确的健康确认，而不打断实时加载器所保留的任何通知。
     public static void showPlaylistTrackAddFailure(String playlistName, String message) {
         String value = safeNoticeValue(message, "服务端未确认加入成功");
-        publishNotice(IslandNoticeType.PLAYLIST_TRACK_ADD_ERROR, "加入歌单失败",
-                safeNoticeValue(playlistName, "目标歌单") + " · " + value);
+        completePersistentNotice(IslandNoticeType.PLAYLIST_TRACK_ADDING,IslandNoticeType.PLAYLIST_TRACK_ADD_ERROR,"加入歌单失败",
+                safeNoticeValue(playlistName,"目标歌单") + " · " + value,operationKey(IslandNoticeType.PLAYLIST_TRACK_ADDING,playlistName));
     }
 
     /**
@@ -732,15 +787,17 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     // 未知通道：把岛屿交回等待中的通知，而不是
     public static void showGdSourceResolving(String sourceName) {
-        publishNotice(IslandNoticeType.GD_SOURCE_LOADING, "GD音乐台获取链接",
-                "正在连接 " + safeNoticeValue(sourceName, "GD 音乐源"), true);
+        String source = safeNoticeValue(sourceName, "GD 音乐源");
+        publishOperation(IslandNoticeType.GD_SOURCE_LOADING, "GD音乐台获取链接",
+                "正在连接 " + source, "current");
     }
 
     public static void showGdSourceResolved(String sourceName, String format) {
         String source = safeNoticeValue(sourceName, "GD 音乐源");
         String streamFormat = safeNoticeValue(format, "未知").toUpperCase(java.util.Locale.ROOT);
         completePersistentNotice(IslandNoticeType.GD_SOURCE_LOADING, IslandNoticeType.GD_SOURCE_SUCCESS,
-                "音频直链已获取", source + " · " + streamFormat + " · 可开始播放");
+                "音频直链已获取", source + " · " + streamFormat + " · 可开始播放",
+                gdSourceChannelKey());
         // 卡住一张本身没有终止消息的卡片。
         /** 持久刷新和 GD 链接卡片有独立的超时/完成通道。 */
         publishNotice(IslandNoticeType.GD_SOURCE_HEALTHY, "当前音源正常",
@@ -764,9 +821,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
 
     public static void showGdSourceFailure(String sourceName, String reason) {
+        String source = safeNoticeValue(sourceName, "GD 音乐源");
         completePersistentNotice(IslandNoticeType.GD_SOURCE_LOADING, IslandNoticeType.GD_SOURCE_ERROR,
-                "GD音乐台链接获取失败", safeNoticeValue(sourceName, "GD 音乐源") + " · "
-                        + safeNoticeValue(reason, "解析失败"));
+                "GD音乐台链接获取失败", source + " · " + safeNoticeValue(reason, "解析失败"),
+                gdSourceChannelKey());
     }
 
 
@@ -854,90 +912,126 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
 
     /**
-     * @param ttlMillis 这条通知的有效期，{@code <= 0} 表示永不过期。只对<b>排队等待中</b>的副本生效：
-     *                  超时的副本在出队时被丢弃，而不是过期了还照样弹出来
+     * @param ttlMillis 实时提示的绝对有效期，{@code <= 0} 表示没有业务时效。
+     *                  排队和抢占恢复都保留原截止时间；普通结果只消耗真实展示预算。
      */
     private static void publishNotice(IslandNoticeType type, String title, String value,
                                       boolean persistent, long ttlMillis) {
+        publishNotice(type,title,value,persistent,ttlMillis,type == null ? "" : type.name());
+    }
+
+    private static String operationKey(IslandNoticeType type,String identity) {
+        return type.name() + ":" + safeNoticeValue(identity,"current");
+    }
+
+    private static void publishOperation(IslandNoticeType type,String title,String value,String identity) {
+        publishNotice(type,title,value,true,0L,operationKey(type,identity));
+    }
+
+    /** GD 解析是播放器的单实例当前任务；开始/成功/失败必须共享同一把钥匙。 */
+    private static String gdSourceChannelKey() {
+        return operationKey(IslandNoticeType.GD_SOURCE_LOADING, "current");
+    }
+
+    private static void publishNotice(IslandNoticeType type,String title,String value,
+                                      boolean persistent, long ttlMillis, String channelKey) {
         IslandNoticeType safeType = type == null ? IslandNoticeType.NONE : type;
         String safeTitle = safeNoticeValue(title, "状态");
         String safeValue = safeNoticeValue(value, "—");
         long now = System.currentTimeMillis();
         long expiresAt = ttlMillis > 0L ? now + ttlMillis : 0L;
+        if (isLowestPriorityNotice(safeType)) {
+            boolean durationChannel = safeType == IslandNoticeType.LISTENING_DURATION_SUCCESS
+                    || safeType == IslandNoticeType.LISTENING_DURATION_ERROR
+                    || (safeType == IslandNoticeType.NETEASE_UPLOADING && "听歌时长上报".equals(safeTitle));
+            boolean recentChannel = safeType == IslandNoticeType.RECENT_PLAY_SUCCESS
+                    || safeType == IslandNoticeType.RECENT_PLAY_ERROR
+                    || (safeType == IslandNoticeType.NETEASE_UPLOADING && "听歌历史上报".equals(safeTitle));
+            channelKey = durationChannel ? "telemetry:duration"
+                    : recentChannel ? "telemetry:recent" : "telemetry:" + safeTitle;
+        }
         synchronized (NOTICE_QUEUE_LOCK) {
-            if (safeType == IslandNoticeType.NONE) {
-                NOTICE_QUEUE.clear();
-                publishActiveNoticeLocked(safeType, safeTitle, safeValue, persistent, false, now);
-                return;
-            }
-
-            if (isInstantStateChannel(safeType)) {
-                // 状态镜像只认最新那一份。它一般根本不会进队列（下面直接顶掉当前卡），但当前
-                // 那张是音量这类同族通道时它会先排上队 —— 不清掉旧副本的话，来回点主题就会
-                // 攒出好几张过期主题名，一张一张慢慢放给人看。
-                dropQueuedNoticesOfTypeLocked(safeType);
-            }
-
-            if (safeType == IslandNoticeType.AUTOMIX_BLENDING) {
-                // 一次交接只该有一张卡。自动接一次、用户紧接着又手动跳一次时，后来的信息更新，
-                // 先前那张直接作废；正在显示的同类卡片就地换成新歌名，而不是再排一张。
-                dropQueuedNoticesOfTypeLocked(safeType);
-                if (noticeType == safeType && !noticePersistent) {
-                    publishActiveNoticeLocked(safeType, safeTitle, safeValue, false,
-                            noticeUsesQueueInterval, now);
-                    return;
+            if (safeType == IslandNoticeType.NONE) return; // 取消必须走自己的通道，不能全队列清空。
+            boolean latestOnly = isInstantStateChannel(safeType) || persistent
+                    || safeType == IslandNoticeType.AUTOMIX_BLENDING || isLowestPriorityNotice(safeType);
+            long originalDeadline=0L;
+            if (persistent) {
+                for (QueuedNotice waiting:NOTICE_QUEUE) {
+                    if (waiting.persistent && waiting.channelKey.equals(channelKey)) originalDeadline=waiting.deadlineAt;
                 }
-            }
-
-            if (noticeType != IslandNoticeType.NONE && isLowestPriorityNotice(safeType)) {
-                // 边缘会让短暂的成功状态保持可见，而不是悄然消失。
-                // 重复的转码/音量更新会收敛为一条连续的进度条动画。
-                noticeUsesQueueInterval = noticeUsesQueueInterval || !noticePersistent;
-                markQueuedNoticesUseQueueIntervalLocked();
-                NOTICE_QUEUE.addLast(new QueuedNotice(safeType, safeTitle, safeValue, persistent, true,
-                        expiresAt));
+                dropQueuedOperationLocked(channelKey);
+            } else if (isLowestPriorityNotice(safeType)) {
+                java.util.Iterator<QueuedNotice> iterator=NOTICE_QUEUE.iterator();
+                while (iterator.hasNext()) {
+                    QueuedNotice waiting=iterator.next();
+                    if (isLowestPriorityNotice(waiting.type) && waiting.channelKey.equals(channelKey)) iterator.remove();
+                }
+            } else if (latestOnly) dropQueuedNoticesOfTypeLocked(safeType);
+            boolean sameTelemetryChannel = isLowestPriorityNotice(safeType)
+                    && isLowestPriorityNotice(noticeType) && noticeChannelKey.equals(channelKey);
+            if (latestOnly && noticePersistent == persistent && noticeChannelKey.equals(channelKey)
+                    && (noticeType == safeType || sameTelemetryChannel)) {
+                publishActiveNoticeLocked(safeType,safeTitle,safeValue,persistent,
+                        noticeUsesQueueInterval,now,expiresAt,noticeType == safeType);
+                noticeChannelKey=channelKey;
                 return;
             }
-
-            if (noticeType != IslandNoticeType.NONE && isLowestPriorityNotice(noticeType)) {
-                // 即使用户不使用常驻岛屿，关闭中的播放器也必须落到
-                // 某个对象上。在撞击过程中保持其可见，然后由正常的可见性目标将其隐藏。
-                // 重新入队的是「当前正在显示的那张遥测卡」，它本身不带时效。
-                NOTICE_QUEUE.addLast(new QueuedNotice(noticeType, noticeTitle, noticeValue,
-                        noticePersistent, true, 0L));
-                markQueuedNoticesUseQueueIntervalLocked();
-                publishActiveNoticeLocked(safeType, safeTitle, safeValue, persistent,
-                        !bypassesNoticeQueue(safeType, persistent), now);
-                return;
-            }
-
-            // 再朝该移动目标动画，会产生级联滞后：缩短的内容在
-            // 两侧边缘开始向内移动之前看起来像暂停了。内容仍与
-            if (bypassesNoticeQueue(safeType, persistent)) {
-                preserveActiveQueuedNoticeLocked();
-                publishActiveNoticeLocked(safeType, safeTitle, safeValue, persistent, false, now);
-                return;
-            }
-
             if (noticeType == IslandNoticeType.NONE) {
-                publishActiveNoticeLocked(safeType, safeTitle, safeValue, persistent, false, now);
+                publishActiveNoticeLocked(safeType,safeTitle,safeValue,persistent,false,now,expiresAt);
+                noticeChannelKey=channelKey;
                 return;
             }
-
-            if (bypassesNoticeQueue(noticeType, noticePersistent)) {
-                boolean alreadyQueued = !NOTICE_QUEUE.isEmpty();
-                if (alreadyQueued) markQueuedNoticesUseQueueIntervalLocked();
-                NOTICE_QUEUE.addLast(new QueuedNotice(safeType, safeTitle, safeValue, persistent,
-                        alreadyQueued, expiresAt));
+            NoticePriority incomingPriority=noticePriority(safeType,persistent);
+            NoticePriority currentPriority=noticePriority(noticeType,noticePersistent);
+            boolean protectedResume=noticeProtectedResume && NOTICE_VISIBLE_CLOCK.elapsed() < 700L;
+            if (IslandNoticeRules.preempts(incomingPriority.rank,currentPriority.rank,noticePersistent,
+                    persistent,isInstantStateChannel(safeType),protectedResume)) {
+                preserveActiveQueuedNoticeLocked(now);
+                publishActiveNoticeLocked(safeType,safeTitle,safeValue,persistent,false,now,expiresAt);
+                noticeChannelKey=channelKey;
+                if (persistent && originalDeadline > 0L) noticeDeadlineAt=originalDeadline;
                 return;
             }
-
-            // ambientMix 交叉淡化；轮廓则通过一次动画立即跟踪活动布局。
-            // 苹果风格撞击：进入的表面以紧凑药丸落下，先在
-            noticeUsesQueueInterval = true;
             markQueuedNoticesUseQueueIntervalLocked();
-            NOTICE_QUEUE.addLast(new QueuedNotice(safeType, safeTitle, safeValue, persistent, true,
-                    expiresAt));
+            QueuedNotice waiting=new QueuedNotice(safeType,safeTitle,safeValue,persistent,true,expiresAt,
+                    -1L,persistent ? originalDeadline > 0L ? originalDeadline
+                    : now + persistentNoticeTimeoutMillis(safeType) : 0L);
+            waiting.channelKey=channelKey;
+            enqueueQueuedNoticeLocked(waiting);
+        }
+    }
+
+    private static void enqueueQueuedNoticeLocked(QueuedNotice notice) {
+        enqueueQueuedNoticeLocked(notice,false);
+    }
+
+    private static void enqueueQueuedNoticeLocked(QueuedNotice notice,boolean resumeBeforePeers) {
+        if (notice == null) return;
+        if (NOTICE_QUEUE.isEmpty() || (resumeBeforePeers ? NOTICE_QUEUE.peekLast().priority.rank > notice.priority.rank
+                : NOTICE_QUEUE.peekLast().priority.rank >= notice.priority.rank)) {
+            NOTICE_QUEUE.addLast(notice);
+            return;
+        }
+        Deque<QueuedNotice> reordered = new ArrayDeque<QueuedNotice>(NOTICE_QUEUE.size() + 1);
+        boolean inserted = false;
+        for (QueuedNotice current : NOTICE_QUEUE) {
+            if (!inserted && (current.priority.rank < notice.priority.rank
+                    || resumeBeforePeers && current.priority.rank == notice.priority.rank)) {
+                reordered.addLast(notice);
+                inserted = true;
+            }
+            reordered.addLast(current);
+        }
+        if (!inserted) reordered.addLast(notice);
+        NOTICE_QUEUE.clear();
+        NOTICE_QUEUE.addAll(reordered);
+    }
+
+    private static void dropQueuedOperationLocked(String channelKey) {
+        java.util.Iterator<QueuedNotice> iterator=NOTICE_QUEUE.iterator();
+        while (iterator.hasNext()) {
+            QueuedNotice waiting=iterator.next();
+            if (waiting.persistent && waiting.channelKey.equals(channelKey)) iterator.remove();
         }
     }
 
@@ -969,26 +1063,50 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     // 而不是从与当前常驻岛屿不匹配的紧凑药丸起步。
     private static void completePersistentNotice(IslandNoticeType loadingType, IslandNoticeType resultType,
                                                  String title, String value) {
+        completePersistentNotice(loadingType,resultType,title,value,loadingType.name());
+    }
+
+    private static void completePersistentNotice(IslandNoticeType loadingType,IslandNoticeType resultType,
+                                                 String title,String value,String channelKey) {
         long now = System.currentTimeMillis();
         synchronized (NOTICE_QUEUE_LOCK) {
-            if (noticeType == loadingType && noticePersistent) {
+            dropQueuedOperationLocked(channelKey);
+            if (noticeType == loadingType && noticePersistent && noticeChannelKey.equals(channelKey)) {
                 boolean queueMode = !NOTICE_QUEUE.isEmpty();
                 if (queueMode) markQueuedNoticesUseQueueIntervalLocked();
                 publishActiveNoticeLocked(resultType, safeNoticeValue(title, "状态"),
                         safeNoticeValue(value, "—"), false, queueMode, now);
                 return;
             }
+            publishNotice(resultType, title, value);
         }
-        publishNotice(resultType, title, value);
     }
 
     // 让阴影贴合岛屿自身的圆角轮廓。之前展开的、
+    private static NoticePriority noticePriority(IslandNoticeType type, boolean persistent) {
+        if (isLowestPriorityNotice(type)) return NoticePriority.LOW;
+        if (isHighPriorityNotice(type)) return NoticePriority.HIGH;
+        if (isInstantStateChannel(type)) return NoticePriority.INSTANT;
+        return NoticePriority.NORMAL;
+    }
+
+    private static boolean isHighPriorityNotice(IslandNoticeType type) {
+        return type == IslandNoticeType.PLAYBACK_ERROR
+                || type == IslandNoticeType.NETWORK_ERROR
+                || type == IslandNoticeType.REFRESH_ERROR
+                || type == IslandNoticeType.PLAYLIST_TRACK_ADD_ERROR
+                || type == IslandNoticeType.GD_SOURCE_ERROR
+                || type == IslandNoticeType.MODEL_INFERENCE_FAILURE
+                ;
+    }
+
     private static boolean isLowestPriorityNotice(IslandNoticeType type) {
         return type == IslandNoticeType.LISTENING_DURATION_SUCCESS
                 || type == IslandNoticeType.LISTENING_DURATION_ERROR
                 // 上报进行中与上报结果是同一条遥测链路，优先级必须一致，否则"上报中"会插到
                 // 用户触发的反馈前面，而它的结果卡片还老实排在后面。
-                || type == IslandNoticeType.NETEASE_UPLOADING;
+                || type == IslandNoticeType.NETEASE_UPLOADING
+                || type == IslandNoticeType.RECENT_PLAY_SUCCESS || type == IslandNoticeType.RECENT_PLAY_ERROR;
     }
 
     /**
@@ -1012,16 +1130,15 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 || type == IslandNoticeType.PLAYBACK_TOGGLE;
     }
 
-    private static boolean bypassesNoticeQueue(IslandNoticeType type, boolean persistent) {
-        return persistent || type == IslandNoticeType.TRANSCODING || isInstantStateChannel(type);
-    }
-
     // 让图标安全地位于圆角轮廓内部，并在文字前留出真正的间距。
-    private static void preserveActiveQueuedNoticeLocked() {
-        if (noticeType == IslandNoticeType.NONE || bypassesNoticeQueue(noticeType, noticePersistent)) return;
-        // 被抢占的这张卡已经露过面了，把剩下的时长还给它就行，不再给它套时效。
-        NOTICE_QUEUE.addFirst(new QueuedNotice(noticeType, noticeTitle, noticeValue,
-                noticePersistent, noticeUsesQueueInterval, 0L));
+    private static void preserveActiveQueuedNoticeLocked(long now) {
+        if (noticeType == IslandNoticeType.NONE) return;
+        long remaining=Math.max(0L,noticeBudgetMillis - NOTICE_VISIBLE_CLOCK.elapsed());
+        if (!noticePersistent && remaining == 0L) return; // 这一张已经实际看完，不必重复。
+        QueuedNotice interrupted=new QueuedNotice(noticeType,noticeTitle,noticeValue,noticePersistent,
+                noticeUsesQueueInterval,noticeExpiresAt,remaining,noticeDeadlineAt);
+        interrupted.channelKey=noticeChannelKey;
+        enqueueQueuedNoticeLocked(interrupted,true);
     }
 
     private static void markQueuedNoticesUseQueueIntervalLocked() {
@@ -1032,24 +1149,87 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     private static void publishActiveNoticeLocked(IslandNoticeType type, String title, String value,
                                                    boolean persistent, boolean useQueueInterval, long shownAt) {
-        // 弧形肩部，使左缘看起来不完整。
-        // 音量频繁地由按键重复更新。其标签有意跳过
-        boolean sameChannel = persistent && noticePersistent && noticeType == type && noticeDeadlineAt > 0L;
-        noticeDeadlineAt = !persistent ? 0L
-                : sameChannel ? noticeDeadlineAt : shownAt + persistentNoticeTimeoutMillis(type);
-        noticeType = type;
-        noticeTitle = title;
-        noticeValue = value;
-        noticePersistent = persistent;
-        noticeUsesQueueInterval = useQueueInterval;
-        noticeShownAt = shownAt;
-        noticeRevision++;
+        publishActiveNoticeLocked(type, title, value, persistent, useQueueInterval, shownAt, 0L);
+    }
+
+    private static void publishActiveNoticeLocked(IslandNoticeType type, String title, String value,
+                                                   boolean persistent, boolean useQueueInterval, long shownAt,
+                                                   long expiresAt) {
+        publishActiveNoticeLocked(type,title,value,persistent,useQueueInterval,shownAt,expiresAt,false);
+    }
+
+    /** Only an explicit update of the same operation/state may keep its display budget. */
+    private static void publishActiveNoticeLocked(IslandNoticeType type, String title, String value,
+                                                   boolean persistent, boolean useQueueInterval, long shownAt,
+                                                   long expiresAt, boolean keepBudget) {
+        noticeDeadlineAt=!persistent ? 0L : keepBudget && noticeDeadlineAt > 0L
+                ? noticeDeadlineAt : shownAt + persistentNoticeTimeoutMillis(type);
+        if (!keepBudget) {
+            NOTICE_VISIBLE_CLOCK.reset();
+            noticeProtectedResume=false;
+            noticeBudgetMillis=Math.max(IslandNoticeRules.minimumVisibleMillis(noticePriority(type,persistent).rank,
+                    isInstantStateChannel(type)),noticeHoldMillis(useQueueInterval));
+        }
+        // A new state value still needs a readable final frame, even after a long slider drag.
+        if (keepBudget && !persistent && isInstantStateChannel(type)
+                && (!title.equals(noticeTitle) || !value.equals(noticeValue))) {
+            noticeBudgetMillis=Math.max(noticeBudgetMillis, NOTICE_VISIBLE_CLOCK.elapsed() + 500L);
+        }
+        noticeType=type; noticeTitle=title; noticeValue=value;
+        noticeChannelKey=type.name();
+        noticeExpiresAt=expiresAt; noticePersistent=persistent;
+        noticeUsesQueueInterval=useQueueInterval; noticeShownAt=shownAt; noticeRevision++;
+    }
+
+    private static void restoreQueuedNoticeLocked(QueuedNotice next,long now) {
+        publishActiveNoticeLocked(next.type,next.title,next.value,next.persistent,next.useQueueInterval,
+                now,next.expiresAt);
+        noticeChannelKey=next.channelKey;
+        if (next.remainingVisibleMillis >= 0L) {
+            noticeBudgetMillis=next.remainingVisibleMillis;
+            noticeProtectedResume=true;
+        }
+        if (next.persistent && next.deadlineAt > 0L) noticeDeadlineAt=next.deadlineAt;
     }
 
     // 岛屿内容入场和文案过渡两种动画，而进度条仍进行插值。
+    private static void pauseNoticeClock() {
+        synchronized (NOTICE_QUEUE_LOCK) { NOTICE_VISIBLE_CLOCK.pause(); }
+    }
+
+    /** Post-draw acknowledgement. A stale frame must never charge a newer message. */
+    private static void recordNoticePresentation(long revision, boolean presented, long now) {
+        synchronized (NOTICE_QUEUE_LOCK) {
+            if (noticeRevision != revision) return;
+            if (presented) NOTICE_VISIBLE_CLOCK.record(now);
+            else NOTICE_VISIBLE_CLOCK.pause();
+        }
+    }
+
     private static void advanceQueuedNotice(long now) {
         synchronized (NOTICE_QUEUE_LOCK) {
-            if (noticeType == IslandNoticeType.NONE) return;
+            List<QueuedNotice> timedOut=new ArrayList<QueuedNotice>();
+            java.util.Iterator<QueuedNotice> waitingIterator=NOTICE_QUEUE.iterator();
+            while (waitingIterator.hasNext()) {
+                QueuedNotice waiting=waitingIterator.next();
+                boolean stalled=waiting.type == IslandNoticeType.TRANSCODING && waiting.persistent
+                        && waiting.channelKey.equals(transcodeChannelKey) && transcodeProgressAdvancedAt > 0L
+                        ? now - transcodeProgressAdvancedAt >= TRANSCODE_STALL_TIMEOUT_MILLIS
+                        : waiting.persistent && waiting.deadlineAt > 0L && now >= waiting.deadlineAt;
+                if (stalled) { waitingIterator.remove(); timedOut.add(waiting); }
+            }
+            for (QueuedNotice waiting:timedOut) enqueueQueuedNoticeLocked(timeoutNotice(waiting));
+            if (!timedOut.isEmpty() && noticeType != IslandNoticeType.NONE
+                    && noticePriority(noticeType,noticePersistent).rank < NoticePriority.HIGH.rank) {
+                preserveActiveQueuedNoticeLocked(now);
+                QueuedNotice urgent=pollNextNoticeLocked(now);
+                if (urgent != null) restoreQueuedNoticeLocked(urgent,now);
+            }
+            if (noticeType == IslandNoticeType.NONE) {
+                QueuedNotice ready=pollNextNoticeLocked(now);
+                if (ready != null) restoreQueuedNoticeLocked(ready,now);
+                return;
+            }
 
             if (noticePersistent) {
                 if (isPersistentNoticeTimedOut(now)) {
@@ -1065,17 +1245,21 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         publishActiveNoticeLocked(IslandNoticeType.PLAYLIST_TRACK_ADD_ERROR, "加入歌单超时",
                                 "20 秒内未收到确认 · 请稍后重试", false, queueMode, now);
                     } else if (noticeType == IslandNoticeType.TRANSCODING) {
-                        transcoding = false;
-                        transcodeProgress = 0.0;
+                        if (noticeChannelKey.equals(transcodeChannelKey)) {
+                            transcoding = false;
+                            transcodeProgress = 0.0;
+                        }
                         publishActiveNoticeLocked(IslandNoticeType.PLAYBACK_ERROR, "转码无响应",
                                 "30 秒内解码进度没有变化 · 已结束提示", false, queueMode, now);
+                    } else if (noticeType == IslandNoticeType.MODEL_INFERENCE) {
+                        publishActiveNoticeLocked(IslandNoticeType.MODEL_INFERENCE_FAILURE,"模型推理超时",
+                                noticeValue + " · 已结束等待，后续结果仍会独立通知",false,queueMode,now);
                     } else {
                         // 通知刷新保持岛屿本身稳定。上一份文案向上退出，
                         // 最新值从下方进入；快速更新由 renderInternal 合并，
                         QueuedNotice next = pollNextNoticeLocked(now);
                         if (next != null) {
-                            publishActiveNoticeLocked(next.type, next.title, next.value, next.persistent,
-                                    next.useQueueInterval, now);
+                            restoreQueuedNoticeLocked(next,now);
                         } else {
                             publishActiveNoticeLocked(IslandNoticeType.NONE, "", "", false, false, now);
                         }
@@ -1083,12 +1267,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 }
                 return;
             }
-            if (noticeShownAt <= 0L || now - noticeShownAt < noticeHoldMillis(noticeUsesQueueInterval)) return;
+            boolean realTimeExpired=noticeExpiresAt > 0L && now >= noticeExpiresAt;
+            if (!realTimeExpired && NOTICE_VISIBLE_CLOCK.elapsed() < noticeBudgetMillis) return;
 
             QueuedNotice next = pollNextNoticeLocked(now);
             if (next != null) {
-                publishActiveNoticeLocked(next.type, next.title, next.value, next.persistent,
-                        next.useQueueInterval, now);
+                restoreQueuedNoticeLocked(next,now);
                 return;
             }
 
@@ -1096,11 +1280,24 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
     }
 
+    private static QueuedNotice timeoutNotice(QueuedNotice waiting) {
+        IslandNoticeType error=waiting.type == IslandNoticeType.REFRESHING ? IslandNoticeType.REFRESH_ERROR
+                : waiting.type == IslandNoticeType.GD_SOURCE_LOADING ? IslandNoticeType.GD_SOURCE_ERROR
+                : waiting.type == IslandNoticeType.PLAYLIST_TRACK_ADDING ? IslandNoticeType.PLAYLIST_TRACK_ADD_ERROR
+                : waiting.type == IslandNoticeType.MODEL_INFERENCE ? IslandNoticeType.MODEL_INFERENCE_FAILURE
+                : IslandNoticeType.PLAYBACK_ERROR;
+        if (waiting.type == IslandNoticeType.TRANSCODING && waiting.channelKey.equals(transcodeChannelKey)) {
+            transcoding=false; transcodeProgress=0.0;
+        }
+        return new QueuedNotice(error,waiting.title + "超时",waiting.value + " · 未收到完成结果，请稍后重试",
+                false,true,0L);
+    }
+
     // 而不是不断重启该过渡。
     private static boolean isPersistentNoticeTimedOut(long now) {
         if (noticeShownAt <= 0L) return false;
-        if (noticeType == IslandNoticeType.TRANSCODING) {
-            // 宽和高必须使用同一个时钟。不同速率会使短内容塌缩
+        if (noticeType == IslandNoticeType.TRANSCODING && noticeChannelKey.equals(transcodeChannelKey)) {
+            // 转码检测真实进度的停滞，其余持久通道仍按自身的原始截止时间。
             long advancedAt = transcodeProgressAdvancedAt;
             return advancedAt > 0L && now - advancedAt >= TRANSCODE_STALL_TIMEOUT_MILLIS;
         }
@@ -1120,16 +1317,29 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         private final String title;
         private final String value;
         private final boolean persistent;
+        private final NoticePriority priority;
         private boolean useQueueInterval;
         /** 出队后仍然有效的截止时刻；{@code <= 0} 表示永不过期。 */
         private final long expiresAt;
+        private final long remainingVisibleMillis;
+        private final long deadlineAt;
+        private String channelKey;
 
         private QueuedNotice(IslandNoticeType type, String title, String value,
                              boolean persistent, boolean useQueueInterval, long expiresAt) {
+            this(type,title,value,persistent,useQueueInterval,expiresAt,-1L,0L);
+        }
+
+        private QueuedNotice(IslandNoticeType type,String title,String value,boolean persistent,
+                             boolean useQueueInterval,long expiresAt,long remainingVisibleMillis,long deadlineAt) {
+            this.channelKey=type.name();
+            this.remainingVisibleMillis=remainingVisibleMillis;
+            this.deadlineAt=deadlineAt;
             this.type = type;
             this.title = title;
             this.value = value;
             this.persistent = persistent;
+            this.priority = noticePriority(type, persistent);
             this.useQueueInterval = useQueueInterval;
             this.expiresAt = expiresAt;
         }
@@ -1142,8 +1352,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     // 紧凑的均衡器使播放质量通知区别于其他状态。
     public static boolean isDownloadActive() {
         return downloading || INSTANCE.completing
-                || (downloadCompletedAt > 0L && System.currentTimeMillis() - downloadCompletedAt
-                < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds));
+                || downloadCompletedAt > 0L && downloadCompletedAt != INSTANCE.acknowledgedCompletionAt;
     }
 
     // 不要使用固定基线：Fontello 字形有不同的上伸部和
@@ -1194,20 +1403,25 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             playerAbsorbStartedAt = 0L;
             suppressPlayerEntryAnimation = false;
         }
-        if (playerSurfaceTransition) return;
         advanceQueuedNotice(now);
+        if (playerSurfaceTransition) { pauseNoticeClock(); completionVisibleClock.pause(); return; }
         double rawProgress = DynamicIslandMath.clamp01(downloadProgress);
         boolean activeDownload = downloading;
-        double sourceTranscodeProgress = DynamicIslandMath.clamp01(transcodeProgress);
+        final double sourceTranscodeProgress;
         long sourceStartedAt = downloadStartedAt;
         long sourceCompletedAt = downloadCompletedAt;
-        long sourceNoticeShownAt = noticeShownAt;
-        long sourceNoticeRevision = noticeRevision;
-        IslandNoticeType sourceNoticeType = noticeType;
-        String sourceNoticeTitle = noticeTitle;
-        String sourceNoticeValue = noticeValue;
-        boolean sourceNoticePersistent = noticePersistent;
-        boolean sourceNoticeQueueMode = noticeUsesQueueInterval;
+        final long sourceNoticeShownAt, sourceNoticeExpiresAt, sourceNoticeRevision;
+        final IslandNoticeType sourceNoticeType;
+        final String sourceNoticeTitle, sourceNoticeValue;
+        final boolean sourceNoticePersistent, sourceNoticeQueueMode;
+        synchronized (NOTICE_QUEUE_LOCK) {
+            sourceTranscodeProgress=noticeChannelKey.equals(transcodeChannelKey)
+                    ? DynamicIslandMath.clamp01(transcodeProgress) : 0.0;
+            sourceNoticeShownAt=noticeShownAt; sourceNoticeExpiresAt=noticeExpiresAt;
+            sourceNoticeRevision=noticeRevision; sourceNoticeType=noticeType;
+            sourceNoticeTitle=noticeTitle; sourceNoticeValue=noticeValue;
+            sourceNoticePersistent=noticePersistent; sourceNoticeQueueMode=noticeUsesQueueInterval;
+        }
 
         // 场合门控：游戏外（主菜单/未进世界）与玩家列表打开时整块不画；播放器界面里只放通知，
         // 常驻状态栏让位。判定见 IslandVisibilityGate。
@@ -1224,6 +1438,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             previousAlwaysOn = false;
             ambientSnapshot = IslandAmbientStatus.EMPTY;
             ambientSampledAt = 0L;
+            pauseNoticeClock();
+            completionVisibleClock.pause();
             return;
         }
 
@@ -1274,12 +1490,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     : sourceNoticeType == IslandNoticeType.TRANSCODING ? sourceTranscodeProgress : 0.0;
             if (activeDownload) {
                 shownAt = sourceStartedAt > 0L ? sourceStartedAt : now;
-            } else if (sourceCompletedAt > 0L && now - sourceCompletedAt < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds)) {
+            } else if (sourceCompletedAt > 0L && sourceCompletedAt != acknowledgedCompletionAt) {
                 completing = true;
                 completeAt = sourceCompletedAt;
+                completionVisibleClock.reset();
                 animatedProgress = 1.0;
-            } else if (sourceNoticeType != IslandNoticeType.NONE
-                    && (sourceNoticePersistent || now - sourceNoticeShownAt < noticeHoldMillis(sourceNoticeQueueMode))) {
+            } else if (sourceNoticeType != IslandNoticeType.NONE) {
                 shownAt = sourceNoticeShownAt;
             }
         }
@@ -1294,8 +1510,6 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             boolean islandAlreadyVisible = visibility > .035f || expansion > .05 || contentAlpha > .05f;
             observedNoticeRevision = sourceNoticeRevision;
             if (!activeDownload) {
-                completing = false;
-                successMorph = 0f;
                 if (!islandAlreadyVisible && !suppressEntry) {
                     contentTransition = 0f;
                     noticeCopyTransition = 1f;
@@ -1336,13 +1550,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         boolean completedBetweenFrames = !activeDownload
                 && rawProgress >= .995
                 && lastObservedProgress < .995;
-        boolean newlyObservedCompletion = !activeDownload
-                && sourceCompletedAt > completeAt
-                && now - sourceCompletedAt < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds);
+        boolean newlyObservedCompletion = !activeDownload && sourceCompletedAt > 0L
+                && sourceCompletedAt != completeAt && sourceCompletedAt != acknowledgedCompletionAt;
         if (!activeDownload && (previousDownloading || completedBetweenFrames || newlyObservedCompletion)) {
             if (rawProgress >= .965) {
                 completing = true;
-                completeAt = newlyObservedCompletion ? sourceCompletedAt : now;
+                completeAt = sourceCompletedAt > 0L ? sourceCompletedAt : now;
+                completionVisibleClock.reset();
                 animatedProgress = Math.max(animatedProgress, rawProgress);
             } else {
                 completing = false;
@@ -1371,12 +1585,24 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             animatedNoticeProgress = Interpolations.interpolate(animatedNoticeProgress, 0.0, .24f);
         }
 
-        boolean holdingCompletion = completing && now - completeAt < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds);
+        if (completing && completionVisibleClock.elapsed() >= DynamicIslandMath.completionHoldMillis(
+                HudConfig.dynamicIslandCompletionHoldSeconds)) {
+            acknowledgedCompletionAt=sourceCompletedAt;
+            completing=false;
+        }
+        boolean holdingCompletion=completing;
         boolean activeNotice = sourceNoticeType != IslandNoticeType.NONE
                 && sourceNoticeShownAt > 0L
                 && now >= sourceNoticeShownAt
-                && (sourceNoticePersistent || now - sourceNoticeShownAt < noticeHoldMillis(sourceNoticeQueueMode));
-        boolean noticeMode = !activeDownload && !holdingCompletion && activeNotice;
+                && (sourceNoticeExpiresAt <= 0L || now < sourceNoticeExpiresAt);
+        // 曲线是岛的独立内容通道，不发布通知，也不丢弃下载/错误/用户操作的展示位。
+        // 与播放相关的提示可让位给曲线；其他通知照常优先，混音时钟不会被它们重置。
+        final AutomixIslandRenderer.Frame mixFrame = enabled && !activeDownload && !holdingCompletion
+                && (!activeNotice || allowsAutomixCurves(sourceNoticeType))
+                ? AutomixTransitionAnimation.islandFrame() : null;
+        boolean mixMode = mixFrame != null;
+        boolean noticeMode=IslandNoticeRules.ownsSurface(activeNotice,
+                noticePriority(sourceNoticeType,sourceNoticePersistent).rank, activeDownload, holdingCompletion);
         // 常驻只是多了一条"没有任何事件也留在屏幕上"的显示理由；下载、完成停留、通知这三条
         // 原有理由与判定顺序都没有改动，所以通知排队的时序与关闭常驻时完全一致。
         // 交接段、且下载/完成/通知这三条真都没在发生时，才让「正在播放」顶上；三者任一在发生
@@ -1384,16 +1610,17 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         // expansionTarget 会返回 0，于是收成紧凑胶囊，而不是展开一张假的下载卡片。
         boolean handoffShowsAmbient = handoffAmbient && !activeDownload && !holdingCompletion
                 && !activeNotice;
-        boolean ambientMode = handoffShowsAmbient || IslandAmbientStatus.isAmbient(enabled, alwaysOn,
-                activeDownload, holdingCompletion, activeNotice);
+        boolean ambientMode = !mixMode && (handoffShowsAmbient || IslandAmbientStatus.isAmbient(enabled, alwaysOn,
+                activeDownload, holdingCompletion, activeNotice));
         IslandAmbientStatus.Snapshot ambient = ambientSnapshot;
         boolean shouldShow = IslandAmbientStatus.shouldShow(enabled, alwaysOn, activeDownload,
                 holdingCompletion, activeNotice);
         // 即使用户不使用常驻灵动岛，关闭的播放器也必须落在某个
         // 位置上。在撞击过程中保持可见，然后让普通可见性目标将其隐藏。
-        if (playerAbsorbImpact) shouldShow = enabled;
+        if (playerAbsorbImpact || mixMode) shouldShow = enabled;
         // 常驻但三项内容全关时收成紧凑胶囊，而不是展开一张空白卡片。
-        double expansionGoal = IslandAmbientStatus.expansionTarget(shouldShow, ambientMode, !ambient.isEmpty());
+        double expansionGoal = mixMode ? 1.0
+                : IslandAmbientStatus.expansionTarget(shouldShow, ambientMode, !ambient.isEmpty());
 
         // 动画节奏来自配置：每个逼近系数乘以对应的速度倍率，再钳到 (0,.95] 以免越过目标值抖动。
         float expandRate = animationRate(shouldShow ? HudConfig.dynamicIslandExpandSpeed
@@ -1416,7 +1643,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         noticeCopyTransition = Interpolations.interpolate(noticeCopyTransition, 1f, copyRate);
         ambientBlend = Interpolations.interpolate(ambientBlend, ambientMode ? 1f : 0f, contentRate);
         successMorph = Interpolations.interpolate(successMorph,
-                enabled && holdingCompletion ? 1f : 0f, successRate);
+                enabled && holdingCompletion && !noticeMode ? 1f : 0f, successRate);
 
         double frameDelta = Math.min(4.0, Math.max(0.0, RenderSystem.getFrameDeltaTime()));
         spinnerRotation = (spinnerRotation + frameDelta * 7.2
@@ -1426,11 +1653,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         lastObservedProgress = rawProgress;
 
         if (visibility <= .012f && !shouldShow) {
-            completing = false;
             successMorph = 0f;
+            pauseNoticeClock();
+            completionVisibleClock.pause();
             return;
         }
 
+        final boolean renderedShouldShow = shouldShow;
         final double easedExpansion = DynamicIslandMath.smoothStep(expansion);
         final float alpha = DynamicIslandMath.clamp01f(visibility);
         final float renderedContentTransition = DynamicIslandMath.clamp01f(contentTransition);
@@ -1448,14 +1677,34 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         renderIsolated(new Runnable() {
             @Override
             public void run() {
-                drawIsland(easedExpansion, alpha, renderedContentTransition, animatedProgress, successMorph, speed,
+                drawIsland(easedExpansion, alpha, renderedContentTransition, animatedProgress,
+                        renderNotice ? 0f : successMorph, speed,
                         System.currentTimeMillis(), shownAt, false, renderNotice,
                         renderedNoticeType, renderedNoticeTitle, renderedNoticeValue,
                         renderedOutgoingNoticeTitle, renderedOutgoingNoticeValue,
                         renderedNoticeCopyTransition, renderedNoticeProgress, sourceNoticePersistent,
-                        renderedAmbient, renderedAmbientBlend);
+                        renderedAmbient, renderedAmbientBlend, mixFrame, renderedShouldShow);
+                // 回执必须在绘制成功之后。旧帧不替新消息消费时间；下载/Automix/不可见帧完全不计时。
+                boolean presented=IslandNoticeRules.presentationReady(
+                        enabled && renderNotice && mixFrame == null,
+                        SkijaGfx.active() && SkijaGfx.canvas() != null,
+                        visibility, expansion, contentAlpha, contentTransition,
+                        renderedNoticeCopyTransition, isInstantStateChannel(renderedNoticeType));
+                recordNoticePresentation(sourceNoticeRevision, presented, System.currentTimeMillis());
+                if (enabled && holdingCompletion && !renderNotice && mixFrame == null && visibility > .75f
+                        && !downloading && downloadCompletedAt == sourceCompletedAt
+                        && expansion > .70 && contentAlpha > .70f && successMorph > .70f
+                        && SkijaGfx.active() && SkijaGfx.canvas() != null) {
+                    completionVisibleClock.record(System.currentTimeMillis());
+                } else completionVisibleClock.pause();
             }
         });
+    }
+
+    private static boolean allowsAutomixCurves(IslandNoticeType type) {
+        return type == IslandNoticeType.AUTOMIX || type == IslandNoticeType.AUTOMIX_BLENDING
+                || type == IslandNoticeType.PLAY_NEXT || type == IslandNoticeType.RECENT_PLAY_SUCCESS
+                || type == IslandNoticeType.LISTENING_DURATION_SUCCESS;
     }
 
     private void renderPreviewInternal() {
@@ -1473,7 +1722,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         HudConfig.dynamicIslandEnabled ? "1.8 MB/s" : "灵动岛已关闭",
                         System.currentTimeMillis(), 0L, true, false,
                         IslandNoticeType.NONE, "", "", "", "", 1f, 0.0, false,
-                        ambient, ambient.isEmpty() ? 0f : 1f);
+                        ambient, ambient.isEmpty() ? 0f : 1f, null, true);
             }
         });
     }
@@ -1504,7 +1753,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                             String activeNoticeValue, String outgoingNoticeTitle,
                             String outgoingNoticeValue, float noticeCopyBlend,
                             double noticeProgress, boolean activeNoticePersistent,
-                            IslandAmbientStatus.Snapshot ambient, float ambientBlendValue) {
+                            IslandAmbientStatus.Snapshot ambient, float ambientBlendValue,
+                             AutomixIslandRenderer.Frame mixFrame, boolean surfaceActive) {
         double configuredScale = DynamicIslandMath.clamp(HudConfig.dynamicIslandScale, .60, 1.35);
         double screenWidth = RenderSystem.getWidth();
         DynamicIslandStyle style = getStyle();
@@ -1565,6 +1815,19 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 : (style == DynamicIslandStyle.MUSIC_FOCUS ? 48.0 : COMPACT_WIDTH));
         double compactHeight = bounce ? BounceIslandMath.ROW_HEIGHT
                 : (style == DynamicIslandStyle.COMPACT ? 14.0 : COMPACT_HEIGHT);
+        if (!surfaceActive) {
+            // 混音结束且没有接替内容时，目标仍是紧凑轮廓；不能在退场一帧回跳到下载兜底大卡片。
+            targetExpandedWidth = compactWidth;
+            targetExpandedHeight = compactHeight;
+        }
+        if (mixFrame != null) {
+            // 曲线只对岛本身的小尺寸目标做形变，不另开全屏面板。
+            double mixWidth = AutomixIslandRenderer.targetWidth(screenWidth, configuredScale);
+            double mixHeight = Math.min(AutomixIslandRenderer.MAX_HEIGHT,
+                    Math.max(AutomixIslandRenderer.TARGET_HEIGHT, compactHeight + 2.0));
+            targetExpandedWidth = DynamicIslandMath.lerp(compactWidth, mixWidth, mixFrame.opacity);
+            targetExpandedHeight = DynamicIslandMath.lerp(compactHeight, mixHeight, mixFrame.opacity);
+        }
         double expandedWidth;
         double expandedHeight;
         if (bounce) {
@@ -1678,11 +1941,19 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             roundedRect(x + 2.0, y + 3.0, width, height, radius,
                     hexColor(0f, 0f, 0f, shadowAlpha * .42f));
         }
-        if (bounce) {
+        if (bounce && mixFrame == null) {
             drawBounceIsland(x, y, width, height, radius, alpha, expansionValue, contentFade,
                     now, preview, noticeMode, activeNoticeType, activeNoticeTitle, activeNoticeValue,
                     noticeProgress, ambient, ambientMix, layout, bounceStack, progress, success,
                     configuredScale, accentColor);
+            api.getGLStateManager().popMatrix();
+            return;
+        }
+        if (mixFrame != null) {
+            // 已处于岛本身的矩阵、圆角和锚点内：不另开画布，不画大图例/多色网格。
+            GlassLook.paintFrost(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha * .64f);
+            AutomixIslandRenderer.draw(SkijaGfx.canvas(), mixFrame, x, y, width, height, radius,
+                    alpha * DynamicIslandMath.clamp01f(contentFade), accentColor);
             api.getGLStateManager().popMatrix();
             return;
         }
@@ -2879,13 +3150,14 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             fresh.add(new BounceRow(IslandNoticeType.VOLUME, "音量", "62%", now, 0L));
             return bounceSwapRows(fresh);
         }
-        if (noticeMode && type != IslandNoticeType.NONE) {
-            long activeExpiry = noticeShownAt > 0L
-                    ? noticeShownAt + noticeHoldMillis(noticeUsesQueueInterval) : 0L;
-            fresh.add(new BounceRow(type, safeNoticeValue(title, "状态"), safeNoticeValue(value, "—"),
-                    bounceRowArrivedAt(now, type, title, value), activeExpiry));
-        }
         synchronized (NOTICE_QUEUE_LOCK) {
+            if (noticeMode && type != IslandNoticeType.NONE) {
+                long activeExpiry = noticePersistent ? 0L
+                        : now + Math.max(0L,noticeBudgetMillis - NOTICE_VISIBLE_CLOCK.elapsed());
+                if (noticeExpiresAt > 0L) activeExpiry=Math.min(activeExpiry,noticeExpiresAt);
+                fresh.add(new BounceRow(type, safeNoticeValue(title, "状态"), safeNoticeValue(value, "—"),
+                        bounceRowArrivedAt(now, type, title, value), activeExpiry));
+            }
             for (QueuedNotice queued : NOTICE_QUEUE) {
                 if (fresh.size() >= BounceIslandMath.MAX_ROWS) break;
                 if (queued.expiresAt > 0L && now >= queued.expiresAt) continue;

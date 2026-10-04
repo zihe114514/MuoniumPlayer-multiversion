@@ -68,12 +68,14 @@ class IslandGlassCoverageStaticTest {
     }
 
     @Test
-    @DisplayName("回弹胶囊仍然在铺背景之前就 return —— 那一款的纯色平面是造型的一部分")
+    @DisplayName("常规回弹胶囊仍在铺背景之前 return，曲线模式单独使用半透明表面")
     void bounceStyleStaysOutOfGlass() throws Exception {
         String src = read(island());
         int start = src.indexOf("private void drawIsland(");
+        assertTrue(src.contains("if (bounce && mixFrame == null)"),
+                "曲线模式不能透出回弹胶囊的下载兜底文字");
         int bounce = src.indexOf("drawBounceIsland(", start);
-        int frost = src.indexOf("GlassLook.paintFrost(GlassLook.Surface.ISLAND", start);
+        int frost = src.indexOf("GlassLook.paintFrost(GlassLook.Surface.ISLAND", bounce);
         assertTrue(bounce > 0 && bounce < frost, "回弹胶囊现在也走上玻璃了，那一款是 1:1 复刻稿");
         assertTrue(src.substring(bounce, frost).contains("return;"),
                 "回弹胶囊那一段必须原样提前返回");

@@ -5,6 +5,7 @@ import com.muoniumplayer.compat.lwjgl2.Mouse;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.ListenTogetherSettings;
 import com.muoniumplayer.core.ncm.music.dto.Music;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.ScissorClipManager;
 import com.muoniumplayer.core.rendering.StencilClipManager;
@@ -490,6 +491,7 @@ public final class MpPartyOverlay extends NCMPanel {
         final RoundedRectWidget pill = new RoundedRectWidget();
         dialog.addChild(pill);
         pill.setRadius(centerY).setShouldOverrideMouseCursor(true);
+        pill.setGlassRim(GlassLook.Surface.PLAYER);
         pill.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
             write.set(!enabled.getAsBoolean());
@@ -506,6 +508,8 @@ public final class MpPartyOverlay extends NCMPanel {
             pill.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND), accent,
                     on[0] * (.62 + hover[0] * .2) + (1.0 - on[0]) * hover[0] * .1));
             room[0] = bar.pillWidth - textLeft - PILL_RAIL_ZONE;
+            pill.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER,
+                    (float) (.46 + on[0] * .38 + hover[0] * .16)));
         });
         stroke(pill, centerY, () -> mix(NCMScreen.getColor(NCMScreen.ColorType.BORDER), accent, on[0]),
                 () -> .45 + on[0] * .35);
@@ -672,7 +676,9 @@ public final class MpPartyOverlay extends NCMPanel {
         final SpringAnimation slideX = new SpringAnimation(new SpringParams(.8, 20.0, 220.0, false));
         final RoundedRectWidget indicator = new RoundedRectWidget();
         strip.addChild(indicator);
-        indicator.setClickable(false).setRadius(9).setBeforeRenderCallback(() -> {
+        indicator.setClickable(false).setRadius(9);
+        indicator.setGlassRim(GlassLook.Surface.PLAYER);
+        indicator.setBeforeRenderCallback(() -> {
             double slot = slotWidth(strip, count);
             int index = indexOf(order, target());
             slideX.setTargetPosition((slot + 4.0) * index);
@@ -682,6 +688,7 @@ public final class MpPartyOverlay extends NCMPanel {
             indicator.setPosition(x, 0);
             indicator.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
                     NCMScreen.getColor(NCMScreen.ColorType.ACCENT), .16));
+            indicator.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, .38f));
         });
         stroke(indicator, 9, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT), () -> .5);
 
@@ -805,6 +812,31 @@ public final class MpPartyOverlay extends NCMPanel {
 
     private void buildNoServer(final Panel host) {
         final RoundedRectWidget card = card(host, 82, 138);
+        // This is the dominant inner surface, so it gets a real lens rather than only an outline.
+        card.setGlassPlate(GlassLook.Surface.PLAYER);
+        final Wash gloss = new Wash(false, 12.0);
+        card.addChild(gloss);
+        gloss.setBeforeRenderCallback(() -> {
+            gloss.tint(0xFFFFFF, 0xFFFFFF);
+            gloss.alphas(.075, 0.0);
+            gloss.setBounds(Math.max(1, card.getWidth()), Math.min(72, card.getHeight()));
+            gloss.setPosition(0, 0);
+        });
+        final RoundedRectWidget statusPlate = new RoundedRectWidget();
+        card.addChild(statusPlate);
+        statusPlate.setClickable(false).setRadius(7);
+        statusPlate.setGlassRim(GlassLook.Surface.PLAYER);
+        statusPlate.setBeforeRenderCallback(() -> {
+            statusPlate.setBounds(86, 22);
+            statusPlate.setPosition(card.getWidth() - 106, 18);
+            statusPlate.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND), WARN_COLOR, .28));
+            statusPlate.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, .52f));
+        });
+        LabelWidget statusText = label(statusPlate, "未连接", FontManager.pf10bold);
+        statusText.setBeforeRenderCallback(() -> statusText
+                .setColor(WARN_COLOR)
+                .setPosition(statusPlate.getWidth() * .5 - statusText.getWidth() * .5,
+                        inkTop(statusText, statusPlate.getHeight() * .5)));
 
         // 「云带斜线」比警告三角准确：不是出错了，而是这台服务器上根本没有这个服务。
         icon(card, PartyIcons.CLOUD_OFF, ICON_XL, () -> 38.0, () -> 40.0, () -> WARN_COLOR);
@@ -832,13 +864,23 @@ public final class MpPartyOverlay extends NCMPanel {
 
         // 探测状态直接显示出来：channel 是「服务器声明了这个通道」（Paper 不会声明），
         // hello 是「服务端回过话」。两个都为 false 才真的是没装。
+        final RoundedRectWidget probePlate = new RoundedRectWidget();
+        card.addChild(probePlate);
+        probePlate.setClickable(false).setRadius(6);
+        probePlate.setGlassRim(GlassLook.Surface.PLAYER);
+        probePlate.setBeforeRenderCallback(() -> {
+            probePlate.setBounds(Math.max(1, card.getWidth() - 40), 22);
+            probePlate.setPosition(20, 104);
+            probePlate.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+            probePlate.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, .34f));
+        });
         LabelWidget probe = label(card, MpPartyClient::diag, FontManager.pf10bold);
         probe.setBeforeRenderCallback(() -> {
             probe.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             probe.setMaxWidth(Math.max(1, card.getWidth() - 40));
             probe.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            probe.setPosition(20, 108);
-            probe.setAlpha(.7f);
+            probe.setPosition(28, 110);
+            probe.setAlpha(.62f);
         });
     }
 
@@ -2642,7 +2684,9 @@ public final class MpPartyOverlay extends NCMPanel {
         background.setClickable(false).setRadius(14).setBeforeRenderCallback(() -> {
             background.setColor(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
             background.setMargin(0);
+            background.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
+        background.setGlassSheet(GlassLook.Surface.PLAYER);
 
         // 顶部一道极淡的白色高光：把标题栏那一段轻轻托起来，弹窗就不是一块死板。
         final Wash gloss = new Wash(false, 14.0);
@@ -2692,6 +2736,7 @@ public final class MpPartyOverlay extends NCMPanel {
         icon(back, PartyIcons.CHEVRON_LEFT, ICON_M, () -> 15.0, () -> 13.0,
                 () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         back.setRadius(9);
+        back.setGlassRim(GlassLook.Surface.PLAYER);
         back.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
             action.run();
@@ -2703,6 +2748,7 @@ public final class MpPartyOverlay extends NCMPanel {
             back.setPosition(20, 16);
             back.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND),
                     NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), .55 + hover[0] * .45));
+            back.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, .44f + (float) hover[0] * .42f));
         });
         stroke(back, 9, () -> NCMScreen.getColor(NCMScreen.ColorType.BORDER), () -> .6);
     }
@@ -2816,12 +2862,15 @@ public final class MpPartyOverlay extends NCMPanel {
     private RoundedRectWidget cardAt(final Panel host, final DoubleSupplier top, final double height) {
         final RoundedRectWidget widget = new RoundedRectWidget();
         host.addChild(widget);
-        widget.setClickable(false).setRadius(12).setBeforeRenderCallback(() -> {
+        widget.setClickable(false).setRadius(12);
+        widget.setGlassRim(GlassLook.Surface.PLAYER);
+        widget.setBeforeRenderCallback(() -> {
             widget.setBounds(Math.max(1, host.getWidth() - PAD * 2), height);
             widget.setPosition(PAD, top.getAsDouble());
             // 只比页面底色亮一点点，轮廓交给描边。
             widget.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND),
                     NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND), .82));
+            widget.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, .82f));
         });
         stroke(widget, 12, () -> NCMScreen.getColor(NCMScreen.ColorType.BORDER), () -> .6);
         return widget;
@@ -2905,6 +2954,7 @@ public final class MpPartyOverlay extends NCMPanel {
         // 不可点：它铺满整行，可点的话会把行自己的悬停判定顶掉。
         bg.setClickable(false);
         bg.setRadius(10);
+        bg.setGlassRim(GlassLook.Surface.PLAYER);
         bg.setBeforeRenderCallback(() -> {
             // 级联入场：切到这一页时行一条一条落下来，而不是整块一起闪出来。
             double gate = clamp01((paneFade - slot * .05) / .5);
@@ -2914,6 +2964,8 @@ public final class MpPartyOverlay extends NCMPanel {
             bg.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND),
                     NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND), .7 + bg.hover * .55));
             bg.setAlpha((float) bg.reveal);
+            bg.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER,
+                    (float) (.22 + .58 * bg.hover)));
         });
         // 悬停时往两侧各长 ROW_INSET 像素：位移比换色更能说明「这一行是可以动手的」。
         bg.setTransformations(() -> {
@@ -3323,6 +3375,7 @@ public final class MpPartyOverlay extends NCMPanel {
         final RoundedButtonWidget button = new RoundedButtonWidget(() -> "", FontManager.pf12bold);
         host.addChild(button);
         button.setRadius(row ? 7 : 9);
+        button.setGlassRim(GlassLook.Surface.PLAYER);
         button.setOnClickCallback((x, y, mouseButton) -> {
             if (mouseButton != 0) return false;
             // 不可用时也吃掉这次点击：否则会穿到底下的遮罩，把整个弹窗关掉。
@@ -3376,6 +3429,8 @@ public final class MpPartyOverlay extends NCMPanel {
             button.setClickable(usable);
             // getAlpha() 已经是「父 alpha × 自身 alpha」，这里只给自身那一份，不要再乘一次父级。
             button.setAlpha(usable ? 1f : (row || style == STYLE_GHOST ? 0f : .35f));
+            float fill = outlined ? (float) (.20 + hover[0] * .58) : (float) (.72 + hover[0] * .20);
+            button.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, fill));
         });
         final double box = row ? ICON_S : ICON_M;
         // 0 = 文字左边缘，1 = 图标中心 x，2 = 按钮中线 y。图标与文字作为<b>一组</b>居中，

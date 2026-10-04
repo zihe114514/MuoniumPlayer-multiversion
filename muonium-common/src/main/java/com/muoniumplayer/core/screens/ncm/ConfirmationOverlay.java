@@ -191,6 +191,7 @@ public final class ConfirmationOverlay extends NCMPanel {
         RoundedButtonWidget cancelButton = new RoundedButtonWidget("取消", FontManager.pf12bold);
         dialog.addChild(cancelButton);
         cancelButton.setRadius(6);
+        cancelButton.setGlassRim(GlassLook.Surface.PLAYER);
         cancelButton.setBeforeRenderCallback(() -> {
             double totalWidth = Math.max(1, dialog.getWidth() - 36);
             double gap = 8;
@@ -201,6 +202,7 @@ public final class ConfirmationOverlay extends NCMPanel {
             cancelButton.setColor(cancelButton.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            cancelButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             cancelButton.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
         cancelButton.setOnClickCallback((x, y, button) -> {
@@ -212,6 +214,7 @@ public final class ConfirmationOverlay extends NCMPanel {
         RoundedButtonWidget confirmButton = new RoundedButtonWidget(confirmText, FontManager.pf12bold);
         dialog.addChild(confirmButton);
         confirmButton.setRadius(6);
+        confirmButton.setGlassRim(GlassLook.Surface.PLAYER);
         confirmButton.setBeforeRenderCallback(() -> {
             double totalWidth = Math.max(1, dialog.getWidth() - 36);
             double gap = 8;
@@ -220,6 +223,7 @@ public final class ConfirmationOverlay extends NCMPanel {
             confirmButton.setBounds(confirmWidth, 26);
             confirmButton.setPosition(18 + cancelWidth + gap, dialog.getHeight() - 34);
             confirmButton.setColor(confirmButton.isHovering() ? 0xEC665D : 0xD94F4D);
+            confirmButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             confirmButton.setTextColor(0xFFFFFF);
         });
         confirmButton.setOnClickCallback((x, y, button) -> {

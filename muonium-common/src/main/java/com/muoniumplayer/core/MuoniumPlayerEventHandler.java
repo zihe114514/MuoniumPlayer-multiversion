@@ -1,5 +1,7 @@
 package com.muoniumplayer.core;
 
+import com.muoniumplayer.core.rendering.texture.Textures;
+
 import com.google.common.collect.Queues;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -11,6 +13,7 @@ import today.opai.api.events.EventRender2D;
 import today.opai.api.interfaces.EventHandler;
 import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
+import com.muoniumplayer.core.rendering.MusicSpectrumRenderer;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.utils.logging.LogManager;
 
@@ -41,6 +44,7 @@ public class MuoniumPlayerEventHandler implements EventHandler {
                 runTask((FutureTask<?>) this.scheduledTasks.poll(), logger);
             }
         }
+        Textures.processPendingUploads();
     }
 
     private <V> V runTask(FutureTask<V> task, Logger logger) {
@@ -88,6 +92,7 @@ public class MuoniumPlayerEventHandler implements EventHandler {
     public void onRender2D(EventRender2D event) {
         Interpolations.calcFrameDelta();
 
+        MusicSpectrumRenderer.renderHud();
         DownloadDynamicIsland.render();
         AutomixTransitionAnimation.render();
     }

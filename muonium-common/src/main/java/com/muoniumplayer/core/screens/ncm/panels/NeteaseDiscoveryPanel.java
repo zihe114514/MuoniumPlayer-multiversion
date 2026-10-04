@@ -12,6 +12,7 @@ import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseRecentPlaysService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
@@ -133,6 +134,7 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
             RoundedButtonWidget row = new RoundedButtonWidget(entry::getTitle, FontManager.pf14bold);
             list.addChild(row);
             row.setRadius(5);
+            row.setGlassPlate(GlassLook.Surface.PLAYER);
             row.setOnClickCallback((x, y, button) -> {
                 if (button != 0 || entry.action == null) return button == 0;
                 entry.action.run();
@@ -143,6 +145,7 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
                 row.setColor(row.isHovering() && entry.action != null
                         ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                         : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+                row.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
                 row.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             });
 

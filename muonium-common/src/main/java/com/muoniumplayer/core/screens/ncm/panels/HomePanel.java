@@ -70,6 +70,11 @@ public class HomePanel extends NCMPanel {
         this.fixedPlaylistActions = cardActions == null ? Collections.emptyMap() : new LinkedHashMap<>(cardActions);
     }
 
+    /** True only for the platform recommendation home, not a fixed result/discovery page. */
+    public boolean isDefaultHomePage() {
+        return this.fixedPlaylists == null;
+    }
+
     private static final int NETEASE_HOME_TARGET = 240;
     private static final int NETEASE_PAGE_SIZE = 50;
     private static final ArrayList<PlayList> playLists = new ArrayList<>();
@@ -636,12 +641,19 @@ public class HomePanel extends NCMPanel {
         // 号是卡片第一次被渲染时领的（网格同样是 ScrollPanel，视口外的卡片不渲染），所以往下滚
         // 露出来的那几行也会补一次进场，而不是只有首屏有动画。
         this.revealQueue.restart();
+        // AbstractWidget 使用 CopyOnWriteArrayList。逐张 add 会为每一张卡片复制一次
+        // 整个数组，240 张推荐卡会在主线程制造 O(n²) 的无意义拷贝；一次 addAll
+        // 只发布一个快照，首帧加载和滚动时都更稳。
+        // 这些 card 仍然直接挂在网格 ScrollPanel 下（等价于旧的 scrollPanel.addChild(card)），
+        // 所以接力的视口认领关系不变。
+                List<AbstractWidget<?>> cards = new ArrayList<>(displayedPlayLists.size());
         for (PlayList playList : displayedPlayLists) {
             PlaylistWidget card = new PlaylistWidget(playList, fixedPlaylistActions.get(playList.getId()));
             card.setShouldOverrideMouseCursor(true);
             card.setEntranceAnimation(this.revealQueue);
-            scrollPanel.addChild(card);
+            cards.add(card);
         }
+        scrollPanel.addChild(cards);
 
     }
 
@@ -650,8 +662,9 @@ public class HomePanel extends NCMPanel {
 
     @Override
     public void onRender(double mouseX, double mouseY) {
-        super.onRender(mouseX, mouseY);
         this.revealQueue.beginFrame();
+        this.revealQueue.setAnimationsSuppressed(this.scrollPanel != null && this.scrollPanel.isScrollActive());
+        super.onRender(mouseX, mouseY);
     }
 
     private static class PlaylistWidget extends AbstractWidget<PlaylistWidget> {
@@ -669,6 +682,8 @@ public class HomePanel extends NCMPanel {
         private final CFontRenderer titleFont;
         private final double titleLineGap;
         private final PlaylistTitleWidget titleWidget;
+        /** 字形图集就绪前用一行占位；真正折行只计算一次，避免滚动时每帧 fitWidth。 */
+        private boolean titleGlyphsReady;
 
         /** 卡片封面。接力起飞那一帧要问它现在真正落在哪儿。 */
         private RoundedImageWidget coverWidget;
@@ -727,6 +742,9 @@ public class HomePanel extends NCMPanel {
                     .setLinearFilter(true)
                     .setBeforeRenderCallback(() -> {
 
+                        if (PlaylistCoverHero.consumeHandoff(this)) {
+                            cover.setAlpha(1.0f);
+                        }
                         if (!coverLoaded) {
                             coverLoaded = true;
                             this.loadCover();
@@ -796,10 +814,12 @@ public class HomePanel extends NCMPanel {
                 }
             }
 
-            // 在本卡片的子级之前运行。一旦首帧加载了
-            //标题字形，就在网格布局下一帧的行之前
-            //重新测量并预留每个折行。
-            updateTitleLayout(titleFont.areGlyphsLoaded(safePlaylistTitle(playList.getName())));
+            // 字形第一次就绪时才重新折行；之后滚动只画文本，不再重复分配字符串数组。
+            boolean glyphsLoaded = titleFont.areGlyphsLoaded(safePlaylistTitle(playList.getName()));
+            if (glyphsLoaded && !titleGlyphsReady) {
+                titleGlyphsReady = true;
+                updateTitleLayout(true);
+            }
         }
 
         private void updateTitleLayout(boolean canMeasureText) {

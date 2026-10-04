@@ -115,7 +115,8 @@ public class NavigateBar extends NCMPanel {
      * <p>写这个数的时候按<b>除完倍率</b>那一档估观感：{@link SheetClock#speed()} 的默认值就是
      * 上限，所以基础常量天然要写大三倍，否则「300ms」在真机上只有 100ms。</p>
      */
-    private static final double INDICATOR_MS = 900.0;
+    /** 与右侧内容页共用同一档基准时长，避免选中条落后于内容页。 */
+    private static final double INDICATOR_MS = 420.0;
     /** 没有选中项时它淡出要多少毫秒（同样按除完那一档估：默认档下 60ms）。 */
     private static final double INDICATOR_PRESENCE_MS = 180.0;
     /** 单帧最多补这么多毫秒：与换页那条同一档，掉帧时整段变慢而不是一帧跨过小半条曲线。 */
@@ -273,6 +274,10 @@ public class NavigateBar extends NCMPanel {
         return platform.name() + (platform == MusicPlatform.GD ? ":" + GdStudioSourceSettings.getPlatform() : "");
     }
 
+    private NCMScreen getScreen() {
+        return NCMScreen.getInstance();
+    }
+
     private Map<String, SidebarLayoutMotion.Snapshot> captureGeometry() {
         Map<String, SidebarLayoutMotion.Snapshot> result = new LinkedHashMap<>();
         for (Map.Entry<String, AbstractWidget<?>> entry : this.sidebarEntries.entrySet()) {
@@ -344,6 +349,15 @@ public class NavigateBar extends NCMPanel {
      */
     private PlaylistItem addSidebarRow(String key, PlaylistItem item) {
         key = SidebarLayoutMotion.rowKey(key, this.sourceIdentity);
+        final String navigationKey = key;
+        // 侧栏入口的文案/面板类型并不唯一：排行榜和电台都可能落到 HomePanel，热搜/最近播放
+        // 也都可能落到 NeteaseDiscoveryPanel。点击时把语义键交给目标页，异步加载完成后仍能
+        // 精确恢复这一个高亮条，而不是按 instanceof 猜成“主页”。
+        final Runnable originalAction = item.onClick;
+        item.onClick = () -> {
+            NCMScreen.getInstance().setPendingPanelNavigationKey(navigationKey);
+            originalAction.run();
+        };
         this.sidebarRows.put(key, item);
         this.sidebarEntries.put(key, item);
         item.setBounds(Math.max(1, this.getWidth() - 8), 16);
@@ -2260,12 +2274,26 @@ public class NavigateBar extends NCMPanel {
 
     /**
      * 重新选中代表当前可见内容面板的侧边栏项。
+     *
+     * <p>不能只按面板类判断：排行榜、电台、热搜和最近播放会复用 HomePanel / DiscoveryPanel，
+     * 但用户切的是不同栏目。语义键优先，旧的类型匹配只作为没有键的历史/外部面板退路。</p>
      */
     public void selectCurrentPanel(NCMPanel panel) {
         PlaylistItem selectedItem = null;
-        if (panel instanceof HomePanel) {
-            selectedItem = this.homeItem;
-        } else if (panel instanceof PlaylistPanel) {
+        String navigationKey = panel == null ? null : panel.getNavigationKey();
+        if (navigationKey != null) {
+            AbstractWidget<?> entry = this.sidebarEntries.get(navigationKey);
+            if (entry instanceof PlaylistItem) {
+                selectedItem = (PlaylistItem) entry;
+            }
+        }
+        if (selectedItem == null && panel instanceof HomePanel) {
+            // 只有真正的默认主页才能直接落到“主页”。固定结果页（排行榜/电台/搜索）由语义键负责，
+            // 没有键时宁可不高亮，也不要误把结果页画成主页。
+            if (((HomePanel) panel).isDefaultHomePage()) {
+                selectedItem = this.homeItem;
+            }
+        } else if (selectedItem == null && panel instanceof PlaylistPanel) {
             PlayList activePlaylist = ((PlaylistPanel) panel).playList;
             if (activePlaylist != null && !activePlaylist.isSearchMode()) {
                 for (PlaylistItem item : this.playlistItems) {

@@ -602,6 +602,7 @@ public abstract class NcmSheet extends NCMPanel {
         dialog.addChild(back);
         back.setRadius(9);
         back.setShouldOverrideMouseCursor(true);
+        back.setGlassRim(GlassLook.Surface.PLAYER);
         back.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
             action.run();
@@ -612,6 +613,7 @@ public abstract class NcmSheet extends NCMPanel {
             back.setPosition(PAD - 4, 20);
             back.setColor(back.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            back.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             back.setTextColor(0x00FFFFFF);
         });
         icon(back, PartyIcons.CHEVRON_LEFT, ICON_M, () -> 15.0, () -> 15.0,
@@ -686,6 +688,7 @@ public abstract class NcmSheet extends NCMPanel {
         button.setRadius(9);
         // 弹窗里的这颗也是玻璃面：文字是它的子控件，边缘光不会把它一起淡掉。
         button.setGlassRim(GlassLook.Surface.PLAYER);
+        button.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         button.setShouldOverrideMouseCursor(true);
         button.setOnClickCallback((x, y, mouseButton) -> {
             if (mouseButton != 0) return false;

@@ -322,11 +322,11 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         int colorIndex = (int) Math.round(colorMix * COLOR_STEPS);
         Color color = SURFACE_COLOR_CACHE[Math.max(0, Math.min(COLOR_STEPS, colorIndex))];
 
-        if (!TransitionPerformanceBudget.isMinimal()) {
+        if (!TransitionPerformanceBudget.simplifySurfaceDetail()) {
             GFX.roundedRect(x + 1.0, y + 1.8, width, height, radius, SHADOW_STRONG);
             GFX.roundedRect(x + 2.0, y + 3.0, width, height, radius, SHADOW_SOFT);
         }
-        boolean liquid = GlassLook.paintFrost(GlassLook.Surface.PLAYER, x, y, width, height, radius, 1f);
+        boolean liquid = GlassLook.paintPlayerTransitionSurface(x, y, width, height, radius, 1f);
         GFX.roundedRect(x, y, width, height, radius,
                 liquid ? new Color(GlassLook.tintedArgb(GlassLook.Surface.PLAYER, color.getRGB()), true) : color);
         if (!liquid) GFX.roundedOutline(x, y, width, height, radius, .72, SURFACE_EDGE);

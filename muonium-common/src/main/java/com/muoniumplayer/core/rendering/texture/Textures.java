@@ -1,7 +1,6 @@
 package com.muoniumplayer.core.rendering.texture;
 
 import lombok.experimental.UtilityClass;
-import com.muoniumplayer.core.MuoniumPlayerEventHandler;
 import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.rendering.TextureManager;
@@ -12,6 +11,8 @@ import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import java.awt.image.BufferedImage;
 import java.io.InputStream;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * @author MuoniumPlayer Contributors
@@ -19,6 +20,22 @@ import java.util.Optional;
  */
 @UtilityClass
 public class Textures implements SharedConstants {
+    private static final TextureUploadQueue UPLOADS = new TextureUploadQueue();
+    private static final Set<Location> PENDING_LOOKUPS = ConcurrentHashMap.newKeySet();
+    /**
+     * 已经在后台下载的封面。滚动列表会在很短时间内反复创建/重绘卡片，
+     * 没有这一层闸门时同一张封面可能被排进多条 HTTP 任务，最后又重复上传。
+     */
+    private static final Set<Location> PENDING_DOWNLOADS = ConcurrentHashMap.newKeySet();
+
+    /** Called once per client tick. Keep cover bursts out of the unbounded task drain. */
+    public void processPendingUploads() {
+        UPLOADS.drain(2_000_000L, 4);
+    }
+
+    public int pendingUploads() {
+        return UPLOADS.pending();
+    }
 
     public Optional<ITextureObject> getTextureOrLoadAsynchronously(Location location, BufferedImage img) {
 
@@ -26,25 +43,51 @@ public class Textures implements SharedConstants {
 
         ITextureObject texture = textureManager.getTexture(location);
 
-        if (texture == null) {
-            Textures.loadTextureAsyncly(location, img);
+        if (texture == null && img != null && PENDING_LOOKUPS.add(location)) {
+            enqueueUpload(() -> {
+                try {
+                    // Another loader may have completed this resource meanwhile.
+                    if (textureManager.getTexture(location) == null) {
+                        loadTexture(location, img);
+                    }
+                } finally {
+                    PENDING_LOOKUPS.remove(location);
+                    img.flush();
+                }
+            });
         }
 
         return Optional.ofNullable(texture);
     }
 
     public void downloadTextureAndLoadAsync(String url, Location location) {
+        if (url == null || url.trim().isEmpty() || location == null) {
+            return;
+        }
+        TextureManager textureManager = TextureManager.getInstance();
+        if (textureManager.getTexture(location) != null || !PENDING_DOWNLOADS.add(location)) {
+            return;
+        }
+
         MultiThreadingUtil.runAsync(() -> {
+            boolean queuedUpload = false;
             try (InputStream inputStream = HttpUtils.downloadStream(url)) {
                 if (inputStream != null) {
                     BufferedImage img = DynamicTexture.readImage(inputStream);
 
                     if (img != null) {
-                        Textures.loadTexture(location, img);
+                        queuedUpload = true;
+                        // 上传仍由主线程限额队列完成；只有上传真正完成后才释放下载闸门，
+                        // 避免图片已经解码但还没贴到 GPU 时被下一帧重复下载。
+                        Textures.loadTextureAsyncly(location, img, true, true, false,
+                                () -> PENDING_DOWNLOADS.remove(location));
                     }
                 }
             } catch (Exception e) {
                 e.printStackTrace();
+            } finally {
+                // 失败时允许下一次进入视口重新尝试。
+                if (!queuedUpload) PENDING_DOWNLOADS.remove(location);
             }
         });
     }
@@ -59,7 +102,7 @@ public class Textures implements SharedConstants {
             return;
 
         if (!MuoniumPlayerExtension.isCallingFromMainThread()) {
-            MuoniumPlayerEventHandler.addScheduledTask(() -> loadTexture(location, img, clearable, linear));
+            enqueueUpload(() -> loadTexture(location, img, clearable, linear));
             return;
         }
 
@@ -81,22 +124,35 @@ public class Textures implements SharedConstants {
     public static long perfUploads;
     public static long perfUploadNanos;
 
+    /** Completion runs on the main thread, after pixels are uploaded and registered. */
     public void loadTextureAsyncly(Location location, BufferedImage img, boolean flush, boolean clearable, boolean linear, Runnable after) {
-
-        MultiThreadingUtil.runAsync(
-                () -> {
-                    Textures.loadTexture(location, img, clearable, linear);
-
-                    if (flush) {
-                        img.flush();
-                    }
-
-                    if (after != null) {
-                        after.run();
-                    }
+        if (img == null) {
+            return;
+        }
+        // No decoding is left to do: dispatch directly rather than scheduling a
+        // worker just to bounce back to the main thread. Retain pixels until done.
+        enqueueUpload(() -> {
+            try {
+                loadTexture(location, img, clearable, linear);
+                if (after != null) {
+                    after.run();
                 }
-        );
+            } finally {
+                if (flush) {
+                    img.flush();
+                }
+            }
+        });
+    }
 
+    private void enqueueUpload(Runnable upload) {
+        UPLOADS.submit(() -> {
+            try {
+                upload.run();
+            } catch (Exception failure) {
+                failure.printStackTrace();
+            }
+        });
     }
 
     public void loadTextureAsyncly(Location location, BufferedImage img, boolean flush, boolean clearable, boolean linear) {

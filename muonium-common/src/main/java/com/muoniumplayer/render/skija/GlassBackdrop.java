@@ -457,6 +457,56 @@ public final class GlassBackdrop {
         return rebuildBlur(raw, sigma, key, blurLevels.allocate(key, captures));
     }
 
+    /**
+     * 只借用本次采集已经存在的预糊档，不触发新的全屏高斯。
+     *
+     * <p>播放器灵动岛交接属于硬实时窗口：如果这里为一个新 sigma 现场建 FBO，
+     * 视觉上就是第一帧突然掉一下。没有可借用的档位时返回 {@code null}，调用方可以
+     * 退回未模糊的背景贴图，而不是把整段动画拖慢。</p>
+     */
+    public static Image blurredCached(float sigma) {
+        Image raw = image();
+        if (raw == null || blurBroken) {
+            return null;
+        }
+        if (sigma <= 0.004f) {
+            return raw;
+        }
+        float key = Math.round(sigma * 2f);
+        blurLevels.beginCapture(captures);
+        int hit = blurLevels.find(key, captures);
+        if (hit >= 0) {
+            blurLevels.touch(hit);
+            return borrowBlur(SkijaHost.context(), blurSlots[hit]);
+        }
+        int borrowed = blurLevels.nearest(key, captures);
+        if (borrowed >= 0) {
+            blurLevels.touch(borrowed);
+            return borrowBlur(SkijaHost.context(), blurSlots[borrowed]);
+        }
+        // 当前采集代数还没建过档时，继续借上一代最接近的纹理。
+        // 它会短暂落后一帧，但不会在转场第一帧突然从玻璃变成裸图。
+        int stale = -1;
+        float staleDistance = Float.MAX_VALUE;
+        long staleGeneration = Long.MIN_VALUE;
+        for (int i = 0; i < blurSlots.length; i++) {
+            if (blurSlots[i].image == null || blurLevels.keyAt(i) == GlassBlurLevels.NO_KEY) {
+                continue;
+            }
+            float distance = Math.abs(blurLevels.keyAt(i) - key);
+            long generation = blurLevels.builtAtCapture(i);
+            if (distance < staleDistance || (distance == staleDistance && generation > staleGeneration)) {
+                stale = i;
+                staleDistance = distance;
+                staleGeneration = generation;
+            }
+        }
+        if (stale >= 0) {
+            blurLevels.touch(stale);
+            return borrowBlur(SkijaHost.context(), blurSlots[stale]);
+        }
+        return null;
+    }
     /** 建（或重建）第 {@code slot} 档预糊。任何一步不对都只置 {@link #blurBroken}，不影响没预糊时的旧画法。 */
     private static Image rebuildBlur(Image raw, float sigma, float key, int slot) {
         DirectContext context = SkijaHost.context();
@@ -687,6 +737,20 @@ public final class GlassBackdrop {
         return rebuildBloom(raw);
     }
 
+    /** 只借用当前采集代数已经建好的亮部溢出纹理，不在灵动岛转场中现场重建。 */
+    public static Image bloomCached() {
+        if (bloomBroken || bloomStrength() <= 0f) {
+            return null;
+        }
+        Image raw = image();
+        if (raw == null || SkijaHost.isDisabled()) {
+            return null;
+        }
+        if (bloomSlot.image != null && bloomBuiltAtCapture == captures) {
+            return bloomSlot.image;
+        }
+        return null;
+    }
     private static Image rebuildBloom(Image raw) {
         DirectContext context = SkijaHost.context();
         if (context == null || textureWidth <= 0 || textureHeight <= 0) {

@@ -761,7 +761,7 @@ public final class HudSettingsModel {
                                         }, new Runnable() {
                                             public void run() { AutomixSettings.setAdvancedModeEnabled(!AutomixSettings.isAdvancedModeEnabled()); }
                                         }, AutomixSettings::isFoliaEngine),
-                                toggle("过渡动画", "Folia 切歌时在屏幕中央显示与真实混合同步的圆环动画；原版继续使用动态岛提示。关闭后只保留音频处理。",
+                                toggle("过渡动画", "圆环保留中央交接提示；EQ 曲线在半透明灵动岛内滚动，衔接时小幅展开、结束后收回。曲线样式需要开启灵动岛；关闭动画不影响音频处理。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() { return AutomixSettings.isTransitionAnimationEnabled(); }
                                         }, new Runnable() {
@@ -770,6 +770,20 @@ public final class HudSettingsModel {
                                                 AutomixSettings.setTransitionAnimationEnabled(enabled);
                                                 if (enabled) AutomixTransitionAnimation.preview();
                                             }
+                                        }),
+                                choice("动画样式", "圆环保留原样；EQ 曲线收进灵动岛，以两条半透明滚动包络和轻量低频伴线展示真实交接，不再弹出大面板。",
+                                        new Supplier<String>() {
+                                            public String get() { return AutomixSettings.getTransitionAnimationStyleLabel(); }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                AutomixSettings.cycleTransitionAnimationStyle();
+                                                if (AutomixSettings.isTransitionAnimationEnabled()) AutomixTransitionAnimation.preview();
+                                            }
+                                        }, new String[] {"圆环", "EQ 曲线"}, selected -> {
+                                            AutomixSettings.setTransitionAnimationStyle(
+                                                    "EQ 曲线".equals(selected) ? AutomixSettings.TransitionAnimationStyle.CURVE
+                                                            : AutomixSettings.TransitionAnimationStyle.RING);
+                                            if (AutomixSettings.isTransitionAnimationEnabled()) AutomixTransitionAnimation.preview();
                                         }),
                                 toggle("切点标记", "在游戏内歌曲信息条、播放页与歌词页的进度条上画出这次交接的位置：竖线是「从哪里开始切」，半透明带子是「这一段两首歌叠在一起」。只在系统真的排出了交接时才显示——还没预备好、或者一起听那一份计划还没到，就什么都不画，不猜一个位置。接缝本身照常发生，关掉只是看不见。",
                                         new BooleanSupplier() {
@@ -873,6 +887,28 @@ public final class HudSettingsModel {
                                 button("删除所有模型", "删除 Beat This!、HTDemucs 和运行组件，不会删除歌曲缓存。", HudSettingsModel::deleteModels, AutomixSettings::isFoliaEngine))),
 
                 new Category("界面与主题", "设置界面本身、外部播放器镜像、窗口缩放与配色", 0xFFE59AC8, HudSettingsIcons.NOTE, "界面与外观",
+                        new Group("音乐频谱", HudSettingsIcons.NOTE,
+                                toggle("音乐频谱", "真实 FFT 频率分析；隐藏时停止采样与分析任务，音乐播放不受影响。",
+                                        () -> HudConfig.spectrumEnabled,
+                                        () -> { HudConfig.spectrumEnabled = !HudConfig.spectrumEnabled; saveNow(); }),
+                                toggle("游戏内显示", "在游戏画面底部显示音乐频谱，不占用灵动岛通知位。",
+                                        () -> HudConfig.spectrumInHud,
+                                        () -> { HudConfig.spectrumInHud = !HudConfig.spectrumInHud; saveNow(); }),
+                                choice("频谱风格", "底部全宽：64 根半透明渐变柱连续铺满底边，高度与位置参考 modernMP；两侧留空：保留快捷栏中央空间。仅影响游戏内显示。",
+                                        () -> HudConfig.spectrumHudStyle == 1 ? "两侧留空" : "底部全宽",
+                                        () -> { HudConfig.spectrumHudStyle = HudConfig.spectrumHudStyle == 1 ? 0 : 1; saveNow(); },
+                                        new String[]{"底部全宽", "两侧留空"},
+                                        value -> { HudConfig.spectrumHudStyle = "两侧留空".equals(value) ? 1 : 0; saveNow(); }),
+                                toggle("播放器内显示", "频谱嵌入控制栏底缘，随播放器缩放和进出场，不遮挡歌词或按钮。",
+                                        () -> HudConfig.spectrumInPlayer,
+                                        () -> { HudConfig.spectrumInPlayer = !HudConfig.spectrumInPlayer; saveNow(); }),
+                                choice("频谱配色", "跟随主题会复用当前主题与封面主题的渐变；封面取色只影响频谱，不改播放器主题。",
+                                        () -> HudConfig.spectrumColorSource == 1 ? "封面取色" : "跟随主题",
+                                        () -> { HudConfig.spectrumColorSource = 1 - HudConfig.spectrumColorSource; saveNow(); },
+                                        new String[]{"跟随主题", "封面取色"},
+                                        value -> { HudConfig.spectrumColorSource = "封面取色".equals(value) ? 1 : 0; saveNow(); }),
+                                slider(HudSetting.SPECTRUM_OPACITY, "控制频谱透明度；低值适合游戏内常驻。"),
+                                slider(HudSetting.SPECTRUM_HEIGHT, "仅调整频谱高度，不改变播放器或通知的尺寸。")),
                         new Group("设置界面", HudSettingsIcons.MODERN_UI,
                                 choice("HUD 设置界面", "按 H 打开 HUD 编辑器时用哪套外观。经典＝右侧一列可折叠长面板；"
                                         + "现代＝侧栏分类 + 卡片分组双栏；Folia＝居中大窗 + 遮罩（移植自 本项目 的设置弹窗）。"

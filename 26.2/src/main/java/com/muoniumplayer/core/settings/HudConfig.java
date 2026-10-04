@@ -330,6 +330,17 @@ public final class HudConfig {
     public static float secondaryOpacity = 0.78f;
 
     /** 全局下载灵动岛。 */
+    /** Passive FFT visualizer: no analysis jobs while neither HUD nor player consumes it. */
+    public static boolean spectrumEnabled = true;
+    public static boolean spectrumInHud = true;
+    /** HUD presentation: 0 = full-width bottom spectrum (default), 1 = split wings. */
+    public static int spectrumHudStyle = 0;
+    public static boolean spectrumInPlayer = true;
+    /** 0 follows the current player theme, 1 derives a restrained palette from the current cover. */
+    public static int spectrumColorSource = 0;
+    public static float spectrumOpacity = .58f;
+    public static float spectrumHeight = 1.0f;
+
     public static boolean dynamicIslandEnabled = true;
     public static float dynamicIslandScale = 0.88f;
     /** 灵动岛排版缩放。长内容在被截断前自动缩小。 */
@@ -825,6 +836,14 @@ public final class HudConfig {
             scrollSmoothness = clamp01(getFloat(o, "scrollSmoothness", scrollSmoothness));
             secondaryOpacity = clamp(getFloat(o, "secondaryOpacity", secondaryOpacity), 0.30f, 1.0f);
 
+            spectrumEnabled = getBoolean(o, "spectrumEnabled", spectrumEnabled);
+            spectrumInHud = getBoolean(o, "spectrumInHud", spectrumInHud);
+            spectrumHudStyle = clampInt(getInt(o, "spectrumHudStyle", spectrumHudStyle), 0, 1);
+            spectrumInPlayer = getBoolean(o, "spectrumInPlayer", spectrumInPlayer);
+            spectrumColorSource = clampInt(getInt(o, "spectrumColorSource", spectrumColorSource), 0, 1);
+            spectrumOpacity = clamp(getFloat(o, "spectrumOpacity", spectrumOpacity), .15f, .85f);
+            spectrumHeight = clamp(getFloat(o, "spectrumHeight", spectrumHeight), .5f, 1.5f);
+
             dynamicIslandEnabled = getBoolean(o, "dynamicIslandEnabled", dynamicIslandEnabled);
             dynamicIslandScale = clamp(getFloat(o, "dynamicIslandScale", dynamicIslandScale), 0.60f, 1.35f);
             dynamicIslandTextScale = clamp(getFloat(o, "dynamicIslandTextScale", dynamicIslandTextScale), 0.82f, 1.18f);
@@ -987,6 +1006,14 @@ public final class HudConfig {
             o.addProperty("edgeFadeSize", edgeFadeSize);
             o.addProperty("scrollSmoothness", scrollSmoothness);
             o.addProperty("secondaryOpacity", secondaryOpacity);
+
+            o.addProperty("spectrumEnabled", spectrumEnabled);
+            o.addProperty("spectrumInHud", spectrumInHud);
+            o.addProperty("spectrumHudStyle", spectrumHudStyle);
+            o.addProperty("spectrumInPlayer", spectrumInPlayer);
+            o.addProperty("spectrumColorSource", spectrumColorSource);
+            o.addProperty("spectrumOpacity", spectrumOpacity);
+            o.addProperty("spectrumHeight", spectrumHeight);
 
             o.addProperty("dynamicIslandEnabled", dynamicIslandEnabled);
             o.addProperty("dynamicIslandScale", dynamicIslandScale);

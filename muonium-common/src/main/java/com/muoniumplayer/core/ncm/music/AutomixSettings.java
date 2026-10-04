@@ -150,6 +150,24 @@ public final class AutomixSettings {
      */
     private static boolean advancedMode = false;
     private static boolean transitionAnimation = true;
+    /** 过渡动画视觉样式：圆环保留原有极简模式，曲线舞台展示真实音频控制曲线。 */
+    public enum TransitionAnimationStyle {
+        RING("圆环"),
+        CURVE("EQ 曲线");
+
+        private final String label;
+        TransitionAnimationStyle(String label) { this.label = label; }
+        public String getLabel() { return label; }
+
+        static TransitionAnimationStyle fromStored(String value) {
+            if (value == null) return RING;
+            for (TransitionAnimationStyle style : values()) {
+                if (style.name().equalsIgnoreCase(value) || style.label.equalsIgnoreCase(value)) return style;
+            }
+            return RING;
+        }
+    }
+    private static TransitionAnimationStyle transitionAnimationStyle = TransitionAnimationStyle.RING;
     /**
      * 把接缝画在进度条上：一条竖线标出「从哪里开始切」，一段半透明带子标出「这一段是
      * 两首歌叠在一起」。见 {@link AutomixCueMarker}。
@@ -250,6 +268,32 @@ public final class AutomixSettings {
             transitionAnimation = value;
             saveLocked();
         }
+    }
+
+    public static TransitionAnimationStyle getTransitionAnimationStyle() {
+        load();
+        synchronized (LOCK) {
+            return transitionAnimationStyle;
+        }
+    }
+
+    public static void setTransitionAnimationStyle(TransitionAnimationStyle value) {
+        load();
+        synchronized (LOCK) {
+            TransitionAnimationStyle next = value == null ? TransitionAnimationStyle.RING : value;
+            if (transitionAnimationStyle == next) return;
+            transitionAnimationStyle = next;
+            saveLocked();
+        }
+    }
+
+    public static void cycleTransitionAnimationStyle() {
+        setTransitionAnimationStyle(getTransitionAnimationStyle() == TransitionAnimationStyle.RING
+                ? TransitionAnimationStyle.CURVE : TransitionAnimationStyle.RING);
+    }
+
+    public static String getTransitionAnimationStyleLabel() {
+        return getTransitionAnimationStyle().getLabel();
     }
 
     /**
@@ -562,6 +606,10 @@ public final class AutomixSettings {
                 if (root.has("transitionAnimation") && !root.get("transitionAnimation").isJsonNull()) {
                     transitionAnimation = root.get("transitionAnimation").getAsBoolean();
                 }
+                if (root.has("transitionAnimationStyle") && !root.get("transitionAnimationStyle").isJsonNull()) {
+                    transitionAnimationStyle = TransitionAnimationStyle.fromStored(
+                            root.get("transitionAnimationStyle").getAsString());
+                }
                 if (root.has("cueMarker") && !root.get("cueMarker").isJsonNull()) {
                     cueMarker = root.get("cueMarker").getAsBoolean();
                 }
@@ -591,6 +639,7 @@ public final class AutomixSettings {
             root.addProperty("performanceMode", performanceMode);
             root.addProperty("advancedMode", advancedMode);
             root.addProperty("transitionAnimation", transitionAnimation);
+            root.addProperty("transitionAnimationStyle", transitionAnimationStyle.name());
             root.addProperty("cueMarker", cueMarker);
             root.addProperty("modelInferenceStatus", modelInferenceStatus);
             root.addProperty("beatAlign", beatAlign);

@@ -15,7 +15,6 @@ import com.muoniumplayer.core.rendering.texture.DynamicTexture;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
-import com.muoniumplayer.core.rendering.ui.widgets.RectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedImageWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
@@ -28,7 +27,6 @@ import com.muoniumplayer.party.MpPartyClient;
 
 import java.awt.image.BufferedImage;
 import java.util.List;
-import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -38,8 +36,8 @@ import java.util.function.Supplier;
  * <b>不按状态重建控件树</b>：四段内容一次性建好，每帧只切 {@code setHidden}。重建控件只发生在
  * 「总览 ↔ 加入房间」这一次用户主动换页时（在点击回调里，不在遍历子组件的过程中）。</p>
  *
- * <p>可见性由 {@code createDialog} 的每帧回调统一驱动，而不是各段自己判断 —— 被隐藏的组件不会
- * 再执行自己的回调，也就再没有机会把自己显示回来。</p>
+ * <p>弹窗骨架与翻页动效交给 {@link NcmSheet}：遮罩、玻璃底板、错峰入场、翻页方向与
+ * 高度补间都从基类拿，这里只写「有哪些内容」。</p>
  *
  * <p><b>为什么这一页只认门面、不直接叫某个源的服务。</b>两家的房间服务方法是照着彼此写的
  * （状态机与角色枚举同名同集合），而面板只想问「能进吗、在哪个阶段、成员有谁」。若在三十多个
@@ -48,7 +46,7 @@ import java.util.function.Supplier;
  * 没房间时才看当前音源。两家能力的差集（酷狗查不到他人会员状态、网易云没有房间聊天）
  * 也集中写在那一层，界面上因此不会出现「看着像做了、其实没有」的开关。</p>
  */
-public final class ListenTogetherOverlay extends NCMPanel {
+public final class ListenTogetherOverlay extends NcmSheet {
 
     /** 成员行数上限。房间人数超过这个数时，标题里的总人数仍然是真实值。 */
     private static final int MEMBER_ROWS = 4;
@@ -62,16 +60,22 @@ public final class ListenTogetherOverlay extends NCMPanel {
     /** 「已复制」提示的存在时长。 */
     private static final long COPIED_HINT_MILLIS = 1400L;
 
-    private boolean closing;
+    /**
+     * 当前在哪一页：false = 总览（创建 / 加入 / 服务器 / 房间态），true = 加入房间的填写页。
+     *
+     * <p>ESC 的两套行为（关弹窗 / 回总览）就靠这一位；输入框里的按键也要按它走。
+     * {@link NcmSheet#pageDirection} 记的是翻页方向，这一字段记的是「停在第几页」。</p>
+     */
     private boolean joinPage;
-    /** 进出场那一条时钟；遮罩与弹窗共用同一个 progress。 */
-    private final SheetClock clock = new SheetClock();
 
-    /** 弹窗入场进度；同时驱动上浮位移与整体淡入。 */
-    private double presentation;
-
-    /** 弹窗高度的当帧值。四段内容高矮不同，直接跳变会很生硬，所以朝目标高度插值。 */
-    private double dialogHeight;
+    /**
+     * 总览页四段内容（不可用 / 连接中 / 空闲 / 房间进行中）的容器引用。
+     *
+     * <p>放在外面而不是建在 {@link #showOverview()} 的闭包里，是因为翻页时这一层会被
+     * {@link NcmSheet#beginPage()} 清掉重建——下一次建完之后还得能由 {@link #onRender}
+     * 继续推动显隐，所以引用必须活过那次清空。</p>
+     */
+    private final Panel[] overviewSections = new Panel[4];
 
     private String bakedQrContent = "";
     private volatile boolean bakingQr;
@@ -94,25 +98,10 @@ public final class ListenTogetherOverlay extends NCMPanel {
         showOverview();
     }
 
-    /** 正在退场：还画得着，但 {@link NCMPanel} 会把它这一帧的输入整个吞掉。 */
-    @Override
-    protected boolean isDismissing() {
-        return closing;
-    }
-
-    public boolean shouldClose() {
-        // 退场播完才回收。房间状态由后台线程推，所以这一段动画期间它照常自己更新，不用额外照看。
-        return clock.isGone();
-    }
-
-    public void dispose() {
-        closing = true;
-        clock.requestDismiss();
-    }
-
     public void handleEscape() {
         if (joinPage) {
-            showOverview();
+            // NcmSheet#back(Runnable) 把这次翻页标成反向，让 pageDelta 朝负向滑回总览页。
+            back(this::showOverview).run();
         } else {
             dispose();
         }
@@ -128,31 +117,44 @@ public final class ListenTogetherOverlay extends NCMPanel {
         }
         return false;
     }
+
+    /**
+     * 房间状态由后台线程推进，每帧都要把四段内容里哪段该显示推一遍。
+     *
+     * <p>挂在 {@link #onRender} 而不是塞进 {@link NcmSheet#sheet} 的回调 —— 后者只管弹窗
+     * 自身的尺寸与位置，加上「总览 ↔ 加入房间」的翻页透明度，混进业务状态切换会撑到一百行。
+     * 这里只读 {@link ListenTogetherService} 的快照并切显隐，与 UI 时钟解耦。</p>
+     */
+    @Override
+    public void onRender(double mouseX, double mouseY) {
+        super.onRender(mouseX, mouseY);
+        if (joinPage) return;
+        if (overviewSections[0] == null) return;
+        boolean available = ListenTogetherService.isAvailable();
+        ListenTogetherService.Phase phase = ListenTogetherService.getPhase();
+        boolean busy = phase == ListenTogetherService.Phase.CONNECTING;
+        boolean active = phase == ListenTogetherService.Phase.ACTIVE;
+        overviewSections[0].setHidden(available);
+        overviewSections[1].setHidden(!available || !busy);
+        overviewSections[2].setHidden(!available || busy || active);
+        overviewSections[3].setHidden(!available || busy || !active);
+        if (!active) {
+            for (double[] slot : memberReveal) slot[0] = 0.0;
+            qrReveal = 0.0;
+        }
+        ensureQrTexture();
+    }
     // ──────────────────────────── 总览页 ────────────────────────────
 
     private void showOverview() {
+        // 初次进入 / 从加入房间页回退，都走这条路。NcmSheet#beginPage 帮我们清掉旧页并切翻页方向。
+        beginPage();
         joinPage = false;
         inviteField = null;
-        getChildren().clear();
         for (double[] slot : memberReveal) slot[0] = 0.0;
         qrReveal = 0.0;
 
-        final Panel[] sections = new Panel[4];
-        Panel dialog = createDialog(474, this::targetOverviewHeight, () -> {
-            boolean available = ListenTogetherService.isAvailable();
-            ListenTogetherService.Phase phase = ListenTogetherService.getPhase();
-            boolean busy = phase == ListenTogetherService.Phase.CONNECTING;
-            boolean active = phase == ListenTogetherService.Phase.ACTIVE;
-            sections[0].setHidden(available);
-            sections[1].setHidden(!available || !busy);
-            sections[2].setHidden(!available || busy || active);
-            sections[3].setHidden(!available || busy || !active);
-            if (!active) {
-                for (double[] slot : memberReveal) slot[0] = 0.0;
-                qrReveal = 0.0;
-            }
-            ensureQrTexture();
-        });
+        final Panel dialog = sheet(474, this::targetOverviewHeight);
         // 副标题写清楚是哪一家的房间：两个源的房间互不相通，界面上却共用这一块面板，
         // 「和好友一起听」这句话单独看分不出对方要登的是哪个 App。
         addTitle(dialog, "一起听", "与好友共享同一条播放进度 · "
@@ -162,14 +164,14 @@ public final class ListenTogetherOverlay extends NCMPanel {
         // 网易云那半边不可用（没登录 / 非网易云源）时，服务器房间照样能用。
         addServerRoomPill(dialog);
 
-        sections[0] = section(dialog);
-        buildUnavailable(sections[0]);
-        sections[1] = section(dialog);
-        buildConnecting(sections[1]);
-        sections[2] = section(dialog);
-        buildIdle(sections[2]);
-        sections[3] = section(dialog);
-        buildActive(sections[3]);
+        overviewSections[0] = section(dialog);
+        buildUnavailable(overviewSections[0]);
+        overviewSections[1] = section(dialog);
+        buildConnecting(overviewSections[1]);
+        overviewSections[2] = section(dialog);
+        buildIdle(overviewSections[2]);
+        overviewSections[3] = section(dialog);
+        buildActive(overviewSections[3]);
 
         addStatusLine(dialog);
     }
@@ -852,6 +854,8 @@ public final class ListenTogetherOverlay extends NCMPanel {
     // ──────────────────────────── 加入房间页 ────────────────────────────
 
     private void showJoinPage() {
+        // 从总览点进来的：翻页方向前进，不走翻页反向那条。
+        beginPage();
         joinPage = true;
         // 两家的邀请形态不是一回事：网易云有官方分享链接（也能只填房间号#邀请人ID），
         // 酷狗没有链接 scheme，只有本机面板上那串 kugou: 开头的短码。
@@ -860,10 +864,10 @@ public final class ListenTogetherOverlay extends NCMPanel {
                 ? "粘贴好友面板上的邀请码（kugou: 开头那一串）"
                 : "支持整条分享链接、房间号#邀请人ID，或只有房间号";
         joinHintColor = 0xAEB5C4;
-        getChildren().clear();
 
-        final Panel dialog = createDialog(452, () -> 262.0, null);
-        addBackButton(dialog, this::showOverview);
+        final Panel dialog = sheet(452, () -> 262.0);
+        // 返回键的回弹：交给 NcmSheet#back 包一层，让翻页方向置成反向。
+        addBackButton(dialog, back(this::showOverview));
         addDetailTitle(dialog, "加入房间",
                 ListenTogetherService.backendLabel() + "房间的加入页 · 粘贴对方发来的邀请码");
 
@@ -919,7 +923,7 @@ public final class ListenTogetherOverlay extends NCMPanel {
                 return true;
             }
             ListenTogetherService.joinRoom(invite, 0L);
-            showOverview();
+            back(this::showOverview).run();
             return true;
         });
         confirm.setBeforeRenderCallback(() -> {
@@ -932,54 +936,9 @@ public final class ListenTogetherOverlay extends NCMPanel {
     }
 
     // ──────────────────────────── 对话框骨架 ────────────────────────────
-
-    private Panel createDialog(final double preferredWidth, final DoubleSupplier preferredHeight,
-                               final Runnable perFrame) {
-        RectWidget mask = new RectWidget();
-        addChild(mask);
-        mask.setColor(0);
-        mask.setClickable(false);
-        // 遮罩跟着弹窗同一条进度淡。原来它是写死的 .48f，于是总览 ↔ 加入房间之间翻页时
-        // 弹窗重新淡入、遮罩却一直是全黑的。dialogHeight 也不再重置：换页时高度朝新值补间，
-        // 而不是从 1 像素拉开。第一次那一帧仍会直接落在目标高度（见下面那个 <= 0 的分支）。
-        mask.setBeforeRenderCallback(() -> {
-            mask.setMargin(0);
-            mask.setAlpha((float) (presentation * .48));
-        });
-        setBeforeRenderCallback(() -> presentation = TransitionCurveCache.MOTION.at(clock.tick()));
-        setOnClickCallback((x, y, button) -> {
-            if (button == 0) dispose();
-            return button == 0;
-        });
-
-        final Panel dialog = new Panel();
-        addChild(dialog);
-        dialog.setOnClickCallback((x, y, button) -> true);
-        dialog.setBeforeRenderCallback(() -> {
-            double width = Math.max(1, Math.min(preferredWidth, getWidth() - 24));
-            double target = Math.max(1, Math.min(preferredHeight.getAsDouble(), getHeight() - 24));
-            // 第一帧直接落在目标高度，之后才插值；否则入场会从 1px 拉开，像卷帘门。
-            dialogHeight = dialogHeight <= 0.0 ? target : Interpolations.interpolate(dialogHeight, target, .2f);
-            dialog.setBounds(width, dialogHeight);
-            dialog.setAlpha((float) presentation);
-            dialog.setPosition(getWidth() * .5 - width * .5,
-                    getHeight() * .5 - dialogHeight * .5 + (1.0 - presentation) * 10.0);
-            if (perFrame != null) perFrame.run();
-        });
-
-        RoundedRectWidget background = new RoundedRectWidget();
-        dialog.addChild(background);
-        background.setClickable(false);
-        background.setRadius(13);
-        background.setBeforeRenderCallback(() -> {
-            background.setColor(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
-            background.setMargin(0);
-        });
-        background.setGlassSheet(GlassLook.Surface.PLAYER);
-        // 底板自己那层深色压薄：不压的话刚贴上去的糊背景仍然在它底下，弹窗读起来就是一块实色板。
-        background.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-        return dialog;
-    }
+    //
+    // 旧版的 createDialog() 已经删掉：现在遮罩、玻璃底板、高光、描边、高度补间都从 NcmSheet.sheet() 拿。
+    // 这里只剩「添加按钮 / 卡片」两类。
 
     private void addTitle(final Panel dialog, String titleText, String subtitleText) {
         LabelWidget title = new LabelWidget(titleText, FontManager.pf18bold);
@@ -1079,24 +1038,9 @@ public final class ListenTogetherOverlay extends NCMPanel {
     }
 
     // ──────────────────────────── 配色 ────────────────────────────
-
-    /**
-     * 在两个 {@code 0xRRGGBB} 之间线性插值。
-     *
-     * <p>只混 RGB：{@code AbstractWidget.setColor(int)} 走 {@code new Color(int)}，高位 alpha
-     * 会被丢掉（透明度由组件自己的 alpha 决定），传半透明色没有意义。</p>
-     */
-    private static int mix(int from, int to, double amount) {
-        double t = Math.max(0.0, Math.min(1.0, amount));
-        int r = channel((from >> 16) & 0xFF, (to >> 16) & 0xFF, t);
-        int g = channel((from >> 8) & 0xFF, (to >> 8) & 0xFF, t);
-        int b = channel(from & 0xFF, to & 0xFF, t);
-        return (r << 16) | (g << 8) | b;
-    }
-
-    private static int channel(int from, int to, double t) {
-        return Math.max(0, Math.min(255, (int) Math.round(from + (to - from) * t)));
-    }
+    //
+    // {@code mix(int, int, double)} 现在从 {@link NcmSheet} 继承（public static），
+    // 本来自己写的那一份删掉 —— 不删的话会因为权限更严而被编译器当成「覆盖」。
 
     // ──────────────────────────── 自绘控件 ────────────────────────────
 

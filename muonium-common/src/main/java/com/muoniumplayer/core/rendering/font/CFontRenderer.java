@@ -76,6 +76,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
 
     /** 未派生的原始 AWT Font 实例，用来向 {@link SkijaText} 查 Typeface。 */
     private Font sourceFont;
+    private final TextBlobCache plainTextBlobs = new TextBlobCache(256, 16_384);
     private Font[] sourceFallbacks;
 
     /**
@@ -137,16 +138,15 @@ public class CFontRenderer implements Closeable, SharedConstants {
     }
 
     public CFontRenderer(Font font, float sizePx) {
-        this.sizePx = sizePx;
-        this.sourceFont = font;
-        this.sourceFallbacks = new Font[0];
-        init(font, sizePx);
+        this(font, sizePx, new Font[0]);
     }
 
     @SneakyThrows
     public CFontRenderer(Font font, float sizePx, Font... fallBackFonts) {
-        this(font, sizePx);
-
+        // Configure main + fallback fonts before initializing Skia. Previously
+        // every renderer built and discarded its main font and metrics twice.
+        this.sizePx = sizePx;
+        this.sourceFont = font;
         this.sourceFallbacks = fallBackFonts == null ? new Font[0] : fallBackFonts.clone();
         this.fallBackFonts = new Font[this.sourceFallbacks.length];
 
@@ -155,7 +155,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
                     .deriveFont(sizePx * 2 * cffScaleFactor(this.sourceFallbacks[i]));
         }
 
-        buildSkiaFonts();
+        init(font, sizePx);
     }
 
     public CFontRenderer(Font font, float sizePx, FontKerning fontKerning, Font... fallBackFonts) {
@@ -175,7 +175,15 @@ public class CFontRenderer implements Closeable, SharedConstants {
      * 净效果就是 {@code sizePx} 这么大的字。Skia 自己按设备分辨率决定超采样，
      * 不需要也不应该再手工放大再缩小——那只会让字发虚。
      */
+    private long metricsRevision;
+
+    /** Changes whenever this renderer is retargeted to another font. */
+    public long metricsRevision() {
+        return metricsRevision;
+    }
+
     private void buildSkiaFonts() {
+        metricsRevision++;
         List<Typeface> typefaces = new ArrayList<>();
         List<io.github.humbleui.skija.Font> fonts = new ArrayList<>();
 
@@ -483,6 +491,19 @@ public class CFontRenderer implements Closeable, SharedConstants {
         drawGlyphs(s, x, y, 0xFFFFFFFF, 255, 0f, shader);
     }
 
+    /**
+     * Builds only CPU text geometry on the render thread. No Canvas, drawing, texture
+     * upload or animation state is required; the bounded blob cache owns the result.
+     */
+    public void prepareText(String text) {
+        if (text == null || text.isEmpty() || text.length() > 1024
+                || text.indexOf('\u00a7') >= 0 || skFonts.length == 0) return;
+        if (plainTextBlobs.get(text) == null) {
+            TextBlob blob = buildPlainBlob(text);
+            if (blob != null) plainTextBlobs.put(text, blob);
+        }
+    }
+
     private boolean drawGlyphs(String s, double x, double y, int baseArgb, int alpha255,
                                float glowSigma, Shader shader) {
         if (s == null || s.isEmpty()) {
@@ -490,6 +511,23 @@ public class CFontRenderer implements Closeable, SharedConstants {
         }
         Canvas canvas = SkijaGfx.canvas();
         if (canvas == null || skFonts.length == 0) {
+            return true;
+        }
+
+        // Geometry is independent of position, tint, alpha, glow and shader.
+        // Keep formatted text on the original path; plain labels and lyrics
+        // can reuse the same native blob throughout their animations.
+        if (s.length() <= 1024 && s.indexOf('\u00a7') < 0) {
+            TextBlob blob = plainTextBlobs.get(s);
+            if (blob == null) {
+                blob = buildPlainBlob(s);
+                if (blob != null) {
+                    plainTextBlobs.put(s, blob);
+                }
+            }
+            if (blob != null) {
+                drawBlob(canvas, blob, x, y - 2.0, baseArgb, glowSigma, shader);
+            }
             return true;
         }
 
@@ -557,6 +595,51 @@ public class CFontRenderer implements Closeable, SharedConstants {
         return true;
     }
 
+    private TextBlob buildPlainBlob(String text) {
+        RunAccumulator runs = new RunAccumulator(0f, null);
+        try {
+            double penX = 0.0;
+            double lineY = 0.0;
+            double lineStep = this.getHeight() + 2.0;
+            for (int i = 0; i < text.length(); i++) {
+                char c = text.charAt(i);
+                char next = i + 1 < text.length() ? text.charAt(i + 1) : '\0';
+                if (c == '\n') {
+                    lineY += lineStep;
+                    penX = 0.0;
+                    continue;
+                }
+                if (c == '（') c = '(';
+                if (c == '）') c = ')';
+                if (c == '・') c = '·';
+                GlyphRef ref = glyphRef(c);
+                if (ref.fontIndex >= 0) {
+                    runs.add(ref.fontIndex, ref.glyphId, (float) penX, (float) (lineY + baselineOffset));
+                    penX += ref.advance;
+                }
+                if (fontKerning != null && next != '\0' && next != '\n') {
+                    penX += fontKerning.getKerning(c, next, sizePx);
+                }
+            }
+            return runs.buildBlob();
+        } finally {
+            runs.close();
+        }
+    }
+
+    private static void drawBlob(Canvas canvas, TextBlob blob, double x, double y,
+                                 int argb, float glowSigma, Shader shader) {
+        Paint paint = shader != null ? SkijaGfx.fillShader(shader)
+                : glowSigma > 0.01f ? SkijaGfx.fillBlurred(argb, glowSigma) : SkijaGfx.fill(argb);
+        try {
+            canvas.drawTextBlob(blob, (float) x, (float) y, paint);
+        } finally {
+            if (shader != null) {
+                paint.setShader(null);
+            }
+        }
+    }
+
     /**
      * 把逐字符的字形累积成 TextBlob。
      *
@@ -612,28 +695,19 @@ public class CFontRenderer implements Closeable, SharedConstants {
             xs.clear();
         }
 
-        void flushBlob(Canvas canvas, double originX, double originY, int argb) {
+        TextBlob buildBlob() {
             flushRun();
             if (!hasContent) {
-                return;
+                return null;
             }
             hasContent = false;
-            try (TextBlob blob = builder.build()) {
+            return builder.build();
+        }
+
+        void flushBlob(Canvas canvas, double originX, double originY, int argb) {
+            try (TextBlob blob = buildBlob()) {
                 if (blob != null) {
-                    Paint paint;
-                    if (shader != null) {
-                        paint = SkijaGfx.fillShader(shader);
-                    } else if (glowSigma > 0.01f) {
-                        paint = SkijaGfx.fillBlurred(argb, glowSigma);
-                    } else {
-                        paint = SkijaGfx.fill(argb);
-                    }
-                    canvas.drawTextBlob(blob, (float) originX, (float) originY, paint);
-                    if (shader != null) {
-                        // fillPaint 是全局共享的：渐变留在上面会污染下一次本该纯色的绘制，
-                        // 而且会让 shader 的生命周期挂在一个不知道何时被复用的对象上。
-                        paint.setShader(null);
-                    }
+                    drawBlob(canvas, blob, originX, originY, argb, glowSigma, shader);
                 }
             }
         }
@@ -859,6 +933,8 @@ public class CFontRenderer implements Closeable, SharedConstants {
     }
 
     private void closeSkiaFonts() {
+        // Font changes invalidate glyph IDs, offsets and kerning in every blob.
+        plainTextBlobs.close();
         for (io.github.humbleui.skija.Font f : skFonts) {
             f.close();
         }

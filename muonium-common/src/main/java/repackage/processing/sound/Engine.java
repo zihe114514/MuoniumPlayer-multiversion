@@ -110,6 +110,7 @@ public class Engine {
 	}
 
 	protected Synthesizer synth;
+    private volatile repackage.com.jsyn.engine.SynthesisEngine.OutputObserver outputObserver;
 	boolean hasBeenUsed = false;
 	protected final Set<UnitGenerator> addedUnits = new HashSet<>();
 
@@ -161,6 +162,9 @@ public class Engine {
 			}
 		}
 		this.synth = JSyn.createSynthesizer(deviceManager);
+        if (this.synth instanceof repackage.com.jsyn.engine.SynthesisEngine) {
+            ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setOutputObserver(outputObserver);
+        }
 		// try {
 			// 如果没有带输入的设备，这可能是-1
 			// this.inputDevice = deviceManager.getDefaultInputDeviceID();
@@ -432,6 +436,14 @@ public class Engine {
 			}
 		}
 	}
+
+    /** Attach a passive observer after all deck processing and mixing. No new audio graph units. */
+    public void setOutputObserver(repackage.com.jsyn.engine.SynthesisEngine.OutputObserver observer) {
+        outputObserver = observer;
+        if (this.synth instanceof repackage.com.jsyn.engine.SynthesisEngine) {
+            ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setOutputObserver(observer);
+        }
+    }
 
 	public int getSampleRate() {
 		return this.synth.getFrameRate();

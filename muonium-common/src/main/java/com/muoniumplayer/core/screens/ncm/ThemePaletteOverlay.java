@@ -184,6 +184,7 @@ public final class ThemePaletteOverlay extends NCMPanel {
         RoundedButtonWidget resetOne = new RoundedButtonWidget("撤销此项", FontManager.pf12bold);
         dialog.addChild(resetOne);
         resetOne.setRadius(7.0);
+        resetOne.setGlassRim(GlassLook.Surface.PLAYER);
         resetOne.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
             NCMTheme.resetCustomColor(this.editing);
@@ -195,12 +196,14 @@ public final class ThemePaletteOverlay extends NCMPanel {
             resetOne.setColor(resetOne.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+            resetOne.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             resetOne.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
 
         RoundedButtonWidget resetAll = new RoundedButtonWidget("恢复主题原色", FontManager.pf12bold);
         dialog.addChild(resetAll);
         resetAll.setRadius(7.0);
+        resetAll.setGlassRim(GlassLook.Surface.PLAYER);
         resetAll.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
             NCMTheme.resetAllCustomColors();
@@ -212,12 +215,14 @@ public final class ThemePaletteOverlay extends NCMPanel {
             resetAll.setColor(resetAll.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+            resetAll.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             resetAll.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
 
         RoundedButtonWidget done = new RoundedButtonWidget("完成", FontManager.pf12bold);
         dialog.addChild(done);
         done.setRadius(7.0);
+        done.setGlassRim(GlassLook.Surface.PLAYER);
         done.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
             dispose();
@@ -229,6 +234,7 @@ public final class ThemePaletteOverlay extends NCMPanel {
             done.setColor(done.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+            done.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             done.setTextColor(0xFFFFFF);
         });
 

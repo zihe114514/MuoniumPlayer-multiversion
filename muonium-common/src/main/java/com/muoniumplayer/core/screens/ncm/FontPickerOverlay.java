@@ -3,6 +3,7 @@ package com.muoniumplayer.core.screens.ncm;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.management.UiFont;
 import com.muoniumplayer.core.management.UiFontLibrary;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
@@ -225,6 +226,7 @@ public final class FontPickerOverlay extends NcmSheet {
         final RoundedButtonWidget refresh = new RoundedButtonWidget("", FontManager.pf12bold);
         dialog.addChild(refresh);
         refresh.setRadius(9);
+        refresh.setGlassRim(GlassLook.Surface.PLAYER);
         refresh.setShouldOverrideMouseCursor(true);
         refresh.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -237,6 +239,7 @@ public final class FontPickerOverlay extends NcmSheet {
             refresh.setColor(refresh.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+            refresh.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             refresh.setTextColor(0x00FFFFFF);
         });
         icon(refresh, PartyIcons.SYNC, ICON_M, () -> refreshBox * .5, () -> height * .5,

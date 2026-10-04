@@ -15,11 +15,11 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 
 @Getter
 public class DynamicTexture extends AbstractTexture {
+    private static final TextureUploadBuffer UPLOAD_BUFFER = new TextureUploadBuffer();
     public int[] dynamicTextureData;
 
     /**
@@ -144,42 +144,23 @@ public class DynamicTexture extends AbstractTexture {
         int maxPixels = maxBufferSize / bytesPerPixel;
         int chunkHeight = Math.max(1, Math.min(maxPixels / width, height));
 
-        int optimalBufferSize = width * chunkHeight * bytesPerPixel;
-
-        ByteBuffer dataBuffer = ByteBuffer.allocateDirect(optimalBufferSize);
-
         GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 4);
-
         try {
-            int[] aint = this.dynamicTextureData;
-
-            for (int l = 0; l < height; l += chunkHeight) {
-                int j = Math.min(chunkHeight, height - l);
-                int k = l * width;
-                int pixelCount = width * j;
-
-                dataBuffer.clear();
-
-                for (int i = 0; i < pixelCount; i++) {
-                    int pixel = aint[k + i];
-                    dataBuffer.put((byte) (pixel & 0xFF));
-                    dataBuffer.put((byte) ((pixel >> 8) & 0xFF));
-                    dataBuffer.put((byte) ((pixel >> 16) & 0xFF));
-                    dataBuffer.put((byte) ((pixel >> 24) & 0xFF));
-                }
-
-                dataBuffer.flip();
-
-                GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, l, width, j,
-                        GL12.GL_BGRA, GL11.GL_UNSIGNED_BYTE, dataBuffer);
+            int[] pixels = this.dynamicTextureData;
+            for (int row = 0; row < height; row += chunkHeight) {
+                int rows = Math.min(chunkHeight, height - row);
+                // BufferedImage supplies packed ARGB ints. BGRA + REV consumes
+                // those integers directly; no four byte-by-byte puts per pixel.
+                IntBuffer data = UPLOAD_BUFFER.pack(pixels, row * width, width * rows);
+                GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, row, width, rows,
+                        GL12.GL_BGRA, GL12.GL_UNSIGNED_INT_8_8_8_8_REV, data);
             }
         } finally {
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
         }
 
         if (this.clearable)
             this.dynamicTextureData = null;
-
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
     }
 
     public void clear() {

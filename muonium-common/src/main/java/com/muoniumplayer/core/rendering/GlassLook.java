@@ -104,6 +104,26 @@ public final class GlassLook {
     }
 
     /**
+     * 灵动岛交接专用的低成本玻璃表面。
+     *
+     * <p>交接时不使用液态折射 shader，而是直接贴已经预糊好的背景纹理。这样保留
+     * 玻璃的明暗和背景透入效果，但不把整面播放器交给高成本的逐像素折射。</p>
+     */
+    public static boolean paintPlayerTransitionSurface(double x, double y,
+                                                        double width, double height,
+                                                        double radius, float opacityScale) {
+        if (!TransitionPerformanceBudget.isPlayerIslandTransitionActive()) {
+            return paintFrost(Surface.PLAYER, x, y, width, height, radius, opacityScale);
+        }
+        float amount = amount(Surface.PLAYER) * Math.max(0f, Math.min(1f, opacityScale));
+        if (amount <= 0.001f) {
+            return false;
+        }
+        // 预糊贴图的成本远低于液态折射；限制 sigma 避免转场期间临时创建过大的模糊档位。
+        float sigma = Math.min(blurSigma(Surface.PLAYER), 12f);
+        return SkijaEffects.frostedBackdropCached(x, y, width, height, radius, sigma, amount);
+    }
+    /**
      * 兼容的历史方法名；现在绘制整面透镜折射，不再绘制磨砂底。
      *
      * @return 真的铺上了；{@code false} = 这一面不该有玻璃、或者这一帧根本没有背景图，
@@ -129,6 +149,11 @@ public final class GlassLook {
     public static boolean paintFrost(Surface surface, double x, double y,
                                      double width, double height, double radius,
                                      float opacityScale) {
+        // 灵动岛交接期间只画轻量的实色表面。液态玻璃会触发整面背景采样/折射，
+        // 其成本远高于普通圆角矩形，而且在移动中的裁剪窗口里观感收益很小。
+        if (TransitionPerformanceBudget.isPlayerIslandTransitionActive()) {
+            return false;
+        }
         float amount = amount(surface) * Math.max(0f, Math.min(1f, opacityScale));
         if (amount <= 0.001f) {
             return false;
@@ -147,6 +172,11 @@ public final class GlassLook {
     public static boolean paintSheetFrost(Surface surface, double x, double y,
                                           double width, double height, double radius,
                                           float opacityScale) {
+        // 灵动岛交接期间只画轻量的实色表面。液态玻璃会触发整面背景采样/折射，
+        // 其成本远高于普通圆角矩形，而且在移动中的裁剪窗口里观感收益很小。
+        if (TransitionPerformanceBudget.isPlayerIslandTransitionActive()) {
+            return false;
+        }
         float amount = amount(surface) * Math.max(0f, Math.min(1f, opacityScale));
         if (amount <= 0.001f) {
             return false;
@@ -247,6 +277,10 @@ public final class GlassLook {
      * @param smoothing 融合半径，画布局部单位：两块间隙小于它才连得起来。0 等于不开融合。
      */
     public static void beginFusion(Surface surface, float smoothing) {
+        if (TransitionPerformanceBudget.isPlayerIslandTransitionActive()) {
+            GlassEdgeBatch.clear();
+            return;
+        }
         if (amount(surface) <= 0.001f || refractionStrength(surface) <= 0.002f
                 || !(smoothing > 0f)) {
             GlassEdgeBatch.clear();
@@ -283,6 +317,9 @@ public final class GlassLook {
      * 强度也在那一刻由各面自己判。再给每一面配一个半径，就成了「四个滑块里两个永远用不上」。</p>
      */
     public static float fusionRadius() {
+        if (TransitionPerformanceBudget.isPlayerIslandTransitionActive()) {
+            return 0f;
+        }
         float radius = HudConfig.glassFusion;
         if (!(radius > 0f)) {
             return 0f;   // NaN 与负数都当关掉

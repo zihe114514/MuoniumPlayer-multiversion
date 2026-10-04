@@ -31,15 +31,16 @@ class SheetMotionStaticTest {
     private static final Path NCM = ProjectPaths.sharedJava().resolve(Paths.get(
             "com", "muoniumplayer", "core", "screens", "ncm"));
 
-    /** 走 {@code NcmSheet} 骨架的六个浮层。 */
+    /** 走 {@code NcmSheet} 骨架的浮层。 */
     private static final String[] SHEETS = {
             "MusicSourceOverlay.java", "AccountManagerOverlay.java", "FontPickerOverlay.java",
-            "PlaylistImportOverlay.java", "AnnouncementOverlay.java", "LyricSearchOverlay.java"};
+            "PlaylistImportOverlay.java", "AnnouncementOverlay.java", "LyricSearchOverlay.java",
+            "ListenTogetherOverlay.java"};
 
     /** 各自继承 {@code NCMPanel}、但同样接上 {@link SheetClock} 的那几层。 */
     private static final String[] STANDALONE = {
             "ConfirmationOverlay.java", "AddToPlaylistOverlay.java", "ThemePaletteOverlay.java",
-            "ListenTogetherOverlay.java", "FfmpegNoticeOverlay.java", "ModelInstallNoticeOverlay.java",
+            "FfmpegNoticeOverlay.java", "ModelInstallNoticeOverlay.java",
             "UpdateNoticeOverlay.java"};
 
     /**

@@ -17,7 +17,15 @@ final class IslandVisibilityGate {
         /** 播放器界面（含全屏歌词）是否打开。 */
         final boolean playerUiOpen;
 
+        final boolean anyScreenOpen;
+        final boolean hudHidden;
+
         Scene(boolean inWorld, boolean playerListVisible, boolean playerUiOpen) {
+            this(inWorld, playerListVisible, playerUiOpen, playerUiOpen, false);
+        }
+        Scene(boolean inWorld, boolean playerListVisible, boolean playerUiOpen, boolean anyScreenOpen, boolean hudHidden) {
+            this.anyScreenOpen = anyScreenOpen;
+            this.hudHidden = hudHidden;
             this.inWorld = inWorld;
             this.playerListVisible = playerListVisible;
             this.playerUiOpen = playerUiOpen;
@@ -50,6 +58,10 @@ final class IslandVisibilityGate {
         return scene == null || !scene.playerUiOpen;
     }
 
+    static boolean allowSpectrumHud(Scene scene) {
+        return scene != null && scene != UNKNOWN && scene.inWorld && !scene.anyScreenOpen && !scene.hudHidden && !scene.playerListVisible;
+    }
+
     /** 读取真实场合。任何取值异常都退化成"允许显示"，绝不因为判定失败把灵动岛整个弄没。 */
     static Scene capture() {
         try {
@@ -62,7 +74,7 @@ final class IslandVisibilityGate {
                 playerList = mc.options.keyPlayerList.isDown();
             }
             boolean playerUi = mc.screen instanceof com.muoniumplayer.core.screens.ncm.NCMScreen;
-            return new Scene(inWorld, playerList, playerUi);
+            return new Scene(inWorld, playerList, playerUi, mc.screen != null, mc.options != null && mc.options.hideGui);
         } catch (Throwable ignored) {
             return UNKNOWN;
         }
