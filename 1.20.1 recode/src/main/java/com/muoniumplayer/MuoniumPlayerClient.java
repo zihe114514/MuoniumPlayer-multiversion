@@ -21,7 +21,9 @@ import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.update.AnnouncementChecker;
 import com.muoniumplayer.core.update.UpdateChecker;
+import com.muoniumplayer.core.screens.RenderLayerNotice;
 import com.muoniumplayer.render.skija.SkijaHost;
+import com.muoniumplayer.render.skija.SkijaNatives;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.KeyMapping;
@@ -152,6 +154,14 @@ public final class MuoniumPlayerClient {
      * <p>两阶段之间原本没有跨 mod 依赖，合并不改变顺序语义。
      */
     public void init() {
+        // 0. 把运行时身份打出来。
+        //    这一行的存在理由：「装了模组、游戏正常、界面一个像素都没有」这类反馈，
+        //    根因要么是原生库平台判定、要么是加载器/运行时缺东西，而两者都要看
+        //    os.name/os.arch/java.vm.name/java.vendor 才能分辨——以前这些只藏在
+        //    SkijaNatives 的失败文案里，用户不会去读，我们只能靠猜。手机端尤其如此：
+        //    Android 的 JVM 报的是 os.name=Linux，光看它永远分不清「真 Linux」和「Android」。
+        logRuntimeEnvironment();
+
         // 1. 注入 OpenAPI 单例（必须在任何引用 Extension.getAPI() / SharedConstants.api 的类加载之前完成）
         this.api = new OpenAPIImpl();
         OpenAPI.setInstance(this.api);
@@ -326,6 +336,52 @@ public final class MuoniumPlayerClient {
      */
     private static boolean hudRenderDisabled;
     private static boolean screenRenderDisabled;
+
+    /** 停用提示自身的兜底闸：提示画不出来时只关它，不能连累 HUD 那条路。 */
+    private static boolean noticeRenderDisabled;
+
+    /**
+     * 一次性把运行时身份打进日志。
+     *
+     * <p>读的是系统属性与 {@link SkijaNatives#mappedPlatform()} 的判定结果，不发网络、不碰 GL，
+     * 所以放在 {@code init()} 最前面也是安全的。
+     *
+     * <p>为什么必须有这一行：非 Windows 用户报「没有界面」时，光靠描述分不出
+     * 「平台判错了」「伴生包没放对地方」还是「放了但版本不对」——这三种的修法完全不同，
+     * 而它们在这行里一眼就能分开。
+     */
+    private static void logRuntimeEnvironment() {
+        System.out.println("[MuoniumPlayer/runtime] os.name=" + System.getProperty("os.name", "")
+                + " | os.arch=" + System.getProperty("os.arch", "")
+                + " | os.version=" + System.getProperty("os.version", "")
+                + " | java=" + System.getProperty("java.version", "")
+                + " | vm=" + System.getProperty("java.vm.name", "")
+                + " | vendor=" + System.getProperty("java.vendor", "")
+                + " | 判定平台=" + SkijaNatives.mappedPlatform()
+                + " | 伴生包目录=" + SkijaNatives.nativeRoot().getAbsolutePath());
+    }
+
+    /**
+     * 渲染层停用时的原版 GUI 提示。
+     *
+     * <p>与 {@code inSkijaFrame} 那条路完全无关：它用的是原版字体与原版 GUI 提交，
+     * Skia 起不来也照样能说话。两个加载器都要在 HUD 回调与界面绘制回调里各调一次
+     * （前者 {@code onScreen=false}，后者 {@code true}）。
+     *
+     * <p>异常单独吞在自己的闸里：如果提示本身画不出来（缺字体之类的运行时问题），
+     * 关掉提示就行，不能把「还活着的 HUD」一起带走。
+     */
+    public void onRenderLayerNotice(net.minecraft.client.gui.GuiGraphics graphics, boolean onScreen) {
+        if (noticeRenderDisabled || graphics == null) {
+            return;
+        }
+        try {
+            RenderLayerNotice.draw(graphics, onScreen);
+        } catch (Throwable t) {
+            noticeRenderDisabled = true;
+            System.err.println("[MuoniumPlayer] 停用提示渲染已关闭：" + t);
+        }
+    }
 
     private static void reportRenderFailure(String where, Throwable t) {
         System.err.println("[MuoniumPlayer] " + where + " 渲染已关闭：" + t);
@@ -524,6 +580,9 @@ public final class MuoniumPlayerClient {
         RenderSystem.refreshResolution();
         Interpolations.calcFrameDelta();
 
+        // 即时合成的版本可在 Screen 画完后直接刷新底图；避免液态玻璃继续拿到 Screen
+        // 出现前缓存的游戏世界。captureTopmostBackdrop 自己限频，失败不影响覆盖层。
+        SkijaHost.captureTopmostBackdrop();
         // 两套 HUD 设置界面都自己画灵动岛的专用预览，这里再画一次会叠成双层。
         if (DownloadDynamicIsland.isDownloadActive()
                 || (!(screen instanceof GuiHudEditor) && !(screen instanceof GuiHudEditorPro))) {

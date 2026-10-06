@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 「A-Z」快捷面板分列算法的探针。
  *
- * <p>面板的行数是随配置变的，最长的一档（「隐现」背景 + 自定义配色 + 带四条参数滑块的歌词样式）
+ * <p>面板的行数是随配置变的，最长的一档（QPlayer 流体背景 + 自定义配色 + 带四条参数滑块的歌词样式）
  * 有三十行、八百多像素高。此前遇到这种配置只有一个手段：把整块面板连同文字等比缩小，缩到
  * {@code MIN_UI_SCALE} 就停手——可 0.62 只是「比原来好看一点」，一列八百多像素对上半屏的可视
  * 高度，缩到底也塞不进去，结果是字小得看不清、底部还要滚。现在改成先分列。</p>
@@ -175,14 +175,14 @@ class LyricQuickPanelColumnsProbeTest {
     // ---- 构造行表 ----
 
     /**
-     * 最长的那一档：「隐现」背景（含像素 + 流体两段参数与可读性叠色）+ 四条样式滑块的歌词样式。
+     * 最长的那一档：QPlayer 流体背景与自定义配色+ 四条样式滑块的歌词样式。
      * 32 行，合计 851。
      */
     private static double[] tallestConfiguration() {
         return new double[]{
                 PICK_ROW_HEIGHT, PICK_ROW_HEIGHT, PICK_ROW_HEIGHT,   // 歌词样式 / 歌词背景 / 主题配色
-                SECTION_HEIGHT, PICK_ROW_HEIGHT, PICK_ROW_HEIGHT,    // 隐现背景 / 显示图层 / 颜色来源
-                PICK_ROW_HEIGHT, PICK_ROW_HEIGHT, PICK_ROW_HEIGHT,   // 三个「隐现」开关
+                SECTION_HEIGHT, PICK_ROW_HEIGHT, PICK_ROW_HEIGHT,    // 流体模式 / 主题配色 / 流体参数
+                PICK_ROW_HEIGHT, PICK_ROW_HEIGHT, PICK_ROW_HEIGHT,   // 流体背景参数
                 ROW_HEIGHT,                                          // 可读性叠色透明度
                 SECTION_HEIGHT, ROW_HEIGHT, ROW_HEIGHT, ROW_HEIGHT, ROW_HEIGHT,   // 像素背景四条
                 SECTION_HEIGHT, ROW_HEIGHT, ROW_HEIGHT, ROW_HEIGHT, ROW_HEIGHT,   // 流体背景四条

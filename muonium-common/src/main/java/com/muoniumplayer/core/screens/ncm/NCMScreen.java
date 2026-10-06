@@ -251,6 +251,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     @Override
     public void onGuiClosed() {
+        if (this.musicLyricsPanel != null) {
+            this.musicLyricsPanel.dispose();
+            this.musicLyricsPanel = null;
+        }
         Keyboard.enableRepeatEvents(false);
         PlayerIslandTransition.abort();
         // 提示层不跨「一次打开播放器」存活：下次打开时由 maybeShowModelNotice 重新决定要不要弹，
@@ -520,6 +524,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                     }
 
                     if (this.panelTransitionT >= 1.0) {
+                        this.finishDroppedPanel(this.prevAnimatingPanel);
                         this.prevAnimatingPanel = null;
                     }
                 }
@@ -600,8 +605,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             StencilClipManager.restoreActiveClip();
             StencilClipManager.endClip();
 
-            if (this.musicLyricsPanel.shouldClose())
+            if (this.musicLyricsPanel.shouldClose()) {
+                this.musicLyricsPanel.dispose();
                 this.musicLyricsPanel = null;
+            }
         }
 
         // 接力封面画在歌词页之上、裁剪之外：它飞行时要从控制栏一路压过压暗层与面板内容，
@@ -1010,10 +1017,34 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             this.currentPanel.onInit();
         }
     }
+
+    /** Finish visual state before a dropped page can be reused from navigation history. */
+    private void finishDroppedPanel(NCMPanel panel) {
+        if (panel == null) return;
+        panel.finishTransientAnimations();
+        panel.setTransformations(null);
+        panel.setAlpha(0f);
+    }
+
     private void innerSetCurrentPanel(NCMPanel panel, boolean shouldCallInit) {
         this.navigationRequests.invalidate();
         this.navigationLoading.clear();
         this.pendingNavigationLabel = "";
+
+        // Do not turn the same page into both current and previous during a repeated click.
+        if (panel == this.currentPanel) {
+            this.pendingNavigationBackward = false;
+            this.pendingPanelNavigationKey = null;
+            return;
+        }
+
+        // A new click can abandon the old previous page before its fade reaches zero.
+        // Clean its row/card animations now; when the target is that page, keep it for reversal.
+        if (this.prevAnimatingPanel != null
+                && this.prevAnimatingPanel != this.currentPanel
+                && this.prevAnimatingPanel != panel) {
+            this.finishDroppedPanel(this.prevAnimatingPanel);
+        }
         this.prevAnimatingPanelAlpha = this.currentPanel == null ? 0f : this.currentPanel.getAlpha();
         this.prevAnimatingPanel = this.currentPanel;
         this.currentPanel = panel;

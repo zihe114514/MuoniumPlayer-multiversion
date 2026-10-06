@@ -59,7 +59,7 @@ class GlassBloomStaticTest {
         int end = source.indexOf("private static void paintBloom(", at);
         assertTrue(at > 0 && end > at, "frostedBackdrop 与 paintBloom 的相对位置变了");
         String frost = source.substring(at, end);
-        assertTrue(frost.contains("paintBloom(canvas, source, bounds, opacity)"),
+        assertTrue(frost.contains("paintBloom(canvas, source, bounds, opacity"),
                 "bloom 必须画在 frostedBackdrop 的 clipRRect 之内：两处各算源矩形会错半像素");
         assertTrue(frost.contains("canvas.clipRRect(rounded, true)"), "剪形丢了");
         String body = source.substring(end);

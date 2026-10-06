@@ -54,14 +54,21 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         // 自己开 Skia 帧画到离屏图上，帧末再合成（见 GlSurfaceMixin）。
         HudElementRegistry.addLast(
                 Identifier.fromNamespaceAndPath(MuoniumPlayerClient.MOD_ID, "player_hud"),
-                (extractor, deltaTracker) -> client.onHudRender());
+                (extractor, deltaTracker) -> {
+                    client.onHudRender();
+                    // 第二行是给「渲染层没起来」时的原版 GUI 提示：Skia 那条路整个跳过时，
+                    // 只有原版 GUI 这条路还能说话，而用户此刻看到的正是一片空白。
+                    client.onRenderLayerNotice(extractor, false);
+                });
         // afterRender 在 26.2 改名 afterExtract：GUI 变成延迟批处理后，
         // 这个回调的实际语义是「Screen 已经把自己的元素录入 render state 之后」，
         // 而不是「已经画完」。对本渲染层没有影响，因为合成本来就推迟到帧末。
         ScreenEvents.AFTER_INIT.register((minecraft, screen, scaledWidth, scaledHeight) -> {
             ScreenEvents.afterExtract(screen).register(
-                    (renderedScreen, extractor, mouseX, mouseY, tickDelta) ->
-                            client.onScreenRendered(renderedScreen));
+                    (renderedScreen, extractor, mouseX, mouseY, tickDelta) -> {
+                        client.onScreenRendered(renderedScreen);
+                        client.onRenderLayerNotice(extractor, true);
+                    });
             // 主菜单上的「公告」入口。AFTER_INIT 在原版 init() 之后派发，窗口 resize 时会再来一次，
             // 而那时原版已经清空了自己的组件，所以这里 add 一次就是一次，不会越加越多。
             // 26.2 把 Screens.getButtons 改名成了 getWidgets（返回的还是同一份活列表）。

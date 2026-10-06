@@ -822,6 +822,28 @@ public class HomePanel extends NCMPanel {
             }
         }
 
+        private void finishEntranceAnimation() {
+            this.entrance.finishImmediately();
+            this.entranceEased = 1.0;
+            this.setAlpha(1f);
+            this.setTransformations(null);
+        }
+
+        @Override
+        public void onViewportExit() {
+            if (!this.entrance.isFinished()) {
+                this.finishEntranceAnimation();
+            }
+        }
+
+        /** Finish the card before its parent page is dropped by an interrupted navigation. */
+        @Override
+        public void finishTransientAnimations() {
+            this.finishEntranceAnimation();
+            this.entranceQueue = null;
+            super.finishTransientAnimations();
+        }
+
         private void updateTitleLayout(boolean canMeasureText) {
             if (canMeasureText) {
                 titleWidget.setLines(wrapPlaylistTitle(titleFont, playList.getName(), COVER_SIZE));

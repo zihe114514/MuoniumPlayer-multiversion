@@ -14,6 +14,7 @@ import today.opai.api.interfaces.EventHandler;
 import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.MusicSpectrumRenderer;
+import com.muoniumplayer.render.skija.SkijaHost;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.utils.logging.LogManager;
 
@@ -93,7 +94,10 @@ public class MuoniumPlayerEventHandler implements EventHandler {
         Interpolations.calcFrameDelta();
 
         MusicSpectrumRenderer.renderHud();
-        DownloadDynamicIsland.render();
-        AutomixTransitionAnimation.render();
+        Runnable islandOverlay = () -> {
+            DownloadDynamicIsland.render();
+            AutomixTransitionAnimation.render();
+        };
+        if (!SkijaHost.deferPostCompositeOverlay(islandOverlay)) islandOverlay.run();
     }
 }

@@ -260,6 +260,20 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
     }
 
     /**
+     * Finish visual entrance state in this subtree when its owner is about to stop rendering.
+     * Concrete animated widgets override this method; ordinary widgets are unaffected.
+     */
+    public void finishTransientAnimations() {
+        for (AbstractWidget<?> child : this.getChildren()) {
+            child.finishTransientAnimations();
+        }
+    }
+
+    /** Called when a virtualized container moves this widget out of its render viewport. */
+    public void onViewportExit() {
+    }
+
+    /**
      * 添加子组件
      * @param children 子组件
      */

@@ -16,7 +16,8 @@ public final class MusicSpectrumRenderer {
     private static final int BANDS=AudioSpectrumAnalyzer.BANDS;
     private static final float[] TARGET=new float[BANDS], DISPLAY=new float[BANDS];
     private static final SpectrumRibbon LEFT=new SpectrumRibbon(), RIGHT=new SpectrumRibbon(), PLAYER=new SpectrumRibbon();
-    private static final SpectrumFullWidth FULL=new SpectrumFullWidth();
+    private static final SpectrumRibbon FULLSCREEN_LEFT=new SpectrumRibbon(), FULLSCREEN_RIGHT=new SpectrumRibbon();
+    private static final SpectrumFullWidth FULL=new SpectrumFullWidth(), FULLSCREEN_FULL=new SpectrumFullWidth();
     private static AudioSpectrumAnalyzer.Frame observed;
     private static Music observedMusic;
     private static long lastFrame,lastPaletteCheck;
@@ -37,8 +38,10 @@ public final class MusicSpectrumRenderer {
         try {
             if(!tick()) return;
             if(fullWidth) {
-                FULL.draw(SkijaGfx.canvas(),DISPLAY,width,height,
-                        SpectrumVisualMath.fullHeight(height,heightScale()),opacity()*reveal,colorA,colorB);
+                int barLimit = SpectrumVisualMath.fullWidthBarLimit(
+                        HudConfig.spectrumBarCountPreset, HudConfig.spectrumCustomBarCount);
+                FULL.draw(SkijaGfx.canvas(),DISPLAY,0f,width,height,
+                        SpectrumVisualMath.fullHeight(height,heightScale()),opacity()*reveal,colorA,colorB,barLimit);
             } else {
                 float high=Math.min(24f,height*.06f)*heightScale();
                 float opacity=opacity()*.82f*reveal;
@@ -55,6 +58,28 @@ public final class MusicSpectrumRenderer {
             float high=(float)Math.min(10.0,height*.18)*heightScale();
             PLAYER.draw(SkijaGfx.canvas(),DISPLAY,0,BANDS,(float)(x+(width-ribbonWidth)*.5),
                     (float)(y+height-2.0),ribbonWidth,high,opacity()*alpha*reveal,colorA,colorB);
+        } catch(Throwable failure) { fail(failure); }
+    }
+    /** Fullscreen lyric-player spectrum. The split style adapts to two adjacent halves, never HUD-style wings. */
+    public static void renderFullscreen(double x,double y,double width,double height,float alpha) {
+        if(!HudConfig.spectrumEnabled || !HudConfig.spectrumInPlayer || failed || alpha<.02f || width<90 || height<80) return;
+        try {
+            if(!tick()) return;
+            float bottom=(float)(y+height-2.0);
+            float scale=heightScale();
+            float amount=opacity()*alpha*reveal*.74f;
+            if(HudConfig.spectrumFullscreenStyle==1) {
+                float half=(float)width*.5f;
+                float high=Math.min(34f,(float)height*.085f)*scale;
+                // Map bass to the left half and treble to the right half. Unlike HUD wings there is no center gap.
+                FULLSCREEN_LEFT.draw(SkijaGfx.canvas(),DISPLAY,0,BANDS/2,(float)x,bottom,half,high,amount,colorA,colorB);
+                FULLSCREEN_RIGHT.draw(SkijaGfx.canvas(),DISPLAY,BANDS/2,BANDS/2,(float)x+half,bottom,
+                        (float)width-half,high,amount,colorB,colorA);
+            } else {
+                float high=Math.min(116f,(float)height*.235f)*scale;
+                FULLSCREEN_FULL.draw(SkijaGfx.canvas(),DISPLAY,(float)x,(float)width,bottom,high,
+                        amount*.88f,colorA,colorB,160);
+            }
         } catch(Throwable failure) { fail(failure); }
     }
     private static boolean tick() {
@@ -102,7 +127,7 @@ public final class MusicSpectrumRenderer {
     private static float heightScale() {return Float.isFinite(HudConfig.spectrumHeight)?Math.max(.5f,Math.min(1.5f,HudConfig.spectrumHeight)):1f;}
     private static void fail(Throwable failure) {
         failed=true;AudioSpectrumAnalyzer.suspend();
-        try { LEFT.close();RIGHT.close();PLAYER.close();FULL.close(); } catch(Throwable ignored) { }
+        try { LEFT.close();RIGHT.close();PLAYER.close();FULLSCREEN_LEFT.close();FULLSCREEN_RIGHT.close();FULL.close();FULLSCREEN_FULL.close(); } catch(Throwable ignored) { }
         System.err.println("[Muonium/Spectrum] Visualization disabled; playback unaffected: "+failure);
     }
 }

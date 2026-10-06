@@ -15,7 +15,10 @@ import java.util.List;
 import java.util.Set;
 
 import static com.muoniumplayer.testsupport.ProjectPaths.sharedJava;
+import com.muoniumplayer.core.settings.HudConfig;
+import com.muoniumplayer.core.settings.HudSetting;
 import com.muoniumplayer.testsupport.ProjectPaths;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,13 +43,13 @@ class HudSettingsTaxonomyStaticTest {
             "歌词样式", "面板与卡片", "灵动岛", "无缝切换", "界面与主题", "信息栏与封面", "缓存与公告");
 
     /** 与 {@link #TITLES} 同序的条目数；总和必须等于 {@link #TOTAL}。 */
-    private static final List<Integer> COUNTS = Arrays.asList(21, 8, 22, 22, 32, 5, 3);
+    private static final List<Integer> COUNTS = Arrays.asList(21, 8, 22, 22, 35, 5, 3);
 
     /** 「界面与主题」那页 2026-09-30 从 19 条长到 21 条：真玻璃材质组多了「实时背景采集」与
      *  「帧率不够时自动摘玻璃」两个开关；同日傍晚又长到 26 条：多了四面各自的模糊倍率
      *  与「玻璃亮部溢出」；夜里再到 27 条：多了「玻璃融合半径」。「无缝切换」那页 10-01
-     *  从 20 条长到 21 条：多了「切点标记」；现在 22 条，加上「动画样式」；「界面与主题」新增音乐频谱的 6 个有效设置。 */
-    private static final int TOTAL = 113;
+     *  从 20 条长到 21 条：多了「切点标记」；现在 22 条，加上「动画样式」；「界面与主题」新增全宽频谱柱数快捷档与自定义档。 */
+    private static final int TOTAL = 116;
 
     /** 侧栏一大块的名字。分类要按块相邻摆放，见 {@code GuiHudEditorFolia#navGroupLabel}。 */
     private static final List<String> NAV_GROUPS =
@@ -103,7 +106,7 @@ class HudSettingsTaxonomyStaticTest {
                 }
             }
         }
-        assertEquals(48, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱透明度与高度是新增有效设置");
+        assertEquals(49, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱自定义柱数、透明度与高度都是有效设置");
         assertFalse(settings.contains("GLASS_BLOOM"), "退役的磨砂 bloom 不能作为无效设置暴露");
         assertFalse(settings.contains("GLASS_FUSION"), "参考透镜不使用旧  融合描边");
         assertEquals(settings.size(), new HashSet<String>(settings).size(),
@@ -154,6 +157,43 @@ class HudSettingsTaxonomyStaticTest {
                     category.title + " 又回到了「" + category.navGroup + "」这一块："
                             + "同一块的分类要相邻摆放，否则侧栏标签会重复出现");
             previous = category.navGroup;
+        }
+    }
+
+    @Test
+    @DisplayName("全宽频谱柱数提供多档预设，并仅在自定义时展示精细滑块")
+    void spectrumBarCountPresetsExposeConditionalCustomSlider() {
+        HudSettingsModel.Entry preset = null;
+        HudSettingsModel.Entry custom = null;
+        for (HudSettingsModel.Category category : HudSettingsModel.categories()) {
+            for (HudSettingsModel.Group group : category.groups) {
+                for (HudSettingsModel.Entry entry : group.entries) {
+                    if ("全宽频谱柱数".equals(entry.getLabel())) preset = entry;
+                    if (entry.setting == HudSetting.SPECTRUM_BAR_COUNT_CUSTOM) custom = entry;
+                }
+            }
+        }
+        assertTrue(preset != null, "缺少全宽频谱柱数快捷档");
+        assertArrayEquals(new String[]{"64 根", "96 根", "128 根", "160 根", "192 根", "自定义"},
+                preset.getChoices());
+        assertTrue(custom != null, "缺少自定义柱数滑块");
+        int previousPreset = HudConfig.spectrumBarCountPreset;
+        try {
+            HudConfig.spectrumBarCountPreset = 0;
+            assertFalse(custom.isVisible(), "预设档位下不应显示无效的自定义滑块");
+            HudConfig.spectrumBarCountPreset = 5;
+            assertTrue(custom.isVisible(), "切到自定义后必须立即显示精细调节滑块");
+            int previousCount = HudConfig.spectrumCustomBarCount;
+            try {
+                HudSetting.SPECTRUM_BAR_COUNT_CUSTOM.setValue(999f);
+                assertEquals(256, HudConfig.spectrumCustomBarCount, "自定义上限必须限制在可读且可批量绘制的范围");
+                HudSetting.SPECTRUM_BAR_COUNT_CUSTOM.setValue(48f);
+                assertEquals(48, HudConfig.spectrumCustomBarCount, "自定义下限应保持合理的柱间距");
+            } finally {
+                HudConfig.spectrumCustomBarCount = previousCount;
+            }
+        } finally {
+            HudConfig.spectrumBarCountPreset = previousPreset;
         }
     }
 

@@ -22,13 +22,27 @@ final class FoliaBeatThis {
 
     static AutomixAnalyzer.BeatGrid analyse(float[] mono, int sampleRate, boolean outgoing) {
         if (mono == null || mono.length < MODEL_RATE || sampleRate <= 0) return null;
-        if (!FoliaModelManager.isInstalled(FoliaModelManager.Kind.BEAT_THIS)
-                || !FoliaModelManager.isInstalled(FoliaModelManager.Kind.RUNTIME)) return null;
+        if (!FoliaModelManager.isInstalled(FoliaModelManager.Kind.BEAT_THIS)) return null;
+        float[] resampled = resample(mono, sampleRate, MODEL_RATE);
+        // 推理引擎按平台各一条：安卓走进程内 ONNX Runtime，桌面走 Python 子进程。
+        if (FoliaModelManager.preferOnnxInference()) {
+            if (!FoliaModelManager.isInstalled(FoliaModelManager.Kind.ONNX_RUNTIME)) {
+                System.err.println("[Automix/Folia] Beat This ONNX 不可用: 运行包不完整（"
+                        + FoliaModelManager.onnxRuntimeStatus() + "）");
+                return null;
+            }
+            if (!FoliaOnnx.available()) {
+                return null;   // 具体失败原因已由 FoliaOnnx 打印
+            }
+            double[][] grid = FoliaBeatOnnx.analyse(resampled);
+            if (grid == null) return null;
+            return grid(grid[0], grid[1], outgoing);
+        }
+        if (!FoliaModelManager.isInstalled(FoliaModelManager.Kind.RUNTIME)) return null;
         File input = null, output = null, script = null;
         try {
             input = File.createTempFile("folia-beat-", ".raw");
             output = File.createTempFile("folia-beat-", ".json");
-            float[] resampled = resample(mono, sampleRate, MODEL_RATE);
             ByteBuffer bytes = ByteBuffer.allocate(resampled.length * 4).order(ByteOrder.LITTLE_ENDIAN);
             for (float value : resampled) bytes.putFloat(value);
             Files.write(input.toPath(), bytes.array());

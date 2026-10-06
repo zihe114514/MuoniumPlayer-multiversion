@@ -25,6 +25,18 @@ class SpectrumVisualMathTest {
         assertEquals(180f,SpectrumVisualMath.fullHeight(900f,1.5f),.001f);
         assertEquals(70f,SpectrumVisualMath.fullHeight(200f,1f),.001f);
         assertEquals(64,SpectrumVisualMath.fullBars(1920f));
+        assertEquals(160,SpectrumVisualMath.fullBars(1920f,160));
+        assertEquals(106,SpectrumVisualMath.fullBars(320f,160));
+        assertEquals(256,SpectrumVisualMath.fullBars(1920f,512));
+        assertEquals(1,SpectrumVisualMath.fullBars(320f,0));
+        assertEquals(64,SpectrumVisualMath.fullWidthBarLimit(0,200));
+        assertEquals(96,SpectrumVisualMath.fullWidthBarLimit(1,200));
+        assertEquals(128,SpectrumVisualMath.fullWidthBarLimit(2,200));
+        assertEquals(160,SpectrumVisualMath.fullWidthBarLimit(3,200));
+        assertEquals(192,SpectrumVisualMath.fullWidthBarLimit(4,200));
+        assertEquals(48,SpectrumVisualMath.fullWidthBarLimit(5,1));
+        assertEquals(173,SpectrumVisualMath.fullWidthBarLimit(5,173));
+        assertEquals(256,SpectrumVisualMath.fullWidthBarLimit(5,999));
         assertTrue(SpectrumVisualMath.fullBarWidth(1920f,64)>0);
         float[] bands=new float[48];bands[0]=1f;bands[47]=.5f;
         assertTrue(SpectrumVisualMath.fullLevel(bands,0,64)>.9f);

@@ -68,6 +68,24 @@ class SpectrumRibbonTest {
         }
     }
 
+    @Test void fullscreenAdaptedSplitRibbonCoversBothEdgesAndItsCenter() {
+        try(Surface surface=Surface.makeRasterN32Premul(512,128);
+            SpectrumRibbon left=new SpectrumRibbon();SpectrumRibbon right=new SpectrumRibbon();Bitmap bitmap=new Bitmap()) {
+            Canvas canvas=surface.getCanvas();canvas.clear(0);
+            float[] bands=sample(.25f);
+            left.draw(canvas,bands,0,24,0,116,256,36,.62f,0x8AABCE,0xBDCDE3);
+            right.draw(canvas,bands,24,24,256,116,256,36,.62f,0xBDCDE3,0x8AABCE);
+            bitmap.allocN32Pixels(512,128,false);assertTrue(canvas.readPixels(bitmap,0,0));
+            for(int[] strip:new int[][]{{0,28},{242,270},{484,512}}) {
+                boolean visible=false;
+                for(int x=strip[0];x<strip[1];x++)for(int y=80;y<116;y++) {
+                    if((bitmap.getColor(x,y)>>>24)>0)visible=true;
+                }
+                assertTrue(visible,"fullscreen split spectrum left a gap in x="+strip[0]+".."+strip[1]);
+            }
+        }
+    }
+
     @Test void writesProductionRendererPreview() throws Exception {
         java.nio.file.Path dir=Paths.get("build","spectrum-preview");Files.createDirectories(dir);
         try(Surface surface=Surface.makeRasterN32Premul(1000,250);SpectrumRibbon player=new SpectrumRibbon();SpectrumRibbon left=new SpectrumRibbon();SpectrumRibbon right=new SpectrumRibbon()) {

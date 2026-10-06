@@ -96,11 +96,14 @@ public final class MuoniumPlayerForge {
     /** 对应 Fabric 的 HudRenderCallback：原版 HUD 全部画完之后。 */
     private void onRenderGui(RenderGuiEvent.Post event) {
         MuoniumPlayerClient.getInstance().onHudRender();
+        // 停用时的原版 GUI 提示：Skia 那条路没起来时，只有原版 GUI 还能说话。
+        MuoniumPlayerClient.getInstance().onRenderLayerNotice(event.getGuiGraphics(), false);
     }
 
     /** 对应 Fabric 的 ScreenEvents.afterRender：界面画完之后叠灵动岛。 */
     private void onScreenRendered(ScreenEvent.Render.Post event) {
         MuoniumPlayerClient.getInstance().onScreenRendered(event.getScreen());
+        MuoniumPlayerClient.getInstance().onRenderLayerNotice(event.getGuiGraphics(), true);
     }
 
     /**

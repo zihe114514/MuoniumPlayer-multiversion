@@ -316,6 +316,13 @@ public final class HudSettingsModel {
         }, description, setting, null, null, null, ColorTarget.NONE);
     }
 
+    private static Entry slider(HudSetting setting, String description, BooleanSupplier visibleWhen) {
+        final HudSetting target = setting;
+        return new Entry(Kind.SLIDER, new Supplier<String>() {
+            public String get() { return target.getLabel(); }
+        }, description, setting, null, null, null, ColorTarget.NONE, null, null, visibleWhen);
+    }
+
     private static Entry toggle(final String label, String description,
                                 BooleanSupplier state, Runnable action) {
         return new Entry(Kind.TOGGLE, new Supplier<String>() {
@@ -343,6 +350,26 @@ public final class HudSettingsModel {
                 return label;
             }
         }, description, null, null, null, null, target);
+    }
+
+    private static final String[] SPECTRUM_BAR_COUNT_CHOICES = {
+            "64 根", "96 根", "128 根", "160 根", "192 根", "自定义"
+    };
+
+    private static String spectrumBarCountPresetLabel() {
+        int preset = HudConfig.spectrumBarCountPreset;
+        return preset >= 0 && preset < SPECTRUM_BAR_COUNT_CHOICES.length
+                ? SPECTRUM_BAR_COUNT_CHOICES[preset] : SPECTRUM_BAR_COUNT_CHOICES[0];
+    }
+
+    private static void setSpectrumBarCountPreset(String selected) {
+        for (int i = 0; i < SPECTRUM_BAR_COUNT_CHOICES.length; i++) {
+            if (SPECTRUM_BAR_COUNT_CHOICES[i].equals(selected)) {
+                HudConfig.spectrumBarCountPreset = i;
+                saveNow();
+                return;
+            }
+        }
     }
 
     private static Entry choice(final String label, String description,
@@ -875,9 +902,9 @@ public final class HudSettingsModel {
                                 action(() -> FoliaModelManager.statusLabel(FoliaModelManager.Kind.HTDEMUCS),
                                         "HTDemucs 四轨分离模型。仅在开启表现模式时分析首尾窗口；关闭时不会推理，缺失时继续使用频段与增益处理。",
                                         () -> installModel(FoliaModelManager.Kind.HTDEMUCS), AutomixSettings::isFoliaEngine),
-                                action(() -> FoliaModelManager.statusLabel(FoliaModelManager.Kind.RUNTIME),
-                                        "模型所需的 Python/ONNX 运行组件。安装 Beat This! 或 HTDemucs 前需要它。",
-                                        () -> installModel(FoliaModelManager.Kind.RUNTIME), AutomixSettings::isFoliaEngine),
+                                action(() -> FoliaModelManager.statusLabel(FoliaModelManager.runtimeKind()),
+                                        "模型所需的运行组件（桌面是 Python，安卓是 ONNX 运行时）。安装 Beat This! 或 HTDemucs 前需要它。",
+                                        () -> installModel(FoliaModelManager.runtimeKind()), AutomixSettings::isFoliaEngine),
                                 button("从本机查找模型", "扫描下载目录、桌面和游戏目录，校验文件名与 SHA-256 后导入。", HudSettingsModel::scanModels, AutomixSettings::isFoliaEngine),
                                 button(FoliaModelManager::directoryLabel, "当前模型与运行时位置；点击选择新目录，不改变已经下载的音频缓存。", () -> {
                                     String detail = FoliaModelManager.chooseDirectory();
@@ -894,14 +921,25 @@ public final class HudSettingsModel {
                                 toggle("游戏内显示", "在游戏画面底部显示音乐频谱，不占用灵动岛通知位。",
                                         () -> HudConfig.spectrumInHud,
                                         () -> { HudConfig.spectrumInHud = !HudConfig.spectrumInHud; saveNow(); }),
-                                choice("频谱风格", "底部全宽：64 根半透明渐变柱连续铺满底边，高度与位置参考 modernMP；两侧留空：保留快捷栏中央空间。仅影响游戏内显示。",
+                                choice("频谱风格", "底部全宽：半透明渐变柱合并为一次路径绘制；两侧留空：保留快捷栏中央空间。仅影响游戏内显示。",
                                         () -> HudConfig.spectrumHudStyle == 1 ? "两侧留空" : "底部全宽",
                                         () -> { HudConfig.spectrumHudStyle = HudConfig.spectrumHudStyle == 1 ? 0 : 1; saveNow(); },
                                         new String[]{"底部全宽", "两侧留空"},
                                         value -> { HudConfig.spectrumHudStyle = "两侧留空".equals(value) ? 1 : 0; saveNow(); }),
-                                toggle("播放器内显示", "频谱嵌入控制栏底缘，随播放器缩放和进出场，不遮挡歌词或按钮。",
+                                choice("全宽频谱柱数", "游戏内全宽样式支持 64–192 根常用档；选择「自定义」后可用滑块在 48–256 根间细调。高密度仍合并为单个路径批次，低分辨率下会自动限制密度以保留清晰间距。",
+                                        () -> spectrumBarCountPresetLabel(),
+                                        () -> { HudConfig.spectrumBarCountPreset = (HudConfig.spectrumBarCountPreset + 1) % SPECTRUM_BAR_COUNT_CHOICES.length; saveNow(); },
+                                        SPECTRUM_BAR_COUNT_CHOICES, HudSettingsModel::setSpectrumBarCountPreset),
+                                slider(HudSetting.SPECTRUM_BAR_COUNT_CUSTOM, "自定义柱数；在上方选择「自定义」时显示，拖动后立即预览、松开后保存。",
+                                        () -> HudConfig.spectrumBarCountPreset == 5),
+                                toggle("播放器内显示", "在控制栏和全屏歌词播放器底部显示频谱，随界面进出场，并跟随当前主题或封面配色。",
                                         () -> HudConfig.spectrumInPlayer,
                                         () -> { HudConfig.spectrumInPlayer = !HudConfig.spectrumInPlayer; saveNow(); }),
+                                choice("全屏播放器频谱", "底部全宽：铺满播放器底边并使用更多频谱线；两侧铺开：沿用双侧线条，但在全屏页自适应铺满，不留快捷栏式空隙。",
+                                        () -> HudConfig.spectrumFullscreenStyle == 1 ? "两侧铺开" : "底部全宽",
+                                        () -> { HudConfig.spectrumFullscreenStyle = HudConfig.spectrumFullscreenStyle == 1 ? 0 : 1; saveNow(); },
+                                        new String[]{"底部全宽", "两侧铺开"},
+                                        value -> { HudConfig.spectrumFullscreenStyle = "两侧铺开".equals(value) ? 1 : 0; saveNow(); }),
                                 choice("频谱配色", "跟随主题会复用当前主题与封面主题的渐变；封面取色只影响频谱，不改播放器主题。",
                                         () -> HudConfig.spectrumColorSource == 1 ? "封面取色" : "跟随主题",
                                         () -> { HudConfig.spectrumColorSource = 1 - HudConfig.spectrumColorSource; saveNow(); },
@@ -1593,6 +1631,8 @@ public final class HudSettingsModel {
                 return Math.round(value) + " px";
             case BLOSSOM_LINES:
                 return Math.round(value) + " 行";
+            case SPECTRUM_BAR_COUNT_CUSTOM:
+                return Math.round(value) + " 根";
             default:
                 return String.format("%.2f", value);
         }

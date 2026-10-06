@@ -108,6 +108,15 @@ public final class SkijaGfx {
     }
 
     // ------------------------------------------------------------------
+    /** Current GPU context for offscreen shared-renderer targets. */
+    public static io.github.humbleui.skija.DirectContext context() {
+        return SkijaHost.context();
+    }
+
+    /** Current framebuffer-pixel to GUI-unit scale. */
+    public static double guiScale() {
+        return SkijaHost.guiScale();
+    }
     // Paint 取用
     // ------------------------------------------------------------------
 

@@ -54,7 +54,8 @@ class ModelInstallNoticeStaticTest {
         String notice = read(music("FoliaModelNotice.java"));
         String overlay = read(screens("ModelInstallNoticeOverlay.java"));
 
-        String[] ordered = {"Kind.BEAT_THIS", "Kind.HTDEMUCS", "Kind.RUNTIME"};
+        // 第三个组件是平台感知的 runtimeKind()（安卓展示 ONNX 运行时，桌面展示 Python）。
+        String[] ordered = {"Kind.BEAT_THIS", "Kind.HTDEMUCS", "runtimeKind()"};
         int previous = -1;
         for (String kind : ordered) {
             int at = notice.indexOf(kind);

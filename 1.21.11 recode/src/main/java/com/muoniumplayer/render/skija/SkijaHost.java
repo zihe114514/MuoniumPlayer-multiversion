@@ -51,8 +51,27 @@ public final class SkijaHost {
             Boolean.getBoolean("muonium.skija.drawDirect");
 
     private static DirectContext context;
-    /** 初始化失败后置位，避免每帧重试刷日志。 */
+    /**
+     * 初始化失败后置位，避免每帧重试刷日志。
+     *
+     * <p>不是「永远不再试」：{@link #maybeResume()} 按 {@link #RESUME_INTERVAL_NANOS} 的退避
+     * 重新评估一次。理由很具体——非 Windows 用户的原生库来自伴生包，「装好文件但没重启」
+     * 和「压根没装」如果都表现为永久停用，用户看到的是一模一样的白屏，
+     * 而前者其实只需要等一个重评周期就能活。
+     */
     private static boolean disabled;
+
+    /** 停用后的重评间隔。20 秒：够短，用户在文件管理器里放好文件回来就能看到；够长，不刷日志。 */
+    private static final long RESUME_INTERVAL_NANOS = 20L * 1_000_000_000L;
+
+    /** 下一次允许重评的时刻（{@link System#nanoTime()} 轴）。 */
+    private static long resumeAtNanos;
+
+    /** 已经重评过多少次，只用来限制日志条数。 */
+    private static int resumeAttempts;
+
+    /** 最后一次停用的原因，给原版 GUI 的提示层直接读。 */
+    private static String suspendReason;
 
     // ---- 离屏目标（Skia 自己拥有，含按需分配的 stencil）----
     private static Surface offscreen;
@@ -72,6 +91,9 @@ public final class SkijaHost {
     private static boolean frameCleared;
     /** 本帧是否有内容等着在帧末合成。见 {@link #compositeFrame()}。 */
     private static boolean pendingComposite;
+    /** Screen/island pixels are drawn after the base pass so the lens can sample the true backdrop. */
+    private static Runnable postCompositeOverlay;
+    private static boolean postCompositeOverlayFailureLogged;
 
 
     /**
@@ -107,8 +129,14 @@ public final class SkijaHost {
      * 因此上层即使 push/pop 不配对也不会污染下一帧）。
      */
     public static Canvas beginFrame() {
-        if (disabled || inFrame) {
+        if (inFrame) {
             return null;
+        }
+        if (disabled) {
+            maybeResume();
+            if (disabled) {
+                return null;
+            }
         }
         try {
             Minecraft client = Minecraft.getInstance();
@@ -133,7 +161,16 @@ public final class SkijaHost {
                 return null;
             }
             if (context == null) {
-                context = DirectContext.makeGL();
+                try {
+                    context = DirectContext.makeGL();
+                } catch (Throwable makeGlThrew) {
+                    // Skija 在这里不是返回 null，而是拿 nullptr 造对象时抛「Can't wrap nullptr」
+                    // ——真机第一条就是这个形状。单独兜一句，日志里就有明确的「上下文装不出来」字样，
+                    // 不用从 beginFrame 那一串堆栈里反推。
+                    fail("DirectContext.makeGL() 抛异常（Skia 装配不出当前 GL 上下文）: "
+                            + makeGlThrew, makeGlThrew);
+                    return null;
+                }
                 if (context == null) {
                     fail("DirectContext.makeGL() 返回 null", null);
                     return null;
@@ -335,20 +372,93 @@ public final class SkijaHost {
      * 否则下一帧会在旧内容上继续画。
      */
     public static void compositeFrame() {
-        // Capture immediately before the HUD composite so our own HUD is not sampled.
-        GlassBackdrop.captureNow(0, offscreenWidth, offscreenHeight);
+        Runnable topOverlay = postCompositeOverlay;
+        postCompositeOverlay = null;
         boolean hadContent = pendingComposite;
         pendingComposite = false;
         frameCleared = false;
-        if (disabled || DEBUG_DRAW_DIRECT || !hadContent || offscreen == null || context == null) {
+        if (disabled || DEBUG_DRAW_DIRECT || offscreen == null || context == null) {
             return;
         }
         if (inFrame) {
-            // 不该发生：说明有调用点 beginFrame 之后没 endFrame。此时离屏图还没 flush，
-            // 强行合成会画出半成品，宁可这一帧不显示。
             fail("compositeFrame 时仍在帧内，跳过合成", null);
             return;
         }
+
+        // The deferred ports have a real window framebuffer at this point. Capture the
+        // clean source before compositing our own Skia layer, so player glass never samples
+        // its previous frame or the panels it is about to render.
+        Minecraft client = Minecraft.getInstance();
+        Window window = client == null ? null : client.getWindow();
+        if (window == null) {
+            return;
+        }
+        GlassBackdrop.captureNow(0, window.getWidth(), window.getHeight(),
+                client != null && client.screen != null);
+
+        if (hadContent) {
+            try {
+                savedFbo = org.lwjgl.opengl.GL11.glGetInteger(
+                        org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
+                org.lwjgl.opengl.GL11.glGetIntegerv(
+                        org.lwjgl.opengl.GL11.GL_VIEWPORT, SAVED_VIEWPORT);
+                SNAPSHOT.capture();
+                context.resetAll();
+                resetPixelUnpackLayout();
+                org.lwjgl.opengl.GL30.glBindFramebuffer(
+                        org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, WINDOW_FRAMEBUFFER);
+                GlStateManager._viewport(0, 0, offscreenWidth, offscreenHeight);
+                org.lwjgl.opengl.GL11.glViewport(0, 0, offscreenWidth, offscreenHeight);
+                composite(WINDOW_FRAMEBUFFER);
+                if (firstCompositeUnlogged) {
+                    firstCompositeUnlogged = false;
+                    log("首次帧末合成完成 " + offscreenWidth + "x" + offscreenHeight
+                            + " → 窗口默认帧缓冲");
+                }
+            } catch (Throwable t) {
+                fail("compositeFrame 失败", t);
+            } finally {
+                restoreMinecraftState();
+            }
+        }
+        if (disabled) return;
+
+        // The visible base GUI is now on the window framebuffer. Keep a second capture
+        // exclusively for the island, so its liquid surface can refract the topmost layer
+        // without replacing the clean source used by player panels.
+        if (topOverlay != null) {
+            GlassBackdrop.captureTopmostNow(0, window.getWidth(), window.getHeight());
+            if (context != null) context.resetAll();
+        }
+        if (topOverlay != null) renderPostCompositeOverlay(topOverlay);
+    }
+
+    /** Defer an overlay until the base GUI has reached the window framebuffer. */
+    public static boolean deferPostCompositeOverlay(Runnable overlay) {
+        if (overlay == null || disabled || DEBUG_DRAW_DIRECT) return false;
+        postCompositeOverlay = overlay;
+        return true;
+    }
+
+    private static void renderPostCompositeOverlay(Runnable overlay) {
+        if (overlay == null || disabled || offscreen == null || context == null) return;
+        if (beginFrame() == null) return;
+        try {
+            overlay.run();
+        } catch (Throwable failure) {
+            if (!postCompositeOverlayFailureLogged) {
+                postCompositeOverlayFailureLogged = true;
+                log("顶层灵动岛绘制失败，本帧已跳过: " + failure);
+            }
+        } finally {
+            endFrame();
+        }
+        if (!pendingComposite || disabled) {
+            frameCleared = false;
+            pendingComposite = false;
+            return;
+        }
+        pendingComposite = false;
         try {
             savedFbo = org.lwjgl.opengl.GL11.glGetInteger(
                     org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
@@ -357,34 +467,20 @@ public final class SkijaHost {
             SNAPSHOT.capture();
             context.resetAll();
             resetPixelUnpackLayout();
-            // 显式绑定合成目标。用 GL_FRAMEBUFFER 一次改掉读和写两个绑定，
-            // 不给 Skia 留下一个还指向别处的 READ 绑定。
             org.lwjgl.opengl.GL30.glBindFramebuffer(
                     org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, WINDOW_FRAMEBUFFER);
-            // 默认帧缓冲的尺寸就是窗口帧缓冲尺寸，也就是离屏图的尺寸；视口按整屏给。
             GlStateManager._viewport(0, 0, offscreenWidth, offscreenHeight);
             org.lwjgl.opengl.GL11.glViewport(0, 0, offscreenWidth, offscreenHeight);
             composite(WINDOW_FRAMEBUFFER);
-            if (firstCompositeUnlogged) {
-                firstCompositeUnlogged = false;
-                log("首次帧末合成完成 " + offscreenWidth + "x" + offscreenHeight
-                        + " → 窗口默认帧缓冲");
-            }
-        } catch (Throwable t) {
-            fail("compositeFrame 失败", t);
+        } catch (Throwable failure) {
+            fail("顶层灵动岛合成失败", failure);
         } finally {
             restoreMinecraftState();
+            frameCleared = false;
+            pendingComposite = false;
         }
     }
 
-    /**
-     * 把离屏纹理作为一张图片画到给定的 FBO 上。
-     *
-     * @param targetFbo 目标帧缓冲的 GL 名。当前恒为 {@link #WINDOW_FRAMEBUFFER}，
-     *                  保留成参数是为了让「往哪儿合成」这件事在调用点上写明，
-     *                  而不是藏在一个共享字段里（{@code savedFbo} 曾经兼任过这个角色，
-     *                  正是那次混用导致贴错目标）。
-     */
     private static void composite(int targetFbo) {
         context.flush(offscreen);
         // makeImageSnapshot 在 GPU 目标上通常只是加一次纹理引用，不做像素拷贝。
@@ -872,8 +968,53 @@ public final class SkijaHost {
         }
     }
 
+    /**
+     * 到点就把停用结论撤掉，让下一帧重新走一遍初始化。
+     *
+     * <p>必须同时叫 {@link SkijaNatives#reset()}：那边的 {@code loaded} 缓存成 false 之后
+     * 再也不会回头，只解这边这一层的闸，重试到的永远是「原生库不可用」这个旧结论。
+     * 撤闸本身不做任何加载工作——真正的重活在下一次 {@link #beginFrame()} 里，
+     * 那时 GL 上下文是当前的，失败也照样会被 {@link #fail} 重新按上退避。
+     */
+    private static void maybeResume() {
+        long now = System.nanoTime();
+        if (now < resumeAtNanos) {
+            return;
+        }
+        resumeAttempts++;
+        resumeAtNanos = now + RESUME_INTERVAL_NANOS;
+        SkijaNatives.reset();
+        disabled = false;
+        // 前几次要说，之后每 10 次说一句：长期缺伴生包的机器上一秒 60 帧，全打会把日志淹掉
+        if (resumeAttempts <= 3 || resumeAttempts % 10 == 0) {
+            log("第 " + resumeAttempts + " 次重新评估渲染层（上次原因：" + suspendReason + "）");
+        }
+    }
+
+    /** 渲染层当前是否处于停用状态（供原版 GUI 的提示层判断要不要说话）。 */
+    public static boolean isSuspended() {
+        return disabled;
+    }
+
+    /** 最后一次停用的原因；从未停用时为 null。 */
+    public static String suspendReason() {
+        return suspendReason;
+    }
+
+    /** 已经重评过多少次。 */
+    public static int resumeAttempts() {
+        return resumeAttempts;
+    }
+
+    /** 原生库的加载交代；提示层用它区分「缺伴生包」与「库有了但 GPU 上下文建不起来」。 */
+    public static SkijaNatives.Status nativeStatus() {
+        return SkijaNatives.status();
+    }
+
     private static void fail(String message, Throwable t) {
         disabled = true;
+        resumeAtNanos = System.nanoTime() + RESUME_INTERVAL_NANOS;
+        suspendReason = message;
         log("已停用 Skia 渲染层: " + message);
         if (t != null) {
             t.printStackTrace();

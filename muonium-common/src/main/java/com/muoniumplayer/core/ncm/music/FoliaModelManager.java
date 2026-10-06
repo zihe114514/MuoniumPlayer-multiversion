@@ -25,7 +25,13 @@ public final class FoliaModelManager {
                 "c5c1466e08abdb03fdeb50668a06f244b787d564c212490482231a9cfbe9ccbd", false),
         HTDEMUCS("HTDemucs", "htdemucs.onnx", 108_644_650L,
                 "099b5be76c1f6922124d07f850250f39d1f33f254a0b8cc90f4ec0dfd0912329", false),
-        RUNTIME("必要组件", null, 0L, null, true);
+        RUNTIME("必要组件", null, 0L, null, true),
+        /**
+         * ONNX Runtime 的 Java 运行时——<b>安卓专用</b>（桌面保持 Python 路线）。
+         * 解包内容 = onnxruntime-android AAR 抽包：classes.jar + arm64-v8a 的两个 .so。
+         * 构建脚本：{@code tools/build-folia-onnx-runtime.ps1}。
+         */
+        ONNX_RUNTIME("ONNX 运行时", null, 0L, null, false);
 
         final String label;
         final String file;
@@ -40,11 +46,27 @@ public final class FoliaModelManager {
     public interface Progress { void onProgress(long done, long total); }
     public interface Callback { void done(boolean ok, String detail); }
 
+    /**
+     * 下载镜像链。两个模型（beat_this / htdemucs）在上面三路 folia-models 仓库；
+     * 安卓 ONNX 运行时 zip 托管在更新清单仓库（MuoniumPlayer-updates），
+     * 后三路与 {@code UpdateChecker} 同款三源（ghfast 代理 / raw / jsdelivr）。
+     * 未命中该文件的镜像会 404，循环会继续往下一路试（见 {@link #downloadBytes}）。
+     */
     private static final String[] MIRRORS = {
             "https://hf-mirror.com/HUAI4236/folia-models/resolve/main/",
             "https://huggingface.co/HUAI4236/folia-models/resolve/main/",
-            "https://github.com/AZURE-HUAI/folia-models/releases/download/weights-v1/"
+            "https://github.com/AZURE-HUAI/folia-models/releases/download/weights-v1/",
+            "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/",
+            "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/",
+            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/"
     };
+    /**
+     * 安卓 ONNX 运行时 zip 的字节数与 sha256，由 {@code tools/build-folia-onnx-runtime.ps1}
+     * 打印。这两个值必须与镜像上的 zip 精确一致，改版本时一起重跑脚本、一起更新。
+     */
+    private static final long ANDROID_ZIP_BYTES = 12_287_062L;
+    private static final String ANDROID_ZIP_SHA256 =
+            "389a074e6783a0cc97f05cf2d7fe20711f624c0365160ce9328362f9e4fc6de0";
     private static final File DEFAULT_DIR = new File(new File("config", "muonium"), "models");
     private static volatile File modelsDir = initialDirectory();
     private static volatile File cachedPython;
@@ -98,10 +120,74 @@ public final class FoliaModelManager {
 
     public static File path(Kind kind) {
         if (kind == Kind.RUNTIME) return new File(modelsDir, "runtime");
+        if (kind == Kind.ONNX_RUNTIME) return onnxRuntimeDir();
         return new File(modelsDir, kind.file);
     }
 
+    /** ONNX Runtime Java 运行时的解包目录（{@link Kind#ONNX_RUNTIME}，下载目标）。 */
+    public static File onnxRuntimeDir() {
+        return new File(modelsDir, "onnx-rt");
+    }
+
+    /**
+     * 运行包三件套实际所在的目录：优先 {@code onnx-rt/}，其次模型根目录。
+     *
+     * <p>手动解压时很容易把三个文件直接放到 {@code models/} 根（而不是再建一层
+     * {@code onnx-rt/}），两种布局都认，免得「文件明明在」却报未安装。
+     * 每个目录内的查找还会再看一层子目录（见 {@link #runtimeFile}）。</p>
+     */
+    static File resolveOnnxRuntimeDir() {
+        File canonical = onnxRuntimeDir();
+        if (hasRuntimeFiles(canonical)) return canonical;
+        if (hasRuntimeFiles(modelsDir)) return modelsDir;
+        return canonical;
+    }
+
+    private static boolean hasRuntimeFiles(File dir) {
+        return runtimeFile(dir, "classes.jar") != null
+                && runtimeFile(dir, "libonnxruntime.so") != null
+                && runtimeFile(dir, "libonnxruntime4j_jni.so") != null;
+    }
+
+    /** 本机是否安卓（判定来自 {@code com.muoniumplayer.render.skija} 的平台映射）。 */
+    public static boolean isAndroidPlatform() {
+        return com.muoniumplayer.render.skija.SkijaNatives.mappedPlatform().startsWith("android");
+    }
+
+    /**
+     * 运行组件是否就绪：安卓看 ONNX 运行时，桌面看 Python。
+     *
+     * <p>推理引擎按平台各走一条：两端引擎不同（手机上是进程内 ONNX Runtime，
+     * 桌面是随包管理的 Python 子进程），所以这里没有「任一即可」——桌面上留着一份
+     * 用不上的 ONNX 目录不该让提示层闭嘴。
+     */
+    public static boolean runtimeReady() {
+        return isAndroidPlatform() ? isInstalled(Kind.ONNX_RUNTIME) : isInstalled(Kind.RUNTIME);
+    }
+
+    /**
+     * 提示层应该展示的运行组件 Kind：安卓展示 ONNX 运行时（Python 装不了），
+     * 桌面展示 Python（久经考验的主路径）。
+     */
+    public static Kind runtimeKind() {
+        return isAndroidPlatform() ? Kind.ONNX_RUNTIME : Kind.RUNTIME;
+    }
+
+    /**
+     * 是否走进程内 ONNX 推理：<b>只有安卓</b>。
+     *
+     * <p>桌面保持 Python 路线不变——Python 运行组件在桌面上久经考验，而桌面 JVM
+     * 与 ORT 的 Windows 原生库存在 MSVC 运行库版本兼容问题（上游
+     * onnxruntime#24287：ORT 1.21+ 用新工具链编译，JVM 自带旧 VC++ 运行库时
+     * DllMain 失败），换引擎只会平添一类只影响桌面的故障。安卓上 Python 跑不起来，
+     * ONNX 是唯一选项。
+     */
+    public static boolean preferOnnxInference() {
+        return isAndroidPlatform();
+    }
+
     public static boolean isInstalled(Kind kind) {
+        if (kind == Kind.ONNX_RUNTIME) return isOnnxRuntimeInstalled();
         if (kind == Kind.RUNTIME) {
             File python = pythonExecutable();
             return python != null && python.isFile();
@@ -109,6 +195,84 @@ public final class FoliaModelManager {
         File file = path(kind);
         return file.isFile() && (kind.bytes <= 0L || file.length() == kind.bytes);
     }
+
+    private static boolean isOnnxRuntimeInstalled() {
+        if (!isAndroidPlatform()) return false;
+        return hasRuntimeFiles(resolveOnnxRuntimeDir());
+    }
+
+    /**
+     * 安卓 ONNX 运行包的缺失清单；空字符串 = 三件套齐全。
+     * 目录缺失、文件不全、多套一层子目录都从同一套查找判定（见 {@link #runtimeFile}）。
+     */
+    static String onnxRuntimeStatus() {
+        File dir = resolveOnnxRuntimeDir();
+        if (dir == null || !dir.isDirectory()) return "目录不存在";
+        StringBuilder missing = new StringBuilder();
+        for (String name : new String[] {"classes.jar", "libonnxruntime.so", "libonnxruntime4j_jni.so"}) {
+            if (runtimeFile(dir, name) == null) {
+                if (missing.length() > 0) missing.append("、");
+                missing.append("缺 ").append(name);
+            }
+        }
+        return missing.toString();
+    }
+
+    /**
+     * 给日志：模型推理当前的可用性快照。排查「为什么没走模型推理」就看这一行——
+     * 三个前置（权重、运行组件、表现模式）里任意一个不满足都会静默退回信号处理。
+     */
+    public static String inferenceReadiness() {
+        StringBuilder text = new StringBuilder();
+        text.append(isAndroidPlatform() ? "android" : "desktop");
+        text.append(" · Beat This!=").append(isInstalled(Kind.BEAT_THIS) ? "有" : "无");
+        text.append(" · HTDemucs=").append(isInstalled(Kind.HTDEMUCS) ? "有" : "无");
+        text.append(" · 运行时=");
+        if (isAndroidPlatform()) {
+            String status = onnxRuntimeStatus();
+            text.append(status.isEmpty() ? "就绪" : "未就绪(").append(status).append(')');
+        } else {
+            text.append(isInstalled(Kind.RUNTIME) ? "就绪" : "未就绪(Python 未装)");
+        }
+        text.append(" · 表现模式=").append(AutomixSettings.isPerformanceModeEnabled() ? "开" : "关");
+        return text.toString();
+    }
+
+    /**
+     * 在运行时目录里找一个文件；找不到就再往下一层子目录看一眼。
+     *
+     * <p>解压工具常会「多套一层文件夹」（右键解压到同名目录），那种布局下三件套在
+     * {@code onnx-rt/<子目录>/} 里。安装判定与 {@link FoliaOnnx} 的加载找同一份文件，
+     * 两边用同一套查找，才不会出现「设置页说已安装、加载说找不到」。
+     */
+    static File runtimeFile(File dir, String name) {
+        if (dir == null) return null;
+        File direct = new File(dir, name);
+        if (direct.isFile()) return direct;
+        File[] children = dir.listFiles(File::isDirectory);
+        if (children != null) {
+            for (File child : children) {
+                File nested = new File(child, name);
+                if (nested.isFile()) return nested;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 安卓 ONNX 运行时 zip 的条目（名字/字节数/sha256 由构建脚本
+     * {@code tools/build-folia-onnx-runtime.ps1} 产出）。
+     *
+     * <p>版本必须 ≥ 1.21：1.20 的引擎加载不了 HTDemucs 导出（{@code /dft_istft}
+     * 的 DFT 算子在旧版形状推断里报 {@code is_onesided and inverse}）；这里选
+     * 1.29.0，与 Python 运行组件里那份 onnxruntime 同版本，两个推理路径对着同一份
+     * 模型行为。安卓上 ORT 走 bionic（NDK 编译），不受桌面那份 MSVC 运行库兼容问题影响。
+     */
+    private static OnnxEntry onnxEntry() {
+        return new OnnxEntry("folia-onnx-android-arm64.zip", ANDROID_ZIP_BYTES, ANDROID_ZIP_SHA256);
+    }
+
+    private record OnnxEntry(String file, long bytes, String sha256) {}
 
     public static String statusLabel(Kind kind) {
         Double progress = ACTIVE_DOWNLOADS.get(kind);
@@ -148,8 +312,31 @@ public final class FoliaModelManager {
     }
 
     public static void download(Kind kind, Progress progress) throws Exception {
+        // 运行组件的两条腿按平台互斥：安卓是 ONNX 运行时（Python 在手机上不存在），
+        // 桌面是 Python 运行组件。少了这道闸，安卓会把 os.name=Linux 匹配到
+        // linux-x64 的 Python 包下下来（纯浪费流量），桌面则会下到用不上的安卓包。
+        if (isAndroidPlatform() && kind == Kind.RUNTIME) {
+            throw new IllegalStateException("Python 运行组件只有桌面版；安卓请安装 ONNX 运行时");
+        }
+        if (!isAndroidPlatform() && kind == Kind.ONNX_RUNTIME) {
+            throw new IllegalStateException("ONNX 运行时只在安卓上使用；桌面请安装必要组件（Python）");
+        }
         if (!modelsDir.exists() && !modelsDir.mkdirs() && !modelsDir.isDirectory()) {
             throw new IllegalStateException("cannot create " + modelsDir);
+        }
+        if (kind == Kind.ONNX_RUNTIME) {
+            OnnxEntry entry = onnxEntry();
+            File archive = new File(modelsDir, entry.file() + ".part");
+            downloadBytes(entry.file(), archive, entry.bytes(), entry.sha256(), progress);
+            File unpacked = new File(modelsDir, "onnx-rt.part");
+            deleteTree(unpacked);
+            unzip(archive, unpacked);
+            Files.deleteIfExists(archive.toPath());
+            File target = onnxRuntimeDir();
+            deleteTree(target);
+            try { Files.move(unpacked.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING); }
+            catch (Exception failure) { deleteTree(unpacked); throw failure; }
+            return;
         }
         if (kind == Kind.RUNTIME) {
             RuntimeEntry runtime = runtimeEntry();
@@ -204,8 +391,7 @@ public final class FoliaModelManager {
         throw last == null ? new IllegalStateException("no mirror") : last;
     }
 
-    private static HttpURLConnection openFollowing(URL url, int depth) throws Exception {
-        if (depth > 6) throw new IllegalStateException("too many redirects");
+    private static HttpURLConnection openFollowing(URL url, int depth) throws Exception {        if (depth > 6) throw new IllegalStateException("too many redirects");
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setInstanceFollowRedirects(false);
         connection.setConnectTimeout(20_000); connection.setReadTimeout(60_000);
@@ -242,6 +428,9 @@ public final class FoliaModelManager {
      * 因为目录被替换之后旧的那份 {@code File} 依然可能指向一个同名的旧文件。</p>
      */
     public static File pythonExecutable() {
+        // 安卓没有 Python 运行组件：不解析、不扫目录。就算目录里躺着一份被误下载的
+        // linux-x64 包（旧版本曾把 aarch64 错判成 linux-x64），也不当它是可用的。
+        if (isAndroidPlatform()) return null;
         File runtime = path(Kind.RUNTIME);
         if (cachedPythonResolved && runtime.equals(cachedPythonRuntime)) return cachedPython;
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
@@ -270,12 +459,23 @@ public final class FoliaModelManager {
         }
         return null;
     }
+    /**
+     * 桌面 Python 运行组件的下载条目。
+     *
+     * <p>安卓上没有这个组件（走 {@link Kind#ONNX_RUNTIME}），所以在安卓上报错而不是
+     * 落进任何分支——这里如果用 {@code os.arch.contains("64")} 判断，
+     * aarch64 也会命中 linux-x64，手机就会下到 x86-64 的包。
+     */
     private static RuntimeEntry runtimeEntry() {
+        if (isAndroidPlatform()) {
+            throw new IllegalStateException("安卓不存在 Python 运行组件");
+        }
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         String arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
-        if (os.contains("win") && arch.contains("64")) return new RuntimeEntry("folia-runtime-win32-x64.zip", 35_633_855L, "50a5829ac928071ab2eecaf2667e5dab9c3af2b4b44fb5bb4b7acfb9863cdacd");
-        if (os.contains("mac") && arch.contains("aarch64")) return new RuntimeEntry("folia-runtime-darwin-arm64.zip", 44_380_755L, "f8313150254d699396b4ff4c9289bdd2864ba3268bd137e5aeb17963be318cde");
-        if (os.contains("linux") && arch.contains("64")) return new RuntimeEntry("folia-runtime-linux-x64.zip", 60_509_680L, "cf1347f5621fed74f8b2dea243ea1365824ac77ab52ddc2183ca8a77180b60da");
+        boolean x64 = arch.contains("x86_64") || arch.contains("amd64");
+        if (os.contains("win") && x64) return new RuntimeEntry("folia-runtime-win32-x64.zip", 35_633_855L, "50a5829ac928071ab2eecaf2667e5dab9c3af2b4b44fb5bb4b7acfb9863cdacd");
+        if (os.contains("mac") && (arch.contains("aarch64") || arch.contains("arm64"))) return new RuntimeEntry("folia-runtime-darwin-arm64.zip", 44_380_755L, "f8313150254d699396b4ff4c9289bdd2864ba3268bd137e5aeb17963be318cde");
+        if (os.contains("linux") && x64) return new RuntimeEntry("folia-runtime-linux-x64.zip", 60_509_680L, "cf1347f5621fed74f8b2dea243ea1365824ac77ab52ddc2183ca8a77180b60da");
         throw new IllegalStateException("unsupported platform " + os + "/" + arch);
     }
 
@@ -315,10 +515,17 @@ public final class FoliaModelManager {
         invalidatePythonCache();
         for (Kind kind : Kind.values()) {
             File target = path(kind);
-            if (kind == Kind.RUNTIME) deleteTree(target); else {
+            if (kind == Kind.RUNTIME || kind == Kind.ONNX_RUNTIME) {
+                // 两者都是目录树；Files.deleteIfExists 删不掉非空目录，必须走递归删除。
+                deleteTree(target);
+            } else {
                 try { Files.deleteIfExists(target.toPath()); } catch (Throwable ignored) {}
                 try { Files.deleteIfExists(new File(modelsDir, kind.file + ".part").toPath()); } catch (Throwable ignored) {}
             }
+        }
+        // 手动解压到模型根目录的那份运行包也一并清掉（resolveOnnxRuntimeDir 认这种布局）。
+        for (String name : new String[] {"classes.jar", "libonnxruntime.so", "libonnxruntime4j_jni.so"}) {
+            try { Files.deleteIfExists(new File(modelsDir, name).toPath()); } catch (Throwable ignored) {}
         }
     }
 

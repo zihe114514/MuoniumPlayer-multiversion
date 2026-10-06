@@ -56,20 +56,32 @@ public final class GlassLiquidSurface {
                 float2 p = local / halfSize;
                 float radius = clamp(uShape.x, 0.0, min(halfSize.x, halfSize.y));
                 float d;
+                float depth;
                 if (uShape.y > 0.0) {
                     d = sdSuperellipse(p, max(2.001, uShape.y));
+                    if (d > 0.0) { return half4(0.0); }
+                    // The normalized squircle is retained for the small reference lens only.
+                    depth = max(0.0, -d);
                 } else {
-                    // sdRoundBox works in device pixels; p is normalized only for the
-                    // superellipse and angular edge-light calculation. Mixing p with pixel
-                    // halfSize makes the whole panel appear as one giant lens (severe stretch).
-                    d = sdRoundBox(local, halfSize, radius) / min(halfSize.x, halfSize.y);
+                    // Production panels use a local edge band. Normalizing a wide panel's
+                    // distance by its half-size turns the whole player into a giant lens.
+                    d = sdRoundBox(local, halfSize, radius);
+                    if (d > 0.0) { return half4(0.0); }
+                    depth = clamp(max(0.0, -d) / 24.0, 0.0, 1.0);
                 }
-                if (d > 0.0) { return half4(0.0); }
-                float depth = max(0.0, -d);
-                // Same non-linear contraction as the reference, not a blurred flat fill.
+                // Refraction is an edge cue, not a screen-wide warp: cap the bend to a few
+                // GUI pixels so cards and text never stretch across the player.
                 float lens = pow(max(0.0001, glassFalloff(depth)), uMisc.x);
-                lens = mix(1.0, lens, uShape.z);
-                float2 samplePoint = center + local * lens;
+                lens = mix(1.0, lens, clamp(uShape.z, 0.0, 1.0));
+                float2 samplePoint;
+                if (uShape.y > 0.0) {
+                    samplePoint = center + local * lens;
+                } else {
+                    float localLength = length(local);
+                    float2 towardCenter = localLength > 0.0001 ? -local / localLength : float2(0.0);
+                    float bend = clamp((1.0 - lens) * 28.0, 0.0, 8.0);
+                    samplePoint = coord + towardCenter * bend;
+                }
                 half4 sampled = uBackdrop.eval(samplePoint * uSample.zw + uSample.xy);
                 float3 rgb = float3(sampled.rgb) / max(float(sampled.a), 0.0001);
                 // Reference gl_FragCoord / local UV are bottom-up; Skia is top-down.

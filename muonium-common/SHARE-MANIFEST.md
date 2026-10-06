@@ -33,6 +33,7 @@
 | `com/muoniumplayer/core/screens/GuiAnnouncements.java` | FORK | 五树都有 | 26.x 关闭屏幕改用 mc.gui.setScreen(null) |
 | `com/muoniumplayer/core/screens/GuiFfmpegNotice.java` | FORK | 五树都有 | 26.x 的屏幕访问/关闭 API 差异 |
 | `com/muoniumplayer/core/screens/GuiUpdateNotice.java` | FORK | 五树都有 | 26.x 的屏幕访问/关闭 API 差异 |
+| `com/muoniumplayer/core/screens/RenderLayerNotice.java` | FORK | 五树都有 | 老树回调给 GuiGraphics、26.x 给 GuiGraphicsExtractor，文字方法 drawString/text 两代不同 |
 | `com/muoniumplayer/core/screens/TitleMenuAnnouncementButton.java` | FORK | 五树都有 | 26.x 的屏幕访问与按钮挂载 API 差异 |
 | `com/muoniumplayer/core/screens/hud/GuiHudEditor.java` | FORK | 五树都有 | 经典 HUD 编辑器按版本的绘制/屏幕 API 差异 |
 | `com/muoniumplayer/core/screens/hud/GuiHudEditorFolia.java` | FORK | 五树都有 | Folia 编辑器按版本的绘制/屏幕 API 差异 |

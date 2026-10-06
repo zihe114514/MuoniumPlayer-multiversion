@@ -35,7 +35,7 @@ import com.muoniumplayer.core.utils.cursor.CursorUtils;
  * 渲染与命中<b>共用同一张表</b>，加行只需要在 {@code layout()} 里插一句。</p>
  *
  * <h3>装不下就分列，不是把整块缩小</h3>
- * <p>行数一多（「隐现」背景的像素/流体两段参数、加上自定义配色，能有三十行、八九百像素高），
+ * <p>行数一多（QPlayer 流体背景参数、加上自定义配色，仍可能超过视口高度），
  * 一列排下来必然高过视口。此前的唯一手段是 {@link #updateUiScale()}：把面板连同文字一起等比
  * 缩小，缩到 {@link #MIN_UI_SCALE} 就停手——可 0.62 只是「比原来好看一点」，一列八百多像素
  * 对上半屏的可视高度，缩到底也塞不进去，结果是<b>字小得看不清 + 底部还要滚</b>。</p>
@@ -64,7 +64,9 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private static final int KIND_STYLE_SLIDER = 8;
     /** 当前样式专属的开关 / 枚举，点一下换下一档。 */
     private static final int KIND_STYLE_TOGGLE = 9;
-    /** 全屏歌词背景来源；不随歌词样式切换而消失。 */
+    /** 背景类型：QPlayer 流体或传统模糊封面。 */
+    private static final int KIND_BACKGROUND_TYPE = 21;
+    /** QPlayer fluid animation mode. */
     private static final int KIND_BACKGROUND = 10;
     /** 播放器颜色来源：当前预设或当前歌曲封面。 */
     private static final int KIND_THEME_SOURCE = 11;
@@ -72,14 +74,10 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private static final int KIND_LYRIC_RELOAD = 12;
     /** 歌词时间偏移滑块；左右各 ±10 秒，右键归零。 */
     private static final int KIND_LYRIC_OFFSET = 13;
-    /** 「隐现」显示图层：像素 / 流体 / 混合。 */
-    private static final int KIND_LATENT_MODE = 14;
-    /** 「隐现」颜色来源：封面与主题 / 仅封面取色。 */
-    private static final int KIND_LATENT_COLOR = 15;
-    /** 「隐现」布尔开关。 */
-    private static final int KIND_LATENT_TOGGLE = 16;
-    /** 「隐现」浮点参数。 */
-    private static final int KIND_LATENT_SLIDER = 17;
+    /** QPlayer fluid setting slider. */
+    private static final int KIND_FLUID_SLIDER = 17;
+    /** QPlayer 三种流体算法选择。 */
+    private static final int KIND_FLUID_STYLE = 20;
     /**
      * 歌词来源：自动，或指定某一个源。
      *
@@ -159,36 +157,14 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private static final int[] DIORAMA_TOGGLES = {TOGGLE_DIORAMA_DUST};
     private static final int[] PENDOLO_TOGGLES = {TOGGLE_PENDOLO_GEARS};
 
-    // ---- 「隐现」背景参数 ----
-    private static final int LATENT_TOGGLE_DYNAMIC_ONLY = 0;
-    private static final int LATENT_TOGGLE_ENHANCED_BEAT = 1;
-    private static final int LATENT_TOGGLE_OVERLAY = 2;
-    private static final int[] LATENT_TOGGLES = {
-            LATENT_TOGGLE_DYNAMIC_ONLY, LATENT_TOGGLE_ENHANCED_BEAT, LATENT_TOGGLE_OVERLAY
-    };
+    // ---- QPlayer 全屏歌词流体参数 ----
+    private static final int FLUID_SATURATION_SLIDER = 0;
+    private static final String[] BACKGROUND_MODE_NAMES = {"QPlayer 流体", "模糊封面"};
 
-    private static final int LATENT_DITHER_SPEED = 0;
-    private static final int LATENT_DITHER_AUDIO_SPEED = 1;
-    private static final int LATENT_DITHER_SIZE = 2;
-    private static final int LATENT_DITHER_OPACITY = 3;
-    private static final int LATENT_MESH_SPEED = 4;
-    private static final int LATENT_MESH_AUDIO_SPEED = 5;
-    private static final int LATENT_MESH_DISTORTION = 6;
-    private static final int LATENT_MESH_SWIRL = 7;
-    private static final int LATENT_OVERLAY_OPACITY = 8;
-    private static final String[] LATENT_DISPLAY_NAMES = {"像素", "流体", "混合"};
-    private static final String[] LATENT_COLOR_NAMES = {"封面与主题", "仅封面取色"};
-    private static final String[] LATENT_SLIDER_LABELS = {
-            "基础速度", "音频响应最大速度", "像素尺寸", "像素层透明度",
-            "基础速度", "音频响应最大速度", "流体扭曲", "流体旋涡", "叠色透明度"
-    };
-    private static final float[] LATENT_SLIDER_MIN = {
-            0f, 0f, 0.5f, 0f, 0f, 0f, 0f, 0f, 0f
-    };
-    private static final float[] LATENT_SLIDER_MAX = {
-            2f, 2f, 8f, 1f, 2f, 2f, 2f, 1f, 1f
-    };
-
+    private static final String[] FLUID_STYLE_NAMES = {"Pixi 四层", "AMLL 网格", "Classic warp"};
+    private static final String[] FLUID_SLIDER_LABELS = {"流体饱和度"};
+    private static final float[] FLUID_SLIDER_MIN = {0f};
+    private static final float[] FLUID_SLIDER_MAX = {200f};
     private static final String[] TILT_COLOR_NAMES = {"默认", "互换", "全强调", "全主色"};
 
     /** 第 0 档是「左侧歌曲封面 + 右侧登录账号头像」，未登录时右侧自动退回封面。 */
@@ -293,81 +269,21 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         HudConfig.save();
     }
 
-    private static String latentToggleLabel(int id) {
-        switch (id) {
-            case LATENT_TOGGLE_DYNAMIC_ONLY: return "仅播放时动态";
-            case LATENT_TOGGLE_ENHANCED_BEAT: return "增强节拍响应";
-            case LATENT_TOGGLE_OVERLAY: return "可读性叠色";
-            default: return "";
+    private static float fluidSliderValue(int index) {
+        return index == FLUID_SATURATION_SLIDER
+                ? HudConfig.fullscreenLyricFluidSaturation : 0f;
+    }
+
+    private static void setFluidSliderValue(int index, float value) {
+        if (index == FLUID_SATURATION_SLIDER) {
+            HudConfig.fullscreenLyricFluidSaturation = Math.max(0f, Math.min(200f, value));
         }
     }
 
-    private static String latentToggleValue(int id) {
-        switch (id) {
-            case LATENT_TOGGLE_DYNAMIC_ONLY:
-                return HudConfig.latentDynamicOnlyInPlayer ? "开" : "关";
-            case LATENT_TOGGLE_ENHANCED_BEAT:
-                return HudConfig.latentEnhancedBeatResponse ? "开" : "关";
-            case LATENT_TOGGLE_OVERLAY:
-                return HudConfig.latentOverlayEnabled ? "开" : "关";
-            default:
-                return "";
-        }
+    private static String fluidSliderText(int index, float value) {
+        return index == FLUID_SATURATION_SLIDER
+                ? Math.round(value) + "%" : String.format("%.2f", value);
     }
-
-    private static void cycleLatentToggle(int id) {
-        switch (id) {
-            case LATENT_TOGGLE_DYNAMIC_ONLY:
-                HudConfig.latentDynamicOnlyInPlayer = !HudConfig.latentDynamicOnlyInPlayer;
-                break;
-            case LATENT_TOGGLE_ENHANCED_BEAT:
-                HudConfig.latentEnhancedBeatResponse = !HudConfig.latentEnhancedBeatResponse;
-                break;
-            case LATENT_TOGGLE_OVERLAY:
-                HudConfig.latentOverlayEnabled = !HudConfig.latentOverlayEnabled;
-                break;
-            default:
-                return;
-        }
-        HudConfig.save();
-    }
-
-    private static float latentSliderValue(int index) {
-        switch (index) {
-            case LATENT_DITHER_SPEED: return HudConfig.latentDitheringSpeed;
-            case LATENT_DITHER_AUDIO_SPEED: return HudConfig.latentDitheringAudioSpeed;
-            case LATENT_DITHER_SIZE: return HudConfig.latentDitheringSize;
-            case LATENT_DITHER_OPACITY: return HudConfig.latentDitheringOpacity;
-            case LATENT_MESH_SPEED: return HudConfig.latentMeshSpeed;
-            case LATENT_MESH_AUDIO_SPEED: return HudConfig.latentMeshAudioSpeed;
-            case LATENT_MESH_DISTORTION: return HudConfig.latentMeshDistortion;
-            case LATENT_MESH_SWIRL: return HudConfig.latentMeshSwirl;
-            case LATENT_OVERLAY_OPACITY: return HudConfig.latentOverlayOpacity;
-            default: return 0f;
-        }
-    }
-
-    private static void setLatentSliderValue(int index, float value) {
-        switch (index) {
-            case LATENT_DITHER_SPEED: HudConfig.latentDitheringSpeed = value; break;
-            case LATENT_DITHER_AUDIO_SPEED: HudConfig.latentDitheringAudioSpeed = value; break;
-            case LATENT_DITHER_SIZE: HudConfig.latentDitheringSize = value; break;
-            case LATENT_DITHER_OPACITY: HudConfig.latentDitheringOpacity = value; break;
-            case LATENT_MESH_SPEED: HudConfig.latentMeshSpeed = value; break;
-            case LATENT_MESH_AUDIO_SPEED: HudConfig.latentMeshAudioSpeed = value; break;
-            case LATENT_MESH_DISTORTION: HudConfig.latentMeshDistortion = value; break;
-            case LATENT_MESH_SWIRL: HudConfig.latentMeshSwirl = value; break;
-            case LATENT_OVERLAY_OPACITY: HudConfig.latentOverlayOpacity = value; break;
-            default: break;
-        }
-    }
-
-    private static String latentSliderText(int index, float value) {
-        return index == LATENT_DITHER_OPACITY || index == LATENT_OVERLAY_OPACITY
-                ? Math.round(value * 100f) + "%"
-                : String.format("%.2f", value);
-    }
-
     private static final double MARGIN = 12.0;
     private static final double BUTTON_SIZE = 24.0;
     private static final double PANEL_WIDTH = 178.0;
@@ -494,7 +410,7 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private int dragKind = -1;
     private int dragIndex = -1;
 
-    /** 「隐现」完整参数超出可用高度时，面板内部滚动。 */
+    /** 流体背景与歌词参数超出可用高度时，面板内部滚动。 */
     private double scrollOffset;
     private double scrollTarget;
 
@@ -749,30 +665,15 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         targetCount = 0;
         // ---- 1) 先按显示顺序把行收集起来 ----
         addRow(KIND_STYLE, 0, PICK_ROW_HEIGHT);
-        addRow(KIND_BACKGROUND, 0, PICK_ROW_HEIGHT);
-        addRow(KIND_THEME_SOURCE, 0, PICK_ROW_HEIGHT);
-        if (FullscreenLyricBackground.current() == FullscreenLyricBackground.LATENT) {
+        addRow(KIND_BACKGROUND_TYPE, 0, PICK_ROW_HEIGHT);
+        if (HudConfig.fullscreenLyricBackgroundMode == 0) {
+            addRow(KIND_BACKGROUND, 0, PICK_ROW_HEIGHT);
+            addRow(KIND_THEME_SOURCE, 0, PICK_ROW_HEIGHT);
             addRow(KIND_SECTION, 3, SECTION_HEIGHT);
-            addRow(KIND_LATENT_MODE, 0, PICK_ROW_HEIGHT);
-            addRow(KIND_LATENT_COLOR, 0, PICK_ROW_HEIGHT);
-            for (int i = 0; i < LATENT_TOGGLES.length; i++) {
-                addRow(KIND_LATENT_TOGGLE, i, PICK_ROW_HEIGHT);
-            }
-            if (HudConfig.latentOverlayEnabled) {
-                addRow(KIND_LATENT_SLIDER, LATENT_OVERLAY_OPACITY, ROW_HEIGHT);
-            }
-            if (HudConfig.latentBackgroundDisplayMode != 1) {
-                addRow(KIND_SECTION, 4, SECTION_HEIGHT);
-                for (int i = LATENT_DITHER_SPEED; i <= LATENT_DITHER_OPACITY; i++) {
-                    addRow(KIND_LATENT_SLIDER, i, ROW_HEIGHT);
-                }
-            }
-            if (HudConfig.latentBackgroundDisplayMode != 0) {
-                addRow(KIND_SECTION, 5, SECTION_HEIGHT);
-                for (int i = LATENT_MESH_SPEED; i <= LATENT_MESH_SWIRL; i++) {
-                    addRow(KIND_LATENT_SLIDER, i, ROW_HEIGHT);
-                }
-            }
+            addRow(KIND_FLUID_STYLE, 0, PICK_ROW_HEIGHT);
+            addRow(KIND_FLUID_SLIDER, FLUID_SATURATION_SLIDER, ROW_HEIGHT);
+        } else {
+            addRow(KIND_THEME_SOURCE, 0, PICK_ROW_HEIGHT);
         }
         for (int i = 0; i < SETTINGS.length; i++) {
             addRow(KIND_SLIDER, i, ROW_HEIGHT);
@@ -907,6 +808,13 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
 
     private void handleRowClick(Row row, double mouseX, int mouseButton) {
         boolean right = mouseButton == 1;
+        if (row.kind == KIND_BACKGROUND_TYPE) {
+            int nextMode = HudConfig.fullscreenLyricBackgroundMode + (right ? -1 : 1);
+            HudConfig.fullscreenLyricBackgroundMode = ((nextMode % BACKGROUND_MODE_NAMES.length)
+                    + BACKGROUND_MODE_NAMES.length) % BACKGROUND_MODE_NAMES.length;
+            HudConfig.save();
+            return;
+        }
         if (row.kind == KIND_STYLE) {
             // 右键往回退一档：十种样式只能单向轮换的话，想回上一种得点九下。
             if (right) FullscreenLyricStyle.previous();
@@ -914,8 +822,8 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             return;
         }
         if (row.kind == KIND_BACKGROUND) {
-            if (right) FullscreenLyricBackground.previous();
-            else FullscreenLyricBackground.next();
+            HudConfig.fullscreenLyricFluidStatic = !HudConfig.fullscreenLyricFluidStatic;
+            HudConfig.save();
             return;
         }
         if (row.kind == KIND_THEME_SOURCE) {
@@ -997,29 +905,18 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             }
             return;
         }
-        if (row.kind == KIND_LATENT_MODE) {
-            int next = HudConfig.latentBackgroundDisplayMode + (right ? -1 : 1);
-            HudConfig.latentBackgroundDisplayMode = ((next % 3) + 3) % 3;
+        if (row.kind == KIND_FLUID_STYLE) {
+            int next = HudConfig.fullscreenLyricFluidStyle + (right ? -1 : 1);
+            HudConfig.fullscreenLyricFluidStyle = ((next % FLUID_STYLE_NAMES.length)
+                    + FLUID_STYLE_NAMES.length) % FLUID_STYLE_NAMES.length;
             HudConfig.save();
-            return;
-        }
-        if (row.kind == KIND_LATENT_COLOR) {
-            int next = HudConfig.latentBackgroundColorSource + (right ? -1 : 1);
-            HudConfig.latentBackgroundColorSource = ((next % 2) + 2) % 2;
-            HudConfig.save();
-            return;
-        }
-        if (row.kind == KIND_LATENT_TOGGLE) {
-            if (row.index >= 0 && row.index < LATENT_TOGGLES.length) {
-                cycleLatentToggle(LATENT_TOGGLES[row.index]);
-            }
             return;
         }
         if (right) {
             return;
         }
         if (row.kind == KIND_SLIDER || row.kind == KIND_BEATS || row.kind == KIND_HSB
-                || row.kind == KIND_STYLE_SLIDER || row.kind == KIND_LATENT_SLIDER) {
+                || row.kind == KIND_STYLE_SLIDER || row.kind == KIND_FLUID_SLIDER) {
             dragKind = row.kind;
             dragIndex = row.index;
             applyDrag(mouseX, rowLeft(row));
@@ -1072,12 +969,12 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             pendingSave = true;
             return;
         }
-        if (dragKind == KIND_LATENT_SLIDER) {
-            if (dragIndex < 0 || dragIndex >= LATENT_SLIDER_LABELS.length) return;
+        if (dragKind == KIND_FLUID_SLIDER) {
+            if (dragIndex < 0 || dragIndex >= FLUID_SLIDER_LABELS.length) return;
             double fraction = fractionAt(mouseX, left, trackWidth());
-            float value = (float) (LATENT_SLIDER_MIN[dragIndex]
-                    + (LATENT_SLIDER_MAX[dragIndex] - LATENT_SLIDER_MIN[dragIndex]) * fraction);
-            setLatentSliderValue(dragIndex, value);
+            float value = (float) (FLUID_SLIDER_MIN[dragIndex]
+                    + (FLUID_SLIDER_MAX[dragIndex] - FLUID_SLIDER_MIN[dragIndex]) * fraction);
+            setFluidSliderValue(dragIndex, value);
             pendingSave = true;
             return;
         }
@@ -1249,13 +1146,21 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     }
 
     private void renderRow(Row row, double mouseX, double mouseY, float panelAlpha) {
+        if (row.kind == KIND_BACKGROUND_TYPE) {
+            int mode = Math.max(0, Math.min(BACKGROUND_MODE_NAMES.length - 1,
+                    HudConfig.fullscreenLyricBackgroundMode));
+            renderPickRow(row, "背景类型", BACKGROUND_MODE_NAMES[mode],
+                    mouseX, mouseY, panelAlpha);
+            return;
+        }
         if (row.kind == KIND_STYLE) {
             renderPickRow(row, "歌词样式", FullscreenLyricStyle.current().getDisplayName(),
                     mouseX, mouseY, panelAlpha);
             return;
         }
         if (row.kind == KIND_BACKGROUND) {
-            renderPickRow(row, "歌词背景", FullscreenLyricBackground.current().getDisplayName(),
+            renderPickRow(row, "流体模式",
+                    HudConfig.fullscreenLyricFluidStatic ? "静态" : "动态",
                     mouseX, mouseY, panelAlpha);
             return;
         }
@@ -1283,30 +1188,15 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             }
             return;
         }
-        if (row.kind == KIND_LATENT_MODE) {
-            int mode = Math.max(0, Math.min(LATENT_DISPLAY_NAMES.length - 1,
-                    HudConfig.latentBackgroundDisplayMode));
-            renderPickRow(row, "显示图层", LATENT_DISPLAY_NAMES[mode],
+        if (row.kind == KIND_FLUID_STYLE) {
+            int style = Math.max(0, Math.min(FLUID_STYLE_NAMES.length - 1,
+                    HudConfig.fullscreenLyricFluidStyle));
+            renderPickRow(row, "流体算法", FLUID_STYLE_NAMES[style],
                     mouseX, mouseY, panelAlpha);
             return;
         }
-        if (row.kind == KIND_LATENT_COLOR) {
-            int source = Math.max(0, Math.min(LATENT_COLOR_NAMES.length - 1,
-                    HudConfig.latentBackgroundColorSource));
-            renderPickRow(row, "颜色来源", LATENT_COLOR_NAMES[source],
-                    mouseX, mouseY, panelAlpha);
-            return;
-        }
-        if (row.kind == KIND_LATENT_TOGGLE) {
-            if (row.index >= 0 && row.index < LATENT_TOGGLES.length) {
-                int id = LATENT_TOGGLES[row.index];
-                renderPickRow(row, latentToggleLabel(id), latentToggleValue(id),
-                        mouseX, mouseY, panelAlpha);
-            }
-            return;
-        }
-        if (row.kind == KIND_LATENT_SLIDER) {
-            renderLatentSettingRow(row, mouseX, mouseY, panelAlpha);
+        if (row.kind == KIND_FLUID_SLIDER) {
+            renderFluidSettingRow(row, mouseX, mouseY, panelAlpha);
             return;
         }
         if (row.kind == KIND_SECTION) {
@@ -1316,10 +1206,6 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             } else if (row.index == 2) {
                 title = "歌词同步";
             } else if (row.index == 3) {
-                title = "隐现背景";
-            } else if (row.index == 4) {
-                title = "像素背景";
-            } else if (row.index == 5) {
                 title = "流体背景";
             } else {
                 title = "背景配色";
@@ -1451,18 +1337,18 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         renderTrack(left, trackY, width, fraction, hover, panelAlpha);
     }
 
-    private void renderLatentSettingRow(Row row, double mouseX, double mouseY, float panelAlpha) {
-        if (row.index < 0 || row.index >= LATENT_SLIDER_LABELS.length) return;
+    private void renderFluidSettingRow(Row row, double mouseX, double mouseY, float panelAlpha) {
+        if (row.index < 0 || row.index >= FLUID_SLIDER_LABELS.length) return;
         double left = rowLeft(row);
         double width = trackWidth();
         double trackY = row.y + 16;
-        float value = latentSliderValue(row.index);
-        float min = LATENT_SLIDER_MIN[row.index];
-        float max = LATENT_SLIDER_MAX[row.index];
+        float value = fluidSliderValue(row.index);
+        float min = FLUID_SLIDER_MIN[row.index];
+        float max = FLUID_SLIDER_MAX[row.index];
 
-        FontManager.pf12bold.drawString(LATENT_SLIDER_LABELS[row.index], left, row.y,
+        FontManager.pf12bold.drawString(FLUID_SLIDER_LABELS[row.index], left, row.y,
                 hexColor(1f, 1f, 1f, panelAlpha * .82f));
-        String valueText = latentSliderText(row.index, value);
+        String valueText = fluidSliderText(row.index, value);
         FontManager.pf12bold.drawString(valueText,
                 left + width - FontManager.pf12bold.getStringWidthD(valueText), row.y,
                 hexColor(1f, 1f, 1f, panelAlpha * .62f));

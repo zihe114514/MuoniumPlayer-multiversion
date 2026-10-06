@@ -54,3 +54,113 @@ tasks.register('buildAll') {
     description = '构建 Fabric 与 NeoForge 两个 jar，并复制到仓库根的 dist/'
     dependsOn ':fabric:build', ':neoforge:build', 'collectDist'
 }
+
+// ==================== Skija 原生库伴生包（枪弹分离里的那发「弹」）====================
+// 主包只内置 windows-x64：五个平台全塞进一个 jar 会从 58 MB 涨到约 121 MB，
+// 越过 GitHub release 的 100 MB 单文件上限，还让占绝大多数的 Windows 用户陪着多下一半体积。
+// 所以非 Windows 平台的原生库单独出包，用户把 zip 解压到 config/muonium/native/skija/ 就行，
+// 模组侧的发现·校验·加载逻辑在 SkijaNativeCatalog / SkijaNatives。
+//
+// zip 内部布局就是目录契约，不要改：
+//   <os>/<arch>/{libskija.so|skija.dll|libskija.dylib, skija.version[, icudtl.dat]}
+//   LICENSE-Skija.txt / LICENSE-Skia.txt / NOTICE-Skija.txt / README.txt
+// skija.version 必须与 libskija 放在同一层：模组拿它当「这份库是不是给我这一版用的」的硬判据
+// （JNI 符号写死类名，版本错配会炸在某个具体方法上，症状是「库加载成功了界面还是不出来」）。
+def skijaVersion = '0.143.17'
+// 六个平台全出。安卓那份 2026-10-05 真机复测通过：渲染器用 MobileGlues 并关闭 ANGLE 时，
+// Skia 的 GL 互操作完整可用——此前「MobileGlues 装不出上下文」的结论是 ANGLE 报的桌面语义
+// 版本串造成的误判。换 Krypton 包装仍可能弄坏世界贴图，风险写在停用提示与 README 里。
+def skijaCompanionPlatforms = ['linux-x64', 'linux-arm64', 'macos-x64', 'macos-arm64',
+        'android-arm64', 'android-x64']
+
+configurations { skijaCompanion }
+repositories {
+    // 与两个子工程同一套源：repo.maven.apache.org 在本机不可用，走阿里云。
+    maven { url = 'https://maven.aliyun.com/repository/public' }
+}
+dependencies {
+    skijaCompanionPlatforms.each { platform ->
+        skijaCompanion "io.github.humbleui:skija-${platform}:${skijaVersion}"
+    }
+}
+
+def companionOutDir = new File(rootProject.projectDir, '../dist/skija-companion')
+
+tasks.register('packageSkijaCompanion') {
+    group = 'distribution'
+    description = '为非 Windows 平台各出一个可直接解压进 config/muonium/native/skija/ 的 zip'
+
+    def bundle = configurations.skijaCompanion
+    inputs.files(bundle)
+    inputs.property('skijaVersion', skijaVersion)
+    outputs.dir(companionOutDir)
+
+    doLast {
+        companionOutDir.mkdirs()
+        def licenseDir = new File(rootProject.projectDir, 'licenses')
+        bundle.files.each { File jar ->
+            def matcher = (jar.name =~ /^skija-([a-z0-9]+-[a-z0-9]+)-${skijaVersion}\.jar$/)
+            if (!matcher.matches()) {
+                return
+            }
+            String platform = matcher.group(1)          // 例如 linux-arm64
+            String os = platform.substring(0, platform.indexOf('-'))
+            String arch = platform.substring(platform.indexOf('-') + 1)
+            String prefix = "io/github/humbleui/skija/${os}/${arch}/"
+
+            // 说明文本按平台生成：它必须写出本包里那两层真实目录名——
+            // 用户在手机上只能照着名字核对，给一个占位符等于没写。
+            def readme = """Skija 原生库伴生包（MuoniumPlayer）
+
+本包平台：${platform}（Skija ${skijaVersion}）
+
+把本压缩包里的文件夹整个解压到 Minecraft 的 config/muonium/native/skija/ 下面，
+让最终形如：
+    config/muonium/native/skija/${os}/${arch}/libskija.*
+然后回到游戏，约 20 秒内渲染层会自动重试一次，不需要重启。
+
+已经装好 MuoniumPlayer 主模组即可，不需要动 mods/ 目录。
+要不要本包，看模组停用提示第一行：写着「缺 ${platform} 的渲染原生库」就是这个包。
+
+许可：本包内的 libskija 二进制由 Skija（Apache-2.0，见 LICENSE-Skija.txt 与 NOTICE-Skija.txt）
+构建自 Skia（BSD-3-Clause，见 LICENSE-Skia.txt）。请连同这两个许可文本一起保留。
+"""
+            def outFile = new File(companionOutDir,
+                    "muonium-skija-${platform}-${skijaVersion}.zip")
+            def written = []
+            new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(outFile)).withCloseable { zip ->
+                new java.util.zip.ZipFile(jar).withCloseable { source ->
+                    def entries = source.entries().toList()
+                        .findAll { it.name.startsWith(prefix) && !it.directory }
+                        .sort { it.name }
+                    if (entries.isEmpty()) {
+                        throw new GradleException(
+                                "${jar.name} 里找不到 ${prefix} —— Skija 的包结构变了，不能出伴生包")
+                    }
+                    entries.each { entry ->
+                        zip.putNextEntry(new java.util.zip.ZipEntry("${os}/${arch}/" + entry.name.substring(prefix.length())))
+                        source.getInputStream(entry).withCloseable { it.transferTo(zip) }
+                        zip.closeEntry()
+                        written << entry.name.substring(prefix.length())
+                    }
+                }
+                ['LICENSE-Skija.txt', 'LICENSE-Skia.txt', 'NOTICE-Skija.txt'].each { name ->
+                    def file = new File(licenseDir, name)
+                    if (!file.isFile()) {
+                        throw new GradleException("缺少许可文本 ${name}（伴生包必须随附）")
+                    }
+                    zip.putNextEntry(new java.util.zip.ZipEntry(name))
+                    file.withInputStream { it.transferTo(zip) }
+                    zip.closeEntry()
+                }
+                zip.putNextEntry(new java.util.zip.ZipEntry('README.txt'))
+                zip.write(readme.getBytes('UTF-8'))
+                zip.closeEntry()
+            }
+            if (!written.any { it.endsWith('.so') || it.endsWith('.dll') || it.endsWith('.dylib') }) {
+                throw new GradleException("${jar.name} 里没有原生库文件，伴生包不可用")
+            }
+            logger.lifecycle("伴生包 ${outFile.name}：${written.join(', ')}")
+        }
+    }
+}

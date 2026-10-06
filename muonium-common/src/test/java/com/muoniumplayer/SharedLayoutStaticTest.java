@@ -70,6 +70,7 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/core/screens/GuiAnnouncements.java",
             "com/muoniumplayer/core/screens/GuiFfmpegNotice.java",
             "com/muoniumplayer/core/screens/GuiUpdateNotice.java",
+            "com/muoniumplayer/core/screens/RenderLayerNotice.java",
             "com/muoniumplayer/core/screens/TitleMenuAnnouncementButton.java",
             "com/muoniumplayer/core/screens/hud/GuiHudEditor.java",
             "com/muoniumplayer/core/screens/hud/GuiHudEditorPro.java",

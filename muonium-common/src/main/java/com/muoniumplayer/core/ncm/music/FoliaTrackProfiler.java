@@ -57,6 +57,12 @@ final class FoliaTrackProfiler {
             if (mono.length == 0) return null;
             boolean beatModel = hasBeatModel();
             boolean stemModel = hasStemModel();
+            // 三个前置（权重、运行组件、表现模式）任一不满足就静默退回信号处理——
+            // 那种「什么都没发生」正是最难的排查现场，所以这里把快照打出来。
+            if (!beatModel || !stemModel) {
+                System.out.println("[Automix/Folia] 推理未全开（" + FoliaModelManager.inferenceReadiness()
+                        + "），缺的那部分退回信号处理: " + source.getName());
+            }
             inference = InferenceStatus.of(player, source, beatModel, stemModel);
             FoliaTrackProfile profile = new FoliaTrackProfile();
             profile.cacheKey = profileKey;
@@ -241,13 +247,13 @@ final class FoliaTrackProfiler {
 
     private static boolean hasBeatModel() {
         return FoliaModelManager.isInstalled(FoliaModelManager.Kind.BEAT_THIS)
-                && FoliaModelManager.isInstalled(FoliaModelManager.Kind.RUNTIME);
+                && FoliaModelManager.runtimeReady();
     }
 
     private static boolean hasStemModel() {
         return AutomixSettings.isPerformanceModeEnabled()
                 && FoliaModelManager.isInstalled(FoliaModelManager.Kind.HTDEMUCS)
-                && FoliaModelManager.isInstalled(FoliaModelManager.Kind.RUNTIME);
+                && FoliaModelManager.runtimeReady();
     }
 
     private static final class InferenceStatus {
@@ -309,7 +315,7 @@ final class FoliaTrackProfiler {
         String models = (FoliaModelManager.isInstalled(FoliaModelManager.Kind.BEAT_THIS) ? "B" : "-")
                 + (AutomixSettings.isPerformanceModeEnabled()
                 && FoliaModelManager.isInstalled(FoliaModelManager.Kind.HTDEMUCS)
-                && FoliaModelManager.isInstalled(FoliaModelManager.Kind.RUNTIME) ? "S" : "-");
+                && FoliaModelManager.runtimeReady() ? "S" : "-");
         String value=source.getAbsolutePath()+'|'+source.length()+'|'+source.lastModified()+'|'+models;
         long hash=0xcbf29ce484222325L;
         for(int i=0;i<value.length();i++){hash^=value.charAt(i);hash*=0x100000001b3L;}

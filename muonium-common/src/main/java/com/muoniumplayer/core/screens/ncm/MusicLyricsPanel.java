@@ -46,8 +46,7 @@ import java.util.List;
 public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstants {
     static double scrollOffset, scrollTarget;
 
-    float musicBgAlpha = 1.0f;
-    static ITextureObject prevBg = null, prevCover;
+    static ITextureObject prevCover;
     static Music prevMusic = null;
 
     float alpha = 0f;
@@ -91,8 +90,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     /** 左上角「A-Z」逐字特效快捷面板；只影响全屏歌词页的两项配置，实时预览。 */
     private final LyricStyleQuickPanel styleQuickPanel = new LyricStyleQuickPanel();
-    /** 「隐现」背景的音频响应状态；旧模糊封面背景不会触碰它。 */
-    private final LatentLyricBackground latentBackground = new LatentLyricBackground();
+    /** QPlayer 流体背景的音频响应状态；背景不再叠加旧的模糊封面层。 */
+    private final QPlayerFluidLyricBackground fluidLyricBackground = new QPlayerFluidLyricBackground();
     /**
      * 「逐行滚动」的滚动动效：换行用什么弹簧、每行晚多久出发、seek 怎么收尾都在里面。
      * 只有经典样式走它，别的样式各自有自己的一套运动。
@@ -572,6 +571,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     public void onInit() {
+        fluidLyricBackground.reset();
         if (handoffPrewarmed) {
             resetVisibleLyricStatus();
         } else {
@@ -603,6 +603,11 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             line.delayTimer.reset();
             for (LyricLine.Word word : line.words) java.util.Arrays.fill(word.emphasizes, 0);
         }
+    }
+
+    /** Release the native fluid compositor when the panel is removed from the screen. */
+    public void dispose() {
+        fluidLyricBackground.dispose();
     }
 
     public void close() {
@@ -1838,85 +1843,26 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         return LyricsPanelGeometry.formatDuration(totalMillis);
     }
 
-    private void renderBackground(double posX, double posY, double width, double height, float alpha, CloudMusic.PlaybackSnapshot snapshot) {
+    private void renderBackground(double posX, double posY, double width, double height,
+                                  float alpha, CloudMusic.PlaybackSnapshot snapshot) {
         if (alpha <= .004f) return;
         Music current = snapshot.music;
 
-        // 新背景是可选的；着色器不可用或用户选择旧模式时，原模糊封面路径完全保留。
-        if (FullscreenLyricBackground.current() == FullscreenLyricBackground.LATENT
-                && latentBackground.render(posX, posY, width, height, alpha,
-                        current == null ? null : current.getCoverPalette())) {
-            if (HudConfig.latentOverlayEnabled && HudConfig.latentOverlayOpacity > .001f) {
-                int overlayColor = NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND);
-                Rect.draw(posX, posY, width, height,
-                        reAlpha(overlayColor, alpha * HudConfig.latentOverlayOpacity));
-            }
-            return;
-        }
-
-        TextureManager textureManager = TextureManager.getInstance();
-        // 镜像中且外部播放器给了封面时，这张底由那张图现算（CloudMusic 那一处统一分叉）。
-        Location musicCoverBlurred = CloudMusic.preferredBlurredCoverLocation(current);
-        ITextureObject texBg = current == null ? null : textureManager.getTexture(musicCoverBlurred);
-
+        // The cover transition state also feeds the foreground album-art handoff.
+        // Keep it independent from the backdrop implementation being replaced.
         if (current != null && current != prevMusic) {
-
-            if (prevMusic != null) musicBgAlpha = 0.0f;
-
-            prevBg = prevMusic == null ? null : textureManager.getTexture(prevMusic.getBlurredCoverLocation());
-            prevCover = prevMusic == null ? null : textureManager.getTexture(prevMusic.getCoverLocation());
+            if (prevMusic != null) coverAlpha = 0.0f;
+            TextureManager textures = TextureManager.getInstance();
+            prevCover = prevMusic == null ? null
+                    : textures.getTexture(prevMusic.getCoverLocation());
             prevMusic = current;
-            coverAlpha = 0.0f;
         }
 
-        // 模糊封面刻意超大，使裁剪在
-        //播放器缩放时保持稳定。不要仅依赖父模板：辅助 FBO/着色器
-        //过程可能暂时禁用它。一个投影 scissor 是硬边界，
-        //使这个超大纹理在每个缩放下都保持在实时播放器矩形内。
-        StencilClipManager.restoreActiveClip();
-        ScissorClipManager.begin(posX, posY, width, height);
-        try {
-            if (texBg != null || prevBg != null) {
-                api.getGLStateManager().pushMatrix();
-                try {
-                    double bgSize = Math.max(width, height);
-
-                    boolean skipPreviousCover = texBg != null
-                            && TransitionPerformanceBudget.skipLyricBackgroundCrossfade();
-                    if (skipPreviousCover) musicBgAlpha = 1.0f;
-                    if (prevBg != null && musicBgAlpha < 0.99f && !skipPreviousCover) {
-                        int glTextureId = prevBg.getGlTextureId();
-                        api.getGLStateManager().bindTexture(glTextureId);
-                        prevBg.linearFilter();
-                        api.getGLStateManager().color(1, 1, 1, alpha);
-                        Image.draw(posX + width * .5 - bgSize * .5, posY + height * .5 - bgSize * .5,
-                                bgSize, bgSize, Image.Type.NoColor);
-                    }
-
-                    if (texBg != null) {
-                        this.musicBgAlpha = Interpolations.interpolate(this.musicBgAlpha, 1.0f,
-                                prevBg == null ? 0.15f : 0.05f);
-                        api.getGLStateManager().bindTexture(texBg.getGlTextureId());
-                        texBg.linearFilter();
-                        api.getGLStateManager().color(1, 1, 1, alpha * this.musicBgAlpha);
-                        Image.draw(posX + width * .5 - bgSize * .5, posY + height * .5 - bgSize * .5,
-                                bgSize, bgSize, Image.Type.NoColor);
-                    }
-                } finally {
-                    api.getGLStateManager().popMatrix();
-                }
-            }
-
-            Rect.draw(posX, posY, width, height, hexColor(0, 0, 0, alpha * .35f));
-        } finally {
-            ScissorClipManager.end();
-            // 图像渲染改变原始 GL 状态；外层圆角播放器裁剪必须
-            //对之后渲染的控件和歌词层保持有效。
-            StencilClipManager.restoreActiveClip();
+        boolean rendered = fluidLyricBackground.render(posX, posY, width, height, alpha, current);
+        if (!rendered) {
+            Rect.draw(posX, posY, width, height, reAlpha(0xFF0A0A0E, alpha));
         }
     }
-
-
     /**
      * 横向把图层 alpha 从 1 渐变到 0，做出填涂前沿的羽化。
      *

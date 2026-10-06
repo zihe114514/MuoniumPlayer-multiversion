@@ -43,7 +43,45 @@ issue `neoforged/NeoForge#3518` 的答复就是升级插件（NeoGradle 对应 7
 
 五份工程共用：`mod_version=1.7.0`、`maven_group=com.muoniumplayer`、
 `archives_base_name=MuoniumPlayer`、Skija `0.143.17`（Fabric 侧 `include` 进 jar，
-Forge/NeoForge 侧用 shadow 合并；原生库平台由 `skija_natives` 控制，发布时需要改成四平台全打）。
+Forge/NeoForge 侧用 shadow 合并；原生库平台由 `skija_natives` 控制，主包只内置 windows-x64）。
+
+**Skija 原生库伴生包（非 Windows 平台）**：Linux / macOS / Android 用户把
+`dist/skija-companion/muonium-skija-<platform>-<skija版本>.zip`（各版本根目录
+`gradlew packageSkijaCompanion` 产出，带许可文本；android-arm64 是真机实测过的那档）
+解压到 `config/muonium/native/skija/` 即可，渲染层约 20 秒内自动重试，不用重启。
+**音频输出同样自带兜底**：安卓 JRE 的 `javax.sound.sampled` 没有任何 Mixer（打包的 JSyn
+只有 JavaSound 一个出厂设备，PortAudio 回退在打包时被裁掉），所以 `AudioPlayer` 在
+JavaSound 拿不到输出设备时自动把 JSyn 的输出换成自带的 OpenAL 流式设备
+（`OpenALAudioDevice`，自开独立 ALC 上下文，不碰游戏自己的声音引擎）——
+FCL 这类不带音频桥的启动器上也能放歌；启动器提供了 MioJSound（Zalith v2 自带）时
+JavaSound 有 Mixer，照走原路不抢设备。
+Android 的 linker namespace 不允许从外置存储 dlopen，模组会自动把库搬到 libjvm 同树再加载
+（`SkijaNativeCatalog.stageRoots`，搬运幂等）。**安卓渲染器必须选 MobileGlues（MG）并关闭
+ANGLE**——2026-10-05 真机复测，这个组合下 Skia 的 GL 互操作完整可用；此前「MobileGlues
+装不出上下文」的结论是 ANGLE 报的桌面语义版本串造成的误判。换 Krypton 包装仍可能弄坏世界
+贴图，这条风险写在停用提示里。停用时的原版 GUI 提示是 `RenderLayerNotice`（走原版 GUI 是因为
+它报告的正是 Skia 起不来这件事）。非 Windows 用户报障时先看启动日志里
+`[MuoniumPlayer/runtime]` 那两行运行时身份。
+
+**Automix（Folia）推理在安卓上改走 ONNX Runtime**：Python 运行组件在手机上没有可用形态，
+所以只有 Android 换引擎——桌面继续走久经考验的 Python 子进程（`preferOnnxInference()`
+恒 false），两端的模型与数学契约不变。安卓侧 `FoliaOnnx` 用反射装载运行包里的
+`classes.jar`（onnxruntime-android AAR 抽包），两个 native 库先暂存到 libjvm 同树或应用
+私有缓存再设给 `onnxruntime.native.path`（同受安卓 linker namespace 限制）；
+Beat This! 的 mel 前端与 HTDemucs 分段分离整段搬进 Java（`FoliaMelFrontend` /
+`FoliaBeatOnnx` / `FoliaStemOnnx`），输出与 Python 契约逐字段对齐，mel 前端与 numpy
+参考实现对拍逐位一致。运行时包由 `tools/build-folia-onnx-runtime.ps1` 产出：
+`dist/folia-onnx/folia-onnx-android-arm64.zip`（≈12 MB，ORT 1.29.0），大小与 SHA-256 钉在
+`FoliaModelManager.ANDROID_ZIP_*`——运行时 zip 托管在**更新清单仓库**
+（`MuoniumPlayer-updates`，格式与模型不同所以没放 folia-models），客户端经
+`MIRRORS` 后三路（ghfast 代理 / raw / jsdelivr，与 `UpdateChecker` 同款三源）下载；
+两个 `.onnx` 模型仍走前几路 folia-models。重出运行包时两处一起更新：传 zip 到
+对应仓库，改 `ANDROID_ZIP_*` 常量。
+ORT 版本下限是 1.21（1.20 的引擎加载不了 HTDemucs 导出：`/dft_istft` 的 DFT 算子在旧版
+形状推断里报 `is_onesided and inverse`），这里与 Python 运行组件里的 onnxruntime 对齐到
+1.29.0。桌面不装 ONNX 运行时的原因除了「Python 够用」，还有一条硬伤：ORT 1.21+ 的
+Windows 原生库用新 MSVC 工具链编译，部分 JVM 自带旧 VC++ 运行库时会 DllMain 失败
+（上游 onnxruntime#24287），不该把这类只影响桌面的故障引进来。
 
 产物命名：`MuoniumPlayer-<mc版本>-<加载器>-<mod版本>.jar`，
 例如 `MuoniumPlayer-1.21.11-neoforge-1.7.0.jar` / `MuoniumPlayer-1.20.1-forge-1.7.0.jar`。

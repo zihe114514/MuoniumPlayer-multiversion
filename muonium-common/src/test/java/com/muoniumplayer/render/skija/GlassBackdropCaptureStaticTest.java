@@ -25,5 +25,7 @@ class GlassBackdropCaptureStaticTest {
                 "Minecraft's read-buffer state must be restored after the blit");
         assertTrue(source.contains("GL11.glDrawBuffer(previousDrawBuffer)"),
                 "Minecraft's draw-buffer state must be restored after the blit");
+        assertTrue(source.contains("screenVisible != lastCaptureIncludedScreen"),
+                "world/Screen transitions must refresh immediately rather than showing a stale game-only refraction");
     }
 }

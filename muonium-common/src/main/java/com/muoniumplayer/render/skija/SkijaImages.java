@@ -150,6 +150,11 @@ public final class SkijaImages {
         return size == null ? null : wrap(glId, size[0], size[1]);
     }
 
+    /** Image view for a RuntimeEffect child shader; ownership remains with the texture manager. */
+    public static Image wrapForShader(int glId) {
+        return wrap(glId);
+    }
+
     /** 纹理被删除或重新分配时调用，丢掉所有指向这个 id 的视图。 */
     public static void invalidate(int glId) {
         if (CACHE.isEmpty()) {

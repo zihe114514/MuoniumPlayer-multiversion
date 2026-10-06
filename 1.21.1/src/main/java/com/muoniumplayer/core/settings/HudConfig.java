@@ -26,8 +26,12 @@ public final class HudConfig {
     /** 全屏歌词样式索引上限,与 {@code FullscreenLyricStyle} 的数量保持一致。 */
     public static final int FULLSCREEN_LYRIC_STYLE_MAX = 10;
 
-    /** 全屏歌词背景索引上限，与 {@code FullscreenLyricBackground} 的数量保持一致。 */
-    public static final int FULLSCREEN_LYRIC_BACKGROUND_MAX = 1;
+
+
+    /** 全屏歌词背景类型：0 QPlayer 流体，1 模糊封面。 */
+
+    public static final int FULLSCREEN_LYRIC_BACKGROUND_MODE_MAX = 1;
+
 
     /** 主题颜色来源索引上限，与 {@code ThemeColorSource} 的数量保持一致。 */
     public static final int THEME_COLOR_SOURCE_MAX = 1;
@@ -109,31 +113,15 @@ public final class HudConfig {
      * 越界时渲染层退回经典样式。</p>
      */
     public static int fullscreenLyricStyle = 0;
+    /** 全屏歌词背景类型：0 QPlayer 流体，1 传统模糊封面。 */
+    public static int fullscreenLyricBackgroundMode = 0;
 
-    /**
-     * 全屏歌词页的背景索引。{@code 0} 是原有的模糊封面，{@code 1} 是「隐现」shader 背景。
-     * 旧配置没有这个字段时默认仍然是模糊封面。
-     */
-    public static int fullscreenLyricBackground = 0;
-
-    /**
-     * 「隐现」参数组。默认值直接对齐 本项目 的 DEFAULT_LATENT_BACKGROUND_TUNING，
-     * 以便旧配置升级后保持原版的细腻度与节拍响应。
-     */
-    public static int latentBackgroundDisplayMode = 2; // 0 像素，1 流体，2 混合
-    public static int latentBackgroundColorSource = 0; // 0 封面与主题，1 仅封面取色
-    public static boolean latentDynamicOnlyInPlayer = true;
-    public static boolean latentEnhancedBeatResponse = true;
-    public static float latentDitheringSpeed = 0.10f;
-    public static float latentDitheringAudioSpeed = 1.20f;
-    public static float latentDitheringSize = 2.50f;
-    public static float latentDitheringOpacity = 0.55f;
-    public static float latentMeshSpeed = 0.30f;
-    public static float latentMeshAudioSpeed = 2.00f;
-    public static float latentMeshDistortion = 0.80f;
-    public static float latentMeshSwirl = 0.10f;
-    public static boolean latentOverlayEnabled = true;
-    public static float latentOverlayOpacity = 0.35f;
+    /** QPlayer 全屏歌词流体算法：0 PixiRenderer、1 AMLL MeshGradient、2 Classic。 */
+    public static int fullscreenLyricFluidStyle = 0;
+    /** QPlayer 全屏歌词流体饱和度，100 为原始值。 */
+    public static float fullscreenLyricFluidSaturation = 100.0f;
+    /** QPlayer 的省电静态背景模式；默认保持完整动态与音频响应。 */
+    public static boolean fullscreenLyricFluidStatic = false;
 
     /** 主题颜色来源。0 保留用户当前主题预设，1 使用当前歌曲封面自动配色。 */
     public static int themeColorSource = 0;
@@ -336,6 +324,12 @@ public final class HudConfig {
     /** HUD presentation: 0 = full-width bottom spectrum (default), 1 = split wings. */
     public static int spectrumHudStyle = 0;
     public static boolean spectrumInPlayer = true;
+    /** Fullscreen lyric-player style: 0 = denser full-width bars, 1 = adapted edge-to-edge split ribbon. */
+    public static int spectrumFullscreenStyle = 0;
+    /** HUD full-width spectrum bar preset: 0=64, 1=96, 2=128, 3=160, 4=192, 5=custom. */
+    public static int spectrumBarCountPreset = 0;
+    /** Custom HUD bar count used only when spectrumBarCountPreset is 5. */
+    public static int spectrumCustomBarCount = 128;
     /** 0 follows the current player theme, 1 derives a restrained palette from the current cover. */
     public static int spectrumColorSource = 0;
     public static float spectrumOpacity = .58f;
@@ -592,22 +586,10 @@ public final class HudConfig {
         lyricGlowSpread = 1.3181034f;
         fullscreenGlowStrength = 0.278481f;
         fullscreenLyricStyle = 0;
-        fullscreenLyricBackground = 0;
-
-        latentBackgroundDisplayMode = 2;
-        latentBackgroundColorSource = 0;
-        latentDynamicOnlyInPlayer = true;
-        latentEnhancedBeatResponse = true;
-        latentDitheringSpeed = 0.10f;
-        latentDitheringAudioSpeed = 1.20f;
-        latentDitheringSize = 2.50f;
-        latentDitheringOpacity = 0.55f;
-        latentMeshSpeed = 0.30f;
-        latentMeshAudioSpeed = 2.00f;
-        latentMeshDistortion = 0.80f;
-        latentMeshSwirl = 0.10f;
-        latentOverlayEnabled = true;
-        latentOverlayOpacity = 0.35f;
+        fullscreenLyricBackgroundMode = 0;
+        fullscreenLyricFluidStyle = 0;
+        fullscreenLyricFluidSaturation = 100.0f;
+        fullscreenLyricFluidStatic = false;
         themeColorSource = 0;
         osdLyricStyle = 1;
         blossomBackdropBlur = 1.00f;
@@ -729,35 +711,16 @@ public final class HudConfig {
             fullscreenGlowStrength = clamp01(getFloat(o, "fullscreenGlowStrength", fullscreenGlowStrength));
             fullscreenLyricStyle = clampInt(getInt(o, "fullscreenLyricStyle", fullscreenLyricStyle), 0,
                     FULLSCREEN_LYRIC_STYLE_MAX);
-            fullscreenLyricBackground = clampInt(
-                    getInt(o, "fullscreenLyricBackground", fullscreenLyricBackground), 0,
-                    FULLSCREEN_LYRIC_BACKGROUND_MAX);
-
-            latentBackgroundDisplayMode = clampInt(getInt(o, "latentBackgroundDisplayMode",
-                    latentBackgroundDisplayMode), 0, 2);
-            latentBackgroundColorSource = clampInt(getInt(o, "latentBackgroundColorSource",
-                    latentBackgroundColorSource), 0, 1);
-            latentDynamicOnlyInPlayer = getBoolean(o, "latentDynamicOnlyInPlayer",
-                    latentDynamicOnlyInPlayer);
-            latentEnhancedBeatResponse = getBoolean(o, "latentEnhancedBeatResponse",
-                    latentEnhancedBeatResponse);
-            latentDitheringSpeed = clamp(getFloat(o, "latentDitheringSpeed", latentDitheringSpeed),
-                    0.0f, 2.0f);
-            latentDitheringAudioSpeed = clamp(getFloat(o, "latentDitheringAudioSpeed",
-                    latentDitheringAudioSpeed), 0.0f, 2.0f);
-            latentDitheringSize = clamp(getFloat(o, "latentDitheringSize", latentDitheringSize),
-                    0.50f, 8.0f);
-            latentDitheringOpacity = clamp01(getFloat(o, "latentDitheringOpacity",
-                    latentDitheringOpacity));
-            latentMeshSpeed = clamp(getFloat(o, "latentMeshSpeed", latentMeshSpeed), 0.0f, 2.0f);
-            latentMeshAudioSpeed = clamp(getFloat(o, "latentMeshAudioSpeed", latentMeshAudioSpeed),
-                    0.0f, 2.0f);
-            latentMeshDistortion = clamp(getFloat(o, "latentMeshDistortion", latentMeshDistortion),
-                    0.0f, 2.0f);
-            latentMeshSwirl = clamp(getFloat(o, "latentMeshSwirl", latentMeshSwirl), 0.0f, 1.0f);
-            latentOverlayEnabled = getBoolean(o, "latentOverlayEnabled", latentOverlayEnabled);
-            latentOverlayOpacity = clamp01(getFloat(o, "latentOverlayOpacity",
-                    latentOverlayOpacity));
+            int legacyBackground = getInt(o, "fullscreenLyricBackground", -1);
+            int backgroundFallback = legacyBackground == 0 ? 1 : fullscreenLyricBackgroundMode;
+            fullscreenLyricBackgroundMode = clampInt(getInt(o, "fullscreenLyricBackgroundMode",
+                    backgroundFallback), 0, FULLSCREEN_LYRIC_BACKGROUND_MODE_MAX);
+            fullscreenLyricFluidStyle = clampInt(getInt(o, "fullscreenLyricFluidStyle",
+                    fullscreenLyricFluidStyle), 0, 2);
+            fullscreenLyricFluidSaturation = clamp(getFloat(o, "fullscreenLyricFluidSaturation",
+                    fullscreenLyricFluidSaturation), 0.0f, 200.0f);
+            fullscreenLyricFluidStatic = getBoolean(o, "fullscreenLyricFluidStatic",
+                    fullscreenLyricFluidStatic);
             themeColorSource = clampInt(getInt(o, "themeColorSource", themeColorSource), 0,
                     THEME_COLOR_SOURCE_MAX);
             osdLyricStyle = clampInt(getInt(o, "osdLyricStyle", osdLyricStyle), 0,
@@ -836,6 +799,9 @@ public final class HudConfig {
             spectrumInHud = getBoolean(o, "spectrumInHud", spectrumInHud);
             spectrumHudStyle = clampInt(getInt(o, "spectrumHudStyle", spectrumHudStyle), 0, 1);
             spectrumInPlayer = getBoolean(o, "spectrumInPlayer", spectrumInPlayer);
+            spectrumFullscreenStyle = clampInt(getInt(o, "spectrumFullscreenStyle", spectrumFullscreenStyle), 0, 1);
+            spectrumBarCountPreset = clampInt(getInt(o, "spectrumBarCountPreset", spectrumBarCountPreset), 0, 5);
+            spectrumCustomBarCount = clampInt(getInt(o, "spectrumCustomBarCount", spectrumCustomBarCount), 48, 256);
             spectrumColorSource = clampInt(getInt(o, "spectrumColorSource", spectrumColorSource), 0, 1);
             spectrumOpacity = clamp(getFloat(o, "spectrumOpacity", spectrumOpacity), .15f, .85f);
             spectrumHeight = clamp(getFloat(o, "spectrumHeight", spectrumHeight), .5f, 1.5f);
@@ -924,22 +890,10 @@ public final class HudConfig {
             o.addProperty("lyricGlowSpread", lyricGlowSpread);
             o.addProperty("fullscreenGlowStrength", fullscreenGlowStrength);
             o.addProperty("fullscreenLyricStyle", fullscreenLyricStyle);
-            o.addProperty("fullscreenLyricBackground", fullscreenLyricBackground);
-
-            o.addProperty("latentBackgroundDisplayMode", latentBackgroundDisplayMode);
-            o.addProperty("latentBackgroundColorSource", latentBackgroundColorSource);
-            o.addProperty("latentDynamicOnlyInPlayer", latentDynamicOnlyInPlayer);
-            o.addProperty("latentEnhancedBeatResponse", latentEnhancedBeatResponse);
-            o.addProperty("latentDitheringSpeed", latentDitheringSpeed);
-            o.addProperty("latentDitheringAudioSpeed", latentDitheringAudioSpeed);
-            o.addProperty("latentDitheringSize", latentDitheringSize);
-            o.addProperty("latentDitheringOpacity", latentDitheringOpacity);
-            o.addProperty("latentMeshSpeed", latentMeshSpeed);
-            o.addProperty("latentMeshAudioSpeed", latentMeshAudioSpeed);
-            o.addProperty("latentMeshDistortion", latentMeshDistortion);
-            o.addProperty("latentMeshSwirl", latentMeshSwirl);
-            o.addProperty("latentOverlayEnabled", latentOverlayEnabled);
-            o.addProperty("latentOverlayOpacity", latentOverlayOpacity);
+            o.addProperty("fullscreenLyricBackgroundMode", fullscreenLyricBackgroundMode);
+            o.addProperty("fullscreenLyricFluidStyle", fullscreenLyricFluidStyle);
+            o.addProperty("fullscreenLyricFluidSaturation", fullscreenLyricFluidSaturation);
+            o.addProperty("fullscreenLyricFluidStatic", fullscreenLyricFluidStatic);
             o.addProperty("themeColorSource", themeColorSource);
             o.addProperty("osdLyricStyle", osdLyricStyle);
             o.addProperty("blossomBackdropBlur", blossomBackdropBlur);
@@ -1009,6 +963,9 @@ public final class HudConfig {
             o.addProperty("spectrumInHud", spectrumInHud);
             o.addProperty("spectrumHudStyle", spectrumHudStyle);
             o.addProperty("spectrumInPlayer", spectrumInPlayer);
+            o.addProperty("spectrumFullscreenStyle", spectrumFullscreenStyle);
+            o.addProperty("spectrumBarCountPreset", spectrumBarCountPreset);
+            o.addProperty("spectrumCustomBarCount", spectrumCustomBarCount);
             o.addProperty("spectrumColorSource", spectrumColorSource);
             o.addProperty("spectrumOpacity", spectrumOpacity);
             o.addProperty("spectrumHeight", spectrumHeight);

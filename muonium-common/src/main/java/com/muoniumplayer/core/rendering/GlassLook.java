@@ -158,7 +158,18 @@ public final class GlassLook {
         if (amount <= 0.001f) {
             return false;
         }
-        return SkijaEffects.liquidBackdrop(x, y, width, height, radius, blurSigma(surface), amount);
+        boolean topmost = surface == Surface.ISLAND;
+        boolean previousTopmost = topmost ? GlassBackdrop.pushTopmost() : false;
+        try {
+            // The topmost Screen capture is already a downscaled, linear-filtered snapshot.
+            // Do not rebuild the full-screen blur cache while alternating base and island passes.
+            float sigma = topmost ? 0f : blurSigma(surface);
+            return SkijaEffects.liquidBackdrop(x, y, width, height, radius, sigma, amount);
+        } finally {
+            if (topmost) {
+                GlassBackdrop.popTopmost(previousTopmost);
+            }
+        }
     }
 
     /**
@@ -181,7 +192,16 @@ public final class GlassLook {
         if (amount <= 0.001f) {
             return false;
         }
-        return SkijaEffects.dimmedLiquidBackdrop(x, y, width, height, radius, blurSigma(surface), amount);
+        boolean topmost = surface == Surface.ISLAND;
+        boolean previousTopmost = topmost ? GlassBackdrop.pushTopmost() : false;
+        try {
+            float sigma = topmost ? 0f : blurSigma(surface);
+            return SkijaEffects.dimmedLiquidBackdrop(x, y, width, height, radius, sigma, amount);
+        } finally {
+            if (topmost) {
+                GlassBackdrop.popTopmost(previousTopmost);
+            }
+        }
     }
 
     /** Compatibility call: directional edges are already inside the full-surface lens. */

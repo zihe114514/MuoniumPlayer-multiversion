@@ -624,7 +624,7 @@ public class GuiHudEditor extends GuiScreen {
                     drawChoiceRow(fr, FoliaModelManager.statusLabel(FoliaModelManager.Kind.HTDEMUCS), "点击安装",
                             x + 6, rowY, mouseX, mouseY);
                     rowY += COLOR_ROW_H;
-                    drawChoiceRow(fr, FoliaModelManager.statusLabel(FoliaModelManager.Kind.RUNTIME), "点击安装",
+                    drawChoiceRow(fr, FoliaModelManager.statusLabel(FoliaModelManager.runtimeKind()), "点击安装",
                             x + 6, rowY, mouseX, mouseY);
                     rowY += COLOR_ROW_H;
                     drawChoiceRow(fr, "从本机查找模型", "点击扫描",
@@ -1283,7 +1283,7 @@ public class GuiHudEditor extends GuiScreen {
                     }
                     rowY += COLOR_ROW_H;
                     if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
-                        FoliaModelManager.downloadAsync(FoliaModelManager.Kind.RUNTIME,
+                        FoliaModelManager.downloadAsync(FoliaModelManager.runtimeKind(),
                                 (ok, detail) -> DownloadDynamicIsland.showModelOperationResult(
                                         ok ? "模型安装完成" : "模型安装失败", detail, ok));
                         return;

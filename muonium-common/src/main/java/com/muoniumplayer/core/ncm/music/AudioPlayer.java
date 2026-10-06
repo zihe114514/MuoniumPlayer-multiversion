@@ -2,9 +2,14 @@ package com.muoniumplayer.core.ncm.music;
 
 import lombok.Getter;
 import lombok.SneakyThrows;
+import repackage.com.jsyn.devices.AudioDeviceFactory;
+import repackage.com.jsyn.devices.AudioDeviceManager;
+import repackage.com.jsyn.devices.javasound.JavaSoundAudioDevice;
 import repackage.com.jsyn.exceptions.ChannelMismatchException;
 import repackage.processing.sound.AutomixDeckChain;
 import repackage.processing.sound.SoundFile;
+import com.muoniumplayer.core.ncm.music.audio.OpenALAudioDevice;
+import com.muoniumplayer.render.skija.SkijaNatives;
 
 import java.io.File;
 
@@ -834,7 +839,68 @@ public class AudioPlayer {
         return isUsable(player);
     }
 
+    /** 兜底探测只做一次；结果（装没装 OpenAL 设备）对整个进程有效。 */
+    private static volatile boolean audioDeviceFallbackChecked;
+
+    /**
+     * OpenAL 兜底的急停开关（默认开）。声音线程泵不创建第二个设备/上下文，
+     * 但如果哪台机器上它另有古怪，加 {@code -Dmuonium.audio.openal=false} 可以
+     * 一键退回「无音频设备」的原有失败，不用等发版。
+     */
+    private static final String OPENAL_FLAG = "muonium.audio.openal";
+
+    /**
+     * JavaSound 拿不到输出设备时（桌面 Linux / macOS、没装音频桥的安卓启动器），
+     * 把 JSyn 的输出设备换成 mod 自带的 {@link OpenALAudioDevice}
+     * （声音线程绑定：alcSetThreadContext 线程局部，不与游戏声音引擎抢进程级指针）。
+     *
+     * <p>必须在第一个 {@code new SoundFile(...)} 之前调：那一下就会触发
+     * {@code Engine.getEngine()} 的设备选择，晚了就赶不上。桌面有可用 Mixer 时
+     * 直接返回，绝不抢现成的设备。
+     *
+     * <p><b>安卓上连 JavaSoundAudioDevice 的构造都要跳过</b>：那次构造会触发
+     * {@code AudioSystem} 的 Mixer 扫描，把启动器里 MioJSound 这类桥唤醒；
+     * 它们与游戏声音引擎共用同一份 libopenal 的进程级 current 指针，一用起来
+     * 游戏声音引擎立刻变成「Invalid name parameter」刷屏（2026-10-06 Zalith 真机）。
+     * 我们自己的设备用线程局部上下文绑定，从根上绕开这场架。
+     */
+    private static synchronized void installAudioDeviceFallbackIfMissing() {
+        if (audioDeviceFallbackChecked) {
+            return;
+        }
+        audioDeviceFallbackChecked = true;
+        try {
+            boolean android = SkijaNatives.mappedPlatform().startsWith("android");
+            if (!android) {
+                JavaSoundAudioDevice javaSound = new JavaSoundAudioDevice();
+                if (javaSound.getDefaultOutputDeviceID() != -1) {
+                    return;
+                }
+            } else {
+                System.out.println("[MuoniumPlayer/Audio] 安卓：绕过 javax.sound（含 MioJSound "
+                        + "一类桥，它们会与游戏声音引擎抢上下文），直接使用自带 OpenAL 设备");
+            }
+            if ("false".equalsIgnoreCase(System.getProperty(OPENAL_FLAG, "true"))) {
+                System.out.println("[MuoniumPlayer/Audio] OpenAL 兜底已被 -D" + OPENAL_FLAG
+                        + "=false 显式关闭，音乐将无法播放");
+                return;
+            }
+            AudioDeviceManager openal = OpenALAudioDevice.createIfAvailable();
+            if (openal != null) {
+                AudioDeviceFactory.setInstance(openal);
+                System.out.println("[MuoniumPlayer/Audio] 音乐输出改走 OpenAL 流式设备"
+                        + (android ? "（声音线程局部绑定）" : ""));
+            } else {
+                System.out.println("[MuoniumPlayer/Audio] JavaSound 与 OpenAL 都拿不到输出设备，"
+                        + "音乐将无法播放");
+            }
+        } catch (Throwable t) {
+            System.out.println("[MuoniumPlayer/Audio] 音频设备兜底探测失败（不影响现有播放）：" + t);
+        }
+    }
+
     private static SoundFile loadUsableSoundFile(File file) {
+        installAudioDeviceFallbackIfMissing();
         if (file == null)
             throw new IllegalArgumentException("Audio file is null");
 

@@ -79,6 +79,15 @@ final class PanelItemEntrance {
         return finished;
     }
 
+    /** Finish this entrance without waiting for another render tick. */
+    void finishImmediately() {
+        this.started = true;
+        this.finished = true;
+        this.skipAnimation = true;
+        this.startedAt = 0L;
+        this.delayMillis = 0L;
+    }
+
     /** 把这一条还没落位的那点位移与缩放乘到当前矩阵上。中心要传条目的绝对中心，缩放才不打偏。 */
     static void applyTransform(double eased, double centerX, double centerY) {
         if (eased >= 1.0) return;

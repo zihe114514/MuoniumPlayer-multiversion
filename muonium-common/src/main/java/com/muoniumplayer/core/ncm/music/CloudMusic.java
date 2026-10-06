@@ -4651,7 +4651,7 @@ public class CloudMusic implements SharedConstants {
             if (!AutomixSettings.isFoliaEngine()) return false;
             return FoliaModelManager.isInstalled(FoliaModelManager.Kind.BEAT_THIS)
                     && FoliaModelManager.isInstalled(FoliaModelManager.Kind.HTDEMUCS)
-                    && FoliaModelManager.isInstalled(FoliaModelManager.Kind.RUNTIME);
+                    && FoliaModelManager.runtimeReady();
         } catch (Throwable ignored) {
             return false;   // 问不出来就按「不能跑」处理，绝不为预热去惊动模型下载
         }

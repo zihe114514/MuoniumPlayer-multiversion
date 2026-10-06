@@ -232,7 +232,8 @@ class RoomPrefetchStaticTest {
         assertTrue(ready.contains("AutomixSettings.isFoliaEngine()"), "引擎必须是模型那一档");
         assertTrue(ready.contains("FoliaModelManager.Kind.BEAT_THIS"), "节拍栅格权重缺一不可");
         assertTrue(ready.contains("FoliaModelManager.Kind.HTDEMUCS"), "stem 分离权重缺一不可");
-        assertTrue(ready.contains("FoliaModelManager.Kind.RUNTIME"), "Python 运行时缺一不可");
+        assertTrue(ready.contains("FoliaModelManager.runtimeReady()"),
+                "运行组件（Python 或 ONNX，二选一）缺一不可");
         assertFalse(ready.contains("downloadAsync"), "预热没有资格顺手下载模型");
 
         String warm = region(source, "public static boolean warmAutomixProfile(",

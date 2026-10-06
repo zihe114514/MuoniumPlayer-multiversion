@@ -111,7 +111,8 @@ public enum HudSetting {
      */
     GLASS_FUSION("玻璃融合半径", 0.00f, 32.00f),
     SPECTRUM_OPACITY("频谱透明度", 0.15f, 0.85f),
-    SPECTRUM_HEIGHT("频谱高度", 0.50f, 1.50f);
+    SPECTRUM_HEIGHT("频谱高度", 0.50f, 1.50f),
+    SPECTRUM_BAR_COUNT_CUSTOM("自定义频谱柱数", 48.0f, 256.0f);
 
     private final String label;
     private final float min;
@@ -204,6 +205,7 @@ public enum HudSetting {
             case GLASS_FUSION: return HudConfig.glassFusion;
             case SPECTRUM_OPACITY: return HudConfig.spectrumOpacity;
             case SPECTRUM_HEIGHT: return HudConfig.spectrumHeight;
+            case SPECTRUM_BAR_COUNT_CUSTOM: return HudConfig.spectrumCustomBarCount;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }
@@ -280,6 +282,9 @@ public enum HudSetting {
             case GLASS_FUSION: HudConfig.glassFusion = clamped; break;
             case SPECTRUM_OPACITY: HudConfig.spectrumOpacity = clamped; break;
             case SPECTRUM_HEIGHT: HudConfig.spectrumHeight = clamped; break;
+            case SPECTRUM_BAR_COUNT_CUSTOM:
+                HudConfig.spectrumCustomBarCount = Math.max(48, Math.min(256, Math.round(clamped)));
+                break;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }

@@ -42,11 +42,18 @@ public class MuoniumPlayerMod implements ClientModInitializer {
 
         // 4. 事件挂点
         ClientTickEvents.END_CLIENT_TICK.register(client::onClientTick);
-        HudRenderCallback.EVENT.register((drawContext, tickDelta) -> client.onHudRender());
+        HudRenderCallback.EVENT.register((drawContext, tickDelta) -> {
+            client.onHudRender();
+            // 第二行是给「渲染层没起来」时的原版 GUI 提示：Skia 那条路整个跳过时，
+            // 只有原版 GUI 这条路还能说话，而用户此刻看到的正是一片空白。
+            client.onRenderLayerNotice(drawContext, false);
+        });
         ScreenEvents.AFTER_INIT.register((minecraft, screen, scaledWidth, scaledHeight) -> {
             ScreenEvents.afterRender(screen).register(
-                    (renderedScreen, drawContext, mouseX, mouseY, tickDelta) ->
-                            client.onScreenRendered(renderedScreen));
+                    (renderedScreen, drawContext, mouseX, mouseY, tickDelta) -> {
+                        client.onScreenRendered(renderedScreen);
+                        client.onRenderLayerNotice(drawContext, true);
+                    });
             // 主菜单上的「公告」入口。AFTER_INIT 在原版 init() 之后派发，窗口 resize 时会再来一次，
             // 而那时原版已经清空了自己的组件，所以这里 add 一次就是一次，不会越加越多。
             if (TitleMenuAnnouncementButton.appliesTo(screen)) {

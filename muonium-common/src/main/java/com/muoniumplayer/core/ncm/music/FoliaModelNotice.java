@@ -17,11 +17,14 @@ import java.util.List;
 public final class FoliaModelNotice {
 
     /** 全部齐备才算就绪的组件。顺序与 {@link FoliaModelManager.Kind} 的声明顺序一致。 */
-    private static final FoliaModelManager.Kind[] REQUIRED = {
-            FoliaModelManager.Kind.BEAT_THIS,
-            FoliaModelManager.Kind.HTDEMUCS,
-            FoliaModelManager.Kind.RUNTIME
-    };
+    private static FoliaModelManager.Kind[] required() {
+        // 安卓展示 ONNX 运行时（Python 装不了），桌面展示 Python。
+        return new FoliaModelManager.Kind[] {
+                FoliaModelManager.Kind.BEAT_THIS,
+                FoliaModelManager.Kind.HTDEMUCS,
+                FoliaModelManager.runtimeKind()
+        };
+    }
 
     /** 本次启动是否已经弹过。纯内存：重启游戏即失效，这正是「每次启动提示一次」想要的。 */
     private static volatile boolean shownThisSession;
@@ -32,9 +35,14 @@ public final class FoliaModelNotice {
     /** 仍然缺失的组件；空列表表示全部就绪。 */
     public static List<FoliaModelManager.Kind> missing() {
         List<FoliaModelManager.Kind> absent = new ArrayList<FoliaModelManager.Kind>();
-        for (FoliaModelManager.Kind kind : REQUIRED) {
+        for (FoliaModelManager.Kind kind : required()) {
             try {
-                if (!FoliaModelManager.isInstalled(kind)) absent.add(kind);
+                // 运行组件一族（Python 或 ONNX）任一在就算齐备：桌面只装 ONNX 的用户不该被 nag。
+                boolean installed = kind == FoliaModelManager.Kind.RUNTIME
+                        || kind == FoliaModelManager.Kind.ONNX_RUNTIME
+                        ? FoliaModelManager.runtimeReady()
+                        : FoliaModelManager.isInstalled(kind);
+                if (!installed) absent.add(kind);
             } catch (Throwable ignored) {
                 // 判定本身出错（目录不可读等）按「没装」处理：提示最多多弹一次，用户可以关掉。
                 absent.add(kind);

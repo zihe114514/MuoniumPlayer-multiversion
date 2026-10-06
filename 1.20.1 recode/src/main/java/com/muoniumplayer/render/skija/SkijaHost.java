@@ -51,8 +51,27 @@ public final class SkijaHost {
             Boolean.getBoolean("muonium.skija.drawDirect");
 
     private static DirectContext context;
-    /** 初始化失败后置位，避免每帧重试刷日志。 */
+    /**
+     * 初始化失败后置位，避免每帧重试刷日志。
+     *
+     * <p>不是「永远不再试」：{@link #maybeResume()} 按 {@link #RESUME_INTERVAL_NANOS} 的退避
+     * 重新评估一次。理由很具体——非 Windows 用户的原生库来自伴生包，「装好文件但没重启」
+     * 和「压根没装」如果都表现为永久停用，用户看到的是一模一样的白屏，
+     * 而前者其实只需要等一个重评周期就能活。
+     */
     private static boolean disabled;
+
+    /** 停用后的重评间隔。20 秒：够短，用户在文件管理器里放好文件回来就能看到；够长，不刷日志。 */
+    private static final long RESUME_INTERVAL_NANOS = 20L * 1_000_000_000L;
+
+    /** 下一次允许重评的时刻（{@link System#nanoTime()} 轴）。 */
+    private static long resumeAtNanos;
+
+    /** 已经重评过多少次，只用来限制日志条数。 */
+    private static int resumeAttempts;
+
+    /** 最后一次停用的原因，给原版 GUI 的提示层直接读。 */
+    private static String suspendReason;
 
     // ---- 离屏目标（Skia 自己拥有，含按需分配的 stencil）----
     private static Surface offscreen;
@@ -98,8 +117,14 @@ public final class SkijaHost {
      * 因此上层即使 push/pop 不配对也不会污染下一帧）。
      */
     public static Canvas beginFrame() {
-        if (disabled || inFrame) {
+        if (inFrame) {
             return null;
+        }
+        if (disabled) {
+            maybeResume();
+            if (disabled) {
+                return null;
+            }
         }
         try {
             Minecraft client = Minecraft.getInstance();
@@ -124,7 +149,16 @@ public final class SkijaHost {
                 return null;
             }
             if (context == null) {
-                context = DirectContext.makeGL();
+                try {
+                    context = DirectContext.makeGL();
+                } catch (Throwable makeGlThrew) {
+                    // Skija 在这里不是返回 null，而是拿 nullptr 造对象时抛「Can't wrap nullptr」
+                    // ——真机第一条就是这个形状。单独兜一句，日志里就有明确的「上下文装不出来」字样，
+                    // 不用从 beginFrame 那一串堆栈里反推。
+                    fail("DirectContext.makeGL() 抛异常（Skia 装配不出当前 GL 上下文）: "
+                            + makeGlThrew, makeGlThrew);
+                    return null;
+                }
                 if (context == null) {
                     fail("DirectContext.makeGL() 返回 null", null);
                     return null;
@@ -146,7 +180,9 @@ public final class SkijaHost {
             // 帧号闸：同一显示帧内只有第一个 beginFrame 采集，见 lastImmediateBackdropFrameTime 的注释。
             float frameTime = client.getFrameTime();
             if (frameTime != lastImmediateBackdropFrameTime) {
-                GlassBackdrop.captureNow(savedFbo, pixelWidth, pixelHeight);
+                // This is the underlay captured before the current Skia Screen content. The post-render
+                // hook replaces it with the completed topmost Screen image for the island lens.
+                GlassBackdrop.captureNow(savedFbo, pixelWidth, pixelHeight, false);
                 lastImmediateBackdropFrameTime = frameTime;
             }
             SNAPSHOT.capture();
@@ -670,6 +706,25 @@ public final class SkijaHost {
         return disabled;
     }
 
+    /** Refresh glass from the already rendered Screen before drawing the global island overlay. */
+    public static void captureTopmostBackdrop() {
+        if (!inFrame || disabled || savedFbo < 0) return;
+        try {
+            Minecraft client = Minecraft.getInstance();
+            Window window = client == null ? null : client.getWindow();
+            if (client == null || client.screen == null || window == null) return;
+            GlassBackdrop.captureTopmostNow(savedFbo, window.getWidth(), window.getHeight());
+            if (context != null) context.resetAll();
+        } catch (Throwable ignored) {
+            // Missing capture only disables this visual enhancement; keep the island itself alive.
+        }
+    }
+
+    /** Immediate hosts already render the island after Screen#render. */
+    public static boolean deferPostCompositeOverlay(Runnable overlay) {
+        return false;
+    }
+
     /** 帧内当前 canvas；不在帧内时为 null。 */
     public static Canvas canvas() {
         return canvas;
@@ -718,8 +773,53 @@ public final class SkijaHost {
         }
     }
 
+    /**
+     * 到点就把停用结论撤掉，让下一帧重新走一遍初始化。
+     *
+     * <p>必须同时叫 {@link SkijaNatives#reset()}：那边的 {@code loaded} 缓存成 false 之后
+     * 再也不会回头，只解这边这一层的闸，重试到的永远是「原生库不可用」这个旧结论。
+     * 撤闸本身不做任何加载工作——真正的重活在下一次 {@link #beginFrame()} 里，
+     * 那时 GL 上下文是当前的，失败也照样会被 {@link #fail} 重新按上退避。
+     */
+    private static void maybeResume() {
+        long now = System.nanoTime();
+        if (now < resumeAtNanos) {
+            return;
+        }
+        resumeAttempts++;
+        resumeAtNanos = now + RESUME_INTERVAL_NANOS;
+        SkijaNatives.reset();
+        disabled = false;
+        // 前几次要说，之后每 10 次说一句：长期缺伴生包的机器上一秒 60 帧，全打会把日志淹掉
+        if (resumeAttempts <= 3 || resumeAttempts % 10 == 0) {
+            log("第 " + resumeAttempts + " 次重新评估渲染层（上次原因：" + suspendReason + "）");
+        }
+    }
+
+    /** 渲染层当前是否处于停用状态（供原版 GUI 的提示层判断要不要说话）。 */
+    public static boolean isSuspended() {
+        return disabled;
+    }
+
+    /** 最后一次停用的原因；从未停用时为 null。 */
+    public static String suspendReason() {
+        return suspendReason;
+    }
+
+    /** 已经重评过多少次。 */
+    public static int resumeAttempts() {
+        return resumeAttempts;
+    }
+
+    /** 原生库的加载交代；提示层用它区分「缺伴生包」与「库有了但 GPU 上下文建不起来」。 */
+    public static SkijaNatives.Status nativeStatus() {
+        return SkijaNatives.status();
+    }
+
     private static void fail(String message, Throwable t) {
         disabled = true;
+        resumeAtNanos = System.nanoTime() + RESUME_INTERVAL_NANOS;
+        suspendReason = message;
         log("已停用 Skia 渲染层: " + message);
         if (t != null) {
             t.printStackTrace();

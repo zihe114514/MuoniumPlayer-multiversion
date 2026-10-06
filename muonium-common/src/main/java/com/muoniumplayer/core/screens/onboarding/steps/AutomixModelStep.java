@@ -14,7 +14,7 @@ public final class AutomixModelStep implements OnboardingStepView {
     private static final FoliaModelManager.Kind[] KINDS = {
             FoliaModelManager.Kind.BEAT_THIS,
             FoliaModelManager.Kind.HTDEMUCS,
-            FoliaModelManager.Kind.RUNTIME
+            FoliaModelManager.runtimeKind()
     };
     private static final String[] TITLES = {"Beat This!", "HTDemucs", "必要运行组件"};
     private static final String[] DESCRIPTIONS = {
@@ -22,6 +22,13 @@ public final class AutomixModelStep implements OnboardingStepView {
             "识别人声与伴奏结构 · 约 104 MB",
             "在本机执行模型推理 · 大小随系统变化"
     };
+
+    static {
+        // 安卓那行是 ONNX 运行时（约 12 MB），桌面是 Python 运行组件。
+        if (KINDS[2] == FoliaModelManager.Kind.ONNX_RUNTIME) {
+            DESCRIPTIONS[2] = "在本机执行模型推理 · 约 12 MB";
+        }
+    }
     /**
      * 三行各自那枚图标：三件事不是一回事，用同一枚「音符」等于告诉玩家「这三行差不多」。
      * Beat This! 是节拍（一条心跳波形）、HTDemucs 是把人声从伴奏里拆出来（一根魔杖）、

@@ -96,23 +96,30 @@ public final class GlassBackdrop {
      */
 
     /** 采集目标。尺寸变了就整组重建。 */
-    private static int textureId;
-    private static int framebufferId;
-    private static int textureWidth;
-    private static int textureHeight;
+    /** One capture target for the clean game/Screen underlay and one for the topmost Screen pass. */
+    private static final class CaptureTarget {
+        int textureId;
+        int framebufferId;
+        int width;
+        int height;
+        Image image;
+    }
 
-    /**
-     * 指向 {@link #textureId} 的 Skia 视图。
-     *
-     * <p>只建一次：Image 是<b>视图</b>而不是像素快照，纹理内容变了下次绘制自然就是新内容
-     * （同 {@link SkijaImages} 的取舍）。每帧重建视图会让 Skia 反复丢弃并重绑外部纹理。
-     */
-    private static Image image;
+    private static final CaptureTarget baseTarget = new CaptureTarget();
+    private static final CaptureTarget topmostTarget = new CaptureTarget();
+
+    /** True only while an island is being painted against the completed topmost Screen image. */
+    private static boolean topmostRequested;
+    /** Set only after a topmost capture was completed for the current render pass. */
+    private static boolean topmostAvailable;
+
+    /** Raw image the blur/bloom slots currently belong to; base and topmost must never share them. */
+    private static Image blurSource;
 
     /**
      * 预糊那一层：最多 {@link GlassBlurLevels#SLOTS} 个槽，每个槽是「一张自己的纹理 + FBO +
      * 包出来的画布 + 借给 Skia 的视图」，按半径分档（一处一档模糊强度）。尺寸永远跟
-     * {@link #textureWidth} 一致，所以映射与源矩形两头通用。
+     * {@link #backdropWidth()} 一致，所以映射与源矩形两头通用。
      *
      * <p>为什么不用 {@code makeImageSnapshot}：快照是<b>带生命周期的副本</b>，下一次绘制会触发
      * copy-on-write，而 {@code GlassRefraction} 把背景当子 shader 缓存着跨帧用——快照一旦被回收，
@@ -156,6 +163,10 @@ public final class GlassBackdrop {
     private static long lastCaptureNanos;
     /** 上一次发起采集的时刻，见 {@link #captureNow()} 里的时间闸。 */
     private static long lastCaptureStart;
+    /** Last capture mode; a world/Screen transition must not wait for the normal capture interval. */
+    private static boolean lastCaptureIncludedScreen;
+    /** Topmost Screen capture has an independent rate limiter; base and topmost may occur in one frame. */
+    private static long lastTopmostCaptureStart;
     /**
      * 每帧一档的时间闸：8ms（≈125fps 一帧），比这更快的那部分帧直接复用上一次采集。
      *
@@ -287,6 +298,28 @@ public final class GlassBackdrop {
      * @param sourceHeight 该帧缓冲的像素高。
      */
     public static void captureNow(int sourceFramebuffer, int sourceWidth, int sourceHeight) {
+        captureInto(sourceFramebuffer, sourceWidth, sourceHeight, false, false);
+    }
+
+    /** Capture the completed Screen into a separate texture used only by the Dynamic Island. */
+    public static void captureTopmostNow(int sourceFramebuffer, int sourceWidth, int sourceHeight) {
+        captureInto(sourceFramebuffer, sourceWidth, sourceHeight, true, true);
+    }
+
+    /** Screen visibility is used only to break the interval when switching world ↔ Screen. */
+    public static void captureNow(int sourceFramebuffer, int sourceWidth, int sourceHeight,
+                                  boolean screenVisible) {
+        captureInto(sourceFramebuffer, sourceWidth, sourceHeight, screenVisible, false);
+    }
+
+    private static void captureInto(int sourceFramebuffer, int sourceWidth, int sourceHeight,
+                                    boolean screenVisible, boolean topmost) {
+        // A new base pass invalidates the previous Screen snapshot. If this frame has
+        // no completed topmost pass, the island must fall back to the clean base image,
+        // never to a stale Screen from an earlier frame.
+        if (!topmost) {
+            topmostAvailable = false;
+        }
         // 这一层已经停用，或 Skia 上下文还没装出来（beginFrame 一次都没跑过），那就是没有消费者。
         if (broken || !wanted() || SkijaHost.isDisabled() || SkijaHost.context() == null) {
             return;
@@ -296,16 +329,25 @@ public final class GlassBackdrop {
         // 正式档压在 30Hz（实测一次 blit 0.4~1.1ms，而这块画面出门还要整个糊一遍）。
         // 用户手动开了「实时背景采集」就每帧采——他要的正是玻璃背后那一层跟着画面走。
         long interval = realtime() ? PER_FRAME_CAPTURE_INTERVAL_NANOS : CAPTURE_INTERVAL_NANOS;
-        if (startedAt - lastCaptureStart < interval) {
+        // The topmost call is made only after a Screen has actually rendered. It must not
+        // be throttled: two different Screens can be rendered inside one 33 ms window,
+        // and reusing the previous Screen is exactly the stale-refraction bug this pass fixes.
+        boolean sceneChanged = !topmost && captures > 0 && screenVisible != lastCaptureIncludedScreen;
+        if (!topmost && startedAt - lastCaptureStart < interval && !sceneChanged) {
             return;
         }
-        lastCaptureStart = startedAt;
+        if (topmost) {
+            lastTopmostCaptureStart = startedAt;
+        } else {
+            lastCaptureStart = startedAt;
+        }
         if (sourceWidth <= 0 || sourceHeight <= 0) {
             return;
         }
         int targetWidth = Math.max(1, sourceWidth / downscale());
         int targetHeight = Math.max(1, sourceHeight / downscale());
-        if (!ensureTarget(targetWidth, targetHeight)) {
+        CaptureTarget destination = topmost ? topmostTarget : baseTarget;
+        if (!ensureTarget(destination, targetWidth, targetHeight)) {
             return;
         }
 
@@ -333,7 +375,7 @@ public final class GlassBackdrop {
             // black. Pause/menu rendering happens to leave GL_BACK selected, which is why this bug
             // only appears while the world is running. Select the correct buffer explicitly.
             GL11.glReadBuffer(sourceFramebuffer == 0 ? GL11.GL_BACK : GL30.GL_COLOR_ATTACHMENT0);
-            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, framebufferId);
+            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, destination.framebufferId);
             GL11.glDrawBuffer(GL30.GL_COLOR_ATTACHMENT0);
             GL30.glBlitFramebuffer(0, 0, sourceWidth, sourceHeight,
                     0, 0, targetWidth, targetHeight,
@@ -367,6 +409,11 @@ public final class GlassBackdrop {
         }
 
         captures++;
+        if (topmost) {
+            topmostAvailable = true;
+        } else {
+            lastCaptureIncludedScreen = screenVisible;
+        }
         lastCaptureNanos = System.nanoTime() - startedAt;
         if (!firstCaptureUnlogged) {
             firstCaptureUnlogged = true;
@@ -405,7 +452,31 @@ public final class GlassBackdrop {
      * <p>返回的对象由本类持有，<b>调用方不要 close</b>。
      */
     public static Image image() {
-        return broken ? null : wrapIntoSkia();
+        return broken ? null : wrapIntoSkia(activeTarget());
+    }
+
+    /** Select the isolated completed-Screen capture while painting the Dynamic Island. */
+    public static boolean pushTopmost() {
+        boolean previous = topmostRequested;
+        topmostRequested = topmostAvailable && topmostTarget.textureId != 0;
+        return previous;
+    }
+
+    public static void popTopmost(boolean previous) {
+        topmostRequested = previous;
+    }
+
+    private static CaptureTarget activeTarget() {
+        return topmostRequested && topmostTarget.textureId != 0
+                ? topmostTarget : baseTarget;
+    }
+
+    private static int backdropWidth() {
+        return activeTarget().width;
+    }
+
+    private static int backdropHeight() {
+        return activeTarget().height;
     }
 
     /**
@@ -432,6 +503,9 @@ public final class GlassBackdrop {
      */
     public static Image blurred(float sigma) {
         Image raw = image();
+        if (raw != blurSource) {
+            resetBlurSource(raw);
+        }
         if (raw == null || blurBroken || sigma <= 0.004f) {
             return null;
         }
@@ -466,6 +540,9 @@ public final class GlassBackdrop {
      */
     public static Image blurredCached(float sigma) {
         Image raw = image();
+        if (raw != blurSource) {
+            resetBlurSource(raw);
+        }
         if (raw == null || blurBroken) {
             return null;
         }
@@ -507,10 +584,18 @@ public final class GlassBackdrop {
         }
         return null;
     }
+    private static void resetBlurSource(Image raw) {
+        if (blurSource == raw) {
+            return;
+        }
+        releaseAllBlurTargets();
+        blurSource = raw;
+    }
+
     /** 建（或重建）第 {@code slot} 档预糊。任何一步不对都只置 {@link #blurBroken}，不影响没预糊时的旧画法。 */
     private static Image rebuildBlur(Image raw, float sigma, float key, int slot) {
         DirectContext context = SkijaHost.context();
-        if (context == null || textureWidth <= 0 || textureHeight <= 0 || slot < 0) {
+        if (context == null || backdropWidth() <= 0 || backdropHeight() <= 0 || slot < 0) {
             return null;
         }
         try {
@@ -541,7 +626,7 @@ public final class GlassBackdrop {
      * （{@code borrow} 而不是 {@code adopt}），Skia 只借看，不会替我们删。</p>
      */
     private static boolean ensureBlurTarget(BlurSlot target) {
-        if (target.surface != null && target.width == textureWidth && target.height == textureHeight) {
+        if (target.surface != null && target.width == backdropWidth() && target.height == backdropHeight()) {
             return true;
         }
         releaseBlurTarget(target);
@@ -562,7 +647,7 @@ public final class GlassBackdrop {
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
             GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, internalFormat(),
-                    textureWidth, textureHeight, 0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE,
+                    backdropWidth(), backdropHeight(), 0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE,
                     (java.nio.ByteBuffer) null);
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, target.framebufferId);
             GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0,
@@ -579,7 +664,7 @@ public final class GlassBackdrop {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
         }
         DirectContext context = SkijaHost.context();
-        target.backend = BackendRenderTarget.makeGL(textureWidth, textureHeight, 0, 0,
+        target.backend = BackendRenderTarget.makeGL(backdropWidth(), backdropHeight(), 0, 0,
                 target.framebufferId, FramebufferFormat.GR_GL_RGBA8);
         target.surface = Surface.wrapBackendRenderTarget(context, target.backend,
                 // 与采集目标同一个原点约定：这块 FBO 是 Skia 画出来的，而它写的那张纹理
@@ -591,8 +676,8 @@ public final class GlassBackdrop {
             System.out.println(TAG + "预糊目标包不成 Skia 画布，玻璃退回逐面板自己糊");
             return false;
         }
-        target.width = textureWidth;
-        target.height = textureHeight;
+        target.width = backdropWidth();
+        target.height = backdropHeight();
         return true;
     }
 
@@ -753,7 +838,7 @@ public final class GlassBackdrop {
     }
     private static Image rebuildBloom(Image raw) {
         DirectContext context = SkijaHost.context();
-        if (context == null || textureWidth <= 0 || textureHeight <= 0) {
+        if (context == null || backdropWidth() <= 0 || backdropHeight() <= 0) {
             return null;
         }
         RuntimeEffect effect = bloomEffect();
@@ -777,7 +862,7 @@ public final class GlassBackdrop {
                 paint.setShader(bright);
                 Canvas canvas = bloomSlot.surface.getCanvas();
                 canvas.drawRect(io.github.humbleui.types.Rect.makeXYWH(0f, 0f,
-                        (float) textureWidth, (float) textureHeight), paint);
+                        (float) backdropWidth(), (float) backdropHeight()), paint);
             }
             context.flush(bloomSlot.surface);
             bloomBuiltAtCapture = captures;
@@ -845,11 +930,11 @@ public final class GlassBackdrop {
 
     /** 背景纹理尺寸（设备像素）。 */
     public static int width() {
-        return textureWidth;
+        return backdropWidth();
     }
 
     public static int height() {
-        return textureHeight;
+        return backdropHeight();
     }
 
     /**
@@ -1002,13 +1087,11 @@ public final class GlassBackdrop {
         GlassLiquidSurface.release();
         try {
             releaseAllBlurTargets();
-            releaseTarget();
+            releaseTarget(baseTarget);
+            releaseTarget(topmostTarget);
         } catch (Throwable ignored) {
-            image = null;
-            textureId = 0;
-            framebufferId = 0;
-            textureWidth = 0;
-            textureHeight = 0;
+            clearTarget(baseTarget);
+            clearTarget(topmostTarget);
             for (BlurSlot slot : blurTargets()) {
                 // 上下文可能已经没了：这里只丢引用，不再发 GL 删除调用（发出去是崩在原生层）。
                 slot.image = null;
@@ -1024,6 +1107,12 @@ public final class GlassBackdrop {
             bloomChild = null;
             bloomChildImage = null;
         }
+        blurSource = null;
+        topmostRequested = false;
+        topmostAvailable = false;
+        lastCaptureIncludedScreen = false;
+        lastCaptureStart = 0L;
+        lastTopmostCaptureStart = 0L;
         broken = false;
         blurBroken = false;
         bloomBroken = false;
@@ -1042,32 +1131,32 @@ public final class GlassBackdrop {
         System.out.println(TAG + message);
     }
 
-    private static boolean ensureTarget(int width, int height) {
-        if (textureId != 0 && textureWidth == width && textureHeight == height) {
+    private static boolean ensureTarget(CaptureTarget target, int width, int height) {
+        if (target.textureId != 0 && target.width == width && target.height == height) {
             return true;
         }
-        releaseTarget();
-        textureId = GL11.glGenTextures();
-        if (textureId == 0) {
+        GlassLiquidSurface.release();
+        releaseTarget(target);
+        target.textureId = GL11.glGenTextures();
+        if (target.textureId == 0) {
             broken = true;
             System.out.println(TAG + "glGenTextures 返回 0，已停用背景采集");
             return false;
         }
         int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
         try {
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, target.textureId);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
-            GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0,
-                    internalFormat(),
-                    width, height, 0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, (java.nio.ByteBuffer) null);
+            GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, internalFormat(), width, height, 0,
+                    GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, (java.nio.ByteBuffer) null);
 
-            framebufferId = GL30.glGenFramebuffers();
-            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, framebufferId);
+            target.framebufferId = GL30.glGenFramebuffers();
+            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, target.framebufferId);
             GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0,
-                    GL11.GL_TEXTURE_2D, textureId, 0);
+                    GL11.GL_TEXTURE_2D, target.textureId, 0);
             if (GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER)
                     != GL30.GL_FRAMEBUFFER_COMPLETE) {
                 broken = true;
@@ -1078,32 +1167,34 @@ public final class GlassBackdrop {
             GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
         }
-        textureWidth = width;
-        textureHeight = height;
-        // 尺寸变了就是另一张图，旧视图必须丢掉，否则 Skia 还按旧尺寸算源矩形。
-        if (image != null) {
-            image.close();
-            image = null;
-        }
+        target.width = width;
+        target.height = height;
         return true;
     }
 
-    private static void releaseTarget() {
-        GlassLiquidSurface.release();
-        if (image != null) {
-            image.close();
-            image = null;
+    private static void releaseTarget(CaptureTarget target) {
+        if (target.image != null) {
+            target.image.close();
+            target.image = null;
         }
-        if (framebufferId != 0) {
-            GL30.glDeleteFramebuffers(framebufferId);
-            framebufferId = 0;
+        if (target.framebufferId != 0) {
+            GL30.glDeleteFramebuffers(target.framebufferId);
+            target.framebufferId = 0;
         }
-        if (textureId != 0) {
-            GL11.glDeleteTextures(textureId);
-            textureId = 0;
+        if (target.textureId != 0) {
+            GL11.glDeleteTextures(target.textureId);
+            target.textureId = 0;
         }
-        textureWidth = 0;
-        textureHeight = 0;
+        target.width = 0;
+        target.height = 0;
+    }
+
+    private static void clearTarget(CaptureTarget target) {
+        target.image = null;
+        target.textureId = 0;
+        target.framebufferId = 0;
+        target.width = 0;
+        target.height = 0;
     }
 
     /**
@@ -1112,28 +1203,29 @@ public final class GlassBackdrop {
      * <p>{@code borrow} 而不是 {@code adopt}：所有权仍在 GL 纹理手上，Skia 不会去删它
      * （删了下一帧就采不到东西了）。
      */
-    static Image wrapIntoSkia() {
+    static Image wrapIntoSkia(CaptureTarget target) {
         DirectContext context = SkijaHost.context();
-        if (context == null || textureId == 0 || textureWidth <= 0) {
+        if (context == null || target == null || target.textureId == 0 || target.width <= 0) {
             return null;
         }
-        if (image != null) {
-            return image;
+        if (target.image != null) {
+            return target.image;
         }
         try {
-            BackendTexture backend = BackendTexture.makeGL(textureWidth, textureHeight, false,
-                    new GLTextureInfo(GL11.GL_TEXTURE_2D, textureId, internalFormat()));
-            image = Image.borrowTextureFrom(context, backend, SurfaceOrigin.BOTTOM_LEFT,
+            BackendTexture backend = BackendTexture.makeGL(target.width, target.height, false,
+                    new GLTextureInfo(GL11.GL_TEXTURE_2D, target.textureId, internalFormat()));
+            target.image = Image.borrowTextureFrom(context, backend, SurfaceOrigin.BOTTOM_LEFT,
                     ColorType.RGBA_8888, ColorAlphaType.UNPREMUL, ColorSpace.getSRGB(), null);
-            if (image == null) {
+            if (target.image == null) {
                 broken = true;
                 System.out.println(TAG + "borrowTextureFrom 返回 null，已停用背景采集");
             }
-            return image;
+            return target.image;
         } catch (Throwable failure) {
             broken = true;
             System.out.println(TAG + "包装背景纹理失败: " + failure);
             return null;
         }
     }
+
 }

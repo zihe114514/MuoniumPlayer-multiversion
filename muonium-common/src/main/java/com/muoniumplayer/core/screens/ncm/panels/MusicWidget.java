@@ -643,6 +643,30 @@ public class MusicWidget extends RoundedRectWidget {
             this.setTransformations(null);
         }
     }
+
+    private void finishEntranceAnimation() {
+        this.entrance.finishImmediately();
+        this.entranceEased = 1.0;
+        this.setAlpha(1f);
+        this.setTransformations(null);
+    }
+
+    /** Do not bring a half-transparent row back when fast scrolling reverses direction. */
+    @Override
+    public void onViewportExit() {
+        if (!this.entrance.isFinished()) {
+            this.finishEntranceAnimation();
+        }
+    }
+
+    /** Finish the row before its parent page is dropped by an interrupted navigation. */
+    @Override
+    public void finishTransientAnimations() {
+        this.finishEntranceAnimation();
+        this.entranceQueue = null;
+        super.finishTransientAnimations();
+    }
+
     /**
      * 时长文本占用的固定槽位宽度。
      *

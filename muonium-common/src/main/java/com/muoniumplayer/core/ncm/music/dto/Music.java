@@ -139,7 +139,7 @@ public class Music {
      * 做尺寸缩放，而自定义源给的封面是别人家的直链，追加过去多半就是 404。
      */
     private transient boolean foreignCover;
-    /** 当前封面提取出的代表色，供「隐现」歌词背景实时取用；不进入歌单序列化。 */
+    /** 当前封面提取出的代表色，供歌词页主题与流体背景实时取用；不进入歌单序列化。 */
     private transient volatile int[] coverPalette;
     /** 自由选择的 GD 曲目的 GD Studio 聚合源 key（netease/joox/...）。 */
     private transient String gdPlatform;

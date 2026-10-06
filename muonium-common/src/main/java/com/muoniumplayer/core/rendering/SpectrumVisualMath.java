@@ -18,9 +18,26 @@ final class SpectrumVisualMath {
         float multiplier=Float.isFinite(scale)?Math.max(.5f,Math.min(1.5f,scale)):1f;
         return Math.min(screenHeight,Math.min(120f,screenHeight*.35f)*multiplier);
     }
-    static int fullBars(float width) { return Math.max(1,Math.min(64,(int)(width/3f))); }
+    private static final int MAX_FULL_WIDTH_BARS = 256;
+    static int fullBars(float width) { return fullBars(width, 64); }
+    static int fullBars(float width, int maximum) {
+        int cap = Math.max(1, Math.min(MAX_FULL_WIDTH_BARS, maximum));
+        return Math.max(1, Math.min(cap, (int) (width / 3f)));
+    }
+    /** Maps the HUD's saved preset to a bounded, aesthetically readable maximum bar count. */
+    static int fullWidthBarLimit(int preset, int customBars) {
+        switch (preset) {
+            case 1: return 96;
+            case 2: return 128;
+            case 3: return 160;
+            case 4: return 192;
+            case 5: return Math.max(48, Math.min(MAX_FULL_WIDTH_BARS, customBars));
+            case 0:
+            default: return 64;
+        }
+    }
     static float fullBarWidth(float width,int bars) { return Math.max(.5f,(width-1.5f*(bars-1))/bars); }
-    /** Display response, not synthesized data: interpolates the actual logarithmic bands to 64 columns. */
+    /** Display response, not synthesized data: interpolates logarithmic bands to the requested bar count. */
     static float fullLevel(float[] bands,int index,int count) {
         if(bands==null || bands.length==0) return 0f;
         float position=count<=1?0f:index*(bands.length-1f)/(count-1f);

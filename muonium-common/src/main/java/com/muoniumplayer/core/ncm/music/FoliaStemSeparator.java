@@ -27,10 +27,45 @@ final class FoliaStemSeparator {
     static FoliaStemProfile analyse(File source, long startMillis, long lengthMillis,
                                     AnalysisAudio audio, boolean outgoing, File material) {
         if (source == null || audio == null || lengthMillis <= 0L
-                || !FoliaModelManager.isInstalled(FoliaModelManager.Kind.HTDEMUCS)
-                || !FoliaModelManager.isInstalled(FoliaModelManager.Kind.RUNTIME)) return null;
-        File input = null, output = null, script = null;
+                || !FoliaModelManager.isInstalled(FoliaModelManager.Kind.HTDEMUCS)) return null;
         File materialPart = material == null ? null : new File(material.getAbsolutePath() + ".part");
+        // 推理引擎按平台各一条：安卓走进程内 ONNX Runtime，桌面走 Python 子进程。
+        if (FoliaModelManager.preferOnnxInference()) {
+            if (!FoliaModelManager.isInstalled(FoliaModelManager.Kind.ONNX_RUNTIME)) {
+                System.err.println("[Automix/Folia] HTDemucs ONNX 不可用: 运行包不完整（"
+                        + FoliaModelManager.onnxRuntimeStatus() + "）");
+                delete(materialPart);
+                return null;
+            }
+            if (!FoliaOnnx.available()) {
+                delete(materialPart);
+                return null;   // 具体失败原因已由 FoliaOnnx 打印
+            }
+            try {
+                float[] mono = audio.readMono(startMillis, lengthMillis);
+                if (mono.length < MODEL_RATE / 2) return null;
+                float[] samples = resample(mono, audio.sampleRate(), MODEL_RATE);
+                FoliaStemProfile profile = FoliaStemOnnx.analyse(samples, startMillis, lengthMillis,
+                        outgoing ? false : true, materialPart);
+                if (profile == null || !profile.isUsable()) {
+                    delete(materialPart);
+                    return null;
+                }
+                if (materialPart == null) {
+                    profile.materialFrames = 0L;          // 出场侧只要时间戳，没有素材可发布
+                } else if (!publishMaterial(materialPart, material, profile)) {
+                    delete(materialPart);
+                    profile.materialFrames = 0L;
+                }
+                return profile;
+            } catch (Throwable failure) {
+                System.err.println("[Automix/Folia] HTDemucs unavailable: " + failure.getMessage());
+                delete(materialPart);
+                return null;
+            }
+        }
+        if (!FoliaModelManager.isInstalled(FoliaModelManager.Kind.RUNTIME)) return null;
+        File input = null, output = null, script = null;
         try {
             float[] mono = audio.readMono(startMillis, lengthMillis);
             if (mono.length < MODEL_RATE / 2) return null;

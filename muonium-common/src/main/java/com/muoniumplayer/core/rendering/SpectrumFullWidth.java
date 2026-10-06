@@ -10,39 +10,45 @@ import io.github.humbleui.skija.Shader;
 import io.github.humbleui.types.Rect;
 import io.github.humbleui.types.RRect;
 
-/** Continuous 64-column bottom spectrum. One batched fill, no per-column shaders or full-screen blur. */
+/** Continuous bottom spectrum, bounded to 256 columns. One batched path draw; no per-column shaders or full-screen blur. */
 final class SpectrumFullWidth implements AutoCloseable {
     private Paint paint;
     private Shader shader;
     private int cachedA,cachedB;
-    private float cachedWidth,cachedBottom,cachedHeight;
+    private float cachedX,cachedWidth,cachedBottom,cachedHeight;
 
     void draw(Canvas canvas,float[] bands,float width,float bottom,float maxHeight,float opacity,int a,int b) {
+        draw(canvas,bands,0f,width,bottom,maxHeight,opacity,a,b,64);
+    }
+
+    void draw(Canvas canvas,float[] bands,float x,float width,float bottom,float maxHeight,
+              float opacity,int a,int b,int maximumBars) {
         if(canvas==null || width<3f || maxHeight<1f || opacity<.005f || bands==null || bands.length==0) return;
         if(paint==null) paint=new Paint().setAntiAlias(true).setMode(PaintMode.FILL);
         a=0xFF000000|(a&0xFFFFFF);b=0xFF000000|(b&0xFFFFFF);
-        if(shader==null || a!=cachedA || b!=cachedB || width!=cachedWidth || bottom!=cachedBottom || maxHeight!=cachedHeight) {
+        if(shader==null || a!=cachedA || b!=cachedB || x!=cachedX || width!=cachedWidth || bottom!=cachedBottom || maxHeight!=cachedHeight) {
             paint.setShader(null);
             if(shader!=null) {shader.close();shader=null;}
             // A restrained brighter crest/darker translucent foot, multiplied by the theme/cover gradient.
-            try(Shader horizontal=Shader.makeLinearGradient(0f,bottom,width,bottom,new int[]{a,b});
+            try(Shader horizontal=Shader.makeLinearGradient(x,bottom,x+width,bottom,new int[]{a,b});
                 Shader vertical=Shader.makeLinearGradient(0f,bottom-maxHeight,0f,bottom,
                         new int[]{0xFFFFFFFF,0xECDDE3EB,0xB88C96A5},new float[]{0f,.42f,1f})) {
                 shader=Shader.makeBlend(BlendMode.MODULATE,horizontal,vertical);
             }
-            cachedA=a;cachedB=b;cachedWidth=width;cachedBottom=bottom;cachedHeight=maxHeight;
+            cachedA=a;cachedB=b;cachedX=x;cachedWidth=width;cachedBottom=bottom;cachedHeight=maxHeight;
         }
-        int count=SpectrumVisualMath.fullBars(width);
+        int count=SpectrumVisualMath.fullBars(width,maximumBars);
         float barWidth=SpectrumVisualMath.fullBarWidth(width,count);
         canvas.save();
+        // Pack every rounded bar into one path so a dense spectrum still costs one draw call.
         try(PathBuilder builder=new PathBuilder()) {
-            canvas.clipRect(Rect.makeXYWH(0f,bottom-maxHeight,width,maxHeight));
+            canvas.clipRect(Rect.makeXYWH(x,bottom-maxHeight,width,maxHeight));
             for(int index=0;index<count;index++) {
                 float value=SpectrumVisualMath.fullLevel(bands,index,count);
                 if(value<.001f) continue;
                 float h=Math.max(1f,value*maxHeight);
-                float x=index*(barWidth+1.5f);
-                builder.addRRect(RRect.makeXYWH(x,bottom-h,barWidth,h,Math.min(1.6f,Math.min(h,barWidth)*.25f)));
+                float barX=x+index*(barWidth+1.5f);
+                builder.addRRect(RRect.makeXYWH(barX,bottom-h,barWidth,h,Math.min(1.6f,Math.min(h,barWidth)*.25f)));
             }
             try(Path path=builder.snapshot()) {
                 paint.setShader(shader);

@@ -34,7 +34,8 @@ public final class ModelInstallNoticeOverlay extends NCMPanel {
     private static final FoliaModelManager.Kind[] KINDS = {
             FoliaModelManager.Kind.BEAT_THIS,
             FoliaModelManager.Kind.HTDEMUCS,
-            FoliaModelManager.Kind.RUNTIME
+            // 安卓展示 ONNX 运行时（Python 装不了），桌面展示 Python。
+            FoliaModelManager.runtimeKind()
     };
 
     /** 卡片正文：解释这些组件是干什么的、不装会怎样。 */

@@ -8,7 +8,10 @@ import com.muoniumplayer.core.rendering.StencilClipManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 一个从上至下排列的可以滚动的容器
@@ -16,6 +19,9 @@ import java.util.List;
  * Date: 2025/7/8 21:45
  */
 public class ScrollPanel extends AbstractWidget<ScrollPanel> {
+
+    /** A fixed sentinel stays outside the viewport even when the panel is resized next frame. */
+    private static final double OUTSIDE_VIEWPORT_Y = -1_000_000.0;
 
     @Getter
     private double spacing = 0;
@@ -33,6 +39,11 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
     private double uniformVerticalItemHeight = -1.0;
     private int uniformFirstVisible = -1;
     private int uniformLastVisible = -1;
+    /** Visible object identities let list replacement stay O(visible) without leaving old rows behind. */
+    private final Set<AbstractWidget<?>> uniformVisibleChildren =
+            Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<AbstractWidget<?>> uniformNextVisibleChildren =
+            Collections.newSetFromMap(new IdentityHashMap<>());
 
     @Getter
     private Alignment alignment = Alignment.VERTICAL;
@@ -85,6 +96,8 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
     private void resetUniformLayoutState() {
         this.uniformFirstVisible = -1;
         this.uniformLastVisible = -1;
+        this.uniformVisibleChildren.clear();
+        this.uniformNextVisibleChildren.clear();
     }
 
     private double uniformContentLength() {
@@ -99,13 +112,15 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
 
     private void placeUniformChildrenOutsideViewport(List<AbstractWidget<?>> children) {
         for (AbstractWidget<?> child : children) {
-            child.setPosition(child.getRelativeX(), this.getHeight() + 1.0);
+            child.onViewportExit();
+            child.setPosition(child.getRelativeX(), OUTSIDE_VIEWPORT_Y);
         }
     }
 
     private void placeUniformChildrenOutsideViewport(AbstractWidget<?>[] children) {
         for (AbstractWidget<?> child : children) {
-            child.setPosition(child.getRelativeX(), this.getHeight() + 1.0);
+            child.onViewportExit();
+            child.setPosition(child.getRelativeX(), OUTSIDE_VIEWPORT_Y);
         }
     }
 
@@ -334,15 +349,17 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
         int last = Math.min(count - 1,
                 (int) Math.ceil((this.actualScrollOffset + Math.max(0.0, this.getHeight())) / stride) + 1);
 
-        // 把刚离开视口的那一小段旧范围移出裁剪区；不再遍历整张歌单。
-        if (this.uniformFirstVisible >= 0) {
-            int oldFirst = this.uniformFirstVisible;
-            int oldLast = this.uniformLastVisible;
-            for (int index = oldFirst; index <= oldLast; index++) {
-                if (index < first || index > last) {
-                    AbstractWidget<?> child = children.get(index);
-                    child.setPosition(child.getRelativeX(), this.getHeight() + 1.0);
-                }
+        // Build the next visible identity set first. This handles fast jumps and arbitrary list
+        // replacement without scanning every child or relying on stale integer indices.
+        this.uniformNextVisibleChildren.clear();
+        for (int index = first; index <= last; index++) {
+            this.uniformNextVisibleChildren.add(children.get(index));
+        }
+
+        for (AbstractWidget<?> child : this.uniformVisibleChildren) {
+            if (!this.uniformNextVisibleChildren.contains(child)) {
+                child.onViewportExit();
+                child.setPosition(child.getRelativeX(), OUTSIDE_VIEWPORT_Y);
             }
         }
 
@@ -351,6 +368,9 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
             child.setPosition(child.getRelativeX(), index * stride - this.actualScrollOffset);
         }
 
+        this.uniformVisibleChildren.clear();
+        this.uniformVisibleChildren.addAll(this.uniformNextVisibleChildren);
+        this.uniformNextVisibleChildren.clear();
         this.uniformFirstVisible = first;
         this.uniformLastVisible = last;
     }
