@@ -46,6 +46,9 @@ public final class NCMTheme {
             if (object != null && object.has("theme")) {
                 current = ThemePreset.fromId(object.get("theme").getAsString());
             }
+            // 手机档：存档里是真玻璃主题也只在内存里退回默认主题（见 usableTheme）。
+            // 刻意不回写文件——这台手机不该改写（未来可能共享/备份的）配置本体。
+            current = usableTheme(current);
             if (object != null && object.has("custom") && object.get("custom").isJsonObject()) {
                 readCustomColors(object.getAsJsonObject("custom"));
             }
@@ -64,10 +67,41 @@ public final class NCMTheme {
         return getCurrent().getDisplayName();
     }
 
+    /**
+     * 这款主题在当前运行时能不能被选中。
+     *
+     * <p>真玻璃主题（{@link ThemePreset#isTrueGlass()}：液态玻璃、琉璃）在手机档
+     * （{@code GlassMobileTier}）上<b>整档不可选</b>：折射透镜在 GL 翻译层下编不过也跑不动，
+     * 真玻璃画不出来时主题只剩深色实色兜底，看起来就是「一块黑」。禁用从源头做起——
+     * 存档加载、轮换、直接设置三条路都过这道闸，设置界面的主题网格/下拉与引导页的
+     * 主题卡按它把真玻璃项画成灰的。桌面恒可选。</p>
+     */
+    public static synchronized boolean isSelectable(ThemePreset preset) {
+        load();
+        return selectableLocked(preset);
+    }
+
+    private static boolean selectableLocked(ThemePreset preset) {
+        return !com.muoniumplayer.core.rendering.GlassMobileTier.active()
+                || preset == null || !preset.isTrueGlass();
+    }
+
+    /** 手机档把真玻璃主题退回默认主题；桌面原样返回。只在内存里生效，不回写存档。 */
+    private static ThemePreset usableTheme(ThemePreset preset) {
+        return selectableLocked(preset) ? preset : ThemePreset.VELVET_ROSE;
+    }
+
     /** 切换至下一款预设主题，并保存当前视觉状态作为动画起点。 */
     public static synchronized ThemePreset next() {
         load();
         ThemePreset[] presets = ThemePreset.values();
+        // 手机档跳过真玻璃主题：轮换按钮永远落在可选的那一款上，不会「转到一块黑」。
+        for (int step = 1; step <= presets.length; step++) {
+            ThemePreset candidate = presets[(current.ordinal() + step) % presets.length];
+            if (selectableLocked(candidate)) {
+                return setCurrent(candidate);
+            }
+        }
         return setCurrent(presets[(current.ordinal() + 1) % presets.length]);
     }
 
@@ -76,6 +110,9 @@ public final class NCMTheme {
         load();
         if (preset == null || preset == current) {
             return current;
+        }
+        if (!selectableLocked(preset)) {
+            return current; // 手机档：真玻璃主题选不了（UI 已置灰，这里是最后一道闸）。
         }
         beginTransitionLocked();
         current = preset;

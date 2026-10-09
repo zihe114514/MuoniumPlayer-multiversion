@@ -6,6 +6,7 @@ import com.muoniumplayer.core.settings.ConfigPaths;
 import com.muoniumplayer.core.settings.JsonConfigStorage;
 
 import java.io.File;
+import java.util.Locale;
 
 /**
  * 「这台电脑上似乎没有 ffmpeg」全屏提示的状态与持久化。
@@ -21,6 +22,9 @@ public final class FfmpegNotice {
 
     /** ffmpeg 官方下载页。刻意用官网而不是某个镜像：镜像会失效，官网上各平台的构建入口都在。 */
     public static final String DOWNLOAD_URL = "https://ffmpeg.org/download.html";
+
+    /** winget 的一键安装由 {@link FfmpegInstaller} 负责，界面文案里会引用它的状态。 */
+    public static final String WINGET_PACKAGE_ID = "Gyan.FFmpeg";
 
     /** 尚未探测 / 探测还没结束。 */
     public static final int STATE_UNKNOWN = 0;
@@ -98,18 +102,36 @@ public final class FfmpegNotice {
     /**
      * 现在该不该弹这个全屏提示。
      *
-     * <p>四个条件同时成立才弹：探测已完成、确认没有 ffmpeg、用户没选过「永不展示」、本次启动还没弹过。
+     * <p>五个条件同时成立才弹：<b>系统是 Windows</b>、探测已完成、确认没有 ffmpeg、用户没选过
+     * 「永不展示」、本次启动还没弹过。只对 Windows 弹是刻意的：手机端（安卓，{@code os.name} 是
+     * Linux）压根跑不了外部 ffmpeg，解码走的是纯 Java 路线，问了用户也装不上，弹出来纯粹吓人。
      * 探测没完成时返回 {@code false} 而不是等待——调用方在客户端 tick 里，下一 tick 再问一次即可。</p>
      */
     public static boolean shouldShow() {
+        if (!isWindows()) return false;
         if (shownThisSession) return false;
         if (probeState != STATE_MISSING) return false;
         return !isNeverShow();
     }
 
+    /** 当前系统是不是 Windows。手机端（安卓）与桌面 Linux/Mac 都不是，弹窗、一键安装都只给 Windows。 */
+    public static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+    }
+
     /** 标记本次启动已经弹过。由界面在真正显示出来的那一刻调用。 */
     public static void markShownThisSession() {
         shownThisSession = true;
+    }
+
+    /**
+     * 一键安装流程复测出结论后回写探测状态：装上了就记「有」，让 {@code shouldShow()} 与
+     * HUD 编辑器的标签立刻与事实一致，而不是等下一次启动。只接受确定的结论。
+     */
+    public static void noteProbeResult(int state) {
+        if (state == STATE_PRESENT || state == STATE_MISSING) {
+            probeState = state;
+        }
     }
 
     private static void load() {

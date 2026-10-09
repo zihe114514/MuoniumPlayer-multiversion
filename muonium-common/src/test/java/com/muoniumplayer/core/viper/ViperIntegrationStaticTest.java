@@ -103,5 +103,20 @@ class ViperIntegrationStaticTest {
         String runtime = shared("com/muoniumplayer/core/viper/ViperRuntime.java");
         assertTrue(runtime.contains("ViperBuiltin.ensureProvisioned()"), "运行时必须铺设随包内置内核/预设");
         assertEquals(2, runtime.split("provisionBuiltins\\(\\);", -1).length - 1, "装载与面板同步两条路径都要铺设");
+
+        // JamesDSP 混响（本模组扩展）：引擎链尾驱动 + 参数入口 + 三层接线齐全。
+        String jdspEngine = shared("com/muoniumplayer/core/viper/dsp/ViPER.java");
+        assertTrue(jdspEngine.contains("jdspReverb_.process(tmpBuf, tmpBufSize);"),
+                "引擎链尾驱动 JamesDSP 混响（ViPER 全效果之后、输出段之前）");
+        assertTrue(jdspEngine.contains("public void applyJdspReverb("), "JamesDSP 混响参数入口");
+        assertTrue(jdspEngine.contains("new JdspReverb()"), "引擎持有 JamesDSP 混响实例");
+        String jdspMapper = shared("com/muoniumplayer/core/viper/ViperParamMapper.java");
+        assertTrue(jdspMapper.contains("\"jdspReverb\""), "映射层覆盖 JamesDSP 混响组");
+        String jdspSchema = shared("com/muoniumplayer/core/viper/ViperPresetSchema.java");
+        assertTrue(jdspSchema.contains("group(\"jdspReverb\""), "schema 定义该组（面板据此生成表单）");
+        String jdspCatalog = shared("com/muoniumplayer/core/viper/ViperTuningCatalog.java");
+        assertTrue(jdspCatalog.contains("GROUP_NAMES.put(\"jdspReverb\""), "分组显示名");
+        assertTrue(jdspCatalog.contains("INT_CHOICES.put(\"jdspReverb.preset\""), "19 预设档位表");
+        assertTrue(jdspCatalog.contains("INT_CHOICE_NAMES.put(\"jdspReverb.preset\""), "预设中文名");
     }
 }

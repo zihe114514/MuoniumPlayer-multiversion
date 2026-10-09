@@ -238,6 +238,31 @@ final class ViperPresetSchema {
                 f("wet", 0.0, 0.0, 1.0, Conv.DIV100, "reverbWet", "spkReverbWet"),
                 f("dry", 0.0, 0.0, 1.0, Conv.DIV100, "reverbDry", "spkReverbDry")));
 
+        // —— 扩展：JamesDSP 混响（sndfilter sf_reverb；非上游 ViPER 组） ——
+        // 预设表 0..18（19 个）或 custom=true 时的 17 个自定义参数
+        // （oversampleFactor + sf_advancereverb 的 16 个入口参数）。
+        groups.add(group("jdspReverb",
+                b("enable", false, "jdspReverbEnabled", "spkJdspReverbEnabled"),
+                i("preset", 0, 0, 18, "jdspReverbPreset", "spkJdspReverbPreset"),
+                b("custom", false, "jdspReverbCustom", "spkJdspReverbCustom"),
+                i("oversampleFactor", 1, 1, 2, "jdspReverbOsf", "spkJdspReverbOsf"),
+                f("ertolate", 0.40, 0.0, 1.0, Conv.NONE, "jdspReverbErtolate", "spkJdspReverbErtolate"),
+                f("erefwet", -9.0, -60.0, 12.0, Conv.NONE, "jdspReverbErefwet", "spkJdspReverbErefwet"),
+                f("dry", -7.0, -60.0, 12.0, Conv.NONE, "jdspReverbDry", "spkJdspReverbDry"),
+                f("ereffactor", 1.6, 0.1, 3.0, Conv.NONE, "jdspReverbEreffactor", "spkJdspReverbEreffactor"),
+                f("erefwidth", 0.7, -1.0, 1.0, Conv.NONE, "jdspReverbErefwidth", "spkJdspReverbErefwidth"),
+                f("width", 1.0, 0.0, 1.0, Conv.NONE, "jdspReverbWidth", "spkJdspReverbWidth"),
+                f("wet", 0.0, -60.0, 12.0, Conv.NONE, "jdspReverbWet", "spkJdspReverbWet"),
+                f("wander", 0.25, 0.0, 1.0, Conv.NONE, "jdspReverbWander", "spkJdspReverbWander"),
+                f("bassb", 0.15, 0.0, 1.0, Conv.NONE, "jdspReverbBassb", "spkJdspReverbBassb"),
+                f("spin", 0.7, 0.0, 20.0, Conv.NONE, "jdspReverbSpin", "spkJdspReverbSpin"),
+                f("inputlpf", 17000.0, 100.0, 24000.0, Conv.NONE, "jdspReverbInputlpf", "spkJdspReverbInputlpf"),
+                f("basslpf", 500.0, 100.0, 24000.0, Conv.NONE, "jdspReverbBasslpf", "spkJdspReverbBasslpf"),
+                f("damplpf", 7000.0, 100.0, 24000.0, Conv.NONE, "jdspReverbDamplpf", "spkJdspReverbDamplpf"),
+                f("outputlpf", 10000.0, 100.0, 24000.0, Conv.NONE, "jdspReverbOutputlpf", "spkJdspReverbOutputlpf"),
+                f("rt60", 3.2, 0.1, 30.0, Conv.NONE, "jdspReverbRt60", "spkJdspReverbRt60"),
+                f("delay", 0.020, -0.1, 0.1, Conv.NONE, "jdspReverbDelay", "spkJdspReverbDelay")));
+
         groups.add(group("dynamicSystem",
                 b("enable", false, "dynamicSystemEnabled", "spkDynamicSystemEnabled"),
                 n("presetId", "dsPresetId", "spkDsPresetId"),

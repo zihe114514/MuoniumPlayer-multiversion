@@ -1,6 +1,7 @@
 package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.core.management.FontManager;
+import com.muoniumplayer.core.ncm.music.FfmpegInstaller;
 import com.muoniumplayer.core.ncm.music.FfmpegNotice;
 import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.GlassLook;
@@ -31,8 +32,12 @@ import java.net.URI;
  * 改用 Skija 之后文字与播放器界面走同一条 {@code CFontRenderer} 链路，颜色一律带 alpha，
  * 不再有这种分歧。</p>
  *
- * <p>三个出口都不改动任何设置：前往下载（打不开浏览器就把地址塞进剪贴板）、
- * 我才不管呢喵（本次启动不再弹）、永不展示（落盘，以后都不弹）。ESC 等价于第二个。</p>
+ * <p>出口也按「傻瓜操作」重排过：Windows 上的主行动是「一键安装喵！」——交给 {@link FfmpegInstaller}
+ * 用系统自带的 winget 自动装，状态行滚着进度省略号，界面侧的看门狗每帧瞄一眼安装状态，装好后把成功
+ * 文案多留一秒半再自动收起（立刻消失会让人怀疑有没有真装上）。winget 装的 ffmpeg 落在 WinGet Links
+ * 目录，探测逻辑本来就覆盖那里，装完立刻生效、不用重启游戏。「前往下载」退居次要出口：winget 不在
+ * 或装失败时，还能去官网手动下。三个出口都不改动任何设置；打不开浏览器就把地址塞进剪贴板。
+ * ESC 与点遮罩等价于「我才不管呢喵」。</p>
  */
 public final class FfmpegNoticeOverlay extends NCMPanel {
 
@@ -43,7 +48,13 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
             "当然如果不安装也是可以使用的喵！ 但是会影响一些功能喵！ 例如动态封面，B站解析可能会受到影响的喵喵喵";
     private static final String NEVER_SHOW = "永不展示";
     private static final String DOWNLOAD = "前往下载";
+    private static final String INSTALL = "一键安装喵！";
     private static final String IGNORE = "我才不管呢喵！";
+
+    /** 空闲时状态行上的指引：解释「一键安装」是什么、要联网，免得用户以为点了就会弹窗广告。 */
+    private static final String HINT_IDLE = "点「一键安装喵！」用 winget 自动装好，装完立即生效（需要联网）";
+    private static final String STATUS_INSTALLING = "正在用 winget 下载安装 ffmpeg 喵";
+    private static final String STATUS_SUCCESS = "装好了喵！已经检测到 ffmpeg，动态封面可以用了";
 
     /** 正文最多显示的行数；再长会在最后一行截断，卡片不允许长到顶出屏幕。 */
     private static final int MAX_BODY_LINES = 5;
@@ -67,12 +78,16 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
     private static final double LINK_GAP = 8.0;
     private static final double CARD_BOTTOM_PAD = 12.0;
 
-    /** 强调按钮（前往下载）的底色，与「未安装分析模型」提示里的安装按钮同色。 */
+    /** 强调按钮（一键安装喵！）的底色，与「未安装分析模型」提示里的安装按钮同色。 */
     private static final int PRIMARY_COLOR = 0xD2913A;
     private static final int PRIMARY_HOVER_COLOR = 0xE5B24E;
-    /** 打不开浏览器时那行兜底说明的颜色。 */
+    /** 安装进行中主按钮压暗一档：看得出「在干活」，又不至于像坏了。 */
+    private static final int PRIMARY_RUNNING_COLOR = 0xB07E38;
+    /** 安装成功的状态行颜色；唯一一处跳出橙色系的地方，让「成了」和「出事了」一眼分得开。 */
+    private static final int SUCCESS_COLOR = 0x9FD48A;
+    /** 异常与进行中共用的状态行颜色（打不开浏览器、安装失败等）。 */
     private static final int STATUS_COLOR = 0xFFB74D;
-    /** 「永不展示」悬停时的颜色。 */
+    /** 链接悬停时的颜色（我才不管呢喵 / 永不展示）。 */
     private static final int LINK_HOVER_COLOR = 0xFFD08A;
 
     private boolean closing;
@@ -82,8 +97,10 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
     private double presentation;
     private boolean resolved;
 
-    /** 浏览器打不开时显示的兜底说明（地址已复制到剪贴板）。 */
+    /** 浏览器打不开时显示的兜底说明（地址已复制到剪贴板）；非空时状态行优先显示它。 */
     private String status;
+    /** 界面侧看门狗：第一次看到「装好了」的时刻，据此在短暂展示后自动收起。-1 表示还没见到。 */
+    private long successSeenAt = -1L;
     /** 按当前卡片宽度换行后的正文。 */
     private String[] bodyLines = new String[0];
     /** 上一次换行用的宽度；宽度没变就不重复换行（换行要逐字累加字形宽度）。 */
@@ -145,8 +162,11 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
         addChild(dialog);
         dialog.setOnClickCallback((x, y, button) -> true);
         // 高度由正文行数决定，所以尺寸每帧在渲染前重算：窗口变窄会让正文多一行，卡片必须跟着
-        // 长高，否则按钮会压在正文上。
-        dialog.setBeforeRenderCallback(() -> layoutDialog(dialog));
+        // 长高，否则按钮会压在正文上。顺带跑界面侧的安装看门狗，见 tickInstallWatchdog。
+        dialog.setBeforeRenderCallback(() -> {
+            layoutDialog(dialog);
+            tickInstallWatchdog();
+        });
 
         RoundedRectWidget background = new RoundedRectWidget();
         dialog.addChild(background);
@@ -223,9 +243,9 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
             });
         }
 
-        // 打不开浏览器时的兜底说明。这一行的高度恒被预留：否则它会一边长出来一边把按钮往下推，
-        // 用户正要点按钮的时候按钮跑了。
-        LabelWidget statusLabel = new LabelWidget(() -> status == null ? "" : status, FontManager.pf14);
+        // 状态行：平时是傻瓜指引，装的时候滚进度，结束报结果。这一行的高度恒被预留：否则它会一边
+        // 长出来一边把按钮往下推，用户正要点按钮的时候按钮跑了。
+        LabelWidget statusLabel = new LabelWidget(this::statusText, FontManager.pf14);
         dialog.addChild(statusLabel);
         statusLabel.setClickable(false);
         statusLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
@@ -234,7 +254,7 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
             // 那时算出来的上限会被夹成 1px，而 TRIM_TO_WIDTH 在 1px 内连省略号都
             // 放不下，于是整行文字静默地什么都不画（正文曾经就是这样消失的）。
             statusLabel.setMaxWidth(Math.max(1, dialog.getWidth() - SIDE_INSET * 2 - BODY_PAD * 2));
-            statusLabel.setColor(STATUS_COLOR);
+            statusLabel.setColor(statusColor());
             statusLabel.setPosition(SIDE_INSET + BODY_PAD, statusTop());
         });
 
@@ -247,35 +267,23 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
             divider.setColor(getColor(NCMScreen.ColorType.BORDER));
         });
 
-        RoundedButtonWidget ignoreButton = new RoundedButtonWidget(IGNORE, FontManager.pf12bold);
-        dialog.addChild(ignoreButton);
-        ignoreButton.setRadius(6);
-        ignoreButton.setGlassRim(GlassLook.Surface.PLAYER);
         RoundedButtonWidget downloadButton = new RoundedButtonWidget(DOWNLOAD, FontManager.pf12bold);
         dialog.addChild(downloadButton);
         downloadButton.setRadius(6);
         downloadButton.setGlassRim(GlassLook.Surface.PLAYER);
+        RoundedButtonWidget installButton = new RoundedButtonWidget(INSTALL, FontManager.pf12bold);
+        dialog.addChild(installButton);
+        installButton.setRadius(6);
+        installButton.setGlassRim(GlassLook.Surface.PLAYER);
 
         // 两个按钮共用一次宽度计算，保证左右对齐、中间间隙一致。
-        ignoreButton.setBeforeRenderCallback(() -> {
-            layoutActions(dialog, ignoreButton, downloadButton);
-            ignoreButton.setColor(ignoreButton.isHovering()
+        downloadButton.setBeforeRenderCallback(() -> {
+            layoutActions(dialog, downloadButton, installButton);
+            downloadButton.setColor(downloadButton.isHovering()
                     ? getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            ignoreButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-            ignoreButton.setTextColor(getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-        });
-        ignoreButton.setOnClickCallback((x, y, button) -> {
-            if (button != 0) return false;
-            cancel();
-            return true;
-        });
-
-        downloadButton.setBeforeRenderCallback(() -> {
-            layoutActions(dialog, ignoreButton, downloadButton);
-            downloadButton.setColor(downloadButton.isHovering() ? PRIMARY_HOVER_COLOR : PRIMARY_COLOR);
             downloadButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-            downloadButton.setTextColor(0xFFFFFF);
+            downloadButton.setTextColor(getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
         downloadButton.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -283,7 +291,44 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
             return true;
         });
 
-        // 「永不展示」是这一屏唯一的持久化出口，单独放在按钮下面，和「我才不管呢喵」拉开距离。
+        installButton.setBeforeRenderCallback(() -> {
+            layoutActions(dialog, downloadButton, installButton);
+            boolean running = FfmpegInstaller.state() == FfmpegInstaller.RUNNING;
+            installButton.setColor(running ? PRIMARY_RUNNING_COLOR
+                    : installButton.isHovering() ? PRIMARY_HOVER_COLOR : PRIMARY_COLOR);
+            installButton.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+            installButton.setTextColor(0xFFFFFF);
+        });
+        installButton.setOnClickCallback((x, y, button) -> {
+            if (button != 0) return false;
+            // 正在装就别点出第二个安装进程；FfmpegInstaller.start() 自己也会挡，这里挡是为了
+            // 连点时连「状态行闪一下」都不发生。
+            if (FfmpegInstaller.state() == FfmpegInstaller.RUNNING) return true;
+            // 清掉浏览器兜底说明之类的一次性文案，状态行交还给安装流程自己的输出。
+            status = null;
+            successSeenAt = -1L;
+            FfmpegInstaller.start();
+            return true;
+        });
+
+        // 「我才不管呢喵」与「永不展示」是两个低调出口，放同一行：左边本次不弹，右边永久不弹。
+        // 它们降级成链接是刻意的——傻瓜流程要把视线留给「一键安装」。
+        LabelWidget ignoreLink = new LabelWidget(IGNORE, FontManager.pf12);
+        dialog.addChild(ignoreLink);
+        ignoreLink.setShouldOverrideMouseCursor(true);
+        ignoreLink.setBeforeRenderCallback(() -> {
+            ignoreLink.setColor(ignoreLink.isHovering()
+                    ? LINK_HOVER_COLOR
+                    : getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            ignoreLink.setPosition(SIDE_INSET, linkTop());
+        });
+        ignoreLink.setOnClickCallback((x, y, button) -> {
+            if (button != 0) return false;
+            cancel();
+            return true;
+        });
+
+        // 「永不展示」是这一屏唯一的持久化出口，收在右下角。
         LabelWidget neverShowLabel = new LabelWidget(NEVER_SHOW, FontManager.pf12);
         dialog.addChild(neverShowLabel);
         neverShowLabel.setShouldOverrideMouseCursor(true);
@@ -293,7 +338,7 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
                     : getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             // 宽度是上一帧量出来的：文本内容固定，第一帧之后就是定值。
             neverShowLabel.setPosition(
-                    Math.max(SIDE_INSET, dialog.getWidth() * .5 - neverShowLabel.getWidth() * .5),
+                    Math.max(SIDE_INSET, dialog.getWidth() - SIDE_INSET - neverShowLabel.getWidth()),
                     linkTop());
         });
         neverShowLabel.setOnClickCallback((x, y, button) -> {
@@ -317,21 +362,74 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
         dialog.setAlpha((float) presentation);
     }
 
-    private void layoutActions(Panel dialog, RoundedButtonWidget ignore, RoundedButtonWidget download) {
+    private void layoutActions(Panel dialog, RoundedButtonWidget download, RoundedButtonWidget install) {
         double total = Math.max(1, dialog.getWidth() - SIDE_INSET * 2);
         double gap = 8;
-        double downloadWidth = Math.max(104, Math.min(140, total * .56));
-        double ignoreWidth = Math.max(1, total - gap - downloadWidth);
+        double installWidth = Math.max(118, Math.min(150, total * .52));
+        double downloadWidth = Math.max(1, total - gap - installWidth);
         double top = buttonsTop();
-        // 「我才不管呢喵」在左、「前往下载」在右：读起来是「先看主行动」，鼠标也正好停在惯用一侧。
-        ignore.setBounds(ignoreWidth, BUTTON_HEIGHT);
-        ignore.setPosition(SIDE_INSET, top);
+        // 「前往下载」在左、「一键安装喵！」在右：主行动放惯用手一侧，鼠标停过去最顺手。
         download.setBounds(downloadWidth, BUTTON_HEIGHT);
-        download.setPosition(SIDE_INSET + ignoreWidth + gap, top);
+        download.setPosition(SIDE_INSET, top);
+        install.setBounds(installWidth, BUTTON_HEIGHT);
+        install.setPosition(SIDE_INSET + downloadWidth + gap, top);
     }
 
     private static double lineHeight() {
         return (FontManager.pf14 == null ? 13.0 : FontManager.pf14.getFontHeight()) + 3.0;
+    }
+
+    /**
+     * 状态行文字：每帧由 Label 的取值回调读一次。来源只有两个——浏览器兜底说明（一次性事件，
+     * {@code status} 非空就优先它）和安装流程的当前状态。安装线程只写 volatile 字段，这里只读，
+     * 跨线程不需要任何锁。
+     */
+    private String statusText() {
+        if (status != null) return status;
+        int state = FfmpegInstaller.state();
+        if (state == FfmpegInstaller.RUNNING) return STATUS_INSTALLING + progressDots();
+        if (state == FfmpegInstaller.SUCCESS) return STATUS_SUCCESS;
+        if (state == FfmpegInstaller.FAILED) {
+            String reason = FfmpegInstaller.failureReason();
+            return reason != null ? reason : "没装上喵…点「前往下载」手动装吧";
+        }
+        return HINT_IDLE;
+    }
+
+    /** 状态行颜色：成功是唯一的绿色系，失败与进行中用橙色，空闲指引跟着主题的次要文字色。 */
+    private int statusColor() {
+        if (status != null) return STATUS_COLOR;
+        int state = FfmpegInstaller.state();
+        if (state == FfmpegInstaller.SUCCESS) return SUCCESS_COLOR;
+        if (state == FfmpegInstaller.RUNNING || state == FfmpegInstaller.FAILED) return STATUS_COLOR;
+        return getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+    }
+
+    /** 按 0.4 秒一颗滚动的省略号；不加的话「正在安装」静得像卡死了。 */
+    private static String progressDots() {
+        long elapsed = System.currentTimeMillis() - FfmpegInstaller.startedAtMillis();
+        int count = (int) ((elapsed / 400L) % 4L);
+        if (count <= 0) return "";
+        StringBuilder dots = new StringBuilder(count);
+        for (int i = 0; i < count; i++) dots.append('…');
+        return dots.toString();
+    }
+
+    /**
+     * 界面侧的看门狗：每帧瞄一眼安装状态。装好后把成功文案多留一秒半再自动收起——立刻消失会让人
+     * 怀疑有没有真装上；失败则停在原地，让用户改走「前往下载」。收起走 {@link #cancel()}，
+     * 与「我才不管呢喵」同一条路。
+     */
+    private void tickInstallWatchdog() {
+        if (resolved) return;
+        if (FfmpegInstaller.state() != FfmpegInstaller.SUCCESS) return;
+        if (successSeenAt < 0L) {
+            successSeenAt = System.currentTimeMillis();
+            return;
+        }
+        if (System.currentTimeMillis() - successSeenAt >= 1600L) {
+            cancel();
+        }
     }
 
     private double bodyBlockHeight() {

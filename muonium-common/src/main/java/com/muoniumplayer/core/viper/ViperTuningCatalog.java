@@ -27,8 +27,19 @@ public final class ViperTuningCatalog {
     /** 档位型整型字段的离散取值（键同上；{@code null} 表示未收录，界面回退为只读）。 */
     private static final Map<String, int[]> INT_CHOICES = new LinkedHashMap<>();
 
+    /** 档位取值的可读名（键同上；仅有名字的档位才收录，界面优先显示名字）。 */
+    private static final Map<String, String[]> INT_CHOICE_NAMES = new LinkedHashMap<>();
+
     /** 标记「官方遗留、映射器不消费」的字段（界面只读展示，避免调了没反应的困惑）。 */
     private static final Map<String, Boolean> UNUSED = new LinkedHashMap<>();
+
+    /** JamesDSP 混响的 19 个预设中文名（与 {@code JdspReverb.PRESET_NAMES} 一一对应）。 */
+    private static final String[] JDSP_REVERB_PRESET_NAMES = {
+            "默认", "小厅 1", "小厅 2", "中厅 1", "中厅 2",
+            "大厅 1", "大厅 2", "小房间 1", "小房间 2",
+            "中房间 1", "中房间 2", "大房间 1", "大房间 2",
+            "中 ER 1", "中 ER 2", "板式（亮）", "板式（暗）",
+            "长混响 1", "长混响 2"};
 
     static {
         GROUP_NAMES.put("masterLimiter", "主限幅与输出");
@@ -46,6 +57,7 @@ public final class ViperTuningCatalog {
         GROUP_NAMES.put("stereoImager", "立体声像");
         GROUP_NAMES.put("headphoneSurround", "耳机环绕（VHE）");
         GROUP_NAMES.put("reverb", "混响");
+        GROUP_NAMES.put("jdspReverb", "JamesDSP 混响");
         GROUP_NAMES.put("dynamicSystem", "动态系统");
         GROUP_NAMES.put("psychoacousticBass", "心理声学低音");
         GROUP_NAMES.put("bass", "ViPER 低音");
@@ -128,6 +140,26 @@ public final class ViperTuningCatalog {
         field("reverb", "damp", "阻尼");
         field("reverb", "wet", "湿声");
         field("reverb", "dry", "干声");
+        field("jdspReverb", "enable", "启用");
+        field("jdspReverb", "preset", "预设");
+        field("jdspReverb", "custom", "自定义参数");
+        field("jdspReverb", "oversampleFactor", "过采样倍率");
+        field("jdspReverb", "ertolate", "早期反射混合");
+        field("jdspReverb", "erefwet", "早期反射湿声");
+        field("jdspReverb", "dry", "干声增益");
+        field("jdspReverb", "ereffactor", "早期反射延迟系数");
+        field("jdspReverb", "erefwidth", "早期反射宽度");
+        field("jdspReverb", "width", "立体声宽度");
+        field("jdspReverb", "wet", "湿声增益");
+        field("jdspReverb", "wander", "调制深度");
+        field("jdspReverb", "bassb", "低频增强");
+        field("jdspReverb", "spin", "LFO 速率");
+        field("jdspReverb", "inputlpf", "输入低通");
+        field("jdspReverb", "basslpf", "低频低通");
+        field("jdspReverb", "damplpf", "阻尼低通");
+        field("jdspReverb", "outputlpf", "输出低通");
+        field("jdspReverb", "rt60", "混响时长 RT60");
+        field("jdspReverb", "delay", "输出延迟");
         field("dynamicSystem", "enable", "启用");
         field("dynamicSystem", "device", "设备（未使用）");
         field("dynamicSystem", "strength", "强度");
@@ -170,6 +202,11 @@ public final class ViperTuningCatalog {
         INT_CHOICES.put("cure.crossfeedPreset", new int[] {0, 1, 2, 3, 4, 5});
         INT_CHOICES.put("equalizer.bandCount", new int[] {10});
         INT_CHOICES.put("dynamicEq.bandCount", new int[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
+        // 扩展：JamesDSP 混响——19 个预设（档位名见 INT_CHOICE_NAMES）+ 过采样倍率。
+        INT_CHOICES.put("jdspReverb.preset",
+                new int[] {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18});
+        INT_CHOICES.put("jdspReverb.oversampleFactor", new int[] {1, 2});
+        INT_CHOICE_NAMES.put("jdspReverb.preset", JDSP_REVERB_PRESET_NAMES);
 
         UNUSED.put("dynamicSystem.device", Boolean.TRUE);
     }
@@ -196,6 +233,24 @@ public final class ViperTuningCatalog {
     /** 档位型整型字段的离散取值；未收录返回 {@code null}（界面回退只读）。 */
     public static int[] intChoices(String groupKey, String fieldKey) {
         return INT_CHOICES.get(groupKey + "." + fieldKey);
+    }
+
+    /**
+     * 档位取值的显示名（如 JamesDSP 混响的预设名）；未收录该字段或取值不在表内时返回
+     * {@code null}，界面回退为显示数字。
+     */
+    public static String intChoiceName(String groupKey, String fieldKey, int value) {
+        String[] names = INT_CHOICE_NAMES.get(groupKey + "." + fieldKey);
+        int[] values = INT_CHOICES.get(groupKey + "." + fieldKey);
+        if (names == null || values == null) {
+            return null;
+        }
+        for (int i = 0; i < values.length && i < names.length; i++) {
+            if (values[i] == value) {
+                return names[i];
+            }
+        }
+        return null;
     }
 
     /** 是否为官方遗留、映射器不消费的字段（界面只读展示）。 */

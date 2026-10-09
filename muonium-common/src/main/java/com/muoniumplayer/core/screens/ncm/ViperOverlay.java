@@ -520,8 +520,11 @@ public final class ViperOverlay extends NcmSheet {
 
         final LabelWidget value = label(row, () -> {
             int current = editor.getInt(gi, fi, choices[0]);
+            String name = editor.fieldIntChoiceName(gi, fi, current);
             for (int choice : choices) {
-                if (choice == current) return String.valueOf(current);
+                if (choice == current) {
+                    return name != null ? name : String.valueOf(current);
+                }
             }
             return choices[0] + " →";
         }, FontManager.pf12bold);

@@ -598,10 +598,52 @@ public final class LxSourceService {
         worker.start();
     }
 
-    private static boolean looksLikeUrl(String text) {
+    /**
+     * 判断一段文本是不是一个单行 {@code http(s)} 链接。
+     *
+     * <p>public 是给自定义源页的网址导入弹窗用的：弹窗在提交前用它做同一判据的前置校验，
+     * 不然界面上说「这不是链接」而服务层悄悄收下，两边就会打架。</p>
+     */
+    public static boolean looksLikeUrl(String text) {
         String lower = text.toLowerCase(Locale.ROOT);
         // 带换行的一定是正文：脚本正文里也可能出现 http 开头的一行。
         return (lower.startsWith("http://") || lower.startsWith("https://")) && text.indexOf('\n') < 0;
+    }
+
+    /**
+     * 从用户在网址输入栏里手输的链接导入：只接受 {@code http(s)} 链接。
+     *
+     * <p>与 {@link #importFromText} 分开是因为两者的容错方向相反：剪贴板里的内容「多半是用户想要的」，
+     * 链接和正文都试着收下；输入栏里敲出来的东西写错了就该直说——把一段误粘进网址栏的脚本正文再
+     * 当成正文收下，只会让「我到底导入了什么」变得更糊涂。</p>
+     */
+    public static void importFromUrl(final String url) {
+        final String trimmed = url == null ? "" : url.trim();
+        if (trimmed.isEmpty()) {
+            fail("先在输入栏里填一个脚本的下载链接");
+            return;
+        }
+        if (!looksLikeUrl(trimmed)) {
+            fail("这不像一个链接：要以 http:// 或 https:// 开头");
+            return;
+        }
+        if (busy) return;
+        busy = true;
+        notice = "正在下载脚本…";
+        noticeBad = false;
+        Thread worker = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String downloaded = download(trimmed);
+                    if (downloaded != null) adopt(downloaded, trimmed);
+                } finally {
+                    busy = false;
+                }
+            }
+        }, "MuoniumPlayer-LxSourceUrlImport");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     /**

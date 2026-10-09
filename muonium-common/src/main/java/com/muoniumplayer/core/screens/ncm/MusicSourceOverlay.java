@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.screens.ncm;
 
+import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.lxsource.LxRuntime;
 import com.muoniumplayer.core.ncm.lxsource.LxSourceService;
@@ -16,10 +17,12 @@ import com.muoniumplayer.core.ncm.music.YouTubeSessionStore;
 import com.muoniumplayer.core.rendering.BrandVectorIcons;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
+import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
+import com.muoniumplayer.core.rendering.ui.widgets.RectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.TextFieldWidget;
@@ -84,7 +87,7 @@ public final class MusicSourceOverlay extends NcmSheet {
     private static final int LX_COLOR = 0x9C7CF4;
     /** 自定义源页：页眉（返回键 + 标题 + 副标题）加一行状态，共 88。 */
     private static final double LX_HEADER_H = 88.0;
-    /** 自定义源页页脚：分隔线 + 三颗按钮 + 两行开关 + 一行安全说明。 */
+    /** 自定义源页页脚：分隔线 + 四颗按钮 + 两行开关 + 一行安全说明。 */
     private static final double LX_FOOTER_H = 138.0;
     private static final double LX_CARD_H = 58.0;
     private static final double LX_ROW_H = LX_CARD_H + 7.0;
@@ -105,6 +108,21 @@ public final class MusicSourceOverlay extends NcmSheet {
 
     /** Cookie 校验要联网（最坏 25 秒），期间把按钮钉成「正在验证…」，不让人连点。 */
     private boolean youtubeLoginBusy;
+
+    /** 网址导入弹窗的开合。组件随页面重建，开合状态由它独立保管。 */
+    private boolean lxUrlDialogOpen;
+    /** 弹窗里的半成品网址：误触关闭后重开还在，提交成功才清。 */
+    private String lxUrlDraft = "";
+    /** 弹窗内那行提示：空串表示没有要专门说的话（此时显示默认说明）。 */
+    private String lxUrlDialogStatus = "";
+    /** 上面那行是不是坏消息（坏消息用红色与关闭图标）。 */
+    private boolean lxUrlDialogBad;
+    /** 二级弹窗的入场进度：遮罩暗下去、卡片从下方落上来都读它。 */
+    private double lxUrlReveal;
+    /** 弹窗组件：开合就是切 hidden，页面重建时由 {@link #buildLxUrlDialog()} 重新构建。 */
+    private RectWidget lxUrlMask;
+    private RoundedRectWidget lxUrlCard;
+    private TextFieldWidget lxUrlField;
 
     /**
      * 当前在哪一页。
@@ -130,6 +148,12 @@ public final class MusicSourceOverlay extends NcmSheet {
     }
 
     public void handleEscape() {
+        // 弹窗开着时 ESC 只关弹窗。正常路径输入框自己会拦（它聚焦时吞掉一切按键），
+        // 这里兜的是「焦点被 updateStyles 抢走的那一帧」，别让 ESC 穿到翻页层级去。
+        if (lxUrlDialogOpen) {
+            closeLxUrlDialog();
+            return;
+        }
         if (page == PAGE_OVERVIEW) {
             dispose();
         } else {
@@ -146,6 +170,10 @@ public final class MusicSourceOverlay extends NcmSheet {
             if (lxRevision != LxSourceService.getRevision()) {
                 showLxSources();
             }
+        }
+        // 弹窗的入场只有一条补间：挂在 onRender 而不是某个组件的回调里，同一帧所有组件读到同一个数。
+        if (lxUrlDialogOpen) {
+            lxUrlReveal = Interpolations.interpolate(lxUrlReveal, 1.0, .22f);
         }
         super.onRender(mouseX, mouseY);
     }
@@ -855,7 +883,7 @@ public final class MusicSourceOverlay extends NcmSheet {
                 () -> 5.0, () -> LX_COLOR);
         if (scripts.isEmpty()) {
             tip(strip(feed, 44.0), () -> PartyIcons.FOLDER_OPEN,
-                    () -> "还没有脚本。用下面的「从文件导入」挑一个 .js，或复制正文 / 链接后从剪贴板导入。",
+                    () -> "还没有脚本。点下方「从网址导入」填一个下载链接、挑一个 .js 文件，或复制正文 / 链接后从剪贴板导入。",
                     () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), () -> 10.0);
         }
         for (int i = 0; i < scripts.size(); i++) {
@@ -867,6 +895,10 @@ public final class MusicSourceOverlay extends NcmSheet {
         runtimeCard(strip(feed, LX_RUNTIME_ROW), scripts.size());
 
         lxFooter(dialog);
+
+        // 网址导入弹窗挂在整层最上面：它不属于任何一页的滚动内容，每次重建页面都按开合状态
+        // 重新搭一遍 —— hidden 的组件不渲染也不吃事件，关着的时候等于不存在。
+        buildLxUrlDialog();
     }
 
     private double lxContentHeight(final int count) {
@@ -1049,7 +1081,11 @@ public final class MusicSourceOverlay extends NcmSheet {
         // 要么是整段脚本，让程序看一眼比让他先选一次更省事。
         lxFooterButton(dialog, 1, () -> PartyIcons.LINK, () -> "从剪贴板导入",
                 () -> LxSourceService.importFromText(KeyboardUtils.getClipboardString()));
-        lxFooterButton(dialog, 2, () -> PartyIcons.SYNC, () -> "重新加载",
+        // 手输的网址走二级弹窗：页脚已经排满，再塞一行常驻输入栏会把开关和安全说明挤上去；
+        // 而网址导入终究是「偶尔用一次」的路径，弹窗恰好表达这种「要用的时候才出现」。
+        lxFooterButton(dialog, 2, () -> PartyIcons.PUBLIC_ROOM, () -> "从网址导入",
+                this::openLxUrlDialog);
+        lxFooterButton(dialog, 3, () -> PartyIcons.SYNC, () -> "重新加载",
                 LxSourceService::reloadActive);
 
         // 两行开关都是「有启用项才有意义」，没有启用项时整行调暗。
@@ -1099,13 +1135,226 @@ public final class MusicSourceOverlay extends NcmSheet {
                 () -> LX_COLOR);
     }
 
+    /**
+     * 网址导入弹窗：页脚「从网址导入」点开的二级弹窗，一个输入框加两颗按钮。
+     *
+     * <p>「从剪贴板导入」只覆盖「先复制好了再点」的路径；很多用户是照着别处开着的一个链接，
+     * 手动输进来更直接。给它开一个二级弹窗而不是在页脚塞一行常驻输入栏：网址导入是「偶尔用
+     * 一次」的路径，页脚还要给两行开关与安全说明留位置，弹窗的「要用时才出现」恰好合适。</p>
+     *
+     * <p>组件挂在整层（{@code this}）而不是 lx 页的弹窗板上：页间切换会 {@code beginPage()}
+     * 清空子组件，挂在那上面会被误清。每次页面重建都按 {@link #lxUrlDialogOpen} 重新搭一遍，
+     * 输入内容经 {@link #lxUrlDraft} 回填；关着的时候整套 hidden，不渲染也不吃事件，等于不存在。</p>
+     */
+    private void buildLxUrlDialog() {
+        final boolean open = lxUrlDialogOpen;
+
+        // 遮罩要能点：点它关弹窗。sheet() 那层遮罩不吃点击是因为「点空白关整层」走根回调，
+        // 而根回调在这里的意思还是关整层 —— 二级弹窗的点空白关闭必须自己消费掉，不然会漏下去。
+        lxUrlMask = new RectWidget();
+        addChild(lxUrlMask);
+        lxUrlMask.setColor(0x000000);
+        lxUrlMask.setOnClickCallback((x, y, button) -> {
+            if (button != 0) return false;
+            closeLxUrlDialog();
+            return true;
+        });
+        lxUrlMask.setBeforeRenderCallback(() -> {
+            lxUrlMask.setMargin(0);
+            lxUrlMask.setBounds(Math.max(1, getWidth()), Math.max(1, getHeight()));
+            lxUrlMask.setPosition(0, 0);
+            lxUrlMask.setAlpha((float) (clamp01(lxUrlReveal) * .36 * presentation));
+        });
+
+        lxUrlCard = new RoundedRectWidget();
+        addChild(lxUrlCard);
+        lxUrlCard.setRadius(14);
+        lxUrlCard.setGlassRim(GlassLook.Surface.PLAYER);
+        // 卡片自己吃掉落在它身上的点击：不返回 true 的话，点卡片会透过它触发遮罩的关闭。
+        lxUrlCard.setOnClickCallback((x, y, button) -> button == 0);
+        lxUrlCard.setBeforeRenderCallback(() -> {
+            double width = Math.max(1, Math.min(452, getWidth() - 40));
+            lxUrlCard.setBounds(width, 164);
+            lxUrlCard.setAlpha((float) (clamp01(lxUrlReveal) * presentation));
+            lxUrlCard.setPosition(getWidth() * .5 - width * .5,
+                    getHeight() * .5 - 82 + (1.0 - clamp01(lxUrlReveal)) * 10.0);
+            lxUrlCard.setColor(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
+            lxUrlCard.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+        });
+        stroke(lxUrlCard, 14.0, () -> NCMScreen.getColor(NCMScreen.ColorType.BORDER),
+                () -> .55 * clamp01(lxUrlReveal));
+
+        // 标题盘与标题：与 header() 同一套版式，只是没有返回键 —— 关闭走遮罩、ESC 和取消。
+        final RoundedRectWidget plate = new RoundedRectWidget();
+        lxUrlCard.addChild(plate);
+        plate.setClickable(false).setRadius(11);
+        plate.setGlassRim(GlassLook.Surface.PLAYER);
+        plate.setBeforeRenderCallback(() -> {
+            plate.setBounds(34, 34);
+            plate.setPosition(PAD, 12);
+            plate.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND), LX_COLOR, .28));
+        });
+        icon(plate, PartyIcons.LINK, ICON_M, () -> 17.0, () -> 17.0, () -> LX_COLOR);
+
+        final LabelWidget title = label(lxUrlCard, "从网址导入", FontManager.pf18bold);
+        title.setBeforeRenderCallback(() -> {
+            title.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            title.setPosition(PAD + 45, inkTop(title, 26.0));
+        });
+
+        final LabelWidget caption = label(lxUrlCard, this::lxUrlDialogCaption, FontManager.pf12);
+        caption.setBeforeRenderCallback(() -> {
+            caption.setColor(lxUrlDialogBad ? BAD_COLOR
+                    : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            caption.setMaxWidth(Math.max(1, lxUrlCard.getWidth() - (PAD + CARD_INSET) * 2));
+            caption.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            caption.setPosition(PAD + CARD_INSET + 2, inkTop(caption, 56.0));
+        });
+
+        // 输入框：与账号页 Cookie 栏同一套手感（粘贴、选中、聚焦描边）。
+        final RoundedRectWidget backing = new RoundedRectWidget();
+        lxUrlCard.addChild(backing);
+        backing.setClickable(false);
+        backing.setRadius(9);
+        backing.setBeforeRenderCallback(() -> {
+            backing.setBounds(Math.max(1, lxUrlCard.getWidth() - (PAD + CARD_INSET) * 2), 36);
+            backing.setPosition(PAD + CARD_INSET, 66);
+            backing.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+            backing.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+        });
+        stroke(backing, 9.0, () -> LX_COLOR,
+                () -> lxUrlField != null && lxUrlField.isFocused() ? .7 : 0.0);
+
+        lxUrlField = new TextFieldWidget(FontManager.pf12) {
+            @Override
+            public boolean onKeyTyped(char character, int keyCode) {
+                // 聚焦的 TextField 会吞掉一切按键（PlaylistCreateSheet 有同样的拦截），
+                // 所以回车提交与 ESC 关闭都得在这里拦，拦完就别再放给 super。
+                if (keyCode == Keyboard.KEY_ESCAPE) {
+                    closeLxUrlDialog();
+                    return true;
+                }
+                if (isFocused() && (keyCode == Keyboard.KEY_RETURN
+                        || keyCode == Keyboard.KEY_NUMPADENTER)) {
+                    submitLxUrlDialog();
+                    return true;
+                }
+                return super.onKeyTyped(character, keyCode);
+            }
+        };
+        lxUrlCard.addChild(lxUrlField);
+        lxUrlField.getTextField().setMaxStringLength(1024);
+        lxUrlField.setEnabled(true);
+        lxUrlField.setPlaceholder("输入或粘贴脚本的下载链接 https://…");
+        lxUrlField.drawUnderline(false);
+        // 草稿跟着每次编辑走，而不是在关闭时从框里捞：提交路径要把草稿清空，
+        // 关闭时再读一遍会把刚提交的网址又存回去。
+        lxUrlField.setTextChangedCallback(newText -> lxUrlDraft = newText == null ? "" : newText);
+        lxUrlField.setBeforeRenderCallback(() -> {
+            lxUrlField.setBounds(Math.max(1, backing.getWidth() - 20),
+                    Math.max(1, backing.getHeight() - 10));
+            lxUrlField.setPosition(backing.getRelativeX() + 10, backing.getRelativeY() + 5);
+            lxUrlField.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            lxUrlField.setDisabledTextColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            // 模态弹窗里它是唯一的输入目标，索性钉住焦点：TextField#updateStyles 对「框外按下」
+            // 一律失焦，而打开弹窗的那次点击恰好就是框外按下 —— 不钉的话焦点一帧就丢。
+            lxUrlField.setFocused(true);
+        });
+
+        final RoundedButtonWidget cancel = action(lxUrlCard, () -> PartyIcons.CLOSE, () -> "取消",
+                FontManager.pf12bold, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                this::closeLxUrlDialog);
+        cancel.setBeforeRenderCallback(() -> {
+            cancel.setBounds(88, 30);
+            cancel.setPosition(PAD + CARD_INSET, lxUrlCard.getHeight() - 40);
+            cancel.setColor(cancel.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+
+        final RoundedButtonWidget confirm = action(lxUrlCard, () -> PartyIcons.CHECK, () -> "导入",
+                FontManager.pf12bold, () -> 0xFFFFFF, this::submitLxUrlDialog);
+        confirm.setBeforeRenderCallback(() -> {
+            confirm.setBounds(120, 30);
+            confirm.setPosition(lxUrlCard.getWidth() - PAD - CARD_INSET - 120,
+                    lxUrlCard.getHeight() - 40);
+            confirm.setColor(mix(LX_COLOR, 0xFFFFFF, confirm.isHovering() ? .16 : 0.0));
+        });
+
+        lxUrlMask.setHidden(!open);
+        lxUrlCard.setHidden(!open);
+        lxUrlField.setText(lxUrlDraft);
+        if (open) lxUrlField.setFocused(true);
+    }
+
+    /** 弹窗内那行提示：没有要专门说的话就给默认说明。 */
+    private String lxUrlDialogCaption() {
+        return lxUrlDialogStatus.isEmpty()
+                ? "粘贴脚本作者给出的 http(s) 下载链接，回车或点「导入」" : lxUrlDialogStatus;
+    }
+
+    /** 打开弹窗。组件由最近一次页面重建搭好，这里只负责点亮与归零。 */
+    private void openLxUrlDialog() {
+        lxUrlDialogOpen = true;
+        lxUrlDialogStatus = "";
+        lxUrlDialogBad = false;
+        lxUrlReveal = 0.0;
+        if (lxUrlCard != null) lxUrlCard.setHidden(false);
+        if (lxUrlMask != null) lxUrlMask.setHidden(false);
+        if (lxUrlField != null) {
+            lxUrlField.setText(lxUrlDraft);
+            lxUrlField.setFocused(true);
+        }
+    }
+
+    /**
+     * 关掉弹窗。组件 hidden 掉即可，页面与列表原地不动。
+     *
+     * <p>草稿不在这里捞：它由输入框的编辑回调实时维护（见 {@link #buildLxUrlDialog()}），
+     * 提交路径已经把它清掉了，这里再读一遍会把刚提交的网址又存回去。</p>
+     */
+    private void closeLxUrlDialog() {
+        lxUrlDialogOpen = false;
+        lxUrlDialogStatus = "";
+        lxUrlDialogBad = false;
+        if (lxUrlCard != null) lxUrlCard.setHidden(true);
+        if (lxUrlMask != null) lxUrlMask.setHidden(true);
+    }
+
+    /**
+     * 提交网址。校验放在弹窗里当场直说，别等下载线程回头才报错；真正的下载仍交给
+     * {@link LxSourceService#importFromUrl}，结果（正在下载 / 成功 / 失败）走页眉状态行 ——
+     * 与剪贴板导入是同一条反馈链路。
+     */
+    private void submitLxUrlDialog() {
+        final String url = lxUrlField.getText() == null ? "" : lxUrlField.getText().trim();
+        if (url.isEmpty()) {
+            lxUrlDialogStatus = "先填一个脚本的下载链接";
+            lxUrlDialogBad = true;
+            return;
+        }
+        if (!LxSourceService.looksLikeUrl(url)) {
+            lxUrlDialogStatus = "这不像一个链接：要以 http:// 或 https:// 开头";
+            lxUrlDialogBad = true;
+            return;
+        }
+        if (LxSourceService.isBusy()) {
+            lxUrlDialogStatus = "正在处理上一次导入，稍等一下再试";
+            lxUrlDialogBad = true;
+            return;
+        }
+        lxUrlDraft = "";
+        closeLxUrlDialog();
+        LxSourceService.importFromUrl(url);
+    }
+
     private void lxFooterButton(final Panel dialog, final int index, final Supplier<String> glyph,
                                 final Supplier<String> text, final Runnable onClick) {
         final RoundedButtonWidget button = action(dialog, glyph, text, FontManager.pf12bold,
                 () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), onClick);
         button.setBeforeRenderCallback(() -> {
             double span = Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2);
-            double width = Math.max(1, (span - 16.0) / 3.0);
+            double width = Math.max(1, (span - 24.0) / 4.0);
             button.setBounds(width, 30);
             // 按钮下面还有两行开关与一行安全说明，所以从底边往上抬到 126。
             button.setPosition(PAD + CARD_INSET + (width + 8.0) * index, dialog.getHeight() - 126.0);

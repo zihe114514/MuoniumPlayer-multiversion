@@ -677,6 +677,9 @@ public class GuiHudEditor extends GuiScreen {
             if (themeExpanded) {
                 int hovered = themeChipIndexAt(mouseX, mouseY, x + 6, rowY + COLOR_ROW_H);
                 NCMTheme.ThemePreset[] presets = NCMTheme.ThemePreset.values();
+                if (hovered >= 0 && !NCMTheme.isSelectable(presets[hovered])) {
+                    hovered = -1; // 手机档：悬停真玻璃芯片不显示主题名（点了也不会生效）
+                }
                 String name = hovered >= 0 && hovered < presets.length
                         ? presets[hovered].getDisplayName()
                         : NCMTheme.getCurrentName();
@@ -1373,7 +1376,10 @@ public class GuiHudEditor extends GuiScreen {
                 rowY += COLOR_ROW_H;
                 int chip = themeChipIndexAt(mouseX, mouseY, panelX + 6, rowY);
                 if (chip >= 0) {
-                    applyTheme(NCMTheme.setCurrent(NCMTheme.ThemePreset.values()[chip]));
+                    NCMTheme.ThemePreset preset = NCMTheme.ThemePreset.values()[chip];
+                    // 手机档真玻璃芯片点了没反应（显式短路，不依赖 setCurrent 的兜底返回值）。
+                    if (!NCMTheme.isSelectable(preset)) return;
+                    applyTheme(NCMTheme.setCurrent(preset));
                     return;
                 }
                 rowY += themeGridHeight();
@@ -1668,7 +1674,10 @@ public class GuiHudEditor extends GuiScreen {
             int chipX = x + (i % THEME_CHIP_COLUMNS) * (THEME_CHIP_SIZE + THEME_CHIP_GAP);
             int chipY = y + (i / THEME_CHIP_COLUMNS) * (THEME_CHIP_SIZE + THEME_CHIP_GAP);
             boolean selected = presets[i] == current;
-            boolean hover = isInside(mouseX, mouseY, chipX, chipY, THEME_CHIP_SIZE, THEME_CHIP_SIZE);
+            // 手机档：真玻璃主题（液态玻璃/琉璃）芯片压灰、不响应悬停，点了没反应——
+            // 命中处已挡，行为兜底在 NCMTheme.setCurrent（见 NCMTheme.isSelectable）。
+            boolean locked = !NCMTheme.isSelectable(presets[i]);
+            boolean hover = !locked && isInside(mouseX, mouseY, chipX, chipY, THEME_CHIP_SIZE, THEME_CHIP_SIZE);
             if (selected || hover) {
                 drawRoundedRect(chipX - 1, chipY - 1, THEME_CHIP_SIZE + 2, THEME_CHIP_SIZE + 2, 7,
                         selected ? 0xFFF4F7FB : 0x66A9BCD6);
@@ -1677,6 +1686,10 @@ public class GuiHudEditor extends GuiScreen {
                     0xFF000000 | presets[i].getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
             drawRoundedRect(chipX + 4, chipY + 4, THEME_CHIP_SIZE - 8, THEME_CHIP_SIZE - 8, 4,
                     0xFF000000 | presets[i].getColor(NCMScreen.ColorType.ACCENT));
+            if (locked) {
+                // 基础版真玻璃芯片压灰（与 Pro/Folia 的主题网格同一层纱色）。
+                drawRoundedRect(chipX, chipY, THEME_CHIP_SIZE, THEME_CHIP_SIZE, 6, 0x96141A22);
+            }
         }
     }
 

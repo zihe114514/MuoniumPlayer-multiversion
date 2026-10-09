@@ -1990,6 +1990,10 @@ public class GuiHudEditorFolia extends GuiScreen {
             default:
                 break;
         }
+        // 手机档锁死行：整行罩一层底色纱（文字、控件一起变灰），点击在 activateRow 已挡。
+        if (row.entry.isLocked()) {
+            drawRoundedRect(row.x, row.y, row.w, row.h, 10, 0x96141A22);
+        }
     }
 
     /** 标题 {@code text-sm font-medium} + 说明 {@code text-xs opacity-50}（{@code space-y-1}）。 */
@@ -2585,6 +2589,7 @@ public class GuiHudEditorFolia extends GuiScreen {
      */
     private void drawThemeTile(int x, int y, int w, int h, NCMTheme.ThemePreset preset,
                                boolean selected, CFontRenderer label) {
+        boolean lockedTheme = !NCMTheme.isSelectable(preset);
         int bg = 0xFF000000 | preset.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND);
         int ac = 0xFF000000 | preset.getColor(NCMScreen.ColorType.ACCENT);
         drawRoundedRect(x, y, w, h, TILE_RADIUS, selected ? accentTint() : THEME_TILE_REST);
@@ -2594,10 +2599,15 @@ public class GuiHudEditorFolia extends GuiScreen {
         }
         drawGradientFill(x + (w - THEME_DOT) / 2.0, y + TILE_PAD, THEME_DOT, THEME_DOT,
                 THEME_DOT / 2.0, bg, ac, 135f);
+        if (lockedTheme) {
+            // 手机档：真玻璃主题瓦片压灰（见 NCMTheme.isSelectable），点击在 activateRow 已挡。
+            drawRoundedRect(x, y, w, h, TILE_RADIUS, 0x96141A22);
+        }
         if (label == null) return;
         String name = label.trim(preset.getDisplayName(), w - TILE_PAD * 2);
         drawLineText(label, name, x + (w - label.getStringWidth(name)) / 2.0,
-                y + TILE_PAD + THEME_DOT + 8, ROW_DESC_H, textPrimary());
+                y + TILE_PAD + THEME_DOT + 8, ROW_DESC_H,
+                lockedTheme ? fade(textPrimary(), 0.45f) : textPrimary());
     }
 
     /** 落在哪一格上：与 {@link #drawThemeChips} 共用同一份 {@link #themeTileRect}，不会错开半格。 */
@@ -2908,6 +2918,8 @@ public class GuiHudEditorFolia extends GuiScreen {
      * 什么都不发生，所以这里也按控件矩形判，而不是整行。
      */
     private void activateRow(Row row, int mouseX, int mouseY) {
+        // 手机档锁死行（真玻璃材质整组）：点击与滑条拖动一律无效，渲染层把它画成灰的。
+        if (row.entry.isLocked()) return;
         switch (row.entry.kind) {
             case SLIDER: {
                 int[] track = sliderTrackRect(row);
@@ -2957,6 +2969,7 @@ public class GuiHudEditorFolia extends GuiScreen {
                 int chip = themeChipIndexAt(mouseX, mouseY, row);
                 if (chip >= 0) {
                     NCMTheme.ThemePreset preset = NCMTheme.ThemePreset.values()[chip];
+                    if (!NCMTheme.isSelectable(preset)) break;
                     DownloadDynamicIsland.showTheme(NCMTheme.setCurrent(preset) == null
                             ? NCMTheme.getCurrentName() : preset.getDisplayName());
                 }

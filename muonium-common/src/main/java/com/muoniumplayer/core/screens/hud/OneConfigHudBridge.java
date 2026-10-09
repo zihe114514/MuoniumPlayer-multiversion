@@ -111,7 +111,11 @@ public final class OneConfigHudBridge {
             for (HudSettingsModel.Category category : HudSettingsModel.categories()) {
                 for (HudSettingsModel.Group group : category.groups) {
                     for (HudSettingsModel.Entry entry : group.entries) {
-                        if (!entry.isVisible() || entry.kind == HudSettingsModel.Kind.THEME_GRID) continue;
+                        // 锁死条目（手机档「真玻璃材质」组）不注册：OneConfig 的属性模型没有
+                        // 「禁用」视觉，注册进去等于给用户一个能改的假象；行为闸虽在（activate/
+                        // setChoice 都过 isLocked），但显示出来本身就是误导。
+                        if (!entry.isVisible() || entry.isLocked()
+                                || entry.kind == HudSettingsModel.Kind.THEME_GRID) continue;
                         Object property = createProperty(entry, entryIndex++, functional, dummy);
                         if (property == null) continue;
                         addMetadata.invoke(property, "category", category.title);
@@ -161,6 +165,7 @@ public final class OneConfigHudBridge {
                 Object property = functional.invoke(null,
                         (java.util.function.Supplier<Object>) setting::getValue,
                         (java.util.function.Consumer<Object>) value -> {
+                            if (entry.isLocked()) return; // 锁死行：滑条不走 activate，直写也要过闸
                             if (value instanceof Number) {
                                 setting.setValue(((Number) value).floatValue());
                                 HudConfig.save();
@@ -191,6 +196,7 @@ public final class OneConfigHudBridge {
                 Object property = functional.invoke(null,
                         (java.util.function.Supplier<Object>) entry::getColor,
                         (java.util.function.Consumer<Object>) value -> {
+                            if (entry.isLocked()) return; // 锁死行：颜色直写同样过闸
                             if (value instanceof Color) {
                                 entry.setColor((Color) value);
                                 HudConfig.save();

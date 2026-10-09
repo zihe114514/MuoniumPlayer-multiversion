@@ -900,4 +900,103 @@ public final class ViPERParams {
     public final MultibandCompressorParams multibandCompressor =
             new MultibandCompressorParams();
     public final DynamicEqParams dynamicEq = new DynamicEqParams();
+
+    // ──────────────────────── 扩展：JamesDSP 混响 ────────────────────────
+    //
+    // 以下不属于上游 ViPER（ViPERDSP 只有 Freeverb 系的 reverb）。这是本模组额外移植的
+    // JamesDSP 混响（sndfilter sf_reverb），参数模型对齐 JamesDSP 的 Reverb_SetParam +
+    // sf_advancereverb 的 16 个入口参数。放在 ViPERParams 里是为了复用既有的
+    // 预设 → 映射 → 引擎 下发链路（面板自动可调）。
+
+    /** JamesDSP 混响参数（{@link com.muoniumplayer.core.jdsp.JdspReverb}）。 */
+    public static final class JdspReverbParams {
+        /** 总开关。 */
+        public boolean enable = false;
+        /** 预设索引 0..18（{@link com.muoniumplayer.core.jdsp.JdspReverb#PRESET_NAMES}）。 */
+        public int preset = 0;
+        /** true = 使用下面 17 个自定义参数；false = 使用预设表（默认）。 */
+        public boolean custom = false;
+
+        // —— 自定义参数（对齐 sf_advancereverb 的入口，仅 custom=true 时生效） ——
+        /** 过采样倍率 1..2（上游为 int）。 */
+        public int oversampleFactor = 1;
+        /** 早期反射到后期混响的混合量 0..1。 */
+        public float ertolate = 0.40f;
+        /** 早期反射湿声（dB）。 */
+        public float erefwet = -9.0f;
+        /** 干声增益（dB）。 */
+        public float dry = -7.0f;
+        /** 早期反射延迟缩放系数。 */
+        public float ereffactor = 1.6f;
+        /** 早期反射声场宽度 -1..1。 */
+        public float erefwidth = 0.7f;
+        /** 立体声宽度 0..1。 */
+        public float width = 1.0f;
+        /** 混响湿声增益（dB）。 */
+        public float wet = 0.0f;
+        /** 调制深度 0..1。 */
+        public float wander = 0.25f;
+        /** 低频增强量 0..1。 */
+        public float bassb = 0.15f;
+        /** LFO 旋转速率 0..20。 */
+        public float spin = 0.7f;
+        /** 输入低通频率（Hz）。 */
+        public float inputlpf = 17000.0f;
+        /** 低频低通频率（Hz）。 */
+        public float basslpf = 500.0f;
+        /** 阻尼低通频率（Hz）。 */
+        public float damplpf = 7000.0f;
+        /** 输出低通频率（Hz）。 */
+        public float outputlpf = 10000.0f;
+        /** 混响时长 RT60（秒）。 */
+        public float rt60 = 3.2f;
+        /** 输出延迟（秒，可为负）。 */
+        public float delay = 0.020f;
+
+        @Override
+        public boolean equals(Object other) {
+            if (this == other) {
+                return true;
+            }
+            if (!(other instanceof JdspReverbParams)) {
+                return false;
+            }
+            JdspReverbParams o = (JdspReverbParams) other;
+            if (!enable && !o.enable) {
+                return true;
+            }
+            return enable == o.enable
+                    && preset == o.preset
+                    && custom == o.custom
+                    && oversampleFactor == o.oversampleFactor
+                    && ertolate == o.ertolate
+                    && erefwet == o.erefwet
+                    && dry == o.dry
+                    && ereffactor == o.ereffactor
+                    && erefwidth == o.erefwidth
+                    && width == o.width
+                    && wet == o.wet
+                    && wander == o.wander
+                    && bassb == o.bassb
+                    && spin == o.spin
+                    && inputlpf == o.inputlpf
+                    && basslpf == o.basslpf
+                    && damplpf == o.damplpf
+                    && outputlpf == o.outputlpf
+                    && rt60 == o.rt60
+                    && delay == o.delay;
+        }
+
+        @Override
+        public int hashCode() {
+            return enable
+                    ? java.util.Objects.hash(true, preset, custom, oversampleFactor, ertolate,
+                            erefwet, dry, ereffactor, erefwidth, width, wet, wander, bassb, spin,
+                            inputlpf, basslpf, damplpf, outputlpf, rt60, delay)
+                    : 0;
+        }
+    }
+
+    /** JamesDSP 混响（本模组扩展；见上方说明）。 */
+    public final JdspReverbParams jdspReverb = new JdspReverbParams();
 }

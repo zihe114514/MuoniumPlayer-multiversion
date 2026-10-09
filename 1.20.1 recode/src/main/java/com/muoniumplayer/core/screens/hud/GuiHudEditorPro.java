@@ -1178,6 +1178,11 @@ public class GuiHudEditorPro extends GuiScreen {
             default:
                 break;
         }
+        // 手机档锁死行：整行罩一层底色纱（文字、控件一起变灰），点击在 activateRow 已挡。
+        if (row.entry.isLocked()) {
+            drawRoundedRect(row.x + 2, row.y + 1, row.w - 4, row.h - 2, CARD_RADIUS - 3,
+                    0x96141A22);
+        }
     }
 
     /** 控件区的左边界。说明文字要在它之前收住，否则长句子会压到控件底下。 */
@@ -1306,8 +1311,9 @@ public class GuiHudEditorPro extends GuiScreen {
             int chipX = x + (i % themeChipColumns()) * (THEME_CHIP_SIZE + THEME_CHIP_GAP);
             int chipY = y + (i / themeChipColumns()) * (THEME_CHIP_SIZE + THEME_CHIP_GAP);
             boolean selected = presets[i] == current;
+            boolean lockedTheme = !NCMTheme.isSelectable(presets[i]);
             float hp = named("theme." + i, isInside(mouseX, mouseY, chipX, chipY, THEME_CHIP_SIZE, THEME_CHIP_SIZE));
-            if (selected || hp > 0.02f) {
+            if (!lockedTheme && (selected || hp > 0.02f)) {
                 drawRoundedRect(chipX - 2, chipY - 2, THEME_CHIP_SIZE + 4, THEME_CHIP_SIZE + 4, 9,
                         selected ? 0xFFF4F7FB : fade(0x88A9BCD6, hp));
             }
@@ -1315,6 +1321,10 @@ public class GuiHudEditorPro extends GuiScreen {
                     0xFF000000 | presets[i].getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
             drawRoundedRect(chipX + 5, chipY + 5, THEME_CHIP_SIZE - 10, THEME_CHIP_SIZE - 10, 5,
                     0xFF000000 | presets[i].getColor(NCMScreen.ColorType.ACCENT));
+            if (lockedTheme) {
+                // 手机档：真玻璃主题芯片压灰，点它没有反应（activateRow 里已挡）。
+                drawRoundedRect(chipX, chipY, THEME_CHIP_SIZE, THEME_CHIP_SIZE, 7, 0x96141A22);
+            }
             if (selected) {
                 drawIcon(FontManager.settingsIcon24, HudSettingsIcons.CHECK,
                         chipX + THEME_CHIP_SIZE / 2.0, chipY + THEME_CHIP_SIZE / 2.0,
@@ -1599,6 +1609,8 @@ public class GuiHudEditorPro extends GuiScreen {
     }
 
     private void activateRow(Row row, int mouseX, int mouseY) {
+        // 手机档锁死行（真玻璃材质整组）：点击与滑条拖动一律无效，渲染层把它画成灰的。
+        if (row.entry.isLocked()) return;
         switch (row.entry.kind) {
             case SLIDER: {
                 int trackX = trackX(row.x + row.w - 14);
@@ -1622,6 +1634,7 @@ public class GuiHudEditorPro extends GuiScreen {
                 int chip = themeChipIndexAt(mouseX, mouseY, row.x + 14, row.y + 24);
                 if (chip >= 0) {
                     NCMTheme.ThemePreset preset = NCMTheme.ThemePreset.values()[chip];
+                    if (!NCMTheme.isSelectable(preset)) break;
                     DownloadDynamicIsland.showTheme(NCMTheme.setCurrent(preset) == null
                             ? NCMTheme.getCurrentName() : preset.getDisplayName());
                 }

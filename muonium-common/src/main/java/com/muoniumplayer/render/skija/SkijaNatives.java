@@ -139,9 +139,9 @@ public final class SkijaNatives {
      * 「一个候选都没有」时提示层要说的整块文案。
      *
      * <p>自动下载上线之后这一段不能写死：同样是「缺库」，用户下一步动作差得很远——
-     * 下载中什么都别做、装好了等重评、失败了才回手动补包。文案跟
-     * {@link SkijaCompanionDownload} 的状态走；包名 / 下载页 / 目标目录这三条硬信息
-     * 在任何「需要用户动手」的分岔里都必须原样给出——静态测试钉着它们，
+     * 下载中什么都别做、装好了必须重启游戏（非 Windows 平台的硬要求，热加载不可靠）、
+     * 失败了才回手动补包。文案跟 {@link SkijaCompanionDownload} 的状态走；包名 / 下载页 /
+     * 目标目录这三条硬信息在任何「需要用户动手」的分岔里都必须原样给出——静态测试钉着它们，
      * 那是用户唯一的自救路径。
      */
     public static List<String> nativeMissingLines() {
@@ -153,15 +153,15 @@ public final class SkijaNatives {
                 lines.add(download.percent() >= 0
                         ? "正在自动下载渲染原生库：" + download.percent() + "%"
                         : "正在自动下载渲染原生库…");
-                lines.add("完成后自动启用，不需要手动放置，也不需要重启游戏");
+                lines.add("下载完成后需要重启游戏才会生效，先等它下完");
             }
             case INSTALLING -> {
                 lines.add("渲染原生库已下载，正在解压安装…");
-                lines.add("装好后自动启用，不需要重启游戏");
+                lines.add("装好后需要重启游戏才会生效");
             }
             case DONE -> {
-                lines.add("渲染原生库已自动装好，正在重试…");
-                lines.add("稍等片刻，不需要重启游戏");
+                lines.add("渲染原生库已自动装好，必须重启游戏后才能生效");
+                lines.add("重启后会自动加载，不需要手动放置任何文件");
             }
             case FAILED -> {
                 lines.add("自动下载失败：" + download.detail());
@@ -170,6 +170,26 @@ public final class SkijaNatives {
             default -> addManualCompanionLines(lines, current);
         }
         return lines;
+    }
+
+    /**
+     * 自动下载过程此刻是否「看得见」：正在下载 / 正在安装 / 已装好待重启，三段都算。
+     * 原版 GUI 提示层据此决定要不要把整块文案与进度条一直挂着——这个过程是「首次启动」
+     * 的必经之路，缩成一行角标会让用户以为卡死了。
+     */
+    public static boolean nativeDownloadVisible() {
+        SkijaCompanionDownload.Phase phase = SkijaCompanionDownload.state().phase();
+        return phase == SkijaCompanionDownload.Phase.DOWNLOADING
+                || phase == SkijaCompanionDownload.Phase.INSTALLING
+                || phase == SkijaCompanionDownload.Phase.DONE;
+    }
+
+    /**
+     * 自动下载进度（0~100）。「下载中但拿不到总长度」时是 -1，提示层画成来回扫的
+     * 不定长动画；安装与完成阶段恒为 100。不可见时读它没有意义。
+     */
+    public static int nativeDownloadPercent() {
+        return SkijaCompanionDownload.state().percent();
     }
 
     /** 缺库时的「手动补包」引导：包名、下载页、目标目录与自动重试承诺。 */

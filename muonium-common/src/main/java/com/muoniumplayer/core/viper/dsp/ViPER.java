@@ -5,6 +5,8 @@
 // 与官方 App 的新版全量参数通道（PARAM_SET_FULL_PARAMS → ApplyParams）一致。
 package com.muoniumplayer.core.viper.dsp;
 
+import com.muoniumplayer.core.jdsp.JdspReverb;
+
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -55,6 +57,11 @@ public final class ViPER {
     private final SoftwareLimiter[] softwareLimiters_ = {
             new SoftwareLimiter(), new SoftwareLimiter()
     };
+
+    // —— 扩展（非上游 ViPER）：JamesDSP 混响，挂在 ViPER 全链之后、输出段之前 ——
+    private final JdspReverb jdspReverb_ = new JdspReverb();
+    /** 当前 JamesDSP 混响参数（采样率变化时按它重建）。 */
+    private ViPERParams.JdspReverbParams jdspReverbParams_ = new ViPERParams.JdspReverbParams();
 
     /**
      * 上次应用的参数快照。上游在每组 Apply 内逐组存回 {@code last_applied_}；
@@ -160,6 +167,9 @@ public final class ViPER {
         speakerCorrection_.setSampleRate(samplingRate_);
         speakerCorrection_.reset();
 
+        // JamesDSP 混响（扩展）：默认关闭；启用经 applyJdspReverb / ResetAllEffects 重建。
+        jdspReverb_.reset();
+
         for (SoftwareLimiter limiter : softwareLimiters_) {
             limiter.reset();
         }
@@ -241,6 +251,10 @@ public final class ViPER {
             reverberation_.process(tmpBuf, tmpBufSize);
             speakerCorrection_.process(tmpBuf, tmpBufSize);
             lufsTargeting_.process(tmpBuf, tmpBufSize);
+
+            // JamesDSP 混响（扩展）：ViPER 全部效果之后、输出段（音量/pan/限幅）之前。
+            // 与上游 ViPER 链无耦合——关闭时 jdspReverb_ 未配置，process 直接返回。
+            jdspReverb_.process(tmpBuf, tmpBufSize);
 
             if (frameScale_ != 1.0) {
                 adaptiveBuffer_.scaleFrames(frameScale_);
@@ -359,6 +373,14 @@ public final class ViPER {
         speakerCorrection_.setSampleRate(samplingRate_);
         speakerCorrection_.reset();
 
+        // JamesDSP 混响（扩展）：延迟长度按采样率缩放，此处必须按新采样率重建；
+        // 关闭时只标记未配置（process 直接旁路）。
+        if (jdspReverbParams_.enable) {
+            configureJdspReverbLocked(jdspReverbParams_);
+        } else {
+            jdspReverb_.reset();
+        }
+
         for (SoftwareLimiter limiter : softwareLimiters_) {
             limiter.reset();
         }
@@ -457,6 +479,10 @@ public final class ViPER {
         if (!params.dynamicEq.equals(lastApplied_.dynamicEq)) {
             applyDynamicEq(params.dynamicEq);
         }
+        // 扩展：JamesDSP 混响（非上游 ViPER；上游无此组，diff 语义与其它组一致）。
+        if (!params.jdspReverb.equals(lastApplied_.jdspReverb)) {
+            applyJdspReverb(params.jdspReverb);
+        }
 
         lastApplied_ = params;
     }
@@ -495,6 +521,8 @@ public final class ViPER {
         applySpeakerCorrection(params.speakerCorrection);
         applyMultibandCompressor(params.multibandCompressor);
         applyDynamicEq(params.dynamicEq);
+        // 扩展：JamesDSP 混响（与其它组的无条件全量下发一致）。
+        applyJdspReverb(params.jdspReverb);
         lastApplied_ = params;
     }
 
@@ -648,6 +676,35 @@ public final class ViPER {
         reverberation_.setDamp(p.damp);
         reverberation_.setWet(p.wet);
         reverberation_.setDry(p.dry);
+    }
+
+    /**
+     * JamesDSP 混响（本模组扩展，非上游 ViPER）：应用一组参数并立即按当前采样率重建。
+     *
+     * <p>重建成本约 1MB 的延迟线清零 + 系数计算，仅发生在「开关 / 预设 / 自定义参数变化」时；
+     * 采样率变化走 {@link #resetAllEffects()} 的重建分支。关闭时不重建——{@code process}
+     * 见未配置即直接旁路。</p>
+     */
+    public void applyJdspReverb(ViPERParams.JdspReverbParams p) {
+        jdspReverbParams_ = p;
+        if (p.enable) {
+            configureJdspReverbLocked(p);
+        } else {
+            jdspReverb_.reset();
+        }
+    }
+
+    /** 按当前采样率配置 JamesDSP 混响（预设表或 17 个自定义参数）。 */
+    private void configureJdspReverbLocked(ViPERParams.JdspReverbParams p) {
+        if (p.custom) {
+            jdspReverb_.configureCustom(samplingRate_, new float[]{
+                    (float) p.oversampleFactor, p.ertolate, p.erefwet, p.dry, p.ereffactor,
+                    p.erefwidth, p.width, p.wet, p.wander, p.bassb, p.spin, p.inputlpf,
+                    p.basslpf, p.damplpf, p.outputlpf, p.rt60, p.delay
+            });
+        } else {
+            jdspReverb_.configure(samplingRate_, p.preset);
+        }
     }
 
     /** Mirror of {@code void ViPER::ApplyDynamicSystem(...)}. */

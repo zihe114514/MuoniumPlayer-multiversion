@@ -82,6 +82,12 @@ public final class GlassLook {
      * 设置里「帧率不够时自动摘玻璃」关掉就是永远按主题画。</p>
      */
     public static float amount(Surface surface) {
+        // 手机档：真玻璃整体禁用（见 GlassMobileTier 类注释——折射透镜在 GL 翻译层下扛不住，
+        // 降参数组合也不稳）。返回 0 后各面走回自己原来的假玻璃 / 实色画法，
+        // 压薄 / 融合 / 边缘光这些 amount 的消费方也一并归零，不需要各自再判。
+        if (GlassMobileTier.active()) {
+            return 0f;
+        }
         if (!toggleOf(surface)) {
             return 0f;
         }

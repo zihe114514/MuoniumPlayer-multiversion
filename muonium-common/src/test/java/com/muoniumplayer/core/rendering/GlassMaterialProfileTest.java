@@ -40,6 +40,26 @@ class GlassMaterialProfileTest {
         assertEquals(.75f,json.get("glassBlurSigma").getAsFloat());
         assertEquals(.12f,json.get("glassTintStrength").getAsFloat());
     }
+    @Test void legacyUserPerformanceChoicesSurviveFirstMigration() {
+        // v1 的覆盖条件对正常布尔恒为真，老配置里用户已设的这两项在首次迁移时被无条件
+        // 翻回出厂值（旧版手动关掉的「实时背景采集」在手机上被重新打开，正是卡死主因之一）。
+        // v2 修复后：首次迁移只补缺失的字段，用户已设的一律保留。
+        JsonObject json=new JsonObject();
+        json.addProperty("glassRealtimeCapture",false); json.addProperty("glassAutoDegrade",true);
+        GlassMaterialProfile.migrate(json);
+        assertFalse(json.get("glassRealtimeCapture").getAsBoolean(),"首次迁移不得翻掉用户已设的值");
+        assertTrue(json.get("glassAutoDegrade").getAsBoolean(),"首次迁移不得翻掉用户已设的值");
+        assertEquals(GlassMaterialProfile.VERSION,json.get("glassMaterialVersion").getAsInt());
+    }
+    @Test void missingPerformanceFieldsGetFactoryDefaults() {
+        // 缺失才补，补的是出厂默认（实时采集开、自动降载关）。手机档整体禁用真玻璃
+        //（GlassMobileTier），这些字段在那边只是存档，不参与生效——默认值因此不需要平台感知。
+        JsonObject json=new JsonObject();
+        GlassMaterialProfile.migrate(json);
+        assertTrue(json.get("glassRealtimeCapture").getAsBoolean());
+        assertFalse(json.get("glassAutoDegrade").getAsBoolean());
+        assertEquals(GlassMaterialProfile.VERSION,json.get("glassMaterialVersion").getAsInt());
+    }
     @Test void liquidGlassAndCrystalBothUseRealBackgroundButOrdinaryThemesDoNot() {
         assertTrue(NCMTheme.ThemePreset.LIQUID_GLASS.isTrueGlass());
         assertTrue(NCMTheme.ThemePreset.CRYSTAL.isTrueGlass());

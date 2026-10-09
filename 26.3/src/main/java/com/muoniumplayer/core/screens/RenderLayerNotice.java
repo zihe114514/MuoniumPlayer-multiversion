@@ -50,6 +50,12 @@ public final class RenderLayerNotice {
     private static final int TEXT_COLOR = 0xFFE6E6E6;
     private static final int BACKDROP = 0xC0101014;
 
+    /** 自动下载进度条：贴在文案下面、与文案块同宽。 */
+    private static final int BAR_GAP = 4;
+    private static final int BAR_HEIGHT = 4;
+    private static final int BAR_TRACK = 0xFF2E2E34;
+    private static final int BAR_FILL = 0xFF6EDAA0;
+
     private RenderLayerNotice() {
     }
 
@@ -70,7 +76,11 @@ public final class RenderLayerNotice {
             suspendedSince = now;
             detailedShown = false;
         }
-        boolean detailed = onScreen || !detailedShown
+        // 自动下载全程整块常驻：下载中缩成一行角标会被当成卡死；装好待重启时更不能收，
+        // 「必须重启游戏」是这一屏唯一要传达的事。
+        boolean downloadVisible = SkijaNatives.nativeDownloadVisible();
+        int downloadPercent = SkijaNatives.nativeDownloadPercent();
+        boolean detailed = onScreen || !detailedShown || downloadVisible
                 || now - suspendedSince < DETAILED_WINDOW_NANOS;
         if (detailed) {
             detailedShown = true;
@@ -89,7 +99,8 @@ public final class RenderLayerNotice {
         for (String line : clipped) {
             widest = Math.max(widest, font.width(line));
         }
-        int height = clipped.length * LINE_HEIGHT + MARGIN * 2;
+        int height = clipped.length * LINE_HEIGHT + MARGIN * 2
+                + (downloadVisible ? BAR_GAP + BAR_HEIGHT : 0);
         int x = MARGIN;
         // 小屏或字体放大时整块可能比屏幕还高：贴到顶也不能把它推出可视区，
         // 否则用户看到的仍然是「什么都没有」，正是这块提示要避免的事。
@@ -99,6 +110,37 @@ public final class RenderLayerNotice {
         for (int index = 0; index < clipped.length; index++) {
             graphics.text(font, clipped[index], x + MARGIN, y + MARGIN + index * LINE_HEIGHT,
                     TEXT_COLOR, false);
+        }
+        if (downloadVisible) {
+            drawProgressBar(graphics, x + MARGIN,
+                    y + MARGIN + clipped.length * LINE_HEIGHT + BAR_GAP, widest, downloadPercent);
+        }
+    }
+
+    /**
+     * 自动下载进度条。总长度拿得到就画实打实的百分比；拿不到画一段来回扫的不定长动画——
+     * 静止的空条读起来像卡死。装好待重启的阶段画满条：绿条到头 = 「可以重启了」。
+     */
+    private static void drawProgressBar(GuiGraphicsExtractor graphics, int x, int y, int width,
+                                        int percent) {
+        if (width <= 0) {
+            return;
+        }
+        graphics.fill(x, y, x + width, y + BAR_HEIGHT, BAR_TRACK);
+        if (percent < 0) {
+            long sweep = Math.max(8, width / 5);
+            long head = (System.currentTimeMillis() / 12L) % (width + sweep) - sweep;
+            int from = (int) Math.max(0, head);
+            int to = (int) Math.min(width, head + sweep);
+            if (to > from) {
+                graphics.fill(x + from, y, x + to, y + BAR_HEIGHT, BAR_FILL);
+            }
+            return;
+        }
+        int fill = (int) Math.min(width,
+                (long) width * Math.max(0, Math.min(100, percent)) / 100L);
+        if (fill > 0) {
+            graphics.fill(x, y, x + fill, y + BAR_HEIGHT, BAR_FILL);
         }
     }
 

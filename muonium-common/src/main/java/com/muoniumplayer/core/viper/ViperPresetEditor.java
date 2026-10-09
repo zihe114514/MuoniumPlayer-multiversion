@@ -127,6 +127,12 @@ public final class ViperPresetEditor {
         return ViperTuningCatalog.intChoices(groupKey(groupIndex), fieldKey(groupIndex, fieldIndex));
     }
 
+    /** 档位取值的可读名（如 JamesDSP 混响预设名）；无名字时返回 {@code null}。 */
+    public String fieldIntChoiceName(int groupIndex, int fieldIndex, int value) {
+        return ViperTuningCatalog.intChoiceName(
+                groupKey(groupIndex), fieldKey(groupIndex, fieldIndex), value);
+    }
+
     /** 是否为官方遗留、映射器不消费的字段（界面只读展示）。 */
     public boolean fieldUnused(int groupIndex, int fieldIndex) {
         return ViperTuningCatalog.isUnusedField(groupKey(groupIndex), fieldKey(groupIndex, fieldIndex));

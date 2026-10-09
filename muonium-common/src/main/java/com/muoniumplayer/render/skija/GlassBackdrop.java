@@ -225,6 +225,17 @@ public final class GlassBackdrop {
      *       从琉璃切走时玻璃要淡出 0.95 秒，那一刻强度还没到 0，得继续采，
      *       否则淡出过程中铺着一帧过期画面，看着像卡了一层脏玻璃。</li>
      *   <li>主题开着但四个生效面全关，同样不采。</li>
+     *   <li>手机档（{@code GlassMobileTier.active()}）整档禁用：真玻璃一个像素都不会画，
+     *       采集侧就必须同步归零——否则又是「不画玻璃照付采集钱」。放在主题判断之前，
+     *       让「手机上误开了玻璃主题」也彻底静默。</li>
+     *   <li>液态透镜的着色器编不出来（{@code unavailable} 已置位），真玻璃就一个像素都画不出
+     *       ——绘制侧 {@code GlassLook.amount()} 已经把它判成 0，采集侧必须跟着停：每帧的
+     *       全屏 blit 加预糊重建此时是纯白付钱，这正是手机 GL 翻译层编译失败时把帧预算
+     *       打爆的主要浪费源。这里问的是 {@link GlassLiquidSurface#compiles()}（只看着色器
+     *       本体能不能编），<b>不能</b>换成 {@link GlassLiquidSurface#available()}——那个还
+     *       要求「已经有采集图」，塞进来就是「不采 → available 恒 false → 永远不采」的死锁。
+     *       至于绘制时才炸（SkSL 编得过、GL 层跑不动）的情况：{@code draw()} 失败也会置
+     *       {@code unavailable}，下一帧起这里自然停采，自愈。</li>
      * </ol>
      *
      * <p>文件那次问得慢（一秒一次）而不是每帧 stat：这个调用点每帧都跑。</p>
@@ -233,7 +244,13 @@ public final class GlassBackdrop {
         if (debugging()) {
             return true;
         }
+        if (com.muoniumplayer.core.rendering.GlassMobileTier.active()) {
+            return false;
+        }
         if (com.muoniumplayer.core.screens.ncm.NCMTheme.getTrueGlassAmount() <= 0.001f) {
+            return false;
+        }
+        if (!GlassLiquidSurface.compiles()) {
             return false;
         }
         return com.muoniumplayer.core.settings.HudConfig.glassSurfacePlayer

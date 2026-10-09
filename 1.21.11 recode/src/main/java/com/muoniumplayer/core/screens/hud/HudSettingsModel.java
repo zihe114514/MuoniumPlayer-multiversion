@@ -139,6 +139,27 @@ public final class HudSettingsModel {
             try { return visibleWhen.getAsBoolean(); } catch (RuntimeException ignored) { return false; }
         }
 
+        /**
+         * 可选的「本行在当前环境锁死」钩子：命中时行为置灰、点击无效。
+         *
+         * <p>手机档（{@code GlassMobileTier}）把「真玻璃材质」整组锁死——玻璃主题在安卓
+         * 上整体禁用后（见 {@code NCMTheme.isSelectable}），这些材质参数只是摆设，留着可点
+         * 会让人以为改了有用。置灰画在渲染层，这里的 {@link #isLocked()} 是行为闸。</p>
+         */
+        private BooleanSupplier lockedWhen;
+
+        /** 链式标记本行为条件锁死；返回自身便于构建处内联包裹。 */
+        public Entry lockedWhen(BooleanSupplier when) {
+            this.lockedWhen = when;
+            return this;
+        }
+
+        /** 本行当前是否锁死：锁死行点击不生效，渲染层应把它画成灰的。 */
+        public boolean isLocked() {
+            if (lockedWhen == null) return false;
+            try { return lockedWhen.getAsBoolean(); } catch (RuntimeException ignored) { return false; }
+        }
+
         public String getLabel() {
             try {
                 String text = label == null ? null : label.get();
@@ -190,6 +211,7 @@ public final class HudSettingsModel {
 
         /** 外部 UI 直写 CHOICE；没有直写实现时沿用循环动作。 */
         public void setChoice(String selected) {
+            if (isLocked()) return;
             if (choiceSetter != null) {
                 try {
                     choiceSetter.accept(selected);
@@ -207,7 +229,7 @@ public final class HudSettingsModel {
          * 一次点击失败不该把设置界面整个带崩。</p>
          */
         public void activate() {
-            if (action == null) return;
+            if (isLocked() || action == null) return;
             try {
                 action.run();
             } catch (RuntimeException ignored) {
@@ -539,8 +561,33 @@ public final class HudSettingsModel {
      * 全部分类。结果被缓存：条目本身无状态（取值都走 Supplier），重复构造只是浪费。
      */
     public static Category[] categories() {
-        if (cache == null) cache = build();
+        if (cache == null) {
+            cache = build();
+            lockGlassGroup(cache);
+        }
         return cache;
+    }
+
+    /**
+     * 手机档把「真玻璃材质」整组锁死：条目置灰、点击无效。
+     *
+     * <p>玻璃主题本身已在 {@code NCMTheme} 挡住（真玻璃预设不可选），这里锁的是那些
+     * 只剩摆设意义的材质参数。桌面（{@code GlassMobileTier.active()} 为 false）不受影响。</p>
+     */
+    private static void lockGlassGroup(Category[] categories) {
+        if (!com.muoniumplayer.core.rendering.GlassMobileTier.active()) return;
+        for (Category category : categories) {
+            for (Group group : category.groups) {
+                if (!"真玻璃材质".equals(group.title)) continue;
+                for (Entry entry : group.entries) {
+                    entry.lockedWhen(new BooleanSupplier() {
+                        public boolean getAsBoolean() {
+                            return true;
+                        }
+                    });
+                }
+            }
+        }
     }
 
     private static Category[] build() {
@@ -1311,14 +1358,22 @@ public final class HudSettingsModel {
 
     private static String[] islandStyleChoices() {
         DownloadDynamicIsland.DynamicIslandStyle[] styles = DownloadDynamicIsland.DynamicIslandStyle.values();
-        String[] names = new String[styles.length];
-        for (int i = 0; i < styles.length; i++) names[i] = styles[i].getDisplayName();
-        return names;
+        // 手机档剔除「液态玻璃」款：真玻璃在安卓上整体禁用，这个名字留在下拉里只会误导
+        // （判据与渲染兜底见 DownloadDynamicIsland.isStyleSelectable / getStyle）。
+        java.util.ArrayList<String> names = new java.util.ArrayList<String>(styles.length);
+        for (int i = 0; i < styles.length; i++) {
+            if (DownloadDynamicIsland.isStyleSelectable(styles[i])) {
+                names.add(styles[i].getDisplayName());
+            }
+        }
+        return names.toArray(new String[0]);
     }
 
     private static void setIslandStyle(String value) {
         for (DownloadDynamicIsland.DynamicIslandStyle style : DownloadDynamicIsland.DynamicIslandStyle.values()) {
             if (style.getDisplayName().equals(value)) {
+                // 手机档：直设「液态玻璃」款一律拒绝（下拉里已不出现，这里挡 OneConfig 一类直写口）。
+                if (!DownloadDynamicIsland.isStyleSelectable(style)) return;
                 if (HudConfig.dynamicIslandStyle == style.ordinal()) return;
                 HudConfig.dynamicIslandStyle = style.ordinal();
                 saveNow();
@@ -1528,14 +1583,18 @@ public final class HudSettingsModel {
 
     private static String[] themeChoices() {
         NCMTheme.ThemePreset[] presets = NCMTheme.ThemePreset.values();
-        String[] names = new String[presets.length];
-        for (int i = 0; i < presets.length; i++) names[i] = presets[i].getDisplayName();
-        return names;
+        // 手机档跳过真玻璃主题（液态玻璃/琉璃）：下拉里根本不出现，选不到。
+        java.util.ArrayList<String> names = new java.util.ArrayList<String>(presets.length);
+        for (int i = 0; i < presets.length; i++) {
+            if (NCMTheme.isSelectable(presets[i])) names.add(presets[i].getDisplayName());
+        }
+        return names.toArray(new String[0]);
     }
 
     private static void setThemeChoice(String value) {
         for (NCMTheme.ThemePreset preset : NCMTheme.ThemePreset.values()) {
             if (preset.getDisplayName().equals(value)) {
+                if (!NCMTheme.isSelectable(preset)) return;
                 NCMTheme.setCurrent(preset);
                 applyTheme(preset);
                 return;

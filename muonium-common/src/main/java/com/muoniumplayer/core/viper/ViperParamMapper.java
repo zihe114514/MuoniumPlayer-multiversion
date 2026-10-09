@@ -263,6 +263,34 @@ final class ViperParamMapper {
             band.noClip = i < mbNoClips.length && mbNoClips[i];
         }
 
+        // —— 扩展：JamesDSP 混响（非上游 ViPER 组；sndfilter sf_reverb） ——
+        // 默认走 19 个预设（preset 0..18）；custom=true 时改用 17 个自定义参数
+        // （oversampleFactor + sf_advancereverb 的 16 个入口参数）。
+        p.jdspReverb.enable = b(preset, "jdspReverb", "enable", false);
+        p.jdspReverb.preset = (int) n(preset, "jdspReverb", "preset", 0.0, 0.0, 18.0);
+        p.jdspReverb.custom = b(preset, "jdspReverb", "custom", false);
+        p.jdspReverb.oversampleFactor =
+                (int) n(preset, "jdspReverb", "oversampleFactor", 1.0, 1.0, 2.0);
+        p.jdspReverb.ertolate = (float) n(preset, "jdspReverb", "ertolate", 0.40, 0.0, 1.0);
+        p.jdspReverb.erefwet = (float) n(preset, "jdspReverb", "erefwet", -9.0, -60.0, 12.0);
+        p.jdspReverb.dry = (float) n(preset, "jdspReverb", "dry", -7.0, -60.0, 12.0);
+        p.jdspReverb.ereffactor = (float) n(preset, "jdspReverb", "ereffactor", 1.6, 0.1, 3.0);
+        p.jdspReverb.erefwidth = (float) n(preset, "jdspReverb", "erefwidth", 0.7, -1.0, 1.0);
+        p.jdspReverb.width = (float) n(preset, "jdspReverb", "width", 1.0, 0.0, 1.0);
+        p.jdspReverb.wet = (float) n(preset, "jdspReverb", "wet", 0.0, -60.0, 12.0);
+        p.jdspReverb.wander = (float) n(preset, "jdspReverb", "wander", 0.25, 0.0, 1.0);
+        p.jdspReverb.bassb = (float) n(preset, "jdspReverb", "bassb", 0.15, 0.0, 1.0);
+        p.jdspReverb.spin = (float) n(preset, "jdspReverb", "spin", 0.7, 0.0, 20.0);
+        p.jdspReverb.inputlpf =
+                (float) n(preset, "jdspReverb", "inputlpf", 17000.0, 100.0, 24000.0);
+        p.jdspReverb.basslpf = (float) n(preset, "jdspReverb", "basslpf", 500.0, 100.0, 24000.0);
+        p.jdspReverb.damplpf =
+                (float) n(preset, "jdspReverb", "damplpf", 7000.0, 100.0, 24000.0);
+        p.jdspReverb.outputlpf =
+                (float) n(preset, "jdspReverb", "outputlpf", 10000.0, 100.0, 24000.0);
+        p.jdspReverb.rt60 = (float) n(preset, "jdspReverb", "rt60", 3.2, 0.1, 30.0);
+        p.jdspReverb.delay = (float) n(preset, "jdspReverb", "delay", 0.020, -0.1, 0.1);
+
         return new Mapped(p, kernelFile, ddcDevice);
     }
 

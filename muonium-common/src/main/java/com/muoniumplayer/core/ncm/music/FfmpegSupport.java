@@ -57,6 +57,24 @@ final class FfmpegSupport {
     }
 
     /**
+     * 清掉缓存立刻重新探测一遍，找到就返回路径，没找到返回 {@code null}。
+     *
+     * <p>给一键安装流程用：winget 装完的 ffmpeg 落在 WinGet Links 目录里，本进程的 PATH 是启动时
+     * 固定的，不重启也该立刻能用。探测会真的创建子进程（每个候选最多等一次超时），<b>必须放在后台
+     * 线程调用</b>，放到渲染线程上就是肉眼可见的卡顿。</p>
+     */
+    static String forceReprobe() {
+        synchronized (LOCK) {
+            executable = null;
+            nextProbeAtMillis = 0L;
+        }
+        String found = executable();
+        System.out.println("[Music/Cover] ffmpeg reprobe after install: "
+                + (found != null ? found : "still not found"));
+        return found;
+    }
+
+    /**
      * 只报告已缓存的探测结论,绝不触发新的探测。供渲染线程(HUD 编辑器)使用:探测会创建子进程,
      * 放在渲染线程上会卡帧。
      *
@@ -158,8 +176,8 @@ final class FfmpegSupport {
         }
     }
 
-    /** 必须把输出读干:管道缓冲区填满时子进程会阻塞在写上,永远等不到退出。 */
-    private static void drainAsync(final InputStream stream) {
+    /** 必须把输出读干:管道缓冲区填满时子进程会阻塞在写上,永远等不到退出。包内共用(winget 安装同样要排空)。 */
+    static void drainAsync(final InputStream stream) {
         if (stream == null) return;
         Thread thread = new Thread(new Runnable() {
             @Override

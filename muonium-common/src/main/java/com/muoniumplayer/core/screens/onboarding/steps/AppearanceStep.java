@@ -74,8 +74,13 @@ public final class AppearanceStep implements OnboardingStepView {
      */
     private static void drawCard(OnboardingController controller, NCMTheme.ThemePreset theme,
                                  double x, double y, double width, boolean selected, boolean hover) {
+        // 手机档：真玻璃主题（液态玻璃/琉璃）不可选（见 NCMTheme.isSelectable）。
+        // 卡片不响应悬停高亮，预览压一层底色纱，右下角标「手机不可用」。
+        boolean lockedTheme = !NCMTheme.isSelectable(theme);
+        hover &= !lockedTheme;
         OnboardingUi.roundedRect(x, y, width, CARD_H, OnboardingUi.CARD_RADIUS + 1,
-                selected ? of(theme, NCMScreen.ColorType.ACCENT, .16f)
+                lockedTheme ? OnboardingUi.surface()
+                        : selected ? of(theme, NCMScreen.ColorType.ACCENT, .16f)
                         : (hover ? OnboardingUi.surfaceHover() : OnboardingUi.surface()));
         if (selected) {
             OnboardingUi.roundedOutline(x, y, width, CARD_H, OnboardingUi.CARD_RADIUS + 1, 1.6,
@@ -88,9 +93,12 @@ public final class AppearanceStep implements OnboardingStepView {
         OnboardingUi.drawIcon(FoliaLucideIcons.PALETTE, PartyIcons.TEXT_FORMAT,
                 x + 19, labelY + 9, 14, of(theme, NCMScreen.ColorType.ACCENT, 1.0f));
         OnboardingUi.drawText(FontManager.pf12bold, theme.getDisplayName(),
-                x + 32, labelY + 2, OnboardingUi.textPrimary());
-        OnboardingUi.drawText(FontManager.pf10bold, selected ? "SELECTED" : "PREVIEW",
-                x + 12, labelY + 20, selected ? OnboardingUi.CYAN : OnboardingUi.textMuted());
+                x + 32, labelY + 2, lockedTheme ? OnboardingUi.textMuted() : OnboardingUi.textPrimary());
+        OnboardingUi.drawText(FontManager.pf10bold,
+                lockedTheme ? "手机不可用" : (selected ? "SELECTED" : "PREVIEW"),
+                x + 12, labelY + 20,
+                lockedTheme ? OnboardingUi.textMuted()
+                        : (selected ? OnboardingUi.CYAN : OnboardingUi.textMuted()));
     }
 
     /** 卡里那块迷你播放器：面板底 + 封面 + 两行字 + 进度条，全部用这套主题自己的颜色。 */
@@ -204,7 +212,11 @@ public final class AppearanceStep implements OnboardingStepView {
         for (int i = 0; i < 3; i++) {
             double cardX = cardX(x, width, i);
             if (OnboardingUi.inside(mouseX, mouseY, cardX, cardY, cardWidth(width), CARD_H)) {
-                controller.selectTheme(themes[Math.floorMod(start + i, themes.length)]);
+                NCMTheme.ThemePreset target = themes[Math.floorMod(start + i, themes.length)];
+                // 手机档点真玻璃主题卡：吞掉点击但什么都不做（卡片已画成灰的）。
+                if (NCMTheme.isSelectable(target)) {
+                    controller.selectTheme(target);
+                }
                 return true;
             }
         }

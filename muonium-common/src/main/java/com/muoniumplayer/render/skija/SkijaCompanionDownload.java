@@ -27,7 +27,8 @@ import java.util.zip.ZipInputStream;
  * 越过 GitHub release 的单文件上限）。其余平台的原生库向来靠「伴生包」——用户手动下载 zip、
  * 手动解压到 {@code config/muonium/native/skija/}。本类把这一步自动化：本机判定平台在
  * {@link #PACKS} 里、且磁盘上一个候选都没有时，从公开的清单仓库拉对应的包、校验字节数与
- * sha256、解压到同一个目录，剩下的交给 {@link SkijaNatives} 的重评窗口。
+ * sha256、解压到同一个目录；装好后非 Windows 平台<b>必须重启游戏</b>才生效（重启看门狗置闸，
+ * 见 {@link #restartRequired}），进度条与状态展示由提示层照 {@link #state()} 画。
  *
  * <h2>触发条件（同时满足才下载）</h2>
  * <ol>
@@ -115,7 +116,7 @@ final class SkijaCompanionDownload {
         DOWNLOADING,
         /** 下载完成，正在解压安装。 */
         INSTALLING,
-        /** 装好了，等重评窗口把库捡起来（正常情况 20 秒内渲染层自活）。 */
+        /** 装好了。Windows 等重评窗口捡起来；其余平台等用户重启游戏（见 {@link #restartRequired}）。 */
         DONE,
         /** 本会话内失败（重试预算没用完时冷却到了会再试）。 */
         FAILED
@@ -136,7 +137,23 @@ final class SkijaCompanionDownload {
     private static int attempts;
     private static long nextAttemptAtNanos;
 
+    /**
+     * 重启看门狗的闸：本会话里自动下载装好了伴生包、且本平台<b>必须重启游戏才能生效</b>。
+     *
+     * <p>非 Windows 平台（伴生包的所有受众）装完后不再走「热加载」：装到一半的游戏里，链接器
+     * 命名空间、GL 上下文、字体管理器的状态都不是一张白纸，热加载能不能成全看运气——用户看到的
+     * 却是「下载完了然后呢」。所以装好即置位本闸：下载线程不再立即重试、{@code SkijaHost} 的
+     * 重评窗口对它让路，提示层挂出「必须重启游戏」。重启之后这是一次全新的 JVM，文件已在
+     * 磁盘上，加载走首次启动的正常路径，本闸自然不存在。</p>
+     */
+    private static volatile boolean restartRequired;
+
     private SkijaCompanionDownload() {
+    }
+
+    /** 本会话是否已进入「装好了、等重启」状态。提示层与重评窗口都读它。 */
+    static boolean isRestartRequired() {
+        return restartRequired;
     }
 
     /** 当前（或最近一次）的下载状态；提示层每帧读它，永远不会为 null。 */
@@ -218,12 +235,21 @@ final class SkijaCompanionDownload {
             Files.deleteIfExists(archive.toPath());
 
             state = new State(Phase.DONE, 100, null);
-            log("已自动装好 " + pack.fileName() + " → " + root.getAbsolutePath() + "，等待重评定夺");
-            try {
-                SkijaNatives.reset();
-                SkijaNatives.ensureLoaded();
-            } catch (Throwable ignored) {
-                // 加载结论由重评窗口继续推进；安装本身已经成功，不在这里改判
+            if (SkijaNativeCatalog.mappedPlatform().startsWith("windows")) {
+                // 防御分支：主包内置 Windows 原生库，Windows 理论上永远进不到这里；真进来了
+                // 就照旧把库热加载起来，别让用户白等一次重启。
+                log("已自动装好 " + pack.fileName() + " → " + root.getAbsolutePath() + "，等待重评定夺");
+                try {
+                    SkijaNatives.reset();
+                    SkijaNatives.ensureLoaded();
+                } catch (Throwable ignored) {
+                    // 加载结论由重评窗口继续推进；安装本身已经成功，不在这里改判
+                }
+            } else {
+                // 重启看门狗：置闸、不再热加载。提示层会一直挂着「必须重启游戏」。
+                restartRequired = true;
+                log("已自动装好 " + pack.fileName() + " → " + root.getAbsolutePath()
+                        + "；本平台必须重启游戏后生效，本会话不再尝试热加载");
             }
         } catch (Throwable failure) {
             state = new State(Phase.FAILED, 0, safeMessage(failure));

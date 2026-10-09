@@ -140,17 +140,47 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     public static DynamicIslandStyle getStyle() {
         DynamicIslandStyle[] styles = DynamicIslandStyle.values();
-        return styles[HudConfig.clampInt(HudConfig.dynamicIslandStyle, 0, styles.length - 1)];
+        DynamicIslandStyle style = styles[HudConfig.clampInt(HudConfig.dynamicIslandStyle, 0, styles.length - 1)];
+        // 手机档：存档里选的是「液态玻璃」款时，读取兜底退回经典胶囊——真玻璃在安卓上
+        // 整体禁用（见 GlassMobileTier），这款的折射亮带画出来只剩假玻璃兜底。只在内存里
+        // 生效、不回写存档：桌面上这份配置仍然有效。
+        if (style == DynamicIslandStyle.LIQUID_GLASS && !isStyleSelectable(style)) {
+            style = DynamicIslandStyle.PILL;
+        }
+        return style;
     }
 
     public static String getStyleName() {
         return getStyle().getDisplayName();
     }
 
+    /**
+     * 这款灵动岛样式在当前运行时能不能被选中。
+     *
+     * <p>「液态玻璃」款的材质与主题侧真玻璃同源（{@code GlassLook} 的 ISLAND 面），
+     * 手机档把真玻璃整体禁用后它只剩假玻璃兜底——样式名还摆在下拉里、还能选中，
+     * 会让人以为「液态玻璃在手机上没禁干净」。所以安卓上整款不可选：下拉不出现、
+     * 轮换跳过（{@code cycleStyle}）、直设拒绝（设置模型 {@code setIslandStyle}），
+     * 渲染侧另有 {@link #getStyle()} 的兜底。桌面恒可选。</p>
+     */
+    public static boolean isStyleSelectable(DynamicIslandStyle style) {
+        return !com.muoniumplayer.core.rendering.GlassMobileTier.active()
+                || style != DynamicIslandStyle.LIQUID_GLASS;
+    }
+
     /** 安全网：没有专属通道的持久卡片仍会自行结束。 */
     public static void cycleStyle() {
         DynamicIslandStyle[] styles = DynamicIslandStyle.values();
-        HudConfig.dynamicIslandStyle = (HudConfig.clampInt(HudConfig.dynamicIslandStyle, 0, styles.length - 1) + 1) % styles.length;
+        int index = HudConfig.clampInt(HudConfig.dynamicIslandStyle, 0, styles.length - 1);
+        // 手机档跳过「液态玻璃」款：轮换不能停在一条已经禁用的死样式上（与主题轮换
+        // NCMTheme.next() 同一套规矩）。
+        for (int step = 0; step < styles.length; step++) {
+            index = (index + 1) % styles.length;
+            if (isStyleSelectable(styles[index])) {
+                break;
+            }
+        }
+        HudConfig.dynamicIslandStyle = index;
         HudConfig.save();
         publishNotice(IslandNoticeType.STYLE, "灵动岛样式", getStyleName());
     }
