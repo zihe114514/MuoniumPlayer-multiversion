@@ -74,6 +74,26 @@ public class SynthesisEngine implements Synthesizer {
         }
     }
 
+    /** Mutable output processor. Runs on the audio thread before the mixed buffer is written to the
+     *  device and may modify the supplied PCM buffer in place. Must be real-time safe (no
+     *  allocation, no locks, no blocking). */
+    public interface OutputProcessor {
+        void process(double[] interleaved, int channels, int sampleRate);
+    }
+    private volatile OutputProcessor outputProcessor;
+    public void setOutputProcessor(OutputProcessor processor) { outputProcessor = processor; }
+
+    private void processOutput() {
+        OutputProcessor processor = outputProcessor;
+        if (processor == null || outputBuffer == null) return;
+        try {
+            processor.process(outputBuffer.interleavedBuffer, outputBuffer.blockBuffers.length, getFrameRate());
+        } catch (Throwable failure) {
+            // An effect must never reach the playback loop's error path or silence music.
+            outputProcessor = null;
+        }
+    }
+
 
     private final static int BLOCKS_PER_BUFFER = 8;
     private final static int FRAMES_PER_BUFFER = Synthesizer.FRAMES_PER_BLOCK * BLOCKS_PER_BUFFER;
@@ -405,6 +425,7 @@ public class SynthesisEngine implements Synthesizer {
             }
             frameCount += Synthesizer.FRAMES_PER_BLOCK;
         }
+        processOutput();
         observeOutput();
     }
 

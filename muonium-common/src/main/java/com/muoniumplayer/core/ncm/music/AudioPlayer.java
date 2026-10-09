@@ -9,6 +9,7 @@ import repackage.com.jsyn.exceptions.ChannelMismatchException;
 import repackage.processing.sound.AutomixDeckChain;
 import repackage.processing.sound.SoundFile;
 import com.muoniumplayer.core.ncm.music.audio.OpenALAudioDevice;
+import com.muoniumplayer.core.viper.ViperRuntime;
 import com.muoniumplayer.render.skija.SkijaNatives;
 
 import java.io.File;
@@ -142,6 +143,15 @@ public class AudioPlayer {
         if (!isUsable())
             return;
 
+        // 已经在出声就不再命令它播放第二次。AudioSample.play() 对「自己已在播放」的采样
+        // 会克隆出一路新读头（getUnusedPlayer），而克隆对象没有任何句柄留在外面 ——
+        // pause()/close() 都只停得住原本那一路，多出来的那路会一直响到曲子结束。
+        // 暂停/播放键被反复点按时叠出的第二层、第三层音就是这么来的。
+        if (this.player.isPlaying()) {
+            this.playRequested = true;
+            return;
+        }
+
         attachAutomixChain();
 
         finished = false;
@@ -175,7 +185,18 @@ public class AudioPlayer {
 
         float safeMillis = Math.max(0.0f, Math.min(total, millis));
         try {
-            this.player.jump(safeMillis / 1000F);
+            // 暂停中挪进度只许挪读头，绝不许出声。AudioSample.jump() 的契约是
+            // 「跳转并继续播放，没在播就开播」：暂停时它会把这一路重新接回引擎开始出声，
+            // 而播放意图（playRequested）仍是 false —— 界面照旧画着播放键，用户再按一下
+            // 又会在「已在播放」的采样上触发第二次 play()，克隆出一路停不掉的读头（叠音）。
+            // 暂停态要的是 cue()：同样把读头放到目标位置，但保持静音，等真正的 play()
+            // 从那里续上。判据用播放意图而不是引擎瞬时状态：play() 命令排队后到引擎真正
+            // 开播之间有一个窗口，那里意图已是要播、引擎还没动，此时拖动进度条必须继续播。
+            if (this.playRequested) {
+                this.player.jump(safeMillis / 1000F);
+            } else {
+                this.player.cue(safeMillis / 1000F);
+            }
             this.player.resyncTimeStretch();
             this.player.amp(effectiveAmp());
         } catch (RuntimeException ignored) {
@@ -249,6 +270,11 @@ public class AudioPlayer {
         if (!isUsable()) return;
         if (!this.prepared) {
             play();
+            return;
+        }
+        // 与 play() 同一条防线：已经在出声的采样再收一次 play() 会克隆出没人持有的第二路读头。
+        if (this.player.isPlaying()) {
+            this.playRequested = true;
             return;
         }
         finished = false;
@@ -911,6 +937,10 @@ public class AudioPlayer {
         if (file.isFile() && file.length() > pcmLimit) {
             throw new IllegalStateException(PlaybackMemoryLimits.describeOverLimit(file.length()));
         }
+
+        // ViPER 音效：与设备兜底同一时机挂接输出处理器 —— Engine 的创建与设备选择
+        // 就发生在下面的 new SoundFile 里，在这里挂接不改变任何设备选择时序。
+        ViperRuntime.ensureInstalled();
 
         SoundFile candidate;
         try {

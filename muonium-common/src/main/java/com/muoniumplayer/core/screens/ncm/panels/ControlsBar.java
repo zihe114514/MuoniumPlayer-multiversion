@@ -36,8 +36,10 @@ import com.muoniumplayer.core.screens.ncm.SheetClock;
 import com.muoniumplayer.core.screens.ncm.TrackSelectionMotion;
 import com.muoniumplayer.core.screens.ncm.TransitionCurveCache;
 import com.muoniumplayer.core.screens.ncm.VolumeControl;
+import com.muoniumplayer.core.viper.ViperRuntime;
 import com.muoniumplayer.core.widget.impl.MusicLyricsWidget;
 import com.muoniumplayer.party.MpPartyClient;
+import com.muoniumplayer.party.ui.PartyIcons;
 
 import java.util.List;
 
@@ -739,7 +741,10 @@ public class ControlsBar extends NCMPanel {
                     if (volumeX <= 0.0 || volumeX >= parentWidth) {
                         volumeX = parentWidth - volumeWidth - 8.0;
                     }
-                    double selectorGap = Math.min(38.0, Math.max(14.0, parentWidth * .045));
+                    // 基础间隙里还要容纳蝰蛇音效入口（18 图标 + 8 边距，用户指定放音质右边、音量左边）：
+                    // 整体加宽 26 之后，无论走正常路径还是极窄收缩路径，「芯片右缘 = volumeX - selectorGap」
+                    // 恒成立，蝰蛇钉在芯片右缘 + 6 就永远落在芯片与音量之间、不与两者重叠。
+                    double selectorGap = Math.min(38.0, Math.max(14.0, parentWidth * .045)) + 26.0;
                     // 箭头交给矢量画，文字里就不该再留那枚全角「﹀」：它既占宽又和文字基线对不齐，
                     // 而 LucideIconWidget 那一枚是随缩放算出来的，和菜单里的勾选/档位图标同一套笔画。
                     String selectorLabel = "音质 · " + formatQuality(CloudMusic.quality);
@@ -806,6 +811,32 @@ public class ControlsBar extends NCMPanel {
                     .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
                     .setPosition(qualitySelector.getWidth() - chevronSize - 6.0 * chevronScale,
                             Math.max(0.0, (qualitySelector.getHeight() - chevronSize) * .5));
+        });
+
+        // 蝰蛇音效入口：用户指定放在音质选择的右边、音量滑条左边（2026-10-07）。
+        // 位置完全由音质芯片的几何推出（芯片右缘 + 6）——selectorGap 已为它预留 26 宽度，
+        // 任何面板宽度下都落在芯片与音量之间、不与两者重叠；跟随芯片垂直居中，
+        // 不参与待播/一起听那条图标带的抬升。启用时点亮强调色，其余时候跟次级文字同色。
+        final LucideIconWidget viperToggle = new LucideIconWidget(() -> FoliaLucideIcons.TUNE,
+                () -> PartyIcons.HEADPHONES, FontManager.partyIcon32, 0, 0, 18, 18);
+        this.addChild(viperToggle);
+        viperToggle.setShouldOverrideMouseCursor(true);
+        viperToggle.setDrawScale(.78);
+        viperToggle.setBeforeRenderCallback(() -> {
+            viperToggle
+                    .setClickable(true)
+                    .centerVertically();
+            viperToggle
+                    .setPosition(qualitySelector.getRelativeX() + qualitySelector.getWidth() + 6.0,
+                            viperToggle.getRelativeY())
+                    .setColor(ViperRuntime.isEnabled()
+                            ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
+                            : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        });
+        viperToggle.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+            if (mouseButton != 0) return false;
+            NCMScreen.getInstance().openViperEffects();
+            return true;
         });
 
         // 下一首播放列表：队列抽屉的开关排在音质按钮左边，沿用右下角次级控件的同一条锚点链。

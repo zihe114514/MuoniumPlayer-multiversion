@@ -33,6 +33,10 @@ import com.muoniumplayer.core.settings.ConfigPaths;
  *       嵌套 jar，由本类自己解到 {@code <root>/<版本>/extracted/<platform>/} 再指给 Skija。</li>
  * </ol>
  *
+ * <p>非 Windows 平台连一个磁盘候选都没有时，还会走一次<b>自动下载</b>
+ * （{@link SkijaCompanionDownload}）：按本机判定平台从清单仓库拉同名伴生包、校验字节数与
+ * sha256 后解到伴生包目录，再回头走上面第 2 条路径。下载全程在后台线程，渲染线程不等它。
+ *
  * <p>候选的查找、排序与版本校验都在 {@link SkijaNativeCatalog} 里，本类只管「试」与「记状态」。
  *
  * <p><b>候选之外还有一维：落在哪个目录</b>。真机（FCL / Android 16）给出的第一条硬证据是
@@ -132,6 +136,52 @@ public final class SkijaNatives {
     }
 
     /**
+     * 「一个候选都没有」时提示层要说的整块文案。
+     *
+     * <p>自动下载上线之后这一段不能写死：同样是「缺库」，用户下一步动作差得很远——
+     * 下载中什么都别做、装好了等重评、失败了才回手动补包。文案跟
+     * {@link SkijaCompanionDownload} 的状态走；包名 / 下载页 / 目标目录这三条硬信息
+     * 在任何「需要用户动手」的分岔里都必须原样给出——静态测试钉着它们，
+     * 那是用户唯一的自救路径。
+     */
+    public static List<String> nativeMissingLines() {
+        Status current = status;
+        List<String> lines = new ArrayList<>();
+        SkijaCompanionDownload.State download = SkijaCompanionDownload.state();
+        switch (download.phase()) {
+            case DOWNLOADING -> {
+                lines.add(download.percent() >= 0
+                        ? "正在自动下载渲染原生库：" + download.percent() + "%"
+                        : "正在自动下载渲染原生库…");
+                lines.add("完成后自动启用，不需要手动放置，也不需要重启游戏");
+            }
+            case INSTALLING -> {
+                lines.add("渲染原生库已下载，正在解压安装…");
+                lines.add("装好后自动启用，不需要重启游戏");
+            }
+            case DONE -> {
+                lines.add("渲染原生库已自动装好，正在重试…");
+                lines.add("稍等片刻，不需要重启游戏");
+            }
+            case FAILED -> {
+                lines.add("自动下载失败：" + download.detail());
+                addManualCompanionLines(lines, current);
+            }
+            default -> addManualCompanionLines(lines, current);
+        }
+        return lines;
+    }
+
+    /** 缺库时的「手动补包」引导：包名、下载页、目标目录与自动重试承诺。 */
+    private static void addManualCompanionLines(List<String> lines, Status current) {
+        lines.add("需要伴生包：" + current.expectedPackageName());
+        lines.add("下载页：" + NATIVE_DOWNLOAD_PAGE);
+        lines.add("把压缩包里的文件夹整个解压到这里：");
+        lines.add(current.expectedDirectory());
+        lines.add("放好约 20 秒内自动重试，不需要重启游戏");
+    }
+
+    /**
      * 确保 Skija 原生库已加载。可重复调用，只有第一次会做实际工作。
      *
      * <p>形状是「先凑齐候选来源，再对每个候选试所有可能的落点」：
@@ -184,6 +234,11 @@ public final class SkijaNatives {
 
         // ---- 全部失败：把结论留下来，等 SkijaHost 的重评窗口 ----
         boolean foundSomething = !sources.isEmpty();
+        if (!foundSomething) {
+            // 一个候选都没有：这正是自动下载该出场的情形。候选找到了却加载不了的不在此列——
+            // 那说明问题不在「有没有包」，重复下载同一个包没有意义（真机 2026-09-29 的教训）。
+            SkijaCompanionDownload.onNoCandidates(mapped);
+        }
         String summary = buildSummary(mapped, root, sources, attempted, rejectedOnDisk);
         String lastError = attempted.isEmpty() ? null : attempted.get(attempted.size() - 1);
         loaded = Boolean.FALSE;

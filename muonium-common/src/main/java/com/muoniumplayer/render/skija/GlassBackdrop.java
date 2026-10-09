@@ -532,11 +532,22 @@ public final class GlassBackdrop {
     }
 
     /**
-     * 只借用本次采集已经存在的预糊档，不触发新的全屏高斯。
+     * 转场路径的预糊档：能借就借（免掉一遍全屏高斯），但<b>只借新鲜的</b>。
      *
-     * <p>播放器灵动岛交接属于硬实时窗口：如果这里为一个新 sigma 现场建 FBO，
-     * 视觉上就是第一帧突然掉一下。没有可借用的档位时返回 {@code null}，调用方可以
-     * 退回未模糊的背景贴图，而不是把整段动画拖慢。</p>
+     * <h2>借档的年龄上限是怎么来的</h2>
+     * 播放器开场/收起动画期间液态透镜整面关闭（见 {@code GlassLook.paintFrost} 的转场分流），
+     * 而透镜正是那个每个采集代数都会把预糊档重糊一遍的消费者。也就是说转场期间没有任何人
+     * 刷新播放器那一档——本方法若无年龄上限地「借上一代」，借到的其实是<b>上一次开界面</b>
+     * 时糊的那张：整段开场动画透的都是旧截图，直到转场结束透镜接管才变成当前画面
+     * （2026-10-08 玩家报的「打开 GUI 背景是上次的缓存」就是它）。所以借档一刀切在
+     * {@link #STALE_BORROW_CAPTURES} 代以内——那才是「落后一帧」的平滑兜底本来的意思
+     * （快速关了再开时第一帧不掉帧）；再旧就是另一个时代的画面，按本代数现糊一遍。
+     *
+     * <h2>现糊那一遍的价钱</h2>
+     * 与界面全开时透镜每个采集代数都付的那一遍完全相同（默认 30Hz 采集；借一代、糊一代，
+     * 实际频率只有全开稳态的一半），槽位复用、不新建 FBO，且仍受
+     * {@link GlassBlurLevels#REBUILDS_PER_CAPTURE} 预算约束。预糊这一层建不起来时
+     * {@link #rebuildBlur} 返回 {@code null}，调用方退回贴<b>当前</b>原图——也还是当前画面。
      */
     public static Image blurredCached(float sigma) {
         Image raw = image();
@@ -561,29 +572,32 @@ public final class GlassBackdrop {
             blurLevels.touch(borrowed);
             return borrowBlur(SkijaHost.context(), blurSlots[borrowed]);
         }
-        // 当前采集代数还没建过档时，继续借上一代最接近的纹理。
-        // 它会短暂落后一帧，但不会在转场第一帧突然从玻璃变成裸图。
-        int stale = -1;
-        float staleDistance = Float.MAX_VALUE;
-        long staleGeneration = Long.MIN_VALUE;
-        for (int i = 0; i < blurSlots.length; i++) {
-            if (blurSlots[i].image == null || blurLevels.keyAt(i) == GlassBlurLevels.NO_KEY) {
-                continue;
-            }
-            float distance = Math.abs(blurLevels.keyAt(i) - key);
-            long generation = blurLevels.builtAtCapture(i);
-            if (distance < staleDistance || (distance == staleDistance && generation > staleGeneration)) {
-                stale = i;
-                staleDistance = distance;
-                staleGeneration = generation;
-            }
-        }
+        int stale = blurLevels.nearestStale(key, captures, STALE_BORROW_CAPTURES);
         if (stale >= 0) {
             blurLevels.touch(stale);
             return borrowBlur(SkijaHost.context(), blurSlots[stale]);
         }
-        return null;
+        // 旧档太旧（典型：开场动画遇上上一场界面留下的档）→ 按本代数现糊，
+        // 这正是全开状态每个代数都在付的那一遍高斯。
+        if (blurLevels.overBudget()) {
+            // 预算被同帧别的面花完了：退回无年龄借用，旧画面好过玻璃消失，
+            // 与 blurred() 的预算兜底同一套哲学；下一个代数就有预算了。
+            int anyStale = blurLevels.nearestStale(key, captures, Long.MAX_VALUE);
+            if (anyStale >= 0) {
+                blurLevels.touch(anyStale);
+                return borrowBlur(SkijaHost.context(), blurSlots[anyStale]);
+            }
+            // 连一档旧档都没有（本代第一次请求就撞上预算为 0 的边界）→ 往下照常建，
+            // 绝不能返回 null，那等于让玻璃整层消失。
+        }
+        return rebuildBlur(raw, sigma, key, blurLevels.allocate(key, captures));
     }
+
+    /**
+     * 转场借档的年龄上限（采集代数）。1 = 「落后一帧」：默认 30Hz 采集下即 ≤33ms，
+     * 快速关了再开的交接第一帧照样免糊；超过它就是上一场界面的残影，必须重建。
+     */
+    private static final long STALE_BORROW_CAPTURES = 1L;
     private static void resetBlurSource(Image raw) {
         if (blurSource == raw) {
             return;

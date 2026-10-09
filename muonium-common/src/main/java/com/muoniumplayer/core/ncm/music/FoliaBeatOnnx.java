@@ -15,7 +15,6 @@ final class FoliaBeatOnnx {
 
     private static final int CHUNK = 1500;
     private static final int BORDER = 6;
-    private static final int INTRA_THREADS = 4;
 
     private FoliaBeatOnnx() {}
 
@@ -24,11 +23,12 @@ final class FoliaBeatOnnx {
         long startedAt = System.nanoTime();
         float[][] mel = FoliaMelFrontend.spectrogram(mono);
         if (mel.length <= 0) return null;
-        Object session = null;
         try {
-            session = FoliaOnnx.createSession(
+            // 会话复用：一整首歌要跑若干个 1500 帧的分块，建图只该发生一次。
+            // 线程数与优先级由 FoliaInferenceBudget 统一收紧。
+            Object session = FoliaOnnx.session(
                     FoliaModelManager.path(FoliaModelManager.Kind.BEAT_THIS).getAbsolutePath(),
-                    false, INTRA_THREADS);
+                    false, FoliaInferenceBudget.intraOpThreads());
             String inputName = FoliaOnnx.inputName(session);
             int outputCount = FoliaOnnx.outputCount(session);
             int beatIndex = 0, downbeatIndex = 1;
@@ -54,6 +54,8 @@ final class FoliaBeatOnnx {
                 predictions.add(new Chunk(start, count,
                         FoliaOnnx.flatten(outputs[Math.min(beatIndex, outputs.length - 1)]),
                         FoliaOnnx.flatten(outputs[Math.min(downbeatIndex, outputs.length - 1)])));
+                // 分块之间把 CPU 让给渲染线程；见 FoliaInferenceBudget。
+                FoliaInferenceBudget.yieldToGame();
             }
 
             float[] beatLogits = new float[mel.length];
@@ -98,9 +100,8 @@ final class FoliaBeatOnnx {
         } catch (Throwable failure) {
             System.err.println("[Automix/Folia] Beat This ONNX 推理失败: " + failure.getMessage());
             return null;
-        } finally {
-            if (session != null) FoliaOnnx.closeSession(session);
         }
+        // 不关会话：它由 FoliaOnnx.session 持有并复用。见那边的注释。
     }
 
     private record Chunk(int start, int count, float[] beat, float[] downbeat) {}

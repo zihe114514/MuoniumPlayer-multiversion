@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 2.1,
+  "name": "酷狗3D丽音[重制版]",
+  "convolver": {
+    "enable": true,
+    "kernelFile": "酷狗3D丽音[重制版].irs"
+  }
+}

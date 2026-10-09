@@ -121,6 +121,64 @@ class GlassBlurLevelsProbeTest {
     }
 
     @Test
+    @DisplayName("旧档借用有年龄上限：超过一代就是上一场的残影，不许借")
+    void staleBorrowIsAgeBounded() {
+        GlassBlurLevels levels = new GlassBlurLevels();
+        levels.beginCapture(100L);
+        levels.markBuilt(levels.allocate(KEY_PANEL, 100L), KEY_PANEL, 100L);
+
+        // 落后一代：可以借——这正是「快速关了再开」交接第一帧免糊的兜底
+        levels.beginCapture(101L);
+        assertEquals(0, levels.nearestStale(KEY_PANEL, 101L, 1L),
+                "落后一代的档就是「落后一帧」兜底要的东西，借它没有问题");
+
+        // 落后两代：不许借。开场动画期间没有任何消费者刷新播放器那一档，
+        // 无年龄上限地借 = 整段转场透「上一次开界面」糊的那张旧截图
+        levels.beginCapture(102L);
+        assertEquals(GlassBlurLevels.NO_SLOT, levels.nearestStale(KEY_PANEL, 102L, 1L),
+                "旧档超龄必须判不可借，逼着调用方按本代数重糊");
+    }
+
+    @Test
+    @DisplayName("旧档借用按 key 距离挑，并列取代数更新的")
+    void staleBorrowPicksNearestKeyThenNewestGeneration() {
+        GlassBlurLevels levels = new GlassBlurLevels();
+        levels.beginCapture(50L);
+        levels.markBuilt(levels.allocate(22f, 50L), 22f, 50L);
+        levels.beginCapture(51L);
+        levels.markBuilt(levels.allocate(26f, 51L), 26f, 51L);
+
+        // 要 24：两档距离并列（22 与 26 都是 2），但 26 那档更新
+        levels.beginCapture(52L);
+        int borrowed = levels.nearestStale(24f, 52L, 2L);
+        assertTrue(borrowed >= 0);
+        assertEquals(26f, levels.keyAt(borrowed),
+                "距离并列时借取代数新的：它背后是更近一次采集的画面");
+    }
+
+    @Test
+    @DisplayName("没建过档或档已作废时无旧可借；无上限模式专供预算兜底")
+    void staleBorrowHandlesEmptyAndUnbounded() {
+        GlassBlurLevels levels = new GlassBlurLevels();
+        levels.beginCapture(1L);
+        assertEquals(GlassBlurLevels.NO_SLOT, levels.nearestStale(KEY_PANEL, 1L, 1L),
+                "从没糊过就没有旧档可借");
+
+        levels.markBuilt(levels.allocate(KEY_PANEL, 1L), KEY_PANEL, 1L);
+        levels.reset();
+        assertEquals(GlassBlurLevels.NO_SLOT, levels.nearestStale(KEY_PANEL, 1L, Long.MAX_VALUE),
+                "reset 之后一切当作没糊过，无上限也不许借出");
+
+        levels.beginCapture(1L);
+        levels.markBuilt(levels.allocate(KEY_PANEL, 1L), KEY_PANEL, 1L);
+        levels.beginCapture(900L);
+        assertTrue(levels.nearestStale(KEY_PANEL, 900L, Long.MAX_VALUE) >= 0,
+                "无上限模式是预算耗尽时的兜底：再旧也必须能借到，好过玻璃消失");
+        assertEquals(GlassBlurLevels.NO_SLOT, levels.nearestStale(KEY_PANEL, 900L, 1L),
+                "有上限模式对同一档必须判超龄");
+    }
+
+    @Test
     @DisplayName("reset 之后一切当作没糊过（尺寸变了、层停用了都走这条）")
     void resetClearsEverything() {
         GlassBlurLevels levels = new GlassBlurLevels();

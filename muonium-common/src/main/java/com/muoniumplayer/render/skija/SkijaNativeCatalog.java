@@ -450,7 +450,7 @@ final class SkijaNativeCatalog {
         return 100;
     }
 
-    /** 递归收集原生库文件；深度有限制，符号链接不跟，目录不可读就跳过而不是抛。 */
+    /** 递归收集原生库文件；深度有限制，符号链接不跟，点开头的自有暂存目录不跟，目录不可读就跳过而不是抛。 */
     private static List<File> findLibraryFiles(File root) {
         List<File> found = new ArrayList<>();
         collect(root, 0, found);
@@ -468,7 +468,10 @@ final class SkijaNativeCatalog {
         for (File child : children) {
             if (child.isFile() && LIBRARY_FILE_NAMES.contains(child.getName())) {
                 out.add(child);
-            } else if (child.isDirectory() && !Files.isSymbolicLink(child.toPath())) {
+            } else if (child.isDirectory() && !child.getName().startsWith(".")
+                    && !Files.isSymbolicLink(child.toPath())) {
+                // 点开头的是本模组自己的暂存目录（.incoming-*：自动下载正在解压的目标），
+                // 里面的半成品绝不能进候选——否则加载试探会在写到一半的文件上报错
                 collect(child, depth + 1, out);
             }
         }

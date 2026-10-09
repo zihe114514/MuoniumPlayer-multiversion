@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 2.1,
+  "name": "酷狗HiFi",
+  "convolver": {
+    "enable": true,
+    "kernelFile": "酷狗HiFi.irs"
+  }
+}

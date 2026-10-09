@@ -147,6 +147,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     /** 服务器一起听（mpsync 服务端 mod）的房间面板。与网易云一起听同层，互不相干。 */
     public MpPartyOverlay mpPartyOverlay = null;
 
+    /** 蝰蛇音效（ViPER）面板：播放条右下角那颗调音图标打开的单页浮层（总开关 + 预设列表）。 */
+    public ViperOverlay viperOverlay = null;
+
     /** 主题调色板：主题按钮右键打开的二级菜单，实时预览主题颜色配置项。 */
     public ThemePaletteOverlay themePaletteOverlay = null;
 
@@ -646,6 +649,20 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             if (this.musicSourceOverlay.shouldClose()) {
                 this.musicSourceOverlay.dispose();
                 this.musicSourceOverlay = null;
+            }
+            StencilClipManager.endClip();
+        }
+
+        // 蝰蛇音效面板与来源菜单同层：它们是同一个播放条上的两个二级入口，样式同族。
+        if (this.viperOverlay != null) {
+            StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+            this.viperOverlay.setBounds(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight());
+            this.viperOverlay.setAlpha(alpha);
+            this.viperOverlay.renderWidget(mouseX, mouseY, dWheel);
+            if (this.viperOverlay.shouldClose()) {
+                this.viperOverlay.dispose();
+                this.viperOverlay = null;
             }
             StencilClipManager.endClip();
         }
@@ -1281,6 +1298,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.musicSourceOverlay.onInit();
     }
 
+    /** 打开蝰蛇音效面板；重复打开时先回收上一次的实例，避免两层叠在一起。 */
+    public void openViperEffects() {
+        if (this.viperOverlay != null) this.viperOverlay.dispose();
+        this.viperOverlay = new ViperOverlay();
+        this.viperOverlay.onInit();
+    }
+
     /** 打开一起听面板；重复打开时先回收上一次的实例，避免两层叠在一起。 */
     public void openListenTogether() {
         if (this.listenTogetherOverlay != null) this.listenTogetherOverlay.dispose();
@@ -1372,6 +1396,16 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             }
             return;
         }
+
+        if (this.viperOverlay != null) {
+            if (this.viperOverlay.onKeyTypedReceived(typedChar, keyCode)) {
+                return;
+            }
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                this.viperOverlay.handleEscape();
+            }
+            return;
+        }
         // 一起听的「加入房间」页有可编辑的邀请码输入框，必须先让控件树看到按键，
         // 否则粘贴和输入都会像没反应。
         if (this.listenTogetherOverlay != null) {
@@ -1458,6 +1492,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 || this.playlistCreateSheet != null
                 || this.lyricSearchOverlay != null
                 || this.musicSourceOverlay != null
+                || this.viperOverlay != null
                 || this.listenTogetherOverlay != null
                 || this.mpPartyOverlay != null
                 || this.accountManagerOverlay != null
@@ -1515,6 +1550,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         if (this.musicSourceOverlay != null) {
             this.musicSourceOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            return;
+        }
+        if (this.viperOverlay != null) {
+            this.viperOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
             return;
         }
         if (this.listenTogetherOverlay != null) {

@@ -251,6 +251,65 @@ final class FoliaOnnx {
         return createSessionMethod.invoke(environment, modelPath, options);
     }
 
+    // ------------------------------------------------------------------
+    // 会话复用：一次分析多个窗口/多个 chunk 只建一次
+    // ------------------------------------------------------------------
+
+    /**
+     * 进程内长期持有的会话。键是「模型路径 + 低内存 + 线程数」，值是一个只建一次、
+     * 用到进程结束的 {@code OrtSession}。
+     *
+     * <h2>为什么值得缓存</h2>
+     * 建会话不只是分配一个对象：ORT 要读盘、反序列化整个模型图、做一次常量折叠与算子融合。
+     * htdemucs 那份 108 MB 的权重与 beat_this 的 83 MB 都在这条路径上，一次是几百毫秒到
+     * 一两秒的纯 CPU + IO 尖峰。而分析一走进来就是「一个窗口分 10 个 chunk，每个 chunk
+     * 还要按 stem 复用」——旧代码在每个 {@code analyse()} 里建一次、用完关掉，等于把这段
+     * 尖峰放在每一次预备上，还顺手把 ORT 内部已经热身好的内存池丢掉。
+     *
+     * <h2>为什么不会泄漏或读到旧模型</h2>
+     * 键里带着模型文件的绝对路径与长度+修改时间（见 {@link #sessionKey}），用户换模型、
+     * 换模型目录都会自然得到新键，旧会话仍留在表里但不会再被取到——数量被 {@link #MAX_SESSIONS}
+     * 封顶，且两个模型是唯一会进这张表的东西。会话不关是刻意的：这是进程级的常驻资源，
+     * 关掉它等于把下次分析的建图开销又付一遍。
+     *
+     * <p>键里也带线程数：改了预算就该按新预算重建，而不是沿用按旧线程数建好的会话。
+     */
+    private static final Map<String, Object> SESSIONS =
+            new java.util.concurrent.ConcurrentHashMap<String, Object>();
+
+    /** 常驻会话上限。模型一共两个、每个按 (低内存, 线程数) 至多几份，12 已经远超实际需要。 */
+    private static final int MAX_SESSIONS = 12;
+
+    /**
+     * 取一个可复用的会话，没有就建一个并放回表里。
+     *
+     * <p>建会话本身不并发安全（ORT 的 {@code createSession} 在同一 environment 上并发调用会
+     * 内部争锁），这里用 {@code computeIfAbsent} 之外的双检 + 局部锁：同一模型的并发首次调用
+     * 只建一次，不同模型之间不互相阻塞。
+     */
+    static Object session(String modelPath, boolean lowMemory, int intraThreads) throws Exception {
+        String key = sessionKey(modelPath, lowMemory, intraThreads);
+        Object existing = SESSIONS.get(key);
+        if (existing != null) return existing;
+        synchronized (SESSION_LOCKS.computeIfAbsent(key, ignored -> new Object())) {
+            Object second = SESSIONS.get(key);
+            if (second != null) return second;
+            Object created = createSession(modelPath, lowMemory, intraThreads);
+            if (SESSIONS.size() < MAX_SESSIONS) SESSIONS.put(key, created);
+            return created;
+        }
+    }
+
+    private static final Map<String, Object> SESSION_LOCKS =
+            new java.util.concurrent.ConcurrentHashMap<String, Object>();
+
+    /** 键 = 模型绝对路径 + 大小 + 修改时间 + 两个建会话参数。 */
+    private static String sessionKey(String modelPath, boolean lowMemory, int intraThreads) {
+        File file = new File(modelPath);
+        return modelPath + '|' + file.length() + '|' + file.lastModified()
+                + '|' + lowMemory + '|' + intraThreads;
+    }
+
     /** 首个输入名。ORT 的 InputInfo map 保持模型声明顺序。 */
     static String inputName(Object session) throws Exception {
         Map<?, ?> info = (Map<?, ?>) inputInfoMethod.invoke(session);
@@ -290,19 +349,29 @@ final class FoliaOnnx {
     /**
      * 跑一次推理并关闭结果。返回每个输出 {@code getValue()} 的原始对象——
      * float32 输出按模型秩还原成 {@code float[]} / {@code float[][]} / {@code float[][][][]}。
+     *
+     * <p>执行期间把<b>当前线程</b>压到最低优先级：包在 {@code run} 外面的张量构造与结果
+     * 解包在长窗口上是百万级的浮点运算，压低它对帧率有实际意义。ORT 内部那几条 intra-op
+     * worker 不受影响（优先级不沿创建关系传递），它们的大小由
+     * {@link FoliaInferenceBudget#intraOpThreads()} 在建会话时限定。
      */
     static Object[] run(Object session, String inputName, Object tensor) throws Exception {
-        Object result = runMethod.invoke(session, Collections.singletonMap(inputName, tensor));
+        int previous = FoliaInferenceBudget.lowerCurrentThread();
         try {
-            int count = ((Integer) resultSize.invoke(result));
-            Object[] outputs = new Object[count];
-            for (int i = 0; i < count; i++) {
-                Object value = resultGet.invoke(result, i);
-                outputs[i] = valueMethod.invoke(value);
+            Object result = runMethod.invoke(session, Collections.singletonMap(inputName, tensor));
+            try {
+                int count = ((Integer) resultSize.invoke(result));
+                Object[] outputs = new Object[count];
+                for (int i = 0; i < count; i++) {
+                    Object value = resultGet.invoke(result, i);
+                    outputs[i] = valueMethod.invoke(value);
+                }
+                return outputs;
+            } finally {
+                resultClose.invoke(result);
             }
-            return outputs;
         } finally {
-            resultClose.invoke(result);
+            FoliaInferenceBudget.restoreCurrentThread(previous);
         }
     }
 

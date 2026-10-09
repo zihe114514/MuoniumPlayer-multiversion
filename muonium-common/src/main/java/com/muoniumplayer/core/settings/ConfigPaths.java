@@ -328,6 +328,20 @@ public final class ConfigPaths {
      */
     public static final File DEV_GLASS_PROBE = new File(CONFIG_DIRECTORY, "dev_glass_probe");
 
+    /**
+     * ViPER 蝰蛇音效的预设与开关。
+     *
+     * <p>{@code presets/} 下可以直接放三类文件：官方 App 导出的 JSON（schema 2.1，以及更早的
+     * 分组 / 扁平 JSON）、以及更老的 XML 预设（{@code <map>} 数字 ID 格式，即经典「蝰蛇音效
+     * 配置文件」）。读取时统一归一化为 2.1 语义单位，与官方 App 的导入行为一致。</p>
+     *
+     * <p>{@code settings.json} 只存「总开关 + 当前预设名」，与预设文件分开：改开关、换预设
+     * 都不会重写任何一份预设，读失败的代价也只是回到「未启用、未选择」。</p>
+     */
+    public static final File VIPER_DIR = new File(CONFIG_DIRECTORY, "viper");
+    public static final File VIPER_SETTINGS = new File(VIPER_DIR, "settings.json");
+    public static final File VIPER_PRESETS = new File(VIPER_DIR, "presets");
+
     static {
         migrateLegacyFiles();
     }

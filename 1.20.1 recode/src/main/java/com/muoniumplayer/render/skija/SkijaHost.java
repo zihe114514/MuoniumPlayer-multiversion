@@ -78,6 +78,42 @@ public final class SkijaHost {
     private static int offscreenWidth;
     private static int offscreenHeight;
 
+    // ---- 自持离屏目标（Android GL 翻译层上 canvas.clear() 会整帧丢失，见 beginOffscreen）----
+    private static int ownedFbo;
+    private static int ownedTexture;
+    private static int ownedDepthStencil;
+    /** true = {@link #offscreen} 包装的是上面自持的 FBO；false = Skia 自管目标（退化路径）。 */
+    private static boolean offscreenOwned;
+
+    /** AB 开关：-Dmuonium.skija.legacyOffscreen=true 回到 Skia 自管离屏的旧行为。 */
+    private static final boolean LEGACY_OFFSCREEN =
+            Boolean.getBoolean("muonium.skija.legacyOffscreen");
+
+    /**
+     * 是否用「自持 FBO + 裸 GL 清屏」承载离屏层。
+     *
+     * <p>Android 的 GL 翻译层（FCL 的 Zink/gl4es 一类）上，{@code canvas.clear()} 被优化成
+     * 的 clear op 可能整帧丢失——离屏层于是带着上一帧的残影合成上屏，表现为歌词滚动拖尾、
+     * HUD 编辑器残影、换句瞬间闪一下（2026-10-07 真机截图实证，Windows 无此症状）。
+     * 桌面 Windows 驱动没有这个问题，保持 Skia 自管目标的历史路径不动；其余平台走自持
+     * FBO，清屏不再依赖 Skia 的 clear 优化与驱动 clear 实现的咬合。
+     */
+    private static boolean ownedOffscreenDecided;
+    private static boolean ownedOffscreenDecision;
+
+    private static boolean useOwnedOffscreen() {
+        if (LEGACY_OFFSCREEN) {
+            return false;
+        }
+        // 判定结果钉住：mappedPlatform 内部有文件 stat，beginFrame 每帧都来这里，
+        // 按本库惯例不做每帧 stat。
+        if (!ownedOffscreenDecided) {
+            ownedOffscreenDecision = !SkijaNatives.mappedPlatform().startsWith("windows");
+            ownedOffscreenDecided = true;
+        }
+        return ownedOffscreenDecision;
+    }
+
     // ---- 帧内状态 ----
     private static boolean inFrame;
     private static Canvas canvas;
@@ -245,24 +281,143 @@ public final class SkijaHost {
     }
 
     private static Canvas beginOffscreen(int pixelWidth, int pixelHeight) {
-        if (offscreen == null || offscreenWidth != pixelWidth || offscreenHeight != pixelHeight) {
+        boolean wantOwned = useOwnedOffscreen();
+        if (offscreen == null || offscreenWidth != pixelWidth || offscreenHeight != pixelHeight
+                || wantOwned != offscreenOwned) {
             closeOffscreen();
-            // budgeted=false：这块目标生命周期由我们自己控制，不希望 Skia 的资源缓存
-            // 在内存压力下把它回收掉。
-            offscreen = Surface.makeRenderTarget(context, false,
-                    ImageInfo.makeN32Premul(pixelWidth, pixelHeight));
+            if (wantOwned) {
+                offscreen = wrapOwnedOffscreen(pixelWidth, pixelHeight);
+            }
             if (offscreen == null) {
-                fail("Surface.makeRenderTarget 返回 null（" + pixelWidth + "x" + pixelHeight + "）", null);
-                return null;
+                // budgeted=false：这块目标生命周期由我们自己控制，不希望 Skia 的资源缓存
+                // 在内存压力下把它回收掉。
+                offscreen = Surface.makeRenderTarget(context, false,
+                        ImageInfo.makeN32Premul(pixelWidth, pixelHeight));
+                if (offscreen == null) {
+                    fail("Surface.makeRenderTarget 返回 null（" + pixelWidth + "x" + pixelHeight + "）", null);
+                    return null;
+                }
+                offscreenOwned = false;
+                log("离屏目标（Skia 自管）已建立 " + pixelWidth + "x" + pixelHeight);
             }
             offscreenWidth = pixelWidth;
             offscreenHeight = pixelHeight;
-            log("离屏目标已建立 " + pixelWidth + "x" + pixelHeight);
         }
         Canvas c = offscreen.getCanvas();
         // 必须清成全透明。清成不透明黑会把整个屏幕糊掉。
+        if (offscreenOwned) {
+            clearOwnedOffscreenRaw();
+        }
         c.clear(0x00000000);
         return c;
+    }
+
+    /**
+     * 建一块<b>我们自己持有</b>的离屏 FBO（纹理 + 深度模板渲染缓冲）并包成 Skia Surface。
+     *
+     * <p>与 {@link Surface#makeRenderTarget} 的差别只有一个，却是这次修复的全部：
+     * FBO 名在我们手里，beginFrame 可以在 Skia 排队之前用<b>裸 GL</b> 把它清成全透明，
+     * 不再依赖 Skia 的 clear 路径在手机 GL 栈上是否生效。任何一步失败都返回
+     * {@code null}，调用方退回 Skia 自管目标，功能不丢。
+     *
+     * <p>Origin 声明 BOTTOM_LEFT 与 {@link #composite} 里包装 MC FBO 的口径一致：
+     * GL 纹理 FBO 的原点本来就是左下，两个同源目标之间 drawImage 逐纹素 1:1，没有额外翻转；
+     * 画布坐标系仍然是上层依赖的「GUI 单位、左上原点、y 向下」，对业务层零变化。
+     */
+    private static Surface wrapOwnedOffscreen(int pixelWidth, int pixelHeight) {
+        try {
+            ownedTexture = org.lwjgl.opengl.GL11.glGenTextures();
+            org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, ownedTexture);
+            org.lwjgl.opengl.GL11.glTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D,
+                    org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER, org.lwjgl.opengl.GL11.GL_LINEAR);
+            org.lwjgl.opengl.GL11.glTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D,
+                    org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER, org.lwjgl.opengl.GL11.GL_LINEAR);
+            org.lwjgl.opengl.GL11.glTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D,
+                    org.lwjgl.opengl.GL12.GL_TEXTURE_WRAP_S, org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE);
+            org.lwjgl.opengl.GL11.glTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D,
+                    org.lwjgl.opengl.GL12.GL_TEXTURE_WRAP_T, org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE);
+            org.lwjgl.opengl.GL11.glTexImage2D(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0,
+                    org.lwjgl.opengl.GL11.GL_RGBA8, pixelWidth, pixelHeight, 0,
+                    org.lwjgl.opengl.GL11.GL_RGBA, org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE,
+                    (java.nio.ByteBuffer) null);
+
+            ownedDepthStencil = org.lwjgl.opengl.GL30.glGenRenderbuffers();
+            org.lwjgl.opengl.GL30.glBindRenderbuffer(org.lwjgl.opengl.GL30.GL_RENDERBUFFER,
+                    ownedDepthStencil);
+            org.lwjgl.opengl.GL30.glRenderbufferStorage(org.lwjgl.opengl.GL30.GL_RENDERBUFFER,
+                    org.lwjgl.opengl.GL30.GL_DEPTH24_STENCIL8, pixelWidth, pixelHeight);
+
+            ownedFbo = org.lwjgl.opengl.GL30.glGenFramebuffers();
+            org.lwjgl.opengl.GL30.glBindFramebuffer(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, ownedFbo);
+            org.lwjgl.opengl.GL30.glFramebufferTexture2D(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER,
+                    org.lwjgl.opengl.GL30.GL_COLOR_ATTACHMENT0, org.lwjgl.opengl.GL11.GL_TEXTURE_2D,
+                    ownedTexture, 0);
+            org.lwjgl.opengl.GL30.glFramebufferRenderbuffer(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER,
+                    org.lwjgl.opengl.GL30.GL_DEPTH_STENCIL_ATTACHMENT,
+                    org.lwjgl.opengl.GL30.GL_RENDERBUFFER, ownedDepthStencil);
+            boolean complete = org.lwjgl.opengl.GL30.glCheckFramebufferStatus(
+                    org.lwjgl.opengl.GL30.GL_FRAMEBUFFER)
+                    == org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_COMPLETE;
+            org.lwjgl.opengl.GL30.glBindRenderbuffer(org.lwjgl.opengl.GL30.GL_RENDERBUFFER, 0);
+            if (!complete) {
+                destroyOwnedOffscreenGl();
+                return null;
+            }
+            BackendRenderTarget target = BackendRenderTarget.makeGL(pixelWidth, pixelHeight,
+                    0, 8, ownedFbo, FramebufferFormat.GR_GL_RGBA8);
+            Surface s = Surface.wrapBackendRenderTarget(context, target, SurfaceOrigin.BOTTOM_LEFT,
+                    ColorType.RGBA_8888, ColorSpace.getSRGB());
+            if (s == null) {
+                target.close();
+                destroyOwnedOffscreenGl();
+                return null;
+            }
+            offscreenOwned = true;
+            log("离屏目标（自持 FBO + 裸 GL 清屏）已建立 " + pixelWidth + "x" + pixelHeight);
+            return s;
+        } catch (Throwable t) {
+            destroyOwnedOffscreenGl();
+            return null;
+        }
+    }
+
+    /**
+     * 裸 GL 清屏：绑定自己的 FBO，显式关 scissor、开满 colorMask，把颜色位清成全透明。
+     *
+     * <p>不再经 {@code canvas.clear()} 那条链：它会被 Skia 优化成 clear op，而 clear op
+     * 依赖 Skia 对 GL scissor/colorMask 的缓存与驱动的 clear 实现咬合——真机上这一咬合
+     * 会整帧失效，离屏层于是带着上一帧的残影合成上屏。这里每一项状态都显式设置；
+     * clearColor 不在 {@code GlSnapshot} 的快照范围内，清完必须还回去，
+     * 否则 0,0,0,0 会泄漏给 Minecraft 自己的下一次清屏。
+     */
+    private static void clearOwnedOffscreenRaw() {
+        float[] previousClearColor = new float[4];
+        org.lwjgl.opengl.GL11.glGetFloatv(org.lwjgl.opengl.GL11.GL_COLOR_CLEAR_VALUE,
+                previousClearColor);
+        org.lwjgl.opengl.GL30.glBindFramebuffer(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, ownedFbo);
+        org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_SCISSOR_TEST);
+        org.lwjgl.opengl.GL11.glColorMask(true, true, true, true);
+        org.lwjgl.opengl.GL11.glClearColor(0f, 0f, 0f, 0f);
+        org.lwjgl.opengl.GL11.glClear(org.lwjgl.opengl.GL11.GL_COLOR_BUFFER_BIT);
+        org.lwjgl.opengl.GL11.glClearColor(previousClearColor[0], previousClearColor[1],
+                previousClearColor[2], previousClearColor[3]);
+    }
+
+    /** 删掉自持离屏的 GL 对象。必须在渲染线程、GL 上下文仍 current 的时候调。 */
+    private static void destroyOwnedOffscreenGl() {
+        if (ownedFbo != 0) {
+            org.lwjgl.opengl.GL30.glDeleteFramebuffers(ownedFbo);
+            ownedFbo = 0;
+        }
+        if (ownedDepthStencil != 0) {
+            org.lwjgl.opengl.GL30.glDeleteRenderbuffers(ownedDepthStencil);
+            ownedDepthStencil = 0;
+        }
+        if (ownedTexture != 0) {
+            org.lwjgl.opengl.GL11.glDeleteTextures(ownedTexture);
+            ownedTexture = 0;
+        }
+        offscreenOwned = false;
     }
 
     private static Canvas beginDirect(int pixelWidth, int pixelHeight) {
@@ -760,6 +915,7 @@ public final class SkijaHost {
         }
         offscreenWidth = 0;
         offscreenHeight = 0;
+        destroyOwnedOffscreenGl();
     }
 
     private static void closeDirect() {

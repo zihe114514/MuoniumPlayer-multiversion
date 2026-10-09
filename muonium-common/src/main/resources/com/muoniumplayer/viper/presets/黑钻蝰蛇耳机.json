@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 2.1,
+  "name": "黑钻蝰蛇耳机",
+  "convolver": {
+    "enable": true,
+    "kernelFile": "黑钻蝰蛇耳机.irs"
+  }
+}

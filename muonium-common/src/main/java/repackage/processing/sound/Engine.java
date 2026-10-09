@@ -164,6 +164,7 @@ public class Engine {
 		this.synth = JSyn.createSynthesizer(deviceManager);
         if (this.synth instanceof repackage.com.jsyn.engine.SynthesisEngine) {
             ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setOutputObserver(outputObserver);
+            ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setOutputProcessor(outputProcessor);
         }
 		// try {
 			// 如果没有带输入的设备，这可能是-1
@@ -442,6 +443,21 @@ public class Engine {
         outputObserver = observer;
         if (this.synth instanceof repackage.com.jsyn.engine.SynthesisEngine) {
             ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setOutputObserver(observer);
+        }
+    }
+
+    /**
+     * Attach a mutable output processor that runs on the audio thread after all deck processing and
+     * mixing, right before the buffer is written to the device. Unlike the observer it may modify
+     * the PCM in place; the implementation must be real-time safe. Kept across audio driver
+     * switches (re-applied in {@link #createSynth}).
+     */
+    private volatile repackage.com.jsyn.engine.SynthesisEngine.OutputProcessor outputProcessor;
+
+    public void setOutputProcessor(repackage.com.jsyn.engine.SynthesisEngine.OutputProcessor processor) {
+        outputProcessor = processor;
+        if (this.synth instanceof repackage.com.jsyn.engine.SynthesisEngine) {
+            ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setOutputProcessor(processor);
         }
     }
 

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 2.1,
+  "name": "【黑钻蝰蛇】",
+  "convolver": {
+    "enable": true,
+    "kernelFile": "【黑钻蝰蛇】.irs"
+  }
+}

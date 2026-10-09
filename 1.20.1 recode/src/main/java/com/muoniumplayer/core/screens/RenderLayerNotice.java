@@ -125,7 +125,7 @@ public final class RenderLayerNotice {
      * <ol>
      *   <li>Android → 除通用分岔外多说一行：渲染器要用 MobileGlues 并关闭 ANGLE，
      *       这是 2026-10-05 真机实测出的可用组合；</li>
-     *   <li>原生库压根没找到 → 给包名、地址、目录、重试时间；</li>
+     *   <li>原生库压根没找到 → 自动下载进行中就说进度与现状，否则给包名、地址、目录、重试时间；</li>
      *   <li>原生库找到了、版本也对，却仍然加载不了 → 再喊「请下载伴生包」是把人往回指第二遍，
      *       要说「请把日志给我们」；</li>
      *   <li>原生库加载成功了却仍停用 → 卡在 GPU 上下文或绘制，给伴生包没有任何意义。</li>
@@ -153,11 +153,9 @@ public final class RenderLayerNotice {
                 lines.add("这种情况下再下一遍伴生包没有用——请把 latest.log 发给我们");
                 lines.add("日志里搜 MuoniumPlayer/SkijaNatives 与 MuoniumPlayer/runtime");
             } else {
-                lines.add("需要伴生包：" + status.expectedPackageName());
-                lines.add("下载页：" + SkijaNatives.NATIVE_DOWNLOAD_PAGE);
-                lines.add("把压缩包里的文件夹整个解压到这里：");
-                lines.add(status.expectedDirectory());
-                lines.add("放好约 20 秒内自动重试，不需要重启游戏");
+                // 缺库文案跟自动下载的状态走（下载中 / 装好待重试 / 失败转手动），
+                // 由共享层统一生成——五棵树各写一份必然飘。
+                lines.addAll(SkijaNatives.nativeMissingLines());
             }
         } else {
             lines.add("原因：" + firstSentence(SkijaHost.suspendReason()));

@@ -296,8 +296,10 @@ public final class SkijaEffects {
     }
 
     /**
-     * 转场专用的预糊贴图路径：只使用已经存在的背景档，不在动画帧里创建新的全屏高斯。
-     * 没有可用预糊档时仍会贴原始背景，但不会为了补模糊而触发 saveLayer + blur。
+     * 转场专用的预糊贴图路径：优先吃已经存在的<b>新鲜</b>背景档（同代或落后一代，免糊），
+     * 档太旧（上一次开界面留下的）时由预糊层按本代数重糊一遍——那是全开状态本来就在付的
+     * 价钱，且受每次采集的重建预算约束。没有可用预糊档时仍会贴当前原始背景，
+     * 但绝不会为了补模糊而在本面板上触发 saveLayer + blur。
      */
     public static boolean frostedBackdropCached(double x, double y, double width, double height,
                                                 double radius, float sigma, float opacity) {

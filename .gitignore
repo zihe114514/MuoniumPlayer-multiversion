@@ -29,6 +29,7 @@ _mcref/
 
 # ---- 迁移到单仓前的旧单版本 git 仓库备份（见 README「历史」）----
 _legacy-git/
+_viperfx-ref/
 
 # ---- 系统垃圾 ----
 .DS_Store
@@ -92,3 +93,7 @@ error-report-*/
 
 # ZCode 工具的本地状态目录（会话/工作区数据）
 /.zcode/
+
+# 编译产物/文件清单/探针等一次性草稿转储，用完即弃
+/_*.txt
+/.*.txt

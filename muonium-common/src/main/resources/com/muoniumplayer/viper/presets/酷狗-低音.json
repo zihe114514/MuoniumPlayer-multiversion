@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 2.1,
+  "name": "酷狗-低音",
+  "convolver": {
+    "enable": true,
+    "kernelFile": "酷狗-低音.irs"
+  }
+}

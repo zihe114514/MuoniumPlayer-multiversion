@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 2.1,
+  "name": "尊享旗舰·空间音效",
+  "convolver": {
+    "enable": true,
+    "kernelFile": "尊享旗舰·空间音效.irs"
+  }
+}

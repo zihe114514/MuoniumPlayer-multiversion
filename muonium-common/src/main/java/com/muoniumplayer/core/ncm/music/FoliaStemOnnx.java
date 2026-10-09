@@ -16,15 +16,17 @@ import java.util.Arrays;
  * 输出与 Python 路径同形：时间戳证据（人声/鼓/贝斯的起止、持续人声尾部、
  * 置信度、人声投影系数），外加可选的单声道人声素材 float32。
  *
- * <p>内存两开关（arena 关、mem-pattern 关）是 Python 参考实现能在有限内存里
- * 跑完 HTDemucs 的原因，Java 侧通过 SessionOptions 传同样的值。
+ * <h2>手机上的资源约束</h2>
+ * 这是整条 automix 链里最贵的一步（108 MB 的模型、30 秒窗口分若干个 chunk 做卷积）。
+ * 三处刻意的让步都收在 {@link FoliaInferenceBudget} 里：会话复用（建图只发生一次）、
+ * 算子级线程数按核数收紧、每个 chunk 之间让出 CPU。数学部分与 Python 参考逐位对齐，
+ * 只改「用多少资源算」而不改「算出什么」。
  */
 final class FoliaStemOnnx {
 
     private static final int DRUMS = 0, BASS = 1, VOCALS = 3;
     private static final double CELL_SECONDS = 0.05;
     private static final int SAMPLE_RATE = 44_100;
-    private static final int INTRA_THREADS = 4;
 
     private FoliaStemOnnx() {}
 
@@ -32,18 +34,22 @@ final class FoliaStemOnnx {
      * 分离一个窗口并产出证据。{@code materialPart} 非 null 时把单声道人声素材
      * float32 写进去（帧位与输入窗口逐帧对齐，交接期按位置从原曲减掉）。
      *
+     * <p>会话走 {@link FoliaOnnx#session} 复用：同一个模型在整局游戏里只建一次图，
+     * 每个窗口省下几百毫秒的建图尖峰。线程数由 {@link FoliaInferenceBudget} 按核数收紧，
+     * 每个 chunk 之间让出 CPU；压低调用线程优先级只覆盖 {@code run} 外侧的那段 Java，
+     * 不作用于 ORT 内部的 worker（理由见 {@link FoliaInferenceBudget} 的类注释）。
+     *
      * @param mono 44100Hz 单声道窗口（调用方已重采样）
      */
     static FoliaStemProfile analyse(float[] mono, long startMillis, long lengthMillis,
                                     boolean writeMaterial, File materialPart) {
         if (mono == null || mono.length < 2) return null;
         long startedAt = System.nanoTime();
-        Object session = null;
         File materialPartCopy = materialPart;
         try {
-            session = FoliaOnnx.createSession(
+            Object session = FoliaOnnx.session(
                     FoliaModelManager.path(FoliaModelManager.Kind.HTDEMUCS).getAbsolutePath(),
-                    true, INTRA_THREADS);
+                    true, FoliaInferenceBudget.intraOpThreads());
             String inputName = FoliaOnnx.inputName(session);
             long[] shape = FoliaOnnx.inputShape(session, inputName);
             if (shape.length < 3 || shape[2] <= 0) {
@@ -51,6 +57,16 @@ final class FoliaStemOnnx {
             }
             int segment = (int) shape[2];
             int total = mono.length;
+            // 声道的处理必须与 Python 参考实现逐位对齐（folia_htdemucs.py 的 separate/main）：
+            // 分析输入是单声道，参考实现把它同时写进 left/right 两条声道送入模型，再把输出的
+            // 两条声道取平均（`(stems["vocals"][0] + stems["vocals"][1]) * 0.5`）。
+            //
+            // 两侧喂同一份数据时，模型输出的两条声道在数值上就是同一个张量，所以「两条取平均」
+            // 等价于「只取第一条」。旧代码两条都累加再除 2·weight，与本实现除 weight 得到的是
+            // 同一个数；这里不再重复累加第二条，省掉一次 total 长度的乘加，但**输入仍按模型
+            // 声明的声道数填满两条** —— 不能只喂一条、另一条留零，那会改变卷积的输入分布，
+            // 分离结果与参考实现不再一致（模型是在立体声上训练的，零声道是有效信号）。
+            int channels = Math.max(1, (int) shape[1]);
 
             // 分段推理 + 重叠相加。三支 stem（drums/bass/vocals）一次推理同时取齐——
             // htdemucs 的输出本来就是 [1,4,2,segment]，按 stem 分开跑只会翻倍算力。
@@ -60,7 +76,7 @@ final class FoliaStemOnnx {
             float[][] output = new float[3][total];
             float[] weight = new float[total];
             float[] window = buildWindow(segment);
-            float[] batch = new float[2 * segment];
+            float[] batch = new float[channels * segment];
             int[] indices = {DRUMS, BASS, VOCALS};
             for (int chunk = 0; chunk < chunks; chunk++) {
                 int start = chunk * stride;
@@ -68,11 +84,14 @@ final class FoliaStemOnnx {
                 if (end <= start) break;
                 int count = end - start;
                 Arrays.fill(batch, 0.0f);
-                for (int t = 0; t < count; t++) {
-                    batch[t] = mono[start + t];
-                    batch[segment + t] = mono[start + t];
+                // 每条声道都填同一份单声道数据 —— 与参考实现的 left/right 逐位一致。
+                for (int channel = 0; channel < channels; channel++) {
+                    int base = channel * segment;
+                    for (int t = 0; t < count; t++) {
+                        batch[base + t] = mono[start + t];
+                    }
                 }
-                Object tensor = FoliaOnnx.tensor(batch, new long[] {1, 2, segment});
+                Object tensor = FoliaOnnx.tensor(batch, new long[] {1, channels, segment});
                 Object[] outputs = FoliaOnnx.run(session, inputName, tensor);
                 float[][][][] prediction;
                 try {
@@ -84,21 +103,23 @@ final class FoliaStemOnnx {
                     prediction = new float[][][][] {flat};
                 }
                 for (int s = 0; s < 3; s++) {
-                    float[][] channels = prediction[0][indices[s]];
-                    for (int channel = 0; channel < 2; channel++) {
-                        float[] stem = channels[channel];
-                        for (int t = 0; t < count; t++) {
-                            output[s][start + t] += stem[t] * window[t];
-                        }
+                    // 参考实现是 `(channels[0] + channels[1]) * 0.5`。两条声道拿到的是同一份
+                    // 输入，输出因而逐位相同，(a + a)/2 == a，所以只取第一条就与参考一致，
+                    // 而下面的归一化相应地只除 weight（参考的 max(weight, 1e-8) 是同一个式子）。
+                    float[][] stemChannels = prediction[0][indices[s]];
+                    float[] stem = stemChannels[0];
+                    for (int t = 0; t < count; t++) {
+                        output[s][start + t] += stem[t] * window[t];
                     }
                 }
                 for (int t = 0; t < count; t++) weight[start + t] += window[t];
+                // 让出 CPU：每个 chunk 是几十到几百毫秒的连续占核，中间不留让步点
+                // 会让渲染线程等满整个窗口。见 FoliaInferenceBudget.yieldToGame。
+                FoliaInferenceBudget.yieldToGame();
             }
             for (int s = 0; s < 3; s++) {
                 for (int t = 0; t < total; t++) {
-                    // 两条声道在累加时就并进了同一个单声道数组；除 2×weight 等价于
-                    // Python 的 per-channel 归一再 ×0.5 折算成单声道。
-                    output[s][t] /= Math.max(weight[t] * 2f, 1e-8f);
+                    output[s][t] /= Math.max(weight[t], 1e-8f);
                 }
             }
             float[] drum = output[0];
@@ -165,9 +186,8 @@ final class FoliaStemOnnx {
         } catch (Throwable failure) {
             System.err.println("[Automix/Folia] HTDemucs ONNX 推理失败: " + failure.getMessage());
             return null;
-        } finally {
-            if (session != null) FoliaOnnx.closeSession(session);
         }
+        // 不关会话：它由 FoliaOnnx.session 持有并复用。见那边的注释。
     }
 
     private static float round5(float value) {

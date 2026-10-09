@@ -318,6 +318,93 @@ class FoliaOnnxStaticTest {
     }
 
     // ------------------------------------------------------------------
+    // 手机上的资源约束：推理不许和渲染线程抢核
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("推理线程数按核数收紧、且不硬编码：4 核手机必须只拿到 2 条，绝不是 4 条")
+    void inferenceThreadsAreBudgeted() {
+        int threads = FoliaInferenceBudget.intraOpThreads();
+        int cores = Runtime.getRuntime().availableProcessors();
+        assertTrue(threads >= 1, "线程数不能小于 1，否则 ORT 行为未定义");
+        assertTrue(threads <= 2,
+                "intra-op 线程上限是 2：这是「游戏流畅优先」的取舍点，放宽它等于把掉帧放回来");
+        if (cores >= 4) {
+            assertEquals(2, threads, cores + " 核机器该拿到 2 条推理线程");
+        }
+        if (cores <= 3) {
+            assertEquals(1, threads, cores + " 核机器只该拿到 1 条");
+        }
+    }
+
+    @Test
+    @DisplayName("线程数预算只按核数算，两个推理入口都不许再硬编码 4")
+    void noHardcodedThreadCount() throws IOException {
+        for (String name : new String[] {"FoliaBeatOnnx.java", "FoliaStemOnnx.java"}) {
+            String source = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music", name));
+            assertFalse(source.contains("INTRA_THREADS"),
+                    name + " 不许再持有自己的线程数常量：线程数是全链共同的资源预算，"
+                            + "散在各处就会重新长出「某个入口偷偷开 4 条线程」");
+            assertTrue(source.contains("FoliaInferenceBudget.intraOpThreads()"),
+                    name + " 必须从 FoliaInferenceBudget 取线程数");
+        }
+    }
+
+    @Test
+    @DisplayName("会话复用：两个推理入口走 session() 而不是每次 createSession()，且都不再关会话")
+    void sessionsAreReused() throws IOException {
+        String onnx = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music",
+                "FoliaOnnx.java"));
+        assertTrue(onnx.contains("static Object session("),
+                "要有可复用的会话入口：建图是几百毫秒的尖峰，每次分析重来一遍是本末倒置");
+        assertTrue(onnx.contains("SESSIONS"),
+                "会话要放在进程级表里持有");
+        // 键必须带上模型文件的大小与修改时间：换了模型/换了目录要自然失效，
+        // 否则用户会拿到旧模型的推理结果，而且毫无提示。
+        String key = body(onnx, "private static String sessionKey(");
+        assertTrue(key.contains("length()") && key.contains("lastModified()"),
+                "会话键必须带模型文件的长度与修改时间，换模型才能自动失效");
+        for (String name : new String[] {"FoliaBeatOnnx.java", "FoliaStemOnnx.java"}) {
+            String source = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music", name));
+            assertTrue(source.contains("FoliaOnnx.session("), name + " 要走复用的会话");
+            assertFalse(source.contains("FoliaOnnx.closeSession("),
+                    name + " 不许关掉共享会话：关掉就等于把建图开销留给了下一次分析");
+        }
+    }
+
+    @Test
+    @DisplayName("HTDemucs 的声道契约与 Python 参考一致：两侧都填、只取一条输出")
+    void stemChannelsMatchReference() throws IOException {
+        String stems = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music",
+                "FoliaStemOnnx.java"));
+        // 参考实现（folia_htdemucs.py）把同一份单声道写进 left/right 两条声道送入模型，
+        // 再把两条输出取平均。模型在立体声上训练，喂零声道会改变输出分布 —— 那不是等价优化。
+        assertTrue(stems.contains("for (int channel = 0; channel < channels; channel++)"),
+                "每条输入声道都要填同一份单声道数据：只填一条、另一条留零会改变模型输出");
+        assertTrue(stems.contains("float[] stem = stemChannels[0]"),
+                "两条输出取平均等价于只取第一条（两侧输入相同），归一化相应只除 weight");
+        assertFalse(stems.contains("weight[t] * 2f"),
+                "原来的 2×weight 是「两条都累加」时代的补偿；改成只累加一条后必须去掉，"
+                        + "否则整条人声素材会偏小一半");
+    }
+
+    @Test
+    @DisplayName("分批推理之间要有让步点：chunk 循环里必须调用 yieldToGame")
+    void chunkLoopsYieldToGame() throws IOException {
+        for (String name : new String[] {"FoliaBeatOnnx.java", "FoliaStemOnnx.java"}) {
+            String source = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music", name));
+            assertTrue(source.contains("FoliaInferenceBudget.yieldToGame()"),
+                    name + " 的 chunk 循环里要让出 CPU：连续几秒不让核就是「一分析就卡」");
+        }
+        String budget = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music",
+                "FoliaInferenceBudget.java"));
+        String yield = body(budget, "static void yieldToGame()");
+        assertTrue(yield.contains("Thread.sleep("),
+                "让步要用 sleep 而不是 yield：yield 只把线程放回可运行队列，"
+                        + "满载时调度器可以立刻又选中它，等于没让");
+    }
+
+    // ------------------------------------------------------------------
     // 工具
     // ------------------------------------------------------------------
 

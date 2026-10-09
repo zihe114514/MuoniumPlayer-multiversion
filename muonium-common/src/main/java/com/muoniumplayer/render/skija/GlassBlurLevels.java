@@ -137,6 +137,34 @@ final class GlassBlurLevels {
     }
 
     /**
+     * 年龄不超过 {@code maxAge} 个采集代数的旧档里 key 最接近的那个；并列取代数更新的。
+     *
+     * <p>给 {@code GlassBackdrop#blurredCached(float)} 那条转场路径用：借旧档的本意是
+     * 「落后一帧」的平滑兜底，不是「把上一场界面糊的那张再端出来」。没有这一层年龄
+     * 判断时，开场动画期间唯一可借的档是上一次开界面时糊的——整段转场透的都是旧截图。</p>
+     *
+     * @return 槽位，或 {@link #NO_SLOT}（没有满足年龄的档，含从未建过的情况）
+     */
+    int nearestStale(float key, long captures, long maxAge) {
+        int best = NO_SLOT;
+        float bestDistance = Float.MAX_VALUE;
+        long bestGeneration = NO_CAPTURE;
+        for (int i = 0; i < SLOTS; i++) {
+            long generation = builtAt[i];
+            if (keys[i] == NO_KEY || generation < 0L || captures - generation > maxAge) {
+                continue;
+            }
+            float distance = Math.abs(keys[i] - key);
+            if (distance < bestDistance || (distance == bestDistance && generation > bestGeneration)) {
+                best = i;
+                bestDistance = distance;
+                bestGeneration = generation;
+            }
+        }
+        return best;
+    }
+
+    /**
      * 给一次重建挑槽位：空槽优先，其次本代数没建过的（过期也算，它反正要重糊），
      * 四槽全在本代数上时挑最久没用的那个。
      *

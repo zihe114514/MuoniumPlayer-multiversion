@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 2.1,
+  "name": "至臻-沉浸环绕音效",
+  "convolver": {
+    "enable": true,
+    "kernelFile": "至臻-沉浸环绕音效.irs"
+  }
+}

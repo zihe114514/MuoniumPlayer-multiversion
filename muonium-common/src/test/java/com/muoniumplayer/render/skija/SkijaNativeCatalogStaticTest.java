@@ -344,10 +344,16 @@ class SkijaNativeCatalogStaticTest {
                 "提示层不能走 Skia 绘制链路");
         assertTrue(notice.contains("GuiGraphics"),
                 "提示要走原版 GUI 提交，Skia 停用也照样能画");
-        assertTrue(notice.contains("expectedPackageName()"),
-                "提示必须把伴生包名字说出来，用户只有这一条路能找到东西");
-        assertTrue(notice.contains("expectedDirectory()"),
-                "提示必须把目标目录的绝对路径打出来——手机端相对路径等于没说");
+        // 自动下载上线后，缺库分支的文案由共享层按下载状态统一生成；
+        // 包名与目录这两条硬信息也必须生在那里——这里改钉「提示层确实走了共享层」。
+        assertTrue(notice.contains("nativeMissingLines()"),
+                "缺库分支必须走 SkijaNatives.nativeMissingLines()，五个版本不许各写一份");
+        String nativesText = read(ProjectPaths.sourceFile(
+                Paths.get("com", "muoniumplayer", "render", "skija", "SkijaNatives.java")));
+        assertTrue(nativesText.contains("expectedPackageName()"),
+                "共享文案必须把伴生包名字说出来，用户只有这一条路能找到东西");
+        assertTrue(nativesText.contains("expectedDirectory()"),
+                "共享文案必须把目标目录的绝对路径打出来——手机端相对路径等于没说");
         // 真机第一轮的教训：库找到了、版本也对、却加载被拒——这时再喊「下载伴生包」是把人往回指
         assertTrue(notice.contains("nativeFound()"),
                 "提示要分得开「没找到库」与「找到了但加载被拒」");
