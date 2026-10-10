@@ -14,6 +14,7 @@ import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.settings.ClientSettings;
+import com.muoniumplayer.core.utils.IMBlockerCompat;
 import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.core.utils.timing.Timer;
 
@@ -636,6 +637,9 @@ public class TextField implements SharedConstants {
             cursorForceShowTimer.reset();
             cursorCounter = 0;
             Keyboard.enableRepeatEvents(true);
+            // 自绘输入框的焦点 IMBlocker 不可见；点亮时把窗口 IME 挂回去
+            //（覆盖 alt-tab 回窗后它按「游戏界面」重新摘掉 IME 的情况）。
+            IMBlockerCompat.keepIMEOn();
         }
 
         if (!focused && isFocused) {

@@ -69,15 +69,17 @@ class SkijaCompanionDownloadStaticTest {
     @Test
     @DisplayName("三条镜像都是 https、都指向清单仓库的 skija-companion/ 目录")
     void mirrorsPointAtTheManifestRepository() {
-        assertEquals(3, SkijaCompanionDownload.MIRRORS.size(), "镜像条数与更新检查同一套策略");
+        assertEquals(5, SkijaCompanionDownload.MIRRORS.size(), "镜像条数与更新检查同一套策略");
         for (String mirror : SkijaCompanionDownload.MIRRORS) {
             assertTrue(mirror.startsWith("https://"), "必须 https：" + mirror);
             assertTrue(mirror.endsWith("/skija-companion/"), "目录要与仓库布局一致：" + mirror);
             assertTrue(mirror.contains("MuoniumPlayer-updates"), "指向公开清单仓库：" + mirror);
         }
         assertTrue(SkijaCompanionDownload.MIRRORS.get(0).contains("ghfast.top"), "源 1 是国内可达的代理");
-        assertTrue(SkijaCompanionDownload.MIRRORS.get(1).contains("raw.githubusercontent.com"), "源 2 是原始地址");
-        assertTrue(SkijaCompanionDownload.MIRRORS.get(2).contains("jsdelivr"), "源 3 是 CDN 兜底");
+        assertTrue(SkijaCompanionDownload.MIRRORS.get(1).contains("gh-proxy.com"), "源 2 是 gh-proxy（直连实测最好：支持断点续传，截断后续传可拿全）");
+        assertTrue(SkijaCompanionDownload.MIRRORS.get(2).contains("raw.githubusercontent.com"), "源 3 是原始地址（经代理可达）");
+        assertTrue(SkijaCompanionDownload.MIRRORS.get(3).contains("ghproxy.net"), "源 4 是 ghproxy.net（镜像多活时代的另一主流接棒者）");
+        assertTrue(SkijaCompanionDownload.MIRRORS.get(4).contains("jsdelivr"), "源 5 是 CDN 兜底（对新推送有缓存延迟，殿后）");
     }
 
     @Test

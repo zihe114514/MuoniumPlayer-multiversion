@@ -4,16 +4,20 @@ import lombok.Getter;
 
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
+import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.RGBA;
 import com.muoniumplayer.core.rendering.Rect;
+import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
+import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.settings.ClientSettings;
 import com.muoniumplayer.core.utils.cursor.CursorUtils;
 
 import java.awt.*;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Supplier;
 
 /**
  * 组件 base.
@@ -79,6 +83,30 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
      */
     @Getter
     private boolean shouldOverrideMouseCursor = false;
+
+    /**
+     * 悬浮说明：悬停约半秒后在控件上方浮出一行小字。null（默认）表示这块控件没有说明；
+     * Supplier 每次画之前重取，「播放顺序：列表循环」「刷新QQ音乐歌单」这类跟着状态走的
+     * 文案直接换内容就行，不用重建控件。
+     *
+     * <p>画它的是<b>父组件</b>（在所有子控件渲染完之后，见 {@link #renderWidget}），
+     * 而不是控件自己的 onRender：说明浮在控件上方，而后加进来的兄弟（播放条上正是
+     * 进度条、时间标签这些）画在更上层，跟在控件自己的渲染里画会被它们盖住。</p>
+     */
+    private Supplier<String> tooltip;
+
+    /**
+     * 这一轮悬停开始的时间戳；0 表示当前没悬停。移开立即清零，回来重新计时。
+     * 被 {@code setHidden} 跳过整帧渲染的控件收不到清零，重新出现时若仍悬停会立刻
+     * 显示说明——比永远显示不出来安全，与侧栏按钮同一取舍。
+     */
+    private long tooltipHoverSince;
+
+    /** 悬浮说明要停够这么久才出现：鼠标扫过一排按钮时每颗只停留几十毫秒，立刻弹会连环闪烁。 */
+    private static final long TOOLTIP_DELAY_MS = 450L;
+
+    /** 停够之后多久淡满。 */
+    private static final long TOOLTIP_FADE_MS = 140L;
 
     /**
      * 颜色
@@ -210,6 +238,15 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
             this.afterRenderChildren(mouseX, mouseY);
         }
 
+        // 子控件的悬浮说明画在所有子控件之后，理由见 drawTooltip：说明要盖住后渲染的兄弟。
+        // 此刻每个子控件的本帧悬停状态都已由它自己的 renderWidget 更新过。
+        // 这里与 drawTooltip 一律直取字段而不是 lombok 生成的访问器：渲染树深处逐控件走一遍，
+        // 同类私有字段本就可见，也少一层调用。
+        for (AbstractWidget<?> child : this.children) {
+            if (child.hidden) continue;
+            child.drawTooltip(this);
+        }
+
         if (debug) {
             this.renderDebugLayout();
         }
@@ -236,6 +273,72 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
 
     public long getHoveringCursorType() {
         return CursorUtils.HAND;
+    }
+
+    /** 固定文案的悬浮说明，见 {@link #tooltip}。 */
+    public SELF setTooltip(String tooltip) {
+        return this.setTooltip(() -> tooltip);
+    }
+
+    /** 动态文案的悬浮说明（每次显示前重取），见 {@link #tooltip}。 */
+    public SELF setTooltip(Supplier<String> tooltip) {
+        this.tooltip = tooltip;
+        return (SELF) this;
+    }
+
+    /**
+     * 画悬浮说明（悬停并停够 {@link #TOOLTIP_DELAY_MS} 之后）。只由父组件的
+     * {@link #renderWidget} 在所有子控件渲染完之后调用，参数是父组件自己——
+     * 说明要夹在父组件的范围里，探出去的部分会被后渲染的面板盖住，看着像断了一截。
+     */
+    private void drawTooltip(AbstractWidget<?> clampTo) {
+        if (this.tooltip == null) return;
+        if (!this.hovering) {
+            this.tooltipHoverSince = 0L;
+            return;
+        }
+        if (this.tooltipHoverSince == 0L) {
+            this.tooltipHoverSince = System.currentTimeMillis();
+            return;
+        }
+        long held = System.currentTimeMillis() - this.tooltipHoverSince;
+        if (held < TOOLTIP_DELAY_MS) return;
+        float reveal = Math.min(1f, (held - TOOLTIP_DELAY_MS) / (float) TOOLTIP_FADE_MS);
+        float alpha = this.getAlpha() * reveal;
+        if (alpha <= .01f) return;
+
+        String text;
+        try {
+            text = this.tooltip.get();
+        } catch (RuntimeException ignored) {
+            // 瞬时的 provider 失败绝不能带崩整棵渲染树，与 LabelWidget 的兜底同一条规则。
+            return;
+        }
+        CFontRenderer font = FontManager.pf11;
+        if (text == null || text.trim().isEmpty() || font == null) return;
+
+        double textWidth = font.getStringWidthD(text);
+        double textHeight = font.getStringHeight(text);
+        double padX = 7, padY = 3.5;
+        double width = textWidth + padX * 2;
+        double height = textHeight + padY * 2;
+        double x = this.getX() + this.getWidth() * .5 - width * .5;
+        double y = this.getY() - height - 4;
+        if (clampTo != null && clampTo.getWidth() - 4 >= width) {
+            x = Math.max(clampTo.getX() + 2,
+                    Math.min(x, clampTo.getX() + clampTo.getWidth() - 2 - width));
+            if (y < clampTo.getY() + 1) {
+                // 贴着父组件顶边的按钮上方放不下：翻到按钮下方，总比画到面板外被裁掉好。
+                y = this.getY() + this.getHeight() + 4;
+            }
+        }
+        // 底板不透明：底下就是歌单行、进度条这些内容，半透明会把两层墨迹叠在一起读不清。
+        roundedRect(x - 1, y - 1, width + 2, height + 2, 6,
+                reAlpha(NCMScreen.getColor(NCMScreen.ColorType.BORDER), alpha));
+        roundedRect(x, y, width, height, 5,
+                reAlpha(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND), alpha));
+        font.drawCenteredString(text, x + width * .5, y + padY,
+                reAlpha(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), alpha));
     }
 
     public SELF setOnTick(Runnable onTick) {

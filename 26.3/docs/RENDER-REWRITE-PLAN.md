@@ -61,7 +61,7 @@ compileOnly 'org.jetbrains:annotations:20.1.0'
 
 1. 引用 `com.muoniumplayer.compat.gl.*` / `org.lwjgl.opengl.*` / `com.mojang.blaze3d.*`
 2. 位于 `core/rendering/` 下且职责是「怎么画」而不是「画什么」
-3. 是 `today/opai/api/impl/` 下的渲染实现（`GLStateManagerImpl` / `RenderUtilImpl` / `VanillaFont`）
+3. 是 `com/muoniumplayer/api/impl/` 下的渲染实现（`GLStateManagerImpl` / `RenderUtilImpl` / `VanillaFont`）
 4. 是 `compat/` 下的图形替身层
 
 **不属于渲染层、绝对不动**：音源与登录（`core/ncm/`）、播放引擎、歌词解析、
@@ -91,7 +91,7 @@ compileOnly 'org.jetbrains:annotations:20.1.0'
 | --- | --- | --- | --- | --- |
 | `SharedRenderingConstants` | `core/interfaces/` | 29 个 default | 16 文件 | **签名冻结**，方法体改到 Skia |
 | `RenderSystem` | `core/rendering/rendersystem/` | 33 个 static | 45 文件 | **签名冻结**，方法体改到 Skia |
-| `GLStateManager`（接口） | `today/opai/api/interfaces/render/` | 40 | 46 文件 | **接口冻结**，`GLStateManagerImpl` 改到 Skia |
+| `GLStateManager`（接口） | `com/muoniumplayer/api/interfaces/render/` | 40 | 46 文件 | **接口冻结**，`GLStateManagerImpl` 改到 Skia |
 | `Rect` | `core/rendering/` | 2 个 static | 20 文件 | **签名冻结** |
 | `Image` | `core/rendering/` | 21 个 static | 8 文件 | **签名冻结**，方法体改到 Skia |
 | `CFontRenderer` | `core/rendering/font/` | ~30 | 55 文件 | **签名冻结**，内部换 Skija 文字后端 |

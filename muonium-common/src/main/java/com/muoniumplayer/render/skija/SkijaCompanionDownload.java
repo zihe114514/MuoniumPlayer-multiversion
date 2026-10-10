@@ -66,7 +66,9 @@ final class SkijaCompanionDownload {
      */
     static final List<String> MIRRORS = List.of(
             "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
+            "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
             "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
+            "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
             "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/skija-companion/");
 
     /** 关闭自动下载的开关（默认开，只有显式 {@code =false} 才关）。包级可见：静态测试要读它。 */
@@ -270,7 +272,22 @@ final class SkijaCompanionDownload {
         Exception last = null;
         for (String mirror : MIRRORS) {
             try {
-                download(pack, mirror + pack.fileName(), archive);
+                // 同镜像先续传重试（最多 3 次，download 内部按 archive 已收字节挂 Range）：
+                // gh-proxy 这类代理对大文件常在中途截断但支持 Range 续传，接着拉就能拿全。
+                for (int retry = 0; retry <= 3; retry++) {
+                    try {
+                        download(pack, mirror + pack.fileName(), archive);
+                        break;
+                    } catch (Exception attempt) {
+                        if (retry == 3) {
+                            throw attempt;
+                        }
+                        if (attempt instanceof IOException
+                                && String.valueOf(attempt.getMessage()).contains("sha256")) {
+                            Files.deleteIfExists(archive.toPath());
+                        }
+                    }
+                }
                 return;
             } catch (Exception failure) {
                 last = failure;
@@ -283,26 +300,47 @@ final class SkijaCompanionDownload {
         throw last == null ? new IOException("没有可用的下载源") : last;
     }
 
-    /** 单次下载：读流与校验同步走，进度按整百分比推给 {@link #state()}。 */
+    /** 单次下载：读流与校验同步走，进度按整百分比推给 {@link #state()}。支持断点续传。 */
     private static void download(Pack pack, String url, File archive) throws Exception {
-        HttpURLConnection connection = openFollowing(URI.create(url).toURL(), 0);
+        long already = archive.isFile() ? archive.length() : 0L;
+        if (already > pack.bytes()) {
+            throw new IOException(".part 超长：已有 " + already + " 字节，应为 " + pack.bytes());
+        }
+        HttpURLConnection connection = openFollowing(URI.create(url).toURL(), 0, already);
         int code = connection.getResponseCode();
+        // 续传被服务端拒绝（不认 Range）时它会给全量 200：把已收部分清掉按从头下处理。
+        if (already > 0L && code == 200) {
+            connection.disconnect();
+            Files.deleteIfExists(archive.toPath());
+            connection = openFollowing(URI.create(url).toURL(), 0, 0L);
+            code = connection.getResponseCode();
+            already = 0L;
+        }
         if (code < 200 || code >= 300) {
             throw new IOException("HTTP " + code);
+        }
+        if (already > 0L && code != 206) {
+            throw new IOException("续传未生效：HTTP " + code);
         }
         long total = connection.getContentLengthLong();
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         long done = 0L;
         int shown = -1;
         try (InputStream input = new BufferedInputStream(connection.getInputStream());
-             FileOutputStream output = new FileOutputStream(archive)) {
+             FileOutputStream output = new FileOutputStream(archive, already > 0L)) {
+            // 已收的前缀在续传时不再过哈希：整包 sha256 校验在收完后照做，
+            // 前缀损坏（极小概率）会在那里被抓住、换下一路重来。
+            digestSkip(input, already);
             byte[] buffer = new byte[64 * 1024];
             int read;
             while ((read = input.read(buffer)) >= 0) {
                 output.write(buffer, 0, read);
                 digest.update(buffer, 0, read);
                 done += read;
-                int percent = total > 0L ? (int) Math.min(100L, done * 100L / total) : -1;
+                if (already + done > pack.bytes()) {
+                    throw new IOException("下超了：已收 " + (already + done) + " 字节，应为 " + pack.bytes());
+                }
+                int percent = (int) Math.min(100L, (already + done) * 100L / pack.bytes());
                 if (percent != shown) {
                     shown = percent;
                     state = new State(Phase.DOWNLOADING, percent, null);
@@ -312,8 +350,19 @@ final class SkijaCompanionDownload {
         checkAgainst(pack, archive.length(), hex(digest.digest()));
     }
 
-    /** 重定向自己跟（镜像会 30x 到 CDN），最多 6 跳，与 Folia 的下载器同款。 */
-    private static HttpURLConnection openFollowing(URL url, int depth) throws Exception {
+    /** 续传时跳过已收前缀（服务端已按 Range 从该字节开始发）。 */
+    private static void digestSkip(InputStream input, long skip) throws IOException {
+        while (skip > 0) {
+            long jumped = input.skip(skip);
+            if (jumped <= 0) {
+                throw new IOException("续传前缀跳读失败：还剩 " + skip + " 字节");
+            }
+            skip -= jumped;
+        }
+    }
+
+    /** 重定向自己跟（镜像会 30x 到 CDN），最多 6 跳，与 Folia 的下载器同款。rangeFrom &gt; 0 时挂 Range 续传头。 */
+    private static HttpURLConnection openFollowing(URL url, int depth, long rangeFrom) throws Exception {
         if (depth > 6) {
             throw new IOException("重定向过多");
         }
@@ -322,6 +371,9 @@ final class SkijaCompanionDownload {
         connection.setConnectTimeout(20_000);
         connection.setReadTimeout(60_000);
         connection.setRequestProperty("User-Agent", "MuoniumPlayer-Skija/1.0");
+        if (rangeFrom > 0L) {
+            connection.setRequestProperty("Range", "bytes=" + rangeFrom + "-");
+        }
         int code = connection.getResponseCode();
         if (code >= 300 && code < 400) {
             String location = connection.getHeaderField("Location");
@@ -329,7 +381,7 @@ final class SkijaCompanionDownload {
             if (location == null) {
                 throw new IOException("重定向没有 Location");
             }
-            return openFollowing(new URL(url, location), depth + 1);
+            return openFollowing(new URL(url, location), depth + 1, rangeFrom);
         }
         return connection;
     }

@@ -8,7 +8,7 @@ import lombok.Getter;
 import lombok.SneakyThrows;
 import repackage.com.jsyn.exceptions.ChannelMismatchException;
 import repackage.processing.sound.Engine;
-import today.opai.api.enums.EnumChatColor;
+import com.muoniumplayer.api.enums.EnumChatColor;
 import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.ncm.OptionsUtil;

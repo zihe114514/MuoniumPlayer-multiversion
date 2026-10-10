@@ -632,10 +632,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 "脚本转译器下载失败", safeNoticeValue(reason, "网络不可用") + " · 稍后自动重试");
     }
 
-    /** 转译器已就位：自定义源的新语法脚本从此能正常降级。 */
+    /** 转译器已就位：等它的脚本会被自动加载，无需用户手动重新加载。 */
     public static void showLxTranspilerReady() {
         completePersistentNotice(IslandNoticeType.LX_TRANSPILER, IslandNoticeType.LX_TRANSPILER_SUCCESS,
-                "脚本转译器", "已就绪 · 新语法脚本可用");
+                "脚本转译器", "已就绪 · 自定义源已自动加载");
     }
 
     /**

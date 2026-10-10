@@ -54,7 +54,7 @@ src/main/java/com/muoniumplayer/render/skija/
 ### 冻结的门面（签名不许改，业务调用方零改动）
 
 `SharedRenderingConstants`（21 个绘制方法）、`core/rendering/rendersystem/RenderSystem`、
-`today/opai/api/impl/GLStateManagerImpl`（40 个方法）、`RenderUtilImpl`、
+`com/muoniumplayer/api/impl/GLStateManagerImpl`（40 个方法）、`RenderUtilImpl`、
 `core/rendering/Image`、`StencilClipManager`、`ScissorClipManager`、
 `core/rendering/font/CFontRenderer`、`compat/gl/GL11`（已精简成只剩纹理上传）。
 

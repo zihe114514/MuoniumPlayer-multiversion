@@ -271,9 +271,10 @@ public final class LxRuntime {
             LxTranspiler.Outcome outcome = LxTranspiler.toEs5(rawSource);
             transpiled = outcome.transpiled;
             if (!outcome.transpiled && !outcome.messages.isEmpty()) {
-                // 转译失败时仍然把原文交给 Rhino 试一次：万一脚本本来就是 ES5，
-                // 报错反而是 Closure 自己的毛病。真的语法不合就在下面这行抛出来。
-                log("warn", "转译失败，改用原始脚本：" + outcome.messages.get(0));
+                // 转译失败不再把原文喂给 Rhino 硬试：新语法脚本那样只会得到一条莫名其妙的
+                // 「非法字符」语法错，玩家没法归因。失败消息带 Closure 的行:列诊断，
+                // 且 toEs5 内部已按 UNSTABLE → UNSUPPORTED 两档试过，能过的早过了。
+                log("warn", "转译失败：" + outcome.messages.get(0));
             }
             beginTask();
             cx.evaluateString(scope, outcome.code, "user-source.js", 1, null);

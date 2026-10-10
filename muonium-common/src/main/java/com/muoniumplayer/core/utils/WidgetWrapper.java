@@ -1,8 +1,8 @@
 package com.muoniumplayer.core.utils;
 
 import lombok.experimental.UtilityClass;
-import today.opai.api.features.ExtensionModule;
-import today.opai.api.features.ExtensionWidget;
+import com.muoniumplayer.api.features.ExtensionModule;
+import com.muoniumplayer.api.features.ExtensionWidget;
 
 /**
  * @author MuoniumPlayer Contributors

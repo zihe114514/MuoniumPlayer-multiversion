@@ -57,7 +57,9 @@ public final class FontAssetDownload {
      */
     static final List<String> MIRRORS = List.of(
             "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
+            "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
             "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
+            "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
             "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/fonts/");
 
     /** 关闭自动下载的开关（默认开，只有显式 {@code =false} 才关）。包级可见：静态测试要读它。 */
@@ -344,7 +346,24 @@ public final class FontAssetDownload {
         for (String mirror : MIRRORS) {
             File part = new File(fontCacheDir(), pack.fileName() + PART_SUFFIX);
             try {
-                download(pack, mirror + pack.fileName(), part, baseBytes, totalBytes);
+                // 同镜像先续传重试（最多 3 次，download 内部按 .part 已收字节挂 Range）：
+                // gh-proxy 这类代理对大文件常在中途截断但支持 Range 续传，接着拉就能拿全，
+                // 不必整包重来、也不必急着换路。校验失败（哈希不符）说明已收前缀可疑，
+                // 续传没有意义，清掉 .part 从零来。
+                for (int retry = 0; retry <= 3; retry++) {
+                    try {
+                        download(pack, mirror + pack.fileName(), part, baseBytes, totalBytes);
+                        break;
+                    } catch (Exception attempt) {
+                        if (retry == 3) {
+                            throw attempt;
+                        }
+                        if (attempt instanceof IOException
+                                && String.valueOf(attempt.getMessage()).contains("sha256")) {
+                            Files.deleteIfExists(part.toPath());
+                        }
+                    }
+                }
                 copyIntoPlace(part, pack);
                 return;
             } catch (Exception failure) {
@@ -358,34 +377,52 @@ public final class FontAssetDownload {
         throw last == null ? new IOException("没有可用的下载源") : last;
     }
 
-    /** 单次下载：读流与校验同步走，整百分比变化时喂一次灵动岛（带时间下限）。 */
+    /** 单次下载：读流与校验同步走，整百分比变化时喂一次灵动岛（带时间下限）。支持断点续传。 */
     private static void download(Pack pack, String url, File part,
                                  long baseBytes, long totalBytes) throws Exception {
-        HttpURLConnection connection = openFollowing(URI.create(url).toURL(), 0);
+        long already = part.isFile() ? part.length() : 0L;
+        if (already > pack.bytes()) {
+            throw new IOException(".part 超长：已有 " + already + " 字节，应为 " + pack.bytes());
+        }
+        HttpURLConnection connection = openFollowing(URI.create(url).toURL(), 0, already);
         int code = connection.getResponseCode();
+        // 续传被服务端拒绝（不认 Range）时它会给全量 200：把 .part 清掉按从头下处理。
+        if (already > 0L && code == 200) {
+            connection.disconnect();
+            Files.deleteIfExists(part.toPath());
+            connection = openFollowing(URI.create(url).toURL(), 0, 0L);
+            code = connection.getResponseCode();
+            already = 0L;
+        }
         if (code < 200 || code >= 300) {
             throw new IOException("HTTP " + code);
         }
+        if (already > 0L && code != 206) {
+            throw new IOException("续传未生效：HTTP " + code);
+        }
         long contentLength = connection.getContentLengthLong();
-        if (contentLength > 0 && contentLength != pack.bytes()) {
+        if (contentLength > 0 && contentLength != pack.bytes() - already) {
             throw new IOException("Content-Length 不符：得到 " + contentLength
-                    + "，应为 " + pack.bytes());
+                    + "，应为 " + (pack.bytes() - already));
         }
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         long done = 0L;
         int shownPercent = -1;
         try (InputStream input = new BufferedInputStream(connection.getInputStream());
-             FileOutputStream output = new FileOutputStream(part)) {
+             FileOutputStream output = new FileOutputStream(part, already > 0L)) {
+            // 已收的前缀在续传时不再过哈希：整包 sha256 校验在收完后照做，
+            // 前缀损坏（极小概率）会在那里被抓住、换下一路重来。
+            digestSkip(input, already);
             byte[] buffer = new byte[64 * 1024];
             int read;
             while ((read = input.read(buffer)) >= 0) {
                 output.write(buffer, 0, read);
                 digest.update(buffer, 0, read);
                 done += read;
-                if (done > pack.bytes()) {
-                    throw new IOException("下超了：已收 " + done + " 字节，应为 " + pack.bytes());
+                if (already + done > pack.bytes()) {
+                    throw new IOException("下超了：已收 " + (already + done) + " 字节，应为 " + pack.bytes());
                 }
-                int percent = (int) Math.min(100L, (baseBytes + done) * 100L / totalBytes);
+                int percent = (int) Math.min(100L, (baseBytes + already + done) * 100L / totalBytes);
                 if (percent != shownPercent) {
                     shownPercent = percent;
                     announceProgress(percent);
@@ -395,6 +432,17 @@ public final class FontAssetDownload {
         checkAgainst(pack, part.length(), hex(digest.digest()));
     }
 
+    /** 续传时跳过已收前缀（服务端已按 Range 从该字节开始发）。 */
+    private static void digestSkip(InputStream input, long skip) throws IOException {
+        while (skip > 0) {
+            long jumped = input.skip(skip);
+            if (jumped <= 0) {
+                throw new IOException("续传前缀跳读失败：还剩 " + skip + " 字节");
+            }
+            skip -= jumped;
+        }
+    }
+
     /** 校验通过后的并入：改名即生效（同目录同文件系统，原子性由 Rename 保证）。 */
     private static void copyIntoPlace(File verified, Pack pack) throws IOException {
         Files.move(verified.toPath(), cachedFile(pack.fileName()).toPath(),
@@ -402,8 +450,8 @@ public final class FontAssetDownload {
                 StandardCopyOption.ATOMIC_MOVE);
     }
 
-    /** 重定向自己跟（镜像会 30x 到 CDN），最多 6 跳，与 Skija/Folia 的下载器同款。 */
-    private static HttpURLConnection openFollowing(URL url, int depth) throws Exception {
+    /** 重定向自己跟（镜像会 30x 到 CDN），最多 6 跳，与 Skija/Folia 的下载器同款。rangeFrom &gt; 0 时挂 Range 续传头。 */
+    private static HttpURLConnection openFollowing(URL url, int depth, long rangeFrom) throws Exception {
         if (depth > 6) {
             throw new IOException("重定向过多");
         }
@@ -412,6 +460,9 @@ public final class FontAssetDownload {
         connection.setConnectTimeout(20_000);
         connection.setReadTimeout(60_000);
         connection.setRequestProperty("User-Agent", "MuoniumPlayer-FontAsset/1.0");
+        if (rangeFrom > 0L) {
+            connection.setRequestProperty("Range", "bytes=" + rangeFrom + "-");
+        }
         int code = connection.getResponseCode();
         if (code >= 300 && code < 400) {
             String location = connection.getHeaderField("Location");
@@ -419,7 +470,7 @@ public final class FontAssetDownload {
             if (location == null) {
                 throw new IOException("重定向没有 Location");
             }
-            return openFollowing(new URL(url, location), depth + 1);
+            return openFollowing(new URL(url, location), depth + 1, rangeFrom);
         }
         return connection;
     }

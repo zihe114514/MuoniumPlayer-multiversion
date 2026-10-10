@@ -1,7 +1,7 @@
 package com.muoniumplayer.core;
 
 import lombok.Getter;
-import today.opai.api.OpenAPI;
+import com.muoniumplayer.api.OpenAPI;
 import com.muoniumplayer.core.management.AbstractManager;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.module.impl.OpenNCMScreen;
@@ -29,7 +29,7 @@ public class MuoniumPlayerExtension {
 
     public static final String NAME = "MuoniumPlayer";
     public static final String AUTHOR = "MuoniumPlayer Contributors";
-    public static final String VERSION = "1.9.0";
+    public static final String VERSION = "1.9.1";
 
     @Getter
     private static final MuoniumPlayerExtension instance = new MuoniumPlayerExtension();

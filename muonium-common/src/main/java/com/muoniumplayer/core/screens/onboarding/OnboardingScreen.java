@@ -29,7 +29,7 @@ import com.muoniumplayer.party.ui.PartyIcons;
 import com.muoniumplayer.render.skija.SkijaClip;
 import com.muoniumplayer.render.skija.SkijaGfx;
 import com.muoniumplayer.render.skija.SkijaShapes;
-import today.opai.api.features.ExtensionScreen;
+import com.muoniumplayer.api.features.ExtensionScreen;
 
 import java.util.List;
 

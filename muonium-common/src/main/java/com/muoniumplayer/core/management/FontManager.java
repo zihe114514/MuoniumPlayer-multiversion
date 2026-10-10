@@ -21,13 +21,10 @@ public class FontManager extends AbstractManager {
 
     /**
      * Java 8u51 的 Java2D CFF/OpenType 光栅化会让 SF Pro 的半角字形使用
-     * 与实际绘制不一致的尺寸。中文由 PingFang TrueType 回退字体绘制，
-     * 因而只有英文、数字和半角标点出现比例异常。
-     *
-     * 仅在受影响的早期 Java 8 运行时切换半角主字体到已内置的 Arial
-     * TrueType；中文回退字体、UI 逻辑及其它字体系统均保持不变。
+     * 与实际绘制不一致的尺寸。该分支原本为此切换半角主字体到内置的 Arial；
+     * 1.9.1 起前置就是 Java 17+（受影响的 8u51–8u60 根本启动不了游戏），
+     * Arial 两份与其运行时探测已随瘦身删除，SF Pro 是唯一的半角主字体。
      */
-    private static final boolean USE_LEGACY_JAVA8_TTF_FONTS = isLegacyJava8CffRuntime();
 
     public FontManager() {
         super("FontManager");
@@ -291,10 +288,6 @@ public class FontManager extends AbstractManager {
     }
 
     public static void loadFonts() {
-        if (USE_LEGACY_JAVA8_TTF_FONTS) {
-            System.out.println("[MuoniumPlayer] Detected Java 8u51-compatible runtime; using TrueType UI fonts for stable half-width glyph sizing.");
-        }
-
         String normalName = "pf_normal";
         String boldName = "pf_middleblack";
 
@@ -543,66 +536,12 @@ public class FontManager extends AbstractManager {
 
     /** 内置正文字体的半角主字体：中文由回退字体画，所以这一份只管拉丁字母、数字与半角标点。 */
     private static String builtinMainPath(boolean bold) {
-        if (bold) {
-            return USE_LEGACY_JAVA8_TTF_FONTS
-                    ? "/muonium/fonts/arialBold.ttf"
-                    : "/muonium/fonts/sfbold.otf";
-        }
-        return USE_LEGACY_JAVA8_TTF_FONTS
-                ? "/muonium/fonts/arial.ttf"
-                : "/muonium/fonts/sfregular.otf";
+        return bold ? "/muonium/fonts/sfbold.otf" : "/muonium/fonts/sfregular.otf";
     }
 
     /** 内置正文字体的中文回退（苹方）。 */
     private static String builtinFallbackPath(boolean bold) {
         return bold ? "/muonium/fonts/pf_middleblack.ttf" : "/muonium/fonts/pf_normal.ttf";
-    }
-
-    private static boolean isLegacyJava8CffRuntime() {
-        int update = parseJava8Update(System.getProperty("java.version", ""));
-        if (update < 0) {
-            update = parseJava8Update(System.getProperty("java.runtime.version", ""));
-        }
-
-        // Java 8u51 是受影响的目标环境。让更新的 Java 8
-        // 运行时保持原始的 SF Pro 外观。
-        return update >= 0 && update <= 60;
-    }
-
-    static int parseJava8Update(String version) {
-        if (version == null) {
-            return -1;
-        }
-
-        String normalized = version.trim().toLowerCase(java.util.Locale.ROOT);
-        if (normalized.isEmpty()) {
-            return -1;
-        }
-
-        int updateStart;
-        if (normalized.startsWith("1.8.0_")) {
-            updateStart = "1.8.0_".length();
-        } else if (normalized.startsWith("8u")) {
-            updateStart = 2;
-        } else if (normalized.startsWith("8.0.")) {
-            updateStart = "8.0.".length();
-        } else {
-            return -1;
-        }
-
-        int updateEnd = updateStart;
-        while (updateEnd < normalized.length() && Character.isDigit(normalized.charAt(updateEnd))) {
-            updateEnd++;
-        }
-        if (updateEnd == updateStart) {
-            return -1;
-        }
-
-        try {
-            return Integer.parseInt(normalized.substring(updateStart, updateEnd));
-        } catch (NumberFormatException ignored) {
-            return -1;
-        }
     }
 
     @Override

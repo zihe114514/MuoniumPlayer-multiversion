@@ -4,7 +4,7 @@ import lombok.Getter;
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.compat.lwjgl2.Mouse;
 import com.muoniumplayer.compat.gl.GL11;
-import today.opai.api.features.ExtensionScreen;
+import com.muoniumplayer.api.features.ExtensionScreen;
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
@@ -32,6 +32,7 @@ import com.muoniumplayer.core.screens.ncm.panels.NavigationLoadingOverlay;
 import com.muoniumplayer.core.screens.ncm.panels.PlaylistPanel;
 import com.muoniumplayer.core.screens.ncm.panels.PersonalFmPanel;
 import com.muoniumplayer.core.screens.ncm.panels.PlayQueuePanel;
+import com.muoniumplayer.core.utils.IMBlockerCompat;
 import com.muoniumplayer.core.utils.cursor.CursorUtils;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import com.muoniumplayer.party.ui.MpPartyOverlay;
@@ -204,6 +205,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             this.musicLyricsPanel.onInit();
 
         Keyboard.enableRepeatEvents(true);
+        // IMBlocker 会在 setScreen 开头按「未知屏幕=游戏界面」把窗口 IME 摘掉；
+        // 它的任务比这里早入队，主线程队列 FIFO，这里再挂回去即等价于屏幕白名单。
+        IMBlockerCompat.keepIMEOn();
         CursorUtils.setCursor(CursorUtils.ARROW);
     }
 

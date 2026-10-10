@@ -451,6 +451,11 @@ public class ControlsBar extends NCMPanel {
                     }
                     return true;
                 });
+        // 说明跟着当前模式走：这颗按钮既是状态显示（当前是什么顺序）也是切换入口，
+        // 只写「切换播放顺序」的话用户看不出现在是哪一档；右键的无缝交接不写永远没人发现。
+        playMode.setTooltip(() -> CloudMusic.isPersonalFmActive()
+                ? "私人FM（播放顺序不可用）"
+                : "播放顺序：" + CloudMusic.playMode.getDisplayName() + "（右键无缝交接）");
 
         // 显式私人 FM 动作。它在 FM 会话之外完全隐藏，
         //因此普通播放列表从不暴露也不调用电台垃圾端点。
@@ -838,6 +843,10 @@ public class ControlsBar extends NCMPanel {
             NCMScreen.getInstance().openViperEffects();
             return true;
         });
+        // 与点亮状态同步：图标亮着说明 ViPER 在跑，说明里的「开启中」让这层含义不用猜。
+        viperToggle.setTooltip(() -> ViperRuntime.isEnabled()
+                ? "音效调音台（蝰蛇 · 开启中）"
+                : "音效调音台（蝰蛇）");
 
         // 下一首播放列表：队列抽屉的开关排在音质按钮左边，沿用右下角次级控件的同一条锚点链。
         // 用「播放三角 + 列表」（player-action-icons U+E144）而不是歌曲行那枚「下一首播放」
@@ -877,6 +886,11 @@ public class ControlsBar extends NCMPanel {
             PlayQueuePanel queuePanel = NCMScreen.getInstance().getPlayQueuePanel();
             if (queuePanel != null) queuePanel.toggle();
             return true;
+        });
+        // 数量与右上角徽标、抽屉里的列表读同一份（PlayQueueRoomBridge），说明里带上省得点开数。
+        queueToggle.setTooltip(() -> {
+            int queued = PlayQueueRoomBridge.displayQueuedCount();
+            return queued > 0 ? "下一首播放列表 · 待播 " + queued + " 首" : "下一首播放列表";
         });
 
         // 待播数量贴在图标右上角。作为图标的子组件，它自动继承那一份 alpha，
@@ -931,6 +945,10 @@ public class ControlsBar extends NCMPanel {
             NCMScreen.getInstance().openListenTogether();
             return true;
         });
+        // 房间开着时与点亮状态同步加个「进行中」，静态时只报功能名。
+        listenTogether.setTooltip(() -> ListenTogetherService.isActive() || MpPartyClient.inRoom()
+                ? "一起听（进行中）"
+                : "一起听");
 
         // 播放条自己的每帧回调：既决定私人 FM 按钮的显示，也算出窄面板下的让位量。放在 onInit
         // 末尾是因为它要用到上面才声明的剩余时间标签与一起听入口 —— lambda 只能捕获已声明的

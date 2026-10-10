@@ -41,7 +41,9 @@ public final class ClosureCompilerDownload {
      */
     static final List<String> MIRRORS = List.of(
             "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
+            "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
             "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
+            "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
             "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/libs/");
 
     /** 钉死的发布文件：剥掉 org/checkerframework/**（closure 对其零引用的死重）后的版本。 */
@@ -244,7 +246,24 @@ public final class ClosureCompilerDownload {
         for (String mirror : MIRRORS) {
             File part = new File(libCacheDir(), FILE_NAME + PART_SUFFIX);
             try {
-                download(mirror + FILE_NAME, part);
+                // 同镜像先续传重试（最多 3 次，download 内部按 .part 已收字节挂 Range）：
+                // gh-proxy 这类代理对大文件常在中途截断但支持 Range 续传，接着拉就能拿全，
+                // 不必整包重来、也不必急着换路。内容校验不过时清掉 .part 从零再来。
+                for (int retry = 0; retry <= 3; retry++) {
+                    try {
+                        download(mirror + FILE_NAME, part);
+                        break;
+                    } catch (Exception attempt) {
+                        if (retry == 3) {
+                            throw attempt;
+                        }
+                        // 校验失败（哈希不符）说明已收前缀可疑，续传没有意义，清掉从零来。
+                        if (attempt instanceof IOException
+                                && String.valueOf(attempt.getMessage()).contains("sha256")) {
+                            Files.deleteIfExists(part.toPath());
+                        }
+                    }
+                }
                 verify(part);
                 Files.move(part.toPath(), cachedFile().toPath(),
                         StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -262,30 +281,49 @@ public final class ClosureCompilerDownload {
 
     /** 单次下载：读流与校验同步走，整百分比变化时喂一次灵动岛（带时间下限）。 */
     private static void download(String url, File part) throws Exception {
-        HttpURLConnection connection = openFollowing(URI.create(url).toURL(), 0);
+        long already = part.isFile() ? part.length() : 0L;
+        if (already > BYTES) {
+            throw new IOException(".part 超长：已有 " + already + " 字节，应为 " + BYTES);
+        }
+        HttpURLConnection connection = openFollowing(URI.create(url).toURL(), 0, already);
         int code = connection.getResponseCode();
+        // 续传被服务端拒绝（不认 Range）时它会给全量 200：把 .part 清掉按从头下处理。
+        if (already > 0L && code == 200) {
+            connection.disconnect();
+            Files.deleteIfExists(part.toPath());
+            connection = openFollowing(URI.create(url).toURL(), 0, 0L);
+            code = connection.getResponseCode();
+            already = 0L;
+        }
         if (code < 200 || code >= 300) {
             throw new IOException("HTTP " + code);
         }
+        if (already > 0L && code != 206) {
+            throw new IOException("续传未生效：HTTP " + code);
+        }
         long contentLength = connection.getContentLengthLong();
-        if (contentLength > 0 && contentLength != BYTES) {
-            throw new IOException("Content-Length 不符：得到 " + contentLength + "，应为 " + BYTES);
+        if (contentLength > 0 && contentLength != BYTES - already) {
+            throw new IOException("Content-Length 不符：得到 " + contentLength
+                    + "，应为 " + (BYTES - already));
         }
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         long done = 0L;
         int shownPercent = -1;
         try (InputStream input = new BufferedInputStream(connection.getInputStream());
-             FileOutputStream output = new FileOutputStream(part)) {
+             FileOutputStream output = new FileOutputStream(part, already > 0L)) {
+            // 已收的前缀在续传时不再过哈希：整包 sha256 校验在收完后照做，
+            // 前缀损坏（极小概率）会在那里被抓住、换下一路重来。
+            digestSkip(input, already);
             byte[] buffer = new byte[64 * 1024];
             int read;
             while ((read = input.read(buffer)) >= 0) {
                 output.write(buffer, 0, read);
                 digest.update(buffer, 0, read);
                 done += read;
-                if (done > BYTES) {
-                    throw new IOException("下超了：已收 " + done + " 字节，应为 " + BYTES);
+                if (already + done > BYTES) {
+                    throw new IOException("下超了：已收 " + (already + done) + " 字节，应为 " + BYTES);
                 }
-                int percent = contentLength > 0 ? (int) Math.min(100L, done * 100L / BYTES) : -1;
+                int percent = (int) Math.min(100L, (already + done) * 100L / BYTES);
                 if (percent != shownPercent) {
                     shownPercent = percent;
                     announcePercent(percent);
@@ -295,14 +333,25 @@ public final class ClosureCompilerDownload {
         checkAgainst(part.length(), hex(digest.digest()));
     }
 
+    /** 续传时跳过已收前缀（服务端已按 Range 从该字节开始发）；请求头由 openFollowing 挂。 */
+    private static void digestSkip(InputStream input, long skip) throws IOException {
+        while (skip > 0) {
+            long jumped = input.skip(skip);
+            if (jumped <= 0) {
+                throw new IOException("续传前缀跳读失败：还剩 " + skip + " 字节");
+            }
+            skip -= jumped;
+        }
+    }
+
     private static void announcePercent(int percent) {
         if (percent >= 0) {
             announceProgress(percent);
         }
     }
 
-    /** 重定向自己跟（镜像会 30x 到 CDN），最多 6 跳，与 Skija/字体下载器同款。 */
-    private static HttpURLConnection openFollowing(URL url, int depth) throws Exception {
+    /** 重定向自己跟（镜像会 30x 到 CDN），最多 6 跳，与 Skija/字体下载器同款。rangeFrom &gt; 0 时挂 Range 续传头。 */
+    private static HttpURLConnection openFollowing(URL url, int depth, long rangeFrom) throws Exception {
         if (depth > 6) {
             throw new IOException("重定向过多");
         }
@@ -311,6 +360,9 @@ public final class ClosureCompilerDownload {
         connection.setConnectTimeout(20_000);
         connection.setReadTimeout(60_000);
         connection.setRequestProperty("User-Agent", "MuoniumPlayer-LxTranspiler/1.0");
+        if (rangeFrom > 0L) {
+            connection.setRequestProperty("Range", "bytes=" + rangeFrom + "-");
+        }
         int code = connection.getResponseCode();
         if (code >= 300 && code < 400) {
             String location = connection.getHeaderField("Location");
@@ -318,7 +370,7 @@ public final class ClosureCompilerDownload {
             if (location == null) {
                 throw new IOException("重定向没有 Location");
             }
-            return openFollowing(new URL(url, location), depth + 1);
+            return openFollowing(new URL(url, location), depth + 1, rangeFrom);
         }
         return connection;
     }

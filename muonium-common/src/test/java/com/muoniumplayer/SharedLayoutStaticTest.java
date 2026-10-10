@@ -58,8 +58,8 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/compat/mc/ScreenCapture.java",
             "com/muoniumplayer/MuoniumPlayerClient.java",
             "com/muoniumplayer/render/skija/SkijaHost.java",
-            "today/opai/api/impl/GLStateManagerImpl.java",
-            "today/opai/api/impl/OpenAPIImpl.java",
+            "com/muoniumplayer/api/impl/GLStateManagerImpl.java",
+            "com/muoniumplayer/api/impl/OpenAPIImpl.java",
             // --- 功能集还没对齐的（差异是历史欠账，不是 API 逼的）---
             "com/muoniumplayer/core/settings/HudConfig.java",
             "com/muoniumplayer/core/settings/HudSetting.java",

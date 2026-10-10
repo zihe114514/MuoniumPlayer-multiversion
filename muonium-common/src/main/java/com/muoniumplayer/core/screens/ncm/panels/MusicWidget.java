@@ -1,6 +1,6 @@
 package com.muoniumplayer.core.screens.ncm.panels;
 
-import today.opai.api.enums.EnumChatColor;
+import com.muoniumplayer.api.enums.EnumChatColor;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.PlaybackPresentation;

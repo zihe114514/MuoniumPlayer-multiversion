@@ -1648,17 +1648,6 @@ public class NavigateBar extends NCMPanel {
         private long lastClickAt;
 
         /**
-         * 悬浮说明要停够这么久才出现。鼠标扫过整排按钮时每颗都只停留几十毫秒，
-         * 立刻弹说明会连环闪烁；停一下才出，读出来的才是「真的想看这颗」。
-         */
-        private static final long TOOLTIP_DELAY_MS = 450L;
-        /** 停够之后多久淡满。 */
-        private static final long TOOLTIP_FADE_MS = 140L;
-
-        /** 这一轮悬停开始的时间戳；0 表示当前没悬停。移开立即清零，回来重新计时。 */
-        private long hoverBeganAt;
-
-        /**
          * lucide 的 24 网格在这颗按钮里占的边长。
          *
          * <p>定成 16 是为了和换掉之前的手绘几何同大：lucide 的字形在网格里自带约 2 个单位的内边距，
@@ -1672,6 +1661,9 @@ public class NavigateBar extends NCMPanel {
             // 五颗按钮共用这一处：底板本身是一块小玻璃（onRender 里 setColor 之后
             // super 那一笔会把背景、折射与边缘光一次画完）。
             this.setGlassPlate(GlassLook.Surface.PLAYER);
+            // 悬浮说明走 AbstractWidget 那套通用机制：文案在这里定，画法（延迟、淡入、底板）
+            // 全在框架里，与播放条上的四颗按钮共用同一条实现。
+            this.setTooltip(this::tooltipText);
         }
 
         private void setSpinning(boolean spinning) {
@@ -1688,13 +1680,6 @@ public class NavigateBar extends NCMPanel {
             hoverAnimation = Interpolations.interpolate(hoverAnimation, isHovering() ? 1f : 0f, .22f);
             boolean recentlyPressed = System.currentTimeMillis() - lastClickAt < 170L;
             pressAnimation = Interpolations.interpolate(pressAnimation, recentlyPressed ? 1f : 0f, .30f);
-            // 悬停计时在这里推进而不是在渲染树外面：这颗按钮被 setHidden 跳过整帧渲染时，
-            // 计时停在同值，重新出现后要么已不悬停（清零重来），要么沿用原计时——两种都合理。
-            if (isHovering()) {
-                if (hoverBeganAt == 0L) hoverBeganAt = System.currentTimeMillis();
-            } else {
-                hoverBeganAt = 0L;
-            }
 
             int base = NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND);
             int hover = NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER);
@@ -1744,8 +1729,6 @@ public class NavigateBar extends NCMPanel {
                                 Math.min(1f, alpha + .4f)));
                 roundedRect(dotX, dotY, size, size, size * .5, RenderSystem.reAlpha(UNREAD_DOT_COLOR, alpha));
             }
-
-            renderTooltip();
         }
 
         /** 悬浮说明的文案。右键那些入口不写出来，用户永远不会发现它们存在。 */
@@ -1773,46 +1756,6 @@ public class NavigateBar extends NCMPanel {
             }
             // 酷我 / 咪咕 / GD / 系统播放器这些模式，侧栏账号歌单栏兜底显示网易云。
             return "刷新网易云歌单";
-        }
-
-        /**
-         * 悬浮说明：停够 {@link #TOOLTIP_DELAY_MS} 后在按钮上方浮出一行小字，随整棵树的
-         * {@code getAlpha()} 一起淡入淡出。
-         *
-         * <p>画在按钮自己的 onRender 末尾而不是 NavigateBar 那一层：说明浮在操作条上方，
-         * 碰不到后渲染的兄弟按钮；未读小圆点已经开了「这颗按钮画自身边界外元素」的先例。
-         * 底板不透明——它下面就是歌单行和它们的悬停高亮，半透明会把两层字叠在一起读不清，
-         * 这条和搜索联想面板的内层是同一个结论。</p>
-         */
-        private void renderTooltip() {
-            if (hoverBeganAt == 0L) return;
-            long held = System.currentTimeMillis() - hoverBeganAt;
-            if (held < TOOLTIP_DELAY_MS) return;
-            float reveal = Math.min(1f, (held - TOOLTIP_DELAY_MS) / (float) TOOLTIP_FADE_MS);
-            float alpha = getAlpha() * reveal;
-
-            CFontRenderer font = FontManager.pf11;
-            if (font == null) return; // 字体未就绪就不画这一层，与 LabelWidget 的兜底同一条规则
-            String text = tooltipText();
-            double textWidth = font.getStringWidthD(text);
-            double textHeight = font.getStringHeight(text);
-            double padX = 7, padY = 3.5;
-            double width = textWidth + padX * 2;
-            double height = textHeight + padY * 2;
-            double x = getX() + getWidth() * .5 - width * .5;
-            double y = getY() - height - 4;
-            // 首颗按钮贴着侧栏左缘，按按钮中心对齐会把说明探出侧栏外，左右夹回来。
-            AbstractWidget<?> sidebar = getParent() != null ? getParent().getParent() : null;
-            if (sidebar != null && width < sidebar.getWidth() - 4) {
-                x = Math.max(sidebar.getX() + 2,
-                        Math.min(x, sidebar.getX() + sidebar.getWidth() - 2 - width));
-            }
-            roundedRect(x - 1, y - 1, width + 2, height + 2, 6,
-                    RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.BORDER), alpha));
-            roundedRect(x, y, width, height, 5,
-                    RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND), alpha));
-            font.drawCenteredString(text, x + width * .5, y + padY,
-                    RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), alpha));
         }
 
         /**

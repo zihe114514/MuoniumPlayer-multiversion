@@ -48,8 +48,8 @@
 | `com/muoniumplayer/mixin/MouseScrollMixin.java` | ONLY | 26.3 | mixin 注入点按版本独有，本就各树一份 |
 | `com/muoniumplayer/party/net/MpPayloads.java` | ONLY | 1.21.1、1.21.11、26.2、26.3 | 一起听的载荷包装按各树网络通道 API 而活，1.20.1 那棵用的是另一套 |
 | `com/muoniumplayer/render/skija/SkijaHost.java` | FORK | 五树都有 | GlStateManager 类路径（1.20.1 blaze3d.platform / 1.21.11+ renderpearl.backend.opengl）与 GpuDevice 归属 |
-| `today/opai/api/impl/GLStateManagerImpl.java` | FORK | 五树都有 | GL 状态机类路径与矩阵栈 API 差异 |
-| `today/opai/api/impl/OpenAPIImpl.java` | FORK | 五树都有 | 取屏幕/画布/字体度量的 API 差异 |
+| `com/muoniumplayer/api/impl/GLStateManagerImpl.java` | FORK | 五树都有 | GL 状态机类路径与矩阵栈 API 差异 |
+| `com/muoniumplayer/api/impl/OpenAPIImpl.java` | FORK | 五树都有 | 取屏幕/画布/字体度量的 API 差异 |
 
 ### `src/main/resources`
 
@@ -149,7 +149,7 @@
 * `repackage/processing/sound/Waveform.java`（与 26.3 不同的树：1.21.11）
 * `repackage/processing/sound/WsolaStretchSample.java`（与 26.3 不同的树：1.21.11）
 * `repackage/processing/sound/WsolaTimeStretch.java`（与 26.3 不同的树：1.21.11）
-* `today/opai/api/impl/VanillaFont.java`（与 26.3 不同的树：1.20.1、1.21.1、1.21.11）
+* `com/muoniumplayer/api/impl/VanillaFont.java`（与 26.3 不同的树：1.20.1、1.21.1、1.21.11）
 * `com/muoniumplayer/core/screens/hud/HudSettingsTaxonomyStaticTest.java`（与 26.3 不同的树：1.20.1、1.21.1、1.21.11、26.2）
 
 ## 分类判「该留守」但事后收编进来的

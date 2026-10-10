@@ -1,14 +1,14 @@
 package com.muoniumplayer.core.widget.impl;
 
-import today.opai.api.enums.EnumChatColor;
-import today.opai.api.enums.EnumModuleCategory;
-import today.opai.api.features.ExtensionModule;
-import today.opai.api.features.ExtensionWidget;
-import today.opai.api.interfaces.EventHandler;
-import today.opai.api.interfaces.modules.values.BooleanValue;
-import today.opai.api.interfaces.modules.values.ColorValue;
-import today.opai.api.interfaces.modules.values.ModeValue;
-import today.opai.api.interfaces.modules.values.NumberValue;
+import com.muoniumplayer.api.enums.EnumChatColor;
+import com.muoniumplayer.api.enums.EnumModuleCategory;
+import com.muoniumplayer.api.features.ExtensionModule;
+import com.muoniumplayer.api.features.ExtensionWidget;
+import com.muoniumplayer.api.interfaces.EventHandler;
+import com.muoniumplayer.api.interfaces.modules.values.BooleanValue;
+import com.muoniumplayer.api.interfaces.modules.values.ColorValue;
+import com.muoniumplayer.api.interfaces.modules.values.ModeValue;
+import com.muoniumplayer.api.interfaces.modules.values.NumberValue;
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;

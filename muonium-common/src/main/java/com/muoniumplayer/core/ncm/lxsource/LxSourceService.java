@@ -103,8 +103,64 @@ public final class LxSourceService {
                 System.err.println("[LX] 启用的脚本正文读不出来，已忽略：" + entry.id);
                 return;
             }
+            // 转译器（Closure，进游戏时按需下载的 13.7MB jar）没就绪就不起 runtime：
+            // LX 自定义源全靠它把新语法脚本降成 ES5，硬起只会让脚本死在语法错误上、
+            // 玩家看到的是「升级后 LX 源放不了了」。这里等它：下载通常几十秒内完成，
+            // 就绪后自动把 runtime 拉起来，用户不用手动点重新加载。
+            if (ClosureCompilerDownload.backend() == null) {
+                ClosureCompilerDownload.ensureDownload();
+                scheduleTranspilerWait();
+                return;
+            }
             runtime = LxRuntime.start(entry.id, entry.info, source, LxSourceStore.isExtraActionsEnabled());
         }
+    }
+
+    /**
+     * 转译器就绪前的等待钩子：后台线程轮询（500ms 一次，上限 10 分钟——下载器自己有
+     * 尝试预算与冷却，10 分钟足够它走完全部重试），就绪即重载。期间
+     * {@link #isLoading()} 恒为 false、{@code ready()} 返回 null，取流安静地走内置链路，
+     * 状态行显示「转译器下载中 x%」——是「暂缓」而不是「坏了」。
+     * 等待期间用户手动关掉脚本（{@link #reload()} 走到这里 entry == null / 转译器就绪）
+     * 由重启检查拦住，不会起出一个已无人要的 runtime。
+     */
+    private static volatile boolean transpilerWaiting;
+    private static volatile boolean transpilerWaitScheduled;
+
+    private static void scheduleTranspilerWait() {
+        synchronized (LOCK) {
+            if (transpilerWaitScheduled) return;
+            transpilerWaitScheduled = true;
+            transpilerWaiting = true;
+        }
+        Thread waiter = new Thread(() -> {
+            try {
+                long deadline = System.currentTimeMillis() + 10 * 60_000L;
+                while (System.currentTimeMillis() < deadline) {
+                    if (!isEnabled()) return; // 用户把脚本关了：别再起
+                    if (ClosureCompilerDownload.backend() != null) {
+                        System.out.println("[LX] 转译器就绪，自动加载启用的脚本");
+                        reload();
+                        return;
+                    }
+                    Thread.sleep(500L);
+                }
+                System.out.println("[LX] 等转译器超过 10 分钟仍未就绪，本次会话放弃自动加载"
+                        + "（转译器就位后手动「重新加载」即可）");
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } finally {
+                transpilerWaiting = false;
+                transpilerWaitScheduled = false;
+            }
+        }, "MuoniumPlayer-LxTranspilerWait");
+        waiter.setDaemon(true);
+        waiter.start();
+    }
+
+    /** 转译器就绪前脚本被暂缓：给状态行与下载触发点看的（避免误报「加载失败」）。 */
+    public static boolean isWaitingForTranspiler() {
+        return transpilerWaiting;
     }
 
     public static LxRuntime getRuntime() {
@@ -126,6 +182,7 @@ public final class LxSourceService {
     public static boolean isLoading() {
         if (!isEnabled()) return false;
         ensureStarted();
+        if (isWaitingForTranspiler()) return true;
         LxRuntime current = runtime;
         return current != null && current.getState() == LxRuntime.State.LOADING;
     }
@@ -145,6 +202,7 @@ public final class LxSourceService {
     public static boolean awaitReady(long timeoutMs) {
         if (!isEnabled()) return false;
         ensureStarted();
+        if (isWaitingForTranspiler()) return false;
         LxRuntime current = runtime;
         if (current == null) return false;
         if (current.getState() == LxRuntime.State.READY) return true;
@@ -176,6 +234,10 @@ public final class LxSourceService {
     /** 面板上的一行状态。 */
     public static String statusLabel() {
         if (!isEnabled()) return "";
+        if (isWaitingForTranspiler()) {
+            String suffix = ClosureCompilerDownload.headlineSuffix();
+            return "脚本转译器准备中" + (suffix == null ? "…" : " · " + suffix.replace("转译器", ""));
+        }
         LxRuntime current = runtime;
         if (current == null) return "未加载";
         switch (current.getState()) {

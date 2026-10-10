@@ -4,7 +4,7 @@ import lombok.Getter;
 import lombok.SneakyThrows;
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.compat.lwjgl2.Mouse;
-import today.opai.api.features.ExtensionScreen;
+import com.muoniumplayer.api.features.ExtensionScreen;
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;

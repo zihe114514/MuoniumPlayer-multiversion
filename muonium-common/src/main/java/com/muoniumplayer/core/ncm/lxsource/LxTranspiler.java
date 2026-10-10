@@ -13,9 +13,11 @@ import java.util.List;
  * <p><b>转译器本体不在主包里</b>：Closure Compiler 有 13.7 MB，而全项目只有这一处用它，
  * 所以它由 {@link ClosureCompilerDownload} 在进游戏时（与完整字体、Skija 伴生包同期）按需
  * 下载，经 {@link ClosureEs5Backend} 的反射桥调用——本类（以及整个主包）对
- * {@code com.google.javascript} 零编译期依赖，静态测试钉着这一点。转译器未就绪时
- * 返回带一句人话的失败结果，{@code LxRuntime} 会把原始脚本直送 Rhino 再试：
- * ES5 脚本全程无感，新语法脚本在转译器就位前会多失败一次。</p>
+ * {@code com.google.javascript} 零编译期依赖，静态测试钉着这一点。<b>转译器未就绪时不做
+ * 「原文直送 Rhino」的静默降级</b>——LX 自定义源几乎全是新语法脚本，硬喂 Rhino 只会死在
+ * 语法错误上，玩家看到的就是「LX 源放不了了」。取而代之：{@code LxSourceService} 在转译器
+ * 就绪前根本不起 runtime（见 {@code ensureStarted} 的等待钩子，就绪后自动加载），这里
+ * 返回的失败消息只是最后防线，明确说「转译器还在准备」而不是让脚本背锅。</p>
  *
  * <p>刻意不设 {@code CompilationLevel}：一旦设了 {@code WHITESPACE_ONLY}，Closure 就不再注入
  * {@code $jscomp} 运行时，输出里的 {@code $jscomp.asyncExecutePromiseGeneratorProgram} 会变成
@@ -47,7 +49,8 @@ public final class LxTranspiler {
         }
         ClosureEs5Backend backend = ClosureCompilerDownload.backend();
         if (backend == null) {
-            // 未下载/下载中/加载失败：一句话说清这是暂态，原始脚本交给 Rhino 再试。
+            // 最后防线：正常流程走不到这里（LxSourceService 会先等转译器就绪再起 runtime）。
+            // 消息只陈述事实，不引导用户去怀疑脚本坏了。
             messages.add(ClosureCompilerDownload.pendingMessage());
             return new Outcome(source, false, messages);
         }

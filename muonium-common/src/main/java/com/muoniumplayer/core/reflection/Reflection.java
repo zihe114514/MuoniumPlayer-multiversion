@@ -1,6 +1,6 @@
 package com.muoniumplayer.core.reflection;
 
-import today.opai.api.OpenAPI;
+import com.muoniumplayer.api.OpenAPI;
 
 /**
  *

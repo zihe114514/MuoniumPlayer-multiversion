@@ -1,10 +1,10 @@
 package com.muoniumplayer.core.module.impl;
 
-import today.opai.api.enums.EnumModuleCategory;
-import today.opai.api.features.ExtensionModule;
-import today.opai.api.interfaces.EventHandler;
-import today.opai.api.interfaces.modules.values.BooleanValue;
-import today.opai.api.interfaces.modules.values.ModeValue;
+import com.muoniumplayer.api.enums.EnumModuleCategory;
+import com.muoniumplayer.api.features.ExtensionModule;
+import com.muoniumplayer.api.interfaces.EventHandler;
+import com.muoniumplayer.api.interfaces.modules.values.BooleanValue;
+import com.muoniumplayer.api.interfaces.modules.values.ModeValue;
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.Quality;

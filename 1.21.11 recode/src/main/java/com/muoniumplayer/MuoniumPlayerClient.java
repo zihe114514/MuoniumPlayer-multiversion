@@ -29,13 +29,13 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.Identifier;
 import net.minecraft.client.gui.screens.Screen;
-import today.opai.api.OpenAPI;
-import today.opai.api.events.EventRender2D;
-import today.opai.api.features.ExtensionModule;
-import today.opai.api.features.ExtensionWidget;
-import today.opai.api.impl.OpenAPIImpl;
-import today.opai.api.impl.WindowResolutionImpl;
-import today.opai.api.interfaces.EventHandler;
+import com.muoniumplayer.api.OpenAPI;
+import com.muoniumplayer.api.events.EventRender2D;
+import com.muoniumplayer.api.features.ExtensionModule;
+import com.muoniumplayer.api.features.ExtensionWidget;
+import com.muoniumplayer.api.impl.OpenAPIImpl;
+import com.muoniumplayer.api.impl.WindowResolutionImpl;
+import com.muoniumplayer.api.interfaces.EventHandler;
 
 import java.util.List;
 
@@ -61,7 +61,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "1.9.0";
+    public static final String MOD_VERSION = "1.9.1";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，

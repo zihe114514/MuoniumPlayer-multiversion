@@ -50,15 +50,17 @@ class ClosureCompilerDownloadStaticTest {
     @Test
     @DisplayName("三条镜像都是 https、都指向清单仓库的 libs/ 目录")
     void mirrorsPointAtTheManifestRepository() {
-        assertEquals(3, ClosureCompilerDownload.MIRRORS.size(), "镜像条数与字体/伴生包同一套策略");
+        assertEquals(5, ClosureCompilerDownload.MIRRORS.size(), "镜像条数与字体/伴生包同一套策略");
         for (String mirror : ClosureCompilerDownload.MIRRORS) {
             assertTrue(mirror.startsWith("https://"), "必须 https：" + mirror);
             assertTrue(mirror.endsWith("/libs/"), "目录要与仓库布局一致：" + mirror);
             assertTrue(mirror.contains("MuoniumPlayer-updates"), "指向公开清单仓库：" + mirror);
         }
         assertTrue(ClosureCompilerDownload.MIRRORS.get(0).contains("ghfast.top"), "源 1 是国内可达的代理");
-        assertTrue(ClosureCompilerDownload.MIRRORS.get(1).contains("raw.githubusercontent.com"), "源 2 是原始地址");
-        assertTrue(ClosureCompilerDownload.MIRRORS.get(2).contains("jsdelivr"), "源 3 是 CDN 兜底");
+        assertTrue(ClosureCompilerDownload.MIRRORS.get(1).contains("gh-proxy.com"), "源 2 是 gh-proxy（直连实测最好：支持断点续传，截断后续传可拿全）");
+        assertTrue(ClosureCompilerDownload.MIRRORS.get(2).contains("raw.githubusercontent.com"), "源 3 是原始地址（经代理可达）");
+        assertTrue(ClosureCompilerDownload.MIRRORS.get(3).contains("ghproxy.net"), "源 4 是 ghproxy.net（镜像多活时代的另一主流接棒者）");
+        assertTrue(ClosureCompilerDownload.MIRRORS.get(4).contains("jsdelivr"), "源 5 是 CDN 兜底（对新推送有缓存延迟，殿后）");
     }
 
     @Test
@@ -154,9 +156,23 @@ class ClosureCompilerDownloadStaticTest {
         String runtime = read(ProjectPaths.sourceFile(
                 Paths.get("com", "muoniumplayer", "core", "ncm", "lxsource", "LxRuntime.java")));
         int transpile = runtime.indexOf("LxTranspiler.toEs5(rawSource);");
-        int fallback = runtime.indexOf("改用原始脚本");
-        assertTrue(transpile >= 0 && fallback > transpile,
-                "转译失败回退原始脚本的降级路必须保留——转译器未就绪时全靠它");
+        assertTrue(transpile >= 0, "LxRuntime 必须仍然走 LxTranspiler 转译");
+        assertFalse(runtime.contains("改用原始脚本"),
+                "转译失败不许再「改用原始脚本」静默降级——那会让新语法脚本死在"
+                        + "莫名其妙的语法错误上，玩家看到的就是「LX 源放不了了」");
+
+        // 转译器未就绪时脚本必须被暂缓（而不是硬起 runtime）：等就绪后自动加载。
+        String service = read(ProjectPaths.sourceFile(
+                Paths.get("com", "muoniumplayer", "core", "ncm", "lxsource", "LxSourceService.java")));
+        int gate = service.indexOf("if (ClosureCompilerDownload.backend() == null) {");
+        int start = service.indexOf("LxRuntime.start(", gate > 0 ? gate : 0);
+        assertTrue(gate >= 0 && start > gate,
+                "ensureStarted 必须先问转译器就绪没：没就绪就 scheduleTranspilerWait，"
+                        + "就绪才 LxRuntime.start（老用户升级后 LX 源不能无声失效）");
+        assertTrue(service.contains("scheduleTranspilerWait()"),
+                "缺转译器等待钩子（就绪后自动 reload，用户不用手动点重新加载）");
+        assertTrue(service.contains("isWaitingForTranspiler()"),
+                "缺暂缓状态查询（状态行与 isLoading/awaitReady 都要能感知）");
     }
 
     private static String read(Path path) throws IOException {

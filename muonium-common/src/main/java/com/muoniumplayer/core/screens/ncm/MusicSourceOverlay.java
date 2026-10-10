@@ -1390,6 +1390,13 @@ public final class MusicSourceOverlay extends NcmSheet {
 
     private String runtimeHeadline() {
         if (!LxSourceService.isEnabled()) return "未启用脚本，播放走内置解析链路";
+        // 转译器（Closure，进游戏时按需下载）没就绪时脚本被暂缓：明说「准备中」，
+        // 带下载进度。绝不能落进下面 runtime == null 的「等待加载」或 FAILED 的「加载失败」——
+        // 那两种都读起来像坏了，而这是暂态。
+        final String transpiler = com.muoniumplayer.core.ncm.lxsource.ClosureCompilerDownload.headlineSuffix();
+        if (LxSourceService.isWaitingForTranspiler()) {
+            return "正在准备脚本转译器" + (transpiler == null ? "…" : " · " + transpiler.replace("转译器", ""));
+        }
         LxRuntime runtime = LxSourceService.getRuntime();
         if (runtime == null) return "已选中脚本，等待加载";
         final String base;
@@ -1410,7 +1417,6 @@ public final class MusicSourceOverlay extends NcmSheet {
         }
         // 转译器没就绪时在这行补一句下载状态：用户能看出「新语法脚本暂时解析不了」
         // 是转译器还在路上，而不是脚本坏了。就绪时 suffix 为 null、一行照旧。
-        String transpiler = com.muoniumplayer.core.ncm.lxsource.ClosureCompilerDownload.headlineSuffix();
         return transpiler == null ? base : base + " · " + transpiler;
     }
 
