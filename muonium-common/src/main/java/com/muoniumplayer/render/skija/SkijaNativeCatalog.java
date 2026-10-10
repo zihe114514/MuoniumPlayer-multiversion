@@ -16,10 +16,10 @@ import java.util.Set;
  * 「这台机器上到底有哪一份 Skija 原生库可以试」的查表逻辑。
  *
  * <h2>为什么要有这个类</h2>
- * 主包只带 {@code skija-windows-x64}（58 MB 的包体不能再线性涨），Linux / macOS
- * 用户的原生库来自<b>伴生包</b>：他们把 {@code muonium-skija-<platform>-<skija版本>.zip}
- * 解压到 {@code config/muonium/native/skija/} 下面。于是运行期面对的不是「一个路径」
- * 而是「一堆可能出现在各处、命名不一定标准、版本不一定对得上」的候选文件，
+ * 主包不带任何平台的原生库（2026-10-10 瘦身轮起 Windows 也改为按需下载），所有平台都靠
+ * <b>伴生包</b>：用户把 {@code muonium-skija-<platform>-<skija版本>.zip} 解压到
+ * {@code config/muonium/native/skija/} 下面（或由自动下载器解到同一处）。于是运行期面对的
+ * 不是「一个路径」而是「一堆可能出现在各处、命名不一定标准、版本不一定对得上」的候选文件，
  * 需要有人把它们找出来、排序、校验，并把「为什么没用上」说清楚。
  *
  * <p>Android 单独成档（下面那套平台映射认它），伴生包照发：2026-10-05 真机复测推翻了

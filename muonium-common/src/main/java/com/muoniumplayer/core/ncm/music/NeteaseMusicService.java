@@ -32,6 +32,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * Cadence 的宿主适配层。所有 QQ 音乐请求和新的跨平台网易云请求都从这里进入，
@@ -342,6 +343,58 @@ public final class NeteaseMusicService {
     /** 回调运行在后台线程；UI 调用方应自行切回主线程。 */
     public static void ensureQQUserPlaylistsAsync(Runnable callback) {
         refreshQQAccountDataAsyncSafe(callback, false);
+    }
+
+    /**
+     * 侧栏刷新按钮：无视「已加载」强制重拉 QQ 账号资料与歌单。
+     *
+     * <p>ensure 那条路一局只会拉一次，没有这个入口侧栏快照就再也不更新。结果在
+     * <b>后台线程</b>回调（UI 调用方自己切主线程）；刷新已在路上时被 loading 标志挡住
+     * 并立刻回报失败，由调用方决定怎么提示。两条子请求各自吞异常（与 ensure 线程体
+     * 同一条规则），成败最终看 {@link #areQQUserPlaylistsLoaded()}。</p>
+     */
+    public static void forceRefreshQQAccountAsync(Consumer<PlaylistRefreshResult> callback) {
+        long startedAt = System.currentTimeMillis();
+        initializeIfNeeded();
+        if (!SERVICE.getQq().getLoggedIn()) {
+            if (callback != null) callback.accept(PlaylistRefreshResult.failure(
+                    System.currentTimeMillis() - startedAt, "未登录QQ音乐账号"));
+            return;
+        }
+        synchronized (QQ_PLAYLIST_LOCK) {
+            if (qqUserPlaylistsLoading) {
+                if (callback != null) callback.accept(PlaylistRefreshResult.failure(
+                        System.currentTimeMillis() - startedAt, "QQ音乐歌单正在刷新中"));
+                return;
+            }
+            qqUserPlaylistsLoading = true;
+            qqUserPlaylistsLastAttempt = System.currentTimeMillis();
+        }
+
+        Thread thread = new Thread(() -> {
+            PlaylistRefreshResult outcome;
+            try {
+                refreshQQUserInfo();
+                refreshQQUserPlaylists(true);
+                outcome = qqUserPlaylistsLoaded
+                        ? PlaylistRefreshResult.success(System.currentTimeMillis() - startedAt, qqUserPlaylists.size())
+                        : PlaylistRefreshResult.failure(System.currentTimeMillis() - startedAt, "QQ音乐歌单刷新失败");
+            } catch (Throwable throwable) {
+                outcome = PlaylistRefreshResult.failure(System.currentTimeMillis() - startedAt, throwable.getMessage());
+            } finally {
+                synchronized (QQ_PLAYLIST_LOCK) {
+                    qqUserPlaylistsLoading = false;
+                }
+            }
+            if (callback != null) {
+                try {
+                    callback.accept(outcome);
+                } catch (Throwable ignored) {
+                }
+            }
+        }, "Cadence QQ Refresh");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     /** 登录成功后强制刷新用户资料、创建歌单和收藏歌单。 */

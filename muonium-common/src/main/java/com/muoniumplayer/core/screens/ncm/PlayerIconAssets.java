@@ -1,7 +1,15 @@
 package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.rendering.TextureManager;
+import com.muoniumplayer.core.rendering.texture.DynamicTexture;
+import com.muoniumplayer.core.rendering.texture.Textures;
 import com.muoniumplayer.core.utils.Location;
+import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
+
+import java.awt.image.BufferedImage;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 从提供的美术资源导入的静态播放器控制图标。
@@ -61,5 +69,60 @@ public final class PlayerIconAssets {
             default:
                 return null;
         }
+    }
+
+    /** 正在后台解码/上传的图标，防止重复排队。 */
+    private static final Set<Location> PENDING_PREWARM = ConcurrentHashMap.newKeySet();
+
+    /**
+     * 把这批控制图标提前装进 {@code TextureManager}：工作线程读 jar + 解码，
+     * GL 上交给主线程的限额队列（每 tick 最多 4 项 / 2ms，见 {@code TextureUploadQueue}）。
+     *
+     * <p>{@code ThemedTextureIconWidget} 首次渲染某个 Location 时走的是
+     * {@code TextureManager#bindTexture} 的同步兜底——渲染线程上读 jar、ImageIO 解码、
+     * GL 分配上传一次做完。布局预热只<b>构造</b>控件树、从不渲染，这份成本于是全部落在
+     * 首次打开播放器的第一帧。这里把它挪到 HUD 空闲期；三张播放模式图标一起装，
+     * 播放模式切换的那一帧同样会触发同步兜底。</p>
+     *
+     * <p>参数刻意与同步兜底保持一致（{@code linear=false}）：采样方式由
+     * {@code ThemedTextureIconWidget} 绘制时经 {@code RenderSystem.linearFilter()} 现场指定，
+     * 纹理自身的过滤参数跟着旧路径走，预热与否不改变任何观感。</p>
+     *
+     * <p>缺资源（资源包或过时的开发 jar）、解码失败都只放弃预热收益：真正的同步兜底
+     * 仍在，控件还有字体字形兜底，因此单张失败不中断其余图标。</p>
+     */
+    public static void prewarm() {
+        prewarmIcon(FAVORITE);
+        prewarmIcon(PLAYLIST);
+        prewarmIcon(HISTORY);
+        prewarmIcon(PERSONAL_FM);
+        prewarmIcon(PLAY_MODE_SEQUENTIAL);
+        prewarmIcon(PLAY_MODE_RANDOM);
+        prewarmIcon(PLAY_MODE_SINGLE_LOOP);
+    }
+
+    private static void prewarmIcon(Location icon) {
+        if (icon == null) return;
+        TextureManager textureManager = TextureManager.getInstance();
+        if (textureManager.getTexture(icon) != null || !PENDING_PREWARM.add(icon)) {
+            return;
+        }
+        MultiThreadingUtil.runAsync(() -> {
+            boolean queuedUpload = false;
+            try {
+                BufferedImage img = DynamicTexture.readImage(icon.getResourceStream());
+                if (img != null) {
+                    queuedUpload = true;
+                    // 与 downloadTextureAndLoadAsync 同一收尾口径：上传真正完成后才释放图片。
+                    Textures.loadTextureAsyncly(icon, img, true, true, false,
+                            () -> PENDING_PREWARM.remove(icon));
+                }
+            } catch (Throwable t) {
+                System.err.println("[MuoniumPlayer] 播放器图标预热失败(" + icon + "): " + t);
+            } finally {
+                // 失败（缺资源/解码不出）时允许将来重试；成功排队时由 after 回调释放。
+                if (!queuedUpload) PENDING_PREWARM.remove(icon);
+            }
+        });
     }
 }

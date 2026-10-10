@@ -35,6 +35,11 @@ import java.util.List;
  * {@link CloudMusic#moveQueuedNext(int, int)}：当前播放位置、队列长度、播放模式都不受影响，
  * 没用过这个功能的用户拿到的仍然是原来的行为。</p>
  *
+ * <p>进了一起听房间后抽屉整体切到<b>房间模式</b>（{@link PlayQueueRoomBridge}）：显示的是一起听
+ * 歌单而不是本地待播段——房间里的「下一首播放」本来就被改写成房间点歌，本地段在房间里永远是空的。
+ * 拖动/移除/清空改走房间协议（服务器房间全量支持；酷狗官方房间只读展示），松手才发一条
+ * {@code move}，避免一次拖动变成几十条消息。</p>
+ *
  * <p>每一行的位置由本面板在 {@link #onRender(double, double)} 里统一计算（父组件的 onRender
  * 先于子组件执行），列表容器只负责滚动与裁剪，因此不存在"容器自动排列覆盖动画位置"的问题。</p>
  *
@@ -76,6 +81,10 @@ public class PlayQueuePanel extends NCMPanel {
     private static final double DRAG_AUTO_SCROLL_PPS = 320.0;
 
     private boolean open;
+    /** 这一帧抽屉是否处于一起听房间模式（显示房间歌单而非本地待播段）。 */
+    private boolean roomMode;
+    /** 房间模式的数据源：快照、乐观顺序与协议落地都在那一层。 */
+    private final PlayQueueRoomBridge room = new PlayQueueRoomBridge();
     /** 抽屉滑入/滑出的进度，0 为完全收起、1 为完全展开。线性推进，曲线在读的时候才套。 */
     private double openAnimation;
     private long lastFrameNanos;
@@ -114,6 +123,8 @@ public class PlayQueuePanel extends NCMPanel {
     private String flowSortLabel = "排列";
     /** 提示标签上当前那句文案；只在真的换字时才动它，避免每帧重建一个 supplier。 */
     private String hintText = "拖动可调整顺序";
+    /** 空状态那句话的当前文案；与提示标签同一个换字套路。 */
+    private String emptyHintText = "队列为空 · 点击歌曲右侧的排队按钮加入";
 
     private QueueRow draggingRow;
     private double dragGrabOffset;
@@ -129,6 +140,11 @@ public class PlayQueuePanel extends NCMPanel {
     private static double smooth(double value) {
         double clamped = Math.max(0.0, Math.min(1.0, value));
         return clamped * clamped * (3.0 - 2.0 * clamped);
+    }
+
+    /** 表头标题：本地是「下一首播放」，一起听房间里换成名副其实的「一起听歌单」。 */
+    private String queueTitle() {
+        return this.roomMode ? "一起听歌单" : "下一首播放";
     }
 
     public boolean isOpen() {
@@ -196,8 +212,8 @@ public class PlayQueuePanel extends NCMPanel {
         this.drawer.setOnClickCallback((relativeX, relativeY, mouseButton) -> true);
 
         LabelWidget title = new LabelWidget(() -> this.rows.isEmpty()
-                ? "下一首播放"
-                : ("下一首播放 · " + this.rows.size() + " 首"), FontManager.pf12bold);
+                ? this.queueTitle()
+                : (this.queueTitle() + " · " + this.rows.size() + " 首"), FontManager.pf12bold);
         this.drawer.addChild(title);
         title.setClickable(false);
         title.setBeforeRenderCallback(() -> title
@@ -215,19 +231,24 @@ public class PlayQueuePanel extends NCMPanel {
             //
             // 排列已经改到后台跑了，所以这里每帧读一次它的状态：正在扫就显示进度，
             // 扫完显示那一句结论（靠序号判断是不是新结论，不能每帧刷新倒计时）。
-            long serial = com.muoniumplayer.core.ncm.music.QueueFlowSorter.noticeSerial();
-            if (serial != this.flowNoticeSerial) {
-                this.flowNoticeSerial = serial;
-                this.flowNotice = com.muoniumplayer.core.ncm.music.QueueFlowSorter.lastNotice();
-                this.flowNoticeUntil = System.currentTimeMillis() + FLOW_NOTICE_MILLIS;
-            }
+            // 房间模式下没有「排列」这回事，提示位让给房间那句（能不能拖、谁在控制顺序）。
             String wanted;
-            if (com.muoniumplayer.core.ncm.music.QueueFlowSorter.isRunning()) {
-                wanted = com.muoniumplayer.core.ncm.music.QueueFlowSorter.notice();
-            } else if (System.currentTimeMillis() < this.flowNoticeUntil) {
-                wanted = this.flowNotice;
+            if (this.roomMode) {
+                wanted = this.room.hint();
             } else {
-                wanted = "拖动可调整顺序";
+                long serial = com.muoniumplayer.core.ncm.music.QueueFlowSorter.noticeSerial();
+                if (serial != this.flowNoticeSerial) {
+                    this.flowNoticeSerial = serial;
+                    this.flowNotice = com.muoniumplayer.core.ncm.music.QueueFlowSorter.lastNotice();
+                    this.flowNoticeUntil = System.currentTimeMillis() + FLOW_NOTICE_MILLIS;
+                }
+                if (com.muoniumplayer.core.ncm.music.QueueFlowSorter.isRunning()) {
+                    wanted = com.muoniumplayer.core.ncm.music.QueueFlowSorter.notice();
+                } else if (System.currentTimeMillis() < this.flowNoticeUntil) {
+                    wanted = this.flowNotice;
+                } else {
+                    wanted = "拖动可调整顺序";
+                }
             }
             if (!wanted.equals(this.hintText)) {
                 this.hintText = wanted;
@@ -246,9 +267,11 @@ public class PlayQueuePanel extends NCMPanel {
         flowSort.setBeforeRenderCallback(() -> {
             // 少于两首待播没有「相邻」可言，与「清空」同一个做法：连同命中框一起收掉。
             // 正在排的时候不收：那时它写的是「取消」，收掉就没法停了。
-            flowSort.setHidden(!com.muoniumplayer.core.ncm.music.QueueFlowSorter.isRunning()
+            // 房间模式下排的是别人的队列（本地段在房间里永远为空），整个功能不存在。
+            flowSort.setHidden(this.roomMode
+                    || (!com.muoniumplayer.core.ncm.music.QueueFlowSorter.isRunning()
                     && (this.rows.size() < 2
-                    || !com.muoniumplayer.core.ncm.music.AutomixSettings.isAdvancedModeEnabled()));
+                    || !com.muoniumplayer.core.ncm.music.AutomixSettings.isAdvancedModeEnabled())));
             flowSort.setBounds(FLOW_BUTTON_WIDTH, 14.0)
                     .setPosition(this.drawer.getWidth() - DRAWER_PADDING - 16.0 - 4.0 - 34.0
                                     - 4.0 - FLOW_BUTTON_WIDTH,
@@ -293,7 +316,9 @@ public class PlayQueuePanel extends NCMPanel {
         clearAll.setShouldOverrideMouseCursor(true);
         clearAll.setBeforeRenderCallback(() -> {
             // 队列为空时没有可清空的内容，按钮连同命中框一起收掉。
-            clearAll.setHidden(this.rows.isEmpty());
+            // 房间模式里清空是发全房的一条指令：清空权跟着房间面板「清空歌单」同一个判据，
+            // 没有控制权的成员根本不该看到这颗按钮。
+            clearAll.setHidden(this.rows.isEmpty() || (this.roomMode && !this.room.canClear()));
             clearAll.setBounds(34.0, 14.0)
                     .setPosition(this.drawer.getWidth() - DRAWER_PADDING - 16.0 - 4.0 - 34.0,
                             DRAWER_PADDING + Math.max(0.0, (HEADER_HEIGHT - 14.0) * .5))
@@ -305,7 +330,8 @@ public class PlayQueuePanel extends NCMPanel {
         clearAll.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
             if (mouseButton == 0 && !this.rows.isEmpty()) {
                 this.cancelDrag();
-                CloudMusic.clearQueuedNextSongs();
+                if (this.roomMode) this.room.clear();
+                else CloudMusic.clearQueuedNextSongs();
             }
             return true;
         });
@@ -345,10 +371,19 @@ public class PlayQueuePanel extends NCMPanel {
         this.emptyHint = new LabelWidget("队列为空 · 点击歌曲右侧的排队按钮加入", FontManager.pf10bold);
         this.drawer.addChild(this.emptyHint);
         this.emptyHint.setClickable(false);
-        this.emptyHint.setBeforeRenderCallback(() -> this.emptyHint
-                .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
-                .setPosition(this.list.getRelativeX() + Math.max(0.0, (this.list.getWidth() - this.emptyHint.getWidth()) * .5),
-                        this.list.getRelativeY() + Math.max(0.0, (this.list.getHeight() - this.emptyHint.getHeight()) * .5)));
+        this.emptyHint.setBeforeRenderCallback(() -> {
+            // 房间模式那句空提示是另一句人话（能不能点歌、去哪点），每帧按模式换文案而不是加组件。
+            String wanted = this.roomMode ? this.room.emptyHint()
+                    : "队列为空 · 点击歌曲右侧的排队按钮加入";
+            if (!wanted.equals(this.emptyHintText)) {
+                this.emptyHintText = wanted;
+                this.emptyHint.setLabel(wanted);
+            }
+            this.emptyHint
+                    .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
+                    .setPosition(this.list.getRelativeX() + Math.max(0.0, (this.list.getWidth() - this.emptyHint.getWidth()) * .5),
+                            this.list.getRelativeY() + Math.max(0.0, (this.list.getHeight() - this.emptyHint.getHeight()) * .5));
+        });
     }
 
     @Override
@@ -370,6 +405,8 @@ public class PlayQueuePanel extends NCMPanel {
         }
         this.drawer.setHidden(false);
 
+        // 进房/退房随时发生，模式必须每帧判定；判定本身只读两个 volatile 布尔，零开销。
+        this.roomMode = PlayQueueRoomBridge.roomActive();
         this.syncRows();
 
         double progress = smooth(this.openAnimation);
@@ -459,6 +496,16 @@ public class PlayQueuePanel extends NCMPanel {
 
     /** 把一行搬到它这一帧该在的位置，并处理视口内外的可见性与命中框。 */
     private void applyRowLayout(QueueRow row, long now) {
+        // 房间模式下每一行的两枚手势控件（拖动把手、移除）按权限逐帧开合；正在淡出的行
+        // 两个都关掉，别让一个已经不在歌单里的条目还能被点出一条指令。
+        if (this.roomMode && !row.removing) {
+            row.canDrag = this.room.canReorder();
+            row.canRemove = this.room.canRemove(row.slot);
+        } else {
+            row.canDrag = !row.removing;
+            row.canRemove = !row.removing;
+        }
+
         double y = row.animation.getCurrentPosition() - this.list.scrollActual;
         row.setBounds(this.list.getWidth(), ROW_HEIGHT).setPosition(0.0, y);
 
@@ -477,9 +524,10 @@ public class PlayQueuePanel extends NCMPanel {
 
     /** 用队列快照对齐界面上的行，尽量复用同一个行对象，动画状态才不会被重建打断。 */
     private void syncRows() {
-        List<Music> queued = CloudMusic.getQueuedNextSongs();
+        List<Music> queued = this.roomMode ? this.room.snapshot() : CloudMusic.getQueuedNextSongs();
 
         // 拖动途中队列长度变了（比如这首歌播完了），继续按旧下标搬动就会错位，直接放手最安全。
+        // 房间模式下这条同样成立：别人点歌/撤歌都会让房间歌单变长变短。
         if (this.draggingRow != null && queued.size() != this.rows.size()) {
             this.cancelDrag();
         }
@@ -541,6 +589,8 @@ public class PlayQueuePanel extends NCMPanel {
 
     private void beginDrag(QueueRow row, double grabOffsetY) {
         if (row == null || row.removing || !this.rows.contains(row)) return;
+        // 房间模式里没有控制权的成员、以及只读的官方房间歌单，按住一行不该有任何反应。
+        if (this.roomMode && !this.room.canReorder()) return;
         this.draggingRow = row;
         this.dragGrabOffset = grabOffsetY;
         row.dragY = row.animation.getCurrentPosition();
@@ -553,8 +603,12 @@ public class PlayQueuePanel extends NCMPanel {
         QueueRow row = this.draggingRow;
         if (row == null) return;
 
-        if (!Mouse.isButtonDown(0) || row.removing || !this.rows.contains(row)) {
-            this.cancelDrag();
+        // 松手是一次完成（房间模式下这里才把最终位置发给服务器）；行被移除、被对齐掉
+        // 都是中途夭折，不发。两种结局分开，别把「提交」混进 cancelDrag 里——
+        // 收起抽屉、点「排列」这些地方也在调它。
+        boolean released = !Mouse.isButtonDown(0);
+        if (released || row.removing || !this.rows.contains(row)) {
+            this.endDrag(released);
             return;
         }
 
@@ -580,9 +634,29 @@ public class PlayQueuePanel extends NCMPanel {
         int target = (int) Math.round(row.dragY / SLOT_HEIGHT);
         target = Math.max(0, Math.min(rowCount - 1, target));
 
-        if (target != from && CloudMusic.moveQueuedNext(from, target)) {
+        // 本地模式每一格换位都直接写进 playList；房间模式只动暂存顺序（松手才发一条 move），
+        // 但两边的返回值语义相同：顺序真的变了才让界面跟着搬行。
+        if (target != from && this.moveDisplayRow(from, target)) {
             this.rows.remove(from);
             this.rows.add(target, row);
+        }
+    }
+
+    /** 把一次换位落到当前模式的数据源上：本地写活队列，房间写暂存。 */
+    private boolean moveDisplayRow(int from, int to) {
+        return this.roomMode ? this.room.move(from, to) : CloudMusic.moveQueuedNext(from, to);
+    }
+
+    /**
+     * 一次拖动的两种结局。松手（{@code commit}）时房间模式把暂存顺序发给服务器——
+     * 本地模式没有任何收尾要做，它的每一格换位在拖动途中就已经写进队列了。
+     */
+    private void endDrag(boolean commit) {
+        QueueRow row = this.draggingRow;
+        this.draggingRow = null;
+        if (this.roomMode) {
+            if (commit && row != null) this.room.commitMove(row.music);
+            else this.room.rollbackMove();
         }
     }
 
@@ -622,8 +696,11 @@ public class PlayQueuePanel extends NCMPanel {
     private void removeRow(QueueRow row) {
         int index = this.rows.indexOf(row);
         if (index < 0 || row.removing) return;
+        // 房间模式先提交移除、再断拖动：cancelDrag 会回滚未提交的拖动顺序，顺序颠倒的话
+        // 回滚就发生在「按用户看到的顺序取下标」之后，删掉的不再是用户指着的那一行。
+        boolean removed = this.roomMode ? this.room.remove(index) : CloudMusic.removeQueuedNext(index);
         if (row == this.draggingRow) this.cancelDrag();
-        if (!CloudMusic.removeQueuedNext(index)) return;
+        if (!removed) return;
 
         this.rows.remove(index);
         row.removing = true;
@@ -633,6 +710,9 @@ public class PlayQueuePanel extends NCMPanel {
 
     private void cancelDrag() {
         this.draggingRow = null;
+        // 房间模式下没发出去的拖动顺序一并退掉：中断的拖动不该在界面上留下一份
+        // 服务器从来没有过的顺序（回滚只动未提交的移动，已发的移除/清空不受影响）。
+        if (this.roomMode) this.room.rollbackMove();
     }
 
     /**
@@ -745,6 +825,9 @@ public class PlayQueuePanel extends NCMPanel {
         private double dragY;
         private double fade = 1.0;
         private boolean removing;
+        /** 这一帧这行允不允许拖动 / 移除：本地模式恒开，房间模式按权限逐帧写入（见 applyRowLayout）。 */
+        private boolean canDrag = true;
+        private boolean canRemove = true;
         private long appearedAt;
         private boolean coverLoaded;
 
@@ -816,11 +899,13 @@ public class PlayQueuePanel extends NCMPanel {
                     .setPosition(42.0, ROW_HEIGHT - artist.getHeight() - 4.0));
 
             // 移除按钮排在把手左边，并且自己吃掉点击，否则按下去会变成"开始拖动"。
+            // 房间模式下没有权限（别人的点歌、且自己不是房主/管理员）时整颗收掉：
+            // 一颗按了只会被服务端拒绝的按钮，比没有按钮更让人误会。
             RoundedRectWidget remove = new RoundedRectWidget();
             this.addChild(remove);
             remove.setShouldOverrideMouseCursor(true);
             remove.setBeforeRenderCallback(() -> {
-                remove.setHidden(this.removing);
+                remove.setHidden(this.removing || !this.canRemove);
                 remove.setBounds(14.0, 14.0)
                         .setPosition(Math.max(0.0, this.getWidth() - 32.0), (ROW_HEIGHT - 14.0) * .5)
                         .setRadius(3.0)
@@ -846,12 +931,17 @@ public class PlayQueuePanel extends NCMPanel {
             DragHandleWidget handle = new DragHandleWidget();
             this.addChild(handle);
             handle.setClickable(false);
-            handle.setBeforeRenderCallback(() -> handle
-                    .setBounds(10.0, 7.0)
-                    .setPosition(Math.max(0.0, this.getWidth() - 16.0), (ROW_HEIGHT - 7.0) * .5)
-                    .setColor(NCMScreen.getColor(this == PlayQueuePanel.this.draggingRow
-                            ? NCMScreen.ColorType.PRIMARY_TEXT
-                            : NCMScreen.ColorType.SECONDARY_TEXT)));
+            handle.setBeforeRenderCallback(() -> {
+                // 拖不动的时候把手收掉：三条横线的意思是「抓住我」，对一个抓不起来的行
+                // 摆这个手势是在邀请用户做一件做不到的事。
+                handle.setHidden(!this.canDrag);
+                handle
+                        .setBounds(10.0, 7.0)
+                        .setPosition(Math.max(0.0, this.getWidth() - 16.0), (ROW_HEIGHT - 7.0) * .5)
+                        .setColor(NCMScreen.getColor(this == PlayQueuePanel.this.draggingRow
+                                ? NCMScreen.ColorType.PRIMARY_TEXT
+                                : NCMScreen.ColorType.SECONDARY_TEXT));
+            });
         }
     }
 

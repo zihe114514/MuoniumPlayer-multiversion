@@ -861,7 +861,9 @@ public class ControlsBar extends NCMPanel {
                     .centerVertically();
             queueToggle
                     .setPosition(toggleX, queueToggle.getRelativeY() - ControlsBar.this.iconBandLift)
-                    .setColor(opened || CloudMusic.getQueuedNextCount() > 0
+                    // 一起听房间里这颗入口换成房间歌单的读数：抽屉里显示的就是那份队列，
+                    // 按钮点亮条件必须跟它是同一份数字，否则会出现「亮着、打开却是空的」。
+                    .setColor(opened || PlayQueueRoomBridge.displayQueuedCount() > 0
                             ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                             : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             // 把按钮的右边缘交给抽屉，抽屉据此右对齐 —— 点开之后视线不用再横穿半屏去找它。
@@ -878,9 +880,9 @@ public class ControlsBar extends NCMPanel {
         });
 
         // 待播数量贴在图标右上角。作为图标的子组件，它自动继承那一份 alpha，
-        // 因此窄面板下不需要第二处可见性判断。
+        // 因此窄面板下不需要第二处可见性判断。房间模式下数的是一起听歌单，与抽屉一致。
         LabelWidget queueCount = new LabelWidget(() -> {
-            int queued = CloudMusic.getQueuedNextCount();
+            int queued = PlayQueueRoomBridge.displayQueuedCount();
             return queued > 0 ? String.valueOf(Math.min(99, queued)) : "";
         }, FontManager.pf10bold);
         queueToggle.addChild(queueCount);

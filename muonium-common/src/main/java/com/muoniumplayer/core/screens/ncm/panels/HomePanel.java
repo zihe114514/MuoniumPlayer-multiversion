@@ -114,6 +114,35 @@ public class HomePanel extends NCMPanel {
     }
 
     /**
+     * 无副作用地预热主页这条内容页链路的类与控件构造。
+     *
+     * <p>首次打开播放器时 {@code new HomePanel()} 加载的是一整棵<b>只在首开才碰到</b>的类树
+     * （卡片、标题控件、滚动网格、加载转子），类加载加首次构造全落在换页动画的帧预算里，
+     * 是「第一次打开会卡一下」的主要来源之一。这里在 HUD 空闲期（紧跟
+     * {@code NCMScreen#prewarmLayout}）用一张<b>假卡片</b>把同样的构造跑一遍：</p>
+     *
+     * <ul>
+     *   <li>走 {@code fixedPlaylists != null} 的固定结果页分支——{@link #onInit} 只做布局，
+     *       <b>不发任何网络请求</b>（推荐页的请求只在 {@code fixedPlaylists == null} 时发出）；</li>
+     *   <li>封面下载只挂在封面控件的 beforeRenderCallback 上，本实例永不渲染，不会触发；</li>
+     *   <li>{@link #layoutPlaceholder} 也走一遍：冷缓存首开先看到的就是那个转子，
+     *       {@code PanelLoadingWidget} 同样是首开才加载的类；</li>
+     *   <li>实例用完即弃，不进任何缓存，也不挂到 {@code NCMScreen} 上。</li>
+     * </ul>
+     */
+    public static void prewarm() {
+        try {
+            HomePanel dummy = new HomePanel(Collections.singletonList(
+                    new PlayList(-1L, "prewarm", "", 0, 0L, null, null, 0L)), "prewarm");
+            dummy.layoutPlaceholder("prewarm", true);
+            dummy.onInit();
+        } catch (Throwable t) {
+            // 预热只买「首开不卡」这一份收益；失败时完整路径在真正打开时照常执行。
+            System.err.println("[MuoniumPlayer] 主页预热失败: " + t);
+        }
+    }
+
+    /**
      * 首页问候语。
      *
      * <p>抽成一处是因为占位布局与正式布局都要用它，而两处如果不一致，加载中和加载完的标题会跳一下。</p>

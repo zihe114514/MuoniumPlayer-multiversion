@@ -67,10 +67,10 @@ tasks.register('buildAll') {
 // skija.version 必须与 libskija 放在同一层：模组拿它当「这份库是不是给我这一版用的」的硬判据
 // （JNI 符号写死类名，版本错配会炸在某个具体方法上，症状是「库加载成功了界面还是不出来」）。
 def skijaVersion = '0.143.17'
-// 六个平台全出。安卓那份 2026-10-05 真机复测通过：渲染器用 MobileGlues 并关闭 ANGLE 时，
+// 七个平台全出（Windows 也在内：原生库不再随主包内置）。安卓那份 2026-10-05 真机复测通过：渲染器用 MobileGlues 并关闭 ANGLE 时，
 // Skia 的 GL 互操作完整可用——此前「MobileGlues 装不出上下文」的结论是 ANGLE 报的桌面语义
 // 版本串造成的误判。换 Krypton 包装仍可能弄坏世界贴图，风险写在停用提示与 README 里。
-def skijaCompanionPlatforms = ['linux-x64', 'linux-arm64', 'macos-x64', 'macos-arm64',
+def skijaCompanionPlatforms = ['windows-x64', 'linux-x64', 'linux-arm64', 'macos-x64', 'macos-arm64',
         'android-arm64', 'android-x64']
 
 configurations { skijaCompanion }

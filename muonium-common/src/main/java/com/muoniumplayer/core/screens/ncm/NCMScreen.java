@@ -213,17 +213,22 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     }
 
     /**
-     * 在 HUD 已经稳定渲染后提前构建基础控件树。
+     * 在 HUD 已经稳定渲染后提前构建基础控件树，并预热首开才用到的内容页与图标纹理。
      *
-     * <p>只预热外框、侧栏、控制栏和队列抽屉，不调用 HomePanel#onInit，
-     * 因此不会提前发起首页网络请求。打开播放器时 initGui 仍会创建内容页，
-     * 但最重的一段控件树构造已经不在动画第一帧里。</p>
+     * <p>三段预热按「构造最重、离首帧最近」排：<b>基础控件树</b>（外框、侧栏、控制栏、
+     * 队列抽屉）整棵建好，首开 initGui 直接复用；<b>主页内容页</b>用一张假卡片把
+     * 类加载和控件构造跑一遍（固定结果页分支，不调 HomePanel#onInit 的推荐加载，
+     * 因此不会提前发起首页网络请求）；<b>播放器图标</b>交给后台线程解码、主线程限额
+     * 队列上传，消掉 ThemedTextureIconWidget 首帧在渲染线程上的同步 PNG 解码。
+     * 三段各自容错，任何一段失败都不影响其余与真正打开时的完整路径。</p>
      */
     public static void prewarmLayout() {
         if (layoutPrewarmed) return;
         layoutPrewarmed = true;
         skipNextLayoutAfterPrewarm = true;
         getInstance().layout();
+        HomePanel.prewarm();
+        PlayerIconAssets.prewarm();
     }
 
     public void checkDirty() {

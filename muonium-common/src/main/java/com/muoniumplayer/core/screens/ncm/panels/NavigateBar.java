@@ -16,6 +16,7 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
+import com.muoniumplayer.core.ncm.music.PlaylistRefreshResult;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.ImportedPlaylistStore;
 import com.muoniumplayer.core.ncm.music.LocalPlaylistStore;
@@ -1156,37 +1157,10 @@ public class NavigateBar extends NCMPanel {
 
         btnRefresh.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
             if (mouseButton != 0) return mouseButton == 1;
-            if (!CloudMusic.beginNeteaseRefresh()) {
-                btnRefresh.setSpinning(true);
-                DownloadDynamicIsland.showPlaylistRefreshInProgress();
-                return true;
-            }
-
-            btnRefresh.setSpinning(true);
-            DownloadDynamicIsland.showPlaylistRefreshInProgress();
-            MultiThreadingUtil.runAsync(() -> {
-                CloudMusic.NeteaseRefreshResult result = CloudMusic.refreshNeteaseAccountData();
-                MultiThreadingUtil.runOnMainThread(() -> {
-                    try {
-                        btnRefresh.setSpinning(false);
-                        if (result.isSuccess()) {
-                            NCMScreen.getInstance().markDirty();
-                            // 云盘歌曲 ID 集合在
-                            // 刷新期间异步加载。重建可见的播放列表行，以便
-                            // newly available "网盘" badge is created immediately.
-                            NCMScreen.getInstance().reloadCurrentPanel();
-                            DownloadDynamicIsland.showPlaylistRefreshSuccess(
-                                    result.getPlaylistCount(), result.getElapsedMillis());
-                        } else {
-                            DownloadDynamicIsland.showPlaylistRefreshFailure(result.getMessage());
-                        }
-                    } finally {
-                        CloudMusic.endNeteaseRefresh();
-                    }
-                });
-            });
+            triggerSidebarRefresh(btnRefresh);
             return true;
         });
+
         btnTheme.setBeforeRenderCallback(() -> {
             double actionWidth = railSlotWidth(quickActionsSurface.getWidth());
             btnTheme.setBounds(actionWidth, 28);
@@ -1222,8 +1196,7 @@ public class NavigateBar extends NCMPanel {
             btnRefresh.setBounds(actionWidth, 28);
             btnRefresh.setPosition(8 + actionWidth * 3, 2);
             btnRefresh.setRadius(7);
-            // 这会刷新已登录的网易云账户及其歌单，这一操作
-            // 与当前所选的搜索/内容提供方无关。
+            // 这颗按钮按当前平台刷新「我的账号歌单」，分发逻辑见 triggerSidebarRefresh。
             btnRefresh.setAlpha(1f);
             btnRefresh.setColor(btnRefresh.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
@@ -1393,6 +1366,104 @@ public class NavigateBar extends NCMPanel {
     @Override
     public boolean onMouseClicked(double mouseX, double mouseY, int mouseButton) {
         return false;
+    }
+
+    /**
+     * 侧栏刷新按钮：按当前平台重拉「我的账号歌单」正在显示的那一路数据。
+     *
+     * <p>网易云沿用 CloudMusic 的防重入槽与同步刷新；QQ / 酷狗 / B站 / 汽水走各自的
+     * 强制重拉入口——它们平时是「一局只拉一次」的快照，没有这颗按钮就再也不会更新。
+     * 酷我 / 咪咕 / GD / 系统播放器这些模式的账号歌单栏兜底显示网易云，刷新也刷网易云。
+     * YouTube 模式没有账号歌单，直接说明情况而不是让按钮无声无息。</p>
+     */
+    private void triggerSidebarRefresh(SidebarActionButton btnRefresh) {
+        MusicPlatform platform = NeteaseMusicService.getCurrentPlatform();
+        if (platform == MusicPlatform.QQ) {
+            startSidebarRefresh(btnRefresh, NeteaseMusicService.areQQUserPlaylistsLoading(),
+                    () -> NeteaseMusicService.forceRefreshQQAccountAsync(
+                            result -> completeSidebarRefresh(btnRefresh, result)));
+        } else if (platform == MusicPlatform.KUGOU) {
+            startSidebarRefresh(btnRefresh, KuGouMusicService.areUserPlaylistsLoading(),
+                    () -> KuGouMusicService.forceRefreshUserPlaylistsAsync(
+                            result -> completeSidebarRefresh(btnRefresh, result)));
+        } else if (platform == MusicPlatform.BILIBILI) {
+            startSidebarRefresh(btnRefresh, BilibiliFavoriteService.areUserPlaylistsLoading(),
+                    () -> BilibiliFavoriteService.forceRefreshUserPlaylistsAsync(
+                            result -> completeSidebarRefresh(btnRefresh, result)));
+        } else if (platform == MusicPlatform.QISHUI) {
+            startSidebarRefresh(btnRefresh, QishuiMusicService.areUserPlaylistsLoading(),
+                    () -> QishuiMusicService.forceRefreshUserPlaylistsAsync(
+                            result -> completeSidebarRefresh(btnRefresh, result)));
+        } else if (platform == MusicPlatform.YOUTUBE) {
+            DownloadDynamicIsland.showPlaylistRefreshFailure("YouTube 模式没有账号歌单可刷新");
+        } else {
+            refreshNeteaseFromSidebar(btnRefresh);
+        }
+    }
+
+    /**
+     * 各平台强刷入口共用的起手式：转起图标、报一枚进度提示，然后（若没有请求在路上）
+     * 启动这一次刷新。已在刷新中时不重起请求——双击只会让灵动岛回到「正在刷新」，
+     * 与网易云防重入槽被占住时的表现一致。
+     */
+    private void startSidebarRefresh(SidebarActionButton btnRefresh, boolean alreadyRefreshing, Runnable starter) {
+        btnRefresh.setSpinning(true);
+        DownloadDynamicIsland.showPlaylistRefreshInProgress();
+        if (!alreadyRefreshing) {
+            starter.run();
+        }
+    }
+
+    /** 平台强刷入口的统一收尾。服务回调可能落在后台线程，先切回主线程再动 UI。 */
+    private void completeSidebarRefresh(SidebarActionButton btnRefresh, PlaylistRefreshResult result) {
+        MultiThreadingUtil.runOnMainThread(() -> {
+            btnRefresh.setSpinning(false);
+            if (result.isSuccess()) {
+                NCMScreen.getInstance().markDirty();
+                // 快照换新后重建可见的播放列表行：像网易云「网盘」徽标那样按数据出现的元素立刻到位。
+                NCMScreen.getInstance().reloadCurrentPanel();
+                DownloadDynamicIsland.showPlaylistRefreshSuccess(
+                        result.getPlaylistCount(), result.getElapsedMillis());
+            } else {
+                DownloadDynamicIsland.showPlaylistRefreshFailure(result.getMessage());
+            }
+        });
+    }
+
+    /**
+     * 网易云那一路：防重入槽 + 同步刷新跑在工作线程上，全部请求成功才换快照。
+     * 这是刷新按钮最早支持的平台，行为原样保留。
+     */
+    private void refreshNeteaseFromSidebar(SidebarActionButton btnRefresh) {
+        if (!CloudMusic.beginNeteaseRefresh()) {
+            btnRefresh.setSpinning(true);
+            DownloadDynamicIsland.showPlaylistRefreshInProgress();
+            return;
+        }
+
+        btnRefresh.setSpinning(true);
+        DownloadDynamicIsland.showPlaylistRefreshInProgress();
+        MultiThreadingUtil.runAsync(() -> {
+            CloudMusic.NeteaseRefreshResult result = CloudMusic.refreshNeteaseAccountData();
+            MultiThreadingUtil.runOnMainThread(() -> {
+                try {
+                    btnRefresh.setSpinning(false);
+                    if (result.isSuccess()) {
+                        NCMScreen.getInstance().markDirty();
+                        // 云盘歌曲 ID 集合在
+                        // 刷新期间异步加载。重建可见的播放列表行，以便
+                        // newly available "网盘" badge is created immediately.
+                        NCMScreen.getInstance().reloadCurrentPanel();
+                        DownloadDynamicIsland.showPlaylistRefreshSuccess(
+                                result.getPlaylistCount(), result.getElapsedMillis());
+                    } else {
+                        DownloadDynamicIsland.showPlaylistRefreshFailure(result.getMessage());
+                    }
+                } finally {
+                    CloudMusic.endNeteaseRefresh();
+                }
+            });
+        });
     }
 
     /**
@@ -1577,6 +1648,17 @@ public class NavigateBar extends NCMPanel {
         private long lastClickAt;
 
         /**
+         * 悬浮说明要停够这么久才出现。鼠标扫过整排按钮时每颗都只停留几十毫秒，
+         * 立刻弹说明会连环闪烁；停一下才出，读出来的才是「真的想看这颗」。
+         */
+        private static final long TOOLTIP_DELAY_MS = 450L;
+        /** 停够之后多久淡满。 */
+        private static final long TOOLTIP_FADE_MS = 140L;
+
+        /** 这一轮悬停开始的时间戳；0 表示当前没悬停。移开立即清零，回来重新计时。 */
+        private long hoverBeganAt;
+
+        /**
          * lucide 的 24 网格在这颗按钮里占的边长。
          *
          * <p>定成 16 是为了和换掉之前的手绘几何同大：lucide 的字形在网格里自带约 2 个单位的内边距，
@@ -1606,6 +1688,13 @@ public class NavigateBar extends NCMPanel {
             hoverAnimation = Interpolations.interpolate(hoverAnimation, isHovering() ? 1f : 0f, .22f);
             boolean recentlyPressed = System.currentTimeMillis() - lastClickAt < 170L;
             pressAnimation = Interpolations.interpolate(pressAnimation, recentlyPressed ? 1f : 0f, .30f);
+            // 悬停计时在这里推进而不是在渲染树外面：这颗按钮被 setHidden 跳过整帧渲染时，
+            // 计时停在同值，重新出现后要么已不悬停（清零重来），要么沿用原计时——两种都合理。
+            if (isHovering()) {
+                if (hoverBeganAt == 0L) hoverBeganAt = System.currentTimeMillis();
+            } else {
+                hoverBeganAt = 0L;
+            }
 
             int base = NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND);
             int hover = NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER);
@@ -1655,6 +1744,75 @@ public class NavigateBar extends NCMPanel {
                                 Math.min(1f, alpha + .4f)));
                 roundedRect(dotX, dotY, size, size, size * .5, RenderSystem.reAlpha(UNREAD_DOT_COLOR, alpha));
             }
+
+            renderTooltip();
+        }
+
+        /** 悬浮说明的文案。右键那些入口不写出来，用户永远不会发现它们存在。 */
+        private String tooltipText() {
+            if (icon == SidebarActionIcon.THEME) return "切换主题（右键调色板）";
+            if (icon == SidebarActionIcon.FONT) return "更换界面字体";
+            if (icon == SidebarActionIcon.SCALE) return "切换窗口大小（右键还原）";
+            if (icon == SidebarActionIcon.REFRESH) return refreshTooltipText();
+            if (icon == SidebarActionIcon.ANNOUNCEMENT) return "查看公告";
+            return "";
+        }
+
+        /**
+         * 刷新那颗的说明跟着当前平台走：它刷的正是侧栏「我的账号歌单」正在显示的那一路。
+         * 每帧重取，切平台后无需重建按钮文案就会跟上。
+         */
+        private static String refreshTooltipText() {
+            MusicPlatform platform = NeteaseMusicService.getCurrentPlatform();
+            if (platform == MusicPlatform.QQ || platform == MusicPlatform.KUGOU
+                    || platform == MusicPlatform.BILIBILI || platform == MusicPlatform.QISHUI) {
+                return "刷新" + platform.getDisplayName() + "歌单";
+            }
+            if (platform == MusicPlatform.YOUTUBE) {
+                return "刷新账号歌单（YouTube 无账号歌单）";
+            }
+            // 酷我 / 咪咕 / GD / 系统播放器这些模式，侧栏账号歌单栏兜底显示网易云。
+            return "刷新网易云歌单";
+        }
+
+        /**
+         * 悬浮说明：停够 {@link #TOOLTIP_DELAY_MS} 后在按钮上方浮出一行小字，随整棵树的
+         * {@code getAlpha()} 一起淡入淡出。
+         *
+         * <p>画在按钮自己的 onRender 末尾而不是 NavigateBar 那一层：说明浮在操作条上方，
+         * 碰不到后渲染的兄弟按钮；未读小圆点已经开了「这颗按钮画自身边界外元素」的先例。
+         * 底板不透明——它下面就是歌单行和它们的悬停高亮，半透明会把两层字叠在一起读不清，
+         * 这条和搜索联想面板的内层是同一个结论。</p>
+         */
+        private void renderTooltip() {
+            if (hoverBeganAt == 0L) return;
+            long held = System.currentTimeMillis() - hoverBeganAt;
+            if (held < TOOLTIP_DELAY_MS) return;
+            float reveal = Math.min(1f, (held - TOOLTIP_DELAY_MS) / (float) TOOLTIP_FADE_MS);
+            float alpha = getAlpha() * reveal;
+
+            CFontRenderer font = FontManager.pf11;
+            if (font == null) return; // 字体未就绪就不画这一层，与 LabelWidget 的兜底同一条规则
+            String text = tooltipText();
+            double textWidth = font.getStringWidthD(text);
+            double textHeight = font.getStringHeight(text);
+            double padX = 7, padY = 3.5;
+            double width = textWidth + padX * 2;
+            double height = textHeight + padY * 2;
+            double x = getX() + getWidth() * .5 - width * .5;
+            double y = getY() - height - 4;
+            // 首颗按钮贴着侧栏左缘，按按钮中心对齐会把说明探出侧栏外，左右夹回来。
+            AbstractWidget<?> sidebar = getParent() != null ? getParent().getParent() : null;
+            if (sidebar != null && width < sidebar.getWidth() - 4) {
+                x = Math.max(sidebar.getX() + 2,
+                        Math.min(x, sidebar.getX() + sidebar.getWidth() - 2 - width));
+            }
+            roundedRect(x - 1, y - 1, width + 2, height + 2, 6,
+                    RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.BORDER), alpha));
+            roundedRect(x, y, width, height, 5,
+                    RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND), alpha));
+            font.drawCenteredString(text, x + width * .5, y + padY,
+                    RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), alpha));
         }
 
         /**

@@ -24,7 +24,8 @@ import com.muoniumplayer.core.settings.ConfigPaths;
  *
  * <ol>
  *   <li><b>Skija 默认路径</b>：直接调 {@code Library.load()}，让它自己找、自己解压到临时目录。
- *       主包内置 {@code skija-windows-x64}，所以 Windows 用户走的就是这一条，与历史行为完全一致；</li>
+ *       主包已不内置任何平台的原生库（全平台走伴生包自动下载），这条通常只在用户用
+ *       {@code skija.library.path} 自指目录时走通；</li>
  *   <li><b>伴生包目录</b>：{@code config/muonium/native/skija/} 下面用户自己解压出来的
  *       {@code libskija.so}/{@code skija.dll}/{@code libskija.dylib}。Linux / macOS / Android
  *       走这一条——主包不带这些平台的原生库（全带会让 jar 从 58 MB 涨到 121 MB，
@@ -33,9 +34,9 @@ import com.muoniumplayer.core.settings.ConfigPaths;
  *       嵌套 jar，由本类自己解到 {@code <root>/<版本>/extracted/<platform>/} 再指给 Skija。</li>
  * </ol>
  *
- * <p>非 Windows 平台连一个磁盘候选都没有时，还会走一次<b>自动下载</b>
+ * <p>任何平台连一个磁盘候选都没有时，都会走一次<b>自动下载</b>
  * （{@link SkijaCompanionDownload}）：按本机判定平台从清单仓库拉同名伴生包、校验字节数与
- * sha256 后解到伴生包目录，再回头走上面第 2 条路径。下载全程在后台线程，渲染线程不等它。
+ * sha256 后解到伴生包目录，装好即置「必须重启」的闸。下载全程在后台线程，渲染线程不等它。
  *
  * <p>候选的查找、排序与版本校验都在 {@link SkijaNativeCatalog} 里，本类只管「试」与「记状态」。
  *
@@ -220,7 +221,7 @@ public final class SkijaNatives {
         List<String> attempted = new ArrayList<>();
         List<String> rejectedOnDisk = new ArrayList<>();
 
-        // ---- 1. Skija 默认流程（Windows 主路径，也尊重用户自己设的 skija.library.path）----
+        // ---- 1. Skija 默认流程（现在通常只有 skija.library.path 自指目录能走通）----
         if (attempt(null, "Skija 默认路径（自行定位平台包并解压到临时目录）", attempted)) {
             return adopt(null, "Skija 默认路径", mapped, attempted, rejectedOnDisk, true, null);
         }
@@ -347,9 +348,10 @@ public final class SkijaNatives {
     /**
      * 允许重新评估一次加载。
      *
-     * <p>存在的理由：现在的主包只带 Windows 原生库，非 Windows 用户要么装伴生包、要么改配置目录，
-     * 这两件事都可能发生在游戏已经跑起来之后。{@code loaded} 一旦缓存成 false 就再也不会回头，
-     * 于是「装好了但没重启」和「压根没装」在屏幕上长得一样。{@code SkijaHost} 按退避窗口调本方法。
+     * <p>存在的理由：主包不带任何平台的原生库（全走伴生包自动下载），但用户也可以手动装包、
+     * 改配置目录、用 JVM 参数指文件，这些都可能发生在游戏已经跑起来之后。{@code loaded}
+     * 一旦缓存成 false 就再也不会回头，于是「装好了但没重启」和「压根没装」在屏幕上长得一样。
+     * {@code SkijaHost} 按退避窗口调本方法。
      *
      * <p>已经成功的情况下什么都不做——原生库加载进来就退不掉，重置缓存只会让下一次
      * 在已经可用的库上白试一次。

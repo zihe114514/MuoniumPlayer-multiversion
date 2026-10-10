@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * 酷狗音乐的宿主适配层。
@@ -1289,6 +1290,59 @@ public final class KuGouMusicService {
                 }
             }
         }, "KuGou Account");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /**
+     * 侧栏刷新按钮：无视「已加载」强制重拉账号歌单。
+     *
+     * <p>ensure 那条路一局只会拉一次，没有这个入口侧栏快照就再也不更新。结果在
+     * <b>后台线程</b>回调（UI 调用方自己切主线程）；刷新已在路上时被 loading 标志挡住
+     * 并立刻回报失败，由调用方决定怎么提示。{@link #refreshUserPlaylists(boolean)} 内部
+     * 吞异常且失败保留旧快照，成败最终看 {@link #areUserPlaylistsLoaded()}。</p>
+     */
+    public static void forceRefreshUserPlaylistsAsync(Consumer<PlaylistRefreshResult> callback) {
+        long startedAt = System.currentTimeMillis();
+        if (!isLoggedIn()) {
+            if (callback != null) callback.accept(PlaylistRefreshResult.failure(
+                    System.currentTimeMillis() - startedAt, "未登录酷狗账号"));
+            return;
+        }
+        synchronized (PLAYLIST_LOCK) {
+            if (userPlaylistsLoading) {
+                if (callback != null) callback.accept(PlaylistRefreshResult.failure(
+                        System.currentTimeMillis() - startedAt, "酷狗歌单正在刷新中"));
+                return;
+            }
+            userPlaylistsLoading = true;
+            userPlaylistsLastAttempt = System.currentTimeMillis();
+        }
+
+        Thread thread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                PlaylistRefreshResult outcome;
+                try {
+                    refreshUserPlaylists(true);
+                    outcome = userPlaylistsLoaded
+                            ? PlaylistRefreshResult.success(System.currentTimeMillis() - startedAt, userPlaylists.size())
+                            : PlaylistRefreshResult.failure(System.currentTimeMillis() - startedAt, "酷狗歌单刷新失败");
+                } catch (Throwable throwable) {
+                    outcome = PlaylistRefreshResult.failure(System.currentTimeMillis() - startedAt, throwable.getMessage());
+                } finally {
+                    synchronized (PLAYLIST_LOCK) {
+                        userPlaylistsLoading = false;
+                    }
+                }
+                if (callback != null) {
+                    try {
+                        callback.accept(outcome);
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
+        }, "KuGou Account Refresh");
         thread.setDaemon(true);
         thread.start();
     }

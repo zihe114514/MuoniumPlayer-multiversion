@@ -31,6 +31,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -1100,6 +1101,56 @@ public final class QishuiMusicService {
                 }
             }
         }, "Qishui Account");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /**
+     * 侧栏刷新按钮：无视「已加载」强制重拉账号歌单。
+     *
+     * <p>ensure 那条路一局只会拉一次，没有这个入口侧栏快照就再也不更新。结果在
+     * <b>后台线程</b>回调（UI 调用方自己切主线程）；刷新已在路上时被 loading 标志挡住
+     * 并立刻回报失败，由调用方决定怎么提示。{@link #refreshUserPlaylistsSnapshot()} 内部
+     * 吞异常且失败保留旧快照，成败最终看 {@link #areUserPlaylistsLoaded()}。</p>
+     */
+    public static void forceRefreshUserPlaylistsAsync(Consumer<PlaylistRefreshResult> callback) {
+        long startedAt = System.currentTimeMillis();
+        if (!isLoggedIn()) {
+            if (callback != null) callback.accept(PlaylistRefreshResult.failure(
+                    System.currentTimeMillis() - startedAt, "未登录汽水音乐账号"));
+            return;
+        }
+        synchronized (USER_PLAYLIST_LOCK) {
+            if (userPlaylistsLoading) {
+                if (callback != null) callback.accept(PlaylistRefreshResult.failure(
+                        System.currentTimeMillis() - startedAt, "汽水歌单正在刷新中"));
+                return;
+            }
+            userPlaylistsLoading = true;
+            userPlaylistsLastAttempt = System.currentTimeMillis();
+        }
+
+        Thread thread = new Thread(() -> {
+            PlaylistRefreshResult outcome;
+            try {
+                refreshUserPlaylistsSnapshot();
+                outcome = userPlaylistsLoaded
+                        ? PlaylistRefreshResult.success(System.currentTimeMillis() - startedAt, userPlaylistsSnapshot.size())
+                        : PlaylistRefreshResult.failure(System.currentTimeMillis() - startedAt, "汽水歌单刷新失败");
+            } catch (Throwable throwable) {
+                outcome = PlaylistRefreshResult.failure(System.currentTimeMillis() - startedAt, throwable.getMessage());
+            } finally {
+                synchronized (USER_PLAYLIST_LOCK) {
+                    userPlaylistsLoading = false;
+                }
+            }
+            if (callback != null) {
+                try {
+                    callback.accept(outcome);
+                } catch (Throwable ignored) {
+                }
+            }
+        }, "Qishui Account Refresh");
         thread.setDaemon(true);
         thread.start();
     }

@@ -38,12 +38,13 @@ class SkijaCompanionDownloadStaticTest {
 
     private static final String PINNED = SkijaNatives.PINNED_SKIJA_VERSION;
 
-    /** 应该托管伴生包的六个平台（与 build.gradle 的 skijaCompanionPlatforms 同一份）。 */
+    /** 应该托管伴生包的七个平台（与 build.gradle 的 skijaCompanionPlatforms 同一份）。 */
     private static final List<String> PLATFORMS = List.of(
-            "linux/x64", "linux/arm64", "macos/x64", "macos/arm64", "android/arm64", "android/x64");
+            "windows/x64", "linux/x64", "linux/arm64", "macos/x64", "macos/arm64",
+            "android/arm64", "android/x64");
 
     @Test
-    @DisplayName("六个平台一个不少：文件名与打包任务、提示层三处同一拼法")
+    @DisplayName("七个平台一个不少：文件名与打包任务、提示层三处同一拼法")
     void tableCoversEveryShippedPlatform() {
         Set<String> seen = new HashSet<>();
         for (String platform : PLATFORMS) {
@@ -62,9 +63,6 @@ class SkijaCompanionDownloadStaticTest {
                     "sha256 只许十六进制字符：" + platform);
         }
         assertEquals(PLATFORMS.size(), SkijaCompanionDownload.PACKS.size(), "表里不能多出计划外的平台");
-        // Windows 走主包内置（classpath 里就带着 windows-x64），永远不该出现在下载表里
-        assertNull(SkijaCompanionDownload.packFor("windows/x64"),
-                "Windows 不许来自动下载，主包已内置");
         assertNull(SkijaCompanionDownload.packFor("linux/riscv64"), "没有包的平台要老实返回 null");
     }
 

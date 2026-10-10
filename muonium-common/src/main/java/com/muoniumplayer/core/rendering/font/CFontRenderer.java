@@ -323,6 +323,44 @@ public class CFontRenderer implements Closeable, SharedConstants {
         buildSkiaFonts();
     }
 
+    /**
+     * 按<b>对象身份</b>把回退链里的某个字体换成另一个实例：完整字体包下载完成后的热启用入口。
+     *
+     * <p>和 {@link #retarget} 的分工：retarget 换主字体、锁行盒，是"用户换界面字体"的入口；
+     * 本方法只认回退链里与 {@code expected} 同一个对象的槽位（子集→同款全量，度量一致，
+     * 不需要锁行盒），主字体一概不动。渲染器实例保持不变，所有缓存过本实例的地方——
+     * 预热的控件树、{@code GlyphInkMetrics} 的键——继续有效。</p>
+     *
+     * <p>字形索引与宽度缓存随 {@link #buildSkiaFonts()} 一并失效；已栅格化进图集的旧字形
+     * 是同一款字体的同一批轮廓，不清理也不会画错，只是图集里的空洞无法回收。</p>
+     *
+     * @param expected    要被换掉的字体实例（主包里的精简子集那个 {@code Font}）
+     * @param replacement 同一款字体的完整版实例，必须<b>先</b>在 {@code SkijaText} 登记过字节
+     * @return 有槽位被换掉返回 true；回退链里没有这个实例则什么都不做并返回 false
+     */
+    public boolean swapFallbackFont(Font expected, Font replacement) {
+        if (expected == null || replacement == null || expected == replacement) {
+            return false;
+        }
+        boolean changed = false;
+        for (int i = 0; i < this.sourceFallbacks.length; i++) {
+            if (this.sourceFallbacks[i] == expected) {
+                this.sourceFallbacks[i] = replacement;
+                changed = true;
+            }
+        }
+        if (!changed) {
+            return false;
+        }
+        this.fallBackFonts = new Font[this.sourceFallbacks.length];
+        for (int i = 0; i < this.sourceFallbacks.length; i++) {
+            this.fallBackFonts[i] = this.sourceFallbacks[i]
+                    .deriveFont(this.sizePx * 2 * cffScaleFactor(this.sourceFallbacks[i]));
+        }
+        buildSkiaFonts();
+        return true;
+    }
+
     public static String stripControlCodes(String text) {
         char[] chars = text.toCharArray();
         StringBuilder f = new StringBuilder();

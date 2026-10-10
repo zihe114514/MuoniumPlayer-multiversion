@@ -1,5 +1,5 @@
 plugins {
-    id 'fabric-loom' version '1.17-SNAPSHOT'
+    id 'fabric-loom' version '1.17.20'
 }
 
 base {
@@ -126,7 +126,6 @@ dependencies {
     // 故这些不重复打包（见 build/bundle-deps.txt 的解析结果）。
     implementation include('com.google.zxing:core:3.5.3')
     implementation include('org.mozilla:rhino:1.7.15')
-    implementation include('com.google.javascript:closure-compiler:v20240317')
     // MC 1.20.1 自带 gson 2.10，而 Cadence 相关代码按 2.11 API 编写，必须自带 2.11。
     implementation include('com.google.code.gson:gson:2.11.0')
     // JNA：DeviceIdGenerator 读注册表 CPU 名 + CursorUtils 切光标。
@@ -134,7 +133,7 @@ dependencies {
     implementation include('net.java.dev.jna:jna-platform:5.14.0')
     // 对应 libs/ 下的三个本地 jar（Cadence 音源 SDK / zstd / Kotlin 运行时）。
     implementation include('muoniumplayer.libs:music-api:0.1.1')
-    implementation include('muoniumplayer.libs:zstd-jni:1.5.6-9-forge189')
+    implementation include('muoniumplayer.libs:zstd-jni:1.5.6-9-forge189-slim')
 
     // ==================== Skija（渲染层重写）====================
     // Skia 的 Java 绑定。渲染层重写后，文字整形/光栅、圆角、裁剪、模糊、渐变、阴影
@@ -143,15 +142,14 @@ dependencies {
     // 三个 artifact 的分工：
     //   skija-shared        纯 Java 绑定层（0.4 MB）
     //   types               Rect / RRect / Point 等值类型，skija-shared 的编译期依赖
-    //   skija-<os>-<arch>   原生库 + ICU 数据（Windows x64 约 10.6 MB 压缩 / 23 MB 解压）
-    //
-    // 原生库当前只打包开发机平台。发布前需要把四个平台都加上（合计约 46 MB），
-    // 见 gradle.properties 的 skija_natives；SkijaNatives 会按 os.name/os.arch 自动挑资源路径。
+    // 原生库不再随主包内置：Windows 与其余六个平台一样走伴生包自动下载
+    // （SkijaCompanionDownload，见 docs/实现约定-渲染原生库自动下载.md）。
     // Kotlin 运行时由 Fabric Language Kotlin 统一提供，不再随本 mod 打包。
     implementation "net.fabricmc:fabric-language-kotlin:${project.fabric_language_kotlin_version}"
     implementation include('io.github.humbleui:skija-shared:0.143.17')
     implementation include('io.github.humbleui:types:0.2.0')
-    implementation include("io.github.humbleui:skija-" + project.skija_natives + ":0.143.17")
+    // 开发期 runClient 用：只进运行时类路径，不进成品 jar（成品全平台走伴生包自动下载）
+    runtimeOnly 'io.github.humbleui:skija-windows-x64:0.143.17'
     // skija-shared 的 provided 依赖，只在编译期需要（@Nullable 之类）。
     compileOnly 'org.jetbrains:annotations:20.1.0'
 
@@ -167,11 +165,16 @@ dependencies {
     // 离线探针（不需要 GL / 不需要启动客户端就能跑的断言）。
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
+    // 离线光栅测试要在 JUnit 里真跑 Skia：原生库已不随主包内置，
+    // 这里只进测试类路径，不会进成品 jar
+    testImplementation 'io.github.humbleui:skija-windows-x64:0.143.17'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 test {
     useJUnitPlatform()
+    // 测试 JVM 不许真去下载伴生包：断网/超时会拖垮整轮测试
+    systemProperty 'muonium.skija.autoDownload', 'false'
     testLogging {
         events 'passed', 'failed', 'skipped'
         showStandardStreams = false

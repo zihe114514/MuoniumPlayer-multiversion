@@ -310,6 +310,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     // 始终使用未变换的 Minecraft GUI 宽度，以便调用方一次性完成换算。
     public static void render() {
+        // 完整字体下载的渲染线程钩子挂在这里（本方法每帧、且只在渲染线程上跑）：
+        // 就绪则热启用，未就绪则节流重评。五棵版本树都只调 render()，接线零改动。
+        com.muoniumplayer.core.management.FontAssetDownload.pollFromRenderThread();
         TransitionPerformanceBudget.tick();
         prewarmPlayerLayoutOnce();
         INSTANCE.renderInternal();
@@ -587,6 +590,52 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     public static void showPlaylistRefreshFailure(String message) {
         completePersistentNotice(IslandNoticeType.REFRESHING, IslandNoticeType.REFRESH_ERROR,
                 "歌单同步失败", safeNoticeValue(message, "网络请求失败"));
+    }
+
+    /**
+     * 完整字体包的下载进度卡。持久卡、同频道替换式更新（与歌单同步的
+     * REFRESHING 同一形态）：下载线程节流推送，界面想看随时能看到走到哪了。
+     */
+    public static void showFontAssetProgress(int percent) {
+        int safePercent = Math.max(0, Math.min(100, percent));
+        publishNotice(IslandNoticeType.FONT_ASSET, "字体资源",
+                safePercent >= 100 ? "下载完成，正在启用完整字体…" : "正在下载完整字体 " + safePercent + "%",
+                true);
+    }
+
+    /** 完整字体下载/启用失败：一句人话 + 冷却后自动重试的指引。 */
+    public static void showFontAssetFailure(String reason) {
+        completePersistentNotice(IslandNoticeType.FONT_ASSET, IslandNoticeType.FONT_ASSET_ERROR,
+                "字体资源下载失败", safeNoticeValue(reason, "网络不可用") + " · 稍后自动重试");
+    }
+
+    /** 完整字体已热启用：本次会话起生僻字与繁体即刻可用。 */
+    public static void showFontAssetReady() {
+        completePersistentNotice(IslandNoticeType.FONT_ASSET, IslandNoticeType.FONT_ASSET_SUCCESS,
+                "字体资源", "完整字体已启用 · 生僻字可用");
+    }
+
+    /**
+     * LX 脚本转译器（Closure Compiler）的下载进度卡。进入自定义源界面才触发下载，
+     * 与字体进度卡同一形态：持久卡、同频道替换式更新、下载线程节流推送。
+     */
+    public static void showLxTranspilerProgress(int percent) {
+        int safePercent = Math.max(0, Math.min(100, percent));
+        publishNotice(IslandNoticeType.LX_TRANSPILER, "脚本转译器",
+                safePercent >= 100 ? "下载完成，下次转译脚本时启用…" : "正在下载脚本转译器 " + safePercent + "%",
+                true);
+    }
+
+    /** 转译器下载失败：一句人话 + 冷却后自动重试的指引。 */
+    public static void showLxTranspilerFailure(String reason) {
+        completePersistentNotice(IslandNoticeType.LX_TRANSPILER, IslandNoticeType.LX_TRANSPILER_ERROR,
+                "脚本转译器下载失败", safeNoticeValue(reason, "网络不可用") + " · 稍后自动重试");
+    }
+
+    /** 转译器已就位：自定义源的新语法脚本从此能正常降级。 */
+    public static void showLxTranspilerReady() {
+        completePersistentNotice(IslandNoticeType.LX_TRANSPILER, IslandNoticeType.LX_TRANSPILER_SUCCESS,
+                "脚本转译器", "已就绪 · 新语法脚本可用");
     }
 
     /**
@@ -2699,7 +2748,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             return;
         }
         if (type == IslandNoticeType.REFRESHING || type == IslandNoticeType.PLAYLIST_TRACK_ADDING
-                || type == IslandNoticeType.TRANSCODING || type == IslandNoticeType.GD_SOURCE_LOADING) {
+                || type == IslandNoticeType.TRANSCODING || type == IslandNoticeType.GD_SOURCE_LOADING
+                || type == IslandNoticeType.FONT_ASSET
+                || type == IslandNoticeType.LX_TRANSPILER) {
             renderSpinner(centerX, centerY, alpha, accentColor, now, false);
             return;
         }
@@ -2711,7 +2762,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 || type == IslandNoticeType.TRANSCODE_SUCCESS || type == IslandNoticeType.GD_SOURCE_HEALTHY
                 || type == IslandNoticeType.RECENT_PLAY_SUCCESS
                 || type == IslandNoticeType.LISTENING_DURATION_SUCCESS
-                || type == IslandNoticeType.MODEL_INFERENCE_SUCCESS) {
+                || type == IslandNoticeType.MODEL_INFERENCE_SUCCESS
+                || type == IslandNoticeType.FONT_ASSET_SUCCESS
+                || type == IslandNoticeType.LX_TRANSPILER_SUCCESS) {
             drawIslandStatusIcon(IslandStatusIcons.SUCCESS, centerX, centerY, alpha,
                     hexColor(.70f, 1f, .77f, alpha));
             return;
@@ -2735,7 +2788,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
         if (type == IslandNoticeType.REFRESH_ERROR || type == IslandNoticeType.PLAYLIST_TRACK_ADD_ERROR
                 || type == IslandNoticeType.PLAYBACK_ERROR || type == IslandNoticeType.GD_SOURCE_ERROR
-                || type == IslandNoticeType.MODEL_INFERENCE_FAILURE) {
+                || type == IslandNoticeType.MODEL_INFERENCE_FAILURE
+                || type == IslandNoticeType.FONT_ASSET_ERROR
+                || type == IslandNoticeType.LX_TRANSPILER_ERROR) {
             drawRotatedPill(centerX, centerY, 10.0, 1.25, 45f,
                     hexColor(1f, .48f, .50f, alpha));
             drawRotatedPill(centerX, centerY, 10.0, 1.25, -45f,
@@ -3286,6 +3341,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             case GD_SOURCE_SUCCESS:
             case GD_SOURCE_HEALTHY:
             case MODEL_INFERENCE_SUCCESS:
+            case FONT_ASSET_SUCCESS:
+            case LX_TRANSPILER_SUCCESS:
                 return BounceIslandMath.TINT_CATEGORY_SUCCESS;
             case REFRESH_ERROR:
             case PLAYLIST_TRACK_ADD_ERROR:
@@ -3295,6 +3352,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             case LISTENING_DURATION_ERROR:
             case GD_SOURCE_ERROR:
             case MODEL_INFERENCE_FAILURE:
+            case FONT_ASSET_ERROR:
+            case LX_TRANSPILER_ERROR:
                 return BounceIslandMath.TINT_CATEGORY_DANGER;
             case REFRESHING:
             case PLAYLIST_TRACK_ADDING:
@@ -3304,6 +3363,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             case MODEL_INFERENCE:
             case AUTOMIX_BLENDING:
             case VOLUME:
+            case FONT_ASSET:
+            case LX_TRANSPILER:
                 return BounceIslandMath.TINT_CATEGORY_PROGRESS;
             default:
                 return BounceIslandMath.TINT_CATEGORY_NEUTRAL;
@@ -3322,6 +3383,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             case GD_SOURCE_SUCCESS:
             case GD_SOURCE_HEALTHY:
             case MODEL_INFERENCE_SUCCESS:
+            case FONT_ASSET_SUCCESS:
+            case LX_TRANSPILER_SUCCESS:
             case PLAY_NEXT:
                 return 1;
             case REFRESH_ERROR:
@@ -3333,6 +3396,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             case LISTENING_DURATION_ERROR:
             case GD_SOURCE_ERROR:
             case MODEL_INFERENCE_FAILURE:
+            case FONT_ASSET_ERROR:
+            case LX_TRANSPILER_ERROR:
                 return -1;
             default:
                 return 0;
@@ -3623,7 +3688,19 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         /** 无缝重叠正在进行：两首歌同时出声的那几秒。文案带扫光，和已就绪/开关提示区分开。 */
         AUTOMIX_BLENDING,
         PLAY_NEXT,
-        PLAYBACK_TOGGLE
+        PLAYBACK_TOGGLE,
+        /** 完整字体包下载中（持久卡，与 REFRESHING 同形态：转子 + 进度百分比）。 */
+        FONT_ASSET,
+        /** 完整字体已热启用。 */
+        FONT_ASSET_SUCCESS,
+        /** 完整字体下载失败（会自动重试）。 */
+        FONT_ASSET_ERROR,
+        /** LX 脚本转译器下载中（进入自定义源界面触发，持久卡）。 */
+        LX_TRANSPILER,
+        /** 转译器已就位（下次转译脚本时懒加载）。 */
+        LX_TRANSPILER_SUCCESS,
+        /** 转译器下载失败（会自动重试，期间转译走原始脚本降级）。 */
+        LX_TRANSPILER_ERROR
     }
 
 

@@ -863,6 +863,9 @@ public final class MusicSourceOverlay extends NcmSheet {
     private void showLxSources() {
         page = PAGE_LX;
         lxRevision = LxSourceService.getRevision();
+        // 转译器在进游戏时就开始下载（见 MuoniumPlayerExtension.init）；这里再兜一次重评：
+        // 启动时网络没好、预算冷却刚过期的会话，用户进这一页时补触发，不用等下次启动。
+        com.muoniumplayer.core.ncm.lxsource.ClosureCompilerDownload.ensureDownload();
         beginPage();
 
         final List<LxSourceStore.Entry> scripts = LxSourceStore.list();
@@ -1389,17 +1392,26 @@ public final class MusicSourceOverlay extends NcmSheet {
         if (!LxSourceService.isEnabled()) return "未启用脚本，播放走内置解析链路";
         LxRuntime runtime = LxSourceService.getRuntime();
         if (runtime == null) return "已选中脚本，等待加载";
+        final String base;
         switch (runtime.getState()) {
             case READY:
-                return "已就绪 · 可解析 " + String.join("/", runtime.getSources().keySet())
+                base = "已就绪 · 可解析 " + String.join("/", runtime.getSources().keySet())
                         + (runtime.isTranspiled() ? " · 已转译为 ES5" : "");
+                break;
             case LOADING:
-                return "正在转译并执行脚本…";
+                base = "正在转译并执行脚本…";
+                break;
             case FAILED:
-                return "加载失败：" + runtime.getError();
+                base = "加载失败：" + runtime.getError();
+                break;
             default:
-                return "已停止";
+                base = "已停止";
+                break;
         }
+        // 转译器没就绪时在这行补一句下载状态：用户能看出「新语法脚本暂时解析不了」
+        // 是转译器还在路上，而不是脚本坏了。就绪时 suffix 为 null、一行照旧。
+        String transpiler = com.muoniumplayer.core.ncm.lxsource.ClosureCompilerDownload.headlineSuffix();
+        return transpiler == null ? base : base + " · " + transpiler;
     }
 
     /** 取 console 尾巴的第 index 行（不足时给空串，让那一行自然消失）。 */

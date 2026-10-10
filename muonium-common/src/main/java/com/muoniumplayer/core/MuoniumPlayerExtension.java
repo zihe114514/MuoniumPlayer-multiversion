@@ -61,6 +61,9 @@ public class MuoniumPlayerExtension {
         // 异步起自定义源：启用了脚本时这一步要转译并执行一整份 JS（官方参考源约 2.7 秒），
         // 放在主线程上就是进游戏前多一次卡顿；没启用任何脚本时它连 Rhino 都不会去碰。
         MultiThreadingUtil.runAsync(LxSourceService::init);
+        // 脚本转译器（13.7 MB 的 closure jar，不进主包）与完整字体同期、进游戏就拉：
+        // 用户真要用自定义源时多半已经就位。下载在后台守护线程上，这里只做判断就走。
+        com.muoniumplayer.core.ncm.lxsource.ClosureCompilerDownload.ensureDownload();
         CloudMusic.quality = NCMPlayerConfig.getAudioQuality();
         MultiThreadingUtil.runAsync(CloudMusic::initNCM);
         Reflection.init(api);

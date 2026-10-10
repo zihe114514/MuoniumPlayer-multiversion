@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 /**
  * 哔哩哔哩的收藏夹链路：读取我的/订阅的收藏夹、取其中内容，以及把一条稿件收藏/取消收藏。
@@ -109,6 +110,51 @@ public final class BilibiliFavoriteService {
             } finally {
                 foldersLoading = false;
                 if (onComplete != null) MultiThreadingUtil.runOnMainThread(onComplete);
+            }
+        });
+    }
+
+    /**
+     * 侧栏刷新按钮：无视已有缓存强制重拉收藏夹列表。
+     *
+     * <p>ensure 那条路命中缓存就返回，没有这个入口侧栏快照就再也不更新。结果在
+     * <b>主线程</b>回调（与 ensure 的回调同一条规则）；刷新已在路上时被 loading 标志
+     * 挡住并立刻回报失败，由调用方决定怎么提示。{@link #refreshFolders(String)} 抛异常
+     * 时不碰 {@code folderCache}，旧数据原样保留。</p>
+     */
+    public static void forceRefreshUserPlaylistsAsync(Consumer<PlaylistRefreshResult> callback) {
+        long startedAt = System.currentTimeMillis();
+        String mid = BilibiliMusicService.getAccountId();
+        if (mid.isEmpty()) {
+            if (callback != null) MultiThreadingUtil.runOnMainThread(() ->
+                    callback.accept(PlaylistRefreshResult.failure(
+                            System.currentTimeMillis() - startedAt, "未登录哔哩哔哩账号")));
+            return;
+        }
+        if (foldersLoading) {
+            if (callback != null) MultiThreadingUtil.runOnMainThread(() ->
+                    callback.accept(PlaylistRefreshResult.failure(
+                            System.currentTimeMillis() - startedAt, "B站收藏夹正在刷新中")));
+            return;
+        }
+        foldersLoading = true;
+        MultiThreadingUtil.runAsync(() -> {
+            PlaylistRefreshResult outcome;
+            try {
+                List<PlayList> folders = refreshFolders(mid);
+                outcome = PlaylistRefreshResult.success(System.currentTimeMillis() - startedAt, folders.size());
+            } catch (Throwable throwable) {
+                String detail = throwable.getMessage();
+                outcome = PlaylistRefreshResult.failure(System.currentTimeMillis() - startedAt,
+                        detail == null || detail.trim().isEmpty() ? "网络请求失败" : detail);
+            } finally {
+                foldersLoading = false;
+            }
+            if (callback != null) {
+                // try 与 catch 各赋值一次，outcome 因此不是 effectively final，
+                // lambda 捕获需要一份只赋值一次的拷贝。
+                final PlaylistRefreshResult result = outcome;
+                MultiThreadingUtil.runOnMainThread(() -> callback.accept(result));
             }
         });
     }

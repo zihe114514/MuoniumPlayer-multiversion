@@ -146,7 +146,8 @@ public class FontManager extends AbstractManager {
         private final CFontRenderer renderer;
         private final boolean bold;
         private final Font builtinMain;
-        private final Font builtinFallback;
+        /** 完整字体热启用时会被换成全量实例（见 {@link #swapBuiltinFallback}），不能 final。 */
+        private Font builtinFallback;
         private final FontKerning builtinKerning;
         /**
          * 内置字体下的行盒，锁定用。
@@ -170,6 +171,18 @@ public class FontManager extends AbstractManager {
                 this.lineBox = this.renderer.lineBox();
             }
             return this.lineBox;
+        }
+
+        /**
+         * 完整字体热启用时同步换掉登记的内置回退：之后用户再换字体/换回内置，
+         * 组装的回退链里拿到的是全量实例而不是子集。
+         */
+        private void swapBuiltinFallback(Font oldNormal, Font newNormal, Font oldBold, Font newBold) {
+            if (this.builtinFallback == oldNormal) {
+                this.builtinFallback = newNormal;
+            } else if (this.builtinFallback == oldBold) {
+                this.builtinFallback = newBold;
+            }
         }
     }
 
@@ -207,6 +220,52 @@ public class FontManager extends AbstractManager {
     /** 内置正文字体的主字体实例。用户挑的字体解析不出 AWT 句柄时拿它兜底量墨迹。 */
     public static Font builtinTextMain(boolean bold) {
         return readFont(builtinMainPath(bold));
+    }
+
+    /** 从字体字节建 AWT Font 并登记给 Skia；完整字体包在下载线程上先行解析时用。 */
+    static Font createRegisteredFont(byte[] data) throws Exception {
+        return createAndRegister(new java.io.ByteArrayInputStream(data));
+    }
+
+    /**
+     * 完整字体热启用：把所有渲染器回退链里的<b>子集</b>苹方换成同款全量实例。
+     *
+     * <p>调用约定：{@code newNormal}/{@code newBold} 必须已在 {@code SkijaText}
+     * 登记过字节（{@link FontAssetDownload} 在下载线程上解析好再传过来），
+     * 且本方法只能在<b>渲染线程</b>上调——引用替换本身不碰 GL，但渲染器内部的
+     * Skia 字体对象要就地重建。渲染器实例一概不换：预热控件树、按实例缓存的
+     * 墨迹度量全部继续有效。</p>
+     *
+     * @return 成功换掉返回 true；启动路径没走全（缓存里没有旧实例）时返回 false，
+     *         完整字体留待下次启动由 {@link #readFont} 的缓存优先路径自然启用
+     */
+    public static boolean applyFullFontAssets(Font newNormal, Font newBold) {
+        String normalPath = builtinFallbackPath(false);
+        String boldPath = builtinFallbackPath(true);
+        Font oldNormal = fonts.get(normalPath);
+        Font oldBold = fonts.get(boldPath);
+        if (oldNormal == null || oldBold == null || newNormal == null || newBold == null) {
+            return false;
+        }
+        fonts.put(normalPath, newNormal);
+        fonts.put(boldPath, newBold);
+        int swappedRenderers = 0;
+        for (CFontRenderer renderer : getAllFontRenderers()) {
+            if (renderer == null) {
+                continue;
+            }
+            boolean hit = renderer.swapFallbackFont(oldNormal, newNormal);
+            hit |= renderer.swapFallbackFont(oldBold, newBold);
+            if (hit) {
+                swappedRenderers++;
+            }
+        }
+        for (TextSlot slot : TEXT_SLOTS) {
+            slot.swapBuiltinFallback(oldNormal, newNormal, oldBold, newBold);
+        }
+        System.out.println("[MuoniumPlayer] 完整字体热启用：更新了 " + swappedRenderers
+                + " 个渲染器的回退链");
+        return true;
     }
 
     public static List<CFontRenderer> getAllFontRenderers() {
@@ -337,6 +396,9 @@ public class FontManager extends AbstractManager {
         // 用户上次选的界面字体。同步装：这时界面还没起来，几十毫秒没人看得见，而异步会让
         // 开头几帧先用内置字体画一遍再突然换掉。
         UiFontLibrary.bootstrap();
+        // 完整字体（两份全量苹方）没就位就在后台拉取：进度走灵动岛，装好由渲染线程
+        // 热启用（pollFromRenderThread）。本会话继续用主包里的精简子集，不阻塞启动。
+        FontAssetDownload.ensureFonts();
     }
     
     private static final HashMap<String, Font> fonts = new HashMap<>();
@@ -345,9 +407,7 @@ public class FontManager extends AbstractManager {
     private static Font readFont(String path) {
         return fonts.computeIfAbsent(path, p -> {
             try {
-                InputStream resourceAsStream = FontManager.class.getResourceAsStream(p);
-                byte[] data = readAll(resourceAsStream);
-                resourceAsStream.close();
+                byte[] data = readFontBytes(p);
                 Font font = Font.createFont(Font.TRUETYPE_FONT, new java.io.ByteArrayInputStream(data));
                 // 同一份字节既给 AWT（墨迹度量还在用它）也给 Skia（真正的光栅化）。
                 // 必须在这里登记：AWT 的 Font 对象拿不回字体文件的字节，
@@ -359,6 +419,27 @@ public class FontManager extends AbstractManager {
                 return null;
             }
         });
+    }
+
+    /**
+     * 取一份字体的字节：可下载的完整字体（苹方两份）优先读缓存目录——
+     * {@link FontAssetDownload} 装好的全量版；没有再读主包 classpath（精简子集）。
+     * 判据只看字节数是否等于钉住的全量值，sha256 在下载时已校验，启动路径不重算。
+     */
+    private static byte[] readFontBytes(String path) throws java.io.IOException {
+        String fileName = path.substring(path.lastIndexOf('/') + 1);
+        long pinned = FontAssetDownload.pinnedBytes(fileName);
+        if (pinned > 0) {
+            java.io.File cached = FontAssetDownload.cachedFile(fileName);
+            if (cached.isFile() && cached.length() == pinned) {
+                try (InputStream in = new java.io.FileInputStream(cached)) {
+                    return readAll(in);
+                }
+            }
+        }
+        try (InputStream resourceAsStream = FontManager.class.getResourceAsStream(path)) {
+            return readAll(resourceAsStream);
+        }
     }
 
     /**

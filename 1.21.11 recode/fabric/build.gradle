@@ -1,5 +1,5 @@
 plugins {
-    id 'fabric-loom' version '1.17-SNAPSHOT'
+    id 'fabric-loom' version '1.17.20'
 }
 
 base {
@@ -123,7 +123,6 @@ dependencies {
     // 那边用 shadow 把同一批库直接塞进 jar（见 neoforge/build.gradle）。
     implementation include('com.google.zxing:core:3.5.3')
     implementation include('org.mozilla:rhino:1.7.15')
-    implementation include('com.google.javascript:closure-compiler:v20240317')
     implementation include('com.google.code.gson:gson:2.11.0')
     // JNA：DeviceIdGenerator 读注册表 CPU 名 + CursorUtils 切光标。
     // 5.17.0 就是本版 MC 自带的那一份，嵌套 jar 与它同版本，进程里不再并存两套 com.sun.jna。
@@ -131,14 +130,15 @@ dependencies {
     implementation include('net.java.dev.jna:jna:5.17.0')
     implementation include('net.java.dev.jna:jna-platform:5.17.0')
     implementation include('muoniumplayer.libs:music-api:0.1.1')
-    implementation include('muoniumplayer.libs:zstd-jni:1.5.6-9-forge189')
+    implementation include('muoniumplayer.libs:zstd-jni:1.5.6-9-forge189-slim')
 
     // ==================== Skija（渲染层）====================
     // Kotlin 运行时由 Fabric Language Kotlin 统一提供，不再随本 mod 打包。
     implementation "net.fabricmc:fabric-language-kotlin:${project.fabric_language_kotlin_version}"
     implementation include('io.github.humbleui:skija-shared:0.143.17')
     implementation include('io.github.humbleui:types:0.2.0')
-    implementation include("io.github.humbleui:skija-" + project.skija_natives + ":0.143.17")
+    // 开发期 runClient 用：只进运行时类路径，不进成品 jar（成品全平台走伴生包自动下载）
+    runtimeOnly 'io.github.humbleui:skija-windows-x64:0.143.17'
     compileOnly 'org.jetbrains:annotations:20.1.0'
 
     // ==================== ModernUI（HUD 设置面板的可选外部渲染层）====================
@@ -153,11 +153,16 @@ dependencies {
     // 离线探针（不需要 GL / 不需要启动客户端就能跑的断言）。
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
+    // 离线光栅测试要在 JUnit 里真跑 Skia：原生库已不随主包内置，
+    // 这里只进测试类路径，不会进成品 jar
+    testImplementation 'io.github.humbleui:skija-windows-x64:0.143.17'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 test {
     useJUnitPlatform()
+    // 测试 JVM 不许真去下载伴生包：断网/超时会拖垮整轮测试
+    systemProperty 'muonium.skija.autoDownload', 'false'
     testLogging {
         events 'passed', 'failed', 'skipped'
         showStandardStreams = false
