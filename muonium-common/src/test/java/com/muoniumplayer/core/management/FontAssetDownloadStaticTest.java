@@ -54,7 +54,7 @@ class FontAssetDownloadStaticTest {
     }
 
     @Test
-    @DisplayName("三条镜像都是 https、都指向清单仓库的 fonts/ 目录")
+    @DisplayName("五条镜像都是 https、都指向清单仓库的 fonts/ 目录")
     void mirrorsPointAtTheManifestRepository() {
         assertEquals(5, FontAssetDownload.MIRRORS.size(), "镜像条数与 Skija 伴生包同一套策略");
         for (String mirror : FontAssetDownload.MIRRORS) {

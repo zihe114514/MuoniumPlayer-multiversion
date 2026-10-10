@@ -44,6 +44,12 @@ public final class NeteasePlaybackHistoryReporter {
         final Music startedSong = song;
         final PlayList startedSource = source;
         MultiThreadingUtil.runAsync(() -> {
+            // 打卡组件（zstd，登录时按需下载）没就绪就整轮安静跳过：打卡按天记账晚一轮无损失，
+            // 而每首歌都弹一张「失败」卡只会制造噪音。顺手补一次触发，接住启动时网络没好的会话。
+            if (ZstdNativeDownload.compressor() == null) {
+                ZstdNativeDownload.ensureJar();
+                return;
+            }
             // 上报开始也给一条反馈：走的是和上报结果同一条最低优先级排队通道，不会抢占任何
             // 用户主动触发的卡片，只是让"正在上报"这一段有可见状态而不是凭空出现结果。
             DownloadDynamicIsland.showNeteaseUploadStarted("听歌历史上报");
@@ -93,6 +99,12 @@ public final class NeteasePlaybackHistoryReporter {
         final int finalPlayedSeconds = (int) Math.min(Integer.MAX_VALUE, playedSeconds);
         final EndReason finalReason = reason;
         MultiThreadingUtil.runAsync(() -> {
+            // 与开始上报同一条门：组件没就绪整轮安静跳过（这次播放的时长记账随会话丢失，
+            // 但打卡按天记账，一首的缺口无感；组件就位后从下一首起自动恢复）。
+            if (ZstdNativeDownload.compressor() == null) {
+                ZstdNativeDownload.ensureJar();
+                return;
+            }
             DownloadDynamicIsland.showNeteaseUploadStarted("听歌时长上报");
             NeteaseClientLogUploader.UploadResult result =
                     NeteaseClientLogUploader.uploadPlayDuration(song, source, finalPlayedSeconds, finalReason);

@@ -1,8 +1,11 @@
 package com.muoniumplayer.core.screens.ncm.panels;
 
 import com.muoniumplayer.core.management.FontManager;
+import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.PersonalFmManager;
+import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.FontelloIcons;
@@ -190,7 +193,7 @@ public final class PersonalFmPanel extends NCMPanel {
 
         // 标题与副标题先装配：右边那两颗按钮要读它本帧的真实位置来对齐，而子组件是按列表
         // 顺序正序渲染的，排在后面的回调才量得到前面那一格。
-        LabelWidget title = new LabelWidget("私人 FM", FontManager.pf25bold);
+        LabelWidget title = new LabelWidget(qishuiFm() ? "发现流 FM" : "私人 FM", FontManager.pf25bold);
         addChild(title);
         title.setClickable(false);
         title.setBeforeRenderCallback(() -> title
@@ -324,6 +327,9 @@ public final class PersonalFmPanel extends NCMPanel {
      * 淡底、按墨迹居中都只有一份实现，改一处两边一起好。</p>
      */
     private void addModeRow() {
+        // 汽水没有这套六模式的体系——它有自己真实的听歌模式(见 buildSceneRow 的汽水分支),
+        // 网易云的枚举在这里一颗都不该出现。
+        if (qishuiFm()) return;
         final SegmentControl.Spec spec = new SegmentControl.Spec();
         spec.y = MODE_TOP;
         spec.height = MODE_H;
@@ -403,20 +409,24 @@ public final class PersonalFmPanel extends NCMPanel {
      * 因为淡出的是那个已经被丢掉的实例。所以这四行连视口带控件一起留着，只重挂不改建。</p>
      */
     private void addSceneRows() {
+        // 汽水分组平铺:推荐 + 心情 + 生活场景 + 风格流派 + 语言地区,每组一行横向滚。
+        int groups = qishuiFm() ? qishuiGroupCount() : SCENE_GROUP_LABELS.length;
         if (this.sceneHeaders == null) {
             this.sceneHeaders = new LabelWidget[SCENE_GROUP_LABELS.length];
             this.sceneRows = new Panel[SCENE_GROUP_LABELS.length];
             this.sceneViewports = new ScrollPanel[SCENE_GROUP_LABELS.length];
-            for (int group = 0; group < SCENE_GROUP_LABELS.length; group++) buildSceneRow(group);
+            for (int group = 0; group < groups; group++) buildSceneRow(group);
         }
-        for (int group = 0; group < SCENE_GROUP_LABELS.length; group++) {
+        for (int group = 0; group < groups; group++) {
             addChild(this.sceneHeaders[group]);
             addChild(this.sceneRows[group]);
         }
     }
 
     private void buildSceneRow(final int slot) {
-        LabelWidget header = new LabelWidget(PersonalFmManager.SCENE_GROUP_TITLES[slot], FontManager.pf12bold);
+        LabelWidget header = new LabelWidget(
+                qishuiFm() ? QISHUI_GROUP_TITLES[slot] : PersonalFmManager.SCENE_GROUP_TITLES[slot],
+                FontManager.pf12bold);
         header.setClickable(false);
         header.setBeforeRenderCallback(() -> header
                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
@@ -489,7 +499,16 @@ public final class PersonalFmPanel extends NCMPanel {
      * 轨道），点一枚标签滑块就从上一枚滑过去 —— 和换模式是同一个动作、同一拍子。</p>
      */
     private SegmentControl addSceneSegment(final ScrollPanel viewport, final int group) {
-        final String[] labels = SCENE_GROUP_LABELS[group];
+        final boolean qishui = qishuiFm();
+        final java.util.List<QishuiMusicService.FeedMode> qishuiModes =
+                qishui ? qishuiGroupModes(group) : java.util.Collections.<QishuiMusicService.FeedMode>emptyList();
+        final String[] labels;
+        if (qishui) {
+            labels = new String[qishuiModes.size()];
+            for (int index = 0; index < labels.length; index++) labels[index] = qishuiModes.get(index).text;
+        } else {
+            labels = SCENE_GROUP_LABELS[group];
+        }
         final String[] subModes = PersonalFmManager.SCENE_GROUP_MODES[group];
 
         final SegmentControl.Spec spec = new SegmentControl.Spec();
@@ -520,7 +539,11 @@ public final class PersonalFmPanel extends NCMPanel {
                 glyphs, labels,
                 index -> {
                     if (PersonalFmManager.isLoading()) return false;
-                    PersonalFmManager.selectMode(PersonalFmManager.Mode.SCENE_RCMD, subModes[index]);
+                    if (qishui) {
+                        PersonalFmManager.selectQishuiMode(qishuiModes.get(index));
+                    } else {
+                        PersonalFmManager.selectMode(PersonalFmManager.Mode.SCENE_RCMD, subModes[index]);
+                    }
                     return true;
                 });
     }
@@ -528,7 +551,11 @@ public final class PersonalFmPanel extends NCMPanel {
     /** 轨道要多宽：每一格自己的宽度加起来，外加两侧内缩。放不下的部分由视口横向滚。 */
     private static double sceneTrackWidth(int group) {
         double at = 0.0;
-        for (String label : SCENE_GROUP_LABELS[group]) at += labelWidth(label);
+        if (qishuiFm()) {
+            for (QishuiMusicService.FeedMode mode : qishuiGroupModes(group)) at += labelWidth(mode.text);
+        } else {
+            for (String label : SCENE_GROUP_LABELS[group]) at += labelWidth(label);
+        }
         return at + SCENE_INSET * 2.0;
     }
 
@@ -538,7 +565,76 @@ public final class PersonalFmPanel extends NCMPanel {
      * <p>四组是互斥的：一次只有一枚子模式生效，所以另外三组没有「选中」可言。报 -1 让滑块淡出、
      * 位置原地冻住，比把它们各自的第一枚点亮更诚实。</p>
      */
+    /** 当前这页是不是汽水发现流——模式区整个换成汽水自己的听歌模式。 */
+    private static boolean qishuiFm() {
+        return NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QISHUI;
+    }
+
+    /**
+     * 汽水听歌模式的分组平铺:每组一行横向滚(与网易云场景区同形态),组名在行首。
+     * 分类按模式真实语义手工归(上游只给一个平铺的「场景音乐」大块,没有子类):
+     * 推荐单独一行(默认档位),其余按心情/生活场景/风格流派/语言地区四类平铺。
+     * 上游将来下发的新模式没进这四类时,自动追加到最后一行——宁可挤一点,也不能丢。
+     */
+    private static final String[] QISHUI_GROUP_TITLES = {"推荐", "心情", "生活场景", "风格流派", "语言地区"};
+    private static final String[][] QISHUI_GROUP_KEYS = {
+            {"default"},
+            {"scene_mode_chill", "scene_mode_happy", "scene_mode_emo", "scene_mode_heal",
+                    "scene_mode_calm", "scene_mode_love_song", "scene_mode_breakup",
+                    "scene_mode_lucky", "scene_mode_focus"},
+            {"scene_mode_commute", "scene_mode_car_mode", "scene_mode_travel", "scene_mode_get_up",
+                    "scene_mode_bedtime", "scene_mode_sport", "scene_mode_game", "scene_mode_bath",
+                    "scene_mode_clean_up", "scene_mode_library", "scene_mode_drunk", "scene_mode_ktv",
+                    "scene_mode_fish", "scene_mode_lying_flat", "scene_mode_douyin_roam",
+                    "scene_mode_night_time", "scene_mode_rain", "scene_mode_beach"},
+            {"scene_mode_dj", "scene_mode_electronic", "scene_mode_rap", "scene_mode_rock",
+                    "scene_mode_rnb", "scene_mode_folk", "scene_mode_chinese_style",
+                    "scene_mode_classic", "scene_mode_non_vocal", "scene_mode_country",
+                    "scene_mode_child", "scene_mode_sweet_girl", "scene_mode_slow_motion",
+                    "scene_mode_nostalgic"},
+            {"scene_mode_cantonese", "scene_mode_english", "scene_mode_kpop", "scene_mode_jpop"},
+    };
+
+    /** 某一组解析成真实模式(按 key 查清单);清单里没有的 key 静默跳过。 */
+    private static java.util.List<QishuiMusicService.FeedMode> qishuiGroupModes(int group) {
+        java.util.List<QishuiMusicService.FeedMode> all = QishuiMusicService.getFeedModes();
+        java.util.List<QishuiMusicService.FeedMode> picked = new ArrayList<>();
+        if (group == QISHUI_GROUP_KEYS.length - 1) {
+            // 最后一组把没归类的上游新模式一并接住(见分组注释)。
+            java.util.Set<String> classified = new java.util.HashSet<>();
+            for (String[] keys : QISHUI_GROUP_KEYS) {
+                for (String key : keys) classified.add(key);
+            }
+            for (QishuiMusicService.FeedMode mode : all) {
+                if (!classified.contains(mode.key)) picked.add(mode);
+            }
+        }
+        for (String key : QISHUI_GROUP_KEYS[group]) {
+            for (QishuiMusicService.FeedMode mode : all) {
+                if (mode.key.equals(key)) {
+                    picked.add(mode);
+                    break;
+                }
+            }
+        }
+        return picked;
+    }
+
+    /** 汽水模式分组行数(标题行读它)。 */
+    private static int qishuiGroupCount() {
+        return QISHUI_GROUP_TITLES.length;
+    }
+
     private static int sceneSelectionOf(int group) {
+        if (qishuiFm()) {
+            // 汽水:按 key 在本组内对号;不在本组报 -1(滑块淡出,与网易云多组同一语义)。
+            String chosen = PersonalFmManager.getSelectedQishuiMode().key;
+            java.util.List<QishuiMusicService.FeedMode> modes = qishuiGroupModes(group);
+            for (int index = 0; index < modes.size(); index++) {
+                if (modes.get(index).key.equals(chosen)) return index;
+            }
+            return -1;
+        }
         if (PersonalFmManager.getSelectedMode() != PersonalFmManager.Mode.SCENE_RCMD) return -1;
         String chosen = PersonalFmManager.getSelectedSubMode();
         String[] modes = PersonalFmManager.SCENE_GROUP_MODES[group];
@@ -557,7 +653,7 @@ public final class PersonalFmPanel extends NCMPanel {
     }
 
     private double sceneHeight() {
-        return SCENE_ROW * SCENE_GROUP_LABELS.length * sceneReveal;
+        return SCENE_ROW * (qishuiFm() ? qishuiGroupCount() : SCENE_GROUP_LABELS.length) * sceneReveal;
     }
 
     /**
@@ -565,12 +661,15 @@ public final class PersonalFmPanel extends NCMPanel {
      * 最后一扇正好在 {@link #sceneReveal} 走到 1 时落位，收起时按相反顺序退场。
      */
     private static double groupReveal(int group) {
+        if (qishuiFm()) return sceneReveal;
         return NcmSheet.clamp01((sceneReveal - group * 0.15) / 0.55);
     }
 
     /** 朝目标线性走一步：展开与收起用同一条时长，反过来切不会比切过去更快。 */
     private void advanceScene() {
-        boolean wanted = PersonalFmManager.getSelectedMode() == PersonalFmManager.Mode.SCENE_RCMD;
+        // 汽水的听歌模式行常驻(没有网易云那种「场景推荐才展开」的两态)。
+        boolean wanted = qishuiFm()
+                || PersonalFmManager.getSelectedMode() == PersonalFmManager.Mode.SCENE_RCMD;
         double target = wanted ? 1.0 : 0.0;
         double step = this.lastFrameMs / Math.max(1.0, SCENE_MILLIS / SheetClock.speed());
         if (sceneReveal < target) {

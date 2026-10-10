@@ -102,6 +102,17 @@ public final class NeteaseMusicService {
         }
         currentPlatform = selected;
         NCMPlayerConfig.setMusicSourcePlatform(selected);
+        if (selected == MusicPlatform.QISHUI) {
+            // 玩家选了汽水源:后端没起就按需处理——已装则隐藏拉起,缺失则下载伴生包
+            // (进度走动态岛「汽水音乐源」持久卡);都失败时汽水源降级试听并提示。
+            if (!QishuiBackend.isAvailable()) {
+                if (QishuiCompanionDownload.isInstalled()) {
+                    QishuiBackendLifecycle.ensureStartedForGame();
+                } else {
+                    QishuiCompanionDownload.onBackendMissing();
+                }
+            }
+        }
     }
 
     public static List<Music> search(String keyword, int limit) {
@@ -134,6 +145,9 @@ public final class NeteaseMusicService {
         if (currentPlatform == MusicPlatform.MIGU) {
             return MiguMusicService.search(keyword, limit);
         }
+        if (currentPlatform == MusicPlatform.SPOTIFY) {
+            return searchSpotify(keyword, limit);
+        }
         try {
             List<Track> tracks = SERVICE.search(currentPlatform.toCadenceSource(), keyword.trim(), Math.max(1, limit));
             return adaptTracks(tracks);
@@ -141,6 +155,17 @@ public final class NeteaseMusicService {
             System.err.println("[Music/Netease] Search failed for " + currentPlatform + ": " + throwable.getMessage());
             return Collections.emptyList();
         }
+    }
+
+    /** Spotify 搜索：元数据行（无本家音频），播放由换源流水线接管。 */
+    private static List<Music> searchSpotify(String keyword, int limit) {
+        List<Music> result = new ArrayList<>();
+        for (com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.Track track
+                : com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.search(keyword, limit)) {
+            Music adapted = Music.fromSpotifyTrack(track);
+            if (adapted != null) result.add(adapted);
+        }
+        return result;
     }
     /**
      * 问一次自定义源要搜索结果。
@@ -250,6 +275,9 @@ public final class NeteaseMusicService {
         // 换源流水线拿它们当候选）；取流则只认自定义源，见 Music#getPlayUrl 的早退。
         if (platform == MusicPlatform.KUWO) return KuwoMusicService.search(keyword, limit);
         if (platform == MusicPlatform.MIGU) return MiguMusicService.search(keyword, limit);
+        // Spotify 没有候选用途：它在这里只可能是用户显式选中的平台。行是元数据行，
+        // 播放由换源流水线在其余平台找替身（Music#getPlayUrl 对它恒返回空）。
+        if (platform == MusicPlatform.SPOTIFY) return searchSpotify(keyword, limit);
         if (!platform.isCadenceBacked()) return Collections.emptyList();
         initialize(OptionsUtil.getCookie());
         try {
@@ -447,6 +475,11 @@ public final class NeteaseMusicService {
         if (music.isLxOnlyChannel()) {
             // 酷我 / 咪咕没有内置取流：继续往下会把它们当成 Cadence 网易云曲目，
             // 拿错平台的 id 解出别人的歌。这一路的活路是自定义源（Music#resolveLxPlayUrl）。
+            return null;
+        }
+        if (music.isSpotify()) {
+            // Spotify 行是元数据行（官方 Web API 无音频出口）：返回 null 让播放链路落进
+            // CrossSourceSwitcher。继续往下会把它当网易云曲目，拿 spotify id 解出别人的歌。
             return null;
         }
         initialize(OptionsUtil.getCookie());
@@ -736,6 +769,11 @@ public final class NeteaseMusicService {
             KuGouMusicService.logout();
             return;
         }
+        if (platform == MusicPlatform.SPOTIFY) {
+            // 同理挡在 initialize 之前：Spotify 的凭据文件与网易云 cookie 互不相干。
+            com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.logout();
+            return;
+        }
         initialize(OptionsUtil.getCookie());
         if (platform == MusicPlatform.QQ) {
             SERVICE.getQq().clearLogin();
@@ -760,6 +798,11 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.BILIBILI) return BilibiliMusicService.isLoggedIn();
         if (platform == MusicPlatform.QISHUI) return QishuiMusicService.isLoggedIn();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.isLoggedIn();
+        // 必须挡在 initializeIfNeeded 之前：Spotify 的登录态与网易云 cookie 无关，
+        // 掉进下面的 Cadence 分支会为了查登录态去初始化一整套网易云会话。
+        if (platform == MusicPlatform.SPOTIFY) {
+            return com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.isLoggedIn();
+        }
         initializeIfNeeded();
         if (platform == MusicPlatform.QQ) {
             return SERVICE.getQq().getLoggedIn();
@@ -777,6 +820,9 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.BILIBILI) return BilibiliMusicService.getAccountName();
         if (platform == MusicPlatform.QISHUI) return QishuiMusicService.getAccountName();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.getAccountName();
+        if (platform == MusicPlatform.SPOTIFY) {
+            return com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.getAccountName();
+        }
         if (platform == MusicPlatform.QQ) {
             QQUserInfo info = qqUserInfo;
             if (info != null && !isBlank(info.getNickname())) return info.getNickname();
@@ -804,6 +850,9 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.BILIBILI) return BilibiliMusicService.getAvatarUrl();
         if (platform == MusicPlatform.QISHUI) return QishuiMusicService.getAvatarUrl();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.getAvatarUrl();
+        if (platform == MusicPlatform.SPOTIFY) {
+            return com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.getAvatarUrl();
+        }
         if (platform == MusicPlatform.QQ) return getQQAvatarUrl();
         if (CloudMusic.profile == null) return "";
         String url = nonNull(CloudMusic.profile.getAvatarUrl());
@@ -823,6 +872,11 @@ public final class NeteaseMusicService {
      */
     public static Location getAccountAvatarLocation(MusicPlatform platform) {
         if (platform == MusicPlatform.YOUTUBE) return null;
+        if (platform == MusicPlatform.SPOTIFY) {
+            // Spotify 头像走 AccountAvatar 的远端下载路径，与 B 站 / 汽水同一形态。
+            return com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.getAvatarUrl().isEmpty()
+                    ? null : Location.of("muonium/textures/account/spotify_avatar.png");
+        }
         if (platform == MusicPlatform.BILIBILI) {
             return BilibiliMusicService.getAvatarUrl().isEmpty()
                     ? null : Location.of("muonium/textures/account/bilibili_avatar.png");

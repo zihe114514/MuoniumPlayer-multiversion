@@ -233,6 +233,23 @@ public class PlayList {
                 if (loadedMusics == null) {
                     throw new IllegalStateException("Bilibili playlist track response is null");
                 }
+            } else if (getPlatform() == MusicPlatform.SPOTIFY) {
+                // Spotify 的 platformPlaylistId 有三种形状：裸 base62 是歌单、"liked" 是喜欢的歌
+                // 虚拟单、"album:<id>" 是专辑——由服务层按形状分派。行是元数据行，播放由
+                // 换源流水线在其余平台找替身。
+                List<com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.Track> spotifyTracks =
+                        com.muoniumplayer.core.ncm.spotify.SpotifyMusicService
+                                .playlistTracks(getPlatformPlaylistId(), Math.max(100, count > 0 ? count : 100));
+                if (spotifyTracks == null) {
+                    throw new IllegalStateException("Spotify playlist track response is null");
+                }
+                loadedMusics = new ArrayList<>(spotifyTracks.size());
+                for (com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.Track track : spotifyTracks) {
+                    Music music = Music.fromSpotifyTrack(track);
+                    if (music != null) {
+                        loadedMusics.add(music);
+                    }
+                }
             } else if (getPlatform() == MusicPlatform.YOUTUBE) {
                 // YouTube 的 platformPlaylistId 有两种：裸的 PL/RD/OLAK… 是歌单（内部再补 VL 前缀），
                 // radio:<videoId> 是「以某首为种子的电台」——与汽水电台同一套前缀约定。
@@ -333,6 +350,11 @@ public class PlayList {
             CloudMusicApi.subscribe(this.id, subscribed);
             return;
         }
+        if (getPlatform() == MusicPlatform.QISHUI) {
+            // 账号歌单(acct: 前缀)本就在账号里,setPlaylistCollected 对它们直接幂等成功。
+            QishuiMusicService.setPlaylistCollected(getPlatformPlaylistId(), subscribed);
+            return;
+        }
         if (getPlatform() == MusicPlatform.KUGOU) {
             if (subscribed) {
                 KuGouMusicService.subscribePlaylist(this);
@@ -347,6 +369,19 @@ public class PlayList {
             CloudMusicApi.playlistTracks("del", this.id, String.valueOf(musicId));
             return;
         }
+        if (getPlatform() == MusicPlatform.QISHUI) {
+            // 汽水自建歌单的删歌写回云端；删歌接口认上游 track id（source id），照酷狗的先例
+            // 在已加载的曲目里把对象找出来再拿 source id。虚拟单（每日推荐/电台）没有上游可删。
+            // 注意:曲目行的 ✕ 按钮目前只对本地单显示,这条分发留着给将来的入口用。
+            String pid = getPlatformPlaylistId();
+            if (pid.startsWith("acct:")) {
+                Music target = findQishuiMusic(musicId);
+                if (target != null) {
+                    QishuiMusicService.removeSongFromCloudPlaylist(pid, target.getSourceId());
+                }
+            }
+            return;
+        }
         if (getPlatform() == MusicPlatform.KUGOU) {
             // 酷狗的删曲接口只认 fileid，而枚举曲目的那个端点不给它：要先按稳定 id 找到这一首，
             // 再由适配层拿它的 hash 去 get_list_all_file_v3 的结果里换出 fileid。
@@ -356,6 +391,16 @@ public class PlayList {
                 KuGouMusicService.removeTrackFromPlaylist(getPlatformPlaylistId(), target);
             }
         }
+    }
+
+    /** 在已加载的曲目里按稳定 id 找一首汽水歌；没加载或找不到返回 {@code null}。 */
+    private Music findQishuiMusic(long musicId) {
+        List<Music> loaded = this.musics;
+        if (loaded == null) return null;
+        for (Music music : loaded) {
+            if (music != null && music.getId() == musicId) return music;
+        }
+        return null;
     }
 
     /** 在已加载的曲目里按稳定 id 找一首；没加载或找不到返回 {@code null}。 */

@@ -50,12 +50,13 @@ class BrandVectorIconsStaticTest {
     }
 
     @Test
-    @DisplayName("只有酷狗、哔哩哔哩、汽水接了矢量标识，其余各家必须老实回落")
+    @DisplayName("只有酷狗、哔哩哔哩、汽水、Spotify 接了矢量标识，其余各家必须老实回落")
     void onlyTheThreeProvidersUseVectorMarks() {
         for (MusicPlatform platform : MusicPlatform.values()) {
             boolean expected = platform == MusicPlatform.KUGOU
                     || platform == MusicPlatform.BILIBILI
-                    || platform == MusicPlatform.QISHUI;
+                    || platform == MusicPlatform.QISHUI
+                    || platform == MusicPlatform.SPOTIFY;
             assertEquals(expected, BrandVectorIcons.has(platform),
                     platform + " 的矢量标识接线状态不对：接了的家会盖掉字形字标，没接的家必须继续走字形");
         }
@@ -63,19 +64,22 @@ class BrandVectorIconsStaticTest {
     }
 
     @Test
-    @DisplayName("归一化后最长边为 1，长宽比与三份素材显示出来的尺寸一致")
+    @DisplayName("归一化后最长边为 1，长宽比与各份素材显示出来的尺寸一致")
     void normalizedAspectMatchesTheSvgs() {
         assertAspect(MusicPlatform.KUGOU, 0.9834);
         // 哔哩哔哩是一条横长的字标，另两枚接近正方 —— 差这么远，拉进方格必然走形。
         assertAspect(MusicPlatform.BILIBILI, 2.2286);
         assertAspect(MusicPlatform.QISHUI, 0.8840);
+        // Spotify 用的是 simple-icons 的 24 网格圆形路径，等比之后就是一枚正圆。
+        assertAspect(MusicPlatform.SPOTIFY, 1.0);
     }
 
     @Test
     @DisplayName("离屏光栅之后墨迹不为空，长宽比也没有被方格改掉")
     void rasterKeepsTheAspectAndLeavesInk() {
         for (MusicPlatform platform : new MusicPlatform[]{
-                MusicPlatform.KUGOU, MusicPlatform.BILIBILI, MusicPlatform.QISHUI}) {
+                MusicPlatform.KUGOU, MusicPlatform.BILIBILI, MusicPlatform.QISHUI,
+                MusicPlatform.SPOTIFY}) {
             int[][] grid = raster(platform);
             double[] size = BrandVectorIcons.inkSizeFor(platform);
             assertNotNull(size, platform + " 没有归一化尺寸");
@@ -148,14 +152,18 @@ class BrandVectorIconsStaticTest {
     }
 
     @Test
-    @DisplayName("源码里的 y 缩放必须带负号，三家的变换常量必须与 SVG 的 <g> 逐字一致")
+    @DisplayName("y 轴朝向必须与数据源一致：描摹素材翻转，Spotify 的标准 SVG 不翻")
     void sourceKeepsTheNegativeYScaleAndTheSvgTransforms() throws IOException {
         String src = readSource();
 
-        assertTrue(src.contains(".makeScale(art.scale, -art.scale)"),
-                "y 缩放必须取负：三份 SVG 的描摹数据坐标系是 y 朝上，漏掉负号整枚标识会上下颠倒");
-        assertFalse(src.contains(".makeScale(art.scale, art.scale)"),
-                "出现了不带负号的 y 缩放，标识会上下颠倒");
+        // 三份描摹素材的坐标系是 y 朝上，走 flipY 分支取负；Spotify 那份是标准 SVG 数据
+        // （y 朝下），不翻 —— 别把它当成「漏了负号」改回去，改回去它就上下颠倒了。
+        assertTrue(src.contains("art.flipY ? -art.scale : art.scale"),
+                "翻转分支不见了：三份描摹 SVG 的 y 缩放必须取负，漏掉整枚标识会上下颠倒");
+        assertFalse(src.contains("art.flipY ? art.scale : -art.scale"),
+                "翻转条件写反了：真值分支必须是负 y，否则描摹素材整体上下颠倒");
+        assertTrue(src.contains("new String[]{SPOTIFY_D}, 0f, 0f, 1f, false"),
+                "Spotify 是标准 SVG 数据（y 朝下），必须 flipY=false");
 
         // 这三行抄的是三份 SVG 外层 <g> 的 transform，改错一位数就会画歪或画小。
         assertTrue(src.contains("167.457259f, 659.597685f, .062622f"),

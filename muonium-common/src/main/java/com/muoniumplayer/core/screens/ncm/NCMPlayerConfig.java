@@ -43,6 +43,8 @@ public final class NCMPlayerConfig {
      * 且仅在本地音频实际播放满所需时长之后。
      */
     private static boolean neteaseListeningHistorySyncEnabled;
+    /** 汽水音乐「最近播放」上报开关(默认开;上报内容只有一首歌的 id,经本地签名后端)。 */
+    private static boolean qishuiRecentlyPlayedReportEnabled = true;
     /**
      * 是否已经就听歌历史同步征求过一次同意。
      *
@@ -105,6 +107,9 @@ public final class NCMPlayerConfig {
             }
             if (object != null && object.has("neteaseListeningHistorySyncEnabled")) {
                 neteaseListeningHistorySyncEnabled = object.get("neteaseListeningHistorySyncEnabled").getAsBoolean();
+            }
+            if (object != null && object.has("qishuiRecentlyPlayedReportEnabled")) {
+                qishuiRecentlyPlayedReportEnabled = object.get("qishuiRecentlyPlayedReportEnabled").getAsBoolean();
             }
             if (object != null && object.has("neteaseListeningHistorySyncAsked")) {
                 neteaseListeningHistorySyncAsked = object.get("neteaseListeningHistorySyncAsked").getAsBoolean();
@@ -188,6 +193,18 @@ public final class NCMPlayerConfig {
     public static synchronized void setNeteaseListeningHistorySyncEnabled(boolean enabled) {
         load();
         neteaseListeningHistorySyncEnabled = enabled;
+        save();
+    }
+
+    /** 返回是否把汽水播放上报到「最近播放」。 */
+    public static synchronized boolean isQishuiRecentlyPlayedReportEnabled() {
+        load();
+        return qishuiRecentlyPlayedReportEnabled;
+    }
+
+    public static synchronized void setQishuiRecentlyPlayedReportEnabled(boolean enabled) {
+        load();
+        qishuiRecentlyPlayedReportEnabled = enabled;
         save();
     }
 

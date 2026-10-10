@@ -8,6 +8,7 @@ import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
+import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseRecentPlaysService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
@@ -356,6 +357,13 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
     /** 酷狗最近播放，与 {@link #loadRecentSongsPanel()} 同形。 */
     public static NCMPanel loadKuGouRecentSongsPanel() {
         List<Music> songs = KuGouMusicService.recentSongs(100);
+        if (songs.isEmpty()) return null;
+        return buildSongsPanel(songs, false);
+    }
+
+    /** 汽水最近播放，与 {@link #loadRecentSongsPanel()} 同形；条目与发现流同形，去重取最新。 */
+    public static NCMPanel loadQishuiRecentSongsPanel() {
+        List<Music> songs = QishuiMusicService.recentlyPlayedTracks(100);
         if (songs.isEmpty()) return null;
         return buildSongsPanel(songs, false);
     }

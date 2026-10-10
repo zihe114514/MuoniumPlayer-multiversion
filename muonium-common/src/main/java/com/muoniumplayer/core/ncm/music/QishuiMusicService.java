@@ -23,9 +23,11 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -34,6 +36,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
 /**
  * 汽水音乐（Luna）内置音源。
@@ -95,6 +98,13 @@ public final class QishuiMusicService {
      * 侧栏里那条既然来自账号，就必须按账号的身份去取。</p>
      */
     private static final String ACCOUNT_PLAYLIST_PREFIX = "acct:";
+    /**
+     * 「每日推荐」虚拟歌单前缀（见 {@link #playlistTracks(String, int)}）：曲目来自
+     * {@code /luna/pc/feed/song-tab}，内容每天变，所以做成虚拟单而不是真歌单。
+     */
+    private static final String DAILY_PLAYLIST_PREFIX = "qsdaily:";
+    /** 每日推荐（发现页歌曲流）与歌单写操作的 PC 端路径，全部走后端签名代理。 */
+    private static final String PC_FEED_SONG_TAB_PATH = "/luna/pc/feed/song-tab";
 
     private static final Pattern SODA_WORD = Pattern.compile("<(\\d+),(\\d+),(\\d+)>([^<]*)");
     private static final HttpClient HTTP = HttpClient.newBuilder()
@@ -130,12 +140,17 @@ public final class QishuiMusicService {
         public final String format;
         public final long bitrate;
         public final String playAuth;
+        /** 本次响应里全部 AAC 候选的码率(降序,kbps),给 UI 显示音质档;未知为空表。 */
+        public final List<Long> availableBitrates;
 
-        ResolveResult(String url, String format, long bitrate, String playAuth) {
+        ResolveResult(String url, String format, long bitrate, String playAuth,
+                      List<Long> availableBitrates) {
             this.url = url;
             this.format = format;
             this.bitrate = bitrate;
             this.playAuth = playAuth;
+            this.availableBitrates = availableBitrates == null
+                    ? Collections.emptyList() : availableBitrates;
         }
     }
 
@@ -233,6 +248,9 @@ public final class QishuiMusicService {
      * 就是因为静默回落才当夜回滚的。</p>
      */
     public static QrCode createQrCode() {
+        // 登录只走外部取码工具(QishuiCookieTool):passport 的扫码确认会触发 2046
+        // 风控二次验证,闭环需要官方验证组件在浏览器环境里运行——只有这个工具有。
+        // 后端(qs-backend)管的是取流/账号数据的签名,与登录无关,两条链路别混。
         if (!QishuiLoginBridge.isAvailable()) {
             throw new IllegalStateException("汽水扫码需要外部取码工具：把 QishuiCookieTool.exe 放到 "
                     + QishuiLoginBridge.requiredPath());
@@ -501,7 +519,19 @@ public final class QishuiMusicService {
             QishuiSessionStore.markVerified();
             // 换进来的可能压根是另一个账号：旧快照必须作废，侧栏才知道要重拉。
             clearUserPlaylistsCache();
-            return new CookieImport(true, "Cookie 登录成功", nickname, vip);
+            // 完整版取流走的是本机签名后端,签名代理的 Cookie 在后端手里——
+            // 导入成功必须立刻覆盖推送,否则后端继续拿旧/空 Cookie 打 1000016,
+            // 表现成「游戏里明明导入了,播 VIP 还是只有试听」。后端没起也不算失败:
+            // 它拉起时 onBackendUp 会按「后端缺 Cookie 就推」配对补上。
+            boolean synced = false;
+            try {
+                synced = QishuiBackend.pushCookie(QishuiSessionStore.getCookieHeader(), true);
+            } catch (Throwable syncError) {
+                System.err.println("[Music/Qishui] 导入后推送 Cookie 给后端失败: " + describe(syncError));
+            }
+            return new CookieImport(true,
+                    synced ? "Cookie 登录成功，已同步本机签名后端" : "Cookie 登录成功",
+                    nickname, vip);
         } catch (Throwable error) {
             if (looksLikeAuthRejection(error)) {
                 return CookieImport.fail("这份 Cookie 已被上游拒绝（过期、被顶下线或触发验证）。");
@@ -636,6 +666,643 @@ public final class QishuiMusicService {
         if (file == null || playAuth == null || playAuth.trim().isEmpty()) return;
         QishuiAudioDecryptor.decryptInPlace(file.toPath(), playAuth);
     }
+
+    // ── 写操作(全部经后端签名代理;凭据在 qs-backend,模组不持有签名能力) ──
+
+    /** 红心集合的本地缓存:LikeButton 每帧只读它,绝不发请求。 */
+    private static volatile Set<String> likedTrackIds = Collections.emptySet();
+    private static volatile boolean likedTrackIdsLoadAttempted;
+
+
+    /** 喜欢/取消喜欢:POST /luna/pc/me/collection/media(/delete)。 */
+    public static boolean setTrackLiked(String trackId, boolean liked) {
+        String id = nonBlank(trackId);
+        if (id.isEmpty() || !QishuiSessionStore.isLoggedIn()) return false;
+        try {
+            JsonObject payload = new JsonObject();
+            JsonArray media = new JsonArray();
+            JsonObject item = new JsonObject();
+            item.addProperty("type", "track");
+            item.addProperty("id", id);
+            media.add(item);
+            payload.add("media", media);
+            payload.addProperty("scene", "");
+            String path = liked ? "/luna/pc/me/collection/media"
+                    : "/luna/pc/me/collection/media/delete";
+            requirePcStatus(QishuiBackend.signedPc(path, Collections.emptyMap(), payload.toString()),
+                    liked ? "红心" : "取消红心");
+            noteTrackLikedLocal(id, liked);
+            return true;
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Set track liked failed for " + id + ": "
+                    + describe(error));
+            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            return false;
+        }
+    }
+
+    /** 收藏/取消收藏歌单;账号歌单(acct: 前缀)本就在账号里,直接成功不做请求。 */
+    public static boolean setPlaylistCollected(String playlistId, boolean collected) {
+        String id = nonBlank(playlistId);
+        if (id.isEmpty()) return false;
+        if (id.startsWith(ACCOUNT_PLAYLIST_PREFIX)) return true;
+        if (!QishuiSessionStore.isLoggedIn()) return false;
+        try {
+            JsonObject payload = new JsonObject();
+            JsonArray ids = new JsonArray();
+            ids.add(id);
+            payload.add("playlist_ids", ids);
+            String path = collected ? "/luna/pc/me/collection/playlist"
+                    : "/luna/pc/me/collection/playlist/delete";
+            requirePcStatus(QishuiBackend.signedPc(path, Collections.emptyMap(), payload.toString()),
+                    collected ? "收藏歌单" : "取消收藏歌单");
+            return true;
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Set playlist collected failed for " + id + ": "
+                    + describe(error));
+            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            return false;
+        }
+    }
+
+    /** 把歌加进自建歌单:POST /luna/pc/me/playlist/media/append。 */
+    public static boolean addSongToPlaylist(String playlistId, String trackId) {
+        String pid = nonBlank(playlistId);
+        String id = nonBlank(trackId);
+        if (pid.isEmpty() || id.isEmpty() || !QishuiSessionStore.isLoggedIn()) return false;
+        try {
+            JsonObject payload = new JsonObject();
+            payload.addProperty("playlist_id", pid.startsWith(ACCOUNT_PLAYLIST_PREFIX)
+                    ? pid.substring(ACCOUNT_PLAYLIST_PREFIX.length()) : pid);
+            JsonArray media = new JsonArray();
+            JsonObject item = new JsonObject();
+            item.addProperty("id", id);
+            item.addProperty("type", "track");
+            media.add(item);
+            payload.add("media", media);
+            requirePcStatus(QishuiBackend.signedPc("/luna/pc/me/playlist/media/append",
+                    Collections.emptyMap(), payload.toString()), "加歌进歌单");
+            return true;
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Add song to playlist failed: " + describe(error));
+            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            return false;
+        }
+    }
+
+    // ── 云歌单管理(2026-10-11 逐条实测过:建/改名/删单/删歌四个端点都按下面的形状回) ──
+
+    /**
+     * 新建云歌单:POST /luna/pc/me/playlist(与「获取账号歌单」同路径不同方法)。
+     *
+     * @return 新建歌单的卡片(已带 acct: 前缀),失败返回 null;成功后由调用方刷新侧栏快照
+     */
+    public static PlayList createCloudPlaylist(String name) {
+        String title = nonBlank(name);
+        if (title.isEmpty() || !QishuiSessionStore.isLoggedIn()) return null;
+        try {
+            JsonObject payload = new JsonObject();
+            payload.addProperty("name", title);
+            payload.addProperty("is_private", false);
+            JsonObject response = requirePcStatus(QishuiBackend.signedPc(
+                    pcPathOf(PC_ME_PLAYLISTS_ENDPOINT), Collections.emptyMap(), payload.toString()),
+                    "新建歌单");
+            PlayList created = parsePlaylistCard(object(response, "playlist"), new JsonObject());
+            if (created != null) {
+                created.setPlatformPlaylistId(ACCOUNT_PLAYLIST_PREFIX + created.getPlatformPlaylistId());
+                clearUserPlaylistsCache();
+                return created;
+            }
+            System.err.println("[Music/Qishui] 新建歌单成功但响应里没有 playlist 对象");
+            return null;
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Create cloud playlist failed: " + describe(error));
+            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            return null;
+        }
+    }
+
+    /** 改名/改简介:POST /luna/pc/me/playlist/update。两个字段都可独立改,传空即不动。 */
+    public static boolean updateCloudPlaylist(String playlistId, String newName, String newDescription) {
+        String pid = stripAccountPrefix(playlistId);
+        String name = nonBlank(newName);
+        String description = newDescription == null ? "" : newDescription.trim();
+        if (pid.isEmpty() || (name.isEmpty() && description.isEmpty())
+                || !QishuiSessionStore.isLoggedIn()) return false;
+        try {
+            JsonObject payload = new JsonObject();
+            payload.addProperty("playlist_id", pid);
+            if (!name.isEmpty()) payload.addProperty("name", name);
+            if (!description.isEmpty()) payload.addProperty("description", description);
+            requirePcStatus(QishuiBackend.signedPc("/luna/pc/me/playlist/update",
+                    Collections.emptyMap(), payload.toString()), "改歌单信息");
+            clearUserPlaylistsCache();
+            return true;
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Update cloud playlist failed for " + pid + ": "
+                    + describe(error));
+            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            return false;
+        }
+    }
+
+    /** 删除云歌单:POST /luna/pc/me/playlist/delete,请求体是 id 数组(实测可批量,这里只删一张)。 */
+    public static boolean deleteCloudPlaylist(String playlistId) {
+        String pid = stripAccountPrefix(playlistId);
+        if (pid.isEmpty() || !QishuiSessionStore.isLoggedIn()) return false;
+        try {
+            JsonObject payload = new JsonObject();
+            JsonArray ids = new JsonArray();
+            ids.add(pid);
+            payload.add("playlist_ids", ids);
+            requirePcStatus(QishuiBackend.signedPc("/luna/pc/me/playlist/delete",
+                    Collections.emptyMap(), payload.toString()), "删除歌单");
+            clearUserPlaylistsCache();
+            return true;
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Delete cloud playlist failed for " + pid + ": "
+                    + describe(error));
+            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            return false;
+        }
+    }
+
+    /** 从自建歌单删歌:POST /luna/pc/me/playlist/media/delete,media 形状与加歌对称。
+     *  2026-10-11 实测可用;曲目行的 ✕ 按钮目前只对本地单显示,这条留着按需接 UI。 */
+    public static boolean removeSongFromCloudPlaylist(String playlistId, String trackId) {
+        String pid = stripAccountPrefix(playlistId);
+        String id = nonBlank(trackId);
+        if (pid.isEmpty() || id.isEmpty() || !QishuiSessionStore.isLoggedIn()) return false;
+        try {
+            JsonObject payload = new JsonObject();
+            payload.addProperty("playlist_id", pid);
+            JsonArray media = new JsonArray();
+            JsonObject item = new JsonObject();
+            item.addProperty("id", id);
+            item.addProperty("type", "track");
+            media.add(item);
+            payload.add("media", media);
+            requirePcStatus(QishuiBackend.signedPc("/luna/pc/me/playlist/media/delete",
+                    Collections.emptyMap(), payload.toString()), "从歌单移除");
+            return true;
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Remove song from cloud playlist failed: " + describe(error));
+            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            return false;
+        }
+    }
+
+    /** 账号歌单 id 去掉 acct: 前缀;没带前缀原样返回。 */
+    private static String stripAccountPrefix(String playlistId) {
+        String id = nonBlank(playlistId);
+        return id.startsWith(ACCOUNT_PLAYLIST_PREFIX)
+                ? id.substring(ACCOUNT_PLAYLIST_PREFIX.length()) : id;
+    }
+
+    // ── 发现流(私人 FM 语义;内容个性化,做成 qsdaily: 虚拟歌单的曲目源 + FM 取数引擎) ──
+
+    /**
+     * 发现流取数:POST /luna/pc/feed/song-tab。
+     *
+     * <p><b>私人 FM 语义（2026-10-11 三波实测零重叠）</b>：把听过的歌以 {@code played_media}
+     * 回传，下一波就是全新的推荐，{@code has_more} 恒真——它是无限流，不是固定榜单。
+     * 汽水首页的「发现」就是抖音式滑动切歌，数据引擎与私人 FM 同构，所以模组把它接进
+     * {@link PersonalFmManager}：一次取一首、上报已听、无限续。</p>
+     *
+     * <p>翻页不靠游标（响应里没有 cursor 字段），靠的就是回传 {@code played_media}；
+     * 一次取一页（30 条）整块展示的场景（每日推荐卡）传空 played 即可。</p>
+     *
+     * @param playedTracks 已听过的歌（新→旧任意顺序，内部取最近 20 条上报），null/空表示首次请求
+     * @param mode         听歌模式；null 或默认「推荐」不带 feed_preference，场景模式按官方
+     *                     feedmode.ts 的映射只传 {@code {scene_mode_id}}（实测确实改变推荐内容）
+     */
+    public static List<Music> discoverFeedTracks(int count, List<Music> playedTracks, FeedMode mode) {
+        int target = Math.max(1, Math.min(30, count));
+        boolean firstRequest = playedTracks == null || playedTracks.isEmpty();
+        try {
+            JsonObject payload = new JsonObject();
+            payload.addProperty("count", target);
+            payload.addProperty("is_first_request", firstRequest);
+            if (!firstRequest) {
+                payload.addProperty("is_did_first_request", true);
+                JsonArray played = new JsonArray();
+                int reported = 0;
+                for (Music song : playedTracks) {
+                    if (reported >= 20) break;
+                    if (song == null || nonBlank(song.getSourceId()).isEmpty()) continue;
+                    JsonObject item = new JsonObject();
+                    item.addProperty("type", "track");
+                    item.addProperty("media_id", song.getSourceId());
+                    item.addProperty("played_mills", 30_000L);
+                    item.addProperty("duration", Math.max(1_000L, song.getDuration()));
+                    played.add(item);
+                    reported++;
+                }
+                payload.add("played_media", played);
+            }
+            if (mode != null && !mode.isDefaultMode()) {
+                // 官方 feedmode.ts 的映射:场景模式只传 scene_mode_id;偏好模式(非默认的
+                // 话)传 preference_mode。实测 scene_mode_id=6/8 给出的推荐明显不同。
+                JsonObject preference = new JsonObject();
+                if (mode.sceneModeId > 0) {
+                    preference.addProperty("scene_mode_id", mode.sceneModeId);
+                } else {
+                    preference.addProperty("preference_mode", mode.key);
+                }
+                payload.add("feed_preference", preference);
+                JsonObject counts = new JsonObject();
+                counts.addProperty("mix_session_count", 1);
+                payload.add("feed_counts", counts);
+            }
+            payload.addProperty("full_media", true);
+            JsonObject response = requirePcStatus(QishuiBackend.signedPc(PC_FEED_SONG_TAB_PATH,
+                    Collections.emptyMap(), payload.toString()), "发现流");
+            LinkedHashMap<String, Music> unique = new LinkedHashMap<>();
+            collectFeedTracks(array(response, "items"), unique, target);
+            return new ArrayList<>(unique.values());
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Discover feed failed: " + describe(error));
+            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            return Collections.emptyList();
+        }
+    }
+
+    /** 两参形态：不带模式（默认「推荐」），每日推荐卡等整页场景用。 */
+    public static List<Music> discoverFeedTracks(int count, List<Music> playedTracks) {
+        return discoverFeedTracks(count, playedTracks, null);
+    }
+
+    // ── 听歌模式(场景模式)——清单由 /luna/pc/feed/mode 下发,断网时回落实测快照 ──
+
+    /** 一个听歌模式:「推荐」是偏好模式({@code feed_preference_mode})，其余是场景模式。 */
+    public static final class FeedMode {
+        /** 稳定键:场景模式用 sub_queue_type(scene_mode_chill),偏好模式用 default。 */
+        public final String key;
+        /** UI 文案,与官方客户端一致(如「专注模式」「深夜 EMO」)。 */
+        public final String text;
+        /** 场景模式的上游 id(传给 feed_preference);偏好模式为 -1。 */
+        public final int sceneModeId;
+
+        FeedMode(String key, String text, int sceneModeId) {
+            this.key = key;
+            this.text = text;
+            this.sceneModeId = sceneModeId;
+        }
+
+        public boolean isDefaultMode() {
+            return sceneModeId <= 0 && "default".equals(key);
+        }
+    }
+
+    /** 模式清单缓存;getFeedModes() 保证非空(拉不到就用实测快照)。 */
+    private static volatile List<FeedMode> feedModesCache;
+
+    /** 顶部偏好条第一枚永远叫「推荐」;上游下不来时它是唯一的兜底。 */
+    static final FeedMode DEFAULT_FEED_MODE = new FeedMode("default", "推荐", -1);
+
+    /**
+     * 真实听歌模式清单:GET /luna/pc/feed/mode。偏好条在前面(「推荐」),场景音乐块按
+     * 上游顺序排在后面;同一 sub_queue_type 去重。拉不到时用 2026-10-11 实测快照
+     * (45 个场景模式,真实 id/键/文案),所以<b>永远</b>返回非空列表。
+     */
+    public static List<FeedMode> getFeedModes() {
+        List<FeedMode> cached = feedModesCache;
+        if (cached != null) return cached;
+        try {
+            JsonObject response = requirePcStatus(QishuiBackend.signedPc("/luna/pc/feed/mode",
+                    Collections.emptyMap(), null), "听歌模式");
+            LinkedHashMap<String, FeedMode> unique = new LinkedHashMap<>();
+            unique.put(DEFAULT_FEED_MODE.key, DEFAULT_FEED_MODE);
+            JsonObject bar = object(response, "feed_mode_bar");
+            for (JsonElement element : array(bar, "feed_mode")) {
+                collectFeedMode(element, unique);
+            }
+            for (JsonElement blockElement : array(response, "feed_mode_block")) {
+                if (!blockElement.isJsonObject()) continue;
+                for (JsonElement element : array(blockElement.getAsJsonObject(), "feed_mode")) {
+                    collectFeedMode(element, unique);
+                }
+            }
+            // 「推荐」必须存在且排第一:偏好条拉丢了也轮不到场景模式冒名。
+            List<FeedMode> modes = new ArrayList<>(unique.values());
+            if (!modes.isEmpty() && !modes.get(0).isDefaultMode()) {
+                modes.remove(DEFAULT_FEED_MODE);
+                modes.add(0, DEFAULT_FEED_MODE);
+            }
+            feedModesCache = Collections.unmodifiableList(modes);
+            return feedModesCache;
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Feed modes failed, using snapshot: " + describe(error));
+            feedModesCache = FEED_MODE_SNAPSHOT;
+            return feedModesCache;
+        }
+    }
+
+    private static void collectFeedMode(JsonElement element, Map<String, FeedMode> output) {
+        if (element == null || !element.isJsonObject()) return;
+        JsonObject mode = element.getAsJsonObject();
+        String text = nonBlank(string(mode, "text"));
+        if (text.isEmpty()) return;
+        JsonObject scene = object(object(mode, "entity"), "feed_scene_mode");
+        int sceneModeId = (int) longValue(scene, "scene_mode_id");
+        if (sceneModeId > 0) {
+            String subQueueType = nonBlank(string(scene, "sub_queue_type"));
+            String key = subQueueType.isEmpty() ? "scene_mode_" + sceneModeId : subQueueType;
+            output.putIfAbsent(key, new FeedMode(key, text, sceneModeId));
+            return;
+        }
+        // 偏好条:目前只有「推荐」一枚;上游哪天下发别的偏好模式也照单全收。
+        String preferenceKey = nonBlank(string(object(object(mode, "entity"), "feed_preference_mode"), "mode"));
+        output.putIfAbsent(preferenceKey.isEmpty() ? "default" : preferenceKey,
+                new FeedMode(preferenceKey.isEmpty() ? "default" : preferenceKey, text, -1));
+    }
+
+    /**
+     * 实测快照(2026-10-11,来自 /luna/pc/feed/mode 真实响应):断网或端点异常时的兜底。
+     * 上游随时可能增删——所以只要在线就优先用下发的清单,这里只是最后防线。
+     */
+    private static final List<FeedMode> FEED_MODE_SNAPSHOT = Collections.unmodifiableList(Arrays.asList(
+            DEFAULT_FEED_MODE,
+            new FeedMode("scene_mode_chill", "Chill 放松", 3),
+            new FeedMode("scene_mode_happy", "快乐时光", 5),
+            new FeedMode("scene_mode_emo", "深夜 EMO", 4),
+            new FeedMode("scene_mode_dj", "DJ模式", 7),
+            new FeedMode("scene_mode_bedtime", "助眠模式", 8),
+            new FeedMode("scene_mode_sport", "动感健身", 2),
+            new FeedMode("scene_mode_douyin_roam", "抖音漫游", 9),
+            new FeedMode("scene_mode_bath", "洗澡", 41),
+            new FeedMode("scene_mode_electronic", "电音", 11),
+            new FeedMode("scene_mode_lucky", "好运", 45),
+            new FeedMode("scene_mode_library", "图书馆", 48),
+            new FeedMode("scene_mode_cantonese", "粤语", 10),
+            new FeedMode("scene_mode_commute", "通勤必听", 1),
+            new FeedMode("scene_mode_breakup", "失恋必听", 13),
+            new FeedMode("scene_mode_lying_flat", "躺平", 44),
+            new FeedMode("scene_mode_english", "欧美", 15),
+            new FeedMode("scene_mode_clean_up", "打扫", 47),
+            new FeedMode("scene_mode_chinese_style", "国风", 12),
+            new FeedMode("scene_mode_game", "打游戏", 37),
+            new FeedMode("scene_mode_car_mode", "驾车", 33),
+            new FeedMode("scene_mode_focus", "专注模式", 6),
+            new FeedMode("scene_mode_rap", "说唱", 24),
+            new FeedMode("scene_mode_slow_motion", "沉浸0.8x", 14),
+            new FeedMode("scene_mode_night_time", "夜晚", 40),
+            new FeedMode("scene_mode_heal", "治愈", 21),
+            new FeedMode("scene_mode_non_vocal", "轻音乐", 25),
+            new FeedMode("scene_mode_drunk", "小酒馆", 18),
+            new FeedMode("scene_mode_ktv", "KTV必点", 31),
+            new FeedMode("scene_mode_get_up", "起床", 38),
+            new FeedMode("scene_mode_love_song", "浪漫情歌", 19),
+            new FeedMode("scene_mode_rock", "摇滚", 28),
+            new FeedMode("scene_mode_rnb", "R&B", 23),
+            new FeedMode("scene_mode_calm", "佛系时间", 20),
+            new FeedMode("scene_mode_nostalgic", "怀旧老歌", 16),
+            new FeedMode("scene_mode_folk", "民谣", 29),
+            new FeedMode("scene_mode_sweet_girl", "甜美女声", 17),
+            new FeedMode("scene_mode_kpop", "K-pop", 22),
+            new FeedMode("scene_mode_jpop", "日语", 30),
+            new FeedMode("scene_mode_travel", "旅行", 36),
+            new FeedMode("scene_mode_fish", "摸鱼", 34),
+            new FeedMode("scene_mode_child", "儿歌", 26),
+            new FeedMode("scene_mode_rain", "雨天", 35),
+            new FeedMode("scene_mode_beach", "海边", 39),
+            new FeedMode("scene_mode_country", "乡村", 27),
+            new FeedMode("scene_mode_classic", "古典", 32)));
+
+    /** 每日推荐虚拟歌单的曲目源：首次请求形态（不带 played_media），内容每天变。 */
+    public static List<Music> feedDailyTracks(int limit) {
+        return discoverFeedTracks(limit, Collections.emptyList());
+    }
+
+    // ── 搜索联想 + 最近播放(2026-10-11 逐条实测:签名代理与免签移动端两条路都通) ──
+
+    /**
+     * 搜索联想：GET /luna/pc/sug（后端签名优先），免签移动端 /luna/sug 兜底——两条路
+     * 实测给同一份 {@code sugs}（suggestion 文本 + content_type 标签），兜底不带 Cookie 也能出。
+     *
+     * @return 联想项（text 点下去真正拿去搜的词，kind 是右侧类型标签）
+     */
+    public static List<NeteaseSearchSuggestService.Suggestion> searchSuggest(String keyword) {
+        String q = nonBlank(keyword);
+        if (q.isEmpty()) return Collections.emptyList();
+        try {
+            JsonObject response;
+            if (QishuiBackend.isAvailable()) {
+                Map<String, String> params = new LinkedHashMap<>();
+                params.put("q", q);
+                params.put("sug_scene", "");
+                params.put("sug_search_id", "");
+                response = requirePcStatus(QishuiBackend.signedPc("/luna/pc/sug", params, null),
+                        "搜索联想(后端签名)");
+            } else {
+                StringBuilder url = new StringBuilder("https://api.qishui.com/luna/sug?");
+                appendMobileCommonParams(url);
+                append(url, "q", q);
+                append(url, "sug_scene", "");
+                append(url, "sug_search_id", "");
+                response = getJson(url.toString(), ANDROID_USER_AGENT, "", Collections.emptyMap());
+            }
+            List<NeteaseSearchSuggestService.Suggestion> result = new ArrayList<>();
+            JsonArray sugs = array(response, "sugs");
+            if (sugs == null) return result;
+            Set<String> seen = new LinkedHashSet<>();
+            for (JsonElement element : sugs) {
+                if (result.size() >= NeteaseSearchSuggestService.MAX_SUGGESTIONS) break;
+                if (!element.isJsonObject()) continue;
+                JsonObject sug = element.getAsJsonObject();
+                String text = nonBlank(string(sug, "suggestion"));
+                if (text.isEmpty() || !seen.add(text)) continue;
+                result.add(new NeteaseSearchSuggestService.Suggestion(text,
+                        suggestKindLabel(string(sug, "content_type")), ""));
+            }
+            return result;
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Search suggest failed for " + q + ": " + describe(error));
+            return Collections.emptyList();
+        }
+    }
+
+    private static String suggestKindLabel(String contentType) {
+        switch (nonBlank(contentType)) {
+            case "artist": return "歌手";
+            case "playlist": return "歌单";
+            case "track": return "歌曲";
+            case "album": return "专辑";
+            case "mv": return "MV";
+            default: return "";
+        }
+    }
+
+    /**
+     * 最近播放：GET /luna/me/recently-played-media 按游标翻页。条目与发现流同形
+     * （{@code entity.track}，{@link #parseFeedTrack} 的回退链正好覆盖），去重取最新一次。
+     *
+     * <p>后端签名代理优先；不在时走免签移动端 + Cookie（实测同给 media/next_cursor/has_more）。
+     * 两边都不在或未登录返回空列表，调用方按「暂无播放记录」处理。</p>
+     */
+    public static List<Music> recentlyPlayedTracks(int limit) {
+        if (!QishuiSessionStore.isLoggedIn()) return Collections.emptyList();
+        int target = Math.max(1, Math.min(500, limit));
+        LinkedHashMap<String, Music> unique = new LinkedHashMap<>();
+        String cursor = "0";
+        Set<String> cursors = new HashSet<>();
+        for (int page = 0; page < MAX_PAGES && unique.size() < target; page++) {
+            try {
+                JsonObject response;
+                if (QishuiBackend.isAvailable()) {
+                    Map<String, String> params = new LinkedHashMap<>();
+                    params.put("cursor", cursor);
+                    params.put("count", String.valueOf(Math.min(PAGE_SIZE, target - unique.size())));
+                    params.put("media_type", "track");
+                    params.put("scene", "");
+                    response = requirePcStatus(QishuiBackend.signedPc(
+                            "/luna/pc/me/recently-played-media", params, null), "最近播放(后端签名)");
+                } else {
+                    StringBuilder url = new StringBuilder("https://api.qishui.com/luna/me/recently-played-media?");
+                    appendMobileCommonParams(url);
+                    append(url, "cursor", cursor);
+                    append(url, "count", String.valueOf(Math.min(PAGE_SIZE, target - unique.size())));
+                    append(url, "media_type", "track");
+                    append(url, "scene", "");
+                    response = getJson(url.toString(), ANDROID_USER_AGENT,
+                            QishuiSessionStore.getCookieHeader(), Collections.emptyMap());
+                }
+                collectFeedTracks(array(response, "media"), unique, target);
+                if (!truthy(response, "has_more")) break;
+                String next = firstNonBlank(string(response, "next_cursor"), "");
+                if (next.isEmpty() || next.equals(cursor) || !cursors.add(next)) break;
+                cursor = next;
+            } catch (Throwable error) {
+                System.err.println("[Music/Qishui] Recently played failed: " + describe(error));
+                break;
+            }
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    /**
+     * 「垃圾桶」：POST /luna/track/dislike（免签名移动端面，与搜索同一套公共参数）。
+     *
+     * <p>实测两个硬约束：{@code artist_ids} <b>必填</b>（缺了 1000004），艺人 id 只在
+     * feed 的响应里有——所以 {@link #collectFeedTracks} 解析时顺手把 trackId → 第一位
+     * 艺人 id 记进侧表，跳过时从这里查。查不到（比如这首不是发现流推的）就返回 false，
+     * 跳过本身不受影响：下一波请求照样会把这首以短时长计入 played_media。</p>
+     */
+    public static boolean dislikeTrack(String trackId) {
+        String id = nonBlank(trackId);
+        if (id.isEmpty() || !QishuiSessionStore.isLoggedIn()) return false;
+        long artistId = feedArtistIdOf(id);
+        if (artistId <= 0L) {
+            System.err.println("[Music/Qishui] Dislike skipped: no artist id seen for " + id);
+            return false;
+        }
+        try {
+            StringBuilder url = new StringBuilder("https://api.qishui.com/luna/track/dislike?");
+            appendMobileCommonParams(url);
+            JsonObject payload = new JsonObject();
+            payload.addProperty("track_id", id);
+            JsonArray artistIds = new JsonArray();
+            artistIds.add(artistId);
+            payload.add("artist_ids", artistIds);
+            JsonObject response = postJson(url.toString(), payload.toString(),
+                    ANDROID_USER_AGENT, QishuiSessionStore.getCookieHeader(), Collections.emptyMap());
+            int status = response.has("status_code") ? response.get("status_code").getAsInt() : -1;
+            if (status != 0) {
+                throw new IllegalStateException("dislike 业务码 " + status);
+            }
+            return true;
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Dislike failed for " + id + ": " + describe(error));
+            return false;
+        }
+    }
+
+    /** feed 里见过的曲目 → 第一位艺人的上游 id（dislike 必填）；超出上限淘汰最旧的。 */
+    private static final Map<String, Long> FEED_ARTIST_IDS = new LinkedHashMap<>();
+    private static final int FEED_ARTIST_ID_LIMIT = 512;
+
+    private static void rememberFeedArtistId(String trackId, long artistId) {
+        if (nonBlank(trackId).isEmpty() || artistId <= 0L) return;
+        synchronized (FEED_ARTIST_IDS) {
+            FEED_ARTIST_IDS.put(trackId, artistId);
+            while (FEED_ARTIST_IDS.size() > FEED_ARTIST_ID_LIMIT) {
+                String oldest = FEED_ARTIST_IDS.keySet().iterator().next();
+                FEED_ARTIST_IDS.remove(oldest);
+            }
+        }
+    }
+
+    private static long feedArtistIdOf(String trackId) {
+        synchronized (FEED_ARTIST_IDS) {
+            Long value = FEED_ARTIST_IDS.get(trackId);
+            return value == null ? 0L : value;
+        }
+    }
+
+    /** 播放上报:POST /luna/pc/me/recently-played-media(最近播放)。 */
+    public static boolean reportRecentlyPlayed(String trackId) {
+        String id = nonBlank(trackId);
+        if (id.isEmpty() || !QishuiSessionStore.isLoggedIn()) return false;
+        try {
+            JsonObject payload = new JsonObject();
+            JsonArray media = new JsonArray();
+            JsonObject item = new JsonObject();
+            item.addProperty("type", "track");
+            item.addProperty("id", id);
+            media.add(item);
+            payload.add("media", media);
+            requirePcStatus(QishuiBackend.signedPc("/luna/pc/me/recently-played-media",
+                    Collections.emptyMap(), payload.toString()), "播放上报");
+            return true;
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Recently-played report failed for " + id + ": "
+                    + describe(error));
+            return false;
+        }
+    }
+
+    /** 登录后异步拉一次「我喜欢的音乐」歌单,把红心集合装进本地缓存。 */
+    public static void ensureLikedTrackIdsLoaded() {
+        if (likedTrackIdsLoadAttempted || !QishuiSessionStore.isLoggedIn()) return;
+        likedTrackIdsLoadAttempted = true;
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                for (PlayList playlist : getUserPlaylistsSnapshot()) {
+                    String name = playlist.getName();
+                    String pid = playlist.getPlatformPlaylistId();
+                    if (name == null || pid == null || !name.contains("我喜欢")
+                            || !pid.startsWith(ACCOUNT_PLAYLIST_PREFIX)) {
+                        continue;
+                    }
+                    List<Music> tracks = accountPlaylistTracks(
+                            pid.substring(ACCOUNT_PLAYLIST_PREFIX.length()), 500);
+                    Set<String> ids = new HashSet<>();
+                    for (Music music : tracks) ids.add(music.getSourceId());
+                    likedTrackIds = ids;
+                    System.out.println("[Music/Qishui] 红心集合已加载: " + ids.size() + " 首");
+                    return;
+                }
+                System.out.println("[Music/Qishui] 账号歌单里未找到『我喜欢的音乐』,红心状态不可用");
+            } catch (Throwable error) {
+                likedTrackIdsLoadAttempted = false; // 这次失败,下次再试
+                System.err.println("[Music/Qishui] 红心集合加载失败: " + describe(error));
+            }
+        });
+    }
+
+    /** LikeButton 的只读本地判定;集合没加载完时按未红心处理。 */
+    public static boolean isTrackLikedLocal(String trackId) {
+        return likedTrackIds.contains(nonBlank(trackId));
+    }
+
+    public static void noteTrackLikedLocal(String trackId, boolean liked) {
+        String id = nonBlank(trackId);
+        if (id.isEmpty()) return;
+        Set<String> updated = new HashSet<>(likedTrackIds);
+        if (liked) updated.add(id);
+        else updated.remove(id);
+        likedTrackIds = updated;
+    }
     /** 汽水发现页推荐歌单。接口为公开 App 流，返回卡片所需的最小元数据。 */
     public static List<PlayList> recommendPlaylists(int limit) {
         int target = Math.max(1, Math.min(120, limit));
@@ -691,22 +1358,49 @@ public final class QishuiMusicService {
         int target = Math.max(1, Math.min(100, limit));
         LinkedHashMap<String, PlayList> unique = new LinkedHashMap<>();
         try {
-            JsonObject response = requirePcStatus(getJson(buildPcSearchUrl(keyword, 0),
-                    PC_USER_AGENT, QishuiSessionStore.getCookieHeader(), pcHeaders()), "歌单搜索");
+            JsonObject response;
+            if (QishuiBackend.isAvailable()) {
+                response = requirePcStatus(QishuiBackend.signedPc(
+                        pcPathOf(PC_SEARCH_PLAYLIST_ENDPOINT), pcSearchParams(keyword, 0), null),
+                        "歌单搜索(后端签名)");
+            } else {
+                response = requirePcStatus(getJson(buildPcSearchUrl(keyword, 0),
+                        PC_USER_AGENT, QishuiSessionStore.getCookieHeader(), pcHeaders()), "歌单搜索");
+            }
             collectPlaylistsFromSearch(response, unique, target);
         } catch (Throwable error) {
             System.err.println("[Music/Qishui] Playlist search failed: " + describe(error));
         }
         if (unique.isEmpty()) {
             try {
-                JsonObject response = requirePcStatus(getJson(buildPcMixedSearchUrl(keyword, 0),
-                        PC_USER_AGENT, QishuiSessionStore.getCookieHeader(), pcHeaders()), "混合搜索");
+                JsonObject response;
+                if (QishuiBackend.isAvailable()) {
+                    response = requirePcStatus(QishuiBackend.signedPc(
+                            pcPathOf(PC_SEARCH_MIXED_ENDPOINT), pcSearchParams(keyword, 0), null),
+                            "混合搜索(后端签名)");
+                } else {
+                    response = requirePcStatus(getJson(buildPcMixedSearchUrl(keyword, 0),
+                            PC_USER_AGENT, QishuiSessionStore.getCookieHeader(), pcHeaders()), "混合搜索");
+                }
                 collectPlaylistsFromSearch(response, unique, target);
             } catch (Throwable error) {
                 System.err.println("[Music/Qishui] Mixed playlist search failed: " + describe(error));
             }
         }
         return new ArrayList<>(unique.values());
+    }
+
+    /** PC 搜索的业务参数(设备参数由后端统一补齐)。 */
+    private static Map<String, String> pcSearchParams(String keyword, int cursor) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("q", keyword);
+        params.put("cursor", String.valueOf(Math.max(0, cursor)));
+        params.put("search_id", "");
+        params.put("search_method", "input");
+        params.put("debug_params", "");
+        params.put("from_search_id", "");
+        params.put("search_scene", "");
+        return params;
     }
 
     /** 歌单详情。只保留 feed 中的曲目实体，视频/播客条目会被忽略。 */
@@ -716,7 +1410,21 @@ public final class QishuiMusicService {
         if (id.startsWith(ACCOUNT_PLAYLIST_PREFIX)) {
             return accountPlaylistTracks(id.substring(ACCOUNT_PLAYLIST_PREFIX.length()), limit);
         }
+        if (id.startsWith(DAILY_PLAYLIST_PREFIX)) {
+            return feedDailyTracks(limit);
+        }
         return anonymousPlaylistTracks(id, limit);
+    }
+
+    /** 每日推荐虚拟歌单的卡片（首页墙第一张）。日期后缀让用户一眼知道内容会换。 */
+    public static PlayList dailyFeedCard() {
+        PlayList card = new PlayList(stableLong("qishui:daily:" + java.time.LocalDate.now()),
+                "每日推荐 · " + java.time.LocalDate.now().getMonthValue() + "月"
+                        + java.time.LocalDate.now().getDayOfMonth() + "日",
+                "", 30, 0L, null, "汽水发现页每天为你挑的新歌", 0L);
+        card.setPlatform(MusicPlatform.QISHUI);
+        card.setPlatformPlaylistId(DAILY_PLAYLIST_PREFIX + "today");
+        return card;
     }
 
     /**
@@ -739,9 +1447,19 @@ public final class QishuiMusicService {
         Set<String> cursors = new HashSet<>();
         for (int page = 0; page < MAX_PAGES && unique.size() < target; page++) {
             try {
-                JsonObject response = requirePcStatus(getJson(
-                        buildPcPlaylistDetailUrl(playlistId, cursor), PC_USER_AGENT,
-                        QishuiSessionStore.getCookieHeader(), pcHeaders()), "歌单详情");
+                JsonObject response;
+                if (QishuiBackend.isAvailable()) {
+                    Map<String, String> params = new LinkedHashMap<>();
+                    params.put("playlist_id", playlistId);
+                    params.put("count", String.valueOf(PAGE_SIZE));
+                    params.put("cursor", cursor);
+                    response = requirePcStatus(QishuiBackend.signedPc(
+                            pcPathOf(PC_PLAYLIST_DETAIL_ENDPOINT), params, null), "歌单详情(后端签名)");
+                } else {
+                    response = requirePcStatus(getJson(
+                            buildPcPlaylistDetailUrl(playlistId, cursor), PC_USER_AGENT,
+                            QishuiSessionStore.getCookieHeader(), pcHeaders()), "歌单详情");
+                }
                 collectFeedTracks(array(response, "media_resources"), unique, target);
                 if (!truthy(response, "has_more")) break;
                 String next = string(response, "next_cursor");
@@ -931,8 +1649,16 @@ public final class QishuiMusicService {
                 payload.addProperty("radio_id", id);
                 payload.addProperty("count", Math.min(50, target - unique.size()));
                 if (!cursor.isEmpty()) payload.addProperty("cursor", cursor);
-                JsonObject response = postJson(LUNA_RADIO_TRACKS_ENDPOINT, payload.toString(),
-                        ANDROID_USER_AGENT, "", Collections.emptyMap());
+                // 后端在就优先走 PC 签名代理（与官方 PC 客户端同一入口，稳）；不在再走
+                // 匿名 Android 流——两条路实测给的是同一份 items 形状。
+                JsonObject response;
+                if (QishuiBackend.isAvailable()) {
+                    response = requirePcStatus(QishuiBackend.signedPc("/luna/pc/feed/radio/tracks",
+                            Collections.emptyMap(), payload.toString()), "电台曲目(后端签名)");
+                } else {
+                    response = postJson(LUNA_RADIO_TRACKS_ENDPOINT, payload.toString(),
+                            ANDROID_USER_AGENT, "", Collections.emptyMap());
+                }
                 collectFeedTracks(array(response, "items"), unique, target);
                 String nextCursor = firstNonBlank(string(response, "next_cursor"), string(response, "cursor"));
                 if (nextCursor.isEmpty() || nextCursor.equals(cursor)) break;
@@ -1023,11 +1749,21 @@ public final class QishuiMusicService {
         String cursor = "";
         Set<String> cursors = new HashSet<>();
         for (int page = 0; page < MAX_PAGES; page++) {
-            StringBuilder paged = new StringBuilder(url);
-            append(paged, "count", String.valueOf(PAGE_SIZE));
-            append(paged, "cursor", cursor);
-            JsonObject response = requirePcStatus(getJson(paged.toString(), PC_USER_AGENT,
-                    QishuiSessionStore.getCookieHeader(), pcHeaders()), what);
+            JsonObject response;
+            if (QishuiBackend.isAvailable()) {
+                // 后端在:签名由官方 bdms.node 经 qs-backend 完成,URL/头序由后端拼装。
+                Map<String, String> params = new LinkedHashMap<>();
+                params.put("count", String.valueOf(PAGE_SIZE));
+                params.put("cursor", cursor);
+                response = requirePcStatus(QishuiBackend.signedPc(
+                        pcPathOf(url), params, null), what);
+            } else {
+                StringBuilder paged = new StringBuilder(url);
+                append(paged, "count", String.valueOf(PAGE_SIZE));
+                append(paged, "cursor", cursor);
+                response = requirePcStatus(getJson(paged.toString(), PC_USER_AGENT,
+                        QishuiSessionStore.getCookieHeader(), pcHeaders()), what);
+            }
             JsonArray items = array(response, arrayKey);
             if (items != null) {
                 for (JsonElement item : items) collected.add(item);
@@ -1038,6 +1774,13 @@ public final class QishuiMusicService {
             cursor = next;
         }
         return collected;
+    }
+
+    /** {@code https://api.qishui.com/luna/pc/xxx} → {@code /luna/pc/xxx}，后端白名单用。 */
+    private static String pcPathOf(String endpoint) {
+        return endpoint.startsWith("https://api.qishui.com")
+                ? endpoint.substring("https://api.qishui.com".length())
+                : endpoint;
     }
 
     // ── 我的歌单（快照 + 异步，与 QQ / 酷狗侧栏同一套加载形态） ──────────────
@@ -1341,7 +2084,16 @@ public final class QishuiMusicService {
         if (raw.size() == 0) raw = object(object(item, "media"), "track");
         if (raw.size() == 0) raw = item;
         Track track = parseTrack(raw);
-        return track == null ? null : Music.fromQishuiTrack(track);
+        Music music = track == null ? null : Music.fromQishuiTrack(track);
+        // 顺手记下第一位艺人的上游 id:/luna/track/dislike 必填 artist_ids,而这个 id
+        // 只在 feed 响应里有。FM 跳过时要查这张侧表。
+        if (music != null) {
+            JsonArray artists = array(raw, "artists");
+            if (artists != null && !artists.isEmpty() && artists.get(0).isJsonObject()) {
+                rememberFeedArtistId(music.getSourceId(), longValue(artists.get(0).getAsJsonObject(), "id"));
+            }
+        }
+        return music;
     }
 
     private static int checkedInt(long value, String name) {
@@ -1408,6 +2160,21 @@ public final class QishuiMusicService {
         payload.addProperty("queue_type", "favorite_track_playlist");
         payload.addProperty("scene_name", "library");
         String body = payload.toString();
+        // 首选本地签名后端：x-helios/x-medusa 只有官方 bdms.node 算得出，Java 侧复现不了。
+        // 后端签名覆盖 URL+全部请求头，必须由最终发请求的后端完成，模组不能签完自发。
+        if (QishuiBackend.isAvailable()) {
+            try {
+                return requirePcStatus(QishuiBackend.signedPc(PC_TRACK_PATH,
+                        Collections.emptyMap(), body), "取流(后端签名)");
+            } catch (Throwable backendError) {
+                System.err.println("[Music/Qishui] Backend-signed track request failed: "
+                        + describe(backendError));
+                if (looksLikeAuthRejection(backendError)) {
+                    QishuiSessionStore.markReauthRequired();
+                    return null;
+                }
+            }
+        }
         Throwable last = null;
         for (String base : PC_API_BASES) {
             try {
@@ -1521,10 +2288,12 @@ public final class QishuiMusicService {
 
     static ResolveResult selectAac(List<Stream> candidates, Quality requestedQuality,
                                    long declaredDurationMillis) {
-        boolean preferHigher = requestedQuality != Quality.STANDARD;
+        long targetBitrate = targetBitrateFor(requestedQuality);
         Stream selected = null;
-        long selectedScore = preferHigher ? Long.MIN_VALUE : Long.MAX_VALUE;
+        long selectedScore = -1L;
         long selectedDuration = 0L;
+        // 全部 AAC 候选的码率集合(降序去重):给 UI 展示"这首歌实际有几档音质"。
+        List<Long> availableBitrates = new ArrayList<>();
         for (Stream candidate : candidates) {
             String url = audioUrl(candidate.node);
             if (url.isEmpty()) continue;
@@ -1541,6 +2310,7 @@ public final class QishuiMusicService {
             if (!aac || format.contains("flac") || format.contains("wav")) continue;
 
             long bitrate = streamBitrate(candidate.node);
+            if (bitrate > 0L && !availableBitrates.contains(bitrate)) availableBitrates.add(bitrate);
             long duration = candidate.durationMillis;
             int rank = streamCompletenessRank(duration, declaredDurationMillis);
             int selectedRank = selected == null ? Integer.MIN_VALUE
@@ -1551,7 +2321,7 @@ public final class QishuiMusicService {
             if (selected == null) better = true;
             else if (rank != selectedRank) better = rank > selectedRank;
             else if (Math.abs(duration - selectedDuration) > 1_000L) better = duration > selectedDuration;
-            else better = preferHigher ? bitrate >= selectedScore : bitrate <= selectedScore;
+            else better = bitrateBetter(bitrate, selectedScore, targetBitrate);
             if (better) {
                 selected = candidate;
                 selectedScore = bitrate;
@@ -1569,7 +2339,9 @@ public final class QishuiMusicService {
             System.err.println("[Music/Qishui] 上游只给到试听片段：" + (selectedDuration / 1000L)
                     + "s / 声明 " + (declaredDurationMillis / 1000L) + "s，完整流需要上游放开的权益");
         }
-        return new ResolveResult(url, normalized, streamBitrate(selected.node), selected.playAuth);
+        availableBitrates.sort((a, b) -> Long.compare(b, a));
+        return new ResolveResult(url, normalized, streamBitrate(selected.node), selected.playAuth,
+                availableBitrates);
     }
 
     /**
@@ -1582,6 +2354,34 @@ public final class QishuiMusicService {
     static int streamCompletenessRank(long durationMillis, long declaredMillis) {
         if (durationMillis <= 0L) return 1;
         return isFullStream(durationMillis, declaredMillis) ? 2 : 0;
+    }
+
+    /**
+     * 目标码率：把全局音质偏好换算成汽水码率阶梯（实测 68k/132k/260k/324k）上的选档策略。
+     *
+     * <p>返回值语义：{@code 0} = 取最低档（标准音质省流量）；{@code Long.MAX_VALUE} = 取最高档；
+     * 其余 = 取「≥目标的最小档」，一档都没达标就取最高——宁可多给一点，不偷偷降档。</p>
+     */
+    static long targetBitrateFor(Quality quality) {
+        if (quality == null) return 0L;
+        switch (quality) {
+            case STANDARD: return 0L;
+            case HIGHER: return 192_000L;
+            case EXHIGH: return 320_000L;
+            // LOSSLESS 及以上：汽水 AAC 阶梯里 324k 就是顶，直接取最高。
+            default: return Long.MAX_VALUE;
+        }
+    }
+
+    /** 同完整度、同时长的两条流按选档策略比码率；{@code currentBest < 0} 表示还没有选中者。 */
+    static boolean bitrateBetter(long candidate, long currentBest, long target) {
+        if (currentBest < 0L) return true;
+        if (target == Long.MAX_VALUE) return candidate > currentBest;
+        if (target == 0L) return candidate < currentBest;
+        if (candidate >= target && currentBest >= target) return candidate < currentBest;
+        if (candidate >= target) return true;
+        if (currentBest >= target) return false;
+        return candidate > currentBest;
     }
 
     /** 流码率：显式字段优先，其次按档位的代表码率兜底。字段大小写两套都见过。 */
@@ -1668,6 +2468,18 @@ public final class QishuiMusicService {
     }
     private static String buildSearchUrl(String query, int limit) {
         StringBuilder url = new StringBuilder(SEARCH_ENDPOINT).append('?');
+        appendMobileCommonParams(url);
+        append(url, "q", query);
+        append(url, "cursor", "0");
+        append(url, "count", String.valueOf(limit));
+        return url.toString();
+    }
+
+    /**
+     * 匿名移动端公共参数（与官方 App 同形）。搜索、免签名写操作（如 /luna/track/dislike）
+     * 共用这一套——2026-10-11 实测这些移动端面端点不要求应用级签名，带 cookie + 公共参数即达。
+     */
+    private static void appendMobileCommonParams(StringBuilder url) {
         append(url, "device_platform", "android");
         append(url, "os", "android");
         append(url, "ssmix", "a");
@@ -1712,10 +2524,6 @@ public final class QishuiMusicService {
         append(url, "iid", "2204957404569386");
         append(url, "device_id", "2204957404565290");
         append(url, "_rticket", String.valueOf(System.currentTimeMillis()));
-        append(url, "q", query);
-        append(url, "cursor", "0");
-        append(url, "count", String.valueOf(limit));
-        return url.toString();
     }
 
     /** {@code trackId} 为空时是 POST 用的 URL（曲目 id 只在 body 里），非空时是 GET 回落用的。 */

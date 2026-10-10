@@ -48,7 +48,7 @@ class ClosureCompilerDownloadStaticTest {
     }
 
     @Test
-    @DisplayName("三条镜像都是 https、都指向清单仓库的 libs/ 目录")
+    @DisplayName("五条镜像都是 https、都指向清单仓库的 libs/ 目录")
     void mirrorsPointAtTheManifestRepository() {
         assertEquals(5, ClosureCompilerDownload.MIRRORS.size(), "镜像条数与字体/伴生包同一套策略");
         for (String mirror : ClosureCompilerDownload.MIRRORS) {

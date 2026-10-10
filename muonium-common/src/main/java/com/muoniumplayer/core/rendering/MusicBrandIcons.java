@@ -41,6 +41,12 @@ public final class MusicBrandIcons {
      */
     public static final String QISHUI_MONOGRAM = "汽";
 
+    /**
+     * Spotify 的兜底字标，理由同 {@link #KUGOU_MONOGRAM}。正常路径上已经让位给
+     * {@link BrandVectorIcons} 里的那枚三弧标识。
+     */
+    public static final String SPOTIFY_MONOGRAM = "S";
+
     private MusicBrandIcons() {
     }
 }

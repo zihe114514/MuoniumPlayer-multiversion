@@ -632,10 +632,59 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 "脚本转译器下载失败", safeNoticeValue(reason, "网络不可用") + " · 稍后自动重试");
     }
 
+    /**
+     * 渲染层热启用成功：伴生包装好后重评窗口捡起了原生库，文字渲染器已重建。
+     * 走 REFRESH_SUCCESS 的对勾外观即可——这是一次性结果提示，不值得新开一种通知。
+     */
+    public static void showRenderLayerHotReloaded() {
+        publishNotice(IslandNoticeType.REFRESH_SUCCESS, "渲染层", "热启用成功 · 无需重启");
+    }
+
     /** 转译器已就位：等它的脚本会被自动加载，无需用户手动重新加载。 */
     public static void showLxTranspilerReady() {
         completePersistentNotice(IslandNoticeType.LX_TRANSPILER, IslandNoticeType.LX_TRANSPILER_SUCCESS,
                 "脚本转译器", "已就绪 · 自定义源已自动加载");
+    }
+
+    /** 汽水签名后端伴生包的下载进度卡（选择汽水源且本机缺失时触发，持久卡）。 */
+    public static void showQishuiBackendProgress(int percent) {
+        int safePercent = Math.max(0, Math.min(100, percent));
+        publishNotice(IslandNoticeType.QISHUI_BACKEND, "汽水音乐源",
+                safePercent >= 100 ? "下载完成，正在启动后端…" : "正在下载汽水音乐后端 " + safePercent + "%",
+                true);
+    }
+
+    public static void showQishuiBackendFailure(String reason) {
+        completePersistentNotice(IslandNoticeType.QISHUI_BACKEND, IslandNoticeType.QISHUI_BACKEND_ERROR,
+                "汽水音乐后端安装失败", safeNoticeValue(reason, "网络不可用") + " · 稍后自动重试");
+    }
+
+    public static void showQishuiBackendReady() {
+        completePersistentNotice(IslandNoticeType.QISHUI_BACKEND, IslandNoticeType.QISHUI_BACKEND_SUCCESS,
+                "汽水音乐源", "签名后端已就绪 · 完整版可用");
+    }
+
+    /**
+     * 听歌打卡组件（zstd-jni）的下载进度卡。登录网易云账号时触发下载，
+     * 与字体/转译器进度卡同一形态：持久卡、同频道替换式更新、下载线程节流推送。
+     */
+    public static void showZstdNativeProgress(int percent) {
+        int safePercent = Math.max(0, Math.min(100, percent));
+        publishNotice(IslandNoticeType.ZSTD_NATIVE, "听歌打卡",
+                safePercent >= 100 ? "下载完成，下一轮播放自动恢复上报…" : "正在下载听歌打卡组件 " + safePercent + "%",
+                true);
+    }
+
+    /** 打卡组件下载失败：一句人话 + 冷却后自动重试的指引。 */
+    public static void showZstdNativeFailure(String reason) {
+        completePersistentNotice(IslandNoticeType.ZSTD_NATIVE, IslandNoticeType.ZSTD_NATIVE_ERROR,
+                "听歌打卡组件下载失败", safeNoticeValue(reason, "网络不可用") + " · 稍后自动重试");
+    }
+
+    /** 打卡组件已就位：下一轮播放起，网易云的播放历史与时长自动恢复上报。 */
+    public static void showZstdNativeReady() {
+        completePersistentNotice(IslandNoticeType.ZSTD_NATIVE, IslandNoticeType.ZSTD_NATIVE_SUCCESS,
+                "听歌打卡", "组件已就绪 · 上报自动恢复");
     }
 
     /**
@@ -2750,7 +2799,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         if (type == IslandNoticeType.REFRESHING || type == IslandNoticeType.PLAYLIST_TRACK_ADDING
                 || type == IslandNoticeType.TRANSCODING || type == IslandNoticeType.GD_SOURCE_LOADING
                 || type == IslandNoticeType.FONT_ASSET
-                || type == IslandNoticeType.LX_TRANSPILER) {
+                || type == IslandNoticeType.LX_TRANSPILER
+                || type == IslandNoticeType.ZSTD_NATIVE) {
             renderSpinner(centerX, centerY, alpha, accentColor, now, false);
             return;
         }
@@ -2764,7 +2814,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 || type == IslandNoticeType.LISTENING_DURATION_SUCCESS
                 || type == IslandNoticeType.MODEL_INFERENCE_SUCCESS
                 || type == IslandNoticeType.FONT_ASSET_SUCCESS
-                || type == IslandNoticeType.LX_TRANSPILER_SUCCESS) {
+                || type == IslandNoticeType.LX_TRANSPILER_SUCCESS
+                || type == IslandNoticeType.ZSTD_NATIVE_SUCCESS) {
             drawIslandStatusIcon(IslandStatusIcons.SUCCESS, centerX, centerY, alpha,
                     hexColor(.70f, 1f, .77f, alpha));
             return;
@@ -2790,7 +2841,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 || type == IslandNoticeType.PLAYBACK_ERROR || type == IslandNoticeType.GD_SOURCE_ERROR
                 || type == IslandNoticeType.MODEL_INFERENCE_FAILURE
                 || type == IslandNoticeType.FONT_ASSET_ERROR
-                || type == IslandNoticeType.LX_TRANSPILER_ERROR) {
+                || type == IslandNoticeType.LX_TRANSPILER_ERROR
+                || type == IslandNoticeType.ZSTD_NATIVE_ERROR) {
             drawRotatedPill(centerX, centerY, 10.0, 1.25, 45f,
                     hexColor(1f, .48f, .50f, alpha));
             drawRotatedPill(centerX, centerY, 10.0, 1.25, -45f,
@@ -3343,6 +3395,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             case MODEL_INFERENCE_SUCCESS:
             case FONT_ASSET_SUCCESS:
             case LX_TRANSPILER_SUCCESS:
+            case ZSTD_NATIVE_SUCCESS:
                 return BounceIslandMath.TINT_CATEGORY_SUCCESS;
             case REFRESH_ERROR:
             case PLAYLIST_TRACK_ADD_ERROR:
@@ -3354,6 +3407,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             case MODEL_INFERENCE_FAILURE:
             case FONT_ASSET_ERROR:
             case LX_TRANSPILER_ERROR:
+            case ZSTD_NATIVE_ERROR:
                 return BounceIslandMath.TINT_CATEGORY_DANGER;
             case REFRESHING:
             case PLAYLIST_TRACK_ADDING:
@@ -3365,6 +3419,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             case VOLUME:
             case FONT_ASSET:
             case LX_TRANSPILER:
+            case ZSTD_NATIVE:
                 return BounceIslandMath.TINT_CATEGORY_PROGRESS;
             default:
                 return BounceIslandMath.TINT_CATEGORY_NEUTRAL;
@@ -3385,6 +3440,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             case MODEL_INFERENCE_SUCCESS:
             case FONT_ASSET_SUCCESS:
             case LX_TRANSPILER_SUCCESS:
+            case ZSTD_NATIVE_SUCCESS:
             case PLAY_NEXT:
                 return 1;
             case REFRESH_ERROR:
@@ -3398,6 +3454,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             case MODEL_INFERENCE_FAILURE:
             case FONT_ASSET_ERROR:
             case LX_TRANSPILER_ERROR:
+            case ZSTD_NATIVE_ERROR:
                 return -1;
             default:
                 return 0;
@@ -3700,7 +3757,19 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         /** 转译器已就位（下次转译脚本时懒加载）。 */
         LX_TRANSPILER_SUCCESS,
         /** 转译器下载失败（会自动重试，期间转译走原始脚本降级）。 */
-        LX_TRANSPILER_ERROR
+        LX_TRANSPILER_ERROR,
+        /** 听歌打卡组件（zstd-jni）下载中（登录网易云账号触发，持久卡）。 */
+        ZSTD_NATIVE,
+        /** 打卡组件已就位（下一轮播放自动恢复上报）。 */
+        ZSTD_NATIVE_SUCCESS,
+        /** 打卡组件下载失败（会自动重试，期间打卡轮次安静跳过）。 */
+        ZSTD_NATIVE_ERROR,
+        /** 汽水签名后端伴生包下载中（选择汽水源且本机缺失时触发，持久卡）。 */
+        QISHUI_BACKEND,
+        /** 汽水签名后端已就绪（进程已拉起、健康检查通过）。 */
+        QISHUI_BACKEND_SUCCESS,
+        /** 汽水签名后端安装/启动失败（会自动重试，期间汽水源降级试听）。 */
+        QISHUI_BACKEND_ERROR
     }
 
 

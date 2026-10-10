@@ -267,8 +267,15 @@ final class NowPlayingInfo implements SharedRenderingConstants {
      */
     private static String qualityLabel(Music music) {
         Music.PlaybackQuality resolved = music.getPlaybackQuality();
-        if (resolved != null && resolved.hasBadge()) return resolved.getBadge();
-        return nonNull(music.getHighestQualityLabel()).trim();
+        String badge = resolved != null && resolved.hasBadge() ? resolved.getBadge()
+                : nonNull(music.getHighestQualityLabel()).trim();
+        // 汽水把本次解析出的全部音质档一起展示(如 "HQ · 324k/260k/132k/68k"):
+        // 用户能看到这首歌在自家权益下实际有几档可切,这是签名接口独有的信息。
+        if (music.isQishui()) {
+            String tiers = music.getQishuiQualityTiersText();
+            if (!tiers.isEmpty()) return (badge.isEmpty() ? "" : badge + " · ") + tiers;
+        }
+        return badge;
     }
 
     /** 音质档位只有这四个中文取值（见 {@code Music.toQualityLabel}），HQ 与 Hi-Res 本来就是英文。 */

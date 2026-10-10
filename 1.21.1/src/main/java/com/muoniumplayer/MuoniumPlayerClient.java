@@ -235,6 +235,11 @@ public final class MuoniumPlayerClient {
         // 三个提示天然排队。公告自己只管「这批看过没有」，不参与更新提示那套次数额度。
         GuiAnnouncements.tickAutoShow(mc);
 
+        // ---- 原生库装好、热启用又失败：模组替用户把游戏关掉再原样打开 ----
+        // 只在主菜单（mc.level == null）倒计时；游戏世界里绝不自动关人。ESC 取消；
+        // 重启上限、拿不到启动命令等安全阀都在 GameRestart 内部，这里一次布尔判断。
+        com.muoniumplayer.core.update.GameRestart.tick(mc::stop, mc.level == null);
+
         // ---- 【只给开发验证】一个文件等价于按一次右 Shift ----
         // 自动化环境里合成按键驱动不了 KeyMapping（要等 tick 循环里的 consumeClick），
         // 而首启的覆盖层与引导必须真的开出来才看得到效果。这条只补「按那一下」，

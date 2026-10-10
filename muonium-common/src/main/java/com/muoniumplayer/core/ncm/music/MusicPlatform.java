@@ -21,7 +21,18 @@ public enum MusicPlatform {
      * 是从外面进来的。<b>追加在末尾</b>：稳定键里带着 {@code name()}，插在中间会让已经
      * 落盘的歌词与封面缓存整体错行。</p>
      */
-    SMTC("系统播放器", 0x8E6BD6);
+    SMTC("系统播放器", 0x8E6BD6),
+    /**
+     * Spotify：<b>元数据源，不是播放源</b>。官方 Web API 没有任何音频出口（2024-11 起
+     * {@code preview_url} 也从响应里下线了），它的行只提供搜索、本人歌单与账号资料；点播时
+     * {@code Music#getPlayUrl()} 返回空，由 {@code CrossSourceSwitcher} 按同名同歌手在其余
+     * 平台找替身。也正因如此它<b>绝不能</b>进换源候选表 {@code CANDIDATE_ORDER} ——
+     * 它没有流可以给别人换。凭据是每个用户自建的 Client ID + OAuth PKCE（见
+     * {@code core.ncm.spotify}）。
+     *
+     * <p>同样<b>追加在末尾</b>，理由同 {@link #SMTC}：稳定键按 {@code name()} 落盘。</p>
+     */
+    SPOTIFY("Spotify", 0x1DB954);
 
     private final String displayName;
     private final int brandColor;

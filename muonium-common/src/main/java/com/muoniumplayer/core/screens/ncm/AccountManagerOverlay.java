@@ -184,6 +184,8 @@ public class AccountManagerOverlay extends NcmSheet {
         accountCard(strip(feed, ACCOUNT_ROW), 2, MusicPlatform.KUGOU);
         accountCard(strip(feed, ACCOUNT_ROW), 3, MusicPlatform.QISHUI);
         accountCard(strip(feed, ACCOUNT_ROW), 4, MusicPlatform.BILIBILI);
+        // YouTube 与 Spotify 不在这里：它们的登录不是扫码 / Cookie 导入，各自的登录页
+        // 挂在音源浮层（MusicSourceOverlay）自己的卡上。
 
         tip(dialog, () -> PartyIcons.LOCK,
                 () -> "登录信息仅保存在本地配置中，界面不会显示 Cookie 内容",

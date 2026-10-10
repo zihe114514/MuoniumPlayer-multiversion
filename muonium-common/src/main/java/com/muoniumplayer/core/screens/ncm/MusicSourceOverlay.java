@@ -6,6 +6,8 @@ import com.muoniumplayer.core.ncm.lxsource.LxRuntime;
 import com.muoniumplayer.core.ncm.lxsource.LxSourceService;
 import com.muoniumplayer.core.ncm.lxsource.LxSourceStore;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
+import com.muoniumplayer.core.ncm.music.QishuiBackend;
+import com.muoniumplayer.core.ncm.music.QishuiCompanionDownload;
 import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
@@ -14,6 +16,9 @@ import com.muoniumplayer.core.ncm.music.SwitchSourceSettings;
 import com.muoniumplayer.core.ncm.music.YouTubeMusicService;
 import com.muoniumplayer.core.ncm.music.YouTubeProxySettings;
 import com.muoniumplayer.core.ncm.music.YouTubeSessionStore;
+import com.muoniumplayer.core.ncm.spotify.SpotifyConfigStore;
+import com.muoniumplayer.core.ncm.spotify.SpotifyMusicService;
+import com.muoniumplayer.core.ncm.spotify.SpotifyOAuthFlow;
 import com.muoniumplayer.core.rendering.BrandVectorIcons;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
@@ -105,9 +110,13 @@ public final class MusicSourceOverlay extends NcmSheet {
     private static final int PAGE_LX = 2;
     private static final int PAGE_YOUTUBE_PROXY = 3;
     private static final int PAGE_YOUTUBE_LOGIN = 4;
+    private static final int PAGE_SPOTIFY_LOGIN = 5;
 
     /** Cookie 校验要联网（最坏 25 秒），期间把按钮钉成「正在验证…」，不让人连点。 */
     private boolean youtubeLoginBusy;
+
+    /** OAuth 有一次浏览器往返（可能几分钟），期间登录态由 SpotifyOAuthFlow 的阶段接管。 */
+    private boolean spotifyLoginBusy;
 
     /** 网址导入弹窗的开合。组件随页面重建，开合状态由它独立保管。 */
     private boolean lxUrlDialogOpen;
@@ -201,12 +210,13 @@ public final class MusicSourceOverlay extends NcmSheet {
         officialCard(strip(feed, ROW_H), 3, MusicPlatform.YOUTUBE);
         officialCard(strip(feed, ROW_H), 4, MusicPlatform.BILIBILI);
         officialCard(strip(feed, ROW_H), 5, MusicPlatform.QISHUI);
+        officialCard(strip(feed, ROW_H), 6, MusicPlatform.SPOTIFY);
 
         sectionLabel(strip(feed, LABEL_ROW_2), "在线聚合源", () -> 9.0, MusicPlatform.GD::getBrandColor);
-        gdCard(strip(feed, ROW_H), 6);
+        gdCard(strip(feed, ROW_H), 7);
 
         sectionLabel(strip(feed, LABEL_ROW_2), "自定义音源", () -> 9.0, () -> LX_COLOR);
-        lxEntryCard(strip(feed, ROW_H), 7);
+        lxEntryCard(strip(feed, ROW_H), 8);
 
         unblockRow(dialog);
         switchSourceRow(dialog);
@@ -257,6 +267,41 @@ public final class MusicSourceOverlay extends NcmSheet {
             youtubeProxyButton(card);
             youtubeLoginButton(card);
         }
+        if (platform == MusicPlatform.SPOTIFY) {
+            spotifyLoginButton(card);
+        }
+    }
+
+    /**
+     * Spotify 卡上的登录入口。
+     *
+     * <p>Spotify 是唯一要「用户先去别处办一件事」的官方源：自建开发者应用拿 Client ID。
+     * 登录页里把步骤写死在界面上，比丢一份链接让用户自己找文档靠谱。</p>
+     */
+    private void spotifyLoginButton(final Card card) {
+        final RoundedButtonWidget button = new RoundedButtonWidget("", FontManager.pf12bold);
+        card.addChild(button);
+        button.setGlassRim(GlassLook.Surface.PLAYER);
+        button.setRadius(10);
+        button.setShouldOverrideMouseCursor(true);
+        button.setOnClickCallback((x, y, mouse) -> {
+            if (mouse != 0) return false;
+            showSpotifyLogin();
+            return true;
+        });
+        button.setBeforeRenderCallback(() -> {
+            button.setBounds(32, 32);
+            button.setPosition(card.getWidth() - 64, card.getHeight() * .5 - 16);
+            button.setColor(button.isHovering()
+                    ? mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER),
+                    MusicPlatform.SPOTIFY.getBrandColor(), .16)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            button.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+        });
+        icon(button, PartyIcons.KEY, ICON_M, () -> 16.0, () -> 16.0,
+                () -> NeteaseMusicService.isLoggedIn(MusicPlatform.SPOTIFY)
+                        ? MusicPlatform.SPOTIFY.getBrandColor()
+                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
     }
 
     /** YouTube 专属设置入口。代理只作用于 YouTube 链路，所以留在 YouTube 卡上而不是全局设置。 */
@@ -492,6 +537,248 @@ public final class MusicSourceOverlay extends NcmSheet {
                 statusTone = result.ok ? 1 : 2;
             });
         });
+    }
+
+    // ── Spotify 登录（自备 Client ID + OAuth PKCE） ───────────────────────────
+
+    /**
+     * 二级页：Spotify 登录。
+     *
+     * <p>与 YouTube 的粘贴 Cookie 同一版式，但两步走：先存 Client ID，再开浏览器授权。
+     * 状态行是<b>活的</b> —— OAuth 的等待/换token 阶段由 {@link SpotifyOAuthFlow} 的事件推进，
+     * 直接读它而不是抄一份快照，回调落地后页面自己翻成「已登录」。</p>
+     */
+    private void showSpotifyLogin() {
+        page = PAGE_SPOTIFY_LOGIN;
+        beginPage();
+
+        // busy 标记按流程当前阶段复位：上次开着页面时流程被看门狗/取消收掉的，
+        // 这里不复位的话「打开浏览器授权」会永远停在「等待授权…」。
+        SpotifyOAuthFlow.Status flow = SpotifyOAuthFlow.currentStatus();
+        spotifyLoginBusy = flow == SpotifyOAuthFlow.Status.WAITING_BROWSER
+                || flow == SpotifyOAuthFlow.Status.EXCHANGING;
+
+        statusText = SpotifyMusicService.describeStatus();
+        statusTone = SpotifyMusicService.isLoggedIn() ? 1 : 0;
+
+        final Panel dialog = sheet(476, () -> 356.0);
+        subHeader(dialog, back(this::showOverview), () -> "Spotify · 登录",
+                () -> "自备 Client ID · 播放始终由跨平台换源匹配",
+                MusicPlatform.SPOTIFY::getBrandColor);
+        tip(dialog, this::spotifyStatusGlyph, this::spotifyLiveStatus, this::spotifyLiveColor, () -> 60.0);
+
+        final Panel body = body(dialog, () -> 88.0, () -> 54.0);
+        final ScrollPanel feed = feed(body);
+        sectionLabel(strip(feed, 20.0), "Client ID", () -> 4.0,
+                MusicPlatform.SPOTIFY::getBrandColor);
+        final TextFieldWidget input = spotifyClientIdInputRow(strip(feed, 46.0));
+        spotifyStepsCard(strip(feed, 96.0));
+        spotifyLoginFooter(dialog, input);
+    }
+
+    /** Client ID 输入行。预填已保存的值，用户换号时看得见自己粘过什么。 */
+    private TextFieldWidget spotifyClientIdInputRow(final Panel row) {
+        final RoundedRectWidget field = new RoundedRectWidget();
+        row.addChild(field);
+        field.setGlassRim(GlassLook.Surface.PLAYER);
+        field.setClickable(false);
+        field.setRadius(9);
+        field.setBeforeRenderCallback(() -> {
+            field.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 40);
+            field.setPosition(PAD + CARD_INSET, 4.0);
+            field.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+            field.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+        });
+
+        final TextFieldWidget input = new TextFieldWidget(FontManager.pf12);
+        row.addChild(input);
+        input.setEnabled(true).setFocused(true);
+        input.setPlaceholder("粘贴你的 Spotify Client ID（约 32 位字母数字）");
+        String saved = SpotifyConfigStore.clientId();
+        if (!saved.isEmpty()) input.setText(saved);
+        input.drawUnderline(false);
+        input.setBeforeRenderCallback(() -> {
+            input.setBounds(Math.max(1, field.getWidth() - 22), 24);
+            input.setPosition(field.getRelativeX() + 11, field.getRelativeY() + 8);
+            input.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            input.setDisabledTextColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        });
+        stroke(field, 9.0, MusicPlatform.SPOTIFY::getBrandColor, () -> input.isFocused() ? .62 : 0.0);
+        return input;
+    }
+
+    /** 三行前置步骤说明。放卡片里而不是塞进 tip：步骤值得一块安静的底。 */
+    private void spotifyStepsCard(final Panel row) {
+        final RoundedRectWidget surface = new RoundedRectWidget();
+        row.addChild(surface);
+        surface.setGlassRim(GlassLook.Surface.PLAYER);
+        surface.setClickable(false);
+        surface.setRadius(11);
+        surface.setBeforeRenderCallback(() -> {
+            surface.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 90);
+            surface.setPosition(PAD + CARD_INSET, 4.0);
+            surface.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            surface.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+        });
+        String[][] steps = {
+                {"①", "developer.spotify.com/dashboard 建应用：勾选 Web API，Redirect URI 填 "
+                        + SpotifyConfigStore.REDIRECT_URI},
+                {"②", "粘贴 Client ID 并保存，再点「打开浏览器授权」（应用所有者需要 Premium）"},
+                {"③", "Spotify 不提供音频：点播由换源在网易云 / QQ / 酷狗等平台找同名同歌手版本"},
+        };
+        for (int index = 0; index < steps.length; index++) {
+            final LabelWidget label = label(surface, steps[index][1], FontManager.pf12);
+            final double rowTop = 12.0 + index * 26.0;
+            label.setBeforeRenderCallback(() -> {
+                label.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+                label.setMaxWidth(Math.max(1, surface.getWidth() - 26));
+                label.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+                label.setPosition(14, rowTop);
+            });
+        }
+    }
+
+    private void spotifyLoginFooter(final Panel dialog, final TextFieldWidget input) {
+        final RoundedButtonWidget save = action(dialog, () -> PartyIcons.CHECK,
+                () -> "保存 Client ID", FontManager.pf12bold,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                () -> submitSpotifyClientId(input));
+        save.setBeforeRenderCallback(() -> {
+            save.setBounds(112, 30);
+            save.setPosition(PAD + CARD_INSET, dialog.getHeight() - 46);
+            save.setColor(save.isHovering()
+                    ? mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF, .16)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        });
+
+        final RoundedButtonWidget authorize = action(dialog, () -> PartyIcons.LINK,
+                () -> spotifyLoginBusy ? "等待授权…" : "打开浏览器授权", FontManager.pf12bold,
+                () -> 0xFFFFFF, () -> startSpotifyAuthorize());
+        authorize.setBeforeRenderCallback(() -> {
+            authorize.setBounds(124, 30);
+            authorize.setPosition(save.getRelativeX() + 120, dialog.getHeight() - 46);
+            authorize.setColor(authorize.isHovering()
+                    ? mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF, .16)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        });
+
+        final RoundedButtonWidget signOut = action(dialog, () -> PartyIcons.LOGOUT, () -> "退出登录",
+                FontManager.pf12bold, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                () -> {
+                    if (!SpotifyMusicService.isLoggedIn()) {
+                        statusText = "现在本来就是未登录状态";
+                        statusTone = 0;
+                        return;
+                    }
+                    // 走账号分派那一层：与 YouTube 相同，登出只清 Spotify 自己的凭据文件。
+                    NeteaseMusicService.logout(MusicPlatform.SPOTIFY);
+                    SpotifyOAuthFlow.cancel();
+                    statusText = SpotifyMusicService.describeStatus();
+                    statusTone = 0;
+                });
+        signOut.setBeforeRenderCallback(() -> {
+            signOut.setBounds(96, 30);
+            signOut.setPosition(authorize.getRelativeX() + 132, dialog.getHeight() - 46);
+            signOut.setColor(signOut.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+    }
+
+    /** 保存 Client ID。纯本地校验（形状），不联网 —— 联网的失败留给授权那一步去说。 */
+    private void submitSpotifyClientId(final TextFieldWidget input) {
+        String clientId = input.getText() == null ? "" : input.getText().trim();
+        if (clientId.isEmpty()) {
+            statusText = "请先粘贴 Client ID";
+            statusTone = 2;
+            return;
+        }
+        if (SpotifyConfigStore.saveClientId(clientId)) {
+            statusText = "已保存 Client ID，现在可以打开浏览器授权";
+            statusTone = 1;
+        } else {
+            statusText = "Client ID 形状不对：应是一串约 32 位的字母数字（在开发者后台的应用页里）";
+            statusTone = 2;
+        }
+    }
+
+    /**
+     * 起回调服务并拉起浏览器。全程无网络请求（授权页是 Spotify 的），快到可以直接在点击线程做。
+     * 浏览器打不开时把 URL 塞进剪贴板 —— 手动粘贴到浏览器照样能完成授权。
+     */
+    private void startSpotifyAuthorize() {
+        if (spotifyLoginBusy) return;
+        if (!SpotifyMusicService.isConfigured()) {
+            statusText = "先粘贴并保存 Client ID，再打开授权";
+            statusTone = 2;
+            return;
+        }
+        try {
+            final String url = SpotifyOAuthFlow.beginLogin();
+            spotifyLoginBusy = true;
+            if (com.muoniumplayer.core.utils.other.BrowserUtils.open(url)) {
+                statusText = "浏览器已打开：登录 Spotify 并点同意授权，完成后自动回到游戏";
+                statusTone = 3;
+                return;
+            }
+            KeyboardUtils.setClipboardString(url);
+            statusText = "浏览器打不开：授权链接已复制到剪贴板，手动粘贴到浏览器打开即可";
+            statusTone = 2;
+        } catch (Throwable throwable) {
+            SpotifyOAuthFlow.cancel();
+            spotifyLoginBusy = false;
+            statusText = "起不了回调服务（端口 " + SpotifyOAuthFlow.callbackPort() + " 被占用？）："
+                    + throwable.getMessage();
+            statusTone = 2;
+        }
+    }
+
+    /**
+     * 活状态行：OAuth 进行中直接读流程阶段，其余时候显示最近一次操作的反馈。
+     * DONE 不落缓存 —— 授权在页面开着的时候完成时，这里要立刻翻成「已登录」。
+     */
+    private String spotifyLiveStatus() {
+        SpotifyOAuthFlow.Status flow = SpotifyOAuthFlow.currentStatus();
+        if (flow == SpotifyOAuthFlow.Status.WAITING_BROWSER) {
+            return "等待浏览器授权…完成后自动回到游戏（五分钟内有效）";
+        }
+        if (flow == SpotifyOAuthFlow.Status.EXCHANGING) {
+            return "已收到授权回调，正在换取 token…";
+        }
+        if (flow == SpotifyOAuthFlow.Status.DONE) {
+            if (spotifyLoginBusy) {
+                spotifyLoginBusy = false;
+                statusText = SpotifyMusicService.describeStatus();
+                statusTone = 1;
+            }
+            return statusText;
+        }
+        if (flow == SpotifyOAuthFlow.Status.FAILED) {
+            if (spotifyLoginBusy) spotifyLoginBusy = false;
+            return "授权失败：" + SpotifyOAuthFlow.statusMessage();
+        }
+        return statusText;
+    }
+
+    private int spotifyLiveColor() {
+        SpotifyOAuthFlow.Status flow = SpotifyOAuthFlow.currentStatus();
+        if (flow == SpotifyOAuthFlow.Status.WAITING_BROWSER
+                || flow == SpotifyOAuthFlow.Status.EXCHANGING) {
+            return NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+        }
+        if (flow == SpotifyOAuthFlow.Status.FAILED) return BAD_COLOR;
+        return statusTone == 1 ? OK_COLOR : statusTone == 2 ? BAD_COLOR
+                : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+    }
+
+    private String spotifyStatusGlyph() {
+        SpotifyOAuthFlow.Status flow = SpotifyOAuthFlow.currentStatus();
+        if (flow == SpotifyOAuthFlow.Status.WAITING_BROWSER
+                || flow == SpotifyOAuthFlow.Status.EXCHANGING) {
+            return PartyIcons.HOURGLASS;
+        }
+        if (flow == SpotifyOAuthFlow.Status.FAILED) return PartyIcons.WARNING;
+        return statusTone == 1 ? PartyIcons.CHECK : statusTone == 2 ? PartyIcons.WARNING : PartyIcons.INFO;
     }
 
     private void youtubeProxyToggleRow(final Panel row) {
@@ -1486,19 +1773,23 @@ public final class MusicSourceOverlay extends NcmSheet {
         final boolean youtube = platform == MusicPlatform.YOUTUBE;
         final boolean bilibili = platform == MusicPlatform.BILIBILI;
         final boolean qishui = platform == MusicPlatform.QISHUI;
+        final boolean spotify = platform == MusicPlatform.SPOTIFY;
         // 品牌字形必须配对到自己那份字体：music-brand-icons 里没有 U+E888（QQ 音乐），
         // 拿错字体会落到兜底字体上、画出一片空白。酷狗两份字体里都没有，用正文字体画一枚汉字字标。
-        // 酷狗、哔哩哔哩与汽水现在有真标识了（brandMark 里的矢量分支），下面这对字形/字体只在矢量画不出来时兜底。
+        // 酷狗、哔哩哔哩、汽水与 Spotify 现在有真标识了（brandMark 里的矢量分支），
+        // 下面这对字形/字体只在矢量画不出来时兜底。
         final String mark = kugou ? MusicBrandIcons.KUGOU_MONOGRAM
                 : qq ? MusicBrandIcons.QQ_MUSIC
                 : youtube ? MusicBrandIcons.YOUTUBE
                 : bilibili ? MusicBrandIcons.BILIBILI_MONOGRAM
                 : qishui ? MusicBrandIcons.QISHUI_MONOGRAM
+                : spotify ? MusicBrandIcons.SPOTIFY_MONOGRAM
                 : MusicBrandIcons.NETEASE_CLOUD_MUSIC;
         final CFontRenderer font = kugou ? FontManager.pf34bold
                 : youtube ? FontManager.youtubeIcon34
                 : bilibili ? FontManager.pf34bold
                 : qishui ? FontManager.pf34bold
+                : spotify ? FontManager.pf34bold
                 : qq ? FontManager.qqMusicIcon68 : FontManager.musicBrand52;
 
         final RoundedRectWidget disc = new RoundedRectWidget();
@@ -1584,10 +1875,32 @@ public final class MusicSourceOverlay extends NcmSheet {
             return "未登录 · 可搜索播放，扫码后解锁歌词与收藏夹";
         }
         if (platform == MusicPlatform.QISHUI) {
+            // 醒目提示:后端缺失/下载失败时,卡片副标题直接显示安装状态(动态岛同步滚动)。
+            String backendLine = QishuiCompanionDownload.backendInstallStatusLine();
+            if (!backendLine.isEmpty()) {
+                return backendLine + " · 完整版暂不可用";
+            }
+            if (!QishuiBackend.isAvailable()) {
+                return "签名后端未运行 · 仅试听；重新进入游戏或重选本源可自动安装";
+            }
+            // 完整版的 Cookie 实际由后端持有(签名代理必须带它转发)。登录工具导入的凭据
+            // 只落在本机后端时,模组会话库是空的——这时绝不能显示「未登录」误导用户重登。
             if (NeteaseMusicService.isLoggedIn(platform)) {
                 return "已登录 · " + NeteaseMusicService.getAccountName(platform);
             }
-            return "未登录 · 可试听，用外部工具获取 Cookie 登录后播放完整 AAC";
+            if (QishuiBackend.backendHasCookie()) {
+                return "已登录 · 凭据在本机签名后端";
+            }
+            return "未登录 · 可试听；游戏内导入 Cookie 或运行汽水登录工具后播放完整版";
+        }
+        if (platform == MusicPlatform.SPOTIFY) {
+            if (NeteaseMusicService.isLoggedIn(platform)) {
+                return "已登录 · " + NeteaseMusicService.getAccountName(platform);
+            }
+            // 与 B 站同理：不能把「未登录」写成不可用——搜索本来就不需要登录。
+            return SpotifyMusicService.isConfigured()
+                    ? "未登录 · 已配置，开浏览器授权后可浏览本人歌单"
+                    : "未登录 · 元数据源，搜索无需登录，登录需自备 Client ID";
         }
         if (NeteaseMusicService.isLoggedIn(platform)) {
             return "已登录 · " + NeteaseMusicService.getAccountName(platform);

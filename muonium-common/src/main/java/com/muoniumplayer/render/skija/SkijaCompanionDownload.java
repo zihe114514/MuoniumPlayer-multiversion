@@ -28,7 +28,8 @@ import java.util.zip.ZipInputStream;
  * 原生库以「伴生包」形式托管在公开清单仓库 {@code MuoniumPlayer-updates} 的
  * {@code skija-companion/} 目录，客户端在<b>磁盘上一个候选都没有</b>时自动下载本机平台的那一份、
  * 校验字节数与 sha256、解压到伴生包目录；装好后<b>必须重启游戏</b>才生效（重启看门狗置闸，
- * 见 {@link #restartRequired}），进度条与状态展示由提示层照 {@link #state()} 画。
+ * 见 {@link #isRestartRequired()}）——重启由模组替用户自动完成（{@code GameRestart}：等回主菜单
+ * 后优雅关游戏、看守脚本原命令重开），不试热加载。进度条与状态展示由提示层照 {@link #state()} 画。
  *
  * <h2>触发条件（同时满足才下载）</h2>
  * <ol>
@@ -80,7 +81,7 @@ final class SkijaCompanionDownload {
     /** 同一会话内最多尝试几次：网络断了不该每 20 秒重评都打一次。 */
     private static final int MAX_ATTEMPTS = 5;
 
-    /** 两次尝试之间的冷却：给网络恢复留时间，也避免频繁重试刷日志。 */
+/** 两次尝试之间的冷却：给网络恢复留时间，也避免频繁重试刷日志。 */
     private static final long RETRY_COOLDOWN_NANOS = 3L * 60L * 1_000_000_000L;
 
     /** 暂存目录前缀。扫描层对「点开头」的目录一律不看，两边靠这个约定对齐。 */
@@ -121,7 +122,7 @@ final class SkijaCompanionDownload {
         DOWNLOADING,
         /** 下载完成，正在解压安装。 */
         INSTALLING,
-        /** 装好了。等用户重启游戏后生效（见 {@link #restartRequired}）。 */
+        /** 装好了。置重启闸：生效统一走重启（GameRestart 替用户完成）。 */
         DONE,
         /** 本会话内失败（重试预算没用完时冷却到了会再试）。 */
         FAILED
@@ -145,20 +146,30 @@ final class SkijaCompanionDownload {
     /**
      * 重启看门狗的闸：本会话里自动下载装好了伴生包、<b>必须重启游戏才能生效</b>。
      *
-     * <p>装完后不走「热加载」：装到一半的游戏里，链接器命名空间、GL 上下文、字体管理器的
-     * 状态都不是一张白纸，热加载能不能成全看运气——用户看到的却是「下载完了然后呢」。
-     * 所以装好即置位本闸：下载线程不再立即重试、{@code SkijaHost} 的重评窗口对它让路，
-     * 提示层挂出「必须重启游戏」。重启之后这是一次全新的 JVM，文件已在磁盘上，加载走
-     * 首次启动的正常路径，本闸自然不存在。</p>
+     * <p>装完不试热加载：救援改由 {@code GameRestart} 替用户把「关掉再打开」整段走完
+     * （等主菜单 → 优雅 stop → 看守原命令重开），玩家只需要看着。本闸的效果与旧版一致：
+     * {@code SkijaHost} 的重评窗口对它让路（不再白烧 CPU 反复重试 dlopen），提示层挂出重启
+     * 倒计时。重启后是全新的 JVM，文件已在磁盘上，加载走首次启动的正常路径，本闸自然不存在。</p>
+     *
+     * <p>手动放置伴生包的用户不受本闸影响——那条路没有「装好」信号，重评窗口照常每 20 秒
+     * 重试；真热载成功时 {@code SkijaNatives} 的 FALSE→TRUE 跃迁钩子会重建文字渲染器
+     * （当年「UI 活了文字全空」的焊死点已修），界面当帧复活。</p>
      */
     private static volatile boolean restartRequired;
 
     private SkijaCompanionDownload() {
     }
 
-    /** 本会话是否已进入「装好了、等重启」状态。提示层与重评窗口都读它。 */
+    /**
+     * 本会话是否已进入「装好了、必须重启」状态。提示层、重评窗口与自动重启都读它。
+     * 万一库其实已经加载成功（比如手动放包后重评抢先热载了），不再要求重启。
+     */
     static boolean isRestartRequired() {
-        return restartRequired;
+        if (!restartRequired) {
+            return false;
+        }
+        SkijaNatives.Status current = SkijaNatives.status();
+        return current == null || !current.loaded();
     }
 
     /** 当前（或最近一次）的下载状态；提示层每帧读它，永远不会为 null。 */
@@ -217,9 +228,8 @@ final class SkijaCompanionDownload {
     /**
      * 下载 → 校验 → 解压 → 校验 → 并入伴生包目录 → 置重启闸。
      *
-     * <p>全程在后台线程。装好即置位 {@link #restartRequired}——所有平台一致：
-     * 热加载在装到一半的游戏里不可靠（2026-10-07 收紧的规则），重启后走首次启动的
-     * 正常加载路径。
+     * <p>全程在后台线程。装好即置位 {@link #restartRequired}：不试热加载，直接等
+     * {@code GameRestart} 在主菜单布防、倒计时、优雅关游戏、看守原命令重开。</p>
      */
     private static void run(Pack pack) {
         try {
@@ -240,10 +250,10 @@ final class SkijaCompanionDownload {
             Files.deleteIfExists(archive.toPath());
 
             state = new State(Phase.DONE, 100, null);
-            // 重启看门狗：置闸、不热加载。提示层会一直挂着「必须重启游戏」。
+            // 重启看门狗：置闸、不试热加载。GameRestart 等回主菜单后倒计时关游戏、看守原命令重开。
             restartRequired = true;
             log("已自动装好 " + pack.fileName() + " → " + root.getAbsolutePath()
-                    + "；必须重启游戏后生效，本会话不再尝试热加载");
+                    + "；等待自动重启（回主菜单后 15 秒倒计时，ESC 可取消）");
         } catch (Throwable failure) {
             state = new State(Phase.FAILED, 0, safeMessage(failure));
             log("自动下载失败：" + describe(failure));

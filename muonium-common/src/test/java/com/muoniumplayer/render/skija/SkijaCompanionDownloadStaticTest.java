@@ -67,7 +67,7 @@ class SkijaCompanionDownloadStaticTest {
     }
 
     @Test
-    @DisplayName("三条镜像都是 https、都指向清单仓库的 skija-companion/ 目录")
+    @DisplayName("五条镜像都是 https、都指向清单仓库的 skija-companion/ 目录")
     void mirrorsPointAtTheManifestRepository() {
         assertEquals(5, SkijaCompanionDownload.MIRRORS.size(), "镜像条数与更新检查同一套策略");
         for (String mirror : SkijaCompanionDownload.MIRRORS) {
@@ -151,6 +151,38 @@ class SkijaCompanionDownloadStaticTest {
                 Paths.get("com", "muoniumplayer", "core", "screens", "RenderLayerNotice.java")));
         assertTrue(notice.contains("SkijaNatives.nativeMissingLines()"),
                 "停用提示的缺库分支必须走共享文案，而不是继续教用户手动解压");
+    }
+
+    @Test
+    @DisplayName("重启接线：装好即置重启闸（不试热启用），跃迁钩子仍兜底重建文字渲染器")
+    void restartGateAndRendererRebuildWired() throws IOException {
+        String companion = read(ProjectPaths.sourceFile(
+                Paths.get("com", "muoniumplayer", "render", "skija",
+                        "SkijaCompanionDownload.java")));
+        assertTrue(companion.contains("restartRequired = true;"),
+                "装好即置重启闸——热启用路线已撤下，生效统一走重启（GameRestart 替用户完成）");
+        assertFalse(companion.contains("HOT_ENABLE_WINDOW_NANOS"),
+                "不许再有热启用窗口：那是热重载时代的中间方案，已废弃");
+        assertTrue(companion.contains("public static boolean companionRestartPending()")
+                        || companion.contains("isRestartRequired()"),
+                "重启判据要有跨包可问的入口（GameRestart 布防与救援文案都靠它）");
+
+        String natives = read(ProjectPaths.sourceFile(
+                Paths.get("com", "muoniumplayer", "render", "skija", "SkijaNatives.java")));
+        int adopt = natives.indexOf("private static boolean adopt(File directory");
+        int transition = natives.indexOf("Boolean.FALSE.equals(loaded)");
+        int rebuild = natives.indexOf("FontManager.rebuildAllRenderers()");
+        assertTrue(adopt >= 0 && transition > adopt && rebuild > transition,
+                "跃迁钩子要保留：热加载不再主动尝试，但手动放包 + 重评偶然热载成功时，"
+                        + "仍须重建无库窗口期焊死为空数组的文字渲染器");
+
+        String fontManager = read(ProjectPaths.sourceFile(
+                Paths.get("com", "muoniumplayer", "core", "management", "FontManager.java")));
+        assertTrue(fontManager.contains("public static int rebuildAllRenderers()"),
+                "缺全量重建入口");
+        assertTrue(fontManager.contains("GlyphInk.clearCache()")
+                        && fontManager.contains("GlyphInkMetrics.clearCache()"),
+                "重建时必须清 AWT 墨迹缓存——无库窗口期量出的高度可能基于坏行盒");
     }
 
     // ------------------------------------------------------------------

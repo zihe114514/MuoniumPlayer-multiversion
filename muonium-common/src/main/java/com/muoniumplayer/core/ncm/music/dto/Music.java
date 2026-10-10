@@ -191,6 +191,8 @@ public class Music {
 
     /** 汽水登录流返回的一次性 play_auth；只在解析到下载完成之间使用，不写配置。 */
     private transient volatile String qishuiPlayAuth = "";
+    /** 本次解析出的全部音质档(码率 kbps,降序),来自汽水签名响应;仅用于 UI 展示。 */
+    private transient volatile List<Long> qishuiQualityBitrates = List.of();
 
     /**
      * Gson 在解码不可变网易云响应模型时，可能不运行字段初始化器
@@ -217,6 +219,26 @@ public class Music {
 
     public void clearQishuiPlayAuth() {
         qishuiPlayAuth = "";
+    }
+
+    /** 本次解析可用的音质档(码率 kbps 降序);空表 = 未知。 */
+    public List<Long> getQishuiQualityBitrates() {
+        return qishuiQualityBitrates;
+    }
+
+    public void setQishuiQualityBitrates(List<Long> bitrates) {
+        qishuiQualityBitrates = bitrates == null ? List.of() : List.copyOf(bitrates);
+    }
+
+    /** 音质档展示串,如 "324k/260k/132k/68k";未知返回空串。 */
+    public String getQishuiQualityTiersText() {
+        if (qishuiQualityBitrates.isEmpty()) return "";
+        StringBuilder out = new StringBuilder();
+        for (Long bitrate : qishuiQualityBitrates) {
+            if (out.length() > 0) out.append('/');
+            out.append(Math.round(bitrate / 1000.0)).append('k');
+        }
+        return out.toString();
     }
 
     public enum PlaybackQuality {
@@ -538,6 +560,54 @@ public class Music {
         return track;
     }
 
+    /**
+     * 由一条 Spotify 曲目元数据构造 {@link Music} 行。
+     *
+     * <p>这条行<b>没有本家音频</b>（官方 Web API 无音频出口），它存在的意义是：搜索结果里
+     * 出现真实的 Spotify 曲目（封面、时长、多歌手），点播时 {@code #getPlayUrl()} 返回空、
+     * 由跨平台换源在其余平台找同名同歌手的替身。{@code id} 用 spotify track id 的稳定哈希，
+     * 与酷狗同理由：封面 / 下载缓存、播放历史全按 {@link #getStableKey()} 落盘。</p>
+     *
+     * <p>{@code vip} 恒为 false：Spotify 的元数据没有「会员才能看」的概念，替身的会员
+     * 限制由替身自己那行在播放链路上如实呈现。</p>
+     */
+    public static Music fromSpotifyTrack(
+            com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.Track track) {
+        if (track == null) return null;
+        // 本地文件行与空 id 行没有可跨平台匹配的规范化元数据，映射出来只会是一行永远放不出声的废行。
+        if (track.local) return null;
+        String trackId = nonNull(track.id).trim();
+        if (trackId.isEmpty()) return null;
+        long stableId = stableLong("spotify:" + trackId);
+
+        List<Artist> artistList = new ArrayList<>();
+        String artists = nonNull(track.artist);
+        if (!artists.trim().isEmpty()) {
+            for (String artistName : artists.split("\\s*/\\s*")) {
+                if (artistName.trim().isEmpty()) continue;
+                artistList.add(new Artist(stableLong("spotify:artist:" + artistName), artistName.trim(),
+                        Collections.emptyList(), Collections.emptyList()));
+            }
+        }
+        if (artistList.isEmpty()) {
+            artistList.add(new Artist(0L, "Unknown Artist", Collections.emptyList(), Collections.emptyList()));
+        }
+
+        String albumName = nonNull(track.album);
+        String cover = nonNull(track.coverUrl);
+        Album album = new Album(stableLong("spotify:album:" + nonNull(track.albumId)), albumName, cover,
+                Collections.emptyList());
+        Music music = new Music(nonNull(track.name), nonNull(track.name), "", stableId,
+                artistList, Collections.emptyList(), album, track.durationMillis, 0L, 0L,
+                Collections.emptyList());
+        music.source = MusicPlatform.SPOTIFY;
+        music.sourceId = trackId;
+        music.sourceMid = trackId;
+        music.externalCoverUrl = cover;
+        music.foreignCover = !cover.isEmpty();
+        return music;
+    }
+
     /** 从一条 GD API 搜索结果构建一条可自由选择的 GD Studio 曲目。 */
     public static Music fromGdTrack(GdStudioMusicService.GdTrack track, String platformKey) {
         if (track == null) return null;
@@ -647,6 +717,14 @@ public class Music {
     /** 咪咕渠道：同 {@link #isKuwo()}，脚本声明 mg 渠道之外不可播。 */
     public boolean isMigu() {
         return getSource() == MusicPlatform.MIGU;
+    }
+
+    /**
+     * Spotify 行：只有元数据（官方 Web API 无音频出口），取流由跨平台换源接管。
+     * 见 {@link #fromSpotifyTrack} 与 {@code SpotifyMusicService} 的类注释。
+     */
+    public boolean isSpotify() {
+        return getSource() == MusicPlatform.SPOTIFY;
     }
 
     /** 酷我 / 咪咕：宿主只内置了它们的搜索（供换源匹配），取流完全依赖自定义源。 */
@@ -801,6 +879,11 @@ public class Music {
         // 酷我 / 咪咕渠道没有内置取流链路：上面那一跳（自定义源）就是它们唯一的活路。
         // 绝不能继续往下掉 —— 那会把这些平台的 id 当网易云 id 喂给内置解析，放出别的歌。
         if (isLxOnlyChannel()) return null;
+
+        // Spotify 是元数据源：官方 Web API 没有任何音频出口（preview_url 已下线），返回 null
+        // 让点播链路落进 CrossSourceSwitcher 按同名同歌手找替身。同样绝不能继续往下掉 ——
+        // spotify id 会被 Cadence 当网易云 id 解析，放出完全不相干的歌。
+        if (isSpotify()) return null;
 
         if (isYouTube()) {
             return resolveYouTubePlayUrl();
@@ -1161,6 +1244,7 @@ public class Music {
                         QishuiMusicService.getSongUrl(getSourceId(), requestedQuality);
                 if (result == null) return null;
                 setQishuiPlayAuth(result.playAuth);
+                setQishuiQualityBitrates(result.availableBitrates);
                 playbackQuality = detectCadencePlaybackQuality(result.format, requestedQuality);
                 considerHighestQuality(result.format, result.bitrate);
                 return new Tuple<>(result.url, result.format);
@@ -1483,6 +1567,9 @@ public class Music {
         if (isNetease()) CloudMusicApi.like(this.id, like);
         else if (isKuGou()) {
             com.muoniumplayer.core.ncm.music.KuGouMusicService.setLike(this, like);
+        }
+        else if (isQishui()) {
+            com.muoniumplayer.core.ncm.music.QishuiMusicService.setTrackLiked(getSourceId(), like);
         }
     }
 

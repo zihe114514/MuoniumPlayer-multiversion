@@ -140,6 +140,11 @@ public final class PersonalFmManager {
     private static volatile Mode selectedMode = Mode.DEFAULT;
     private static volatile String selectedSubMode = "";
     private static volatile String status = "进入后获取 1 首私人 FM 推荐";
+    // ── 汽水听歌模式(真实的、汽水自己的体系,见 QishuiMusicService.FeedMode) ──
+    /** 选中的汽水模式 key;空串 = 「推荐」。与网易云的 Mode 枚举完全独立,互不复用。 */
+    private static volatile String qishuiModeKey = "";
+    /** 汽水模式在落盘文件里多带一个键(见 ensureSettingsLoaded/persistSelection)。 */
+    static final String QISHUI_MODE_SETTING_KEY = "qishuiMode";
 
     /** 模式选择的落盘状态。与 {@link #selectedMode} 分开加锁：读写只发生在用户切换与首次取数时。 */
     private static final Gson SETTINGS_GSON = new Gson();
@@ -226,6 +231,35 @@ public final class PersonalFmManager {
         requestBatch(selectedMode, selectedSubMode, CloudMusic.isPersonalFmActive());
     }
 
+    // ── 汽水听歌模式:选择/查询(清单本体在 QishuiMusicService.getFeedModes) ──
+
+    /** 当前选中的汽水模式(始终非 null:没选或选了「推荐」都给默认模式)。 */
+    public static QishuiMusicService.FeedMode getSelectedQishuiMode() {
+        return findQishuiMode(qishuiModeKey);
+    }
+
+    private static QishuiMusicService.FeedMode findQishuiMode(String key) {
+        if (key == null || key.isEmpty() || QishuiMusicService.DEFAULT_FEED_MODE.key.equals(key)) {
+            return QishuiMusicService.DEFAULT_FEED_MODE;
+        }
+        for (QishuiMusicService.FeedMode mode : QishuiMusicService.getFeedModes()) {
+            if (mode.key.equals(key)) return mode;
+        }
+        return QishuiMusicService.DEFAULT_FEED_MODE;
+    }
+
+    /** 汽水模式的展示名(状态文案用);默认模式就是「推荐」。 */
+    public static String qishuiSelectionLabel() {
+        return getSelectedQishuiMode().text;
+    }
+
+    public static void selectQishuiMode(QishuiMusicService.FeedMode mode) {
+        ensureSettingsLoaded();
+        qishuiModeKey = mode == null || mode.isDefaultMode() ? "" : mode.key;
+        persistSelection();
+        requestBatch(selectedMode, selectedSubMode, CloudMusic.isPersonalFmActive());
+    }
+
     /** 由仅 FM 播放器按钮调用。这是唯一提交电台“垃圾桶”的路径。 */
     public static void skipCurrentAndRequestNext() {
         if (!CloudMusic.isPersonalFmActive() || !LOADING.compareAndSet(false, true)) {
@@ -244,6 +278,11 @@ public final class PersonalFmManager {
                     // 酷狗是同一个语义、不同端点：/v2/personal_recommend 带 action=garbage，
                     // 并且要回传最近一次推荐的游标，否则反馈会打到别批推荐上（且不报错）。
                     KuGouMusicService.reportFmTrash(current);
+                } else if (current != null && current.isQishui()) {
+                    // 汽水的垃圾桶是 /luna/track/dislike（免签名移动端面，artist_ids 必填，
+                    // 从 feed 解析时记下的侧表里查）。失败不影响跳过本身——下一波请求仍会把
+                    // 这首以短时长计入 played_media，推荐器照样能感知「这首没被听完」。
+                    QishuiMusicService.dislikeTrack(current.getSourceId());
                 }
             } catch (Throwable throwable) {
                 System.err.println("[NCM/FM] Skip feedback failed: " + safeMessage(throwable));
@@ -271,6 +310,12 @@ public final class PersonalFmManager {
         // 差别只在「怎么拿到一批歌」。
         if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.KUGOU) {
             requestKuGouBatch(startPlaybackAfterLoad);
+            return;
+        }
+        // 汽水发现流与私人 FM 同构（上报已听 → 无限续个性化流，2026-10-11 三波实测零重叠），
+        // 所以直接接进同一套 FM 机件。模式选择器在汽水下不生效（同酷狗的待遇），文案里说明。
+        if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QISHUI) {
+            requestQishuiBatch(startPlaybackAfterLoad);
             return;
         }
         if (CloudMusic.profile == null || CloudMusic.profile.getId() <= 0L) {
@@ -345,11 +390,75 @@ public final class PersonalFmManager {
     }
 
     /**
+     * 汽水发现流分支。
+     *
+     * <p>数据引擎与私人 FM 同构：每次请求把「听过的歌」（当前批次 + 历史，最近 20 条）以
+     * {@code played_media} 回传，上游据此给下一波全新推荐。模式选择器在这里不生效——
+     * 发现流没有模式参数，与酷狗分支同一待遇：照常接受、状态文案说清。</p>
+     */
+    private static void requestQishuiBatch(boolean startPlaybackAfterLoad) {
+        if (!QishuiMusicService.isLoggedIn()) {
+            status = "汽水发现流需要先登录汽水账号";
+            LOADING.set(false);
+            notifyUi();
+            return;
+        }
+        if (!QishuiBackend.isAvailable()) {
+            status = "汽水发现流需要本机签名后端在线";
+            LOADING.set(false);
+            notifyUi();
+            return;
+        }
+        status = "正在获取汽水发现流…";
+        notifyUi();
+
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                List<Music> loaded = QishuiMusicService.discoverFeedTracks(BATCH_SIZE, playedFeedback(),
+                        getSelectedQishuiMode());
+                if (loaded.isEmpty()) throw new IllegalStateException("发现流没有返回可播放曲目");
+                retireToHistory();
+                currentBatch = Collections.unmodifiableList(loaded);
+                QishuiMusicService.FeedMode mode = getSelectedQishuiMode();
+                status = (mode.isDefaultMode() ? "汽水发现流" : "汽水发现流 · " + mode.text)
+                        + " · 为你挑的新歌";
+                if (startPlaybackAfterLoad) {
+                    CloudMusic.playFm(loaded, 0);
+                }
+            } catch (Throwable throwable) {
+                status = "汽水发现流获取失败：" + safeMessage(throwable);
+                System.err.println("[NCM/FM] " + status);
+            } finally {
+                LOADING.set(false);
+                notifyUi();
+            }
+        });
+    }
+
+    /** 上报给发现流的「已听」名单：当前批次在前（正在被换掉的就是最新听的），历史随后。 */
+    private static List<Music> playedFeedback() {
+        List<Music> merged = new ArrayList<>(currentBatch.size() + history.size());
+        for (Music song : currentBatch) {
+            if (song != null) merged.add(song);
+        }
+        for (Music song : history) {
+            if (song != null) merged.add(song);
+        }
+        return merged;
+    }
+
+    /**
      * 按当前选中的模式拉一次推荐并解析。请求失败、响应状态异常、没有可播放曲目都直接抛出，由调用方
      * 决定怎么反馈。抽出来给"用户触发的整批请求"和"后台预备下一首"共用，避免两条路径的接口参数和
      * 解析行为日后慢慢分叉。
      */
     private static List<Music> fetchRecommendations() throws Exception {
+        if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QISHUI) {
+            List<Music> loaded = QishuiMusicService.discoverFeedTracks(BATCH_SIZE, playedFeedback(),
+                    getSelectedQishuiMode());
+            if (loaded.isEmpty()) throw new IllegalStateException("发现流没有返回可播放曲目");
+            return loaded;
+        }
         if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.KUGOU) {
             if (!KuGouMusicService.isLoggedIn()) throw new IllegalStateException("酷狗私人 FM 需要登录");
             List<Music> loaded = KuGouMusicService.personalFm(kuGouMode(), BATCH_SIZE, "");
@@ -408,7 +517,9 @@ public final class PersonalFmManager {
         if (expectedQueue == null || !CloudMusic.isPersonalFmActive()) return;
         if (prefetchedNext != null || LOADING.get()) return;
         boolean kuGou = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.KUGOU;
-        if (!kuGou && (CloudMusic.profile == null || CloudMusic.profile.getId() <= 0L)) return;
+        boolean qishui = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QISHUI;
+        if (qishui && (!QishuiMusicService.isLoggedIn() || !QishuiBackend.isAvailable())) return;
+        if (!kuGou && !qishui && (CloudMusic.profile == null || CloudMusic.profile.getId() <= 0L)) return;
         if (kuGou && !KuGouMusicService.isLoggedIn()) return;
         if (!PREFETCHING.compareAndSet(false, true)) return;
 
@@ -457,7 +568,13 @@ public final class PersonalFmManager {
         }
         retireToHistory();
         currentBatch = Collections.singletonList(song);
-        status = getSelectionLabel() + " · 正在播放推荐";
+        if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QISHUI) {
+            QishuiMusicService.FeedMode mode = getSelectedQishuiMode();
+            status = (mode.isDefaultMode() ? "汽水发现流" : "汽水发现流 · " + mode.text)
+                    + " · 正在播放推荐";
+        } else {
+            status = getSelectionLabel() + " · 正在播放推荐";
+        }
         notifyUi();
     }
 
@@ -603,6 +720,10 @@ public final class PersonalFmManager {
                 if (!file.isFile()) return;
                 JsonObject root = JsonConfigStorage.readObject(file, SETTINGS_GSON);
                 if (root == null) return;
+                // 汽水的听歌模式也落在同一份文件里(独立键):两个源共用一个 FM 页,
+                // 选择各记各的,互不覆盖。
+                qishuiModeKey = string(root, QISHUI_MODE_SETTING_KEY);
+                if (qishuiModeKey == null) qishuiModeKey = "";
                 Mode mode = parsePersistedMode(string(root, "mode"));
                 if (mode == null) return;
                 selectedMode = mode;
@@ -636,6 +757,7 @@ public final class PersonalFmManager {
                 JsonObject root = new JsonObject();
                 root.addProperty("mode", selectedMode.name());
                 if (!selectedSubMode.isEmpty()) root.addProperty("subMode", selectedSubMode);
+                if (!qishuiModeKey.isEmpty()) root.addProperty(QISHUI_MODE_SETTING_KEY, qishuiModeKey);
                 JsonConfigStorage.writeObject(ConfigPaths.PERSONAL_FM_MODE, SETTINGS_GSON, root);
             } catch (Throwable ignored) {
             }

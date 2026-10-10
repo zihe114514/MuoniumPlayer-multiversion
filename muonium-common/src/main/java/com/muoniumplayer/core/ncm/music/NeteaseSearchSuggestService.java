@@ -166,6 +166,10 @@ public final class NeteaseSearchSuggestService {
         if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.KUGOU) {
             return fetchKuGou(keyword);
         }
+        if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QISHUI) {
+            // 汽水：/luna/pc/sug 签名代理优先、免签移动端兜底，解析在服务层（见那边的注释）。
+            return QishuiMusicService.searchSuggest(keyword);
+        }
         List<Suggestion> keywords = parseKeyword(read(keyword, true));
         if (!keywords.isEmpty()) return keywords;
         return parseWeb(read(keyword, false));

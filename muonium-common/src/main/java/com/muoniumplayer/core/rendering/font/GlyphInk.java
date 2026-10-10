@@ -46,6 +46,13 @@ public final class GlyphInk {
 
     private static final Map<Font, Map<Character, GlyphInk>> CACHE = new HashMap<>();
 
+    /** 渲染层热启用后清空：无库窗口期量出的墨迹可能基于坏度量，重建后按需重测。 */
+    public static void clearCache() {
+        synchronized (CACHE) {
+            CACHE.clear();
+        }
+    }
+
     /** {@link GlyphGenerator} 烘出的位图尺寸，单位是位图像素。 */
     public final int bitmapWidth, bitmapHeight;
     /** 墨迹包围盒，闭区间，单位是位图像素。 */

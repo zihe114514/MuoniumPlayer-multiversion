@@ -163,6 +163,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     /** 建一张本地歌单：只要一个名字，曲目之后从任意音源加进来。与导入面板互斥打开。 */
     public PlaylistCreateSheet playlistCreateSheet = null;
 
+    /** 建/改名一张汽水云歌单：写请求经本机签名后端落在汽水账号里。与本地建单页互斥打开。 */
+    public QishuiCloudPlaylistSheet qishuiCloudPlaylistSheet = null;
+
     /**
      * 歌词搜索弹窗：给正在放的这首歌手动挑一份歌词（四张源标签 + 候选列表 + 预览）。
      *
@@ -761,6 +764,21 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             }
             StencilClipManager.endClip();
         }
+        // 汽水云歌单表单与本地建单页同层同形状：都是「往一个歌单体系里落一张单子」，
+        // 只是落点一个在本机、一个在汽水账号。互斥由 openQishuiCloudPlaylistSheet 保证。
+        if (this.qishuiCloudPlaylistSheet != null) {
+            StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+            this.qishuiCloudPlaylistSheet.setBounds(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight());
+            this.qishuiCloudPlaylistSheet.setAlpha(alpha);
+            this.qishuiCloudPlaylistSheet.renderWidget(mouseX, mouseY, dWheel);
+            if (this.qishuiCloudPlaylistSheet.shouldClose()) {
+                this.qishuiCloudPlaylistSheet.dispose();
+                this.qishuiCloudPlaylistSheet = null;
+            }
+            StencilClipManager.endClip();
+        }
         // 歌词搜索弹窗：两栏宽面板，同样有输入框，键盘/滚轮由它独占。
         //
         // 这一页的排版数值是照 folia 的 CSS px 抄来的（弹窗最大宽 1024、卡片高 92、正文 14），
@@ -1248,6 +1266,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     public void openPlaylistImport() {
         if (this.playlistCreateSheet != null) this.playlistCreateSheet.dispose();
         this.playlistCreateSheet = null;
+        if (this.qishuiCloudPlaylistSheet != null) this.qishuiCloudPlaylistSheet.dispose();
+        this.qishuiCloudPlaylistSheet = null;
         if (this.playlistImportOverlay != null) this.playlistImportOverlay.dispose();
         this.playlistImportOverlay = new PlaylistImportOverlay();
         this.playlistImportOverlay.onInit();
@@ -1267,9 +1287,32 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     private void openPlaylistSheet(PlaylistCreateSheet sheet) {
         if (this.playlistImportOverlay != null) this.playlistImportOverlay.dispose();
         this.playlistImportOverlay = null;
+        if (this.qishuiCloudPlaylistSheet != null) this.qishuiCloudPlaylistSheet.dispose();
+        this.qishuiCloudPlaylistSheet = null;
         if (this.playlistCreateSheet != null) this.playlistCreateSheet.dispose();
         this.playlistCreateSheet = sheet;
         this.playlistCreateSheet.onInit();
+    }
+
+    /** 打开汽水云歌单建单页：写操作经本机签名后端落在汽水账号里（汽水源侧栏「＋」入口）。 */
+    public void openQishuiCloudPlaylistCreate() {
+        openQishuiCloudPlaylistSheet(new QishuiCloudPlaylistSheet());
+    }
+
+    /** 打开汽水云歌单改名页：同一份表单，提交走 /luna/pc/me/playlist/update。 */
+    public void openQishuiCloudPlaylistRename(PlayList playlist) {
+        if (playlist == null) return;
+        openQishuiCloudPlaylistSheet(new QishuiCloudPlaylistSheet(playlist));
+    }
+
+    private void openQishuiCloudPlaylistSheet(QishuiCloudPlaylistSheet sheet) {
+        if (this.playlistImportOverlay != null) this.playlistImportOverlay.dispose();
+        this.playlistImportOverlay = null;
+        if (this.playlistCreateSheet != null) this.playlistCreateSheet.dispose();
+        this.playlistCreateSheet = null;
+        if (this.qishuiCloudPlaylistSheet != null) this.qishuiCloudPlaylistSheet.dispose();
+        this.qishuiCloudPlaylistSheet = sheet;
+        this.qishuiCloudPlaylistSheet.onInit();
     }
 
     /**
@@ -1383,6 +1426,16 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 return;
             }
             this.playlistCreateSheet.onKeyTypedReceived(typedChar, keyCode);
+            return;
+        }
+
+        if (this.qishuiCloudPlaylistSheet != null) {
+            // 汽水云歌单表单同款：ESC 抢在控件树之前（busy 时表单自己会忽略 ESC）。
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                this.qishuiCloudPlaylistSheet.handleEscape();
+                return;
+            }
+            this.qishuiCloudPlaylistSheet.onKeyTypedReceived(typedChar, keyCode);
             return;
         }
 

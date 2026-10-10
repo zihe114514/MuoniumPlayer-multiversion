@@ -137,11 +137,19 @@ public final class SkijaNatives {
     }
 
     /**
+     * 是否已到「必须重启才能生效」：伴生包装好了、原生库仍未加载（重启由 GameRestart
+     * 替用户自动完成）。{@code SkijaCompanionDownload} 是包级私有，跨包的询问
+     * （自动重启布防、救援文案）统一走这个门面。加载已生效时恒 false。
+     */
+    public static boolean companionRestartPending() {
+        return SkijaCompanionDownload.isRestartRequired();
+    }
+
+    /**
      * 「一个候选都没有」时提示层要说的整块文案。
      *
      * <p>自动下载上线之后这一段不能写死：同样是「缺库」，用户下一步动作差得很远——
-     * 下载中什么都别做、装好了必须重启游戏（非 Windows 平台的硬要求，热加载不可靠）、
-     * 失败了才回手动补包。文案跟 {@link SkijaCompanionDownload} 的状态走；包名 / 下载页 /
+     * 下载中什么都别做、装好了模组自动重启游戏生效、失败了才回手动补包。文案跟 {@link SkijaCompanionDownload} 的状态走；包名 / 下载页 /
      * 目标目录这三条硬信息在任何「需要用户动手」的分岔里都必须原样给出——静态测试钉着它们，
      * 那是用户唯一的自救路径。
      */
@@ -154,15 +162,24 @@ public final class SkijaNatives {
                 lines.add(download.percent() >= 0
                         ? "正在自动下载渲染原生库：" + download.percent() + "%"
                         : "正在自动下载渲染原生库…");
-                lines.add("下载完成后需要重启游戏才会生效，先等它下完");
+                lines.add("装好后模组会自动重启游戏使其生效，先等它下完");
             }
             case INSTALLING -> {
                 lines.add("渲染原生库已下载，正在解压安装…");
-                lines.add("装好后需要重启游戏才会生效");
+                lines.add("装好后模组会自动重启游戏使其生效");
             }
             case DONE -> {
-                lines.add("渲染原生库已自动装好，必须重启游戏后才能生效");
-                lines.add("重启后会自动加载，不需要手动放置任何文件");
+                // 装好即必须重启，而这一步模组替用户走：GameRestart 已布防时逐字播报
+                // 倒计时/取消后的手动指引；拿不到启动命令、超过重启上限时 statusLine
+                // 返回 null，回落到「自己重启一次」的手动文案。
+                String restartLine = com.muoniumplayer.core.update.GameRestart.statusLine();
+                if (restartLine != null) {
+                    lines.add("渲染原生库已自动装好，需要重启游戏生效");
+                    lines.add(restartLine);
+                } else {
+                    lines.add("渲染原生库已自动装好，必须重启游戏后才能生效");
+                    lines.add("退出后重新进入即可，不需要手动放置任何文件");
+                }
             }
             case FAILED -> {
                 lines.add("自动下载失败：" + download.detail());
@@ -383,12 +400,35 @@ public final class SkijaNatives {
     private static boolean adopt(File directory, String origin, String mapped,
                                  List<String> attempted, List<String> rejected,
                                  boolean found, String lastError, int pruned) {
+        // FALSE→TRUE 翻转 = 渲染层在会话中途复活的时刻（自动重启路线下，这条路
+        // 只剩「手动放置伴生包 + 重评窗口捡起」一种来源）：无库窗口期构造的文字
+        // 渲染器手里还是空字体数组（形状照画、文字全无），必须在这里安排一次重建。
+        // 投回主线程：adopt 可能在重评（渲染线程）或下载线程上进，渲染器重建与
+        // 绘制保持同线程。首次加载（null→TRUE）不触发——那时渲染器还没构造。
+        boolean recovered = Boolean.FALSE.equals(loaded);
         loaded = Boolean.TRUE;
         mode = origin;
         // 前面几条为什么没走通要留着，出问题时一眼能看出是「版本不对」还是「落点不对」
         failure = attempted.isEmpty() ? null : String.join(" | ", attempted);
         status = new Status(true, mapped, PINNED_SKIJA_VERSION, origin, directory,
                 List.copyOf(attempted), List.copyOf(rejected), lastError, found);
+        if (recovered) {
+            com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil
+                    .runOnMainThread(() -> {
+                        try {
+                            com.muoniumplayer.core.management.FontManager.rebuildAllRenderers();
+                            com.muoniumplayer.core.rendering.DownloadDynamicIsland
+                                    .showRenderLayerHotReloaded();
+                        } catch (Throwable rebuildFailure) {
+                            System.out.println("[MuoniumPlayer/SkijaNatives] 热启用重建失败: "
+                                    + describe(rebuildFailure));
+                        }
+                    });
+        }
+        // 任何一次跃迁到 TRUE 都拆自动重启的雷：原生库加载成功 = 重启标记的使命完成。
+        // null→TRUE 覆盖「重启后正常启动」，FALSE→TRUE 覆盖「手动放包后重评热载成功」——
+        // 两种都要删标记，否则计数会带着旧值活到下一次真的要重启的场景里。
+        com.muoniumplayer.core.update.GameRestart.onNativesLoaded();
         if (attempted.size() > 1) {
             System.out.println("[MuoniumPlayer/SkijaNatives] 原生库最终走通：" + origin
                     + "；此前 " + (attempted.size() - 1) + " 条尝试未通过"

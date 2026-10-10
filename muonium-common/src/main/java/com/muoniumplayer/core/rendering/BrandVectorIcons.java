@@ -12,18 +12,20 @@ import io.github.humbleui.types.Rect;
  *
  * <p>酷狗、哔哩哔哩、汽水这三家没有可用的品牌图标字体（见 {@link MusicBrandIcons} 里那几条注释），
  * 以前是拿一个汉字顶替的。这里放它们真正的标识：SVG 的路径数据 + 各自的落位变换，
- * 第一次真正要画的时候解析一次、归一化一次，之后每帧只是一次 {@code drawPath}。</p>
+ * 第一次真正要画的时候解析一次、归一化一次，之后每帧只是一次 {@code drawPath}。
+ * Spotify 的公开路径也收在这里（它是标准 SVG 数据，方向与描摹素材相反，见 {@code SPOTIFY_D}）。</p>
  *
  * <h2>三条必须守住的性质</h2>
  *
  * <ul>
- *   <li><b>y 轴要翻回来</b>。三份 SVG 的外层 {@code <g>} 都带<b>负的 y 缩放</b>
+ *   <li><b>y 轴朝向要和数据源一致</b>。三份描摹 SVG 的外层 {@code <g>} 都带<b>负的 y 缩放</b>
  *       （描摹数据的坐标系是 y 朝上），照抄它才和 SVG 显示的一致；漏掉就是上下颠倒。
  *       单测用哔哩哔哩那枚字标的「墨迹重心偏下」把这条钉死 —— 它的小写字母字碗都在下半部，
  *       朝上的只有 b、l 的细竖笔和 i 的点，本来就下重上轻；反过来量就是另一头。
  *       另两枚（酷狗的圆环 + K、汽水的音符）竖向几乎对半，光栅量不出来，
- *       只能靠「源码里的 y 缩放必须带负号」那条断言兜住。</li>
- *   <li><b>等比 + 居中，绝不拉伸</b>。三枚标识的长宽比差得很远（酷狗 0.98 近正方、
+ *       只能靠「源码里的 flipY 必须为 true」那条断言兜住。Spotify 用的是标准 SVG 数据
+ *       （y 朝下），{@code flipY=false}，别把它当成漏翻。</li>
+ *   <li><b>等比 + 居中，绝不拉伸</b>。各家标识的长宽比差得很远（酷狗 0.98 近正方、
  *       汽水 0.88 略高、哔哩哔哩 2.23 是一条横长的字标），拉进方格会把圆环压成椭圆。</li>
  *   <li><b>画不出来就返回 false</b>，由调用方退回字形字标 —— 一个矢量路径解析失败
  *       绝不能让卡片上出现一块空白。</li>
@@ -145,26 +147,46 @@ public final class BrandVectorIcons {
             + "70 -49 -174 -46 -3 3 16 48 42 99 234 466 680 754 1250 808 140 13 202 49 251 144 47 94 49 85 -192"
             + " 1042 -126 502 -216 877 -212 888 6 16 68 17 1099 17 601 0 1098 -4 1105 -8z";
 
+    /**
+     * Spotify 的三道弧 + 外圆（simple-icons 公开路径，24 网格）。
+     *
+     * <p>与上面三枚不同源：它是<b>标准 SVG 坐标（y 朝下）</b>的公开数据，不再带描摹素材那把
+     * 负的 y 缩放，所以 {@code flipY=false}。归一化（最长边 1、左上角归原点）对两种朝向一视同仁，
+     * 平移量给零即可。</p>
+     */
+    private static final String SPOTIFY_D =
+            "M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48"
+            + "-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78."
+            + "54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262."
+            + "3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9."
+            + "9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6."
+            + "179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 "
+            + "1.02.42 1.56-.299.421-1.02.599-1.561.3z";
+
+    private static final Art SPOTIFY = new Art(new String[]{SPOTIFY_D}, 0f, 0f, 1f, false);
+
     /** 酷狗：{@code translate(167.457259,659.597685) scale(0.062622,-0.062622)}。 */
     private static final Art KUGOU = new Art(new String[]{KUGOU_D},
-            167.457259f, 659.597685f, .062622f);
+            167.457259f, 659.597685f, .062622f, true);
 
     /** 哔哩哔哩：{@code translate(135.851572,691.068512) scale(0.070152,-0.070152)}（来自 qishui.svg）。 */
     private static final Art BILIBILI = new Art(new String[]{BILIBILI_D},
-            135.851572f, 691.068512f, .070152f);
+            135.851572f, 691.068512f, .070152f, true);
 
     /** 汽水：{@code translate(150.221997,669.063002) scale(0.070459,-0.070459)}（来自 哔哩哔哩.svg）。 */
     private static final Art QISHUI = new Art(new String[]{QISHUI_D},
-            150.221997f, 669.063002f, .070459f);
+            150.221997f, 669.063002f, .070459f, true);
 
     /**
      * 一枚标识：{@code <g>} 的平移与缩放，加该组下所有 {@code <path d>}。
      *
-     * <p>{@link #scale} 只存绝对值，建图时按「x 正、y 负」套 —— 负号就是那把翻回来的 y 轴。</p>
+     * <p>{@link #scale} 只存绝对值，建图时按「x 正、y 负」套 —— 负号就是那把翻回来的 y 轴。
+     * {@link #flipY} 为 false 时（标准 SVG 数据）不翻。</p>
      */
     private static final class Art {
         private final String[] paths;
         private final float translateX, translateY, scale;
+        private final boolean flipY;
 
         /** 归一化后的路径：最长边 = 1，墨迹左上角在原点。 */
         private Path normalized;
@@ -173,11 +195,12 @@ public final class BrandVectorIcons {
         /** 已经失败过就别反复解析：每帧重试一次解析不划算，也没有成功的可能。 */
         private boolean failed;
 
-        private Art(String[] paths, float translateX, float translateY, float scale) {
+        private Art(String[] paths, float translateX, float translateY, float scale, boolean flipY) {
             this.paths = paths;
             this.translateX = translateX;
             this.translateY = translateY;
             this.scale = scale;
+            this.flipY = flipY;
         }
     }
 
@@ -265,6 +288,7 @@ public final class BrandVectorIcons {
         if (platform == MusicPlatform.KUGOU) return KUGOU;
         if (platform == MusicPlatform.BILIBILI) return BILIBILI;
         if (platform == MusicPlatform.QISHUI) return QISHUI;
+        if (platform == MusicPlatform.SPOTIFY) return SPOTIFY;
         return null;
     }
 
@@ -279,7 +303,8 @@ public final class BrandVectorIcons {
     }
 
     /**
-     * 解析 → 落位（y 取负 = 翻回来）→ 归一化到「最长边 1、墨迹左上角在原点」。
+     * 解析 → 落位（描摹素材 y 取负 = 翻回来；标准 SVG 数据不翻）→ 归一化到「最长边 1、
+     * 墨迹左上角在原点」。
      *
      * <p>归一化放在这里而不是每帧做：之后每帧只乘一个缩放系数，不用再造路径对象。</p>
      */
@@ -288,7 +313,7 @@ public final class BrandVectorIcons {
         try {
             for (String d : art.paths) {
                 try (Path raw = Path.makeFromSVGString(d);
-                     Path placed = raw.makeScale(art.scale, -art.scale)
+                     Path placed = raw.makeScale(art.scale, art.flipY ? -art.scale : art.scale)
                              .makeOffset(art.translateX, art.translateY)) {
                     builder.addPath(placed);
                 }

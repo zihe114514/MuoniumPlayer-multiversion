@@ -323,14 +323,14 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
         double width = textWidth + padX * 2;
         double height = textHeight + padY * 2;
         double x = this.getX() + this.getWidth() * .5 - width * .5;
+        // 只往上方放，不翻转：会挂提示的按钮全都住在播放器底部（侧栏操作条、播放条图标带），
+        // 上方是内容区、仍在播放器的圆角裁剪之内。曾经加过「贴着父组件顶边就翻到按钮下方」，
+        // 结果播放条整条就这么高，按钮又垂直居中——翻下去正好压在播放器底缘上，被圆角
+        // 裁剪吞掉半截，比要避免的下场更糟。
         double y = this.getY() - height - 4;
         if (clampTo != null && clampTo.getWidth() - 4 >= width) {
             x = Math.max(clampTo.getX() + 2,
                     Math.min(x, clampTo.getX() + clampTo.getWidth() - 2 - width));
-            if (y < clampTo.getY() + 1) {
-                // 贴着父组件顶边的按钮上方放不下：翻到按钮下方，总比画到面板外被裁掉好。
-                y = this.getY() + this.getHeight() + 4;
-            }
         }
         // 底板不透明：底下就是歌单行、进度条这些内容，半透明会把两层墨迹叠在一起读不清。
         roundedRect(x - 1, y - 1, width + 2, height + 2, 6,

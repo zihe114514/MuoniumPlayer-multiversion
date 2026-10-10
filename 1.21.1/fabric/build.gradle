@@ -75,7 +75,7 @@ buildscript.repositories.all(retargetCentral)
 repositories {
     maven { url = 'https://maven.aliyun.com/repository/public' }
     maven { url = 'https://maven.aliyun.com/repository/google' }
-    // libs/ 里的三个本地 jar 必须以「模块」形式出现，否则 Loom 的 include（Jar-in-Jar）
+    // libs/ 里的本地 jar 必须以「模块」形式出现，否则 Loom 的 include（Jar-in-Jar）
     // 会报 "not a module component and has no capabilities"（file 依赖没有坐标）。
     // flatDir 按 <name>-<version>.jar 匹配，group 任意。
     flatDir { dirs rootProject.file('libs') }
@@ -106,7 +106,6 @@ dependencies {
     implementation include('net.java.dev.jna:jna:5.14.0')
     implementation include('net.java.dev.jna:jna-platform:5.14.0')
     implementation include('muoniumplayer.libs:music-api:0.1.1')
-    implementation include('muoniumplayer.libs:zstd-jni:1.5.6-9-forge189-slim')
 
     // ==================== Skija（渲染层）====================
     // Kotlin 运行时由 Fabric Language Kotlin 统一提供，不再随本 mod 打包。

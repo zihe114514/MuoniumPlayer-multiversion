@@ -5,9 +5,11 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.ncm.music.dto.User;
+import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.TextureManager;
@@ -289,24 +291,68 @@ public class PlaylistPanel extends NCMPanel {
             });
             // 本地单占的是上面「收藏歌单」那一格：那张单子没有任何上游可以收藏，那一格对它没有
             // 意义，而它确实需要一个改名字的地方（名字是这张单在本机上唯一的标识）。
+            // 汽水自建云歌单同一格给「重命名」：写回 /luna/pc/me/playlist/update，提交走云表单。
             RoundedButtonWidget btnRename = new RoundedButtonWidget("重命名", FontManager.pf16bold);
             // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
             btnRename.setGlassPlate(GlassLook.Surface.PLAYER)
                     .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             this.addChild(btnRename);
             btnRename.setBeforeRenderCallback(() -> {
-                boolean local = playList != null && playList.isLocalPlaylist();
+                boolean renamable = playList != null
+                        && (playList.isLocalPlaylist() || ownQishuiCloudPlaylist());
                 btnRename.setBounds(57, 17);
                 btnRename.setPosition(btnCoverflow.getRelativeX() + btnCoverflow.getWidth() + 8,
                         cover.getRelativeY() + cover.getHeight() - btnRename.getHeight());
                 btnRename.setRadius(3);
                 btnRename.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
                 btnRename.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-                btnRename.setHidden(!local);
+                btnRename.setHidden(!renamable);
             });
             btnRename.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
                 if (mouseButton != 0) return false;
-                NCMScreen.getInstance().openPlaylistRename(playList);
+                if (playList != null && ownQishuiCloudPlaylist()) {
+                    NCMScreen.getInstance().openQishuiCloudPlaylistRename(playList);
+                } else {
+                    NCMScreen.getInstance().openPlaylistRename(playList);
+                }
+                return true;
+            });
+
+            // 汽水自建云歌单才有「删除歌单」：真删上游，虚拟单（每日推荐/电台）与别家歌单不配。
+            RoundedButtonWidget btnDeleteCloud = new RoundedButtonWidget("删除歌单", FontManager.pf16bold);
+            btnDeleteCloud.setGlassPlate(GlassLook.Surface.PLAYER)
+                    .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+            this.addChild(btnDeleteCloud);
+            btnDeleteCloud.setBeforeRenderCallback(() -> {
+                btnDeleteCloud.setBounds(57, 17);
+                btnDeleteCloud.setPosition(btnRename.getRelativeX() + btnRename.getWidth() + 8,
+                        cover.getRelativeY() + cover.getHeight() - btnDeleteCloud.getHeight());
+                btnDeleteCloud.setRadius(3);
+                // 危险动作的红色与表单层的 BAD_COLOR(NcmSheet) 同值：全界面的「删除红」就一种。
+                btnDeleteCloud.setColor(0xF1767D);
+                btnDeleteCloud.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                btnDeleteCloud.setHidden(!ownQishuiCloudPlaylist());
+            });
+            btnDeleteCloud.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+                if (mouseButton != 0 || !ownQishuiCloudPlaylist()) return false;
+                NCMScreen.getInstance().openConfirmation(
+                        "删除云歌单？",
+                        "「" + playList.getName() + "」将从你的汽水账号中删除，客户端同步消失，不可恢复。",
+                        "删除",
+                        () -> MultiThreadingUtil.runAsync(() -> {
+                            boolean ok = QishuiMusicService.deleteCloudPlaylist(
+                                    playList.getPlatformPlaylistId());
+                            MultiThreadingUtil.runOnMainThread(() -> {
+                                DownloadDynamicIsland.showModelOperationResult("汽水云歌单",
+                                        ok ? "已删除「" + playList.getName() + "」"
+                                                : "删除失败：签名后端没通或上游拒绝",
+                                        ok);
+                                if (ok) {
+                                    NCMScreen.getInstance().markDirty();
+                                    NCMScreen.getInstance().setCurrentPanel(new HomePanel());
+                                }
+                            });
+                        }));
                 return true;
             });
 
@@ -336,6 +382,9 @@ public class PlaylistPanel extends NCMPanel {
                         // 它的位置（它的回调不再跑，那里停的是上一次的值），只能按各自的可见条件判。
                         if (canToggleSubscription) {
                             searchAnchorX = btnSubscribe.getRelativeX() + btnSubscribe.getWidth();
+                        } else if (ownQishuiCloudPlaylist()) {
+                            // 汽水自建单：重命名 + 删除两颗并排，搜索框锚在删除那颗后面。
+                            searchAnchorX = btnDeleteCloud.getRelativeX() + btnDeleteCloud.getWidth();
                         } else if (playList != null && playList.isLocalPlaylist()) {
                             searchAnchorX = btnRename.getRelativeX() + btnRename.getWidth();
                         }
@@ -641,6 +690,18 @@ public class PlaylistPanel extends NCMPanel {
         User creator = playList.getCreator();
         User currentUser = CloudMusic.profile;
         return creator == null || currentUser == null || creator.getId() != currentUser.getId();
+    }
+
+    /**
+     * 打开的这张是不是<b>汽水自建云歌单</b>（acct: 前缀）：只有这类单子能改名、能删除、
+     * 行内能移除歌曲。每日推荐（qsdaily:）与电台（radio:）是虚拟单，收藏歌单来自别人，
+     * 都没有这些写权限。
+     */
+    private boolean ownQishuiCloudPlaylist() {
+        return playList != null
+                && playList.getPlatform() == MusicPlatform.QISHUI
+                && playList.getPlatformPlaylistId() != null
+                && playList.getPlatformPlaylistId().startsWith("acct:");
     }
 
     // 转子的实现已提到 PanelLoadingWidget：主页、发现页、导航等待遮罩用的是同一个控件。

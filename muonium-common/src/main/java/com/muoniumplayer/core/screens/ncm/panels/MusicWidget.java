@@ -590,7 +590,7 @@ public class MusicWidget extends RoundedRectWidget {
                 if (!LocalPlaylistStore.removeTrack(playList, music)) return true;
                 NCMScreen.getInstance().markDirty();
                 DownloadDynamicIsland.showModelOperationResult("本地歌单",
-                        "已从「" + playList.getName() + "」移除《" + music.getName() + "》", true);
+                        "已从「" + playList.getName() + "」移除《" + music.getName() + "」", true);
                 // 行不会自己消失：曲目列表是建页时一次性铺出来的，只能整页重铺一次。
                 NCMScreen.getInstance().reloadCurrentPanel();
                 return true;

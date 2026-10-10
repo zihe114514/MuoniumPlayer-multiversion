@@ -66,6 +66,13 @@ public final class GlyphInkMetrics {
             new FontRenderContext(new AffineTransform(), true, true);
     private static final Map<String, GlyphInkMetrics> CACHE = new HashMap<String, GlyphInkMetrics>();
 
+    /** 渲染层热启用后清空：无库窗口期量出的墨迹可能基于坏度量，重建后按需重测。 */
+    public static void clearCache() {
+        synchronized (CACHE) {
+            CACHE.clear();
+        }
+    }
+
     /** 量测一个字形，失败返回 {@code null}。结果会被缓存，可以放心在每帧的回调里调用。 */
     public static GlyphInkMetrics of(CFontRenderer renderer, char glyph) {
         if (renderer == null || renderer.font == null) {

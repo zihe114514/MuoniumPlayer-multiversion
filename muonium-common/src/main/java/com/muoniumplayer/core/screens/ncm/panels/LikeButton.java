@@ -6,6 +6,7 @@ import com.muoniumplayer.core.ncm.music.BilibiliMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouLikedCache;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
+import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.svg.AnimatedIcons;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
@@ -126,6 +127,13 @@ final class LikeButton {
                     CloudMusic.likeList.add(music.getId());
                 }
                 MultiThreadingUtil.runAsync(() -> music.setLike(true));
+            } else if (music.isQishui()) {
+                QishuiMusicService.noteTrackLikedLocal(music.getSourceId(), true);
+                MultiThreadingUtil.runAsync(() -> {
+                    if (!QishuiMusicService.setTrackLiked(music.getSourceId(), true)) {
+                        QishuiMusicService.noteTrackLikedLocal(music.getSourceId(), false);
+                    }
+                });
             } else if (music.isBilibili()) {
                 noteBilibiliFavoured(music, true);
                 MultiThreadingUtil.runAsync(() -> {
@@ -155,6 +163,13 @@ final class LikeButton {
                             CloudMusic.likeList.remove(music.getId());
                         }
                         MultiThreadingUtil.runAsync(() -> music.setLike(false));
+                    } else if (music.isQishui()) {
+                        QishuiMusicService.noteTrackLikedLocal(music.getSourceId(), false);
+                        MultiThreadingUtil.runAsync(() -> {
+                            if (!QishuiMusicService.setTrackLiked(music.getSourceId(), false)) {
+                                QishuiMusicService.noteTrackLikedLocal(music.getSourceId(), true);
+                            }
+                        });
                     } else if (music.isBilibili()) {
                         noteBilibiliFavoured(music, false);
                         MultiThreadingUtil.runAsync(() -> {
@@ -187,6 +202,10 @@ final class LikeButton {
         if (music.isKuGou()) {
             return KuGouLikedCache.contains(music.getStableKey());
         }
+        if (music.isQishui()) {
+            QishuiMusicService.ensureLikedTrackIdsLoaded();
+            return QishuiMusicService.isTrackLikedLocal(music.getSourceId());
+        }
         if (music.isBilibili()) {
             return BilibiliFavoriteService.isFavouredLocally(music);
         }
@@ -201,6 +220,9 @@ final class LikeButton {
      */
     static boolean canFavourite(Music music) {
         if (music == null) return false;
+        if (music.isQishui()) {
+            return QishuiMusicService.isLoggedIn() && !QishuiMusicService.isReauthRequired();
+        }
         return music.isNetease() || music.isKuGou()
                 || (music.isBilibili() && BilibiliMusicService.isLoggedIn());
     }

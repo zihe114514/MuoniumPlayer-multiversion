@@ -7,6 +7,7 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.module.impl.OpenNCMScreen;
 import com.muoniumplayer.core.ncm.lxsource.LxSourceService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.QishuiBackendLifecycle;
 import com.muoniumplayer.core.reflection.Reflection;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
@@ -66,6 +67,9 @@ public class MuoniumPlayerExtension {
         com.muoniumplayer.core.ncm.lxsource.ClosureCompilerDownload.ensureDownload();
         CloudMusic.quality = NCMPlayerConfig.getAudioQuality();
         MultiThreadingUtil.runAsync(CloudMusic::initNCM);
+        // 汽水签名后端:装了伴生包就随游戏隐藏拉起(独立进程,游戏退出自动收掉);
+        // 还没装则不惊动,首次点进汽水源时按需下载伴生包。
+        QishuiBackendLifecycle.ensureStartedForGame();
         Reflection.init(api);
 
         this.fontManager = new FontManager();

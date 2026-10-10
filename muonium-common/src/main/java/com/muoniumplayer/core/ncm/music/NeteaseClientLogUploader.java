@@ -1,7 +1,6 @@
 package com.muoniumplayer.core.ncm.music;
 
 import com.google.gson.JsonArray;
-import com.github.luben.zstd.Zstd;
 import com.google.gson.JsonObject;
 import com.muoniumplayer.core.ncm.OptionsUtil;
 import com.muoniumplayer.core.ncm.music.dto.Music;
@@ -360,16 +359,18 @@ final class NeteaseClientLogUploader {
     }
 
     /**
-     * zstd-jni 作为过滤后的 Java 8 兼容 JAR 打包。与之前的 JNA 桥不同，
-     * 它自带并加载自己的原生编解码器，而不触碰 Forge 重定位的 JNA 运行时。
+     * NCBL 的记录块必须是标准 zstd 帧——格式由网易服务端钉死，不随实现走。压缩器本体
+     * （zstd-jni，2MB JNI 包）不进主包：由 {@link ZstdNativeDownload} 在登录网易云账号时
+     * 按需下载，这里经 {@link ZstdCompressor} 的反射桥调用。未就绪时抛出的失败由上报方
+     * 按一轮跳过处理——打卡按天记账，晚一轮没有损失。
      */
     private static byte[] compressZstd(byte[] source) throws IOException {
+        ZstdCompressor compressor = ZstdNativeDownload.compressor();
+        if (compressor == null) {
+            throw new IOException(ZstdNativeDownload.pendingMessage());
+        }
         try {
-            byte[] compressed = Zstd.compress(source);
-            if (compressed == null || compressed.length == 0) {
-                throw new IOException("Zstandard compression returned no data");
-            }
-            return compressed;
+            return compressor.compress(source);
         } catch (Throwable failure) {
             throw new IOException("Zstandard compression failed: " + messageOf(failure), failure);
         }

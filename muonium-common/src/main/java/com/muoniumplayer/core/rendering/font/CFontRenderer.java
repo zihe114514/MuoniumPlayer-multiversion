@@ -361,6 +361,21 @@ public class CFontRenderer implements Closeable, SharedConstants {
         return true;
     }
 
+    /**
+     * 用当前已登记的字体字节重建 Skia 侧的字体与度量。渲染层热启用的收尾动作。
+     *
+     * <p>无原生库窗口期构造的渲染器，{@link #buildSkiaFonts()} 拿到的 Typeface 全是 null，
+     * skFonts 建出来是空数组——形状照画、文字全无。原生库就位后调这个方法：
+     * typefaceFor 是懒解析且不缓存失败的，重跑即得；字形索引、宽度缓存与文本 blob
+     * 随 {@code buildSkiaFonts} 一并失效，行盒按真字体重新计算。</p>
+     *
+     * @return 重建后至少解析出一个字体返回 true；仍是空（字节没登记/库仍不可用）返回 false
+     */
+    public boolean refreshSkiaFonts() {
+        buildSkiaFonts();
+        return this.skFonts.length > 0;
+    }
+
     public static String stripControlCodes(String text) {
         char[] chars = text.toCharArray();
         StringBuilder f = new StringBuilder();

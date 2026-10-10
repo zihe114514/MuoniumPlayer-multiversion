@@ -67,6 +67,24 @@ public final class ConfigPaths {
     public static final File QISHUI_AUTH = new File(CONFIG_DIRECTORY, "qishui_auth.json");
 
     /**
+     * Spotify 的本机配置：用户自备的 Client ID 与市场代码。
+     *
+     * <p>与凭据分成两个文件：Client ID 不是秘密（它是公开的），改它不必碰 token；
+     * 重新授权也不该丢掉用户的配置。Client ID 为什么要用户自备，见
+     * {@code SpotifyConfigStore} 的类注释。</p>
+     */
+    public static final File SPOTIFY_CONFIG = new File(CONFIG_DIRECTORY, "spotify_config.json");
+
+    /**
+     * Spotify 的 OAuth token 与账号展示资料（PKCE 授权后落盘）。
+     *
+     * <p>与 {@link #KUGOU_AUTH}、{@link #QISHUI_AUTH} 同样的理由单开一个文件：
+     * {@link #MUSIC_AUTH} 由 Cadence 的凭据存储整段重写，只认识网易云 cookie 与 QQ 的
+     * musicid/musickey，Spotify 的 access/refresh token 放进去会在下一次保存时被丢掉。</p>
+     */
+    public static final File SPOTIFY_AUTH = new File(CONFIG_DIRECTORY, "spotify_auth.json");
+
+    /**
      * 用户用「粘贴分享链接/ID」导入的汽水音乐歌单。
      *
      * <p>只存歌单引用（歌单 ID + 标题 + 封面 + 曲目数），曲目每次点开时才匿名向上游拉取，

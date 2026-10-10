@@ -287,6 +287,33 @@ public class FontManager extends AbstractManager {
         });
     }
 
+    /**
+     * 用当前可用的原生库重建所有文字渲染器的 Skia 字体。渲染层热启用的收尾动作。
+     *
+     * <p>无原生库窗口期（模组初始化早于伴生包装好）构造的渲染器，Skia 侧字体是空数组——
+     * 形状照画、文字全无。原生库就位后由跃迁钩子（{@code SkijaNatives} 的 FALSE→TRUE
+     * 翻转）调到这里：逐个重跑 Skia 字体装配，并清掉两个 AWT 墨迹缓存——无库期间量出的
+     * 墨迹高度可能基于坏行盒，重建后按需重测。</p>
+     *
+     * <p>线程约定：跃迁钩子把它投回主线程执行（Skia 的 Typeface/Font 是 CPU 对象，
+     * 但与渲染器其余状态保持同线程更稳）。图片不需要同类处理——{@code SkijaImages.wrap}
+     * 不缓存失败，上下文就位后当帧自愈。</p>
+     *
+     * @return 实际重建成功的渲染器个数（诊断用）
+     */
+    public static int rebuildAllRenderers() {
+        int rebuilt = 0;
+        for (CFontRenderer renderer : getAllFontRenderers()) {
+            if (renderer != null && renderer.refreshSkiaFonts()) {
+                rebuilt++;
+            }
+        }
+        com.muoniumplayer.core.rendering.font.GlyphInk.clearCache();
+        com.muoniumplayer.core.rendering.font.GlyphInkMetrics.clearCache();
+        System.out.println("[MuoniumPlayer] 渲染层热启用：重建了 " + rebuilt + " 个文字渲染器");
+        return rebuilt;
+    }
+
     public static void loadFonts() {
         String normalName = "pf_normal";
         String boldName = "pf_middleblack";

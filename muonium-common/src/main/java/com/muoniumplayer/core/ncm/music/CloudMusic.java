@@ -207,6 +207,11 @@ public class CloudMusic implements SharedConstants {
 
         System.out.printf("[NCM] Logged in as %s(%s)\n", profile.getName(), profile.getId());
 
+        // 听歌打卡组件（zstd-jni，2MB JNI 包，不进主包）在登录这一刻触发下载：
+        // 扫码 / Cookie / 启动自动恢复三条登录路都汇聚在 loadNCM，这里是唯一触发点。
+        // 打卡按天记账，组件就位前上报轮次安静跳过，就位后下一轮播放自然带上。
+        ZstdNativeDownload.ensureJar();
+
         if (!OptionsUtil.getCookie().isEmpty()) {
             onStop();
         }
@@ -2142,6 +2147,7 @@ public class CloudMusic implements SharedConstants {
             warmAdvancedEnvelope(activePlayer);
             NeteasePlaybackHistoryReporter.start(song, currentPlaylistContext, activePlayer);
             KuGouPlaybackReporter.start(song, activePlayer);
+            QishuiPlaybackReporter.start(song, currentPlaylistContext);
             final AudioPlayer callbackPlayer = activePlayer;
             callbackPlayer.setAfterPlayed(() -> {
                 // 已被下一首复用/替换的播放器回调不能结束新会话。
@@ -4169,6 +4175,7 @@ public class CloudMusic implements SharedConstants {
             if (selection != null) warmAdvancedEnvelope(incoming);
             NeteasePlaybackHistoryReporter.start(track.song, currentPlaylistContext, incoming);
             KuGouPlaybackReporter.start(track.song, incoming);
+            QishuiPlaybackReporter.start(track.song, currentPlaylistContext);
             // 无缝交接同样是"一首 FM 曲目开始出声"，面板与预备标记都要跟着走。
             if (personalFmActive) PersonalFmManager.noteFmTrackStarted(track.song);
             return true;

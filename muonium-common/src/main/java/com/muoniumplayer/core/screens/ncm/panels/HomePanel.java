@@ -11,6 +11,7 @@ import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.QishuiBackend;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
@@ -569,6 +570,11 @@ public class HomePanel extends NCMPanel {
         MultiThreadingUtil.runAsync(() -> {
             try {
                 List<PlayList> result = QishuiMusicService.recommendPlaylists(QISHUI_HOME_TARGET);
+                // 「每日推荐」虚拟卡排在墙最前：曲目来自 feed/song-tab，打开即取今天的一页。
+                // 需要登录 + 签名后端；缺一个就别放这张卡，免得点开是一片空白。
+                if (QishuiMusicService.isLoggedIn() && QishuiBackend.isAvailable()) {
+                    result.add(0, QishuiMusicService.dailyFeedCard());
+                }
                 qishuiHomePlaylists = Collections.unmodifiableList(new ArrayList<>(result));
                 final List<PlayList> displayed = new ArrayList<>(result);
                 MultiThreadingUtil.runOnMainThread(() -> {
