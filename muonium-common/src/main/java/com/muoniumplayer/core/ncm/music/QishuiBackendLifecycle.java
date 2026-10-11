@@ -51,8 +51,19 @@ public final class QishuiBackendLifecycle {
         }, "MuoniumPlayer-QishuiBackendShutdown"));
     }
 
-    /** 模组初始化时调用一次:装好了就隐藏拉起,没装就留给按需下载链路。 */
+    /**
+     * 调用一次:装好了就隐藏拉起,没装就留给按需下载链路。
+     *
+     * <p><b>本方法不阻塞</b>:调用点在客户端初始化线程上(以及玩家点来源按钮的那一下),
+     * 而它内部要做健康探测(有超时)与双向 Cookie 同步(两次 HTTP)。这些全部放进后台线程,
+     * 调用方拿到的是一次立即返回。判定与拉起的状态机本身是幂等的,晚几十毫秒无影响。</p>
+     */
     public static void ensureStartedForGame() {
+        MultiThreadingUtil.runAsync(QishuiBackendLifecycle::ensureStartedForGameBlocking);
+    }
+
+    /** 真正的启动判定。只允许后台线程调用——探测、Cookie 同步、进程等待都在这里。 */
+    private static void ensureStartedForGameBlocking() {
         if (ownedProcess != null && ownedProcess.isAlive()) return; // 自己拉起的还活着
         // 已装但伴生包版本落后 → 后台热补(不阻塞启动,失败静默下次重试)。
         QishuiCompanionDownload.refreshIfNeeded();
@@ -71,13 +82,11 @@ public final class QishuiBackendLifecycle {
             QishuiCompanionDownload.onBackendMissing();
             return;
         }
-        MultiThreadingUtil.runAsync(() -> {
-            try {
-                startOwned();
-            } catch (Throwable error) {
-                System.err.println("[MuoniumPlayer/QishuiBackend] 随游戏启动后端失败: " + error);
-            }
-        });
+        try {
+            startOwned();
+        } catch (Throwable error) {
+            System.err.println("[MuoniumPlayer/QishuiBackend] 随游戏启动后端失败: " + error);
+        }
     }
 
     /** 拉起冷却:另一个组件刚拉起过(启动窗口内)就别再抢同一个端口。 */

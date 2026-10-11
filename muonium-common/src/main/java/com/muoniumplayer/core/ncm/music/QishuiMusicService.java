@@ -32,7 +32,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -76,6 +81,46 @@ public final class QishuiMusicService {
     private static final String PC_USER_AGENT = "LunaPC/3.3.0(359450208)";
     private static final int REQUEST_TIMEOUT_MS = 15_000;
     private static final int MAX_BYTES = 8 * 1024 * 1024;
+
+    /**
+     * 发现页推荐歌单的采样参数。这一条接口不分页（见 {@link #recommendPlaylists}），只能靠
+     * 反复抽样去重凑量，所以「几路并发、抽几轮、要够多少」都是这里定的。
+     *
+     * <p>实测（2026-10，单次 0.3~0.5 秒）：8 并发 × 5 轮 ≈ 3 秒收到 140 张以上；池子上限
+     * 约 150~160。所以并发给 8 路，轮数给 6 轮留一点余量，并把池子上限写死避免无谓地抽。</p>
+     */
+    private static final int RECOMMEND_PARALLELISM = 8;
+    private static final int RECOMMEND_ROUNDS = 6;
+    /**
+     * 一轮采样的等待上限。
+     *
+     * <p><b>必须大于 {@link #REQUEST_TIMEOUT_MS}</b>：单轮预算比单个请求的超时还短时，
+     * 慢网络下请求永远不可能在预算内返回，这一轮必然被判「空手」，连续几轮就把主页判成
+     * 失败了 —— 2026-10-11 真机踩过：预算 8 秒、请求超时 15 秒，采样直接放弃、主页全空。
+     * 留一点余量让「慢但能通」的请求有机会落地。</p>
+     */
+    private static final long RECOMMEND_ROUND_TIMEOUT_MS = REQUEST_TIMEOUT_MS + 4_000L;
+    /**
+     * 整次采样（所有轮加起来）的上限。
+     *
+     * <p>拦的是「后端半死」那一档：单轮虽然有自己的预算，但六轮串起来最坏仍是几十秒，
+     * 而调用方是在给首屏铺内容。到点就带着已经拿到的部分返回（渐进发布已经把首屏发出去了）。</p>
+     *
+     * <p>只对「已经拿到东西」之后生效 —— 一张都没拿到时不受它约束，否则慢网络会被直接
+     * 判成失败（见 {@link #recommendPlaylists(int, Consumer)}）。</p>
+     */
+    private static final long RECOMMEND_TOTAL_BUDGET_MS = 30_000L;
+    /** 池子实测上限约 150~160：目标再高也只是多抽几轮空手回来，直接夹到这里。 */
+    private static final int RECOMMEND_POOL_LIMIT = 160;
+    /** 电台池子实测只有 24 个左右，抽两轮就见底。 */
+    private static final int RADIO_ROUNDS = 3;
+    /** 采样用的短命线程池：守护线程，空闲即回收，不占住游戏进程退出。 */
+    private static final ExecutorService RECOMMEND_EXECUTOR = Executors.newFixedThreadPool(
+            RECOMMEND_PARALLELISM, runnable -> {
+                Thread thread = new Thread(runnable, "qishui-discover-sample");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     /**
      * 分页页长。PC 与匿名 Android 两条列表/详情接口都照数给：实测 {@code count=100} 就是满
@@ -943,7 +988,7 @@ public final class QishuiMusicService {
         /** 场景模式的上游 id(传给 feed_preference);偏好模式为 -1。 */
         public final int sceneModeId;
 
-        FeedMode(String key, String text, int sceneModeId) {
+        public FeedMode(String key, String text, int sceneModeId) {
             this.key = key;
             this.text = text;
             this.sceneModeId = sceneModeId;
@@ -956,46 +1001,115 @@ public final class QishuiMusicService {
 
     /** 模式清单缓存;getFeedModes() 保证非空(拉不到就用实测快照)。 */
     private static volatile List<FeedMode> feedModesCache;
+    /** 「正在后台拉真实清单」标记:同一个时刻只有一趟,拉回来只覆盖快照那一份缓存。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean FEED_MODES_FETCHING =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /** 顶部偏好条第一枚永远叫「推荐」;上游下不来时它是唯一的兜底。 */
-    static final FeedMode DEFAULT_FEED_MODE = new FeedMode("default", "推荐", -1);
+    public static final FeedMode DEFAULT_FEED_MODE = new FeedMode("default", "推荐", -1);
+
+    /**
+     * 模组静态注册的偏好模式:familiar/explore(熟悉/新鲜)。上游偏好条(/luna/pc/feed/mode
+     * 的 feed_mode_bar)只下发「推荐」一枚,但 song-tab 的 feed_preference 实测接受这两个值
+     * 且真实改变推荐池——它们是汽水对应「熟悉/探索」的参数。面板的「常用」行固定显示
+     * 推荐/熟悉模式/新鲜模式三枚(用户指定),取显示对象走这里。
+     */
+    public static FeedMode staticFeedMode(String key) {
+        for (FeedMode mode : STATIC_FEED_MODES) {
+            if (mode.key.equals(key)) return mode;
+        }
+        return DEFAULT_FEED_MODE;
+    }
+
+    public static final FeedMode[] STATIC_FEED_MODES = {
+            DEFAULT_FEED_MODE,
+            new FeedMode("familiar", "熟悉模式", -1),
+            new FeedMode("explore", "新鲜模式", -1),
+    };
 
     /**
      * 真实听歌模式清单:GET /luna/pc/feed/mode。偏好条在前面(「推荐」),场景音乐块按
      * 上游顺序排在后面;同一 sub_queue_type 去重。拉不到时用 2026-10-11 实测快照
      * (45 个场景模式,真实 id/键/文案),所以<b>永远</b>返回非空列表。
+     *
+     * <p><b>这个方法绝不在调用线程上发请求</b>:调用它的地方是面板装配与渲染回调(渲染线程),
+     * 一次签名请求的往返会把帧卡住。清单先给快照,真实清单在后台拉回来替换缓存,下一次装配
+     * 用上——顺序与内容都是真实的,只是晚一趟。</p>
      */
     public static List<FeedMode> getFeedModes() {
         List<FeedMode> cached = feedModesCache;
         if (cached != null) return cached;
-        try {
-            JsonObject response = requirePcStatus(QishuiBackend.signedPc("/luna/pc/feed/mode",
-                    Collections.emptyMap(), null), "听歌模式");
-            LinkedHashMap<String, FeedMode> unique = new LinkedHashMap<>();
-            unique.put(DEFAULT_FEED_MODE.key, DEFAULT_FEED_MODE);
-            JsonObject bar = object(response, "feed_mode_bar");
-            for (JsonElement element : array(bar, "feed_mode")) {
-                collectFeedMode(element, unique);
-            }
-            for (JsonElement blockElement : array(response, "feed_mode_block")) {
-                if (!blockElement.isJsonObject()) continue;
-                for (JsonElement element : array(blockElement.getAsJsonObject(), "feed_mode")) {
+        refreshFeedModesAsync();
+        return FEED_MODE_SNAPSHOT;
+    }
+
+    /** 后台拉一次真实清单;已经有缓存就不重复。失败不写缓存,但 30 秒内不重试(见下)。 */
+    public static void refreshFeedModesAsync() {
+        if (feedModesCache != null) return;
+        if (System.nanoTime() < FEED_MODES_RETRY_AFTER) return;
+        if (!FEED_MODES_FETCHING.compareAndSet(false, true)) return;
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                JsonObject response = requirePcStatus(QishuiBackend.signedPc("/luna/pc/feed/mode",
+                        Collections.emptyMap(), null), "听歌模式");
+                LinkedHashMap<String, FeedMode> unique = new LinkedHashMap<>();
+                unique.put(DEFAULT_FEED_MODE.key, DEFAULT_FEED_MODE);
+                JsonObject bar = object(response, "feed_mode_bar");
+                for (JsonElement element : array(bar, "feed_mode")) {
                     collectFeedMode(element, unique);
                 }
+                for (JsonElement blockElement : array(response, "feed_mode_block")) {
+                    if (!blockElement.isJsonObject()) continue;
+                    for (JsonElement element : array(blockElement.getAsJsonObject(), "feed_mode")) {
+                        collectFeedMode(element, unique);
+                    }
+                }
+                // 「推荐」必须存在且排第一:偏好条拉丢了也轮不到场景模式冒名。
+                List<FeedMode> modes = new ArrayList<>(unique.values());
+                if (!modes.isEmpty() && !modes.get(0).isDefaultMode()) {
+                    modes.remove(DEFAULT_FEED_MODE);
+                    modes.add(0, DEFAULT_FEED_MODE);
+                }
+                feedModesCache = Collections.unmodifiableList(modes);
+            } catch (Throwable error) {
+                System.err.println("[Music/Qishui] Feed modes failed, keeping snapshot: " + describe(error));
+                // 失败<b>不</b>把快照写进缓存:后端稍后起来了还得能换成真实清单。代价是这一段时间
+                // 里调用方拿到的都是快照,所以给一个 30 秒的冷却,别让每次装配都去撞一次网络。
+                FEED_MODES_RETRY_AFTER = System.nanoTime() + 30_000_000_000L;
+            } finally {
+                FEED_MODES_FETCHING.set(false);
             }
-            // 「推荐」必须存在且排第一:偏好条拉丢了也轮不到场景模式冒名。
-            List<FeedMode> modes = new ArrayList<>(unique.values());
-            if (!modes.isEmpty() && !modes.get(0).isDefaultMode()) {
-                modes.remove(DEFAULT_FEED_MODE);
-                modes.add(0, DEFAULT_FEED_MODE);
+        });
+    }
+
+    /** 上一次清单拉取失败后的冷却截止时刻(nanoTime)。 */
+    private static volatile long FEED_MODES_RETRY_AFTER;
+
+    /** 连接预热是否已经排过：只做一次，够覆盖整个会话。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean WARMED = new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
+     * 预热发现页那条链路的连接。
+     *
+     * <p>实测（2026-10）：<b>冷</b>启动第一次采样要 1.9 秒才回来，而同一进程里后续几次只要
+     * 0.33 秒 —— 差的 1.6 秒全在建连（DNS + TCP + TLS，{@code beta-luna.douyin.com}）。
+     * 主页首个回调因此从「一秒出头」被拖成「两秒」。这里是把这个建连提前：玩家在本源面板
+     * 点下汽水的那一刻（或面板装配时）就发一次最小请求，等真正去拉推荐歌单时连接已经在池子里。</p>
+     *
+     * <p>只发一次、失败静默 —— 它买的只是建连那点时间，拿不到也还有正路。</p>
+     */
+    public static void warmDiscoverConnectionAsync() {
+        if (!WARMED.compareAndSet(false, true)) return;
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                JsonObject payload = new JsonObject();
+                payload.addProperty("count", 1);
+                postJson(LUNA_DISCOVER_MIX_ENDPOINT, payload.toString(),
+                        ANDROID_USER_AGENT, "", Collections.emptyMap());
+            } catch (Throwable error) {
+                System.out.println("[Music/Qishui] 发现页连接预热未成功（不影响功能）: " + describe(error));
             }
-            feedModesCache = Collections.unmodifiableList(modes);
-            return feedModesCache;
-        } catch (Throwable error) {
-            System.err.println("[Music/Qishui] Feed modes failed, using snapshot: " + describe(error));
-            feedModesCache = FEED_MODE_SNAPSHOT;
-            return feedModesCache;
-        }
+        });
     }
 
     private static void collectFeedMode(JsonElement element, Map<String, FeedMode> output) {
@@ -1303,52 +1417,170 @@ public final class QishuiMusicService {
         else updated.remove(id);
         likedTrackIds = updated;
     }
-    /** 汽水发现页推荐歌单。接口为公开 App 流，返回卡片所需的最小元数据。 */
+    /**
+     * 汽水发现页推荐歌单。接口为公开 App 流，返回卡片所需的最小元数据。
+     *
+     * <p><b>这一条接口不分页。</b>它每次都从推荐池里随机取一小批（实测 4~12 张，与
+     * {@code count} 无关：传 50、100、200 回来的是同一个量级），响应里 {@code has_more}
+     * 恒为真却<b>没有</b> {@code next_cursor}（试过 {@code cursor}/{@code offset}/{@code page}
+     * 也都被忽略）。所以「跟着游标翻页」那套在这里必然只取到第一批 —— 原来就是这样，主页
+     * 永远只有 8~10 张卡。</p>
+     *
+     * <p>要拿更多只有一条路：<b>反复采样同一接口，按歌单 id 去重累积</b>。池子上限实测约
+     * 150~160 张，边际递减明显（第 1 轮 +65、第 5 轮只剩 +8）。并发不受限流（6~8 个并发
+     * 全部 200），所以按批并发去压时间：8 并发 × 5 轮约 3 秒能收到 140 张以上。</p>
+     *
+     * <p>截断策略按「够用就停」：凑够 target 就收手，而且连续两轮零新增就认定池子已经
+     * 见底，提前结束 —— 免得为了最后几张把用户晾在转圈上。</p>
+     */
     public static List<PlayList> recommendPlaylists(int limit) {
-        int target = Math.max(1, Math.min(120, limit));
-        LinkedHashMap<String, PlayList> unique = new LinkedHashMap<>();
-        String cursor = "";
-        String sessionId = "";
-        for (int page = 0; page < 4 && unique.size() < target; page++) {
-            try {
-                JsonObject payload = new JsonObject();
-                payload.addProperty("count", Math.min(50, target - unique.size()));
-                if (!cursor.isEmpty()) payload.addProperty("cursor", cursor);
-                if (!sessionId.isEmpty()) payload.addProperty("session_id", sessionId);
-                JsonObject response = postJson(LUNA_DISCOVER_MIX_ENDPOINT, payload.toString(),
-                        ANDROID_USER_AGENT, "", Collections.emptyMap());
-                collectPlaylistResources(array(response, "inner_block"), unique, target);
-                if (unique.isEmpty()) collectPlaylistResources(array(response, "blocks"), unique, target);
-                String nextCursor = string(response, "next_cursor");
-                String nextSession = string(response, "session_id");
-                boolean hasMore = truthy(response, "has_more");
-                if (!hasMore || nextCursor.isEmpty()
-                        || (nextCursor.equals(cursor) && nextSession.equals(sessionId))) break;
-                cursor = nextCursor;
-                sessionId = nextSession;
-            } catch (Throwable error) {
-                System.err.println("[Music/Qishui] Recommend playlists failed: " + describe(error));
-                break;
+        return recommendPlaylists(limit, null);
+    }
+
+    /**
+     * 与 {@link #recommendPlaylists(int)} 相同，但每一轮采完就把当前的累积结果交给
+     * {@code progress}（可以为 null）。
+     *
+     * <p>给主页做渐进式首屏用：第一轮（8 个并发）就能拿到五六十张，先铺出去，
+     * 后面几轮在后台补到一百多张再追加。回调在<b>采样线程</b>上跑，实现方自己负责切到主线程；
+     * 传进去的列表是当轮的不可变快照，可以安全地跨线程持有。</p>
+     */
+    public static List<PlayList> recommendPlaylists(int limit, Consumer<List<PlayList>> progress) {
+        int target = Math.max(1, Math.min(RECOMMEND_POOL_LIMIT, limit));
+        ConcurrentHashMap<String, PlayList> unique = new ConcurrentHashMap<>();
+        int barrenRounds = 0;
+        long budgetDeadline = System.nanoTime() + RECOMMEND_TOTAL_BUDGET_MS * 1_000_000L;
+        for (int round = 0; round < RECOMMEND_ROUNDS && unique.size() < target; round++) {
+            // 整次预算从第二轮起生效：第一轮永远跑满。一张都没拿到就收手等于把所有慢网络
+            // 都判成失败（见 RECOMMEND_ROUND_TIMEOUT_MS 的说明）。
+            if (round > 0 && System.nanoTime() > budgetDeadline) break;
+            int before = unique.size();
+            sampleDiscoverMixRound(unique, target);
+            if (unique.isEmpty()) {
+                // 一张都没拿到：网络慢或上游抖动。继续下一轮再试，<b>不要</b>在这里收手 ——
+                // 单轮空手是常态（实测请求 0.3~0.5 秒，但慢网络下 8 路全超时也出现过），
+                // 交给轮数与整次预算收尾。
+                continue;
             }
+            boolean grew = unique.size() > before;
+            if (!grew) {
+                if (++barrenRounds >= 2) break;
+            } else {
+                barrenRounds = 0;
+                if (progress != null) {
+                    // 有进展才回调：空手的一轮不该让界面重排一次。
+                    progress.accept(Collections.unmodifiableList(new ArrayList<>(unique.values())));
+                }
+            }
+        }
+        if (unique.isEmpty()) {
+            System.err.println("[Music/Qishui] Recommend playlists failed: "
+                    + RECOMMEND_ROUNDS + " 轮采样都没拿到歌单（网络不可达或上游风控）");
         }
         return new ArrayList<>(unique.values());
     }
 
-    /** 汽水发现页电台。当前上游有时把电台放在 blocks，有时放在 discover/mix 的 inner_block。 */
+    /**
+     * 一轮并发采样：{@value #RECOMMEND_PARALLELISM} 个请求同时发，回来的卡片按 id 并进
+     * {@code unique}。单个请求失败只丢它自己那一批，不牵连同一轮的其它请求。
+     *
+     * @return 这一轮新解析出的歌单张数（含重复的，用来判「这一轮有没有东西回来」）
+     */
+    private static int sampleDiscoverMixRound(ConcurrentHashMap<String, PlayList> unique, int target) {
+        List<CompletableFuture<Integer>> futures = new ArrayList<>(RECOMMEND_PARALLELISM);
+        for (int index = 0; index < RECOMMEND_PARALLELISM; index++) {
+            futures.add(CompletableFuture.supplyAsync(() -> {
+                try {
+                    JsonObject payload = new JsonObject();
+                    // 每次带一点随机量:上游对同样的载荷常常回同一批,随机 count 能让两次
+                    // 采样错开一点,重叠率更低。
+                    payload.addProperty("count", 20 + ThreadLocalRandom.current().nextInt(31));
+                    payload.addProperty("first_request", true);
+                    JsonObject response = postJson(LUNA_DISCOVER_MIX_ENDPOINT, payload.toString(),
+                            ANDROID_USER_AGENT, "", Collections.emptyMap());
+                    Map<String, PlayList> parsed = new LinkedHashMap<>();
+                    collectPlaylistResources(array(response, "inner_block"), parsed, target);
+                    if (parsed.isEmpty()) {
+                        collectPlaylistResources(array(response, "blocks"), parsed, target);
+                    }
+                    for (Map.Entry<String, PlayList> entry : parsed.entrySet()) {
+                        unique.putIfAbsent(entry.getKey(), entry.getValue());
+                    }
+                    return parsed.size();
+                } catch (Throwable error) {
+                    System.err.println("[Music/Qishui] Recommend playlist sample failed: " + describe(error));
+                    return 0;
+                }
+            }, RECOMMEND_EXECUTOR));
+        }
+        int collected = 0;
+        // 整轮一份预算，而不是每一路各给一份：八路并发同时起飞，慢的那几路不该把这一轮的
+        // 等待累加成「8 × 超时」。给到整轮上限就收手，剩下的路自己跑完——结果仍会并进
+        // unique，只是这一轮不等它们了。
+        long deadline = System.nanoTime() + RECOMMEND_ROUND_TIMEOUT_MS * 1_000_000L;
+        for (CompletableFuture<Integer> future : futures) {
+            long remaining = (deadline - System.nanoTime()) / 1_000_000L;
+            if (remaining <= 0L) break;
+            try {
+                collected += future.get(remaining, TimeUnit.MILLISECONDS);
+            } catch (Throwable ignored) {
+                // 超时/中断只丢这一路,其余几路照常统计。
+            }
+        }
+        return collected;
+    }
+
+    /**
+     * 汽水发现页电台。当前上游有时把电台放在 blocks，有时放在 discover/mix 的 inner_block。
+     *
+     * <p>电台和推荐歌单是同一套采样语义：接口一次给一批、无游标可跟。实测连抽 12 次，
+     * 第 1、2 次各出 12 个不重复的之后就一直空手 —— 池子只有 24 个左右。所以这里同样并发
+     * 采两轮就够了，不必像歌单那样铺 6 轮。</p>
+     */
     public static List<PlayList> recommendRadios(int limit) {
         int target = Math.max(1, Math.min(80, limit));
-        LinkedHashMap<String, PlayList> unique = new LinkedHashMap<>();
-        try {
-            JsonObject payload = new JsonObject();
-            payload.addProperty("first_request", true);
-            JsonObject response = postJson(LUNA_DISCOVER_ENDPOINT, payload.toString(),
-                    ANDROID_USER_AGENT, "", Collections.emptyMap());
-            collectRadioResources(array(response, "blocks"), unique, target);
-            if (unique.isEmpty()) collectRadioResources(array(response, "inner_block"), unique, target);
-        } catch (Throwable error) {
-            System.err.println("[Music/Qishui] Recommend radios failed: " + describe(error));
+        ConcurrentHashMap<String, PlayList> unique = new ConcurrentHashMap<>();
+        for (int round = 0; round < RADIO_ROUNDS && unique.size() < target; round++) {
+            int before = unique.size();
+            sampleRadioRound(unique, target);
+            if (unique.size() == before) break;
         }
         return new ArrayList<>(unique.values());
+    }
+
+    /** 电台采样的一轮：与歌单同一形状，只是端点与收集器不同。 */
+    private static void sampleRadioRound(ConcurrentHashMap<String, PlayList> unique, int target) {
+        List<CompletableFuture<Void>> futures = new ArrayList<>(RECOMMEND_PARALLELISM);
+        for (int index = 0; index < RECOMMEND_PARALLELISM; index++) {
+            futures.add(CompletableFuture.runAsync(() -> {
+                try {
+                    JsonObject payload = new JsonObject();
+                    payload.addProperty("first_request", true);
+                    JsonObject response = postJson(LUNA_DISCOVER_ENDPOINT, payload.toString(),
+                            ANDROID_USER_AGENT, "", Collections.emptyMap());
+                    Map<String, PlayList> parsed = new LinkedHashMap<>();
+                    collectRadioResources(array(response, "blocks"), parsed, target);
+                    if (parsed.isEmpty()) {
+                        collectRadioResources(array(response, "inner_block"), parsed, target);
+                    }
+                    for (Map.Entry<String, PlayList> entry : parsed.entrySet()) {
+                        unique.putIfAbsent(entry.getKey(), entry.getValue());
+                    }
+                } catch (Throwable error) {
+                    System.err.println("[Music/Qishui] Recommend radio sample failed: " + describe(error));
+                }
+            }, RECOMMEND_EXECUTOR));
+        }
+        // 与歌单那一轮同一预算口径：整轮一份上限，不按每路累加。
+        long deadline = System.nanoTime() + RECOMMEND_ROUND_TIMEOUT_MS * 1_000_000L;
+        for (CompletableFuture<Void> future : futures) {
+            long remaining = (deadline - System.nanoTime()) / 1_000_000L;
+            if (remaining <= 0L) break;
+            try {
+                future.get(remaining, TimeUnit.MILLISECONDS);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     /** PC 歌单搜索，失败时回退到混合搜索中的歌单分组。 */
@@ -2759,8 +2991,14 @@ public final class QishuiMusicService {
         if (image == null) return "";
         String uri = string(image, "uri");
         String templatePrefix = string(image, "template_prefix");
-        if (!uri.isEmpty() && !templatePrefix.isEmpty()) {
-            return COVER_ROOT + uri + "~" + templatePrefix + "-resize:960:960.png";
+        if (!uri.isEmpty()) {
+            // 上游偶尔不给 template_prefix，但 uri 本身是完整的对象键。这时沿用那个
+            // 已知可用的模板前缀 —— 实测它对每个存储桶都成立（tos-cn-i-b829550vbb、
+            // tos-cn-v-2774c002…）。原来这种情形会回落到裸 url（没有 ~tplv-…-resize:
+            // 后缀），那是个 **HTTP 400**：真机上一屏封面全指向它，HttpUtils 还会对 400
+            // 重试十次，几十条线程一起猛打网络，把带宽从真正要用的请求那里抢走。
+            String prefix = templatePrefix.isEmpty() ? COVER_TEMPLATE_PREFIX : templatePrefix;
+            return COVER_ROOT + uri + "~" + prefix + "-resize:" + COVER_PIXELS + ":" + COVER_PIXELS + ".png";
         }
         JsonArray urls = array(image, "urls");
         if (urls == null || urls.size() == 0) return "";
@@ -2768,6 +3006,21 @@ public final class QishuiMusicService {
         if (!uri.isEmpty() && !base.contains(uri)) base += uri;
         return base;
     }
+
+    /**
+     * 取封面时的边长（像素）。
+     *
+     * <p>原来写死 960：一张 960×960 的 ARGB 解码出来是 3.7 MB 的 int 数组，而它服务的
+     * 位置最大也只有详情页 hero 那不到 200 像素、列表里更是 40~100 像素。降到这里：
+     * 像素量约为原来的 1/7，解码内存与主线程贴图上传的开销同比降，观感在两种用途上都
+     * 足够（封面是照片，缩小后仍锐）。要提回去只动这一个数。</p>
+     */
+    private static final int COVER_PIXELS = 360;
+    /**
+     * 封面模板前缀兜底。上游给的 {@code template_prefix} 优先；它缺失时用这个 ——
+     * 实测对该服务的每个存储桶都成立（见 {@link #coverUrl(JsonObject)}）。
+     */
+    private static final String COVER_TEMPLATE_PREFIX = "tplv-b829550vbb";
 
     private static String firstUrl(JsonElement element) {
         if (element == null || element.isJsonNull()) return "";

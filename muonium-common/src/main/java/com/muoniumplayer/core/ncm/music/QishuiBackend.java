@@ -45,6 +45,8 @@ public final class QishuiBackend {
     private static volatile long lastProbeAt;
     private static volatile boolean lastProbeAvailable;
     private static volatile boolean lastProbeHasCookie;
+    /** 探活超时：真机健康检查是本机回环，正常在毫秒级；2 秒的等待只会让发起方白等。 */
+    private static final Duration PROBE_TIMEOUT = Duration.ofMillis(800);
 
     private QishuiBackend() {
     }
@@ -53,7 +55,36 @@ public final class QishuiBackend {
         return System.getProperty("muonium.qishui.backend", DEFAULT_BASE);
     }
 
-    /** 探测结果缓存 30 秒：游玩过程别每个请求都打健康检查。 */
+    /**
+     * 只读最近一次探活结论，<b>绝不发起探测</b>。
+     *
+     * <p>渲染路径必须用这一个而不是 {@link #isAvailable()}：后者在 30 秒窗口的首次调用会
+     * 同步发一次健康检查（还有 800 毫秒超时），探测失败时更会顺带触发伴生包下载调度 ——
+     * 挂在每帧求值的文本 supplier 上就是「后端一卡，界面就卡」。</p>
+     *
+     * <p>返回 {@code false} 表示「最近一次探测说不可用」，也包含「还没探测过」。
+     * 需要区分这两种情况（比如给用户文案）时用 {@link #hasProbed()}。</p>
+     */
+    public static boolean peekAvailable() {
+        return lastProbeAvailable;
+    }
+
+    /** 是否已经探过至少一次。未探过时界面该显示中文中性文案，而不是断言后端不在。 */
+    public static boolean hasProbed() {
+        return lastProbeAt != 0L;
+    }
+
+    /** 只读最近一次探活里的 has_cookie，绝不发起探测（渲染路径可用）。 */
+    public static boolean peekHasCookie() {
+        return lastProbeAvailable && lastProbeHasCookie;
+    }
+
+    /**
+     * 探测结果缓存 30 秒：游玩过程别每个请求都打健康检查。
+     *
+     * <p><b>会阻塞</b>（最多 {@link #PROBE_TIMEOUT}）：只在后台线程调用。渲染路径读
+     * {@link #peekAvailable()}。</p>
+     */
     public static boolean isAvailable() {
         long now = System.currentTimeMillis();
         if (now - lastProbeAt < PROBE_INTERVAL_MILLIS) return lastProbeAvailable;
@@ -63,7 +94,7 @@ public final class QishuiBackend {
             boolean ok;
             try {
                 HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl() + "/api/health"))
-                        .timeout(Duration.ofSeconds(2))
+                        .timeout(PROBE_TIMEOUT)
                         .GET().build();
                 HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
                 // 后端是美化 JSON("ok": true 带空格),这里必须容忍空白差异——

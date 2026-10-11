@@ -2519,7 +2519,10 @@ public class CloudMusic implements SharedConstants {
          * 这里只管「别在开播第一秒就去抢」。
          *
          * <p>为什么值得提前：YouTube 那一份配额是一台出口 IP 的字节余额，约「一秒攒一秒播放量」，
-         * 一首四分钟的歌最坏要等将近曲长才取得完。这段等待消不掉，但能挪到上一首还在响的时候花掉。</p>
+         * 一首四分钟的歌最坏要等将近曲长才取得完。这段等待消不掉，但能挪到上一首还在响的时候花掉。
+         * 汽水更极端：它落盘之后还有一次整曲 AAC→WAV 转码（见
+         * {@link CloudMusic#worthAudioPrefetch}），那一趟以前是几十秒量级，现在换成 ffmpeg
+         * 快路径也要一两秒。同样是消不掉的，同样只能挪到前面花。</p>
          */
         private static final long AUDIO_PREFETCH_AFTER_MILLIS = 3_000L;
         /** 每首歌允许的音频预取次数；失败几次就认了，真轮到它时实播那条链会自己重走。 */
@@ -4536,12 +4539,23 @@ public class CloudMusic implements SharedConstants {
     /**
      * 这一首值不值得在后台先替它把音频取满。
      *
-     * <p>只挑 YouTube：其余源的直链是普通 CDN，一两秒就落盘，提前取与现取没差别，白占用户的
-     * 上行与缓存。YouTube 不一样 —— 它的字节由那台出口 IP 的余额配给（约一秒攒一秒播放量），
-     * 现取最坏要等接近曲长。把这段时间挪到「上一首还在响」的时候花掉，点下去就是本地秒开。</p>
+     * <p>两类源值得：</p>
+     *
+     * <ul>
+     *   <li><b>YouTube</b>：它的字节由那台出口 IP 的余额配给（约一秒攒一秒播放量），
+     *       现取最坏要等接近曲长。把这段时间挪到「上一首还在响」的时候花掉，点下去就是本地秒开。</li>
+     *   <li><b>汽水</b>：它的直链也是普通 CDN，一两秒就落盘 —— 贵的不是网络，是<b>落盘之后</b>。
+     *       汽水交付的是 AAC/M4A，模组必须先做一次 AES-CTR 逐样本解密、再做一次整曲 AAC→WAV
+     *       转码（引擎只按扩展名认 wav/flac/mp3，没有 AAC 解码器，见
+     *       {@code SampleLoader#loadStreamedFloatSample}），这两步都与曲长成正比、单线程、跑在
+     *       取流线程上。现取就是「点下去等好几秒的黑屏」。其余源没有这两步，所以不在此列：
+     *       它们提前取只是白占用户的带宽与缓存。</li>
+     * </ul>
+     *
+     * <p>只判「是不是这类源」，不判「此刻值不值得」——后者由调用点的位置闸与磁盘命中检查管。</p>
      */
     static boolean worthAudioPrefetch(Music song) {
-        return song != null && song.isYouTube();
+        return song != null && (song.isYouTube() || song.isQishui());
     }
 
     /**

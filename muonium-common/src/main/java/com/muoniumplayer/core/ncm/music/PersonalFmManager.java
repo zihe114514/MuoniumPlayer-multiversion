@@ -163,6 +163,31 @@ public final class PersonalFmManager {
     }
 
     /**
+     * 平台切换时的 FM 清场：批次、历史、预备、状态全作废。
+     *
+     * <p>这几份都是<b>跨平台共用</b>的，而 FM 页三个源（网易云/酷狗/汽水）共用同一个面板。
+     * 不清的后果就是「切回网易云，FM 页上还摆着汽水的推荐」，点下去还会跨源播放。用户显式
+     * 切平台这一下就是最准的清理时机；同一个平台重复点击不做事。</p>
+     *
+     * <p>模式选择（{@link #selectedMode}/{@link #qishuiModeKey}）刻意保留：那是用户对「哪个源
+     * 的哪一档」的持久选择，各源各存各的，切换平台正是要把它带过去。</p>
+     */
+    public static void onPlatformChanged(MusicPlatform platform) {
+        if (batchPlatform == platform) return;
+        batchPlatform = platform;
+        currentBatch = Collections.emptyList();
+        history = Collections.emptyList();
+        prefetchedNext = null;
+        status = platform == MusicPlatform.QISHUI ? "进入后获取汽水发现流推荐" : "进入后获取 1 首私人 FM 推荐";
+        // 让新平台的 FM 页首次打开时重新拉一次（旧的「已经拉过」标记属于旧平台）。
+        INITIAL_REQUEST_ISSUED.set(false);
+        notifyUi();
+    }
+
+    /** 当前批次属于哪个源；{@code null} = 还没有批次（懒初始化，读时按当前平台补齐）。 */
+    private static volatile MusicPlatform batchPlatform;
+
+    /**
      * 把即将被替换掉的那一批压进历史，然后交给新的一批。
      *
      * <p>去重按 {@link Music#getStableKey()} 而不是 id：上游在短时间内把同一首推回来是常事
@@ -245,7 +270,9 @@ public final class PersonalFmManager {
         for (QishuiMusicService.FeedMode mode : QishuiMusicService.getFeedModes()) {
             if (mode.key.equals(key)) return mode;
         }
-        return QishuiMusicService.DEFAULT_FEED_MODE;
+        // 静态注册的偏好模式(familiar/explore):上游偏好条不下发它们,但实测
+        // preference_mode 接受且真实改变推荐池,模组把它们固定在「常用」行。
+        return QishuiMusicService.staticFeedMode(key);
     }
 
     /** 汽水模式的展示名(状态文案用);默认模式就是「推荐」。 */
@@ -403,17 +430,17 @@ public final class PersonalFmManager {
             notifyUi();
             return;
         }
-        if (!QishuiBackend.isAvailable()) {
-            status = "汽水发现流需要本机签名后端在线";
-            LOADING.set(false);
-            notifyUi();
-            return;
-        }
         status = "正在获取汽水发现流…";
         notifyUi();
 
         MultiThreadingUtil.runAsync(() -> {
             try {
+                // 后端在线判定挪进后台：探测会发一次健康检查（还有超时），
+                // 而这条链是从面板点击直接进来的 —— 摆在点击处理器上就是「点一下卡一下」。
+                if (!QishuiBackend.isAvailable()) {
+                    status = "汽水发现流需要本机签名后端在线";
+                    return;
+                }
                 List<Music> loaded = QishuiMusicService.discoverFeedTracks(BATCH_SIZE, playedFeedback(),
                         getSelectedQishuiMode());
                 if (loaded.isEmpty()) throw new IllegalStateException("发现流没有返回可播放曲目");

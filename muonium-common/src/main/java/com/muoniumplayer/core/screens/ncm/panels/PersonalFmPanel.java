@@ -25,6 +25,7 @@ import com.muoniumplayer.core.screens.ncm.SegmentControl;
 import com.muoniumplayer.core.screens.ncm.SheetClock;
 import com.muoniumplayer.core.screens.ncm.TransitionCurveCache;
 import com.muoniumplayer.core.utils.Location;
+import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -59,6 +60,12 @@ public final class PersonalFmPanel extends NCMPanel {
     /** 一格 = 最宽那枚标签的墨迹 + 左右各 5 像素。墨迹宽度要等字体装好才知道，所以首次渲染时才算。 */
     private static double modeCellW = Double.NaN;
     private static final double SCENE_TOP = 80.0;
+    /**
+     * 汽水树的标签区从哪起。它没有网易云那条六模式行（{@code addModeRow} 在这棵树上提前返回），
+     * 原来仍旧按 {@link #SCENE_TOP} 摆，于是页眉和首行之间白空掉整整一条模式行的高度。
+     * 取模式行本该在的位置：两个平台的首行落在同一条线上，切平台时标签区不再上下跳。
+     */
+    private static final double QISHUI_SCENE_TOP = MODE_TOP;
     /** 一个分组固定占一行：轨道 19 + 行与行之间 5。四组就是 96，不再随窗口宽度堆高。 */
     private static final double SCENE_ROW = 24.0;
     /** 场景那一行的轨道高度：比模式行矮一档，四行叠起来才不压人。 */
@@ -135,6 +142,20 @@ public final class PersonalFmPanel extends NCMPanel {
     private LabelWidget[] sceneHeaders;
     private Panel[] sceneRows;
     private ScrollPanel[] sceneViewports;
+
+    /**
+     * 这一棵树是按哪个平台装配的，装配那一刻冻结，整棵树按它建、按它渲染。
+     *
+     * <p>行与控件的回调可能在这棵树还挂在屏上的时候遇到平台切换 —— 侧栏源按钮只 markDirty
+     * 重建侧栏，内容页不重建，于是回调会拿着 A 平台的组号去索引 B 平台的标签数组。上一版
+     * 就是在渲染回调里现场问平台：汽水树（五组）碰上已经切走的平台，slot=4 越界崩。树类型
+     * 是「建树事实」，渲染一律读它，不再现场问全局平台。</p>
+     */
+    private boolean treeQishui;
+    /** 上一棵树的平台类型（跨实例记），用来认出「平台切了、树还是旧的那棵」并把展开进度归零。 */
+    private static boolean lastTreeQishui;
+    private static boolean lastTreeKnown;
+
     /** 上一次各组的选中是哪一枚；变了才去把那一枚留在视口里。 */
     private static final int[] sceneShown = new int[PersonalFmManager.SCENE_GROUP_MODES.length];
 
@@ -150,6 +171,16 @@ public final class PersonalFmPanel extends NCMPanel {
     @Override
     public void onInit() {
         this.reentering = isReenter();
+        this.treeQishui = qishuiFm();
+        this.healRequestNanos = 0L;
+        // 平台换了、面板没换：旧树（另一平台的组数与标签）不能按新平台继续渲染，展开进度也从
+        // 零起 —— 否则切到汽水时还端着网易云「收起」的进度，五组行会停在透明态。
+        if (!lastTreeKnown || lastTreeQishui != this.treeQishui) {
+            lastTreeQishui = this.treeQishui;
+            lastTreeKnown = true;
+            sceneReveal = 0.0;
+            this.reentering = true;
+        }
         if (this.reentering) {
             // 标签区收回零、hero 的封面槽交回去：重新进入这一页应该像第一次打开那样把东西
             // 交出来一次，而不是「上一页留下的进度」直接摆在那。
@@ -193,7 +224,7 @@ public final class PersonalFmPanel extends NCMPanel {
 
         // 标题与副标题先装配：右边那两颗按钮要读它本帧的真实位置来对齐，而子组件是按列表
         // 顺序正序渲染的，排在后面的回调才量得到前面那一格。
-        LabelWidget title = new LabelWidget(qishuiFm() ? "发现流 FM" : "私人 FM", FontManager.pf25bold);
+        LabelWidget title = new LabelWidget(this.treeQishui ? "发现流 FM" : "私人 FM", FontManager.pf25bold);
         addChild(title);
         title.setClickable(false);
         title.setBeforeRenderCallback(() -> title
@@ -252,8 +283,12 @@ public final class PersonalFmPanel extends NCMPanel {
      * 只是已经被展开的标签区推到了新位置 —— 用户看到的就是「上一首的残影」，要等请求回来才换。
      * 所以这一首得记住自己是哪个栏目要来的：栏目一换、曲子还没换，就先把内容交出去。</p>
      */
-    private static boolean isHeroStale(Music current) {
-        String selection = PersonalFmManager.getSelectedMode() + "|" + PersonalFmManager.getSelectedSubMode();
+    private boolean isHeroStale(Music current) {
+        // 指纹要含「哪个源的哪个栏目」:汽水的栏目标是 qishuiModeKey,网易云的是 Mode+子模式。
+        // 少了平台这一段,从汽水切回网易云时指纹可能恰好相同,hero 就不会交骨架重新落位。
+        String selection = (this.treeQishui ? "qishui|" + PersonalFmManager.qishuiSelectionLabel() + "|"
+                + PersonalFmManager.getSelectedQishuiMode().sceneModeId
+                : "netease|" + PersonalFmManager.getSelectedMode() + "|" + PersonalFmManager.getSelectedSubMode());
         if (current != null) {
             String key = current.getStableKey();
             if (!key.equals(heroSongKey)) {
@@ -327,9 +362,9 @@ public final class PersonalFmPanel extends NCMPanel {
      * 淡底、按墨迹居中都只有一份实现，改一处两边一起好。</p>
      */
     private void addModeRow() {
-        // 汽水没有这套六模式的体系——它有自己真实的听歌模式(见 buildSceneRow 的汽水分支),
-        // 网易云的枚举在这里一颗都不该出现。
-        if (qishuiFm()) return;
+        // 汽水没有这套六模式的体系——它有自己真实的听歌模式(见 addSceneRows 的汽水分支),
+        // 网易云的枚举在这棵树上一个都不该出现。判据是装配时冻结的树类型,不是现场的平台。
+        if (this.treeQishui) return;
         final SegmentControl.Spec spec = new SegmentControl.Spec();
         spec.y = MODE_TOP;
         spec.height = MODE_H;
@@ -409,8 +444,41 @@ public final class PersonalFmPanel extends NCMPanel {
      * 因为淡出的是那个已经被丢掉的实例。所以这四行连视口带控件一起留着，只重挂不改建。</p>
      */
     private void addSceneRows() {
-        // 汽水分组平铺:推荐 + 心情 + 生活场景 + 风格流派 + 语言地区,每组一行横向滚。
-        int groups = qishuiFm() ? qishuiGroupCount() : SCENE_GROUP_LABELS.length;
+        if (this.treeQishui) {
+            // 汽水分组平铺:常用(推荐/熟悉/新鲜)+ 心情 + 生活场景 + 风格流派 + 语言地区。
+            // 只复用 SegmentControl 这个 UI 控件,行/滑块/滚动全是汽水自己的状态,
+            // 不与网易云的分组机件共享任何数组(组数不同,共享就是越界)。
+            if (this.qishuiRows == null) {
+                this.qishuiHeaders = new LabelWidget[qishuiGroupCount()];
+                this.qishuiRows = new Panel[qishuiGroupCount()];
+                this.qishuiViewports = new ScrollPanel[qishuiGroupCount()];
+                this.qishuiFrozenModes = newEmptyModeLists();
+                this.qishuiLabels = new String[qishuiGroupCount()][];
+                this.qishuiBuiltRows = 0;
+                for (int group = 0; group < qishuiGroupCount(); group++) {
+                    // 清单在这里冻结一次:之后这一行的段数、宽度、点击回填全按这一份走,
+                    // 上游清单在两次装配之间刷新也不会让行内索引对不上。
+                    java.util.List<QishuiMusicService.FeedMode> picked = qishuiGroupModes(group);
+                    this.qishuiFrozenModes[group] = picked;
+                    String[] labels = new String[picked.size()];
+                    for (int index = 0; index < labels.length; index++) labels[index] = picked.get(index).text;
+                    this.qishuiLabels[group] = labels;
+                    // 少于两枚的组整行不建:SegmentControl 的格数下限是 2,给 0 或 1 枚会在建格时
+                    // 越界(它按 cells 建标签却按 texts 取内容)。上游清单暂缺某类时,宁可这一行
+                    // 不存在,也不能让它把整页带崩。行号按实际建出来的数往上顶。
+                    if (labels.length < 2) continue;
+                    this.qishuiRowSlot[group] = this.qishuiBuiltRows++;
+                    buildQishuiRow(group);
+                }
+            }
+            for (int group = 0; group < qishuiGroupCount(); group++) {
+                if (this.qishuiRows[group] == null) continue;
+                addChild(this.qishuiHeaders[group]);
+                addChild(this.qishuiRows[group]);
+            }
+            return;
+        }
+        int groups = SCENE_GROUP_LABELS.length;
         if (this.sceneHeaders == null) {
             this.sceneHeaders = new LabelWidget[SCENE_GROUP_LABELS.length];
             this.sceneRows = new Panel[SCENE_GROUP_LABELS.length];
@@ -423,10 +491,131 @@ public final class PersonalFmPanel extends NCMPanel {
         }
     }
 
+    /** 汽水分组行:与 {@link #buildSceneRow(int)} 同形状,但状态全部是汽水自己的。 */
+    private void buildQishuiRow(final int slot) {
+        // 整行(标题+轨道)自建起就按这一组的标签源摆位,渲染回调里不再现场判平台:
+        // 「这棵树是哪边」在装配时就已经定了(见 treeQishui),回调只读它。
+        final int row = this.qishuiRowSlot[slot];
+        LabelWidget header = new LabelWidget(QISHUI_GROUP_TITLES[slot], FontManager.pf12bold);
+        header.setClickable(false);
+        header.setBeforeRenderCallback(() -> header
+                .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
+                .setBounds(GROUP_LABEL_W, CHIP_H)
+                .setPosition(MARGIN, NcmSheet.inkTop(header, sceneRowTop(row) + SCENE_TRACK_H * .5))
+                .setAlpha((float) sceneReveal)
+                .setMaxWidth(GROUP_LABEL_W)
+                .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH));
+
+        Panel rowPanel = new Panel();
+        ScrollPanel viewport = new ScrollPanel();
+        rowPanel.addChild(viewport);
+        viewport.setSpacing(0).setScrollStrength(42).setAlignment(ScrollPanel.Alignment.HORIZONTAL);
+        viewport.setBeforeRenderCallback(() -> viewport.setBounds(0, 0, rowPanel.getWidth(), rowPanel.getHeight()));
+        final SegmentControl control = addQishuiSegment(viewport, slot);
+
+        rowPanel.setBeforeRenderCallback(() -> {
+            double eased = TransitionCurveCache.MOTION.at(sceneReveal);
+            control.setEnabled(sceneReveal > .5);
+            rowPanel.setBounds(Math.max(1.0, getWidth() - MARGIN - GROUP_LABEL_W - MARGIN), SCENE_TRACK_H)
+                    .setPosition(MARGIN + GROUP_LABEL_W + 8.0 * (1.0 - eased), sceneRowTop(row))
+                    .setAlpha((float) eased);
+            int chosen = qishuiSelectionOf(slot);
+            if (chosen != qishuiShown[slot]) {
+                qishuiShown[slot] = chosen;
+                keepQishuiChipInView(viewport, slot, chosen);
+            }
+        });
+
+        this.qishuiHeaders[slot] = header;
+        this.qishuiRows[slot] = rowPanel;
+        this.qishuiViewports[slot] = viewport;
+    }
+
+    /** 把汽水刚选中的那枚留在视口里(语义与网易云版一致,数组用自己的)。 */
+    private void keepQishuiChipInView(ScrollPanel viewport, int slot, int index) {
+        if (index < 0 || viewport == null) return;
+        String[] labels = this.qishuiLabels == null ? new String[0] : this.qishuiLabels[slot];
+        if (labels == null || index >= labels.length) return;
+        double left = SCENE_INSET;
+        for (int at = 0; at < index; at++) left += labelWidth(labels[at]);
+        double width = labelWidth(labels[index]);
+        double offset = Math.max(0.0, Math.min(viewport.targetScrollOffset,
+                Math.max(0.0, qishuiTrackWidth(slot) - viewport.getWidth())));
+        if (left - SCENE_INSET < offset) offset = Math.max(0.0, left - width);
+        else if (left + width > offset + viewport.getWidth()) offset = left + width - viewport.getWidth();
+        viewport.targetScrollOffset = offset;
+        viewport.actualScrollOffset = offset;
+    }
+
+    /** 汽水轨道要多宽:按这一组装配时冻结的标签算(与 sceneTrackWidth 分开,不共享平台分支)。 */
+    private double qishuiTrackWidth(int slot) {
+        String[] labels = this.qishuiLabels == null ? null : this.qishuiLabels[slot];
+        if (labels == null) return SCENE_INSET * 2.0;
+        double at = 0.0;
+        for (String label : labels) at += labelWidth(label);
+        return at + SCENE_INSET * 2.0;
+    }
+
+    /** 汽水这一组里当前选中的那一枚;不在本组报 -1(语义与 sceneSelectionOf 一致)。 */
+    private int qishuiSelectionOf(int slot) {
+        java.util.List<QishuiMusicService.FeedMode> modes = this.qishuiFrozenModes == null
+                ? null : this.qishuiFrozenModes[slot];
+        if (modes == null) return -1;
+        String chosen = PersonalFmManager.getSelectedQishuiMode().key;
+        for (int index = 0; index < modes.size(); index++) {
+            if (modes.get(index).key.equals(chosen)) return index;
+        }
+        return -1;
+    }
+
+    /** 汽水分段条:复用 SegmentControl 控件本身,滑块记忆走 qishuiSlides。 */
+    private SegmentControl addQishuiSegment(final ScrollPanel viewport, final int slot) {
+        // 标签与模式清单在装配这一刻冻结,回调只读这一份:上游清单之后刷新也不改变这一行的
+        // 段数(重建时才会换),渲染期的所有索引都跑不出这个数组。
+        final java.util.List<QishuiMusicService.FeedMode> modes = this.qishuiFrozenModes[slot];
+        final String[] labels = this.qishuiLabels[slot];
+
+        final SegmentControl.Spec spec = new SegmentControl.Spec();
+        spec.height = SCENE_TRACK_H;
+        spec.radius = 6.0;
+        spec.inset = SCENE_INSET;
+        spec.durationMs = SCENE_MILLIS;
+        spec.font = FontManager.pf12bold;
+        spec.cellWidth = index -> labelWidth(labels[index]);
+        spec.positionsItself = false;
+        spec.memory = new SegmentControl.SlideMemory() {
+            @Override public double last() { return qishuiSlides[slot]; }
+
+            @Override public void remember(double slide) { qishuiSlides[slot] = slide; }
+        };
+
+        final String[] glyphs = new String[labels.length];
+        for (int index = 0; index < glyphs.length; index++) glyphs[index] = "";
+
+        return SegmentControl.attach(viewport, () -> {
+            spec.width = qishuiTrackWidth(slot);
+            return spec;
+        }, () -> qishuiSelectionOf(slot),
+                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                glyphs, labels,
+                index -> {
+                    if (PersonalFmManager.isLoading()) return false;
+                    PersonalFmManager.selectQishuiMode(modes.get(index));
+                    return true;
+                });
+    }
+
+    /** 汽水各行在视口里横滚的状态(视口实例活在这一棵树里,行号变了也还是它)。 */
+    private static java.util.List<QishuiMusicService.FeedMode>[] newEmptyModeLists() {
+        @SuppressWarnings("unchecked")
+        java.util.List<QishuiMusicService.FeedMode>[] lists =
+                (java.util.List<QishuiMusicService.FeedMode>[]) new java.util.List<?>[qishuiGroupCount()];
+        return lists;
+    }
+
     private void buildSceneRow(final int slot) {
-        LabelWidget header = new LabelWidget(
-                qishuiFm() ? QISHUI_GROUP_TITLES[slot] : PersonalFmManager.SCENE_GROUP_TITLES[slot],
-                FontManager.pf12bold);
+        LabelWidget header = new LabelWidget(PersonalFmManager.SCENE_GROUP_TITLES[slot], FontManager.pf12bold);
         header.setClickable(false);
         header.setBeforeRenderCallback(() -> header
                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
@@ -477,9 +666,11 @@ public final class PersonalFmPanel extends NCMPanel {
      */
     private void keepChipInView(int slot, ScrollPanel viewport, int index) {
         if (index < 0 || viewport == null) return;
+        String[] labels = SCENE_GROUP_LABELS[slot];
+        if (index >= labels.length) return;
         double left = SCENE_INSET;
-        for (int at = 0; at < index; at++) left += labelWidth(SCENE_GROUP_LABELS[slot][at]);
-        double width = labelWidth(SCENE_GROUP_LABELS[slot][index]);
+        for (int at = 0; at < index; at++) left += labelWidth(labels[at]);
+        double width = labelWidth(labels[index]);
         double offset = Math.max(0.0, Math.min(viewport.targetScrollOffset,
                 Math.max(0.0, sceneTrackWidth(slot) - viewport.getWidth())));
         if (left - SCENE_INSET < offset) offset = Math.max(0.0, left - width);
@@ -499,16 +690,7 @@ public final class PersonalFmPanel extends NCMPanel {
      * 轨道），点一枚标签滑块就从上一枚滑过去 —— 和换模式是同一个动作、同一拍子。</p>
      */
     private SegmentControl addSceneSegment(final ScrollPanel viewport, final int group) {
-        final boolean qishui = qishuiFm();
-        final java.util.List<QishuiMusicService.FeedMode> qishuiModes =
-                qishui ? qishuiGroupModes(group) : java.util.Collections.<QishuiMusicService.FeedMode>emptyList();
-        final String[] labels;
-        if (qishui) {
-            labels = new String[qishuiModes.size()];
-            for (int index = 0; index < labels.length; index++) labels[index] = qishuiModes.get(index).text;
-        } else {
-            labels = SCENE_GROUP_LABELS[group];
-        }
+        final String[] labels = SCENE_GROUP_LABELS[group];
         final String[] subModes = PersonalFmManager.SCENE_GROUP_MODES[group];
 
         final SegmentControl.Spec spec = new SegmentControl.Spec();
@@ -539,11 +721,7 @@ public final class PersonalFmPanel extends NCMPanel {
                 glyphs, labels,
                 index -> {
                     if (PersonalFmManager.isLoading()) return false;
-                    if (qishui) {
-                        PersonalFmManager.selectQishuiMode(qishuiModes.get(index));
-                    } else {
-                        PersonalFmManager.selectMode(PersonalFmManager.Mode.SCENE_RCMD, subModes[index]);
-                    }
+                    PersonalFmManager.selectMode(PersonalFmManager.Mode.SCENE_RCMD, subModes[index]);
                     return true;
                 });
     }
@@ -551,11 +729,7 @@ public final class PersonalFmPanel extends NCMPanel {
     /** 轨道要多宽：每一格自己的宽度加起来，外加两侧内缩。放不下的部分由视口横向滚。 */
     private static double sceneTrackWidth(int group) {
         double at = 0.0;
-        if (qishuiFm()) {
-            for (QishuiMusicService.FeedMode mode : qishuiGroupModes(group)) at += labelWidth(mode.text);
-        } else {
-            for (String label : SCENE_GROUP_LABELS[group]) at += labelWidth(label);
-        }
+        for (String label : SCENE_GROUP_LABELS[group]) at += labelWidth(label);
         return at + SCENE_INSET * 2.0;
     }
 
@@ -576,9 +750,11 @@ public final class PersonalFmPanel extends NCMPanel {
      * 推荐单独一行(默认档位),其余按心情/生活场景/风格流派/语言地区四类平铺。
      * 上游将来下发的新模式没进这四类时,自动追加到最后一行——宁可挤一点,也不能丢。
      */
-    private static final String[] QISHUI_GROUP_TITLES = {"推荐", "心情", "生活场景", "风格流派", "语言地区"};
+    private static final String[] QISHUI_GROUP_TITLES = {"常用", "心情", "生活场景", "风格流派", "语言地区"};
+    /** 常用行 = 服务层静态注册的偏好模式(推荐/熟悉/新鲜,用户指定的最上一行)。 */
+    private static final QishuiMusicService.FeedMode[] QISHUI_FREQUENT_MODES =
+            QishuiMusicService.STATIC_FEED_MODES;
     private static final String[][] QISHUI_GROUP_KEYS = {
-            {"default"},
             {"scene_mode_chill", "scene_mode_happy", "scene_mode_emo", "scene_mode_heal",
                     "scene_mode_calm", "scene_mode_love_song", "scene_mode_breakup",
                     "scene_mode_lucky", "scene_mode_focus"},
@@ -597,19 +773,29 @@ public final class PersonalFmPanel extends NCMPanel {
 
     /** 某一组解析成真实模式(按 key 查清单);清单里没有的 key 静默跳过。 */
     private static java.util.List<QishuiMusicService.FeedMode> qishuiGroupModes(int group) {
-        java.util.List<QishuiMusicService.FeedMode> all = QishuiMusicService.getFeedModes();
         java.util.List<QishuiMusicService.FeedMode> picked = new ArrayList<>();
-        if (group == QISHUI_GROUP_KEYS.length - 1) {
+        if (group == 0) {
+            // 常用行:推荐/熟悉/新鲜,固定在最上面(用户要求;熟悉/新鲜对应汽水
+            // preference_mode 的 familiar/explore,实测真实改变推荐池)。
+            picked.addAll(java.util.Arrays.asList(QISHUI_FREQUENT_MODES));
+            return picked;
+        }
+        int keysIndex = group - 1;
+        if (keysIndex < 0 || keysIndex >= QISHUI_GROUP_KEYS.length) return picked;
+        java.util.List<QishuiMusicService.FeedMode> all = QishuiMusicService.getFeedModes();
+        if (keysIndex == QISHUI_GROUP_KEYS.length - 1) {
             // 最后一组把没归类的上游新模式一并接住(见分组注释)。
             java.util.Set<String> classified = new java.util.HashSet<>();
             for (String[] keys : QISHUI_GROUP_KEYS) {
                 for (String key : keys) classified.add(key);
             }
             for (QishuiMusicService.FeedMode mode : all) {
-                if (!classified.contains(mode.key)) picked.add(mode);
+                if (classified.contains(mode.key)) continue;
+                if (mode.isDefaultMode()) continue;
+                picked.add(mode);
             }
         }
-        for (String key : QISHUI_GROUP_KEYS[group]) {
+        for (String key : QISHUI_GROUP_KEYS[keysIndex]) {
             for (QishuiMusicService.FeedMode mode : all) {
                 if (mode.key.equals(key)) {
                     picked.add(mode);
@@ -625,16 +811,36 @@ public final class PersonalFmPanel extends NCMPanel {
         return QISHUI_GROUP_TITLES.length;
     }
 
+    // ── 汽水分组行的专属状态(与网易云 sceneShown/sceneSlides/sceneHeaders 完全独立:
+    //    两边只共用 SegmentControl 这个 UI 控件本身,数据、滑块记忆、滚动状态各记各的,
+    //    组数不同也不会互相越界——上一版崩就是这个根) ──
+    /** 每组滑块走到哪(汽水自己的记忆)。NaN = 还没走过(0 会被读成「上一帧在第一格」)。 */
+    private static final double[] qishuiSlides = new double[qishuiGroupCount()];
+    /** 每组上一帧的选中索引(-1 = 无),用于只在变化时调整横向滚动。 */
+    private static final int[] qishuiShown = new int[qishuiGroupCount()];
+    /**
+     * 已建出来的各行:标题/行/视口。实例字段 —— 面板实例活得过整棵重排,而 static 会把
+     * 上一个实例的控件串给下一个(上一版就是这么坏的)。
+     */
+    private LabelWidget[] qishuiHeaders;
+    private Panel[] qishuiRows;
+    private ScrollPanel[] qishuiViewports;
+    /** 每个已建组实际占第几行;不足两枚的组整行不建,后面的组按行号顶上来(见 addSceneRows)。 */
+    private final int[] qishuiRowSlot = new int[qishuiGroupCount()];
+    /** 实际建出来的行数:空行不占高度,sceneHeight 按它算。 */
+    private int qishuiBuiltRows;
+    /** 每一组装配时冻结下来的模式清单与标签:渲染回调只读这一份(见 addQishuiSegment)。 */
+    private java.util.List<QishuiMusicService.FeedMode>[] qishuiFrozenModes;
+    private String[][] qishuiLabels;
+    /** 平台错位自愈上一次排重建的时刻;0 = 还没排过(见 healPlatformDrift)。 */
+    private long healRequestNanos;
+
+    static {
+        java.util.Arrays.fill(qishuiShown, -1);
+        java.util.Arrays.fill(qishuiSlides, Double.NaN);
+    }
+
     private static int sceneSelectionOf(int group) {
-        if (qishuiFm()) {
-            // 汽水:按 key 在本组内对号;不在本组报 -1(滑块淡出,与网易云多组同一语义)。
-            String chosen = PersonalFmManager.getSelectedQishuiMode().key;
-            java.util.List<QishuiMusicService.FeedMode> modes = qishuiGroupModes(group);
-            for (int index = 0; index < modes.size(); index++) {
-                if (modes.get(index).key.equals(chosen)) return index;
-            }
-            return -1;
-        }
         if (PersonalFmManager.getSelectedMode() != PersonalFmManager.Mode.SCENE_RCMD) return -1;
         String chosen = PersonalFmManager.getSelectedSubMode();
         String[] modes = PersonalFmManager.SCENE_GROUP_MODES[group];
@@ -642,8 +848,13 @@ public final class PersonalFmPanel extends NCMPanel {
         return -1;
     }
 
+    /** 这一棵树标签区的起点：汽水没有模式行，接在模式行的位置上；网易云在模式行底下。 */
+    private double sceneTop() {
+        return this.treeQishui ? QISHUI_SCENE_TOP : SCENE_TOP;
+    }
+
     private double sceneRowTop(int group) {
-        return SCENE_TOP + group * SCENE_ROW;
+        return sceneTop() + group * SCENE_ROW;
     }
 
     /** 标签区当前展开到多少高度 —— hero 卡与下面那一列都从它接着摆。 */
@@ -653,22 +864,29 @@ public final class PersonalFmPanel extends NCMPanel {
     }
 
     private double sceneHeight() {
-        return SCENE_ROW * (qishuiFm() ? qishuiGroupCount() : SCENE_GROUP_LABELS.length) * sceneReveal;
+        // 高度按这一棵树实际建了几行算:汽水的组是「解析出来够两枚才建」,空组不占位,
+        // 所以不能按组数乘,得按 builtRows;网易云四组固定全建。
+        if (this.treeQishui) return SCENE_ROW * this.qishuiBuiltRows * sceneReveal;
+        return SCENE_ROW * SCENE_GROUP_LABELS.length * sceneReveal;
     }
 
     /**
      * 某一组展开到多少：整块进度里每组占 0.55 宽的一扇、彼此错开 0.15，四组就自上而下依次到场。
-     * 最后一扇正好在 {@link #sceneReveal} 走到 1 时落位，收起时按相反顺序退场。
+     * 最后一扇正好在 {@link #sceneReveal} 走到 1 时落位，收起时按相反顺序退场（汽水行常驻，不分扇）。
      */
-    private static double groupReveal(int group) {
-        if (qishuiFm()) return sceneReveal;
+    private double groupReveal(int group) {
+        if (this.treeQishui) return sceneReveal;
         return NcmSheet.clamp01((sceneReveal - group * 0.15) / 0.55);
     }
 
     /** 朝目标线性走一步：展开与收起用同一条时长，反过来切不会比切过去更快。 */
     private void advanceScene() {
-        // 汽水的听歌模式行常驻(没有网易云那种「场景推荐才展开」的两态)。
-        boolean wanted = qishuiFm()
+        // 平台在页面开着的时候被换掉了:这棵树还是旧平台的,继续按旧平台渲染是对的,
+        // 但不能就这么留在屏上——排一次原地重建,让新平台按自己的树重新装配。
+        healPlatformDrift();
+        // 汽水的听歌模式行常驻(没有网易云那种「场景推荐才展开」的两态)。判据是树类型:
+        // 这棵是汽水树时,就算平台已经被切走,它也该按汽水的方式把行收好/展开完再走。
+        boolean wanted = this.treeQishui
                 || PersonalFmManager.getSelectedMode() == PersonalFmManager.Mode.SCENE_RCMD;
         double target = wanted ? 1.0 : 0.0;
         double step = this.lastFrameMs / Math.max(1.0, SCENE_MILLIS / SheetClock.speed());
@@ -677,6 +895,26 @@ public final class PersonalFmPanel extends NCMPanel {
         } else if (sceneReveal > target) {
             sceneReveal = Math.max(target, sceneReveal - step);
         }
+    }
+
+    /**
+     * 面板还挂在屏上、平台却被换了(侧栏源按钮只重建侧栏,内容页不动):这一棵树是按旧平台
+     * 装配的,继续摆着就是「网易云页面上长着汽水的行」或者反过来。排一次原地重排把这棵树
+     * 换成新平台的。
+     *
+     * <p>节流用时间而不是平台标记:重排请求在任务队列里还没跑完的那几帧不该重复排,但要是
+     * 那一次请求丢了,一秒后还得能再排一次 —— 否则这一页就永远停在「新平台旧树」上。</p>
+     */
+    private void healPlatformDrift() {
+        if (this.treeQishui == qishuiFm()) return;
+        final long now = System.nanoTime();
+        if (this.healRequestNanos != 0L && (now - this.healRequestNanos) / 1_000_000.0 < 1000.0) return;
+        this.healRequestNanos = now;
+        MultiThreadingUtil.runOnMainThread(() -> {
+            // 拖到下一帧执行:此刻还在渲染回调里遍历这棵树的子组件,当场 clear 会踩到遍历。
+            // reloadCurrentPanel 只会对当前面板生效,这一页正好是它。
+            NCMScreen.getInstance().reloadCurrentPanel();
+        });
     }
 
     /**
@@ -699,7 +937,7 @@ public final class PersonalFmPanel extends NCMPanel {
      * 和它上面那四行脱开、各走各的。</p>
      */
     private double heroTop() {
-        return SCENE_TOP + sceneHeight() + 8.0;
+        return sceneTop() + sceneHeight() + 8.0;
     }
 
     /** hero 卡与里面所有东西共用的宽度，同样逐帧问。 */

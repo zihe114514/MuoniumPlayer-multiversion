@@ -213,8 +213,13 @@ class PanelTransitionStaticTest {
         assertTrue(call(home, "PlaylistCoverHero.setTarget(").contains("getParent()"),
                 "主页卡片回报落点时没带视口，回程的可见性检查形同虚设");
         // getParent() 就是那块网格 —— 卡片是直接被 add 进 ScrollPanel 的。
-        assertTrue(home.contains("scrollPanel.addChild(card)"),
-                "卡片不再直接挂在 ScrollPanel 下，getParent() 已经不是裁剪它的那层视口了");
+        // 卡片改成按帧分批挂上去之后，调用点从字面的 scrollPanel.addChild(card) 变成
+        // 「待建队列 + cardsPanel.addChild(batch)」，所以这里钉的是那条实质约束：
+        // 承接这批卡片的容器必须就是那块网格本身（HomePanel#buildPendingCards）。
+        assertTrue(home.contains("this.cardsPanel.addChild(batch)"),
+                "卡片不再被挂到网格上，getParent() 已经不是裁剪它的那层视口了");
+        assertTrue(home.contains("this.cardsPanel = scrollPanel;"),
+                "分批构建的落点必须就是那块 ScrollPanel，否则接力拿到的视口是错的");
 
         // 不被任何视口裁的那一侧（详情页大封面直接挂在面板上）必须照飞不误。
         assertTrue(hero.contains("if (viewport == null) return true"),

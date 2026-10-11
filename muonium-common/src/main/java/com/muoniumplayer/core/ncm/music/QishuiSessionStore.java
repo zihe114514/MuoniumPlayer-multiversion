@@ -3,6 +3,7 @@ package com.muoniumplayer.core.ncm.music;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.muoniumplayer.core.settings.ConfigPaths;
+import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -47,17 +48,50 @@ final class QishuiSessionStore {
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Object LOCK = new Object();
-    private static Data data;
-    private static boolean loaded;
+    /** 读盘完成后只在这里换引用（写路径仍持 {@link #LOCK}），读路径因此可以不加锁。 */
+    private static volatile Data data = new Data();
+    private static volatile boolean loaded;
+
+    /** 已排过读盘。挡住「预读还没跑完时，渲染路径每帧又各排一次」的重复排程。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean LOAD_SCHEDULED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    static {
+        // 预读：类第一次被碰到就把这次读盘排到后台。这样渲染路径随后读到的已经是内存快照，
+        // 不会在某次绘制里为了「这账号登没登录」去等一次文件 I/O。
+        scheduleLoad();
+    }
 
     private QishuiSessionStore() {
     }
 
-    static Session snapshot() {
+    /** 排一次后台读盘；已经排过就直接返回。 */
+    private static void scheduleLoad() {
+        if (!LOAD_SCHEDULED.compareAndSet(false, true)) return;
+        MultiThreadingUtil.runAsync(QishuiSessionStore::ensureLoadedAsync);
+    }
+
+    /** 持锁读盘一次。只允许后台线程调用（渲染路径见 {@link #snapshot()}）。 */
+    private static void ensureLoadedAsync() {
         synchronized (LOCK) {
             ensureLoaded();
-            return new Session(data);
         }
+    }
+
+    /**
+     * 当前会话快照。
+     *
+     * <p><b>不阻塞</b>：这是一个渲染路径也在调的方法（红心按不按得、来源卡片怎么写副标题）。
+     * 磁盘读只在后台发生——静态初始化那次预读，或下面这条兜底分支。还没读完时按「空会话」
+     * 作答，同时把读盘排到后台；读完之后的调用都直接读内存。</p>
+     */
+    static Session snapshot() {
+        if (!loaded) {
+            // 兜底路径：类的静态预读还没跑完（或读盘很慢）。绝不在调用方线程上等磁盘 ——
+            // 这里可能是渲染线程。排一次后台读（有闸门，重复调用不会重复排），本次按空会话作答。
+            scheduleLoad();
+        }
+        return new Session(data);
     }
 
     static boolean isLoggedIn() {
@@ -68,20 +102,31 @@ final class QishuiSessionStore {
         return snapshot().cookieHeader;
     }
 
+    /**
+     * 拿一份可安全修改的副本。
+     *
+     * <p>写入一律走「改副本 → 换引用」，绝不原地改 {@code data} 里的集合：读路径
+     * （{@link #snapshot()}）不加锁且会遍历 cookie 表，原地改就是并发修改异常。</p>
+     */
+    private static Data editableCopy() {
+        ensureLoaded();
+        return data.copy();
+    }
+
     static void saveCookies(Map<String, String> cookies) {
         if (cookies == null || cookies.isEmpty()) return;
         synchronized (LOCK) {
-            ensureLoaded();
+            Data next = editableCopy();
             for (Map.Entry<String, String> entry : cookies.entrySet()) {
                 String name = nonBlank(entry.getKey());
                 String value = nonBlank(entry.getValue());
-                if (!name.isEmpty() && !value.isEmpty()) data.cookies.put(name, value);
+                if (!name.isEmpty() && !value.isEmpty()) next.cookies.put(name, value);
             }
-            data.updatedAt = System.currentTimeMillis();
+            next.updatedAt = System.currentTimeMillis();
             // 新凭据到手就等于「待验证」：既不算已验证，也不该继续挂着过期标记。
-            data.verifiedAt = 0L;
-            data.reauthRequired = false;
-            persistLocked();
+            next.verifiedAt = 0L;
+            next.reauthRequired = false;
+            persist(next);
         }
     }
 
@@ -94,35 +139,35 @@ final class QishuiSessionStore {
     static void replaceCookies(Map<String, String> cookies) {
         if (cookies == null || cookies.isEmpty()) return;
         synchronized (LOCK) {
-            ensureLoaded();
-            data.cookies = new LinkedHashMap<>();
+            Data next = editableCopy();
+            next.cookies = new LinkedHashMap<>();
             for (Map.Entry<String, String> entry : cookies.entrySet()) {
                 String name = nonBlank(entry.getKey());
                 String value = nonBlank(entry.getValue());
-                if (!name.isEmpty() && !value.isEmpty()) data.cookies.put(name, value);
+                if (!name.isEmpty() && !value.isEmpty()) next.cookies.put(name, value);
             }
             // 换账号了，上一个账号的展示资料必须一起清掉，否则界面会显示错人的昵称头像。
-            data.userId = "";
-            data.nickname = "";
-            data.douyinId = "";
-            data.avatarUrl = "";
-            data.vip = false;
-            data.vipStage = "";
-            data.updatedAt = System.currentTimeMillis();
-            data.verifiedAt = 0L;
-            data.reauthRequired = false;
-            persistLocked();
+            next.userId = "";
+            next.nickname = "";
+            next.douyinId = "";
+            next.avatarUrl = "";
+            next.vip = false;
+            next.vipStage = "";
+            next.updatedAt = System.currentTimeMillis();
+            next.verifiedAt = 0L;
+            next.reauthRequired = false;
+            persist(next);
         }
     }
 
     /** 账号接口确认成功时记录时刻，并撤销之前的过期标记。 */
     static void markVerified() {
         synchronized (LOCK) {
-            ensureLoaded();
-            if (!containsSessionCookie(data.cookies)) return;
-            data.verifiedAt = System.currentTimeMillis();
-            data.reauthRequired = false;
-            persistLocked();
+            Data next = editableCopy();
+            if (!containsSessionCookie(next.cookies)) return;
+            next.verifiedAt = System.currentTimeMillis();
+            next.reauthRequired = false;
+            persist(next);
         }
     }
 
@@ -132,10 +177,10 @@ final class QishuiSessionStore {
      */
     static void markReauthRequired() {
         synchronized (LOCK) {
-            ensureLoaded();
-            if (!data.reauthRequired) {
-                data.reauthRequired = true;
-                persistLocked();
+            Data next = editableCopy();
+            if (!next.reauthRequired) {
+                next.reauthRequired = true;
+                persist(next);
             }
         }
     }
@@ -151,15 +196,15 @@ final class QishuiSessionStore {
     static void saveProfile(String userId, String nickname, String douyinId,
                             String avatarUrl, boolean vip, String vipStage) {
         synchronized (LOCK) {
-            ensureLoaded();
-            if (!isBlank(userId)) data.userId = userId.trim();
-            if (!isBlank(nickname)) data.nickname = nickname.trim();
-            if (!isBlank(douyinId)) data.douyinId = douyinId.trim();
-            if (!isBlank(avatarUrl)) data.avatarUrl = avatarUrl.trim();
-            data.vip = vip;
-            if (!isBlank(vipStage)) data.vipStage = vipStage.trim();
-            data.updatedAt = System.currentTimeMillis();
-            persistLocked();
+            Data next = editableCopy();
+            if (!isBlank(userId)) next.userId = userId.trim();
+            if (!isBlank(nickname)) next.nickname = nickname.trim();
+            if (!isBlank(douyinId)) next.douyinId = douyinId.trim();
+            if (!isBlank(avatarUrl)) next.avatarUrl = avatarUrl.trim();
+            next.vip = vip;
+            if (!isBlank(vipStage)) next.vipStage = vipStage.trim();
+            next.updatedAt = System.currentTimeMillis();
+            persist(next);
         }
     }
 
@@ -175,29 +220,32 @@ final class QishuiSessionStore {
         }
     }
 
+    /** 读盘一次。只在持锁的后台路径上调用；发布走 volatile 写，读路径不必等它。 */
     private static void ensureLoaded() {
         if (loaded) return;
-        loaded = true;
         Path path = ConfigPaths.QISHUI_AUTH.toPath();
-        if (!Files.isRegularFile(path)) {
-            data = new Data();
-            return;
+        Data parsed = new Data();
+        if (Files.isRegularFile(path)) {
+            try {
+                Data loadedData = GSON.fromJson(Files.readString(path, StandardCharsets.UTF_8), Data.class);
+                if (loadedData != null) parsed = loadedData.normalized();
+            } catch (Throwable ignored) {
+                // 损坏的会话文件按空会话处理，与旧行为一致。
+            }
         }
-        try {
-            Data parsed = GSON.fromJson(Files.readString(path, StandardCharsets.UTF_8), Data.class);
-            data = parsed == null ? new Data() : parsed.normalized();
-        } catch (Throwable ignored) {
-            data = new Data();
-        }
+        data = parsed;
+        loaded = true;
     }
 
-    private static void persistLocked() {
+    /** 落盘当前这一份。写入方已经把 {@code next} 挂上去了，这里只负责写文件。 */
+    private static void persist(Data value) {
+        data = value;
         Path path = ConfigPaths.QISHUI_AUTH.toPath();
         try {
             Path parent = path.getParent();
             if (parent != null) Files.createDirectories(parent);
             Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
-            Files.writeString(temporary, GSON.toJson(data), StandardCharsets.UTF_8);
+            Files.writeString(temporary, GSON.toJson(value), StandardCharsets.UTF_8);
             try {
                 Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING,
                         StandardCopyOption.ATOMIC_MOVE);
@@ -270,6 +318,25 @@ final class QishuiSessionStore {
             avatarUrl = nonBlank(avatarUrl);
             vipStage = nonBlank(vipStage);
             return this;
+        }
+
+        /**
+         * 深拷贝。写路径据此「改副本再换引用」——读路径不加锁且会遍历 cookie 表，
+         * 原地改就会让读者撞上并发修改。
+         */
+        Data copy() {
+            Data clone = new Data();
+            clone.cookies = new LinkedHashMap<>(cookies);
+            clone.userId = userId;
+            clone.nickname = nickname;
+            clone.douyinId = douyinId;
+            clone.avatarUrl = avatarUrl;
+            clone.vip = vip;
+            clone.vipStage = vipStage;
+            clone.updatedAt = updatedAt;
+            clone.verifiedAt = verifiedAt;
+            clone.reauthRequired = reauthRequired;
+            return clone;
         }
     }
 }

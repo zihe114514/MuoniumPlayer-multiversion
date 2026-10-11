@@ -1880,15 +1880,20 @@ public final class MusicSourceOverlay extends NcmSheet {
             if (!backendLine.isEmpty()) {
                 return backendLine + " · 完整版暂不可用";
             }
-            if (!QishuiBackend.isAvailable()) {
-                return "签名后端未运行 · 仅试听；重新进入游戏或重选本源可自动安装";
+            if (!QishuiBackend.peekAvailable()) {
+                // 渲染路径只读缓存结论（peek），绝不在这里探测：这一段每帧求值，
+                // 一旦让它同步发健康检查，后端慢的半秒就是一帧卡顿。
+                // 还没探过时不写「未运行」——那是断言，而此刻只是还不知道。
+                return QishuiBackend.hasProbed()
+                        ? "签名后端未运行 · 仅试听；重新进入游戏或重选本源可自动安装"
+                        : "正在连接签名后端…未就绪时仅试听";
             }
             // 完整版的 Cookie 实际由后端持有(签名代理必须带它转发)。登录工具导入的凭据
             // 只落在本机后端时,模组会话库是空的——这时绝不能显示「未登录」误导用户重登。
             if (NeteaseMusicService.isLoggedIn(platform)) {
                 return "已登录 · " + NeteaseMusicService.getAccountName(platform);
             }
-            if (QishuiBackend.backendHasCookie()) {
+            if (QishuiBackend.peekHasCookie()) {
                 return "已登录 · 凭据在本机签名后端";
             }
             return "未登录 · 可试听；游戏内导入 Cookie 或运行汽水登录工具后播放完整版";

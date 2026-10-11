@@ -16,6 +16,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -26,9 +27,18 @@ import java.util.List;
  * 把通常以 ADTS（.aac）、ISO-BMFF/M4A（.m4a）以及含音频的 MP4/DASH（.m4s）形式返回的 AAC 流
  * 解码为标准的 16 位 PCM WAV 缓存。
  * 不含可解码 AAC 音轨的文件将按失败处理（fail closed）。
+ *
+ * <h3>两条解码路径</h3>
+ * <p>首选外部 ffmpeg（原生 SIMD、多核解码，本项目 {@link FfmpegSupport} 已在用），拿不到
+ * ffmpeg 或它失败时退回内置的 JAAD 纯 Java 解码器。两条路径产出完全同构的 16 位 PCM WAV，
+ * 上层（{@code RafSampleLoader} 流式读）分不出区别；ffmpeg 这条路只是把「与曲长成正比的
+ * 等待」压短一档 —— 汽水每首新歌都要过这一趟，用户是直接等着的。</p>
  */
 final class AacAudioDecoder {
     private static final int WAV_HEADER_SIZE = 44;
+
+    /** ffmpeg 转码的挂钟上限。超时按失败处理并退回 JAAD，绝不吊住取流线程。 */
+    private static final long FFMPEG_TIMEOUT_MILLIS = 90_000L;
 
     private AacAudioDecoder() {
     }
@@ -58,29 +68,38 @@ final class AacAudioDecoder {
         boolean completed = false;
         File decoderInput = input;
         reportProgress(progressListener, 0.0);
-        try (PcmWaveWriter writer = new PcmWaveWriter(temporary)) {
-            if ("aac".equals(container)) {
-                decodeAdts(input, writer, progressListener);
-            } else {
-                // 部分 JOOX M4A 文件包含旧版 QuickTime "tags" atom。JAAD 的 MP4
-                // 解复用器会错误计算该 atom 实际消耗的长度，从而无限期寻址。
-                // 仅把这个元数据 atom 重标记为等大小的 free atom，可保留每一个
-                // 音频字节和每个采样偏移，同时让内嵌的 AAC 解码器
-                // 正常处理该流。
-                decoderInput = sanitizeJaadIncompatibleMetadata(input, destination);
-                decodeIsoBaseMedia(decoderInput, writer, progressListener);
-            }
-            writer.finish();
-            reportProgress(progressListener, 1.0);
+        // 快路径：外部 ffmpeg 直接转 16 位 PCM WAV。它支持 ADTS 与 ISO-BMFF 两种输入，
+        // 且是原生解码；失败（没装、超时、载荷异常）一律安静退回下面的 JAAD 路径，
+        // 由那条路给出正式的成败结论。
+        if (decodeWithFfmpeg(input, temporary, progressListener)) {
             completed = true;
-        } catch (AACException e) {
-            throw new IOException("AAC decoder rejected the audio stream", e);
-        } finally {
-            if (!decoderInput.equals(input) && decoderInput.exists() && !decoderInput.delete()) {
-                System.err.println("[Music] Unable to remove temporary sanitized AAC input: " + decoderInput.getName());
-            }
-            if (!completed && temporary.exists()) {
-                temporary.delete();
+            reportProgress(progressListener, 1.0);
+        }
+        if (!completed) {
+            try (PcmWaveWriter writer = new PcmWaveWriter(temporary)) {
+                if ("aac".equals(container)) {
+                    decodeAdts(input, writer, progressListener);
+                } else {
+                    // 部分 JOOX M4A 文件包含旧版 QuickTime "tags" atom。JAAD 的 MP4
+                    // 解复用器会错误计算该 atom 实际消耗的长度，从而无限期寻址。
+                    // 仅把这个元数据 atom 重标记为等大小的 free atom，可保留每一个
+                    // 音频字节和每个采样偏移，同时让内嵌的 AAC 解码器
+                    // 正常处理该流。
+                    decoderInput = sanitizeJaadIncompatibleMetadata(input, destination);
+                    decodeIsoBaseMedia(decoderInput, writer, progressListener);
+                }
+                writer.finish();
+                reportProgress(progressListener, 1.0);
+                completed = true;
+            } catch (AACException e) {
+                throw new IOException("AAC decoder rejected the audio stream", e);
+            } finally {
+                if (!decoderInput.equals(input) && decoderInput.exists() && !decoderInput.delete()) {
+                    System.err.println("[Music] Unable to remove temporary sanitized AAC input: " + decoderInput.getName());
+                }
+                if (!completed && temporary.exists()) {
+                    temporary.delete();
+                }
             }
         }
 
@@ -487,6 +506,98 @@ final class AacAudioDecoder {
         return "moov".equals(type) || "trak".equals(type) || "mdia".equals(type)
                 || "minf".equals(type) || "stbl".equals(type) || "edts".equals(type)
                 || "dinf".equals(type) || "udta".equals(type);
+    }
+
+    /**
+     * 外部 ffmpeg 快路径：把输入（ADTS 或 ISO-BMFF）直接转成 16 位 PCM WAV。
+     *
+     * <p>{@code -vn -map a:0?} 只要音轨、没有音轨时不报错；{@code -f wav} 显式指定容器
+     * （输出名是 {@code .part}，ffmpeg 推不出格式）。输出先落 {@code .part}，成功且头有效
+     * 才由调用方改名——半成品绝不冒充成品。</p>
+     *
+     * <p>刻意<b>不</b>提前 {@code process.destroy()}：{@code waitFor} 之后再 destroy 是常规姿势，
+     * 但超时那一支必须 destroy，否则子进程会一直挂着，这就是这里分两支的原因。</p>
+     *
+     * @return true 表示 {@code output} 已经是一份可用的 WAV；false 表示这条快路径没走通
+     *         （没装 ffmpeg、超时、非零退出、输出不合格），调用方应退回 JAAD
+     */
+    private static boolean decodeWithFfmpeg(File input, File output, ProgressListener progressListener) {
+        String executable = FfmpegSupport.executable();
+        if (executable == null) {
+            return false;
+        }
+        Process process = null;
+        try {
+            List<String> command = new ArrayList<String>();
+            command.add(executable);
+            command.add("-hide_banner");
+            command.add("-v");
+            command.add("error");
+            command.add("-nostdin");
+            command.add("-y");
+            // 单线程：这是一次短转码，不该在游戏运行时把核心占满。原生解码本身已经比
+            // JAAD 快得多，多线程收益有限而抢占明显。
+            command.add("-threads");
+            command.add("1");
+            command.add("-i");
+            command.add(input.getAbsolutePath());
+            command.add("-vn");
+            command.add("-map");
+            command.add("a:0?");
+            command.add("-c:a");
+            command.add("pcm_s16le");
+            command.add("-f");
+            command.add("wav");
+            command.add(output.getAbsolutePath());
+
+            process = new ProcessBuilder(command).start();
+            // stderr 必须异步排空：管道写满时子进程会卡死（项目里踩过这个坑）。
+            drainQuietly(process.getErrorStream());
+            reportProgress(progressListener, 0.5);   // 进度语义只有「在跑」：不动 UI 比乱跳好
+
+            if (!process.waitFor(FFMPEG_TIMEOUT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                process.destroy();
+                System.err.println("[Music] ffmpeg transcode timed out, falling back to JAAD: "
+                        + input.getName());
+                return false;
+            }
+            if (process.exitValue() != 0) {
+                return false;   // 载荷异常/缺音轨：交给 JAAD 给出正式结论
+            }
+            // 「能播」的判据与 JAAD 那条路一致：写够头 + 有实质数据 + 头是真 WAV。
+            if (!output.isFile() || output.length() <= WAV_HEADER_SIZE) {
+                return false;
+            }
+            if (!"wav".equals(AudioContainerSupport.detectContainer(output))) {
+                return false;
+            }
+            return true;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Throwable ignored) {
+            return false;
+        } finally {
+            if (process != null && process.isAlive()) {
+                process.destroy();
+            }
+        }
+    }
+
+    /** 把子进程的 stderr 排空到丢弃，避免管满卡死。 */
+    private static void drainQuietly(InputStream stream) {
+        if (stream == null) return;
+        Thread drain = new Thread(() -> {
+            byte[] buffer = new byte[4096];
+            try (InputStream input = stream) {
+                while (input.read(buffer) >= 0) {
+                    // 丢弃：ffmpeg 的 -v error 输出只在排障时需要，失败已由退出码表达。
+                }
+            } catch (Throwable ignored) {
+            }
+        }, "muonium-ffmpeg-drain");
+        drain.setDaemon(true);
+        drain.start();
     }
 
     private static void reportProgress(ProgressListener progressListener, double progress) {

@@ -97,3 +97,20 @@ error-report-*/
 # 编译产物/文件清单/探针等一次性草稿转储，用完即弃
 /_*.txt
 /.*.txt
+
+# ---- 接口探针转储（含响应体与会话 token，绝不入库）----
+# 26.3/qr.json 里有汽水扫码登录 token，pc-test.json / search.json 是后端探针响应。
+# 这三个是手测时写在工作区的，跟各版本工程无关，按「文件 + 递归」两条都堵上。
+/26.3/*.json
+/search.json
+/pc-test.json
+/qr.json
+# 各版本树下同类探针 json（只匹配根层，不误伤 src/main/resources 里的 mod 元数据）
+/*/*/qr.json
+/*/*/pc-test.json
+
+# ---- 第三方上游源码 clone（自带 .git，参考用，不入本库）----
+/IMBlocker/
+
+# ---- buildAll 发布产物的第二份落地目录（与 /dist/ 同质，每份一百多 MB）----
+/dist-new/

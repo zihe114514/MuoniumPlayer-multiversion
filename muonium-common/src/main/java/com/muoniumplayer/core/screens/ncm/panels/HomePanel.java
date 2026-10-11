@@ -86,7 +86,12 @@ public class HomePanel extends NCMPanel {
     private static final int KUGOU_HOME_TARGET = 240;
     private static volatile List<PlayList> kugouHomePlaylists = Collections.emptyList();
     private static volatile boolean kugouHomeLoading;
-    private static final int QISHUI_HOME_TARGET = 120;
+    /**
+     * 汽水主页要多少张推荐歌单。发现页那条接口不分页（见 {@code QishuiMusicService#recommendPlaylists}），
+     * 只能靠反复抽样去重凑量，池子实测上限约 150~160 —— 所以这里直接要满，让后端抽到见底为止；
+     * 实际能拿到多少由上游决定。
+     */
+    private static final int QISHUI_HOME_TARGET = 160;
     private static volatile List<PlayList> qishuiHomePlaylists = Collections.emptyList();
     private static volatile boolean qishuiHomeLoading;
     private static volatile List<PlayList> bilibiliHomePlaylists = Collections.emptyList();
@@ -169,6 +174,14 @@ public class HomePanel extends NCMPanel {
     private void layoutPlaceholder(String message, boolean spinning) {
         this.getChildren().clear();
         this.scrollPanel = null;
+        // 占位布局把网格整个丢掉，还没建完的那些卡片也就没有落点了：一起清掉，
+        // 否则它们会在下一次 layout 时被追加到新网格上（连的是上一份数据）。
+        this.cardsPanel = null;
+        this.pendingCards = null;
+        this.pendingCardActions = Collections.emptyMap();
+        this.recommendationsLabel = null;
+        this.displayedCardIds.clear();
+        this.layoutGeneration++;
         final String welcomeText = welcomeTextFor(platform);
         final int margin = 12;
 
@@ -567,20 +580,40 @@ public class HomePanel extends NCMPanel {
             qishuiHomeLoading = true;
         }
 
+        // 首屏发布记下它铺的是哪一次布局：后续追加只在这一代布局还活着时才落笔，
+        // 否则会把新数据补到上一份（已经换掉的）网格上。
+        final java.util.concurrent.atomic.AtomicLong publishedGeneration =
+                new java.util.concurrent.atomic.AtomicLong(-1L);
         MultiThreadingUtil.runAsync(() -> {
             try {
-                List<PlayList> result = QishuiMusicService.recommendPlaylists(QISHUI_HOME_TARGET);
                 // 「每日推荐」虚拟卡排在墙最前：曲目来自 feed/song-tab，打开即取今天的一页。
                 // 需要登录 + 签名后端；缺一个就别放这张卡，免得点开是一片空白。
-                if (QishuiMusicService.isLoggedIn() && QishuiBackend.isAvailable()) {
-                    result.add(0, QishuiMusicService.dailyFeedCard());
+                final PlayList daily = QishuiMusicService.isLoggedIn() && QishuiBackend.isAvailable()
+                        ? QishuiMusicService.dailyFeedCard() : null;
+                // 渐进式：第一轮采样先铺首屏，后面几轮在后台补齐再追加。
+                // 原来是等全部采样跑完才一次性显示，用户要为最后那几十张干等两秒多。
+                List<PlayList> sampled = QishuiMusicService.recommendPlaylists(QISHUI_HOME_TARGET,
+                        partial -> publishQishuiProgress(partial, daily, publishedGeneration));
+                // 「每日推荐」虚拟卡排在墙最前，但它自己不算「这次拉到了内容」。
+                final List<PlayList> displayed = new ArrayList<>(sampled.size() + 1);
+                if (daily != null) displayed.add(daily);
+                displayed.addAll(sampled);
+                // 只拿到了那张虚拟卡（采样空手）时不要进缓存：缓存下来会让下一次进主页被
+                // cache-first 分支直接命中，于是永远不再重试 —— 一次网络抖动就变成
+                // 「主页再也不出内容」。宁可下次再拉一次。
+                if (!sampled.isEmpty()) {
+                    qishuiHomePlaylists = Collections.unmodifiableList(new ArrayList<>(displayed));
                 }
-                qishuiHomePlaylists = Collections.unmodifiableList(new ArrayList<>(result));
-                final List<PlayList> displayed = new ArrayList<>(result);
                 MultiThreadingUtil.runOnMainThread(() -> {
                     if (NeteaseMusicService.getCurrentPlatform() != platform) return;
+                    if (publishedGeneration.get() >= 0) {
+                        // 首屏已经在屏幕上了：只补最后一轮新增的那几张。
+                        appendQishuiCards(displayed);
+                        return;
+                    }
                     if (!displayed.isEmpty()) {
                         layout(displayed, qishuiRecommendationTitle(displayed.size()));
+                        publishedGeneration.set(this.layoutGeneration);
                     } else {
                         layoutPlaceholder("汽水推荐歌单获取失败，请稍后重试", false);
                     }
@@ -595,6 +628,64 @@ public class HomePanel extends NCMPanel {
                 qishuiHomeLoading = false;
             }
         });
+    }
+
+    /**
+     * 一轮采样到手的部分结果：第一次调用铺首屏，之后只把新增的那些追加进去。
+     *
+     * <p>在采样线程上被调，所以这里立刻把列表拷一份再切主线程 —— 上游传下来的是当轮快照，
+     * 但拷贝的成本远小于在主线程上做判重与建控件。</p>
+     */
+    private void publishQishuiProgress(List<PlayList> partial, PlayList daily,
+                                       java.util.concurrent.atomic.AtomicLong publishedGeneration) {
+        final List<PlayList> snapshot = new ArrayList<>(partial.size() + 1);
+        if (daily != null) snapshot.add(daily);
+        snapshot.addAll(partial);
+        MultiThreadingUtil.runOnMainThread(() -> {
+            if (NeteaseMusicService.getCurrentPlatform() != platform) return;
+            if (publishedGeneration.get() < 0) {
+                if (snapshot.isEmpty()) return;
+                layout(snapshot, qishuiRecommendationTitle(snapshot.size()));
+                publishedGeneration.set(this.layoutGeneration);
+                // 顺便把这一份写进缓存：加载中途退出再进来，看到的是已有的六十张，
+                // 而不是又一次从头转圈。
+                qishuiHomePlaylists = Collections.unmodifiableList(new ArrayList<>(snapshot));
+                return;
+            }
+            if (publishedGeneration.get() != this.layoutGeneration) return;
+            appendQishuiCards(snapshot);
+        });
+    }
+
+    /**
+     * 把新到的歌单追加进现有网格。
+     *
+     * <p>只补新卡片，<b>不 clear、不重建、不重播入场</b>：首屏已经在屏幕上了，重建会让用户
+     * 看到整屏闪一下，而这里要表达的只是「又多了一批」。新增的部分同样走分批队列 ——
+     * 一次追加一百来张也不该在一帧里建完。</p>
+     */
+    private void appendQishuiCards(List<PlayList> cards) {
+        // 卡片必须直接挂在网格 ScrollPanel 下：封面接力拿 getParent() 当裁剪视口，
+        // 挂在中间层上它就不再是「谁裁住我」的那一层了（见 PlaylistCoverHero）。
+        if (this.cardsPanel == null || this.cardsPanel != this.scrollPanel) return;
+        List<PlayList> fresh = new ArrayList<>();
+        for (PlayList playlist : cards) {
+            if (playlist == null) continue;
+            // 按歌单 id 判重：渐进发布是累积快照，前后两批必然重叠。
+            if (this.displayedCardIds.add(playlist.getId())) fresh.add(playlist);
+        }
+        if (fresh.isEmpty()) return;
+        if (this.recommendationsLabel != null) {
+            this.recommendationsLabel.setLabel(qishuiRecommendationTitle(this.displayedCardIds.size()));
+        }
+        this.pendingCardActions = this.fixedPlaylistActions;
+        if (this.pendingCards != null) {
+            this.pendingCards.addAll(fresh);
+        } else {
+            this.pendingCards = new ArrayList<>(fresh);
+            this.pendingCardIndex = 0;
+            buildPendingCards();
+        }
     }
 
     private void awaitQishuiHomeCache() {
@@ -668,6 +759,8 @@ public class HomePanel extends NCMPanel {
                 .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
                 .setPosition(margin, recommendationsY));
         this.addChild(lblRecommendations);
+        // 渐进发布的追加批要改这一行的计数（60 → 150），而不是重建整页。
+        this.recommendationsLabel = lblRecommendations;
 
         // 标题刻意加在被裁剪网格之后，因此它们始终在最上。
         //
@@ -676,27 +769,86 @@ public class HomePanel extends NCMPanel {
         // 号是卡片第一次被渲染时领的（网格同样是 ScrollPanel，视口外的卡片不渲染），所以往下滚
         // 露出来的那几行也会补一次进场，而不是只有首屏有动画。
         this.revealQueue.restart();
-        // AbstractWidget 使用 CopyOnWriteArrayList。逐张 add 会为每一张卡片复制一次
-        // 整个数组，240 张推荐卡会在主线程制造 O(n²) 的无意义拷贝；一次 addAll
-        // 只发布一个快照，首帧加载和滚动时都更稳。
-        // 这些 card 仍然直接挂在网格 ScrollPanel 下（等价于旧的 scrollPanel.addChild(card)），
+        // 卡片不在这里一口气建完：整张网格最多 240 张卡（每张封面 + 标题 + 若干回调），
+        // 一次性构造会把换页/数据到达那一帧撑长成一次可见的顿挫。交给 onRender 每帧补一批，
+        // 首屏先出来，其余在随后几帧内到齐（见 buildPendingCards）。
+        // 不逐张 addChild 的理由不变：CopyOnWriteArrayList 逐张 add 会为每张卡复制整个数组，
+        // 一批一次 addAll 只发布一个快照。这些 card 仍直接挂在网格 ScrollPanel 下，
         // 所以接力的视口认领关系不变。
-                List<AbstractWidget<?>> cards = new ArrayList<>(displayedPlayLists.size());
-        for (PlayList playList : displayedPlayLists) {
-            PlaylistWidget card = new PlaylistWidget(playList, fixedPlaylistActions.get(playList.getId()));
-            card.setShouldOverrideMouseCursor(true);
-            card.setEntranceAnimation(this.revealQueue);
-            cards.add(card);
+        this.cardsPanel = scrollPanel;
+        this.pendingCards = new ArrayList<>(displayedPlayLists);
+        this.pendingCardIndex = 0;
+        this.pendingCardActions = fixedPlaylistActions;
+        // 记下这一代网格上面有哪些卡片，并给这一代布局一个新号码：之后到的追加批
+        // 只在这一代还活着时落笔（用户中途换来源/重排，号码就对不上了）。
+        this.displayedCardIds.clear();
+        for (PlayList playlist : displayedPlayLists) {
+            if (playlist != null) this.displayedCardIds.add(playlist.getId());
         }
-        scrollPanel.addChild(cards);
+        this.layoutGeneration++;
+        buildPendingCards();
 
     }
+
+    /** 攒着还没建完的卡片源（{@link #buildPendingCards} 每帧消耗一批）。 */
+    private List<PlayList> pendingCards;
+    private int pendingCardIndex;
+    private Map<Long, Runnable> pendingCardActions = Collections.emptyMap();
+    /** 这一批卡片最终挂到哪个网格上。网格本身在 {@link #layout} 里换新，所以每帧读它。 */
+    private ScrollPanel cardsPanel;
+    /**
+     * 每次 {@link #layout} 递增。渐进发布用它认出「我铺的那一代布局还在不在」——
+     * 中间用户换了来源、或数据重排过一次，旧的一批追加就该作废。
+     */
+    private volatile long layoutGeneration;
+    /** 网格上现有卡片的歌单 id。追加时据此判重：渐进发布是累积快照，前后必然重叠。 */
+    private final java.util.Set<Long> displayedCardIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** 「推荐歌单 · N」那一行。追加后要就地改数字，而不是重建整页。 */
+    private LabelWidget recommendationsLabel;
+
+    /**
+     * 每帧只构建一小批卡片。
+     *
+     * <p>与歌单页的 {@code PlaylistPanel#buildPendingMusicWidgets} 同一形状：真正昂贵的是
+     * {@link PlaylistWidget} 及其子控件树的创建与首次布局，把它摊到渲染帧之间，避免首开、
+     * 换源、数据到达这些时刻出现长帧。分批不影响入场观感 —— 进场号是卡片第一次被渲染时
+     * 才向 {@link #revealQueue} 领的，分批只是让它们晚一两帧领号。</p>
+     */
+    private void buildPendingCards() {
+        if (this.cardsPanel == null || this.pendingCards == null) return;
+
+        int total = this.pendingCards.size();
+        int end = Math.min(total, this.pendingCardIndex + CARD_BUILD_BATCH);
+        if (this.pendingCardIndex < end) {
+            List<AbstractWidget<?>> batch = new ArrayList<>(end - this.pendingCardIndex);
+            for (int index = this.pendingCardIndex; index < end; index++) {
+                PlayList playList = this.pendingCards.get(index);
+                PlaylistWidget card = new PlaylistWidget(playList, this.pendingCardActions.get(playList.getId()));
+                card.setShouldOverrideMouseCursor(true);
+                card.setEntranceAnimation(this.revealQueue);
+                batch.add(card);
+            }
+            this.cardsPanel.addChild(batch);
+            this.pendingCardIndex = end;
+        }
+
+        if (this.pendingCardIndex >= total) {
+            this.pendingCards = null;
+            this.pendingCardActions = Collections.emptyMap();
+        }
+    }
+
+    /** 每帧构建的卡片数。与歌单页同一档：一屏可见十来张，32 张约两屏，首屏当帧就到齐。 */
+    private static final int CARD_BUILD_BATCH = 32;
 
     /** 卡片进场的错峰发号器，见 {@link PanelItemEntrance.RevealQueue}。 */
     private final PanelItemEntrance.RevealQueue revealQueue = new PanelItemEntrance.RevealQueue();
 
     @Override
     public void onRender(double mouseX, double mouseY) {
+        // 先把这一批卡片补上，再发号：本帧新挂的卡片会在同一次渲染里被遍历到，
+        // 于是它们第一次被渲染就是这一帧，入场动画从这一帧起算。
+        buildPendingCards();
         this.revealQueue.beginFrame();
         this.revealQueue.setAnimationsSuppressed(this.scrollPanel != null && this.scrollPanel.isScrollActive());
         super.onRender(mouseX, mouseY);

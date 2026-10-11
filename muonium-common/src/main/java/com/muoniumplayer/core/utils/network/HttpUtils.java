@@ -382,7 +382,7 @@ public class HttpUtils {
     }
 
     public static InputStream downloadStream(String path, int retry, Proxy proxy) {
-        InputStream bin = null;
+        int status;
         try {
             URL url = new URL(path);
             URLConnection urlConnection = proxy == null ? url.openConnection() : url.openConnection(proxy);
@@ -390,17 +390,28 @@ public class HttpUtils {
             httpURLConnection.setInstanceFollowRedirects(true);
             httpURLConnection.setRequestMethod("GET");
             httpURLConnection.setRequestProperty("Charset", "UTF-8");
+            // 与文件里另外两条 GET 路径（DEFAULT_CONNECT_TIMEOUT_MILLIS / READ）取同一个数：
+            // 这里原来只设了读超时，连接阶段吃 OS 默认（可达数十秒），网络一慢就在后台
+            // 积累大量挂住的线程。
+            httpURLConnection.setConnectTimeout(DEFAULT_CONNECT_TIMEOUT_MILLIS);
             httpURLConnection.setReadTimeout(10 * 1000);
-            httpURLConnection.connect();
-
-            bin = httpURLConnection.getInputStream();
+            // getResponseCode() 顺带完成连接（并跟随同协议重定向），而且是状态码的权威来源 ——
+            // 不必去解析异常消息里的数字。
+            status = httpURLConnection.getResponseCode();
+            if (status < 400) {
+                return httpURLConnection.getInputStream();
+            }
         } catch (Exception err) {
+            // 连接失败（DNS/超时/重置）才是可重试的：换个时刻同一地址可能就通了。
             if (retry >= retryTimes) {
                 throw new RuntimeException("Max retry time reached for url " + path);
             }
             return downloadStream(path, ++retry, proxy);
         }
-        return bin;
+        // 4xx/5xx：这个地址本身不通，重试同一地址只会重复同一个结果，直接失败。
+        // 原来 400 也要重试 10 次：一屏 160 张封面全指向同一个坏形态时，后台会同时
+        // 挂起上百个线程猛打网络，把带宽从真正要用的请求那里抢走（真机见过 56 条线程）。
+        throw new RuntimeException("URL 不可用（HTTP " + status + "）: " + path);
     }
 
     public interface OnHttpResult {

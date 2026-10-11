@@ -102,16 +102,29 @@ public final class NeteaseMusicService {
         }
         currentPlatform = selected;
         NCMPlayerConfig.setMusicSourcePlatform(selected);
+        // FM 的批次/历史是跨源共用的(见 PersonalFmManager#onPlatformChanged 的说明):
+        // 换源这一下最该把旧源的推荐清掉,否则新源 FM 页一打开摆的还是上一个源的歌。
+        PersonalFmManager.onPlatformChanged(selected);
         if (selected == MusicPlatform.QISHUI) {
             // 玩家选了汽水源:后端没起就按需处理——已装则隐藏拉起,缺失则下载伴生包
             // (进度走动态岛「汽水音乐源」持久卡);都失败时汽水源降级试听并提示。
-            if (!QishuiBackend.isAvailable()) {
+            //
+            // 判据用只读缓存(peek),不在这里探活:这里是来源按钮的点击处理器,跑在主线程上,
+            // 而探活要发一次健康检查。探测与拉起都交给 ensureStartedForGame —— 它内部整段
+            // 在后台线程上跑(见 QishuiBackendLifecycle)。冷启动时缓存还没值,它自己会探。
+            if (!QishuiBackend.peekAvailable()) {
                 if (QishuiCompanionDownload.isInstalled()) {
                     QishuiBackendLifecycle.ensureStartedForGame();
                 } else {
                     QishuiCompanionDownload.onBackendMissing();
                 }
             }
+            // 听歌模式清单(45 个真实场景模式)在这里先热一份:面板装配与渲染回调绝不能
+            // 自己发请求(见 QishuiMusicService#getFeedModes),早一步拉好,首次打开就是真实清单。
+            QishuiMusicService.refreshFeedModesAsync();
+            // 发现页那条链路也顺手建连:实测冷启动第一次采样有约 1.6 秒花在 DNS/TCP/TLS 上,
+            // 预热过之后主页首个回调从两秒缩到三百毫秒(见 warmDiscoverConnectionAsync)。
+            QishuiMusicService.warmDiscoverConnectionAsync();
         }
     }
 
