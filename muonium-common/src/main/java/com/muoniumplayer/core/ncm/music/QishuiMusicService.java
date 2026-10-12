@@ -8,6 +8,7 @@ import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
 import com.muoniumplayer.core.screens.ncm.LyricParser;
+import com.muoniumplayer.core.utils.Location;
 import top.fpsmaster.music.QrCode;
 import top.fpsmaster.music.QrLoginState;
 
@@ -81,6 +82,7 @@ public final class QishuiMusicService {
     private static final String PC_USER_AGENT = "LunaPC/3.3.0(359450208)";
     private static final int REQUEST_TIMEOUT_MS = 15_000;
     private static final int MAX_BYTES = 8 * 1024 * 1024;
+    private static final Map<String, Location> AVATAR_LOCATIONS = new ConcurrentHashMap<>();
 
     /**
      * 发现页推荐歌单的采样参数。这一条接口不分页（见 {@link #recommendPlaylists}），只能靠
@@ -185,17 +187,15 @@ public final class QishuiMusicService {
         public final String format;
         public final long bitrate;
         public final String playAuth;
-        /** 本次响应里全部 AAC 候选的码率(降序,kbps),给 UI 显示音质档;未知为空表。 */
-        public final List<Long> availableBitrates;
+        /** 这一条流实际属于哪一档；上游没给可辨认的档位名时为 null。 */
+        public final Quality actualTier;
 
-        ResolveResult(String url, String format, long bitrate, String playAuth,
-                      List<Long> availableBitrates) {
+        ResolveResult(String url, String format, long bitrate, String playAuth, Quality actualTier) {
             this.url = url;
             this.format = format;
             this.bitrate = bitrate;
             this.playAuth = playAuth;
-            this.availableBitrates = availableBitrates == null
-                    ? Collections.emptyList() : availableBitrates;
+            this.actualTier = actualTier;
         }
     }
 
@@ -383,8 +383,7 @@ public final class QishuiMusicService {
     public static String getAccountName() {
         QishuiSessionStore.Session session = QishuiSessionStore.snapshot();
         if (!session.loggedIn) return "未登录";
-        if (!session.nickname.isEmpty()) return session.nickname;
-        return "汽水音乐账号";
+        return displayName(session.nickname);
     }
 
     public static String getAccountId() {
@@ -401,6 +400,52 @@ public final class QishuiMusicService {
 
     public static boolean isVipAccount() {
         return QishuiSessionStore.snapshot().vip;
+    }
+
+    /** 账号资料的稳定显示名：过滤格式/控制字符，绝不把不可绘制昵称交给 UI。 */
+    public static String displayName(String value) {
+        if (value == null) return "汽水音乐账号";
+        StringBuilder clean = new StringBuilder();
+        boolean skipFormatCode = false;
+        for (int offset = 0; offset < value.length();) {
+            int codePoint = value.codePointAt(offset);
+            offset += Character.charCount(codePoint);
+            if (skipFormatCode) {
+                skipFormatCode = false;
+                continue;
+            }
+            if (codePoint == '\u00a7') {
+                skipFormatCode = true;
+                continue;
+            }
+            int type = Character.getType(codePoint);
+            if (Character.isISOControl(codePoint)
+                    || type == Character.FORMAT || type == Character.SURROGATE
+                    || type == Character.UNASSIGNED) continue;
+            if (!Character.isWhitespace(codePoint)) clean.appendCodePoint(codePoint);
+            else if (clean.length() > 0 && clean.charAt(clean.length() - 1) != ' ') clean.append(' ');
+        }
+        String result = clean.toString().trim();
+        boolean hasIdentityCharacter = result.codePoints().anyMatch(codePoint ->
+                Character.isLetterOrDigit(codePoint) || Character.isIdeographic(codePoint));
+        return hasIdentityCharacter ? result : "汽水音乐账号";
+    }
+
+    /** 头像位置随账号身份和签名 URL 变化，避免复用上个账号的固定贴图。 */
+    public static Location avatarLocation(String userId, String avatarUrl) {
+        if (avatarUrl == null || avatarUrl.trim().isEmpty()) return null;
+        String identity = (userId == null ? "" : userId.trim()) + "|" + avatarUrl.trim();
+        return AVATAR_LOCATIONS.computeIfAbsent(identity, key -> {
+            StringBuilder hex = new StringBuilder();
+            try {
+                byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                        .digest(key.getBytes(StandardCharsets.UTF_8));
+                for (byte value : digest) hex.append(String.format(Locale.ROOT, "%02x", value));
+            } catch (Throwable ignored) {
+                hex.append(Integer.toHexString(key.hashCode()));
+            }
+            return Location.of("muonium/textures/account/qishui/" + hex + ".png");
+        });
     }
 
     /**
@@ -482,9 +527,10 @@ public final class QishuiMusicService {
             String douyinId = string(info, "douyin_id");
             String avatar = resolveAvatarUrl(info);
             boolean vip = resolveVip(info);
-            if (!nickname.isEmpty() || !userId.isEmpty()) {
-                QishuiSessionStore.saveProfile(userId, nickname, douyinId, avatar, vip,
-                        string(info, "vip_stage"));
+            QishuiSessionStore.saveProfile(userId, nickname, douyinId, avatar, vip,
+                    string(info, "vip_stage"));
+            if (QishuiSessionStore.isLoggedIn()) {
+                QishuiAccountProfiles.saveCurrent();
             }
             QishuiSessionStore.markVerified();
             return true;
@@ -516,6 +562,10 @@ public final class QishuiMusicService {
 
         private static CookieImport fail(String message) {
             return new CookieImport(false, message, "", false);
+        }
+
+        static CookieImport failure(String message) {
+            return fail(message);
         }
     }
 
@@ -558,25 +608,26 @@ public final class QishuiMusicService {
                     : parseCookieInput(response.cookieHeader).entrySet()) {
                 merged.put(entry.getKey(), entry.getValue());
             }
+            boolean synced = false;
+            if (QishuiBackend.probeAlive()) {
+                try {
+                    synced = QishuiBackend.pushCookie(joinCookieMap(merged), true);
+                } catch (Throwable syncError) {
+                    System.err.println("[Music/Qishui] 导入前推送 Cookie 给后端失败: " + describe(syncError));
+                }
+                if (!synced) {
+                    return CookieImport.fail("本机签名后端未接受新账号，当前账号保持不变。请稍后重试。");
+                }
+            }
             QishuiSessionStore.replaceCookies(merged);
             QishuiSessionStore.saveProfile(userId, nickname, douyinId, avatar, vip,
                     string(info, "vip_stage"));
             QishuiSessionStore.markVerified();
-            // 换进来的可能压根是另一个账号：旧快照必须作废，侧栏才知道要重拉。
+            QishuiAccountProfiles.saveCurrent();
             clearUserPlaylistsCache();
-            // 完整版取流走的是本机签名后端,签名代理的 Cookie 在后端手里——
-            // 导入成功必须立刻覆盖推送,否则后端继续拿旧/空 Cookie 打 1000016,
-            // 表现成「游戏里明明导入了,播 VIP 还是只有试听」。后端没起也不算失败:
-            // 它拉起时 onBackendUp 会按「后端缺 Cookie 就推」配对补上。
-            boolean synced = false;
-            try {
-                synced = QishuiBackend.pushCookie(QishuiSessionStore.getCookieHeader(), true);
-            } catch (Throwable syncError) {
-                System.err.println("[Music/Qishui] 导入后推送 Cookie 给后端失败: " + describe(syncError));
-            }
             return new CookieImport(true,
                     synced ? "Cookie 登录成功，已同步本机签名后端" : "Cookie 登录成功",
-                    nickname, vip);
+                    displayName(nickname), vip);
         } catch (Throwable error) {
             if (looksLikeAuthRejection(error)) {
                 return CookieImport.fail("这份 Cookie 已被上游拒绝（过期、被顶下线或触发验证）。");
@@ -2155,6 +2206,8 @@ public final class QishuiMusicService {
         userPlaylistsLoaded = false;
         userPlaylistsLoading = false;
         userPlaylistsLastAttempt = 0L;
+        likedTrackIds = Collections.emptySet();
+        likedTrackIdsLoadAttempted = false;
     }
 
     /**
@@ -2524,8 +2577,6 @@ public final class QishuiMusicService {
         Stream selected = null;
         long selectedScore = -1L;
         long selectedDuration = 0L;
-        // 全部 AAC 候选的码率集合(降序去重):给 UI 展示"这首歌实际有几档音质"。
-        List<Long> availableBitrates = new ArrayList<>();
         for (Stream candidate : candidates) {
             String url = audioUrl(candidate.node);
             if (url.isEmpty()) continue;
@@ -2542,7 +2593,6 @@ public final class QishuiMusicService {
             if (!aac || format.contains("flac") || format.contains("wav")) continue;
 
             long bitrate = streamBitrate(candidate.node);
-            if (bitrate > 0L && !availableBitrates.contains(bitrate)) availableBitrates.add(bitrate);
             long duration = candidate.durationMillis;
             int rank = streamCompletenessRank(duration, declaredDurationMillis);
             int selectedRank = selected == null ? Integer.MIN_VALUE
@@ -2571,9 +2621,37 @@ public final class QishuiMusicService {
             System.err.println("[Music/Qishui] 上游只给到试听片段：" + (selectedDuration / 1000L)
                     + "s / 声明 " + (declaredDurationMillis / 1000L) + "s，完整流需要上游放开的权益");
         }
-        availableBitrates.sort((a, b) -> Long.compare(b, a));
         return new ResolveResult(url, normalized, streamBitrate(selected.node), selected.playAuth,
-                availableBitrates);
+                tierOf(selected.node));
+    }
+
+    /**
+     * 这一条流在上游侧属于哪一档。
+     *
+     * <p>取的是上游自己的 {@code quality}/{@code Quality} 字段（实测取值 {@code medium} /
+     * {@code higher} / {@code highest} / {@code lossless} / {@code hi_res} / {@code spatial}），
+     * 而不是靠码率猜：汽水的 {@code spatial}（324k）与 {@code highest}（324k）码率几乎一样，
+     * 只按码率分不出「高清环绕」与「极高」。码率只在字段缺席时兜底。</p>
+     *
+     * <p>为什么不能让界面继续显示「本次有几档、各多少码率」：那是实现细节，用户看到
+     * {@code 324k/321k/320k/260k/258k/132k/130k/68k/66k} 只会困惑，他只关心「我选了什么、
+     * 最后听到的是什么」。所以档位名在这里收成 Quality 枚举，界面再翻译成短名。</p>
+     */
+    static Quality tierOf(JsonObject candidate) {
+        String raw = firstNonBlank(string(candidate, "quality"), string(candidate, "Quality"),
+                string(object(candidate, "video_meta"), "quality")).toLowerCase(Locale.ROOT);
+        if (raw.contains("spatial") || raw.contains("atmos")) return Quality.JYEFFECT;
+        if (raw.contains("jymaster") || raw.contains("master")) return Quality.JYMASTER;
+        if (raw.contains("sky") || raw.contains("immers")) return Quality.SKY;
+        if (raw.contains("hi_res") || raw.contains("hires") || raw.contains("hi-res")) return Quality.HIRES;
+        if (raw.contains("lossless") || raw.contains("flac") || raw.contains("sq")) return Quality.LOSSLESS;
+        if (raw.contains("highest") || raw.contains("exhigh")) return Quality.EXHIGH;
+        if (raw.contains("higher")) return Quality.HIGHER;
+        if (raw.contains("medium") || raw.contains("standard") || raw.contains("normal")) {
+            return Quality.STANDARD;
+        }
+        // 上游没给可辨认的档位名：返回 null 让界面只说「实得」那一半，而不是瞎猜一个档。
+        return null;
     }
 
     /**

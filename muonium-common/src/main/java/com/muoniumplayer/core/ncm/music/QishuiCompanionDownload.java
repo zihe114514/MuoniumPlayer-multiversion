@@ -14,8 +14,12 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -42,14 +46,14 @@ import java.util.zip.ZipInputStream;
  * <h2>触发条件（同时满足才下载）</h2>
  * <ol>
  *   <li>{@link QishuiBackend#isAvailable()} 为假（本机 8787 无健康后端）；</li>
- *   <li>安装目录里没有完整的 server.mjs + node.exe（有则只尝试直接拉起，不重复下载）；</li>
+ *   <li>安装目录里没有完整的 server.mjs + Node 运行时（有则只尝试直接拉起，不重复下载）；</li>
  *   <li>没有被 {@value #PROP_ENABLED} 显式关掉；</li>
  *   <li>不在下载中，且本会话的尝试预算与冷却时间还允许。</li>
  * </ol>
  *
  * <h2>钉死字节数与 sha256</h2>
  * 下载的是「会以本机权限执行的可执行运行时」，与更新清单同一标准：字节数与 sha256
- * 钉死在 {@link #PACK}，解压后再做内容级核对（server.mjs 存在、node.exe 体量合理）。
+ * 钉死在 {@link #PACK}，解压后再做内容级核对（server.mjs 存在、Node 运行时体量合理）。
  * 换包时三处必须一起改：清单仓库里的 zip、本类常量、发布产物；
  * 换包后旧版本号留着也行，{@code installMarker} 只记当前版本。
  */
@@ -76,6 +80,15 @@ public final class QishuiCompanionDownload {
     /** 暂存目录前缀。 */
     private static final String INCOMING_PREFIX = ".incoming-";
 
+    /**
+     * 热补时「换不上去」的文件的暂存后缀。
+     *
+     * <p>Windows 上运行中的 exe 不能覆盖也不能删（文件被映射进进程映像）。热补发生在
+     * 旧实例还在跑的当口，遇到这种文件不能直接放弃：先落到 {@code <原名>.new}，
+     * 下一次开局（旧实例已退出）由 {@link #maintainInstallRoot()} 换上真名。</p>
+     */
+    private static final String STAGED_SUFFIX = ".new";
+
     /** 伴生包：文件名 + 字节数 + sha256，三个都必须精确。 */
     record Pack(String fileName, long bytes, String sha256) {
     }
@@ -83,11 +96,20 @@ public final class QishuiCompanionDownload {
     /** 1.0.0：Node v22.23.3 运行时 + qs-backend 脚本 + 解密器 + start.bat。
      *  1.0.1：server.mjs 补 Cookie 自动同步三件套（约定路径自动导入、config.json
      *  热重读、/api/cookie/full 反向导出）——修复「登录工具写了 Cookie 但游戏后端
-     *  一直 1000016 登录失效」的断链。运行时 node.exe 与 1.0.0 相同。
+     *  一直 1000016 登录失效」的断链。运行时与 1.0.0 相同。
      *  1.1.0：/api/stream 支持 ?quality=&lt;kbps&gt; 选档（≥目标的最小档，缺省最高），
-     *  缓存键按档位区分；电台曲目改走 PC 签名代理优先。 */
-    static final Pack PACK = new Pack("qishui-backend-windows-x64-1.1.0.zip", 33_013_552L,
-            "d8f95d4db391be9cfd2c11b15382802a7dcb7dbca5bf7df3c2fc5715f207bd8b");
+     *  缓存键按档位区分；电台曲目改走 PC 签名代理优先。
+     *  1.2.0：随游戏起停闭环——运行时改名 qishui-backend.exe（任务管理器显示
+     *  「qishui后端 for Muo」，原来叫 node.exe 只显示「Node.js JavaScript Runtime」）；
+     *  server.mjs 加 --watchdog-stdin / --parent-pid 自杀看门狗，JVM 被强杀也不会
+     *  留孤儿；/api/health 增报 version/pid/parent_pid/watchdog，供游戏侧清扫孤儿。
+     *
+     * <p>清理旧版残留（{@code pack.files.txt} 清单 + 每局清扫）是<b>游戏侧</b>的行为，
+     * 所以没有抬版本号：存量安装靠「新名运行时在位时收掉 node.exe」这条保守回落就能干净，
+     * 不必为清一次目录让所有人重下一次 33 MB。下一次真的换了包内容时，清单会随热补写下，
+     * 此后按清单清扫。</p> */
+    static final Pack PACK = new Pack("qishui-backend-windows-x64-1.2.0.zip", 33_176_994L,
+            "9a2ccc4cf51602b6fecf3926df6320d76f2b68665253b9c0e6a6938ca291b245");
 
     /** 下载状态机；提示层与日志照它说话。 */
     enum Phase {
@@ -111,15 +133,65 @@ public final class QishuiCompanionDownload {
         return state;
     }
 
-    /** 给音源选择卡的醒目提示行:下载/安装/失败时非空,常态为空串。公开给 UI 包用。 */
-    public static String backendInstallStatusLine() {
+    static void markBackendStarting() {
+        state = new State(Phase.STARTING, 100, null);
+    }
+
+    static void markBackendRunning() {
+        state = new State(Phase.RUNNING, 100, null);
+    }
+
+    static void markBackendFailed(String detail) {
+        state = new State(Phase.FAILED, 0, detail);
+    }
+
+    /** 后端状态给来源卡提供稳定、可本地化的呈现语义。 */
+    public enum BackendStatus {
+        CONNECTING, DOWNLOADING, VERIFYING, INSTALLING, STARTING, RUNNING, STOPPED, FAILED
+    }
+
+    /** 给音源选择卡的简短状态标签。 */
+    public static String backendStatusLabel() {
+        State snapshot = state;
+        return switch (backendStatus()) {
+            case CONNECTING -> "连接中";
+            case DOWNLOADING -> "下载 " + Math.max(0, snapshot.percent()) + "%";
+            case VERIFYING -> "校验中";
+            case INSTALLING -> "安装中";
+            case STARTING -> "启动中";
+            case RUNNING -> "已运行";
+            case STOPPED -> "未运行";
+            case FAILED -> "启动失败";
+        };
+    }
+
+    /** 状态来源合并了健康探测快照与安装状态；确认健康优先于过期的安装失败记录。 */
+    public static BackendStatus backendStatus() {
+        if (QishuiBackend.peekAvailable()) return BackendStatus.RUNNING;
         State snapshot = state;
         return switch (snapshot.phase()) {
+            case DOWNLOADING -> snapshot.percent() >= 100 ? BackendStatus.VERIFYING : BackendStatus.DOWNLOADING;
+            case INSTALLING -> BackendStatus.INSTALLING;
+            case STARTING -> BackendStatus.STARTING;
+            case RUNNING -> BackendStatus.STOPPED;
+            case FAILED -> BackendStatus.FAILED;
+            case IDLE -> QishuiBackend.hasProbed() ? BackendStatus.STOPPED : BackendStatus.CONNECTING;
+        };
+    }
+
+    /** 给音源选择卡的详细后端状态说明。 */
+    public static String backendInstallStatusLine() {
+        State snapshot = state;
+        return switch (backendStatus()) {
+            case CONNECTING -> "正在连接签名后端…未就绪时仅试听";
             case DOWNLOADING -> "正在下载签名后端 " + Math.max(0, snapshot.percent()) + "%…";
-            case INSTALLING -> "后端下载完成，正在安装…";
-            case STARTING -> "后端安装完成，正在启动…";
-            case FAILED -> "后端安装失败" + (snapshot.detail() == null || snapshot.detail().isEmpty() ? "" : "(" + snapshot.detail() + ")") + " · 自动重试中，期间仅试听";
-            default -> "";
+            case VERIFYING -> "下载已接收，正在校验…";
+            case INSTALLING -> "下载校验通过，正在安装…";
+            case STARTING -> snapshot.phase() == Phase.RUNNING
+                    ? "签名后端正在连接…" : "安装完成，正在启动…";
+            case RUNNING -> "签名后端运行中 · 完整版可用";
+            case STOPPED -> "签名后端未运行 · 仅试听；重新进入游戏或重选本源可自动安装";
+            case FAILED -> "后端启动失败" + (snapshot.detail() == null || snapshot.detail().isEmpty() ? "" : "（" + snapshot.detail() + "）") + " · 自动重试中，期间仅试听";
         };
     }
 
@@ -133,17 +205,230 @@ public final class QishuiCompanionDownload {
         return new File(new File("config", "muonium"), "qishui-backend");
     }
 
-    /** 安装目录是否已有完整的后端文件（脚本 + 运行时）。 */
+    /**
+     * 包内 Node 运行时的文件名。
+     *
+     * <p>1.2.0 起运行时改名为 {@code qishui-backend.exe}：任务管理器「名称」列读 exe 的
+     * 版本资源 FileDescription，原名 {@code node.exe} 在那里显示成「Node.js JavaScript
+     * Runtime」，玩家分不清这是游戏的后端还是别的 Node 程序。旧包（≤1.1.0）里的
+     * {@code node.exe} 仍要认——热补是后台进行的，升级窗口内旧安装还在跑。</p>
+     */
+    static String runtimeFileName() {
+        return "qishui-backend.exe";
+    }
+
+    /**
+     * 定位安装目录里现成的运行时，优先新名、回落旧名；都没有返回 {@code null}。
+     *
+     * <p>不能只认新名：1.1.0 及更早的安装目录里只有 {@code node.exe}，而热补要等
+     * 下一次拉起才换新脚本——这个窗口里若只找新名，用户会被判成「没装」，
+     * 触发一次 33 MB 的重复下载。</p>
+     */
+    static File findRuntime(File root) {
+        for (String name : new String[]{runtimeFileName(), "node.exe"}) {
+            File candidate = new File(root, name);
+            if (candidate.isFile() && candidate.length() > 50_000_000L) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /** 安装目录是否已有完整的后端文件（脚本 + 运行时，新旧运行时名都认）。 */
     static boolean isInstalled() {
         File root = installRoot();
         File server = new File(root, "server.mjs");
-        File node = new File(root, "node.exe");
-        return server.isFile() && server.length() > 10_000L
-                && node.isFile() && node.length() > 50_000_000L;
+        return server.isFile() && server.length() > 10_000L && findRuntime(root) != null;
     }
 
     private static File versionMarker() {
         return new File(installRoot(), "pack.version");
+    }
+
+    /** 当前安装「应有的文件」清单名：装包时从包内容生成，清扫照它删旧版残留。 */
+    private static final String MANIFEST_NAME = "pack.files.txt";
+
+    /**
+     * 安装根里属于「用户数据 / 运行期状态」的名字，清扫时原样保留。
+     *
+     * <p>配置里有设备身份与账号 Cookie，缓存里是已解密的音频——它们都不来自伴生包，
+     * 任何清理动作都不能碰。清单文件与版本标记由本类生成，同样不算包内文件。</p>
+     */
+    private static final Set<String> PRESERVED_NAMES = Set.of(
+            "config.json", "config.json.tmp", "pack.version", MANIFEST_NAME,
+            "qishui-cookie.txt", "backend.log");
+
+    /** 整体保留的目录前缀（已解密音频缓存）。 */
+    private static final Set<String> PRESERVED_PREFIXES = Set.of("cache/");
+
+    private static boolean preservedPath(String relative) {
+        if (PRESERVED_NAMES.contains(relative)) {
+            return true;
+        }
+        for (String prefix : PRESERVED_PREFIXES) {
+            if (relative.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 读安装清单；没有 / 读不出 / 为空返回空集（调用方退回到「已知旧名单」的保守清扫）。 */
+    static Set<String> readManifest(File root) {
+        try {
+            Set<String> entries = new TreeSet<>();
+            for (String line : Files.readAllLines(new File(root, MANIFEST_NAME).toPath(),
+                    StandardCharsets.UTF_8)) {
+                String trimmed = line.trim().replace('\\', '/');
+                if (!trimmed.isEmpty()) {
+                    entries.add(trimmed);
+                }
+            }
+            return entries;
+        } catch (IOException missing) {
+            return Set.of();
+        }
+    }
+
+    /**
+     * 把包内容写成安装清单（相对安装根、'/' 分隔、按路径排序）。
+     *
+     * <p>写失败只记日志：没有清单时清扫退回保守名单，顶多留一点旧文件，不影响后端可用。</p>
+     */
+    private static void writeManifest(File packRoot, File root) {
+        try {
+            List<String> entries = new ArrayList<>();
+            collectRelativePaths(packRoot, packRoot, entries);
+            Collections.sort(entries);
+            Files.write(new File(root, MANIFEST_NAME).toPath(),
+                    String.join("\n", entries).getBytes(StandardCharsets.UTF_8));
+        } catch (IOException failure) {
+            log("安装清单写入失败（下次启动退回到保守清扫）：" + describe(failure));
+        }
+    }
+
+    private static void collectRelativePaths(File root, File current, List<String> out) {
+        File[] children = current.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (File child : children) {
+            if (child.isDirectory()) {
+                collectRelativePaths(root, child, out);
+            } else if (child.isFile()) {
+                out.add(root.toPath().relativize(child.toPath()).toString().replace('\\', '/'));
+            }
+        }
+    }
+
+    /**
+     * 按清单清扫安装目录：不属于当前伴生包的文件一律收掉。返回收掉的文件数。
+     *
+     * <p>这是「新旧混装」的根治手段。安装与热补都只做合并式覆盖，新版本删掉/改名的文件
+     * （比如 1.2.0 改名前的 {@code node.exe}）会永远留在目录里，占着磁盘、也让人分不清
+     * 哪个是当前版本。清单是装包时从 zip 内容现生成的，所以「包里有什么」永远说真话。</p>
+     *
+     * <p>三条纪律：① {@link #PRESERVED_NAMES} 与 {@code cache/} 绝不碰（设备身份、Cookie、
+     * 已解密音频）；② 待启用的 {@code *.new} 暂存文件保留（它们不在清单里，但删了等于
+     * 把热补成果扔了）；③ 本次删不掉的文件只记日志、绝不报错——运行中的后端占着自己的
+     * exe，Windows 上删不掉是常态，下一次启动接着收。</p>
+     *
+     * <p>没有清单的老安装（≤1.2.0 的包不写清单）退回到「已知旧名单」：只收改名前那个
+     * {@code node.exe}，而且<b>必须新名运行时已在位</b>才敢删——1.1.0 的安装里它就是唯一
+     * 的运行时，清单还没写下来时删掉等于把用户装好的后端弄坏。</p>
+     */
+    static int sweepStaleFiles(File root) {
+        if (!root.isDirectory()) {
+            return 0;
+        }
+        int removed = 0;
+        Set<String> expected = readManifest(root);
+        if (expected.isEmpty()) {
+            // 只认「体量像运行时」的 node.exe：目录是被托管的，但也不该因为同名就删掉
+            // 用户自己放的小文件（findRuntime 用同一条体量门槛认它）。
+            File legacyRuntime = new File(root, "node.exe");
+            File replacement = new File(root, runtimeFileName());
+            if (legacyRuntime.isFile() && legacyRuntime.length() > 50_000_000L && replacement.isFile()) {
+                if (deleteTolerant(legacyRuntime, "旧运行时 node.exe")) {
+                    removed++;
+                }
+            }
+            return removed;
+        }
+        List<File> files = new ArrayList<>();
+        List<File> directories = new ArrayList<>();
+        collectAll(root, files, directories);
+        for (File file : files) {
+            String relative = root.toPath().relativize(file.toPath()).toString().replace('\\', '/');
+            if (expected.contains(relative) || preservedPath(relative)
+                    || isPendingPromotion(relative, expected)) {
+                continue;
+            }
+            if (deleteTolerant(file, relative)) {
+                removed++;
+            }
+        }
+        // 顺手收掉清空后的空目录（比如整目录被新版删掉的情形）。
+        for (int index = directories.size() - 1; index >= 0; index--) {
+            File directory = directories.get(index);
+            String relative = root.toPath().relativize(directory.toPath()).toString().replace('\\', '/');
+            if (preservedPath(relative + "/")) {
+                continue; // cache/ 这类保留目录：空着也要留着（用户数据目录，不是包内容）
+            }
+            File[] remaining = directory.listFiles();
+            if (remaining != null && remaining.length == 0) {
+                try {
+                    Files.deleteIfExists(directory.toPath());
+                } catch (IOException ignored) {
+                    // 删不掉就留着，空目录不碍事。
+                }
+            }
+        }
+        if (removed > 0) {
+            log("已收掉 " + removed + " 个不属于当前伴生包的旧文件（清单：" + MANIFEST_NAME + "）");
+        }
+        return removed;
+    }
+
+    /** 生产入口：按清单清安装根（只碰安装根本身，不碰它的上级）。 */
+    static void sweepStaleFiles() {
+        sweepStaleFiles(installRoot());
+    }
+
+    /** 是不是「等旧进程退出后启用」的暂存文件，且它的正品仍在当前清单里。 */
+    private static boolean isPendingPromotion(String relative, Set<String> expected) {
+        if (!relative.endsWith(STAGED_SUFFIX)) {
+            return false;
+        }
+        String base = relative.substring(0, relative.length() - STAGED_SUFFIX.length());
+        return expected.contains(base);
+    }
+
+    private static void collectAll(File current, List<File> files, List<File> directories) {
+        File[] children = current.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (File child : children) {
+            if (child.isDirectory()) {
+                directories.add(child);
+                collectAll(child, files, directories);
+            } else if (child.isFile()) {
+                files.add(child);
+            }
+        }
+    }
+
+    /** 删一个文件，成功记日志返回 true；被占用/没权限则静默返回 false（下次启动再试）。 */
+    private static boolean deleteTolerant(File file, String label) {
+        try {
+            Files.deleteIfExists(file.toPath());
+            log("清理旧版残留：" + label);
+            return true;
+        } catch (IOException inUse) {
+            // 运行中的旧实例占着它（exe 被映射进进程映像）：这一局删不掉是正常的。
+            return false;
+        }
     }
 
     /** 安装目录是否已是当前 {@link #PACK} 版本；缺标记的旧安装视为待升级。 */
@@ -170,8 +455,12 @@ public final class QishuiCompanionDownload {
      * 换上去（1.0.1 的 Cookie 同步修复就是这么送达存量安装的）。
      *
      * <p>与首次安装的三点不同：<b>绝不阻塞启动</b>（旧脚本当场就能用，新脚本下次
-     * 拉起生效）、<b>失败不弹提示</b>（下次启动重试）、node.exe 被运行中的后端占用时
-     * 只跳过该文件（脚本层才是热补目标，运行时本身没换版本）。</p>
+     * 拉起生效）、<b>失败不弹提示</b>（下次启动重试）、运行时文件被运行中的后端占用时
+     * 只跳过该文件（脚本层才是热补目标；被占用的旧运行时由 {@link #sweepStaleFiles()}
+     * 在后续启动里收尾——那时旧进程已退出，文件不再被映射）。</p>
+     *
+     * <p>热补结束后立即按新包清单清扫一次：新包里没有的旧文件（改名前后的运行时、
+     * 上游删掉的脚本）当场收掉，不留给下一次启动——但被占用的那份要等下一条命。</p>
      */
     static void refreshIfNeeded() {
         if (!isInstalled() || isUpToDate()) return;
@@ -189,12 +478,18 @@ public final class QishuiCompanionDownload {
                 File incoming = new File(root.getParentFile(), INCOMING_PREFIX + Long.toHexString(System.nanoTime()));
                 unzip(archive, incoming);
                 verifyExtracted(incoming);
-                copyTreeTolerant(new File(incoming, "qishui-backend"), root);
+                File packRoot = new File(incoming, "qishui-backend");
+                copyTreeTolerant(packRoot, root);
+                // 清单必须在删暂存之前写：它记录的正是刚解压出来的那份内容，
+                // 而 incoming 删掉后就无从生成了（清单为空会让清扫退化成什么都不清）。
+                writeManifest(packRoot, root);
                 deleteRecursively(incoming);
                 Files.deleteIfExists(archive.toPath());
                 if (!new File(root, "server.mjs").isFile()) {
                     throw new IOException("热补后 server.mjs 缺失：" + root.getAbsolutePath());
                 }
+                // 再按清单清扫：新文件已落地、清单已就位，此刻删掉的必是上一版的残留。
+                sweepStaleFiles();
                 writeVersionMarker();
                 log("后端伴生包已热补到 " + PACK.fileName() + "（正在运行的旧进程下次拉起换新）");
             } catch (Throwable failure) {
@@ -209,7 +504,14 @@ public final class QishuiCompanionDownload {
         worker.start();
     }
 
-    /** 容错复制：单个文件被占用（比如正在运行的 node.exe）只记日志不中断整树。 */
+    /**
+     * 容错复制：单个文件被占用（比如正在运行的后端运行时）时不中断整树，改存为
+     * {@code <原名>.new} 留给下一次开局换上。
+     *
+     * <p>只跳过不落盘是不行的：热补时被占用的恰恰是运行时本体，跳过等于新版本永远
+     * 换不上（旧运行时映射在运行进程里，Windows 不让覆盖）。落 {@code .new} 后，
+     * 进程一退，{@link #promoteStagedFiles()} 把它换成正品。</p>
+     */
     private static void copyTreeTolerant(File from, File to) throws IOException {
         File[] children = from.listFiles();
         if (children == null) {
@@ -224,8 +526,94 @@ public final class QishuiCompanionDownload {
                 try {
                     Files.copy(child.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
                 } catch (IOException busy) {
-                    log("热补跳过被占用的文件：" + target.getName());
+                    File staged = new File(target.getParentFile(), target.getName() + STAGED_SUFFIX);
+                    // 先写 .new.tmp 再原子改名成 .new：游戏在热补中途被杀时，半个文件的
+                    // .new 会被下一次开局当成「热补成果」启用，把后端弄成起不来。
+                    // .new 只有完整才算数；残留的 .new.tmp 由清扫当普通旧文件收掉。
+                    File scratch = new File(target.getParentFile(), target.getName() + STAGED_SUFFIX + ".tmp");
+                    Files.copy(child.toPath(), scratch.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                    Files.move(scratch.toPath(), staged.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                    log("热补暂存被占用的文件：" + target.getName() + " → " + staged.getName()
+                            + "（旧进程退出后换新）");
                 }
+            }
+        }
+    }
+
+    /**
+     * 把热补时暂存的 {@code *.new} 换成正品；换不掉的（仍被占用）留到下一局。
+     * 返回换成功几个。
+     *
+     * <p>只对「暂存文件在、正品在清单里」的成对文件动手——清单外的 {@code .new} 是垃圾，
+     * 交给 {@link #sweepStaleFiles(File)} 收掉，不要在这里冒充正品。正品缺失（上一次换到
+     * 一半崩了）时，暂存文件顶上——它至少是当前包里的那份内容。</p>
+     *
+     * <p>递归整棵树：包里有子目录，被占用的文件未必就在根下（虽然眼下只有 exe 会被锁，
+     * 但没理由把规则写死在「只认根目录」上）。</p>
+     */
+    static int promoteStagedFiles(File root) {
+        Set<String> expected = readManifest(root);
+        List<File> staged = new ArrayList<>();
+        collectStaged(root, staged);
+        int promoted = 0;
+        for (File file : staged) {
+            String relative = root.toPath().relativize(file.toPath()).toString().replace('\\', '/');
+            String base = relative.substring(0, relative.length() - STAGED_SUFFIX.length());
+            if (!expected.isEmpty() && !expected.contains(base)) {
+                continue; // 清单里的当前包没有这个文件：它是旧版残留的暂存，交给清扫。
+            }
+            File target = new File(root, base.replace('/', File.separatorChar));
+            try {
+                Files.move(file.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                log("已把热补暂存文件启用为正品：" + base);
+                promoted++;
+            } catch (IOException inUse) {
+                // 正品还被运行中的旧实例占着——留着 .new，下一局再换。
+            }
+        }
+        return promoted;
+    }
+
+    private static void collectStaged(File current, List<File> out) {
+        File[] children = current.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (File child : children) {
+            if (child.isDirectory()) {
+                collectStaged(child, out);
+            } else if (child.isFile() && child.getName().endsWith(STAGED_SUFFIX)) {
+                out.add(child);
+            }
+        }
+    }
+
+    /**
+     * 每局开一次安装目录保养：{@link #promoteStagedFiles(File)} → {@link #sweepStaleFiles()}。
+     *
+     * <p>为什么必须是独立于热补的动作、每局都跑：① 热补时被占用的文件（运行中的
+     * 运行时）只能等旧进程退出后才能换/删，那时版本标记已写成新版，热补不会再跑；
+     * ② 清单清扫同样会撞上被占用文件，需要一次「下一条命再试」的机会。</p>
+     *
+     * <p>正在装包（首次下载或热补）时整个跳过：那两个流程在写新文件、换新清单，
+     * 此刻清扫读到的还是旧清单，会把刚到的新文件当成「不在清单里」删掉——删完没人补，
+     * 安装就缺件了。装包流程自己会在落盘后清扫，不需要这里插手。</p>
+     */
+    static void maintainInstallRoot() {
+        if (!isInstalled()) return;
+        synchronized (LOCK) {
+            // 与装包互斥：装包流程正在写新文件、换新清单，此刻清扫会拿旧清单把新文件
+            // 当旧残留删掉（装包流程自己会在落盘后清扫，不需要这里插手）。
+            if (inFlight) return;
+            inFlight = true;
+        }
+        try {
+            File root = installRoot();
+            promoteStagedFiles(root);
+            sweepStaleFiles();
+        } finally {
+            synchronized (LOCK) {
+                inFlight = false;
             }
         }
     }
@@ -270,7 +658,7 @@ public final class QishuiCompanionDownload {
                 File archive = new File(root.getParentFile(), PACK.fileName() + ".part");
                 fetch(PACK, archive);
                 state = new State(Phase.INSTALLING, 100, null);
-                com.muoniumplayer.core.rendering.DownloadDynamicIsland.showQishuiBackendProgress(100);
+                com.muoniumplayer.core.rendering.DownloadDynamicIsland.showQishuiBackendInstalling();
                 deleteStaleIncoming(root.getParentFile());
                 File incoming = new File(root.getParentFile(), INCOMING_PREFIX + Long.toHexString(System.nanoTime()));
                 unzip(archive, incoming);
@@ -281,27 +669,41 @@ public final class QishuiCompanionDownload {
                 // startBackend 找不到 node.exe 报 CreateProcess error=2（真机踩过）。
                 // 上一版错误安装曾把后端文件散落在 config/muonium/ 根下，装前清掉。
                 deleteLegacyStrays(root.getParentFile());
-                copyTree(new File(incoming, "qishui-backend"), root);
+                File packRoot = new File(incoming, "qishui-backend");
+                // 装之前先按新包清理旧安装：目录里可能躺着上一版甚至更早混进来的文件
+                // （改名前的 node.exe 等）。清单先于清理写入——它描述「装完后目录该有
+                // 什么」，先写清单再清，刚落地的新文件才不会被当成旧残留。
+                writeManifest(packRoot, root);
+                copyTree(packRoot, root);
                 deleteRecursively(incoming);
                 Files.deleteIfExists(archive.toPath());
                 // 装完即验最终落点:上面那次 copyTree 目标写错一层时,verifyExtracted
                 // (只查 incoming)拦不住,必须在最终路径上再核一遍。
-                if (!new File(root, "node.exe").isFile()
-                        || !new File(root, "server.mjs").isFile()) {
+                if (!new File(root, "server.mjs").isFile() || findRuntime(root) == null) {
                     throw new IOException("安装落点校验失败：" + root.getAbsolutePath()
-                            + " 下缺 node.exe/server.mjs");
+                            + " 下缺 server.mjs 或 Node 运行时");
                 }
+                sweepStaleFiles();
                 log("已装好 " + PACK.fileName() + " → " + root.getAbsolutePath());
                 writeVersionMarker();
             }
             state = new State(Phase.STARTING, 100, null);
+            com.muoniumplayer.core.rendering.DownloadDynamicIsland.showQishuiBackendStarting();
             Process process = startBackend(root);
-            if (process != null) QishuiBackendLifecycle.adoptOwnedProcess(process);
+            if (process != null) {
+                QishuiBackendLifecycle.adoptOwnedProcess(process);
+            }
             if (awaitHealthy(15_000L)) {
-                state = new State(Phase.RUNNING, 100, null);
-                log("后端已就绪 " + QishuiBackend.baseUrl());
-                com.muoniumplayer.core.rendering.DownloadDynamicIsland.showQishuiBackendReady();
                 QishuiBackend.onBackendUp();
+                if (QishuiBackend.peekAvailable()) {
+                    state = new State(Phase.RUNNING, 100, null);
+                    log("后端已就绪 " + QishuiBackend.baseUrl());
+                    com.muoniumplayer.core.rendering.DownloadDynamicIsland.showQishuiBackendReady();
+                } else {
+                    state = new State(Phase.FAILED, 0, "同步账号状态时后端失去响应");
+                    com.muoniumplayer.core.rendering.DownloadDynamicIsland.showQishuiBackendFailure(state.detail());
+                    log(state.detail());
+                }
             } else {
                 state = new State(Phase.FAILED, 0, "后端进程已拉起但健康检查未通过");
                 com.muoniumplayer.core.rendering.DownloadDynamicIsland.showQishuiBackendFailure(state.detail());
@@ -318,28 +720,16 @@ public final class QishuiCompanionDownload {
         }
     }
 
-    /** 用包内 node.exe 把 server.mjs 拉成独立进程；输出重定向到 backend.log 供排查。
-     *  已有健康后端时不重复拉起返回 null；进程所有权交给 {@link QishuiBackendLifecycle} 登记。
-     *  <b>路径必须绝对</b>：游戏进程的 CWD 与模组文件操作的解析目录（游戏运行目录）不一定是
-     *  同一个，相对的 {@code directory()} 会让 CreateProcess 直接报「系统找不到指定的文件」
-     *  （真机 2026-10-11 的教训）。 */
-    private static Process startBackend(File root) throws IOException {        if (QishuiBackend.isAvailable() || QishuiBackendLifecycle.recentlySpawned()) {
+    /** 用安装目录里的运行时把 server.mjs 拉成独立进程（看门狗标志由
+     *  {@link QishuiBackendLifecycle#spawn} 统一带上）；输出重定向到 backend.log 供排查。
+     *  已有健康后端时不重复拉起返回 null；进程所有权交给 {@link QishuiBackendLifecycle} 登记。 */
+    private static Process startBackend(File root) throws IOException {
+        if (QishuiBackend.probeAlive() || QishuiBackendLifecycle.recentlySpawned()) {
             log("8787 已有健康后端或另一组件刚拉起，不重复拉起");
             return null;
         }
         File rootAbs = root.getAbsoluteFile();
-        File node = new File(rootAbs, "node.exe");
-        File server = new File(rootAbs, "server.mjs");
-        File logFile = new File(rootAbs, "backend.log");
-        if (!node.isFile()) {
-            throw new IOException("node.exe 不存在: " + node.getAbsolutePath());
-        }
-        ProcessBuilder builder = new ProcessBuilder(node.getAbsolutePath(), server.getAbsolutePath())
-                .directory(rootAbs)
-                .redirectErrorStream(true)
-                .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile));
-        builder.environment().put("QISHUI_CLIENT_DIR", "");
-        Process process = builder.start();
+        Process process = QishuiBackendLifecycle.spawn(rootAbs);
         QishuiBackendLifecycle.noteSpawn();
         log("后端进程已拉起 pid=" + process.pid() + " → " + rootAbs.getAbsolutePath());
         return process;
@@ -349,7 +739,7 @@ public final class QishuiCompanionDownload {
     private static boolean awaitHealthy(long timeoutMillis) {
         long deadline = System.currentTimeMillis() + timeoutMillis;
         while (System.currentTimeMillis() < deadline) {
-            if (QishuiBackend.isAvailable()) return true;
+            if (QishuiBackend.probeAlive()) return true;
             try {
                 Thread.sleep(500L);
             } catch (InterruptedException interrupted) {
@@ -452,17 +842,16 @@ public final class QishuiCompanionDownload {
         return connection;
     }
 
-    /** 并入前核对包内结构：server.mjs、node.exe、解密器三件套必须在，体量要合理。 */
+    /** 并入前核对包内结构：server.mjs、Node 运行时、解密器三件套必须在，体量要合理。 */
     private static void verifyExtracted(File incoming) throws IOException {
         File root = new File(incoming, "qishui-backend");
         File server = new File(root, "server.mjs");
-        File node = new File(root, "node.exe");
         File decryptor = new File(root, "qishui-audio-decryptor" + File.separator + "track-decryptor.js");
         if (!server.isFile() || server.length() < 10_000L) {
             throw new IOException("包内缺 server.mjs 或体量异常");
         }
-        if (!node.isFile() || node.length() < 50_000_000L) {
-            throw new IOException("包内缺 node.exe 或体量异常");
+        if (findRuntime(root) == null) {
+            throw new IOException("包内缺 Node 运行时(" + runtimeFileName() + ")或体量异常");
         }
         if (!decryptor.isFile()) {
             throw new IOException("包内缺解密器 track-decryptor.js");

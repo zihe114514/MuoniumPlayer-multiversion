@@ -7,6 +7,7 @@ import java.util.List;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.Quality;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.RGBA;
 import com.muoniumplayer.core.rendering.entities.impl.ScrollText;
@@ -214,9 +215,11 @@ final class NowPlayingInfo implements SharedRenderingConstants {
             pills.add(new Pill(english ? platformEnglish(music) : music.getSource().getDisplayName(),
                     NEUTRAL));
         }
-        String quality = qualityLabel(music);
+        // 汽水的音质标签自带英文（{@link Quality#displayNameEn()}），不走 qualityEnglish——
+        // 那边是按中文取值反查的，遇到「极高 → EXHIGH」这类新档位会原样漏出来。
+        String quality = qualityLabel(music, english);
         if (!quality.isEmpty()) {
-            pills.add(new Pill(english ? qualityEnglish(quality) : quality, NEUTRAL));
+            pills.add(new Pill(quality, NEUTRAL));
         }
         String lyric = lyricLabel(english);
         if (!lyric.isEmpty()) pills.add(new Pill(lyric, NEUTRAL));
@@ -260,25 +263,35 @@ final class NowPlayingInfo implements SharedRenderingConstants {
     }
 
     /**
-     * 音质标签。
+     * 音质标签：只说「用户选的什么 → 实际听到的是什么」。
      *
-     * <p>优先"这一次实际取到的流"——那才是此刻听到的东西；本次没解析出档位时退一步显示
-     * provider 声明的上限（例如 Hi-Res），它描述的是"这首歌最高能到哪"。</p>
+     * <p>从前这里贴的是一串码率（{@code HQ · 324k/321k/320k/260k/258k/132k/130k/68k/66k}）——
+     * 那是实现细节，用户读不懂也不关心；他要知道的只有两件事：我选的是哪一档、最后真正
+     * 拿到的是哪一档。这两件事在汽水上是会不一致的（权益、版权、上游降级都会让实得低于所选），
+     * 所以两边都要说，并且用箭头把方向讲明白。</p>
+     *
+     * <p>实得档位取自上游自己的 {@code quality} 字段（{@link Music#getQishuiActualTier()}），
+     * 不是按码率猜——汽水的「高清环绕」与「极高」码率几乎一样，猜不出来。</p>
      */
-    private static String qualityLabel(Music music) {
-        Music.PlaybackQuality resolved = music.getPlaybackQuality();
-        String badge = resolved != null && resolved.hasBadge() ? resolved.getBadge()
-                : nonNull(music.getHighestQualityLabel()).trim();
-        // 汽水把本次解析出的全部音质档一起展示(如 "HQ · 324k/260k/132k/68k"):
-        // 用户能看到这首歌在自家权益下实际有几档可切,这是签名接口独有的信息。
-        if (music.isQishui()) {
-            String tiers = music.getQishuiQualityTiersText();
-            if (!tiers.isEmpty()) return (badge.isEmpty() ? "" : badge + " · ") + tiers;
+    private static String qualityLabel(Music music, boolean english) {
+        if (!music.isQishui()) {
+            Music.PlaybackQuality resolved = music.getPlaybackQuality();
+            String badge = resolved != null && resolved.hasBadge() ? resolved.getBadge()
+                    : nonNull(music.getHighestQualityLabel()).trim();
+            return english ? qualityEnglish(badge) : badge;
         }
-        return badge;
+        // 汽水：用户选的那一档 + 本次实得的那一档。实得缺失时只显示所选，不编一个出来。
+        Quality chosenQuality = CloudMusic.quality;
+        String chosen = english ? Quality.displayNameEnOf(chosenQuality)
+                : Quality.displayNameOf(chosenQuality);
+        Quality actual = music.getQishuiActualTier();
+        if (actual == null) return chosen;
+        String actualName = english ? actual.displayNameEn() : actual.displayName();
+        // 两档同名（选了无损也确实拿到无损）就说一次，别写成「无损 → 无损」。
+        return chosen.equals(actualName) ? chosen : chosen + " → " + actualName;
     }
 
-    /** 音质档位只有这四个中文取值（见 {@code Music.toQualityLabel}），HQ 与 Hi-Res 本来就是英文。 */
+    /** 非汽水平台的音质档位只有这四个中文取值（见 {@code Music.toQualityLabel}），HQ 与 Hi-Res 本来就是英文。 */
     private static String qualityEnglish(String label) {
         if ("无损".equals(label)) return "LOSSLESS";
         if ("标准".equals(label)) return "STANDARD";

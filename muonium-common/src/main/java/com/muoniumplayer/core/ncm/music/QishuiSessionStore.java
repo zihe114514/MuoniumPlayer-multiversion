@@ -197,12 +197,12 @@ final class QishuiSessionStore {
                             String avatarUrl, boolean vip, String vipStage) {
         synchronized (LOCK) {
             Data next = editableCopy();
-            if (!isBlank(userId)) next.userId = userId.trim();
-            if (!isBlank(nickname)) next.nickname = nickname.trim();
-            if (!isBlank(douyinId)) next.douyinId = douyinId.trim();
-            if (!isBlank(avatarUrl)) next.avatarUrl = avatarUrl.trim();
+            next.userId = nonBlank(userId);
+            next.nickname = nonBlank(nickname);
+            next.douyinId = nonBlank(douyinId);
+            next.avatarUrl = nonBlank(avatarUrl);
             next.vip = vip;
-            if (!isBlank(vipStage)) next.vipStage = vipStage.trim();
+            next.vipStage = nonBlank(vipStage);
             next.updatedAt = System.currentTimeMillis();
             persist(next);
         }

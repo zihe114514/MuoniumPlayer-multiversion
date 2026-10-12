@@ -191,8 +191,13 @@ public class Music {
 
     /** 汽水登录流返回的一次性 play_auth；只在解析到下载完成之间使用，不写配置。 */
     private transient volatile String qishuiPlayAuth = "";
-    /** 本次解析出的全部音质档(码率 kbps,降序),来自汽水签名响应;仅用于 UI 展示。 */
-    private transient volatile List<Long> qishuiQualityBitrates = List.of();
+    /**
+     * 本次实际取到的那条流属于哪一档；上游没给可辨认的档位名时为 null。
+     *
+     * <p>描述的是「这一次点播发生了什么」，所以是 transient：不落盘、不参与相等性。
+     * 界面拿它与用户选的档位拼成「选的 → 实得」，取代从前那串码率列表。</p>
+     */
+    private transient volatile Quality qishuiActualTier;
 
     /**
      * Gson 在解码不可变网易云响应模型时，可能不运行字段初始化器
@@ -221,24 +226,13 @@ public class Music {
         qishuiPlayAuth = "";
     }
 
-    /** 本次解析可用的音质档(码率 kbps 降序);空表 = 未知。 */
-    public List<Long> getQishuiQualityBitrates() {
-        return qishuiQualityBitrates;
+    /** 本次实际取到的汽水档位；null = 上游没给可辨认的档位名。 */
+    public Quality getQishuiActualTier() {
+        return qishuiActualTier;
     }
 
-    public void setQishuiQualityBitrates(List<Long> bitrates) {
-        qishuiQualityBitrates = bitrates == null ? List.of() : List.copyOf(bitrates);
-    }
-
-    /** 音质档展示串,如 "324k/260k/132k/68k";未知返回空串。 */
-    public String getQishuiQualityTiersText() {
-        if (qishuiQualityBitrates.isEmpty()) return "";
-        StringBuilder out = new StringBuilder();
-        for (Long bitrate : qishuiQualityBitrates) {
-            if (out.length() > 0) out.append('/');
-            out.append(Math.round(bitrate / 1000.0)).append('k');
-        }
-        return out.toString();
+    public void setQishuiActualTier(Quality tier) {
+        qishuiActualTier = tier;
     }
 
     public enum PlaybackQuality {
@@ -1244,7 +1238,7 @@ public class Music {
                         QishuiMusicService.getSongUrl(getSourceId(), requestedQuality);
                 if (result == null) return null;
                 setQishuiPlayAuth(result.playAuth);
-                setQishuiQualityBitrates(result.availableBitrates);
+                setQishuiActualTier(result.actualTier);
                 playbackQuality = detectCadencePlaybackQuality(result.format, requestedQuality);
                 considerHighestQuality(result.format, result.bitrate);
                 return new Tuple<>(result.url, result.format);

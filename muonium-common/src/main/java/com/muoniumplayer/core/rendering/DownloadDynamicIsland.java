@@ -650,13 +650,21 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     public static void showQishuiBackendProgress(int percent) {
         int safePercent = Math.max(0, Math.min(100, percent));
         publishNotice(IslandNoticeType.QISHUI_BACKEND, "汽水音乐源",
-                safePercent >= 100 ? "下载完成，正在启动后端…" : "正在下载汽水音乐后端 " + safePercent + "%",
+                safePercent >= 100 ? "下载已接收，正在校验…" : "正在下载汽水音乐后端 " + safePercent + "%",
                 true);
+    }
+
+    public static void showQishuiBackendInstalling() {
+        publishNotice(IslandNoticeType.QISHUI_BACKEND, "汽水音乐源", "下载校验通过，正在解压安装…", true);
+    }
+
+    public static void showQishuiBackendStarting() {
+        publishNotice(IslandNoticeType.QISHUI_BACKEND, "汽水音乐源", "后端已安装，正在启动并检查状态…", true);
     }
 
     public static void showQishuiBackendFailure(String reason) {
         completePersistentNotice(IslandNoticeType.QISHUI_BACKEND, IslandNoticeType.QISHUI_BACKEND_ERROR,
-                "汽水音乐后端安装失败", safeNoticeValue(reason, "网络不可用") + " · 稍后自动重试");
+                "汽水音乐后端未就绪", safeNoticeValue(reason, "网络不可用") + " · 稍后自动重试");
     }
 
     public static void showQishuiBackendReady() {

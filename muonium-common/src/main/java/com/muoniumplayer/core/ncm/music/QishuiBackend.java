@@ -45,6 +45,10 @@ public final class QishuiBackend {
     private static volatile long lastProbeAt;
     private static volatile boolean lastProbeAvailable;
     private static volatile boolean lastProbeHasCookie;
+    /** 最近一次探活里后端自报的 pid / 父进程 pid / 是否带看门狗；0 / false = 未探到。 */
+    private static volatile long lastProbeBackendPid;
+    private static volatile long lastProbeParentPid;
+    private static volatile boolean lastProbeWatchdog;
     /** 探活超时：真机健康检查是本机回环，正常在毫秒级；2 秒的等待只会让发起方白等。 */
     private static final Duration PROBE_TIMEOUT = Duration.ofMillis(800);
 
@@ -53,6 +57,29 @@ public final class QishuiBackend {
 
     public static String baseUrl() {
         return System.getProperty("muonium.qishui.backend", DEFAULT_BASE);
+    }
+
+    /**
+     * 最近一次探活里后端自报的进程 pid（0 = 没探到 / 对方是老版本）。
+     * 只读，渲染路径可用。
+     */
+    static long peekBackendPid() {
+        return lastProbeBackendPid;
+    }
+
+    /**
+     * 最近一次探活里后端自报的父进程 pid（0 = 手动启动的后端，或对方是老版本）。
+     *
+     * <p>带看门狗拉起的后端会报它启动时看到的父进程（游戏 JVM）。这个值消失即代表
+     * 「父进程死了而它居然还活着」——{@link QishuiBackendLifecycle} 拿它识别孤儿。</p>
+     */
+    static long peekParentPid() {
+        return lastProbeParentPid;
+    }
+
+    /** 最近一次探活里后端是否自报带父进程看门狗（1.2.0 起才有这个字段）。 */
+    static boolean peekWatchdog() {
+        return lastProbeWatchdog;
     }
 
     /**
@@ -105,12 +132,22 @@ public final class QishuiBackend {
                 // 探活响应里就有 has_cookie,顺手解析:汽水源卡片的登录态提示要用。
                 // 后端持有 Cookie 而模组会话库为空是常态(Cookie 由登录工具/后端 config 导入)。
                 lastProbeHasCookie = ok && response.body().replace(" ", "").contains("\"has_cookie\":true");
+                // 1.2.0 起后端自报身份与父进程:游戏侧靠它识别「上一局留下的孤儿后端」
+                // 并决定要不要接管(见 QishuiBackendLifecycle.sweepOrphans)。
+                // 老版本没有这些字段——解析不到就记 0/false,当作「不是我拉起的」处理。
+                lastProbeBackendPid = ok ? readLongField(response.body(), "pid") : 0L;
+                lastProbeParentPid = ok ? readLongField(response.body(), "parent_pid") : 0L;
+                lastProbeWatchdog = ok
+                        && response.body().replace(" ", "").contains("\"watchdog\":true");
             } catch (Throwable throwable) {
                 ok = false;
             }
             lastProbeAvailable = ok;
             lastProbeAt = now;
             if (!ok) {
+                lastProbeBackendPid = 0L;
+                lastProbeParentPid = 0L;
+                lastProbeWatchdog = false;
                 // 本机没有可用后端:交给伴生包下载器(装包→拉起→健康检查→cookie 推送)。
                 // 它自带尝试预算与冷却,不会每次探测都触发。
                 QishuiCompanionDownload.onBackendMissing();
@@ -119,9 +156,55 @@ public final class QishuiBackend {
         }
     }
 
+    /**
+     * 从后端 JSON 里取一个整数型字段；没有 / 不是数字 / 负数都返回 0。
+     *
+     * <p>手写解析而不是上 Gson：探活是热路径上最频繁的一次调用，而返回值只有三个
+     * 固定字段，Gson 的反射开销不值得。容忍空白（后端输出的是美化 JSON）。</p>
+     */
+    private static long readLongField(String body, String field) {
+        int at = body.indexOf("\"" + field + "\"");
+        if (at < 0) return 0L;
+        int colon = body.indexOf(':', at);
+        if (colon < 0) return 0L;
+        int end = colon + 1;
+        while (end < body.length() && body.charAt(end) == ' ') end++;
+        int start = end;
+        while (end < body.length() && (Character.isDigit(body.charAt(end)) || body.charAt(end) == '-')) {
+            end++;
+        }
+        if (start == end) return 0L;
+        try {
+            long value = Long.parseLong(body.substring(start, end));
+            return value > 0 ? value : 0L;
+        } catch (NumberFormatException overflow) {
+            return 0L;
+        }
+    }
+
     /** 强制下次探测重跑(伴生包装好/拉起后立即调用,不等 30 秒缓存过期)。 */
     static void invalidateProbe() {
         lastProbeAt = 0L;
+    }
+
+    /**
+     * 单次健康检查，<b>不带任何副作用</b>：不写探测缓存、失败也不触发伴生包下载。
+     *
+     * <p>给「等一个刚被杀掉的旧后端真正放开端口」这类场景用。普通的
+     * {@link #isAvailable()} 不适合：它失败时会拉起 {@code onBackendMissing()}，
+     * 在「孤儿已杀、新实例还没起」的空窗里正好会多派一个下载/拉起线程去抢 8787。</p>
+     */
+    static boolean probeAlive() {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl() + "/api/health"))
+                    .timeout(PROBE_TIMEOUT)
+                    .GET().build();
+            HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+            return response.statusCode() == 200
+                    && response.body().replace(" ", "").contains("\"ok\":true");
+        } catch (Throwable unreachable) {
+            return false;
+        }
     }
 
     /** 后端是否持有账号 Cookie(以最近一次探活为准;后端不可用时为 false)。 */
@@ -133,18 +216,16 @@ public final class QishuiBackend {
     static void onBackendUp() {
         invalidateProbe();
         if (!isAvailable()) return;
-        // 正向:模组已登录而后端缺 Cookie → 推过去。
+        // 本地活动会话是用户当前选择：始终覆盖后端可能遗留的旧账号 Cookie。
         if (QishuiSessionStore.isLoggedIn()) {
             try {
-                syncCookieIfMissing();
+                pushCookie(QishuiSessionStore.getCookieHeader(), true);
+                QishuiMusicService.refreshProfile();
             } catch (Throwable error) {
                 System.err.println("[Music/Qishui] Cookie 推送失败: " + error);
             }
-        }
-        // 反向:后端有 Cookie 而模组会话库是空的(登录工具只写到后端的形态)→ 拉回来。
-        // 账号歌单/红心/收藏等一切写操作都以模组登录态为门槛,不回拉它们永远不可用,
-        // 尽管签名后端明明握着有效凭据。
-        if (backendHasCookie() && !QishuiSessionStore.isLoggedIn()) {
+        } else if (backendHasCookie()) {
+            // 只有本地没有活动账号时，才把登录工具写入后端的账号回拉。
             try {
                 pullCookieFromBackend();
             } catch (Throwable error) {
@@ -168,6 +249,8 @@ public final class QishuiBackend {
         if (parsed.isEmpty()) return;
         QishuiSessionStore.replaceCookies(parsed);
         QishuiMusicService.clearUserPlaylistsCache();
+        QishuiMusicService.refreshProfile();
+        QishuiAccountProfiles.saveCurrent();
         System.out.println("[Music/Qishui] 已从本机后端回拉 Cookie(" + cookie.length() + "B),账号功能解锁");
     }
 
@@ -193,7 +276,10 @@ public final class QishuiBackend {
             HttpRequest getStatus = HttpRequest.newBuilder(URI.create(baseUrl() + "/api/cookie"))
                     .timeout(TIMEOUT).GET().build();
             HttpResponse<String> status = HTTP.send(getStatus, HttpResponse.BodyHandlers.ofString());
-            if (status.statusCode() != 200 || !status.body().contains("\"has_cookie\":false")) {
+            // 后端所有响应都是 JSON.stringify(obj, null, 1) 美化输出，键值对里有空格。
+            // 与 isAvailable() 的 2026-10-11 教训同源：裸查 "has_cookie":false 永远匹配不上。
+            if (status.statusCode() != 200
+                    || !status.body().replace(" ", "").contains("\"has_cookie\":false")) {
                 return false;
             }
         }
@@ -206,12 +292,15 @@ public final class QishuiBackend {
                 .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(payload), StandardCharsets.UTF_8))
                 .build();
         HttpResponse<String> pushed = HTTP.send(push, HttpResponse.BodyHandlers.ofString());
-        if (pushed.statusCode() == 200 && pushed.body().contains("\"ok\":true")) {
+        // 同上：美化 JSON 必须先去空格再匹配，否则推送永远被当作失败。
+        if (pushed.statusCode() == 200
+                && pushed.body().replace(" ", "").contains("\"ok\":true")) {
             System.out.println("[Music/Qishui] 已把 Cookie 推送给本地后端(" + cookie.length() + "B"
                     + (force ? ",覆盖推送" : ",配对推送") + ")");
             return true;
         }
-        System.err.println("[Music/Qishui] Cookie 推送被后端拒绝: HTTP " + pushed.statusCode());
+        System.err.println("[Music/Qishui] Cookie 推送被后端拒绝: HTTP " + pushed.statusCode()
+                + " " + snippet(pushed.body()));
         return false;
     }
 

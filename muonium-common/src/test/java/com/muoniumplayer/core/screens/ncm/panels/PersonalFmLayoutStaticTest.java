@@ -223,8 +223,9 @@ class PersonalFmLayoutStaticTest {
 
         String manager = read(MANAGER);
         assertTrue(manager.contains("retireToHistory()"), "换下去的那首没被留下，历史列永远是空的");
-        assertEquals(3, count(manager, "retireToHistory();"),
-                "有一处换批没压历史：网易云、酷狗、接进播放三条路径都得记");
+        // 四条换批路径：网易云、酷狗、汽水发现流（468d911 接入时漏更新了这里）、接进播放。
+        assertEquals(4, count(manager, "retireToHistory();"),
+                "有一处换批没压历史：网易云、酷狗、汽水发现流、接进播放四条路径都得记");
     }
 
     @Test

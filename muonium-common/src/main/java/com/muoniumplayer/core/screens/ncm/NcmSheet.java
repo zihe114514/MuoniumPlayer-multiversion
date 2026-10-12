@@ -177,6 +177,10 @@ public abstract class NcmSheet extends NCMPanel {
         pageDirection = nextPageBackward ? -1 : 1;
         nextPageBackward = false;
         page.restart();
+        // 落点卡跟着旧页一起被抛弃了：置空等总览页重建时重新认领，滚入的一次性标记一并重算。
+        // 不置空的话 afterRenderChildren 还在读旧卡的坐标 —— 那棵子树已经没人排版了。
+        heroPlate = null;
+        heroScrolledIntoView = false;
         getChildren().clear();
     }
 
@@ -193,6 +197,8 @@ public abstract class NcmSheet extends NCMPanel {
         super.onRender(mouseX, mouseY);
         presentation = TransitionCurveCache.MOTION.at(clock.tick());
         pageFade = page.tick();
+        // 赶在滚动区排版之前：这一帧设进去的偏移，本帧 alignChildren 就会带上。
+        scrollHeroIntoViewIfNeeded();
     }
 
     // ──────────────────────────── 弹窗骨架 ────────────────────────────
@@ -441,6 +447,8 @@ public abstract class NcmSheet extends NCMPanel {
     private SheetHeroRelay.Origin heroOrigin;
     /** 这块飞行板要落进的那张卡，由 {@link #hero(Card)} 标出来。 */
     private Card heroPlate;
+    /** 本层打开后是否已经把落点卡滚进过视口：只做一次，之后用户滚到哪儿都不再拽。 */
+    private boolean heroScrolledIntoView;
 
     /**
      * 认领一次接力。<b>必须在 {@code onInit()} 之前调</b> —— 那之后 {@code sheet()} 已经建好了，
@@ -457,6 +465,78 @@ public abstract class NcmSheet extends NCMPanel {
     }
 
     /**
+     * 落点卡所在的滚动视口：卡片 ← 行 ← 滚动区。行与卡片都是各页自排的，中途层级可能变，
+     * 所以每帧现走父链找；找不到（落点不在滚动区里）返回 {@code null} —— 那一侧视为不被裁剪。
+     */
+    private ScrollPanel heroViewport() {
+        for (AbstractWidget<?> at = heroPlate.getParent(); at != null; at = at.getParent()) {
+            if (at instanceof ScrollPanel) return (ScrollPanel) at;
+        }
+        return null;
+    }
+
+    /**
+     * 把落点卡滚进视口：打开后的头两帧做一次、只做一次。
+     *
+     * <p>为什么要滚：当前来源排在列表下方时（YouTube 往后），落点卡在打开那一刻还在视口下沿
+     * 之外 —— 接力板的落点坐标每帧现读，板子就朝着屏幕外飞，中途被底板 stencil 齐根切平。
+     * 滚进视口之后落点有了诚实的坐标，接力照常起飞。</p>
+     *
+     * <p>由 {@link #feed} 的滚动区在每帧排版<b>之前</b>调：滚动偏移必须赶在 {@code alignChildren}
+     * 之前设进去，本帧的行坐标才带上这一滚，接力第二帧就能朝真目标飞。需要的偏移按落点行<b>前面
+     * 各行的累计高度</b>现算，而不是读卡片当前的绝对坐标 —— 建树后的第一帧所有行都还没量出尺寸、
+     * 全堆在顶部，那个坐标是错的；累计高度只依赖行高，第一帧过完就是真值。</p>
+     */
+    private void scrollHeroIntoViewIfNeeded() {
+        if (heroScrolledIntoView || heroPlate == null) return;
+        final ScrollPanel viewport = heroViewport();
+        if (viewport == null) {
+            heroScrolledIntoView = true;
+            return;
+        }
+        final AbstractWidget<?> row = heroPlate.getParent();
+        if (row == viewport) {
+            heroScrolledIntoView = true;
+            return;
+        }
+        // 行高还没量出来（建树后第一帧）就不动：这时算了也是错值，下一帧再算。
+        if (row.getHeight() <= 1.0) return;
+        double above = 0.0;
+        boolean found = false;
+        for (final AbstractWidget<?> child : viewport.getChildren()) {
+            if (child == row) {
+                found = true;
+                break;
+            }
+            if (child.isHidden()) continue;
+            above += child.getHeight() + viewport.getSpacing();
+        }
+        if (!found) return;
+        heroScrolledIntoView = true;
+        // 最小位移：够到视口下沿就行，不故意把卡片顶到视口顶部去。留出容差，
+        // 卡片入场时还要从下方 7 像素落上来，别让入场位被裁剪沿切掉。
+        final double bottom = above + row.getHeight() + SheetHeroRelay.VISIBILITY_TOLERANCE;
+        if (bottom > viewport.getHeight()) {
+            viewport.scrollToOffsetImmediately(bottom - viewport.getHeight());
+            return;
+        }
+        final double top = above - SheetHeroRelay.VISIBILITY_TOLERANCE;
+        if (top < 0.0) viewport.scrollToOffsetImmediately(top);
+    }
+
+    /**
+     * 起飞前的最后一道闸：落点卡必须落在它自己的滚动视口里。飞行板画在整棵控件树之外，只被
+     * 浮层底板那一刀 stencil 罩着；卡片被用户滚出视口后，它的绝对矩形越过了视口下沿 —— 照它飞
+     * 就是朝着屏幕外飞，中途被 stencil 切平。这时候整趟收手，让卡片自己那格淡入顶上，跟
+     * {@link PlaylistCoverHero} 的「落点不存在」是同一条退路。
+     */
+    private boolean heroLandingOutsideViewport() {
+        final ScrollPanel viewport = heroViewport();
+        return viewport != null && !SheetHeroRelay.fullyInside(viewport, heroPlate.getX(), heroPlate.getY(),
+                heroPlate.getWidth(), heroPlate.getHeight());
+    }
+
+    /**
      * 飞行板画在<b>所有子组件之后</b>：它起飞时要压过自己那层遮罩（那块按钮本来就在遮罩底下），
      * 落位时又要盖在自己那张卡的底板上，直到卡片自己淡满才交棒。
      *
@@ -467,6 +547,7 @@ public abstract class NcmSheet extends NCMPanel {
     protected void afterRenderChildren(double mouseX, double mouseY) {
         super.afterRenderChildren(mouseX, mouseY);
         if (heroOrigin == null || heroPlate == null) return;
+        if (heroLandingOutsideViewport()) return;
         SheetHeroRelay.render(heroOrigin, heroPlate.getX(), heroPlate.getY(),
                 heroPlate.getWidth(), heroPlate.getHeight(), heroPlate.getRadius(),
                 presentation, heroPlate.reveal);

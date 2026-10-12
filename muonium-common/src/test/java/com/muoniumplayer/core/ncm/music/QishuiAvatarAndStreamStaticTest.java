@@ -83,6 +83,22 @@ class QishuiAvatarAndStreamStaticTest {
         return new String(Files.readAllBytes(dir.resolve("QishuiMusicService.java")), StandardCharsets.UTF_8);
     }
 
+    /** 读共享层里的任意源文件（界面类在 screens 下，不在 music 包里）。 */
+    private static String readShared(String relative) throws IOException {
+        Path path = ProjectPaths.sharedJava().resolve(Path.of(relative.replace('/', java.io.File.separatorChar)));
+        assertTrue(Files.isRegularFile(path), "找不到源文件: " + relative);
+        return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+    }
+
+    /** 取一段源码：从 {@code from} 起到 {@code to} 之前。用来把断言钉在某个方法体内。 */
+    private static String between(String source, String from, String to) {
+        int start = source.indexOf(from);
+        assertTrue(start >= 0, "找不到起点: " + from);
+        int end = source.indexOf(to, start);
+        assertTrue(end > start, "找不到终点: " + to);
+        return source.substring(start, end);
+    }
+
     // ──────────────────────────────── 头像 ────────────────────────────────
 
     @Test
@@ -497,6 +513,78 @@ class QishuiAvatarAndStreamStaticTest {
         assertNull(selectAac(List.of(), Quality.LOSSLESS, 279_918L));
     }
 
+    // ──────────────────────────────── 音质档位短名 ────────────────────────────────
+
+    @Test
+    @DisplayName("上游的 quality 字段映射到宿主档位 —— 每个取值都是实测见过的")
+    void upstreamQualityMapsToHostTier() throws Exception {
+        // 取值集合来自 2026-10-12 对 /luna/pc/track_v2 真实响应的采样：
+        // PlayInfoList 的 Quality 字段只出现这几个。
+        assertEquals(Quality.STANDARD, tierOf("{\"quality\":\"medium\"}"));
+        assertEquals(Quality.HIGHER, tierOf("{\"quality\":\"higher\"}"));
+        assertEquals(Quality.EXHIGH, tierOf("{\"quality\":\"highest\"}"));
+        assertEquals(Quality.LOSSLESS, tierOf("{\"quality\":\"lossless\"}"));
+        assertEquals(Quality.HIRES, tierOf("{\"quality\":\"hi_res\"}"));
+        assertEquals(Quality.JYEFFECT, tierOf("{\"quality\":\"spatial\"}"));
+        // PascalCase 与 video_meta 里那套也要认（上游两处都见过）。
+        assertEquals(Quality.EXHIGH, tierOf("{\"Quality\":\"highest\"}"));
+        assertEquals(Quality.HIRES, tierOf("{\"video_meta\":{\"quality\":\"hi_res\"}}"));
+    }
+
+    @Test
+    @DisplayName("档位名认不出来时返回 null，绝不按码率瞎猜一档")
+    void unknownTierStaysNull() throws Exception {
+        // 「高清环绕」与「极高」的码率几乎一样（实测都是 324k），按码率猜必然猜错其中一个。
+        assertNull(tierOf("{\"bitrate\":324226}"));
+        assertNull(tierOf("{}"));
+    }
+
+    @Test
+    @DisplayName("选中的流要把它自己那一档带回去 —— 界面靠它说「实得」")
+    void selectedStreamCarriesItsOwnTier() throws Exception {
+        QishuiMusicService.ResolveResult result = selectAac(List.of(
+                stream("{\"main_url\":\"https://cdn.example/a.m4a\",\"format\":\"m4a\","
+                        + "\"codec_type\":\"aac\",\"quality\":\"highest\",\"bitrate\":260166}", 279_918L, ""),
+                stream("{\"main_url\":\"https://cdn.example/b.m4a\",\"format\":\"m4a\","
+                        + "\"codec_type\":\"aac\",\"quality\":\"medium\",\"bitrate\":68190}", 279_918L, "")),
+                Quality.LOSSLESS, 279_918L);
+        assertEquals("https://cdn.example/a.m4a", result.url);
+        assertEquals(Quality.EXHIGH, result.actualTier,
+                "实得档位要取自被选中的那条流，而不是最高档或最低档");
+    }
+
+    @Test
+    @DisplayName("播放条不再贴码率列表，只说「所选 → 实得」两个短名")
+    void qualityPillTellsChosenAndDelivered() throws IOException {
+        String pill = readShared("com/muoniumplayer/core/screens/ncm/NowPlayingInfo.java");
+        String label = between(pill,
+                "private static String qualityLabel(Music music, boolean english) {",
+                "private static String qualityEnglish(");
+        assertFalse(label.contains("getQishuiQualityTiersText") || label.contains("availableBitrates"),
+                "音质标签又把码率列表贴回去了 —— 用户读不懂 324k/321k/320k 那串数字，"
+                        + "他要知道的只是「我选了什么、听到的是什么」");
+        assertTrue(label.contains("getQishuiActualTier()"), "实得档位要读解析结果里的那一档");
+        assertTrue(label.contains("\" → \""),
+                "所选与实得要有一个方向记号，否则两个档位名并排看不出谁是结果");
+    }
+
+    @Test
+    @DisplayName("档位短名只有一份：菜单与播放条不许各写一套词")
+    void tierDisplayNamesHaveASingleSource() throws IOException {
+        String menu = readShared("com/muoniumplayer/core/screens/ncm/panels/ControlsBar.java");
+        assertFalse(menu.contains("case JYMASTER: return \"母带\""),
+                "音质菜单又自己写了一份档位中文名 —— 两处各写一套，改一处就会出现"
+                        + "「菜单写极高、标签写 EXHIGH」这种对不上的说法");
+        assertTrue(menu.contains("Quality.displayNameOf(quality)"),
+                "菜单的档位名应当取 Quality 那一份");
+        // 八个档位每一个都要有中文名，别落下谁变成枚举名。
+        for (Quality quality : Quality.values()) {
+            String name = quality.displayName();
+            assertTrue(name != null && !name.isEmpty() && !name.equals(quality.name()),
+                    quality + " 没有中文短名，界面会直接露出枚举名");
+        }
+    }
+
     @Test
     @DisplayName("只剩试听时仍然返回它 —— 有声音比静默好，但要在日志里说明")
     void previewOnlyFailsOpen() throws Exception {
@@ -630,6 +718,11 @@ class QishuiAvatarAndStreamStaticTest {
             throws Exception {
         return (QishuiMusicService.ResolveResult) invoke("selectAac",
                 new Class<?>[]{List.class, Quality.class, long.class}, candidates, quality, declared);
+    }
+
+    /** 上游候选节点 → 宿主档位。包内静态方法，测试直接反射调用。 */
+    private static Quality tierOf(String node) throws Exception {
+        return (Quality) invoke("tierOf", new Class<?>[]{JsonObject.class}, json(node));
     }
 
     private static int streamCompletenessRank(long durationMillis, long declaredMillis)

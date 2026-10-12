@@ -68,6 +68,71 @@ class QishuiThreadDecouplingStaticTest {
     }
 
     @Test
+    @DisplayName("汽水多账号切换先验证凭据，保存列表与活动会话分离")
+    void qishuiAccountProfilesUseValidatedSwitching() throws Exception {
+        String profiles = read(MUSIC + "QishuiAccountProfiles.java");
+        assertTrue(profiles.contains("ConfigPaths.QISHUI_ACCOUNTS"), "账号列表必须独立存放");
+        String switchTo = methodBody(profiles, "public static QishuiMusicService.CookieImport switchTo(");
+        assertTrue(switchTo.contains("QishuiMusicService.importCookie(account.cookie)"),
+                "切换不能直接覆盖活动 Cookie，必须先走真实账号接口校验");
+        assertTrue(profiles.contains("MAX_ACCOUNTS = 8"), "账号列表需要有明确上限");
+        assertTrue(profiles.contains("account.id.equals(old.id)"), "保存记录按账号 ID 去重");
+
+        String service = read(MUSIC + "QishuiMusicService.java");
+        String imported = methodBody(service, "public static CookieImport importCookie(");
+        assertTrue(imported.contains("QishuiAccountProfiles.saveCurrent()"),
+                "验证成功后的 Cookie 导入要自动保存账号资料");
+        assertTrue(imported.indexOf("pushCookie(joinCookieMap(merged), true)")
+                        < imported.indexOf("QishuiSessionStore.replaceCookies(merged)"),
+                "在线后端拒绝新 Cookie 时，本地活动账号不得先切换");
+        String cache = methodBody(service, "public static void clearUserPlaylistsCache()");
+        assertTrue(cache.contains("likedTrackIds = Collections.emptySet()"),
+                "切号后不能保留上一个账号的红心集合");
+        assertTrue(cache.contains("likedTrackIdsLoadAttempted = false"),
+                "切号后要允许重新加载红心集合");
+    }
+
+    @Test
+    @DisplayName("汽水头像按账号与签名 URL 隔离，昵称不可见时始终有占位")
+    void qishuiAccountIdentityHasStableFallbacks() throws Exception {
+        String service = read(MUSIC + "QishuiMusicService.java");
+        String display = methodBody(service, "public static String displayName(");
+        assertTrue(display.contains("汽水音乐账号"), "空白或仅特殊字符昵称应显示固定占位");
+        assertTrue(display.contains("Character.isISOControl"), "昵称显示时必须过滤控制字符");
+        String avatar = methodBody(service, "public static Location avatarLocation(");
+        assertTrue(avatar.contains("SHA-256"), "头像位置应以账号和头像 URL 的稳定摘要隔离");
+        assertFalse(avatar.contains("qishui_avatar.png"), "所有账号不能再共享固定头像位置");
+
+        String cadence = read(MUSIC + "NeteaseMusicService.java");
+        String location = methodBody(cadence, "public static Location getAccountAvatarLocation(MusicPlatform platform)");
+        assertTrue(location.contains("QishuiMusicService.avatarLocation"),
+                "当前账号头像与已保存账号行必须共用头像键生成器");
+    }
+
+    @Test
+    @DisplayName("汽水后端当前活动 Cookie 优先于旧后端 Cookie")
+    void qishuiBackendUsesLocalActiveAccountFirst() throws Exception {
+        String backend = read(MUSIC + "QishuiBackend.java");
+        String onUp = methodBody(backend, "static void onBackendUp()");
+        assertTrue(onUp.indexOf("QishuiSessionStore.isLoggedIn()") < onUp.indexOf("else if (backendHasCookie())"),
+                "本地活动账号存在时不得回拉后端残留账号");
+        assertTrue(onUp.contains("pushCookie(QishuiSessionStore.getCookieHeader(), true)"),
+                "本地活动账号应覆盖同步到签名后端");
+        assertTrue(onUp.contains("QishuiMusicService.refreshProfile()"),
+                "登录资料与签名头像 URL 应在后端启动后刷新");
+    }
+
+    @Test
+    @DisplayName("汽水账号页提供保存列表、验证切换与 Cookie 添加入口")
+    void qishuiAccountUiSupportsSavedProfiles() throws Exception {
+        String ui = read(SCREENS + "AccountManagerOverlay.java");
+        assertTrue(ui.contains("showSavedQishuiAccounts()"), "汽水详情页应能打开本地存号列表");
+        assertTrue(ui.contains("switchQishuiAccount("), "列表项应能切换活动账号");
+        assertTrue(ui.contains("removeQishuiAccount("), "列表项应能删除本地快捷记录");
+        assertTrue(ui.contains("qishuiAddAccountMode"), "通过列表添加后应返回汽水账号列表");
+    }
+
+    @Test
     @DisplayName("来源卡片副标题（每帧求值）只读后端缓存的探活结论，绝不自己探测")
     void accountLineNeverProbes() throws Exception {
         String source = read(SCREENS + "MusicSourceOverlay.java");
@@ -101,9 +166,45 @@ class QishuiThreadDecouplingStaticTest {
                 "入口必须把整段判定排到后台，否则客户端初始化线程要吃一次健康探测 + 两次 Cookie 同步");
         assertFalse(entry.contains("isAvailable()"),
                 "探测不该在入口的调用线程上跑");
-        // 真正的判定里必须有探测：它是拉起流程的一部分。
+        // 真正的判定在后台执行：启动前可以先用缓存探测，但需要显式失效，避免沿用上局状态。
         String blocking = methodBody(source, "private static void ensureStartedForGameBlocking(");
-        assertTrue(blocking.contains("isAvailable()"), "后台判定里应当探测后端健康");
+        assertTrue(blocking.contains("isAvailable()"), "后台判定应探测后端健康");
+        assertTrue(blocking.indexOf("invalidateProbe()") < blocking.indexOf("isAvailable()"),
+                "启动判定必须先清掉上一次游戏留下的缓存结论");
+
+        String start = methodBody(source, "private static void startOwned()");
+        assertTrue(start.contains("probeAlive()"), "新进程启动后的等待必须绕过 30 秒探活缓存");
+        assertTrue(start.indexOf("onBackendUp()") < start.indexOf("markBackendRunning()"),
+                "正式运行状态应在探活快照刷新和 Cookie 同步后发布");
+        assertTrue(start.contains("peekAvailable()"), "Cookie 同步后若后端失去响应，不能标记为已运行");
+    }
+
+    @Test
+    @DisplayName("下载器启动检查和健康等待均使用新鲜探活")
+    void companionDownloadUsesFreshHealthChecks() throws Exception {
+        String source = read(MUSIC + "QishuiCompanionDownload.java");
+        String start = methodBody(source, "private static Process startBackend(");
+        String wait = methodBody(source, "private static boolean awaitHealthy(");
+        assertTrue(start.contains("probeAlive()"), "启动前应直接确认监听状态，不能用旧探活缓存");
+        assertTrue(wait.contains("probeAlive()"), "启动等待期间每次检查都必须是新鲜探活");
+        assertFalse(wait.contains("isAvailable()"), "等待时的负缓存 TTL 不能长于健康等待窗口");
+    }
+
+    @Test
+    @DisplayName("来源卡有独立后端状态标记，健康态优先于残留失败态")
+    void sourceCardShowsBackendReadinessSeparately() throws Exception {
+        String download = read(MUSIC + "QishuiCompanionDownload.java");
+        String status = methodBody(download, "public static BackendStatus backendStatus()");
+        assertTrue(status.indexOf("peekAvailable()") < status.indexOf("case FAILED"),
+                "新鲜探活确认可用时，不能继续显示先前记录的启动失败");
+        assertTrue(status.contains("BackendStatus.VERIFYING"), "下载到 100% 后应转为校验状态");
+
+        String ui = read(SCREENS + "MusicSourceOverlay.java");
+        assertTrue(ui.contains("QishuiCompanionDownload::backendStatusLabel"),
+                "汽水来源卡应显示独立的后端状态胶囊");
+        assertTrue(ui.contains("this::qishuiBackendStatusColor"), "状态胶囊应按运行/等待/失败使用不同颜色");
+        assertTrue(download.contains("签名后端运行中 · 完整版可用"), "正常启动必须明确标记完整后端已运行");
+        assertTrue(download.contains("下载已接收，正在校验"), "100% 进度文案必须说明仍在校验而非已启动");
     }
 
     @Test
@@ -213,5 +314,157 @@ class QishuiThreadDecouplingStaticTest {
                 "兜底前缀要在「读 urls 数组」之前生效，否则还会走到裸路径那条分支");
         assertTrue(read("com/muoniumplayer/core/utils/network/HttpUtils.java").contains("getResponseCode()"),
                 "下载失败要按 HTTP 状态码区分可重试与不可重试：4xx 重复十次只会挂满线程抢带宽");
+    }
+
+    @Test
+    @DisplayName("随游戏拉起后端时必带看门狗标志——JVM 被强杀时这才是唯一能收尾的一条路")
+    void spawnedBackendCarriesWatchdogs() throws Exception {
+        String source = read(MUSIC + "QishuiBackendLifecycle.java");
+        String spawn = methodBody(source, "static Process spawn(File rootAbs)");
+        assertTrue(spawn.contains("--watchdog-stdin"),
+                "stdin EOF 看门狗：父进程一消失就退，是任务管理器强杀 JVM 时最快生效的信号");
+        assertTrue(spawn.contains("--parent-pid"),
+                "父 pid 看门狗：stdin 那条被管道形态搅乱时还有这条兜底（不依赖管道，更稳）");
+        assertTrue(spawn.contains("ProcessHandle.current().pid()"),
+                "传的必须是本 JVM 的 pid —— 后端要盯的就是游戏进程本身");
+        assertTrue(source.contains("sweepOrphans"),
+                "还要有「下一局清扫上一局孤儿」的路径：旧版本后端没有看门狗，只能靠它兜住");
+    }
+
+    @Test
+    @DisplayName("收孤儿前必须二次确认父进程仍不存在，绝不误杀别人正在用的后端")
+    void orphanSweepRechecksBeforeKilling() throws Exception {
+        String source = read(MUSIC + "QishuiBackendLifecycle.java");
+        String sweep = methodBody(source, "private static boolean sweepOrphans()");
+        // 两次 ProcessHandle.of(parentPid).isAlive()：进门前一次、动手前再一次。
+        int checks = sweep.split("ProcessHandle\\.of\\(parentPid\\)", -1).length - 1;
+        assertTrue(checks >= 2,
+                "探活结论最长 30 秒，期间父进程完全可能重新起来；动手前必须再核一次（当前只核了 "
+                        + checks + " 次）");
+        assertTrue(sweep.contains("peekWatchdog()"),
+                "只接管「自报带看门狗」的实例：parent_pid=0 的是用户手动开的，不能动");
+    }
+
+    @Test
+    @DisplayName("运行时改名后旧名仍要认——升级窗口里 1.1.0 的安装还在跑")
+    void runtimeNameFallsBackToLegacy() throws Exception {
+        String source = read(MUSIC + "QishuiCompanionDownload.java");
+        String find = methodBody(source, "static File findRuntime(File root)");
+        assertTrue(find.contains("runtimeFileName()"), "先找新名 qishui-backend.exe");
+        assertTrue(find.contains("\"node.exe\""),
+                "再回落旧名 node.exe：热补是后台的，只认新名会把存量安装误判成「没装」，"
+                        + "触发一次 33 MB 的重复下载");
+        assertTrue(source.contains("sweepStaleFiles"),
+                "旧运行时要能被清掉，否则改完名后 87 MB 的 node.exe 永远留在盘上；"
+                        + "清扫必须按清单走（sweepStaleFiles），不能退回只认 node.exe 的窄口径");
+    }
+
+    @Test
+    @DisplayName("探活不带副作用：清扫孤儿后等端口的轮询不得触发下载/拉起")
+    void probeAliveHasNoSideEffects() throws Exception {
+        String source = read(MUSIC + "QishuiBackend.java");
+        String probe = methodBody(source, "static boolean probeAlive()");
+        assertFalse(probe.contains("onBackendMissing"),
+                "「孤儿已杀、新实例未起」的空窗里若触发 onBackendMissing，会多派一个下载线程去抢 8787");
+        assertFalse(probe.contains("lastProbe"),
+                "单次探活不该写探测缓存（它不返回 has_cookie/pid 那些字段，写了就是脏数据）");
+    }
+
+    @Test
+    @DisplayName("后端响应匹配必须容忍美化 JSON 的空格——裸查 \\\"ok\\\":true 会把成功当失败")
+    void backendResponseMatchingToleratesPrettyJson() throws Exception {
+        String source = read(MUSIC + "QishuiBackend.java");
+        for (String signature : new String[]{
+                "static boolean probeAlive()",
+                "static boolean pushCookie(String cookie, boolean force)"}) {
+            String body = methodBody(source, signature);
+            for (String field : new String[]{"\\\"ok\\\":true", "\\\"has_cookie\\\":false"}) {
+                assertFalse(body.contains("body().contains(\"" + field + "\")"),
+                        signature + " 裸匹配 " + field + "：qs-backend 所有响应都是"
+                                + " JSON.stringify(obj, null, 1) 美化输出，键值对之间有空格，"
+                                + "裸匹配永远失败（2026-10-11 健康检查、2026-10-12 Cookie 推送"
+                                + "各踩过一次）。必须先 replace(\" \", \"\") 再 contains");
+            }
+            if (signature.contains("pushCookie")) {
+                assertTrue(body.contains("replace(\" \", \"\")"),
+                        "推送响应判定必须先去空格再匹配（见上一条断言的教训）");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("热补的落盘顺序：清单先于清扫，清单先于删暂存目录——顺序错了清单就是空的")
+    void hotPatchWritesManifestBeforeSweepingAndBeforeDeletingStaging() throws Exception {
+        String source = read(MUSIC + "QishuiCompanionDownload.java");
+        String refresh = methodBody(source, "static void refreshIfNeeded()");
+        int manifest = refresh.indexOf("writeManifest(packRoot, root)");
+        int sweep = refresh.indexOf("sweepStaleFiles()");
+        int deleteIncoming = refresh.indexOf("deleteRecursively(incoming)");
+        assertTrue(manifest > 0 && sweep > 0 && deleteIncoming > 0,
+                "热补路径里三件事都要在：写清单 / 清扫 / 删暂存目录");
+        assertTrue(manifest < sweep,
+                "清单必须先写再清扫：清扫以清单为唯一依据，顺序反了新文件会被当成旧残留删掉");
+        assertTrue(manifest < deleteIncoming,
+                "清单必须在删暂存目录之前写：清单记录的就是刚解压出来的那份内容，"
+                        + "incoming 删掉后无从生成，空清单会让清扫退化成什么都不清");
+    }
+
+    @Test
+    @DisplayName("首次安装同样先写清单再清扫，且版本标记要等落点校验通过")
+    void firstInstallKeepsTheSameOrdering() throws Exception {
+        String source = read(MUSIC + "QishuiCompanionDownload.java");
+        String run = methodBody(source, "private static void run()");
+        int manifest = run.indexOf("writeManifest(packRoot, root)");
+        int sweep = run.indexOf("sweepStaleFiles()");
+        int marker = run.indexOf("writeVersionMarker()");
+        assertTrue(manifest > 0 && sweep > 0,
+                "首次安装也要写清单并清扫——否则用户第一次装完就自带一份混装");
+        assertTrue(manifest < sweep,
+                "首次安装同样是「先清单、后清扫」：清单描述装完后目录该有什么");
+        assertTrue(run.indexOf("安装落点校验失败") < marker,
+                "版本标记要等落点校验（server.mjs + 运行时都在）通过才写："
+                        + "标记一写，热补就不会再跑，半成品安装会被永久当成好的");
+    }
+
+    @Test
+    @DisplayName("每局保养在生命周期里被调用：被占用的文件只能等旧进程退出后才收得掉")
+    void maintenanceRunsEveryGameStart() throws Exception {
+        String source = read(MUSIC + "QishuiBackendLifecycle.java");
+        String start = methodBody(source, "private static void ensureStartedForGameBlocking()");
+        assertTrue(start.contains("maintainInstallRoot()"),
+                "安装目录保养必须每局跑：热补时被占用的运行时/清单外文件，"
+                        + "只有等旧进程退出后才删得掉，而那时热补不会再跑（版本标记已是新版）");
+        assertTrue(start.contains("refreshIfNeeded()"), "热补也在同一条启动链上");
+    }
+
+    @Test
+    @DisplayName("清扫与暂存启用都不碰用户数据：保留名单里是设备身份、Cookie 与音频缓存")
+    void sweepPreservesUserData() throws Exception {
+        String source = read(MUSIC + "QishuiCompanionDownload.java");
+        String names = declarationOf(source, "PRESERVED_NAMES");
+        for (String guarded : new String[]{"config.json", "pack.version", "backend.log"}) {
+            assertTrue(names.contains(guarded),
+                    "保留名单少了 " + guarded + "——扫掉的每一样都是用户找不回来的东西");
+        }
+        assertTrue(declarationOf(source, "PRESERVED_PREFIXES").contains("cache/"),
+                "已解密的音频缓存整个目录都要保留（那是取流链路重复下载的成本）");
+    }
+
+    /** 取一个多行字段声明（从「名字 = 」到配对的右括号），跨行也能读全。 */
+    private static String declarationOf(String source, String fieldName) {
+        int at = source.indexOf(fieldName + " = ");
+        assertTrue(at >= 0, "找不到字段声明: " + fieldName);
+        int depth = 0;
+        for (int i = at; i < source.length(); i++) {
+            char c = source.charAt(i);
+            if (c == '(') depth++;
+            else if (c == ')') {
+                depth--;
+                if (depth == 0) return source.substring(at, i + 1);
+            } else if (c == ';' && depth == 0) {
+                return source.substring(at, i + 1);
+            }
+        }
+        throw new AssertionError("字段声明没有收尾: " + fieldName);
     }
 }

@@ -238,6 +238,10 @@ class SheetMotionStaticTest {
                 "接力不再随落点那张卡变实而淡出：会有一帧两块板都全亮");
         assertTrue(relay.contains("eased >= 1.0 || eased <= 0.0"),
                 "落位与还没起飞时它还在画，等于给已经在屏幕上的卡片再垫一块板");
+        // 位移通道吃到的 eased 已经是 MOTION(t) 缓动过的进度；再过一条曲线等于缓动两次 ——
+        // 前段赖在按钮上不动、中段速度翻倍地窜，落点前又拖一条长尾巴。
+        assertFalse(relay.contains("MOTION_LAGGING.at(eased)"),
+                "接力位移又套上了第二层缓动：板子先赖着不走再猛窜，落点前拖长尾");
 
         String sheet = read(ProjectPaths.sourceFile(Paths.get("com/muoniumplayer/core/screens/ncm", "NcmSheet.java")));
         // 取最后一次出现：NcmSheet 的 body() 里还有一格匿名 Panel 的 afterRenderChildren，
@@ -274,6 +278,18 @@ class SheetMotionStaticTest {
             assertTrue(claim >= 0 && (init < 0 || claim < init),
                     opener + " 没有在建骨架之前交出起点");
         }
+
+        // 落点画在滚动区裁剪之外：卡片滚出视口后照它的绝对矩形飞，就是朝着屏幕外飞。
+        String sheet2 = read(ProjectPaths.sourceFile(Paths.get("com/muoniumplayer/core/screens/ncm", "NcmSheet.java")));
+        assertTrue(sheet2.contains("heroLandingOutsideViewport()"),
+                "接力不再检查落点是否落在滚动视口里：卡片滚出视口后板子会朝屏幕外飞、被底板切平");
+        assertTrue(sheet2.contains("SheetHeroRelay.fullyInside(viewport"),
+                "视口判定不再走 SheetHeroRelay.fullyInside：PlaylistCoverHero 那条规矩又只剩一半了");
+        // 溢出 bug 的正解是滚入：打开后把落点卡最小位移拽进视口，接力才有得飞。
+        assertTrue(sheet2.contains("scrollHeroIntoViewIfNeeded()") && sheet2.contains("scrollToOffsetImmediately"),
+                "落点卡在视口下方时不再滚入视口：YouTube 往后的音源一打开接力就整趟放弃");
+        assertTrue(body(sheet2, "protected void beginPage()").contains("heroPlate = null"),
+                "换页没有抛弃旧页的落点卡：afterRenderChildren 会去读一棵已经没人排版的子树");
     }
 
     @Test

@@ -1145,18 +1145,9 @@ public class ControlsBar extends NCMPanel {
     }
 
     private static String formatQuality(Quality quality) {
-        if (quality == null) return "无损";
-        switch (quality) {
-            case STANDARD: return "标准";
-            case HIGHER: return "高品质";
-            case EXHIGH: return "极高";
-            case LOSSLESS: return "无损";
-            case HIRES: return "Hi-Res";
-            case JYEFFECT: return "高清环绕";
-            case SKY: return "沉浸音质";
-            case JYMASTER: return "母带";
-            default: return quality.getQuality();
-        }
+        // 档位短名与播放条那枚音质标签共用 Quality.displayName()：两处各写一套词，
+        // 用户就会看到「我选的是极高、标签上却写着 EXHIGH」这种对不上的说法。
+        return Quality.displayNameOf(quality);
     }
     private String formatDuration(float totalMillis) {
         int totalSeconds = (int) (totalMillis / 1000);

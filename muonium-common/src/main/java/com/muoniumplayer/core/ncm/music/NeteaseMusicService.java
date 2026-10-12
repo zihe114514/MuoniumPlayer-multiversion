@@ -895,8 +895,8 @@ public final class NeteaseMusicService {
                     ? null : Location.of("muonium/textures/account/bilibili_avatar.png");
         }
         if (platform == MusicPlatform.QISHUI) {
-            return QishuiMusicService.getAvatarUrl().isEmpty()
-                    ? null : Location.of("muonium/textures/account/qishui_avatar.png");
+            String url = QishuiMusicService.getAvatarUrl();
+            return QishuiMusicService.avatarLocation(QishuiMusicService.getAccountId(), url);
         }
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.getAvatarLocation();
         if (platform == MusicPlatform.QQ) {

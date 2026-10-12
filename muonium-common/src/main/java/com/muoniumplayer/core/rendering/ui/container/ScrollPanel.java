@@ -277,6 +277,11 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
         }
     }
 
+    /**
+     * 立即滚到内容末尾，跳过滚动补间。给「打开浮层的那一帧就要看到底部」的场景用：
+     * {@link #scrollToEnd()} 只设目标值，actual 还要好几帧才追上，那几帧里排在视口外的
+     * 行仍然持有越过下沿的绝对坐标。
+     */
     public void scrollToEndImmediately() {
         switch (this.alignment) {
             case VERTICAL: {
@@ -304,6 +309,19 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
                 break;
             }
         }
+    }
+
+    /**
+     * 立即把滚动偏移钉到指定值，actual 与 target 一起设、不经过补间，并夹进当帧的内容范围。
+     *
+     * <p>给「打开浮层的那一帧就要让某一行落进视口」用：接力飞行板的落点坐标每帧现读，
+     * 若靠 target 补间追过去，追的那几帧里落点还在视口下方，板子就朝屏幕外飞。夹取读的是
+     * 子项当帧的尺寸，所以要在子项排完版之后再调（首次渲染的 afterRenderChildren 里正合适）。</p>
+     */
+    public void scrollToOffsetImmediately(double offset) {
+        double maximum = this.getMaximumScrollOffset();
+        this.targetScrollOffset = Math.max(0, Math.min(offset, maximum));
+        this.actualScrollOffset = this.targetScrollOffset;
     }
 
     public boolean isScrolledToEnd() {

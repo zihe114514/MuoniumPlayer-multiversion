@@ -3,6 +3,7 @@ package com.muoniumplayer.core.screens.ncm;
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
+import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 
 import java.awt.Color;
 import java.util.function.IntSupplier;
@@ -31,7 +32,31 @@ public final class SheetHeroRelay implements SharedRenderingConstants, SharedCon
     /** 形状绘制是接口上的 default 方法，静态调用需要一个实例；除此之外这个对象没有状态。 */
     private static final SheetHeroRelay GFX = new SheetHeroRelay();
 
+    /**
+     * 起/落矩形伸出视口多少以内仍算「看得见」。卡片入场时从下方 7 像素落上来、悬停时向四周
+     * 胀 3 像素，这些设计内的溢出不该把接力判死 —— 留 6 逻辑像素的容差。
+     */
+    public static final double VISIBILITY_TOLERANCE = 6.0;
+
     private SheetHeroRelay() {
+    }
+
+    /**
+     * 矩形是否（近似）完整落在一块视口里。容器为 {@code null} 表示这一侧根本不被裁剪，恒真。
+     *
+     * <p>飞行板画在整棵控件树之外，只被浮层底板那一刀 stencil 罩着；落点卡却还被滚动区裁着。
+     * 卡片滚出视口后它的绝对矩形还在视口下沿之外 —— 照它飞就是朝着屏幕外飞，中途被 stencil
+     * 齐根切平，看起来是「板子漏出去了」而不是「板子落进去了」。所以视口外的落点没有诚实的
+     * 目标矩形，整趟放弃（{@link PlaylistCoverHero} 早立过同一条规矩）。
+     */
+    public static boolean fullyInside(final AbstractWidget<?> viewport,
+                                      final double x, final double y,
+                                      final double width, final double height) {
+        if (viewport == null) return true;
+        final double t = VISIBILITY_TOLERANCE;
+        return x >= viewport.getX() - t && y >= viewport.getY() - t
+                && x + width <= viewport.getX() + viewport.getWidth() + t
+                && y + height <= viewport.getY() + viewport.getHeight() + t;
     }
 
     /**
@@ -80,7 +105,9 @@ public final class SheetHeroRelay implements SharedRenderingConstants, SharedCon
         double alpha = 1.0 - landing;
         if (eased >= 1.0 || eased <= 0.0 || alpha <= .004) return;
 
-        double m = TransitionCurveCache.MOTION_LAGGING.at(eased);
+        // eased 已经是 MOTION(t) 缓动过的进度，位移通道直接用它；再套一层缓动曲线等于
+        // 缓动两次 —— 前段赖在按钮上不动、中段速度翻倍地窜，落点前又拖一条长尾巴。
+        double m = eased;
         double width = from.width + (targetWidth - from.width) * m;
         double height = from.height + (targetHeight - from.height) * m;
         double radius = from.radius + (targetRadius - from.radius) * m;

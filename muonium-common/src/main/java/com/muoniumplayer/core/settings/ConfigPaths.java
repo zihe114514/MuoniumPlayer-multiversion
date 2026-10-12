@@ -65,6 +65,8 @@ public final class ConfigPaths {
      * 由宿主自己完成，单独保存也便于退出登录时只清除汽水凭据。</p>
      */
     public static final File QISHUI_AUTH = new File(CONFIG_DIRECTORY, "qishui_auth.json");
+    /** 汽水已保存账号列表；与当前活动会话分开，切换失败不会覆盖现账号。 */
+    public static final File QISHUI_ACCOUNTS = new File(CONFIG_DIRECTORY, "qishui_accounts.json");
 
     /**
      * Spotify 的本机配置：用户自备的 Client ID 与市场代码。

@@ -14,6 +14,7 @@ import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseAccountProfiles;
 import com.muoniumplayer.core.ncm.music.QishuiLoginBridge;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
+import com.muoniumplayer.core.ncm.music.QishuiAccountProfiles;
 import com.muoniumplayer.core.ncm.music.QRCodeGenerator;
 import com.muoniumplayer.core.ncm.music.dto.User;
 import com.muoniumplayer.core.rendering.BrandVectorIcons;
@@ -105,6 +106,7 @@ public class AccountManagerOverlay extends NcmSheet {
      */
     private volatile int statusTone;
     private volatile boolean requestRunning;
+    private volatile boolean qishuiAddAccountMode;
     /** 二维码贴图是否已就绪。没就绪时盘里放占位图标，而不是露出一片空白。 */
     private volatile boolean qrReady;
     /**
@@ -314,6 +316,7 @@ public class AccountManagerOverlay extends NcmSheet {
     /** {@code addAccountByQr}：即便已经有网易云账号在线，也走扫码添加另一个账号的流程。 */
     private void showDetail(final MusicPlatform platform, final boolean addAccountByQr) {
         final long token = pageGeneration.incrementAndGet();
+        qishuiAddAccountMode = platform == MusicPlatform.QISHUI && addAccountByQr;
         detailPlatform = platform;
         requestRunning = false;
         qrReady = false;
@@ -321,6 +324,10 @@ public class AccountManagerOverlay extends NcmSheet {
         loginSucceeded = false;
 
         final boolean loggedIn = NeteaseMusicService.isLoggedIn(platform);
+        if (platform == MusicPlatform.QISHUI && loggedIn) {
+            // 第一次启用存号器时，把当前活动账号补进列表；失败不会影响当前登录。
+            MultiThreadingUtil.runAsync(QishuiAccountProfiles::saveCurrent);
+        }
         // 汽水的 Passport 取码/轮询要 a_bogus / msToken，只有官方安全组件在浏览器渲染进程里
         // 算得出来，Java 侧没有。所以码由外部取码工具出：工具在就照常摆二维码，工具不在才
         // 退回只留 Cookie 这一条路。<b>不做静默回落</b>——内置那条无签名请求必然被上游拒绝，
@@ -360,9 +367,9 @@ public class AccountManagerOverlay extends NcmSheet {
         } else if (platform == MusicPlatform.KUGOU) {
             // 常有一颗「备选取流」开关；没登录时再多一颗 token 粘贴登录。
             extras = loggedIn ? 1 : 2;
-        } else if (qishuiCookieOnly) {
-            // 未登录时「Cookie 登录」就是主按钮，不再单占次级排；已登录后保留一颗换 Cookie。
-            extras = loggedIn ? 1 : 0;
+        } else if (platform == MusicPlatform.QISHUI) {
+            // 存号器一行；缺外部工具时已登录还会多一颗「导入新的 Cookie」。
+            extras = qishuiCookieOnly && loggedIn ? 2 : 1;
         } else {
             extras = 0;
         }
@@ -373,8 +380,8 @@ public class AccountManagerOverlay extends NcmSheet {
                 + (qqChannelPicker || kugouVariantPicker ? SEGMENT_BLOCK : 0.0);
 
         final Panel dialog = sheet(462, () -> HEADER_H + content + footer);
-        subHeader(dialog, addAccountByQr ? this::showSavedNeteaseAccounts : this::showOverview,
-                () -> addAccountByQr ? "扫码添加网易云账号" : platform.getDisplayName() + "账号",
+        subHeader(dialog, addAccountByQr ? this::showSavedQishuiAccounts : this::showOverview,
+                () -> addAccountByQr ? "扫码添加汽水账号" : platform.getDisplayName() + "账号",
                 () -> addAccountByQr ? "扫码成功后自动回到已保存账号"
                         : loggedIn ? "本地已保存这个账号的登录凭据"
                         : qishuiCookieOnly ? "未找到外部取码工具 · 可改用 Cookie 登录"
@@ -418,6 +425,13 @@ public class AccountManagerOverlay extends NcmSheet {
             secondaryAction(dialog, 1, () -> PartyIcons.KEY, () -> "导入新的 Cookie",
                     () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
                     this::showQishuiCookieLogin);
+        }
+        if (!addAccountByQr && platform == MusicPlatform.QISHUI) {
+            // 换 Cookie 那颗只在缺外部工具时出现（1）；其余情况主按钮下第一排就是存号器。
+            secondaryAction(dialog, qishuiCookieOnly ? 2 : 1, () -> PartyIcons.GROUP,
+                    () -> "已保存账号（" + QishuiAccountProfiles.load().size() + "）",
+                    () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                    this::showSavedQishuiAccounts);
         }
         if (!addAccountByQr && platform == MusicPlatform.KUGOU) {
             // 手上已经有 App 抓到的 token 时，不必为了换设备再扫一次码。与网易云那侧的
@@ -870,7 +884,10 @@ public class AccountManagerOverlay extends NcmSheet {
         beginPage();
 
         final Panel dialog = sheet(452, () -> 200.0);
-        subHeader(dialog, back(() -> showDetail(MusicPlatform.QISHUI)), () -> "Cookie 登录",
+        subHeader(dialog, back(() -> {
+                    if (qishuiAddAccountMode) showSavedQishuiAccounts();
+                    else showDetail(MusicPlatform.QISHUI);
+                }), () -> "Cookie 登录",
                 () -> "需要外部工具获取 Cookie：网盘 / QQ群下载 · 仅本地保存",
                 MusicPlatform.QISHUI::getBrandColor);
 
@@ -964,7 +981,6 @@ public class AccountManagerOverlay extends NcmSheet {
                 });
                 return;
             }
-            // 失败路径什么都不写：本地原来登录着谁，就还是谁。
             if (!result.success) {
                 MultiThreadingUtil.runOnMainThread(() -> {
                     requestRunning = false;
@@ -981,8 +997,6 @@ public class AccountManagerOverlay extends NcmSheet {
                 statusTone = 1;
                 DownloadDynamicIsland.showNetworkConnectionSuccess("汽水音乐账号");
             });
-            // 成功那一行停留一下再换页。这一觉只能睡在后台线程：主线程 sleep 会把整个游戏冻住半秒，
-            // 用户看到的是点完「验证并登录」之后界面卡死，而不是成功提示。
             try {
                 Thread.sleep(SUCCESS_HOLD_MILLIS);
             } catch (InterruptedException ignored) {
@@ -993,7 +1007,12 @@ public class AccountManagerOverlay extends NcmSheet {
                 requestRunning = false;
                 if (!isCurrent(MusicPlatform.QISHUI, token)) return;
                 NCMScreen.getInstance().markDirty();
-                showDetail(MusicPlatform.QISHUI);
+                if (qishuiAddAccountMode) {
+                    qishuiAddAccountMode = false;
+                    showSavedQishuiAccounts();
+                } else {
+                    showDetail(MusicPlatform.QISHUI);
+                }
             });
         });
     }
@@ -1186,6 +1205,173 @@ public class AccountManagerOverlay extends NcmSheet {
     }
 
     // ════════════════════════════ 三级页：已保存账号 ════════════════════════════
+
+    private void showSavedQishuiAccounts() {
+        final long token = pageGeneration.incrementAndGet();
+        detailPlatform = MusicPlatform.QISHUI;
+        requestRunning = false;
+        statusText = "点一行即可切换；移除只删除本地快捷记录";
+        statusTone = 0;
+        beginPage();
+
+        final List<QishuiAccountProfiles.Account> accounts = QishuiAccountProfiles.load();
+        final double listHeight = accounts.isEmpty()
+                ? 84.0 : Math.min(accounts.size() * SAVED_ROW, 4 * SAVED_ROW);
+        final Panel dialog = sheet(468, () -> HEADER_H + LEAD + listHeight + 84.0);
+        subHeader(dialog, back(() -> showDetail(MusicPlatform.QISHUI)), () -> "汽水已保存账号",
+                () -> "本地切换 · 最多保存 8 个", MusicPlatform.QISHUI::getBrandColor);
+
+        final Panel body = body(dialog, () -> HEADER_H, () -> 84.0);
+        final ScrollPanel feed = feed(body);
+        strip(feed, LEAD);
+        if (accounts.isEmpty()) {
+            emptyState(strip(feed, 84.0));
+        } else {
+            for (int i = 0; i < accounts.size(); i++) {
+                qishuiAccountRow(strip(feed, SAVED_ROW), i, accounts.get(i), token);
+            }
+        }
+
+        final boolean bridgeReady = QishuiLoginBridge.isAvailable();
+        final RoundedButtonWidget add = action(dialog,
+                () -> bridgeReady ? PartyIcons.PERSON_ADD : PartyIcons.KEY,
+                () -> bridgeReady ? "扫码添加" : "Cookie 添加", FontManager.pf12bold,
+                () -> 0xFFFFFF, () -> {
+                    if (requestRunning) return;
+                    if (bridgeReady) showDetail(MusicPlatform.QISHUI, true);
+                    else {
+                        qishuiAddAccountMode = true;
+                        showQishuiCookieLogin();
+                    }
+                });
+        add.setBeforeRenderCallback(() -> {
+            add.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 30);
+            add.setPosition(PAD + CARD_INSET, dialog.getHeight() - 76);
+            add.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF,
+                    add.isHovering() ? .16 : 0.0));
+        });
+        tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> dialog.getHeight() - 30);
+    }
+
+    private void qishuiAccountRow(final Panel row, final int slot,
+                                  final QishuiAccountProfiles.Account account, final long token) {
+        final boolean current = QishuiAccountProfiles.isActive(account);
+        final Card[] self = new Card[1];
+        final Card card = card(row, slot, () -> 0.0, () -> 52.0, () -> current
+                ? mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
+                MusicPlatform.QISHUI.getBrandColor(), .22)
+                : mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
+                NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), self[0].hover));
+        self[0] = card;
+        card.setShouldOverrideMouseCursor(!current);
+        card.setOnClickCallback((x, y, button) -> {
+            if (button != 0 || requestRunning || current) return false;
+            switchQishuiAccount(account, token);
+            return true;
+        });
+        stroke(card, 12.0, MusicPlatform.QISHUI::getBrandColor, () -> current ? .5 : 0.0);
+
+        final RoundedRectWidget disc = new RoundedRectWidget();
+        card.addChild(disc);
+        disc.setClickable(false);
+        disc.setRadius(11);
+        disc.setBeforeRenderCallback(() -> {
+            disc.setBounds(36, 36);
+            disc.setPosition(12, card.getHeight() * .5 - 18);
+            disc.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
+                    MusicPlatform.QISHUI.getBrandColor(), .30));
+        });
+        final String initial = initial(account.getDisplayName());
+        final LabelWidget letter = label(disc, initial, FontManager.pf16bold);
+        letter.setBeforeRenderCallback(() -> {
+            letter.setColor(0xFFFFFF);
+            letter.setPosition(18 - FontManager.pf16bold.getStringWidthD(initial) * .5,
+                    inkTop(letter, 18.0));
+        });
+        final Location avatar = account.getAvatarLocation();
+        final RoundedImageWidget photo = new RoundedImageWidget(
+                () -> AccountAvatar.textureOrNull(account.getAvatarUrl(), avatar) == null ? null : avatar,
+                0, 0, 36, 36);
+        disc.addChild(photo);
+        photo.setClickable(false);
+        photo.setRadius(11);
+        photo.setLinearFilter(true);
+        photo.setBeforeRenderCallback(() -> {
+            photo.setBounds(36, 36);
+            photo.setPosition(0, 0);
+        });
+
+        final RoundedRectWidget remove = new RoundedRectWidget();
+        card.addChild(remove);
+        remove.setRadius(9);
+        remove.setShouldOverrideMouseCursor(true);
+        remove.setOnClickCallback((x, y, button) -> {
+            if (button != 0 || requestRunning) return false;
+            removeQishuiAccount(account);
+            return true;
+        });
+        remove.setBeforeRenderCallback(() -> {
+            remove.setBounds(26, 26);
+            remove.setPosition(Math.max(0, card.getWidth() - 38), card.getHeight() * .5 - 13);
+            remove.setColor(remove.isHovering()
+                    ? mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND), BAD_COLOR, .35)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+        icon(remove, PartyIcons.CLOSE, ICON_S, () -> 13.0, () -> 13.0,
+                () -> remove.isHovering() ? 0xFFFFFF
+                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+
+        final Panel currentLayer = veil(card, () -> current ? 1.0 : 0.0);
+        final RoundedRectWidget flag = pill(currentLayer, () -> PartyIcons.CHECK, () -> "当前",
+                () -> OK_COLOR, () -> currentLayer.getWidth() - 46, () -> currentLayer.getHeight() * .5);
+        final LabelWidget name = label(card, account::getDisplayName, FontManager.pf12bold);
+        name.setBeforeRenderCallback(() -> {
+            name.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            name.setMaxWidth(Math.max(1, card.getWidth() - 58 - 54 - (current ? flag.getWidth() : 0)));
+            name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            name.setPosition(58, inkTop(name, card.getHeight() * .5 - 8));
+        });
+        final LabelWidget meta = label(card, account.getMeta(), FontManager.pf12);
+        meta.setBeforeRenderCallback(() -> {
+            meta.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            meta.setMaxWidth(Math.max(1, card.getWidth() - 58 - 54 - (current ? flag.getWidth() : 0)));
+            meta.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            meta.setPosition(58, inkTop(meta, card.getHeight() * .5 + 8));
+        });
+    }
+
+    private void switchQishuiAccount(final QishuiAccountProfiles.Account account, final long token) {
+        requestRunning = true;
+        statusText = "正在验证并切换汽水账号…";
+        statusTone = 3;
+        MultiThreadingUtil.runAsync(() -> {
+            QishuiMusicService.CookieImport result = QishuiAccountProfiles.switchTo(account);
+            MultiThreadingUtil.runOnMainThread(() -> {
+                requestRunning = false;
+                if (!isCurrent(MusicPlatform.QISHUI, token)) return;
+                if (!result.success) {
+                    statusText = "切换失败：" + result.message;
+                    statusTone = 2;
+                    return;
+                }
+                NCMScreen.getInstance().markDirty();
+                showDetail(MusicPlatform.QISHUI);
+            });
+        });
+    }
+
+    private void removeQishuiAccount(final QishuiAccountProfiles.Account account) {
+        NCMScreen screen = NCMScreen.getInstance();
+        if (screen == null) return;
+        screen.openConfirmation("移除汽水已保存账号",
+                "只从本地列表移除「" + account.getDisplayName() + "」，不会退出当前账号。",
+                "移除", () -> {
+                    QishuiAccountProfiles.remove(account);
+                    showSavedQishuiAccounts();
+                    statusText = "已移除「" + account.getDisplayName() + "」";
+                    statusTone = 1;
+                });
+    }
 
     private void showSavedNeteaseAccounts() {
         final long token = pageGeneration.incrementAndGet();
@@ -1444,7 +1630,9 @@ public class AccountManagerOverlay extends NcmSheet {
                         transientErrors = 0;
                         publishQrStatus(platform, token, "已扫码，请在手机上确认…", 3);
                     } else if (state == QrLoginState.CONFIRMED) {
-                        if (platform == MusicPlatform.NETEASE) {
+                        if (platform == MusicPlatform.QISHUI) {
+                            QishuiAccountProfiles.saveCurrent();
+                        } else if (platform == MusicPlatform.NETEASE) {
                             String confirmedCookie = OptionsUtil.getCookie();
                             if (confirmedCookie == null || confirmedCookie.trim().isEmpty()) {
                                 throw new IllegalStateException("服务端未返回有效登录凭据");
@@ -1467,11 +1655,13 @@ public class AccountManagerOverlay extends NcmSheet {
                         MultiThreadingUtil.runOnMainThread(() -> {
                             if (!isCurrent(platform, token)) return;
                             NCMScreen.getInstance().markDirty();
-                            if (addAccountByQr && platform == MusicPlatform.NETEASE) {
-                                showSavedNeteaseAccounts();
-                            } else {
-                                showOverview();
-                            }
+                    if (addAccountByQr && (platform == MusicPlatform.NETEASE || platform == MusicPlatform.QISHUI)) {
+                        if (platform == MusicPlatform.NETEASE) showSavedNeteaseAccounts();
+                        else showSavedQishuiAccounts();
+                    } else {
+                        showOverview();
+                    }
+
                             if (platform == MusicPlatform.NETEASE) {
                                 maybePromptListeningHistorySync();
                             }

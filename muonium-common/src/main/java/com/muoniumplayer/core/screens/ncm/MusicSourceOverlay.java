@@ -193,7 +193,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         page = PAGE_OVERVIEW;
         beginPage();
 
-        final Panel dialog = sheet(476, () -> HEADER_H + LABEL_ROW + ROW_H * 6
+        final Panel dialog = sheet(476, () -> HEADER_H + LABEL_ROW + ROW_H * 7
                 + LABEL_ROW_2 + ROW_H + LABEL_ROW_2 + ROW_H + FOOTER_H);
         header(dialog, PartyIcons.NOTE, "音乐来源",
                 () -> "官方源、在线聚合源与自定义脚本源各自独立，随时切换",
@@ -260,9 +260,19 @@ public final class MusicSourceOverlay extends NcmSheet {
                         // 从品牌色朝白推 .78 得到的才是"同一块底上的第二层文字"。
                         ? mix(platform.getBrandColor(), 0xFFFFFF, .78)
                         : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                () -> platform == MusicPlatform.YOUTUBE ? 74.0 : (picked.getAsBoolean() ? 46.0 : 16.0));
+                () -> platform == MusicPlatform.QISHUI ? 118.0
+                        : (platform == MusicPlatform.YOUTUBE ? 74.0 : (picked.getAsBoolean() ? 46.0 : 16.0)));
 
-        checkBadge(card, picked, platform::getBrandColor, () -> card.getWidth() - 23);
+        RoundedRectWidget qishuiStatus = null;
+        if (platform == MusicPlatform.QISHUI) {
+            qishuiStatus = pill(card, this::qishuiBackendStatusGlyph,
+                    QishuiCompanionDownload::backendStatusLabel,
+                    this::qishuiBackendStatusColor,
+                    () -> card.getWidth() - 12, () -> card.getHeight() * .5);
+        }
+        final RoundedRectWidget statusPill = qishuiStatus;
+        checkBadge(card, picked, platform::getBrandColor,
+                () -> statusPill == null ? card.getWidth() - 23 : statusPill.getRelativeX() - 15);
         if (platform == MusicPlatform.YOUTUBE) {
             youtubeProxyButton(card);
             youtubeLoginButton(card);
@@ -1863,6 +1873,22 @@ public final class MusicSourceOverlay extends NcmSheet {
     // ════════════════════════════ 文案与状态 ════════════════════════════
 
     /** 官方卡副标题：这个来源现在能不能用。比一句写死的能力描述有用得多。 */
+    private int qishuiBackendStatusColor() {
+        return switch (QishuiCompanionDownload.backendStatus()) {
+            case RUNNING -> OK_COLOR;
+            case FAILED, STOPPED -> BAD_COLOR;
+            case CONNECTING, DOWNLOADING, VERIFYING, INSTALLING, STARTING -> WARN_COLOR;
+        };
+    }
+
+    private String qishuiBackendStatusGlyph() {
+        return switch (QishuiCompanionDownload.backendStatus()) {
+            case RUNNING -> PartyIcons.CHECK;
+            case FAILED, STOPPED -> PartyIcons.WARNING;
+            case CONNECTING, DOWNLOADING, VERIFYING, INSTALLING, STARTING -> PartyIcons.HOURGLASS;
+        };
+    }
+
     private String accountLine(final MusicPlatform platform) {
         if (platform == MusicPlatform.YOUTUBE) {
             return "无需登录 · 搜索并播放 YouTube 音频";
@@ -1875,18 +1901,10 @@ public final class MusicSourceOverlay extends NcmSheet {
             return "未登录 · 可搜索播放，扫码后解锁歌词与收藏夹";
         }
         if (platform == MusicPlatform.QISHUI) {
-            // 醒目提示:后端缺失/下载失败时,卡片副标题直接显示安装状态(动态岛同步滚动)。
-            String backendLine = QishuiCompanionDownload.backendInstallStatusLine();
-            if (!backendLine.isEmpty()) {
-                return backendLine + " · 完整版暂不可用";
-            }
             if (!QishuiBackend.peekAvailable()) {
-                // 渲染路径只读缓存结论（peek），绝不在这里探测：这一段每帧求值，
-                // 一旦让它同步发健康检查，后端慢的半秒就是一帧卡顿。
-                // 还没探过时不写「未运行」——那是断言，而此刻只是还不知道。
                 return QishuiBackend.hasProbed()
-                        ? "签名后端未运行 · 仅试听；重新进入游戏或重选本源可自动安装"
-                        : "正在连接签名后端…未就绪时仅试听";
+                        ? "仅试听 · 后端未就绪时会自动重试"
+                        : "正在连接 · 后端就绪后可播放完整版";
             }
             // 完整版的 Cookie 实际由后端持有(签名代理必须带它转发)。登录工具导入的凭据
             // 只落在本机后端时,模组会话库是空的——这时绝不能显示「未登录」误导用户重登。
@@ -1896,7 +1914,7 @@ public final class MusicSourceOverlay extends NcmSheet {
             if (QishuiBackend.peekHasCookie()) {
                 return "已登录 · 凭据在本机签名后端";
             }
-            return "未登录 · 可试听；游戏内导入 Cookie 或运行汽水登录工具后播放完整版";
+            return "未登录 · 可试听；导入 Cookie 后播放完整版";
         }
         if (platform == MusicPlatform.SPOTIFY) {
             if (NeteaseMusicService.isLoggedIn(platform)) {
