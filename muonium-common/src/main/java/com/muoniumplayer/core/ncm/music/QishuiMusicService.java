@@ -606,7 +606,7 @@ public final class QishuiMusicService {
         } catch (Throwable error) {
             // 只有上游明确拒绝凭据时才标过期；网络抖动、超时、解析失败都不算，
             // 否则一次断网就会把好好登录着的账号踢成「需要重新登录」。
-            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            if (looksLikeAuthRejection(error)) handleAuthRejection();
             System.err.println("[Music/Qishui] Profile refresh failed: " + describe(error));
             return false;
         }
@@ -822,6 +822,26 @@ public final class QishuiMusicService {
         return false;
     }
 
+    /**
+     * 凭据被上游拒绝的统一处置：先试一次「后端缺 Cookie」自愈，救不回来才标过期。
+     *
+     * <p>{@code 1000016} 有两种成因——后端手里没有 Cookie（启动竞态漏推、后端重装、
+     * 手动清了后端 config），或本地 Cookie 真过期/被顶下线。前者与本地凭据无关，
+     * 强推一次本地会话就能恢复；不区分就会把好好登录着的账号标成「需要重新验证」，
+     * 界面让用户去重扫——他们重登完，下一次还是同样报错。所有
+     * {@code looksLikeAuthRejection → markReauthRequired} 的调用点都改走这里，
+     * 不要再绕过它直接标。</p>
+     *
+     * <p>调用方都在后台线程（业务请求链路），自愈里的一次推送/探活开销可接受。</p>
+     */
+    static void handleAuthRejection() {
+        if (QishuiBackend.healMissingCookie()) {
+            QishuiSessionStore.markVerified();
+            return;
+        }
+        QishuiSessionStore.markReauthRequired();
+    }
+
     public static void logout() {
         QishuiSessionStore.clear();
         clearUserPlaylistsCache();
@@ -861,7 +881,7 @@ public final class QishuiMusicService {
         } catch (Throwable error) {
             System.err.println("[Music/Qishui] Set track liked failed for " + id + ": "
                     + describe(error));
-            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            if (looksLikeAuthRejection(error)) handleAuthRejection();
             return false;
         }
     }
@@ -885,7 +905,7 @@ public final class QishuiMusicService {
         } catch (Throwable error) {
             System.err.println("[Music/Qishui] Set playlist collected failed for " + id + ": "
                     + describe(error));
-            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            if (looksLikeAuthRejection(error)) handleAuthRejection();
             return false;
         }
     }
@@ -910,7 +930,7 @@ public final class QishuiMusicService {
             return true;
         } catch (Throwable error) {
             System.err.println("[Music/Qishui] Add song to playlist failed: " + describe(error));
-            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            if (looksLikeAuthRejection(error)) handleAuthRejection();
             return false;
         }
     }
@@ -942,7 +962,7 @@ public final class QishuiMusicService {
             return null;
         } catch (Throwable error) {
             System.err.println("[Music/Qishui] Create cloud playlist failed: " + describe(error));
-            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            if (looksLikeAuthRejection(error)) handleAuthRejection();
             return null;
         }
     }
@@ -966,7 +986,7 @@ public final class QishuiMusicService {
         } catch (Throwable error) {
             System.err.println("[Music/Qishui] Update cloud playlist failed for " + pid + ": "
                     + describe(error));
-            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            if (looksLikeAuthRejection(error)) handleAuthRejection();
             return false;
         }
     }
@@ -987,7 +1007,7 @@ public final class QishuiMusicService {
         } catch (Throwable error) {
             System.err.println("[Music/Qishui] Delete cloud playlist failed for " + pid + ": "
                     + describe(error));
-            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            if (looksLikeAuthRejection(error)) handleAuthRejection();
             return false;
         }
     }
@@ -1012,7 +1032,7 @@ public final class QishuiMusicService {
             return true;
         } catch (Throwable error) {
             System.err.println("[Music/Qishui] Remove song from cloud playlist failed: " + describe(error));
-            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            if (looksLikeAuthRejection(error)) handleAuthRejection();
             return false;
         }
     }
@@ -1087,7 +1107,7 @@ public final class QishuiMusicService {
             return new ArrayList<>(unique.values());
         } catch (Throwable error) {
             System.err.println("[Music/Qishui] Discover feed failed: " + describe(error));
-            if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+            if (looksLikeAuthRejection(error)) handleAuthRejection();
             return Collections.emptyList();
         }
     }
@@ -1820,7 +1840,7 @@ public final class QishuiMusicService {
             } catch (Throwable error) {
                 System.err.println("[Music/Qishui] Account playlist detail failed for "
                         + playlistId + ": " + describe(error));
-                if (looksLikeAuthRejection(error)) QishuiSessionStore.markReauthRequired();
+                if (looksLikeAuthRejection(error)) handleAuthRejection();
                 break;
             }
         }
@@ -2524,7 +2544,7 @@ public final class QishuiMusicService {
                 System.err.println("[Music/Qishui] Backend-signed track request failed: "
                         + describe(backendError));
                 if (looksLikeAuthRejection(backendError)) {
-                    QishuiSessionStore.markReauthRequired();
+                    handleAuthRejection();
                     return null;
                 }
             }
@@ -2539,7 +2559,7 @@ public final class QishuiMusicService {
                 // 凭据被拒不换域名重试——参考实现同样在 401/403 时立刻停手，
                 // 连着打只会让风控更快盯上这个会话。这里只标记，不清凭据。
                 if (looksLikeAuthRejection(posted)) {
-                    QishuiSessionStore.markReauthRequired();
+                    handleAuthRejection();
                     break;
                 }
             }
@@ -2549,7 +2569,7 @@ public final class QishuiMusicService {
             } catch (Throwable fallback) {
                 last = fallback;
                 if (looksLikeAuthRejection(fallback)) {
-                    QishuiSessionStore.markReauthRequired();
+                    handleAuthRejection();
                     break;
                 }
             }

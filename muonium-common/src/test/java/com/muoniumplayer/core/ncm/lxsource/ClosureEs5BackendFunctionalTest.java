@@ -28,7 +28,7 @@ class ClosureEs5BackendFunctionalTest {
     private static Path publishedJar() {
         String[] roots = {
                 System.getenv("MUONIUM_UPDATES_REPO"),
-                "F:\\donked\\MuoniumPlayer-updates-main",
+                "F:\\donked\\MuoniumPlayer-web\\MuoniumPlayer-updates",
         };
         for (String root : roots) {
             if (root == null || root.isBlank()) {

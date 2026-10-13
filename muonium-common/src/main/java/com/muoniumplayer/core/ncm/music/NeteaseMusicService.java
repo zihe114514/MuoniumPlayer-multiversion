@@ -109,10 +109,13 @@ public final class NeteaseMusicService {
             // 玩家选了汽水源:后端没起就按需处理——已装则隐藏拉起,缺失则下载伴生包
             // (进度走动态岛「汽水音乐源」持久卡);都失败时汽水源降级试听并提示。
             //
+            // 平台闸先行:伴生包只有 Windows 形态,其它平台不下载不拉起(见
+            // QishuiCompanionDownload.supportedPlatform),界面会提示完整版仅支持 Windows。
+            //
             // 判据用只读缓存(peek),不在这里探活:这里是来源按钮的点击处理器,跑在主线程上,
             // 而探活要发一次健康检查。探测与拉起都交给 ensureStartedForGame —— 它内部整段
             // 在后台线程上跑(见 QishuiBackendLifecycle)。冷启动时缓存还没值,它自己会探。
-            if (!QishuiBackend.peekAvailable()) {
+            if (QishuiCompanionDownload.supportedPlatform() && !QishuiBackend.peekAvailable()) {
                 if (QishuiCompanionDownload.isInstalled()) {
                     QishuiBackendLifecycle.ensureStartedForGame();
                 } else {

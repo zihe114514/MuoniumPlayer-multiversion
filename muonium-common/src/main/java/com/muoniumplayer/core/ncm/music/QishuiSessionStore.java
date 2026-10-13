@@ -237,6 +237,22 @@ final class QishuiSessionStore {
         loaded = true;
     }
 
+    /**
+     * 后台线程专用的阻塞加载：会话还没从盘上读进来时就地读完再返回。
+     *
+     * <p>启动链路（{@code QishuiBackendLifecycle/onBackendUp}）与渲染路径的差别就在这里：
+     * 渲染用 {@link #snapshot()} 按空会话作答不阻塞；而「把本地 Cookie 强推给后端」这类
+     * 判定必须看到真实的登录态——预读还在跑时就作答会拿到空会话，误判成未登录、跳过
+     * 推送，且之后没有任何补推时机（后端从此拿空 Cookie 打上游 1000016）。调用方必须
+     * 已在后台线程；渲染路径绝不可调这里。</p>
+     */
+    static void awaitLoaded() {
+        if (loaded) return;
+        synchronized (LOCK) {
+            ensureLoaded();
+        }
+    }
+
     /** 落盘当前这一份。写入方已经把 {@code next} 挂上去了，这里只负责写文件。 */
     private static void persist(Data value) {
         data = value;

@@ -108,8 +108,8 @@ public final class QishuiCompanionDownload {
      * 所以没有抬版本号：存量安装靠「新名运行时在位时收掉 node.exe」这条保守回落就能干净，
      * 不必为清一次目录让所有人重下一次 33 MB。下一次真的换了包内容时，清单会随热补写下，
      * 此后按清单清扫。</p> */
-    static final Pack PACK = new Pack("qishui-backend-windows-x64-1.2.1.zip", 33_177_121L,
-            "87c014eee6c0ac1aac706aa669b4d2c88fbd46be01b230adc5d1bde66367305c");
+    static final Pack PACK = new Pack("qishui-backend-windows-x64-1.3.0.zip", 41_719_888L,
+            "8931fbe490c4a2c9568518c929044e2c166b5a7d99ea81e12a58111c7ba0c7d6");
 
     /** 下载状态机；提示层与日志照它说话。 */
     enum Phase {
@@ -147,11 +147,23 @@ public final class QishuiCompanionDownload {
 
     /** 后端状态给来源卡提供稳定、可本地化的呈现语义。 */
     public enum BackendStatus {
-        CONNECTING, DOWNLOADING, VERIFYING, INSTALLING, STARTING, RUNNING, STOPPED, FAILED
+        CONNECTING, DOWNLOADING, VERIFYING, INSTALLING, STARTING, RUNNING, STOPPED, FAILED, UNSUPPORTED
+    }
+
+    /**
+     * 本平台是否支持运行伴生后端。签名后端只发布了 windows-x64 包（bdms.node 是
+     * Windows 客户端里的原生模块），其它平台下载了也跑不起来——所以安装/热补/拉起
+     * 三个入口都要先过这道闸，别让手机端与 Linux/macOS 白耗 33 MB 流量。
+     * 照 {@code FfmpegNotice.isWindows()} 同款判法；安卓的 os.name 是 Linux，
+     * 不会误判成支持。
+     */
+    public static boolean supportedPlatform() {
+        return System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
     }
 
     /** 给音源选择卡的简短状态标签。 */
     public static String backendStatusLabel() {
+        if (!supportedPlatform()) return "不支持";
         State snapshot = state;
         return switch (backendStatus()) {
             case CONNECTING -> "连接中";
@@ -162,11 +174,13 @@ public final class QishuiCompanionDownload {
             case RUNNING -> "已运行";
             case STOPPED -> "未运行";
             case FAILED -> "启动失败";
+            case UNSUPPORTED -> "不支持";
         };
     }
 
     /** 状态来源合并了健康探测快照与安装状态；确认健康优先于过期的安装失败记录。 */
     public static BackendStatus backendStatus() {
+        if (!supportedPlatform()) return BackendStatus.UNSUPPORTED;
         if (QishuiBackend.peekAvailable()) return BackendStatus.RUNNING;
         State snapshot = state;
         return switch (snapshot.phase()) {
@@ -192,6 +206,7 @@ public final class QishuiCompanionDownload {
             case RUNNING -> "签名后端运行中 · 完整版可用";
             case STOPPED -> "签名后端未运行 · 仅试听；重新进入游戏或重选本源可自动安装";
             case FAILED -> "后端启动失败" + (snapshot.detail() == null || snapshot.detail().isEmpty() ? "" : "（" + snapshot.detail() + "）") + " · 自动重试中，期间仅试听";
+            case UNSUPPORTED -> "完整版仅支持 Windows · 签名器是 Windows 客户端原生组件，本平台不安装后端，可搜索与试听";
         };
     }
 
@@ -463,7 +478,7 @@ public final class QishuiCompanionDownload {
      * 上游删掉的脚本）当场收掉，不留给下一次启动——但被占用的那份要等下一条命。</p>
      */
     static void refreshIfNeeded() {
-        if (!isInstalled() || isUpToDate()) return;
+        if (!supportedPlatform() || !isInstalled() || isUpToDate()) return;
         synchronized (LOCK) {
             if (inFlight) return;
             inFlight = true;
@@ -623,7 +638,7 @@ public final class QishuiCompanionDownload {
      * 所有判断在调用线程做，下载/解压/启动在后台线程。
      */
     static void onBackendMissing() {
-        if (!enabled()) {
+        if (!enabled() || !supportedPlatform()) {
             return;
         }
         synchronized (LOCK) {

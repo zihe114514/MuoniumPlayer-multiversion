@@ -467,6 +467,11 @@ public class CloudMusic implements SharedConstants {
             return;
         }
         if (MpPartyClient.interceptNext()) return;
+        // FM 只在「队列里真的没有下一首」（预取还没回来）时才整体换批：
+        // 换批走 playFm → stopExistingPlayThread，正在放的歌当场断掉、静音等网络。
+        // 预取已把下一首接进队列时，落进下面的 requestManualSelection（原曲不停、
+        // 就绪才交接）——FM 的 automix 因此与普通歌单同一条手动路径。
+        if (personalFmActive && playList.isEmpty()) return;
         if (personalFmActive && curIdx + 1 >= playList.size()) {
             PersonalFmManager.requestNextBatchAsync();
             return;
@@ -3695,7 +3700,11 @@ public class CloudMusic implements SharedConstants {
 
         private boolean requestManualSelection(List<Music> queue, int index, boolean replaceQueue) {
             synchronized (PLAYER_STATE_LOCK) {
-                if (!AutomixSettings.isEnabled() || awaitingPlaybackAction || personalFmActive
+                // 私人 FM 不再排除：这条路径本来就是「原曲不停、新歌取流解码就绪才短渐变交接」，
+                // 交接尾部走 performAutomixHandover（noteFmTrackStarted 在那里照常同步面板）。
+                // 旧歌播完而新歌还没解码好时，监督 tick 会一直等到 ready 才动，不会偷播也不会断流。
+                // （一起听两个房间仍排除：传输控制权归服务端，本机换歌要走房间帧。）
+                if (!AutomixSettings.isEnabled() || awaitingPlaybackAction
                         || MpPartyClient.inRoom() || NeteaseListenTogetherService.isActive()
                         || KuGouListenTogetherService.isActive()
                         || doBreak || !isSessionUsable(session)) return false;

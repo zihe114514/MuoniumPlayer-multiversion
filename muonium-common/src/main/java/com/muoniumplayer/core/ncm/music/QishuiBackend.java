@@ -216,6 +216,10 @@ public final class QishuiBackend {
     static void onBackendUp() {
         invalidateProbe();
         if (!isAvailable()) return;
+        // 会话读盘是异步预读，启动链路可能先到这里——不等它就判 isLoggedIn() 会拿到
+        // 空会话、误判未登录而跳过推送，且没有补推时机（后端从此空 Cookie 打 1000016）。
+        // 本方法只在后台线程被调（生命周期/装包路径），阻塞一次文件 I/O 无妨。
+        QishuiSessionStore.awaitLoaded();
         // 本地活动会话是用户当前选择：始终覆盖后端可能遗留的旧账号 Cookie。
         if (QishuiSessionStore.isLoggedIn()) {
             try {
@@ -257,6 +261,30 @@ public final class QishuiBackend {
     /** 后端没有 Cookie 而模组已登录时,把 Cookie 推过去(幂等,后端有就跳过)。 */
     static void syncCookieIfMissing() throws IOException, InterruptedException {
         pushCookie(QishuiSessionStore.getCookieHeader(), false);
+    }
+
+    /**
+     * 凭据被上游拒绝（{@code 1000016} 等）时的自愈尝试：后端没 Cookie 而本地有会话时
+     * 强推一次。返回 true 表示补推成功、后端 Cookie 已就位——这种情况下上游拒绝的
+     * 「真因」是后端缺凭据而不是本地 Cookie 失效，调用方不该把账号标成需要重登。
+     *
+     * <p>只补「后端缺 Cookie」这一种成因：后端明明有 Cookie 还被拒，才是本地凭据真
+     * 过期/被顶下线，如实交给调用方标 reauth。判定用最近一次探活的
+     * {@link #peekHasCookie()}（绝不在这里发探测）加推送结果本身，全部后台线程调用。</p>
+     */
+    static boolean healMissingCookie() {
+        try {
+            if (!isAvailable()) return false;
+            if (peekHasCookie()) return false;
+            if (!QishuiSessionStore.isLoggedIn()) return false;
+            if (pushCookie(QishuiSessionStore.getCookieHeader(), true)) {
+                System.out.println("[Music/Qishui] 后端缺 Cookie 导致凭据被拒,已强推本地会话自愈");
+                return true;
+            }
+        } catch (Throwable error) {
+            System.err.println("[Music/Qishui] Cookie 自愈补推失败: " + error);
+        }
+        return false;
     }
 
     /**

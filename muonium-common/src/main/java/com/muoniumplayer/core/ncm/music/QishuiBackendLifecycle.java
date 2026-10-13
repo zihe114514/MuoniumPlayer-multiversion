@@ -73,6 +73,12 @@ public final class QishuiBackendLifecycle {
     /** 真正的启动判定。只允许后台线程调用——探测、Cookie 同步、进程等待都在这里。 */
     private static void ensureStartedForGameBlocking() {
         if (ownedProcess != null && ownedProcess.isAlive()) return; // 自己拉起的还活着
+        // 平台闸：伴生包只有 windows-x64 形态（bdms.node 是 Windows 客户端原生模块），
+        // 其它平台下载了也跑不起来。非 Windows 直接整段跳过——不下载、不热补、不拉起，
+        // 汽水功能走免签名读接口 + H5 试听本来就不需要后端。
+        if (!QishuiCompanionDownload.supportedPlatform()) {
+            return;
+        }
         // 已装但伴生包版本落后 → 后台热补(不阻塞启动,失败静默下次重试)。
         QishuiCompanionDownload.refreshIfNeeded();
         // 安装目录保养:启用上次热补腾挪的 .new、按清单收掉旧版残留(改名前后的运行时、

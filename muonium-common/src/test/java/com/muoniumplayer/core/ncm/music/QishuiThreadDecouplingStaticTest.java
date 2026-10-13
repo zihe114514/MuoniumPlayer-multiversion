@@ -393,6 +393,83 @@ class QishuiThreadDecouplingStaticTest {
     }
 
     @Test
+    @DisplayName("伴生包只发 windows-x64——非 Windows 平台绝不下载、热补或拉起")
+    void companionDownloadIsWindowsOnly() throws Exception {
+        String download = read(MUSIC + "QishuiCompanionDownload.java");
+        assertTrue(download.contains("supportedPlatform()"),
+                "要有平台支持判定（签名器 bdms.node 是 Windows 客户端原生模块）");
+        String gate = methodBody(download, "public static boolean supportedPlatform()");
+        assertTrue(gate.contains("os.name") && gate.contains("win"),
+                "判定按 os.name 含 win，与 FfmpegNotice.isWindows 同款（安卓 os.name=Linux 不会误判）");
+        // 三个入口都要先过闸
+        String missing = methodBody(download, "static void onBackendMissing()");
+        assertTrue(missing.contains("!supportedPlatform()"),
+                "下载入口必须拦非 Windows：33 MB 的 exe 包下载了也跑不起来");
+        String refresh = methodBody(download, "static void refreshIfNeeded()");
+        assertTrue(refresh.contains("!supportedPlatform()"),
+                "热补入口必须拦非 Windows");
+        // 状态机要能表达「平台不支持」，来源卡的胶囊与副标题据此说明
+        assertTrue(download.contains("UNSUPPORTED"),
+                "BackendStatus 要有 UNSUPPORTED 态，供音源界面提示完整版仅 Windows");
+        String statusLine = methodBody(download, "public static String backendInstallStatusLine()");
+        assertTrue(statusLine.contains("完整版仅支持 Windows"),
+                "详细状态行要向用户解释为什么不装后端");
+
+        String lifecycle = read(MUSIC + "QishuiBackendLifecycle.java");
+        String ensure = methodBody(lifecycle, "private static void ensureStartedForGameBlocking()");
+        assertTrue(ensure.contains("!QishuiCompanionDownload.supportedPlatform()"),
+                "随游戏启动的整段拉起链必须先过平台闸");
+
+        // 音源选择界面的副标题要说人话：不支持时先讲清楚，别让用户以为坏了。
+        String overlay = read(SCREENS + "MusicSourceOverlay.java");
+        assertTrue(overlay.contains("完整版仅支持 Windows"),
+                "汽水卡片副标题要提示完整版仅 Windows（可搜索与试听）");
+    }
+
+    @Test
+    @DisplayName("启动链路等会话读盘——onBackendUp 不许拿空会话误判未登录")
+    void backendUpWaitsForSessionLoad() throws Exception {
+        String backend = read(MUSIC + "QishuiBackend.java");
+        String up = methodBody(backend, "static void onBackendUp()");
+        int upBrace = backend.indexOf("static void onBackendUp()");
+        int awaitAt = backend.indexOf("QishuiSessionStore.awaitLoaded()", upBrace);
+        int isLoggedInAt = backend.indexOf("QishuiSessionStore.isLoggedIn()", upBrace);
+        assertTrue(awaitAt > 0 && isLoggedInAt > awaitAt,
+                "onBackendUp 必须先 awaitLoaded 再判 isLoggedIn：会话预读是异步的，"
+                        + "启动竞态下空会话会让 Cookie 永远推不出去（后端从此 1000016）");
+
+        String store = read(MUSIC + "QishuiSessionStore.java");
+        String await = methodBody(store, "static void awaitLoaded()");
+        assertTrue(await.contains("ensureLoaded()") && await.contains("synchronized"),
+                "awaitLoaded 持锁读盘（后台线程专用入口，渲染路径仍走 snapshot 不阻塞）");
+    }
+
+    @Test
+    @DisplayName("凭据被拒先自愈后端缺 Cookie——不许直接把账号标成需要重登")
+    void authRejectionHealsBeforeMarking() throws Exception {
+        String service = read(MUSIC + "QishuiMusicService.java");
+        String handle = methodBody(service, "static void handleAuthRejection()");
+        assertTrue(handle.contains("QishuiBackend.healMissingCookie()"),
+                "标 reauth 前必须先试自愈：1000016 有两种成因（后端缺 Cookie / 本地凭据真失效），"
+                        + "前者与本地凭据无关，误标会让用户重登后依然报错");
+        assertTrue(handle.contains("markVerified()") && handle.contains("markReauthRequired()"),
+                "自愈成功清过期标记，失败才如实标记");
+        // 全部调用点收口：不许绕过自愈直接标
+        int direct = service.split("QishuiSessionStore\\.markReauthRequired\\(\\)", -1).length - 1;
+        assertTrue(direct <= 1,
+                "markReauthRequired 只允许 handleAuthRejection 自己调（当前直调 " + direct + " 处）");
+
+        String backend = read(MUSIC + "QishuiBackend.java");
+        String heal = methodBody(backend, "static boolean healMissingCookie()");
+        assertTrue(heal.contains("peekHasCookie()"),
+                "自愈只补「后端缺 Cookie」：后端有 Cookie 还被拒才是真失效");
+        assertTrue(heal.contains("pushCookie(QishuiSessionStore.getCookieHeader(), true)"),
+                "自愈动作是覆盖推送本地会话");
+        assertTrue(heal.contains("isAvailable()"),
+                "自愈跑在后台线程（业务请求链路），可以用阻塞探活确认后端在不在");
+    }
+
+    @Test
     @DisplayName("热补的落盘顺序：清单先于清扫，清单先于删暂存目录——顺序错了清单就是空的")
     void hotPatchWritesManifestBeforeSweepingAndBeforeDeletingStaging() throws Exception {
         String source = read(MUSIC + "QishuiCompanionDownload.java");

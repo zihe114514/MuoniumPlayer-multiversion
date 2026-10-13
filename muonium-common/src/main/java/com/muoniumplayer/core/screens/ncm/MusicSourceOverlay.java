@@ -1876,7 +1876,7 @@ public final class MusicSourceOverlay extends NcmSheet {
     private int qishuiBackendStatusColor() {
         return switch (QishuiCompanionDownload.backendStatus()) {
             case RUNNING -> OK_COLOR;
-            case FAILED, STOPPED -> BAD_COLOR;
+            case FAILED, STOPPED, UNSUPPORTED -> BAD_COLOR;
             case CONNECTING, DOWNLOADING, VERIFYING, INSTALLING, STARTING -> WARN_COLOR;
         };
     }
@@ -1884,7 +1884,7 @@ public final class MusicSourceOverlay extends NcmSheet {
     private String qishuiBackendStatusGlyph() {
         return switch (QishuiCompanionDownload.backendStatus()) {
             case RUNNING -> PartyIcons.CHECK;
-            case FAILED, STOPPED -> PartyIcons.WARNING;
+            case FAILED, STOPPED, UNSUPPORTED -> PartyIcons.WARNING;
             case CONNECTING, DOWNLOADING, VERIFYING, INSTALLING, STARTING -> PartyIcons.HOURGLASS;
         };
     }
@@ -1901,6 +1901,11 @@ public final class MusicSourceOverlay extends NcmSheet {
             return "未登录 · 可搜索播放，扫码后解锁歌词与收藏夹";
         }
         if (platform == MusicPlatform.QISHUI) {
+            // 平台不支持先把话说死：签名后端只有 Windows 包（签名器是 Windows 客户端里的
+            // 原生模块），别的系统装不了也跑不了。搜索与试听仍可用——匿名 H5 接口不经过后端。
+            if (!QishuiCompanionDownload.supportedPlatform()) {
+                return "完整版仅支持 Windows · 本平台可搜索与试听";
+            }
             if (!QishuiBackend.peekAvailable()) {
                 return QishuiBackend.hasProbed()
                         ? "仅试听 · 后端未就绪时会自动重试"
