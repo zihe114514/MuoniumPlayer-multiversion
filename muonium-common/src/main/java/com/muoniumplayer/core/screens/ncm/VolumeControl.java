@@ -47,7 +47,12 @@ public final class VolumeControl implements SharedRenderingConstants {
         boolean hovering = isHovered(mouseX, mouseY, sliderX, centerY - HIT_HEIGHT * .5,
                 sliderWidth, HIT_HEIGHT);
         boolean leftDown = Mouse.isButtonDown(0);
-        if (!leftDown) {
+        // 模态浮层（歌词选词、建单、导入等）压在界面上时，这一帧的按住不属于音量条：
+        // 点一下遮罩就会把下面的音量拖到鼠标位置。全屏页与底栏共用这一个实例，闸门一处生效。
+        if (NCMScreen.getInstance().isModalOverlayActive()) {
+            hovering = false;
+            dragging = false;
+        } else if (!leftDown) {
             dragging = false;
         } else if (hovering) {
             dragging = true;

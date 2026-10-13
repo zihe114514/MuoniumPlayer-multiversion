@@ -108,8 +108,8 @@ public final class QishuiCompanionDownload {
      * 所以没有抬版本号：存量安装靠「新名运行时在位时收掉 node.exe」这条保守回落就能干净，
      * 不必为清一次目录让所有人重下一次 33 MB。下一次真的换了包内容时，清单会随热补写下，
      * 此后按清单清扫。</p> */
-    static final Pack PACK = new Pack("qishui-backend-windows-x64-1.2.0.zip", 33_176_994L,
-            "9a2ccc4cf51602b6fecf3926df6320d76f2b68665253b9c0e6a6938ca291b245");
+    static final Pack PACK = new Pack("qishui-backend-windows-x64-1.2.1.zip", 33_177_121L,
+            "87c014eee6c0ac1aac706aa669b4d2c88fbd46be01b230adc5d1bde66367305c");
 
     /** 下载状态机；提示层与日志照它说话。 */
     enum Phase {

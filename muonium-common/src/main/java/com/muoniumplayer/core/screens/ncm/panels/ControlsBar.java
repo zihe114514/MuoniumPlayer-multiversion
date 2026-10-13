@@ -12,7 +12,6 @@ import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.ListenTogetherService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.dto.Music;
-import com.muoniumplayer.core.ncm.music.PersonalFmManager;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.rendering.AutomixCuePainter;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
@@ -457,35 +456,9 @@ public class ControlsBar extends NCMPanel {
                 ? "私人FM（播放顺序不可用）"
                 : "播放顺序：" + CloudMusic.playMode.getDisplayName() + "（右键无缝交接）");
 
-        // 显式私人 FM 动作。它在 FM 会话之外完全隐藏，
-        //因此普通播放列表从不暴露也不调用电台垃圾端点。
-        RoundedButtonWidget fmSkip = new RoundedButtonWidget("换一首", FontManager.pf12bold);
-        // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
-        fmSkip.setGlassPlate(GlassLook.Surface.PLAYER)
-                .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-        this.addChild(fmSkip);
-        fmSkip.setShouldOverrideMouseCursor(true);
-        // 显示与否必须由播放条来判定，不能写在按钮自己的回调里：AbstractWidget#renderWidget
-        // 在跑 beforeRenderCallback 之前就会因为 isHidden() 直接返回（父组件的渲染循环也会跳过
-        // 隐藏的子组件），而唯一能把它重新显示出来的代码就在那个回调里。播放条是常驻的，首帧
-        // 通常还没进入私人 FM，于是这个按钮会永久卡在隐藏状态，进了私人 FM 也不会出现。
-        // 这一判定放到播放条自己的每帧回调里，和窄面板让位量一起算（见 onInit 末尾）。
-        fmSkip.setBeforeRenderCallback(() -> {
-            boolean active = CloudMusic.isPersonalFmActive();
-            fmSkip.setClickable(active && !PersonalFmManager.isLoading());
-            fmSkip.setBounds(44, 17);
-            fmSkip.setPosition(playMode.getRelativeX() + playMode.getWidth() + 10, playMode.getRelativeY() + 1);
-            fmSkip.setRadius(4);
-            fmSkip.setAlpha(ControlsBar.this.getAlpha() * (PersonalFmManager.isLoading() ? .50f : 1.0f));
-            fmSkip.setColor(fmSkip.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-            fmSkip.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-        });
-        fmSkip.setOnClickCallback((x, y, mouseButton) -> {
-            if (mouseButton != 0 || !CloudMusic.isPersonalFmActive()) return mouseButton == 0;
-            PersonalFmManager.skipCurrentAndRequestNext();
-            return true;
-        });
+        // 私人 FM 没有「换一首」按钮：底栏是「居中传输簇 + 居中进度条」的两行式版式，
+        // 追加一颗 44 宽的按钮就得让整簇外扩，与右下角待播/一起听一挤，让位量会把按钮组
+        // 推离进度条（2026-10-13 的错位截图）。跳歌动作由 FM 页面自己的「换一首」承担。
 
 
 
@@ -510,7 +483,13 @@ public class ControlsBar extends NCMPanel {
                 if (prevMouse && !Mouse.isButtonDown(0))
                     prevMouse = false;
 
-                if (this.testHovered(mouseX, mouseY, 1) && Mouse.isButtonDown(0) && !prevMouse) {
+                // 模态浮层（歌词选词、建单、导入等）压在界面上时这一帧的鼠标状态不属于播放条：
+                // 点遮罩的那一下会同时落在这里，把底下的进度条当成拖到起点 seek 到 0——
+                // 用户看到的就是「开了个弹窗，歌回到开头」。命中判定与 Mouse 轮询一起停。
+                boolean modalOpen = NCMScreen.getInstance().isModalOverlayActive();
+                if (modalOpen) {
+                    prevMouse = false;
+                } else if (this.testHovered(mouseX, mouseY, 1) && Mouse.isButtonDown(0) && !prevMouse) {
                     prevMouse = true;
                     double xDelta = Math.max(0, Math.min(this.getWidth(), (mouseX - this.getX())));
                     double percent = xDelta / this.getWidth();
@@ -950,23 +929,20 @@ public class ControlsBar extends NCMPanel {
                 ? "一起听（进行中）"
                 : "一起听");
 
-        // 播放条自己的每帧回调：既决定私人 FM 按钮的显示，也算出窄面板下的让位量。放在 onInit
-        // 末尾是因为它要用到上面才声明的剩余时间标签与一起听入口 —— lambda 只能捕获已声明的
-        // 局部变量。
+        // 播放条自己的每帧回调：算出窄面板下的让位量。放在 onInit 末尾是因为它要用到上面
+        // 才声明的剩余时间标签与一起听入口 —— lambda 只能捕获已声明的局部变量。
         this.setBeforeRenderCallback(() -> {
-            fmSkip.setHidden(!CloudMusic.isPersonalFmActive());
-
             double half = this.getWidth() * .5;
             // 一律按「未让位」的几何算：改读 playMode 让位后的实际坐标，会把让位量自己反馈进
             // 输入，每帧收敛一点，肉眼看到的就是控件一直在抖。
-            double transportRight = half + 70.0 + (CloudMusic.isPersonalFmActive() ? 54.0 : 0.0);
+            double transportRight = half + 70.0;
             double progressRight = half + 71.5 + lblRemainingTime.getWidth();
             double bandLeft = listenTogetherPrimaryX;
             boolean firstFrame = bandLeft <= 0.0;
 
             // 图标带默认与音质/音量同高，那个高度上它跟剩余时间标签同排，必须为标签让路。让不
             // 出来（面板太窄）就整条抬到传输键那一行：标签在下面一行，抬 4 个单位就压不到字，
-            // 于是只剩播放模式/换一首需要避让，一下省出一大截宽度。
+            // 于是只剩播放模式需要避让，一下省出一大截宽度。
             boolean besideLabel = firstFrame || bandLeft > progressRight + 6.0;
             iconBandLift = Interpolations.interpolate(iconBandLift, besideLabel ? 0.0 : 4.0, .35);
 

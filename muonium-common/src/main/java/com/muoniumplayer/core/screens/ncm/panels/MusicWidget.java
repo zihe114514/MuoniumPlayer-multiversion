@@ -7,6 +7,7 @@ import com.muoniumplayer.core.ncm.music.PlaybackPresentation;
 import com.muoniumplayer.core.ncm.music.CrossSourceSwitcher;
 import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.LocalPlaylistStore;
+import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
@@ -230,6 +231,7 @@ public class MusicWidget extends RoundedRectWidget {
         double dolbyBadgeWidth = dolbyAtmos ? 34.0 : 0.0;
         double instrumentalBadgeWidth = instrumental ? 27.0 : 0.0;
         double accessBadgeReserve = (vipRestricted ? 24.0 : 0.0) + (digitalAlbumTrack ? 28.0 : 0.0)
+                + (music.isQishui() && music.hasVipRestriction() ? 28.0 : 0.0)
                 + (cloudSong ? 28.0 : 0.0) + (showHighestQuality ? 38.0 : 0.0) + gdBadgeWidth
                 + (dolbyAtmos ? dolbyBadgeWidth + 3.0 : 0.0)
                 + (instrumental ? instrumentalBadgeWidth + 3.0 : 0.0);
@@ -274,6 +276,42 @@ public class MusicWidget extends RoundedRectWidget {
                 vipText.center();
             });
             nextAccessBadgeX = 24.0;
+        }
+
+        // 汽水「试听」标：与 VIP 同款胶囊、同一条推进线。判定是「曲目要求 × 账号能力」的
+        // 对照（见 QishuiMusicService.vipContentRestrictedToTrial）：VIP 曲目要完整版需要
+        // 登录 + VIP 账号 + 本机签名后端三样齐，缺一播前就能断定只拿得到试听——这是判定
+        // 不是猜测，所以标签准确。播放过的曲目由播放层点亮的 isQishuiTrialResolve 兜底
+        // （覆盖权益内仍拿不到完整版的罕见情形，如地区限制）。状态每帧可变，显隐用 alpha
+        // 收放而非 setHidden（隐藏组件的回调不再执行，自己没法复活）。
+        boolean trialDependingOnState = music.isQishui() && music.hasVipRestriction();
+        if (trialDependingOnState) {
+            final double trialOffset = nextAccessBadgeX;
+            LabelWidget trialText = new LabelWidget("试听", FontManager.pf12bold);
+            RoundedRectWidget trialBadge = new RoundedRectWidget(0, 0, 25, 10);
+            this.addChild(trialBadge);
+            trialBadge.setClickable(false);
+            trialBadge.setBeforeRenderCallback(() -> {
+                if (!QishuiMusicService.vipContentRestrictedToTrial()
+                        && !music.isQishuiTrialResolve()) {
+                    trialBadge.setAlpha(0f);
+                    trialText.setAlpha(0f);
+                    return;
+                }
+                trialBadge.setAlpha(.92f);
+                trialText.setAlpha(1f);
+                trialBadge.setRadius(2.5);
+                trialBadge.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER));
+                trialBadge.setPosition(lblMusicName.getRelativeX() + lblMusicName.getWidth() + 3 + trialOffset,
+                        lblMusicName.getRelativeY() + lblMusicName.getHeight() * .5 - trialBadge.getHeight() * .5);
+            });
+            trialBadge.addChild(trialText);
+            trialText.setClickable(false);
+            trialText.setBeforeRenderCallback(() -> {
+                trialText.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                trialText.center();
+            });
+            nextAccessBadgeX += 28.0;
         }
 
         if (digitalAlbumTrack) {

@@ -1755,6 +1755,27 @@ public class CloudMusic implements SharedConstants {
             loadMusicCover(playList.get(curIdx));
         }
 
+        /**
+         * 「只拿到试听片段」的归因文案：汽水按时下状态说真话，其他平台维持原判。
+         *
+         * <p>判定依据不是解码时长（那只说明「是试听」），而是取流层随流上传的权益状态：
+         * 本机签名后端不在 → 临时降级，就绪后重播即得；未登录 → 登录后可放；
+         * 都不是 → 才轮到「账号权益拿不到完整版」。此前一律归因「当前账号」，
+         * 用户在后端未就绪时被误导去检查自己的会员。</p>
+         */
+        private static String trialFailureReason(Music song) {
+            if (song != null && song.isQishui()) {
+                if (!QishuiBackend.peekAvailable()) {
+                    return "本机签名后端未就绪，就绪后重播可获取完整版";
+                }
+                if (!QishuiMusicService.isLoggedIn()) {
+                    return "汽水账号未登录，登录后可播放完整版";
+                }
+                return "当前账号权益拿不到完整版";
+            }
+            return "当前账号只能拿到试听片段";
+        }
+
         private boolean playSong(Music song) {
             if (isPlaybackCancelled()) return false;
 
@@ -1813,9 +1834,10 @@ public class CloudMusic implements SharedConstants {
                 // AUTO_ATTEMPTED 保证每首每进程最多试一次，不会连环烧整张候选表的额度。
                 boolean switchable = CrossSourceSwitcher.canAutoSwitch(song);
                 if (!switchable && lastStreamIncomplete) {
-                    // 不救场时至少说清为什么停下：试听不是网络故障。
+                    // 不救场时至少说清为什么停下：试听不是网络故障，归因要说准——
+                    // 汽水的「只有试听」多半是本机后端未就绪或没登录，不是账号的错。
                     DownloadDynamicIsland.showPlaybackFailure(song.getName(),
-                            "当前账号只能拿到试听片段");
+                            trialFailureReason(song));
                 }
                 CrossSourceSwitcher.Match brokenStream = null;
                 if (switchable) {
@@ -1936,27 +1958,41 @@ public class CloudMusic implements SharedConstants {
             // 播半首」。拿解码器报出的真实长度对上曲目声明时长，判据在 CrossSourceSwitcher，
             // 与换源共享同一本 AUTO_ATTEMPTED 账，短歌与时长未知的曲目不会被误伤。
             if (CrossSourceSwitcher.isIncompleteStream(song.getDuration(), decodedMillis)) {
-                lastStreamIncomplete = true;
-                if (startedPlayer != null) {
-                    synchronized (PLAYER_STATE_LOCK) {
-                        if (ownedPlayer == startedPlayer) {
-                            try {
-                                startedPlayer.close();
-                            } catch (Throwable ignored) {
-                                // 收尾失败不改变「这是不完整流」的判定。
+                // 汽水在自动换源关闭时的特殊约定：试听也是用户此刻真实能拿到的东西——
+                // 后端未就绪/未登录只是暂时的，30 秒片段照常播完比掐断更尊重「我就想听听」。
+                // 文件照留（权益世代在缓存键里，世代一翻它自然失配），界面常驻「仅试听」标识
+                // 说明现状；automix/手动切歌的预备路径不适用——下一曲要在无人值守时无缝出声，
+                // 预备了半首到点才现出原形更糟，那边维持丢弃重预备。
+                boolean autoSwitchable = CrossSourceSwitcher.canAutoSwitch(song);
+                if (!autoSwitchable && song.isQishui()) {
+                    song.setQishuiTrialResolve(true);
+                    lastStreamIncomplete = false;
+                    System.out.println("[Music/Qishui] 仅试听播放（自动换源未开启，不打断）："
+                            + song.getName() + "，解码 " + (decodedMillis / 1000L) + "s / 声明 "
+                            + (song.getDuration() / 1000L) + "s");
+                } else {
+                    lastStreamIncomplete = true;
+                    if (startedPlayer != null) {
+                        synchronized (PLAYER_STATE_LOCK) {
+                            if (ownedPlayer == startedPlayer) {
+                                try {
+                                    startedPlayer.close();
+                                } catch (Throwable ignored) {
+                                    // 收尾失败不改变「这是不完整流」的判定。
+                                }
                             }
                         }
                     }
+                    // 缓存键只有「曲目 + 音质」，不认直链：这份试听片段必须删掉，否则以后开了
+                    // 会员、官方直链能拿到完整流了，点歌却还命中这份 60 秒的坏缓存。删除排在
+                    // close 之后 —— 解码器拿着这个文件的 RandomAccessFile 句柄，Windows 上
+                    // 打开中的文件删不掉（File.delete 只会静默返回 false）。
+                    try {
+                        musicFile.delete();
+                    } catch (Throwable ignored) {
+                    }
+                    return false;
                 }
-                // 缓存键只有「曲目 + 音质」，不认直链：这份试听片段必须删掉，否则以后开了
-                // 会员、官方直链能拿到完整流了，点歌却还命中这份 60 秒的坏缓存。删除排在
-                // close 之后 —— 解码器拿着这个文件的 RandomAccessFile 句柄，Windows 上
-                // 打开中的文件删不掉（File.delete 只会静默返回 false）。
-                try {
-                    musicFile.delete();
-                } catch (Throwable ignored) {
-                }
-                return false;
             }
 
             // 歌词异步加载绑定本 Session（两阶段提交），歌词可先到或后到。
@@ -2223,11 +2259,17 @@ public class CloudMusic implements SharedConstants {
          * <p>酷狗源多带一段 {@link KuGouMusicApi#AUDIO_CACHE_EPOCH}：交付校验上线前落盘的酷狗缓存
          * 可能装着另一首歌（上游对取不到的 hash 会静默交付别人的文件），而缓存名只由「曲目 + 音质」
          * 决定，键不变就会被一直命中，只修取流等于没修。换掉这一段，旧文件自然失配，
-         * 随后由容量兜底回收。其它音源没有这个问题，名字保持原样，不牵连它们的缓存。</p>
+         * 随后由容量兜底回收。</p>
+         *
+         * <p>汽水同理带一段 {@link QishuiMusicService#audioCacheEpoch()}：登录态/账号 VIP/后端可用性
+         * 任一翻转就换一代——后端未就绪窗口里落盘的试听文件，不能在就绪后继续被当成完整版命中
+         * （键原样不变的话，点歌直接命中缓存，重新解析出的完整流 URL 会被丢弃）。其它音源
+         * 没有这个问题，名字保持原样，不牵连它们的缓存。</p>
          */
         private static String audioCachePrefix(Music song) {
             return song.getStableKey() + "_"
-                    + (song.isKuGou() ? KuGouMusicApi.AUDIO_CACHE_EPOCH : "");
+                    + (song.isKuGou() ? KuGouMusicApi.AUDIO_CACHE_EPOCH : "")
+                    + (song.isQishui() ? QishuiMusicService.audioCacheEpoch() + "_" : "");
         }
 
         /** 下载缓存的主键（不含扩展名），淘汰分组的组名也因此天然带上世代标记。 */
@@ -2984,17 +3026,27 @@ public class CloudMusic implements SharedConstants {
                 // 的解码器报出真实长度之后做同一判定；是试听就丢掉这张牌，先去跨平台换源把队列
                 // 里这一格换成完整曲目，下一轮预备对着替身重来。
                 if (CrossSourceSwitcher.isIncompleteStream(song.getDuration(), decodedMillis)) {
-                    // 先放句柄再删文件：解码器正用 RandomAccessFile 读着这份缓存，Windows 上
-                    // 打开中的文件删不掉。删缓存与 playSong 路径同一本账 —— 缓存键只有
-                    // 「曲目 + 音质」不认直链，不删的话以后开了会员仍会预备命中这份试听坏缓存。
-                    closeQuietly(deck);
-                    deck = null;
-                    try {
-                        file.delete();
-                    } catch (Throwable ignored) {
+                    // 与 playSong 同一约定：自动换源关闭且是汽水时，试听照常预备——
+                    // 到点出声的是 30 秒片段，界面会亮「仅试听」标识，比预备期直接弃牌
+                    // （表现为下一曲没声）诚实。换源开着才丢牌走救援；文件同样照留，
+                    // 交给缓存键的权益世代自然失配。
+                    if (!CrossSourceSwitcher.canAutoSwitch(song) && song.isQishui()) {
+                        song.setQishuiTrialResolve(true);
+                        System.out.println("[Music/Qishui] 预备试听播放（自动换源未开启）："
+                                + song.getName());
+                    } else {
+                        // 先放句柄再删文件：解码器正用 RandomAccessFile 读着这份缓存，Windows 上
+                        // 打开中的文件删不掉。删缓存与 playSong 路径同一本账 —— 缓存键只有
+                        // 「曲目 + 音质」不认直链，不删的话以后开了会员仍会预备命中这份试听坏缓存。
+                        closeQuietly(deck);
+                        deck = null;
+                        try {
+                            file.delete();
+                        } catch (Throwable ignored) {
+                        }
+                        armTrialClipRescue(song, index, armGeneration, armRevision);
+                        return;
                     }
-                    armTrialClipRescue(song, index, armGeneration, armRevision);
-                    return;
                 }
 
                 // 进阶模式：进场这一首的整曲包络必须在这次规划<b>之前</b>就位。上一轮这里只是把
@@ -3706,10 +3758,17 @@ public class CloudMusic implements SharedConstants {
                             song.applyDecodedDuration(duration);
                             if (!manualSelectionCurrent(selection)) return;
                             if (CrossSourceSwitcher.isIncompleteStream(song.getDuration(), duration)) {
-                                closeQuietly(deck);
-                                deck = null;
-                                file.delete();
-                                throw new IllegalStateException("当前账号只能拿到试听片段");
+                                // 手动切歌预备与 armTrack 同一约定：换源关且汽水时试听照常预备。
+                                if (!CrossSourceSwitcher.canAutoSwitch(song) && song.isQishui()) {
+                                    song.setQishuiTrialResolve(true);
+                                    System.out.println("[Music/Qishui] 手动切歌预备试听（自动换源未开启）："
+                                            + song.getName());
+                                } else {
+                                    closeQuietly(deck);
+                                    deck = null;
+                                    file.delete();
+                                    throw new IllegalStateException(trialFailureReason(song));
+                                }
                             }
                             deck.enableManualTransitionProcessing();
                             deck.prepareStart(0f);

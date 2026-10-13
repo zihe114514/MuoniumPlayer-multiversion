@@ -270,8 +270,12 @@ class PersonalFmLayoutStaticTest {
                 "交接没有走面板那一格真毫秒时钟：它会跟标签区展开、封面接力各走各的拍子");
         assertTrue(body.contains(".setAlpha((float) handoffT)"),
                 "骨架不是跟着交接进度淡入的：会有一帧两张都在，或者一帧两张都不在");
-        assertTrue(body.contains("if (current == null || handoffT >= .995) return;"),
-                "内容交出去之后还在画：淡到零的封面与文字会留在原地当残影");
+        // 残影闸只拦 stale：新歌已到位时必须照建内容，否则起播那一次重建（noteFmTrackStarted）
+        // 会带着还停在 1 的 handoffT 进来，卡片空白到下一次重建（已预备下一首）才补上。
+        assertTrue(body.contains("if (current == null || (stale && handoffT >= .995)) return;"),
+                "交接闸又拦住了新歌已到位的重建：起播后大卡片会一直空白");
+        assertFalse(body.contains("if (current == null || handoffT >= .995) return;"),
+                "交接闸退回了不区分 stale 的老写法");
         // 淡出的是整张卡：封面、三行文字、徽标、动作行都得乘同一个系数。
         assertTrue(count(body, "* heroKeep()") >= 6,
                 "只有部分内容跟着交接淡：骨架亮起来的时候卡上还压着上一首的某一样东西");

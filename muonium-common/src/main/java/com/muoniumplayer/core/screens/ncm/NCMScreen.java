@@ -1542,16 +1542,22 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     }
 
     /**
-     * 是否有模态弹窗正在显示。点击链路（{@link #mouseClicked}）本来就是逐层 return 的模态处理，
+     * 模态浮层是否压在界面上。点击链路（{@link #mouseClicked}）本来就是逐层 return 的模态处理，
      * 滚轮必须用同一套判断，否则弹窗里滚动会连带下层一起滚。
+     *
+     * <p>渲染循环里那些<b>不走</b> {@link #mouseClicked} 分发的原始鼠标轮询（底栏进度条 seek、
+     * 音量条拖动、全屏页歌词行 seek 与进度条拖拽）也必须问这一句：浮层打开时它们照常读
+     * {@code Mouse.isButtonDown(0)} 的话，点一下遮罩就会同时拖动下面的进度条 / 音量——
+     * 「打开歌词选择页会穿透控制」正是这个缝。</p>
      */
-    private boolean isModalOverlayActive() {
+    public boolean isModalOverlayActive() {
         return this.modelInstallNoticeOverlay != null
                 || this.confirmationOverlay != null
                 || this.themePaletteOverlay != null
                 || this.fontPickerOverlay != null
                 || this.playlistImportOverlay != null
                 || this.playlistCreateSheet != null
+                || this.qishuiCloudPlaylistSheet != null
                 || this.lyricSearchOverlay != null
                 || this.musicSourceOverlay != null
                 || this.viperOverlay != null
@@ -1599,6 +1605,14 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         if (this.playlistCreateSheet != null) {
             this.playlistCreateSheet.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            return;
+        }
+
+        // 汽水云歌单建单页与本地建单页同层同形状。e90e748 把渲染与键盘都接上了，
+        // 却漏了这条点击分支——点击全部落到下方主界面树（穿透、误播歌曲），而表单
+        // 自己的按钮一颗都收不到。
+        if (this.qishuiCloudPlaylistSheet != null) {
+            this.qishuiCloudPlaylistSheet.onMouseClickReceived(mouseX, mouseY, mouseButton);
             return;
         }
 

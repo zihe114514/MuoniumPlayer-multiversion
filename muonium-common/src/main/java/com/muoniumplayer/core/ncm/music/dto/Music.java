@@ -198,6 +198,14 @@ public class Music {
      * 界面拿它与用户选的档位拼成「选的 → 实得」，取代从前那串码率列表。</p>
      */
     private transient volatile Quality qishuiActualTier;
+    /**
+     * 本次解析到的汽水流是否试听片段（取流层 {@code ResolveResult#full} 的镜像）。
+     *
+     * <p>播放层判到「只播了半首」时用它如实归因：是后端未就绪/未登录的临时降级，
+     * 还是账号权益真的不够——按时长差瞎猜会把前者说成「当前账号拿不到完整版」。
+     * 描述本次点播，与 {@link #qishuiActualTier} 同为 transient。</p>
+     */
+    private transient volatile boolean qishuiTrialResolve;
 
     /**
      * Gson 在解码不可变网易云响应模型时，可能不运行字段初始化器
@@ -233,6 +241,15 @@ public class Music {
 
     public void setQishuiActualTier(Quality tier) {
         qishuiActualTier = tier;
+    }
+
+    /** 本次解析到的汽水流是否试听；非汽水源恒 false。 */
+    public boolean isQishuiTrialResolve() {
+        return qishuiTrialResolve;
+    }
+
+    public void setQishuiTrialResolve(boolean trial) {
+        qishuiTrialResolve = trial;
     }
 
     public enum PlaybackQuality {
@@ -1239,6 +1256,7 @@ public class Music {
                 if (result == null) return null;
                 setQishuiPlayAuth(result.playAuth);
                 setQishuiActualTier(result.actualTier);
+                setQishuiTrialResolve(!result.full);
                 playbackQuality = detectCadencePlaybackQuality(result.format, requestedQuality);
                 considerHighestQuality(result.format, result.bitrate);
                 return new Tuple<>(result.url, result.format);

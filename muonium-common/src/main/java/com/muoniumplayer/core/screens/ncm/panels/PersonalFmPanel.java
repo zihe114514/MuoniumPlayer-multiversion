@@ -972,7 +972,14 @@ public final class PersonalFmPanel extends NCMPanel {
                 .setAlpha((float) handoffT)
                 .setBounds(heroWidth(), HERO_H).setPosition(MARGIN, heroTop()));
 
-        if (current == null || handoffT >= .995) return;
+        // 这道闸只拦「残影」：卡上这首已经不是当前栏目要来的那一首（stale）且骨架已经交接
+        // 到底时，重建出来的封面与文字会永远淡不出去（heroKeep() 在装配那刻只采样一次，
+        // 之后控件不会跟着 handoffT 反向淡出），于是不建它们。
+        // 新歌已到位（!stale）时必须照建：起播链路 noteFmTrackStarted 会带着一个还停在 1 的
+        // handoffT 重建面板，跳过的话卡片就一直空白，要等下一次重建（已预备下一首）才补上
+        // ——2026-10-13 的「播放开始了大卡还空着」就是它。内容这时随 heroKeep() 从骨架
+        // 底下淡进来，正好是交接的反向一趟。
+        if (current == null || (stale && handoffT >= .995)) return;
 
         addHeroCover(current);
         addHeroActions(current);
@@ -1245,6 +1252,14 @@ public final class PersonalFmPanel extends NCMPanel {
 
     /** 和曲行点下去完全同一条路：FM 走 playFm，才能保住它那套隔离的会话与「不顺着列表往下播」。 */
     private static void playCurrent(Music current) {
+        // FM 下 playFm 的快速交接路径被 personalFmActive 挡掉（PlayThread#requestManualSelection
+        // 的硬条件），点击必然走「停掉整条播放线程 → 从头起」的兜底。封面与「播放」按钮点中的
+        // 恰恰经常是正在播的这一首（FM 批次就只有一首），重启它就是用户看到的「点一下封面，
+        // 歌停了、进度归零」。已在出声就不动；暂停中替用户按一下恢复，与按钮文案的预期一致。
+        if (CloudMusic.isPersonalFmActive() && CloudMusic.currentlyPlaying == current) {
+            if (!CloudMusic.isAudibleNow()) CloudMusic.togglePlayPause();
+            return;
+        }
         List<Music> batch = PersonalFmManager.getCurrentBatchSnapshot();
         CloudMusic.playFm(new CopyOnWriteArrayList<>(batch), batch.indexOf(current));
     }

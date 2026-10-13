@@ -189,13 +189,17 @@ public final class QishuiMusicService {
         public final String playAuth;
         /** 这一条流实际属于哪一档；上游没给可辨认的档位名时为 null。 */
         public final Quality actualTier;
+        /** 选中流是否完整版（时长达到声明 95%）；false = 试听片段。播放层归因要用。 */
+        public final boolean full;
 
-        ResolveResult(String url, String format, long bitrate, String playAuth, Quality actualTier) {
+        ResolveResult(String url, String format, long bitrate, String playAuth, Quality actualTier,
+                      boolean full) {
             this.url = url;
             this.format = format;
             this.bitrate = bitrate;
             this.playAuth = playAuth;
             this.actualTier = actualTier;
+            this.full = full;
         }
     }
 
@@ -400,6 +404,71 @@ public final class QishuiMusicService {
 
     public static boolean isVipAccount() {
         return QishuiSessionStore.snapshot().vip;
+    }
+
+    /**
+     * VIP 受限曲目此刻是否必然只拿得到试听：后端未就绪、未登录、账号非会员，命中其一即成立。
+     *
+     * <p>这是播放前的<b>判定</b>而不是猜测——完整版要「登录 + VIP 账号 + 本机签名后端」三样
+     * 同时在位（track_v2 要后端签名，权益要账号），缺哪样上游都只给试听片段；反过来三者齐了
+     * VIP 曲目就是完整版。免费曲目不经此判定：匿名也能拿到全曲。列表行的「试听」标据此点亮，
+     * 与真实播放结果不符时（权益内却仍拿到试听，如地区限制）由播放层点亮的
+     * {@code Music.isQishuiTrialResolve()} 兜底。三个读取全是 volatile 快照，每帧调用安全。</p>
+     */
+    public static boolean vipContentRestrictedToTrial() {
+        return !QishuiBackend.peekAvailable()
+                || !QishuiSessionStore.isLoggedIn()
+                || !isVipAccount();
+    }
+
+    /**
+     * 当前账号的会员短标：{@code "SVIP"} / {@code "VIP"}，非会员与未登录返回 {@code null}。
+     *
+     * <p>给账号行右端的会员徽标用。vip_stage 非空不等于会员（免费账号是 {@code "free"}），
+     * 判定仍以 {@code vip} 位为准，stage 只用来分 SVIP 与 VIP 两档文案。</p>
+     */
+    public static String membershipBadgeText() {
+        QishuiSessionStore.Session session = QishuiSessionStore.snapshot();
+        if (!session.loggedIn || !session.vip) return null;
+        String stage = session.vipStage;
+        return stage != null && stage.toLowerCase(Locale.ROOT).contains("svip") ? "SVIP" : "VIP";
+    }
+
+    /**
+     * 汽水音频缓存的权益世代：登录态 + 账号 VIP + 后端可用性，任一翻转都要换一代。
+     *
+     * <p>音频缓存键原本只有「曲目 + 音质」。后端未就绪（或未登录）窗口里解析出的试听
+     * 流会以这个键落盘，之后哪怕后端已就绪、账号权益足够，点歌依然命中那份试听文件，
+     * 完整流 URL 被直接丢弃——用户「充了 VIP 也只放半首」。把这三个状态位折进键里
+     * （与酷狗 {@code AUDIO_CACHE_EPOCH} 同款先例），世代一翻旧键自然不命中，
+     * 试听文件成为孤儿交给既有 LRU 淘汰，不需要显式失效钩子。</p>
+     *
+     * <p>三个读取全部是 volatile 快照（{@link QishuiBackend#peekAvailable()} 绝不发探测），
+     * 缓存键计算虽不在渲染路径，也保持零阻塞。</p>
+     */
+    static int audioCacheEpoch() {
+        int epoch = 0;
+        if (QishuiSessionStore.isLoggedIn()) epoch |= 1;
+        if (isVipAccount()) epoch |= 2;
+        if (QishuiBackend.peekAvailable()) epoch |= 4;
+        return epoch;
+    }
+
+    /**
+     * 「仅试听」常驻标识的文案：按当下状态说清为什么只有半首。
+     *
+     * <p>给播放条与全屏播放页的 WARN 徽标用；与 {@code trialFailureReason}（播放失败
+     * 归因）同一套判据但措辞面向「正在播的这是什么」——这里是状态说明，不是报错。
+     * 三个读取全是 volatile 快照，渲染路径每帧调用安全。</p>
+     */
+    public static String trialBadgeLabel() {
+        if (!QishuiBackend.peekAvailable()) {
+            return "仅试听 · 后端未就绪";
+        }
+        if (!QishuiSessionStore.isLoggedIn()) {
+            return "仅试听 · 未登录";
+        }
+        return "仅试听 · 账号权益不足";
     }
 
     /** 账号资料的稳定显示名：过滤格式/控制字符，绝不把不可绘制昵称交给 UI。 */
@@ -2621,8 +2690,11 @@ public final class QishuiMusicService {
             System.err.println("[Music/Qishui] 上游只给到试听片段：" + (selectedDuration / 1000L)
                     + "s / 声明 " + (declaredDurationMillis / 1000L) + "s，完整流需要上游放开的权益");
         }
+        // 完整度结论必须随流上传：播放层判到「只播了半首」时，要靠它区分「后端未就绪/
+        // 未登录的临时降级」与「账号权益真的不够」，不能让上层只按时长差瞎归因到账号。
+        boolean full = isFullStream(selectedDuration, declaredDurationMillis);
         return new ResolveResult(url, normalized, streamBitrate(selected.node), selected.playAuth,
-                tierOf(selected.node));
+                tierOf(selected.node), full);
     }
 
     /**

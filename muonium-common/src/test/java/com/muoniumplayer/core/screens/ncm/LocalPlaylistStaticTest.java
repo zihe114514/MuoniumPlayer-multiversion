@@ -77,10 +77,18 @@ class LocalPlaylistStaticTest {
     @DisplayName("建单页在四路派发里全都接上了（画、键、鼠、模态）")
     void createSheetIsWiredIntoEveryDispatchPath() throws IOException {
         String body = read(SCREEN);
-        int modal = indexOf(body, "private boolean isModalOverlayActive()", "模态判定");
+        int modal = indexOf(body, "boolean isModalOverlayActive()", "模态判定");
         assertTrue(body.indexOf("playlistCreateSheet != null", modal) > 0
                         && body.indexOf("playlistCreateSheet != null", modal) < modal + 900,
                 "建单页没进 isModalOverlayActive()：在它下面滚轮会连带滚到播放器列表");
+        // 汽水云建单页与本地建单页同层同形状。e90e748 把渲染与键盘接上了、漏了点击与模态——
+        // 「点击穿透到下方主界面 + 表单按钮点不了」就是那次漏接，这里四个派发口一起钉住。
+        assertTrue(body.indexOf("qishuiCloudPlaylistSheet != null", modal) > 0
+                        && body.indexOf("qishuiCloudPlaylistSheet != null", modal) < modal + 900,
+                "汽水云建单页没进 isModalOverlayActive()：滚轮与模态闸门对它失效");
+        int qishuiClicked = indexOf(body, "public void mouseClicked(", "鼠标派发");
+        assertTrue(body.indexOf("qishuiCloudPlaylistSheet.onMouseClickReceived", qishuiClicked) > 0,
+                "鼠标点击没派发给汽水云建单页：点击全部穿透到下方组件，表单按钮点不了");
 
         int clicked = indexOf(body, "public void mouseClicked(", "鼠标派发");
         assertTrue(body.indexOf("playlistCreateSheet.onMouseClickReceived", clicked) > 0,

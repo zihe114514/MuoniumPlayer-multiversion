@@ -47,7 +47,10 @@ public final class MusicAudioCache {
     /** 改名淘汰用的中间后缀。上一轮被打断留下的这类文件下一轮无条件清掉。 */
     private static final String EVICT_SUFFIX = ".evicting";
 
-    private static final String[] PARTIAL_SUFFIXES = {".download", ".part", ".jaad-input"};
+    // .decrypted 是汽水解密器的中间临时名（密文旁路写明文、再原子改名覆盖密文）：
+    // 正常路径毫秒级消失，只有进程在解密中途死掉才残留。不加进残片清单的话，
+    // 它不属于任何容器后缀，容量淘汰只按组走——低量级使用下会一直躺着。
+    private static final String[] PARTIAL_SUFFIXES = {".download", ".part", ".jaad-input", ".decrypted"};
 
     private static final Object LOCK = new Object();
 

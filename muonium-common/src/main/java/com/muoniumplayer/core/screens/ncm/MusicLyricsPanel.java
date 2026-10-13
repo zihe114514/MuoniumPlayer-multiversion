@@ -790,7 +790,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                 lyric.hoveringAlpha = Interpolations.interpolate(lyric.hoveringAlpha,
                         isHovering ? 1f : 0f, 0.2f);
                 if (isHovering) CursorUtils.setOverride(CursorUtils.HAND);
-                if (isHovering && Mouse.isButtonDown(0) && !prevMouse) {
+                // 模态浮层（选词、建单等）打开时这一帧的按住不属于歌词列：点遮罩会同时把
+                // 底下的歌词行当成跳转、seek 到那一行的时刻。
+                if (!NCMScreen.getInstance().isModalOverlayActive()
+                        && isHovering && Mouse.isButtonDown(0) && !prevMouse) {
                     prevMouse = true;
                     if (CloudMusic.hasPlaybackClock() && CloudMusic.seekToMillis(lyric.timestamp)) {
                         resetLyricStatus();
@@ -1680,6 +1683,12 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         this.progressBarHeight = Interpolations.interpolate(this.progressBarHeight, hoveringProgressBar ? 8 : 5, 0.3f);
 
         boolean lmbDown = Mouse.isButtonDown(0);
+        // 模态浮层（选词、建单等）打开时这一帧的按住不属于进度条：点遮罩会同时把
+        // 底下的进度条当成拖到起点。
+        if (NCMScreen.getInstance().isModalOverlayActive()) {
+            lmbDown = false;
+            progressBarDragging = false;
+        }
         if (clockReady && hoveringProgressBar && lmbDown && !prevMouse) {
             prevMouse = true;
             progressBarDragging = true;

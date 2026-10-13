@@ -117,7 +117,7 @@ class ModelInstallNoticeStaticTest {
         }
 
         // 提示必须算进模态浮层，否则滚轮会穿透到下层曲库。
-        String modal = body(screen, "private boolean isModalOverlayActive()");
+        String modal = body(screen, "boolean isModalOverlayActive()");
         assertTrue(modal.contains("this.modelInstallNoticeOverlay != null"),
                 "提示层要计入模态判定，否则滚轮会连带下层一起滚");
 

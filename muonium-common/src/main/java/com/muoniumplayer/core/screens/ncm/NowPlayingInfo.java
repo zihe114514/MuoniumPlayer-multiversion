@@ -7,6 +7,8 @@ import java.util.List;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.QishuiBackend;
+import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.Quality;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.rendering.RGBA;
@@ -217,9 +219,15 @@ final class NowPlayingInfo implements SharedRenderingConstants {
         }
         // 汽水的音质标签自带英文（{@link Quality#displayNameEn()}），不走 qualityEnglish——
         // 那边是按中文取值反查的，遇到「极高 → EXHIGH」这类新档位会原样漏出来。
+        // 试听时这枚 pill 直接换成试听说明（音质本来就拿不到，档位箭头没有信息量），
+        // 并转 WARN 色——试听的原因（后端/登录/权益）就地说明，不再单独立一枚。
+        boolean qishuiTrial = music.isQishui() && music.isQishuiTrialResolve();
         String quality = qualityLabel(music, english);
         if (!quality.isEmpty()) {
-            pills.add(new Pill(quality, NEUTRAL));
+            pills.add(new Pill(qishuiTrial
+                            ? (english ? "TRIAL · " + trialBadgeEn() : QishuiMusicService.trialBadgeLabel())
+                            : quality,
+                    qishuiTrial ? WARN : NEUTRAL));
         }
         String lyric = lyricLabel(english);
         if (!lyric.isEmpty()) pills.add(new Pill(lyric, NEUTRAL));
@@ -237,9 +245,15 @@ final class NowPlayingInfo implements SharedRenderingConstants {
         return pills;
     }
 
+    /** 试听徽标的英文短文案（{@link QishuiMusicService#trialBadgeLabel} 的英文版）。 */
+    private static String trialBadgeEn() {
+        if (!QishuiBackend.peekAvailable()) return "BACKEND OFFLINE";
+        if (!QishuiMusicService.isLoggedIn()) return "NOT LOGGED IN";
+        return "ACCOUNT TIER";
+    }
+
     /** 平台的英文短名。不用 {@code MusicPlatform.name()}：那是枚举名，"GD" 讲不清是什么。 */
-    private static String platformEnglish(Music music) {
-        switch (music.getSource()) {
+    private static String platformEnglish(Music music) {        switch (music.getSource()) {
             case QQ:
                 return "QQ MUSIC";
             case KUGOU:

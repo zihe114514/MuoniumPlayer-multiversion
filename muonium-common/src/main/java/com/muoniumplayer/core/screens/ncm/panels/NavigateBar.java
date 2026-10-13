@@ -15,6 +15,7 @@ import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.QishuiMusicService;
 import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
 import com.muoniumplayer.core.ncm.music.PlaylistRefreshResult;
 import com.muoniumplayer.core.ncm.music.QishuiMusicService;
@@ -1260,9 +1261,10 @@ public class NavigateBar extends NCMPanel {
             creatorAvatar.setRadius(7.25);
         });
 
-        // 会员徽标：网易云已登录且是会员时出现在账号行右端。原来这条信息是主页左下角一行灰字，
+        // 会员徽标：已登录且是会员时出现在账号行右端。原来这条信息是主页左下角一行灰字，
         // 那个位置既压着内容网格、又和"我的账号"离得最远，看着像界面上多出来的一块。
         // 徽标先建：昵称的可用宽度要按它当帧的实际宽度让位，否则长昵称会压到徽标底下。
+        // 网易云与汽水共用这枚底板：文案随平台与权益取（SVIP/VIP），普通用户不亮。
         final RoundedRectWidget vipPlate = new RoundedRectWidget();
         this.addChild(vipPlate);
         vipPlate.setClickable(false);
@@ -1285,11 +1287,15 @@ public class NavigateBar extends NCMPanel {
                     creatorAvatar.getRelativeY() + creatorAvatar.getHeight() * .5 - lblCreator.getHeight() * .5);
             lblCreator.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             lblCreator.setMaxWidth(Math.max(1, this.getWidth() - lblCreator.getRelativeX() - 12
-                    - (isNeteaseVip() ? vipPlate.getWidth() + 6 : 0)));
+                    - (membershipBadgeText() != null ? vipPlate.getWidth() + 6 : 0)));
         });
 
         vipPlate.setBeforeRenderCallback(() -> {
-            double width = 8.0 + VIP_ICON_BOX + 3.0 + FontManager.pf10bold.getStringWidthD("VIP") + 8.0;
+            String text = membershipBadgeText();
+            // null = 普通用户/未登录，徽标收成零宽隐形：量宽用空串（字体渲染器不收 null，
+            // 真机 2026-10-13 渲染线程 NPE 就是这里漏的），显隐交给 alpha。
+            double width = 8.0 + VIP_ICON_BOX + 3.0
+                    + FontManager.pf10bold.getStringWidthD(text == null ? "" : text) + 8.0;
             vipPlate.setRadius(VIP_PLATE_H * .5);
             vipPlate.setBounds(width, VIP_PLATE_H);
             vipPlate.setPosition(Math.max(0, this.getWidth() - 12 - width),
@@ -1297,18 +1303,21 @@ public class NavigateBar extends NCMPanel {
             // 底色由金色朝导航底色混出来。铺纯金会比旁边的昵称还抢眼 —— 身份标记不该压过账号本身。
             vipPlate.setColor(NcmSheet.mix(NCMScreen.getColor(NCMScreen.ColorType.NAVIGATION_BACKGROUND),
                     NcmSheet.VIP_COLOR, .3));
-            vipPlate.setAlpha(isNeteaseVip() ? 1f : 0f);
+            vipPlate.setAlpha(text != null ? 1f : 0f);
         });
         vipMark.setBeforeRenderCallback(() -> {
+            String text = membershipBadgeText();
             vipMark.setColor(NcmSheet.VIP_COLOR);
-            vipMark.setAlpha(isNeteaseVip() ? 1f : 0f);
+            vipMark.setAlpha(text != null ? 1f : 0f);
             NcmSheet.placeIcon(vipMark, FontManager.partyIcon24,
                     vipPlate.getRelativeX() + 8.0 + VIP_ICON_BOX * .5,
                     vipPlate.getRelativeY() + VIP_PLATE_H * .5);
         });
         vipText.setBeforeRenderCallback(() -> {
+            String text = membershipBadgeText();
+            vipText.setLabel(text == null ? "" : text);
             vipText.setColor(NcmSheet.VIP_COLOR);
-            vipText.setAlpha(isNeteaseVip() ? 1f : 0f);
+            vipText.setAlpha(text != null ? 1f : 0f);
             vipText.setPosition(vipPlate.getRelativeX() + 8.0 + VIP_ICON_BOX + 3.0,
                     NcmSheet.inkTop(vipText, vipPlate.getRelativeY() + VIP_PLATE_H * .5));
         });
@@ -1566,6 +1575,22 @@ public class NavigateBar extends NCMPanel {
     private static boolean isNeteaseVip() {
         return NeteaseMusicService.getCurrentPlatform() == MusicPlatform.NETEASE
                 && CloudMusic.profile != null && CloudMusic.profile.isVipMember();
+    }
+
+    /**
+     * 账号行右端会员徽标的文案；当前平台没有会员身份时返回 {@code null}（徽标不亮）。
+     *
+     * <p>网易云沿用 {@link #isNeteaseVip()}；汽水按账号权益取「SVIP」（vip_stage 含 svip）
+     * 与「VIP」（其余会员档），免费账号与未登录不亮——普通用户挂一枚「普通」标是噪音，
+     * 账号身份这件事没有信息可说就不说。三个数据源全是 volatile 快照，每帧调用安全。</p>
+     */
+    private static String membershipBadgeText() {
+        MusicPlatform platform = NeteaseMusicService.getCurrentPlatform();
+        if (platform == MusicPlatform.NETEASE) return isNeteaseVip() ? "VIP" : null;
+        if (platform == MusicPlatform.QISHUI) {
+            return QishuiMusicService.membershipBadgeText();
+        }
+        return null;
     }
 
     private static String sourceGlyph(MusicPlatform platform) {
