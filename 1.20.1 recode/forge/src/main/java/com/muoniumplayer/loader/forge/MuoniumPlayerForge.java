@@ -58,6 +58,9 @@ public final class MuoniumPlayerForge {
         // 一起听通道：1.20.1 是裸 custom payload，登记不需要 mod 总线事件，
         // 但必须在 FMLCommonSetupEvent 之前（Forge 的通道注册表在那之后就锁了）。
         MpNetForge.register();
+        // 内嵌一起听房间引擎（局域网主机）：给 C2S 通道加服务端方向监听并挂生命周期事件。
+        // 通道注册表在 FMLCommonSetupEvent 之后锁定，所以必须在这里、commonSetup 之前接好。
+        com.muoniumplayer.party.lan.LanNetForge.register();
     }
 
     /**

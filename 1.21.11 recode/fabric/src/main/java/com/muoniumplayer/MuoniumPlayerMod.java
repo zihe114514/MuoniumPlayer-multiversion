@@ -35,6 +35,10 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         //    装了则由 MpPartyClient 接管房间内的播放/点歌，复用播放器现有的播放链路。
         MpNetFabric.register();
 
+        // 内嵌一起听房间引擎（局域网主机）：注册服务端方向的 C2S 接收器与生命周期钩子。
+        // 集成服务端不存在时全程静止；专用服务器上本 mod 不加载，与此处代码无关。
+        com.muoniumplayer.party.lan.LanNetFabric.register();
+
         // 3. 可配置按键（出现在「选项 → 控制 → MuoniumPlayer」分组下）
         for (KeyMapping key : MuoniumPlayerClient.createKeyMappings()) {
             KeyBindingHelper.registerKeyBinding(key);

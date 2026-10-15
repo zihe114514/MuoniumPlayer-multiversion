@@ -38,7 +38,7 @@ public final class MpNetNeoForge implements MpHost {
     public static void register(IEventBus modBus) {
         modBus.addListener(MpNetNeoForge::onRegisterPayloads);
 
-        MpPartyClient.bind(INSTANCE);
+        MpPartyClient.bind(com.muoniumplayer.party.direct.MpHostRouter.wrap(INSTANCE));
 
         NeoForge.EVENT_BUS.addListener(
                 (ClientPlayerNetworkEvent.LoggingIn event) -> MpPartyClient.onWorldJoin());
@@ -50,7 +50,11 @@ public final class MpNetNeoForge implements MpHost {
         PayloadRegistrar registrar = event.registrar(PROTOCOL_VERSION).optional();
         registrar.playToServer(MpPayloads.C2S.ID, MpPayloads.C2S.CODEC,
                 (payload, context) -> {
-                    // 客户端不处理自己发出去的方向。
+                    // 客户端平时不处理这个方向；内嵌引擎激活（局域网主机）时,
+                    // 客户端发给集成服务端的帧在这里转进房间引擎。
+                    com.muoniumplayer.party.lan.LanNetNeoForge
+                            .dispatchC2s(context.player() == null ? null : context.player().getUUID(),
+                                    payload.data());
                 });
         registrar.playToClient(MpPayloads.S2C.ID, MpPayloads.S2C.CODEC,
                 (payload, context) -> MpPartyClient.onFrame(payload.data()));
@@ -77,6 +81,12 @@ public final class MpNetNeoForge implements MpHost {
     public UUID selfUuid() {
         Minecraft mc = Minecraft.getInstance();
         return mc.player == null ? null : mc.player.getUUID();
+    }
+
+    @Override
+    public String selfName() {
+        Minecraft mc = Minecraft.getInstance();
+        return mc.player == null ? null : mc.player.getName().getString();
     }
 
     @Override

@@ -24,6 +24,7 @@ import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import com.muoniumplayer.party.MpPartyClient;
+import com.muoniumplayer.party.MpRoom;
 
 import java.awt.image.BufferedImage;
 import java.util.List;
@@ -182,8 +183,8 @@ public final class ListenTogetherOverlay extends NcmSheet {
         ListenTogetherService.Phase phase = ListenTogetherService.getPhase();
         if (phase == ListenTogetherService.Phase.CONNECTING) return 244.0;
         if (phase == ListenTogetherService.Phase.ACTIVE) return 440.0;
-        // 空闲态多了一张「服务器房间」卡片，比原来高 100。
-        return 444.0;
+        // 空闲态：全宽官方卡 + 两张半宽卡（两行）+ 两行脚注。
+        return 344.0;
     }
 
     /** 一段内容的容器：本身不画任何东西，只是用来整段切显隐。 */
@@ -302,8 +303,7 @@ public final class ListenTogetherOverlay extends NcmSheet {
      */
     private void addServerRoomPill(final Panel dialog) {
         final double[] hover = new double[1];
-        RoundedButtonWidget pill = new RoundedButtonWidget(
-                () -> MpPartyClient.inRoom() ? "服务器房间 · 在房" : "服务器房间", FontManager.pf12bold);
+        RoundedButtonWidget pill = new RoundedButtonWidget(this::sourcePillLabel, FontManager.pf12bold);
         dialog.addChild(pill);
         pill.setGlassRim(GlassLook.Surface.PLAYER);
         pill.setRadius(8);
@@ -314,10 +314,13 @@ public final class ListenTogetherOverlay extends NcmSheet {
         });
         pill.setBeforeRenderCallback(() -> {
             boolean present = MpPartyClient.serverPresent();
+            boolean inRoom = MpPartyClient.inRoom();
+            boolean directOn = com.muoniumplayer.party.direct.MpDirect.isActive();
             hover[0] = Interpolations.interpolate(hover[0], pill.isHovering() ? 1.0 : 0.0, .22f);
-            pill.setBounds(MpPartyClient.inRoom() ? 122 : 96, 28);
+            pill.setBounds(pillLabelWidth(), 28);
             pill.setPosition(Math.max(1, dialog.getWidth() - 16 - pill.getWidth()), 14);
-            if (MpPartyClient.inRoom()) {
+            if (inRoom || directOn) {
+                // 有活跃会话（服务器房间或直连）：绿底白字，一眼看出「现在连着的是它」。
                 pill.setColor(mix(OK_COLOR, 0xFFFFFF, hover[0] * .18));
                 pill.setTextColor(0xFFFFFF);
             } else {
@@ -326,10 +329,61 @@ public final class ListenTogetherOverlay extends NcmSheet {
                 pill.setTextColor(present ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)
                         : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             }
-            pill.setFillAlpha(MpPartyClient.inRoom() ? 1.0f : GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+            pill.setFillAlpha(inRoom || directOn ? 1.0f : GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             // 服务端没装也照样可点：房间面板会把「这台服务器没装服务端 mod」直接写在脸上，
             // 比让入口凭空消失、用户以为功能不存在要好。
         });
+
+        // 来源状态行：pill 下方一行小字，把「当前会话是哪条链路的」写成一句话。
+        LabelWidget source = new LabelWidget(this::sourceStateLine, FontManager.pf10bold);
+        dialog.addChild(source);
+        source.setClickable(false);
+        source.setBeforeRenderCallback(() -> {
+            source.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            source.setMaxWidth(Math.max(1, dialog.getWidth() - 32));
+            source.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            source.setPosition(16, 57);
+        });
+    }
+
+    /** 右上角 pill 的文案：按活跃会话分级。 */
+    private String sourcePillLabel() {
+        boolean inRoom = MpPartyClient.inRoom();
+        boolean directOn = com.muoniumplayer.party.direct.MpDirect.isActive();
+        if (inRoom && directOn) return "双会话并行";
+        if (directOn) return "直连房间 · 在听";
+        if (inRoom) return "服务器房间 · 在房";
+        return "服务器房间";
+    }
+
+    private double pillLabelWidth() {
+        String label = sourcePillLabel();
+        return Math.max(96, FontManager.pf12bold.getStringWidthD(label) + 24);
+    }
+
+    /**
+     * 来源状态行：一句话讲清当前会话来自哪条链路。
+     * 三个来源互不互斥由各自引擎决定，这里只做如实呈现。
+     */
+    private String sourceStateLine() {
+        java.util.List<String> parts = new java.util.ArrayList<>();
+        if (MpPartyClient.inRoom()) {
+            MpRoom room = MpPartyClient.room();
+            parts.add("MC 服务器（" + (room == null || !room.channel
+                    ? "mpsync 服务端" : "频道") + "）");
+        }
+        if (com.muoniumplayer.party.direct.MpDirect.isHosting()) {
+            parts.add("直连房间（本机托管）");
+        } else if (com.muoniumplayer.party.direct.MpDirect.isJoined()) {
+            parts.add("直连房间（好友托管）");
+        }
+        if (ListenTogetherService.isActive()) {
+            parts.add("官方一起听（" + ListenTogetherService.backendLabel() + "）");
+        }
+        if (parts.isEmpty()) {
+            return "当前没有活跃的一起听会话";
+        }
+        return "当前会话来源：" + String.join(" + ", parts);
     }
 
     /** 服务器房间卡片的副标题：跟着房间状态走。 */
@@ -388,20 +442,220 @@ public final class ListenTogetherOverlay extends NcmSheet {
     // ──────────────────────────── 空闲（建房 / 加入） ────────────────────────────
 
     private void buildIdle(final Panel host) {
-        addActionCard(host, 68, FontelloIcons.ACCOUNT_ADD, "创建房间",
-                ListenTogetherService.ownedByKuGou()
-                        ? "生成房间与邀请码，你的播放、暂停、切歌会同步给好友"
-                        : "生成房间与分享链接，你的播放、暂停、切歌会同步给好友", true,
-                ListenTogetherService::createRoom);
-        addActionCard(host, 168, FontelloIcons.LINK, "加入房间",
-                "粘贴好友发来的分享链接或邀请码", false, this::showJoinPage);
-        // 第三条路：本服的一起听服务端（mpsync）。它不依赖网易云的一起听接口，
-        // 因此没有下面那两条脚注说的限制 —— 进度、暂停、切歌都是服务端说了算。
-        addActionCard(host, 268, FontelloIcons.LEADERBOARD, "服务器房间",
+        // 三张卡：上排全宽「官方一起听」（网易云/酷狗，创建/加入在其内页二选一），
+        // 下排两张半宽「服务器房间」「直连房间」。名字里写清是谁的房间——
+        // 「创建房间」这类泛称会让人以为是又一个独立功能。
+        addWideCard(host, 0, FontelloIcons.ACCOUNT_ADD, "官方一起听 · " + ListenTogetherService.backendLabel(),
+                this::officialCardDetail, true, this::showOfficialPage);
+        addGridCard(host, 0, 1, FontelloIcons.LEADERBOARD, "服务器房间",
                 this::serverRoomCardDetail, false, this::openServerRoom);
+        addGridCard(host, 1, 1, FontelloIcons.UNLINK, "直连房间",
+                this::directRoomCardDetail, false, this::openDirectRoom);
 
-        addFootnote(host, "受官方接口限制：加入方无法自动跟随主机的暂停与切歌，", 374);
-        addFootnote(host, "需要在房间页点「同步一次」手动对齐当前曲目与进度。", 390);
+        addFootnote(host, "受官方接口限制：加入方无法自动跟随主机的暂停与切歌，", 282);
+        addFootnote(host, "需要在房间页点「同步一次」手动对齐当前曲目与进度。", 298);
+    }
+
+    /** 官方一起听卡的详情：随音源与在房状态走。 */
+    private String officialCardDetail() {
+        if (ListenTogetherService.isActive()) {
+            return "在房 · " + ListenTogetherService.getMembers().size() + " 人 · 房间 "
+                    + shortRoom(ListenTogetherService.getRoomId());
+        }
+        return "网易云 / 酷狗的官方房间：与好友共享一条播放进度，点开创建或加入";
+    }
+
+    /** 官方一起听的内页：创建 / 加入二选一（沿用加入页的翻页骨架）。 */
+    private void showOfficialPage() {
+        beginPage();
+        joinPage = false;
+        inviteField = null;
+
+        final Panel dialog = sheet(452, () -> 232.0);
+        addBackButton(dialog, back(this::showOverview));
+        addDetailTitle(dialog, "官方一起听 · " + ListenTogetherService.backendLabel(),
+                "用你的 " + ListenTogetherService.backendLabel() + " 账号开房，或加入好友的房间");
+
+        LabelWidget createTitle = new LabelWidget("创建房间", FontManager.pf14bold);
+        dialog.addChild(createTitle);
+        createTitle.setClickable(false);
+        createTitle.setBeforeRenderCallback(() -> {
+            createTitle.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            createTitle.setPosition(16, 66);
+        });
+        LabelWidget createSub = new LabelWidget(
+                ListenTogetherService.ownedByKuGou()
+                        ? "生成房间与邀请码，你的播放、暂停、切歌同步给好友"
+                        : "生成房间与分享链接，你的播放、暂停、切歌同步给好友",
+                FontManager.pf12);
+        dialog.addChild(createSub);
+        createSub.setClickable(false);
+        createSub.setBeforeRenderCallback(() -> {
+            createSub.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            createSub.setMaxWidth(Math.max(1, dialog.getWidth() - 32));
+            createSub.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            createSub.setPosition(16, 88);
+        });
+
+        LabelWidget joinTitle = new LabelWidget("加入房间", FontManager.pf14bold);
+        dialog.addChild(joinTitle);
+        joinTitle.setClickable(false);
+        joinTitle.setBeforeRenderCallback(() -> {
+            joinTitle.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            joinTitle.setPosition(16, 118);
+        });
+        LabelWidget joinSub = new LabelWidget("粘贴好友发来的分享链接或邀请码", FontManager.pf12);
+        dialog.addChild(joinSub);
+        joinSub.setClickable(false);
+        joinSub.setBeforeRenderCallback(() -> {
+            joinSub.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            joinSub.setMaxWidth(Math.max(1, dialog.getWidth() - 32));
+            joinSub.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            joinSub.setPosition(16, 140);
+        });
+
+        final double[] createHover = new double[1];
+        RoundedButtonWidget create = new RoundedButtonWidget("创建房间", FontManager.pf12bold);
+        dialog.addChild(create);
+        create.setGlassRim(GlassLook.Surface.PLAYER);
+        create.setRadius(8);
+        create.setOnClickCallback((x, y, button) -> {
+            if (button != 0) return false;
+            ListenTogetherService.createRoom();
+            return true;
+        });
+        create.setBeforeRenderCallback(() -> {
+            createHover[0] = Interpolations.interpolate(createHover[0], create.isHovering() ? 1.0 : 0.0, .22f);
+            create.setBounds((Math.max(1, dialog.getWidth() - 32) - 8) * .5, 34);
+            create.setPosition(16, dialog.getHeight() - 56);
+            create.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF, createHover[0] * .16));
+            create.setTextColor(0xFFFFFF);
+        });
+
+        final double[] joinHover = new double[1];
+        RoundedButtonWidget join = new RoundedButtonWidget("加入房间", FontManager.pf12bold);
+        dialog.addChild(join);
+        join.setGlassRim(GlassLook.Surface.PLAYER);
+        join.setRadius(8);
+        join.setOnClickCallback((x, y, button) -> {
+            if (button != 0) return false;
+            showJoinPage();
+            return true;
+        });
+        join.setBeforeRenderCallback(() -> {
+            joinHover[0] = Interpolations.interpolate(joinHover[0], join.isHovering() ? 1.0 : 0.0, .22f);
+            double w = (Math.max(1, dialog.getWidth() - 32) - 8) * .5;
+            join.setBounds(w, 34);
+            join.setPosition(16 + w + 8, dialog.getHeight() - 56);
+            join.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
+                    NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), joinHover[0]));
+            join.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            join.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+        });
+    }
+
+    /** 全宽卡：占满整行（官方一起听这类需要整行说清楚的事）。 */
+    private void addWideCard(final Panel host, final int row,
+                             final String glyph, String titleText, Supplier<String> detailText,
+                             final boolean primary, final Runnable action) {
+        addGridCardFull(host, row, 0, 1.0, glyph, titleText, detailText, primary, action);
+    }
+
+    /** 2×2 卡片网格里的半宽卡：col 0/1，宽度与位置在每帧回调里按宿主实宽算。 */
+    private void addGridCard(final Panel host, final int col, final int row,
+                             final String glyph, String titleText, Supplier<String> detailText,
+                             final boolean primary, final Runnable action) {
+        addGridCardFull(host, row, col, 0.5, glyph, titleText, detailText, primary, action);
+    }
+
+    /**
+     * 卡片网格的公共实现：{@code widthFrac} 是这张卡占内容区宽的比例（全宽 1.0 / 半宽 0.5），
+     * {@code col} 只在半宽时用于横向偏移。宽度与位置都在每帧回调里按宿主实宽算——
+     * 构建时面板还没渲染，宽度是 0。
+     */
+    private void addGridCardFull(final Panel host, final int row, final int col, final double widthFrac,
+                                 final String glyph, String titleText, Supplier<String> detailText,
+                                 final boolean primary, final Runnable action) {
+        final double[] hover = new double[1];
+        final double y = 68 + row * 104.0;
+
+        RoundedButtonWidget card = new RoundedButtonWidget("", FontManager.pf14bold);
+        host.addChild(card);
+        card.setGlassRim(GlassLook.Surface.PLAYER);
+        card.setRadius(10);
+        card.setOnClickCallback((x, yy, button) -> {
+            if (button != 0) return false;
+            action.run();
+            return true;
+        });
+        card.setBeforeRenderCallback(() -> {
+            hover[0] = Interpolations.interpolate(hover[0], card.isHovering() ? 1.0 : 0.0, .2f);
+            double contentW = Math.max(1, host.getWidth() - 32);
+            double cardW = widthFrac >= 1.0 ? contentW : (contentW - 8.0) * .5;
+            card.setBounds(Math.max(1, cardW), 96);
+            // 悬停整卡轻微上抬 2px：与旧单列版同一手感。
+            card.setPosition(16 + (widthFrac >= 1.0 ? 0 : (cardW + 8.0) * col),
+                    y - hover[0] * 2.0);
+            if (primary) {
+                card.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF, hover[0] * .18));
+            } else {
+                card.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
+                        NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), hover[0]));
+            }
+            card.setFillAlpha(primary ? 1.0f : GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+            card.setTextColor(0x00FFFFFF);
+        });
+
+        LabelWidget icon = new LabelWidget(glyph, FontManager.fontello18);
+        card.addChild(icon);
+        icon.setClickable(false);
+        icon.setBeforeRenderCallback(() -> {
+            icon.setColor(primary ? 0xFFFFFF : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+            icon.setPosition(16, 21);
+        });
+
+        LabelWidget title = new LabelWidget(titleText, FontManager.pf14bold);
+        card.addChild(title);
+        title.setClickable(false);
+        title.setBeforeRenderCallback(() -> {
+            title.setColor(primary ? 0xFFFFFF : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            title.setPosition(44, 16);
+        });
+
+        LabelWidget detail = new LabelWidget(detailText, FontManager.pf10bold);
+        card.addChild(detail);
+        detail.setClickable(false);
+        detail.setBeforeRenderCallback(() -> {
+            detail.setColor(primary ? 0xE0FFFFFF : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            detail.setMaxWidth(Math.max(1, card.getWidth() - 60));
+            detail.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            detail.setPosition(44, 40);
+        });
+
+        LabelWidget chevron = new LabelWidget("›", FontManager.pf20bold);
+        card.addChild(chevron);
+        chevron.setClickable(false);
+        chevron.setBeforeRenderCallback(() -> {
+            chevron.setColor(primary ? 0xE0FFFFFF : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            chevron.setPosition(card.getWidth() - 20 + hover[0] * 3.0, 18);
+        });
+    }
+
+    /** 直连房间卡片的副标题：跟着直连状态走。 */
+    private String directRoomCardDetail() {
+        if (com.muoniumplayer.party.direct.MpDirect.isHosting()) {
+            return "托管中 · " + com.muoniumplayer.party.direct.MpDirect.onlineMemberCount() + " 位好友在线";
+        }
+        if (com.muoniumplayer.party.direct.MpDirect.isJoined()) {
+            return "已连接好友的直连房间";
+        }
+        return "第三方服务器也能一起听：一人开房、好友凭邀请串加入";
+    }
+
+    private void openDirectRoom() {
+        // 与服务器房间同款跳法：先收掉自己再开下一层，两层模态叠在一起会抢键盘与点击。
+        dispose();
+        NCMScreen.getInstance().openMpDirect();
     }
 
     private void addFootnote(final Panel host, String text, final double y) {

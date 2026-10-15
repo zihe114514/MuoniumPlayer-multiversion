@@ -45,7 +45,8 @@ sourceSets {
                 'src/main/java',                                       // Fabric 外壳
                 rootProject.file('../muonium-common/src/main/java'),   // 五树共享主体（版本中立）
                 rootProject.file('src/main/java'),                     // 本树版本差异层（compat / mixin / 功能集）
-                rootProject.file('../mpparty-common/src/main/java')    // 一起听共用源码
+                rootProject.file('../mpparty-common/src/main/java'),   // 一起听共用源码
+                rootProject.file('../mpserver-core/src/main/java')      // 内嵌一起听房间引擎（服务端 core 镜像）
         ]
         if (modernUiEnabled) {
             java.srcDirs += rootProject.file('external/modernui/java') // ModernUI 版 HUD 设置面板

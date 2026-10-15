@@ -45,19 +45,25 @@ class ZstdNativeDownloadStaticTest {
     }
 
     @Test
-    @DisplayName("五条镜像都是 https、都指向清单仓库的 libs/ 目录")
+    @DisplayName("五条 GitHub 系镜像 + 两条 https 官网系 + 一条自建分发站，都指向 libs/ 目录")
     void mirrorsPointAtTheManifestRepository() {
-        assertEquals(5, ZstdNativeDownload.MIRRORS.size(), "镜像条数与字体/转译器扩容后的同一套");
+        assertEquals(8, ZstdNativeDownload.MIRRORS.size(), "镜像条数：五条 GitHub 系 + Pages + R2 + 自建分发站");
         for (String mirror : ZstdNativeDownload.MIRRORS) {
-            assertTrue(mirror.startsWith("https://"), "必须 https：" + mirror);
+            // 自建分发站是 http（无证书），靠 sha256 终验保证内容不被篡改；其余路必须 https。
+            if (!mirror.startsWith("http://109.206.245.74/")) {
+                assertTrue(mirror.startsWith("https://"), "必须 https：" + mirror);
+            }
             assertTrue(mirror.endsWith("/libs/"), "目录要与仓库布局一致：" + mirror);
-            assertTrue(mirror.contains("MuoniumPlayer-updates"), "指向公开清单仓库：" + mirror);
         }
         assertTrue(ZstdNativeDownload.MIRRORS.get(0).contains("ghfast.top"), "源 1 是 ghfast 代理");
         assertTrue(ZstdNativeDownload.MIRRORS.get(1).contains("gh-proxy.com"), "源 2 是 gh-proxy（直连实测最好）");
         assertTrue(ZstdNativeDownload.MIRRORS.get(2).contains("raw.githubusercontent.com"), "源 3 是原始地址");
         assertTrue(ZstdNativeDownload.MIRRORS.get(3).contains("ghproxy.net"), "源 4 是 ghproxy.net");
         assertTrue(ZstdNativeDownload.MIRRORS.get(4).contains("jsdelivr"), "源 5 是 CDN 兜底");
+        // 两条官网系兜底不走 GitHub；Pages 在 site 仓库 dl/ 下逐字节镜像，R2 是 fenfa 桶直链。
+        assertTrue(ZstdNativeDownload.MIRRORS.get(5).startsWith("https://melodifymc.cc.cd/dl/"), "源 6 是官网（Cloudflare Pages）直链兜底");
+        assertTrue(ZstdNativeDownload.MIRRORS.get(6).startsWith("https://file.melodifymc.cc.cd/"), "源 7 是 R2 对象存储直链兜底");
+        assertTrue(ZstdNativeDownload.MIRRORS.get(7).startsWith("http://109.206.245.74/"), "源 8 是自建分发站（独立于 Cloudflare 与 GitHub 的第三托管面）");
     }
 
     @Test

@@ -13,6 +13,9 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import com.muoniumplayer.core.utils.network.HttpDownloadRace;
+
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -51,16 +54,19 @@ import java.util.Locale;
 public final class FontAssetDownload {
 
     /**
-     * 下载镜像链，全部指向公开的清单仓库 {@code fonts/} 目录，与更新检查、
-     * Skija 伴生包同一套三源（ghfast 代理 / raw / jsdelivr）。
-     * 未命中该文件的镜像会 404，循环继续往下一路试。
+     * 下载镜像链，前五路指向公开的清单仓库 {@code fonts/} 目录（ghfast / gh-proxy / raw /
+     * ghproxy.net / jsdelivr），后两路是官网系（Cloudflare）：Pages 直链与 R2 对象存储直链，
+     * 同一批文件的两个镜像。未命中该文件的镜像会 404，竞速下只是那一路白跑。
      */
     static final List<String> MIRRORS = List.of(
             "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
             "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
             "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
             "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
-            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/fonts/");
+            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/fonts/",
+            "https://melodifymc.cc.cd/dl/fonts/",
+            "https://file.melodifymc.cc.cd/fonts/",
+            "http://109.206.245.74/dl/fonts/");
 
     /** 关闭自动下载的开关（默认开，只有显式 {@code =false} 才关）。包级可见：静态测试要读它。 */
     static final String PROP_ENABLED = "muonium.fonts.autoDownload";
@@ -331,6 +337,10 @@ public final class FontAssetDownload {
      * 每次尝试都完整校验（字节数 + sha256），校验不过算这次失败、换下一路。
      * 进度按「已收字节 / 全部待收字节」聚合推给灵动岛。
      */
+    /**
+     * 取字体到缓存目录。本地替代源优先；否则多路竞速下载（见 {@link HttpDownloadRace}），
+     * 开关关掉时退回旧的逐路串行回退（带同镜像 Range 续传）。
+     */
     private static void fetch(Pack pack, long baseBytes, long totalBytes) throws Exception {
         String localDir = System.getProperty(PROP_LOCAL_DIR);
         if (localDir != null && !localDir.isBlank()) {
@@ -342,9 +352,22 @@ public final class FontAssetDownload {
             copyIntoPlace(local, pack);
             return;
         }
+        File part = new File(fontCacheDir(), pack.fileName() + PART_SUFFIX);
+        if (HttpDownloadRace.enabled()) {
+            List<String> urls = new ArrayList<String>(MIRRORS.size());
+            for (String mirror : MIRRORS) {
+                urls.add(mirror + pack.fileName());
+            }
+            // 两份字体共享一张进度卡：领先路字节加上前几份的 baseBytes 再换算总百分比。
+            HttpDownloadRace.fetch(urls, pack.bytes(), pack.sha256(), part, raceDone -> {
+                long overall = Math.min(totalBytes, baseBytes + raceDone);
+                announceProgress((int) Math.min(100L, overall * 100L / totalBytes));
+            });
+            copyIntoPlace(part, pack);
+            return;
+        }
         Exception last = null;
         for (String mirror : MIRRORS) {
-            File part = new File(fontCacheDir(), pack.fileName() + PART_SUFFIX);
             try {
                 // 同镜像先续传重试（最多 3 次，download 内部按 .part 已收字节挂 Range）：
                 // gh-proxy 这类代理对大文件常在中途截断但支持 Range 续传，接着拉就能拿全，

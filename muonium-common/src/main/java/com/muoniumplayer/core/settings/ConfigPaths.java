@@ -132,6 +132,14 @@ public final class ConfigPaths {
     public static final File LISTEN_TOGETHER = new File(CONFIG_DIRECTORY, "listen_together.json");
 
     /**
+     * 直连房间（无服务端 mod 的一起听）的行为开关。
+     *
+     * <p>与 {@link #LISTEN_TOGETHER} 同理单独一个文件：只存上次的监听端口与局域网直连开关，
+     * 读失败的代价是回到默认端口，不该有机会影响播放器主配置的读写。</p>
+     */
+    public static final File DIRECT_ROOM = new File(CONFIG_DIRECTORY, "direct_room.json");
+
+    /**
      * 网易云灰色歌曲解灰的行为开关。
      *
      * <p>与 {@link #LISTEN_TOGETHER} 同理单独一个文件：这些开关只在「官方链路已经取不到流」

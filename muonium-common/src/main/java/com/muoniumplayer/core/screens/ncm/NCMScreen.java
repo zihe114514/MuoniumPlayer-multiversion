@@ -1371,6 +1371,14 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.mpPartyOverlay.onInit();
     }
 
+    /** 打开服务器一起听面板并直接落到「直连房间」页（二级菜单的直连卡片跳进来）。 */
+    public void openMpDirect() {
+        if (this.mpPartyOverlay != null) this.mpPartyOverlay.dispose();
+        this.mpPartyOverlay = new MpPartyOverlay();
+        this.mpPartyOverlay.onInit();
+        this.mpPartyOverlay.openDirect();
+    }
+
     @Override
     public void keyTyped(char typedChar, int keyCode) {
 

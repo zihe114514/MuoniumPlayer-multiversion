@@ -42,6 +42,9 @@ public final class MuoniumPlayerNeoForge {
 
         // 一起听通道：负载登记也在 mod 总线上，因此把总线传进去。
         MpNetNeoForge.register(modBus);
+        // 内嵌一起听房间引擎（局域网主机）：接通 C2S 槽位并挂集成服务端生命周期事件。
+        // 不在专用服务器上加载（dist=CLIENT），连远程服时引擎不激活、全程静止。
+        com.muoniumplayer.party.lan.LanNetNeoForge.register();
 
         // ---- 游戏总线（每帧 / 每 tick）----
         IEventBus gameBus = NeoForge.EVENT_BUS;

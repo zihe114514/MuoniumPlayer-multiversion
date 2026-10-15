@@ -30,13 +30,14 @@ import java.util.function.BooleanSupplier;
  * 而主菜单上没有播放器界面可以承载浮层，所以做成一个能独立渲染的 {@link NCMPanel} ——
  * 宿主是个最薄的 {@code GuiUpdateNotice}，只负责开 Skija 帧、转发输入、收起后回到原界面。</p>
  *
- * <p><b>「有新版本」这一套还带一个额定额度</b>：这次提示<b>每次启动都会再弹</b> —— 额度决定的不是
- * 弹不弹，而是还能不能先不更新。同一个新版本最多先不更新 {@link UpdateChecker#MAX_SKIP_COUNT} 次，
- * 每一次收起提示（点「先不更新」或按 ESC）都用掉一格；用尽后 {@link UpdateChecker#mustUpdate()}
- * 成立，界面上不再有任何绕过的出口 —— 「先不更新」按钮不再出现，ESC 与点卡片外面也失效，
+ * <p><b>「先不更新」的额度只对关键更新生效</b>：这次提示<b>每次启动都会再弹</b>。普通更新
+ * （清单里 {@code critical} 为 false）不限次数，随时可以收起，永不锁死；关键更新
+ * 同一个新版本最多先不更新 {@link UpdateChecker#MAX_SKIP_COUNT} 次，每一次收起提示
+ * （点「先不更新」或按 ESC）都用掉一格；用尽后 {@link UpdateChecker#mustUpdate()} 成立，
+ * 界面上不再有任何绕过的出口 —— 「先不更新」按钮不再出现，ESC 与点卡片外面也失效，
  * 只剩「前往下载」（它此时只打开浏览器，不会收起提示，见下）。清单换成更新的版本时额度重新给满。</p>
  *
- * <p>点卡片外面刻意<b>不</b>算一次「先不更新」：额度是有限资源，误触一下用掉一格太亏，
+ * <p>点卡片外面刻意<b>不</b>算一次「先不更新」：关键更新的额度是有限资源，误触一下用掉一格太亏，
  * 想走就走按钮或 ESC。</p>
  *
  * <p><b>锁死状态下「前往下载」不收起提示</b> —— 这一点必须保住：提示一关用户就回到主菜单、
@@ -52,7 +53,7 @@ public final class UpdateNoticeOverlay extends NCMPanel {
     private static final String DOWNLOAD = "前往下载";
     private static final String COPY_LINK = "复制下载链接";
     private static final String COPY_PAGE_LINK = "复制更新页地址";
-    /** 「先不更新」＝ 用掉一格额度收起提示。额度用尽后这个按钮不再出现。 */
+    /** 「先不更新」＝ 收起提示。关键更新每次收起用掉一格额度；普通更新不限次。 */
     private static final String LATER = "先不更新";
     private static final String RETRY = "重试检查";
     private static final String OK = "我知道了";
@@ -60,7 +61,7 @@ public final class UpdateNoticeOverlay extends NCMPanel {
     /**
      * 正文最多显示的行数；再长会在最后一行截断，卡片不允许长到顶出屏幕。
      *
-     * <p>上限留得比较宽是因为正文本身含三段（当前/最新版本、还能先不更新几次、更新公告），
+     * <p>上限留得比较宽是因为正文本身含三段（当前/最新版本、次数/不强制说明、更新公告），
      * 而公告一动就是上百字；行数压太紧会把最该看的公告截掉。</p>
      */
     private static final int MAX_BODY_LINES = 8;
@@ -170,9 +171,10 @@ public final class UpdateNoticeOverlay extends NCMPanel {
     }
 
     /**
-     * 「先不更新」「我知道了」以及 ESC 都走这里：收起提示，并且在「有更新」那一套里扣掉一格额度。
+     * 「先不更新」「我知道了」以及 ESC 都走这里：收起提示，关键更新在「有更新」那一套里扣掉一格额度
+     * （普通更新不限次，{@code noteSkippedOnce()} 里自己不记账）。
      *
-     * <p>额度用尽时这里什么都不做 —— 那就是「必须更新」的落地点。弹不弹由宿主问
+     * <p>关键更新额度用尽时这里什么都不做 —— 那就是「必须更新」的落地点。弹不弹由宿主问
      * {@link UpdateChecker#shouldShow()}，而那个判断不看额度：额度管的是「还能不能先不更新」。</p>
      */
     public void dismissForNow() {
@@ -533,7 +535,8 @@ public final class UpdateNoticeOverlay extends NCMPanel {
     /**
      * 正文：两套内容各写各的。
      *
-     * <p>「有更新」那套在锁死状态下会多一句解释 —— 用户看不到「跳过」了，得知道为什么。</p>
+     * <p>「有更新」那套按 critical 分三档：锁死（关键更新额度用尽）解释为什么必须更新，
+     * 关键更新报还剩几次额度，普通更新直接说不强制。</p>
      */
     private String buildBody() {
         if (networkFailure) {
@@ -545,11 +548,14 @@ public final class UpdateNoticeOverlay extends NCMPanel {
                 .append("，最新 ").append(UpdateChecker.latestVersion())
                 .append("（").append(UpdateChecker.channel()).append("）。");
         if (forcedUpdate) {
-            body.append("这个版本已经先不更新 ").append(UpdateChecker.usedSkips())
-                    .append(" 次啦，这一次必须更新才能继续喵。");
+            // 能走到锁死的只有关键更新（普通更新不限次），把原因说清楚。
+            body.append("这是关键更新喵，这个版本已经先不更新 ").append(UpdateChecker.usedSkips())
+                    .append(" 次啦，这一次必须更新才能继续。");
+        } else if (UpdateChecker.isCritical()) {
+            body.append("这是关键更新喵，这个版本还可以先不更新 ").append(UpdateChecker.remainingSkips())
+                    .append(" 次。");
         } else {
-            body.append("这个版本还可以先不更新 ").append(UpdateChecker.remainingSkips())
-                    .append(" 次喵。");
+            body.append("这次更新不强制，随时可以先不更新喵。");
         }
         String notes = UpdateChecker.releaseNotes();
         if (notes != null && !notes.isEmpty()) {

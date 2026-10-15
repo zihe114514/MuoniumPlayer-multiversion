@@ -29,7 +29,7 @@ class UpdateCheckStaticTest {
     private static final Path SHARED_JAVA = ProjectPaths.sharedJava();
 
     private static final String MC_VERSION = "1.21.1";
-    private static final String MOD_VERSION = "1.9.2";
+    private static final String MOD_VERSION = "1.9.3";
     private static final String LOADER_ID = "neoforge";
 
     @Test
@@ -287,9 +287,9 @@ class UpdateCheckStaticTest {
     }
 
     @Test
-    @DisplayName("「先不更新」有次数上限、连不上服务器有失败阈值，两个计数都落盘")
+    @DisplayName("「先不更新」额度只对关键更新生效、连不上服务器有失败阈值，两个计数都落盘")
     void 先不更新与失败都有阈值() throws IOException {
-        assertEquals(3, UpdateChecker.MAX_SKIP_COUNT, "同一个版本最多先不更新 3 次");
+        assertEquals(3, UpdateChecker.MAX_SKIP_COUNT, "关键更新同一个版本最多先不更新 3 次；普通更新不限次");
         assertEquals(3, UpdateChecker.MAX_FAILURE_COUNT, "连续 3 次启动都连不上就提醒用户检查网络");
         assertTrue(UpdateChecker.STATE_CHECK_FAILED < 0, "连不上服务器必须是一个独立的结论");
 
@@ -298,6 +298,9 @@ class UpdateCheckStaticTest {
                 "两个计数都必须落盘：只放内存等于每次重启都归零，限制形同虚设");
         assertTrue(checker.contains("\"skipCountVersion\""),
                 "次数要按版本记账：清单出现更新的版本时额度必须重新给满");
+        // 额度只对关键更新生效：canSkip 必须先看 critical，普通更新（false）永远可以跳。
+        assertTrue(checker.contains("!critical"),
+                "canSkip/noteSkippedOnce 必须以 critical 为前提，普通更新不许被额度锁住");
         // 「服务器有回应、只是没有本 channel 的条目」不能算网络故障，否则一个没发布的
         // 渠道会把用户一路推到「检查网络」那个提示上。
         assertTrue(checker.contains("reachedServer"),
@@ -308,7 +311,12 @@ class UpdateCheckStaticTest {
         assertTrue(overlay.contains("UpdateChecker.mustUpdate()"),
                 "锁死状态必须由界面读 mustUpdate() 决定");
         assertTrue(overlay.contains("UpdateChecker.noteSkippedOnce()"),
-                "收起提示要真的记账，否则次数永远用不完");
+                "收起提示要真的记账，否则关键更新的次数永远用不完");
+        // 锁死只可能来自关键更新：界面必须把「关键更新」点出来，普通更新要说「不强制」。
+        assertTrue(overlay.contains("UpdateChecker.isCritical()"),
+                "界面必须区分关键更新与普通更新");
+        assertTrue(overlay.contains("关键更新") && overlay.contains("不强制"),
+                "关键更新要点名 critical，普通更新要说不强制");
         assertTrue(overlay.contains("UpdateChecker.retryCheck()"),
                 "连不上服务器那一套界面必须能重试");
         // 更新检查不允许被关掉：界面上曾经有过一个「不再检查更新」的链接，已按要求移除。
@@ -321,7 +329,7 @@ class UpdateCheckStaticTest {
                 "锁死状态不许再留「放开锁」的逃生阀，它就是绕开更新进游戏的那条路");
         assertTrue(overlay.contains("装好新版本再进游戏"),
                 "锁死状态下点「前往下载」必须留在界面上，只把浏览器打开");
-        // 公告必须另起一行：正文由「版本」「次数说明」「公告」三段组成，公告接在次数后面
+        // 公告必须另起一行：正文由「版本」「次数/不强制说明」「公告」三段组成，公告接在后面
         // 会被读成同一句话 —— 而且它是最长的一段，挤在一起最容易看漏。
         assertTrue(overlay.contains("PARAGRAPH_BREAK"),
                 "正文要有显式的段落分隔常量，公告才能真的另起一行");

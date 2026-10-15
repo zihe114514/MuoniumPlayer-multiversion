@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.muoniumplayer.core.utils.network.HttpDownloadRace;
+
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -13,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -36,15 +39,19 @@ import java.util.Locale;
 public final class ZstdNativeDownload {
 
     /**
-     * 下载镜像链，全部指向公开清单仓库 {@code libs/} 目录，与字体、转译器、Skija 伴生包
-     * 同一套五源（ghfast / gh-proxy / raw / ghproxy.net / jsdelivr）。
+     * 下载镜像链，前五路指向公开清单仓库 {@code libs/} 目录（ghfast / gh-proxy / raw /
+     * ghproxy.net / jsdelivr），后两路是官网系（Cloudflare）：Pages 直链与 R2 对象存储直链，
+     * 同一批文件的两个镜像。
      */
     static final List<String> MIRRORS = List.of(
             "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
             "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
             "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
             "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
-            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/libs/");
+            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/libs/",
+            "https://melodifymc.cc.cd/dl/libs/",
+            "https://file.melodifymc.cc.cd/libs/",
+            "http://109.206.245.74/dl/libs/");
 
     /** 钉死的发布文件：forge189-slim 过滤版（Java 8 兼容、自带五平台原生库）。 */
     static final String FILE_NAME = "zstd-jni-1.5.6-9-forge189-slim.jar";
@@ -210,10 +217,8 @@ public final class ZstdNativeDownload {
     }
 
     /**
-     * 取文件到缓存。本地替代源优先；否则按镜像链逐个试，任一成功即返回。
-     * 同镜像先续传重试（最多 3 次，download 内部按 .part 已收字节挂 Range）：
-     * gh-proxy 这类代理对大文件常在中途截断但支持 Range 续传。哈希不符视为
-     * 已收前缀损坏，清掉 .part 从零来。
+     * 取文件到缓存。本地替代源优先；否则多路竞速下载（见 {@link HttpDownloadRace}），
+     * 开关关掉时退回旧的逐路串行回退（带同镜像 Range 续传）。
      */
     private static void fetch() throws Exception {
         String localJar = System.getProperty(PROP_LOCAL_JAR);
@@ -226,10 +231,24 @@ public final class ZstdNativeDownload {
             Files.copy(local.toPath(), cachedFile().toPath(), StandardCopyOption.REPLACE_EXISTING);
             return;
         }
+        File part = new File(libCacheDir(), FILE_NAME + PART_SUFFIX);
+        if (HttpDownloadRace.enabled()) {
+            List<String> urls = new ArrayList<String>(MIRRORS.size());
+            for (String mirror : MIRRORS) {
+                urls.add(mirror + FILE_NAME);
+            }
+            HttpDownloadRace.fetch(urls, BYTES, SHA256, part, ZstdNativeDownload::announceProgress);
+            verify(part);
+            Files.move(part.toPath(), cachedFile().toPath(),
+                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            return;
+        }
         Exception last = null;
         for (String mirror : MIRRORS) {
-            File part = new File(libCacheDir(), FILE_NAME + PART_SUFFIX);
             try {
+                // 同镜像先续传重试（最多 3 次，download 内部按 .part 已收字节挂 Range）：
+                // gh-proxy 这类代理对大文件常在中途截断但支持 Range 续传。哈希不符视为
+                // 已收前缀损坏，清掉 .part 从零来。
                 for (int retry = 0; retry <= 3; retry++) {
                     try {
                         download(mirror + FILE_NAME, part);

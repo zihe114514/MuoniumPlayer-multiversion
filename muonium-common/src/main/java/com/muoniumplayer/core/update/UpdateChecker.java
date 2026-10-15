@@ -29,13 +29,14 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  *   <li>只发匿名 GET，不带任何用户标识，也绝不自动下载或替换 jar。</li>
  * </ul>
  *
- * <p><b>两种「不让用户随手滑过去」的策略</b>（都只作用于提示窗，不会改动用户的游戏内容）：
- * <ol>
- *   <li><b>「先不更新」有次数上限</b>：结论是「有更新」时，<b>每次启动都会重新弹</b>这个提示 ——
- *       额度决定的不是「弹不弹」，而是「还能不能先不更新」。同一个新版本最多先不更新
- *       {@link #MAX_SKIP_COUNT} 次（每次收起提示算一次，见 {@link #noteSkippedOnce()}），
- *       用尽后 {@link #mustUpdate()} 成立，界面不再提供任何绕过更新的出口（只剩「前往下载」）。
- *       清单换成更新的版本时额度重新给满 —— 每个新版本各有一份，不会被历史记录连坐。</li>
+     * <p><b>两种「不让用户随手滑过去」的策略</b>（都只作用于提示窗，不会改动用户的游戏内容）：
+     * <ol>
+     *   <li><b>关键更新才有「先不更新」的次数上限</b>：结论是「有更新」时，<b>每次启动都会重新弹</b>
+     *       这个提示。普通更新（清单里 {@code critical} 为 false）不限次数，随时可以收起，永不锁死；
+     *       关键更新（{@code critical} 为 true）同一个新版本最多先不更新 {@link #MAX_SKIP_COUNT} 次
+     *       （每次收起提示算一次，见 {@link #noteSkippedOnce()}），用尽后 {@link #mustUpdate()} 成立，
+     *       界面不再提供任何绕过更新的出口（只剩「前往下载」）。清单换成更新的版本时额度重新给满
+     *       —— 每个新版本各有一份，不会被历史记录连坐。</li>
  *   <li><b>连不上服务器会被点出来</b>：连续 {@link #MAX_FAILURE_COUNT} 次启动都没能连上清单
  *       服务器时 {@link #STATE_CHECK_FAILED} 成立，提示用户检查网络。注意「连上了但清单里没有
  *       本 channel 的条目」不算失败：那是服务器有回应，只是这次没发布。</li>
@@ -93,7 +94,8 @@ public final class UpdateChecker {
     public static final int STATE_CHECK_FAILED = -2;
 
     /**
-     * 同一个新版本最多允许「先不更新」几次。用尽后界面只留「前往下载」，不再提供任何绕过的出口。
+     * 关键更新（{@code critical} 为 true）同一个新版本最多允许「先不更新」几次。普通更新不限次。
+     * 用尽后界面只留「前往下载」，不再提供任何绕过的出口。
      */
     public static final int MAX_SKIP_COUNT = 3;
 
@@ -169,11 +171,12 @@ public final class UpdateChecker {
     private static volatile String latestVersion = "";
     private static volatile String downloadPage = DOWNLOAD_PAGE;
     private static volatile String releaseNotes = "";
+    /** 清单把这次更新标成了关键更新。额度记账与「必须更新」的锁死只对它生效。 */
     private static volatile boolean critical;
 
     // 以下几项由 LOCK 保护，只在持久化读写时访问。
     private static boolean loaded;
-    /** 针对 {@link #skipCountVersion} 已经「先不更新」过几次。 */
+    /** 关键更新针对 {@link #skipCountVersion} 已经「先不更新」过几次。普通更新不记账。 */
     private static int skipCount;
     /** {@link #skipCount} 记的是哪个版本的账。清单换版本时这一对一起重置。 */
     private static String skipCountVersion = "";
@@ -266,7 +269,6 @@ public final class UpdateChecker {
         return releaseNotes;
     }
 
-    /** true 时清单把这次更新标成了关键更新，界面上同样不提供「跳过这个版本」。 */
     public static boolean isCritical() {
         return critical;
     }
@@ -275,11 +277,8 @@ public final class UpdateChecker {
         return channelKey();
     }
 
-    /** 当前这个版本还能「先不更新」几次。关键更新、或额度已用尽时是 0。 */
+    /** 关键更新当前这个版本还能「先不更新」几次（普通更新不限次，界面只在 critical 时消费这个数）。 */
     public static int remainingSkips() {
-        if (critical) {
-            return 0;
-        }
         String latest = latestVersion;
         if (latest.isEmpty()) {
             return 0;
@@ -294,8 +293,11 @@ public final class UpdateChecker {
         }
     }
 
-    /** 当前这个版本已经「先不更新」过几次（界面用它解释为什么那个出口不见了）。 */
+    /** 关键更新当前这个版本已经「先不更新」过几次（界面用它解释为什么那个出口不见了）。 */
     public static int usedSkips() {
+        if (!critical) {
+            return 0;
+        }
         String latest = latestVersion;
         if (latest.isEmpty()) {
             return 0;
@@ -306,15 +308,16 @@ public final class UpdateChecker {
         }
     }
 
-    /** 还能跳过这个版本吗。额度用尽或关键更新时为 false。 */
+    /** 还能跳过这个版本吗。普通更新永远可以；关键更新额度用尽时为 false。 */
     public static boolean canSkip() {
-        return remainingSkips() > 0;
+        return !critical || remainingSkips() > 0;
     }
 
     /**
-     * 必须更新：结论是「有更新」，而跳过额度已经用尽（或这次是关键更新）。
+     * 必须更新：这次是关键更新，而跳过额度已经用尽。
      *
-     * <p>界面上据此不再提供任何绕过更新的出口，只留「前往下载」。</p>
+     * <p>普通更新（critical 为 false）永远不成立 —— 不强制更新。界面上据此不再提供任何绕过
+     * 更新的出口，只留「前往下载」。</p>
      */
     public static boolean mustUpdate() {
         return state == STATE_OUTDATED && !canSkip();
@@ -375,10 +378,13 @@ public final class UpdateChecker {
     /**
      * 记一次「先不更新」：把当前版本的额度用掉一格。
      *
-     * <p>额度是由界面在用户收起提示时调的（按钮、ESC 都算一次），这里再挡一道：已经用尽时
-     * 只当作「收起提示」，不再往上加计数。</p>
+     * <p>只对关键更新记账 —— 普通更新不限次，收起多少次都不动账。额度是由界面在用户收起提示时
+     * 调的（按钮、ESC 都算一次），这里再挡一道：已经用尽时只当作「收起提示」，不再往上加计数。</p>
      */
     public static void noteSkippedOnce() {
+        if (!critical) {
+            return;
+        }
         String latest = latestVersion;
         if (latest.isEmpty()) {
             return;

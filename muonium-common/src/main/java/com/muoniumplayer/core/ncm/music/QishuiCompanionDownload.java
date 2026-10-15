@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.muoniumplayer.core.utils.network.HttpDownloadRace;
+
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -59,13 +61,19 @@ import java.util.zip.ZipInputStream;
  */
 public final class QishuiCompanionDownload {
 
-    /** 下载镜像链，与 Skija 伴生包同一套三源（ghfast 代理 / raw / jsdelivr 等）。 */
+    /**
+     * 下载镜像链，前五路与 Skija 伴生包同一套（ghfast / gh-proxy / raw / ghproxy.net / jsdelivr）。
+     * 末一路是 R2 对象存储直链（Cloudflare，公网出口免费，单文件无 25MiB 限制）——
+     * 汽水包超过 Pages 的 25MiB 硬限进不了官网 {@code dl/}，R2 是它的官网系兜底。
+     */
     static final List<String> MIRRORS = List.of(
             "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/qishui-companion/",
             "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/qishui-companion/",
             "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/qishui-companion/",
             "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/qishui-companion/",
-            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/qishui-companion/");
+            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/qishui-companion/",
+            "https://file.melodifymc.cc.cd/qishui-companion/",
+            "http://109.206.245.74/dl/qishui-companion/");
 
     /** 关闭自动下载的开关（默认开，只有显式 {@code =false} 才关）。 */
     static final String PROP_ENABLED = "muonium.qishui.autoDownload";
@@ -765,7 +773,10 @@ public final class QishuiCompanionDownload {
         return false;
     }
 
-    /** 取包到 {@code archive}：本地替代源优先，否则镜像链逐个试（字节数 + sha256 全验）。 */
+    /**
+     * 取包到 {@code archive}：本地替代源优先，否则多路竞速下载（见 {@link HttpDownloadRace}），
+     * 开关关掉时退回旧的逐路串行回退。字节数 + sha256 全验。
+     */
     private static void fetch(Pack pack, File archive) throws Exception {
         String localDir = System.getProperty(PROP_LOCAL_DIR);
         if (localDir != null && !localDir.isBlank()) {
@@ -775,6 +786,14 @@ public final class QishuiCompanionDownload {
             }
             checkAgainst(pack, local.length(), sha256(local));
             Files.copy(local.toPath(), archive.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            return;
+        }
+        if (HttpDownloadRace.enabled()) {
+            List<String> urls = new ArrayList<String>(MIRRORS.size());
+            for (String mirror : MIRRORS) {
+                urls.add(mirror + pack.fileName());
+            }
+            HttpDownloadRace.fetch(urls, pack.bytes(), pack.sha256(), archive, QishuiCompanionDownload::announceProgress);
             return;
         }
         Exception last = null;

@@ -10,6 +10,7 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundCustomPayloadPacket;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
 import net.minecraftforge.network.NetworkEvent;
@@ -59,7 +60,7 @@ public final class MpNetForge implements MpHost {
         c2sChannel = channel(C2S);
         s2cChannel = channel(S2C);
 
-        MpPartyClient.bind(INSTANCE);
+        MpPartyClient.bind(com.muoniumplayer.party.direct.MpHostRouter.wrap(INSTANCE));
 
         s2cChannel.addListener((NetworkEvent.ClientCustomPayloadEvent event) -> {
             FriendlyByteBuf buf = event.getPayload();
@@ -87,6 +88,28 @@ public final class MpNetForge implements MpHost {
                 .eventNetworkChannel();
     }
 
+    /**
+     * 给 C2S 通道加一个服务端方向的监听（内嵌引擎用，见 {@code lan/LanNetForge}）。
+     *
+     * <p>{@code EventNetworkChannel} 的 {@code ClientCustomPayloadEvent} 与
+     * {@code ServerCustomPayloadEvent} 按包流向天然分流：同一 JVM 里集成服务端
+     * 收到 C2S 走 Server 事件、客户端收到 S2C 走 Client 事件，互不干扰。
+     * 只在客户端入口里被调（本 mod 不加载到专用服务器），监听体第一行就判
+     * 引擎激活与否，未激活零成本直返。
+     */
+    public static void addServerListener(java.util.function.BiConsumer<ServerPlayer, byte[]> sink) {
+        c2sChannel.addListener((NetworkEvent.ServerCustomPayloadEvent event) -> {
+            FriendlyByteBuf buf = event.getPayload();
+            if (buf != null) {
+                byte[] data = new byte[Math.min(buf.readableBytes(), MpProto.MAX_FRAME)];
+                buf.readBytes(data);
+                ServerPlayer sender = event.getSource().get().getSender();
+                if (sender != null) sink.accept(sender, data);
+            }
+            event.getSource().get().setPacketHandled(true);
+        });
+    }
+
     @Override
     public boolean canSend() {
         try {
@@ -112,6 +135,12 @@ public final class MpNetForge implements MpHost {
     public UUID selfUuid() {
         Minecraft mc = Minecraft.getInstance();
         return mc.player == null ? null : mc.player.getUUID();
+    }
+
+    @Override
+    public String selfName() {
+        Minecraft mc = Minecraft.getInstance();
+        return mc.player == null ? null : mc.player.getName().getString();
     }
 
     @Override

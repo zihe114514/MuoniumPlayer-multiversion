@@ -54,19 +54,25 @@ class FontAssetDownloadStaticTest {
     }
 
     @Test
-    @DisplayName("五条镜像都是 https、都指向清单仓库的 fonts/ 目录")
+    @DisplayName("五条 GitHub 系镜像 + 两条 https 官网系 + 一条自建分发站，都指向 fonts/ 目录")
     void mirrorsPointAtTheManifestRepository() {
-        assertEquals(5, FontAssetDownload.MIRRORS.size(), "镜像条数与 Skija 伴生包同一套策略");
+        assertEquals(8, FontAssetDownload.MIRRORS.size(), "镜像条数：五条 GitHub 系 + Pages + R2 + 自建分发站");
         for (String mirror : FontAssetDownload.MIRRORS) {
-            assertTrue(mirror.startsWith("https://"), "必须 https：" + mirror);
+            // 自建分发站是 http（无证书），靠 sha256 终验保证内容不被篡改；其余路必须 https。
+            if (!mirror.startsWith("http://109.206.245.74/")) {
+                assertTrue(mirror.startsWith("https://"), "必须 https：" + mirror);
+            }
             assertTrue(mirror.endsWith("/fonts/"), "目录要与仓库布局一致：" + mirror);
-            assertTrue(mirror.contains("MuoniumPlayer-updates"), "指向公开清单仓库：" + mirror);
         }
         assertTrue(FontAssetDownload.MIRRORS.get(0).contains("ghfast.top"), "源 1 是国内可达的代理");
         assertTrue(FontAssetDownload.MIRRORS.get(1).contains("gh-proxy.com"), "源 2 是 gh-proxy（直连实测最好：支持断点续传，截断后续传可拿全）");
         assertTrue(FontAssetDownload.MIRRORS.get(2).contains("raw.githubusercontent.com"), "源 3 是原始地址（经代理可达）");
         assertTrue(FontAssetDownload.MIRRORS.get(3).contains("ghproxy.net"), "源 4 是 ghproxy.net（镜像多活时代的另一主流接棒者）");
         assertTrue(FontAssetDownload.MIRRORS.get(4).contains("jsdelivr"), "源 5 是 CDN 兜底（对新推送有缓存延迟，殿后）");
+        // 两条官网系兜底不走 GitHub；Pages 在 site 仓库 dl/ 下逐字节镜像，R2 是 fenfa 桶直链。
+        assertTrue(FontAssetDownload.MIRRORS.get(5).startsWith("https://melodifymc.cc.cd/dl/"), "源 6 是官网（Cloudflare Pages）直链兜底");
+        assertTrue(FontAssetDownload.MIRRORS.get(6).startsWith("https://file.melodifymc.cc.cd/"), "源 7 是 R2 对象存储直链兜底");
+        assertTrue(FontAssetDownload.MIRRORS.get(7).startsWith("http://109.206.245.74/"), "源 8 是自建分发站（独立于 Cloudflare 与 GitHub 的第三托管面）");
     }
 
     @Test

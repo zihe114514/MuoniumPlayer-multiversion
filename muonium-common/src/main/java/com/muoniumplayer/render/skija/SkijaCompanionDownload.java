@@ -1,5 +1,7 @@
 package com.muoniumplayer.render.skija;
 
+import com.muoniumplayer.core.utils.network.HttpDownloadRace;
+
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -14,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.zip.ZipEntry;
@@ -61,16 +64,19 @@ import java.util.zip.ZipInputStream;
 final class SkijaCompanionDownload {
 
     /**
-     * 下载镜像链，全部指向公开的清单仓库——「清单 + 运行包」那座仓库的
-     * {@code skija-companion/} 目录，与更新检查、Folia 运行包同一套三源
-     * （ghfast 代理 / raw / jsdelivr）。未命中该文件的镜像会 404，循环继续往下一路试。
+     * 下载镜像链，前五路 GitHub 系 + 两路官网系（Cloudflare）：Pages 直链与 R2 对象存储直链。
+     * Pages {@code dl/} 与 R2 {@code fenfa} 桶是同一批文件的镜像（R2 无 25MiB 单文件限制），
+     * 两条互为备份——国内对 CF 边缘的连接波动大，多一路就多一分命中的机会。
      */
     static final List<String> MIRRORS = List.of(
             "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
             "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
             "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
             "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
-            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/skija-companion/");
+            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/skija-companion/",
+            "https://melodifymc.cc.cd/dl/skija-companion/",
+            "https://file.melodifymc.cc.cd/skija-companion/",
+            "http://109.206.245.74/dl/skija-companion/");
 
     /** 关闭自动下载的开关（默认开，只有显式 {@code =false} 才关）。包级可见：静态测试要读它。 */
     static final String PROP_ENABLED = "muonium.skija.autoDownload";
@@ -265,8 +271,8 @@ final class SkijaCompanionDownload {
     }
 
     /**
-     * 取包到 {@code archive}。本地替代源优先；否则按镜像链逐个试，任一成功即返回。
-     * 每次尝试都完整校验（字节数 + sha256），校验不过算这次失败、换下一路。
+     * 取包到 {@code archive}。本地替代源优先；否则多路竞速下载（见 {@link HttpDownloadRace}），
+     * 开关关掉时退回旧的逐路串行回退（带同镜像 Range 续传）。
      */
     private static void fetch(Pack pack, File archive) throws Exception {
         String localDir = System.getProperty(PROP_LOCAL_DIR);
@@ -277,6 +283,16 @@ final class SkijaCompanionDownload {
             }
             verify(local, pack);
             Files.copy(local.toPath(), archive.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            return;
+        }
+        if (HttpDownloadRace.enabled()) {
+            List<String> urls = new ArrayList<String>(MIRRORS.size());
+            for (String mirror : MIRRORS) {
+                urls.add(mirror + pack.fileName());
+            }
+            HttpDownloadRace.fetch(urls, pack.bytes(), pack.sha256(), archive, percent ->
+                    state = new State(Phase.DOWNLOADING, percent, null));
+            verify(archive, pack);
             return;
         }
         Exception last = null;

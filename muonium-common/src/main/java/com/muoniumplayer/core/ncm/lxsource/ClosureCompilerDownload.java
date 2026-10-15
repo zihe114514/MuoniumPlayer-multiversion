@@ -13,6 +13,9 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import com.muoniumplayer.core.utils.network.HttpDownloadRace;
+
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -36,15 +39,19 @@ import java.util.Locale;
 public final class ClosureCompilerDownload {
 
     /**
-     * 下载镜像链，全部指向公开清单仓库 {@code libs/} 目录，与更新检查、Skija 伴生包、
-     * 完整字体同一套三源（ghfast 代理 / raw / jsdelivr）。
+     * 下载镜像链，前五路指向公开清单仓库 {@code libs/} 目录（ghfast / gh-proxy / raw /
+     * ghproxy.net / jsdelivr），后两路是官网系（Cloudflare）：Pages 直链与 R2 对象存储直链，
+     * 同一批文件的两个镜像。
      */
     static final List<String> MIRRORS = List.of(
             "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
             "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
             "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
             "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
-            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/libs/");
+            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/libs/",
+            "https://melodifymc.cc.cd/dl/libs/",
+            "https://file.melodifymc.cc.cd/libs/",
+            "http://109.206.245.74/dl/libs/");
 
     /** 钉死的发布文件：剥掉 org/checkerframework/**（closure 对其零引用的死重）后的版本。 */
     static final String FILE_NAME = "closure-compiler-v20240317.jar";
@@ -228,8 +235,8 @@ public final class ClosureCompilerDownload {
     }
 
     /**
-     * 取文件到缓存。本地替代源优先；否则按镜像链逐个试，任一成功即返回。
-     * 每次尝试都完整校验（字节数 + sha256），校验不过换下一路。
+     * 取文件到缓存。本地替代源优先；否则多路竞速下载（见 {@link HttpDownloadRace}），
+     * 开关关掉时退回旧的逐路串行回退（带同镜像 Range 续传）。
      */
     private static void fetch() throws Exception {
         String localJar = System.getProperty(PROP_LOCAL_JAR);
@@ -242,9 +249,20 @@ public final class ClosureCompilerDownload {
             Files.copy(local.toPath(), cachedFile().toPath(), StandardCopyOption.REPLACE_EXISTING);
             return;
         }
+        File part = new File(libCacheDir(), FILE_NAME + PART_SUFFIX);
+        if (HttpDownloadRace.enabled()) {
+            List<String> urls = new ArrayList<String>(MIRRORS.size());
+            for (String mirror : MIRRORS) {
+                urls.add(mirror + FILE_NAME);
+            }
+            HttpDownloadRace.fetch(urls, BYTES, SHA256, part, ClosureCompilerDownload::announceProgress);
+            verify(part);
+            Files.move(part.toPath(), cachedFile().toPath(),
+                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            return;
+        }
         Exception last = null;
         for (String mirror : MIRRORS) {
-            File part = new File(libCacheDir(), FILE_NAME + PART_SUFFIX);
             try {
                 // 同镜像先续传重试（最多 3 次，download 内部按 .part 已收字节挂 Range）：
                 // gh-proxy 这类代理对大文件常在中途截断但支持 Range 续传，接着拉就能拿全，
