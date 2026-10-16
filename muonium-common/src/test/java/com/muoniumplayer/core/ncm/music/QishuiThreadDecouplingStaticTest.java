@@ -200,9 +200,10 @@ class QishuiThreadDecouplingStaticTest {
         assertTrue(status.contains("BackendStatus.VERIFYING"), "下载到 100% 后应转为校验状态");
 
         String ui = read(SCREENS + "MusicSourceOverlay.java");
-        assertTrue(ui.contains("QishuiCompanionDownload::backendStatusLabel"),
-                "汽水来源卡应显示独立的后端状态胶囊");
-        assertTrue(ui.contains("this::qishuiBackendStatusColor"), "状态胶囊应按运行/等待/失败使用不同颜色");
+        // 标记改版后从文字胶囊收成方格状态行前的一颗 6px 圆点（方格里放不下胶囊）：
+        // 语义不变——后端有独立于登录态的状态标记，颜色按运行/等待/失败三档走。
+        assertTrue(ui.contains("dot.setColor(qishuiBackendStatusColor())"),
+                "汽水来源格应显示独立的后端状态圆点（颜色随运行/等待/失败变化）");
         assertTrue(download.contains("签名后端运行中 · 完整版可用"), "正常启动必须明确标记完整后端已运行");
         assertTrue(download.contains("下载已接收，正在校验"), "100% 进度文案必须说明仍在校验而非已启动");
     }

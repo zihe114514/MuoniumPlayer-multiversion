@@ -291,6 +291,59 @@ public final class HudConfig {
     /** 时计：是否画左侧的齿轮刻度装饰。 */
     public static boolean pendoloGearDecor = true;
 
+    // ---- 3D 世界歌词 ----
+    // 与全屏歌词页/桌面歌词完全独立的第三条歌词通路：把当前行附近的歌词以公告牌四边形
+    // 画进 3D 世界（玩家视线前方 N 格）。渲染链在 muonium-common 的 core/lyrics3d/，
+    // 字段语义见 WorldLyricsSettings。
+
+    /** 3D 歌词总开关。关 = 不进世界渲染通路，其余 3D 参数无效果。 */
+    public static boolean worldLyricsEnabled = false;
+
+    /** 3D 歌词：锚点距玩家眼睛的距离（方块）。 */
+    public static float worldLyricsDistance = 10.5f;
+
+    /** 3D 歌词：billboard 朝向跟随玩家。关 = 行首次出现时冻结朝向，绕到侧面被透视压扁。 */
+    public static boolean worldLyricsFacePlayer = true;
+
+    /** 3D 歌词：玩家走近时锚点自动后退拉开距离，防止穿过文字。 */
+    public static boolean worldLyricsKeepAway = true;
+
+    /** 3D 歌词：多行左右散开的最大角（度）。行内容为种子的确定性偏角。 */
+    public static float worldLyricsSpreadDeg = 30.0f;
+
+    /** 3D 歌词：整体缩放。1.0 = 行高约 0.9 方块。 */
+    public static float worldLyricsScale = 1.0f;
+
+    /** 3D 歌词：开 = Skija 平滑矢量字烘焙进纹理；关 = 原版像素字体直绘。 */
+    public static boolean worldLyricsSmoothFont = true;
+
+    /** 3D 歌词：把「两句挤一行」（网易云脏数据，分隔符 / ／）拆成两行独立渲染。 */
+    public static boolean worldLyricsSplitLines = true;
+
+    /** 3D 歌词：发光总开关。 */
+    public static boolean worldLyricsGlowEnabled = true;
+
+    /** 3D 歌词：发光强度 0..1（烘焙进纹理时只传这一次，渲染层不得再乘）。 */
+    public static float worldLyricsGlowStrength = 0.35f;
+
+    /** 3D 歌词：发光扩散倍率（与全屏页 lyricGlowSpread 同口径）。 */
+    public static float worldLyricsGlowSpread = 1.3181034f;
+
+    /** 3D 歌词：发光颜色（RGB 低 24 位，alpha 由渲染层按进出场计算）。 */
+    public static int worldLyricsGlowColorRgb = 0xFFFFFF;
+
+    /** 3D 歌词：文字颜色（RGB 低 24 位）。 */
+    public static int worldLyricsColorRgb = 0xFFFFFF;
+
+    /** 3D 歌词：文字抖动 Wiggle（低帧率量化 + 确定性相位）。 */
+    public static boolean worldLyricsWiggle = false;
+
+    /** 3D 歌词：逐词弹出 Word Pop（词被唱到的瞬间弹一下；无逐字轴的歌自动无效果）。 */
+    public static boolean worldLyricsWordPop = false;
+
+    /** 3D 歌词：按节拍闪 Text Flash（PlaybackPulse 拍边沿触发）。 */
+    public static boolean worldLyricsTextFlash = false;
+
     // OSD KTV 动画。这些值独立于全屏歌词渲染器。
     public static float osdKaraokeTransitionWidth = 14.0f;
     public static float osdKaraokePulseStrength = 0.00f;
@@ -625,6 +678,22 @@ public final class HudConfig {
         pendoloArcAngle = 100.0f;
         pendoloActiveScale = 1.25f;
         pendoloGearDecor = true;
+        worldLyricsEnabled = false;
+        worldLyricsDistance = 10.5f;
+        worldLyricsFacePlayer = true;
+        worldLyricsKeepAway = true;
+        worldLyricsSpreadDeg = 30.0f;
+        worldLyricsScale = 1.0f;
+        worldLyricsSmoothFont = true;
+        worldLyricsSplitLines = true;
+        worldLyricsGlowEnabled = true;
+        worldLyricsGlowStrength = 0.35f;
+        worldLyricsGlowSpread = 1.3181034f;
+        worldLyricsGlowColorRgb = 0xFFFFFF;
+        worldLyricsColorRgb = 0xFFFFFF;
+        worldLyricsWiggle = false;
+        worldLyricsWordPop = false;
+        worldLyricsTextFlash = false;
         osdKaraokeTransitionWidth = 14.0f;
         osdKaraokePulseStrength = 0.00f;
         osdKaraokeSmoothing = 0.85f;
@@ -781,6 +850,22 @@ public final class HudConfig {
             pendoloArcAngle = clamp(getFloat(o, "pendoloArcAngle", pendoloArcAngle), 60.0f, 160.0f);
             pendoloActiveScale = clamp(getFloat(o, "pendoloActiveScale", pendoloActiveScale), 1.00f, 1.60f);
             pendoloGearDecor = getBoolean(o, "pendoloGearDecor", pendoloGearDecor);
+            worldLyricsEnabled = getBoolean(o, "worldLyricsEnabled", worldLyricsEnabled);
+            worldLyricsDistance = clamp(getFloat(o, "worldLyricsDistance", worldLyricsDistance), 3.0f, 24.0f);
+            worldLyricsFacePlayer = getBoolean(o, "worldLyricsFacePlayer", worldLyricsFacePlayer);
+            worldLyricsKeepAway = getBoolean(o, "worldLyricsKeepAway", worldLyricsKeepAway);
+            worldLyricsSpreadDeg = clamp(getFloat(o, "worldLyricsSpreadDeg", worldLyricsSpreadDeg), 0.0f, 60.0f);
+            worldLyricsScale = clamp(getFloat(o, "worldLyricsScale", worldLyricsScale), 0.4f, 3.0f);
+            worldLyricsSmoothFont = getBoolean(o, "worldLyricsSmoothFont", worldLyricsSmoothFont);
+            worldLyricsSplitLines = getBoolean(o, "worldLyricsSplitLines", worldLyricsSplitLines);
+            worldLyricsGlowEnabled = getBoolean(o, "worldLyricsGlowEnabled", worldLyricsGlowEnabled);
+            worldLyricsGlowStrength = clamp01(getFloat(o, "worldLyricsGlowStrength", worldLyricsGlowStrength));
+            worldLyricsGlowSpread = clamp(getFloat(o, "worldLyricsGlowSpread", worldLyricsGlowSpread), 0.5f, 1.8f);
+            worldLyricsGlowColorRgb = getInt(o, "worldLyricsGlowColorRgb", worldLyricsGlowColorRgb);
+            worldLyricsColorRgb = getInt(o, "worldLyricsColorRgb", worldLyricsColorRgb);
+            worldLyricsWiggle = getBoolean(o, "worldLyricsWiggle", worldLyricsWiggle);
+            worldLyricsWordPop = getBoolean(o, "worldLyricsWordPop", worldLyricsWordPop);
+            worldLyricsTextFlash = getBoolean(o, "worldLyricsTextFlash", worldLyricsTextFlash);
 
             osdKaraokeTransitionWidth = clamp(getFloat(o, "osdKaraokeTransitionWidth", osdKaraokeTransitionWidth), 4.0f, 32.0f);
             osdKaraokePulseStrength = clamp(getFloat(o, "osdKaraokePulseStrength", osdKaraokePulseStrength), 0.0f, 0.15f);
@@ -946,6 +1031,22 @@ public final class HudConfig {
             o.addProperty("pendoloArcAngle", pendoloArcAngle);
             o.addProperty("pendoloActiveScale", pendoloActiveScale);
             o.addProperty("pendoloGearDecor", pendoloGearDecor);
+            o.addProperty("worldLyricsEnabled", worldLyricsEnabled);
+            o.addProperty("worldLyricsDistance", worldLyricsDistance);
+            o.addProperty("worldLyricsFacePlayer", worldLyricsFacePlayer);
+            o.addProperty("worldLyricsKeepAway", worldLyricsKeepAway);
+            o.addProperty("worldLyricsSpreadDeg", worldLyricsSpreadDeg);
+            o.addProperty("worldLyricsScale", worldLyricsScale);
+            o.addProperty("worldLyricsSmoothFont", worldLyricsSmoothFont);
+            o.addProperty("worldLyricsSplitLines", worldLyricsSplitLines);
+            o.addProperty("worldLyricsGlowEnabled", worldLyricsGlowEnabled);
+            o.addProperty("worldLyricsGlowStrength", worldLyricsGlowStrength);
+            o.addProperty("worldLyricsGlowSpread", worldLyricsGlowSpread);
+            o.addProperty("worldLyricsGlowColorRgb", worldLyricsGlowColorRgb);
+            o.addProperty("worldLyricsColorRgb", worldLyricsColorRgb);
+            o.addProperty("worldLyricsWiggle", worldLyricsWiggle);
+            o.addProperty("worldLyricsWordPop", worldLyricsWordPop);
+            o.addProperty("worldLyricsTextFlash", worldLyricsTextFlash);
             o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
             o.addProperty("osdKaraokePulseStrength", osdKaraokePulseStrength);
             o.addProperty("osdKaraokeSmoothing", osdKaraokeSmoothing);

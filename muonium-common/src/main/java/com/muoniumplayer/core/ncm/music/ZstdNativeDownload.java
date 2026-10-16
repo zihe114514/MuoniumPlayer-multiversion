@@ -39,19 +39,19 @@ import java.util.Locale;
 public final class ZstdNativeDownload {
 
     /**
-     * 下载镜像链，前五路指向公开清单仓库 {@code libs/} 目录（ghfast / gh-proxy / raw /
-     * ghproxy.net / jsdelivr），后两路是官网系（Cloudflare）：Pages 直链与 R2 对象存储直链，
-     * 同一批文件的两个镜像。
+     * 下载镜像链，按 2026-10-16 逐线实测排序：A 档（R2 / gh-proxy / 自建分发站，先开）在前，
+     * B 档（Pages / ghfast / gcore / ghproxy.net / raw，15 秒后放量）在后。分批逻辑见
+     * {@link HttpDownloadRace}。
      */
     static final List<String> MIRRORS = List.of(
-            "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
-            "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
-            "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
-            "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
-            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/libs/",
-            "https://melodifymc.cc.cd/dl/libs/",
             "https://file.melodifymc.cc.cd/libs/",
-            "http://109.206.245.74/dl/libs/");
+            "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
+            "http://muoniummc.cc.cd/dl/libs/",
+            "https://melodifymc.cc.cd/dl/libs/",
+            "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
+            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/libs/",
+            "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
+            "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/");
 
     /** 钉死的发布文件：forge189-slim 过滤版（Java 8 兼容、自带五平台原生库）。 */
     static final String FILE_NAME = "zstd-jni-1.5.6-9-forge189-slim.jar";

@@ -78,6 +78,13 @@ public final class MpPlayback {
         MultiThreadingUtil.runAsync(new Runnable() {
             @Override
             public void run() {
+                // 会话复核：排进线程池的这段时间里可能已经离房/被踢/解散
+                // （S_PLAY 与 S_LEFT 几乎同时到），此时 stop() 已清了 partyMusic 与
+                // 房间状态——照常起播就是「离房后的幽灵播放」，无心跳纠偏也不受控制。
+                if (MpPartyClient.room() == null) {
+                    System.out.println("[MpParty] 起播放弃：房间会话已不存在（离房竞态）");
+                    return;
+                }
                 Music music;
                 try {
                     music = track.toMusic();
@@ -100,6 +107,16 @@ public final class MpPlayback {
 
                 MpPartyClient.beginRemote();
                 try {
+                    // 下载/转码可能耗时数秒——真正交给播放器前再复核一次：
+                    // 期间离房的话，起播出来的就是没人管的幽灵播放。
+                    // 也要把已改写的播放模式还回去：forceSequentialMode 只在 stop()
+                    // 里还原，这个出口离 stop 还远，不还就是永久强制顺序播放。
+                    if (MpPartyClient.room() == null) {
+                        System.out.println("[MpParty] 起播放弃：交给播放器前房间已离场（离房竞态）");
+                        startPending = false;
+                        restorePlayMode();
+                        return;
+                    }
                     CloudMusic.play(roomQueue(music), 0);
                 } catch (Throwable throwable) {
                     System.err.println("[MpParty] 起播失败：" + throwable);

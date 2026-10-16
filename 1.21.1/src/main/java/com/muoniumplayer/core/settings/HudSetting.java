@@ -112,7 +112,13 @@ public enum HudSetting {
     GLASS_FUSION("玻璃融合半径", 0.00f, 32.00f),
     SPECTRUM_OPACITY("频谱透明度", 0.15f, 0.85f),
     SPECTRUM_HEIGHT("频谱高度", 0.50f, 1.50f),
-    SPECTRUM_BAR_COUNT_CUSTOM("自定义频谱柱数", 48.0f, 256.0f);
+    SPECTRUM_BAR_COUNT_CUSTOM("自定义频谱柱数", 48.0f, 256.0f),
+    // ---- 3D 世界歌词（接在末尾：这套条目的 id 有按序号落盘的历史，插中间会让老配置错位）----
+    WORLD_LYRICS_DISTANCE("3D歌词 距离", 3.0f, 24.0f),
+    WORLD_LYRICS_SPREAD("3D歌词 散开角", 0.0f, 60.0f),
+    WORLD_LYRICS_SCALE("3D歌词 缩放", 0.4f, 3.0f),
+    WORLD_LYRICS_GLOW_STRENGTH("3D歌词 发光强度", 0.00f, 1.00f),
+    WORLD_LYRICS_GLOW_SPREAD("3D歌词 发光扩散", 0.50f, 1.80f);
 
     private final String label;
     private final float min;
@@ -206,6 +212,11 @@ public enum HudSetting {
             case SPECTRUM_OPACITY: return HudConfig.spectrumOpacity;
             case SPECTRUM_HEIGHT: return HudConfig.spectrumHeight;
             case SPECTRUM_BAR_COUNT_CUSTOM: return HudConfig.spectrumCustomBarCount;
+            case WORLD_LYRICS_DISTANCE: return HudConfig.worldLyricsDistance;
+            case WORLD_LYRICS_SPREAD: return HudConfig.worldLyricsSpreadDeg;
+            case WORLD_LYRICS_SCALE: return HudConfig.worldLyricsScale;
+            case WORLD_LYRICS_GLOW_STRENGTH: return HudConfig.worldLyricsGlowStrength;
+            case WORLD_LYRICS_GLOW_SPREAD: return HudConfig.worldLyricsGlowSpread;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }
@@ -285,6 +296,11 @@ public enum HudSetting {
             case SPECTRUM_BAR_COUNT_CUSTOM:
                 HudConfig.spectrumCustomBarCount = Math.max(48, Math.min(256, Math.round(clamped)));
                 break;
+            case WORLD_LYRICS_DISTANCE: HudConfig.worldLyricsDistance = clamped; break;
+            case WORLD_LYRICS_SPREAD: HudConfig.worldLyricsSpreadDeg = clamped; break;
+            case WORLD_LYRICS_SCALE: HudConfig.worldLyricsScale = clamped; break;
+            case WORLD_LYRICS_GLOW_STRENGTH: HudConfig.worldLyricsGlowStrength = clamped; break;
+            case WORLD_LYRICS_GLOW_SPREAD: HudConfig.worldLyricsGlowSpread = clamped; break;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }

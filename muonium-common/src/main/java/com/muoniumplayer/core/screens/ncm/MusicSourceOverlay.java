@@ -63,25 +63,31 @@ public final class MusicSourceOverlay extends NcmSheet {
      * 所以是盘去迁就字形而不是反过来 —— 缩放字形会重采样发虚。</p>
      */
     private static final double DISC = 46.0;
-    private static final double CARD_H = 60.0;
-    /** 滚动行 = 卡高 + 行距。行距做进行高里，于是最后一行自带一段收尾留白。 */
-    private static final double ROW_H = CARD_H + 7.0;
-    /**
-     * 分组小标题占的行高（第二组前面多留一段，让两组分开）。
-     *
-     * <p>这几个数和上面的卡高都是按“1080p + GUI 缩放 2”量出来的：那个档下内容区约 266
-     * 逻辑像素，刚好能把三张官方卡 + 「在线聚合源」分组标题 + 聚合源卡的顶部露出来。露出一截
-     * 是有意的：它是“下面还有东西”唯一可靠的提示，刚好切齐则会让人以为到底了。</p>
-     */
+    /** 分组小标题占的行高。 */
     private static final double LABEL_ROW = 22.0;
     private static final double LABEL_ROW_2 = 26.0;
-    /** 页脚：解灰 + 自动换源两行开关、一行来源说明。这些贴着弹窗底边，不参与滚动。 */
-    private static final double FOOTER_H = 124.0;
-    /** 卡片上文字块的左边缘 = 盘的左留白 + 盘宽 + 盘到文字的间距。 */
-    private static final double TEXT_LEFT = 12.0 + DISC + 12.0;
+    /**
+     * 页脚：解灰 + 自动换源两格开关并排一行、一行来源说明。
+     *
+     * <p>两行开关原来上下排开各占一行、整段 124 高，把内容区压得首屏都放不下三张卡；
+     * 并排成两格之后这段只需要 76，省下的高度正好是总览页从「必然滚动」回到「一屏放下」的那一笔。</p>
+     */
+    private static final double FOOTER_H = 76.0;
     /** GD 平台列表的行高与卡高。 */
     private static final double PLATFORM_ROW = 56.0;
     private static final double PLATFORM_CARD = 48.0;
+
+    // ── 总览页方格矩阵 ──
+    /** 方格的列间距。 */
+    private static final double CELL_GAP = 10.0;
+    /** 一颗方格的高。盘 32 + 两行文字，压着 84 刚好三行加间距放得进一屏。 */
+    private static final double CELL_H = 84.0;
+    /** 方格里品牌字标底盘的边长（46 那档是大卡用的；方格里收成 32）。 */
+    private static final double CELL_DISC = 32.0;
+    /** 方格内文字的左边缘。 */
+    private static final double CELL_TEXT_LEFT = 11.0;
+    /** 角标圆钮的边长（YouTube 代理/登录、Spotify 登录）。 */
+    private static final double CELL_CORNER = 22.0;
 
     /**
      * 自定义源那一组的强调色。
@@ -92,9 +98,14 @@ public final class MusicSourceOverlay extends NcmSheet {
     private static final int LX_COLOR = 0x9C7CF4;
     /** 自定义源页：页眉（返回键 + 标题 + 副标题）加一行状态，共 88。 */
     private static final double LX_HEADER_H = 88.0;
-    /** 自定义源页页脚：分隔线 + 四颗按钮 + 两行开关 + 一行安全说明。 */
-    private static final double LX_FOOTER_H = 138.0;
-    private static final double LX_CARD_H = 58.0;
+    /**
+     * 自定义源页页脚：只剩一行四颗导入/刷新按钮。
+     *
+     * <p>原来页脚还挤着两行权限开关与一行安全警告（整段 138 高），把脚本列表压到只剩两三行；
+     * 权限是脚本的属性、警告是权限的说明，都搬进滚动区跟脚本放在一起，页脚只留动作。</p>
+     */
+    private static final double LX_FOOTER_H = 44.0;
+    private static final double LX_CARD_H = 50.0;
     private static final double LX_ROW_H = LX_CARD_H + 7.0;
     private static final double LX_DISC = 36.0;
     private static final double LX_TEXT_LEFT = 12.0 + LX_DISC + 11.0;
@@ -102,6 +113,8 @@ public final class MusicSourceOverlay extends NcmSheet {
     private static final double LX_RESERVE = 112.0;
     private static final double LX_RUNTIME_CARD = 82.0;
     private static final double LX_RUNTIME_ROW = LX_RUNTIME_CARD + 7.0;
+    /** 权限开关行的高（挂进滚动区之后与脚本行同一条 feed）。 */
+    private static final double LX_PERM_ROW = 34.0;
     /** 运行状态卡上摊开几行 console。三行刚好放得下一条堆栈的头尾。 */
     private static final int LX_LOG_LINES = 3;
 
@@ -189,54 +202,177 @@ public final class MusicSourceOverlay extends NcmSheet {
 
     // ════════════════════════════ 一级页：来源总览 ════════════════════════════
 
+    /**
+     * 总览页：3 × 3 方格矩阵，一格一个可切换项。
+     *
+     * <p>可切换项恰好九个 —— 七个官方源 + GD 聚合 + LX 自定义 —— 三列三行填满，一格不空：
+     * 这是这批条目唯一不需要拿占位块去凑的规整矩阵（四列九格必然剩三个窟窿）。
+     * 旧版七张 67px 的大卡加三行分组标题加两行页脚开关，目标高度 750 上下，一屏根本放不下，
+     * 首屏永远截在一半；压成方格之后整页 ~480，绝大多数视口不再需要滚动。</p>
+     *
+     * <p>格子按行主序排：上两行是官方源（第一行网易云/QQ/酷狗，第二行 YouTube/B站/汽水，
+     * 第三行 Spotify/GD/LX）。选中的格子整块铺品牌色，扫一眼就知道现在用着谁。</p>
+     */
     private void showOverview() {
         page = PAGE_OVERVIEW;
         beginPage();
 
-        final Panel dialog = sheet(476, () -> HEADER_H + LABEL_ROW + ROW_H * 7
-                + LABEL_ROW_2 + ROW_H + LABEL_ROW_2 + ROW_H + FOOTER_H);
+        final Panel dialog = sheet(476, () -> HEADER_H + LABEL_ROW + CELL_ROW_H * 3 + FOOTER_H);
         header(dialog, PartyIcons.NOTE, "音乐来源",
-                () -> "官方源、在线聚合源与自定义脚本源各自独立，随时切换",
+                () -> "点按任一格即切换；官方源、聚合源与自定义脚本源各自独立",
                 () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
 
         final Panel body = body(dialog, () -> HEADER_H, () -> FOOTER_H);
         final ScrollPanel feed = feed(body);
 
-        sectionLabel(strip(feed, LABEL_ROW), "官方音乐源", () -> 5.0,
+        sectionLabel(strip(feed, LABEL_ROW), "选择音源", () -> 5.0,
                 () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-        officialCard(strip(feed, ROW_H), 0, MusicPlatform.NETEASE);
-        officialCard(strip(feed, ROW_H), 1, MusicPlatform.QQ);
-        officialCard(strip(feed, ROW_H), 2, MusicPlatform.KUGOU);
-        officialCard(strip(feed, ROW_H), 3, MusicPlatform.YOUTUBE);
-        officialCard(strip(feed, ROW_H), 4, MusicPlatform.BILIBILI);
-        officialCard(strip(feed, ROW_H), 5, MusicPlatform.QISHUI);
-        officialCard(strip(feed, ROW_H), 6, MusicPlatform.SPOTIFY);
 
-        sectionLabel(strip(feed, LABEL_ROW_2), "在线聚合源", () -> 9.0, MusicPlatform.GD::getBrandColor);
-        gdCard(strip(feed, ROW_H), 7);
+        // 方格行：行内三格平分宽度，格间距 CELL_GAP。ScrollPanel 的行是等宽的 Panel，
+        // 格子的 x 在行回调里按当帧宽度现算（窄视口下弹窗被夹窄，格子跟着收）。
+        gridRow(feed, 0, cell -> officialCell(cell, 0, MusicPlatform.NETEASE),
+                cell -> officialCell(cell, 1, MusicPlatform.QQ),
+                cell -> officialCell(cell, 2, MusicPlatform.KUGOU));
+        gridRow(feed, 1, cell -> officialCell(cell, 3, MusicPlatform.YOUTUBE),
+                cell -> officialCell(cell, 4, MusicPlatform.BILIBILI),
+                cell -> officialCell(cell, 5, MusicPlatform.QISHUI));
+        // 第三行混排：官方源收尾 + 两个「入口」格（GD/LX 进二级页，不直接切换）。
+        // 同一行同规格，规整优先于分组 —— 分组信息由格子自己的颜色体系（品牌色/靛蓝/紫）承担。
+        gridRow(feed, 2, cell -> officialCell(cell, 6, MusicPlatform.SPOTIFY),
+                this::gdCell, this::lxCell);
 
-        sectionLabel(strip(feed, LABEL_ROW_2), "自定义音源", () -> 9.0, () -> LX_COLOR);
-        lxEntryCard(strip(feed, ROW_H), 8);
-
-        unblockRow(dialog);
-        switchSourceRow(dialog);
+        settingsRow(dialog);
         tip(dialog, () -> "GD音乐台来源由 music-api.gdstudio.xyz 提供，请遵循上游服务的使用要求",
                 () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                () -> dialog.getHeight() - 30);
+                () -> dialog.getHeight() - 24);
     }
 
-    /** 一张官方来源卡。点一下即切换并关闭浮层 —— 这是终点操作，所以没有 chevron。 */
-    private void officialCard(final Panel row, final int slot, final MusicPlatform platform) {
-        final BooleanSupplier picked = () -> NeteaseMusicService.getCurrentPlatform() == platform;
-        // 底色要用卡片自己的悬停进度推，而 card(...) 在构造时就要拿到颜色供应器。
-        // 供应器只在渲染时求值，所以先留一个格子、拿到卡片之后回填。
+    /** 方格行高 = 格高 + 上下留给 hover 生长与行距的呼吸位。 */
+    private static final double CELL_ROW_H = CELL_H + 8.0;
+
+    /**
+     * 方格里的一行：三格等宽平铺。
+     *
+     * <p>x 按行宽现算而不是按 476 写死 —— 弹窗宽是「min(476, 视口−24)」的，窄视口下每格
+     * 等比收窄，三格永远占满一行，不会挤成一坨或留一截。</p>
+     *
+     * <p>行里每格有自己的入场档位（{@code rowSlot * 3 + 列}），九格是一条连贯的瀑布——
+     * 整行共用一个 gate 的话，三格会同时到场，瀑布断成三截。</p>
+     */
+    private void gridRow(final ScrollPanel feed, final int rowSlot,
+                         final java.util.function.Consumer<Panel> left,
+                         final java.util.function.Consumer<Panel> middle,
+                         final java.util.function.Consumer<Panel> right) {
+        final Panel[] cells = new Panel[3];
+        for (int i = 0; i < 3; i++) {
+            cells[i] = new Panel();
+        }
+        final Panel row = new Panel();
+        feed.addChild(row);
+        for (Panel cell : cells) {
+            row.addChild(cell);
+        }
+        // 方格行：行内三格平分宽度，格间距 CELL_GAP。
+        //
+        // 行不能走 strip(feed, …)：那个帮助方法把「设行尺寸」挂进它自己的 beforeRenderCallback，
+        // 而这里必须再挂一个排三格的回调 —— AbstractWidget 的回调是单槽的，后挂的会把先挂的覆盖掉，
+        // 行就永远是 0×0（三格塌在左上角叠成一摞）。所以行在这里自管尺寸，语义与 strip 相同：
+        // 宽随滚动区现算、高等于 CELL_ROW_H，feed(VERTICAL) 只负责摆 y，x 由这个回调自己排。
+        row.setBeforeRenderCallback(() -> {
+            row.setBounds(Math.max(1, feed.getWidth()), Math.max(1, CELL_ROW_H));
+            double width = Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2);
+            double cellWidth = (width - CELL_GAP * 2) / 3.0;
+            for (int i = 0; i < 3; i++) {
+                cells[i].setBounds(cellWidth, Math.max(1, row.getHeight()));
+                cells[i].setPosition(PAD + CARD_INSET + (cellWidth + CELL_GAP) * i,
+                        // 入场时每格按自己的档位从下方落上来（格子自己的回调再乘各自的 gate）。
+                        (1.0 - cardGate(rowSlot * 3 + i)) * 6.0);
+            }
+        });
+        left.accept(cells[0]);
+        middle.accept(cells[1]);
+        right.accept(cells[2]);
+    }
+
+    /**
+     * 总览页的一颗方格。
+     *
+     * <p>与 {@link NcmSheet#card} 的区别：格子并排铺在行里，hover 的生长量必须收小
+     * （每侧 2px，而不是卡片那档 CARD_INSET=3 的两侧 6px），不然 10px 的格距下相邻两格
+     * 悬停时会互相压住圆角。版式：品牌盘 32 在左上，名字与状态两行在盘下。</p>
+     *
+     * <p>选中态是一条<b>连续的颜色补间</b>而不是布尔跳变：{@code pickedProgress} 从 0 走到 1，
+     * 底色从面板底色滑向品牌色、盘与文字随之换墨。切换来源的那一下，旧格淡出与新格点亮
+     * 是同时发生的两段补间，眼睛读到的是「颜色流过去」，而不是两块色块互换。</p>
+     *
+     * @param slot 入场瀑布次序（0..8，九格全在 stagger 窗口内）
+     * @param pickedProgressOut 可选：把选中进度补间写进调用方给的格子，文字/勾标与底色
+     *                          共用同一条曲线；不关心就传 null
+     */
+    private Card gridCell(final Panel cell, final int slot, final IntSupplier accent,
+                          final BooleanSupplier picked, final boolean entryStyle,
+                          final double[] pickedProgressOut) {
         final Card[] self = new Card[1];
-        final Card card = card(row, slot, () -> 0.0, () -> CARD_H, () -> picked.getAsBoolean()
-                ? platform.getBrandColor()
-                : mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
-                NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), self[0].hover));
+        // 兜底数组同样按当前状态起步；调用方传了自己的格子时（官方格）以那一格为准。
+        final double[] pickedProgress = pickedProgressOut != null
+                ? pickedProgressOut : new double[]{picked.getAsBoolean() ? 1.0 : 0.0};
+        final Card card = new Card();
+        cell.addChild(card);
+        card.setRadius(12);
+        card.setGlassRim(GlassLook.Surface.PLAYER);
+        card.setBeforeRenderCallback(() -> {
+            card.reveal = cardGate(slot);
+            pickedProgress[0] = Interpolations.interpolate(pickedProgress[0],
+                    picked.getAsBoolean() ? 1.0 : 0.0, .22f);
+            card.setBounds(Math.max(1, cell.getWidth() - 2.0), Math.max(1, CELL_H));
+            card.setPosition(1.0, 2.0 + (1.0 - card.reveal) * 7.0);
+            card.setColor(mix(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
+                    NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), self[0].hover),
+                    accent.getAsInt(), pickedProgress[0]));
+            card.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+            card.setAlpha((float) card.reveal);
+        });
         self[0] = card;
-        // 侧栏那枚来源按钮上写着的就是当前来源，所以接力板落在当前来源这一行。
+        card.setTransformations(() -> {
+            double w = Math.max(1, card.getWidth());
+            card.scaleAtPos(card.getX() + w * .5, card.getY() + card.getHeight() * .5,
+                    1.0 + (4.0 / w) * card.hover);
+        });
+        if (entryStyle) {
+            // 入口格（GD/LX）的选中态不铺整块品牌色（它们不是「当前音源」的概念），
+            // 只上一圈品牌色描边 + 常规底色，与官方格一眼区分「这是扇门，不是一块已选的地」。
+            // 描边亮度跟着同一条 pickedProgress 走，点亮/熄灭也是渐变的。
+            stroke(card, 12.0, accent, () -> .55 * pickedProgress[0]);
+        } else {
+            selectionSheen(card, picked, () -> pickedProgress[0]);
+        }
+        return card;
+    }
+
+    /**
+     * 选中格文字的墨色：随 pickedProgress 在「正文字色 → 白」之间连续插值，与底色补间同一条曲线。
+     *
+     * <p>端点语义与旧版一致：progress=0 是停泊在深底上的 PRIMARY_TEXT，progress=1 是停在
+     * 品牌色底上的白。中途某一帧文字可能同时压在两种底色的过渡带上，朝白推的插值在两种底上
+     * 都保持可读，而旧的布尔切换会在补间中点闪一下。</p>
+     */
+    private int cellInk(final double pickedProgress) {
+        return mix(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), 0xFFFFFF, pickedProgress);
+    }
+
+    /**
+     * 官方源的方格：点击切换音源，右上角按需挂特例入口（YouTube 的代理/登录、Spotify 的登录）。
+     *
+     * <p>特例入口收成角标圆钮而不是占一整行：方格里放不下三颗并排的按钮，而这些入口
+     * （偶尔用一次的设置）hover 才亮起，平时不抢注意力。这是终点操作，所以没有 chevron。</p>
+     */
+    private void officialCell(final Panel cell, final int slot, final MusicPlatform platform) {
+        final BooleanSupplier picked = () -> NeteaseMusicService.getCurrentPlatform() == platform;
+        // 按当前状态初始化（与 NcmSheet.toggle 的 knob 同一范本）：翻页重建后选中格
+        // 直接以品牌色到场，不再从「未选中色」闪一遍补间。
+        final double[] pickedProgress = {picked.getAsBoolean() ? 1.0 : 0.0};
+        final Card card = gridCell(cell, slot, platform::getBrandColor, picked, false, pickedProgress);
+        // 侧栏那枚来源按钮上写着的就是当前来源，所以接力板落在当前来源这一格。
         if (NeteaseMusicService.getCurrentPlatform() == platform) hero(card);
         card.setShouldOverrideMouseCursor(true);
         card.setOnClickCallback((x, y, button) -> {
@@ -249,97 +385,250 @@ public final class MusicSourceOverlay extends NcmSheet {
             return true;
         });
 
-        selectionSheen(card, picked);
-        brandDisc(card, platform, picked);
+        cellDisc(card, platform, pickedProgress);
 
-        final IntSupplier ink = () -> picked.getAsBoolean()
-                ? 0xFFFFFF : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT);
-        cardText(card, platform::getDisplayName, () -> accountLine(platform), ink,
-                () -> picked.getAsBoolean()
-                        // 选中卡是品牌色底，副标题不能直接用次要文字色（那是给深/浅底色调的），
-                        // 从品牌色朝白推 .78 得到的才是"同一块底上的第二层文字"。
-                        ? mix(platform.getBrandColor(), 0xFFFFFF, .78)
-                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                () -> platform == MusicPlatform.QISHUI ? 118.0
-                        : (platform == MusicPlatform.YOUTUBE ? 74.0 : (picked.getAsBoolean() ? 46.0 : 16.0)));
+        // 状态行：汽水挂一颗后端状态圆点（它的后端有五态，颜色就是状态），
+        // 其余平台右侧留给角标钮或对勾。
+        final boolean qishui = platform == MusicPlatform.QISHUI;
 
-        RoundedRectWidget qishuiStatus = null;
-        if (platform == MusicPlatform.QISHUI) {
-            qishuiStatus = pill(card, this::qishuiBackendStatusGlyph,
-                    QishuiCompanionDownload::backendStatusLabel,
-                    this::qishuiBackendStatusColor,
-                    () -> card.getWidth() - 12, () -> card.getHeight() * .5);
+        final LabelWidget name = label(card, platform::getDisplayName, FontManager.pf12bold);
+        final LabelWidget note = label(card, () -> accountLine(platform), FontManager.pf12);
+        name.setBeforeRenderCallback(() -> {
+            name.setColor(cellInk(pickedProgress[0]));
+            // 右端让位：角标钮（YouTube 两颗 22 + 间距 + 边距 ≈ 58）或勾标（22 + 10）。
+            double reserve = cornerReserve(platform, pickedProgress[0]);
+            name.setMaxWidth(Math.max(1, card.getWidth() - CELL_TEXT_LEFT - reserve));
+            name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            name.setPosition(CELL_TEXT_LEFT, inkTop(name, 52.0));
+        });
+        note.setBeforeRenderCallback(() -> {
+            // 副标题走同一条补间：从次要文字色滑向「品牌色底上的第二层白」，中点两色在
+            // 明度上已经相当接近，过渡是连续的，不会再有布尔切换那一帧的色跳。
+            note.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                    mix(platform.getBrandColor(), 0xFFFFFF, .78), pickedProgress[0]));
+            note.setMaxWidth(Math.max(1, card.getWidth() - CELL_TEXT_LEFT - 10.0));
+            note.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            note.setPosition(qishui ? CELL_TEXT_LEFT + 12.0 : CELL_TEXT_LEFT, inkTop(note, 68.0));
+        });
+
+        if (qishui) {
+            // 后端状态圆点：直径 6，跟在状态文字左边。旧版是一枚胶囊，方格里放不下还破坏规整。
+            final RoundedRectWidget dot = new RoundedRectWidget();
+            card.addChild(dot);
+            dot.setClickable(false).setBeforeRenderCallback(() -> {
+                dot.setRadius(3);
+                dot.setBounds(6, 6);
+                dot.setPosition(CELL_TEXT_LEFT, inkTop(note, 68.0) - 1.0);
+                dot.setColor(qishuiBackendStatusColor());
+            });
         }
-        final RoundedRectWidget statusPill = qishuiStatus;
-        checkBadge(card, picked, platform::getBrandColor,
-                () -> statusPill == null ? card.getWidth() - 23 : statusPill.getRelativeX() - 15);
+
+        checkBadge(card, picked, platform::getBrandColor, () -> card.getWidth() - 19.0,
+                () -> pickedProgress[0]);
+
         if (platform == MusicPlatform.YOUTUBE) {
-            youtubeProxyButton(card);
-            youtubeLoginButton(card);
+            cornerButton(card, PartyIcons.LINK, MusicPlatform.YOUTUBE,
+                    () -> YouTubeProxySettings.isEnabled(),
+                    this::showYouTubeProxySettings, 0);
+            cornerButton(card, PartyIcons.KEY, MusicPlatform.YOUTUBE,
+                    () -> NeteaseMusicService.isLoggedIn(MusicPlatform.YOUTUBE),
+                    this::showYouTubeLogin, 1);
         }
         if (platform == MusicPlatform.SPOTIFY) {
-            spotifyLoginButton(card);
+            cornerButton(card, PartyIcons.KEY, MusicPlatform.SPOTIFY,
+                    () -> NeteaseMusicService.isLoggedIn(MusicPlatform.SPOTIFY),
+                    this::showSpotifyLogin, 0);
         }
+    }
+
+    /** 名字行右端的让位宽度：角标钮（YouTube 两颗）> 勾标 > 无。勾标让位随补间连续变化。 */
+    private double cornerReserve(final MusicPlatform platform, final double pickedProgress) {
+        double badgeReserve = 12.0 + 18.0 * pickedProgress;
+        if (platform == MusicPlatform.YOUTUBE) return CELL_CORNER * 2 + 4.0 + 8.0;
+        if (platform == MusicPlatform.SPOTIFY) return CELL_CORNER + 8.0;
+        return badgeReserve;
     }
 
     /**
-     * Spotify 卡上的登录入口。
+     * 方格右上角的入口圆钮。hover 才亮：这些是「偶尔用一次」的设置，平时不该和切换动作抢注意力。
      *
-     * <p>Spotify 是唯一要「用户先去别处办一件事」的官方源：自建开发者应用拿 Client ID。
-     * 登录页里把步骤写死在界面上，比丢一份链接让用户自己找文档靠谱。</p>
+     * @param index 从右往左数的第几颗（0 = 最靠右）
      */
-    private void spotifyLoginButton(final Card card) {
+    private void cornerButton(final Card card, final String glyph, final MusicPlatform platform,
+                              final BooleanSupplier active, final Runnable onClick, final int index) {
         final RoundedButtonWidget button = new RoundedButtonWidget("", FontManager.pf12bold);
         card.addChild(button);
         button.setGlassRim(GlassLook.Surface.PLAYER);
-        button.setRadius(10);
+        button.setRadius(CELL_CORNER * .5);
         button.setShouldOverrideMouseCursor(true);
         button.setOnClickCallback((x, y, mouse) -> {
             if (mouse != 0) return false;
-            showSpotifyLogin();
+            onClick.run();
             return true;
         });
+        final double[] hover = new double[1];
         button.setBeforeRenderCallback(() -> {
-            button.setBounds(32, 32);
-            button.setPosition(card.getWidth() - 64, card.getHeight() * .5 - 16);
-            button.setColor(button.isHovering()
-                    ? mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER),
-                    MusicPlatform.SPOTIFY.getBrandColor(), .16)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            // 平时半亮、hover 实起，走 .2f 补间 —— 布尔跳变的角标在鼠标扫过一排格子时
+            // 会连闪三下，补间之后是三段连续的亮起。
+            hover[0] = Interpolations.interpolate(hover[0], button.isHovering() ? 1.0 : 0.0, .2f);
+            button.setAlpha((float) (.45 + .55 * hover[0]));
+            button.setBounds(CELL_CORNER, CELL_CORNER);
+            button.setPosition(card.getWidth() - 6.0 - CELL_CORNER - (CELL_CORNER + 4.0) * index,
+                    5.0);
+            button.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
+                    mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER),
+                            platform.getBrandColor(), .16), hover[0]));
             button.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
-        icon(button, PartyIcons.KEY, ICON_M, () -> 16.0, () -> 16.0,
-                () -> NeteaseMusicService.isLoggedIn(MusicPlatform.SPOTIFY)
-                        ? MusicPlatform.SPOTIFY.getBrandColor()
+        icon(button, glyph, ICON_S, () -> CELL_CORNER * .5, () -> CELL_CORNER * .5,
+                () -> active.getAsBoolean() ? platform.getBrandColor()
                         : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
     }
 
-    /** YouTube 专属设置入口。代理只作用于 YouTube 链路，所以留在 YouTube 卡上而不是全局设置。 */
-    private void youtubeProxyButton(final Card card) {
-        final RoundedButtonWidget button = new RoundedButtonWidget("", FontManager.pf12bold);
-        card.addChild(button);
-        button.setGlassRim(GlassLook.Surface.PLAYER);
-        button.setRadius(10);
-        button.setShouldOverrideMouseCursor(true);
-        button.setOnClickCallback((x, y, mouse) -> {
-            if (mouse != 0) return false;
-            showYouTubeProxySettings();
-            return true;
+    /**
+     * 方格里的品牌字标底盘（32 那档）。方格里盘居上、文字两行居下；盘的配色随选中进度补间，
+     * 品牌字形的字体配对沿用大卡那一套 —— 字形配错字体画出来是空白，这一段不能另起炉灶。
+     */
+    private void cellDisc(final Card card, final MusicPlatform platform,
+                          final double[] pickedProgress) {
+        final IntSupplier accent = platform::getBrandColor;
+        final RoundedRectWidget disc = new RoundedRectWidget();
+        card.addChild(disc);
+        disc.setGlassRim(GlassLook.Surface.PLAYER);
+        disc.setClickable(false);
+        disc.setRadius(10);
+        disc.setBeforeRenderCallback(() -> {
+            disc.setBounds(CELL_DISC, CELL_DISC);
+            disc.setPosition(CELL_TEXT_LEFT, 10.0);
+            disc.setColor(mix(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
+                    accent.getAsInt(), .18), mix(accent.getAsInt(), 0xFFFFFF, .20),
+                    pickedProgress[0]));
         });
-        button.setBeforeRenderCallback(() -> {
-            button.setBounds(32, 32);
-            button.setPosition(card.getWidth() - 64, card.getHeight() * .5 - 16);
-            button.setColor(button.isHovering()
-                    ? mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), MusicPlatform.YOUTUBE.getBrandColor(), .16)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            button.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-        });
-        icon(button, PartyIcons.LINK, ICON_M, () -> 16.0, () -> 16.0,
-                () -> YouTubeProxySettings.isEnabled() ? MusicPlatform.YOUTUBE.getBrandColor()
-                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        brandMark(disc, platform, CELL_DISC * BrandVectorIcons.MARK_RATIO,
+                brandGlyph(platform), brandFont(platform),
+                () -> CELL_DISC * .5, () -> CELL_DISC * .5,
+                () -> mix(accent.getAsInt(), 0xFFFFFF, pickedProgress[0]));
     }
 
-    /** 二级页：YouTube 专用 HTTP 代理。 */
+    /** 品牌字形的兜底字形（矢量画不出来时用）。配对关系与品牌盘一致。 */
+    private String brandGlyph(final MusicPlatform platform) {
+        return switch (platform) {
+            case KUGOU -> MusicBrandIcons.KUGOU_MONOGRAM;
+            case QQ -> MusicBrandIcons.QQ_MUSIC;
+            case YOUTUBE -> MusicBrandIcons.YOUTUBE;
+            case BILIBILI -> MusicBrandIcons.BILIBILI_MONOGRAM;
+            case QISHUI -> MusicBrandIcons.QISHUI_MONOGRAM;
+            case SPOTIFY -> MusicBrandIcons.SPOTIFY_MONOGRAM;
+            default -> MusicBrandIcons.NETEASE_CLOUD_MUSIC;
+        };
+    }
+
+    /** 品牌字形的兜底字体。酷狗/哔哩/汽水/Spotify 用正文字体画一枚汉字字标。 */
+    private CFontRenderer brandFont(final MusicPlatform platform) {
+        return switch (platform) {
+            case KUGOU, BILIBILI, QISHUI, SPOTIFY -> FontManager.pf34bold;
+            case YOUTUBE -> FontManager.youtubeIcon34;
+            case QQ -> FontManager.qqMusicIcon68;
+            default -> FontManager.musicBrand52;
+        };
+    }
+
+    /**
+     * GD 聚合格：进入平台选择页。它不是「当前音源」而是一扇门，选中态用描边而不是铺色。
+     */
+    private void gdCell(final Panel cell) {
+        final BooleanSupplier picked = this::isGdActive;
+        final Card card = gridCell(cell, 7, MusicPlatform.GD::getBrandColor, picked, true, null);
+        card.setShouldOverrideMouseCursor(true);
+        card.setOnClickCallback((x, y, button) -> {
+            if (button != 0) return false;
+            showGdPlatforms();
+            return true;
+        });
+
+        final RoundedRectWidget disc = new RoundedRectWidget();
+        card.addChild(disc);
+        disc.setGlassRim(GlassLook.Surface.PLAYER);
+        disc.setClickable(false);
+        disc.setRadius(10);
+        disc.setBeforeRenderCallback(() -> {
+            disc.setBounds(CELL_DISC, CELL_DISC);
+            disc.setPosition(CELL_TEXT_LEFT, 10.0);
+            disc.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
+                    MusicPlatform.GD.getBrandColor(), .18));
+        });
+        // 聚合源没有品牌字标，用"探索"这一枚。
+        icon(disc, PartyIcons.EXPLORE, ICON_M, () -> CELL_DISC * .5, () -> CELL_DISC * .5,
+                () -> MusicPlatform.GD.getBrandColor());
+
+        final LabelWidget name = label(card, () -> "GD音乐台", FontManager.pf12bold);
+        name.setBeforeRenderCallback(() -> {
+            name.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            name.setMaxWidth(Math.max(1, card.getWidth() - CELL_TEXT_LEFT - 22.0));
+            name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            name.setPosition(CELL_TEXT_LEFT, inkTop(name, 52.0));
+        });
+        final LabelWidget note = label(card, this::buildGdSummary, FontManager.pf12);
+        note.setBeforeRenderCallback(() -> {
+            note.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            note.setMaxWidth(Math.max(1, card.getWidth() - CELL_TEXT_LEFT - 10.0));
+            note.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            note.setPosition(CELL_TEXT_LEFT, inkTop(note, 68.0));
+        });
+
+        icon(card, PartyIcons.CHEVRON_RIGHT, ICON_S, () -> card.getWidth() - 14.0,
+                () -> 16.0, () -> mix(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), card.hover));
+        checkBadge(card, picked, MusicPlatform.GD::getBrandColor, () -> card.getWidth() - 19.0);
+    }
+
+    /** LX 自定义源格：进入脚本管理页。与 GD 同一套入口版式，紫色系。 */
+    private void lxCell(final Panel cell) {
+        final BooleanSupplier picked = LxSourceService::isEnabled;
+        final Card card = gridCell(cell, 8, () -> LX_COLOR, picked, true, null);
+        card.setShouldOverrideMouseCursor(true);
+        card.setOnClickCallback((x, y, button) -> {
+            if (button != 0) return false;
+            showLxSources();
+            return true;
+        });
+
+        final RoundedRectWidget disc = new RoundedRectWidget();
+        card.addChild(disc);
+        disc.setGlassRim(GlassLook.Surface.PLAYER);
+        disc.setClickable(false);
+        disc.setRadius(10);
+        disc.setBeforeRenderCallback(() -> {
+            disc.setBounds(CELL_DISC, CELL_DISC);
+            disc.setPosition(CELL_TEXT_LEFT, 10.0);
+            disc.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
+                    LX_COLOR, .18));
+        });
+        icon(disc, PartyIcons.LINK, ICON_M, () -> CELL_DISC * .5, () -> CELL_DISC * .5,
+                () -> LX_COLOR);
+
+        final LabelWidget name = label(card, () -> "自定义音源", FontManager.pf12bold);
+        name.setBeforeRenderCallback(() -> {
+            name.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            name.setMaxWidth(Math.max(1, card.getWidth() - CELL_TEXT_LEFT - 22.0));
+            name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            name.setPosition(CELL_TEXT_LEFT, inkTop(name, 52.0));
+        });
+        final LabelWidget note = label(card, this::buildLxSummary, FontManager.pf12);
+        note.setBeforeRenderCallback(() -> {
+            note.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            note.setMaxWidth(Math.max(1, card.getWidth() - CELL_TEXT_LEFT - 10.0));
+            note.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            note.setPosition(CELL_TEXT_LEFT, inkTop(note, 68.0));
+        });
+
+        icon(card, PartyIcons.CHEVRON_RIGHT, ICON_S, () -> card.getWidth() - 14.0,
+                () -> 16.0, () -> mix(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), card.hover));
+        checkBadge(card, picked, () -> LX_COLOR, () -> card.getWidth() - 19.0);
+    }
+
+    /** YouTube 专属设置走方格角标（见 {@link #cornerButton}），二级页从那里进入。 */
     private void showYouTubeProxySettings() {
         page = PAGE_YOUTUBE_PROXY;
         beginPage();
@@ -363,39 +652,6 @@ public final class MusicSourceOverlay extends NcmSheet {
         final TextFieldWidget input = youtubeProxyInputRow(strip(feed, 46.0));
 
         youtubeProxyFooter(dialog, input);
-    }
-
-    /**
-     * YouTube 的登录入口。
-     *
-     * <p>YouTube 是唯一「不登录也能搜能播」的源，所以这颗按钮不是主流程而是一颗能力增强：
-     * 登录之后才亮起来的是歌词与私人歌单。挂在这张卡上而不是账号页，是因为账号页那颗主按钮
-     * 的整条状态机是围着扫码转的，硬塞一个不能扫码的平台会把那边搞脏。</p>
-     */
-    private void youtubeLoginButton(final Card card) {
-        final RoundedButtonWidget button = new RoundedButtonWidget("", FontManager.pf12bold);
-        card.addChild(button);
-        button.setGlassRim(GlassLook.Surface.PLAYER);
-        button.setRadius(10);
-        button.setShouldOverrideMouseCursor(true);
-        button.setOnClickCallback((x, y, mouse) -> {
-            if (mouse != 0) return false;
-            showYouTubeLogin();
-            return true;
-        });
-        button.setBeforeRenderCallback(() -> {
-            button.setBounds(32, 32);
-            // 代理那颗按钮占着 card.getWidth()-64，这一颗排在它左边，两张卡图标不重叠。
-            button.setPosition(card.getWidth() - 104, card.getHeight() * .5 - 16);
-            button.setColor(button.isHovering()
-                    ? mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER),
-                            MusicPlatform.YOUTUBE.getBrandColor(), .16)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            button.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-        });
-        icon(button, PartyIcons.KEY, ICON_M, () -> 16.0, () -> 16.0,
-                () -> YouTubeSessionStore.isLoggedIn() ? MusicPlatform.YOUTUBE.getBrandColor()
-                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
     }
 
     /** 二级页：YouTube 登录（粘贴浏览器 Cookie）。 */
@@ -906,143 +1162,73 @@ public final class MusicSourceOverlay extends NcmSheet {
                 () -> dialog.getHeight() - 20);
     }
 
-    /** GD 聚合源卡。它通往下一页，所以右端常驻一枚 chevron。 */
-    private void gdCard(final Panel row, final int slot) {
-        final BooleanSupplier picked = this::isGdActive;
-        final Card[] self = new Card[1];
-        final Card card = card(row, slot, () -> 0.0, () -> CARD_H, () -> picked.getAsBoolean()
-                ? MusicPlatform.GD.getBrandColor()
-                : mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
-                NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), self[0].hover));
-        self[0] = card;
-        card.setShouldOverrideMouseCursor(true);
-        card.setOnClickCallback((x, y, button) -> {
-            if (button != 0) return false;
-            showGdPlatforms();
-            return true;
-        });
-
-        selectionSheen(card, picked);
-
-        final IntSupplier ink = () -> picked.getAsBoolean()
-                ? 0xFFFFFF : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT);
-        final RoundedRectWidget disc = new RoundedRectWidget();
-        card.addChild(disc);
-        disc.setGlassRim(GlassLook.Surface.PLAYER);
-        disc.setClickable(false);
-        disc.setRadius(14);
-        disc.setBeforeRenderCallback(() -> {
-            disc.setBounds(DISC, DISC);
-            disc.setPosition(12, card.getHeight() * .5 - DISC * .5);
-            disc.setColor(picked.getAsBoolean()
-                    ? mix(MusicPlatform.GD.getBrandColor(), 0xFFFFFF, .20)
-                    : mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
-                    MusicPlatform.GD.getBrandColor(), .18));
-        });
-        // 聚合源没有品牌字标，用"探索"这一枚：它比品牌盘小一圈，一眼就能和上面三张官方卡分开。
-        icon(disc, PartyIcons.EXPLORE, ICON_XL, () -> DISC * .5, () -> DISC * .5,
-                () -> picked.getAsBoolean() ? 0xFFFFFF : MusicPlatform.GD.getBrandColor());
-
-        cardText(card, () -> "GD音乐台 · 在线聚合", this::buildGdSummary, ink,
-                () -> picked.getAsBoolean()
-                        ? mix(MusicPlatform.GD.getBrandColor(), 0xFFFFFF, .78)
-                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                () -> picked.getAsBoolean() ? 74.0 : 40.0);
-
-        icon(card, PartyIcons.CHEVRON_RIGHT, ICON_M, () -> card.getWidth() - 20,
-                () -> card.getHeight() * .5, () -> picked.getAsBoolean() ? 0xFFFFFF
-                        : mix(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                        NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), self[0].hover));
-        checkBadge(card, picked, MusicPlatform.GD::getBrandColor, () -> card.getWidth() - 46);
+    /**
+     * 页脚两格设置开关并排一行：左「灰色歌曲解灰」、右「跨平台自动换源」。
+     *
+     * <p>留在音乐来源这一层而不是挪进 HUD 配置：它们决定的就是「官方源没有流的时候怎么办」，
+     * 和这个面板讨论的是同一件事。钉在页脚是因为它们是设置而不是列表项，滚动内容不该把它带走；
+     * 原来上下各占一行（页脚整段 124 高），并排成两格之后页脚只需要 76 —— 省下的高度正是
+     * 总览页从「必然滚动」回到「一屏放下」的那一笔。左格在前也是执行顺序：先解灰保住身份，
+     * 解不开才换平台换身份。</p>
+     */
+    private void settingsRow(final Panel dialog) {
+        footerToggle(dialog, 0, () -> PartyIcons.SWEEP, "灰色歌曲解灰", "官方没流时按曲名匹配",
+                NeteaseUnblockSettings::isEnabled,
+                () -> NeteaseUnblockSettings.setEnabled(!NeteaseUnblockSettings.isEnabled()));
+        footerToggle(dialog, 1, () -> PartyIcons.SYNC, "跨平台自动换源", "解灰仍失败时换平台匹配",
+                SwitchSourceSettings::isEnabled,
+                () -> SwitchSourceSettings.setEnabled(!SwitchSourceSettings.isEnabled()));
     }
 
     /**
-     * 「灰色歌曲解灰」一行。
+     * 页脚上的一格开关：图标 + 标题一行 + 短副标题一行 + 右端开关。
      *
-     * <p>留在音乐来源这一层而不是挪进 HUD 配置：它决定的就是「官方源没有流的时候要不要换一家」，
-     * 和这个面板讨论的是同一件事。钉在页脚是因为它是设置而不是列表项，滚动内容不该把它带走。</p>
+     * <p>开关的轨道由 {@link NcmSheet#toggle} 自己补间；这一格补的是整格的 hover 底色与
+     * 左侧图标的点亮 —— 鼠标扫过来时，图标先于开关半拍亮起，指向「这一整格是一件事」。</p>
      */
-    private void unblockRow(final Panel dialog) {
+    private void footerToggle(final Panel dialog, final int index, final Supplier<String> glyph,
+                              final String titleText, final String hint,
+                              final BooleanSupplier state, final Runnable flip) {
         final RoundedRectWidget surface = new RoundedRectWidget();
         dialog.addChild(surface);
         surface.setGlassRim(GlassLook.Surface.PLAYER);
         surface.setClickable(false);
         surface.setRadius(11);
+        final double[] hover = new double[1];
         surface.setBeforeRenderCallback(() -> {
-            surface.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 40);
-            surface.setPosition(PAD + CARD_INSET, dialog.getHeight() - FOOTER_H + 4);
-            surface.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            hover[0] = Interpolations.interpolate(hover[0], surface.isHovering() ? 1.0 : 0.0, .22f);
+            double width = Math.max(1, (dialog.getWidth() - (PAD + CARD_INSET) * 2 - 8.0) / 2.0);
+            surface.setBounds(width, 40);
+            surface.setPosition(PAD + CARD_INSET + (width + 8.0) * index,
+                    dialog.getHeight() - FOOTER_H + 4);
+            surface.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
+                    NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), hover[0]));
             surface.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
 
-        icon(surface, PartyIcons.SWEEP, ICON_M, () -> 20.0, () -> 20.0,
-                () -> NeteaseUnblockSettings.isEnabled()
-                        ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
-                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        icon(surface, glyph, ICON_M, () -> 17.0, () -> 20.0,
+                () -> mix(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                        state.getAsBoolean() ? .72 + .28 * hover[0] : hover[0] * .35));
 
-        final LabelWidget title = label(surface, "灰色歌曲解灰", FontManager.pf12bold);
+        final LabelWidget title = label(surface, titleText, FontManager.pf12bold);
         title.setBeforeRenderCallback(() -> {
             title.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            title.setPosition(38, inkTop(title, 13.0));
+            title.setMaxWidth(Math.max(1, surface.getWidth() - 32 - 46));
+            title.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            title.setPosition(32, inkTop(title, 13.0));
         });
 
-        final LabelWidget hint = label(surface, "官方源没有可播放流时，改到第三方源按曲名匹配", FontManager.pf12);
-        hint.setBeforeRenderCallback(() -> {
-            hint.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            // 96 = 开关宽 34 + 开关到右边缘 12 + 文字到开关 12 + 一点余量。
-            hint.setMaxWidth(Math.max(1, surface.getWidth() - 38 - 96));
-            hint.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            hint.setPosition(38, inkTop(hint, 28.0));
+        final LabelWidget hintLabel = label(surface, hint, FontManager.pf12);
+        hintLabel.setBeforeRenderCallback(() -> {
+            hintLabel.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            // 46 = 开关宽 34 + 到右缘 12。
+            hintLabel.setMaxWidth(Math.max(1, surface.getWidth() - 32 - 46));
+            hintLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            hintLabel.setPosition(32, inkTop(hintLabel, 28.0));
         });
 
-        toggle(surface, NeteaseUnblockSettings::isEnabled,
-                () -> NeteaseUnblockSettings.setEnabled(!NeteaseUnblockSettings.isEnabled()),
-                () -> surface.getWidth() - 12, () -> 20.0,
-                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-    }
-
-    /**
-     * 「跨平台自动换源」一行，紧贴在解灰行下面。
-     *
-     * <p>它管的是解灰也救不回来之后的最后一级兜底：按曲名 / 艺人去别的平台匹配一条真正的
-     * 曲目来替换播放。两行上下排开是因为顺序就是执行顺序 —— 先试着保住这首歌的身份，
-     * 保不住才换身份。</p>
-     */
-    private void switchSourceRow(final Panel dialog) {
-        final RoundedRectWidget surface = new RoundedRectWidget();
-        dialog.addChild(surface);
-        surface.setGlassRim(GlassLook.Surface.PLAYER);
-        surface.setClickable(false);
-        surface.setRadius(11);
-        surface.setBeforeRenderCallback(() -> {
-            surface.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 40);
-            surface.setPosition(PAD + CARD_INSET, dialog.getHeight() - FOOTER_H + 48);
-            surface.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            surface.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
-        });
-
-        icon(surface, PartyIcons.SYNC, ICON_M, () -> 20.0, () -> 20.0,
-                () -> SwitchSourceSettings.isEnabled()
-                        ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
-                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-
-        final LabelWidget title = label(surface, "跨平台自动换源", FontManager.pf12bold);
-        title.setBeforeRenderCallback(() -> {
-            title.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            title.setPosition(38, inkTop(title, 13.0));
-        });
-
-        final LabelWidget hint = label(surface, "取不到流或只能拿到试听片段时，到其他平台按曲名匹配完整曲目替换播放；要会员的平台没会员不试（GD/B 站不限；LX 自定义源覆盖的平台免会员也试；汽水需汽水会员）", FontManager.pf12);
-        hint.setBeforeRenderCallback(() -> {
-            hint.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            // 96 = 开关宽 34 + 开关到右边缘 12 + 文字到开关 12 + 一点余量。
-            hint.setMaxWidth(Math.max(1, surface.getWidth() - 38 - 96));
-            hint.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            hint.setPosition(38, inkTop(hint, 28.0));
-        });
-
-        toggle(surface, SwitchSourceSettings::isEnabled,
-                () -> SwitchSourceSettings.setEnabled(!SwitchSourceSettings.isEnabled()),
+        toggle(surface, state, flip,
                 () -> surface.getWidth() - 12, () -> 20.0,
                 () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
     }
@@ -1194,6 +1380,40 @@ public final class MusicSourceOverlay extends NcmSheet {
                 () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
         runtimeCard(strip(feed, LX_RUNTIME_ROW), scripts.size());
 
+        // 脚本权限跟着脚本走：这两颗开关决定的是「启用的那个脚本能多做什么」，挂在滚动区里
+        // 紧挨着脚本列表（旧版塞在页脚，把脚本列表压得只剩两三行）。没有启用项时整组调暗——
+        // 调暗走一条补间而不是瞬时色差：启用/停用脚本的那一下，权限组的墨色是滑过去的。
+        // 补间按当前状态起步：LX 页重建（导入/删除触发的原地重建）时墨色不闪。
+        final double[] enabledInk = {LxSourceService.isEnabled() ? 1.0 : 0.0};
+        final IntSupplier permInk = () -> mix(
+                mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND),
+                        NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), .45),
+                NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), enabledInk[0]);
+
+        sectionLabel(strip(feed, LABEL_ROW_2), "脚本权限", () -> 9.0, () -> LX_COLOR);
+        lxToggleRow(strip(feed, LX_PERM_ROW), () -> PartyIcons.ALBUM,
+                "允许脚本提供搜索 / 歌词 / 封面",
+                LxSourceService::isExtraActionsEnabled,
+                () -> LxSourceService.setExtraActions(!LxSourceService.isExtraActionsEnabled()),
+                permInk);
+        lxToggleRow(strip(feed, LX_PERM_ROW), () -> PartyIcons.MAIL,
+                "允许脚本弹出作者的更新提示",
+                LxSourceService::isUpdateAlertAllowed, LxSourceService::flipUpdateAlert,
+                permInk);
+        // 补间驱动器：两行开关各自占用了自己的回调，借一块不画东西的板子统一推进墨色。
+        final RoundedRectWidget inkDriver = new RoundedRectWidget();
+        addChild(inkDriver);
+        inkDriver.setClickable(false).setBeforeRenderCallback(() -> {
+            inkDriver.setBounds(0, 0);
+            inkDriver.setAlpha(0f);
+            enabledInk[0] = Interpolations.interpolate(enabledInk[0],
+                    LxSourceService.isEnabled() ? 1.0 : 0.0, .22f);
+        });
+        // 安全说明是权限那一组的注脚：警告的本体就是上面两颗开关放出去的东西。
+        tip(strip(feed, 24.0), () -> PartyIcons.WARNING,
+                () -> "脚本在本机执行、能发任意网络请求（已断掉它访问 Java 类的路）：只导入你信得过的来源",
+                () -> WARN_COLOR, () -> 2.0);
+
         lxFooter(dialog);
 
         // 网址导入弹窗挂在整层最上面：它不属于任何一页的滚动内容，每次重建页面都按开合状态
@@ -1203,55 +1423,10 @@ public final class MusicSourceOverlay extends NcmSheet {
 
     private double lxContentHeight(final int count) {
         return 6.0 + LABEL_ROW + (count == 0 ? 44.0 : LX_ROW_H * count)
-                + LABEL_ROW_2 + LX_RUNTIME_ROW;
+                + LABEL_ROW_2 + LX_RUNTIME_ROW
+                + LABEL_ROW_2 + LX_PERM_ROW * 2 + 24.0;
     }
 
-    /** 总览页上通往自定义源那一页的入口卡。有 chevron，因为它不是终点操作。 */
-    private void lxEntryCard(final Panel row, final int slot) {
-        final BooleanSupplier picked = LxSourceService::isEnabled;
-        final Card[] self = new Card[1];
-        final Card card = card(row, slot, () -> 0.0, () -> CARD_H, () -> picked.getAsBoolean()
-                ? LX_COLOR
-                : mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
-                NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), self[0].hover));
-        self[0] = card;
-        card.setShouldOverrideMouseCursor(true);
-        card.setOnClickCallback((x, y, button) -> {
-            if (button != 0) return false;
-            showLxSources();
-            return true;
-        });
-
-        selectionSheen(card, picked);
-
-        final RoundedRectWidget disc = new RoundedRectWidget();
-        card.addChild(disc);
-        disc.setGlassRim(GlassLook.Surface.PLAYER);
-        disc.setClickable(false);
-        disc.setRadius(14);
-        disc.setBeforeRenderCallback(() -> {
-            disc.setBounds(DISC, DISC);
-            disc.setPosition(12, card.getHeight() * .5 - DISC * .5);
-            disc.setColor(picked.getAsBoolean()
-                    ? mix(LX_COLOR, 0xFFFFFF, .20)
-                    : mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND), LX_COLOR, .18));
-        });
-        icon(disc, PartyIcons.LINK, ICON_XL, () -> DISC * .5, () -> DISC * .5,
-                () -> picked.getAsBoolean() ? 0xFFFFFF : LX_COLOR);
-
-        cardText(card, () -> "自定义音源 · LX 脚本", this::buildLxSummary,
-                () -> picked.getAsBoolean() ? 0xFFFFFF
-                        : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
-                () -> picked.getAsBoolean() ? mix(LX_COLOR, 0xFFFFFF, .78)
-                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                () -> picked.getAsBoolean() ? 74.0 : 40.0);
-
-        icon(card, PartyIcons.CHEVRON_RIGHT, ICON_M, () -> card.getWidth() - 20,
-                () -> card.getHeight() * .5, () -> picked.getAsBoolean() ? 0xFFFFFF
-                        : mix(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                        NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), self[0].hover));
-        checkBadge(card, picked, () -> LX_COLOR, () -> card.getWidth() - 46);
-    }
     /** 列表里的一行脚本。点一下即启用；已启用的再点一下就关掉，与字体列表同一套手感。 */
     private void scriptRow(final Panel row, final int slot, final LxSourceStore.Entry entry) {
         final BooleanSupplier picked = () -> LxSourceService.isActive(entry.id);
@@ -1372,6 +1547,12 @@ public final class MusicSourceOverlay extends NcmSheet {
 
     // ──────────────────────────── 自定义源页脚 ────────────────────────────
 
+    /**
+     * LX 页页脚：只剩一行四颗导入/刷新按钮。
+     *
+     * <p>两行权限开关与安全警告搬进了滚动区（它们是脚本权限，语义上跟脚本走），页脚从 138
+     * 收到 44，脚本列表 因此多出近一屏的呼吸位。</p>
+     */
     private void lxFooter(final Panel dialog) {
         divider(dialog, () -> dialog.getHeight() - LX_FOOTER_H + 2);
 
@@ -1381,57 +1562,47 @@ public final class MusicSourceOverlay extends NcmSheet {
         // 要么是整段脚本，让程序看一眼比让他先选一次更省事。
         lxFooterButton(dialog, 1, () -> PartyIcons.LINK, () -> "从剪贴板导入",
                 () -> LxSourceService.importFromText(KeyboardUtils.getClipboardString()));
-        // 手输的网址走二级弹窗：页脚已经排满，再塞一行常驻输入栏会把开关和安全说明挤上去；
-        // 而网址导入终究是「偶尔用一次」的路径，弹窗恰好表达这种「要用的时候才出现」。
+        // 手输的网址走二级弹窗：网址导入终究是「偶尔用一次」的路径，弹窗恰好表达
+        // 「要用的时候才出现」。
         lxFooterButton(dialog, 2, () -> PartyIcons.PUBLIC_ROOM, () -> "从网址导入",
                 this::openLxUrlDialog);
         lxFooterButton(dialog, 3, () -> PartyIcons.SYNC, () -> "重新加载",
                 LxSourceService::reloadActive);
-
-        // 两行开关都是「有启用项才有意义」，没有启用项时整行调暗。
-        final IntSupplier footerInk = () -> LxSourceService.isEnabled()
-                ? NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT)
-                : mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND),
-                NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), .45);
-
-        // 这一行是宿主自己的扩展，不是上游协议的一部分：上游只给 local 源放开 lyric / pic，
-        // 而 local 指的是洛雪的本机文件，这里的曲目全来自远端平台。默认关，与上游一字不差。
-        lxToggleRow(dialog, () -> PartyIcons.ALBUM, "允许脚本提供搜索 / 歌词 / 封面",
-                LxSourceService::isExtraActionsEnabled,
-                () -> LxSourceService.setExtraActions(!LxSourceService.isExtraActionsEnabled()),
-                -78.0, footerInk);
-        // 更新提示是「这个脚本」的开关而不是全局设置。
-        lxToggleRow(dialog, () -> PartyIcons.MAIL, "允许脚本弹出作者的更新提示",
-                LxSourceService::isUpdateAlertAllowed, LxSourceService::flipUpdateAlert,
-                -50.0, footerInk);
-
-        tip(dialog, () -> PartyIcons.WARNING,
-                () -> "脚本在本机执行、能发任意网络请求（已断掉它访问 Java 类的路）：只导入你信得过的来源",
-                () -> WARN_COLOR, () -> dialog.getHeight() - 26.0);
     }
 
     /**
-     * 页脚上的一行开关：图标 + 一行字 + 右端的开关。
+     * 滚动区里的一行权限开关：图标 + 一行字 + 右端的开关。
      *
-     * @param offsetFromBottom 这一行的基线相对弹窗底边的偏移，负数
+     * <p>宿主是 {@code feed} 里的一条 {@code strip}（等宽行），所以文字的可用宽度按行宽算，
+     * 不再需要读弹窗高度。</p>
      */
-    private void lxToggleRow(final Panel dialog, final Supplier<String> glyph, final String text,
+    private void lxToggleRow(final Panel row, final Supplier<String> glyph, final String text,
                              final BooleanSupplier state, final Runnable flip,
-                             final double offsetFromBottom, final IntSupplier ink) {
-        icon(dialog, glyph, ICON_S, () -> PAD + CARD_INSET + ICON_S * .5,
-                () -> dialog.getHeight() + offsetFromBottom, ink);
-
-        final LabelWidget caption = label(dialog, text, FontManager.pf12);
-        caption.setBeforeRenderCallback(() -> {
-            caption.setColor(ink.getAsInt());
-            caption.setMaxWidth(Math.max(1, dialog.getWidth() - PAD * 2 - ICON_S - 60));
-            caption.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            caption.setPosition(PAD + CARD_INSET + ICON_S + 7.0,
-                    inkTop(caption, dialog.getHeight() + offsetFromBottom));
+                             final IntSupplier ink) {
+        final RoundedRectWidget surface = new RoundedRectWidget();
+        row.addChild(surface);
+        surface.setGlassRim(GlassLook.Surface.PLAYER);
+        surface.setClickable(false);
+        surface.setRadius(9);
+        surface.setBeforeRenderCallback(() -> {
+            surface.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 30);
+            surface.setPosition(PAD + CARD_INSET, 2.0);
+            surface.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            surface.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
         });
 
-        toggle(dialog, state, flip,
-                () -> dialog.getWidth() - PAD - CARD_INSET, () -> dialog.getHeight() + offsetFromBottom,
+        icon(surface, glyph, ICON_S, () -> 17.0, () -> 15.0, ink);
+
+        final LabelWidget caption = label(surface, text, FontManager.pf12);
+        caption.setBeforeRenderCallback(() -> {
+            caption.setColor(ink.getAsInt());
+            caption.setMaxWidth(Math.max(1, surface.getWidth() - 30 - 52));
+            caption.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            caption.setPosition(30, inkTop(caption, 15.0));
+        });
+
+        toggle(surface, state, flip,
+                () -> surface.getWidth() - 10, () -> 15.0,
                 () -> LX_COLOR);
     }
 
@@ -1766,87 +1937,33 @@ public final class MusicSourceOverlay extends NcmSheet {
 
     /** 选中卡上的一层横向白色渐隐 + 一圈描边。品牌色铺整块会是一片死板的纯色。 */
     private void selectionSheen(final Card card, final BooleanSupplier picked) {
+        selectionSheen(card, picked, null);
+    }
+
+    /**
+     * 同上，但高光与描边跟一条<b>已有的选中进度</b>补间（0..1），而不是布尔跳变。
+     *
+     * <p>方格版传 {@code progress}：切换来源时旧格的高光收回去、新格的高光亮起来，
+     * 两段是同时推进的补间而不是两下闪变。传 null 走旧的布尔路径（本文件已无调用方，
+     * 留着是为了不让签名变更惊动别的 sheet —— 它们用的是基类同名方法）。</p>
+     */
+    private void selectionSheen(final Card card, final BooleanSupplier picked,
+                                final java.util.function.DoubleSupplier progress) {
         final Wash sheen = wash(card, true, 12.0);
         sheen.tint(0xFFFFFF, 0xFFFFFF).alphas(.14, 0.0);
         sheen.setBeforeRenderCallback(() -> {
             sheen.setBounds(Math.max(1, card.getWidth()), Math.max(1, card.getHeight()));
             sheen.setPosition(0, 0);
-            sheen.setAlpha(picked.getAsBoolean() ? 1f : 0f);
+            sheen.setAlpha((float) (progress == null
+                    ? (picked.getAsBoolean() ? 1.0 : 0.0)
+                    : progress.getAsDouble()));
         });
-        stroke(card, 12.0, () -> 0xFFFFFF, () -> picked.getAsBoolean() ? .26 : 0.0);
+        stroke(card, 12.0, () -> 0xFFFFFF, () -> .26 * (progress == null
+                ? (picked.getAsBoolean() ? 1.0 : 0.0)
+                : progress.getAsDouble()));
     }
 
-    /** 品牌字标底盘。未选中时是「卡片底色朝品牌色推一小步」，于是浅色主题上也看得见。 */
-    private void brandDisc(final Card card, final MusicPlatform platform, final BooleanSupplier picked) {
-        final boolean kugou = platform == MusicPlatform.KUGOU;
-        final boolean qq = platform == MusicPlatform.QQ;
-        final boolean youtube = platform == MusicPlatform.YOUTUBE;
-        final boolean bilibili = platform == MusicPlatform.BILIBILI;
-        final boolean qishui = platform == MusicPlatform.QISHUI;
-        final boolean spotify = platform == MusicPlatform.SPOTIFY;
-        // 品牌字形必须配对到自己那份字体：music-brand-icons 里没有 U+E888（QQ 音乐），
-        // 拿错字体会落到兜底字体上、画出一片空白。酷狗两份字体里都没有，用正文字体画一枚汉字字标。
-        // 酷狗、哔哩哔哩、汽水与 Spotify 现在有真标识了（brandMark 里的矢量分支），
-        // 下面这对字形/字体只在矢量画不出来时兜底。
-        final String mark = kugou ? MusicBrandIcons.KUGOU_MONOGRAM
-                : qq ? MusicBrandIcons.QQ_MUSIC
-                : youtube ? MusicBrandIcons.YOUTUBE
-                : bilibili ? MusicBrandIcons.BILIBILI_MONOGRAM
-                : qishui ? MusicBrandIcons.QISHUI_MONOGRAM
-                : spotify ? MusicBrandIcons.SPOTIFY_MONOGRAM
-                : MusicBrandIcons.NETEASE_CLOUD_MUSIC;
-        final CFontRenderer font = kugou ? FontManager.pf34bold
-                : youtube ? FontManager.youtubeIcon34
-                : bilibili ? FontManager.pf34bold
-                : qishui ? FontManager.pf34bold
-                : spotify ? FontManager.pf34bold
-                : qq ? FontManager.qqMusicIcon68 : FontManager.musicBrand52;
 
-        final RoundedRectWidget disc = new RoundedRectWidget();
-        card.addChild(disc);
-        disc.setGlassRim(GlassLook.Surface.PLAYER);
-        disc.setClickable(false);
-        disc.setRadius(14);
-        disc.setBeforeRenderCallback(() -> {
-            disc.setBounds(DISC, DISC);
-            disc.setPosition(12, card.getHeight() * .5 - DISC * .5);
-            disc.setColor(picked.getAsBoolean()
-                    ? mix(platform.getBrandColor(), 0xFFFFFF, .20)
-                    : mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
-                    platform.getBrandColor(), .18));
-        });
-        brandMark(disc, platform, DISC * BrandVectorIcons.MARK_RATIO, mark, font,
-                () -> DISC * .5, () -> DISC * .5,
-                () -> picked.getAsBoolean() ? 0xFFFFFF : platform.getBrandColor());
-    }
-
-    /**
-     * 卡片上的「标题 + 副标题」两行。
-     *
-     * <p>两行绕着卡片中线各让 9 像素，而不是写死 y+13 / y+34：卡高一改，写死的那两个数就得
-     * 重新调，而按中线算的这一对永远居中。{@code reserve} 是右端零件（勾标、chevron）占掉的宽度，
-     * 副标题必须在它之前收住，否则长文案会压到底下去。</p>
-     */
-    private void cardText(final Card card, final java.util.function.Supplier<String> titleText,
-                          final java.util.function.Supplier<String> noteText,
-                          final IntSupplier titleInk, final IntSupplier noteInk,
-                          final java.util.function.DoubleSupplier reserve) {
-        final LabelWidget title = label(card, titleText, FontManager.pf14bold);
-        title.setBeforeRenderCallback(() -> {
-            title.setColor(titleInk.getAsInt());
-            title.setMaxWidth(Math.max(1, card.getWidth() - TEXT_LEFT - reserve.getAsDouble()));
-            title.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            title.setPosition(TEXT_LEFT, inkTop(title, card.getHeight() * .5 - 9));
-        });
-
-        final LabelWidget note = label(card, noteText, FontManager.pf12);
-        note.setBeforeRenderCallback(() -> {
-            note.setColor(noteInk.getAsInt());
-            note.setMaxWidth(Math.max(1, card.getWidth() - TEXT_LEFT - reserve.getAsDouble()));
-            note.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            note.setPosition(TEXT_LEFT, inkTop(note, card.getHeight() * .5 + 9));
-        });
-    }
 
     /**
      * 选中标记：一枚白底圆里放品牌色的勾。
@@ -1857,17 +1974,39 @@ public final class MusicSourceOverlay extends NcmSheet {
      */
     private void checkBadge(final Card card, final BooleanSupplier picked, final IntSupplier tint,
                             final java.util.function.DoubleSupplier centerX) {
-        final Panel layer = veil(card, () -> picked.getAsBoolean() ? 1.0 : 0.0);
+        checkBadge(card, picked, tint, centerX, null);
+    }
+
+    /**
+     * 同上，但徽标跟一条已有的选中进度补间，并且带<b>缩放弹入</b>。
+     *
+     * <p>进度走 .22f 补间的同时徽标从 0.6 倍长到 1 倍（过了中点才开始放大，读起来是
+     * 「颜色先铺满、对勾再点头」的两段动作），消失时反着缩回去。传 {@code progress == null}
+     * 走旧的布尔路径（GD/LX 入口格的选中态不铺色，徽标突然出现也不突兀）。</p>
+     */
+    private void checkBadge(final Card card, final BooleanSupplier picked, final IntSupplier tint,
+                            final java.util.function.DoubleSupplier centerX,
+                            final java.util.function.DoubleSupplier progress) {
+        final Panel layer = veil(card, () -> progress == null
+                ? (picked.getAsBoolean() ? 1.0 : 0.0)
+                : Math.min(1.0, progress.getAsDouble() * 1.6));
         final RoundedRectWidget badge = new RoundedRectWidget();
         layer.addChild(badge);
         badge.setClickable(false);
         badge.setRadius(11);
         badge.setBeforeRenderCallback(() -> {
-            badge.setBounds(22, 22);
-            badge.setPosition(centerX.getAsDouble() - 11, layer.getHeight() * .5 - 11);
+            double scale = progress == null ? 1.0
+                    : .6 + .4 * Math.max(0.0, progress.getAsDouble() * 2.0 - 1.0);
+            double size = 22.0 * scale;
+            badge.setRadius(size * .5);
+            badge.setBounds(size, size);
+            // 徽标缩放绕自己的中心做：右缘仍钉在 centerX，中心点不随缩放漂移。
+            badge.setPosition(centerX.getAsDouble() - size * .5,
+                    layer.getHeight() * .5 - size * .5);
             badge.setColor(0xFFFFFF);
         });
-        icon(badge, PartyIcons.CHECK, ICON_M, () -> 11.0, () -> 11.0, tint);
+        icon(badge, PartyIcons.CHECK, ICON_M, () -> badge.getWidth() * .5,
+                () -> badge.getHeight() * .5, tint);
     }
 
     // ════════════════════════════ 文案与状态 ════════════════════════════

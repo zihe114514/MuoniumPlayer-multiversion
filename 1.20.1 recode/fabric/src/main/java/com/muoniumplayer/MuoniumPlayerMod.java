@@ -2,10 +2,12 @@ package com.muoniumplayer;
 
 import com.muoniumplayer.party.net.MpNetFabric;
 import com.muoniumplayer.core.screens.TitleMenuAnnouncementButton;
+import com.muoniumplayer.compat.mc.WorldLyricsBridge;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.minecraft.client.KeyMapping;
@@ -52,6 +54,8 @@ public class MuoniumPlayerMod implements ClientModInitializer {
             // 只有原版 GUI 这条路还能说话，而用户此刻看到的正是一片空白。
             client.onRenderLayerNotice(drawContext, false);
         });
+        // WorldLyricsBridge.worldRenderEnd() 自己设，事件参数不需要。
+        WorldRenderEvents.LAST.register(context -> WorldLyricsBridge.worldRenderEnd());
         ScreenEvents.AFTER_INIT.register((minecraft, screen, scaledWidth, scaledHeight) -> {
             ScreenEvents.afterRender(screen).register(
                     (renderedScreen, drawContext, mouseX, mouseY, tickDelta) -> {

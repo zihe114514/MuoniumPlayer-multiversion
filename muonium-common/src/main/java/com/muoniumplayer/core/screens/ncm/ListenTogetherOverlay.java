@@ -76,7 +76,7 @@ public final class ListenTogetherOverlay extends NcmSheet {
      * {@link NcmSheet#beginPage()} 清掉重建——下一次建完之后还得能由 {@link #onRender}
      * 继续推动显隐，所以引用必须活过那次清空。</p>
      */
-    private final Panel[] overviewSections = new Panel[4];
+    private final Panel[] overviewSections = new Panel[5];
 
     private String bakedQrContent = "";
     private volatile boolean bakingQr;
@@ -135,10 +135,14 @@ public final class ListenTogetherOverlay extends NcmSheet {
         ListenTogetherService.Phase phase = ListenTogetherService.getPhase();
         boolean busy = phase == ListenTogetherService.Phase.CONNECTING;
         boolean active = phase == ListenTogetherService.Phase.ACTIVE;
-        overviewSections[0].setHidden(available);
+        // 官方区（0=警告卡 / 1=连接中 / 2=空闲卡）随官方状态切换；4=下排两卡
+        // （服务器房间/直连房间）在官方不占满页面时**常驻显示**——官方不可用时
+        // 它们是唯一的可用入口，警告卡与它同屏，不能被整页盖住。
+        overviewSections[0].setHidden(available || busy || active);
         overviewSections[1].setHidden(!available || !busy);
         overviewSections[2].setHidden(!available || busy || active);
         overviewSections[3].setHidden(!available || busy || !active);
+        overviewSections[4].setHidden(busy || active);
         if (!active) {
             for (double[] slot : memberReveal) slot[0] = 0.0;
             qrReveal = 0.0;
@@ -173,15 +177,19 @@ public final class ListenTogetherOverlay extends NcmSheet {
         buildIdle(overviewSections[2]);
         overviewSections[3] = section(dialog);
         buildActive(overviewSections[3]);
+        // 常驻区：服务器房间 / 直连房间两张卡。官方空闲或不可用时与官方区同屏——
+        // 它们不受登录态与音源限制，官方不可用时就是唯一的可用入口。
+        overviewSections[4] = section(dialog);
+        buildSelfHostedRow(overviewSections[4]);
 
         addStatusLine(dialog);
     }
 
-    /** 四段内容高矮不同；高度由状态决定，由 {@code createDialog} 每帧插值过去。 */
+    /** 总览页高度：官方区（警告/空闲）+ 常驻两卡，随状态收缩。 */
     private double targetOverviewHeight() {
-        if (!ListenTogetherService.isAvailable()) return 300.0;
+        if (!ListenTogetherService.isAvailable()) return 344.0;
         ListenTogetherService.Phase phase = ListenTogetherService.getPhase();
-        if (phase == ListenTogetherService.Phase.CONNECTING) return 244.0;
+        if (phase == ListenTogetherService.Phase.CONNECTING) return 344.0;
         if (phase == ListenTogetherService.Phase.ACTIVE) return 440.0;
         // 空闲态：全宽官方卡 + 两张半宽卡（两行）+ 两行脚注。
         return 344.0;
@@ -214,6 +222,13 @@ public final class ListenTogetherOverlay extends NcmSheet {
 
     // ──────────────────────────── 不可用 ────────────────────────────
 
+    /**
+     * 官方一起听不可用（未登录 / 音源不支持）时的提示。
+     *
+     * <p>刻意做成<b>上半一块紧凑卡</b>而不是占满整页：服务器房间与直连房间不受登录态与
+     * 音源限制，此时仍然完全可用——它们的两张入口卡就挂在这块提示的下面（
+     * {@link #buildIdle} 的下排），把整页让给警告等于告诉用户「全都没了」。</p>
+     */
     private void buildUnavailable(final Panel host) {
         RoundedRectWidget card = new RoundedRectWidget();
         host.addChild(card);
@@ -235,7 +250,7 @@ public final class ListenTogetherOverlay extends NcmSheet {
             icon.setPosition(32, 92);
         });
 
-        LabelWidget title = new LabelWidget("一起听暂不可用", FontManager.pf14bold);
+        LabelWidget title = new LabelWidget("官方一起听暂不可用", FontManager.pf14bold);
         host.addChild(title);
         title.setClickable(false);
         title.setBeforeRenderCallback(() -> {
@@ -248,26 +263,12 @@ public final class ListenTogetherOverlay extends NcmSheet {
         detail.setClickable(false);
         detail.setBeforeRenderCallback(() -> {
             detail.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            detail.setMaxWidth(Math.max(1, host.getWidth() - 100));
+            detail.setMaxWidth(Math.max(1, host.getWidth() - 240));
             detail.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             detail.setPosition(68, 106);
         });
 
-        // 这一段只说网易云那半边。服务器房间走的是本服的服务端 mod，不受登录态与音源限制，
-        // 所以在这里指一次路，免得用户以为整个一起听都用不了。
-        LabelWidget serverHint = new LabelWidget(
-                () -> MpPartyClient.serverPresent()
-                        ? "本服装了一起听服务端：右上角「服务器房间」不受上面这些限制。"
-                        : "", FontManager.pf12);
-        host.addChild(serverHint);
-        serverHint.setClickable(false);
-        serverHint.setBeforeRenderCallback(() -> {
-            serverHint.setColor(OK_COLOR);
-            serverHint.setMaxWidth(Math.max(1, host.getWidth() - 32));
-            serverHint.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            serverHint.setPosition(16, 206);
-        });
-
+        // 登录 / 换源按钮：不再占满整行，收窄成右侧动作键——下方还有两张可用的入口卡。
         final double[] hover = new double[1];
         RoundedButtonWidget action = new RoundedButtonWidget(this::unavailableActionLabel, FontManager.pf12bold);
         host.addChild(action);
@@ -285,8 +286,8 @@ public final class ListenTogetherOverlay extends NcmSheet {
         });
         action.setBeforeRenderCallback(() -> {
             hover[0] = Interpolations.interpolate(hover[0], action.isHovering() ? 1.0 : 0.0, .22f);
-            action.setBounds(Math.max(1, host.getWidth() - 32), 34);
-            action.setPosition(16, 158);
+            action.setBounds(150, 34);
+            action.setPosition(Math.max(1, host.getWidth() - 16 - 150), 86);
             action.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF, hover[0] * .16));
             action.setTextColor(0xFFFFFF);
         });
@@ -439,21 +440,36 @@ public final class ListenTogetherOverlay extends NcmSheet {
             loading.setPosition(0, 74);
         });
     }
-    // ──────────────────────────── 空闲（建房 / 加入） ────────────────────────────
+    // ──────────────────────────── 空闲（官方卡） ────────────────────────────
 
+    /** 官方空闲区：只放官方卡；服务器房间/直连房间在常驻区（buildSelfHostedRow）。 */
     private void buildIdle(final Panel host) {
-        // 三张卡：上排全宽「官方一起听」（网易云/酷狗，创建/加入在其内页二选一），
-        // 下排两张半宽「服务器房间」「直连房间」。名字里写清是谁的房间——
-        // 「创建房间」这类泛称会让人以为是又一个独立功能。
-        addWideCard(host, 0, FontelloIcons.ACCOUNT_ADD, "官方一起听 · " + ListenTogetherService.backendLabel(),
+        // 全宽官方卡：名字里写清是谁的房间——「创建房间」这类泛称会让人
+        // 以为是又一个独立功能。创建/加入在其内页二选一（showOfficialPage）。
+        addWideCard(host, 0, FontelloIcons.ACCOUNT_ADD,
+                "官方一起听 · " + ListenTogetherService.backendLabel(),
                 this::officialCardDetail, true, this::showOfficialPage);
+
+        // 脚注挂在常驻两卡（row 1 → 172..268）的下方：官方卡与常驻卡同屏时，
+        // 这两行说明若留在旧位（190/206）会被后渲染的卡片整个压住。
+        addFootnote(host, "受官方接口限制：加入方无法自动跟随主机的暂停与切歌，", 278);
+        addFootnote(host, "需要在房间页点「同步一次」手动对齐当前曲目与进度。", 294);
+    }
+
+    /**
+     * 常驻区：服务器房间 / 直连房间两张半宽卡。
+     *
+     * <p>不受登录态与音源限制：官方一起听不可用（没登录 / 音源不支持）时，
+     * 警告卡与这一排<b>同屏</b>——用户看到「官方用不了」的同时，立刻能看到
+     * 还有哪些路可走，而不是整页只有一句警告。</p>
+     */
+    private void buildSelfHostedRow(final Panel host) {
+        // row 1：y=172，正好接在全宽官方卡（68~164）下方；不可用态警告卡（68~144）
+        // 与它之间留 28px 空隙，同屏不重叠。
         addGridCard(host, 0, 1, FontelloIcons.LEADERBOARD, "服务器房间",
                 this::serverRoomCardDetail, false, this::openServerRoom);
         addGridCard(host, 1, 1, FontelloIcons.UNLINK, "直连房间",
                 this::directRoomCardDetail, false, this::openDirectRoom);
-
-        addFootnote(host, "受官方接口限制：加入方无法自动跟随主机的暂停与切歌，", 282);
-        addFootnote(host, "需要在房间页点「同步一次」手动对齐当前曲目与进度。", 298);
     }
 
     /** 官方一起听卡的详情：随音源与在房状态走。 */

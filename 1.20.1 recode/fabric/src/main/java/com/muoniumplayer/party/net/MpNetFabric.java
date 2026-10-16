@@ -32,7 +32,7 @@ public final class MpNetFabric implements MpHost {
 
     /** 客户端初始化时调用一次；服务器没装一起听服务端 mod 时全程无副作用。 */
     public static void register() {
-        MpPartyClient.bind(INSTANCE);
+        MpPartyClient.bind(com.muoniumplayer.party.direct.MpHostRouter.wrap(INSTANCE));
 
         ClientPlayNetworking.registerGlobalReceiver(S2C, (client, handler, buf, responseSender) -> {
             // netty 缓冲返回即释放，必须先拷出来。
@@ -63,6 +63,12 @@ public final class MpNetFabric implements MpHost {
     public UUID selfUuid() {
         Minecraft mc = Minecraft.getInstance();
         return mc.player == null ? null : mc.player.getUUID();
+    }
+
+    @Override
+    public String selfName() {
+        Minecraft mc = Minecraft.getInstance();
+        return mc.player == null ? null : mc.player.getName().getString();
     }
 
     @Override

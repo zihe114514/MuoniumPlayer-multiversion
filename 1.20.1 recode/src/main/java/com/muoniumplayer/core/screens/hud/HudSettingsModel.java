@@ -660,6 +660,128 @@ public final class HudSettingsModel {
                                         }),
                                 slider(HudSetting.EDGE_FADE, "上下边缘渐隐区域的高度。"))),
 
+                new Category("3D 歌词", "把歌词作为公告牌画进 3D 世界：悬浮在玩家前方，转视角跟随", 0xFF7CC8FF, HudSettingsIcons.VISIBILITY, "歌词与画面",
+                        new Group("放置", HudSettingsIcons.MOVE,
+                                toggle("3D 歌词", "开启后歌词渲染在游戏三维世界中，而不是屏幕 HUD。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsEnabled;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsEnabled = !HudConfig.worldLyricsEnabled;
+                                                saveNow();
+                                            }
+                                        }),
+                                slider(HudSetting.WORLD_LYRICS_DISTANCE, "歌词悬浮在玩家视线前方多远（方块）。"),
+                                toggle("朝向玩家", "歌词平面始终正对你。关闭后歌词固定朝向生成时的方向，绕到侧面会被压扁。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsFacePlayer;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsFacePlayer = !HudConfig.worldLyricsFacePlayer;
+                                                saveNow();
+                                            }
+                                        }),
+                                toggle("自动避让", "走近歌词时它自动向后退开，防止穿过文字。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsKeepAway;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsKeepAway = !HudConfig.worldLyricsKeepAway;
+                                                saveNow();
+                                            }
+                                        }),
+                                slider(HudSetting.WORLD_LYRICS_SPREAD, "多行歌词左右铺开的最大角度。"),
+                                slider(HudSetting.WORLD_LYRICS_SCALE, "整体缩放。1.0 时一行约 0.9 方块高。")),
+                        new Group("字体与文本", HudSettingsIcons.SUBTITLES,
+                                toggle("平滑字体", "开启用平滑矢量字体，关闭用原版像素字体。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsSmoothFont;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsSmoothFont = !HudConfig.worldLyricsSmoothFont;
+                                                saveNow();
+                                            }
+                                        }),
+                                toggle("分割歌词行", "把「两句挤在一行」的歌词（分隔符 / ）拆成两行分别渲染。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsSplitLines;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsSplitLines = !HudConfig.worldLyricsSplitLines;
+                                                saveNow();
+                                            }
+                                        }),
+                                toggle("文字颜色跟随", "使用桌面歌词的文字颜色，而不是默认白色。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsColorRgb != 0xFFFFFF;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsColorRgb = HudConfig.worldLyricsColorRgb == 0xFFFFFF
+                                                        ? 0xFFF3D9 : 0xFFFFFF;
+                                                saveNow();
+                                            }
+                                        })),
+                        new Group("发光", HudSettingsIcons.SPARKLE,
+                                toggle("发光", "文字外发光（Deep Glow 风格），随纹理一起烘焙。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsGlowEnabled;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsGlowEnabled = !HudConfig.worldLyricsGlowEnabled;
+                                                saveNow();
+                                            }
+                                        }),
+                                slider(HudSetting.WORLD_LYRICS_GLOW_STRENGTH, "发光强度。"),
+                                slider(HudSetting.WORLD_LYRICS_GLOW_SPREAD, "光晕铺多远。")),
+                        new Group("动效", HudSettingsIcons.TUNE,
+                                toggle("文字抖动", "Wiggle：逐字低帧率抖动，像手绘逐帧动画。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsWiggle;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsWiggle = !HudConfig.worldLyricsWiggle;
+                                                saveNow();
+                                            }
+                                        }),
+                                toggle("逐词弹出", "Word Pop：词被唱到的瞬间弹一下。需要逐字歌词。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsWordPop;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsWordPop = !HudConfig.worldLyricsWordPop;
+                                                saveNow();
+                                            }
+                                        }),
+                                toggle("节拍闪烁", "Text Flash：随音乐节拍轻轻闪一下。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsTextFlash;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsTextFlash = !HudConfig.worldLyricsTextFlash;
+                                                saveNow();
+                                            }
+                                        }))),
+
                 new Category("面板与卡片", "桌面歌词的视口尺寸与 Blossom 毛玻璃卡片", 0xFFE087C0, HudSettingsIcons.CAPTION, "歌词与画面",
                         new Group("大小与换行", HudSettingsIcons.RULER,
                                 slider(HudSetting.OSD_WIDTH, "桌面歌词视口的基础宽度。超出这一宽度的原文、译文和逐字歌词都会自动换行。"),

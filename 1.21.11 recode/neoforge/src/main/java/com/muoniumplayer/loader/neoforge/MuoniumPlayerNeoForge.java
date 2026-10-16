@@ -1,6 +1,7 @@
 package com.muoniumplayer.loader.neoforge;
 
 import com.muoniumplayer.MuoniumPlayerClient;
+import com.muoniumplayer.compat.mc.WorldLyricsBridge;
 import com.muoniumplayer.core.screens.TitleMenuAnnouncementButton;
 import com.muoniumplayer.party.net.MpNetNeoForge;
 import net.minecraft.client.KeyMapping;
@@ -12,6 +13,7 @@ import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.common.NeoForge;
 
@@ -26,6 +28,7 @@ import net.neoforged.neoforge.common.NeoForge;
  *   <tr><td>{@code KeyBindingHelper.registerKeyBinding}</td><td>{@code RegisterKeyMappingsEvent#register}</td></tr>
  *   <tr><td>{@code ClientTickEvents.END_CLIENT_TICK}</td><td>{@code ClientTickEvent.Post}</td></tr>
  *   <tr><td>{@code HudRenderCallback}</td><td>{@code RenderGuiEvent.Post}</td></tr>
+ *   <tr><td>{@code WorldRenderEvents.END_MAIN}</td><td>{@code RenderLevelStageEvent.AfterLevel}</td></tr>
  *   <tr><td>{@code ScreenEvents.afterRender}</td><td>{@code ScreenEvent.Render.Post}</td></tr>
  * </table>
  *
@@ -52,6 +55,10 @@ public final class MuoniumPlayerNeoForge {
         gameBus.addListener(this::onRenderGui);
         gameBus.addListener(this::onScreenRendered);
         gameBus.addListener(this::onScreenInit);
+        gameBus.addListener(this::onRenderLevelStage);
+
+        // 3D 世界歌词：装纹理宿主（DynamicTexture 注册）。
+        WorldLyricsBridge.install();
     }
 
     /**
@@ -92,6 +99,17 @@ public final class MuoniumPlayerNeoForge {
         MuoniumPlayerClient.getInstance().onHudRender();
         // 停用时的原版 GUI 提示：Skia 那条路没起来时，只有原版 GUI 还能说话。
         MuoniumPlayerClient.getInstance().onRenderLayerNotice(event.getGuiGraphics(), false);
+    }
+
+    /**
+     * 3D 世界歌词：对应 Fabric 的 {@code WorldRenderEvents.END_MAIN} —— 世界主通道渲染的最后。
+     * 1.21.1 的 {@code Stage.AFTER_LEVEL} 枚举在 NeoForge 21.11.45 已改成独立子类
+     * {@code RenderLevelStageEvent.AfterLevel}（javap 核对），等价：地形/实体/半透明
+     * 都画完、天气粒子之前。矩阵与 GL 状态由 {@code WorldLyricsBridge.worldRenderEnd()}
+     */
+    private void onRenderLevelStage(RenderLevelStageEvent event) {
+        if (!(event instanceof RenderLevelStageEvent.AfterLevel)) return;
+        WorldLyricsBridge.worldRenderEnd();
     }
 
     /** 对应 Fabric 的 ScreenEvents.afterRender：界面画完之后叠灵动岛。 */

@@ -1,11 +1,13 @@
 package com.muoniumplayer.loader.forge;
 
 import com.muoniumplayer.MuoniumPlayerClient;
+import com.muoniumplayer.compat.mc.WorldLyricsBridge;
 import com.muoniumplayer.core.screens.TitleMenuAnnouncementButton;
 import com.muoniumplayer.party.net.MpNetForge;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.client.event.RenderGuiEvent;
+import net.minecraftforge.client.event.RenderLevelStageEvent;
 import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
 import net.minecraftforge.client.event.ScreenEvent;
 import net.minecraftforge.common.MinecraftForge;
@@ -54,6 +56,10 @@ public final class MuoniumPlayerForge {
         gameBus.addListener(this::onRenderGui);
         gameBus.addListener(this::onScreenRendered);
         gameBus.addListener(this::onScreenInit);
+        gameBus.addListener(this::onRenderLevelStage);
+
+        // 3D 世界歌词：装纹理宿主（当前无装配体，保调用契约）。
+        WorldLyricsBridge.install();
 
         // 一起听通道：1.20.1 是裸 custom payload，登记不需要 mod 总线事件，
         // 但必须在 FMLCommonSetupEvent 之前（Forge 的通道注册表在那之后就锁了）。
@@ -101,6 +107,15 @@ public final class MuoniumPlayerForge {
         MuoniumPlayerClient.getInstance().onHudRender();
         // 停用时的原版 GUI 提示：Skia 那条路没起来时，只有原版 GUI 还能说话。
         MuoniumPlayerClient.getInstance().onRenderLayerNotice(event.getGuiGraphics(), false);
+    }
+
+    /**
+     * 3D 世界歌词：对应 Fabric 的 {@code WorldRenderEvents.LAST} —— 世界渲染的最后。
+     * 加载器给的矩阵不一致，自算才一致）。
+     */
+    private void onRenderLevelStage(RenderLevelStageEvent event) {
+        if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_LEVEL) return;
+        WorldLyricsBridge.worldRenderEnd();
     }
 
     /** 对应 Fabric 的 ScreenEvents.afterRender：界面画完之后叠灵动岛。 */

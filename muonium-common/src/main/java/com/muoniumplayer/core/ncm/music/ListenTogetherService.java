@@ -229,6 +229,10 @@ public final class ListenTogetherService {
      * 酷狗那侧会直接失败并在状态行写明原因（它的房间必须有歌单，那是上游的形状）。</p>
      */
     public static boolean createRoom() {
+        // 与 MC 服务器房间/直连房间互斥：两套引擎都想独占播放器（本类差分上报会把
+        // 别人的队列整表搬进官方房间，MC 房间的 S_PLAY 又会改写本地播放），同时开
+        // 就是互相拉扯。入口挡死并写明原因，比静默串台好。
+        if (conflictingSession()) return false;
         if (!ownedByKuGou()) {
             NeteaseListenTogetherService.createRoom();
             return accepted();
@@ -245,6 +249,8 @@ public final class ListenTogetherService {
      * 酷狗不需要，所以在酷狗分支下被忽略——不是漏传。</p>
      */
     public static boolean joinRoom(String invite, long fallbackInviterId) {
+        // 与 createRoom 同款互斥：官方房间与 MC 服务器/直连房间二选一。
+        if (conflictingSession()) return false;
         if (!ownedByKuGou()) {
             NeteaseListenTogetherService.joinRoom(invite, fallbackInviterId);
             return accepted();
@@ -295,7 +301,15 @@ public final class ListenTogetherService {
      */
     private static void runInBackground(String what, java.util.concurrent.Callable<Boolean> action) {
         // 上一次还没跑完就吃掉这一枪：连点两下「创建房间」不该开出两条会话。
-        if (pendingAction) return;
+        // 但静默丢弃会让按钮像坏了——至少在状态行说一声。
+        if (pendingAction) {
+            if (!ownedByKuGou()) {
+                NeteaseListenTogetherService.publishStatus("上一个操作还在进行，请稍候再试", true);
+            } else {
+                KuGouListenTogetherService.publishStatus("上一个操作还在进行，请稍候再试", true);
+            }
+            return;
+        }
         pendingAction = true;
         MultiThreadingUtil.runAsync(() -> {
             try {
@@ -321,12 +335,45 @@ public final class ListenTogetherService {
             single.add(playing);
             return single;
         }
-        return new ArrayList<Music>(source);
+        try {
+            return new ArrayList<Music>(source);
+        } catch (java.util.ConcurrentModificationException raced) {
+            // 换歌线程正在整表替换/增删：这一拍拿不到快照，等下一次同步即可，
+            // 不能让 CME 冒上去被当成「上游无响应」刷屏。
+            return Collections.emptyList();
+        }
     }
 
     /** 网易云那侧的异步动作有没有「被立刻拒绝」。见 {@link #createRoom()} 的返回值说明。 */
     private static boolean accepted() {
         return phaseOf(NeteaseListenTogetherService.getPhase()) != Phase.FAILED;
+    }
+
+    /**
+     * 官方一起听与 MC 服务器房间 / 直连房间是否冲突（互斥判据）。
+     *
+     * <p>冲突时把原因写进状态行（网易云侧）——用户点按钮看到的是明确的拒绝原因，
+     * 而不是「点了没反应」或两套引擎静默串台。</p>
+     */
+    private static boolean conflictingSession() {
+        if (com.muoniumplayer.party.direct.MpDirect.isActive()) {
+            reject("直连房间正在进行：先在「直连房间」页断开，再使用官方一起听");
+            return true;
+        }
+        if (com.muoniumplayer.party.MpPartyClient.inRoom()) {
+            reject("已在服务器房间中：先退出房间，再使用官方一起听");
+            return true;
+        }
+        return false;
+    }
+
+    /** 拒绝原因写进当前音源的状态行。 */
+    private static void reject(String text) {
+        if (ownedByKuGou()) {
+            KuGouListenTogetherService.publishStatus(text, true);
+        } else {
+            NeteaseListenTogetherService.publishStatus(text, true);
+        }
     }
 
     // ──────────────────────────── 转换 ────────────────────────────

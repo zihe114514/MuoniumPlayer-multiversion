@@ -90,4 +90,57 @@ class HttpDownloadRaceSmokeTest {
         }
         assertTrue(!target.isFile(), "全败时不得留下正式文件");
     }
+
+    @Test
+    @DisplayName("全 B 档列表（无 A 档）→ 直接全量竞速，不空等观察窗")
+    void allTierBStartsImmediately() throws Exception {
+        // 死链 + 全是 B 档风格 URL：若实现错误地先等 15 秒观察窗，这个测试会超时失败。
+        List<String> dead = new ArrayList<String>();
+        for (int index = 1; index <= 3; index++) {
+            dead.add("https://ghfast.invalid/mirror" + index + "/file.bin");
+        }
+        File target = new File(System.getProperty("java.io.tmpdir"), "race-tierb-smoke.bin");
+        long t0 = System.currentTimeMillis();
+        try {
+            HttpDownloadRace.fetch(dead, 1024,
+                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    target, null);
+            throw new AssertionError("全死链必须抛 IOException");
+        } catch (IOException expected) {
+            long elapsed = System.currentTimeMillis() - t0;
+            assertTrue(elapsed < 10_000, "无 A 档必须立即全量竞速，不许空等观察窗（实际 " + elapsed + " ms）");
+        }
+        Files.deleteIfExists(target.toPath());
+    }
+
+    @Test
+    @DisplayName("观察窗设为 0 → 等价全量竞速（所有路立即起跑）")
+    void zeroStageMeansFullRace() throws Exception {
+        String original = System.getProperty("muonium.downloadStageMillis");
+        System.setProperty("muonium.downloadStageMillis", "0");
+        try {
+            List<String> dead = new ArrayList<String>();
+            for (int index = 1; index <= 2; index++) {
+                dead.add("https://dead.invalid/mirror" + index + "/file.bin");
+            }
+            File target = new File(System.getProperty("java.io.tmpdir"), "race-zero-stage-smoke.bin");
+            long t0 = System.currentTimeMillis();
+            try {
+                HttpDownloadRace.fetch(dead, 1024,
+                        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                        target, null);
+                throw new AssertionError("全死链必须抛 IOException");
+            } catch (IOException expected) {
+                long elapsed = System.currentTimeMillis() - t0;
+                assertTrue(elapsed < 10_000, "stageMillis=0 必须跳过观察窗（实际 " + elapsed + " ms）");
+            }
+            Files.deleteIfExists(target.toPath());
+        } finally {
+            if (original == null) {
+                System.clearProperty("muonium.downloadStageMillis");
+            } else {
+                System.setProperty("muonium.downloadStageMillis", original);
+            }
+        }
+    }
 }

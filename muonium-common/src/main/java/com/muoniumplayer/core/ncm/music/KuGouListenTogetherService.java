@@ -818,6 +818,11 @@ public final class KuGouListenTogetherService {
         return false;
     }
 
+    /** 外部闸门的入口：跨引擎互斥检查要把拒绝原因直接写进状态行（见 ListenTogetherService）。 */
+    public static void publishStatus(String text, boolean error) {
+        publish(text, error);
+    }
+
     private static void publish(String text, boolean error) {
         synchronized (LOCK) {
             statusText = text;

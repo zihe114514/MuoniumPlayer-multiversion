@@ -1,11 +1,13 @@
 package com.muoniumplayer;
 
 import com.muoniumplayer.party.net.MpNetFabric;
+import com.muoniumplayer.compat.mc.WorldLyricsBridge;
 import com.muoniumplayer.core.screens.TitleMenuAnnouncementButton;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.minecraft.client.KeyMapping;
@@ -16,7 +18,8 @@ import net.minecraft.resources.Identifier;
  * <ol>
  *   <li>{@code fabric.mod.json} 的 client entrypoint 让 Loader 加载本类（替代 Forge 的 {@code @Mod}）；</li>
  *   <li>把七个按键交给 {@link KeyMappingHelper} 注册（NeoForge 侧走 {@code RegisterKeyMappingsEvent}）；</li>
- *   <li>挂三个事件：{@link ClientTickEvents#END_CLIENT_TICK}、{@link HudElementRegistry}、
+ *   <li>挂四个事件：{@link ClientTickEvents#END_CLIENT_TICK}、{@link HudElementRegistry}、
+ *       {@code LevelRenderEvents.COLLECT_SUBMITS}（3D 世界歌词）、
  *       {@code ScreenEvents.afterExtract}（后者必须在 AFTER_INIT 里为每个 Screen 实例挂一次）；</li>
  *   <li>注册一起听通道的 Fabric 实现 {@link MpNetFabric}。</li>
  * </ol>
@@ -45,6 +48,9 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         // 集成服务端不存在时全程静止；专用服务器上本 mod 不加载，与此处代码无关。
         com.muoniumplayer.party.lan.LanNetFabric.register();
 
+        // 3D 世界歌词：装纹理宿主（保留 1.21.1 的装配入口契约）。
+        WorldLyricsBridge.install();
+
         // 3. 可配置按键（出现在「选项 → 控制 → MuoniumPlayer」分组下）
         for (KeyMapping key : MuoniumPlayerClient.createKeyMappings()) {
             KeyMappingHelper.registerKeyMapping(key);
@@ -67,6 +73,13 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         // afterRender 在 26.2 改名 afterExtract：GUI 变成延迟批处理后，
         // 这个回调的实际语义是「Screen 已经把自己的元素录入 render state 之后」，
         // 而不是「已经画完」。对本渲染层没有影响，因为合成本来就推迟到帧末。
+        // 26.3 删掉了 WorldRenderEvents，世界实体渲染改 submit-collect，等价挂点是
+        // LevelRenderEvents.COLLECT_SUBMITS —— 在原版实体收集完之后、帧执行之前，
+        // 我们把歌词公告牌以 submitCustomGeometry 提交进原版管线（比照名字牌）。
+        // 矩阵由 WorldLyricsBridge 自己算（Fabric/NeoForge 给的矩阵不一致，自算两边一致），
+        // partialTick 不需要（歌词动画走歌曲毫秒时钟）。
+        LevelRenderEvents.COLLECT_SUBMITS.register(context ->
+                WorldLyricsBridge.collectWorldLyrics(context.submitNodeCollector()));
         ScreenEvents.AFTER_INIT.register((minecraft, screen, scaledWidth, scaledHeight) -> {
             ScreenEvents.afterExtract(screen).register(
                     (renderedScreen, extractor, mouseX, mouseY, tickDelta) -> {

@@ -1,6 +1,7 @@
 package com.muoniumplayer.loader.neoforge;
 
 import com.muoniumplayer.MuoniumPlayerClient;
+import com.muoniumplayer.compat.mc.WorldLyricsBridge;
 import com.muoniumplayer.core.screens.TitleMenuAnnouncementButton;
 import com.muoniumplayer.party.net.MpNetNeoForge;
 import net.minecraft.client.KeyMapping;
@@ -12,6 +13,7 @@ import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.common.NeoForge;
 
@@ -52,6 +54,10 @@ public final class MuoniumPlayerNeoForge {
         gameBus.addListener(this::onRenderGui);
         gameBus.addListener(this::onScreenRendered);
         gameBus.addListener(this::onScreenInit);
+        gameBus.addListener(this::onRenderLevelStage);
+
+        // 3D 世界歌词：装纹理宿主（DynamicTexture 注册）。
+        WorldLyricsBridge.install();
     }
 
     /**
@@ -89,6 +95,15 @@ public final class MuoniumPlayerNeoForge {
     private void onScreenRendered(ScreenEvent.Render.Post event) {
         MuoniumPlayerClient.getInstance().onScreenRendered(event.getScreen());
         MuoniumPlayerClient.getInstance().onRenderLayerNotice(event.getGuiGraphics(), true);
+    }
+
+    /**
+     * 3D 世界歌词：对应 Fabric 的 {@code WorldRenderEvents.LAST} —— 世界渲染的最后。
+     * 矩阵与 GL 状态由 {@code WorldLyricsBridge.worldRenderEnd()} 自己设
+     */
+    private void onRenderLevelStage(RenderLevelStageEvent event) {
+        if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_LEVEL) return;
+        WorldLyricsBridge.worldRenderEnd();
     }
 
     /**

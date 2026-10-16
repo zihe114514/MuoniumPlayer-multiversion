@@ -110,6 +110,7 @@ public class CFontRenderer implements Closeable, SharedConstants {
     private Typeface[] skTypefaces = new Typeface[0];
 
     /** 从 {@code y - 2} 到基线的距离，GUI 单位。 */
+    @Getter
     private float baselineOffset;
 
     /**
@@ -559,10 +560,25 @@ public class CFontRenderer implements Closeable, SharedConstants {
 
     private boolean drawGlyphs(String s, double x, double y, int baseArgb, int alpha255,
                                float glowSigma, Shader shader) {
+        Canvas canvas = SkijaGfx.canvas();
+        if (canvas == null) {
+            return true;
+        }
+        return drawGlyphsOn(canvas, s, x, y, baseArgb, alpha255, glowSigma, shader);
+    }
+
+    /**
+     * 同样的绘制语义，但画到<b>指定的</b>画布 —— 离屏栅格化（3D 世界歌词把行文字烘焙成
+     * GL 纹理）用：那一帧的字不进宿主帧画布，而进一张离屏位图，再经 DynamicTexture 上传。
+     *
+     * <p>与 {@link #drawGlyphs} 唯一的差异是画布来源；blob 缓存、回退字体、颜色码、
+     * 光晕全部同一条路径。</p>
+     */
+    public boolean drawGlyphsOn(Canvas canvas, String s, double x, double y, int baseArgb,
+                                int alpha255, float glowSigma, Shader shader) {
         if (s == null || s.isEmpty()) {
             return true;
         }
-        Canvas canvas = SkijaGfx.canvas();
         if (canvas == null || skFonts.length == 0) {
             return true;
         }

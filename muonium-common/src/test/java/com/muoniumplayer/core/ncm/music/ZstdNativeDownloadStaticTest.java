@@ -50,20 +50,20 @@ class ZstdNativeDownloadStaticTest {
         assertEquals(8, ZstdNativeDownload.MIRRORS.size(), "镜像条数：五条 GitHub 系 + Pages + R2 + 自建分发站");
         for (String mirror : ZstdNativeDownload.MIRRORS) {
             // 自建分发站是 http（无证书），靠 sha256 终验保证内容不被篡改；其余路必须 https。
-            if (!mirror.startsWith("http://109.206.245.74/")) {
+            if (!mirror.startsWith("http://muoniummc.cc.cd/")) {
                 assertTrue(mirror.startsWith("https://"), "必须 https：" + mirror);
             }
             assertTrue(mirror.endsWith("/libs/"), "目录要与仓库布局一致：" + mirror);
         }
-        assertTrue(ZstdNativeDownload.MIRRORS.get(0).contains("ghfast.top"), "源 1 是 ghfast 代理");
-        assertTrue(ZstdNativeDownload.MIRRORS.get(1).contains("gh-proxy.com"), "源 2 是 gh-proxy（直连实测最好）");
-        assertTrue(ZstdNativeDownload.MIRRORS.get(2).contains("raw.githubusercontent.com"), "源 3 是原始地址");
-        assertTrue(ZstdNativeDownload.MIRRORS.get(3).contains("ghproxy.net"), "源 4 是 ghproxy.net");
-        assertTrue(ZstdNativeDownload.MIRRORS.get(4).contains("jsdelivr"), "源 5 是 CDN 兜底");
+        assertTrue(ZstdNativeDownload.MIRRORS.get(0).startsWith("https://file.melodifymc.cc.cd/"), "源 1 是 R2 对象存储（2026-10-16 实测最快 2.25MB/s，A 档先开）");
+        assertTrue(ZstdNativeDownload.MIRRORS.get(1).contains("gh-proxy.com"), "源 2 是 gh-proxy（实测次快 1.75MB/s，A 档先开）");
+        assertTrue(ZstdNativeDownload.MIRRORS.get(2).startsWith("http://muoniummc.cc.cd/"), "源 3 是自建分发站（实测 1.11MB/s，A 档先开；独立于 Cloudflare 与 GitHub 的托管面）");
+        assertTrue(ZstdNativeDownload.MIRRORS.get(3).startsWith("https://melodifymc.cc.cd/dl/"), "源 4 是官网 Pages 直链（B 档，15 秒后放量）");
+        assertTrue(ZstdNativeDownload.MIRRORS.get(4).contains("ghfast.top"), "源 5 是 ghfast（B 档，高方差线路）");
         // 两条官网系兜底不走 GitHub；Pages 在 site 仓库 dl/ 下逐字节镜像，R2 是 fenfa 桶直链。
-        assertTrue(ZstdNativeDownload.MIRRORS.get(5).startsWith("https://melodifymc.cc.cd/dl/"), "源 6 是官网（Cloudflare Pages）直链兜底");
-        assertTrue(ZstdNativeDownload.MIRRORS.get(6).startsWith("https://file.melodifymc.cc.cd/"), "源 7 是 R2 对象存储直链兜底");
-        assertTrue(ZstdNativeDownload.MIRRORS.get(7).startsWith("http://109.206.245.74/"), "源 8 是自建分发站（独立于 Cloudflare 与 GitHub 的第三托管面）");
+        assertTrue(ZstdNativeDownload.MIRRORS.get(5).contains("jsdelivr"), "源 6 是 jsDelivr CDN（B 档，近期不稳）");
+        assertTrue(ZstdNativeDownload.MIRRORS.get(6).contains("ghproxy.net"), "源 7 是 ghproxy.net（B 档，稳定但慢）");
+        assertTrue(ZstdNativeDownload.MIRRORS.get(7).contains("raw.githubusercontent.com"), "源 8 是原始地址（B 档，兜底）");
     }
 
     @Test

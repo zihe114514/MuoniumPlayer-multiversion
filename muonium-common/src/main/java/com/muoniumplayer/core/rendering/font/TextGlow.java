@@ -3,6 +3,7 @@ package com.muoniumplayer.core.rendering.font;
 import com.muoniumplayer.render.skija.SkijaGfx;
 
 import io.github.humbleui.skija.BlendMode;
+import io.github.humbleui.skija.Canvas;
 
 /**
  * 文字的高斯光晕，全项目歌词发光的唯一实现。
@@ -47,7 +48,20 @@ public final class TextGlow {
      */
     public static void draw(CFontRenderer font, String text, double x, double y,
                             int rgb, double alpha, double strength, double spread) {
-        if (font == null || text == null || text.isEmpty()) {
+        Canvas target = SkijaGfx.canvas();
+        if (target == null) {
+            return;
+        }
+        drawOn(target, font, text, x, y, rgb, alpha, strength, spread);
+    }
+
+    /**
+     * 画到<b>指定的</b>画布 —— 3D 世界歌词的纹理烘焙用：光晕与文字一起烘进一张离屏位图。
+     * 语义与 {@link #draw} 完全一致（同样的三层 sigma/alpha、加色混合），只是画布由调用方给。
+     */
+    public static void drawOn(Canvas canvas, CFontRenderer font, String text, double x, double y,
+                              int rgb, double alpha, double strength, double spread) {
+        if (canvas == null || font == null || text == null || text.isEmpty()) {
             return;
         }
         double clampedStrength = clamp01(strength);
@@ -64,8 +78,8 @@ public final class TextGlow {
                 if (layerAlpha <= .003) {
                     continue;
                 }
-                font.drawStringGlow(text, x, y, withAlpha(rgb, layerAlpha),
-                        scale * SIGMA_RATIO[layer]);
+                font.drawGlyphsOn(canvas, text, x, y, withAlpha(rgb, layerAlpha), 255,
+                        (float) (scale * SIGMA_RATIO[layer]), null);
             }
         } finally {
             SkijaGfx.setBlendMode(previousBlend);

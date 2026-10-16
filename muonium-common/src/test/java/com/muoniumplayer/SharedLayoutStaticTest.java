@@ -56,6 +56,10 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/compat/mc/GuiTextField.java",
             "com/muoniumplayer/compat/mc/ScaledResolution.java",
             "com/muoniumplayer/compat/mc/ScreenCapture.java",
+            // --- 3D 世界歌词：相机/公告牌/桥全是 MC 触点，各树一份（共享层只放语义）---
+            "com/muoniumplayer/compat/mc/CameraAccess.java",
+            "com/muoniumplayer/compat/mc/WorldBillboard.java",
+            "com/muoniumplayer/compat/mc/WorldLyricsBridge.java",
             "com/muoniumplayer/MuoniumPlayerClient.java",
             "com/muoniumplayer/render/skija/SkijaHost.java",
             "com/muoniumplayer/api/impl/GLStateManagerImpl.java",

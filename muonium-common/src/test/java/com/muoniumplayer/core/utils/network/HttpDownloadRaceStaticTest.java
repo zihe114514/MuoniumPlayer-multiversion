@@ -91,4 +91,35 @@ class HttpDownloadRaceStaticTest {
         assertTrue(race.contains("settled.compareAndSet(false, true)"),
                 "冠军判定必须是 CAS：任何时刻最多一条路改名");
     }
+
+    @Test
+    @DisplayName("A/B 分批：15 秒观察窗、A 档三前缀、放量绝不回收先行线程")
+    void stagingSemantics() throws Exception {
+        String race = raceSource();
+        assertEquals(HttpDownloadRace.STAGING_DELAY_MILLIS, 15_000L, "观察窗 15 秒");
+        assertTrue(HttpDownloadRace.isTierA("https://file.melodifymc.cc.cd/libs/x.jar"),
+                "A 档含 R2（实测最快 2.25MB/s）");
+        assertTrue(HttpDownloadRace.isTierA("https://gh-proxy.com/https://raw.githubusercontent.com/x/libs/x.jar"),
+                "A 档含 gh-proxy（实测次快 1.75MB/s）");
+        assertTrue(HttpDownloadRace.isTierA("http://muoniummc.cc.cd/dl/libs/x.jar"),
+                "A 档含自建分发站（实测 1.11MB/s，独立托管面）");
+        assertFalse(HttpDownloadRace.isTierA("https://ghfast.top/https://raw.githubusercontent.com/x/libs/x.jar"),
+                "ghfast 高方差，B 档");
+        assertFalse(HttpDownloadRace.isTierA("https://unknown.example.com/x.jar"),
+                "未知线路保守归 B 档");
+        // 放量不回收：红线是「不许 interrupt 别的竞速线程」。
+        // Thread.currentThread().interrupt()（恢复中断位）与 connection.disconnect()（单路收尾）都合法，
+        // 所以钉的是 worker 数组/列表上没有 interrupt 调用。
+        assertTrue(race.contains("Thread.currentThread().interrupt()"),
+                "中断只允许出现在恢复中断位的惯用法里");
+        assertFalse(race.matches("(?s).*started\\.forEach\\([^)]*interrupt.*"),
+                "不许对已启动线程列表批量 interrupt（原批不中断）");
+        assertFalse(race.contains("allWorkers[index].interrupt()"),
+                "不许对先行线程 interrupt（原批不中断）");
+        assertTrue(race.contains("PROP_STAGE_MILLIS = \"muonium.downloadStageMillis\""),
+                "观察窗覆盖开关的属性名");
+        assertTrue(race.contains("stagingDelayMillis()"), "观察窗必须可经系统属性调整（0 = 全量竞速）");
+        assertTrue(race.contains("started.add(allWorkers[index])") || race.contains("started.add(worker)"),
+                "放量起的 B 档线程必须与 A 档统一收尸（同一个 started 列表）");
+    }
 }

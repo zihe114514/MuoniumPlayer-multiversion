@@ -1,6 +1,7 @@
 package com.muoniumplayer.loader.neoforge;
 
 import com.muoniumplayer.MuoniumPlayerClient;
+import com.muoniumplayer.compat.mc.WorldLyricsBridge;
 import com.muoniumplayer.core.screens.TitleMenuAnnouncementButton;
 import com.muoniumplayer.party.net.MpNetNeoForge;
 import net.minecraft.client.KeyMapping;
@@ -13,6 +14,7 @@ import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 import net.neoforged.neoforge.common.NeoForge;
 
 /**
@@ -52,6 +54,10 @@ public final class MuoniumPlayerNeoForge {
         gameBus.addListener(this::onRenderGui);
         gameBus.addListener(this::onScreenRendered);
         gameBus.addListener(this::onScreenInit);
+        gameBus.addListener(this::onSubmitCustomGeometry);
+
+        // 3D 世界歌词：装纹理宿主（DynamicTexture 注册）。
+        WorldLyricsBridge.install();
     }
 
     /**
@@ -98,6 +104,19 @@ public final class MuoniumPlayerNeoForge {
     private void onScreenRendered(ScreenEvent.Render.Post event) {
         MuoniumPlayerClient.getInstance().onScreenRendered(event.getScreen());
         MuoniumPlayerClient.getInstance().onRenderLayerNotice(event.getGuiGraphics(), true);
+    }
+
+    /**
+     * 3D 世界歌词：对应 Fabric 的 {@code LevelRenderEvents.COLLECT_SUBMITS} ——
+     * 世界渲染采集的最后。1.21.1 用 {@code RenderLevelStageEvent.AFTER_LEVEL}；
+     * 26.2 文字进 renderpearl 延迟采集（submitText 进 SubmitNodeStorage，
+     * prepareFrame drain 后 main pass 才画），AFTER_LEVEL 在 drain 之后、太迟，
+     * 换成 {@code SubmitCustomGeometryEvent}：实体/B/E/粒子提交完、finalizeGizmos
+     * 前派发，事件自带 collector（javap 核对 NeoForge 26.2.0.72）。
+     * 矩阵与提交由 {@code WorldLyricsBridge.worldRenderCollect} 自己管。
+     */
+    private void onSubmitCustomGeometry(SubmitCustomGeometryEvent event) {
+        WorldLyricsBridge.worldRenderCollect(event.getSubmitNodeCollector());
     }
 
     /**

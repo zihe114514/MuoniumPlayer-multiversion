@@ -7,6 +7,7 @@ import com.muoniumplayer.MuoniumPlayerClient;
 import com.muoniumplayer.core.ncm.music.CrossSourceSwitcher;
 import com.muoniumplayer.core.ncm.music.PlatformAccess;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.ListenTogetherService;
 import com.muoniumplayer.core.ncm.music.ListenTogetherSettings;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.RoomAutomix;
@@ -225,6 +226,9 @@ public final class MpPartyClient {
 
     /** 进入世界：向服务端打招呼（没装服务端 mod 时什么都不会发生）。 */
     public static void onWorldJoin() {
+        // 直连房间活跃时不探测 MC 通道：帧走 socket，这 worlds join 与它无关，
+        // 探测只会把 hello 打到第三方服务器上。
+        if (com.muoniumplayer.party.direct.MpDirect.isActive()) return;
         helloAcked = false;
         helloProbes = 0;
         serverPresent = available();
@@ -262,6 +266,10 @@ public final class MpPartyClient {
     private static final int HELLO_PROBE_LIMIT = 30;
 
     public static void onDisconnect() {
+        // 直连房间活跃时不清理：玩家退出第三方 MC 服务器会触发 MC 通道的 DISCONNECT
+        // 事件，但直连房间独立于游戏服务器存活（引擎在客户端 JVM 里）——
+        // 清掉它就是把正在放的一起听一起杀掉。关房/断开时 MpDirect 会自己调一次本方法。
+        if (com.muoniumplayer.party.direct.MpDirect.isActive()) return;
         boolean had = room != null;
         serverPresent = false;
         helloAcked = false;
@@ -295,6 +303,8 @@ public final class MpPartyClient {
 
     private static int heartbeatCounter;
     private static int presenceCounter;
+    /** 上一次真正发出在线态查询的时刻：面板打开时的「立即补一轮」判据。 */
+    private static volatile long lastPresencePull;
 
     private static void tick() {
         try {
@@ -316,6 +326,7 @@ public final class MpPartyClient {
             // 单独一个一秒的计数器，而且只在界面确实在看的时候才问（见 presenceInterest）。
             if (v2() && ++presenceCounter >= 20) {
                 presenceCounter = 0;
+                lastPresencePull = System.currentTimeMillis();
                 if (System.currentTimeMillis() - presenceInterest < 10_000L) {
                     sendQuiet(MpProto.msg(MpProto.C_PRESENCE));
                     if (room == null) sendQuiet(MpProto.msg(MpProto.C_ROOMS));
@@ -580,21 +591,42 @@ public final class MpPartyClient {
      * 路径关掉，任何一条漏了退订就会永久轮询下去。用时间戳自然过期，漏不了。
      */
     public static void touchPresence() {
-        presenceInterest = System.currentTimeMillis();
+        long now = System.currentTimeMillis();
+        // 面板开着就算「正在看」：大厅统计、邀请角标、在线页、发现页全靠这一句续命。
+        presenceInterest = now;
+        // 立即性：轮询周期 20 秒太久，「在线」页/邀请页开着时要看到别人进出房间、
+        // 收到邀请能马上变出来。距上次拉取超过 5 秒就把计数器顶满，下一跳立刻补一轮；
+        // 平时（计数未满）不影响原有的 20 秒节流。
+        if (now - lastPresencePull >= 5_000L) {
+            presenceCounter = Math.max(presenceCounter, 19);
+        }
     }
 
     // ── 写接口 ───────────────────────────────────────────────────────────────
 
     public static void createRoom(String name) {
+        if (officialRoomConflict()) return;
         JsonObject m = MpProto.msg(MpProto.C_CREATE);
         if (name != null && !name.trim().isEmpty()) m.addProperty("name", name.trim());
         send(m);
     }
 
     public static void joinRoom(String code) {
+        if (officialRoomConflict()) return;
         JsonObject m = MpProto.msg(MpProto.C_JOIN);
         m.addProperty("code", code == null ? "" : code.trim());
         send(m);
+    }
+
+    /**
+     * 与官方一起听（网易云/酷狗）互斥：两套引擎都想独占播放器，同时开会互相拉扯
+     * （官方 worker 每秒差分本地播放并整表回写房间，MC 房间的 S_PLAY 又改写本地播放）。
+     * 入口挡死并写明原因。
+     */
+    private static boolean officialRoomConflict() {
+        if (!ListenTogetherService.isActive()) return false;
+        note("官方一起听正在进行：先退出官方房间，再使用服务器房间", true);
+        return true;
     }
 
     public static void leaveRoom() {
@@ -802,6 +834,39 @@ public final class MpPartyClient {
         m.addProperty("nowPlaying", now == null ? "" : safe(now.getName()));
         m.addProperty("nowArtist", now == null ? "" : safe(now.getArtistsName()));
         m.addProperty("localPlaying", MpPlayback.localPlaying());
+        // 直连房间的身份与鉴权（纯加法，服务器房间模式下服务端 mod 忽略未知字段）：
+        // 引擎没有 MC 连接可查名字，会话表靠自报的 uuid/playerName 建立；
+        // auth 只在直连会话活跃时带上（服务器房间的 hello 里永远没有这个字段）。
+        UUID self = selfUuidSafe();
+        m.addProperty("uuid", self == null ? "" : self.toString());
+        String selfName = selfNameSafe();
+        m.addProperty("playerName", selfName == null ? "" : selfName);
+        String auth = directAuth();
+        if (!auth.isEmpty()) m.addProperty("auth", auth);
+    }
+
+    private static UUID selfUuidSafe() {
+        try {
+            return host == null ? null : host.selfUuid();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static String selfNameSafe() {
+        try {
+            return host == null ? null : host.selfName();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static String directAuth() {
+        try {
+            return com.muoniumplayer.party.direct.MpDirect.helloAuth();
+        } catch (Throwable ignored) {
+            return "";
+        }
     }
 
     /** 本机此刻在听什么（不限于房间曲目：全服在线态要的是「他在听什么」）。 */
@@ -1480,6 +1545,11 @@ public final class MpPartyClient {
 
     /** 由 {@code MpNet} 对每一帧 S2C 调用；可以在任意线程上调用。 */
     public static void onFrame(byte[] data) {
+        // 接收侧闸门：直连会话活跃时，MC 通道来的 S2C 一律丢弃。路由只管发送侧，
+        // 接收是各树 MpNet 直接回调本方法——不拦的话，玩家连着服务器的同时开直连，
+        // 两个房间的快照会互相覆盖（UI 在两个房间之间跳变）。
+        // 直连 socket 的帧由 DirectClient 回调进来，带 directSource 标记放行。
+        if (com.muoniumplayer.party.direct.MpDirect.isActive() && !directSource.get()) return;
         JsonObject msg = MpProto.decode(data);
         if (msg == null) return;
         applyingRemote = true;
@@ -1490,6 +1560,18 @@ public final class MpPartyClient {
         } finally {
             applyingRemote = false;
         }
+    }
+
+    /** 直连 socket 送来的帧标记：直连活跃时 MC 通道的帧被闸门丢弃，这一路放行。 */
+    private static final ThreadLocal<Boolean> directSource = ThreadLocal.withInitial(() -> Boolean.FALSE);
+
+    /** 由 {@code DirectClient} 在投递直连帧前打标记（见 {@link #onFrame} 的闸门）。 */
+    public static void markDirectSource() {
+        directSource.set(Boolean.TRUE);
+    }
+
+    public static void clearDirectSource() {
+        directSource.set(Boolean.FALSE);
     }
 
     private static void dispatch(JsonObject msg) {
@@ -2335,9 +2417,34 @@ public final class MpPartyClient {
         selfPaused = false;
         // 离房：收走队列里多出来的那一格与已预置的下一首，别让它跟着本机自己的队列继续播。
         // 交叠开关本身不动 —— 它来自服务端 hello，跟房间无关。
+        // 播放的停止由调用方负责（onDisconnect / resetForDirectSession 各自判断 had）。
         MpPlayback.clearRoomAutomix();
         MpSyncPolicy.reset();
         contributionHintShown = false;      // 下次进房重新说一次
+    }
+
+    /**
+     * 显式清理服务器房间的客户端状态（直连开房 / 加入前调用）。
+     *
+     * <p>与 {@link #onDisconnect()} 的区别：这一份<b>不经过直连守卫</b>——那条守卫
+     * 挡的是「MC 通道断开事件不许杀直连会话」，而这里是要在切到直连之前把上一个
+     * 房间（可能是服务器房间）的残留主动扔掉。不清理的话，{@code room} 等字段会
+     * 继续显示一个已经不再参与的服务器房间。</p>
+     *
+     * <p>如果本机在服务器房间里，会先发一帧离房（让服务端把人请出去、别的成员看到
+     * 离开提示），再清本机状态。直连房间自己（{@code MpDirect.isActive()} 为 true）
+     * 时不做任何事——那次的清理由直连会话自己的生命周期负责。</p>
+     */
+    public static void resetForDirectSession() {
+        if (com.muoniumplayer.party.direct.MpDirect.isActive()) return;
+        boolean had = room != null;
+        if (had) {
+            // 通知服务端离房（fire-and-forget：发出去了就行，不等回执）。
+            sendQuiet(MpProto.msg(MpProto.C_LEAVE));
+        }
+        reset();
+        if (had) MpPlayback.stop();
+        notifyListeners();
     }
 
     static void note(String text, boolean error) {

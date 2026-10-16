@@ -63,21 +63,25 @@ public final class LanMpParty {
             return;
         }
         active = true;
+        rememberMount(platform, configDir, integrated);
         MpParty.init(platform, configDir.resolve("mpsync-lan.json"));
         LanLog.info("[muonium-lan] 一起听房间引擎已挂到集成服务端（protocol v{}）", MpParty.protocol());
     }
 
     public static void onPlayerJoin(java.util.UUID uuid) {
-        if (active) MpParty.onPlayerJoin(uuid);
+        if (active && !directOwnsEngine()) MpParty.onPlayerJoin(uuid);
     }
 
     public static void onPlayerQuit(java.util.UUID uuid) {
-        if (active) MpParty.onPlayerQuit(uuid);
+        if (active && !directOwnsEngine()) MpParty.onPlayerQuit(uuid);
     }
 
     /** 每服务器 tick 一次；引擎未激活时是零开销直返。 */
     public static void tick() {
-        if (active) MpParty.tick();
+        // 引擎被直连接管后（纯单人放行场景），LAN 桥必须整体闭嘴：再 tick 就是
+        // 第二条线程并发驱动引擎（心跳翻倍、Room.tick 双执行、交接点可能连跳两首），
+        // LAN 成员的帧也会打进直连引擎然后有去无回。
+        if (active && !directOwnsEngine()) MpParty.tick();
     }
 
     public static void onServerStopped() {
@@ -95,7 +99,42 @@ public final class LanMpParty {
 
     /** C2S 帧入口：桥接层收到的服务端方向帧全转这里，未激活时丢弃。 */
     public static void onC2sFrame(java.util.UUID sender, byte[] payload) {
-        if (active) MpParty.onPacket(sender, payload);
+        if (active && !directOwnsEngine()) MpParty.onPacket(sender, payload);
+    }
+
+    /** 引擎当前是否由直连房间托管（LAN 桥让位的判据，与 onServerStarting 同源）。 */
+    private static boolean directOwnsEngine() {
+        return com.muoniumplayer.party.direct.MpDirect.isHosting();
+    }
+
+    // ── 引擎归还：直连接管（纯单人放行场景）释放后，把引擎重新装配回 LAN ──
+
+    /** 最近一次 onServerStarting 的装配参数：直连释放后按它重挂引擎。 */
+    private static volatile MpPlatform lastPlatform;
+    private static volatile java.nio.file.Path lastConfigDir;
+    private static volatile boolean lastIntegrated;
+
+    /** 由 {@link #onServerStarting} 记下装配参数（直连释放后重挂用）。 */
+    static void rememberMount(MpPlatform platform, Path configDir, boolean integrated) {
+        lastPlatform = platform;
+        lastConfigDir = configDir;
+        lastIntegrated = integrated;
+    }
+
+    /**
+     * 直连房间释放引擎后调用：LAN 桥还激活着（同一个世界没退），但引擎已被
+     * 直连 shutdown——此时按原装配参数重挂一次，局域网一起听立刻恢复，
+     * 不用重进世界。engineGone 由 MpDirect 的会话回收路径触发。
+     */
+    public static void onDirectReleased() {
+        if (!active || lastPlatform == null) return;
+        if (com.muoniumplayer.party.direct.MpDirect.isHosting()) return;
+        try {
+            MpParty.init(lastPlatform, lastConfigDir);
+            LanLog.info("[muonium-lan] 直连房间已释放，一起听引擎已重挂回集成服务端");
+        } catch (Throwable t) {
+            LanLog.warn("[muonium-lan] 引擎重挂失败（局域网一起听不可用，重进世界可恢复）", t);
+        }
     }
 
     /** 简单的日志外观：避免各桥接层重复配 logger。 */

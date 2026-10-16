@@ -67,13 +67,13 @@ public final class QishuiCompanionDownload {
      * 汽水包超过 Pages 的 25MiB 硬限进不了官网 {@code dl/}，R2 是它的官网系兜底。
      */
     static final List<String> MIRRORS = List.of(
-            "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/qishui-companion/",
-            "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/qishui-companion/",
-            "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/qishui-companion/",
-            "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/qishui-companion/",
-            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/qishui-companion/",
             "https://file.melodifymc.cc.cd/qishui-companion/",
-            "http://109.206.245.74/dl/qishui-companion/");
+            "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/qishui-companion/",
+            "http://muoniummc.cc.cd/dl/qishui-companion/",
+            "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/qishui-companion/",
+            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/qishui-companion/",
+            "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/qishui-companion/",
+            "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/qishui-companion/");
 
     /** 关闭自动下载的开关（默认开，只有显式 {@code =false} 才关）。 */
     static final String PROP_ENABLED = "muonium.qishui.autoDownload";

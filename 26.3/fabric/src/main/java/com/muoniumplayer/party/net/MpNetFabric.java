@@ -25,16 +25,28 @@ public final class MpNetFabric implements MpHost {
 
     /** 客户端初始化时调用一次；服务器没装一起听服务端 mod 时全程无副作用。 */
     public static void register() {
-        PayloadTypeRegistry.serverboundPlay().register(MpPayloads.C2S.TYPE, MpPayloads.C2S.CODEC);
-        PayloadTypeRegistry.clientboundPlay().register(MpPayloads.S2C.TYPE, MpPayloads.S2C.CODEC);
+        registerPayloadsCompat();
 
-        MpPartyClient.bind(INSTANCE);
+        MpPartyClient.bind(com.muoniumplayer.party.direct.MpHostRouter.wrap(INSTANCE));
 
         ClientPlayNetworking.registerGlobalReceiver(MpPayloads.S2C.TYPE,
                 (payload, context) -> MpPartyClient.onFrame(payload.data()));
 
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> MpPartyClient.onWorldJoin());
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> MpPartyClient.onDisconnect());
+    }
+
+    /**
+     * 同装服务端 mod 时服务端已登记过这两个 payload，注册表对重复登记直接抛
+     * {@code IllegalArgumentException} 崩在启动。codec 两侧同一份源码，跳过不影响收发。
+     */
+    private static void registerPayloadsCompat() {
+        try {
+            PayloadTypeRegistry.serverboundPlay().register(MpPayloads.C2S.TYPE, MpPayloads.C2S.CODEC);
+            PayloadTypeRegistry.clientboundPlay().register(MpPayloads.S2C.TYPE, MpPayloads.S2C.CODEC);
+        } catch (IllegalArgumentException alreadyRegistered) {
+            System.out.println("[MpParty] mpsync payload 已由服务端 mod 登记，跳过重复登记（同装模式）");
+        }
     }
 
     @Override
@@ -55,6 +67,12 @@ public final class MpNetFabric implements MpHost {
     public UUID selfUuid() {
         Minecraft mc = Minecraft.getInstance();
         return mc.player == null ? null : mc.player.getUUID();
+    }
+
+    @Override
+    public String selfName() {
+        Minecraft mc = Minecraft.getInstance();
+        return mc.player == null ? null : mc.player.getName().getString();
     }
 
     @Override

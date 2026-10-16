@@ -20,17 +20,26 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntConsumer;
 
 /**
- * 多路并发竞速下载：所有镜像<b>同时</b>开拉，谁先完整通过校验就用谁，其余立刻掐断。
+ * 多路并发竞速下载：镜像按实测表现分两档<b>分批放量</b>——先开实测最快最稳的 A 档，
+ * 15 秒观察窗内没人交卷再放 B 档；谁先完整通过校验就用谁，其余立刻掐断。
  *
  * <p>字体 / Skija 伴生包 / zstd / closure / 汽水后端五个下载器共用的下载引擎，取代以前
  * 「逐路串行回退」的镜像链走法。动机：串行模式下「连上了但极慢」的镜像不会被识别为失败
  * —— {@code readTimeout} 只管字节间空闲，一条 50 KB/s 的涓流可以合法地占住整次下载
- * 尝试几十分钟；竞速下它最多浪费一点头部流量，下载时长由最快的那条线决定。</p>
+ * 尝试几十分钟；竞速下它最多浪费一点头部流量，下载时长由最快的那条线决定。
+ * 分批放量再省一层：A 档（实测快且稳的三条）足够交卷时，B 档（慢、抖、或可能已死的
+ * 五条）一条线程都不起，头部流量也不花。</p>
  *
  * <h2>规则</h2>
  * <ul>
- *   <li><b>写入隔离</b>：每路写自己的临时文件（{@code <目标>.race<序号>}），冠军产生后
- *       原子改名成目标文件，其余路的临时文件各自在收尾时删掉。绝不并发写同一个文件。</li>
+ *   <li><b>A/B 分批</b>：A 档 = 实测最快的 R2、gh-proxy、自建分发站（2026-10-16 逐线
+ *       3 次实测，见 {@link #isTierA}）；下载开始只起 A 档，观察窗
+ *       {@link #STAGING_DELAY_MILLIS}（15 秒，{@code -Dmuonium.downloadStageMillis} 可调，
+ *       0 = 全量竞速）内无人交卷才放 B 档；A 档全部失败也立即放量。<b>放量不回收</b>：
+ *       A 档线程继续跑，绝不 interrupt/disconnect——它们可能正是慢热的那条快线。</li>
+ *   <li><b>写入隔离</b>：每路写自己的临时文件（{@code <目标>.race<序号>}，序号=原始列表
+ *       下标，与启动批次无关），冠军产生后原子改名成目标文件，其余路的临时文件各自在
+ *       收尾时删掉。绝不并发写同一个文件。</li>
  *   <li><b>校验与各下载器旧的 {@code download()} 同一套</b>：连接 20 秒、读空闲 60 秒、
  *       HTTP 非 2xx 拒收、Content-Length 不符拒收、下载中越界拒收、收完字节数 + sha256
  *       双验。sha256 在接收时就地计算，不是收完再读一遍文件——13 MB 的二次读盘没有必要。</li>
@@ -38,17 +47,17 @@ import java.util.function.IntConsumer;
  *       换算的百分比（{@code leaderBytes} 只增不减），落后路的进度被丢弃——回调方（灵动岛）
  *       看到的数字单调递增，不会因为慢线先起步而回跳。节流（500ms 下限）仍在下载器侧，
  *       引擎每次过新字节都会尝试推，频率由节流器压住。</li>
- *   <li><b>失败语义</b>：所有路都失败才抛（每路错误一行摘要日志）；任何一路成功即成功。
- *       整轮重试预算（{@code MAX_ATTEMPTS} / 冷却）仍由调用方管，这里不管。</li>
+ *   <li><b>失败语义</b>：<b>所有已启动的路</b>都失败才抛（每路错误一行摘要日志）；任何一路
+ *       成功即成功。整轮重试预算（{@code MAX_ATTEMPTS} / 冷却）仍由调用方管，这里不管。</li>
  *   <li><b>断点续传有意放弃</b>：竞速下各路从零开始，旧「单一 .part + Range 续传」方案
  *       不再成立。gh-proxy 中途截断的场景由「换一路重拉」的并发能力兜住（别的路先到）；
  *       要回旧行为，{@code -Dmuonium.downloadRace=false}，各下载器里串行回退路径原样保留。</li>
  * </ul>
  *
  * <h2>线程</h2>
- * 每路一条守护线程（{@code muonium-download-race-N}）；{@link #fetch} 对每条线程 join
- * 收尸，任何退出路径（成功 / 全败 / 中断）都不留活线程。冠军产生的瞬间其余路可能在
- * 阻塞的 {@code read()} 里，它们会在下一个字节到达、或读空闲超时（≤60s）后退出——
+ * 每路一条守护线程（{@code muonium-download-race-N}）；{@link #fetch} 对每条<b>已启动</b>的
+ * 线程 join 收尸，任何退出路径（成功 / 全败 / 中断）都不留活线程。冠军产生的瞬间其余路
+ * 可能在阻塞的 {@code read()} 里，它们会在下一个字节到达、或读空闲超时（≤60s）后退出——
  * 文件层面不冲突（各写各的临时文件），不必为提前几秒的退场上中断手段。
  */
 public final class HttpDownloadRace {
@@ -62,8 +71,17 @@ public final class HttpDownloadRace {
     /** 临时文件后缀 + 槽位：{@code <目标>.race<N>}。 */
     static final String PART_SUFFIX = ".race";
 
+    /**
+     * A 档观察窗：A 档开跑后等这么久，无人交卷才放 B 档。2026-10-16 实测 8 线 3 次均值下，
+     * A 档三条（R2 2.25 / gh-proxy 1.75 / 分发站 1.11 MB/s）拉 2~14MB 的文件都在 15 秒内
+     * 有结论；B 档全是慢、抖或已死的线，窗口内空等它们没有收益。
+     */
+    static final long STAGING_DELAY_MILLIS = 15_000L;
+
     /** 总开关：显式 {@code -Dmuonium.downloadRace=false} 时调用方退回串行回退。 */
     public static final String PROP_ENABLED = "muonium.downloadRace";
+    /** 观察窗覆盖：{@code -Dmuonium.downloadStageMillis=0} 即全量竞速。 */
+    public static final String PROP_STAGE_MILLIS = "muonium.downloadStageMillis";
 
     private HttpDownloadRace() {
     }
@@ -72,6 +90,31 @@ public final class HttpDownloadRace {
     public static boolean enabled() {
         String value = System.getProperty(PROP_ENABLED);
         return value == null || value.isBlank() || !"false".equalsIgnoreCase(value.trim());
+    }
+
+    /** 观察窗时长（毫秒）。默认 15 秒；显式设置（含 0）以设置为准。 */
+    static long stagingDelayMillis() {
+        String value = System.getProperty(PROP_STAGE_MILLIS);
+        if (value == null || value.isBlank()) {
+            return STAGING_DELAY_MILLIS;
+        }
+        try {
+            return Math.max(0L, Long.parseLong(value.trim()));
+        } catch (NumberFormatException broken) {
+            return STAGING_DELAY_MILLIS;
+        }
+    }
+
+    /**
+     * A 档判定：实测（2026-10-16，13.8MB ×3 次均值 2.25 / 1.75 / 1.11 MB/s，全成功率）
+     * 快且稳的三条——R2 对象存储、gh-proxy 代理、自建分发站。三者分属三个互不相关的
+     * 托管面（CF-R2 / GitHub 代理 / 独立 VPS），A 档同时全灭的概率很低。
+     * 不在名单里的 URL 一律按 B 档处理（保守：没实测过的不当快线）。
+     */
+    static boolean isTierA(String url) {
+        return url.startsWith("https://file.melodifymc.cc.cd/")
+                || url.startsWith("https://gh-proxy.com/")
+                || url.startsWith("http://muoniummc.cc.cd/");
     }
 
     /** 一次竞速的结果：冠军的 URL 与下到文件的总字节数（应与钉死值一致，校验过）。 */
@@ -104,19 +147,22 @@ public final class HttpDownloadRace {
         }
 
         final int count = urls.size();
-        List<Thread> workers = new ArrayList<Thread>(count);
         List<AtomicReference<String>> failures = new ArrayList<AtomicReference<String>>(count);
         // 冠军闸：第一条完整通过校验的路 CAS 成功，其余路看到闸落下就退场。
         AtomicBoolean settled = new AtomicBoolean(false);
         AtomicLong leaderBytes = new AtomicLong(0L);
         AtomicReference<String> winnerUrl = new AtomicReference<>();
+        // 每路的失败记录与线程在 spawn 时登记；join 只覆盖「实际启动过」的线程。
+        final AtomicReference<String>[] failureRefs = new AtomicReference[count];
+        final Thread[] allWorkers = new Thread[count];
+        final List<Thread> started = new ArrayList<Thread>(count);
 
         for (int index = 0; index < count; index++) {
             final int slot = index;
             final String url = urls.get(index);
             final File part = partFile(target, slot);
             final AtomicReference<String> failure = new AtomicReference<>();
-            failures.add(failure);
+            failureRefs[index] = failure;
             Thread worker = new Thread(new Runnable() {
                 @Override
                 public void run() {
@@ -144,13 +190,62 @@ public final class HttpDownloadRace {
                 }
             }, "muonium-download-race-" + (slot + 1));
             worker.setDaemon(true);
-            workers.add(worker);
+            allWorkers[index] = worker;
         }
-        for (Thread worker : workers) {
-            worker.start();
+
+        // A 档先行：只起实测快且稳的那几条。B 档线程此刻不创建、不占资源。
+        boolean tierAPresent = false;
+        boolean tierBPresent = false;
+        for (int index = 0; index < count; index++) {
+            if (isTierA(urls.get(index))) {
+                allWorkers[index].start();
+                started.add(allWorkers[index]);
+                tierAPresent = true;
+            } else {
+                tierBPresent = true;
+            }
         }
+        if (!tierAPresent) {
+            // 列表里没有一条 A 档（调用方给了未知镜像集）：直接全量竞速，不空等。
+            tierBPresent = false;
+            for (Thread worker : allWorkers) {
+                worker.start();
+                started.add(worker);
+            }
+        }
+
+        // 观察窗：A 档跑 15 秒无人交卷（或 A 档已全部阵亡）就放 B 档，A 档继续跑不中断。
+        long delay = stagingDelayMillis();
+        if (tierBPresent && tierAPresent && delay > 0L) {
+            long deadline = System.currentTimeMillis() + delay;
+            while (System.currentTimeMillis() < deadline) {
+                if (settled.get()) {
+                    break;
+                }
+                if (allStartedFailuresSettled(started, failureRefs, allWorkers)) {
+                    // A 档全阵亡：等窗口没有意义，立即放量。
+                    break;
+                }
+                try {
+                    Thread.sleep(200L);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            if (!settled.get()) {
+                System.out.println("[MuoniumPlayer/DownloadRace] A 档 " + delay + "ms 内无人交卷，放 B 档（A 档继续跑）");
+            }
+            for (int index = 0; index < count; index++) {
+                if (!isTierA(urls.get(index)) && !allWorkers[index].isAlive() && !started.contains(allWorkers[index])) {
+                    allWorkers[index].start();
+                    started.add(allWorkers[index]);
+                }
+            }
+        }
+
         try {
-            for (Thread worker : workers) {
+            for (Thread worker : started) {
                 worker.join();
             }
         } catch (InterruptedException interrupted) {
@@ -162,12 +257,27 @@ public final class HttpDownloadRace {
         String winner = winnerUrl.get();
         if (winner == null) {
             for (int index = 0; index < count; index++) {
-                System.out.println("[MuoniumPlayer/DownloadRace] 源 " + (index + 1)
-                        + "（" + hostOf(urls.get(index)) + "）：" + failures.get(index).get());
+                if (allWorkers[index] != null && started.contains(allWorkers[index])) {
+                    System.out.println("[MuoniumPlayer/DownloadRace] 源 " + (index + 1)
+                            + "（" + hostOf(urls.get(index)) + "）：" + failureRefs[index].get());
+                }
             }
-            throw new IOException("全部 " + count + " 条线路都失败了（详见上方日志）");
+            throw new IOException("全部已启动的 " + started.size() + " 条线路都失败了（详见上方日志）");
         }
         return new Winner(winner, expectedBytes);
+    }
+
+    /** 已启动的 A 档线程是否已经全部结束（无论成败）——是的话观察窗可以提前结束。 */
+    private static boolean allStartedFailuresSettled(List<Thread> started,
+                                                     AtomicReference<String>[] failureRefs,
+                                                     Thread[] allWorkers) {
+        for (Thread worker : started) {
+            if (worker.isAlive()) {
+                return false;
+            }
+        }
+        // started 非空且全死 = A 档全阵亡（B 档还没起）。
+        return !started.isEmpty();
     }
 
     /** 第 slot 路的临时文件：正式落点旁的 {@code <名>.race<slot>}。 */

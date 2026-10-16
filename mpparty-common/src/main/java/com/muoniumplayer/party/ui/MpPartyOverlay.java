@@ -180,7 +180,7 @@ public final class MpPartyOverlay extends NCMPanel {
     private static final int STYLE_ROW_PRIMARY = 5;
     private static final int STYLE_GHOST = 6;
 
-    private enum Page { OVERVIEW, CREATE, JOIN, INVITE, LINK, PLAYLIST }
+    private enum Page { OVERVIEW, CREATE, JOIN, INVITE, LINK, PLAYLIST, DIRECT }
 
     private enum Tab { ROOM, QUEUE, MEMBERS, ONLINE, DISCOVER, INVITES }
 
@@ -229,6 +229,24 @@ public final class MpPartyOverlay extends NCMPanel {
         showOverview();
     }
 
+    /**
+     * 直接打开到直连房间页（从「一起听」二级菜单的「直连房间」卡片跳进来）。
+     * 只想看房间就点左上角的「‹ 一起听」回去——入口在跳转后仍然在。
+     */
+    public void openDirect() {
+        directCameFromMenu = true;
+        showDirectPage();
+    }
+
+    /** 直连页的返回键行为：true = 上一跳来自「一起听」二级菜单。 */
+    private boolean directCameFromMenu;
+
+    /** 从直连页回到「一起听」二级菜单（同 NCMScreen 里那两颗返回键的跳法）。 */
+    private void returnToMenu() {
+        dispose();
+        NCMScreen.getInstance().openListenTogether();
+    }
+
     @Override
     public void onRender(double mouseX, double mouseY) {
         wheelConsumed = false;
@@ -255,12 +273,29 @@ public final class MpPartyOverlay extends NCMPanel {
     public boolean onKeyTypedReceived(char typedChar, int keyCode) {
         // ESC 交回给 NCMScreen 的模态栈路由，别把退出键吃掉。
         if (keyCode == Keyboard.KEY_ESCAPE) return false;
-        TextFieldWidget input = field;
-        if (input != null && input.isFocused()) {
-            input.onKeyTyped(typedChar, keyCode);
+        // 交给「当前有焦点」的那个输入框，而不是全局 field：
+        // 直连页同时有两个输入框，inputField 构造时 field 总是被后建的那个覆盖——
+        // 点了端口框后 field 仍指着加入框，端口框永远收不到按键（B3）。
+        // 深度遍历整棵控件树，isFocused 的输入框（TextField 点击聚焦）才收按键。
+        TextFieldWidget target = focusedField(this);
+        if (target != null) {
+            target.onKeyTyped(typedChar, keyCode);
             return true;
         }
         return false;
+    }
+
+    /** 深度优先找本页里有键盘焦点的输入框；没有返回 null。 */
+    private TextFieldWidget focusedField(AbstractWidget<?> host) {
+        for (AbstractWidget<?> child : host.getChildren()) {
+            if (child instanceof TextFieldWidget) {
+                TextFieldWidget tf = (TextFieldWidget) child;
+                if (tf.isFocused()) return tf;
+            }
+            TextFieldWidget nested = focusedField(child);
+            if (nested != null) return nested;
+        }
+        return null;
     }
 
     // ──────────────────────────── 总览（页签壳） ────────────────────────────
@@ -270,6 +305,9 @@ public final class MpPartyOverlay extends NCMPanel {
         field = null;
         pendingTab = null;
         paneFade = 1.0;
+        // 回过大厅之后，直连页的返回键就该回大厅了；「来自二级菜单」只在 openDirect
+        // 落地的第一屏成立。
+        directCameFromMenu = false;
         getChildren().clear();
 
         // 0 页签条 / 1 没装服务端 / 2 房间 / 3 歌单 / 4 成员 / 5 在线 / 6 发现 / 7 邀请
@@ -378,6 +416,9 @@ public final class MpPartyOverlay extends NCMPanel {
                 .setPosition(PAD, 15));
 
         LabelWidget kicker = label(dialog, () -> {
+            // 来源标签：用户要能分清面板上显示的是哪个房间（S6）。
+            // 直连活跃时这里的一切都来自直连引擎，不是 MC 服务器。
+            if (com.muoniumplayer.party.direct.MpDirect.isActive()) return "直连房间";
             MpRoom room = MpPartyClient.room();
             if (room == null) return "服务器房间";
             return room.kindLabel();
@@ -425,10 +466,14 @@ public final class MpPartyOverlay extends NCMPanel {
     }
 
     private String headerSubtitle() {
-        if (!MpPartyClient.serverPresent()) {
-            return "同一台服务器里的玩家共享一条播放进度 · 不限播放源";
+        // 来源前缀：与标题旁角标、房间页色带同一套口径——用户在任何一处都能读出
+        // 当前会话是哪条链路的。
+        String source = com.muoniumplayer.party.direct.MpDirect.isActive() ? "【直连房间】"
+                : MpPartyClient.inRoom() ? "【服务器房间】" : "";
+        if (!MpPartyClient.serverPresent() && !com.muoniumplayer.party.direct.MpDirect.isActive()) {
+            return source + "同一台服务器里的玩家共享一条播放进度 · 不限播放源";
         }
-        StringBuilder sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder(source);
         sb.append("在线 ").append(Math.max(0, MpPartyClient.onlineCount())).append(" 人");
         if (!MpPartyClient.v2()) {
             sb.append(" · 服务端是旧版协议 v").append(MpPartyClient.serverProtocol())
@@ -1133,9 +1178,24 @@ public final class MpPartyOverlay extends NCMPanel {
             name.setPosition(PAD, bannerInset + 4);
         });
 
+        // 来源色带：房名下的一短条，颜色按会话来源区分——
+        // 绿=直连、蓝=服务器房间、橙=频道。扫一眼就知道当前是哪条链路的一起听。
+        RoundedRectWidget sourceBand = new RoundedRectWidget();
+        host.addChild(sourceBand);
+        sourceBand.setClickable(false).setRadius(1.5).setBeforeRenderCallback(() -> {
+            sourceBand.setBounds(Math.max(6, Math.min(name.getWidth(), 120)), 3);
+            sourceBand.setPosition(PAD, bannerInset + 26);
+            sourceBand.setColor(com.muoniumplayer.party.direct.MpDirect.isActive() ? OK_COLOR
+                    : MpPartyClient.inChannel() ? WARN_COLOR
+                    : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        });
+
         // 邀请码 / 人数 / 在听 / 会员 / 循环 / 我的身份：原来是一句「A  ·  B  ·  C」的长句，
         // 要从头读到尾才能找到想看的那一项。换成图标信息条之后是扫一眼的事。
+        // 右边界钉在公开开关（左缘 W−194）左边：窄窗口下 chips 超界整颗隐藏，
+        // 不然文字会半埋进右上角那两颗按钮底下。
         metaChips(host, () -> PAD, () -> bannerInset + 32, ICON_S, FontManager.pf10bold,
+                () -> Math.max(PAD + 120, host.getWidth() - PAD - 194 - 12),
                 meta(PartyIcons.KEY, () -> {
                     MpRoom room = MpPartyClient.room();
                     return room == null || room.channel ? "" : room.code;
@@ -2067,12 +2127,14 @@ public final class MpPartyOverlay extends NCMPanel {
             MpPresence who = presenceAt(list, slot);
             name.setColor(who != null && who.hasClient
                     ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT) : secondary());
-            name.setMaxWidth(Math.max(1, bg.getWidth() - 200));
+            name.setMaxWidth(Math.max(1, bg.getWidth() - 214));
             name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             name.setPosition(46, 5);
         });
 
+        // 右边界钉在贡献 chip（左缘 W−138）左边：极窄窗口下 chips 超界隐藏，不钻进右列。
         metaChips(bg, () -> 46.0, () -> 27.0, ICON_S, FontManager.pf10bold,
+                () -> Math.max(146.0, bg.getWidth() - 138 - 10),
                 meta(() -> {
                     MpPresence who = presenceAt(list, slot);
                     return who != null && who.localPlaying ? PartyIcons.NOTE : PartyIcons.HOURGLASS;
@@ -2094,7 +2156,7 @@ public final class MpPartyOverlay extends NCMPanel {
         }, () -> {
             MpPresence who = presenceAt(list, slot);
             return who != null && who.vip;
-        }, b -> b.setPosition(Math.max(1, bg.getWidth() - 124), 12));
+        }, b -> b.setPosition(Math.max(1, bg.getWidth() - 138), 12));
 
         final Panel tools = rowTools(bg);
 
@@ -2106,8 +2168,10 @@ public final class MpPartyOverlay extends NCMPanel {
             MpPresence who = presenceAt(list, slot);
             if (who != null) MpPartyClient.invite(who.name);
         }, STYLE_ROW_PRIMARY, b -> {
+            // chip 右缘 -90，这里左缘 -82：中间自然留 8px，右侧留 16px——
+            // 原来两件控件零间距相接，悬停时行再往两侧一扩就贴出行缘。
             b.setBounds(66, 26);
-            b.setPosition(bg.getWidth() - 76, 7);
+            b.setPosition(Math.max(1, bg.getWidth() - 82), 7);
         });
     }
 
@@ -2389,6 +2453,265 @@ public final class MpPartyOverlay extends NCMPanel {
                 }, true);
     }
 
+    /**
+     * 直连房间页：上半是「开直连房间」（端口 + 局域网开关），下半是「加入」（邀请串输入框）。
+     *
+     * <p>两个动作放同一页是有意的：这个功能最常见的场景是「一个人懂，四个朋友不懂」——
+     * 懂的那位开房、把串发到群里，其余人只需要知道「去直连房间粘贴那串东西」。分两页反而
+     * 让「粘贴」这一步离「开房」太远。</p>
+     *
+     * <p>托管态整个换一版布局：房主此刻唯一要干的事是把邀请串发出去，所以地址输入 +
+     * 三颗复制按钮（整串 / 端口 / 密码）常驻页面中央；「关闭直连房间」走完之后立刻
+     * 回大厅（关房是终结动作，留在原地只会看到一堆「已断开」的空状态）。</p>
+     */
+    private void showDirectPage() {
+        page = Page.DIRECT;
+        field = null;
+        hint = "";
+        hintColor = 0xAEB5C4;
+        getChildren().clear();
+
+        final boolean hosting = com.muoniumplayer.party.direct.MpDirect.isHosting();
+        final boolean joined = com.muoniumplayer.party.direct.MpDirect.isJoined();
+
+        final Panel dialog = createDialog(468, () -> hosting ? 286.0 : 300.0, null);
+        // 托管/加入态的布局是按构建那一刻的状态定型的；如果会话随后被动终结
+        // （休眠恢复打断 socket 等），留在页面上会看到一具「空密码、0 人」的僵尸。
+        // 状态翻 false 就重建一次本页。
+        //
+        // 检测挂在一张不画东西的透明子件上——不能覆盖 dialog 自己的
+        // beforeRender（那里跑着入场动画与尺寸布局，覆盖掉弹窗就永远是 0 尺寸，
+        // 只剩子控件裸渲染在主界面上）。
+        if (hosting || joined) {
+            final RectWidget watcher = new RectWidget();
+            dialog.addChild(watcher);
+            watcher.setClickable(false).setBeforeRenderCallback(() -> {
+                watcher.setBounds(0, 0);
+                watcher.setAlpha(0f);
+                if (!com.muoniumplayer.party.direct.MpDirect.isHosting()
+                        && !com.muoniumplayer.party.direct.MpDirect.isJoined()) {
+                    showDirectPage();
+                }
+            });
+        }
+        // 回程按来路区分：从「一起听」二级菜单的直连卡片跳来时，返回键回二级菜单
+        // （那里才是不打断的路径）；从服务器房间大厅进来时照旧回大厅。
+        addBackButton(dialog, directCameFromMenu ? this::returnToMenu : this::showOverview);
+        // 副标题单行只有 ~388px 可用（TRIM 截断），长文案会丢字——
+        // 非托管态的连接指引放进下方的 listenNote 行，这里只留短句。
+        addDetailTitle(dialog, "直连房间",
+                hosting ? "把邀请串发给好友，对方在「直连房间」页粘贴即可加入"
+                        : joined ? "已连接到房主的直连房间，用「‹ 一起听」返回房间"
+                        : "服务器没装一起听 mod？在这里开房或凭邀请串加入");
+
+        // ── 托管态 ──────────────────────────────────────────────────────────
+        if (hosting) {
+            // 房主状态行：端口 + 在线成员数 + 密码。
+            LabelWidget status = label(dialog, () -> {
+                int members = com.muoniumplayer.party.direct.MpDirect.onlineMemberCount();
+                return "端口 " + com.muoniumplayer.party.direct.MpDirect.port()
+                        + "  ·  " + members + " 位好友在线  ·  密码 "
+                        + com.muoniumplayer.party.direct.MpDirect.hostPassword();
+            }, FontManager.pf12bold);
+            status.setBeforeRenderCallback(() -> {
+                status.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                status.setMaxWidth(Math.max(1, dialog.getWidth() - 40));
+                status.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+                status.setPosition(20, 68);
+            });
+
+            // 地址输入框：穿透给什么就填什么；填过一次会记住，下次直接复制。
+            LabelWidget hostCaption = label(dialog, () -> {
+                String h = DirectRoomSettingsBridge.lastHost();
+                return h.isEmpty() ? "邀请地址（填内网穿透给你的地址，或局域网 IP）"
+                        : "邀请地址（已记住；换穿透地址时再改）";
+            }, FontManager.pf10bold);
+            hostCaption.setBeforeRenderCallback(() -> hostCaption
+                    .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
+                    .setPosition(20, 94));
+
+            final TextFieldWidget hostInput = inputField(dialog,
+                    "例如 cn-zhejiang.xxx.com 或 192.168.1.5", 160, 20, 112, -1);
+            hostInput.setText(DirectRoomSettingsBridge.lastHost());
+
+            dialogHint(dialog, 162);
+
+            // 复制整串：主按钮。地址没填时提示但不拦——有人只需要密码和端口口头说。
+            btn(dialog, () -> System.currentTimeMillis() - copiedAt < COPIED_HINT_MILLIS
+                            ? PartyIcons.CHECK : PartyIcons.KEY,
+                    () -> System.currentTimeMillis() - copiedAt < COPIED_HINT_MILLIS
+                            ? "已复制邀请串" : "复制邀请串", null, () -> {
+                        String host = text(hostInput);
+                        DirectRoomSettingsBridge.setLastHost(host);
+                        String s = com.muoniumplayer.party.direct.MpDirect.inviteString(host);
+                        if (s.isEmpty()) return;
+                        KeyboardUtils.setClipboardString(s);
+                        copiedAt = System.currentTimeMillis();
+                    }, STYLE_PRIMARY, b -> {
+                        double w = (Math.max(1, dialog.getWidth() - 40) - 16) / 3.0;
+                        b.setBounds(w, 34);
+                        b.setPosition(20, dialog.getHeight() - 96);
+                    });
+            // 只复制端口 + 密码（对方已经知道地址时用）。
+            btn(dialog, () -> PartyIcons.KEY, () -> "复制端口密码", null, () -> {
+                String s = com.muoniumplayer.party.direct.MpDirect.inviteString("");
+                if (s.isEmpty()) return;
+                KeyboardUtils.setClipboardString(s);
+                hint = "已复制「端口#密码」：" + s;
+                hintColor = OK_COLOR;
+            }, STYLE_GHOST, b -> {
+                double w = (Math.max(1, dialog.getWidth() - 40) - 16) / 3.0;
+                b.setBounds(w, 34);
+                b.setPosition(20 + w + 8, dialog.getHeight() - 96);
+            });
+            // 关房：终结动作，走完立刻回大厅。
+            btn(dialog, () -> PartyIcons.CANCEL, () -> "关闭直连房间", null, () -> {
+                com.muoniumplayer.party.direct.MpDirect.close();
+                showOverview();
+            }, STYLE_DANGER, b -> {
+                double w = (Math.max(1, dialog.getWidth() - 40) - 16) / 3.0;
+                b.setBounds(w, 34);
+                b.setPosition(20 + (w + 8) * 2, dialog.getHeight() - 96);
+            });
+            return;
+        }
+
+        // ── 已加入态 ────────────────────────────────────────────────────────
+        // joined 有自己的布局：此刻只有两件事有意义（回房间 / 断开重连）。
+        // 落回「开房+加入」表单的话，玩家会踩到重入守卫的拒绝，也找不到断开的门。
+        if (joined) {
+            LabelWidget status = label(dialog, "已连接到好友的直连房间。", FontManager.pf14bold);
+            status.setBeforeRenderCallback(() -> {
+                status.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                status.setPosition(20, 72);
+            });
+            LabelWidget sub = label(dialog, "回房间用左上角的「‹ 返回」或顶部标签栏；想换房间或重连，先断开。",
+                    FontManager.pf12);
+            sub.setBeforeRenderCallback(() -> {
+                sub.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+                sub.setMaxWidth(Math.max(1, dialog.getWidth() - 40));
+                sub.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+                sub.setPosition(20, 96);
+            });
+
+            dialogHint(dialog);
+
+            btn(dialog, () -> PartyIcons.CANCEL, () -> "断开连接", null, () -> {
+                com.muoniumplayer.party.direct.MpDirect.close();
+                showDirectPage();
+            }, STYLE_DANGER, b -> {
+                b.setBounds(Math.max(1, dialog.getWidth() - 40), 34);
+                b.setPosition(20, dialog.getHeight() - 54);
+            });
+            return;
+        }
+
+        // ── 未托管态 ────────────────────────────────────────────────────────
+        // 开房区。监听一律 0.0.0.0：局域网 IP 与 frp 回连两条路都通，
+        // 走哪条由邀请串里的地址决定——因此没有「仅回环/可直连」开关。
+        LabelWidget portCaption = label(dialog, "开一个直连房间 · 监听端口", FontManager.pf10bold);
+        portCaption.setBeforeRenderCallback(() -> portCaption
+                .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
+                .setPosition(20, 66));
+
+        final TextFieldWidget portInput = inputField(dialog, "端口", 5, 20, 84, 150);
+        portInput.getTextField().setMaxStringLength(5);
+        portInput.setText(String.valueOf(com.muoniumplayer.party.direct.MpDirect
+                .lastPortOr(com.muoniumplayer.party.direct.DirectRoomConfig.DEFAULT_PORT)));
+
+        // 监听范围说明：替代原来那颗令人困惑的开关。
+        LabelWidget listenNote = label(dialog, "同一局域网用你的内网 IP 直连；"
+                + "公网好友用内网穿透（frp）——都能连", FontManager.pf10bold);
+        listenNote.setBeforeRenderCallback(() -> {
+            listenNote.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            listenNote.setMaxWidth(Math.max(1, dialog.getWidth() - 40 - 150 - 12));
+            listenNote.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            listenNote.setPosition(20 + 150 + 12, inkTop(listenNote, 102.0));
+        });
+
+        // 加入区。
+        LabelWidget joinCaption = label(dialog, "加入好友的直连房间", FontManager.pf10bold);
+        joinCaption.setBeforeRenderCallback(() -> joinCaption
+                .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
+                .setPosition(20, 138));
+
+        final TextFieldWidget joinInput = inputField(dialog,
+                "地址:端口#密码（好友发你的整串）", 160, 20, 156, -1);
+
+        dialogHint(dialog, 206);
+
+        // 底部动作行：开房（主）+ 加入。
+        btn(dialog, () -> PartyIcons.ADD, () -> "开直连房间", null, () -> {
+            String value = text(portInput);
+            int port;
+            try {
+                port = Integer.parseInt(value);
+            } catch (NumberFormatException e) {
+                hint = "端口要是数字";
+                hintColor = ERROR_COLOR;
+                return;
+            }
+            String err = com.muoniumplayer.party.direct.MpDirect.hostRoom(port, null);
+            if (err != null) {
+                hint = err;
+                hintColor = ERROR_COLOR;
+                return;
+            }
+            // 开好直接重进本页：托管态有地址输入和复制按钮，下一步顺理成章。
+            showDirectPage();
+        }, STYLE_PRIMARY, b -> {
+            b.setBounds(120, 34);
+            b.setPosition(20, dialog.getHeight() - 54);
+        });
+
+        btn(dialog, () -> PartyIcons.KEY, () -> "加入", null, () -> {
+            String value = text(joinInput);
+            if (value.isEmpty()) {
+                hint = "请先粘贴好友发的邀请串";
+                hintColor = ERROR_COLOR;
+                return;
+            }
+            // 建连在后台（最长 16s），不能冻住渲染线程：先给「连接中」提示，
+            // 结果回主线程后再刷新页面。
+            hint = "正在连接好友的直连房间…";
+            hintColor = 0xAEB5C4;
+            String syncErr = com.muoniumplayer.party.direct.MpDirect.joinRoom(value, err -> {
+                if (err != null) {
+                    hint = err;
+                    hintColor = ERROR_COLOR;
+                } else {
+                    showOverview();
+                }
+            });
+            if (syncErr != null) {
+                hint = syncErr;
+                hintColor = ERROR_COLOR;
+            }
+        }, STYLE_GHOST, b -> {
+            double w = Math.max(1, dialog.getWidth() - 40) - 120 - 10;
+            b.setBounds(w, 34);
+            b.setPosition(20 + 120 + 10, dialog.getHeight() - 54);
+        });
+    }
+
+    /** 直连设置的小桥：UI 层不直接 import muonium-common 的类，走这里解包。 */
+    private static final class DirectRoomSettingsBridge {
+        static String lastHost() {
+            try {
+                return com.muoniumplayer.core.ncm.music.DirectRoomSettings.lastHost();
+            } catch (Throwable ignored) {
+                return "";
+            }
+        }
+
+        static void setLastHost(String host) {
+            try {
+                com.muoniumplayer.core.ncm.music.DirectRoomSettings.setLastHost(host);
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
     /** 链接点歌：整段分享文案 / 短链 / 纯歌曲 ID 都收。 */
     private void showLinkPage() {
         page = Page.LINK;
@@ -2402,6 +2725,8 @@ public final class MpPartyOverlay extends NCMPanel {
         addDetailTitle(dialog, "链接点歌", "解析在你本机完成，只把歌名与播放链接发给服务端");
 
         final TextFieldWidget input = inputField(dialog, "https://music.163.com/song?id=… 或 1234567", 512);
+        // 单输入框页直接把焦点给它：进页面就能粘贴/打字。
+        input.setFocused(true);
 
         dialogHint(dialog);
 
@@ -2572,6 +2897,8 @@ public final class MpPartyOverlay extends NCMPanel {
         addDetailTitle(dialog, title, subtitle);
 
         final TextFieldWidget input = inputField(dialog, placeholder, maxLength);
+        // 单输入框页直接把焦点给它：进页面就能打字（多框的直连页走点击聚焦）。
+        input.setFocused(true);
 
         dialogHint(dialog);
 
@@ -2596,24 +2923,45 @@ public final class MpPartyOverlay extends NCMPanel {
      * 更是完全收不到。换图标是不依赖配色的那一半信息。</p>
      */
     private void dialogHint(final Panel dialog) {
+        dialogHint(dialog, 139.0);
+    }
+
+    /** 定位版提示行：直连页有两个输入区，提示行要落在各自下面。 */
+    private void dialogHint(final Panel dialog, final double y) {
         icon(dialog, () -> hintColor == ERROR_COLOR ? PartyIcons.WARNING : PartyIcons.INFO,
-                ICON_S, () -> 20 + ICON_S * .5, () -> 139.0, () -> hintColor);
+                ICON_S, () -> 20 + ICON_S * .5, () -> y, () -> hintColor);
 
         LabelWidget hintLabel = label(dialog, () -> hint, FontManager.pf12);
         hintLabel.setBeforeRenderCallback(() -> {
             hintLabel.setColor(hintColor);
             hintLabel.setMaxWidth(Math.max(1, dialog.getWidth() - 40 - ICON_S - ICON_GAP));
             hintLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            hintLabel.setPosition(20 + ICON_S + ICON_GAP, inkTop(hintLabel, 139.0));
+            hintLabel.setPosition(20 + ICON_S + ICON_GAP, inkTop(hintLabel, y));
         });
     }
 
     private TextFieldWidget inputField(final Panel dialog, String placeholder, int maxLength) {
+        return inputField(dialog, placeholder, maxLength, 20, 88, -1);
+    }
+
+    /**
+     * 定位版输入框：surface 落在 {@code (x, y)}；{@code width} 给 -1 就占满整行。
+     *
+     * <p>要挪输入框<b>只能挪 surface</b>——文本框自己的回调是按 surface 的相对坐标定位的，
+     * 直接改文本框坐标会跟回调打架（surface 留在原地，文本框飞走，背景板还占着整行）。</p>
+     *
+     * <p>构造时<b>不抢焦点</b>：一页可能有多个输入框（直连页的端口 + 邀请串），默认聚焦
+     * 只会让最后建的框吃掉键盘路由、其余框的文字以 disabled 色渲染得几乎看不见。
+     * 焦点交给点击（TextField.mouseClicked 原生支持），未聚焦的文字用七成亮度的主色——
+     * 看得清，又与聚焦态有区别。</p>
+     */
+    private TextFieldWidget inputField(final Panel dialog, String placeholder, int maxLength,
+                                       final double x, final double y, final double width) {
         final RoundedRectWidget surface = new RoundedRectWidget();
         dialog.addChild(surface);
         surface.setClickable(false).setRadius(8).setBeforeRenderCallback(() -> {
-            surface.setBounds(Math.max(1, dialog.getWidth() - 40), 36);
-            surface.setPosition(20, 88);
+            surface.setBounds(Math.max(1, width < 0 ? dialog.getWidth() - 40 : width), 36);
+            surface.setPosition(x, y);
             surface.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
         stroke(surface, 8, () -> NCMScreen.getColor(NCMScreen.ColorType.BORDER), () -> .6);
@@ -2621,13 +2969,16 @@ public final class MpPartyOverlay extends NCMPanel {
         final TextFieldWidget input = new TextFieldWidget(FontManager.pf12);
         dialog.addChild(input);
         input.getTextField().setMaxStringLength(maxLength);
-        input.setEnabled(true).setFocused(true);
+        input.setEnabled(true);
         input.setPlaceholder(placeholder);
         input.drawUnderline(false);
         input.setBeforeRenderCallback(() -> {
             input.setBounds(Math.max(1, surface.getWidth() - 16), Math.max(1, surface.getHeight() - 8));
             input.setPosition(surface.getRelativeX() + 8, surface.getRelativeY() + 4);
-            input.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            // 聚焦全亮；未聚焦七成亮度——文字必须始终可读（「选中才看得见」就是这么来的）。
+            boolean focused = input.isFocused();
+            input.setColor(focused ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)
+                    : mix(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), 0, .3));
             input.setDisabledTextColor(secondary());
         });
         field = input;
@@ -2967,10 +3318,11 @@ public final class MpPartyOverlay extends NCMPanel {
             bg.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER,
                     (float) (.22 + .58 * bg.hover)));
         });
-        // 悬停时往两侧各长 ROW_INSET 像素：位移比换色更能说明「这一行是可以动手的」。
+        // 悬停时扩展 ROW_INSET 像素说明「这一行可以动手」，但只向左长——
+        // 右缘固定：右列锚着贡献/邀请按钮，两边一起扩就把它们推出行缘。
         bg.setTransformations(() -> {
             double w = Math.max(1, bg.getWidth());
-            bg.scaleAtPos(bg.getX() + w * .5, bg.getY() + bg.getHeight() * .5,
+            bg.scaleAtPos(bg.getX() + w - ROW_INSET, bg.getY() + bg.getHeight() * .5,
                     1.0 + (ROW_INSET * 2 / w) * bg.hover);
         });
 
@@ -3276,8 +3628,19 @@ public final class MpPartyOverlay extends NCMPanel {
      */
     private void metaChips(final AbstractWidget<?> host, final DoubleSupplier x, final DoubleSupplier y,
                            final double box, final CFontRenderer font, final Chip... chips) {
+        metaChips(host, x, y, box, font, () -> Double.MAX_VALUE, chips);
+    }
+
+    /**
+     * 带右边界的信息条：{@code maxX} 之后的 chip 整个隐藏（不换行——这行只有一层高）。
+     * 房间页的 chips 行与右上角两颗按钮同高，窄窗口下不钳制就会钻进按钮底下。
+     */
+    private void metaChips(final AbstractWidget<?> host, final DoubleSupplier x, final DoubleSupplier y,
+                           final double box, final CFontRenderer font,
+                           final DoubleSupplier maxX, final Chip... chips) {
         final LabelWidget[] marks = new LabelWidget[chips.length];
         final LabelWidget[] texts = new LabelWidget[chips.length];
+        final boolean[][] visible = new boolean[chips.length][1];
         final double[][] slot = new double[chips.length][2];
 
         // 排版组件不画东西，只把每格的左上角写进 slot[]。它必须<b>先</b>建：子组件按插入顺序
@@ -3289,11 +3652,14 @@ public final class MpPartyOverlay extends NCMPanel {
             layout.setPosition(0, 0);
             double pen = x.getAsDouble();
             double line = y.getAsDouble();
+            double limit = maxX.getAsDouble();
             for (int index = 0; index < chips.length; index++) {
                 String value = chips[index].text.get();
                 slot[index][0] = pen;
                 slot[index][1] = line;
-                if (!has(value)) continue;
+                boolean show = has(value) && (pen + box + ICON_GAP + font.getStringWidthD(value) <= limit);
+                visible[index][0] = show;
+                if (!show) continue;
                 pen += box + ICON_GAP + font.getStringWidthD(value) + 14.0;
             }
         });
@@ -3305,9 +3671,10 @@ public final class MpPartyOverlay extends NCMPanel {
             final LabelWidget mark = label(host, spec.glyph, iconFont(box));
             marks[index] = mark;
             mark.setBeforeRenderCallback(() -> {
-                boolean show = has(spec.text.get());
+                boolean show = visible[self][0];
                 mark.setColor(spec.color.getAsInt());
                 mark.setAlpha(show ? .85f : 0f);
+                if (!show) return;
                 GlyphInkMetrics square = emSquare(iconFont(box));
                 double cx = slot[self][0] + box * .5;
                 double cy = slot[self][1];
@@ -3321,6 +3688,9 @@ public final class MpPartyOverlay extends NCMPanel {
             final LabelWidget text = label(host, spec.text, font);
             texts[index] = text;
             text.setBeforeRenderCallback(() -> {
+                boolean show = visible[self][0];
+                text.setAlpha(show ? 1f : 0f);
+                if (!show) return;
                 text.setColor(spec.color.getAsInt());
                 text.setPosition(slot[self][0] + box + ICON_GAP, inkTop(text, slot[self][1]));
             });

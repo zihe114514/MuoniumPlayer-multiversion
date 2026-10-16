@@ -59,14 +59,14 @@ public final class FontAssetDownload {
      * 同一批文件的两个镜像。未命中该文件的镜像会 404，竞速下只是那一路白跑。
      */
     static final List<String> MIRRORS = List.of(
-            "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
-            "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
-            "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
-            "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
-            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/fonts/",
-            "https://melodifymc.cc.cd/dl/fonts/",
             "https://file.melodifymc.cc.cd/fonts/",
-            "http://109.206.245.74/dl/fonts/");
+            "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
+            "http://muoniummc.cc.cd/dl/fonts/",
+            "https://melodifymc.cc.cd/dl/fonts/",
+            "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
+            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/fonts/",
+            "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/",
+            "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/fonts/");
 
     /** 关闭自动下载的开关（默认开，只有显式 {@code =false} 才关）。包级可见：静态测试要读它。 */
     static final String PROP_ENABLED = "muonium.fonts.autoDownload";

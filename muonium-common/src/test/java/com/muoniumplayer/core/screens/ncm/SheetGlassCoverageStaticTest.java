@@ -64,7 +64,8 @@ class SheetGlassCoverageStaticTest {
         assertFalse(card.contains("setGlassPlate"), "弹窗里面的卡不许再贴一遍真背景");
         assertTrue(src.contains("pill.setGlassRim(GlassLook.Surface.PLAYER)"),
                 "标题右侧那颗「服务器房间」胶囊没上玻璃");
-        assertTrue(src.contains("pill.setFillAlpha(MpPartyClient.inRoom() ? 1.0f :"),
+        // 在房判定已扩展为「服务器房间或直连房间任一活跃」：绿色强调跟着走，不许压薄。
+        assertTrue(src.contains("pill.setFillAlpha(inRoom || directOn ? 1.0f :"),
                 "在房状态那颗是绿色强调，压薄就看不出「已经在房里」了");
     }
 

@@ -21,6 +21,17 @@ public interface MpHost {
     /** 本地玩家 UUID；不在世界里时返回 null。 */
     UUID selfUuid();
 
+    /**
+     * 本地玩家名；拿不到就返回 {@code null}。
+     *
+     * <p>直连房间的会话表靠它建立：引擎没有 MC 连接可查名字，成员的显示名、
+     * 邀请与踢人按名找人都要用。它随 hello 帧自报给引擎，服务器房间模式下
+     * 服务端 mod 从 MC 连接里拿名字，这个字段被忽略。</p>
+     */
+    default String selfName() {
+        return null;
+    }
+
     /** 往聊天栏写一行反馈。 */
     void chat(String message);
 }

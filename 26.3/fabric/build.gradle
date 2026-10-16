@@ -19,11 +19,15 @@ loom {
 
     // 移植期验收辅助：设了 MU_QUICKPLAY=<存档文件夹名> 就直接进存档，
     // 不用在标题界面一路盲点鼠标（合成按键在本机对 MC 不生效，只能用鼠标，所以这条很省事）。
+    // MU_DEBUG_WORLD_LYRICS=1 顺手挂上 3D 歌词的链路 trace（[WorldLyrics/trace]）。
     runs {
         client {
             def quickPlay = System.getenv('MU_QUICKPLAY')
             if (quickPlay) {
                 programArgs '--quickPlaySingleplayer', quickPlay
+            }
+            if (System.getenv('MU_DEBUG_WORLD_LYRICS')) {
+                property 'muonium.debug.worldLyrics', 'true'
             }
         }
     }

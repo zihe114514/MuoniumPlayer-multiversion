@@ -310,6 +310,14 @@ public final class NeteaseListenTogetherService {
      */
     public static void syncOnce() {
         if (!isActive() || roomId.isEmpty()) return;
+        // MC 房间接管播放器期间禁用对齐：CloudMusic.play 会被房间拦截改写成
+        // 服务器房间点歌——官方房间没对齐，反而把官方列表灌进 MC 房间队列。
+        if (com.muoniumplayer.party.MpPartyClient.inRoom()
+                || com.muoniumplayer.party.direct.MpDirect.isActive()) {
+            statusText = "服务器房间接管播放中，官方房间对齐已暂停";
+            statusIsError = true;
+            return;
+        }
         final long token = generation;
         final String room = roomId;
         statusText = "正在同步房间播放列表…";
@@ -394,6 +402,16 @@ public final class NeteaseListenTogetherService {
 
                 long now = System.currentTimeMillis();
                 if (role == Role.HOST) reportPlaybackDiff();
+                // MC 房间（服务器/直连）接管播放器期间停表：此时 CloudMusic 里放的是
+                // 别人的队列，差分上报会把 MC 房间的歌单整表 REPLACE 进官方房间，
+                // 把官方房员集体拖走。入口互查挡住了并发进入，这条闸兜住
+                // 「先官方后 MC」与检查间隙的一切漏网（与音源闸同款处理）。
+                if (com.muoniumplayer.party.MpPartyClient.inRoom()
+                        || com.muoniumplayer.party.direct.MpDirect.isActive()) {
+                    DownloadDynamicIsland.showNetworkConnectionFailure("一起听", "检测到服务器房间接管播放，官方房间已退出");
+                    leave();
+                    return;
+                }
                 if (now - lastHeartbeatMillis >= HEARTBEAT_INTERVAL_MILLIS) {
                     lastHeartbeatMillis = now;
                     sendHeartbeat();
@@ -492,7 +510,14 @@ public final class NeteaseListenTogetherService {
 
     /** 本地待播列表变了就整表 REPLACE 一次。只比较 id 串，避免每秒都发请求。 */
     private static void syncQueueIfChanged() {
-        List<Music> queue = new ArrayList<>(CloudMusic.playList);
+        List<Music> queue;
+        try {
+            queue = new ArrayList<>(CloudMusic.playList);
+        } catch (java.util.ConcurrentModificationException raced) {
+            // 换歌线程正在改表：这一拍跳过（每秒还会再来），CME 冒上去会被
+            // workerLoop 当成「上游无响应」刷屏。
+            return;
+        }
         StringBuilder builder = new StringBuilder();
         for (Music music : queue) {
             if (music == null || !music.isNetease() || music.getId() <= 0L) continue;
@@ -602,6 +627,11 @@ public final class NeteaseListenTogetherService {
             statusIsError = true;
         }
         DownloadDynamicIsland.showNetworkConnectionFailure("一起听", text);
+    }
+
+    /** 外部闸门的入口：跨引擎互斥检查要把拒绝原因直接写进状态行（见 ListenTogetherService）。 */
+    public static void publishStatus(String text, boolean error) {
+        publish(generation, text, error);
     }
 
     private static void publish(long token, String text, boolean error) {

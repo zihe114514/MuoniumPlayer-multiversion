@@ -265,7 +265,10 @@ class KuGouUiParityStaticTest {
         String facade = read(MUSIC, "ListenTogetherService.java");
         assertTrue(facade.contains("runInBackground(\"创建房间\""), "建房不许在渲染回调里同步打网络");
         assertTrue(facade.contains("runInBackground(\"加入房间\""), "加入同理");
-        assertTrue(facade.contains("if (pendingAction) return;"), "连点两下不该开出两条会话");
+        // 连点防线保留，但被吞的动作不再静默——状态行要说「上一个操作还在进行」。
+        assertTrue(facade.contains("if (pendingAction) {"), "连点两下不该开出两条会话");
+        assertTrue(facade.contains("上一个操作还在进行，请稍候再试"),
+                "被吞的动作要给反馈，不许让按钮看起来像坏了");
         assertTrue(facade.contains("if (pendingAction && (phase == Phase.IDLE || phase == Phase.FAILED))"),
                 "后台动作期间界面要显示「连接中」，否则用户以为没点上");
         assertTrue(facade.contains("throw new IllegalArgumentException"),

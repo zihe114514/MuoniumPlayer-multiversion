@@ -45,6 +45,21 @@ public final class MpParty {
         manager.bootstrap(banFile(configFile), p);
     }
 
+    /**
+     * 用调用方装好的配置对象初始化（直连房间用：宿主想按自己的场景收口默认值）。
+     *
+     * <p>{@code banFile} 与标准 init 同款，按 {@code configFile} 的位置解析；
+     * {@code configFile} 传 null 时落工作目录。配置不再从盘上重读——宿主已经
+     * 加载（或决定用默认值），这里只做装配。</p>
+     */
+    public static void init(MpPlatform p, MpConfig readyConfig, Path configFile) {
+        platform = p;
+        config = readyConfig;
+        manager = new RoomManager(config);
+        Net.bind(p);
+        manager.bootstrap(banFile(configFile), p);
+    }
+
     /** {@code mpsync.json} 旁边的 {@code mpsync-bans.json}。 */
     private static Path banFile(Path configFile) {
         try {

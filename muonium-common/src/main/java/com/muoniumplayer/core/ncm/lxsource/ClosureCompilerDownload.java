@@ -44,14 +44,14 @@ public final class ClosureCompilerDownload {
      * 同一批文件的两个镜像。
      */
     static final List<String> MIRRORS = List.of(
-            "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
-            "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
-            "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
-            "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
-            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/libs/",
-            "https://melodifymc.cc.cd/dl/libs/",
             "https://file.melodifymc.cc.cd/libs/",
-            "http://109.206.245.74/dl/libs/");
+            "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
+            "http://muoniummc.cc.cd/dl/libs/",
+            "https://melodifymc.cc.cd/dl/libs/",
+            "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
+            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/libs/",
+            "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/",
+            "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/libs/");
 
     /** 钉死的发布文件：剥掉 org/checkerframework/**（closure 对其零引用的死重）后的版本。 */
     static final String FILE_NAME = "closure-compiler-v20240317.jar";

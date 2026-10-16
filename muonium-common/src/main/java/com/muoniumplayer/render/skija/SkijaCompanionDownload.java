@@ -69,14 +69,14 @@ final class SkijaCompanionDownload {
      * 两条互为备份——国内对 CF 边缘的连接波动大，多一路就多一分命中的机会。
      */
     static final List<String> MIRRORS = List.of(
-            "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
-            "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
-            "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
-            "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
-            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/skija-companion/",
-            "https://melodifymc.cc.cd/dl/skija-companion/",
             "https://file.melodifymc.cc.cd/skija-companion/",
-            "http://109.206.245.74/dl/skija-companion/");
+            "https://gh-proxy.com/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
+            "http://muoniummc.cc.cd/dl/skija-companion/",
+            "https://melodifymc.cc.cd/dl/skija-companion/",
+            "https://ghfast.top/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
+            "https://gcore.jsdelivr.net/gh/zihe114514/MuoniumPlayer-updates@main/skija-companion/",
+            "https://ghproxy.net/https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/",
+            "https://raw.githubusercontent.com/zihe114514/MuoniumPlayer-updates/main/skija-companion/");
 
     /** 关闭自动下载的开关（默认开，只有显式 {@code =false} 才关）。包级可见：静态测试要读它。 */
     static final String PROP_ENABLED = "muonium.skija.autoDownload";

@@ -1357,8 +1357,16 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.viperOverlay.onInit();
     }
 
-    /** 打开一起听面板；重复打开时先回收上一次的实例，避免两层叠在一起。 */
+    /**
+     * 打开一起听面板；重复打开时先回收上一次的实例，避免两层叠在一起。
+     *
+     * <p>dispose 是延迟生效的标志位（旧实例要等下一帧 shouldClose 才真正摘除），
+     * 而输入链按固定优先级查各浮层——不把旧字段立即置 null，dispose→open 的
+     * 单帧窗口里按键与点击会落到已废弃的实例上（一次「点了没反应/关错层」）。
+     * 三个 open 之间互跳的路径都走同一约定：开对方前先把自己置 null。</p>
+     */
     public void openListenTogether() {
+        this.mpPartyOverlay = null;
         if (this.listenTogetherOverlay != null) this.listenTogetherOverlay.dispose();
         this.listenTogetherOverlay = new ListenTogetherOverlay();
         this.listenTogetherOverlay.onInit();
@@ -1366,6 +1374,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     /** 打开服务器一起听（房间）面板；同样先回收上一次的实例。 */
     public void openMpParty() {
+        this.listenTogetherOverlay = null;
         if (this.mpPartyOverlay != null) this.mpPartyOverlay.dispose();
         this.mpPartyOverlay = new MpPartyOverlay();
         this.mpPartyOverlay.onInit();
@@ -1373,6 +1382,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     /** 打开服务器一起听面板并直接落到「直连房间」页（二级菜单的直连卡片跳进来）。 */
     public void openMpDirect() {
+        this.listenTogetherOverlay = null;
         if (this.mpPartyOverlay != null) this.mpPartyOverlay.dispose();
         this.mpPartyOverlay = new MpPartyOverlay();
         this.mpPartyOverlay.onInit();

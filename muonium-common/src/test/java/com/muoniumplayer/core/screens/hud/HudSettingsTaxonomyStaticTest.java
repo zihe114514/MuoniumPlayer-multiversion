@@ -40,16 +40,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class HudSettingsTaxonomyStaticTest {
 
     private static final List<String> TITLES = Arrays.asList(
-            "歌词样式", "面板与卡片", "灵动岛", "无缝切换", "界面与主题", "信息栏与封面", "缓存与公告");
+            "歌词样式", "3D 歌词", "面板与卡片", "灵动岛", "无缝切换", "界面与主题", "信息栏与封面", "缓存与公告");
 
     /** 与 {@link #TITLES} 同序的条目数；总和必须等于 {@link #TOTAL}。 */
-    private static final List<Integer> COUNTS = Arrays.asList(21, 8, 22, 22, 35, 5, 3);
+    private static final List<Integer> COUNTS = Arrays.asList(21, 15, 8, 22, 22, 35, 5, 3);
 
     /** 「界面与主题」那页 2026-09-30 从 19 条长到 21 条：真玻璃材质组多了「实时背景采集」与
      *  「帧率不够时自动摘玻璃」两个开关；同日傍晚又长到 26 条：多了四面各自的模糊倍率
      *  与「玻璃亮部溢出」；夜里再到 27 条：多了「玻璃融合半径」。「无缝切换」那页 10-01
-     *  从 20 条长到 21 条：多了「切点标记」；现在 22 条，加上「动画样式」；「界面与主题」新增全宽频谱柱数快捷档与自定义档。 */
-    private static final int TOTAL = 116;
+     *  从 20 条长到 21 条：多了「切点标记」；现在 22 条，加上「动画样式」；「界面与主题」新增全宽频谱柱数快捷档与自定义档。
+     *  2026-10-16 新增第 2 页「3D 歌词」15 条（放置 6 / 字体与文本 3 / 发光 3 / 动效 3）。 */
+    private static final int TOTAL = 131;
 
     /** 侧栏一大块的名字。分类要按块相邻摆放，见 {@code GuiHudEditorFolia#navGroupLabel}。 */
     private static final List<String> NAV_GROUPS =
@@ -94,7 +95,7 @@ class HudSettingsTaxonomyStaticTest {
     }
 
     @Test
-    @DisplayName("滑块条目不重复，覆盖 48 个生效设置，不暴露退役的毛玻璃 Bloom / Fusion")
+    @DisplayName("滑块条目不重复，覆盖 53 个生效设置，不暴露退役的毛玻璃 Bloom / Fusion")
     void slidersAppearExactlyOnce() {
         List<String> settings = new ArrayList<String>();
         for (HudSettingsModel.Category category : HudSettingsModel.categories()) {
@@ -106,7 +107,8 @@ class HudSettingsTaxonomyStaticTest {
                 }
             }
         }
-        assertEquals(49, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱自定义柱数、透明度与高度都是有效设置");
+        // 2026-10-16 起 3D 歌词那页带 5 个滑块（距离/散开角/缩放/发光强度/发光扩散）
+        assertEquals(54, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱自定义柱数、透明度与高度都是有效设置");
         assertFalse(settings.contains("GLASS_BLOOM"), "退役的磨砂 bloom 不能作为无效设置暴露");
         assertFalse(settings.contains("GLASS_FUSION"), "参考透镜不使用旧  融合描边");
         assertEquals(settings.size(), new HashSet<String>(settings).size(),

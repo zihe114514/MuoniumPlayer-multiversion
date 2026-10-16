@@ -1,6 +1,7 @@
 package com.muoniumplayer.loader.neoforge;
 
 import com.muoniumplayer.MuoniumPlayerClient;
+import com.muoniumplayer.compat.mc.WorldLyricsBridge;
 import com.muoniumplayer.core.screens.TitleMenuAnnouncementButton;
 import com.muoniumplayer.party.net.MpNetNeoForge;
 import net.minecraft.client.KeyMapping;
@@ -12,6 +13,7 @@ import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.common.NeoForge;
 
@@ -27,6 +29,7 @@ import net.neoforged.neoforge.common.NeoForge;
  *   <tr><td>{@code ClientTickEvents.END_CLIENT_TICK}</td><td>{@code ClientTickEvent.Post}</td></tr>
  *   <tr><td>{@code HudRenderCallback}</td><td>{@code RenderGuiEvent.Post}</td></tr>
  *   <tr><td>{@code ScreenEvents.afterRender}</td><td>{@code ScreenEvent.Render.Post}</td></tr>
+ *   <tr><td>{@code LevelRenderEvents.COLLECT_SUBMITS}</td><td>{@code SubmitCustomGeometryEvent}</td></tr>
  * </table>
  *
  * <p>{@code dist = Dist.CLIENT}：客户端专用 mod，装到服务端上直接不加载，
@@ -52,6 +55,10 @@ public final class MuoniumPlayerNeoForge {
         gameBus.addListener(this::onRenderGui);
         gameBus.addListener(this::onScreenRendered);
         gameBus.addListener(this::onScreenInit);
+        gameBus.addListener(this::onSubmitCustomGeometry);
+
+        // 3D 世界歌词：装纹理宿主（保留 1.21.1 的装配入口契约）。
+        WorldLyricsBridge.install();
     }
 
     /**
@@ -98,6 +105,24 @@ public final class MuoniumPlayerNeoForge {
     private void onScreenRendered(ScreenEvent.Render.Post event) {
         MuoniumPlayerClient.getInstance().onScreenRendered(event.getScreen());
         MuoniumPlayerClient.getInstance().onRenderLayerNotice(event.getGuiGraphics(), true);
+    }
+
+    /**
+     * 3D 世界歌词：对应 Fabric 的 {@code LevelRenderEvents.COLLECT_SUBMITS} ——
+     * 世界渲染的收集阶段（原版实体收集完之后、帧执行之前）。
+     *
+     * <p>26.3 的 {@code RenderLevelStageEvent} 变成了每个阶段一个子类
+     * （{@code AfterOpaqueBlocks} / {@code AfterLevel} / …），但那些挂点在
+     * submit-collect 模型下都拿不到可即时画字的通路（{@code AfterLevel} 的
+     * {@code getRenderPass()} 直接抛「does not provide an active render pass」，
+     * poseStack 也是 null —— 它在帧图已执行完之后派发，提交几何已经太晚）。
+     * 与 1.21.1 的 {@code RenderLevelStageEvent.Stage.AFTER_LEVEL} / Fabric
+     * {@code WorldRenderEvents.LAST} 语义对应的现役挂点是
+     * {@code SubmitCustomGeometryEvent}（原版在 {@code LevelRenderer.submitFeatures}
+     * 末尾派发），矩阵由 {@code WorldLyricsBridge.collectWorldLyrics} 自己算
+     */
+    private void onSubmitCustomGeometry(SubmitCustomGeometryEvent event) {
+        WorldLyricsBridge.collectWorldLyrics(event.getSubmitNodeCollector());
     }
 
     /**
