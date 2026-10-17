@@ -6,54 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 3D 歌词三特效纯函数的离线探针。
+ * 3D 歌词特效纯函数的离线探针。（Wiggle 段随功能移除。）
  */
 class LyricEffectsMathTest {
-
-    // ==================== Wiggle ====================
-
-    @Test
-    void wiggleStepQuantizesTimeToFps() {
-        // 8fps：0..125ms 都是同一个台阶
-        double step0 = LyricEffectsMath.wiggleStep(0.000, 8.0);
-        double stepMid = LyricEffectsMath.wiggleStep(0.124, 8.0);
-        double stepNext = LyricEffectsMath.wiggleStep(0.126, 8.0);
-        assertEquals(step0, stepMid, 1e-9);
-        assertTrue(stepNext > stepMid);
-        assertEquals(0.125, stepNext, 1e-9);
-    }
-
-    @Test
-    void wiggleStepHandlesZeroFps() {
-        // fps<=0 按 1fps 处理：时间被 floor 到整数秒
-        assertEquals(0.0, LyricEffectsMath.wiggleStep(0.5, 0.0), 1e-9);
-        assertEquals(1.0, LyricEffectsMath.wiggleStep(1.5, 0.0), 1e-9);
-    }
-
-    @Test
-    void wiggleOffsetIsDeterministicAndBounded() {
-        double[] a = LyricEffectsMath.wiggleOffset(42L, 3, 1.0, 0.61);
-        double[] b = LyricEffectsMath.wiggleOffset(42L, 3, 1.0, 0.61);
-        assertEquals(a[0], b[0], 1e-12);
-        assertEquals(a[1], b[1], 1e-12);
-        // ±0.5 行高以内
-        assertTrue(Math.abs(a[0]) <= 0.5);
-        assertTrue(Math.abs(a[1]) <= 0.5);
-    }
-
-    @Test
-    void wiggleOffsetZeroAmountIsZero() {
-        double[] zero = LyricEffectsMath.wiggleOffset(1L, 0, 1.0, 0.0);
-        assertEquals(0.0, zero[0], 1e-12);
-        assertEquals(0.0, zero[1], 1e-12);
-    }
-
-    @Test
-    void wiggleOffsetDiffersPerCharacter() {
-        double[] c0 = LyricEffectsMath.wiggleOffset(7L, 0, 1.0, 1.0);
-        double[] c1 = LyricEffectsMath.wiggleOffset(7L, 1, 1.0, 1.0);
-        assertTrue(Math.abs(c0[0] - c1[0]) > 1e-6 || Math.abs(c0[1] - c1[1]) > 1e-6);
-    }
 
     // ==================== Word Pop ====================
 

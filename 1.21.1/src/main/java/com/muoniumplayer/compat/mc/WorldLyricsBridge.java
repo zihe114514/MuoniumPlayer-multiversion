@@ -50,11 +50,19 @@ public final class WorldLyricsBridge {
     private WorldLyricsBridge() {
     }
 
-    /** 树侧初始化（当前无纹理宿主需要装配，保留入口以稳调用契约）。 */
+    /** 树侧初始化：装配字形图集宿主（现代化风格的世界侧纹理通路）。 */
     public static void install() {
         if (hostInstalled) return;
         hostInstalled = true;
+        try {
+            com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas.setHost(LyricGlyphAtlasBridge.INSTANCE);
+        } catch (Throwable t) {
+            logger.error("3D 歌词字形图集宿主装配失败，现代档将回退像素字", t);
+        }
     }
+
+    /** 本帧设置快照（WorldBillboard.drawSmoothGlyph 取发光参数用；帧头装、帧末清）。 */
+    static volatile WorldLyricsSettings currentSettings;
 
     /**
      * 由两个加载器的 LAST/AFTER_LEVEL 事件调用，无参数 —— 相机与矩阵自己取。
@@ -110,6 +118,7 @@ public final class WorldLyricsBridge {
 
         WorldLyricsSettings settings = WorldLyricsSettings.snapshot();
         if (!settings.enabled) return;
+        WorldLyricsBridge.currentSettings = settings;
 
         if (!WorldLyricsState.hasLyrics()) {
             if (TRACE && !tracedNoLyrics) {
@@ -145,6 +154,7 @@ public final class WorldLyricsBridge {
                 System.out.println("[WorldLyrics/trace] 首次 update+render 编排完成（active/fading 组帧）");
             }
         } finally {
+            WorldLyricsBridge.currentSettings = null;
             WorldBillboard.INSTANCE.end();
         }
     }

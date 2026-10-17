@@ -60,6 +60,7 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/compat/mc/CameraAccess.java",
             "com/muoniumplayer/compat/mc/WorldBillboard.java",
             "com/muoniumplayer/compat/mc/WorldLyricsBridge.java",
+            "com/muoniumplayer/compat/mc/LyricGlyphAtlasBridge.java",
             "com/muoniumplayer/MuoniumPlayerClient.java",
             "com/muoniumplayer/render/skija/SkijaHost.java",
             "com/muoniumplayer/api/impl/GLStateManagerImpl.java",

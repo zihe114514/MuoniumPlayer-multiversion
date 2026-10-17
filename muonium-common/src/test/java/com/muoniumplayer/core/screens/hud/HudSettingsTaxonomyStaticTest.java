@@ -43,14 +43,16 @@ class HudSettingsTaxonomyStaticTest {
             "歌词样式", "3D 歌词", "面板与卡片", "灵动岛", "无缝切换", "界面与主题", "信息栏与封面", "缓存与公告");
 
     /** 与 {@link #TITLES} 同序的条目数；总和必须等于 {@link #TOTAL}。 */
-    private static final List<Integer> COUNTS = Arrays.asList(21, 15, 8, 22, 22, 35, 5, 3);
+    private static final List<Integer> COUNTS = Arrays.asList(21, 14, 8, 22, 22, 35, 5, 3);
 
     /** 「界面与主题」那页 2026-09-30 从 19 条长到 21 条：真玻璃材质组多了「实时背景采集」与
      *  「帧率不够时自动摘玻璃」两个开关；同日傍晚又长到 26 条：多了四面各自的模糊倍率
      *  与「玻璃亮部溢出」；夜里再到 27 条：多了「玻璃融合半径」。「无缝切换」那页 10-01
      *  从 20 条长到 21 条：多了「切点标记」；现在 22 条，加上「动画样式」；「界面与主题」新增全宽频谱柱数快捷档与自定义档。
-     *  2026-10-16 新增第 2 页「3D 歌词」15 条（放置 6 / 字体与文本 3 / 发光 3 / 动效 3）。 */
-    private static final int TOTAL = 131;
+     *  2026-10-16 新增第 2 页「3D 歌词」15 条（放置 6 / 字体与文本 3 / 发光 3 / 动效 3）；
+     *  2026-10-17 「文字颜色跟随」toggle 升级为取色条目（数目不变），随后移除「文字抖动」
+     *  —— 「3D 歌词」页 15 → 14 条（动效组剩 逐词弹出 / 节拍闪烁）。 */
+    private static final int TOTAL = 130;
 
     /** 侧栏一大块的名字。分类要按块相邻摆放，见 {@code GuiHudEditorFolia#navGroupLabel}。 */
     private static final List<String> NAV_GROUPS =
@@ -116,7 +118,7 @@ class HudSettingsTaxonomyStaticTest {
     }
 
     @Test
-    @DisplayName("取色两项在歌词页、主题色卡在界面与主题页 —— 它们各自只有一个落点")
+    @DisplayName("桌面歌词取色两项在歌词页、3D 歌词取色在 3D 页、主题色卡在界面与主题页")
     void specialEntriesStayOnTheirPage() {
         List<String> colorPages = new ArrayList<String>();
         List<String> gridPages = new ArrayList<String>();
@@ -134,11 +136,13 @@ class HudSettingsTaxonomyStaticTest {
                 }
             }
         }
-        assertEquals(Arrays.asList("歌词样式", "歌词样式"), colorPages,
-                "两个取色条目要在同一页，用户才会在一个地方配完歌词颜色");
+        assertEquals(Arrays.asList("歌词样式", "歌词样式", "3D 歌词"), colorPages,
+                "桌面歌词的两个取色条目同页（一个地方配完），3D 歌词的取色在自己那一页");
         assertTrue(targets.contains(HudSettingsModel.ColorTarget.CURRENT)
                         && targets.contains(HudSettingsModel.ColorTarget.NORMAL),
                 "当前行与普通行的颜色入口少了一个");
+        assertTrue(targets.contains(HudSettingsModel.ColorTarget.WORLD_LYRICS),
+                "3D 歌词的文字颜色取色入口缺失");
         assertEquals(Arrays.asList("界面与主题"), gridPages, "主题色卡的位置决定侧栏要不要为它单开一页");
     }
 

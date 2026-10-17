@@ -23,7 +23,7 @@ import java.util.Random;
  * </table>
  *
  * {@code CloudMusic.getSnapshot()}（含歌词偏移的唯一时钟）；CjkFont 平滑字体换成
- * {@code LyricTextureCache} 纹理烘焙（同一观感）；DeepGlow 后处理换成 TextGlow 烘焙。</p>
+ * {@code LyricGlyphAtlas} 字形图集烘焙（同一观感）；DeepGlow 后处理换成 TextGlow 烘焙。</p>
  */
 public final class WorldLyricsState {
 
@@ -111,9 +111,6 @@ public final class WorldLyricsState {
         boolean facePlayer();
         boolean keepAway();
         boolean wordPop();
-        boolean wiggle();
-        double wiggleFps();
-        double wiggleAmount();
     }
 
     /** 一行歌词这一帧的最终落点与字形状态，渲染层只读。 */
@@ -148,14 +145,16 @@ public final class WorldLyricsState {
     }
 
     /**
-     * 下标（wiggle 种子）与 pop 缩放。由渲染层按此直接画。
+     * 下标（确定性随机相位与出场级联的键）与 pop 缩放。由渲染层按此直接画。
      */
     public static final class LyricGlyph {
         public final char c;
-        public final float x, y;   // 字的顶部（与 MC 字体一致）
-        public final float alpha;  // 0..1
-        public final int k;        // 非空白字符序号（wiggle/确定性随机种子用）
-        public final float pop;    // word pop 缩放（1 = 无）
+        public final float x, y;   // 字的顶部（与 MC 字体一致；入场落位已含在内）
+        /** 0..1。入场淡入给出初值；整行出场时由出场级联就地缩（非 final）。 */
+        public float alpha;
+        public final int k;        // 非空白字符序号（确定性随机/出场级联的相位键）
+        /** 恒生效的弹性缩放（入场飞入回弹 / word pop 回弹 / 出场收拢），1 = 无。 */
+        public float pop;
 
         LyricGlyph(char c, float x, float y, float alpha, int k, float pop) {
             this.c = c;
@@ -170,6 +169,8 @@ public final class WorldLyricsState {
     /** 一句歌词的全部字形布局（相对平面原点，单位：文字像素）。 */
     public static final class LyricGlyphs {
         public final List<LyricGlyph> glyphs = new ArrayList<>();
+        /** 与 glyphs 一一对应的入场相位（歌曲内 ms）——出场级联按它排「先唱先走」。 */
+        public final List<Float> appearAts = new ArrayList<>();
         public final int seed;
         public final float totalHeight;
 
@@ -497,23 +498,59 @@ public final class WorldLyricsState {
     }
 
 
+    /** 入场动画时长（ms）：淡入 + 上浮 + 回弹共用这一条时间轴。 */
+    private static final float ENTER_MS = 320f;
+    /** 入场上浮距离（设计像素）：从下方 8px 处落位，比旧 5px 更有「飞入」感。 */
+    private static final float ENTER_LIFT_PX = 8f;
+    /** 入场回弹的过冲幅度（ease-out-back，c1=1.70158 的标准曲线）。 */
+    private static final float ENTER_BACK = 1.70158f;
+    /** 出场逐字级联的窗口（ms）：行开始淡出后，先唱的字先走。 */
+    private static final float EXIT_STAGGER_MS = 220f;
+    /** 出场缩小下限：字缩到 0.85 再随行 alpha 一起消失。 */
+    private static final float EXIT_SCALE_MIN = 0.85f;
+
+    /** ease-out-back：先过冲再落回，比 smoothstep 多一分弹性与华丽感。 */
+    private static float easeOutBack(float t) {
+        // c3 = c1 + 1
+        float u = t - 1f;
+        return 1f + (ENTER_BACK + 1f) * u * u * u + ENTER_BACK * u * u;
+    }
+
     /**
-     * 构建一句的字形布局：逐字出现（每个字在 reveal 窗口内依次淡入、smoothstep、
-     * 从下往上浮 5px），word pop 开时按 charTimes 整词弹出（1+0.55·back² 先大后回）。
-     * 坐标以平面中心为原点、单位是文字像素（渲染层乘 scale 进世界）。
+     * 构建一句的字形布局与动画状态。
      *
-     * @param pixelWidthOf 单行像素宽（宿主用 MC 字体量）
+     * <h2>入场（每个字一条 ENTER_MS 时间轴）</h2>
+     * <ul>
+     *   <li>相位：有逐字轴时用逐字时刻（词被唱到的瞬间起舞），否则按字序均分
+     *       reveal 窗口，再叠 ±20ms 的 hashRand 抖动 —— 群像错落，不像阅兵；</li>
+     *   <li>位置：从下方 {@link #ENTER_LIFT_PX}px 处按 ease-out-back 落位
+     *       （过冲 2px 再回落），alpha 前 60% 时间用 smoothstep 亮起来；</li>
+     *   <li>缩放：0.6 → 1 的 ease-out-back（字从「远处飞来」），落到 1 后由
+     *       word pop 的回弹接管（有逐字轴时）。</li>
+     * </ul>
+     *
+     * <h2>出场（整行淡出 0.4s 的精化）</h2>
+     * 行 alpha 统一淡出的同时，每个字按自身序号级联提前退场（先唱的先走，
+     * 窗口 {@link #EXIT_STAGGER_MS}），并缩到 {@link #EXIT_SCALE_MIN} ——
+     * 行的消失变成一串涟漪而不是一整块突然熄灭。
+     *
+     * <p>坐标以平面中心为原点、单位是文字像素（渲染层乘 scale 进世界）。
+     *
+     * @param pixelWidthOf 单行像素宽（与绘制通道同源）
+     * @param exiting      该行正在整行淡出（出场级联只在这一态生效；
+     *                     恢复播放的整行淡入 alphaMul 同样 <1,不能误触发退场）
      */
     public static LyricGlyphs buildGlyphs(Floating f, long songNowMs, float alphaMul,
-                                          boolean wordPop, PixelWidthOf pixelWidthOf) {
+                                          boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf) {
         List<String> lines = f.lines;
         long elapsedMs = songNowMs - f.startMs;
         boolean flashMode = wordPop && f.charTimes.length > 0;
         int total = 0;
         for (String s : lines) total += s.length();
         total = Math.max(1, total);
+        int seed = lines.hashCode();
 
-        LyricGlyphs out = new LyricGlyphs(lines.hashCode(), lines.size() * LINE_H);
+        LyricGlyphs out = new LyricGlyphs(seed, lines.size() * LINE_H);
         float y = -(lines.size() * LINE_H) / 2f;
         int k = 0;      // 字形下标（含空白，与  一致）
         int n = 0;      // 非空白字符序号
@@ -522,31 +559,70 @@ public final class WorldLyricsState {
             float x = -w / 2f;
             for (int i = 0; i < line.length(); i++) {
                 char c = line.charAt(i);
-                if (flashMode && !Character.isWhitespace(c)) {
-                    long at = f.charTimes[Math.min(n, f.charTimes.length - 1)];
-                    n++;
-                    float t = (elapsedMs - at) / 160f;
-                    if (t >= 0f) {
-                        float a = (float) clamp01(t * 3f) * alphaMul;
-                        float back = (float) clamp01(1f - t);
-                        float pop = 1f + 0.55f * back * back;
-                        if (a > 0.02f) {
-                            out.glyphs.add(new LyricGlyph(c, x, y, a, k, pop));
-                        }
+                if (!Character.isWhitespace(c)) {
+                    // ---- 入场相位 ----
+                    float appearAt;
+                    if (flashMode) {
+                        appearAt = f.charTimes[Math.min(n, f.charTimes.length - 1)];
+                        n++;
+                    } else {
+                        appearAt = (float) ((double) k / total * f.revealMs);
                     }
-                } else if (!flashMode) {
-                    float appearAt = (float) ((double) k / total * f.revealMs);
-                    float a = (float) clamp01((elapsedMs - appearAt) / CHAR_FADE_MS);
-                    a = a * a * (3f - 2f * a);  // smoothstep
-                    float alpha = a * alphaMul;
-                    if (alpha > 0.02f && !Character.isWhitespace(c)) {
-                        out.glyphs.add(new LyricGlyph(c, x, y + (1f - a) * CHAR_LIFT_PX, alpha, k, 1f));
+                    // ±20ms 确定性抖动：同句群像错落（发光层与本层同帧取同值）
+                    appearAt += hashRand(k, 0L, 7, seed) * 20f;
+                    float enterT = (elapsedMs - appearAt) / ENTER_MS;
+
+                    if (enterT > 0f) {
+                        // ---- 入场曲线 ----
+                        float landed = (float) clamp01(enterT);                       // 0..1 时间进度
+                        float back = easeOutBack(landed);                             // 过冲再回落的位置/缩放曲线
+                        float fadeT = (float) clamp01(enterT / 0.6f);                 // alpha 用前 60% 时间
+                        float fade = fadeT * fadeT * (3f - 2f * fadeT);               // smoothstep
+
+                        // 位置：从下 8px 落位（ease-out-back 过冲 2px 再回来）
+                        float gy = y + (1f - back) * ENTER_LIFT_PX;
+                        // 缩放：0.6 → 过冲 1.06 → 1.0
+                        float scale = 0.6f + 0.4f * back;
+                        // word pop（有逐字轴时）：入场完成后由唱到时刻的回弹接管
+                        if (flashMode) {
+                            float popT = (elapsedMs - appearAt) / 160f;
+                            float back01 = (float) clamp01(1f - popT);
+                            scale *= 1f + 0.55f * back01 * back01;
+                        }
+                        float a = fade * alphaMul;
+                        if (a > 0.02f) {
+                            out.glyphs.add(new LyricGlyph(c, x, gy, a, k, scale));
+                            out.appearAts.add(appearAt);
+                        }
                     }
                 }
                 x += pixelWidthOf.widthOf(String.valueOf(c));
                 k++;
             }
             y += LINE_H;
+        }
+
+        // ---- 出场级联：行 alpha 已经是统一淡出系数（alphaMul），
+        //      这里按「真实出现序」把退场提前量摊进 EXIT_STAGGER_MS —— 先唱的字先走。
+        //      出现序不是排版序 k：逐字歌词（flashMode）的时间戳可能非单调（副歌重叠），
+        //      级联必须按每字自己的 appearAt 归一，否则退场顺序和演唱顺序会拧着。
+        if (exiting && alphaMul < 1f && !out.glyphs.isEmpty() && !out.appearAts.isEmpty()) {
+            float first = out.appearAts.get(0);
+            float last = out.appearAts.get(out.appearAts.size() - 1);
+            float span = Math.max(1f, last - first);
+            for (int i = 0; i < out.glyphs.size(); i++) {
+                LyricGlyph g = out.glyphs.get(i);
+                // 出现序归一 0..1 → 级联延迟 0..EXIT_STAGGER_MS
+                float stagger = (out.appearAts.get(i) - first) / span * EXIT_STAGGER_MS;
+                float exitT = (1f - alphaMul) * (FADE_SECONDS * 1000f) - stagger;
+                if (exitT > 0f) {
+                    float exitFade = (float) clamp01(1f - exitT / (FADE_SECONDS * 1000f * 0.75f));
+                    g.alpha *= exitFade * exitFade * (3f - 2f * exitFade);
+                    // 退场缩小：向 EXIT_SCALE_MIN 收拢（乘在 pop 上，宿主同一入口）
+                    float exitShrink = EXIT_SCALE_MIN + (1f - EXIT_SCALE_MIN) * exitFade;
+                    g.pop *= exitShrink;
+                }
+            }
         }
         return out;
     }
@@ -566,18 +642,6 @@ public final class WorldLyricsState {
         h *= 0x5bd1e995;
         h ^= h >>> 15;
         return (h & 0xFFFF) / 32767.5f - 1f;
-    }
-
-    public static long wiggleFrame(long wallMillis, double fps) {
-        return (long) (wallMillis * Math.max(1.0, fps) / 1000.0);
-    }
-
-    public static float[] wiggleOf(LyricGlyph g, int seed, long frame, double amount) {
-        float rot = hashRand(g.k, frame, 1, seed) * 9f * (float) amount;
-        float dx = hashRand(g.k, frame, 2, seed) * 0.8f * (float) amount;
-        float dy = hashRand(g.k, frame, 3, seed) * 1.6f * (float) amount;
-        float sc = 1f + hashRand(g.k, frame, 4, seed) * 0.12f * (float) amount;
-        return new float[] {rot, dx, dy, sc};
     }
 
     // ==================== 入口 ====================

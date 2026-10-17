@@ -1,58 +1,16 @@
 package com.muoniumplayer.core.lyrics3d;
 
 /**
- * 3D 歌词三特效的纯函数数学：Wiggle（低帧率抖动）、Word Pop（词被唱到的瞬间弹一下）、
- * Text Flash（按节拍闪）。
+ * 3D 歌词特效的纯函数数学：Word Pop（词被唱到的瞬间弹一下）、Text Flash（按节拍闪）。
+ * （Wiggle 低帧率抖动已整体移除；逐字入出场动画的曲线在 WorldLyricsState.buildGlyphs。）
  *
- * <p>全部无状态、可离线断言（ProbeTest），与帧率无关 —— 时间都由调用方以毫秒/秒传入。
- * 参考实现（Placement: In the world）的对应项：Wiggle fps≈8、Wiggle amount 0..1、
- * Word Pop 弹一下（带 size 上限）、Text Flash 按拍闪（可调幅度）。</p>
+ * <p>全部无状态、可离线断言（ProbeTest），与帧率无关 —— 时间都由调用方以毫秒/秒传入。</p>
  */
 public final class LyricEffectsMath {
 
     private LyricEffectsMath() {
     }
 
-    // ==================== Wiggle ====================
-
-    /**
-     * Wiggle 的量化时钟：把连续时间按 fps 切成台阶。
-     *
-     * <p>参考实现默认 8fps —— 手绘逐帧的抖动质感来自<b>低帧率</b>，用连续时间反而像信号抖动。
-     * {@code floor(t*fps)/fps} 让同一台阶内相位恒定，字稳住一拍再跳到下一组偏移。</p>
-     *
-     * @param tSeconds 连续动画时间（秒）
-     * @param fps      量化帧率（参考实现 8；&lt;=0 视为 1）
-     */
-    public static double wiggleStep(double tSeconds, double fps) {
-        double f = fps <= 0 ? 1.0 : fps;
-        return Math.floor(tSeconds * f) / f;
-    }
-
-    /**
-     * 逐字符 Wiggle 偏移（单位：行高的比例）。相位由「字符下标 + 量化时间」经确定性随机给出
-     * （与全屏页 {@code FullscreenLyricStage.random} 同一族：fract(sin(x)*10000)），
-     * 同一字符同一台阶永远取同一偏移 —— 录屏与回放一致。
-     *
-     * @param charIndex  字符下标（行内）
-     * @param timeStep   已量化的时间（{@link #wiggleStep} 的返回值）
-     * @param amount     抖动幅度 0..1（设置项 Wiggle amount）
-     * @return 水平/垂直偏移，单位是「行高的比例」；乘上行高（方块）得世界偏移
-     */
-    public static double[] wiggleOffset(long seed, int charIndex, double timeStep, double amount) {
-        if (amount <= 0.001) {
-            return new double[] {0.0, 0.0};
-        }
-        double phase = timeStep * 7.0 + charIndex * 1.37;
-        double rx = frac(Math.sin((seed + phase) * 12.9898) * 43758.5453);
-        double ry = frac(Math.sin((seed + phase) * 78.2330) * 24634.6345);
-        // ±0.5 行高以内；amount 线性缩放。参考实现 amount 默认 0.61 时约 ±0.3 行高。
-        return new double[] { (rx - 0.5) * amount, (ry - 0.5) * amount };
-    }
-
-    private static double frac(double v) {
-        return v - Math.floor(v);
-    }
 
     // ==================== Word Pop ====================
 

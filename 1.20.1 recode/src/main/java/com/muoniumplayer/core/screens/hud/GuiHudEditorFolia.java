@@ -2631,6 +2631,15 @@ public class GuiHudEditorFolia extends GuiScreen {
         return panelY + (panelH - PICKER_H) / 2;
     }
 
+    /** 取色器标题：每个 ColorTarget 一句。 */
+    private static String pickerTitle(HudSettingsModel.ColorTarget target) {
+        switch (target) {
+            case CURRENT: return "当前歌词颜色";
+            case WORLD_LYRICS: return "3D 歌词文字颜色";
+            default: return "普通歌词颜色";
+        }
+    }
+
     private void drawColorPicker(CFontRenderer fr, int panelX, int panelY, int panelW, int panelH,
                                  int mouseX, int mouseY) {
         int x = pickerX(panelX, panelW);
@@ -2644,7 +2653,7 @@ public class GuiHudEditorFolia extends GuiScreen {
             drawRoundedOutline(x, y, PICKER_W, PICKER_H, PICKER_RADIUS, 1, structuralDivider());
 
             drawLineText(FontManager.pf14,
-                    editingColor == HudSettingsModel.ColorTarget.CURRENT ? "当前歌词颜色" : "普通歌词颜色",
+                    pickerTitle(editingColor),
                     x + PICKER_PAD, y + PICKER_PAD, PICKER_HEADER_H, textPrimary());
             int[] close = pickerCloseButton(x, y);
             float cp = named("picker.close",

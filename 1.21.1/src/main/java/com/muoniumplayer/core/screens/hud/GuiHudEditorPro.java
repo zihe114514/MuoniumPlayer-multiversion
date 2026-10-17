@@ -1355,6 +1355,15 @@ public class GuiHudEditorPro extends GuiScreen {
         return panelY + Math.max(HEADER_H + 6, (panelH - PICKER_H) / 2);
     }
 
+    /** 取色器标题：每个 ColorTarget 一句。 */
+    private static String pickerTitle(HudSettingsModel.ColorTarget target) {
+        switch (target) {
+            case CURRENT: return "当前歌词颜色";
+            case WORLD_LYRICS: return "3D 歌词文字颜色";
+            default: return "普通歌词颜色";
+        }
+    }
+
     private void drawColorPicker(CFontRenderer fr, int panelX, int panelY, int panelW, int panelH,
                                  int mouseX, int mouseY) {
         int x = pickerX(panelX, panelW);
@@ -1364,7 +1373,7 @@ public class GuiHudEditorPro extends GuiScreen {
         drawRoundedRect(x + 6, y, PICKER_W - 12, 1, 1, PANEL_EDGE);
         drawIcon(FontManager.settingsIcon24, HudSettingsIcons.COLORIZE, x + 20, y + 17, 0xFFB6C4D8);
         drawText(FontManager.pf12bold,
-                editingColor == HudSettingsModel.ColorTarget.CURRENT ? "当前歌词颜色" : "普通歌词颜色",
+                pickerTitle(editingColor),
                 x + 29, y + 13, TEXT_PRIMARY);
         drawGhostButton("picker.close", fr, HudSettingsIcons.CLOSE, null,
                 pickerCloseButton(x, y), mouseX, mouseY, TEXT_SECONDARY, 0xFFE58B7B);

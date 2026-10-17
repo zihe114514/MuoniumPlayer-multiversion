@@ -204,6 +204,8 @@ public class FontManager extends AbstractManager {
                     slot.bold ? fakeBoldBold : fakeBoldRegular,
                     null);
         }
+        // 3D 世界歌词的烘焙字体从正文槽派生 —— 字体换它也换，字形图集整批作废。
+        com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas.onFontChanged();
     }
 
     /** 换回随 mod 打包的字体：连字间距表一起还原，度量口径也不再锁。 */
@@ -212,6 +214,7 @@ public class FontManager extends AbstractManager {
             slot.renderer.retarget(slot.builtinMain, new Font[]{slot.builtinFallback},
                     -1, false, slot.builtinKerning);
         }
+        com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas.onFontChanged();
     }
 
     /** 内置正文字体的主字体实例。用户挑的字体解析不出 AWT 句柄时拿它兜底量墨迹。 */
@@ -262,6 +265,10 @@ public class FontManager extends AbstractManager {
         }
         System.out.println("[MuoniumPlayer] 完整字体热启用：更新了 " + swappedRenderers
                 + " 个渲染器的回退链");
+        // 3D 歌词的烘焙字体是独立派生渲染器（deriveAtSize），不会随上面的
+        // swapFallbackFont 自动失效 —— CJK 字形来自回退链，热启用后不失效图集
+        // 就会出现「界面已是全量字体、3D 歌词还是旧子集字形」。本方法只在渲染线程调。
+        com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas.onFontChanged();
         return true;
     }
 

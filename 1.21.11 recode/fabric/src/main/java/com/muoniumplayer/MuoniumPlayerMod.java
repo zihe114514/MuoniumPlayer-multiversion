@@ -7,8 +7,6 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
-import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.minecraft.client.KeyMapping;
@@ -18,9 +16,9 @@ import net.minecraft.client.KeyMapping;
  * <ol>
  *   <li>{@code fabric.mod.json} 的 client entrypoint 让 Loader 加载本类（替代 Forge 的 {@code @Mod}）；</li>
  *   <li>把七个按键交给 {@link KeyBindingHelper} 注册（NeoForge 侧走 {@code RegisterKeyMappingsEvent}）；</li>
- *   <li>挂四个事件：{@link ClientTickEvents#END_CLIENT_TICK}、{@link HudRenderCallback}、
- *       {@link WorldRenderEvents#END_MAIN}（3D 世界歌词）、
- *       {@link ScreenEvents#afterRender}（后者必须在 AFTER_INIT 里为每个 Screen 实例挂一次）；</li>
+ *   <li>挂三个事件：{@link ClientTickEvents#END_CLIENT_TICK}、{@link HudRenderCallback}、
+ *       {@link ScreenEvents#afterRender}（后者必须在 AFTER_INIT 里为每个 Screen 实例挂一次）；
+ *       3D 世界歌词由 {@code WorldLyricsRenderTailMixin} 挂在帧图之后（见 onInitializeClient 内注释）；</li>
  *   <li>注册一起听通道的 Fabric 实现 {@link MpNetFabric}。</li>
  * </ol>
  */
@@ -59,12 +57,13 @@ public class MuoniumPlayerMod implements ClientModInitializer {
             // 只有原版 GUI 这条路还能说话，而用户此刻看到的正是一片空白。
             client.onRenderLayerNotice(drawContext, false);
         });
-        // 3D 世界歌词：世界渲染的主通道结束（对应 1.21.1 fabric 的 WorldRenderEvents.LAST
-        // —— fabric-api 0.141.6+1.21.11 把 LAST 改名为 END_MAIN 并挪到 ...rendering.v1.world 包，
-        // 触发时机相同：实体/方块实体/地形/半透明都画完之后，粒子/云/天气之前）。
-        // 矩阵与 GL 状态由 WorldLyricsBridge 自己设（Fabric/Forge 给的矩阵不一致，
-        // 自算两边结果一致），partialTick 不需要（歌词动画走歌曲毫秒时钟）。
-        WorldRenderEvents.END_MAIN.register((WorldRenderContext context) -> WorldLyricsBridge.worldRenderEnd());
+        // 3D 世界歌词：不再挂 WorldRenderEvents.END_MAIN —— 那个钩子注入在 main pass
+        // 执行体末尾，云（clouds pass）/天气（weather pass）都是 main pass 之后的独立
+        // pass，歌词画得太早会被云直接混叠盖住。fabric-api 0.141.6 没有「云之后」的
+        // 世界事件，改用本 mod 的 WorldLyricsRenderTailMixin 注入
+        // LevelRenderer.renderLevel 的 TAIL（帧图执行完、modelViewStack 还在栈上），
+        // 与 NeoForge 侧 RenderLevelStageEvent.AfterLevel 同一时机。
+        // 矩阵与 GL 状态由 WorldLyricsBridge.worldRenderEnd() 自己设。
         ScreenEvents.AFTER_INIT.register((minecraft, screen, scaledWidth, scaledHeight) -> {
             ScreenEvents.afterRender(screen).register(
                     (renderedScreen, drawContext, mouseX, mouseY, tickDelta) -> {

@@ -325,6 +325,29 @@ public class CFontRenderer implements Closeable, SharedConstants {
     }
 
     /**
+     * 派生一个<b>同一套字体族</b>（主字体 + 回退链 + 字距表 + 加粗设置）、
+     * 不同字号的渲染器。3D 世界歌词的烘焙字体用：界面字体切到哪，烘焙就跟着哪。
+     *
+     * <p>与 {@link #retarget} 的区别：retarget 是「把这个渲染器换成另一款字体」，
+     * 本方法是「用这套字体再造一个别的字号的渲染器」，原渲染器不动。新渲染器的
+     * Skia 字体对象是独立重建的，与原实例互不共享缓存。</p>
+     *
+     * @param newSizePx 新字号（GUI 像素，与构造器同口径）
+     */
+    public CFontRenderer deriveAtSize(float newSizePx) {
+        CFontRenderer derived = new CFontRenderer(this.sourceFont, newSizePx,
+                this.fontKerning, this.sourceFallbacks);
+        if (this.emboldenMain && derived.skFonts.length > 0) {
+            // 构造器没带 embolden 语义（它由 retarget/buildSkiaFonts 读字段），这里手动对齐：
+            // 主字体假粗是"字体族没有粗体文件"时的观感补偿，派生档必须一致，否则
+            // 50px 烘焙字比界面正文细一档。
+            derived.emboldenMain = true;
+            derived.buildSkiaFonts();
+        }
+        return derived;
+    }
+
+    /**
      * 按<b>对象身份</b>把回退链里的某个字体换成另一个实例：完整字体包下载完成后的热启用入口。
      *
      * <p>和 {@link #retarget} 的分工：retarget 换主字体、锁行盒，是"用户换界面字体"的入口；

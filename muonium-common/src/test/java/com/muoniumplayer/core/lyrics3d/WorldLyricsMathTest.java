@@ -44,6 +44,7 @@ class WorldLyricsMathTest {
         assertEquals(1.0, len, 1e-9);
     }
 
+    // ==================== hashRand（入场动画的确定性相位） ====================
 
     @Test
     void hashRandIsDeterministicInRange() {
@@ -57,27 +58,6 @@ class WorldLyricsMathTest {
     void hashRandDiffersPerCharacterAndFrame() {
         assertTrue(WorldLyricsState.hashRand(0, 1L, 1, 7) != WorldLyricsState.hashRand(1, 1L, 1, 7));
         assertTrue(WorldLyricsState.hashRand(0, 1L, 1, 7) != WorldLyricsState.hashRand(0, 2L, 1, 7));
-    }
-
-    @Test
-    void wiggleFrameQuantizesToLowFps() {
-        // fps=8：0..125ms 内是同一帧
-        long f0 = WorldLyricsState.wiggleFrame(0L, 8.0);
-        long f1 = WorldLyricsState.wiggleFrame(124L, 8.0);
-        long f2 = WorldLyricsState.wiggleFrame(126L, 8.0);
-        assertEquals(f0, f1);
-        assertTrue(f2 > f1);
-        assertEquals(0L, WorldLyricsState.wiggleFrame(0L, 8.0));
-    }
-
-    @Test
-    void wiggleAmountsScaleWithAmount() {
-        WorldLyricsState.LyricGlyph g = new WorldLyricsState.LyricGlyph('字', 0f, 0f, 1f, 3, 1f);
-        float[] half = WorldLyricsState.wiggleOf(g, 7, 100L, 0.5);
-        float[] full = WorldLyricsState.wiggleOf(g, 7, 100L, 1.0);
-        // 同一相位下，幅度 1.0 的偏移必须是 0.5 的两倍
-        assertEquals(half[0] * 2f, full[0], 1e-5f);
-        assertEquals(half[2] * 2f, full[2], 1e-5f);
     }
 
 
@@ -163,17 +143,17 @@ class WorldLyricsMathTest {
         WorldLyricsState.PixelWidthOf width = s -> 12f;
         // 句子刚开始：还没到第一个字的出现点，0 个字形
         WorldLyricsState.LyricGlyphs early =
-                WorldLyricsState.buildGlyphs(f, 0L, 1f, false, width);
+                WorldLyricsState.buildGlyphs(f, 0L, 1f, false, false, width);
         assertTrue(early.glyphs.isEmpty());
         // 句尾：全部出现
         WorldLyricsState.LyricGlyphs late =
-                WorldLyricsState.buildGlyphs(f, 1500L, 1f, false, width);
+                WorldLyricsState.buildGlyphs(f, 1500L, 1f, false, false, width);
         assertEquals(2, late.glyphs.size());
         assertEquals('你', late.glyphs.get(0).c);
         assertEquals('好', late.glyphs.get(1).c);
         // 逐字淡入中：先出现的字 alpha 更高
         WorldLyricsState.LyricGlyphs mid =
-                WorldLyricsState.buildGlyphs(f, 650L, 1f, false, width);
+                WorldLyricsState.buildGlyphs(f, 650L, 1f, false, false, width);
         if (mid.glyphs.size() == 2) {
             assertTrue(mid.glyphs.get(0).alpha > mid.glyphs.get(1).alpha,
                     "先唱到的字应更亮");
@@ -188,11 +168,87 @@ class WorldLyricsMathTest {
         WorldLyricsState.PixelWidthOf width = s -> 12f;
         // word pop 开：第一字刚唱到（elapsed=80ms，t=0.5）应带 pop>1
         WorldLyricsState.LyricGlyphs g =
-                WorldLyricsState.buildGlyphs(f, 80L, 1f, true, width);
+                WorldLyricsState.buildGlyphs(f, 80L, 1f, true, false, width);
         assertTrue(g.glyphs.size() >= 1);
         assertTrue(g.glyphs.get(0).pop > 1f, "刚唱到的词应放大弹出，实际 " + g.glyphs.get(0).pop);
         // 还没唱到的第二个字不出现
         assertTrue(g.glyphs.size() == 1);
+    }
+
+    @Test
+    void buildGlyphsFlashEntryFadesInsteadOfHardCut() {
+        // 逐字歌词的入场：alpha 必须走 180ms smoothstep 淡入（旧实现 t*3 硬切，
+        // 53ms 内从 0 冲到 1，观感是「生硬的单字出现」），并带下→上落位。
+        WorldLyricsState.Floating f = new WorldLyricsState.Floating(
+                List.of("你"), 0L, 1000L, 0, 0, 0, 0, 0,
+                new long[] {0L});
+        WorldLyricsState.PixelWidthOf width = s -> 12f;
+        WorldLyricsState.LyricGlyphs early =
+                WorldLyricsState.buildGlyphs(f, 45L, 1f, true, false, width);
+        assertTrue(early.glyphs.size() == 1);
+        float a45 = early.glyphs.get(0).alpha;
+        assertTrue(a45 > 0.02f && a45 < 0.95f,
+                "入场中段（45ms）的 alpha 应在渐变区间内，实际 " + a45);
+        assertTrue(early.glyphs.get(0).y > -WorldLyricsState.LINE_H / 2f,
+                "入场中段应比落定行位偏下（还没浮到位），实际 y=" + early.glyphs.get(0).y);
+        WorldLyricsState.LyricGlyphs done =
+                WorldLyricsState.buildGlyphs(f, 400L, 1f, true, false, width);
+        assertEquals(1f, done.glyphs.get(0).alpha, 1e-4f, "入场完成后 alpha 应到 1");
+        assertEquals(-WorldLyricsState.LINE_H / 2f, done.glyphs.get(0).y, 1e-4f,
+                "入场完成后应落回行位（单行基线 = -LINE_H/2）");
+    }
+
+    @Test
+    void exitCascadeFadesInAppearanceOrderAndShrinks() {
+        // 出场级联（exiting=true）：alpha 随行淡出整体下降，先出现的字先衰减，
+        // pop 向收拢下限靠拢；非出场态不得误触发级联。
+        WorldLyricsState.Floating f = new WorldLyricsState.Floating(
+                List.of("你好"), 0L, 1000L, 0, 0, 0, 0, 0,
+                new long[] {0L, 400L});
+        WorldLyricsState.PixelWidthOf width = s -> 12f;
+        // 淡出后段：行 alpha=0.25 —— 级联窗口内第一字衰减最多，任一仍在场的字
+        // alpha 不得超过行系数（级联只会额外衰减）。
+        WorldLyricsState.LyricGlyphs mid =
+                WorldLyricsState.buildGlyphs(f, 260L, 0.25f, true, true, width);
+        assertTrue(mid.glyphs.size() >= 1);
+        assertTrue(mid.glyphs.get(0).alpha < 0.25f,
+                "第一字应被级联额外衰减（行系数之下），实际 " + mid.glyphs.get(0).alpha);
+        assertTrue(mid.glyphs.get(0).pop >= 0.85f - 1e-4f,
+                "退场缩放下限 0.85，实际 " + mid.glyphs.get(0).pop);
+        assertTrue(mid.glyphs.get(0).pop < 1f, "退场中应有收拢");
+        // 非出场态：同样的 alphaMul 不得触发级联
+        WorldLyricsState.LyricGlyphs notExiting =
+                WorldLyricsState.buildGlyphs(f, 260L, 0.25f, true, false, width);
+        assertTrue(notExiting.glyphs.size() >= 1);
+        assertEquals(0.25f, notExiting.glyphs.get(0).alpha, 1e-4f,
+                "非出场态 alpha 恰为行系数（无级联）");
+    }
+
+    @Test
+    void entryBackStaysInBounds() {
+        // 入场曲线边界：坐标系 y 向下为正 —— 起步在 baseline+8（下方），
+        // ease-out-back 的过冲在 baseline−0.8（行上方）之内；缩放下限 0.6。
+        WorldLyricsState.Floating f = new WorldLyricsState.Floating(
+                List.of("你"), 0L, 1000L, 0, 0, 0, 0, 0, new long[] {0L});
+        WorldLyricsState.PixelWidthOf width = s -> 12f;
+        float baseline = -WorldLyricsState.LINE_H / 2f;
+        float minY = Float.POSITIVE_INFINITY;
+        float maxY = Float.NEGATIVE_INFINITY;
+        for (long t = 1; t <= 320; t += 4) {
+            WorldLyricsState.LyricGlyphs g =
+                    WorldLyricsState.buildGlyphs(f, t, 1f, true, false, width);
+            assertTrue(g.glyphs.size() == 1);
+            minY = Math.min(minY, g.glyphs.get(0).y);
+            maxY = Math.max(maxY, g.glyphs.get(0).y);
+        }
+        assertTrue(maxY <= baseline + WorldLyricsState.LYRIC_SIZE + 1e-3f,
+                "起步不得低于 baseline+一个字高，实际 " + (maxY - baseline));
+        assertTrue(minY >= baseline - 0.9f,
+                "落位过冲不得高于行位 0.9px（y 向下为正，上方过冲即 minY）,实际 "
+                        + (baseline - minY));
+        WorldLyricsState.LyricGlyphs first =
+                WorldLyricsState.buildGlyphs(f, 1L, 1f, true, false, width);
+        assertTrue(first.glyphs.get(0).pop >= 0.6f - 1e-4f, "入场缩放下限 0.6");
     }
 
 

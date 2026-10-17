@@ -64,7 +64,9 @@ public final class HudSettingsModel {
         /** 当前演唱行的颜色。 */
         CURRENT,
         /** 其余歌词行的颜色。 */
-        NORMAL
+        NORMAL,
+        /** 3D 世界歌词的文字颜色（存 HudConfig.worldLyricsColorRgb，无 OneConfig 值对象）。 */
+        WORLD_LYRICS
     }
 
     public static final class Entry {
@@ -243,6 +245,7 @@ public final class HudSettingsModel {
             try {
                 if (colorTarget == ColorTarget.CURRENT) return lyrics.currentLyricColor.getValue();
                 if (colorTarget == ColorTarget.NORMAL) return lyrics.lyricColor.getValue();
+                if (colorTarget == ColorTarget.WORLD_LYRICS) return new Color(HudConfig.worldLyricsColorRgb);
             } catch (RuntimeException ignored) {
             }
             return new Color(0x9AA6B8);
@@ -256,6 +259,14 @@ public final class HudSettingsModel {
          */
         public void setColor(Color selected) {
             if (selected == null) return;
+            if (colorTarget == ColorTarget.WORLD_LYRICS) {
+                // 3D 歌词没有 OneConfig 值对象，直写 HudConfig（alpha 位剥掉，存 RGB 低 24 位）。
+                // 「改过色」必须单独记旗：0xFFFFFF 本身是合法的自定义色（纯白），
+                // 拿值当旗标会让「选白色」被回落逻辑替换成暖白肉色。
+                HudConfig.worldLyricsColorRgb = selected.getRGB() & 0xFFFFFF;
+                HudConfig.worldLyricsColorCustom = true;
+                return;
+            }
             MusicLyricsWidget lyrics = lyrics();
             if (lyrics == null) return;
             try {
@@ -699,14 +710,14 @@ public final class HudSettingsModel {
                                 slider(HudSetting.WORLD_LYRICS_SPREAD, "多行歌词左右铺开的最大角度。"),
                                 slider(HudSetting.WORLD_LYRICS_SCALE, "整体缩放。1.0 时一行约 0.9 方块高。")),
                         new Group("字体与文本", HudSettingsIcons.SUBTITLES,
-                                toggle("平滑字体", "开启用平滑矢量字体，关闭用原版像素字体。",
+                                toggle("现代化渲染", "开 = Skija 超采样矢量字形 + 高级发光烘焙，跟随界面字体设置；关 = 原版像素字体。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
-                                                return HudConfig.worldLyricsSmoothFont;
+                                                return HudConfig.worldLyricsModernStyle;
                                             }
                                         }, new Runnable() {
                                             public void run() {
-                                                HudConfig.worldLyricsSmoothFont = !HudConfig.worldLyricsSmoothFont;
+                                                HudConfig.worldLyricsModernStyle = !HudConfig.worldLyricsModernStyle;
                                                 saveNow();
                                             }
                                         }),
@@ -721,18 +732,8 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         }),
-                                toggle("文字颜色跟随", "使用桌面歌词的文字颜色，而不是默认白色。",
-                                        new BooleanSupplier() {
-                                            public boolean getAsBoolean() {
-                                                return HudConfig.worldLyricsColorRgb != 0xFFFFFF;
-                                            }
-                                        }, new Runnable() {
-                                            public void run() {
-                                                HudConfig.worldLyricsColorRgb = HudConfig.worldLyricsColorRgb == 0xFFFFFF
-                                                        ? 0xFFF3D9 : 0xFFFFFF;
-                                                saveNow();
-                                            }
-                                        })),
+                                color("文字颜色", "3D 歌词的文字颜色，选白色就是纯白。点击用取色器自定。",
+                                        ColorTarget.WORLD_LYRICS)),
                         new Group("发光", HudSettingsIcons.SPARKLE,
                                 toggle("发光", "文字外发光（Deep Glow 风格），随纹理一起烘焙。",
                                         new BooleanSupplier() {
@@ -748,17 +749,6 @@ public final class HudSettingsModel {
                                 slider(HudSetting.WORLD_LYRICS_GLOW_STRENGTH, "发光强度。"),
                                 slider(HudSetting.WORLD_LYRICS_GLOW_SPREAD, "光晕铺多远。")),
                         new Group("动效", HudSettingsIcons.TUNE,
-                                toggle("文字抖动", "Wiggle：逐字低帧率抖动，像手绘逐帧动画。",
-                                        new BooleanSupplier() {
-                                            public boolean getAsBoolean() {
-                                                return HudConfig.worldLyricsWiggle;
-                                            }
-                                        }, new Runnable() {
-                                            public void run() {
-                                                HudConfig.worldLyricsWiggle = !HudConfig.worldLyricsWiggle;
-                                                saveNow();
-                                            }
-                                        }),
                                 toggle("逐词弹出", "Word Pop：词被唱到的瞬间弹一下。需要逐字歌词。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {

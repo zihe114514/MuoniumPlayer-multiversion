@@ -200,6 +200,45 @@ public final class MusicSourceOverlay extends NcmSheet {
         super.onRender(mouseX, mouseY);
     }
 
+    // ════════════════════════════ 动画助手 ════════════════════════════
+
+    /**
+     * 真毫秒半衰期补间：按墙上时钟把 {@code state[0]} 朝目标推进，{@code halfLifeMs} 是
+     * 「走完一半路程」所需的毫秒数。
+     *
+     * <p>为什么不用 {@link Interpolations#interpolate(double, double, double)}：那条路读全局
+     * 帧间隔，而 {@code calcFrameDelta()} 在帧间隔超过 200ms 时把步长压成 0.01 —— MC 一卡
+     * （加载区块、GC），所有补间当场冻结；恢复后又因为「每帧固定比例」在一台 30fps 的机器上
+     * 慢一倍、144Hz 的机器上快一倍多。这里改读 {@code System.nanoTime}：帧率无关、断档不冻
+     * （超长帧照实按毫秒走，上限一档防瞬跳），和 {@link SheetClock} 的真时钟哲学同一条线 ——
+     * 本页的入场瀑布是 {@code SheetClock} 在演，如果 hover/选中还是那套「先窜后糊」的指数，
+     * 两种节奏混在一块就是肉眼可见的不同步。</p>
+     *
+     * <p>半衰期而不是线性时长：颜色类补间「先快后缓」收得才稳（线性逼近终点会有肉眼可见的
+     * 匀速爬行尾巴），且不需要记起点时间，一个 double 状态格就够。</p>
+     *
+     * @param state       单元素状态格，就地更新
+     * @param target      目标值（0/1 或任意）
+     * @param halfLifeMs  半程毫秒数
+     * @param lastNanos   单元素时间戳格（各补间独享，避免共享同一个「上一帧」）
+     */
+    private static void easeMs(final double[] state, final double target,
+                               final double halfLifeMs, final long[] lastNanos) {
+        long now = System.nanoTime();
+        double frameMs = lastNanos[0] == 0L ? 0.0
+                : Math.min(100.0, (now - lastNanos[0]) / 1_000_000.0);
+        lastNanos[0] = now;
+        if (frameMs <= 0.0 || state[0] == target) {
+            // 首帧不动、到位即锁死（避免无限趋近的微小抖动常年跑着）。
+            return;
+        }
+        // 指数衰减的解析解：剩余距离每过 halfLifeMs 减半。
+        double blend = 1.0 - Math.pow(.5, frameMs / halfLifeMs);
+        state[0] += (target - state[0]) * blend;
+        // 过冲保护：blend<1 恒成立，但浮点累加可能在端点上越过，夹一下。
+        if ((target - state[0]) * (target - state[0]) < 1e-8) state[0] = target;
+    }
+
     // ════════════════════════════ 一级页：来源总览 ════════════════════════════
 
     /**
@@ -283,10 +322,10 @@ public final class MusicSourceOverlay extends NcmSheet {
             double width = Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2);
             double cellWidth = (width - CELL_GAP * 2) / 3.0;
             for (int i = 0; i < 3; i++) {
+                // 行只排 x；入场位移由格子自己的回调按各自的 gate 走（行级位移会和它
+                // 叠成 13px 的双重拖尾，瀑布反而发闷）。
                 cells[i].setBounds(cellWidth, Math.max(1, row.getHeight()));
-                cells[i].setPosition(PAD + CARD_INSET + (cellWidth + CELL_GAP) * i,
-                        // 入场时每格按自己的档位从下方落上来（格子自己的回调再乘各自的 gate）。
-                        (1.0 - cardGate(rowSlot * 3 + i)) * 6.0);
+                cells[i].setPosition(PAD + CARD_INSET + (cellWidth + CELL_GAP) * i, 0.0);
             }
         });
         left.accept(cells[0]);
@@ -316,18 +355,22 @@ public final class MusicSourceOverlay extends NcmSheet {
         // 兜底数组同样按当前状态起步；调用方传了自己的格子时（官方格）以那一格为准。
         final double[] pickedProgress = pickedProgressOut != null
                 ? pickedProgressOut : new double[]{picked.getAsBoolean() ? 1.0 : 0.0};
+        final long[] pickedNanos = new long[1];
+        // hover 独立走真毫秒补间：Card.hover 是基类的帧比例补间，两者不要混用节奏。
+        final double[] hoverSmooth = {0.0};
+        final long[] hoverNanos = new long[1];
         final Card card = new Card();
         cell.addChild(card);
         card.setRadius(12);
         card.setGlassRim(GlassLook.Surface.PLAYER);
         card.setBeforeRenderCallback(() -> {
             card.reveal = cardGate(slot);
-            pickedProgress[0] = Interpolations.interpolate(pickedProgress[0],
-                    picked.getAsBoolean() ? 1.0 : 0.0, .22f);
+            easeMs(pickedProgress, picked.getAsBoolean() ? 1.0 : 0.0, 90.0, pickedNanos);
+            easeMs(hoverSmooth, card.hover > .02 ? 1.0 : 0.0, 60.0, hoverNanos);
             card.setBounds(Math.max(1, cell.getWidth() - 2.0), Math.max(1, CELL_H));
-            card.setPosition(1.0, 2.0 + (1.0 - card.reveal) * 7.0);
+            card.setPosition(1.0, 2.0 + (1.0 - card.reveal) * 9.0);
             card.setColor(mix(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
-                    NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), self[0].hover),
+                    NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), hoverSmooth[0]),
                     accent.getAsInt(), pickedProgress[0]));
             card.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             card.setAlpha((float) card.reveal);
@@ -466,11 +509,12 @@ public final class MusicSourceOverlay extends NcmSheet {
             onClick.run();
             return true;
         });
-        final double[] hover = new double[1];
+        final double[] hover = {0.0};
+        final long[] hoverNanos = new long[1];
         button.setBeforeRenderCallback(() -> {
-            // 平时半亮、hover 实起，走 .2f 补间 —— 布尔跳变的角标在鼠标扫过一排格子时
+            // 平时半亮、hover 实起，走真毫秒补间 —— 布尔跳变的角标在鼠标扫过一排格子时
             // 会连闪三下，补间之后是三段连续的亮起。
-            hover[0] = Interpolations.interpolate(hover[0], button.isHovering() ? 1.0 : 0.0, .2f);
+            easeMs(hover, button.isHovering() ? 1.0 : 0.0, 55.0, hoverNanos);
             button.setAlpha((float) (.45 + .55 * hover[0]));
             button.setBounds(CELL_CORNER, CELL_CORNER);
             button.setPosition(card.getWidth() - 6.0 - CELL_CORNER - (CELL_CORNER + 4.0) * index,
@@ -1194,9 +1238,10 @@ public final class MusicSourceOverlay extends NcmSheet {
         surface.setGlassRim(GlassLook.Surface.PLAYER);
         surface.setClickable(false);
         surface.setRadius(11);
-        final double[] hover = new double[1];
+        final double[] hover = {0.0};
+        final long[] hoverNanos = new long[1];
         surface.setBeforeRenderCallback(() -> {
-            hover[0] = Interpolations.interpolate(hover[0], surface.isHovering() ? 1.0 : 0.0, .22f);
+            easeMs(hover, surface.isHovering() ? 1.0 : 0.0, 70.0, hoverNanos);
             double width = Math.max(1, (dialog.getWidth() - (PAD + CARD_INSET) * 2 - 8.0) / 2.0);
             surface.setBounds(width, 40);
             surface.setPosition(PAD + CARD_INSET + (width + 8.0) * index,
@@ -1385,6 +1430,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         // 调暗走一条补间而不是瞬时色差：启用/停用脚本的那一下，权限组的墨色是滑过去的。
         // 补间按当前状态起步：LX 页重建（导入/删除触发的原地重建）时墨色不闪。
         final double[] enabledInk = {LxSourceService.isEnabled() ? 1.0 : 0.0};
+        final long[] enabledNanos = new long[1];
         final IntSupplier permInk = () -> mix(
                 mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND),
                         NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), .45),
@@ -1406,8 +1452,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         inkDriver.setClickable(false).setBeforeRenderCallback(() -> {
             inkDriver.setBounds(0, 0);
             inkDriver.setAlpha(0f);
-            enabledInk[0] = Interpolations.interpolate(enabledInk[0],
-                    LxSourceService.isEnabled() ? 1.0 : 0.0, .22f);
+            easeMs(enabledInk, LxSourceService.isEnabled() ? 1.0 : 0.0, 90.0, enabledNanos);
         });
         // 安全说明是权限那一组的注脚：警告的本体就是上面两颗开关放出去的东西。
         tip(strip(feed, 24.0), () -> PartyIcons.WARNING,

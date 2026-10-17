@@ -27,24 +27,23 @@ class WorldLyricsStaticTest {
     @Test
     @DisplayName("3D 歌词的发光必须走 TextGlow 单一入口，不得自写模糊")
     void glowGoesThroughTextGlowOnly() throws IOException {
-        String cache = read(shared("LyricTextureCache.java"));
-        assertTrue(cache.contains("TextGlow.drawOn("),
-                "纹理烘焙里的光晕必须走 TextGlow.drawOn（三层高斯那一份实现）");
+        String atlas = read(shared("LyricGlyphAtlas.java"));
+        assertTrue(atlas.contains("TextGlow.drawOn("),
+                "字形烘焙里的光晕必须走 TextGlow.drawOn（三层高斯那一份实现）");
         // MaskFilter / dropShadow 自写模糊是 docs/歌词发光-高斯重写.md 之前清掉的路子
-        assertTrue(!cache.contains("MaskFilter"),
+        assertTrue(!atlas.contains("MaskFilter"),
                 "不得在 3D 歌词里自建 MaskFilter 模糊——发光只能经 TextGlow");
     }
 
     @Test
     @DisplayName("发光强度只传一次：烘焙层不得再乘非量化系数")
     void glowStrengthIsNotMultipliedTwice() throws IOException {
-        String cache = read(shared("LyricTextureCache.java"));
+        String atlas = read(shared("LyricGlyphAtlas.java"));
         // 缓存键里的量化乘法（glowStrength * 64f）是允许的；禁止的是对传入 drawOn 的
-        // 强度值再乘一个观感系数（Apple 样式的坑）。抓「drawOn 调用点之外、rasterize 里
-        // 对 glowStrength 的算术」：只许出现 cacheKey 的 *64 量化。
-        String body = cache.substring(cache.indexOf("private static Entry rasterize"));
+        // 强度值再乘一个观感系数（Apple 样式的坑）。
+        String body = atlas.substring(atlas.indexOf("private static GlyphCell bakeLocked"));
         assertTrue(!body.matches("(?s).*glowStrength\\s*\\*\\s*[0-9].*"),
-                "rasterize 内不得对 glowStrength 做任何乘法——强度语义已含在 "
+                "bakeLocked 内不得对 glowStrength 做任何乘法——强度语义已含在 "
                         + "TextGlow.drawOn 的参数里，二次乘是 Apple 样式踩过的坑"
                         + "（docs/歌词发光-高斯重写.md）");
         assertTrue(body.contains("glowStrength, glowSpread"),
