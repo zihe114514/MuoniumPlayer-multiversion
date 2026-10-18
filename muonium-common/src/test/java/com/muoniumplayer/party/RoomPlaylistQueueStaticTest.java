@@ -192,11 +192,19 @@ class RoomPlaylistQueueStaticTest {
                 "不在房间里（或老服务端）这颗按钮整个不出现，而不是按下去没反应");
         assertTrue(body.contains("MpPartyClient.requestPlaylist(playList)"),
                 "按下去交给房间那一条批量路径，不在界面里自己拼帧");
+        // 显隐必须走 alpha：renderWidget 对 setHidden 的控件整帧跳过，挂在它身上的
+        // 回调也就不再执行 —— 一旦建页那一瞬还没进房，setHidden(true) 之后这颗按钮
+        // 就永远没有机会把自己显示回来（只能靠换一张歌单重建面板）。
+        assertFalse(body.contains("btnParty.setHidden("),
+                "「排进房间」不许用 setHidden 控制显隐：隐藏后回调停跑，进房也救不回来");
+        assertTrue(body.contains("partyFade[0]"),
+                "显隐走 alpha 淡入淡出，进房后按钮自己长出来，不惊动正在翻的歌单");
 
         String coverflow = region(panel, "RoundedButtonWidget btnCoverflow",
                 "btnCoverflow.setOnClickCallback");
-        assertTrue(coverflow.contains("MpPartyClient.playlistSupported()"),
-                "链式定位：那一颗收起来时后面那排要自己顶回原位，不然界面留一块空");
+        assertTrue(coverflow.contains("partyFade[0]"),
+                "链式定位按淡出进度连续过渡：那一颗收起来时后面那排平滑顶回原位，"
+                        + "不按布尔跳变瞬移、也不留一块空");
     }
 
     // ═══════════════════════ 协议读回 ═══════════════════════

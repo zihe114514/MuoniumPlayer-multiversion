@@ -60,13 +60,15 @@ class SegmentControlStaticTest {
     }
 
     @Test
-    @DisplayName("三处分段控件全部走同一个共享类，不再各写一份")
+    @DisplayName("分段控件全部走同一个共享类，不再各写一份")
     void everySegmentUsesTheSharedControl() throws IOException {
         String account = read(NCM.resolve(ACCOUNT));
         assertFalse(account.contains("segmentChooser") || account.contains("segmentHalf"),
                 "账号页还留着自己那份分段控件：它会和共享的那份在动效上分叉");
-        assertTrue(count(account, "SegmentControl.attach(") == 2,
-                "账号页的 QQ 链路与酷狗身份两格应当都换成共享控件");
+        // QQ 链路、酷狗身份（扫码页）与酷狗签发客户端（Token 页）三格都走共享控件：
+        // 「一颗会自己换文案的按钮」读不出这是二选一，2026-10 那一轮已经并过来了。
+        assertTrue(count(account, "SegmentControl.attach(") >= 3,
+                "账号页的三处二选一（QQ 链路 / 酷狗身份 / 酷狗签发客户端）应当都用共享控件");
         assertTrue(read(NAVIGATE).contains("SegmentControl.attach("),
                 "搜索栏的模式开关没有用共享控件");
     }

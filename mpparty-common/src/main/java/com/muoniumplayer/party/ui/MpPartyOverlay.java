@@ -411,9 +411,12 @@ public final class MpPartyOverlay extends NCMPanel {
 
     private void buildHeader(final Panel dialog) {
         LabelWidget title = label(dialog, "一起听", FontManager.pf20bold);
-        title.setBeforeRenderCallback(() -> title
-                .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
-                .setPosition(PAD, 15));
+        title.setBeforeRenderCallback(() -> {
+            title.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            // 标题 / 角标 / 副标题三种字号共用墨迹中线（25 / 25 / 42），与右上角那排胶囊
+            // （15 + 20/2 = 25）同一条线 —— 原来三行各写各的行盒 y，混排时基线互相差着几像素。
+            title.setPosition(PAD, inkTop(title, 25.0));
+        });
 
         LabelWidget kicker = label(dialog, () -> {
             // 来源标签：用户要能分清面板上显示的是哪个房间（S6）。
@@ -433,7 +436,8 @@ public final class MpPartyOverlay extends NCMPanel {
             // 挤不下时第一个让位的就是它：房间页顶上本来就写着房间名，这一排却是唯一的入口。
             kickerFade[0] = Interpolations.interpolate(kickerFade[0], bar.kickerFits ? 1.0 : 0.0, .3f);
             kicker.setAlpha((float) kickerFade[0]);
-            kicker.setPosition(PAD + title.getWidth() + 10, 21);
+            // 与标题同一条墨迹中线（25），只按标题的右缘往后排。
+            kicker.setPosition(PAD + title.getWidth() + 10, inkTop(kicker, 25.0));
         });
 
         LabelWidget subtitle = label(dialog, this::headerSubtitle, FontManager.pf12);
@@ -444,7 +448,9 @@ public final class MpPartyOverlay extends NCMPanel {
             bar.layout();
             subtitle.setMaxWidth(Math.max(1, bar.bandRight - PAD - 6));
             subtitle.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            subtitle.setPosition(PAD, 36);
+            // 副标题与胶囊排（15..35）之间留出呼吸位：墨迹中心 45，字身 36..54 都在页签条
+            // （56 起）之上。原来 y=36 是行盒顶，中文字身压到 36..50，和胶囊排只隔 1px。
+            subtitle.setPosition(PAD, inkTop(subtitle, 45.0));
         });
 
         // 双向入口：这一层是从「一起听」面板点进来的，右上角给一条回去的路。
@@ -1173,9 +1179,13 @@ public final class MpPartyOverlay extends NCMPanel {
         }, FontManager.pf16bold);
         name.setBeforeRenderCallback(() -> {
             name.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            name.setMaxWidth(Math.max(1, host.getWidth() - PAD * 2 - 190));
+            // 右列两颗按钮（复制邀请码 88 + 间距 8 + 公开中 76）最左探到 W−PAD−172，
+            // 房名按它让位再留 8 呼吸位。原来写 −190 是拍的，跟右列对不上。
+            name.setMaxWidth(Math.max(1, host.getWidth() - PAD * 2 - 172 - 8));
             name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            name.setPosition(PAD, bannerInset + 4);
+            // 三层（房名 / 色带 / 信息 chips）原来的 y 是各写各的：色带 26..29 正好横穿
+            // chips 的中文字身。现在按墨迹中线排成栅格：房名 13，色带 24..27，chips 37。
+            name.setPosition(PAD, inkTop(name, bannerInset + 13.0));
         });
 
         // 来源色带：房名下的一短条，颜色按会话来源区分——
@@ -1184,7 +1194,7 @@ public final class MpPartyOverlay extends NCMPanel {
         host.addChild(sourceBand);
         sourceBand.setClickable(false).setRadius(1.5).setBeforeRenderCallback(() -> {
             sourceBand.setBounds(Math.max(6, Math.min(name.getWidth(), 120)), 3);
-            sourceBand.setPosition(PAD, bannerInset + 26);
+            sourceBand.setPosition(PAD, bannerInset + 24);
             sourceBand.setColor(com.muoniumplayer.party.direct.MpDirect.isActive() ? OK_COLOR
                     : MpPartyClient.inChannel() ? WARN_COLOR
                     : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
@@ -1192,10 +1202,10 @@ public final class MpPartyOverlay extends NCMPanel {
 
         // 邀请码 / 人数 / 在听 / 会员 / 循环 / 我的身份：原来是一句「A  ·  B  ·  C」的长句，
         // 要从头读到尾才能找到想看的那一项。换成图标信息条之后是扫一眼的事。
-        // 右边界钉在公开开关（左缘 W−194）左边：窄窗口下 chips 超界整颗隐藏，
+        // 右边界钉在公开开关（左缘 W−PAD−172）左边：窄窗口下 chips 超界整颗隐藏，
         // 不然文字会半埋进右上角那两颗按钮底下。
-        metaChips(host, () -> PAD, () -> bannerInset + 32, ICON_S, FontManager.pf10bold,
-                () -> Math.max(PAD + 120, host.getWidth() - PAD - 194 - 12),
+        metaChips(host, () -> PAD, () -> bannerInset + 37.0, ICON_S, FontManager.pf10bold,
+                () -> Math.max(PAD + 120, host.getWidth() - PAD - 172 - 12),
                 meta(PartyIcons.KEY, () -> {
                     MpRoom room = MpPartyClient.room();
                     return room == null || room.channel ? "" : room.code;
@@ -1953,6 +1963,9 @@ public final class MpPartyOverlay extends NCMPanel {
             if (member == null) return "";
             return member.name + (isSelf(member) ? "（你）" : "");
         }, FontManager.pf12bold);
+        // 右列从右往左是一条固定间距链：右缘留 10 → 踢出 76 → 6 → 转房主 62 → 6 → 撤管理 62，
+        // 按钮区左缘落在 W−222。贡献 chip 再往左留 10（左缘 W−280），automix 标记右缘 W−286。
+        // 原来 chip 锚 W−262（右缘 W−214）与撤管理左缘 W−220 重叠 6px，间距还是 6/4 混用。
         name.setBeforeRenderCallback(() -> {
             MpMember member = memberAt(list, slot);
             name.setColor(member != null && member.controls()
@@ -1960,26 +1973,31 @@ public final class MpPartyOverlay extends NCMPanel {
                     : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             // automix 标记就挂在名字这一行的右端，它这一帧真的画出来才给名字让位；
             // 老服务端没下发那一档时标记是空的，名字该用满原来的宽度。
+            // 右界推导：名字后跟 MP/Mu 徽标（约 13px），徽标右缘要清开贡献 chip 左缘
+            // （W−280）再留 13 —— 基线 W−367；有标记时再让出整颗标记宽加边距。
             String mark = member == null ? "" : member.automixLabel();
             double reserve = has(mark)
-                    ? FontManager.pf10bold.getStringWidthD(mark) + MARK_PAD * 2 + 8.0 : 0.0;
-            name.setMaxWidth(Math.max(1, bg.getWidth() - 380 - reserve));
+                    ? FontManager.pf10bold.getStringWidthD(mark) + MARK_PAD * 2 + 6.0 : 0.0;
+            name.setMaxWidth(Math.max(1, bg.getWidth() - 367 - reserve));
             name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            name.setPosition(54, 9);
+            name.setPosition(54, inkTop(name, 16.0));
         });
 
-        // MP / Mu 徽标紧跟名字：一眼看出对方用的是哪个播放器。
+        // MP / Mu 徽标紧跟名字：一眼看出对方用的是哪个播放器。与名字同一条墨迹中线（16）。
         LabelWidget badge = label(bg, () -> {
             MpMember member = memberAt(list, slot);
             return member == null ? "" : member.badge();
         }, FontManager.pf10bold);
         badge.setBeforeRenderCallback(() -> {
             badge.setColor(secondary());
-            badge.setPosition(54 + name.getWidth() + 7, 11);
+            badge.setPosition(54 + name.getWidth() + 7, inkTop(badge, 16.0));
         });
 
         // 身份 / 客户端 / 在听状态：三段各自配一枚图标，别再堆成一句「A · B · C」。
+        // 第二行也要右边界：按钮（10..36）纵跨两行文字，maxX 钉在按钮区左缘（W−222）
+        // 左边，窄行时超界的 chip 整格隐藏，不钻进右列按钮底下（原来这行完全没钳）。
         metaChips(bg, () -> 54.0, () -> 32.0, ICON_S, FontManager.pf10bold,
+                () -> Math.max(54.0 + 120, bg.getWidth() - 230),
                 meta(() -> {
                     MpMember member = memberAt(list, slot);
                     return member != null && member.controls() ? PartyIcons.HOST : PartyIcons.PERSON;
@@ -2013,16 +2031,17 @@ public final class MpPartyOverlay extends NCMPanel {
         }, () -> {
             MpMember member = memberAt(list, slot);
             return member != null && member.vip;
-        }, b -> b.setPosition(Math.max(1, bg.getWidth() - 262), 15));
+        }, b -> b.setPosition(Math.max(1, bg.getWidth() - 280), 15));
 
-        // automix 能力标记：这一台能不能替房间算下一首的交接点。挑了「贡献 / VIP」那颗左边那块
-        // —— 那一列本来就是「这个人能给房间什么」的位置，右边三颗按钮与徽标都各占一格，只有它是
-        // 一条按右边界锚死的空档。没下发这一档时文案为空，整颗淡掉，什么都不画。
+        // automix 能力标记：这一台能不能替房间算下一首的交接点。挂在「贡献 / VIP」那颗左边
+        // —— 那一列本来就是「这个人能给房间什么」的位置，右缘 W−286 与 chip 左缘 W−280
+        // 之间留 6px，到按钮区（左缘 W−222）隔着 58px 的空档。没下发这一档时文案为空，
+        // 整颗淡掉，什么都不画。
         automixMark(bg, () -> {
             MpMember member = memberAt(list, slot);
             return member == null ? "" : member.automixLabel();
         }, () -> automixTint(memberAt(list, slot)),
-                b -> b.setPosition(Math.max(1, bg.getWidth() - 262 - 6 - b.getWidth()), 15));
+                b -> b.setPosition(Math.max(1, bg.getWidth() - 286 - b.getWidth()), 15));
 
         final Panel tools = rowTools(bg);
 
@@ -2039,7 +2058,7 @@ public final class MpPartyOverlay extends NCMPanel {
             if (member != null) MpPartyClient.setAdmin(member.name, !"admin".equals(member.role));
         }, STYLE_ROW, b -> {
             b.setBounds(62, 26);
-            b.setPosition(bg.getWidth() - 220, 10);
+            b.setPosition(bg.getWidth() - 10 - 76 - 6 - 62 - 6 - 62, 10);
         });
 
         btn(tools, () -> PartyIcons.HOST, () -> "转房主", () -> {
@@ -2051,7 +2070,7 @@ public final class MpPartyOverlay extends NCMPanel {
             if (member != null) MpPartyClient.transferOwner(member.name);
         }, STYLE_ROW, b -> {
             b.setBounds(62, 26);
-            b.setPosition(bg.getWidth() - 152, 10);
+            b.setPosition(bg.getWidth() - 10 - 76 - 6 - 62, 10);
         });
 
         // 频道里的普通成员踢人得走投票；自己的房间里房主 / 管理员直接踢。
@@ -2072,7 +2091,7 @@ public final class MpPartyOverlay extends NCMPanel {
             }
         }, STYLE_ROW_DANGER, b -> {
             b.setBounds(76, 26);
-            b.setPosition(bg.getWidth() - 86, 10);
+            b.setPosition(bg.getWidth() - 10 - 76, 10);
         });
     }
 
@@ -2117,6 +2136,8 @@ public final class MpPartyOverlay extends NCMPanel {
             return who == null ? "" : who.name;
         }, 10, 6, 28);
 
+        // 两行文字按墨迹中线排：名字 14、状态 chips 28，头像（10..38，中心 24）跨两行居中。
+        // 原来名字 y=5 是行盒顶、chips 27 是另一套口径，三者各自为政，一行里三种视觉中线。
         LabelWidget name = label(bg, () -> {
             MpPresence who = presenceAt(list, slot);
             if (who == null) return "";
@@ -2127,14 +2148,17 @@ public final class MpPartyOverlay extends NCMPanel {
             MpPresence who = presenceAt(list, slot);
             name.setColor(who != null && who.hasClient
                     ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT) : secondary());
-            name.setMaxWidth(Math.max(1, bg.getWidth() - 214));
+            // 名字与贡献 chip（左缘 W−134）同排，清 52 —— chip 16 高、名字行墨迹带更矮，
+            // 纵向本来就相接，横向再留一步呼吸位；窄行时名字先截断而不是顶进 chip。
+            name.setMaxWidth(Math.max(1, bg.getWidth() - 186));
             name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            name.setPosition(46, 5);
+            name.setPosition(46, inkTop(name, 14.0));
         });
 
-        // 右边界钉在贡献 chip（左缘 W−138）左边：极窄窗口下 chips 超界隐藏，不钻进右列。
-        metaChips(bg, () -> 46.0, () -> 27.0, ICON_S, FontManager.pf10bold,
-                () -> Math.max(146.0, bg.getWidth() - 138 - 10),
+        // 右列从右往左固定间距链：右缘留 10 → 邀请按钮 66（左缘 W−76）→ 10 → 贡献 chip
+        // （左缘 W−134）。chips maxX 钉在 chip 左边留 10：极窄窗口下超界整格隐藏，不钻进右列。
+        metaChips(bg, () -> 46.0, () -> 28.0, ICON_S, FontManager.pf10bold,
+                () -> Math.max(146.0, bg.getWidth() - 144),
                 meta(() -> {
                     MpPresence who = presenceAt(list, slot);
                     return who != null && who.localPlaying ? PartyIcons.NOTE : PartyIcons.HOURGLASS;
@@ -2156,7 +2180,7 @@ public final class MpPartyOverlay extends NCMPanel {
         }, () -> {
             MpPresence who = presenceAt(list, slot);
             return who != null && who.vip;
-        }, b -> b.setPosition(Math.max(1, bg.getWidth() - 138), 12));
+        }, b -> b.setPosition(Math.max(1, bg.getWidth() - 134), 12));
 
         final Panel tools = rowTools(bg);
 
@@ -2168,10 +2192,10 @@ public final class MpPartyOverlay extends NCMPanel {
             MpPresence who = presenceAt(list, slot);
             if (who != null) MpPartyClient.invite(who.name);
         }, STYLE_ROW_PRIMARY, b -> {
-            // chip 右缘 -90，这里左缘 -82：中间自然留 8px，右侧留 16px——
-            // 原来两件控件零间距相接，悬停时行再往两侧一扩就贴出行缘。
+            // 右列链最右一颗：右缘留 10，与贡献 chip 之间留 10——
+            // 原来两件控件零间距相接，悬停时行再往左一伸就贴出行缘。
             b.setBounds(66, 26);
-            b.setPosition(Math.max(1, bg.getWidth() - 82), 7);
+            b.setPosition(Math.max(1, bg.getWidth() - 10 - 66), 7);
         });
     }
 
@@ -3320,10 +3344,13 @@ public final class MpPartyOverlay extends NCMPanel {
         });
         // 悬停时扩展 ROW_INSET 像素说明「这一行可以动手」，但只向左长——
         // 右缘固定：右列锚着贡献/邀请按钮，两边一起扩就把它们推出行缘。
+        // 锚点必须钉在行右缘本身：总放大量按 ROW_INSET 折算（宽 * ROW_INSET/w ≈ 3px），
+        // 恰好填满左侧预留。原来系数写成 ROW_INSET*2/w，锚点又缩进右缘 3px，
+        // 实际向左伸 6px——预留只有 3px，多出的 3px 被列表裁剪切平，悬停时左缘像被削了一刀。
         bg.setTransformations(() -> {
             double w = Math.max(1, bg.getWidth());
-            bg.scaleAtPos(bg.getX() + w - ROW_INSET, bg.getY() + bg.getHeight() * .5,
-                    1.0 + (ROW_INSET * 2 / w) * bg.hover);
+            bg.scaleAtPos(bg.getX() + w, bg.getY() + bg.getHeight() * .5,
+                    1.0 + (ROW_INSET / w) * bg.hover);
         });
 
         stroke(bg, 10, () -> mix(NCMScreen.getColor(NCMScreen.ColorType.BORDER),

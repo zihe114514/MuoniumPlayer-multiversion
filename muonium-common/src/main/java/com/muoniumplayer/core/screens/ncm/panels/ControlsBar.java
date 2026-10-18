@@ -668,7 +668,8 @@ public class ControlsBar extends NCMPanel {
                     compactVolumeWidget
                             .setBounds(controlWidth, 20.0)
                             .setPosition(compactVolumeWidget.getParentWidth() - controlWidth - 8.0,
-                                    Math.max(1.0, (compactVolumeWidget.getParentHeight() - 20.0) * .5))
+                                    Math.max(1.0, (compactVolumeWidget.getParentHeight() - 20.0) * .5
+                                            - iconBandLift))
                             .setAlpha(ControlsBar.this.getAlpha());
                 });
 
@@ -725,16 +726,19 @@ public class ControlsBar extends NCMPanel {
                     if (volumeX <= 0.0 || volumeX >= parentWidth) {
                         volumeX = parentWidth - volumeWidth - 8.0;
                     }
-                    // 基础间隙里还要容纳蝰蛇音效入口（18 图标 + 8 边距，用户指定放音质右边、音量左边）：
-                    // 整体加宽 26 之后，无论走正常路径还是极窄收缩路径，「芯片右缘 = volumeX - selectorGap」
-                    // 恒成立，蝰蛇钉在芯片右缘 + 6 就永远落在芯片与音量之间、不与两者重叠。
-                    double selectorGap = Math.min(38.0, Math.max(14.0, parentWidth * .045)) + 26.0;
+                    // 音效入口（18 图标）钉死在芯片与音量之间：音量 ←10← 音效 ←10← 芯片。
+                    // 原来这里是一段随面板宽度伸缩的空隙（clamp(宽×4.5%,14,38)+26，宽面板上
+                    // 60px+ 的死空间），右侧看着永远空一块；改固定间距链之后整条右簇收紧，
+                    // 无论面板多宽四颗入口都排在同一段里。
+                    double selectorGap = 10.0 + 18.0 + 10.0;
                     // 箭头交给矢量画，文字里就不该再留那枚全角「﹀」：它既占宽又和文字基线对不齐，
                     // 而 LucideIconWidget 那一枚是随缩放算出来的，和菜单里的勾选/档位图标同一套笔画。
+                    // 量宽与渲染必须同一份字体：标签固定 pf12bold，量宽也用它 —— 原来 scale<.9
+                    // 时按 pf10bold 量、按 pf12bold 渲染，量出来的宽偏小，文字会被提前截断。
                     String selectorLabel = "音质 · " + formatQuality(CloudMusic.quality);
                     double chevronWidth = 10.0 * scale;
-                    double desiredWidth = (scale < .9 ? FontManager.pf10bold : FontManager.pf12bold)
-                            .getStringWidthD(selectorLabel) + 7.0 * scale + chevronWidth + 6.0 * scale;
+                    double desiredWidth = FontManager.pf12bold.getStringWidthD(selectorLabel)
+                            + 7.0 * scale + chevronWidth + 6.0 * scale;
                     double selectorWidth = Math.max(56.0 * scale, Math.min(112.0 * scale, desiredWidth));
                     double selectorX = volumeX - selectorGap - selectorWidth;
 
@@ -760,7 +764,8 @@ public class ControlsBar extends NCMPanel {
                             .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f))
                             .setAlpha(ControlsBar.this.getAlpha() * .94f)
                             .setPosition(selectorX,
-                                    Math.max(1.0, (qualitySelector.getParentHeight() - buttonHeight) * .5));
+                                    Math.max(1.0, (qualitySelector.getParentHeight() - buttonHeight) * .5
+                                            - iconBandLift));
                 })
                 .setOnClickCallback((relativeX, relativeY, mouseButton) -> {
                     if (mouseButton == 0) {
@@ -798,9 +803,11 @@ public class ControlsBar extends NCMPanel {
         });
 
         // 蝰蛇音效入口：用户指定放在音质选择的右边、音量滑条左边（2026-10-07）。
-        // 位置完全由音质芯片的几何推出（芯片右缘 + 6）——selectorGap 已为它预留 26 宽度，
-        // 任何面板宽度下都落在芯片与音量之间、不与两者重叠；跟随芯片垂直居中，
-        // 不参与待播/一起听那条图标带的抬升。启用时点亮强调色，其余时候跟次级文字同色。
+        // 位置完全由音质芯片的几何推出：芯片右缘 +10 就是它的左缘（selectorGap 的两个 10
+        // 就是给这一步留的），任何面板宽度下都落在芯片与音量之间、不与两者重叠。
+        // 垂直位置跟随整条右侧簇的共用中线（面板半高 − iconBandLift）——它以前走自己的
+        // centerVertically()，窄面板下待播/一起听抬升 4px 时就它不抬，四颗入口高低不齐。
+        // 启用时点亮强调色，其余时候跟次级文字同色。
         final LucideIconWidget viperToggle = new LucideIconWidget(() -> FoliaLucideIcons.TUNE,
                 () -> PartyIcons.HEADPHONES, FontManager.partyIcon32, 0, 0, 18, 18);
         this.addChild(viperToggle);
@@ -809,10 +816,9 @@ public class ControlsBar extends NCMPanel {
         viperToggle.setBeforeRenderCallback(() -> {
             viperToggle
                     .setClickable(true)
-                    .centerVertically();
+                    .setPosition(qualitySelector.getRelativeX() + qualitySelector.getWidth() + 10.0,
+                            Math.max(1.0, (viperToggle.getParentHeight() - 18.0) * .5 - iconBandLift));
             viperToggle
-                    .setPosition(qualitySelector.getRelativeX() + qualitySelector.getWidth() + 6.0,
-                            viperToggle.getRelativeY())
                     .setColor(ViperRuntime.isEnabled()
                             ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                             : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
@@ -845,10 +851,11 @@ public class ControlsBar extends NCMPanel {
             boolean fits = toggleX - 8.0 - queueToggle.getWidth() > ControlsBar.this.centerClusterRight + 6.0;
             queueToggle
                     .setClickable(fits)
-                    .setAlpha(fits ? ControlsBar.this.getAlpha() : 0f)
-                    .centerVertically();
+                    .setAlpha(fits ? ControlsBar.this.getAlpha() : 0f);
             queueToggle
-                    .setPosition(toggleX, queueToggle.getRelativeY() - ControlsBar.this.iconBandLift)
+                    .setPosition(toggleX, Math.max(1.0,
+                            (queueToggle.getParentHeight() - queueToggle.getHeight()) * .5
+                                    - ControlsBar.this.iconBandLift))
                     // 一起听房间里这颗入口换成房间歌单的读数：抽屉里显示的就是那份队列，
                     // 按钮点亮条件必须跟它是同一份数字，否则会出现「亮着、打开却是空的」。
                     .setColor(opened || PlayQueueRoomBridge.displayQueuedCount() > 0
@@ -910,10 +917,11 @@ public class ControlsBar extends NCMPanel {
             boolean usable = (netease || kugou || MpPartyClient.serverPresent()) && fits;
             listenTogether
                     .setClickable(usable)
-                    .setAlpha(usable ? ControlsBar.this.getAlpha() : 0f)
-                    .centerVertically();
+                    .setAlpha(usable ? ControlsBar.this.getAlpha() : 0f);
             listenTogether
-                    .setPosition(toggleX, listenTogether.getRelativeY() - ControlsBar.this.iconBandLift)
+                    .setPosition(toggleX, Math.max(1.0,
+                            (listenTogether.getParentHeight() - listenTogether.getHeight()) * .5
+                                    - ControlsBar.this.iconBandLift))
                     // 门面同时看得见两个源的房间：任一家的房间开着，图标就点亮。
                     .setColor(ListenTogetherService.isActive() || MpPartyClient.inRoom()
                             ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
@@ -940,9 +948,9 @@ public class ControlsBar extends NCMPanel {
             double bandLeft = listenTogetherPrimaryX;
             boolean firstFrame = bandLeft <= 0.0;
 
-            // 图标带默认与音质/音量同高，那个高度上它跟剩余时间标签同排，必须为标签让路。让不
-            // 出来（面板太窄）就整条抬到传输键那一行：标签在下面一行，抬 4 个单位就压不到字，
-            // 于是只剩播放模式需要避让，一下省出一大截宽度。
+            // 右侧整条簇（音量/音质/音效/待播/一起听）默认都落在面板垂直中线，那条线上还排着
+            // 剩余时间标签。让不出来（簇的左缘顶进标签）就整条簇一起抬 4 个单位：五颗入口
+            // 永远在同一条水平线上，抬升是整簇的行为，不再是某两颗图标自己的事。
             boolean besideLabel = firstFrame || bandLeft > progressRight + 6.0;
             iconBandLift = Interpolations.interpolate(iconBandLift, besideLabel ? 0.0 : 4.0, .35);
 

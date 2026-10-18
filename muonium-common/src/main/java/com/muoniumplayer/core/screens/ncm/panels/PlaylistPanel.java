@@ -193,19 +193,28 @@ public class PlaylistPanel extends NCMPanel {
 
             // 「排进房间」= 把这一整张单子挂到一起听的队列后面。它只在<b>真的在一间房间里、
             // 而且这台服务端认识这个功能</b>时才出现（频道里不出现：全服共用的房间不该被一个人
-            // 倒进一百首）。判据每帧重算，所以中途建房、进房、退房都会让这颗按钮自己长出来或收回去。
+            // 倒进一百首）。
             //
             // 按钮文字用「排进」而不是「播放」是有意的：它不会动正在播的那首歌，也不会插到别人
             // 前面 —— 说「播放」会让人以为按下去立刻换歌，而实际要到队列排空才听得见。
+            //
+            // 显隐走 alpha 而不是 setHidden：renderWidget 对隐藏的控件整帧跳过，挂在它身上的
+            // beforeRenderCallback 也就不再执行 —— 一旦在建页那一瞬还没进房（房间状态晚到、
+            // 重连的空档），setHidden(true) 之后这颗按钮就永远没有机会把自己显示回来，只能靠
+            // 换一张歌单重建面板。alpha 每帧照算，进房后自己淡出来，正在翻的歌单、滚动位置
+            // 一概不动。
             RoundedButtonWidget btnParty = new RoundedButtonWidget("排进房间", FontManager.pf16bold);
             // 贴在面板上，背后就是这一帧采进来的画面：给它一整块小玻璃（糊背景 + 薄折射 + 边光）。
             btnParty.setGlassPlate(GlassLook.Surface.PLAYER)
                     .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             this.addChild(btnParty);
-
+            final double[] partyFade = new double[1];
             btnParty.setBeforeRenderCallback(() -> {
                 boolean show = MpPartyClient.playlistSupported();
-                btnParty.setHidden(!show);
+                partyFade[0] = Interpolations.interpolate(partyFade[0], show ? 1.0 : 0.0, .3f);
+                boolean visible = partyFade[0] > .04f;
+                btnParty.setClickable(visible);
+                btnParty.setAlpha((float) partyFade[0]);
                 btnParty.setBounds(57, 17);
                 btnParty.setPosition(btnPlay.getRelativeX() + btnPlay.getWidth() + 8,
                         cover.getRelativeY() + cover.getHeight() - btnParty.getHeight());
@@ -232,11 +241,12 @@ public class PlaylistPanel extends NCMPanel {
 
             btnCoverflow.setBeforeRenderCallback(() -> {
                 btnCoverflow.setBounds(57, 17);
-                // 这一排按钮是<b>链式</b>定位的，所以「排进房间」收起时要让 Coverflow 自己顶回那个位置，
-                // 否则不在一起听的界面上会留一块谁都不属于的空位。
-                double anchor = MpPartyClient.playlistSupported()
-                        ? btnParty.getRelativeX() + btnParty.getWidth()
-                        : btnPlay.getRelativeX() + btnPlay.getWidth();
+                // 这一排按钮是<b>链式</b>定位的，「排进房间」收起时 Coverflow 要顶回那个位置，
+                // 否则不在一起听的界面上会留一块谁都不属于的空位。锚点按淡出进度连续过渡
+                // 而不是按布尔跳变：按钮淡出的那几帧里 Coverflow 平滑跟上来，不会瞬移盖住它。
+                double partyAnchor = btnParty.getRelativeX() + btnParty.getWidth();
+                double collapsedAnchor = btnPlay.getRelativeX() + btnPlay.getWidth();
+                double anchor = collapsedAnchor + (partyAnchor - collapsedAnchor) * partyFade[0];
                 btnCoverflow.setPosition(anchor + 8,
                         cover.getRelativeY() + cover.getHeight() - btnCoverflow.getHeight());
                 btnCoverflow.setRadius(3);

@@ -1872,8 +1872,13 @@ public final class MusicSourceOverlay extends NcmSheet {
             double span = Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2);
             double width = Math.max(1, (span - 24.0) / 4.0);
             button.setBounds(width, 30);
-            // 按钮下面还有两行开关与一行安全说明，所以从底边往上抬到 126。
-            button.setPosition(PAD + CARD_INSET + (width + 8.0) * index, dialog.getHeight() - 126.0);
+            // 页脚带高 44：按钮 30 在带内垂直居中，距底 12。旧的 -126 是两行开关还塞在页脚
+            // 时代的坐标，页脚收到 44 之后这句没人跟着改，按钮飘进滚动区、压在「脚本权限」上。
+            button.setPosition(PAD + CARD_INSET + (width + 8.0) * index,
+                    dialog.getHeight() - LX_FOOTER_H + (LX_FOOTER_H - 30.0) * .5);
+            // 与账号浮层页脚同一道闸：进场随页脚档落位，退场先收；没到场不接点击。
+            button.setClickable(footerGate() > .5);
+            button.setAlpha((float) footerGate());
             button.setColor(button.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));

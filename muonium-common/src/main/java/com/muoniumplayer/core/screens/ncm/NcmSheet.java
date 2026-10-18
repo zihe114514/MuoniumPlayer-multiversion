@@ -91,6 +91,12 @@ public abstract class NcmSheet extends NCMPanel {
     /** 翻页时内容沿水平方向偏移这么多逻辑像素。只在场外存在，落位为零，不影响点击判定。 */
     private static final double PAGE_SLIDE_DISTANCE = 12.0;
 
+    /**
+     * 弹窗高度补间的半衰期基准毫秒（默认 3x 倍率下约 60ms）。高度变化是换页时唯一还动的几何，
+     * 它必须比整条瀑布短 —— 内容都落位了弹窗还在长，读起来就是「页面追着框跑」。
+     */
+    private static final double SHEET_HEIGHT_HALF_LIFE_MS = 180.0;
+
     protected static final int OK_COLOR = 0x6EDAA0;
     protected static final int WARN_COLOR = 0xE0B268;
     protected static final int BAD_COLOR = 0xF1767D;
@@ -118,6 +124,20 @@ public abstract class NcmSheet extends NCMPanel {
      * 重新淡一遍，看着像整个界面又开了一次。</p>
      */
     protected double pageFade;
+
+    /**
+     * 弹窗高度补间那一条的真毫秒时钟。{@code heightStamp[0]} 是上一帧的时间戳；0 表示这是第一帧，
+     * 目标直接落位。
+     *
+     * <p>为什么不用 {@code Interpolations.interpolate(sheetHeight, target, .22f)}：那是帧差指数，
+     * 没有时长概念，掉帧时它按帧数走、正常帧率下尾巴又拖得比整条瀑布还长 —— 换页时整页内容
+     * 都已落位，就剩弹窗还在慢慢长。换真毫秒之后它和 {@link SheetClock} 同一条节奏线，
+     * 基准也过同一份「界面切换动画速度」倍率。</p>
+     */
+    private final long[] heightStamp = new long[1];
+
+    /** 弹窗高度的当前值。{@code <= 0} 表示还没建过（首帧直落到目标）。 */
+    private double heightCurrent;
 
     /**
      * 这一层进出场的时钟。
@@ -232,7 +252,14 @@ public abstract class NcmSheet extends NCMPanel {
         dialog.setBeforeRenderCallback(() -> {
             double width = Math.max(1, Math.min(preferredWidth, getWidth() - 24));
             double target = Math.max(1, Math.min(preferredHeight.getAsDouble(), getHeight() - 24));
-            sheetHeight = sheetHeight <= 0.0 ? target : Interpolations.interpolate(sheetHeight, target, .22f);
+            // 首帧直落：第一次建页没有「从哪来」的问题，从零撑开反而是白演一趟。
+            if (heightCurrent <= 0.0) {
+                heightCurrent = target;
+            } else {
+                heightCurrent = easeStamp(heightStamp, heightCurrent, target,
+                        SHEET_HEIGHT_HALF_LIFE_MS / SheetClock.speed());
+            }
+            sheetHeight = heightCurrent;
             dialog.setBounds(width, sheetHeight);
             dialog.setAlpha((float) presentation);
             dialog.setPosition(getWidth() * .5 - width * .5,
@@ -1017,6 +1044,40 @@ public abstract class NcmSheet extends NCMPanel {
         return value < 0.0 ? 0.0 : (value > 1.0 ? 1.0 : value);
     }
 
+    /** 单帧最多折算这么多毫秒：挡切后台回来和调试器断档。比 SheetClock 那档紧 —— 这是补间，宁短勿跳。 */
+    private static final double EASE_MAX_FRAME_MS = 100.0;
+
+    /**
+     * 真毫秒半衰期逼近：{@code current} 朝 {@code target} 走一步，帧率无关。
+     *
+     * <p>时间戳由调用方持有（{@code long[1]}），这样同一个补间可以在任意回调里推进而不产生
+     * 每帧分配。第一帧（时间戳为 0）或已到位时不画不算，端点用平方锁死 —— 半衰期指数永远
+     * 差一点到不了位，不锁的话透明度会留下一个肉眼可辨的尾巴。</p>
+     *
+     * @return 走完这一步后的值
+     */
+    protected static double easeStamp(final long[] stamp, final double current, final double target,
+                                      final double halfLifeMs) {
+        long now = System.nanoTime();
+        double frameMs = stamp[0] == 0L ? 0.0 : Math.min(EASE_MAX_FRAME_MS, (now - stamp[0]) / 1_000_000.0);
+        stamp[0] = now;
+        if (frameMs <= 0.0 || current == target) return current;
+        double blended = current + (target - current) * (1.0 - Math.pow(.5, frameMs / halfLifeMs));
+        double remaining = target - blended;
+        if (remaining * remaining < 1e-8) return target;
+        return blended;
+    }
+
+    /**
+     * 朝目标走半衰期一步的便捷形态：状态占一个 {@code double[1]}、时间戳占一个 {@code long[1]}，
+     * 都由调用方持有。适合悬停、聚焦这类「只有一档目标」的小补间。
+     */
+    protected static double easeMs(final double[] state, final long[] stamp, final double target,
+                                   final double halfLifeMs) {
+        state[0] = easeStamp(stamp, state[0], target, halfLifeMs);
+        return state[0];
+    }
+
     /**
      * 在两个 {@code 0xRRGGBB} 之间线性插值。
      *
@@ -1109,16 +1170,22 @@ public abstract class NcmSheet extends NCMPanel {
      *
      * <p>自己算一次悬停：框架的 {@code hovering} 在<b>任意可点子组件</b>被悬停时会被清掉，而卡片
      * 里往往还有一两颗按钮，直接用它的话鼠标一挪到按钮上整张卡的悬停态就塌了。</p>
+     *
+     * <p>悬停补间走真毫秒（半衰期 60ms，与音源浮层的格子同档），不再用帧差指数 —— 后者帧率一低
+     * 就按帧数走，悬停反馈跟着掉帧一起变钝。</p>
      */
     protected final class Card extends RoundedRectWidget {
 
         public double hover;
         public double reveal;
+        private final long[] hoverStamp = new long[1];
+        private final double[] hoverBox = new double[1];
 
         @Override
         public void onRender(double mouseX, double mouseY) {
             boolean inside = getAlpha() > .5f && testHovered(mouseX, mouseY);
-            hover = Interpolations.interpolate(hover, inside ? 1.0 : 0.0, .25f);
+            easeMs(hoverBox, hoverStamp, inside ? 1.0 : 0.0, 60.0 / SheetClock.speed());
+            hover = hoverBox[0];
             super.onRender(mouseX, mouseY);
         }
     }

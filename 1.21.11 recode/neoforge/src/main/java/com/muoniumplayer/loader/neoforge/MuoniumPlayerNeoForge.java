@@ -55,6 +55,8 @@ public final class MuoniumPlayerNeoForge {
         gameBus.addListener(this::onRenderGui);
         gameBus.addListener(this::onScreenRendered);
         gameBus.addListener(this::onScreenInit);
+        // 监听必须挂具体子类：RenderLevelStageEvent 本体是抽象类，NeoForge 21.11 的 EventBus
+        // 对抽象类直接抛 IllegalArgumentException（mod 构造失败、整层 broken）。
         gameBus.addListener(this::onRenderLevelStage);
 
         // 3D 世界歌词：装纹理宿主（DynamicTexture 注册）。
@@ -103,12 +105,12 @@ public final class MuoniumPlayerNeoForge {
 
     /**
      * 3D 世界歌词：对应 Fabric 的 {@code WorldRenderEvents.END_MAIN} —— 世界主通道渲染的最后。
-     * 1.21.1 的 {@code Stage.AFTER_LEVEL} 枚举在 NeoForge 21.11.45 已改成独立子类
-     * {@code RenderLevelStageEvent.AfterLevel}（javap 核对），等价：地形/实体/半透明
-     * 都画完、天气粒子之前。矩阵与 GL 状态由 {@code WorldLyricsBridge.worldRenderEnd()}
+     * 1.21.1 的 {@code Stage.AFTER_LEVEL} 枚举在 NeoForge 21.11.45 已拆成独立子类
+     * {@code RenderLevelStageEvent.AfterLevel}（javap 核对），监听器直接挂它 —— 挂抽象基类
+     * 会被 EventBus 拒绝。等价语义：地形/实体/半透明都画完、天气粒子之前。矩阵与 GL 状态
+     * 两树不一致，自算才一致）。
      */
-    private void onRenderLevelStage(RenderLevelStageEvent event) {
-        if (!(event instanceof RenderLevelStageEvent.AfterLevel)) return;
+    private void onRenderLevelStage(RenderLevelStageEvent.AfterLevel event) {
         WorldLyricsBridge.worldRenderEnd();
     }
 

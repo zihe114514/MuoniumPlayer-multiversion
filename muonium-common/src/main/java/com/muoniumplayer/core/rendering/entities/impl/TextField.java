@@ -529,10 +529,15 @@ public class TextField implements SharedConstants {
 
         if (!displayText.isEmpty()) {
             int textColor = isFocused ? enabledColor : disabledColor;
-            int alpha = (textColor >> 24) & 255;
+            // 未聚焦的文字不是「选中才显示」：disabledColor 大多是 6 位 RGB 主题色（高字节 0），
+            // 直接拿高字节当 alpha 会全透明——正是 GUI 约定文档里那条「空 alpha 陷阱」。
+            // 沿用 1.8.9 的兜底：颜色自带 alpha（如 NavigateBar 传的 reAlpha(…, .4f)）就照用，
+            // 高字节为 0 就当不透明，整体透明度仍由 wholeAlpha 统一收口。
+            float ownAlpha = ((textColor >> 24) & 255) * RenderSystem.DIVIDE_BY_255;
+            float alpha = ownAlpha > 0f ? ownAlpha : 1f;
             getFontRenderer().drawString(displayText, posX - (float) scrollOffset,
                     getRenderOffsetY(),
-                    RenderSystem.reAlpha(textColor, alpha * RenderSystem.DIVIDE_BY_255 * wholeAlpha));
+                    RenderSystem.reAlpha(textColor, alpha * wholeAlpha));
         }
 
         if (shouldDrawCursor() && !hasSelection()) {
