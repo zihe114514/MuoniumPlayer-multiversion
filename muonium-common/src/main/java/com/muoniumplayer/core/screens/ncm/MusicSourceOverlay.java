@@ -2158,12 +2158,12 @@ public final class MusicSourceOverlay extends NcmSheet {
     /**
      * 换来源等于换「当前面板能渲染什么」。
      *
-     * <p>先回主页再重建导航栏，而不是把上一个来源的搜索 / 发现面板留在屏幕上。</p>
+     * <p>先回主页再重建导航栏，而不是把上一个来源的搜索 / 发现面板留在屏幕上。整段交接交给
+     * {@link NCMScreen#switchSourcePanel}：旧源内容不参与交叉淡入、侧栏静默换代，避免两套内容
+     * 与两批行动画同时叠在屏幕上。</p>
      */
     private void resetToHomeForCurrentSource() {
         // 换源会重建左栏，但搜索框本身会被 NavigateBar 复用；旧源的异步结果同时失效。
-        NCMScreen screen = NCMScreen.getInstance();
-        screen.setCurrentPanel(new HomePanel());
-        screen.markDirty();
+        NCMScreen.getInstance().switchSourcePanel(new HomePanel());
     }
 }

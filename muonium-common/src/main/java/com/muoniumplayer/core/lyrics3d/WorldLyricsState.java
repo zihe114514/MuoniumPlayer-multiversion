@@ -54,7 +54,17 @@ public final class WorldLyricsState {
     private String currentKey;
     private long lastSeenNanos;
     private int lastIndex = -1;
+    /** 当前 active 句对应的行下标：同句恢复判定用（去抖窗口内换行才重 spawn）。 */
+    private int lastSpawnedIdx = -1;
     private boolean wasPaused;
+    /**
+     * 淡出去抖：最近一次看到「在播」的时间。歌曲自然结束时引擎的
+     * {@code isFinished()} 在解码收尾边界可能抖动几帧（true/false 交替），
+     * 没有去抖的话同一句会走「retire→同句重 spawn→再 retire」的循环 ——
+     * 表现就是歌词结束时闪烁一下才消失。
+     */
+    private static final long PAUSE_DEBOUNCE_NANOS = 150_000_000L; // 150ms
+    private long lastPlayingNanos;
     private final Random random = new Random();
 
     // ==================== 数据模型 ====================
@@ -65,23 +75,34 @@ public final class WorldLyricsState {
         public final List<String> lines;      // wrap 拆行后的文本
         public final long startMs;
         public final long revealMs;           // 逐字出现的总时长
+        /** 时间线里的行下标：去抖恢复（takeFadingIfSameLine）按它认回同一句。 */
+        final int lineIndex;
         public double x, y, z;
         public double spawnYawDeg, spawnPitchDeg;
         /** 每个非空白字符出现的时间（相对这句开始，毫秒）——word pop 用。 */
         public final long[] charTimes;
 
         Floating(List<String> lines, long startMs, long revealMs,
+                 int lineIndex,
                  double x, double y, double z, double spawnYawDeg, double spawnPitchDeg,
                  long[] charTimes) {
             this.lines = lines;
             this.startMs = startMs;
             this.revealMs = revealMs;
+            this.lineIndex = lineIndex;
             this.x = x;
             this.y = y;
             this.z = z;
             this.spawnYawDeg = spawnYawDeg;
             this.spawnPitchDeg = spawnPitchDeg;
             this.charTimes = charTimes;
+        }
+
+        /** 测试等直接构造入口：不带时间线行下标（去抖恢复按 -1 视作不可认回）。 */
+        public Floating(List<String> lines, long startMs, long revealMs,
+                        double x, double y, double z, double spawnYawDeg, double spawnPitchDeg,
+                        long[] charTimes) {
+            this(lines, startMs, revealMs, -1, x, y, z, spawnYawDeg, spawnPitchDeg, charTimes);
         }
 
         long fadeStartNanos;
@@ -189,27 +210,47 @@ public final class WorldLyricsState {
                         boolean snapshotPlaying, long snapshotPositionMs) {
         updateClock(snapshotPlaying, nowNanos);
 
-        boolean paused = currentKey != null && !snapshotPlaying;
+        boolean paused = currentKey != null && !snapshotPlaying
+                && (nowNanos - lastPlayingNanos) > PAUSE_DEBOUNCE_NANOS;
+        if (snapshotPlaying) lastPlayingNanos = nowNanos;
 
         // idx 即使暂停也算（indexAt 按时间戳二分），恢复时 idx==lastIndex 才算「恢复」而不是「换行」。
         List<LyricLine> lines = effectiveLines(params.splitLines());
         int idx = indexAtTimestamp(lines, snapshotPositionMs);
-        LyricLine current = (!paused && idx >= 0 && idx < lines.size())
-                ? lines.get(idx) : null;
         if (paused) {
             retireActive(nowNanos);
             wasPaused = true;
         } else if (idx != lastIndex || wasPaused) {
             boolean resumed = wasPaused && idx == lastIndex;
+            boolean sameLine = idx == lastSpawnedIdx && active != null;
             wasPaused = false;
             lastIndex = idx;
-            retireActive(nowNanos);
-            if (idx >= 0 && idx < lines.size()) {
-                LyricLine line = lines.get(idx);
-                if (line != null && !line.isBreakLine && line.lyric != null && !line.lyric.isEmpty()) {
-                    active = WorldLyricsState.spawn(line, lines, idx, camera, params, random);
-                    if (resumed) active.resumedAtNanos = nowNanos;
+            if (!sameLine) {
+                // 真·换行（或去抖窗口内同句已被 retire 且 playing 恢复）。先把现句
+                // 转淡出（满 alpha 的 active 硬切消失 = 闪帧；retire 后它至少还有
+                // 一帧渐隐），再试把刚转淡的同句原样捞回来 —— 捞回时现句一定已
+                // 安全进入 fading，不存在被覆盖丢弃。
+                retireActive(nowNanos);
+                Floating revived = takeFadingIfSameLine(idx, nowNanos);
+                if (revived != null) {
+                    active = revived;
+                    lastSpawnedIdx = idx;
+                    // 认回的句子走恢复淡入（resumeFadeOf 消费 resumedAtNanos）。
+                    if (resumed) revived.resumedAtNanos = nowNanos;
+                } else if (idx >= 0 && idx < lines.size()) {
+                    LyricLine line = lines.get(idx);
+                    if (line != null && !line.isBreakLine && line.lyric != null && !line.lyric.isEmpty()) {
+                        active = WorldLyricsState.spawn(line, lines, idx, camera, params, random);
+                        lastSpawnedIdx = idx;
+                        if (resumed) active.resumedAtNanos = nowNanos;
+                    } else {
+                        lastSpawnedIdx = idx;
+                    }
+                } else {
+                    lastSpawnedIdx = idx;
                 }
+            } else if (resumed) {
+                active.resumedAtNanos = nowNanos;
             }
         }
 
@@ -219,18 +260,19 @@ public final class WorldLyricsState {
             if ((nowNanos - f.fadeStartNanos) / 1.0E9f > FADE_SECONDS) it.remove();
         }
 
-        // 组帧
+        // 组帧。fading 在前、active 在后 —— 渲染层按下标顺序画，淡出中的句子先画
+        // （下层），当前句后画（上层）：同屏时 active 盖在 fading 之上
         List<Row> out = new ArrayList<>(1 + fading.size());
-        if (active != null) {
-            out.add(WorldLyricsState.resolve(active, camera, params,
-                    resumeFadeOf(active, nowNanos), true, 0f));
-        }
         for (Floating f : fading) {
             float a = fadeAlphaOf(f, nowNanos);
             if (a > 0.01f) {
                 float t = (nowNanos - f.fadeStartNanos) / 1.0E9f;
                 out.add(WorldLyricsState.resolve(f, camera, params, a, false, t * FADE_LIFT));
             }
+        }
+        if (active != null) {
+            out.add(WorldLyricsState.resolve(active, camera, params,
+                    resumeFadeOf(active, nowNanos), true, 0f));
         }
         return new Frame(out, currentKey != null);
     }
@@ -243,6 +285,7 @@ public final class WorldLyricsState {
                 currentKey = null;
                 retireActive(nowNanos);
                 lastIndex = -1;
+                lastSpawnedIdx = -1;
             }
             return;
         }
@@ -252,6 +295,7 @@ public final class WorldLyricsState {
             currentKey = key;
             retireActive(nowNanos);
             lastIndex = -1;
+            lastSpawnedIdx = -1;
         }
     }
 
@@ -278,6 +322,26 @@ public final class WorldLyricsState {
             fading.add(active);
             active = null;
         }
+    }
+
+    /**
+     * 淡出列表里认回指定时间线行的句子（有则从 fading 移除、复位淡出时间戳），
+     * 没有返回 null。调用方必须已把现 active retire 过（见换行分支）：认回与
+     * retire 的顺序保证任何句子要么在 active、要么在 fading，绝无第三种状态，
+     * 也就不存在「捞回时把满 alpha 的现句直接覆盖丢弃」的硬切。
+     */
+    private Floating takeFadingIfSameLine(int idx, long nowNanos) {
+        if (idx < 0) return null;
+        for (Iterator<Floating> it = fading.iterator(); it.hasNext(); ) {
+            Floating f = it.next();
+            if (f.lineIndex == idx) {
+                it.remove();
+                f.fadeStartNanos = 0L;
+                f.resumedAtNanos = nowNanos;
+                return f;
+            }
+        }
+        return null;
     }
 
     public static float resumeFadeOf(Floating f, long nowNanos) {
@@ -327,7 +391,7 @@ public final class WorldLyricsState {
                 - random.nextDouble() * SPAWN_PITCH_RANDOM);
         double[] dir = yawPitchDirectionStatic(yaw, pitch);
         double d = params.distance();
-        return new Floating(wrapped, line.timestamp, reveal,
+        return new Floating(wrapped, line.timestamp, reveal, lineIndex,
                 camera.eyeX() + dir[0] * d, camera.eyeY() + dir[1] * d, camera.eyeZ() + dir[2] * d,
                 yaw, pitch, charTimes);
     }
@@ -692,6 +756,10 @@ public final class WorldLyricsState {
         currentKey = null;
         lastSeenNanos = 0;
         lastIndex = -1;
+        lastSpawnedIdx = -1;
+        lastPlayingNanos = 0;
         wasPaused = false;
+        cachedSplitLines = null;
+        cachedSplitRevision = -1;
     }
 }

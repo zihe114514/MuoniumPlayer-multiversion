@@ -97,6 +97,32 @@ public class HomePanel extends NCMPanel {
     private static volatile List<PlayList> bilibiliHomePlaylists = Collections.emptyList();
     private static volatile boolean bilibiliHomeLoading;
 
+    // ─────────────────────────── W2 主页网格几何 ───────────────────────────
+    /** 页面左右内边距：页头与网格共用，网格视口宽度固定是「面板宽 - 24」。 */
+    private static final double PAGE_MARGIN = 12.0;
+    /** 欢迎语位置（pf25bold）。 */
+    private static final double HEADER_TITLE_Y = 12.0;
+    /** 「推荐歌单 · N」位置（pf14bold）。 */
+    private static final double HEADER_SUBTITLE_Y = 39.0;
+    /** 内容起始 y：占位布局与正式网格共用，数据到达时页面不跳。 */
+    private static final double CONTENT_TOP = 60.0;
+    /** 内容底部留白。 */
+    private static final double CONTENT_BOTTOM_PADDING = 12.0;
+    /** 卡片栅格间距（ScrollPanel 的横竖间距共用这一个值）。 */
+    private static final double GRID_GAP = 12.0;
+    /** hover 时封面四周各外扩多少：卡片宽里先给它留 5L，封面静态边长才是 cardW - 5。 */
+    private static final double COVER_HOVER_EXPANSION = 5.0;
+    /** 旧的密度公式：一列的基准宽 = 105 卡片 + 12 间距 = 117。 */
+    private static final double GRID_COLUMN_PITCH = 105.0 + GRID_GAP;
+    /**
+     * 网格量化单位：1/64 L。
+     *
+     * <p>{@link ScrollPanel} 用 {@code offsetX + width > 视口宽} 判断换行，浮点累加只要多出
+     * 1e-13，每行最后一格就会被挤到下一行。把卡片宽量化到 1/64 L 后，累加是精确的，
+     * 且总量保证不超过视口宽；右侧余下的最大 1/64 L 肉眼不可见，左右边距仍然相等。</p>
+     */
+    private static final double GRID_QUANTUM = 64.0;
+
     @Override
     public void onInit() {
         if (fixedPlaylists != null) {
@@ -183,23 +209,23 @@ public class HomePanel extends NCMPanel {
         this.displayedCardIds.clear();
         this.layoutGeneration++;
         final String welcomeText = welcomeTextFor(platform);
-        final int margin = 12;
 
         LabelWidget lblWelcome = new LabelWidget(welcomeText, FontManager.pf25bold);
         lblWelcome.setClickable(false);
         lblWelcome.setBeforeRenderCallback(() -> lblWelcome
-                .setPosition(margin, margin)
-                .setMaxWidth(Math.max(1.0, this.getWidth() - margin * 2.0))
+                .setPosition(PAGE_MARGIN, HEADER_TITLE_Y)
+                .setMaxWidth(Math.max(1.0, this.getWidth() - PAGE_MARGIN * 2.0))
                 .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)));
         this.addChild(lblWelcome);
 
+        // 占位内容与正式网格从同一个 y 起排：数据回来换成网格时页面不会跳一下。
         PanelLoadingWidget indicator = new PanelLoadingWidget(message);
         indicator.setSpinning(spinning);
         indicator.setClickable(false);
-        indicator.setBeforeRenderCallback(() -> indicator.setBounds(margin, 52.0,
-                Math.max(1.0, this.getWidth() - margin * 2.0),
-                Math.max(1.0, this.getHeight() - 52.0 - 30.0)));
+        indicator.setBeforeRenderCallback(() -> indicator.setBounds(PAGE_MARGIN, CONTENT_TOP,
+                Math.max(1.0, this.getWidth() - PAGE_MARGIN * 2.0),
+                Math.max(1.0, this.getHeight() - CONTENT_TOP - 30.0)));
         this.addChild(indicator);
     }
 
@@ -714,40 +740,62 @@ public class HomePanel extends NCMPanel {
     }
     public ScrollPanel scrollPanel;
 
+    /** 主页网格几何（列宽/封面边长）：每帧 O(1) 刷新，所有卡片共享同一份。 */
+    private final GridMetrics grid = new GridMetrics();
+    /** 尺寸变化时卡片重排的补间：全网格共享一条时钟（见 {@link GridReshape}）。 */
+    private final GridReshape reshape = new GridReshape();
+    /**
+     * 触发重排补间所需的最小几何跳变（布局单位，按卡片宽变化量算）。
+     *
+     * <p>1.5L 的意义：内置「播放器大小」缩放时，面板在十几帧里从 100% 平滑逼近 90%，
+     * 每帧卡片宽的变化通常只有零点几 L，远低于这个阈值 —— 那种情况卡片直接跟随网格，
+     * 观感才连贯。而窗口 resize / 切换 GUI Scale 是一步到位的大跳变（往往几十 L），
+     * 这时才值得用补间把「瞬移」抹平成「滑过去」。</p>
+     */
+    private static final double RESHAPE_MIN_STEP = 1.5;
+    /**
+     * 「几何刚变过」标记：宽度停止变化的第一帧给在跑的重排补间一个快速收尾，
+     * 不让 240ms 的尾巴拖在已经静止的画面上（见 {@link #refreshGridLayout}）。
+     */
+    private boolean reshapeAwaitingSettle;
+
+    /**
+     * 把当前网格几何立刻推给所有已构建卡片（绕过「等卡片自己 onRender 时再套用」的旧时序）。
+     *
+     * <p>只在列宽/封面边长变化的那几帧被调；卡片侧 {@code applyGridGeometry} 有 revision
+     * 快速路径，几何没变的卡片在这里只是一次 long 比较。</p>
+     */
+    private void applyGridGeometryToCards() {
+        if (this.scrollPanel == null) return;
+        for (AbstractWidget<?> child : this.scrollPanel.getChildren()) {
+            if (child instanceof PlaylistWidget) {
+                ((PlaylistWidget) child).applyGridGeometryNow();
+            }
+        }
+    }
+
     private void layout(List<PlayList> displayedPlayLists, String recommendationsText) {
         this.getChildren().clear();
         final String welcomeText = welcomeTextFor(platform);
-        final int margin = 12;
 
-        // 字体图集在首次绘制前报告负高度。从第一帧起保持稳定的
-        //头部预留，使响应式卡片网格永远不会盖住文字
-        // ——即便播放器正在打开或在 100/90/80/70 之间切换。
-        final double welcomeHeight = Math.max(12.0, FontManager.pf25bold.getStringHeight(welcomeText));
-        final double recommendationsHeight = Math.max(7.0, FontManager.pf14bold.getStringHeight(recommendationsText));
-        final double recommendationsY = margin + welcomeHeight + 2
-                + margin * .5 - recommendationsHeight * .5;
-        final double contentTop = Math.max(52.0, Math.ceil(recommendationsY + recommendationsHeight + margin * .75));
-        // 账号身份已经挪到侧栏的账号行（那里本来就有头像和昵称），主页下方不再需要给它留位置。
-        final double bottomPadding = margin;
-
+        // 页头几何改成固定 token：欢迎语 (12,12)、副标题 (12,39)、内容从 60 起。
+        // 以前副标题的 y 是由字体量出来的，字体图集没就绪时的负高度会让它上下跳；
+        // 固定值之后占位布局与正式布局共用同一个 contentTop，数据到达时网格不再整体跳一下。
         scrollPanel = new ScrollPanel();
         this.addChild(scrollPanel);
 
         scrollPanel
-                .setSpacing(margin)
+                .setSpacing(GRID_GAP)
                 .setScrollStrength(44)
-                .setAlignment(ScrollPanel.Alignment.VERTICAL_WITH_HORIZONTAL_FILL)
-                .setBeforeRenderCallback(() -> scrollPanel.setBounds(
-                        margin,
-                        contentTop,
-                        Math.max(1.0, this.getWidth() - margin * 2.0),
-                        Math.max(1.0, this.getHeight() - contentTop - bottomPadding)
-                ));
+                .setAlignment(ScrollPanel.Alignment.VERTICAL_WITH_HORIZONTAL_FILL);
+        // 网格视口的 bounds 不在这里挂 beforeRender：几何由 HomePanel#onRender 每帧 O(1) 刷新，
+        // 那里跑在子控件之前，本帧新补的卡片在构造时就能拿到当帧列宽。
+        // 账号身份已经挪到侧栏的账号行（那里本来就有头像和昵称），主页下方不再需要给它留位置。
 
         LabelWidget lblWelcome = new LabelWidget(welcomeText, FontManager.pf25bold);
         lblWelcome.setBeforeRenderCallback(() -> lblWelcome
-                .setPosition(margin, margin)
-                .setMaxWidth(Math.max(1.0, this.getWidth() - margin * 2.0))
+                .setPosition(PAGE_MARGIN, HEADER_TITLE_Y)
+                .setMaxWidth(Math.max(1.0, this.getWidth() - PAGE_MARGIN * 2.0))
                 .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)));
         this.addChild(lblWelcome);
@@ -755,9 +803,9 @@ public class HomePanel extends NCMPanel {
         LabelWidget lblRecommendations = new LabelWidget(recommendationsText, FontManager.pf14bold);
         lblRecommendations.setBeforeRenderCallback(() -> lblRecommendations
                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
-                .setMaxWidth(Math.max(1.0, this.getWidth() - margin * 2.0))
+                .setMaxWidth(Math.max(1.0, this.getWidth() - PAGE_MARGIN * 2.0))
                 .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
-                .setPosition(margin, recommendationsY));
+                .setPosition(PAGE_MARGIN, HEADER_SUBTITLE_Y));
         this.addChild(lblRecommendations);
         // 渐进发布的追加批要改这一行的计数（60 → 150），而不是重建整页。
         this.recommendationsLabel = lblRecommendations;
@@ -786,8 +834,60 @@ public class HomePanel extends NCMPanel {
             if (playlist != null) this.displayedCardIds.add(playlist.getId());
         }
         this.layoutGeneration++;
+        // 先把当帧列宽算好再补第一批卡片：面板已经上屏时（占位 → 数据到达）这一帧就是最终几何。
+        // 冷启动首帧面板宽还是 0，这一次调用是 no-op，卡片先按默认宽构造，下一次渲染前会校正。
+        this.refreshGridLayout();
         buildPendingCards();
 
+    }
+
+    /**
+     * 每帧 O(1) 地刷新网格几何与滚动视口 bounds。
+     *
+     * <p>放在 {@link #onRender} 里而不是卡片里：onRender 跑在所有子控件之前，
+     * 本帧新补的卡片在构造时就能拿到当帧列宽；列宽没变时 {@link GridMetrics#update}
+     * 只是一次 double 比较，连除法都不做。</p>
+     */
+    private void refreshGridLayout() {
+        // update 只在几何真的变了才返回 true（宽度没变时连列数除法都不做）。
+        if (this.grid.update(this.getWidth())) {
+            // 关键时序：先把新卡宽推给所有已构建卡片，再失效容器布局。
+            //
+            // 顺序反了的话（先失效、卡片在自己的 onRender 里才改宽），ScrollPanel 的
+            // alignChildren 会用「上一帧的旧卡宽」摆位 —— 本帧排出来就是错的；下一帧
+            // 宽度不再变、失效不再发生，布局签名命中，这份错位摆位被冻结，直到一滚动
+            // （偏移入签）才重排。表现正是「缩放堆叠抽搐 / 切到排行榜间隙错位，滚动自愈」。
+            // 卡片侧有 revision 快速路径，非本代的卡片在这里只是一次 long 比较，240 张可忽略。
+            this.applyGridGeometryToCards();
+            // 卡片宽变了 = 子项尺寸变了，网格容器必须重排。显式失效比让容器每帧
+            // 遍历 240 个子项求和便宜得多。
+            if (this.scrollPanel != null) this.scrollPanel.invalidateLayout();
+            // 连续缩放（内置「播放器大小」）与离散跳变（窗口 resize）必须分开对待：
+            // 前者面板本身正在十几帧里平滑逼近目标，卡片只要老老实实跟着网格走就是顺的；
+            // 再叠一层补间会和面板运动打架，表现成抽搐与闪烁。
+            // 判据是「这一步卡片宽变了多少」——连续缩放每步通常远小于 1L。
+            // 例外是跨列：那一步的宽度变化可能很小，但整行卡片会换行，必须补一次。
+            if (this.grid.lastStepDelta >= RESHAPE_MIN_STEP || this.grid.columnsChanged) {
+                this.reshape.restart();
+            } else {
+                // 小步跟随：立刻收掉任何在跑的补间，卡片直接落在网格算好的位置上。
+                this.reshape.finishImmediately();
+            }
+            // 记下「几何刚变过」：宽度停止变化的第一帧（下一行）要给在跑的补间一个快速收尾。
+            this.reshapeAwaitingSettle = true;
+        } else if (this.reshapeAwaitingSettle) {
+            // resize 结束帧：几何不再变，若补间还在跑，把行程砍到只剩 30% 立刻收拢 ——
+            // 否则 240ms 的尾巴会拖在已经静止的画面上，像卡片慢半拍才想起来归位。
+            this.reshapeAwaitingSettle = false;
+            this.reshape.settleSoon();
+        }
+        if (this.scrollPanel != null) {
+            this.scrollPanel.setBounds(
+                    PAGE_MARGIN,
+                    CONTENT_TOP,
+                    Math.max(1.0, this.getWidth() - PAGE_MARGIN * 2.0),
+                    Math.max(1.0, this.getHeight() - CONTENT_TOP - CONTENT_BOTTOM_PADDING));
+        }
     }
 
     /** 攒着还没建完的卡片源（{@link #buildPendingCards} 每帧消耗一批）。 */
@@ -823,12 +923,16 @@ public class HomePanel extends NCMPanel {
             List<AbstractWidget<?>> batch = new ArrayList<>(end - this.pendingCardIndex);
             for (int index = this.pendingCardIndex; index < end; index++) {
                 PlayList playList = this.pendingCards.get(index);
-                PlaylistWidget card = new PlaylistWidget(playList, this.pendingCardActions.get(playList.getId()));
+                PlaylistWidget card = new PlaylistWidget(playList,
+                        this.pendingCardActions.get(playList.getId()), this.grid, this.reshape,
+                        this.cardsPanel);
                 card.setShouldOverrideMouseCursor(true);
                 card.setEntranceAnimation(this.revealQueue);
                 batch.add(card);
             }
             this.cardsPanel.addChild(batch);
+            // 子项数量变了，排版签名必须失效：否则容器会以为上一帧的排布仍然有效。
+            this.cardsPanel.invalidateLayout();
             this.pendingCardIndex = end;
         }
 
@@ -846,6 +950,12 @@ public class HomePanel extends NCMPanel {
 
     @Override
     public void onRender(double mouseX, double mouseY) {
+        // 页头/网格几何每帧只做一次 O(1) 更新（宽度没变时只是一次比较），
+        // 让本帧补上的卡片在构造时就能读到当帧列宽。
+        this.refreshGridLayout();
+        // 重排补间每帧只推进一次：卡片在矩阵回调里只读结果。
+        // 若让每张卡各自 tick，同一帧里几十张卡会把共享时钟推进几十遍，动画直接跑飞。
+        this.reshape.tick();
         // 先把这一批卡片补上，再发号：本帧新挂的卡片会在同一次渲染里被遍历到，
         // 于是它们第一次被渲染就是这一帧，入场动画从这一帧起算。
         buildPendingCards();
@@ -854,23 +964,263 @@ public class HomePanel extends NCMPanel {
         super.onRender(mouseX, mouseY);
     }
 
+    /**
+     * 窗口/播放器尺寸变化时，卡片重排的补间状态（全网格共享一份）。
+     *
+     * <p>问题：列宽一变，{@link GridMetrics} 当场改写几何，{@code ScrollPanel} 下一帧就把每张卡
+     * 摆到新位置 —— 整屏卡片在<b>同一帧</b>瞬移，缩放窗口时看起来像画面被硬切了一下。</p>
+     *
+     * <p>做法：几何变化的那一刻记下「这一次重排」的起点，之后若干毫秒内每张卡片在<b>渲染期</b>
+     * 把「旧位置 - 新位置」的差值按缓动补掉（走矩阵 translate，真实布局边界不动，滚动与点击
+     * 判定完全不受影响）。补间结束偏移归零，之后每帧只付一次 long 比较。</p>
+     *
+     * <p>为什么不做成「每张卡各自一段动画」：拖窗口时列宽每帧都在变，各自起动画会互相打断、
+     * 越拖越乱。这里用一条共享时钟，连续拖动时<b>只续命不重启</b>，卡片始终朝最新几何收敛。</p>
+     */
+    private static final class GridReshape {
+
+        /** 一次重排的时长。比换页(≈140ms)略长：这是「跟随尺寸变化」而不是「切换页面」。 */
+        private static final long DURATION_MILLIS = 240L;
+        /** 单帧毫秒上限，挡切后台回来那种断档（同 ScrollPanel 的口径）。 */
+        private static final double MAX_FRAME_MS = 64.0;
+
+        /** 这一次重排开始的时刻；0 = 当前没有重排在进行。 */
+        private long startedAtNanos;
+        /** 上一次推进时的缓动值，用来判断是否还在动。 */
+        private double eased = 1.0;
+        /**
+         * 本帧的缓动值。由面板每帧推进一次（{@link #tick()}），卡片只读它 ——
+         * 几十张卡各推进一次会把共享时钟推飞。
+         */
+        private double frameEased = 1.0;
+        /**
+         * 拖动窗口期间列宽会连续变化：每变一次就把时钟往前推一小段，
+         * 让补间始终「还有一点没走完」，卡片于是平滑地跟着走而不是一顿一顿。
+         */
+        private boolean active;
+        /**
+         * 第几次几何变化。卡片据此判断「我手上的差值是不是这一代的」——
+         * 连续拖动时每次几何变化都会换基准，旧差值必须作废重算。
+         */
+        private long generation;
+
+        /** 本帧卡片应当使用的缓动值（只读）。 */
+        private double frameEased() {
+            return this.frameEased;
+        }
+
+        /** 几何变化时调用：开始或续期一次重排。 */
+        private void restart() {
+            // 续期而不是重置：正在拖窗口时保持同一条时钟，卡片不会每次都从 0 重新起步。
+            if (!this.active) {
+                this.startedAtNanos = System.nanoTime();
+                this.eased = 0.0;
+                this.frameEased = 0.0;
+                this.active = true;
+            } else {
+                // 已经在动：把起点往近处拉一点，等价于「再给 40% 的行程」，
+                // 连续变化时曲线不会因为每次重置而卡在第一格。
+                final long now = System.nanoTime();
+                final long total = DURATION_MILLIS * 1_000_000L;
+                final long minStart = now - (long) (total * .60);
+                if (this.startedAtNanos < minStart) this.startedAtNanos = minStart;
+            }
+            // 每次几何变化都让这一代的补间从头计：卡片的 reshapeDx/Dy 是相对「上一次排版位置」的
+            // 差值，几何一改差值就换了基准，缓动必须同步归零才不会把旧差值按旧进度画出去。
+            this.generation++;
+        }
+
+        /** 推进到本帧，返回 0..1 的缓动值；没有重排在跑时恒为 1。 */
+        private double tick() {
+            if (!this.active) {
+                this.frameEased = 1.0;
+                return 1.0;
+            }
+
+            final long now = System.nanoTime();
+            final long elapsedNanos = now - this.startedAtNanos;
+            final double totalNanos = DURATION_MILLIS * 1_000_000.0;
+            final double progress = Math.max(0.0, Math.min(1.0, elapsedNanos / totalNanos));
+
+            // 三次缓出：起步快、收尾缓，缩放窗口时卡片「滑过去」而不是「弹过去」。
+            this.eased = 1.0 - Math.pow(1.0 - progress, 3.0);
+            if (progress >= 1.0) {
+                this.active = false;
+                this.eased = 1.0;
+            }
+            this.frameEased = this.eased;
+            return this.eased;
+        }
+
+        /** 是否还有卡片需要按偏移绘制（决定要不要挂矩阵变换）。 */
+        private boolean isRunning() {
+            return this.active;
+        }
+
+        /** 立刻收尾（页面被换下去 / 进场被打断时用，避免留下半程偏移）。 */
+        private void finishImmediately() {
+            this.active = false;
+            this.eased = 1.0;
+            this.frameEased = 1.0;
+        }
+
+        /**
+         * 快速收尾：从「当前视觉位置」重新起步，用 30% 时长滑完剩余距离。
+         *
+         * <p>resize 结束的第一帧调它：几何已经不再变，与其放任 240ms 全程跑完（尾巴拖在
+         * 静止画面上），也与其硬切 {@link #finishImmediately()}，不如重算一次差值、
+         * 用一段短补间从当前画面位置优雅滑到终点。</p>
+         *
+         * <p>「重新起步」必须换代：卡片的 reshapeDx/Dy 定格于换代时刻的位置差，若只压时钟
+         * 不换代，进度从已走的 5% 跳到 97%，画面瞬移。generation++ 让每张卡下一帧重新定格
+         * 「当前位置 → 新位置」的差值（此刻两者已非常接近，差值只剩尾巴那一截），配合
+         * 短时钟正好是一条短而准的收尾曲线。</p>
+         */
+        private void settleSoon() {
+            if (!this.active) return;
+            final long now = System.nanoTime();
+            final long total = DURATION_MILLIS * 1_000_000L;
+            // 剩余不足三成就顺其自然走完，不值得再折腾一代。
+            final double elapsed = (double) (now - this.startedAtNanos) / total;
+            if (elapsed >= .70) return;
+            this.startedAtNanos = now - (long) (total * .70);
+            this.eased = 1.0 - Math.pow(1.0 - .70, 3.0);
+            this.frameEased = this.eased;
+            this.generation++;
+        }
+    }
+
+    /**
+     * 主页网格的当前几何（列宽 / 封面边长）。
+     *
+     * <p>只在面板宽度变化时由 {@link HomePanel#refreshGridLayout()} 改写；所有卡片共享同一份
+     * 实例，每帧只比较一次 {@link #revision}，命中就完全跳过 —— 不测量文本、不分配对象。</p>
+     */
+    private static final class GridMetrics {
+        /** 上一次计算用的网格视口宽度；-1 表示还没算过。 */
+        private double viewportWidth = -1.0;
+        /** 当前卡片宽（已含 hover 外扩的 5L 预留）。 */
+        private double cardWidth = 105.0;
+        /** 封面静态边长 = cardWidth - 5。 */
+        private double coverSize = 100.0;
+        /** 每次几何变化 +1：卡片据此判断要不要重挂宽度、重算折行。 */
+        private long revision;
+        /** 上一次的卡片宽：用来算这一步变化了多大幅度（见 {@link #lastStepDelta}）。 */
+        private double lastCardWidth = 105.0;
+        /**
+         * 最近一次几何变化中卡片宽改变了多少。
+         *
+         * <p>这个值决定要不要给卡片加重排补间：面板连续缩放时每一步都很小（内置缩放是
+         * 每帧逼近目标，一步常常不到 1L），此时补间会和面板自身的平滑运动叠加成抽搐；
+         * 而窗口 resize 是一步到位的大跳变，补间才有意义。</p>
+         */
+        private double lastStepDelta;
+        /** 上一次的列数：跨列（6 列变 5 列）会让整行卡片换行，是必须补一次的拐点。 */
+        private int lastColumns = -1;
+        /** 这一次几何变化是否跨过了列数边界。 */
+        private boolean columnsChanged;
+
+        /**
+         * 用面板宽度刷新几何。O(1)；宽度没变时连列数除法都不做。
+         *
+         * @return 几何是否发生变化
+         */
+        private boolean update(double panelWidth) {
+            // 首帧之前面板宽还是 0：保留上一份几何，别把卡片排成一根 1px 的柱子。
+            if (panelWidth <= 0.0) {
+                return false;
+            }
+            final double viewport = Math.max(1.0, panelWidth - PAGE_MARGIN * 2.0);
+            if (viewport == this.viewportWidth) {
+                return false;
+            }
+            this.viewportWidth = viewport;
+
+            // 密度公式沿用旧版：一列按 117L（105 卡片 + 12 间距）折算。
+            final int columns = Math.max(1,
+                    (int) Math.floor((viewport + GRID_GAP) / GRID_COLUMN_PITCH));
+            // 以 1/64 L 为单位做整数分配：保证 cols*cardW + (cols-1)*gap ≤ 视口宽，
+            // 且 ScrollPanel 里的累加是精确的 —— 浮点残差会把每行最后一格挤到下一行。
+            final long viewportUnits = (long) Math.floor(viewport * GRID_QUANTUM);
+            final long gapUnits = Math.round(GRID_GAP * GRID_QUANTUM);
+            final long cardUnits = Math.max(1L, (viewportUnits - (columns - 1L) * gapUnits) / columns);
+            final double cardWidth = Math.max(1.0, (double) cardUnits / GRID_QUANTUM);
+            final double coverSize = Math.max(1.0, cardWidth - COVER_HOVER_EXPANSION);
+
+            this.viewportWidth = viewport;
+            // 宽度只有零点几个 L 的变化常常量化到同一个卡片宽：这时不要 bump revision，
+            // 否则拖动窗口的每一帧都会让所有可见卡片重算一次折行。
+            if (cardWidth == this.cardWidth && coverSize == this.coverSize) {
+                return false;
+            }
+            this.cardWidth = cardWidth;
+            this.coverSize = coverSize;
+            // 记下这一次几何变化相对上一次的幅度。调用方据此区分两种完全不同的情况：
+            //   · 幅度很小 → 面板正在连续缩放（内置「播放器大小」每帧逼近目标，十几帧才停），
+            //     这时卡片必须<b>直接跟随</b>，任何补间都会和面板自身的平滑运动打架，表现就是抽搐；
+            //   · 幅度很大 → 真正的离散跳变（窗口 resize 一次到位），这时才值得补间。
+            this.lastStepDelta = Math.abs(cardWidth - this.lastCardWidth);
+            this.lastCardWidth = cardWidth;
+            // 列数变化是网格重排的本质拐点：整行卡片会换行。哪怕这一步的宽度变化很小
+            // （连续缩放刚好跨过 117L 的整数倍），也值得补一次，否则会看到一行卡片突然跳位。
+            this.columnsChanged = columns != this.lastColumns;
+            this.lastColumns = columns;
+            this.revision++;
+            return true;
+        }
+    }
+
     private static class PlaylistWidget extends AbstractWidget<PlaylistWidget> {
 
         /** 网易云首页网格中两条标题行之间的额外空隙。 */
         private static final double NETEASE_TITLE_LINE_GAP = 6.0;
         private static final double DEFAULT_TITLE_LINE_GAP = 4.0;
-        private static final double COVER_SIZE = 100.0;
-        private static final double COVER_HOVER_EXPANSION = 5.0;
+        /** 封面静态内缩：四周各 2.5L，正好是 hover 外扩量（5L）的一半。 */
+        private static final double COVER_INSET = COVER_HOVER_EXPANSION * .5;
         private static final double COVER_TITLE_SPACING = 4.0;
+        private static final double COVER_RADIUS = 4.0;
+        /** 标题超过两行时第二行的收尾省略号。 */
+        private static final String TITLE_ELLIPSIS = "\u2026";
 
         @Getter
         private final PlayList playList;
         private final Runnable customAction;
+        /** 共享的网格几何（HomePanel 每帧 O(1) 刷新，列宽/封面边长只有一份）。 */
+        private final GridMetrics grid;
+        /** 共享的重排补间（与 {@link #grid} 同一模式：静态嵌套类拿不到外部实例，只能显式传）。 */
+        private final GridReshape reshape;
+        /** 网格所在的滚动容器：卡高变化时据此让布局签名失效（见 applyGridGeometry）。 */
+        private final ScrollPanel container;
         private final CFontRenderer titleFont;
         private final double titleLineGap;
         private final PlaylistTitleWidget titleWidget;
-        /** 字形图集就绪前用一行占位；真正折行只计算一次，避免滚动时每帧 fitWidth。 */
-        private boolean titleGlyphsReady;
+        /** 安全化后的标题，构建期算一次；渲染热路径不再 trim / 判空。 */
+        private final String titleText;
+        /** 上次套用的网格几何 revision：没变就完全跳过尺寸与折行重算。 */
+        private long appliedGridRevision = -1L;
+        /** 上次套用时的字体度量代次：换字体/热重建后标题 y 与折行要跟着重挂。 */
+        private long appliedMetrics = -1L;
+        /** 本卡片当前的列宽与封面边长（共享几何的本地快照）。 */
+        private double cardWidth = 105.0;
+        private double coverSize = 100.0;
+        /**
+         * 上一次排版时卡片左上角在网格里的位置（相对父级）。重排补间用它算「从哪儿滑过来」。
+         * 用 {@code Double.NaN} 表示还没排过版 —— 那时不该有任何偏移。
+         */
+        private double lastLayoutX = Double.NaN;
+        private double lastLayoutY = Double.NaN;
+        /** 本帧要补的重排位移（旧位置 - 新位置）；补间推进时按 (1-eased) 缩小到 0。 */
+        private double reshapeDx;
+        private double reshapeDy;
+        /** 这份位移取自哪一代几何：几何又变了就作废重算（见 {@link GridReshape#generation}）。 */
+        private long reshapeGeneration = -1L;
+        /** 折行缓存：只有 cover 宽度、字形就绪状态或字体度量代次变了才重算（文本每张卡固定）。 */
+        private String[] titleLines;
+        private double titleLinesWidth = -1.0;
+        private boolean titleLinesGlyphsReady;
+        private long titleLinesMetrics = -1L;
+        /** 标题当前主题色；每帧只比 int，变主题时才 setColor —— 避免每帧 new Color。 */
+        private int titleColor = Integer.MIN_VALUE;
 
         /** 卡片封面。接力起飞那一帧要问它现在真正落在哪儿。 */
         private RoundedImageWidget coverWidget;
@@ -878,43 +1228,50 @@ public class HomePanel extends NCMPanel {
         double emphasizeAnim = 0;
 
         boolean coverLoaded = false;
+        /**
+         * 封面加载的重试节拍器。初值取临界值减一：第一帧 ++ 后即达 20，首次加载当帧发起；
+         * 之后每 20 帧重试一次直到 loadCover 返回 true。
+         */
+        int coverRetryFrame = 19;
 
         /** 与曲目行同一套进场：淡入 + 从下方落进来 + 微微放大。 */
         private final PanelItemEntrance entrance = new PanelItemEntrance();
         private double entranceEased = 1.0;
         /** 第一次被渲染（= 刚滚进网格视口）时向它领一个错峰号。 */
         private PanelItemEntrance.RevealQueue entranceQueue;
+        /** 矩阵变换当前是否已挂上（进场与重排共用同一个槽位，见 {@link #syncTransformations()}）。 */
+        private boolean transformationsAttached;
 
         /** 由 {@code HomePanel} 在建网格时挂上：号是卡片第一次被渲染那一帧领的，不是现在发好的。 */
         void setEntranceAnimation(PanelItemEntrance.RevealQueue queue) {
             this.entranceQueue = queue;
             this.entranceEased = 0.0;
             this.setAlpha(0f);
-            this.setTransformations(() -> PanelItemEntrance.applyTransform(this.entranceEased,
-                    this.getX() + this.getWidth() * .5, this.getY() + this.getHeight() * .5));
+            // 变换不在建卡时就挂：第一帧真正渲染前由 syncTransformations 统一决定。
+            // 这里只把状态摆好，避免「挂上了但几何还没算」那一帧用错中心点。
+            this.transformationsAttached = false;
+            this.setTransformations(null);
         }
 
-        public PlaylistWidget(PlayList playList) {
-            this(playList, null);
-        }
-
-        public PlaylistWidget(PlayList playList, Runnable customAction) {
+        public PlaylistWidget(PlayList playList, Runnable customAction, GridMetrics grid,
+                              GridReshape reshape, ScrollPanel container) {
             this.playList = playList;
             this.customAction = customAction;
-
-            double size = COVER_SIZE;
-            double emphasizeAnimMax = COVER_HOVER_EXPANSION;
+            this.grid = grid;
+            this.reshape = reshape;
+            this.container = container;
+            this.titleText = safePlaylistTitle(playList.getName());
             this.titleFont = FontManager.pf14bold;
-            boolean neteaseTitle = playList.getPlatform() == MusicPlatform.NETEASE;
-            this.titleLineGap = neteaseTitle ? NETEASE_TITLE_LINE_GAP : DEFAULT_TITLE_LINE_GAP;
+            this.titleLineGap = playList.getPlatform() == MusicPlatform.NETEASE
+                    ? NETEASE_TITLE_LINE_GAP : DEFAULT_TITLE_LINE_GAP;
 
-            // 字形宽度由 CFontRenderer 惰性生成。先从一行
-            //加载文字开始，再在其字形图集测量过本标题后排版。
-            this.titleWidget = new PlaylistTitleWidget(new String[]{safePlaylistTitle(playList.getName())},
-                    titleFont, titleLineGap, size);
-            updateTitleLayout(false);
+            // 先用占位的一行文本把标题控件建出来：真正的两行折行在构建末尾的
+            // applyGridGeometry 里按当帧封面宽度做一次，之后由缓存键守住，滚动时一帧都不重量。
+            this.titleWidget = new PlaylistTitleWidget(new String[]{this.titleText},
+                    this.titleFont, this.titleLineGap, this.grid.coverSize);
 
-            RoundedImageWidget cover = new RoundedImageWidget(this::getCoverLocation, 0, 0, size, size);
+            // 封面先用 1×1 建出来；真实几何在构建末尾落一次，之后只在网格列宽变化时重挂。
+            RoundedImageWidget cover = new RoundedImageWidget(this::getCoverLocation, 0, 0, 1.0, 1.0);
 
             this.addChild(cover);
             this.coverWidget = cover;
@@ -932,18 +1289,33 @@ public class HomePanel extends NCMPanel {
                         if (PlaylistCoverHero.consumeHandoff(this)) {
                             cover.setAlpha(1.0f);
                         }
-                        if (!coverLoaded) {
-                            coverLoaded = true;
-                            this.loadCover();
+                        // 封面加载带重试：首次当帧立即发起（计数器初值就是临界值），
+                        // 之后 URL 异步就绪或上次下载失败时，每隔约 1/3 秒再问一次。
+                        // 节拍而不是每帧——loadCover 未就绪时虽是廉价判断，重试语义不该
+                        // 依赖渲染帧率；首次不节拍——冷下载晚 1/3 秒是肉眼可感的空白。
+                        if (!coverLoaded && ++coverRetryFrame >= 20) {
+                            coverRetryFrame = 0;
+                            coverLoaded = this.loadCover();
                         }
 
-                        this.emphasizeAnim = Interpolations.interpolate(this.emphasizeAnim, cover.isHovering() ? emphasizeAnimMax : 0, .2f);
+                        // 悬停外扩的逼近：用比例逼近（跟手），但收敛后必须精确归位。
+                        // 原来永远差一点点、每帧都在动，封面 bounds 于是每帧重设 ——
+                        // 缩放窗口时这层微动会和重排叠在一起，看起来就是抖。
+                        final double emphasizeTarget = cover.isHovering() ? COVER_HOVER_EXPANSION : 0.0;
+                        this.emphasizeAnim = Interpolations.interpolate(this.emphasizeAnim,
+                                emphasizeTarget, .2f);
+                        if (Math.abs(this.emphasizeAnim - emphasizeTarget) < .01) {
+                            this.emphasizeAnim = emphasizeTarget;
+                        }
 
-                        cover
-                                .setBounds(size + this.emphasizeAnim)
-                                .setRadius(4)
-                                .centerHorizontally()
-                                .setBounds(cover.getRelativeX(), this.getWidth() * .5 - size * .5 - emphasizeAnim * .5, cover.getWidth(), cover.getHeight());
+                        // 悬停只让封面在卡片里胀满：x/y 与尺寸都由「卡片宽 - 当前封面边」推出来。
+                        // 标题位置是网格几何算好的常量，不会跟着这张封面的动画斜移。
+                        final double size = this.coverSize + this.emphasizeAnim;
+                        final double inset = (this.cardWidth - size) * .5;
+                        // 尺寸真的变了才重设 bounds：静止的封面不该每帧重录一次圆角裁剪。
+                        if (cover.getWidth() != size || cover.getX() != inset) {
+                            cover.setBounds(inset, inset, size, size).setRadius(COVER_RADIUS);
+                        }
 
                         // 回程的落点：从歌单页按返回时，飞回来的那张封面要落在同一首歌单的这张卡片上。
                         // 视口就是本卡片的父级（网格那块 ScrollPanel），卡片被滚出去一半时这里不认领，
@@ -956,9 +1328,15 @@ public class HomePanel extends NCMPanel {
             PlaylistTitleWidget lblName = this.titleWidget;
             this.addChild(lblName);
             lblName.setClickable(false);
-            lblName.setBeforeRenderCallback(() -> lblName
-                    .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
-                    .setPosition(cover.getRelativeX(), cover.getRelativeY() + cover.getHeight() + COVER_TITLE_SPACING));
+            // 位置/宽度只在网格几何变化时改（applyGridGeometry）；这里每帧只同步主题色，
+            // 且仅在颜色真的变了时才 setColor —— 否则每帧都会 new 一个 Color。
+            lblName.setBeforeRenderCallback(() -> {
+                final int color = NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT);
+                if (this.titleColor != color) {
+                    this.titleColor = color;
+                    lblName.setColor(color);
+                }
+            });
 
             this.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
 
@@ -970,6 +1348,7 @@ public class HomePanel extends NCMPanel {
                         // 上一页（同样是卡片在回报）抢不走。
                         // 视口交给接力自己判：卡片被网格滚出视口一半时，这张封面的绝对矩形已经在
                         // 列表上方那条页眉带里了，照它起飞就是一条盖住页眉的巨型封面。
+                        // 起点矩形一律读封面控件当帧的 bounds（悬停时它已经胀大过），不能拿常量。
                         PlaylistPanel panel = new PlaylistPanel(playList);
                         PlaylistCoverHero.begin(this, panel, playList, this.getCoverLocation(),
                                 cover.getX(), cover.getY(), cover.getWidth(), cover.getRadius(),
@@ -981,6 +1360,9 @@ public class HomePanel extends NCMPanel {
                 return true;
             });
 
+            // 首帧渲染前就把卡片宽度/标题位置/折行落到共享几何上：网格第一次排版就是对的。
+            // 构建期 container 已可用（构造器传入），此时让卡高失效也无害——容器还没排过版。
+            this.applyGridGeometry(this.container);
         }
 
 
@@ -995,17 +1377,98 @@ public class HomePanel extends NCMPanel {
             if (!entrance.isFinished()) {
                 this.entranceEased = entrance.tick();
                 this.setAlpha((float) this.entranceEased);
-                if (entrance.isFinished()) {
-                    // 摘掉变换：停在原地的卡片不该继续每帧付一次 pushMatrix。
-                    this.setTransformations(null);
-                }
             }
 
-            // 字形第一次就绪时才重新折行；之后滚动只画文本，不再重复分配字符串数组。
-            boolean glyphsLoaded = titleFont.areGlyphsLoaded(safePlaylistTitle(playList.getName()));
-            if (glyphsLoaded && !titleGlyphsReady) {
-                titleGlyphsReady = true;
-                updateTitleLayout(true);
+            // 列宽/封面边长只在共享几何 revision 变化时重挂；折行缓存的键含这个宽度与
+            // 字形就绪状态，滚动、悬停期间这里只是一次 long 比较加两次 double 比较。
+            // 容器传给 applyGridGeometry 供卡高变化时失效布局签名（正常路径是一帧一次 null 判断）。
+            this.applyGridGeometry(this.container);
+            this.updateTitleLines(this.coverSize);
+
+            // 进场与重排共用同一个矩阵通道：任一条还在动就挂上合成变换，两条都停了才摘掉。
+            // 摘掉之后停住的卡片每帧只付一次 null 判断，不再有 pushMatrix。
+            this.syncTransformations();
+
+            // 封面底板：图还没到时先给一块 ELEMENT_BACKGROUND 圆角占位，避免那个位置是个黑洞；
+            // 图到了自然被封面完全盖住。直接画在子控件之前（=封面下面），不新增控件树，
+            // 也不参与命中测试。
+            this.roundedRect(this.getX() + COVER_INSET, this.getY() + COVER_INSET,
+                    this.coverSize, this.coverSize, COVER_RADIUS,
+                    reAlpha(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND), this.getAlpha()));
+
+            // 记下本帧的真实排版位置，供下一帧判「有没有被重排」。
+            // 重排补间进行中<b>不更新</b>：补间的基准必须固定成「换代那一刻的位置」，
+            // 若每帧都刷新，差值会恒等于零、动画失效，而且滚动混进来时会把卡片拖偏。
+            if (this.reshape.frameEased() >= 1.0) {
+                this.lastLayoutX = this.getX();
+                this.lastLayoutY = this.getY();
+            }
+        }
+
+        /**
+         * 合成这一帧的矩阵变换：先补重排位移，再套进场（位移+缩放）。
+         *
+         * <p>为什么必须合成而不能各挂各的：{@code AbstractWidget} 只有一个
+         * {@code transformations} 槽位，后挂的会覆盖先挂的。进场动画原来在这里独占它，
+         * 重排如果直接抢走，卡片就会在缩放窗口时丢掉「落进来」那一段。</p>
+         *
+         * <p>重排位移读的是<b>父级共享时钟</b>（{@link GridReshape}），所以整屏卡片同一条进度，
+         * 不会各走各的；偏移量由「上一次排版位置 - 当前位置」算出来，补间走完自然归零。</p>
+         */
+        private void syncTransformations() {
+            // 只有在「几何换代」时才取差值：滚动同样会让 getX()/getY() 每帧变化，
+            // 若按「位置变了就补」来判断，滚动会被误当成重排，卡片会一路拖着残影走。
+            // 代次由 HomePanel 在列宽/封面边长真的变化时递增（见 GridReshape#restart）。
+            if (this.reshapeGeneration != this.reshape.generation) {
+                if (!Double.isNaN(this.lastLayoutX)) {
+                    // 这一帧的新位置已经由 ScrollPanel 排好，旧位置是上一帧记下的。
+                    // 差值必须在补间推进之前定格，否则推进一次差值就变小了。
+                    // 定格后整个补间期间不再重算：重算会让差值恒等于「上一帧 - 当前帧」≈ 0，
+                    // 动画直接失效。
+                    this.reshapeDx = this.lastLayoutX - this.getX();
+                    this.reshapeDy = this.lastLayoutY - this.getY();
+                } else {
+                    // 这张卡还没排过版（刚构建）：没有「从哪儿来」，不该有偏移。
+                    this.reshapeDx = 0.0;
+                    this.reshapeDy = 0.0;
+                }
+                this.reshapeGeneration = this.reshape.generation;
+            }
+            final boolean reshaping = this.reshape.frameEased() < 1.0
+                    && (this.reshapeDx != 0.0 || this.reshapeDy != 0.0);
+            final boolean entering = !entrance.isFinished();
+            if (!reshaping && !entering) {
+                if (this.transformationsAttached) {
+                    this.setTransformations(null);
+                    this.transformationsAttached = false;
+                }
+                return;
+            }
+            if (!this.transformationsAttached) {
+                this.setTransformations(this::applyCompositeTransform);
+                this.transformationsAttached = true;
+            }
+        }
+
+        /**
+         * 矩阵合成：重排位移（旧位置 → 新位置）+ 进场（下落 + 轻微放大）。
+         *
+         * <p>重排补的是「还在路上的那部分距离」：{@code (旧 - 新) * (1 - eased)}。
+         * 缓动到 1 时它变成 0，卡片正好落在网格排好的位置上。</p>
+         */
+        private void applyCompositeTransform() {
+            // 只读父级本帧推进好的值：每张卡都 tick 一次会把共享时钟推进几十遍。
+            final double eased = this.reshape.frameEased();
+            if (eased < 1.0) {
+                final double dx = this.reshapeDx * (1.0 - eased);
+                final double dy = this.reshapeDy * (1.0 - eased);
+                if (dx != 0.0 || dy != 0.0) {
+                    api.getGLStateManager().translate(dx, dy, 0.0);
+                }
+            }
+            if (this.entranceEased < 1.0) {
+                PanelItemEntrance.applyTransform(this.entranceEased,
+                        this.getX() + this.getWidth() * .5, this.getY() + this.getHeight() * .5);
             }
         }
 
@@ -1013,7 +1476,11 @@ public class HomePanel extends NCMPanel {
             this.entrance.finishImmediately();
             this.entranceEased = 1.0;
             this.setAlpha(1f);
+            // 重排偏移也一并收掉：这一帧之后卡片不再需要任何矩阵。
+            this.lastLayoutX = this.getX();
+            this.lastLayoutY = this.getY();
             this.setTransformations(null);
+            this.transformationsAttached = false;
         }
 
         @Override
@@ -1031,12 +1498,97 @@ public class HomePanel extends NCMPanel {
             super.finishTransientAnimations();
         }
 
-        private void updateTitleLayout(boolean canMeasureText) {
-            if (canMeasureText) {
-                titleWidget.setLines(wrapPlaylistTitle(titleFont, playList.getName(), COVER_SIZE));
+        /**
+         * 套用共享网格几何。
+         *
+         * <p>两类变化的感知路径不同，<b>都不能早退</b>：</p>
+         * <ul>
+         *   <li><b>列宽/封面边长</b>（{@code grid.revision}）：只在列宽变化那几帧重挂，
+         *       平时是一次 long 比较；</li>
+         *   <li><b>字体度量</b>（{@code metricsRevision}）：换字体/渲染层热重建会改行进与
+         *       字宽，但不改列宽、不 bump revision。标题 y、折行、卡高全部派生自度量，
+         *       必须跟着它走 —— 否则换字体后标题停在旧行进的位置、折行用旧字宽，
+         *       文字溢出压到封面与相邻卡片上（截图里「文字叠在封面下缘」正是它）。</li>
+         * </ul>
+         *
+         * <p>度量变化的自愈是一帧的事：metricsRevision 变 → 折行重算 + 卡高变化 → 容器
+         * 签名失效 → 下一帧容器重排。之后每帧只付「两次 revision 比较 + 一次高度比较」。</p>
+         *
+         * @param container 网格所在的 ScrollPanel，卡高变化时让它的布局签名失效
+         */
+        private void applyGridGeometry(final ScrollPanel container) {
+            final boolean metricsChanged = this.appliedMetrics != this.titleFont.metricsRevision();
+            final boolean gridChanged = this.appliedGridRevision != this.grid.revision;
+
+            if (gridChanged) {
+                this.appliedGridRevision = this.grid.revision;
+                this.cardWidth = this.grid.cardWidth;
+                this.coverSize = this.grid.coverSize;
+                // 封面静态几何也落一次：首帧在网格视口里排版前就有正确宽度（悬停动画随后覆盖它）。
+                this.coverWidget.setBounds(COVER_INSET, COVER_INSET, this.coverSize, this.coverSize)
+                        .setRadius(COVER_RADIUS);
             }
-            this.setBounds(COVER_SIZE + COVER_HOVER_EXPANSION,
-                    COVER_SIZE + COVER_HOVER_EXPANSION + COVER_TITLE_SPACING + titleWidget.getContentHeight());
+
+            // titleY/newHeight 必须在 coverSize 快照刷新<b>之后</b>计算：字段初值 100 与
+            // 真实列宽（100~123 视视口而定）差的那十几像素恰好是一个行进 —— 先算后刷的话，
+            // 标题被 setPosition 到旧快照的位置、压进封面下缘，且此后不再重挂，错误永久冻结。
+            final double titleY = COVER_INSET + this.coverSize + COVER_TITLE_SPACING;
+            final double newHeight = titleY + this.titleWidget.getBlockHeight();
+            final boolean heightChanged = Math.abs(this.getHeight() - newHeight) > .01;
+
+            if (gridChanged || metricsChanged) {
+                this.titleWidget.setPosition(COVER_INSET, titleY);
+                this.updateTitleLines(this.coverSize);
+            }
+
+            this.setBounds(this.cardWidth, newHeight);
+            if ((heightChanged || metricsChanged) && container != null) {
+                container.invalidateLayout();
+            }
+            if (metricsChanged) {
+                this.appliedMetrics = this.titleFont.metricsRevision();
+            }
+        }
+
+        /** HomePanel 在列宽变化的那几帧统一调用（时序在容器摆位之前，见 refreshGridLayout）。 */
+        void applyGridGeometryNow() {
+            this.applyGridGeometry(this.container);
+        }
+
+        /**
+         * 标题折行结果缓存：只有 cover 宽度、字形就绪状态或字体度量代次变化时才重算。
+         *
+         * <p>文本每张卡固定，构建期已经安全化过一次，这里既不 trim 也不判空；
+         * 命中缓存时一帧一分钱都不花，滚动与 hover 都不会触发文本测量。</p>
+         */
+        private void updateTitleLines(double coverWidth) {
+            final boolean glyphsReady = titleFont.areGlyphsLoaded(titleText);
+            // 缓存键用「量化后的宽度」而不是精确值：内置「播放器大小」缩放时面板每帧都在
+            // 平滑逼近目标，封面宽每帧都可能差零点几 L。若按精确值比，缓存每帧失效，
+            // 于是每张卡每帧都重新 fitWidth + 贪心删字符 —— 240 张卡就是每帧几百次文本测量，
+            // 这正是缩放时卡顿的主因。
+            //
+            // 量化到 1L：折行结果在 1L 之内的差别肉眼不可见（一行少一个字的边界情况除外，
+            // 那种情况本来也会在真正跨过边界时重算），但缓存命中率从「每帧失效」变成「稳定」。
+            // 度量代次（用户换字体时递增）必须在键里：宽度没变、度量变了，旧折行就是错的。
+            final long metrics = titleFont.metricsRevision();
+            final double quantized = Math.floor(coverWidth);
+            if (this.titleLines != null && this.titleLinesWidth == quantized
+                    && this.titleLinesGlyphsReady == glyphsReady
+                    && this.titleLinesMetrics == metrics) {
+                // 命中缓存：连 setLines 都不调 —— 它内部会 clone 数组并重设 bounds，
+                // 240 张卡每帧各来一次就是白白的 240 次分配。
+                // 但宽度确实变了（量化后仍在同一档）：只更新排版宽度，不重算折行。
+                if (this.titleWidget.getMaxWidth() != Math.max(1.0, coverWidth)) {
+                    this.titleWidget.setMaxWidth(coverWidth);
+                }
+                return;
+            }
+            this.titleLines = wrapTwoLineTitle(titleFont, titleText, coverWidth);
+            this.titleLinesWidth = quantized;
+            this.titleLinesGlyphsReady = glyphsReady;
+            this.titleLinesMetrics = metrics;
+            this.titleWidget.setLines(this.titleLines, coverWidth);
         }
 
         private static String safePlaylistTitle(String title) {
@@ -1044,24 +1596,64 @@ public class HomePanel extends NCMPanel {
             return safe.isEmpty() ? "未命名歌单" : safe;
         }
 
-        private static String[] wrapPlaylistTitle(CFontRenderer font, String title, double width) {
-            String[] lines = font.fitWidth(safePlaylistTitle(title), width);
-            return lines == null || lines.length == 0 ? new String[]{""} : lines;
+        /**
+         * 标题最多两行：先按封面宽度自然折行；超过两行时取前两行，第二行用「…」收尾
+         * （贪心删字符，直到「前缀 + …」放得下）。
+         *
+         * <p>只在 {@link #updateTitleLines} 的缓存失效时调用，渲染热路径里不会执行。</p>
+         */
+        private static String[] wrapTwoLineTitle(CFontRenderer font, String title, double width) {
+            if (width <= 1.0) {
+                return new String[]{""};
+            }
+            final String[] fitted = font.fitWidth(title, width);
+            if (fitted == null || fitted.length == 0) {
+                return new String[]{""};
+            }
+            if (fitted.length <= 2) {
+                return fitted;
+            }
+
+            String second = fitted[1];
+            while (!second.isEmpty() && font.getStringWidthD(second + TITLE_ELLIPSIS) > width) {
+                second = second.substring(0, second.length() - 1);
+            }
+            // 贪心删字符可能停在空格上，省略号前不该留它。
+            while (!second.isEmpty() && second.charAt(second.length() - 1) == ' ') {
+                second = second.substring(0, second.length() - 1);
+            }
+            if (second.isEmpty()) {
+                // 极窄窗口连「…」都放不下：宁可只留第一行，也不画出超宽文本。
+                return new String[]{fitted[0]};
+            }
+            return new String[]{fitted[0], second + TITLE_ELLIPSIS};
         }
-        private void loadCover() {
+        /**
+         * 封面加载：纹理已在内存、或下载已受理（入队）= true；URL 还没就绪 = false。
+         *
+         * <p>与曲目行（{@code MusicWidget#loadCover}）同一口径 —— 覆盖的是「URL 异步就绪晚」
+         * 这一段：返回 false 的卡下轮重试。注意「已受理」只代表进了下载闸门，HTTP 失败后
+         * 闸门虽会释放（Textures.PENDING_DOWNLOADS 移除），但本卡的 coverLoaded 已经为 true、
+         * 不会再发 —— 这一层与曲目行完全一致，若将来要真正的失败重试，需要 Textures 暴露
+         * 失败回调来清 coverLoaded。</p>
+         */
+        private boolean loadCover() {
 
             TextureManager textureManager = TextureManager.getInstance();
             Location coverLoc = this.getCoverLocation();
             if (textureManager.getTexture(coverLoc) != null)
-                return;
+                return true;
 
             String coverUrl = playList.getCoverUrl();
-            if (coverUrl == null || coverUrl.trim().isEmpty()) return;
+            if (coverUrl == null || coverUrl.trim().isEmpty()) return false;
             String secureUrl = coverUrl.replace("http://", "https://");
             String requestUrl = playList.getPlatform() == MusicPlatform.QQ || playList.getPlatform() == MusicPlatform.QISHUI || playList.isSearchMode()
                     ? secureUrl
                     : secureUrl + "?param=256y256";
+            // 入队（下载闸门在 Textures.PENDING_DOWNLOADS 里去重）。已经在下/已下载的
+            // 第二次调用会在闸门处被吞掉，按「已受理」返回 true。
             Textures.downloadTextureAndLoadAsync(requestUrl, coverLoc);
+            return true;
 
         }
 
@@ -1076,41 +1668,55 @@ public class HomePanel extends NCMPanel {
      * 行前进，而不改变全局字体渲染器。
      */
     private static final class PlaylistTitleWidget extends AbstractWidget<PlaylistTitleWidget> {
+        /** 标题块固定按两行预留高度：卡片高度不随标题长短变化，栅格行高才统一。 */
+        private static final int BLOCK_LINES = 2;
+
         private String[] lines;
         private final CFontRenderer font;
         private final double lineGap;
-        private final double maxWidth;
+        private double maxWidth;
 
         private PlaylistTitleWidget(String[] lines, CFontRenderer font, double lineGap, double maxWidth) {
             this.font = font;
             this.lineGap = lineGap;
-            this.maxWidth = Math.max(1.0, maxWidth);
-            setLines(lines);
+            setLines(lines, maxWidth);
         }
 
-        private void setLines(String[] lines) {
+        /** 行数组与标题宽一起换；高度恒为两行，短标题不会把卡片撑矮。 */
+        private void setLines(String[] lines, double maxWidth) {
             this.lines = lines == null || lines.length == 0 ? new String[]{""} : lines.clone();
-            setBounds(maxWidth, getContentHeight());
+            this.maxWidth = Math.max(1.0, maxWidth);
+            setBounds(this.maxWidth, getBlockHeight());
         }
 
-        private double getContentHeight() {
-            return heightOf(font, lines, lineGap);
+        /** 当前排版宽度。 */
+        private double getMaxWidth() {
+            return this.maxWidth;
+        }
+
+        /**
+         * 只更新排版宽度，不动行数组。
+         *
+         * <p>连续缩放时折行结果没变（量化后仍同一档），但卡片宽确实变了：
+         * 这时只需要把 bounds 跟上，不必重新 clone 行数组、更不必重新测量文本。</p>
+         */
+        private void setMaxWidth(double maxWidth) {
+            this.maxWidth = Math.max(1.0, maxWidth);
+            setBounds(this.maxWidth, getBlockHeight());
+        }
+
+        /** 两行标题块的高度（固定值，与当前实际画几行无关）。 */
+        private double getBlockHeight() {
+            return lineAdvance(font, lineGap) * BLOCK_LINES;
         }
 
         @Override
         public void onRender(double mouseX, double mouseY) {
-            double advance = lineAdvance(font, lineGap);
+            // 行高、宽度、行数组都在 setLines 里定死；这里只画，不再每帧重设 bounds。
+            final double advance = lineAdvance(font, lineGap);
             for (int index = 0; index < lines.length; index++) {
                 font.drawString(lines[index], getX(), getY() + advance * index, getHexColor());
             }
-            // 让文本视口与封面足迹精确对齐。显式宽度
-            //阻止说明文字改变水平网格间距。
-            setBounds(maxWidth, getContentHeight());
-        }
-
-        private static double heightOf(CFontRenderer font, String[] lines, double lineGap) {
-            int count = Math.max(1, lines == null ? 0 : lines.length);
-            return lineAdvance(font, lineGap) * count;
         }
 
         private static double lineAdvance(CFontRenderer font, double lineGap) {

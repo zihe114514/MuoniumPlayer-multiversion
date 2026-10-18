@@ -84,8 +84,12 @@ class SidebarEntranceStaticTest {
                 "退场没有往左带出这一格：幽灵行和新行同格同 x，淡出途中叠成认不出的字");
         assertTrue(!retire.contains("RETIRE_SLIDE_X * (1.0 - row.entranceEased)"),
                 "左移按缓动值算：还画满的那头两帧恰好一点没挪开，等于没有");
-        assertTrue(body.contains("if (rowsAnnounced)"),
-                "第一次装配也会去退场：那时 announcedRows 里根本没有任何用户见过的行");
+        // 第一次装配不退场（那时 announcedRows 里根本没有用户见过的行）；
+        // 音源切换的静默换代同样整段跳过 —— 换源会让几乎每一行同时「新出现 + 旧消失」，
+        // 两套动画叠在一起就是满屏幽灵行，那正是「上一层的残留」。
+        // 两条都落在同一个条件上：先认 rowsAnnounced 这道闸，再认静默换代必须绕开它。
+        assertTrue(body.contains("rowsAnnounced && !this.silentBuild"),
+                "退场条件丢了：要么第一次装配就去退场，要么静默换代还在演退场");
     }
 
     @Test

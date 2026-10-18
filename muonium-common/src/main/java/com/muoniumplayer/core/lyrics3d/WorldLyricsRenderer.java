@@ -65,20 +65,40 @@ public final class WorldLyricsRenderer {
         float smoothCharWidth(char c, float sizePx);
     }
 
+    /** 连续绘制失败熔断阈值：超过即整体停用（与 Bridge 的 broken 同一口径）。 */
+    private static final int MAX_CONSECUTIVE_FAILURES = 60;
+    private static int consecutiveFailures;
+
     /**
+     * 持续失败（连续 {@value #MAX_CONSECUTIVE_FAILURES} 帧）时置停用旗标并停止
+     * 打日志 —— 以前只 println 不熔断，渲染线程每帧刷一条还永远不桥接
+     * Bridge 的 broken 熔断。
      */
     public static void render(WorldLyricsState state, WorldLyricsState.CameraView camera,
                               WorldLyricsSettings settings, Host host, long nowNanos) {
         try {
             renderGuarded(state, camera, settings, host, nowNanos);
+            consecutiveFailures = 0;
         } catch (Throwable t) {
-            System.out.println("[MuoniumPlayer/WorldLyrics] 渲染失败，本帧跳过: " + t);
+            if (consecutiveFailures == 0) {
+                System.out.println("[MuoniumPlayer/WorldLyrics] 渲染失败，本帧跳过: " + t);
+            }
+            consecutiveFailures++;
+            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                System.out.println("[MuoniumPlayer/WorldLyrics] 连续 " + consecutiveFailures
+                        + " 帧渲染失败，整体停用（重启游戏恢复）");
+                consecutiveFailures = 0;
+                broken = true;
+            }
         }
     }
 
+    /** 渲染层整体停用旗标（Bridge 一并在入口短路）。 */
+    private static volatile boolean broken;
+
     private static void renderGuarded(WorldLyricsState state, WorldLyricsState.CameraView camera,
                                       WorldLyricsSettings settings, Host host, long nowNanos) {
-        if (!settings.enabled || !WorldLyricsState.hasLyrics() || camera == null || host == null) {
+        if (broken || !settings.enabled || !WorldLyricsState.hasLyrics() || camera == null || host == null) {
             return;
         }
         // 一次取整份快照：分开调 getSnapshot()/positionMsNow() 可能跨切歌边界，

@@ -83,6 +83,10 @@ public final class WorldLyricsBridge {
      */
     public static void collectWorldLyrics(SubmitNodeCollector collector) {
         if (broken || !HudConfig.worldLyricsEnabled || collector == null) return;
+        // always-on-top 门旗标（见 fabric 侧 LyricOnTopSubmitter.submittedThisFrame 的
+        // 注释）：帧头复位 —— 本帧没提交就保持 vanilla 门。fabric 的
+        // LevelRendererAlwaysOnTopGateMixin 读它补执行门的 OR 半句。
+        LyricOnTopSubmitter.submittedThisFrame = false;
         try {
             Minecraft mc = Minecraft.getInstance();
             if (mc == null || mc.player == null || mc.level == null) return;

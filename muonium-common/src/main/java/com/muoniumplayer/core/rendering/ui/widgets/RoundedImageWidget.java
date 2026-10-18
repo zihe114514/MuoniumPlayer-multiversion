@@ -59,8 +59,13 @@ public class RoundedImageWidget extends AbstractWidget<RoundedImageWidget> {
         if (textureObject == null)
             return;
 
-        if (fadeIn)
-            this.setAlpha(Interpolations.interpolate(this.getWidgetAlpha(), 1.0f, 0.15f));
+        if (fadeIn && this.getWidgetAlpha() < 1.0f) {
+            // 渐显只在自己还没满亮时推进：到位之后每帧一次 setAlpha（内部 new Color）
+            // 是纯白花的分配。用 0.25f 的步长，纹理就绪后约 6 帧淡满，与同批封面几乎同时到齐。
+            float next = Interpolations.interpolate(this.getWidgetAlpha(), 1.0f, 0.25f);
+            if (next > 0.99f) next = 1.0f;
+            this.setAlpha(next);
+        }
 
         api.getGLStateManager().color(1, 1, 1, this.getAlpha());
         api.getGLStateManager().bindTexture(textureObject.getGlTextureId());

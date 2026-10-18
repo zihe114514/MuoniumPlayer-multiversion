@@ -46,11 +46,11 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     private static WorldLyricsSettings buildFromConfig() {
         WorldLyricsSettings s = new WorldLyricsSettings();
         s.enabled = HudConfig.worldLyricsEnabled;
-        s.distance = clamp(HudConfig.worldLyricsDistance, 3.0, 24.0);
+        s.distance = clamp(HudConfig.worldLyricsDistance, 3.0, 48.0);
         s.facePlayer = HudConfig.worldLyricsFacePlayer;
         s.keepAway = HudConfig.worldLyricsKeepAway;
         s.spreadDeg = clamp(HudConfig.worldLyricsSpreadDeg, 0.0, 60.0);
-        s.scale = clamp(HudConfig.worldLyricsScale, 0.4, 3.0);
+        s.scale = clamp(HudConfig.worldLyricsScale, 0.4, 6.0);
         s.smoothFont = HudConfig.worldLyricsSmoothFont;
         s.styleModern = HudConfig.worldLyricsModernStyle;
         s.splitLines = HudConfig.worldLyricsSplitLines;

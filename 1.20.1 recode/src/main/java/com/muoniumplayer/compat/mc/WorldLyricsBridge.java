@@ -69,6 +69,9 @@ public final class WorldLyricsBridge {
      */
     public static void worldRenderEnd() {
         if (broken || !HudConfig.worldLyricsEnabled) return;
+        // 懒装配（幂等）：加载器外壳忘了调 install() 时（1.20.1 fabric 曾漏），
+        // 第一帧世界渲染也会把图集宿主装上 —— 现代化渲染不因接线遗漏而整档失效。
+        install();
         try {
             Minecraft mc = Minecraft.getInstance();
             if (mc == null || mc.player == null || mc.level == null) return;
@@ -99,12 +102,20 @@ public final class WorldLyricsBridge {
             try {
                 renderInner(basePose, mc, camera);
             } finally {
-                // 这里逐项还原等价的几项，避免泄漏给本帧后续的绘制）。
+                // 恢复状态：视图矩阵 + 我们改过的 GL 状态。逐项还原成 1.20.1 的
+                // 原版默认（defaultBlendFunc = SRC_ALPHA/ONE_MINUS_SRC_ALPHA,
+                // alpha 侧 ONE/ZERO —— javap RenderSystem.defaultBlendFunc 核对），
+                // 而不是「设回我们进来时的另一组值」：blend(true)/blendFunc 只在
+                // 本渲染窗口内成立，LAST/AFTER_LEVEL 之后的原版绘制（gui 等）
+                // 期望的是默认态。blend 与 activeTexture 同样只设不恢复会泄漏：
+                // early-return 帧（无歌词/无行）后面就是原版 GUI，混合态残留会
+                // 让无 transparency shard 的 RenderType 继承环境 blend。
                 GlCompat.depthTest(true);
                 GlCompat.depthMask(true);
                 GlCompat.cull(true);
+                GlCompat.blend(false);
                 GlCompat.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
-                        GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                        GL11.GL_ONE, GL11.GL_ZERO);
                 viewStack.popPose();
                 RenderSystem.applyModelViewMatrix();
             }
@@ -121,7 +132,17 @@ public final class WorldLyricsBridge {
         WorldLyricsSettings settings = WorldLyricsSettings.snapshot();
         if (!settings.enabled) return;
         WorldLyricsBridge.currentSettings = settings;
+        try {
+            renderInnerWithSettings(basePose, mc, cameraAccess, settings);
+        } finally {
+            // 帧末清空（含 early-return 路径）：发光参数快照只在本渲染窗口内有效。
+            WorldLyricsBridge.currentSettings = null;
+        }
+    }
 
+    private static void renderInnerWithSettings(Matrix4f basePose, Minecraft mc,
+                                                CameraAccess cameraAccess,
+                                                WorldLyricsSettings settings) {
         if (!WorldLyricsState.hasLyrics()) {
             if (TRACE && !tracedNoLyrics) {
                 tracedNoLyrics = true;
@@ -156,7 +177,6 @@ public final class WorldLyricsBridge {
                 System.out.println("[WorldLyrics/trace] 首次 update+render 编排完成（active/fading 组帧）");
             }
         } finally {
-            WorldLyricsBridge.currentSettings = null;
             WorldBillboard.INSTANCE.end();
         }
     }

@@ -738,6 +738,8 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
     }
 
     public SELF setAlpha(float alpha) {
+        // 短路：值没变就不重建 Color。封面/卡片这类每帧渐显的控件收敛后不再每帧分配。
+        if (alpha == this.alpha) return (SELF) this;
         this.alpha = alpha;
         this.color = new Color(this.color.getRed(), this.color.getGreen(), this.color.getBlue(), (int) (alpha * 255));
         return (SELF) this;

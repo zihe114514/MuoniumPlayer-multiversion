@@ -29,9 +29,15 @@ class PanelTransitionStaticTest {
     private static final Path NCM = JAVA.resolve(Paths.get("com", "muoniumplayer", "core", "screens", "ncm"));
     private static final Path PANELS = NCM.resolve("panels");
 
-    /** 换页那一段渲染：从推进时钟到画完新页。 */
+    /**
+     * 换页那一段渲染：从推进时钟到画完新页。
+     *
+     * <p>锚点认的是「转场时钟条件」那一行，它现在同时管两种专场：普通换页（有旧页）与
+     * 音源切换（只画新页）。旧锚点 {@code if (this.prevAnimatingPanel != null) {} 会先撞上
+     * 同一段里更早出现的「有旧页才画旧页」分支，截出来的区间是错的。</p>
+     */
     private static String transitionRegion(String screen) {
-        int start = screen.indexOf("if (this.prevAnimatingPanel != null) {");
+        int start = screen.indexOf("if (this.prevAnimatingPanel != null || this.panelSoloFadeActive) {");
         assertTrue(start >= 0, "找不到换页转场的时钟段");
         int end = screen.indexOf("// 导航等待遮罩", start);
         assertTrue(end > start, "换页转场段后面找不到收尾锚点，八成是渲染被挪走了");
@@ -62,6 +68,7 @@ class PanelTransitionStaticTest {
 
         assertFalse(region.contains("Interpolations.interpolate"),
                 "转场 alpha 又回到指数逼近：它没有时长概念，默认速度下两三帧就吃光");
+        // 进度是「本帧毫秒 / 总毫秒」。写法收成了一个表达式，断言认这条性质而不是它的排版。
         assertTrue(region.contains("panelTransitionStepMillis() / panelTransitionMillis()"),
                 "进度不是「本帧毫秒 / 总毫秒」，就不是时间驱动");
 
@@ -71,6 +78,11 @@ class PanelTransitionStaticTest {
         assertTrue(screen.contains("RenderSystem.getFrameDeltaTime() * 10.0"),
                 "步进不是帧间隔，掉帧时动画会整段跳掉");
         assertTrue(screen.contains("Math.min(40.0"), "大帧没夹住：一帧跨掉小半条曲线就是一顿一顿");
+
+        // 音源切换专场复用同一条时钟与同一条曲线，只是不画旧页：
+        // 它要是自己另起一条时长，换源和换栏目就会是两个节奏。
+        assertTrue(region.contains("this.panelSoloFadeActive ? 0.0"),
+                "音源专场没有走同一条转场时钟");
     }
 
     @Test
@@ -79,11 +91,17 @@ class PanelTransitionStaticTest {
         String screen = read(NCM.resolve("NCMScreen.java"));
         String region = transitionRegion(screen);
 
+        // 位移距离仍然按前进/后退取符号（音源切换专场是 0，那是另一个分支，见下面的断言）。
         assertTrue(region.contains("this.panelTransitionBackward ? -1.0 : 1.0"),
                 "位移没有前进/后退方向：返回键看起来像又前进了一页");
         assertTrue(region.contains("-slideDistance * transitionEased"), "旧页没有往反方向推出去");
         assertTrue(region.contains("slideDistance * (1.0 - transitionEased)"), "新页没有从侧面推进来");
         assertTrue(screen.contains("this.pendingNavigationBackward = true"), "navigateBack 没有声明方向");
+
+        // 音源切换专场没有上一页可推，位移必须是 0：横向位移会和侧栏换代抢方向，
+        // 也正是「上一层的残留」最容易出现的地方。
+        assertTrue(region.contains("this.panelSoloFadeActive ? 0.0"),
+                "音源切换还在做横向位移：新页会从侧面推进来，和侧栏换代抢方向");
 
         // 一位移就得出界：不裁的话旧页会糊到左侧导航栏上。两段 beginClip 都必须是内容区。
         long clips = java.util.stream.Stream.of(region.split("StencilClipManager.beginClip\\(")).skip(1).count();
@@ -102,8 +120,20 @@ class PanelTransitionStaticTest {
                 "被换下去的页没有记下自己当前的不透明度，中途再切会先闪回全亮");
         assertTrue(switchBody.contains("prevAnimatingPanelAlpha <= .02f"),
                 "上一页几乎还没露脸时应当直接跳过转场，而不是硬凑一次");
-        assertTrue(transitionRegion(screen).contains("prevAnimatingPanelAlpha * (float) (1.0 - transitionEased)"),
-                "旧页不是从记录下的那个值往下淡");
+
+        // 旧页从记录下的那个值往下淡，而且比新页淡入更快一档（指数 1.45）：
+        // 两层同框的时间越短，越读不出「叠影」，收尾也更利落。
+        String region = transitionRegion(screen);
+        assertTrue(region.contains("prevAnimatingPanelAlpha")
+                        && region.contains("Math.pow(1.0 - transitionEased, 1.45)"),
+                "旧页不是从记录下的那个值、按更快的节奏往下淡");
+
+        // 音源切换专场：旧页在换页那一刻就被丢掉，整段转场只画新页 ——
+        // 这是「不要有上一层的残留」的落点。
+        assertTrue(switchBody.contains("this.panelSoloFadeRequested"),
+                "音源切换没有专场标记，旧页会和交叉淡入一起出现");
+        assertTrue(switchBody.contains("this.prevAnimatingPanel = null"),
+                "音源切换没有把旧页丢掉，上一层的内容会残留");
     }
 
     @Test

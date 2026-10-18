@@ -49,33 +49,67 @@ public final class PersonalFmPanel extends NCMPanel {
 
     private static final double MARGIN = 12.0;
     private static final double BUTTON_GAP = 6.0;
+    /**
+     * 模式行与场景行共用的分段控件尺寸：高 17、圆角 6（BRIEF W4 的 chip 口径）。
+     *
+     * <p>两处都必须走同一条 {@code SegmentControl}：它自带滑块从上一格滑到这一格的动画，
+     * 点一次模式就是一次整棵重排，控件对象活不过那一趟，所以滑块位置交给类上的记忆
+     * （{@code modeSlide} / {@code sceneSlides}）。若把模式行换成静态 chip，页面上就会出现
+     * 两种「选中」——一条会滑的轨道和一枚不动的底色，切模式与切场景的手感立刻不一致。</p>
+     */
     private static final double CHIP_H = 17.0;
+    private static final double CHIP_RADIUS = 6.0;
+    /** 同一行相邻 chip 的间距，也是本页行距/组距的统一档（8L）。 */
+    private static final double CHIP_GAP = 8.0;
+    /** 模式行的高度与内缩：与场景轨道同高，两行的滑块因此是同一个尺寸。 */
+    private static final double MODE_H = CHIP_H;
+    private static final double MODE_INSET = 2.0;
     /** 页眉那一行的高度：与主页 {@code HomePanel}、排行榜、热搜写的是同一个数，切页时页眉不再上下跳。 */
     private static final double HEADER_TOP = 12.0;
 
-    private static final double MODE_TOP = 56.0;
-    /** 模式行：一条轨道 + 一颗滑块，六段等宽，用的就是搜索栏「歌曲 / 歌单」那一条控件。 */
-    private static final double MODE_H = 20.0;
-    private static final double MODE_INSET = 3.0;
-    /** 一格 = 最宽那枚标签的墨迹 + 左右各 5 像素。墨迹宽度要等字体装好才知道，所以首次渲染时才算。 */
-    private static double modeCellW = Double.NaN;
-    private static final double SCENE_TOP = 80.0;
+    /** 内容起始 y：与主页/发现页/热搜同一口径（页头盒底 + 8L，即 token 里的 60）。 */
+    private static final double MODE_TOP = 60.0;
+    /** 场景区起点：模式 chip 行 + 8L；汽水没有模式行，它的标签区直接落在 {@link #MODE_TOP}。 */
+    private static final double SCENE_TOP = MODE_TOP + CHIP_H + CHIP_GAP;
     /**
      * 汽水树的标签区从哪起。它没有网易云那条六模式行（{@code addModeRow} 在这棵树上提前返回），
      * 原来仍旧按 {@link #SCENE_TOP} 摆，于是页眉和首行之间白空掉整整一条模式行的高度。
      * 取模式行本该在的位置：两个平台的首行落在同一条线上，切平台时标签区不再上下跳。
      */
     private static final double QISHUI_SCENE_TOP = MODE_TOP;
-    /** 一个分组固定占一行：轨道 19 + 行与行之间 5。四组就是 96，不再随窗口宽度堆高。 */
-    private static final double SCENE_ROW = 24.0;
-    /** 场景那一行的轨道高度：比模式行矮一档，四行叠起来才不压人。 */
-    private static final double SCENE_TRACK_H = 19.0;
+    /** 一个分组固定占一行：chip 17 + 行距 8。四组就是整块 100，不再随窗口宽度堆高。 */
+    private static final double SCENE_ROW = CHIP_H + CHIP_GAP;
+    /**
+     * 场景轨道（横向滚动的那条 chip 带）的高度。
+     *
+     * <p>等于 chip 自身的 17L：轨道是 chip 的容器，比 chip 高出来的部分只会变成看不见的
+     * 命中区，还会把「组名与轨道同一条中线」这条对齐关系算歪。原来这里是 19L。</p>
+     */
+    private static final double SCENE_TRACK_H = CHIP_H;
     /** 组名那一列的宽度，四行的 chip 左边缘因此对齐。 */
     private static final double GROUP_LABEL_W = 40.0;
+    /** 组名与这一行轨道之间的距离（8L 档）。 */
+    private static final double GROUP_LABEL_GAP = 8.0;
+    /** 标签轨道两端的留白：横向滚到首尾时，chip 的文字不贴着裁切边。 */
+    private static final double SCENE_INSET = 2.0;
 
     private static final double HERO_H = 132.0;
     private static final double HERO_PAD = 14.0;
     private static final double COVER_BOX = 104.0;
+    /** hero 卡与封面圆角：卡片 8、封面 4（BRIEF 圆角档位，不再留 5/6/7 这些零碎档）。 */
+    private static final double HERO_RADIUS = 8.0;
+    private static final double COVER_RADIUS = 4.0;
+    /** hero 主操作：28L 圆形强调底播放键，字形与底栏那颗播放键同源。 */
+    private static final double HERO_PLAY_SIZE = 28.0;
+    /** 次级图标（下一首）的边长，与喜欢那颗同一档。 */
+    private static final double HERO_SKIP_BOX = 20.0;
+    /** 历史列表：行高 22、行距 2（BRIEF token：列表行 22L、列表行间距 2L）。 */
+    private static final double HISTORY_ROW_H = 22.0;
+    private static final double HISTORY_ROW_GAP = 2.0;
+    /** 历史行标题左缘：序号槽占 0..24，再让 6，与热搜页「名次 / 关键词」同一列语言。 */
+    private static final double HISTORY_TITLE_X = 30.0;
+    /** 历史行序号右缘：序号在这一列里右对齐，列的位置本身固定，不随位数漂移。 */
+    private static final double HISTORY_INDEX_RIGHT = 24.0;
 
     private static final PersonalFmManager.Mode[] MODES = {
             PersonalFmManager.Mode.DEFAULT, PersonalFmManager.Mode.FAMILIAR,
@@ -87,10 +121,6 @@ public final class PersonalFmPanel extends NCMPanel {
     /** 场景子模式的分组展示：分组标题 + 组内中文名，成员顺序与 PersonalFmManager 的分组一致。 */
     private static final String[][] SCENE_GROUP_LABELS = new String[PersonalFmManager.SCENE_GROUP_MODES.length][];
 
-    /** 四组场景标签各自那颗滑块走到哪了，同一件事按组各记一份。 */
-    private static final double[] sceneSlides =
-            new double[PersonalFmManager.SCENE_GROUP_MODES.length];
-
     static {
         for (int index = 0; index < MODES.length; index++) MODE_LABELS[index] = MODES[index].getDisplayName();
         for (int group = 0; group < SCENE_GROUP_LABELS.length; group++) {
@@ -98,8 +128,6 @@ public final class PersonalFmPanel extends NCMPanel {
             String[] labels = new String[modes.length];
             for (int index = 0; index < modes.length; index++) labels[index] = PersonalFmManager.sceneLabel(modes[index]);
             SCENE_GROUP_LABELS[group] = labels;
-            // 0 会被读成「上一帧滑块在第一格」，于是每次装配都从第一格滑过来。NaN 才是「没有上一帧」。
-            sceneSlides[group] = Double.NaN;
         }
     }
 
@@ -107,9 +135,6 @@ public final class PersonalFmPanel extends NCMPanel {
     /** 标签区展开到多少：0 = 整块收起，1 = 四组全在。切到/切离「场景推荐」时朝目标缓动过去。 */
     private static double sceneReveal;
     private static long sceneLastNanos;
-
-    /** 模式行滑块走到哪了：整棵重排之后接着走完这一趟，而不是瞬移到新那一格。 */
-    private static double modeSlide = Double.NaN;
 
     /** 已经演过进场的「刚才推荐过」那一行的指纹，用来只让新来的那一首落进来。 */
     private static final java.util.Set<String> historySeen = new java.util.LinkedHashSet<>();
@@ -158,9 +183,34 @@ public final class PersonalFmPanel extends NCMPanel {
 
     /** 上一次各组的选中是哪一枚；变了才去把那一枚留在视口里。 */
     private static final int[] sceneShown = new int[PersonalFmManager.SCENE_GROUP_MODES.length];
+    /**
+     * 各组滑块上一次停在哪一格（浮点：滑块动画进行中也是有效位置）。
+     *
+     * <p>重排会重建整棵控件树，滑块如果只认「当前选中」就会从 0 重新滑一遍；记住上一格位置，
+     * 重建后滑块直接落在原地，只有真正的选中变化才滑动。与汽水侧 {@code qishuiSlides} 同义。</p>
+     *
+     * <p>初值必须是 {@link Double#NaN} 而不是 0：0 的含义是「上一帧停在第 0 格」，那样每次装配
+     * 都会从第一格滑过来。NaN 表示「还没有过上一帧」，控件会直接钉在目标上（见下面的 static 块）。</p>
+     */
+    private static final double[] sceneSlides = new double[PersonalFmManager.SCENE_GROUP_MODES.length];
+
+    /**
+     * 模式行滑块的记忆：上一次停在哪一格。
+     *
+     * <p>初值 {@link Double#NaN} 表示「还没有过上一帧」—— 控件据此直接钉在目标格上，而不是
+     * 从第 0 格滑过来。点一次模式就是一次整棵重排，控件实例活不过那一趟，所以记忆必须放在类上。</p>
+     */
+    private static double modeSlide = Double.NaN;
+    /** 模式行一格多宽（按最宽标签的墨迹算，首次渲染时量一次）。 */
+    private static double modeCellW = Double.NaN;
 
     static {
-        for (int group = 0; group < sceneShown.length; group++) sceneShown[group] = -1;
+        for (int group = 0; group < sceneShown.length; group++) {
+            sceneShown[group] = -1;
+            // 与汽水侧 qishuiSlides 同一套初始化：NaN = 还没有过上一帧，控件据此直接钉在
+            // 目标格上；写成 0 会被当成「上一帧停在第 0 格」，每次装配都从第一格滑过来。
+            sceneSlides[group] = Double.NaN;
+        }
     }
 
     /** 上一次这一页真的画出来是什么时候，用来分「切走了又切回来」和「数据到了原地重排」。 */
@@ -352,23 +402,24 @@ public final class PersonalFmPanel extends NCMPanel {
         });
     }
 
-    // ── 模式行：一条轨道 + 一颗滑块，六段等宽 ────────────────────────────────
+    // ── 模式行：一排 chip，选中态与场景区共用同一种语言 ───────────────────────
 
     /**
      * 六枚模式换成搜索栏那一条 {@link SegmentControl}。
      *
-     * <p>原来这里是一条自己画的滑块贴在文字底下：没有轨道，选中态就只是「一块粉色底」，和搜索栏
-     * 那两颗「歌曲 / 歌单」看着是两种东西。共用同一条控件之后，轨道、内缩、圆角、按压回弹、悬停
-     * 淡底、按墨迹居中都只有一份实现，改一处两边一起好。</p>
+     * <p>它和下面四组场景标签用的是同一条控件：轨道、内缩、圆角、按压回弹、悬停淡底、
+     * 按墨迹居中都只有一份实现，滑块从上一格滑到这一格也只有一套节奏。换成自绘静态 chip
+     * 会让「切模式」失去滑动连续性，一页里还会出现两种选中语言。</p>
      */
     private void addModeRow() {
         // 汽水没有这套六模式的体系——它有自己真实的听歌模式(见 addSceneRows 的汽水分支),
         // 网易云的枚举在这棵树上一个都不该出现。判据是装配时冻结的树类型,不是现场的平台。
         if (this.treeQishui) return;
+
         final SegmentControl.Spec spec = new SegmentControl.Spec();
         spec.y = MODE_TOP;
         spec.height = MODE_H;
-        spec.radius = 7.0;
+        spec.radius = CHIP_RADIUS;
         spec.inset = MODE_INSET;
         // 基准 1150：默认档（3.0×）下走满整条轨道约 383 毫秒。这一页其余几步（标签区展开、
         // hero 让位、封面接力）都在三百毫秒这一档，滑块比它们快就没人和它们对得上拍子。
@@ -416,17 +467,15 @@ public final class PersonalFmPanel extends NCMPanel {
         return modeCellW;
     }
 
-    /** 轨道总宽：内容区放不下就整条收窄，宁可挤一点，也不把最后一枚推出右边。 */
-    private double modeTrackWidth() {
-        return Math.min(modeCellWidth() * MODES.length + MODE_INSET * 2.0,
-                Math.max(1.0, getWidth() - MARGIN * 2.0));
+    /** 整条模式轨道多宽：格宽 × 格数 + 两侧内缩。 */
+    private static double modeTrackWidth() {
+        return modeCellWidth() * MODES.length + MODE_INSET * 2.0;
     }
 
     private static int modeSlotOf(PersonalFmManager.Mode mode) {
         for (int index = 0; index < MODES.length; index++) if (MODES[index] == mode) return index;
         return 0;
     }
-
     // ── 标签区：每组一行，行内横向滚 ─────────────────────────────────────────
 
     /**
@@ -678,9 +727,6 @@ public final class PersonalFmPanel extends NCMPanel {
         viewport.targetScrollOffset = offset;
         viewport.actualScrollOffset = offset;
     }
-
-    /** 场景轨道的内缩，与 {@link #addSceneSegment} 里那份是同一个数。 */
-    private static final double SCENE_INSET = 2.0;
 
     /**
      * 一组场景标签 = 一条轨道 + 一颗滑块，格与格按文字长短排。

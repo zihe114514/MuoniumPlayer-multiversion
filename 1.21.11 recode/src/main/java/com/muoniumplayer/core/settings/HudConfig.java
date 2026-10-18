@@ -844,11 +844,11 @@ public final class HudConfig {
             pendoloActiveScale = clamp(getFloat(o, "pendoloActiveScale", pendoloActiveScale), 1.00f, 1.60f);
             pendoloGearDecor = getBoolean(o, "pendoloGearDecor", pendoloGearDecor);
             worldLyricsEnabled = getBoolean(o, "worldLyricsEnabled", worldLyricsEnabled);
-            worldLyricsDistance = clamp(getFloat(o, "worldLyricsDistance", worldLyricsDistance), 3.0f, 24.0f);
+            worldLyricsDistance = clamp(getFloat(o, "worldLyricsDistance", worldLyricsDistance), 3.0f, 48.0f);
             worldLyricsFacePlayer = getBoolean(o, "worldLyricsFacePlayer", worldLyricsFacePlayer);
             worldLyricsKeepAway = getBoolean(o, "worldLyricsKeepAway", worldLyricsKeepAway);
             worldLyricsSpreadDeg = clamp(getFloat(o, "worldLyricsSpreadDeg", worldLyricsSpreadDeg), 0.0f, 60.0f);
-            worldLyricsScale = clamp(getFloat(o, "worldLyricsScale", worldLyricsScale), 0.4f, 3.0f);
+            worldLyricsScale = clamp(getFloat(o, "worldLyricsScale", worldLyricsScale), 0.4f, 6.0f);
             worldLyricsSmoothFont = getBoolean(o, "worldLyricsSmoothFont", worldLyricsSmoothFont);
             worldLyricsModernStyle = getBoolean(o, "worldLyricsModernStyle", worldLyricsModernStyle);
             worldLyricsSplitLines = getBoolean(o, "worldLyricsSplitLines", worldLyricsSplitLines);

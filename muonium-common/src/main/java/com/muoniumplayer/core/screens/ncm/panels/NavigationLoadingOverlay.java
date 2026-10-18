@@ -1,7 +1,5 @@
 package com.muoniumplayer.core.screens.ncm.panels;
 
-import com.muoniumplayer.core.rendering.animation.Interpolations;
-
 /**
  * 内容区的「导航等待」遮罩：点了导航栏里那几个要先取网络才知道去哪的入口时，
  * 在<b>当前页面之上</b>转一枚转子，取到数据后一次性切到目标页。
@@ -25,8 +23,11 @@ public final class NavigationLoadingOverlay {
     /** 提示态（失败/为空）停留多久后自动淡出。 */
     static final long MESSAGE_HOLD_NANOS = 2_200_000_000L;
 
-    /** 淡入淡出速度，与面板切换的 alpha 插值同一量级。 */
-    private static final float FADE_SPEED = .24f;
+    /** 淡入/淡出时长（毫秒，真实时间）。关闭比打开果断一档，和 SheetClock 同一惯例。 */
+    private static final double FADE_IN_MS = 120.0;
+    private static final double FADE_OUT_MS = 160.0;
+    /** 一帧最多折算的毫秒数，挡切后台回来这种断档。 */
+    private static final double MAX_FRAME_MS = 64.0;
 
     private final PanelLoadingWidget spinner = new PanelLoadingWidget(this::visibleText);
 
@@ -41,6 +42,8 @@ public final class NavigationLoadingOverlay {
     private String fadingText = "";
     private boolean fadingSpinning;
     private float alpha;
+    /** 上一帧的 nanoTime，用来把透明度改成帧率无关的真毫秒推进。 */
+    private long lastFadeNanos;
 
     /**
      * 这一帧是否需要画。淡出期间 {@code text} 已经是 {@code null} 但 {@code alpha} 还没归零，
@@ -104,12 +107,29 @@ public final class NavigationLoadingOverlay {
             fadingSpinning = spinning;
         }
 
-        alpha = Interpolations.interpolate(alpha, current != null ? 1f : 0f, FADE_SPEED);
+        // 真毫秒推进：以前用指数逼近，高帧率下遮罩几乎「啪」一下出现，低帧率下又拖尾；
+        // 这里按 120/160ms 的固定时长走，观感与换页转场（默认约 140ms）同一档。
+        final double frameMs = this.advanceFadeClock(now);
+        if (current != null) {
+            alpha = Math.min(1f, alpha + (float) (frameMs / FADE_IN_MS));
+        } else {
+            alpha = Math.max(0f, alpha - (float) (frameMs / FADE_OUT_MS));
+        }
         if (alpha <= .015f) {
             alpha = 0f;
             return;
         }
         spinner.paint(x, y, width, height, alpha * Math.max(0f, Math.min(1f, parentAlpha)), fadingSpinning);
+    }
+
+    /** 推进并返回本帧毫秒数；第一帧与断档（>64ms）按 0 处理，避免遮罩一帧跳满。 */
+    private double advanceFadeClock(long now) {
+        final long previous = this.lastFadeNanos;
+        this.lastFadeNanos = now;
+        if (previous == 0L) return 0.0;
+        final double deltaMs = Math.min(MAX_FRAME_MS, Math.max(0.0, (now - previous) / 1_000_000.0));
+        // 长时间不可见（alpha=0、text=null）后重新出现时，从 0 开始算，不要一口气吃掉整个时长。
+        return this.alpha <= 0f && deltaMs > 32.0 ? 0.0 : deltaMs;
     }
 
     /** 供 {@link PanelLoadingWidget} 取文案。淡出期间返回的是最后一次的文案。 */

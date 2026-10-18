@@ -14,6 +14,8 @@ import com.muoniumplayer.core.ncm.music.NeteaseRecentPlaysService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.GlassLook;
+import com.muoniumplayer.core.rendering.font.CFontRenderer;
+import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedButtonWidget;
@@ -50,11 +52,50 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         }
     }
 
+    // ── 热搜榜（W1）视觉常量 ────────────────────────────────────────────
+    // 单位是布局单位 L（设计单位 D = 2L），字号/间距口径对齐「视觉精修 + 性能」规范。
+    /** 行高 22L：榜单行比原来的 28L 整宽按钮矮，一屏能多放三行。 */
+    private static final double HOT_ROW_HEIGHT = 22.0;
+    /** 行间距 2L：榜单行之间只要一条呼吸缝，不构成卡片分组感。 */
+    private static final double HOT_ROW_SPACING = 2.0;
+    /** 行圆角 6L。 */
+    private static final double HOT_ROW_RADIUS = 6.0;
+    /** 名次列：右对齐的小盒 x=4、宽 20L；1~3 名走强调色，其余次要色。 */
+    private static final double HOT_RANK_X = 4.0;
+    private static final double HOT_RANK_BOX_WIDTH = 20.0;
+    private static final int HOT_ACCENT_RANK_LIMIT = 3;
+    /** 关键词左缘 30L = 名次盒右缘 24L + 6L 缝；关键词与 meta 之间再留 8L。 */
+    private static final double HOT_KEYWORD_X = 30.0;
+    private static final double HOT_KEYWORD_META_GAP = 8.0;
+    /** meta 右对齐到行右缘内 10L 处；最大宽度取 min(35% 行宽, 160L)。 */
+    private static final double HOT_META_RIGHT_MARGIN = 10.0;
+    private static final double HOT_META_MAX_WIDTH_RATIO = .35;
+    private static final double HOT_META_MAX_WIDTH = 160.0;
+    /**
+     * hover 背景的指数逼近半衰期。45ms 时约 120ms 到 85%、160ms 到 92%，正好落在
+     * 120~160ms 这一档；同时是实时毫秒驱动，掉帧时不会变成「一帧闪过去」。
+     */
+    private static final double HOT_HOVER_HALF_LIFE_MILLIS = 45.0;
+    /** 逼近到这个距离内就直接归位，不为不可见的差值继续算。 */
+    private static final float HOT_HOVER_EPSILON = .01f;
+    /** 单帧时间上限：页面切走再切回时，别让积攒的毫秒把 hover 一步跳完。 */
+    private static final long HOT_HOVER_MAX_DT_MILLIS = 100L;
+
     private final Page page;
     private final MusicPlatform platform;
     private volatile List<Entry> entries = Collections.emptyList();
     private volatile boolean loading;
     private volatile String status = "";
+    /** 上一次请求是不是抛异常失败的：只有这种空态才可点重试。 */
+    private volatile boolean failed;
+    /** 热搜行「一件件落进来」的错峰发号器，见 {@link PanelItemEntrance.RevealQueue}。 */
+    private final PanelItemEntrance.RevealQueue revealQueue = new PanelItemEntrance.RevealQueue();
+    /**
+     * 本帧主题色。{@code NCMTheme.getColor} 是全局同步入口，而热搜一屏有几十行、每行要读四种
+     * 颜色；集中在这里一帧取一次，行渲染只做已缓存读值。主题过渡期间颜色本来就会逐帧变化，
+     * 所以这些值每帧重取，行为与逐处取色一致。
+     */
+    private int accentColor, primaryTextColor, secondaryTextColor, hoverColor;
 
     public NeteaseDiscoveryPanel(Page page) {
         this(page, MusicPlatform.NETEASE);
@@ -83,12 +124,13 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
     private void renderLayout() {
         getChildren().clear();
         final double margin = 12.0;
+        final boolean hotSearch = this.page == Page.HOT_SEARCH;
 
         LabelWidget title = new LabelWidget(() -> pageTitle(), FontManager.pf25bold);
         addChild(title);
         title.setClickable(false);
         title.setBeforeRenderCallback(() -> title
-                .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
+                .setColor(this.primaryTextColor)
                 .setMaxWidth(Math.max(1.0, getWidth() - margin * 2.0))
                 .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
                 .setPosition(margin, margin));
@@ -97,18 +139,36 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         addChild(subtitle);
         subtitle.setClickable(false);
         subtitle.setBeforeRenderCallback(() -> subtitle
-                .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
+                .setColor(this.secondaryTextColor)
                 .setMaxWidth(Math.max(1.0, getWidth() - margin * 2.0))
                 .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
                 .setPosition(margin, 39));
 
         ScrollPanel list = new ScrollPanel();
         addChild(list);
-        list.setSpacing(6);
+        // 热搜行间距 2L（榜单行之间只要一条缝）；其它页面保持原来的 6L，行为不变。
+        list.setSpacing(hotSearch ? HOT_ROW_SPACING : 6);
         list.setScrollStrength(40);
         list.setAlignment(ScrollPanel.Alignment.VERTICAL);
+        if (hotSearch) {
+            // 热搜行等高，直接交给 ScrollPanel 的等高快速路径：每帧只排版视口附近的行，
+            // 而不是为几十行做一次全量扫描（见 ScrollPanel#setUniformVerticalItemHeight）。
+            list.setUniformVerticalItemHeight(HOT_ROW_HEIGHT);
+        }
         list.setBeforeRenderCallback(() -> list.setBounds(margin, 60,
                 Math.max(1.0, getWidth() - margin * 2.0), Math.max(1.0, getHeight() - 74)));
+
+        // 面板回调跑在所有子控件之前：本帧要用的主题色、进场发号与滚动状态在这里一次算好。
+        // NCMTheme.getColor 是全局同步入口，而热搜一屏几十行、每行四种颜色；逐行取会把锁次数
+        // 放大到几百次，集中取一次之后行渲染只做已缓存读值。
+        this.setBeforeRenderCallback(() -> {
+            this.accentColor = NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
+            this.primaryTextColor = NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT);
+            this.secondaryTextColor = NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+            this.hoverColor = NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER);
+            this.revealQueue.beginFrame();
+            this.revealQueue.setAnimationsSuppressed(list.isScrollActive());
+        });
 
         if (loading && entries.isEmpty()) {
             // 和歌单页、主页用同一枚转子。原来这里只有一行不会动的"正在获取…"，
@@ -122,12 +182,56 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         }
 
         if (entries.isEmpty()) {
+            if (hotSearch) {
+                // 空态与失败态共用这枚控件：失败只留一行字（转子的含义是"还在忙"，配在终态上
+                // 自相矛盾），整行可点重试；空态不可点，和原来一样只是提示。
+                final boolean retryable = failed;
+                final String rawNotice = status.isEmpty() ? "暂无可显示内容" : status;
+                // 失败文案带异常信息时可能长到溢出页面；首帧拿到真实宽度后折一次并缓存，
+                // 不在渲染回调里反复 trim。
+                final String[] noticeText = {null};
+                PanelLoadingWidget notice = new PanelLoadingWidget(() -> {
+                    String text = noticeText[0];
+                    if (text == null) {
+                        text = FontManager.pf14.trim(rawNotice, Math.max(1.0, getWidth() - margin * 2.0));
+                        noticeText[0] = text;
+                    }
+                    return text;
+                }).setSpinning(false);
+                addChild(notice);
+                notice.setClickable(retryable);
+                notice.setShouldOverrideMouseCursor(retryable);
+                notice.setBeforeRenderCallback(() -> notice.setBounds(list.getRelativeX(), list.getRelativeY(),
+                        Math.max(1.0, list.getWidth()), Math.max(1.0, list.getHeight())));
+                if (retryable) {
+                    notice.setOnClickCallback((x, y, button) -> {
+                        if (button != 0 || loading) return false;
+                        loadPage();
+                        // 立刻重铺一次让转子当帧替掉失败文案；网络结果回来时那边还会再铺一次。
+                        MultiThreadingUtil.runOnMainThread(this::renderLayout);
+                        return true;
+                    });
+                }
+                return;
+            }
+            // 其它页面保持原来的空态小字。
             LabelWidget empty = new LabelWidget(status.isEmpty() ? "暂无可显示内容" : status, FontManager.pf14bold);
             list.addChild(empty);
             empty.setClickable(false);
             empty.setBeforeRenderCallback(() -> empty
                     .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
                     .setBounds(Math.max(1.0, list.getWidth()), 22));
+            return;
+        }
+
+        if (hotSearch) {
+            // 重建整列时重新武装首屏那一档（首次加载、重试成功都会走到这里）。
+            this.revealQueue.restart();
+            for (Entry entry : entries) {
+                HotSearchRow row = new HotSearchRow(entry);
+                row.setEntranceAnimation(this.revealQueue);
+                list.addChild(row);
+            }
             return;
         }
 
@@ -161,8 +265,200 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         }
     }
 
+    /**
+     * 行内文字的顶边：按字体的<b>行盒</b>居中，而不是按这串字的墨迹居中 —— 名次「1」和「12」
+     * 墨迹宽度不同，逐串居中会让同一列文字的基线各走各的。字体还没解析出来时
+     * {@code getFontHeight()} 是负数，那时退回行顶（与 {@code LyricSearchOverlay#textY} 同一条判据）。
+     */
+    private static double textY(double rowTop, double rowHeight, CFontRenderer font) {
+        final double box = font == null ? 0.0 : font.getFontHeight();
+        return rowTop + (rowHeight - (box > 0.0 ? box : rowHeight)) * .5;
+    }
+
+    /**
+     * 热搜榜的一行：名次 / 关键词 / 右侧 meta 三栏，整行可点。
+     *
+     * <p>三串文字用字体直接画、不挂标签子控件：一屏几十行，每行三个 {@code LabelWidget} 就是
+     * 上百个控件要走完整棵渲染树（隐藏检查、悬停判定、tooltip 遍历）。文字、折行结果和每帧
+     * 要读的颜色都在行宽变化时算一次，{@code onRender} 里只剩算术与绘制。</p>
+     *
+     * <p>刻意不做常驻底板与玻璃 plate，也不加任何二次动效：hover 只推背景那一层 alpha，
+     * 行高与三栏位置全程不动。</p>
+     */
+    private final class HotSearchRow extends AbstractWidget<HotSearchRow> {
+
+        /** 名次 + 关键词与右侧 meta 各自用哪一档字体，对齐规范里的 14bold / 12。 */
+        private final CFontRenderer denseFont = FontManager.pf14bold;
+        private final CFontRenderer metaFont = FontManager.pf12;
+
+        private final Entry entry;
+        private final String rankText;
+        private final String keywordRaw;
+        private final String metaRaw;
+
+        /** 只在行宽变化时重算：名次右对齐起点、关键词折行、meta 折行与右对齐起点。 */
+        private double laidOutWidth = -1.0;
+        private double rankTextWidth = -1.0;
+        private double rankTextX = HOT_RANK_X;
+        private double metaTextX = 0.0;
+        private String keywordText = "";
+        private String metaText = "";
+
+        /** 与曲目行、主页卡片同一套进场（{@link PanelItemEntrance}）。 */
+        private final PanelItemEntrance entrance = new PanelItemEntrance();
+        private double entranceEased = 1.0;
+        /** 第一次被渲染（= 刚滚进视口）时向发号器领一个错峰号。 */
+        private PanelItemEntrance.RevealQueue entranceQueue;
+
+        /** hover 背景的 0..1 强度；只作用在那一层 ELEMENT_HOVER 的 alpha 上。 */
+        private float hoverProgress;
+        private long lastHoverMillis;
+
+        private HotSearchRow(Entry entry) {
+            this.entry = entry;
+            // 名次与两串文字在构建期定稿：渲染回调里不再拼字符串。
+            this.rankText = entry.rank > 0 ? Integer.toString(entry.rank) : "";
+            this.keywordRaw = entry.getTitle();
+            this.metaRaw = entry.getSubtitle();
+            this.setShouldOverrideMouseCursor(true);
+            this.setOnClickCallback((x, y, button) -> {
+                if (button != 0 || entry.action == null) return false;
+                entry.action.run();
+                return true;
+            });
+            this.setBeforeRenderCallback(() -> {
+                // 只用 (宽,高) 重载：四参 setBounds 会把 ScrollPanel 每帧排好的滚动位置抹掉。
+                this.setBounds(Math.max(1.0, this.getParentWidth()), HOT_ROW_HEIGHT);
+                this.updateEntranceAnimation();
+                this.ensureColumnsLaidOut();
+                this.advanceHover();
+            });
+        }
+
+        /**
+         * 挂上发号器但不立刻起算：{@code ScrollPanel} 不渲染视口外的行，所以本行第一次被渲染
+         * 就是它刚滚进视口的那一帧；建页时把号发完的话，下面的行在滚到之前早演完了。
+         */
+        void setEntranceAnimation(PanelItemEntrance.RevealQueue queue) {
+            this.entranceQueue = queue;
+            this.entranceEased = 0.0;
+            this.setAlpha(0f);
+            this.setTransformations(() -> PanelItemEntrance.applyTransform(this.entranceEased,
+                    this.getX() + this.getWidth() * .5, this.getY() + this.getHeight() * .5));
+        }
+
+        private void updateEntranceAnimation() {
+            if (!this.entrance.isStarted()) {
+                if (this.entranceQueue == null) return;
+                this.entrance.begin(System.currentTimeMillis(), this.entranceQueue.nextDelayMillis());
+            }
+            if (this.entrance.isFinished()) return;
+
+            this.entranceEased = this.entrance.tick();
+            this.setAlpha((float) this.entranceEased);
+            if (this.entrance.isFinished()) {
+                // 摘掉变换：一屏几十行不该为已经停住的行一直付一次 pushMatrix。
+                this.setTransformations(null);
+            }
+        }
+
+        private void finishEntranceAnimation() {
+            this.entrance.finishImmediately();
+            this.entranceEased = 1.0;
+            this.setAlpha(1f);
+            this.setTransformations(null);
+        }
+
+        /** 快速滚动时别把半透明的行再带回来。 */
+        @Override
+        public void onViewportExit() {
+            if (!this.entrance.isFinished()) this.finishEntranceAnimation();
+        }
+
+        /** 页面被中断导航丢掉之前，把这行的进场状态收干净。 */
+        @Override
+        public void finishTransientAnimations() {
+            this.finishEntranceAnimation();
+            this.entranceQueue = null;
+            super.finishTransientAnimations();
+        }
+
+        /**
+         * 三栏位置只在行宽变化时重算。窗口缩放是唯一会改变行宽的路径；把它挡在每帧之外，
+         * 滚动时就不会出现「每行每帧一次 fitWidth/trim」。
+         */
+        private void ensureColumnsLaidOut() {
+            final double width = this.getWidth();
+            if (width == this.laidOutWidth) return;
+            this.laidOutWidth = width;
+
+            if (this.rankTextWidth < 0.0) {
+                this.rankTextWidth = this.denseFont.getStringWidthD(this.rankText);
+            }
+            // 名次右对齐到小盒（x=4 宽 20）的右缘；真到三位数时允许向左多占一两个像素。
+            this.rankTextX = Math.max(0.0, HOT_RANK_X + HOT_RANK_BOX_WIDTH - this.rankTextWidth);
+
+            // meta 先折到预算内、再量一次实际宽度，关键词据此给右侧留出 8L 的缝。
+            final double metaBudget = Math.min(width * HOT_META_MAX_WIDTH_RATIO, HOT_META_MAX_WIDTH);
+            this.metaText = this.metaFont.trim(this.metaRaw, metaBudget);
+            final double metaWidth = this.metaFont.getStringWidthD(this.metaText);
+            this.metaTextX = Math.max(HOT_KEYWORD_X + 1.0, width - HOT_META_RIGHT_MARGIN - metaWidth);
+            final double keywordMaxWidth = Math.max(1.0,
+                    this.metaTextX - HOT_KEYWORD_META_GAP - HOT_KEYWORD_X);
+            this.keywordText = this.denseFont.trim(this.keywordRaw, keywordMaxWidth);
+        }
+
+        /**
+         * hover 只推背景那一层 alpha：按实时毫秒做指数逼近（剩余距离每半衰期减半），与帧率
+         * 无关，也不会碰行高与三栏位置 —— 鼠标划过去时文字不能跟着动。
+         */
+        private void advanceHover() {
+            final long now = System.currentTimeMillis();
+            final long elapsed = this.lastHoverMillis == 0L ? 16L
+                    : Math.min(HOT_HOVER_MAX_DT_MILLIS, Math.max(1L, now - this.lastHoverMillis));
+            this.lastHoverMillis = now;
+
+            final float target = this.isHovering() ? 1f : 0f;
+            if (this.hoverProgress == target) return;
+
+            final double remain = Math.pow(0.5, elapsed / HOT_HOVER_HALF_LIFE_MILLIS);
+            this.hoverProgress = (float) (target + (this.hoverProgress - target) * remain);
+            if (Math.abs(target - this.hoverProgress) < HOT_HOVER_EPSILON) {
+                this.hoverProgress = target;
+            }
+        }
+
+        @Override
+        public void onRender(double mouseX, double mouseY) {
+            final float alpha = this.getAlpha();
+            if (alpha <= .002f) return; // 进场第一帧整行不可见，省掉这一帧的三次文字绘制
+
+            final double x = this.getX();
+            final double y = this.getY();
+            final double width = this.getWidth();
+            final double height = this.getHeight();
+
+            if (this.hoverProgress > .002f) {
+                // hover 语言只有「底变亮」这一件事：色块 alpha 从 0 逼近 ELEMENT_HOVER，
+                // 行高、圆角与三栏文字位置一律不动。
+                this.roundedRect(x, y, width, height, HOT_ROW_RADIUS,
+                        reAlpha(hoverColor, this.hoverProgress * alpha));
+            }
+
+            final double denseY = textY(y, height, this.denseFont);
+            final int rankColor = this.entry.rank > 0 && this.entry.rank <= HOT_ACCENT_RANK_LIMIT
+                    ? accentColor : secondaryTextColor;
+            this.denseFont.drawString(this.rankText, x + this.rankTextX, denseY, reAlpha(rankColor, alpha));
+            this.denseFont.drawString(this.keywordText, x + HOT_KEYWORD_X, denseY,
+                    reAlpha(primaryTextColor, alpha));
+            this.metaFont.drawString(this.metaText, x + this.metaTextX, textY(y, height, this.metaFont),
+                    reAlpha(secondaryTextColor, alpha));
+        }
+    }
+
     private void loadPage() {
         loading = true;
+        failed = false;
         status = "正在获取…";
         MultiThreadingUtil.runAsync(() -> {
             try {
@@ -225,6 +521,8 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
                 MultiThreadingUtil.runOnMainThread(this::renderLayout);
             } catch (Throwable throwable) {
                 entries = Collections.emptyList();
+                // 只有抛异常才算「失败」：空列表是数据侧的正常结果，不该给重试入口。
+                failed = true;
                 status = "获取失败：" + safeMessage(throwable);
                 loading = false;
                 MultiThreadingUtil.runOnMainThread(this::renderLayout);
@@ -239,7 +537,7 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
             int rank = 1;
             for (String keyword : keywords) {
                 final String selected = keyword;
-                hot.add(new Entry(rank++ + ". " + keyword, "点击搜索",
+                hot.add(new Entry(rank++, keyword, "点击搜索",
                         () -> openLegacySongSearch(selected)));
             }
             entries = hot;
@@ -329,7 +627,7 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         int rank = 1;
         for (String keyword : keywords) {
             final String selected = keyword;
-            hot.add(new Entry(rank++ + ". " + keyword, "点击搜索",
+            hot.add(new Entry(rank++, keyword, "点击搜索",
                     () -> openKuGouSongSearch(selected)));
         }
         entries = hot;
@@ -427,10 +725,15 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
             JsonObject item = element.getAsJsonObject();
             String keyword = text(item, "searchWord", "first", "keyword");
             if (keyword.isEmpty()) continue;
-            String content = text(item, "content", "iconType");
+            // 右侧 meta 优先用接口给的 content（热搜说明/热度文案）；缺了就退回 score 折算，
+            // 再没有才显示「点击搜索」—— 那一栏总有东西可读，又不编造新数据。
+            String meta = text(item, "content");
+            if (meta.isEmpty()) {
+                long score = number(item, "score");
+                meta = score > 0L ? "热度 " + score : "点击搜索";
+            }
             final String selected = keyword;
-            result.add(new Entry(index++ + ". " + keyword, content.isEmpty() ? "点击搜索" : content,
-                    () -> openLegacySongSearch(selected)));
+            result.add(new Entry(index++, keyword, meta, () -> openLegacySongSearch(selected)));
         }
         return result;
     }
@@ -731,14 +1034,26 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
     }
 
     private static final class Entry {
+        /**
+         * 热搜名次，从 1 开始；0 表示这条不是榜单条目 —— QQ 音乐排行榜那条兜底路径
+         * 仍按歌曲行展示，不带名次列。
+         */
+        private final int rank;
         private final String title;
         private final String subtitle;
         private final Runnable action;
 
-        private Entry(String title, String subtitle, Runnable action) {
+        /** 热搜条目：名次、关键词、右侧 meta 分开存，由 {@link HotSearchRow} 按三栏排版。 */
+        private Entry(int rank, String title, String subtitle, Runnable action) {
+            this.rank = rank;
             this.title = title == null || title.trim().isEmpty() ? "未命名" : title;
             this.subtitle = subtitle == null ? "" : subtitle;
             this.action = action;
+        }
+
+        /** 非榜单条目（QQ 榜单兜底歌曲行）：沿用原来的整宽按钮行。 */
+        private Entry(String title, String subtitle, Runnable action) {
+            this(0, title, subtitle, action);
         }
 
         private String getTitle() {

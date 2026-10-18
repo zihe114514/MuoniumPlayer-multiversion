@@ -45,12 +45,23 @@ import net.minecraft.client.renderer.rendertype.RenderType;
  * （与 {@code submitCustomGeometry} 造的节点同构），相位分组与特征渲染器都按
  * submit 的 {@code featureType()} 走 —— 换相位不换绘制代码。</p>
  */
-final class LyricOnTopSubmitter {
+public final class LyricOnTopSubmitter {
 
     private static final Logger logger = LogManager.getLogger("MuoniumPlayer/WorldLyrics");
 
     /** API 缺位/相位缺失时一次性降级，避免日志刷屏。 */
     private static boolean broken;
+
+    /**
+     * 本帧是否向 always-on-top 相位提交过节点。26.3 vanilla 的 always-on-top pass
+     * 执行门只看「帧里有没有 always-on-top gizmo 原语」（javap：{@code render} 与
+     * {@code addMainPass} 两处 {@code frameHasAlwaysOnTopGizmos()}，vanilla jar 里
+     * 不存在 hasAnyAlwaysOnTop；NeoForge 有补丁补回 OR 半句，fabric 没有）——
+     * fabric 侧由 {@code LevelRendererAlwaysOnTopGateMixin} 把这半句补上：门 = vanilla
+     * || 本旗标。Bridge 在帧头清零、提交成功时置位；本帧没提交就保持 vanilla 门
+     * （不空开 pass；即便真常开也只是多一个空 pass，无副作用）。
+     */
+    public static volatile boolean submittedThisFrame;
 
     private LyricOnTopSubmitter() {
     }
@@ -60,6 +71,7 @@ final class LyricOnTopSubmitter {
         if (collector == null || broken) return false;
         try {
             collector.submitCustom(phase, node);
+            submittedThisFrame = true;
             return true;
         } catch (Throwable t) {
             broken = true;

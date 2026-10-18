@@ -113,9 +113,9 @@ public enum HudSetting {
     SPECTRUM_HEIGHT("频谱高度", 0.50f, 1.50f),
     SPECTRUM_BAR_COUNT_CUSTOM("自定义频谱柱数", 48.0f, 256.0f),
     // ---- 3D 世界歌词（接在末尾：这套条目的 id 有按序号落盘的历史，插中间会让老配置错位）----
-    WORLD_LYRICS_DISTANCE("3D歌词 距离", 3.0f, 24.0f),
+    WORLD_LYRICS_DISTANCE("3D歌词 距离", 3.0f, 48.0f),
     WORLD_LYRICS_SPREAD("3D歌词 散开角", 0.0f, 60.0f),
-    WORLD_LYRICS_SCALE("3D歌词 缩放", 0.4f, 3.0f),
+    WORLD_LYRICS_SCALE("3D歌词 缩放", 0.4f, 6.0f),
     WORLD_LYRICS_GLOW_STRENGTH("3D歌词 发光强度", 0.00f, 1.00f),
     WORLD_LYRICS_GLOW_SPREAD("3D歌词 发光扩散", 0.50f, 1.80f);
 

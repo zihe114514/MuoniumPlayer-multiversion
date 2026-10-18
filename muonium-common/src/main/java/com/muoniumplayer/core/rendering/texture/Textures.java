@@ -28,9 +28,17 @@ public class Textures implements SharedConstants {
      */
     private static final Set<Location> PENDING_DOWNLOADS = ConcurrentHashMap.newKeySet();
 
-    /** Called once per client tick. Keep cover bursts out of the unbounded task drain. */
+    /**
+     * Called once per client tick. Keep cover bursts out of the unbounded task drain.
+     *
+     * <p>配速口径：一次快速滚动会让几十张封面几乎同时进视口，下载并发完成后的上传若按
+     * 老口径每 tick 只走 4 张（20 TPS = 80 张/秒），排到队尾的那张（网格右下角，渲染顺序
+     * 最晚发起下载）要空着占位板 0.4~0.8 秒——用户看到的就是「永远差最后一个」。GPU 贴图
+     * 上传本身极廉，放宽到 4ms/12 张（240 张/秒）后同屏积压约 0.1 秒清空，右下角与同批
+     * 封面几乎同时淡入，又不至于在极端帧里挤占渲染预算。</p>
+     */
     public void processPendingUploads() {
-        UPLOADS.drain(2_000_000L, 4);
+        UPLOADS.drain(4_000_000L, 12);
     }
 
     public int pendingUploads() {

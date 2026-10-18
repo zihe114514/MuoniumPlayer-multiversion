@@ -22,7 +22,6 @@ import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
 import com.muoniumplayer.core.rendering.TextureManager;
-import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.svg.AnimatedIcons;
 import com.muoniumplayer.core.rendering.svg.SmilSvg;
@@ -50,7 +49,6 @@ import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.DoubleSupplier;
-import java.util.function.IntPredicate;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
@@ -79,15 +77,67 @@ public class AccountManagerOverlay extends NcmSheet {
     private static final double ACCOUNT_ROW = ACCOUNT_CARD + 8.0;
     /** 二维码白盘边长。扫码靠明暗对比，盘必须是浅色，和主题无关。 */
     private static final double QR_PLATE = 148.0;
-    private static final double QR_BLOCK = 8.0 + QR_PLATE + 30.0;
-    private static final double IDENTITY_BLOCK = 96.0;
     private static final double STATUS_BLOCK = 30.0;
-    private static final double SEGMENT_BLOCK = 52.0;
     private static final double SAVED_ROW = 60.0;
     /** 滚动区开头的让位（见 {@code plain} 的注释：悬停生长会越过上边界）。 */
     private static final double LEAD = 6.0;
     /** 卡片上文字块的左边缘 = 头像左留白 + 头像宽 + 间距。 */
     private static final double TEXT_LEFT = 12.0 + 46.0 + 12.0;
+
+    // ──────────────────────── W3 视觉重排新增量 ────────────────────────
+    //
+    // 二级页原来是「二维码/身份卡 + 状态行 + 分段器」按定值直接往下摞，区块之间只隔几像素，
+    // 读不出分组。这一轮把每页拆成「分区标题 + 内容」的小节，小节之间统一让 12 的整数倍：
+    // 间距是这一版最贵的装饰 —— 不新增任何阴影/玻璃层，层级只靠留白、圆角与字号建立。
+
+    /** 分区之间的呼吸。本页所有区块间距都取它的整数倍（规范：12L 的整数倍）。 */
+    private static final double SECTION_GAP = 12.0;
+    /** 分区标题行高：sectionLabel 的 11L 竖条 + 上下留白，与音源浮层同一档。 */
+    private static final double SECTION_LABEL_ROW = 20.0;
+    /** 分区标题到它自己那块内容之间的间隙，同样 12。 */
+    private static final double SECTION_LABEL_GAP = 12.0;
+    /** 「标题 + 间隙」整段高度，各页算内容高度时直接加它。 */
+    private static final double SECTION_LABEL_BLOCK = SECTION_LABEL_ROW + SECTION_LABEL_GAP;
+    /** 详情页主 / 次级按钮高（规范 20~24L）；圆角 6。 */
+    private static final double DETAIL_BUTTON_H = 22.0;
+    /** Cookie / Token 页的输入框与按钮统一 20L 高（规范）。 */
+    private static final double CREDENTIAL_FIELD_H = 20.0;
+    /** 同一组按钮之间的间隙。 */
+    private static final double BUTTON_GAP = 8.0;
+    /** 最底下一排按钮到弹窗下沿的留白（12 的整数倍）。 */
+    private static final double FOOTER_BOTTOM = 12.0;
+    /** 内容区与页脚之间也留 12。 */
+    private static final double FOOTER_TOP_GAP = 12.0;
+    /** 二维码白盘下方那行说明占的高度（12 字号墨迹 + 呼吸）。 */
+    private static final double QR_CAPTION = 14.0;
+    /** 扫码分区：标题 + 白盘 + 说明行。 */
+    private static final double QR_ROW = SECTION_LABEL_BLOCK + QR_PLATE + SECTION_GAP + QR_CAPTION;
+    /** 身份卡高。 */
+    private static final double IDENTITY_CARD = 84.0;
+    /** 身份卡分区：标题 + 卡片。 */
+    private static final double IDENTITY_ROW = SECTION_LABEL_BLOCK + IDENTITY_CARD;
+    /** 身份卡头像盘边长与左留白（比总览卡大一档：这是这一页的主角）。 */
+    private static final double IDENTITY_AVATAR = 48.0;
+    private static final double IDENTITY_AVATAR_LEFT = 16.0;
+    /** 身份卡文字左边缘 = 左留白 + 头像 + 间距。 */
+    private static final double IDENTITY_TEXT_LEFT = IDENTITY_AVATAR_LEFT + IDENTITY_AVATAR + 12.0;
+    /** 登录方式分段器轨道高：内缩 4×2 + 滑块 20，滑块正好和主操作按钮一样高。 */
+    private static final double SEGMENT_TRACK = 28.0;
+    /** 分段器分区：标题 + 轨道。 */
+    private static final double SEGMENT_ROW = SECTION_LABEL_BLOCK + SEGMENT_TRACK;
+    /** 详情页页头：品牌圆盘直径 / 左缘 / 标题左缘（返回键 30 + 8 间隙 + 盘 34 + 10）。 */
+    private static final double DETAIL_DISC = 34.0;
+    private static final double DETAIL_DISC_LEFT = PAD + 34.0;
+    private static final double DETAIL_TITLE_LEFT = PAD + 78.0;
+    /** 总览卡右缘的固定让位：chevron 区 26 + 登录状态 / VIP 药丸里最宽的那一档。 */
+    private static final double CARD_RIGHT_RESERVE = 84.0;
+    /** 已保存账号行：头像 32、文字左缘 = 左留白 12 + 头像 32 + 间距 12。 */
+    private static final double SAVED_AVATAR = 32.0;
+    private static final double SAVED_TEXT_LEFT = 12.0 + SAVED_AVATAR + 12.0;
+    /** 已保存账号行右侧小按钮：高 20、宽 40、圆角 6，右缘留 12。 */
+    private static final double SAVED_BUTTON_H = 20.0;
+    private static final double SAVED_BUTTON_W = 40.0;
+    private static final double SAVED_BUTTON_RIGHT = 12.0;
     /**
      * 登录成功后停留多久再换页。
      *
@@ -201,8 +251,13 @@ public class AccountManagerOverlay extends NcmSheet {
                 () -> mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
                         NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), self[0].hover));
         self[0] = card;
+        // 卡片圆角收一档（NcmSheet 默认 12）：这一版统一「行/小卡 6、卡片 8」。
+        card.setRadius(8.0);
+        // 当前来源在建页时取一次快照：总览是点开时才建的一页，期间换源会整页重建；
+        // 而 getCurrentPlatform() 内含惰性加载，不该进每帧回调。
+        final boolean current = NeteaseMusicService.getCurrentPlatform() == platform;
         // 侧栏那颗账号控件报的是当前来源，于是接力板落在「你正在用的那个账号」这一行。
-        if (NeteaseMusicService.getCurrentPlatform() == platform) hero(card);
+        if (current) hero(card);
         card.setShouldOverrideMouseCursor(true);
         card.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -210,30 +265,41 @@ public class AccountManagerOverlay extends NcmSheet {
             return true;
         });
 
+        // 当前音源：左侧 2L 品牌色轨（圆角 1）。比整卡换色轻 —— 不会把「已登录」的状态色搅浑，
+        // 而且只标记「正在用谁」，不改变卡片的可点语义。
+        final RoundedRectWidget rail = new RoundedRectWidget();
+        card.addChild(rail);
+        rail.setClickable(false);
+        rail.setRadius(1.0);
+        rail.setBeforeRenderCallback(() -> {
+            rail.setBounds(2.0, Math.max(1.0, card.getHeight() - 24.0));
+            rail.setPosition(0.0, 12.0);
+            rail.setColor(platform.getBrandColor());
+            rail.setAlpha(current ? 1f : 0f);
+        });
+
         avatarSlot(card, platform, 46.0, () -> 12.0, () -> card.getHeight() * .5);
-
-        // 状态胶囊先建：昵称行的可用宽度要按它当帧的实际宽度让位，长昵称才不会压到它底下。
-        final RoundedRectWidget state = pill(card,
-                () -> NeteaseMusicService.isLoggedIn(platform) ? PartyIcons.CLOUD_DONE : PartyIcons.CLOUD_OFF,
-                () -> NeteaseMusicService.isLoggedIn(platform) ? "已登录" : "未登录",
-                () -> NeteaseMusicService.isLoggedIn(platform)
-                        ? OK_COLOR : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                () -> card.getWidth() - 34, () -> card.getHeight() * .5 - 11);
-
-        // 会员标记就该长在账号旁边。原来它是主页左下角一行灰字，那个位置离「我的账号」最远。
-        final Panel vipLayer = veil(card, () -> isAccountVip(platform) ? 1.0 : 0.0);
-        pill(vipLayer, () -> PartyIcons.VIP, () -> "会员", () -> VIP_COLOR,
-                () -> vipLayer.getWidth() - 34, () -> vipLayer.getHeight() * .5 + 11);
 
         icon(card, PartyIcons.CHEVRON_RIGHT, ICON_M, () -> card.getWidth() - 18,
                 () -> card.getHeight() * .5,
                 () -> mix(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         platform.getBrandColor(), self[0].hover));
 
+        // 右侧「小圆点 + 文字」的登录状态；宽度在 helper 里构建期量好，渲染只做减法。
+        loginStateMark(card, platform, () -> card.getWidth() - 34, () -> card.getHeight() * .5 - 10);
+
+        // 会员标记就该长在账号旁边。原来它是主页左下角一行灰字，那个位置离「我的账号」最远。
+        // veil 在建页时就挂好，显隐只改 alpha：会员状态变化会整页重建，不做运行期增删控件。
+        final Panel vipLayer = veil(card, () -> isAccountVip(platform) ? 1.0 : 0.0);
+        pill(vipLayer, () -> PartyIcons.VIP, () -> "会员", () -> VIP_COLOR,
+                () -> vipLayer.getWidth() - 34, () -> vipLayer.getHeight() * .5 + 11);
+
         final LabelWidget name = label(card, platform::getDisplayName, FontManager.pf14bold);
         name.setBeforeRenderCallback(() -> {
             name.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            name.setMaxWidth(Math.max(1, card.getWidth() - TEXT_LEFT - 44 - state.getWidth()));
+            // 让位用固定值而不是读兄弟控件的当帧宽度：省一次跨控件帧序依赖，
+            // 首帧也不会因为状态文字还没量出来而让昵称先压过去。
+            name.setMaxWidth(Math.max(1, card.getWidth() - TEXT_LEFT - CARD_RIGHT_RESERVE));
             name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             name.setPosition(TEXT_LEFT, inkTop(name, card.getHeight() * .5 - 10));
         });
@@ -243,10 +309,107 @@ public class AccountManagerOverlay extends NcmSheet {
                 : "未登录 · 点击选择登录方式", FontManager.pf12);
         account.setBeforeRenderCallback(() -> {
             account.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            account.setMaxWidth(Math.max(1, card.getWidth() - TEXT_LEFT - 44 - state.getWidth()));
+            account.setMaxWidth(Math.max(1, card.getWidth() - TEXT_LEFT - CARD_RIGHT_RESERVE));
             account.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             account.setPosition(TEXT_LEFT, inkTop(account, card.getHeight() * .5 + 11));
         });
+    }
+
+    /**
+     * 右对齐的「小圆点 + 登录状态」。
+     *
+     * <p>比原来那枚胶囊轻：胶囊有底色，一列排下来像三个各自独立的状态按钮；圆点只说明「在线」，
+     * 文字才是状态本身。文案只有「已登录 / 未登录」两种，两者的墨迹宽度在构建期量一次存下来，
+     * 渲染回调里只做减法 —— 红线禁止每帧文本测量，这里也顺带避免了首帧靠上一帧宽度摆位的问题。</p>
+     *
+     * @param rightX 整组文字的右边缘（不含 chevron 区）
+     * @param centerY 文字墨迹的中心 y
+     * @return 这组状态文字的最大墨迹宽度（「已登录」「未登录」取宽者），调用方据此给标题留位
+     */
+    private double loginStateMark(final AbstractWidget<?> host, final MusicPlatform platform,
+                                  final DoubleSupplier rightX, final DoubleSupplier centerY) {
+        final double dot = 6.0;
+        final double gap = 5.0;
+        // 两串文案的墨迹宽度只在构建期量一次：渲染回调里不能再做文本测量（红线），
+        // 而且取宽者能保证两种状态切换时标题的让位量不跳。
+        final double textWidth = Math.max(FontManager.pf12.getStringWidthD("已登录"),
+                FontManager.pf12.getStringWidthD("未登录"));
+
+        final RoundedRectWidget mark = new RoundedRectWidget();
+        host.addChild(mark);
+        mark.setClickable(false);
+        mark.setRadius(dot * .5);
+        mark.setBeforeRenderCallback(() -> {
+            boolean online = NeteaseMusicService.isLoggedIn(platform);
+            mark.setBounds(dot, dot);
+            mark.setPosition(rightX.getAsDouble() - textWidth - gap - dot,
+                    centerY.getAsDouble() - dot * .5);
+            mark.setColor(online ? OK_COLOR : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        });
+
+        final LabelWidget caption = label(host, () -> NeteaseMusicService.isLoggedIn(platform)
+                ? "已登录" : "未登录", FontManager.pf12);
+        caption.setBeforeRenderCallback(() -> {
+            // 未登录用次文色：这一栏在没登录时不该比账号名更抢眼。
+            caption.setColor(NeteaseMusicService.isLoggedIn(platform)
+                    ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)
+                    : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            caption.setPosition(rightX.getAsDouble() - textWidth, inkTop(caption, centerY.getAsDouble()));
+        });
+        return textWidth + gap + dot;
+    }
+
+    /**
+     * 二级页统一页头：返回键 + 品牌圆盘 + 平台名 + 登录状态点。
+     *
+     * <p>为什么不用 {@code subHeader()}：那个 helper 只有「返回 + 标题 + 副标题」，而这一轮的二级页
+     * 要在页头就把「这是哪个平台、现在登没登录」讲清楚。这里仍然复用它那套组合件
+     * （{@link #backButton}、{@link #veil} + {@code headerGate}、{@code label}/{@code brandMark}），
+     * 所以到场节奏、返回键位置与其它二级页逐像素一致。</p>
+     *
+     * @return 状态文字的宽度，调用方（标题）据此让位
+     */
+    private double detailHeader(final Panel dialog, final Runnable backAction, final MusicPlatform platform,
+                                final Supplier<String> titleText, final Supplier<String> subtitleText) {
+        // 返回键不套进 veil：那一层是不吃点击的，它要自己跟着底板淡入（与 subHeader 同一处理）。
+        backButton(dialog, backAction);
+        final Panel crown = veil(dialog, this::headerGate);
+
+        // 品牌圆盘：与页眉同高的 34L 盘，颜色按品牌色轻微染色，和总览卡的头像盘是同一套语言。
+        final RoundedRectWidget disc = new RoundedRectWidget();
+        crown.addChild(disc);
+        disc.setClickable(false);
+        disc.setRadius(DETAIL_DISC * .3);
+        disc.setBeforeRenderCallback(() -> {
+            disc.setBounds(DETAIL_DISC, DETAIL_DISC);
+            disc.setPosition(DETAIL_DISC_LEFT, 18.0);
+            disc.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND),
+                    platform.getBrandColor(), .30));
+        });
+        brandMark(disc, platform, DETAIL_DISC * BrandVectorIcons.MARK_RATIO,
+                brandGlyph(platform), brandFont(platform),
+                () -> DETAIL_DISC * .5, () -> DETAIL_DISC * .5, platform::getBrandColor);
+
+        final double stateWidth = loginStateMark(crown, platform,
+                () -> dialog.getWidth() - PAD, () -> 28.0);
+
+        final LabelWidget title = label(crown, titleText, FontManager.pf18bold);
+        title.setBeforeRenderCallback(() -> {
+            title.setColor(platform.getBrandColor());
+            title.setMaxWidth(Math.max(1, dialog.getWidth() - DETAIL_TITLE_LEFT - PAD
+                    - stateWidth - 45.0));
+            title.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            title.setPosition(DETAIL_TITLE_LEFT, inkTop(title, 28.0));
+        });
+
+        final LabelWidget subtitle = label(crown, subtitleText, FontManager.pf12);
+        subtitle.setBeforeRenderCallback(() -> {
+            subtitle.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            subtitle.setMaxWidth(Math.max(1, dialog.getWidth() - DETAIL_TITLE_LEFT - PAD * 2));
+            subtitle.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            subtitle.setPosition(DETAIL_TITLE_LEFT, inkTop(subtitle, 44.0));
+        });
+        return stateWidth;
     }
 
     /**
@@ -276,14 +439,27 @@ public class AccountManagerOverlay extends NcmSheet {
 
         final Panel letterLayer = veil(disc, () -> NeteaseMusicService.isLoggedIn(platform) ? 1.0 : 0.0);
         final CFontRenderer letterFont = size >= 48 ? FontManager.pf20bold : FontManager.pf16bold;
-        final Supplier<String> letterText = () -> initial(NeteaseMusicService.getAccountName(platform));
+        // 首字与它的宽度只在「昵称真的变了」时重算：原来每帧 initial()（会 new String）再量一次宽度，
+        // 既是红线禁止的每帧分配/测量，也让首帧只能读到上一帧的尺寸。页打开期间昵称基本不变，
+        // 真变了（异步资料到达）这里也会当场跟上。
+        final String[] seed = {null};
+        final String[] letterCache = {null};
+        final double[] letterWidth = {0.0};
+        final Supplier<String> letterText = () -> {
+            String name = NeteaseMusicService.getAccountName(platform);
+            if (name == null ? seed[0] != null : !name.equals(seed[0])) {
+                seed[0] = name;
+                letterCache[0] = initial(name);
+                letterWidth[0] = letterFont.getStringWidthD(letterCache[0]);
+            }
+            return letterCache[0];
+        };
+        // 先按当前昵称填一次缓存，避免首帧文字是 null。
+        letterText.get();
         final LabelWidget letter = label(letterLayer, letterText, letterFont);
         letter.setBeforeRenderCallback(() -> {
             letter.setColor(0xFFFFFF);
-            // 按字体宽度算而不是读 getWidth()：LabelWidget 的尺寸是在 onRender 末尾回填的，
-            // 这里读到的是上一帧的值，首帧还是 0，会让首字明显闪一下。
-            letter.setPosition(size * .5 - letterFont.getStringWidthD(letterText.get()) * .5,
-                    inkTop(letter, size * .5));
+            letter.setPosition(size * .5 - letterWidth[0] * .5, inkTop(letter, size * .5));
         });
 
         final RoundedImageWidget photo = new RoundedImageWidget(
@@ -359,6 +535,7 @@ public class AccountManagerOverlay extends NcmSheet {
         beginPage();
 
         // 页脚按钮排的高度随状态变。算不准的话，内容区要么被按钮盖住、要么白留一大块。
+        // 一排 = 22 高 + 8 间隙；最上面再让 12、最下面留 12。
         final int extras;
         if (addAccountByQr) {
             extras = 0;
@@ -373,44 +550,61 @@ public class AccountManagerOverlay extends NcmSheet {
         } else {
             extras = 0;
         }
-        final double footer = 48.0 + extras * 36.0;
-        final double headBlock = qrVisible ? QR_BLOCK
-                : (loggedIn || !qishuiCookieOnly ? IDENTITY_BLOCK : 0.0);
-        final double content = LEAD + headBlock + STATUS_BLOCK
-                + (qqChannelPicker || kugouVariantPicker ? SEGMENT_BLOCK : 0.0);
+        final double footer = FOOTER_BOTTOM + DETAIL_BUTTON_H
+                + extras * (DETAIL_BUTTON_H + BUTTON_GAP) + FOOTER_TOP_GAP;
 
-        final Panel dialog = sheet(462, () -> HEADER_H + content + footer);
-        subHeader(dialog, addAccountByQr ? this::showSavedQishuiAccounts : this::showOverview,
+        // 内容按「分区」累加，和下面挂进滚动区的顺序一一对应：
+        //   顶部 12 → [扫码 / 身份卡] → 12 → 状态说明 → [12 → 登录方式] → 底部交给页脚的 12。
+        // 每个分区内部是「标题 20 + 间隙 12 + 内容」，所以整页的纵向节奏都是 12 的整数倍。
+        final boolean identityVisible = !qrVisible && (loggedIn || !qishuiCookieOnly);
+        final boolean segmentVisible = qqChannelPicker || kugouVariantPicker;
+        double content = SECTION_GAP;
+        if (qrVisible) {
+            content += QR_ROW + SECTION_GAP;
+        } else if (identityVisible) {
+            content += IDENTITY_ROW + SECTION_GAP;
+        }
+        content += STATUS_BLOCK;
+        if (segmentVisible) content += SECTION_GAP + SEGMENT_ROW;
+
+        // sheet 的高度是个 supplier，每帧可能被问一次；content 是累加出来的局部变量，
+        // 直接进 lambda 就不是 effectively final 了。这里先定格成常量再捕获。
+        final double sheetContent = content;
+        final Panel dialog = sheet(462, () -> HEADER_H + sheetContent + footer);
+        detailHeader(dialog, addAccountByQr ? this::showSavedQishuiAccounts : this::showOverview, platform,
                 () -> addAccountByQr ? "扫码添加汽水账号" : platform.getDisplayName() + "账号",
                 () -> addAccountByQr ? "扫码成功后自动回到已保存账号"
                         : loggedIn ? "本地已保存这个账号的登录凭据"
                         : qishuiCookieOnly ? "未找到外部取码工具 · 可改用 Cookie 登录"
-                        : "请使用" + scanClientName(platform) + "扫码并确认",
-                platform::getBrandColor);
+                        : "请使用" + scanClientName(platform) + "扫码并确认");
 
         final Panel body = body(dialog, () -> HEADER_H, () -> footer);
         final ScrollPanel feed = feed(body);
-        strip(feed, LEAD);
+        strip(feed, SECTION_GAP);
         if (qrVisible) {
-            qrBlock(strip(feed, QR_BLOCK), 0, platform);
-        } else if (headBlock > 0.0) {
-            identityBlock(strip(feed, IDENTITY_BLOCK), 0, platform);
-        } else {
-            strip(feed, 0.0);
+            qrBlock(strip(feed, QR_ROW), 0, platform);
+            strip(feed, SECTION_GAP);
+        } else if (identityVisible) {
+            identityBlock(strip(feed, IDENTITY_ROW), 0, platform);
+            strip(feed, SECTION_GAP);
         }
         tip(strip(feed, STATUS_BLOCK), this::statusGlyph, () -> statusText, this::statusColor, () -> 6.0);
         if (qqChannelPicker) {
-            channelSegment(strip(feed, SEGMENT_BLOCK));
+            strip(feed, SECTION_GAP);
+            channelSegment(strip(feed, SEGMENT_ROW));
         }
         if (kugouVariantPicker) {
-            profileSegment(strip(feed, SEGMENT_BLOCK));
+            strip(feed, SECTION_GAP);
+            profileSegment(strip(feed, SEGMENT_ROW));
         }
 
         primaryAction(dialog, platform, loggedIn, addAccountByQr);
         if (!addAccountByQr && platform == MusicPlatform.NETEASE) {
             if (loggedIn) {
-                secondaryAction(dialog, 1, () -> PartyIcons.GROUP,
-                        () -> "切换已保存账号（" + NeteaseAccountProfiles.load().size() + "）",
+                // 账号数在建页时读一次：原来是每帧 load()（每次都读配置文件）再拼字符串。
+                // 这一页只要切过账号就会整页重建，构建期快照不会显示过期数字。
+                final String savedLabel = "切换已保存账号（" + NeteaseAccountProfiles.load().size() + "）";
+                secondaryAction(dialog, 1, () -> PartyIcons.GROUP, () -> savedLabel,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
                         this::showSavedNeteaseAccounts);
                 historySyncAction(dialog, 2);
@@ -428,8 +622,8 @@ public class AccountManagerOverlay extends NcmSheet {
         }
         if (!addAccountByQr && platform == MusicPlatform.QISHUI) {
             // 换 Cookie 那颗只在缺外部工具时出现（1）；其余情况主按钮下第一排就是存号器。
-            secondaryAction(dialog, qishuiCookieOnly ? 2 : 1, () -> PartyIcons.GROUP,
-                    () -> "已保存账号（" + QishuiAccountProfiles.load().size() + "）",
+            final String savedLabel = "已保存账号（" + QishuiAccountProfiles.load().size() + "）";
+            secondaryAction(dialog, qishuiCookieOnly ? 2 : 1, () -> PartyIcons.GROUP, () -> savedLabel,
                     () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
                     this::showSavedQishuiAccounts);
         }
@@ -456,11 +650,19 @@ public class AccountManagerOverlay extends NcmSheet {
         }
     }
 
+    /**
+     * 扫码分区：分区标题 + 二维码白盘 + 一行说明。
+     *
+     * <p>白盘尺寸一点没动（扫码靠明暗对比，尺寸是可用性不是装饰），只把圆角收一档到 8、
+     * 在盘上方补一个分区标题 —— 原来这张盘直接贴在页头顶上，读不出它属于哪一组。</p>
+     */
     private void qrBlock(final Panel row, final int slot, final MusicPlatform platform) {
+        sectionLabel(row, "扫码登录", () -> 4.0, platform::getBrandColor);
+
         final RoundedRectWidget board = new RoundedRectWidget();
         row.addChild(board);
         board.setClickable(false);
-        board.setRadius(14);
+        board.setRadius(8);
 
         final RoundedImageWidget image = new RoundedImageWidget(
                 () -> qrReady ? getQrLocation(platform) : null, 0, 0, QR_PLATE - 16, QR_PLATE - 16);
@@ -500,7 +702,7 @@ public class AccountManagerOverlay extends NcmSheet {
             double gate = cardGate(slot);
             board.setBounds(QR_PLATE, QR_PLATE);
             board.setPosition(row.getWidth() * .5 - QR_PLATE * .5 + pageSlide() * (1.0 - gate),
-                    8 + (1.0 - gate) * 7.0);
+                    SECTION_LABEL_BLOCK + (1.0 - gate) * 7.0);
             // 二维码必须画在浅底上：扫码靠的是明暗对比，深色主题下铺主题底色会扫不出来。
             board.setColor(0xF6F7F9);
             board.setAlpha((float) gate);
@@ -513,53 +715,82 @@ public class AccountManagerOverlay extends NcmSheet {
         final Panel waiting = veil(board, () -> qrReady ? 0.0 : 1.0);
         icon(waiting, () -> requestRunning ? PartyIcons.HOURGLASS : PartyIcons.SYNC, ICON_XL,
                 () -> QR_PLATE * .5, () -> QR_PLATE * .5 - 12, () -> 0x9AA3B2);
+        // 白盘永远是浅色，盘内文字只能用固定深灰，不能跟着主题色走；两种文案的宽度
+        // 构建期各量一次，盘内居中就不必每帧测量（红线）。
+        final double fetchingWidth = FontManager.pf12.getStringWidthD("正在获取二维码…");
+        final double idleWidth = FontManager.pf12.getStringWidthD("点下方按钮获取二维码");
         final Supplier<String> waitText = () -> requestRunning ? "正在获取二维码…" : "点下方按钮获取二维码";
         final LabelWidget waitHint = label(waiting, waitText, FontManager.pf12);
         waitHint.setBeforeRenderCallback(() -> {
             waitHint.setColor(0x8A93A4);
-            waitHint.setPosition(QR_PLATE * .5 - FontManager.pf12.getStringWidthD(waitText.get()) * .5,
-                    inkTop(waitHint, QR_PLATE * .5 + 20));
+            double width = requestRunning ? fetchingWidth : idleWidth;
+            waitHint.setPosition(QR_PLATE * .5 - width * .5, inkTop(waitHint, QR_PLATE * .5 + 20));
         });
 
-        final Supplier<String> caption = () -> "请使用" + scanClientName(platform) + "扫码并确认";
-        final LabelWidget scanHint = label(row, caption, FontManager.pf12bold);
+        // 盘下方这行是「下一步做什么」，12 次要色、居中；页头副标题说的是「这是什么页」，
+        // 两行分工不同，所以不合并。文案会随 QQ/微信、酷狗身份切换而变 —— 只有客户端名
+        // 真的换了才重建字符串与宽度，渲染回调里只做减法。
+        final String[] captionCache = {null};
+        final String[] clientCache = {null};
+        final double[] captionWidth = {0.0};
+        final Supplier<String> caption = () -> {
+            String client = scanClientName(platform);
+            if (!client.equals(clientCache[0])) {
+                clientCache[0] = client;
+                captionCache[0] = "请使用" + client + "扫码并确认";
+                captionWidth[0] = FontManager.pf12.getStringWidthD(captionCache[0]);
+            }
+            return captionCache[0];
+        };
+        caption.get();
+        final LabelWidget scanHint = label(row, caption, FontManager.pf12);
         scanHint.setBeforeRenderCallback(() -> {
-            scanHint.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            scanHint.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             scanHint.setMaxWidth(Math.max(1, row.getWidth() - PAD * 2));
             scanHint.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            scanHint.setPosition(
-                    row.getWidth() * .5 - FontManager.pf12bold.getStringWidthD(caption.get()) * .5,
-                    inkTop(scanHint, 8 + QR_PLATE + 15));
+            scanHint.setPosition(row.getWidth() * .5 - captionWidth[0] * .5,
+                    inkTop(scanHint, SECTION_LABEL_BLOCK + QR_PLATE + SECTION_GAP + QR_CAPTION * .5));
         });
     }
 
+    /**
+     * 身份卡分区：分区标题 + 一张只读卡片（大头像 + 昵称 + ID/身份 + 会员徽标）。
+     *
+     * <p>卡只是展示当前账号，不能点 —— 所以走 {@code plain()} 关掉悬停生长之外，
+     * 底色也只按品牌色轻染 12%：它不该看起来像总览里那种可点的平台卡。</p>
+     */
     private void identityBlock(final Panel row, final int slot, final MusicPlatform platform) {
+        sectionLabel(row, "当前账号", () -> 4.0, platform::getBrandColor);
+
         // 这张卡只是展示当前账号，不能点 —— 所以也不该跟着鼠标长。
-        final Card card = plain(card(row, slot, () -> 0.0, () -> 84.0,
+        final Card card = plain(card(row, slot, () -> SECTION_LABEL_BLOCK, () -> IDENTITY_CARD,
                 () -> mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
                         platform.getBrandColor(), .12)));
-        avatarSlot(card, platform, 52.0, () -> 14.0, () -> card.getHeight() * .5);
+        card.setRadius(8.0);
+        avatarSlot(card, platform, IDENTITY_AVATAR, () -> IDENTITY_AVATAR_LEFT,
+                () -> card.getHeight() * .5);
 
         final Panel vipLayer = veil(card, () -> isAccountVip(platform) ? 1.0 : 0.0);
         final RoundedRectWidget vip = pill(vipLayer, () -> PartyIcons.VIP, () -> "会员", () -> VIP_COLOR,
                 () -> vipLayer.getWidth() - 14, () -> vipLayer.getHeight() * .5);
 
         final LabelWidget name = label(card, () -> NeteaseMusicService.getAccountName(platform),
-                FontManager.pf16bold);
+                FontManager.pf14bold);
         name.setBeforeRenderCallback(() -> {
             name.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            name.setMaxWidth(Math.max(1, card.getWidth() - 80
-                    - (isAccountVip(platform) ? vip.getWidth() + 22 : 20)));
+            name.setMaxWidth(Math.max(1, card.getWidth() - IDENTITY_TEXT_LEFT - 20
+                    - (isAccountVip(platform) ? vip.getWidth() + 22 : 0)));
             name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            name.setPosition(80, inkTop(name, card.getHeight() * .5 - 11));
+            name.setPosition(IDENTITY_TEXT_LEFT, inkTop(name, card.getHeight() * .5 - 10));
         });
 
         final LabelWidget meta = label(card, () -> identityMeta(platform), FontManager.pf12);
         meta.setBeforeRenderCallback(() -> {
             meta.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            meta.setMaxWidth(Math.max(1, card.getWidth() - 80 - 20));
+            meta.setMaxWidth(Math.max(1, card.getWidth() - IDENTITY_TEXT_LEFT - 20
+                    - (isAccountVip(platform) ? vip.getWidth() + 22 : 0)));
             meta.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            meta.setPosition(80, inkTop(meta, card.getHeight() * .5 + 10));
+            meta.setPosition(IDENTITY_TEXT_LEFT, inkTop(meta, card.getHeight() * .5 + 11));
         });
     }
 
@@ -570,6 +801,7 @@ public class AccountManagerOverlay extends NcmSheet {
      * 「这是二选一」，而两颗独立按钮看上去像两个可以各自开关的选项。</p>
      */
     private void channelSegment(final Panel row) {
+        sectionLabel(row, "登录方式", () -> 4.0, MusicPlatform.QQ::getBrandColor);
         final SegmentControl.Spec spec = accountRowSpec(row);
         SegmentControl.attach(row, () -> {
             spec.width = Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2);
@@ -599,6 +831,9 @@ public class AccountManagerOverlay extends NcmSheet {
      * 留着旧码的话，用户点了概念版却扫到一张标准版的码，是这条入口最容易踩的坑。</p>
      */
     private void profileSegment(final Panel row) {
+        // 与 QQ 那档不同：酷狗的两个身份共用端点、只是凭证不同，所以标题写成「客户端身份」
+        // 更准确 —— 用户在选的是「这张 token 由哪个 App 签发」，不是「用哪种登录方式」。
+        sectionLabel(row, "客户端身份", () -> 4.0, MusicPlatform.KUGOU::getBrandColor);
         final SegmentControl.Spec spec = accountRowSpec(row);
         SegmentControl.attach(row, () -> {
             spec.width = Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2);
@@ -615,13 +850,15 @@ public class AccountManagerOverlay extends NcmSheet {
                 });
     }
 
-    /** 账号页里这两格共用同一套摆位：整行宽、34 高、圆角 11，左右各让出一档卡片内缩。 */
+    /** 账号页里这两格共用同一套摆位：整行宽、28 高、圆角 8，左右各让出一档卡片内缩。 */
     private static SegmentControl.Spec accountRowSpec(final Panel row) {
         final SegmentControl.Spec spec = new SegmentControl.Spec();
         spec.x = PAD + CARD_INSET;
-        spec.y = 8;
-        spec.height = 34;
-        spec.radius = 11;
+        // 分区标题块之后：轨道顶正好落在「标题 20 + 间隙 12」之后。
+        spec.y = SECTION_LABEL_BLOCK;
+        // 28 = 上下内缩 4×2 + 滑块 20，滑块高度与主操作按钮一致。
+        spec.height = SEGMENT_TRACK;
+        spec.radius = 8;
         return spec;
     }
 
@@ -676,9 +913,12 @@ public class AccountManagerOverlay extends NcmSheet {
                         startQrLogin(platform, pageGeneration.get());
                     }
                 });
+        // 圆角 6、高 22（规范 20~24）：一开始就定下来，渲染回调里只改尺寸与位置。
+        button.setRadius(6.0);
         button.setBeforeRenderCallback(() -> {
-            button.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 32);
-            button.setPosition(PAD + CARD_INSET, dialog.getHeight() - 42);
+            button.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), DETAIL_BUTTON_H);
+            button.setPosition(PAD + CARD_INSET,
+                    dialog.getHeight() - FOOTER_BOTTOM - DETAIL_BUTTON_H);
             int base = signOut ? BAD_COLOR : platform.getBrandColor();
             button.setColor(mix(base, 0xFFFFFF, button.isHovering() ? .16 : 0.0));
         });
@@ -689,9 +929,12 @@ public class AccountManagerOverlay extends NcmSheet {
                                                 final Supplier<String> text, final IntSupplier ink,
                                                 final Runnable onClick) {
         final RoundedButtonWidget button = action(dialog, glyph, text, FontManager.pf12bold, ink, onClick);
+        button.setRadius(6.0);
         button.setBeforeRenderCallback(() -> {
-            button.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 30);
-            button.setPosition(PAD + CARD_INSET, dialog.getHeight() - 42 - 36 * index);
+            button.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), DETAIL_BUTTON_H);
+            button.setPosition(PAD + CARD_INSET,
+                    dialog.getHeight() - FOOTER_BOTTOM - DETAIL_BUTTON_H
+                            - index * (DETAIL_BUTTON_H + BUTTON_GAP));
             button.setColor(button.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
@@ -699,9 +942,18 @@ public class AccountManagerOverlay extends NcmSheet {
         return button;
     }
 
+    /**
+     * 听歌历史开关的两种文案。
+     *
+     * <p>预构造而不是在 supplier 里拼字符串：LabelWidget 的 supplier 每帧都要读一次，
+     * 拼接会变成每帧一次小分配（性能红线第 1 条）。</p>
+     */
+    private static final String HISTORY_SYNC_ON = "听歌历史同步：已开启";
+    private static final String HISTORY_SYNC_OFF = "听歌历史同步：已关闭";
+
     private void historySyncAction(final Panel dialog, final int index) {
         secondaryAction(dialog, index, () -> PartyIcons.SYNC,
-                () -> "听歌历史同步：" + (NCMPlayerConfig.isNeteaseListeningHistorySyncEnabled() ? "已开启" : "已关闭"),
+                () -> NCMPlayerConfig.isNeteaseListeningHistorySyncEnabled() ? HISTORY_SYNC_ON : HISTORY_SYNC_OFF,
                 () -> NCMPlayerConfig.isNeteaseListeningHistorySyncEnabled()
                         ? OK_COLOR : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
                 () -> {
@@ -759,18 +1011,26 @@ public class AccountManagerOverlay extends NcmSheet {
         statusTone = 0;
         beginPage();
 
-        final Panel dialog = sheet(452, () -> 200.0);
-        subHeader(dialog, back(() -> showDetail(MusicPlatform.NETEASE)), () -> "Cookie 登录",
-                () -> "仅本地保存 · 校验失败不会覆盖当前登录状态",
-                MusicPlatform.NETEASE::getBrandColor);
+        // 这一页没有滚动区（只有一行输入），高度按「页头 → 12 → 分区标题 → 12 → 输入 → 12 →
+        // 状态行 → 12 → 主按钮 → 12」精确累加：全是 12 的整数倍，窗口再矮也不会互相压住。
+        final double contentTop = HEADER_H + SECTION_GAP;
+        final double fieldTop = contentTop + SECTION_LABEL_BLOCK;
+        final double statusTop = fieldTop + CREDENTIAL_FIELD_H + SECTION_GAP;
+        final Panel dialog = sheet(452, () -> HEADER_H + SECTION_GAP + SECTION_LABEL_BLOCK
+                + CREDENTIAL_FIELD_H + SECTION_GAP + STATUS_BLOCK
+                + FOOTER_TOP_GAP + CREDENTIAL_FIELD_H + FOOTER_BOTTOM);
+        detailHeader(dialog, back(() -> showDetail(MusicPlatform.NETEASE)), MusicPlatform.NETEASE,
+                () -> "Cookie 登录",
+                () -> "仅本地保存 · 校验失败不会覆盖当前登录状态");
+        sectionLabel(dialog, "登录凭据", () -> contentTop, MusicPlatform.NETEASE::getBrandColor);
 
         final RoundedRectWidget field = new RoundedRectWidget();
         dialog.addChild(field);
         field.setClickable(false);
-        field.setRadius(9);
+        field.setRadius(6);
         field.setBeforeRenderCallback(() -> {
-            field.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 36);
-            field.setPosition(PAD + CARD_INSET, HEADER_H + 4);
+            field.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), CREDENTIAL_FIELD_H);
+            field.setPosition(PAD + CARD_INSET, fieldTop);
             field.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
 
@@ -788,18 +1048,20 @@ public class AccountManagerOverlay extends NcmSheet {
             cookieField.setDisabledTextColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
         });
         // 聚焦描边：输入框是这一页唯一要动手的地方，得让它自己看起来就是焦点。
-        stroke(field, 9.0, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+        stroke(field, 6.0, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
                 () -> cookieField.isFocused() ? .7 : 0.0);
 
-        tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> HEADER_H + 50);
+        tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> statusTop);
 
         final RoundedButtonWidget confirm = action(dialog,
                 () -> requestRunning ? PartyIcons.HOURGLASS : PartyIcons.CHECK,
                 () -> requestRunning ? "正在校验…" : "验证并登录", FontManager.pf12bold, () -> 0xFFFFFF,
                 () -> submitCookie(cookieField, token));
+        confirm.setRadius(6.0);
         confirm.setBeforeRenderCallback(() -> {
-            confirm.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 32);
-            confirm.setPosition(PAD + CARD_INSET, dialog.getHeight() - 42);
+            confirm.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), CREDENTIAL_FIELD_H);
+            confirm.setPosition(PAD + CARD_INSET,
+                    dialog.getHeight() - FOOTER_BOTTOM - CREDENTIAL_FIELD_H);
             confirm.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF,
                     confirm.isHovering() ? .16 : 0.0));
         });
@@ -883,21 +1145,27 @@ public class AccountManagerOverlay extends NcmSheet {
         statusTone = 0;
         beginPage();
 
-        final Panel dialog = sheet(452, () -> 200.0);
-        subHeader(dialog, back(() -> {
+        // 与网易云 Cookie 页同一套纵向网格（见 showCookieLogin 的注释）。
+        final double contentTop = HEADER_H + SECTION_GAP;
+        final double fieldTop = contentTop + SECTION_LABEL_BLOCK;
+        final double statusTop = fieldTop + CREDENTIAL_FIELD_H + SECTION_GAP;
+        final Panel dialog = sheet(452, () -> HEADER_H + SECTION_GAP + SECTION_LABEL_BLOCK
+                + CREDENTIAL_FIELD_H + SECTION_GAP + STATUS_BLOCK
+                + FOOTER_TOP_GAP + CREDENTIAL_FIELD_H + FOOTER_BOTTOM);
+        detailHeader(dialog, back(() -> {
                     if (qishuiAddAccountMode) showSavedQishuiAccounts();
                     else showDetail(MusicPlatform.QISHUI);
-                }), () -> "Cookie 登录",
-                () -> "需要外部工具获取 Cookie：网盘 / QQ群下载 · 仅本地保存",
-                MusicPlatform.QISHUI::getBrandColor);
+                }), MusicPlatform.QISHUI, () -> "Cookie 登录",
+                () -> "需要外部工具获取 Cookie：网盘 / QQ群下载 · 仅本地保存");
+        sectionLabel(dialog, "登录凭据", () -> contentTop, MusicPlatform.QISHUI::getBrandColor);
 
         final RoundedRectWidget field = new RoundedRectWidget();
         dialog.addChild(field);
         field.setClickable(false);
-        field.setRadius(9);
+        field.setRadius(6);
         field.setBeforeRenderCallback(() -> {
-            field.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 36);
-            field.setPosition(PAD + CARD_INSET, HEADER_H + 4);
+            field.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), CREDENTIAL_FIELD_H);
+            field.setPosition(PAD + CARD_INSET, fieldTop);
             field.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
 
@@ -914,18 +1182,19 @@ public class AccountManagerOverlay extends NcmSheet {
             cookieField.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             cookieField.setDisabledTextColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
         });
-        stroke(field, 9.0, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+        stroke(field, 6.0, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
                 () -> cookieField.isFocused() ? .7 : 0.0);
 
-        tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> HEADER_H + 50);
+        tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> statusTop);
 
         // 显式给一颗粘贴按钮，而不是进页面就自动读剪贴板：剪贴板里可能是别的东西。
         final RoundedButtonWidget paste = action(dialog, () -> PartyIcons.LINK, () -> "粘贴",
                 FontManager.pf12bold, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
                 () -> fillQishuiCookieFromClipboard(cookieField));
+        paste.setRadius(6.0);
         paste.setBeforeRenderCallback(() -> {
-            paste.setBounds(QISHUI_PASTE_W, 32);
-            paste.setPosition(PAD + CARD_INSET, dialog.getHeight() - 42);
+            paste.setBounds(QISHUI_PASTE_W, CREDENTIAL_FIELD_H);
+            paste.setPosition(PAD + CARD_INSET, dialog.getHeight() - FOOTER_BOTTOM - CREDENTIAL_FIELD_H);
             paste.setColor(paste.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
@@ -935,10 +1204,12 @@ public class AccountManagerOverlay extends NcmSheet {
                 () -> requestRunning ? PartyIcons.HOURGLASS : PartyIcons.CHECK,
                 () -> requestRunning ? "正在校验…" : "验证并登录", FontManager.pf12bold, () -> 0xFFFFFF,
                 () -> submitQishuiCookie(cookieField, token));
+        confirm.setRadius(6.0);
         confirm.setBeforeRenderCallback(() -> {
             double full = Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2);
-            confirm.setBounds(Math.max(1, full - QISHUI_PASTE_W - 8), 32);
-            confirm.setPosition(paste.getRelativeX() + QISHUI_PASTE_W + 8, dialog.getHeight() - 42);
+            confirm.setBounds(Math.max(1, full - QISHUI_PASTE_W - BUTTON_GAP), CREDENTIAL_FIELD_H);
+            confirm.setPosition(paste.getRelativeX() + QISHUI_PASTE_W + BUTTON_GAP,
+                    dialog.getHeight() - FOOTER_BOTTOM - CREDENTIAL_FIELD_H);
             confirm.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF,
                     confirm.isHovering() ? .16 : 0.0));
         });
@@ -1038,24 +1309,33 @@ public class AccountManagerOverlay extends NcmSheet {
         statusTone = 0;
         beginPage();
 
-        final Panel dialog = sheet(452, () -> 262.0);
-        subHeader(dialog, back(() -> showDetail(MusicPlatform.KUGOU)), () -> "Token 登录",
-                () -> "仅本地保存 · 校验失败不会覆盖当前登录状态",
-                MusicPlatform.KUGOU::getBrandColor);
+        // 与两个 Cookie 页同一套纵向网格，只是多一行输入、页脚多一排「签发客户端」。
+        final double contentTop = HEADER_H + SECTION_GAP;
+        final double tokenTop = contentTop + SECTION_LABEL_BLOCK;
+        final double userIdTop = tokenTop + CREDENTIAL_FIELD_H + SECTION_GAP;
+        final double statusTop = userIdTop + CREDENTIAL_FIELD_H + SECTION_GAP;
+        final Panel dialog = sheet(452, () -> HEADER_H + SECTION_GAP + SECTION_LABEL_BLOCK
+                + CREDENTIAL_FIELD_H + SECTION_GAP + CREDENTIAL_FIELD_H + SECTION_GAP + STATUS_BLOCK
+                + FOOTER_TOP_GAP + (CREDENTIAL_FIELD_H + BUTTON_GAP) + CREDENTIAL_FIELD_H + FOOTER_BOTTOM);
+        detailHeader(dialog, back(() -> showDetail(MusicPlatform.KUGOU)), MusicPlatform.KUGOU,
+                () -> "Token 登录",
+                () -> "仅本地保存 · 校验失败不会覆盖当前登录状态");
+        sectionLabel(dialog, "登录凭据", () -> contentTop, MusicPlatform.KUGOU::getBrandColor);
 
-        final TextFieldWidget tokenField = textField(dialog, HEADER_H + 4, 36,
+        final TextFieldWidget tokenField = textField(dialog, tokenTop, CREDENTIAL_FIELD_H,
                 "粘贴 App 侧 token（不是浏览器 Cookie 里的 token）", 4096, true);
-        final TextFieldWidget userIdField = textField(dialog, HEADER_H + 48, 34,
+        final TextFieldWidget userIdField = textField(dialog, userIdTop, CREDENTIAL_FIELD_H,
                 "userid（纯数字的酷狗 ID）", 32, false);
 
-        tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> HEADER_H + 96);
+        tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> statusTop);
 
         final RoundedButtonWidget paste = action(dialog, () -> PartyIcons.LINK, () -> "粘贴 token",
                 FontManager.pf12bold, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
                 () -> fillKuGouTokenFromClipboard(tokenField));
+        paste.setRadius(6.0);
         paste.setBeforeRenderCallback(() -> {
-            paste.setBounds(QISHUI_PASTE_W, 32);
-            paste.setPosition(PAD + CARD_INSET, dialog.getHeight() - 42);
+            paste.setBounds(QISHUI_PASTE_W, CREDENTIAL_FIELD_H);
+            paste.setPosition(PAD + CARD_INSET, dialog.getHeight() - FOOTER_BOTTOM - CREDENTIAL_FIELD_H);
             paste.setColor(paste.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
@@ -1065,17 +1345,22 @@ public class AccountManagerOverlay extends NcmSheet {
                 () -> requestRunning ? PartyIcons.HOURGLASS : PartyIcons.CHECK,
                 () -> requestRunning ? "正在校验…" : "验证并登录", FontManager.pf12bold, () -> 0xFFFFFF,
                 () -> submitKuGouToken(tokenField, userIdField, concept, token));
+        confirm.setRadius(6.0);
         confirm.setBeforeRenderCallback(() -> {
             double full = Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2);
-            confirm.setBounds(Math.max(1, full - QISHUI_PASTE_W - 8), 32);
-            confirm.setPosition(paste.getRelativeX() + QISHUI_PASTE_W + 8, dialog.getHeight() - 42);
+            confirm.setBounds(Math.max(1, full - QISHUI_PASTE_W - BUTTON_GAP), CREDENTIAL_FIELD_H);
+            confirm.setPosition(paste.getRelativeX() + QISHUI_PASTE_W + BUTTON_GAP,
+                    dialog.getHeight() - FOOTER_BOTTOM - CREDENTIAL_FIELD_H);
             confirm.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF,
                     confirm.isHovering() ? .16 : 0.0));
         });
 
         // 身份选择放在按钮排上面一行：这张 token 属于哪个客户端，是提交之前最后一个能改的东西。
+        // 两段文案预构造（supplier 每帧都会被读，拼接就是每帧一次分配）。
+        final String[] variantLabels = {"签发客户端：" + KUGOU_VARIANTS[0],
+                "签发客户端：" + KUGOU_VARIANTS[1]};
         final RoundedButtonWidget variant = action(dialog, () -> PartyIcons.PERSON,
-                () -> "签发客户端：" + KUGOU_VARIANTS[concept[0] ? 1 : 0],
+                () -> variantLabels[concept[0] ? 1 : 0],
                 FontManager.pf12bold,
                 () -> concept[0] ? OK_COLOR : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
                 () -> {
@@ -1085,9 +1370,12 @@ public class AccountManagerOverlay extends NcmSheet {
                             : "已按标准版身份校验：token 要抓自酷狗音乐 App";
                     statusTone = 0;
                 });
+        variant.setRadius(6.0);
         variant.setBeforeRenderCallback(() -> {
-            variant.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 30);
-            variant.setPosition(PAD + CARD_INSET, dialog.getHeight() - 42 - 36);
+            variant.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2),
+                    CREDENTIAL_FIELD_H);
+            variant.setPosition(PAD + CARD_INSET, dialog.getHeight() - FOOTER_BOTTOM
+                    - CREDENTIAL_FIELD_H - (CREDENTIAL_FIELD_H + BUTTON_GAP));
             variant.setColor(variant.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
@@ -1106,7 +1394,7 @@ public class AccountManagerOverlay extends NcmSheet {
         final RoundedRectWidget backing = new RoundedRectWidget();
         dialog.addChild(backing);
         backing.setClickable(false);
-        backing.setRadius(9);
+        backing.setRadius(6);
         backing.setBeforeRenderCallback(() -> {
             backing.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), height);
             backing.setPosition(PAD + CARD_INSET, y);
@@ -1127,7 +1415,7 @@ public class AccountManagerOverlay extends NcmSheet {
             field.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             field.setDisabledTextColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
         });
-        stroke(backing, 9.0, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+        stroke(backing, 6.0, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
                 () -> field.isFocused() ? .7 : 0.0);
         return field;
     }
@@ -1189,9 +1477,13 @@ public class AccountManagerOverlay extends NcmSheet {
      * {@code /v5/url} 阶梯与老 trackercdn 都拿不到地址时多打一次请求，所以它不会
      * 拖慢正常播放，只是一个「什么都不行了再试它一下」的最后兜底。</p>
      */
+    /** 备选取流开关的两种文案：预构造，理由同 {@link #HISTORY_SYNC_ON}。 */
+    private static final String KUGOU_FALLBACK_ON = "备选取流 /v6：已开启";
+    private static final String KUGOU_FALLBACK_OFF = "备选取流 /v6：已关闭";
+
     private void kuGouPrivUrlAction(final Panel dialog, final int index) {
         secondaryAction(dialog, index, () -> PartyIcons.WARNING,
-                () -> "备选取流 /v6：" + (NCMPlayerConfig.isKuGouPrivUrlFallbackEnabled() ? "已开启" : "已关闭"),
+                () -> NCMPlayerConfig.isKuGouPrivUrlFallbackEnabled() ? KUGOU_FALLBACK_ON : KUGOU_FALLBACK_OFF,
                 () -> NCMPlayerConfig.isKuGouPrivUrlFallbackEnabled()
                         ? OK_COLOR : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
                 () -> {
@@ -1217,20 +1509,29 @@ public class AccountManagerOverlay extends NcmSheet {
         final List<QishuiAccountProfiles.Account> accounts = QishuiAccountProfiles.load();
         final double listHeight = accounts.isEmpty()
                 ? 84.0 : Math.min(accounts.size() * SAVED_ROW, 4 * SAVED_ROW);
-        final Panel dialog = sheet(468, () -> HEADER_H + LEAD + listHeight + 84.0);
-        subHeader(dialog, back(() -> showDetail(MusicPlatform.QISHUI)), () -> "汽水已保存账号",
-                () -> "本地切换 · 最多保存 8 个", MusicPlatform.QISHUI::getBrandColor);
+        // 内容 = 顶部 12 + 列表 + 底部 12；页脚 = 上间隙 12 + 主按钮 22 + 12 + 状态行 30。
+        final double content = SECTION_GAP + listHeight + SECTION_GAP;
+        final double footer = FOOTER_TOP_GAP + DETAIL_BUTTON_H + SECTION_GAP + STATUS_BLOCK;
+        final Panel dialog = sheet(468, () -> HEADER_H + content + footer);
+        detailHeader(dialog, back(() -> showDetail(MusicPlatform.QISHUI)), MusicPlatform.QISHUI,
+                () -> "汽水已保存账号", () -> "本地切换 · 最多保存 8 个");
 
-        final Panel body = body(dialog, () -> HEADER_H, () -> 84.0);
+        final Panel body = body(dialog, () -> HEADER_H, () -> footer);
         final ScrollPanel feed = feed(body);
-        strip(feed, LEAD);
+        strip(feed, SECTION_GAP);
         if (accounts.isEmpty()) {
             emptyState(strip(feed, 84.0));
         } else {
             for (int i = 0; i < accounts.size(); i++) {
-                qishuiAccountRow(strip(feed, SAVED_ROW), i, accounts.get(i), token);
+                final QishuiAccountProfiles.Account account = accounts.get(i);
+                savedAccountRow(strip(feed, SAVED_ROW), i, QishuiAccountProfiles.isActive(account),
+                        MusicPlatform.QISHUI, account.getDisplayName(), account.getMeta(),
+                        account.getAvatarUrl(), account.getAvatarLocation(),
+                        () -> switchQishuiAccount(account, token),
+                        () -> removeQishuiAccount(account));
             }
         }
+        strip(feed, SECTION_GAP);
 
         final boolean bridgeReady = QishuiLoginBridge.isAvailable();
         final RoundedButtonWidget add = action(dialog,
@@ -1244,13 +1545,16 @@ public class AccountManagerOverlay extends NcmSheet {
                         showQishuiCookieLogin();
                     }
                 });
+        add.setRadius(6.0);
         add.setBeforeRenderCallback(() -> {
-            add.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), 30);
-            add.setPosition(PAD + CARD_INSET, dialog.getHeight() - 76);
+            add.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), DETAIL_BUTTON_H);
+            add.setPosition(PAD + CARD_INSET, dialog.getHeight() - STATUS_BLOCK - SECTION_GAP
+                    - DETAIL_BUTTON_H);
             add.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF,
                     add.isHovering() ? .16 : 0.0));
         });
-        tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> dialog.getHeight() - 30);
+        tip(dialog, this::statusGlyph, () -> statusText, this::statusColor,
+                () -> dialog.getHeight() - STATUS_BLOCK);
     }
 
     private void qishuiAccountRow(final Panel row, final int slot,
@@ -1282,11 +1586,12 @@ public class AccountManagerOverlay extends NcmSheet {
                     MusicPlatform.QISHUI.getBrandColor(), .30));
         });
         final String initial = initial(account.getDisplayName());
+        // 墨迹宽度是常量串的度量，构建期量一次就够：放进渲染回调等于每帧做一次文本测量。
+        final double initialWidth = FontManager.pf16bold.getStringWidthD(initial);
         final LabelWidget letter = label(disc, initial, FontManager.pf16bold);
         letter.setBeforeRenderCallback(() -> {
             letter.setColor(0xFFFFFF);
-            letter.setPosition(18 - FontManager.pf16bold.getStringWidthD(initial) * .5,
-                    inkTop(letter, 18.0));
+            letter.setPosition(18 - initialWidth * .5, inkTop(letter, 18.0));
         });
         final Location avatar = account.getAvatarLocation();
         final RoundedImageWidget photo = new RoundedImageWidget(
@@ -1397,7 +1702,15 @@ public class AccountManagerOverlay extends NcmSheet {
             emptyState(strip(feed, 84.0));
         } else {
             for (int i = 0; i < accounts.size(); i++) {
-                savedAccountRow(strip(feed, SAVED_ROW), i, accounts.get(i), token);
+                final NeteaseAccountProfiles.Account account = accounts.get(i);
+                // meta 文案与「是不是当前账号」都在建页时定下来：前者是纯字符串，后者要读配置。
+                final String meta = account.id == null || account.id.trim().isEmpty()
+                        ? "本地凭据" : "网易云 ID " + account.id;
+                savedAccountRow(strip(feed, SAVED_ROW), i, NeteaseAccountProfiles.isActive(account),
+                        MusicPlatform.NETEASE, account.getDisplayName(), meta,
+                        account.getAvatarUrl(), account.getAvatarLocation(),
+                        () -> switchAccount(account, token),
+                        () -> removeAccount(account));
             }
         }
 
@@ -1437,39 +1750,50 @@ public class AccountManagerOverlay extends NcmSheet {
         icon(row, PartyIcons.PERSON_ADD, ICON_XL, () -> row.getWidth() * .5, () -> 30.0,
                 () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
         final String text = "还没有保存过账号";
+        // 常量文案的墨迹宽度在构建期量一次：渲染回调里不能再做文本测量。
+        final double textWidth = FontManager.pf12bold.getStringWidthD(text);
         final LabelWidget caption = label(row, text, FontManager.pf12bold);
         caption.setBeforeRenderCallback(() -> {
             caption.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            caption.setPosition(row.getWidth() * .5 - FontManager.pf12bold.getStringWidthD(text) * .5,
-                    inkTop(caption, 58.0));
+            caption.setPosition(row.getWidth() * .5 - textWidth * .5, inkTop(caption, 58.0));
         });
     }
 
     /**
-     * 已保存账号的一行。
+     * 已保存账号的一行（网易云 / 汽水共用）。
      *
-     * <p>「是不是当前账号」在建页时取一次快照而不是每帧问：{@code NeteaseAccountProfiles.isActive}
-     * 要去读配置里的 cookie，那不是每帧该做的事；而这一页只要切过账号就会换页重建。</p>
+     * <p>两个平台的「已保存账号」页结构完全一样：一行一个账号，左边头像、中间名字与副标题、
+     * 右边「当前」标记与删除键，点整行切换。原来这里写死了网易云的账号类型、品牌色与 meta 文案，
+     * 汽水那边只能另起一份；把会变的那几样（平台、名称、meta、头像地址、两个动作）当参数传进来，
+     * 一份实现管两边，行高、间距与 hover 语言也就自然一致了。</p>
+     *
+     * <p>「是不是当前账号」由调用方在建页时算好传进来，而不是每帧问：判活要去读配置里的凭据，
+     * 那不是每帧该做的事；而这一页只要切过账号就会换页重建。</p>
+     *
+     * @param current 这一行是不是当前生效的账号（建页时快照）
+     * @param onSwitch 点整行切换；当前行不可点
+     * @param onRemove 点右侧删除键
      */
-    private void savedAccountRow(final Panel row, final int slot,
-                                 final NeteaseAccountProfiles.Account account, final long token) {
-        final boolean current = NeteaseAccountProfiles.isActive(account);
+    private void savedAccountRow(final Panel row, final int slot, final boolean current,
+                                 final MusicPlatform platform, final String displayName, final String metaText,
+                                 final String avatarUrl, final Location avatarLocation,
+                                 final Runnable onSwitch, final Runnable onRemove) {
         final Card[] self = new Card[1];
         final Card card = card(row, slot, () -> 0.0, () -> 52.0, () -> current
                 ? mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
-                MusicPlatform.NETEASE.getBrandColor(), .22)
+                platform.getBrandColor(), .22)
                 : mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
                 NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER), self[0].hover));
         self[0] = card;
         card.setShouldOverrideMouseCursor(!current);
         card.setOnClickCallback((x, y, button) -> {
             if (button != 0 || requestRunning || current) return false;
-            switchAccount(account, token);
+            onSwitch.run();
             return true;
         });
-        stroke(card, 12.0, MusicPlatform.NETEASE::getBrandColor, () -> current ? .5 : 0.0);
+        stroke(card, 12.0, platform::getBrandColor, () -> current ? .5 : 0.0);
 
-        savedAvatar(card, account);
+        savedAvatar(card, platform, displayName, avatarUrl, avatarLocation);
 
         final RoundedRectWidget remove = new RoundedRectWidget();
         card.addChild(remove);
@@ -1477,7 +1801,7 @@ public class AccountManagerOverlay extends NcmSheet {
         remove.setShouldOverrideMouseCursor(true);
         remove.setOnClickCallback((x, y, button) -> {
             if (button != 0 || requestRunning) return false;
-            removeAccount(account);
+            onRemove.run();
             return true;
         });
         remove.setBeforeRenderCallback(() -> {
@@ -1494,7 +1818,7 @@ public class AccountManagerOverlay extends NcmSheet {
         final RoundedRectWidget flag = pill(currentLayer, () -> PartyIcons.CHECK, () -> "当前",
                 () -> OK_COLOR, () -> currentLayer.getWidth() - 46, () -> currentLayer.getHeight() * .5);
 
-        final LabelWidget name = label(card, account::getDisplayName, FontManager.pf12bold);
+        final LabelWidget name = label(card, () -> displayName, FontManager.pf12bold);
         name.setBeforeRenderCallback(() -> {
             name.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             name.setMaxWidth(Math.max(1, card.getWidth() - 58 - 54 - (current ? flag.getWidth() : 0)));
@@ -1502,9 +1826,7 @@ public class AccountManagerOverlay extends NcmSheet {
             name.setPosition(58, inkTop(name, card.getHeight() * .5 - 8));
         });
 
-        final String meta = account.id == null || account.id.trim().isEmpty()
-                ? "本地凭据" : "网易云 ID " + account.id;
-        final LabelWidget metaLabel = label(card, meta, FontManager.pf12);
+        final LabelWidget metaLabel = label(card, () -> metaText, FontManager.pf12);
         metaLabel.setBeforeRenderCallback(() -> {
             metaLabel.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             metaLabel.setMaxWidth(Math.max(1, card.getWidth() - 58 - 54 - (current ? flag.getWidth() : 0)));
@@ -1513,9 +1835,14 @@ public class AccountManagerOverlay extends NcmSheet {
         });
     }
 
-    private void savedAvatar(final Card card, final NeteaseAccountProfiles.Account account) {
-        final Location location = account.getAvatarLocation();
-        final String url = account.getAvatarUrl();
+    /**
+     * 已保存账号行左边的头像位：品牌色底盘 → 昵称首字 → 头像照片，三层叠着画。
+     *
+     * <p>与 {@link #savedAvatar(Card, NeteaseAccountProfiles.Account)} 的区别只在数据来源，
+     * 这样汽水的账号不必为了画一个头像而先被包装成网易云的账号类型。</p>
+     */
+    private void savedAvatar(final Card card, final MusicPlatform platform, final String displayName,
+                             final String avatarUrl, final Location avatarLocation) {
         final RoundedRectWidget disc = new RoundedRectWidget();
         card.addChild(disc);
         disc.setClickable(false);
@@ -1524,18 +1851,21 @@ public class AccountManagerOverlay extends NcmSheet {
             disc.setBounds(36, 36);
             disc.setPosition(12, card.getHeight() * .5 - 18);
             disc.setColor(mix(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND),
-                    MusicPlatform.NETEASE.getBrandColor(), .30));
+                    platform.getBrandColor(), .30));
         });
 
-        final String first = initial(account.getDisplayName());
+        final String first = initial(displayName);
+        // 同上：首字是常量串，宽度构建期量一次。
+        final double firstWidth = FontManager.pf16bold.getStringWidthD(first);
         final LabelWidget letter = label(disc, first, FontManager.pf16bold);
         letter.setBeforeRenderCallback(() -> {
             letter.setColor(0xFFFFFF);
-            letter.setPosition(18 - FontManager.pf16bold.getStringWidthD(first) * .5, inkTop(letter, 18.0));
+            letter.setPosition(18 - firstWidth * .5, inkTop(letter, 18.0));
         });
 
         final RoundedImageWidget photo = new RoundedImageWidget(
-                () -> AccountAvatar.textureOrNull(url, location) == null ? null : location, 0, 0, 36, 36);
+                () -> AccountAvatar.textureOrNull(avatarUrl, avatarLocation) == null ? null : avatarLocation,
+                0, 0, 36, 36);
         disc.addChild(photo);
         photo.setClickable(false);
         photo.setRadius(11);

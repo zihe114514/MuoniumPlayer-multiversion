@@ -101,6 +101,16 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     private boolean pendingNavigationBackward;
 
     /**
+     * 音源切换专场换页：只让新页从背景里淡入，旧源内容<b>不参与</b>交叉淡入。
+     *
+     * <p>换音源时旧页展示的是另一个平台的内容（另一份推荐、另一位用户的歌单），如果按普通换页
+     * 做交叉淡入，两层内容会在同一块区域里叠上 140ms —— 用户看到的就是「上一层的残留」。这里把
+     * 旧页直接收掉、只淡入新页；背景本来就是内容区自己的不透明底，清底层不会露出任何东西。</p>
+     */
+    private boolean panelSoloFadeRequested;
+    private boolean panelSoloFadeActive;
+
+    /**
      * 面板切换帧的轻量渲染闸门。
      *
      * <p>栏目切换本身已经负责整页的淡入与位移，主页卡片、曲目行再各自做一遍落入动画会
@@ -501,29 +511,31 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 // 在子组件/帧缓冲渲染后重新断言根圆角裁剪。
                 StencilClipManager.restoreActiveClip();
 
-                // 换页转场：一条真时钟，两页<b>同时</b>画。
-                //
-                // 旧页淡完才画新页会露空底；两页各自再套一套条目进场又会让矩阵和透明度层
-                // 成倍增加。这里保留一次交叉淡入，但把距离收短、去掉整页缩放，并在旧页已经
-                // 几乎不可见时停止遍历它的整棵控件树。
-                if (this.prevAnimatingPanel != null) {
+                // 换页转场：一条真时钟。普通换页两页同时画（交叉淡入）；音源切换专场只画新页，
+                // 从内容区底色上淡入 —— 旧源内容不参与，避免两层内容同框的「残留感」。
+                if (this.prevAnimatingPanel != null || this.panelSoloFadeActive) {
                     this.panelTransitionT = Math.min(1.0,
                             this.panelTransitionT + panelTransitionStepMillis() / panelTransitionMillis());
                 }
                 final double transitionEased = TransitionCurveCache.MOTION.at(this.panelTransitionT);
-                final double slideDistance = PANEL_SLIDE_DISTANCE * (this.panelTransitionBackward ? -1.0 : 1.0);
-                this.panelTransitionActive = this.prevAnimatingPanel != null;
+                // 音源切换没有「上一页」可推：只让新页淡入，不做横向位移，免得和侧栏换代抢方向。
+                final double slideDistance = this.panelSoloFadeActive ? 0.0
+                        : PANEL_SLIDE_DISTANCE * (this.panelTransitionBackward ? -1.0 : 1.0);
+                this.panelTransitionActive = this.prevAnimatingPanel != null || this.panelSoloFadeActive;
+
+                // 旧页淡出比新页淡入更快一档：两层同框的时间越短，越读不出「叠影」，收尾也更利落。
+                final float oldPageAlpha = this.prevAnimatingPanel == null ? 0f
+                        : this.prevAnimatingPanelAlpha
+                        * (float) Math.pow(1.0 - transitionEased, 1.45);
 
                 if (this.prevAnimatingPanel != null) {
                     // 中途再切一次页时，这张旧页可能还在自己淡进来的半路上。从它<b>当前</b>的不透明度
                     // 接着往下淡，而不是先跳回全亮。旧页透明到阈值以下后不再遍历它，最后这段只画新页。
-                    this.prevAnimatingPanel.setAlpha(Math.min(this.basePanel.getAlpha(),
-                            this.prevAnimatingPanelAlpha * (float) (1.0 - transitionEased)));
+                    this.prevAnimatingPanel.setAlpha(Math.min(this.basePanel.getAlpha(), oldPageAlpha));
                     this.prevAnimatingPanel.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
                             this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
 
-                    if (this.prevAnimatingPanelAlpha * (float) (1.0 - transitionEased)
-                            > PANEL_OLD_PAGE_RENDER_CUTOFF) {
+                    if (oldPageAlpha > PANEL_OLD_PAGE_RENDER_CUTOFF) {
                         // 位移必须裁在内容区里：旧页推出去不允许糊到左侧导航栏上。
                         StencilClipManager.beginClip(() -> Rect.draw(this.currentPanelBg.getX(),
                                 this.currentPanelBg.getY(), this.currentPanelBg.getWidth(),
@@ -558,6 +570,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                     api.getGLStateManager().popMatrix();
 
                     StencilClipManager.endClip();
+                }
+
+                // 音源切换专场的淡入收尾：下一帧起恢复普通换页判定。
+                if (this.panelSoloFadeActive && this.panelTransitionT >= 1.0) {
+                    this.panelSoloFadeActive = false;
                 }
 
                 // 接力封面画在两页之上、仍裁在内容区里。这层裁剪是最后一道保险，不是主要手段：
@@ -1051,6 +1068,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         });
     }
 
+    /** 当前内容页。侧栏用它判断「点的就是当前栏目」，避免把同一页重建一遍、多闪一次转场。 */
+    public NCMPanel getCurrentPanel() {
+        return this.currentPanel;
+    }
+
     /**
      * 立即返回前一个内容页。现有鼠标侧键导航使用
      * 同一历史，因此页面动画
@@ -1060,6 +1082,25 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         if (this.currentPanel instanceof PlaylistPanel || this.currentPanel instanceof PersonalFmPanel) {
             this.currentPanel.onInit();
         }
+    }
+
+    /**
+     * 音源切换后的视觉交接：内容区「清底淡入」，侧栏整列静默换代。
+     *
+     * <p>调用方（音源浮层）已经先改好 {@code NeteaseMusicService} 的当前平台。这里把三件事收成
+     * 一个动作：</p>
+     * <ul>
+     *   <li>旧页直接收掉（不交叉淡入）—— 另一个平台的内容不该在本平台的新页淡入时还留在屏幕上；</li>
+     *   <li>侧栏重建时跳过行进场/退场动画 —— 换源本来就会让几乎每一行同时「新出现 + 旧消失」，
+     *       两套动画叠在一起就是满屏幽灵行，那正是「上一层的残留」；</li>
+     *   <li>仍走正常换页时钟（默认约 140ms），新页从内容区底色里淡入，节奏与其它栏目一致。</li>
+     * </ul>
+     */
+    public void switchSourcePanel(NCMPanel panel) {
+        this.panelSoloFadeRequested = true;
+        NavigateBar.suppressNextBuildAnimations();
+        this.setCurrentPanel(panel);
+        this.markDirty();
     }
 
     /** Finish visual state before a dropped page can be reused from navigation history. */
@@ -1079,6 +1120,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         if (panel == this.currentPanel) {
             this.pendingNavigationBackward = false;
             this.pendingPanelNavigationKey = null;
+            // 同页重复点击不该把「音源切换专场」的口子留给下一次真正的换页。
+            this.panelSoloFadeRequested = false;
             return;
         }
 
@@ -1094,11 +1137,22 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.currentPanel = panel;
         this.panelTransitionBackward = this.pendingNavigationBackward;
         this.pendingNavigationBackward = false;
-        // 没有上一页、或者上一页几乎还没露脸（连点两个歌单时很常见），就没有什么可交代的：
-        // 时钟直接给到终点，新页按停稳态画，不硬凑一次转场。
-        this.panelTransitionT = this.prevAnimatingPanel == null || this.prevAnimatingPanelAlpha <= .02f
-                ? 1.0 : 0.0;
-        this.panelTransitionActive = this.prevAnimatingPanel != null;
+        if (this.panelSoloFadeRequested) {
+            // 音源切换：旧页直接收掉，只让新页从主题底色里淡入。旧页的条目动画也在这一下收干净，
+            // 否则它们会挂在不再绘制的树上继续持有矩阵。
+            this.panelSoloFadeRequested = false;
+            if (this.prevAnimatingPanel != null) this.finishDroppedPanel(this.prevAnimatingPanel);
+            this.prevAnimatingPanel = null;
+            this.prevAnimatingPanelAlpha = 0f;
+            this.panelSoloFadeActive = true;
+            this.panelTransitionT = 0.0;
+        } else {
+            // 没有上一页、或者上一页几乎还没露脸（连点两个歌单时很常见），就没有什么可交代的：
+            // 时钟直接给到终点，新页按停稳态画，不硬凑一次转场。
+            this.panelTransitionT = this.prevAnimatingPanel == null || this.prevAnimatingPanelAlpha <= .02f
+                    ? 1.0 : 0.0;
+        }
+        this.panelTransitionActive = this.prevAnimatingPanel != null || this.panelSoloFadeActive;
         if (panel != null) {
             if (this.pendingPanelNavigationKey != null) {
                 panel.setNavigationKey(this.pendingPanelNavigationKey);

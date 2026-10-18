@@ -33,6 +33,11 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         MuoniumPlayerClient.setLoaderId("fabric");
         client.init();
 
+        // 1.5. 3D 世界歌词：装配字形图集宿主（现代化风格的纹理通路）。
+        // 漏掉这一句时图集宿主是 null，getGlyph 全部返回 null，
+        // drawSmoothGlyph 逐字回退像素兜底 —— 现代化渲染看起来「没有效果」。
+        WorldLyricsBridge.install();
+
         // 2. 一起听（服务端房间）通道：服务器没装一起听服务端 mod 时全程无副作用，
         //    装了则由 MpPartyClient 接管房间内的播放/点歌，复用播放器现有的播放链路。
         MpNetFabric.register();

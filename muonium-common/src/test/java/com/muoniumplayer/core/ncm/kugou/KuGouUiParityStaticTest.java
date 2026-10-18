@@ -68,10 +68,14 @@ class KuGouUiParityStaticTest {
         String sheet = read(SCREENS, "AccountManagerOverlay.java");
         assertTrue(sheet.contains("kugouVariantPicker = platform == MusicPlatform.KUGOU && !loggedIn"),
                 "身份选择器只在未登录时出现：已登录时该显示的是凭证所属身份，不是「下一次选谁」");
-        assertTrue(sheet.contains("profileSegment(strip(feed, SEGMENT_BLOCK))"),
+        assertTrue(sheet.contains("profileSegment(strip(feed, SEGMENT_ROW))"),
                 "酷狗要有自己的分段控件，不能只加一个字段没有入口");
-        assertTrue(sheet.contains("qqChannelPicker || kugouVariantPicker ? SEGMENT_BLOCK : 0.0"),
-                "选择器占的那一段高度要算进版式，否则小窗口下二维码会压在按钮上");
+        // 选择器占的高度必须算进版式（现在先收成一个 segmentVisible，再由它累加进 content），
+        // 否则小窗口下二维码会压在按钮上。
+        assertTrue(sheet.contains("final boolean segmentVisible = qqChannelPicker || kugouVariantPicker"),
+                "选择器的可见性没有归成一个判据");
+        assertTrue(sheet.contains("if (segmentVisible) content += SECTION_GAP + SEGMENT_ROW"),
+                "选择器占的那一段高度没算进版式，小窗口下二维码会压在按钮上");
     }
 
     @Test

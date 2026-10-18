@@ -1,6 +1,8 @@
 package com.muoniumplayer.core.screens.ncm;
 
+import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
+import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 
 /**
  * @author MuoniumPlayer Contributors
@@ -57,6 +59,44 @@ public abstract class NCMPanel extends Panel {
     public boolean onKeyTypedReceived(char typedChar, int keyCode) {
         if (isDismissing()) return false;
         return super.onKeyTypedReceived(typedChar, keyCode);
+    }
+
+    /**
+     * 内容页的滚轮兜底：指针压在页头、标题或空白处时，滚轮也应该滚这一页的主列表。
+     *
+     * <p>以前只有指针正好落在 {@link ScrollPanel} 矩形内才滚得动 —— 用户习惯是「在整个页面上滚滚轮」，
+     * 压在页头上没反应会被当成页面卡住。这里先让正常的子控件派发跑一遍（真正的列表命中、
+     * 音量条等仍优先），没人消费时再转发给本页第一个纵向滚动区。</p>
+     */
+    @Override
+    public boolean onDWheel(double mouseX, double mouseY, int dWheel) {
+        if (super.onDWheel(mouseX, mouseY, dWheel)) return true;
+        if (dWheel == 0) return false;
+        final ScrollPanel target = this.findPrimaryVerticalScrollPanel();
+        if (target == null) return false;
+        target.forwardWheel(dWheel);
+        return true;
+    }
+
+    /**
+     * 找本页第一个纵向滚动区。只认纵向：私人 FM 页头那排横向 chip 也是 ScrollPanel，
+     * 把纵向滚轮喂给它会让「滚页头」变成横滑标签。
+     */
+    private ScrollPanel findPrimaryVerticalScrollPanel() {
+        return findPrimaryVerticalScrollPanel(this);
+    }
+
+    private static ScrollPanel findPrimaryVerticalScrollPanel(AbstractWidget<?> host) {
+        for (AbstractWidget<?> child : host.getChildren()) {
+            if (child instanceof ScrollPanel) {
+                ScrollPanel panel = (ScrollPanel) child;
+                if (panel.getAlignment() != ScrollPanel.Alignment.HORIZONTAL) return panel;
+                continue;
+            }
+            final ScrollPanel nested = findPrimaryVerticalScrollPanel(child);
+            if (nested != null) return nested;
+        }
+        return null;
     }
 
 }

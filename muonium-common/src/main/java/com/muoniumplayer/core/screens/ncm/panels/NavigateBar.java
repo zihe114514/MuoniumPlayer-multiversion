@@ -174,6 +174,17 @@ public class NavigateBar extends NCMPanel {
     private static Map<String, PlaylistItem> announcedRows = Collections.emptyMap();
     /** 侧栏装配过几次了 —— 第一次那一趟既不演进场也不演退场，见 {@link #addSidebarRow}。 */
     private static boolean rowsAnnounced = false;
+
+    /**
+     * 下一次整树重建是否静默跳过行的进场/退场动画。音源切换时置位，由构造函数取走。
+     *
+     * <p>换音源几乎会把整列行同时换掉（发现区、账号歌单、收藏歌单全变）。如果还按常规演
+     * 「旧行退场 + 新行进场」，两批半透明文字会在 150~280ms 里叠在同一列上，读起来就是满屏残影 ——
+     * 这正是换源时「上一层残留」的来源之一。这一趟改成静默换代，视觉交代交给内容区那条淡入。</p>
+     */
+    private static boolean silentNextBuild;
+    /** 本次重建是否静默。构造时从静态位取走并清掉，不污染下一次。 */
+    private final boolean silentBuild;
     /** 这一次重建摆出来的行，{@link #layout()} 末尾交还给 {@link #announcedRows}。 */
     private final Map<String, PlaylistItem> sidebarRows = new LinkedHashMap<>();
     /**
@@ -244,6 +255,8 @@ public class NavigateBar extends NCMPanel {
 
     public NavigateBar(NavigateBar previous) {
         this.sourceIdentity = currentSourceIdentity();
+        this.silentBuild = silentNextBuild;
+        silentNextBuild = false;
         this.sourceChanged = previous != null && !this.sourceIdentity.equals(previous.sourceIdentity);
         this.searchField = previous == null ? new TextFieldWidget(FontManager.pf14bold) : previous.searchField;
         this.playlistSearchMode = previous != null && previous.playlistSearchMode;
@@ -276,6 +289,14 @@ public class NavigateBar extends NCMPanel {
         return platform.name() + (platform == MusicPlatform.GD ? ":" + GdStudioSourceSettings.getPlatform() : "");
     }
 
+    /**
+     * 让下一次侧栏重建静默换代：不演行进场、不演旧行退场。
+     * 只给音源切换用（见 {@link #silentBuild}）；常驻的刷新/账号变化仍保留原有的进场动画。
+     */
+    public static void suppressNextBuildAnimations() {
+        silentNextBuild = true;
+    }
+
     private NCMScreen getScreen() {
         return NCMScreen.getInstance();
     }
@@ -295,6 +316,8 @@ public class NavigateBar extends NCMPanel {
     }
 
     private void armRelocation(String key, AbstractWidget<?> widget, boolean enterIfNew) {
+        // 静默换代：位置/透明度都直接落到最终值，不装位移与淡入变换。
+        if (this.silentBuild) return;
         SidebarLayoutMotion.Snapshot old = this.previousGeometry.get(key);
         if (old == null && (!rowsAnnounced || !enterIfNew)) return;
         SidebarLayoutMotion motion = new SidebarLayoutMotion(old);
@@ -366,8 +389,11 @@ public class NavigateBar extends NCMPanel {
         // 第一次装配既不演进场也不演退场：那一趟是 prewarm 建的（{@code NCMScreen#prewarmLayout}
         // 之后紧跟的那次 checkDirty 会跳过重建，所以开界面用的就是这一棵）。用户还没见过任何一行，
         // 「新出现的行」和「被换下去的行」在这里都没有意义，而打开播放器自己有转场负责。
-        if (rowsAnnounced && !announcedRows.containsKey(key)) item.armEntrance(this.entranceReveal);
-        else this.armRelocation(key, item, false);
+        if (!this.silentBuild && rowsAnnounced && !announcedRows.containsKey(key)) {
+            item.armEntrance(this.entranceReveal);
+        } else {
+            this.armRelocation(key, item, false);
+        }
         this.playlistPanel.addChild(item);
         return item;
     }
@@ -733,7 +759,15 @@ public class NavigateBar extends NCMPanel {
 
 
         {
-            PlaylistItem item = new PlaylistItem("A", () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT), () -> "主页", () -> NCMScreen.getInstance().setCurrentPanel(new HomePanel()));
+            // 已经在默认主页时点「主页」不重建：新实例与当前页视觉完全一样，走一次换页只会把同一屏
+            // 内容淡出再淡入，读起来就是一次「闪」。固定结果页（榜单/搜索/电台）仍照常切页。
+            PlaylistItem item = new PlaylistItem("A", () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                    () -> "主页", () -> {
+                        NCMScreen screen = NCMScreen.getInstance();
+                        NCMPanel current = screen.getCurrentPanel();
+                        if (current instanceof HomePanel && ((HomePanel) current).isDefaultHomePage()) return;
+                        screen.setCurrentPanel(new HomePanel());
+                    });
             item.setSelected(true);
             this.homeItem = item;
 
@@ -1324,14 +1358,16 @@ public class NavigateBar extends NCMPanel {
 
         // 上一次有、这一次没有的那些行交给退场。签名要在装配<b>全部</b>做完之后才交还：只记到一半
         // 会让没记上的那批无辜重亮一次，或者反过来把该退的那批漏掉。
-        if (rowsAnnounced) {
+        // 静默换代（音源切换）时这一整段跳过：旧行直接随旧树一起丢掉，不再演退场。
+        if (rowsAnnounced && !this.silentBuild) {
             List<PlaylistItem> leaving = new ArrayList<>();
             for (Map.Entry<String, PlaylistItem> previous : announcedRows.entrySet()) {
                 if (!this.sidebarRows.containsKey(previous.getKey())) leaving.add(previous.getValue());
             }
             this.retireRows(leaving);
         }
-        this.retireSections();
+        if (this.silentBuild) this.previousSections.clear();
+        else this.retireSections();
         announcedRows = Collections.unmodifiableMap(new LinkedHashMap<>(this.sidebarRows));
         rowsAnnounced = true;
 

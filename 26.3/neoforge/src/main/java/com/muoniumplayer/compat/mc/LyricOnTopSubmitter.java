@@ -55,6 +55,15 @@ final class LyricOnTopSubmitter {
     /** API 缺位/相位缺失时一次性降级，避免日志刷屏。 */
     private static boolean broken;
 
+    /**
+     * 本帧是否向 always-on-top 相位提交过节点（与 fabric 侧同名旗标对齐，
+     * Bridge 帧头统一清零）。NeoForge 26.3 的执行门已有
+     * {@code frameHasAlwaysOnTopGizmos() || featureFrame.hasAnyAlwaysOnTop()}
+     * 补丁（patched sources "Neo: also check the FeatureFrame …"），phase 非空
+     * 本身就会开门，本旗标在 neoforge 侧只是保持两侧同名/同口径，无人消费。
+     */
+    public static volatile boolean submittedThisFrame;
+
     private LyricOnTopSubmitter() {
     }
 
@@ -64,6 +73,7 @@ final class LyricOnTopSubmitter {
         if (collector == null || broken) return false;
         try {
             collector.submitSpecial(ON_TOP, node);
+            submittedThisFrame = true;
             return true;
         } catch (Throwable t) {
             broken = true;

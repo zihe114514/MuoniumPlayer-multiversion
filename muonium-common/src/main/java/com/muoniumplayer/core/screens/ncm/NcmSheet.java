@@ -323,6 +323,9 @@ public abstract class NcmSheet extends NCMPanel {
         list.setSpacing(0);
         list.setScrollStrength(34);
         list.setAlignment(ScrollPanel.Alignment.VERTICAL);
+        // 这一格宽度就等于弹窗宽度，外侧没有页面留白可住：指示条必须回到视口内侧，
+        // 否则会贴住弹窗圆角、甚至画到弹窗外面去。
+        list.setIndicatorInsideViewport();
         list.setBeforeRenderCallback(() -> {
             list.setBounds(Math.max(1, body.getWidth()), Math.max(1, body.getHeight()));
             list.setPosition(0, 0);

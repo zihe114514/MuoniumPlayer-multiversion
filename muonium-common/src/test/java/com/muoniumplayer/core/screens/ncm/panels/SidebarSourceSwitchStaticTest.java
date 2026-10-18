@@ -34,7 +34,12 @@ class SidebarSourceSwitchStaticTest {
         String nav = read(NAV);
         String source = read(SOURCE);
         String screen = read(SCREEN);
-        assertTrue(source.contains("screen.setCurrentPanel(new HomePanel())"));
+        // 换源后回到主页，并且必须走「音源切换专场」：普通换页会做两页交叉淡入，
+        // 于是另一个平台的内容会在新页淡入时还留在屏幕上 —— 那正是「上一层的残留」。
+        assertTrue(source.contains("switchSourcePanel(new HomePanel())"),
+                "换源没有回到主页，或没走音源切换专场（旧源内容会残留）");
+        assertTrue(source.contains("NCMScreen.getInstance().switchSourcePanel"),
+                "换源没有经过 NCMScreen 的专场入口");
         assertTrue(screen.contains("this.navigationRequests.invalidate()"));
         assertTrue(nav.contains("screen.isContentRequestCurrent(ticket)"));
         assertTrue(screen.contains("if (!this.navigationRequests.isCurrent(ticket)) return"));
