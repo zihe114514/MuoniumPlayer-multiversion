@@ -21,8 +21,13 @@ public class AudioPlayer {
     public SoundFile player;
     public Runnable afterPlayed;
 
+    /**
+     * 播放音量。渲染线程（音量滑块逐帧 {@code setVolume}）写、JSyn 音频线程
+     * {@code applyAutomixFrame}/{@code effectiveAmp} 逐帧读——同文件所有跨线程
+     * 音频参数都是 volatile，这个字段被 @Getter 生成的 getter 带着走了，漏了。
+     */
     @Getter
-    public float volume = 0.25f;
+    public volatile float volume = 0.25f;
 
     /**
      * 叠加在 {@link #volume} 之上的交叉淡化倍率。它的存在，是为了让 automix 交接时
@@ -68,8 +73,11 @@ public class AudioPlayer {
      * 有些下载下来的文件解码器能打开，却不含任何可用的音频帧；
      * AudioSample.position() 会对 frames() 取模，
      * 因此空采样绝不能流到播放或渲染路径上。
+     *
+     * <p>close() 在持锁下写、isUsable() 无锁读（Play Thread 与后台线程都会问），
+     * 同样按跨线程字段处理用 volatile。</p>
      */
-    private boolean closed;
+    private volatile boolean closed;
 
     /** 由 {@link #prepareStart(float)} 设置：读头已定位、搁架已接入、窗口已预热。 */
     private volatile boolean prepared;
@@ -755,8 +763,12 @@ public class AudioPlayer {
         dispose(this.player);
     }
 
+    /**
+     * 引擎回调线程写、Play Thread 读（{@code isFinished()}）。与同文件其它跨线程字段一致
+     * 用 volatile：不加的话最坏停留在旧值，让 {@code stopPreviousPlayer} 多走一次失效操作。
+     */
     @Getter
-    private boolean finished;
+    private volatile boolean finished;
 
     public void setAfterPlayed(Runnable runnable) {
         this.afterPlayed = runnable;

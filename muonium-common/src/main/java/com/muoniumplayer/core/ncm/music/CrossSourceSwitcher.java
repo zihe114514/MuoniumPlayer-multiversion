@@ -387,21 +387,48 @@ public final class CrossSourceSwitcher {
 
         List<Candidate> pool = new ArrayList<Candidate>();
         // 按完成顺序收割：哪个源先回来就先拿它的头部候选做高置信判定，慢源不拖全场。
-        for (int index = 0; index < futures.size(); index++) {
+        // 实现用「轮询全部 future」而不是按提交顺序逐个 get——原来的写法是注释的反面：
+        // 排在最前的源一慢，后面早已完成的（含高置信候选）必须干等它，
+        // 最坏把整段 deadline 烧在第一个源上。每轮小睡让出 CPU，任一源完成即处理。
+        boolean[] settled = new boolean[futures.size()];
+        int remainingCount = futures.size();
+        while (remainingCount > 0) {
             if (Thread.currentThread().isInterrupted()) break;
             long remaining = deadline - System.currentTimeMillis();
             if (remaining <= 0L) break;
-            SourceHits hits = awaitHits(futures.get(index),
-                    Math.min(remaining, SOURCE_SEARCH_TIMEOUT_MILLIS * 2));
-            if (hits == null || hits.candidates.isEmpty()) continue;
-            sortCandidates(hits.candidates);
-            pool.addAll(hits.candidates);
+            boolean progressed = false;
+            for (int index = 0; index < futures.size(); index++) {
+                if (settled[index]) continue;
+                SourceHits hits = awaitHits(futures.get(index), 0L);
+                if (hits == null) {
+                    // null 含义二义（超时未完成 / 完成但失败或空），用 isDone 区分。
+                    if (!futures.get(index).isDone()) continue;
+                    settled[index] = true;
+                    remainingCount--;
+                    progressed = true;
+                    continue;
+                }
+                settled[index] = true;
+                remainingCount--;
+                progressed = true;
+                if (hits.candidates.isEmpty()) continue;
+                sortCandidates(hits.candidates);
+                pool.addAll(hits.candidates);
 
-            Candidate best = hits.candidates.get(0);
-            if (isHighConfidence(best, durationMillis)) {
-                Tuple<String, String> stream = tryPlayable(best.music, requestedQuality);
-                if (stream != null) {
-                    return new Match(best.music, stream, best.score, platformLabel(best.platform));
+                Candidate best = hits.candidates.get(0);
+                if (isHighConfidence(best, durationMillis)) {
+                    Tuple<String, String> stream = tryPlayable(best.music, requestedQuality);
+                    if (stream != null) {
+                        return new Match(best.music, stream, best.score, platformLabel(best.platform));
+                    }
+                }
+            }
+            if (!progressed && remainingCount > 0) {
+                try {
+                    Thread.sleep(50L);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
                 }
             }
         }
@@ -474,17 +501,39 @@ public final class CrossSourceSwitcher {
             if (stream != null && stream.getA() != null && !stream.getA().trim().isEmpty()) return stream;
             if (!lxCovers(candidate.getSource())) return null;
             return candidate.resolveLxPlayUrl();
-        } catch (Throwable ignored) {
+        } catch (Throwable failure) {
+            // 全部候选都卡在这里时，只看日志只能知道「没匹配到」；留一行区分「取流层在抛」与「搜索无结果」。
+            System.err.println("[Music/switch] 候选取流失败 " + candidate.getSource()
+                    + " «" + candidate.getName() + "»: " + failure);
             return null;
         }
     }
 
+    /**
+     * 收割一个搜索 future。
+     *
+     * <p>{@code timeoutMillis <= 0} 是<b>非阻塞探测</b>：完成了返回结果，没完成立刻返回 null
+     * （调用方靠 {@code future.isDone()} 区分「还没好」与「失败」），供按完成顺序的轮询循环用。
+     * 正超时则是阻塞等待，超时即 cancel——原来的逐源串行等待语义。</p>
+     */
     private static SourceHits awaitHits(Future<SourceHits> future, long timeoutMillis) {
         if (future == null) return null;
         try {
             return future.get(Math.max(1L, timeoutMillis), java.util.concurrent.TimeUnit.MILLISECONDS);
-        } catch (Throwable interrupted) {
+        } catch (java.util.concurrent.TimeoutException timedOut) {
+            // 非阻塞探测（timeout 会被 Math.max 提到 1ms）：不 cancel，交给调用方继续轮询。
+            if (timeoutMillis <= 0L) return null;
             future.cancel(true);
+            return null;
+        } catch (java.util.concurrent.CancellationException cancelled) {
+            return null;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            future.cancel(true);
+            return null;
+        } catch (java.util.concurrent.ExecutionException failed) {
+            // 同 tryPlayable：换源整体失败时得能区分「各源都没搜到」和「搜索层在抛」。
+            System.err.println("[Music/switch] 源搜索失败: " + failed.getCause());
             return null;
         }
     }

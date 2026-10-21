@@ -72,15 +72,17 @@ public class Logger {
         return LogManager.getDefaultLogLevel().getLevel() >= LogLevel.DEBUG.getLevel();
     }
 
-    private final StringWriter stringWriter = new StringWriter();
-    private final PrintWriter writer = new PrintWriter(stringWriter);
-
+    /**
+     * 堆栈格式化改用方法内局部缓冲。原来每个 Logger 实例共享一支 StringWriter，
+     * cached 线程池里两个任务同时对同一个 logger error/catching 时，两次 printStackTrace
+     * 会写进同一个缓冲，产出的堆栈互相穿插成乱码。
+     */
     public String getErrorStackTrace(Throwable t) {
-        stringWriter.getBuffer().delete(0, stringWriter.getBuffer().length());
-        t.printStackTrace(writer);
-        writer.flush();
-
-        return stringWriter.toString();
+        StringWriter sw = new StringWriter();
+        PrintWriter pw = new PrintWriter(sw);
+        t.printStackTrace(pw);
+        pw.flush();
+        return sw.toString();
     }
 
     public void catching(Level level, Throwable throwable) {

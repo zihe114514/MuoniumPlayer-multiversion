@@ -429,7 +429,10 @@ public final class LyricSearchOverlay extends NcmSheet {
 
     /** {@code w-full max-w-5xl} 再被遮罩的 {@code p-4} 夹一道。 */
     private double dialogWidth() {
-        return Math.min(DIALOG_MAX_W, Math.max(360.0, getWidth() - BACKDROP_PAD * 2));
+        // 地板 240 而不是 360：手机比例视口下宿主可能只有 300 多宽，硬地板 360 会让弹窗
+        // 比宿主还宽、关闭键点不到。两栏布局在 240 宽下仍成立（右栏信息块最窄 ~60px，
+        // 靠截断兜底），宁窄勿出界。
+        return Math.min(DIALOG_MAX_W, Math.max(240.0, getWidth() - BACKDROP_PAD * 2));
     }
 
     /**
@@ -1825,8 +1828,14 @@ public final class LyricSearchOverlay extends NcmSheet {
         @Override
         public boolean onMouseClicked(double relativeX, double relativeY, int mouseButton) {
             if (mouseButton != 0 || previewError == null) return false;
-            if (relativeX < reloadX || relativeX > reloadX + reloadW
-                    || relativeY < reloadY || relativeY > reloadY + reloadH) return false;
+            // reloadX/reloadY 是绘制时存的<b>绝对</b>坐标（含 getX()/getY()），
+            // 而框架派发给这里的 relativeX/relativeY 是相对本控件的偏移（见 AbstractWidget
+            // 的 mouseX - child.getX()）。以前直接拿相对值比绝对矩形，按钮在原点右侧就永远
+            // 点不到——「看得见、点不动」。这里把相对坐标换算回绝对再比。
+            double absoluteX = getX() + relativeX;
+            double absoluteY = getY() + relativeY;
+            if (absoluteX < reloadX || absoluteX > reloadX + reloadW
+                    || absoluteY < reloadY || absoluteY > reloadY + reloadH) return false;
             loadPreview(selected);
             return true;
         }

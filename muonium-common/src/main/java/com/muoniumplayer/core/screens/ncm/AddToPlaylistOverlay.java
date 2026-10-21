@@ -36,6 +36,13 @@ public class AddToPlaylistOverlay extends NCMPanel {
     private LabelWidget heroTarget;
     private SheetHeroRelay.Origin heroOrigin;
     private boolean closing = false;
+    /**
+     * 酷狗歌单懒加载的「已挂回调」标志。{@code ensureUserPlaylistsAsync} 在加载已在路上时
+     * 会<b>直接丢弃</b>新回调（loading 分支 return），而 onInit 每次都会重新挂——
+     * 不加这道闸的话，加载完成前每开一次弹窗就白挂一个回调，完成后每个回调又各触发
+     * 一次「清树 + onInit」全量重建（连闪 N 帧）。
+     */
+    private boolean kuGouCallbackPending = false;
     /** 进出场那一条时钟，和 {@code NcmSheet} 那六个浮层共用同一个 {@link SheetClock}。 */
     private final SheetClock clock = new SheetClock();
     /** 遮罩与弹窗共同读的那一档进度（已经过缓动）。 */
@@ -89,8 +96,8 @@ public class AddToPlaylistOverlay extends NCMPanel {
                 Math.max(1, heroTarget.getWidth()) + 12, ink + 8, 5.0, presentation, presentation);
     }
 
-    /** 收到关闭请求：置位 closing 让在途请求作废，同时让退场动画开始播。 */
-    private void requestClose() {
+    /** 收到关闭请求：置位 closing 让在途请求作废，同时让退场动画开始播。NCMScreen 的 ESC 也走这里。 */
+    void requestClose() {
         this.closing = true;
         clock.requestDismiss();
     }
@@ -132,8 +139,9 @@ public class AddToPlaylistOverlay extends NCMPanel {
         Panel dialog = new Panel();
         this.addChild(dialog);
         dialog.setBeforeRenderCallback(() -> {
-            double w = Math.min(360, this.getWidth() - 80);
-            double h = Math.min(440, this.getHeight() - 80);
+            // 地板 200：原来无下限，宿主极窄时 w 会趋近 0 甚至为负（弹窗凭空消失）。
+            double w = Math.max(200, Math.min(360, this.getWidth() - 80));
+            double h = Math.max(160, Math.min(440, this.getHeight() - 80));
             dialog.setBounds(w, h);
             dialog.center();
             // 上浮 10 像素落位，和模态确认、主题调色板同一档动作。
@@ -234,16 +242,24 @@ public class AddToPlaylistOverlay extends NCMPanel {
         List<PlayList> combined = new ArrayList<>(LocalPlaylistStore.list());
         if (music != null && music.isKuGou()) {
             if (!KuGouMusicService.areUserPlaylistsLoaded()) {
-                KuGouMusicService.ensureUserPlaylistsAsync(() -> {
-                    // 回调在后台线程，重建 UI 必须回主线程。
-                    MultiThreadingUtil.runOnMainThread(() -> {
-                        if (closing) return;
-                        // 列表是构建期一次性铺出来的，没有增量刷新入口，所以只能整体重建：
-                        // 先丢掉旧的子组件（包括那个"暂无可用歌单"占位），再跑一遍 onInit。
-                        getChildren().clear();
-                        onInit();
+                if (!kuGouCallbackPending) {
+                    kuGouCallbackPending = true;
+                    KuGouMusicService.ensureUserPlaylistsAsync(() -> {
+                        // 回调在后台线程，重建 UI 必须回主线程。
+                        MultiThreadingUtil.runOnMainThread(() -> {
+                            kuGouCallbackPending = false;
+                            if (closing) return;
+                            // 只在列表仍然空着时才整体重建：拿到数据了就铺一次；
+                            // 加载失败（快照还是空）时保持占位文案，不再闪屏。
+                            if (KuGouMusicService.getUserPlaylistsSnapshot() == null
+                                    || KuGouMusicService.getUserPlaylistsSnapshot().isEmpty()) return;
+                            // 列表是构建期一次性铺出来的，没有增量刷新入口，所以只能整体重建：
+                            // 先丢掉旧的子组件（包括那个"暂无可用歌单"占位），再跑一遍 onInit。
+                            getChildren().clear();
+                            onInit();
+                        });
                     });
-                });
+                }
             }
             List<PlayList> snapshot = KuGouMusicService.getUserPlaylistsSnapshot();
             if (snapshot != null) combined.addAll(snapshot);

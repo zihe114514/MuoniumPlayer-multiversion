@@ -24,6 +24,19 @@ public final class ConfigPaths {
     public static final File PLAYER = new File(CONFIG_DIRECTORY, "player.json");
     public static final File THEME = new File(CONFIG_DIRECTORY, "theme.json");
 
+    /**
+     * 全屏歌词「Folia 背景」的独立配置。
+     *
+     * <p>刻意不塞进 {@link #HUD}：这一套参数按背景样式分组、字段多，而且与 QPlayer 那套流体
+     * 背景是两条互不相干的系统；混在 HUD 里会让「歌词背景」看起来像 HUD 的一部分，也会让拖动
+     * 任何一个滑块都重写整份 HUD 配置。</p>
+     */
+    public static final File FOLIA_LYRICS_BACKGROUND =
+            new File(CONFIG_DIRECTORY, "folia_lyrics_background.json");
+
+    /** Folia 背景的自定义图片（莫奈 / 漫游 / 嵌入共用一张）。 */
+    public static final File FOLIA_BACKGROUND_DIR = new File(CONFIG_DIRECTORY, "folia_background");
+
     public static final Path MUSIC_AUTH = CONFIG_DIRECTORY.toPath().resolve("music_auth.json");
     public static final File NETEASE_ACCOUNTS = new File(CONFIG_DIRECTORY, "netease_accounts.json");
 

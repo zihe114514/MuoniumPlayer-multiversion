@@ -503,6 +503,7 @@ public final class PersonalFmPanel extends NCMPanel {
                 this.qishuiViewports = new ScrollPanel[qishuiGroupCount()];
                 this.qishuiFrozenModes = newEmptyModeLists();
                 this.qishuiLabels = new String[qishuiGroupCount()][];
+                this.qishuiTrackWidthCache = new double[qishuiGroupCount()];
                 this.qishuiBuiltRows = 0;
                 for (int group = 0; group < qishuiGroupCount(); group++) {
                     // 清单在这里冻结一次:之后这一行的段数、宽度、点击回填全按这一份走,
@@ -512,6 +513,10 @@ public final class PersonalFmPanel extends NCMPanel {
                     String[] labels = new String[picked.size()];
                     for (int index = 0; index < labels.length; index++) labels[index] = picked.get(index).text;
                     this.qishuiLabels[group] = labels;
+                    // 轨道宽度同一时刻算好存进缓存：spec 回调每帧读，不再现测。
+                    double at = 0.0;
+                    for (String label : labels) at += labelWidth(label);
+                    this.qishuiTrackWidthCache[group] = at + SCENE_INSET * 2.0;
                     // 少于两枚的组整行不建:SegmentControl 的格数下限是 2,给 0 或 1 枚会在建格时
                     // 越界(它按 cells 建标签却按 texts 取内容)。上游清单暂缺某类时,宁可这一行
                     // 不存在,也不能让它把整页带崩。行号按实际建出来的数往上顶。
@@ -598,8 +603,13 @@ public final class PersonalFmPanel extends NCMPanel {
 
     /** 汽水轨道要多宽:按这一组装配时冻结的标签算(与 sceneTrackWidth 分开,不共享平台分支)。 */
     private double qishuiTrackWidth(int slot) {
+        // 装配期冻结的标签 → 建行时算一次宽度存进缓存，spec 回调每帧直接读。
+        double[] widths = this.qishuiTrackWidthCache;
         String[] labels = this.qishuiLabels == null ? null : this.qishuiLabels[slot];
         if (labels == null) return SCENE_INSET * 2.0;
+        if (widths != null && slot < widths.length && widths[slot] > 0.0) {
+            return widths[slot];
+        }
         double at = 0.0;
         for (String label : labels) at += labelWidth(label);
         return at + SCENE_INSET * 2.0;
@@ -878,6 +888,12 @@ public final class PersonalFmPanel extends NCMPanel {
     /** 每一组装配时冻结下来的模式清单与标签:渲染回调只读这一份(见 addQishuiSegment)。 */
     private java.util.List<QishuiMusicService.FeedMode>[] qishuiFrozenModes;
     private String[][] qishuiLabels;
+    /**
+     * 每组轨道宽度（含两侧内缩）的装配期缓存。原来 spec 回调每帧对全部标签做
+     * {@code getStringWidth}——4~5 组 × 最多 18 枚 ≈ 每帧 70+ 次测量，而标签清单
+     * 在建行那一刻就冻结了。0 = 未缓存，命中不了才现算并回填。
+     */
+    private double[] qishuiTrackWidthCache;
     /** 平台错位自愈上一次排重建的时刻;0 = 还没排过(见 healPlatformDrift)。 */
     private long healRequestNanos;
 

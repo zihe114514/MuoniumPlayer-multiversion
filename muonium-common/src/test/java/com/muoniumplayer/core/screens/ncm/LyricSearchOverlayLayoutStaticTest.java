@@ -212,7 +212,8 @@ class LyricSearchOverlayLayoutStaticTest {
         assertTrue(overlay.contains("private static final double DIALOG_MAX_RATIO = .85;"),
                 "max-h-[85vh]");
         // 视口 = 这一层的边界，而边界已经是设计单位（见 overlayRendersInDesignSpace）。
-        assertTrue(overlay.contains("return Math.min(DIALOG_MAX_W, Math.max(360.0, getWidth() - BACKDROP_PAD * 2));"),
+        // 地板 240：手机比例视口下宿主可能只有 300 多宽，硬地板比宿主还宽就是关闭键出屏。
+        assertTrue(overlay.contains("return Math.min(DIALOG_MAX_W, Math.max(240.0, getWidth() - BACKDROP_PAD * 2));"),
                 "弹窗宽必须由自己的边界算，不能再去读 RenderSystem");
         assertFalse(overlay.contains("RenderSystem."), "这一层不碰全局分辨率：轴由宿主决定");
     }

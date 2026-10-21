@@ -338,11 +338,19 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                     1.0f - NCMTheme.getLiquidGlassAmount() * 0.24f));
         });
 
+        // layout() 会被 markDirty 反复触发（侧栏刷新完成、账号歌单异步落地等）。
+        // 两个控件的打开状态（队列抽屉 open、音质菜单 qualityMenuOpen）是实例字段，
+        // 直接 new 会把用户正开着的抽屉/菜单悄悄合上——重建时把旧状态迁过去。
+        boolean queueWasOpen = this.playQueuePanel != null && this.playQueuePanel.isOpen();
+        boolean qualityWasOpen = this.controlsBar != null && this.controlsBar.isQualityMenuOpen();
+
         this.controlsBar = new ControlsBar();
         this.controlsBar.onInit();
+        if (qualityWasOpen) this.controlsBar.reopenQualityMenu();
 
         this.playQueuePanel = new PlayQueuePanel();
         this.playQueuePanel.onInit();
+        if (queueWasOpen) this.playQueuePanel.setOpen(true);
     }
 
     public double getSpacing() {
@@ -1253,6 +1261,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
      * 布尔判断，所以每帧问一次是安全的。</p>
      */
     public void openConfirmation(String title, String message, String confirmText, Runnable onConfirm) {
+        // 已有一层确认框还在时先丢弃旧实例：直接 new 覆盖会让旧层的退场回调悬空、
+        // 它未决的 onConfirm 被静默吞掉。resolve 之外没有别的回收入口，这里不调
+        // requestDismiss（那会执行旧确认动作），只换新——与旧版行为一致，只是引用干净了。
         this.confirmationOverlay = new ConfirmationOverlay(title, message, confirmText, onConfirm);
         this.confirmationOverlay.onInit();
     }
@@ -1575,9 +1586,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         }
 
         // 加入歌单弹窗为模态：仅处理 ESC，其余按键不穿透到下层面板。
+        // ESC 走 overlay 自己的收尾（SheetClock 退场 + closing 置位），而不是直接置 null——
+        // 硬置 null 会跳过退场动画，还会让在途的提交请求失去作废闸门。
         if (this.addToPlaylistOverlay != null) {
             if (keyCode == Keyboard.KEY_ESCAPE)
-                this.addToPlaylistOverlay = null;
+                this.addToPlaylistOverlay.requestClose();
             return;
         }
 

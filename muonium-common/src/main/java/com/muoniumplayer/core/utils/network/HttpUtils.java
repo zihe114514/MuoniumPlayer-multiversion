@@ -206,8 +206,10 @@ public class HttpUtils {
                 return request(new URL(httpUrl, location).toString(), params, headers, method,
                         mediaType, connectTimeoutMillis, readTimeoutMillis, proxy, redirectDepth + 1);
             }
+            // 非 2xx：读掉 errorStream（帮助连接回归池复用）再断开。之前既不消费也不 disconnect，
+            // 每个失败的 JSON 请求都留下一条挂到 GC 的连接；酷狗/QQ 这类高频接口一天能漏上百条。
+            drainAndDisconnect(conn);
             throw new RuntimeException("HTTP Request is not success, Response code is " + responseCode);
-//            bin = new BufferedInputStream(conn.getErrorStream());
         }
         // 获取返回数据
 
@@ -359,16 +361,44 @@ public class HttpUtils {
         return sb.toString();
     }
 
-    @SneakyThrows
-    public static String readString(InputStream stream) {
+    /**
+     * 把响应体整段读成 UTF-8 字符串并<b>关闭流</b>。
+     *
+     * <p>两个历史问题的修正：一是读完从不 close，流底下的 socket 只能等 GC 兜底；二是用
+     * {@code readLine()} 丢掉原始换行再拼 {@code System.lineSeparator()}，Windows 上会把响应里
+     * 的 {@code \n} 全部改写成 {@code \r\n}（对 JSON 无害，但污染任何按字节比对的文本响应）。
+     * 现在按字符流一次读成型，原样保留内容。</p>
+     */
+    public static String readString(InputStream stream) throws IOException {
+        if (stream == null) return "";
         StringBuilder sb = new StringBuilder();
-        BufferedReader in = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
-        String line;
-        while ((line = in.readLine()) != null) {
-            sb.append(line).append(System.lineSeparator());
+        try (Reader in = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
+            char[] buf = new char[4096];
+            int n;
+            while ((n = in.read(buf)) != -1) {
+                sb.append(buf, 0, n);
+            }
         }
         return sb.toString();
     }
+
+    /** 消费并静默关闭错误流，随后 disconnect，让失败请求的连接立即归还而不是等 GC。 */
+    private static void drainAndDisconnect(HttpURLConnection conn) {
+        try {
+            InputStream err = conn.getErrorStream();
+            if (err != null) {
+                byte[] buf = new byte[4096];
+                while (err.read(buf) != -1) {
+                    // 丢弃
+                }
+                err.close();
+            }
+        } catch (IOException ignored) {
+        } finally {
+            conn.disconnect();
+        }
+    }
+
     @Getter
     @Setter
     private static int retryTimes = 10;
@@ -403,8 +433,16 @@ public class HttpUtils {
             }
         } catch (Exception err) {
             // 连接失败（DNS/超时/重置）才是可重试的：换个时刻同一地址可能就通了。
+            // 退避递增（200ms×次数）：网络一抖时不再对同一主机立即连发，一屏封面的
+            // 并发失败也不会瞬间打出 5×N 条连接。
             if (retry >= retryTimes) {
                 throw new RuntimeException("Max retry time reached for url " + path);
+            }
+            try {
+                Thread.sleep(retry * 200L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Download interrupted for url " + path, interrupted);
             }
             return downloadStream(path, ++retry, proxy);
         }

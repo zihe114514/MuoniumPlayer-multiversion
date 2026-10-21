@@ -65,6 +65,11 @@ final class LuminousLyricRenderer extends AbstractStageLyricRenderer {
     private double blockHeight;
     private double blockWidth;
 
+    /** 字形按需异步生成，量不到宽度时排版不可信——见 {@link FullscreenLyricStage#glyphWidth}。 */
+    private boolean metricsPending;
+    private int metricsRetries;
+    private static final int METRICS_MAX_RETRIES = 40;
+
     private CFontRenderer font = null;
     private double fontScale = 1;
     private double fontPx = 16;
@@ -78,6 +83,8 @@ final class LuminousLyricRenderer extends AbstractStageLyricRenderer {
         laidOutWidth = -1;
         laidOutHeight = -1;
         exitStartNanos = 0L;
+        metricsPending = false;
+        metricsRetries = 0;
     }
 
     protected void draw(double left, double top, double width, double height,
@@ -86,13 +93,21 @@ final class LuminousLyricRenderer extends AbstractStageLyricRenderer {
         boolean viewportChanged = tuningDirty
                 || Math.abs(width - laidOutWidth) >= 2.0
                 || Math.abs(height - laidOutHeight) >= 2.0;
-        if (currentLine != laidOutLine || viewportChanged) {
+        // 字形按需异步生成：量到 0 宽的排版不可信——同 Apple/Cappella/Fume 的防护。
+        boolean metricsChanged = false;
+        if (metricsPending && metricsRetries < METRICS_MAX_RETRIES) {
+            metricsChanged = true;
+            metricsRetries++;
+        }
+        if (currentLine != laidOutLine || viewportChanged || metricsChanged) {
+            if (!metricsChanged) metricsRetries = 0;
             if (currentLine != laidOutLine) {
                 outgoing.clear();
                 outgoing.addAll(words);
                 exitStartNanos = now;
             }
             rebuild(currentLine, width, height);
+            metricsPending = wordsGlyphsPending();
             laidOutLine = currentLine;
             laidOutWidth = width;
             laidOutHeight = height;
@@ -119,6 +134,16 @@ final class LuminousLyricRenderer extends AbstractStageLyricRenderer {
     }
 
     // ==================== 布局 ====================
+
+    /** 重排后问一遍：还有没有词在等字形上传（有就继续安排重排）。 */
+    private boolean wordsGlyphsPending() {
+        if (font == null) return false;
+        for (int i = 0; i < words.size(); i++) {
+            Word word = words.get(i);
+            if (!FullscreenLyricStage.glyphsReady(font, word.text)) return true;
+        }
+        return false;
+    }
 
     private void rebuild(LyricLine line, double viewWidth, double viewHeight) {
         words.clear();

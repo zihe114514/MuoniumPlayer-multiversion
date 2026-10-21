@@ -95,7 +95,9 @@ public final class ConfirmationOverlay extends NCMPanel {
             // 旧的 174 单位卡片在普通 GUI 缩放下留下一大块视觉上空旷的中部。
             //把破坏性确认保持紧凑，把
             //所有信息安排在一条清晰的头部/消息/操作流中。
-            double width = Math.max(248, Math.min(340, getWidth() - 32));
+            // 地板 200 而不是 248：手机比例视口下宿主可能只有 200~280 宽，硬地板比宿主还宽
+            // 就是两侧出屏、确认键点不到。窄卡上正文折行数上限（8 行）与标题降级字号仍然有效。
+            double width = Math.max(200, Math.min(340, getWidth() - 32));
             // 先按这个宽度把说明换行，再由行数决定卡片高度：隐私授权类的说明有好几行，
             // 固定高度只能把它裁成一行，用户根本看不到自己同意了什么。
             wrapMessage(Math.max(1, width - MESSAGE_INSET * 2));

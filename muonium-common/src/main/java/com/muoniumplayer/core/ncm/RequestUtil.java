@@ -263,6 +263,8 @@ public class RequestUtil {
      * 创建HTTP请求
      */
     public static RequestAnswer createRequest(String uri, Object data, RequestOptions options) {
+        // 声明提到 try 外：finally 里统一 disconnect，异常路径也能释放连接。
+        HttpURLConnection connection = null;
         try {
             Map<String, String> headers = options.getHeaders() != null ?
                     new HashMap<>(options.getHeaders()) : new HashMap<>();
@@ -409,7 +411,6 @@ public class RequestUtil {
             }
 
             URL requestUrl = new URL(url);
-            HttpURLConnection connection = null;
 
             if (StringUtils.isNotBlank(options.getProxy())) {
                 String[] proxyParts = options.getProxy().split(":");
@@ -497,12 +498,6 @@ public class RequestUtil {
                 answer.setCookies(setCookieHeaders.toArray(new String[0]));
             }
 
-            connection.disconnect();
-
-//            System.out.println("POST " + url);
-//            System.out.println("Response: " + responseCode);
-//            System.out.println("Response Body: " + answer.toString());
-
             return answer;
 
         } catch (Exception e) {
@@ -517,6 +512,12 @@ public class RequestUtil {
                     .status(502)
                     .body(map)
                     .build();
+        } finally {
+            // 响应解析/header 读取抛异常的路径以前不释放连接。disconnect 放 finally，
+            // 成功路径的语义不变（本来就是返回前断开）。
+            if (connection != null) {
+                connection.disconnect();
+            }
         }
     }
 }

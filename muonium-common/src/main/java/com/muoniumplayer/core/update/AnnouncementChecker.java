@@ -247,7 +247,14 @@ public final class AnnouncementChecker {
     // ==================== 内部实现 ====================
 
     private static void startThread() {
-        fetching = true;
+        // fetching 的检查在 refresh() 的锁里，置位必须也在锁里——原来这一句在锁外，
+        // 两个线程可以同时通过「还没在拉」的检查，然后各自起一条拉取线程重复打源。
+        synchronized (LOCK) {
+            if (fetching) {
+                return;
+            }
+            fetching = true;
+        }
         Thread thread = new Thread(new Runnable() {
             @Override
             public void run() {

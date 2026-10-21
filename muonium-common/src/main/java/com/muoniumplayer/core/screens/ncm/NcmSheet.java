@@ -806,8 +806,8 @@ public abstract class NcmSheet extends NCMPanel {
             onClick.run();
             return true;
         });
-        // [0] 图标中心 x、[1] 文字左边缘。
-        final double[] slot = new double[2];
+        // [0] 图标中心 x、[1] 文字左边缘、[2] 按钮宽够不够放下整组（不够则文字要截断）。
+        final double[] slot = new double[3];
         final RoundedRectWidget arrange = new RoundedRectWidget();
         button.addChild(arrange);
         arrange.setClickable(false).setBeforeRenderCallback(() -> {
@@ -817,9 +817,13 @@ public abstract class NcmSheet extends NCMPanel {
             double iconWidth = mark.isEmpty() ? 0.0 : ICON_S;
             double gap = mark.isEmpty() ? 0.0 : 5.0;
             double total = iconWidth + gap + font.getStringWidthD(text.get() == null ? "" : text.get());
-            double left = (button.getWidth() - total) * .5;
+            // 按钮比「图标+文字」还窄时把 left 夹到 0：不夹的话整组对称外溢，图标伸出
+            // 左缘、文字压进相邻按钮（页脚等分按钮在窄弹窗下的通病）。文字侧的截断
+            // 由 caption 的回调按 slot[2] 做 —— 那时它才已声明。
+            double left = Math.max(0.0, (button.getWidth() - total) * .5);
             slot[0] = left + iconWidth * .5;
             slot[1] = left + iconWidth + gap;
+            slot[2] = total > button.getWidth() ? button.getWidth() - iconWidth - gap : 0.0;
         });
         if (glyph != null) {
             icon(button, glyph, ICON_S, () -> slot[0], () -> button.getHeight() * .5, ink);
@@ -829,6 +833,11 @@ public abstract class NcmSheet extends NCMPanel {
         final LabelWidget caption = label(button, text, font);
         caption.setBeforeRenderCallback(() -> {
             caption.setColor(ink.getAsInt());
+            // slot[2] > 0 表示按钮装不下整组：文字截断到剩余宽度，不再画出按钮外。
+            if (slot[2] > 0.0) {
+                caption.setMaxWidth(Math.max(1, slot[2]));
+                caption.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            }
             caption.setPosition(slot[1], inkTop(caption, button.getHeight() * .5));
         });
         return button;

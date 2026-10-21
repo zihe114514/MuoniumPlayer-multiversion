@@ -254,11 +254,16 @@ public class AccountManagerOverlay extends NcmSheet {
             row.setBeforeRenderCallback(() -> {
                 row.setBounds(Math.max(1, feed.getWidth()), Math.max(1, OVERVIEW_ROW));
                 double width = Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2);
-                double span = cells.length * OVERVIEW_CELL + (cells.length - 1) * OVERVIEW_GAP;
+                // 格宽按当帧内容宽现算、以 OVERVIEW_CELL 为上限：窄弹窗（视口夹到 340 时
+                // 内容宽只有 294）下三格等比收到 ~91px 仍全部落在格内，不再越过右留白
+                // 被滚动区硬裁掉一角。两行按各自的格宽分别居中，共用一根中轴。
+                double cellWidth = Math.min(OVERVIEW_CELL,
+                        (width - OVERVIEW_GAP * (cells.length - 1)) / cells.length);
+                double span = cellWidth * cells.length + OVERVIEW_GAP * (cells.length - 1);
                 double left = PAD + CARD_INSET + Math.max(0.0, (width - span) * .5);
                 for (int i = 0; i < cells.length; i++) {
-                    cells[i].setBounds(OVERVIEW_CELL, Math.max(1, row.getHeight()));
-                    cells[i].setPosition(left + (OVERVIEW_CELL + OVERVIEW_GAP) * i, 0.0);
+                    cells[i].setBounds(cellWidth, Math.max(1, row.getHeight()));
+                    cells[i].setPosition(left + (cellWidth + OVERVIEW_GAP) * i, 0.0);
                 }
             });
             for (int i = 0; i < platforms.length; i++) {

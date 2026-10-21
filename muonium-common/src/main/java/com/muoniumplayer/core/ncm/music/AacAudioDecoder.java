@@ -557,6 +557,15 @@ final class AacAudioDecoder {
 
             if (!process.waitFor(FFMPEG_TIMEOUT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
                 process.destroy();
+                // SIGTERM 对卡死的 ffmpeg 不保证退出：延迟强杀，避免残留僵尸子进程占着文件句柄。
+                try {
+                    if (!process.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                        process.destroyForcibly();
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    process.destroyForcibly();
+                }
                 System.err.println("[Music] ffmpeg transcode timed out, falling back to JAAD: "
                         + input.getName());
                 return false;
@@ -584,7 +593,7 @@ final class AacAudioDecoder {
         }
     }
 
-    /** 把子进程的 stderr 排空到丢弃，避免管满卡死。 */
+    /** 把子进程的 stderr 排空到丢弃，避免管满卡死。每次转码一条——频度低（一首 AAC 一次），不值得养常驻池。 */
     private static void drainQuietly(InputStream stream) {
         if (stream == null) return;
         Thread drain = new Thread(() -> {

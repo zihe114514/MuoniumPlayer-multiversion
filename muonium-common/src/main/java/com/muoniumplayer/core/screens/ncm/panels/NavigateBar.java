@@ -154,6 +154,12 @@ public class NavigateBar extends NCMPanel {
     /** 上一帧的时刻，用来把进度换算成真实毫秒。 */
     private long indicatorLastNanos;
     private PlaylistItem homeItem;
+    /**
+     * 选中项缓存：高亮条每帧都要问「谁被选中」，原来每次全列表扫描。
+     * 选中态只在离散时刻变化，写点必须调 {@link #invalidateSelectionCache()}。
+     */
+    private PlaylistItem cachedSelectedItem;
+    private boolean selectionCacheDirty = true;
     /** 快捷操作条上那颗公告按钮。让位判断挂在父组件的渲染里，见 {@link #onRender}。 */
     private SidebarActionButton announcementButton;
     private final List<PlaylistItem> playlistItems = new CopyOnWriteArrayList<>();
@@ -770,6 +776,7 @@ public class NavigateBar extends NCMPanel {
                     });
             item.setSelected(true);
             this.homeItem = item;
+            invalidateSelectionCache();
 
             item.setShouldOverrideMouseCursor(true);
 
@@ -2370,6 +2377,7 @@ public class NavigateBar extends NCMPanel {
                 ((PlaylistItem) child).setSelected(false);
             }
         });
+        invalidateSelectionCache();
 
         final boolean bilibiliSearch = searchPlatform == MusicPlatform.BILIBILI;
         final boolean spotifySearch = searchPlatform == MusicPlatform.SPOTIFY;
@@ -2469,12 +2477,27 @@ public class NavigateBar extends NCMPanel {
 
     /** 列表里当前被选中的条目，没有选中项时返回 {@code null}。 */
     private PlaylistItem findSelectedItem() {
+        // 选中态只在 selectCurrentPanel / 行点击 / 搜索重置这几个离散时刻变化（各
+        // setSelected 写点都会调 invalidateSelectionCache）。原来每帧全列表扫描，
+        // 歌单多的账号（几百行）就是每帧几百次 instanceof。
+        if (!this.selectionCacheDirty) return this.cachedSelectedItem;
+        this.cachedSelectedItem = findSelectedItemSlow();
+        this.selectionCacheDirty = false;
+        return this.cachedSelectedItem;
+    }
+
+    private PlaylistItem findSelectedItemSlow() {
         for (AbstractWidget<?> child : this.playlistPanel.getChildren()) {
             if (child instanceof PlaylistItem && ((PlaylistItem) child).isSelected()) {
                 return (PlaylistItem) child;
             }
         }
         return null;
+    }
+
+    /** 任何写选中态的地方都必须调它，让下一次 findSelectedItem 重新扫一遍。 */
+    void invalidateSelectionCache() {
+        this.selectionCacheDirty = true;
     }
 
     /**
@@ -2516,6 +2539,7 @@ public class NavigateBar extends NCMPanel {
         for (PlaylistItem item : this.playlistItems) {
             item.setSelected(item == selectedItem);
         }
+        invalidateSelectionCache();
     }
 
     @Override
@@ -2724,6 +2748,9 @@ public class NavigateBar extends NCMPanel {
                     NCMScreen.getInstance().getPlaylistsPanel().playlistPanel.getChildren().stream()
                             .filter(it -> it instanceof PlaylistItem && it != this)
                             .forEach(it -> ((PlaylistItem) it).setSelected(false));
+                    // 行点击改了选中态：高亮条的缓存下一帧要重扫。PlaylistItem 是 static
+                    // 嵌套类，拿不到外层 this，走 PlaylistsPanel 持有的 NavigateBar 引用。
+                    NCMScreen.getInstance().getPlaylistsPanel().invalidateSelectionCache();
                 } else if (mouseButton == 1 && this.onSecondaryClick != null) {
                     this.onSecondaryClick.run();
                 }

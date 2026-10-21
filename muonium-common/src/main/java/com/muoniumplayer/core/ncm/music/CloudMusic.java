@@ -3729,10 +3729,18 @@ public class CloudMusic implements SharedConstants {
                 manualSkipRequested = false;
                 // 使已经在分析/下载的自动预备永远失效，即使手动加载很快失败也不能重新发布旧牌。
                 queueRevision++;
-                Thread worker = new Thread(() -> prepareManualSelection(selection), "Manual track preparation");
-                worker.setDaemon(true);
-                selection.worker = worker;
-                worker.start();
+                // 快速连点时以前每击新建一条裸线程（取流+解码各来一份）。
+                // BackgroundWork 是低优先级、有并发上限的池，正是为这类活准备的；interrupt 语义
+                // 保持不变——取消时对执行线程发中断，跑在池线程上同样生效。
+                final ManualSelection finalSelection = selection;
+                BackgroundWork.submit(() -> {
+                    // 取消旧预备时 cancelManualSelection 会中断池线程。裸线程时代中断随线程
+                    // 死亡；池线程会把中断位带给下一个任务（ffmpeg waitFor、Thread.sleep
+                    // 会当场炸）。进任务先清掉本任务不该背的旧中断。
+                    Thread.interrupted();
+                    finalSelection.worker = Thread.currentThread();
+                    prepareManualSelection(finalSelection);
+                });
                 // 封面与音频并行准备，显示层立刻认新曲，但歌词与音频会话仍属于旧曲。
                 try { loadMusicCover(selection.selectedSong); } catch (Throwable ignored) { }
                 DownloadDynamicIsland.showManualTrackLoading(selection.selectedSong.getName());
@@ -3788,6 +3796,11 @@ public class CloudMusic implements SharedConstants {
                             synchronized (PLAYER_STATE_LOCK) {
                                 if (!manualSelectionCurrent(selection)) return;
                                 selection.ready = track;
+                                // 预备成功了就摘掉 worker 引用：之后播放链路 finally 里的
+                                // cancelManualSelection 不会再对这条池线程发中断——
+                                // 中断打在同池正在跑的别的任务（armTrack 等）身上会
+                                // 让那次预备被误弃一次（有重试自愈，但能免则免）。
+                                selection.worker = null;
                                 deck = null;
                             }
                             return;
@@ -5582,14 +5595,30 @@ public class CloudMusic implements SharedConstants {
         });
     }
 
+    /**
+     * 轮询扫码结果，直到确认（803）、被中断，或超过轮询上限。
+     *
+     * <p>上限是有意的防线：以前是纯 {@code while(true)}，唯一出口是 interrupt——一旦调用方
+     * （LoginRenderer）不再持有这条线程的引用，它就会以 3 秒一次的频率永久打接口。虽然当前
+     * 代码树里登录流程走的是账号浮层，这里仍是公开 API，所以按<b>总轮询次数</b>计上限
+     * （200 轮 × 3 秒 ≈ 10 分钟；key 过期换新也照常计入），超时返回空串，由调用方按「未登录」处理。</p>
+     */
     public static String qrCodeLogin() {
         String key = CloudMusic.qrKey();
 
         QRCodeGenerator.generateAndLoadTexture("https://music.163.com/login?codekey=" + key);
 
+        int totalPolls = 0;
+        final int maxTotalPolls = 200;
+
         while (true) {
 
             if (Thread.currentThread().isInterrupted()) {
+                return "";
+            }
+
+            if (++totalPolls > maxTotalPolls) {
+                System.out.println("[MuoniumPlayer] 扫码登录轮询超时，放弃本次登录");
                 return "";
             }
 
@@ -5643,7 +5672,9 @@ public class CloudMusic implements SharedConstants {
             try {
                 Thread.sleep(3000);
             } catch (InterruptedException e) {
-                throw new RuntimeException(e);
+                // 中断即退出：恢复中断位让调用方感知，返回空串按「未登录」收尾。
+                Thread.currentThread().interrupt();
+                return "";
             }
         }
     }

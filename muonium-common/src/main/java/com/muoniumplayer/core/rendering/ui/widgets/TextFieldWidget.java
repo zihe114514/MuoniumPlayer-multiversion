@@ -39,6 +39,12 @@ public class TextFieldWidget extends AbstractWidget<TextFieldWidget> {
 
     @Override
     public boolean onKeyTyped(char character, int keyCode) {
+        // ESC 不吃：聚焦的输入框以前对任何键都返回 true，模态浮层（音源/账号管理）的
+        // handleEscape 排在控件树之后，结果是 ESC 被输入框吞掉、浮层关不掉。
+        // 放行 ESC 让浮层自己决定；输入框不需要对 ESC 做任何事。
+        if (keyCode == com.muoniumplayer.compat.lwjgl2.Keyboard.KEY_ESCAPE) {
+            return false;
+        }
         if (this.textField.isFocused()) {
             this.textField.textboxKeyTyped(character, keyCode);
             super.onKeyTyped(character, keyCode);

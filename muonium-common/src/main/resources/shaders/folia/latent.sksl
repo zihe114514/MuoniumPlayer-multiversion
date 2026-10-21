@@ -1,0 +1,279 @@
+/*
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * 「隐现 / Latent」：把 @paper-design/shaders 0.0.80 的 MeshGradient 与 Dithering 两层按
+ * 本项目 src/components/visualizer/backgrounds/latent/LatentBackground.tsx 的合成方式
+ * 落进一个 SkSL。数值逐条对齐 Paper 0.0.80 的 GLSL 原文
+ * （@paper-design/shaders/dist/shaders/{mesh-gradient,dithering}.js）：
+ *
+ *   MeshGradient —— 六色控制点位置用 getPosition(i,t)：
+ *                   a=i*.37、b=.6+fract(i/3)*.9、c=.8+fract((i+1)/4)，
+ *                   x=sin(t*b+a)、y=cos(t*c+a*1.5)，pos=.5+.5*(x,y)；
+ *                   t=.5*(u_time+41.5)（首帧偏移 41.5，从 t=20.75 开始，不是空白）；
+ *                   域变形两趟（i=1,2，后一趟吃前一趟改过的 uv）；
+ *                   swirl 绕中心旋转 -3*swirl*radius；
+ *                   权重 1/(pow(dist,3.5)+1e-3)，六色按 alpha 加权后除以总权重；
+ *                   grainOverlay = pow(mix(noise(rot(u,1)+3), noise(rot(u,2)-1), .5), 1.3)，
+ *                   强度 pow(grainOverlay*|v|, .8)，混入权重 .35（grainMixer 恒为 0）。
+ *
+ *   Dithering    —— shape="warp"（u_shape=2）：shapeUV 先换算成 CSS 像素再 *0.003，
+ *                   五趟耦合余弦域变形后取 .15/max(.001,|sin(t-y-x)|)，再 smoothstep(.02,1)；
+ *                   type="4x4"（u_type=3）的 Bayer 阈值；
+ *                   t=.5*u_time（与网格层是两个独立时钟）；
+ *                   dithering-=.5 后 step(.5, shape+dithering)，前景/背景两色硬切。
+ *
+ * 两处必须跟着 Paper 走、又容易被「看起来差不多」写错的几何：
+ *   1) MeshGradient 的 object box 是 1:1 正方形（fit=contain），宽屏时 x 向要展开到
+ *      [-aspect/2, aspect/2]，否则色心距离被横向拉伸，色块形状会变形。
+ *   2) Dithering 的像素格与图案都按「画布像素」定义，与图片尺寸无关；pxSize 是格子边长。
+ *
+ * folia 的 CSS 合成（mesh 打底、抖动层 soft-light、opacity=ditheringOpacity、两层各自 scale）
+ * 全部在 Java 侧算成 uniform：saturate/brightness 滤镜、两层缩放、音频驱动的尺寸与不透明度
+ * 都是每帧的派生量（见 FoliaBackgroundHost.drawLatent），着色器只做几何与颜色。
+ *
+ * layer: 0 = 只画网格（不透明底），1 = 只画抖动（带自身 alpha，供叠加层用），2 = 两者融合。
+ */
+uniform float2 resolution;
+uniform float meshTime;
+uniform float ditherTime;
+uniform float alpha;
+uniform float layer;
+
+// 网格：六色（Paper 的 u_colors[0..5]）+ distortion/swirl + grainOverlay。
+uniform float4 c0;
+uniform float4 c1;
+uniform float4 c2;
+uniform float4 c3;
+uniform float4 c4;
+uniform float4 c5;
+uniform float distortion;
+uniform float swirl;
+uniform float grainOverlay;
+uniform float meshSaturation;
+uniform float meshBrightness;
+uniform float meshScale;
+
+// 抖动层：两色 + 像素尺寸 + 该层不透明度 + 缩放。
+uniform float3 ditherBack;
+uniform float3 ditherFront;
+uniform float ditherSize;
+uniform float ditherOpacity;
+uniform float ditherScale;
+
+float hash21(float2 p) {
+    return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453123);
+}
+
+float valueNoise(float2 st) {
+    float2 i = floor(st);
+    float2 f = fract(st);
+    float a = hash21(i);
+    float b = hash21(i + float2(1.0, 0.0));
+    float c = hash21(i + float2(0.0, 1.0));
+    float d = hash21(i + float2(1.0, 1.0));
+    float2 u = f * f * (3.0 - 2.0 * f);
+    float x1 = mix(a, b, u.x);
+    float x2 = mix(c, d, u.x);
+    return mix(x1, x2, u.y);
+}
+
+float2 rotate2(float2 p, float angle) {
+    float s = sin(angle);
+    float c = cos(angle);
+    return float2(c * p.x - s * p.y, s * p.x + c * p.y);
+}
+
+float3 saturated(float3 color, float amount) {
+    float l = dot(color, float3(0.2126, 0.7152, 0.0722));
+    return max(float3(0.0), mix(float3(l), color, amount));
+}
+
+/* Paper MeshGradient 的 getPosition(i, t)。 */
+float2 controlPoint(float i, float t) {
+    float a = i * 0.37;
+    float b = 0.6 + fract(i / 3.0) * 0.9;
+    float c = 0.8 + fract((i + 1.0) / 4.0);
+    return 0.5 + 0.5 * float2(sin(t * b + a), cos(t * c + a * 1.5));
+}
+
+/* CSS/PDF soft-light，逐通道；base 是网格，blend 是抖动层。 */
+float softLightChannel(float a, float b) {
+    float d = a <= 0.25 ? ((16.0 * a - 12.0) * a + 4.0) * a : sqrt(a);
+    return b <= 0.5 ? a - (1.0 - 2.0 * b) * a * (1.0 - a)
+                    : a + (2.0 * b - 1.0) * (d - a);
+}
+
+float3 softLight(float3 base, float3 blend) {
+    return float3(softLightChannel(base.r, blend.r),
+                  softLightChannel(base.g, blend.g),
+                  softLightChannel(base.b, blend.b));
+}
+
+/* index 恰好等于 k 时返回 1，否则 0（SkSL 不能拿变量给常量数组下标，用选择器展开查表）。 */
+float eqIdx(float index, float k) {
+    return step(k - 0.5, index) * (1.0 - step(k + 0.5, index));
+}
+
+/*
+ * Paper 的 4x4 Bayer 表（dithering.js:47-52），逐格查表展开：
+ *   0  8  2 10
+ *  12  4 14  6
+ *   3 11  1  9
+ *  15  7 13  5
+ * 索引取 floor(p) mod 4（Paper 写的是 ivec2(fract(p/4)*4)，对正负 p 等价）。
+ */
+float bayer4At(float2 p) {
+    float2 cell = floor(p) - floor(floor(p) / 4.0) * 4.0;
+    float index = cell.y * 4.0 + cell.x;
+    float value = 0.0;
+    value = mix(value, 8.0, eqIdx(index, 1.0));
+    value = mix(value, 2.0, eqIdx(index, 2.0));
+    value = mix(value, 10.0, eqIdx(index, 3.0));
+    value = mix(value, 12.0, eqIdx(index, 4.0));
+    value = mix(value, 4.0, eqIdx(index, 5.0));
+    value = mix(value, 14.0, eqIdx(index, 6.0));
+    value = mix(value, 6.0, eqIdx(index, 7.0));
+    value = mix(value, 3.0, eqIdx(index, 8.0));
+    value = mix(value, 11.0, eqIdx(index, 9.0));
+    value = mix(value, 1.0, eqIdx(index, 10.0));
+    value = mix(value, 9.0, eqIdx(index, 11.0));
+    value = mix(value, 15.0, eqIdx(index, 12.0));
+    value = mix(value, 7.0, eqIdx(index, 13.0));
+    value = mix(value, 13.0, eqIdx(index, 14.0));
+    value = mix(value, 5.0, eqIdx(index, 15.0));
+    return value / 16.0;
+}
+
+half4 main(float2 coord) {
+    float2 res = max(resolution, float2(1.0));
+    float aspect = res.x / res.y;
+    float2 uv = coord / res;
+
+    // ---- 网格层 ----
+    // CSS transform: scale(meshScale) 先在画布空间里做，再换到 Paper 的 1:1 object box。
+    float meshZoom = max(0.2, meshScale);
+    float2 cuv = (uv - float2(0.5)) / meshZoom + float2(0.5);
+    float2 muv = float2((cuv.x - 0.5) * aspect + 0.5, cuv.y);
+    float t = 0.5 * (meshTime + 41.5);
+
+    // Paper 的 grainMixer 在 folia 里恒为 0：只保留 grainOverlay 用的那份 grainUV。
+    float2 grainUV = muv * 1000.0;
+    float mixerGrain = 0.0;
+
+    float radius = smoothstep(0.0, 1.0, length(muv - 0.5));
+    float center = 1.0 - radius;
+
+    // 两趟域变形（Paper: for i=1..2；第二趟用第一趟改过的坐标）。
+    float2 d = muv;
+    d.x += distortion * center / 1.0
+            * sin(t + 1.0 * 0.4 * smoothstep(0.0, 1.0, d.y))
+            * cos(0.2 * t + 1.0 * 2.4 * smoothstep(0.0, 1.0, d.y));
+    d.y += distortion * center / 1.0
+            * cos(t + 1.0 * 2.0 * smoothstep(0.0, 1.0, d.x));
+    d.x += distortion * center / 2.0
+            * sin(t + 2.0 * 0.4 * smoothstep(0.0, 1.0, d.y))
+            * cos(0.2 * t + 2.0 * 2.4 * smoothstep(0.0, 1.0, d.y));
+    d.y += distortion * center / 2.0
+            * cos(t + 2.0 * 2.0 * smoothstep(0.0, 1.0, d.x));
+
+    float2 rot = d - float2(0.5);
+    rot = rotate2(rot, -3.0 * swirl * radius);
+    float2 warped = rot + float2(0.5);
+
+    float3 color = float3(0.0);
+    float totalWeight = 0.0;
+
+    float2 p = controlPoint(0.0, t) + mixerGrain;
+    float w = 1.0 / (pow(length(warped - p), 3.5) + 1e-3);
+    color += c0.rgb * c0.a * w;
+    totalWeight += w;
+
+    p = controlPoint(1.0, t) + mixerGrain;
+    w = 1.0 / (pow(length(warped - p), 3.5) + 1e-3);
+    color += c1.rgb * c1.a * w;
+    totalWeight += w;
+
+    p = controlPoint(2.0, t) + mixerGrain;
+    w = 1.0 / (pow(length(warped - p), 3.5) + 1e-3);
+    color += c2.rgb * c2.a * w;
+    totalWeight += w;
+
+    p = controlPoint(3.0, t) + mixerGrain;
+    w = 1.0 / (pow(length(warped - p), 3.5) + 1e-3);
+    color += c3.rgb * c3.a * w;
+    totalWeight += w;
+
+    p = controlPoint(4.0, t) + mixerGrain;
+    w = 1.0 / (pow(length(warped - p), 3.5) + 1e-3);
+    color += c4.rgb * c4.a * w;
+    totalWeight += w;
+
+    p = controlPoint(5.0, t) + mixerGrain;
+    w = 1.0 / (pow(length(warped - p), 3.5) + 1e-3);
+    color += c5.rgb * c5.a * w;
+    totalWeight += w;
+
+    color /= max(1e-4, totalWeight);
+
+    // ---- grain overlay（Paper: 两方向 value noise 取平均后再 pow 1.3）----
+    float g1 = valueNoise(rotate2(grainUV, 1.0) + float2(3.0));
+    float g2 = valueNoise(rotate2(grainUV, 2.0) + float2(-1.0));
+    float grainOverlayValue = pow(mix(g1, g2, 0.5), 1.3);
+    float grainV = grainOverlayValue * 2.0 - 1.0;
+    float grainStrength = pow(grainOverlay * abs(grainV), 0.8);
+    color = mix(color, float3(step(0.0, grainV)), 0.35 * grainStrength);
+
+    // folia 在网格层外面套 saturate(...) brightness(...)
+    color = saturated(color, meshSaturation) * meshBrightness;
+
+    // ---- 抖动层 ----
+    float dzoom = max(0.2, ditherScale);
+    float2 duv = (uv - float2(0.5)) / dzoom + float2(0.5);
+
+    // Paper: pxSizeUV = (gl_FragCoord-.5*res)/pxSize；canvasPixelizedUV=(floor(pxSizeUV)+.5)*pxSize。
+    float px = max(0.5, ditherSize);
+    float2 pxSizeUV = (duv * res - 0.5 * res) / px;
+    float2 canvasPixelizedUV = (floor(pxSizeUV) + 0.5) * px;
+    float2 normalizedUV = canvasPixelizedUV / res;
+
+    // fit="none" 时 shapeUV = canvasPixelizedUV / pixelRatio + .5（本宿主 pixelRatio=1）。
+    float2 shapeUV = canvasPixelizedUV + float2(0.5);
+    shapeUV *= 0.003;
+
+    // Paper 的 warp shape：五趟耦合变形（i = 1..5，后一趟吃前一趟改过的分量）。
+    float dt = 0.5 * ditherTime;
+    float2 s = shapeUV;
+    s.x += 0.6 / 1.0 * cos(1.0 * 2.5 * s.y + dt);
+    s.y += 0.6 / 1.0 * cos(1.0 * 1.5 * s.x + dt);
+    s.x += 0.6 / 2.0 * cos(2.0 * 2.5 * s.y + dt);
+    s.y += 0.6 / 2.0 * cos(2.0 * 1.5 * s.x + dt);
+    s.x += 0.6 / 3.0 * cos(3.0 * 2.5 * s.y + dt);
+    s.y += 0.6 / 3.0 * cos(3.0 * 1.5 * s.x + dt);
+    s.x += 0.6 / 4.0 * cos(4.0 * 2.5 * s.y + dt);
+    s.y += 0.6 / 4.0 * cos(4.0 * 1.5 * s.x + dt);
+    s.x += 0.6 / 5.0 * cos(5.0 * 2.5 * s.y + dt);
+    s.y += 0.6 / 5.0 * cos(5.0 * 1.5 * s.x + dt);
+
+    float shape = 0.15 / max(0.001, abs(sin(dt - s.y - s.x)));
+    shape = smoothstep(0.02, 1.0, shape);
+
+    // 4x4 Bayer：阈值取 floor(pxSizeUV) 的格索引，pxSizeUV 以像素格为单位。
+    float threshold = bayer4At(pxSizeUV) - 0.5;
+    float res01 = step(0.5, shape + threshold);
+    float3 ditherRGB = mix(ditherBack, ditherFront, res01);
+
+    if (layer < 0.5) {
+        // 只画网格：不透明底。
+        return half4(half3(clamp(color, float3(0.0), float3(1.0))), alpha);
+    }
+    if (layer < 1.5) {
+        // 只画抖动：透明底，格子自带该层不透明度，宿主用 soft-light 叠。
+        return half4(half3(clamp(ditherRGB, float3(0.0), float3(1.0))),
+                     alpha * clamp(ditherOpacity, 0.0, 1.0));
+    }
+
+    // 融合：mesh 打底 + soft-light 抖动，权重 = ditheringOpacity。
+    float3 blended = mix(color, softLight(clamp(color, float3(0.0), float3(1.0)), ditherRGB),
+                         clamp(ditherOpacity, 0.0, 1.0));
+    return half4(half3(clamp(blended, float3(0.0), float3(1.0))), alpha);
+}

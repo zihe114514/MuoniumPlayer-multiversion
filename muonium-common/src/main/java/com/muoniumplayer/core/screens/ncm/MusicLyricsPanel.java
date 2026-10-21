@@ -92,6 +92,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     private final LyricStyleQuickPanel styleQuickPanel = new LyricStyleQuickPanel();
     /** QPlayer 流体背景的音频响应状态；背景不再叠加旧的模糊封面层。 */
     private final QPlayerFluidLyricBackground fluidLyricBackground = new QPlayerFluidLyricBackground();
+
+    /** folia 背景（与 QPlayer 那套完全独立，见 {@code foliabg} 包）。 */
+    private final com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundHost foliaBackground =
+            new com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundHost();
     /**
      * 「逐行滚动」的滚动动效：换行用什么弹簧、每行晚多久出发、seek 怎么收尾都在里面。
      * 只有经典样式走它，别的样式各自有自己的一套运动。
@@ -153,6 +157,43 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     IconWidget playPauseButton = new IconWidget("G", FontManager.music40, 0, 0, 24, 24);
     IconWidget prev = new IconWidget("E", FontManager.music40, 0, 0, 32, 32);
     IconWidget next = new IconWidget("H", FontManager.music40, 0, 0, 32, 32);
+    {
+        // 回调体永远不变，挂一次就够。原来在 renderControlsPart 里每帧重挂——
+        // 全屏歌词页每帧多出 5+ 个 lambda 分配与回调表写入，纯浪费。
+        // 图标切换逻辑本来就读实时状态（isAudibleNow），留在 beforeRender 里没损失。
+        playPauseButton.setBeforeRenderCallback(() -> {
+            if (!CloudMusic.isAudibleNow()) {
+                playPauseButton.setIcon("G");
+            } else {
+                playPauseButton.setIcon("F");
+            }
+        });
+        playPauseButton.setOnClickCallback((x, y, i) -> {
+            if (i == 0) {
+                // 与控制栏、全局快捷键共用 CloudMusic.togglePlayPause()（含一起听房间拦截）。
+                CloudMusic.togglePlayPause();
+            }
+            return true;
+        });
+        prev.setOnClickCallback((x, y, i) -> {
+            if (i == 0) {
+                if (CloudMusic.hasPlaybackClock() && CloudMusic.currentlyPlaying != null) {
+                    navigationMotion.trigger(-1);
+                    CloudMusic.prev();
+                }
+            }
+            return true;
+        });
+        next.setOnClickCallback((x, y, i) -> {
+            if (i == 0) {
+                if (CloudMusic.hasPlaybackClock() && CloudMusic.currentlyPlaying != null) {
+                    navigationMotion.trigger(1);
+                    CloudMusic.next();
+                }
+            }
+            return true;
+        });
+    }
 
 
     /**
@@ -572,6 +613,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     public void onInit() {
         fluidLyricBackground.reset();
+        foliaBackground.reset();
         if (handoffPrewarmed) {
             resetVisibleLyricStatus();
         } else {
@@ -608,6 +650,12 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     /** Release the native fluid compositor when the panel is removed from the screen. */
     public void dispose() {
         fluidLyricBackground.dispose();
+        foliaBackground.dispose();
+        // 三级景深的模糊滤镜缓存：native 对象，渲染层整体关闭时统一释放。
+        for (io.github.humbleui.skija.ImageFilter filter : EDGE_BLUR_FILTERS.values()) {
+            filter.close();
+        }
+        EDGE_BLUR_FILTERS.clear();
     }
 
     public void close() {
@@ -731,11 +779,20 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         LyricViewport lyricViewport = createLyricViewport(posX, posY, width, height);
         if (lyricViewport.width <= .5 || lyricViewport.height <= .5) return;
 
+        // 「未到歌词模糊」（移植 qplayer edgeBlur）：开启且清晰带已收敛时主循环只更新
+        // 状态不绘制，整列由循环后的「模糊份×带外蒙版 + 清晰份×带内蒙版」双通路绘制，
+        // 清晰带随活跃行指数平滑滑动（TAU=0.14s）。
+        edgeBlurBeginFrame(edgeBlurEnabled() && SkijaGfx.active(), lyricViewport.height);
+
         double lyricsWidth = lyricViewport.width;
         LyricLine displayedCurrentLyric = qplayerVisualAnchorLyric(songProgress);
 
         FullscreenLyricRenderer styleRenderer = currentStyleRenderer();
         if (styleRenderer != null) {
+            // 非 classic 样式不跑 edgeBlur 主循环，但也要把带状态停掉：
+            // 否则切回 classic 的头几帧会用分钟前的旧带算 ghostT，把行错误
+            // 模糊/清晰（dt 被钳 0.05 时要 5-8 帧才收敛回正确位置）。
+            edgeBlurBeginFrame(false, lyricViewport.height);
             styleRenderer.render(lyricViewport.left, lyricViewport.top,
                     lyricViewport.width, lyricViewport.height, alpha, songProgress, displayedCurrentLyric);
             return;
@@ -784,6 +841,11 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                 int groupIndex = qplayerLineToGroup[k];
                 float activeK = groupIndex >= 0 ? qplayerActiveK(groupIndex, songProgress) : 0f;
                 float qBaseAlpha = qplayerBaseAlpha(activeK);
+                if (edgeBlurFrameActive && activeK >= .5f) {
+                    // 活跃行按本帧实际绘制坐标进清晰带；ghost 行也在这里累计，保证带会追上它们。
+                    edgeBlurExpandLitBand(lyric.posY + scrollOffset,
+                            lyric.posY + scrollOffset + lyric.height);
+                }
                 lyric.alpha = activeK;
                 boolean isHovering = isHovered(mouseX, mouseY - scrollOffset,
                         lyricRenderOffsetX, lyric.posY, lyricsWidth, lyric.height);
@@ -801,184 +863,29 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                     scrollTarget = 0;
                 }
 
-                double columnWidth = LyricDuetGroups.columnWidth(lyricsWidth, lyric.duetSlot);
-                double columnLeft = LyricDuetGroups.columnLeft(lyricRenderOffsetX, lyricsWidth, lyric.duetSlot);
-                boolean columnRightAligned = LyricDuetGroups.rightAligned(lyric.duetSlot);
-                double renderBaseY = lyric.posY + scrollOffset;
-
-                List<LyricLine.Word> words = lyric.words;
-                LyricWordPlacement placement = null;
-                String[] plainRows = null;
-                int rowCount;
-                if (!words.isEmpty()) {
-                    placement = qplayerPlacement(lyric, words, columnLeft,
-                            qplayerWrapWidth(columnWidth), columnRightAligned);
-                    rowCount = placement.first.length;
-                } else {
-                    plainRows = lyric.wrappedRows(FontManager.pf65bold, lyric.lyric, qplayerWrapWidth(columnWidth));
-                    if (plainRows.length == 0) continue;
-                    rowCount = Math.max(1, plainRows.length);
+                // 「未到歌词模糊」开启且清晰带有效时，整列由循环后的模糊/清晰两个
+                // 蒙版通路绘制，主循环只跑交互与状态；带无效（首帧）时按清晰绘制。
+                if (!edgeBlurFrameActive || Double.isNaN(edgeBlurBandViewTop)) {
+                    renderQplayerColumn(lyric, k, songProgress, alpha, 0f,
+                            lyricViewport.left, lyricsWidth, lyricsViewportTop, lyricsViewportBottom,
+                            posY + height * lyricFraction());
                 }
-
-                double mainTextHeight = lineStep * rowCount;
-                double maxRowRightX = columnLeft;
-                double lineScaleAnchorX = columnRightAligned ? columnLeft + columnWidth : columnLeft;
-                double lineScaleAnchorY = renderBaseY + mainTextHeight * .5;
-                double lineScale = qplayerLineScale(activeK,
-                        posY + height * lyricFraction(), lineScaleAnchorY, mainTextHeight);
-                api.getGLStateManager().pushMatrix();
-                api.getGLStateManager().translate(lineScaleAnchorX, lineScaleAnchorY, 0);
-                api.getGLStateManager().scale(lineScale, lineScale, 1);
-                api.getGLStateManager().translate(-lineScaleAnchorX, -lineScaleAnchorY, 0);
-
-                boolean animatePerToken = lyric.hasTimedWords();
-                for (int row = 0; row < rowCount; row++) {
-                    double rowRenderY = renderBaseY + row * lineStep;
-
-                    if (placement != null) {
-                        int first = placement.first[row];
-                        int last = placement.last[row];
-                        if (first < 0) continue;
-
-                        double rowLeft = placement.x[first];
-                        double rowRight = placement.x[last]
-                                + placement.widths[last];
-                        maxRowRightX = Math.max(maxRowRightX, rowRight);
-                        double rowWidth = Math.max(1.0, rowRight - rowLeft);
-                        double rowHScale = Math.min(1.0,
-                                columnWidth / (rowWidth * Math.max(1.0, lineScale)));
-                        boolean rowHGuard = rowHScale < .999;
-                        if (rowHGuard) {
-                            api.getGLStateManager().pushMatrix();
-                            api.getGLStateManager().translate(lineScaleAnchorX, rowRenderY, 0);
-                            api.getGLStateManager().scale(rowHScale, 1, 1);
-                            api.getGLStateManager().translate(-lineScaleAnchorX, -rowRenderY, 0);
-                        }
-                        try {
-                        if (!animatePerToken || activeK <= .001f) {
-                            for (int wordIndex = first; wordIndex <= last; wordIndex++) {
-                                String text = words.get(wordIndex).word;
-                                FontManager.pf65bold.drawString(text, placement.x[wordIndex], rowRenderY + 2.0,
-                                        hexColor(0, 0, 0, alpha * qBaseAlpha * .48f));
-                                FontManager.pf65bold.drawString(text, placement.x[wordIndex], rowRenderY,
-                                        qplayerTextColor(alpha * qBaseAlpha));
-                            }
-                            continue;
-                        }
-
-                        for (int wordIndex = first; wordIndex <= last; wordIndex++) {
-                            LyricLine.Word word = words.get(wordIndex);
-                            long[] starts = placement.charStarts[wordIndex];
-                            for (int c = 0; c < word.emphasizes.length; c++) {
-                                word.emphasizes[c] = qplayerSyllableLift(starts[c], songProgress);
-                            }
-                        }
-
-                        int glowPad = TextGlow.padding(FontManager.pf65bold, .034);
-                        double layerLeft = rowLeft - 8.0 - glowPad;
-                        double layerRight = rowRight + 8.0 + glowPad;
-                        double layerTop = rowRenderY - 2.0 - glowPad;
-                        double layerBottom = rowRenderY + fontHeight + 6.0 + glowPad;
-                        io.github.humbleui.skija.Canvas ktvCanvas = SkijaGfx.canvas();
-                        int ktvLayer = ktvCanvas == null ? -1 : ktvCanvas.saveLayer(
-                                io.github.humbleui.types.Rect.makeLTRB(
-                                        (float) layerLeft, (float) layerTop,
-                                        (float) layerRight, (float) layerBottom), null);
-                        try {
-                            for (int wordIndex = first; wordIndex <= last; wordIndex++) {
-                                LyricLine.Word word = words.get(wordIndex);
-                                String[] glyphs = placement.glyphs[wordIndex];
-                                double[] advances = placement.charAdvances[wordIndex];
-                                double x = placement.x[wordIndex];
-                                for (int charIndex = 0; charIndex < glyphs.length; charIndex++) {
-                                    double y = rowRenderY - word.emphasizes[Math.min(charIndex, word.emphasizes.length - 1)]
-                                            - qplayerWordRibbonLift(word, songProgress, activeK);
-                                    String glyph = glyphs[charIndex];
-                                    FontManager.pf65bold.drawString(glyph, x, y + 2.0,
-                                            hexColor(0, 0, 0, alpha * qBaseAlpha * .48f));
-                                    FontManager.pf65bold.drawString(glyph, x, y, qplayerTextColor(alpha * qBaseAlpha));
-                                    x += advances[charIndex];
-                                }
-                            }
-                            if (ktvCanvas != null) {
-                                double sweepX = qplayerSweepX(words, placement, first, last,
-                                        rowLeft, rowRight, songProgress);
-                                applyQplayerSweepMask(ktvCanvas, sweepX, layerLeft, layerRight,
-                                        layerTop, layerBottom - layerTop, activeK);
-                            }
-                        } finally {
-                            if (ktvLayer >= 0) ktvCanvas.restoreToCount(ktvLayer);
-                        }
-
-                        // 副歌强调：整行的持续音发光更足。曲线由段号（bar/circle/beam）决定，
-                        // 非副歌行恒为 0，所以这里的系数退化成 1，行为与加这段之前一致。
-                        float chorusK = (float) CloudMusic.chorusEmphasis(lyric, songProgress);
-                        for (int wordIndex = first; wordIndex <= last; wordIndex++) {
-                            LyricLine.Word word = words.get(wordIndex);
-                            long wordEnd = word.timestamp + Math.max(0L, word.duration);
-                            long wordDuration = wordEnd - word.timestamp;
-                            if (wordDuration < 1500L) continue;
-                            if (songProgress < word.timestamp || songProgress > wordEnd) continue;
-                            double progress = (songProgress - word.timestamp) / (double) Math.max(1L, wordDuration);
-                            float glowAlpha = activeK
-                                    * smoothStepQplayer(progress / .18)
-                                    * (1f - smoothStepQplayer((progress - .90) / .10))
-                                    * (.55f * (1f + .9f * chorusK)) * qBaseAlpha;
-                            if (glowAlpha <= .01f) continue;
-                            drawQplayerWordGlow(word, placement.x[wordIndex],
-                                    rowRenderY - qplayerWordRibbonLift(word, songProgress, activeK),
-                                    alpha * glowAlpha);
-                        }
-                        } finally {
-                            if (rowHGuard) api.getGLStateManager().popMatrix();
-                        }
-                    } else {
-                        String text = plainRows[row];
-                        double rowX = columnRightAligned
-                                ? columnLeft + columnWidth - FontManager.pf65bold.getStringWidthD(text)
-                                : columnLeft;
-                        double rowWidth = Math.max(1.0, FontManager.pf65bold.getStringWidthD(text));
-                        double rowHScale = Math.min(1.0,
-                                columnWidth / (rowWidth * Math.max(1.0, lineScale)));
-                        boolean rowHGuard = rowHScale < .999;
-                        if (rowHGuard) {
-                            api.getGLStateManager().pushMatrix();
-                            api.getGLStateManager().translate(lineScaleAnchorX, rowRenderY, 0);
-                            api.getGLStateManager().scale(rowHScale, 1, 1);
-                            api.getGLStateManager().translate(-lineScaleAnchorX, -rowRenderY, 0);
-                        }
-                        try {
-                        FontManager.pf65bold.drawString(text, rowX, rowRenderY + 2.0,
-                                hexColor(0, 0, 0, alpha * qBaseAlpha * .48f));
-                        FontManager.pf65bold.drawString(text, rowX, rowRenderY,
-                                qplayerTextColor(alpha * qBaseAlpha));
-                        maxRowRightX = Math.max(maxRowRightX,
-                                rowX + FontManager.pf65bold.getStringWidthD(text));
-                        } finally {
-                            if (rowHGuard) api.getGLStateManager().popMatrix();
-                        }
-                    }
-                }
-
-                if (lyric.translationText != null && !lyric.translationText.trim().isEmpty()) {
-                    double translationY = renderBaseY + (rowCount - 1) * lineStep
-                            + fontHeight * .85 + 8.0;
-                    String[] strings = lyric.wrappedRows(FontManager.pf34bold, lyric.translationText, qplayerWrapWidth(columnWidth));
-                    for (String string : strings) {
-                        double translationX = columnRightAligned
-                                ? columnLeft + columnWidth - FontManager.pf34bold.getStringWidthD(string)
-                                : columnLeft;
-                        FontManager.pf34bold.drawString(string, translationX, translationY + 2.0,
-                                hexColor(0, 0, 0, alpha * qBaseAlpha * .75f * .48f));
-                        FontManager.pf34bold.drawString(string, translationX, translationY,
-                                qplayerTextColor(alpha * qBaseAlpha * .75f));
-                        translationY += FontManager.pf34bold.getHeight() + 4;
-                    }
-                }
-
-                api.getGLStateManager().popMatrix();
             }
 
+            if (edgeBlurFrameActive) {
+                if (!Double.isNaN(edgeBlurBandViewTop)) {
+                    // 分级景深：清晰份在最下，三级模糊由近到远逐级接管更远的区域，
+                    // 相邻级蒙版互补换手——离清晰带越远越模糊，而不是一刀切的均匀模糊。
+                    for (int tier = 0; tier <= QPLAYER_EDGE_BLUR_TIER_SIGMA_SCALE.length; tier++) {
+                        edgeBlurRenderColumnPass(renderStart, renderEnd, lyricViewport.left, lyricsWidth,
+                                lyricsViewportTop, lyricsViewportBottom,
+                                posY + height * lyricFraction(), songProgress, alpha, tier);
+                    }
+                }
+                // 本帧清晰带目标（活跃组并集，无则锚点兜底）指数平滑进视图带。
+                // 放在带判定之外：首帧必须落带，否则 NaN 永远不消除、双通路永远不激活。
+                edgeBlurUpdateBand(posY + height * lyricFraction(), lyricViewport.height);
+            }
             renderQplayerInterludeDots(lyricViewport.left, lyricsWidth,
                     fontHeight, fontHeight, songProgress, alpha);
         } finally {
@@ -986,6 +893,479 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             StencilClipManager.restoreActiveClip();
             StencilClipManager.endClip();
         }
+    }
+
+    // ── 未到歌词模糊（移植自 qplayer 的渐进边缘模糊 / edgeBlur）─────────────
+
+    /** 模糊 sigma 相对主字号的比例，与 qplayer LyricCompositor.EDGE_BLUR_SIGMA_RATIO 一致。 */
+    private static final float QPLAYER_EDGE_BLUR_SIGMA_RATIO = 0.11f;
+    /** 无活跃行（前奏/间奏）时兜底清晰带的半高，相对视口高度。 */
+    private static final double QPLAYER_EDGE_BLUR_BAND_HALF = 0.09;
+    /** 清晰带边缘到全模糊的过渡余量，相对视口高度（对应 qplayer BAND_RAMP=0.24）。 */
+    private static final double QPLAYER_EDGE_BLUR_BAND_RAMP = 0.24;
+    /** 清晰带随换行滑动的指数平滑时间常数，对应 qplayer 的 TAU=0.14s。 */
+    private static final double QPLAYER_EDGE_BLUR_BAND_TAU = 0.14;
+
+    /** 本帧是否处于「未到歌词模糊」通路（开关开且 Skija 可用）。 */
+    private static boolean edgeBlurFrameActive;
+    /** 本帧过渡余量的像素值，beginFrame 时按视口高度折算。 */
+    private static double edgeBlurRampPx = 1.0;
+    /** 本帧观测到的活跃行（activeK≥.5）屏幕顶/底并集。 */
+    private static double edgeBlurLitTop = Double.POSITIVE_INFINITY;
+    private static double edgeBlurLitBottom = Double.NEGATIVE_INFINITY;
+    private static boolean edgeBlurLitAny;
+    /** 平滑后的清晰带（屏幕 Y，核心区，过渡在其外 {@link #edgeBlurRampPx} 内展开）。 */
+    private static double edgeBlurBandViewTop = Double.NaN;
+    private static double edgeBlurBandViewBottom = Double.NaN;
+    private static long edgeBlurBandLastNanos;
+
+    private static boolean edgeBlurEnabled() {
+        return HudConfig.fullscreenLyricEdgeBlur;
+    }
+
+    private static void edgeBlurBeginFrame(boolean active, double viewportHeight) {
+        edgeBlurFrameActive = active;
+        edgeBlurRampPx = Math.max(1.0, viewportHeight * QPLAYER_EDGE_BLUR_BAND_RAMP);
+        edgeBlurLitTop = Double.POSITIVE_INFINITY;
+        edgeBlurLitBottom = Double.NEGATIVE_INFINITY;
+        edgeBlurLitAny = false;
+        if (!active) {
+            // 关闭期间清掉旧带：重新打开的第一帧全部清晰，避免拿陈旧带错杀行。
+            edgeBlurBandViewTop = Double.NaN;
+            edgeBlurBandViewBottom = Double.NaN;
+            edgeBlurBandLastNanos = 0L;
+        }
+    }
+
+    private static void edgeBlurExpandLitBand(double top, double bottom) {
+        edgeBlurLitTop = Math.min(edgeBlurLitTop, top);
+        edgeBlurLitBottom = Math.max(edgeBlurLitBottom, bottom);
+        edgeBlurLitAny = true;
+    }
+
+    /** 由近到远模糊级的 sigma 倍率（相对基础 sigma = 字号×0.11）。
+     *  对齐 qplayer 上游：单一模糊级，整个带外共用一档 σ=1.0×base，温和失焦。 */
+    private static final float[] QPLAYER_EDGE_BLUR_TIER_SIGMA_SCALE = {1.0f};
+    /**
+     * 每级模糊的「墨水地板」。闲置行本身只有 0.22 的基础亮度（{@code qplayerBaseAlpha}），
+     * 高斯把字形能量摊开后等于再压一档，视觉上就是「消失」。补偿不走图层 alpha——
+     * 那条路会被 1.0 钳死，对 0.22 的闲置行根本加不上亮度——而是直接抬高模糊通路里
+     * 字形的基准亮度（0.22 → 0.30），让糊开的字迹仍然可辨。qplayer 上游不加补偿，
+     * 但它的字号更小、能量密度更高；本项目 65px 字号摊得更开，需要这一点地板。
+     */
+    private static final float[] QPLAYER_EDGE_BLUR_TIER_INK = {0.30f};
+    /**
+     * 清晰↔模糊的过渡宽度，占 {@link #edgeBlurRampPx}（=0.24 视口高，即 qplayer
+     * BAND_RAMP 口径）的比例。上游是整段 RAMP 直接线性换手，取 1.0 对齐。
+     */
+    private static final double QPLAYER_EDGE_BLUR_TIER_FADE = 1.0;
+    /** 模糊级的起点距离，占 R 的比例。上游单一模糊级从清晰带边缘（d=0）即开始接管。 */
+    private static final double QPLAYER_EDGE_BLUR_TIER_STEP = 0.0;
+
+    /**
+     * 分级景深的整列渲染（对应 qplayer LyricCompositor.drawProgressiveBlurColumn，
+     * 并按本项目需求把「单一模糊带外」扩成「由近到远三级渐进模糊」）。
+     *
+     * <p>{@code tier=0} 是清晰通路：整列画进包裹层，用「带内不透明、带外渐隐」的
+     * DST_IN 垂直渐变蒙版只保留清晰带内的部分。{@code tier=1..3} 是模糊通路：
+     * 整列画进挂了高斯 {@code ImageFilter} 的滤镜层（sigma 逐级增大），用各自的
+     * 距离蒙版只保留对应深度环带的部分。相邻级的蒙版在同一交叉区间一降一升、
+     * 各级处处合计为 1，所以从清晰带向外是<b>连续的逐级模糊</b>——先轻微糊，
+     * 再中度糊，最远处才是深度糊，没有行级硬切，也不会「越远越透明最后消失」。</p>
+     *
+     * <p>嵌套结构与 qplayer 一致：先开「包裹层」，模糊通路再在包裹层里开滤镜层；
+     * DST_IN 蒙版在包裹层 <b>restore 之前</b>画——蒙版只作用于包裹层自己的内容，
+     * 绝不会吃到主画布上的流体背景（DST_IN 乘目标 alpha，直接画主画布会把背景抹出洞）。</p>
+     *
+     * <p>每帧 1 + 3 次 saveLayer（清晰一层 + 三级模糊各一层整列图层），与 qplayer
+     * 的「three nested saveLayers + 整列画两遍」同量级；高斯滤镜按 sigma 缓存复用。</p>
+     */
+    private void edgeBlurRenderColumnPass(int renderStart, int renderEnd,
+                                          double viewportLeft, double viewportWidth,
+                                          double viewportTop, double viewportBottom,
+                                          double anchorY, double songProgress, float alpha,
+                                          int tier) {
+        io.github.humbleui.skija.Canvas canvas = SkijaGfx.canvas();
+        if (canvas == null) return;
+        List<LyricLine> lines = CloudMusic.lyrics;
+        float baseSigma = (float) Math.max(1.0,
+                FontManager.pf65bold.getHeight() * QPLAYER_EDGE_BLUR_SIGMA_RATIO);
+        boolean blurred = tier > 0;
+        float sigma = blurred ? Math.max(1.0f,
+                baseSigma * QPLAYER_EDGE_BLUR_TIER_SIGMA_SCALE[tier - 1]) : baseSigma;
+        // 模糊层外扩 3σ：DECAL 在层缘把 alpha 衰减掉，不外扩会把最外行也裁淡。
+        double pad = blurred ? sigma * 3.0 + 12.0 : 4.0;
+        double columnTop = viewportTop - pad;
+        double columnBottom = viewportBottom + pad;
+        io.github.humbleui.types.Rect column = io.github.humbleui.types.Rect.makeLTRB(
+                (float) (viewportLeft - pad), (float) columnTop,
+                (float) (viewportLeft + viewportWidth + pad), (float) columnBottom);
+
+        io.github.humbleui.skija.Paint filterPaint = null;
+        int depth = canvas.save();
+        try {
+            if (blurred) {
+                io.github.humbleui.skija.ImageFilter blur = edgeBlurFilter(sigma);
+                filterPaint = new io.github.humbleui.skija.Paint();
+                filterPaint.setImageFilter(blur);
+            }
+            // 外包裹层：下面那块 DST_IN 蒙版的作用域。
+            int wrapper = canvas.saveLayer(column, null);
+            int inner = wrapper;
+            if (wrapper >= 0 && blurred) {
+                inner = canvas.saveLayer(column, filterPaint);
+            }
+            // 各级模糊用「墨水地板」补偿高斯摊薄：直接抬高闲置行字形的基准亮度，
+            // 而不是乘图层 alpha（会被 1.0 钳死，对 0.22 的闲置行加不上亮度）。
+            float rowAlpha = alpha;
+            float inkFloor = blurred ? QPLAYER_EDGE_BLUR_TIER_INK[tier - 1] : 0f;
+            try {
+                for (int k = renderStart; k < renderEnd; k++) {
+                    LyricLine lyric = lines.get(k);
+                    if (lyric == null || lyric.isBreakLine) continue;
+                    double rowTop = lyric.posY + scrollOffset;
+                    if (rowTop + lyric.height < viewportTop - 32.0) continue;
+                    if (rowTop > viewportBottom + 32.0) continue;
+                    renderQplayerColumn(lyric, k, songProgress, rowAlpha, inkFloor, viewportLeft,
+                            viewportWidth, viewportTop, viewportBottom, anchorY);
+                }
+            } finally {
+                if (inner != wrapper && inner >= 0) canvas.restoreToCount(inner);
+            }
+
+            if (wrapper >= 0) {
+                float[][] mask = edgeBlurTierMask(tier, columnTop, columnBottom);
+                int stopCount = mask[0].length;
+                float[] stops = mask[0];
+                int[] colors = new int[stopCount];
+                for (int i = 0; i < stopCount; i++) {
+                    colors[i] = ((int) (Math.max(0f, Math.min(1f, mask[1][i])) * 255f) << 24)
+                            | 0x00FFFFFF;
+                }
+                try (io.github.humbleui.skija.Shader band = io.github.humbleui.skija.Shader.makeLinearGradient(
+                        0f, (float) columnTop, 0f, (float) columnBottom, colors, stops)) {
+                    io.github.humbleui.skija.Paint maskPaint = SkijaGfx.fillShader(band);
+                    maskPaint.setBlendMode(io.github.humbleui.skija.BlendMode.DST_IN);
+                    canvas.drawRect(column, maskPaint);
+                    maskPaint.setShader(null);
+                    maskPaint.setBlendMode(SkijaGfx.blendMode());
+                }
+            }
+        } finally {
+            if (filterPaint != null) filterPaint.close();
+            // 包裹层在这里合成进主画布；蒙版已经吃过，出来的就是带缘渐变的整列。
+            canvas.restoreToCount(depth);
+        }
+    }
+
+    /** sigma → 模糊滤镜缓存。与 {@code SkijaGfx} 的 MaskFilter 缓存同一套口径。 */
+    private static final java.util.Map<Integer, io.github.humbleui.skija.ImageFilter> EDGE_BLUR_FILTERS =
+            new java.util.HashMap<>();
+
+    private static io.github.humbleui.skija.ImageFilter edgeBlurFilter(float sigma) {
+        int key = Math.max(1, Math.round(sigma * 16f));
+        return EDGE_BLUR_FILTERS.computeIfAbsent(key, k ->
+                io.github.humbleui.skija.ImageFilter.makeBlur(k / 16f, k / 16f,
+                        io.github.humbleui.skija.FilterTileMode.DECAL));
+    }
+
+    /**
+     * 第 {@code tier} 级蒙版在「离清晰带边缘距离 d（按 R 归一）」处的保持度。
+     * 相邻级共用同一对交叉端点，一降一升严格互补，全级合计恒为 1：
+     * <pre>
+     *   tier0（清晰）：d≤0 恒 1，[0, F] 线性降到 0
+     *   tier t（1..N）：[起点, 起点+F] 线性升到 1，保持到下一级起点，
+     *                  再在 [下降起点, +F] 线性降回 0（最后一级不降）
+     * </pre>
+     * 其中第 t 级起点 = (t-1)×STEP，交叉宽度 = FADE。
+     */
+    private static float edgeBlurTierMaskAt(int tier, double d) {
+        if (tier <= 0) {
+            return d <= 0 ? 1f : (float) Math.max(0.0, 1.0 - d / QPLAYER_EDGE_BLUR_TIER_FADE);
+        }
+        int levels = QPLAYER_EDGE_BLUR_TIER_SIGMA_SCALE.length;
+        double riseStart = (tier - 1) * QPLAYER_EDGE_BLUR_TIER_STEP;
+        double riseEnd = riseStart + QPLAYER_EDGE_BLUR_TIER_FADE;
+        double fallStart = tier * QPLAYER_EDGE_BLUR_TIER_STEP;
+        double fallEnd = fallStart + QPLAYER_EDGE_BLUR_TIER_FADE;
+        if (d < riseStart) return 0f;
+        if (d < riseEnd) return (float) ((d - riseStart) / (riseEnd - riseStart));
+        if (tier >= levels || d < fallStart) return 1f;
+        if (d < fallEnd) return (float) (1.0 - (d - fallStart) / (fallEnd - fallStart));
+        return 0f;
+    }
+
+    /**
+     * 构建第 {@code tier} 级的垂直渐变蒙版：返回 {停靠点[], 保持度[]}。
+     * 停靠点取「列两端 + 清晰带两缘 + 每级交叉区间的全部端点」，逐点求值；
+     * 蒙版对 d 分段线性，所以相邻停点间的线性插值精确还原函数本身。
+     */
+    private static float[][] edgeBlurTierMask(int tier, double columnTop, double columnBottom) {
+        double bandTop = edgeBlurBandViewTop;
+        double bandBottom = edgeBlurBandViewBottom;
+        double r = Math.max(1.0, edgeBlurRampPx);
+        int levels = QPLAYER_EDGE_BLUR_TIER_SIGMA_SCALE.length;
+
+        // d 采样集合：0 与每级交叉区间端点（升序去重）。
+        java.util.TreeSet<Double> samples = new java.util.TreeSet<>();
+        samples.add(0.0);
+        for (int i = 0; i < levels; i++) {
+            samples.add(i * QPLAYER_EDGE_BLUR_TIER_STEP);
+            samples.add(i * QPLAYER_EDGE_BLUR_TIER_STEP + QPLAYER_EDGE_BLUR_TIER_FADE);
+        }
+
+        // (y, d) 候选点：上下两侧各采样一遍，外加列两端。
+        java.util.TreeMap<Double, Double> points = new java.util.TreeMap<>();
+        points.put(columnTop, (bandTop - columnTop) / r);
+        points.put(columnBottom, (columnBottom - bandBottom) / r);
+        for (double d : samples) {
+            points.put(bandTop - d * r, d);
+            points.put(bandBottom + d * r, d);
+        }
+
+        int count = points.size();
+        float[] stops = new float[count];
+        float[] alphas = new float[count];
+        double span = Math.max(1.0, columnBottom - columnTop);
+        int i = 0;
+        double prevY = Double.NEGATIVE_INFINITY;
+        for (java.util.Map.Entry<Double, Double> e : points.entrySet()) {
+            double y = e.getKey();
+            double d = e.getValue();
+            // 停靠点必须严格递增：几何上不同 y 不会重合，但浮点抖动要兜住。
+            if (y <= prevY) y = prevY + 1e-4;
+            prevY = y;
+            stops[i] = (float) Math.max(0f, Math.min(1f, (y - columnTop) / span));
+            alphas[i] = edgeBlurTierMaskAt(tier, d);
+            i++;
+        }
+        // 钳到 [0,1] 后仍可能首尾越界（列端在带外侧很远时 d 已到平台区，没问题；
+        // 但 stop 越界会被 Skija 拒绝），统一夹一遍。
+        for (int j = 1; j < count; j++) {
+            if (stops[j] <= stops[j - 1]) stops[j] = Math.min(1f, stops[j - 1] + 1e-4f);
+        }
+        return new float[][]{stops, alphas};
+    }
+
+    /** 本帧清晰带目标 → 指数平滑进视图带（qplayer 同款 TAU，dt 上限 0.05s）。 */
+    private static void edgeBlurUpdateBand(double anchorY, double viewportHeight) {
+        double targetTop, targetBottom;
+        if (edgeBlurLitAny) {
+            targetTop = edgeBlurLitTop;
+            targetBottom = edgeBlurLitBottom;
+        } else {
+            double center = anchorY;
+            double half = Math.max(24.0, viewportHeight * QPLAYER_EDGE_BLUR_BAND_HALF);
+            targetTop = center - half;
+            targetBottom = center + half;
+        }
+        long now = System.nanoTime();
+        double dt = edgeBlurBandLastNanos == 0L ? 0.0
+                : Math.min(0.05, (now - edgeBlurBandLastNanos) / 1.0e9);
+        edgeBlurBandLastNanos = now;
+        if (Double.isNaN(edgeBlurBandViewTop) || Double.isNaN(edgeBlurBandViewBottom)
+                || dt <= 0.0) {
+            edgeBlurBandViewTop = targetTop;
+            edgeBlurBandViewBottom = targetBottom;
+            return;
+        }
+        double blend = 1.0 - Math.exp(-dt / QPLAYER_EDGE_BLUR_BAND_TAU);
+        edgeBlurBandViewTop += (targetTop - edgeBlurBandViewTop) * blend;
+        edgeBlurBandViewBottom += (targetBottom - edgeBlurBandViewBottom) * blend;
+    }
+
+    /**
+     * qplayer 列绘制主体（自主循环抽出，主循环与模糊补画两个阶段共用）。
+     * 坐标口径与抽出的原循环体一致：viewport* 为本帧歌词视口，anchorY 为阅读锚点。
+     */
+    private void renderQplayerColumn(LyricLine lyric, int lineIndex, double songProgress,
+                                     float alpha, float inkFloor, double viewportLeft,
+                                     double viewportWidth, double viewportTop, double viewportBottom,
+                                     double anchorY) {
+        int groupIndex = lineIndex >= 0 && lineIndex < qplayerLineToGroup.length
+                ? qplayerLineToGroup[lineIndex] : -1;
+        float activeK = groupIndex >= 0 ? qplayerActiveK(groupIndex, songProgress) : 0f;
+        // inkFloor 是模糊通路的墨水地板：闲置行的 0.22 基础亮度被抬高到地板值，
+        // 让高斯摊薄后的字迹仍然可见；清晰通路传 0，行为与移植前完全一致。
+        float qBaseAlpha = Math.max(qplayerBaseAlpha(activeK), inkFloor);
+        double fontHeight = FontManager.pf65bold.getHeight();
+        double lineStep = fontHeight;
+            double columnWidth = LyricDuetGroups.columnWidth(viewportWidth, lyric.duetSlot);
+            double columnLeft = LyricDuetGroups.columnLeft(viewportLeft, viewportWidth, lyric.duetSlot);
+            boolean columnRightAligned = LyricDuetGroups.rightAligned(lyric.duetSlot);
+            double renderBaseY = lyric.posY + scrollOffset;
+
+            List<LyricLine.Word> words = lyric.words;
+            LyricWordPlacement placement = null;
+            String[] plainRows = null;
+            int rowCount;
+            if (!words.isEmpty()) {
+                placement = qplayerPlacement(lyric, words, columnLeft,
+                        qplayerWrapWidth(columnWidth), columnRightAligned);
+                rowCount = placement.first.length;
+            } else {
+                plainRows = lyric.wrappedRows(FontManager.pf65bold, lyric.lyric, qplayerWrapWidth(columnWidth));
+                if (plainRows.length == 0) return;
+                rowCount = Math.max(1, plainRows.length);
+            }
+
+            double mainTextHeight = lineStep * rowCount;
+            double maxRowRightX = columnLeft;
+            double lineScaleAnchorX = columnRightAligned ? columnLeft + columnWidth : columnLeft;
+            double lineScaleAnchorY = renderBaseY + mainTextHeight * .5;
+            double lineScale = qplayerLineScale(activeK,
+                    anchorY, lineScaleAnchorY, mainTextHeight);
+            api.getGLStateManager().pushMatrix();
+            api.getGLStateManager().translate(lineScaleAnchorX, lineScaleAnchorY, 0);
+            api.getGLStateManager().scale(lineScale, lineScale, 1);
+            api.getGLStateManager().translate(-lineScaleAnchorX, -lineScaleAnchorY, 0);
+
+            boolean animatePerToken = lyric.hasTimedWords();
+            for (int row = 0; row < rowCount; row++) {
+                double rowRenderY = renderBaseY + row * lineStep;
+
+                if (placement != null) {
+                    int first = placement.first[row];
+                    int last = placement.last[row];
+                    if (first < 0) continue;
+
+                    double rowLeft = placement.x[first];
+                    double rowRight = placement.x[last]
+                            + placement.widths[last];
+                    maxRowRightX = Math.max(maxRowRightX, rowRight);
+                    double rowWidth = Math.max(1.0, rowRight - rowLeft);
+                    double rowHScale = Math.min(1.0,
+                            columnWidth / (rowWidth * Math.max(1.0, lineScale)));
+                    boolean rowHGuard = rowHScale < .999;
+                    if (rowHGuard) {
+                        api.getGLStateManager().pushMatrix();
+                        api.getGLStateManager().translate(lineScaleAnchorX, rowRenderY, 0);
+                        api.getGLStateManager().scale(rowHScale, 1, 1);
+                        api.getGLStateManager().translate(-lineScaleAnchorX, -rowRenderY, 0);
+                    }
+                    try {
+                    if (!animatePerToken || activeK <= .001f) {
+                        for (int wordIndex = first; wordIndex <= last; wordIndex++) {
+                            String text = words.get(wordIndex).word;
+                            FontManager.pf65bold.drawString(text, placement.x[wordIndex], rowRenderY + 2.0,
+                                    hexColor(0, 0, 0, alpha * qBaseAlpha * .48f));
+                            FontManager.pf65bold.drawString(text, placement.x[wordIndex], rowRenderY,
+                                    qplayerTextColor(alpha * qBaseAlpha));
+                        }
+                        continue;
+                    }
+
+                    for (int wordIndex = first; wordIndex <= last; wordIndex++) {
+                        LyricLine.Word word = words.get(wordIndex);
+                        long[] starts = placement.charStarts[wordIndex];
+                        for (int c = 0; c < word.emphasizes.length; c++) {
+                            word.emphasizes[c] = qplayerSyllableLift(starts[c], songProgress);
+                        }
+                    }
+
+                    int glowPad = TextGlow.padding(FontManager.pf65bold, .034);
+                    double layerLeft = rowLeft - 8.0 - glowPad;
+                    double layerRight = rowRight + 8.0 + glowPad;
+                    double layerTop = rowRenderY - 2.0 - glowPad;
+                    double layerBottom = rowRenderY + fontHeight + 6.0 + glowPad;
+                    io.github.humbleui.skija.Canvas ktvCanvas = SkijaGfx.canvas();
+                    int ktvLayer = ktvCanvas == null ? -1 : ktvCanvas.saveLayer(
+                            io.github.humbleui.types.Rect.makeLTRB(
+                                    (float) layerLeft, (float) layerTop,
+                                    (float) layerRight, (float) layerBottom), null);
+                    try {
+                        for (int wordIndex = first; wordIndex <= last; wordIndex++) {
+                            LyricLine.Word word = words.get(wordIndex);
+                            String[] glyphs = placement.glyphs[wordIndex];
+                            double[] advances = placement.charAdvances[wordIndex];
+                            double x = placement.x[wordIndex];
+                            for (int charIndex = 0; charIndex < glyphs.length; charIndex++) {
+                                double y = rowRenderY - word.emphasizes[Math.min(charIndex, word.emphasizes.length - 1)]
+                                        - qplayerWordRibbonLift(word, songProgress, activeK);
+                                String glyph = glyphs[charIndex];
+                                FontManager.pf65bold.drawString(glyph, x, y + 2.0,
+                                        hexColor(0, 0, 0, alpha * qBaseAlpha * .48f));
+                                FontManager.pf65bold.drawString(glyph, x, y, qplayerTextColor(alpha * qBaseAlpha));
+                                x += advances[charIndex];
+                            }
+                        }
+                        if (ktvCanvas != null) {
+                            double sweepX = qplayerSweepX(words, placement, first, last,
+                                    rowLeft, rowRight, songProgress);
+                            applyQplayerSweepMask(ktvCanvas, sweepX, layerLeft, layerRight,
+                                    layerTop, layerBottom - layerTop, activeK);
+                        }
+                    } finally {
+                        if (ktvLayer >= 0) ktvCanvas.restoreToCount(ktvLayer);
+                    }
+
+                    // 副歌强调：整行的持续音发光更足。曲线由段号（bar/circle/beam）决定，
+                    // 非副歌行恒为 0，所以这里的系数退化成 1，行为与加这段之前一致。
+                    float chorusK = (float) CloudMusic.chorusEmphasis(lyric, songProgress);
+                    for (int wordIndex = first; wordIndex <= last; wordIndex++) {
+                        LyricLine.Word word = words.get(wordIndex);
+                        long wordEnd = word.timestamp + Math.max(0L, word.duration);
+                        long wordDuration = wordEnd - word.timestamp;
+                        if (wordDuration < 1500L) continue;
+                        if (songProgress < word.timestamp || songProgress > wordEnd) continue;
+                        double progress = (songProgress - word.timestamp) / (double) Math.max(1L, wordDuration);
+                        float glowAlpha = activeK
+                                * smoothStepQplayer(progress / .18)
+                                * (1f - smoothStepQplayer((progress - .90) / .10))
+                                * (.55f * (1f + .9f * chorusK)) * qBaseAlpha;
+                        if (glowAlpha <= .01f) continue;
+                        drawQplayerWordGlow(word, placement.x[wordIndex],
+                                rowRenderY - qplayerWordRibbonLift(word, songProgress, activeK),
+                                alpha * glowAlpha);
+                    }
+                    } finally {
+                        if (rowHGuard) api.getGLStateManager().popMatrix();
+                    }
+                } else {
+                    String text = plainRows[row];
+                    double rowX = columnRightAligned
+                            ? columnLeft + columnWidth - FontManager.pf65bold.getStringWidthD(text)
+                            : columnLeft;
+                    double rowWidth = Math.max(1.0, FontManager.pf65bold.getStringWidthD(text));
+                    double rowHScale = Math.min(1.0,
+                            columnWidth / (rowWidth * Math.max(1.0, lineScale)));
+                    boolean rowHGuard = rowHScale < .999;
+                    if (rowHGuard) {
+                        api.getGLStateManager().pushMatrix();
+                        api.getGLStateManager().translate(lineScaleAnchorX, rowRenderY, 0);
+                        api.getGLStateManager().scale(rowHScale, 1, 1);
+                        api.getGLStateManager().translate(-lineScaleAnchorX, -rowRenderY, 0);
+                    }
+                    try {
+                    FontManager.pf65bold.drawString(text, rowX, rowRenderY + 2.0,
+                            hexColor(0, 0, 0, alpha * qBaseAlpha * .48f));
+                    FontManager.pf65bold.drawString(text, rowX, rowRenderY,
+                            qplayerTextColor(alpha * qBaseAlpha));
+                    maxRowRightX = Math.max(maxRowRightX,
+                            rowX + FontManager.pf65bold.getStringWidthD(text));
+                    } finally {
+                        if (rowHGuard) api.getGLStateManager().popMatrix();
+                    }
+                }
+            }
+
+            if (lyric.translationText != null && !lyric.translationText.trim().isEmpty()) {
+                double translationY = renderBaseY + (rowCount - 1) * lineStep
+                        + fontHeight * .85 + 8.0;
+                String[] strings = lyric.wrappedRows(FontManager.pf34bold, lyric.translationText, qplayerWrapWidth(columnWidth));
+                for (String string : strings) {
+                    double translationX = columnRightAligned
+                            ? columnLeft + columnWidth - FontManager.pf34bold.getStringWidthD(string)
+                            : columnLeft;
+                    FontManager.pf34bold.drawString(string, translationX, translationY + 2.0,
+                            hexColor(0, 0, 0, alpha * qBaseAlpha * .75f * .48f));
+                    FontManager.pf34bold.drawString(string, translationX, translationY,
+                            qplayerTextColor(alpha * qBaseAlpha * .75f));
+                    translationY += FontManager.pf34bold.getHeight() + 4;
+                }
+            }
+
+            api.getGLStateManager().popMatrix();
     }
 
     // ── qplayer 全屏歌词动效 ───────────────────────────────────────
@@ -1744,23 +2124,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         playPauseButton.renderWidget(mouseX, mouseY, 0);
         playPauseButton.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
 
-        playPauseButton.setBeforeRenderCallback(() -> {
-            if (!CloudMusic.isAudibleNow()) {
-                playPauseButton.setIcon("G");
-            } else {
-                playPauseButton.setIcon("F");
-            }
-        });
-
-        playPauseButton.setOnClickCallback((x, y, i) -> {
-
-            if (i == 0) {
-                // 与控制栏、全局快捷键共用 CloudMusic.togglePlayPause()（含一起听房间拦截）。
-                CloudMusic.togglePlayPause();
-            }
-
-            return true;
-        });
+        // 回调已在字段初始化块挂一次（见上面的字段声明），每帧重挂是纯分配浪费。
 
         playPauseButton.fontOffsetY = 0;
         prev.setAlpha(alpha);
@@ -1772,18 +2136,6 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         prev.fontOffsetY = 0;
         prev.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
 
-        prev.setOnClickCallback((x, y, i) -> {
-
-            if (i == 0) {
-                if (CloudMusic.hasPlaybackClock() && CloudMusic.currentlyPlaying != null) {
-                    navigationMotion.trigger(-1);
-                    CloudMusic.prev();
-                }
-            }
-
-            return true;
-        });
-
         next.setAlpha(alpha);
         next.setWidth(32);
         next.setHeight(32);
@@ -1792,18 +2144,6 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         next.fr = FontManager.music40;
         next.fontOffsetY = 0;
         next.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-
-        next.setOnClickCallback((x, y, i) -> {
-
-            if (i == 0) {
-                if (CloudMusic.hasPlaybackClock() && CloudMusic.currentlyPlaying != null) {
-                    navigationMotion.trigger(1);
-                    CloudMusic.next();
-                }
-            }
-
-            return true;
-        });
 
         renderNavigationFeedback(playPauseButton.getX() + playPauseButton.getWidth() * .5,
                 playPauseButton.getY() + playPauseButton.getHeight() + 4, alpha);
@@ -1867,7 +2207,25 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             prevMusic = current;
         }
 
-        boolean rendered = fluidLyricBackground.render(posX, posY, width, height, alpha, current);
+        // 档位平级：0 = QPlayer 流体，1 = 模糊封面，2 以后是 Folia 的四种样式。
+        // 模糊封面由 QPlayerFluidLyricBackground 内部读 HudConfig 决定，这里临时把那个开关设成
+        // 对应档、画完立刻还原 —— 于是「切到 Folia 再切回来」不会改写用户原来的 QPlayer 选择，
+        // 两套参数各存各的，随时可以来回切。
+        int kind = com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundOptions.currentKind();
+        boolean rendered;
+        if (!com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundOptions.isQPlayer(kind)) {
+            rendered = foliaBackground.render(posX, posY, width, height, alpha, current);
+        } else if (current == null) {
+            rendered = false;
+        } else {
+            int previous = HudConfig.fullscreenLyricBackgroundMode;
+            HudConfig.fullscreenLyricBackgroundMode = kind == 1 ? 1 : 0;
+            try {
+                rendered = fluidLyricBackground.render(posX, posY, width, height, alpha, current);
+            } finally {
+                HudConfig.fullscreenLyricBackgroundMode = previous;
+            }
+        }
         if (!rendered) {
             Rect.draw(posX, posY, width, height, reAlpha(0xFF0A0A0E, alpha));
         }

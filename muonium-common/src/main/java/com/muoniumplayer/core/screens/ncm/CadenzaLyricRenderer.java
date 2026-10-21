@@ -299,6 +299,21 @@ final class CadenzaLyricRenderer implements FullscreenLyricRenderer,
     private long exitStartNanos;
     private double elapsedSeconds;
 
+    /** 字形按需异步生成，量不到宽度时排版不可信——见 {@link FullscreenLyricStage#glyphWidth}。 */
+    private boolean metricsPending;
+    private int metricsRetries;
+    private static final int METRICS_MAX_RETRIES = 40;
+
+    /** 重排后问一遍：还有没有字词在等字形上传（有就继续安排重排）。 */
+    private boolean tokensGlyphsPending() {
+        for (int i = 0; i < tokens.size(); i++) {
+            Token token = tokens.get(i);
+            if (token.font == null) continue;
+            if (!FullscreenLyricStage.glyphsReady(token.font, token.text)) return true;
+        }
+        return false;
+    }
+
     /** 整层的开合量 0..1。{@link #reset()} 把它归零，于是每次重开歌词页都会重新滑进来一次。 */
     private double openK;
 
@@ -312,6 +327,8 @@ final class CadenzaLyricRenderer implements FullscreenLyricRenderer,
         laidOutLine = null;
         laidOutWidth = -1;
         laidOutHeight = -1;
+        metricsPending = false;
+        metricsRetries = 0;
         cameraX.setPosition(0);
         cameraY.setPosition(0);
         openK = 0;
@@ -340,13 +357,21 @@ final class CadenzaLyricRenderer implements FullscreenLyricRenderer,
 
         boolean viewportChanged = Math.abs(viewWidth - laidOutWidth) >= 2.0
                 || Math.abs(viewHeight - laidOutHeight) >= 2.0;
-        if (currentLine != laidOutLine || viewportChanged) {
+        // 字形按需异步生成：量到 0 宽的排版不可信——同 Apple/Cappella/Fume 的防护。
+        boolean metricsChanged = false;
+        if (metricsPending && metricsRetries < METRICS_MAX_RETRIES) {
+            metricsChanged = true;
+            metricsRetries++;
+        }
+        if (currentLine != laidOutLine || viewportChanged || metricsChanged) {
+            if (!metricsChanged) metricsRetries = 0;
             if (currentLine != laidOutLine) {
                 outgoing.clear();
                 outgoing.addAll(tokens);
                 exitStartNanos = now;
             }
             rebuild(currentLine, viewWidth, viewHeight);
+            metricsPending = tokensGlyphsPending();
             laidOutWidth = viewWidth;
             laidOutHeight = viewHeight;
         }

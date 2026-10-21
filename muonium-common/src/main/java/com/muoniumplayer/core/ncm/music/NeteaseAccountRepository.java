@@ -152,7 +152,18 @@ final class NeteaseAccountRepository {
 
     static String qrKey() {
         JsonObject json = CloudMusicApi.loginQrKey().toJsonObject();
-        return json.getAsJsonObject("data").get("unikey").getAsString();
+        // 失败响应是 {code:502, msg:...}，没有 data。以前直接 getAsJsonObject("data")
+        // 抛 NPE，把整条登录线程打死、二维码界面毫无反馈；这里换成带响应内容的异常，
+        // 由调用方（LoginRenderer）兜住并提示。
+        JsonElement data = json == null ? null : json.get("data");
+        if (data == null || !data.isJsonObject()) {
+            throw new IllegalStateException("二维码 key 获取失败：" + (json == null ? "空响应" : json.toString()));
+        }
+        JsonElement unikey = data.getAsJsonObject().get("unikey");
+        if (unikey == null || unikey.isJsonNull()) {
+            throw new IllegalStateException("二维码 key 获取失败：响应缺少 unikey");
+        }
+        return unikey.getAsString();
     }
 
     private static JsonArray extractCloudEntries(JsonObject response) {

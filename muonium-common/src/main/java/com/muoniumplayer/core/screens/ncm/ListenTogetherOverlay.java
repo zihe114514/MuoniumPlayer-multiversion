@@ -263,7 +263,9 @@ public final class ListenTogetherOverlay extends NcmSheet {
         detail.setClickable(false);
         detail.setBeforeRenderCallback(() -> {
             detail.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            detail.setMaxWidth(Math.max(1, host.getWidth() - 240));
+            // 右界 = 右侧动作键（150 宽，贴右缘 16）的左缘再让 8：原来的定值 -240 在窄弹窗
+            // 下把说明夹到只剩 8 个字，而动作键其实只占右端一小截。
+            detail.setMaxWidth(Math.max(60, host.getWidth() - 68 - 166 - 8));
             detail.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             detail.setPosition(68, 106);
         });
@@ -849,6 +851,10 @@ public final class ListenTogetherOverlay extends NcmSheet {
         membersLabel.setClickable(false);
         membersLabel.setBeforeRenderCallback(() -> {
             membersLabel.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            // 右界 = 「自动跳过 VIP」开关（126 定宽贴右缘 16）的左缘再让 12：
+            // 长文案「房间成员 · 8（仅显示前 5 位）」窄弹窗下不再压进开关。
+            membersLabel.setMaxWidth(Math.max(60, host.getWidth() - 16 - 126 - 12 - 16));
+            membersLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             membersLabel.setPosition(16, 232);
         });
 

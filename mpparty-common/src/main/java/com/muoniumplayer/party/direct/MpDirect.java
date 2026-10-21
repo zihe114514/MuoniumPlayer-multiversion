@@ -100,6 +100,31 @@ public final class MpDirect {
         return s == null ? 0 : s.listeningPort();
     }
 
+    /**
+     * 回应房主的保活 ping。回执会让房主那侧的活性计时刷新——
+     * 房间空闲期没有任何别的下行/上行，没有它，半开成员 90 秒后就会被误清。
+     * 未在直连会话里（老客户端路径/帧串扰）时静默丢弃。
+     *
+     * <p>房主自己的回环连接（{@link #loopback}）也会收到 ping：它同样要回 pong，
+     * 否则房主离开世界（退标题/被踢）后 C_PROGRESS 心跳停发，回环连接 90 秒就会被
+     * stale 清扫误判，连锁触发 {@code onSessionClosed → server.stop()}——整个房间
+     * 自毁、全体成员被断开。直连房间的设计语义是独立于游戏服务器存活的，这条必须保住。</p>
+     */
+    public static void sendPong(long timestamp) {
+        com.google.gson.JsonObject pong = MpProto.msg(MpProto.C_PONG);
+        pong.addProperty("t", timestamp);
+        byte[] payload = MpProto.encode(pong);
+        DirectClient c = client;
+        if (c != null && c.isConnected()) {
+            c.send(payload);
+        }
+        // 回环连接同样要续命（房主 = 这台机器自己既是服务端又是成员）。
+        DirectClient l = loopback;
+        if (l != null && l.isConnected()) {
+            l.send(payload);
+        }
+    }
+
     // ── 开房（托管） ────────────────────────────────────────────────────────
 
     /**

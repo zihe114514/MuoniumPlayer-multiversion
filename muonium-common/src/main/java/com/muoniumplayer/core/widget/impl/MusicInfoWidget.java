@@ -257,9 +257,13 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
                     artists.setOneShot(true);
 
                     if (next != null) {
-                        artists.anim.setDuration(Duration.ofMillis(next.timestamp - currentDisplaying.timestamp - 500));
+                        // 行间隔小于 500ms（或开口后 500ms 内算剩余时间）会算出负值，
+                        // 负 duration 交给滚动动画是未定义行为，钳到 0（立即滚动）。
+                        artists.anim.setDuration(Duration.ofMillis(Math.max(0L,
+                                next.timestamp - currentDisplaying.timestamp - 500)));
                     } else {
-                        artists.anim.setDuration(Duration.ofMillis(CloudMusic.positionMsNow() - currentDisplaying.timestamp - 500));
+                        artists.anim.setDuration(Duration.ofMillis(Math.max(0L,
+                                CloudMusic.positionMsNow() - currentDisplaying.timestamp - 500)));
                     }
 
                 } else {

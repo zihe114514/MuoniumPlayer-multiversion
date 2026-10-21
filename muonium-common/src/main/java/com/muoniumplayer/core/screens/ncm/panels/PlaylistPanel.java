@@ -137,7 +137,22 @@ public class PlaylistPanel extends NCMPanel {
             return true;
         });
 
-        double musicsContainerOffsetY;
+        // 头部让位槽：非搜索模式由封面回调每帧写入（宽档 176 / 窄档 144），
+        // 搜索模式建页时定格 18。列表容器按它让位。
+        final double[] headerHeight = new double[1];
+        headerHeight[0] = 176.0;
+
+        // 头部按钮排的窄窗折行槽：[0] 下一颗按钮的 x 锚点、[1] 下一颗按钮的 y。
+        // 由链上前一颗按钮的回调写入、下一颗读（渲染顺序 = addChild 顺序）。
+        final double[] headerButtonNextX = new double[1];
+        final double[] headerButtonWrapY = new double[1];
+        // 手机比例的窄内容区才启用紧凑头：电脑等宽窗口保持原来的大气头不动。
+        // 本面板的尺寸就是内容区矩形（NCMScreen 每帧把 currentPanelBg 的矩形设给它），
+        // 所以渲染回调里的 getWidth() 就是内容区宽。<b>必须在回调里读</b>：构建那一刻
+        // 面板还没被设过边界，getWidth() 恒 0，按它判档会让所有设备都掉进窄档
+        // （2026-10 真机翻过这个车：1920 宽的电脑屏幕上头部被压成 96）。
+        // 阈值 400：按钮链四颗 57×4 + 3×8 + 起点 164 = 424，内容区 < 400 时必然折行，
+        // 与其让按钮跳到第二行占掉列表，不如整头一起收。
 
         if (!playList.isSearchMode()) {
             RoundedImageWidget cover = new RoundedImageWidget(this.playList.getCoverLocation(), 0, 0, 0, 0);
@@ -156,6 +171,10 @@ public class PlaylistPanel extends NCMPanel {
                     cover.setAlpha(1.0f);
                 }
                 cover.setRadius(4);
+                // 窄内容区收成 96：判据每帧现读（见上方注释），跨过阈值当场切档。
+                double coverSize = getWidth() < 400.0 ? 96.0 : 128.0;
+                cover.setBounds(coverSize, coverSize);
+                headerHeight[0] = cover.getRelativeY() + cover.getHeight() + 24;
                 // 每帧回报落点：接力封面要朝这里飞，而这一帧封面本身让位（纹理供给换成 null，
                 // 控件照常跑回调），所以屏幕上任何时刻只有一张封面。
                 PlaylistCoverHero.setTarget(this, this.playList, cover.getX(), cover.getY(),
@@ -176,6 +195,13 @@ public class PlaylistPanel extends NCMPanel {
                 btnPlay.setRadius(3);
                 btnPlay.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
                 btnPlay.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                // 窄内容区保护：按钮排 57 宽 + 8 间隙逐颗链下去，内容区不够时后续按钮
+                // 折到封面下方第二行（y 写进共享槽，渲染顺序按 addChild 先后，前一颗
+                // 写完下一颗才读）。行会占掉列表 17px —— 折行只在真的放不下时发生。
+                headerButtonWrapY[0] = btnPlay.getRelativeX() + btnPlay.getWidth() + 8 + 57 > getWidth() - 12
+                        ? cover.getRelativeY() + cover.getHeight() + 6
+                        : cover.getRelativeY() + cover.getHeight() - 17;
+                headerButtonNextX[0] = btnPlay.getRelativeX() + btnPlay.getWidth() + 8;
             });
 
             btnPlay.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
@@ -216,11 +242,18 @@ public class PlaylistPanel extends NCMPanel {
                 btnParty.setClickable(visible);
                 btnParty.setAlpha((float) partyFade[0]);
                 btnParty.setBounds(57, 17);
-                btnParty.setPosition(btnPlay.getRelativeX() + btnPlay.getWidth() + 8,
-                        cover.getRelativeY() + cover.getHeight() - btnParty.getHeight());
+                btnParty.setPosition(headerButtonNextX[0], headerButtonWrapY[0]);
                 btnParty.setRadius(3);
                 btnParty.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
                 btnParty.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                // 无论显隐都续写链：这颗淡出时下一颗的锚点要顶到它原来的位置。
+                // 折行判据只看「下一颗的槽右缘」：越界就把后续按钮整体放到封面下方第二行，
+                // 行高 17 + 上下呼吸 6。
+                double nextX = headerButtonNextX[0] + 57 + 8;
+                headerButtonNextX[0] = nextX;
+                if (nextX + 57 > getWidth() - 12) {
+                    headerButtonWrapY[0] = cover.getRelativeY() + cover.getHeight() + 6;
+                }
             });
 
             btnParty.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
@@ -244,14 +277,19 @@ public class PlaylistPanel extends NCMPanel {
                 // 这一排按钮是<b>链式</b>定位的，「排进房间」收起时 Coverflow 要顶回那个位置，
                 // 否则不在一起听的界面上会留一块谁都不属于的空位。锚点按淡出进度连续过渡
                 // 而不是按布尔跳变：按钮淡出的那几帧里 Coverflow 平滑跟上来，不会瞬移盖住它。
+                // 折行时 btnParty 已经落到第二行，淡出锚点跟着它的实际位置算，过渡仍然连续。
                 double partyAnchor = btnParty.getRelativeX() + btnParty.getWidth();
                 double collapsedAnchor = btnPlay.getRelativeX() + btnPlay.getWidth();
                 double anchor = collapsedAnchor + (partyAnchor - collapsedAnchor) * partyFade[0];
-                btnCoverflow.setPosition(anchor + 8,
-                        cover.getRelativeY() + cover.getHeight() - btnCoverflow.getHeight());
+                btnCoverflow.setPosition(anchor + 8, headerButtonWrapY[0]);
                 btnCoverflow.setRadius(3);
                 btnCoverflow.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
                 btnCoverflow.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                double nextX = anchor + 8 + 57 + 8;
+                headerButtonNextX[0] = nextX;
+                if (nextX + 57 > getWidth() - 12) {
+                    headerButtonWrapY[0] = cover.getRelativeY() + cover.getHeight() + 6;
+                }
             });
 
             btnCoverflow.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
@@ -273,11 +311,15 @@ public class PlaylistPanel extends NCMPanel {
                 boolean canToggleSubscription = canToggleSubscription();
                 btnSubscribe.setHidden(!canToggleSubscription);
                 btnSubscribe.setBounds(57, 17);
-                btnSubscribe.setPosition(btnCoverflow.getRelativeX() + btnCoverflow.getWidth() + 8,
-                        cover.getRelativeY() + cover.getHeight() - btnSubscribe.getHeight());
+                btnSubscribe.setPosition(headerButtonNextX[0], headerButtonWrapY[0]);
                 btnSubscribe.setRadius(3);
                 btnSubscribe.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
                 btnSubscribe.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                double nextX = headerButtonNextX[0] + 57 + 8;
+                headerButtonNextX[0] = nextX;
+                if (nextX + 57 > getWidth() - 12) {
+                    headerButtonWrapY[0] = cover.getRelativeY() + cover.getHeight() + 6;
+                }
             });
             btnSubscribe.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
                 if (mouseButton != 0 || !canToggleSubscription()) {
@@ -311,8 +353,9 @@ public class PlaylistPanel extends NCMPanel {
                 boolean renamable = playList != null
                         && (playList.isLocalPlaylist() || ownQishuiCloudPlaylist());
                 btnRename.setBounds(57, 17);
-                btnRename.setPosition(btnCoverflow.getRelativeX() + btnCoverflow.getWidth() + 8,
-                        cover.getRelativeY() + cover.getHeight() - btnRename.getHeight());
+                // 与「收藏歌单」同槽互斥（两者都挂在本格），锚点读共享槽而不是上一颗的实际位置：
+                // 收藏格这帧 hidden 时它的坐标仍在续写链，读槽保证本格位置稳定。
+                btnRename.setPosition(headerButtonNextX[0], headerButtonWrapY[0]);
                 btnRename.setRadius(3);
                 btnRename.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
                 btnRename.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
@@ -335,8 +378,7 @@ public class PlaylistPanel extends NCMPanel {
             this.addChild(btnDeleteCloud);
             btnDeleteCloud.setBeforeRenderCallback(() -> {
                 btnDeleteCloud.setBounds(57, 17);
-                btnDeleteCloud.setPosition(btnRename.getRelativeX() + btnRename.getWidth() + 8,
-                        cover.getRelativeY() + cover.getHeight() - btnDeleteCloud.getHeight());
+                btnDeleteCloud.setPosition(headerButtonNextX[0], headerButtonWrapY[0]);
                 btnDeleteCloud.setRadius(3);
                 // 危险动作的红色与表单层的 BAD_COLOR(NcmSheet) 同值：全界面的「删除红」就一种。
                 btnDeleteCloud.setColor(0xF1767D);
@@ -508,6 +550,9 @@ public class PlaylistPanel extends NCMPanel {
                     lblCreator.setPosition(cover.getRelativeX() + cover.getWidth() + 12,
                             btnPlay.getRelativeY() - 6 - lblCreator.getHeight());
                 }
+                // 创建者名与统计行同一条右让位（返回键左缘）：长作者名窄窗下不再顶出去。
+                lblCreator.setMaxWidth(Math.max(40, getWidth() - (cover.getRelativeX() + cover.getWidth() + 12) - 44));
+                lblCreator.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
                 lblCreator.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             });
 
@@ -518,6 +563,8 @@ public class PlaylistPanel extends NCMPanel {
                 double creatorTop = creatorAvatar == null
                         ? lblCreator.getRelativeY()
                         : creatorAvatar.getRelativeY();
+                lblPlaylistInfo.setMaxWidth(Math.max(40, getWidth() - (cover.getRelativeX() + cover.getWidth() + 12) - 12));
+                lblPlaylistInfo.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
                 lblPlaylistInfo.setPosition(cover.getRelativeX() + cover.getWidth() + 12,
                         creatorTop - 8 - lblPlaylistInfo.getHeight());
                 lblPlaylistInfo.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
@@ -526,29 +573,38 @@ public class PlaylistPanel extends NCMPanel {
             this.addChild(lblPlaylistName);
 
             lblPlaylistName.setBeforeRenderCallback(() -> {
+                // 宽窗口保持 pf32 大字；窄内容区降一档到 pf24bold。判据与封面同一条、
+                // 每帧现读。截断保护两档都要：原来这个名字没有任何让位，长歌名直接画出右缘。
+                lblPlaylistName.setFont(getWidth() < 400.0 ? FontManager.pf24bold : FontManager.pf32);
+                lblPlaylistName.setMaxWidth(Math.max(40, getWidth() - (cover.getRelativeX() + cover.getWidth() + 12) - 44));
+                lblPlaylistName.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
                 lblPlaylistName.setPosition(cover.getRelativeX() + cover.getWidth() + 12, lblPlaylistInfo.getRelativeY() - 4 - lblPlaylistName.getHeight());
                 lblPlaylistName.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             });
 
-            musicsContainerOffsetY = cover.getRelativeY() + cover.getHeight() + 24;
+            // 非搜索模式的让位由 headerHeight 槽逐帧承载（封面回调写入），这里不再定格。
         } else {
-            musicsContainerOffsetY = 18;
+            headerHeight[0] = 18.0;
         }
 
         Panel rwMusicsContainer = new Panel();
         final double bottomSafeInset = 8.0;
+        final boolean searchLayout = playList.isSearchMode();
 
         this.addChild(rwMusicsContainer);
 
         rwMusicsContainer.setBeforeRenderCallback(() -> {
             // 让最后一个可见行与控制栏保持间距。嵌套的 ScrollPanel
             // 将歌曲行裁剪到这个缩小后的视口，而不是让文字贴边。
+            // 非搜索模式读 headerHeight 槽（宽档 176 / 窄档 144 随内容区宽切换），
+            // 搜索模式恒 18。
+            double offsetY = searchLayout ? 18.0 : headerHeight[0];
             rwMusicsContainer.setBounds(
                     Math.max(0.0, this.getWidth() - 36),
-                    Math.max(0.0, this.getHeight() - musicsContainerOffsetY - bottomSafeInset)
+                    Math.max(0.0, this.getHeight() - offsetY - bottomSafeInset)
             );
             rwMusicsContainer.centerHorizontally();
-            rwMusicsContainer.setPosition(rwMusicsContainer.getRelativeX(), musicsContainerOffsetY);
+            rwMusicsContainer.setPosition(rwMusicsContainer.getRelativeX(), offsetY);
         });
 
         final ScrollPanel musicsPanel = new ScrollPanel();

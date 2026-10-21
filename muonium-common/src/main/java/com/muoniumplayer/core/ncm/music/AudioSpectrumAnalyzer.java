@@ -39,6 +39,11 @@ public final class AudioSpectrumAnalyzer {
         public final long capturedAt;
         private Frame(float[] bands,long capturedAt) { this.bands=bands; this.capturedAt=capturedAt; }
         public void copyTo(float[] destination) { System.arraycopy(bands,0,destination,0,BANDS); }
+        /** 单个频段 0..1；越界一律给 0，调用方不用自己防。 */
+        public float band(int index) {
+            if (index < 0 || index >= BANDS) return 0f;
+            return bands[index];
+        }
     }
     private AudioSpectrumAnalyzer() { }
     /** Render-thread entry point. At most one FFT task may be queued or executing. */

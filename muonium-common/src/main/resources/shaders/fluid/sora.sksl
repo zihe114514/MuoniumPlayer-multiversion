@@ -1,0 +1,181 @@
+/*
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * Sora starfield - Skija RuntimeEffect port of 本项目's
+ * src/components/visualizer/backgrounds/sora/SoraBackground.tsx
+ * (WebGL GL_POINTS starfield, PARTICLE_COUNT = 150). 本项目 is licensed
+ * under the GNU Affero General Public License v3.0 (see _folia_ref/LICENSE),
+ * so this derivative stays under the AGPL.
+ *
+ * Port notes (GL_POINTS -> single-pass full-screen SkSL):
+ *  - Judging "nearest particle" per pixel over all 150 GL points is too
+ *    expensive, so the field is rebuilt as a fixed hash grid: square 1/8-uv
+ *    cells give 8 rows and ceil(aspect*8) columns (15 x 8 = 120 cells at
+ *    16:9). Each cell spawns 1 star plus a second one with probability 0.25,
+ *    i.e. exactly 150 generated stars at 16:9 (PARTICLE_COUNT). A star is at
+ *    full strength while its centre is inside its cell and fades out across
+ *    a thin pad just outside; the mean visibility over a wrap cycle is
+ *    (1+FLOW_PAD)/(1+2*FLOW_PAD) = 0.946, which reproduces the original's
+ *    own on-screen fraction aspect/(aspect+0.1) = 0.947, so the lit average
+ *    is 150 * 0.946 = 142 stars, the same as the original (it also shows
+ *    only ~142 of its 150 and hides the rest in its wrap margin). Each
+ *    pixel only evaluates the stars of its 3x3 cell neighbourhood (9-18
+ *    candidates; star centres never leave their padded cell by more than
+ *    FLOW_PAD, and the largest sprite reach is 0.053 cells < FLOW_PAD, so
+ *    3x3 is exact).
+ *  - Per-star attributes keep the original's six hash2(seed, k) draws
+ *    (1.1 speed, 2.2 size, 3.3 y, 4.4 flow phase, 5.5 blink, 6.6 colour
+ *    type) and the fract(sin(dot)) hash verbatim; a_index*123.456 becomes a
+ *    small cell-derived seed, plus a 0.9 draw for the twin-star test.
+ *  - Sizes: the power law size = 0.0006 + 0.0032*pow(r, 3.8) is verbatim.
+ *    The original gl_PointSize is a diameter of size*resolution.y*3.5
+ *    (min 2 px); the sprite radius here is half of that, clamped to a 2 px
+ *    minimum per the port spec. The fragment falloff smoothstep(0.5, 0.1,
+ *    dist) is kept verbatim with dist normalised by the sprite diameter, so
+ *    the profile matches the gl_PointCoord footprint.
+ *  - Flow: the original moves stars right at speed uv/s (height-normalised
+ *    uv) and hides the fract wrap in a 0.05-uv margin. A grid star instead
+ *    traverses its own cell at the SAME on-screen velocity, keeps full
+ *    brightness while its centre is inside the cell (like an on-screen
+ *    original star), and fades across a 0.06-cell pad on each side so the
+ *    in-cell wrap jump happens while invisible (the pad exceeds the 0.053
+ *    cell maximum sprite reach). The 0.008 + r*0.024 speed spread and the
+ *    px/s velocity are preserved; the deviation is that a star re-enters
+ *    every 0.14/speed s (one padded cell traverse) instead of crossing the
+ *    whole screen over minutes, and it fades at cell boundaries instead of
+ *    wrapping strictly off-screen.
+ *  - y: the original maps y_rand into the central 90% of the screen;
+ *    Y_MARGIN + (cell.y + y_rand) * Y_SPAN * CELL tiles that same central
+ *    90% band seamlessly across the 8 rows (no per-cell dead stripes), and
+ *    the wave sin(t*0.3 + y_rand*2pi) * 0.005 is kept verbatim.
+ *  - audio (0..1) only brightens: intensity = blink * (1 + audio * 0.35).
+ *    The "audio speed feel" is produced by the host integrating time; this
+ *    shader never integrates audio itself and only reads time.
+ *  - Blending: the original premultiplied-alpha additive pass over a black
+ *    clear collapses on a black background to a plain accumulation of
+ *    color * intensity; the shader returns that sum with alpha = 1.
+ *
+ * Host uniforms (set by name via RuntimeEffectBuilder, no child shaders):
+ *   resolution     float2  size in pixels
+ *   time           float   seconds, integrated by the host (audio-aware)
+ *   audio          float   0..1 envelope
+ *   particleColor  float3  theme primary, 0..1 RGB
+ *   particleAccent float3  theme accent, 0..1 RGB
+ */
+
+uniform float2 resolution;
+uniform float time;
+uniform float audio;
+uniform float3 particleColor;
+uniform float3 particleAccent;
+// Layer compositing: 0 = classic opaque black base, 1 = standalone overlay
+// layer (premultiplied alpha; the black base becomes transparency so the host
+// can draw the starfield additively over any lower layer).
+uniform float layer;
+uniform float alpha;
+
+// Square 1/8-uv cells: 8 rows, ceil(aspect*8) columns (15 x 8 at 16:9).
+const float CELL = 0.125;
+// Wrap pad outside a cell, in cell units; hides the in-cell wrap. Must stay
+// above the largest sprite reach (0.00665 uv / CELL = 0.0532 cells).
+const float FLOW_PAD = 0.06;
+// The original's central-90% screen band, tiled seamlessly over the 8 rows.
+const float Y_MARGIN = 0.05;
+const float Y_SPAN = 0.9;
+// Star 1 spawns when its hash exceeds this (probability 0.25).
+const float TWIN_STAR = 0.75;
+// Largest possible sprite radius in uv units: (0.0006 + 0.0032) * 1.75.
+const float MAX_RADIUS_UV = 0.00665;
+
+float hash2(float2 p) {
+    return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453123);
+}
+
+// Accumulates one star: the grid equivalent of one GL_POINTS vertex plus its
+// point-sprite fragment in the original.
+void addStar(float2 cell, float seed, float2 uv, float maxRadiusPx,
+             inout float3 accum) {
+    // Original vertex draws: 1.1 speed, 4.4 x/flow phase, 3.3 y.
+    float speedRand = hash2(float2(seed, 1.1));
+    float xRand = hash2(float2(seed, 4.4));
+    float yRand = hash2(float2(seed, 3.3));
+
+    // The original speed is height-normalised uv/s. The grid star keeps that
+    // velocity across its cell; the fractional cycle covering the padded
+    // traverse ((1 + 2*FLOW_PAD) cells of CELL uv) therefore runs at
+    // speed / (CELL * (1 + 2*FLOW_PAD)) cycles per second.
+    float speed = 0.008 + speedRand * 0.024;
+    float u = fract(xRand + time * speed / (CELL * (1.0 + 2.0 * FLOW_PAD)));
+    float spos = u * (1.0 + 2.0 * FLOW_PAD) - FLOW_PAD;
+
+    // Full brightness while the centre is inside the cell; fade across the
+    // outer pads so the in-cell wrap jump happens while invisible.
+    float edgeFade = smoothstep(-FLOW_PAD, 0.0, spos)
+            * (1.0 - smoothstep(1.0, 1.0 + FLOW_PAD, spos));
+    if (edgeFade <= 0.0) return;
+
+    float starX = (cell.x + spos) * CELL;
+    float wave = sin(time * 0.3 + yRand * 6.283) * 0.005;
+    float starY = Y_MARGIN + (cell.y + yRand) * Y_SPAN * CELL + wave;
+    float distPx = length((uv - float2(starX, starY)) * resolution.y);
+    if (distPx > maxRadiusPx) return;
+
+    // Original size power law; the gl_PointSize diameter was
+    // size*resolution.y*3.5 (min 2 px), so the sprite radius is half of it.
+    float sizeRand = hash2(float2(seed, 2.2));
+    float size = 0.0006 + 0.0032 * pow(sizeRand, 3.8);
+    float radiusPx = max(2.0, size * resolution.y * 1.75);
+    if (distPx >= radiusPx) return;
+
+    // Blink: frequency from 5.5, phase from the flow draw 4.4, like the
+    // original; the audio gain lands straight on the blink intensity.
+    float blinkRand = hash2(float2(seed, 5.5));
+    float blink = 0.3 + 0.7 * sin(time * (1.0 + blinkRand * 2.5) + xRand * 6.283);
+    float intensity = blink * (1.0 + audio * 0.35) * edgeFade;
+    if (intensity <= 0.001) return;
+
+    // 90/10 main/accent split (6.6).
+    float colorRand = hash2(float2(seed, 6.6));
+    float3 baseColor = colorRand > 0.90 ? particleAccent : particleColor;
+
+    // Fragment: alpha = smoothstep(0.5, 0.1, dist) * blink over a sprite of
+    // diameter 2*radiusPx; premultiplied additive on black collapses to a sum.
+    float spriteAlpha = smoothstep(0.5, 0.1, distPx / (radiusPx * 2.0)) * intensity;
+    accum += baseColor * spriteAlpha;
+}
+
+half4 main(float2 fragCoord) {
+    // Height-normalised space like the original: y in [0, 1], x in [0, aspect].
+    float2 uv = fragCoord / resolution.y;
+    float maxRadiusPx = max(MAX_RADIUS_UV * resolution.y, 2.0);
+
+    float3 accum = float3(0.0);
+    float2 baseCell = floor(uv / CELL);
+
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            float2 cell = baseCell + float2(float(dx), float(dy));
+            for (int s = 0; s < 2; s++) {
+                float seed = cell.x * 5.731 + cell.y * 13.171 + float(s) * 1.23456;
+                // Star 0 always exists; star 1 spawns with probability 0.25,
+                // giving 150 generated stars on a 16:9 frame (PARTICLE_COUNT).
+                if (s == 0 || hash2(float2(seed, 0.9)) > TWIN_STAR) {
+                    addStar(cell, seed, uv, maxRadiusPx, accum);
+                }
+            }
+        }
+    }
+
+    if (layer < 0.5) {
+        // Classic draw: pure black base, additive star light, opaque output.
+        return half4(accum, alpha);
+    }
+    // Overlay layer: PREMULTIPLIED output. Skia treats shader results as
+    // premultiplied and PLUS blending only adds src.rgb (src.a never scales
+    // rgb), so without folding alpha into rgb here the host's layer-opacity
+    // slider would have no effect between ~0.3% and 100%. Folding it makes
+    // L=1 pixel-identical to the classic branch and dims the starlight
+    // linearly below that.
+    float cov = clamp(max(accum.r, max(accum.g, accum.b)) * 16.0, 0.0, 1.0);
+    return half4(accum * alpha, alpha * cov);
+}

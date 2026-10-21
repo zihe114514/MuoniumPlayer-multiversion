@@ -36,13 +36,23 @@ public class LoginRenderer implements SharedRenderingConstants, SharedConstants 
 
     public LoginRenderer() {
         loginThread = new Thread(() -> {
-            String cookie = CloudMusic.qrCodeLogin();
-//            System.out.println("Cookie is " + cookie);
-            OptionsUtil.setCookie(cookie);
-            success = true;
-            this.closing = true;
+            // 网络异常/响应缺字段时以前直接把线程打死：成功标志不落、二维码界面永远等下去。
+            // 失败在这里吞掉并保留 closing=false，界面可以关掉重开再试。
+            try {
+                String cookie = CloudMusic.qrCodeLogin();
+                if (cookie != null && !cookie.isEmpty()) {
+                    OptionsUtil.setCookie(cookie);
+                    success = true;
+                    this.closing = true;
+                } else {
+                    System.out.println("[MuoniumPlayer] 扫码登录未完成（超时或被取消）");
+                }
+            } catch (Throwable t) {
+                System.err.println("[MuoniumPlayer] 扫码登录失败: " + t);
+            }
         });
 
+        loginThread.setDaemon(true);
         loginThread.start();
     }
 

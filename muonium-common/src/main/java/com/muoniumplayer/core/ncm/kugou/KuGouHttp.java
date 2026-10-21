@@ -313,8 +313,14 @@ public final class KuGouHttp {
 
     private static JsonObject parse(InputStream stream) {
         if (stream == null) return null;
-        String text = HttpUtils.readString(stream);
-        return parseText(text);
+        try {
+            String text = HttpUtils.readString(stream);
+            return parseText(text);
+        } catch (java.io.IOException e) {
+            // readString 现在会声明 IOException（读完负责关流）；读失败按
+            // 「响应不可解析」处理，与 parseText 收到垃圾时的语义一致。
+            return null;
+        }
     }
 
     /** 把一段可能的 JSON 文本解析成对象；不是对象（HTML 错误页等）时返回 {@code null}。 */

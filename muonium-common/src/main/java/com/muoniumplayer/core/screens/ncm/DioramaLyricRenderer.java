@@ -3,6 +3,7 @@ package com.muoniumplayer.core.screens.ncm;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.settings.HudConfig;
 
@@ -39,16 +40,30 @@ final class DioramaLyricRenderer extends AbstractStageLyricRenderer {
     private double laidOutWidth = -1;
     private double laidOutHeight = -1;
 
+    /** 字形按需异步生成，量不到宽度时排版不可信——见 {@link FullscreenLyricStage#glyphWidth}。 */
+    private boolean metricsPending;
+    private int metricsRetries;
+    private static final int METRICS_MAX_RETRIES = 40;
+
     protected void onReset() {
         cachedLines.clear();
         cachedDepths.clear();
         laidOutWidth = -1;
         laidOutHeight = -1;
+        metricsPending = false;
+        metricsRetries = 0;
     }
 
     protected void draw(double left, double top, double width, double height,
                         float alpha, double positionMs, LyricLine currentLine, double opened) {
-        if (tuningDirty || Math.abs(width - laidOutWidth) >= 2.0
+        // 字形按需异步生成：字号档第一次被用到时量宽为 0，首帧排版不可信——
+        // 同 Apple/Cappella/Fume 的防护：发现没上传完就安排下一帧重排。
+        boolean metricsChanged = false;
+        if (metricsPending && metricsRetries < METRICS_MAX_RETRIES) {
+            metricsChanged = true;
+            metricsRetries++;
+        }
+        if (metricsChanged || tuningDirty || Math.abs(width - laidOutWidth) >= 2.0
                 || Math.abs(height - laidOutHeight) >= 2.0) {
             double targetPx = FullscreenLyricStage.baseFontPx(width, height) * 1.0;
             font = FullscreenLyricStage.fontAtMost(targetPx);
@@ -56,6 +71,10 @@ final class DioramaLyricRenderer extends AbstractStageLyricRenderer {
             fontPx = targetPx;
             laidOutWidth = width;
             laidOutHeight = height;
+            if (!metricsChanged) metricsRetries = 0;
+            // 拿当前行探一下这一档字形齐不齐；不齐就继续安排重排，齐了就停。
+            metricsPending = !FullscreenLyricStage.glyphsReady(font,
+                    CloudMusic.currentLyric == null ? "" : CloudMusic.currentLyric.lyric);
         }
         if (font == null) return;
 

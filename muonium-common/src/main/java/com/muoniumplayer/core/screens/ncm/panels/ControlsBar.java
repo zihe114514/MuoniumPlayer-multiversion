@@ -146,6 +146,25 @@ public class ControlsBar extends NCMPanel {
         return qualityMenuOpen || qualityMenuAnimation > .004;
     }
 
+    /** 音质菜单当前是否打开（NCMScreen.layout() 重建控件时用来迁移状态）。 */
+    public boolean isQualityMenuOpen() {
+        return qualityMenuOpen;
+    }
+
+    /**
+     * 重建后恢复「菜单是开着的」这一状态。
+     *
+     * <p>layout() 每次都会 {@code new ControlsBar()}，用户正开着音质菜单时点一下刷新，
+     * 菜单就会无端合上。这里只补状态翻转（含酷狗档位刷新），不做动画回放——重建那一帧
+     * 直接呈现打开态最不打扰。动画字段 {@code qualityMenuAnimation} 从 0 起步时
+     * {@link #isQualityMenuVisible()} 已经为 true（qualityMenuOpen 短路），不会闪没。</p>
+     */
+    public void reopenQualityMenu() {
+        if (this.qualityMenuOpen) return;
+        refreshKuGouQualityOptions();
+        this.qualityMenuOpen = true;
+    }
+
     /**
      * 把 automix 的接缝画在这条进度条上：一根竖线是「从这里开始切」，一段半透明带子是
      * 「这一段两首叠在一起」。
@@ -735,9 +754,10 @@ public class ControlsBar extends NCMPanel {
                     // 而 LucideIconWidget 那一枚是随缩放算出来的，和菜单里的勾选/档位图标同一套笔画。
                     // 量宽与渲染必须同一份字体：标签固定 pf12bold，量宽也用它 —— 原来 scale<.9
                     // 时按 pf10bold 量、按 pf12bold 渲染，量出来的宽偏小，文字会被提前截断。
-                    String selectorLabel = "音质 · " + formatQuality(CloudMusic.quality);
+                    // 标签只在切档那一刻才变：按 quality 缓存拼接结果与量宽，不每帧重做。
+                    String selectorLabel = qualityLabelCache();
                     double chevronWidth = 10.0 * scale;
-                    double desiredWidth = FontManager.pf12bold.getStringWidthD(selectorLabel)
+                    double desiredWidth = qualityLabelWidthCache(selectorLabel)
                             + 7.0 * scale + chevronWidth + 6.0 * scale;
                     double selectorWidth = Math.max(56.0 * scale, Math.min(112.0 * scale, desiredWidth));
                     double selectorX = volumeX - selectorGap - selectorWidth;
@@ -778,7 +798,8 @@ public class ControlsBar extends NCMPanel {
                     return true;
                 });
 
-        LabelWidget qualityText = new LabelWidget(() -> "音质 · " + formatQuality(CloudMusic.quality), FontManager.pf12bold);
+        // 供应函数读同一份缓存：LabelWidget 每帧调一次，里面不再重新拼接字符串。
+        LabelWidget qualityText = new LabelWidget(this::qualityLabelCache, FontManager.pf12bold);
         qualitySelector.addChild(qualityText);
         qualityText.setClickable(false);
         qualityText.setBeforeRenderCallback(() -> qualityText
@@ -1129,9 +1150,29 @@ public class ControlsBar extends NCMPanel {
     }
 
     private static String formatQuality(Quality quality) {
-        // 档位短名与播放条那枚音质标签共用 Quality.displayName()：两处各写一套词，
+        // 档位短名与播放条那枚音质标签共用 Quality.displayNameOf(quality)：两处各写一套词，
         // 用户就会看到「我选的是极高、标签上却写着 EXHIGH」这种对不上的说法。
         return Quality.displayNameOf(quality);
+    }
+
+    /** 「音质 · xx」标签与它的量宽，只在 {@link CloudMusic#quality} 变化时重建（每帧热路径）。 */
+    private Quality cachedQuality;
+    private String cachedQualityLabel = "";
+    private double cachedQualityLabelWidth;
+
+    private String qualityLabelCache() {
+        Quality current = CloudMusic.quality;
+        if (cachedQuality != current) {
+            cachedQuality = current;
+            cachedQualityLabel = "音质 · " + formatQuality(current);
+            cachedQualityLabelWidth = FontManager.pf12bold.getStringWidthD(cachedQualityLabel);
+        }
+        return cachedQualityLabel;
+    }
+
+    private double qualityLabelWidthCache(String label) {
+        return cachedQualityLabel == label ? cachedQualityLabelWidth
+                : FontManager.pf12bold.getStringWidthD(label);
     }
     private String formatDuration(float totalMillis) {
         int totalSeconds = (int) (totalMillis / 1000);

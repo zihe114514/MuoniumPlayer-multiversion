@@ -61,6 +61,23 @@ final class FumeLyricRenderer extends AbstractStageLyricRenderer {
     private double laidOutWidth = -1;
     private double laidOutHeight = -1;
 
+    /** 字形按需异步生成，量不到宽度时排版不可信——见 {@link FullscreenLyricStage#glyphWidth}。 */
+    private boolean metricsPending;
+    private int metricsRetries;
+    private static final int METRICS_MAX_RETRIES = 40;
+
+    /** 重排后问一遍：还有没有行在等字形上传（有就继续安排重排）。 */
+    private boolean anyRowGlyphsPending() {
+        for (int i = 0; i < rows.size(); i++) {
+            Row row = rows.get(i);
+            if (row.font == null || row.chars == null) continue;
+            StringBuilder text = new StringBuilder();
+            for (int c = 0; c < row.chars.size(); c++) text.append(row.chars.get(c));
+            if (!FullscreenLyricStage.glyphsReady(row.font, text.toString())) return true;
+        }
+        return false;
+    }
+
     private double cameraX;
     private double cameraY;
     private double cameraScale = 1;
@@ -78,6 +95,8 @@ final class FumeLyricRenderer extends AbstractStageLyricRenderer {
         laidOutCenter = null;
         laidOutWidth = -1;
         laidOutHeight = -1;
+        metricsPending = false;
+        metricsRetries = 0;
         cameraX = 0;
         cameraY = 0;
         cameraScale = 1;
@@ -91,10 +110,19 @@ final class FumeLyricRenderer extends AbstractStageLyricRenderer {
         boolean viewportChanged = tuningDirty
                 || Math.abs(width - laidOutWidth) >= 2.0
                 || Math.abs(height - laidOutHeight) >= 2.0;
-        if (currentLine != laidOutCenter || viewportChanged) {
+        // 字形按需异步生成：量到 0 宽的排版不可信（同 Apple/Cappella 的防护）。
+        // 首帧照常绘制会把字形逐步上传，撑住重试窗口后下一帧量到的就是真宽。
+        boolean metricsChanged = false;
+        if (metricsPending && metricsRetries < METRICS_MAX_RETRIES) {
+            metricsChanged = true;
+            metricsRetries++;
+        }
+        if (currentLine != laidOutCenter || viewportChanged || metricsChanged) {
+            if (!metricsChanged) metricsRetries = 0;
             double previousAnchorY = anchorY;
             LyricLine previousAnchor = anchorLine;
             rebuild(currentLine, positionMs, width, height);
+            metricsPending = anyRowGlyphsPending();
             laidOutCenter = currentLine;
             laidOutWidth = width;
             laidOutHeight = height;

@@ -120,6 +120,15 @@ public final class MpProto {
     public static final String C_KICK       = "kick";
     public static final String C_TRANSFER   = "transfer";
     public static final String C_PROGRESS   = "progress";
+    /**
+     * 直连保活的应答帧。直连服务端每 15 秒广播一帧 {@link #S_PING}，
+     * 客户端收到就回这一帧——房主据此确认成员还活着（房间空闲时没有任何广播，
+     * 写路径探测不到半开成员），成员也把任何下行帧（含 ping）当作「房主还活着」的证据。
+     * 服务器房间走 MC 通道自带的保活，不用这一对。
+     */
+    public static final String C_PONG       = "pong";
+    /** 服务端 → 客户端的保活探测帧，负载只有毫秒时间戳。直连专用，见 {@link #C_PONG}。 */
+    public static final String S_PING       = "ping";
     public static final String C_SYNC       = "sync";
     public static final String C_URL_SUPPLY = "url_supply";
     /**

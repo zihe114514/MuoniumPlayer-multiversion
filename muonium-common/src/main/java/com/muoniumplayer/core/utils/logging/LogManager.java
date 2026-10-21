@@ -28,8 +28,15 @@ public class LogManager {
         return new Logger(name);
     }
 
+    /**
+     * 时间戳格式化。SimpleDateFormat 非线程安全，而 print 被多个后台线程并发调用；
+     * 每次新建一个又纯属浪费——ThreadLocal 各留一份。
+     */
+    private static final ThreadLocal<SimpleDateFormat> TIME_FORMAT =
+            ThreadLocal.withInitial(() -> new SimpleDateFormat("hh:mm:ss"));
+
     private static String getLocalTime() {
-        return new SimpleDateFormat("hh:mm:ss").format(new Date());
+        return TIME_FORMAT.get().format(new Date());
     }
 
     @SneakyThrows

@@ -93,6 +93,13 @@ public final class SmilSvg {
     /** 测量墨迹盒时沿时间轴采的点数。8 个够把「从 0 缩放出来」的那些元素量全。 */
     private static final int MEASURE_SAMPLES = 8;
 
+    /**
+     * 所有实例共享的一支 Paint。渲染只在主线程上发生（Skija canvas 本身就是主线程物件），
+     * 每帧 new Paint() + close() 是纯 JNI 开销；paintLeaf 画完即清 effect/shader，
+     * render 入口再兜一次底，字段间不会串。
+     */
+    private static final Paint SHARED_PAINT = new Paint();
+
     private final List<Node> roots = new ArrayList<>();
     private final Map<String, Path> clips = new HashMap<>();
     private final Map<String, Gradient> gradients = new HashMap<>();
@@ -388,9 +395,13 @@ public final class SmilSvg {
         double drawnW = contentW * scale;
         double drawnH = contentH * scale;
         int base = canvas.getSaveCount();
-        Paint paint = new Paint();
+        // 渲染只在主线程发生（见调用方），复用一支共享 Paint 省掉每帧的 JNI 分配 +
+        // close；paintLeaf 每次画完都会把 effect/shader 清干净，无状态外泄。
+        Paint paint = SHARED_PAINT;
         try {
             paint.setAntiAlias(true);
+            paint.setPathEffect(null);
+            paint.setShader(null);
             // save() 必须在改矩阵之前：concat / translate / scale 都只动当前矩阵，
             // 不会自己加一层保存点 —— 少了这一步，末尾那句 restoreToCount 就是空转，
             // 本类的平移缩放会留在宿主画布上，把这一帧后面所有界面都带偏。
@@ -410,7 +421,6 @@ public final class SmilSvg {
             return false;
         } finally {
             canvas.restoreToCount(base);
-            paint.close();
         }
         return true;
     }
@@ -517,7 +527,12 @@ public final class SmilSvg {
             paint.setStrokeWidth((float) strokeWidth);
             paint.setStrokeCap(node.lineCap);
             paint.setStrokeJoin(node.lineJoin);
-            applyDash(paint, dashArray, dashOffset, dashUnit(node));
+            if (node.dashIntervals != null && dashArray == node.dashArray && dashOffset == node.dashOffset) {
+                // 无 dash 动画通道覆盖本帧（局部值仍是加载期的同一引用）：走预解析结果，不碰字符串。
+                applyStaticDash(paint, node.dashIntervals, node.dashPhase, dashUnit(node));
+            } else {
+                applyDash(paint, dashArray, dashOffset, dashUnit(node));
+            }
             canvas.drawPath(geometry, paint);
             paint.setPathEffect(null);
             paint.setShader(null);
@@ -609,6 +624,50 @@ public final class SmilSvg {
         PathEffect effect = PathEffect.makeDash(dashes, offset);
         paint.setPathEffect(effect);
         effect.close();
+    }
+
+    /**
+     * dash 的快捷路径：预解析好的间隔（加载期算好，奇数已补偶）× 单位。
+     *
+     * <p>没有 dash 动画通道的叶子每帧都走这里——原来每一帧都要重新 parseFloats 两串
+     * 字符串再建一个原生 PathEffect，动画素材常驻期间按帧率持续付费。</p>
+     */
+    private static void applyStaticDash(Paint paint, float[] intervals, float phase, float unit) {
+        if (intervals == null || intervals.length == 0) {
+            return;
+        }
+        float[] dashes = new float[intervals.length];
+        double total = 0;
+        for (int i = 0; i < intervals.length; i++) {
+            dashes[i] = (float) Math.max(0, intervals[i] * unit);
+            total += dashes[i];
+        }
+        if (total <= 0) {
+            return;
+        }
+        PathEffect effect = PathEffect.makeDash(dashes, phase * unit);
+        paint.setPathEffect(effect);
+        effect.close();
+    }
+
+    /** 加载期解析 dasharray：奇数个数补成偶数（applyDash 同一语义），解析不出整串返回 null。 */
+    private static float[] staticDashIntervals(String dashArray) {
+        double[] intervals = parseFloats(dashArray);
+        if (intervals.length == 0) {
+            return null;
+        }
+        int length = intervals.length % 2 == 0 ? intervals.length : intervals.length * 2;
+        float[] dashes = new float[length];
+        for (int i = 0; i < length; i++) {
+            dashes[i] = (float) Math.max(0, intervals[i % intervals.length]);
+        }
+        return dashes;
+    }
+
+    /** 加载期解析 dashoffset 的首个值；没有按 0。 */
+    private static float staticDashPhase(String dashOffset) {
+        double[] offsets = parseFloats(dashOffset);
+        return offsets.length > 0 ? (float) offsets[0] : 0f;
     }
 
     // ==================================================================
@@ -738,6 +797,8 @@ public final class SmilSvg {
         node.lineJoin = state.lineJoin;
         node.dashArray = state.dashArray;
         node.dashOffset = state.dashOffset;
+        node.dashIntervals = staticDashIntervals(state.dashArray);
+        node.dashPhase = staticDashPhase(state.dashOffset);
         node.fillMode = state.evenOdd ? PathFillMode.EVEN_ODD : PathFillMode.WINDING;
         if (node.geometry != null && node.fillMode != node.geometry.getFillMode()) {
             Path retuned = node.geometry.makeWithFillMode(node.fillMode);
@@ -1213,7 +1274,15 @@ public final class SmilSvg {
         String dashArray;
         String dashOffset;
         /**
-         * {@code path/@pathLength}；0 表示没写，dash 按用户单位算。
+         * dash 参数的加载期解析结果（奇数已补偶、用户单位值）。
+         *
+         * <p>没有 DASH_ARRAY/DASH_OFFSET 动画通道时它是常量——每帧重新 parseFloats +
+         * makeDash 是白付一次 JNI 原生内存。挂了 dash 动画的节点保持 {@code null}，走每帧解析。</p>
+         */
+        float[] dashIntervals;
+        float dashPhase;
+        /**
+         * {@code pathLength}；0 表示没写，dash 按用户单位算。
          *
          * <p>只在 Node 上而不在 State 上：规范里 pathLength 是几何属性，不继承。</p>
          */

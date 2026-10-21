@@ -72,8 +72,6 @@ public final class AnnouncementOverlay extends NcmSheet {
     private static final double DOT_SLOT = 9.0;
     /** 正文里的显式换行 = 分段。段内折行由 {@code fitWidth} 负责，它不认换行符。 */
     private static final String PARAGRAPH_BREAK = "\n";
-    /** 页脚那两颗按钮合计要占掉的宽度，说明文字据此让位。 */
-    private static final double FOOTER_BUTTONS = 150.0;
 
     // ──────────────────────────── 文案 ────────────────────────────
 
@@ -593,7 +591,8 @@ public final class AnnouncementOverlay extends NcmSheet {
         hint.setBeforeRenderCallback(() -> {
             hint.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             // 右边那两颗按钮占掉的宽度必须让开：让不开就是字压在按钮上，看着像界面坏了。
-            hint.setMaxWidth(Math.max(1.0, dialog.getWidth() - PAD * 2 - ICON_S - 5.0 - FOOTER_BUTTONS));
+            // 按钮跨度按实际位置现算（刷新左缘 → 关闭右缘 = 144），定值 150 偏保守会白让 6px。
+            hint.setMaxWidth(Math.max(60.0, refresh.getRelativeX() - ICON_S - 5.0 - PAD));
             hint.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             hint.setPosition(PAD + ICON_S + 5.0, inkTop(hint, dialog.getHeight() - FOOTER_HEIGHT + 25.0));
         });

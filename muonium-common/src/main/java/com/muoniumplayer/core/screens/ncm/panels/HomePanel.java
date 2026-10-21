@@ -560,7 +560,12 @@ public class HomePanel extends NCMPanel {
 
         layoutPlaceholder("正在获取 B 站收藏夹…", true);
         synchronized (HomePanel.class) {
-            if (bilibiliHomeLoading) return;
+            if (bilibiliHomeLoading) {
+                // 已有加载在飞：不能直接 return——那次加载的回调只 layout 到当时那个实例上，
+                // 快速进出 B 站主页时新实例的转子会永远转下去。与汽水页同款等待后自铺。
+                MultiThreadingUtil.runAsync(this::awaitBilibiliHomeCache);
+                return;
+            }
             bilibiliHomeLoading = true;
         }
 
@@ -585,6 +590,28 @@ public class HomePanel extends NCMPanel {
                 });
             } finally {
                 bilibiliHomeLoading = false;
+            }
+        });
+    }
+
+    /** 在飞的 B 站收藏夹加载落地后，把缓存铺到<b>当前</b>这个实例上（等待上限 20 秒）。 */
+    private void awaitBilibiliHomeCache() {
+        final long deadline = System.nanoTime() + 20_000_000_000L;
+        while (bilibiliHomeLoading && System.nanoTime() - deadline < 0L) {
+            try {
+                Thread.sleep(120L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        final List<PlayList> cached = new ArrayList<>(bilibiliHomePlaylists);
+        MultiThreadingUtil.runOnMainThread(() -> {
+            if (NeteaseMusicService.getCurrentPlatform() != platform) return;
+            if (cached.isEmpty()) {
+                layoutPlaceholder("B 站收藏夹获取失败，请稍后重试", false);
+            } else {
+                layout(cached, "我的收藏夹 · " + cached.size());
             }
         });
     }

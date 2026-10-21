@@ -1755,6 +1755,10 @@ public final class MpPartyClient {
             // 封禁横幅由界面显示；这里仍写一行聊天，纯服务端玩家也得知道自己被封了。
             note("你的一起听功能已被封禁（" + banReason
                     + (banRemaining.isEmpty() ? "" : "，剩余 " + banRemaining) + "）", true);
+        } else if (MpProto.S_PING.equals(op)) {
+            // 直连保活的探测帧。回 pong 让房主确认本机还活着（老客户端不回也不影响——
+            // 它们的 C_PROGRESS 心跳本来就在刷新房主那侧的活性记录）。
+            com.muoniumplayer.party.direct.MpDirect.sendPong(MpProto.num(msg, "t", 0L));
         }
     }
 

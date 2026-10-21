@@ -50,6 +50,8 @@ public final class DirectServer {
         final String name;
         final OutputStream out;
         volatile boolean open = true;
+        /** 上一次收到该成员任何一帧的时刻；服务端用它摘除半开的幽灵席位。 */
+        volatile long lastFrameNanos = System.nanoTime();
 
         Conn(Socket socket, UUID uuid, String name, OutputStream out) {
             this.socket = socket;
@@ -76,6 +78,11 @@ public final class DirectServer {
                 try {
                     out.write(payload);
                     out.flush();
+                    // 注意：这里<b>不能</b>刷新 lastFrameNanos。半开连接（成员拔网线）
+                    // 的 write 在 TCP 缓冲填满前几乎总是「成功」，而服务端每 15 秒
+                    // 发一帧 ping——写成功就续期的话，过期清扫（见 tickLoop 的
+                    // STALE_TIMEOUT_NANOS）永远不触发，幽灵席位要等 TCP 重传失败
+                    // （可达十几分钟）才被摘。活性只认<b>收到</b>的帧（serveLoop）。
                 } catch (Throwable ignored) {
                     // 写失败 = 连接已死（半开：成员掉线无 FIN/RST，reader 还阻塞在
                     // readFrame 上）。必须当场 close socket——它会立刻唤醒 reader 走
@@ -84,6 +91,11 @@ public final class DirectServer {
                     close();
                 }
             }
+        }
+
+        /** 引擎线程问：这个连接多久没有给出任何活性证据了（收帧或发帧都算）。 */
+        boolean staleFor(long nanos) {
+            return System.nanoTime() - lastFrameNanos > nanos;
         }
 
         @Override
@@ -101,6 +113,10 @@ public final class DirectServer {
     private static final long AUTH_FAIL_COOLDOWN_MS = 30_000L;
     /** 握手读首帧的等待上限。 */
     private static final int HANDSHAKE_TIMEOUT_MS = 8_000;
+    /** 保活 ping 的间隔（纳秒）。 */
+    private static final long PING_INTERVAL_NANOS = 15_000_000_000L;
+    /** 连接被判定半开的读/写静默上限（纳秒）。三个 ping 周期足够穿过一次网络抖动。 */
+    private static final long STALE_TIMEOUT_NANOS = 90_000_000_000L;
 
     private final int port;
     private final String auth;
@@ -197,6 +213,7 @@ public final class DirectServer {
      */
     private void tickLoop() {
         long last = System.nanoTime();
+        long lastPingNanos = System.nanoTime();
         while (running && !Thread.currentThread().isInterrupted()) {
             // 先把攒下的任务清完（帧处理、join/quit），再问一次时钟。
             Runnable task;
@@ -218,8 +235,33 @@ public final class DirectServer {
                     platform.warn("[muonium-direct] engine tick failed", t);
                 }
             }
+            // 保活：每 15 秒给所有成员发一帧 ping。两个作用——
+            // ① 成员把任何下行帧当「房主还活着」，空闲期也能感知房主死亡；
+            // ② 客户端回 pong（或任何帧）会刷新 lastFrameNanos，让下面的
+            //    过期清扫能摘掉「拔网线无 FIN/RST」的半开幽灵席位。
+            // 老客户端不认识 ping（dispatch 静默忽略未知 op），但它们的 C_PROGRESS
+            // 心跳每 5 秒一帧，本来就在刷新活性，清扫不受影响。
+            if (now - lastPingNanos >= PING_INTERVAL_NANOS) {
+                lastPingNanos = now;
+                byte[] ping = MpProto.encode(MpProto.msg(MpProto.S_PING));
+                for (DirectMpPlatform.Session s : platform.snapshot()) {
+                    if (s instanceof Conn) ((Conn) s).send(ping);
+                }
+            }
+            // 读/写都超过窗口没动静的连接按半开处理：close 会唤醒阻塞在 readFrame
+            // 上的 reader 走 finally 清理（unregister + onPlayerQuit）。
+            for (DirectMpPlatform.Session s : platform.snapshot()) {
+                if (s instanceof Conn && ((Conn) s).staleFor(STALE_TIMEOUT_NANOS)) {
+                    // warn 只收 message+Throwable：把成员名并进消息。
+                    platform.warn("[muonium-direct] member " + ((Conn) s).name
+                            + " 90s 无任何帧，按断线清理", null);
+                    ((Conn) s).close();
+                }
+            }
             try {
-                Thread.sleep(2L);
+                // 托管期间这个循环常驻：2ms 忙轮询每秒醒 500 次；50ms 的 tick 粒度下
+                // 睡 5ms 完全够用，把空转的唤醒频率砍掉 60%。
+                Thread.sleep(5L);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
@@ -333,6 +375,8 @@ public final class DirectServer {
         while (running && conn.open) {
             byte[] frame = readFrame(in);
             if (frame == null) return; // 连接关闭或帧非法
+            // 任何来帧都是对端活着的证据——半开清扫以它为准。
+            conn.lastFrameNanos = System.nanoTime();
             // 引擎线程在跑 tickLoop；onPacket 内部自己经 platform.execute 回引擎线程，
             // 所以这里入队即可，不直接碰引擎状态。
             tasks.offer(() -> {

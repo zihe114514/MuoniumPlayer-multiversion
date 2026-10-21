@@ -9,7 +9,7 @@ import lombok.Setter;
 import lombok.SneakyThrows;
 import com.muoniumplayer.compat.gl.GL11;
 import com.muoniumplayer.core.interfaces.SharedConstants;
-import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
+
 import com.muoniumplayer.core.rendering.texture.DynamicTexture;
 import com.muoniumplayer.core.rendering.texture.ITextureObject;
 import com.muoniumplayer.core.utils.Location;
@@ -98,7 +98,6 @@ public class AnimatedTexture implements SharedConstants {
             api.getGLStateManager().tryBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, GL11.GL_ONE, GL11.GL_ZERO);
             ITextureObject textureObj = TextureManager.getInstance().getTexture(locImg);
             TextureUtil.bindTexture(textureObj.getGlTextureId());
-            RenderSystem.nearestFilter();
 
             int v = frame.origFrameIndex * frameWidth;
 
@@ -113,11 +112,15 @@ public class AnimatedTexture implements SharedConstants {
 
             // 竖向排布的逐帧图：整张图宽 frameWidth、高 imgHeight，
             // 第 n 帧占 v..v+frameWidth 这一段。uv 与旧实现逐字一致。
+            // 采样意图（nearest，像素风逐帧图放大不糊）由最后一个参数随绘制传递，
+            // 不再像原来那样 RenderSystem.nearestFilter() 把全局档位拨过去不拨回来——
+            // 那会让本帧之后所有未显式声明采样方式的贴图都跟着变 nearest。
             com.muoniumplayer.render.skija.SkijaImages.drawTextured(
                     x, y, width, height,
                     0, (double) v / imgHeight, 1, (double) (v + frameWidth) / imgHeight,
                     textureObj.getGlTextureId(), frameWidth, imgHeight,
                     com.muoniumplayer.render.skija.SkijaGfx.color(), false);
+            com.muoniumplayer.render.skija.SkijaGfx.setLinearFiltering(true);
 
             api.getGLStateManager().enableAlpha();
         }
@@ -298,11 +301,12 @@ public class AnimatedTexture implements SharedConstants {
             return new Frame(JsonUtils.getInt(frameElement, "frames[" + frameIndex + "]"), fixedFrameTime);
         } else if (frameElement.isJsonObject()) {
             JsonObject frameObject = JsonUtils.getJsonObject(frameElement, "frames[" + frameIndex + "]");
-            int time = JsonUtils.getInt(frameObject, "time", -1);
+            // mcmeta 缺省 "time" 时按原版语义取全局 frametime（fixedFrameTime）。
+            // 以前缺省存 -1：isDelayed(-50ms) 永不成立，动画永久卡在这一帧。
+            int time = JsonUtils.getInt(frameObject, "time", fixedFrameTime);
 
-            if (frameObject.has("time")) {
-                if (time < 1)
-                    time = 1;
+            if (time < 1) {
+                time = 1;
             }
 
             int idx = JsonUtils.getInt(frameObject, "index");

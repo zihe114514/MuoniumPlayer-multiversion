@@ -1,0 +1,855 @@
+/*
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * 「漫游 / Nomand」：把 @paper-design/shaders 0.0.80 的五种图像特效按 本项目
+ * src/components/visualizer/backgrounds/nomand/NomandBackgroundLayer.tsx 的参数接线落成一个 SkSL。
+ * 每个效果的算式逐条对齐 Paper 0.0.80 的 GLSL 原文
+ * （@paper-design/shaders/dist/shaders/{image-dithering,fluted-glass,paper-texture,halftone-dots,
+ * lens-distortion}.js）。
+ *
+ *   0 ImageDithering  ：像素化 + Bayer(2x2/4x4/8x8) 阈值 + N 级量化；originalColors 时按原色
+ *                       归一化重建（normColor*quantLum），否则用 fg*quantLum + bg*(1-quantLum)，
+ *                       最亮一级 fg 换成 colorHighlight（阈值 step(1.02-.02*N, brightness)）。
+ *   1 FlutedGlass     ：patternSize=mix(200,5,size)，只沿 y 分条纹；prism 形变的
+ *                       distortion=-pow(1.5x,3)+.5，接缝处用 fadeX 拉回 .5；highlights 是接缝两侧的
+ *                       细亮线；shadows=pow(x,1.3)*shadows²；只有竖直方向的一维高斯（sigma=50*blur）；
+ *                       edgeDist=.04*edges+.06*frameFade*edges 处向 colorBack 淡出。
+ *   2 PaperTexture    ：roughness 屏幕空间中心差分、crumples、4 层 fiber 梯度、foldCount=5 的折痕、
+ *                       drops（照抄 Paper 的 min(d, d*dist) 写法）；法线/图像法线两套累加，
+ *                       Blinn-Phong 的 z=9.5-9*contrast^.1，最后 colorFront*res 与图像按 frame 混合。
+ *   3 HalftoneDots    ：cellsPerSide=mix(300,7,size^.7)/6（gooey 的 stepMultiplier=6），hex+gooey 的
+ *                       6x6 半格跳过、pad*=.7，网点半径 mix(.42*radius,0,lum) 再 pow(d,2+radius)，
+ *                       阈值 smoothstep(.5±带宽)；grainMixer .12 / grainOverlay .06 / grainSize .5。
+ *   4 LensDistortion  ：径向 tan/atan 映射（bulge=|b|*(b>0?1.4:1.2)）、lensCircle=.1 的边角拉伸、
+ *                       reach=.7*spread^(1.3+2.7*spread) 的 20 层扇形色散，sampleOverWhite 越界混白。
+ *
+ * 三个宿主约定（不是近似，是 FoliaBackgroundHost 的真实数据形状）：
+ *   - cover 子着色器按 0..32 的域采样，对应宿主 256×256 的正方形工作纹理，
+ *     所以 Paper 的 u_imageAspectRatio 恒为 1（cover 裁切在宿主完成）。
+ *   - u_pixelRatio 恒为 1：宿主直接在最终画布像素里画。
+ *   - 主题色的 alpha 恒为 1，因此四个图像效果合成后的 opacity 恒为 1，只有镜头畸变要算真实 alpha。
+ *
+ * 抗锯齿用的是常数带宽，不是屏幕空间导数：Skia 的 RuntimeEffect 不提供
+ * fwidth/dFdx/dFdy（编译期直接 no match），所以 Paper 里所有 fwidth 处都换成固定宽度
+ * （uv 级的 .002、玻璃棱线的 .0015、半调阈值的 .06、镜头边带的 .004）。视觉上是
+ * 「1px 左右固定软化」，与 Paper 的像素级 aa 同量级，但不是逐帧自适应。
+ *
+ * 唯一替换掉的外部输入是 Paper 的 u_noiseTexture（SkSL 只能有 uniform shader 子着色器，
+ * 而 cover 已被占用）：noiseR/noiseGB 用同一套 hash21 在 50×50 的格子粒度上重建通道，
+ * 保留随机场的尺度与块状结构，具体点位与 Paper 的贴图不同。
+ */
+uniform float2 resolution;
+uniform float alpha;
+uniform float effect;
+
+uniform shader cover;
+
+uniform float inverted;
+uniform float originalColors;
+uniform float colorSteps;
+uniform float pxSize;
+uniform float ditherType;      // 0 = 2x2, 1 = 4x4, 2 = 8x8
+
+uniform float4 colorFront;
+uniform float4 colorBack;
+uniform float4 colorHighlight;
+uniform float4 colorShadow;
+
+uniform float glassSize;
+uniform float glassDistortion;
+uniform float glassBlur;
+
+uniform float paperContrast;
+uniform float paperRoughness;
+uniform float paperFiber;
+
+uniform float dotSize;
+uniform float dotRadius;
+uniform float dotContrast;
+
+uniform float lensSpread;
+uniform float lensBulge;
+uniform float lensDispersion;
+
+uniform float brightness;      // 统一亮度（音频包络）
+uniform float3 themeBack;      // 兜底底色（图片缺失时）
+
+const float TEX_SIZE = 32.0;
+const float PI = 3.14159265359;
+const float TWO_PI = 6.28318530718;
+
+/* Paper 的 proceduralHash21 / proceduralHash22（shader-utils.js:22-35）。 */
+float hash21(float2 p) {
+    p = fract(p * float2(0.3183099, 0.3678794)) + 0.1;
+    p += dot(p, p + 19.19);
+    return fract(p.x * p.y);
+}
+
+float2 hash22(float2 p) {
+    p = fract(p * float2(0.3183099, 0.3678794)) + 0.1;
+    p += dot(p, p.yx + 19.19);
+    return fract(float2(p.x * p.y, p.x + p.y));
+}
+
+float valueNoise(float2 st) {
+    float2 i = floor(st);
+    float2 f = fract(st);
+    float a = hash21(i);
+    float b = hash21(i + float2(1.0, 0.0));
+    float c = hash21(i + float2(0.0, 1.0));
+    float d = hash21(i + float2(1.0, 1.0));
+    float2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+/* smoothstep 的降序版本：GLSL 允许 edge0 > edge1，SkSL 的 smoothstep 不保证，这里显式翻过来。 */
+float sstepDown(float edge0, float edge1, float x) {
+    return 1.0 - smoothstep(edge1, edge0, x);
+}
+
+float luminance(float3 c) {
+    return dot(c, float3(0.2126, 0.7152, 0.0722));
+}
+
+/* 宿主把封面铺进 256×256 后，子着色器的采样域是 0..32。 */
+float4 sampleCover(float2 uv) {
+    float2 c = clamp(uv, float2(0.0), float2(1.0));
+    return float4(cover.eval(c * TEX_SIZE));
+}
+
+/* Paper image-dithering 的 getUvFrame(uv, pad)：aa 本身就是 0.0001。 */
+float uvFramePad(float2 uv, float2 pad) {
+    float aa = 0.0001;
+    float left = smoothstep(-pad.x, -pad.x + aa, uv.x);
+    float right = sstepDown(1.0 + pad.x, 1.0 + pad.x - aa, uv.x);
+    float bottom = smoothstep(-pad.y, -pad.y + aa, uv.y);
+    float top = sstepDown(1.0 + pad.y, 1.0 + pad.y - aa, uv.y);
+    return left * right * bottom * top;
+}
+
+/* Paper paper-texture 的 getUvFrame(uv)：原式 aax/aay 是 2*fwidth，这里用常数带宽 AA_UV。 */
+float uvFrameSoft(float2 uv) {
+    float aax = 2.0 * 0.002;
+    float aay = 2.0 * 0.002;
+    float left = smoothstep(0.0, aax, uv.x);
+    float right = 1.0 - smoothstep(1.0 - aax, 1.0, uv.x);
+    float bottom = smoothstep(0.0, aay, uv.y);
+    float top = 1.0 - smoothstep(1.0 - aay, 1.0, uv.y);
+    return left * right * bottom * top;
+}
+
+/* Paper fluted-glass 的 getUvFrame(uv, softness)。 */
+float uvFrameSoftness(float2 uv, float softness) {
+    float aax = 2.0 * 0.0015;
+    float aay = 2.0 * 0.0015;
+    float left = smoothstep(0.0, aax + softness, uv.x);
+    float right = 1.0 - smoothstep(1.0 - softness - aax, 1.0, uv.x);
+    float bottom = smoothstep(0.0, aay + softness, uv.y);
+    float top = 1.0 - smoothstep(1.0 - softness - aay, 1.0, uv.y);
+    return left * right * bottom * top;
+}
+
+/* Paper lens-distortion 的 getUvFrame(uv)：1px 边带，宽度夹在 .001..02。 */
+float uvFrameAA(float2 uv) {
+    float2 invAA = float2(1.0 / 0.004);
+    float2 lo = clamp(uv * invAA + 0.5, float2(0.0), float2(1.0));
+    float2 hi = clamp((1.0 - uv) * invAA + 0.5, float2(0.0), float2(1.0));
+    return lo.x * hi.x * lo.y * hi.y;
+}
+
+// ---------------------------------------------------------------------------
+// Bayer，逐格查表（SkSL 没法定长数组变量下标）。三张表都是 Paper 原文。
+// ---------------------------------------------------------------------------
+float eqIdx(float index, float k) {
+    return step(k - 0.5, index) * (1.0 - step(k + 0.5, index));
+}
+
+float bayer2At(float2 p) {
+    float2 c = floor(p) - floor(floor(p) / 2.0) * 2.0;
+    float i = c.y * 2.0 + c.x;
+    // [[0,2],[3,1]] / 4
+    float v = 2.0 * eqIdx(i, 1.0);
+    v = mix(v, 3.0, eqIdx(i, 2.0));
+    v = mix(v, 1.0, eqIdx(i, 3.0));
+    return v / 4.0;
+}
+
+float bayer4At(float2 p) {
+    float2 c = floor(p) - floor(floor(p) / 4.0) * 4.0;
+    float i = c.y * 4.0 + c.x;
+    // 0 8 2 10 / 12 4 14 6 / 3 11 1 9 / 15 7 13 5
+    float v = 8.0 * eqIdx(i, 1.0);
+    v = mix(v, 2.0, eqIdx(i, 2.0));
+    v = mix(v, 10.0, eqIdx(i, 3.0));
+    v = mix(v, 12.0, eqIdx(i, 4.0));
+    v = mix(v, 4.0, eqIdx(i, 5.0));
+    v = mix(v, 14.0, eqIdx(i, 6.0));
+    v = mix(v, 6.0, eqIdx(i, 7.0));
+    v = mix(v, 3.0, eqIdx(i, 8.0));
+    v = mix(v, 11.0, eqIdx(i, 9.0));
+    v = mix(v, 1.0, eqIdx(i, 10.0));
+    v = mix(v, 9.0, eqIdx(i, 11.0));
+    v = mix(v, 15.0, eqIdx(i, 12.0));
+    v = mix(v, 7.0, eqIdx(i, 13.0));
+    v = mix(v, 13.0, eqIdx(i, 14.0));
+    v = mix(v, 5.0, eqIdx(i, 15.0));
+    return v / 16.0;
+}
+
+/* 传进来的是已经 mod 过的 0..3 / 0..1 局部坐标，避免再次 mod。 */
+float bayer2Raw(float2 c) {
+    float i = c.y * 2.0 + c.x;
+    float v = 2.0 * eqIdx(i, 1.0);
+    v = mix(v, 3.0, eqIdx(i, 2.0));
+    v = mix(v, 1.0, eqIdx(i, 3.0));
+    return v / 4.0;
+}
+
+float bayer4Raw(float2 c) {
+    float i = c.y * 4.0 + c.x;
+    float v = 8.0 * eqIdx(i, 1.0);
+    v = mix(v, 2.0, eqIdx(i, 2.0));
+    v = mix(v, 10.0, eqIdx(i, 3.0));
+    v = mix(v, 12.0, eqIdx(i, 4.0));
+    v = mix(v, 4.0, eqIdx(i, 5.0));
+    v = mix(v, 14.0, eqIdx(i, 6.0));
+    v = mix(v, 6.0, eqIdx(i, 7.0));
+    v = mix(v, 3.0, eqIdx(i, 8.0));
+    v = mix(v, 11.0, eqIdx(i, 9.0));
+    v = mix(v, 1.0, eqIdx(i, 10.0));
+    v = mix(v, 9.0, eqIdx(i, 11.0));
+    v = mix(v, 15.0, eqIdx(i, 12.0));
+    v = mix(v, 7.0, eqIdx(i, 13.0));
+    v = mix(v, 13.0, eqIdx(i, 14.0));
+    v = mix(v, 5.0, eqIdx(i, 15.0));
+    return v / 16.0;
+}
+
+/* Paper 的 8x8 表。Bayer 的递归定义 M8 = 4*M4 + M2（按 4x4 分块），
+   所以不需要 64 项表：4*bayer4(x mod 4, y mod 4) + bayer2(x/4, y/4) 就是精确值。 */
+float bayer8At(float2 p) {
+    float2 c = floor(p);
+    float2 inner = c - floor(c / 4.0) * 4.0;
+    float2 outer = floor(c / 4.0);
+    return (4.0 * bayer4Raw(inner) + bayer2Raw(outer)) / 64.0;
+}
+float bayerAt(float2 p, float type) {
+    if (type < 0.5) return bayer2At(p);
+    if (type < 1.5) return bayer4At(p);
+    return bayer8At(p);
+}
+
+// ---------------------------------------------------------------------------
+// 0) ImageDithering
+// ---------------------------------------------------------------------------
+float3 effectDithering(float2 fragCoord) {
+    float2 res = max(resolution, float2(1.0));
+    float cellPx = max(0.5, pxSize);
+
+    // WebGL 的 gl_FragCoord.y 自下而上，Skia 的画布 y 向下：像素格用 y 向上的坐标算，
+    // 采样时再翻回来，这样 Bayer 的斜纹方向与 Web 端一致，图像本身仍正立。
+    float2 fragUp = float2(fragCoord.x, res.y - fragCoord.y);
+    float2 p = (fragUp - 0.5 * res) / cellPx;
+    // p 是「相对画布中心的像素坐标 / 格边」，回到像素坐标要加回半个画布。
+    float2 cellCenterUp = (floor(p) + 0.5) * cellPx + 0.5 * res;
+    float2 imageUV = float2(cellCenterUp.x, res.y - cellCenterUp.y) / res;
+
+    float4 image = sampleCover(imageUV);
+    float frame = uvFramePad(imageUV, cellPx / res);
+
+    float lum = luminance(image.rgb);
+    if (inverted > 0.5) lum = 1.0 - lum;
+
+    float dithering = bayerAt(p, ditherType) - 0.5;
+
+    float steps = max(floor(colorSteps), 1.0);
+    float brightnessValue = clamp(lum + dithering / steps, 0.0, 1.0);
+    brightnessValue = mix(0.0, brightnessValue, frame);
+    brightnessValue = mix(0.0, brightnessValue, image.a);
+    float quantLum = floor(brightnessValue * steps + 0.5) / steps;
+    quantLum = mix(0.0, quantLum, frame);
+
+    if (originalColors > 0.5) {
+        float3 normColor = image.rgb / max(lum, 0.001);
+        return clamp(normColor * quantLum, float3(0.0), float3(1.0));
+    }
+
+    float highlightMask = step(1.02 - 0.02 * steps, brightnessValue);
+    float3 front = mix(colorFront.rgb, colorHighlight.rgb, highlightMask);
+    return clamp(front * quantLum + colorBack.rgb * (1.0 - quantLum), float3(0.0), float3(1.0));
+}
+
+// ---------------------------------------------------------------------------
+// 1) FlutedGlass
+// ---------------------------------------------------------------------------
+/* Paper 的 getBlur：只沿 y 的一维高斯，sigma 以画布像素计，预乘后还原。 */
+float4 flutedBlur(float2 uv, float sigma) {
+    if (sigma <= 0.5) return sampleCover(uv);
+    float radius = min(50.0, ceil(3.0 * sigma));
+    float twoSigma2 = 2.0 * sigma * sigma;
+    float gaussNorm = 1.0 / sqrt(TWO_PI * sigma * sigma);
+    float2 texel = float2(1.0) / max(resolution, float2(1.0));
+
+    float4 sum = sampleCover(uv) * gaussNorm;
+    float weightSum = gaussNorm;
+    for (int i = 1; i <= 50; i++) {
+        if (float(i) > radius) break;
+        float x = float(i);
+        float w = exp(-(x * x) / twoSigma2) * gaussNorm;
+        float2 offset = float2(0.0, texel.y * x);
+        float4 s1 = sampleCover(uv + offset);
+        float4 s2 = sampleCover(uv - offset);
+        sum += (s1 + s2) * w;
+        weightSum += 2.0 * w;
+    }
+    float4 result = sum / max(weightSum, 1e-6);
+    if (result.a > 0.0) result.rgb /= result.a;
+    return result;
+}
+
+/* Paper 的 smoothFract：只在 f≈0/1 的接缝处把 f 与 1-f 混合，抹掉 1→0 的硬跳变。 */
+float smoothFract(float x, float w) {
+    float f = fract(x);
+    float edge = abs(f - 0.5) - 0.5;
+    float band = smoothstep(-w, w, edge);
+    return mix(f, 1.0 - f, band);
+}
+
+float3 effectFlutedGlass(float2 fragCoord) {
+    float2 res = max(resolution, float2(1.0));
+    float2 imageUV = fragCoord / res;
+
+    // Paper: patternSize = mix(200, 5, u_size)；size 越大条纹越疏。
+    float size = clamp(glassSize, 0.0, 1.0);
+    float patternSize = mix(200.0, 5.0, size);
+    float uShadows = 0.25;
+    float uHighlights = 0.1;
+    float uEdges = 0.25;
+
+    float2 uv = imageUV - 0.5;
+    uv *= patternSize;
+
+    // shape = lines 时 curve 恒为 0。
+    float2 fractOrigUV = fract(uv);
+    float2 floorOrigUV = floor(uv);
+
+    // fwidth(uv.x) 的常数替代：一个像素在棱纹单位下的宽度。
+    float aaConst = 0.0015;
+    float x = smoothFract(uv.x, aaConst);
+    float xNonSmooth = fract(uv.x) + 0.0001;
+
+    float highlightsWidth = 2.0 * max(0.001, aaConst);
+    float highlights = smoothstep(0.0, highlightsWidth, xNonSmooth)
+            * sstepDown(1.0, 1.0 - highlightsWidth, xNonSmooth);
+    highlights = (1.0 - highlights) * uHighlights;
+    highlights = clamp(highlights, 0.0, 1.0);
+
+    float shadows = pow(x, 1.3);
+
+    // prism：distortion = -pow(1.5x,3) + (.5 - shift)，接缝处被 fadeX 拉回 .5。
+    float distortion = -pow(1.5 * x, 3.0) + 0.5;
+    float frameFade = pow(1.5 * x, 3.0);
+
+    float aa = max(0.2, aaConst);
+    aa += mix(0.2, 0.0, size);
+    float fadeX = smoothstep(0.0, aa, xNonSmooth) * sstepDown(1.0, 1.0 - aa, xNonSmooth);
+    distortion = mix(0.5, distortion, fadeX);
+
+    shadows = min(shadows, 1.0);
+    shadows *= pow(uShadows, 2.0);
+    shadows = clamp(shadows, 0.0, 1.0);
+
+    distortion *= 3.0 * clamp(glassDistortion, 0.0, 1.0);
+    frameFade *= clamp(glassDistortion, 0.0, 1.0);
+
+    fractOrigUV.x += distortion;
+    float2 warpedUV = (floorOrigUV + fractOrigUV) / patternSize + 0.5;
+
+    float edgeDistortion = mix(0.0, 0.04, uEdges) + 0.06 * frameFade * uEdges;
+    float frame = uvFrameSoftness(warpedUV, edgeDistortion);
+
+    float4 image = flutedBlur(warpedUV, mix(0.0, 50.0, clamp(glassBlur, 0.0, 1.0)));
+    image.rgb *= image.a;
+
+    float3 color = colorHighlight.rgb * highlights;
+    float opacity = highlights;
+
+    float shadowTerm = mix(shadows, 0.0, highlights);
+    color = mix(color, colorShadow.rgb, 0.5 * shadowTerm);
+    color += 0.5 * pow(shadowTerm, 0.5) * colorShadow.rgb;
+    opacity += shadowTerm;
+    color = clamp(color, float3(0.0), float3(1.0));
+    opacity = clamp(opacity, 0.0, 1.0);
+
+    color += image.rgb * (1.0 - opacity) * frame;
+    opacity += image.a * (1.0 - opacity) * frame;
+
+    color += colorBack.rgb * (1.0 - opacity);
+    return clamp(color, float3(0.0), float3(1.0));
+}
+
+// ---------------------------------------------------------------------------
+// 2) PaperTexture
+// ---------------------------------------------------------------------------
+/* Paper 的 noise texture：R 用于 roughness，GB 用于 crumples 抖动与折痕方向。 */
+float noiseR(float2 p) {
+    float2 uv = fract(floor(p) / 50.0 + 0.5);
+    return hash21(uv * 61.7 + float2(0.31, 0.17));
+}
+
+float2 noiseGB(float2 p) {
+    float2 uv = fract(floor(p) / 50.0 + 0.5);
+    return float2(hash21(uv * 43.1 + float2(7.7, 1.3)),
+                  hash21(uv * 91.3 + float2(13.1, 5.9)));
+}
+
+/* Paper 的 roughness(p)：4 层、每层 2x2 双线性 + 一项 sin 衰减。 */
+float paperRoughnessFn(float2 p) {
+    float2 q = p * 0.1;
+    float o = 0.0;
+    for (int i = 0; i < 4; i++) {
+        float2 lo = floor(q);
+        float2 hi = ceil(q);
+        float2 f = fract(q);
+        float a = mix(noiseR(float2(lo.x, lo.y)), noiseR(float2(lo.x, hi.y)), f.y);
+        float b = mix(noiseR(float2(hi.x, lo.y)), noiseR(hi), f.y);
+        o += mix(a, b, f.x);
+        o += 0.2 / exp(2.0 * abs(sin(0.2 * q.x + 0.5 * q.y)));
+        q *= 2.1;
+    }
+    return o / 3.0;
+}
+
+float fiberRandom(float2 p) {
+    float2 uv = fract(floor(p) / 50.0);
+    return hash21(uv * 37.7 + float2(2.9, 8.3));
+}
+
+float fiberValueNoise(float2 st) {
+    float2 i = floor(st);
+    float2 f = fract(st);
+    float a = fiberRandom(i);
+    float b = fiberRandom(i + float2(1.0, 0.0));
+    float c = fiberRandom(i + float2(0.0, 1.0));
+    float d = fiberRandom(i + float2(1.0, 1.0));
+    float2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+/* Paper 的 fiberNoiseFbm：4 层，每层先转 .7 弧度、频率 x2、幅度 x.6。 */
+float fiberFbm(float2 n) {
+    float total = 0.0;
+    float amplitude = 1.0;
+    for (int i = 0; i < 4; i++) {
+        n = float2(cos(0.7) * n.x - sin(0.7) * n.y, sin(0.7) * n.x + cos(0.7) * n.y);
+        total += fiberValueNoise(n) * amplitude;
+        n *= 2.0;
+        amplitude *= 0.6;
+    }
+    return total;
+}
+
+/* Paper 的 fiberNoise：中心差分的梯度长度。 */
+float fiberGradient(float2 uv) {
+    float e = 0.001;
+    float n1 = fiberFbm(uv + float2(e, 0.0));
+    float n2 = fiberFbm(uv - float2(e, 0.0));
+    float n3 = fiberFbm(uv + float2(0.0, e));
+    float n4 = fiberFbm(uv - float2(0.0, e));
+    return length(float2(n1 - n2, n3 - n4)) / (2.0 * e);
+}
+
+/* Paper 的 crumpledNoise(t, pw)：3x3 邻域，按格抖动后取正弦高度。 */
+float crumpledNoise(float2 t, float pw) {
+    float2 cell = floor(t);
+    float wsum = 0.0;
+    float cl = 0.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            float2 b = float2(float(x), float(y));
+            float2 q = b + cell;
+            float2 q2 = q - floor(q / 8.0) * 8.0;
+            float2 c = q + noiseGB(q2);
+            float2 r = c - t;
+            float w = pow(smoothstep(0.0, 1.0, 1.0 - abs(r.x)), pw)
+                    * pow(smoothstep(0.0, 1.0, 1.0 - abs(r.y)), pw);
+            cl += (0.5 + 0.5 * sin((q2.x + q2.y * 5.0) * 8.0)) * w;
+            wsum += w;
+        }
+    }
+    return pow(wsum != 0.0 ? cl / wsum : 0.0, 0.5) * 2.0;
+}
+
+float crumplesShape(float2 uv) {
+    return crumpledNoise(uv * 0.25, 16.0) * crumpledNoise(uv * 0.5, 2.0);
+}
+
+/* Paper 的 folds：foldCount=5 个随机点里取最近的一个，按 pow(dist,.25) 淡出。 */
+float2 folds(float2 uv) {
+    float2 pp = float2(0.0);
+    float pz = 0.0;
+    float l = 9.0;
+    for (int i = 0; i < 5; i++) {
+        float idx = float(i);
+        float2 rand = noiseGB(float2(idx, idx * 5.8));
+        float an = rand.x * TWO_PI;
+        float2 p = float2(cos(an), sin(an)) * rand.y;
+        float dist = distance(uv, p);
+        if (dist < l) {
+            l = dist;
+            pp = uv - p;
+            pz = dist;
+        }
+    }
+    return mix(pp, float2(0.0), pow(pz, 0.25));
+}
+
+/*
+ * Paper 的 drops：原文写的是 dropsMinDist = min(dropsMinDist, dropsMinDist*dist)
+ * （乘而不是取 dist）。这里照抄，包括它对斑点分布的影响。
+ */
+float dropsFn(float2 uv) {
+    float2 iDropsUV = floor(uv);
+    float2 fDropsUV = fract(uv);
+    float dropsMinDist = 1.0;
+    for (int j = -1; j <= 1; j++) {
+        for (int i = -1; i <= 1; i++) {
+            float2 neighbor = float2(float(i), float(j));
+            float2 offset = noiseGB(iDropsUV + neighbor);
+            offset = 0.5 + 0.5 * sin(10.0 * 5.8 + TWO_PI * offset);
+            float2 pos = neighbor + offset - fDropsUV;
+            float dist = length(pos);
+            dropsMinDist = min(dropsMinDist, dropsMinDist * dist);
+        }
+    }
+    return 1.0 - smoothstep(0.05, 0.09, pow(dropsMinDist, 0.5));
+}
+
+float3 effectPaperTexture(float2 fragCoord) {
+    float2 res = max(resolution, float2(1.0));
+    float2 imageUV = fragCoord / res;
+    float2 patternUV = (imageUV - 0.5) * 5.0;
+
+    float uContrast = clamp(paperContrast, 0.0, 1.0);
+    float uRoughness = clamp(paperRoughness, 0.0, 1.0);
+    float uFiber = clamp(paperFiber, 0.0, 1.0);
+
+    // roughness 是屏幕空间中心差分，坐标要先乘回像素。
+    float2 roughnessUV = 1.5 * (fragCoord - 0.5 * res);
+    float rough = paperRoughnessFn(roughnessUV + float2(1.0, 0.0))
+            - paperRoughnessFn(roughnessUV - float2(1.0, 0.0));
+
+    // crumples：crumpleSize .35、seed 5.8。
+    float2 crumplesUV = fract(patternUV * 0.02 / 0.35 - 5.8) * 32.0;
+    float crumpleTerm = 0.35 * (crumplesShape(crumplesUV + float2(0.05, 0.0))
+            - crumplesShape(crumplesUV));
+
+    // fiber：fiberSize .2。
+    float2 fiberUV = 2.0 / 0.2 * patternUV;
+    float fiberTerm = 0.5 * uFiber * (fiberGradient(fiberUV) - 1.0);
+
+    // folds：foldsUV = rotate(patternUV*.12, 4*seed)，第二套再叠一次微小旋转。
+    float2 foldsUV = patternUV * 0.12;
+    float ang = 4.0 * 5.8;
+    foldsUV = float2(cos(ang) * foldsUV.x - sin(ang) * foldsUV.y,
+                     sin(ang) * foldsUV.x + cos(ang) * foldsUV.y);
+    float2 w = folds(foldsUV);
+    float2 foldsUV2 = foldsUV + float2(0.007 * cos(5.8), 0.0);
+    float ang2 = 0.01 * sin(5.8);
+    foldsUV2 = float2(cos(ang2) * foldsUV2.x - sin(ang2) * foldsUV2.y,
+                      sin(ang2) * foldsUV2.x + cos(ang2) * foldsUV2.y);
+    float2 w2 = folds(foldsUV2);
+
+    float dropTerm = 0.2 * dropsFn(patternUV * 2.0);
+
+    float2 normal = float2(0.0);
+    float2 normalImage = float2(0.0);
+
+    normal += 0.65 * min(5.0 * uContrast, 1.0) * 4.0 * max(float2(0.0), w + w2);
+    normalImage += 0.65 * 2.0 * w;
+
+    normal += crumpleTerm;
+    normalImage += 1.5 * crumpleTerm;
+
+    normal += 3.0 * dropTerm;
+    normalImage += 0.2 * dropTerm;
+
+    normal += uRoughness * 1.5 * rough;
+    normal += fiberTerm;
+
+    normalImage += uRoughness * 0.75 * rough;
+    normalImage += 0.2 * fiberTerm;
+
+    float lightZ = 9.5 - 9.0 * pow(uContrast, 0.1);
+    float resDot = dot(normalize(float3(normal.x, normal.y, lightZ)),
+                       float3(0.4082483, 0.8164966, 0.4082483));
+
+    float2 sampleUV = imageUV + 0.02 * normalImage;
+    float frame = uvFrameSoft(sampleUV);
+    float4 image = sampleCover(sampleUV);
+    image.rgb += 0.6 * pow(uContrast, 0.4) * (resDot - 0.7);
+    frame *= image.a;
+
+    // 主题色 alpha 恒为 1 → Paper 的 opacity 恒为 1，只剩 colorFront*res 与图像按 frame 插值。
+    float3 color = colorFront.rgb * resDot + colorBack.rgb * (1.0 - resDot);
+    color -= 0.007 * dropTerm;
+    color = mix(color, image.rgb, frame);
+    return clamp(color, float3(0.0), float3(1.0));
+}
+
+// ---------------------------------------------------------------------------
+// 3) HalftoneDots（hex + gooey）
+// ---------------------------------------------------------------------------
+float sigmoid(float x, float k) {
+    return 1.0 / (1.0 + exp(-k * (x - 0.5)));
+}
+
+float halftoneLum(float2 uv, float contrastK) {
+    float4 tex = sampleCover(uv);
+    float3 color = float3(sigmoid(tex.r, contrastK), sigmoid(tex.g, contrastK),
+                          sigmoid(tex.b, contrastK));
+    float lum = luminance(color);
+    lum = mix(1.0, lum, tex.a);
+    if (inverted > 0.5) lum = 1.0 - lum;
+    return lum;
+}
+
+/* Paper 的 getGooeyBall：r 是亮度，baseR 是 u_radius。 */
+float gooeyBall(float2 uv, float r, float baseR) {
+    float d = length(uv - 0.5);
+    float sizeRadius = 0.42;
+    sizeRadius = mix(sizeRadius * baseR, 0.0, r);
+    d = 1.0 - smoothstep(0.0, max(sizeRadius, 1e-4), d);
+    return pow(max(d, 0.0), 2.0 + baseR);
+}
+
+float3 effectHalftone(float2 fragCoord) {
+    float2 res = max(resolution, float2(1.0));
+    float2 imageUV = fragCoord / res;
+
+    // gooey 的 stepMultiplier = 6；hex + gooey 的 pad 再乘 .7。
+    float cellsPerSide = mix(300.0, 7.0, pow(clamp(dotSize, 0.0, 1.0), 0.7)) / 6.0;
+    float cellSizeY = 1.0 / max(cellsPerSide, 1e-4);
+    float2 pad = cellSizeY * float2(1.0, 1.0) * 0.7;
+
+    float2 uv = (imageUV - 0.5) / pad;
+
+    float contrastK = mix(0.0, 15.0, pow(clamp(dotContrast, 0.0, 1.0), 1.5));
+    float baseRadius = max(dotRadius, 1e-4);
+    if (originalColors > 0.5) {
+        contrastK = mix(0.1, 4.0, pow(clamp(dotContrast, 0.0, 1.0), 2.0));
+        baseRadius = 2.0 * pow(0.5 * baseRadius, 0.3);
+    }
+
+    float stepSize = 1.0 / 6.0;
+    float totalShape = 0.0;
+    float3 totalColor = float3(0.0);
+    float totalOpacity = 0.0;
+
+    for (int i = 0; i < 6; i++) {
+        for (int j = 0; j < 6; j++) {
+            // 6x6 循环里按 (row+col) 奇偶跳掉一半 → 六边形网格。
+            float parity = float(i + j) - 2.0 * floor(float(i + j) * 0.5);
+            if (parity > 0.5) continue;
+
+            float2 offset = float2(-0.5 + float(i) * stepSize, -0.5 + float(j) * stepSize);
+            float2 p = uv + offset;
+            float2 uv_i = floor(p);
+            float2 uv_f = fract(p);
+            float2 sampleUV = (uv_i + 0.5 - offset) * pad + 0.5;
+            float outOfFrame = uvFramePad(sampleUV, pad * stepSize);
+
+            float lum = halftoneLum(sampleUV, contrastK);
+            float4 ballColor = sampleCover(sampleUV) * outOfFrame;
+
+            float shape = gooeyBall(uv_f, lum, baseRadius) * outOfFrame;
+            totalColor += ballColor.rgb * shape;
+            totalShape += shape;
+            totalOpacity += shape;
+        }
+    }
+
+    float eps = 1e-4;
+    totalColor /= max(totalShape, eps);
+    totalOpacity /= max(totalShape, eps);
+
+    // gooey 的阈值：0.5 ± 常数带宽（fwidth(totalShape) 的替代）。
+    float shapeAA = 0.06;
+    float finalShape = smoothstep(0.5 - shapeAA, 0.5 + shapeAA, totalShape);
+
+    // grainMixer .12 / grainSize .5。
+    float2 grainSize = float2(1100.0, 1100.0);
+    float2 grainUV = (imageUV - 0.5) * grainSize + 0.5;
+    float grain = valueNoise(grainUV);
+    grain = smoothstep(0.55, 0.7 + 0.2 * 0.12, grain);
+    grain *= 0.12;
+    finalShape = mix(finalShape, 0.0, grain);
+
+    float3 color;
+    if (originalColors > 0.5) {
+        color = totalColor * finalShape + colorBack.rgb * (1.0 - finalShape);
+    } else {
+        color = colorFront.rgb * finalShape + colorBack.rgb * (1.0 - finalShape);
+    }
+
+    // grainOverlay .06：黑白点。
+    float2 grainRot1 = float2(cos(1.0) * grainUV.x - sin(1.0) * grainUV.y,
+                              sin(1.0) * grainUV.x + cos(1.0) * grainUV.y);
+    float2 grainRot2 = float2(cos(2.0) * grainUV.x - sin(2.0) * grainUV.y,
+                              sin(2.0) * grainUV.x + cos(2.0) * grainUV.y);
+    float grainOverlay = pow(mix(valueNoise(grainRot1 + float2(3.0)),
+                                 valueNoise(grainRot2 + float2(-1.0)), 0.5), 1.3);
+    float grainV = grainOverlay * 2.0 - 1.0;
+    float grainStrength = pow(0.06 * abs(grainV), 0.8);
+    color = mix(color, float3(step(0.0, grainV)), 0.5 * grainStrength);
+    return clamp(color, float3(0.0), float3(1.0));
+}
+
+// ---------------------------------------------------------------------------
+// 4) LensDistortion
+// ---------------------------------------------------------------------------
+float4 sampleOverWhiteLens(float2 uv) {
+    float4 img = sampleCover(uv);
+    float cover = img.a * uvFrameAA(uv);
+    float3 overWhite = mix(float3(1.0), img.rgb, cover);
+    return float4(overWhite, cover);
+}
+
+float3 hueColor(float hue) {
+    float3 rgb = clamp(abs(mod(hue * 6.0 + float3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0,
+                       float3(0.0), float3(1.0));
+    return rgb * rgb * (3.0 - 2.0 * rgb);
+}
+
+float3 effectLens(float2 fragCoord, inout float outAlpha) {
+    float2 res = max(resolution, float2(1.0));
+    float2 imageUV = fragCoord / res;
+    float aspect = 1.0;
+
+    float inradius = 0.5 * min(aspect, 1.0);
+    float outradius = 0.5 * length(float2(aspect, 1.0));
+    float spread = clamp(lensSpread, 0.0, 1.0);
+    float reach = 0.7 * pow(spread, 1.3 + 2.7 * spread);
+
+    float2 fromCenter = imageUV - 0.5;
+    fromCenter.x *= aspect;
+    float radius = length(fromCenter);
+
+    // ---- lensWarp：bulge 的 tan/atan 映射，再叠 lensCircle=.1 的边角拉伸。
+    float bulgeFade = 1.0;
+    float2 warped = fromCenter;
+    float warpedRadius = radius;
+    float bulge = clamp(lensBulge, -1.0, 1.0);
+    if (abs(bulge) > 1e-5 && radius > 1e-5) {
+        float rn = radius / inradius;
+        float b = abs(bulge) * (bulge > 0.0 ? 1.4 : 1.2);
+        if (bulge > 0.0) bulgeFade = 1.0 - smoothstep(1.45, 1.53, rn * b);
+        float map = bulge > 0.0
+                ? tan(min(rn * b, 1.53)) / tan(b)
+                : atan(rn * tan(b)) / b;
+        float scale = map / max(rn, 1e-5);
+        warped = fromCenter * scale;
+        warpedRadius = radius * scale;
+    }
+    float lensCircle = 0.1;
+    if (radius > 1e-5) {
+        float2 dir = warped / max(warpedRadius, 1e-5);
+        float2 halfBox = float2(aspect, 1.0) * 0.5;
+        float rBox = min(halfBox.x / max(abs(dir.x), 1e-4), halfBox.y / max(abs(dir.y), 1e-4));
+        float band = inradius * mix(0.03, 0.2, 0.5 * (bulge + 1.0));
+        float over = smoothstep(0.0, 1.0, (warpedRadius - (inradius - band)) / max(band, 1e-5));
+        float g = warpedRadius + (rBox - inradius) * pow(over, 14.0);
+        warped = dir * mix(warpedRadius, g, lensCircle);
+        warpedRadius = length(warped);
+    }
+
+    float2 baseUV = float2(warped.x / aspect, warped.y) + 0.5;
+    float edgeAA = 0.004;
+
+    // ---- getSpread：perspective .4 / focusCenter .55 / focusEdges .8 / swirl .08 / lensCircle .1。
+    float2 radialDir = fromCenter / max(inradius, 1e-5);
+    float maxLen = (outradius + reach) * (1.0 / max(inradius, 1e-5));
+    float radialLen = radius / max(inradius, 1e-5);
+    if (radialLen > maxLen) radialDir *= maxLen / max(radialLen, 1e-5);
+
+    float2 spreadDir = mix(float2(1.0, 0.0), radialDir, 0.4);
+    float bandProximity = smoothstep(inradius * 0.8, inradius, radius);
+    float lensCircleMaxing = bandProximity * lensCircle * lensCircle * lensCircle;
+    spreadDir = mix(spreadDir, radialDir, lensCircleMaxing);
+
+    float2 warpedAbs = abs(baseUV - 0.5);
+    float inner = mix(1.0, smoothstep(0.0, mix(inradius, outradius, 0.55), radius), 0.55);
+    float boxDist = max(warpedAbs.x, warpedAbs.y) * 2.0;
+    float outer = mix(1.0, 1.0 - min(boxDist, 1.0), 0.8);
+    float strength = inner * outer;
+    strength *= mix(1.0, mix(0.15, 0.03, max(-bulge, 0.0)), lensCircleMaxing);
+
+    float2 outside = max(warpedAbs - 0.5, float2(0.0));
+    float margin = max(reach * length(spreadDir) * (1.0 - lensCircle), edgeAA);
+    strength *= 1.0 - smoothstep(0.0, margin, length(outside));
+
+    float2 axis = spreadDir * (reach * strength);
+    axis.x /= aspect;
+
+    // ---- 色层循环：count=20、bias=1（t^3）、dispersionColor=.6。
+    float count = 20.0;
+    float invCount = 1.0 / count;
+    float invSpan = 1.0 / (count - 1.0);
+    float hueBase = 1.1;
+    float biasPower = 3.0;
+    float dispersionPower = pow(clamp(lensDispersion, 0.0, 1.0), 0.8);
+    float swirlAngle = 0.08 * 0.4 * PI * strength * spread
+            * min(1.0, inradius / max(warpedRadius, 1e-4));
+
+    float3 colorSum = float3(0.0);
+    float3 weightSum = float3(0.0);
+    float coverSum = 0.0;
+    for (int i = 0; i < 20; i++) {
+        float layer = float(i);
+        float hue = hueBase + layer * invCount;
+        float t = pow(layer * invSpan, biasPower);
+        float fanPos = 1.0 - 2.0 * t;
+        float2 tapUV = baseUV + axis * fanPos - 0.5;
+        if (abs(swirlAngle) > 1e-6) {
+            float swirl = swirlAngle * fanPos;
+            tapUV.x *= aspect;
+            tapUV = float2(cos(swirl) * tapUV.x - sin(swirl) * tapUV.y,
+                           sin(swirl) * tapUV.x + cos(swirl) * tapUV.y);
+            tapUV.x /= aspect;
+        }
+        float4 tap = sampleOverWhiteLens(tapUV + float2(0.5, 0.5));
+        float3 weight = 1.0 - dispersionPower * hueColor(hue);
+        colorSum += tap.rgb * weight;
+        weightSum += weight;
+        coverSum += tap.a;
+    }
+
+    float3 color = colorSum / max(weightSum, float3(1e-4));
+    float coverAvg = coverSum * invCount;
+    float ground = min(color.r, min(color.g, color.b));
+    outAlpha = clamp(max(coverAvg, 1.0 - ground) * bulgeFade, 0.0, 1.0);
+    // Paper 输出预乘色；SkSL 的 main 也按预乘解释返回值。
+    return max(color * bulgeFade - (1.0 - outAlpha), float3(0.0));
+}
+
+half4 main(float2 fragCoord) {
+    float3 rgb;
+    float outAlpha = 1.0;
+    if (effect < 0.5) {
+        rgb = effectDithering(fragCoord);
+    } else if (effect < 1.5) {
+        rgb = effectFlutedGlass(fragCoord);
+    } else if (effect < 2.5) {
+        rgb = effectPaperTexture(fragCoord);
+    } else if (effect < 3.5) {
+        rgb = effectHalftone(fragCoord);
+    } else {
+        rgb = effectLens(fragCoord, outAlpha);
+    }
+
+    rgb *= max(0.0, brightness);
+    return half4(half3(clamp(rgb, float3(0.0), float3(1.0))), alpha * outAlpha);
+}
+
+
+

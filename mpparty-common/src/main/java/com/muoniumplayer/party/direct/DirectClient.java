@@ -47,6 +47,8 @@ public final class DirectClient implements MpHost {
 
     /** 建连 + 握手的总预算。 */
     private static final int CONNECT_TIMEOUT_MS = 8_000;
+    /** 读空闲上限：房主 ping 间隔 15s 的三个周期。超过判定房主已死，主动断开重走路由。 */
+    private static final long STALE_TIMEOUT_NANOS = 45_000_000_000L;
 
     private final String host;
     private final int port;
@@ -172,10 +174,23 @@ public final class DirectClient implements MpHost {
     }
 
     private void readLoop(Socket s, InputStream in) {
+        boolean everSeenPing = false;
         try {
             while (running) {
+                // 读空闲超时：房主挂了（进程被杀/休眠，无 FIN/RST）时 read 永久阻塞，
+                // 界面永远显示「已连接」。房主每 15 秒发一帧 ping，把超时设在三个周期
+                // 之后（45 秒），一次网络抖动不会误杀。
+                // 兼容闸：老版本房主从不发 ping（也没有任何空闲期下行帧）。在见到第一帧
+                // S_PING 之前不启用空闲超时（退回旧版「永久阻塞」行为，宁可僵也不误踢）；
+                // 见到过 ping 的新会话，超时判死是可靠的。
+                int soTimeout = everSeenPing ? (int) (STALE_TIMEOUT_NANOS / 1_000_000L) : 0;
+                s.setSoTimeout(soTimeout);
                 byte[] frame = readFrame(in);
                 if (frame == null) break;
+                if (!everSeenPing) {
+                    everSeenPing = frameContainsPing(frame);
+                    if (everSeenPing) System.out.println("[MpParty/direct] 房主支持保活探测，启用空闲超时判定");
+                }
                 // 房主下发的帧原样进客户端：与服务器房间完全同一条链路。
                 // directSource 标记放行 MpPartyClient 的接收闸门（直连活跃时
                 // MC 通道的帧被丢弃，直连这一路必须放行）。
@@ -186,9 +201,21 @@ public final class DirectClient implements MpHost {
                     MpPartyClient.clearDirectSource();
                 }
             }
+        } catch (java.net.SocketTimeoutException idle) {
+            System.err.println("[MpParty/direct] 45s 没有收到房主任何帧，判定房主已离线");
         } catch (Throwable ignored) {
         } finally {
             close();
+        }
+    }
+
+    /** 探一帧的 op 是不是 S_PING（轻量：只为启用空闲超时闸，避免每帧完整解码）。 */
+    private static boolean frameContainsPing(byte[] frame) {
+        try {
+            com.google.gson.JsonObject msg = MpProto.decode(frame);
+            return msg != null && MpProto.S_PING.equals(MpProto.str(msg, MpProto.OP, ""));
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 

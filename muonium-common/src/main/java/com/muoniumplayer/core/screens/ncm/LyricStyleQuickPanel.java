@@ -15,6 +15,8 @@ import com.muoniumplayer.core.ncm.music.LyricSourceMemory;
 import com.muoniumplayer.core.rendering.animation.Easing;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.settings.HudConfig;
+import com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundConfig;
+import com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundOptions;
 import com.muoniumplayer.core.settings.HudSetting;
 import com.muoniumplayer.core.utils.cursor.CursorUtils;
 
@@ -52,6 +54,16 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             HudSetting.CURRENT_WORD_SCALE
     };
 
+    /**
+     * 「背景」：六档循环（QPlayer 流体 / 模糊封面 / 四种 Folia 样式）。
+     *
+     * <p>一行同时承担「切哪一套」与「这一套用哪种」，下面紧接着展开当前档位的参数 ——
+     * 用户点一下就换画面、同时换配置项。</p>
+     */
+    private static final int KIND_BACKGROUND_KIND = 25;
+    /** 当前档位下 Folia 的参数行，内容由 {@link #foliaSpecs()} 决定。 */
+    private static final int KIND_FOLIA_SPEC = 26;
+
     private static final int KIND_STYLE = 0;
     private static final int KIND_SLIDER = 1;
     private static final int KIND_SECTION = 2;
@@ -64,8 +76,12 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     private static final int KIND_STYLE_SLIDER = 8;
     /** 当前样式专属的开关 / 枚举，点一下换下一档。 */
     private static final int KIND_STYLE_TOGGLE = 9;
-    /** 背景类型：QPlayer 流体或传统模糊封面。 */
-    private static final int KIND_BACKGROUND_TYPE = 21;
+    /** 「未到行模糊」全局开关：未唱到的行渐进高斯模糊，正在唱的行保持清晰（qplayer edgeBlur）。 */
+    private static final int KIND_EDGE_BLUR = 22;
+    /** 背景层叠的层开关：值是位掩码里的位索引（bit0 = Latent 抖动层，bit1 = Sora 星空层）。 */
+    private static final int KIND_LAYER_TOGGLE = 23;
+    /** 背景层叠的层不透明度滑杆：值同样是位索引。 */
+    private static final int KIND_LAYER_OPACITY = 24;
     /** QPlayer fluid animation mode. */
     private static final int KIND_BACKGROUND = 10;
     /** 播放器颜色来源：当前预设或当前歌曲封面。 */
@@ -159,12 +175,52 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
 
     // ---- QPlayer 全屏歌词流体参数 ----
     private static final int FLUID_SATURATION_SLIDER = 0;
-    private static final String[] BACKGROUND_MODE_NAMES = {"QPlayer 流体", "模糊封面"};
+    private static final int FLUID_AUDIO_SLIDER = 1;
 
-    private static final String[] FLUID_STYLE_NAMES = {"Pixi 四层", "AMLL 网格", "Classic warp"};
-    private static final String[] FLUID_SLIDER_LABELS = {"流体饱和度"};
-    private static final float[] FLUID_SLIDER_MIN = {0f};
-    private static final float[] FLUID_SLIDER_MAX = {200f};
+    /**
+     * 流体算法的底层档位：显示名 + 渲染层风格索引两列并行。渲染层的
+     * SkijaFluidBackground 里 8/9 是叠加层内部代号，不进这个轮换表，
+     * 所以这里用显式映射而不是直接拿下标当风格值——改渲染层常量时
+     * 只动 STYLE_INDEXES 这一列。
+     *
+     * <p><b>只剩 QPlayer 自己的三支</b>：原先混在这里的「隐现 / 星空 / 像素 / 无 / 隐现网格 /
+     * 像素抖动 / 半调网点」是 folia 背景的旧移植，已经从这一组撤掉 —— Folia 的背景现在走
+     * 本面板「背景」那一行（{@code FoliaBackgroundOptions}），存档在
+     * {@code folia_lyrics_background.json}，与 QPlayer 的 {@code fullscreenLyricFluidStyle}
+     * 没有任何关系。旧配置里指向那几档的数值在渲染层统一折回 0。</p>
+     */
+    private static final String[] FLUID_STYLE_NAMES = {
+            "Pixi 四层", "AMLL 网格", "Classic warp"
+    };
+    /** 上表每档对应的 SkijaFluidBackground 风格常量值（顺序严格一致）。 */
+    private static final int[] FLUID_STYLE_INDEXES = {
+            0, 1, 2
+    };
+
+    /**
+     * 渲染层风格值 → 轮换表下标。找不到（理论上只有叠加层内部代号 8/9 会落到
+     * 这里，而它们不该被存进配置）时退回第一档，轮换从那里继续。
+     */
+    private static int displayIndexForStyle(int style) {
+        for (int i = 0; i < FLUID_STYLE_INDEXES.length; i++) {
+            if (FLUID_STYLE_INDEXES[i] == style) return i;
+        }
+        return 0;
+    }
+
+    /** 叠加层的两个位索引：bit0 = Latent 抖动层，bit1 = Sora 星空层。 */
+    private static final int LAYER_BIT_LATENT = 0;
+    private static final int LAYER_BIT_SORA = 1;
+
+    /** 叠加层不透明度滑杆的下标（进 {@link #LAYER_OPACITY_*} 三张表）。 */
+    private static final int LAYER_OPACITY_LATENT = 0;
+    private static final int LAYER_OPACITY_SORA = 1;
+    private static final String[] LAYER_OPACITY_LABELS = {"抖动层", "星空层"};
+    private static final float[] LAYER_OPACITY_MIN = {0f, 0f};
+    private static final float[] LAYER_OPACITY_MAX = {100f, 100f};
+    private static final String[] FLUID_SLIDER_LABELS = {"流体饱和度", "律动强度"};
+    private static final float[] FLUID_SLIDER_MIN = {0f, 0f};
+    private static final float[] FLUID_SLIDER_MAX = {200f, 200f};
     private static final String[] TILT_COLOR_NAMES = {"默认", "互换", "全强调", "全主色"};
 
     /** 第 0 档是「左侧歌曲封面 + 右侧登录账号头像」，未登录时右侧自动退回封面。 */
@@ -270,19 +326,45 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     }
 
     private static float fluidSliderValue(int index) {
-        return index == FLUID_SATURATION_SLIDER
-                ? HudConfig.fullscreenLyricFluidSaturation : 0f;
+        if (index == FLUID_SATURATION_SLIDER) return HudConfig.fullscreenLyricFluidSaturation;
+        if (index == FLUID_AUDIO_SLIDER) return HudConfig.fullscreenLyricFluidAudio;
+        return 0f;
     }
 
     private static void setFluidSliderValue(int index, float value) {
         if (index == FLUID_SATURATION_SLIDER) {
             HudConfig.fullscreenLyricFluidSaturation = Math.max(0f, Math.min(200f, value));
+        } else if (index == FLUID_AUDIO_SLIDER) {
+            HudConfig.fullscreenLyricFluidAudio = Math.max(0f, Math.min(200f, value));
         }
     }
 
     private static String fluidSliderText(int index, float value) {
-        return index == FLUID_SATURATION_SLIDER
+        return index == FLUID_SATURATION_SLIDER || index == FLUID_AUDIO_SLIDER
                 ? Math.round(value) + "%" : String.format("%.2f", value);
+    }
+
+    /**
+     * 背景层叠的不透明度助手。滑杆下标 0/1 对应位索引 bit0/bit1——这里「下标」与「位」刻意合一，
+     * 命中行拿到的 index 既能进表查标签，也能直接当位掩码的位用。
+     */
+    private static float layerOpacityValue(int index) {
+        if (index == LAYER_OPACITY_LATENT) return HudConfig.fullscreenLyricLayerLatentDither;
+        if (index == LAYER_OPACITY_SORA) return HudConfig.fullscreenLyricLayerSora;
+        return 0f;
+    }
+
+    private static void setLayerOpacityValue(int index, float value) {
+        if (index == LAYER_OPACITY_LATENT) {
+            HudConfig.fullscreenLyricLayerLatentDither = Math.max(0f, Math.min(100f, value));
+        } else if (index == LAYER_OPACITY_SORA) {
+            HudConfig.fullscreenLyricLayerSora = Math.max(0f, Math.min(100f, value));
+        }
+    }
+
+    /** 第 {@code bit} 位（bit0=Latent 抖动层，bit1=Sora 星空层）当前有没有开。 */
+    private static boolean layerEnabled(int bit) {
+        return (HudConfig.fullscreenLyricBackgroundLayers & (1 << bit)) != 0;
     }
     private static final double MARGIN = 12.0;
     private static final double BUTTON_SIZE = 24.0;
@@ -357,6 +439,41 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
      * 只维护一份行表的话就只能「瞬间换掉」——那正是「切换时大小突变、栏目凭空增减」的来源。分成两份
      * 之后，新行可以从透明淡入、消失的行可以留在原地淡出，其余行平滑挪到新位置。</p>
      */
+    /**
+     * 把 QPlayer 的那两个字段登记给 {@code FoliaBackgroundOptions}。
+     *
+     * <p>{@code HudConfig} 是按版本分叉的类（见 {@code SHARE-MANIFEST.md}），共享层的
+     * options 类不能直接 import 它；这里用一个静态块登记实现，取代「options 里反射读字段」。</p>
+     */
+    static {
+        com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundOptions.installHudBridge(
+                new com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundOptions.HudBridge() {
+                    @Override
+                    public void setBackgroundMode(int mode) {
+                        HudConfig.fullscreenLyricBackgroundMode = mode;
+                        HudConfig.save();
+                    }
+
+                    @Override
+                    public int backgroundMode() {
+                        return HudConfig.fullscreenLyricBackgroundMode;
+                    }
+
+                    @Override
+                    public String fluidStyleName() {
+                        int index = displayIndexForStyle(HudConfig.fullscreenLyricFluidStyle);
+                        return FLUID_STYLE_NAMES[Math.max(0, Math.min(FLUID_STYLE_NAMES.length - 1, index))];
+                    }
+                });
+    }
+
+    /** 当前档位下要显示的行；每帧算一次（档位或子选项变了就变）。 */
+    private static java.util.List<com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundOptions.Spec>
+            foliaSpecs() {
+        return com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundOptions
+                .rowsFor(com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundOptions.currentKind());
+    }
+
     private final List<Row> targetRows = new ArrayList<Row>();
     private int targetCount;
     /** 显示行表；渲染与命中共用。 */
@@ -665,16 +782,27 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         targetCount = 0;
         // ---- 1) 先按显示顺序把行收集起来 ----
         addRow(KIND_STYLE, 0, PICK_ROW_HEIGHT);
-        addRow(KIND_BACKGROUND_TYPE, 0, PICK_ROW_HEIGHT);
-        if (HudConfig.fullscreenLyricBackgroundMode == 0) {
-            addRow(KIND_BACKGROUND, 0, PICK_ROW_HEIGHT);
-            addRow(KIND_THEME_SOURCE, 0, PICK_ROW_HEIGHT);
-            addRow(KIND_SECTION, 3, SECTION_HEIGHT);
-            addRow(KIND_FLUID_STYLE, 0, PICK_ROW_HEIGHT);
-            addRow(KIND_FLUID_SLIDER, FLUID_SATURATION_SLIDER, ROW_HEIGHT);
+        // ---- 背景：一行切六档（QPlayer 流体 / 模糊封面 / 四种 Folia 样式），
+        //      下面紧接着换成这一档自己的参数。切换即换配置项。----
+        addRow(KIND_BACKGROUND_KIND, 0, PICK_ROW_HEIGHT);
+        if (FoliaBackgroundOptions.isQPlayer(FoliaBackgroundOptions.currentKind())) {
+            if (FoliaBackgroundOptions.currentKind() == FoliaBackgroundOptions.KIND_QPLAYER_FLUID) {
+                addRow(KIND_SECTION, 3, SECTION_HEIGHT);
+                addRow(KIND_FLUID_STYLE, 0, PICK_ROW_HEIGHT);
+                addRow(KIND_BACKGROUND, 0, PICK_ROW_HEIGHT);
+                addRow(KIND_FLUID_SLIDER, FLUID_SATURATION_SLIDER, ROW_HEIGHT);
+                addRow(KIND_FLUID_SLIDER, FLUID_AUDIO_SLIDER, ROW_HEIGHT);
+            }
         } else {
-            addRow(KIND_THEME_SOURCE, 0, PICK_ROW_HEIGHT);
+            List<FoliaBackgroundOptions.Spec> specs = foliaSpecs();
+            for (int i = 0; i < specs.size(); i++) {
+                addRow(KIND_FOLIA_SPEC, i, FoliaBackgroundOptions.rowHeight(specs.get(i)));
+            }
         }
+        // 全局效果开关，与用哪套背景无关，紧挨背景组方便一起够到。
+        addRow(KIND_EDGE_BLUR, 0, PICK_ROW_HEIGHT);
+        addRow(KIND_THEME_SOURCE, 0, PICK_ROW_HEIGHT);
+
         for (int i = 0; i < SETTINGS.length; i++) {
             addRow(KIND_SLIDER, i, ROW_HEIGHT);
         }
@@ -808,11 +936,27 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
 
     private void handleRowClick(Row row, double mouseX, int mouseButton) {
         boolean right = mouseButton == 1;
-        if (row.kind == KIND_BACKGROUND_TYPE) {
-            int nextMode = HudConfig.fullscreenLyricBackgroundMode + (right ? -1 : 1);
-            HudConfig.fullscreenLyricBackgroundMode = ((nextMode % BACKGROUND_MODE_NAMES.length)
-                    + BACKGROUND_MODE_NAMES.length) % BACKGROUND_MODE_NAMES.length;
-            HudConfig.save();
+        if (row.kind == KIND_BACKGROUND_KIND) {
+            // 左键下一档、右键上一档；切完立刻重排，下面的参数整块换成新档位的。
+            int kind = FoliaBackgroundOptions.currentKind();
+            FoliaBackgroundOptions.applyKind(kind + (right ? -1 : 1));
+            scrollTarget = 0;
+            return;
+        }
+        if (row.kind == KIND_FOLIA_SPEC) {
+            List<FoliaBackgroundOptions.Spec> specs = foliaSpecs();
+            if (row.index >= 0 && row.index < specs.size()) {
+                handleFoliaSpec(specs.get(row.index), right);
+            }
+            return;
+        }
+
+        if (row.kind == KIND_EDGE_BLUR) {
+            // 布尔开关：左键切换，右键无效；下一帧立即生效（渲染状态每帧从配置读起）。
+            if (!right) {
+                HudConfig.fullscreenLyricEdgeBlur = !HudConfig.fullscreenLyricEdgeBlur;
+                HudConfig.save();
+            }
             return;
         }
         if (row.kind == KIND_STYLE) {
@@ -906,17 +1050,28 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             return;
         }
         if (row.kind == KIND_FLUID_STYLE) {
-            int next = HudConfig.fullscreenLyricFluidStyle + (right ? -1 : 1);
-            HudConfig.fullscreenLyricFluidStyle = ((next % FLUID_STYLE_NAMES.length)
-                    + FLUID_STYLE_NAMES.length) % FLUID_STYLE_NAMES.length;
+            int current = displayIndexForStyle(HudConfig.fullscreenLyricFluidStyle);
+            int next = current + (right ? -1 : 1);
+            next = ((next % FLUID_STYLE_NAMES.length) + FLUID_STYLE_NAMES.length)
+                    % FLUID_STYLE_NAMES.length;
+            HudConfig.fullscreenLyricFluidStyle = FLUID_STYLE_INDEXES[next];
             HudConfig.save();
+            return;
+        }
+        if (row.kind == KIND_LAYER_TOGGLE) {
+            // 直接翻转位掩码里的对应位：只有开/关两态，左键切换，右键无意义。
+            if (!right) {
+                HudConfig.fullscreenLyricBackgroundLayers ^= (1 << row.index);
+                HudConfig.save();
+            }
             return;
         }
         if (right) {
             return;
         }
         if (row.kind == KIND_SLIDER || row.kind == KIND_BEATS || row.kind == KIND_HSB
-                || row.kind == KIND_STYLE_SLIDER || row.kind == KIND_FLUID_SLIDER) {
+                || row.kind == KIND_STYLE_SLIDER || row.kind == KIND_FLUID_SLIDER
+                || row.kind == KIND_LAYER_OPACITY) {
             dragKind = row.kind;
             dragIndex = row.index;
             applyDrag(mouseX, rowLeft(row));
@@ -952,6 +1107,21 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     }
 
     private void applyDrag(double mouseX, double left) {
+        if (dragKind == KIND_FOLIA_SPEC) {
+            java.util.List<FoliaBackgroundOptions.Spec> specs = foliaSpecs();
+            if (dragIndex < 0 || dragIndex >= specs.size()) return;
+            FoliaBackgroundOptions.Spec spec = specs.get(dragIndex);
+            if (spec.kind != FoliaBackgroundOptions.KIND_SLIDER) return;
+            double fraction = fractionAt(mouseX, left, trackWidth());
+            float value = (float) (spec.min + (spec.max - spec.min) * fraction);
+            if (spec.step > 0f) {
+                value = spec.min + Math.round((value - spec.min) / spec.step) * spec.step;
+            }
+            FoliaBackgroundOptions.writeFloat(spec.id,
+                    Math.max(spec.min, Math.min(spec.max, value)));
+            pendingSave = true;
+            return;
+        }
         if (dragKind == KIND_SLIDER) {
             if (dragIndex < 0 || dragIndex >= SETTINGS.length) return;
             HudSetting setting = SETTINGS[dragIndex];
@@ -975,6 +1145,16 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             float value = (float) (FLUID_SLIDER_MIN[dragIndex]
                     + (FLUID_SLIDER_MAX[dragIndex] - FLUID_SLIDER_MIN[dragIndex]) * fraction);
             setFluidSliderValue(dragIndex, value);
+            pendingSave = true;
+            return;
+        }
+        if (dragKind == KIND_LAYER_OPACITY) {
+            // index 既是滑杆下标也是位掩码的位索引（见 layerOpacityValue），这里只用它进表取范围。
+            if (dragIndex < 0 || dragIndex >= LAYER_OPACITY_LABELS.length) return;
+            double fraction = fractionAt(mouseX, left, trackWidth());
+            float value = (float) (LAYER_OPACITY_MIN[dragIndex]
+                    + (LAYER_OPACITY_MAX[dragIndex] - LAYER_OPACITY_MIN[dragIndex]) * fraction);
+            setLayerOpacityValue(dragIndex, value);
             pendingSave = true;
             return;
         }
@@ -1011,6 +1191,9 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
     }
 
     private void releaseDrag() {
+        if (dragKind == KIND_FOLIA_SPEC) {
+            FoliaBackgroundConfig.save();
+        }
         int finishedKind = dragKind;
         dragKind = -1;
         dragIndex = -1;
@@ -1145,11 +1328,96 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         }
     }
 
+    // ──────────────────────────── Folia 参数行 ────────────────────────────
+
+    /**
+     * 画一条 Folia 参数行。
+     *
+     * <p>四种控件：滑杆拖动、开关翻转、枚举左右循环、动作点击。这里只负责画，
+     * 读写与枚举语义全在 {@code FoliaBackgroundOptions}。</p>
+     */
+    private void renderFoliaSpec(Row row, FoliaBackgroundOptions.Spec spec,
+                                 double mouseX, double mouseY, float alpha) {
+        double left = rowLeft(row);
+        if (spec.kind == FoliaBackgroundOptions.KIND_SECTION) {
+            FontManager.pf12bold.drawString(spec.label, left, row.y + 3,
+                    hexColor(1f, 1f, 1f, alpha * .52f));
+            return;
+        }
+        if (spec.kind == FoliaBackgroundOptions.KIND_SLIDER) {
+            double width = trackWidth();
+            double trackY = row.y + 16;
+            float value = FoliaBackgroundOptions.readFloat(spec.id);
+            String text = FoliaBackgroundOptions.formatValue(spec, value);
+            FontManager.pf12bold.drawString(spec.label, left, row.y,
+                    hexColor(1f, 1f, 1f, alpha * .82f));
+            FontManager.pf12bold.drawString(text,
+                    left + width - FontManager.pf12bold.getStringWidthD(text), row.y,
+                    hexColor(1f, 1f, 1f, alpha * .62f));
+            double fraction = (value - spec.min) / Math.max(1.0e-4, spec.max - spec.min);
+            boolean hover = (dragKind == KIND_FOLIA_SPEC && dragIndex == row.index)
+                    || isInside(mouseX, mouseY, left, trackY - 6, width, TRACK_HEIGHT + 12);
+            renderTrack(left, trackY, width, fraction, hover, alpha);
+            return;
+        }
+        if (spec.kind == FoliaBackgroundOptions.KIND_TOGGLE) {
+            renderPickRow(row, spec.label,
+                    FoliaBackgroundOptions.readBoolean(spec.id) ? "开" : "关",
+                    mouseX, mouseY, alpha);
+            return;
+        }
+        if (spec.kind == FoliaBackgroundOptions.KIND_PICK) {
+            renderPickRow(row, spec.label, FoliaBackgroundOptions.readOption(spec),
+                    mouseX, mouseY, alpha);
+            return;
+        }
+        renderPickRow(row, spec.label, FoliaBackgroundOptions.actionValue(spec),
+                mouseX, mouseY, alpha);
+    }
+
+    /** 点击一条 Folia 参数行。 */
+    private void handleFoliaSpec(FoliaBackgroundOptions.Spec spec, boolean right) {
+        switch (spec.kind) {
+            case FoliaBackgroundOptions.KIND_SLIDER:
+                dragKind = KIND_FOLIA_SPEC;
+                dragIndex = foliaSpecs().indexOf(spec);
+                return;
+            case FoliaBackgroundOptions.KIND_TOGGLE:
+                if (right) return;
+                FoliaBackgroundOptions.writeBoolean(spec.id,
+                        !FoliaBackgroundOptions.readBoolean(spec.id));
+                FoliaBackgroundConfig.save();
+                return;
+            case FoliaBackgroundOptions.KIND_PICK:
+                FoliaBackgroundOptions.cyclePick(spec, right);
+                FoliaBackgroundConfig.save();
+                return;
+            case FoliaBackgroundOptions.KIND_ACTION:
+                if (right) return;
+                FoliaBackgroundOptions.runAction(spec.id);
+                FoliaBackgroundConfig.save();
+                return;
+            default:
+        }
+    }
+
     private void renderRow(Row row, double mouseX, double mouseY, float panelAlpha) {
-        if (row.kind == KIND_BACKGROUND_TYPE) {
-            int mode = Math.max(0, Math.min(BACKGROUND_MODE_NAMES.length - 1,
-                    HudConfig.fullscreenLyricBackgroundMode));
-            renderPickRow(row, "背景类型", BACKGROUND_MODE_NAMES[mode],
+        if (row.kind == KIND_BACKGROUND_KIND) {
+            int kind = FoliaBackgroundOptions.currentKind();
+            renderPickRow(row, "背景", FoliaBackgroundOptions.kindLabel(kind),
+                    mouseX, mouseY, panelAlpha);
+            return;
+        }
+        if (row.kind == KIND_FOLIA_SPEC) {
+            List<FoliaBackgroundOptions.Spec> specs = foliaSpecs();
+            if (row.index >= 0 && row.index < specs.size()) {
+                renderFoliaSpec(row, specs.get(row.index), mouseX, mouseY, panelAlpha);
+            }
+            return;
+        }
+
+        if (row.kind == KIND_EDGE_BLUR) {
+            renderPickRow(row, "未到行模糊", HudConfig.fullscreenLyricEdgeBlur ? "开" : "关",
                     mouseX, mouseY, panelAlpha);
             return;
         }
@@ -1189,14 +1457,22 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             return;
         }
         if (row.kind == KIND_FLUID_STYLE) {
-            int style = Math.max(0, Math.min(FLUID_STYLE_NAMES.length - 1,
-                    HudConfig.fullscreenLyricFluidStyle));
+            int style = displayIndexForStyle(HudConfig.fullscreenLyricFluidStyle);
             renderPickRow(row, "流体算法", FLUID_STYLE_NAMES[style],
                     mouseX, mouseY, panelAlpha);
             return;
         }
         if (row.kind == KIND_FLUID_SLIDER) {
             renderFluidSettingRow(row, mouseX, mouseY, panelAlpha);
+            return;
+        }
+        if (row.kind == KIND_LAYER_TOGGLE) {
+            renderPickRow(row, LAYER_OPACITY_LABELS[row.index],
+                    layerEnabled(row.index) ? "开" : "关", mouseX, mouseY, panelAlpha);
+            return;
+        }
+        if (row.kind == KIND_LAYER_OPACITY) {
+            renderLayerOpacityRow(row, mouseX, mouseY, panelAlpha);
             return;
         }
         if (row.kind == KIND_SECTION) {
@@ -1207,6 +1483,8 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
                 title = "歌词同步";
             } else if (row.index == 3) {
                 title = "流体背景";
+            } else if (row.index == 5) {
+                title = "背景层叠";
             } else {
                 title = "背景配色";
             }
@@ -1349,6 +1627,32 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         FontManager.pf12bold.drawString(FLUID_SLIDER_LABELS[row.index], left, row.y,
                 hexColor(1f, 1f, 1f, panelAlpha * .82f));
         String valueText = fluidSliderText(row.index, value);
+        FontManager.pf12bold.drawString(valueText,
+                left + width - FontManager.pf12bold.getStringWidthD(valueText), row.y,
+                hexColor(1f, 1f, 1f, panelAlpha * .62f));
+
+        double fraction = Math.max(0.0, Math.min(1.0, (value - min) / Math.max(1.0e-4, max - min)));
+        boolean hover = (dragKind == row.kind && dragIndex == row.index)
+                || isInside(mouseX, mouseY, left, trackY - 6, width, TRACK_HEIGHT + 12);
+        renderTrack(left, trackY, width, fraction, hover, panelAlpha);
+    }
+
+    /**
+     * 背景层叠的不透明度行：与 {@link #renderFluidSettingRow} 同一款（label 左、百分比右、
+     * renderTrack），只是数值来自位掩码层各自的字段，范围固定 0-100。
+     */
+    private void renderLayerOpacityRow(Row row, double mouseX, double mouseY, float panelAlpha) {
+        if (row.index < 0 || row.index >= LAYER_OPACITY_LABELS.length) return;
+        double left = rowLeft(row);
+        double width = trackWidth();
+        double trackY = row.y + 16;
+        float value = layerOpacityValue(row.index);
+        float min = LAYER_OPACITY_MIN[row.index];
+        float max = LAYER_OPACITY_MAX[row.index];
+
+        FontManager.pf12bold.drawString(LAYER_OPACITY_LABELS[row.index], left, row.y,
+                hexColor(1f, 1f, 1f, panelAlpha * .82f));
+        String valueText = Math.round(value) + "%";
         FontManager.pf12bold.drawString(valueText,
                 left + width - FontManager.pf12bold.getStringWidthD(valueText), row.y,
                 hexColor(1f, 1f, 1f, panelAlpha * .62f));
@@ -1558,3 +1862,15 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         return mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height;
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+

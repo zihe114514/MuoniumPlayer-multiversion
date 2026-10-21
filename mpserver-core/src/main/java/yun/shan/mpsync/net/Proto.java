@@ -151,6 +151,14 @@ public final class Proto {
     public static final String C_KICK        = "kick";
     public static final String C_TRANSFER    = "transfer";     // owner only
     public static final String C_PROGRESS    = "progress";     // heartbeat
+    /**
+     * 直连保活应答帧的占位常量（"pong"，与 mpparty MpProto.C_PONG 同名）。
+     *
+     * <p>直连房间不走这套 RoomManager；但房主侧 reader 会把成员的所有帧（含 pong）
+     * 转进 MpParty.onPacket → 引擎分发，pom 和直连引擎共用这个 switch 的话，
+     * 没有 case 就会每 15 秒回一句「不支持的操作」。占位 + 显式吞掉即可。</p>
+     */
+    public static final String C_PONG        = "pong";         // direct keep-alive reply
     public static final String C_SYNC        = "sync";         // request a full snapshot
     public static final String C_URL_SUPPLY  = "url_supply";   // answer to S_URL_NEEDED
 

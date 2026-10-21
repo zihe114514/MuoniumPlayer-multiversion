@@ -215,8 +215,17 @@ public final class HttpDownloadRace {
         }
 
         // 观察窗：A 档跑 15 秒无人交卷（或 A 档已全部阵亡）就放 B 档，A 档继续跑不中断。
+        // delay == 0 是「全量竞速」档位（PROP_STAGE_MILLIS 注释），语义是 A/B 同跑——
+        // 以前整段被 delay > 0 挡住，B 档永远不起，实际反而只剩 A 档。
         long delay = stagingDelayMillis();
-        if (tierBPresent && tierAPresent && delay > 0L) {
+        if (tierBPresent && tierAPresent && delay == 0L) {
+            for (int index = 0; index < count; index++) {
+                if (!isTierA(urls.get(index)) && !allWorkers[index].isAlive() && !started.contains(allWorkers[index])) {
+                    allWorkers[index].start();
+                    started.add(allWorkers[index]);
+                }
+            }
+        } else if (tierBPresent && tierAPresent && delay > 0L) {
             long deadline = System.currentTimeMillis() + delay;
             while (System.currentTimeMillis() < deadline) {
                 if (settled.get()) {

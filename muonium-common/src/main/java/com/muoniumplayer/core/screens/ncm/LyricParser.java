@@ -26,8 +26,12 @@ import java.util.regex.Pattern;
 /** 歌词解析与跨平台时间轴适配。 */
 public class LyricParser {
 
-    private static final Pattern LRC_LINE = Pattern.compile("((?:\\[\\d{1,3}:\\d{1,2}[.:]\\d{1,3}])+)(.*)");
-    private static final Pattern LRC_TIME = Pattern.compile("\\[(\\d{1,3}):(\\d{1,2})[.:](\\d{1,3})]");
+    /**
+     * 普通 LRC 行/时间标签。小数秒段<b>可选</b>：外挂 .lrc 里 {@code [01:23]} 这种整秒时间戳
+     * 很常见，以前必填导致整份歌词逐行匹配失败、被当成无歌词。缺省按 0 毫秒处理。
+     */
+    private static final Pattern LRC_LINE = Pattern.compile("((?:\\[\\d{1,3}:\\d{1,2}(?:[.:]\\d{1,3})?])+)(.*)");
+    private static final Pattern LRC_TIME = Pattern.compile("\\[(\\d{1,3}):(\\d{1,2})(?:[.:](\\d{1,3}))?]");
     private static final Pattern ENHANCED_LRC_WORD = Pattern.compile("<(\\d{1,3}):(\\d{1,2})[.:](\\d{1,3})>([^<]*)");
     private static final Pattern YRC_LINE = Pattern.compile("^\\[(\\d+),(\\d+)](.*)$");
     private static final Pattern YRC_WORD = Pattern.compile("\\((\\d+),(\\d+)(?:,(\\d+))?\\)([^()]*)");
@@ -929,6 +933,10 @@ public class LyricParser {
         for (String rawLine : content.replace("\uFEFF", "").split("\\r?\\n", 40)) {
             String line = rawLine.trim();
             if (line.isEmpty()) continue;
+            // QRC 文件头部常见 [ti:…]/[ar:…]/[offset:…] 这类元数据行（QRC_LINE 匹配不到）。
+            // 以前见到第一行不是 [start,dur] 就整体判 false，带头的 QRC 走不到解析。
+            // 这里跳过 LRC 风格的元数据行，从第一条时间轴行做判定。
+            if (line.charAt(0) == '[' && !QRC_LINE.matcher(line).matches()) continue;
             if (!QRC_LINE.matcher(line).matches()) return false;
             // YRC 的音节是 (start,dur,0),QRC 是 text(start,dur):有了第三个字段才是 YRC。
             return YRC_THREE_FIELD_WORD.matcher(line).find() || QRC_WORD.matcher(line).find();
@@ -1218,10 +1226,14 @@ public class LyricParser {
     }
 
     private static long parseTimestamp(Matcher matcher) {
+        // 整秒形式 [mm:ss] 的小数组为 null，按 0 毫秒。
         return parseTimestamp(matcher.group(1), matcher.group(2), matcher.group(3));
     }
 
     private static long parseTimestamp(String minutes, String seconds, String fraction) {
+        if (fraction == null) {
+            return Long.parseLong(minutes) * 60000L + Long.parseLong(seconds) * 1000L;
+        }
         long millis = Long.parseLong(fraction);
         if (fraction.length() == 1) millis *= 100L;
         else if (fraction.length() == 2) millis *= 10L;

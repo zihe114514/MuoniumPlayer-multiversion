@@ -1,0 +1,300 @@
+/*
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * MuoniumPlayer Skija RuntimeEffect port of 本项目's "Latent" full-screen
+ * background (src/components/visualizer/backgrounds/latent/LatentBackground.tsx,
+ * AGPL-3.0-only - see _folia_ref/LICENSE), which stacks two @paper-design/shaders
+ * scenes over the album art:
+ *
+ *   lower  MeshGradient - six cover colors on a drifting 3x2 control grid,
+ *                         domain-warp "distortion" + center "swirl", smooth
+ *                         inverse-distance blending of the six colors, and a
+ *                         saturate/brightness filter reacting to audio;
+ *   upper  Dithering    - two-color 4x4 Bayer ordered dithering, shape="warp"
+ *                         (the threshold field itself flows over time), drawn
+ *                         over the mesh with CSS soft-light blending.
+ *
+ * Audio-response mapping. 本项目 writes these per frame from smoothed
+ * envelopes (smoothedPower -> audio, smoothedBass -> audioLow, smoothedMid ->
+ * audioMid); here they are derived inside the shader:
+ *
+ *   u_distortion = 0.8 + audio    * 0.62   (meshDistortion + smoothedPower*0.62)
+ *   u_swirl      = 0.1 + audioMid * 0.38   (meshSwirl      + smoothedMid*0.38)
+ *   dither px    = max(0.5, 2.5 * (1 - audioLow * 0.34))
+ *   dither opac. = min(1, 0.55 + audioLow * 0.25)
+ *   dither scale = 1.015 + audioLow * 0.025
+ *   mesh scale   = 1.025 + audio    * 0.018
+ *   mesh filter  = saturate(1.04 + audioMid * 0.34) brightness(0.94 + audio * 0.16)
+ *
+ * `time` must come in pre-integrated from the host (SkijaFluidBackground's
+ * renderWithTime clock). No term below multiplies time by an audio value, so
+ * an onset can accelerate the drift without ever jumping a phase. At
+ * audio = 0 the scene keeps floating at the tuning baselines: meshSpeed 0.3
+ * and ditheringSpeed 0.1 (MESH_CLOCK / DITHER_CLOCK below). Tuning defaults
+ * are baked in as constants (meshDistortion 0.8, meshSwirl 0.1,
+ * ditheringSize 2.5, ditheringOpacity 0.55, displayMode "both").
+ *
+ * Six-color palette without a median cut: the original runs
+ * extractRepresentativeColors(cover, 6) on the CPU. A single RuntimeEffect
+ * cannot afford a histogram median-cut, so the 32x32 cover child is sampled
+ * with a 3x3 tent kernel at three fixed UV anchors, and the six mesh colors
+ * are derived: the three anchors, two of them lightened 25% toward white
+ * (the tonal variants), and one cross-anchor mix for the sixth slot. The
+ * dithering pair is the darkest and brightest anchor, kept in one hue family
+ * (front lifted toward white so soft-light keeps its contrast). Theme colors
+ * from the original's "cover-theme" mode are not available inside a shader.
+ *
+ * Target: Skija 0.143.17 (Skia ~m134), RuntimeEffect.makeForShader, following
+ * this project's fluid shader conventions (uniform float2 resolution / float
+ * time / audio envelopes + "cover" child at 32x32). No loops, no arrays, no
+ * function overloads; half/float conversions are written out explicitly.
+ */
+
+uniform float2 resolution;
+uniform float time;
+uniform float audio;
+uniform float audioLow;
+uniform float audioMid;
+uniform shader cover;
+// Layer compositing:
+//   layer - which half of the Latent pair this invocation draws:
+//           0 = mesh gradient only, 1 = dithering only, 2 = both (classic look)
+//   alpha - output alpha multiplier. The mesh half draws opaque color; the
+//           dither half carries its own cell alpha so the host can stack it
+//           over any lower layer (blend modes live on the host Paint).
+uniform float layer;
+uniform float alpha;
+
+const float TEX_SIZE = 32.0;
+const float MESH_CLOCK = 0.3;            // tuning.meshSpeed baseline
+const float DITHER_CLOCK = 0.1;          // tuning.ditheringSpeed baseline
+const float BASE_DISTORTION = 0.8;       // tuning.meshDistortion
+const float BASE_SWIRL = 0.1;            // tuning.meshSwirl
+const float BASE_DITHER_PX = 2.5;        // tuning.ditheringSize
+const float BASE_DITHER_OPACITY = 0.55;  // tuning.ditheringOpacity
+
+// -------------------------------------------------------------------------
+// Cover anchors: 3x3 tent-kernel weighted average of the 32x32 cover child.
+// Corner taps weight 1, edge taps 2, center 4 (sum 16).
+// -------------------------------------------------------------------------
+float3 coverTent(float2 centerUV) {
+    float2 o = float2(0.08);  // about 2.5 px on the 32 px working texture
+    float3 sum = float3(cover.eval((centerUV - o) * TEX_SIZE).rgb);
+    sum += float3(cover.eval((centerUV + float2(o.x, -o.y)) * TEX_SIZE).rgb);
+    sum += float3(cover.eval((centerUV + float2(-o.x, o.y)) * TEX_SIZE).rgb);
+    sum += float3(cover.eval((centerUV + o) * TEX_SIZE).rgb);
+    sum += float3(cover.eval((centerUV + float2(0.0, -o.y)) * TEX_SIZE).rgb) * 2.0;
+    sum += float3(cover.eval((centerUV + float2(-o.x, 0.0)) * TEX_SIZE).rgb) * 2.0;
+    sum += float3(cover.eval((centerUV + float2(o.x, 0.0)) * TEX_SIZE).rgb) * 2.0;
+    sum += float3(cover.eval((centerUV + float2(0.0, o.y)) * TEX_SIZE).rgb) * 2.0;
+    sum += float3(cover.eval(centerUV * TEX_SIZE).rgb) * 4.0;
+    return sum * (1.0 / 16.0);
+}
+
+// -------------------------------------------------------------------------
+// Small color helpers.
+// -------------------------------------------------------------------------
+float luminance(float3 c) {
+    return dot(c, float3(0.2126, 0.7152, 0.0722));
+}
+
+// CSS-like saturate(): mix toward/away from the luminance by s, clamped >= 0.
+float3 saturated(float3 c, float s) {
+    return max(float3(0.0), mix(float3(luminance(c)), c, s));
+}
+
+// -------------------------------------------------------------------------
+// Field deformation for the mesh layer. Both work in aspect-corrected space.
+// -------------------------------------------------------------------------
+float2 swirlAround(float2 p, float2 center, float strength) {
+    float2 d = p - center;
+    float angle = strength * 3.0 * exp(-length(d) * 1.25);
+    float s = sin(angle);
+    float c = cos(angle);
+    return center + float2(c * d.x - s * d.y, s * d.x + c * d.y);
+}
+
+// Layered-sine domain warp; amount scales with the distortion uniform.
+float2 distortField(float2 src, float amount, float t) {
+    float2 p = src;  // in-params stay untouched; warp into a local copy
+    p.x += amount * (sin(p.y * 2.9 + t * 0.9) * 0.7 + sin(p.y * 6.3 - t * 1.4) * 0.3);
+    p.y += amount * (cos(p.x * 2.5 - t * 0.8) * 0.7 + cos(p.x * 5.9 + t * 1.2) * 0.3);
+    return p;
+}
+
+// -------------------------------------------------------------------------
+// 4x4 Bayer ordered-dither threshold in [0, 1). The classic recursive
+// bayer2/bayer4 idiom; inputs are reduced mod 4 by the caller so the fract
+// stays exact at any screen size.
+// -------------------------------------------------------------------------
+float bayer2(float2 p) {
+    float2 a = floor(p);
+    return fract(a.x * 0.5 + a.y * a.y * 0.75);
+}
+
+float bayer4(float2 a) {
+    return bayer2(0.5 * a) * 0.25 + bayer2(a);
+}
+
+// -------------------------------------------------------------------------
+// CSS/PDF soft-light, channel by channel: base = mesh backdrop, blend =
+// dithering layer. Unit-range inputs keep the result unit-range.
+// -------------------------------------------------------------------------
+float softLightChannel(float a, float b) {
+    float d = a <= 0.25 ? ((16.0 * a - 12.0) * a + 4.0) * a : sqrt(a);
+    return b <= 0.5 ? a - (1.0 - 2.0 * b) * a * (1.0 - a)
+                    : a + (2.0 * b - 1.0) * (d - a);
+}
+
+float3 softLight(float3 base, float3 blend) {
+    return float3(softLightChannel(base.r, blend.r),
+                  softLightChannel(base.g, blend.g),
+                  softLightChannel(base.b, blend.b));
+}
+
+// -------------------------------------------------------------------------
+// Mesh gradient layer: six drifting control points on a 3x2 grid, six colors
+// blended by inverse-distance weights. q is aspect-corrected; t is the mesh
+// clock (time * MESH_CLOCK); the drift amplitude also gains a little audio.
+// -------------------------------------------------------------------------
+float3 meshColor(float2 q, float t, float aspect, float3 a0, float3 a1, float3 a2) {
+    // Six derived palette slots (see header): anchors, white-lifted variants,
+    // and one cross-anchor mix.
+    float3 c0 = a0;
+    float3 c1 = a1;
+    float3 c2 = a2;
+    float3 c3 = mix(a0, float3(1.0), 0.25);
+    float3 c4 = mix(a2, float3(1.0), 0.25);
+    float3 c5 = mix(a1, a2, 0.5);
+
+    float amp = 0.16 + audio * 0.05;
+    float2 p0 = float2(0.12 * aspect, 0.16) + amp * float2(sin(t * 0.50 + 0.8), cos(t * 0.62 + 2.1));
+    float2 p1 = float2(0.50 * aspect, 0.08) + amp * float2(sin(t * 0.44 + 2.6), cos(t * 0.71 + 0.4));
+    float2 p2 = float2(0.88 * aspect, 0.18) + amp * float2(sin(t * 0.58 + 4.4), cos(t * 0.47 + 3.3));
+    float2 p3 = float2(0.10 * aspect, 0.84) + amp * float2(sin(t * 0.66 + 1.5), cos(t * 0.55 + 5.2));
+    float2 p4 = float2(0.52 * aspect, 0.92) + amp * float2(sin(t * 0.41 + 3.7), cos(t * 0.60 + 1.1));
+    float2 p5 = float2(0.90 * aspect, 0.80) + amp * float2(sin(t * 0.49 + 5.6), cos(t * 0.68 + 4.0));
+
+    // Inverse-distance weights, w = 1 / (d^3 + eps): smooth blobs around each
+    // control point, normalized so the result always stays in the hull.
+    float d = distance(q, p0);
+    float w = 1.0 / (d * d * d + 0.015);
+    float3 col = c0 * w;
+    float wsum = w;
+
+    d = distance(q, p1);
+    w = 1.0 / (d * d * d + 0.015);
+    col += c1 * w;
+    wsum += w;
+
+    d = distance(q, p2);
+    w = 1.0 / (d * d * d + 0.015);
+    col += c2 * w;
+    wsum += w;
+
+    d = distance(q, p3);
+    w = 1.0 / (d * d * d + 0.015);
+    col += c3 * w;
+    wsum += w;
+
+    d = distance(q, p4);
+    w = 1.0 / (d * d * d + 0.015);
+    col += c4 * w;
+    wsum += w;
+
+    d = distance(q, p5);
+    w = 1.0 / (d * d * d + 0.015);
+    col += c5 * w;
+    wsum += w;
+
+    return col / wsum;
+}
+
+// -------------------------------------------------------------------------
+half4 main(float2 coord) {
+    float2 res = max(resolution, float2(1.0));
+    float2 uv = coord / res;
+    float aspect = res.x / res.y;
+
+    // ---- cover anchors (median-cut stand-in) ----
+    float3 a0 = coverTent(float2(0.28, 0.40));
+    float3 a1 = coverTent(float2(0.62, 0.28));
+    float3 a2 = coverTent(float2(0.50, 0.74));
+
+    // ---- mesh half ----
+    float meshScale = 1.025 + audio * 0.018;
+    float2 muv = (uv - float2(0.5)) / meshScale + float2(0.5);
+    float2 q = muv * float2(aspect, 1.0);
+    float tM = time * MESH_CLOCK;
+
+    float distortion = BASE_DISTORTION + audio * 0.62;
+    float swirl = BASE_SWIRL + audioMid * 0.38;
+    q = swirlAround(q, float2(aspect, 1.0) * 0.5, swirl);
+    q = distortField(q, distortion * 0.09, tM);
+
+    float3 meshRGB = meshColor(q, tM, aspect, a0, a1, a2);
+    meshRGB = saturated(meshRGB, 1.04 + audioMid * 0.34);
+    meshRGB *= 0.94 + audio * 0.16;
+
+    // ---- dither half (same math as the fused draw, but also outputable
+    //      standalone with a real alpha channel for host-side stacking) ----
+    float dScale = 1.015 + audioLow * 0.025;
+    float2 duv = (uv - float2(0.5)) / dScale + float2(0.5);
+    float2 dpix = duv * res;
+    float px = max(0.5, BASE_DITHER_PX * (1.0 - audioLow * 0.34));
+    float2 cell = floor(dpix / px);
+    float tD = time * DITHER_CLOCK;
+
+    // shape="warp": the dither threshold field itself flows and bends over time.
+    float2 wcell = cell + float2(
+        sin(cell.y * 0.35 + tD * 2.0) * 1.7,
+        cos(cell.x * 0.31 - tD * 1.6) * 1.7);
+
+    float value = 0.5
+        + 0.26 * sin(wcell.x * 0.33 + tD * 1.7)
+        + 0.26 * sin(wcell.y * 0.27 - tD * 1.3)
+        + 0.22 * sin((wcell.x + wcell.y) * 0.19 + tD * 0.9);
+    value = clamp(value, 0.0, 1.0);
+
+    // Dithering colors: darkest vs brightest anchor, same hue family.
+    float l1 = luminance(a1);
+    float l2 = luminance(a2);
+    float3 darkA = a0;
+    float dl = luminance(a0);
+    if (l1 < dl) { darkA = a1; dl = l1; }
+    if (l2 < dl) { darkA = a2; }
+    float3 brightA = a0;
+    float bl = luminance(a0);
+    if (l1 > bl) { brightA = a1; bl = l1; }
+    if (l2 > bl) { brightA = a2; }
+
+    float3 dithBack = mix(darkA, float3(0.03, 0.03, 0.05), 0.2);
+    float3 dithFront = mix(brightA, float3(1.0), 0.3);
+
+    // Reduce the cell index mod 4 before the Bayer lookup so fract() stays
+    // exact at any screen size (the 4x4 matrix tiles with period 4).
+    float2 bcell = cell - floor(cell * 0.25) * 4.0;
+    float3 ditherRGB = value > bayer4(bcell) ? dithFront : dithBack;
+
+    float dOpacity = min(1.0, BASE_DITHER_OPACITY + audioLow * 0.25);
+
+    if (layer < 0.5) {
+        // Mesh only: full-frame opaque gradient, no dither pass.
+        float vigM = smoothstep(0.8, 0.3, distance(uv, float2(0.5)));
+        float3 meshOut = clamp(meshRGB * (0.6 + vigM * 0.4), float3(0.0), float3(1.0));
+        return half4(half3(meshOut), alpha);
+    }
+    if (layer < 1.5) {
+        // Dither only: transparent background; the dither cells carry the
+        // layer opacity so the host can blend this over anything below
+        // (host soft-light reproduces the classic pairing).
+        return half4(half3(clamp(ditherRGB, float3(0.0), float3(1.0))),
+                     alpha * dOpacity);
+    }
+    // layer >= 2: the original fused draw (mesh + in-shader soft-light).
+    float3 blended = mix(meshRGB, softLight(meshRGB, ditherRGB), dOpacity);
+    float vig = smoothstep(0.8, 0.3, distance(uv, float2(0.5)));
+    blended *= 0.6 + vig * 0.4;
+    float3 outColor = clamp(blended, float3(0.0), float3(1.0));
+    return half4(half3(outColor), alpha);
+}

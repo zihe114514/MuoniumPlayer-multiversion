@@ -10,6 +10,8 @@ import com.muoniumplayer.api.interfaces.modules.values.ColorValue;
 import com.muoniumplayer.api.interfaces.modules.values.ModeValue;
 import com.muoniumplayer.api.interfaces.modules.values.NumberValue;
 import com.muoniumplayer.core.interfaces.SharedConstants;
+
+import java.util.Map;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
@@ -232,7 +234,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                 if (CloudMusic.haveNoWords || currentLine.words.isEmpty()) {
                     // words 为空时不能走逐字分支：calculateCurrentWordInfo 会返回下标 0，
                     // 紧接着的 words.get(0) 直接 IndexOutOfBounds —— 而这是每帧执行的渲染路径。
-                    System.setProperty("ncm.dynIslandLyrics", EnumChatColor.WHITE + currentLine.getLyric());
+                    setDynIslandLyrics(EnumChatColor.WHITE + currentLine.getLyric());
                 } else {
                     WordInfo wordInfo = calculateCurrentWordInfo(currentLine, songProgress);
 
@@ -273,23 +275,31 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                         right += currentLine.words.get(i).word;
                     }
 
-                    System.setProperty("ncm.dynIslandLyrics", left + right);
+                    setDynIslandLyrics(left + right);
                 }
             } else {
-                System.setProperty("ncm.dynIslandLyrics", "");
+                setDynIslandLyrics("");
             }
         } else {
-            System.setProperty("ncm.dynIslandLyrics", "");
+            setDynIslandLyrics("");
 
             api.getGLStateManager().pushMatrix();
 
             if (BlossomLyricStyle.isActive()) {
                 // Blossom 自己画毛玻璃面板，并且要按圆角裁剪文字，所以裁剪框由它自己开；
                 // 这里再套一层直角裁剪只会把圆角外面那四块底色切成方角。
-                blossomStyle.render(wpsInterface.getX(), wpsInterface.getY(),
-                        wpsInterface.getWidth(), wpsInterface.getHeight(),
-                        lyricColor.getValue().getRGB(), currentLyricColor.getValue().getRGB(),
-                        shouldNotDisplayOtherLyrics);
+                try {
+                    blossomStyle.render(wpsInterface.getX(), wpsInterface.getY(),
+                            wpsInterface.getWidth(), wpsInterface.getHeight(),
+                            lyricColor.getValue().getRGB(), currentLyricColor.getValue().getRGB(),
+                            shouldNotDisplayOtherLyrics);
+                } finally {
+                    // Blossom 分支以前没有任何 pop：上面这层 push 每帧净增，
+                    // 帧内之后绘制的灵动岛等内容全带着桌面歌词的 translate/scale。
+                    // 经典路径的 pop 由 cleanupRender() 配对，两分支不能共用一处兜底，
+                    // 否则经典分支会双重 pop 把外层的整体变换也弹掉。
+                    api.getGLStateManager().popMatrix();
+                }
             } else {
                 StencilClipManager.beginClip(() -> Rect.draw(wpsInterface.getX() - 2, wpsInterface.getY(), wpsInterface.getWidth() + 4, wpsInterface.getHeight(), -1));
 
@@ -322,6 +332,24 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         // 新歌的进度去填涂旧歌的字。
         return CloudMusic.hasLiveTrack()
                 && !CloudMusic.lyrics.isEmpty() && CloudMusic.lyricsMatchCurrentTrack();
+    }
+
+    /**
+     * 灵动岛歌词桥（系统属性 {@code ncm.dynIslandLyrics}）。
+     *
+     * <p>这条属性本模组自己不读（留给外部工具/未来的岛内引擎），但以前是<b>每帧无条件</b>
+     * 拼整行字符串 + {@code setProperty}——后者是同步方法还会触发属性监听。逐字高亮期间
+     * 内容每帧都在变，去重只能省掉静止行那一部分；但按下分隔线（岛未开）时每帧都是
+     * 同一个空串，去重后这条路径就是零分配。</p>
+     */
+    private static final String DYN_ISLAND_LYRICS_PROPERTY = "ncm.dynIslandLyrics";
+    private static volatile String lastDynIslandLyrics = null;
+
+    private static void setDynIslandLyrics(String value) {
+        String previous = lastDynIslandLyrics;
+        if (java.util.Objects.equals(previous, value)) return;
+        lastDynIslandLyrics = value;
+        System.setProperty(DYN_ISLAND_LYRICS_PROPERTY, value);
     }
 
     private void handleSingleLineMode(boolean shouldNotDisplayOtherLyrics) {
@@ -538,7 +566,97 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         return createLyricLayout(line, true);
     }
 
+    /**
+     * 桌面歌词 HUD 的行排版缓存。
+     *
+     * <p>这条路径是常驻每帧的（MusicLyricsPanel 有 qplayerPlacementCache、Blossom 有
+     * layoutCache，唯独这里原来每帧对每个可见行全量重建：逐词量宽 + 原文/译文两次
+     * fitWidth）。缓存键包含全部会改变结果的输入：歌词代数（换歌/seek 即失效）、
+     * 行对象本身、是否留译文行、内容宽度与字体尺寸档。窗口大小不变时大多数帧整帧命中。</p>
+     */
+    private static final int OSD_LAYOUT_CACHE_LIMIT = 64;
+    private final java.util.LinkedHashMap<LyricLayoutKey, LyricLayout> osdLayoutCache =
+            new java.util.LinkedHashMap<LyricLayoutKey, LyricLayout>(32, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<LyricLayoutKey, LyricLayout> eldest) {
+                    return size() > OSD_LAYOUT_CACHE_LIMIT;
+                }
+            };
+
+    private static final class LyricLayoutKey {
+        final LyricLine line;
+        final boolean allowSecondary;
+        final long revision;
+        final int widthBucket;
+        final boolean secondaryEnabled;
+        /** 字体度量代数：UI 字体热切换（UiFontLibrary.select）会整体替换 Skia 字体。 */
+        final long fontRevision;
+        final long smallFontRevision;
+
+        LyricLayoutKey(LyricLine line, boolean allowSecondary, long revision,
+                       int widthBucket, boolean secondaryEnabled,
+                       long fontRevision, long smallFontRevision) {
+            this.line = line;
+            this.allowSecondary = allowSecondary;
+            this.revision = revision;
+            this.widthBucket = widthBucket;
+            this.secondaryEnabled = secondaryEnabled;
+            this.fontRevision = fontRevision;
+            this.smallFontRevision = smallFontRevision;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof LyricLayoutKey)) return false;
+            LyricLayoutKey key = (LyricLayoutKey) o;
+            return allowSecondary == key.allowSecondary
+                    && revision == key.revision
+                    && widthBucket == key.widthBucket
+                    && secondaryEnabled == key.secondaryEnabled
+                    && fontRevision == key.fontRevision
+                    && smallFontRevision == key.smallFontRevision
+                    && line == key.line;
+        }
+
+        @Override
+        public int hashCode() {
+            int result = System.identityHashCode(line);
+            result = 31 * result + (allowSecondary ? 1 : 0);
+            result = 31 * result + Long.hashCode(revision);
+            result = 31 * result + widthBucket;
+            result = 31 * result + (secondaryEnabled ? 1 : 0);
+            result = 31 * result + Long.hashCode(fontRevision);
+            result = 31 * result + Long.hashCode(smallFontRevision);
+            return result;
+        }
+    }
+
     private LyricLayout createLyricLayout(LyricLine line, boolean allowSecondary) {
+        // 内容宽度取整进键：wpsInterface 宽度是连续值，直接比 double 会让缓存几乎永不命中；
+        // 1px 粒度下折行点只有在跨过整数边界时才变——与逐像素重排视觉上不可区分。
+        int widthBucket = (int) Math.round(getContentWidth());
+        boolean secondaryEnabled = hasSecondaryLyrics();
+        long revision = CloudMusic.lyricsRevision;
+        // 字体热切换会换掉 pf28bold/pf18bold 的底层 Skia 字体（metricsRevision++），
+        // 键里不带代数的话旧折行会一直命中到换歌（与 LyricLine 的字宽缓存同一约定）。
+        long fontRevision = getFontRenderer().metricsRevision();
+        long smallFontRevision = getSmallFontRenderer().metricsRevision();
+        LyricLayoutKey key = new LyricLayoutKey(line, allowSecondary, revision, widthBucket,
+                secondaryEnabled, fontRevision, smallFontRevision);
+        LyricLayout cached = osdLayoutCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        LyricLayout layout = buildLyricLayout(line, allowSecondary);
+        if (osdLayoutCache.size() >= OSD_LAYOUT_CACHE_LIMIT) {
+            osdLayoutCache.clear();
+        }
+        osdLayoutCache.put(key, layout);
+        return layout;
+    }
+
+    private LyricLayout buildLyricLayout(LyricLine line, boolean allowSecondary) {
         // 只有真实的逐字时间戳可以进入 KTV 渲染器。普通 LRC 在解析后
         // 可能携带词元，但没有时长时每个词元会同时解析，
         // 会错误地将整行重新着色。

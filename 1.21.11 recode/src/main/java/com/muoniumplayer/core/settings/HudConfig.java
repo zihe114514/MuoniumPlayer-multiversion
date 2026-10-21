@@ -36,6 +36,16 @@ public final class HudConfig {
 
     public static final int FULLSCREEN_LYRIC_BACKGROUND_MODE_MAX = 1;
 
+    /**
+     * QPlayer 流体算法索引上限，与 {@code SkijaFluidBackground} 的风格表长度保持一致。
+     *
+     * <p>0-2 是 QPlayer 原生三种（Pixi 四层 / AMLL 网格 / Classic warp），3-5 是
+     * 本项目 的移植融合风格，6-11 是层叠形态（无底 / Latent 网格 / 抖动层 /
+     * 星空层 / Nomand 两特效；8-9 是叠加层内部代号，不该出现在配置里，但钳制
+     * 按合法风格值上限算所以一并放行）。追加新风格时只改这个常量与风格表。</p>
+     */
+    public static final int FULLSCREEN_LYRIC_FLUID_STYLE_MAX = 11;
+
     /** 歌词：靠近底部水平居中。 */
 
     /** 桌面歌词视口尺寸，以未缩放逻辑单位计。文本在此宽度内换行。 */
@@ -104,6 +114,33 @@ public final class HudConfig {
     public static float fullscreenLyricFluidSaturation = 100.0f;
     /** QPlayer 的省电静态背景模式；默认保持完整动态与音频响应。 */
     public static boolean fullscreenLyricFluidStatic = false;
+    /** 全屏歌词页「未到歌词模糊」：未唱到的行带外渐进高斯模糊，正在唱的行保持清晰（移植 qplayer edgeBlur）。 */
+    public static boolean fullscreenLyricEdgeBlur = false;
+    /**
+     * QPlayer 流体（含 folia 移植风格）的音频律动跟随强度，0 = 完全无视音频。
+     *
+     * <p>与 {@link #fullscreenGlowStrength} 分开：那个管的是逐字发光，这里管的是
+     * 背景流体随音乐响应的<b>全部路径</b>——分段频段（Latent/Nomand 的低/中频响应）、
+     * shader 亮度包络（三种 QPlayer 原生算法也读它）与运动时钟的惯性加速。0 =
+     * 完全无视音频，画面保持各风格固有的缓慢基速漂移；100 为原版口径，200 为两倍
+     * 灵敏。存的是 0..200 的百分比。</p>
+     */
+    public static float fullscreenLyricFluidAudio = 100.0f;
+
+    /**
+     * folia 背景的叠加层位掩码（对齐 本项目 的多层合成：LatentBackground 的
+     * mesh+dithering 双层、SoraBackground 的加色星点都是独立可叠的层）。
+     *
+     * <p>bit0 = Latent 抖动层（宿主用 soft-light 混合，对齐原版的 mixBlendMode），
+     * bit1 = Sora 星空层（加色，对齐星点的预乘 alpha additive）。叠加层开启时，
+     * 融合形态的底层（Latent 整体/Sora 整体/Nomand 整体）会被渲染层自动换成
+     * 对应拆分层，避免同一效果画两遍。</p>
+     */
+    public static int fullscreenLyricBackgroundLayers = 0;
+    /** Latent 抖动叠加层的不透明度，0..100（folia 的 tuning.ditheringOpacity 默认 0.55 → 55）。 */
+    public static float fullscreenLyricLayerLatentDither = 55.0f;
+    /** Sora 星空叠加层的不透明度，0..100。 */
+    public static float fullscreenLyricLayerSora = 80.0f;
 
 
     /** 主题颜色来源。0 保留用户当前主题预设，1 使用当前歌曲封面自动配色。 */
@@ -640,6 +677,11 @@ public final class HudConfig {
         fullscreenLyricFluidStyle = 0;
         fullscreenLyricFluidSaturation = 100.0f;
         fullscreenLyricFluidStatic = false;
+        fullscreenLyricEdgeBlur = false;
+        fullscreenLyricFluidAudio = 100.0f;
+        fullscreenLyricBackgroundLayers = 0;
+        fullscreenLyricLayerLatentDither = 55.0f;
+        fullscreenLyricLayerSora = 80.0f;
         themeColorSource = 0;
         osdLyricStyle = 1;
         blossomBackdropBlur = 1.00f;
@@ -778,11 +820,26 @@ public final class HudConfig {
             fullscreenLyricBackgroundMode = clampInt(getInt(o, "fullscreenLyricBackgroundMode",
                     backgroundFallback), 0, FULLSCREEN_LYRIC_BACKGROUND_MODE_MAX);
             fullscreenLyricFluidStyle = clampInt(getInt(o, "fullscreenLyricFluidStyle",
-                    fullscreenLyricFluidStyle), 0, 2);
+                    fullscreenLyricFluidStyle), 0, FULLSCREEN_LYRIC_FLUID_STYLE_MAX);
+            // 8/9 是渲染层的叠加层内部代号，不是合法底层档位：手改配置写进来
+            // 会画出近乎全黑的透明底并让面板标签错位，归一化回默认档。
+            if (fullscreenLyricFluidStyle == 8 || fullscreenLyricFluidStyle == 9) {
+                fullscreenLyricFluidStyle = 0;
+            }
             fullscreenLyricFluidSaturation = clamp(getFloat(o, "fullscreenLyricFluidSaturation",
                     fullscreenLyricFluidSaturation), 0.0f, 200.0f);
             fullscreenLyricFluidStatic = getBoolean(o, "fullscreenLyricFluidStatic",
                     fullscreenLyricFluidStatic);
+            fullscreenLyricFluidAudio = clamp(getFloat(o, "fullscreenLyricFluidAudio",
+                    fullscreenLyricFluidAudio), 0.0f, 200.0f);
+            fullscreenLyricBackgroundLayers = clampInt(getInt(o, "fullscreenLyricBackgroundLayers",
+                    fullscreenLyricBackgroundLayers), 0, 3);
+            fullscreenLyricLayerLatentDither = clamp(getFloat(o, "fullscreenLyricLayerLatentDither",
+                    fullscreenLyricLayerLatentDither), 0.0f, 100.0f);
+            fullscreenLyricLayerSora = clamp(getFloat(o, "fullscreenLyricLayerSora",
+                    fullscreenLyricLayerSora), 0.0f, 100.0f);
+            fullscreenLyricEdgeBlur = getBoolean(o, "fullscreenLyricEdgeBlur",
+                    fullscreenLyricEdgeBlur);
             themeColorSource = clampInt(getInt(o, "themeColorSource", themeColorSource), 0,
                     THEME_COLOR_SOURCE_MAX);
             osdLyricStyle = clampInt(getInt(o, "osdLyricStyle", osdLyricStyle), 0,
@@ -971,6 +1028,11 @@ public final class HudConfig {
             o.addProperty("fullscreenLyricFluidStyle", fullscreenLyricFluidStyle);
             o.addProperty("fullscreenLyricFluidSaturation", fullscreenLyricFluidSaturation);
             o.addProperty("fullscreenLyricFluidStatic", fullscreenLyricFluidStatic);
+            o.addProperty("fullscreenLyricEdgeBlur", fullscreenLyricEdgeBlur);
+            o.addProperty("fullscreenLyricFluidAudio", fullscreenLyricFluidAudio);
+            o.addProperty("fullscreenLyricBackgroundLayers", fullscreenLyricBackgroundLayers);
+            o.addProperty("fullscreenLyricLayerLatentDither", fullscreenLyricLayerLatentDither);
+            o.addProperty("fullscreenLyricLayerSora", fullscreenLyricLayerSora);
             o.addProperty("themeColorSource", themeColorSource);
             o.addProperty("osdLyricStyle", osdLyricStyle);
             o.addProperty("blossomBackdropBlur", blossomBackdropBlur);

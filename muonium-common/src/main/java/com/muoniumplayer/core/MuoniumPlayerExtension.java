@@ -53,6 +53,8 @@ public class MuoniumPlayerExtension {
         // 在异步账号引导可能创建 AudioPlayer 之前，先恢复所有播放器偏好。
         // 这包括 mod 自有的持久化音量。
         HudConfig.load();
+        // Folia 背景的独立配置（config/muonium/folia_lyrics_background.json）。
+        com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundConfig.load();
         this.musicInfo.volume.setValue((double) HudConfig.playerVolume);
         this.musicInfo.animatedCover.setValue(HudConfig.animatedCoverEnabled);
         NCMPlayerConfig.load();

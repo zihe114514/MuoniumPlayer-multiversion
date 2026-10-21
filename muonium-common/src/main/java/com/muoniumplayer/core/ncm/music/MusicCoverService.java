@@ -617,9 +617,14 @@ final class MusicCoverService {
         BufferedImage filtered = operation.filter(image, null);
         BufferedImage output = new BufferedImage(filtered.getWidth(), filtered.getHeight(), filtered.getType());
         Graphics2D graphics = (Graphics2D) output.getGraphics();
-        graphics.setRenderingHints(map);
-        graphics.drawImage(filtered, -blur, -blur, filtered.getWidth() + blur * 2,
-                filtered.getHeight() + blur * 2, null);
+        try {
+            graphics.setRenderingHints(map);
+            graphics.drawImage(filtered, -blur, -blur, filtered.getWidth() + blur * 2,
+                    filtered.getHeight() + blur * 2, null);
+        } finally {
+            // AWT Graphics 是重量级原生资源，不 dispose 会积累到 GC 才释放。
+            graphics.dispose();
+        }
         return output;
     }
 
@@ -687,27 +692,37 @@ final class MusicCoverService {
     /**
      * 封面 → 背景用的那张模糊图。31 半径高斯，与 {@link #loadCoverTextures} 一直同一份实现。
      *
-     * <p>先复制一遍再传进卷积：{@code gaussianBlur} 会就地写回像素，而调用方手里那张
-     * {@code coverImage} 通常还要拿去做取色或装成清晰封面。</p>
+     * <p>规范成一张 ARGB 副本再卷积：一是 {@code ConvolveOp.filter(image, null)} 会沿用源图
+     * 的 colorModel，JPEG 封面（TYPE_3BYTE_BGR）直接卷会产出 BGR 结果，下游纹理上传和
+     * 测试都假定 ARGB；二是把「输出与输入互相独立」变成显式保证，不依赖 filter 不改源图
+     * 这一实现细节。相比旧版（预拷贝 + 卷积产出）少了一次整图分配。</p>
      */
     static BufferedImage blurCover(BufferedImage coverImage) {
         if (coverImage == null) {
             return null;
         }
-        BufferedImage inputImage = new BufferedImage(coverImage.getWidth(), coverImage.getHeight(),
+        BufferedImage argb = new BufferedImage(coverImage.getWidth(), coverImage.getHeight(),
                 BufferedImage.TYPE_INT_ARGB);
-        inputImage.setRGB(0, 0, coverImage.getWidth(), coverImage.getHeight(),
-                coverImage.getRGB(0, 0, coverImage.getWidth(), coverImage.getHeight(), null, 0,
-                        coverImage.getWidth()), 0, coverImage.getWidth());
-        return gaussianBlur(inputImage, 31);
+        java.awt.Graphics2D g = argb.createGraphics();
+        try {
+            g.drawImage(coverImage, 0, 0, null);
+        } finally {
+            g.dispose();
+        }
+        return gaussianBlur(argb, 31);
     }
 
     private static void loadSmallCoverAsync(Music music, Location musicCoverSmall) {
         MultiThreadingUtil.runAsync(() -> {
-            InputStream smallCoverStream = HttpUtils.downloadStream(coverUrl(music, 128), 5,
-                    music != null && music.isYouTube() ? YouTubeProxySettings.createHttpProxy() : null);
-            BufferedImage smallCoverImage = DynamicTexture.readImage(smallCoverStream);
-            Textures.loadTexture(musicCoverSmall, smallCoverImage);
+            // 与主封面路径同款 try-with-resources：不 close 的话每首小封面都漏一条网络连接，
+            // DynamicTexture.readImage 只读不关。
+            try (InputStream smallCoverStream = HttpUtils.downloadStream(coverUrl(music, 128), 5,
+                    music != null && music.isYouTube() ? YouTubeProxySettings.createHttpProxy() : null)) {
+                BufferedImage smallCoverImage = DynamicTexture.readImage(smallCoverStream);
+                Textures.loadTexture(musicCoverSmall, smallCoverImage);
+            } catch (Throwable t) {
+                System.err.println("[Music] 小封面加载失败: " + t);
+            }
         });
     }
 

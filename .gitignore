@@ -17,6 +17,9 @@ logs/
 # 开发期 runClient 把 MC 的 config 目录直接生成在 <版本>/<加载器>/ 下的情况
 #（里面有 kugou_auth.json 这类登录凭据，绝不入库）
 config/
+# 例外：mpserver-core 的 yun/shan/mpsync/config 是 Java 源码包（MpConfig.java），
+# 不是 MC 运行 config —— 曾被上面的规则误伤，clone 后 mpserver-core 编译不过。
+!mpserver-core/src/main/java/yun/shan/mpsync/config/
 *.log
 hs_err_pid*
 replay_pid*
@@ -111,6 +114,11 @@ error-report-*/
 
 # ---- 第三方上游源码 clone（自带 .git，参考用，不入本库）----
 /IMBlocker/
+# 本项目 背景 shader 移植期的上游 clone（AGPL 参考实现，仅查阅）
+/_folia_ref/
 
 # ---- buildAll 发布产物的第二份落地目录（与 /dist/ 同质，每份一百多 MB）----
 /dist-new/
+
+# 仓库大扫除的回收站：历史遗留垃圾先移进来等确认，确认无误后整个删掉
+/_trash/

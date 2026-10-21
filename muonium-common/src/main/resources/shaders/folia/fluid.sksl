@@ -1,0 +1,105 @@
+/*
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * 「通用 / Common」的封面色流体（本项目 src/components/visualizer/backgrounds/common/FluidBackground.tsx）。
+ *
+ * 原版是纯 CSS 三件套：
+ *   1) 封面 object-cover，模糊 40px（在 1.5x 放大之后量），再整体 scale(1.5)；
+ *   2) 其上一道 linear-gradient(to bottom right, primary, transparent, secondary)，
+ *      以 mix-blend-mode: overlay、opacity .4 叠加；
+ *   3) 底下垫一层主题底色（opacity .8），启用封面色时再乘 common.opacity。
+ *
+ * 这里把 1) 与 2) 合进一个着色器：模糊用 5 抽头两趟近似（Java 侧已把封面缩到 256，
+ * 模糊半径按像素换算进 uniform），渐变严格按 CSS 的「对角线上两段各 fading 到自己颜色的 0 alpha」
+ * 重算，overlay 混合逐通道实现。3) 由 Java 侧用纯色矩形叠加，不需要进着色器。
+ *
+ * blurPx、gradientOpacity、coverOpacity 都从 uniform 来；封面缺失时输出纯主题底色，
+ * 与原版「没有封面就只画底色」一致。
+ */
+uniform float2 resolution;
+uniform float alpha;
+uniform shader cover;
+uniform float blurPx;
+uniform float gradientOpacity;
+uniform float3 primaryColor;
+uniform float3 secondaryColor;
+uniform float3 backgroundColor;
+uniform float hasCover;
+uniform float coverScale;
+
+float3 sampleCoverClamped(float2 uv) {
+    return float3(cover.eval(clamp(uv, float2(0.0), float2(1.0)) * 32.0).rgb);
+}
+
+float3 blurredCover(float2 uv, float aspect) {
+    // 封面 object-cover + scale：把 uv 从中心缩到 1/scale。
+    float2 suv = (uv - float2(0.5)) / max(0.2, coverScale) + float2(0.5);
+    if (blurPx <= 0.3) {
+        return sampleCoverClamped(suv);
+    }
+    // 5 抽头高斯（两轴共用一套权重），半径按 blurPx/resolution.y 换算。
+    float2 texel = float2(blurPx / max(1.0, resolution.x), blurPx / max(1.0, resolution.y));
+    float3 sum = sampleCoverClamped(suv) * 0.28;
+    sum += sampleCoverClamped(suv + float2(texel.x, 0.0)) * 0.18;
+    sum += sampleCoverClamped(suv - float2(texel.x, 0.0)) * 0.18;
+    sum += sampleCoverClamped(suv + float2(0.0, texel.y)) * 0.18;
+    sum += sampleCoverClamped(suv - float2(0.0, texel.y)) * 0.18;
+    // 长边再走一趟，让 40px 级别的模糊在 256 贴图上仍然成立。
+    float2 texel2 = texel * 2.0;
+    sum *= 0.62;
+    sum += sampleCoverClamped(suv + float2(texel2.x, texel2.y)) * 0.095;
+    sum += sampleCoverClamped(suv - float2(texel2.x, texel2.y)) * 0.095;
+    sum += sampleCoverClamped(suv + float2(texel2.x, -texel2.y)) * 0.095;
+    sum += sampleCoverClamped(suv + float2(-texel2.x, texel2.y)) * 0.095;
+    return sum;
+}
+
+// CSS 的 mix-blend-mode: overlay，逐通道。
+float overlayChannel(float base, float blend) {
+    return base <= 0.5 ? 2.0 * base * blend : 1.0 - 2.0 * (1.0 - base) * (1.0 - blend);
+}
+
+float3 overlayBlend(float3 base, float3 blend) {
+    return float3(overlayChannel(base.r, blend.r),
+                  overlayChannel(base.g, blend.g),
+                  overlayChannel(base.b, blend.b));
+}
+
+half4 main(float2 coord) {
+    float2 res = max(resolution, float2(1.0));
+    float2 uv = coord / res;
+
+    if (hasCover < 0.5) {
+        return half4(half3(backgroundColor), alpha);
+    }
+
+    float3 base = blurredCover(uv, res.x / res.y);
+
+    // CSS: linear-gradient(to bottom right, primary, transparent, secondary)
+    // 「transparent」在 CSS 里是预乘透明：两半各自保色，只有 alpha 落到 0。
+    // 渐变线过中心、垂直于左下→右上对角线，长度 2wh/diagonal。
+    float diagonal = length(res);
+    float halfLen = (res.x * res.y) / max(1.0, diagonal);
+    float2 dir = normalize(float2(res.x, res.y));
+    float2 centered = (uv - 0.5) * res;
+    // 0 在左上、0.5 在中心、1 在右下。
+    float t = 0.5 + dot(centered, dir) / (2.0 * halfLen);
+
+    float3 gradientColor;
+    float gradientAlpha;
+    if (t < 0.5) {
+        gradientColor = primaryColor;
+        gradientAlpha = 1.0 - t * 2.0;      // 左上 1 → 中心 0
+    } else {
+        gradientColor = secondaryColor;
+        gradientAlpha = (t - 0.5) * 2.0;    // 中心 0 → 右下 1
+    }
+
+    // mix-blend-mode: overlay，再乘 opacity .4（gradientOpacity）。
+    float3 blended = overlayBlend(base, gradientColor);
+    float weight = clamp(gradientAlpha * clamp(gradientOpacity, 0.0, 1.0), 0.0, 1.0);
+    float3 outColor = mix(base, blended, weight);
+
+    return half4(half3(clamp(outColor, float3(0.0), float3(1.0))), alpha);
+}
+

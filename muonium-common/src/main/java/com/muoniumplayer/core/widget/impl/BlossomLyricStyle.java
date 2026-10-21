@@ -849,6 +849,7 @@ public final class BlossomLyricStyle implements SharedConstants, SharedRendering
             return cached;
         }
         LineLayout lay = new LineLayout();
+        boolean metricsSuspicious = false;
         if (hasTimedWords(line)) {
             float[] ww = wordWidths(line, font);
             int count = ww.length;
@@ -866,6 +867,9 @@ public final class BlossomLyricStyle implements SharedConstants, SharedRendering
             starts[used++] = count;
             lay.rowStart = java.util.Arrays.copyOf(starts, used);
             lay.mainRows = Math.max(1, used - 1);
+            // wordWidths 量到 0 宽（字形还没上传）时这份排版不可信，不进缓存——
+            // 下一帧量到真宽后重算；缓存只收一次可信结果。
+            metricsSuspicious = wordWidthsPending(line);
         } else {
             String text = line.getLyric();
             lay.plainRows = text == null || text.isEmpty() ? EMPTY_ROWS : font.fitWidth(text, wrapW);
@@ -873,8 +877,15 @@ public final class BlossomLyricStyle implements SharedConstants, SharedRendering
         }
         lay.height = rowH + (lay.mainRows - 1) * mainStep;
         lay.mainCenter = rowH * .5 + (lay.mainRows - 1) * mainStep * .5;
-        layoutCache.put(line, lay);
+        if (!metricsSuspicious) {
+            layoutCache.put(line, lay);
+        }
         return lay;
+    }
+
+    /** 词宽缓存里没有这行 = 刚量过且量出了 0 宽（见 {@link #wordWidths}），本次排版先别固化。 */
+    private boolean wordWidthsPending(LyricLine line) {
+        return hasTimedWords(line) && !wordWidthCache.containsKey(line);
     }
 
     private static boolean hasTimedWords(LyricLine line) {
@@ -889,10 +900,20 @@ public final class BlossomLyricStyle implements SharedConstants, SharedRendering
             return cached;
         }
         float[] widths = new float[n];
+        boolean anyZero = false;
         for (int i = 0; i < n; i++) {
             LyricLine.Word word = words.get(i);
             widths[i] = word == null || word.word == null ? 0f
                     : (float) font.getStringWidthD(word.word);
+            if (word != null && word.word != null && !word.word.isEmpty() && widths[i] <= 0f) {
+                anyZero = true;
+            }
+        }
+        // 字形按需异步生成：量出 0 宽的词表不可信，不能写进缓存——
+        // wordWidthCache 是 IdentityHashMap、只在换歌/改几何时清，
+        // 一旦固化，错误的折行与 KTV 扫光位置会陪完一整首歌。
+        if (anyZero) {
+            return widths;
         }
         wordWidthCache.put(line, widths);
         return widths;

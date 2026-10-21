@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.screens.ncm;
 
+import com.muoniumplayer.core.ncm.music.AudioSpectrumAnalyzer;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.PlaybackPulse;
 import com.muoniumplayer.core.ncm.music.dto.Music;
@@ -99,6 +100,35 @@ final class QPlayerFluidLyricBackground {
             energy = clamp01(PlaybackPulse.loudness());
             beat = clamp01(PlaybackPulse.beat());
         }
+        // Split bands for the folia-port styles: the 48-band log-spaced FFT
+        // (40Hz-16kHz) folded into a bass share (bands 0-7 ≈ 40-108Hz) and a mid
+        // share (bands 14-29 ≈ 229Hz-1.7kHz). Zero when silent, so the styles
+        // fall back to their calm idle drift.
+        float audioLow = 0f;
+        float audioMid = 0f;
+        // 只有真正读分段频段的风格（folia 移植系）或层叠模式才调度 FFT——
+        // QPlayer 原生算法只读 audio 包络，常驻一路 FFT 线程是白付的唤醒
+        // （对照 Analyzer「Only a visible consumer schedules FFT」的口径）。
+        boolean bandsNeeded = HudConfig.fullscreenLyricFluidStyle >= SkijaFluidBackground.STYLE_LATENT
+                || HudConfig.fullscreenLyricBackgroundLayers != 0;
+        if (audible && bandsNeeded) {
+            AudioSpectrumAnalyzer.Frame frame = AudioSpectrumAnalyzer.requestFrame(now);
+            if (frame.capturedAt > 0L && now - frame.capturedAt < 250_000_000L) {
+                float lowSum = 0f;
+                for (int band = 0; band < 8; band++) lowSum += frame.band(band);
+                audioLow = clamp01(lowSum / 8f);
+                float midSum = 0f;
+                for (int band = 14; band < 30; band++) midSum += frame.band(band);
+                audioMid = clamp01(midSum / 16f);
+            }
+        }
+        // The user's audio-response dial scales every audio path with the same
+        // factor, so "0 = ignore audio" holds for all styles (review R2 #1):
+        // the split bands below, the shader brightness envelope (QPlayer's own
+        // shaders read it too), and the motion-clock speed boost.
+        float audioAmount = clamp01(HudConfig.fullscreenLyricFluidAudio / 100f);
+        audioLow *= audioAmount;
+        audioMid *= audioAmount;
 
         float energyApproach = approach(dt, .28);
         float beatApproach = approach(dt, .12);
@@ -113,14 +143,16 @@ final class QPlayerFluidLyricBackground {
         onsetPulse = Math.max(Math.max(onsetPulse * onsetDecay, smoothedBeat * .72f), rising * .55f);
         previousEnergy = energy;
 
-        float targetDrive = clamp01(smoothedEnergy * .62f
+        float targetDrive = clamp01((smoothedEnergy * .62f
                 + smoothedBeat * .18f
-                + onsetPulse * .14f);
+                + onsetPulse * .14f) * audioAmount);
         float driveApproach = approach(dt, targetDrive > smoothedMotionDrive ? .14 : .42);
         smoothedMotionDrive += (targetDrive - smoothedMotionDrive) * driveApproach;
 
         // 1x is the normal QPlayer clock.  Audio only adds an inertial speed boost,
         // so the fluid visibly accelerates and eases back instead of blinking.
+        // The dial scales the boost, never the 1x base, so 0% keeps the calm
+        // idle drift of every style instead of freezing the picture.
         float targetSpeed = 1f + smoothedMotionDrive * .85f;
         float speedApproach = approach(dt, targetSpeed > motionSpeed ? .12 : .46);
         motionSpeed += (targetSpeed - motionSpeed) * speedApproach;
@@ -131,13 +163,27 @@ final class QPlayerFluidLyricBackground {
         float shaderAudio = clamp01(smoothedMotionDrive * .78f + smoothedEnergy * .22f);
 
         Image cover = resolveCoverImage(current);
-        if (cover == null) return false;
+        // 「无」底层 + 星空层不需要封面：没有封面时也把层叠画面画出来。
+        boolean layerStack = HudConfig.fullscreenLyricBackgroundLayers != 0
+                || HudConfig.fullscreenLyricFluidStyle == SkijaFluidBackground.STYLE_NONE;
+        if (cover == null && !layerStack) return false;
 
         Canvas canvas = SkijaGfx.canvas();
         if (canvas == null) return false;
         int save = canvas.save();
         try {
             canvas.translate((float) x, (float) y);
+            // 层叠组合：位掩码非零时走底层+叠加层路径；融合形态的底层由渲染层
+            // 自动换成拆分层，避免同一效果画两遍。
+            int layerBits = HudConfig.fullscreenLyricBackgroundLayers;
+            fluidBackground.setLayerStack(layerBits,
+                    HudConfig.fullscreenLyricLayerLatentDither / 100f,
+                    HudConfig.fullscreenLyricLayerSora / 100f);
+            // Sora's starfield is theme-tinted like folia's: particles carry the
+            // accent colour with a warm-white fallback when the theme is grayscale.
+            boolean soraInvolved = HudConfig.fullscreenLyricFluidStyle == SkijaFluidBackground.STYLE_SORA
+                    || (layerBits & SkijaFluidBackground.LAYER_BIT_SORA) != 0;
+            float[] tint = soraInvolved ? themeTint() : null;
             return fluidBackground.renderWithTime(canvas,
                     SkijaGfx.context(), (float) SkijaGfx.guiScale(),
                     (float) width, (float) height, cover,
@@ -145,10 +191,24 @@ final class QPlayerFluidLyricBackground {
                     HudConfig.fullscreenLyricFluidStatic,
                     HudConfig.fullscreenLyricFluidStyle,
                     Math.round(HudConfig.fullscreenLyricFluidSaturation),
-                    alpha, shaderAudio);
+                    alpha, shaderAudio, audioLow, audioMid, tint);
         } finally {
             canvas.restoreToCount(save);
         }
+    }
+
+    /** Sora's particle colours: accent for the main tint, its hover for the sparkle set. */
+    private static float[] themeTint() {
+        int accent = NCMTheme.getAccentColor() & 0xFFFFFF;
+        int hover = NCMTheme.getColor(NCMScreen.ColorType.ACCENT_HOVER) & 0xFFFFFF;
+        return new float[] {
+                ((accent >>> 16) & 0xFF) / 255f,
+                ((accent >>> 8) & 0xFF) / 255f,
+                (accent & 0xFF) / 255f,
+                ((hover >>> 16) & 0xFF) / 255f,
+                ((hover >>> 8) & 0xFF) / 255f,
+                (hover & 0xFF) / 255f,
+        };
     }
 
     private boolean renderBlurredCover(double x, double y, double width, double height,

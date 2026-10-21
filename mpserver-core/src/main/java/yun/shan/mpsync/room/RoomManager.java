@@ -411,6 +411,9 @@ public final class RoomManager {
         // 档案和管理员标记都跟着连接走：下线的人既不在听歌，也不能替谁解析。
         presence.forget(uuid);
         operators.remove(uuid);
+        // 待处理邀请一并撤掉：条目极小，但长期不回来的玩家会让它一直滞留
+        //（过期清理只在玩家自己上线拉 invitesFrame 时按 TTL 走，见 addInvite 侧注释）。
+        invites.remove(uuid);
         Room room = roomOf(uuid);
         if (room == null) return;
         room.markOffline(uuid);
@@ -559,6 +562,10 @@ public final class RoomManager {
                 case Proto.C_INVITE_ACCEPT  -> acceptInvite(uuid, Proto.str(msg, "roomId", ""));
                 case Proto.C_INVITE_DECLINE -> declineInvite(uuid, Proto.str(msg, "roomId", ""));
                 case Proto.C_CHANNEL_JOIN   -> joinChannel(uuid);
+                // 直连保活的应答：房主侧直连引擎（MpParty.onPacket）会把它转进这里。
+                // 它只证明成员活着，无需任何处理——静默吞掉，否则每 15 秒回一句
+                // 「不支持的操作」刷成员聊天栏。
+                case Proto.C_PONG -> { }
                 default -> handleInRoom(uuid, op, msg);
             }
         } catch (IllegalStateException | IllegalArgumentException e) {
@@ -793,6 +800,8 @@ public final class RoomManager {
             // 被指派人放弃：当场改派下一台，不必干等到超时。
             case Proto.C_ANALYZE_DECLINE -> room.declinePlan(uuid,
                     Proto.num(msg, "entryId", 0L));
+            // 直连保活应答：直连房主引擎转发进来的 pong（见外层同名 case 的注释），静默吞。
+            case Proto.C_PONG -> { }
             default -> Net.error(uuid, "不支持的操作：" + op);
         }
     }

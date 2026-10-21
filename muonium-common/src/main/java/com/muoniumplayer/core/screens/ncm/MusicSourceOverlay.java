@@ -769,7 +769,7 @@ public final class MusicSourceOverlay extends NcmSheet {
                     statusTone = 1;
                 });
         paste.setBeforeRenderCallback(() -> {
-            paste.setBounds(96, 30);
+            paste.setBounds(footerTripleWidth(dialog), 30);
             paste.setPosition(PAD + CARD_INSET, dialog.getHeight() - 46);
             paste.setColor(paste.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
@@ -780,8 +780,8 @@ public final class MusicSourceOverlay extends NcmSheet {
                 () -> youtubeLoginBusy ? "正在验证…" : "验证并登录", FontManager.pf12bold,
                 () -> 0xFFFFFF, () -> submitYouTubeCookie(input));
         verify.setBeforeRenderCallback(() -> {
-            verify.setBounds(118, 30);
-            verify.setPosition(paste.getRelativeX() + 104, dialog.getHeight() - 46);
+            verify.setBounds(footerTripleWidth(dialog), 30);
+            verify.setPosition(PAD + CARD_INSET + footerTripleWidth(dialog) + 8.0, dialog.getHeight() - 46);
             verify.setColor(verify.isHovering()
                     ? mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF, .16)
                     : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
@@ -802,12 +802,22 @@ public final class MusicSourceOverlay extends NcmSheet {
                     input.setText("");
                 });
         signOut.setBeforeRenderCallback(() -> {
-            signOut.setBounds(96, 30);
-            signOut.setPosition(verify.getRelativeX() + 126, dialog.getHeight() - 46);
+            signOut.setBounds(footerTripleWidth(dialog), 30);
+            signOut.setPosition(PAD + CARD_INSET + (footerTripleWidth(dialog) + 8.0) * 2, dialog.getHeight() - 46);
             signOut.setColor(signOut.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
         });
+    }
+
+    /**
+     * 登录页页脚三键的等分宽度：三键 + 两道 8 间隙铺满内容区。
+     *
+     * <p>原来是 96/118/96 三段定宽链（行尾 349/371px），弹窗被视口夹窄后整条链画出弹窗右缘、
+     * 「退出登录」点不到。改成按当帧宽等分，极窄时靠 {@code action()} 的文字截断兜底。</p>
+     */
+    private double footerTripleWidth(final Panel dialog) {
+        return Math.max(64.0, (dialog.getWidth() - (PAD + CARD_INSET) * 2 - 16.0) / 3.0);
     }
 
     /**
@@ -954,7 +964,7 @@ public final class MusicSourceOverlay extends NcmSheet {
                 () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
                 () -> submitSpotifyClientId(input));
         save.setBeforeRenderCallback(() -> {
-            save.setBounds(112, 30);
+            save.setBounds(footerTripleWidth(dialog), 30);
             save.setPosition(PAD + CARD_INSET, dialog.getHeight() - 46);
             save.setColor(save.isHovering()
                     ? mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF, .16)
@@ -965,8 +975,8 @@ public final class MusicSourceOverlay extends NcmSheet {
                 () -> spotifyLoginBusy ? "等待授权…" : "打开浏览器授权", FontManager.pf12bold,
                 () -> 0xFFFFFF, () -> startSpotifyAuthorize());
         authorize.setBeforeRenderCallback(() -> {
-            authorize.setBounds(124, 30);
-            authorize.setPosition(save.getRelativeX() + 120, dialog.getHeight() - 46);
+            authorize.setBounds(footerTripleWidth(dialog), 30);
+            authorize.setPosition(PAD + CARD_INSET + footerTripleWidth(dialog) + 8.0, dialog.getHeight() - 46);
             authorize.setColor(authorize.isHovering()
                     ? mix(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), 0xFFFFFF, .16)
                     : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
@@ -987,8 +997,8 @@ public final class MusicSourceOverlay extends NcmSheet {
                     statusTone = 0;
                 });
         signOut.setBeforeRenderCallback(() -> {
-            signOut.setBounds(96, 30);
-            signOut.setPosition(authorize.getRelativeX() + 132, dialog.getHeight() - 46);
+            signOut.setBounds(footerTripleWidth(dialog), 30);
+            signOut.setPosition(PAD + CARD_INSET + (footerTripleWidth(dialog) + 8.0) * 2, dialog.getHeight() - 46);
             signOut.setColor(signOut.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));

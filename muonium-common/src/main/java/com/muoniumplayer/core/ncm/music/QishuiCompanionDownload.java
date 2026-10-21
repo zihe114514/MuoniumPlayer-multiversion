@@ -812,42 +812,46 @@ public final class QishuiCompanionDownload {
         throw last == null ? new IOException("没有可用的下载源") : last;
     }
 
-    /** 单次下载：读流与校验同步走，进度按整百分比推进。 */
+    /** 单次下载：读流与校验同步走，进度按整百分比推进。失败路径也断开连接（镜像串行回退最坏 7 条）。 */
     private static void download(Pack pack, String url, File archive) throws Exception {
         HttpURLConnection connection = openFollowing(URI.create(url).toURL());
-        int code = connection.getResponseCode();
-        if (code < 200 || code >= 300) {
-            throw new IOException("HTTP " + code);
-        }
-        long total = connection.getContentLengthLong();
-        if (total > 0 && total != pack.bytes()) {
-            throw new IOException("大小不符（Content-Length " + total + "，应为 " + pack.bytes() + "）");
-        }
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        long done = 0L;
-        int shown = -1;
-        try (InputStream input = new BufferedInputStream(connection.getInputStream());
-             FileOutputStream output = new FileOutputStream(archive)) {
-            byte[] buffer = new byte[64 * 1024];
-            int read;
-            while ((read = input.read(buffer)) >= 0) {
-                output.write(buffer, 0, read);
-                digest.update(buffer, 0, read);
-                done += read;
-                if (pack.bytes() > 0 && done > pack.bytes()) {
-                    throw new IOException("下超了：已收 " + done + " 字节，应为 " + pack.bytes());
-                }
-                if (pack.bytes() > 0) {
-                    int percent = (int) Math.min(100L, done * 100L / pack.bytes());
-                    if (percent != shown) {
-                        shown = percent;
-                        state = new State(Phase.DOWNLOADING, percent, null);
-                        announceProgress(percent);
+        try {
+            int code = connection.getResponseCode();
+            if (code < 200 || code >= 300) {
+                throw new IOException("HTTP " + code);
+            }
+            long total = connection.getContentLengthLong();
+            if (total > 0 && total != pack.bytes()) {
+                throw new IOException("大小不符（Content-Length " + total + "，应为 " + pack.bytes() + "）");
+            }
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            long done = 0L;
+            int shown = -1;
+            try (InputStream input = new BufferedInputStream(connection.getInputStream());
+                 FileOutputStream output = new FileOutputStream(archive)) {
+                byte[] buffer = new byte[64 * 1024];
+                int read;
+                while ((read = input.read(buffer)) >= 0) {
+                    output.write(buffer, 0, read);
+                    digest.update(buffer, 0, read);
+                    done += read;
+                    if (pack.bytes() > 0 && done > pack.bytes()) {
+                        throw new IOException("下超了：已收 " + done + " 字节，应为 " + pack.bytes());
+                    }
+                    if (pack.bytes() > 0) {
+                        int percent = (int) Math.min(100L, done * 100L / pack.bytes());
+                        if (percent != shown) {
+                            shown = percent;
+                            state = new State(Phase.DOWNLOADING, percent, null);
+                            announceProgress(percent);
+                        }
                     }
                 }
             }
+            checkAgainst(pack, archive.length(), hex(digest.digest()));
+        } finally {
+            connection.disconnect();
         }
-        checkAgainst(pack, archive.length(), hex(digest.digest()));
     }
 
     /** 重定向自己跟（镜像会 30x 到 CDN），最多 6 跳。 */

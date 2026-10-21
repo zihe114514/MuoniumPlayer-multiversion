@@ -1,0 +1,195 @@
+/*
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * MuoniumPlayer Skija RuntimeEffect port of 本项目's "Nomand" full-screen
+ * background. Source: 本项目
+ *   src/components/visualizer/backgrounds/nomand/NomandBackgroundLayer.tsx
+ *   src/components/visualizer/backgrounds/nomand/tuning.ts  +  src/types.ts
+ * which mount Paper Design's ImageDithering and HalftoneDots shaders from
+ * @paper-design/shaders(-react). 本项目 is licensed under the GNU Affero
+ * General Public License v3 (see _folia_ref/LICENSE); this file reproduces the
+ * observable shader behavior only.
+ *
+ * Two effects in one program, selected at runtime with `effect`
+ * (compiling two specializations is too expensive for the host):
+ *   effect 0.0 -> ImageDithering : source warped by slow sine domain distortion,
+ *                                  quantized to N color steps with an 8x8 Bayer
+ *                                  ordered-dither threshold (folia default type
+ *                                  "8x8"; defaults: size 3, 6 steps baked below)
+ *   effect 1.0 -> HalftoneDots   : per-cell luminance -> dot radius on a slowly
+ *                                  drifting square grid. Paper's "hex" grid,
+ *                                  "gooey" merge, contrast and inversion props
+ *                                  are NOT ported (out of scope).
+ *
+ * Uniform contract (same convention as pixi_renderer.sksl / meshgradient.sksl):
+ *   resolution - output size in px.
+ *   time       - host-driven seconds; MUST keep easing when audio == 0 (both
+ *                branches animate from time alone).
+ *   audio      - 0..1 broadband envelope; only a subtle brightness gain here.
+ *   audioLow   - 0..1 low-band envelope; dither cell "breathing".
+ *   audioMid   - 0..1 mid-band envelope; halftone dot radius ceiling boost.
+ *                (New envelopes: an unset uniform defaults to 0, so an older
+ *                host that only feeds `audio` still renders correctly.)
+ *   cover      - child shader, evaluated on the 0..TEX_SIZE (0..32) domain like
+ *                every other fluid shader. Bind a makeSourceShader-style child
+ *                (scale matrix imageW/32, imageH/32) so the ORIGINAL-resolution
+ *                cover fills 0..32; the 32x32 processed path satisfies the same
+ *                contract. uv is clamped to 0..1 before eval, so a CLAMP-tiled
+ *                child is assumed.
+ *   effect     - 0 = dithering, 1 = halftone (plain runtime branch).
+ *
+ * Baked constants that folia exposes as tuning props (edit + recompile):
+ *   DITHER_CELL     = 3.0   (folia `size` default, px per dither cell)
+ *   COLOR_STEPS     = 6.0   (quantization levels; folia tuning default is 4)
+ *   HALFTONE_SIZE   = 0.5   (folia default; 0..1 maps to 44..8 px cells)
+ *   HALFTONE_RADIUS = 1.25  (folia default, dot radius multiplier)
+ *
+ * Skija 0.143.17 compatibility notes: half/float conversions are explicit at
+ * the cover.eval boundary; no loops, no arrays, no dynamic indexing (the Bayer
+ * matrix is a closed-form recursion); the effect switch is an ordinary
+ * uniform-float branch, which runtime effects support without specialization.
+ */
+
+uniform float2 resolution;
+uniform float time;
+uniform float audio;
+uniform float audioLow;
+uniform float audioMid;
+uniform shader cover;
+uniform float effect;
+// Layer compositing: 0 = classic opaque frame, 1 = standalone overlay layer
+// (premultiplied alpha; the darkened cover base keeps its alpha so the host
+// can blend the pixelation over any lower layer).
+uniform float layer;
+uniform float alpha;
+
+const float TEX_SIZE = 32.0;
+
+const float DITHER_CELL = 3.0;
+const float COLOR_STEPS = 6.0;
+const float HALFTONE_SIZE = 0.5;
+const float HALFTONE_RADIUS = 1.25;
+
+/* ------------------------------ shared ------------------------------ */
+
+// cover.eval expects the 0..TEX_SIZE domain (see header). uv is clamped so
+// warp overshoot can never leave the image under a CLAMP-tiled child.
+float3 sampleCover(float2 uv) {
+    float2 c = clamp(uv, float2(0.0), float2(1.0));
+    return float3(cover.eval(c * TEX_SIZE).rgb);
+}
+
+// Two-layer sine domain warp: a small ambient flow that eases on time alone;
+// the broadband envelope grows the amplitude (+audio*0.15 per the port spec).
+// t and amp arrive as parameters: this Skia raster build only refreshes
+// uniforms read from main, so every non-main function is uniform-free.
+float2 warpUV(float2 uv, float t, float amp) {
+    uv += amp * float2(sin(uv.y * 4.7 + t * 0.31), sin(uv.x * 3.9 - t * 0.23));
+    uv += amp * 0.5 * float2(sin(uv.x * 9.1 - t * 0.17), sin(uv.y * 8.3 + t * 0.27));
+    return uv;
+}
+
+/* ----------------- Bayer 8x8, analytic (no arrays/loops) ----------------- */
+
+// Bayer 2x2 base case in {0, 0.25, 0.5, 0.75}:
+//   [[0.00, 0.50], [0.75, 0.25]]  (x = column, y = row)
+float bayer2(float2 a) {
+    a = floor(a);
+    return fract(a.x * 0.5 + a.y * a.y * 0.75);
+}
+
+// Recursive ordered-dither expansion M2n = M2 fine term + coarser terms;
+// bayer4/bayer8 reproduce the classic 4x4 (/16) and 8x8 (/64) threshold
+// matrices. Inputs must already be tile-local: the caller passes
+// mod(cellId, 8.0) so every bayer2 argument stays <= 8 and fract() keeps
+// float32 precision even for far-from-origin pixels.
+float bayer4(float2 a) {
+    return bayer2(0.5 * a) * 0.25 + bayer2(a);
+}
+
+float bayer8(float2 a) {
+    return bayer4(0.5 * a) * 0.25 + bayer2(a);
+}
+
+/* --------------------------- effect 0: dithering --------------------------- */
+
+float3 dithering(float2 fragCoord, float t, float amp, float audioLow) {
+    // audioLow breathes the effective cell size: size * (1 - audioLow * 0.25).
+    float cell = max(1.0, DITHER_CELL * (1.0 - audioLow * 0.25));
+
+    // Pixel-art cells: one sample + one threshold per cell, Bayer indexed on
+    // the CELL grid so the dither pattern scales with the pixelation.
+    float2 cellId = floor(fragCoord / cell);
+    float2 center = (cellId + 0.5) * cell;
+
+    float3 src = sampleCover(warpUV(center / resolution, t, amp));
+
+    // Centered threshold in [-0.5, 0.5).
+    float bayer = bayer8(mod(cellId, 8.0)) - 0.5;
+
+    // N-level quantization: floor(c*(steps-1) + bayer + 0.5) / (steps-1).
+    // With the centered bayer the result is exactly 0..steps-1, so black and
+    // white survive; the clamp is float-safety only.
+    float levels = COLOR_STEPS - 1.0;
+    return clamp(floor(src * levels + bayer + 0.5) / levels, 0.0, 1.0);
+}
+
+/* --------------------------- effect 1: halftone --------------------------- */
+
+float3 halftone(float2 fragCoord, float t, float audioMid) {
+    // folia's 0..1 size tuning (default 0.5) to cell pixels. Paper's exact
+    // mapping lives inside the @paper-design bundle (not in this repo), so a
+    // 44..8 px stand-in is chosen; default 0.5 -> 26 px cells.
+    float cell = mix(44.0, 8.0, clamp(HALFTONE_SIZE, 0.0, 1.0));
+
+    // Dot lattice phase drifts slowly with time (independent of audio).
+    float2 drift = float2(t * 6.0, t * 3.7);
+    float2 p = fragCoord - drift;
+    float2 cellId = floor(p / cell);
+
+    // Sample at the drifted cell center so dots and colors slide together.
+    float2 center = (cellId + 0.5) * cell + drift;
+    float3 src = sampleCover(center / resolution);
+
+    float lum = dot(src, float3(0.2126, 0.7152, 0.0722));
+
+    // radius = luminance * cellSize * 0.5; audioMid raises the radius ceiling
+    // (+audioMid * 0.3). audioMid=1 lets full-brightness dots overlap, which
+    // stands in for Paper's "gooey" merge on beats.
+    float maxR = cell * 0.5 * (1.0 + audioMid * 0.3);
+    float r = lum * maxR * HALFTONE_RADIUS;
+
+    float2 local = p - cellId * cell;
+    float dist = distance(local, float2(cell * 0.5));
+    float spot = 1.0 - smoothstep(r - 0.75, r + 0.75, dist);
+
+    // Dot takes the cover color of its cell; the base is that color darkened.
+    return mix(src * 0.22, src, spot);
+}
+
+/* ---------------------------------- main ---------------------------------- */
+
+half4 main(float2 fragCoord) {
+    // All derived scalars live in main: the raster pipeline only refreshes
+    // uniforms actually read from the entry point.
+    float t = time;
+    float amp = 0.012 + audio * 0.15;
+    float3 rgb = effect < 0.5
+            ? dithering(fragCoord, t, amp, audioLow)
+            : halftone(fragCoord, t, audioMid);
+
+    // Center vignette, same falloff as meshgradient.sksl.
+    float dist = distance(fragCoord / resolution, float2(0.5));
+    float vig = smoothstep(0.8, 0.3, dist);
+
+    // Audio is only a subtle brightness gain on the 0..1 envelope.
+    rgb *= (0.6 + vig * 0.4) * (0.92 + audio * 0.16);
+
+    if (layer < 0.5) {
+        return half4(rgb, alpha);
+    }
+    // Overlay layer: full coverage — the layer's opacity slider lives entirely
+    // on the host paint (shader alpha = slider, paint alpha = page fade ×
+    // slider), so folding an extra factor here would double-multiply.
+    return half4(rgb, alpha);
+}
