@@ -597,6 +597,8 @@ public final class HudConfig {
     public static boolean glassSurfacePlayer = true;
     /** 真玻璃生效在顶部灵动岛上。岛面积小，折射读不出来，主要吃的是背景透色与边缘光。 */
     public static boolean glassSurfaceIsland = true;
+    /** 游戏内 Ctrl+F 从灵动岛长出的快捷搜索栏。关掉后快捷键不再响应。 */
+    public static boolean islandSearchEnabled = true;
     /** 真玻璃生效在桌面歌词卡片上。 */
     public static boolean glassSurfaceDesktopLyric = true;
     /** 真玻璃生效在三套 HUD 设置界面的面板上。这几块面板平时是不透明的，所以它同时决定底色压不压薄。 */
@@ -956,6 +958,7 @@ public final class HudConfig {
             spectrumHeight = clamp(getFloat(o, "spectrumHeight", spectrumHeight), .5f, 1.5f);
 
             dynamicIslandEnabled = getBoolean(o, "dynamicIslandEnabled", dynamicIslandEnabled);
+            islandSearchEnabled = getBoolean(o, "islandSearchEnabled", islandSearchEnabled);
             dynamicIslandScale = clamp(getFloat(o, "dynamicIslandScale", dynamicIslandScale), 0.60f, 1.35f);
             dynamicIslandTextScale = clamp(getFloat(o, "dynamicIslandTextScale", dynamicIslandTextScale), 0.82f, 1.18f);
             dynamicIslandMaxWidth = clamp(getFloat(o, "dynamicIslandMaxWidth", dynamicIslandMaxWidth), 160.0f, 720.0f);
@@ -1140,6 +1143,7 @@ public final class HudConfig {
             o.addProperty("spectrumHeight", spectrumHeight);
 
             o.addProperty("dynamicIslandEnabled", dynamicIslandEnabled);
+            o.addProperty("islandSearchEnabled", islandSearchEnabled);
             o.addProperty("dynamicIslandScale", dynamicIslandScale);
             o.addProperty("dynamicIslandTextScale", dynamicIslandTextScale);
             o.addProperty("dynamicIslandMaxWidth", dynamicIslandMaxWidth);

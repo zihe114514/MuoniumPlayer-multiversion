@@ -33,27 +33,41 @@ import java.net.URI;
  * 不再有这种分歧。</p>
  *
  * <p>出口也按「傻瓜操作」重排过：Windows 上的主行动是「一键安装喵！」——交给 {@link FfmpegInstaller}
- * 用系统自带的 winget 自动装，状态行滚着进度省略号，界面侧的看门狗每帧瞄一眼安装状态，装好后把成功
- * 文案多留一秒半再自动收起（立刻消失会让人怀疑有没有真装上）。winget 装的 ffmpeg 落在 WinGet Links
- * 目录，探测逻辑本来就覆盖那里，装完立刻生效、不用重启游戏。「前往下载」退居次要出口：winget 不在
- * 或装失败时，还能去官网手动下。三个出口都不改动任何设置；打不开浏览器就把地址塞进剪贴板。
- * ESC 与点遮罩等价于「我才不管呢喵」。</p>
+ * 从托管仓库的镜像链自动下载伴生包并装好，状态行报真实下载进度，界面侧的看门狗每帧瞄一眼安装状态，
+ * 装好后把成功文案多留一会儿再自动收起（立刻消失会让人怀疑有没有真装上）。装好的 ffmpeg 落在
+ * {@code config/muonium/bin/}，探测逻辑本来就覆盖那里，装完立刻生效、不用重启游戏。「前往下载」退居
+ * 次要出口：镜像链全挂或复测不过时，还能去官网手动下。三个出口都不改动任何设置；打不开浏览器就把地址
+ * 塞进剪贴板。ESC 与点遮罩等价于「我才不管呢喵」。</p>
  */
 public final class FfmpegNoticeOverlay extends NCMPanel {
 
     /** 标题：整段提示的主语。 */
     private static final String HEADING = "您的电脑似乎没有ffmpeg喵~要不要安装一个喵？！";
-    /** 正文：解释不装会怎样。 */
+    /**
+     * 正文：如实解释不装会怎样。动态封面是唯一会彻底失效的功能（退回静态封面）；
+     * B 站音频与无缝交接都有纯 Java 兜底，没有 ffmpeg 只是慢一点、覆盖率窄一点，
+     * 不是「受影响」这种让用户自己猜程度的模糊说法。措辞用玩家已有的词汇
+     * （「无缝交接」，ControlsBar 里就是这么叫的），不引入内部名。
+     */
     private static final String BODY =
-            "当然如果不安装也是可以使用的喵！ 但是会影响一些功能喵！ 例如动态封面，B站解析可能会受到影响的喵喵喵";
+            "不装也能正常听歌喵！只有动态封面会退回静态图；B站解析和无缝交接有纯 Java 兜底，只是慢一点点喵~";
     private static final String NEVER_SHOW = "永不展示";
     private static final String DOWNLOAD = "前往下载";
     private static final String INSTALL = "一键安装喵！";
     private static final String IGNORE = "我才不管呢喵！";
 
-    /** 空闲时状态行上的指引：解释「一键安装」是什么、要联网，免得用户以为点了就会弹窗广告。 */
-    private static final String HINT_IDLE = "点「一键安装喵！」用 winget 自动装好，装完立即生效（需要联网）";
-    private static final String STATUS_INSTALLING = "正在用 winget 下载安装 ffmpeg 喵";
+    /**
+     * 空闲时状态行上的指引：说清「一键安装」会联网下载。状态行是单行截断的（TRIM_TO_WIDTH），
+     * 最宽卡片下只装得下 ~25 个汉字，这条与失败文案一样按这个预算写——指引里必须保住
+     * 「一键安装」这个词，它是按钮名的锚点。
+     */
+    private static final String HINT_IDLE = "点「一键安装喵！」自动下载安装，需要联网（约 38MB）";
+    /** 下载中但还没拿到有效进度（镜像还在响应）。 */
+    private static final String STATUS_CONNECTING = "正在下载 ffmpeg 喵";
+    /** 下载中且进度已知，{0} 是百分比。 */
+    private static final String STATUS_DOWNLOADING = "正在下载 ffmpeg 喵 {0}%";
+    /** 下载完成到复测通过之间的窗口：解压 + 实测 ffmpeg。 */
+    private static final String STATUS_INSTALLING = "下载完成，正在安装喵";
     private static final String STATUS_SUCCESS = "装好了喵！已经检测到 ffmpeg，动态封面可以用了";
 
     /** 正文最多显示的行数；再长会在最后一行截断，卡片不允许长到顶出屏幕。 */
@@ -387,11 +401,16 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
     private String statusText() {
         if (status != null) return status;
         int state = FfmpegInstaller.state();
-        if (state == FfmpegInstaller.RUNNING) return STATUS_INSTALLING + progressDots();
+        if (state == FfmpegInstaller.RUNNING) {
+            int percent = FfmpegInstaller.progressPercent();
+            if (percent < 0) return STATUS_CONNECTING + progressDots();
+            if (percent >= 100) return STATUS_INSTALLING + progressDots();
+            return STATUS_DOWNLOADING.replace("{0}", Integer.toString(percent));
+        }
         if (state == FfmpegInstaller.SUCCESS) return STATUS_SUCCESS;
         if (state == FfmpegInstaller.FAILED) {
             String reason = FfmpegInstaller.failureReason();
-            return reason != null ? reason : "没装上喵…点「前往下载」手动装吧";
+            return reason != null ? reason : "没装上喵…重试或「前往下载」";
         }
         return HINT_IDLE;
     }
@@ -405,7 +424,10 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
         return getColor(NCMScreen.ColorType.SECONDARY_TEXT);
     }
 
-    /** 按 0.4 秒一颗滚动的省略号；不加的话「正在安装」静得像卡死了。 */
+    /**
+     * 按 0.4 秒一颗滚动的省略号；不加的话「正在下载」「正在安装」静得像卡死了。
+     * 解压 98MB 的 exe 加复测可能要十几秒，这一秒的动画差别就是「在干活」与「假死」。
+     */
     private static String progressDots() {
         long elapsed = System.currentTimeMillis() - FfmpegInstaller.startedAtMillis();
         int count = (int) ((elapsed / 400L) % 4L);
@@ -416,9 +438,9 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
     }
 
     /**
-     * 界面侧的看门狗：每帧瞄一眼安装状态。装好后把成功文案多留一秒半再自动收起——立刻消失会让人
-     * 怀疑有没有真装上；失败则停在原地，让用户改走「前往下载」。收起走 {@link #cancel()}，
-     * 与「我才不管呢喵」同一条路。
+     * 界面侧的看门狗：每帧瞄一眼安装状态。装好后把成功文案多留两秒半再自动收起——立刻消失会让人
+     * 怀疑有没有真装上（用户刚等完一整次下载，确认感值得多花一秒）；失败则停在原地，让用户改走
+     * 「前往下载」。收起走 {@link #cancel()}，与「我才不管呢喵」同一条路。
      */
     private void tickInstallWatchdog() {
         if (resolved) return;
@@ -427,7 +449,7 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
             successSeenAt = System.currentTimeMillis();
             return;
         }
-        if (System.currentTimeMillis() - successSeenAt >= 1600L) {
+        if (System.currentTimeMillis() - successSeenAt >= 2600L) {
             cancel();
         }
     }
@@ -502,7 +524,9 @@ public final class FfmpegNoticeOverlay extends NCMPanel {
         }
         // 打不开浏览器（无桌面环境 / 被沙箱拦住）时把地址塞进剪贴板，别让用户照着抄。
         KeyboardUtils.setClipboardString(FfmpegNotice.DOWNLOAD_URL);
-        status = "打不开浏览器喵…地址已复制到剪贴板：" + FfmpegNotice.DOWNLOAD_URL;
+        // 剪贴板兜底文案必须短：URL 是这行的关键信息，状态行单行截断会把超宽文案的尾巴
+        // （恰好是地址）吃掉，兜底就白兜了。地址在剪贴板里，这行只要说清这件事。
+        status = "打不开浏览器喵，下载地址已复制到剪贴板";
     }
 
     private static boolean browse(String url) {

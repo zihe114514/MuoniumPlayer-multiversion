@@ -14,8 +14,8 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>动态封面(网易云返回的是 MP4)需要一个外部解码器,项目里不打包二进制,所以按固定顺序找一个能用的
  * ffmpeg:系统属性 / 环境变量 → 游戏目录下的 {@code config/muonium/bin} → PATH → 各平台常见安装位置
- * (含 winget 的 Links 目录:游戏进程启动时 PATH 已经固定,用户在游戏运行期间安装的 ffmpeg 不会出现在
- * 继承来的 PATH 里)。</p>
+ * (含 winget 的 Links 目录:游戏进程启动时 PATH 已经固定,用户在游戏运行期间自行安装的 ffmpeg
+ * 不会出现在继承来的 PATH 里)。</p>
  *
  * <p>找不到不是错误:动态封面纯属装饰,没有它就一直用静态封面。因此结果会缓存,并且"没找到"只缓存 5
  * 分钟——用户可能在游戏运行期间才装上 ffmpeg。校验用 {@code ffmpeg -version},带超时,避免某个同名程序
@@ -59,9 +59,9 @@ final class FfmpegSupport {
     /**
      * 清掉缓存立刻重新探测一遍，找到就返回路径，没找到返回 {@code null}。
      *
-     * <p>给一键安装流程用：winget 装完的 ffmpeg 落在 WinGet Links 目录里，本进程的 PATH 是启动时
-     * 固定的，不重启也该立刻能用。探测会真的创建子进程（每个候选最多等一次超时），<b>必须放在后台
-     * 线程调用</b>，放到渲染线程上就是肉眼可见的卡顿。</p>
+     * <p>给一键安装流程用：伴生包解压到 {@code config/muonium/bin}，那是候选列表里固定的一位，
+     * 不依赖 PATH，所以装完立刻复测就能用、不重启游戏。但探测会真的创建子进程（每个候选最多等
+     * 一次超时），<b>必须放在后台线程调用</b>，放到渲染线程上就是肉眼可见的卡顿。</p>
      */
     static String forceReprobe() {
         synchronized (LOCK) {
@@ -176,7 +176,7 @@ final class FfmpegSupport {
         }
     }
 
-    /** 必须把输出读干:管道缓冲区填满时子进程会阻塞在写上,永远等不到退出。包内共用(winget 安装同样要排空)。 */
+    /** 必须把输出读干:管道缓冲区填满时子进程会阻塞在写上,永远等不到退出。包内共用(伴生包安装同样要排空)。 */
     static void drainAsync(final InputStream stream) {
         if (stream == null) return;
         Thread thread = new Thread(new Runnable() {

@@ -422,10 +422,8 @@ final class CadenzaLyricRenderer implements FullscreenLyricRenderer,
         }
         try {
             float layerAlpha = (float) (alpha * opened);
-            if (!TransitionPerformanceBudget.skipStageDecorations()) {
-                decor.render(viewLeft, viewTop, viewWidth, viewHeight, elapsedSeconds,
-                        beatSmooth, PlaybackPulse.loudness(), layerAlpha);
-            }
+            decor.render(viewLeft, viewTop, viewWidth, viewHeight, elapsedSeconds,
+                    beatSmooth, PlaybackPulse.loudness(), layerAlpha);
 
             if (!outgoing.isEmpty()) {
                 double exitProgress = (now - exitStartNanos) / 1.0e9 / EXIT_SECONDS;

@@ -249,6 +249,18 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     }
 
     public void checkDirty() {
+        // 展开动画期间不重建控件树。异步账号/歌单落地会随时 markDirty，而整棵 layout()
+        // （侧栏 + 控制栏 + 队列抽屉）是几十毫秒级的主线程重活，落在形变帧上就是肉眼可见的
+        // 一顿 —— 用户看到的是「打开播放器卡一下」。脏标记保持置位，转场一结束（含关闭
+        // 方向：CLOSING 同样避开）补上。几何本身每帧照常更新，不受影响。
+        //
+        // 补账的时机刻意再错开一拍：转场 state 翻转发生在同一帧 tick() 里（tick 在
+        // checkDirty 之前），立刻补会把「落定」和「整树重建」叠在同一帧 —— 用户看到的是
+        // 动画收尾瞬间又顿一下。宽限期（材质交接窗走完）过后才补，落定帧只做淡入，
+        // 重活挪到画面完全停稳之后。
+        if (this.dirty && (PlayerIslandTransition.isRunning() || !settleGraceElapsed())) {
+            return;
+        }
         if (this.dirty) {
             this.dirty = false;
 
@@ -274,6 +286,33 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         }
     }
 
+    /** 上一次展开转场落定的时刻；0 = 不在宽限期内（照常补账）。 */
+    private static long settledAtMillis;
+    /** 落定后的静默期（毫秒）：材质交接窗走完再加一拍，重活不与落定淡入同帧。 */
+    private static final long SETTLE_GRACE_MS = 200L;
+
+    /**
+     * 展开转场是否已落定超过宽限期。落定沿 tick 里 state→OPEN 的翻转检测一次
+     * （isRunning 从 true 变 false 且 t 已到 1），关闭方向（CLOSING→IDLE）不算 ——
+     * 那之后屏幕就要摘掉了，没有再补账的必要。
+     */
+    private static boolean settleGraceElapsed() {
+        boolean running = PlayerIslandTransition.isRunning();
+        if (running) {
+            settledAtMillis = 0L;
+            return true;
+        }
+        if (PlayerIslandTransition.contentAlpha() < 0.999) {
+            // 关闭方向或未展开：不算「落定」，不设宽限。
+            return true;
+        }
+        if (settledAtMillis == 0L) {
+            settledAtMillis = System.currentTimeMillis();
+            return false;
+        }
+        return System.currentTimeMillis() - settledAtMillis >= SETTLE_GRACE_MS;
+    }
+
     @Override
     public void onGuiClosed() {
         if (this.musicLyricsPanel != null) {
@@ -281,6 +320,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             this.musicLyricsPanel = null;
         }
         Keyboard.enableRepeatEvents(false);
+        // closing 是「屏幕正在收尾」的标志：displayScreen(null) 之后屏幕生命周期已经结束，
+        // 该标志必须随之清零。留着不清的后果是 PlayerIslandTransition.isBusy()（= 动画中
+        // 或收尾中）永久为 true —— 灵动岛快捷搜索的 open 闸被整场拒绝、布局预热被永久顺延。
+        // 此刻撞击脉冲已由转场 tick 在 t=0 时交给 beginPlayerAbsorbImpact 接管，不依赖本标志。
+        this.closing = false;
         PlayerIslandTransition.abort();
         // 提示层不跨「一次打开播放器」存活：下次打开时由 maybeShowModelNotice 重新决定要不要弹，
         // 而「本次启动已弹过」的闸门在 FoliaModelNotice 里，所以这里清掉不会导致重复提示。
@@ -919,12 +963,17 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         @Override
         public void onRender(double mouseX, double mouseY) {
-            if (PlayerIslandTransition.isRunning()
+            // 展开期间透镜整面不画（表面由转场贴图接管）；落定后的材质交接窗里按
+            // surfaceHandoff 淡入铺上来，盖住下面保持全浓度的转场贴图 —— 覆盖式交接，
+            // 背景覆盖率恒为 1，材质切换没有跳变也没有中段凹陷。
+            // isRunning 必须单独挡：落定后立刻 ESC 时 handoff 还在回卷半路上（>0），
+            // 而 isRunning 已经为真 —— 不挡的话假高光会画在正在移动的表面上。
+            double handoff = PlayerIslandTransition.surfaceHandoff();
+            if (PlayerIslandTransition.isRunning() || handoff <= 0.001
                     || GlassLook.amount(GlassLook.Surface.PLAYER) > 0.001f) return;
-            if (TransitionPerformanceBudget.skipLiquidGlass()) return;
             // 边缘光滑块只在真玻璃铺上来的时候吃：没有真背景时这套高光就是「玻璃」本身，
             // 拿它去压暗会让原来那几款液态玻璃主题凭空变淡。
-            float amount = NCMTheme.getLiquidGlassAmount() * this.getAlpha()
+            float amount = (float) (NCMTheme.getLiquidGlassAmount() * handoff) * this.getAlpha()
                     * GlassLook.edgeGlow(GlassLook.Surface.PLAYER);
             if (amount <= 0.001f) return;
             themeTransitionRenderer.renderLiquidGlassSurface(this.getX(), this.getY(),
@@ -952,8 +1001,14 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         @Override
         public void onRender(double mouseX, double mouseY) {
+            // 落定后的材质交接窗里按 handoff 淡入：转场贴图（renderSurface）在更下面
+            // 保持全浓度垫底，这里铺上来把它盖住 —— 覆盖式交接，背景浓度恒定，
+            // 不会两层半透明叠出「先变亮再回落」的中段凹陷。
+            double handoff = PlayerIslandTransition.surfaceHandoff();
+            float alpha = (float) (this.getAlpha() * handoff);
+            if (alpha <= 0.004f) return;
             GlassLook.paintFrost(GlassLook.Surface.PLAYER, this.getX(), this.getY(),
-                    this.getWidth(), this.getHeight(), getPlayerCornerRadius(), this.getAlpha());
+                    this.getWidth(), this.getHeight(), getPlayerCornerRadius(), alpha);
         }
     }
     public LoginRenderer loginRenderer = null;
@@ -1273,6 +1328,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         if (this.modelInstallNoticeOverlay != null) return;
         // 展开动画期间播放器表面还在动，这时弹一张居中卡片会跟着一起漂。
         if (PlayerIslandTransition.isRunning()) return;
+        // 落定后的静默期同理：卡片 onInit（构造 + 类加载）不与材质交接的淡入同帧。
+        if (!settleGraceElapsed()) return;
         // 正在关闭的播放器不需要再来一张新卡片。
         if (this.closing) return;
         // 全屏歌词页上不打断；与其它模态浮层同理，一次只让一层独占输入。

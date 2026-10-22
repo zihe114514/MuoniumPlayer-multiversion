@@ -738,7 +738,7 @@ public class NavigateBar extends NCMPanel {
         this.retirementLayer.setClickable(false);
         this.retirementLayer.setBeforeRenderCallback(() -> {
             double top = sourceSwitcher.getRelativeY() + sourceSwitcher.getHeight() + 7;
-            this.retirementLayer.setBounds(0, top, this.getWidth(), Math.max(0, this.getHeight() - top - 70));
+            this.retirementLayer.setBounds(0, top, this.getWidth(), Math.max(0, this.getHeight() - top - 61));
             this.advanceRetiringRows();
         });
         if (this.sourceChanged) {
@@ -757,8 +757,10 @@ public class NavigateBar extends NCMPanel {
             this.playlistPanel.setMargin(0);
             double top = sourceSwitcher.getRelativeY() + sourceSwitcher.getHeight() + 7;
             this.playlistPanel.setPosition(this.playlistPanel.getRelativeX(), top);
-            // 为紧凑快捷操作栏和账号入口预留底部空间。
-            this.playlistPanel.setBounds(this.playlistPanel.getWidth(), Math.max(0, this.getHeight() - top - 70));
+            // 为快捷操作栏和账号入口预留底部空间：壳下缘 H-31 + 与账号行的 4 像素缝
+            // ＝ 账号行底 H-27，再留 3 像素缓冲就是 61。壳收小后这里是 61，不是过去的 70——
+            // 多出的 9 像素曾经是列表和按钮条之间一条没人用的空带。
+            this.playlistPanel.setBounds(this.playlistPanel.getWidth(), Math.max(0, this.getHeight() - top - 61));
         });
 
         this.playlistPanel.setSpacing(4);
@@ -1174,10 +1176,16 @@ public class NavigateBar extends NCMPanel {
         this.addChild(quickActionsSurface);
         quickActionsSurface.setClickable(false);
         quickActionsSurface.setBeforeRenderCallback(() -> {
-            // 保留原有的紧凑操作栏尺寸；只对字形渲染
-            // 进行强化，使侧边栏布局和按钮尺寸保持不变。
-            quickActionsSurface.setBounds(Math.max(1, this.getWidth() - 16), 32);
-            quickActionsSurface.setPosition(8, this.getHeight() - 63);
+            // 壳按内容收窄：宽度 = 按钮簇 + 左右内边距，高度 = 按钮 24 + 上下内边距。
+            // 过去壳占满侧栏内宽（按钮跟着摊成长条），整块底板比内容大出一圈，
+            // 就是「整个按钮部分太大」的来源——现在它只是五颗按钮正好包住的一层底。
+            // 下缘钉在 H-59（28 高 → 底边 H-31），与账号行（顶在 H-27）之间保持
+            // 原来那 4 像素的呼吸缝：壳变矮之后 y 不收回来的话，缝会涨到 10 像素。
+            double railWidth = Math.max(1, this.getWidth() - 16);
+            double surfaceWidth = railClusterWidth(railWidth) + 2 * RAIL_SURFACE_INSET;
+            quickActionsSurface.setBounds(Math.max(1, surfaceWidth), 28);
+            quickActionsSurface.setPosition(8 + Math.max(0, (railWidth - surfaceWidth) * .5),
+                    this.getHeight() - 59);
             quickActionsSurface.setRadius(9);
             quickActionsSurface.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
             quickActionsSurface.setAlpha(.90f);
@@ -1239,40 +1247,40 @@ public class NavigateBar extends NCMPanel {
         });
 
         btnTheme.setBeforeRenderCallback(() -> {
-            double actionWidth = railSlotWidth(quickActionsSurface.getWidth());
-            btnTheme.setBounds(actionWidth, 28);
-            btnTheme.setPosition(2, 2);
-            btnTheme.setRadius(7);
+            double actionWidth = railSlotWidth(Math.max(1, this.getWidth() - 16));
+            btnTheme.setBounds(actionWidth, 24);
+            btnTheme.setPosition(railSlotX(0, actionWidth), 2);
+            btnTheme.setRadius(6);
             btnTheme.setColor(btnTheme.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
 
         btnFont.setBeforeRenderCallback(() -> {
-            double actionWidth = railSlotWidth(quickActionsSurface.getWidth());
-            btnFont.setBounds(actionWidth, 28);
-            btnFont.setPosition(4 + actionWidth, 2);
-            btnFont.setRadius(7);
+            double actionWidth = railSlotWidth(Math.max(1, this.getWidth() - 16));
+            btnFont.setBounds(actionWidth, 24);
+            btnFont.setPosition(railSlotX(1, actionWidth), 2);
+            btnFont.setRadius(6);
             btnFont.setColor(btnFont.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
 
         btnPlayerSize.setBeforeRenderCallback(() -> {
-            double actionWidth = railSlotWidth(quickActionsSurface.getWidth());
-            btnPlayerSize.setBounds(actionWidth, 28);
-            btnPlayerSize.setPosition(6 + actionWidth * 2, 2);
-            btnPlayerSize.setRadius(7);
+            double actionWidth = railSlotWidth(Math.max(1, this.getWidth() - 16));
+            btnPlayerSize.setBounds(actionWidth, 24);
+            btnPlayerSize.setPosition(railSlotX(2, actionWidth), 2);
+            btnPlayerSize.setRadius(6);
             btnPlayerSize.setColor(btnPlayerSize.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
 
         btnRefresh.setBeforeRenderCallback(() -> {
-            double actionWidth = railSlotWidth(quickActionsSurface.getWidth());
-            btnRefresh.setBounds(actionWidth, 28);
-            btnRefresh.setPosition(8 + actionWidth * 3, 2);
-            btnRefresh.setRadius(7);
+            double actionWidth = railSlotWidth(Math.max(1, this.getWidth() - 16));
+            btnRefresh.setBounds(actionWidth, 24);
+            btnRefresh.setPosition(railSlotX(3, actionWidth), 2);
+            btnRefresh.setRadius(6);
             // 这颗按钮按当前平台刷新「我的账号歌单」，分发逻辑见 triggerSidebarRefresh。
             btnRefresh.setAlpha(1f);
             btnRefresh.setColor(btnRefresh.isHovering()
@@ -1288,10 +1296,10 @@ public class NavigateBar extends NCMPanel {
             return true;
         });
         btnAnnouncement.setBeforeRenderCallback(() -> {
-            double actionWidth = railSlotWidth(quickActionsSurface.getWidth());
-            btnAnnouncement.setBounds(actionWidth, 28);
-            btnAnnouncement.setPosition(10 + actionWidth * 4, 2);
-            btnAnnouncement.setRadius(7);
+            double actionWidth = railSlotWidth(Math.max(1, this.getWidth() - 16));
+            btnAnnouncement.setBounds(actionWidth, 24);
+            btnAnnouncement.setPosition(railSlotX(4, actionWidth), 2);
+            btnAnnouncement.setRadius(6);
             btnAnnouncement.setColor(btnAnnouncement.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
@@ -1568,17 +1576,33 @@ public class NavigateBar extends NCMPanel {
         return NeteaseMusicService.getAccountAvatarLocation();
     }
 
+    /** 一颗按钮的槽位宽度上限：26×24 的近方格。壳按内容收窄，宽侧栏多出来的宽度留白，不摊给按钮。 */
+    private static final double RAIL_SLOT_MAX_WIDTH = 26.0;
+
+    /** 壳的内边距：左右各 2、上下各 2（按钮 24 高 + 上下各 2 = 壳 28 高）。 */
+    private static final double RAIL_SURFACE_INSET = 2.0;
+
     /**
-     * 快捷操作条上一颗按钮的宽度。
+     * 快捷操作条上一颗按钮的宽度。参数是侧栏内宽（侧栏宽 − 左右各 8 的边距）。
      *
-     * <p>左右各 2 像素留白、每两颗之间 2 像素，所以扣掉的是 {@code 4 + 2 * 颗数}。
-     * 收成一个方法是因为五处 {@code beforeRenderCallback} 必须用同一个公式：其中任何一处
-     * 落后一版，那颗按钮就会和邻居错开或者叠上去。</p>
+     * <p>先算 n 颗的理论槽宽（扣掉壳的左右内边距与 n-1 条 3 像素的缝），再钳到
+     * {@link #RAIL_SLOT_MAX_WIDTH}——窄侧栏槽宽自然收，宽侧栏保持近方格。</p>
      */
     private static double railSlotWidth(double railWidth) {
         int slots = railSlotCount(railWidth);
-        // 左右各 2 像素留白，n 颗之间有 n-1 条 2 像素的缝。
-        return Math.max(1, (railWidth - (4 + 2 * (slots - 1))) / slots);
+        double natural = (railWidth - 2 * RAIL_SURFACE_INSET - 3.0 * (slots - 1)) / slots;
+        return Math.max(1, Math.min(RAIL_SLOT_MAX_WIDTH, natural));
+    }
+
+    /** 五颗按钮占的总宽（n 格宽 + n-1 条 3 像素的缝），壳宽就是它再加左右内边距。 */
+    private static double railClusterWidth(double railWidth) {
+        double actionWidth = railSlotWidth(railWidth);
+        return actionWidth * railSlotCount(railWidth) + 3.0 * (railSlotCount(railWidth) - 1);
+    }
+
+    /** 第 {@code index} 颗按钮在壳内的左缘：左内边距 2 起，每颗占一格宽再加一条 3 像素的缝。 */
+    private static double railSlotX(int index, double actionWidth) {
+        return RAIL_SURFACE_INSET + index * (actionWidth + 3);
     }
 
     /** 这一帧这条快捷操作条上有几颗按钮：窄到放不下第五颗时由公告让位。 */
@@ -1589,12 +1613,13 @@ public class NavigateBar extends NCMPanel {
     /**
      * 第五颗按钮放不放得下。
      *
-     * <p>门槛取 18.5：图标底板宽 17.2，再窄邻居之间就会重叠，而这条按钮排是横向并排的，
-     * 叠在一起的图标读起来就是「界面坏了」。侧栏收窄到 112 逻辑像素那一档正好落在门槛外侧，
+     * <p>门槛取 18.5：图标墨迹约 12.4 逻辑像素，再窄邻居之间就会视觉重叠，而这条按钮排是
+     * 横向并排的，叠在一起的图标读起来就是「界面坏了」。分母里扣的是壳的左右内边距 4 与
+     * 五颗之间 4 条 3 像素的缝。侧栏收窄到 112 逻辑像素那一档正好落在门槛外侧，
      * 于是那一档只显示原来那四颗。</p>
      */
     private static boolean railFitsAnnouncement(double railWidth) {
-        return (railWidth - 12) / 5.0 >= 18.5;
+        return (railWidth - 2 * RAIL_SURFACE_INSET - 3.0 * 4) / 5.0 >= 18.5;
     }
 
     /** 会员徽标的胶囊高度与图标方格。方格必须是 partyIcon24 实际画出来的 12，填大了图标和字之间会空一块。 */
@@ -1755,10 +1780,11 @@ public class NavigateBar extends NCMPanel {
         /**
          * lucide 的 24 网格在这颗按钮里占的边长。
          *
-         * <p>定成 16 是为了和换掉之前的手绘几何同大：lucide 的字形在网格里自带约 2 个单位的内边距，
-         * 实际墨迹约 13.3，正对着原来那圈 ±6.5 单位的作图范围，也就刚好落进 14.8 的那块内底板。</p>
+         * <p>15 = 槽高 24 的 62.5%：lucide 的字形在网格里自带约 2 个单位的内边距，实际墨迹
+         * 约 12.4，占按钮高度的 52%——与上一版（17 格 / 28 高）同一档光学占比，只是整颗
+         * 壳收小一圈；再大的话五连排在侧栏里就喧宾夺主了。</p>
          */
-        private static final double LUCIDE_BOX = 16.0;
+        private static final double LUCIDE_BOX = 15.0;
 
         private SidebarActionButton(SidebarActionIcon icon) {
             this.icon = icon;
@@ -1789,9 +1815,8 @@ public class NavigateBar extends NCMPanel {
             int base = NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND);
             int hover = NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER);
             setColor(mixColor(base, hover, .18f + hoverAnimation * .58f));
-            // 只有外面这块底板走玻璃的内层档。里面那圈图标底板、底部强调色横杠与字形用的
-            // 是下面自己算的 alpha（getAlpha() 那条），不经过 getHexColor()，所以不受影响：
-            // 玻璃下按钮会变薄，但图标该多清楚还多清楚。
+            // 只有外面这块底板走玻璃的内层档。字形用的是下面自己算的 alpha（getAlpha() 那条），
+            // 不经过 getHexColor()，所以不受影响：玻璃下按钮会变薄，但图标该多清楚还多清楚。
             setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
             super.onRender(mouseX, mouseY);
 
@@ -1805,27 +1830,21 @@ public class NavigateBar extends NCMPanel {
             int accent = getIconAccentColor();
             int foreground = NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT);
 
-            // 现在每个操作都带有持久的对比色图标底板和彩色的底部
-            // 标记。这保留了紧凑的纯图标布局，同时使三个
-            // 控件，在指针悬停之前即可立即辨认。
-            roundedRect(centerX - 8.6, centerY - 8.6, 17.2, 17.2, 8.6,
-                    RenderSystem.reAlpha(accent, alpha * (.16f + hoverAnimation * .16f)));
-            roundedRect(centerX - 7.4, centerY - 7.4, 14.8, 14.8, 7.4,
-                    RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND),
-                            alpha * (.38f - hoverAnimation * .12f)));
-            roundedRect(getX() + 4.0, getY() + getHeight() - 2.4,
-                    Math.max(1.0, getWidth() - 8.0), 1.35, .675,
-                    RenderSystem.reAlpha(accent, alpha * (.58f + hoverAnimation * .38f)));
+            // 彩色识别收进墨迹本身：图标永远染各自的强调色，不再垫那两层圆角底板、
+            // 也不再画底部横杠——那三层装饰叠在一条五连按钮上就是「芯片套芯片」的闷感，
+            // 而图标底板还把 lucide 的细线墨迹整个泡进一层浅纱里。悬停时图标回正文色、
+            // 并放大一档，识别与反馈都还在，只是安静下来。
+            int ink = blendInk(accent, foreground, hoverAnimation);
 
             api.getGLStateManager().pushMatrix();
             scaleAtPos(centerX, centerY, iconScale);
-            if (!drawLucideIcon(centerX, centerY, alpha, accent, foreground)) {
-                renderHandDrawnIcon(centerX, centerY, alpha, accent, foreground);
+            if (!drawLucideIcon(centerX, centerY, alpha, ink)) {
+                renderHandDrawnIcon(centerX, centerY, alpha, ink, foreground);
             }
             api.getGLStateManager().popMatrix();
 
             if (badge != null && badge.getAsBoolean()) {
-                // 未读小圆点压在图标底板上，所以先垫一圈底色把它从邻居图形里分离出来。
+                // 未读小圆点压在操作条底上，所以先垫一圈底色把它从邻居图形里分离出来。
                 double size = 5.4;
                 double dotX = getX() + getWidth() - size - .5;
                 double dotY = getY() - .5;
@@ -1834,6 +1853,17 @@ public class NavigateBar extends NCMPanel {
                                 Math.min(1f, alpha + .4f)));
                 roundedRect(dotX, dotY, size, size, size * .5, RenderSystem.reAlpha(UNREAD_DOT_COLOR, alpha));
             }
+        }
+
+        /**
+         * 图标墨迹的颜色：静止时是这颗按钮的强调色（彩色识别），悬停时往正文色收。
+         *
+         * <p>只动墨迹这一个通道，悬停放大（iconScale）与按钮底色变化负责其余反馈；
+         * 三者叠加后悬停回应依然明显，但平时那条五连按钮不再背七种颜色。</p>
+         */
+        private int blendInk(int accent, int foreground, float hover) {
+            if (hover <= 0f) return accent;
+            return mixColor(accent, foreground, Math.min(1f, hover * .55f));
         }
 
         /** 悬浮说明的文案。右键那些入口不写出来，用户永远不会发现它们存在。 */
@@ -1867,34 +1897,31 @@ public class NavigateBar extends NCMPanel {
          * 走 {@link FoliaLucideIcons} 那套矢量管线：图标几何是 lucide 的原始路径数据，
          * 不再是这里手写的圆角矩形拼出来的。
          *
-         * <p>主题用强调色、其余几颗用正文色。全染成强调色的话，按钮底下那条强调色底杠就白画了
-         * —— 它靠的正是「图标与底杠不同色」才分得出来。</p>
+         * <p>五颗全部走同一族线性字形：墨迹颜色由调用方给（静止时各自的强调色、悬停时收向
+         * 正文色），家族一致与彩色识别互不挤占。全部同染强调色的话按钮之间只剩颜色可辨，
+         * 那条方案在五连排上读不出层级，所以这里不做「全强调色」。</p>
          *
          * @return 真的画了才返回 true。不在 Skija 帧内、路径解析失败、或这颗按钮没有对应的
          *         lucide 字形都返回 false，由调用方退回 {@link #renderHandDrawnIcon}：
          *         界面不能因为一枚图标画不出来而空一块。
          */
-        private boolean drawLucideIcon(double centerX, double centerY, float alpha,
-                                       int accent, int foreground) {
+        private boolean drawLucideIcon(double centerX, double centerY, float alpha, int ink) {
             String name;
-            int ink;
             if (icon == SidebarActionIcon.THEME) {
                 name = FoliaLucideIcons.PALETTE;
-                ink = accent;
             } else if (icon == SidebarActionIcon.FONT) {
                 name = FoliaLucideIcons.TYPOGRAPHY;
-                ink = foreground;
             } else if (icon == SidebarActionIcon.SCALE) {
                 name = FoliaLucideIcons.SCALING;
-                ink = foreground;
             } else if (icon == SidebarActionIcon.REFRESH) {
                 name = FoliaLucideIcons.REFRESH;
-                ink = spinning ? accent : foreground;
                 if (spinning) {
                     // 只有转起来才转：绕图标中心自转，转速沿用原来那版环形图标的每 6 毫秒一度。
                     rotateAtPos(centerX, centerY,
                             (float) ((System.currentTimeMillis() / 6.0) % 360.0));
                 }
+            } else if (icon == SidebarActionIcon.ANNOUNCEMENT) {
+                name = FoliaLucideIcons.MEGAPHONE;
             } else {
                 return false;
             }
@@ -1902,7 +1929,12 @@ public class NavigateBar extends NCMPanel {
                     RenderSystem.reAlpha(ink, alpha));
         }
 
-        /** 手绘兜底：矢量管线画不出来时退回换掉之前的那套几何。 */
+        /**
+         * 手绘兜底：矢量管线画不出来时退回换掉之前的那套几何。
+         *
+         * <p>传入的 {@code accent} 在主路径里是「悬停混色后的墨迹」，兜底几何沿用同一参数名，
+         * 语义一致：五颗都用它当主墨色，正文色只画点缀。</p>
+         */
         private void renderHandDrawnIcon(double centerX, double centerY, float alpha,
                                          int accent, int foreground) {
             if (icon == SidebarActionIcon.THEME) {
@@ -1946,7 +1978,7 @@ public class NavigateBar extends NCMPanel {
          * 描边粗细与光学重心都对不上邻居；而这条按钮会跟着播放器缩放走，矢量在任何倍率下都锐。</p>
          */
         private void renderFontIcon(double x, double y, float alpha, int accent, int foreground) {
-            int ink = RenderSystem.reAlpha(foreground, alpha);
+            int ink = RenderSystem.reAlpha(accent, alpha);
             // 两笔斜杠在字顶交汇：pill 两端是圆头，交汇处自然圆滑，不用另画一个尖。
             drawRotatedPill(x - 2.35, y - 0.55, 10.9, 1.75, -64.5f, ink);
             drawRotatedPill(x + 2.35, y - 0.55, 10.9, 1.75, 64.5f, ink);
@@ -1971,15 +2003,15 @@ public class NavigateBar extends NCMPanel {
                 api.getGLStateManager().translate(x, y, 0);
                 api.getGLStateManager().rotate((float) (rotation + segment * 45.0), 0, 0, 1);
                 roundedRect(-.85, -6.55, 1.7, 3.25, .85,
-                        RenderSystem.reAlpha(spinning ? accent : foreground, segmentAlpha));
+                        RenderSystem.reAlpha(accent, segmentAlpha));
                 api.getGLStateManager().popMatrix();
             }
             // 小箭头尖闭合这两个缺口，将圆环变成清晰的
             // 刷新符号，而非普通的加载转圈。
             drawRotatedPill(x - 4.25, y - 4.05, 4.45, 1.65, -42f,
-                    RenderSystem.reAlpha(spinning ? accent : foreground, alpha));
+                    RenderSystem.reAlpha(accent, alpha));
             drawRotatedPill(x + 4.25, y + 4.05, 4.45, 1.65, 138f,
-                    RenderSystem.reAlpha(spinning ? accent : foreground, alpha));
+                    RenderSystem.reAlpha(accent, alpha));
         }
 
         private void renderScaleIcon(double x, double y, float alpha, int accent, int foreground) {
@@ -1989,7 +2021,7 @@ public class NavigateBar extends NCMPanel {
             double bottom = y + 6.15;
             double thickness = 1.65;
             double arm = 4.7;
-            int corner = RenderSystem.reAlpha(foreground, alpha);
+            int corner = RenderSystem.reAlpha(accent, alpha);
             int highlight = RenderSystem.reAlpha(accent, alpha * .94f);
 
             roundedRect(left, top, arm, thickness, thickness * .5, highlight);
@@ -2001,7 +2033,7 @@ public class NavigateBar extends NCMPanel {
             roundedRect(right - arm, bottom - thickness, arm, thickness, thickness * .5, highlight);
             roundedRect(right - thickness, bottom - arm, thickness, arm, thickness * .5, highlight);
             roundedRect(x - 1.15, y - 1.15, 2.3, 2.3, 1.15,
-                    RenderSystem.reAlpha(foreground, alpha * .92f));
+                    RenderSystem.reAlpha(accent, alpha * .92f));
         }
 
         /**
@@ -2018,11 +2050,11 @@ public class NavigateBar extends NCMPanel {
             double height = 13.4;
             roundedRect(left, top, width, height, 2.3, RenderSystem.reAlpha(accent, alpha * .30f));
             // 三条文字线，最后一条短一截：读起来是「这里写着一段话」，而不是一块表格。
-            int ink = RenderSystem.reAlpha(foreground, alpha * .92f);
+            int ink = RenderSystem.reAlpha(accent, alpha * .92f);
             roundedRect(left + 2.0, top + 2.7, width - 4.0, 1.5, .75, ink);
             roundedRect(left + 2.0, top + 5.6, width - 4.0, 1.5, .75, ink);
             roundedRect(left + 2.0, top + 8.5, width - 6.6, 1.5, .75,
-                    RenderSystem.reAlpha(foreground, alpha * .74f));
+                    RenderSystem.reAlpha(accent, alpha * .74f));
         }
 
         private int getIconAccentColor() {

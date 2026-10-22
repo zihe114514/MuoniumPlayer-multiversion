@@ -84,8 +84,7 @@ final class DioramaLyricRenderer extends AbstractStageLyricRenderer {
         double spread = FullscreenLyricStage.clamp(HudConfig.dioramaDepthSpread, .3, 2.5);
         double step = focal * DEPTH_STEP * spread;
 
-        if (HudConfig.dioramaDust
-                && !TransitionPerformanceBudget.skipStageDecorations()) {
+        if (HudConfig.dioramaDust) {
             drawDust(left, top, width, height, focal, alpha);
         }
 

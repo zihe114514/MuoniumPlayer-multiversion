@@ -15,6 +15,10 @@ import java.util.Locale;
  * 界面本身在 {@code com.muoniumplayer.core.screens.GuiFfmpegNotice}，两者刻意分开：状态要在主菜单
  * 出现之前就准备好，而界面依赖 Minecraft 的 GuiScreen，不该被状态逻辑拖进类加载。</p>
  *
+ * <p>「一键安装」的自动下载由 {@link FfmpegInstaller} 负责（伴生包来自托管仓库的镜像链，
+ * 见 {@link FfmpegPackageDownload}），与这里互不牵连：那边装完会经
+ * {@link #noteProbeResult(int)} 回写探测结论。</p>
+ *
  * <p>探测放在守护线程上：{@link FfmpegSupport} 的校验是 {@code ffmpeg -version}，会真的创建子进程，
  * 最坏情况下要为好几个候选路径各等一次超时。放在主线程或渲染线程上就是几秒的卡顿。</p>
  */
@@ -22,9 +26,6 @@ public final class FfmpegNotice {
 
     /** ffmpeg 官方下载页。刻意用官网而不是某个镜像：镜像会失效，官网上各平台的构建入口都在。 */
     public static final String DOWNLOAD_URL = "https://ffmpeg.org/download.html";
-
-    /** winget 的一键安装由 {@link FfmpegInstaller} 负责，界面文案里会引用它的状态。 */
-    public static final String WINGET_PACKAGE_ID = "Gyan.FFmpeg";
 
     /** 尚未探测 / 探测还没结束。 */
     public static final int STATE_UNKNOWN = 0;

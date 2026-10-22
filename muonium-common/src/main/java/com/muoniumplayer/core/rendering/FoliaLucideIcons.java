@@ -416,6 +416,15 @@ public final class FoliaLucideIcons {
         "M21 3 9 15",
     };
 
+    /** 侧边栏「公告中心」按钮（lucide {@code megaphone}）。 */
+    public static final String MEGAPHONE = "megaphone";
+    static final String[] D_MEGAPHONE = {
+                    "M11 6a13 13 0 0 0 8.4-2.8A1 1 0 0 1 21 4v12a1 1 0 0 1-1.6.8A13 13 0 0 0 11 14H5a2 2 0 0 1-2-"
+            +             "2V8a2 2 0 0 1 2-2z",
+        "M6 14a12 12 0 0 0 2.4 7.2 2 2 0 0 0 3.2-2.4A8 8 0 0 1 10 14",
+        "M8 6v8",
+    };
+
     /** 音质·标准（lucide {@code signal-low}）。 */
     public static final String SIGNAL_LOW = "signal-low";
     static final String[] D_SIGNAL_LOW = {
@@ -634,6 +643,7 @@ public final class FoliaLucideIcons {
         TABLE.put("languages", D_LANGUAGES);
         TABLE.put("a-large-small", D_TYPOGRAPHY);
         TABLE.put("scaling", D_SCALING);
+        TABLE.put("megaphone", D_MEGAPHONE);
         TABLE.put("signal-low", D_SIGNAL_LOW);
         TABLE.put("signal-medium", D_SIGNAL_MEDIUM);
         TABLE.put("signal-high", D_SIGNAL_HIGH);

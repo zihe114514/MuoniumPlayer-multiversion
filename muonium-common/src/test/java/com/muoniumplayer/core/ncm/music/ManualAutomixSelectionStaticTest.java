@@ -22,7 +22,13 @@ class ManualAutomixSelectionStaticTest {
         assertTrue(request.contains("MpPartyClient.inRoom()"));
         assertTrue(request.contains("NeteaseListenTogetherService.isActive()"));
         assertTrue(request.contains("KuGouListenTogetherService.isActive()"));
-        assertTrue(request.contains("worker.start()"));
+        // 预备线程：曾经是裸 new Thread(...).start()，98d14d9 起改走 BackgroundWork 池
+        // （低优先级、有并发上限；中断语义不变）。钉契约而不是钉写法：异步提交必须还在，
+        // 且任务开头必须清掉池线程带来的旧中断位。
+        assertTrue(request.contains("BackgroundWork.submit("),
+                "手动预备必须仍走异步提交（BackgroundWork 池或线程），不允许在调用线程上现做取流解码");
+        assertTrue(request.contains("Thread.interrupted()"),
+                "池线程任务开头必须清旧中断位：cancelManualSelection 的中断会带给下一个任务");
         assertFalse(request.contains("join("));
         assertFalse(request.contains("getPlayUrl()"));
         assertFalse(request.contains("player.close()"));

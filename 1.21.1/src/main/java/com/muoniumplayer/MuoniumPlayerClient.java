@@ -20,6 +20,8 @@ import com.muoniumplayer.core.screens.hud.GuiHudEditorPro;
 import com.muoniumplayer.core.screens.hud.ModernUiHudBridge;
 import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
 import com.muoniumplayer.core.settings.HudConfig;
+import com.muoniumplayer.core.screens.ncm.IslandSearchOverlay;
+import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.core.update.AnnouncementChecker;
 import com.muoniumplayer.core.update.UpdateChecker;
 import com.muoniumplayer.core.screens.RenderLayerNotice;
@@ -107,6 +109,8 @@ public final class MuoniumPlayerClient {
     public static KeyMapping keyVolumeDown;
     /** 暂停 / 继续播放，默认数字键盘 *。可在「选项 → 控制」中修改。 */
     public static KeyMapping keyTogglePause;
+    /** 游戏内唤出灵动岛搜索栏，默认 Ctrl+F（见 onClientTick 里的修饰键说明）。 */
+    public static KeyMapping keyQuickSearch;
 
     private static final MuoniumPlayerClient INSTANCE = new MuoniumPlayerClient();
 
@@ -139,8 +143,11 @@ public final class MuoniumPlayerClient {
         keyVolumeDown = key("key.muonium.volume_down", Keyboard.KEY_SUBTRACT);
         // 和音量的小键盘 +/- 放在一起，构成一组「媒体键」；原版没有占用小键盘 *，因此默认不冲突。
         keyTogglePause = key("key.muonium.toggle_pause", Keyboard.KEY_MULTIPLY);
+        // 快捷搜索默认 F；绑定仍是默认键时由 tick 里要求 Ctrl 一起按下（即 Ctrl+F），
+        // 玩家改绑其它键后直接触发，不再要求修饰键。
+        keyQuickSearch = key("key.muonium.quick_search", Keyboard.KEY_F);
         return List.of(keyOpenMusic, keyEditHud, keyPreviousTrack, keyNextTrack,
-                keyVolumeUp, keyVolumeDown, keyTogglePause);
+                keyVolumeUp, keyVolumeDown, keyTogglePause, keyQuickSearch);
     }
 
     private static KeyMapping key(String translationKey, int lwjgl2DefaultKey) {
@@ -300,6 +307,14 @@ public final class MuoniumPlayerClient {
             if (keyTogglePause.consumeClick()) {
                 MusicHotkeys.togglePlayback();
             }
+
+            // 灵动岛快捷搜索：默认 Ctrl+F。绑定还是默认键（F）时要求 Ctrl 按下 ——
+            // 光杆 F 太容易误触；改绑其它键后直接触发。
+            if (keyQuickSearch.consumeClick()) {
+                if (!isDefaultBinding(keyQuickSearch) || KeyboardUtils.isCtrlKeyDown()) {
+                    IslandSearchOverlay.toggle();
+                }
+            }
         } else {
             // 打开 GUI 时把这一 tick 积累的边沿消费掉，避免关掉界面的瞬间一次性全部触发。
             // 1.8.9 靠 Forge 的按键处理天然不会积累；现在 consumeClick 的计数会留到下次读取。
@@ -310,6 +325,19 @@ public final class MuoniumPlayerClient {
             keyVolumeUp.consumeClick();
             keyVolumeDown.consumeClick();
             keyTogglePause.consumeClick();
+            keyQuickSearch.consumeClick();
+        }
+    }
+
+    /**
+     * 这个按键此刻是否仍是出厂绑定。读 {@code KeyMapping#isDefault()}；
+     * 异常时按「是默认」处理 —— 宁可多要求一次 Ctrl，也不会让改绑后的键失灵。
+     */
+    private static boolean isDefaultBinding(KeyMapping mapping) {
+        try {
+            return mapping.isDefault();
+        } catch (Throwable ignored) {
+            return true;
         }
     }
 

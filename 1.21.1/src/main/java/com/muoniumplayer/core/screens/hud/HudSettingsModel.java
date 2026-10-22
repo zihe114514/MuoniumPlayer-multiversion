@@ -1264,9 +1264,8 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         }),
-                                toggle("帧率不够时自动摘玻璃", "画面持续吃紧时把真玻璃淡出成原来的实色面板，"
-                                        + "腾出帧预算保流畅，缓回来以后再淡回来。关掉它就是「永远按主题画玻璃」，"
-                                        + "不管掉多少帧——配合上一项一起开，就是高配机上的「我要一直实时、别替我降载」。",
+                                toggle("帧率不够时自动摘玻璃（已停用）", "玻璃的自动降载已随帧率分档一起移除——它带来的「暗一下再恢复」闪烁比省下的帧更扎眼。"
+                                        + "此项仅为兼容旧存档保留，开关不再产生任何效果；现在的流畅由转场时钟、预糊复用、采集节流这些不碰观感的门槛保证。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.glassAutoDegrade;

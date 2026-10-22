@@ -39,16 +39,50 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
 
     private static int state = IDLE;
 
-    /** 1 = 完全展开。全部曲线都读它，一帧只推进一次（{@link #tick()}）。 */
+    /** 1 = 完全展开。全部曲线都读它，一帧只在 {@link #tick()} 里推进一次。 */
     private static double t = 0.0;
     /** 平滑的灵动岛 → 胶囊交接；在关闭被中途逆转时保留。 */
     private static double capsuleHandoffMix = 0.0;
+
+    /**
+     * 落定材质交接窗，毫秒。
+     *
+     * <p>转场期间播放器表面贴的是「预糊背景贴图」（廉价、无折射），透镜液态玻璃整面关闭；
+     * 动画一结束透镜立刻接管。两种材质对同一背景的亮度与边缘折射不同，瞬间切换读起来就是
+     * 「落定那一下闪/顿」。这个窗口让表面落定后两种材质交叉淡变：贴图淡出、透镜按同一比例
+     * 淡入（{@link #surfaceHandoff()}）。打开放完与关闭落定（CLOSING→IDLE 的撞击交给岛，
+     * 表面消失）各自适用；中途反向不重置窗口，混合是双向连续的。</p>
+     */
+    private static final double SURFACE_HANDOFF_MS = 180.0;
+
+    /**
+     * 材质交接的进度 0..1：0 = 仍然按转场贴图画表面，1 = 已完全交给常规玻璃路径。
+     * 只在 {@link #tick()} 推进（消费与 {@code tick} 相同的钳后 deltaMs），渲染侧只读。
+     */
+    private static double surfaceHandoff = 1.0;
+
+    /** 上一次推进 {@link #surfaceHandoff} 的时刻；0 = 窗口已走完或尚未开始。 */
+    private static long handoffLastNanos;
     /**
      * 过渡专用的单调时钟。共享的帧增量助手对长帧设上限，且也
      * 被 HUD/音乐渲染共享；当播放把帧率降到 25fps 以下时，旧的 40ms
      * 上限使该形变在墙上时钟上更久，即使其配置速度未变。
      */
     private static long lastTickNanos;
+
+    /**
+     * 单帧最多推进的动画时间，毫秒。
+     *
+     * <p>这条转场是用户盯着看的开场动画，{@code t} 一次跳太多读起来就是「跳过了动画」：
+     * 旧上限 250ms 下，一次 200ms 的卡顿一帧吃掉 880ms 展开的 23%，连续几帧重活整个动画
+     * 4 帧放完。50ms ≈ 20fps 的帧间距，正常掉帧（含一次 GC、一次区块加载）完全不触顶、
+     * 保持实时步调；只有真正的长冻结（切标签页、调试器暂停）才会被按住，代价只是动画
+     * 尾巴在墙上时钟上多走几十毫秒 —— 拉长永远好过跳过。持续低于 20fps 的机器动画会
+     * 按比例慢放（15fps 约 1.32 倍、10fps 约 2 倍墙钟时长），这是刻意的：连续性比时长
+     * 更重要，动画期间真正的降载是几何上的（内容 alpha 门槛、交接窗跳过整树），不是
+     * 档位上的。</p>
+     */
+    private static final double MAX_STEP_MS = 50.0;
 
     private static float speed = 1.0f;
 
@@ -99,6 +133,8 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
             captureCapsule();
             captureSurfacePalette();
             capsuleHandoffMix = 0.0;
+            surfaceHandoff = 0.0;
+            handoffLastNanos = 0L;
         }
         lastTickNanos = System.nanoTime();
         if (state == OPEN) {
@@ -143,6 +179,8 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         state = IDLE;
         t = 0.0;
         capsuleHandoffMix = 0.0;
+        surfaceHandoff = 0.0;
+        handoffLastNanos = 0L;
         lastTickNanos = 0L;
         refreshFrameCache();
     }
@@ -154,9 +192,10 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         long now = System.nanoTime();
         double deltaMs = lastTickNanos == 0L ? 0.0 : (now - lastTickNanos) / 1_000_000.0;
         lastTickNanos = now;
-        // 在掉帧期间保持实时步调。该上限只防标签页切换和
-        //调试器暂停；音乐引起的正常卡顿绝不能拉长动画。
-        deltaMs = Math.min(250.0, Math.max(0.0, deltaMs));
+        // 在掉帧期间保持实时步调。上限压到 50ms：这条转场是用户盯着看的动画，
+        // t 一帧跳 23% 就是「跳过了动画」；真冻结（切标签页）宁可尾巴拉长也不跳。
+        // 音乐引起的正常卡顿（一次 GC、一次区块加载）远触不到这条线。
+        deltaMs = Math.min(MAX_STEP_MS, Math.max(0.0, deltaMs));
 
         // 完全打开后，普通面板拥有渲染权。仅刷新四个缓存输出；
         // 这样可避免在每个空闲的玩家帧上重新求解两条贝塞尔曲线并重建脉冲。
@@ -172,6 +211,9 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
             cachedContentAlpha = 1.0;
             cachedContentScale = 1.0;
             cachedSettlePulse = 0.0;
+            // 落定后的材质交接窗在 OPEN 态继续走完（180ms）：透镜淡入的最后一段
+            // 发生在面板完全展开之后，不能因为 OPEN 态提前 return 而冻结在半途。
+            advanceSurfaceHandoff(deltaMs);
             return;
         }
 
@@ -192,6 +234,10 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
             }
         }
 
+        // 材质交接窗：表面落定（展开到 1）后开始走，转场动画期间反向回卷到 0 ——
+        // 正在形变的表面必须按贴图路径画，透镜只在停稳后逐帧淡入。
+        advanceSurfaceHandoff(deltaMs);
+
         // 保持锚点变化基于时间。中途逆转关闭绝不能在一帧内把原点
         //从胶囊猛地拉回更大的常驻岛。
         if (state == OPENING || state == CLOSING) {
@@ -203,8 +249,59 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         refreshFrameCache();
     }
 
+    /**
+     * 推进落定材质交接：0 = 转场贴图，1 = 常规玻璃路径完全接管。
+     *
+     * <p>窗口只在「表面已落定」（{@code t >= 1}）后向前走；转场重新开始（OPENING/CLOSING
+     * 且 {@code t < 1}）时按同一时间常数回卷 —— 关闭被中途逆转、或者落定后立刻再关，
+     * 表面都在移动，必须整体回到贴图路径，不允许带着半透明透镜叠画。</p>
+     */
+    private static void advanceSurfaceHandoff(double deltaMs) {
+        boolean settled = t >= 1.0;
+        if (settled) {
+            if (surfaceHandoff < 1.0) {
+                if (handoffLastNanos == 0L) {
+                    handoffLastNanos = System.nanoTime();
+                }
+                double step = (System.nanoTime() - handoffLastNanos) / 1_000_000.0;
+                handoffLastNanos = System.nanoTime();
+                surfaceHandoff = Math.min(1.0,
+                        surfaceHandoff + Math.min(step, MAX_STEP_MS) / SURFACE_HANDOFF_MS);
+            } else {
+                handoffLastNanos = 0L;
+            }
+        } else if (surfaceHandoff > 0.0) {
+            surfaceHandoff = Math.max(0.0, surfaceHandoff - deltaMs / SURFACE_HANDOFF_MS);
+            handoffLastNanos = 0L;
+        }
+    }
+
+    /**
+     * 本帧表面该按多大比例交给常规玻璃路径（0..1）。
+     *
+     * <p>0 = 仍按转场贴图画（形变中或刚落定）；1 = 常规透镜完全接管。消费方：
+     * {@code GlassLook#paintPlayerTransitionSurface} 用它给预糊贴图乘淡出系数，
+     * {@code NCMScreen} 的透镜表面控件用它给液态玻璃乘淡入系数 —— 两个系数相加为 1，
+     * 材质切换在视觉上是一条连续的交叉淡化，而不是落定帧的一次跳变。</p>
+     */
+    public static double surfaceHandoff() {
+        return surfaceHandoff;
+    }
+
     public static boolean isRunning() {
         return state == OPENING || state == CLOSING;
+    }
+
+    /**
+     * 播放器转场此刻是否握着灵动岛这块表面。
+     *
+     * <p>不止 OPENING/CLOSING 两个动画态：{@code state != IDLE} 连完全展开（OPEN）也算 ——
+     * 播放器开着的时候，第二个想从岛上长出来的表面（灵动岛搜索栏）不能去抢
+     * {@code beginPlayerSurfaceTransition()}，否则两条转场互相归零对方的动画状态；
+     * 收尾由 {@code NCMScreen.closing} 补上（ESC 到摘屏之间的整个窗口）。</p>
+     */
+    public static boolean isBusy() {
+        return state != IDLE || NCMScreen.getInstance().closing;
     }
 
     public static boolean isOpening() {
@@ -307,11 +404,21 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
      * 在打开的前 10% 和关闭的后 10% 该 alpha 为零，因此表面
      * 即使在几何仍在动时也消失。Apple 的岛展开恰好
      * 相反：暗色表面从第一帧就可见，内容稍后才出现。</p>
+     *
+     * <p>表面落定（{@code t >= 1}）后的材质交接窗里本方法<b>继续</b>画：采用<b>覆盖式交接</b>
+     * 而不是交叉淡化 —— 贴图（含阴影、色块）保持全浓度不淡出，它本来就画在播放器透镜
+     * （{@code ThemeGlassWidget} / {@code ThemeGlassBackdropWidget}，按 surfaceHandoff 淡入）
+     * 的<b>下面</b>，透镜铺上来后自然把它盖住；只有描边按「1 - surfaceHandoff」淡出，
+     * 免得交接完成后突然少一圈白边。这样两层叠出的背景覆盖率恒为 1（若交叉淡化，中段会
+     * 短暂多透 25% 的原始画面，读作一次轻微闪烁），且 handoff 走完后贴图整层停画、
+     * 零残留开销。几何在交接窗内冻结在最终面板矩形上，与透镜逐帧对齐。</p>
      */
     public static void renderSurface() {
-        // 一旦打开，basePanel 已绘制权威表面。再绘制这个回退会
-        //在播放器保持打开的每一帧使圆角矩形工作翻倍。
-        if (state == IDLE || state == OPEN) return;
+        // IDLE：无表面。OPEN：透镜已是权威表面；交接窗内贴图仍在透镜下面垫着，
+        // handoff 走完（透镜完全接管）后整层停画，不再支付任何绘制。
+        if (state == IDLE) return;
+        if (state == OPEN && surfaceHandoff >= 0.999) return;
+        double keep = 1.0 - surfaceHandoff;
 
         double[] bounds = surfaceBounds();
         double x = bounds[0], y = bounds[1], width = bounds[2], height = bounds[3], radius = bounds[4];
@@ -322,18 +429,26 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         int colorIndex = (int) Math.round(colorMix * COLOR_STEPS);
         Color color = SURFACE_COLOR_CACHE[Math.max(0, Math.min(COLOR_STEPS, colorIndex))];
 
-        if (!TransitionPerformanceBudget.simplifySurfaceDetail()) {
-            GFX.roundedRect(x + 1.0, y + 1.8, width, height, radius, SHADOW_STRONG);
-            GFX.roundedRect(x + 2.0, y + 3.0, width, height, radius, SHADOW_SOFT);
-        }
+        // 双层阴影与后面的扫光都是个位数矩形绘制，微秒级：分档摘掉它们的收益
+        // 远小于「所有机器观感不一致」的代价，恒画（fps 分档已整体移除）。
+        GFX.roundedRect(x + 1.0, y + 1.8, width, height, radius, SHADOW_STRONG);
+        GFX.roundedRect(x + 2.0, y + 3.0, width, height, radius, SHADOW_SOFT);
         boolean liquid = GlassLook.paintPlayerTransitionSurface(x, y, width, height, radius, 1f);
         GFX.roundedRect(x, y, width, height, radius,
                 liquid ? new Color(GlassLook.tintedArgb(GlassLook.Surface.PLAYER, color.getRGB()), true) : color);
-        if (!liquid) GFX.roundedOutline(x, y, width, height, radius, .72, SURFACE_EDGE);
+        if (!liquid) GFX.roundedOutline(x, y, width, height, radius, .72,
+                alphaScaled(SURFACE_EDGE, (float) keep));
+    }
+
+    /** 返回同色但 alpha 缩放为 {@code scale} 倍的 Color；scale>=0.999 时原样返回。 */
+    private static Color alphaScaled(Color color, float scale) {
+        if (scale >= 0.999f) return color;
+        return new Color(color.getRed(), color.getGreen(), color.getBlue(),
+                Math.max(0, Math.min(255, Math.round(color.getAlpha() * scale))));
     }
     /** 收起末段的边界光：只服务于胶囊撞击前的压缩，不再给打开动画叠加落地回弹。 */
     public static void renderSurfaceDetail() {
-        if (state == IDLE || state == OPEN || TransitionPerformanceBudget.isMinimal()) return;
+        if (state == IDLE || state == OPEN) return;
         double landing = cachedSettlePulse;
         if (landing <= .01) return;
 
@@ -345,11 +460,9 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
                 bounds[2] + 1.0, bounds[3] + 1.0, bounds[4],
                 .72, whiteAlpha(alpha * edgeAlpha));
 
-        if (!TransitionPerformanceBudget.simplifySurfaceDetail()) {
-            GFX.roundedOutline(bounds[0] - 1.1, bounds[1] - 1.1,
-                    bounds[2] + 2.2, bounds[3] + 2.2, bounds[4] + .6,
-                    .60, accentAlpha(alpha * (closing ? .34f : .28f)));
-        }
+        GFX.roundedOutline(bounds[0] - 1.1, bounds[1] - 1.1,
+                bounds[2] + 2.2, bounds[3] + 2.2, bounds[4] + .6,
+                .60, accentAlpha(alpha * (closing ? .34f : .28f)));
 
         // 顶部扫光：一条窄带从左到右滑过，收起时反向。
         double sheenHeight = Math.max(1.0, bounds[3] * .18);
@@ -357,11 +470,9 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
         double bandX = bounds[0] + 1.0 + (bounds[2] - 2.0 - bandWidth) * Math.max(0.0, Math.min(1.0, t));
         Color sheenStart = closing ? whiteAlpha(alpha * 26) : TRANSPARENT_WHITE;
         Color sheenEnd = closing ? TRANSPARENT_WHITE : whiteAlpha(alpha * 26);
-        if (!TransitionPerformanceBudget.simplifySurfaceDetail()) {
-            GFX.roundedRectGradientHorizontal(bandX, bounds[1] + 1.0,
-                    bandWidth, sheenHeight,
-                    Math.max(1.0, bounds[4] - 1.0), sheenStart, sheenEnd);
-        }
+        GFX.roundedRectGradientHorizontal(bandX, bounds[1] + 1.0,
+                bandWidth, sheenHeight,
+                Math.max(1.0, bounds[4] - 1.0), sheenStart, sheenEnd);
     }
     // ------------------------------------------------------------------ 私有工具
 

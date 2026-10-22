@@ -16,7 +16,6 @@ import com.muoniumplayer.core.rendering.svg.SmilSvg;
 import com.muoniumplayer.core.rendering.svg.SvgPlayback;
 import com.muoniumplayer.core.rendering.texture.ITextureObject;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
-import com.muoniumplayer.core.screens.ncm.TransitionPerformanceBudget;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.utils.Location;
@@ -313,7 +312,6 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         // 完整字体下载的渲染线程钩子挂在这里（本方法每帧、且只在渲染线程上跑）：
         // 就绪则热启用，未就绪则节流重评。五棵版本树都只调 render()，接线零改动。
         com.muoniumplayer.core.management.FontAssetDownload.pollFromRenderThread();
-        TransitionPerformanceBudget.tick();
         prewarmPlayerLayoutOnce();
         INSTANCE.renderInternal();
     }
@@ -321,6 +319,14 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private static void prewarmPlayerLayoutOnce() {
         if (playerLayoutPrewarmed) return;
         if (++hudFramesBeforePlayerPrewarm < PLAYER_LAYOUT_PREWARM_DELAY_FRAMES) return;
+        // 播放器转场/收尾正在播时整树预热（控件树重建 + 主页构造）会把几十毫秒的重活砸进
+        // 形变帧 —— 典型场景：进世界后立刻开播放器，第 45 帧正好落在展开动画中段。
+        // 顺延到转场不再忙的 HUD 空闲帧再执行（isBusy 含完全展开态：播放器已经真开过的
+        // 话，预热本就失去了服务对象，本次会话不再执行是无害的正确行为）；闸门未置位，
+        // 下一帧到期直接重试。
+        if (com.muoniumplayer.core.screens.ncm.PlayerIslandTransition.isBusy()) {
+            return;
+        }
         playerLayoutPrewarmed = true;
         try {
             NCMScreen.prewarmLayout();

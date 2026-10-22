@@ -1,7 +1,7 @@
 package com.muoniumplayer.core.rendering;
 
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
-import com.muoniumplayer.core.screens.ncm.TransitionPerformanceBudget;
+import com.muoniumplayer.core.screens.ncm.PlayerIslandTransition;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.render.skija.GlassBackdrop;
 import com.muoniumplayer.render.skija.GlassEdgeBatch;
@@ -70,16 +70,15 @@ public final class GlassLook {
      * 一帧），判据放这儿会把「主题没开」和「这一帧还没采到」混成一个值。
      * {@link #paintFrost} 会把后者作为 {@code false} 返回给调用点。</p>
      *
-     * <h2>帧率吃紧时是<em>淡出</em>，不是一帧摘掉</h2>
-     * 这里乘的是 {@link TransitionPerformanceBudget#liquidGlassWeight()} 那个 0..1 的缓动值，
-     * 不是「极低档」那个布尔。原因很具体：玻璃一摘，整块面板就从「糊过的亮画面」切回
-     * 「原来的实色深底」，而这条链路是每帧重算的——2026-09-30 玩家报的「有的时候会闪烁，
-     * 表现为暗一下然后恢复」就是这个亮度台阶在帧时闸上来回翻。现在低配判定要连续踩够
-     * 400ms 才算数，真换档之后再按住 2 秒，而玻璃本身走 250ms 斜坡淡出、再 250ms 淡回来。
+     * <h2>帧率吃紧时也不再摘玻璃</h2>
+     * 真玻璃恒按主题强度画。历史上的「帧率不够自动摘玻璃」档（含 250ms 斜坡）随帧率
+     * 分档一起移除了：玻璃一摘，整块面板就从「糊过的亮画面」切回「原来的实色深底」，
+     * 2026-09-30 玩家报的「有的时候会闪烁，表现为暗一下然后恢复」正是那个亮度台阶；
+     * 而它省下的帧预算，如今由各条链路的几何门槛（转场内容 alpha 门槛、交接窗、
+     * 采集节流、预糊档复用）更精准地省出来了——不碰观感，只砍看不见的重活。
      *
      * <p>每帧的 blit 拷贝不在这一档里（那是微秒级的缩小复制，且淡回来时必须有画面可用）；
-     * 贵的是逐面板与逐元素那一层模糊，正是这里掐掉的东西。用户不想要这套自动降载，
-     * 设置里「帧率不够时自动摘玻璃」关掉就是永远按主题画。</p>
+     * 贵的是逐面板与逐元素那一层模糊，正是各条几何门槛掐掉的东西。</p>
      */
     public static float amount(Surface surface) {
         // 手机档：真玻璃整体禁用（见 GlassMobileTier 类注释——折射透镜在 GL 翻译层下扛不住，
@@ -91,36 +90,28 @@ public final class GlassLook {
         if (!toggleOf(surface)) {
             return 0f;
         }
-        float theme = NCMTheme.getTrueGlassAmount() * guardWeight();
+        float theme = NCMTheme.getTrueGlassAmount();
         return theme > 0.001f && GlassLiquidSurface.available() ? theme : 0f;
     }
-
-    /**
-     * 自动降载那一档此刻允许玻璃出多少：1 = 不降载（含用户关掉那一档的情况）。
-     *
-     * <p>开关读在这里而不是让 {@code TransitionPerformanceBudget} 去读设置，是因为那个类
-     * 管的是所有降载策略（歌词窗口、舞台装饰、转场细节），只有<b>玻璃</b>这一项被设置里
-     * 单独授权了「别替我决定」。</p>
-     */
-    private static float guardWeight() {
-        if (!HudConfig.glassAutoDegrade) {
-            return 1f;
-        }
-        return TransitionPerformanceBudget.liquidGlassWeight();
-    }
+    // 「帧率不够时自动摘玻璃」（HudConfig.glassAutoDegrade）的自动判定者——按帧率分三档
+    // 的降载系统——已整体移除：帧率分档被证明管错了对象（摘玻璃的闪比它省下的帧更扎眼），
+    // 它的降载职责已由各条链路的几何门槛（转场内容 alpha 门槛、交接窗、采集节流）接管。
+    // 该开关的存档字段与设置项保留只是兼容旧存档，不再有任何读取方。
 
     /**
      * 灵动岛交接专用的低成本玻璃表面。
      *
      * <p>交接时不使用液态折射 shader，而是直接贴已经预糊好的背景纹理。这样保留
      * 玻璃的明暗和背景透入效果，但不把整面播放器交给高成本的逐像素折射。</p>
+     *
+     * <p>唯一调用方是 {@code PlayerIslandTransition#renderSurface()}：转场全程与落定后的
+     * 材质交接窗内它都以<b>全浓度</b>画在播放器透镜的下面（覆盖式交接 —— 透镜按
+     * {@code PlayerIslandTransition#surfaceHandoff()} 淡入、铺满后自然盖住这一层），
+     * handoff 走完后整个 renderSurface 停画，这里随之停用。</p>
      */
     public static boolean paintPlayerTransitionSurface(double x, double y,
                                                         double width, double height,
                                                         double radius, float opacityScale) {
-        if (!TransitionPerformanceBudget.isPlayerIslandTransitionActive()) {
-            return paintFrost(Surface.PLAYER, x, y, width, height, radius, opacityScale);
-        }
         float amount = amount(Surface.PLAYER) * Math.max(0f, Math.min(1f, opacityScale));
         if (amount <= 0.001f) {
             return false;
@@ -157,7 +148,7 @@ public final class GlassLook {
                                      float opacityScale) {
         // 灵动岛交接期间只画轻量的实色表面。液态玻璃会触发整面背景采样/折射，
         // 其成本远高于普通圆角矩形，而且在移动中的裁剪窗口里观感收益很小。
-        if (TransitionPerformanceBudget.isPlayerIslandTransitionActive()) {
+        if (PlayerIslandTransition.isRunning()) {
             return false;
         }
         float amount = amount(surface) * Math.max(0f, Math.min(1f, opacityScale));
@@ -191,7 +182,7 @@ public final class GlassLook {
                                           float opacityScale) {
         // 灵动岛交接期间只画轻量的实色表面。液态玻璃会触发整面背景采样/折射，
         // 其成本远高于普通圆角矩形，而且在移动中的裁剪窗口里观感收益很小。
-        if (TransitionPerformanceBudget.isPlayerIslandTransitionActive()) {
+        if (PlayerIslandTransition.isRunning()) {
             return false;
         }
         float amount = amount(surface) * Math.max(0f, Math.min(1f, opacityScale));
@@ -303,7 +294,7 @@ public final class GlassLook {
      * @param smoothing 融合半径，画布局部单位：两块间隙小于它才连得起来。0 等于不开融合。
      */
     public static void beginFusion(Surface surface, float smoothing) {
-        if (TransitionPerformanceBudget.isPlayerIslandTransitionActive()) {
+        if (PlayerIslandTransition.isRunning()) {
             GlassEdgeBatch.clear();
             return;
         }
@@ -343,7 +334,7 @@ public final class GlassLook {
      * 强度也在那一刻由各面自己判。再给每一面配一个半径，就成了「四个滑块里两个永远用不上」。</p>
      */
     public static float fusionRadius() {
-        if (TransitionPerformanceBudget.isPlayerIslandTransitionActive()) {
+        if (PlayerIslandTransition.isRunning()) {
             return 0f;
         }
         float radius = HudConfig.glassFusion;
