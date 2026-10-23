@@ -5535,7 +5535,13 @@ public class CloudMusic implements SharedConstants {
         }
 
         if (hasRomanization) {
-            return StringUtils.returnEmptyStringIfNull(lyricLine.getRomanizationText());
+            // 逐行回退：罗马音是按行贴的，个别行（外语歌里的中文句、和声）本来就没有罗马音。
+            // 直接返回空串会让那一行整行空白，连已有的翻译也看不到——有罗马音显罗马音，
+            // 这一行没有就回落到翻译。
+            String romanization = lyricLine.getRomanizationText();
+            if (romanization != null && !romanization.trim().isEmpty()) {
+                return romanization;
+            }
         }
 
         return StringUtils.returnEmptyStringIfNull(lyricLine.getTranslationText());

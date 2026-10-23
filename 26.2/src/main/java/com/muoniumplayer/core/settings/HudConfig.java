@@ -383,6 +383,10 @@ public final class HudConfig {
 
     /** 3D 歌词：按节拍闪 Text Flash（PlaybackPulse 拍边沿触发）。 */
     public static boolean worldLyricsTextFlash = false;
+    /** 心象动效模式（现代化引擎）：整行分块、按块的出入场动画/呼吸/块色画。 */
+    public static boolean worldLyricsCadenza = false;
+    /** 绘光动效模式（现代化引擎）：换句逐字飞行重排 + 径迹拖尾 + 卡拉OK点亮（folia 绘光移植）。 */
+    public static boolean worldLyricsHuiguang = false;
 
     // OSD KTV 动画。这些值独立于全屏歌词渲染器。
     public static float osdKaraokeTransitionWidth = 14.0f;
@@ -751,6 +755,8 @@ public final class HudConfig {
         worldLyricsColorCustom = false;
         worldLyricsWordPop = false;
         worldLyricsTextFlash = false;
+        worldLyricsCadenza = false;
+        worldLyricsHuiguang = false;
         osdKaraokeTransitionWidth = 14.0f;
         osdKaraokePulseStrength = 0.00f;
         osdKaraokeSmoothing = 0.85f;
@@ -934,6 +940,8 @@ public final class HudConfig {
             worldLyricsColorCustom = getBoolean(o, "worldLyricsColorCustom", worldLyricsColorCustom);
             worldLyricsWordPop = getBoolean(o, "worldLyricsWordPop", worldLyricsWordPop);
             worldLyricsTextFlash = getBoolean(o, "worldLyricsTextFlash", worldLyricsTextFlash);
+            worldLyricsCadenza = getBoolean(o, "worldLyricsCadenza", worldLyricsCadenza);
+            worldLyricsHuiguang = getBoolean(o, "worldLyricsHuiguang", worldLyricsHuiguang);
 
             osdKaraokeTransitionWidth = clamp(getFloat(o, "osdKaraokeTransitionWidth", osdKaraokeTransitionWidth), 4.0f, 32.0f);
             osdKaraokePulseStrength = clamp(getFloat(o, "osdKaraokePulseStrength", osdKaraokePulseStrength), 0.0f, 0.15f);
@@ -1120,6 +1128,8 @@ public final class HudConfig {
             o.addProperty("worldLyricsColorCustom", worldLyricsColorCustom);
             o.addProperty("worldLyricsWordPop", worldLyricsWordPop);
             o.addProperty("worldLyricsTextFlash", worldLyricsTextFlash);
+            o.addProperty("worldLyricsCadenza", worldLyricsCadenza);
+            o.addProperty("worldLyricsHuiguang", worldLyricsHuiguang);
             o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
             o.addProperty("osdKaraokePulseStrength", osdKaraokePulseStrength);
             o.addProperty("osdKaraokeSmoothing", osdKaraokeSmoothing);

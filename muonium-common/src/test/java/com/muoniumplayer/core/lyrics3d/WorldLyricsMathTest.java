@@ -143,17 +143,17 @@ class WorldLyricsMathTest {
         WorldLyricsState.PixelWidthOf width = s -> 12f;
         // 句子刚开始：还没到第一个字的出现点，0 个字形
         WorldLyricsState.LyricGlyphs early =
-                WorldLyricsState.buildGlyphs(f, 0L, 1f, false, false, width);
+                WorldLyricsState.buildGlyphs(f, 0L, 1f, false, false, width, false);
         assertTrue(early.glyphs.isEmpty());
         // 句尾：全部出现
         WorldLyricsState.LyricGlyphs late =
-                WorldLyricsState.buildGlyphs(f, 1500L, 1f, false, false, width);
+                WorldLyricsState.buildGlyphs(f, 1500L, 1f, false, false, width, false);
         assertEquals(2, late.glyphs.size());
         assertEquals('你', late.glyphs.get(0).c);
         assertEquals('好', late.glyphs.get(1).c);
         // 逐字淡入中：先出现的字 alpha 更高
         WorldLyricsState.LyricGlyphs mid =
-                WorldLyricsState.buildGlyphs(f, 650L, 1f, false, false, width);
+                WorldLyricsState.buildGlyphs(f, 650L, 1f, false, false, width, false);
         if (mid.glyphs.size() == 2) {
             assertTrue(mid.glyphs.get(0).alpha > mid.glyphs.get(1).alpha,
                     "先唱到的字应更亮");
@@ -168,7 +168,7 @@ class WorldLyricsMathTest {
         WorldLyricsState.PixelWidthOf width = s -> 12f;
         // word pop 开：第一字刚唱到（elapsed=80ms，t=0.5）应带 pop>1
         WorldLyricsState.LyricGlyphs g =
-                WorldLyricsState.buildGlyphs(f, 80L, 1f, true, false, width);
+                WorldLyricsState.buildGlyphs(f, 80L, 1f, true, false, width, false);
         assertTrue(g.glyphs.size() >= 1);
         assertTrue(g.glyphs.get(0).pop > 1f, "刚唱到的词应放大弹出，实际 " + g.glyphs.get(0).pop);
         // 还没唱到的第二个字不出现
@@ -184,7 +184,7 @@ class WorldLyricsMathTest {
                 new long[] {0L});
         WorldLyricsState.PixelWidthOf width = s -> 12f;
         WorldLyricsState.LyricGlyphs early =
-                WorldLyricsState.buildGlyphs(f, 45L, 1f, true, false, width);
+                WorldLyricsState.buildGlyphs(f, 45L, 1f, true, false, width, false);
         assertTrue(early.glyphs.size() == 1);
         float a45 = early.glyphs.get(0).alpha;
         assertTrue(a45 > 0.02f && a45 < 0.95f,
@@ -192,7 +192,7 @@ class WorldLyricsMathTest {
         assertTrue(early.glyphs.get(0).y > -WorldLyricsState.LINE_H / 2f,
                 "入场中段应比落定行位偏下（还没浮到位），实际 y=" + early.glyphs.get(0).y);
         WorldLyricsState.LyricGlyphs done =
-                WorldLyricsState.buildGlyphs(f, 400L, 1f, true, false, width);
+                WorldLyricsState.buildGlyphs(f, 400L, 1f, true, false, width, false);
         assertEquals(1f, done.glyphs.get(0).alpha, 1e-4f, "入场完成后 alpha 应到 1");
         assertEquals(-WorldLyricsState.LINE_H / 2f, done.glyphs.get(0).y, 1e-4f,
                 "入场完成后应落回行位（单行基线 = -LINE_H/2）");
@@ -209,7 +209,7 @@ class WorldLyricsMathTest {
         // 淡出后段：行 alpha=0.25 —— 级联窗口内第一字衰减最多，任一仍在场的字
         // alpha 不得超过行系数（级联只会额外衰减）。
         WorldLyricsState.LyricGlyphs mid =
-                WorldLyricsState.buildGlyphs(f, 260L, 0.25f, true, true, width);
+                WorldLyricsState.buildGlyphs(f, 260L, 0.25f, true, true, width, false);
         assertTrue(mid.glyphs.size() >= 1);
         assertTrue(mid.glyphs.get(0).alpha < 0.25f,
                 "第一字应被级联额外衰减（行系数之下），实际 " + mid.glyphs.get(0).alpha);
@@ -218,7 +218,7 @@ class WorldLyricsMathTest {
         assertTrue(mid.glyphs.get(0).pop < 1f, "退场中应有收拢");
         // 非出场态：同样的 alphaMul 不得触发级联
         WorldLyricsState.LyricGlyphs notExiting =
-                WorldLyricsState.buildGlyphs(f, 260L, 0.25f, true, false, width);
+                WorldLyricsState.buildGlyphs(f, 260L, 0.25f, true, false, width, false);
         assertTrue(notExiting.glyphs.size() >= 1);
         assertEquals(0.25f, notExiting.glyphs.get(0).alpha, 1e-4f,
                 "非出场态 alpha 恰为行系数（无级联）");
@@ -236,7 +236,7 @@ class WorldLyricsMathTest {
         float maxY = Float.NEGATIVE_INFINITY;
         for (long t = 1; t <= 320; t += 4) {
             WorldLyricsState.LyricGlyphs g =
-                    WorldLyricsState.buildGlyphs(f, t, 1f, true, false, width);
+                    WorldLyricsState.buildGlyphs(f, t, 1f, true, false, width, false);
             assertTrue(g.glyphs.size() == 1);
             minY = Math.min(minY, g.glyphs.get(0).y);
             maxY = Math.max(maxY, g.glyphs.get(0).y);
@@ -247,7 +247,7 @@ class WorldLyricsMathTest {
                 "落位过冲不得高于行位 0.9px（y 向下为正，上方过冲即 minY）,实际 "
                         + (baseline - minY));
         WorldLyricsState.LyricGlyphs first =
-                WorldLyricsState.buildGlyphs(f, 1L, 1f, true, false, width);
+                WorldLyricsState.buildGlyphs(f, 1L, 1f, true, false, width, false);
         assertTrue(first.glyphs.get(0).pop >= 0.6f - 1e-4f, "入场缩放下限 0.6");
     }
 

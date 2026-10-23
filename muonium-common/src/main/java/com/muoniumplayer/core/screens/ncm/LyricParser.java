@@ -70,6 +70,15 @@ public class LyricParser {
     /** YRC 的三段式音节标记 {@code (start,duration,0)}——用它把 YRC 与 QRC 的括号形状区分开。 */
     private static final Pattern YRC_THREE_FIELD_WORD = Pattern.compile("\\(\\d+,\\d+,\\d+\\)");
 
+    /**
+     * 「同轴」侧车与主轨之间精度差的容差，毫秒。
+     *
+     * <p>QQ 的侧车与主轨来自同一条时间轴但精度更粗:翻译是厘秒 LRC({@code [00:04.20]} 对主轨
+     * 426ms,差 6ms),罗马音 QRC 有 ±1ms 抖动。40ms 远小于一行歌词的时长(几百毫秒),不会把
+     * 译文安到相邻行头上;又大于全部取整误差。真实缺失的行邻项在几秒外,容差外自然落空。</p>
+     */
+    private static final long SIDECAR_SKEW_TOLERANCE_MS = 40L;
+
     public static List<LyricLine> parse(JsonObject input) {
         if (input == null || input.has("uncollected")) return new ArrayList<>();
 
@@ -635,8 +644,11 @@ public class LyricParser {
      * 把 QQ 的翻译/罗马音贴到已解析的逐字行上。QQ 这两个字段有时是普通 LRC,有时也是 QRC(带音节
      * 时间),所以两种都试。
      *
-     * <p>对齐策略是<b>精确毫秒键优先</b>：QQ 的侧车与主轨通常逐个时间戳相等，此时某一行没有精确键
-     * 就说明这一行真的没有译文；只有整表零命中（时间戳整体错位）才退回 ±1 秒的最近邻。</p>
+     * <p>对齐策略是<b>精确毫秒键优先，小容差最近邻兜底</b>。QQ 的侧车与主轨来自同一条时间轴,
+     * 但精度常比主轨粗:翻译是厘秒 LRC({@code [00:04.20]} 对主轨 426ms,差 6ms),罗马音虽是 QRC
+     * 却有 ±1ms 的取整抖动。因此这里给的对齐是双容差的:存在非零精确命中时按
+     * {@link #SIDECAR_SKEW_TOLERANCE_MS} 补精度差;整表零命中(整体错位的旧数据)时按 1 秒
+     * 最近邻整表救援。真正缺失的行(标题、作曲者)侧车里根本没有对应条目,容差外自然落空。</p>
      */
     public static void applyQrcSidecar(String sidecar, List<LyricLine> lyricLines, boolean translation) {
         if (sidecar == null || sidecar.trim().isEmpty() || lyricLines == null || lyricLines.isEmpty()) return;
@@ -1042,28 +1054,37 @@ public class LyricParser {
     // ── 侧车（翻译 / 罗马音）对齐 ────────────────────────────────────────────
 
     /**
-     * 精确毫秒键对齐。
+     * 精确毫秒键对齐，未命中的行按两种容差之一退回最近邻。
      *
-     * <p>全表零命中才退回 ±容差的最近邻。理由：同一个写出器产出的侧车与主轨时间戳是逐个相等的，
-     * 只要有一条精确命中就说明这份侧车是「按毫秒键编的」，此时某一行没有精确键就意味着它<b>真的
-     * 没有译文</b>（标题、作曲者这类在侧车里是空行），用最近邻去补只会把下一行的译文安到它头上；
-     * 反过来，时间戳整体错位的侧车一条都命中不了，这时最近邻才是唯一可行的对齐方式。</p>
+     * <p>侧车与主轨的关系有两种，需要的容差完全不同：</p>
+     * <ul>
+     *   <li><b>同轴</b>——侧车与主轨来自同一条时间轴，但精度常比主轨粗（QQ 翻译是厘秒 LRC，
+     *       {@code [00:04.20]} 对主轨 426ms 差 6ms；罗马音 QRC 有 ±1ms 取整抖动）。判定依据是
+     *       存在<b>非零</b>的精确命中（时间戳 0 的行两边都有起始行，不构成证据）。此时未命中的
+     *       行只可能是精度差或真的缺失：精度差用 {@link #SIDECAR_SKEW_TOLERANCE_MS} 接住，
+     *       真缺失的行邻项都在几百毫秒外，容差外自然落空，不会被安上邻行的译文；</li>
+     *   <li><b>整体错位</b>——侧车自己带了一套整体偏移的时间戳，一条精确键都命中不了。此时
+     *       最近邻是唯一可行的对齐方式，用调用方给的容差（QQ/字幕轨给 1 秒）整表救援。</li>
+     * </ul>
      */
     private static void applyExactFirst(Map<Long, String> values, List<LyricLine> lyricLines,
-                                        boolean translation, long toleranceMs) {
+                                        boolean translation, long shiftToleranceMs) {
         if (values.isEmpty() || lyricLines == null || lyricLines.isEmpty()) return;
 
-        boolean anyExact = false;
+        boolean sameAxis = false;
         for (LyricLine line : lyricLines) {
-            if (values.containsKey(line.timestamp)) {
-                anyExact = true;
+            if (line.timestamp != 0L && values.containsKey(line.timestamp)) {
+                sameAxis = true;
                 break;
             }
         }
+        long nearestTolerance = sameAxis
+                ? Math.min(SIDECAR_SKEW_TOLERANCE_MS, shiftToleranceMs)
+                : shiftToleranceMs;
 
         for (LyricLine line : lyricLines) {
             String value = values.get(line.timestamp);
-            if (value == null && !anyExact) value = findNearbySecondary(values, line.timestamp, toleranceMs);
+            if (value == null) value = findNearbySecondary(values, line.timestamp, nearestTolerance);
             if (value == null || value.isEmpty()) continue;
             if (translation && line.translationText == null) line.translationText = value;
             if (!translation && line.romanizationText == null) line.romanizationText = value;

@@ -1,5 +1,6 @@
 package com.muoniumplayer.compat.mc;
 
+import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas;
@@ -11,6 +12,7 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.ResourceLocation;
 import org.joml.Matrix4f;
 
@@ -42,6 +44,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private PoseStack poseStack;
     private MultiBufferSource.BufferSource buffers;
     private double camX, camY, camZ;
+    // 同页字形合批：当前挂起的页句柄与字形数（endBatch 延迟到页切换/帧尾）
+    private Object pendingGlyphPage;
+    private int pendingGlyphCount;
     private boolean tracedOnce;
     private boolean tracedSmooth;
 
@@ -58,6 +63,17 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     }
 
     public void end() {
+        // 帧尾把挂起的字形与特效批次收掉（列顺序无关紧要：深度测试已关、文字后画）
+        if (buffers != null && pendingGlyphPage != null) {
+            buffers.endBatch(RenderType.textSeeThrough(
+                    ((LyricGlyphAtlasBridge.PageHandle) pendingGlyphPage).resourceLocation()));
+        }
+        if (buffers != null && pendingEffectRl != null) {
+            buffers.endBatch(RenderType.textSeeThrough(pendingEffectRl));
+        }
+        pendingGlyphPage = null;
+        pendingGlyphCount = 0;
+        pendingEffectRl = null;
         this.poseStack = null;
         this.buffers = null;
     }
@@ -112,24 +128,35 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      *
      * <p>坐标口径：传进来的 (x, y) 是字形<b>顶点</b>（字位框左上角，设计像素），
      * 对应格内 (inkX, inkY)。quad 覆盖整格（含发光留白），尺寸 = 格框 ÷ BAKE_SCALE。
-     * withWiggle 的 translate(cx,cy)→rotate→scale→translate(-cx,-cy) 同构；dx/dy 已由
-     * 渲染器加进 x/y。</p>
+     * 心象模式下的 rot/dx/dy 是块姿态（心象出入场动画一比一）、sc 是块基础放大 ×
+     * 出入场缩放的乘积；glowMul 是发光强度乘数（简洁模式 1；心象下正在唱的块 1、
+     * 其余块 0.35 —— 换算成烘焙档：强度 × glowMul 再查格，两档之间共用缓存键）。</p>
      *
      * <p>格子不可用（图集未装配/Skija 缺位/字符不可见）时回退像素字 —— 绝不吞字。</p>
      */
     @Override
     public void drawSmoothGlyph(char c, float x, float y, float sizePx,
-                                int rgb, float alpha, float rot, float dx, float dy, float sc) {
+                                int rgb, float alpha, float rot, float dx, float dy, float sc,
+                                float glowMul) {
         if (poseStack == null || buffers == null) return;
         // 发光参数取本帧快照（Bridge 在帧头装配好；没装配时按无发光查格）
         WorldLyricsSettings settings = WorldLyricsBridge.currentSettings;
         float glowStrength = settings != null ? settings.glowStrength : 0f;
         float glowSpread = settings != null ? settings.glowSpread : 1f;
         int glowColor = settings != null ? settings.glowColorRgb : 0xFFFFFF;
+        // 心象的发光脉冲：正在唱的块满档、其余块压档 —— 查格前乘上去（缓存键已量化）。
+        glowStrength *= glowMul;
 
         LyricGlyphAtlas.GlyphCell cell = LyricGlyphAtlas.getGlyph(
                 c, rgb & 0xFFFFFF, glowStrength, glowSpread, glowColor);
         if (cell == null) {
+            // 绘光模式下「预算内暂时没烘出来」不回退像素字 —— 那正是用户看到的
+            // 「有时退回原版渲染风格」：字形瞬闪像素风再换回烘焙字形，非常扎眼。
+            // 图集可用时静默跳过该字（下一帧补齐，烘焙预算已提到 4 格/帧）；
+            // 图集整体不可用（host 缺失/字体缺位）仍回退像素字，绝不吞字。
+            if (settings != null && settings.huiguang && LyricGlyphAtlas.isFunctional()) {
+                return;
+            }
             // 图集不可用/超尺寸：像素字兜底（无阴影，与平滑档的无阴影语义一致）
             int argb = ((int) (alpha * 255f) << 24) | (rgb & 0xFFFFFF);
             drawPixelText(String.valueOf(c), x, y, argb, false);
@@ -139,6 +166,21 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             return;
         }
         ResourceLocation pageRl = ((LyricGlyphAtlasBridge.PageHandle) cell.page).resourceLocation();
+
+        // 同页合批：页切换（或首次）时把上一页的字形批次收掉 —— 一句 40 字
+        // 从每字一次 endBatch 降到每页一次。页内 endBatch 省略不影响正确性：
+        // textSeeThrough 是 shared batch，getBuffer 同 RenderType 连续 addVertex
+        // 天然累积；页切换时 lastSharedType 自动换批的前提是参数不同 —— 同页
+        // 参数相同、跨页显式 flush 保证不串页。
+        if (pendingGlyphPage != cell.page) {
+            if (pendingGlyphPage != null) {
+                buffers.endBatch(RenderType.textSeeThrough(
+                        ((LyricGlyphAtlasBridge.PageHandle) pendingGlyphPage).resourceLocation()));
+            }
+            pendingGlyphPage = cell.page;
+            pendingGlyphCount = 0;
+        }
+        pendingGlyphCount++;
 
         // 烘焙像素 → 设计像素。字形顶点 (x, y) 是「字位框左上角」在<b>行内坐标</b>里的位置
         // （buildGlyphs 逐字推进的坐标），格内墨迹原点 (inkX, inkY) 对到它 —— quad 四角
@@ -172,9 +214,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         putGlyphVertex(vc, mat, qRight, qBottom, cx, cy, cos, sin, s, argb, u1, v1);
         putGlyphVertex(vc, mat, qRight, qTop, cx, cy, cos, sin, s, argb, u1, v0);
 
-        // 与像素字路径同约定：画完立刻收批。不然 quad 停在缓冲里，要等下一个
-        // endBatch 才上屏 —— 若这一行后面没有像素字，整行就一个顶点都不出现。
-        buffers.endBatch(RenderType.textSeeThrough(pageRl));
+        // 同页合批：这里不再逐字 endBatch —— 页切换/帧尾统一收（见上）。
 
         if (TRACE && !tracedSmooth) {
             tracedSmooth = true;
@@ -203,6 +243,382 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 .setUv2(LightTexture.FULL_BRIGHT & 0xFFFF,
                         (LightTexture.FULL_BRIGHT >> 16) & 0xFFFF)
                 .setUv1(0, 0);
+    }
+
+    @Override
+    public void drawTrail(float[] xs, float[] ys, int count,
+                          int argb, float widthPx) {
+        if (poseStack == null || buffers == null || count < 2) return;
+        ResourceLocation rl = trailTexture();
+        if (rl == null) return;
+
+        // 逐段 quad 带（folia trackLayer 的 stroke 等价物）：均匀宽度、沿迹均匀
+        // 顶点色 —— folia 是整条一个 alpha 的描边（round cap/join），没有头尾渐变。
+        // UV 钉在白纹理的不透明行（v≈0）。两层模拟 bloom：窄亮芯 + 宽淡晕
+        // （folia 的辉光来自 graphics 组 bloom 过滤器，本仓库无后处理，双 pass 等效）。
+        float half = Math.max(0.15f, widthPx * 0.5f);
+        int baseAlpha = (argb >>> 24) & 0xFF;
+        int rgb = argb & 0xFFFFFF;
+
+        VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(rl));
+        Matrix4f mat = poseStack.last().pose();
+        emitTrail(vc, mat, xs, ys, count, half, baseAlpha, rgb, 1f, 1f);
+        emitTrail(vc, mat, xs, ys, count, half * 3f, baseAlpha, rgb, 1f, 0.35f);
+        flushEffectBatch(rl);
+    }
+
+    /** 发一段径迹折线的 quad 带（widthScale/alphaScale 用于泛光外层）。 */
+    private static void emitTrail(VertexConsumer vc, Matrix4f mat,
+                                  float[] xs, float[] ys, int count,
+                                  float half, int baseAlpha, int rgb,
+                                  float widthScale, float alphaScale) {
+        float hw = half * widthScale;
+        int a = Math.min(255, (int) (baseAlpha * alphaScale));
+        // 每点法线 = 相邻两段法线的归一化平均（folia round join 的廉价近似：
+        // 拐点处带子平滑过渡，不再有外缘细缝/内缘叠色；端点退化为单段法线）
+        for (int i = 0; i < count - 1; i++) {
+            float x0 = xs[i], y0 = ys[i];
+            float x1 = xs[i + 1], y1 = ys[i + 1];
+            // 标量法线（相邻两段平均，端点退化单段）—— 原数组版是飞行窗口最大分配源
+            int p0 = Math.max(0, i - 1), q0 = Math.min(count - 1, i + 1);
+            float dx0 = xs[q0] - xs[p0], dy0 = ys[q0] - ys[p0];
+            float l0 = (float) Math.sqrt(dx0 * dx0 + dy0 * dy0);
+            float n0x = l0 < 1e-4f ? 0f : -dy0 / l0, n0y = l0 < 1e-4f ? 1f : dx0 / l0;
+            int p1 = i, q1 = Math.min(count - 1, i + 2);
+            float dx1 = xs[q1] - xs[p1], dy1 = ys[q1] - ys[p1];
+            float l1 = (float) Math.sqrt(dx1 * dx1 + dy1 * dy1);
+            float n1x = l1 < 1e-4f ? 0f : -dy1 / l1, n1y = l1 < 1e-4f ? 1f : dx1 / l1;
+            putTrailVertex(vc, mat, x0 + n0x * hw, y0 + n0y * hw, a, rgb);
+            putTrailVertex(vc, mat, x0 - n0x * hw, y0 - n0y * hw, a, rgb);
+            putTrailVertex(vc, mat, x1 + n1x * hw, y1 + n1y * hw, a, rgb);
+            putTrailVertex(vc, mat, x1 - n1x * hw, y1 - n1y * hw, a, rgb);
+        }
+    }
+
+    private static void putTrailVertex(VertexConsumer vc, Matrix4f mat,
+                                       float x, float y, int alpha, int rgb) {
+        int argb = (alpha << 24) | rgb;
+        vc.addVertex(mat, x, y, 0f)
+                .setColor(argb)
+                .setUv(0.5f, 0.03f)
+                .setUv2(LightTexture.FULL_BRIGHT & 0xFFFF,
+                        (LightTexture.FULL_BRIGHT >> 16) & 0xFFFF)
+                .setUv1(0, 0);
+    }
+
+    /**
+     * 绘光逐字光晕（folia halos）：径向渐变柔光点 quad 垫在字下。
+     * folia haloAlpha = glyphAlpha × lit × (0.03+0.14illum+0.08flash)、
+     * size = fontPx × (2.2+0.8illum)；渲染层已按 lit 算好 size/alpha。
+     */
+    @Override
+    public void drawHalo(float cx, float cy, float sizePx, int argb) {
+        if (poseStack == null || buffers == null || (argb >>> 24) == 0) return;
+        ResourceLocation rl = haloTexture();
+        if (rl == null) return;
+        float half = Math.max(1f, sizePx * 0.5f);
+
+        VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(rl));
+        Matrix4f mat = poseStack.last().pose();
+        putHaloVertex(vc, mat, cx - half, cy - half, 0f, 0f, argb);
+        putHaloVertex(vc, mat, cx - half, cy + half, 0f, 1f, argb);
+        putHaloVertex(vc, mat, cx + half, cy + half, 1f, 1f, argb);
+        putHaloVertex(vc, mat, cx + half, cy - half, 1f, 0f, argb);
+        flushEffectBatch(rl);
+    }
+
+    /**
+     * 特效通道挂起合批（镜像字形合批模式）：halo/star/streak/trail 四通道各自
+     * 贴图恒定，textSeeThrough 是 shared batch —— 同 RenderType 连续 addVertex
+     * 天然累积；记录挂起贴图，切换到另一张时先收批。发射顺序即绘制顺序
+     * （深度测试已关），BufferSource 跨类型自动换批保证不串纹理，零视觉变化。
+     */
+    private ResourceLocation pendingEffectRl;
+
+    private void flushEffectBatch(ResourceLocation newRl) {
+        if (pendingEffectRl != null && pendingEffectRl != newRl) {
+            buffers.endBatch(RenderType.textSeeThrough(pendingEffectRl));
+        }
+        pendingEffectRl = newRl;
+    }
+
+    private static void putHaloVertex(VertexConsumer vc, Matrix4f mat,
+                                      float x, float y, float u, float v, int argb) {
+        vc.addVertex(mat, x, y, 0f)
+                .setColor(argb)
+                .setUv(u, v)
+                .setUv2(LightTexture.FULL_BRIGHT & 0xFFFF,
+                        (LightTexture.FULL_BRIGHT >> 16) & 0xFFFF)
+                .setUv1(0, 0);
+    }
+
+    /**
+     * 光晕贴图：128×128 径向高斯衰减白点（a = exp(−r²×7)）—— 能量紧贴字形：
+     * r=0.3 处 53%、r=0.6 处 8%、边缘 ~0，不会像旧版 (1−r)^1.7 那样在半程仍
+     * 有 30% 亮度、叠出一层奶雾。首绘惰性生成并注册，TrailTexture 同款 LINEAR。
+     */
+    private static ResourceLocation haloTexture() {
+        if (haloError) return null;
+        if (haloRl == null) {
+            try {
+                NativeImage img = new NativeImage(NativeImage.Format.RGBA, 128, 128, false);
+                for (int y = 0; y < 128; y++) {
+                    for (int x = 0; x < 128; x++) {
+                        float dx = (x + 0.5f) / 64f - 1f;
+                        float dy = (y + 0.5f) / 64f - 1f;
+                        float r2 = dx * dx + dy * dy;
+                        int a = (int) (255 * (float) Math.exp(-r2 * 7f));
+                        img.setPixelRGBA(x, y, 0xFFFFFF | (a << 24));
+                    }
+                }
+                DynamicTexture tex = new TrailTexture(img);
+                haloRl = ResourceLocation.fromNamespaceAndPath("muoniumplayer",
+                        "dynamic/worldlyrics_halo_" + (rlCounter++));
+                Minecraft.getInstance().getTextureManager().register(haloRl, tex);
+            } catch (Throwable t) {
+                haloError = true;
+                if (TRACE) System.out.println("[WorldLyrics/trace] 光晕纹理生成失败，逐字光晕停用: " + t);
+                return null;
+            }
+        }
+        return haloRl;
+    }
+
+    /**
+     * 绘光四芒闪点（folia stars）：点亮瞬间的星芒爆闪。四长芒 + 四短芒 +
+     * 圆核的贴图 quad，画在字的上面一层；随包络尺寸微鼓、alpha 快起慢落。
+     */
+    @Override
+    public void drawStar(float cx, float cy, float sizePx, float rotDeg, int argb) {
+        if (poseStack == null || buffers == null || (argb >>> 24) == 0) return;
+        ResourceLocation rl = starTexture();
+        if (rl == null) return;
+        float half = Math.max(1f, sizePx * 0.5f);
+
+        // 贴图旋转（folia star.rotation）：绕星心转四角
+        float cos = (float) Math.cos(Math.toRadians(rotDeg));
+        float sin = (float) Math.sin(Math.toRadians(rotDeg));
+        VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(rl));
+        Matrix4f mat = poseStack.last().pose();
+        putHaloVertex(vc, mat, cx + rot2(-half, -half, cos, sin)[0], cy + rot2(-half, -half, cos, sin)[1], 0f, 0f, argb);
+        putHaloVertex(vc, mat, cx + rot2(-half, half, cos, sin)[0], cy + rot2(-half, half, cos, sin)[1], 0f, 1f, argb);
+        putHaloVertex(vc, mat, cx + rot2(half, half, cos, sin)[0], cy + rot2(half, half, cos, sin)[1], 1f, 1f, argb);
+        putHaloVertex(vc, mat, cx + rot2(half, -half, cos, sin)[0], cy + rot2(half, -half, cos, sin)[1], 1f, 0f, argb);
+        flushEffectBatch(rl);
+    }
+
+    /** 局部偏移 (ox, oy) 旋转 rot 后的分量。 */
+    private static float[] rot2(float ox, float oy, float cos, float sin) {
+        return new float[] {ox * cos - oy * sin, ox * sin + oy * cos};
+    }
+
+    /**
+     * 星芒贴图：256×256 解析式四芒星（folia sprites 的精修版）——
+     * 热核（锐高斯）+ 4 条长锥形射线（沿轴指数衰减 × 垂直高斯收腰、向尖端
+     * 渐细）+ 4 条短对角芒；全部指数/高斯无多项式色带，LINEAR 下芒尖平滑
+     * 收细。首绘惰性生成并注册，TrailTexture 同款 LINEAR。
+     */
+    private static ResourceLocation starTexture() {
+        if (starError) return null;
+        if (starRl == null) {
+            try {
+                int size = 256;
+                NativeImage img = new NativeImage(NativeImage.Format.RGBA, size, size, false);
+                float half = size * 0.5f;
+                for (int y = 0; y < size; y++) {
+                    for (int x = 0; x < size; x++) {
+                        float nx = (x + 0.5f - half) / half;
+                        float ny = (y + 0.5f - half) / half;
+                        float r2 = nx * nx + ny * ny;
+                        // 热核：中心锐高斯亮点 + 柔和星体底光
+                        float v = (float) Math.exp(-r2 * 22f)
+                                + (float) Math.exp(-r2 * 4.5f) * 0.22f;
+                        // 4 条长轴射线：沿轴指数衰减，垂直高斯收腰且向尖端渐细
+                        float ax = Math.abs(nx);
+                        float ay = Math.abs(ny);
+                        float rayX = (float) Math.exp(-ax * 4.2f)
+                                * (float) Math.exp(-(ny * ny) * (90f + 260f * ax));
+                        float rayY = (float) Math.exp(-ay * 4.2f)
+                                * (float) Math.exp(-(nx * nx) * (90f + 260f * ay));
+                        v += (rayX + rayY) * 0.85f;
+                        // 4 条短对角芒（45°，更短更细更淡）
+                        float d45x = (nx + ny) * 0.7071f;
+                        float d45y = (ny - nx) * 0.7071f;
+                        float adx = Math.abs(d45x);
+                        float ady = Math.abs(d45y);
+                        float rayD = (float) Math.exp(-adx * 9f)
+                                * (float) Math.exp(-(d45y * d45y) * (160f + 380f * adx))
+                                + (float) Math.exp(-ady * 9f)
+                                * (float) Math.exp(-(d45x * d45x) * (160f + 380f * ady));
+                        v += rayD * 0.4f;
+                        int a = Math.min(255, (int) (255 * Math.min(1f, v)));
+                        img.setPixelRGBA(x, y, 0xFFFFFF | (a << 24));
+                    }
+                }
+                DynamicTexture tex = new TrailTexture(img);
+                starRl = ResourceLocation.fromNamespaceAndPath("muoniumplayer",
+                        "dynamic/worldlyrics_star_" + (rlCounter++));
+                Minecraft.getInstance().getTextureManager().register(starRl, tex);
+            } catch (Throwable t) {
+                starError = true;
+                if (TRACE) System.out.println("[WorldLyrics/trace] 星芒纹理生成失败，闪点停用: " + t);
+                return null;
+            }
+        }
+        return starRl;
+    }
+
+    private static ResourceLocation starRl;
+    private static boolean starError;
+
+    /**
+     * 绘光模式启用时的贴图预热：四张特效贴图惰性生成的首帧成本（star 256²
+     * 约 5~15ms）会掉帧一次——绘光开启的第一帧提前生成，把卡顿移出歌内。
+     * Bridge 帧头 settings.huiguang 为真时调用；幂等。
+     */
+    public static void prewarmTextures() {
+        trailTexture();
+        haloTexture();
+        starTexture();
+        streakTexture();
+    }
+
+    private static ResourceLocation haloRl;
+    private static boolean haloError;
+
+    /**
+     * 绘光十字爆闪的一层（folia crossBurst 的竖/横光柱 glow+core）：条纹贴图
+     * 沿条纹方向拉伸到 width、横向撑满 height，rotDeg 旋转（0=水平条纹、
+     * 90=竖直条纹）。streak 贴图：128×32 横向白条，长轴高斯锐中段 + 纵向
+     * 高斯柔边（glow/core 共用一张，靠高度拉伸与 alpha 区分）。
+     */
+    @Override
+    public void drawBurstLayer(float cx, float cy, float width, float height,
+                               float rotDeg, int argb) {
+        if (poseStack == null || buffers == null || (argb >>> 24) == 0) return;
+        ResourceLocation rl = streakTexture();
+        if (rl == null) return;
+        float cos = (float) Math.cos(Math.toRadians(rotDeg));
+        float sin = (float) Math.sin(Math.toRadians(rotDeg));
+        float hw = Math.max(0.5f, width * 0.5f);
+        float hh = Math.max(0.5f, height * 0.5f);
+        VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(rl));
+        Matrix4f mat = poseStack.last().pose();
+        // 四角 = 中心 ± 长轴半宽·轴向 ± 短轴半宽·法向（旋转由 rot2 合成）
+        float axX = cos, axY = sin;
+        float nX = -sin, nY = cos;
+        putBurstVertex(vc, mat, cx - axX * hw - nX * hh, cy - axY * hw - nY * hh, 0f, 0f, argb);
+        putBurstVertex(vc, mat, cx - axX * hw + nX * hh, cy - axY * hw + nY * hh, 0f, 1f, argb);
+        putBurstVertex(vc, mat, cx + axX * hw + nX * hh, cy + axY * hw + nY * hh, 1f, 1f, argb);
+        putBurstVertex(vc, mat, cx + axX * hw - nX * hh, cy + axY * hw - nY * hh, 1f, 0f, argb);
+        flushEffectBatch(rl);
+    }
+
+    private static void putBurstVertex(VertexConsumer vc, Matrix4f mat,
+                                       float x, float y, float u, float v, int argb) {
+        vc.addVertex(mat, x, y, 0f)
+                .setColor(argb)
+                .setUv(u, v)
+                .setUv2(LightTexture.FULL_BRIGHT & 0xFFFF,
+                        (LightTexture.FULL_BRIGHT >> 16) & 0xFFFF)
+                .setUv1(0, 0);
+    }
+
+    /** 光柱条纹贴图：128×32，长轴（u）高斯聚中 + 短轴（v）高斯柔边，白色。 */
+    private static ResourceLocation streakTexture() {
+        if (streakError) return null;
+        if (streakRl == null) {
+            try {
+                NativeImage img = new NativeImage(NativeImage.Format.RGBA, 128, 32, false);
+                for (int y = 0; y < 32; y++) {
+                    for (int x = 0; x < 128; x++) {
+                        float u = (x + 0.5f) / 128f * 2f - 1f;
+                        float v = (y + 0.5f) / 32f * 2f - 1f;
+                        float a = (float) Math.exp(-u * u * 3.2f)
+                                * (float) Math.exp(-v * v * 3.5f);
+                        img.setPixelRGBA(x, y, 0xFFFFFF | ((int) (255 * a) << 24));
+                    }
+                }
+                DynamicTexture tex = new TrailTexture(img);
+                streakRl = ResourceLocation.fromNamespaceAndPath("muoniumplayer",
+                        "dynamic/worldlyrics_streak_" + (rlCounter++));
+                Minecraft.getInstance().getTextureManager().register(streakRl, tex);
+            } catch (Throwable t) {
+                streakError = true;
+                if (TRACE) System.out.println("[WorldLyrics/trace] 光柱纹理生成失败，爆闪停用: " + t);
+                return null;
+            }
+        }
+        return streakRl;
+    }
+
+    private static ResourceLocation streakRl;
+    private static boolean streakError;
+
+    /**
+     * 径迹贴图：128×8 白色横条，v 从上（不透明白）到下（全透明）渐变 ——
+     * 逐段 quad 用 v 承载沿迹参数（u 常量取带中心 0.5）。首绘惰性生成并注册，
+     * 强制 LINEAR（8 行渐变默认 NEAREST 采样会出 8 级色带）。
+     */
+    private static ResourceLocation trailTexture() {
+        if (trailError) return null;
+        if (trailRl == null) {
+            try {
+                NativeImage img = new NativeImage(NativeImage.Format.RGBA, 128, 8, false);
+                for (int y = 0; y < 8; y++) {
+                    // 头（y=0）不透明 → 尾（y=7）透明；sRGB 感知的平方衰减更接近 folia 的渐隐
+                    int a = Math.max(0, 255 - (255 * y * y) / (7 * 7));
+                    for (int x = 0; x < 128; x++) {
+                        img.setPixelRGBA(x, y, 0xFFFFFF | (a << 24));
+                    }
+                }
+                DynamicTexture tex = new TrailTexture(img);
+                trailRl = ResourceLocation.fromNamespaceAndPath("muoniumplayer",
+                        "dynamic/worldlyrics_trail_" + (rlCounter++));
+                Minecraft.getInstance().getTextureManager().register(trailRl, tex);
+            } catch (Throwable t) {
+                trailError = true;
+                if (TRACE) System.out.println("[WorldLyrics/trace] 径迹纹理生成失败，拖尾停用: " + t);
+                return null;
+            }
+        }
+        return trailRl;
+    }
+
+    /**
+     * 径迹纹理：8 行渐变 + 默认 NEAREST 会出 8 级色带。textSeeThrough 的
+     * TextureStateShard 每次 bind 都按 (false,false) 调 setFilter（javap 核对），
+     * 构造后的一次性 setFilter 会被冲掉 —— 必须覆写 setFilter 强制 LINEAR
+     * （与 LyricGlyphAtlasBridge.PageTexture 同一强制点）。
+     */
+    private static final class TrailTexture extends DynamicTexture {
+        TrailTexture(NativeImage img) {
+            super(img);
+        }
+
+        @Override
+        public void setFilter(boolean blur, boolean mipmap) {
+            super.setFilter(true, false);
+        }
+    }
+
+    private static ResourceLocation trailRl;
+    private static boolean trailError;
+    private static int rlCounter;
+
+    /**
+     * 歌词所在环境的感知亮度 0..1：白天 1、深夜 0（天空暗度），洞窟/夜晚持火把
+     * 等场景取公告牌处方块光兜底。绘光的未唱字用它调制「冷暗档 ↔ 自发光冰蓝」。
+     */
+    @Override
+    public float worldLightLevel() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.level == null) return 1f;
+        // 感知亮度 0..15（方块光 ∪ 减去天色暗度后的天空光，正午地表 15、
+        // 满月地表 4、无光源洞窟 0）—— 一个指标同时覆盖昼夜与洞窟/火把
+        int raw = mc.level.getRawBrightness(
+                net.minecraft.core.BlockPos.containing(camX, camY, camZ), 0);
+        return Math.max(0f, Math.min(1f, raw / 15f));
     }
 
     @Override

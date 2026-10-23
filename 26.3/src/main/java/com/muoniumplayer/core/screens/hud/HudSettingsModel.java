@@ -29,8 +29,8 @@ import java.util.function.Supplier;
 /**
  * HUD 设置界面的内容声明：分类 → 分组 → 条目。
  *
- * <p>为什么要单独一层：新的 HUD 设置界面（{@link GuiHudEditorPro}）与经典界面
- * （{@link GuiHudEditor}）展示的必须是同一批设置项。如果两个界面各自把条目硬编码一遍，
+ * <p>为什么要单独一层：内置 HUD 设置界面（{@link GuiHudEditorPro}）与外部镜像
+ * （OneConfig 桥）展示的必须是同一批设置项。如果各界面各自把条目硬编码一遍，
  * 加一个开关就得改两处，漏改的那一边会静默地少一项。把「有哪些项、每项怎么读怎么写、
  * 数值怎么格式化」集中到这里，界面只负责画和命中测试。</p>
  *
@@ -66,7 +66,9 @@ public final class HudSettingsModel {
         /** 其余歌词行的颜色。 */
         NORMAL,
         /** 3D 世界歌词的文字颜色（存 HudConfig.worldLyricsColorRgb，无 OneConfig 值对象）。 */
-        WORLD_LYRICS
+        WORLD_LYRICS,
+        /** 3D 世界歌词的发光颜色（存 HudConfig.worldLyricsGlowColorRgb，同上直写）。 */
+        WORLD_LYRICS_GLOW
     }
 
     public static final class Entry {
@@ -246,6 +248,7 @@ public final class HudSettingsModel {
                 if (colorTarget == ColorTarget.CURRENT) return lyrics.currentLyricColor.getValue();
                 if (colorTarget == ColorTarget.NORMAL) return lyrics.lyricColor.getValue();
                 if (colorTarget == ColorTarget.WORLD_LYRICS) return new Color(HudConfig.worldLyricsColorRgb);
+                if (colorTarget == ColorTarget.WORLD_LYRICS_GLOW) return new Color(HudConfig.worldLyricsGlowColorRgb);
             } catch (RuntimeException ignored) {
             }
             return new Color(0x9AA6B8);
@@ -265,6 +268,10 @@ public final class HudSettingsModel {
                 // 拿值当旗标会让「选白色」被回落逻辑替换成暖白肉色。
                 HudConfig.worldLyricsColorRgb = selected.getRGB() & 0xFFFFFF;
                 HudConfig.worldLyricsColorCustom = true;
+                return;
+            }
+            if (colorTarget == ColorTarget.WORLD_LYRICS_GLOW) {
+                HudConfig.worldLyricsGlowColorRgb = selected.getRGB() & 0xFFFFFF;
                 return;
             }
             MusicLyricsWidget lyrics = lyrics();
@@ -311,23 +318,14 @@ public final class HudSettingsModel {
         public final int accent;
         /** 侧边栏与标题上代表这一分类的图标码位，取 {@link HudSettingsIcons} 的常量。 */
         public final String icon;
-        /**
-         * 这一分类在侧栏里归到哪一大块。只有 Folia 那套界面用得到它：它的侧栏是
-         * 「大块标签 → 分类按钮 → 分组锚点」三级，标签以前按 {@link #categories()} 的下标区间
-         * 硬编码，加一个分类就得回去数下标，数错一次就静默错位（第 12 项「HUD 位置」当年就是这么
-         * 掉进「其他设置」的）。现在标签跟着分类自己带，顺序仍按模型里的出现次序渲染，
-         * 所以**同一块的分类要相邻摆放**，静态测试钉着这一点。
-         */
-        public final String navGroup;
         public final Group[] groups;
 
-        private Category(String title, String subtitle, int accent, String icon, String navGroup,
+        private Category(String title, String subtitle, int accent, String icon,
                          Group... groups) {
             this.title = title;
             this.subtitle = subtitle;
             this.accent = accent;
             this.icon = icon;
-            this.navGroup = navGroup;
             this.groups = groups;
         }
 
@@ -376,6 +374,50 @@ public final class HudSettingsModel {
         }, description, null, state, action, null, ColorTarget.NONE, null, null, visibleWhen);
     }
 
+
+    // ---- 绘光关键字着色预置方案（folia keywordColors 的 MC 化：choice 循环方案） ----
+    private static final String KW_PRESET_OFF = "关闭";
+    private static final String KW_PRESET_SAKURA = "樱红";
+    private static final String KW_PRESET_AZURE = "苍蓝";
+    private static final String KW_PRESET_VERDANT = "翠绿";
+    private static final String KW_PRESET_AMBER = "琥珀";
+
+    private static String[] keywordPresetChoices() {
+        return new String[] {KW_PRESET_OFF, KW_PRESET_SAKURA, KW_PRESET_AZURE,
+                KW_PRESET_VERDANT, KW_PRESET_AMBER};
+    }
+
+    private static String keywordPresetLabel() {
+        return keywordPresetOf(HudConfig.worldLyricsKeywordColors);
+    }
+
+    private static void cycleKeywordPreset() {
+        setKeywordPreset(keywordPresetLabel());
+    }
+
+    private static void setKeywordPreset(String selected) {
+        HudConfig.worldLyricsKeywordColors = keywordTableOf(selected);
+        saveNow();
+    }
+
+    private static String keywordPresetOf(String table) {
+        if (table == null || table.isEmpty()) return KW_PRESET_OFF;
+        // 表里存的是裸 hex（与 keywordTableOf 写入口径一致；R5 审查 P1-3：
+        // 原来用 "0xFF5A8A" 反推永不命中，界面恒显「关闭」）
+        if (table.contains("FF5A8A")) return KW_PRESET_SAKURA;
+        if (table.contains("6FB9FF")) return KW_PRESET_AZURE;
+        if (table.contains("7FE0A0")) return KW_PRESET_VERDANT;
+        if (table.contains("FFC45A")) return KW_PRESET_AMBER;
+        return KW_PRESET_OFF;
+    }
+
+    private static String keywordTableOf(String preset) {
+        if (KW_PRESET_SAKURA.equals(preset)) return "花火:FF5A8A,星:FF5A8A,月:FF5A8A,夜:FF5A8A,梦:FF5A8A";
+        if (KW_PRESET_AZURE.equals(preset)) return "光:6FB9FF,闪:6FB9FF,雷:6FB9FF,风:6FB9FF,翼:6FB9FF";
+        if (KW_PRESET_VERDANT.equals(preset)) return "草:7FE0A0,风:7FE0A0,森:7FE0A0,叶:7FE0A0,夏:7FE0A0";
+        if (KW_PRESET_AMBER.equals(preset)) return "日:FFC45A,炎:FFC45A,夏:FFC45A,阳:FFC45A,梦:FFC45A";
+        return "";
+    }
 
     private static Entry color(final String label, String description, ColorTarget target) {
         return new Entry(Kind.COLOR, new Supplier<String>() {
@@ -603,7 +645,7 @@ public final class HudSettingsModel {
 
     private static Category[] build() {
         return new Category[] {
-                new Category("歌词样式", "桌面歌词与全屏页的文字：颜色、发光、逐字强调与排版", 0xFF8C7CFF, HudSettingsIcons.MIC, "歌词与画面",
+                new Category("歌词样式", "桌面歌词与全屏页的文字：颜色、发光、逐字强调与排版", 0xFF8C7CFF, HudSettingsIcons.MIC,
                         new Group("当前行", HudSettingsIcons.MIC,
                                 color("当前歌词颜色", "逐字填涂之后那部分文字的颜色。", ColorTarget.CURRENT),
                                 toggle("当前歌词特效", "关掉之后当前行只做普通描边，不再放大与发光。",
@@ -651,7 +693,8 @@ public final class HudSettingsModel {
                                 slider(HudSetting.LYRIC_GLOW_SPREAD, "光晕铺多远。桌面与全屏按各自字号成比例缩放。")),
                         new Group("逐字效果 (OSD)", HudSettingsIcons.CAPTION,
                                 slider(HudSetting.OSD_TRANSITION, "桌面歌词填涂边缘的软化宽度。"),
-                                slider(HudSetting.OSD_PULSE, "桌面歌词正在唱的那个字放大多少。"),
+                                slider(HudSetting.OSD_PULSE, "桌面歌词正在唱的那个字放大多少。需要上面的「OSD 逐字强调」开着。",
+                                        () -> HudConfig.osdKaraokeEmphasisEnabled),
                                 slider(HudSetting.OSD_SMOOTHNESS, "桌面歌词逐字动画的平滑程度。"),
                                 slider(HudSetting.OSD_DUET_SPREAD, "对唱段落左右分列的间距，0 为完全居中。")),
                         new Group("排版与滚动", HudSettingsIcons.RULER,
@@ -671,9 +714,9 @@ public final class HudSettingsModel {
                                         }),
                                 slider(HudSetting.EDGE_FADE, "上下边缘渐隐区域的高度。"))),
 
-                new Category("3D 歌词", "把歌词作为公告牌画进 3D 世界：悬浮在玩家前方，转视角跟随", 0xFF7CC8FF, HudSettingsIcons.VISIBILITY, "歌词与画面",
+                new Category("3D 歌词", "把歌词作为公告牌画进 3D 世界：悬浮在玩家前方，转视角跟随", 0xFF7CC8FF, HudSettingsIcons.VISIBILITY,
                         new Group("放置", HudSettingsIcons.MOVE,
-                                toggle("3D 歌词", "开启后歌词渲染在游戏三维世界中，而不是屏幕 HUD。",
+                                toggle("3D 歌词", "开启后歌词渲染在游戏三维世界中（关掉 HUD 设置即可在世界里看到），而不是屏幕 HUD。下面的参数都要先开它。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.worldLyricsEnabled;
@@ -684,7 +727,8 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         }),
-                                slider(HudSetting.WORLD_LYRICS_DISTANCE, "歌词悬浮在玩家视线前方多远（方块）。"),
+                                slider(HudSetting.WORLD_LYRICS_DISTANCE, "歌词悬浮在玩家视线前方多远（方块）。",
+                                        () -> HudConfig.worldLyricsEnabled),
                                 toggle("朝向玩家", "歌词平面始终正对你。关闭后歌词固定朝向生成时的方向，绕到侧面会被压扁。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
@@ -695,7 +739,7 @@ public final class HudSettingsModel {
                                                 HudConfig.worldLyricsFacePlayer = !HudConfig.worldLyricsFacePlayer;
                                                 saveNow();
                                             }
-                                        }),
+                                        }, () -> HudConfig.worldLyricsEnabled),
                                 toggle("自动避让", "走近歌词时它自动向后退开，防止穿过文字。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
@@ -706,11 +750,13 @@ public final class HudSettingsModel {
                                                 HudConfig.worldLyricsKeepAway = !HudConfig.worldLyricsKeepAway;
                                                 saveNow();
                                             }
-                                        }),
-                                slider(HudSetting.WORLD_LYRICS_SPREAD, "多行歌词左右铺开的最大角度。"),
-                                slider(HudSetting.WORLD_LYRICS_SCALE, "整体缩放。1.0 时一行约 0.9 方块高。")),
+                                        }, () -> HudConfig.worldLyricsEnabled),
+                                slider(HudSetting.WORLD_LYRICS_SPREAD, "多行歌词左右铺开的最大角度。",
+                                        () -> HudConfig.worldLyricsEnabled),
+                                slider(HudSetting.WORLD_LYRICS_SCALE, "整体缩放。1.0 时一行约 0.9 方块高。",
+                                        () -> HudConfig.worldLyricsEnabled)),
                         new Group("字体与文本", HudSettingsIcons.SUBTITLES,
-                                toggle("现代化渲染", "开 = Skija 超采样矢量字形 + 高级发光烘焙，跟随界面字体设置；关 = 原版像素字体。",
+                                toggle("现代化渲染", "开 = Skija 超采样矢量字形 + 高级发光烘焙，跟随界面字体设置；关 = 原版像素字体。动效组里的心象与绘光也依赖它。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.worldLyricsModernStyle;
@@ -720,7 +766,7 @@ public final class HudSettingsModel {
                                                 HudConfig.worldLyricsModernStyle = !HudConfig.worldLyricsModernStyle;
                                                 saveNow();
                                             }
-                                        }),
+                                        }, () -> HudConfig.worldLyricsEnabled),
                                 toggle("分割歌词行", "把「两句挤在一行」的歌词（分隔符 / ）拆成两行分别渲染。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
@@ -731,9 +777,25 @@ public final class HudSettingsModel {
                                                 HudConfig.worldLyricsSplitLines = !HudConfig.worldLyricsSplitLines;
                                                 saveNow();
                                             }
-                                        }),
+                                        }, () -> HudConfig.worldLyricsEnabled),
                                 color("文字颜色", "3D 歌词的文字颜色，选白色就是纯白。点击用取色器自定。",
-                                        ColorTarget.WORLD_LYRICS)),
+                                        ColorTarget.WORLD_LYRICS),
+                                choice("关键字染色", "绘光动效的关键字着色方案：循环切换预置的词色组合，染色只作用于完整命中「词」的字（folia keywordColors）。关闭时整句同色。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return keywordPresetLabel();
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                cycleKeywordPreset();
+                                                saveNow();
+                                            }
+                                        }, keywordPresetChoices(), HudSettingsModel::setKeywordPreset,
+                                        new String[] {"整句同色，不染色。",
+                                                "花火/星/月/夜/梦 染樱红。",
+                                                "光/闪/雷/风/翼 染苍蓝。",
+                                                "草/风/森/叶/夏 染翠绿。",
+                                                "日/炎/夏/阳/梦 染琥珀。"})),
                         new Group("发光", HudSettingsIcons.SPARKLE,
                                 toggle("发光", "文字外发光（Deep Glow 风格），随纹理一起烘焙。",
                                         new BooleanSupplier() {
@@ -745,34 +807,31 @@ public final class HudSettingsModel {
                                                 HudConfig.worldLyricsGlowEnabled = !HudConfig.worldLyricsGlowEnabled;
                                                 saveNow();
                                             }
-                                        }),
-                                slider(HudSetting.WORLD_LYRICS_GLOW_STRENGTH, "发光强度。"),
-                                slider(HudSetting.WORLD_LYRICS_GLOW_SPREAD, "光晕铺多远。")),
+                                        }, () -> HudConfig.worldLyricsEnabled),
+                                slider(HudSetting.WORLD_LYRICS_GLOW_STRENGTH, "发光强度。",
+                                        () -> HudConfig.worldLyricsEnabled && HudConfig.worldLyricsGlowEnabled),
+                                slider(HudSetting.WORLD_LYRICS_GLOW_SPREAD, "光晕铺多远。",
+                                        () -> HudConfig.worldLyricsEnabled && HudConfig.worldLyricsGlowEnabled),
+                                color("发光颜色", "发光的颜色。默认白；配合深色环境可换暖色或主题色。",
+                                        ColorTarget.WORLD_LYRICS_GLOW)),
                         new Group("动效", HudSettingsIcons.TUNE,
-                                toggle("逐词弹出", "Word Pop：词被唱到的瞬间弹一下。需要逐字歌词。",
-                                        new BooleanSupplier() {
-                                            public boolean getAsBoolean() {
-                                                return HudConfig.worldLyricsWordPop;
+                                choice("动效风格", "换句与逐字的表现方式，同一时间只有一种生效。逐词弹出需要逐字歌词；心象与绘光需要「现代化渲染」开着，且绘光优先于心象。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return worldEffectName();
                                             }
                                         }, new Runnable() {
                                             public void run() {
-                                                HudConfig.worldLyricsWordPop = !HudConfig.worldLyricsWordPop;
-                                                saveNow();
+                                                cycleWorldEffect();
                                             }
-                                        }),
-                                toggle("节拍闪烁", "Text Flash：随音乐节拍轻轻闪一下。",
-                                        new BooleanSupplier() {
-                                            public boolean getAsBoolean() {
-                                                return HudConfig.worldLyricsTextFlash;
-                                            }
-                                        }, new Runnable() {
-                                            public void run() {
-                                                HudConfig.worldLyricsTextFlash = !HudConfig.worldLyricsTextFlash;
-                                                saveNow();
-                                            }
-                                        }))),
+                                        }, new String[] {"无", "逐词弹出", "心象", "绘光"},
+                                        HudSettingsModel::setWorldEffect,
+                                        new String[] {"静态歌词，不加动效。",
+                                                "Word Pop：词被唱到的瞬间弹一下。",
+                                                "Cadenza：整行分块，每块随机出入场动画 + 呼吸 + 提亮脉冲。",
+                                                "Huiguang：换句逐字飞行重排 + 发光径迹 + 卡拉OK点亮。"}))),
 
-                new Category("面板与卡片", "桌面歌词的视口尺寸与 Blossom 毛玻璃卡片", 0xFFE087C0, HudSettingsIcons.CAPTION, "歌词与画面",
+                new Category("面板与卡片", "桌面歌词的视口尺寸与 Blossom 毛玻璃卡片", 0xFFE087C0, HudSettingsIcons.CAPTION,
                         new Group("大小与换行", HudSettingsIcons.RULER,
                                 slider(HudSetting.OSD_WIDTH, "桌面歌词视口的基础宽度。超出这一宽度的原文、译文和逐字歌词都会自动换行。"),
                                 slider(HudSetting.OSD_HEIGHT, "桌面歌词视口的基础高度。对唱或长行换行后放不下时会优先保留原文。")),
@@ -790,11 +849,14 @@ public final class HudSettingsModel {
                                         }, blossomStyleChoices(), HudSettingsModel::setBlossomStyle,
                                         new String[] {"旧版逐行描边歌词。",
                                                 "毛玻璃卡片，逐字扫光。"}),
-                                slider(HudSetting.BLOSSOM_LINES, "Blossom 卡片里同时显示几行。为 1 行时不滚动，当前行整块居中。")),
+                                slider(HudSetting.BLOSSOM_LINES, "Blossom 卡片里同时显示几行。为 1 行时不滚动，当前行整块居中。",
+                                        () -> HudConfig.osdLyricStyle == 1)),
                         new Group("毛玻璃卡片", HudSettingsIcons.SPARKLE,
-                                slider(HudSetting.BLOSSOM_BLUR, "卡片背后实时模糊的强度。归零就是一块普通的半透明底。"),
-                                slider(HudSetting.BLOSSOM_OPACITY, "卡片深色底的不透明度。压得越低透出的背景越多。"),
-                                toggle("踩点描边", "卡片边框随鼓点呼吸，颜色取当前歌词色。",
+                                slider(HudSetting.BLOSSOM_BLUR, "卡片背后实时模糊的强度。归零就是一块普通的半透明底。",
+                                        () -> HudConfig.osdLyricStyle == 1),
+                                slider(HudSetting.BLOSSOM_OPACITY, "卡片深色底的不透明度。压得越低透出的背景越多。",
+                                        () -> HudConfig.osdLyricStyle == 1),
+                                toggle("踩点描边", "卡片边框随鼓点呼吸，颜色取当前歌词色。需要上面的「OSD 逐字强调」开着才有节拍数据。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.blossomRhythmBorder;
@@ -805,11 +867,12 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         }),
-                                slider(HudSetting.BLOSSOM_BORDER, "描边的强度，同时影响它的透明度与线宽。"))),
+                                slider(HudSetting.BLOSSOM_BORDER, "描边的强度，同时影响它的透明度与线宽。",
+                                        () -> HudConfig.osdLyricStyle == 1 && HudConfig.blossomRhythmBorder))),
 
-                new Category("灵动岛", "顶部胶囊的外观、常驻内容与动画时序", 0xFF65A9FF, HudSettingsIcons.ISLAND, "歌词与画面",
+                new Category("灵动岛", "顶部胶囊的外观、常驻内容与动画时序", 0xFF65A9FF, HudSettingsIcons.ISLAND,
                         new Group("外观与尺寸", HudSettingsIcons.TUNE,
-                                toggle("下载灵动岛", "总开关。关掉之后下载、通知与常驻都不再显示。",
+                                toggle("下载灵动岛", "总开关。关掉之后下载、通知与常驻都不再显示，下面这一页其余条目也随之收起。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.dynamicIslandEnabled;
@@ -820,7 +883,7 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         }),
-                                choice("灵动岛样式", "在紧凑、卡片、液态玻璃、系统卡片、音乐焦点、回弹胶囊之间循环。",
+                                choice("灵动岛样式", "在紧凑、卡片、液态玻璃、系统卡片、音乐焦点、回弹胶囊之间循环。液态玻璃那一款不吃真玻璃材质开关。",
                                         new Supplier<String>() {
                                             public String get() {
                                                 return DownloadDynamicIsland.getStyleName();
@@ -829,13 +892,29 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 DownloadDynamicIsland.cycleStyle();
                                             }
-                                        }, islandStyleChoices(), HudSettingsModel::setIslandStyle),
-                                slider(HudSetting.DYNAMIC_ISLAND_SCALE, "整体大小。"),
-                                slider(HudSetting.DYNAMIC_ISLAND_TEXT_SCALE, "岛内文字的字号缩放。"),
-                                slider(HudSetting.DYNAMIC_ISLAND_MAX_WIDTH, "基础宽度。文案更长时仍会自动伸展。"),
-                                slider(HudSetting.DYNAMIC_ISLAND_PROGRESS_HEIGHT, "下载进度条的粗细。")),
+                                        }, islandStyleChoices(), HudSettingsModel::setIslandStyle,
+                                        () -> HudConfig.dynamicIslandEnabled),
+                                slider(HudSetting.DYNAMIC_ISLAND_SCALE, "整体大小。",
+                                        () -> HudConfig.dynamicIslandEnabled),
+                                slider(HudSetting.DYNAMIC_ISLAND_TEXT_SCALE, "岛内文字的字号缩放。",
+                                        () -> HudConfig.dynamicIslandEnabled),
+                                slider(HudSetting.DYNAMIC_ISLAND_MAX_WIDTH, "基础宽度。文案更长时仍会自动伸展。",
+                                        () -> HudConfig.dynamicIslandEnabled),
+                                slider(HudSetting.DYNAMIC_ISLAND_PROGRESS_HEIGHT, "下载进度条的粗细。",
+                                        () -> HudConfig.dynamicIslandEnabled),
+                                toggle("岛内搜索", "游戏内按 Ctrl+F（可在按键设置改）在灵动岛里直接搜歌。只在岛显示时出现。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.islandSearchEnabled;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.islandSearchEnabled = !HudConfig.islandSearchEnabled;
+                                                saveNow();
+                                            }
+                                        }, () -> HudConfig.dynamicIslandEnabled)),
                         new Group("常驻内容", HudSettingsIcons.TIMER,
-                                toggle("常驻灵动岛", "没有下载与通知时也留在屏幕顶部。通知到来只做内容淡入，不重播入场动画。",
+                                toggle("常驻灵动岛", "没有下载与通知时也留在屏幕顶部。通知到来只做内容淡入，不重播入场动画。下面的内容与时长都要先开它。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.dynamicIslandAlwaysOn;
@@ -845,7 +924,7 @@ public final class HudSettingsModel {
                                                 HudConfig.dynamicIslandAlwaysOn = !HudConfig.dynamicIslandAlwaysOn;
                                                 saveNow();
                                             }
-                                        }),
+                                        }, () -> HudConfig.dynamicIslandEnabled),
                                 toggle("常驻 · 帧率", "状态页显示当前帧率。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
@@ -856,7 +935,7 @@ public final class HudSettingsModel {
                                                 HudConfig.dynamicIslandAmbientFps = !HudConfig.dynamicIslandAmbientFps;
                                                 saveNow();
                                             }
-                                        }),
+                                        }, () -> HudConfig.dynamicIslandEnabled && HudConfig.dynamicIslandAlwaysOn),
                                 toggle("常驻 · 延迟", "状态页显示服务器延迟。单机或未进服时显示两个短横。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
@@ -867,7 +946,7 @@ public final class HudSettingsModel {
                                                 HudConfig.dynamicIslandAmbientPing = !HudConfig.dynamicIslandAmbientPing;
                                                 saveNow();
                                             }
-                                        }),
+                                        }, () -> HudConfig.dynamicIslandEnabled && HudConfig.dynamicIslandAlwaysOn),
                                 toggle("常驻 · 时间", "状态页显示系统时间（时:分）。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
@@ -878,7 +957,7 @@ public final class HudSettingsModel {
                                                 HudConfig.dynamicIslandAmbientClock = !HudConfig.dynamicIslandAmbientClock;
                                                 saveNow();
                                             }
-                                        }),
+                                        }, () -> HudConfig.dynamicIslandEnabled && HudConfig.dynamicIslandAlwaysOn),
                                 toggle("常驻 · 正在播放", "把当前歌曲作为一页参与轮换：左侧换成封面，右侧显示歌名与歌手。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
@@ -889,7 +968,7 @@ public final class HudSettingsModel {
                                                 HudConfig.dynamicIslandAmbientNowPlaying = !HudConfig.dynamicIslandAmbientNowPlaying;
                                                 saveNow();
                                             }
-                                        }),
+                                        }, () -> HudConfig.dynamicIslandEnabled && HudConfig.dynamicIslandAlwaysOn),
                                 toggle("常驻 · 轮换显示", "关掉之后固定停在状态页；状态三项全关时才固定显示正在播放页。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
@@ -900,22 +979,48 @@ public final class HudSettingsModel {
                                                 HudConfig.dynamicIslandAmbientRotate = !HudConfig.dynamicIslandAmbientRotate;
                                                 saveNow();
                                             }
-                                        }),
+                                        }, () -> HudConfig.dynamicIslandEnabled && HudConfig.dynamicIslandAlwaysOn),
                                 slider(HudSetting.DYNAMIC_ISLAND_AMBIENT_STATUS,
-                                        "状态页（帧率/延迟/时间）每次停留多久。三个数字扫一眼就够，可以短一些。"),
+                                        "状态页（帧率/延迟/时间）每次停留多久。三个数字扫一眼就够，可以短一些。",
+                                        () -> HudConfig.dynamicIslandEnabled && HudConfig.dynamicIslandAlwaysOn
+                                                && HudConfig.dynamicIslandAmbientRotate),
                                 slider(HudSetting.DYNAMIC_ISLAND_AMBIENT_NOW_PLAYING,
-                                        "正在播放页每次停留多久。要读完歌名与歌手，通常需要比状态页更久。")),
+                                        "正在播放页每次停留多久。要读完歌名与歌手，通常需要比状态页更久。",
+                                        () -> HudConfig.dynamicIslandEnabled && HudConfig.dynamicIslandAlwaysOn
+                                                && HudConfig.dynamicIslandAmbientRotate)),
                         new Group("时序与动画", HudSettingsIcons.SPEED,
-                                slider(HudSetting.DYNAMIC_ISLAND_COMPLETION_HOLD, "下载完成后结果停留多久再收起。"),
-                                slider(HudSetting.DYNAMIC_ISLAND_QUEUE_INTERVAL, "排队的两条通知之间至少间隔多久。"),
-                                slider(HudSetting.DYNAMIC_ISLAND_EXPAND_SPEED, "展开的速度倍率。"),
-                                slider(HudSetting.DYNAMIC_ISLAND_COLLAPSE_SPEED, "收起的速度倍率。"),
-                                slider(HudSetting.DYNAMIC_ISLAND_CONTENT_SPEED, "岛内内容交叉淡入的速度倍率。"),
-                                slider(HudSetting.DYNAMIC_ISLAND_ENTRANCE_DURATION, "入场动画的时长。"),
-                                slider(HudSetting.DYNAMIC_ISLAND_OVERSHOOT, "入场结束时的回弹幅度，0 为不回弹。"),
-                                slider(HudSetting.DYNAMIC_ISLAND_SPINNER_SPEED, "加载转子的转速倍率。"))),
+                                slider(HudSetting.DYNAMIC_ISLAND_COMPLETION_HOLD, "下载完成后结果停留多久再收起。",
+                                        () -> HudConfig.dynamicIslandEnabled),
+                                slider(HudSetting.DYNAMIC_ISLAND_QUEUE_INTERVAL, "排队的两条通知之间至少间隔多久。",
+                                        () -> HudConfig.dynamicIslandEnabled),
+                                choice("动画速度", "弹出 / 收起 / 内容切换三条动画共用一档速度；要各调各的就选自定义，下面才出现三条倍率。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return islandSpeedName();
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                cycleIslandSpeed();
+                                            }
+                                        }, new String[] {"慢", "标准", "快", "自定义"}, HudSettingsModel::setIslandSpeed,
+                                        new String[] {"更从容的出入场，适合常盯着岛看。",
+                                                "出厂节奏。",
+                                                "更干脆的出入场。",
+                                                "分别微调弹出 / 收起 / 内容切换三条倍率。"}),
+                                slider(HudSetting.DYNAMIC_ISLAND_EXPAND_SPEED, "展开的速度倍率。",
+                                        HudSettingsModel::islandSpeedCustom),
+                                slider(HudSetting.DYNAMIC_ISLAND_COLLAPSE_SPEED, "收起的速度倍率。",
+                                        HudSettingsModel::islandSpeedCustom),
+                                slider(HudSetting.DYNAMIC_ISLAND_CONTENT_SPEED, "岛内内容交叉淡入的速度倍率。",
+                                        HudSettingsModel::islandSpeedCustom),
+                                slider(HudSetting.DYNAMIC_ISLAND_ENTRANCE_DURATION, "入场动画的时长。",
+                                        () -> HudConfig.dynamicIslandEnabled),
+                                slider(HudSetting.DYNAMIC_ISLAND_OVERSHOOT, "入场结束时的回弹幅度，0 为不回弹。",
+                                        () -> HudConfig.dynamicIslandEnabled),
+                                slider(HudSetting.DYNAMIC_ISLAND_SPINNER_SPEED, "加载转子的转速倍率。",
+                                        () -> HudConfig.dynamicIslandEnabled))),
 
-                new Category("无缝切换", "两首歌之间的交接方式与衔接处理", 0xFF5FD3E8, HudSettingsIcons.SPEED, "播放与切换",
+                new Category("无缝切换", "两首歌之间的交接方式与衔接处理", 0xFF5FD3E8, HudSettingsIcons.SPEED,
                         new Group("模式与开关", HudSettingsIcons.SPEED,
                                 toggle("无缝切换", "打开后提前解码下一首并交叉淡化；关掉则切歌时先停下再重新下载解码，中间有静音间隙。",
                                         new BooleanSupplier() {
@@ -927,26 +1032,17 @@ public final class HudSettingsModel {
                                                 AutomixSettings.setEnabled(!AutomixSettings.isEnabled());
                                             }
                                         }),
-                                choice("处理方案", "原版保留现有等功率淡化与低架处理；智能混音 会分析结构、节奏和调性后选择切拍、低频交接、尾奏滑入或普通淡化。",
+                                choice("处理方案", "原版＝等功率淡化与低架处理；Folia 三档＝本地模型分析结构、节奏与调性后选切拍与交接方式，档位越高处理越主动。效果发生在队列自动切歌的交接瞬间。",
                                         new Supplier<String>() {
-                                            public String get() { return AutomixSettings.getEngineLabel(); }
+                                            public String get() { return automixPlanName(); }
                                         }, new Runnable() {
-                                            public void run() { AutomixSettings.cycleEngine(); }
-                                        }, engineChoices(), HudSettingsModel::setEngineChoice,
-                                        new String[] {"等功率淡化与低架处理。",
-                                                "分析后挑切拍与交接方式。"}),
-                                toggle("表现模式", "Folia 模式下允许更主动的分轨/尾奏处理；关闭时始终走保守的自动过渡。",
-                                        new BooleanSupplier() {
-                                            public boolean getAsBoolean() { return AutomixSettings.isPerformanceModeEnabled(); }
-                                        }, new Runnable() {
-                                            public void run() { AutomixSettings.setPerformanceModeEnabled(!AutomixSettings.isPerformanceModeEnabled()); }
-                                        }, AutomixSettings::isFoliaEngine),
-                                toggle("进阶模式", "把交接点从曲尾这几秒放开到整首歌：扫完整曲包络后，在「从哪退、从哪进」的所有候选里按八项打分挑一对，分不够就不挑（照旧按现在的启发式切）；同时打开队列的「排列」按钮，和按实测人声决定让路时机的双侧人声处理。代价是每首歌第一次播放时要在后台多解一遍整曲（进场那一首在预备线程上现扫，不等下一轮）；包络到货比第一次规划晚时，接缝会在真正交接前回头改一次。关闭时这三件事一次都不发生。",
-                                        new BooleanSupplier() {
-                                            public boolean getAsBoolean() { return AutomixSettings.isAdvancedModeEnabled(); }
-                                        }, new Runnable() {
-                                            public void run() { AutomixSettings.setAdvancedModeEnabled(!AutomixSettings.isAdvancedModeEnabled()); }
-                                        }, AutomixSettings::isFoliaEngine),
+                                            public void run() { cycleAutomixPlan(); }
+                                        }, new String[] {"原版", "Folia 稳健", "Folia 表现", "Folia 进阶"},
+                                        HudSettingsModel::setAutomixPlan,
+                                        new String[] {"保留现有等功率淡化与低架处理。",
+                                                "分析后挑切拍与交接方式，始终走保守的自动过渡。",
+                                                "允许更主动的分轨与尾奏处理。",
+                                                "交接点放开到整首歌按八项打分挑最优，含队列排列与双侧人声处理；每首初播要在后台多解一遍整曲。"}),
                                 toggle("过渡动画", "圆环保留中央交接提示；EQ 曲线在半透明灵动岛内滚动，衔接时小幅展开、结束后收回。曲线样式需要开启灵动岛；关闭动画不影响音频处理。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() { return AutomixSettings.isTransitionAnimationEnabled(); }
@@ -1072,58 +1168,50 @@ public final class HudSettingsModel {
                                 button("恢复默认模型位置", "恢复为 config/muonium/models。", () -> FoliaModelManager.resetDirectory(), AutomixSettings::isFoliaEngine),
                                 button("删除所有模型", "删除 Beat This!、HTDemucs 和运行组件，不会删除歌曲缓存。", HudSettingsModel::deleteModels, AutomixSettings::isFoliaEngine))),
 
-                new Category("界面与主题", "设置界面本身、外部播放器镜像、窗口缩放与配色", 0xFFE59AC8, HudSettingsIcons.NOTE, "界面与外观",
+                new Category("界面与主题", "设置界面本身、外部播放器镜像、窗口缩放与配色", 0xFFE59AC8, HudSettingsIcons.NOTE,
                         new Group("音乐频谱", HudSettingsIcons.NOTE,
                                 toggle("音乐频谱", "真实 FFT 频率分析；隐藏时停止采样与分析任务，音乐播放不受影响。",
                                         () -> HudConfig.spectrumEnabled,
                                         () -> { HudConfig.spectrumEnabled = !HudConfig.spectrumEnabled; saveNow(); }),
                                 toggle("游戏内显示", "在游戏画面底部显示音乐频谱，不占用灵动岛通知位。",
                                         () -> HudConfig.spectrumInHud,
-                                        () -> { HudConfig.spectrumInHud = !HudConfig.spectrumInHud; saveNow(); }),
+                                        () -> { HudConfig.spectrumInHud = !HudConfig.spectrumInHud; saveNow(); },
+                                        () -> HudConfig.spectrumEnabled),
                                 choice("频谱风格", "底部全宽：半透明渐变柱合并为一次路径绘制；两侧留空：保留快捷栏中央空间。仅影响游戏内显示。",
                                         () -> HudConfig.spectrumHudStyle == 1 ? "两侧留空" : "底部全宽",
                                         () -> { HudConfig.spectrumHudStyle = HudConfig.spectrumHudStyle == 1 ? 0 : 1; saveNow(); },
                                         new String[]{"底部全宽", "两侧留空"},
-                                        value -> { HudConfig.spectrumHudStyle = "两侧留空".equals(value) ? 1 : 0; saveNow(); }),
+                                        value -> { HudConfig.spectrumHudStyle = "两侧留空".equals(value) ? 1 : 0; saveNow(); },
+                                        () -> HudConfig.spectrumEnabled && HudConfig.spectrumInHud),
                                 choice("全宽频谱柱数", "游戏内全宽样式支持 64–192 根常用档；选择「自定义」后可用滑块在 48–256 根间细调。高密度仍合并为单个路径批次，低分辨率下会自动限制密度以保留清晰间距。",
                                         () -> spectrumBarCountPresetLabel(),
                                         () -> { HudConfig.spectrumBarCountPreset = (HudConfig.spectrumBarCountPreset + 1) % SPECTRUM_BAR_COUNT_CHOICES.length; saveNow(); },
-                                        SPECTRUM_BAR_COUNT_CHOICES, HudSettingsModel::setSpectrumBarCountPreset),
+                                        SPECTRUM_BAR_COUNT_CHOICES, HudSettingsModel::setSpectrumBarCountPreset,
+                                        () -> HudConfig.spectrumEnabled && HudConfig.spectrumInHud),
                                 slider(HudSetting.SPECTRUM_BAR_COUNT_CUSTOM, "自定义柱数；在上方选择「自定义」时显示，拖动后立即预览、松开后保存。",
-                                        () -> HudConfig.spectrumBarCountPreset == 5),
+                                        () -> HudConfig.spectrumEnabled && HudConfig.spectrumInHud
+                                                && HudConfig.spectrumBarCountPreset == 5),
                                 toggle("播放器内显示", "在控制栏和全屏歌词播放器底部显示频谱，随界面进出场，并跟随当前主题或封面配色。",
                                         () -> HudConfig.spectrumInPlayer,
-                                        () -> { HudConfig.spectrumInPlayer = !HudConfig.spectrumInPlayer; saveNow(); }),
+                                        () -> { HudConfig.spectrumInPlayer = !HudConfig.spectrumInPlayer; saveNow(); },
+                                        () -> HudConfig.spectrumEnabled),
                                 choice("全屏播放器频谱", "底部全宽：铺满播放器底边并使用更多频谱线；两侧铺开：沿用双侧线条，但在全屏页自适应铺满，不留快捷栏式空隙。",
                                         () -> HudConfig.spectrumFullscreenStyle == 1 ? "两侧铺开" : "底部全宽",
                                         () -> { HudConfig.spectrumFullscreenStyle = HudConfig.spectrumFullscreenStyle == 1 ? 0 : 1; saveNow(); },
                                         new String[]{"底部全宽", "两侧铺开"},
-                                        value -> { HudConfig.spectrumFullscreenStyle = "两侧铺开".equals(value) ? 1 : 0; saveNow(); }),
+                                        value -> { HudConfig.spectrumFullscreenStyle = "两侧铺开".equals(value) ? 1 : 0; saveNow(); },
+                                        () -> HudConfig.spectrumEnabled && HudConfig.spectrumInPlayer),
                                 choice("频谱配色", "跟随主题会复用当前主题与封面主题的渐变；封面取色只影响频谱，不改播放器主题。",
                                         () -> HudConfig.spectrumColorSource == 1 ? "封面取色" : "跟随主题",
                                         () -> { HudConfig.spectrumColorSource = 1 - HudConfig.spectrumColorSource; saveNow(); },
                                         new String[]{"跟随主题", "封面取色"},
                                         value -> { HudConfig.spectrumColorSource = "封面取色".equals(value) ? 1 : 0; saveNow(); }),
-                                slider(HudSetting.SPECTRUM_OPACITY, "控制频谱透明度；低值适合游戏内常驻。"),
-                                slider(HudSetting.SPECTRUM_HEIGHT, "仅调整频谱高度，不改变播放器或通知的尺寸。")),
+                                slider(HudSetting.SPECTRUM_OPACITY, "控制频谱透明度；低值适合游戏内常驻。",
+                                        () -> HudConfig.spectrumEnabled),
+                                slider(HudSetting.SPECTRUM_HEIGHT, "仅调整频谱高度，不改变播放器或通知的尺寸。",
+                                        () -> HudConfig.spectrumEnabled)),
                         new Group("设置界面", HudSettingsIcons.MODERN_UI,
-                                choice("HUD 设置界面", "按 H 打开 HUD 编辑器时用哪套外观。经典＝右侧一列可折叠长面板；"
-                                        + "现代＝侧栏分类 + 卡片分组双栏；Folia＝居中大窗 + 遮罩（移植自 本项目 的设置弹窗）。"
-                                        + "三套内容完全一样，切换在下次打开时生效。",
-                                        new Supplier<String>() {
-                                            public String get() {
-                                                return editorStyleLabel();
-                                            }
-                                        }, new Runnable() {
-                                            public void run() {
-                                                cycleEditorStyle();
-                                            }
-                                        }, new String[] {"经典", "现代", "Folia"},
-                                                HudSettingsModel::setEditorStyleChoice,
-                                                new String[] {"右侧一列可折叠长面板。",
-                                                        "侧栏分类加卡片分组。",
-                                                        "居中大窗加遮罩。"}),
-                                choice("设置界面由谁渲染", "内置＝本项目自绘的上面那三套；OneConfig / ModernUI＝交给已安装的外部界面。"
+                                choice("设置界面由谁渲染", "内置＝本项目自绘的界面；OneConfig / ModernUI＝交给已安装的外部界面。"
                                         + "选中的外部界面不可用时自动回退内置，不报错也不弹提示，切换在下次按 H 时生效。",
                                         new Supplier<String>() {
                                             public String get() {
@@ -1172,10 +1260,6 @@ public final class HudSettingsModel {
                                         "按物理游戏窗口尺寸计算连续缩放，播放器大小不随 GUI Scale 整数档位跳动；关闭后跟随游戏内 GUI 缩放。",
                                         NCMPlayerConfig::isWindowAdaptiveScaleEnabled,
                                         NCMPlayerConfig::toggleWindowAdaptiveScale),
-                                slider(HudSetting.FOLIA_UI_SCALE,
-                                        "Folia 那套设置界面的整体大小。界面照抄的是网页的 CSS 像素，1.00× 就是「一个像素一个像素」地画，"
-                                        + "在游戏窗口里偏小；放大这一倍率，面板、文字、间距、控件一起等比走，排版比例不变。"
-                                        + "改完立刻生效，不用重开。"),
                                 slider(HudSetting.LYRIC_SEARCH_UI_SCALE,
                                         "手动选词那页弹窗的整体大小。它照抄的是网页的 CSS 像素，1.00× 就是「一个像素一个像素」地画，"
                                         + "正文只有 14 像素、比播放器其它界面小一半；放大这一倍率，弹窗、文字、卡片、间距一起等比走，"
@@ -1202,7 +1286,8 @@ public final class HudSettingsModel {
                                 themeGrid()),
                         new Group("真玻璃材质", HudSettingsIcons.SPARKLE,
                                 toggle("播放器面板", "实时采集游戏画面，用非线性透镜重采样还原液态玻璃；不再使用磨砂底。"
-                                        + "关掉就退回原来的渐变高光。",
+                                        + "关掉就退回原来的渐变高光。前提：播放器主题需选「液态玻璃 / 琉璃」类"
+                                        + "（本页底部的主题色卡）；其余主题与手机档下这一整组不生效。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.glassSurfacePlayer;
@@ -1264,18 +1349,6 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         }),
-                                toggle("帧率不够时自动摘玻璃（已停用）", "玻璃的自动降载已随帧率分档一起移除——它带来的「暗一下再恢复」闪烁比省下的帧更扎眼。"
-                                        + "此项仅为兼容旧存档保留，开关不再产生任何效果；现在的流畅由转场时钟、预糊复用、采集节流这些不碰观感的门槛保证。",
-                                        new BooleanSupplier() {
-                                            public boolean getAsBoolean() {
-                                                return HudConfig.glassAutoDegrade;
-                                            }
-                                        }, new Runnable() {
-                                            public void run() {
-                                                HudConfig.glassAutoDegrade = !HudConfig.glassAutoDegrade;
-                                                saveNow();
-                                            }
-                                        }),
                                 choice("背景采集分辨率", "每帧从游戏画面拷下来那张底按多大比例采。"
                                         + "越小越省，但放大回面板本身就带糊——低配机往小了调，"
                                         + "比把下面的模糊拉低更划算。",
@@ -1299,16 +1372,20 @@ public final class HudSettingsModel {
                                 slider(HudSetting.GLASS_EDGE_GLOW, "透镜边缘的方向性亮暗强度；推到 0 仍保留真实折射，不叠加白框。"),
                                 slider(HudSetting.GLASS_BLUR_PLAYER, "播放器面板这一面的模糊倍率，乘在上面"
                                         + "「玻璃模糊」之上。1 就是与全局同档；这一面通常是最大的那块玻璃，"
-                                        + "所以拿它当基准。"),
+                                        + "所以拿它当基准。只在这一面开着时生效。",
+                                        () -> HudConfig.glassSurfacePlayer),
                                 slider(HudSetting.GLASS_BLUR_ISLAND, "灵动岛的模糊倍率。岛只有几十像素高，"
                                         + "糊到与面板同档会把轮廓一起吃掉（边缘光与折射都读不出来），"
-                                        + "所以默认比面板轻一档。"),
+                                        + "所以默认比面板轻一档。只在这一面开着时生效。",
+                                        () -> HudConfig.glassSurfaceIsland),
                                 slider(HudSetting.GLASS_BLUR_LYRIC, "桌面歌词卡片的模糊倍率。卡片背后通常是"
-                                        + "亮天空与树叶，糊得重一点字才立得住。"),
-                                slider(HudSetting.GLASS_BLUR_EDITORS, "三套 HUD 编辑器面板的模糊倍率。"
-                                        + "编辑器里要看的是控件本身，往低了调会更清楚。"))),
+                                        + "亮天空与树叶，糊得重一点字才立得住。只在这一面开着时生效。",
+                                        () -> HudConfig.glassSurfaceDesktopLyric),
+                                slider(HudSetting.GLASS_BLUR_EDITORS, "HUD 编辑器面板的模糊倍率。"
+                                        + "编辑器里要看的是控件本身，往低了调会更清楚。只在这一面开着时生效。",
+                                        () -> HudConfig.glassSurfaceEditors))),
 
-                new Category("信息栏与封面", "桌面信息栏的显隐与摆放，以及封面与全屏页标签", 0xFFFFA971, HudSettingsIcons.ALBUM, "界面与外观",
+                new Category("信息栏与封面", "桌面信息栏的显隐与摆放，以及封面与全屏页标签", 0xFFFFA971, HudSettingsIcons.ALBUM,
                         new Group("显示与摆放", HudSettingsIcons.VISIBILITY,
                                 toggle("歌曲信息栏", "桌面左上角那块封面 + 歌名的卡片。",
                                         new BooleanSupplier() {
@@ -1368,7 +1445,7 @@ public final class HudSettingsModel {
                                         }, tagLanguageChoices(), HudSettingsModel::setTagLanguage,
                                         new String[] {"更直观。", "胶囊里更清楚。"}))),
 
-                new Category("缓存与公告", "已下载音频的占用上限，以及远端公告", 0xFFD8A657, HudSettingsIcons.STORAGE, "系统",
+                new Category("缓存与公告", "已下载音频的占用上限，以及远端公告", 0xFFD8A657, HudSettingsIcons.STORAGE,
                         new Group("音频缓存", HudSettingsIcons.SWEEP,
                                 choice("缓存上限",
                                         "音频缓存目录（config/muonium/cache/music）最多占多少磁盘。超出后从最久没听的歌开始整首删除，正在播放与预备播放的歌不会被删。",
@@ -1513,16 +1590,6 @@ public final class HudSettingsModel {
         });
     }
 
-    private static String[] engineChoices() {
-        AutomixSettings.Engine[] engines = AutomixSettings.Engine.values();
-        String[] labels = new String[engines.length];
-        for (int i = 0; i < engines.length; i++) labels[i] = engines[i].getLabel();
-        return labels;
-    }
-
-    private static void setEngineChoice(String value) {
-        AutomixSettings.setEngine(AutomixSettings.Engine.fromStored(value));
-    }
 
     private static String[] overlapChoices() {
         return new String[] {"1.5 秒", "2 秒", "3 秒", "4 秒", "6 秒", "8 秒", "10 秒"};
@@ -1569,35 +1636,118 @@ public final class HudSettingsModel {
 
     // ==================== HUD 设置界面样式 ====================
 
-    /** 当前内置界面样式的中文名，与 choice 条目的可选文案一一对应。 */
-    public static String editorStyleLabel() {
-        if (HudConfig.HUD_EDITOR_STYLE_CLASSIC.equals(HudConfig.hudEditorStyle)) return "经典";
-        if (HudConfig.HUD_EDITOR_STYLE_FOLIA.equals(HudConfig.hudEditorStyle)) return "Folia";
-        return "现代";
+    // ---------- 3D 歌词动效风格（四档单选，取代以前的三个独立开关） ----------
+
+    private static final String[] WORLD_EFFECTS = { "无", "逐词弹出", "心象", "绘光" };
+
+    /** 当前动效档位的中文名。绘光优先于心象（渲染端的既定语义），老的「两个都开」读到绘光。 */
+    static String worldEffectName() {
+        if (HudConfig.worldLyricsHuiguang) return WORLD_EFFECTS[3];
+        if (HudConfig.worldLyricsCadenza) return WORLD_EFFECTS[2];
+        if (HudConfig.worldLyricsWordPop) return WORLD_EFFECTS[1];
+        return WORLD_EFFECTS[0];
     }
 
-    /** 经典 → 现代 → Folia 循环。点一下就能看到下一套，比打开时就换界面温和。 */
-    private static void cycleEditorStyle() {
-        String current = HudConfig.hudEditorStyle;
-        if (HudConfig.HUD_EDITOR_STYLE_CLASSIC.equals(current)) {
-            HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_MODERN;
-        } else if (HudConfig.HUD_EDITOR_STYLE_MODERN.equals(current)) {
-            HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_FOLIA;
-        } else {
-            HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_CLASSIC;
+    private static void cycleWorldEffect() {
+        for (int i = 0; i < WORLD_EFFECTS.length; i++) {
+            if (WORLD_EFFECTS[i].equals(worldEffectName())) {
+                setWorldEffect(WORLD_EFFECTS[(i + 1) % WORLD_EFFECTS.length]);
+                return;
+            }
+        }
+        setWorldEffect(WORLD_EFFECTS[0]);
+    }
+
+    /** 单选写入：先清三个布尔再点亮选中的那档 —— 互斥由这里保证，不再依赖用户自己记得「别同时开」。 */
+    static void setWorldEffect(String value) {
+        HudConfig.worldLyricsWordPop = WORLD_EFFECTS[1].equals(value);
+        HudConfig.worldLyricsCadenza = WORLD_EFFECTS[2].equals(value);
+        HudConfig.worldLyricsHuiguang = WORLD_EFFECTS[3].equals(value);
+        saveNow();
+    }
+
+    // ---------- 灵动岛动画速度档位（弹出/收起/内容切换三条共用） ----------
+
+    /** 三档预设对应的共用倍率；自定义 = 三条各是各的（或都改过但不成档）。 */
+    private static final float[] ISLAND_SPEED_PRESETS = { 0.7f, 1.0f, 1.4f };
+    private static final String[] ISLAND_SPEED_NAMES = { "慢", "标准", "快", "自定义" };
+
+    static boolean islandSpeedCustom() {
+        return islandSpeedPresetIndex() < 0;
+    }
+
+    private static int islandSpeedPresetIndex() {
+        float expand = HudConfig.dynamicIslandExpandSpeed;
+        float collapse = HudConfig.dynamicIslandCollapseSpeed;
+        float content = HudConfig.dynamicIslandContentSpeed;
+        for (int i = 0; i < ISLAND_SPEED_PRESETS.length; i++) {
+            float preset = ISLAND_SPEED_PRESETS[i];
+            if (Math.abs(expand - preset) < 0.02f
+                    && Math.abs(collapse - preset) < 0.02f
+                    && Math.abs(content - preset) < 0.02f) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    static String islandSpeedName() {
+        int preset = islandSpeedPresetIndex();
+        return preset >= 0 ? ISLAND_SPEED_NAMES[preset] : ISLAND_SPEED_NAMES[3];
+    }
+
+    private static void cycleIslandSpeed() {
+        int preset = islandSpeedPresetIndex();
+        int next = preset >= 0 ? (preset + 1) % 3 : 0;
+        setIslandSpeed(ISLAND_SPEED_NAMES[next]);
+    }
+
+    /** 选预设就把三条一起写；选「自定义」不动数值（用户接着自己调），只负责让三条滑条现出来。 */
+    static void setIslandSpeed(String value) {
+        for (int i = 0; i < ISLAND_SPEED_PRESETS.length; i++) {
+            if (ISLAND_SPEED_NAMES[i].equals(value)) {
+                HudConfig.dynamicIslandExpandSpeed = ISLAND_SPEED_PRESETS[i];
+                HudConfig.dynamicIslandCollapseSpeed = ISLAND_SPEED_PRESETS[i];
+                HudConfig.dynamicIslandContentSpeed = ISLAND_SPEED_PRESETS[i];
+                saveNow();
+                return;
+            }
         }
         saveNow();
     }
 
-    private static void setEditorStyleChoice(String value) {
-        if (value == null) return;
-        if ("经典".equals(value)) {
-            HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_CLASSIC;
-        } else if ("Folia".equalsIgnoreCase(value)) {
-            HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_FOLIA;
-        } else {
-            HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_MODERN;
+    // ---------- 无缝切换处理方案（四档单选，取代「引擎 + 表现 + 进阶」三个条目） ----------
+
+    private static final String[] AUTOMIX_PLANS = { "原版", "Folia 稳健", "Folia 表现", "Folia 进阶" };
+
+    /** 当前档位。原三字段仍是唯一事实来源，这里只做读侧映射：进阶包含表现，表现包含 Folia。 */
+    static String automixPlanName() {
+        if (!AutomixSettings.isFoliaEngine()) return AUTOMIX_PLANS[0];
+        if (AutomixSettings.isAdvancedModeEnabled()) return AUTOMIX_PLANS[3];
+        if (AutomixSettings.isPerformanceModeEnabled()) return AUTOMIX_PLANS[2];
+        return AUTOMIX_PLANS[1];
+    }
+
+    private static void cycleAutomixPlan() {
+        for (int i = 0; i < AUTOMIX_PLANS.length; i++) {
+            if (AUTOMIX_PLANS[i].equals(automixPlanName())) {
+                setAutomixPlan(AUTOMIX_PLANS[(i + 1) % AUTOMIX_PLANS.length]);
+                return;
+            }
         }
+        setAutomixPlan(AUTOMIX_PLANS[0]);
+    }
+
+    /** 四档写入：引擎 + 表现 + 进阶一次定好，三者的隐含关系（进阶 ⊃ 表现）不再让用户自己拼。 */
+    static void setAutomixPlan(String value) {
+        boolean folia = !AUTOMIX_PLANS[0].equals(value);
+        boolean performance = AUTOMIX_PLANS[2].equals(value) || AUTOMIX_PLANS[3].equals(value);
+        boolean advanced = AUTOMIX_PLANS[3].equals(value);
+        if (folia != AutomixSettings.isFoliaEngine()) {
+            AutomixSettings.setEngine(folia ? AutomixSettings.Engine.FOLIA : AutomixSettings.Engine.LEGACY);
+        }
+        AutomixSettings.setPerformanceModeEnabled(performance);
+        AutomixSettings.setAdvancedModeEnabled(advanced);
         saveNow();
     }
 
@@ -1791,7 +1941,6 @@ public final class HudSettingsModel {
             case DYNAMIC_ISLAND_CONTENT_SPEED:
             case DYNAMIC_ISLAND_SPINNER_SPEED:
             case DYNAMIC_ISLAND_OVERSHOOT:
-            case FOLIA_UI_SCALE:
             case LYRIC_SEARCH_UI_SCALE:
                 case LYRIC_GLOW_SPREAD:
                 return String.format("%.2f×", value);

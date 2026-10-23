@@ -105,6 +105,34 @@ public final class WorldLyricsState {
             this(lines, startMs, revealMs, -1, x, y, z, spawnYawDeg, spawnPitchDeg, charTimes);
         }
 
+        // ---- 心象模式缓存（句身持有：分块与词云布局都是行的纯函数，一次算好多帧复用；
+        //      摄像机在 WorldLyricsState 实例上逐帧推进）----
+        List<CadenzaMotion.Token> cadenzaTokens;
+        CadenzaMotion.Stage cadenzaStage;
+        /** 布局所依据的整句渲染宽（量宽变化时布局失效重建）。 */
+        float cadenzaLayoutWidth = -1f;
+
+        // ---- 绘光动效的换句交接（见 HuiguangMotion）----
+        /** 入场飞行的来源句：换句瞬间的上一句（null = 无上一句，落位入场）。 */
+        Floating huiguangPrev;
+        /** 交接瞬间来源句的公告牌几何（世界坐标 + 朝向 + 缩放快照）。 */
+        BillboardSnapshot huiguangPrevGeo;
+        /** 交接瞬间本句的公告牌几何（起飞点投影的参照平面）。 */
+        BillboardSnapshot huiguangOwnGeo;
+        /** 入场逐字飞行定义（按非空白字符序缓存；行的纯函数，首帧构建）。 */
+        HuiguangMotion.Flight[] huiguangEntry;
+        /** 入场飞行定义所依据的整句渲染宽（量宽漂移 >1px 时缓存失效重建，对齐 cadenza）。 */
+        float huiguangEntryLayoutWidth = -1f;
+        /** 排版与词级字号倍率缓存（与 entry 同一失效守卫；每帧重算是 D11 的量宽 O(n) 热点）。 */
+        float[] huiguangLayoutCache;
+        float[] huiguangLayoutScalesCache;
+        /** 绘光余光：换句淡出走「先停在 0.75 再熄灭」的长曲线（folia passedDim 的
+         *  3D 等价；普通模式仍 0.4s 一刀切）。 */
+        boolean huiguangLinger;
+        /** 绘光十字爆闪触发表 {charIdx, timeMs, sizeMul, dy}（spawn 时按种子定格；
+         *  null = 本句不爆闪）。 */
+        float[] huiguangBursts;
+
         long fadeStartNanos;
         long resumedAtNanos;
     }
@@ -132,6 +160,10 @@ public final class WorldLyricsState {
         boolean facePlayer();
         boolean keepAway();
         boolean wordPop();
+        /** 心象动效模式（词云布局 + 弹簧镜头 + 块出入场）。 */
+        default boolean cadenza() { return false; }
+        /** 绘光动效模式（换句飞行重排 + 径迹拖尾 + 卡拉OK点亮）。 */
+        default boolean huiguang() { return false; }
     }
 
     /** 一行歌词这一帧的最终落点与字形状态，渲染层只读。 */
@@ -149,10 +181,21 @@ public final class WorldLyricsState {
         /** 淡出上浮（方块）。 */
         public final float lift;
         public final boolean active;
+        /** 绘光保护压暗（folia PROTECT_FLOOR=0.4）：附近有他句时本句整体乘的
+         *  暗度（1 = 无压暗）。注意压暗已在 State 组帧时乘进 alpha —— 此字段仅
+         *  存档供调试，渲染层不应再乘（二次相乘会过度压暗）。 */
+        public final float protectDim;
 
         Row(Floating floating, double x, double y, double z,
             double camX, double camY, double camZ,
             double yawDeg, double pitchDeg, float scale, float alpha, float lift, boolean active) {
+            this(floating, x, y, z, camX, camY, camZ, yawDeg, pitchDeg, scale, alpha, lift, active, 1f);
+        }
+
+        Row(Floating floating, double x, double y, double z,
+            double camX, double camY, double camZ,
+            double yawDeg, double pitchDeg, float scale, float alpha, float lift,
+            boolean active, float protectDim) {
             this.floating = floating;
             this.x = x; this.y = y; this.z = z;
             this.camX = camX; this.camY = camY; this.camZ = camZ;
@@ -162,11 +205,68 @@ public final class WorldLyricsState {
             this.alpha = alpha;
             this.lift = lift;
             this.active = active;
+            this.protectDim = protectDim;
+        }
+    }
+
+    /**
+     * 公告牌几何快照（绘光交接用）：换句瞬间把双方的「牌子在世界里的摆放」定格，
+     * 之后 facePlayer/keepAway 怎么动都不影响已构建的飞行曲线起止点。
+     * {@link #scale} 同 {@code resolve} 的世界缩放公式。
+     */
+    public static final class BillboardSnapshot {
+        public final double x, y, z;
+        public final double yawDeg, pitchDeg;
+        public final float scale;
+
+        BillboardSnapshot(double x, double y, double z, double yawDeg, double pitchDeg, float scale) {
+            this.x = x; this.y = y; this.z = z;
+            this.yawDeg = yawDeg; this.pitchDeg = pitchDeg;
+            this.scale = scale;
+        }
+
+        /** 定格一句的当前摆放（keep away 不推进 —— 快照只要当时的实际位置）。 */
+        static BillboardSnapshot capture(Floating f, CameraView camera, Params params) {
+            double rx = f.x - camera.eyeX();
+            double ry = f.y - camera.eyeY();
+            double rz = f.z - camera.eyeZ();
+            double len = Math.sqrt(rx * rx + ry * ry + rz * rz);
+            double yaw;
+            double pitch;
+            if (params.facePlayer() && len > 1e-4) {
+                yaw = Math.toDegrees(Math.atan2(-rx, rz));
+                pitch = Math.toDegrees(Math.atan2(-ry, Math.sqrt(rx * rx + rz * rz)));
+            } else {
+                yaw = f.spawnYawDeg;
+                pitch = f.spawnPitchDeg;
+            }
+            float scale = (float) (PX_TO_WORLD * params.scale() * (len / DISTANCE_NORM));
+            return new BillboardSnapshot(f.x, f.y, f.z, yaw, pitch, scale);
+        }
+
+        /** 本句平面坐标 (px, py) 对应的世界坐标（push 正变换的展开）。
+         * push = translate(b)·Ry(−yaw)·Rx(pitch)·S(−s,−s,s)，对 (px,py,0) 展开：
+         * X = b·x + s·(−px·cosYaw + py·sinPitch·sinYaw)
+         * Y = b·y − s·(py·cosPitch)
+         * Z = b·z − s·(px·sinYaw + py·sinPitch·cosYaw) */
+        public double[] planePointToWorld(float px, float py) {
+            double p = Math.toRadians(pitchDeg);
+            double cp = Math.cos(p), sp = Math.sin(p);
+            double yaw = Math.toRadians(yawDeg);
+            double cy = Math.cos(yaw), sy = Math.sin(yaw);
+            double wx = -cy * px + (sy * sp) * py;
+            double wy = -cp * py;
+            double wz = -sy * px - (cy * sp) * py;
+            return new double[] {x + wx * scale, y + wy * scale, z + wz * scale};
         }
     }
 
     /**
      * 下标（确定性随机相位与出场级联的键）与 pop 缩放。由渲染层按此直接画。
+     *
+     * <p>心象模式下额外携带块的姿态四量与墨色（简洁模式全零 + 行统一墨色）：
+     * {@code rot/dx/dy/scale} 由 {@link CadenzaMotion} 按块的出入场动画求值，
+     * {@code cadenzaGlow} 是块的发光脉冲（0..1，渲染层据此选发光烘焙档）。</p>
      */
     public static final class LyricGlyph {
         public final char c;
@@ -176,6 +276,22 @@ public final class WorldLyricsState {
         public final int k;        // 非空白字符序号（确定性随机/出场级联的相位键）
         /** 恒生效的弹性缩放（入场飞入回弹 / word pop 回弹 / 出场收拢），1 = 无。 */
         public float pop;
+        /** 心象模式：块姿态（度 / 设计像素 / 乘法项），简洁模式全零。 */
+        public float rot, dx, dy, scale;
+        /** 心象模式：块墨色（0xRRGGBB 已带 alpha，简洁模式 0 = 用行统一墨色）。 */
+        public int tokenRgb;
+        /** 心象模式：块的发光脉冲 0..1（简洁模式 0）。 */
+        public float cadenzaGlow;
+        /** 心象模式：块正在被唱（提亮用；简洁模式恒 false）。 */
+        public boolean tokenActive;
+        /** 绘光模式：卡拉OK点亮进度 0..1（渲染层据此混冷暖色档；简洁/心象模式 0）。 */
+        public float huiguangLit;
+        /** 绘光模式：点亮瞬间四芒闪点的包络 0..1（渲染层据此画星芒；其他模式 0）。 */
+        public float huiguangFlash;
+        /** 绘光模式：字正在飞行（渲染层据此白化发光档）。 */
+        public boolean flyingWhite;
+        /** 绘光模式：关键字色（0xRRGGBB；0 = 无关键字，走全局墨色）。 */
+        public int keywordRgb;
 
         LyricGlyph(char c, float x, float y, float alpha, int k, float pop) {
             this.c = c;
@@ -194,6 +310,22 @@ public final class WorldLyricsState {
         public final List<Float> appearAts = new ArrayList<>();
         public final int seed;
         public final float totalHeight;
+        /** 绘光模式：与 glyphs 一一对应的入场飞行定义（null 元素 = 该字无飞行）。 */
+        public final List<HuiguangMotion.Flight> huiguangFlights = new ArrayList<>();
+        /** 绘光模式：本句 elapsed（songNowMs − startMs），径迹回溯求值用。 */
+        public long huiguangElapsedMs;
+        /** 绘光模式：本句恒定绕行偏移（字心口径；径迹点也要加上它才能连住字）。 */
+        public float huiguangDriftX, huiguangDriftY;
+        /** 绘光模式：行级呼吸缩放（乘法项）与摇摆旋转（度）—— folia 整行脉动。 */
+        public float huiguangLineScale = 1f, huiguangLineSwayDeg;
+        /** 绘光模式：本句排版（与 buildGlyphs 的 huiguangLayout 同引用），光斑取排版路径用。 */
+        public float[] huiguangLayout;
+        /** 绘光模式：排版逐字词级字号倍率（与 glyphs 平行；光斑尺寸/位置换算用）。 */
+        public float[] huiguangLayoutScales;
+        /** 绘光模式：十字爆闪触发表（句身快照转发；null = 不爆闪）。 */
+        public float[] huiguangBursts;
+        /** 绘光模式：逐字关键字色（0xRRGGBB 或 0=无；与 glyphs 平行）。 */
+        public int[] huiguangKeywordRgbs;
 
         LyricGlyphs(int seed, float totalHeight) {
             this.seed = seed;
@@ -225,31 +357,59 @@ public final class WorldLyricsState {
             boolean sameLine = idx == lastSpawnedIdx && active != null;
             wasPaused = false;
             lastIndex = idx;
-            if (!sameLine) {
-                // 真·换行（或去抖窗口内同句已被 retire 且 playing 恢复）。先把现句
-                // 转淡出（满 alpha 的 active 硬切消失 = 闪帧；retire 后它至少还有
-                // 一帧渐隐），再试把刚转淡的同句原样捞回来 —— 捞回时现句一定已
-                // 安全进入 fading，不存在被覆盖丢弃。
-                retireActive(nowNanos);
-                Floating revived = takeFadingIfSameLine(idx, nowNanos);
-                if (revived != null) {
-                    active = revived;
-                    lastSpawnedIdx = idx;
-                    // 认回的句子走恢复淡入（resumeFadeOf 消费 resumedAtNanos）。
-                    if (resumed) revived.resumedAtNanos = nowNanos;
-                } else if (idx >= 0 && idx < lines.size()) {
-                    LyricLine line = lines.get(idx);
-                    if (line != null && !line.isBreakLine && line.lyric != null && !line.lyric.isEmpty()) {
-                        active = WorldLyricsState.spawn(line, lines, idx, camera, params, random);
+                if (!sameLine) {
+                    // 真·换行（或去抖窗口内同句已被 retire 且 playing 恢复）。先把现句
+                    // 转淡出（满 alpha 的 active 硬切消失 = 闪帧；retire 后它至少还有
+                    // 一帧渐隐），再试把刚转淡的同句原样捞回来 —— 捞回时现句一定已
+                    // 安全进入 fading，不存在被覆盖丢弃。
+                    Floating replaced = active;
+                    retireActive(nowNanos);
+                    Floating revived = takeFadingIfSameLine(idx, nowNanos);
+                    if (revived != null) {
+                        active = revived;
                         lastSpawnedIdx = idx;
-                        if (resumed) active.resumedAtNanos = nowNanos;
+                        // 认回的句子走恢复淡入（resumeFadeOf 消费 resumedAtNanos）。
+                        if (resumed) revived.resumedAtNanos = nowNanos;
+                    } else if (idx >= 0 && idx < lines.size()) {
+                        LyricLine line = lines.get(idx);
+                        if (line != null && !line.isBreakLine && line.lyric != null && !line.lyric.isEmpty()) {
+                            active = WorldLyricsState.spawn(line, lines, idx, camera, params, random);
+                            lastSpawnedIdx = idx;
+                            if (resumed) active.resumedAtNanos = nowNanos;
+                        } else {
+                            lastSpawnedIdx = idx;
+                        }
                     } else {
                         lastSpawnedIdx = idx;
                     }
-                } else {
-                    lastSpawnedIdx = idx;
-                }
-            } else if (resumed) {
+                    // 绘光交接（HuiguangMotion）：active 落定后把换句双方连同几何快照
+                    // 互相记录 —— 飞行/径迹据此「从上一句的位置飞来重新排列组合」。
+                    // 几何在交接瞬间定格（facePlayer 会让 Row 逐帧变，快照保证曲线
+                    // 起止点稳定）。replaced 为 null 只出现在「此前无 active」的间隙
+                    // / 首句 —— 此时回退取最近一句 fading（若还看得到）当飞行源，
+                    // 对齐 folia「永远从上一个窗口飞来」；都没有才退化为落位入场。
+                    // 时间轴大跳（seek）同样会形成交接，字从被跳过的旧句位置飞来。
+                    if (active != null && active.huiguangPrev == null
+                            && (active != replaced || replaced == null)) {
+                        Floating source = replaced != null && active != replaced ? replaced
+                                : (fading.isEmpty() ? null : fading.get(fading.size() - 1));
+                        if (source != null && source != active) {
+                            source.huiguangLinger = true;
+                            BillboardSnapshot own = BillboardSnapshot.capture(active, camera, params);
+                            active.huiguangPrev = source;
+                            active.huiguangOwnGeo = own;
+                            active.huiguangPrevGeo = BillboardSnapshot.capture(source, camera, params);
+                            active.huiguangEntry = null;
+                            // 断开 source 的上游引用链：否则 active → N → N−1 → … →
+                            // 首句整条历史 Floating 被钉到换轨才释放。source 自己
+                            // fading 期间画径迹只用 huiguangEntry（已构建的纯函数
+                            // 快照），不再需要 geo/prev。
+                            source.huiguangPrev = null;
+                            source.huiguangPrevGeo = null;
+                            source.huiguangOwnGeo = null;
+                        }
+                    }
+                } else if (resumed) {
                 active.resumedAtNanos = nowNanos;
             }
         }
@@ -257,22 +417,40 @@ public final class WorldLyricsState {
         Iterator<Floating> it = fading.iterator();
         while (it.hasNext()) {
             Floating f = it.next();
-            if ((nowNanos - f.fadeStartNanos) / 1.0E9f > FADE_SECONDS) it.remove();
+            if ((nowNanos - f.fadeStartNanos) / 1.0E9f > fadeDurationOf(f)) it.remove();
         }
 
         // 组帧。fading 在前、active 在后 —— 渲染层按下标顺序画，淡出中的句子先画
         // （下层），当前句后画（上层）：同屏时 active 盖在 fading 之上
+        // 双向保护压暗（folia windowProtection 的 3D 等价）：两牌中心 < 8 格起
+        // 渐入、< 3 格到 PROTECT_FLOOR=0.4 —— active 与 fading 双方都压（R5 审查
+        // P2-7：单向压暗会出现「旧句比新句亮」的主次颠倒）。
         List<Row> out = new ArrayList<>(1 + fading.size());
         for (Floating f : fading) {
             float a = fadeAlphaOf(f, nowNanos);
             if (a > 0.01f) {
                 float t = (nowNanos - f.fadeStartNanos) / 1.0E9f;
+                Row r = WorldLyricsState.resolve(f, camera, params, a, false, t * FADE_LIFT);
+                if (active != null) {
+                    float dim = protectDimBetween(f, active);
+                    if (dim < 0.999f) a *= dim;
+                }
                 out.add(WorldLyricsState.resolve(f, camera, params, a, false, t * FADE_LIFT));
             }
         }
         if (active != null) {
-            out.add(WorldLyricsState.resolve(active, camera, params,
-                    resumeFadeOf(active, nowNanos), true, 0f));
+            Row r = WorldLyricsState.resolve(active, camera, params,
+                    resumeFadeOf(active, nowNanos), true, 0f);
+            float dim = 1f;
+            for (Floating f : fading) {
+                dim = Math.min(dim, protectDimBetween(f, active));
+            }
+            if (dim < 0.999f) {
+                r = new Row(r.floating, r.x, r.y, r.z,
+                        r.camX, r.camY, r.camZ, r.yawDeg, r.pitchDeg, r.scale,
+                        r.alpha * dim, r.lift, r.active, dim);
+            }
+            out.add(r);
         }
         return new Frame(out, currentKey != null);
     }
@@ -349,13 +527,31 @@ public final class WorldLyricsState {
                 : (float) clamp01((nowNanos - f.resumedAtNanos) / 1.0E9 / RESUME_FADE_SECONDS);
     }
 
+     *  「前 1.2s 停在 0.75 → 再 0.5s 熄灭」的长曲线（folia passedDim 的 3D 等价）。 */
     public static float fadeAlphaOf(Floating f, long nowNanos) {
-        return (float) clamp01(1.0 - (nowNanos - f.fadeStartNanos) / 1.0E9 / FADE_SECONDS);
+        float t = (nowNanos - f.fadeStartNanos) / 1.0E9f;
+        if (f.huiguangLinger) {
+            // 余光 1.2s：唱完后旧句停在 0.75（folia passedDim 的 3D 等价），
+            // 1.2s 后 0.5s 熄灭 —— 旧句与新句同屏交叠但有主次
+            if (t <= 1.2f) return 0.75f;
+            return (float) clamp01(0.75 * (1.0 - (t - 1.2) / 0.5));
+        }
+        return (float) clamp01(1.0 - t / FADE_SECONDS);
+    }
+
+    /** 淡出总时长（移除时机与余光曲线共用）。 */
+    static float fadeDurationOf(Floating f) {
+        return f.huiguangLinger ? 1.7f : FADE_SECONDS;
     }
 
     private static double clamp01(double v) {
         return v < 0 ? 0 : (v > 1 ? 1 : v);
     }
+
+    /** 绘光飞行的姿态 scratch（渲染线程单线程使用）。 */
+    private static final float[] HUIGUANG_POSE = new float[4];
+    /** 行级绕行 scratch（每句求值一次、逐字复用；渲染线程单线程）。 */
+    private static final float[] LINE_ORBIT_SCRATCH = new float[2];
 
     /** yaw/pitch（度，MC 口径）→ 视线单位向量。spawn 与测试共用。 */
     static double[] yawPitchDirectionStatic(double yawDeg, double pitchDeg) {
@@ -391,9 +587,147 @@ public final class WorldLyricsState {
                 - random.nextDouble() * SPAWN_PITCH_RANDOM);
         double[] dir = yawPitchDirectionStatic(yaw, pitch);
         double d = params.distance();
-        return new Floating(wrapped, line.timestamp, reveal, lineIndex,
+        Floating f = new Floating(wrapped, line.timestamp, reveal, lineIndex,
                 camera.eyeX() + dir[0] * d, camera.eyeY() + dir[1] * d, camera.eyeZ() + dir[2] * d,
                 yaw, pitch, charTimes);
+        // 十字爆闪规划（folia planBursts sung 模式的 3D 版）：spawn 时按种子定格
+        int nonWs = 0;
+        for (String w : wrapped) {
+            for (int i = 0; i < w.length(); i++) {
+                if (!Character.isWhitespace(w.charAt(i))) nonWs++;
+            }
+        }
+        f.huiguangBursts = HuiguangMotion.planBursts(lineIndex, charTimes, nonWs,
+                line.lyric != null ? line.lyric.hashCode() : lineIndex, 0.32f, 2);
+        return f;
+    }
+
+    /** 中西文标点集（词字号压小档用）。 */
+    private static final String PUNCTUATION_CHARS = "!?,.;:()[]{}<>-—…\"'‘’“”";
+    /** 虚词/语气字（folia wordStyle 的功能词压小档；中文常用集）。 */
+    private static final String HUIGUANG_PARTICLES = "的了着吗呢吧啊呀哦嘛么之乎者也把被和与或是";
+    /** 词字号档位（folia wordStyle.ts）：重点词 1.45、虚词/标点 0.62、其余 0.85+rng×0.35。 */
+    private static final float HUIGUANG_HERO_SCALE = 1.45f;
+    private static final float HUIGUANG_PARTICLE_SCALE = 0.62f;
+
+    /**
+     * 绘光排版：把一句歌词的非空白字符排进公告牌平面（横排，与主循环同轴），
+     * 带 folia wordStyle 的词级字号差异与错落 —— 重点词（句内最长实词）1.45、
+     * 虚词/标点 0.62、其余 0.85~1.2；小字沿基线下沉 (1−scale)×0.32 字号并带
+     * 错落抖动（folia 同式），行距放宽到 1.3 字号。
+     *
+     * @return 每非空白字符 {x, y, rotDeg, scale}（字顶坐标 + 姿态角 + 字号倍率；
+     *         中心原点、消费侧按下标 hwN×4 取）
+     */
+    static float[] huiguangLayoutChars(List<String> lines, PixelWidthOf widthOf, int seed) {
+        int count = 0;
+        for (String line : lines) {
+            for (int i = 0; i < line.length(); i++) {
+                if (!Character.isWhitespace(line.charAt(i))) count++;
+            }
+        }
+        float[] out = new float[Math.max(1, count) * 4];
+        float rowPitch = LYRIC_SIZE * 1.3f;
+        int i4 = 0;
+        float y = -(lines.size() * rowPitch) / 2f;
+        for (String line : lines) {
+            List<String> words = splitWords(line);
+            float[] wordScale = new float[words.size()];
+            int hero = -1;
+            int heroLen = 1;
+            for (int w = 0; w < words.size(); w++) {
+                String word = words.get(w);
+                boolean particle = word.length() == 1
+                        && (HUIGUANG_PARTICLES.indexOf(word.charAt(0)) >= 0
+                            || isPunctuation(word.charAt(0)));
+                if (particle) {
+                    wordScale[w] = HUIGUANG_PARTICLE_SCALE;
+                } else {
+                    wordScale[w] = 0.85f + (hashRand(w, 0L, 81, seed + line.hashCode()) * 0.5f + 0.5f) * 0.35f;
+                    if (word.length() > heroLen) {
+                        heroLen = word.length();
+                        hero = w;
+                    }
+                }
+            }
+            if (hero >= 0) wordScale[hero] = HUIGUANG_HERO_SCALE;
+            // 逐字落位：advance 与基线按词倍率缩放，小字下沉 + 错落
+            float x = 0f;
+            for (int w = 0; w < words.size(); w++) {
+                String word = words.get(w);
+                float scale = wordScale[w];
+                for (int i = 0; i < word.length(); i++) {
+                    char c = word.charAt(i);
+                    if (Character.isWhitespace(c)) continue;
+                    float adv = widthOf.widthOf(String.valueOf(c)) * scale;
+                    // 错落：重点词不动，其余按种子上下抖（folia 小字 ±0.32/其余 ±0.2 字号）
+                    float jagAmp = scale >= HUIGUANG_HERO_SCALE - 0.01f ? 0f
+                            : (scale <= HUIGUANG_PARTICLE_SCALE + 0.01f ? 0.32f : 0.2f);
+                    float jag = hashRand(i4, 0L, 83, seed + line.hashCode()) * jagAmp * LYRIC_SIZE;
+                    out[i4++] = x - widthOf.widthOf(line) * 0f; // 占位（x 基准在下方统一回填）
+                    out[i4++] = y + (1f - scale) * LYRIC_SIZE * 0.32f + jag;
+                    out[i4++] = 0f;
+                    out[i4++] = scale;
+                    x += adv;
+                }
+                x += widthOf.widthOf(" ") * 0.6f * scale; // 词间距
+            }
+            y += rowPitch;
+        }
+        // x 统一居中回填：按每行实际占用宽（含词距）算，去掉上面占位写法
+        i4 = 0;
+        for (String line : lines) {
+            // 重走一遍该行的词与倍率（与上一循环同种子 → 同倍率）
+            List<String> words = splitWords(line);
+            float[] wordScale = new float[words.size()];
+            int hero = -1;
+            int heroLen = 1;
+            for (int w = 0; w < words.size(); w++) {
+                String word = words.get(w);
+                boolean particle = word.length() == 1
+                        && (HUIGUANG_PARTICLES.indexOf(word.charAt(0)) >= 0
+                            || isPunctuation(word.charAt(0)));
+                if (particle) {
+                    wordScale[w] = HUIGUANG_PARTICLE_SCALE;
+                } else {
+                    wordScale[w] = 0.85f + (hashRand(w, 0L, 81, seed + line.hashCode()) * 0.5f + 0.5f) * 0.35f;
+                    if (word.length() > heroLen) {
+                        heroLen = word.length();
+                        hero = w;
+                    }
+                }
+            }
+            if (hero >= 0) wordScale[hero] = HUIGUANG_HERO_SCALE;
+            float lineW = 0f;
+            for (int w = 0; w < words.size(); w++) {
+                for (int i = 0; i < words.get(w).length(); i++) {
+                    if (!Character.isWhitespace(words.get(w).charAt(i))) {
+                        lineW += widthOf.widthOf(String.valueOf(words.get(w).charAt(i)))
+                                * wordScale[w];
+                    }
+                }
+                if (w < words.size() - 1) lineW += widthOf.widthOf(" ") * 0.6f * wordScale[w];
+            }
+            float x = -lineW / 2f;
+            for (int w = 0; w < words.size(); w++) {
+                for (int i = 0; i < words.get(w).length(); i++) {
+                    char c = words.get(w).charAt(i);
+                    if (Character.isWhitespace(c)) continue;
+                    // x 回填：只覆盖第一通道（y/rot/scale 已写好）
+                    out[i4 * 4] = x + 0f;
+                    x += widthOf.widthOf(String.valueOf(c)) * out[i4 * 4 + 3];
+                    i4++;
+                }
+                if (w < words.size() - 1) x += widthOf.widthOf(" ") * 0.6f * wordScale[w];
+            }
+        }
+        return out;
+    }
+
+    /** 中西文标点判定（词字号压小档用）。 */
+    private static boolean isPunctuation(char c) {
+        return (c >= 0x2000 && c <= 0x206F) || (c >= 0x3000 && c <= 0x303F)
+                || (c >= 0xFF00 && c <= 0xFF65) || PUNCTUATION_CHARS.indexOf(c) >= 0;
     }
 
     private static long nextLineStartMs(List<LyricLine> lines, int lineIndex) {
@@ -419,8 +753,20 @@ public final class WorldLyricsState {
             for (LyricLine.Word w : line.words) {
                 if (w == null || w.word == null) continue;
                 long at = Math.max(0L, w.timestamp - line.timestamp);
+                // 词内逐字均摊（folia graphemeTiming）：把 [start, start+duration]
+                // 摊到词内每个非空白字符 —— 卡拉OK从「逐词跳亮」变「逐字扫掠」，
+                // 追字光斑也随之跟手。最短 80ms/字防一闪而过。
+                int chars = 0;
                 for (int i = 0; i < w.word.length(); i++) {
-                    if (!Character.isWhitespace(w.word.charAt(i))) times.add(at);
+                    if (!Character.isWhitespace(w.word.charAt(i))) chars++;
+                }
+                long dur = Math.max(80L * Math.max(1, chars), w.duration);
+                int ci = 0;
+                for (int i = 0; i < w.word.length(); i++) {
+                    char c = w.word.charAt(i);
+                    if (Character.isWhitespace(c)) continue;
+                    times.add(at + (chars > 1 ? dur * ci / (chars - 1) : 0L));
+                    ci++;
                 }
             }
         } else {
@@ -525,11 +871,30 @@ public final class WorldLyricsState {
     }
 
     /**
+     * 两句公告牌中心的保护压暗系数：距离 ≥8 格 = 1（不压）、≤3 格 = 0.4
+     * （folia PROTECT_FLOOR），中间线性渐入。
+     */
+    private static float protectDimBetween(Floating a, Floating b) {
+        double dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+        double d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (d >= 8.0) return 1f;
+        float k = (float) Math.max(0.0, Math.min(1.0, (d - 3.0) / 5.0));
+        return 0.4f + 0.6f * k;
+    }
+
+    static double resolveScale(Floating f, CameraView camera, Params params) {
+        double rx = f.x - camera.eyeX();
+        double ry = f.y - camera.eyeY();
+        double rz = f.z - camera.eyeZ();
+        double len = Math.sqrt(rx * rx + ry * ry + rz * rz);
+        return PX_TO_WORLD * params.scale() * (len / DISTANCE_NORM);
+    }
+
+    /**
      * keep away 硬推、face player 从镜头→歌词方向反算朝向、尺寸随实际距离。
      */
     static Row resolve(Floating f, CameraView camera, Params params,
-                       float alpha, boolean isActive, float lift) {
-        double rx = f.x - camera.eyeX();
+                       float alpha, boolean isActive, float lift) {        double rx = f.x - camera.eyeX();
         double ry = f.y - camera.eyeY();
         double rz = f.z - camera.eyeZ();
         double len = Math.sqrt(rx * rx + ry * ry + rz * rz);
@@ -603,24 +968,170 @@ public final class WorldLyricsState {
      * @param pixelWidthOf 单行像素宽（与绘制通道同源）
      * @param exiting      该行正在整行淡出（出场级联只在这一态生效；
      *                     恢复播放的整行淡入 alphaMul 同样 <1,不能误触发退场）
+     * @param cadenza      心象动效模式（现代化引擎的可选开关）：整行分块、按块的
+     *                     出入场动画/呼吸/墨色画（见 {@link CadenzaMotion}），
+     *                     简洁模式的落位飞入与出场级联在该模式下不参与
+     * @param cameraOffset 心象镜头位移 {x, y}（设计像素，{@code update} 里弹簧推进的
+     *                     当前位置；null = 无位移）。渲染层把整块公告牌按它平移 ——
+     *                     等价于镜头跟着唱到的块走
      */
     public static LyricGlyphs buildGlyphs(Floating f, long songNowMs, float alphaMul,
-                                          boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf) {
+                                          boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf,
+                                          boolean cadenza) {
+        return buildGlyphs(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf, cadenza, false, null);
+    }
+
+    public static LyricGlyphs buildGlyphs(Floating f, long songNowMs, float alphaMul,
+                                          boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf,
+                                          boolean cadenza, boolean huiguang, int[] keywordMatch) {
         List<String> lines = f.lines;
         long elapsedMs = songNowMs - f.startMs;
         boolean flashMode = wordPop && f.charTimes.length > 0;
+        boolean lingerFade = huiguang && exiting && f.huiguangLinger;
         int total = 0;
         for (String s : lines) total += s.length();
         total = Math.max(1, total);
         int seed = lines.hashCode();
 
+        // 心象分块与词云布局：都是行的纯函数，缓存于句身（量宽变化时布局重建）。
+        // 分块按「时刻变化」切词（charTimes 词内共享时刻），行界即块界；布局把块
+        // 散布到「行的文字像素平面」上（心象 assignAnchors/place 一比一），放不下时
+        // 舞台横向扩张 —— 3D 公告牌没有 2D 视口裁剪，扩舞台就是让牌子更宽。
+        List<CadenzaMotion.Token> cadenzaTokens = null;
+        CadenzaMotion.Stage cadenzaStage = null;
+        float layoutWidth = 0f;
+        if (cadenza) {
+            for (String line : lines) {
+                layoutWidth += pixelWidthOf.widthOf(line);
+            }
+            if (f.cadenzaTokens == null || Math.abs(f.cadenzaLayoutWidth - layoutWidth) > 1.0f) {
+                List<CadenzaMotion.Token> tokens = new ArrayList<>();
+                int nonWsCursor = 0;
+                for (String line : lines) {
+                    for (CadenzaMotion.Token t : CadenzaMotion.splitTokens(line, f.charTimes, line)) {
+                        tokens.add(shiftToken(t, nonWsCursor));
+                    }
+                    for (int i = 0; i < line.length(); i++) {
+                        if (!Character.isWhitespace(line.charAt(i))) nonWsCursor++;
+                    }
+                }
+                CadenzaMotion.PixelMetrics metrics = c -> pixelWidthOf.widthOf(String.valueOf(c));
+                f.cadenzaTokens = tokens;
+                f.cadenzaStage = CadenzaMotion.layout(tokens, metrics, LINE_H,
+                        Math.max(layoutWidth, 1.0));
+                f.cadenzaLayoutWidth = layoutWidth;
+            }
+            cadenzaTokens = f.cadenzaTokens;
+            cadenzaStage = f.cadenzaStage;
+        }
+        int cadenzaIndex = 0;
+
+        // ---- 绘光交接的起飞点（本句平面坐标）：上一句的落点投到本句平面。
+        //      投影依赖交接瞬间定格的几何快照，首帧算好缓存在句身 —— 之后
+        //      facePlayer 转动也不改变已起飞的曲线；无上一句时为 null（落位入场）。
+        //      缓存带量宽失效守卫（对齐 cadenza 的 cadenzaLayoutWidth 惯例）：
+        //      字体风格切换（现代↔原版）会换 PixelWidthOf，旧缓存的飞行终点
+        //      是旧布局的字心，不失效就会飞到错位处。
+        HuiguangMotion.Flight[] entryFlights = null;
+        float[] huiguangLayout = null;
+        float[] huiguangLayoutScales = null;
+        if (huiguang) {
+            // 本句排版（含词级字号差异）：飞行终点与落位都用它。
+            // 缓存随 entry 同一守卫 —— 每帧 O(n) 次量宽回调是 D11 的热点。
+            // 一次 Σ widthOf 供 layout 与 entry 两个缓存守卫共用（原每帧算两遍）
+            float layoutWidthNow = 0f;
+            for (String line : lines) layoutWidthNow += pixelWidthOf.widthOf(line);
+            boolean layoutStale = f.huiguangLayoutCache == null
+                    || Math.abs(f.huiguangEntryLayoutWidth - layoutWidthNow) > 1.0f;
+            if (layoutStale) {
+                f.huiguangLayoutCache = huiguangLayoutChars(lines, pixelWidthOf, seed);
+                f.huiguangLayoutScalesCache = new float[f.huiguangLayoutCache.length / 4];
+                for (int i = 0; i < f.huiguangLayoutScalesCache.length; i++) {
+                    f.huiguangLayoutScalesCache[i] = f.huiguangLayoutCache[i * 4 + 3];
+                }
+            }
+            huiguangLayout = f.huiguangLayoutCache;
+            huiguangLayoutScales = f.huiguangLayoutScalesCache;
+            // 消费与构建解耦：entry 已缓存就直接用（纯函数快照，消费不需要 geo）——
+            // 短句被换下时仍在飞行窗口内，fading 期间继续沿曲线飞完 + 拖尾收拢，
+            // 而不是因 geo 被截断（引用链防线）瞬移回落位姿态。
+            float entryLayoutWidth = layoutWidthNow; // 与 layout 守卫同值（合并 Σ）
+            if (f.huiguangEntry == null || layoutStale) {
+                // layout 缓存已在上文按同一守卫刷新，直接用
+                // 每句必有飞行：有交接几何 → 从上一句对应字的位置飞来（重排）；
+                // 无几何（首句/seek）或投影退化 → 从四周散点聚合飞入（folia gather
+                // 的加强版：gather 也拖径迹）。量宽漂移才重建，fading 句消费缓存。
+                int cap = Math.max(1, total);
+                HuiguangMotion.Flight[] flights = new HuiguangMotion.Flight[cap];
+                int kk = 0;
+                for (String line : lines) {
+                    for (int i = 0; i < line.length(); i++) {
+                        char c = line.charAt(i);
+                        if (!Character.isWhitespace(c)) {
+                            // 落点：本句排版的字心。控制点/终点都是「字心」口径 ——
+                            // drawSmoothGlyph 的姿态四量 (dx,dy) 是字顶坐标的平移量、
+                            // 绕字中心应用；落位后转换：顶点 = 字心 − 半宽/半高。
+                            float cScale = huiguangLayout[kk * 4 + 3];
+                            float tx = huiguangLayout[kk * 4]
+                                    + pixelWidthOf.widthOf(String.valueOf(c)) * cScale * 0.5f;
+                            float ty = huiguangLayout[kk * 4 + 1] + LYRIC_SIZE * 0.5f;
+                            float fx, fy;
+                            float[] fp = (f.huiguangOwnGeo != null && f.huiguangPrevGeo != null)
+                                    ? projectFromPrev(f, kk, pixelWidthOf) : null;
+                            if (fp != null) {
+                                fx = fp[0];
+                                fy = fp[1];
+                            } else {
+                                // 聚合起飞点：环绕落点的确定性散点（2.5~5 字号）
+                                float ang = hashRand(kk, 0L, 59, seed) * 2f * (float) Math.PI;
+                                float rad = (2.5f + (hashRand(kk, 0L, 61, seed) + 1f) * 1.25f)
+                                        * LYRIC_SIZE;
+                                fx = tx + (float) Math.cos(ang) * rad;
+                                fy = ty + (float) Math.sin(ang) * rad;
+                            }
+                            flights[kk] = HuiguangMotion.flight(kk, seed,
+                                    fx, fy, tx, ty, LYRIC_SIZE, false);
+                            kk++;
+                        }
+                    }
+                }
+                f.huiguangEntry = flights;
+                f.huiguangEntryLayoutWidth = entryLayoutWidth;
+            }
+            entryFlights = f.huiguangEntry;
+        }
+
         LyricGlyphs out = new LyricGlyphs(seed, lines.size() * LINE_H);
+        out.huiguangElapsedMs = elapsedMs;
+        float orbitPhase = hashRand(0, 0L, 73, seed) * 2f * (float) Math.PI;
+        if (huiguang) {
+            out.huiguangLayout = huiguangLayout;
+            out.huiguangLayoutScales = huiguangLayoutScales;
+            out.huiguangBursts = f.huiguangBursts;
+            out.huiguangKeywordRgbs = keywordMatch;
+            // 行级绕行对整句所有字同值 —— 每句算一次填 scratch（原逐字重算 40 次）
+            float[] orbPre = HuiguangMotion.lineOrbit(elapsedMs / 1000f, LYRIC_SIZE, orbitPhase);
+            LINE_ORBIT_SCRATCH[0] = orbPre[0];
+            LINE_ORBIT_SCRATCH[1] = orbPre[1];
+            // 本句恒定绕行（folia 永不停止的小圆漂移）：渲染层把径迹点也加上它，
+            // 拖尾才能一直连着正在漂移的字
+            float[] orb = HuiguangMotion.lineOrbit(elapsedMs / 1000f, LYRIC_SIZE, orbitPhase);
+            out.huiguangDriftX = orb[0];
+            out.huiguangDriftY = orb[1];
+            // 行级呼吸缩放 + 摇摆旋转（folia windowGeometry 整行脉动，一比一）
+            float t = elapsedMs / 1000f;
+            out.huiguangLineScale = 1f + 0.025f * (float) Math.sin(t * 0.43f + orbitPhase);
+            out.huiguangLineSwayDeg = (float) Math.toDegrees(
+                    0.03f * (float) Math.sin(t * 0.23f + orbitPhase * 0.7f));
+        }
         float y = -(lines.size() * LINE_H) / 2f;
         int k = 0;      // 字形下标（含空白，与  一致）
-        int n = 0;      // 非空白字符序号
+        int n = 0;      // 非空白字符序号（仅 flashMode 推进 —— 与既有语义一致）
+        int hwN = 0;    // 绘光自己的非空白计数器（飞行定义按它索引；见 huiguang 分支）
         for (String line : lines) {
             float w = pixelWidthOf.widthOf(line);
             float x = -w / 2f;
+            float rowLineLeftX = x;   // 行内原排版的最左 x（心象块内偏移的基准）
             for (int i = 0; i < line.length(); i++) {
                 char c = line.charAt(i);
                 if (!Character.isWhitespace(c)) {
@@ -634,6 +1145,141 @@ public final class WorldLyricsState {
                     }
                     // ±20ms 确定性抖动：同句群像错落（发光层与本层同帧取同值）
                     appearAt += hashRand(k, 0L, 7, seed) * 20f;
+
+                    if (huiguang) {
+                        // ---- 绘光模式：换句飞行重排 + 卡拉OK点亮 + 冷暖双色 ----
+                        // 飞行定义按「非空白字符序」对齐（构建侧 projectFromPrev/flight
+                        // 都以非空白序编号）。消费侧必须用自己的计数器 hwN：n 只在
+                        // flashMode 下推进，普通 LRC 歌词（无逐字轴）里 n 恒 0，
+                        // 用 n 索引会让所有字挤在同一条飞行曲线上。
+                        HuiguangMotion.Flight fl = entryFlights != null && entryFlights.length > hwN
+                                ? entryFlights[hwN] : null;
+                        // 本句排版的落位：layout 数组与飞行终点同源（含词级字号缩放）
+                        float layoutX = huiguangLayout != null && huiguangLayout.length > hwN * 4
+                                ? huiguangLayout[hwN * 4] : x;
+                        float layoutY = huiguangLayout != null && huiguangLayout.length > hwN * 4
+                                ? huiguangLayout[hwN * 4 + 1] : y;
+                        float layoutRot = huiguangLayout != null && huiguangLayout.length > hwN * 4
+                                ? huiguangLayout[hwN * 4 + 2] : 0f;
+                        float layoutScale = huiguangLayout != null && huiguangLayout.length > hwN * 4
+                                ? huiguangLayout[hwN * 4 + 3] : 1f;
+                        hwN++;
+                        // 存活门与渲染层 trailAlive 对齐（ENTRY + TRACK_TIME）：窗口后的
+                        // 450ms 收拢期里字位已钉在终点（poseAt 钳到 s=1），但径迹还在
+                        // 按强度自然衰减滑出 —— flights 若在此刻置 null，晚落地的字
+                        // 会带着可观强度整条硬切消失（视觉 pop），收拢语义就落空了。
+                        // poseAt 超窗恒返回终点，落位姿态不受影响。
+                        boolean flying = fl != null && fl.valid
+                                && elapsedMs <= HuiguangMotion.ENTRY_WINDOW_MS
+                                        + HuiguangMotion.TRACK_TIME_S * 1000f;
+                        float gx = layoutX;
+                        float gy = layoutY;
+                        float rot = layoutRot;
+                        float scale = 1f;
+                        if (flying) {
+                            // 逐字贝塞尔飞行（含甩出弧线与途中自旋）—— folia poseAt 同构。
+                            // 曲线全程是「字心」口径（构建侧起止点都取字心），而 g.x/g.y
+                            // 与姿态四量 dx/dy 是「字顶」口径 —— 落位时把字心换回字顶。
+                            float[] ps = HUIGUANG_POSE;
+                            HuiguangMotion.poseAt(fl, elapsedMs, HuiguangMotion.ENTRY_WINDOW_MS, ps);
+                            gx = ps[0] - pixelWidthOf.widthOf(String.valueOf(c)) * layoutScale * 0.5f;
+                            gy = ps[1] - LYRIC_SIZE * 0.5f;
+                            rot = layoutRot + (float) Math.toDegrees(ps[2]);
+                            scale = (1f - HuiguangMotion.FLIGHT_SHRINK * ps[3]) * layoutScale;
+                        } else {
+                            scale = layoutScale;
+                        }
+                        // ---- 永不停止的微动（folia 漂移/绕行/呼吸/崩解的 3D 版）----
+                        float elapsedSec = elapsedMs / 1000f;
+                        float breathPhase = fl != null && fl.valid
+                                ? fl.wobblePhase
+                                : hashRand(k, 0L, 79, seed) * (float) Math.PI;
+                        float[] orbit = LINE_ORBIT_SCRATCH;
+                        float[] breath = HuiguangMotion.glyphBreath(elapsedSec, LYRIC_SIZE, breathPhase);
+                        gx += orbit[0] + breath[0];
+                        gy += orbit[1] + breath[1];
+                        // 崩解：点亮 delay 秒后沿各自方向缓慢漂离（多数向上）、
+                        // 可见自转（folia rotation += spin×amount×0.18 的度数口径）
+                        // 逐字速度倍率（folia drift.speed 0.6~1.5）——散开有快有慢
+                        float litAgeSec = elapsedSec - (appearAt + hashRand(k, 0L, 65, seed)
+                                * HuiguangMotion.DECAY_DELAY_MAX_S * 1000f) / 1000f;
+                        float decaySpeed = 0.6f + (hashRand(k, 0L, 69, seed) * 0.5f + 0.5f) * 0.9f;
+                        float decay = HuiguangMotion.decayAmount(litAgeSec) * decaySpeed;
+                        if (decay > 0.001f) {
+                            float ang = -(float) Math.PI / 2f + hashRand(k, 0L, 63, seed) * 1.1f;
+                            gx += (float) Math.cos(ang) * decay * LYRIC_SIZE;
+                            gy += (float) Math.sin(ang) * decay * LYRIC_SIZE;
+                            rot += (float) Math.toDegrees(
+                                    hashRand(k, 0L, 67, seed) * decay * 0.18f);
+                        }
+                        // 行级呼吸缩放/摇摆：整句统一脉动（folia 整行脉动一比一）
+                        scale *= out.huiguangLineScale;
+                        rot += out.huiguangLineSwayDeg;
+                        // 点亮：卡拉OK渐变（无逐字轴时按均分时刻同款渐变）；
+                        // 未唱 = 冷色半亮（渲染层走暗色烘焙档），已唱 = 暖白满亮。
+                        // litAt 取「本字」的下标：flashMode 时 n 已在上方自增过，回退 1。
+                        float lit = HuiguangMotion.litAt(f.charTimes, Math.max(0, n - 1),
+                                flashMode, elapsedMs, appearAt);
+                        // 四芒闪点包络（folia flashEnvelope）：点亮瞬间爆一下再指数衰减
+                        float flash = HuiguangMotion.flashEnvelope(elapsedMs - appearAt);
+                        float enterFade = Math.max(HuiguangMotion.UNLIT_ALPHA,
+                                HuiguangMotion.smooth01((elapsedMs - appearAt) / CHAR_FADE_MS + 0.35f));
+                        // 飞行加亮（folia revealed += flying×0.4）：字在空中比落定后亮
+                        float flyingGlow = flying ? HUIGUANG_POSE[3] * 0.45f : 0f;
+                        float a = Math.max(enterFade, flyingGlow) * alphaMul;
+                        if (a > 0.02f) {
+                            LyricGlyph g = new LyricGlyph(c, gx, gy, a, k, scale);
+                            g.rot = rot;
+                            g.pop = scale;
+                            g.huiguangLit = lit;
+                            g.huiguangFlash = flash;
+                            g.flyingWhite = flying && flyingGlow > 0.15f;
+                            g.keywordRgb = keywordMatch != null && n - 1 >= 0
+                                    && n - 1 < keywordMatch.length ? keywordMatch[n - 1] : 0;
+                            out.glyphs.add(g);
+                            out.appearAts.add(appearAt);
+                            out.huiguangFlights.add(flying ? fl : null);
+                        }
+                        x += pixelWidthOf.widthOf(String.valueOf(c));
+                        k++;
+                        continue;
+                    }
+
+                    if (cadenza) {
+                        // ---- 心象模式：块姿态 + 词云落点 + 镜头位移 ----
+                        CadenzaMotion.Token token = currentToken(cadenzaTokens, cadenzaIndex, n, k);
+                        if (token != null) {
+                            CadenzaMotion.Pose pose = new CadenzaMotion.Pose();
+                            CadenzaMotion.pose(token, pose, elapsedMs, alphaMul, exiting, LYRIC_SIZE);
+                            float a = (float) (pose.enterAlpha * (1.0 - pose.exitAlpha)) * alphaMul;
+                            if (a > 0.02f) {
+                                // 字的基线位置 = 块词云落点（舞台坐标，中心原点）
+                                //   + 块内字符横向偏移（本字 x − 块首字 x，与简洁模式
+                                //     同一条逐字推进）。镜头不跟随（公告牌整体不动）。
+                                float inBlockX = x - rowLineLeftX;
+                                float gx = (float) (token.homeX - token.width * .5)
+                                        + inBlockX;
+                                // 纵向 = 行基线 y + 块落点的纵向散布（舞台坐标）。
+                                float gy = y + (float) (token.homeY);
+                                LyricGlyph g = new LyricGlyph(c, gx, gy, a, k,
+                                        (float) pose.scale);
+                                g.rot = (float) pose.rotation;
+                                g.dx = (float) pose.dx;
+                                g.dy = (float) pose.dy;
+                                g.tokenRgb = CadenzaMotion.tokenColor(token,
+                                        heroIndexOf(cadenzaTokens), line.hashCode(), 0xF7E1D7);
+                                g.cadenzaGlow = (float) CadenzaMotion.glowPulse(token, elapsedMs);
+                                g.tokenActive = elapsedMs >= token.startMs
+                                        && elapsedMs <= token.endMs;
+                                out.glyphs.add(g);
+                                out.appearAts.add(appearAt);
+                            }
+                        }
+                        x += pixelWidthOf.widthOf(String.valueOf(c));
+                        k++;
+                        continue;
+                    }
+
                     float enterT = (elapsedMs - appearAt) / ENTER_MS;
 
                     if (enterT > 0f) {
@@ -670,7 +1316,8 @@ public final class WorldLyricsState {
         //      这里按「真实出现序」把退场提前量摊进 EXIT_STAGGER_MS —— 先唱的字先走。
         //      出现序不是排版序 k：逐字歌词（flashMode）的时间戳可能非单调（副歌重叠），
         //      级联必须按每字自己的 appearAt 归一，否则退场顺序和演唱顺序会拧着。
-        if (exiting && alphaMul < 1f && !out.glyphs.isEmpty() && !out.appearAts.isEmpty()) {
+        //      心象模式不走级联（块自己的退场动画接手）。
+        if (!cadenza && !lingerFade && exiting && alphaMul < 1f && !out.glyphs.isEmpty() && !out.appearAts.isEmpty()) {
             float first = out.appearAts.get(0);
             float last = out.appearAts.get(out.appearAts.size() - 1);
             float span = Math.max(1f, last - first);
@@ -689,6 +1336,96 @@ public final class WorldLyricsState {
             }
         }
         return out;
+    }
+
+    /**
+     * 绘光入场起飞点：上一句第 n 个非空白字符的字心，经两步投影落到本句平面 ——
+     * 上一句平面坐标 → 世界（prevGeo 正变换）→ 本句平面（ownGeo 逆变换）。
+     * 任何一侧退化（scale 过小）返回 null，调用方退回落位入场。
+     */
+    private static float[] projectFromPrev(Floating f, int n, PixelWidthOf widthOf) {
+        WorldLyricsState.BillboardSnapshot prev = f.huiguangPrevGeo;
+        WorldLyricsState.BillboardSnapshot own = f.huiguangOwnGeo;
+        if (prev == null || own == null || f.huiguangPrev == null) return null;
+        // 上一句的第 n 个非空白字符落位（与构建侧同轴）
+        float[] pl = huiguangLayoutChars(f.huiguangPrev.lines, widthOf,
+                f.huiguangPrev.lines.hashCode());
+        int prevCount = pl.length / 4;
+        float cx, cy;
+        if (n < prevCount) {
+            // 字心 = 字顶 + 半宽×倍率/半高（与构建侧飞行终点同一口径，词缩放同源）
+            char c = nonWsCharAt(f.huiguangPrev.lines, n);
+            cx = pl[n * 4] + widthOf.widthOf(String.valueOf(c)) * pl[n * 4 + 3] * 0.5f;
+            cy = pl[n * 4 + 1] + LYRIC_SIZE * 0.5f;
+        } else {
+            // 上一句比本句短：取上一句整面的随机散点（字面中心 ± 行高），仍成「从上一句飞来」
+            cx = 0f;
+            cy = (hashRand(n, 0L, 43, f.huiguangPrev.lines.hashCode()) * 0.5f)
+                    * Math.max(2, f.huiguangPrev.lines.size()) * LINE_H;
+        }
+        double[] world = prev.planePointToWorld(cx, cy);
+        float[] local = HuiguangMotion.projectToPlane(world[0], world[1], world[2],
+                own.x, own.y, own.z, own.yawDeg, own.pitchDeg, own.scale);
+        if (local == null) return null;
+        // 两牌相距很远时起飞点会落到本句平面极远处：按比例把偏移缩到半径 260px 内
+        //（保持方向、等比缩距 —— clamp 逐轴夹取会改变方向让相邻字的起飞点挤在同一条
+        // 边线上，等比缩放则整组起飞点形状不变，只是整体变近）。
+        float lim = 260f;
+        float d2 = local[0] * local[0] + local[1] * local[1];
+        if (d2 > lim * lim) {
+            float k = lim / (float) Math.sqrt(d2);
+            local[0] *= k;
+            local[1] *= k;
+        }
+        return local;
+    }
+
+    /** 句文本里第 n 个非空白字符（n 越界返回 0，调用方保证 n < 非空白总数）。 */
+    private static char nonWsCharAt(List<String> lines, int n) {
+        int idx = 0;
+        for (String line : lines) {
+            for (int i = 0; i < line.length(); i++) {
+                char c = line.charAt(i);
+                if (!Character.isWhitespace(c)) {
+                    if (idx == n) return c;
+                    idx++;
+                }
+            }
+        }
+        return '\0';
+    }
+
+    /**
+     * 心象块查找：给定非空白字符序号 n（渲染流中的第 n 个非空白字符），返回它所属的块。
+     * 分块按行顺序排列，charOffset/charCount 是块在非空白字符流里的位置 —— 用 n 对齐。
+     */
+    private static CadenzaMotion.Token currentToken(List<CadenzaMotion.Token> tokens,
+                                                    int cadenzaIndex, int n, int k) {
+        if (tokens == null || tokens.isEmpty()) return null;
+        // 线性推进：buildGlyphs 每帧按 k 升序遍历，从上次命中下标起扫即可 O(1)。
+        for (int i = cadenzaIndex; i < tokens.size(); i++) {
+            CadenzaMotion.Token t = tokens.get(i);
+            if (n >= t.charOffset && n < t.charOffset + t.charCount) return t;
+            if (n < t.charOffset) return tokens.get(Math.max(0, i - 1));
+        }
+        return tokens.get(tokens.size() - 1);
+    }
+
+    /** 把块的非空白偏移平移到整句字符流（多行 wrap 时逐行累加行长）。 */
+    private static CadenzaMotion.Token shiftToken(CadenzaMotion.Token t, int nonWsShift) {
+        if (nonWsShift == 0) return t;
+        return new CadenzaMotion.Token(t.text, t.startMs, t.endMs, t.hero,
+                t.enter, t.exit, t.direction, t.angle,
+                t.charOffset + nonWsShift, t.charCount);
+    }
+
+    /** 心象 hero 块下标（渲染层配色用同一函数，保持一致）。 */
+    private static int heroIndexOf(List<CadenzaMotion.Token> tokens) {
+        if (tokens == null) return 0;
+        for (int i = 0; i < tokens.size(); i++) {
+            if (tokens.get(i).hero) return i;
+        }
+        return 0;
     }
 
     /** 宿主量像素宽的回调（MC 字体或纹理缓存的度量）。 */

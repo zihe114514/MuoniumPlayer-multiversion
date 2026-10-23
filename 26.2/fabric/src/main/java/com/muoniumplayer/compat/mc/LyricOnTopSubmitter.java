@@ -81,8 +81,12 @@ final class LyricOnTopSubmitter {
     static void submitText(OrderedSubmitNodeCollector collector, PoseStack poseStack,
                            String text, float x, float y, boolean dropShadow,
                            int lightCoords, int argb) {
+        // 提交时必须快照矩阵：PoseStack.pushPose 对已存在的深度复用 poses[i].set(prev)
+        //（Matrix4f 原地覆写），下一个 drawVanilla 的 push+translate 会把这里捕获的
+        // 「活矩阵」原地改写 —— 帧内所有像素字都渲染在最后一个字的变换上。
+        // 原版 SubmitNodeCollection.submitText 同样是 new Matrix4f(...) 快照口径。
         TextFeatureRenderer.Submit node = new TextFeatureRenderer.Submit(
-                poseStack.last().pose(), x, y,
+                new org.joml.Matrix4f(poseStack.last().pose()), x, y,
                 FormattedCharSequence.forward(text, net.minecraft.network.chat.Style.EMPTY),
                 dropShadow, Font.DisplayMode.SEE_THROUGH, lightCoords, argb, 0, 0);
         if (submitOnTop(collector, SubmitRenderPhases.ALWAYS_ON_TOP, node)) return;

@@ -86,7 +86,7 @@ public final class LyricGlyphAtlas {
     private static int fontGeneration;
 
     /** 帧内烘焙预算：同一帧最多烘焙多少格（渲染线程帧内同步烘焙的掉帧闸）。 */
-    private static final int BAKES_PER_FRAME_BUDGET = 2;
+    private static final int BAKES_PER_FRAME_BUDGET = 4;
     /** 预算记账（nanoTime 值天然唯一，当帧标记用）。 */
     private static long bakeFrameEndNanos;
     private static int bakesThisFrame;
@@ -98,6 +98,18 @@ public final class LyricGlyphAtlas {
 
     public static void setHost(Host h) {
         host = h;
+    }
+
+    /**
+     * 图集是否可用（宿主装配 + 烘焙字体就绪）。绘光模式用它区分
+     * 「预算内暂时没烘出来」（跳过该字，等下一帧补齐）与「图集整体不可用」
+     * （回退像素字）—— 后者才该回退。
+     */
+    public static boolean isFunctional() {
+        synchronized (LOCK) {
+            ensureBakeFontLocked();
+            return host != null && bakeFont != null && bakeFont.fontHeight > 0;
+        }
     }
 
     public static Host host() {

@@ -18,6 +18,8 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     @Override public boolean keepAway() { return keepAway; }
     @Override public boolean wordPop() { return wordPop; }
     @Override public boolean splitLines() { return splitLines; }
+    @Override public boolean cadenza() { return cadenza; }
+    @Override public boolean huiguang() { return huiguang; }
 
     public boolean enabled;
     public double distance = 10.5;
@@ -25,7 +27,6 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     public boolean keepAway = true;
     public double spreadDeg = 30.0;
     public double scale = 1.0;
-    public boolean smoothFont = true;
     /** 现代化渲染风格：Skija 超采样字形 + TextGlow 烘焙发光。关 = 原版像素字。 */
     public boolean styleModern = true;
     public boolean splitLines = true;
@@ -37,6 +38,12 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     public boolean colorCustom;
     public boolean wordPop;
     public boolean textFlash;
+    /** 心象动效模式（仅现代化引擎生效）：整行分块、按块的出入场动画/呼吸/块色画。 */
+    public boolean cadenza;
+    /** 绘光动效模式（仅现代化引擎生效）：换句逐字飞行重排 + 径迹拖尾 + 卡拉OK点亮。 */
+    public boolean huiguang;
+    /** 绘光关键字表（folia wordColors）：格式「词:RRGGBB,词:RRGGBB,…」；空 = 无关键字。 */
+    public String keywordColors = "";
 
     /** 帧头快照（WorldLyricsBridge 调）。 */
     public static WorldLyricsSettings snapshot() {
@@ -51,7 +58,6 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
         s.keepAway = HudConfig.worldLyricsKeepAway;
         s.spreadDeg = clamp(HudConfig.worldLyricsSpreadDeg, 0.0, 60.0);
         s.scale = clamp(HudConfig.worldLyricsScale, 0.4, 6.0);
-        s.smoothFont = HudConfig.worldLyricsSmoothFont;
         s.styleModern = HudConfig.worldLyricsModernStyle;
         s.splitLines = HudConfig.worldLyricsSplitLines;
         s.glowEnabled = HudConfig.worldLyricsGlowEnabled;
@@ -62,6 +68,10 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
         s.colorCustom = HudConfig.worldLyricsColorCustom;
         s.wordPop = HudConfig.worldLyricsWordPop;
         s.textFlash = HudConfig.worldLyricsTextFlash;
+        s.cadenza = HudConfig.worldLyricsCadenza;
+        s.huiguang = HudConfig.worldLyricsHuiguang;
+        s.keywordColors = HudConfig.worldLyricsKeywordColors != null
+                ? HudConfig.worldLyricsKeywordColors : "";
         if (!s.glowEnabled) s.glowStrength = 0f;
         return s;
     }
