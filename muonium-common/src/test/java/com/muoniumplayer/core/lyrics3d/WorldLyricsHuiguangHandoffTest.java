@@ -13,6 +13,7 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -156,7 +157,7 @@ class WorldLyricsHuiguangHandoffTest {
         // 飞行定义缓存出来，revive 后再 build 比较数组实例。update 传 null
         // 宽度回调不行，用与句宽恒定的 lambda。
         WorldLyricsState.PixelWidthOf width = s -> 10f;
-        WorldLyricsState.buildGlyphs(s2, 4300L, 1f, false, false, width, false, true);
+        WorldLyricsState.buildGlyphs(s2, 4300L, 1f, false, false, width, false, true, null);
         HuiguangMotion.Flight[] before = s2.huiguangEntry;
         assertNotNull(before, "首绘应已构建飞行定义（此前该断言因未构建而空洞）");
 
@@ -165,7 +166,7 @@ class WorldLyricsHuiguangHandoffTest {
         state.update(CAMERA, PARAMS, 1_300_000_000L, false, 4300L);
         WorldLyricsState.Frame back = state.update(CAMERA, PARAMS, 1_400_000_000L, true, 4350L);
         assertEquals(s2, activeOf(back), "同句应被认回（不重建）");
-        WorldLyricsState.buildGlyphs(s2, 4350L, 1f, false, false, width, false, true);
+        WorldLyricsState.buildGlyphs(s2, 4350L, 1f, false, false, width, false, true, null);
         assertTrue(s2.huiguangEntry == before,
                 "revive 不得重建飞行定义（同一数组实例 = 续飞）");
     }
@@ -182,5 +183,54 @@ class WorldLyricsHuiguangHandoffTest {
         WorldLyricsState.Frame f2 = state.update(CAMERA, PARAMS, 1_100_000_000L, true, 10100L);
         WorldLyricsState.Floating s2 = activeOf(f2);
         assertEquals(s1, s2.huiguangPrev, "seek 大跳同样形成交接，源是被跳过的句子");
+    }
+
+    @Test
+    void presetDoesNotSpawnAnymore() {
+        // 预摆句已整体摘除（用户反馈：下一句提前出现并跟随玩家视角影响观感）。
+        // LEAD 窗口内不得出现预摆行；下一句唱到时才 spawn（走旧句交接飞入）。
+        CloudMusic.lyrics.add(line(0L, "当前句"));
+        CloudMusic.lyrics.add(line(3000L, "下一句不再提前出现"));
+
+        state.update(CAMERA, PARAMS, 1_000_000_000L, true, 100L);
+        // 下一句开始前 1.2s = 1800ms；pos=1900 原本是 LEAD 窗口
+        WorldLyricsState.Frame f = state.update(CAMERA, PARAMS, 1_100_000_000L, true, 1900L);
+        assertEquals(1, f.rows.size(), "LEAD 窗口内只应有当前句，不应有预摆句");
+        assertTrue(f.rows.get(0).active, "唯一的行应是当前句");
+
+        // 换句瞬间：新句正常转正（非预摆来源），从旧句位置交接飞入
+        WorldLyricsState.Frame f2 = state.update(CAMERA, PARAMS, 1_200_000_000L, true, 3100L);
+        WorldLyricsState.Floating cur = activeOf(f2);
+        assertNotNull(cur, "换句后新句应 spawn");
+        assertFalse(cur.huiguangPresetDone, "不再有预摆转正路径");
+    }
+
+    @Test
+    void oldLineSlidesUpDuringLinger() {
+        // 旧句让位：余光淡出期间旧句向上滑开（y 减小），确保与新句不重叠
+        CloudMusic.lyrics.add(line(0L, "第一句"));
+        CloudMusic.lyrics.add(line(4000L, "第二句"));
+
+        state.update(CAMERA, PARAMS, 1_000_000_000L, true, 100L);
+        WorldLyricsState.Frame f1 = state.update(CAMERA, PARAMS, 1_100_000_000L, true, 4100L);
+        WorldLyricsState.Floating s1 = activeOf(f1);
+        double oldY = f1.rows.get(0).y;
+
+        // 换句 + 1.0s 后（滑开已基本完成：up = sin(1/1.2·π/2) ≈ 0.97）
+        WorldLyricsState.Frame f2 = state.update(CAMERA, PARAMS, 1_800_000_000L, true, 5000L);
+        WorldLyricsState.Row oldRow = null;
+        WorldLyricsState.Row newRow = null;
+        for (WorldLyricsState.Row r : f2.rows) {
+            if (r.floating == s1) oldRow = r;
+            else newRow = r;
+        }
+        assertNotNull(oldRow, "旧句应仍在余光中");
+        assertNotNull(newRow);
+        // 让位 = 旧句与新句的空间距离被拉开（滑开 ≈0.9 格 + lift）；
+        // 旧版 MC 的 facePlayer 投影会让 y 分量缩放 —— 用 3D 欧氏距离更稳
+        double dist = Math.sqrt(Math.pow(newRow.x - oldRow.x, 2)
+                + Math.pow(newRow.y - oldRow.y, 2)
+                + Math.pow(newRow.z - oldRow.z, 2));
+        assertTrue(dist > 0.05, "旧句应向上让位（两行空间距离应拉开），实际 " + dist);
     }
 }

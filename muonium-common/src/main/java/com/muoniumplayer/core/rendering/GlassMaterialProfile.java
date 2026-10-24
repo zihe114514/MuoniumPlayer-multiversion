@@ -26,8 +26,6 @@ public final class GlassMaterialProfile {
         // 手机上真玻璃整体由 GlassMobileTier 禁用，这两个字段在那边只是存档，不参与生效。
         if (!config.has("glassRealtimeCapture"))
             config.addProperty("glassRealtimeCapture", true);
-        if (!config.has("glassAutoDegrade"))
-            config.addProperty("glassAutoDegrade", false);
         config.addProperty("glassMaterialVersion", VERSION);
     }
 

@@ -44,8 +44,8 @@ public enum HudSetting {
     DYNAMIC_ISLAND_AMBIENT_STATUS("常驻状态时长(s)", 2.00f, 30.00f),
     DYNAMIC_ISLAND_AMBIENT_NOW_PLAYING("常驻歌曲时长(s)", 2.00f, 30.00f),
 
-    // 播放器打开 / 关闭动画。只有一个倍率：展开与收回共用同一组曲线，拆开会给出“能调但无效”的假象。
-    PLAYER_FADE_SPEED("开关动画速度", 0.30f, 3.00f),
+    /** 播放器界面打开/关闭那层整屏淡入淡出的速度倍率。1.0 = 历史默认速度。 */
+    PLAYER_FADE_SPEED("界面淡入淡出速度", 0.30f, 3.00f),
 
     /**
      * 播放器界面内部「栏目切换」类过渡的速度倍率：内容页淡入缩放与侧栏选中指示条的滑动。
@@ -53,12 +53,7 @@ public enum HudSetting {
      */
     PLAYER_UI_SWITCH_SPEED("界面切换动画速度", 0.30f, 3.00f),
 
-    /**
-     * Folia 那套 HUD 设置界面的整体缩放倍率。1.0 = 一单位一个物理像素（与 dpr=1 的浏览器一致），
-     * 越大面板与文字一起放大。见 {@link HudConfig#foliaUiScale}。
-     */
-    FOLIA_UI_SCALE("设置界面缩放", 0.80f, 2.50f),
-    /** 歌词搜索弹窗那一页的整体缩放倍率，与 {@link #FOLIA_UI_SCALE} 同档区间、同一个意思。 */
+    /** 歌词搜索弹窗那一页的整体缩放倍率。 */
     LYRIC_SEARCH_UI_SCALE("弹窗界面缩放", 0.80f, 2.50f),
 
     // 移植自 本项目 的各套「文字 PV」全屏歌词样式参数。区间取参考实现的可调范围。
@@ -112,11 +107,12 @@ public enum HudSetting {
     SPECTRUM_OPACITY("频谱透明度", 0.15f, 0.85f),
     SPECTRUM_HEIGHT("频谱高度", 0.50f, 1.50f),
     SPECTRUM_BAR_COUNT_CUSTOM("自定义频谱柱数", 48.0f, 256.0f),
+    // ---- 3D 世界歌词（接在末尾：这套条目的 id 有按序号落盘的历史，插中间会让老配置错位）----
     WORLD_LYRICS_DISTANCE("3D歌词 距离", 3.0f, 48.0f),
     WORLD_LYRICS_SPREAD("3D歌词 散开角", 0.0f, 60.0f),
     WORLD_LYRICS_SCALE("3D歌词 缩放", 0.4f, 6.0f),
     WORLD_LYRICS_GLOW_STRENGTH("3D歌词 发光强度", 0.00f, 1.00f),
-    WORLD_LYRICS_GLOW_SPREAD("3D歌词 发光扩散", 0.50f, 1.80f);;
+    WORLD_LYRICS_GLOW_SPREAD("3D歌词 发光扩散", 0.50f, 1.80f);
 
     private final String label;
     private final float min;
@@ -176,7 +172,6 @@ public enum HudSetting {
             case DYNAMIC_ISLAND_AMBIENT_NOW_PLAYING: return HudConfig.dynamicIslandAmbientNowPlayingSeconds;
             case PLAYER_FADE_SPEED: return HudConfig.playerFadeSpeed;
             case PLAYER_UI_SWITCH_SPEED: return HudConfig.playerUiSwitchSpeed;
-            case FOLIA_UI_SCALE: return HudConfig.foliaUiScale;
             case LYRIC_SEARCH_UI_SCALE: return HudConfig.lyricSearchUiScale;
             case LYRIC_FONT_SCALE: return HudConfig.lyricFontScale;
             case LUMINOUS_WORD_SPACING: return HudConfig.luminousWordSpacing;
@@ -256,7 +251,6 @@ public enum HudSetting {
             case DYNAMIC_ISLAND_AMBIENT_NOW_PLAYING: HudConfig.dynamicIslandAmbientNowPlayingSeconds = clamped; break;
             case PLAYER_FADE_SPEED: HudConfig.playerFadeSpeed = clamped; break;
             case PLAYER_UI_SWITCH_SPEED: HudConfig.playerUiSwitchSpeed = clamped; break;
-            case FOLIA_UI_SCALE: HudConfig.foliaUiScale = clamped; break;
             case LYRIC_SEARCH_UI_SCALE: HudConfig.lyricSearchUiScale = clamped; break;
             case LYRIC_FONT_SCALE: HudConfig.lyricFontScale = clamped; break;
             case LUMINOUS_WORD_SPACING: HudConfig.luminousWordSpacing = clamped; break;

@@ -120,18 +120,17 @@ class AutomixAdvancedModeStaticTest {
     }
 
     @Test
-    @DisplayName("两个界面都要有这一行，且都跟着引擎显示")
-    void bothHudSurfacesExposeTheSwitch() throws Exception {
+    @DisplayName("模型里有处理方案四档单选，进阶是其中最高的一档")
+    void modelExposesTheSwitch() throws Exception {
         String model = read(screens("hud", "HudSettingsModel.java"));
-        assertTrue(model.contains("toggle(\"进阶模式\""), "模型驱动的那套（Pro 与 Folia）要有条目");
-        int row = model.indexOf("toggle(\"进阶模式\"");
-        assertTrue(model.indexOf("AutomixSettings::isFoliaEngine", row) - row < 700,
-                "进阶模式只在 Folia 规划器里实现，条目要跟着处理方案隐藏");
-
-        String classic = read(screens("hud", "GuiHudEditor.java"));
-        assertTrue(classic.contains("drawToggleRow(fr, \"进阶模式\""), "手绘那套也要有同一行");
-        assertTrue(classic.contains("setAdvancedModeEnabled(!AutomixSettings.isAdvancedModeEnabled())"),
-                "绘制与命中必须成对，否则整表下标错位一行");
+        assertTrue(model.contains("choice(\"处理方案\""),
+                "模型驱动的那套（内置编辑器与 OneConfig 桥）要有处理方案条目");
+        assertTrue(model.contains("new String[] {\"原版\", \"Folia 稳健\", \"Folia 表现\", \"Folia 进阶\"}"),
+                "处理方案是引擎×表现×进阶的三合一单选：三个隐含档位不该再让用户自己拼");
+        assertTrue(model.contains("HudSettingsModel::setAutomixPlan"),
+                "四档要有直写 setter（下拉选择走它，而不是只靠循环）");
+        assertTrue(model.contains("AutomixSettings.setAdvancedModeEnabled(advanced)"),
+                "进阶的开关必须由档位写入路径驱动");
     }
 
     @Test

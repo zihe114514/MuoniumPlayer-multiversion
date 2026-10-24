@@ -78,6 +78,34 @@ public final class WorldLyricsRenderer {
         }
 
         /**
+         * 绘光拖尾画布上屏（Skija 光栅化版拖尾的首选通路）：渲染层把整句所有
+         * 飞行径迹用 Skija Path 画进一块 CPU 位图（三层辉光 + 沿程渐变 + 圆头
+         * 圆接 + 超采样 AA），每帧把像素交给宿主上传纹理、以<b>一个 quad</b> 覆盖
+         * 句字面区域 —— 取代逐字 {@link #drawTrail} quad 带的硬边锯齿。
+         *
+         * <p>px 是直通 ARGB（a&lt;&lt;24|r&lt;&lt;16|g&lt;&lt;8|b）行主序、尺寸 w×h；
+         * (planeX, planeY) 是该区域左上角的文字像素坐标（公告牌平面系）、
+         * planeW/planeH 是区域尺寸（设计像素，= w/h ÷ 超采样倍率）；alpha 是
+         * 整体透明度乘子（径迹各自的 alpha 已烘进像素，通常传 1）。
+         * <b>slot</b> 是本行画布槽位（active 行 0、淡出行 1、2、…按淡出行序号）：
+         * 同一帧可能有两行都处于拖尾窗口（短句/seek），而 26 系宿主的几何提交
+         * 是延迟展开的 —— 若所有行共用一张纹理，后上传的行会覆盖先提交 quad
+         * 的像素，拖尾整块串位。宿主按 slot 各持一张纹理（或忽略 slot ——
+         * 即时发射顶点的实现不受影响）。</p>
+         *
+         * <p>宿主实现：尺寸不变时复用纹理只重传像素；<b>吃下了本帧像素（quad
+         * 已提交）返回 true</b>，纹理创建失败/熔断/暂不支持返回 false —— 渲染层
+         * 据此降级：连续失败时停用画布通路、退回 {@link #drawTrail} quad 带，
+         * 不再每帧白做光栅化。调用时仍处于当前 pushBillboard 的矩阵内。</p>
+         */
+        default boolean drawTrailCanvas(int[] px, int w, int h,
+                                        float planeX, float planeY,
+                                        float planeW, float planeH, float alpha,
+                                        int slot) {
+            return false;
+        }
+
+        /**
          * 绘光逐字光晕（folia halos：每字一枚径向渐变柔光点垫在字下）。
          * (cx, cy) 是字心（文字像素坐标、公告牌平面系），sizePx 是光晕正方形
          * 边长（设计像素，folia ≈ fontPx×2.2~3.0），argb 已含整体透明度。
@@ -108,6 +136,14 @@ public final class WorldLyricsRenderer {
          */
         default void drawBurstLayer(float cx, float cy, float width, float height,
                                     float rotDeg, int argb) {
+        }
+
+        /**
+         * 绘光十字爆闪的冲击环（folia bokeh 环）：环心贴图 quad，(cx, cy) 环心、
+         * sizePx 环外径（正方形边长）、argb 已含整体透明度。宿主用环形贴图实现；
+         * 不允许时留空实现（只丢环，不丢字）。调用时仍处于当前 pushBillboard 内。
+         */
+        default void drawRing(float cx, float cy, float sizePx, int argb) {
         }
 
         /**
@@ -185,15 +221,26 @@ public final class WorldLyricsRenderer {
 
         long songNowMs = snap.positionMs;
 
+        // 画布槽位：active 行 0、淡出行从 1 起 —— 同帧两行都进拖尾窗口时
+        //（短句/seek），26 系延迟提交的宿主按槽位各持纹理，后上传不串位。
+        boolean anyDrawn = false;
+        int canvasSlot = 0;
         for (int i = 0; i < frame.rows.size(); i++) {
             WorldLyricsState.Row row = frame.rows.get(i);
             if (row.alpha <= 0.01f) continue;
-            drawRow(row, settings, host, songNowMs);
+            anyDrawn = true;
+            drawRow(row, settings, host, songNowMs, canvasSlot);
+            canvasSlot++;
+        }
+        if (!anyDrawn || !settings.huiguang) {
+            // 拖尾画布生命周期回收：本帧无行可画或绘光已关，Skija 位图
+            // 不再留着常驻（64KB~几百 KB），下一帧需要时 begin 会重建
+            HuiguangTrailCanvas.close();
         }
     }
 
     private static void drawRow(WorldLyricsState.Row row, WorldLyricsSettings settings,
-                                Host host, long songNowMs) {
+                                Host host, long songNowMs, int canvasSlot) {
         // 视图矩阵已被 Bridge 换成单位矩阵、相机旋转在 basePose 里，所以顶点必须
         // 用「相对眼睛、未旋转」的坐标 —— 传世界坐标就是几万格外的视锥外。
         host.pushBillboard(
@@ -375,12 +422,67 @@ public final class WorldLyricsRenderer {
                             host.drawHalo(bx, rowY, BURST_POSE[3],
                                     (int) (layerA * flashA) << 24 | (coreTint & 0xFFFFFF));
                         }
-                        // 冲击环（无 bokeh 环贴图：以大号低 alpha 柔光圆近似「扩散
-                        // 的冲击波前」—— 实心盘但随扩散 alpha 反比消失，观感近似）
+                        // 冲击环（folia bokeh 环：真环贴图，扩散时 alpha 反比消失）
                         if (BURST_POSE[5] > 0.02f) {
-                            host.drawHalo(bx, rowY, BURST_POSE[4],
+                            host.drawRing(bx, rowY, BURST_POSE[4],
                                     (int) (layerA * BURST_POSE[5]) << 24 | (glowTint & 0xFFFFFF));
                         }
+                    }
+                }
+                // ---- 拖尾画布包围盒（帧内定长）：覆盖落点排版 + 各字飞行起点
+                //      （旧句位/预摆槽位 —— 径迹回溯最远可达 from 点）+ 笔画 blur
+                //      外扩。尺寸帧内不变 → Skija 位图与宿主纹理只重绘不重建；
+                //      8px 网格量化吸收呼吸/绕行的亚像素抖动，避免逐帧 resize。
+                //      只在径迹存活窗口内分配/上传（folia drawTracks 的「彻底消失」
+                //      条款同样约束画布：窗口外整帧零成本，不画空气 quad）。
+                boolean trailCanvasActive = false;
+                boolean trailWindow = glyphs.huiguangElapsedMs
+                        <= HuiguangMotion.ENTRY_WINDOW_MS
+                                + HuiguangMotion.TRACK_TIME_S * 1000f;
+                if (trailWindow && !trailCanvasDisabled
+                        && !glyphs.huiguangFlights.isEmpty()) {
+                    float tMinX = Float.MAX_VALUE, tMinY = Float.MAX_VALUE;
+                    float tMaxX = -Float.MAX_VALUE, tMaxY = -Float.MAX_VALUE;
+                    for (int gi = 0; gi < glyphs.glyphs.size(); gi++) {
+                        WorldLyricsState.LyricGlyph g = glyphs.glyphs.get(gi);
+                        float gw = host.smoothCharWidth(g.c, WorldLyricsState.LYRIC_SIZE);
+                        tMinX = Math.min(tMinX, g.x);
+                        tMinY = Math.min(tMinY, g.y);
+                        tMaxX = Math.max(tMaxX, g.x + gw);
+                        tMaxY = Math.max(tMaxY, g.y + WorldLyricsState.LYRIC_SIZE);
+                        if (gi < glyphs.huiguangFlights.size()) {
+                            HuiguangMotion.Flight fl = glyphs.huiguangFlights.get(gi);
+                            if (fl != null && fl.valid) {
+                                tMinX = Math.min(tMinX, fl.fromX);
+                                tMinY = Math.min(tMinY, fl.fromY);
+                                tMaxX = Math.max(tMaxX, fl.fromX);
+                                tMaxY = Math.max(tMaxY, fl.fromY);
+                                // 贝塞尔控制点一并纳入：曲线可越过 from∪to 凸包
+                                // 外最多 ~4.8 字号（c1 lobe），只兜 from 点 + 2 字号
+                                // pad 的话弧线拖尾会被画布平口裁掉
+                                tMinX = Math.min(tMinX, fl.c1x);
+                                tMinY = Math.min(tMinY, fl.c1y);
+                                tMaxX = Math.max(tMaxX, fl.c1x);
+                                tMaxY = Math.max(tMaxY, fl.c1y);
+                                tMinX = Math.min(tMinX, fl.c2x);
+                                tMinY = Math.min(tMinY, fl.c2y);
+                                tMaxX = Math.max(tMaxX, fl.c2x);
+                                tMaxY = Math.max(tMaxY, fl.c2y);
+                            }
+                        }
+                    }
+                    float pad = WorldLyricsState.LYRIC_SIZE * 2f;
+                    float bx0 = (float) Math.floor((tMinX - pad) / 8f) * 8f;
+                    float by0 = (float) Math.floor((tMinY - pad) / 8f) * 8f;
+                    float bw = (float) Math.ceil((tMaxX + pad - bx0) / 8f) * 8f;
+                    float bh = (float) Math.ceil((tMaxY + pad - by0) / 8f) * 8f;
+                    // 尺寸安全阀按**画布设备像素**（设计×2 超采样）封顶：SS=2 下
+                    // 1600 设计 px 是 3200² 设备 = 10.2M px ≈ 40MB 纹理 + 单帧
+                    // 上百 MB 瞬时分配，必须拦；正常句 ≤600 设计 → 1200² 设备
+                    if (bw * HuiguangTrailCanvas.superSample() <= 1600f
+                            && bh * HuiguangTrailCanvas.superSample() <= 1600f
+                            && HuiguangTrailCanvas.begin(bw, bh, bx0, by0)) {
+                        trailCanvasActive = true;
                     }
                 }
                 // ---- 绘光预通道：径迹 + 逐字光晕（folia 层序 spots<track<halos<glyphs：
@@ -415,12 +517,24 @@ public final class WorldLyricsRenderer {
                                     glyphs.huiguangElapsedMs, HuiguangMotion.ENTRY_WINDOW_MS,
                                     WorldLyricsState.LYRIC_SIZE);
                             if (strength > HuiguangMotion.TRAIL_MIN_STRENGTH) {
+                                // Skija 光栅化：折线进共享画布（多层辉光 + 沿程渐变 +
+                                // 圆头圆接，Skija AA 无锯齿），帧尾整块上屏
                                 int trailRgb = HuiguangMotion.dimRgb(inkRgb & 0xFFFFFF, 1.15f);
-                                int argb = ((int) (Math.min(1f,
-                                        row.alpha * HuiguangMotion.TRAIL_ALPHA * strength) * 255f) << 24)
-                                        | (trailRgb & 0xFFFFFF);
-                                host.drawTrail(TRAIL_XS, TRAIL_YS, n, argb,
-                                        HuiguangMotion.TRAIL_WIDTH_PX);
+                                float trailA = Math.min(1f,
+                                        row.alpha * HuiguangMotion.TRAIL_ALPHA * strength);
+                                if (trailCanvasActive) {
+                                    HuiguangTrailCanvas.strokeTrail(TRAIL_XS, TRAIL_YS, n,
+                                            trailRgb, trailA, WorldLyricsState.LYRIC_SIZE);
+                                } else {
+                                    // 画布不可用（宿主未实现上屏 / 超尺寸安全阀）→
+                                    // 退回逐字 quad 带通路（保底有拖尾，只是硬边）。
+                                    // 宽度对齐画布中间层（0.18×字号），不能用
+                                    // TRAIL_WIDTH_PX —— 那是相对字高的 0.32px 口径，
+                                    // 乘出来 3.2px 是胖带子，降级观感跳变
+                                    host.drawTrail(TRAIL_XS, TRAIL_YS, n,
+                                            ((int) (trailA * 255f) << 24) | (trailRgb & 0xFFFFFF),
+                                            WorldLyricsState.LYRIC_SIZE * 0.18f);
+                                }
                             }
                         }
                     }
@@ -449,6 +563,35 @@ public final class WorldLyricsRenderer {
                         int argb = ((int) (Math.min(1f, haloA) * 255f) << 24) | (glowColor & 0xFFFFFF);
                         host.drawHalo(g.x + w * 0.5f, g.y + WorldLyricsState.LYRIC_SIZE * 0.5f,
                                 haloSize, argb);
+                    }
+                }
+                // ---- 拖尾画布上屏：整块位图作为一个 quad 铺在句字面上
+                //      （folia trackLayer 一次收批的等价物 —— 一条纹理一次收批，
+                //      取代逐字 quad 带的几十次收批；各径迹的 alpha 已烘进像素）。
+                //      宿主不吃下（未实现/熔断）→ 累计失败并停用画布通路：
+                //      之后整帧直接走 quad 带，不再每帧白做光栅化与像素拷贝。
+                if (trailCanvasActive) {
+                    int[] px = HuiguangTrailCanvas.readPixelsArgb();
+                    boolean accepted = false;
+                    if (px != null) {
+                        accepted = host.drawTrailCanvas(px,
+                                HuiguangTrailCanvas.canvasWidth(),
+                                HuiguangTrailCanvas.canvasHeight(),
+                                HuiguangTrailCanvas.offX(), HuiguangTrailCanvas.offY(),
+                                HuiguangTrailCanvas.planeW(), HuiguangTrailCanvas.planeH(),
+                                1f, canvasSlot);
+                    }
+                    if (accepted) {
+                        trailCanvasFailStreak = 0;
+                    } else if (++trailCanvasFailStreak >= 30) {
+                        // 约 0.5s 内一次都没上屏成功 → 宿主不支持/已熔断，
+                        // 停用画布通路（ quad 带接管），避免每帧白做光栅化
+                        trailCanvasDisabled = true;
+                        trailCanvasFailStreak = 0;
+                        if (TRACE) {
+                            System.out.println("[WorldLyrics/trace] 拖尾画布连续上屏失败，"
+                                    + "停用画布通路并退回 quad 带");
+                        }
                     }
                 }
             }
@@ -481,6 +624,11 @@ public final class WorldLyricsRenderer {
                         //      夜晚自发光冰蓝（暗背景靠亮度对比）—— 夜色系数 4 档量化，
                         //      黄昏/黎明平滑过渡且图集缓存键不抖动。
                         float lit = g.huiguangLit;
+                        // 预摆预览（下一句未开唱，整行 elapsed<0）：lit 恒 0 会全走
+                        // 暗档 —— 白天是 0.45 亮度墨色字挂在视野下方跟着视角走，
+                        // 观感是「黑色透明影子」。folia 的邻行槽位是可见的亮字，
+                        // 这里同样直接画亮档满色；唱到转正后照常走卡拉OK双色
+                        if (glyphs.huiguangElapsedMs < 0f) lit = 1f;
                         // 关键字着色（folia keywordLight）：点亮后字身按 0.6 混入
                         // 关键字色相（先拉满亮度只取色相，再归一回光色亮度），保证
                         // 「仍是发光体」
@@ -566,6 +714,11 @@ public final class WorldLyricsRenderer {
     private static long spotLastElapsedMs = Long.MIN_VALUE;
     private static float spotSmoothX, spotSmoothY;
 
+    // 拖尾画布通路的降级状态（渲染线程单线程）：宿主未实现/熔断时连续
+    // 上屏失败达阈值即停用画布通路，退回 quad 带并省掉每帧光栅化
+    private static boolean trailCanvasDisabled;
+    private static int trailCanvasFailStreak;
+
     /** 绘光排版第 gi 个非空白字符的词级字号倍率（layout 数组 4 步长的第 4 通道）。 */
     private static float layoutScaleOf(WorldLyricsState.LyricGlyphs glyphs, int gi) {
         return glyphs.huiguangLayoutScales != null && gi < glyphs.huiguangLayoutScales.length
@@ -639,6 +792,11 @@ public final class WorldLyricsRenderer {
         String[] words = cachedKeywordWords;
         int[] colors = cachedKeywordColors;
         if (words.length == 0) return null;
+        // 句身缓存（结果 = (lines, 表) 的纯函数）：每帧重建 StringBuilder/int[]
+        // 是 R6 指出的可免分配 —— 表串引用不同或句不同才重算
+        if (f.cachedKeywordResult != null && f.cachedKeywordSpecRef == cachedKeywordSpec) {
+            return f.cachedKeywordResult;
+        }
         // 整句非空白字符流
         StringBuilder text = new StringBuilder();
         for (String line : f.lines) {
@@ -681,6 +839,8 @@ public final class WorldLyricsRenderer {
                 out[i] = colors[span[2]];
             }
         }
+        f.cachedKeywordSpecRef = cachedKeywordSpec;
+        f.cachedKeywordResult = out;
         return out;
     }
 

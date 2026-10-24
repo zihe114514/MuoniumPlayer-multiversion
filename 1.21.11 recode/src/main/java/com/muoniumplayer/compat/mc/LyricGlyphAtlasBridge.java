@@ -27,14 +27,15 @@ import net.minecraft.resources.Identifier;
  * 不注册就回退缺失纹理。页在创建时 {@code register(rl, texture)}、删除时
  * {@code release(rl)}（内部 safeClose → close，不要再手动 close 一次）。</p>
  *
- * <h2>线性过滤</h2>
- * <p>1.21.11 没有 {@code AbstractTexture.setFilter}（GL 直接管纹理时代已删，javap
- * 核对），过滤参数住进了 {@code GpuSampler}：{@code DynamicTexture} 构造时默认挂
- * {@code SamplerCache.getRepeat(NEAREST)}，会把 5× 超采样的字形毁成马赛克；
- * RenderSetup 解析纹理时用的正是 {@code AbstractTexture.getSampler()} 这个字段，
- * 所以构造后把 {@code sampler} 字段（protected，子类可写）换成
- * {@code getClampToEdge(LINEAR)} —— 线性 + 边缘钳制（与 1.21.1 版 CLAMP_TO_EDGE
- * 同口径）。零自定义 RenderType、零 AccessWidener。</p>
+     * <h2>线性过滤</h2>
+     * <p>1.21.11 没有 {@code AbstractTexture.setFilter}（GL 直接管纹理时代已删，javap
+     * 核对），过滤参数住进了 {@code GpuSampler}：{@code DynamicTexture} 构造时默认挂
+     * {@code SamplerCache.getRepeat(NEAREST)}，会把 5× 超采样的字形毁成马赛克；
+     * RenderSetup 解析纹理时用的正是 {@code AbstractTexture.getSampler()} 这个字段，
+     * 所以构造后把 {@code sampler} 字段（protected，子类可写）换成
+     * {@code getClampToEdge(LINEAR)} —— 线性 + 边缘钳制（与 1.21.1 版 CLAMP_TO_EDGE
+     * 同口径）。零自定义 RenderType、零 AccessWidener。
+     * （曾试过三线性 mip，与特效贴图同期出现渲染发黑，已回退。）</p>
  *
  * <p>像素写入 {@link NativeImage#setPixelABGR}（内存序 ABGR，与 1.21.1 的
  * setPixelRGBA 同为直写无换位）；上传走 {@code GlCommandEncoder.writeToTexture} 的

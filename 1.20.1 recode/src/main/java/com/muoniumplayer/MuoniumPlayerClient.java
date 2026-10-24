@@ -13,8 +13,6 @@ import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.screens.GuiAnnouncements;
 import com.muoniumplayer.core.screens.GuiFfmpegNotice;
 import com.muoniumplayer.core.screens.GuiUpdateNotice;
-import com.muoniumplayer.core.screens.hud.GuiHudEditor;
-import com.muoniumplayer.core.screens.hud.GuiHudEditorFolia;
 import com.muoniumplayer.core.screens.hud.GuiHudEditorPro;
 import com.muoniumplayer.core.screens.hud.ModernUiHudBridge;
 import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
@@ -583,13 +581,7 @@ public final class MuoniumPlayerClient {
                 && OneConfigHudBridge.open()) {
             return;
         }
-        if (HudConfig.HUD_EDITOR_STYLE_CLASSIC.equals(HudConfig.hudEditorStyle)) {
-            mc.setScreen(new GuiHudEditor());
-        } else if (HudConfig.HUD_EDITOR_STYLE_FOLIA.equals(HudConfig.hudEditorStyle)) {
-            mc.setScreen(new GuiHudEditorFolia());
-        } else {
-            mc.setScreen(new GuiHudEditorPro());
-        }
+        mc.setScreen(new GuiHudEditorPro());
     }
 
     /**
@@ -616,9 +608,9 @@ public final class MuoniumPlayerClient {
         // 即时合成的版本可在 Screen 画完后直接刷新底图；避免液态玻璃继续拿到 Screen
         // 出现前缓存的游戏世界。captureTopmostBackdrop 自己限频，失败不影响覆盖层。
         SkijaHost.captureTopmostBackdrop();
-        // 两套 HUD 设置界面都自己画灵动岛的专用预览，这里再画一次会叠成双层。
+        // HUD 设置界面自己画灵动岛的专用预览，这里再画一次会叠成双层。
         if (DownloadDynamicIsland.isDownloadActive()
-                || (!(screen instanceof GuiHudEditor) && !(screen instanceof GuiHudEditorPro))) {
+                || !(screen instanceof GuiHudEditorPro)) {
             DownloadDynamicIsland.render();
         }
         AutomixTransitionAnimation.render();

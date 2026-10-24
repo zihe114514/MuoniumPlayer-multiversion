@@ -53,12 +53,7 @@ public enum HudSetting {
      */
     PLAYER_UI_SWITCH_SPEED("界面切换动画速度", 0.30f, 3.00f),
 
-    /**
-     * Folia 那套 HUD 设置界面的整体缩放倍率。1.0 = 一单位一个物理像素（与 dpr=1 的浏览器一致），
-     * 越大面板与文字一起放大。见 {@link HudConfig#foliaUiScale}。
-     */
-    FOLIA_UI_SCALE("设置界面缩放", 0.80f, 2.50f),
-    /** 歌词搜索弹窗那一页的整体缩放倍率，与 {@link #FOLIA_UI_SCALE} 同档区间、同一个意思。 */
+    /** 歌词搜索弹窗那一页的整体缩放倍率。 */
     LYRIC_SEARCH_UI_SCALE("弹窗界面缩放", 0.80f, 2.50f),
 
     // 移植自 本项目 的各套「文字 PV」全屏歌词样式参数。区间取参考实现的可调范围。
@@ -84,7 +79,6 @@ public enum HudSetting {
     BLOSSOM_BLUR("面板模糊", 0.00f, 1.00f),
     BLOSSOM_OPACITY("面板底色", 0.00f, 1.00f),
     BLOSSOM_BORDER("踩点描边", 0.00f, 1.00f),
-
     // 真玻璃材质三项。区间与 HudConfig 读档时的钳位一致，改一边要改另一边。
     /** 背后画面糊多狠，单位 GUI 像素的 sigma；0 就是不糊，只压暗。 */
     GLASS_BLUR("玻璃模糊", 0.00f, 32.00f),
@@ -178,7 +172,6 @@ public enum HudSetting {
             case DYNAMIC_ISLAND_AMBIENT_NOW_PLAYING: return HudConfig.dynamicIslandAmbientNowPlayingSeconds;
             case PLAYER_FADE_SPEED: return HudConfig.playerFadeSpeed;
             case PLAYER_UI_SWITCH_SPEED: return HudConfig.playerUiSwitchSpeed;
-            case FOLIA_UI_SCALE: return HudConfig.foliaUiScale;
             case LYRIC_SEARCH_UI_SCALE: return HudConfig.lyricSearchUiScale;
             case LYRIC_FONT_SCALE: return HudConfig.lyricFontScale;
             case LUMINOUS_WORD_SPACING: return HudConfig.luminousWordSpacing;
@@ -258,7 +251,6 @@ public enum HudSetting {
             case DYNAMIC_ISLAND_AMBIENT_NOW_PLAYING: HudConfig.dynamicIslandAmbientNowPlayingSeconds = clamped; break;
             case PLAYER_FADE_SPEED: HudConfig.playerFadeSpeed = clamped; break;
             case PLAYER_UI_SWITCH_SPEED: HudConfig.playerUiSwitchSpeed = clamped; break;
-            case FOLIA_UI_SCALE: HudConfig.foliaUiScale = clamped; break;
             case LYRIC_SEARCH_UI_SCALE: HudConfig.lyricSearchUiScale = clamped; break;
             case LYRIC_FONT_SCALE: HudConfig.lyricFontScale = clamped; break;
             case LUMINOUS_WORD_SPACING: HudConfig.luminousWordSpacing = clamped; break;

@@ -40,10 +40,6 @@ class AutomixCueMarkerStaticTest {
             "com", "muoniumplayer", "core", "screens", "ncm", "MusicLyricsPanel.java"));
     private static final Path MODEL = ProjectPaths.sourceFile(Paths.get(
             "com", "muoniumplayer", "core", "screens", "hud", "HudSettingsModel.java"));
-    private static final Path CLASSIC_EDITOR = ProjectPaths.sourceFile(Paths.get(
-            "com", "muoniumplayer", "core", "screens", "hud", "GuiHudEditor.java"));
-    private static final Path CLASSIC_LAYOUT = ProjectPaths.sourceFile(Paths.get(
-            "com", "muoniumplayer", "core", "screens", "hud", "HudEditorLayout.java"));
 
     private static String read(Path path) throws IOException {
         return new String(java.nio.file.Files.readAllBytes(path), StandardCharsets.UTF_8);
@@ -132,31 +128,13 @@ class AutomixCueMarkerStaticTest {
     }
 
     @Test
-    @DisplayName("两个编辑器都有这一行，且经典编辑器的绘制与命中同序")
-    void bothEditorsCarryTheRow() throws IOException {
+    @DisplayName("模型里有这一行，位置钉在过渡动画与重叠时长之间")
+    void modelCarriesTheRow() throws IOException {
         String model = read(MODEL);
         assertTrue(model.contains("toggle(\"切点标记\""),
-                "HudSettingsModel 少了这一条：Folia 与进阶两版编辑器都是从它生成行的");
+                "HudSettingsModel 少了这一条：内置编辑器与 OneConfig 桥都是从它生成行的");
         assertTrue(model.indexOf("toggle(\"切点标记\"") < model.indexOf("choice(\"原版重叠时长\""),
                 "条目顺序变了：它应当在「过渡动画」之后、「原版重叠时长」之前");
-
-        String classic = read(CLASSIC_EDITOR);
-        // 经典编辑器是手写的行表：绘制那一段带标签，命中那一段只按行号走。所以标签出现一次、
-        // 动作接线出现一次，两者的相对位置要各自与邻居对齐。
-        assertEquals(1, count(classic, "\"切点标记\""),
-                "标签只在绘制段出现一次；命中段是按 rowY 走的匿名分支");
-        assertEquals(1, count(classic, "setCueMarkerEnabled(!AutomixSettings.isCueMarkerEnabled())"),
-                "命中段要么漏了这一行，要么接了两次");
-        ordered(classic, "绘制的邻位与命中的邻位必须是同一对：都在过渡动画之后、重叠时长之前",
-                "drawToggleRow(fr, \"过渡动画\"",
-                "drawToggleRow(fr, \"切点标记\"",
-                "AutomixSettings.setTransitionAnimationEnabled(enabled);",
-                "setCueMarkerEnabled(!AutomixSettings.isCueMarkerEnabled())",
-                "AutomixSettings.cycleOverlapSeconds();");
-
-        String layout = read(CLASSIC_LAYOUT);
-        assertTrue(layout.contains("colorRowHeight * 18"),
-                "经典编辑器多了一行却没抬分段高度：这一页的滚动条会比内容短一格");
     }
 
     @Test

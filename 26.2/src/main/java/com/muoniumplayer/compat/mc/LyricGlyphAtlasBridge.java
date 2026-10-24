@@ -19,7 +19,12 @@ import net.minecraft.resources.Identifier;
  *   <li>{@code AbstractTexture} 不再有 {@code setFilter/load}：过滤改由
  *       {@code GpuSampler} 承载。{@code DynamicTexture(String,int,int,boolean)} 构造时
  *       {@code createTexture} 落 {@code GpuDevice.createTexture}（USAGE 含 COPY_DST，
- *       完整整页分配）+ {@code createTextureView} + sampler = {@code SamplerCache.getRepeat(NEAREST)}；</li>
+ *       完整整页分配，mipLevels 硬编码 1）+ {@code createTextureView} + sampler =
+ *       {@code SamplerCache.getRepeat(NEAREST)}；页纹理由
+ *       {@link WorldBillboard.MipDynamicTexture}
+ *       基座换成 LINEAR + CLAMP_TO_EDGE 采样器（1.21.1 的 setFilter(true,false)
+ *       等价物，见该类 javadoc；曾做过带 mip 链的三线性版，与特效贴图同期出现
+ *       渲染发黑，已随基座一并退化回单级 LINEAR）；</li>
  *   <li>{@code NativeImage} 的 9 参 {@code upload}（1.21.1 的子矩形上传口）已删除；
  *       26.x 的上传统一走 {@code CommandEncoder.writeToTexture(GpuTexture, NativeImage,
  *       mip, depthLayer, x, y)} 子矩形重载 —— 显存拷贝由驱动层完成，
@@ -110,26 +115,18 @@ final class LyricGlyphAtlasBridge implements LyricGlyphAtlas.Host {
 
     /**
      * 一页 = RGBA8 动态纹理（构造器完成 GpuDevice.createTexture 整页分配）、
-     * 采样器强制 LINEAR + CLAMP_TO_EDGE。
+     * 采样器强制 LINEAR + CLAMP_TO_EDGE。继承 {@link WorldBillboard.MipDynamicTexture}：
+     * 单级分配 + 强制 LINEAR 采样器 —— 5× 超采样的字形靠纹理放大 5× 后的
+     * LINEAR 采样保平滑（曾试过三线性 mip，与特效贴图同期出现渲染发黑，已回退）。
      */
-    private static final class PageTexture extends DynamicTexture {
+    private static final class PageTexture extends WorldBillboard.MipDynamicTexture {
 
         PageTexture(int width, int height) {
             // (String, int, int, boolean) 构造：内部 NativeImage(w,h,true) +
-            // createTexture(label)（GpuDevice.createTexture 整页分配）+ NEAREST repeat 采样器。
-            // 采样器马上被 getSampler() 覆盖成 LINEAR（见下）。
+            // createTexture(label)（GpuDevice.createTexture 整页分配，mipLevels=1
+            // 单级）+ NEAREST repeat 采样器；基类把采样器换成 LINEAR + CLAMP_TO_EDGE
+            // （见 MipDynamicTexture）。
             super("muoniumplayer_worldlyrics_glyph_page", width, height, true);
-        }
-
-        /**
-         * textSeeThrough 的绑定路径（RenderSetup.prepareTextures）对 2 参 withTexture
-         * 的 null sampler 回退到本方法 —— 1.21.1 时代「shard 每次 bind 都经 setFilter」
-         * 的强制点在 26.x 换成这一处：无论谁取这个纹理，拿到的都是 LINEAR。
-         */
-        @Override
-        public com.mojang.blaze3d.textures.GpuSampler getSampler() {
-            return RenderSystem.getSamplerCache().getClampToEdge(
-                    com.mojang.blaze3d.textures.FilterMode.LINEAR);
         }
 
         /** 把一格 ARGB int 写进暂存 NativeImage（恰好 w×h）并按格上传显存。 */

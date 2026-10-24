@@ -215,7 +215,7 @@ class HuiguangMotionTest {
         cur.huiguangPrevGeo = WorldLyricsState.BillboardSnapshot.capture(prev, cam, params);
         WorldLyricsState.PixelWidthOf width = s -> 10f;
         WorldLyricsState.LyricGlyphs glyphs = WorldLyricsState.buildGlyphs(
-                cur, 3400L, 1f, false, false, width, false, true);
+                cur, 3400L, 1f, false, false, width, false, true, null);
         assertTrue(!glyphs.glyphs.isEmpty());
         assertEquals(glyphs.glyphs.size(), glyphs.huiguangFlights.size(),
                 "飞行定义与字形一一对应");
@@ -263,7 +263,7 @@ class HuiguangMotionTest {
         cur.huiguangPrevGeo = WorldLyricsState.BillboardSnapshot.capture(prev, cam, params);
         WorldLyricsState.PixelWidthOf width = s -> 10f;
         WorldLyricsState.LyricGlyphs glyphs = WorldLyricsState.buildGlyphs(
-                cur, 2200L, 1f, false, false, width, false, true);
+                cur, 2200L, 1f, false, false, width, false, true, null);
         assertTrue(glyphs.glyphs.size() >= 2);
         // 第一个字（n=0）与第二个字（n=1）的飞行起点必须不同（各自从上一句对应字飞来）
         HuiguangMotion.Flight f0 = glyphs.huiguangFlights.get(0);
@@ -282,7 +282,7 @@ class HuiguangMotionTest {
                 List.of("未唱句"), 0L, 800L, 0, 0, 0, 0, 0, new long[0]);
         WorldLyricsState.PixelWidthOf width = s -> 10f;
         WorldLyricsState.LyricGlyphs glyphs = WorldLyricsState.buildGlyphs(
-                cur, 40L, 1f, false, false, width, false, true);
+                cur, 40L, 1f, false, false, width, false, true, null);
         if (!glyphs.glyphs.isEmpty()) {
             assertTrue(glyphs.glyphs.get(0).alpha >= HuiguangMotion.UNLIT_ALPHA * 0.9f,
                     "未唱字应保持冷色半亮可见，实际 " + glyphs.glyphs.get(0).alpha);
@@ -348,7 +348,7 @@ class HuiguangMotionTest {
                 List.of("首句入场"), 0L, 800L, 0, 0, 0, 0, 0, new long[0]);
         WorldLyricsState.PixelWidthOf width = s -> 10f;
         WorldLyricsState.LyricGlyphs glyphs = WorldLyricsState.buildGlyphs(
-                cur, 300L, 1f, false, false, width, false, true);
+                cur, 300L, 1f, false, false, width, false, true, null);
         assertTrue(glyphs.glyphs.size() >= 2);
         int flights = 0;
         for (HuiguangMotion.Flight fl : glyphs.huiguangFlights) {
@@ -371,9 +371,9 @@ class HuiguangMotionTest {
                 List.of("微动"), 0L, 800L, 0, 0, 0, 0, 0, new long[0]);
         WorldLyricsState.PixelWidthOf width = s -> 10f;
         WorldLyricsState.LyricGlyphs early = WorldLyricsState.buildGlyphs(
-                cur, 3000L, 1f, false, false, width, false, true);
+                cur, 3000L, 1f, false, false, width, false, true, null);
         WorldLyricsState.LyricGlyphs late = WorldLyricsState.buildGlyphs(
-                cur, 4500L, 1f, false, false, width, false, true);
+                cur, 4500L, 1f, false, false, width, false, true, null);
         assertTrue(early.glyphs.size() >= 1 && late.glyphs.size() >= 1);
         float dx = Math.abs(late.glyphs.get(0).x - early.glyphs.get(0).x);
         float dy = Math.abs(late.glyphs.get(0).y - early.glyphs.get(0).y);

@@ -36,7 +36,8 @@ import net.minecraft.resources.Identifier;
  * —— 所以<b>过滤完全由纹理对象自己的 sampler 决定</b>：重写
  * {@link PageTexture#getSampler()} 返回 LINEAR（CLAMP_TO_EDGE）的缓存采样器，
  * 绑定路径既不会重设也无处可设 NEAREST（1.21.1 的 setFilter 拦截在 26.x 没有对应物，
- * 这是唯一也足够的强制 LINEAR 点）。纹理查找经
+ * 这是唯一也足够的强制 LINEAR 点。曾试过三线性 mip，与特效贴图同期出现渲染发黑，
+ * 已回退）。纹理查找经
  * {@code TextureManager.getTexture(rl)}（prepareTextures 字节码直调）——
  * 不注册就回退缺失纹理（品红）。页创建时 {@code register(rl, texture)}、
  * 删除时 {@code release(rl)}（内部 safeClose → close：关 NativeImage +
@@ -112,7 +113,7 @@ final class LyricGlyphAtlasBridge implements LyricGlyphAtlas.Host {
 
     /**
      * 一页 = RGBA8 动态纹理（构造器完成 GpuDevice.createTexture 整页分配）、
-     * 采样器强制 LINEAR + CLAMP_TO_EDGE。
+     * 强制 LINEAR 采样 + CLAMP_TO_EDGE、单级分配（无 mip 链）。
      */
     private static final class PageTexture extends DynamicTexture {
 
@@ -127,6 +128,8 @@ final class LyricGlyphAtlasBridge implements LyricGlyphAtlas.Host {
          * textSeeThrough 的绑定路径（RenderSetup.prepareTextures）对 2 参 withTexture
          * 的 null sampler 回退到本方法 —— 1.21.1 时代「shard 每次 bind 都经 setFilter」
          * 的强制点在 26.x 换成这一处：无论谁取这个纹理，拿到的都是 LINEAR。
+         * 曾试过三线性 mip（两参 getClampToEdge + 放开 MAX_LEVEL/MAX_LOD +
+         * glGenerateMipmap），与特效贴图同期出现渲染发黑，一并回退已验证的纯 LINEAR。
          */
         @Override
         public com.mojang.renderpearl.api.textures.GpuSampler getSampler() {

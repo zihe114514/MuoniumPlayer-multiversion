@@ -323,6 +323,8 @@ public final class HuiguangMotion {
     public static final int MAX_BURSTS = 14;
     /** 一个小十字持续多久（秒，folia BURST_DURATION）。 */
     public static final float BURST_DURATION_S = 0.6f;
+    /** 「扫过」方式里相邻两个十字的间隔（秒，folia SWEEP_STEP）。 */
+    public static final float SWEEP_STEP_S = 0.07f;
 
     /**
      * 一个引爆点的包络求值（folia crossBurst update 的参数逐一对齐）。
@@ -376,6 +378,15 @@ public final class HuiguangMotion {
      */
     public static float[] planBursts(int lineIndex, long[] charStarts, int charCount,
                                      int seed, float density, int every) {
+        return planBursts(lineIndex, charStarts, charCount, seed, density, every, false);
+    }
+
+    /**
+     * 带 sweep 模式的爆闪规划（folia spec.mode：sung=挑中的字被唱到时各自引爆、
+     * sweep=行首 0.07s 间隔沿整行连续炸开）。
+     */
+    public static float[] planBursts(int lineIndex, long[] charStarts, int charCount,
+                                     int seed, float density, int every, boolean sweep) {
         if (charCount <= 0 || density <= 0f) return new float[0];
         if (lineIndex < 0 || (lineIndex % Math.max(1, every)) != 0) return new float[0];
         java.util.ArrayList<Integer> chosen = new java.util.ArrayList<>();
@@ -389,8 +400,17 @@ public final class HuiguangMotion {
         // 全挤在句首（R5 审查 P1-4）。渲染层按 age 窗口独立求值，无并发问题。
         float[] out = new float[chosen.size() * 4];
         int o = 0;
+        // sweep：引爆时刻 = 首个点亮时刻 + 挑中序号 × 0.07s（folia SWEEP_STEP）
+        int order = 0;
         for (int idx : chosen) {
-            float time = charStarts != null && idx < charStarts.length ? charStarts[idx] : 0f;
+            float time;
+            if (sweep) {
+                time = (charStarts != null && charStarts.length > 0 ? charStarts[0] : 0f)
+                        + order * SWEEP_STEP_S * 1000f;
+                order++;
+            } else {
+                time = charStarts != null && idx < charStarts.length ? charStarts[idx] : 0f;
+            }
             out[o++] = idx;
             out[o++] = time;
             out[o++] = 0.7f + (WorldLyricsState.hashRand(idx, 0L, 91, seed) * 0.5f + 0.5f) * 0.6f;

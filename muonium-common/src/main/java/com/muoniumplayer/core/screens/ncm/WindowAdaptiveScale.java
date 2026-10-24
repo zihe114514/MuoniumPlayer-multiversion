@@ -88,7 +88,7 @@ public final class WindowAdaptiveScale {
      * <p>这一页的排版数值照的是 folia 的 CSS px，所以基础倍率就是 {@link #DESIGN_PER_LAYOUT}：
      * 1 弹窗单位 = 1 物理像素，和 dpr=1 的浏览器一模一样。问题是浏览器里的 14 px 正文落到
      * Minecraft 里只有一半 —— 播放器其它界面的文字是它的两倍（布局轴上 {@code pf14} 就是 14 个
-     * 布局单位）。所以照 {@link com.muoniumplayer.core.settings.HudConfig#foliaUiScale} 那条老路，
+     * 布局单位）。所以沿用「弹窗界面缩放」那条老路，
      * 让用户自己挑一档：倍率 {@code >1} 等于把整个弹窗（几何、字号、间距一起）放大，弹窗内部的
      * 比例与 folia 完全同构。</p>
      *

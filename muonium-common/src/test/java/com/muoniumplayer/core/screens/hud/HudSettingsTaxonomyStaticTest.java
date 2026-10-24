@@ -4,17 +4,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import static com.muoniumplayer.testsupport.ProjectPaths.sharedJava;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.settings.HudSetting;
 import com.muoniumplayer.testsupport.ProjectPaths;
@@ -30,12 +25,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>为什么单独钉这个：分类只是呈现层的分组，条目本身读的是 {@code HudConfig} 的字段，
  * 所以「重新分类」在功能上应该是零风险的 —— 而它最容易出的事故恰恰是搬运时漏掉一条、
  * 或者把同一条塞进两个组。这两件事都不会让任何一套界面报错，只会让用户某天发现某个滑块不见了。
- * 于是这里把「有几页、每页几条、总共 97 条」钉死：改结构时这几个数字要一起改，改的人会被迫
+ * 于是这里把「有几页、每页几条、总共多少条」钉死：改结构时这几个数字要一起改，改的人会被迫
  * 想清楚自己动的是分组还是条目。</p>
- *
- * <p>另外钉两条与呈现耦合的点：Folia 那套界面的侧栏大标签现在读 {@code Category#navGroup}
- * （以前按分类下标区间硬编码，加分类就静默错位），以及 ModernUI 面板的分类条是横排 TabLayout
- * —— 分类数一多，第 7 格往下的文字会被窗口下沿裁掉，所以分类总数也要有上限。</p>
  */
 class HudSettingsTaxonomyStaticTest {
 
@@ -43,7 +34,7 @@ class HudSettingsTaxonomyStaticTest {
             "歌词样式", "3D 歌词", "面板与卡片", "灵动岛", "无缝切换", "界面与主题", "信息栏与封面", "缓存与公告");
 
     /** 与 {@link #TITLES} 同序的条目数；总和必须等于 {@link #TOTAL}。 */
-    private static final List<Integer> COUNTS = Arrays.asList(21, 16, 8, 22, 22, 35, 5, 3);
+    private static final List<Integer> COUNTS = Arrays.asList(21, 15, 8, 24, 20, 32, 5, 3);
 
     /** 「界面与主题」那页 2026-09-30 从 19 条长到 21 条：真玻璃材质组多了「实时背景采集」与
      *  「帧率不够时自动摘玻璃」两个开关；同日傍晚又长到 26 条：多了四面各自的模糊倍率
@@ -52,12 +43,11 @@ class HudSettingsTaxonomyStaticTest {
      *  2026-10-16 新增第 2 页「3D 歌词」15 条（放置 6 / 字体与文本 3 / 发光 3 / 动效 3）；
      *  2026-10-17 「文字颜色跟随」toggle 升级为取色条目（数目不变），随后移除「文字抖动」
      *  —— 「3D 歌词」页 15 → 14 条（动效组剩 逐词弹出 / 节拍闪烁）。
-     *  2026-10-23 动效组加回「心象动效」后又新增「绘光动效」—— 3D 歌词页 14 → 16 条。 */
-    private static final int TOTAL = 132;
-
-    /** 侧栏一大块的名字。分类要按块相邻摆放，见 {@code GuiHudEditorFolia#navGroupLabel}。 */
-    private static final List<String> NAV_GROUPS =
-            Arrays.asList("歌词与画面", "播放与切换", "界面与外观", "系统");
+     *  2026-10-23 动效组加回「心象动效」后又新增「绘光动效」—— 3D 歌词页 14 → 16 条。
+     *  2026-10-24 移除经典/Folia 样式与死开关四条下架；条目整合：3D 动效三开关并成「动效风格」单选
+     *  并新增「发光颜色」取色与「关键字染色」（绘光配套）；灵动岛新增「岛内搜索」与「动画速度」档位；
+     *  无缝切换「引擎+表现+进阶」三合一成「处理方案」四档 —— 132 → 128。 */
+    private static final int TOTAL = 128;
 
     @Test
     @DisplayName("分类就是这 7 页，顺序与每页条目数都不许悄悄变")
@@ -110,8 +100,9 @@ class HudSettingsTaxonomyStaticTest {
                 }
             }
         }
-        // 2026-10-16 起 3D 歌词那页带 5 个滑块（距离/散开角/缩放/发光强度/发光扩散）
-        assertEquals(54, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱自定义柱数、透明度与高度都是有效设置");
+        // 2026-10-16 起 3D 歌词那页带 5 个滑块（距离/散开角/缩放/发光强度/发光扩散）；
+        // 2026-10-24 「设置界面缩放」随 Folia 样式一起下架，54 → 53。
+        assertEquals(53, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱自定义柱数、透明度与高度都是有效设置");
         assertFalse(settings.contains("GLASS_BLOOM"), "退役的磨砂 bloom 不能作为无效设置暴露");
         assertFalse(settings.contains("GLASS_FUSION"), "参考透镜不使用旧  融合描边");
         assertEquals(settings.size(), new HashSet<String>(settings).size(),
@@ -137,34 +128,14 @@ class HudSettingsTaxonomyStaticTest {
                 }
             }
         }
-        assertEquals(Arrays.asList("歌词样式", "歌词样式", "3D 歌词"), colorPages,
-                "桌面歌词的两个取色条目同页（一个地方配完），3D 歌词的取色在自己那一页");
+        assertEquals(Arrays.asList("歌词样式", "歌词样式", "3D 歌词", "3D 歌词"), colorPages,
+                "桌面歌词的两个取色条目同页（一个地方配完），3D 歌词的文字色与发光色取色在自己那一页");
         assertTrue(targets.contains(HudSettingsModel.ColorTarget.CURRENT)
                         && targets.contains(HudSettingsModel.ColorTarget.NORMAL),
                 "当前行与普通行的颜色入口少了一个");
         assertTrue(targets.contains(HudSettingsModel.ColorTarget.WORLD_LYRICS),
                 "3D 歌词的文字颜色取色入口缺失");
         assertEquals(Arrays.asList("界面与主题"), gridPages, "主题色卡的位置决定侧栏要不要为它单开一页");
-    }
-
-    @Test
-    @DisplayName("navGroup 只认那四块，并且同一块的分类相邻")
-    void navGroupsAreKnownAndContiguous() {
-        HudSettingsModel.Category[] categories = HudSettingsModel.categories();
-        String previous = null;
-        Set<String> seen = new HashSet<String>();
-        for (HudSettingsModel.Category category : categories) {
-            assertTrue(NAV_GROUPS.contains(category.navGroup),
-                    category.title + " 的 navGroup=" + category.navGroup + " 不在已知四块里，"
-                            + "Folia 侧栏会凭空多出一个标签");
-            if (previous != null && !previous.equals(category.navGroup)) {
-                seen.add(previous);
-            }
-            assertFalse(previous != null && seen.contains(category.navGroup),
-                    category.title + " 又回到了「" + category.navGroup + "」这一块："
-                            + "同一块的分类要相邻摆放，否则侧栏标签会重复出现");
-            previous = category.navGroup;
-        }
     }
 
     @Test
@@ -202,19 +173,6 @@ class HudSettingsTaxonomyStaticTest {
         } finally {
             HudConfig.spectrumBarCountPreset = previousPreset;
         }
-    }
-
-    @Test
-    @DisplayName("Folia 侧栏不许再按分类下标区间硬编码分组")
-    void foliaNavDoesNotCountIndices() throws IOException {
-        String text = new String(Files.readAllBytes(ProjectPaths.sourceFile(Paths.get(
-                "com", "muoniumplayer", "core", "screens", "hud", "GuiHudEditorFolia.java"))),
-                StandardCharsets.UTF_8);
-        assertFalse(text.contains("NAV_GROUP_RANGES"),
-                "又回去数下标了：模型加一个分类就会静默挂错块，标签请读 Category#navGroup");
-        assertTrue(text.contains("categories[categoryIndex].navGroup")
-                        || text.contains(".navGroup"),
-                "侧栏大标签要从模型读");
     }
 
     private static int count(HudSettingsModel.Category category) {

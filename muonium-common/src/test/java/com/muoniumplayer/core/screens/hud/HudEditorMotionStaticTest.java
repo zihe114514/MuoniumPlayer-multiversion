@@ -71,8 +71,8 @@ class HudEditorMotionStaticTest {
         assertTrue(body.contains("page.requestDismiss()") && body.contains("list.requestDismiss()"),
                 "关闭没有走退场：进场有动画、退场没有，是这类界面最常见的失衡");
         assertTrue(body.contains("if (page.isGone())"), "退场播完之前就把界面回收掉了");
-        // 26.x 那两棵写的是 mc.gui.setScreen(...)，所以这里只数到 setScreen 那一段。
-        assertEquals(1, count(body, "setScreen(null);"),
+        // 26.x 那两棵写的是 mc.gui.setScreen(...)，所以这里只数 closeScreen 那一段。
+        assertEquals(1, count(body, "closeScreen();"),
                 "整份文件只该有退场末尾那一处回收界面；ESC 那里再出现一处就是绕过了退场");
     }
 

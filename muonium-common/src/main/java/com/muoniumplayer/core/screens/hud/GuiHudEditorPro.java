@@ -20,8 +20,8 @@ import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.font.GlyphInkMetrics;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
-import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
+import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.screens.ncm.SheetClock;
 import com.muoniumplayer.core.screens.ncm.TransitionCurveCache;
 import com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale;
@@ -42,20 +42,18 @@ import com.muoniumplayer.render.skija.SkijaGfx;
 import com.muoniumplayer.render.skija.SkijaShapes;
 
 /**
- * HUD 设置的现代界面。
+ * HUD 设置界面（内置）。
  *
- * <p>与经典界面（{@link GuiHudEditor}）功能完全一致 —— 两者的条目都来自
- * {@link HudSettingsModel}，所以不会出现「某一边少一项」。差别只在呈现：这里是
- * 「侧边栏分类 + 右侧卡片分组 + 每行带说明」的双栏布局，也就是 Windows 11 设置、
- * macOS 系统设置与 VS Code 设置面板共同的那套结构。相比经典界面把二十多个滑块
- * 平铺在一列 236px 宽的长条里，分类之后每屏只需要滚一小段，而且每一项都能带上
- * 一句「这到底影响什么」。</p>
+ * <p>条目全部来自 {@link HudSettingsModel}，OneConfig 桥也从同一份声明构建，所以不会出现
+ * 「某一边少一项」。呈现是「侧边栏分类 + 右侧卡片分组 + 每行带说明」的双栏布局，也就是
+ * Windows 11 设置、macOS 系统设置与 VS Code 设置面板共同的那套结构：每屏只需要滚一小段，
+ * 而且每一项都能带一句「这到底影响什么」。</p>
  *
  * <p>三个刻意的工程约束，改动这个类之前请先读完：</p>
  * <ol>
  *   <li><b>渲染与命中测试共用同一份行矩形列表。</b>每帧先 {@link #layoutRows} 把当前可见的行算成
- *   {@link Row}，之后画图与鼠标判定都只读它。经典界面是绘制一套坐标、{@code mouseClicked} 里再抄
- *   一套，两边靠人工保持同步 —— 那是它最容易出错的地方（加一行忘了同步偏移，点击就会错位到相邻项）。</li>
+ *   {@link Row}，之后画图与鼠标判定都只读它。绘制一套坐标、{@code mouseClicked} 里再抄
+ *   一套是最容易出错的做法（加一行忘了同步偏移，点击就会错位到相邻项），这里不允许。</li>
  *   <li><b>面板矩形只能从 {@link #panelBounds()} 拿。</b>面板可以被拖动、可以折叠、入场时还带一段
  *   位移动画，位置不再是一个常量表达式。任何地方自己算一遍都会在动画中的那几帧和真实位置错开。</li>
  *   <li><b>动画只允许改「颜色 / 透明度 / 偏移」，不允许改命中矩形。</b>唯一的例外是面板位移与滚动，
@@ -63,7 +61,7 @@ import com.muoniumplayer.render.skija.SkijaShapes;
  *   特别地，入场动画不用 {@code glScale} —— {@code GL_SCISSOR} 是屏幕坐标，缩放会让裁剪区错位。</li>
  * </ol>
  *
- * <p>面板默认靠右摆放：屏幕左侧要留给两块 HUD 的实时预览与拖拽，这和经典界面的取舍一致。
+ * <p>面板默认靠右摆放：屏幕左侧要留给两块 HUD 的实时预览与拖拽。
  * 拖动标题栏可以把它挪到任意位置（会被记进配置），双击标题栏或按标题栏上的复位按钮回到默认位置。
  * 屏幕太窄时面板会自动收窄，也可以用折叠按钮把它收成一条，露出下面的 HUD。</p>
  */
@@ -74,17 +72,19 @@ public class GuiHudEditorPro extends GuiScreen {
     private static final int PANEL_MARGIN = 12;
     private static final int PANEL_MAX_W = 604;
     private static final int PANEL_MAX_H = 492;
-    private static final int PANEL_MIN_W = 300;
+    private static final int PANEL_MIN_W = 380;
     private static final int HEADER_H = 52;
     private static final int FOOTER_H = 34;
     private static final int NAV_W = 156;
     private static final int NAV_ROW_H = 36;
+    /** 侧栏行高被压到这一档以下就不再硬挤，改为侧栏内部滚动（矮窗口下每类仍然可点）。 */
+    private static final int NAV_ROW_MIN_H = 28;
     private static final int COLLAPSED_H = 46;
 
     private static final int CONTENT_PAD = 14;
     private static final int SEARCH_H = 22;
     private static final int GROUP_HEADER_H = 24;
-    private static final int ROW_H = 40;
+    private static final int ROW_H = 44;
     private static final int CARD_GAP = 8;
     private static final int CARD_RADIUS = 10;
     private static final int EMPTY_STATE_H = 78;
@@ -107,8 +107,17 @@ public class GuiHudEditorPro extends GuiScreen {
     private static final int HEX_INPUT_W = 86;
     private static final int HEX_INPUT_H = 18;
 
-    private static final int SNAP_THRESHOLD = 8;
-    private static final double SNAP_STRENGTH = 0.35;
+    /** CHOICE 下拉浮层：条目高（带说明）与窄条目高（只有选项名）。 */
+    private static final int DROP_ITEM_H = 34;
+    private static final int DROP_ITEM_COMPACT_H = 24;
+    private static final int DROP_MAX_VISIBLE = 7;
+    private static final int DROP_MIN_W = 168;
+    private static final int DROP_MAX_W = 268;
+    /** 下拉浮层进场时长：比取色器略快一档，它是「点一下就要看到」的东西。 */
+    private static final double DROP_MS = 140.0;
+    /** 搜索结果跳转后目标行的高亮脉冲时长。 */
+    private static final long FLASH_MS = 900L;
+
     private static final int INFO_BASE_W = 230;
     private static final int INFO_BASE_H = 56;
 
@@ -264,6 +273,16 @@ public class GuiHudEditorPro extends GuiScreen {
     private GuiTextField searchInput;
     private String searchQuery = "";
 
+    /** 当前展开下拉的 CHOICE 条目；{@code null} 即没有展开。按条目身份比较（声明是静态常量）。 */
+    private HudSettingsModel.Entry openChoice;
+    /** 下拉浮层的到场进度（0..1），每帧无条件推进，与取色器同一条纪律。 */
+    private float choiceGate;
+    /** 搜索结果跳转后要高亮脉冲的那一行；{@code flashDeadline} 过去后失效。 */
+    private HudSettingsModel.Entry flashEntry;
+    private long flashDeadline;
+    /** 侧栏放不下全部分类时的内部滚动（像素）。 */
+    private int navScroll;
+
     private HudSetting draggingSlider;
     private int draggingSliderTrackX;
     private HudSettingsModel.ColorTarget editingColor = HudSettingsModel.ColorTarget.NONE;
@@ -276,11 +295,16 @@ public class GuiHudEditorPro extends GuiScreen {
     private boolean settingsDirty;
     private boolean resetConfirmationVisible;
 
-    private boolean draggingInfo;
-    private boolean draggingLyrics;
-    private int dragOffX;
-    private int dragOffY;
-    private boolean showSnapGuide;
+    /** 两块叠加层的点选/拖动/边缘缩放/吸附状态机。渲染读它的几何，判定也读它的几何。 */
+    private final HudOverlayStage stage = new HudOverlayStage();
+    /** 快捷配置小窗的到场进度。 */
+    private float popGate;
+    /** 快捷小窗里「整体缩放」那条滑条的拖动中标志与轨道原点；歌词宽高滑条复用 draggingSlider。 */
+    private boolean draggingPopoverScale;
+    private int popoverScaleTrackX;
+    /** 选中块的呼吸脉冲与其归属（变了就重起一段）。 */
+    private HudOverlayStage.Kind pulsedSelection = HudOverlayStage.Kind.NONE;
+    private final Channel selectionPulseChannel = new Channel();
 
     /** 面板自身的拖动。和两块 HUD 的拖动互斥（面板在最上层，命中它就不会落到 HUD 上）。 */
     private boolean draggingPanel;
@@ -385,6 +409,9 @@ public class GuiHudEditorPro extends GuiScreen {
         if (scrollByCategory == null || scrollByCategory.length != HudSettingsModel.categories().length) {
             scrollByCategory = new int[HudSettingsModel.categories().length];
         }
+        // 上次停留在哪个分类就回到哪里：反复调同一页的用户不该每次都从「歌词样式」重新点起。
+        categoryIndex = Math.max(0, Math.min(HudSettingsModel.categories().length - 1,
+                HudConfig.hudEditorLastCategory));
         ensureSearchInput();
         ensureHexColorInput();
         // initGui 在窗口缩放时也会被调用。入场动画只在真正打开时播一次，否则每次改分辨率都要重新淡入。
@@ -400,6 +427,11 @@ public class GuiHudEditorPro extends GuiScreen {
         if (settingsDirty) {
             HudConfig.save();
             settingsDirty = false;
+        }
+        // 记住停在哪一页。save() 每次全量落盘，这里只有换页时才值得写。
+        if (HudConfig.hudEditorLastCategory != clampCategory()) {
+            HudConfig.hudEditorLastCategory = clampCategory();
+            HudConfig.save();
         }
         Keyboard.enableRepeatEvents(false);
     }
@@ -440,9 +472,11 @@ public class GuiHudEditorPro extends GuiScreen {
             dialogGate = motion("dialog.in", resetConfirmationVisible ? 1f : 0f, POP_MS);
             pickerGate = motion("picker.in",
                     editingColor != HudSettingsModel.ColorTarget.NONE ? 1f : 0f, POP_MS);
+            choiceGate = motion("choice.pop", openChoice != null ? 1f : 0f, DROP_MS);
+            popGate = motion("wpop.in", stage.hasSelection() ? 1f : 0f, POP_MS);
             if (page.isGone()) {
                 // 退场播完才真的把界面收掉：这一帧只剩一个全透明的面板，画它没有意义。
-                mc.setScreen(null);
+                closeScreen();
                 return;
             }
             // 退场途中这一层已经不再接受任何输入：拖动、滚动、点控件都不该再改状态。
@@ -466,7 +500,11 @@ public class GuiHudEditorPro extends GuiScreen {
             boolean overPanel = isInside(mouseX, mouseY, panelX, panelY, panelW, panelH);
             boolean overPicker = editingColor != HudSettingsModel.ColorTarget.NONE
                     && isInside(mouseX, mouseY, pickerX(panelX, panelW), pickerY(panelY, panelH), PICKER_W, PICKER_H);
-            boolean uiBusy = retiring || resetConfirmationVisible || overPanel || overPicker || draggingPanel;
+            boolean overPopover = stage.hasSelection()
+                    && isInside(mouseX, mouseY, widgetPopoverX(), widgetPopoverY(),
+                            WIDGET_POPOVER_W, widgetPopoverH());
+            boolean uiBusy = retiring || resetConfirmationVisible || overPanel || overPicker
+                    || overPopover || draggingPanel;
 
             if (!retiring && !resetConfirmationVisible) {
                 updateColorPickerWhileDragging(mouseX, mouseY, panelX, panelY, panelW, panelH);
@@ -475,30 +513,33 @@ public class GuiHudEditorPro extends GuiScreen {
 
             boolean lmb = !retiring && !resetConfirmationVisible && !draggingPanel && Mouse.isButtonDown(0);
 
-            // ==== 两块 HUD 的实时预览与拖拽（面板之外的区域） ====
+            // ==== 两块 HUD 的实时预览与舞台交互（面板之外的区域） ====
             int infoW = (int) (INFO_BASE_W * HudConfig.infoScale);
             int infoH = (int) (INFO_BASE_H * HudConfig.infoScale);
             int infoX = (int) (HudConfig.infoX * (width - infoW));
             int infoY = (int) (HudConfig.infoY * (height - infoH));
-            handleDrag(lmb && !uiBusy, uiBusy ? 0 : wheel, mouseX, mouseY, infoX, infoY, infoW, infoH, true);
+            int lyricW = (int) (HudConfig.lyricWidth * HudConfig.lyricScale);
+            int lyricH = (int) (HudConfig.lyricHeight * HudConfig.lyricScale);
+            int lyricX = (int) (HudConfig.lyricX * (width - lyricW));
+            int lyricY = (int) (HudConfig.lyricY * (height - lyricH));
+            int[] infoRect = { infoX, infoY, infoW, infoH };
+            int[] lyricRect = { lyricX, lyricY, lyricW, lyricH };
+            // 舞台自己判定点选/拖动/缩放并写回 HudConfig；松手有改动时才落一次盘。
+            boolean stageDirty = stage.update(lmb && !uiBusy, uiBusy ? 0 : wheel, mouseX, mouseY,
+                    infoRect, lyricRect, new int[] { INFO_BASE_W, INFO_BASE_H }, width, height);
+            if (stageDirty) HudConfig.save();
+
             if (hasLiveInfoPreview()) {
                 renderLiveInfoPreview(info);
             } else {
                 drawInfoPlaceholder(fr, infoX, infoY, infoW, infoH);
             }
-            drawHudSelection(fr, "歌曲信息", infoX, infoY, infoW, infoH, 0xFF7DD3FC);
-
-            int lyricW = (int) (HudConfig.lyricWidth * HudConfig.lyricScale);
-            int lyricH = (int) (HudConfig.lyricHeight * HudConfig.lyricScale);
-            int lyricX = (int) (HudConfig.lyricX * (width - lyricW));
-            int lyricY = (int) (HudConfig.lyricY * (height - lyricH));
-            handleDrag(lmb && !uiBusy, uiBusy ? 0 : wheel, mouseX, mouseY, lyricX, lyricY, lyricW, lyricH, false);
             if (hasLiveLyricsPreview()) {
                 renderLiveLyricsPreview(lyrics, lyricX, lyricY);
             } else {
                 drawLyricsPlaceholder(fr, lyricX, lyricY, lyricW, lyricH);
             }
-            drawHudSelection(fr, "桌面歌词", lyricX, lyricY, lyricW, lyricH, 0xFFA78BFA);
+            drawStageOverlays(fr, infoRect, lyricRect, mouseX, mouseY);
 
             // ==== 设置面板 ====
             layerAlpha = plate;
@@ -520,9 +561,22 @@ public class GuiHudEditorPro extends GuiScreen {
                 }
             }
 
-            if (showSnapGuide) {
-                Gui.drawRect(0, height / 2, width, height / 2 + 1, 0x558DDCFF);
-                Gui.drawRect(width / 2, 0, width / 2 + 1, height, 0x558DDCFF);
+            // CHOICE 下拉浮层：画在列表之上、取色器之下。收起的过程中仍按最后一份几何画淡出。
+            if (openChoice != null || choiceGate > 0.01f) {
+                float outer = pushAlpha(choiceGate);
+                SkijaGfx.pushMatrix();
+                SkijaGfx.translate(0f, slideY(choiceGate));
+                try {
+                    drawChoiceDropdown(fr, panelX, panelY, panelW, panelH, mouseX, mouseY);
+                } finally {
+                    SkijaGfx.popMatrix();
+                    layerAlpha = outer;
+                }
+            }
+
+            // 吸附参考线：中心线 / 屏幕边缘 / 两块之间的对齐，由舞台每帧给出。
+            for (int[] guide : stage.guides) {
+                Gui.drawRect(guide[0], guide[1], guide[0] + guide[2], guide[1] + guide[3], 0x558DDCFF);
             }
 
             super.drawScreen(mouseX, mouseY, partialTicks);
@@ -532,6 +586,19 @@ public class GuiHudEditorPro extends GuiScreen {
                 SkijaGfx.translate(0f, slideY(dialogGate));
                 try {
                     drawResetConfirmation(fr, mouseX, mouseY);
+                } finally {
+                    SkijaGfx.popMatrix();
+                    layerAlpha = outer;
+                }
+            }
+
+            // 选中叠加层的快捷配置小窗：画在最上层，与它配套的舞台交互在 uiBusy 里已让位。
+            if (stage.hasSelection() || popGate > 0.01f) {
+                float outer = pushAlpha(popGate);
+                SkijaGfx.pushMatrix();
+                SkijaGfx.translate(0f, slideY(popGate));
+                try {
+                    drawWidgetPopover(fr, mouseX, mouseY);
                 } finally {
                     SkijaGfx.popMatrix();
                     layerAlpha = outer;
@@ -574,7 +641,7 @@ public class GuiHudEditorPro extends GuiScreen {
 
     private int panelHeight() {
         if (collapsed) return COLLAPSED_H;
-        return Math.max(220, Math.min(PANEL_MAX_H, height - PANEL_MARGIN * 2));
+        return Math.max(260, Math.min(PANEL_MAX_H, height - PANEL_MARGIN * 2));
     }
 
     /**
@@ -712,7 +779,10 @@ public class GuiHudEditorPro extends GuiScreen {
 
         layoutRows(contentX, listY, contentW, active);
         int maxScroll = Math.max(0, contentHeight - listH);
-        if (wheel != 0 && overPanel && mouseX >= contentX) {
+        if (wheel != 0 && overPanel && mouseX < contentX) {
+            // 侧栏也吃滚轮：矮窗口下侧栏放不下全部分类时靠它滚动，行高不必再被挤扁。
+            navScroll = clampNavScroll(navScroll + (wheel > 0 ? -32 : 32));
+        } else if (wheel != 0 && overPanel && mouseX >= contentX) {
             setScroll(scroll() + (wheel > 0 ? -32 : 32), maxScroll);
         } else {
             setScroll(scroll(), maxScroll);
@@ -802,12 +872,6 @@ public class GuiHudEditorPro extends GuiScreen {
                 null, toggle, mouseX, mouseY, TEXT_PRIMARY, active.accent);
         if (collapsed) return;
 
-        int[] classic = classicButton(panelX, panelY, panelW, panelH);
-        drawGhostButton("header.classic", fr, HudSettingsIcons.CLASSIC_UI, "经典",
-                classic, mouseX, mouseY, TEXT_PRIMARY, active.accent);
-        int[] folia = foliaButton(panelX, panelY, panelW, panelH);
-        drawGhostButton("header.folia", fr, HudSettingsIcons.MODERN_UI, "Folia",
-                folia, mouseX, mouseY, TEXT_PRIMARY, active.accent);
         if (OneConfigHudBridge.isAvailable()) {
             int[] oneConfig = oneConfigButton(panelX, panelY, panelW, panelH);
             drawGhostButton("header.oneconfig", fr, HudSettingsIcons.MODERN_UI, "OneConfig",
@@ -832,30 +896,17 @@ public class GuiHudEditorPro extends GuiScreen {
         return new int[] { panelX + panelW - 14 - 22, buttonRowY(panelY, panelH), 22, 22 };
     }
 
-    private int[] classicButton(int panelX, int panelY, int panelW, int panelH) {
-        int w = ghostWidth(FontManager.pf12, "经典");
-        return new int[] { panelX + panelW - 14 - 22 - 6 - w, buttonRowY(panelY, panelH), w, 22 };
-    }
-
-    /** 切到 Folia 样式界面的入口，排在「经典」左侧。 */
-    private int[] foliaButton(int panelX, int panelY, int panelW, int panelH) {
-        int w = ghostWidth(FontManager.pf12, "Folia");
-        int[] classic = classicButton(panelX, panelY, panelW, panelH);
-        return new int[] { classic[0] - 6 - w, classic[1], w, 22 };
-    }
-
     /** OneConfig 可用时才存在；点击后注册并打开 OneConfig 的 MuoniumPlayer HUD 页。 */
     private int[] oneConfigButton(int panelX, int panelY, int panelW, int panelH) {
         int w = ghostWidth(FontManager.pf12, "OneConfig");
-        int[] folia = foliaButton(panelX, panelY, panelW, panelH);
-        return new int[] { folia[0] - 6 - w, folia[1], w, 22 };
+        return new int[] { panelX + panelW - 14 - 22 - 6 - w, buttonRowY(panelY, panelH), w, 22 };
     }
 
     /** 只在面板被拖动过之后出现，用来把它送回默认摆位。 */
     private int[] restorePositionButton(int panelX, int panelY, int panelW, int panelH) {
         int[] anchorButton = OneConfigHudBridge.isAvailable()
                 ? oneConfigButton(panelX, panelY, panelW, panelH)
-                : foliaButton(panelX, panelY, panelW, panelH);
+                : collapseButton(panelX, panelY, panelW, panelH);
         return new int[] { anchorButton[0] - 6 - 22, anchorButton[1], 22, 22 };
     }
 
@@ -868,15 +919,27 @@ public class GuiHudEditorPro extends GuiScreen {
     /**
      * 侧边栏每行的高度。
      *
-     * <p>侧边栏不滚动，行高又原本是常量，所以窗口一矮（GUI 缩放调大时 {@code height} 会很小）
-     * 排在后面的分类就整行画不出来，连点都点不到。这里在放不下时按可用高度均分，
-     * 保证任何面板高度下每个分类都可见可点；行高被压到放不下两行文字时只画标题。</p>
+     * <p>放不下时先按可用高度均分，但不再无限压缩：低于 {@link #NAV_ROW_MIN_H} 就固定在那一档，
+     * 多出来的部分靠侧栏内部滚动（{@link #navScroll}）解决 —— 18 像素的行连图标都画不全，
+     * 「都能看见但都看不清」不算是可用。</p>
      */
     private static int navRowHeight(int navH, int count) {
         if (count <= 0) return NAV_ROW_H;
         int available = navH - 12;
         if (count * NAV_ROW_H <= available) return NAV_ROW_H;
-        return Math.max(18, available / count);
+        return Math.max(NAV_ROW_MIN_H, available / count);
+    }
+
+    /** 侧栏内容总高超出可视区时的最大滚动量；放得下时恒为 0。 */
+    private int navMaxScroll(int navH, int count, int rowH) {
+        return Math.max(0, 6 + count * rowH - (navH - 6));
+    }
+
+    private int clampNavScroll(int value) {
+        HudSettingsModel.Category[] categories = HudSettingsModel.categories();
+        int rowH = navRowHeight(panelHeight() - HEADER_H - FOOTER_H, categories.length);
+        return Math.max(0, Math.min(navMaxScroll(panelHeight() - HEADER_H - FOOTER_H,
+                categories.length, rowH), value));
     }
 
     private void drawNav(CFontRenderer fr, int navX, int navY, int navW, int navH,
@@ -885,9 +948,11 @@ public class GuiHudEditorPro extends GuiScreen {
         boolean compact = navW < 100;
         int rowH = navRowHeight(navH, categories.length);
         boolean twoLines = rowH >= 32;
+        navScroll = Math.max(0, Math.min(navMaxScroll(navH, categories.length, rowH), navScroll));
+        int navTop = navY + 6 - navScroll;
 
         int selected = clampCategory();
-        float targetY = navY + 6 + selected * rowH;
+        float targetY = navTop + selected * rowH;
         // 橡皮筋：30% 行程就走完 90%，在 60% 处越过目标再收回来 —— 「弹过去钉住」而不是「漂过去停下」，
         // 和播放器侧栏那条高亮是同一档手感。第一次见到这个键时通道直接落在目标上，不会从 0 飞过来。
         navIndicator = motion("nav.indicator", targetY, INDICATOR_MS, TransitionCurveCache.SPRING_LAND);
@@ -914,7 +979,7 @@ public class GuiHudEditorPro extends GuiScreen {
             SkijaGfx.translate(0f, drop);
             try {
                 drawNavRow(fr, category, index, selected, compact, twoLines,
-                        navX, navY, navW, rowH, mouseX, mouseY - drop);
+                        navX, navTop, navW, rowH, navH, mouseX, mouseY - drop);
             } finally {
                 SkijaGfx.popMatrix();
                 layerAlpha = rowOuter;
@@ -925,8 +990,9 @@ public class GuiHudEditorPro extends GuiScreen {
     /** 侧栏的一行：底色、图标、标题与项数。纵向偏移由调用方用矩阵叠上，命中矩形本身不动。 */
     private void drawNavRow(CFontRenderer fr, HudSettingsModel.Category category, int index,
                             int selected, boolean compact, boolean twoLines,
-                            int navX, int navY, int navW, int rowH, int mouseX, int mouseY) {
-        int rowY = navY + 6 + index * rowH;
+                            int navX, int navTop, int navW, int rowH, int navH, int mouseX, int mouseY) {
+        int rowY = navTop + index * rowH;
+        if (rowY + rowH < navTop - 4 || rowY > navTop + navH + 4) return;
         boolean hovered = isInside(mouseX, mouseY, navX + 6, rowY, navW - 12, rowH - 4);
         float hp = named("nav." + index, hovered && index != selected);
         if (hp > 0.02f) {
@@ -1138,8 +1204,22 @@ public class GuiHudEditorPro extends GuiScreen {
         String description = row.entry.description;
         if (description != null && !description.isEmpty()) {
             double available = Math.max(20, controlLeft - (row.x + 14) - 10);
-            drawText(fr, fr.trim(description, available), row.x + 14, row.y + 22,
-                    mix(TEXT_TERTIARY, TEXT_SECONDARY, hp));
+            // 两行收住：窄面板下说明被单行硬截比看不全更难受；第二行仍放不下才省略号。
+            String[] lines = wrapToTwoLines(fr, description, available);
+            drawText(fr, lines[0], row.x + 14, row.y + 21, mix(TEXT_TERTIARY, TEXT_SECONDARY, hp));
+            if (lines[1] != null) {
+                drawText(fr, lines[1], row.x + 14, row.y + 33, mix(TEXT_TERTIARY, TEXT_SECONDARY, hp));
+            }
+        }
+
+        // 搜索跳转后的定位脉冲：一条 accent 亮带从整行扫出再淡掉，指明「你要的那一条在这里」。
+        if (row.entry == flashEntry) {
+            float pulse = flashPulse();
+            if (pulse > 0.01f) {
+                drawRoundedRect(row.x + 2, row.y + 1, row.w - 4, row.h - 2, CARD_RADIUS - 3,
+                        fade(row.accent, 0.28f * pulse));
+                drawRoundedRect(row.x + 3, row.y + 1, 2, row.h - 2, 1, fade(row.accent, pulse));
+            }
         }
 
         int centerY = row.y + row.h / 2;
@@ -1160,11 +1240,28 @@ public class GuiHudEditorPro extends GuiScreen {
             case CHOICE: {
                 String value = row.entry.getValueText();
                 int pillW = choicePillWidth(fr, value);
-                drawRoundedRect(rowRight - pillW, centerY - 10, pillW, 20, 10, mix(BUTTON_BG, BUTTON_HOVER, hp));
+                boolean open = openChoice == row.entry;
+                drawRoundedRect(rowRight - pillW, centerY - 10, pillW, 20, 10,
+                        open ? mix(BUTTON_HOVER, 0x4AFFFFFF, 0.5f) : mix(BUTTON_BG, BUTTON_HOVER, hp));
                 drawText(fr, fr.trim(value, pillW - 30), rowRight - pillW + 11, centerY - 3, TEXT_PRIMARY);
-                // 右折角图标替代原来的 「›」 字符：这个字号下标点会被字形图集压成一个模糊的点。
-                drawIcon(FontManager.settingsIcon24, HudSettingsIcons.CHEVRON_RIGHT,
-                        rowRight - 11 + hp * 1.5, centerY, mix(TEXT_SECONDARY, TEXT_PRIMARY, hp));
+                // 展开时箭头绕自身中心翻 180°（朝下变朝上）：方向本身就是「再点一下会收起」的提示。
+                double chevCx = rowRight - 11 + hp * 1.5;
+                int chevColor = mix(TEXT_SECONDARY, TEXT_PRIMARY, Math.max(hp, open ? 1f : 0f));
+                if (open) {
+                    SkijaGfx.pushMatrix();
+                    SkijaGfx.translate(chevCx, centerY);
+                    SkijaGfx.rotateZ(180f);
+                    SkijaGfx.translate(-chevCx, -centerY);
+                    try {
+                        drawIcon(FontManager.settingsIcon24, HudSettingsIcons.CHEVRON_RIGHT,
+                                chevCx, centerY, chevColor);
+                    } finally {
+                        SkijaGfx.popMatrix();
+                    }
+                } else {
+                    drawIcon(FontManager.settingsIcon24, HudSettingsIcons.CHEVRON_RIGHT,
+                            chevCx, centerY, chevColor);
+                }
                 break;
             }
             case ACTION: {
@@ -1477,14 +1574,42 @@ public class GuiHudEditorPro extends GuiScreen {
         int panelW = panel[2];
         int panelH = panel[3];
 
+        // 下拉展开时它是最顶层：点选项就选，点其它任何地方先收起并吞掉这一下 ——
+        // 否则收起的那次点击会穿透到下面的行，把一个「只是想关掉」的动作变成一次误改。
+        if (openChoice != null) {
+            int[] drop = choiceDropdownBounds(FontManager.pf12, panelX, panelY, panelW, panelH);
+            if (drop != null && isInside(mouseX, mouseY, drop[0], drop[1], drop[2], drop[3])) {
+                int item = choiceItemAt(mouseX, mouseY, drop);
+                if (item >= 0) {
+                    String[] choices = openChoice.getChoices();
+                    if (item < choices.length) {
+                        openChoice.setChoice(choices[item]);
+                        HudConfig.save();
+                    }
+                }
+            }
+            openChoice = null;
+            return;
+        }
+
         if (editingColor != HudSettingsModel.ColorTarget.NONE
                 && handlePickerClick(mouseX, mouseY, button, panelX, panelY, panelW, panelH)) {
             return;
         }
 
+        // 快捷配置小窗：点选项/滑条/按钮都吃掉这一下；点其它任何地方收起选中态。
+        if (stage.hasSelection() || popGate > 0.01f) {
+            int[] pop = widgetPopoverBounds();
+            if (isInside(mouseX, mouseY, pop[0], pop[1], pop[2], pop[3])) {
+                handleWidgetPopoverClick(mouseX, mouseY, pop);
+                return;
+            }
+        }
+
         if (!isInside(mouseX, mouseY, panelX, panelY, panelW, panelH)) {
-            // 点击面板之外：关掉取色器与搜索焦点，剩下的交给 HUD 拖拽（在 drawScreen 里按鼠标状态处理）。
+            // 点击面板之外：关掉取色器与搜索焦点，剩下的交给 HUD 舞台（在 drawScreen 里按鼠标状态处理）。
             editingColor = HudSettingsModel.ColorTarget.NONE;
+            openChoice = null;
             if (searchInput != null) searchInput.setFocused(false);
             return;
         }
@@ -1504,16 +1629,6 @@ public class GuiHudEditorPro extends GuiScreen {
                     switchToOneConfig();
                     return;
                 }
-            }
-            int[] classic = classicButton(panelX, panelY, panelW, panelH);
-            if (isInside(mouseX, mouseY, classic[0], classic[1], classic[2], classic[3])) {
-                switchToClassic();
-                return;
-            }
-            int[] folia = foliaButton(panelX, panelY, panelW, panelH);
-            if (isInside(mouseX, mouseY, folia[0], folia[1], folia[2], folia[3])) {
-                switchToFolia();
-                return;
             }
             if (panelMoved()) {
                 int[] home = restorePositionButton(panelX, panelY, panelW, panelH);
@@ -1555,12 +1670,15 @@ public class GuiHudEditorPro extends GuiScreen {
         int bodyH = panelH - HEADER_H - FOOTER_H;
         HudSettingsModel.Category[] categories = HudSettingsModel.categories();
         if (mouseX < panelX + navW) {
-            // 行高必须和 drawNav 用同一个算法，否则窗口矮的时候点击会落到别的分类上。
+            // 行高与滚动偏移必须和 drawNav 用同一套算法，否则窗口矮的时候点击会落到别的分类上。
             int navRowH = navRowHeight(bodyH, categories.length);
+            int navMax = Math.max(0, Math.min(navMaxScroll(bodyH, categories.length, navRowH), navScroll));
             for (int index = 0; index < categories.length; index++) {
-                int rowY = bodyY + 6 + index * navRowH;
+                int rowY = bodyY + 6 - navMax + index * navRowH;
                 if (isInside(mouseX, mouseY, panelX + 6, rowY, navW - 12, navRowH - 4)) {
                     categoryIndex = index;
+                    // 搜索结果是全分类平铺的虚拟页：从它点侧栏回某个分类，搜索自然结束。
+                    // 「跨分类找同一个词」由搜索页本身承担，不需要在这里保留关键词。
                     editingColor = HudSettingsModel.ColorTarget.NONE;
                     clearSearch();
                     return;
@@ -1592,13 +1710,135 @@ public class GuiHudEditorPro extends GuiScreen {
         if (!isInside(mouseX, mouseY, contentX, listY, contentW, listH)) return;
 
         layoutRows(contentX, listY, contentW, categories[clampCategory()]);
+        boolean searching = !searchQuery.trim().isEmpty();
         for (int index = 0; index < rows.size(); index++) {
             Row row = rows.get(index);
             if (row.isGroupHeader()) continue;
             if (!isInside(mouseX, mouseY, row.x, row.y, row.w, row.h)) continue;
-            activateRow(row, mouseX, mouseY);
+            if (searching) {
+                // 搜索结果点击 = 跳转：到它所属的分类页、滚到它面前、亮一下。
+                // 在结果页里直接拨开关看似更快，但用户会因此搞不清「我现在改的是哪一页的哪一项」。
+                jumpToEntry(row.entry, contentX, listY, contentW);
+            } else {
+                activateRow(row, mouseX, mouseY);
+            }
             return;
         }
+    }
+
+    /**
+     * 从搜索结果跳到条目所在的分类页：切分类、清搜索、把滚动定位到目标行附近，
+     * 并让该行做一次高亮脉冲。定位用目标滚动值直接落位，不再从 0 惯性滑过去 ——
+     * 用户刚点过它，知道自己在找什么，动画反而挡路。
+     */
+    private void jumpToEntry(HudSettingsModel.Entry target, int contentX, int listY, int contentW) {
+        HudSettingsModel.Category[] categories = HudSettingsModel.categories();
+        int targetCategory = clampCategory();
+        for (int c = 0; c < categories.length; c++) {
+            for (HudSettingsModel.Group group : categories[c].groups) {
+                for (HudSettingsModel.Entry entry : group.entries) {
+                    if (entry == target) {
+                        targetCategory = c;
+                        break;
+                    }
+                }
+            }
+        }
+        clearSearch();
+        categoryIndex = targetCategory;
+        // 借 layoutRows 算出目标行在未滚动状态下的纵坐标，再反推滚动目标。
+        float savedScroll = displayScroll;
+        displayScroll = 0f;
+        layoutRows(contentX, listY, contentW, categories[targetCategory]);
+        displayScroll = savedScroll;
+        for (int index = 0; index < rows.size(); index++) {
+            Row row = rows.get(index);
+            if (row.entry == target) {
+                scrollByCategory[targetCategory] = Math.max(0, row.y - listY - 24);
+                displayScroll = scrollByCategory[targetCategory];
+                break;
+            }
+        }
+        flashEntry = target;
+        flashDeadline = System.currentTimeMillis() + FLASH_MS;
+    }
+
+    /** 快捷小窗内的点击：宽高滑条（复用行内滑条的拖动状态）、整体缩放滑条、居中与复位。 */
+    private void handleWidgetPopoverClick(int mouseX, int mouseY, int[] pop) {
+        HudOverlayStage.Kind kind = stage.selected();
+        boolean lyrics = kind == HudOverlayStage.Kind.LYRICS;
+        int pad = 14;
+        int right = pop[0] + pop[2] - pad;
+        int trackX = right - VALUE_W - TRACK_W;
+        int y = pop[1] + 34;
+        if (lyrics) {
+            if (tryBeginPopoverSlider(HudSetting.OSD_WIDTH, mouseX, mouseY, y, trackX)) return;
+            y += 30;
+            if (tryBeginPopoverSlider(HudSetting.OSD_HEIGHT, mouseX, mouseY, y, trackX)) return;
+            y += 30;
+        }
+        // 整体缩放滑条。
+        int sy = y + 12;
+        if (mouseX >= trackX - 8 && mouseX <= trackX + TRACK_W + 8
+                && mouseY >= sy - 8 && mouseY <= sy + 18) {
+            draggingPopoverScale = true;
+            popoverScaleTrackX = trackX;
+            setPopoverScaleFromMouse(mouseX, trackX, kind);
+            return;
+        }
+        y += 34;
+        int btnW = (pop[2] - pad * 2 - 8) / 2;
+        int[] center = { pop[0] + pad, y, btnW, 22 };
+        int[] reset = { pop[0] + pad + btnW + 8, y, btnW, 22 };
+        if (isInside(mouseX, mouseY, center[0], center[1], center[2], center[3])) {
+            if (kind == HudOverlayStage.Kind.INFO) {
+                HudConfig.infoX = 0.5f;
+            } else {
+                HudConfig.lyricX = 0.5f;
+            }
+            HudConfig.save();
+            return;
+        }
+        if (isInside(mouseX, mouseY, reset[0], reset[1], reset[2], reset[3])) {
+            if (kind == HudOverlayStage.Kind.INFO) {
+                HudConfig.infoX = 0.02f;
+                HudConfig.infoY = 0.02f;
+                HudConfig.infoScale = 1.0f;
+            } else {
+                HudConfig.lyricX = 0.5f;
+                HudConfig.lyricY = 0.85f;
+                HudConfig.lyricScale = 1.0f;
+                HudConfig.lyricWidth = 450.0f;
+                HudConfig.lyricHeight = 120.0f;
+                HudSettingsModel.syncLyricViewportModuleValues();
+            }
+            HudConfig.save();
+            return;
+        }
+    }
+
+    /** 小窗里宽高滑条的按下：命中轨道附近才开始拖（与设置页行内滑条同一条防误触规则）。 */
+    private boolean tryBeginPopoverSlider(HudSetting setting, int mouseX, int mouseY, int y, int trackX) {
+        int sy = y + 12;
+        if (mouseX >= trackX - 8 && mouseX <= trackX + TRACK_W + 8
+                && mouseY >= sy - 8 && mouseY <= sy + 18) {
+            draggingSlider = setting;
+            draggingSliderTrackX = trackX;
+            setSliderFromMouse(setting, mouseX, trackX);
+            return true;
+        }
+        return false;
+    }
+
+    private void setPopoverScaleFromMouse(int mouseX, int trackX, HudOverlayStage.Kind kind) {
+        float progress = clamp01((mouseX - trackX) / (float) TRACK_W);
+        float value = HudConfig.SCALE_MIN + (HudConfig.SCALE_MAX - HudConfig.SCALE_MIN) * progress;
+        if (kind == HudOverlayStage.Kind.INFO) {
+            HudConfig.infoScale = HudConfig.clampScale(value);
+        } else {
+            HudConfig.lyricScale = HudConfig.clampScale(value);
+        }
+        settingsDirty = true;
     }
 
     private void resetPanelPosition() {
@@ -1632,9 +1872,13 @@ public class GuiHudEditorPro extends GuiScreen {
                 break;
             }
             case TOGGLE:
-            case CHOICE:
             case ACTION:
                 row.entry.activate();
+                break;
+            case CHOICE:
+                // 展开下拉而不是盲切下一档：选项多于一档时，「点一下循环」意味着用户永远
+                // 不知道还有哪些档位、当前是第几档。同一行再点一次收起。
+                openChoice = openChoice == row.entry ? null : row.entry;
                 break;
             case COLOR:
                 beginColorEdit(row.entry);
@@ -1689,6 +1933,147 @@ public class GuiHudEditorPro extends GuiScreen {
         return false;
     }
 
+    // ==================== CHOICE 下拉浮层 ====================
+
+    /**
+     * 下拉浮层的矩形 {@code [x, y, w, h, itemH, visible]}，右对齐锚在那一行的药丸下方；
+     * 放不下就向上翻。{@code null} 表示找不到锚行（条目被条件显隐收走了），那一帧不画也不吃点击。
+     */
+    private int[] choiceDropdownBounds(CFontRenderer fr, int panelX, int panelY, int panelW, int panelH) {
+        if (openChoice == null) return null;
+        Row anchor = null;
+        for (int index = 0; index < rows.size(); index++) {
+            if (rows.get(index).entry == openChoice) {
+                anchor = rows.get(index);
+                break;
+            }
+        }
+        if (anchor == null) return null;
+        String[] choices = openChoice.getChoices();
+        boolean hinted = openChoice.hasChoiceHints();
+        int w = DROP_MIN_W;
+        for (String choice : choices) {
+            if (choice == null) continue;
+            w = Math.max(w, fr.getStringWidth(choice) + 58);
+        }
+        w = Math.min(DROP_MAX_W, w);
+        int itemH = hinted ? DROP_ITEM_H : DROP_ITEM_COMPACT_H;
+        int visible = Math.min(choices.length, DROP_MAX_VISIBLE);
+        int h = visible * itemH + 8;
+        int bodyY = panelY + HEADER_H;
+        int bodyBottom = panelY + panelH - FOOTER_H;
+        int x = Math.max(panelX + 8, Math.min(panelX + panelW - 8 - w, anchor.x + anchor.w - w));
+        int y = anchor.y + anchor.h + 4;
+        // 面板里放不下就向上翻：锚行上面那段高度足够时直接翻，不足时按可用空间再压可见条数。
+        if (y + h > bodyBottom) {
+            int upY = anchor.y - 4 - h;
+            if (upY >= bodyY) {
+                y = upY;
+            } else {
+                int fit = Math.max(1, (bodyBottom - anchor.y - 12) / itemH);
+                if (fit < visible) {
+                    visible = fit;
+                    h = visible * itemH + 8;
+                }
+                y = Math.min(anchor.y + anchor.h + 4, bodyBottom - h);
+            }
+        }
+        return new int[] { x, y, w, h, itemH, visible };
+    }
+
+    /** 下拉里第几项在这个 y 上；返回 {@code -1} 表示点在浮层空白处。 */
+    private int choiceItemAt(int mouseX, int mouseY, int[] drop) {
+        int inner = mouseY - drop[1] - 4;
+        if (inner < 0) return -1;
+        int index = inner / drop[4];
+        if (index >= drop[5]) return -1;
+        return index;
+    }
+
+    private void drawChoiceDropdown(CFontRenderer fr, int panelX, int panelY, int panelW, int panelH,
+                                    int mouseX, int mouseY) {
+        int[] drop = choiceDropdownBounds(fr, panelX, panelY, panelW, panelH);
+        if (drop == null) return;
+        String[] choices = openChoice == null ? new String[0] : openChoice.getChoices();
+        String[] hints = openChoice == null ? new String[0] : openChoice.getChoiceHints();
+        String current = openChoice == null ? null : openChoice.getValueText();
+        int x = drop[0];
+        int y = drop[1];
+        int w = drop[2];
+        int h = drop[3];
+        int itemH = drop[4];
+        int visible = drop[5];
+
+        drawSoftShadow(x, y, w, h, 12);
+        drawRoundedRect(x, y, w, h, 12, 0xF71A202A);
+        drawRoundedRect(x + 6, y, w - 12, 1, 1, PANEL_EDGE);
+
+        beginScissor(x, y, w, h);
+        try {
+            for (int index = 0; index < choices.length && index < visible; index++) {
+                String choice = choices[index];
+                int itemY = y + 4 + index * itemH;
+                boolean isCurrent = choice.equals(current);
+                boolean hovered = isInside(mouseX, mouseY, x + 4, itemY, w - 8, itemH);
+                float hp = named("drop." + index, hovered && !isCurrent);
+                if (isCurrent) {
+                    drawRoundedRect(x + 4, itemY, w - 8, itemH, 8, 0x26FFFFFF);
+                } else if (hp > 0.02f) {
+                    drawRoundedRect(x + 4, itemY, w - 8, itemH, 8, fade(ROW_HOVER, hp));
+                }
+                int ink = isCurrent ? TEXT_PRIMARY : mix(TEXT_SECONDARY, TEXT_PRIMARY, hp);
+                drawText(FontManager.pf12bold, fr.trim(choice, w - 40), x + 14, itemY + (itemH - 12) / 2 - 1, ink);
+                if (isCurrent) {
+                    drawIcon(FontManager.settingsIcon24, HudSettingsIcons.CHECK,
+                            x + w - 16, itemY + itemH / 2.0, 0xFF8FD4A8);
+                }
+                if (hints != null && index < hints.length && hints[index] != null && !hints[index].isEmpty()) {
+                    double room = w - 28;
+                    drawText(fr, fr.trim(hints[index], room), x + 14, itemY + itemH - 13, TEXT_TERTIARY);
+                }
+            }
+        } finally {
+            endScissor();
+        }
+        if (choices.length > visible) {
+            // 条数太多被裁掉时给一个明确的「下面还有」记号，而不是无声截断。
+            drawCenteredText(fr, "… 共 " + choices.length + " 项",
+                    x + w / 2.0, y + h - 11, TEXT_TERTIARY);
+        }
+    }
+
+    /** 搜索跳转定位脉冲的剩余强度（1 → 0），过期后自动清引用。 */
+    private float flashPulse() {
+        long now = System.currentTimeMillis();
+        if (now >= flashDeadline) {
+            flashEntry = null;
+            return 0f;
+        }
+        return clamp01((flashDeadline - now) / (float) FLASH_MS);
+    }
+
+    /**
+     * 把说明文字按宽度贪心折成至多两行；第二行放不下时以省略号收尾。
+     * 返回数组的第二项可以为 {@code null}（一句话就装得下）。
+     */
+    private static String[] wrapToTwoLines(CFontRenderer fr, String text, double width) {
+        String trimmed = fr.trim(text, width);
+        if (trimmed.equals(text)) return new String[] { text, null };
+        // 第一行贪心装词：按空格找最后一个装得下的断点，找得到就在词间断行。
+        int lastSpace = -1;
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == ' ') {
+                if (fr.getStringWidth(text.substring(0, i)) > width) break;
+                lastSpace = i;
+            }
+        }
+        int cut = lastSpace > 0 ? lastSpace : Math.max(1, trimmed.length());
+        String first = text.substring(0, cut).trim();
+        String rest = text.substring(cut).trim();
+        if (rest.isEmpty()) return new String[] { fr.trim(first, width), null };
+        return new String[] { first, fr.trim(rest, width) };
+    }
+
     @Override
     protected void mouseReleased(int mouseX, int mouseY, int state) {
         boolean adaptive = beginAdaptiveLayout();
@@ -1716,12 +2101,20 @@ public class GuiHudEditorPro extends GuiScreen {
         draggingSaturationBrightness = false;
         draggingHue = false;
         draggingSlider = null;
+        draggingPopoverScale = false;
         super.mouseReleased(mouseX, mouseY, state);
     }
 
     private void updateSliderWhileDragging(int mouseX) {
         if (draggingSlider != null && Mouse.isButtonDown(0)) {
             setSliderFromMouse(draggingSlider, mouseX, draggingSliderTrackX);
+            // 快捷小窗里的宽高直接改 lyricWidth/Height：换行缓存按宽度分桶，会自动重排。
+            if (draggingSlider == HudSetting.OSD_WIDTH || draggingSlider == HudSetting.OSD_HEIGHT) {
+                HudSettingsModel.syncLyricViewportModuleValues();
+            }
+        }
+        if (draggingPopoverScale && Mouse.isButtonDown(0)) {
+            setPopoverScaleFromMouse(mouseX, popoverScaleTrackX, stage.selected());
         }
     }
 
@@ -1795,6 +2188,16 @@ public class GuiHudEditorPro extends GuiScreen {
             if (keyCode == Keyboard.KEY_ESCAPE || keyCode == Keyboard.KEY_RCONTROL) {
                 resetConfirmationVisible = false;
             }
+            return;
+        }
+        // 下拉展开时 ESC 先收它：这是一层临时浮层，语义上它比「关掉整个界面」更近。
+        if (openChoice != null && keyCode == Keyboard.KEY_ESCAPE) {
+            openChoice = null;
+            return;
+        }
+        // 其次是叠加层选中态：ESC = 只退出「编辑这一块」，再按一次才退整个界面。
+        if (stage.hasSelection() && keyCode == Keyboard.KEY_ESCAPE) {
+            stage.clearSelection();
             return;
         }
         if (editingColor != HudSettingsModel.ColorTarget.NONE && hexColorInput != null
@@ -1938,72 +2341,168 @@ public class GuiHudEditorPro extends GuiScreen {
         resetConfirmationVisible = false;
     }
 
-    // ==================== HUD 拖拽与预览 ====================
+    // ==================== HUD 舞台渲染与快捷小窗 ====================
 
-    private void handleDrag(boolean lmb, int dWheel, int mx, int my,
-                            int px, int py, int pw, int ph, boolean isInfo) {
-        if (lmb && isInside(mx, my, px, py, pw, ph)
-                && !draggingSaturationBrightness && !draggingHue && draggingSlider == null) {
-            if (!draggingInfo && !draggingLyrics) {
-                if (isInfo) {
-                    draggingInfo = true;
-                } else {
-                    draggingLyrics = true;
-                }
-                dragOffX = mx - px;
-                dragOffY = my - py;
-            }
+    /** 选中块的标识色（与虚线框那套区分开：实线 + 把手 = 「正在编辑这一块」）。 */
+    private static final int INFO_ACCENT = 0xFF7DD3FC;
+    private static final int LYRICS_ACCENT = 0xFFA78BFA;
+    /** 快捷配置小窗宽度；高度随内容（歌词 4 行控件、信息卡 3 行）由 {@link #widgetPopoverH()} 定。 */
+    private static final int WIDGET_POPOVER_W = 208;
+
+    private static int accentOf(HudOverlayStage.Kind kind) {
+        return kind == HudOverlayStage.Kind.INFO ? INFO_ACCENT : LYRICS_ACCENT;
+    }
+
+    private static String titleOf(HudOverlayStage.Kind kind) {
+        return kind == HudOverlayStage.Kind.INFO ? "歌曲信息" : "桌面歌词";
+    }
+
+    /** 从配置算某块叠加层当前的屏幕矩形（与 drawScreen 同一套公式）。 */
+    private int[] widgetRect(HudOverlayStage.Kind kind) {
+        if (kind == HudOverlayStage.Kind.INFO) {
+            int w = (int) (INFO_BASE_W * HudConfig.infoScale);
+            int h = (int) (INFO_BASE_H * HudConfig.infoScale);
+            return new int[] { (int) (HudConfig.infoX * (width - w)), (int) (HudConfig.infoY * (height - h)), w, h };
         }
-        if (!lmb) {
-            if ((isInfo && draggingInfo) || (!isInfo && draggingLyrics)) {
-                HudConfig.save();
-            }
-            if (isInfo) {
-                draggingInfo = false;
-            } else {
-                draggingLyrics = false;
-            }
-            showSnapGuide = false;
+        int w = (int) (HudConfig.lyricWidth * HudConfig.lyricScale);
+        int h = (int) (HudConfig.lyricHeight * HudConfig.lyricScale);
+        return new int[] { (int) (HudConfig.lyricX * (width - w)), (int) (HudConfig.lyricY * (height - h)), w, h };
+    }
+
+    private int widgetPopoverH() {
+        return stage.selected() == HudOverlayStage.Kind.INFO ? 118 : 150;
+    }
+
+    private int widgetPopoverX() {
+        return widgetPopoverBounds()[0];
+    }
+
+    private int widgetPopoverY() {
+        return widgetPopoverBounds()[1];
+    }
+
+    private int[] widgetPopoverBounds() {
+        if (!stage.hasSelection()) return new int[] { 0, 0, WIDGET_POPOVER_W, widgetPopoverH() };
+        return HudOverlayStage.popoverBounds(widgetRect(stage.selected()),
+                WIDGET_POPOVER_W, widgetPopoverH(), width, height);
+    }
+
+    /**
+     * 两块叠加层的编辑态绘制：未选中画虚线框 + 名称；选中画实线描边 + 八个把手 + 尺寸气泡。
+     * 几何全部来自舞台，这里只负责像素。
+     */
+    private void drawStageOverlays(CFontRenderer fr, int[] infoRect, int[] lyricRect, int mouseX, int mouseY) {
+        drawHudSelection(fr, "歌曲信息", infoRect[0], infoRect[1], infoRect[2], infoRect[3],
+                stage.selected() == HudOverlayStage.Kind.INFO ? INFO_ACCENT : 0x667DD3FC);
+        drawHudSelection(fr, "桌面歌词", lyricRect[0], lyricRect[1], lyricRect[2], lyricRect[3],
+                stage.selected() == HudOverlayStage.Kind.LYRICS ? LYRICS_ACCENT : 0x66A78BFA);
+
+        if (!stage.hasSelection()) return;
+        int[] r = stage.selected() == HudOverlayStage.Kind.INFO ? infoRect : lyricRect;
+        int accent = accentOf(stage.selected());
+        // 选中瞬间描边先亮一下再稳住：一次呼吸说明「点到了」，之后安静下来不抢预览的戏。
+        if (stage.selected() != pulsedSelection) {
+            pulsedSelection = stage.selected();
+            selectionPulseChannel.from = selectionPulseChannel.current = 1f;
+            selectionPulseChannel.to = 0f;
+            selectionPulseChannel.startNanos = System.nanoTime();
         }
-        boolean active = isInfo ? draggingInfo : draggingLyrics;
-        if (active) {
-            int nx = Math.max(0, Math.min(Math.max(0, width - pw), mx - dragOffX));
-            int ny = Math.max(0, Math.min(Math.max(0, height - ph), my - dragOffY));
-            int maxX = Math.max(0, width - pw);
-            int maxY = Math.max(0, height - ph);
-            int centerX = maxX / 2;
-            int centerY = maxY / 2;
-            boolean snapX = Math.abs(nx - centerX) < SNAP_THRESHOLD;
-            boolean snapY = Math.abs(ny - centerY) < SNAP_THRESHOLD;
-            showSnapGuide = snapX || snapY;
-            nx = softenSnap(nx, centerX);
-            ny = softenSnap(ny, centerY);
-            if (isInfo) {
-                HudConfig.infoX = maxX > 0 ? (float) nx / maxX : 0;
-                HudConfig.infoY = maxY > 0 ? (float) ny / maxY : 0;
-            } else {
-                HudConfig.lyricX = maxX > 0 ? (float) nx / maxX : 0;
-                HudConfig.lyricY = maxY > 0 ? (float) ny / maxY : 0;
-            }
+        float pulse = motion(selectionPulseChannel, 0f, 900.0);
+        if (pulse > 0.02f) {
+            drawRoundedRect(r[0] - 2, r[1] - 2, r[2] + 4, r[3] + 4, 6, fade(accent, 0.30f * pulse));
         }
-        if (dWheel != 0 && isInside(mx, my, px, py, pw, ph)) {
-            float delta = dWheel > 0 ? 0.05f : -0.05f;
-            if (isInfo) {
-                HudConfig.infoScale = clampHudScale(HudConfig.infoScale + delta);
-            } else {
-                HudConfig.lyricScale = clampHudScale(HudConfig.lyricScale + delta);
-            }
-            HudConfig.save();
+        // 实线描边：四条 1px 矩形拼一圈，比虚线「重」一档，表达「这一块正在被编辑」。
+        drawRoundedRect(r[0], r[1], r[2], 1.5, 1, accent);
+        drawRoundedRect(r[0], r[1] + r[3] - 1.5, r[2], 1.5, 1, accent);
+        drawRoundedRect(r[0], r[1], 1.5, r[3], 1, accent);
+        drawRoundedRect(r[0] + r[2] - 1.5, r[1], 1.5, r[3], 1, accent);
+        for (int[] handle : stage.handleRects(r)) {
+            boolean hovered = isInside(mouseX, mouseY, handle[0], handle[1], handle[2], handle[3]);
+            drawRoundedRect(handle[0] - 1, handle[1] - 1, handle[2] + 2, handle[3] + 2, 5, 0xE6141922);
+            drawRoundedRect(handle[0], handle[1], handle[2], handle[3], 4, hovered ? accent : 0xFFF2F5FA);
+        }
+
+        if (stage.bubble != null) {
+            // 尺寸读数气泡：拖把手时贴着选中块上沿中央，颜色跟块的 accent。
+            int textW = fr.getStringWidth(stage.bubble);
+            int chipW = textW + 18;
+            int chipX = Math.max(4, Math.min(width - chipW - 4, r[0] + (r[2] - chipW) / 2));
+            int chipY = Math.max(4, r[1] - 24);
+            drawRoundedRect(chipX, chipY, chipW, 18, 9, 0xE61A202A);
+            drawText(FontManager.pf12bold, stage.bubble, chipX + 9, chipY + 5, accent);
         }
     }
 
-    /** 中心吸附从硬跳降级为弱磁吸：贴近时辅助对齐，仍可无感拖离。 */
-    private static int softenSnap(int value, int center) {
-        int delta = center - value;
-        int distance = Math.abs(delta);
-        if (distance >= SNAP_THRESHOLD) return value;
-        if (distance <= 1) return center;
-        return value + (int) Math.round(delta * SNAP_STRENGTH);
+    /** 选中块旁的快捷配置小窗：宽度/高度（歌词）或整体缩放（信息卡）+ 居中/复位两个动作。 */
+    private void drawWidgetPopover(CFontRenderer fr, int mouseX, int mouseY) {
+        if (!stage.hasSelection() && popGate <= 0.01f) return;
+        int[] pop = widgetPopoverBounds();
+        HudOverlayStage.Kind kind = stage.selected();
+        int accent = accentOf(kind);
+        boolean lyrics = kind == HudOverlayStage.Kind.LYRICS;
+
+        drawSoftShadow(pop[0], pop[1], pop[2], pop[3], 13);
+        drawRoundedRect(pop[0], pop[1], pop[2], pop[3], 13, 0xF71A202A);
+        drawRoundedRect(pop[0] + 6, pop[1], pop[2] - 12, 1, 1, PANEL_EDGE);
+        drawIcon(FontManager.settingsIcon24, HudSettingsIcons.RULER, pop[0] + 18, pop[1] + 16, accent);
+        drawText(FontManager.pf12bold, titleOf(kind) + " · 快捷调整", pop[0] + 27, pop[1] + 12, TEXT_PRIMARY);
+
+        int pad = 14;
+        int right = pop[0] + pop[2] - pad;
+        int trackX = right - VALUE_W - TRACK_W;
+        int y = pop[1] + 34;
+        if (lyrics) {
+            drawPopoverSlider(fr, HudSetting.OSD_WIDTH, trackX, right, y, accent, mouseX, mouseY);
+            y += 30;
+            drawPopoverSlider(fr, HudSetting.OSD_HEIGHT, trackX, right, y, accent, mouseX, mouseY);
+            y += 30;
+        }
+        // 整体缩放：信息卡唯一可调的尺寸维度；歌词也提供（与滚轮同一条钳制）。
+        drawText(fr, "整体缩放", pop[0] + pad, y + 5, TEXT_SECONDARY);
+        String scaleText = String.format("%.2f×",
+                kind == HudOverlayStage.Kind.INFO ? HudConfig.infoScale : HudConfig.lyricScale);
+        drawText(fr, scaleText, right - fr.getStringWidth(scaleText), y + 5, TEXT_PRIMARY);
+        int sy = y + 16;
+        drawRoundedRect(trackX, sy + 3, TRACK_W, 4, 2, TRACK_BG);
+        float span = HudConfig.SCALE_MAX - HudConfig.SCALE_MIN;
+        float value = (kind == HudOverlayStage.Kind.INFO ? HudConfig.infoScale : HudConfig.lyricScale);
+        float progress = clamp01((value - HudConfig.SCALE_MIN) / span);
+        double fillW = TRACK_W * progress;
+        if (fillW > 0.5) drawRoundedRect(trackX, sy + 3, fillW, 4, 2, accent);
+        drawRoundedRect(trackX + fillW - 5, sy - 1, 10, 10, 5, 0xFFF6F8FC);
+        y += 34;
+
+        int btnW = (pop[2] - pad * 2 - 8) / 2;
+        int[] center = { pop[0] + pad, y, btnW, 22 };
+        int[] reset = { pop[0] + pad + btnW + 8, y, btnW, 22 };
+        drawGhostButton("wpop.center", fr, HudSettingsIcons.MOVE, "水平居中",
+                center, mouseX, mouseY, TEXT_PRIMARY, accent);
+        drawGhostButton("wpop.reset", fr, HudSettingsIcons.RESTORE, "复位",
+                reset, mouseX, mouseY, TEXT_SECONDARY, 0xFFE58B7B);
+    }
+
+    /** 快捷小窗里的一条滑条（标签 + 值 + 轨道），样式与设置页行内滑条一致。 */
+    private void drawPopoverSlider(CFontRenderer fr, HudSetting setting, int trackX, int right,
+                                   int y, int accent, int mouseX, int mouseY) {
+        int labelW = fr.getStringWidth(setting.getLabel());
+        drawText(fr, setting.getLabel(), trackX - 10 - labelW, y, TEXT_SECONDARY);
+        String value = HudSettingsModel.formatValue(setting, setting.getValue());
+        drawText(fr, value, right - fr.getStringWidth(value), y, TEXT_PRIMARY);
+        int sy = y + 12;
+        boolean dragging = draggingSlider == setting;
+        boolean hovered = isInside(mouseX, mouseY, trackX - 8, sy - 8, TRACK_W + 16, 20);
+        float span = setting.getMax() - setting.getMin();
+        float progress = span <= 0f ? 0f : clamp01((setting.getValue() - setting.getMin()) / span);
+        drawRoundedRect(trackX, sy + 3, TRACK_W, 4, 2, TRACK_BG);
+        double fillW = TRACK_W * progress;
+        if (fillW > 0.5) drawRoundedRect(trackX, sy + 3, fillW, 4, 2, accent);
+        double knobX = trackX + fillW;
+        double radius = 5.0 + (dragging ? 1.7 : hovered ? 1.0 : 0.0);
+        if (hovered || dragging) {
+            drawRoundedRect(knobX - radius - 3, sy + 5 - radius - 3, (radius + 3) * 2, (radius + 3) * 2,
+                    radius + 3, fade(accent, 0.24f));
+        }
+        drawRoundedRect(knobX - radius, sy + 5 - radius, radius * 2, radius * 2, radius, 0xFFF6F8FC);
     }
 
     private boolean hasLiveInfoPreview() {
@@ -2062,23 +2561,7 @@ public class GuiHudEditorPro extends GuiScreen {
         drawText(fr, title, x + 21, labelY, 0xFFE8EDF6);
     }
 
-    // ==================== 新旧界面切换 ====================
-
-    /** 切到经典界面，并把选择记到配置里，下次打开直接是这一套。 */
-    private void switchToClassic() {
-        HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_CLASSIC;
-        HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_BUILTIN;
-        HudConfig.save();
-        mc.setScreen(new GuiHudEditor());
-    }
-
-    /** 切到 Folia 样式界面（居中大窗，移植自 本项目 的设置弹窗）。 */
-    private void switchToFolia() {
-        HudConfig.hudEditorStyle = HudConfig.HUD_EDITOR_STYLE_FOLIA;
-        HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_BUILTIN;
-        HudConfig.save();
-        mc.setScreen(new GuiHudEditorFolia());
-    }
+    // ==================== 外部界面切换 ====================
 
     /** 切到 OneConfig 的真实 UI，并把选择记到配置里。 */
     private void switchToOneConfig() {
@@ -2421,10 +2904,6 @@ public class GuiHudEditorPro extends GuiScreen {
             Gui.drawRect(x, i, x + 1, Math.min(i + seg, y + h), color);
             Gui.drawRect(x + w - 1, i, x + w, Math.min(i + seg, y + h), color);
         }
-    }
-
-    private static float clampHudScale(float value) {
-        return Math.max(HudConfig.SCALE_MIN, Math.min(HudConfig.SCALE_MAX, value));
     }
 
     private static float clamp01(float value) {

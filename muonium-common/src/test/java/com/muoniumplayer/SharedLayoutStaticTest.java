@@ -77,10 +77,6 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/core/screens/GuiUpdateNotice.java",
             "com/muoniumplayer/core/screens/RenderLayerNotice.java",
             "com/muoniumplayer/core/screens/TitleMenuAnnouncementButton.java",
-            "com/muoniumplayer/core/screens/hud/GuiHudEditor.java",
-            "com/muoniumplayer/core/screens/hud/GuiHudEditorPro.java",
-            "com/muoniumplayer/core/screens/hud/GuiHudEditorFolia.java",
-            "com/muoniumplayer/core/screens/hud/HudEditorLayout.java",
             "com/muoniumplayer/core/screens/hud/HudSettingsModel.java"));
 
     /** 只在部分树存在的（mixin 注入点、各树网络通道）。 */
@@ -102,7 +98,6 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/MultiLoaderStaticTest.java",
             "com/muoniumplayer/Port1211StaticTest.java",
             "com/muoniumplayer/core/rendering/animation/AnimationSpeedStaticTest.java",
-            "com/muoniumplayer/core/screens/hud/FoliaPanelRasterProbeTest.java",
             "com/muoniumplayer/core/settings/PlayerFadeSpeedProbeTest.java",
             "com/muoniumplayer/render/skija/Port121StaticTest.java",
             "com/muoniumplayer/render/skija/Port262StaticTest.java",

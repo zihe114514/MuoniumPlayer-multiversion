@@ -78,11 +78,17 @@ public abstract class GuiScreen extends Screen {
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
         // 1.8.9 默认行为：ESC 关闭界面。
         if (keyCode == Keyboard.KEY_ESCAPE) {
-            // 26.2 把「当前界面」挪到了 Minecraft#gui 上：mc.gui.setScreen(...) 才是 1.8.9
-            // displayGuiScreen / Yarn setScreen 的等价物。Minecraft#setScreenAndShow 会顺手
-            // 强制渲染一帧，在关闭界面的路径上多渲染一帧会把我们自己的绘制递归进去。
-            mc.gui.setScreen(null);
+            closeScreen();
         }
+    }
+
+    /**
+     * 关闭当前界面（1.8.9 的 {@code displayGuiScreen(null)} 等价物）。抽成方法是因为
+     * 各版本的调用形态不同（26.x 是 {@code mc.gui.setScreen}，更早是 {@code mc.setScreen}），
+     * 跨版本共享的界面代码只应调这一个版本中立的名字。
+     */
+    public void closeScreen() {
+        mc.gui.setScreen(null);
     }
 
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {

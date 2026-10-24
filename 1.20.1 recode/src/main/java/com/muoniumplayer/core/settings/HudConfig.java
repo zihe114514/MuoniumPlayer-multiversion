@@ -124,7 +124,6 @@ public final class HudConfig {
     public static int fullscreenLyricStyle = 0;
     /** 全屏歌词背景类型：0 QPlayer 流体，1 传统模糊封面。 */
     public static int fullscreenLyricBackgroundMode = 0;
-
     /** QPlayer 全屏歌词流体算法：0 PixiRenderer、1 AMLL MeshGradient、2 Classic。 */
     public static int fullscreenLyricFluidStyle = 0;
     /** QPlayer 全屏歌词流体饱和度，100 为原始值。 */
@@ -158,6 +157,7 @@ public final class HudConfig {
     public static float fullscreenLyricLayerLatentDither = 55.0f;
     /** Sora 星空叠加层的不透明度，0..100。 */
     public static float fullscreenLyricLayerSora = 80.0f;
+
 
     /** 主题颜色来源。0 保留用户当前主题预设，1 使用当前歌曲封面自动配色。 */
     public static int themeColorSource = 0;
@@ -350,9 +350,6 @@ public final class HudConfig {
     /** 3D 歌词：整体缩放。1.0 = 行高约 0.9 方块。 */
     public static float worldLyricsScale = 1.0f;
 
-    /** 3D 歌词：开 = Skija 平滑矢量字烘焙进纹理；关 = 原版像素字体直绘。 */
-    public static boolean worldLyricsSmoothFont = true;
-
     /** 3D 歌词：现代化渲染风格（Skija 5× 超采样字形 + TextGlow 烘焙发光，随界面字体切换）。
      *  关 = 原版像素字体直绘。渲染通道开关，几何行为不受影响。 */
     public static boolean worldLyricsModernStyle = true;
@@ -387,6 +384,8 @@ public final class HudConfig {
     public static boolean worldLyricsCadenza = false;
     /** 绘光动效模式（现代化引擎）：换句逐字飞行重排 + 径迹拖尾 + 卡拉OK点亮（folia 绘光移植）。 */
     public static boolean worldLyricsHuiguang = false;
+    /** 绘光关键字表（folia wordColors）：格式「词:RRGGBB,词:RRGGBB,…」；空 = 无关键字。 */
+    public static String worldLyricsKeywordColors = "";
 
     // OSD KTV 动画。这些值独立于全屏歌词渲染器。
     public static float osdKaraokeTransitionWidth = 14.0f;
@@ -504,12 +503,8 @@ public final class HudConfig {
     public static boolean animatedCoverEnabled = true;
 
     /**
-     * HUD 设置界面用哪一层：内置界面（外观见 {@link #hudEditorStyle}）、OneConfig 或 ModernUI。
+     * HUD 设置界面用哪一层：内置界面、OneConfig 或 ModernUI。
      * 外部那两层不可用时自动回退内置界面。
-     *
-     * <p>内置的几套外观设置项完全一样(都来自 {@code HudSettingsModel}),只是呈现不同;
-     * 各界面都有互相切换的按钮,点了之后会被记住,下次打开直接是选中的那一套。刻意不做成
-     * "新界面替换旧界面":经典界面把全部滑块平铺成一列,熟悉之后找某一项其实更快。</p>
      */
     /** HUD 设置界面的选择：内置界面、OneConfig 或 ModernUI。外部界面不可用时自动回退内置界面。 */
     public static final String HUD_EDITOR_UI_BUILTIN = "builtin";
@@ -521,18 +516,6 @@ public final class HudConfig {
      */
     public static final String HUD_EDITOR_UI_MODERNUI = "modernui";
 
-    /**
-     * 内置 HUD 设置界面的三套外观。
-     *
-     * <p>取代原来的布尔 {@code hudEditorModernUi}：引入 Folia 样式（居中大窗，移植自
-     * 本项目 的设置弹窗）之后布尔已经表达不了三种取值。旧配置文件里的布尔在
-     * {@code load()} 时迁移成这里的一个枚举值，字段本身不再保存。</p>
-     */
-    public static final String HUD_EDITOR_STYLE_CLASSIC = "classic";
-    public static final String HUD_EDITOR_STYLE_MODERN = "modern";
-    public static final String HUD_EDITOR_STYLE_FOLIA = "folia";
-
-    public static String hudEditorStyle = HUD_EDITOR_STYLE_MODERN;
     public static String hudEditorUi = HUD_EDITOR_UI_BUILTIN;
 
     /**
@@ -547,19 +530,9 @@ public final class HudConfig {
     public static final String HUD_PLAYBACK_FEED_MIRROR = "mirror";
 
     public static String playbackFeed = HUD_PLAYBACK_FEED_INTERNAL;
-    /**
-     * Folia 那套 HUD 设置界面的整体缩放倍率。
-     *
-     * <p>界面照抄的是 folia 的 CSS px（面板 896、正文 14），1.0 倍就是「一单位 = 一个物理像素」，
-     * 与 dpr=1 的浏览器一模一样 —— 但在游戏窗口里偏小：Minecraft 的 GUI Scale 本来就是它的 dpr，
-     * 游戏自带文字是 9 个 GUI 像素（guiScale 3 下 27 物理像素）。这一档把设计空间的轴整体除一下，
-     * 1.5 倍相当于「假设浏览器跑在 150% 缩放上」：面板、文字、间距、控件一起等比走，
-     * folia 的排版比例不变。</p>
-     */
-    public static float foliaUiScale = 1.50f;
 
     /**
-     * 歌词搜索弹窗（手动选词那一页）的整体缩放倍率。与 {@link #foliaUiScale} 同一条路子：
+     * 歌词搜索弹窗（手动选词那一页）的整体缩放倍率：
      * 那一页照抄的是 folia 的 CSS px，1.0 就是「一单位一个物理像素」，在游戏窗口里正文只有
      * 14 像素、比播放器其它界面小一半；这一档把弹窗所在的那条轴整体放大，面板、文字、间距、
      * 控件一起等比走，弹窗内部与 folia 的比例不变。读数处是
@@ -577,19 +550,27 @@ public final class HudConfig {
     public static float hudEditorPanelX = -1.0f;
     /** 见 {@link #hudEditorPanelX}。 */
     public static float hudEditorPanelY = -1.0f;
+    /** 上次停留在哪个设置分类（0 起）。重开面板时回到这一页，而不是每次都从第一页点起。 */
+    public static int hudEditorLastCategory = 0;
 
     /**
-     * 播放器主界面打开 / 关闭动画的速度倍率。
+     * 播放器界面打开/关闭时那层整屏淡入淡出的速度倍率。当前默认 3.0，1.0 = 历史速度，越大越快。
      *
-     * <p>只作用于灵动岛展开 / 收回这段整屏转场，不影响页面切换、歌词页、浮层或灵动岛自身。</p>
+     * <p>只作用于 {@code NCMScreen} 与 {@code CoverflowOverlay} 的整屏 alpha,也就是
+     * "界面出现/消失"那一下。界面内部的面板、列表、封面等动画一律不受它影响——
+     * 那些动画之间有既定的节奏关系,统一提速会让节奏走形,而这种走形肉眼很难定位。</p>
      */
     public static float playerFadeSpeed = 3.0f;
 
     /**
-     * 播放器界面内部「栏目切换」类过渡的速度倍率,越大越快。管的正是 {@link #playerFadeSpeed}
-     * 明确不碰的那部分：左侧导航换栏目时内容页的淡入缩放与侧栏选中指示条的滑动。
-     * 当前默认 3.0 —— 明显快于历史速度；1.25 是上一版默认，1.0 是历史速度。
-     * 应用处的逼近系数最终钳在 .95 以下：指数逼近系数到 1 就是一帧到位,再大反而越过目标。
+     * 播放器界面内部「栏目切换」类过渡的速度倍率,越大越快。
+     *
+     * <p>管的正是 {@link #playerFadeSpeed} 明确不碰的那部分：左侧导航换栏目时内容页的
+     * 淡入缩放（{@code NCMScreen} 的 {@code alphaInterpolateSpeed}）与侧栏选中指示条的
+     * 滑动（{@code NavigateBar} 的 leading/trailing 逼近系数）。</p>
+     *
+     * <p>当前默认 3.0 —— 明显快于历史速度；1.25 是上一版默认，1.0 是历史速度。
+     * 应用处的逼近系数最终钳在 .95 以下：指数逼近系数到 1 就是一帧到位,再大反而越过目标。</p>
      */
     public static float playerUiSwitchSpeed = 3.0f;
 
@@ -662,13 +643,16 @@ public final class HudConfig {
     /** 实时刷新透镜背景，默认开启；采集仍受防重复的帧间闸保护。 */
     public static boolean glassRealtimeCapture = true;
 
-    /** 可选的性能降级，默认不把透镜自动摘成实色面板；用户仍可手动开启。 */
-    public static boolean glassAutoDegrade = false;
-
     private HudConfig() {
     }
 
     /** 把播放器界面的淡入淡出与切换动画速度恢复到默认。 */
+    public static void resetPlayerAnimation() {
+        playerFadeSpeed = 3.0f;
+        playerUiSwitchSpeed = 3.0f;
+    }
+
+    /** 仅恢复桌面歌词外观，不改动 HUD 位置。 */
     public static void resetLyricAppearance() {
         lyricColorRgb = 0xFFFFFFFF;
         currentLyricColorRgb = 0xFFFFFFFF;
@@ -732,7 +716,6 @@ public final class HudConfig {
         worldLyricsKeepAway = true;
         worldLyricsSpreadDeg = 30.0f;
         worldLyricsScale = 1.0f;
-        worldLyricsSmoothFont = true;
         worldLyricsModernStyle = true;
         worldLyricsSplitLines = true;
         worldLyricsGlowEnabled = true;
@@ -745,6 +728,7 @@ public final class HudConfig {
         worldLyricsTextFlash = false;
         worldLyricsCadenza = false;
         worldLyricsHuiguang = false;
+        worldLyricsKeywordColors = "";
         osdKaraokeTransitionWidth = 14.0f;
         osdKaraokePulseStrength = 0.00f;
         osdKaraokeSmoothing = 0.85f;
@@ -758,7 +742,7 @@ public final class HudConfig {
         secondaryOpacity = 0.78f;
     }
 
-    /** 仅恢复桌面歌词外观，不改动 HUD 位置。 */
+    /** 恢复全局下载灵动岛外观。 */
     public static void resetDynamicIslandAppearance() {
         dynamicIslandEnabled = true;
         dynamicIslandScale = 0.88f;
@@ -787,12 +771,6 @@ public final class HudConfig {
     /** 恢复封面相关外观。 */
     public static void resetCoverAppearance() {
         animatedCoverEnabled = true;
-    }
-
-    /** 恢复封面相关外观。 */
-    public static void resetPlayerAnimation() {
-        playerFadeSpeed = 3.0f;
-        playerUiSwitchSpeed = 3.0f;
     }
 
     /** 加载已保存的设置；格式错误或超出范围的值安全回退。 */
@@ -881,15 +859,10 @@ public final class HudConfig {
             glassTintStrength = clamp01(getFloat(o, "glassTintStrength", glassTintStrength));
             glassEdgeGlow = clamp(getFloat(o, "glassEdgeGlow", glassEdgeGlow), 0f, 1.5f);
             glassRealtimeCapture = getBoolean(o, "glassRealtimeCapture", glassRealtimeCapture);
-            glassAutoDegrade = getBoolean(o, "glassAutoDegrade", glassAutoDegrade);
             blossomPanelOpacity = clamp01(getFloat(o, "blossomPanelOpacity", blossomPanelOpacity));
             blossomVisibleLines = clampInt(getInt(o, "blossomVisibleLines", blossomVisibleLines), 1, 5);
             blossomRhythmBorder = getBoolean(o, "blossomRhythmBorder", blossomRhythmBorder);
             blossomBorderStrength = clamp01(getFloat(o, "blossomBorderStrength", blossomBorderStrength));
-            playerFadeSpeed = clamp(getFloat(o, "playerFadeSpeed", playerFadeSpeed), 0.30f, 3.00f);
-            playerUiSwitchSpeed = clamp(getFloat(o, "playerUiSwitchSpeed", playerUiSwitchSpeed), 0.30f, 3.00f);
-        foliaUiScale = clamp(getFloat(o, "foliaUiScale", foliaUiScale), 0.80f, 2.50f);
-        lyricSearchUiScale = clamp(getFloat(o, "lyricSearchUiScale", lyricSearchUiScale), 0.80f, 2.50f);
             cadenzaDecorColorMode = clampInt(getInt(o, "cadenzaDecorColorMode", cadenzaDecorColorMode), 0, 1);
             cadenzaDecorColorCount = clampInt(getInt(o, "cadenzaDecorColorCount", cadenzaDecorColorCount),
                     CADENZA_COLOR_COUNT_MIN, CADENZA_PALETTE_SLOTS);
@@ -927,7 +900,6 @@ public final class HudConfig {
             worldLyricsKeepAway = getBoolean(o, "worldLyricsKeepAway", worldLyricsKeepAway);
             worldLyricsSpreadDeg = clamp(getFloat(o, "worldLyricsSpreadDeg", worldLyricsSpreadDeg), 0.0f, 60.0f);
             worldLyricsScale = clamp(getFloat(o, "worldLyricsScale", worldLyricsScale), 0.4f, 6.0f);
-            worldLyricsSmoothFont = getBoolean(o, "worldLyricsSmoothFont", worldLyricsSmoothFont);
             worldLyricsModernStyle = getBoolean(o, "worldLyricsModernStyle", worldLyricsModernStyle);
             worldLyricsSplitLines = getBoolean(o, "worldLyricsSplitLines", worldLyricsSplitLines);
             worldLyricsGlowEnabled = getBoolean(o, "worldLyricsGlowEnabled", worldLyricsGlowEnabled);
@@ -940,6 +912,7 @@ public final class HudConfig {
             worldLyricsTextFlash = getBoolean(o, "worldLyricsTextFlash", worldLyricsTextFlash);
             worldLyricsCadenza = getBoolean(o, "worldLyricsCadenza", worldLyricsCadenza);
             worldLyricsHuiguang = getBoolean(o, "worldLyricsHuiguang", worldLyricsHuiguang);
+            worldLyricsKeywordColors = getString(o, "worldLyricsKeywordColors", worldLyricsKeywordColors);
 
             osdKaraokeTransitionWidth = clamp(getFloat(o, "osdKaraokeTransitionWidth", osdKaraokeTransitionWidth), 4.0f, 32.0f);
             osdKaraokePulseStrength = clamp(getFloat(o, "osdKaraokePulseStrength", osdKaraokePulseStrength), 0.0f, 0.15f);
@@ -986,14 +959,9 @@ public final class HudConfig {
             dynamicIslandAmbientPing = getBoolean(o, "dynamicIslandAmbientPing", dynamicIslandAmbientPing);
             dynamicIslandAmbientClock = getBoolean(o, "dynamicIslandAmbientClock", dynamicIslandAmbientClock);
         dynamicIslandAmbientNowPlaying = getBoolean(o, "dynamicIslandAmbientNowPlaying", dynamicIslandAmbientNowPlaying);
-        // 旧配置只有布尔 hudEditorModernUi：新键缺席时按它迁移，保证升级后打开的还是用户上次用的那套。
-        String legacyStyle = HUD_EDITOR_STYLE_MODERN;
-        if (o.has("hudEditorModernUi") && o.get("hudEditorModernUi").isJsonPrimitive()) {
-            legacyStyle = o.get("hudEditorModernUi").getAsBoolean()
-                    ? HUD_EDITOR_STYLE_MODERN : HUD_EDITOR_STYLE_CLASSIC;
-        }
-        hudEditorStyle = o.has("hudEditorStyle") && o.get("hudEditorStyle").isJsonPrimitive()
-                ? normalizeHudEditorStyle(o.get("hudEditorStyle").getAsString()) : legacyStyle;
+        playerFadeSpeed = clamp(getFloat(o, "playerFadeSpeed", playerFadeSpeed), 0.30f, 3.00f);
+        playerUiSwitchSpeed = clamp(getFloat(o, "playerUiSwitchSpeed", playerUiSwitchSpeed), 0.30f, 3.00f);
+        lyricSearchUiScale = clamp(getFloat(o, "lyricSearchUiScale", lyricSearchUiScale), 0.80f, 2.50f);
         if (o.has("hudEditorUi") && o.get("hudEditorUi").isJsonPrimitive()) {
             hudEditorUi = normalizeHudEditorUi(o.get("hudEditorUi").getAsString());
         }
@@ -1002,6 +970,7 @@ public final class HudConfig {
         }
         hudEditorPanelX = clamp(getFloat(o, "hudEditorPanelX", hudEditorPanelX), -1.0f, 1.0f);
         hudEditorPanelY = clamp(getFloat(o, "hudEditorPanelY", hudEditorPanelY), -1.0f, 1.0f);
+        hudEditorLastCategory = (int) clamp(getFloat(o, "hudEditorLastCategory", hudEditorLastCategory), 0.0f, 31.0f);
         dynamicIslandAmbientRotate = getBoolean(o, "dynamicIslandAmbientRotate", dynamicIslandAmbientRotate);
         // 1.3.0 及更早只有一个「常驻轮换间隔」。拆成两页各自的时长后，用旧键当两个新键的默认值,
         // 这样此前手动调过间隔的配置会平移到两边,而不是被悄悄重置回新默认值。
@@ -1072,15 +1041,10 @@ public final class HudConfig {
             o.addProperty("glassTintStrength", glassTintStrength);
             o.addProperty("glassEdgeGlow", glassEdgeGlow);
             o.addProperty("glassRealtimeCapture", glassRealtimeCapture);
-            o.addProperty("glassAutoDegrade", glassAutoDegrade);
             o.addProperty("blossomPanelOpacity", blossomPanelOpacity);
             o.addProperty("blossomVisibleLines", blossomVisibleLines);
             o.addProperty("blossomRhythmBorder", blossomRhythmBorder);
             o.addProperty("blossomBorderStrength", blossomBorderStrength);
-            o.addProperty("playerFadeSpeed", playerFadeSpeed);
-            o.addProperty("playerUiSwitchSpeed", playerUiSwitchSpeed);
-        o.addProperty("foliaUiScale", foliaUiScale);
-        o.addProperty("lyricSearchUiScale", lyricSearchUiScale);
             o.addProperty("cadenzaDecorColorMode", cadenzaDecorColorMode);
             o.addProperty("cadenzaDecorColorCount", cadenzaDecorColorCount);
             o.addProperty("cadenzaBeatsPerColor", cadenzaBeatsPerColor);
@@ -1115,7 +1079,6 @@ public final class HudConfig {
             o.addProperty("worldLyricsKeepAway", worldLyricsKeepAway);
             o.addProperty("worldLyricsSpreadDeg", worldLyricsSpreadDeg);
             o.addProperty("worldLyricsScale", worldLyricsScale);
-            o.addProperty("worldLyricsSmoothFont", worldLyricsSmoothFont);
             o.addProperty("worldLyricsModernStyle", worldLyricsModernStyle);
             o.addProperty("worldLyricsSplitLines", worldLyricsSplitLines);
             o.addProperty("worldLyricsGlowEnabled", worldLyricsGlowEnabled);
@@ -1128,6 +1091,7 @@ public final class HudConfig {
             o.addProperty("worldLyricsTextFlash", worldLyricsTextFlash);
             o.addProperty("worldLyricsCadenza", worldLyricsCadenza);
             o.addProperty("worldLyricsHuiguang", worldLyricsHuiguang);
+            o.addProperty("worldLyricsKeywordColors", worldLyricsKeywordColors);
             o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
             o.addProperty("osdKaraokePulseStrength", osdKaraokePulseStrength);
             o.addProperty("osdKaraokeSmoothing", osdKaraokeSmoothing);
@@ -1173,11 +1137,14 @@ public final class HudConfig {
             o.addProperty("dynamicIslandAmbientClock", dynamicIslandAmbientClock);
         o.addProperty("dynamicIslandAmbientNowPlaying", dynamicIslandAmbientNowPlaying);
         o.addProperty("dynamicIslandAmbientRotate", dynamicIslandAmbientRotate);
-        o.addProperty("hudEditorStyle", hudEditorStyle);
+        o.addProperty("playerFadeSpeed", playerFadeSpeed);
+        o.addProperty("playerUiSwitchSpeed", playerUiSwitchSpeed);
+        o.addProperty("lyricSearchUiScale", lyricSearchUiScale);
         o.addProperty("hudEditorUi", hudEditorUi);
         o.addProperty("playbackFeed", playbackFeed);
         o.addProperty("hudEditorPanelX", hudEditorPanelX);
         o.addProperty("hudEditorPanelY", hudEditorPanelY);
+        o.addProperty("hudEditorLastCategory", hudEditorLastCategory);
         o.addProperty("dynamicIslandAmbientStatusSeconds", dynamicIslandAmbientStatusSeconds);
         o.addProperty("dynamicIslandAmbientNowPlayingSeconds", dynamicIslandAmbientNowPlayingSeconds);
 
@@ -1279,13 +1246,6 @@ public final class HudConfig {
         return HUD_EDITOR_UI_BUILTIN;
     }
 
-    /** 界面外观只认三个值，其余（含手改坏的配置文件）一律回到现代样式。 */
-    private static String normalizeHudEditorStyle(String value) {
-        if (HUD_EDITOR_STYLE_CLASSIC.equalsIgnoreCase(value)) return HUD_EDITOR_STYLE_CLASSIC;
-        if (HUD_EDITOR_STYLE_FOLIA.equalsIgnoreCase(value)) return HUD_EDITOR_STYLE_FOLIA;
-        return HUD_EDITOR_STYLE_MODERN;
-    }
-
     /**
      * 播放态来源只认两个值。
      *
@@ -1301,6 +1261,13 @@ public final class HudConfig {
     private static boolean getBoolean(JsonObject o, String key, boolean def) {
         try {
             return o.has(key) ? o.get(key).getAsBoolean() : def;
+        } catch (Throwable ignored) {
+            return def;
+        }
+    }
+    private static String getString(JsonObject o, String key, String def) {
+        try {
+            return o.has(key) && o.get(key).isJsonPrimitive() ? o.get(key).getAsString() : def;
         } catch (Throwable ignored) {
             return def;
         }

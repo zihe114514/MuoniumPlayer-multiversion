@@ -68,8 +68,17 @@ public abstract class GuiScreen extends Screen {
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
         // 1.8.9 默认行为：ESC 关闭界面。
         if (keyCode == Keyboard.KEY_ESCAPE) {
-            mc.setScreen(null);
+            closeScreen();
         }
+    }
+
+    /**
+     * 关闭当前界面（1.8.9 的 {@code displayGuiScreen(null)} 等价物）。抽成方法是因为
+     * 各版本的调用形态不同（26.x 是 {@code mc.gui.setScreen}，更早是 {@code mc.setScreen}），
+     * 跨版本共享的界面代码只应调这一个版本中立的名字。
+     */
+    public void closeScreen() {
+        mc.setScreen(null);
     }
 
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {

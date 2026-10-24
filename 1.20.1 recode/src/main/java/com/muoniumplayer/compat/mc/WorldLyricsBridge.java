@@ -132,6 +132,10 @@ public final class WorldLyricsBridge {
         WorldLyricsSettings settings = WorldLyricsSettings.snapshot();
         if (!settings.enabled) return;
         WorldLyricsBridge.currentSettings = settings;
+        // 绘光贴图预热（幂等）：惰性生成的首帧成本移出歌内
+        if (settings.huiguang) {
+            WorldBillboard.INSTANCE.prewarmTextures();
+        }
         try {
             renderInnerWithSettings(basePose, mc, cameraAccess, settings);
         } finally {

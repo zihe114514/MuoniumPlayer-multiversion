@@ -67,7 +67,7 @@ class DesktopLyricsViewportStaticTest {
     }
 
     @Test
-    @DisplayName("现代与经典设置界面都提供宽高，编辑器命中框使用同一尺寸")
+    @DisplayName("设置界面提供宽高，编辑器命中框使用同一尺寸")
     void bothSettingsSurfacesExposeViewportSize() throws IOException {
         String model = read(hud("HudSettingsModel.java"));
         assertTrue(model.contains("new Group(\"大小与换行\""));
@@ -75,30 +75,22 @@ class DesktopLyricsViewportStaticTest {
         assertTrue(model.contains("slider(HudSetting.OSD_HEIGHT"));
         assertTrue(model.contains("syncLyricViewportModuleValues()"));
 
-        for (String fileName : new String[]{"GuiHudEditor.java", "GuiHudEditorPro.java"}) {
-            String editor = read(hud(fileName));
-            assertTrue(editor.contains("HudConfig.lyricWidth * HudConfig.lyricScale"));
-            assertTrue(editor.contains("HudConfig.lyricHeight * HudConfig.lyricScale"));
-        }
-
-        String classic = read(hud("GuiHudEditor.java"));
-        assertTrue(classic.contains("HudSetting.OSD_WIDTH"));
-        assertTrue(classic.contains("HudSetting.OSD_HEIGHT"));
+        String editor = read(hud("GuiHudEditorPro.java"));
+        assertTrue(editor.contains("HudConfig.lyricWidth * HudConfig.lyricScale"));
+        assertTrue(editor.contains("HudConfig.lyricHeight * HudConfig.lyricScale"));
     }
 
     @Test
     @DisplayName("HUD 中心吸附降级为弱磁吸，不再 20px 内强制跳到中心")
     void centerSnappingIsSoftened() throws IOException {
-        for (String fileName : new String[]{"GuiHudEditor.java", "GuiHudEditorPro.java"}) {
-            String editor = read(hud(fileName));
-            assertTrue(editor.contains("SNAP_THRESHOLD = 8"));
-            assertTrue(editor.contains("SNAP_STRENGTH = 0.35"));
-            assertTrue(editor.contains("private static int softenSnap(int value, int center)"));
-            assertTrue(editor.contains("nx = softenSnap(nx, centerX);"));
-            assertTrue(editor.contains("ny = softenSnap(ny, centerY);"));
-            assertFalse(editor.contains("if (snapX) nx = centerX;"));
-            assertFalse(editor.contains("if (snapY) ny = centerY;"));
-        }
+        String stage = read(hud("HudOverlayStage.java"));
+        assertTrue(stage.contains("SNAP_THRESHOLD = 8"));
+        assertTrue(stage.contains("SNAP_STRENGTH = 0.35"));
+        assertTrue(stage.contains("private static int softenSnap(int value, int target)"));
+        assertTrue(stage.contains("nx = snapAxis(nx"));
+        assertTrue(stage.contains("ny = snapAxis(ny"));
+        assertFalse(stage.contains("if (snapX) nx = centerX;"));
+        assertFalse(stage.contains("if (snapY) ny = centerY;"));
     }
 
     private static Path settings(String fileName) {

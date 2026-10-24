@@ -350,10 +350,14 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     }
 
     /**
-     * 白底纹理（径迹 + 光晕共用）：8 行渐变 + 构造器默认挂 NEAREST repeat 采样器
-     * = 条带。1.21.11 的过滤承载在 AbstractTexture.sampler 字段上（RenderSetup 解析
-     * 纹理走 getSampler()，javap 核对）—— 子类构造器里换成 LINEAR CLAMP，
-     * 同 LyricGlyphAtlasBridge.PageTexture 的做法。
+     * 特效贴图（径迹渐变带/光晕/星芒/条纹/拖尾画布共用）：8 行渐变 + 构造器默认挂
+     * NEAREST repeat 采样器 = 条带。1.21.11 的过滤承载在 {@code AbstractTexture.sampler}
+     * 字段上（RenderSetup 解析纹理走 getSampler()，javap 核对）—— 构造器里换成
+     * LINEAR CLAMP 单参缓存采样器，强制纯 LINEAR。曾试过三线性 mip（两参
+     * getClampToEdge 解开采样器 MAX_LOD 钳制 + glTexParameteri 放开纹理的
+     * MAX_LEVEL/MAX_LOD + 构造/上传后 glGenerateMipmap），游戏内特效贴图整块
+     * 渲染发黑（采样链路异常），回退到已验证的纯 LINEAR —— 拖尾的抗锯齿由
+     * CPU 光栅化保证，不靠 mip。
      */
     private static final class TrailTexture extends DynamicTexture {
         TrailTexture(NativeImage img) {
@@ -413,11 +417,103 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 .setUv1(0, 0);
     }
 
+    // ==================== 绘光拖尾画布（Skija 光栅化通路的宿主侧） ====================
+
+    // 按槽位各持一张画布纹理：同一帧 active 行 + 淡出行都进拖尾窗口时
+    //（短句/seek），若共用一张纹理，后上传的行会覆盖先提交 quad 的像素
+    private static final Identifier[] trailCanvasRl = new Identifier[4];
+    private static final TrailTexture[] trailCanvasTex = new TrailTexture[4];
+    private static final int[] trailCanvasW = new int[4];
+    private static final int[] trailCanvasH = new int[4];
+    private static boolean trailCanvasError;
+    private static int trailCanvasErrSlot = -1;
+
     /**
-     * 光晕贴图：128×128 径向高斯衰减白点（a = exp(−r²×7)）—— 能量紧贴字形：
-     * r=0.3 处 53%、r=0.6 处 8%、边缘 ~0，不会像旧版 (1−r)^1.7 那样在半程仍
-     * 有 30% 亮度、叠出一层奶雾。首绘惰性生成并注册，TrailTexture 同款强制
-     * LINEAR（sampler 字段）；失败熔断只丢光晕。
+     * 绘光拖尾画布上屏：渲染层用 Skija 在 CPU 端光栅化整句径迹（多层辉光 +
+     * 沿程渐变 + 圆头圆接 + 超采样 AA），这里把像素灌进一张动态纹理、以一个
+     * quad 覆盖句字面区域 —— 整帧径迹一条纹理一次收批，圆滑无锯齿。
+     * 尺寸不变时复用纹理只重传像素（尺寸有 8px 网格量化，换行才重建）；
+     * slot 是行槽位（active 0、淡出行 1 起），各槽独立纹理互不覆盖。
+     */
+    @Override
+    public boolean drawTrailCanvas(int[] px, int w, int h,
+                                   float planeX, float planeY,
+                                   float planeW, float planeH, float alpha,
+                                   int slot) {
+        if (poseStack == null || buffers == null || trailCanvasError
+                || px == null || w <= 0 || h <= 0 || alpha <= 0.01f
+                || slot < 0 || slot >= trailCanvasRl.length) return false;
+        Identifier rl = trailCanvasRl[slot];
+        TrailTexture tex = trailCanvasTex[slot];
+        // 挂起批次自检：本槽纹理的 quad 还在缓冲里没收批时，必须先收掉再
+        // 改写/释放纹理 —— 否则同帧双拖尾行时后行像素覆盖前行 quad（同尺寸）、
+        // 或 release 后挂起 quad 引用已删纹理画出缺失纹理（变尺寸）
+        if (pendingEffectRl == rl && buffers != null) {
+            buffers.endBatch(RenderTypes.textSeeThrough(rl));
+            pendingEffectRl = null;
+        }
+        try {
+            if (tex == null || trailCanvasW[slot] != w || trailCanvasH[slot] != h) {
+                if (rl != null) {
+                    Minecraft.getInstance().getTextureManager().release(rl);
+                    trailCanvasTex[slot] = null;
+                }
+                NativeImage img = new NativeImage(NativeImage.Format.RGBA, w, h, false);
+                tex = new TrailTexture(img);
+                // 1.21.11 的 ResourceLocation 已更名 Identifier，工厂方法是
+                // Identifier.fromNamespaceAndPath（同径迹贴图的口径）。
+                rl = Identifier.fromNamespaceAndPath("muoniumplayer",
+                        "dynamic/worldlyrics_trailcanvas_" + (rlCounter++));
+                Minecraft.getInstance().getTextureManager().register(rl, tex);
+                trailCanvasRl[slot] = rl;
+                trailCanvasTex[slot] = tex;
+                trailCanvasW[slot] = w;
+                trailCanvasH[slot] = h;
+            }
+            NativeImage img = tex.getPixels();
+            if (img == null || px.length < w * h) return false;
+            // ARGB → NativeImage ABGR（直通 alpha，textSeeThrough 标准混合口径）。
+            // 整图逐帧全量覆写：尺寸复用时旧径迹必须被清掉（NativeImage 无
+            // 快速清屏 API），透明像素也写 0 —— 留白跳写会残留上一帧拖尾。
+            // 边界钉死 w×h：px 是共享层复用缓冲，长度以 w×h 为准（曾有复用
+            // 缓冲大于画布时按 px.length 越界写、写坏相邻 native 内存的教训）。
+            for (int row = 0, i = 0; row < h; row++) {
+                for (int col = 0; col < w; col++, i++) {
+                    int argb = px[i];
+                    // NativeImage 内存序 ABGR：setPixelABGR 吃 (a<<24)|(b<<16)|(g<<8)|r
+                    // （R/B 换位、A/G 原位；与 1.21.1 参考实现的 setPixelRGBA 同口径）。
+                    img.setPixelABGR(col, row,
+                            (argb & 0xFF00FF00)
+                                    | ((argb & 0x00FF0000) >>> 16)
+                                    | ((argb & 0x000000FF) << 16));
+                }
+            }
+            trailCanvasTex[slot].upload();
+        } catch (Throwable t) {
+            trailCanvasError = true;
+            trailCanvasErrSlot = slot;
+            if (TRACE) System.out.println("[WorldLyrics/trace] 拖尾画布纹理失败，径迹退回 quad 带: " + t);
+            return false;
+        }
+        int argb = Math.min(255, (int) (alpha * 255f)) << 24 | 0xFFFFFF;
+        // 1.21.11：textSeeThrough 工厂在 RenderTypes（RenderType 本体只剩 draw/format，
+        // javap 核对），参数类型是 Identifier。
+        VertexConsumer vc = buffers.getBuffer(RenderTypes.textSeeThrough(rl));
+        Matrix4f mat = poseStack.last().pose();
+        putHaloVertex(vc, mat, planeX, planeY, 0f, 0f, argb);
+        putHaloVertex(vc, mat, planeX, planeY + planeH, 0f, 1f, argb);
+        putHaloVertex(vc, mat, planeX + planeW, planeY + planeH, 1f, 1f, argb);
+        putHaloVertex(vc, mat, planeX + planeW, planeY, 1f, 0f, argb);
+        flushEffectBatch(rl);
+        return true;
+    }
+
+    /**
+     * 光晕贴图：128×128 双高斯白点（紧核 + 宽晕）：a = exp(−r²×9)×0.85 +
+     * exp(−r²×2.8)×0.15 —— 核心能量紧贴字形，外围留一层 15% 峰值的宽缓晕
+     * 托住扫光过渡（单高斯 r=0.5 后几乎归零，扫过时晕边缘生硬；双高斯晕尾
+     * 自然衰减到边缘）。首绘惰性生成并注册，TrailTexture 同款强制 LINEAR
+     * （sampler 字段）；失败熔断只丢光晕。
      */
     private static Identifier haloTexture() {
         if (haloError) return null;
@@ -429,7 +525,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                         float dx = (x + 0.5f) / 64f - 1f;
                         float dy = (y + 0.5f) / 64f - 1f;
                         float r2 = dx * dx + dy * dy;
-                        int a = (int) (255 * (float) Math.exp(-r2 * 7f));
+                        int a = (int) (255 * ((float) Math.exp(-r2 * 9f) * 0.85f
+                                + (float) Math.exp(-r2 * 2.8f) * 0.15f));
                         // NativeImage 内存序 ABGR：setPixelABGR 吃 (a<<24)|(b<<16)|(g<<8)|r
                         // （直写无换位，白色低 24 位原样过；与径迹贴图同口径）。
                         img.setPixelABGR(x, y, (a << 24) | 0xFFFFFF);

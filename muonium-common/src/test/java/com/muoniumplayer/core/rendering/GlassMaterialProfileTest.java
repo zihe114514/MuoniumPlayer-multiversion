@@ -18,7 +18,8 @@ class GlassMaterialProfileTest {
         assertFalse(json.get("glassSurfaceIsland").getAsBoolean());
         assertEquals(.97f,json.get("normalScale").getAsFloat());
         assertTrue(json.get("glassRealtimeCapture").getAsBoolean());
-        assertFalse(json.get("glassAutoDegrade").getAsBoolean());
+        // 「自动摘玻璃」开关已随降载系统一起移除：迁移不再铸造这个死键，老配置里的残留原样留着。
+        assertFalse(json.has("glassAutoDegrade"));
         assertEquals(GlassMaterialProfile.VERSION,json.get("glassMaterialVersion").getAsInt());
     }
     @Test void customConcentrationsAndExplicitZeroArePreservedAndMigrationIsIdempotent() {
@@ -52,12 +53,12 @@ class GlassMaterialProfileTest {
         assertEquals(GlassMaterialProfile.VERSION,json.get("glassMaterialVersion").getAsInt());
     }
     @Test void missingPerformanceFieldsGetFactoryDefaults() {
-        // 缺失才补，补的是出厂默认（实时采集开、自动降载关）。手机档整体禁用真玻璃
+        // 缺失才补，补的是出厂默认（实时采集开）。手机档整体禁用真玻璃
         //（GlassMobileTier），这些字段在那边只是存档，不参与生效——默认值因此不需要平台感知。
         JsonObject json=new JsonObject();
         GlassMaterialProfile.migrate(json);
         assertTrue(json.get("glassRealtimeCapture").getAsBoolean());
-        assertFalse(json.get("glassAutoDegrade").getAsBoolean());
+        assertFalse(json.has("glassAutoDegrade"),"已移除的「自动摘玻璃」不该再被迁移铸造出来");
         assertEquals(GlassMaterialProfile.VERSION,json.get("glassMaterialVersion").getAsInt());
     }
     @Test void liquidGlassAndCrystalBothUseRealBackgroundButOrdinaryThemesDoNot() {

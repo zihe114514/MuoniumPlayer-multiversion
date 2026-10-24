@@ -123,12 +123,6 @@ class AnimationSpeedStaticTest {
             }
         }
         assertTrue(found, "设置声明里没有这一项，新版设置界面（GuiHudEditorPro）就看不到它");
-
-        // 经典界面的分组是硬编码的，不走上面的声明，所以要单独钉一次。
-        String classic = read(ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core",
-                "screens", "hud", "GuiHudEditor.java")));
-        assertTrue(classic.contains("HudSetting.PLAYER_FADE_SPEED"),
-                "经典设置界面里没有这一项，切到经典界面的用户就改不了");
     }
 
     @Test

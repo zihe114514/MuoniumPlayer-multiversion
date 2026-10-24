@@ -91,8 +91,8 @@ class AutomixIntegrationStaticTest {
         String controls = read(ProjectPaths.sourceFile(Paths.get(
                 "com", "muoniumplayer", "core", "screens", "ncm", "panels", "ControlsBar.java")));
         assertTrue(settingsUi.contains("AutomixSettings.setEnabled(!AutomixSettings.isEnabled())"));
-        assertTrue(settingsUi.contains("AutomixSettings.setEngine(AutomixSettings.Engine.fromStored(value))"),
-                "HUD 选择引擎时必须显式写回配置");
+        assertTrue(settingsUi.contains("AutomixSettings.setEngine(folia ? AutomixSettings.Engine.FOLIA : AutomixSettings.Engine.LEGACY)"),
+                "HUD 选处理方案时必须显式写回引擎配置（四档单选的写入路径）");
         assertTrue(controls.contains("AutomixSettings.setEnabled(enabled)"));
     }
 

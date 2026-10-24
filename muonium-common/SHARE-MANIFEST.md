@@ -39,10 +39,6 @@
 | `com/muoniumplayer/core/screens/GuiUpdateNotice.java` | FORK | 五树都有 | 26.x 的屏幕访问/关闭 API 差异 |
 | `com/muoniumplayer/core/screens/RenderLayerNotice.java` | FORK | 五树都有 | 老树回调给 GuiGraphics、26.x 给 GuiGraphicsExtractor，文字方法 drawString/text 两代不同 |
 | `com/muoniumplayer/core/screens/TitleMenuAnnouncementButton.java` | FORK | 五树都有 | 26.x 的屏幕访问与按钮挂载 API 差异 |
-| `com/muoniumplayer/core/screens/hud/GuiHudEditor.java` | FORK | 五树都有 | 经典 HUD 编辑器按版本的绘制/屏幕 API 差异 |
-| `com/muoniumplayer/core/screens/hud/GuiHudEditorFolia.java` | FORK | 五树都有 | Folia 编辑器按版本的绘制/屏幕 API 差异 |
-| `com/muoniumplayer/core/screens/hud/GuiHudEditorPro.java` | FORK | 五树都有 | Pro 编辑器按版本的绘制/屏幕 API 差异 |
-| `com/muoniumplayer/core/screens/hud/HudEditorLayout.java` | FORK | 五树都有 | 1.21.1 的编辑器分组行数与其他树不同（功能集差异） |
 | `com/muoniumplayer/core/screens/hud/HudSettingsModel.java` | FORK | 五树都有 | 26.x 打开公告页改用 mc.gui.screen() |
 | `com/muoniumplayer/core/screens/ncm/CoverflowOverlay.java` | FORK | 五树都有 | 同上：老树这里没有乘 HudConfig.playerFadeSpeed |
 | `com/muoniumplayer/core/settings/HudConfig.java` | FORK | 五树都有 | 1.20.1 / 1.21.1 还没有界面淡入速度旋钮（playerFadeSpeed / playerUiSwitchSpeed） |

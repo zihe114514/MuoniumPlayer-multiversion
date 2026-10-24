@@ -35,7 +35,7 @@ import org.lwjgl.opengl.GL12;
  * <p>shard 绑定纹理时无条件调 {@code setFilter(blur, mipmap)}（javap 核对），
  * 原版 textSeeThrough 传 (false,false)=NEAREST，会把 5× 超采样的字形毁成马赛克；
  * 重写 {@link PageTexture#setFilter} 强制 (true,false)=LINEAR。零自定义 RenderType、
- * 零 AccessWidener。</p>
+ * 零 AccessWidener。（曾试过三线性 mip，与特效贴图同期出现渲染发黑，已回退。）</p>
  *
  * <p>像素写入 {@link NativeImage#setPixelRGBA}（内存序 ABGR），上传走 9 参
  * {@link NativeImage#upload} 只发子矩形、且上传前要 {@code bind()} 自己
@@ -119,7 +119,9 @@ final class LyricGlyphAtlasBridge implements LyricGlyphAtlas.Host {
                     GL12.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
         }
 
-        /** shard 绑定时的过滤参数改写：无论 shard 传什么，落成 LINEAR。 */
+        /** shard 绑定时的过滤参数改写：无论 shard 传什么，落成 LINEAR。
+         * 曾试过三线性 mip（glGenerateMipmap + 解开 MAX_LEVEL/MAX_LOD），
+         * 与特效贴图同期出现渲染发黑，一并回退已验证的纯 LINEAR。 */
         @Override
         public void setFilter(boolean blur, boolean mipmap) {
             super.setFilter(true, false);
