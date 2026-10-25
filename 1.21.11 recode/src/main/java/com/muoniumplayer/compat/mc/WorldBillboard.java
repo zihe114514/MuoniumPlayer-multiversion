@@ -363,90 +363,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * LINEAR 采样器。
      */
     private static final class TrailTexture extends DynamicTexture {
-        /** 本贴图的 mip 顶层数（floor(log2(min(w,h)))）；-1 = 已熔断纯 LINEAR。 */
-        final int mipTop;
-
         TrailTexture(NativeImage img) {
             super(() -> "worldlyrics_trail", img);
-            // 基类构造器内部已建单级纹理 + view + upload 整图；这里换多级分配
-            // 并重建 view（原单级纹理/view close 释放）。基类 upload 已把 CPU
-            // 侧整图发进旧纹理 —— 新纹理 0 级要补一次整图上传。
-            int top = 31 - Integer.numberOfLeadingZeros(
-                    img != null ? Math.min(img.getWidth(), img.getHeight()) : 0);
-            int built = -1;
-            if (top >= 1) {
-                try {
-                    com.mojang.blaze3d.textures.GpuTexture oldTex = this.getTexture();
-                    com.mojang.blaze3d.textures.GpuTextureView oldView = this.getTextureView();
-                    com.mojang.blaze3d.textures.GpuTexture mipTex =
-                            RenderSystem.getDevice().createTexture("worldlyrics_trail",
-                                    com.mojang.blaze3d.textures.GpuTexture.USAGE_COPY_DST
-                                            | com.mojang.blaze3d.textures.GpuTexture.USAGE_TEXTURE_BINDING,
-                                    com.mojang.blaze3d.textures.TextureFormat.RGBA8,
-                                    img.getWidth(), img.getHeight(), 1, top + 1);
-                    this.texture = mipTex;
-                    this.textureView = RenderSystem.getDevice()
-                            .createTextureView(mipTex, 0, top + 1);
-                    RenderSystem.getDevice().createCommandEncoder()
-                            .writeToTexture(mipTex, img);
-                    if (oldView != null) oldView.close();
-                    if (oldTex != null) oldTex.close();
-                    built = setupMipChain(img.getWidth(), img.getHeight(), top);
-                } catch (Throwable t) {
-                    built = -1;
-                    WorldLyricsBridge.traceOnce("特效贴图 mip 分配失败，熔断回纯 LINEAR: " + t);
-                }
-            }
-            this.mipTop = built;
-            // 熔断档用缓存 LINEAR 采样器（MAX_LOD=0 单级口径）；健康档换
-            // maxLod=empty 的自建采样器 —— 缓存档把 MAX_LOD 钉 0，三线性必退化
-            // （SamplerCache.initialize javap 核对，详见 PageTexture 注释）。
-            if (this.mipTop > 0) {
-                this.sampler = RenderSystem.getDevice().createSampler(
-                        com.mojang.blaze3d.textures.AddressMode.CLAMP_TO_EDGE,
-                        com.mojang.blaze3d.textures.AddressMode.CLAMP_TO_EDGE,
-                        com.mojang.blaze3d.textures.FilterMode.LINEAR,
-                        com.mojang.blaze3d.textures.FilterMode.LINEAR,
-                        0, java.util.OptionalDouble.empty());
-            } else {
-                this.sampler = RenderSystem.getSamplerCache()
-                        .getClampToEdge(FilterMode.LINEAR);
-            }
-        }
-    }
-
-    /**
-     * 特效贴图的安全 mip 链（与 LyricGlyphAtlasBridge.PageTexture.setupMipChain
-     * 同配方）：解钳 MAX_LEVEL/MAX_LOD → glGenerateMipmap → 读回自检，失败
-     * 返回 -1（构造器据此永久落纯 LINEAR）。调用前提：本纹理当前已绑定
-     * （writeToTexture 刚绑过目标纹理）。
-     */
-    private static int setupMipChain(int width, int height, int top) {
-        try {
-            com.muoniumplayer.compat.gl.GL11.glTexParameteri(
-                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D,
-                    org.lwjgl.opengl.GL12.GL_TEXTURE_MAX_LEVEL, top);
-            com.muoniumplayer.compat.gl.GL11.glTexParameteri(
-                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D,
-                    org.lwjgl.opengl.GL12.GL_TEXTURE_MIN_LOD, 0);
-            com.muoniumplayer.compat.gl.GL11.glTexParameterf(
-                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D,
-                    org.lwjgl.opengl.GL13.GL_TEXTURE_MAX_LOD, (float) top);
-            org.lwjgl.opengl.GL30.glGenerateMipmap(
-                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D);
-            int tailW = org.lwjgl.opengl.GL11.glGetTexLevelParameteri(
-                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D, top,
-                    org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
-            int err = org.lwjgl.opengl.GL11.glGetError();
-            if (err != 0 || tailW != Math.max(1, width >> top)) {
-                WorldLyricsBridge.traceOnce("特效贴图 mip 链自检失败（err=0x"
-                        + Integer.toHexString(err) + " tailW=" + tailW + "），熔断回纯 LINEAR");
-                return -1;
-            }
-            return top;
-        } catch (Throwable t) {
-            WorldLyricsBridge.traceOnce("特效贴图 mip 链生成异常，熔断回纯 LINEAR: " + t);
-            return -1;
+            this.sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         }
     }
 
@@ -571,11 +490,6 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             // 且 encoder 自行绑定目标纹理（javap 核对）——无需先 bind。
             RenderSystem.getDevice().createCommandEncoder().writeToTexture(
                     trailCanvasTex[slot].getTexture(), img, 0, 0, 0, 0, w, h, 0, 0);
-            // 0 级每帧全变 → 重生成 mip 链（画布已按设备像素封顶 1600²，亚毫秒）
-            if (trailCanvasTex[slot].mipTop > 0) {
-                org.lwjgl.opengl.GL30.glGenerateMipmap(
-                        com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D);
-            }
         } catch (Throwable t) {
             trailCanvasError = true;
             trailCanvasErrSlot = slot;
@@ -595,66 +509,6 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         return true;
     }
 
-    /**
-     * 拖尾画布脏区带上屏：只把径迹覆盖带写进纹理子矩形并上传（整图重传的
-     * 替代 —— 拖尾活跃帧的宿主侧 JNI 写入与 GPU 上传都按带面积计，典型省一
-     * 半以上）。band 外的纹理内容不被触碰：画布 clear 语义下 band 外本帧已
-     * 是零，上帧残留都在 band 内（collectDirtyRect 的并集保证）。
-     * 子矩形写入仍整带覆写（透明像素写 0 清上一帧残留）。
-     */
-    @Override
-    public boolean drawTrailCanvasBand(int[] px, int bandX, int bandY,
-                                       int bandW, int bandH,
-                                       int fullW, int fullH,
-                                       float planeX, float planeY,
-                                       float planeW, float planeH, float alpha,
-                                       int slot) {
-        if (poseStack == null || buffers == null || trailCanvasError
-                || px == null || bandW <= 0 || bandH <= 0 || alpha <= 0.01f
-                || slot < 0 || slot >= trailCanvasRl.length) return false;
-        // 画布纹理必须已存在且尺寸一致（渲染层保证 band 画自当前画布）
-        TrailTexture tex = trailCanvasTex[slot];
-        if (tex == null || trailCanvasW[slot] != fullW || trailCanvasH[slot] != fullH) {
-            return false;   // 画布刚重建（本帧首次）：退回整图版先建纹理
-        }
-        if (pendingEffectRl == trailCanvasRl[slot] && buffers != null) {
-            buffers.endBatch(RenderTypes.textSeeThrough(trailCanvasRl[slot]));
-            pendingEffectRl = null;
-        }
-        try {
-            NativeImage img = tex.getPixels();
-            if (img == null || px.length < bandW * bandH) return false;
-            for (int row = 0, i = 0; row < bandH; row++) {
-                for (int col = 0; col < bandW; col++, i++) {
-                    img.setPixelABGR(bandX + col, bandY + row, px[i]);
-                }
-            }
-            // 子矩形上传（10 参 writeToTexture：mip、layer、目的 (dx,dy)、尺寸
-            // (w,h)、源偏移 (sx,sy)；encoder 自行绑定目标纹理）。
-            RenderSystem.getDevice().createCommandEncoder().writeToTexture(
-                    tex.getTexture(), img, 0, 0, bandX, bandY, bandW, bandH, bandX, bandY);
-            // 0 级带内变化 → 重生成 mip 链（generate 是全链重算，但画布 ≤1600² 亚毫秒）
-            if (tex.mipTop > 0) {
-                org.lwjgl.opengl.GL30.glGenerateMipmap(
-                        com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D);
-            }
-        } catch (Throwable t) {
-            trailCanvasError = true;
-            trailCanvasErrSlot = slot;
-            if (TRACE) System.out.println("[WorldLyrics/trace] 拖尾画布带上传失败，径迹退回 quad 带: " + t);
-            return false;
-        }
-        int argb = Math.min(255, (int) (alpha * 255f)) << 24 | 0xFFFFFF;
-        Identifier rl = trailCanvasRl[slot];
-        VertexConsumer vc = buffers.getBuffer(RenderTypes.textSeeThrough(rl));
-        Matrix4f mat = poseStack.last().pose();
-        putHaloVertex(vc, mat, planeX, planeY, 0f, 0f, argb);
-        putHaloVertex(vc, mat, planeX, planeY + planeH, 0f, 1f, argb);
-        putHaloVertex(vc, mat, planeX + planeW, planeY + planeH, 1f, 1f, argb);
-        putHaloVertex(vc, mat, planeX + planeW, planeY, 1f, 0f, argb);
-        flushEffectBatch(rl);
-        return true;
-    }
 
     /**
      * 光晕贴图：128×128 双高斯白点（紧核 + 宽晕）：a = exp(−r²×9)×0.85 +

@@ -84,6 +84,32 @@ public final class CameraAccess implements WorldLyricsState.CameraView {
         return camera.getXRot();
     }
 
+    @Override
+    public double fovDeg() {
+        // 设置里的垂直 FOV（GameRenderer.getFov 是 private，动效/望远镜的瞬时
+        // FOV 拿不到）—— Stay on screen 的视野边界用它；望远镜放大时 FOV 会
+        // 显著小于实际视野，弹簧的边界会偏保守（更早回屏），观感可接受
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.options == null) return 70.0;
+        try {
+            return mc.options.fov().get().intValue();
+        } catch (Throwable t) {
+            return 70.0;
+        }
+    }
+
+    @Override
+    public int windowWidth() {
+        Minecraft mc = Minecraft.getInstance();
+        return mc != null && mc.getWindow() != null ? mc.getWindow().getWidth() : 0;
+    }
+
+    @Override
+    public int windowHeight() {
+        Minecraft mc = Minecraft.getInstance();
+        return mc != null && mc.getWindow() != null ? mc.getWindow().getHeight() : 0;
+    }
+
     /** 本帧的 partialTick（逐词动画插值用）。 */
     public float partialTick() {
         return partialTick;

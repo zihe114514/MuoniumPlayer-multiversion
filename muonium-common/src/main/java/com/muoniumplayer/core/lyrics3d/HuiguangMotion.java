@@ -44,7 +44,7 @@ public final class HuiguangMotion {
     // ==================== 观感常量（folia lyricWindow.ts 的数值） ====================
 
     /** 径迹基础不透明度（folia 0.55），渲染层再乘 strength 与字形 alpha。 */
-    public static final float TRAIL_ALPHA = 0.55f;
+    public static final float TRAIL_ALPHA = 0.8f;
     /** 径迹亮度饱和：路径长达到几个字号后不再变亮（folia heroPx×3）。 */
     public static final float TRAIL_SATURATION_FONTS = 3f;
     /** 径迹最小强度：路径位移不足（≈0.15 字号）不留痕（folia strength>0.05）。 */

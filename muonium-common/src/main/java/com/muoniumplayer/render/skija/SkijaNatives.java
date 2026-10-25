@@ -162,23 +162,22 @@ public final class SkijaNatives {
                 lines.add(download.percent() >= 0
                         ? "正在自动下载渲染原生库：" + download.percent() + "%"
                         : "正在自动下载渲染原生库…");
-                lines.add("装好后模组会自动重启游戏使其生效，先等它下完");
+                lines.add("下载完成后重启游戏生效（通常也会自动重启，没触发就手动重进）");
             }
             case INSTALLING -> {
                 lines.add("渲染原生库已下载，正在解压安装…");
-                lines.add("装好后模组会自动重启游戏使其生效");
+                lines.add("装好后重启游戏生效（通常也会自动重启，没触发就手动重进）");
             }
             case DONE -> {
-                // 装好即必须重启，而这一步模组替用户走：GameRestart 已布防时逐字播报
-                // 倒计时/取消后的手动指引；拿不到启动命令、超过重启上限时 statusLine
-                // 返回 null，回落到「自己重启一次」的手动文案。
+                // 装好即必须重启。自动重启（GameRestart）在真机上偶发不触发——回到主菜单的
+                // 判定、重启脚本落盘、进程退出任何一环都可能被启动器环境卡住——所以文案以
+                // 手动重启为主、倒计时为辅：两条路殊途同归，谁先到都一样生效。
+                lines.add("渲染原生库已自动装好，需要重启游戏后生效");
+                lines.add("请手动退出游戏并重新进入（自动重启偶尔不会触发）");
+                lines.add("不需要手动放置任何文件");
                 String restartLine = com.muoniumplayer.core.update.GameRestart.statusLine();
                 if (restartLine != null) {
-                    lines.add("渲染原生库已自动装好，需要重启游戏生效");
                     lines.add(restartLine);
-                } else {
-                    lines.add("渲染原生库已自动装好，必须重启游戏后才能生效");
-                    lines.add("退出后重新进入即可，不需要手动放置任何文件");
                 }
             }
             case FAILED -> {

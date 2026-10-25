@@ -838,6 +838,28 @@ public final class HudSettingsModel {
                                 slider(HudSetting.WORLD_LYRICS_SCALE, "整体缩放。1.0 时一行约 0.9 方块高。",
                                         () -> HudConfig.worldLyricsEnabled)),
                         new Group("字体与文本", HudSettingsIcons.SUBTITLES,
+                                toggle("Stay on screen", "转开视角时，歌词沿离视线最近的方向平滑滑回视野边缘（临界阻尼弹簧，不会突然跳）。离镜头的距离不变。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsStayOnScreen;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsStayOnScreen = !HudConfig.worldLyricsStayOnScreen;
+                                                saveNow();
+                                            }
+                                        }, () -> HudConfig.worldLyricsEnabled),
+                                toggle("Above ground", "歌词中心最低只到眼睛下方半格，不会沉进地面。跳跃/飞行时地板高度平滑跟随。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsAboveGround;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsAboveGround = !HudConfig.worldLyricsAboveGround;
+                                                saveNow();
+                                            }
+                                        }, () -> HudConfig.worldLyricsEnabled),
                                 toggle("现代化渲染", "开 = Skija 超采样矢量字形 + 高级发光烘焙，跟随界面字体设置；关 = 原版像素字体。动效组里的心象与绘光也依赖它。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {

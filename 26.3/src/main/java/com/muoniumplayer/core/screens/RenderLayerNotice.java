@@ -177,10 +177,12 @@ public final class RenderLayerNotice {
         List<String> lines = new ArrayList<>();
         lines.add(headline(status));
         if (status.mappedPlatform().startsWith("android")) {
-            // 2026-10-05 真机复测：渲染器 MobileGlues + 关闭 ANGLE 时 Skia 完整可用。
-            // 之前「装不出图形上下文」的真凶是 ANGLE 报的桌面语义版本串，不是 MobileGlues 本体。
-            lines.add("渲染器请选 MobileGlues（MG）并关闭 ANGLE，再装伴生包");
-            lines.add("ANGLE 开着 Skia 会装不出图形上下文；换 Krypton 包装则可能弄坏世界贴图");
+            // 2026-10-25 真机：MobileGL（26.3 当前的主流渲染器）在 GL 门对齐修复
+            // （SkijaGlRedirector 把 libskija 的 GL/EGL 导入重定向到它那扇门）之后 Skia
+            // 完整可用。修复前「MobileGlues + 关 ANGLE」的指引是旧结论，留在其余版本树；
+            // 26.3 不再给——否则会把用户从更主流、且已被适配的 MobileGL 引开。
+            lines.add("26.3 安卓请使用 MobileGL 渲染器（本模组已适配并实测）");
+            lines.add("Krypton 包装的渲染器可能弄坏世界贴图，不建议使用");
         }
         if (!status.loaded()) {
             if (status.attempted().isEmpty() && SkijaHost.suspendReason() != null) {

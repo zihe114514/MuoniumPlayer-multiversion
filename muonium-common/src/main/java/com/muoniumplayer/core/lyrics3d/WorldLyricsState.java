@@ -79,6 +79,7 @@ public final class WorldLyricsState {
         final int lineIndex;
         public double x, y, z;
         public double spawnYawDeg, spawnPitchDeg;
+        public double vYaw, vPitch;
         /** 每个非空白字符出现的时间（相对这句开始，毫秒）——word pop 用。 */
         public final long[] charTimes;
 
@@ -168,6 +169,15 @@ public final class WorldLyricsState {
         double yawDeg();
         /** 视线 pitch（度，MC 口径：-90..90）。 */
         double pitchDeg();
+
+        /** 视场角（度，整画面垂直 FOV；Stay on screen 算视野边界用）。默认 70。 */
+        default double fovDeg() { return 70.0; }
+
+        /** 窗口/帧缓冲宽度像素（算水平视野的宽高比用）。默认 0 = 未知（按 16:9 兜底）。 */
+        default int windowWidth() { return 0; }
+
+        /** 窗口/帧缓冲高度像素。默认 0 = 未知。 */
+        default int windowHeight() { return 0; }
     }
 
     /** 渲染参数快照（设置门面）。 */
@@ -183,6 +193,11 @@ public final class WorldLyricsState {
         default boolean cadenza() { return false; }
         /** 绘光动效模式（换句飞行重排 + 径迹拖尾 + 卡拉OK点亮）。 */
         default boolean huiguang() { return false; }
+
+        default boolean stayOnScreen() { return false; }
+
+        /** Above ground：歌词中心不低于眼睛下方 0.5 格（不沉进地面）。 */
+        default boolean aboveGround() { return false; }
     }
 
     /** 一行歌词这一帧的最终落点与字形状态，渲染层只读。 */
@@ -497,6 +512,9 @@ public final class WorldLyricsState {
             }
         }
 
+        // 在画之前把越界句拉回视野（fading 句也 follow —— 与上游同序）
+        keepOnScreen(camera, params);
+
         Iterator<Floating> it = fading.iterator();
         while (it.hasNext()) {
             Floating f = it.next();
@@ -638,6 +656,159 @@ public final class WorldLyricsState {
         return ans;
     }
 
+
+    /** Above ground：歌词中心最低在眼睛下面多少格（站着时离地还有一格多）。 */
+    static final double GROUND_MARGIN = 0.5;
+
+    /** Stay on screen 回屏弹簧的快慢（越大跟得越紧；12 ≈ 0.3s 回到位，临界阻尼）。 */
+    static final double STAY_SPRING = 12.0;
+
+    /** Above ground 的最低高度，平滑地跟着镜头走（NaN = 未启用）。 */
+    private double groundFloor = Double.NaN;
+
+    private long keepNanos;
+
+    /** 角度归一到 -180..180。 */
+    private static double wrapDegrees(double d) {
+        double v = d % 360.0;
+        if (v >= 180.0) v -= 360.0;
+        if (v < -180.0) v += 360.0;
+        return v;
+    }
+
+    /**
+     * Above ground：换算成距离 d 处最多能往下偏的 pitch（度；MC pitch 向下为正）。
+     * 歌词中心最低只到眼睛下面 {@link #GROUND_MARGIN} 格。
+     */
+    static double maxPitchFor(double d) {
+        double s = Math.max(0.0, Math.min(1.0, GROUND_MARGIN / Math.max(1e-6, d)));
+        return Math.toDegrees(Math.asin(s));
+    }
+
+    /**
+     * Stay on screen：歌词（连同字宽）超出视野时，沿离视线最近的方向滑回屏幕边上。
+     * 视野按设置的 FOV 与窗口宽高比算；离镜头距离不变。回屏用临界阻尼弹簧
+     * （有速度、平滑加减速；子步长 1/240s，低帧率也稳定）。Above ground 的
+     * 最低高度同样折算成边界交给同一个弹簧；地板高度用指数插值平滑跟镜头
+     * （上慢 0.3s / 下快 0.15s，跳跃时不抽动）。
+     */
+    private void keepOnScreen(WorldLyricsState.CameraView camera, Params params) {
+        long now = System.nanoTime();
+        double dt = keepNanos == 0L ? 0.016 : Math.max(0.0, Math.min(0.1, (now - keepNanos) / 1.0E9));
+        keepNanos = now;
+        boolean stay = params.stayOnScreen();
+        boolean ground = params.aboveGround();
+        if (!stay) {
+            if (!ground) {
+                groundFloor = Double.NaN;
+                for (Floating f : fading) { f.vYaw = 0; f.vPitch = 0; }
+                if (active != null) { active.vYaw = 0; active.vPitch = 0; }
+            }
+            return;
+        }
+
+        if (ground) {
+            double target = camera.eyeY() - GROUND_MARGIN;
+            groundFloor = Double.isNaN(groundFloor) ? target
+                    : groundFloor + (target - groundFloor) * (1.0 - Math.exp(-dt / (target > groundFloor ? 0.3 : 0.15)));
+        } else {
+            groundFloor = Double.NaN;
+        }
+
+        double vHalf = Math.max(1.0, camera.fovDeg()) / 2.0;
+        int wPx = camera.windowWidth();
+        int hPx = camera.windowHeight();
+        double aspect = (wPx > 0 && hPx > 0) ? (double) wPx / Math.max(1, hPx) : 16.0 / 9.0;
+        double hHalf = Math.toDegrees(Math.atan(Math.tan(Math.toRadians(vHalf)) * aspect));
+        double s = PX_TO_WORLD * params.scale() * (params.distance() / DISTANCE_NORM);
+        double playerYaw = camera.yawDeg();
+        double playerPitch = camera.pitchDeg();
+
+        // active 与 fading 都 follow（上游同序；fading 句被 turn away 时也要回屏）
+        if (active != null) followOnScreen(active, camera, s, vHalf, hHalf, playerYaw, playerPitch, dt);
+        for (Floating f : fading) followOnScreen(f, camera, s, vHalf, hHalf, playerYaw, playerPitch, dt);
+    }
+
+    private void followOnScreen(Floating f, WorldLyricsState.CameraView camera,
+                                double s, double vHalf, double hHalf,
+                                double playerYaw, double playerPitch, double dt) {
+        double rx = f.x - camera.eyeX();
+        double ry = f.y - camera.eyeY();
+        double rz = f.z - camera.eyeZ();
+        double len = Math.sqrt(rx * rx + ry * ry + rz * rz);
+        if (len < 1e-4) return;
+
+        // 字本身占的角度：留一半宽/高，再多留 2 度边距
+        float maxW = 0f;
+        for (String line : f.lines) {
+            float w = 0f;
+            for (int i = 0; i < line.length(); i++) {
+                float adv = LyricGlyphAtlas.designAdvance(line.charAt(i));
+                w += adv > 0 ? adv : pixelWidthOfFallback(line.charAt(i));
+            }
+            maxW = Math.max(maxW, w);
+        }
+        double halfW = Math.toDegrees(Math.atan2(maxW * s / 2.0, len));
+        double halfH = Math.toDegrees(Math.atan2(f.lines.size() * LINE_H * s / 2.0, len));
+        double hLim = Math.max(0.0, hHalf - halfW - 2.0);
+        double vLim = Math.max(0.0, vHalf - halfH - 2.0);
+
+        double curYaw = Math.toDegrees(Math.atan2(-rx, rz));
+        double curPitch = Math.toDegrees(Math.asin(Math.max(-1.0, Math.min(1.0, -ry / len))));
+        double dYaw = wrapDegrees(curYaw - playerYaw);
+        double dPitch = curPitch - playerPitch;
+
+        // 往下最多到哪：屏幕下边 vs（Above ground）地面高度，哪个更靠上用哪个
+        double lowLim = vLim;
+        if (!Double.isNaN(groundFloor)) {
+            double floorPitch = Math.toDegrees(Math.asin(Math.max(-1.0,
+                    Math.min(1.0, (camera.eyeY() - groundFloor) / len))));
+            lowLim = Math.min(lowLim, floorPitch - playerPitch);
+        }
+        double tYaw = Math.max(-hLim, Math.min(hLim, dYaw));
+        double tPitch = lowLim >= -vLim
+                ? Math.max(-vLim, Math.min(lowLim, dPitch))
+                : lowLim;
+
+        // 偏出去多少（边界以内就是 0）
+        double eYaw = dYaw - tYaw;
+        double ePitch = dPitch - tPitch;
+        if (eYaw == 0.0 && ePitch == 0.0 && Math.abs(f.vYaw) < 0.05 && Math.abs(f.vPitch) < 0.05) {
+            f.vYaw = 0;
+            f.vPitch = 0;
+            return;
+        }
+
+        // 临界阻尼弹簧，子步 1/240s 积分（帧率低时也稳定）
+        double moveYaw = 0, movePitch = 0;
+        double left = dt;
+        while (left > 1e-6) {
+            double h = Math.min(left, 1.0 / 240.0);
+            left -= h;
+            f.vYaw += (-STAY_SPRING * STAY_SPRING * (eYaw - moveYaw) - 2.0 * STAY_SPRING * f.vYaw) * h;
+            f.vPitch += (-STAY_SPRING * STAY_SPRING * (ePitch - movePitch) - 2.0 * STAY_SPRING * f.vPitch) * h;
+            moveYaw += f.vYaw * h;
+            movePitch += f.vPitch * h;
+        }
+
+        double newYaw = curYaw + moveYaw;
+        double newPitch = Math.max(-89.0, Math.min(89.0, curPitch + movePitch));
+        double yr = Math.toRadians(newYaw);
+        double pr = Math.toRadians(newPitch);
+        f.x = camera.eyeX() - Math.sin(yr) * Math.cos(pr) * len;
+        f.y = camera.eyeY() - Math.sin(pr) * len;
+        f.z = camera.eyeZ() + Math.cos(yr) * Math.cos(pr) * len;
+        // 非朝向玩家模式下，字的朝向跟着一起转，免得斜着看
+        f.spawnYawDeg = (float) (f.spawnYawDeg + wrapDegrees(newYaw - curYaw));
+        f.spawnPitchDeg = (float) Math.max(-90.0, Math.min(90.0,
+                f.spawnPitchDeg + (newPitch - curPitch)));
+    }
+
+    /** 量宽兜底（designAdvance 不可用时按像素字近似：全角 9 / 半角 5）。 */
+    private static float pixelWidthOfFallback(char c) {
+        return c >= 0x2E80 ? 9f : 5f;
+    }
+
     /** 当前句转淡出。 */
     private void retireActive(long nowNanos) {
         if (active != null) {
@@ -734,6 +905,11 @@ public final class WorldLyricsState {
                 - random.nextDouble() * SPAWN_PITCH_RANDOM);
         double[] dir = yawPitchDirectionStatic(yaw, pitch);
         double d = params.distance();
+        // 之后的回屏弹簧继续把约束维持住
+        if (params.aboveGround()) {
+            pitch = (float) Math.min(pitch, maxPitchFor(d));
+            dir = yawPitchDirectionStatic(yaw, pitch);
+        }
         Floating f = new Floating(wrapped, line.timestamp, reveal, lineIndex,
                 camera.eyeX() + dir[0] * d, camera.eyeY() + dir[1] * d, camera.eyeZ() + dir[2] * d,
                 yaw, pitch, charTimes);

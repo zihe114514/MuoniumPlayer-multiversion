@@ -34,7 +34,7 @@ class HudSettingsTaxonomyStaticTest {
             "歌词样式", "3D 歌词", "面板与卡片", "灵动岛", "无缝切换", "界面与主题", "信息栏与封面", "缓存与公告");
 
     /** 与 {@link #TITLES} 同序的条目数；总和必须等于 {@link #TOTAL}。 */
-    private static final List<Integer> COUNTS = Arrays.asList(21, 15, 8, 24, 20, 32, 5, 3);
+    private static final List<Integer> COUNTS = Arrays.asList(21, 18, 8, 24, 20, 32, 5, 3);
 
     /** 「界面与主题」那页 2026-09-30 从 19 条长到 21 条：真玻璃材质组多了「实时背景采集」与
      *  「帧率不够时自动摘玻璃」两个开关；同日傍晚又长到 26 条：多了四面各自的模糊倍率
@@ -47,7 +47,7 @@ class HudSettingsTaxonomyStaticTest {
      *  2026-10-24 移除经典/Folia 样式与死开关四条下架；条目整合：3D 动效三开关并成「动效风格」单选
      *  并新增「发光颜色」取色与「关键字染色」（绘光配套）；灵动岛新增「岛内搜索」与「动画速度」档位；
      *  无缝切换「引擎+表现+进阶」三合一成「处理方案」四档 —— 132 → 128。 */
-    private static final int TOTAL = 128;
+    private static final int TOTAL = 131;
 
     @Test
     @DisplayName("分类就是这 7 页，顺序与每页条目数都不许悄悄变")

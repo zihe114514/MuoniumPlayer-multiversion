@@ -24,13 +24,13 @@ import io.github.humbleui.skija.Canvas;
 public final class TextGlow {
 
     /**
-     * 三层的 sigma，按字号取比例；歌词字号 32.5 时依次是 8.0 / 2.6 / 0.8 GUI 像素。
-     * 必须从大到小排——{@link #padding} 直接拿第 0 项算留白。
+     * 辉光层的 sigma，按字号取比例。只作用于<b>晕形</b>（见 {@link #drawOn} 的
+     * 两层合成），必须从大到小排——{@link #padding} 直接拿第 0 项算留白。
      */
     private static final double[] SIGMA_RATIO = {0.246, 0.080, 0.0246};
 
-    /** 三层各自的不透明度上限，还要再乘发光强度。越靠外越淡。 */
-    private static final double[] LAYER_ALPHA = {0.24, 0.50, 0.60};
+    /** 辉光层各自的不透明度上限，还要再乘发光强度。越靠外越淡。 */
+    private static final double[] LAYER_ALPHA = {0.20, 0.34, 0.42};
 
     private TextGlow() {
     }
@@ -73,7 +73,14 @@ public final class TextGlow {
         BlendMode previousBlend = SkijaGfx.blendMode();
         SkijaGfx.setBlendMode(BlendMode.PLUS);
         try {
-            for (int layer = 0; layer < SIGMA_RATIO.length; layer++) {
+            // 辉光的观感关键：晕要「薄」。过去三层把文字实体重画三遍，紧贴笔画
+            // 处三层 alpha 加色叠出近不透明的实色壳 —— 用户反馈「像包了一层
+            // 颜色」。改法：两层都把整体 alpha 压低、只保留大 σ 的柔晕与中 σ
+            // 的过渡（小 σ 层紧贴笔画、与墨色本体几乎重合，视觉上只会形成
+            // 壳，删掉由墨色本体自己提供「亮边」）。晕形仍然是文字形状的
+            // blur 副本，但因为 alpha 低、无小 σ 层，笔画边缘由墨色抗锯齿
+            // 灰阶直接过渡到柔晕，不再是「色壳包字」。
+            for (int layer = 0; layer < 2; layer++) {
                 double layerAlpha = clampedAlpha * clampedStrength * LAYER_ALPHA[layer];
                 if (layerAlpha <= .003) {
                     continue;

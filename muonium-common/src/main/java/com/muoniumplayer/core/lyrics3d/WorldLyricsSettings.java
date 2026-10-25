@@ -20,6 +20,8 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     @Override public boolean splitLines() { return splitLines; }
     @Override public boolean cadenza() { return cadenza; }
     @Override public boolean huiguang() { return huiguang; }
+    @Override public boolean stayOnScreen() { return stayOnScreen; }
+    @Override public boolean aboveGround() { return aboveGround; }
 
     public boolean enabled;
     public double distance = 10.5;
@@ -42,6 +44,9 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     public boolean cadenza;
     /** 绘光动效模式（仅现代化引擎生效）：换句逐字飞行重排 + 径迹拖尾 + 卡拉OK点亮。 */
     public boolean huiguang;
+    public boolean stayOnScreen;
+    /** Above ground：歌词中心不低于眼睛下方 0.5 格。 */
+    public boolean aboveGround;
     /** 绘光关键字表（folia wordColors）：格式「词:RRGGBB,词:RRGGBB,…」；空 = 无关键字。 */
     public String keywordColors = "";
 
@@ -70,6 +75,8 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
         s.textFlash = HudConfig.worldLyricsTextFlash;
         s.cadenza = HudConfig.worldLyricsCadenza;
         s.huiguang = HudConfig.worldLyricsHuiguang;
+        s.stayOnScreen = HudConfig.worldLyricsStayOnScreen;
+        s.aboveGround = HudConfig.worldLyricsAboveGround;
         s.keywordColors = HudConfig.worldLyricsKeywordColors != null
                 ? HudConfig.worldLyricsKeywordColors : "";
         if (!s.glowEnabled) s.glowStrength = 0f;

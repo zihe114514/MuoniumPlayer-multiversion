@@ -461,66 +461,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 镜像同步写，用于诊断与全量重传兜底。26.x 无 mip（texStorage 型单级，
      * 见 TrailTexture 注释），上传后无需重生成链。</p>
      */
-    @Override
-    public boolean drawTrailCanvasBand(int[] px, int bandX, int bandY,
-                                       int bandW, int bandH,
-                                       int fullW, int fullH,
-                                       float planeX, float planeY,
-                                       float planeW, float planeH, float alpha,
-                                       int slot) {
-        if (poseStack == null || collector == null || trailCanvasError
-                || px == null || bandW <= 0 || bandH <= 0 || alpha <= 0.01f
-                || slot < 0 || slot >= trailCanvasRl.length) return false;
-        // 画布纹理必须已存在且尺寸一致（渲染层保证 band 画自当前画布）
-        TrailTexture tex = trailCanvasTex[slot];
-        if (tex == null || trailCanvasW[slot] != fullW || trailCanvasH[slot] != fullH) {
-            return false;   // 画布刚重建（本帧首次）：退回整图版先建纹理
-        }
-        try {
-            NativeImage img = tex.getPixels();
-            if (img == null || px.length < bandW * bandH) return false;
-            try (NativeImage band = new NativeImage(bandW, bandH, true)) {
-                for (int row = 0, i = 0; row < bandH; row++) {
-                    for (int col = 0; col < bandW; col++, i++) {
-                        // 共享层已按 NativeImage 内存序（ABGR、直通 alpha）输出，
-                        // 纯拷贝；整页 CPU 镜像同写（诊断/全量重传兜底用）。
-                        img.setPixelABGR(bandX + col, bandY + row, px[i]);
-                        band.setPixelABGR(col, row, px[i]);
-                    }
-                }
-                // 暂存图全尺寸 = 带尺寸，6 参的 (bandX,bandY) 平移目标合法。
-                com.mojang.blaze3d.systems.RenderSystem.getDevice()
-                        .createCommandEncoder()
-                        .writeToTexture(tex.getTexture(), band, 0, 0, bandX, bandY);
-            }
-        } catch (Throwable t) {
-            trailCanvasError = true;
-            trailCanvasErrSlot = slot;
-            if (TRACE) System.out.println("[WorldLyrics/trace] 拖尾画布带上传失败，径迹退回 quad 带: " + t);
-            return false;
-        }
-        int argb = Math.min(255, (int) (alpha * 255f)) << 24 | 0xFFFFFF;
-        Identifier rl = trailCanvasRl[slot];
-        RenderType renderType = RenderTypes.textSeeThrough(rl);
-        // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
-        // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
-        // 渲染层先逐字 halo、再整块画布、最后字形 —— submit 顺序即绘制顺序。
-        poseStack.pushPose();
-        try {
-            LyricOnTopSubmitter.submitCustomGeometry(collector, poseStack, renderType, (pose, vc) -> {
-                Matrix4f mat = pose.pose();
-                // 四顶点：左上 → 左下 → 右下 → 右上（QUADS 环绕序），UV 铺满整张画布
-                putHaloVertex(vc, mat, planeX, planeY, 0f, 0f, argb);
-                putHaloVertex(vc, mat, planeX, planeY + planeH, 0f, 1f, argb);
-                putHaloVertex(vc, mat, planeX + planeW, planeY + planeH, 1f, 1f, argb);
-                putHaloVertex(vc, mat, planeX + planeW, planeY, 1f, 0f, argb);
-            });
-        } finally {
-            poseStack.popPose();
-        }
-        return true;
-    }
-
+    
     /**
      * 径迹贴图：128×8 白色横条（v 从上不透明白到下全透明，历史渐变保留）——
      * 绘光还原度批次后径迹顶点 alpha 均匀、UV 钉在不透明行（v≈0.03），纹理

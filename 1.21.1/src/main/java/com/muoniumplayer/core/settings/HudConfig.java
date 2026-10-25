@@ -392,6 +392,9 @@ public final class HudConfig {
      * 镜不发虚），显存与烘焙 CPU 随档上升。切换即全图集重建。
      */
     public static int worldLyricsQualityTier = 0;
+    public static boolean worldLyricsStayOnScreen = false;
+    /** Above ground：歌词中心不低于眼睛下方 0.5 格，不沉进地面。 */
+    public static boolean worldLyricsAboveGround = false;
 
     // OSD KTV 动画。这些值独立于全屏歌词渲染器。
     public static float osdKaraokeTransitionWidth = 14.0f;
@@ -736,6 +739,8 @@ public final class HudConfig {
         worldLyricsHuiguang = false;
         worldLyricsKeywordColors = "";
         worldLyricsQualityTier = 0;
+        worldLyricsStayOnScreen = false;
+        worldLyricsAboveGround = false;
         osdKaraokeTransitionWidth = 14.0f;
         osdKaraokePulseStrength = 0.00f;
         osdKaraokeSmoothing = 0.85f;
@@ -921,6 +926,8 @@ public final class HudConfig {
             worldLyricsHuiguang = getBoolean(o, "worldLyricsHuiguang", worldLyricsHuiguang);
             worldLyricsKeywordColors = getString(o, "worldLyricsKeywordColors", worldLyricsKeywordColors);
             worldLyricsQualityTier = (int) clamp(getInt(o, "worldLyricsQualityTier", worldLyricsQualityTier), 0, 7);
+            worldLyricsStayOnScreen = getBoolean(o, "worldLyricsStayOnScreen", worldLyricsStayOnScreen);
+            worldLyricsAboveGround = getBoolean(o, "worldLyricsAboveGround", worldLyricsAboveGround);
 
             osdKaraokeTransitionWidth = clamp(getFloat(o, "osdKaraokeTransitionWidth", osdKaraokeTransitionWidth), 4.0f, 32.0f);
             osdKaraokePulseStrength = clamp(getFloat(o, "osdKaraokePulseStrength", osdKaraokePulseStrength), 0.0f, 0.15f);
@@ -1101,6 +1108,8 @@ public final class HudConfig {
             o.addProperty("worldLyricsHuiguang", worldLyricsHuiguang);
             o.addProperty("worldLyricsKeywordColors", worldLyricsKeywordColors);
             o.addProperty("worldLyricsQualityTier", worldLyricsQualityTier);
+            o.addProperty("worldLyricsStayOnScreen", worldLyricsStayOnScreen);
+            o.addProperty("worldLyricsAboveGround", worldLyricsAboveGround);
             o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
             o.addProperty("osdKaraokePulseStrength", osdKaraokePulseStrength);
             o.addProperty("osdKaraokeSmoothing", osdKaraokeSmoothing);

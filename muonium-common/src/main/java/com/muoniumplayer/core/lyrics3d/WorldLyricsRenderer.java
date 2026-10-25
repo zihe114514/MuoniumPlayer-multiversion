@@ -106,23 +106,6 @@ public final class WorldLyricsRenderer {
         }
 
         /**
-         * 拖尾画布<b>脏区带</b>上屏（性能优选）：px 只含 [bandX, bandX+bandW)
-         * × [bandY, bandY+bandH) 的像素（设备像素；band 是上帧∪本帧径迹覆盖带，
-         * 已含被清零的上一帧残留 —— 宿主必须整带覆写）。band 以外的纹理内容
-         * 保持上上帧的旧值（画布上 clear 过，那些旧值已是零）。
-         * 其余语义（返回 true=吃下、slot 槽位）与整图版一致。宿主未实现时
-         * 渲染层退回整图版 {@link #drawTrailCanvas}。
-         */
-        default boolean drawTrailCanvasBand(int[] px, int bandX, int bandY,
-                                            int bandW, int bandH,
-                                            int fullW, int fullH,
-                                            float planeX, float planeY,
-                                            float planeW, float planeH, float alpha,
-                                            int slot) {
-            return false;
-        }
-
-        /**
          * 绘光逐字光晕（folia halos：每字一枚径向渐变柔光点垫在字下）。
          * (cx, cy) 是字心（文字像素坐标、公告牌平面系），sizePx 是光晕正方形
          * 边长（设计像素，folia ≈ fontPx×2.2~3.0），argb 已含整体透明度。
@@ -536,7 +519,7 @@ public final class WorldLyricsRenderer {
                             if (strength > HuiguangMotion.TRAIL_MIN_STRENGTH) {
                                 // Skija 光栅化：折线进共享画布（多层辉光 + 沿程渐变 +
                                 // 圆头圆接，Skija AA 无锯齿），帧尾整块上屏
-                                int trailRgb = HuiguangMotion.dimRgb(inkRgb & 0xFFFFFF, 1.15f);
+                                int trailRgb = HuiguangMotion.dimRgb(inkRgb & 0xFFFFFF, 1.3f);
                                 float trailA = Math.min(1f,
                                         row.alpha * HuiguangMotion.TRAIL_ALPHA * strength);
                                 if (trailCanvasActive) {
@@ -588,46 +571,17 @@ public final class WorldLyricsRenderer {
                 //      宿主不吃下（未实现/熔断）→ 累计失败并停用画布通路：
                 //      之后整帧直接走 quad 带，不再每帧白做光栅化与像素拷贝。
                 if (trailCanvasActive) {
-                    // 脏区带路径（优选）：只把上帧∪本帧径迹覆盖带交宿主 ——
-                    // CPU 转换与宿主写入都按带面积计（拖尾通路头号热点的减负）
-                    int[] rect = TRAIL_RECT_SCRATCH;
-                    int area = HuiguangTrailCanvas.collectDirtyRect(rect);
+                    // ABGR 直出（像素换位在 Skija 读出时一次完成）：宿主写入
+                    // 退化纯拷贝，拖尾活跃帧省一整遍逐像素位运算扫描
+                    int[] px = HuiguangTrailCanvas.readPixelsAbgr();
                     boolean accepted = false;
-                    if (area > 0) {
-                        int[] band = HuiguangTrailCanvas.readPixelsAbgrBand(
-                                rect[0], rect[1], rect[2], rect[3]);
-                        if (band != null) {
-                            // 字面→设备像素换算系数（plane 是设计像素口径）
-                            float sx = HuiguangTrailCanvas.planeW()
-                                    / HuiguangTrailCanvas.canvasWidth();
-                            float sy = HuiguangTrailCanvas.planeH()
-                                    / HuiguangTrailCanvas.canvasHeight();
-                            accepted = host.drawTrailCanvasBand(band,
-                                    rect[0], rect[1], rect[2], rect[3],
-                                    HuiguangTrailCanvas.canvasWidth(),
-                                    HuiguangTrailCanvas.canvasHeight(),
-                                    HuiguangTrailCanvas.offX() + rect[0] * sx,
-                                    HuiguangTrailCanvas.offY() + rect[1] * sy,
-                                    rect[2] * sx, rect[3] * sy,
-                                    1f, canvasSlot);
-                        }
-                    }
-                    if (!accepted) {
-                        // 带路径不被支持/本帧无径迹但上帧有残留 → 整图版兜底
-                        //（透明像素写 0 清残影的语义在整图版里保持）
-                        int[] px = area > 0
-                                ? HuiguangTrailCanvas.readPixelsAbgrBand(
-                                        0, 0, HuiguangTrailCanvas.canvasWidth(),
-                                        HuiguangTrailCanvas.canvasHeight())
-                                : HuiguangTrailCanvas.readPixelsAbgr();
-                        if (px != null) {
-                            accepted = host.drawTrailCanvas(px,
-                                    HuiguangTrailCanvas.canvasWidth(),
-                                    HuiguangTrailCanvas.canvasHeight(),
-                                    HuiguangTrailCanvas.offX(), HuiguangTrailCanvas.offY(),
-                                    HuiguangTrailCanvas.planeW(), HuiguangTrailCanvas.planeH(),
-                                    1f, canvasSlot);
-                        }
+                    if (px != null) {
+                        accepted = host.drawTrailCanvas(px,
+                                HuiguangTrailCanvas.canvasWidth(),
+                                HuiguangTrailCanvas.canvasHeight(),
+                                HuiguangTrailCanvas.offX(), HuiguangTrailCanvas.offY(),
+                                HuiguangTrailCanvas.planeW(), HuiguangTrailCanvas.planeH(),
+                                1f, canvasSlot);
                     }
                     if (accepted) {
                         trailCanvasFailStreak = 0;
@@ -690,8 +644,12 @@ public final class WorldLyricsRenderer {
                         if (lit < 0.999f) {
                             float da = Math.min(1f, g.alpha * (1f + 0.45f * huiguangNight)) * (1f - lit);
                             if (da > 0.02f) {
+                                // 未唱字的发光档压到近零：冷暗档 + 双字叠加期
+                                // （暗/亮格交叉淡化）各自带一轮暖晕加色，正是
+                                // 「字包了一层色」的来源之一 —— 未唱=不发光，
+                                // 只在夜晚保留极低的环境晕（冰蓝靠亮度对比即可）
                                 host.drawSmoothGlyph(g.c, g.x, g.y, WorldLyricsState.LYRIC_SIZE,
-                                        dim, da, g.rot, g.dx, g.dy, g.pop, 0.35f + 0.25f * huiguangNight);
+                                        dim, da, g.rot, g.dx, g.dy, g.pop, 0.06f * huiguangNight);
                             }
                         }
                         if (lit > 0.001f) {
@@ -751,8 +709,6 @@ public final class WorldLyricsRenderer {
     private static final float[] TRAIL_XS = new float[HuiguangMotion.TRACK_SAMPLES + 1];
     /** 逐字呼吸的复用输出（glyphBreathInto；渲染线程单线程）。 */
     private static final float[] TRAIL_BREATH = new float[2];
-    /** 拖尾脏区收集的复用输出（collectDirtyRect 写 [0..3]；渲染线程单线程）。 */
-    private static final int[] TRAIL_RECT_SCRATCH = new int[4];
     private static final float[] TRAIL_YS = new float[HuiguangMotion.TRACK_SAMPLES + 1];
 
     /** 未唱字夜晚档的冰蓝色（月光霜感，暗背景上自发光可读）。 */
@@ -806,7 +762,7 @@ public final class WorldLyricsRenderer {
     private static int[] cachedKeywordColors = new int[0];
 
     /** 解析「词:RRGGBB,词:RRGGBB,…」设置串；非法项跳过，最多 12 项（烘焙预算护栏）。 */
-    private static void parseKeywordTable(String spec) {
+    private static Object parseKeywordTable(String spec) {
         if (spec == null) spec = "";
         if (!spec.equals(cachedKeywordSpec)) {
             java.util.ArrayList<String> words = new java.util.ArrayList<>();
@@ -832,6 +788,7 @@ public final class WorldLyricsRenderer {
             cachedKeywordColors = new int[colors.size()];
             for (int i = 0; i < colors.size(); i++) cachedKeywordColors[i] = colors.get(i);
         }
+        return new Object[] {cachedKeywordWords, cachedKeywordColors};
     }
 
     /**

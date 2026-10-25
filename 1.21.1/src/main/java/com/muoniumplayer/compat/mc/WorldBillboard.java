@@ -445,68 +445,6 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         return true;
     }
 
-    /**
-     * 拖尾画布脏区带上屏：只把径迹覆盖带写进纹理子矩形并上传（整图重传的
-     * 替代 —— 拖尾活跃帧的宿主侧 JNI 写入与 GPU 上传都按带面积计，典型省一
-     * 半以上）。band 外的纹理内容不被触碰：画布 clear 语义下 band 外本帧已
-     * 是零，上帧残留都在 band 内（collectDirtyRect 的并集保证）。
-     * 子矩形写入仍整带覆写（透明像素写 0 清上一帧残留）。
-     */
-    @Override
-    public boolean drawTrailCanvasBand(int[] px, int bandX, int bandY,
-                                       int bandW, int bandH,
-                                       int fullW, int fullH,
-                                       float planeX, float planeY,
-                                       float planeW, float planeH, float alpha,
-                                       int slot) {
-        if (poseStack == null || buffers == null || trailCanvasError
-                || px == null || bandW <= 0 || bandH <= 0 || alpha <= 0.01f
-                || slot < 0 || slot >= trailCanvasRl.length) return false;
-        // 画布纹理必须已存在且尺寸一致（渲染层保证 band 画自当前画布）
-        TrailTexture tex = trailCanvasTex[slot];
-        if (tex == null || trailCanvasW[slot] != fullW || trailCanvasH[slot] != fullH) {
-            return false;   // 画布刚重建（本帧首次）：退回整图版先建纹理
-        }
-        if (pendingEffectRl == trailCanvasRl[slot] && buffers != null) {
-            buffers.endBatch(RenderType.textSeeThrough(trailCanvasRl[slot]));
-            pendingEffectRl = null;
-        }
-        try {
-            NativeImage img = tex.getPixels();
-            if (img == null || px.length < bandW * bandH) return false;
-            for (int row = 0, i = 0; row < bandH; row++) {
-                for (int col = 0; col < bandW; col++, i++) {
-                    img.setPixelRGBA(bandX + col, bandY + row, px[i]);
-                }
-            }
-            // 子矩形上传（9 参重载 → _upload(level, xOffset, yOffset,
-            // unpackSkipPixels=bandX, unpackSkipRows=bandY, bandW, bandH,
-            // blur=false, clamp=false, mipmap=false, closeAfter=false)）；
-            // _upload 不换绑定，uploadSub 同款先 bind。
-            tex.bind();
-            img.upload(0, bandX, bandY, bandX, bandY, bandW, bandH, false, false);
-            // 0 级带内变化 → 重生成 mip 链（generate 是全链重算，但画布 ≤1600² 亚毫秒）
-            if (tex.mipTop > 0) {
-                org.lwjgl.opengl.GL30.glGenerateMipmap(
-                        com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D);
-            }
-        } catch (Throwable t) {
-            trailCanvasError = true;
-            trailCanvasErrSlot = slot;
-            if (TRACE) System.out.println("[WorldLyrics/trace] 拖尾画布带上传失败，径迹退回 quad 带: " + t);
-            return false;
-        }
-        int argb = Math.min(255, (int) (alpha * 255f)) << 24 | 0xFFFFFF;
-        ResourceLocation rl = trailCanvasRl[slot];
-        VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(rl));
-        Matrix4f mat = poseStack.last().pose();
-        putHaloVertex(vc, mat, planeX, planeY, 0f, 0f, argb);
-        putHaloVertex(vc, mat, planeX, planeY + planeH, 0f, 1f, argb);
-        putHaloVertex(vc, mat, planeX + planeW, planeY + planeH, 1f, 1f, argb);
-        putHaloVertex(vc, mat, planeX + planeW, planeY, 1f, 0f, argb);
-        flushEffectBatch(rl);
-        return true;
-    }
 
     /**
      * 光晕贴图：128×128 双高斯白点（紧核 + 宽晕）：a = exp(−r²×9)×0.85 +
