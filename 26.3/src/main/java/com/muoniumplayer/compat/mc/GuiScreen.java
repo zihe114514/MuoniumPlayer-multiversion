@@ -175,8 +175,23 @@ public abstract class GuiScreen extends Screen {
     }
 
     @Override
+    public void added() {
+        super.added();
+        // 26.3 的 SDL 后端里，字符事件（SDL_TEXTINPUT → Screen#charTyped）只有在
+        // SDL_StartTextInput 之后才会投递。原版靠 EditBox 聚焦时调
+        // Minecraft#onTextInputFocusChange 开启，而本项目的输入框全是自绘的，
+        // 没有原版控件替我们开——不开就一个字都打不进搜索栏/输入框。
+        // 这里「界面开着就开」与 GLFW 时代的语义等价：那时 char 回调只要窗口
+        // 聚焦就一直投递，并不看界面里有没有输入框。
+        mc.textInputManager().startTextInput(this);
+    }
+
+    @Override
     public void removed() {
         onGuiClosed();
+        // stopTextInput(owner) 内部有 owner 匹配检查（不是当前 owner 就不动），
+        // 界面切换时不会误关下一个界面（或原版 EditBox）的文本输入。
+        mc.textInputManager().stopTextInput(this);
     }
 
     @Override

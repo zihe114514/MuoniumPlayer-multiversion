@@ -1,6 +1,8 @@
 package com.muoniumplayer.core.screens.ncm.panels;
 
 import com.muoniumplayer.compat.lwjgl2.Mouse;
+import com.muoniumplayer.core.input.TouchGestures;
+import com.muoniumplayer.core.settings.TouchSettings;
 
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
@@ -450,6 +452,7 @@ public class PlayQueuePanel extends NCMPanel {
         this.emptyHint.setAlpha(rowCount == 0 ? 1.0f : 0.0f);
 
         this.updateDrag(mouseX, mouseY, frameMs);
+        this.maybeBeginDragByLongPress();
 
         double frameDelta = RenderSystem.getFrameDeltaTime();
         long now = System.currentTimeMillis();
@@ -585,6 +588,40 @@ public class PlayQueuePanel extends NCMPanel {
             if (row.music != null && song != null && row.music.equals(song)) return pool.remove(index);
         }
         return null;
+    }
+
+    /**
+     * 长按抓取排序：按住一行不动超过 {@link TouchSettings#LONG_PRESS_MS} 且<b>尚未锁轴</b>
+     * （一动就会变成滚动或横向拖动，长按边沿随之作废）时，把那一行抓起来交给既有的
+     * {@link #updateDrag} 接管。之后手指怎么动都由行拖动自己消费，QueueList 的触摸滚动
+     * 见到 {@code draggingRow != null} 会主动让位。
+     *
+     * <p>抓取落点按<b>按压起点</b>换算行与抓取偏移——长按的前提是没动过，起点≈当前点，
+     * 而 updateDrag 期望的 grabOffset 语义是「指针在该行内的相对 Y」（旧点击路径里就是
+     * 点击的 relativeY）。</p>
+     */
+    private void maybeBeginDragByLongPress() {
+        if (!TouchSettings.ENABLED || this.draggingRow != null) {
+            return;
+        }
+        TouchGestures gestures = TouchGestures.get();
+        if (!gestures.longPressElapsed() || !gestures.isPressed()) {
+            return;
+        }
+        // 按压起点换算到列表内容坐标（updateDrag 同一套换算的逆推），落不进任何一行就不抓。
+        double contentY = gestures.startY() - this.list.getY() + this.list.scrollActual;
+        if (contentY < 0.0) {
+            return;
+        }
+        int slot = (int) Math.floor(contentY / SLOT_HEIGHT);
+        if (slot < 0 || slot >= this.rows.size()) {
+            return;
+        }
+        QueueRow row = this.rows.get(slot);
+        if (row == null || row.removing || !row.canDrag) {
+            return;
+        }
+        this.beginDrag(row, gestures.startY() - row.getY());
     }
 
     private void beginDrag(QueueRow row, double grabOffsetY) {
@@ -760,12 +797,61 @@ public class PlayQueuePanel extends NCMPanel {
         private double scrollActual;
         private double contentHeight;
 
+        /** 本轮纵向拖动是否由本列表认领（行抓取排序期间必须让位）。 */
+        private boolean touchDragging;
+
+        /** 甩动的最小速度（GUI 像素/ms）：低于它的松手只停住，不给惯性。 */
+        private static final double QUEUE_FLING_MIN_VELOCITY = 0.05;
+
         @Override
         public void onRender(double mouseX, double mouseY) {
+            this.advanceTouchDrag();
             double max = Math.max(0.0, this.contentHeight - this.getHeight());
             this.scrollTarget = Math.max(0.0, Math.min(this.scrollTarget, max));
             this.scrollActual = Interpolations.interpolate(this.scrollActual, this.scrollTarget, 1.0);
             this.scrollActual = Math.max(0.0, Math.min(this.scrollActual, max));
+        }
+
+        /**
+         * 触屏拖动滚动（符号与滚轮一致：偏移 0 = 顶，手指向下 dy&gt;0 = {@code target -= dy}）。
+         * 与 ScrollPanel 的同款逻辑分开写而不是抽公共类：这里滚动状态是裸字段、
+         * 抓取排序还要参与互斥，抽象反而把两处差异藏进参数里。
+         */
+        private void advanceTouchDrag() {
+            TouchGestures gestures = TouchGestures.get();
+            if (!TouchSettings.ENABLED || PlayQueuePanel.this.draggingRow != null) {
+                this.touchDragging = false;
+                return;
+            }
+            if (this.touchDragging) {
+                if (gestures.isVerticalDrag() && gestures.claimedBy() == this) {
+                    double dy = gestures.dy();
+                    if (dy != 0) {
+                        double max = Math.max(0.0, this.contentHeight - this.getHeight());
+                        this.scrollTarget = Math.max(0.0, Math.min(this.scrollTarget - dy, max));
+                        this.scrollActual = this.scrollTarget;
+                    }
+                    return;
+                }
+                this.touchDragging = false;
+                if (!gestures.isPressed()) {
+                    double velocity = gestures.velocityY();
+                    if (Math.abs(velocity) > QUEUE_FLING_MIN_VELOCITY) {
+                        double distance = Math.min(TouchSettings.FLING_MAX_DISTANCE,
+                                (velocity * velocity) / (2.0 * TouchSettings.FLING_DECEL));
+                        double max = Math.max(0.0, this.contentHeight - this.getHeight());
+                        this.scrollTarget = Math.max(0.0, Math.min(
+                                this.scrollTarget - Math.signum(velocity) * distance, max));
+                    }
+                }
+                return;
+            }
+            if (gestures.isVerticalDrag()
+                    && gestures.claimedBy() == null
+                    && this.contentHeight - this.getHeight() > 0.0
+                    && this.testHovered(gestures.startX(), gestures.startY())) {
+                this.touchDragging = gestures.claim(this);
+            }
         }
 
         @Override
@@ -859,7 +945,12 @@ public class PlayQueuePanel extends NCMPanel {
 
             this.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
                 if (mouseButton != 0) return true;
-                PlayQueuePanel.this.beginDrag(this, relativeY);
+                // 触屏时代「点击即抓取」会让滚动列表的第一步变成抓起一张卡片：
+                // 抓取改由长按触发（maybeBeginDragByLongPress），点击只负责消费掉自己。
+                // 手势层关闭时回到旧行为（按下即抓、按住拖动），那是纯鼠标时代的语义。
+                if (!TouchSettings.ENABLED) {
+                    PlayQueuePanel.this.beginDrag(this, relativeY);
+                }
                 return true;
             });
 

@@ -1,6 +1,7 @@
 package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.compat.lwjgl2.Mouse;
+import com.muoniumplayer.core.input.TouchGestures;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
@@ -53,6 +54,10 @@ public final class VolumeControl implements SharedRenderingConstants {
             hovering = false;
             dragging = false;
         } else if (!leftDown) {
+            dragging = false;
+        } else if (TouchGestures.get().isVerticalDrag()) {
+            // 纵向手势已锁定 = 用户在滚列表：横向音量条让位（含已起手的拖动一并撤掉），
+            // 否则手指从音量条上起滑会把音量拖到手指高度对应的值。
             dragging = false;
         } else if (hovering) {
             dragging = true;

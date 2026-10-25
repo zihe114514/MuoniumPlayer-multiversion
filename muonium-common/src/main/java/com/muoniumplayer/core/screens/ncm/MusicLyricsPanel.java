@@ -2,6 +2,8 @@ package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.compat.lwjgl2.Mouse;
+import com.muoniumplayer.core.input.TouchGestures;
+import com.muoniumplayer.core.settings.TouchSettings;
 import com.muoniumplayer.compat.gl.GL11;
 import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.interfaces.SharedConstants;
@@ -82,6 +84,63 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     private final TrackNavigationMotion navigationMotion = new TrackNavigationMotion();
 
     boolean prevMouse = false;
+
+    /** 本帧是否出现「按过且刚抬起且没拖过」的点沿；onRender 头部捕获，歌词行 seek 消费。 */
+    private boolean tapReleaseEdge;
+
+    /** 本帧是否出现按下沿（onRender 头部捕获）：进度条拖拽起手用，拖不属于点按语义。 */
+    private boolean lmbPressEdge;
+
+    /** 歌词列的纵向拖动是否由本面板认领。 */
+    private boolean lyricsTouchDragging;
+
+    /** 甩动的最小速度（GUI 像素/ms）：低于它的松手只停住，不给惯性。 */
+    private static final double LYRICS_FLING_MIN_VELOCITY = 0.05;
+
+    /**
+     * 歌词列的触屏拖动滚动：认领 → 1:1 跟手 → 松手甩动。
+     *
+     * <p><b>符号与 ScrollPanel 相反</b>：本页 scrollOffset 为正把内容向下推
+     * （滚轮向上 dWheel&gt;0 是 {@code scrollTarget += strength}），所以手指向下滑
+     * （dy&gt;0）是 {@code scrollTarget += dy}，甩动延续手指方向
+     * {@code scrollTarget += signum(v)·distance}。拖动与甩动的每一帧都重置 3 秒
+     * 自动回中计时——手在歌词上，自动跟唱就不许抢。</p>
+     *
+     * <p>歌词页没有可滚余量的概念（wheel 也不设限、靠自动回中收口），甩动距离同样交给
+     * 3 秒计时兜底。</p>
+     */
+    private void advanceLyricsTouchDrag(boolean hoveringViewport) {
+        TouchGestures gestures = TouchGestures.get();
+        if (!TouchSettings.ENABLED) {
+            this.lyricsTouchDragging = false;
+            return;
+        }
+        if (this.lyricsTouchDragging) {
+            if (gestures.isVerticalDrag() && gestures.claimedBy() == this) {
+                double dy = gestures.dy();
+                if (dy != 0) {
+                    scrollTarget += dy;
+                    scrollOffsetResetTimer.reset();
+                }
+                return;
+            }
+            this.lyricsTouchDragging = false;
+            if (!gestures.isPressed()) {
+                double velocity = gestures.velocityY();
+                if (Math.abs(velocity) > LYRICS_FLING_MIN_VELOCITY) {
+                    double distance = Math.min(TouchSettings.FLING_MAX_DISTANCE,
+                            (velocity * velocity) / (2.0 * TouchSettings.FLING_DECEL));
+                    scrollTarget += Math.signum(velocity) * distance;
+                    scrollOffsetResetTimer.reset();
+                }
+            }
+            return;
+        }
+        if (gestures.isVerticalDrag() && gestures.claimedBy() == null && hoveringViewport) {
+            this.lyricsTouchDragging = gestures.claim(this);
+        }
+    }
+
 
     /** automix 接缝记号在这条进度条上的平滑，见 {@link AutomixCueMarker.Glide}。 */
     private final AutomixCueMarker.Glide automixCueGlide = new AutomixCueMarker.Glide();
@@ -673,7 +732,18 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     public void onRender(double mouseX, double mouseY, double posX, double posY, double width, double height, int dWheel) {
 
-        if (prevMouse && !Mouse.isButtonDown(0)) prevMouse = false;
+        // 左键锁存与两条边沿都在这里统一结算（渲染各段之前）：
+        //  · tapReleaseEdge：「按过 + 刚抬起 + 这一按从头到尾没拖过」（TouchGestures#
+        //    lastPressWasDrag）= 一次点按。歌词行的 seek 据此结算——触屏时代按下那一下
+        //    可能只是滚动的起手，直接 seek 就是「想滑列表结果跳了进度」。
+        //  · lmbPressEdge：按下沿。进度条的拖拽起手是<b>拖</b>不是点，仍在按下沿启动，
+        //    由手势层的主轴锁定负责让位（竖向手势滑过进度条不 seek，见那一处的门）。
+        boolean lmbDownNow = Mouse.isButtonDown(0);
+        boolean prevLatch = prevMouse;
+        this.tapReleaseEdge = prevLatch && !lmbDownNow
+                && !TouchGestures.get().lastPressWasDrag();
+        this.lmbPressEdge = lmbDownNow && !prevLatch;
+        prevMouse = lmbDownNow;
 
         // 本层不透明度不再自己插值，而是读转场时钟：整条「播放器主页 到 全屏歌词页」的进退场由
         // CoverHeroTransition 统一编排（页面底色、接力封面、本层内容、左栏、歌词各有时间窗），
@@ -720,6 +790,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         double lyricsFade = CoverHeroTransition.lyricsFade();
         if (lyricsFade > .002) {
             double lyricRise = (1.0 - lyricsFade) * height * .014;
+            // 快捷面板的触摸滚动先于歌词列认领（面板浮在歌词之上，同一点按下时上面那层赢）。
+            this.styleQuickPanel.advanceTouchDrag();
             int lyricWheel = this.styleQuickPanel.handleScroll(dWheel, mouseX, mouseY) ? 0 : dWheel;
             api.getGLStateManager().pushMatrix();
             api.getGLStateManager().translate(0, lyricRise, 0);
@@ -802,6 +874,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
         boolean hoveringLyrics = isHovered(mouseX, mouseY, lyricViewport.left, lyricViewport.top,
                 lyricViewport.width, lyricViewport.height);
+        // 触屏拖动滚动（认领/跟手/甩动），语义与滚轮同源，符号见方法注释。
+        this.advanceLyricsTouchDrag(hoveringLyrics);
         if (hoveringLyrics && dWheel != 0) {
             double strength = 24;
             if (Keyboard.isKeyDown(Keyboard.KEY_LSHIFT)) strength *= 2;
@@ -852,9 +926,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                 if (isHovering) CursorUtils.setOverride(CursorUtils.HAND);
                 // 模态浮层（选词、建单等）打开时这一帧的按住不属于歌词列：点遮罩会同时把
                 // 底下的歌词行当成跳转、seek 到那一行的时刻。
+                // 点击语义在松手沿结算（tapReleaseEdge，见 onRender 开头）：按下那一下可能
+                // 只是滚动的起手，直接 seek 就是「想滑列表结果跳了进度」。
                 if (!NCMScreen.getInstance().isModalOverlayActive()
-                        && isHovering && Mouse.isButtonDown(0) && !prevMouse) {
-                    prevMouse = true;
+                        && isHovering && tapReleaseEdge) {
                     if (CloudMusic.hasPlaybackClock() && CloudMusic.seekToMillis(lyric.timestamp)) {
                         resetLyricStatus();
                     }
@@ -2067,8 +2142,13 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             lmbDown = false;
             progressBarDragging = false;
         }
-        if (clockReady && hoveringProgressBar && lmbDown && !prevMouse) {
-            prevMouse = true;
+        // 纵向拖动已锁定时这一按属于滚动（滚歌词列），不属于进度条：横向 seek 让位，
+        // 已起的 seek 预览一并撤掉。横向拖动不受影响——进度条本来就是横着拖的。
+        if (TouchGestures.get().isVerticalDrag()) {
+            lmbDown = false;
+            progressBarDragging = false;
+        }
+        if (clockReady && hoveringProgressBar && lmbDown && lmbPressEdge) {
             progressBarDragging = true;
 
             double xDelta = Math.max(0, Math.min(progressBarWidth, (mouseX - elementsXOffset)));

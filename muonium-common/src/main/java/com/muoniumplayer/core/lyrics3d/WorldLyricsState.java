@@ -697,6 +697,8 @@ public final class WorldLyricsState {
     private static final float[] HUIGUANG_POSE = new float[4];
     /** 行级绕行 scratch（每句求值一次、逐字复用；渲染线程单线程）。 */
     private static final float[] LINE_ORBIT_SCRATCH = new float[2];
+    /** 逐字呼吸的复用输出（glyphBreathInto；渲染线程单线程）。 */
+    private static final float[] BREATH_SCRATCH = new float[2];
 
     /** yaw/pitch（度，MC 口径）→ 视线单位向量。spawn 与测试共用。 */
     static double[] yawPitchDirectionStatic(double yawDeg, double pitchDeg) {
@@ -1150,7 +1152,12 @@ public final class WorldLyricsState {
                                           boolean cadenza, boolean huiguang, int[] keywordMatch) {
         List<String> lines = f.lines;
         long elapsedMs = songNowMs - f.startMs;
-        boolean flashMode = wordPop && f.charTimes.length > 0;
+        // 逐字轴在 → 逐字点亮（卡拉OK扫掠）。原门控是 wordPop（弹跳设置），
+        // 默认关 —— 用户实证：关掉 Word Pop 后整句 250ms 内一起点亮（均分
+        // appearAt + 300ms 窗口取代了真实逐字时刻）。逐字点亮是卡拉OK的核心
+        // 观感，不该挂在弹跳开关下：有轴即启用。wordPop 只管「唱到的字弹一下」
+        //（1558 行的 pop 回弹），两件事彻底解耦。
+        boolean flashMode = f.charTimes != null && f.charTimes.length > 0;
         boolean lingerFade = huiguang && exiting && f.huiguangLinger;
         int total = 0;
         for (String s : lines) total += s.length();
@@ -1235,6 +1242,12 @@ public final class WorldLyricsState {
                 //（本句排版整体缩 PRESET_SCALE、下移槽位，中心原点口径）——
                 // 纯字面坐标，无需世界投影（牌滑移由渲染层的入位滑移承担）
                 boolean presetSrc = f.huiguangPresetDone && f.huiguangPresetScale > 0f;
+                // 上一句排版 hoist 到逐字循环外（原 projectFromPrev 每字全句重排
+                // 一次 = O(n²) 排版 + 数千 String 分配的换句尖峰；每句只算一次）
+                float[] prevLayout = (!presetSrc && f.huiguangPrev != null
+                        && f.huiguangOwnGeo != null && f.huiguangPrevGeo != null)
+                        ? huiguangLayoutChars(f.huiguangPrev.lines, pixelWidthOf,
+                                f.huiguangPrev.lines.hashCode()) : null;
                 for (String line : lines) {
                     for (int i = 0; i < line.length(); i++) {
                         char c = line.charAt(i);
@@ -1258,8 +1271,8 @@ public final class WorldLyricsState {
                                         + LYRIC_SIZE * (PRESET_SCALE - 1f) * 0.32f
                                         + f.huiguangPresetDy + LYRIC_SIZE * 0.5f;
                             } else {
-                                float[] fp = (f.huiguangOwnGeo != null && f.huiguangPrevGeo != null)
-                                        ? projectFromPrev(f, kk, pixelWidthOf) : null;
+                                float[] fp = (prevLayout != null)
+                                        ? projectFromPrev(f, kk, pixelWidthOf, prevLayout) : null;
                                 if (fp != null) {
                                     fx = fp[0];
                                     fy = fp[1];
@@ -1292,15 +1305,15 @@ public final class WorldLyricsState {
             out.huiguangLayoutScales = huiguangLayoutScales;
             out.huiguangBursts = f.huiguangBursts;
             out.huiguangKeywordRgbs = keywordMatch;
-            // 行级绕行对整句所有字同值 —— 每句算一次填 scratch（原逐字重算 40 次）
+            // 行级绕行对整句所有字同值 —— 每句算一次：填 scratch（渲染层径迹用）
+            // 并同值落 driftX/driftY（一次求值，删掉重复的第二遍调用）
             float[] orbPre = HuiguangMotion.lineOrbit(elapsedMs / 1000f, LYRIC_SIZE, orbitPhase);
             LINE_ORBIT_SCRATCH[0] = orbPre[0];
             LINE_ORBIT_SCRATCH[1] = orbPre[1];
             // 本句恒定绕行（folia 永不停止的小圆漂移）：渲染层把径迹点也加上它，
             // 拖尾才能一直连着正在漂移的字
-            float[] orb = HuiguangMotion.lineOrbit(elapsedMs / 1000f, LYRIC_SIZE, orbitPhase);
-            out.huiguangDriftX = orb[0];
-            out.huiguangDriftY = orb[1];
+            out.huiguangDriftX = orbPre[0];
+            out.huiguangDriftY = orbPre[1];
             // 行级呼吸缩放 + 摇摆旋转（folia windowGeometry 整行脉动，一比一）
             float t = elapsedMs / 1000f;
             out.huiguangLineScale = 1f + 0.025f * (float) Math.sin(t * 0.43f + orbitPhase);
@@ -1385,7 +1398,8 @@ public final class WorldLyricsState {
                                 ? fl.wobblePhase
                                 : hashRand(k, 0L, 79, seed) * (float) Math.PI;
                         float[] orbit = LINE_ORBIT_SCRATCH;
-                        float[] breath = HuiguangMotion.glyphBreath(elapsedSec, LYRIC_SIZE, breathPhase);
+                        float[] breath = BREATH_SCRATCH;
+                        HuiguangMotion.glyphBreathInto(elapsedSec, LYRIC_SIZE, breathPhase, breath);
                         gx += orbit[0] + breath[0];
                         gy += orbit[1] + breath[1];
                         // 崩解：点亮 delay 秒后沿各自方向缓慢漂离（多数向上）、
@@ -1500,8 +1514,10 @@ public final class WorldLyricsState {
                         float gy = y + (1f - back) * ENTER_LIFT_PX;
                         // 缩放：0.6 → 过冲 1.06 → 1.0
                         float scale = 0.6f + 0.4f * back;
-                        // word pop（有逐字轴时）：入场完成后由唱到时刻的回弹接管
-                        if (flashMode) {
+                        // word pop（有逐字轴时）：入场完成后由唱到时刻的回弹接管。
+                        // 弹跳仍归 wordPop 开关门控（与逐字点亮解耦 —— 那是有轴
+                        // 即启用；这里尊重用户的弹跳开关，关了就不弹）
+                        if (flashMode && wordPop) {
                             float popT = (elapsedMs - appearAt) / 160f;
                             float back01 = (float) clamp01(1f - popT);
                             scale *= 1f + 0.55f * back01 * back01;
@@ -1550,13 +1566,13 @@ public final class WorldLyricsState {
      * 上一句平面坐标 → 世界（prevGeo 正变换）→ 本句平面（ownGeo 逆变换）。
      * 任何一侧退化（scale 过小）返回 null，调用方退回落位入场。
      */
-    private static float[] projectFromPrev(Floating f, int n, PixelWidthOf widthOf) {
+    /** 上一句排版（prevLayout）由调用方 hoist 出逐字循环 —— 本方法只做投影。 */
+    private static float[] projectFromPrev(Floating f, int n, PixelWidthOf widthOf,
+                                           float[] pl) {
         WorldLyricsState.BillboardSnapshot prev = f.huiguangPrevGeo;
         WorldLyricsState.BillboardSnapshot own = f.huiguangOwnGeo;
         if (prev == null || own == null || f.huiguangPrev == null) return null;
-        // 上一句的第 n 个非空白字符落位（与构建侧同轴）
-        float[] pl = huiguangLayoutChars(f.huiguangPrev.lines, widthOf,
-                f.huiguangPrev.lines.hashCode());
+        // 上一句的第 n 个非空白字符落位（与构建侧同轴；pl 已由调用方备好）
         int prevCount = pl.length / 4;
         float cx, cy;
         if (n < prevCount) {
@@ -1661,7 +1677,7 @@ public final class WorldLyricsState {
     static List<LyricLine> effectiveLines(boolean splitLines) {
         List<LyricLine> raw = CloudMusic.lyrics;
         if (raw == null || raw.isEmpty()) return raw;
-        if (!splitLines) return raw;
+        if (!splitLines) return filteredLines(raw);
         WorldLyricsState s = INSTANCE;
         long revision = CloudMusic.lyricsRevision;
         if (s.cachedSplitLines != null && s.cachedSplitRevision == revision) {
@@ -1674,8 +1690,81 @@ public final class WorldLyricsState {
         }
         s.cachedSplitLines = out;
         s.cachedSplitRevision = revision;
-        return out;
+        return filteredLines(out);
     }
+
+    // ==================== 商业元数据行过滤（歌曲开头的制作人员表等） ====================
+
+    /**
+     * 常见商业附加信息行（「xxx平台独家」「作词/作曲/编曲：…」「出品人/监制…」
+     * 一整张制作人员表）—— 通常挤在歌曲开头 0.1~0.5s 一行地快速闪过。绘光模式
+     * 下每行都是一次「整句字形烘焙风暴 + 飞入重排」，连续快闪就是连续掉帧尖峰，
+     * 且观感是满屏字影乱闪。
+     *
+     * <p>特征识别（宁缺毋滥：三个条件都满足才过滤）：① 命中制作人员/平台运营的
+     * 关键词表；② 行极短（≤30 字，正常歌词行很少整行都是职务表）；③ 该行挂载
+     * 时长极短（<1.2s，按下一行时间戳差算 —— 商业行总是一扫而过）。纯歌词行
+     * 即使偶尔含「回：「作曲」」这类字眼，靠 ②③ 双保险不会误伤。</p>
+     */
+    private static final String[] METADATA_KEYWORDS = {
+            "作词", "作詞", "作曲", "编曲", "編曲", "填詞", "填词", "作词：", "作曲：",
+            "出品", "发行", "發行", "企划", "企劃", "监制", "監製", "制作人", "製作人",
+            "混音", "母带", "母帶", "录音", "錄音", "和声", "和聲", "吉他", "贝斯",
+            "键盘", "鼓", "弦乐", "弦樂", "配唱", "录音棚", "錄音棚", "混音师", "母带师",
+            "独家", "獨家", "版权", "版權", "未经许可", "未經許可", "禁止翻唱",
+            "音乐平台", "音樂平台", "云音乐", "雲音樂", "官方渠道", "正版授权", "正版的音樂",
+    };
+
+    /** 判定一行是不是「快速闪过的商业附加信息」。lineIndex 用于取下一行时间戳。 */
+    static boolean isFlashMetaLine(List<LyricLine> lines, int lineIndex) {
+        LyricLine l = lines.get(lineIndex);
+        if (l == null || l.lyric == null) return false;
+        String text = l.lyric;
+        if (text.isEmpty() || text.length() > 30) return false;
+        boolean hit = false;
+        for (String kw : METADATA_KEYWORDS) {
+            if (text.contains(kw)) {
+                hit = true;
+                break;
+            }
+        }
+        if (!hit) return false;
+        long next = nextLineStartMs(lines, lineIndex);
+        long dur = Math.max(0L, next - l.timestamp);
+        return dur < 1200L;
+    }
+
+    /**
+     * 过滤后的行表（带 revision 缓存 —— 与 split 缓存同惯例）。过滤只发生在
+     * 「开头一串快闪商业行」的场景，正常歌曲零改动。
+     */
+    static List<LyricLine> filteredLines(List<LyricLine> raw) {
+        WorldLyricsState s = INSTANCE;
+        long revision = CloudMusic.lyricsRevision;
+        if (s.cachedFilteredLines != null && s.cachedFilteredRevision == revision) {
+            return s.cachedFilteredLines;
+        }
+        List<LyricLine> out = null;
+        for (int i = 0; i < raw.size(); i++) {
+            LyricLine l = raw.get(i);
+            if (l == null) continue;
+            if (isFlashMetaLine(raw, i)) {
+                if (out == null) {
+                    out = new ArrayList<>(raw.size());
+                    for (int j = 0; j < i; j++) out.add(raw.get(j));
+                }
+                continue;
+            }
+            if (out != null) out.add(l);
+        }
+        List<LyricLine> result = out != null ? out : raw;
+        s.cachedFilteredLines = result;
+        s.cachedFilteredRevision = revision;
+        return result;
+    }
+
+    private List<LyricLine> cachedFilteredLines;
+    private long cachedFilteredRevision = -1;
 
     private WorldLyricsState() {
     }
@@ -1706,5 +1795,7 @@ public final class WorldLyricsState {
         wasPaused = false;
         cachedSplitLines = null;
         cachedSplitRevision = -1;
+        cachedFilteredLines = null;
+        cachedFilteredRevision = -1;
     }
 }

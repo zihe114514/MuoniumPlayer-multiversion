@@ -317,6 +317,18 @@ public final class HuiguangMotion {
         };
     }
 
+    /**
+     * {@link #glyphBreath} 的无分配版：写进 out[0..1]（渲染线程单线程 scratch）。
+     * 逐字循环里每帧每字调一次，new float[2] 的分配率在长句下每帧数百次 ——
+     * 全是朝生夕死对象，虽不构成 GC 压力主项，但分配+初始化本身在热点路径上。
+     */
+    public static void glyphBreathInto(float elapsedSec, float fontPx, float phase,
+                                       float[] out) {
+        float b = BREATH_FONTS * fontPx;
+        out[0] = (float) Math.sin(elapsedSec * 0.9f + phase) * b;
+        out[1] = (float) Math.cos(elapsedSec * 1.13f + phase * 1.7f) * b;
+    }
+
     // ==================== 十字爆闪（folia crossBurst 完整版） ====================
 
     /** 同时存在的小十字上限（folia MAX_BURSTS=14）。 */

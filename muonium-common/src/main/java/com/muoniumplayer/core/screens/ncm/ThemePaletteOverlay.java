@@ -1,6 +1,8 @@
 package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.compat.lwjgl2.Mouse;
+import com.muoniumplayer.core.input.TouchGestures;
+import com.muoniumplayer.core.settings.TouchSettings;
 
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.rendering.GlassLook;
@@ -402,13 +404,23 @@ public final class ThemePaletteOverlay extends NCMPanel {
         @Override
         public void onRender(double mouseX, double mouseY) {
             if (this.dragging) {
-                if (Mouse.isButtonDown(0)) {
+                if (TouchGestures.get().isVerticalDrag()) {
+                    // 纵向手势已锁定 = 用户在滚弹层列表：横向滑条让位，已起的拖动撤掉。
+                    // 撤掉即放弃本次改值（不写盘），颜色停在拖动前——面板自身的列表滚动优先。
+                    this.dragging = false;
+                } else if (Mouse.isButtonDown(0)) {
                     applyFromMouse(mouseX);
                 } else {
                     // 松手才写盘：拖动途中只改内存，避免每帧写一次配置文件。
                     this.dragging = false;
                     ThemePaletteOverlay.this.applyEditingColor(true);
                 }
+            } else if (Mouse.isButtonDown(0) && !TouchGestures.get().isVerticalDrag()
+                    && this.testHovered(mouseX, mouseY)) {
+                // 按下即起手的横向拖。原来只靠 onMouseClicked 起手，而点击已延迟到松手
+                // （触屏时代按下可能是滚动起手），不补这条路鼠标按住拖滑条就没了。
+                this.dragging = true;
+                applyFromMouse(mouseX);
             }
 
             float widgetAlpha = this.getAlpha();

@@ -186,9 +186,72 @@ class WorldLyricsHuiguangHandoffTest {
     }
 
     @Test
+    void karaokeLitPerCharEvenWithWordPopOff() {
+        // 逐字点亮（卡拉OK扫掠）曾被门在 wordPop（弹跳设置，默认关）后面：
+        // 关掉弹跳 → flashMode=false → 真实逐字时刻被忽略，整句 250ms 内
+        // 一起点亮（用户实证的「整句点亮」回归）。有逐字轴就应逐字点亮，
+        // wordPop 只管「唱到的字弹一下」。
+        LyricLine l = new LyricLine(0L, "黑色毛衣");
+        l.words.add(new LyricLine.Word("黑色", 0L, 600L));
+        l.words.add(new LyricLine.Word("毛衣", 600L, 600L));
+        CloudMusic.lyrics.add(l);
+
+        WorldLyricsState.Frame f = state.update(CAMERA, PARAMS, 1_000_000_000L, true, 100L);
+        WorldLyricsState.Floating cur = activeOf(f);
+        assertNotNull(cur, "首句应 spawn");
+
+        // PARAMS.wordPop()=false：t=400ms 时第一个词点亮、第二个词未亮
+        WorldLyricsState.LyricGlyphs g = WorldLyricsState.buildGlyphs(
+                cur, 400L, 1f, false, false, s -> 10f, false, true, null);
+        assertEquals(4, g.glyphs.size());
+        assertTrue(g.glyphs.get(0).huiguangLit > 0.5f,
+                "首字 400ms 应已扫掠过半，实际 " + g.glyphs.get(0).huiguangLit);
+        assertTrue(g.glyphs.get(2).huiguangLit < 0.2f,
+                "第二个词（600ms 起）在 400ms 应未点亮，实际 "
+                        + g.glyphs.get(2).huiguangLit);
+
+        // t=900ms：前一个词满亮、后一个词扫掠中
+        WorldLyricsState.LyricGlyphs g2 = WorldLyricsState.buildGlyphs(
+                cur, 900L, 1f, false, false, s -> 10f, false, true, null);
+        assertEquals(1f, g2.glyphs.get(0).huiguangLit, 0.02f);
+        assertTrue(g2.glyphs.get(2).huiguangLit > 0.2f && g2.glyphs.get(2).huiguangLit < 1f,
+                "600ms 起的词在 900ms 应扫掠中，实际 " + g2.glyphs.get(2).huiguangLit);
+    }
+
+    @Test
+    void flashMetaLinesAreFiltered() {
+        // 歌曲开头的商业附加信息（制作人员表/平台声明）通常 0.1~0.5s 一行地
+        // 快速闪过 —— 绘光下每行都是一次字形烘焙风暴 + 飞入重排，连续快闪
+        // 就是连续掉帧尖峰。命中关键词 + 行短 + 挂载时长短的行不进 3D 歌词。
+        CloudMusic.lyrics.add(line(0L, "作词 : 某某 作曲 : 某某"));          // 400ms 闪过 → 滤
+        CloudMusic.lyrics.add(line(400L, "xx音乐 独家出品"));               // 300ms 闪过 → 滤
+        CloudMusic.lyrics.add(line(700L, "未经许可 不得翻唱"));             // 400ms 闪过 → 滤
+        CloudMusic.lyrics.add(line(1100L, "真实的歌词第一句"));             // 正常行 → 留
+        CloudMusic.lyrics.add(line(6000L, "真实的歌词第二句"));             // 正常行 → 留
+
+        WorldLyricsState.Frame f = state.update(CAMERA, PARAMS, 1_000_000_000L, true, 200L);
+        // pos=200ms：原表里 0/400/700ms 三行都是「当前行」候选，过滤后当前行
+        // 只能是 1100ms 的真实歌词……但 200ms 还没到 1100，应该无行可画
+        assertTrue(f.rows.isEmpty(), "开头三行商业附加信息应被过滤，实际 "
+                + f.rows.size() + " 行");
+        // 唱到 1200ms：当前行是「真实的歌词第一句」
+        WorldLyricsState.Frame f2 = state.update(CAMERA, PARAMS, 1_100_000_000L, true, 1200L);
+        WorldLyricsState.Floating cur = activeOf(f2);
+        assertNotNull(cur, "过滤后应正常进入真实歌词行");
+        assertTrue(cur.lines.get(0).contains("真实"), "当前句应是真实歌词，实际 "
+                + cur.lines.get(0));
+
+        // 长挂载的「疑似元数据」行不误伤：一句 5 秒的歌词即使含「作词」字眼也保留
+        CloudMusic.lyrics.clear();
+        CloudMusic.lyrics.add(line(0L, "我把作词写进了歌里这是一句很长的真实歌词"));
+        CloudMusic.lyrics.add(line(5000L, "下一句"));
+        WorldLyricsState.Frame f3 = state.update(CAMERA, PARAMS, 1_200_000_000L, true, 100L);
+        WorldLyricsState.Floating cur3 = activeOf(f3);
+        assertNotNull(cur3, "长挂载的含关键词正常歌词行不应被误过滤");
+    }
+
+    @Test
     void presetDoesNotSpawnAnymore() {
-        // 预摆句已整体摘除（用户反馈：下一句提前出现并跟随玩家视角影响观感）。
-        // LEAD 窗口内不得出现预摆行；下一句唱到时才 spawn（走旧句交接飞入）。
         CloudMusic.lyrics.add(line(0L, "当前句"));
         CloudMusic.lyrics.add(line(3000L, "下一句不再提前出现"));
 

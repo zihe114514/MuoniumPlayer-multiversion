@@ -103,9 +103,22 @@ final class LyricGlyphAtlasBridge implements LyricGlyphAtlas.Host {
     }
 
     /**
-     * 一页 = RGBA8 动态纹理（构造器完成 prepareImage 分配）、强制 LINEAR、CLAMP_TO_EDGE。
+     * 一页 = RGBA8 动态纹理（构造器完成 prepareImage 分配）+ 安全三线性 mip +
+     * CLAMP_TO_EDGE。
+     *
+     * <p>mip 配方（字节码侦查结论，见 2026-10-25 侦查报告）：prepareImage 恒以
+     * mipLevels=0 分配并把 MAX_LEVEL/MIN_LOD/MAX_LOD/LOD_BIAS 四参数钉死 0——
+     * MAX_LOD=0 会把采样 LOD 钳在 0 级（上一次"三线性"静默退化双线性的直接
+     * 原因）。安全顺序：解钳（MAX_LEVEL 与 MAX_LOD 都设为精确
+     * floor(log2(min(w,h)))）→ 上传 level 0 → 同一绑定窗口 glGenerateMipmap
+     * （自管分配 1..top 各级，texImage2D 型纹理可扩）→ 读回自检，失败永久熔断
+     * 回纯 LINEAR（不完整纹理采样 undefined，主流驱动返回不透明黑——宁可不糊
+     * 也不黑）。每次基底层变更后必须重跑 generate，链不会自动跟随。</p>
      */
     private static final class PageTexture extends DynamicTexture {
+
+        /** 本页的 mip 顶层数（floor(log2(min(w,h)))）；-1 = 已熔断纯 LINEAR。 */
+        private final int mipTop;
 
         PageTexture(int width, int height) {
             super(width, height, true);
@@ -117,14 +130,52 @@ final class LyricGlyphAtlasBridge implements LyricGlyphAtlas.Host {
             com.muoniumplayer.compat.gl.GL11.glTexParameteri(
                     com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D,
                     GL12.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
+            this.mipTop = setupMipChain(width, height);
         }
 
-        /** shard 绑定时的过滤参数改写：无论 shard 传什么，落成 LINEAR。
-         * 曾试过三线性 mip（glGenerateMipmap + 解开 MAX_LEVEL/MAX_LOD），
-         * 与特效贴图同期出现渲染发黑，一并回退已验证的纯 LINEAR。 */
+        /** shard 绑定时的过滤参数改写：mip 链健康时落三线性，熔断时落 LINEAR。 */
         @Override
         public void setFilter(boolean blur, boolean mipmap) {
-            super.setFilter(true, false);
+            super.setFilter(true, mipTop > 0);
+        }
+
+        /**
+         * 解钳 + 生成完整 mip 链 + 读回自检。返回顶层数；自检不过返回 -1
+         * （setFilter 据此永久落纯 LINEAR，纹理由 prepareImage 只分配 0 级，
+         * MAX_LEVEL 维持 0 → 完整性只需 0 级，绝不产生不完整采样）。
+         */
+        private static int setupMipChain(int width, int height) {
+            try {
+                int top = 31 - Integer.numberOfLeadingZeros(Math.min(width, height));
+                if (top < 1) return -1;
+                com.muoniumplayer.compat.gl.GL11.glTexParameteri(
+                        com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D,
+                        org.lwjgl.opengl.GL12.GL_TEXTURE_MAX_LEVEL, top);
+                com.muoniumplayer.compat.gl.GL11.glTexParameteri(
+                        com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D,
+                        org.lwjgl.opengl.GL12.GL_TEXTURE_MIN_LOD, 0);
+                com.muoniumplayer.compat.gl.GL11.glTexParameterf(
+                        com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D,
+                        org.lwjgl.opengl.GL13.GL_TEXTURE_MAX_LOD, (float) top);
+                org.lwjgl.opengl.GL30.glGenerateMipmap(
+                        com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D);
+                // 读回自检：链尾必须存在且宽度正确；GL 错误必须为 0
+                int tailW = org.lwjgl.opengl.GL11.glGetTexLevelParameteri(
+                        com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D, top,
+                        org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
+                int err = org.lwjgl.opengl.GL11.glGetError();
+                if (err != 0 || tailW != Math.max(1, width >> top)) {
+                    com.muoniumplayer.compat.mc.WorldLyricsBridge.traceOnce(
+                            "mip 链自检失败（err=0x" + Integer.toHexString(err)
+                                    + " tailW=" + tailW + "），图集页熔断回纯 LINEAR");
+                    return -1;
+                }
+                return top;
+            } catch (Throwable t) {
+                com.muoniumplayer.compat.mc.WorldLyricsBridge.traceOnce(
+                        "mip 链生成异常，图集页熔断回纯 LINEAR: " + t);
+                return -1;
+            }
         }
 
         /** 资源重载钩子：页像素全程自管，不走 ResourceManager 重载。 */
@@ -156,6 +207,11 @@ final class LyricGlyphAtlasBridge implements LyricGlyphAtlas.Host {
             // unpackSkipPixels=x, unpackSkipRows=y, regionWidth, regionHeight,
             // blur=false, clamp=false, mipmap=false, closeAfter=false)）。
             image.upload(0, x, y, x, y, w, h, false, false);
+            // 基底层变了 → 重生成整条链（每个新字形烘焙才触发一次，稳态零成本）
+            if (mipTop > 0) {
+                org.lwjgl.opengl.GL30.glGenerateMipmap(
+                        com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D);
+            }
         }
     }
 }

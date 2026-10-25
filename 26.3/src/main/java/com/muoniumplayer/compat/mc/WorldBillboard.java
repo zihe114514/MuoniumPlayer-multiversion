@@ -204,17 +204,21 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 烘焙像素 → 设计像素。字形顶点 (x, y) 是「字位框左上角」在<b>行内坐标</b>里的位置
         // （buildGlyphs 逐字推进的坐标），格内墨迹原点 (inkX, inkY) 对到它 —— quad 四角
         // 必须加上 (x, y) 再进公告牌矩阵。初版漏加，整行所有字都叠在公告牌原点。
-        float inv = 1f / LyricGlyphAtlas.BAKE_SCALE;
+        // 档位运行时化：读 volatile int（bakeScale）实时除，切档即时生效
+        float inv = 1f / LyricGlyphAtlas.bakeScale();
         float qLeft = x - cell.inkX * inv;
         float qTop = y - cell.inkY * inv;
         float qRight = qLeft + cell.w * inv;
         float qBottom = qTop + cell.h * inv;
 
         float pageF = LyricGlyphAtlas.PAGE_SIZE;
-        float u0 = cell.x / pageF;
-        float v0 = cell.y / pageF;
-        float u1 = (cell.x + cell.w) / pageF;
-        float v1 = (cell.y + cell.h) / pageF;
+        // UV 半像素内缩：LINEAR 采样时 quad 边缘正落 texel 边界会混入邻格
+        // （页内格间零间隔）——内缩半个 texel 让采样核完全落在格内，去边缘灰缝
+        float halfTexel = 0.5f / pageF;
+        float u0 = cell.x / pageF + halfTexel;
+        float v0 = cell.y / pageF + halfTexel;
+        float u1 = (cell.x + cell.w) / pageF - halfTexel;
+        float v1 = (cell.y + cell.h) / pageF - halfTexel;
 
         float cx = x + (cell.advance * inv) * 0.5f;
         float cy = y + (cell.inkHeight * inv) * 0.5f;
@@ -402,18 +406,15 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             }
             NativeImage img = tex.getPixels();
             if (img == null || px.length < w * h) return false;
-            // ARGB → NativeImage ABGR（直通 alpha，textSeeThrough 标准混合口径）。
-            // 整图逐帧全量覆写：尺寸复用时旧径迹必须被清掉（NativeImage 无
-            // 快速清屏 API），透明像素也写 0 —— 留白跳写会残留上一帧拖尾。
-            // 边界钉死 w×h：px 是共享层复用缓冲，长度以 w×h 为准（曾有复用
-            // 缓冲大于画布时按 px.length 越界写、写坏相邻 native 内存的教训）。
+            // 共享层已按 NativeImage 内存序（ABGR、直通 alpha）输出 —— 这里是
+            // 纯数组拷贝，不再做每像素换位（拖尾活跃帧像素量几十万~上百万级，
+            // 每帧省一整遍位运算扫描）。整图逐帧全量覆写：尺寸复用时旧径迹必须
+            // 被清掉，透明像素也写 0 —— 留白跳写会残留上一帧拖尾。
+            // 边界钉死 w×h：曾有共享层缓冲大于画布时按 px.length 越界写、
+            // 写坏相邻 native 内存的教训。
             for (int row = 0, i = 0; row < h; row++) {
                 for (int col = 0; col < w; col++, i++) {
-                    int argb = px[i];
-                    img.setPixelABGR(col, row,
-                            (argb & 0xFF00FF00)
-                                    | ((argb & 0x00FF0000) >>> 16)
-                                    | ((argb & 0x000000FF) << 16));
+                    img.setPixelABGR(col, row, px[i]);
                 }
             }
             // 构造器 (Supplier, NativeImage) 内部已 createTexture + upload，重建帧无需
@@ -431,6 +432,79 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
         // 渲染层先逐字 halo、再整块画布、最后字形 —— submit 顺序即绘制顺序，
         // 拖尾垫在字下、压在光晕上（与 1.21.1 即时缓冲的层序一致）。
+        poseStack.pushPose();
+        try {
+            LyricOnTopSubmitter.submitCustomGeometry(collector, poseStack, renderType, (pose, vc) -> {
+                Matrix4f mat = pose.pose();
+                // 四顶点：左上 → 左下 → 右下 → 右上（QUADS 环绕序），UV 铺满整张画布
+                putHaloVertex(vc, mat, planeX, planeY, 0f, 0f, argb);
+                putHaloVertex(vc, mat, planeX, planeY + planeH, 0f, 1f, argb);
+                putHaloVertex(vc, mat, planeX + planeW, planeY + planeH, 1f, 1f, argb);
+                putHaloVertex(vc, mat, planeX + planeW, planeY, 1f, 0f, argb);
+            });
+        } finally {
+            poseStack.popPose();
+        }
+        return true;
+    }
+
+    /**
+     * 拖尾画布脏区带上屏：只把径迹覆盖带写进纹理子矩形并上传（整图重传的
+     * 替代 —— 拖尾活跃帧的宿主侧 JNI 写入与 GPU 上传都按带面积计，典型省一
+     * 半以上）。band 外的纹理内容不被触碰：画布 clear 语义下 band 外本帧已
+     * 是零，上帧残留都在 band 内（collectDirtyRect 的并集保证）。
+     * 子矩形写入仍整带覆写（透明像素写 0 清上一帧残留）。
+     *
+     * <p>26.3 的子矩形上传与 {@link LyricGlyphAtlasBridge.PageTexture#uploadSub}
+     * 同口径：6 参 writeToTexture 是「整幅图平移到 (x,y)」（越界校验按图自身
+     * 尺寸），所以把带切进一张恰好 bandW×bandH 的暂存图再平移上传；整页 CPU
+     * 镜像同步写，用于诊断与全量重传兜底。26.x 无 mip（texStorage 型单级，
+     * 见 TrailTexture 注释），上传后无需重生成链。</p>
+     */
+    @Override
+    public boolean drawTrailCanvasBand(int[] px, int bandX, int bandY,
+                                       int bandW, int bandH,
+                                       int fullW, int fullH,
+                                       float planeX, float planeY,
+                                       float planeW, float planeH, float alpha,
+                                       int slot) {
+        if (poseStack == null || collector == null || trailCanvasError
+                || px == null || bandW <= 0 || bandH <= 0 || alpha <= 0.01f
+                || slot < 0 || slot >= trailCanvasRl.length) return false;
+        // 画布纹理必须已存在且尺寸一致（渲染层保证 band 画自当前画布）
+        TrailTexture tex = trailCanvasTex[slot];
+        if (tex == null || trailCanvasW[slot] != fullW || trailCanvasH[slot] != fullH) {
+            return false;   // 画布刚重建（本帧首次）：退回整图版先建纹理
+        }
+        try {
+            NativeImage img = tex.getPixels();
+            if (img == null || px.length < bandW * bandH) return false;
+            try (NativeImage band = new NativeImage(bandW, bandH, true)) {
+                for (int row = 0, i = 0; row < bandH; row++) {
+                    for (int col = 0; col < bandW; col++, i++) {
+                        // 共享层已按 NativeImage 内存序（ABGR、直通 alpha）输出，
+                        // 纯拷贝；整页 CPU 镜像同写（诊断/全量重传兜底用）。
+                        img.setPixelABGR(bandX + col, bandY + row, px[i]);
+                        band.setPixelABGR(col, row, px[i]);
+                    }
+                }
+                // 暂存图全尺寸 = 带尺寸，6 参的 (bandX,bandY) 平移目标合法。
+                com.mojang.blaze3d.systems.RenderSystem.getDevice()
+                        .createCommandEncoder()
+                        .writeToTexture(tex.getTexture(), band, 0, 0, bandX, bandY);
+            }
+        } catch (Throwable t) {
+            trailCanvasError = true;
+            trailCanvasErrSlot = slot;
+            if (TRACE) System.out.println("[WorldLyrics/trace] 拖尾画布带上传失败，径迹退回 quad 带: " + t);
+            return false;
+        }
+        int argb = Math.min(255, (int) (alpha * 255f)) << 24 | 0xFFFFFF;
+        Identifier rl = trailCanvasRl[slot];
+        RenderType renderType = RenderTypes.textSeeThrough(rl);
+        // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
+        // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
+        // 渲染层先逐字 halo、再整块画布、最后字形 —— submit 顺序即绘制顺序。
         poseStack.pushPose();
         try {
             LyricOnTopSubmitter.submitCustomGeometry(collector, poseStack, renderType, (pose, vc) -> {
@@ -483,10 +557,16 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     /**
      * 特效贴图（径迹白底 + 光晕/星芒/条纹 + 拖尾画布共用）：26.x 的过滤强制点
      * 在采样器（{@code setFilter} 已删）—— 覆写 {@link #getSampler()} 返回
-     * LINEAR + CLAMP_TO_EDGE 的单参缓存采样器。曾试过三线性 mip（两参变体 +
-     * 放开纹理 MAX_LEVEL/MAX_LOD + glGenerateMipmap），游戏内特效贴图整块
-     * 渲染发黑（采样链路异常），回退到已验证的纯 LINEAR —— 拖尾的抗锯齿由
-     * CPU 光栅化保证，不靠 mip（与 1.21.1 标杆一致，任何贴图都不生成/不采样 mip）。
+     * LINEAR + CLAMP_TO_EDGE 的单参缓存采样器。
+     *
+     * <p><b>mip 为什么跳过（2026-10-25 画质轮同步，与 1.21.1/1.20.1/1.21.11 树
+     * 的分工）</b>：26.x 的 {@code GpuDevice.createTexture} 是 texStorage 型
+     * 单级不可变存储（DynamicTexture 硬编码 mipLevels=1）——
+     * {@code glGenerateMipmap} 不能给不可变存储扩级，只解
+     * {@code GL_TEXTURE_MAX_LEVEL} 会得到不完整采样链（主流驱动返回不透明黑，
+     * 整块贴图发黑）。所以 26.x 不生成、不采样 mip：毛边由 CPU 侧 5× 超采样 +
+     * LINEAR 承担，拖尾的抗锯齿由 CPU 光栅化保证。曾试过三线性 mip，游戏内
+     * 特效贴图整块发黑，正是这个根因。</p>
      */
     private static final class TrailTexture extends DynamicTexture {
         TrailTexture(NativeImage img) {

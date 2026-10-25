@@ -135,7 +135,7 @@ class LyricGlyphAtlasTest {
     // ==================== 预乘 → 直通 ====================
 
     @Test
-    @DisplayName("readPixelsArgb：预乘像素除回直通 alpha，全零/全透保持")
+    @DisplayName("readPixelsArgb：预乘像素除回直通 alpha；透明 texel 的 RGB 被延拓（去暗边）")
     void readPixelsUnpremultiplies() {
         try (io.github.humbleui.skija.Bitmap bm = new io.github.humbleui.skija.Bitmap()) {
             bm.allocPixels(io.github.humbleui.skija.ImageInfo.makeN32Premul(2, 1));
@@ -155,7 +155,32 @@ class LyricGlyphAtlasTest {
             int r = (half >>> 16) & 0xFF;
             assertTrue(a > 0 && a < 255, "半透像素的 alpha 应在 (0,255): " + a);
             assertTrue(r >= 250, "预乘的 R 应被除回 ≈255: " + r);
-            assertEquals(0, clear, "透明像素必须保持全零（黑边防线）");
+            // RGB 延拓（去毛边）：透明 texel 的 alpha 必须仍为 0（混合贡献零），
+            // 但 RGB 继承相邻非透明色 —— LINEAR 边缘插值从「色↔黑」变「色↔色」
+            assertEquals(0, clear >>> 24, "透明像素 alpha 必须保持 0");
+            assertEquals(r, (clear >>> 16) & 0xFF,
+                    "透明像素 RGB 应被延拓为邻色（防 LINEAR 暗晕）");
+        }
+    }
+
+    @Test
+    @DisplayName("readPixelsArgb：整行全透明的行不延拓（无可继承色时保持全零）")
+    void readPixelsFullyTransparentRowStaysZero() {
+        try (io.github.humbleui.skija.Bitmap bm = new io.github.humbleui.skija.Bitmap()) {
+            bm.allocPixels(io.github.humbleui.skija.ImageInfo.makeN32Premul(2, 2));
+            try (io.github.humbleui.skija.Canvas cv = new io.github.humbleui.skija.Canvas(bm)) {
+                cv.clear(0x00000000);
+                io.github.humbleui.skija.Paint paint = new io.github.humbleui.skija.Paint();
+                paint.setColor(0xFF3366CC);
+                cv.drawRect(io.github.humbleui.types.Rect.makeXYWH(0, 0, 2, 1), paint);
+                paint.close();
+            }
+            int[] out = LyricGlyphAtlas.readPixelsArgb(bm, 2, 2);
+            assertNotNull(out);
+            // 第 2 行全透明且上方不相邻非透明?——第 1 行不透明、纵向不延拓（只水平扫）：
+            // 行内无非透明邻 → RGB 保持 0
+            assertEquals(0, out[2], "无水平邻色的透明像素应保持全零");
+            assertEquals(0, out[3], "无水平邻色的透明像素应保持全零");
         }
     }
 

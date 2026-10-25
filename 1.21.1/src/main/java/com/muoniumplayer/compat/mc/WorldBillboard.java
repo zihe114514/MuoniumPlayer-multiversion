@@ -185,17 +185,21 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 烘焙像素 → 设计像素。字形顶点 (x, y) 是「字位框左上角」在<b>行内坐标</b>里的位置
         // （buildGlyphs 逐字推进的坐标），格内墨迹原点 (inkX, inkY) 对到它 —— quad 四角
         // 必须加上 (x, y) 再进公告牌矩阵。初版漏加，整行所有字都叠在公告牌原点。
-        float inv = 1f / LyricGlyphAtlas.BAKE_SCALE;
+        // 档位运行时化：读 volatile int（bakeScale）实时除，切档即时生效
+        float inv = 1f / LyricGlyphAtlas.bakeScale();
         float qLeft = x - cell.inkX * inv;
         float qTop = y - cell.inkY * inv;
         float qRight = qLeft + cell.w * inv;
         float qBottom = qTop + cell.h * inv;
 
         float pageF = LyricGlyphAtlas.PAGE_SIZE;
-        float u0 = cell.x / pageF;
-        float v0 = cell.y / pageF;
-        float u1 = (cell.x + cell.w) / pageF;
-        float v1 = (cell.y + cell.h) / pageF;
+        // UV 半像素内缩：LINEAR 采样时 quad 边缘正落 texel 边界会混入邻格
+        // （页内格间零间隔）——内缩半个 texel 让采样核完全落在格内，去边缘灰缝
+        float halfTexel = 0.5f / pageF;
+        float u0 = cell.x / pageF + halfTexel;
+        float v0 = cell.y / pageF + halfTexel;
+        float u1 = (cell.x + cell.w) / pageF - halfTexel;
+        float v1 = (cell.y + cell.h) / pageF - halfTexel;
 
         float cx = x + (cell.advance * inv) * 0.5f;
         float cy = y + (cell.inkHeight * inv) * 0.5f;
@@ -393,6 +397,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                     Minecraft.getInstance().getTextureManager().release(rl);
                     trailCanvasTex[slot] = null;
                 }
+                // 直接按 (w,h) 构造：prepareImage 只分配 0 级，mip 链在
+                // setupMipChain 里一次性扩好；每帧只整图重传 0 级 + 重生成
                 NativeImage img = new NativeImage(NativeImage.Format.RGBA, w, h, false);
                 tex = new TrailTexture(img);
                 rl = ResourceLocation.fromNamespaceAndPath("muoniumplayer",
@@ -405,21 +411,23 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             }
             NativeImage img = tex.getPixels();
             if (img == null || px.length < w * h) return false;
-            // ARGB → NativeImage ABGR（直通 alpha，textSeeThrough 标准混合口径）。
-            // 整图逐帧全量覆写：尺寸复用时旧径迹必须被清掉（NativeImage 无
-            // 快速清屏 API），透明像素也写 0 —— 留白跳写会残留上一帧拖尾。
-            // 边界钉死 w×h：px 是共享层复用缓冲，长度以 w×h 为准（曾有复用
-            // 缓冲大于画布时按 px.length 越界写、写坏相邻 native 内存的教训）
+            // 共享层已按 NativeImage 内存序（ABGR、直通 alpha）输出 —— 这里是
+            // 纯数组拷贝，不再做每像素换位（拖尾活跃帧像素量几十万~上百万级，
+            // 每帧省一整遍位运算扫描）。整图逐帧全量覆写：尺寸复用时旧径迹必须
+            // 被清掉，透明像素也写 0 —— 留白跳写会残留上一帧拖尾。
+            // 边界钉死 w×h：曾有共享层缓冲大于画布时按 px.length 越界写、
+            // 写坏相邻 native 内存的教训。
             for (int row = 0, i = 0; row < h; row++) {
                 for (int col = 0; col < w; col++, i++) {
-                    int argb = px[i];
-                    img.setPixelRGBA(col, row,
-                            (argb & 0xFF00FF00)
-                                    | ((argb & 0x00FF0000) >>> 16)
-                                    | ((argb & 0x000000FF) << 16));
+                    img.setPixelRGBA(col, row, px[i]);
                 }
             }
             tex.upload();
+            // 0 级每帧全变 → 重生成 mip 链（画布已按设备像素封顶 1600²，亚毫秒）
+            if (tex.mipTop > 0) {
+                org.lwjgl.opengl.GL30.glGenerateMipmap(
+                        com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D);
+            }
         } catch (Throwable t) {
             trailCanvasError = true;
             trailCanvasErrSlot = slot;
@@ -427,6 +435,69 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             return false;
         }
         int argb = Math.min(255, (int) (alpha * 255f)) << 24 | 0xFFFFFF;
+        VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(rl));
+        Matrix4f mat = poseStack.last().pose();
+        putHaloVertex(vc, mat, planeX, planeY, 0f, 0f, argb);
+        putHaloVertex(vc, mat, planeX, planeY + planeH, 0f, 1f, argb);
+        putHaloVertex(vc, mat, planeX + planeW, planeY + planeH, 1f, 1f, argb);
+        putHaloVertex(vc, mat, planeX + planeW, planeY, 1f, 0f, argb);
+        flushEffectBatch(rl);
+        return true;
+    }
+
+    /**
+     * 拖尾画布脏区带上屏：只把径迹覆盖带写进纹理子矩形并上传（整图重传的
+     * 替代 —— 拖尾活跃帧的宿主侧 JNI 写入与 GPU 上传都按带面积计，典型省一
+     * 半以上）。band 外的纹理内容不被触碰：画布 clear 语义下 band 外本帧已
+     * 是零，上帧残留都在 band 内（collectDirtyRect 的并集保证）。
+     * 子矩形写入仍整带覆写（透明像素写 0 清上一帧残留）。
+     */
+    @Override
+    public boolean drawTrailCanvasBand(int[] px, int bandX, int bandY,
+                                       int bandW, int bandH,
+                                       int fullW, int fullH,
+                                       float planeX, float planeY,
+                                       float planeW, float planeH, float alpha,
+                                       int slot) {
+        if (poseStack == null || buffers == null || trailCanvasError
+                || px == null || bandW <= 0 || bandH <= 0 || alpha <= 0.01f
+                || slot < 0 || slot >= trailCanvasRl.length) return false;
+        // 画布纹理必须已存在且尺寸一致（渲染层保证 band 画自当前画布）
+        TrailTexture tex = trailCanvasTex[slot];
+        if (tex == null || trailCanvasW[slot] != fullW || trailCanvasH[slot] != fullH) {
+            return false;   // 画布刚重建（本帧首次）：退回整图版先建纹理
+        }
+        if (pendingEffectRl == trailCanvasRl[slot] && buffers != null) {
+            buffers.endBatch(RenderType.textSeeThrough(trailCanvasRl[slot]));
+            pendingEffectRl = null;
+        }
+        try {
+            NativeImage img = tex.getPixels();
+            if (img == null || px.length < bandW * bandH) return false;
+            for (int row = 0, i = 0; row < bandH; row++) {
+                for (int col = 0; col < bandW; col++, i++) {
+                    img.setPixelRGBA(bandX + col, bandY + row, px[i]);
+                }
+            }
+            // 子矩形上传（9 参重载 → _upload(level, xOffset, yOffset,
+            // unpackSkipPixels=bandX, unpackSkipRows=bandY, bandW, bandH,
+            // blur=false, clamp=false, mipmap=false, closeAfter=false)）；
+            // _upload 不换绑定，uploadSub 同款先 bind。
+            tex.bind();
+            img.upload(0, bandX, bandY, bandX, bandY, bandW, bandH, false, false);
+            // 0 级带内变化 → 重生成 mip 链（generate 是全链重算，但画布 ≤1600² 亚毫秒）
+            if (tex.mipTop > 0) {
+                org.lwjgl.opengl.GL30.glGenerateMipmap(
+                        com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D);
+            }
+        } catch (Throwable t) {
+            trailCanvasError = true;
+            trailCanvasErrSlot = slot;
+            if (TRACE) System.out.println("[WorldLyrics/trace] 拖尾画布带上传失败，径迹退回 quad 带: " + t);
+            return false;
+        }
+        int argb = Math.min(255, (int) (alpha * 255f)) << 24 | 0xFFFFFF;
+        ResourceLocation rl = trailCanvasRl[slot];
         VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(rl));
         Matrix4f mat = poseStack.last().pose();
         putHaloVertex(vc, mat, planeX, planeY, 0f, 0f, argb);
@@ -488,18 +559,15 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         float sin = (float) Math.sin(Math.toRadians(rotDeg));
         VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(rl));
         Matrix4f mat = poseStack.last().pose();
-        putHaloVertex(vc, mat, cx + rot2(-half, -half, cos, sin)[0], cy + rot2(-half, -half, cos, sin)[1], 0f, 0f, argb);
-        putHaloVertex(vc, mat, cx + rot2(-half, half, cos, sin)[0], cy + rot2(-half, half, cos, sin)[1], 0f, 1f, argb);
-        putHaloVertex(vc, mat, cx + rot2(half, half, cos, sin)[0], cy + rot2(half, half, cos, sin)[1], 1f, 1f, argb);
-        putHaloVertex(vc, mat, cx + rot2(half, -half, cos, sin)[0], cy + rot2(half, -half, cos, sin)[1], 1f, 0f, argb);
+        // rot2 内联成标量（原先每角两次调用各 new float[2]，4 角 8 个分配）
+        putHaloVertex(vc, mat, cx + (-half * cos + half * sin), cy + (-half * sin - half * cos), 0f, 0f, argb);
+        putHaloVertex(vc, mat, cx + (-half * cos - half * sin), cy + (-half * sin + half * cos), 0f, 1f, argb);
+        putHaloVertex(vc, mat, cx + (half * cos - half * sin), cy + (half * sin + half * cos), 1f, 1f, argb);
+        putHaloVertex(vc, mat, cx + (half * cos + half * sin), cy + (half * sin - half * cos), 1f, 0f, argb);
         flushEffectBatch(rl);
     }
 
     /** 局部偏移 (ox, oy) 旋转 rot 后的分量。 */
-    private static float[] rot2(float ox, float oy, float cos, float sin) {
-        return new float[] {ox * cos - oy * sin, ox * sin + oy * cos};
-    }
-
     /**
      * 星芒贴图：256×256 解析式四芒星（folia sprites 的精修版）——
      * 热核（锐高斯）+ 4 条长锥形射线（沿轴指数衰减 × 垂直高斯收腰、向尖端
@@ -739,13 +807,65 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 回退到已验证的纯 LINEAR —— 拖尾的抗锯齿由 CPU 光栅化保证，不靠 mip。
      */
     private static final class TrailTexture extends DynamicTexture {
+        /** 本贴图的 mip 顶层数（floor(log2(min(w,h)))）；-1 = 已熔断纯 LINEAR。 */
+        final int mipTop;
+
         TrailTexture(NativeImage img) {
             super(img);
+            bind();
+            this.mipTop = setupMipChain(img != null ? img.getWidth() : 0,
+                    img != null ? img.getHeight() : 0);
+        }
+
+        TrailTexture(int w, int h) {
+            super(w, h, true);
+            bind();
+            this.mipTop = setupMipChain(w, h);
         }
 
         @Override
         public void setFilter(boolean blur, boolean mipmap) {
-            super.setFilter(true, false);
+            super.setFilter(true, mipTop > 0);
+        }
+    }
+
+    /**
+     * 安全 mip 链（与 LyricGlyphAtlasBridge.PageTexture 同配方）：解钳
+     * MAX_LEVEL/MAX_LOD（prepareImage 钉死 0，MAX_LOD 不解开则 LOD 恒 0、
+     * 三线性静默退化双线性）→ glGenerateMipmap 自管扩级 → 读回自检，失败
+     * 返回 -1（setFilter 据此永久落纯 LINEAR，绝不产生不完整采样）。
+     * 调用前提：本纹理当前已绑定。
+     */
+    private static int setupMipChain(int width, int height) {
+        try {
+            int top = 31 - Integer.numberOfLeadingZeros(Math.min(width, height));
+            if (top < 1) return -1;
+            com.muoniumplayer.compat.gl.GL11.glTexParameteri(
+                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D,
+                    org.lwjgl.opengl.GL12.GL_TEXTURE_MAX_LEVEL, top);
+            com.muoniumplayer.compat.gl.GL11.glTexParameteri(
+                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D,
+                    org.lwjgl.opengl.GL12.GL_TEXTURE_MIN_LOD, 0);
+            com.muoniumplayer.compat.gl.GL11.glTexParameterf(
+                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D,
+                    org.lwjgl.opengl.GL13.GL_TEXTURE_MAX_LOD, (float) top);
+            org.lwjgl.opengl.GL30.glGenerateMipmap(
+                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D);
+            int tailW = org.lwjgl.opengl.GL11.glGetTexLevelParameteri(
+                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D, top,
+                    org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
+            int err = org.lwjgl.opengl.GL11.glGetError();
+            if (err != 0 || tailW != Math.max(1, width >> top)) {
+                com.muoniumplayer.compat.mc.WorldLyricsBridge.traceOnce(
+                        "特效贴图 mip 链自检失败（err=0x" + Integer.toHexString(err)
+                                + " tailW=" + tailW + "），熔断回纯 LINEAR");
+                return -1;
+            }
+            return top;
+        } catch (Throwable t) {
+            com.muoniumplayer.compat.mc.WorldLyricsBridge.traceOnce(
+                    "特效贴图 mip 链生成异常，熔断回纯 LINEAR: " + t);
+            return -1;
         }
     }
 

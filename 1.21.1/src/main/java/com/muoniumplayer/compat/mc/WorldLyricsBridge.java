@@ -43,6 +43,14 @@ public final class WorldLyricsBridge {
 
     /** 一次性链路诊断。 */
     static final boolean TRACE = Boolean.getBoolean("muonium.debug.worldLyrics");
+    private static final java.util.Set<String> TRACED_ONCE = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** 一次性诊断日志（去重；仅 muonium.debug.worldLyrics 开启时输出）。 */
+    static void traceOnce(String msg) {
+        if (!TRACE || !TRACED_ONCE.add(msg)) return;
+        System.out.println("[WorldLyrics/trace] " + msg);
+    }
+
     private static boolean tracedReady;
     private static boolean tracedNoLyrics;
     private static boolean tracedRendered;
@@ -118,6 +126,9 @@ public final class WorldLyricsBridge {
 
         WorldLyricsSettings settings = WorldLyricsSettings.snapshot();
         if (!settings.enabled) return;
+        // 画质档同步（幂等）：自动档按当前帧缓冲高度解析——用户改窗口大小后
+        // 下一次渲染自然跟上；手动档 setBakeScale 同值直接短路，零成本
+        com.muoniumplayer.core.screens.hud.HudSettingsModel.syncWorldLyricsQuality();
         WorldLyricsBridge.currentSettings = settings;
         // 绘光贴图预热（幂等）：惰性生成的首帧成本移出歌内
         if (settings.huiguang) {

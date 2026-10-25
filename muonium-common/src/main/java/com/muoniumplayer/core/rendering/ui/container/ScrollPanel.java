@@ -2,12 +2,14 @@ package com.muoniumplayer.core.rendering.ui.container;
 
 import lombok.Getter;
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
+import com.muoniumplayer.core.input.TouchGestures;
 import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.ScissorClipManager;
 import com.muoniumplayer.core.rendering.StencilClipManager;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
+import com.muoniumplayer.core.settings.TouchSettings;
 
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -210,6 +212,9 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
 
     @Override
     public void onRender(double mouseX, double mouseY) {
+        // 触屏拖动滚动（必须在 clamp/推进之前：拖动本身就要写 target 与 actual）。
+        this.advanceTouchDrag();
+
         // 以前这一帧会为 clamp、actual 再 clamp、align 各自扫描一遍全部子项。
         // 歌单几百/几千行时，滚轮期间这类重复 O(n) 会和可见行绘制叠在一起。
         // 等高歌曲行走固定高度快速路径，只计算数量并更新视口附近的行。
@@ -313,6 +318,81 @@ public class ScrollPanel extends AbstractWidget<ScrollPanel> {
         super.onDWheel(mouseX, mouseY, dWheel);
 
         return true;
+    }
+
+    // ──────────────────────── 触屏拖动滚动 ────────────────────────
+
+    /** 本轮纵向拖动是否由本容器认领。 */
+    private boolean touchDragging;
+
+    /** 甩动的最小速度（GUI 像素/ms）：低于它的松手只停住，不给惯性。 */
+    private static final double TOUCH_FLING_MIN_VELOCITY = 0.05;
+
+    /**
+     * 触屏拖动滚动：认领 → 1:1 跟手 → 松手惯性甩动。
+     *
+     * <h2>认领条件（全部满足才动手）</h2>
+     * <ul>
+     *   <li>手势层处于<b>纵向拖动</b>（位移超阈值且主轴锁定为纵）；</li>
+     *   <li>尚无人认领——多个滚动容器同屏时（侧栏 + 页面列表）按下起点落在谁家谁先到先得，
+     *       渲染顺序即查询顺序，不重叠就不冲突；</li>
+     *   <li>按下起点在本视口内（用 {@link #testHovered}，与悬停同一套几何）；</li>
+     *   <li>纵向排版且内容长于视口（{@code maxOffset > 0}，没有滚动余量的容器不抢手势）。</li>
+     * </ul>
+     *
+     * <h2>符号表（与滚轮严格一致）</h2>
+     * 偏移 0 = 顶部；滚轮向上（dWheel&gt;0）= {@code target -= strength}。手指<b>向下</b>滑
+     * （dy&gt;0）内容跟手下移、视口走向顶部 = {@code target -= dy}；向上甩
+     * （velocityY&lt;0）视口走向底部 = {@code target -= signum(v)·distance}。
+     *
+     * <h2>为什么拖动期间 actual 直接等于 target</h2>
+     * 42ms 的指数平滑是给滚轮/甩动这种「目标突变」用的减速带；拖动要求 1:1 跟手，
+     * 平滑会变成橡皮筋。甩动时把惯性距离一次性记进 target，让既有平滑自然接管减速尾。</h2>
+     */
+    private void advanceTouchDrag() {
+        TouchGestures gestures = TouchGestures.get();
+        if (!TouchSettings.ENABLED) {
+            this.touchDragging = false;
+            return;
+        }
+        if (this.touchDragging) {
+            if (gestures.isVerticalDrag() && gestures.claimedBy() == this) {
+                double dy = gestures.dy();
+                if (dy != 0) {
+                    double maximum = this.maximumOffsetForTouch();
+                    this.targetScrollOffset = Math.max(0, Math.min(this.targetScrollOffset - dy, maximum));
+                    this.actualScrollOffset = this.targetScrollOffset;
+                    this.lastScrollInputNanos = System.nanoTime();
+                }
+                return;
+            }
+            // 松手（或认领被抢走的异常帧）：结算甩动。
+            this.touchDragging = false;
+            if (!gestures.isPressed()) {
+                double velocity = gestures.velocityY();
+                if (Math.abs(velocity) > TOUCH_FLING_MIN_VELOCITY) {
+                    double distance = Math.min(TouchSettings.FLING_MAX_DISTANCE,
+                            (velocity * velocity) / (2.0 * TouchSettings.FLING_DECEL));
+                    double maximum = this.maximumOffsetForTouch();
+                    this.targetScrollOffset = Math.max(0, Math.min(
+                            this.targetScrollOffset - Math.signum(velocity) * distance, maximum));
+                    this.lastScrollInputNanos = System.nanoTime();
+                }
+            }
+            return;
+        }
+        if (gestures.isVerticalDrag()
+                && gestures.claimedBy() == null
+                && this.alignment != Alignment.HORIZONTAL
+                && this.maximumOffsetForTouch() > 0.0
+                && this.testHovered(gestures.startX(), gestures.startY())) {
+            this.touchDragging = gestures.claim(this);
+        }
+    }
+
+    /** 当前内容最大可滚偏移；认领判据与拖动期间都要，直接复用滚轮那条路径的算法。 */
+    private double maximumOffsetForTouch() {
+        return this.getMaximumScrollOffset();
     }
 
     /**

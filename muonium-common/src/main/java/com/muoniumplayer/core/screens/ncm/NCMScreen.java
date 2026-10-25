@@ -3,6 +3,8 @@ package com.muoniumplayer.core.screens.ncm;
 import lombok.Getter;
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.compat.lwjgl2.Mouse;
+import com.muoniumplayer.core.input.TouchGestures;
+import com.muoniumplayer.core.settings.TouchSettings;
 import com.muoniumplayer.compat.gl.GL11;
 import com.muoniumplayer.api.features.ExtensionScreen;
 import com.muoniumplayer.core.interfaces.SharedConstants;
@@ -465,6 +467,12 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         //在 updatePanelScaleAnimation()/tick() 把形变目标留在 Minecraft
         //GUI 坐标后进入它，而渲染变换期望自适应坐标。
         WindowAdaptiveScale.begin();
+        // 手势层每帧推进：喂的是与点击分发同一口径的布局坐标。必须在所有消费者
+        // （ScrollPanel/歌词页/队列抽屉/延迟点击）之前跑，它们在下面的渲染回调里查询。
+        TouchGestures.get().advance(System.nanoTime(),
+                mX / WindowAdaptiveScale.correctionX(),
+                mY / WindowAdaptiveScale.correctionY(),
+                Mouse.isButtonDown(0));
         this.updatePanelScaleAnimation();
         // 两条时钟互不接管：外层从岛展开/收回，内部主页 -> 全屏歌词页。
         PlayerIslandTransition.tick();
@@ -1148,14 +1156,15 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     }
 
     /**
-     * 音源切换后的视觉交接：内容区「清底淡入」，侧栏整列静默换代。
+     * 音源切换后的视觉交接：内容区「清底淡入」，侧栏整列<b>整块交接</b>。
      *
      * <p>调用方（音源浮层）已经先改好 {@code NeteaseMusicService} 的当前平台。这里把三件事收成
      * 一个动作：</p>
      * <ul>
      *   <li>旧页直接收掉（不交叉淡入）—— 另一个平台的内容不该在本平台的新页淡入时还留在屏幕上；</li>
-     *   <li>侧栏重建时跳过行进场/退场动画 —— 换源本来就会让几乎每一行同时「新出现 + 旧消失」，
-     *       两套动画叠在一起就是满屏幽灵行，那正是「上一层的残留」；</li>
+     *   <li>侧栏重建时跳过<b>行级</b>进场/退场动画 —— 换源本来就会让几乎每一行同时「新出现 + 旧消失」，
+     *       两套动画叠在一起就是满屏幽灵行，那正是「上一层的残留」；侧栏的故事改由
+     *       {@code NavigateBar} 的<b>整块交接</b>来讲（旧列整块滑出淡出、新列滑入），不再原地瞬移；</li>
      *   <li>仍走正常换页时钟（默认约 140ms），新页从内容区底色里淡入，节奏与其它栏目一致。</li>
      * </ul>
      */
@@ -1709,6 +1718,34 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 || this.addToPlaylistOverlay != null;
     }
 
+    /**
+     * 被延迟分发的按压：按下时记下坐标与按钮，松手时（若不是拖动）由
+     * {@link #mouseReleased} 补发。见 {@link #mouseClicked} 的类注释级说明。
+     */
+    private boolean pendingClickActive;
+    private double pendingClickX;
+    private double pendingClickY;
+    private int pendingClickButton;
+
+    /**
+     * 触屏时代的点击时机：按下只记账，松手才分发。
+     *
+     * <h2>为什么必须延迟</h2>
+     * FCL 系启动器把触屏映射成左键。手指想滚动列表时必然先「按下在某一行上」——如果按下
+     * 即分发（旧行为），歌单行立刻误触播放，拖动滚动根本无从谈起。改为松手分发后，
+     * {@code TouchGestures} 在松手沿上给出「这次按压从未超过拖动阈值」的结论
+     * （{@link TouchGestures#consumeTap()}），是点按才补发，是拖动就整体吞掉。
+     *
+     * <h2>哪些交互不受影响</h2>
+     * 滑条/进度条/文本选择这一类不依赖 click 事件的交互（它们每帧轮询
+     * {@code Mouse.isButtonDown(0)}，按下即开始拖动）语义不变——它们与滚动的冲突由
+     * 手势层的<b>主轴锁定</b>仲裁（纵向手势滑过进度条不触发 seek，见各站点加的门）。
+     * 右键不参与拖动仲裁，但也延迟到松手分发，行为统一。
+     *
+     * <h2>回滚</h2>
+     * {@code TouchSettings.ENABLED=false} 时 {@link #mouseClicked} 立即走
+     * {@link #dispatchClick}（与旧版逐字节同一条路径），松手什么都不做。
+     */
     @Override
     public void mouseClicked(int mX, int mY, int mouseButton) {
 
@@ -1720,6 +1757,24 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         double mouseY = mY / yScale;
         WindowAdaptiveScale.end();
 
+        if (TouchSettings.ENABLED) {
+            // 按下只记账（坐标已换算到布局空间，与 dispatchClick 内部口径一致）；
+            // 松手沿上由 TouchGestures 判定这是点按还是拖动滚动。
+            this.pendingClickActive = true;
+            this.pendingClickX = mouseX;
+            this.pendingClickY = mouseY;
+            this.pendingClickButton = mouseButton;
+            return;
+        }
+        dispatchClick(mouseX, mouseY, mouseButton);
+    }
+
+    /**
+     * 真正的点击分发：原 {@code mouseClicked} 的完整主体（模态浮层优先级、队列/联想前置
+     * 消费、侧键导航、歌词搜索页的换轴换算）原样保留。「按下即分发」（功能关闭时的回滚
+     * 路径）与「松手补发」共用这一段，保证两条路径的行为永远一致。
+     */
+    private void dispatchClick(double mouseX, double mouseY, int mouseButton) {
         if (this.modelInstallNoticeOverlay != null) {
             this.modelInstallNoticeOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
             return;
@@ -1838,6 +1893,29 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             this.musicLyricsPanel.mouseClicked(mouseX, mouseY, mouseButton);
         }
 
+    }
+
+    /**
+     * 松手沿：补发被扣住的点击，或把拖动整体吞掉。
+     *
+     * <p>左键问 {@link TouchGestures#consumeTap()} 结算——本轮按压从未超过拖动阈值才算
+     * 点按；右键不参与拖动仲裁，一律补发。分发坐标用<b>按下时</b>记账的坐标：悬停命中
+     * 本来就是按那一刻的布局算的，松手坐标在阈值（8 GUI 像素）内几乎同点。</p>
+     *
+     * <p>事件丢失的兜底：release 事件没到的话，下一帧 {@code TouchGestures.advance} 会
+     * 自行结算按压，被扣的点击就此丢弃（拖动的收尾不依赖它，见各滚动容器的实现）。</p>
+     */
+    @Override
+    public void mouseReleased(int mX, int mY, int state) {
+        super.mouseReleased(mX, mY, state);
+        if (!TouchSettings.ENABLED || !this.pendingClickActive || state != this.pendingClickButton) {
+            return;
+        }
+        this.pendingClickActive = false;
+        if (state == 0 && !TouchGestures.get().consumeTap()) {
+            return;
+        }
+        dispatchClick(this.pendingClickX, this.pendingClickY, state);
     }
 
     /** 播放器主题的颜色语义；具体颜色由 {@link NCMTheme} 提供。 */

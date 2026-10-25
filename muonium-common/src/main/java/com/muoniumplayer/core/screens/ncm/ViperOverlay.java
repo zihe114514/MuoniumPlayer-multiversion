@@ -3,6 +3,8 @@ package com.muoniumplayer.core.screens.ncm;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.muoniumplayer.compat.lwjgl2.Mouse;
+import com.muoniumplayer.core.input.TouchGestures;
+import com.muoniumplayer.core.settings.TouchSettings;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
@@ -718,6 +720,10 @@ public final class ViperOverlay extends NcmSheet {
             boolean hovered = testHovered(mouseX, mouseY);
             boolean down = Mouse.isButtonDown(0);
             if (!down) {
+                dragging = false;
+            } else if (TouchGestures.get().isVerticalDrag()) {
+                // 纵向手势已锁定 = 用户在滚弹层列表：横向滑条让位（含已起手的拖动），
+                // 否则手指从滑条上起滑会把参数拖到手指高度对应的值。
                 dragging = false;
             } else if (hovered) {
                 dragging = true;

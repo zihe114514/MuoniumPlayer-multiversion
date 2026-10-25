@@ -93,4 +93,27 @@ class HuiguangTrailCanvasTest {
         assertEquals(128 * 64, small.length,
                 "复用缓冲必须精确等于当前画布 w×h（宿主按此全量写纹理）");
     }
+
+    /**
+     * readPixelsAbgr 直出宿主内存序：画一条纯红（0xFF0000）描边，ABGR int
+     * 应读作 (a<<24|b<<16|g<<8|r) —— R 在低位、B 在 16 位。换位做反
+     * （R/B 颠倒）时红会被读成蓝，游戏里拖尾整体偏色 —— 字节序回归钉。
+     */
+    @Test
+    void readPixelsAbgrByteOrder() {
+        assertTrue(HuiguangTrailCanvas.begin(64f, 32f, -32f, -16f));
+        float[] xs = {-24f, 24f};
+        float[] ys = {0f, 0f};
+        HuiguangTrailCanvas.strokeTrail(xs, ys, 2, 0xFF0000, 1f, 10f);
+        int[] px = HuiguangTrailCanvas.readPixelsAbgr();
+        assertNotNull(px);
+        int center = px[(32 * 128) + 64];
+        int a = center >>> 24;
+        assertTrue(a > 100, "描边中心应有实覆盖，实际 alpha=" + a);
+        int r = center & 0xFF;
+        int b = (center >>> 16) & 0xFF;
+        // 预乘像素除回直通后，中心点的红分量应占绝对主导（换位做反则红蓝互换）
+        assertTrue(r > 150 && r > b * 3,
+                "ABGR 直出：红应主导（r=" + r + " b=" + b + "）");
+    }
 }

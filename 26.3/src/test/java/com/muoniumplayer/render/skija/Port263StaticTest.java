@@ -427,7 +427,7 @@ class Port263StaticTest {
     }
 
     @Test
-    @DisplayName("鼠标按钮编号只在 compat 边界换算（SDL 1/2/3 → LWJGL2 0/1/2）")
+    @DisplayName("鼠标按钮编号只在 compat 边界换算（SDL 1-5 → LWJGL2 0/2/1/3/4，含侧键）")
     void 按钮编号在边界换算() throws IOException {
         Path mouse = ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "lwjgl2", "Mouse.java"));
         Path guiScreen = ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "compat", "mc", "GuiScreen.java"));
@@ -438,9 +438,7 @@ class Port263StaticTest {
         int to = m.indexOf("static int toSdlButton(int lwjgl2Button)");
         assertTrue(from > 0 && to > from,
                 "Mouse 里必须有 fromSdlButton / toSdlButton 这一对换算。26.3 原版事件带的是 SDL 的"
-                        + "按钮号（lwjgl-sdl 的 SDLMouse：LEFT=1 / MIDDLE=2 / RIGHT=3；"
-                        + "另一条判据是 MouseHandler#onButton 拿 1/2/3 分别置 "
-                        + "isLeftPressed / isMiddlePressed / isRightPressed），"
+                        + "按钮号（lwjgl-sdl 的 SDLMouse：LEFT=1 / MIDDLE=2 / RIGHT=3），"
                         + "而本项目整套 UI 说 LWJGL2 的编号（0=左、1=右、2=中）。"
                         + "不换算的实机症状是「点任何控件都没有反应」，而悬停照常——"
                         + "因为 GuiScreen.mouseClicked 里那句 if (mouseButton != 0) return; "
@@ -455,6 +453,18 @@ class Port263StaticTest {
                         + "「2=右」的旧顺序——以 SDLMouse 常量与原版 onButton 的分支为准");
         assertTrue(containsOrdered(fromBody, "sdlButton == 2", "return 2"),
                 "fromSdlButton 必须把 SDL 的 2（中）换成 LWJGL2 的 2");
+        assertTrue(containsOrdered(fromBody, "sdlButton == 4", "return 3")
+                        && containsOrdered(fromBody, "sdlButton == 5", "return 4"),
+                "侧键必须换算：GLFW 的侧键号是 3/4，SDL 是 X1=4/X2=5。NCMScreen 的侧键导航"
+                        + "认的是旧编号（3=后退、4=前进），把 SDL 的 4/5 原样透传的实机症状是"
+                        + "「按后退键触发前进、按前进键完全无反应」——即 26.3 移植期的侧键失效");
+
+        String toBody = m.substring(to);
+        assertTrue(containsOrdered(toBody, "lwjgl2Button == 3", "return 4")
+                        && containsOrdered(toBody, "lwjgl2Button == 4", "return 5"),
+                "toSdlButton 是 fromSdlButton 的反向，侧键也要换回去（3→4、4→5）："
+                        + "GuiTextField 替原版构造 MouseButtonInfo 时靠它把编号还原成 SDL 的，"
+                        + "漏了侧键会让原版把本项目构造出的侧键事件读成别的键");
 
         String screen = stripComments(read(guiScreen));
         assertTrue(screen.contains("Mouse.fromSdlButton(click.button())"),
@@ -468,6 +478,56 @@ class Port263StaticTest {
         assertTrue(stripComments(read(guiTextField)).contains("Mouse.toSdlButton(mouseButton)"),
                 "GuiTextField 替原版构造 MouseButtonInfo 时要做反方向换算，"
                         + "否则本项目说的「左键 0」会被原版读成 0 = 不是任何键");
+    }
+
+    @Test
+    @DisplayName("按住状态有投料口：MouseHandler#onButton 的 mixin 已写好并注册，isButtonDown 不查原版三布尔")
+    void 按住状态钩子完整() throws IOException {
+        Path stateMixin = ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "mixin", "MouseButtonStateMixin.java"));
+        assertTrue(Files.exists(stateMixin),
+                "MouseButtonStateMixin 不见了。原版 isLeftPressed/isMiddlePressed/isRightPressed"
+                        + "只在没有任何 Screen 打开时才更新（onButton 里 Gui.screen() != null 直接跳过），"
+                        + "界面开着时轮询它们恒为进界面前的旧值。少了这颗 mixin，"
+                        + "isButtonDown(0) 在本项目任何界面里都恒 false，实机症状是"
+                        + "「音量/HUD 滑块拖不动、全屏歌词点了没反应、文本框拖选失灵」");
+        String body = read(stateMixin);
+        assertTrue(body.contains("@Mixin(MouseHandler.class)")
+                        && body.contains("onButton(JLnet/minecraft/client/input/MouseButtonInfo;I)V")
+                        && body.contains("@At(\"HEAD\")"),
+                "必须挂 MouseHandler#onButton(JLnet/minecraft/client/input/MouseButtonInfo;I)V 的入口："
+                        + "它是 SDL handleMouseButtonEvent 分发的统一步口，HEAD 注入且不 cancel，"
+                        + "原版照常处理。描述符里的参数类型必须写全限定名");
+        assertTrue(body.contains("Mouse.setButtonPressed(") && body.contains("Mouse.fromSdlButton("),
+                "onButton 要把按钮号换算成 LWJGL2 编号后投进 Mouse 的位图，"
+                        + "与 GuiScreen 桥接处共用同一张换算表");
+
+        for (Path each : java.util.List.of(MIXIN_CONFIG, NEOFORGE_MIXIN_CONFIG)) {
+            assertTrue(read(each).contains("\"MouseButtonStateMixin\""),
+                    each + " 的 client 数组里没有 MouseButtonStateMixin，按住状态那一侧不会生效");
+        }
+
+        String mouse = stripComments(read(ProjectPaths.sourceFile(
+                Paths.get("com", "muoniumplayer", "compat", "lwjgl2", "Mouse.java"))));
+        assertFalse(mouse.contains("isLeftPressed") || mouse.contains("isMiddlePressed")
+                        || mouse.contains("isRightPressed"),
+                "isButtonDown 不许再查原版的三布尔：它们在 Screen 打开期间不更新，"
+                        + "这就是 26.3 移植期「滑块拖不动」的成因");
+    }
+
+    @Test
+    @DisplayName("界面开着就开 SDL 文本输入：GuiScreen 已对接 TextInputManager")
+    void 文本输入已对接() throws IOException {
+        String screen = stripComments(read(ProjectPaths.sourceFile(
+                Paths.get("com", "muoniumplayer", "compat", "mc", "GuiScreen.java"))));
+        assertTrue(screen.contains("startTextInput(this)"),
+                "GuiScreen#added 必须调 textInputManager().startTextInput(this)："
+                        + "26.3 的 SDL 后端里字符事件只在 SDL_StartTextInput 之后投递，"
+                        + "原版靠 EditBox 聚焦开启，而本项目输入框全是自绘的。"
+                        + "少这一句的实机症状是「搜索栏/输入框一个字都打不进」，"
+                        + "keyPressed（ESC、空格）却照常——很容易误判成键盘焦点问题");
+        assertTrue(screen.contains("stopTextInput(this)"),
+                "GuiScreen#removed 必须调 textInputManager().stopTextInput(this) 收尾，"
+                        + "否则关界面后 SDL 文本输入一直开着，原版聊天框外也会弹输入法组合窗");
     }
 
     /** 断言 needle2 出现在 needle1 之后（只看顺序，不假设具体写法）。 */

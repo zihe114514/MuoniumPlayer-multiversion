@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.muoniumplayer.compat.lwjgl2.Mouse;
+import com.muoniumplayer.core.input.TouchGestures;
+import com.muoniumplayer.core.settings.TouchSettings;
 
 import com.muoniumplayer.core.interfaces.SharedConstants;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
@@ -653,6 +655,55 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
         return true;
     }
 
+    /** 本轮纵向拖动是否由本面板认领。 */
+    private boolean quickTouchDragging;
+
+    /** 甩动的最小速度（GUI 像素/ms）：低于它的松手只停住，不给惯性。 */
+    private static final double QUICK_FLING_MIN_VELOCITY = 0.05;
+
+    /**
+     * 触屏拖动滚动：认领/跟手/甩动，与 {@link #handleScroll} 同一套命中判定与符号
+     * （{@code scrollTarget - dy}，偏移 0 = 顶）。由 MusicLyricsPanel 每帧驱动——
+     * 本面板没有自己的每帧入口，歌词页是它唯一的宿主。
+     */
+    void advanceTouchDrag() {
+        TouchGestures gestures = TouchGestures.get();
+        if (!TouchSettings.ENABLED || !expanded || Double.isNaN(anchorX)) {
+            this.quickTouchDragging = false;
+            return;
+        }
+        if (this.quickTouchDragging) {
+            if (gestures.isVerticalDrag() && gestures.claimedBy() == this) {
+                double dy = gestures.dy();
+                if (dy != 0) {
+                    double max = Math.max(0.0, contentHeight() - panelHeight());
+                    scrollTarget = Math.max(0.0, Math.min(max, scrollTarget - dy));
+                    scrollOffset = scrollTarget;
+                }
+                return;
+            }
+            this.quickTouchDragging = false;
+            if (!gestures.isPressed()) {
+                double velocity = gestures.velocityY();
+                if (Math.abs(velocity) > QUICK_FLING_MIN_VELOCITY) {
+                    double distance = Math.min(TouchSettings.FLING_MAX_DISTANCE,
+                            (velocity * velocity) / (2.0 * TouchSettings.FLING_DECEL));
+                    double max = Math.max(0.0, contentHeight() - panelHeight());
+                    scrollTarget = Math.max(0.0, Math.min(
+                            max, scrollTarget - Math.signum(velocity) * distance));
+                }
+            }
+            return;
+        }
+        if (gestures.isVerticalDrag()
+                && gestures.claimedBy() == null
+                && contentHeight() - panelHeight() > 0.0
+                && isInside(toLayoutX(gestures.startX()), toLayoutY(gestures.startY()),
+                        anchorX, panelTop(), shownWidth, panelHeight())) {
+            this.quickTouchDragging = gestures.claim(this);
+        }
+    }
+
     private void updateScroll() {
         double max = Math.max(0.0, contentHeight() - panelHeight());
         if (scrollTarget > max) scrollTarget = max;
@@ -1083,6 +1134,11 @@ final class LyricStyleQuickPanel implements SharedRenderingConstants, SharedCons
             return;
         }
         if (!Mouse.isButtonDown(0)) {
+            releaseDrag();
+            return;
+        }
+        // 纵向手势已锁定 = 用户在滚面板列表：横向的偏移微调让位，已起的拖动收掉。
+        if (TouchGestures.get().isVerticalDrag()) {
             releaseDrag();
             return;
         }

@@ -387,6 +387,77 @@ public final class HudSettingsModel {
                 KW_PRESET_VERDANT, KW_PRESET_AMBER};
     }
 
+    // ==================== 3D 歌词渲染画质档（烘焙超采样） ====================
+
+    private static final String[] QUALITY_CHOICES = {"自动", "流畅", "标准", "高清", "极致"};
+
+    /** 当前档名（0=自动按帧缓冲高度分档，4~7=手动烘焙倍率）。 */
+    private static String qualityTierLabel() {
+        return QUALITY_CHOICES[qualityChoiceIndex(HudConfig.worldLyricsQualityTier)];
+    }
+
+    private static int qualityChoiceIndex(int tier) {
+        return switch (tier) {
+            case 4 -> 1;
+            case 5 -> 2;
+            case 6 -> 3;
+            case 7 -> 4;
+            default -> 0;
+        };
+    }
+
+    private static void cycleQualityTier() {
+        int idx = (qualityChoiceIndex(HudConfig.worldLyricsQualityTier) + 1) % QUALITY_CHOICES.length;
+        setQualityTier(idx);
+    }
+
+    /** Consumer&lt;String&gt; 口径（choice 的 setter 契约）：按当前档名反查下标再切。 */
+    private static void setQualityTier(String selected) {
+        for (int i = 0; i < QUALITY_CHOICES.length; i++) {
+            if (QUALITY_CHOICES[i].equals(selected)) {
+                setQualityTier(i);
+                return;
+            }
+        }
+    }
+
+    private static void setQualityTier(int choiceIdx) {
+        // choice 循环切换：0=自动（按帧缓冲高度一次性定档，改分辨率/窗口后下次
+        // 进设置重估）；4~7 = 手动强制对应烘焙倍率。切档经 setBakeScale 全图集重建。
+        int tier = switch (choiceIdx) {
+            case 1 -> 4;
+            case 2 -> 5;
+            case 3 -> 6;
+            case 4 -> 7;
+            default -> 0;
+        };
+        HudConfig.worldLyricsQualityTier = tier;
+        applyQualityTierNow(tier);
+    }
+
+    /** 解析设置档（0=自动按帧缓冲高度）并落到图集。 */
+    private static void applyQualityTierNow(int tier) {
+        int scale = tier >= 4 ? tier : autoBakeScale();
+        com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas.setBakeScale(scale);
+    }
+
+    /** 启动/字体初始化后的档位同步：把存档里的画质档解析落到图集（幂等）。 */
+    public static void syncWorldLyricsQuality() {
+        applyQualityTierNow(HudConfig.worldLyricsQualityTier);
+    }
+
+    /** 自动档解析（≤1080p→标准 5、1440p→高清 6、≥2160p→极致 7）。 */
+    private static int autoBakeScale() {
+        try {
+            int h = net.minecraft.client.Minecraft.getInstance().getWindow().getHeight();
+            if (h >= 2000) return 7;
+            if (h >= 1300) return 6;
+            return 5;
+        } catch (Throwable t) {
+            return 5;
+        }
+    }
+
     private static String keywordPresetLabel() {
         return keywordPresetOf(HudConfig.worldLyricsKeywordColors);
     }
@@ -477,6 +548,17 @@ public final class HudSettingsModel {
         return new Entry(Kind.CHOICE, new Supplier<String>() {
             public String get() { return label; }
         }, description, null, null, next, value, ColorTarget.NONE, choices, setter, null,
+                false, hints);
+    }
+
+    /** 带可见性条件 + 逐项说明的 choice（3D 渲染画质档：只在现代化渲染开启时可见）。 */
+    private static Entry choice(final String label, String description,
+                                Supplier<String> value, Runnable next,
+                                String[] choices, Consumer<String> setter,
+                                BooleanSupplier visibleWhen, String[] hints) {
+        return new Entry(Kind.CHOICE, new Supplier<String>() {
+            public String get() { return label; }
+        }, description, null, null, next, value, ColorTarget.NONE, choices, setter, visibleWhen,
                 false, hints);
     }
 
@@ -795,7 +877,25 @@ public final class HudSettingsModel {
                                                 "花火/星/月/夜/梦 染樱红。",
                                                 "光/闪/雷/风/翼 染苍蓝。",
                                                 "草/风/森/叶/夏 染翠绿。",
-                                                "日/炎/夏/阳/梦 染琥珀。"})),
+                                                "日/炎/夏/阳/梦 染琥珀。"}),
+                                choice("渲染画质", "字形烘焙的超采样倍率：越高，靠近歌词、4K 分辨率或望远镜放大时文字越精细（毛边/发虚越少）。自动按游戏渲染分辨率选档；切换会重建字形图集（下一句歌词的字会重新烘出）。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return qualityTierLabel();
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                cycleQualityTier();
+                                                saveNow();
+                                            }
+                                        }, new String[] {"自动", "流畅", "标准", "高清", "极致"},
+                                        HudSettingsModel::setQualityTier,
+                                        () -> HudConfig.worldLyricsEnabled && HudConfig.worldLyricsModernStyle,
+                                        new String[] {"按渲染分辨率自动：1080p 标准、2K 高清、4K 极致。",
+                                                "4× 烘焙：低配省显存省 CPU，近看略糙。",
+                                                "5× 烘焙：默认档。",
+                                                "6× 烘焙：2K 屏推荐，烘焙成本 +44%。",
+                                                "7× 烘焙：4K/望远镜党，烘焙成本 +96%，显存占用略增。"})),
                         new Group("发光", HudSettingsIcons.SPARKLE,
                                 toggle("发光", "文字外发光（Deep Glow 风格），随纹理一起烘焙。",
                                         new BooleanSupplier() {

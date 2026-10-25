@@ -25,6 +25,14 @@ public final class ConfigPaths {
     public static final File THEME = new File(CONFIG_DIRECTORY, "theme.json");
 
     /**
+     * 触屏手势层（拖动滚动 / 松手触发）的旋钮。
+     *
+     * <p>刻意不塞进 {@link #HUD}：手势实现全在共享层，而 HudConfig 是五棵版本树各自一份的
+     * FORK——设置跟着实现走才能保持「零跨树复制」。参见 {@code TouchSettings}。</p>
+     */
+    public static final File TOUCH = new File(CONFIG_DIRECTORY, "touch.json");
+
+    /**
      * 全屏歌词「Folia 背景」的独立配置。
      *
      * <p>刻意不塞进 {@link #HUD}：这一套参数按背景样式分组、字段多，而且与 QPlayer 那套流体

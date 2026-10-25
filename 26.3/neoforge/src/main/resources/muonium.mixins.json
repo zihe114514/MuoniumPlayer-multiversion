@@ -5,7 +5,8 @@
   "compatibilityLevel": "JAVA_25",
   "client": [
     "GlSurfaceMixin",
-    "MouseScrollMixin"
+    "MouseScrollMixin",
+    "MouseButtonStateMixin"
   ],
   "injectors": {
     "defaultRequire": 1

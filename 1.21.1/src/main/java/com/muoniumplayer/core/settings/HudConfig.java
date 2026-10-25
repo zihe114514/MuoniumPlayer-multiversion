@@ -386,6 +386,12 @@ public final class HudConfig {
     public static boolean worldLyricsHuiguang = false;
     /** 绘光关键字表（folia wordColors）：格式「词:RRGGBB,词:RRGGBB,…」；空 = 无关键字。 */
     public static String worldLyricsKeywordColors = "";
+    /**
+     * 3D 歌词渲染画质档（烘焙超采样倍率）：0 = 按分辨率自动（≤1080p→5、1440p→6、
+     * ≥2160p→7），4/5/6/7 = 手动强制对应档。烘焙档越高字形越精细（近看/4K/望远
+     * 镜不发虚），显存与烘焙 CPU 随档上升。切换即全图集重建。
+     */
+    public static int worldLyricsQualityTier = 0;
 
     // OSD KTV 动画。这些值独立于全屏歌词渲染器。
     public static float osdKaraokeTransitionWidth = 14.0f;
@@ -729,6 +735,7 @@ public final class HudConfig {
         worldLyricsCadenza = false;
         worldLyricsHuiguang = false;
         worldLyricsKeywordColors = "";
+        worldLyricsQualityTier = 0;
         osdKaraokeTransitionWidth = 14.0f;
         osdKaraokePulseStrength = 0.00f;
         osdKaraokeSmoothing = 0.85f;
@@ -913,6 +920,7 @@ public final class HudConfig {
             worldLyricsCadenza = getBoolean(o, "worldLyricsCadenza", worldLyricsCadenza);
             worldLyricsHuiguang = getBoolean(o, "worldLyricsHuiguang", worldLyricsHuiguang);
             worldLyricsKeywordColors = getString(o, "worldLyricsKeywordColors", worldLyricsKeywordColors);
+            worldLyricsQualityTier = (int) clamp(getInt(o, "worldLyricsQualityTier", worldLyricsQualityTier), 0, 7);
 
             osdKaraokeTransitionWidth = clamp(getFloat(o, "osdKaraokeTransitionWidth", osdKaraokeTransitionWidth), 4.0f, 32.0f);
             osdKaraokePulseStrength = clamp(getFloat(o, "osdKaraokePulseStrength", osdKaraokePulseStrength), 0.0f, 0.15f);
@@ -1092,6 +1100,7 @@ public final class HudConfig {
             o.addProperty("worldLyricsCadenza", worldLyricsCadenza);
             o.addProperty("worldLyricsHuiguang", worldLyricsHuiguang);
             o.addProperty("worldLyricsKeywordColors", worldLyricsKeywordColors);
+            o.addProperty("worldLyricsQualityTier", worldLyricsQualityTier);
             o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
             o.addProperty("osdKaraokePulseStrength", osdKaraokePulseStrength);
             o.addProperty("osdKaraokeSmoothing", osdKaraokeSmoothing);

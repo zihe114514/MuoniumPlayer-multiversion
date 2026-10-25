@@ -48,10 +48,12 @@ public final class Mouse {
      * {@code isLeftPressed}/{@code isMiddlePressed}/{@code isRightPressed}）。
      * GLFW 时代是 0/1/2（左/右/中），与 LWJGL2 相同，所以 26.2 及更早不需要这一步。
      *
-     * <p>全项目约 180 处按钮判断说的都是 LWJGL2 的编号（{@code button == 0} 是左键），
-     * 因此换算只允许发生在「原版事件 → 本项目」的边界上（{@code compat/mc} 那三个入口），
-     * 不要在下游逐处改比较值。侧键（4/5）保持原值：它们本来就非 0，不会被误认成左键。
-     */
+ * <p>全项目约 180 处按钮判断说的都是 LWJGL2 的编号（{@code button == 0} 是左键），
+ * 因此换算只允许发生在「原版事件 → 本项目」的边界上（{@code compat/mc} 那三个入口），
+ * 不要在下游逐处改比较值。侧键同样要换算：GLFW 的侧键是 3/4，SDL 是 X1=4/X2=5，
+ * {@code NCMScreen} 的侧键导航认的是旧编号（3=后退、4=前进），照抄 SDL 号会让
+ * 「后退」键触发前进、「前进」键无人处理。
+ */
     public static int fromSdlButton(int sdlButton) {
         if (sdlButton == 1) {
             return 0;
@@ -61,6 +63,12 @@ public final class Mouse {
         }
         if (sdlButton == 3) {
             return 1;
+        }
+        if (sdlButton == 4) {
+            return 3;
+        }
+        if (sdlButton == 5) {
+            return 4;
         }
         return sdlButton;
     }
@@ -76,31 +84,38 @@ public final class Mouse {
         if (lwjgl2Button == 2) {
             return 2;
         }
+        if (lwjgl2Button == 3) {
+            return 4;
+        }
+        if (lwjgl2Button == 4) {
+            return 5;
+        }
         return lwjgl2Button;
     }
 
     /**
-     * LWJGL2 与原版按钮编号一致：0 左、1 右、2 中。
+     * LWJGL2 语义的按钮按住位图，下标即 LWJGL2 按钮号（0 左、1 右、2 中、3/4 侧键）。
+     * 由 {@code MouseButtonStateMixin} 在 {@code MouseHandler#onButton} 入口投喂。
      *
-     * <p>26.3 的 {@code SDL_GetMouseState} 用的是另一套位掩码（SDL_BUTTON_LMASK 等），
-     * 这里不碰它：原版本身就把按住状态存在 {@link MouseHandler} 里，问它既是同一份真值，
-     * 也不用把 SDL 的按钮位图搬进本项目。
+     * <p>不能改成问 {@code MouseHandler} 的 {@code isLeftPressed/isMiddlePressed/isRightPressed}：
+     * 原版只在<b>没有任何 Screen 打开</b>时才更新这三个字段（onButton 字节码里
+     * {@code Gui.screen() != null} 直接跳过更新段），它们只服务于游戏内转头。
+     * 本项目的滑块拖动、全屏歌词 seek、文本框拖选全部靠「界面开着时轮询
+     * {@code isButtonDown(0)}」，问原版会恒为进界面前的旧值（通常是 false），
+     * 实机症状就是 26.3 移植期的「滑块拖不动、歌词点了没反应」。
+     * 26.2 及更早直接 {@code glfwGetMouseButton} 查硬件，无此限制。
      */
+    private static final boolean[] PRESSED_BUTTONS = new boolean[16];
+
+    /** {@code MouseButtonStateMixin} 的投喂口；action 语义与原版 onButton 一致：1=按下。 */
+    public static void setButtonPressed(int lwjgl2Button, boolean pressed) {
+        if (lwjgl2Button >= 0 && lwjgl2Button < PRESSED_BUTTONS.length) {
+            PRESSED_BUTTONS[lwjgl2Button] = pressed;
+        }
+    }
+
     public static boolean isButtonDown(int button) {
-        MouseHandler handler = handler();
-        if (handler == null) {
-            return false;
-        }
-        if (button == 0) {
-            return handler.isLeftPressed();
-        }
-        if (button == 1) {
-            return handler.isRightPressed();
-        }
-        if (button == 2) {
-            return handler.isMiddlePressed();
-        }
-        return false;
+        return button >= 0 && button < PRESSED_BUTTONS.length && PRESSED_BUTTONS[button];
     }
 
     /** 光标 X，framebuffer 像素，原点在左。 */

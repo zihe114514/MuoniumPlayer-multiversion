@@ -6,6 +6,7 @@
   "client": [
     "GlSurfaceMixin",
     "MouseScrollMixin",
+    "MouseButtonStateMixin",
     "LevelRendererAlwaysOnTopGateMixin"
   ],
   "injectors": {

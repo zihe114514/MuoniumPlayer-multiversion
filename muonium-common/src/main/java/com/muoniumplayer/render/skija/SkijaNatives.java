@@ -407,6 +407,12 @@ public final class SkijaNatives {
         // 绘制保持同线程。首次加载（null→TRUE）不触发——那时渲染器还没构造。
         boolean recovered = Boolean.FALSE.equals(loaded);
         loaded = Boolean.TRUE;
+        // 原生库刚映射进进程、还没发生任何 GL 调用（首个 GL 调用是 SkijaHost 里的
+        // DirectContext.makeGL），此刻是唯一安全的窗口：把 libskija 的 GL/EGL 导入
+        // 重定向到启动器给 LWJGL 装的那扇门上（MobileGL 一类翻译层的 ID 空间与
+        // 状态影子只有一扇门时才成立，详见 SkijaGlRedirector 的类注释）。
+        // 失败只影响翻译层环境的互操作，桌面与其它渲染器不设触发条件、原样跳过。
+        SkijaGlRedirector.afterLibraryLoad();
         mode = origin;
         // 前面几条为什么没走通要留着，出问题时一眼能看出是「版本不对」还是「落点不对」
         failure = attempted.isEmpty() ? null : String.join(" | ", attempted);

@@ -1,6 +1,7 @@
 package com.muoniumplayer.core.screens.ncm.panels;
 
 import com.muoniumplayer.compat.lwjgl2.Mouse;
+import com.muoniumplayer.core.input.TouchGestures;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.AudioPlayer;
 import com.muoniumplayer.core.ncm.music.AutomixCueMarker;
@@ -499,8 +500,17 @@ public class ControlsBar extends NCMPanel {
                     return;
                 }
 
-                if (prevMouse && !Mouse.isButtonDown(0))
+                // 触屏时代的点击时机：按下可能是滚动的起手，seek 改在「松手沿 + 这一按
+                // 从头到尾没拖过」（TouchGestures#lastPressWasDrag）时才结算。
+                // prevMouse 仍是按压锁存：按下沿置位，抬起沿结算点按后复位。
+                boolean lmbDownNow = Mouse.isButtonDown(0);
+                boolean tapEdge = prevMouse && !lmbDownNow
+                        && !TouchGestures.get().lastPressWasDrag();
+                if (lmbDownNow) {
+                    prevMouse = true;
+                } else {
                     prevMouse = false;
+                }
 
                 // 模态浮层（歌词选词、建单、导入等）压在界面上时这一帧的鼠标状态不属于播放条：
                 // 点遮罩的那一下会同时落在这里，把底下的进度条当成拖到起点 seek 到 0——
@@ -508,8 +518,7 @@ public class ControlsBar extends NCMPanel {
                 boolean modalOpen = NCMScreen.getInstance().isModalOverlayActive();
                 if (modalOpen) {
                     prevMouse = false;
-                } else if (this.testHovered(mouseX, mouseY, 1) && Mouse.isButtonDown(0) && !prevMouse) {
-                    prevMouse = true;
+                } else if (tapEdge && this.testHovered(mouseX, mouseY, 1)) {
                     double xDelta = Math.max(0, Math.min(this.getWidth(), (mouseX - this.getX())));
                     double percent = xDelta / this.getWidth();
 

@@ -114,6 +114,14 @@ final class LyricGlyphAtlasBridge implements LyricGlyphAtlas.Host {
     /**
      * 一页 = RGBA8 动态纹理（构造器完成 GpuDevice.createTexture 整页分配）、
      * 强制 LINEAR 采样 + CLAMP_TO_EDGE、单级分配（无 mip 链）。
+     *
+     * <p><b>mip 跳过说明（2026-10-25 画质轮同步）</b>：1.21.1/1.20.1/1.21.11 树
+     * 的字形页走安全三线性 mip（texImage2D 型可变存储，glGenerateMipmap 可扩级）；
+     * 26.x 的 {@code GpuDevice.createTexture} 是 texStorage 型单级不可变存储
+     * （{@code glGenerateMipmap} 不能扩级），只解 {@code GL_TEXTURE_MAX_LEVEL}
+     * 会得到不完整采样链（主流驱动返回不透明黑，整页发黑）——所以 26.x
+     * <b>不生成、不采样 mip</b>，字形平滑由 5× 超采样 + LINEAR 承担。曾试过
+     * 三线性，与特效贴图同期整块发黑，正是这个根因。</p>
      */
     private static final class PageTexture extends DynamicTexture {
 

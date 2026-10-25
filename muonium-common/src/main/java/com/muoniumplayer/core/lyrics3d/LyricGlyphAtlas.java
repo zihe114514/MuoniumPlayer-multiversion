@@ -48,7 +48,46 @@ public final class LyricGlyphAtlas {
     /** 世界歌词设计字号（文字像素，billboard 内坐标口径），WorldLyricsState.LYRIC_SIZE。 */
     private static final float DESIGN_SIZE = WorldLyricsState.LYRIC_SIZE;
 
-    /** 烘焙超采样倍率：50px 光栅化、绘制时 ÷5。 */
+    /** 烘焙超采样倍率（默认 5×）：运行时可变（画质档位），setter 触发全图集重建。 */
+    private static volatile int bakeScale = 5;
+
+    /** 当前烘焙超采样倍率（运行时档位）。热路径每帧每字除一次 —— 读 volatile int。 */
+    public static int bakeScale() {
+        return bakeScale;
+    }
+
+    /** 无发光时的最小留白（烘焙像素）——防边缘裁切的最小余量，随档派生。 */
+    private static int minPadBake() {
+        return 2 * bakeScale;
+    }
+
+    /**
+     * 设置烘焙超采样档位（画质档：4=流畅 / 5=标准 / 6=高清 / 7=极致）。
+     * 档位变化全量作废图集（含烘焙字体与 advance 缓存）——切档瞬间第一句
+     * 字形按帧预算逐格"长出"，与字体切换同一通路，不渐进混合两种分辨率。
+     * 同值调用零成本。
+     */
+    public static void setBakeScale(int scale) {
+        int s = Math.max(3, Math.min(8, scale));
+        if (s == bakeScale) return;
+        bakeScale = s;
+        invalidateAll();
+    }
+
+    /**
+     * 应用「渲染画质」设置：0 = 自动（由树侧按帧缓冲高度解析后传入具体倍率，
+     * 4~7 = 手动档直通）。设置界面循环切换与存档加载都走这里 —— 图集只认
+     * 最终倍率，不感知"自动/手动"的区分。
+     */
+    public static void applyQualityTier(int tier) {
+        // tier==0 的自动解析由调用方（树侧设置 UI / 帧头同步）完成：
+        // 共享层不做分辨率读取（MC 依赖只在版本树的 compat 层），传入具体倍率。
+        if (tier >= 4) {
+            setBakeScale(tier);
+        }
+    }
+
+    /** 兼容保留：默认档常量口径（新代码请用 {@link #bakeScale()}）。 */
     public static final int BAKE_SCALE = 5;
 
     /** 页边长（烘焙像素）。CJK 50px 字形连发光留白约 150px 见方，一页约 36 格。 */
@@ -56,9 +95,6 @@ public final class LyricGlyphAtlas {
 
     /** 页上限（每页 4MB 显存，8 页 ≈ 32MB 封顶）。LRU 逐出。 */
     public static final int MAX_PAGES = 8;
-
-    /** 无发光时的最小留白（烘焙像素）——防边缘裁切的最小余量。 */
-    private static final int MIN_PAD_BAKE = 2 * BAKE_SCALE;
 
     /** 树侧纹理宿主；null = 现代档不可用（渲染层回退像素字）。 */
     public interface Host {
@@ -165,14 +201,17 @@ public final class LyricGlyphAtlas {
          * 返回 {x, y}。真正推进游标由 {@link #commit} 做 —— 烘焙成功才占用，
          * 失败不留洞。
          */
+        /** 格间空隙（烘焙像素）：邻格间距，UV 半像素内缩之外的渗色双保险。 */
+        static final int CELL_GAP = 2;
+
         int[] probe(int w, int h) {
             if (w > width || h > height) return null;
-            // 当前 shelf 放得下？
-            if (shelfX + w <= width && shelfY + Math.max(shelfH, h) <= height) {
+            // 当前 shelf 放得下？（格间空隙计入占用）
+            if (shelfX + w + CELL_GAP <= width && shelfY + Math.max(shelfH, h + CELL_GAP) <= height) {
                 return new int[] {shelfX, shelfY};
             }
             // 开新 shelf？
-            if (shelfY + shelfH + h <= height) {
+            if (shelfY + shelfH + h + CELL_GAP <= height) {
                 return new int[] {0, shelfY + shelfH};
             }
             return null;
@@ -182,11 +221,11 @@ public final class LyricGlyphAtlas {
             if (y != shelfY) {
                 // 开了新 shelf
                 shelfY = y;
-                shelfH = h;
-                shelfX = w;
+                shelfH = h + CELL_GAP;
+                shelfX = w + CELL_GAP;
             } else {
-                shelfX = x + w;
-                if (shelfH < h) shelfH = h;
+                shelfX = x + w + CELL_GAP;
+                if (shelfH < h + CELL_GAP) shelfH = h + CELL_GAP;
             }
         }
     }
@@ -242,13 +281,31 @@ public final class LyricGlyphAtlas {
      * 单字符 advance（设计像素、烘焙字体口径）。世界侧量宽用 —— 与逐字绘制完全同源，
      * 行宽 = Σ 单字 advance，不会漂移。字体不可用时返回 -1（调用方回退像素度量）。
      */
+    /** 单字 advance 缓存（char → 设计像素）：designAdvance 是渲染层每帧每字
+     * 一次的热路径（量宽/布局/画布包围盒都要它），原实现每次进同步锁做一次
+     * String.valueOf + 字体排版 —— 布局引擎对单字也有可观的固定开销，且锁
+     * 在烘焙进行时会挡住渲染线程。缓存键用 char（10 位 BMP + 常用增补面直接
+     * 索引 HashMap），字体切换时随 invalidateAll 一起清。 */
+    /** 渲染线程的无锁读快照（双检：miss 才进锁）。ConcurrentHashMap 承载 ——
+     * 渲染线程读、烘焙线程写天然安全，消除热路径上的锁竞争。 */
+    private static final java.util.concurrent.ConcurrentHashMap<Character, Float> ADVANCE_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>(512);
+
     public static float designAdvance(char ch) {
-        synchronized (LOCK) {
+        Float cached = ADVANCE_CACHE.get(ch);          // 渲染线程无锁快路径
+        if (cached != null) return cached;
+        synchronized (LOCK) {                           // miss 才进锁（烘焙侧持锁时才竞争）
+            cached = ADVANCE_CACHE.get(ch);
+            if (cached != null) return cached;
             ensureBakeFontLocked();
             CFontRenderer font = bakeFont;
             if (font == null || font.fontHeight <= 0) return -1f;
             float w = (float) font.getStringWidthD(String.valueOf(ch));
-            return w / BAKE_SCALE;
+            float design = w / bakeScale;
+            if (ADVANCE_CACHE.size() < 8192) {
+                ADVANCE_CACHE.put(ch, design);
+            }
+            return design;
         }
     }
 
@@ -265,6 +322,7 @@ public final class LyricGlyphAtlas {
             dead = new ArrayList<>(PAGES);
             PAGES.clear();
             CELLS.clear();
+            ADVANCE_CACHE.clear();
             bakeFont = null;
             fontGeneration++;
         }
@@ -280,13 +338,14 @@ public final class LyricGlyphAtlas {
 
     // ==================== 内部 ====================
 
-    /** 懒建烘焙字体：界面正文字体（pf25bold 槽）的 50px 派生档，随字体切换重建。 */
+    /** 懒建烘焙字体：界面正文字体（pf25bold 槽）的 {@code DESIGN_SIZE × bakeScale} 派生档，
+     * 随字体切换或画质档切换重建（档位变化时 bakeFont 已被 invalidateAll 清空）。 */
     private static void ensureBakeFontLocked() {
         if (bakeFont != null) return;
         CFontRenderer base = FontManager.pf25bold;
         if (base == null || base.fontHeight <= 0) return;
         try {
-            bakeFont = base.deriveAtSize(DESIGN_SIZE * BAKE_SCALE);
+            bakeFont = base.deriveAtSize(DESIGN_SIZE * bakeScale);
         } catch (Throwable t) {
             bakeFont = null;
         }
@@ -327,7 +386,7 @@ public final class LyricGlyphAtlas {
         // 发光留白（烘焙像素）。TextGlow.padding 的口径 = 3σ × 字号 × spread，
         // 传入的就是 50px 的烘焙字体 —— 出来直接是烘焙像素。
         int glowPad = glowStrength > 0.004f ? TextGlow.padding(font, glowSpread) : 0;
-        int pad = Math.max(MIN_PAD_BAKE, glowPad);
+        int pad = Math.max(minPadBake(), glowPad);
         int cellW = (int) Math.ceil(advanceBake) + pad * 2;
         int cellH = inkH + pad * 2;
         if (cellW > PAGE_SIZE || cellH > PAGE_SIZE) return null;
@@ -446,6 +505,12 @@ public final class LyricGlyphAtlas {
      * 字节流（探针实测：0x80FF4080 → [64,32,128,128]）且<b>预乘</b>，除回 alpha 转成
      * 直通 alpha（文字管线是 (SRC_ALPHA, ONE_MINUS_SRC_ALPHA) 混合，吃直通 alpha；
      * 预乘像素会出黑边）。
+     *
+     * <p>去毛边（RGB 延拓）：全透明 texel 存 (0,0,0,0)，LINEAR 采样在边缘半
+     * 像素内与它插值 → 暗色晕。这里给 a==0 的 texel 从水平方向相邻非透明 texel
+     * 延拓 RGB（alpha 保持 0）——插值结果从「颜色↔黑」变成「颜色↔同色零透明
+     * 度」，边缘晕消失。发光格的 pad 全是光色渐隐，延拓色 = 光色，语义正确。
+     * 两遍扫描（左→右、右→左）保证两侧边缘都覆盖。</p>
      */
     static int[] readPixelsArgb(Bitmap bitmap, int width, int height) {
         try {
@@ -466,9 +531,37 @@ public final class LyricGlyphAtlas {
                 }
                 out[i] = (a << 24) | (r << 16) | (g << 8) | b;
             }
+            dilateTransparentRgb(out, width, height);
             return out;
         } catch (Throwable t) {
             return null;
+        }
+    }
+
+    /** 透明 texel 的 RGB 从水平相邻非透明 texel 延拓（alpha 不变）。渲染线程单线程。 */
+    private static void dilateTransparentRgb(int[] px, int w, int h) {
+        for (int y = 0; y < h; y++) {
+            int row = y * w;
+            int lastRgb = 0;
+            // 左→右
+            for (int x = 0; x < w; x++) {
+                int i = row + x;
+                if ((px[i] >>> 24) > 0) {
+                    lastRgb = px[i] & 0xFFFFFF;
+                } else if (lastRgb != 0) {
+                    px[i] = lastRgb;
+                }
+            }
+            // 右→左（只填仍为 0 的，不动左向已填充的）
+            lastRgb = 0;
+            for (int x = w - 1; x >= 0; x--) {
+                int i = row + x;
+                if ((px[i] >>> 24) > 0) {
+                    lastRgb = px[i] & 0xFFFFFF;
+                } else if ((px[i] & 0xFFFFFF) == 0 && lastRgb != 0) {
+                    px[i] = lastRgb;
+                }
+            }
         }
     }
 
