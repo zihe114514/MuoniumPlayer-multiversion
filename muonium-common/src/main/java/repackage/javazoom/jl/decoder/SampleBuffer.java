@@ -105,7 +105,6 @@ public class SampleBuffer extends Obuffer {
     }
 
     /**
-     *
      */
     @Override
     public void clearBuffer() {
@@ -114,7 +113,6 @@ public class SampleBuffer extends Obuffer {
     }
 
     /**
-     *
      */
     @Override
     public void setStopFlag() {

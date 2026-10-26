@@ -8,7 +8,6 @@ import repackage.com.jsyn.util.soundfile.WAVEFileParser;
 import java.io.IOException;
 
 /**
- * @author MuoniumPlayer Contributors
  * 日期： 2025/5/5 12:48
  */
 public class RafWAVEFileParser extends WAVEFileParser {

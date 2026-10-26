@@ -84,6 +84,7 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/mixin/FramebufferMixin.java",
             "com/muoniumplayer/mixin/GlSurfaceMixin.java",
             "com/muoniumplayer/mixin/MouseScrollMixin.java",
+            "com/muoniumplayer/mixin/MouseButtonStateMixin.java",
             "com/muoniumplayer/party/net/MpPayloads.java"));
 
     /** 五棵树各自的版本差异测试（ProjectPaths 例外，它已经收进共享层）。 */

@@ -107,7 +107,7 @@ final class CadenzaMotion {
      * 的毫秒，词内字符共享词的时刻）与整行的文本 —— 不需要 LyricLine 对象，与简洁模式
      * 的数据来源完全一致。时间轴缺失（全 0）时按心象的无时序路径：按空白切、时长均分。</p>
      *
-     * @param lineText  整行文本（与 Floating.lines 拼接一致）
+     * @param lineText  整行文本（与 SpawnedLine.lines 拼接一致）
      * @param charTimes 逐字时刻（相对行始 ms；每个非空白字符一项）
      * @param lineChars 整行的全部字符（含空白；与逐字流同一顺序）
      */

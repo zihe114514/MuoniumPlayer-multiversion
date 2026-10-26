@@ -200,6 +200,16 @@ public final class SkijaHost {
                     return null;
                 }
                 log("DirectContext 创建成功");
+                // GL 身份对账（一次性）：这串经 LWJGL 门取回，与重定向后的 Skia 同门。
+                // 「画不出来」时第一眼就能看出 Minecraft 实际站在哪个驱动栈上
+                // （MobileGlues / MobileGL / Mesa·zink / 系统 GLES / 桌面驱动）。
+                try {
+                    log("GL 身份: " + org.lwjgl.opengl.GL11.glGetString(org.lwjgl.opengl.GL11.GL_VERSION)
+                            + " | " + org.lwjgl.opengl.GL11.glGetString(org.lwjgl.opengl.GL11.GL_VENDOR)
+                            + " | " + org.lwjgl.opengl.GL11.glGetString(org.lwjgl.opengl.GL11.GL_RENDERER));
+                } catch (Throwable ignored) {
+                    // 纯诊断，拿不到字符串就跳过，绝不影响渲染链路。
+                }
             }
 
             savedFbo = org.lwjgl.opengl.GL11.glGetInteger(
@@ -355,11 +365,14 @@ public final class SkijaHost {
             org.lwjgl.opengl.GL30.glFramebufferRenderbuffer(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER,
                     org.lwjgl.opengl.GL30.GL_DEPTH_STENCIL_ATTACHMENT,
                     org.lwjgl.opengl.GL30.GL_RENDERBUFFER, ownedDepthStencil);
-            boolean complete = org.lwjgl.opengl.GL30.glCheckFramebufferStatus(
-                    org.lwjgl.opengl.GL30.GL_FRAMEBUFFER)
-                    == org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_COMPLETE;
+            int fboStatus = org.lwjgl.opengl.GL30.glCheckFramebufferStatus(
+                    org.lwjgl.opengl.GL30.GL_FRAMEBUFFER);
+            boolean complete = fboStatus == org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_COMPLETE;
             org.lwjgl.opengl.GL30.glBindRenderbuffer(org.lwjgl.opengl.GL30.GL_RENDERBUFFER, 0);
             if (!complete) {
+                // 这条原来是完全静默的——真机上「FBO 起不来」在日志里无迹可寻，补一行再退回。
+                log("自持 FBO 不完整（glCheckFramebufferStatus=0x"
+                        + Integer.toHexString(fboStatus) + "），回退 Skia 自管目标");
                 destroyOwnedOffscreenGl();
                 return null;
             }
@@ -368,6 +381,7 @@ public final class SkijaHost {
             Surface s = Surface.wrapBackendRenderTarget(context, target, SurfaceOrigin.BOTTOM_LEFT,
                     ColorType.RGBA_8888, ColorSpace.getSRGB());
             if (s == null) {
+                log("离屏目标包装失败（Surface.wrapBackendRenderTarget 返回 null），回退 Skia 自管目标");
                 target.close();
                 destroyOwnedOffscreenGl();
                 return null;
@@ -376,6 +390,7 @@ public final class SkijaHost {
             log("离屏目标（自持 FBO + 裸 GL 清屏）已建立 " + pixelWidth + "x" + pixelHeight);
             return s;
         } catch (Throwable t) {
+            log("自持离屏目标建立异常，回退 Skia 自管目标: " + t);
             destroyOwnedOffscreenGl();
             return null;
         }

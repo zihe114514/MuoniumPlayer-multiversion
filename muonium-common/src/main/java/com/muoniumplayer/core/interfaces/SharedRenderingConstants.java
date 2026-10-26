@@ -20,7 +20,6 @@ import static com.muoniumplayer.core.rendering.rendersystem.RenderSystem.DIVIDE_
  * <p>底下有 8 个方法是纯计算（{@code evenAdd} / {@code getWidth} / {@code getHeight} /
  * 四个 {@code hexColor} / {@code reAlpha} / {@code isHovered}），一行都没改。
  *
- * @author MuoniumPlayer Contributors
  * @since 2023/12/17
  */
 public interface SharedRenderingConstants {

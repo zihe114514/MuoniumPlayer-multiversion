@@ -37,8 +37,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/2/14 20:34
  */
 public class MusicLyricsWidget extends ExtensionModule implements SharedConstants, SharedRenderingConstants, EventHandler {
     public ModeValue alignMode = api.getValueManager().createModes("Align Mode", "Center", new String[]{ "Left", "Center", "Right" });

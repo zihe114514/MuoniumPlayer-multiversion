@@ -7,9 +7,6 @@ import com.sun.jna.platform.win32.WinNT;
 import com.sun.jna.win32.StdCallLibrary;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/6/8 21:48
- *
  * 原样移植（原文件位于 _removed_e/main/java/muonium/interfaces/User32Interface.java）。
  * 供 CursorUtils 通过 JNA 调用 user32 切换窗口光标。
  */

@@ -6,8 +6,6 @@ import java.awt.*;
 import java.util.function.Supplier;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/10/17 19:05
  */
 public class RoundedButtonWidget extends RoundedRectWidget {
 

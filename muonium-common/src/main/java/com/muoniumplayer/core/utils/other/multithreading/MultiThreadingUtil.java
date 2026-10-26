@@ -10,7 +10,6 @@ import java.util.concurrent.Executors;
 import java.util.function.Supplier;
 
 /**
- * @author MuoniumPlayer Contributors
  * @since 2024/12/28 17:57
  */
 public class MultiThreadingUtil {

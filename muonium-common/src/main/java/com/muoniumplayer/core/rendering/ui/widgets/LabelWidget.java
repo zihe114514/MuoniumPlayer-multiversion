@@ -10,8 +10,6 @@ import com.muoniumplayer.core.utils.Lazy;
 import java.util.function.Supplier;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/7/8 20:59
  */
 public class LabelWidget extends AbstractWidget<LabelWidget> {
 

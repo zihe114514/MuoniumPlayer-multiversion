@@ -61,7 +61,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "2.0.0";
+    public static final String MOD_VERSION = "2.1.0";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -446,8 +446,8 @@ public final class MuoniumPlayerClient {
      *
      * <p>两个加载器都在「原版 HUD 全部画完之后」调用本方法：Fabric 是
      * {@code HudRenderCallback}，NeoForge 是 {@code RenderGuiEvent.Post}。
-     * 打开 GuiScreen 时 HUD 不渲染，界面之上的灵动岛由 {@link #onScreenRendered(Screen)} 负责，
-     * 因此同一帧只更新一次动画。
+     * 注意 26.x 起 Screen 打开期间这条回调照常触发（不再有 1.8.9 的「开界面即停 HUD」），
+     * 所以编辑器打开时要在这里显式停掉真实 HUD，否则它和编辑器的实时预览同屏各画一份。</p>
      */
     public void onHudRender() {
         if (hudRenderDisabled || this.api == null) {
@@ -471,6 +471,11 @@ public final class MuoniumPlayerClient {
      * 压一层能把影响限制在本帧（宿主层每帧还会再兜一次底）。
      */
     private void onHudRenderUnguarded() {
+        // HUD 设置编辑器自带两块 widget 的实时预览；真实 HUD 若照常渲染就与预览同屏各一份
+        //（26.x 的 HUD 回调在 Screen 打开期间并不停）。整段跳过，只留给编辑器画。
+        if (Minecraft.getInstance().gui.screen() instanceof GuiHudEditorPro) {
+            return;
+        }
         api.getGLStateManager().pushAttrib();
         api.getGLStateManager().pushMatrix();
         try {

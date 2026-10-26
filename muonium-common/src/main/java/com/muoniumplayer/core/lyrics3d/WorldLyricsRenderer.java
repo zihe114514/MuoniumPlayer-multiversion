@@ -5,17 +5,21 @@ import com.muoniumplayer.core.screens.ncm.LyricLine;
 import java.util.List;
 
 /**
+ * 3D 世界歌词渲染编排 —— 帧循环、宿主调用契约与逐字绘制流程。
  *
  * <p>与宿主的契约（树侧 WorldBillboard 实现）：</p>
  * <ul>
- *       {@code ModernWorld.push} 一比一：translate → rotateY(-yaw) → rotateX(pitch)
+ *   <li>{@link Host#pushBillboard(rx, ry, rz, yaw, pitch, scale)} —— 公告牌矩阵：
+ *       translate → rotateY(-yaw) → rotateX(pitch)
  *       → scale(-s,-s,s)。之后宿主按「MC 字体坐标」画字（x 右、y 下、原点是平面中心）；</li>
  *   <li>{@link Host#drawPixelText(text, x, y, argb, shadow)} —— 原版字体一批
+ *       （原版 vanillaText 口径：阴影单独画在字前，SEE_THROUGH + FULL_BRIGHT）；</li>
  *   <li>{@link Host#drawSmoothGlyph(c, x, y, baselinePx, sizePx, rgb, alpha, rot, dx, dy, sc)}
  *       —— 平滑字体单字（纹理烘焙档）；</li>
  *   <li>{@link Host#popBillboard()}。</li>
  * </ul>
  *
+ * <p>坐标口径：push 之后画的是「文字像素坐标」，一行字的 y 是
  * 字的<b>顶部</b>（MC 字体口径），平面中心是原点、行高 {@code WorldLyricsState.LINE_H}。</p>
  */
 public final class WorldLyricsRenderer {
@@ -38,6 +42,7 @@ public final class WorldLyricsRenderer {
     /** 宿主能力。树侧实现（1.21.1 的 WorldBillboard）。 */
     public interface Host {
         /**
+         * 公告牌矩阵 push：移到镜头相对坐标 (rx,ry,rz)，
          * 绕 Y 转 -yaw、绕 X 转 pitch，再 scale(-s,-s,s) 翻成文字坐标。
          */
         void pushBillboard(double rx, double ry, double rz,
@@ -174,6 +179,7 @@ public final class WorldLyricsRenderer {
     private static int consecutiveFailures;
 
     /**
+     * 每帧入口。异常整体吞掉并熔断：
      * 持续失败（连续 {@value #MAX_CONSECUTIVE_FAILURES} 帧）时置停用旗标并停止
      * 打日志 —— 以前只 println 不熔断，渲染线程每帧刷一条还永远不桥接
      * Bridge 的 broken 熔断。
@@ -221,6 +227,7 @@ public final class WorldLyricsRenderer {
 
         long songNowMs = snap.positionMs;
 
+        // 淡出中的先画（下层），active 后画（上层）。
         // 画布槽位：active 行 0、淡出行从 1 起 —— 同帧两行都进拖尾窗口时
         //（短句/seek），26 系延迟提交的宿主按槽位各持纹理，后上传不串位。
         boolean anyDrawn = false;
@@ -239,8 +246,10 @@ public final class WorldLyricsRenderer {
         }
     }
 
+    /** 画一句（帧布局 + 逐字形布局的精化版）。canvasSlot 是拖尾画布槽位。 */
     private static void drawRow(WorldLyricsState.Row row, WorldLyricsSettings settings,
                                 Host host, long songNowMs, int canvasSlot) {
+        // 镜头相对坐标 rx/ry/rz = 世界坐标 − 相机位置。
         // 视图矩阵已被 Bridge 换成单位矩阵、相机旋转在 basePose 里，所以顶点必须
         // 用「相对眼睛、未旋转」的坐标 —— 传世界坐标就是几万格外的视锥外。
         host.pushBillboard(
@@ -250,7 +259,7 @@ public final class WorldLyricsRenderer {
             // 渲染风格：现代化（Skija 字形图集 + 烘焙发光）或原版像素字。
             // 只换绘制通道 —— billboard 矩阵、逐字时序、特效数学完全共享。
             boolean smooth = settings.styleModern;
-            WorldLyricsState.Floating f = row.floating;
+            WorldLyricsState.SpawnedLine f = row.floating;
             // 量宽必须与绘制通道同源：现代档的字形 advance 是烘焙字体的（一个汉字约
             // 10 设计像素），原版档是 MC 像素字体的（一个汉字 9px）。布局若固定用
             // MC 字体量、字却按烘焙 advance 画，相邻字形会叠在一起 —— 量宽跟着风格走。
@@ -264,6 +273,7 @@ public final class WorldLyricsRenderer {
                         return total;
                     }
                     : host::pixelWidth;
+            // 心象动效仅在现代化引擎生效（原版像素风格不受影响）。
             // 两个动效都开时绘光优先（与设置界面的「此处优先」文案一致）——
             // 绘光是用户点名要的模式，心象作为兜底回退。
             boolean huiguang = settings.huiguang && smooth;
@@ -283,6 +293,7 @@ public final class WorldLyricsRenderer {
                     : WorldLyricsState.TEXT_RGB;
 
                 // 文字颜色：取色器自定义过的色原样显示（选白色就是纯白 0xFFFFFF）；
+                // 没动过取色器时用暖白默认（TEXT_RGB）观感。
                 // 「是否自定义」必须是独立旗标 —— 0xFFFFFF 本身是合法的自定义色，
                 // 以前拿值当旗标，选白色被回落成暖白，看起来就是「偏肉色」。
                 int inkRgb = baseRgb;
@@ -407,7 +418,7 @@ public final class WorldLyricsRenderer {
                         // 横光条（glow + core）：交点在光柱上段
                         float rowY = by - length * 0.42f;
                         if (BURST_POSE[2] > 0.5f) {
-                            // folia 横条还有 30ms 的二段淡入（crossBurst.ts:164）
+                            // 横条还有 30ms 的二段淡入（邻行槽位间隙的观感保护）
                             float hFade = Math.max(0f, Math.min(1f, (ageS - 0.02f) / 0.03f));
                             host.drawBurstLayer(bx, rowY, BURST_POSE[2],
                                     Math.max(1f, length * 0.09f * BURST_POSE[6]),
@@ -600,6 +611,7 @@ public final class WorldLyricsRenderer {
             for (int gi = 0; gi < glyphs.glyphs.size(); gi++) {
                 WorldLyricsState.LyricGlyph g = glyphs.glyphs.get(gi);
                 // g.pop 恒生效的弹性缩放（入场飞入回弹 / word pop 回弹 / 出场收拢），
+                // 宿主绕字中心应用 —— withWiggle 的 pop 通路。
                 if (smooth) {
                     int rgb = inkRgb;
                     float glowMul = 1f;
@@ -666,17 +678,17 @@ public final class WorldLyricsRenderer {
                         //      0.65~1.35 字号 ×(0.8+0.5flash)、静态转角 ±0.25rad +
                         //      随包络旋转（熄得越快转得越多）、位置上偏（多在字上半）。
                         if (g.huiguangFlash > 0.02f) {
-                            float u = WorldLyricsState.hashRand(g.k, 0L, 71, glyphs.seed) * 0.5f + 0.5f;
+                            float u = WorldLyricsState.seededJitter(g.k, 0L, 71, glyphs.seed) * 0.5f + 0.5f;
                             float starBase = 0.65f + u * 0.7f;
                             float starSize = WorldLyricsState.LYRIC_SIZE * starBase
                                     * (0.8f + 0.5f * g.huiguangFlash);
                             float rotDeg = (float) Math.toDegrees(
-                                    WorldLyricsState.hashRand(g.k, 0L, 85, glyphs.seed) * 0.25f)
+                                    WorldLyricsState.seededJitter(g.k, 0L, 85, glyphs.seed) * 0.25f)
                                     * (1f + (1f - g.huiguangFlash) * 0.6f);
                             float cx = g.x + WorldLyricsState.LYRIC_SIZE * 0.5f
-                                    + WorldLyricsState.hashRand(g.k, 0L, 71, glyphs.seed)
+                                    + WorldLyricsState.seededJitter(g.k, 0L, 71, glyphs.seed)
                                             * 0.22f * WorldLyricsState.LYRIC_SIZE;
-                            float u2 = WorldLyricsState.hashRand(g.k, 0L, 71, glyphs.seed + 1) * 0.5f + 0.5f;
+                            float u2 = WorldLyricsState.seededJitter(g.k, 0L, 71, glyphs.seed + 1) * 0.5f + 0.5f;
                             float cy = g.y + WorldLyricsState.LYRIC_SIZE * 0.5f
                                     + (-0.62f + (float) Math.pow(u2, 1.4f) * 0.9f) * WorldLyricsState.LYRIC_SIZE;
                             int glowColor = settings.glowEnabled ? settings.glowColorRgb
@@ -691,6 +703,7 @@ public final class WorldLyricsRenderer {
                             rgb, g.alpha, g.rot, g.dx, g.dy, g.pop, glowMul);
                 } else {
                     int argb = ((int) (g.alpha * 255f) << 24) | (inkRgb & 0xFFFFFF);
+                    // 阴影由宿主按原版规则拆开画（原版 pixelText 的做法）
                     host.drawPixelText(String.valueOf(g.c), g.x, g.y, argb, true);
                 }
             }
@@ -699,6 +712,7 @@ public final class WorldLyricsRenderer {
         }
     }
 
+    /** Split lines（拆句已由解析层实现，这里保留入口给渲染层开关用）。 */
     public static List<LyricLine> split(LyricLine line, boolean enabled) {
         return SplitLines.split(line, enabled);
     }
@@ -718,7 +732,7 @@ public final class WorldLyricsRenderer {
     private static final float[] BURST_POSE = new float[7];
 
     // 追字光斑的指数平滑状态（渲染线程单线程；按句身份切换、暂停冻结）
-    private static WorldLyricsState.Floating spotRow;
+    private static WorldLyricsState.SpawnedLine spotRow;
     private static long spotLastElapsedMs = Long.MIN_VALUE;
     private static float spotSmoothX, spotSmoothY;
 
@@ -796,7 +810,7 @@ public final class WorldLyricsRenderer {
      * 整句非空白字符流上找关键字的完整命中（前后不能再与任何关键字续成更长
      * 命中——「花火」不染「火车」的火），命中区间按关键字色标记。
      */
-    private static int[] matchKeywords(WorldLyricsState.Floating f) {
+    private static int[] matchKeywords(WorldLyricsState.SpawnedLine f) {
         String[] words = cachedKeywordWords;
         int[] colors = cachedKeywordColors;
         if (words.length == 0) return null;

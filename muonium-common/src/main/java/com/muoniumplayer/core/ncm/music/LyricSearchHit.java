@@ -8,7 +8,7 @@ import com.google.gson.JsonObject;
  * <p>它同时服务三件事，所以字段是分两组的：</p>
  * <ul>
  *   <li><b>界面</b>：{@link #title} {@link #artists} {@link #album} {@link #coverUrl} {@link #score}
- *       —— 照 本项目 的候选卡片，一行封面 + 歌名 + 匹配分 + 歌手 + 专辑；</li>
+ *       —— 照上游参考实现的候选卡片，一行封面 + 歌名 + 匹配分 + 歌手 + 专辑；</li>
  *   <li><b>取词</b>：{@link #source} {@link #trackId} {@link #platform} {@link #payload}
  *       —— 各家接口拿歌词要的坐标不一样，{@code payload} 就是上游返回的那一条候选原始 JSON，
  *       酷狗靠它拿 {@code id + accesskey}，AMLL 靠它拿 {@code musicNames}；</li>
@@ -75,7 +75,7 @@ public final class LyricSearchHit {
      * 封面地址统一升到 https。
      *
      * <p>Minecraft 客户端本身不校验混合内容，但网易云与酷狗的图床对 http 会 301 到 https，
-     * 少一次跳转就少一次失败半径；folia 那边也是同一处理（{@code matchResult.ts} 里
+     * 少一次跳转就少一次失败半径；上游那边也是同一处理（匹配结果处理里
      * {@code coverUrl.replace('http:', 'https:')}）。</p>
      */
     private static String https(String value) {

@@ -8,8 +8,6 @@ import com.muoniumplayer.core.utils.timing.Timer;
 import java.util.function.Supplier;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/7/9 16:58
  */
 public class ScrollLabelWidget extends LabelWidget {
 

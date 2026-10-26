@@ -19,7 +19,7 @@ import com.muoniumplayer.core.settings.HudConfig;
 /**
  * 全屏歌词各套「文字 PV」样式共用的舞台层。
  *
- * <p>这些样式移植自 本项目 播放器（TypeScript + framer-motion）。那边每套样式都是一个 React
+ * <p>这些样式本实现 播放器（TypeScript + framer-motion）。那边每套样式都是一个 React
  * 组件，靠 DOM 布局与 CSS 变换实现；这里没有布局引擎，所有位置都要自己算，所以把公共部分收在这一个
  * 类里：确定性随机、缓动、字号求解、字形切分、带变换与发光的文本绘制、裁剪。</p>
  *

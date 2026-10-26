@@ -29,8 +29,6 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/11/17 22:43
  */
 public class AnimatedTexture implements SharedConstants {
 

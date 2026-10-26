@@ -4,8 +4,6 @@ import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/7/8 20:28
  */
 public class RectWidget extends AbstractWidget<RectWidget> {
 

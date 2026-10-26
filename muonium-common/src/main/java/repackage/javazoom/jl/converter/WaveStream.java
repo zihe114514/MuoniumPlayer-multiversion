@@ -110,7 +110,6 @@ public class WaveStream extends RiffStream {
     }
 
     /**
-     *
      */
     public int openForWrite(int samplingRate, short bitsPerSample, short numChannels) {
         // 校验参数……
@@ -158,7 +157,6 @@ public class WaveStream extends RiffStream {
     }
 
     /**
-     *
      */
     @Override
     public int close() {
@@ -198,7 +196,6 @@ public class WaveStream extends RiffStream {
     }
 
     /**
-     *
      */
     @Override
     public long currentFilePosition() {

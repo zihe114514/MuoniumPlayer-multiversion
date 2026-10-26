@@ -58,6 +58,7 @@ public class MuoniumPlayerMod implements ClientModInitializer {
             // 只有原版 GUI 这条路还能说话，而用户此刻看到的正是一片空白。
             client.onRenderLayerNotice(drawContext, false);
         });
+        // 3D 世界歌词：世界渲染的最后（Fabric WorldRenderEvents.LAST）。
         // 矩阵与 GL 状态由 WorldLyricsBridge 自己设（Fabric/Forge 给的矩阵不一致，
         // 自算两边结果一致），partialTick 不需要（歌词动画走歌曲毫秒时钟）。
         WorldRenderEvents.LAST.register(context -> WorldLyricsBridge.worldRenderEnd());

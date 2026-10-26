@@ -73,6 +73,7 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         // afterRender 在 26.2 改名 afterExtract：GUI 变成延迟批处理后，
         // 这个回调的实际语义是「Screen 已经把自己的元素录入 render state 之后」，
         // 而不是「已经画完」。对本渲染层没有影响，因为合成本来就推迟到帧末。
+        // 3D 世界歌词：世界渲染的收集阶段（Fabric WorldRenderEvents.LAST 等价事件）。
         // 26.3 删掉了 WorldRenderEvents，世界实体渲染改 submit-collect，等价挂点是
         // LevelRenderEvents.COLLECT_SUBMITS —— 在原版实体收集完之后、帧执行之前，
         // 我们把歌词公告牌以 submitCustomGeometry 提交进原版管线（比照名字牌）。

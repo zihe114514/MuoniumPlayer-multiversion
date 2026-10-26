@@ -62,7 +62,6 @@ public interface BitstreamErrors extends JavaLayerErrors {
     int INVALIDFRAME = BITSTREAM_ERROR + 5;
 
     /**
-     *
      */
     int BITSTREAM_LAST = 0x1ff;
 }

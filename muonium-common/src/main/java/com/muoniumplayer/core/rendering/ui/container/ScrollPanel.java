@@ -18,8 +18,6 @@ import java.util.Set;
 
 /**
  * 一个从上至下排列的可以滚动的容器
- * @author MuoniumPlayer Contributors
- * Date: 2025/7/8 21:45
  */
 public class ScrollPanel extends AbstractWidget<ScrollPanel> {
 

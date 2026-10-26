@@ -4,7 +4,6 @@ import lombok.SneakyThrows;
 import repackage.com.jsyn.data.FloatSample;
 
 /**
- * @author MuoniumPlayer Contributors
  * 日期： 2025/5/5 12:48
  */
 public class BufferedFloatSample extends FloatSample {

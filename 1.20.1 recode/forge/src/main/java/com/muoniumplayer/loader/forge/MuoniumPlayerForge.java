@@ -111,6 +111,7 @@ public final class MuoniumPlayerForge {
 
     /**
      * 3D 世界歌词：对应 Fabric 的 {@code WorldRenderEvents.LAST} —— 世界渲染的最后。
+     * 矩阵与 GL 状态由 {@code WorldLyricsBridge.worldRenderEnd()} 自己设（与 Fabric 侧同口径：
      * 加载器给的矩阵不一致，自算才一致）。
      */
     private void onRenderLevelStage(RenderLevelStageEvent event) {

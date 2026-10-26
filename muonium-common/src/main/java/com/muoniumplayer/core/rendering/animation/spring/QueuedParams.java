@@ -1,8 +1,6 @@
 package com.muoniumplayer.core.rendering.animation.spring;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/12/11 23:35
  */
 public class QueuedParams {
     SpringParams params;

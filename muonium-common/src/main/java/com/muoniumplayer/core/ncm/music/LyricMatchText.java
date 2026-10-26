@@ -15,7 +15,7 @@ import java.util.regex.Pattern;
  * 标点与空格习惯不同、多歌手的连接符各异。这里先把这些差异抹平,上层的 {@link LyricMatchScore}
  * 才是在比较「内容」而不是「写法」。</p>
  *
- * <p>归一化做三件事(与 本项目 的 {@code utils/lyrics/matchScore.ts} 对齐):</p>
+ * <p>归一化做三件事(与上游参考实现的匹配打分对齐):</p>
  * <ol>
  *   <li><b>假名 → 罗马音</b>:{@code ヨルシカ} 与 {@code Yorushika} 归一化后是同一个串。注意这只对
  *       假名有效,汉字(如 {@code 米津玄師})不转——和 wanakana 的行为一致。</li>

@@ -1,5 +1,6 @@
 package com.muoniumplayer.render.skija;
 
+import java.io.File;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
@@ -7,8 +8,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.sun.jna.Function;
 import com.sun.jna.NativeLibrary;
@@ -58,13 +61,29 @@ import com.sun.jna.Pointer;
  * {@code mprotect} 改可写、写完还原只读；本就落在可写映射（懒绑定）里的槽位直接写。
  * 全部经 JNA 完成（启动器带 jna.boot.library.path，本 mod 亦 JiJ JNA）。
  *
- * <h2>触发条件（刻意收窄）</h2>
- * 只在启动器设置了 {@code org.lwjgl.opengl.libname} 时动手——那是「LWJGL 的 GL 门
- * 被换成自定义翻译层库」的明确信号（FCL 家族对 MobileGL / gl4es / Zink 包装全是
- * 这么设的，26.3 真机日志可证）。桌面 Windows/Linux/macOS 不设它：Skia 与 LWJGL 本来
- * 就共享系统 GL，重定向既不需要也不该发生。目标库必须导出 {@code eglGetProcAddress}
- * 与 {@code glGetString}（MobileGL 的 GetProcAddress 表实测全量导出 libskija 需要的
- * 108 个符号），不满足就整段跳过——行为退回本修复之前，不会更糟。
+ * <h2>门型：目标库怎么给出函数指针（2026-10-26 Zink 全黑扩展）</h2>
+ * 触发条件不变：只在启动器设置了 {@code org.lwjgl.opengl.libname} 时动手。但目标库
+ * 提供 GL 函数指针的「门型」有两种，按序探测：
+ * <ol>
+ *   <li><b>dlsym 门</b>（MobileGL 一类的完整前端）：库本身导出 {@code eglGetProcAddress}
+ *       与 {@code glGetString}，每个符号查表直取。</li>
+ *   <li><b>过程地址门</b>（Zink 的 libglxshim、Mesa 系的 libOSMesa）：库只导出一个
+ *       「给名字、回指针」的过程地址桥——{@code glXGetProcAddress} /
+ *       {@code glXGetProcAddressARB} / {@code OSMesaGetProcAddress}——其余一切
+ *       gl 与 egl 前缀的导入都得<b>调用</b>这个桥来拿。发行二进制实测（ZL2 随包
+ *       kopper-zink-release.aar 里的 libglxshim.so）：动态符号表中 GL 相关导出只有
+ *       {@code glXGetProcAddress} 一个，旧的 dlsym 探针双双落空 → 重定向整段跳过 →
+ *       Skia 的每个 GL 调用落到系统 GLES 驱动，而 Minecraft 上下文在 Mesa/Zink 栈里，
+ *       两套驱动栈互不相识，症状正是「日志全部成功、屏幕一个像素都没有」。让 Skia
+ *       也走这扇桥即与 LWJGL 同源（ZL2 的 LWJGL 在 Linux 上正是先探
+ *       {@code glXGetProcAddress} 再逐函数取址）。健全性探针：桥必须能为
+ *       {@code glGetString} 与 {@code eglGetProcAddress} 都给出非零地址——前者验证
+ *       GL 函数面可达，后者验证 egl 门在同一侧（Mesa 的 eglGetProcAddress 对核心
+ *       GL 函数同样返回有效指针，EGL 1.5 语义）；任一给不出就放弃，绝不做半扇门。</li>
+ * </ol>
+ * 两型都不满足才跳过——行为退回本修复之前，不会更糟。
+ * {@link #outcome()} 把「进了哪扇门、写了几条、还有什么拿不到」留给提示层对账；
+ * {@code -Dmuonium.skija.noGlRedirect=true} 仍可整体关掉本机制，用于异常环境 A/B。
  *
  * <h2>失败语义</h2>
  * 任何一步失败（无 /proc、非 ELF64、JNA 不可用、目标库打不开……）只记一条日志然后
@@ -88,9 +107,21 @@ public final class SkijaGlRedirector {
     /** 只重定向这两种前缀的符号：GL/EGL 函数，绝不碰 libc/JNI 等其它命名空间。 */
     private static final String[] SYMBOL_PREFIXES = {"gl", "egl"};
 
-    /** 动手之前目标库必须给出的两个探针符号。 */
+    /** 动手之前目标库必须给出的两个探针符号（dlsym 门的判据）。 */
     private static final String PROBE_GETPROC = "eglGetProcAddress";
     private static final String PROBE_GETSTRING = "glGetString";
+
+    /**
+     * 过程地址门的桥符号候选，按序探测：Zink 的 libglxshim 只导出第一个；
+     * VirGL / Freedreno 的 libOSMesa 用最后一个（{@code OSMesaGetProcAddress}）。
+     */
+    private static final String BRIDGE_GLX = "glXGetProcAddress";
+    private static final String BRIDGE_GLX_ARB = "glXGetProcAddressARB";
+    private static final String BRIDGE_OSMESA = "OSMesaGetProcAddress";
+    private static final String[] BRIDGE_SYMBOLS = {BRIDGE_GLX, BRIDGE_GLX_ARB, BRIDGE_OSMESA};
+
+    /** dlsym 门在结果与日志里的名字。 */
+    static final String DLSYM_DOOR = "dlsym 门";
 
     // ---- ELF 常量（只写用到的）----
     private static final int PT_LOAD = 1;
@@ -117,6 +148,62 @@ public final class SkijaGlRedirector {
 
     /** 一次性执行；重评热载会再次走到，避免重复解析与重复日志。 */
     private static boolean attempted;
+
+    /**
+     * 一次成功重定向的对账单：进了哪扇门、用什么探针、写了几条、还剩几条拿不到。
+     * 提示层拿它与日志对账（「重定向到底做没做成」不用再翻日志）。
+     */
+    public record Outcome(String door, String probe, int redirected, int unresolved,
+                          String targetLibrary) {
+    }
+
+    /** 最近一次成功重定向的结果；未动手（不需要 / 失败 / 跳过）恒为 null。 */
+    private static volatile Outcome outcome;
+
+    /** 最近一次成功重定向的结果，未动手为 null。供提示层与诊断对账。 */
+    public static Outcome outcome() {
+        return outcome;
+    }
+
+    /**
+     * 一扇可用的 GL 门：{@code probe} 是判定它的探针符号，{@code bridge} 为 true 时
+     * 表示「逐符号调用探针拿地址」的过程地址门，false 表示「逐符号 dlsym」的完整前端。
+     */
+    private record Door(String label, String probe, boolean bridge) {
+    }
+
+    /**
+     * 门判定本体：导出符号集 → 命中的门，参数全是字符串，单元测试可直接喂合成符号表。
+     *
+     * <p>顺序刻意先 dlsym 后桥：dlsym 门每个符号一次查表，代价与能力都优于「逐个调桥」，
+     * MobileGL 这类完整前端不该被桥再跳一道。命中 dlsym 门要求两个探针<b>同时</b>在场；
+     * 只见桥（或探针缺一但有桥）走过程地址门。都见不着返回 null = 不动手。
+     */
+    static Door doorForSymbols(Set<String> exportedSymbols) {
+        if (exportedSymbols.contains(PROBE_GETPROC) && exportedSymbols.contains(PROBE_GETSTRING)) {
+            return new Door(DLSYM_DOOR, PROBE_GETPROC, false);
+        }
+        for (String bridge : BRIDGE_SYMBOLS) {
+            if (exportedSymbols.contains(bridge)) {
+                return new Door("过程地址门", bridge, true);
+            }
+        }
+        return null;
+    }
+
+    /** 门判定要探测的全部符号；JNA 拿不到导出表，就对我们关心的这份名单逐个 resolve。 */
+    private static final List<String> DOOR_PROBE_SYMBOLS = List.of(
+            PROBE_GETPROC, PROBE_GETSTRING, BRIDGE_GLX, BRIDGE_GLX_ARB, BRIDGE_OSMESA);
+
+    private static Set<String> symbolsOf(NativeLibrary target) {
+        Set<String> present = new LinkedHashSet<>();
+        for (String name : DOOR_PROBE_SYMBOLS) {
+            if (resolve(target, name) != 0) {
+                present.add(name);
+            }
+        }
+        return present;
+    }
 
     private SkijaGlRedirector() {
     }
@@ -146,6 +233,10 @@ public final class SkijaGlRedirector {
         String glLib = System.getProperty(PROP_LWJGL_OPENGL_LIB, "").trim();
         if (glLib.isEmpty()) {
             // 桌面默认环境：LWJGL 用系统 GL，Skia 也解析系统 GL，本就同一扇门。
+            // 但安卓启动器家族里属性缺失本身就是异常信号，留一行日志便于真机对账。
+            if (launcherFamilySignal() != null) {
+                log("启动器未设置 " + PROP_LWJGL_OPENGL_LIB + "，无需重定向");
+            }
             return;
         }
 
@@ -177,22 +268,41 @@ public final class SkijaGlRedirector {
             return;
         }
 
-        NativeLibrary target = openLibrary(glLib);
+        NativeLibrary target = openTargetLibrary(glLib);
         if (target == null) {
-            log("打不开 GL 库 " + glLib + "，跳过");
+            log("打不开 GL 库 " + glLib + "（含启动器原生目录搜索），跳过");
             return;
         }
-        if (resolve(target, PROBE_GETPROC) == 0 || resolve(target, PROBE_GETSTRING) == 0) {
-            // 缺任何一个探针都说明它不是完整的 GL/EGL 前端，重定向反而会把 Skia 弄残。
-            log(glLib + " 不导出 " + PROBE_GETPROC + "/" + PROBE_GETSTRING + "，跳过");
+
+        // 门判定：完整前端（dlsym 门）或过程地址桥，二者其一才动手。
+        Door door = doorForSymbols(symbolsOf(target));
+        if (door == null) {
+            log(glLib + " 既不导出完整前端探针（" + PROBE_GETPROC + "/" + PROBE_GETSTRING
+                    + "）也没有过程地址桥（" + String.join("/", BRIDGE_SYMBOLS) + "），跳过");
             return;
+        }
+        if (door.bridge()) {
+            // 桥必须能为「GL 函数面」与「egl 门」都给出非零地址，任一给不出就是半扇门——
+            // 半扇门比不修更糟（eglGetProcAddress 落到系统侧会重新劈成两条门）。
+            long glProbe = resolveViaBridge(target, door.probe(), PROBE_GETSTRING);
+            long eglProbe = resolveViaBridge(target, door.probe(), PROBE_GETPROC);
+            if (glProbe == 0 || eglProbe == 0) {
+                log(door.probe() + " 不肯为 " + PROBE_GETSTRING + "/" + PROBE_GETPROC
+                        + " 给出地址，放弃重定向");
+                return;
+            }
+            log("命中过程地址门（" + door.probe() + "），逐符号经桥解析");
+        } else {
+            log("命中" + door.label() + "，逐符号查表解析");
         }
 
         int pageSize = pageSize();
         Map<Long, List<Slot>> byPage = new LinkedHashMap<>();
         int unresolved = 0;
         for (Reloc reloc : elf.relocs) {
-            long addr = resolve(target, reloc.name);
+            long addr = door.bridge()
+                    ? resolveViaBridge(target, door.probe(), reloc.name)
+                    : resolve(target, reloc.name);
             if (addr == 0) {
                 unresolved++;
                 continue;
@@ -207,12 +317,103 @@ public final class SkijaGlRedirector {
             patched += patchPage(page.getKey(), page.getValue(), pageSize, skija);
         }
         if (patched > 0) {
+            outcome = new Outcome(door.label(), door.probe(), patched, unresolved, glLib);
             log("已把 libskija 的 " + patched + " 个 GL/EGL 导入重定向到 " + glLib
+                    + "（" + door.label() + (door.bridge() ? "：" + door.probe() : "")
                     + (unresolved > 0
-                    ? "（另有 " + unresolved + " 个符号目标库未导出，保留原解析）" : ""));
+                    ? "；另有 " + unresolved + " 个符号解析不到，保留原解析）" : "）"));
         } else {
             log("目标库 " + glLib + " 可解析的符号没有一个写入成功");
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 过程地址桥与目标库定位
+    // ------------------------------------------------------------------
+
+    /**
+     * 经过程地址桥解析一个符号：先 dlsym（有的库恰好也直接导出部分函数），
+     * 查不到再<b>调用</b>桥本身——桥的签名统一是「{@code const char*} 进、指针出」，
+     * 传 Java String 即可，不需要任何 GL 上下文。
+     */
+    private static long resolveViaBridge(NativeLibrary bridge, String bridgeName, String name) {
+        long direct = resolve(bridge, name);
+        if (direct != 0) {
+            return direct;
+        }
+        try {
+            Pointer p = bridge.getFunction(bridgeName).invokePointer(new Object[]{name});
+            return p == null ? 0 : Pointer.nativeValue(p);
+        } catch (Throwable bridgeFailure) {
+            return 0;
+        }
+    }
+
+    /**
+     * 打开目标库。属性值可能是绝对路径（FCL 的 MobileGL 日志实证），也可能是裸 soname
+     * （ZL2/FCL 的 Zink 都是 {@code libglxshim.so}）——后者 dlopen 搜不到时（JVM 的
+     * 链接器命名空间未必覆盖启动器的插件目录），再按启动器原生目录逐个找文件打开。
+     */
+    private static NativeLibrary openTargetLibrary(String glLib) {
+        NativeLibrary direct = openLibrary(glLib);
+        if (direct != null) {
+            return direct;
+        }
+        for (String dir : launcherNativeDirectories()) {
+            File candidate = new File(dir, glLib);
+            if (!candidate.isFile()) {
+                continue;
+            }
+            NativeLibrary lib = openLibrary(candidate.getAbsolutePath());
+            if (lib != null) {
+                log("GL 库 " + glLib + " 在启动器原生目录找到：" + dir);
+                return lib;
+            }
+        }
+        return null;
+    }
+
+    /** 启动器原生目录候选：渲染器插件的 nativeLibraryDir 必然在链接器允许的命名空间里。 */
+    private static List<String> launcherNativeDirectories() {
+        List<String> out = new ArrayList<>();
+        for (String key : new String[]{"POJAV_NATIVEDIR", "FCL_NATIVEDIR"}) {
+            String value = System.getenv(key);
+            if (value != null && !value.isBlank()) {
+                out.add(value);
+            }
+        }
+        // SDL_EGL_LIBRARY 是绝对路径（ZL2/FCL 都是）；POJAVEXEC_EGL / LIB_MESA_NAME
+        // 常是裸名——只收带路径分隔符的那些的所在目录。
+        for (String key : new String[]{"SDL_EGL_LIBRARY", "POJAVEXEC_EGL", "LIB_MESA_NAME"}) {
+            String value = System.getenv(key);
+            if (value != null) {
+                int slash = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
+                if (slash > 0) {
+                    out.add(value.substring(0, slash));
+                }
+            }
+        }
+        String lwjglPath = System.getProperty("org.lwjgl.librarypath", "");
+        if (!lwjglPath.isBlank()) {
+            for (String part : lwjglPath.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
+                if (!part.isBlank()) {
+                    out.add(part);
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 安卓启动器家族信号（pojav 系 env）；拿不准就返回 null，桌面保持静默。 */
+    private static String launcherFamilySignal() {
+        if (System.getenv("POJAV_NATIVEDIR") != null) {
+            return "POJAV_NATIVEDIR";
+        }
+        if (System.getenv("FCL_NATIVEDIR") != null) {
+            return "FCL_NATIVEDIR";
+        }
+        String osVersion = System.getProperty("os.version", "");
+        return osVersion.startsWith("Android") ? "os.version" : null;
     }
 
     // ------------------------------------------------------------------

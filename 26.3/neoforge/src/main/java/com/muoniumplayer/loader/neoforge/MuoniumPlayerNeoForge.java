@@ -120,6 +120,7 @@ public final class MuoniumPlayerNeoForge {
      * {@code WorldRenderEvents.LAST} 语义对应的现役挂点是
      * {@code SubmitCustomGeometryEvent}（原版在 {@code LevelRenderer.submitFeatures}
      * 末尾派发），矩阵由 {@code WorldLyricsBridge.collectWorldLyrics} 自己算
+     * （与 Fabric 侧同口径：加载器给的矩阵两树不一致，自算才一致）。</p>
      */
     private void onSubmitCustomGeometry(SubmitCustomGeometryEvent event) {
         WorldLyricsBridge.collectWorldLyrics(event.getSubmitNodeCollector());

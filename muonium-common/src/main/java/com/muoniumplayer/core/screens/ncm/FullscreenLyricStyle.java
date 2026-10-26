@@ -16,7 +16,7 @@ public enum FullscreenLyricStyle {
     /**
      * 只显示当前一行，把它拆成字词散布开，镜头跟着正在唱的那个词走。
      *
-     * <p>对应 本项目 的 {@code cadenza}（心象）。这一套先于其余「文字 PV」样式实现，
+     * <p>对应 本项目的 {@code cadenza}（心象）。这一套先于其余「文字 PV」样式实现，
      * 名字保留原来的「律动词云」，后面补上参考实现的中文名以便对照。</p>
      */
     CADENZA("律动词云 · 心象"),
@@ -49,7 +49,7 @@ public enum FullscreenLyricStyle {
     APPLE("苹果"),
 
     /**
-     * 流光 · 原版：对 本项目 {@code classic} 的更忠实移植。
+     * 流光 · 原版：对本项目 {@code classic} 的更忠实移植。
      *
      * <p>原样式 {@link #LUMINOUS} 保持不动；这一套补回参考实现里的等待/演唱/唱过三态、
      * passed 旋转余晖以及整行缩放进退场，供用户按喜好自由切换。</p>

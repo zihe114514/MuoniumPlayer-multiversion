@@ -76,7 +76,7 @@ class WorldLyricsHuiguangHandoffTest {
 
 
     /** 帧组装时 fading 在前、active 在后 —— 取 active 行的句子。 */
-    private static WorldLyricsState.Floating activeOf(WorldLyricsState.Frame frame) {
+    private static WorldLyricsState.SpawnedLine activeOf(WorldLyricsState.Frame frame) {
         for (WorldLyricsState.Row r : frame.rows) {
             if (r.active) return r.floating;
         }
@@ -97,11 +97,11 @@ class WorldLyricsHuiguangHandoffTest {
 
         WorldLyricsState.Frame f1 = state.update(CAMERA, PARAMS, 1_000_000_000L, true, 100L);
         assertEquals(1, f1.rows.size());
-        WorldLyricsState.Floating s1 = activeOf(f1);
+        WorldLyricsState.SpawnedLine s1 = activeOf(f1);
         assertNull(s1.huiguangPrev, "首句无上一句");
 
         WorldLyricsState.Frame f2 = state.update(CAMERA, PARAMS, 1_100_000_000L, true, 4100L);
-        WorldLyricsState.Floating s2 = activeOf(f2);
+        WorldLyricsState.SpawnedLine s2 = activeOf(f2);
         assertNotNull(s2.huiguangPrev, "换句后新句应有 prev");
         assertEquals(s1, s2.huiguangPrev, "prev 应是刚被换下的那句");
         assertNotNull(s2.huiguangOwnGeo, "应有本句几何快照");
@@ -111,7 +111,7 @@ class WorldLyricsHuiguangHandoffTest {
         assertNull(s1.huiguangOwnGeo, "被换下句子的自身快照应截断");
 
         WorldLyricsState.Frame f3 = state.update(CAMERA, PARAMS, 1_200_000_000L, true, 8100L);
-        WorldLyricsState.Floating s3 = activeOf(f3);
+        WorldLyricsState.SpawnedLine s3 = activeOf(f3);
         assertEquals(s2, s3.huiguangPrev, "第三句的 prev 应是第二句");
         assertNull(s2.huiguangPrev, "第二句的上游链应截断（不再钉住 s1）");
         assertNull(s2.huiguangOwnGeo);
@@ -129,13 +129,13 @@ class WorldLyricsHuiguangHandoffTest {
 
         WorldLyricsState.Frame f1 = state.update(CAMERA, PARAMS, 1_000_000_000L, true, 100L);
         assertEquals(1, f1.rows.size());
-        WorldLyricsState.Floating s1 = activeOf(f1);
+        WorldLyricsState.SpawnedLine s1 = activeOf(f1);
 
         // 落到 break 行：active 置 null、s1 转淡出
         state.update(CAMERA, PARAMS, 1_100_000_000L, true, 4100L);
         // 再落到后一句：replaced 为 null（active 上一帧已是 null），应回退 fading 源
         WorldLyricsState.Frame f3 = state.update(CAMERA, PARAMS, 1_200_000_000L, true, 8100L);
-        WorldLyricsState.Floating s3 = activeOf(f3);
+        WorldLyricsState.SpawnedLine s3 = activeOf(f3);
         assertNotNull(s3, "空行后的实句应正常 spawn");
         assertEquals(s1, s3.huiguangPrev, "间隙后应回退最近一句 fading 当飞行源");
         assertNotNull(s3.huiguangOwnGeo);
@@ -151,7 +151,7 @@ class WorldLyricsHuiguangHandoffTest {
 
         state.update(CAMERA, PARAMS, 1_000_000_000L, true, 100L);
         WorldLyricsState.Frame f2 = state.update(CAMERA, PARAMS, 1_100_000_000L, true, 4100L);
-        WorldLyricsState.Floating s2 = activeOf(f2);
+        WorldLyricsState.SpawnedLine s2 = activeOf(f2);
         assertNotNull(s2.huiguangPrev);
         // update() 不调 buildGlyphs（那是渲染层的活）—— 手动构建一次把
         // 飞行定义缓存出来，revive 后再 build 比较数组实例。update 传 null
@@ -178,10 +178,10 @@ class WorldLyricsHuiguangHandoffTest {
         CloudMusic.lyrics.add(line(10000L, "远处的句子"));
 
         WorldLyricsState.Frame f1 = state.update(CAMERA, PARAMS, 1_000_000_000L, true, 100L);
-        WorldLyricsState.Floating s1 = activeOf(f1);
+        WorldLyricsState.SpawnedLine s1 = activeOf(f1);
 
         WorldLyricsState.Frame f2 = state.update(CAMERA, PARAMS, 1_100_000_000L, true, 10100L);
-        WorldLyricsState.Floating s2 = activeOf(f2);
+        WorldLyricsState.SpawnedLine s2 = activeOf(f2);
         assertEquals(s1, s2.huiguangPrev, "seek 大跳同样形成交接，源是被跳过的句子");
     }
 
@@ -197,7 +197,7 @@ class WorldLyricsHuiguangHandoffTest {
         CloudMusic.lyrics.add(l);
 
         WorldLyricsState.Frame f = state.update(CAMERA, PARAMS, 1_000_000_000L, true, 100L);
-        WorldLyricsState.Floating cur = activeOf(f);
+        WorldLyricsState.SpawnedLine cur = activeOf(f);
         assertNotNull(cur, "首句应 spawn");
 
         // PARAMS.wordPop()=false：t=400ms 时第一个词点亮、第二个词未亮
@@ -236,7 +236,7 @@ class WorldLyricsHuiguangHandoffTest {
                 + f.rows.size() + " 行");
         // 唱到 1200ms：当前行是「真实的歌词第一句」
         WorldLyricsState.Frame f2 = state.update(CAMERA, PARAMS, 1_100_000_000L, true, 1200L);
-        WorldLyricsState.Floating cur = activeOf(f2);
+        WorldLyricsState.SpawnedLine cur = activeOf(f2);
         assertNotNull(cur, "过滤后应正常进入真实歌词行");
         assertTrue(cur.lines.get(0).contains("真实"), "当前句应是真实歌词，实际 "
                 + cur.lines.get(0));
@@ -246,7 +246,7 @@ class WorldLyricsHuiguangHandoffTest {
         CloudMusic.lyrics.add(line(0L, "我把作词写进了歌里这是一句很长的真实歌词"));
         CloudMusic.lyrics.add(line(5000L, "下一句"));
         WorldLyricsState.Frame f3 = state.update(CAMERA, PARAMS, 1_200_000_000L, true, 100L);
-        WorldLyricsState.Floating cur3 = activeOf(f3);
+        WorldLyricsState.SpawnedLine cur3 = activeOf(f3);
         assertNotNull(cur3, "长挂载的含关键词正常歌词行不应被误过滤");
     }
 
@@ -256,14 +256,23 @@ class WorldLyricsHuiguangHandoffTest {
         CloudMusic.lyrics.add(line(3000L, "下一句不再提前出现"));
 
         state.update(CAMERA, PARAMS, 1_000_000_000L, true, 100L);
-        // 下一句开始前 1.2s = 1800ms；pos=1900 原本是 LEAD 窗口
+        // 下一句开始前 1.2s = 1800ms；pos=1900 原本是 LEAD 窗口。
+        // 100→1900ms 的位置差超 seek 阈值：同句重同步走销毁重建，帧里
+        // 除淡出的旧句外只有新 spawn 的当前句 —— 没有预摆句。
         WorldLyricsState.Frame f = state.update(CAMERA, PARAMS, 1_100_000_000L, true, 1900L);
-        assertEquals(1, f.rows.size(), "LEAD 窗口内只应有当前句，不应有预摆句");
-        assertTrue(f.rows.get(0).active, "唯一的行应是当前句");
+        WorldLyricsState.SpawnedLine active = activeOf(f);
+        assertNotNull(active, "LEAD 窗口内当前句应在场（seek 重同步后重新 spawn）");
+        for (WorldLyricsState.Row r : f.rows) {
+            if (r.floating == active) {
+                assertTrue(r.active, "当前句应是 active 态");
+            } else {
+                assertFalse(r.active, "LEAD 窗口内不应有预摆句，淡出的只有重同步前的旧句");
+            }
+        }
 
         // 换句瞬间：新句正常转正（非预摆来源），从旧句位置交接飞入
         WorldLyricsState.Frame f2 = state.update(CAMERA, PARAMS, 1_200_000_000L, true, 3100L);
-        WorldLyricsState.Floating cur = activeOf(f2);
+        WorldLyricsState.SpawnedLine cur = activeOf(f2);
         assertNotNull(cur, "换句后新句应 spawn");
         assertFalse(cur.huiguangPresetDone, "不再有预摆转正路径");
     }
@@ -276,7 +285,7 @@ class WorldLyricsHuiguangHandoffTest {
 
         state.update(CAMERA, PARAMS, 1_000_000_000L, true, 100L);
         WorldLyricsState.Frame f1 = state.update(CAMERA, PARAMS, 1_100_000_000L, true, 4100L);
-        WorldLyricsState.Floating s1 = activeOf(f1);
+        WorldLyricsState.SpawnedLine s1 = activeOf(f1);
         double oldY = f1.rows.get(0).y;
 
         // 换句 + 1.0s 后（滑开已基本完成：up = sin(1/1.2·π/2) ≈ 0.97）

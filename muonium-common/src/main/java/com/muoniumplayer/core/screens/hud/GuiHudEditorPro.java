@@ -514,19 +514,38 @@ public class GuiHudEditorPro extends GuiScreen {
             boolean lmb = !retiring && !resetConfirmationVisible && !draggingPanel && Mouse.isButtonDown(0);
 
             // ==== 两块 HUD 的实时预览与舞台交互（面板之外的区域） ====
+            //
+            // 坐标系必须与真实渲染一致：widget 在游戏里的实际绘制走 HUD 回调（GUI 逻辑空间，
+            // 跨度 = RenderSystem 宽高，无任何 correction）。而本界面在自适应布局模式下整体
+            // 乘了 correction（布局空间）。若预览/选框直接用布局空间算，屏幕上就会与真实控件
+            // 差一个 correction 因子 —— 表现为「预览框与实际渲染的大小/位置严重不符」。
+            // 这里把预览整段撤回 GUI 逻辑空间：跨度换回 RenderSystem 宽高，矩阵反向缩放，
+            // 鼠标坐标同样换算，命中与所见继续共用一套几何。
+            float hudSpaceScaleX = 1f;
+            float hudSpaceScaleY = 1f;
+            if (adaptive) {
+                hudSpaceScaleX = (float) WindowAdaptiveScale.correctionX();
+                hudSpaceScaleY = (float) WindowAdaptiveScale.correctionY();
+                SharedConstants.api.getGLStateManager().pushMatrix();
+                SharedConstants.api.getGLStateManager().scale(1f / hudSpaceScaleX, 1f / hudSpaceScaleY, 1);
+            }
+            int hudSpaceWidth = (int) RenderSystem.getWidth();
+            int hudSpaceHeight = (int) RenderSystem.getHeight();
+            int hudMouseX = adaptive ? Math.round(mouseX / hudSpaceScaleX) : mouseX;
+            int hudMouseY = adaptive ? Math.round(mouseY / hudSpaceScaleY) : mouseY;
             int infoW = (int) (INFO_BASE_W * HudConfig.infoScale);
             int infoH = (int) (INFO_BASE_H * HudConfig.infoScale);
-            int infoX = (int) (HudConfig.infoX * (width - infoW));
-            int infoY = (int) (HudConfig.infoY * (height - infoH));
+            int infoX = (int) (HudConfig.infoX * (hudSpaceWidth - infoW));
+            int infoY = (int) (HudConfig.infoY * (hudSpaceHeight - infoH));
             int lyricW = (int) (HudConfig.lyricWidth * HudConfig.lyricScale);
             int lyricH = (int) (HudConfig.lyricHeight * HudConfig.lyricScale);
-            int lyricX = (int) (HudConfig.lyricX * (width - lyricW));
-            int lyricY = (int) (HudConfig.lyricY * (height - lyricH));
+            int lyricX = (int) (HudConfig.lyricX * (hudSpaceWidth - lyricW));
+            int lyricY = (int) (HudConfig.lyricY * (hudSpaceHeight - lyricH));
             int[] infoRect = { infoX, infoY, infoW, infoH };
             int[] lyricRect = { lyricX, lyricY, lyricW, lyricH };
             // 舞台自己判定点选/拖动/缩放并写回 HudConfig；松手有改动时才落一次盘。
-            boolean stageDirty = stage.update(lmb && !uiBusy, uiBusy ? 0 : wheel, mouseX, mouseY,
-                    infoRect, lyricRect, new int[] { INFO_BASE_W, INFO_BASE_H }, width, height);
+            boolean stageDirty = stage.update(lmb && !uiBusy, uiBusy ? 0 : wheel, hudMouseX, hudMouseY,
+                    infoRect, lyricRect, new int[] { INFO_BASE_W, INFO_BASE_H }, hudSpaceWidth, hudSpaceHeight);
             if (stageDirty) HudConfig.save();
 
             if (hasLiveInfoPreview()) {
@@ -539,7 +558,10 @@ public class GuiHudEditorPro extends GuiScreen {
             } else {
                 drawLyricsPlaceholder(fr, lyricX, lyricY, lyricW, lyricH);
             }
-            drawStageOverlays(fr, infoRect, lyricRect, mouseX, mouseY);
+            drawStageOverlays(fr, infoRect, lyricRect, hudMouseX, hudMouseY);
+            if (adaptive) {
+                SharedConstants.api.getGLStateManager().popMatrix();
+            }
 
             // ==== 设置面板 ====
             layerAlpha = plate;

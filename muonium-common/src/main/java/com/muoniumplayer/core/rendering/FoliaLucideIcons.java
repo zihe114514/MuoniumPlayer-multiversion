@@ -17,7 +17,7 @@ import java.util.Set;
  * Folia 设置界面用的 <b>lucide 矢量图标</b>。
  *
  * <p>本文件由 {@code tools/make_lucide_icons.py} 从 lucide 1.31.0 生成，不要手改：重跑脚本会
- * 整文件覆盖。本项目 的设置弹窗渲染的就是这批字形（它锁的是同版本的 lucide-react），
+ * 整文件覆盖。本项目的设置弹窗渲染的就是这批字形（它锁的是同版本的 lucide-react），
  * 所以这里的图标与它是同一套几何，而不是「看着像」。</p>
  *
  * <p>lucide 的设计网格是 24x24，默认描边 2、圆头圆角、只描边不填充。绘制时按目标边长等比

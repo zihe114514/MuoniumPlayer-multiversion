@@ -20,7 +20,6 @@ import java.awt.*;
 import java.util.UUID;
 
 /**
- * @author MuoniumPlayer Contributors
  * @since 4/15/2023 8:47 PM
  */
 public class RenderSystem implements SharedConstants {

@@ -19,9 +19,8 @@ import com.muoniumplayer.render.skija.SkijaGfx;
 /**
  * 「群唱」：每一行歌词是一条聊天气泡，左右交替，正在唱的那一条逐字浮现。
  *
- * <p>移植自 本项目 的 {@code cappella} 视觉，含内置头像与表情气泡。参考实现的素材是
- * 3.6 MB 的散图（15 张 256² 头像 + 9 张 ~440² 表情，均为 AI 生成、其 README 声明不受该仓库
- * AGPL 约束），这里挑了 8 + 6 张重新压成两张精灵图共 236 KB：
+ * <p>「群唱」视觉的参考实现带内置头像与表情气泡，其素材是
+ * 3.6 MB 的散图（15 张 256² 头像 + 9 张 ~440² 表情），这里挑了 8 + 6 张重新压成两张精灵图共 236 KB：
  * {@code cappella/avatars.png}（4×2，每格 96²，调色板 PNG）与
  * {@code cappella/emoji.png}（3×2，每格 128²，画面只占中间 112²、四周留 8 px 透明边，保留软边
  * alpha）。表情素材原图是<b>贴边裁切</b>的（alpha 包围盒等于整张图），直接铺进精灵图会让相邻格子
@@ -52,7 +51,7 @@ final class CappellaLyricRenderer extends AbstractStageLyricRenderer {
     /** 单条气泡最多占视口多高。超过就整体降一档字号重排，绝不让它被裁。 */
     private static final double MAX_BUBBLE_HEIGHT_RATIO = .78;
 
-    // ==================== 内置素材（folia-chan 精灵图） ====================
+    // ==================== 内置素材（精灵图） ====================
 
     private static final Location AVATAR_SHEET =
             Location.of("/muonium/textures/player/cappella/avatars.png");

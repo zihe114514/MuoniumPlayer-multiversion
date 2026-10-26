@@ -20,8 +20,6 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/11/16 12:04
  */
 @UtilityClass
 public class MusicToast implements SharedRenderingConstants, SharedConstants {

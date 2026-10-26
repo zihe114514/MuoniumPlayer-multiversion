@@ -231,7 +231,7 @@ class CadenzaMotionTest {
 
     @Test
     void buildGlyphsCadenzaUsesStageAndCamera() {
-        WorldLyricsState.Floating f = new WorldLyricsState.Floating(
+        WorldLyricsState.SpawnedLine f = new WorldLyricsState.SpawnedLine(
                 List.of(LINE), 0L, 3000L, 0, 0, 0, 0, 0, TIMES);
         WorldLyricsState.PixelWidthOf width = s -> 10f;
         WorldLyricsState.LyricGlyphs glyphs =
@@ -263,7 +263,7 @@ class CadenzaMotionTest {
 
     @Test
     void buildGlyphsCadenzaCarriesPoseAndColor() {
-        WorldLyricsState.Floating f = new WorldLyricsState.Floating(
+        WorldLyricsState.SpawnedLine f = new WorldLyricsState.SpawnedLine(
                 List.of(LINE), 0L, 3000L, 0, 0, 0, 0, 0, TIMES);
         WorldLyricsState.PixelWidthOf width = s -> 10f;
         WorldLyricsState.LyricGlyphs glyphs =

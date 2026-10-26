@@ -14,7 +14,6 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
- * @author MuoniumPlayer Contributors
  * @since 4/8/2023 11:09 AM
  */
 public class FontManager extends AbstractManager {

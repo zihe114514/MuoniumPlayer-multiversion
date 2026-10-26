@@ -3,7 +3,6 @@ package com.muoniumplayer.core.rendering;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 
 /**
- * @author MuoniumPlayer Contributors
  * @since 4/15/2023 8:54 PM
  */
 public class Rect {

@@ -1,7 +1,7 @@
 package com.muoniumplayer.core.ncm.music;
 
 /**
- * 歌词检索的四个来源，顺序与标签文案都照 本项目 的
+ * 歌词检索的四个来源，顺序与标签文案都按
  * {@code LYRIC_MATCH_SOURCES = ['netease', 'amll', 'qq', 'kugou']}。
  *
  * <p>为什么用枚举而不是复用 {@link LyricSourceMemory} 的那套 int：两者钉的东西不同。

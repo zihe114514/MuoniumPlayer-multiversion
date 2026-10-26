@@ -17,13 +17,16 @@ import net.minecraft.util.LightCoordsUtil;
 import org.joml.Matrix4f;
 
 /**
+ * 3D 世界歌词的宿主绘制实现 —— <b>公告牌矩阵、像素字与逐字平滑字形三条通路</b>。
  *
+ * <h2>通路与口径</h2>
  * <ul>
  *   <li>{@code ModernWorld.push} → {@link #pushBillboard}：translate(rx,ry,rz) →
  *       rotateY(-yaw) → rotateX(pitch) → scale(-s,-s,s)。之后画的是「文字像素坐标」，
  *       MC 字体坐标口径（x 右、y 下、字顶为 y）。</li>
  *   <li>{@code ModernGfx.vanillaText} → {@link #drawPixelText}：阴影按原版规则
  *       拆开单独画在字前（两次独立 submit，阴影先进），本体
+ *       {@code SEE_THROUGH + FULL_BRIGHT} —— 与上游的 drawVanilla 口径相同。</li>
  * </ul>
  *
  * <h2>26.2 的字要怎么画（与 1.21.1 的最大差异）</h2>
@@ -47,6 +50,7 @@ import org.joml.Matrix4f;
  * 名字牌/挡视线等原版特性同款），renderType =
  * {@code RenderTypes.textSeeThrough(页 Identifier)}（1.21.1 的
  * {@code RenderType.textSeeThrough(rl)} 在 26.x 挪进了 {@code RenderTypes}）。
+ * 回调里发一个 POSITION_COLOR_TEX_LIGHTMAP 四顶点 quad —— 与上游的逐字
  * textured quad 同构，wiggle 的旋转/缩放绕字中心落进顶点矩阵；页纹理的采样器被
  * PageTexture 强制成 LINEAR（见 LyricGlyphAtlasBridge），超采样不被 NEAREST 采样毁掉。
  * 坐标是相机相对（与像素路径同基准），ModelViewMat 由 RenderType.prepare 在采集期捕获，
@@ -78,6 +82,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private WorldBillboard() {
     }
 
+    /** 事件入口（worldRenderEnd 的矩阵在 Bridge 里已设好）。 */
     public void begin(PoseStack poseStack, Minecraft mc,
                       double camX, double camY, double camZ) {
         this.poseStack = poseStack;
@@ -96,6 +101,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     public void pushBillboard(double rx, double ry, double rz,
                               double yawDeg, double pitchDeg, float scale) {
         if (poseStack == null) return;
+        // 公告牌矩阵 push（上游 ModernWorld.push 口径）：
         //   translate(rx,ry,rz) → rotateY(-yaw) → rotateX(pitch) → scale(-s,-s,s)
         poseStack.pushPose();
         Matrix4f mat = poseStack.last().pose();
@@ -114,7 +120,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     @Override
     public void drawPixelText(String text, float x, float y, int argb, boolean shadow) {
         if (poseStack == null || mc == null || text == null || text.isEmpty()) return;
-        // DangoModernGfx.vanillaText 一比一：阴影拆开单独画（先进），本体后进
+        // 原版文字阴影拆分策略：阴影拆开单独画（先进），本体后进
         if (shadow) {
             int shadowColor = ((argb & 0xFCFCFC) >> 2) | (argb & 0xFF000000);
             drawVanilla(text, x + 1f, y + 1f, shadowColor);
@@ -126,6 +132,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         }
     }
 
+    /** 像素字：SEE_THROUGH + FULL_BRIGHT（alwaysOnTop 相位）。 */
     private void drawVanilla(String text, float x, float y, int argb) {
         OrderedSubmitNodeCollector submitter = WorldLyricsBridgeAccess.submitter(mc);
         if (submitter == null) return;
@@ -147,6 +154,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      *
      * <p>坐标口径：传进来的 (x, y) 是字形<b>顶点</b>（字位框左上角，设计像素），
      * 对应格内 (inkX, inkY)。quad 覆盖整格（含发光留白），尺寸 = 格框 ÷ BAKE_SCALE。
+     * wiggle 四量绕<b>字中心</b>（半个 advance × 半个字位框）旋转/缩放 —— 与上游
      * withWiggle 的 translate(cx,cy)→rotate→scale→translate(-cx,-cy) 同构；dx/dy 已由
      * 渲染器加进 x/y。回调拿到的 Pose 已含 billboard 矩阵（submitCustomGeometry 拷走
      * 提交时的 poseStack 栈顶），四角直接在该矩阵下展开。</p>
@@ -207,6 +215,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         float u1 = (cell.x + cell.w) / pageF - halfTexel;
         float v1 = (cell.y + cell.h) / pageF - halfTexel;
 
+        // 绕字中心（行内坐标：半个 advance × 半个字位框）的旋转/缩放（上游 withWiggle 同构）
         float cx = x + (cell.advance * inv) * 0.5f;
         float cy = y + (cell.inkHeight * inv) * 0.5f;
         boolean transformed = rot != 0f || sc != 1f;

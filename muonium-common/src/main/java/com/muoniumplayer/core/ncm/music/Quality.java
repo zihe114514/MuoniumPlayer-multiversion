@@ -3,7 +3,6 @@ package com.muoniumplayer.core.ncm.music;
 import lombok.Getter;
 
 /**
- * @author MuoniumPlayer Contributors
  * @since 6/16/2023 10:03 AM
  */
 public enum Quality {

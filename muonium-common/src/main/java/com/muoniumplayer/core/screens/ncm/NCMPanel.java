@@ -5,8 +5,6 @@ import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/10/16 19:51
  */
 public abstract class NCMPanel extends Panel {
 

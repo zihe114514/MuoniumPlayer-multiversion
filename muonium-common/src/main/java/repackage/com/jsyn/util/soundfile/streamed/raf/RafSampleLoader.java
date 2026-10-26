@@ -7,8 +7,6 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/5/5 12:47
  */
 public class RafSampleLoader extends CustomSampleLoader {
 

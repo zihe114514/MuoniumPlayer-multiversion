@@ -3,7 +3,6 @@ package com.muoniumplayer.core.utils.timing;
 import java.time.Duration;
 
 /**
- * @author MuoniumPlayer Contributors
  * @since 2023/12/10
  */
 public class Timer {

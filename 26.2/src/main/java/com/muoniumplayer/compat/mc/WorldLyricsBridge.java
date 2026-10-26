@@ -16,6 +16,7 @@ import net.minecraft.client.renderer.OrderedSubmitNodeCollector;
 import org.joml.Matrix4f;
 
 /**
+ * 3D 世界歌词的树侧桥 —— <b>世界渲染结束事件入口（Fabric LAST / NeoForge AFTER_LEVEL）</b>，
  * 按到 26.2 renderpearl 渲染管线重排钩子。
  *
  * <h2>26.2 相对 1.21.1 的钩子差异（javap + 字节码核对）</h2>
@@ -38,6 +39,7 @@ import org.joml.Matrix4f;
  *       collector 已被 drain，作为钩子太迟，只能做「保险熔断复位」）。</li>
  * </ol>
  * <p>所以移植形态从「事件里画」改成「事件里提交」：相机转向仍在采集时自己算
+ * （{@code identity().rotateX(pitch).rotateY(yaw+180)}，与上游同口径），矩阵跟
  * submit 一起走 —— 与实体文字完全同管线（同一 texts 相位、同一 see-through 批），
  * 1.21.1 里「Fabric/NeoForge 给的矩阵不一致」的老问题随 drawInBatch 一起消失。
  * GL 状态不再手设：{@code textSeeThrough} 的 RenderType 自带混合/深度设置；
@@ -84,6 +86,7 @@ public final class WorldLyricsBridge {
     static volatile WorldLyricsSettings currentSettings;
 
     /**
+     * 世界渲染「采集末尾」事件入口（对应上游 worldRenderEnd 的
      * 采集形态）。由 Fabric {@code LevelRenderEvents.COLLECT_SUBMITS} /
      * NeoForge {@code SubmitCustomGeometryEvent} 调用；两处都拿得到
      * {@code OrderedSubmitNodeCollector}（Fabric 从 context、NeoForge 从事件），
@@ -107,6 +110,7 @@ public final class WorldLyricsBridge {
             // RenderType.prepare() 在 buildGroup（= 我们发顶点的时候）捕获
             // getModelViewMatrixCopy() 写进 ModelViewMat uniform：GPU 端变换 =
             // 视图旋转 × 根矩阵 × billboard。这里再算一遍相机旋转就是转两次 ——
+            // 症状正是「玩家视角向左、字向右」。1.21.1 的 basePose 公式
             // 只适用于「事件时视图矩阵是单位矩阵」的旧管线。
             // 顶点坐标仍然用镜头相对坐标（rx = 世界 − 相机），视图旋转把它转回相机空间。
             Matrix4f basePose = new Matrix4f();
@@ -146,6 +150,7 @@ public final class WorldLyricsBridge {
                     + com.muoniumplayer.core.ncm.music.CloudMusic.lyricsTrackKey + "），开始渲染");
         }
 
+        // 上游 ModernWorld.begin 口径：Fixed.reset(basePose)。
         // 本仓库没有自建矩阵栈：宿主的 PoseStack 原点就是 basePose —— 用一个
         // 专用 PoseStack，pose() 直接填 basePose，push/pop 由 WorldBillboard 自己管。
         PoseStack poseStack = new PoseStack();

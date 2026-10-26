@@ -45,8 +45,8 @@ import java.util.function.IntSupplier;
 /**
  * 歌词搜索弹窗：给正在放的这首歌手动挑一份歌词。
  *
- * <p>版式逐条照 本项目 的 {@code OnlineLyricMatchModal.tsx}（1 单位 = 1 CSS 像素），右下角
- * 那一块预览照 {@code LyricPreviewPanel.tsx}。四张标签是网易云音乐 / AMLLDB / QQ 音乐 / 酷狗音乐，
+ * <p>版式逐条照参考实现的搜索匹配弹窗（1 单位 = 1 CSS 像素），右下角
+ * 那一块预览照参考实现的歌词预览面板。四张标签是网易云音乐 / AMLLDB / QQ 音乐 / 酷狗音乐，
  * 左栏选候选、右栏预览，底部「取消 / 保存」；保存写进 {@code LyricManualMemory} 之后由加载链的
  * 第 0 级精确重取。打开即自动搜一次并选中第一条，这一点也和 folia 一致。</p>
  *
@@ -1668,7 +1668,7 @@ public final class LyricSearchOverlay extends NcmSheet {
     // ════════════════════════════ 预览块 ════════════════════════════
 
     /**
-     * 右下角那块歌词预览，照 {@code LyricPreviewPanel.tsx} 逐条搬。
+     * 右下角那块歌词预览，照参考实现的歌词预览面板逐条搬。
      *
      * <p>整块是<b>一个</b>即时绘制组件，里面没有子组件：它要画的是一句被逐字点亮、还会横向滚走、
      * 换行时上下两行各自淡入淡出的文字 —— 用组件树表达这套动画只会在每帧改一堆供应器，反而更难

@@ -93,14 +93,12 @@ public class WaveFileObuffer extends Obuffer {
     }
 
     /**
-     *
      */
     @Override
     public void clearBuffer() {
     }
 
     /**
-     *
      */
     @Override
     public void setStopFlag() {

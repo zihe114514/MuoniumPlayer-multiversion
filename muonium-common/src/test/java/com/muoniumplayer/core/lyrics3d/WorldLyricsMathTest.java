@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
+ * 3D 世界歌词纯函数的离线探针。
  * update/spawn 依赖 CloudMusic 全局态与相机，这里测可独立断言的几何与文字工具。
  */
 class WorldLyricsMathTest {
@@ -44,22 +45,23 @@ class WorldLyricsMathTest {
         assertEquals(1.0, len, 1e-9);
     }
 
-    // ==================== hashRand（入场动画的确定性相位） ====================
+    // ==================== seededJitter（入场动画的确定性相位） ====================
 
     @Test
-    void hashRandIsDeterministicInRange() {
-        float a = WorldLyricsState.hashRand(42, 1000L, 1, 7);
-        float b = WorldLyricsState.hashRand(42, 1000L, 1, 7);
+    void seededJitterIsDeterministicInRange() {
+        float a = WorldLyricsState.seededJitter(42, 1000L, 1, 7);
+        float b = WorldLyricsState.seededJitter(42, 1000L, 1, 7);
         assertEquals(a, b, 1e-7f, "同一帧同一字必须取同一个值（发光层与本体一致）");
         assertTrue(a >= -1f && a <= 1f);
     }
 
     @Test
-    void hashRandDiffersPerCharacterAndFrame() {
-        assertTrue(WorldLyricsState.hashRand(0, 1L, 1, 7) != WorldLyricsState.hashRand(1, 1L, 1, 7));
-        assertTrue(WorldLyricsState.hashRand(0, 1L, 1, 7) != WorldLyricsState.hashRand(0, 2L, 1, 7));
+    void seededJitterDiffersPerCharacterAndFrame() {
+        assertTrue(WorldLyricsState.seededJitter(0, 1L, 1, 7) != WorldLyricsState.seededJitter(1, 1L, 1, 7));
+        assertTrue(WorldLyricsState.seededJitter(0, 1L, 1, 7) != WorldLyricsState.seededJitter(0, 2L, 1, 7));
     }
 
+    // ==================== 拆词 / 换行（splitWords / wrap） ====================
 
     @Test
     void splitWordsGroupsCjkInPairs() {
@@ -107,6 +109,7 @@ class WorldLyricsMathTest {
         assertEquals("短句", lines.get(0));
     }
 
+    // ==================== 逐字出现时间轴（charTimes） ====================
 
     @Test
     void charTimesWithoutWordTimingAveragesAcrossWords() {
@@ -115,6 +118,7 @@ class WorldLyricsMathTest {
         long[] times = WorldLyricsState.charTimesOf(line, 3000L);
         // 4 个字 → 4 个时间点（2 词 × 每词 2 字）
         assertEquals(4, times.length);
+        // 同组两个字符共享同一个出现时间（整词出现）。
         // span = min(dur*0.75, 词数*330) = min(1500, 660) = 660ms → 两词时间 [0, 330]
         assertEquals(0L, times[0]);
         assertEquals(0L, times[1]);
@@ -135,10 +139,11 @@ class WorldLyricsMathTest {
         assertEquals(500L, times[1]);
     }
 
+    // ==================== 逐字形布局（buildGlyphs 的数学） ====================
 
     @Test
     void buildGlyphsRevealsCharactersProgressively() {
-        WorldLyricsState.Floating f = new WorldLyricsState.Floating(
+        WorldLyricsState.SpawnedLine f = new WorldLyricsState.SpawnedLine(
                 List.of("你好"), 0L, 1000L, 0, 0, 0, 0, 0, new long[0]);
         WorldLyricsState.PixelWidthOf width = s -> 12f;
         // 句子刚开始：还没到第一个字的出现点，0 个字形
@@ -162,7 +167,7 @@ class WorldLyricsMathTest {
 
     @Test
     void buildGlyphsWordPopScalesNewlySungWord() {
-        WorldLyricsState.Floating f = new WorldLyricsState.Floating(
+        WorldLyricsState.SpawnedLine f = new WorldLyricsState.SpawnedLine(
                 List.of("你好"), 0L, 1000L, 0, 0, 0, 0, 0,
                 new long[] {0L, 500L});
         WorldLyricsState.PixelWidthOf width = s -> 12f;
@@ -179,7 +184,7 @@ class WorldLyricsMathTest {
     void buildGlyphsFlashEntryFadesInsteadOfHardCut() {
         // 逐字歌词的入场：alpha 必须走 180ms smoothstep 淡入（旧实现 t*3 硬切，
         // 53ms 内从 0 冲到 1，观感是「生硬的单字出现」），并带下→上落位。
-        WorldLyricsState.Floating f = new WorldLyricsState.Floating(
+        WorldLyricsState.SpawnedLine f = new WorldLyricsState.SpawnedLine(
                 List.of("你"), 0L, 1000L, 0, 0, 0, 0, 0,
                 new long[] {0L});
         WorldLyricsState.PixelWidthOf width = s -> 12f;
@@ -202,7 +207,7 @@ class WorldLyricsMathTest {
     void exitCascadeFadesInAppearanceOrderAndShrinks() {
         // 出场级联（exiting=true）：alpha 随行淡出整体下降，先出现的字先衰减，
         // pop 向收拢下限靠拢；非出场态不得误触发级联。
-        WorldLyricsState.Floating f = new WorldLyricsState.Floating(
+        WorldLyricsState.SpawnedLine f = new WorldLyricsState.SpawnedLine(
                 List.of("你好"), 0L, 1000L, 0, 0, 0, 0, 0,
                 new long[] {0L, 400L});
         WorldLyricsState.PixelWidthOf width = s -> 12f;
@@ -228,7 +233,7 @@ class WorldLyricsMathTest {
     void entryBackStaysInBounds() {
         // 入场曲线边界：坐标系 y 向下为正 —— 起步在 baseline+8（下方），
         // ease-out-back 的过冲在 baseline−0.8（行上方）之内；缩放下限 0.6。
-        WorldLyricsState.Floating f = new WorldLyricsState.Floating(
+        WorldLyricsState.SpawnedLine f = new WorldLyricsState.SpawnedLine(
                 List.of("你"), 0L, 1000L, 0, 0, 0, 0, 0, new long[] {0L});
         WorldLyricsState.PixelWidthOf width = s -> 12f;
         float baseline = -WorldLyricsState.LINE_H / 2f;
@@ -251,9 +256,10 @@ class WorldLyricsMathTest {
         assertTrue(first.glyphs.get(0).pop >= 0.6f - 1e-4f, "入场缩放下限 0.6");
     }
 
+    // ==================== 文字布局常量 ====================
 
     @Test
-    void textLayoutConstantsMatch() {
+    void textLayoutConstantsMatchReference() {
         assertEquals(0xF7E1D7, WorldLyricsState.TEXT_RGB, "暖白偏粉的字色");
         assertEquals(10f, WorldLyricsState.LYRIC_SIZE, 1e-6f);
         assertEquals(11f, WorldLyricsState.LINE_H, 1e-6f);

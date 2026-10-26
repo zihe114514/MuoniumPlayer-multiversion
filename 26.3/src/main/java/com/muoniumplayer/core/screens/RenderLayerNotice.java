@@ -177,12 +177,13 @@ public final class RenderLayerNotice {
         List<String> lines = new ArrayList<>();
         lines.add(headline(status));
         if (status.mappedPlatform().startsWith("android")) {
-            // 2026-10-25 真机：MobileGL（26.3 当前的主流渲染器）在 GL 门对齐修复
-            // （SkijaGlRedirector 把 libskija 的 GL/EGL 导入重定向到它那扇门）之后 Skia
-            // 完整可用。修复前「MobileGlues + 关 ANGLE」的指引是旧结论，留在其余版本树；
-            // 26.3 不再给——否则会把用户从更主流、且已被适配的 MobileGL 引开。
-            lines.add("26.3 安卓请使用 MobileGL 渲染器（本模组已适配并实测）");
-            lines.add("Krypton 包装的渲染器可能弄坏世界贴图，不建议使用");
+            // 渲染器建议收进共享层按「识别到的渲染器 × 版本段」路由（见 RendererAdviceLines）：
+            // 默认仍是 MobileGL（2026-10-25 真机、GOT 门对齐后 Skia 完整可用），
+            // 识别到 MobileGlues / Mesa 渲染器时给对应的行，不再一刀切。
+            lines.addAll(com.muoniumplayer.core.rendering.RendererAdviceLines.of(
+                    com.muoniumplayer.core.rendering.RendererAdviceLines.GameBranch.RENDER_PEARL,
+                    com.muoniumplayer.core.rendering.MobileRendererEnv.current().kind().id,
+                    true));
         }
         if (!status.loaded()) {
             if (status.attempted().isEmpty() && SkijaHost.suspendReason() != null) {

@@ -27,7 +27,6 @@ import java.nio.ByteOrder;
  * Snell 近似那三行（{@code xR = 1 - d/thickness} → {@code thetaI = asin(xR²)} →
  * {@code thetaT = asin(sin(thetaI)/n)} → {@code edgeFactor = -tan(thetaT - thetaI)}）、
  * 三通道折射率（0.985 / 1.0 / 1.015）与菲涅尔的幂次，逐式搬自
- * （MIT，Copyright (c) 2025 ReStudio By RedxAx；见 LICENSE-REGLASS.txt）。
  * <b>没有</b>搬它的两件事：一是全屏 post pass（它 hook {@code GameRenderer#renderBlur} 并
  * {@code ci.cancel()}，我们在自己的 Skia 图层上按矩形画），二是「读同一张纹理当输入再写回去」
  * ——那条路在我们的合成分层里会直接读到自己。它把每块面板的 SDF 上传进 UBO 在一个 pass 里画完，

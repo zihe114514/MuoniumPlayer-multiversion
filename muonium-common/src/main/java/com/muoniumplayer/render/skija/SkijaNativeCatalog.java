@@ -217,6 +217,11 @@ final class SkijaNativeCatalog {
             addParentChain(ordered, properties.get("sun.boot.library.path"));
             addAll(ordered, splitPath(env.get("LD_LIBRARY_PATH"), ':'));
             addParentChain(ordered, properties.get("java.io.tmpdir"));
+            // 启动器原生目录追加在阶梯尾部：渲染器插件（MobileGlues / MobileGL / Zink 套件）的
+            // nativeLibraryDir 是启动器自己 dlopen 渲染器 .so 的地方，必然在链接器允许的
+            // 命名空间里——伴生包在那类目录全部落空时，这里是最后一个「结构性合法」的落点。
+            // 传的是目录本身，不玩父链（插件目录通常就在应用私有树的两三层深处）。
+            addAll(ordered, launcherNativeRoots(env));
         }
         // 游戏配置目录：桌面是正解，Android 上是那条被拒的路径，所以 Android 放最后兜一手
         // （别的启动器/容器运行时也许真允许，代价只是一次多余的试加载）
@@ -228,6 +233,37 @@ final class SkijaNativeCatalog {
             ordered.add(configRoot);
         }
         return dedup(ordered);
+    }
+
+    /**
+     * 启动器原生目录候选（只收真实存在的目录；caller 之后还会 dedup）。
+     *
+     * <ul>
+     *   <li>{@code POJAV_NATIVEDIR} / {@code FCL_NATIVEDIR}：两家启动器各自的 native 目录；</li>
+     *   <li>{@code POJAVEXEC_EGL} / {@code SDL_EGL_LIBRARY} / {@code LIB_MESA_NAME}：
+     *       渲染器插件注入的 EGL/GL 库路径——裸名时无从定位，带路径分隔符时取所在目录
+     *       （{@code SDL_EGL_LIBRARY} 两家都给绝对路径，是最稳的一条）。</li>
+     * </ul>
+     */
+    static List<File> launcherNativeRoots(Map<String, String> env) {
+        List<File> out = new ArrayList<>();
+        for (String key : new String[]{"POJAV_NATIVEDIR", "FCL_NATIVEDIR"}) {
+            String value = env.get(key);
+            if (value != null && !value.isBlank()) {
+                out.add(new File(value));
+            }
+        }
+        for (String key : new String[]{"POJAVEXEC_EGL", "SDL_EGL_LIBRARY", "LIB_MESA_NAME"}) {
+            String value = env.get(key);
+            if (value == null) {
+                continue;
+            }
+            int slash = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
+            if (slash > 0) {
+                out.add(new File(value.substring(0, slash)));
+            }
+        }
+        return out;
     }
 
     /** 把 {@code a/b/c} 这样的目录拆成 {@code a/b/c, a/b} 两级：命名空间允许的往往是上层那棵树。 */

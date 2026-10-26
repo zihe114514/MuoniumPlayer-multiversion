@@ -86,7 +86,7 @@ class WorldLyricsEndFlickerTest {
         WorldLyricsState.Frame frame = state.update(CAMERA, PARAMS, 1_000_000_000L, true, 1200L);
         assertEquals(1, frame.rows.size(), "行应显示");
         assertTrue(frame.rows.get(0).active);
-        WorldLyricsState.Floating first = frame.rows.get(0).floating;
+        WorldLyricsState.SpawnedLine first = frame.rows.get(0).floating;
 
         // 「歌放完」边界：pos 跳 0（player close），idx 从 0 变 -1 → 原行转淡出。
         WorldLyricsState.Frame gone = state.update(CAMERA, PARAMS, 1_100_000_000L, true, 0L);
@@ -133,7 +133,7 @@ class WorldLyricsEndFlickerTest {
     }
 
     @Test
-    void resumeAfterSustainedPauseReusesSameFloating() {
+    void resumeAfterSustainedPauseReusesSameSpawnedLine() {
         // 持续暂停转淡出后恢复播放：同句（idx 相同）应把淡出中的句子原样认回
         // （从 alpha 0 渐入），而不是销毁重建 —— 重建会闪。
         CloudMusic.lyrics.add(line(0L, "first"));

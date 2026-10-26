@@ -92,14 +92,12 @@ public class WaveStreamObuffer extends Obuffer {
     }
 
     /**
-     *
      */
     @Override
     public void clearBuffer() {
     }
 
     /**
-     *
      */
     @Override
     public void setStopFlag() {

@@ -1,5 +1,4 @@
 /**
- *
  */
 package repackage.org.kc7bfi.jflac.sound.spi;
 

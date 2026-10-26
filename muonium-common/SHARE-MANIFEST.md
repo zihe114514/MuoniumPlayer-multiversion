@@ -1,19 +1,9 @@
-# 共享层清单（tools/share-trees.py 生成，别手改统计数字）
-
-参考树：`26.3`。分类规则见 `tools/share-trees.py` 顶部注释。
-
-| 根 | 路径总数 | 进共享 | 留守 |
+# 共享层清单（tools/share-trees.py 生成，别手改统计数字） 参考树：`26.3`。分类规则见 `tools/share-trees.py` 顶部注释。 | 根 | 路径总数 | 进共享 | 留守 |
 | --- | --- | --- | --- |
 | `src/main/java` | 861 | 827 | 34 |
 | `src/main/resources` | 55 | 52 | 2 + 清垃圾 1 |
 | `src/test/java` | 121 | 108 | 13 |
-| 合计 | | 987 | 49 |
-
-## 留在各棵树的文件（版本相关，改动要逐树确认）
-
-### `src/main/java`
-
-| 文件 | 形态 | 存在树 | 原因 |
+| 合计 | | 987 | 49 | ## 留在各棵树的文件（版本相关，改动要逐树确认） ### `src/main/java` | 文件 | 形态 | 存在树 | 原因 |
 | --- | --- | --- | --- |
 | `com/muoniumplayer/MuoniumPlayerClient.java` | FORK | 五树都有 | KeyMapping 构造（KEYSYM vs KEYBOARD scancode）、按键类别 API 世代、MC_VERSION 常量 |
 | `com/muoniumplayer/compat/gl/GL11.java` | FORK | 五树都有 | LWJGL 2/3 的 GL 常量与方法签名差异 |
@@ -46,21 +36,14 @@
 | `com/muoniumplayer/mixin/FramebufferMixin.java` | ONLY | 1.21.11 | mixin 注入点按版本独有，本就各树一份 |
 | `com/muoniumplayer/mixin/GlSurfaceMixin.java` | ONLY | 26.2、26.3 | mixin 注入点按版本独有，本就各树一份 |
 | `com/muoniumplayer/mixin/MouseScrollMixin.java` | ONLY | 26.3 | mixin 注入点按版本独有，本就各树一份 |
+| `com/muoniumplayer/mixin/MouseButtonStateMixin.java` | ONLY | 26.3 | mixin 注入点按版本独有（26.3 的 SDL 后端里 MouseHandler 三布尔在 Screen 打开期间不更新，按住状态只能自投），本就各树一份 |
 | `com/muoniumplayer/party/net/MpPayloads.java` | ONLY | 1.21.1、1.21.11、26.2、26.3 | 一起听的载荷包装按各树网络通道 API 而活，1.20.1 那棵用的是另一套 |
 | `com/muoniumplayer/render/skija/SkijaHost.java` | FORK | 五树都有 | GlStateManager 类路径（1.20.1 blaze3d.platform / 1.21.11+ renderpearl.backend.opengl）与 GpuDevice 归属 |
 | `com/muoniumplayer/api/impl/GLStateManagerImpl.java` | FORK | 五树都有 | GL 状态机类路径与矩阵栈 API 差异 |
-| `com/muoniumplayer/api/impl/OpenAPIImpl.java` | FORK | 五树都有 | 取屏幕/画布/字体度量的 API 差异 |
-
-### `src/main/resources`
-
-| 文件 | 形态 | 存在树 | 原因 |
+| `com/muoniumplayer/api/impl/OpenAPIImpl.java` | FORK | 五树都有 | 取屏幕/画布/字体度量的 API 差异 | ### `src/main/resources` | 文件 | 形态 | 存在树 | 原因 |
 | --- | --- | --- | --- |
 | `assets/muonium/lang/en_us.json` | FORK | 五树都有 | lang 文件的键位随版本 API 变动，留各树 |
-| `assets/muonium/lang/zh_cn.json` | FORK | 五树都有 | lang 文件的键位随版本 API 变动，留各树 |
-
-### `src/test/java`
-
-| 文件 | 形态 | 存在树 | 原因 |
+| `assets/muonium/lang/zh_cn.json` | FORK | 五树都有 | lang 文件的键位随版本 API 变动，留各树 | ### `src/test/java` | 文件 | 形态 | 存在树 | 原因 |
 | --- | --- | --- | --- |
 | `com/muoniumplayer/LoaderDependencyStaticTest.java` | ONLY | 1.21.11、26.2、26.3 | 只在该树存在（移植进度 / 版本独有断言） |
 | `com/muoniumplayer/MultiLoaderStaticTest.java` | ONLY | 1.20.1、1.21.11、26.2、26.3 | 只在该树存在（移植进度 / 版本独有断言） |
@@ -74,11 +57,7 @@
 | `com/muoniumplayer/render/skija/Port262StaticTest.java` | ONLY | 26.2 | 只在该树存在（移植进度 / 版本独有断言） |
 | `com/muoniumplayer/render/skija/Port263StaticTest.java` | ONLY | 26.3 | 只在该树存在（移植进度 / 版本独有断言） |
 | `com/muoniumplayer/render/skija/RasterFrames.java` | ONLY | 1.21.11 | 只在该树存在（移植进度 / 版本独有断言） |
-| `com/muoniumplayer/render/skija/RenderLayerStaticTest.java` | FORK | 五树都有 | 渲染层按版本断言不同的宿主 API |
-
-## 注释归一的文件（代码逐字节相同，统一取 26.3 的注释）
-
-* `com/muoniumplayer/core/MuoniumPlayerExtension.java`（与 26.3 不同的树：1.20.1、1.21.1、1.21.11）
+| `com/muoniumplayer/render/skija/RenderLayerStaticTest.java` | FORK | 五树都有 | 渲染层按版本断言不同的宿主 API | ## 注释归一的文件（代码逐字节相同，统一取 26.3 的注释） * `com/muoniumplayer/core/MuoniumPlayerExtension.java`（与 26.3 不同的树：1.20.1、1.21.1、1.21.11）
 * `com/muoniumplayer/core/MusicHotkeys.java`（与 26.3 不同的树：1.20.1、1.21.1、1.21.11）
 * `com/muoniumplayer/core/management/FontManager.java`（与 26.3 不同的树：1.21.11）
 * `com/muoniumplayer/core/management/UiFontLibrary.java`（与 26.3 不同的树：1.21.11）
@@ -150,19 +129,8 @@
 * `repackage/processing/sound/WsolaStretchSample.java`（与 26.3 不同的树：1.21.11）
 * `repackage/processing/sound/WsolaTimeStretch.java`（与 26.3 不同的树：1.21.11）
 * `com/muoniumplayer/api/impl/VanillaFont.java`（与 26.3 不同的树：1.20.1、1.21.1、1.21.11）
-* `com/muoniumplayer/core/screens/hud/HudSettingsTaxonomyStaticTest.java`（与 26.3 不同的树：1.20.1、1.21.1、1.21.11、26.2）
-
-## 分类判「该留守」但事后收编进来的
-
-* `com/muoniumplayer/testsupport/ProjectPaths.java` —— 测试路径帮助类：加载器子工程名靠 loaderDir() 现场探（1.20.1 是 forge/，其余 neoforge/），于是能收成一份；共享层测试靠它同时定位「共享根 + 本树根」。
-* 同一批还新增了 `com/muoniumplayer/SharedLayoutStaticTest.java`（共享层形状守卫），它本来就只该有一份。
-
-## 改这里的规矩
-
-* 共享层是五棵树的同一份编译输入：改一次，五棵树同时生效。
-* 共享层里不许出现 `net.fabricmc` / `net.neoforged` / `net.minecraftforge` / `cpw.mods`，
-  也不许直接调用只在新版本存在的 MC API —— 那类代码进各树的 `compat/`。
-* 需要版本差异时，在 `compat/` 加一个方法（各树同名不同实现），共享层只调同名方法；
-  别把整个文件从共享层搬回树里，那等于把同步负担又请回来了。
-* 搬完必须跑 `python tools/share-trees.py verify`。
-
+* `com/muoniumplayer/core/screens/hud/HudSettingsTaxonomyStaticTest.java`（与 26.3 不同的树：1.20.1、1.21.1、1.21.11、26.2） ## 分类判「该留守」但事后收编进来的 * `com/muoniumplayer/testsupport/ProjectPaths.java` —— 测试路径帮助类：加载器子工程名靠 loaderDir() 现场探（1.20.1 是 forge/，其余 neoforge/），于是能收成一份；共享层测试靠它同时定位「共享根 + 本树根」。
+* 同一批还新增了 `com/muoniumplayer/SharedLayoutStaticTest.java`（共享层形状守卫），它本来就只该有一份。 ## 改这里的规矩 * 共享层是五棵树的同一份编译输入：改一次，五棵树同时生效。
+* 共享层里不许出现 `net.fabricmc` / `net.neoforged` / `net.minecraftforge` / `cpw.mods`， 也不许直接调用只在新版本存在的 MC API —— 那类代码进各树的 `compat/`。
+* 需要版本差异时，在 `compat/` 加一个方法（各树同名不同实现），共享层只调同名方法； 别把整个文件从共享层搬回树里，那等于把同步负担又请回来了。
+* 搬完必须跑 `python tools/share-trees.py verify`。 

@@ -54,6 +54,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -62,7 +63,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * @author MuoniumPlayer Contributors
  * @since 6/16/2023 9:34 AM
  * <p>
  * S3 适配：仅保留音频状态机 + 播放线程 + 下载/解码链（play/pause/seek/next/prev/stop/loop/shuffle）。
@@ -5334,6 +5334,9 @@ public class CloudMusic implements SharedConstants {
         // 先清缓存、后删钉住记录：缓存键里带着钉住的那一条，记录还在才算得出那个键。
         LyricLoadService.invalidateAll(music);
         if (dropManualPin) LyricManualMemory.clear(music.getStableKey());
+        // 用户显式自救 = 负缓存失效信号：不移除的话 loadLyric 入口会被
+        // 负缓存守卫直接拦下，「重取歌词/换来源/钉词」三条路全部空转
+        FAILED_LYRIC_KEYS.remove(music.getStableKey());
         loadLyric(music, session);
     }
 
@@ -5560,6 +5563,38 @@ public class CloudMusic implements SharedConstants {
         return hasAvailableLyrics && showTranslationEnabled;
     }
 
+    // ── 歌词负缓存（失败结果本会话内不再重发） ─────────────────────────────
+
+    /**
+     * 本会话内「歌词确定拿不到」的曲目键：加载失败（或结果确认为空）后登记，
+     * 同键的后续请求直接短路 —— 网络异常/无词的歌不必每帧重试都打一遍接口。
+     *
+     * <p>容量封顶（LRU 64）：负缓存是会话级的纠错手段而不是事实记录，放满后
+     * 淘汰最老的条目即可 —— 真没词的歌被挤出后无非是再失败一次、再登记回来。</p>
+     *
+     * <p>只在 {@code loadLyric} 最外圈设卡，不深入解析链内部：成功（含落盘缓存
+     * 命中）即移除登记；「重取歌词」「换来源」「钉词」这类用户显式动作在
+     * {@code reloadLyrics} 里主动移除登记解禁。守卫本身不做超时重试 ——
+     * 会话内失败过就不再自动重发。</p>
+     */
+    private static final Map<String, Boolean> FAILED_LYRIC_KEYS =
+            Collections.synchronizedMap(new LinkedHashMap<String, Boolean>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Boolean> eldest) {
+                    return size() > 64;
+                }
+            });
+
+    /** 这一首的歌词加载已在本会话内确认失败（负缓存命中）？测试用。 */
+    static boolean isLyricLoadFailed(String trackKey) {
+        return trackKey != null && FAILED_LYRIC_KEYS.containsKey(trackKey);
+    }
+
+    /** 供测试：清空歌词负缓存（重置会话纠错状态）。 */
+    static void resetLyricNegativeCacheForTest() {
+        FAILED_LYRIC_KEYS.clear();
+    }
+
     public static void loadLyric(Music music, PlaybackSession session) {
         loadLyric(music, session, null);
     }
@@ -5567,6 +5602,11 @@ public class CloudMusic implements SharedConstants {
     private static void loadLyric(Music music, PlaybackSession session, File playbackFile) {
         final long songId = music.getId();
         final String trackKey = music.getStableKey();
+        if (trackKey != null && FAILED_LYRIC_KEYS.containsKey(trackKey)) {
+            // 负缓存命中：这首歌刚才已经完整试过一轮且拿不到词，本会话内不再重发。
+            // 时间轴归属照旧由会话校验链路推进（失败那次已经提交过空结果）。
+            return;
+        }
         final File embeddedLyricFile = music.isCloudSong()
                 ? LyricLoadService.resolveEmbeddedLyricFile(playbackFile) : null;
 
@@ -5593,6 +5633,15 @@ public class CloudMusic implements SharedConstants {
             final List<LyricLine> committedLyrics = result.lines == null
                     ? Collections.<LyricLine>emptyList() : result.lines;
             session.pendingLyrics = committedLyrics;
+            if (committedLyrics.isEmpty()) {
+                // 结果确认为空（解析链给出了空、或失败兜底）：登记负缓存，
+                // 本会话内同一首不再重发请求。走空结果的上屏流程不可省 ——
+                // 归属键要推进到这首歌，歌词区才能显示「暂无歌词」而不是空白。
+                if (trackKey != null) FAILED_LYRIC_KEYS.put(trackKey, Boolean.TRUE);
+            } else {
+                // 上一轮失败过、这一轮拿到了词（用户换了来源/重取）：解除登记。
+                FAILED_LYRIC_KEYS.remove(trackKey);
+            }
             MultiThreadingUtil.runOnMainThread(() -> applyLyricTimeline(session, committedJson, committedLyrics));
 
             // 这一首的歌词已经落定，顺手把队列里下一首也解析好落盘。弱网下这几秒的提前量，

@@ -5,8 +5,6 @@ import com.muoniumplayer.api.features.ExtensionModule;
 import com.muoniumplayer.api.features.ExtensionWidget;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2026/4/1 10:21
  */
 @UtilityClass
 public class WidgetWrapper {

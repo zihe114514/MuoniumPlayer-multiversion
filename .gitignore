@@ -116,7 +116,7 @@ error-report-*/
 
 # ---- 第三方上游源码 clone（自带 .git，参考用，不入本库）----
 /IMBlocker/
-# 本项目 背景 shader 移植期的上游 clone（AGPL 参考实现，仅查阅）
+# 背景 shader 移植期的上游 clone（AGPL 参考实现，仅查阅）
 /_folia_ref/
 
 # ---- buildAll 发布产物的第二份落地目录（与 /dist/ 同质，每份一百多 MB）----
@@ -137,7 +137,6 @@ docs/维护总纲-网站-分发仓库-汽水后端.md
 docs/审查报告-三链路互扰.md
 docs/审查报告-近期改动-按严重程度.md
 docs/AUTOMIX智能过渡对比-Folia-vs-MuoniumPlayer.md
-docs/AUTOMIX智能过渡对比--vs-MuoniumPlayer.md
 docs/歌词自动匹配方案对比-Folia-vs-MuoniumPlayer.md
 docs/Spotify音源可行性与文本歌单导入方案.md
 docs/Folia全屏歌词背景移植.md
@@ -145,10 +144,8 @@ docs/绘光文字效果移植方案.md
 docs/绘光歌词样式研究-folia-lumiere.md
 docs/QQ音乐协议能力补齐-QQMusicApi对照.md
 docs/酷狗概念版API对等.md
-docs/酷狗歌单搜索.md
 docs/一起听房间Automix-实现方案.md
 docs/直连房间-实现方案.md
-docs/哔哩哔哩链路移植方案-.md
 docs/一起听全链路说明.html
 docs/一起听v2-使用指导.md
 docs/HUD歌词发光配置重做.md

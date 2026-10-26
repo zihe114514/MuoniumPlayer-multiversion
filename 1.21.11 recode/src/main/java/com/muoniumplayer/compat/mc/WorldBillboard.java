@@ -19,14 +19,17 @@ import net.minecraft.resources.Identifier;
 import org.joml.Matrix4f;
 
 /**
+ * 3D 世界歌词的宿主绘制实现 —— <b>公告牌矩阵、像素字与逐字平滑字形三条通路</b>。
  *
  * <h2>两条绘制通道</h2>
  * <ul>
+ *   <li>原版风格 {@link #drawPixelText}：原版 vanillaText 口径 —— 阴影按原版
  *       规则拆开单独画在字前，本体 {@code drawInBatch(SEE_THROUGH, FULL_BRIGHT)}，
  *       画完立刻 endBatch。</li>
  *   <li>现代化风格 {@link #drawSmoothGlyph}：查 {@link LyricGlyphAtlas}
  *       （Skija 5× 超采样字形 + TextGlow 三层高斯发光烘在同一张格里），以原版
  *       {@code RenderType.textSeeThrough(页纹理)} 发一个 POSITION_COLOR_TEX_LIGHTMAP
+ *       四顶点 quad —— 逐字 textured quad，wiggle 的旋转/缩放
  *       绕字中心落进顶点矩阵；页纹理强制 LINEAR（见 PageTexture），超采样不被
  *       NEAREST 采样毁掉。</li>
  * </ul>
@@ -55,6 +58,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private WorldBillboard() {
     }
 
+    /** 事件入口（worldRenderEnd 的矩阵在 Bridge 里已设好）。 */
     public void begin(PoseStack poseStack, MultiBufferSource.BufferSource buffers,
                       double camX, double camY, double camZ) {
         this.poseStack = poseStack;
@@ -84,6 +88,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     public void pushBillboard(double rx, double ry, double rz,
                               double yawDeg, double pitchDeg, float scale) {
         if (poseStack == null) return;
+        // 公告牌矩阵 push（上游 ModernWorld.push 口径）：
         //   translate(rx,ry,rz) → rotateY(-yaw) → rotateX(pitch) → scale(-s,-s,s)
         poseStack.pushPose();
         Matrix4f mat = poseStack.last().pose();
@@ -104,7 +109,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         if (poseStack == null || buffers == null || text == null || text.isEmpty()) return;
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.font == null) return;
-        // DangoModernGfx.vanillaText 一比一：阴影拆开单独画，本体 false shadow
+        // 原版文字阴影拆分策略：阴影拆开单独画，本体 false shadow
         if (shadow) {
             int shadowColor = ((argb & 0xFCFCFC) >> 2) | (argb & 0xFF000000);
             drawVanilla(mc, text, x + 1f, y + 1f, shadowColor);
@@ -116,6 +121,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         }
     }
 
+    /** 像素字：SEE_THROUGH + FULL_BRIGHT + 画完 endBatch。 */
     private void drawVanilla(Minecraft mc, String text, float x, float y, int argb) {
         PoseStack.Pose pose = poseStack.last();
         Matrix4f mat = pose.pose();
@@ -130,6 +136,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      *
      * <p>坐标口径：传进来的 (x, y) 是字形<b>顶点</b>（字位框左上角，设计像素），
      * 对应格内 (inkX, inkY)。quad 覆盖整格（含发光留白），尺寸 = 格框 ÷ BAKE_SCALE。
+     * wiggle 四量绕<b>字中心</b>（半个 advance × 半个字位框）旋转/缩放 —— 与上游
      * withWiggle 的 translate(cx,cy)→rotate→scale→translate(-cx,-cy) 同构；dx/dy 已由
      * 渲染器加进 x/y。</p>
      *
@@ -202,6 +209,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         float u1 = (cell.x + cell.w) / pageF - halfTexel;
         float v1 = (cell.y + cell.h) / pageF - halfTexel;
 
+        // 绕字中心（行内坐标：半个 advance × 半个字位框）的旋转/缩放（上游 withWiggle 同构）
         float cx = x + (cell.advance * inv) * 0.5f;
         float cy = y + (cell.inkHeight * inv) * 0.5f;
         boolean transformed = rot != 0f || sc != 1f;

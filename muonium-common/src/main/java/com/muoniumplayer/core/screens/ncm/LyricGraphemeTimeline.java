@@ -6,7 +6,7 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * 行内逐字形（grapheme）时间轴。对应 Folia 的 {@code src/utils/lyrics/graphemeTiming.ts}。
+ * 行内逐字形（grapheme）时间轴。上游参考实现的同名能力在本仓库的 Java 移植。
  *
  * <h3>为什么需要它</h3>
  * <p>解析层给出的最小单位是<b>音节</b>（{@link LyricLine.Word}）。一个音节在中文里是一个词、
@@ -18,7 +18,7 @@ import java.util.List;
  * 音节内按字形均摊、以及把音节时间<b>反向映射回整行</b>（补齐词表里没有的空格与标点）。</p>
  *
  * <h3>为什么用 {@link BreakIterator}</h3>
- * <p>Folia 用 {@code Intl.Segmenter} 按 Unicode 扩展字形簇切分，{@code BreakIterator} 的
+ * <p>上游用 {@code Intl.Segmenter} 按 Unicode 扩展字形簇切分，{@code BreakIterator} 的
  * {@code getCharacterInstance()} 正是 Java 的对应物（都按 UAX #29）。手写「码点 + 组合记号」
  * 会漏掉 emoji ZWJ 序列、区域指示符、韩文音节簇，而这些恰恰是歌词里会出现的字符。</p>
  *

@@ -1,8 +1,6 @@
 package com.muoniumplayer.core.rendering.animation.spring;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/12/11 23:33
  */
 public class SpringParams {
     double mass = 1.0;

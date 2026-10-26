@@ -209,7 +209,6 @@ class LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public void readAllocation(Bitstream stream, Header header, Crc16 crc) throws DecoderException {
@@ -228,7 +227,6 @@ class LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public void readScaleFactor(Bitstream stream, Header header) {
@@ -236,7 +234,6 @@ class LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public boolean readSampleData(Bitstream stream) {
@@ -251,7 +248,6 @@ class LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public boolean put_next_sample(int channels, SynthesisFilter filter1, SynthesisFilter filter2) {
@@ -277,7 +273,6 @@ class LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public void readAllocation(Bitstream stream, Header header, Crc16 crc) throws DecoderException {
@@ -285,7 +280,6 @@ class LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public void readScaleFactor(Bitstream stream, Header header) {
@@ -296,7 +290,6 @@ class LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public boolean readSampleData(Bitstream stream) {
@@ -304,7 +297,6 @@ class LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public boolean put_next_sample(int channels, SynthesisFilter filter1, SynthesisFilter filter2) {
@@ -346,7 +338,6 @@ class LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public void readAllocation(Bitstream stream, Header header, Crc16 crc) {
@@ -369,7 +360,6 @@ class LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public void readScaleFactor(Bitstream stream, Header header) {
@@ -378,7 +368,6 @@ class LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public boolean readSampleData(Bitstream stream) {
@@ -390,7 +379,6 @@ class LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public boolean put_next_sample(int channels, SynthesisFilter filter1, SynthesisFilter filter2) {

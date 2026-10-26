@@ -821,7 +821,7 @@ public final class SkijaFluidBackground {
         return (seedFor(currentKey) & 1L) == 0L ? 0f : 1f;
     }
 
-    // ==================== 层叠组合（对齐 本项目 的多层合成） ====================
+    // ==================== 层叠组合（对齐 本项目的多层合成） ====================
     //
     // folia 原版的背景是单槽多层：LatentBackground = mesh gradient（不透明）→
     // dithering（mixBlendMode: soft-light + tuning.ditheringOpacity）→ 底色遮罩；

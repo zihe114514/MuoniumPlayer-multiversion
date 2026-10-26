@@ -28,7 +28,6 @@ public class Sound {
 	}
 
 	/**
-	 * 
 	 * @param sampleRate
 	 *            the sample rate to be used by the synthesis engine (default 44100)
 	 * 合成引擎使用的采样率（默认 44100）

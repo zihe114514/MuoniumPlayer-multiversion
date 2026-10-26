@@ -375,7 +375,7 @@ public final class HudSettingsModel {
     }
 
 
-    // ---- 绘光关键字着色预置方案（folia keywordColors 的 MC 化：choice 循环方案） ----
+    // ---- 绘光关键字着色预置方案（关键字染色的 MC 化：choice 循环方案） ----
     private static final String KW_PRESET_OFF = "关闭";
     private static final String KW_PRESET_SAKURA = "樱红";
     private static final String KW_PRESET_AZURE = "苍蓝";
@@ -707,10 +707,11 @@ public final class HudSettingsModel {
      * 手机档把「真玻璃材质」整组锁死：条目置灰、点击无效。
      *
      * <p>玻璃主题本身已在 {@code NCMTheme} 挡住（真玻璃预设不可选），这里锁的是那些
-     * 只剩摆设意义的材质参数。桌面（{@code GlassMobileTier.active()} 为 false）不受影响。</p>
+     * 只剩摆设意义的材质参数。Mesa 真驱动渲染器的实验档（hardDisabled=false）不锁——
+     * 用户要能点到「真玻璃（实验）」那个开关；桌面同样不锁。</p>
      */
     private static void lockGlassGroup(Category[] categories) {
-        if (!com.muoniumplayer.core.rendering.GlassMobileTier.active()) return;
+        if (!com.muoniumplayer.core.rendering.GlassMobileTier.hardDisabled()) return;
         for (Category category : categories) {
             for (Group group : category.groups) {
                 if (!"真玻璃材质".equals(group.title)) continue;
@@ -838,7 +839,7 @@ public final class HudSettingsModel {
                                 slider(HudSetting.WORLD_LYRICS_SCALE, "整体缩放。1.0 时一行约 0.9 方块高。",
                                         () -> HudConfig.worldLyricsEnabled)),
                         new Group("字体与文本", HudSettingsIcons.SUBTITLES,
-                                toggle("Stay on screen", "转开视角时，歌词沿离视线最近的方向平滑滑回视野边缘（临界阻尼弹簧，不会突然跳）。离镜头的距离不变。",
+                                toggle("回屏保持", "转开视角时，歌词沿离视线最近的方向平滑滑回视野边缘（临界阻尼弹簧，不会突然跳）。离镜头的距离不变。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.worldLyricsStayOnScreen;
@@ -849,7 +850,7 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         }, () -> HudConfig.worldLyricsEnabled),
-                                toggle("Above ground", "歌词中心最低只到眼睛下方半格，不会沉进地面。跳跃/飞行时地板高度平滑跟随。",
+                                toggle("不沉入地面", "歌词中心最低只到眼睛下方半格，不会沉进地面。跳跃/飞行时地板高度平滑跟随。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.worldLyricsAboveGround;
@@ -884,7 +885,7 @@ public final class HudSettingsModel {
                                         }, () -> HudConfig.worldLyricsEnabled),
                                 color("文字颜色", "3D 歌词的文字颜色，选白色就是纯白。点击用取色器自定。",
                                         ColorTarget.WORLD_LYRICS),
-                                choice("关键字染色", "绘光动效的关键字着色方案：循环切换预置的词色组合，染色只作用于完整命中「词」的字（folia keywordColors）。关闭时整句同色。",
+                                choice("关键字染色", "绘光动效的关键字着色方案：循环切换预置的词色组合，染色只作用于完整命中「词」的字。关闭时整句同色。",
                                         new Supplier<String>() {
                                             public String get() {
                                                 return keywordPresetLabel();
@@ -1453,6 +1454,23 @@ public final class HudSettingsModel {
                                         }, new Runnable() {
                                             public void run() {
                                                 HudConfig.glassSurfaceEditors = !HudConfig.glassSurfaceEditors;
+                                                saveNow();
+                                            }
+                                        }),
+                                toggle("真玻璃（实验·Mesa 渲染器）", "只在手机上用 Mesa 真驱动渲染器"
+                                        + "（Zink / VirGL / Freedreno / Panfrost）时出现。"
+                                        + "这些渲染器不是 GL 翻译层，真玻璃的采集与折射在语义上与桌面同族，"
+                                        + "但性能未经真机标定，默认关闭——卡了就关。"
+                                        + "MobileGlues / MobileGL 等翻译层渲染器上这一项无效。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.glassMobileExperimental;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.glassMobileExperimental = !HudConfig.glassMobileExperimental;
+                                                com.muoniumplayer.core.rendering.GlassMobileTier
+                                                        .setUserOptIn(HudConfig.glassMobileExperimental);
                                                 saveNow();
                                             }
                                         }),

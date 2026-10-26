@@ -16,7 +16,6 @@ import com.muoniumplayer.render.skija.SkijaGfx;
 import java.time.Duration;
 
 /**
- * @author MuoniumPlayer Contributors
  * @since 2024/9/17 22:32
  */
 public class ScrollText implements SharedConstants {

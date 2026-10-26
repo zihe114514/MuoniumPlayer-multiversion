@@ -6,7 +6,6 @@ import com.muoniumplayer.core.utils.math.Mth;
 import java.awt.*;
 
 /**
- * @author MuoniumPlayer Contributors
  * @since 2023/12/30
  */
 public class Interpolations {

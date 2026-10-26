@@ -46,8 +46,6 @@ import java.util.function.Supplier;
 import com.muoniumplayer.render.skija.SkijaGfx;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/10/16 19:47
  */
 public class NCMScreen extends ExtensionScreen implements SharedConstants, SharedRenderingConstants {
 

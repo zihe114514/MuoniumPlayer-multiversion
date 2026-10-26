@@ -38,8 +38,6 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/11/4 22:30
  */
 public class HomePanel extends NCMPanel {
 

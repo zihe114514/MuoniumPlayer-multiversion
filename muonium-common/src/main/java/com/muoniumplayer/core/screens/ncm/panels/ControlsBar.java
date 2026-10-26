@@ -45,8 +45,6 @@ import java.util.List;
 
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/10/17 21:24
  */
 public class ControlsBar extends NCMPanel {
 

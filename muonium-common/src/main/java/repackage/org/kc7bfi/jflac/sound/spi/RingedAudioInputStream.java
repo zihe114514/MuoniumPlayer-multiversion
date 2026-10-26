@@ -180,7 +180,6 @@ public abstract class RingedAudioInputStream extends AudioInputStream {
     }
 
     /**
-     *
      */
     /*
     protected void makeSpace() {

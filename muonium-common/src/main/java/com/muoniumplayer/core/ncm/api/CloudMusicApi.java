@@ -19,8 +19,6 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/7/2 19:56
  */
 @UtilityClass
 public class CloudMusicApi {

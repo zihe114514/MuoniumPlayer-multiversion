@@ -3,8 +3,6 @@ package com.muoniumplayer.core.rendering.ui.widgets;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/7/8 20:28
  */
 public class RoundedRectWidget extends AbstractWidget<RoundedRectWidget> {
 

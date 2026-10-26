@@ -23,14 +23,12 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2026/3/31 22:28
  */
 public class MuoniumPlayerExtension {
 
     public static final String NAME = "MuoniumPlayer";
     public static final String AUTHOR = "MuoniumPlayer Contributors";
-    public static final String VERSION = "2.0.0";
+    public static final String VERSION = "2.1.0";
 
     @Getter
     private static final MuoniumPlayerExtension instance = new MuoniumPlayerExtension();

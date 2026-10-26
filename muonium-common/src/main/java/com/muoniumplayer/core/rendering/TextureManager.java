@@ -10,8 +10,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2026/4/1 09:22
  */
 public class TextureManager {
 

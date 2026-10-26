@@ -19,6 +19,7 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
 
 /**
+ * 3D 世界歌词的树侧桥 —— <b>世界渲染结束事件入口（Fabric LAST / NeoForge AFTER_LEVEL）</b>。
  *
  * <p>世界渲染结束时（Fabric {@code WorldRenderEvents.END_MAIN} / NeoForge
  * {@code RenderLevelStageEvent.AfterLevel}）：</p>
@@ -29,6 +30,7 @@ import org.lwjgl.opengl.GL13;
  *   <li>把原版视图矩阵临时换成<b>单位矩阵</b>（仍是 JOML Matrix4fStack），
  *       画完换回来 —— 镜头转向只算这一次；</li>
  *   <li>设好世界文字的 GL 状态（透明混合、关深度测试、关剔除），等价
+ *       上游 {@code ModernWorld.begin → worldState} 的口径；</li>
  *   <li>调 common 渲染编排器画所有句子；</li>
  *   <li>恢复视图矩阵与状态。</li>
  * </ol>
@@ -78,6 +80,7 @@ public final class WorldLyricsBridge {
     static volatile WorldLyricsSettings currentSettings;
 
     /**
+     * 世界渲染结束事件入口（Fabric LAST / NeoForge AFTER_LEVEL）。
      * 由两个加载器的 END_MAIN/AfterLevel 事件调用，无参数 —— 相机与矩阵自己取。
      */
     public static void worldRenderEnd() {
@@ -89,7 +92,7 @@ public final class WorldLyricsBridge {
             Camera camera = mc.gameRenderer.getMainCamera();
             if (camera == null) return;
 
-            // 1. 镜头转向自己算（ModernDango 一比一）
+            // 1. 镜头转向自己算（相机朝向独立计算）
             Matrix4f basePose = new Matrix4f()
                     .rotateX((float) Math.toRadians(camera.xRot()))
                     .rotateY((float) Math.toRadians(camera.yRot() + 180.0));
@@ -110,6 +113,7 @@ public final class WorldLyricsBridge {
             try {
                 renderInner(basePose, mc, camera);
             } finally {
+                // 恢复状态：视图矩阵 + 我们改过的 GL 状态（上游用 GlState 快照恢复，
                 // 这里逐项还原等价的几项，避免泄漏给本帧后续的绘制）。
                 GlCompat.depthTest(true);
                 GlCompat.depthMask(true);
@@ -150,6 +154,7 @@ public final class WorldLyricsBridge {
                     + com.muoniumplayer.core.ncm.music.CloudMusic.lyricsTrackKey + "），开始渲染");
         }
 
+        // 上游 ModernWorld.begin 口径：Fixed.reset(basePose)。
         // 本仓库没有自建矩阵栈：宿主的 PoseStack 原点就是 basePose —— 用一个
         // 专用 PoseStack，pose() 直接填 basePose，push/pop 由 WorldBillboard 自己管。
         PoseStack poseStack = new PoseStack();
@@ -174,6 +179,7 @@ public final class WorldLyricsBridge {
         }
     }
 
+    /** GlStateManager 同步的 GL 状态封装（上游 Gl 的最小子集）。 */
     private static final class GlCompat {
         static void blend(boolean on) {
             if (on) GlStateManager._enableBlend();

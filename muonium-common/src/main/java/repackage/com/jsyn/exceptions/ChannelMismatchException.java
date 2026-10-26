@@ -28,7 +28,6 @@ public class ChannelMismatchException extends RuntimeException {
     }
 
     /**
-	 * 
 	 */
     private static final long serialVersionUID = -5345224363387498119L;
 

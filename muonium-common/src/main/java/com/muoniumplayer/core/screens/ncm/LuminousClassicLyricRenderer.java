@@ -7,7 +7,7 @@ import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.settings.HudConfig;
 
 /**
- * 「流光 · 原版」：对 本项目 {@code classic} 可视化器的更忠实移植。
+ * 「流光 · 原版」：对本项目 {@code classic} 可视化器的更忠实移植。
  *
  * <p>与项目里现有的 {@link LuminousLyricRenderer} 不同，这一套不是把每个字都画成独立进度条，
  * 而是完整保留参考实现的字词状态机：等待时字词在画面外保持低缩放和高旋转，临近演唱时飞入，

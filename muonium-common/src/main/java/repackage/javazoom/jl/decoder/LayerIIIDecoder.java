@@ -437,7 +437,6 @@ final class LayerIIIDecoder implements FrameDecoder {
     }
 
     /**
-     *
      */
     private void get_scale_factors(int ch, int gr) {
         int sfb, window;
@@ -547,7 +546,6 @@ final class LayerIIIDecoder implements FrameDecoder {
     private final int[] newSlen = new int[4];
 
     /**
-     *
      */
     private void getLSFScaleData(int ch, int gr) {
 
@@ -645,7 +643,6 @@ final class LayerIIIDecoder implements FrameDecoder {
     }
 
     /**
-     *
      */
     private void getLSFScaleFactors(int ch, int gr) {
         int m = 0;
@@ -691,7 +688,6 @@ final class LayerIIIDecoder implements FrameDecoder {
     }
 
     /**
-     *
      */
     int[] x = {0};
     int[] y = {0};
@@ -789,7 +785,6 @@ final class LayerIIIDecoder implements FrameDecoder {
     }
 
     /**
-     *
      */
     private void i_stereo_k_values(int is_pos, int io_type, int i) {
         if (is_pos == 0) {
@@ -805,7 +800,6 @@ final class LayerIIIDecoder implements FrameDecoder {
     }
 
     /**
-     *
      */
     private void dequantize_sample(float[][] xr, int ch, int gr) {
         GrInfoS gr_info = (si.ch[ch].gr[gr]);
@@ -943,7 +937,6 @@ final class LayerIIIDecoder implements FrameDecoder {
     }
 
     /**
-     *
      */
     private void reorder(float[][] xr, int ch, int gr) {
         GrInfoS gr_info = (si.ch[ch].gr[gr]);
@@ -1020,7 +1013,6 @@ final class LayerIIIDecoder implements FrameDecoder {
     float[] is_ratio = new float[576];
 
     /**
-     *
      */
     private void stereo(int gr) {
         int sb, ss;
@@ -1296,7 +1288,6 @@ final class LayerIIIDecoder implements FrameDecoder {
     }
 
     /**
-     *
      */
     private void antialias(int ch, int gr) {
         int sb18, ss, sb18lim;
@@ -1333,7 +1324,6 @@ final class LayerIIIDecoder implements FrameDecoder {
     float[] rawout = new float[36];
 
     /**
-     *
      */
     private void hybrid(int ch, int gr) {
         int bt;
@@ -1400,7 +1390,6 @@ final class LayerIIIDecoder implements FrameDecoder {
     }
 
     /**
-     *
      */
     private void do_downmix() {
         for (int sb = 0; sb < SSLIMIT; sb++) {

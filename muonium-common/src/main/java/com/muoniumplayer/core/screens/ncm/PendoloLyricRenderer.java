@@ -9,7 +9,7 @@ import com.muoniumplayer.core.settings.HudConfig;
 /**
  * 「时计」：歌词沿一段圆弧排布，像钟面刻度一样绕过来，左侧是齿轮装饰。
  *
- * <p>移植自 本项目 的 {@code pendolo} 视觉，几何部分照参考实现的 {@code pendoloGeometry} 写：
+ * <p>本实现采用 {@code pendolo} 视觉，几何部分照参考实现的 {@code pendoloGeometry} 写：
  * 轮心在视口左缘、只画右半圆、相邻两行的角间距取「固定步长」与「按真实行高算出的最小间距」的较大值
  * —— 后者是防叠字的关键，否则长行在弧线内侧会互相压住。</p>
  *

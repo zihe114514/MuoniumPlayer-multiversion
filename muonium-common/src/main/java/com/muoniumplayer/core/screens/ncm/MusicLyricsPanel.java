@@ -42,8 +42,6 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/10/17 21:56
  */
 public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstants {
     static double scrollOffset, scrollTarget;

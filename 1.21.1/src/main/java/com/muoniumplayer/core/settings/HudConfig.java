@@ -36,7 +36,7 @@ public final class HudConfig {
      * QPlayer 流体算法索引上限，与 {@code SkijaFluidBackground} 的风格表长度保持一致。
      *
      * <p>0-2 是 QPlayer 原生三种（Pixi 四层 / AMLL 网格 / Classic warp），3-5 是
-     * 本项目 的移植融合风格，6-11 是层叠形态（无底 / Latent 网格 / 抖动层 /
+     * 上游移植的融合风格，6-11 是层叠形态（无底 / Latent 网格 / 抖动层 /
      * 星空层 / Nomand 两特效；8-9 是叠加层内部代号，不该出现在配置里，但钳制
      * 按合法风格值上限算所以一并放行）。追加新风格时只改这个常量与风格表。</p>
      */
@@ -144,7 +144,7 @@ public final class HudConfig {
     public static float fullscreenLyricFluidAudio = 100.0f;
 
     /**
-     * folia 背景的叠加层位掩码（对齐 本项目 的多层合成：LatentBackground 的
+     * folia 背景的叠加层位掩码（对齐上游的多层合成：LatentBackground 的
      * mesh+dithering 双层、SoraBackground 的加色星点都是独立可叠的层）。
      *
      * <p>bit0 = Latent 抖动层（宿主用 soft-light 混合，对齐原版的 mixBlendMode），
@@ -245,7 +245,7 @@ public final class HudConfig {
      */
     public static float lyricFontScale = 0.60f;
 
-    // ---- 移植自 本项目 的各套「文字 PV」全屏歌词样式的可调参数 ----
+    // ---- 各套「文字 PV」全屏歌词样式的可调参数（移植自上游） ----
     // 默认值取参考实现的 DEFAULT_*_TUNING，只有少数几项按本项目的视口尺寸重新标定（见各自注释）。
 
     /** 流光：字词之间的间距系数。 */
@@ -369,6 +369,7 @@ public final class HudConfig {
     /** 3D 歌词：发光颜色（RGB 低 24 位，alpha 由渲染层按进出场计算）。 */
     public static int worldLyricsGlowColorRgb = 0xFFFFFF;
 
+    /** 3D 歌词：文字颜色（RGB 低 24 位）。0xFFFFFF 且未自定义时渲染层回落暖白默认。 */
     public static int worldLyricsColorRgb = 0xFFFFFF;
 
     /** 3D 歌词：文字颜色是否被取色器改过（0xFFFFFF 同时是合法的自定义色「纯白」，
@@ -382,9 +383,9 @@ public final class HudConfig {
     public static boolean worldLyricsTextFlash = false;
     /** 心象动效模式（现代化引擎）：整行分块、按块的出入场动画/呼吸/块色画。 */
     public static boolean worldLyricsCadenza = false;
-    /** 绘光动效模式（现代化引擎）：换句逐字飞行重排 + 径迹拖尾 + 卡拉OK点亮（folia 绘光移植）。 */
+    /** 绘光动效模式（现代化引擎）：换句逐字飞行重排 + 径迹拖尾 + 卡拉OK点亮（绘光移植）。 */
     public static boolean worldLyricsHuiguang = false;
-    /** 绘光关键字表（folia wordColors）：格式「词:RRGGBB,词:RRGGBB,…」；空 = 无关键字。 */
+    /** 绘光关键字表（keywordColors）：格式「词:RRGGBB,词:RRGGBB,…」；空 = 无关键字。 */
     public static String worldLyricsKeywordColors = "";
     /**
      * 3D 歌词渲染画质档（烘焙超采样倍率）：0 = 按分辨率自动（≤1080p→5、1440p→6、
@@ -392,6 +393,7 @@ public final class HudConfig {
      * 镜不发虚），显存与烘焙 CPU 随档上升。切换即全图集重建。
      */
     public static int worldLyricsQualityTier = 0;
+    /** 回屏保持（stayOnScreen）：转开视角时歌词沿离视线最近的方向滑回视野边缘。 */
     public static boolean worldLyricsStayOnScreen = false;
     /** Above ground：歌词中心不低于眼睛下方 0.5 格，不沉进地面。 */
     public static boolean worldLyricsAboveGround = false;
@@ -652,6 +654,13 @@ public final class HudConfig {
     /** 实时刷新透镜背景，默认开启；采集仍受防重复的帧间闸保护。 */
     public static boolean glassRealtimeCapture = true;
 
+    /**
+     * 「真玻璃（实验）」开关：只在手机档的 Mesa 真驱动渲染器（Zink / VirGL / Freedreno /
+     * Panfrost）上生效，翻译层渲染器（MobileGlues / MobileGL / GL4ES）与桌面忽略它。
+     * 默认关——性能未经真机标定，用户自担。加载与改动时推入 {@code GlassMobileTier#setUserOptIn}。
+     */
+    public static boolean glassMobileExperimental = false;
+
     private HudConfig() {
     }
 
@@ -871,6 +880,7 @@ public final class HudConfig {
             glassTintStrength = clamp01(getFloat(o, "glassTintStrength", glassTintStrength));
             glassEdgeGlow = clamp(getFloat(o, "glassEdgeGlow", glassEdgeGlow), 0f, 1.5f);
             glassRealtimeCapture = getBoolean(o, "glassRealtimeCapture", glassRealtimeCapture);
+            glassMobileExperimental = getBoolean(o, "glassMobileExperimental", false);
             blossomPanelOpacity = clamp01(getFloat(o, "blossomPanelOpacity", blossomPanelOpacity));
             blossomVisibleLines = clampInt(getInt(o, "blossomVisibleLines", blossomVisibleLines), 1, 5);
             blossomRhythmBorder = getBoolean(o, "blossomRhythmBorder", blossomRhythmBorder);
@@ -998,6 +1008,9 @@ public final class HudConfig {
                 playingFallback), 2.0f, 30.0f);
 
             animatedCoverEnabled = getBoolean(o, "animatedCoverEnabled", animatedCoverEnabled);
+
+            // 手机档实验玻璃的 opt-in 随配置走（桌面 / 翻译层渲染器上该调用无效果）。
+            com.muoniumplayer.core.rendering.GlassMobileTier.setUserOptIn(glassMobileExperimental);
         } catch (Throwable ignored) {
         }
     }
@@ -1056,6 +1069,7 @@ public final class HudConfig {
             o.addProperty("glassTintStrength", glassTintStrength);
             o.addProperty("glassEdgeGlow", glassEdgeGlow);
             o.addProperty("glassRealtimeCapture", glassRealtimeCapture);
+            o.addProperty("glassMobileExperimental", glassMobileExperimental);
             o.addProperty("blossomPanelOpacity", blossomPanelOpacity);
             o.addProperty("blossomVisibleLines", blossomVisibleLines);
             o.addProperty("blossomRhythmBorder", blossomRhythmBorder);

@@ -34,8 +34,6 @@ class PlayerFadeSpeedProbeTest {
             ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "screens", "ncm", "NCMScreen.java"));
     private static final Path SETTINGS_MODEL =
             ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "screens", "hud", "HudSettingsModel.java"));
-    private static final Path CLASSIC_EDITOR =
-            ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core", "screens", "hud", "GuiHudEditor.java"));
 
     @Test
     @DisplayName("配置项：默认 3.00×，区间 0.30×~3.00×，越界被夹住")
@@ -95,7 +93,6 @@ class PlayerFadeSpeedProbeTest {
         allowed.add("PlayerIslandTransition.java");
         allowed.add("NCMScreen.java");
         allowed.add("HudSettingsModel.java");
-        allowed.add("GuiHudEditor.java");
         for (String file : referencing) {
             assertTrue(allowed.contains(file),
                     "不该有别的文件读播放器开关动画速度: " + file + "（需求是只调这一段淡入淡出）");
@@ -127,12 +124,10 @@ class PlayerFadeSpeedProbeTest {
     }
 
     @Test
-    @DisplayName("两套设置界面都能调到它")
-    void 两套界面都有入口() throws IOException {
+    @DisplayName("设置界面能调到它")
+    void 设置界面有入口() throws IOException {
         assertTrue(stripComments(read(SETTINGS_MODEL)).contains("slider(HudSetting.PLAYER_FADE_SPEED"),
-                "现代设置界面（HudSettingsModel 的声明）里没有这一项");
-        assertTrue(stripComments(read(CLASSIC_EDITOR)).contains("HudSetting.PLAYER_FADE_SPEED"),
-                "经典设置界面（GuiHudEditor 的滑块清单）里没有这一项");
+                "设置界面（HudSettingsModel 的声明）里没有这一项");
     }
 
     private static String read(Path path) throws IOException {

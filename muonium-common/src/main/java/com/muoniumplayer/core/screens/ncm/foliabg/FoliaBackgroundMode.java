@@ -1,14 +1,14 @@
 package com.muoniumplayer.core.screens.ncm.foliabg;
 
 /**
- * 本项目 的全屏歌词背景样式清单。
+ * 本项目的全屏歌词背景样式清单。
  *
  * <p>顺序即面板里的轮换顺序。{@link #storedId()} 是写进
  * {@code folia_lyrics_background.json} 的稳定标识，<b>不再用数组下标</b> ——
  * 早先存的是下标，移除「空 / 莫奈」两档时老配置会整体错位一格，读回来就变成另一种背景。
  * 现在改成存字符串 id：删掉一种样式，别人的选择最多回落到默认，绝不会串到别的样式上。</p>
  *
- * <p>每一项对应 folia 的 {@code src/components/visualizer/backgrounds/<id>/entry.tsx}：</p>
+ * <p>每一项对应参考实现的一个背景条目：</p>
  *
  * <ul>
  *   <li>{@link #COMMON} —— 通用：封面色流体 + 几何氛围层（含暗角）</li>
@@ -44,7 +44,7 @@ public enum FoliaBackgroundMode {
         return storedId;
     }
 
-    /** 索引越界时退回「隐现」——它是 folia 的默认背景。 */
+    /** 索引越界时退回「隐现」——它是参考实现的默认背景。 */
     public static FoliaBackgroundMode byIndex(int index) {
         FoliaBackgroundMode[] values = values();
         if (index < 0 || index >= values.length) return LATENT;

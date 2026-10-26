@@ -3,8 +3,6 @@ package com.muoniumplayer.core.utils;
 import java.util.function.Supplier;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/8/2 10:03
  */
 public class Lazy<T> implements Supplier<T> {
 

@@ -63,7 +63,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "2.0.0";
+    public static final String MOD_VERSION = "2.1.0";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -453,6 +453,12 @@ public final class MuoniumPlayerClient {
         }
     }
 
+    /** 当前屏幕是否是 HUD 设置编辑器（抑制真实 HUD 用）。各树取当前屏幕的 API 不同。 */
+    private static boolean currentScreenIsHudEditor() {
+        Minecraft mc = Minecraft.getInstance();
+        return mc != null && mc.screen instanceof GuiHudEditorPro;
+    }
+
     /**
      * 驱动所有 HUD 绘制。
      *
@@ -466,6 +472,11 @@ public final class MuoniumPlayerClient {
      * 压一层能把影响限制在本帧（宿主层每帧还会再兜一次底）。
      */
     private void onHudRenderUnguarded() {
+        // HUD 设置编辑器自带两块 widget 的实时预览；真实 HUD 若照常渲染就与预览同屏各一份。
+        // 整段跳过，只留给编辑器画（编辑器预览走 renderEditorPreview，不经过这里）。
+        if (currentScreenIsHudEditor()) {
+            return;
+        }
         api.getGLStateManager().pushAttrib();
         api.getGLStateManager().pushMatrix();
         try {

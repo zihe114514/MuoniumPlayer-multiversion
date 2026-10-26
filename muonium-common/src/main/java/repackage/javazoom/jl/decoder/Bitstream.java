@@ -104,7 +104,6 @@ public final class Bitstream implements BitstreamErrors {
     private int headerPos = 0;
 
     /**
-     *
      */
     private boolean singleChMode;
 

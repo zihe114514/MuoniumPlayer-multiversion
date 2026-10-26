@@ -10,11 +10,10 @@ import java.io.File;
 /**
  * 「Folia 背景」的全部可配置项。
  *
- * <p>这是从 本项目 的 {@code VisualizerBackgroundConfig} 一一对应搬过来的一份独立配置：
+ * <p>这是从 本项目的 {@code VisualizerBackgroundConfig} 一一对应搬过来的一份独立配置：
  * 那边每个背景的 tuning 各是一个对象（{@code latentBackgroundTuning}、{@code nomandBackgroundTuning}…），
  * 这里同样按背景分节存进 {@code config/muonium/folia_lyrics_background.json}。默认值全部取自
- * {@code src/types.ts} 里的 {@code DEFAULT_*_BACKGROUND_TUNING}，所以「第一次打开」看到的就是
- * folia 的出厂外观。</p>
+ * 上游的 {@code DEFAULT_*_BACKGROUND_TUNING}，所以「第一次打开」看到的就是参考实现的出厂外观。</p>
  *
  * <h3>为什么不用 HudConfig</h3>
  * <p>两边是两套独立系统：QPlayer 流体背景读 {@code HudConfig.fullscreenLyricFluid*}，这一套只读

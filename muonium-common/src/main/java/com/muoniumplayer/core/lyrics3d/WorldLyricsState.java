@@ -7,56 +7,88 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Random;
+import java.util.regex.Pattern;
 
 /**
+ * 3D 世界歌词语义层 —— 行切换/暂停/seek 的状态机与逐字布局的纯函数核心。
  *
- * <table>
- *   <tr><td>{@code updateClock()}</td><td>{@link #updateClock()}</td></tr>
- *   <tr><td>{@code render()} 的行切换/暂停逻辑</td><td>{@link #update(...)}</td></tr>
- *   <tr><td>{@code spawn()}</td><td>{@link Floating#spawn}</td></tr>
- *   <tr><td>{@code charTimes()}</td><td>{@link Floating#charTimesOf}</td></tr>
- *   <tr><td>{@code splitWords()}/{@code wrap()}</td><td>{@link #splitWords}/{@link #wrap}</td></tr>
- *   <tr><td>{@code drawWorld()} 的 facePlayer / keepAway / 尺寸公式</td><td>{@link Row#resolve}</td></tr>
- *   <tr><td>{@code drawAnimated()} 逐字出现 + smoothstep</td><td>{@link LyricGlyphs#build}</td></tr>
- *   <tr><td>{@code withWiggle()} + {@code hashRand()}</td><td>{@link #hashRand}（渲染层消费）</td></tr>
- *   <tr><td>{@code appearOf()}/{@code drawFading()}</td><td>{@link #resumeFadeOf}/{@link #fadeAlphaOf}</td></tr>
- * </table>
+ * <p>职责划分：</p>
+ * <ul>
+ *   <li>{@link #updateClock} —— 播放时钟的推进与换轨检测；</li>
+ *   <li>{@link #update} —— 行切换/暂停/恢复的判定与句的升降级；</li>
+ *   <li>{@link SpawnedLine#spawn} —— 新句在视线前方的落位与逐字出现时刻
+ *       （{@link SpawnedLine#charTimesOf}）；</li>
+ *   <li>{@link #splitWords}/{@link #wrap} —— 拆词与按像素宽度换行；</li>
+ *   <li>{@link Row#resolve} —— 面向玩家 / keep away / 尺寸公式的帧布局；</li>
+ *   <li>{@link LyricGlyphs#build} —— 逐字出现 + smoothstep 的字形布局；</li>
+ *   <li>{@link #seededJitter} —— 入场动画的确定性抖动（渲染层消费）；</li>
+ *   <li>{@link #resumeFadeOf}/{@link #fadeAlphaOf} —— 恢复播放淡入与淡出系数。</li>
+ * </ul>
  *
- * {@code CloudMusic.getSnapshot()}（含歌词偏移的唯一时钟）；CjkFont 平滑字体换成
- * {@code LyricGlyphAtlas} 字形图集烘焙（同一观感）；DeepGlow 后处理换成 TextGlow 烘焙。</p>
+ * <p>时钟口径：统一取 {@code CloudMusic.getSnapshot()}（含歌词偏移的唯一时钟）；
+ * 字形观感由 {@code LyricGlyphAtlas} 图集烘焙承担，发光由 TextGlow 烘焙。</p>
  */
 public final class WorldLyricsState {
 
+    // ==================== 布局与动效常量 ====================
 
+    /** 歌词文字颜色（暖白偏粉）。 */
     public static final int TEXT_RGB = 0xF7E1D7;
+    /** 平滑字体的字号（和 MC 字体大写字高差不多）。 */
     public static final float LYRIC_SIZE = 10f;
+    /** 多行换行的行高。 */
     public static final float LINE_H = 11f;
+    /** 换行最大像素宽（wrap(text, 200) 口径）。 */
     public static final float WRAP_WIDTH = 200f;
+    /** 逐字出现的总时长上限：min(字符数×55ms, 行时长×0.6)，下限 250ms。 */
     private static final long REVEAL_PER_CHAR_MS = 55L;
     private static final long REVEAL_MIN_MS = 250L;
     private static final double REVEAL_LINE_RATIO = 0.6;
+    /** 单个字的淡入时长（/180f）。 */
     private static final float CHAR_FADE_MS = 180f;
+    /** 逐字出现时的上浮距离（(1-a)*5f）。 */
     private static final float CHAR_LIFT_PX = 5f;
+    /** 淡出时长与上浮速度（0.4s、lift=t*0.4）。 */
     public static final float FADE_SECONDS = 0.4f;
     public static final float FADE_LIFT = 0.4f;
+    /** 恢复播放淡入（0.3s）。 */
     public static final double RESUME_FADE_SECONDS = 0.3;
+    /** 暂停多久内算「暂停」而不是「停了」（3 秒）。 */
     private static final double SILENCE_QUIT_SECONDS = 3.0;
+    /** keep away 的最小距离（distance*0.6）。 */
     public static final double KEEP_AWAY_MIN_RATIO = 0.6;
+    /** spawn 的 pitch 下沉（pitch-3f-random*10f，夹 -60..30）。 */
     private static final float SPAWN_PITCH_DROP = 3f;
     private static final float SPAWN_PITCH_RANDOM = 10f;
+    /** 世界缩放公式（0.03*scale*(distance/6.5)）。 */
     public static final float PX_TO_WORLD = 0.03f;
     public static final float DISTANCE_NORM = 6.5f;
 
+    // ==================== 帧间状态 ====================
 
-    private Floating active;
-    private final List<Floating> fading = new ArrayList<>();
+    /** 正在播放的一句。单数 —— 一句一句出。 */
+    private SpawnedLine active;
+    /** 淡出中的句子。 */
+    private final List<SpawnedLine> fading = new ArrayList<>();
     /** 当前歌曲 key（netease:{id}），换歌检测。 */
     private String currentKey;
     private long lastSeenNanos;
+    /** 换行检测：上一句的行下标。 */
     private int lastIndex = -1;
     /** 当前 active 句对应的行下标：同句恢复判定用（去抖窗口内换行才重 spawn）。 */
     private int lastSpawnedIdx = -1;
+    /** 暂停检测。 */
     private boolean wasPaused;
+    /**
+     * 上一帧的播放位置（毫秒）：同句内 seek 检测用。暂停帧也照记 —— 暂停期间
+     * 位置不变，恢复后第一帧的「位置差」不会误报；恢复本身走 wasPaused 链路，
+     * 与这里的重同步互不干扰。
+     */
+    private long lastFramePosMs = Long.MIN_VALUE;
+    /** 同句内 seek 的判定阈值（毫秒）：逐帧正常推进远小于它，拖进度条必然超过。 */
+    static final long SEEK_RESYNC_THRESHOLD_MS = 300L;
+    /** 上一帧墙钟（纳秒）：把「位置跳幅」与「帧间隔」分开判，掉帧不误报 seek。 */
+    private long lastFrameNanos;
     /**
      * 淡出去抖：最近一次看到「在播」的时间。歌曲自然结束时引擎的
      * {@code isFinished()} 在解码收尾边界可能抖动几帧（true/false 交替），
@@ -70,8 +102,9 @@ public final class WorldLyricsState {
     // ==================== 数据模型 ====================
 
     /**
+     * 一句漂浮的歌词（位置 spawn 后不变）。
      */
-    public static final class Floating {
+    public static final class SpawnedLine {
         public final List<String> lines;      // wrap 拆行后的文本
         public final long startMs;
         public final long revealMs;           // 逐字出现的总时长
@@ -79,11 +112,12 @@ public final class WorldLyricsState {
         final int lineIndex;
         public double x, y, z;
         public double spawnYawDeg, spawnPitchDeg;
+        /** 回屏保持弹簧的角速度（度/秒）。 */
         public double vYaw, vPitch;
         /** 每个非空白字符出现的时间（相对这句开始，毫秒）——word pop 用。 */
         public final long[] charTimes;
 
-        Floating(List<String> lines, long startMs, long revealMs,
+        SpawnedLine(List<String> lines, long startMs, long revealMs,
                  int lineIndex,
                  double x, double y, double z, double spawnYawDeg, double spawnPitchDeg,
                  long[] charTimes) {
@@ -100,7 +134,7 @@ public final class WorldLyricsState {
         }
 
         /** 测试等直接构造入口：不带时间线行下标（去抖恢复按 -1 视作不可认回）。 */
-        public Floating(List<String> lines, long startMs, long revealMs,
+        public SpawnedLine(List<String> lines, long startMs, long revealMs,
                         double x, double y, double z, double spawnYawDeg, double spawnPitchDeg,
                         long[] charTimes) {
             this(lines, startMs, revealMs, -1, x, y, z, spawnYawDeg, spawnPitchDeg, charTimes);
@@ -115,7 +149,7 @@ public final class WorldLyricsState {
 
         // ---- 绘光动效的换句交接（见 HuiguangMotion）----
         /** 入场飞行的来源句：换句瞬间的上一句（null = 无上一句，落位入场）。 */
-        Floating huiguangPrev;
+        SpawnedLine huiguangPrev;
         /** 交接瞬间来源句的公告牌几何（世界坐标 + 朝向 + 缩放快照）。 */
         BillboardSnapshot huiguangPrevGeo;
         /** 交接瞬间本句的公告牌几何（起飞点投影的参照平面）。 */
@@ -194,6 +228,7 @@ public final class WorldLyricsState {
         /** 绘光动效模式（换句飞行重排 + 径迹拖尾 + 卡拉OK点亮）。 */
         default boolean huiguang() { return false; }
 
+        /** 回屏保持（stayOnScreen）：转开视角时歌词滑回视野边缘。 */
         default boolean stayOnScreen() { return false; }
 
         /** Above ground：歌词中心不低于眼睛下方 0.5 格（不沉进地面）。 */
@@ -202,13 +237,14 @@ public final class WorldLyricsState {
 
     /** 一行歌词这一帧的最终落点与字形状态，渲染层只读。 */
     public static final class Row {
-        public final Floating floating;
+        public final SpawnedLine floating;
         /** 锚点（世界坐标）。facePlayer/keepAway 处理后的最终位置。 */
         public final double x, y, z;
         /** 本帧相机世界位置（渲染层换算镜头相对坐标用）。 */
         public final double camX, camY, camZ;
         /** 字面朝向（Face player=朝向镜头的反算角；否则 spawn 冻结角）。 */
         public final double yawDeg, pitchDeg;
+        /** 世界缩放（公告牌 push 的 scale 参数）。 */
         public final float scale;
         /** 0..1 显示透明度。 */
         public final float alpha;
@@ -220,13 +256,13 @@ public final class WorldLyricsState {
          *  存档供调试，渲染层不应再乘（二次相乘会过度压暗）。 */
         public final float protectDim;
 
-        Row(Floating floating, double x, double y, double z,
+        Row(SpawnedLine floating, double x, double y, double z,
             double camX, double camY, double camZ,
             double yawDeg, double pitchDeg, float scale, float alpha, float lift, boolean active) {
             this(floating, x, y, z, camX, camY, camZ, yawDeg, pitchDeg, scale, alpha, lift, active, 1f);
         }
 
-        Row(Floating floating, double x, double y, double z,
+        Row(SpawnedLine floating, double x, double y, double z,
             double camX, double camY, double camZ,
             double yawDeg, double pitchDeg, float scale, float alpha, float lift,
             boolean active, float protectDim) {
@@ -260,7 +296,7 @@ public final class WorldLyricsState {
         }
 
         /** 定格一句的当前摆放（keep away 不推进 —— 快照只要当时的实际位置）。 */
-        static BillboardSnapshot capture(Floating f, CameraView camera, Params params) {
+        static BillboardSnapshot capture(SpawnedLine f, CameraView camera, Params params) {
             double rx = f.x - camera.eyeX();
             double ry = f.y - camera.eyeY();
             double rz = f.z - camera.eyeZ();
@@ -296,6 +332,7 @@ public final class WorldLyricsState {
     }
 
     /**
+     * 逐字形状态：每个要画的字的位置、透明度、
      * 下标（确定性随机相位与出场级联的键）与 pop 缩放。由渲染层按此直接画。
      *
      * <p>心象模式下额外携带块的姿态四量与墨色（简洁模式全零 + 行统一墨色）：
@@ -367,6 +404,7 @@ public final class WorldLyricsState {
         }
     }
 
+    // ==================== 行切换 / 暂停 / 时钟 ====================
 
     /**
      * 推进一帧。返回本帧要画的所有行（active + fading）。
@@ -381,23 +419,47 @@ public final class WorldLyricsState {
                 && (nowNanos - lastPlayingNanos) > PAUSE_DEBOUNCE_NANOS;
         if (snapshotPlaying) lastPlayingNanos = nowNanos;
 
+        // 同句内 seek 重同步：上一帧位置与本帧差得远（拖了进度条）且仍在播放时，
+        // 位置虽落在同一行的开唱区间内（idx 没变），但逐字点亮/出现进度已经错位
+        // —— 必须把这句销毁重建（走「真·换行」同一条路径：旧句转淡出、同句重新
+        // spawn，绘制交接让字从旧位飞来重排）。lastFramePosMs 每帧无条件更新
+        //（含暂停帧），暂停期间位置不动、不会攒出差值；恢复播放走 wasPaused 链路，
+        // 暂停帧后的恢复帧也不误报。seek 造成的交接与真实换句一致 —— active 淡出、
+        // 当前行重新 spawn 是预期行为。
+        boolean seekResync = false;
+        if (snapshotPlaying && lastFramePosMs != Long.MIN_VALUE) {
+            long posDelta = Math.abs(snapshotPositionMs - lastFramePosMs);
+            // 墙钟门限：帧间隔本身 ≥ 阈值（重负载/掉帧）时，位置差即使超过
+            // 阈值也可能是正常推进 —— 只有「位置跳幅明显大于墙钟间隔」才是
+            // seek（拖进度条时间轴瞬移，与花了多久渲染无关）。
+            long wallGap = Math.max(0L, nowNanos - lastFrameNanos) / 1_000_000L;
+            seekResync = posDelta > SEEK_RESYNC_THRESHOLD_MS && posDelta > wallGap * 2;
+        }
+        lastFrameNanos = nowNanos;
+        lastFramePosMs = snapshotPositionMs;
+
+        // 行切换 / 暂停 / 恢复：
         // idx 即使暂停也算（indexAt 按时间戳二分），恢复时 idx==lastIndex 才算「恢复」而不是「换行」。
         List<LyricLine> lines = effectiveLines(params.splitLines());
         int idx = indexAtTimestamp(lines, snapshotPositionMs);
         if (paused) {
             retireActive(nowNanos);
             wasPaused = true;
-        } else if (idx != lastIndex || wasPaused) {
-            boolean resumed = wasPaused && idx == lastIndex;
-            boolean sameLine = idx == lastSpawnedIdx && active != null;
+        } else if (idx != lastIndex || wasPaused || seekResync) {
+            boolean resumed = wasPaused && idx == lastIndex && !seekResync;
+            // seek 帧的「同句」判定必须失效：同句但逐字进度已整体错位，走重建。
+            boolean sameLine = !seekResync && idx == lastSpawnedIdx && active != null;
             wasPaused = false;
             lastIndex = idx;
                 if (!sameLine) {
-                    // 真·换行（或去抖窗口内同句已被 retire 且 playing 恢复）。先把现句
-                    // 转淡出（满 alpha 的 active 硬切消失 = 闪帧；retire 后它至少还有
-                    // 一帧渐隐），再试把刚转淡的同句原样捞回来 —— 捞回时现句一定已
-                    // 安全进入 fading，不存在被覆盖丢弃。
-                    Floating replaced = active;
+                    // 真·换行（或去抖窗口内同句已被 retire 且 playing 恢复，或同句内
+                    // seek 重同步）。先把现句转淡出（满 alpha 的 active 硬切消失 =
+                    // 闪帧；retire 后它至少还有一帧渐隐），再试把刚转淡的同句原样
+                    // 捞回来 —— 捞回时现句一定已安全进入 fading，不存在被覆盖丢弃。
+                    // seek 帧同句捞回是错的：句的逐字进度已整体错位，必须真正重建
+                    //（takeFadingIfSameLine 只在恢复帧把同句认回 —— resumed 已在
+                    // seek 帧被强制为 false，认回分支自然跳过，落到下面重新 spawn）。
+                    SpawnedLine replaced = active;
                     retireActive(nowNanos);
                     // 预摆句优先转正（folia 换位语义）：LEAD 窗口里提前出现的
                     // 下一句正是本 idx —— 直接转正，字从预摆位飞到中心重排，
@@ -430,7 +492,7 @@ public final class WorldLyricsState {
                         preset = null;
                         if (resumed) active.resumedAtNanos = nowNanos;
                         // 转正后 revive/spawn 分支都不得再跑 —— 否则下面会重新
-                        // spawn 一个全新 Floating 把转正句顶掉（R5 期间实测踩坑）
+                        // spawn 一个全新 SpawnedLine 把转正句顶掉（R5 期间实测踩坑）
                     } else {
                         if (preset != null) {
                             preset.fadeStartNanos = nowNanos;
@@ -438,7 +500,7 @@ public final class WorldLyricsState {
                             fading.add(preset);
                             preset = null;
                         }
-                    Floating revived = takeFadingIfSameLine(idx, nowNanos);
+                    SpawnedLine revived = seekResync ? null : takeFadingIfSameLine(idx, nowNanos);
                     if (revived != null) {
                         active = revived;
                         lastSpawnedIdx = idx;
@@ -462,14 +524,15 @@ public final class WorldLyricsState {
                     // 几何在交接瞬间定格（facePlayer 会让 Row 逐帧变，快照保证曲线
                     // 起止点稳定）。replaced 为 null 只出现在「此前无 active」的间隙
                     // / 首句 —— 此时回退取最近一句 fading（若还看得到）当飞行源，
-                    // 对齐 folia「永远从上一个窗口飞来」；都没有才退化为落位入场。
-                    // 时间轴大跳（seek）同样会形成交接，字从被跳过的旧句位置飞来。
+                    // 对齐「永远从上一个窗口飞来」；都没有才退化为落位入场。
+                    // 时间轴大跳（跨句 seek）与同句内 seek 重同步同样形成交接，
+                    // 字从被跳过的旧句位置（或同句旧位）飞来。
                     // 预摆转正句不走「从旧句飞」交接：它的飞行来源是预摆位
                     if (active != null && active.huiguangPresetDone) {
                         // 跳过（huiguangOwnGeo/PrevGeo 均不设，buildGlyphs 走预摆来源）
                     } else if (active != null && active.huiguangPrev == null
                             && (active != replaced || replaced == null)) {
-                        Floating source = replaced != null && active != replaced ? replaced
+                        SpawnedLine source = replaced != null && active != replaced ? replaced
                                 : (fading.isEmpty() ? null : fading.get(fading.size() - 1));
                         if (source != null && source != active) {
                             source.huiguangLinger = true;
@@ -479,7 +542,7 @@ public final class WorldLyricsState {
                             active.huiguangPrevGeo = BillboardSnapshot.capture(source, camera, params);
                             active.huiguangEntry = null;
                             // 断开 source 的上游引用链：否则 active → N → N−1 → … →
-                            // 首句整条历史 Floating 被钉到换轨才释放。source 自己
+                            // 首句整条历史 SpawnedLine 被钉到换轨才释放。source 自己
                             // fading 期间画径迹只用 huiguangEntry（已构建的纯函数
                             // 快照），不再需要 geo/prev。
                             source.huiguangPrev = null;
@@ -497,7 +560,7 @@ public final class WorldLyricsState {
         if (huiguangOn(params) && !paused && active != null) {
             // 转正滑移兜底：历史会话里可能残留 huiguangPromoteNanos 的句
             //（保存/恢复边界），滑移推进保持原语义、终点为视线正前位
-            Floating promoted = active.huiguangPresetDone
+            SpawnedLine promoted = active.huiguangPresetDone
                     && active.huiguangPromoteNanos != 0L ? active : null;
             if (promoted != null) {
                 float st = (nowNanos - promoted.huiguangPromoteNanos) / 1.0E9f;
@@ -512,23 +575,26 @@ public final class WorldLyricsState {
             }
         }
 
+        // 回屏保持 / 不沉入地面（stayOnScreen / aboveGround）：
         // 在画之前把越界句拉回视野（fading 句也 follow —— 与上游同序）
-        keepOnScreen(camera, params);
+        clampIntoView(camera, params);
 
-        Iterator<Floating> it = fading.iterator();
+        // 淡出推进（0.4 秒后移除）
+        Iterator<SpawnedLine> it = fading.iterator();
         while (it.hasNext()) {
-            Floating f = it.next();
+            SpawnedLine f = it.next();
             if ((nowNanos - f.fadeStartNanos) / 1.0E9f > fadeDurationOf(f)) it.remove();
         }
 
         // 组帧。fading 在前、active 在后 —— 渲染层按下标顺序画，淡出中的句子先画
         // （下层），当前句后画（上层）：同屏时 active 盖在 fading 之上
+        // （淡出层在先、在场层在后；深度测试已关，顺序即层级）。
         // 双向保护压暗（folia windowProtection 的 3D 等价）：两牌中心 < 8 格起
         // 渐入、< 3 格到 PROTECT_FLOOR=0.4 —— active 与 fading 双方都压（R5 审查
         // P2-7：单向压暗会出现「旧句比新句亮」的主次颠倒）。
         List<Row> out = new ArrayList<>(1 + fading.size());
         float curH = active != null ? active.lines.size() * LINE_H : 0f;
-        for (Floating f : fading) {
+        for (SpawnedLine f : fading) {
             float a = fadeAlphaOf(f, nowNanos);
             if (a > 0.01f) {
                 float t = (nowNanos - f.fadeStartNanos) / 1.0E9f;
@@ -563,7 +629,7 @@ public final class WorldLyricsState {
             Row r = WorldLyricsState.resolve(active, camera, params,
                     resumeFadeOf(active, nowNanos), true, 0f);
             float dim = 1f;
-            for (Floating f : fading) {
+            for (SpawnedLine f : fading) {
                 dim = Math.min(dim, protectDimBetween(f, active));
             }
             if (dim < 0.999f) {
@@ -592,7 +658,7 @@ public final class WorldLyricsState {
     static final float PRESET_GAP_FONTS = 0.735f;
 
     /** 处于预摆预览态的下一句（null = 无；同一时刻至多一句，随 active 换句交接）。 */
-    private Floating preset;
+    private SpawnedLine preset;
 
     /**
      * 下一句提前 spawn 成预摆句（folia 邻行槽位）：当前句的剩余时间进入 LEAD
@@ -618,6 +684,7 @@ public final class WorldLyricsState {
         return presetNowMs;
     }
 
+    /** 时钟推进（超 3 秒没在放就清掉）。 */
     private void updateClock(boolean playing, long nowNanos) {
         String key = CloudMusic.lyricsTrackKey;
         boolean hasTrack = key != null && CloudMusic.lyricsMatchCurrentTrack();
@@ -631,15 +698,20 @@ public final class WorldLyricsState {
             return;
         }
         lastSeenNanos = nowNanos;
+        // 用 equals 而不是 !=（引用比较会误判）：trackKey 内容相同
         // 但实例不同（重新提交的同一首歌）不应触发换歌重置。
         if (!java.util.Objects.equals(key, currentKey)) {
             currentKey = key;
             retireActive(nowNanos);
             lastIndex = -1;
             lastSpawnedIdx = -1;
+            // 换歌后位置从新歌的起点重新起算：旧歌的位置基线作废，
+            // 否则新歌第一帧就会被误判成 seek。
+            lastFramePosMs = Long.MIN_VALUE;
         }
     }
 
+    /** 最后一句开始时间 &lt;= pos 的下标（二分查找，供暂停时也算 idx）。 */
     private static int indexAtTimestamp(List<LyricLine> lines, long positionMs) {
         if (lines == null || lines.isEmpty()) return -1;
         int lo = 0, hi = lines.size() - 1, ans = -1;
@@ -656,6 +728,7 @@ public final class WorldLyricsState {
         return ans;
     }
 
+    // ==================== 回屏保持 / 不沉入地面（stayOnScreen / aboveGround） ====================
 
     /** Above ground：歌词中心最低在眼睛下面多少格（站着时离地还有一格多）。 */
     static final double GROUND_MARGIN = 0.5;
@@ -692,7 +765,7 @@ public final class WorldLyricsState {
      * 最低高度同样折算成边界交给同一个弹簧；地板高度用指数插值平滑跟镜头
      * （上慢 0.3s / 下快 0.15s，跳跃时不抽动）。
      */
-    private void keepOnScreen(WorldLyricsState.CameraView camera, Params params) {
+    private void clampIntoView(WorldLyricsState.CameraView camera, Params params) {
         long now = System.nanoTime();
         double dt = keepNanos == 0L ? 0.016 : Math.max(0.0, Math.min(0.1, (now - keepNanos) / 1.0E9));
         keepNanos = now;
@@ -701,7 +774,7 @@ public final class WorldLyricsState {
         if (!stay) {
             if (!ground) {
                 groundFloor = Double.NaN;
-                for (Floating f : fading) { f.vYaw = 0; f.vPitch = 0; }
+                for (SpawnedLine f : fading) { f.vYaw = 0; f.vPitch = 0; }
                 if (active != null) { active.vYaw = 0; active.vPitch = 0; }
             }
             return;
@@ -725,11 +798,12 @@ public final class WorldLyricsState {
         double playerPitch = camera.pitchDeg();
 
         // active 与 fading 都 follow（上游同序；fading 句被 turn away 时也要回屏）
-        if (active != null) followOnScreen(active, camera, s, vHalf, hHalf, playerYaw, playerPitch, dt);
-        for (Floating f : fading) followOnScreen(f, camera, s, vHalf, hHalf, playerYaw, playerPitch, dt);
+        if (active != null) springTowardView(active, camera, s, vHalf, hHalf, playerYaw, playerPitch, dt);
+        for (SpawnedLine f : fading) springTowardView(f, camera, s, vHalf, hHalf, playerYaw, playerPitch, dt);
     }
 
-    private void followOnScreen(Floating f, WorldLyricsState.CameraView camera,
+    /** 单句的回屏弹簧步进。dt 是本帧秒数。 */
+    private void springTowardView(SpawnedLine f, WorldLyricsState.CameraView camera,
                                 double s, double vHalf, double hHalf,
                                 double playerYaw, double playerPitch, double dt) {
         double rx = f.x - camera.eyeX();
@@ -824,10 +898,10 @@ public final class WorldLyricsState {
      * retire 的顺序保证任何句子要么在 active、要么在 fading，绝无第三种状态，
      * 也就不存在「捞回时把满 alpha 的现句直接覆盖丢弃」的硬切。
      */
-    private Floating takeFadingIfSameLine(int idx, long nowNanos) {
+    private SpawnedLine takeFadingIfSameLine(int idx, long nowNanos) {
         if (idx < 0) return null;
-        for (Iterator<Floating> it = fading.iterator(); it.hasNext(); ) {
-            Floating f = it.next();
+        for (Iterator<SpawnedLine> it = fading.iterator(); it.hasNext(); ) {
+            SpawnedLine f = it.next();
             if (f.lineIndex == idx) {
                 it.remove();
                 f.fadeStartNanos = 0L;
@@ -838,13 +912,15 @@ public final class WorldLyricsState {
         return null;
     }
 
-    public static float resumeFadeOf(Floating f, long nowNanos) {
+    /** 恢复播放淡入系数。 */
+    public static float resumeFadeOf(SpawnedLine f, long nowNanos) {
         return f.resumedAtNanos == 0L ? 1f
                 : (float) clamp01((nowNanos - f.resumedAtNanos) / 1.0E9 / RESUME_FADE_SECONDS);
     }
 
+    /** 淡出系数（1 - t/0.4）。绘光余光句走
      *  「前 0.7s 停在 0.75 → 再 0.5s 熄灭」的长曲线（folia passedDim 的 3D 等价）。 */
-    public static float fadeAlphaOf(Floating f, long nowNanos) {
+    public static float fadeAlphaOf(SpawnedLine f, long nowNanos) {
         float t = (nowNanos - f.fadeStartNanos) / 1.0E9f;
         if (f.huiguangLinger) {
             // 余光 0.7s：唱完后旧句停在 0.75（folia passedDim 的 3D 等价），
@@ -856,7 +932,7 @@ public final class WorldLyricsState {
     }
 
     /** 淡出总时长（移除时机与余光曲线共用）。 */
-    static float fadeDurationOf(Floating f) {
+    static float fadeDurationOf(SpawnedLine f) {
         return f.huiguangLinger ? 1.2f : FADE_SECONDS;
     }
 
@@ -882,11 +958,13 @@ public final class WorldLyricsState {
         };
     }
 
+    // ==================== 一句歌词（spawn / charTimes / wrap） ====================
 
     /**
+     * spawn：把这句钉在「当时视线前方」——
      * yaw 带 spread 随机偏角、pitch 下沉 3~13°，之后位置不再变。
      */
-    static Floating spawn(LyricLine line, List<LyricLine> lines, int lineIndex, CameraView camera,
+    static SpawnedLine spawn(LyricLine line, List<LyricLine> lines, int lineIndex, CameraView camera,
                           Params params, Random random) {
         List<String> wrapped = wrap(line.lyric, WRAP_WIDTH);
         long nextMs = nextLineStartMs(lines, lineIndex);
@@ -900,17 +978,19 @@ public final class WorldLyricsState {
                 lineDur * REVEAL_LINE_RATIO);
 
         double yaw = camera.yawDeg() + (random.nextDouble() * 2.0 - 1.0) * params.spreadDeg();
+        // pitch = player.pitch − 3 − rnd×10（不下沉时随视线，整体略低），
         // 再夹 -60..30。之前把 player.pitch 也取了负 —— 平视时看不出，抬头/低头时歌词会跑到另一侧。
         double pitch = clampPitch(camera.pitchDeg() - SPAWN_PITCH_DROP
                 - random.nextDouble() * SPAWN_PITCH_RANDOM);
         double[] dir = yawPitchDirectionStatic(yaw, pitch);
         double d = params.distance();
+        // 不沉入地面（aboveGround）：生成时就不让歌词沉到地面下，
         // 之后的回屏弹簧继续把约束维持住
         if (params.aboveGround()) {
             pitch = (float) Math.min(pitch, maxPitchFor(d));
             dir = yawPitchDirectionStatic(yaw, pitch);
         }
-        Floating f = new Floating(wrapped, line.timestamp, reveal, lineIndex,
+        SpawnedLine f = new SpawnedLine(wrapped, line.timestamp, reveal, lineIndex,
                 camera.eyeX() + dir[0] * d, camera.eyeY() + dir[1] * d, camera.eyeZ() + dir[2] * d,
                 yaw, pitch, charTimes);
         // 十字爆闪规划（folia planBursts sung 模式的 3D 版）：spawn 时按种子定格
@@ -954,6 +1034,7 @@ public final class WorldLyricsState {
         int i4 = 0;
         float y = -(lines.size() * rowPitch) / 2f;
         for (String line : lines) {
+            // 每行抽词（splitWords 口径），分配词级字号
             List<String> words = splitWords(line);
             float[] wordScale = new float[words.size()];
             int hero = -1;
@@ -966,7 +1047,7 @@ public final class WorldLyricsState {
                 if (particle) {
                     wordScale[w] = HUIGUANG_PARTICLE_SCALE;
                 } else {
-                    wordScale[w] = 0.85f + (hashRand(w, 0L, 81, seed + line.hashCode()) * 0.5f + 0.5f) * 0.35f;
+                    wordScale[w] = 0.85f + (seededJitter(w, 0L, 81, seed + line.hashCode()) * 0.5f + 0.5f) * 0.35f;
                     if (word.length() > heroLen) {
                         heroLen = word.length();
                         hero = w;
@@ -986,7 +1067,7 @@ public final class WorldLyricsState {
                     // 错落：重点词不动，其余按种子上下抖（folia 小字 ±0.32/其余 ±0.2 字号）
                     float jagAmp = scale >= HUIGUANG_HERO_SCALE - 0.01f ? 0f
                             : (scale <= HUIGUANG_PARTICLE_SCALE + 0.01f ? 0.32f : 0.2f);
-                    float jag = hashRand(i4, 0L, 83, seed + line.hashCode()) * jagAmp * LYRIC_SIZE;
+                    float jag = seededJitter(i4, 0L, 83, seed + line.hashCode()) * jagAmp * LYRIC_SIZE;
                     out[i4++] = x - widthOf.widthOf(line) * 0f; // 占位（x 基准在下方统一回填）
                     out[i4++] = y + (1f - scale) * LYRIC_SIZE * 0.32f + jag;
                     out[i4++] = 0f;
@@ -1013,7 +1094,7 @@ public final class WorldLyricsState {
                 if (particle) {
                     wordScale[w] = HUIGUANG_PARTICLE_SCALE;
                 } else {
-                    wordScale[w] = 0.85f + (hashRand(w, 0L, 81, seed + line.hashCode()) * 0.5f + 0.5f) * 0.35f;
+                    wordScale[w] = 0.85f + (seededJitter(w, 0L, 81, seed + line.hashCode()) * 0.5f + 0.5f) * 0.35f;
                     if (word.length() > heroLen) {
                         heroLen = word.length();
                         hero = w;
@@ -1064,10 +1145,12 @@ public final class WorldLyricsState {
     }
 
     private static double clampPitch(double deg) {
+        // 夹取：coerceIn(-60f, 30f)
         return Math.max(-60.0, Math.min(30.0, deg));
     }
 
     /**
+     * 每个非空白字符的出现时间（charTimes）：
      * 有逐字歌词用真实时间，没有就把一句平均分给每个词（每词 330ms、最多占行 75%）。
      */
     static long[] charTimesOf(LyricLine line, long nextMs) {
@@ -1106,6 +1189,7 @@ public final class WorldLyricsState {
         return out;
     }
 
+    /** 拆词（splitWords）：英文按空格，中日韩每两个字一组。 */
     static List<String> splitWords(String text) {
         List<String> out = new ArrayList<>();
         StringBuilder sb = new StringBuilder();
@@ -1145,6 +1229,7 @@ public final class WorldLyricsState {
         return out;
     }
 
+    /** 按像素宽度换行（wrap）。宽度用 MC 字体在渲染层换算，这里按字符宽 6px 估。 */
     static List<String> wrap(String text, float maxWidth) {
         List<String> out = new ArrayList<>();
         StringBuilder sb = new StringBuilder();
@@ -1181,6 +1266,7 @@ public final class WorldLyricsState {
         return w;
     }
 
+    // ==================== 帧布局 ====================
 
     /** 一次世界渲染要画的全部内容。 */
     public static final class Frame {
@@ -1204,7 +1290,7 @@ public final class WorldLyricsState {
      * 两句公告牌中心的保护压暗系数：距离 ≥8 格 = 1（不压）、≤3 格 = 0.4
      * （folia PROTECT_FLOOR），中间线性渐入。
      */
-    private static float protectDimBetween(Floating a, Floating b) {
+    private static float protectDimBetween(SpawnedLine a, SpawnedLine b) {
         double dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
         double d = Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (d >= 8.0) return 1f;
@@ -1212,7 +1298,8 @@ public final class WorldLyricsState {
         return 0.4f + 0.6f * k;
     }
 
-    static double resolveScale(Floating f, CameraView camera, Params params) {
+    /** 绘光交接用的世界缩放快照（同一缩放公式，不修改句位置）。 */
+    static double resolveScale(SpawnedLine f, CameraView camera, Params params) {
         double rx = f.x - camera.eyeX();
         double ry = f.y - camera.eyeY();
         double rz = f.z - camera.eyeZ();
@@ -1221,26 +1308,28 @@ public final class WorldLyricsState {
     }
 
     /**
+     * 由 SpawnedLine 组装渲染行：
      * keep away 硬推、face player 从镜头→歌词方向反算朝向、尺寸随实际距离。
      */
-    static Row resolve(Floating f, CameraView camera, Params params,
+    static Row resolve(SpawnedLine f, CameraView camera, Params params,
                        float alpha, boolean isActive, float lift) {
         return resolveInternal(f, camera, params, alpha, isActive, lift, true);
     }
 
     /** 淡出中的句子用：不推进 keepAway（冻结 spawn 位置，滑开让位不被污染）。 */
-    static Row resolveFrozen(Floating f, CameraView camera, Params params,
+    static Row resolveFrozen(SpawnedLine f, CameraView camera, Params params,
                              float alpha, boolean isActive, float lift) {
         return resolveInternal(f, camera, params, alpha, isActive, lift, false);
     }
 
-    private static Row resolveInternal(Floating f, CameraView camera, Params params,
+    private static Row resolveInternal(SpawnedLine f, CameraView camera, Params params,
                                        float alpha, boolean isActive, float lift,
                                        boolean allowKeepAway) {        double rx = f.x - camera.eyeX();
         double ry = f.y - camera.eyeY();
         double rz = f.z - camera.eyeZ();
         double len = Math.sqrt(rx * rx + ry * ry + rz * rz);
 
+        // keep away：太近就沿方向推回最小距离，位置从此改变
         double minD = params.distance() * KEEP_AWAY_MIN_RATIO;
         if (allowKeepAway && params.keepAway() && len > 1e-4 && len < minD) {
             double k = minD / len;
@@ -1254,6 +1343,7 @@ public final class WorldLyricsState {
         double yaw;
         double pitch;
         if (params.facePlayer() && len > 1e-4) {
+            // 朝向镜头：从「镜头 → 歌词」方向反算
             yaw = Math.toDegrees(Math.atan2(-rx, rz));
             pitch = Math.toDegrees(Math.atan2(-ry, Math.sqrt(rx * rx + rz * rz)));
         } else {
@@ -1261,6 +1351,7 @@ public final class WorldLyricsState {
             pitch = f.spawnPitchDeg;
         }
 
+        // 尺寸：0.03 × scale × (distance/6.5)
         float scale = (float) (PX_TO_WORLD * params.scale() * (len / DISTANCE_NORM));
 
         return new Row(f, f.x, f.y + lift, f.z,
@@ -1268,6 +1359,7 @@ public final class WorldLyricsState {
                 yaw, pitch, scale, alpha, lift, isActive);
     }
 
+    // ==================== 逐字形布局（drawAnimated 的精化版） ====================
 
     /** 入场动画时长（ms）：淡入 + 上浮 + 回弹共用这一条时间轴。 */
     private static final float ENTER_MS = 320f;
@@ -1293,7 +1385,7 @@ public final class WorldLyricsState {
      * <h2>入场（每个字一条 ENTER_MS 时间轴）</h2>
      * <ul>
      *   <li>相位：有逐字轴时用逐字时刻（词被唱到的瞬间起舞），否则按字序均分
-     *       reveal 窗口，再叠 ±20ms 的 hashRand 抖动 —— 群像错落，不像阅兵；</li>
+     *       reveal 窗口，再叠 ±20ms 的 seededJitter 抖动 —— 群像错落，不像阅兵；</li>
      *   <li>位置：从下方 {@link #ENTER_LIFT_PX}px 处按 ease-out-back 落位
      *       （过冲 2px 再回落），alpha 前 60% 时间用 smoothstep 亮起来；</li>
      *   <li>缩放：0.6 → 1 的 ease-out-back（字从「远处飞来」），落到 1 后由
@@ -1306,6 +1398,7 @@ public final class WorldLyricsState {
      * 行的消失变成一串涟漪而不是一整块突然熄灭。
      *
      * <p>坐标以平面中心为原点、单位是文字像素（渲染层乘 scale 进世界）。
+     * pop 语义：恒生效的弹性缩放系数，宿主绕字中心应用。</p>
      *
      * @param pixelWidthOf 单行像素宽（与绘制通道同源）
      * @param exiting      该行正在整行淡出（出场级联只在这一态生效；
@@ -1317,13 +1410,13 @@ public final class WorldLyricsState {
      *                     当前位置；null = 无位移）。渲染层把整块公告牌按它平移 ——
      *                     等价于镜头跟着唱到的块走
      */
-    public static LyricGlyphs buildGlyphs(Floating f, long songNowMs, float alphaMul,
+    public static LyricGlyphs buildGlyphs(SpawnedLine f, long songNowMs, float alphaMul,
                                           boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf,
                                           boolean cadenza) {
         return buildGlyphs(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf, cadenza, false, null);
     }
 
-    public static LyricGlyphs buildGlyphs(Floating f, long songNowMs, float alphaMul,
+    public static LyricGlyphs buildGlyphs(SpawnedLine f, long songNowMs, float alphaMul,
                                           boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf,
                                           boolean cadenza, boolean huiguang, int[] keywordMatch) {
         List<String> lines = f.lines;
@@ -1454,8 +1547,8 @@ public final class WorldLyricsState {
                                     fy = fp[1];
                                 } else {
                                     // seek/首句兜底：紧凑散点（1.2~2.2 字号，随缘聚拢）
-                                    float ang = hashRand(kk, 0L, 59, seed) * 2f * (float) Math.PI;
-                                    float rad = (1.2f + (hashRand(kk, 0L, 61, seed) + 1f) * 0.5f)
+                                    float ang = seededJitter(kk, 0L, 59, seed) * 2f * (float) Math.PI;
+                                    float rad = (1.2f + (seededJitter(kk, 0L, 61, seed) + 1f) * 0.5f)
                                             * LYRIC_SIZE;
                                     fx = tx + (float) Math.cos(ang) * rad;
                                     fy = ty + (float) Math.sin(ang) * rad;
@@ -1475,7 +1568,7 @@ public final class WorldLyricsState {
 
         LyricGlyphs out = new LyricGlyphs(seed, lines.size() * LINE_H);
         out.huiguangElapsedMs = elapsedMs;
-        float orbitPhase = hashRand(0, 0L, 73, seed) * 2f * (float) Math.PI;
+        float orbitPhase = seededJitter(0, 0L, 73, seed) * 2f * (float) Math.PI;
         if (huiguang) {
             out.huiguangLayout = huiguangLayout;
             out.huiguangLayoutScales = huiguangLayoutScales;
@@ -1497,7 +1590,7 @@ public final class WorldLyricsState {
                     0.03f * (float) Math.sin(t * 0.23f + orbitPhase * 0.7f));
         }
         float y = -(lines.size() * LINE_H) / 2f;
-        int k = 0;      // 字形下标（含空白，与  一致）
+        int k = 0;      // 字形下标（含空白）
         int n = 0;      // 非空白字符序号（仅 flashMode 推进 —— 与既有语义一致）
         int hwN = 0;    // 绘光自己的非空白计数器（飞行定义按它索引；见 huiguang 分支）
         for (String line : lines) {
@@ -1516,7 +1609,7 @@ public final class WorldLyricsState {
                         appearAt = (float) ((double) k / total * f.revealMs);
                     }
                     // ±20ms 确定性抖动：同句群像错落（发光层与本层同帧取同值）
-                    appearAt += hashRand(k, 0L, 7, seed) * 20f;
+                    appearAt += seededJitter(k, 0L, 7, seed) * 20f;
 
                     if (huiguang) {
                         // ---- 绘光模式：换句飞行重排 + 卡拉OK点亮 + 冷暖双色 ----
@@ -1572,7 +1665,7 @@ public final class WorldLyricsState {
                         float elapsedSec = elapsedMs / 1000f;
                         float breathPhase = fl != null && fl.valid
                                 ? fl.wobblePhase
-                                : hashRand(k, 0L, 79, seed) * (float) Math.PI;
+                                : seededJitter(k, 0L, 79, seed) * (float) Math.PI;
                         float[] orbit = LINE_ORBIT_SCRATCH;
                         float[] breath = BREATH_SCRATCH;
                         HuiguangMotion.glyphBreathInto(elapsedSec, LYRIC_SIZE, breathPhase, breath);
@@ -1581,16 +1674,16 @@ public final class WorldLyricsState {
                         // 崩解：点亮 delay 秒后沿各自方向缓慢漂离（多数向上）、
                         // 可见自转（folia rotation += spin×amount×0.18 的度数口径）
                         // 逐字速度倍率（folia drift.speed 0.6~1.5）——散开有快有慢
-                        float litAgeSec = elapsedSec - (appearAt + hashRand(k, 0L, 65, seed)
+                        float litAgeSec = elapsedSec - (appearAt + seededJitter(k, 0L, 65, seed)
                                 * HuiguangMotion.DECAY_DELAY_MAX_S * 1000f) / 1000f;
-                        float decaySpeed = 0.6f + (hashRand(k, 0L, 69, seed) * 0.5f + 0.5f) * 0.9f;
+                        float decaySpeed = 0.6f + (seededJitter(k, 0L, 69, seed) * 0.5f + 0.5f) * 0.9f;
                         float decay = HuiguangMotion.decayAmount(litAgeSec) * decaySpeed;
                         if (decay > 0.001f) {
-                            float ang = -(float) Math.PI / 2f + hashRand(k, 0L, 63, seed) * 1.1f;
+                            float ang = -(float) Math.PI / 2f + seededJitter(k, 0L, 63, seed) * 1.1f;
                             gx += (float) Math.cos(ang) * decay * LYRIC_SIZE;
                             gy += (float) Math.sin(ang) * decay * LYRIC_SIZE;
                             rot += (float) Math.toDegrees(
-                                    hashRand(k, 0L, 67, seed) * decay * 0.18f);
+                                    seededJitter(k, 0L, 67, seed) * decay * 0.18f);
                         }
                         // 行级呼吸缩放/摇摆：整句统一脉动（folia 整行脉动一比一）
                         scale *= out.huiguangLineScale;
@@ -1743,7 +1836,7 @@ public final class WorldLyricsState {
      * 任何一侧退化（scale 过小）返回 null，调用方退回落位入场。
      */
     /** 上一句排版（prevLayout）由调用方 hoist 出逐字循环 —— 本方法只做投影。 */
-    private static float[] projectFromPrev(Floating f, int n, PixelWidthOf widthOf,
+    private static float[] projectFromPrev(SpawnedLine f, int n, PixelWidthOf widthOf,
                                            float[] pl) {
         WorldLyricsState.BillboardSnapshot prev = f.huiguangPrevGeo;
         WorldLyricsState.BillboardSnapshot own = f.huiguangOwnGeo;
@@ -1759,7 +1852,7 @@ public final class WorldLyricsState {
         } else {
             // 上一句比本句短：取上一句整面的随机散点（字面中心 ± 行高），仍成「从上一句飞来」
             cx = 0f;
-            cy = (hashRand(n, 0L, 43, f.huiguangPrev.lines.hashCode()) * 0.5f)
+            cy = (seededJitter(n, 0L, 43, f.huiguangPrev.lines.hashCode()) * 0.5f)
                     * Math.max(2, f.huiguangPrev.lines.size()) * LINE_H;
         }
         double[] world = prev.planePointToWorld(cx, cy);
@@ -1832,11 +1925,13 @@ public final class WorldLyricsState {
         float widthOf(String s);
     }
 
+    // ==================== seededJitter（入场动画相位用） ====================
 
     /**
      * 由 (字序号, 第几帧, 种类, 种子) 得到一个固定的 -1..1 随机数
+     * （确定性哈希）：同一帧里取同一个值。
      */
-    public static float hashRand(int k, long frame, int salt, int seed) {
+    public static float seededJitter(int k, long frame, int salt, int seed) {
         int h = k * 73856093 ^ (int) (frame * 19349663L) ^ (salt * 83492791) ^ seed;
         h ^= h >>> 13;
         h *= 0x5bd1e995;
@@ -1847,6 +1942,7 @@ public final class WorldLyricsState {
     // ==================== 入口 ====================
 
 
+    /** 拆句开关生效后的行列表，按歌词版本缓存。 */
     private List<LyricLine> cachedSplitLines;
     private long cachedSplitRevision = -1;
 
@@ -1872,6 +1968,53 @@ public final class WorldLyricsState {
     // ==================== 商业元数据行过滤（歌曲开头的制作人员表等） ====================
 
     /**
+     * 冒号锚定的制作人员表行：一行以「作词：」「作曲：」「Lyricist:」这类
+     * <b>职务词开头且紧跟冒号</b>的，无论挂载多久、行长多少都直接剔除。
+     * 这是过滤的<b>第一层</b>——无条件、零误伤：真实歌词行几乎不会以
+     * 「作词：」开头，因此不需要时长/行长这些保守条件。行首锚定 + 必须跟
+     * 冒号是双保险：句中出现「回：「作曲」」或唱到「吉他」这类词都不命中。
+     */
+    private static final Pattern CREDIT_LINE = Pattern.compile(
+            "^\\s*(作词|作詞|作曲|编曲|編曲|填詞|填词|制作人|製作人|混音|母带|母帶|監製|监制"
+                    + "|和声|和聲|吉他|贝斯|貝斯|键盘|鍵盤|鼓手|录音师|錄音師|作词人|作詞人|作词|作詞|作曲"
+                    + "|编曲|編曲|填词|填詞|鼓|弦乐|弦樂|配唱|录音|錄音|录混|錄混"
+                    + "|录音棚|錄音棚|混音师|混音師|母带师|母帶師|企划|企劃|出品|发行|發行|版权|版權"
+                    + "|独家|獨家|OP|SP|Lyricist|Composer|Producer|Arranger|Mixing|Mastering)"
+                    + "\\s*[:：]",
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE
+                    | Pattern.UNICODE_CHARACTER_CLASS);
+
+    /**
+     * 判定一行是不是「冒号锚定的制作人员表」（如「作词：某某」）。
+     * 纯函数：只看行文本本身，与挂载时长无关 —— 供 filteredLines 第一层与测试用。
+     */
+    static boolean isCreditLine(String text) {
+        if (text == null || text.isEmpty()) return false;
+        return CREDIT_LINE.matcher(text).find();
+    }
+
+    /**
+     * 纯音乐占位行：没填词的歌会被平台塞进「纯音乐，请欣赏」这类恒在的提示行
+     * （与快闪的商业行不同 —— 它从头挂到尾，永远占据「当前行」）。判据是
+     * <b>去掉全部非字母数字字符并归一小写后</b>恰好等于这些固定口吻之一：
+     * 加了标点/空格/全半角变体的提示词也能命中，而「纯音乐的电池」这类碰巧
+     * 含词的真实歌名不会。
+     */
+    static boolean isPlaceholderLine(String text) {
+        if (text == null) return false;
+        StringBuilder sb = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (Character.isLetterOrDigit(c)) sb.append(Character.toLowerCase(c));
+        }
+        if (sb.length() == 0) return false;
+        String t = sb.toString();
+        return t.equals("纯音乐") || t.equals("纯音乐请欣赏") || t.equals("纯音乐请您欣赏")
+                || t.equals("没有填词的纯音乐") || t.equals("instrumental")
+                || t.equals("没有填词的纯音乐") || t.equals("instrumental");
+    }
+
+    /**
      * 常见商业附加信息行（「xxx平台独家」「作词/作曲/编曲：…」「出品人/监制…」
      * 一整张制作人员表）—— 通常挤在歌曲开头 0.1~0.5s 一行地快速闪过。绘光模式
      * 下每行都是一次「整句字形烘焙风暴 + 飞入重排」，连续快闪就是连续掉帧尖峰，
@@ -1879,14 +2022,16 @@ public final class WorldLyricsState {
      *
      * <p>特征识别（宁缺毋滥：三个条件都满足才过滤）：① 命中制作人员/平台运营的
      * 关键词表；② 行极短（≤30 字，正常歌词行很少整行都是职务表）；③ 该行挂载
-     * 时长极短（<1.2s，按下一行时间戳差算 —— 商业行总是一扫而过）。纯歌词行
-     * 即使偶尔含「回：「作曲」」这类字眼，靠 ②③ 双保险不会误伤。</p>
+     * 时长极短（&lt;1.2s，按下一行时间戳差算 —— 商业行总是一扫而过）。纯歌词行
+     * 即使偶尔含「回：「作曲」」这类字眼，靠 ②③ 双保险不会误伤。这是过滤的
+     * <b>第二层</b>：专抓「xx平台独家」这类<b>无冒号</b>的声明行 —— 冒号锚定的
+     * 职务表已由 {@link #CREDIT_LINE} 第一层无条件处理。</p>
      */
-    private static final String[] METADATA_KEYWORDS = {
-            "作词", "作詞", "作曲", "编曲", "編曲", "填詞", "填词", "作词：", "作曲：",
+    static final String[] METADATA_KEYWORDS = {
+            "作词", "作詞", "作曲", "编曲", "編曲", "填詞", "填词",
             "出品", "发行", "發行", "企划", "企劃", "监制", "監製", "制作人", "製作人",
             "混音", "母带", "母帶", "录音", "錄音", "和声", "和聲", "吉他", "贝斯",
-            "键盘", "鼓", "弦乐", "弦樂", "配唱", "录音棚", "錄音棚", "混音师", "母带师",
+            "键盘", "弦乐", "弦樂", "配唱", "录音棚", "錄音棚", "混音师", "母带师",
             "独家", "獨家", "版权", "版權", "未经许可", "未經許可", "禁止翻唱",
             "音乐平台", "音樂平台", "云音乐", "雲音樂", "官方渠道", "正版授权", "正版的音樂",
     };
@@ -1911,8 +2056,11 @@ public final class WorldLyricsState {
     }
 
     /**
-     * 过滤后的行表（带 revision 缓存 —— 与 split 缓存同惯例）。过滤只发生在
-     * 「开头一串快闪商业行」的场景，正常歌曲零改动。
+     * 过滤后的行表（带 revision 缓存 —— 与 split 缓存同惯例）。两级过滤：
+     * 第一层 {@link #isCreditLine}/{@link #isPlaceholderLine} 只看行文本、
+     * 无条件剔除（制作人员表的冒号锚定行 / 纯音乐恒在占位行）；第二层
+     * {@link #isFlashMetaLine} 带时长条件（开头快闪的无冒号商业声明行）。
+     * 过滤只发生在「开头一串快闪商业行 / 纯音乐占位」的场景，正常歌曲零改动。
      */
     static List<LyricLine> filteredLines(List<LyricLine> raw) {
         WorldLyricsState s = INSTANCE;
@@ -1924,6 +2072,13 @@ public final class WorldLyricsState {
         for (int i = 0; i < raw.size(); i++) {
             LyricLine l = raw.get(i);
             if (l == null) continue;
+            if (isCreditLine(l.lyric) || isPlaceholderLine(l.lyric)) {
+                if (out == null) {
+                    out = new ArrayList<>(raw.size());
+                    for (int j = 0; j < i; j++) out.add(raw.get(j));
+                }
+                continue;
+            }
             if (isFlashMetaLine(raw, i)) {
                 if (out == null) {
                     out = new ArrayList<>(raw.size());
@@ -1969,6 +2124,7 @@ public final class WorldLyricsState {
         lastSpawnedIdx = -1;
         lastPlayingNanos = 0;
         wasPaused = false;
+        lastFramePosMs = Long.MIN_VALUE;
         cachedSplitLines = null;
         cachedSplitRevision = -1;
         cachedFilteredLines = null;

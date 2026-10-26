@@ -8,8 +8,6 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/5/5 12:50
  */
 public class RafIFFParser extends IFFParser {
 

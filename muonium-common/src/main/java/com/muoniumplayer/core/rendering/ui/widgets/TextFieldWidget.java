@@ -7,8 +7,6 @@ import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 import com.muoniumplayer.core.utils.cursor.CursorUtils;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/11/8 13:28
  */
 public class TextFieldWidget extends AbstractWidget<TextFieldWidget> {
 

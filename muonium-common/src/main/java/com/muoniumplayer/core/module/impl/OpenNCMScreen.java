@@ -12,8 +12,6 @@ import com.muoniumplayer.core.settings.ClientSettings;
 import com.muoniumplayer.core.screens.onboarding.OnboardingManager;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2026/4/1 11:08
  */
 public class OpenNCMScreen extends ExtensionModule implements SharedConstants, EventHandler {
 

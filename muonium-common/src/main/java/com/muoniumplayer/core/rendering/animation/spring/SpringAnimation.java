@@ -4,8 +4,6 @@ import lombok.Getter;
 import java.util.function.DoubleUnaryOperator;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/12/11 23:28
  */
 public class SpringAnimation {
 

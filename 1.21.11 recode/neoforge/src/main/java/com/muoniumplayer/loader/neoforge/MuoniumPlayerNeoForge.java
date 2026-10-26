@@ -108,6 +108,7 @@ public final class MuoniumPlayerNeoForge {
      * 1.21.1 的 {@code Stage.AFTER_LEVEL} 枚举在 NeoForge 21.11.45 已拆成独立子类
      * {@code RenderLevelStageEvent.AfterLevel}（javap 核对），监听器直接挂它 —— 挂抽象基类
      * 会被 EventBus 拒绝。等价语义：地形/实体/半透明都画完、天气粒子之前。矩阵与 GL 状态
+     * 由 {@code WorldLyricsBridge.worldRenderEnd()} 自己设（与 Fabric 侧同口径：加载器给的矩阵
      * 两树不一致，自算才一致）。
      */
     private void onRenderLevelStage(RenderLevelStageEvent.AfterLevel event) {

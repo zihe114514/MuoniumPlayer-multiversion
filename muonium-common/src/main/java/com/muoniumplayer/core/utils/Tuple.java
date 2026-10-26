@@ -4,8 +4,6 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/5/10 10:39
  */
 @Getter
 @Setter

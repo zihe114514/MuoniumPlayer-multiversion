@@ -15,7 +15,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * @author MuoniumPlayer Contributors
  * @since 11/25/2023
  */
 @UtilityClass

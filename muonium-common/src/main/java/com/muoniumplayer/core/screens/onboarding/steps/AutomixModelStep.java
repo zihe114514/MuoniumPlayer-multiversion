@@ -9,7 +9,7 @@ import com.muoniumplayer.core.screens.onboarding.OnboardingStepView;
 import com.muoniumplayer.core.screens.onboarding.OnboardingUi;
 import com.muoniumplayer.party.ui.PartyIcons;
 
-/** 首次运行设置期间显示的可选 智能混音 模型安装器。 */
+/** 首次运行设置期间显示的可选的智能混音模型安装器。 */
 public final class AutomixModelStep implements OnboardingStepView {
     private static final FoliaModelManager.Kind[] KINDS = {
             FoliaModelManager.Kind.BEAT_THIS,
@@ -167,7 +167,7 @@ public final class AutomixModelStep implements OnboardingStepView {
         if (OnboardingUi.inside(mouseX, mouseY, x, rowsBottom(y) + CTA_GAP, CTA_W, CTA_H)) {
             if (allInstalled()) {
                 AutomixSettings.setEngine(AutomixSettings.Engine.FOLIA);
-                message = "智能混音 已启用。";
+                message = "智能混音已启用。";
                 messageError = false;
             } else if (!installingAll && activeKind == null) {
                 installingAll = true;
@@ -207,7 +207,7 @@ public final class AutomixModelStep implements OnboardingStepView {
         }
         installingAll = false;
         AutomixSettings.setEngine(AutomixSettings.Engine.FOLIA);
-        message = "全部组件安装完成，智能混音 已启用。";
+        message = "全部组件安装完成，智能混音已启用。";
         messageError = false;
     }
 

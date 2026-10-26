@@ -403,9 +403,6 @@ public final class ConfigPaths {
      * 因此用户可以安全地在旁边保留旧配置的备份。
      */
     private static void migrateLegacyFiles() {
-        migrate(new File("music_hud.json"), HUD);
-        migrate(new File("_player_config.json"), PLAYER);
-        migrate(new File("_player_theme.json"), THEME);
 
         // 开发构建创建的中间 Muonium 名称。
         migrate(new File("muonium_hud.json"), HUD);
@@ -419,8 +416,6 @@ public final class ConfigPaths {
         migrate(new File("NCMCookie.txt"), NETEASE_COOKIE);
         migrateDirectory(new File("MusicCache"), MUSIC_CACHE);
 
-        migrate(Paths.get("config", "", "music_auth.json").toFile(), MUSIC_AUTH.toFile());
-        migrate(Paths.get("config", "", "netease_accounts.json").toFile(), NETEASE_ACCOUNTS);
     }
 
     private static void migrate(File legacy, File target) {

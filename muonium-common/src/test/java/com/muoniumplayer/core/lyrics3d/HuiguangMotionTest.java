@@ -187,9 +187,9 @@ class HuiguangMotionTest {
     @Test
     void huiguangBuildGlyphsFliesFromPrevLinePlane() {
         // 端到端：构造「上一句」与「本句」的交接，确认本句带飞行定义、且起点在上一句侧
-        WorldLyricsState.Floating prev = new WorldLyricsState.Floating(
+        WorldLyricsState.SpawnedLine prev = new WorldLyricsState.SpawnedLine(
                 List.of("前一句"), 0L, 800L, -3.0, 64.0, 2.0, 20.0, -5.0, new long[0]);
-        WorldLyricsState.Floating cur = new WorldLyricsState.Floating(
+        WorldLyricsState.SpawnedLine cur = new WorldLyricsState.SpawnedLine(
                 List.of("新句子长一点"), 3000L, 900L, 2.0, 66.0, -1.0, -15.0, 3.0, new long[0]);
         WorldLyricsState.CameraView cam = new WorldLyricsState.CameraView() {
             public double eyeX() { return 0; }
@@ -235,9 +235,9 @@ class HuiguangMotionTest {
     void huiguangLrcLineGetsDistinctFlightsPerChar() {
         // 回归：普通 LRC（无逐字轴，flashMode=false）下飞行定义按非空白字符序推进 ——
         // 曾经用 flashMode 才推进的 n 索引，所有字挤在第 0 条曲线上（起点/曲线全同）。
-        WorldLyricsState.Floating prev = new WorldLyricsState.Floating(
+        WorldLyricsState.SpawnedLine prev = new WorldLyricsState.SpawnedLine(
                 List.of("前一句歌词"), 0L, 800L, -3.0, 64.0, 2.0, 20.0, -5.0, new long[0]);
-        WorldLyricsState.Floating cur = new WorldLyricsState.Floating(
+        WorldLyricsState.SpawnedLine cur = new WorldLyricsState.SpawnedLine(
                 List.of("新句子"), 2000L, 900L, 2.0, 66.0, -1.0, -15.0, 3.0, new long[0]);
         WorldLyricsState.CameraView cam = new WorldLyricsState.CameraView() {
             public double eyeX() { return 0; }
@@ -278,7 +278,7 @@ class HuiguangMotionTest {
     @Test
     void litIsColdDimAtStart() {
         // 未唱字的 alpha 不低于 UNLIT_ALPHA（冷色半亮仍可见）
-        WorldLyricsState.Floating cur = new WorldLyricsState.Floating(
+        WorldLyricsState.SpawnedLine cur = new WorldLyricsState.SpawnedLine(
                 List.of("未唱句"), 0L, 800L, 0, 0, 0, 0, 0, new long[0]);
         WorldLyricsState.PixelWidthOf width = s -> 10f;
         WorldLyricsState.LyricGlyphs glyphs = WorldLyricsState.buildGlyphs(
@@ -344,7 +344,7 @@ class HuiguangMotionTest {
     @Test
     void scatterEntryStillFliesWithTrails() {
         // 无上一句（首句/seek）：散点聚合入场也走贝塞尔飞行（带拖尾），不再退回落位
-        WorldLyricsState.Floating cur = new WorldLyricsState.Floating(
+        WorldLyricsState.SpawnedLine cur = new WorldLyricsState.SpawnedLine(
                 List.of("首句入场"), 0L, 800L, 0, 0, 0, 0, 0, new long[0]);
         WorldLyricsState.PixelWidthOf width = s -> 10f;
         WorldLyricsState.LyricGlyphs glyphs = WorldLyricsState.buildGlyphs(
@@ -367,7 +367,7 @@ class HuiguangMotionTest {
     @Test
     void landedGlyphsKeepMicroMotion() {
         // 落位后仍有恒定微动（绕行+呼吸）：同一 elapsed 求值稳定、不同 elapsed 有位移
-        WorldLyricsState.Floating cur = new WorldLyricsState.Floating(
+        WorldLyricsState.SpawnedLine cur = new WorldLyricsState.SpawnedLine(
                 List.of("微动"), 0L, 800L, 0, 0, 0, 0, 0, new long[0]);
         WorldLyricsState.PixelWidthOf width = s -> 10f;
         WorldLyricsState.LyricGlyphs early = WorldLyricsState.buildGlyphs(

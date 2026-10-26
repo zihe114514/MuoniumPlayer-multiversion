@@ -506,7 +506,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         protected int getAllocationLength(Header header) {
             if (header.version() == Header.MPEG1) {
@@ -546,7 +545,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         protected void prepare_sample_reading(Header header, int allocation,
                                               //float[][] groupingTable,
@@ -599,7 +597,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public void readAllocation(Bitstream stream, Header header, Crc16 crc) {
@@ -610,7 +607,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         public void readScaleFactorSelection(Bitstream stream, Crc16 crc) {
             if (allocation != 0) {
@@ -620,7 +616,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public void readScaleFactor(Bitstream stream, Header header) {
@@ -648,7 +643,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public boolean readSampleData(Bitstream stream) {
@@ -685,7 +679,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public boolean put_next_sample(int channels, SynthesisFilter filter1, SynthesisFilter filter2) {
@@ -723,7 +716,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public void readAllocation(Bitstream stream, Header header, Crc16 crc) {
@@ -731,7 +723,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public void readScaleFactorSelection(Bitstream stream, Crc16 crc) {
@@ -746,7 +737,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public void readScaleFactor(Bitstream stream, Header header) {
@@ -778,7 +768,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public boolean readSampleData(Bitstream stream) {
@@ -786,7 +775,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public boolean put_next_sample(int channels, SynthesisFilter filter1, SynthesisFilter filter2) {
@@ -856,7 +844,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public void readAllocation(Bitstream stream, Header header, Crc16 crc) {
@@ -870,7 +857,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public void readScaleFactorSelection(Bitstream stream, Crc16 crc) {
@@ -887,7 +873,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public void readScaleFactor(Bitstream stream, Header header) {
@@ -924,7 +909,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public boolean readSampleData(Bitstream stream) {
@@ -959,7 +943,6 @@ class LayerIIDecoder extends LayerIDecoder implements FrameDecoder {
         }
 
         /**
-         *
          */
         @Override
         public boolean put_next_sample(int channels, SynthesisFilter filter1, SynthesisFilter filter2) {

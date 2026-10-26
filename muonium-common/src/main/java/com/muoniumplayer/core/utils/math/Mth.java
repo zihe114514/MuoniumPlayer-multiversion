@@ -3,8 +3,6 @@ package com.muoniumplayer.core.utils.math;
 import lombok.experimental.UtilityClass;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/11/16 12:28
  */
 @UtilityClass
 public class Mth {

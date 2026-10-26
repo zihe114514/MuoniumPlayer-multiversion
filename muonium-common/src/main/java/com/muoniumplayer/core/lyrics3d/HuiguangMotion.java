@@ -1,21 +1,20 @@
 package com.muoniumplayer.core.lyrics3d;
 
 /**
- * 「绘光」动效数学 —— 照 本项目 lumiere（MIT）文字子系统的纯函数核心移植：
- * 换句时整行字从上一句的位置沿各自的三次贝塞尔曲线飞来重新排列组合，
- * 飞行途中拖出云室粒子式的径迹（回溯重算，非历史缓冲），唱到的字按
- * 卡拉OK式连续渐变点亮（未唱时冷色半亮）。
+ * 「绘光」动效数学 —— 换句时整行字从上一句的位置沿各自的三次贝塞尔曲线飞来
+ * 重新排列组合，飞行途中拖出云室粒子式的径迹（回溯重算，非历史缓冲），
+ * 唱到的字按卡拉OK式连续渐变点亮（未唱时冷色半亮）。
  *
- * <p>与 lumiere 的对应关系（引用为 folia 仓库 lumiere/ 下的文件）：</p>
+ * <p>动效分解：</p>
  * <ul>
- *   <li>逐字飞行曲线 —— windowLines.ts（控制点甩出 1.6~4.8 / 回卷 1.0~3.6 字号，
+ *   <li>逐字飞行曲线 —— 每字独立的三次贝塞尔（控制点甩出 1.6~4.8 / 回卷 1.0~3.6 字号，
  *       第二控制点转半圈 ±0.4rad；delay+duration ≤ 1 保证窗口结束前全部到位）；</li>
- *   <li>径迹 —— lyricWindow.ts drawTracks（过去 TRACK_TIME 秒均匀 21 个采样时刻
+ *   <li>径迹 —— 过去 TRACK_TIME 秒均匀 21 个采样时刻
  *       重算字的位置连成折线；路径 3 个字号长饱和亮度；位移不足不留痕；
- *       2% 字号的确定性正弦垂直抖动）；</li>
- *   <li>点亮 —— reveal.ts + lyricWindow.ts（卡拉OK渐变最短 LIGHT_UP 毫秒，
- *       未唱字半亮冷色、飞行加亮）；</li>
- *   <li>坐标系换算 —— windowGeometry.ts toWorld 的逆：世界点投回公告牌平面
+ *       2% 字号的确定性正弦垂直抖动；</li>
+ *   <li>点亮 —— 卡拉OK渐变最短 LIGHT_UP 毫秒，
+ *       未唱字半亮冷色、飞行加亮；</li>
+ *   <li>坐标系换算 —— 世界点投回公告牌平面
  *       （本仓库的公告牌 = 一句歌词，换句交接的「上一句位置」用它求得）。</li>
  * </ul>
  *
@@ -28,36 +27,36 @@ public final class HuiguangMotion {
     private HuiguangMotion() {
     }
 
-    // ==================== 时间常量（folia windowTiming.ts 的本仓库换算） ====================
+    // ==================== 时间常量（上游换算到本仓库口径） ====================
 
-    /** 逐字飞行窗口：一次换句的飞行总时长（folia SLIDE=1.5s，本仓库换句无提前量，收紧到 1s）。 */
+    /** 逐字飞行窗口：一次换句的飞行总时长（上游 SLIDE=1.5s，本仓库换句无提前量，收紧到 1s）。 */
     public static final float ENTRY_WINDOW_MS = 700f;
-    /** 径迹回看窗口（folia TRACK_TIME=0.45s）：也是飞行结束后径迹收拢的等待期。 */
+    /** 径迹回看窗口（上游 TRACK_TIME=0.45s）：也是飞行结束后径迹收拢的等待期。 */
     public static final float TRACK_TIME_S = 0.45f;
-    /** 径迹采样数（folia TRACK_SAMPLES=20 → 21 个点）。 */
+    /** 径迹采样数（上游 TRACK_SAMPLES=20 → 21 个点）。 */
     public static final int TRACK_SAMPLES = 20;
-    /** 卡拉OK点亮的最短渐变（folia LIGHT_UP=0.3s）：字再短也不跳变。 */
+    /** 卡拉OK点亮的最短渐变（上游 LIGHT_UP=0.3s）：字再短也不跳变。 */
     public static final float LIGHT_UP_MS = 300f;
     /** 点亮逐字渐变兜底窗口：无下一字时刻可取时的点亮时长。 */
     private static final float LIT_FALLBACK_MS = 400f;
 
-    // ==================== 观感常量（folia lyricWindow.ts 的数值） ====================
+    // ==================== 观感常量（上游 lyricWindow 的数值） ====================
 
-    /** 径迹基础不透明度（folia 0.55），渲染层再乘 strength 与字形 alpha。 */
+    /** 径迹基础不透明度（上游 0.55），渲染层再乘 strength 与字形 alpha。 */
     public static final float TRAIL_ALPHA = 0.8f;
-    /** 径迹亮度饱和：路径长达到几个字号后不再变亮（folia heroPx×3）。 */
+    /** 径迹亮度饱和：路径长达到几个字号后不再变亮（上游 heroPx×3）。 */
     public static final float TRAIL_SATURATION_FONTS = 3f;
-    /** 径迹最小强度：路径位移不足（≈0.15 字号）不留痕（folia strength>0.05）。 */
+    /** 径迹最小强度：路径位移不足（≈0.15 字号）不留痕（上游 strength>0.05）。 */
     public static final float TRAIL_MIN_STRENGTH = 0.05f;
-    /** 径迹垂直抖动幅度（字号比例，folia 0.02；y 折减 0.6 —— 云室粒子的斜向雾感）。 */
+    /** 径迹垂直抖动幅度（字号比例，上游 0.02；y 折减 0.6 —— 云室粒子的斜向雾感）。 */
     public static final float TRAIL_WOBBLE = 0.02f;
-    /** 径迹线宽（设计像素；folia 1.2 逻辑px / 40px 字号 ≈ 3% 字高，本仓库字号 10px 取一半）。 */
+    /** 径迹线宽（设计像素；上游 1.2 逻辑px / 40px 字号 ≈ 3% 字高，本仓库字号 10px 取一半）。 */
     public static final float TRAIL_WIDTH_PX = 0.32f;
-    /** 飞行中字的缩小量（folia pulse = 1 − 0.28×flying）。 */
+    /** 飞行中字的缩小量（上游 pulse = 1 − 0.28×flying）。 */
     public static final float FLIGHT_SHRINK = 0.28f;
-    /** 飞行自旋上限（folia ±1.2 rad）。 */
+    /** 飞行自旋上限（上游 ±1.2 rad）。 */
     public static final float SPIN_MAX_RAD = 1.2f;
-    /** 未唱字的不透明度（folia unlitOpacity 0.22；本仓库背景是世界不是暗场，略提）。 */
+    /** 未唱字的不透明度（上游 unlitOpacity 0.22；本仓库背景是世界不是暗场，略提）。 */
     public static final float UNLIT_ALPHA = 0.3f;
     /** 未唱字的亮度乘数（渲染层据此选烘焙色档；暗档发光同样压到 0.35 档）。 */
     public static final float UNLIT_DIM = 0.45f;
@@ -72,20 +71,20 @@ public final class HuiguangMotion {
         public float fromX, fromY;
         public float toX, toY;
         public float c1x, c1y, c2x, c2y;
-        /** 归一化到飞行窗口的起播延迟与时长（delay+duration ≤ 1，folia 同约束）。 */
+        /** 归一化到飞行窗口的起播延迟与时长（delay+duration ≤ 1，上游同约束）。 */
         public float delay, duration;
         /** 飞行途中自旋（rad，乘 flying 包络）。 */
         public float spin;
         /** 径迹垂直抖动的每字固定相位。 */
         public float wobblePhase;
-        /** 出场飞行用 easeIn（加速离场）；入场用 easeInOutCubic（folia）。 */
+        /** 出场飞行用 easeIn（加速离场）；入场用 easeInOutCubic（上游口径）。 */
         public boolean exitEase;
         public boolean valid;
     }
 
     /**
-     * 构建一次飞行的定义（folia windowLines.ts 的控制点抽取，确定性随机来自
-     * {@link WorldLyricsState#hashRand}）：同一 (k, seed) 永远同一曲线。
+     * 构建一次飞行的定义（控制点抽取口径与上游一致，确定性随机来自
+     * {@link WorldLyricsState#seededJitter}）：同一 (k, seed) 永远同一曲线。
      *
      * @param k       字形下标（含空白，与 buildGlyphs 同轴）
      * @param seed    句种子（行文本 hashCode）
@@ -98,27 +97,27 @@ public final class HuiguangMotion {
         Flight f = new Flight();
         f.fromX = fromX; f.fromY = fromY;
         f.toX = toX; f.toY = toY;
-        // folia windowLines.ts：a1 随机方向甩出，模长 1.6~4.8 字号；
+        // 控制点抽取：a1 随机方向甩出，模长 1.6~4.8 字号；
         // c2 相对终点、方向转过约半圈（±0.4rad 抖动）→ 弧线或 S 形打卷，模长 1.0~3.6 字号。
-        float a1 = WorldLyricsState.hashRand(k, 0L, 11, seed) * (float) Math.PI;
-        float n1 = WorldLyricsState.hashRand(k, 0L, 13, seed) * 0.5f + 0.5f;
+        float a1 = WorldLyricsState.seededJitter(k, 0L, 11, seed) * (float) Math.PI;
+        float n1 = WorldLyricsState.seededJitter(k, 0L, 13, seed) * 0.5f + 0.5f;
         float m1 = fontPx * (1.6f + n1 * 3.2f);
-        float half = WorldLyricsState.hashRand(k, 0L, 17, seed) < 0f ? 0.5f : 1.5f;
-        float a2 = a1 + (float) Math.PI * half + WorldLyricsState.hashRand(k, 0L, 19, seed) * 0.4f;
-        float n2 = WorldLyricsState.hashRand(k, 0L, 23, seed) * 0.5f + 0.5f;
+        float half = WorldLyricsState.seededJitter(k, 0L, 17, seed) < 0f ? 0.5f : 1.5f;
+        float a2 = a1 + (float) Math.PI * half + WorldLyricsState.seededJitter(k, 0L, 19, seed) * 0.4f;
+        float n2 = WorldLyricsState.seededJitter(k, 0L, 23, seed) * 0.5f + 0.5f;
         float m2 = fontPx * (1.0f + n2 * 2.6f);
         f.c1x = fromX + (float) Math.cos(a1) * m1;
         f.c1y = fromY + (float) Math.sin(a1) * m1;
         f.c2x = toX + (float) Math.cos(a2) * m2;
         f.c2y = toY + (float) Math.sin(a2) * m2;
         // 时序：duration 0.45~0.85（归一化），delay 吃掉剩余量 —— 窗口结束前全部到位。
-        float d = 0.45f + (WorldLyricsState.hashRand(k, 0L, 29, seed) * 0.5f + 0.5f) * 0.4f;
+        float d = 0.45f + (WorldLyricsState.seededJitter(k, 0L, 29, seed) * 0.5f + 0.5f) * 0.4f;
         f.duration = d;
-        // delay 分布偏前（×0.6）：本仓库换句从行起点起飞（无 folia 的 −1.2s 预摆），
+        // delay 分布偏前（×0.6）：本仓库换句从行起点起飞（无上游的 −1.2s 预摆），
         // 让大部分字在首个点亮时刻前落位，削弱「边飞边亮」的持续闹感（差距分析 D7）
-        f.delay = (WorldLyricsState.hashRand(k, 0L, 31, seed) * 0.5f + 0.5f) * (1f - d) * 0.6f;
-        f.spin = WorldLyricsState.hashRand(k, 0L, 37, seed) * SPIN_MAX_RAD;
-        f.wobblePhase = WorldLyricsState.hashRand(k, 0L, 41, seed) * (float) Math.PI;
+        f.delay = (WorldLyricsState.seededJitter(k, 0L, 31, seed) * 0.5f + 0.5f) * (1f - d) * 0.6f;
+        f.spin = WorldLyricsState.seededJitter(k, 0L, 37, seed) * SPIN_MAX_RAD;
+        f.wobblePhase = WorldLyricsState.seededJitter(k, 0L, 41, seed) * (float) Math.PI;
         f.exitEase = exitEase;
         f.valid = true;
         return f;
@@ -126,7 +125,7 @@ public final class HuiguangMotion {
 
     /**
      * 对任意时刻求飞行姿态。out[0]=x, out[1]=y, out[2]=rot(rad), out[3]=flying(0..1)。
-     * elapsed 超过窗口后钉在终点、flying=0（folia 的换位进度 clamp 语义）。
+     * elapsed 超过窗口后钉在终点、flying=0（上游的换位进度 clamp 语义）。
      */
     public static void poseAt(Flight f, float elapsedMs, float windowMs, float[] out) {
         float phase = clamp01(elapsedMs / Math.max(1f, windowMs));
@@ -144,7 +143,7 @@ public final class HuiguangMotion {
     }
 
     /**
-     * 径迹采样（folia drawTracks 的回溯重算）：对过去 {@link #TRACK_TIME_S} 秒内
+     * 径迹采样（上游 drawTracks 的回溯重算）：对过去 {@link #TRACK_TIME_S} 秒内
      * 均匀 {@link #TRACK_SAMPLES}+1 个时刻重算飞行位置，连成折线并叠加云室抖动。
      * 点数恒为 {@link #TRACK_SAMPLES}+1；xs/ys 需至少该容量。
      */
@@ -156,7 +155,7 @@ public final class HuiguangMotion {
             float te = elapsedMs - TRACK_TIME_S * 1000f * (1f - (float) j / n);
             if (te < 0f) te = 0f;
             poseAt(f, te, windowMs, POSE);
-            // folia：sin(i·0.9 + 每字相位 + s·6)，幅度 2% 字号，x/y 按 +1/−0.6 斜向分配
+            // 上游：sin(i·0.9 + 每字相位 + s·6)，幅度 2% 字号，x/y 按 +1/−0.6 斜向分配
             float w = (float) Math.sin(j * 0.9f + f.wobblePhase + te * 0.006f) * fontPx * TRAIL_WOBBLE;
             xs[j] = POSE[0] + w;
             ys[j] = POSE[1] - 0.6f * w;
@@ -164,9 +163,9 @@ public final class HuiguangMotion {
         return n + 1;
     }
 
-    /** 径迹强度：按无 wobble 的 pose 折线累计长度归一（folia strength = min(1, len/heroPx×3)）。
+    /** 径迹强度：按无 wobble 的 pose 折线累计长度归一（上游 strength = min(1, len/heroPx×3)）。
      *  静止字恒 0（wobble 只用于绘制顶点、不计入强度 —— 否则抖动底噪让已停的字永远过 0.05 门限，
-     *  违反 folia「位移不足不留痕」）；飞行结束后回溯窗口滑出飞行段，强度自然衰减归零。 */
+     *  违反上游「位移不足不留痕」）；飞行结束后回溯窗口滑出飞行段，强度自然衰减归零。 */
     public static float trailPoseStrength(Flight f, float elapsedMs, float windowMs, float fontPx) {
         if (f == null || !f.valid) return 0f;
         float len = 0f;
@@ -200,7 +199,7 @@ public final class HuiguangMotion {
     // ==================== 卡拉OK点亮 ====================
 
     /**
-     * 字的点亮进度 0..1（folia lit = smooth((t−start)/max(end−start, LIGHT_UP))）：
+     * 字的点亮进度 0..1（上游 lit = smooth((t−start)/max(end−start, LIGHT_UP))）：
      * 卡拉OK式连续渐变、最短 {@link #LIGHT_UP_MS}，绝不跳变。
      * 无逐字轴时按均分出现时刻 + 兜底窗口渐变。
      */
@@ -259,22 +258,22 @@ public final class HuiguangMotion {
 
     // ==================== 四芒闪点 / 崩解 / 恒定微动 ====================
 
-    /** 四芒闪点的攻击时长（folia flashEnvelope attack 0.15s smoothstep）。 */
+    /** 四芒闪点的攻击时长（上游 flashEnvelope attack 0.15s smoothstep）。 */
     public static final float FLASH_ATTACK_MS = 150f;
-    /** 四芒闪点的指数衰减时长（folia decay 0.45s）。 */
+    /** 四芒闪点的指数衰减时长（上游 decay 0.45s）。 */
     public static final float FLASH_DECAY_MS = 450f;
-    /** 崩解漂离的封顶（字号数）：3D 长句防文字散到不可读（folia 无封顶，靠行尾淘汰）。 */
+    /** 崩解漂离的封顶（字号数）：3D 长句防文字散到不可读（上游无封顶，靠行尾淘汰）。 */
     public static final float DECAY_CAP_FONTS = 1.1f;
-    /** 崩解起漂的逐字延迟（秒，folia decay.delay 按设置；此处确定性随机 0~0.8s）。 */
+    /** 崩解起漂的逐字延迟（秒，上游 decay.delay 按设置；此处确定性随机 0~0.8s）。 */
     public static final float DECAY_DELAY_MIN_S = 0.8f;
     public static final float DECAY_DELAY_MAX_S = 1.4f;
-    /** 恒定绕行幅度（字号比；folia ORBIT=0.03 窗口高 ≈ 0.25 字号）。 */
+    /** 恒定绕行幅度（字号比；上游 ORBIT=0.03 窗口高 ≈ 0.25 字号）。 */
     public static final float ORBIT_FONTS = 0.35f;
-    /** 落位字的呼吸幅度（字号比，folia 0.022）。 */
+    /** 落位字的呼吸幅度（字号比，上游 0.022）。 */
     public static final float BREATH_FONTS = 0.02f;
 
     /**
-     * 四芒闪点包络（folia reveal.ts flashEnvelope 一比一）：
+     * 四芒闪点包络（上游 reveal 的 flashEnvelope 口径）：
      * attack 0.15s smoothstep 升起 → 指数衰减（tau 0.45s）。age&lt;0 恒 0。
      */
     public static float flashEnvelope(float ageMs) {
@@ -285,7 +284,7 @@ public final class HuiguangMotion {
     }
 
     /**
-     * 崩解漂离量（字号数，folia decay: amount = 0.08 × age^1.5，本仓库封顶
+     * 崩解漂离量（字号数，上游 decay: amount = 0.08 × age^1.5，本仓库封顶
      * {@link #DECAY_CAP_FONTS} 防长句散到不可读）。age 秒 = 点亮后经过的秒数。
      */
     public static float decayAmount(float ageSec) {
@@ -294,7 +293,7 @@ public final class HuiguangMotion {
     }
 
     /**
-     * 换句整体的恒定绕行（folia lineTransform 的 orbit：永不停的小圆漂移）。
+     * 换句整体的恒定绕行（上游 lineTransform 的 orbit：永不停的小圆漂移）。
      * 幅度 {@link #ORBIT_FONTS}×fontPx，xy 相位差半圈 —— 返回 [x, y] 偏移。
      */
     public static float[] lineOrbit(float elapsedSec, float fontPx, float phase) {
@@ -306,7 +305,7 @@ public final class HuiguangMotion {
     }
 
     /**
-     * 落位字的呼吸晃动（folia glyph breath：sin/cos 双频，幅度
+     * 落位字的呼吸晃动（上游 glyph breath：sin/cos 双频，幅度
      * {@link #BREATH_FONTS}×fontPx）—— 返回 [x, y] 偏移。
      */
     public static float[] glyphBreath(float elapsedSec, float fontPx, float phase) {
@@ -329,17 +328,17 @@ public final class HuiguangMotion {
         out[1] = (float) Math.cos(elapsedSec * 1.13f + phase * 1.7f) * b;
     }
 
-    // ==================== 十字爆闪（folia crossBurst 完整版） ====================
+    // ==================== 十字爆闪（上游 crossBurst 完整版） ====================
 
-    /** 同时存在的小十字上限（folia MAX_BURSTS=14）。 */
+    /** 同时存在的小十字上限（上游 MAX_BURSTS=14）。 */
     public static final int MAX_BURSTS = 14;
-    /** 一个小十字持续多久（秒，folia BURST_DURATION）。 */
+    /** 一个小十字持续多久（秒，上游 BURST_DURATION）。 */
     public static final float BURST_DURATION_S = 0.6f;
-    /** 「扫过」方式里相邻两个十字的间隔（秒，folia SWEEP_STEP）。 */
+    /** 「扫过」方式里相邻两个十字的间隔（秒，上游 SWEEP_STEP）。 */
     public static final float SWEEP_STEP_S = 0.07f;
 
     /**
-     * 一个引爆点的包络求值（folia crossBurst update 的参数逐一对齐）。
+     * 一个引爆点的包络求值（上游 crossBurst update 的参数逐一对齐）。
      * out = [envelope, verticalLen, horizontalLen, flashSize, ringSize, ringAlpha, spread]：
      * 竖柱从字脚下拉到上方（拉丁十字比例）、80ms easeOutExpo 拉满；横条晚 20ms、
      * 交点在 0.42L 上段、100ms 展开 0.62L；白闪 exp(−age/0.07) 急灭；
@@ -374,14 +373,14 @@ public final class HuiguangMotion {
         out[6] = spread;
     }
 
-    /** 一个爆闪给整句光晕层的一下提亮（folia burstLightBoost；叠加封顶 0.45 由调用方做）。 */
+    /** 一个爆闪给整句光晕层的一下提亮（上游 burstLightBoost；叠加封顶 0.45 由调用方做）。 */
     public static float burstLightBoost(float ageSec) {
         if (ageSec < 0f) return 0f;
         return 0.18f * (float) Math.exp(-ageSec / 0.1f);
     }
 
     /**
-     * 按句选爆闪字与时刻（folia planBursts 的 3D 版，sung 模式）：密度按种子挑字、
+     * 按句选爆闪字与时刻（上游 planBursts 的 3D 版，sung 模式）：密度按种子挑字、
      * 至少一个，返回触发表 {charIdx, timeMs, sizeMul, dy}（4 浮点步长；charIdx 为
      * 非空白字符序，timeMs 为本句 elapsed 上的引爆时刻）。
      *
@@ -394,7 +393,7 @@ public final class HuiguangMotion {
     }
 
     /**
-     * 带 sweep 模式的爆闪规划（folia spec.mode：sung=挑中的字被唱到时各自引爆、
+     * 带 sweep 模式的爆闪规划（上游 spec.mode：sung=挑中的字被唱到时各自引爆、
      * sweep=行首 0.07s 间隔沿整行连续炸开）。
      */
     public static float[] planBursts(int lineIndex, long[] charStarts, int charCount,
@@ -403,16 +402,16 @@ public final class HuiguangMotion {
         if (lineIndex < 0 || (lineIndex % Math.max(1, every)) != 0) return new float[0];
         java.util.ArrayList<Integer> chosen = new java.util.ArrayList<>();
         for (int i = 0; i < charCount; i++) {
-            if (WorldLyricsState.hashRand(i, 0L, 87, seed) * 0.5f + 0.5f < density) chosen.add(i);
+            if (WorldLyricsState.seededJitter(i, 0L, 87, seed) * 0.5f + 0.5f < density) chosen.add(i);
         }
         if (chosen.isEmpty()) {
-            chosen.add((int) ((WorldLyricsState.hashRand(0, 0L, 89, seed) * 0.5f + 0.5f) * charCount) % charCount);
+            chosen.add((int) ((WorldLyricsState.seededJitter(0, 0L, 89, seed) * 0.5f + 0.5f) * charCount) % charCount);
         }
-        // 不做单句封顶（folia 并发由渲染端 MAX_BURSTS 控制）：砍尾会让长句爆闪
+        // 不做单句封顶（上游并发由渲染端 MAX_BURSTS 控制）：砍尾会让长句爆闪
         // 全挤在句首（R5 审查 P1-4）。渲染层按 age 窗口独立求值，无并发问题。
         float[] out = new float[chosen.size() * 4];
         int o = 0;
-        // sweep：引爆时刻 = 首个点亮时刻 + 挑中序号 × 0.07s（folia SWEEP_STEP）
+        // sweep：引爆时刻 = 首个点亮时刻 + 挑中序号 × 0.07s（上游 SWEEP_STEP）
         int order = 0;
         for (int idx : chosen) {
             float time;
@@ -425,20 +424,20 @@ public final class HuiguangMotion {
             }
             out[o++] = idx;
             out[o++] = time;
-            out[o++] = 0.7f + (WorldLyricsState.hashRand(idx, 0L, 91, seed) * 0.5f + 0.5f) * 0.6f;
-            out[o++] = WorldLyricsState.hashRand(idx, 0L, 93, seed) * 0.45f;
+            out[o++] = 0.7f + (WorldLyricsState.seededJitter(idx, 0L, 91, seed) * 0.5f + 0.5f) * 0.6f;
+            out[o++] = WorldLyricsState.seededJitter(idx, 0L, 93, seed) * 0.45f;
         }
         return out;
     }
 
     // ==================== 缓动与工具 ====================
 
-    /** easeInOutCubic（folia flightProgress 同款）。 */
+    /** easeInOutCubic（上游 flightProgress 同款）。 */
     public static float easeInOutCubic(float t) {
         return t < 0.5f ? 4f * t * t * t : 1f - (float) Math.pow(-2f * t + 2f, 3f) / 2f;
     }
 
-    /** smoothstep 0..1（folia smooth 同款）。 */
+    /** smoothstep 0..1（上游 smooth 同款）。 */
     public static float smooth01(float t) {
         if (t <= 0f) return 0f;
         if (t >= 1f) return 1f;

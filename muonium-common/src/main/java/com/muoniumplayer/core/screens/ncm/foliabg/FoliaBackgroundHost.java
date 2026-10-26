@@ -33,7 +33,7 @@ import java.util.Objects;
  * 那边读 {@code HudConfig.fullscreenLyricFluid*}，这边只读 {@link FoliaBackgroundConfig}；
  * 两边共用的是「怎么把 GL 纹理借给 Skia」这一层（{@link SkijaImages}），不是任何状态。</p>
  *
- * <h3>图层顺序（对齐 folia 的 VisualizerBackdrop）</h3>
+ * <h3>图层顺序（对齐参考实现的 VisualizerBackdrop）</h3>
  * <ol>
  *   <li>背景本体（{@link FoliaBackgroundMode}）</li>
  *   <li>主题底色 / 各背景自己的遮罩（Latent 与 Nomand 的 overlay）</li>
@@ -42,7 +42,7 @@ import java.util.Objects;
  * 视频层与模组舞台层在 folia 里属于宿主，播放器没有对应物，这里不画。
  *
  * <h3>静态模式</h3>
- * <p>{@code staticMode} 下时间冻结（用固定时刻），音频输入清零；与 folia 的
+ * <p>{@code staticMode} 下时间冻结（用固定时刻），音频输入清零；与参考实现的
  * {@code VisualizerBackgroundRenderProps.staticMode} 一致 —— 省电、也不在后台抖。</p>
  */
 public final class FoliaBackgroundHost {
@@ -54,7 +54,7 @@ public final class FoliaBackgroundHost {
     private final FoliaCommonBackground commonBackground = new FoliaCommonBackground();
 
 
-    /** 动画时钟：与音频解耦，暂停/静音时仍以基速漂移（folia 的行为）。 */
+    /** 动画时钟：与音频解耦，暂停/静音时仍以基速漂移（参考实现的行为）。 */
     private double clock;
     /** 每套背景各自的相位偏移，避免切换时画面「从同一个点开始」。 */
     private double latentMeshClock;
@@ -139,7 +139,7 @@ public final class FoliaBackgroundHost {
         }
 
         // 各背景自己的基速。Latent 两层各有 base → audio 的目标速度，用同一个平滑系数混合
-        // （folia: lerp(base, audioSpeed, smoothedBeatSpeed)）；暂停时降到 12%（原版行为）。
+        // （lerp(base, audioSpeed, smoothedBeatSpeed)）；暂停时降到 12%（原版行为）。
         double speed = frozen ? 0.0 : (paused ? 0.12 : 1.0);
         clock += dt * speed;
         double meshSpeed = lerp(FoliaBackgroundConfig.latentMeshSpeed,
@@ -251,7 +251,7 @@ public final class FoliaBackgroundHost {
         // 底色（folia 在 mesh 下面垫 theme.backgroundColor）
         fill(canvas, width, height, backgroundColor, alpha);
 
-        // 音频派生量，逐条对齐 LatentBackground.tsx 的每帧写法。
+        // 音频派生量，逐条对齐上游 Latent 背景的每帧写法。
         float power = audio.power;
         float bass = audio.bass / 255f;
         float midBand = Math.max(audio.mid, audio.vocal) / 255f;
@@ -278,7 +278,7 @@ public final class FoliaBackgroundHost {
                     ditherSize, 1f, ditherScale);
         }
         if (showDither) {
-            // 只有抖动层时它是不透明底（folia 的 mixBlendMode: normal + opacity 1）。
+            // 只有抖动层时它是不透明底（上游的 mixBlendMode: normal + opacity 1）。
             float layerAlpha = showMesh ? ditherOpacity : 1f;
             drawLatentLayer(canvas, width, height, alpha, effect, 1f, mesh, distortion, swirl,
                     meshSaturation, meshBrightness, meshScale, ditherBack, ditherFront,
@@ -330,7 +330,7 @@ public final class FoliaBackgroundHost {
                 paint.setShader(shaded);
                 paint.setAlphaf(1f);
                 if (layer > 0.5f) {
-                    // 叠加层用 soft-light，与 folia 的 CSS mix-blend-mode 一致。
+                    // 叠加层用 soft-light，与上游的 CSS mix-blend-mode 一致。
                     paint.setBlendMode(BlendMode.SOFT_LIGHT);
                 }
                 canvas.drawRect(Rect.makeXYWH(0f, 0f, width, height), paint);
@@ -412,7 +412,7 @@ public final class FoliaBackgroundHost {
         return true;
     }
 
-    /** 浅色主题下非原色模式要翻转亮度，见 nomandShaderAdjustments.ts。 */
+    /** 浅色主题下非原色模式要翻转亮度，见上游 nomandShaderAdjustments。 */
     private static boolean daylightInversion(boolean inverted, boolean originalColors, boolean daylight) {
         return daylight && !originalColors ? !inverted : inverted;
     }
@@ -423,7 +423,7 @@ public final class FoliaBackgroundHost {
     }
 
     private boolean drawCommon(Canvas canvas, float width, float height, FoliaTheme theme, float alpha) {
-        // 通用背景的几何层与暗角收在 FoliaCommonBackground 里（与 folia 的 GeometricBackground 同构）。
+        // 通用背景的几何层与暗角收在 FoliaCommonBackground 里（与参考实现的几何氛围层同构）。
         commonBackground.render(canvas, width, height, theme, alpha, clock,
                 new float[]{audio.bass, audio.lowMid, audio.mid, audio.vocal, audio.treble},
                 FoliaBackgroundConfig.commonUseCoverColorBg ? coverShader : null);
@@ -453,7 +453,7 @@ public final class FoliaBackgroundHost {
                         SamplingMode.LINEAR, paint, true);
             }
         }
-        // folia 的 iframe 上方那层可读性遮罩：to bottom, .15 → .35
+        // 参考实现的 iframe 上方那层可读性遮罩：to bottom, .15 → .35
         try (Shader shade = Shader.makeLinearGradient(0f, 0f, 0f, height,
                 new int[]{alpha(0x000000, 0.15f * alpha), alpha(0x000000, 0.35f * alpha)})) {
             try (Paint paint = new Paint()) {

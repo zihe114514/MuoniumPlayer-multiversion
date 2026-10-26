@@ -35,8 +35,6 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/10/17 18:42
  */
 public class PlaylistPanel extends NCMPanel {
 

@@ -15,10 +15,10 @@ import java.util.Random;
 /**
  * 「通用 / Common」背景：封面色流体 + 几何氛围层 + 暗角。
  *
- * <p>对应 folia 的 {@code backgrounds/common/entry.tsx}，从下到上：</p>
+ * <p>从下到上分层：</p>
  * <ol>
  *   <li><b>封面色流体</b>（仅 {@code commonUseCoverColorBg} 且拿到封面子着色器时）：
- *       {@code FluidBackground.tsx} 的模糊封面（40px × 1.5 = 60px 等效）、
+ *       上游的模糊封面（40px × 1.5 = 60px 等效）、
  *       {@code to bottom right} 主题渐变（overlay 混合、alpha .4）、封面 scale 1.5。
  *       流体下面先垫一层 {@code theme.backgroundColor}、opacity .8（原版用来盖住封面解码前的空白）。</li>
  *   <li><b>纯色遮罩</b>：整屏 {@code theme.backgroundColor}，alpha =
@@ -40,11 +40,11 @@ import java.util.Random;
  * <p><b>图标槽</b>：原版最多 6 个形状会被 {@code theme.lyricsIcons} 的某个图标顶替，并改用
  * 20..40 s 的时长与 0→peak→0 的脉冲（{@code --geometric-peak = opacity*3}，同时用 vocal 频段
  * 缩放）。本移植没有主题图标表，等价于原版 {@code theme.lyricsIcons} 为空：{@code getShapeIcon}
- * 返回 null、形状面照常显示（{@code GeometricBackground.tsx:158-170}）。因此这里仍然按原顺序抽取
+ * 返回 null、形状面照常显示。因此这里仍然按原顺序抽取
  * iconSlot（让后续随机数序列一致），只把 duration 换成图标档 20..40 s，不画图标与脉冲。</p>
  *
  * <p><b>音频</b>：形状类型固定绑定频段 —— circle=bass、square=lowMid、triangle=mid、
- * cross=treble（folia {@code getShapeScaleKey}）；vocal 只给图标槽用，这里无图标所以不参与。
+ * cross=treble（上游 {@code getShapeScaleKey}）；vocal 只给图标槽用，这里无图标所以不参与。
  * 原版用 spring（stiffness 300 / damping 30，ζ≈.866）把 10..200 映射到 .95..1.45，上升沿约
  * 0.1 s、0.5 s 内稳定并带轻微过冲；这里用时间常数 0.115 s 的一阶平滑近似（同样的跟随速度、
  * 无过冲），再走同一映射。粒子、流体与暗角都不响应音频。</p>
@@ -53,11 +53,11 @@ import java.util.Random;
  */
 public final class FoliaCommonBackground {
 
-    /** 形状数量（folia: {@code Array.from({length: 15})}，GeometricBackground.tsx:236）。 */
+    /** 形状数量（上游 15 个）。 */
     public static final int SHAPE_COUNT = 15;
-    /** 光点数量（folia: 20，GeometricBackground.tsx:260）。 */
+    /** 光点数量（上游 20 颗）。 */
     public static final int PARTICLE_COUNT = 20;
-    /** 最多多少个形状带图标槽（folia: {@code iconSlots < 6}，GeometricBackground.tsx:237）。 */
+    /** 最多多少个形状带图标槽（上游 iconSlots < 6）。 */
     private static final int MAX_ICON_SLOTS = 6;
 
     /**
@@ -82,13 +82,13 @@ public final class FoliaCommonBackground {
      */
     private static final float BAND_TAU_SECONDS = 0.115f;
 
-    /** 封面层下的主题底色 alpha（folia {@code FluidBackground.tsx:490-493} 的 .8）。 */
+    /** 封面层下的主题底色 alpha（上游取 .8）。 */
     private static final float COVER_BASE_ALPHA = 0.8f;
     /** 模糊半径：原版在 320 宽缓冲上按 40*1.5*320/cssWidth 烘，画布即元素时等价 60px。 */
     private static final float COVER_BLUR_PX = 60f;
-    /** 对角渐变 overlay 的 alpha（folia 的 .4，FluidBackground.tsx:253）。 */
+    /** 对角渐变 overlay 的 alpha（上游取 .4）。 */
     private static final float COVER_GRADIENT_OPACITY = 0.4f;
-    /** 封面 object-cover 之后再放大的倍数（folia 的 1.5，FluidBackground.tsx:214）。 */
+    /** 封面 object-cover 之后再放大的倍数（上游取 1.5）。 */
     private static final float COVER_SCALE = 1.5f;
 
     private final Shape[] shapes = new Shape[SHAPE_COUNT];
@@ -100,7 +100,7 @@ public final class FoliaCommonBackground {
     /** 一个形状的全部生成参数（folia {@code BackgroundShape} 的字段，顺序相同）。 */
     private static final class Shape {
         int type;
-        /** 图标槽份额 0..1；{@code <0} 表示没有图标槽（folia 的 null）。 */
+        /** 图标槽份额 0..1；{@code <0} 表示没有图标槽（上游的 null）。 */
         float iconSlot;
         float initialX;
         float initialY;
@@ -137,13 +137,13 @@ public final class FoliaCommonBackground {
         generate(seed);
     }
 
-    /** 按 folia 的抽取顺序生成两套布局（见类注释「随机数的差异」）。 */
+    /** 按参考实现的抽取顺序生成两套布局（见类注释「随机数的差异」）。 */
     private void generate(long seed) {
         Random random = new Random(seed);
         int iconSlots = 0;
         for (int index = 0; index < SHAPE_COUNT; index++) {
             Shape shape = new Shape();
-            // folia: iconSlot = iconSlots < 6 && Math.random() > 0.7 ? Math.random() : null
+            // 抽取式：iconSlot = iconSlots < 6 && Math.random() > 0.7 ? Math.random() : null
             // —— 判定每次都抽，命中时再抽一次份额，所以下面所有参数的下标都要照抄这个顺序。
             if (iconSlots < MAX_ICON_SLOTS && random.nextDouble() > 0.7) {
                 shape.iconSlot = (float) random.nextDouble();
@@ -211,7 +211,7 @@ public final class FoliaCommonBackground {
                            double clock, Shader coverShader) {
         boolean useCover = FoliaBackgroundConfig.commonUseCoverColorBg && coverShader != null;
         if (useCover) {
-            // folia: 封面层下面先垫一层 theme.backgroundColor、opacity .8，盖住解码前的空白。
+            // 封面层下面先垫一层 theme.backgroundColor、opacity .8，盖住解码前的空白。
             fill(canvas, width, height, theme.background, COVER_BASE_ALPHA);
             drawFluid(canvas, width, height, theme, coverShader);
         }
@@ -281,7 +281,7 @@ public final class FoliaCommonBackground {
                 float travel = phase < 0.5f ? phase * 2f : (1f - phase) * 2f;
                 float driftX = (travel * 30f - 15f) * direction;
                 float driftY = (30f - travel * 60f) * direction;
-                // folia 的盒子 left/top 是百分比、宽高是 px；盒的左上角落在 (initialX%, initialY%)，
+                // 上游的盒子 left/top 是百分比、宽高是 px；盒的左上角落在 (initialX%, initialY%)，
                 // 没有居中偏移，所以贴边的形状会被裁掉一部分（规格 §6.4）。
                 float left = shape.initialX / 100f * width + driftX;
                 float top = shape.initialY / 100f * height + driftY;
@@ -346,7 +346,7 @@ public final class FoliaCommonBackground {
             path.close();
             return;
         }
-        // cross：folia 的 12 点星形 clip-path，逐点按百分比换算到形状盒。
+        // cross：上游的 12 点星形 clip-path，逐点按百分比换算到形状盒。
         float[] points = {
                 0.20f, 0.00f, 0.00f, 0.20f, 0.30f, 0.50f, 0.00f, 0.80f,
                 0.20f, 1.00f, 0.50f, 0.70f, 0.80f, 1.00f, 1.00f, 0.80f,

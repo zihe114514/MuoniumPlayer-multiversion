@@ -9,8 +9,6 @@ import com.muoniumplayer.core.interfaces.User32Interface;
 
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/6/8 21:39
  */
 @UtilityClass
 public class CursorUtils {

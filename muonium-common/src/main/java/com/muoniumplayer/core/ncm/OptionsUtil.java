@@ -3,8 +3,6 @@ package com.muoniumplayer.core.ncm;
 import lombok.experimental.UtilityClass;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/7/2 20:00
  */
 @UtilityClass
 public class OptionsUtil {

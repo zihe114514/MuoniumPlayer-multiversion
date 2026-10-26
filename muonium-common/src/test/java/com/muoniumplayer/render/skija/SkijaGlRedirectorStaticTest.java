@@ -59,6 +59,37 @@ class SkijaGlRedirectorStaticTest {
                 "不允许遗留占位实现");
     }
 
+    /**
+     * Door B（过程地址门，2026-10-26 Zink 全黑修复）：目标库只导出 glXGetProcAddress /
+     * OSMesaGetProcAddress 一类「过程地址桥」时，逐符号<b>调用</b>桥拿地址，而不是 dlsym。
+     * 防两类回归：桥符号名单被删（Zink 重新全黑）、健全性探针被去掉（半扇门比不修更糟）。
+     */
+    @Test
+    void processAddressDoorPinned() throws Exception {
+        Path path = ProjectPaths.sharedJava().resolve(
+                Paths.get("com", "muoniumplayer", "render", "skija", "SkijaGlRedirector.java"));
+        String source = new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+        assertTrue(source.contains("\"glXGetProcAddress\""),
+                "过程地址门必须认 glXGetProcAddress（Zink 的 libglxshim 只导出它）");
+        assertTrue(source.contains("\"glXGetProcAddressARB\""),
+                "过程地址门必须认 glXGetProcAddressARB");
+        assertTrue(source.contains("\"OSMesaGetProcAddress\""),
+                "过程地址门必须认 OSMesaGetProcAddress（VirGL/Freedreno 的 libOSMesa）");
+        assertTrue(source.contains("invokePointer"),
+                "桥解析必须真的调用桥函数拿地址（dlsym 拿不到桥后面的符号）");
+        assertTrue(source.contains("doorForSymbols"),
+                "门级联必须抽成可单测的纯函数");
+        // dlsym 门优先于桥：完整前端不该被桥再跳一道。
+        int dlsymDoor = source.indexOf("PROBE_GETPROC) && exportedSymbols.contains(PROBE_GETSTRING)");
+        int bridgeLoop = source.indexOf("for (String bridge : BRIDGE_SYMBOLS)");
+        assertTrue(dlsymDoor >= 0 && bridgeLoop > dlsymDoor,
+                "门级联必须先判 dlsym 门、后判过程地址桥");
+        // 桥的健全性探针：glGetString 与 eglGetProcAddress 都要拿得到。
+        assertTrue(source.contains("resolveViaBridge(target, door.probe(), PROBE_GETSTRING)")
+                        && source.contains("resolveViaBridge(target, door.probe(), PROBE_GETPROC)"),
+                "桥必须为 glGetString/eglGetProcAddress 都给出地址，否则放弃（防半扇门）");
+    }
+
     private static int countOccurrences(String haystack, String needle) {
         int count = 0;
         int index = 0;

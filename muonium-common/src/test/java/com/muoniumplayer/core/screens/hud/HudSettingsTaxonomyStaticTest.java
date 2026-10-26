@@ -34,7 +34,7 @@ class HudSettingsTaxonomyStaticTest {
             "歌词样式", "3D 歌词", "面板与卡片", "灵动岛", "无缝切换", "界面与主题", "信息栏与封面", "缓存与公告");
 
     /** 与 {@link #TITLES} 同序的条目数；总和必须等于 {@link #TOTAL}。 */
-    private static final List<Integer> COUNTS = Arrays.asList(21, 18, 8, 24, 20, 32, 5, 3);
+    private static final List<Integer> COUNTS = Arrays.asList(21, 18, 8, 24, 20, 33, 5, 3);
 
     /** 「界面与主题」那页 2026-09-30 从 19 条长到 21 条：真玻璃材质组多了「实时背景采集」与
      *  「帧率不够时自动摘玻璃」两个开关；同日傍晚又长到 26 条：多了四面各自的模糊倍率
@@ -47,7 +47,7 @@ class HudSettingsTaxonomyStaticTest {
      *  2026-10-24 移除经典/Folia 样式与死开关四条下架；条目整合：3D 动效三开关并成「动效风格」单选
      *  并新增「发光颜色」取色与「关键字染色」（绘光配套）；灵动岛新增「岛内搜索」与「动画速度」档位；
      *  无缝切换「引擎+表现+进阶」三合一成「处理方案」四档 —— 132 → 128。 */
-    private static final int TOTAL = 131;
+    private static final int TOTAL = 132;
 
     @Test
     @DisplayName("分类就是这 7 页，顺序与每页条目数都不许悄悄变")
@@ -104,7 +104,7 @@ class HudSettingsTaxonomyStaticTest {
         // 2026-10-24 「设置界面缩放」随 Folia 样式一起下架，54 → 53。
         assertEquals(53, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱自定义柱数、透明度与高度都是有效设置");
         assertFalse(settings.contains("GLASS_BLOOM"), "退役的磨砂 bloom 不能作为无效设置暴露");
-        assertFalse(settings.contains("GLASS_FUSION"), "参考透镜不使用旧  融合描边");
+        assertFalse(settings.contains("GLASS_FUSION"), "参考透镜不使用旧融合描边");
         assertEquals(settings.size(), new HashSet<String>(settings).size(),
                 "同一个 HudSetting 被塞进了两个组：" + duplicates(settings));
     }

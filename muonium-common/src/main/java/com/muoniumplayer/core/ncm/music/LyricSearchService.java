@@ -27,7 +27,7 @@ import java.util.Set;
  * 结构，界面不需要知道酷狗的 {@code accesskey} 是什么。</p>
  *
  * <h3>四个标签页各自搜什么</h3>
- * <p>照 本项目 的 {@code lyricMatchSources.ts} 一字不差：</p>
+ * <p>来源清单与上游参考实现逐条一致：</p>
  * <ul>
  *   <li><b>网易云音乐</b>：{@code /api/cloudsearch/pc} 单曲 50 条，只排序不筛分；</li>
  *   <li><b>AMLLDB</b>：词库本身不接受自由检索词，所以这一档是「拿用户输入去网易云 + QQ 各搜 5 条

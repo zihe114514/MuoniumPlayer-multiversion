@@ -5,8 +5,6 @@ import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.utils.math.Mth;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/11/16 12:25
  */
 @UtilityClass
 public class RGBA {

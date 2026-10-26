@@ -420,7 +420,7 @@ class SkijaNativeCatalogStaticTest {
     }
 
     @Test
-    @DisplayName("安卓的停用提示要说清该用哪个渲染器：26.3 是 MobileGL，其余是 MG + 关 ANGLE")
+    @DisplayName("安卓的停用提示要走共享渲染器路由（RendererAdviceLines 委托）")
     void androidNoticeGuidesToWorkingSetup() throws IOException {
         String notice = stripComments(read(ProjectPaths.sourceFile(
                 Paths.get("com", "muoniumplayer", "core", "screens", "RenderLayerNotice.java"))));
@@ -428,16 +428,15 @@ class SkijaNativeCatalogStaticTest {
         assertTrue(androidBranch >= 0, "提示层要单独认 Android");
         String androidText = notice.substring(androidBranch,
                 notice.indexOf("if (!status.loaded()", androidBranch));
-        // 26.3 起渲染器结论换代：GL 门对齐修复（SkijaGlRedirector）之后 MobileGL
-        // （26.3 的主流渲染器）实测可用，指引随之换成它；其余树维持修复前实测出的
-        // 「MobileGlues + 关闭 ANGLE」组合。本测试五棵树各跑一份，按所在树分化断言。
+        // 渲染器建议已收进共享层 RendererAdviceLines：按「识别到的渲染器 × 版本段」路由。
+        // 本测试五棵树各跑一份，只钉委托与版本段参数——具体文案由 RendererAdviceLinesTest 管。
         boolean tree263 = ProjectPaths.versionRoot().getFileName().toString().equals("26.3");
-        assertTrue(androidText.contains(tree263 ? "MobileGL" : "MobileGlues"),
-                "要把本版本树实测可用的渲染器名字说出来");
-        if (!tree263) {
-            assertTrue(androidText.contains("ANGLE"),
-                    "「关闭 ANGLE」是能否装出上下文的关键，必须写在提示里");
-        }
+        assertTrue(androidText.contains("RendererAdviceLines.of("),
+                "安卓分支必须委托共享文案构建器（防五份文案漂移）");
+        assertTrue(androidText.contains(tree263 ? "RENDER_PEARL" : "LEGACY"),
+                "必须把本树的版本段传给共享层");
+        assertTrue(notice.contains("MobileRendererEnv.current().kind().id"),
+                "必须把识别到的渲染器传给共享层");
         assertTrue(!androidText.contains("本版不提供"),
                 "安卓是支持的，不许再说「不提供」");
     }

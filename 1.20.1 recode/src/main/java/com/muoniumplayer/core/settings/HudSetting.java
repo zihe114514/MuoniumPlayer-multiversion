@@ -56,7 +56,7 @@ public enum HudSetting {
     /** 歌词搜索弹窗那一页的整体缩放倍率。 */
     LYRIC_SEARCH_UI_SCALE("弹窗界面缩放", 0.80f, 2.50f),
 
-    // 移植自 本项目 的各套「文字 PV」全屏歌词样式参数。区间取参考实现的可调范围。
+    // 各套「文字 PV」全屏歌词样式参数。区间取参考实现的可调范围。
     LYRIC_FONT_SCALE("歌词字号", 0.60f, 1.80f),
     LUMINOUS_WORD_SPACING("词距", 0.20f, 1.60f),
     LUMINOUS_FLOAT("浮动幅度", 0.00f, 2.00f),

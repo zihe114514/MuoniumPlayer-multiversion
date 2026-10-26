@@ -6,7 +6,6 @@ import lombok.experimental.UtilityClass;
 import java.io.Reader;
 
 /**
- * @author MuoniumPlayer Contributors
  * @since 2024/11/10 16:59
  */
 @UtilityClass

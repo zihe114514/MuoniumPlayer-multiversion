@@ -8,8 +8,6 @@ import java.io.BufferedInputStream;
 import java.io.IOException;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/5/5 12:50
  */
 public class BufferedIFFParser extends IFFParser {
 

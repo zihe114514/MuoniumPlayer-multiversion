@@ -40,7 +40,7 @@ public final class ModelInstallNoticeOverlay extends NCMPanel {
 
     /** 卡片正文：解释这些组件是干什么的、不装会怎样。 */
     private static final String INFO =
-            "智能混音 需要用下面的组件在本机分析节拍、人声与乐段。"
+            "智能混音需要用下面的组件在本机分析节拍、人声与乐段。"
                     + "不安装也能正常播放，只在切歌时退回原版智能淡化。";
 
     private static final String TITLE = "未安装 Folia 分析模型";
@@ -451,7 +451,7 @@ public final class ModelInstallNoticeOverlay extends NCMPanel {
         List<FoliaModelManager.Kind> pending = FoliaModelNotice.missing();
         if (pending.isEmpty()) {
             installing = false;
-            status = "全部组件安装完成，智能混音 已经可用。";
+            status = "全部组件安装完成，智能混音已经可用。";
             statusError = false;
             return;
         }

@@ -33,8 +33,6 @@ import java.awt.*;
 import java.time.Duration;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/2/16 14:19
  */
 public class MusicInfoWidget extends ExtensionModule implements SharedConstants, SharedRenderingConstants, EventHandler {
 

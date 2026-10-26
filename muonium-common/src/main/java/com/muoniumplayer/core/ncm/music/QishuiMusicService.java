@@ -1059,7 +1059,7 @@ public final class QishuiMusicService {
      *
      * @param playedTracks 已听过的歌（新→旧任意顺序，内部取最近 20 条上报），null/空表示首次请求
      * @param mode         听歌模式；null 或默认「推荐」不带 feed_preference，场景模式按官方
-     *                     feedmode.ts 的映射只传 {@code {scene_mode_id}}（实测确实改变推荐内容）
+     *                     官方 feedmode 的映射只传 {@code {scene_mode_id}}（实测确实改变推荐内容）
      */
     public static List<Music> discoverFeedTracks(int count, List<Music> playedTracks, FeedMode mode) {
         int target = Math.max(1, Math.min(30, count));
@@ -1086,7 +1086,7 @@ public final class QishuiMusicService {
                 payload.add("played_media", played);
             }
             if (mode != null && !mode.isDefaultMode()) {
-                // 官方 feedmode.ts 的映射:场景模式只传 scene_mode_id;偏好模式(非默认的
+                // 官方 feedmode 的映射:场景模式只传 scene_mode_id;偏好模式(非默认的
                 // 话)传 preference_mode。实测 scene_mode_id=6/8 给出的推荐明显不同。
                 JsonObject preference = new JsonObject();
                 if (mode.sceneModeId > 0) {

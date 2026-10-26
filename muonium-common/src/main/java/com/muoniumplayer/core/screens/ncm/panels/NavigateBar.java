@@ -67,8 +67,6 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/10/16 22:00
  */
 public class NavigateBar extends NCMPanel {
 
@@ -182,11 +180,13 @@ public class NavigateBar extends NCMPanel {
     private static boolean rowsAnnounced = false;
 
     /**
-     * 下一次整树重建是否静默跳过行的进场/退场动画。音源切换时置位，由构造函数取走。
+     * 下一次整树重建是否静默跳过<b>行的</b>进场/退场动画。音源切换时置位，由构造函数取走。
      *
      * <p>换音源几乎会把整列行同时换掉（发现区、账号歌单、收藏歌单全变）。如果还按常规演
      * 「旧行退场 + 新行进场」，两批半透明文字会在 150~280ms 里叠在同一列上，读起来就是满屏残影 ——
-     * 这正是换源时「上一层残留」的来源之一。这一趟改成静默换代，视觉交代交给内容区那条淡入。</p>
+     * 这正是换源时「上一层残留」的来源之一。这一趟行级全部静默，但换代并不是瞬移：
+     * {@code handoffWholeColumn} 会把旧列<b>整块</b>留下演退场、新列整块滑入——
+     * 动画从「几百个行级变换」收成「两个整块变换」，既连贯也不会糊。</p>
      */
     private static boolean silentNextBuild;
     /** 本次重建是否静默。构造时从静态位取走并清掉，不污染下一次。 */
@@ -210,6 +210,55 @@ public class NavigateBar extends NCMPanel {
     /** 逐行错开的间隔，与退场时长同量级：十二行也就多拖 132ms，不会变成排队等消失。 */
     private static final long RETIRE_STAGGER_MILLIS = 11L;
     private static final int RETIRE_STAGGER_LIMIT = 14;
+
+    // ── 音源切换·整块交接（Material「fade-through」式） ─────────────────────
+    //
+    // 参照 Material 3 的 fade-through 过渡（material-components-android 的
+    // FadeThroughProvider / MaterialFadeThrough，本注释里的数值都来自那份源码）：
+    //  · 出与进<b>顺序执行</b>、共享同一条 0..1 时间线，交接点在 35%（FADE_THROUGH_THRESHOLD）；
+    //  · 旧内容在 0%~35% 里淡出，新内容在 35%~100% 里淡入，任何时刻至多一块可见——
+    //    没有两层内容同框的叠影，也没有「闪一下黑」的空档（新内容在交接点立即接管）；
+    //  · 新内容同时从 92% 缩放回 100%（MaterialFadeThrough.DEFAULT_START_SCALE），
+    //    配 emphasized 缓动 cubic-bezier(0.2,0,0,1)。
+    // 竖列表里横移会读成「整列被拽了一下」（用户原话：脑血栓）；fade-through 的
+    // 「快出 → 微落进入」不产生方向感，观感是内容自己完成了一次优雅的更替。
+    //
+    // 时长不取 Material 的 token（450ms 对播放器偏拖），取侧栏行级动画族同档：
+    // 全程 260ms，其中旧列 0~91ms、新列 91~260ms——与 RETIRE_MILLIS(150) 同量级。
+    private static final long COLUMN_HANDOFF_TOTAL_MS = 260L;
+    /** 交接点占全程的比例，源码里的 FADE_THROUGH_THRESHOLD = 0.35f。 */
+    private static final double COLUMN_HANDOFF_THRESHOLD = 0.35;
+    /** 新列进场起点缩放，源码里的 DEFAULT_START_SCALE = 0.92f。 */
+    private static final double COLUMN_HANDOFF_START_SCALE = 0.92;
+    /** 新列从下方落回的像素数。取 PanelItemEntrance.DROP_DISTANCE(6) 同款——同族动画用同一档幅度。 */
+    private static final double COLUMN_HANDOFF_DROP_PX = 6.0;
+
+    /**
+     * 音源切换时被换下去的<b>整列</b>。与逐行幽灵（{@link #retiringRows}）互斥：换源走整块交接，
+     * 行级动画整趟静默（见 {@link #silentBuild}），所以同一时刻至多一个幽灵列。
+     */
+    private static final class ColumnGhost {
+        final ScrollPanel panel;
+        /** 退场起点的相对 x——每帧重钉用，不依赖装配那一帧的布局状态。 */
+        final double relativeX;
+        /** 旧列当前的不透明度。上一场交接可能演到一半就被连点打断，从这里续演而不是跳回全亮。 */
+        final float startAlpha;
+        /** 首次推进的时刻；0 = 还没起表（装配到首帧渲染之间的空档不算进时长）。 */
+        long startedAt;
+
+        ColumnGhost(ScrollPanel panel, double relativeX, float startAlpha) {
+            this.panel = panel;
+            this.relativeX = relativeX;
+            this.startAlpha = startAlpha;
+        }
+    }
+
+    private ColumnGhost columnGhost;
+    /**
+     * 本场交接时间线的起表时刻。旧列的 {@link ColumnGhost#startedAt} 是它的镜像（同一次赋值），
+     * 供幽灵摘除后新列的后半段继续查表；{@code 0} 表示没有正在进行的交接。
+     */
+    private long columnHandoffStartedAt;
 
     // ── 搜索联想 ────────────────────────────────────────────────────────────
     /** 一条联想行的行高。 */
@@ -278,6 +327,10 @@ public class NavigateBar extends NCMPanel {
             this.suggestDismissedFor = previous.suggestDismissedFor;
         }
         this.layout();
+        // 行级动画整趟静默（silentBuild），换代的故事由这两个整块讲：旧列滑出淡出、
+        // 新列滑入。必须排在 layout() 之后——retirementLayer 的视口回调要在装配完成后
+        // 才有正确的 top。
+        if (this.sourceChanged) this.handoffWholeColumn(previous);
         if (previous != null && previous.indicatorPlaced) {
             this.indicatorTop = previous.indicatorTop;
             this.indicatorBottom = previous.indicatorBottom;
@@ -487,6 +540,148 @@ public class NavigateBar extends NCMPanel {
         }
     }
 
+    // ── 音源切换·整块交接（Material「fade-through」式） ─────────────────────
+
+    /**
+     * 音源切换的视觉交接：旧歌单列<b>整块</b>按 fade-through 退场，新列整块接管。
+     *
+     * <p>行级动画在这趟被 {@link #silentBuild} 整体关掉——那是当年为了压「满屏幽灵行」
+     * 的一刀切，但也把侧栏换代演成了一次原地瞬移。整块交接把逐行几百个动画收成
+     * <b>两个</b>（一列出、一列入），既没有叠字残影，也有了时间结构。</p>
+     *
+     * <p>旧列整棵 {@link ScrollPanel} 在重建后本来就该被丢掉；这里不复制不快照，
+     * 直接把它 reparent 进 {@link #retirementLayer} 继续画完最后一程。裁剪层自己的
+     * scissor 保证它不会糊到搜索栏、快捷栏或账号行上。</p>
+     */
+    private void handoffWholeColumn(NavigateBar previous) {
+        // 连点两次换源：上一场还没演完就来了新的一场。直接丢掉旧幽灵重记（与 retireRows
+        // 的连点保护同一语义），别让两个半透明列叠在一起。
+        this.dropColumnGhost();
+
+        final ScrollPanel oldPanel = previous.playlistPanel;
+        if (oldPanel == null || oldPanel.isHidden()) return;
+
+        // 幽灵只演前半段（0~35%），不该再吃输入。递归关掉整棵树的点击与光标改写——
+        // retireRows 对单行就是这么做的。
+        disableInteractionRecursive(oldPanel);
+
+        this.columnGhost = new ColumnGhost(oldPanel, oldPanel.getRelativeX(),
+                Math.max(0f, Math.min(1f, oldPanel.getWidgetAlpha())));
+        // 时间线在装配这一刻起表。幽灵按它查前半段，新列的进场 lambda 按它查后半段——
+        // 两条变换共享同一条 0..1，交接点严丝合缝。
+        this.columnHandoffStartedAt = System.currentTimeMillis();
+        this.columnGhost.startedAt = this.columnHandoffStartedAt;
+        // reparent 会由 addChild 里 setParent 完成；位置钉在层顶（层与列表视口同高同顶），
+        // 之后每帧由 advanceColumnHandoff 按本帧的层坐标重钉。
+        this.retirementLayer.addChild(oldPanel);
+        oldPanel.setTransformations(null);
+
+        // 新列按 fade-through 的后半段接管：alpha 0→1、92%→100% 微缩放、从下方 6px 落回。
+        // 35% 之前它保持全透明——屏幕上任何时刻至多一块内容，交接点处旧列刚好交棒。
+        this.playlistPanel.setAlpha(0f);
+        this.playlistPanel.setTransformations(this::renderColumnEnter);
+    }
+
+    /**
+     * 新列的后半段进场变换（挂在 playlistPanel 的 transformations 上）。
+     *
+     * <p>时间线查的是共享的 {@link #columnHandoffStartedAt}——旧列在 35% 交棒时被摘除，
+     * 这条 lambda 从那一刻起才是可见的那块。位移只用「从下方 6px 落回」这一根竖向轴
+     * （与行级进场 PanelItemEntrance 同向同幅度，竖列表不会产生横移的晃动感），
+     * 缩放 92%→100% 绕列表中心，公式与 {@code PanelItemEntrance.applyTransform} 同款。</p>
+     */
+    private void renderColumnEnter() {
+        final double take = columnHandoffTake();
+        if (take >= 1.0) {
+            this.playlistPanel.setTransformations(null);
+            this.playlistPanel.setAlpha(1f);
+            return;
+        }
+        // 还没到交接点：保持全透明（旧列正在台上）。判定放在 alpha 写入前，避免留下半透明残值。
+        if (take <= COLUMN_HANDOFF_THRESHOLD) {
+            this.playlistPanel.setAlpha(0f);
+            return;
+        }
+        // 后半段（0.35~1.0）内的进度，再过一次三次缓出——与右侧内容页、sourceMotion、
+        // 行级 FLIP 同一条 cubic-bezier(0.2,0,0,1) 的观感族（emphasized）。
+        final double local = (take - COLUMN_HANDOFF_THRESHOLD) / (1.0 - COLUMN_HANDOFF_THRESHOLD);
+        final double eased = 1.0 - Math.pow(1.0 - Math.max(0.0, Math.min(1.0, local)), 3.0);
+        this.playlistPanel.setAlpha((float) eased);
+
+        final double scale = COLUMN_HANDOFF_START_SCALE + (1.0 - COLUMN_HANDOFF_START_SCALE) * eased;
+        final double centerX = this.playlistPanel.getX() + this.playlistPanel.getWidth() * .5;
+        final double centerY = this.playlistPanel.getY() + this.playlistPanel.getHeight() * .5;
+        SharedConstants.api.getGLStateManager().translate(0.0, COLUMN_HANDOFF_DROP_PX * (1.0 - eased), 0.0);
+        SharedConstants.api.getGLStateManager().translate(centerX, centerY, 0.0);
+        SharedConstants.api.getGLStateManager().scale(scale, scale, 1.0);
+        SharedConstants.api.getGLStateManager().translate(-centerX, -centerY, 0.0);
+    }
+
+    /**
+     * 整块交接的时钟推进，由侧栏自己的 beforeRenderCallback 每帧调一次。
+     *
+     * <p>fade-through 的前半段：旧列在 0~35% 时间里淡出（alpha = 起点值 × (1-p/0.35)，
+     * 纯线性——fade-through 的语义就是「交接点之前干净利落地退完」，不需要缓动修饰），
+     * 无位移。旧列压在新列底下（retirementLayer 的挂载顺序在 playlistPanel 之前），
+     * 而新列在这段时间是全透明的，所以屏幕上任何时刻至多一块内容——顺序交接，
+     * 没有叠影也没有空档。</p>
+     */
+    private void advanceColumnHandoff() {
+        final ColumnGhost ghost = this.columnGhost;
+        if (ghost == null) return;
+        if (ghost.startedAt == 0L) ghost.startedAt = System.currentTimeMillis();
+        final double take = columnHandoffTake(ghost);
+
+        ghost.panel.setPosition(ghost.relativeX, 0);
+        // 交接点之前线性退完：0..0.35 → alpha 从起点值收到 0。
+        final double outProgress = Math.max(0.0, Math.min(1.0,
+                take / COLUMN_HANDOFF_THRESHOLD));
+        final float alphaOut = (float) (ghost.startAlpha * (1.0 - outProgress));
+        if (alphaOut > 0.01f) {
+            ghost.panel.setAlpha(alphaOut);
+        }
+        if (take >= COLUMN_HANDOFF_THRESHOLD || alphaOut <= 0.01f) {
+            // 到交接点：旧列已不可见，立即摘除——新列此刻开始接管，中间没有空帧。
+            this.dropColumnGhost();
+        }
+    }
+
+    /**
+     * 当前交接时间线进度 0..1。ghost 在场时按它自己的起表时刻算；幽灵退场后（后半段）
+     * 由 handoff 时记录的统一时钟 {@link #columnHandoffStartedAt} 续走，两条变换共享同一条线。
+     */
+    private double columnHandoffTake() {
+        final ColumnGhost ghost = this.columnGhost;
+        if (ghost != null) return columnHandoffTake(ghost);
+        if (this.columnHandoffStartedAt == 0L) return 1.0;
+        return Math.max(0.0, Math.min(1.0,
+                (System.currentTimeMillis() - this.columnHandoffStartedAt) / (double) COLUMN_HANDOFF_TOTAL_MS));
+    }
+
+    private static double columnHandoffTake(ColumnGhost ghost) {
+        if (ghost.startedAt == 0L) ghost.startedAt = System.currentTimeMillis();
+        return Math.max(0.0, Math.min(1.0,
+                (System.currentTimeMillis() - ghost.startedAt) / (double) COLUMN_HANDOFF_TOTAL_MS));
+    }
+
+    /** 摘掉幽灵列：从裁剪层取下、清变换。旧树本来就要被 GC，不需要再归位什么。 */
+    private void dropColumnGhost() {
+        final ColumnGhost ghost = this.columnGhost;
+        if (ghost == null) return;
+        this.columnGhost = null;
+        ghost.panel.setTransformations(null);
+        this.retirementLayer.getChildren().remove(ghost.panel);
+    }
+
+    /** 幽灵列整个不能再吃输入：递归关点击与光标改写。滚轮同理——isClickable=false 之后 iterateChildrenDWheel 那条也进不来。 */
+    private static void disableInteractionRecursive(AbstractWidget<?> widget) {
+        widget.setClickable(false);
+        widget.setShouldOverrideMouseCursor(false);
+        for (AbstractWidget<?> child : widget.getChildren()) {
+            disableInteractionRecursive(child);
+        }
+    }
+
     /**
      * 一张歌单在这一次侧栏里的签名。
      *
@@ -530,6 +725,8 @@ public class NavigateBar extends NCMPanel {
             this.layoutSuggestions();
             // 退场中的旧行同理：它们已经不属于任何列表，没人推进就会永远停在半透明上。
             // 退场由裁剪层自己的布局回调推进，确保这一帧的视口坐标已经就位。
+            // 整块幽灵列（音源切换）同一条道理：层坐标就位后才重钉幽灵的位置。
+            this.advanceColumnHandoff();
         });
 
         this.setOnKeyTypedCallback((character, keyCode) -> {

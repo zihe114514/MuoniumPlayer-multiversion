@@ -25,8 +25,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2026/4/1 08:26
  */
 public class MuoniumPlayerEventHandler implements EventHandler {
 

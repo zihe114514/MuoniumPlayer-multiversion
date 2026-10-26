@@ -8,8 +8,6 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/11/7 22:16
  */
 @Data
 public class Album {

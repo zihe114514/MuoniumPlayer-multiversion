@@ -15,6 +15,7 @@ import net.minecraft.client.renderer.SubmitNodeCollector;
 import org.joml.Matrix4f;
 
 /**
+ * 3D 世界歌词的树侧桥 —— <b>世界渲染结束事件入口（NeoForge 收集阶段等价物）</b>。
  *
  * <p>世界渲染的收集阶段（Fabric {@code LevelRenderEvents.COLLECT_SUBMITS} / NeoForge
  * {@code SubmitCustomGeometryEvent}，两个挂点都在 {@code LevelRenderer.submitFeatures}
@@ -84,6 +85,7 @@ public final class WorldLyricsBridge {
     static volatile WorldLyricsSettings currentSettings;
 
     /**
+     * 世界渲染收集阶段入口（上游 worldRenderEnd 的 26.3 等价物）。
      * 由两个加载器的 COLLECT_SUBMITS / SubmitCustomGeometryEvent 调用 ——
      * 相机自己取，收集器由加载器的事件上下文提供。
      *
@@ -107,6 +109,7 @@ public final class WorldLyricsBridge {
             // 帧图执行后），RenderType.prepare() 在 buildGroup（发顶点时）捕获
             // getModelViewMatrixCopy() 写进 ModelViewMat uniform：GPU 端变换 =
             // 视图旋转 × 根矩阵 × billboard。这里再算一遍相机旋转就是转两次 ——
+            // 症状正是「玩家视角向左、字向右」。1.21.1 的 basePose 公式
             // 只适用于「事件时视图矩阵是单位矩阵」的旧管线。
             // 顶点坐标仍然用镜头相对坐标（rx = 世界 − 相机），视图旋转把它转回相机空间。
             Matrix4f basePose = new Matrix4f();
@@ -148,6 +151,7 @@ public final class WorldLyricsBridge {
                     + com.muoniumplayer.core.ncm.music.CloudMusic.lyricsTrackKey + "），开始收集");
         }
 
+        // 上游 ModernWorld.begin 口径：Fixed.reset(basePose)。
         // 本仓库没有自建矩阵栈：宿主的 PoseStack 原点就是 basePose —— 用一个
         // 专用 PoseStack，pose() 直接填 basePose，push/pop 由 WorldBillboard 自己管。
         PoseStack poseStack = new PoseStack();

@@ -6,7 +6,6 @@ import com.muoniumplayer.core.utils.logging.Logger;
 
 /**
  * 抽象管理器类
- * @author MuoniumPlayer Contributors
  * @since 2023/12/10
  */
 public abstract class AbstractManager {

@@ -33,7 +33,7 @@ class AutomixIntegrationStaticTest {
         assertTrue(settings.contains("private static boolean enabled = true;"),
                 "缺少 automix.json 时不能静默关闭全部过渡");
         assertTrue(settings.contains("public static final Engine DEFAULT_ENGINE = Engine.FOLIA;"),
-                "出厂默认引擎必须是 智能混音");
+                "出厂默认引擎必须是智能混音");
         assertTrue(settings.contains("private static Engine engine = DEFAULT_ENGINE;"),
                 "未选择引擎时必须落到 DEFAULT_ENGINE，而不是写死另一个枚举常量");
         assertTrue(settings.contains("boolean migrateEngine = !root.has(\"engine\")"),
@@ -52,7 +52,7 @@ class AutomixIntegrationStaticTest {
     void runtimeDefaultsUseFoliaWithoutPerformanceMode() {
         assertTrue(AutomixSettings.isEnabled(), "默认配置必须启用 AUTOMIX");
         assertEquals(AutomixSettings.Engine.FOLIA, AutomixSettings.getEngine(),
-                "默认配置必须使用 智能混音");
+                "默认配置必须使用智能混音");
         assertFalse(AutomixSettings.isPerformanceModeEnabled(),
                 "表现模式是显式 opt-in，默认不能替用户打开");
         assertTrue(AutomixSettings.isModelInferenceStatusEnabled(),

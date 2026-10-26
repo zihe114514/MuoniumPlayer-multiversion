@@ -186,7 +186,7 @@ public final class NeteaseMusicService {
     /**
      * 问一次自定义源要搜索结果。
      *
-     * <p><b>上游 lx 的搜索并不走自定义源</b>：{@code useInitUserApi.ts} 只把脚本包成
+     * <p><b>上游 lx 的搜索并不走自定义源</b>：初始化用户 API 的钩子只把脚本包成
      * {@code getMusicUrl} / {@code getLyric} / {@code getPic} 三个方法，搜索走的是内置
      * {@code musicSdk/<源>/musicSearch.js}。所以这条是宿主加在上游之外的扩展：脚本要在
      * 自己的 {@code inited} 里把 {@code search} 声明进 actions，宿主还要开着扩展开关。

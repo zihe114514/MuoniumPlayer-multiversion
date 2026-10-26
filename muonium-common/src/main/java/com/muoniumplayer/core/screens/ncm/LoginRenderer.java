@@ -18,7 +18,6 @@ import com.muoniumplayer.core.utils.Location;
 import static com.muoniumplayer.core.screens.ncm.NCMScreen.ColorType.PRIMARY_TEXT;
 
 /**
- * @author MuoniumPlayer Contributors
  * @since 6/16/2023 4:05 PM
  */
 public class LoginRenderer implements SharedRenderingConstants, SharedConstants {

@@ -21,8 +21,6 @@ import java.util.function.Supplier;
 
 /**
  * 组件 base.
- * @author MuoniumPlayer Contributors
- * Date: 2025/7/8 19:42
  */
 public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implements SharedRenderingConstants, SharedConstants {
 

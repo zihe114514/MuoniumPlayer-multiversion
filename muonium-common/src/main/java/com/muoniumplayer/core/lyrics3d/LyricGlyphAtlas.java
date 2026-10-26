@@ -21,6 +21,7 @@ import java.util.Map;
  * <h2>为什么是逐字图集而不是整行贴图</h2>
  * 渲染编排器（{@link WorldLyricsRenderer#drawRow}）的逐字循环是行为核心：逐字淡入、
  * word pop 的按词回弹、入出场的每字落位都发生在每个字形自己的变换里。整行贴图会把
+ * 这些全部焊死。现代化风格的参照实现（CjkFont 口径）同样是逐字图集。
  *
  * <h2>烘焙与坐标口径</h2>
  * <p>每个字符用烘焙字体（{@link #bakeFont}，界面正文字体的
@@ -40,6 +41,7 @@ import java.util.Map;
  * （ink 用 inkRgb、glow 用 glowColorRgb），进出场 alpha 由世界侧顶点色承担。</p>
  *
  * <h2>页与淘汰</h2>
+ * <p>格子 shelf-packing 进 1024² 的页，最多 {@link #MAX_PAGES}
  * 页 LRU（按整页逐出，不回收半空页的碎片）。像素留在 Java 堆，纹理的创建/上传/删除
  * 经 {@link Host} 由树侧绑定本树 GL —— 本类纯 CPU、纯 Java，五树共享。</p>
  */

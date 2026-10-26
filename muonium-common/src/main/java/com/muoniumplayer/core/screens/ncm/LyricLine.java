@@ -13,8 +13,6 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/10/18 10:55
  */
 public class LyricLine {
     @Getter

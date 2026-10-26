@@ -11,8 +11,6 @@ import com.muoniumplayer.core.utils.Location;
 import java.util.function.Supplier;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/9/30 15:11
  */
 public class RoundedImageWidget extends AbstractWidget<RoundedImageWidget> {
 

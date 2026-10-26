@@ -110,7 +110,6 @@ public class WaveFile extends RiffFile {
     }
 
     /**
-     *
      */
     public int openForWrite(String filename, int samplingRate, short bitsPerSample, short numChannels) {
         // 校验参数……
@@ -159,7 +158,6 @@ public class WaveFile extends RiffFile {
     }
 
     /**
-     *
      */
     @Override
     public int close() {
@@ -200,7 +198,6 @@ public class WaveFile extends RiffFile {
     }
 
     /**
-     *
      */
     @Override
     public long currentFilePosition() {

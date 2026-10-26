@@ -9,8 +9,6 @@ import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/10/8 19:13
  */
 public class IconWidget extends AbstractWidget<IconWidget> {
 

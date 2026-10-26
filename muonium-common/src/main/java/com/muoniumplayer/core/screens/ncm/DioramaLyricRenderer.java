@@ -10,7 +10,7 @@ import com.muoniumplayer.core.settings.HudConfig;
 /**
  * 「镜台」：歌词卡片摆在不同景深上，镜头一层层往里推。
  *
- * <p><b>这是近似而非还原。</b>本项目 的 {@code diorama} 用 three.js 建了一个真三维场景，
+ * <p><b>这是近似而非还原。</b>本项目的 {@code diorama} 用 three.js 建了一个真三维场景，
  * 还有一套 GPU 粒子 shader；1.8.9 的渲染管线没有这些东西，也不值得为一种歌词样式引入。
  * 这里保留它最核心的观感 —— <b>透视景深 + 镜头推进 + 远处淡出 + 浮尘</b>，
  * 用一次手写的透视投影（{@code scale = focal / (focal + z)}）在 2.5D 里实现。</p>

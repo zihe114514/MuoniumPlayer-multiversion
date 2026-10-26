@@ -14,8 +14,6 @@ import java.io.BufferedInputStream;
 import java.io.IOException;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/5/5 12:47
  */
 public class BufferedSampleLoader extends CustomSampleLoader {
 

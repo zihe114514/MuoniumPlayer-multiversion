@@ -33,8 +33,6 @@ import com.muoniumplayer.core.utils.Location;
 import java.awt.*;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/10/17 20:40
  */
 public class MusicWidget extends RoundedRectWidget {
 

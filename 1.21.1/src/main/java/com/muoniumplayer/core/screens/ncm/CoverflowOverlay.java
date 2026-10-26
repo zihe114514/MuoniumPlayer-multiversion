@@ -36,8 +36,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2025/3/14 20:31
  */
 public class CoverflowOverlay extends ExtensionScreen implements SharedConstants, SharedRenderingConstants {
 

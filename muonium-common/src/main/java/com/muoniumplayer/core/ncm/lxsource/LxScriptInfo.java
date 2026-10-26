@@ -6,7 +6,6 @@ import java.util.regex.Pattern;
 /**
  * 自定义源脚本头部注释里的元信息。
  *
- * <p>字段名、长度上限、缺省行为都照抄 lx-music-desktop 的
  * {@code src/main/modules/userApi/utils.ts}：脚本作者是按那份实现写的头注释，
  * 这里放宽或收紧任何一条都会让同一个脚本在两个播放器里显示出不同的名字。</p>
  */

@@ -1,8 +1,6 @@
 package com.muoniumplayer.core.settings;
 
 /**
- * @author MuoniumPlayer Contributors
- * Date: 2026/4/1 09:31
  */
 public class ClientSettings {
 

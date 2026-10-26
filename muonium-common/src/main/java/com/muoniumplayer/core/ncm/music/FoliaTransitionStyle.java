@@ -1,8 +1,7 @@
 package com.muoniumplayer.core.ncm.music;
 
 /**
- * 智能混音 过渡族。这是对 本项目 所记载策略层的洁净室
- * 实现：硬切、低频交接、衰减尾滑行、中性混音。
+ * 智能混音过渡族：硬切、低频交接、衰减尾滑行、中性混音。
  */
 enum FoliaTransitionStyle {
     BEAT_CUT("beatCut", 0.0),
