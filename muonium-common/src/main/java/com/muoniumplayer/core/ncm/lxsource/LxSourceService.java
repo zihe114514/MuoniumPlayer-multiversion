@@ -5,6 +5,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.muoniumplayer.core.ncm.music.MusicPlatform;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -487,24 +488,26 @@ public final class LxSourceService {
     }
 
     /**
-     * 脚本流那枚徽标的写法：<b>脚本名 · 它这次实际用的渠道键</b>，例：{@code 野花·kw}。
+     * 脚本流那枚徽标的写法：<b>lx / 渠道显示名</b>，例：{@code lx/酷我}。
      *
-     * <p>渠道键不是装饰：一份脚本通常同时声明 wy/tx/kg/kw/mg 五个渠道，只写脚本名分不出
-     * 「这一首是哪个渠道解出来的」，而酷我 / 咪咕这类 LX-only 渠道<b>根本没有本家流</b>，
-     * 玩家要看的就是这一位。跨平台换源落点也要靠它才能一眼读出「换到了酷我、走的是脚本」。</p>
+     * <p>渠道键（wy/tx/kg/kw/mg）是写给脚本看的词，玩家读不出「kw 是哪家」；徽标要说的是
+     * 「这一首的声音从哪来」，所以渠道键在这里翻回平台显示名（kw→酷我、mg→咪咕、wy→网易云），
+     * 再挂上 lx 前缀说明走的是自定义源。一份脚本通常同时声明五个渠道，只写 lx 读不出落点，
+     * 而酷我 / 咪咕这类 LX-only 渠道<b>根本没有本家流</b>，这一位就是它的全部身份信息。</p>
      *
-     * <p>两侧任一缺失时退回有的那一侧，都不缺才拼分隔符；脚本自己已经把渠道名写进名字末尾时
-     * 不重复拼一次。纯字符串，不碰运行期状态，单测直接钉格式。</p>
+     * <p>两侧都缺时退空串（徽标整枚不显示也不误报）；渠道键翻不出平台（上游将来加了新源、
+     * 宿主映射没跟上）时退渠道键本身，宁可露生词也不丢落点。纯字符串，不碰运行期状态，
+     * 单测直接钉格式。</p>
      */
     public static String badgeLabel(String scriptLabel, String sourceKey) {
-        String label = scriptLabel == null ? "" : scriptLabel.trim();
         String key = sourceKey == null ? "" : sourceKey.trim();
-        if (label.isEmpty()) return key;
-        if (key.isEmpty()
-                || label.toLowerCase(Locale.ROOT).endsWith(key.toLowerCase(Locale.ROOT))) {
-            return label;
-        }
-        return label + "·" + key;
+        if (key.isEmpty()) return "";
+        String platform = platformForSourceKey(key);
+        if (platform == null) return "lx/" + key;
+        String name = MusicPlatform.valueOf(platform).getDisplayName();
+        // 徽标求短：「酷我音乐」在行上念成「酷我」（与玩家口中的平台名一致）。
+        String shortName = name.endsWith("音乐") ? name.substring(0, name.length() - 2) : name;
+        return "lx/" + shortName;
     }
 
     /** 四道门：启用了、起来了、声明了这个源、声明了这个动作。 */

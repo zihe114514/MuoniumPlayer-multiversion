@@ -179,6 +179,9 @@ public final class ConfigPaths {
     /** 首次运行设置门控。单独保存，使引导状态不会损坏播放器偏好。 */
     public static final File AUTOMIX = new File(CONFIG_DIRECTORY, "automix.json");
 
+    /** 「播放时压掉原版音乐」的开关（VanillaMusicDucker）。单布尔，默认开。 */
+    public static final File VANILLA_MUSIC_DUCKER = new File(CONFIG_DIRECTORY, "vanilla_music_ducker.json");
+
     /**
      * 仅在新文件不存在时迁移。已有的新文件始终优先，
      * 因此用户可安全地在旁边保留旧配置的备份。

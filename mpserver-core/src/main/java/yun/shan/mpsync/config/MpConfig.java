@@ -159,12 +159,22 @@ public final class MpConfig {
     /**
      * 灌歌单是不是只有房主/管理员能做。
      *
-     * <p>默认 true。理由和 {@code next} 插队位只发给管理者是同一条：一首一首点的时候，
-     * 人均上限 {@link #maxQueuePerMember} 自然把每个人压在几首，而灌单一次就是几十上百首 ——
-     * 对所有成员开放的话，第一个进来的人能把整间房间的歌单变成他一个人的播放列表，
-     * 别人手里那颗「点歌」按钮名义上还在、实际上永远排在几百首后面。服主想开就关。</p>
+     * <p>默认 false —— 「一起听导入歌单」的定位是<b>成员协作</b>：谁都能把自己的网易云歌单
+     * 分享给全房听。放得下是因为下面还有三层闸兜着：单次投放上限 {@link #playlistBatchLimit}、
+     * 房间总队列 {@link #maxQueueSize}、以及每次导入之间的冷却 {@link #playlistImportCooldownMs}。
+     * 「霸房」的窗口被这三层压到了单次一百首之内，不会出现把整间房间的歌单变成自己播放列表
+     * 的空间。服主想收紧就改回 true。</p>
      */
-    public boolean playlistAdminOnly = true;
+    public boolean playlistAdminOnly = false;
+    /**
+     * 同一名玩家两次「播放歌单」之间的最短间隔（毫秒，0 = 不限速）。
+     *
+     * <p>为什么成员开放之后需要这一档：单次上限与总队列是<b>存量</b>闸，管得住一次倒进去多少，
+     * 管不住<b>连续倒</b> —— 一百首一首上限的人连灌二十次，照样把总队列刷满。冷却把「连续倒」
+     * 拉开到人手一次的节奏，和「连点两下创建房间不该开出两条会话」是同一条工程直觉。
+     * 默认 10 秒，够念完一句「我灌了张单子」也够别人有反应的机会；服主可调。</p>
+     */
+    public long playlistImportCooldownMs = 10_000L;
     /**
      * 前瞻窗：轮到播放之前，服务端提前给几首要播放链接。
      *
@@ -381,6 +391,10 @@ public final class MpConfig {
             if (cfg.maxQueueSize > 0 && cfg.playlistBatchLimit > cfg.maxQueueSize) {
                 cfg.playlistBatchLimit = cfg.maxQueueSize;
             }
+            // 导入冷却：负数是手滑按 0（不限速）处理；上限 5 分钟，再长「成员灌歌单」
+            // 就名存实亡了。
+            if (cfg.playlistImportCooldownMs < 0L) cfg.playlistImportCooldownMs = 0L;
+            if (cfg.playlistImportCooldownMs > 300_000L) cfg.playlistImportCooldownMs = 300_000L;
             // 前瞻窗至少 1 首，不然轮到那一首才开始问，每次交接都要空等一个 urlWaitTimeoutMs。
             if (cfg.queueResolveLead < 1) cfg.queueResolveLead = 1;
             if (cfg.queueResolveLead > 10) cfg.queueResolveLead = 10;

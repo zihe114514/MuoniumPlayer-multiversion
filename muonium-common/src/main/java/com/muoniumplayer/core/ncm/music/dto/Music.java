@@ -169,10 +169,29 @@ public class Music {
     private transient volatile boolean greyDetected;
     private transient volatile String unblockedSourceLabel = "";
     /**
+     * 换源配对键：本格被换源改写前后的两条身份（原曲与替身）各持同一把。
+     *
+     * <p>播放队列是面板列表的浅拷贝，自动换源只 set 进替身、行 widget 还绑着原曲对象；
+     * 高亮与待播角标按 {@code stableKey} 相等匹配，替身换了平台与 id 就永远对不上，
+     * 表现为「换源成功的那一行丢了正在播放的焦点」。录取点把两边都标成同一把钥匙，
+     * 显示层在 stableKey 不等时再看这一位，焦点就跟着声音走。</p>
+     */
+    private transient volatile String crossSourcePeerKey = "";
+    /**
+     * 换源<b>替身侧</b>的落点平台；被替换的原曲侧恒为 null。
+     *
+     * <p>只由 {@code CrossSourceSwitcher.propagateUnblockLabel} 写给替身：替身的
+     * {@code source} 就是落点平台，但重播路径上脚本/解灰链路开头会清掉徽标、官方链路
+     * 成功又不写 —— {@code getPlayUrl} 的徽标恢复要靠这一位自证「本次官方流确实来自
+     * 录取时的落点」，防止把旧落点徽标恢复到一个本次走自己平台官方链的对象上。
+     * {@code transient}：描述这一次点播，不落盘、不参与相等性。</p>
+     */
+    private transient volatile MusicPlatform crossSourceLandedPlatform;
+    /**
      * 这一行的声音是<b>跨平台换源</b>换来的（而不是本平台自己解出来的第三方流）。
      *
      * <p>界面上要分两种词说：换源换来的说「已换源 · 网易云」，本平台的解灰 / 脚本流说
-     * 「解灰 · 野花·wy」。{@code unblockedSourceLabel} 只说「声音出自哪里」，分不出这两件事，
+     * 「解灰 · lx/网易云」。{@code unblockedSourceLabel} 只说「声音出自哪里」，分不出这两件事，
      * 而玩家看徽标要判断的正是「我这首原平台的歌是被换掉了，还是只是换了条取流地址」。</p>
      *
      * <p>只在 {@code CrossSourceSwitcher.propagateUnblockLabel} 的录取点置位，同样
@@ -619,6 +638,48 @@ public class Music {
         return music;
     }
 
+    /**
+     * 为「同一首歌在队列里占第二格」复制一份<b>独立的队列身份</b>。
+     *
+     * <p>{@code playNext} 若把同一对象引用插进队列，之后换源录取点写在对象上的徽标与
+     * 换源配对键会同时落到两格上：没被换源的那格行也挂「已换源」徽标、也亮「正在播放」
+     * 高亮，而显示层（行 widget 只认对象）无法区分它们。让第二格拿一份浅拷贝，
+     * 徽标 / 配对键 / 播放态这些「这一格发生过什么」的 transient 运行态就互相隔离开了。</p>
+     *
+     * <p>拷贝体带上<b>取流与显示必需</b>的静态身份（12 个 final 字段 + source/sourceId/
+     * sourceMid/GD 与酷狗主键 + cadenceTrack 缓存 + 会员标记 + 封面链接），{@code equals}
+     * （platform+id）与账本、高亮、队列去重的判据完全不变。刻意<b>不带</b>：解灰 / 换源
+     * 徽标、crossSourceSwitched、配对键、解码时长、播放质量、汽水一次性 play_auth ——
+     * 这些描述的是「原来那一格的这一次点播」，第二格还没播过，留默认才是对的。</p>
+     *
+     * <p>覆盖 {@code artistsName}/{@code translatedNames} 这两个惰性缓存：拷贝体第一次
+     * 渲染就能直接用，不必重拼一次。</p>
+     */
+    public Music queueIdentityCopy() {
+        Music copy = new Music(name, mainTitle, additionalTitle, id, artists, aliasName,
+                album, duration, featureFlag, publishTime, translatedName);
+        copy.source = source;
+        copy.sourceId = sourceId;
+        copy.sourceMid = sourceMid;
+        copy.gdPlatform = gdPlatform;
+        copy.gdPicId = gdPicId;
+        copy.gdLyricId = gdLyricId;
+        copy.kugouHash = kugouHash;
+        copy.kugouHash320 = kugouHash320;
+        copy.kugouHashLossless = kugouHashLossless;
+        copy.kugouAlbumId = kugouAlbumId;
+        copy.kugouAlbumAudioId = kugouAlbumAudioId;
+        copy.kugouCoverTemplate = kugouCoverTemplate;
+        copy.cadenceTrack = cadenceTrack;
+        copy.vip = vip;
+        copy.cloudSong = cloudSong;
+        copy.externalCoverUrl = externalCoverUrl;
+        copy.foreignCover = foreignCover;
+        copy.artistsName = artistsName;
+        copy.translatedNames = translatedNames;
+        return copy;
+    }
+
     /** 从一条 GD API 搜索结果构建一条可自由选择的 GD Studio 曲目。 */
     public static Music fromGdTrack(GdStudioMusicService.GdTrack track, String platformKey) {
         if (track == null) return null;
@@ -751,6 +812,11 @@ public class Music {
         return vip || (isNetease() && fee != 0);
     }
 
+    /** 测试与换源候选取用时写入「会员/付费受限」标记；正常解析链路只读它。 */
+    public void setVipRestricted(boolean restricted) {
+        this.vip = restricted;
+    }
+
     /** 仅对网易云数字专辑购买曲目为 true，而非普通专辑元数据。 */
     public boolean isDigitalAlbumTrack() {
         return isNetease() && fee == 4;
@@ -869,11 +935,30 @@ public class Music {
     /**
      * 获得歌曲播放 URL。每一次点歌都会重新解析，不缓存失败结果。
      *
-     * 默认配置是无损优先：先请求无损；曲目没有无损、账号没有 VIP、接口返回空链接、
+     * <p>默认配置是无损优先：先请求无损；曲目没有无损、账号没有 VIP、接口返回空链接、
      * 解析异常或超时时，再明确降级到标准音质。网易云在主解析器失败后继续切换
-     * 备用解析器；QQ 仅能使用 Cadence，但同样执行无损到标准的降级。
+     * 备用解析器；QQ 仅能使用 Cadence，但同样执行无损到标准的降级。</p>
+     *
+     * <p>外面这层还负责换源替身重播的徽标兜底：解析链（{@link #resolveLxSource} /
+     * {@link #resolveNeteaseUnblock}）都先清掉旧标再干活，走脚本 / 解灰成功会写一枚新的，
+     * 走官方链路却没人写 —— automix 预备替身、手动重播替身时，录取点写好的
+     * 「已换源 · 落点」就会凭空消失。恢复只认<b>替身自己</b>（录取点给它记过落点平台），
+     * 且本次成功链路的平台就是那个落点 —— 被替换的原曲侧没有落点记录，用户重播它时
+     * 走的是它自己平台的官方链路，恢复旧落点只会让徽标归因到本次根本没参与供流的平台。</p>
      */
     public Tuple<String, String> getPlayUrl() {
+        String switchedBadge = crossSourceSwitched ? getUnblockedSourceLabel() : "";
+        MusicPlatform landed = crossSourceLandedPlatform;
+        Tuple<String, String> playUrl = resolvePlayUrl();
+        if (playUrl != null && !switchedBadge.trim().isEmpty() && crossSourceSwitched
+                && landed == getSource()
+                && getUnblockedSourceLabel().trim().isEmpty()) {
+            this.unblockedSourceLabel = switchedBadge;
+        }
+        return playUrl;
+    }
+
+    private Tuple<String, String> resolvePlayUrl() {
         // 绝不显示从上一次失败解析带过来的质量徽标。
         this.playbackQuality = PlaybackQuality.UNKNOWN;
 
@@ -1012,7 +1097,7 @@ public class Music {
                 Tuple<String, String> normalized = normalizePlayUrl(new Tuple<>(resolved.url, resolved.format));
                 if (normalized == null) return null;
                 // 复用解灰的那枚徒标：用户需要知道「这一首不是官方流」，而这与解灰是同一件事。
-                // 末尾带上本次用的渠道键（「野花·kw」）—— 一份脚本五个渠道，只写脚本名读不出落点，
+                // 写成「lx/渠道显示名」（例：lx/酷我）—— 一份脚本五个渠道，只写 lx 读不出落点，
                 // 而酷我 / 咪咕这类 LX-only 渠道没有本家流，这一位就是它的全部身份信息。
                 unblockedSourceLabel = com.muoniumplayer.core.ncm.lxsource.LxSourceService
                         .badgeLabel(resolved.sourceLabel, track.getSource());
@@ -1215,6 +1300,45 @@ public class Music {
     /** 这一行的声音来自另一平台被换进来的曲目（而不是本平台的解灰 / 脚本流）。 */
     public boolean isCrossSourceSwitched() {
         return crossSourceSwitched;
+    }
+
+    /** 录取点写入/更新换源配对键；非录取方一律不碰这一位。 */
+    public void setCrossSourcePeerKey(String key) {
+        this.crossSourcePeerKey = key == null ? "" : key;
+    }
+
+    /** 本格换源配对键（原曲与替身同持一把）；从未参与换源时为空串。 */
+    public String getCrossSourcePeerKey() {
+        String key = crossSourcePeerKey;
+        return key == null ? "" : key;
+    }
+
+    /**
+     * 两条曲目是否站在同一格换源的两侧（原曲 ↔ 替身）。
+     *
+     * <p>给高亮与「正在播放」判定用：面板行 widget 绑的是原曲老对象，正在出的声却是替身的，
+     * stableKey 已经对不上（换了平台与 id）。两侧在录取点都被标了同一把
+     * {@code crossSourcePeerKey}，这一位相等即视为同一格。</p>
+     */
+    public boolean isCrossSourcePeerOf(Music other) {
+        if (this == other) return true;
+        if (other == null) return false;
+        String mine = crossSourcePeerKey;
+        return mine != null && !mine.isEmpty() && mine.equals(other.crossSourcePeerKey);
+    }
+
+    /**
+     * 录取点写入替身的落点平台；{@code replaced} 侧传 null 表示「我不是替身」。
+     *
+     * <p>重播链路凭这一位自证身份（见字段注释），只有 {@code getPlayUrl} 的徽标恢复读它。</p>
+     */
+    public void setCrossSourceLandedPlatform(MusicPlatform platform) {
+        this.crossSourceLandedPlatform = platform;
+    }
+
+    /** 这一对象是否真是换源录取时的<b>替身</b>（而不是被替换的原曲侧）；替身侧返回落点平台。 */
+    public MusicPlatform getCrossSourceLandedPlatform() {
+        return crossSourceLandedPlatform;
     }
 
     /** 官方链路取不到流，且「音乐是否可用」也判定为不可用。 */

@@ -53,6 +53,22 @@ public final class MpDirect {
         return active;
     }
 
+    /**
+     * 直连帧接收侧的会话存活校验（供 MpPartyClient.onFrame 闸门用）。
+     *
+     * <p>{@code active} 只能证明「有会话意图」，不能证明「这条带 directSource 标记的帧
+     * 还属于一个活着的会话」：close()/onSessionClosed 都先复位 active 再关 socket，
+     * readLoop 里的残余帧会在复位之后才投到。这里按「还有任何一条活会话」判——
+     * 迟到的孤儿帧（会话已被顶掉或终结）据此按过期丢弃，不再污染刚清零的客户端状态。
+     * 活会话期间恒为 true，不增加任何开销。</p>
+     */
+    public static boolean frameSinkLive() {
+        DirectClient c = client;
+        if (c != null && c.isConnected()) return true;
+        DirectClient l = loopback;
+        return l != null && l.isConnected();
+    }
+
     public static boolean isHosting() {
         return server != null && server.isRunning();
     }
@@ -207,6 +223,12 @@ public final class MpDirect {
         if (router != null) router.attachDirect(self);
         active = true;
         // 等 S_HELLO 到达（客户端变 usable）再发建房帧；就绪后回调 UI。
+        // 记下托管服务端与代次：这 5 秒等待窗里用户可能已经关房（close 会推进代次、
+        // 摘除路由）。不核对的话，关房后 serverPresent() 会因 MC 通道的 available()
+        // 立刻放行，这一帧名为「直连房间」的 C_CREATE 就发到了真实 MC 服务器上，
+        // 凭空建出一个没人要的房间。
+        final DirectServer myServer = s;
+        final long myGeneration = generation;
         Thread t = new Thread(() -> {
             for (int i = 0; i < 50 && !MpPartyClient.serverPresent(); i++) {
                 try {
@@ -215,6 +237,7 @@ public final class MpDirect {
                     return;
                 }
             }
+            if (myGeneration != generation || server != myServer) return;
             sendCreate();
             if (onReady != null) onReady.run();
         }, "muonium-direct-create");
@@ -487,6 +510,10 @@ public final class MpDirect {
         boolean wasLoop = c != null && c == loopback;
         if (!wasMember && !wasLoop) return false;
 
+        // 会话终结是一次全量清理点，与 close() 同样推进代次（类注释声明的不变量）：
+        // 托管回环被动死亡后的在途 join 线程落地时，代次已变就会主动放弃，
+        // 不至于把一个没人管的僵尸会话注册成新会话。
+        generation++;
         if (wasMember) client = null;
         if (wasLoop) loopback = null;
         joinAuth = "";

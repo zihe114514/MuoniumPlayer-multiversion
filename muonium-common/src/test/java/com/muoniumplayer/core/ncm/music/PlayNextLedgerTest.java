@@ -233,6 +233,31 @@ class PlayNextLedgerTest {
         assertEquals(1, ledger.pendingRun(queue, 0));
     }
 
+    @Test
+    @DisplayName("isPending 认换源配对：面板重建之前，被换掉的原曲行角标不熄灭")
+    void isPendingFollowsTheCrossSourcePeer() {
+        List<Music> queue = songs(6);
+        PlayNextLedger ledger = new PlayNextLedger();
+        Music first = song(995L);
+        queue.add(ledger.insertIndex(queue, 0), first);
+        ledger.remember(first);
+        assertTrue(ledger.isPending(queue, 0, first));
+
+        // 预备期换源：队列格换成替身、账上身份迁到替身；行 widget 还绑着原曲对象。
+        Music standIn = song(996L);
+        standIn.setSource(com.muoniumplayer.core.ncm.music.MusicPlatform.KUWO);
+        queue.set(1, standIn);
+        ledger.replacePendingIdentity(first, standIn);
+        // 两侧立起同一把配对钥匙（CrossSourceSwitcher.propagateUnblockLabel 的录取动作）。
+        CrossSourceSwitcher.propagateUnblockLabel(first, standIn);
+
+        assertTrue(ledger.isPending(queue, 0, first),
+                "面板行绑着原曲，配对键认不上时「下一首」角标会当场熄灭");
+        assertTrue(ledger.isPending(queue, 0, standIn));
+        // 陌生行不碰瓷：没参与换源的歌不许凭配对键蹭上待播角标。
+        assertFalse(ledger.isPending(queue, 0, song(997L)));
+    }
+
     private static List<Music> songs(int count) {
         List<Music> result = new ArrayList<>(count);
         for (int id = 1; id <= count; id++) {

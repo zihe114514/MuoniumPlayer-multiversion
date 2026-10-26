@@ -4,6 +4,8 @@
   "package": "com.muoniumplayer.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "MusicManagerAccessor",
+    "MusicManagerDuckMixin",
     "FramebufferMixin",
     "WorldLyricsRenderTailMixin"
   ],

@@ -1579,6 +1579,13 @@ public final class Room {
                            String reason) {
         QueueEntry entry = askTarget(entryId, source, songId);
         if (entry == null || entry.askTier != tier) return;
+        // reason 必须落日志：排障时「全员 VIP 的房间为什么全层落空」只能靠这里答 ——
+        // 每一层的弃权原因（netease-trial / netease-failed / lx-wy-failed / no-platform）
+        // 是判定「误判弃权」还是「真没人解得出」的唯一证据，聊天栏的 notice 不带它。
+        Member m = members.get(uuid);
+        System.out.println("[mpsync] url_decline entry=" + entryId + " tier=" + tier + " by="
+                + (m == null ? "?" : m.name) + " 原因=" + (reason == null || reason.isBlank()
+                ? "未说明" : reason.trim()));
         if (!entry.decline(uuid)) return;
         advanceAsk(entry, tier + 1, true);
     }

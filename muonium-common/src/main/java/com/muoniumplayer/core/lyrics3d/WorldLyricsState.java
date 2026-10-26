@@ -575,6 +575,16 @@ public final class WorldLyricsState {
             }
         }
 
+        // 生命线防线（传送缺口）：跨维度传送/远距传送瞬间，句锚点还留在旧维度的
+        // 世界坐标上，与相机相减是几十万格的巨量差值 —— 回屏/避让弹簧一步就把锚点
+        // 推出发散区，之后 atan2/asin 全 NaN 且永不退出（顶点 NaN 被 GPU 剔除 =
+        // 歌词「永久消失」，重进服务器也不恢复，因为 SpawnedLine 是进程级单例）。
+        // 帧头扫描：锚点非有限、或离相机超过「距离上限×4 + 64」的句子直接重锚到
+        // 当前视线下方（与新生成的句子同位），角速度清零，下一帧正常。
+        float anchorMaxLen = (float) (params.distance() * 4.0 + 64.0);
+        if (active != null) checkAnchorSanity(active, camera, params, anchorMaxLen);
+        for (SpawnedLine f : fading) checkAnchorSanity(f, camera, params, anchorMaxLen);
+
         // 回屏保持 / 不沉入地面（stayOnScreen / aboveGround）：
         // 在画之前把越界句拉回视野（fading 句也 follow —— 与上游同序）
         clampIntoView(camera, params);
@@ -740,6 +750,32 @@ public final class WorldLyricsState {
     private double groundFloor = Double.NaN;
 
     private long keepNanos;
+
+    /**
+     * 单句锚点的生命线检查：坐标非有限、或离相机远超合理范围（传送/维度切换的
+     * 残留锚点）时，把句子重锚到当前视线的生成位（等价于这句话刚生成），
+     * 角速度一并清零 —— 弹簧从静止状态重新收敛。
+     */
+    private void checkAnchorSanity(SpawnedLine f, WorldLyricsState.CameraView camera,
+                                   Params params, float maxLen) {
+        double rx = f.x - camera.eyeX();
+        double ry = f.y - camera.eyeY();
+        double rz = f.z - camera.eyeZ();
+        boolean insane = !Double.isFinite(rx) || !Double.isFinite(ry) || !Double.isFinite(rz)
+                || (rx * rx + ry * ry + rz * rz) > (double) maxLen * maxLen;
+        if (!insane) return;
+        double d = params.distance();
+        double yaw = camera.yawDeg();
+        double pitch = Math.max(-60.0, Math.min(30.0, camera.pitchDeg() - 5.0));
+        double yr = Math.toRadians(yaw), pr = Math.toRadians(pitch);
+        f.x = camera.eyeX() - Math.sin(yr) * Math.cos(pr) * d;
+        f.y = camera.eyeY() - Math.sin(pr) * d;
+        f.z = camera.eyeZ() + Math.cos(yr) * Math.cos(pr) * d;
+        f.spawnYawDeg = (float) yaw;
+        f.spawnPitchDeg = (float) pitch;
+        f.vYaw = 0;
+        f.vPitch = 0;
+    }
 
     /** 角度归一到 -180..180。 */
     private static double wrapDegrees(double d) {

@@ -497,6 +497,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         int safePercent = Math.max(0, Math.min(100, percent));
         publishNotice(IslandNoticeType.VOLUME, "音乐音量", safePercent + "%");
     }
+
+    /** 「播放时压掉原版音乐」开关的反馈。走 VOLUME 通道：这是音量域的偏好，图标同族。 */
+    public static void showVanillaMusicDucker(boolean enabled) {
+        publishNotice(IslandNoticeType.VOLUME, enabled ? "已压掉游戏音乐" : "游戏音乐已恢复",
+                enabled ? "播放时原版音乐自动让路" : "原版音乐不再被打断");
+    }
     /** 仅在配置的模型返回可用证据后才完成实时卡片。 */
     public static void beginTranscode(String trackName, String sourceFormat, String targetFormat) {
         synchronized (NOTICE_QUEUE_LOCK) {

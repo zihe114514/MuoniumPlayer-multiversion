@@ -596,7 +596,11 @@ public class CloudMusic implements SharedConstants {
                 rank = 1;
             } else {
                 int insertAt = playNextLedger.insertIndex(queue, curIdx);
-                queue.add(insertAt, song);
+                // 插独立身份而不是对象引用：同一首歌允许同时站在播放队列与待播段里，
+                // 若两格共用一个对象，之后换源录取点写在对象上的徽标与配对键会同时落到
+                // 两格（没轮到的那格行也亮「正在播放」高亮、也挂「已换源」徽标，而显示层
+                // 只认对象分不出它们）。拷贝体的 equals（platform+id）不变，账本语义照旧。
+                queue.add(insertAt, song.queueIdentityCopy());
                 playNextLedger.remember(song);
                 queueRevision++;
                 // 通知里那个「第几位」数的是真正的待播段，不再是从 curIdx 到某个尾下标的距离。
@@ -1512,6 +1516,13 @@ public class CloudMusic implements SharedConstants {
 
     private static void startNewPlayThread(List<Music> songs, int startIdx) {
         playThread = new PlayThread(songs, startIdx);
+        // 守护线程：游戏关闭时 JVM 的退出不再被「正在放歌」这件事拖住。26.x 起关闭路径有
+        // 看门狗（ClientShutdownWatchdog），主线程退出后若还有非守护线程活着，等超时就生成
+        // 「Watchdog (Client shutdown from post-main)」崩溃报告——PlayThread 的
+        // waitForPlaybackCompletion 是 10ms 轮询 + 阻塞解码器调用，关闭时没有任何钩子去停它，
+        // 正是触发强杀的那个常驻线程。守护化让 JVM 可以直接走人；正常游戏内的停止/切歌
+        // 仍走 stopExistingPlayThread 的显式取消链路，行为不变。
+        playThread.setDaemon(true);
         awaitingPlaybackAction = false;
         doBreak = false;
         playing.set(false);
@@ -1521,6 +1532,23 @@ public class CloudMusic implements SharedConstants {
     static volatile boolean doBreak = false;
 
     static AtomicBoolean playing = new AtomicBoolean(true);
+
+    static {
+        // 游戏退出时的显式收尾：走与换歌同一条取消链路（invalidate session + cancelPlayback），
+        // 让解码器/混音链在 JVM 存活期间就被打断并释放，而不是等守护线程被 JVM 直接遗弃。
+        // 关闭钩子里不 join 不等待——守护化已保证 JVM 不会被 PlayThread 拖住，这里能停多少
+        // 算多少，纯优化。与 QishuiBackendLifecycle 同一模式（static 块装钩子、只管自己的资源）。
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            doBreak = true;
+            playing.set(false);
+            Thread active = playThread;
+            if (active instanceof PlayThread) {
+                ((PlayThread) active).cancelPlayback();
+            } else if (active != null) {
+                active.interrupt();
+            }
+        }, "MuoniumPlayer-PlaybackShutdown"));
+    }
 
     private static class PlayThread extends Thread {
         private volatile List<Music> songs;
@@ -3818,6 +3846,10 @@ public class CloudMusic implements SharedConstants {
                         if (streamFailure != null) throw streamFailure;
                         throw new IllegalStateException("没有可用音频源");
                     }
+                    // 与 playSong / armCrossSourceRescue 同一本账：徽标与换源标记两侧都写。
+                    // 队列格本身不动 —— 那是 performAutomixHandover 交接点（持锁）的事，
+                    // 这里是后台池线程，提前 set 会在用户并发改队列时错位。
+                    CrossSourceSwitcher.propagateUnblockLabel(song, replacement.music);
                     song = replacement.music;
                     url = replacement.url;
                     if (!manualSelectionCurrent(selection)) return;

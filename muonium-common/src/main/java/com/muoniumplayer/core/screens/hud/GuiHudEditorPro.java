@@ -658,12 +658,21 @@ public class GuiHudEditorPro extends GuiScreen {
     }
 
     private int panelWidth() {
-        return Math.max(PANEL_MIN_W, Math.min(PANEL_MAX_W, width - PANEL_MARGIN * 2));
+        // 上限是双重的：绝对值（604）管大屏「别无限铺开」，比例封顶（窗口的 52%）管小屏
+        // 「别铺满整屏」。自适应坐标层只保证面板跨 GUI Scale 恒定 —— 布局空间里 604 单位在
+        // 高分屏上恒等于 2×604 物理像素，窗口一矮（手机外接屏 960x434 那类），固定 492 高的
+        // 面板钳完还能占屏高 94%，这就是玩家看到的「页面比例巨大」。比例封顶后小窗口下面板
+        // 跟着窗口收缩，内容列由既有的滚动与压缩逻辑消化。
+        int proportionalCap = (int) (width * 0.52f);
+        return Math.max(PANEL_MIN_W, Math.min(Math.min(PANEL_MAX_W, proportionalCap),
+                width - PANEL_MARGIN * 2));
     }
 
     private int panelHeight() {
         if (collapsed) return COLLAPSED_H;
-        return Math.max(260, Math.min(PANEL_MAX_H, height - PANEL_MARGIN * 2));
+        int proportionalCap = (int) (height * 0.88f);
+        return Math.max(260, Math.min(Math.min(PANEL_MAX_H, proportionalCap),
+                height - PANEL_MARGIN * 2));
     }
 
     /**
@@ -2077,19 +2086,25 @@ public class GuiHudEditorPro extends GuiScreen {
     /**
      * 把说明文字按宽度贪心折成至多两行；第二行放不下时以省略号收尾。
      * 返回数组的第二项可以为 {@code null}（一句话就装得下）。
+     *
+     * <p>切割下标只能取「按宽度逐字扫描」得出的原文位置，不能拿 {@code fr.trim} 的返回长度
+     * 充数 —— trim 装不下时会补省略号，返回串可能比原文还长（省略号是额外字符），拿它当
+     * {@code substring} 的下标就出了 {@code StringIndexOutOfBounds}（手机档窄面板必崩）。</p>
      */
     private static String[] wrapToTwoLines(CFontRenderer fr, String text, double width) {
-        String trimmed = fr.trim(text, width);
-        if (trimmed.equals(text)) return new String[] { text, null };
+        // 先按宽度扫描原文，得出「能完整装进一行的最大字符数」。省略号的位置交给 trim。
+        int fitChars = 0;
+        for (int i = 1; i <= text.length(); i++) {
+            if (fr.getStringWidth(text.substring(0, i)) > width) break;
+            fitChars = i;
+        }
+        if (fitChars >= text.length()) return new String[] { text, null };
         // 第一行贪心装词：按空格找最后一个装得下的断点，找得到就在词间断行。
         int lastSpace = -1;
-        for (int i = 0; i < text.length(); i++) {
-            if (text.charAt(i) == ' ') {
-                if (fr.getStringWidth(text.substring(0, i)) > width) break;
-                lastSpace = i;
-            }
+        for (int i = 0; i <= fitChars; i++) {
+            if (text.charAt(i) == ' ') lastSpace = i;
         }
-        int cut = lastSpace > 0 ? lastSpace : Math.max(1, trimmed.length());
+        int cut = lastSpace > 0 ? lastSpace : Math.max(1, fitChars);
         String first = text.substring(0, cut).trim();
         String rest = text.substring(cut).trim();
         if (rest.isEmpty()) return new String[] { fr.trim(first, width), null };

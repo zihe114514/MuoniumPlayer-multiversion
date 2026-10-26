@@ -48,7 +48,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 封面、歌词、收藏、最近播放全部按新平台的真曲目走。所以自动触发点排在解灰<b>之后</b>。</p>
  *
  * <p>徽标说的是<b>落点</b>，两种前缀分开：跨平台换源换来的曲目 → 「已换源 · 网易云」或
- * 「已换源 · 野花·kw」；本平台自己解出来的第三方流（解灰 / 脚本）→ 「解灰 · 野花·wy」。
+ * 「已换源 · lx/酷我」；本平台自己解出来的第三方流（解灰 / 脚本）→ 「解灰 · lx/网易云」。
  * 徽标内容由 {@link #destinationBadge} 定、由 {@link #propagateUnblockLabel} 在录取点写好，
  * 行对象与替身对象各一份 —— 界面上「换到了哪家」必须一眼读得出，否则换源成功与换源失败
  * 在歌曲行上是同一个样子。</p>
@@ -105,11 +105,13 @@ public final class CrossSourceSwitcher {
             // 上游 lx 的一个自定义源里各渠道互为备份，kg 死了换 kw/mg 正是它的原生玩法。
             MusicPlatform.KUWO,
             MusicPlatform.MIGU,
+            // 质量垫底的聚合 / 免费池：主流平台（含 LX 覆盖的渠道）全部落空才轮到。
             MusicPlatform.GD,
             MusicPlatform.BILIBILI,
-            // 垫底：汽水上游对完整版有风控门，很多账号即使有会员也取不到完整流，
-            // 前面的源都试过再轮到它。LX 自定义源不是一行候选而是一个通道（见 lxCovers），
-            // 它覆盖的网易云 / QQ / 酷狗天然坐在各自平台的位次上，优先级高于 B 站。
+            // 最末：汽水上游对完整版有风控门，很多账号即使有会员也取不到完整流。
+            // LX 自定义源不是一行候选而是一个通道（见 lxCovers），
+            // 它覆盖的网易云 / QQ / 酷狗 / 酷我 / 咪咕天然坐在各自平台的位次上，
+            // 优先级高于 B 站 —— 主流平台全空时才轮到 B 站 / GD 这两家。
             MusicPlatform.QISHUI,
     };
 
@@ -187,14 +189,16 @@ public final class CrossSourceSwitcher {
      * {@code resolveLxPlayUrl} 时只写进了替身。两个都写才两头都看得见：行 widget 那一侧靠回写，
      * 面板重建 / 全屏播放页那一侧读的是替身自己。</p>
      *
-     * <p>文案由 {@link #destinationBadge} 定：脚本流是「脚本名·渠道键」（例：{@code 野花·kw}），
+     * <p>文案由 {@link #destinationBadge} 定：脚本流是「lx / 渠道显示名」（例：{@code lx/酷我}），
      * 官方流是平台显示名（例：{@code 网易云}）。之所以必须自己算而不是「照抄替身那一跳留下的值」：
      * 官方链路根本不会写这个字段，换源换到某平台的官方完整流时它是空串，界面上就与
      * 「没换成」长得一模一样。无条件覆写：行对象自己那一跳留下的旧徽标同样要改掉，
      * 现在播的已经不是它了。</p>
      *
      * <p>同时把两个对象都标成「换源换来的」（{@code Music.markCrossSourceSwitched}），
-     * 前缀由此从「解灰 · 」变成「已换源 · 」—— 换的是曲目本身，与「只换一条取流地址」不是一回事。</p>
+     * 前缀由此从「解灰 · 」变成「已换源 · 」—— 换的是曲目本身，与「只换一条取流地址」不是一回事；
+     * 并互持同一把换源配对钥匙（{@code Music#isCrossSourcePeerOf}），行 widget 的「正在播放」
+     * 高亮与待播角标靠它跟上替身。二级换源沿用旧钥匙，同一格的钥匙一辈子不变。</p>
      */
     public static void propagateUnblockLabel(Music replaced, Music replacement) {
         if (replaced == null || replacement == null) return;
@@ -204,10 +208,23 @@ public final class CrossSourceSwitcher {
         // 前缀要说的是「换了一首歌」而不是「换了一条取流地址」：这一位只有这里会置位。
         replacement.markCrossSourceSwitched();
         replaced.markCrossSourceSwitched();
+        // 落点平台只记给替身：重播路径上脚本/解灰链路开头会清徽标、官方链路成功又不写，
+        // getPlayUrl 的徽标恢复靠这一位自证「本次官方流确实来自录取时的落点」——
+        // 原曲侧没有这份记录，重播它时绝不恢复旧落点（那会让徽标归因错平台）。
+        replacement.setCrossSourceLandedPlatform(replacement.getSource());
+        // 同一格两侧互持一把配对钥匙：行 widget（绑着 replaced）与替身在 stableKey 上
+        // 已经对不上（平台与 id 都换了），高亮 / 待播角标靠这一位才跟得上声音。
+        // 二级换源（试听救援会换到上一轮的替身）不再发新钥匙：replaced 已持钥时沿用
+        // 那一把 —— 面板行 widget 绑的还是最初的原曲对象，换钥等于把最早那侧甩下线。
+        String peerKey = replaced.getCrossSourcePeerKey();
+        if (peerKey.isEmpty()) peerKey = replacement.getCrossSourcePeerKey();
+        if (peerKey.isEmpty()) peerKey = java.util.UUID.randomUUID().toString();
+        replacement.setCrossSourcePeerKey(peerKey);
+        replaced.setCrossSourcePeerKey(peerKey);
     }
 
     /**
-     * 换源落点的徽标文案：脚本流保持「脚本名·渠道键」，官方流写平台显示名。
+     * 换源落点的徽标文案：脚本流是「lx/渠道显示名」，官方流写平台显示名。
      *
      * <p>{@code MusicWidget} 与全屏页把这一位拼在前缀之后（换源换来的那一首前缀是「已换源 · 」），
      * 一行读完就知道声音出自哪里。平台名用 {@link MusicPlatform#getDisplayName()} 而不是枚举名，
@@ -611,13 +628,35 @@ public final class CrossSourceSwitcher {
             Music candidate = results.get(index);
             if (candidate == null) continue;
             if (currentKey != null && currentKey.equals(candidate.getStableKey())) continue;
-            double score = acceptanceScore(title, artist, durationMillis,
-                    candidate.getName(), candidate.getArtistsName(), candidate.getDuration());
-            if (score <= 0.0) continue;
             long diff = durationDeltaMillis(durationMillis, candidate.getDuration());
+            Candidate entry = new Candidate(candidate, platform, 0.0, diff);
+            double score = candidateAcceptance(title, artist, durationMillis, entry);
+            if (score <= 0.0) continue;
             candidates.add(new Candidate(candidate, platform, score, diff));
         }
         return candidates;
+    }
+
+    /**
+     * 一条<b>已成候选</b>的录取判定：先 VIP 淘汰，再走相似度 + 时长闸门。
+     *
+     * <p>搜索侧自带「会员/付费受限」标记的候选，只在<b>本机拿不到该平台完整流</b>时淘汰
+     * （返回 0）：非会员换到这种候选拿到的必然是试听片段，而取流验证只验「取得到流」
+     * 验不出「是完整的」—— 等起播的试听判定再兜底，这首歌唯一一次自动换源机会
+     * （{@code AUTO_ATTEMPTED}）已经烧掉了。三条「拿得到」的路都放行：本家有会员
+     * （{@link #hasVipAccess} 的登录态判据）；脚本覆盖该渠道（{@link #lxCovers}，取流时
+     * 脚本优先，VIP 曲借脚本通道拿完整版）。有会员的账号不淘汰 —— 那正是它能换到的
+     * 最高音质候选，误杀会把会员逼到 GD/B 站的 320k。</p>
+     */
+    static double candidateAcceptance(String title, String artist, long durationMillis,
+                                      Candidate candidate) {
+        if (candidate.music.hasVipRestriction()
+                && !hasVipAccess(candidate.platform) && !lxCovers(candidate.platform)) {
+            return 0.0;
+        }
+        return acceptanceScore(title, artist, durationMillis,
+                candidate.music.getName(), candidate.music.getArtistsName(),
+                candidate.music.getDuration());
     }
 
     /**

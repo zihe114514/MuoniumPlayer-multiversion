@@ -39,6 +39,9 @@ public final class LanMpParty {
 
     private static volatile boolean active;
 
+    /** 见 {@link #heldByDirect} 字段注释。 */
+    private static volatile boolean heldByDirect;
+
     /** 引擎是否正挂在当前的集成服务端上（仅诊断/日志用）。 */
     public static boolean isActive() {
         return active;
@@ -54,15 +57,31 @@ public final class LanMpParty {
      * 直连房间的成员经穿透隧道进来，不依赖集成服务端；这时主机退出 MC 存档
      * （触发 {@link #onServerStopped}）也不该影响正在跑的直连房间，所以这里
      * 选择让 LAN 引擎让位，而不是把直连关掉。</p>
+     *
+     * <p>让位时<b>仍然记下本次挂载参数</b>（{@link #rememberMount}）并置
+     * {@link #heldByDirect}：否则主机在直连托管中切换了存档，新世界的装配参数
+     * 会被丢掉，等直连释放时 {@link #onDirectReleased} 拿着的还是旧世界的死参数，
+     * 新世界的局域网一起听就再也挂不回来了（除非重进存档）。</p>
      */
     public static void onServerStarting(boolean integrated, MpPlatform platform, Path configDir) {
         active = false;
-        if (!integrated) return;
+        if (!integrated) {
+            // 远程服务器的桥接调用：不持有任何挂载参数，把上一个世界的痕迹清掉。
+            heldByDirect = false;
+            lastPlatform = null;
+            lastConfigDir = null;
+            return;
+        }
         if (com.muoniumplayer.party.direct.MpDirect.isHosting()) {
-            LanLog.info("[muonium-lan] 直连房间托管中，一起听引擎已由直连持有，跳过挂载");
+            heldByDirect = true;
+            rememberMount(platform, configDir, integrated);
+            // warn 而不是 info：加入者在这台主机上会一直显示「服务端没有应答握手」，
+            // 主机自己的日志里得能查到原因 —— 引擎不是没装，是被直连托管占着。
+            LanLog.warn("[muonium-lan] 直连房间托管中，一起听引擎已由直连持有，本世界的局域网一起听让位；关闭直连房间后自动恢复");
             return;
         }
         active = true;
+        heldByDirect = false;
         rememberMount(platform, configDir, integrated);
         MpParty.init(platform, configDir.resolve("mpsync-lan.json"));
         LanLog.info("[muonium-lan] 一起听房间引擎已挂到集成服务端（protocol v{}）", MpParty.protocol());
@@ -81,11 +100,31 @@ public final class LanMpParty {
         // 引擎被直连接管后（纯单人放行场景），LAN 桥必须整体闭嘴：再 tick 就是
         // 第二条线程并发驱动引擎（心跳翻倍、Room.tick 双执行、交接点可能连跳两首），
         // LAN 成员的帧也会打进直连引擎然后有去无回。
-        if (active && !directOwnsEngine()) MpParty.tick();
+        if (!active || directOwnsEngine()) return;
+        // 直连释放/接管的交接瞬间，引擎单例可能正在被另一条线程（直连引擎线程）收拾——
+        // 这里跑在 MC 集成服的 tick 线程上，一次并发碰房间的异常不许炸进服务器 tick 事件。
+        // 引擎内部每房 tick 已有自己的捕获（RoomManager.tick 逐房 try/catch），这一层兜
+        // 的是「manager 刚被置空/替换」这种房间之外的窄窗口。
+        try {
+            MpParty.tick();
+        } catch (Throwable t) {
+            LanLog.warn("[muonium-lan] 引擎 tick 异常（已吞掉，下一 tick 重试）", t);
+        }
     }
 
     public static void onServerStopped() {
-        if (!active) return;
+        if (!active) {
+            // 引擎正被直连持有（或从未挂载）：这个世界的挂载参数随世界一起作废。
+            // 不清的话 lastPlatform 指向已死的 server 对象，直连释放时 onDirectReleased
+            // 会拿它把引擎重挂到一个已经不存在的世界上。直连房间本身不受影响 ——
+            // 它的成员经穿透隧道进来，不依赖集成服务端。
+            if (lastPlatform != null) {
+                lastPlatform = null;
+                lastConfigDir = null;
+                heldByDirect = false;
+            }
+            return;
+        }
         active = false;
         // 直连房间托管中时引擎归直连持有，不能在这里 shutdown——
         // 那会把正在跑的直连房间（成员还连着）一起杀掉。
@@ -125,12 +164,20 @@ public final class LanMpParty {
      * 直连房间释放引擎后调用：LAN 桥还激活着（同一个世界没退），但引擎已被
      * 直连 shutdown——此时按原装配参数重挂一次，局域网一起听立刻恢复，
      * 不用重进世界。engineGone 由 MpDirect 的会话回收路径触发。
+     *
+     * <p>两种等待者都能被唤醒：正常挂载后让位的（{@code active} 为真），以及
+     * 「直连托管中换过存档」、从未在新世界挂上过的（{@code heldByDirect} 为真、
+     * {@code active} 为假但参数是新的）。世界已经停了的（{@code lastPlatform}
+     * 被 {@link #onServerStopped} 清掉）自然什么都不做。</p>
      */
     public static void onDirectReleased() {
-        if (!active || lastPlatform == null) return;
+        if (lastPlatform == null) return;
         if (com.muoniumplayer.party.direct.MpDirect.isHosting()) return;
+        if (!active && !heldByDirect) return;
         try {
             MpParty.init(lastPlatform, lastConfigDir);
+            active = true;
+            heldByDirect = false;
             LanLog.info("[muonium-lan] 直连房间已释放，一起听引擎已重挂回集成服务端");
         } catch (Throwable t) {
             LanLog.warn("[muonium-lan] 引擎重挂失败（局域网一起听不可用，重进世界可恢复）", t);
@@ -147,6 +194,10 @@ public final class LanMpParty {
 
         static void info(String format, Object... args) {
             LOG.info(format, args);
+        }
+
+        static void warn(String message) {
+            LOG.warn(message);
         }
 
         static void warn(String message, Throwable t) {

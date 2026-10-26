@@ -77,6 +77,15 @@ public final class RoomManager {
     /** 待处理邀请：{@code 被邀请人 -> (roomId -> 邀请)}。 */
     private final Map<UUID, Map<String, PendingInvite>> invites = new HashMap<>();
 
+    /**
+     * 每人上一次「播放歌单」的时间戳，用于导入冷却 {@link MpConfig#playlistImportCooldownMs}。
+     *
+     * <p>放在 manager 而不是 Room：冷却约束的是<b>这个人</b>的行为节奏，不随房间散场重置 ——
+     * 否则灌完一张单立刻退房重建，冷却就被绕开了。条目跟着玩家下线清掉（见 {@link #onPlayerQuit}），
+     * 不留长期状态。</p>
+     */
+    private final Map<UUID, Long> playlistImportAt = new HashMap<>();
+
     public RoomManager(MpConfig cfg) {
         this.cfg = cfg;
     }
@@ -411,6 +420,8 @@ public final class RoomManager {
         // 档案和管理员标记都跟着连接走：下线的人既不在听歌，也不能替谁解析。
         presence.forget(uuid);
         operators.remove(uuid);
+        // 导入冷却同理：那是一段「在线玩家」的行为节奏，人走了状态就该走。
+        playlistImportAt.remove(uuid);
         // 待处理邀请一并撤掉：条目极小，但长期不回来的玩家会让它一直滞留
         //（过期清理只在玩家自己上线拉 invitesFrame 时按 TTL 走，见 addInvite 侧注释）。
         invites.remove(uuid);
@@ -451,6 +462,7 @@ public final class RoomManager {
         playerRoom.clear();
         invites.clear();
         operators.clear();
+        playlistImportAt.clear();
         presence.clear();
         ServerResolver r = resolver;
         if (r != null) r.shutdown();
@@ -612,6 +624,19 @@ public final class RoomManager {
                     return;
                 }
                 if (!control && !cfg.membersCanEnqueue) { Net.error(uuid, "本房间未开放点歌"); return; }
+                // 导入冷却只约束普通成员：房主/管理员是这台服务器信任的角色，他们连灌是
+                // 运营动作（比如派对开场连放几张单），不是要防的行为。
+                if (!control && cfg.playlistImportCooldownMs > 0L) {
+                    long now = System.currentTimeMillis();
+                    long last = playlistImportAt.getOrDefault(uuid, 0L);
+                    if (now - last < cfg.playlistImportCooldownMs) {
+                        long left = (cfg.playlistImportCooldownMs - (now - last) + 999L) / 1000L;
+                        throw new IllegalStateException("灌歌单太频繁了，请再等 " + left + " 秒");
+                    }
+                    // 在灌之前就登记这一笔：等到 enqueueBatch 成功后再记的话，失败重试
+                    // 反而成了免费刷屏的路径。
+                    playlistImportAt.put(uuid, now);
+                }
                 String label = Proto.str(msg, "playlist", "");
                 Room.BatchResult result = room.enqueueBatch(uuid, Net.nameOf(uuid), label,
                         Proto.arr(msg, "tracks"));

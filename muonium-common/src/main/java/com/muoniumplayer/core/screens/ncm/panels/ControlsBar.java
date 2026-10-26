@@ -688,6 +688,8 @@ public class ControlsBar extends NCMPanel {
         compactVolumeWidget
                 .setClickable(false)
                 .setShouldOverrideMouseCursor(true)
+                .setTooltip(() -> "音量（右键切换播放时压掉游戏音乐 · "
+                        + (com.muoniumplayer.core.ncm.music.VanillaMusicDucker.isEnabled() ? "开" : "关") + "）")
                 .setBeforeRenderCallback(() -> {
                     double controlWidth = Math.max(74.0,
                             Math.min(122.0, compactVolumeWidget.getParentWidth() * .18));
