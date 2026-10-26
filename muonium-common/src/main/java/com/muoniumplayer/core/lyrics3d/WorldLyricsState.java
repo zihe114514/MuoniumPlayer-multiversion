@@ -32,8 +32,8 @@ public final class WorldLyricsState {
 
     // ==================== 布局与动效常量 ====================
 
-    /** 歌词文字颜色（暖白偏粉）。 */
-    public static final int TEXT_RGB = 0xF7E1D7;
+    /** 歌词文字颜色（默认纯白；取色器可自定义）。 */
+    public static final int TEXT_RGB = 0xFFFFFF;
     /** 平滑字体的字号（和 MC 字体大写字高差不多）。 */
     public static final float LYRIC_SIZE = 10f;
     /** 多行换行的行高。 */
@@ -1793,7 +1793,7 @@ public final class WorldLyricsState {
                                 g.dx = (float) pose.dx;
                                 g.dy = (float) pose.dy;
                                 g.tokenRgb = CadenzaMotion.tokenColor(token,
-                                        heroIndexOf(cadenzaTokens), line.hashCode(), 0xF7E1D7);
+                                        heroIndexOf(cadenzaTokens), line.hashCode(), TEXT_RGB);
                                 g.cadenzaGlow = (float) CadenzaMotion.glowPulse(token, elapsedMs);
                                 g.tokenActive = elapsedMs >= token.startMs
                                         && elapsedMs <= token.endMs;

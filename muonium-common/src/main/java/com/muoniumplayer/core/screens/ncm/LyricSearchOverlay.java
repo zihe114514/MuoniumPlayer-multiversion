@@ -2147,7 +2147,10 @@ public final class LyricSearchOverlay extends NcmSheet {
     private long previewClock() {
         Music playing = CloudMusic.currentlyPlaying;
         if (track == null || playing == null) return 0L;
-        if (track != playing && !java.util.Objects.equals(track.getStableKey(), playing.getStableKey()))
+        // 换源后正在出声的是替身（currentlyPlaying），弹窗绑的还是原曲那一行：
+        // stableKey 对不上，再看换源配对键（与 isSelected 同一口径），预览时钟才不停在第一句。
+        if (track != playing && !playing.isCrossSourcePeerOf(track)
+                && !java.util.Objects.equals(track.getStableKey(), playing.getStableKey()))
             return 0L;
         CloudMusic.PlaybackSnapshot snapshot = CloudMusic.getSnapshot();
         if (snapshot.music == null) return 0L;

@@ -426,11 +426,11 @@ final class CadenzaMotion {
     // ==================== 配色（心象 assignColors/brighten/mixRgb 一比一） ====================
 
     /**
-     * 块的墨色：hero = 基准色（3D 侧传用户自定义色或默认暖白），其余块按种子哈希在
+     * 块的墨色：hero = 基准色（3D 侧传用户自定义色或默认纯白），其余块按种子哈希在
      * 「基准色与中性白的 45% 混合」与纯中性白之间三选一 —— 心象的 accentSoft/neutral
      * 层次关系（主色/柔色/白）保留，3D 侧没有主题强调色，hero 用基准色充当。
      *
-     * @param baseRgb 基准墨色（0xRRGGBB；用户自定义过就是自定义色，否则默认暖白）
+     * @param baseRgb 基准墨色（0xRRGGBB；用户自定义过就是自定义色，否则默认纯白）
      */
     static int tokenColor(Token token, int heroIndex, long seed, int baseRgb) {
         if (token.hero) return 0xFF000000 | (baseRgb & 0xFFFFFF);

@@ -248,7 +248,10 @@ public class MusicWidget extends RoundedRectWidget {
                     lblMusicName.centerVertically();
                     lblMusicName.setPosition(cover.getRelativeX() + cover.getWidth() + 4, lblMusicName.getRelativeY() - lblMusicName.getHeight() * .5 - 2);
                     // 为时长/操作按钮和版权徽章预留空间，确保没有徽章会与被截断的标题重叠。
-                    lblMusicName.setMaxWidth(Math.max(1.0, this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4
+                    // 下限 40px 而不是 1px：窄面板 + 长落点徽标（已换源 · lx/哔哩哔哩）堆叠时，
+                    // 1px 下限会让歌名整条消失而徽标还占着位 —— 与其留一格尸体，不如让
+                    // 标题保住最小可读宽度，徽标（SCROLL 限宽 + 现算宽）自己向下挤压。
+                    lblMusicName.setMaxWidth(Math.max(40.0, this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4
                             + rightActionsReserve() + (musicDirty ? (dirtyIndicatorSize + 4) : 0)
                             + accessBadgeReserve + unblockBadgeReserve[0])));
                 });

@@ -56,6 +56,7 @@ public final class WorldLyricsBridge {
     private static boolean tracedReady;
     private static boolean tracedNoLyrics;
     private static boolean tracedRendered;
+    private static boolean tracedShaderActive;
 
     private WorldLyricsBridge() {
     }
@@ -86,6 +87,18 @@ public final class WorldLyricsBridge {
             if (mc.gameRenderer == null) return;
             Camera camera = mc.gameRenderer.getMainCamera();
             if (camera == null) return;
+
+            // 0. 光影包探测（帧头一次，本帧内渲染层读缓存值）：
+            //    光影包激活时 WorldBillboard 改走信标全亮程序（ShaderPackProbe 类注释）
+            ShaderPackProbe.refresh();
+            if (TRACE) {
+                boolean shaderNow = ShaderPackProbe.isActive();
+                if (shaderNow != tracedShaderActive) {
+                    tracedShaderActive = shaderNow;
+                    System.out.println("[WorldLyrics/trace] 光影包状态切换 → "
+                            + (shaderNow ? "光影模式（信标全亮程序）" : "普通模式（textSeeThrough）"));
+                }
+            }
 
             // 1. 镜头转向自己算（相机朝向独立计算）
             Matrix4f basePose = new Matrix4f()

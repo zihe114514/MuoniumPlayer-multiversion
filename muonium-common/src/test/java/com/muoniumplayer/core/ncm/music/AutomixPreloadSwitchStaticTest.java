@@ -178,10 +178,24 @@ class AutomixPreloadSwitchStaticTest {
                 "private boolean playSong(Music song) {", "private boolean adoptCrossSourceReplacement");
 
         assertTrue(!playSong.contains("awaitReady("), "playSong 链的一头可能是游戏主线程");
-        assertTrue(!playSong.contains("isLoading("),
-                "就绪与否只影响预备期要不要提前换源，播放这一刻的判断留给解析链路里那 8 秒");
-        assertEquals(-1, playSong.indexOf("lxsource"),
-                "播放路径不该直接依赖 LX 服务，它吃的是 Music.getPlayUrl() 的返回值");
+        // 只许「查一下在不在起」（isLoading 布尔查询，即时返回），不许出现任何阻塞等待：
+        // 取流这件事 playSong 永远只吃 Music.getPlayUrl() 的返回值。
+        assertTrue(!playSong.contains("awaitReady"), "播放路径不许阻塞等脚本就绪");
+        assertTrue(!playSong.contains(".awaitReady("), "playSong 不摸 runtime 的 latch");
+    }
+
+    @Test
+    @DisplayName("playSong 的换源触发在脚本 LOADING 时让路且不记账")
+    void playSongSwitchDefersWhileTheCustomSourceIsLoading() throws IOException {
+        String playSong = region(cloudMusic(),
+                "private boolean playSong(Music song) {", "private boolean adoptCrossSourceReplacement");
+
+        // 防线读的是 isLoading() 的布尔结果（查询不是等待），与 armNoStreamRescue 同一套约定：
+        // 脚本还没起完时不跑流水线 —— 那一跑就是白烧这首歌 10 分钟内的唯一自动换源机会。
+        assertTrue(playSong.contains("LxSourceService.isLoading()"),
+                "playSong 的换源触发缺 isLoading 防线，脚本 LOADING 期的第一次点击会烧掉机会");
+        assertEquals(2, playSong.split("LxSourceService.isLoading\\(\\)", -1).length - 1,
+                "两级触发（取流失败 / 试听救援）都要有防线");
     }
 
     // ════════════════════════════════ 取数辅助 ════════════════════════════════

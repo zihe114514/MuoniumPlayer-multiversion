@@ -962,6 +962,12 @@ public class Music {
         // 绝不显示从上一次失败解析带过来的质量徽标。
         this.playbackQuality = PlaybackQuality.UNKNOWN;
 
+        // 同理，旧徽标也绝不沿用。第三方链（脚本/解灰）成功会写一枚真实的新徽标；
+        // 官方链路成功则什么都不写 —— 留着上一轮「已换源 · X」就是在把本次自己平台
+        // 的官方流错误归因到 X 上。替身侧若需要保住录取徽标，由 getPlayUrl 外层的
+        // 恢复闸（落点平台自证）负责，不受这一次清空影响。
+        this.unblockedSourceLabel = "";
+
         // 一起听房间正在放的这一首，用房间共用的那条链接，不再各自解析：本机重新解析会让
         // 非会员退到试听片段或第三方源，整房的进度条随即失去意义。
         Tuple<String, String> shared = partyPlayUrl();
@@ -1084,8 +1090,6 @@ public class Music {
         if (!com.muoniumplayer.core.ncm.lxsource.LxSourceService.isEnabled()) return null;
         final com.muoniumplayer.core.ncm.lxsource.LxTrack track = lxTrack();
         if (track == null) return null;
-        // 上一首的徒标不能沿用到这一首；失败时下面的内置链路也依赖这个字段是空的。
-        this.unblockedSourceLabel = "";
         final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
         return resolveWithTimeout(new Callable<Tuple<String, String>>() {
             @Override
@@ -1246,7 +1250,6 @@ public class Music {
      */
     private Tuple<String, String> resolveNeteaseUnblock() {
         if (!isNetease()) return null;
-        this.unblockedSourceLabel = "";
         if (!com.muoniumplayer.core.ncm.music.NeteaseUnblockSettings.isEnabled()) return null;
 
         // 先问一次「音乐是否可用」，把真正的灰色歌和一次网络抖动区分开。判定只影响歌曲行上的

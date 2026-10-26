@@ -1836,8 +1836,12 @@ public class CloudMusic implements SharedConstants {
                 // 官方链路与解灰都已扑空：最后试一次跨平台换源 —— 拿曲名 / 艺人去别的平台
                 // 重新匹配一条真正的曲目，换掉队列里的这一格。失败或不在候选半径内时
                 // 维持原行为（报「没有可用音频源」并停下等用户操作）。
+                // 脚本还在起（转译器下载/init）时先让路：此刻靠脚本解 VIP 的候选必然解不出，
+                // 跑一遍就是把这首歌的换源机会烧在「脚本没起完」上 —— 与 automix 预备
+                // （armNoStreamRescue）的防线同一件事。让路不记账，10 分钟账过期前重播照旧。
                 CrossSourceSwitcher.Match replacement = null;
-                if (CrossSourceSwitcher.canAutoSwitch(song)) {
+                if (!com.muoniumplayer.core.ncm.lxsource.LxSourceService.isLoading()
+                        && CrossSourceSwitcher.canAutoSwitch(song)) {
                     DownloadDynamicIsland.showCrossSourceSearching(song.getName());
                     try {
                         replacement = CrossSourceSwitcher.findReplacementForAuto(song, CloudMusic.quality);
@@ -1864,13 +1868,18 @@ public class CloudMusic implements SharedConstants {
                 // ① 下载 / 字节校验 / 解码抛错（CDN 直链过期、上游交付非音频载荷）；
                 // ② 播得出来但只是试听片段（非会员在本平台开不了 VIP，60/30 秒就到底）。
                 // 网易云与 GD 在 getMusicFile 内部已有各自的平台内兜底，那些也扑空之后才到这里；
-                // AUTO_ATTEMPTED 保证每首每进程最多试一次，不会连环烧整张候选表的额度。
-                boolean switchable = CrossSourceSwitcher.canAutoSwitch(song);
+                // AUTO_ATTEMPTED 10 分钟内只记一次，不会连环烧整张候选表的额度。
+                // 脚本仍在 LOADING 时同样让路不记账（与第一级触发同一防线）。
+                boolean switchable = !com.muoniumplayer.core.ncm.lxsource.LxSourceService.isLoading()
+                        && CrossSourceSwitcher.canAutoSwitch(song);
                 if (!switchable && lastStreamIncomplete) {
                     // 不救场时至少说清为什么停下：试听不是网络故障，归因要说准——
                     // 汽水的「只有试听」多半是本机后端未就绪或没登录，不是账号的错。
-                    DownloadDynamicIsland.showPlaybackFailure(song.getName(),
-                            trialFailureReason(song));
+                    // （已切走/换列表的场景不加提示：isPlaybackCancelled 检查在最外层收尾。）
+                    if (!isPlaybackCancelled() && !playListChanged()) {
+                        DownloadDynamicIsland.showPlaybackFailure(song.getName(),
+                                trialFailureReason(song));
+                    }
                 }
                 CrossSourceSwitcher.Match brokenStream = null;
                 if (switchable) {
@@ -1890,6 +1899,11 @@ public class CloudMusic implements SharedConstants {
                             DownloadDynamicIsland.showPlaybackFailure(song.getName(),
                                     "换到的平台同样只有试听片段");
                         }
+                    } else if (brokenStream == null && !isPlaybackCancelled() && !playListChanged()) {
+                        // 二次救援搜空了却一声不吭 = 用户看着「正在换源」无声死去，
+                        // 比「不可换源」分支（上面有归因文案）更差。与手动路径同款说明。
+                        DownloadDynamicIsland.showCrossSourceFailure(song.getName(),
+                                "候选源没有匹配到可播放版本");
                     }
                 }
             }
@@ -1921,6 +1935,9 @@ public class CloudMusic implements SharedConstants {
             // 队列是面板列表的浅拷贝，行 widget 还绑在 oldSong 上：替身若走的是脚本流，
             // 徽标不回写这一行就永远显示不出来（验证关只写到了替身对象上）。
             CrossSourceSwitcher.propagateUnblockLabel(oldSong, replacement.music);
+            // playNext 插的拷贝体让同一首歌可以同时站在队列与源歌单里：把钥匙与徽标
+            // 同步给 equals 兄弟格，那些行 widget 的高亮/角标在面板重建前不掉。
+            CrossSourceSwitcher.propagatePeerKeyToSiblings(playList, oldSong, replacement.music);
             currentlyPlaying = replacement.music;
             // 这里刻意不动待播账。两件事分开看：oldSong 就是正在开播的这一首，它在 {@link #playSong}
             // 起播那一刻已经销过账了；而这一格的身份是「正在播」，替身更不该继承任何待播位。
@@ -3277,8 +3294,9 @@ public class CloudMusic implements SharedConstants {
             if (!armStillValid(armGeneration, armRevision)) return;
             armTrialSwitches++;
             // 预备期换源同样只动队列格：面板行 widget 绑的还是 song 这个老对象，
-            // 替身是脚本解出来的流时把徽标回写过去。
+            // 替身是脚本解出来的流时把徽标回写过去。兄弟格同步跟上（playNext 拷贝体）。
             CrossSourceSwitcher.propagateUnblockLabel(song, replacement.music);
+            CrossSourceSwitcher.propagatePeerKeyToSiblings(playList, song, replacement.music);
             try {
                 List<Music> queue = playList;
                 if (queue != null && index >= 0 && index < queue.size() && queue.get(index) == song) {

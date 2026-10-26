@@ -17,6 +17,12 @@ base {
 legacyForge {
     version = project.forge_version
 
+    // AT 必须显式挂（MDG 不会自动扫 sourceSet 资源）：1.20.1 的 RenderType$CompositeState
+    // 与 RenderStateShard 各状态常量是 protected（1.21.1 全 public），3D 歌词光影包适配
+    // （WorldBillboard.shaderTextType）要自建 RenderType 引用它们。文件在
+    // src/main/resources/META-INF/accesstransformer.cfg，fabric 侧等价条目是 AW。
+    accessTransformers.from('src/main/resources/META-INF/accesstransformer.cfg')
+
     // 客户端专用 mod：只需要 client run。
     runs {
         client {

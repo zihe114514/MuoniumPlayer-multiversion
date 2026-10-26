@@ -1,11 +1,15 @@
 accessWidener	v2	named
-# 刻意保持无条目。
-#
-# 原先这里放开了 Framebuffer 的 depthAttachment / colorAttachment 两个字段，供当时的
-# StencilClipManager 把 depth-only 附件换成 depth-stencil 用。渲染层改到 Skija 之后
-# 那条路径整体不存在了（Skia 自己管裁剪与模板），全仓已无任何一处引用这两个字段。
-#
-# 不删文件是因为 fabric/build.gradle 的 loom.accessWidenerPath 引用着它，删了配置期就失败。
-# 更重要的是：每加一条条目，Forge 侧就要在 forge/src/main/resources/META-INF/
-# accesstransformer.cfg 里写一条等价的 AT（AT 用的是官方名，与 AW 的写法并不一一对应），
-# 也就是同一件事要维护两份。能不加就别加。
+# 1.20.1 的 RenderType$CompositeState 与 RenderStateShard 的各 Shard 嵌套类/状态
+# 常量在类里声明为 protected（1.21.1 同位置全是 public）。3D 歌词光影包适配
+# （WorldBillboard.shaderTextType）要自建 RenderType（信标全亮程序 + 自定义纹理），
+# 必须能引用这些成员。Forge 侧等价条目在 forge/src/main/resources/META-INF/
+# accesstransformer.cfg（AT 语法，同名同字段）。
+accessible class net/minecraft/client/renderer/RenderType$CompositeState
+accessible class net/minecraft/client/renderer/RenderType$CompositeState$CompositeStateBuilder
+accessible class net/minecraft/client/renderer/RenderStateShard$TextureStateShard
+accessible field net/minecraft/client/renderer/RenderStateShard TRANSLUCENT_TRANSPARENCY Lnet/minecraft/client/renderer/RenderStateShard$TransparencyStateShard;
+accessible field net/minecraft/client/renderer/RenderStateShard RENDERTYPE_BEACON_BEAM_SHADER Lnet/minecraft/client/renderer/RenderStateShard$ShaderStateShard;
+accessible field net/minecraft/client/renderer/RenderStateShard NO_LIGHTMAP Lnet/minecraft/client/renderer/RenderStateShard$LightmapStateShard;
+accessible field net/minecraft/client/renderer/RenderStateShard NO_CULL Lnet/minecraft/client/renderer/RenderStateShard$CullStateShard;
+accessible field net/minecraft/client/renderer/RenderStateShard NO_DEPTH_TEST Lnet/minecraft/client/renderer/RenderStateShard$DepthTestStateShard;
+accessible field net/minecraft/client/renderer/RenderStateShard COLOR_WRITE Lnet/minecraft/client/renderer/RenderStateShard$WriteMaskStateShard;

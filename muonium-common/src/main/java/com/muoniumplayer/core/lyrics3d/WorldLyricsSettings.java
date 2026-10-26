@@ -37,7 +37,7 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     public float glowSpread = 1.3f;
     public int glowColorRgb = 0xFFFFFF;
     public int colorRgb = 0xFFFFFF;
-    /** 文字颜色是否被取色器自定义过（false = 用暖白默认）。 */
+    /** 文字颜色是否被取色器自定义过（false = 用默认纯白）。 */
     public boolean colorCustom;
     public boolean wordPop;
     public boolean textFlash;
