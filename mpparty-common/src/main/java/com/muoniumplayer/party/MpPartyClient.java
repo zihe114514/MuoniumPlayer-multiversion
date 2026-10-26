@@ -229,6 +229,17 @@ public final class MpPartyClient {
         // 直连房间活跃时不探测 MC 通道：帧走 socket，这 worlds join 与它无关，
         // 探测只会把 hello 打到第三方服务器上。
         if (com.muoniumplayer.party.direct.MpDirect.isActive()) return;
+        // 会话级残留要在这里清：普通换服走 DISCONNECT→onDisconnect 已清；但经代理
+        // （Velocity 后端切换）时客户端→代理的连接不变、JOIN 不重触发也就罢了——
+        // 一旦某环境 JOIN 确实再触发（或同一连接重进），上一台服务器的房间快照、
+        // proto 与封禁横幅会整段带进新后端：UI 显示 A 的假房间、B 的大厅被 A 的
+        // banned 禁死。onDisconnect 的完整清理在这里补一次，与它共用同一份逻辑。
+        boolean wasInRoom = room != null;
+        clearServerScopeState();
+        if (wasInRoom) {
+            reset();
+            MpPlayback.stop();
+        }
         helloAcked = false;
         helloProbes = 0;
         serverPresent = available();
@@ -324,6 +335,8 @@ public final class MpPartyClient {
     private static int presenceCounter;
     /** 上一次真正发出在线态查询的时刻：面板打开时的「立即补一轮」判据。 */
     private static volatile long lastPresencePull;
+    /** 上一次探测配额续杯的时刻；0 = 还没续过。 */
+    private static volatile long lastProbeRefill;
 
     private static void tick() {
         try {
@@ -338,6 +351,16 @@ public final class MpPartyClient {
             // 停留 5 分钟，就是三百多次。日志里那行「[MpParty] 发送失败」正是它刷出来的。
             if (!helloAcked && inGame()) {
                 if (available()) serverPresent = true;
+                // 配额烧完后的慢速续杯：通道仍被声明（available）说明对端 mod 在，只是
+                // 引擎此刻答不上（典型：主机侧引擎被直连托管占用，LAN 成员被让位静默）。
+                // 引擎随时可能回来（直连释放自动重挂）——固定 30 发会把配额烧死，引擎
+                // 回来后这些成员永远探测不到，只能退世界重进。每 60 秒还一笔，代价是
+                // 每分钟一发无应答的 hello，换来让位结束后 LAN 一起听自动恢复。
+                if (helloProbes >= HELLO_PROBE_LIMIT) {
+                    if (System.currentTimeMillis() - lastProbeRefill < 60_000L) return;
+                    lastProbeRefill = System.currentTimeMillis();
+                    helloProbes = HELLO_PROBE_LIMIT - 5;
+                }
                 probeHello();
             }
             if (!usable()) return;
@@ -640,10 +663,11 @@ public final class MpPartyClient {
     /**
      * 与官方一起听（网易云/酷狗）互斥：两套引擎都想独占播放器，同时开会互相拉扯
      * （官方 worker 每秒差分本地播放并整表回写房间，MC 房间的 S_PLAY 又改写本地播放）。
-     * 入口挡死并写明原因。
+     * 入口挡死并写明原因。判据用 isEngaged（含 CONNECTING）：官方「正在连接」的几秒里
+     * 动作在飞，放进来就是两套引擎并行落地。
      */
     private static boolean officialRoomConflict() {
-        if (!ListenTogetherService.isActive()) return false;
+        if (!ListenTogetherService.isEngaged()) return false;
         note("官方一起听正在进行：先退出官方房间，再使用服务器房间", true);
         return true;
     }
@@ -656,8 +680,16 @@ public final class MpPartyClient {
      * 自动建房帧（MpDirect.sendCreate）稍后被「已在房间中」拒掉，用户看到的就成了
      * 一个名字、密码、端口都对不上直连邀请串的房间，且关房时被连带清掉。与
      * officialRoomConflict 同位加闸——房间的创建权归直连会话自己的建房流程。</p>
+     *
+     * <p>建连窗口（{@code pendingJoin}，后台最长 16s）同样要挡：此刻路由仍指 MC 通道、
+     * 直连守卫还没立起来，放进来的 C_CREATE 会在真实 MC 服务器上开一间房，等直连落地
+     * resetForDirectSession 又把它静默拽出——房主自己都不知道自己开过房。</p>
      */
     private static boolean directRoomConflict() {
+        if (com.muoniumplayer.party.direct.MpDirect.isPendingJoin()) {
+            note("正在连接直连房间，请等连接完成或超时", true);
+            return true;
+        }
         if (!com.muoniumplayer.party.direct.MpDirect.isActive()) return false;
         note("直连房间正在进行：房间操作请到直连房间页进行", true);
         return true;
@@ -2087,6 +2119,15 @@ public final class MpPartyClient {
         if (MpTrack.platformOf(src) == null) {
             // 本机压根没有这个播放源 —— 这一格对这台机器是死题，说一声让别人接。
             declineUrl(entryId, tier, src, songId, "no-platform");
+            return;
+        }
+        // 「贡献会员解析」关掉 = 不替别人解析。用户按 UI 承诺关掉它（不想被拉去解歌），
+        // 服务端兜底层（ASK_INSTALLED/ASK_EVERYONE，只看登录态不看贡献位）仍会问到 ——
+        // 不在这里挡的话，关了贡献照样每次被兜底拉去烧自己的会员解析。弃权带明因，
+        // 服务端立即推进下一层；本机自己点歌不受影响（那是 upload 的路，不走这里）。
+        // LX 那一路（customSourceUrl）本来就有 contributeLx 硬闸，两条路对称。
+        if (MpProto.SOURCE_NETEASE.equals(src) && !contributeVip() && !contributeLx()) {
+            declineUrl(entryId, tier, src, songId, "vip-contribute-off");
             return;
         }
         final long expected = known == null ? 0L : known.durationMs;

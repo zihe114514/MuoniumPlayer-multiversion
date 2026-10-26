@@ -311,14 +311,17 @@ public final class DirectServer {
                 reject(out, "直连房间只收一起听客户端");
                 return;
             }
+            // 爆破冷却必须排在密码比较<b>之前</b>（fail2ban 语义）：排在之后的话，
+            // 错误密码的尝试无限速、永不消耗额度——「失败 3 次冷却 30 秒」对攻击者
+            // 形同虚设，唯一效果反而是把共享出口 NAT 后面的合法用户锁半分钟。
+            if (!consumeAuthFailCredit(socket)) {
+                reject(out, "失败次数过多，稍后再试");
+                return;
+            }
             String given = MpProto.str(hello, "auth", "");
             if (!constantTimeEquals(given, auth)) {
                 reject(out, "密码不对");
                 noteAuthFail(socket);
-                return;
-            }
-            if (!consumeAuthFailCredit(socket)) {
-                reject(out, "失败次数过多，稍后再试");
                 return;
             }
             uuid = sessionUuid(hello);

@@ -234,13 +234,14 @@ public final class CrossSourceSwitcher {
     }
 
     /**
-     * 把配对钥匙补发给队列里与 {@code replaced} 同身份的其它格。
+     * 让队列里与 {@code replaced} 同身份的其它格也拿到这次救援的<b>替身本体</b>。
      *
-     * <p>{@code playNext} 插的是 {@link Music#queueIdentityCopy() 拷贝体}，同一首歌在
-     * 播放队列与源歌单里可以同时站着；换源只录取其中一格，钥匙只落到那一格两侧 ——
-     * 其它格的行 widget（绑着 equals 相等的兄弟对象）在面板重建前会丢掉「正在播放」
-     * 高亮与待播角标。调用方把活队列递进来，这里按 equals 把钥匙与运行态同步给兄弟格；
-     * 顺着 512 上限的护栏遍历，纯内存，录取点上多花一次 O(n) 无感。</p>
+     * <p>{@code playNext} 插的是 {@link Music#queueIdentityCopy() 拷贝体}，同一首歌可以在
+     * 队列里占多格。换源只录取其中一格的话，其余格轮到时仍是死流原曲：账本（按
+     * stableKey 记）拦住第二次自动救援，用户对着一首「明明刚换过源」的歌连续吃硬停。
+     * 所以录取点把替身引用直接 set 进所有 equals 兄弟格 —— 它们与被救格从此同内容、
+     * 同钥匙、同徽标，多行同亮也不会出现（isSelected 的 stableKey 主判定命中的是
+     * 唯一的替身身份）。纯内存 O(n)，无感。</p>
      */
     public static void propagatePeerKeyToSiblings(List<Music> queue, Music replaced, Music replacement) {
         if (queue == null || replaced == null || replacement == null) return;
@@ -250,9 +251,11 @@ public final class CrossSourceSwitcher {
                 Music sibling = queue.get(index);
                 if (sibling == null || sibling == replaced || sibling == replacement) continue;
                 if (!sibling.equals(replaced)) continue;
-                sibling.setCrossSourcePeerKey(replaced.getCrossSourcePeerKey());
-                sibling.setUnblockedSourceLabel(replaced.getUnblockedSourceLabel());
-                if (replaced.isCrossSourceSwitched()) sibling.markCrossSourceSwitched();
+                // 直接让兄弟格引用替身本体：钥匙、徽标、switched、landed 与替身完全同源，
+                // 永不说谎（只发钥不发内容的旧写法会让兄弟格轮到时挂着「已换源」徽标
+                // 却按原曲死流再烧一遍流水线 —— 它本来就该播替身的内容）。同一首歌以
+                // 同一替身占多格是歌单重复的原生形态，写同一引用不产生新问题。
+                queue.set(index, replacement);
             }
         } catch (Throwable ignored) {
             // 队列正被遍历/修改：兄弟格没补上只损失一帧高亮，playSong 那边还会接管。
@@ -314,6 +317,10 @@ public final class CrossSourceSwitcher {
         if (!allowInRoom && MpPartyClient.inRoom()) return false;
         String key = current.getStableKey();
         if (key == null || key.isEmpty()) return false;
+        // 手动右键正在给同一首跑流水线时自动路径让路：用户显式指定的结果必须赢，
+        // 两条流水线并发录取会让耳朵、底栏、面板行指向两个不同替身（自动结果回来
+        // 还会静默覆盖用户刚选的）。让路不记账 —— 手动那条的结论会落账。
+        if (IN_FLIGHT.contains(key)) return false;
         Long attemptedAt = AUTO_ATTEMPTED.get(key);
         if (attemptedAt != null) {
             if (System.currentTimeMillis() - attemptedAt < NEGATIVE_CACHE_MILLIS) return false;
@@ -321,6 +328,19 @@ public final class CrossSourceSwitcher {
             AUTO_ATTEMPTED.remove(key, attemptedAt);
         }
         return !isNegativelyCached(key, System.currentTimeMillis());
+    }
+
+    /**
+     * 这一首当前是否有<b>手动右键</b>的换源流水线在跑。
+     *
+     * <p>自动录取点用它让路：用户显式指定的换源结果必须赢，两个替身先后录取会让
+     * 耳朵、底栏、面板行指向两个不同平台，灵动岛还会连播两条互相矛盾的战报。
+     * {@code canAutoSwitch} 在起跑前查的同一本账；录取在十几秒后，中间用户随时可能
+     * 右键，所以录取前还要再查一次。</p>
+     */
+    public static boolean manualSwitchInFlight(Music current) {
+        String key = current == null ? null : current.getStableKey();
+        return key != null && !key.isEmpty() && IN_FLIGHT.contains(key);
     }
 
     /**
@@ -385,10 +405,15 @@ public final class CrossSourceSwitcher {
                         try {
                             List<Music> musics = playList.getMusics();
                             if (musics != null && index >= 0 && index < musics.size()) {
-                                musics.set(index, result.music);
-                                // 队列格子换了人：automix 里按旧曲目预备好的那张牌（整条解码链 +
-                                // 交接计划）必须作废，否则下一曲照样交接给换源前的旧流。
-                                CloudMusic.queueRevision++;
+                                // 身份闸（与 armCrossSourceRescue 同款）：流水线跑的十几秒里
+                                // 用户可能删了前面的行 / automix 救援改写了这一格，只查边界
+                                // 会把替身写进别人的格子 —— 正在播的那首从队列里消失。
+                                if (musics.get(index) == current) {
+                                    musics.set(index, result.music);
+                                    // 队列格子换了人：automix 里按旧曲目预备好的那张牌（整条解码链 +
+                                    // 交接计划）必须作废，否则下一曲照样交接给换源前的旧流。
+                                    CloudMusic.queueRevision++;
+                                }
                             }
                         } catch (Throwable ignored) {
                             // 列表正被面板遍历：替换失败也不该弄丢这次的换源结果提示。
@@ -396,6 +421,9 @@ public final class CrossSourceSwitcher {
                         // 行 widget 绑的是老对象（列表 set 也换不掉已建好的 widget）：
                         // 替身是脚本解出来的流时，把徽标回写过去，界面这行才看得到。
                         propagateUnblockLabel(current, result.music);
+                        // 同身份的兄弟格（playNext 拷贝体）跟着换内容，别让它们轮到时
+                        // 照播死流再烧一遍自动救援。
+                        propagatePeerKeyToSiblings(playList.getMusics(), current, result.music);
                         DownloadDynamicIsland.showCrossSourceSwitched(result.music.getName(),
                                 result.platformLabel);
                         try {
@@ -450,8 +478,14 @@ public final class CrossSourceSwitcher {
         // 最坏把整段 deadline 烧在第一个源上。每轮小睡让出 CPU，任一源完成即处理。
         boolean[] settled = new boolean[futures.size()];
         int remainingCount = futures.size();
+        boolean interrupted = false;
         while (remainingCount > 0) {
-            if (Thread.currentThread().isInterrupted()) break;
+            if (Thread.currentThread().isInterrupted()) {
+                // 调用方（旧 PlayThread 被切歌）发来的中断：这是「这首已经不用换了」，
+                // 不是「搜过了没有」。记进负缓存会把中断冒充成失败结论。
+                interrupted = true;
+                break;
+            }
             long remaining = deadline - System.currentTimeMillis();
             if (remaining <= 0L) break;
             boolean progressed = false;
@@ -484,13 +518,15 @@ public final class CrossSourceSwitcher {
             if (!progressed && remainingCount > 0) {
                 try {
                     Thread.sleep(50L);
-                } catch (InterruptedException interrupted) {
+                } catch (InterruptedException sleepInterrupted) {
                     Thread.currentThread().interrupt();
+                    interrupted = true;
                     break;
                 }
             }
         }
 
+        if (interrupted) return null;
         if (pool.isEmpty()) {
             markNegative(current);
             return null;
@@ -810,6 +846,20 @@ public final class CrossSourceSwitcher {
         if (decodedMillis <= 0L) return false;
         if (decodedMillis >= declaredMillis * TRIAL_CHECK_MAX_RATIO) return false;
         return declaredMillis - decodedMillis >= TRIAL_CHECK_MIN_GAP_MILLIS;
+    }
+
+    /**
+     * 「声明时长其实是解码器回填的」曲目（GD 落点）的试听旁路判定。
+     *
+     * <p>{@link #isIncompleteStream} 对这类曲目自指失效：搜索响应不带时长 → 解码后 30 秒
+     * 试听被 {@code applyDecodedDuration} 回填成「声明时长」→ 「声明 ≥90 秒」的闸一票放行，
+     * 残曲被 automix 当完整曲目预备、交接、放完。这里改用绝对时长：一首没有任何上游时长
+     * 参照的歌解出来连两分钟都不到，当完整曲目交给无人值守的下一曲交接太冒险 ——
+     * 换到 GD 的候选宁可被多问一次（playSong 的试听归因），也不放 30 秒残曲静默过场。
+     * 阈值取 120 秒：正常歌曲几乎不可能这么短，而试听片段常见 30/60 秒。</p>
+     */
+    static boolean isDecoderBackedShortStream(long declaredMillis, long decodedMillis) {
+        return declaredMillis <= 0L && decodedMillis > 0L && decodedMillis < 120_000L;
     }
 
     static long durationDeltaMillis(long originalMillis, long candidateMillis) {

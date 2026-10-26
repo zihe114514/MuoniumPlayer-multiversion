@@ -100,6 +100,33 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private WorldBillboard() {
     }
 
+    // ==================== 光影包适配：渲染类型单点分发 ====================
+
+    /**
+     * 光影包激活时的渲染类型：原版信标光柱工厂（beaconBeam）自带全亮管线
+     * （BEACON_BEAM_TRANSLUCENT —— 不采样光照图、无 alpha 裁剪、半透明混合），
+     * 纹理直接换成我们的动态图集。每纹理懒建并缓存。
+     * 布尔参数 true = translucent 变体（false 是 opaque 信标柱）。
+     * 挂起合批模式不存在（26.x 是 submit-collect，无延迟批次），帧间模式翻转天然安全。
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<Identifier, RenderType> SHADER_TYPES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static RenderType shaderTextType(Identifier rl) {
+        return SHADER_TYPES.computeIfAbsent(rl, r ->
+                RenderTypes.beaconBeam(r, true));
+    }
+
+    /**
+     * 歌词世界绘制的渲染类型入口 —— 全部字形/特效 quad 的唯一取发点。
+     * 光影包激活（ShaderPackProbe 本帧值）走信标全亮程序，否则原版 textSeeThrough。
+     * refresh() 在帧头调用，帧中读的是本帧缓存值，同一帧内模式恒定。
+     */
+    private static RenderType currentWorldTextType(Identifier rl) {
+        return ShaderPackProbe.isActive() ? shaderTextType(rl)
+                : RenderTypes.textSeeThrough(rl);
+    }
+
     /** 事件入口（worldRenderEnd 的矩阵在 Bridge 里已设好）。 */
     public void begin(PoseStack poseStack, SubmitNodeCollector collector,
                       double camX, double camY, double camZ) {
@@ -236,7 +263,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         int argb = (((int) (alpha * 255f) & 0xFF) << 24) | (rgb & 0xFFFFFF);
 
-        RenderType renderType = RenderTypes.textSeeThrough(pageRl);
+        RenderType renderType = currentWorldTextType(pageRl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
         poseStack.pushPose();
@@ -306,7 +333,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         final int baseAlpha = (argb >>> 24) & 0xFF;
         final int rgb = argb & 0xFFFFFF;
 
-        RenderType renderType = RenderTypes.textSeeThrough(rl);
+        RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
         poseStack.pushPose();
@@ -434,7 +461,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             return false;
         }
         int argb = Math.min(255, (int) (alpha * 255f)) << 24 | 0xFFFFFF;
-        RenderType renderType = RenderTypes.textSeeThrough(rl);
+        RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
         // 渲染层先逐字 halo、再整块画布、最后字形 —— submit 顺序即绘制顺序，
@@ -546,7 +573,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         if (rl == null) return;
         final float half = Math.max(1f, sizePx * 0.5f);
 
-        RenderType renderType = RenderTypes.textSeeThrough(rl);
+        RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
         poseStack.pushPose();
@@ -628,7 +655,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         final float cos = (float) Math.cos(Math.toRadians(rotDeg));
         final float sin = (float) Math.sin(Math.toRadians(rotDeg));
 
-        RenderType renderType = RenderTypes.textSeeThrough(rl);
+        RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开；
         // 星芒贴图在回调外惰性生成 —— 惰性单例不受延迟采集影响）。
@@ -734,7 +761,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         final float hw = Math.max(0.5f, width * 0.5f);
         final float hh = Math.max(0.5f, height * 0.5f);
 
-        RenderType renderType = RenderTypes.textSeeThrough(rl);
+        RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开；
         // 条纹贴图在回调外惰性生成 —— 惰性单例不受延迟采集影响）。

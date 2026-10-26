@@ -25,10 +25,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>结果刻意不在此处发布。CloudMusic 保留会话校验、
  * 跨线程状态发布和主线程时间线应用。</p>
  *
- * <p><b>优先级。</b>先问 AMLL TTML 数据库：其条目是人工逐字核对的
- * 时间线，胜过任何平台响应，因此一旦它应答就完全不再请求其他源。
- * QQ 音乐的 QRC 次之——仍是音节级，覆盖比任何开放数据库广得多——
- * 并以同样方式短路链中其余部分。两个逐字源之下的一切
+ * <p><b>优先级。</b>网易云官方接口（lyricNew）先取一次——一次请求同时带回 lrc / yrc /
+ * 翻译轨三样东西。它自带的 yrc 是 songId 精确取回的逐字时间轴，存在就直接采用，连
+ * 第三方源都不必问；只有平台没有逐字时，才按内容质量与匹配可靠性逐个尝试第三方逐字源：
+ * QQ 的 QRC 与酷狗的 KRC 覆盖面最大、质量最高，排最前；AMLL 词库是人工投稿（覆盖率有限）
+ * 排其后；汽水只对自家曲目有货，放最后。第三方源的匹配结果必须再过一道
+ * {@link LyricContentCheck} 内容比对——用平台行级歌词当身份指纹，同名不同曲
+ * （现场版、翻唱）在元数据打分擦边通过时在这里被拦下。两个逐字源之下的一切
  * （云盘歌词、内嵌标签、统一提供方
  * 模型、网易云歌词 API、内置 YRC 文件）都是行级兜底，且
  * 当前一步已产出真实逐字时间时，每一步仍会被跳过。</p>
@@ -227,6 +230,26 @@ final class LyricLoadService {
         return ranges;
     }
 
+    /**
+     * 读这首的钉词，换源场景沿配对键兜底。
+     *
+     * <p>正在播的是替身而用户当初从原曲行钉的词时，替身的 stableKey 查不到钉账；
+     * 顺着换源配对键找到同格的原曲侧再读一次。钉词描述的是「这首歌的词选了哪条」，
+     * 原曲与替身是同一格的同一首歌，钉词跟着格走而不是跟着平台键走。</p>
+     */
+    private static LyricManualMemory.Pin firstReadablePin(Music music, String trackKey) {
+        LyricManualMemory.Pin pin = LyricManualMemory.read(trackKey);
+        if (pin != null) return pin;
+        try {
+            Music playing = CloudMusic.currentlyPlaying;
+            if (playing != null && playing != music && playing.isCrossSourcePeerOf(music)) {
+                return LyricManualMemory.read(playing.getStableKey());
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
     private static LyricLoadResult resolve(Music music, long songId, long profileId, File embeddedLyricFile) {
         final String trackKey = music.getStableKey();
         JsonObject rawJson = new JsonObject();
@@ -236,7 +259,9 @@ final class LyricLoadService {
         // ── 0) 用户手动选定的那一条 ────────────────────────────────────────────
         // 人工确认过的结果压过一切自动判断:按钉住的源与候选 id 精确重取,不再走匹配、不再看别的源。
         // 取不回来(候选下架、凭据过期)时才落回下面的正常链路,并留一行日志说明发生了什么。
-        final LyricManualMemory.Pin manualPin = LyricManualMemory.read(trackKey);
+        // 换源兜底：正在播替身而用户当初从原曲行钉的词（本会话内 key 对不上）时，
+        // 沿配对键找到原曲那份钉词 —— 用户视角「我钉过的词」不该因自动换源失灵。
+        final LyricManualMemory.Pin manualPin = firstReadablePin(music, trackKey);
         if (manualPin != null) {
             List<LyricLine> pinnedLyrics = LyricSearchService.fetchLyrics(manualPin);
             if (pinnedLyrics != null && !pinnedLyrics.isEmpty()) {
@@ -276,11 +301,46 @@ final class LyricLoadService {
             }
         }
 
-        // ── 2) 自动：逐字歌词永远优先于普通歌词 ────────────────────────────────
-        // 指定「平台官方」时整段跳过——那正是用户点这一档想要的效果（逐字源匹配错了，
+        // ── 1.8) 平台自己的歌词（网易云 lyricNew），一次请求三用 ─────────────────
+        // 这一个请求同时带回 yrc（平台逐字）、lrc（行级正文）与翻译轨：
+        //   · yrc 是 songId 精确取回的逐字时间轴——绝不匹配错，存在就直接采用，
+        //     连第三方逐字源都不必问；
+        //   · lrc 在平台没有逐字时当 LyricContentCheck 的身份指纹，去把关第三方源的匹配；
+        //   · 都用不上时留到下面的行级兜底，原来的 lyricNew 请求就不必再发。
+        // 钉在「平台官方」时整段跳过——那正是用户点这一档想要的效果（第三方逐字源匹配错了，
         // 就要一份平台自己的行级歌词，逐字再漂亮也是错的）。
+        PlatformLyrics platform = null;
+        boolean platformFetchFailed = false;
+        if (music.isNetease() && songId > 0L && pinned != LyricSourceMemory.PLATFORM) {
+            try {
+                String lyricResponse = CloudMusicApi.lyricNew(songId).toString();
+                // 上游偶尔夹 U+2000..U+200A 这类宽空格，解析器会把它当成正文的一部分。
+                lyricResponse = lyricResponse.replaceAll("[\\u2000-\\u200a]", " ");
+                JsonObject lyricJson = JsonUtils.toJsonObject(lyricResponse);
+                if (lyricJson != null && hasLyricPayload(lyricJson)) {
+                    List<LyricLine> platformLines = LyricParser.parse(lyricJson);
+                    platform = new PlatformLyrics(lyricJson, platformLines);
+                    if (LyricParser.hasRealWordTiming(platformLines)) {
+                        System.out.println("[Music/Platform] Platform carries word-by-word (yrc), "
+                                + "serving it before any third-party source for " + trackKey);
+                        SERVED.put(trackKey, LyricSourceMemory.PLATFORM);
+                        return new LyricLoadResult(lyricJson, platformLines);
+                    }
+                }
+            } catch (Throwable throwable) {
+                // 早取失败只影响这一首的指纹与短路，链路照常往下走；别在行级兜底再补一次请求——
+                // 刚失败过一次的接口马上重试只会多等一个超时。
+                platformFetchFailed = true;
+                System.err.println("[Music/Platform] lyricNew fetch failed for " + trackKey + ": "
+                        + throwable.getMessage());
+            }
+        }
+
+        // ── 2) 自动：逐字歌词永远优先于普通歌词 ────────────────────────────────
+        // 每个第三方源的结果都要过 LyricContentCheck：平台行级歌词（songId 精确取回，
+        // 绝无匹配错）当身份指纹，拦下同名不同曲的擦边匹配。
         if (pinned != LyricSourceMemory.PLATFORM) {
-            WordSource wordByWord = autoWordSource(music);
+            WordSource wordByWord = autoWordSource(music, platform);
             if (LyricParser.hasWordByWordTiming(wordByWord.lines)) {
                 SERVED.put(trackKey, wordByWord.source);
                 return new LyricLoadResult(rawJson, wordByWord.lines);
@@ -359,18 +419,31 @@ final class LyricLoadService {
             }
         }
 
+        // ── 行级兜底：平台行级歌词 ─────────────────────────────────────────────
+        // lyricNew 已经在 1.8 步提前取过（响应里 lrc/yrc/翻译同包），这里直接复用那份
+        // 解析结果，不再发第二个请求——早取失败过一次的接口马上重试只会多等一个超时。
         if (music.isNetease() && !cloudLyricsLoaded && !LyricParser.hasRealWordTiming(parsed)) {
-            try {
-                String lyricResponse = CloudMusicApi.lyricNew(songId).toString();
-                lyricResponse = lyricResponse.replaceAll("[ - ]", " ");
-                rawJson = JsonUtils.toJsonObject(lyricResponse);
-                List<LyricLine> fallback = LyricParser.parse(rawJson);
-                if (LyricParser.hasRealWordTiming(fallback) || parsed.isEmpty()) {
-                    parsed = fallback;
+            if (platform != null && !platform.parsed.isEmpty()) {
+                // 早取已解析过：真逐字已经短路过，走到这里的只有行级结果（或为空）。
+                if (LyricParser.hasRealWordTiming(platform.parsed) || parsed.isEmpty()) {
+                    rawJson = platform.rawJson;
+                    parsed = platform.parsed;
                 }
-            } catch (Throwable throwable) {
-                System.err.println("[NCM] Legacy lyric fallback failed for " + trackKey + ": "
-                        + throwable.getMessage());
+            } else if (platform == null && !platformFetchFailed) {
+                // 没走到早取（理论上只剩 pinned==PLATFORM 或非网易云，前者已被门控挡住），
+                // 保守补一次请求，行为与旧链路一致。
+                try {
+                    String lyricResponse = CloudMusicApi.lyricNew(songId).toString();
+                    lyricResponse = lyricResponse.replaceAll("[\\u2000-\\u200a]", " ");
+                    rawJson = JsonUtils.toJsonObject(lyricResponse);
+                    List<LyricLine> fallback = LyricParser.parse(rawJson);
+                    if (LyricParser.hasRealWordTiming(fallback) || parsed.isEmpty()) {
+                        parsed = fallback;
+                    }
+                } catch (Throwable throwable) {
+                    System.err.println("[NCM] Legacy lyric fallback failed for " + trackKey + ": "
+                            + throwable.getMessage());
+                }
             }
         }
 
@@ -488,39 +561,73 @@ final class LyricLoadService {
     }
 
     /**
-     * 自动链路的四个逐字源，按「人工核对的词库 → 覆盖面 → 平台专有」取第一个真的是逐字的。
+     * 自动链路的四个逐字源，按「覆盖面 → 人工词库 → 平台专有」取第一个真的是逐字的。
      *
-     * <p>AMLL 词库是人工投稿、覆盖率有限，但它胜过任何平台响应；QQ 的 QRC 覆盖面大得多，
-     * 排在其后；酷狗与汽水是平台专有，各自只对自家曲目有货，放最后。</p>
+     * <p>QQ 的 QRC 与酷狗的 KRC 覆盖面最大、质量最高，排最前；AMLL 词库是人工投稿
+     * （覆盖率有限，但条目质量极高）排其后，前两个源都空手时仍有机会；汽水只对自家曲目
+     * 有货，放最后。每个源的结果除了「真的是逐字」之外，还要过
+     * {@link LyricContentCheck}——拿平台行级歌词当身份指纹，把元数据打分擦边放行的
+     * 同名不同曲（现场版、翻唱）拦下来；判否按「这个源这次没有逐字」处理，链路继续。</p>
+     *
+     * <p>{@code platform} 为 {@code null}（非网易云曲目、早取失败、钉了平台官方）时
+     * 没有指纹可比，跳过内容比对——与旧行为一致，不能因为没有参考就把逐字全毙了。</p>
      */
-    private static WordSource autoWordSource(Music music) {
+    private static WordSource autoWordSource(Music music, PlatformLyrics platform) {
         final String trackKey = music.getStableKey();
+        final List<LyricLine> reference = platform == null ? null : platform.parsed;
 
-        List<LyricLine> amllLyrics = AmllTtmlLyricService.resolve(music);
-        if (LyricParser.hasWordByWordTiming(amllLyrics)) {
-            System.out.println("[Music/AMLL] Loaded word-by-word TTML lyrics for " + trackKey);
-            return new WordSource(LyricSourceMemory.AMLL, amllLyrics);
-        }
+        WordSource accepted = acceptWordSource(LyricSourceMemory.QQ, QQQrcLyricService.resolve(music),
+                reference, trackKey);
+        if (accepted != null) return accepted;
 
-        List<LyricLine> qqQrcLyrics = QQQrcLyricService.resolve(music);
-        if (LyricParser.hasWordByWordTiming(qqQrcLyrics)) {
-            System.out.println("[Music/QQ-QRC] Loaded word-by-word QRC lyrics for " + trackKey);
-            return new WordSource(LyricSourceMemory.QQ, qqQrcLyrics);
-        }
+        accepted = acceptWordSource(LyricSourceMemory.KUGOU, KuGouMusicService.getWordByWordLyrics(music),
+                reference, trackKey);
+        if (accepted != null) return accepted;
 
-        List<LyricLine> kugouLyrics = KuGouMusicService.getWordByWordLyrics(music);
-        if (LyricParser.hasWordByWordTiming(kugouLyrics)) {
-            System.out.println("[Music/KuGou] Loaded word-by-word KRC lyrics for " + trackKey);
-            return new WordSource(LyricSourceMemory.KUGOU, kugouLyrics);
-        }
+        accepted = acceptWordSource(LyricSourceMemory.AMLL, AmllTtmlLyricService.resolve(music),
+                reference, trackKey);
+        if (accepted != null) return accepted;
 
-        List<LyricLine> qishuiLyrics = QishuiMusicService.getWordByWordLyrics(music);
-        if (LyricParser.hasWordByWordTiming(qishuiLyrics)) {
-            System.out.println("[Music/Qishui] Loaded word-by-word lyrics for " + trackKey);
-            return new WordSource(LyricSourceMemory.QISHUI, qishuiLyrics);
-        }
+        accepted = acceptWordSource(LyricSourceMemory.QISHUI, QishuiMusicService.getWordByWordLyrics(music),
+                reference, trackKey);
+        if (accepted != null) return accepted;
 
         return new WordSource(LyricSourceMemory.AUTO, Collections.<LyricLine>emptyList());
+    }
+
+    /**
+     * 采纳一个逐字源的结果：真的是逐字、且内容比对（有参考时）确认是同一首歌。
+     * 不满足返回 {@code null}，调用方落到下一个源。
+     */
+    private static WordSource acceptWordSource(int source, List<LyricLine> lines,
+                                               List<LyricLine> reference, String trackKey) {
+        if (!LyricParser.hasWordByWordTiming(lines)) return null;
+
+        if (reference != null) {
+            LyricContentCheck.Result check = LyricContentCheck.check(reference, lines);
+            if (!check.accepted) {
+                System.out.println("[Music/ContentCheck] " + LyricSourceMemory.displayName(source)
+                        + " word-by-word lyrics rejected for " + trackKey + ": " + check.describe());
+                return null;
+            }
+            System.out.println("[Music/ContentCheck] " + LyricSourceMemory.displayName(source)
+                    + " word-by-word lyrics verified for " + trackKey + ": " + check.describe());
+        }
+
+        System.out.println("[Music/" + LyricSourceMemory.displayName(source)
+                + "] Loaded word-by-word lyrics for " + trackKey);
+        return new WordSource(source, lines);
+    }
+
+    /** 平台歌词的早取结果：原始响应 + 解析出的行（可能带 yrc 逐字，也可能只有行级）。 */
+    private static final class PlatformLyrics {
+        final JsonObject rawJson;
+        final List<LyricLine> parsed;
+
+        PlatformLyrics(JsonObject rawJson, List<LyricLine> parsed) {
+            this.rawJson = rawJson;
+            this.parsed = parsed;
+        }
     }
 
     /** 逐字源的解析结果 + 它来自哪一个源。 */

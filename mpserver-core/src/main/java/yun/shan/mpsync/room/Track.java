@@ -50,6 +50,10 @@ public final class Track {
      *
      * @throws IllegalArgumentException 带一句面向用户的中文原因，说明这份负载为什么不能入队。
      */
+    /** 客户端自报时长的可信上限（毫秒）。正常曲目最长不过二十来分钟；超过它的负载
+     *  只可能是点歌人（或换源替身）想用一首「歌」占住整间房。 */
+    public static final long MAX_PLAUSIBLE_DURATION_MS = 30 * 60 * 1000L;
+
     public static Track fromJson(JsonObject o, MpConfig cfg) {
         if (o == null) throw new IllegalArgumentException("缺少歌曲信息");
         // 老客户端不发 source，按网易云处理。
@@ -68,6 +72,11 @@ public final class Track {
         String cover = Proto.str(o, "cover", "");
         t.cover = SourceGuard.isAllowedUrl(cover, cfg.allowedHosts) ? cover : "";
         t.durationMs = Math.max(0L, Proto.num(o, "duration", 0L));
+        if (t.durationMs > MAX_PLAUSIBLE_DURATION_MS) {
+            // 没有时长判不出交接点会让房间卡死（enqueue 已挡 0），时长离谱则反过来——
+            // 房间被一首「歌」合法占住半小时起步，频道里只能靠投票解。两个方向都封死。
+            throw new IllegalArgumentException("曲目时长超出可信范围，已拒绝");
+        }
         String url = Proto.str(o, "url", "");
         long served = Proto.num(o, "urlDuration", 0L);
         // 点歌人自己上传的那条链同样可能是「算出来的」长度（酷狗 / LX 一路），判据必须与

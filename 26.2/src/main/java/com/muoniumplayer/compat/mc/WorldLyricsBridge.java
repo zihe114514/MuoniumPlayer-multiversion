@@ -60,6 +60,7 @@ public final class WorldLyricsBridge {
     private static boolean tracedReady;
     private static boolean tracedNoLyrics;
     private static boolean tracedRendered;
+    private static boolean tracedShaderActive;
 
     /** 一次性诊断日志（Set 去重；仅 muonium.debug.worldLyrics 开启时输出）。
      *  与 1.21.1 标杆同名同参 —— 深层模块的熔断都经它报一次。 */
@@ -103,6 +104,18 @@ public final class WorldLyricsBridge {
             if (mc.gameRenderer == null) return;
             Camera camera = mc.gameRenderer.mainCamera();
             if (camera == null) return;
+
+            // 0. 光影包探测（帧头一次，本帧内渲染层读缓存值）：
+            //    光影包激活时 WorldBillboard 改走信标全亮程序（ShaderPackProbe 类注释）
+            ShaderPackProbe.refresh();
+            if (TRACE) {
+                boolean shaderNow = ShaderPackProbe.isActive();
+                if (shaderNow != tracedShaderActive) {
+                    tracedShaderActive = shaderNow;
+                    System.out.println("[WorldLyrics/trace] 光影包状态切换 → "
+                            + (shaderNow ? "光影模式（信标全亮程序）" : "普通模式（textSeeThrough）"));
+                }
+            }
             WorldBillboard.WorldLyricsBridgeAccess.current = collector;
 
             // 根矩阵必须是单位矩阵 —— 相机旋转已经在模型视图栈上（LevelRenderer.render

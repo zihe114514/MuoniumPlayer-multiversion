@@ -122,17 +122,23 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     }
 
     public void end() {
-        // 帧尾把挂起的字形与特效批次收掉（列顺序无关紧要：深度测试已关、文字后画）
-        if (buffers != null && pendingGlyphPage != null) {
-            buffers.endBatch(currentGlyphType(
-                    ((LyricGlyphAtlasBridge.PageHandle) pendingGlyphPage).resourceLocation()));
+        // 帧尾把挂起的字形与特效批次收掉（列顺序无关紧要：深度测试已关、文字后画）。
+        // 挂起记录先复位再收批（finally 保证）：若 endBatch 抛异常，记录也不能残留到
+        // 下一帧 —— 否则下一帧 begin 丢弃记录后，这批孤儿顶点会被原版在任意时点
+        // 以错误状态冲刷（幽灵字形）。
+        try {
+            if (buffers != null && pendingGlyphPage != null) {
+                buffers.endBatch(currentGlyphType(
+                        ((LyricGlyphAtlasBridge.PageHandle) pendingGlyphPage).resourceLocation()));
+            }
+            if (buffers != null && pendingEffectRl != null) {
+                buffers.endBatch(currentEffectType(pendingEffectRl));
+            }
+        } finally {
+            pendingGlyphPage = null;
+            pendingGlyphCount = 0;
+            pendingEffectRl = null;
         }
-        if (buffers != null && pendingEffectRl != null) {
-            buffers.endBatch(currentEffectType(pendingEffectRl));
-        }
-        pendingGlyphPage = null;
-        pendingGlyphCount = 0;
-        pendingEffectRl = null;
         this.poseStack = null;
         this.buffers = null;
     }

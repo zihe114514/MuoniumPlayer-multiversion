@@ -110,17 +110,23 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     }
 
     public void end() {
-        // 帧尾把挂起的字形与特效批次收掉（列顺序无关紧要：深度测试已关、文字后画）
-        if (buffers != null && pendingGlyphPage != null) {
-            buffers.endBatch(currentGlyphType(
-                    ((LyricGlyphAtlasBridge.PageHandle) pendingGlyphPage).resourceLocation()));
+        // 帧尾把挂起的字形与特效批次收掉（列顺序无关紧要：深度测试已关、文字后画）。
+        // 挂起记录先复位再收批（finally 保证）：若 endBatch 抛异常，记录也不能残留到
+        // 下一帧 —— 否则下一帧 begin 丢弃记录后，这批孤儿顶点会被原版在任意时点
+        // 以错误状态冲刷（幽灵字形）。
+        try {
+            if (buffers != null && pendingGlyphPage != null) {
+                buffers.endBatch(currentGlyphType(
+                        ((LyricGlyphAtlasBridge.PageHandle) pendingGlyphPage).resourceLocation()));
+            }
+            if (buffers != null && pendingEffectRl != null) {
+                buffers.endBatch(currentEffectType(pendingEffectRl));
+            }
+        } finally {
+            pendingGlyphPage = null;
+            pendingGlyphCount = 0;
+            pendingEffectRl = null;
         }
-        if (buffers != null && pendingEffectRl != null) {
-            buffers.endBatch(currentEffectType(pendingEffectRl));
-        }
-        pendingGlyphPage = null;
-        pendingGlyphCount = 0;
-        pendingEffectRl = null;
         this.poseStack = null;
         this.buffers = null;
     }
@@ -298,6 +304,10 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 // 传 (0, 240) 会把方块光压成 0 —— 夜里光查出来几乎全黑，字形被乘成黑方块。
                 .setUv2(LightTexture.FULL_BRIGHT & 0xFFFF,
                         (LightTexture.FULL_BRIGHT >> 16) & 0xFFFF)
+                // 光影模式走信标管线（BLOCK 格式带 Normal）：公告牌面向相机，
+                // 法线恒为局部 +Z。beacon 与 Iris BEACON(FULLBRIGHT) 着色器都不读它，
+                // 但 BufferBuilder 逐顶点校验格式完整性 —— 缺 Normal 直接抛异常。
+                .setNormal(0f, 0f, 1f)
                 .setUv1(0, 0);
     }
 
@@ -363,6 +373,10 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 .setUv(0.5f, 0.03f)
                 .setUv2(LightTexture.FULL_BRIGHT & 0xFFFF,
                         (LightTexture.FULL_BRIGHT >> 16) & 0xFFFF)
+                // 光影模式走信标管线（BLOCK 格式带 Normal）：公告牌面向相机，
+                // 法线恒为局部 +Z。beacon 与 Iris BEACON(FULLBRIGHT) 着色器都不读它，
+                // 但 BufferBuilder 逐顶点校验格式完整性 —— 缺 Normal 直接抛异常。
+                .setNormal(0f, 0f, 1f)
                 .setUv1(0, 0);
     }
 
@@ -466,6 +480,10 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 .setUv(u, v)
                 .setUv2(LightTexture.FULL_BRIGHT & 0xFFFF,
                         (LightTexture.FULL_BRIGHT >> 16) & 0xFFFF)
+                // 光影模式走信标管线（BLOCK 格式带 Normal）：公告牌面向相机，
+                // 法线恒为局部 +Z。beacon 与 Iris BEACON(FULLBRIGHT) 着色器都不读它，
+                // 但 BufferBuilder 逐顶点校验格式完整性 —— 缺 Normal 直接抛异常。
+                .setNormal(0f, 0f, 1f)
                 .setUv1(0, 0);
     }
 
@@ -731,6 +749,10 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 .setUv(u, v)
                 .setUv2(LightTexture.FULL_BRIGHT & 0xFFFF,
                         (LightTexture.FULL_BRIGHT >> 16) & 0xFFFF)
+                // 光影模式走信标管线（BLOCK 格式带 Normal）：公告牌面向相机，
+                // 法线恒为局部 +Z。beacon 与 Iris BEACON(FULLBRIGHT) 着色器都不读它，
+                // 但 BufferBuilder 逐顶点校验格式完整性 —— 缺 Normal 直接抛异常。
+                .setNormal(0f, 0f, 1f)
                 .setUv1(0, 0);
     }
 

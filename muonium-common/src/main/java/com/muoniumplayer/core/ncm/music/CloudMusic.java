@@ -1840,8 +1840,8 @@ public class CloudMusic implements SharedConstants {
                 // 跑一遍就是把这首歌的换源机会烧在「脚本没起完」上 —— 与 automix 预备
                 // （armNoStreamRescue）的防线同一件事。让路不记账，10 分钟账过期前重播照旧。
                 CrossSourceSwitcher.Match replacement = null;
-                if (!com.muoniumplayer.core.ncm.lxsource.LxSourceService.isLoading()
-                        && CrossSourceSwitcher.canAutoSwitch(song)) {
+                boolean lxStillLoading = com.muoniumplayer.core.ncm.lxsource.LxSourceService.isLoading();
+                if (!lxStillLoading && CrossSourceSwitcher.canAutoSwitch(song)) {
                     DownloadDynamicIsland.showCrossSourceSearching(song.getName());
                     try {
                         replacement = CrossSourceSwitcher.findReplacementForAuto(song, CloudMusic.quality);
@@ -1851,11 +1851,30 @@ public class CloudMusic implements SharedConstants {
                     }
                 }
                 if (replacement == null || isPlaybackCancelled() || playListChanged()) {
-                    handleUnplayableSong(song);
+                    // 用户在流水线跑的十几秒里切了歌：这张失败通报不属于眼前这首，
+                    // 在新歌起播的一瞬弹出只会像「新歌坏了」。静默收场。
+                    if (!isPlaybackCancelled() && !playListChanged()) {
+                        if (lxStillLoading) {
+                            // 让路是「暂时不能换」不是「没版权」：照搬 handleUnplayableSong
+                            // 的「没有可用音频源」会让用户以为歌坏了，几分钟后重播同一首
+                            // 却又能放 —— 归因要说清是自定义源还没准备好。
+                            DownloadDynamicIsland.showPlaybackFailure(song.getName(),
+                                    "自定义源正在准备，稍后重播即可");
+                        } else {
+                            handleUnplayableSong(song);
+                        }
+                    }
+                    return false;
+                }
+                // 流水线跑的十几秒里用户右键了同一首：手动结果马上回来，自动这份让路，
+                // 否则两个替身先后录取，耳朵与面板行指向两个平台（用户的选择必须赢）。
+                if (CrossSourceSwitcher.manualSwitchInFlight(song)) {
                     return false;
                 }
                 if (!adoptCrossSourceReplacement(song, replacement)) {
-                    handleUnplayableSong(song);
+                    if (!isPlaybackCancelled() && !playListChanged()) {
+                        handleUnplayableSong(song);
+                    }
                     return false;
                 }
                 song = replacement.music;
@@ -2007,7 +2026,11 @@ public class CloudMusic implements SharedConstants {
             // 60/30 秒就到底 —— 前两级换源触发（取流失败 / 流是坏的）都看不见这种「完整地
             // 播半首」。拿解码器报出的真实长度对上曲目声明时长，判据在 CrossSourceSwitcher，
             // 与换源共享同一本 AUTO_ATTEMPTED 账，短歌与时长未知的曲目不会被误伤。
-            if (CrossSourceSwitcher.isIncompleteStream(song.getDuration(), decodedMillis)) {
+            // GD 落点例外：声明时长就是解码器回填的，主判据自指失效，走解码旁路。
+            boolean trialClip = CrossSourceSwitcher.isIncompleteStream(song.getDuration(), decodedMillis)
+                    || (song.durationCameFromDecoder()
+                    && CrossSourceSwitcher.isDecoderBackedShortStream(song.getDuration(), decodedMillis));
+            if (trialClip) {
                 // 汽水在自动换源关闭时的特殊约定：试听也是用户此刻真实能拿到的东西——
                 // 后端未就绪/未登录只是暂时的，30 秒片段照常播完比掐断更尊重「我就想听听」。
                 // 文件照留（权益世代在缓存键里，世代一翻它自然失配），界面常驻「仅试听」标识
@@ -3074,8 +3097,11 @@ public class CloudMusic implements SharedConstants {
                 // 它在上面这里被解析、下载、解码，然后在交接点直接出声，三级换源触发谁也看不见
                 // 它。非会员在下一平台的试听流同样「合法」：能下、能解、无声异议。所以预备平台
                 // 的解码器报出真实长度之后做同一判定；是试听就丢掉这张牌，先去跨平台换源把队列
-                // 里这一格换成完整曲目，下一轮预备对着替身重来。
-                if (CrossSourceSwitcher.isIncompleteStream(song.getDuration(), decodedMillis)) {
+                // 里这一格换成完整曲目，下一轮预备对着替身重来。GD 落点走解码旁路（同 playSong）。
+                boolean armTrialClip = CrossSourceSwitcher.isIncompleteStream(song.getDuration(), decodedMillis)
+                        || (song.durationCameFromDecoder()
+                        && CrossSourceSwitcher.isDecoderBackedShortStream(song.getDuration(), decodedMillis));
+                if (armTrialClip) {
                     // 与 playSong 同一约定：自动换源关闭且是汽水时，试听照常预备——
                     // 到点出声的是 30 秒片段，界面会亮「仅试听」标识，比预备期直接弃牌
                     // （表现为下一曲没声）诚实。换源开着才丢牌走救援；文件同样照留，
@@ -3820,7 +3846,9 @@ public class CloudMusic implements SharedConstants {
                             long duration = (long) deck.getTotalTimeMillis();
                             song.applyDecodedDuration(duration);
                             if (!manualSelectionCurrent(selection)) return;
-                            if (CrossSourceSwitcher.isIncompleteStream(song.getDuration(), duration)) {
+                            if (CrossSourceSwitcher.isIncompleteStream(song.getDuration(), duration)
+                                    || (song.durationCameFromDecoder()
+                                    && CrossSourceSwitcher.isDecoderBackedShortStream(song.getDuration(), duration))) {
                                 // 手动切歌预备与 armTrack 同一约定：换源关且汽水时试听照常预备。
                                 if (!CrossSourceSwitcher.canAutoSwitch(song) && song.isQishui()) {
                                     song.setQishuiTrialResolve(true);
@@ -3858,8 +3886,15 @@ public class CloudMusic implements SharedConstants {
                     }
                     if (!manualSelectionCurrent(selection)) return;
                     // 保留普通起播的跨平台救援，但绝不为失败而关掉旧歌，也不循环尝试整张队列。
-                    CrossSourceSwitcher.Match replacement = attempt == 0 && CrossSourceSwitcher.canAutoSwitch(song)
-                            ? CrossSourceSwitcher.findReplacementForAuto(song, CloudMusic.quality) : null;
+                    // 账本拦住（典型：arm 预备救援正对同一首跑流水线，或 10 分钟内刚搜过）时
+                    // 先看队列格：arm 的救援若已录取，兄弟格写入让这一格已经是替身本体 ——
+                    // 拿替身重取一次流就能接上，用户「点下一首」不该吃「没有可用音频源」。
+                    CrossSourceSwitcher.Match replacement = null;
+                    if (attempt == 0 && CrossSourceSwitcher.canAutoSwitch(song)) {
+                        replacement = CrossSourceSwitcher.findReplacementForAuto(song, CloudMusic.quality);
+                    } else if (attempt == 0) {
+                        replacement = retryWithQueuedStandIn(selection, song);
+                    }
                     if (replacement == null) {
                         if (streamFailure != null) throw streamFailure;
                         throw new IllegalStateException("没有可用音频源");
@@ -3884,6 +3919,39 @@ public class CloudMusic implements SharedConstants {
         /** 固定短频谱交接：从歌曲开头起播，轻量 EQ，不等待分析、变速或移调。 */
         private static AutomixPlan manualSelectionPlan() {
             return AutomixPlan.manualQuickMix(MANUAL_SKIP_FADE_MILLIS);
+        }
+
+        /**
+         * 自动救援账拦路时，看队列这一格是否已被 arm 的救援换成替身本体。
+         *
+         * <p>场景：automix 预备发现下一首取不到流、正在跑 16-24 秒换源流水线，用户等不及
+         * 点了这一首。手动预备的 canAutoSwitch 撞上 arm 刚记的账（同一 stableKey）→ 旧代码
+         * 直接「没有可用音频源」收场，而 arm 随后找到的替身在 armStillValid 处被整体丢弃
+         * —— 替身找到了、额度烧了、点击失败了。兄弟格写入（propagatePeerKeyToSiblings）
+         * 让 arm 录取后队列这一格就是替身本体：这里把替身捞出来重新解析一次（arm 路上
+         * 解析的 URL 已随弃牌作废），点击接上替身继续。</p>
+         *
+         * <p>只认「队列这一格就是 selection 那首的 equals 且对象已换成替身（换了身份）」；
+         * 找不到、或者这一格还是原曲本体（arm 还没录取），返回 null 走原来的失败路径。</p>
+         */
+        private CrossSourceSwitcher.Match retryWithQueuedStandIn(ManualSelection selection, Music song) {
+            try {
+                List<Music> queue = selection.songs;
+                int index = selection.index;
+                if (queue == null || index < 0 || index >= queue.size()) return null;
+                Music cell = queue.get(index);
+                if (cell == null || cell == song || !cell.equals(song)) return null;
+                if (cell == CloudMusic.currentlyPlaying) return null;
+                Tuple<String, String> url = cell.getPlayUrl();
+                if (url == null) return null;
+                System.out.println("[Music/Switch] 手动点播撞上预备期救援：直接采用队列里的替身 "
+                        + cell.getSource() + " «" + cell.getName() + "»");
+                return new CrossSourceSwitcher.Match(cell, url, 1.0,
+                        cell.getSource() == null ? "其他平台" : cell.getSource().getDisplayName());
+            } catch (Throwable failure) {
+                System.err.println("[Music/Switch] 采用队列替身失败: " + failure);
+                return null;
+            }
         }
 
         private boolean tryManualSelectionHandover(AudioPlayer outgoing) {

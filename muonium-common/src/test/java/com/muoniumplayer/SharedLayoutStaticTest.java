@@ -61,6 +61,8 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/compat/mc/WorldBillboard.java",
             "com/muoniumplayer/compat/mc/WorldLyricsBridge.java",
             "com/muoniumplayer/compat/mc/LyricGlyphAtlasBridge.java",
+            // --- 光影包适配：各树 RenderState/Shader API 差异大，探测器各树一份 ---
+            "com/muoniumplayer/compat/mc/ShaderPackProbe.java",
             "com/muoniumplayer/MuoniumPlayerClient.java",
             "com/muoniumplayer/render/skija/SkijaHost.java",
             "com/muoniumplayer/api/impl/GLStateManagerImpl.java",

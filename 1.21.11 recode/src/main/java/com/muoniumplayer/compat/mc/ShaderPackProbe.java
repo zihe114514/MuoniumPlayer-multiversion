@@ -81,7 +81,6 @@ public final class ShaderPackProbe {
     }
 
     private static volatile MethodHandle getInstanceHandle;
-    private static boolean instanceResolved;
 
     private static MethodHandle resolve() {
         if (resolved) {

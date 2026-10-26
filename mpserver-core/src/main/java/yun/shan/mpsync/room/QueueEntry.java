@@ -74,8 +74,23 @@ public final class QueueEntry {
 
     /** 没有任何一层在等 —— 初始态，以及采纳/放弃之后回到这里。 */
     public static final int ASK_IDLE = -1;
-    /** 还没采纳过任何答案。采纳之后这里记的是<b>采纳来自第几层</b>。 */
+    /**
+     * 还没采纳过任何「分层求助」的答案。
+     *
+     * <p>点歌人 enqueue 自带直链的格子<b>不再停留在这个哨兵上</b>（Room 会记成
+     * {@code ADOPTED_REQUESTER}）：ADOPTED_NONE 与任何层号比较都为真，留着它的格子
+     * 会被任何成员的迟到/伪造 url_supply（层号被服务端推导为 ASK_EVERYONE=6，
+     * servedDuration 缺省放行）静默顶掉正在用的链接。</p>
+     */
     public static final int ADOPTED_NONE = Integer.MAX_VALUE;
+    /**
+     * 「链接来自点歌人自己上传」的记账层号。
+     *
+     * <p>比服务端自解（0）还要可信 —— 这条链就是全房共用的源头。此后任何 url_supply
+     * （层号最小也是 0）都过不了 {@link #canAdoptTier}，直到这条链真的过期、
+     * {@link Room} 为它重新开分层求助并把本字段复位为 {@link #ADOPTED_NONE}。</p>
+     */
+    public static final int ADOPTED_REQUESTER = -2;
 
     /** 当前那一层的层号（0 = 服主 Token 的服务端自解那一层），{@link #ASK_IDLE} = 没在等。 */
     public volatile int askTier = ASK_IDLE;

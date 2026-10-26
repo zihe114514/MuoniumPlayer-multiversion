@@ -731,6 +731,18 @@ public class Music {
         }
     }
 
+    /**
+     * 这首的声明时长是否来自解码器（搜索时上游没给时长）。
+     *
+     * <p>GD 落点的试听判定依赖它：搜索响应不带时长 → 解码后 {@link #applyDecodedDuration}
+     * 把 30 秒试听回填成「声明时长」→ {@code isIncompleteStream} 的「声明 ≥90 秒」第一道闸
+     * 把残曲当完整曲目放行。播放链路拿这一位旁路判定（解码出的绝对时长过短且无上游参照
+     * = 不可信完整）。</p>
+     */
+    public boolean durationCameFromDecoder() {
+        return duration <= 0L && decodedDurationMillis > 0L;
+    }
+
     public Track toCadenceTrack() {
         if (cadenceTrack != null) return cadenceTrack;
         // 必须走 getSource() 而不是直接读字段：Music 声明了显式构造器，Lombok 的 @Data 因此
@@ -1266,6 +1278,10 @@ public class Music {
                 Tuple<String, String> normalized = normalizePlayUrl(new Tuple<>(unblocked.url, unblocked.format));
                 if (normalized == null) return null;
                 unblockedSourceLabel = unblocked.sourceLabel;
+                // 解灰换的是「这一条取流地址」不是「这一首歌」：录取点留下的换源标记若还在
+                // （本曲曾当过兄弟格/替身），这次成功后前缀会念成「已换源 · …」——本次并没有
+                // 换曲目，复位让它回到「解灰 · …」的本义。
+                crossSourceSwitched = false;
                 playbackQuality = detectCadencePlaybackQuality(normalized.getB(), requestedQuality);
                 considerHighestQuality(normalized.getB(), 0L);
                 return normalized;
