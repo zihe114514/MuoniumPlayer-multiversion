@@ -15,9 +15,9 @@ import net.minecraftforge.fml.loading.FMLPaths;
  * 内嵌引擎在 Forge 1.20.1 上的桥接（mojmap + FML 事件）。
  *
  * <p>C2S 接收：客户端栈在 {@code MpNetForge} 里建过 {@code c2sChannel}
- * （{@code EventNetworkChannel}），目前只挂了 S2C 的客户端事件。这里由
- * {@link #wire()} 把服务端方向的 {@code ServerCustomPayloadEvent} 监听加到
- * 同一条通道上 —— EventNetworkChannel 本来就按方向分事件类型，加监听不冲突。
+ * （{@code EventNetworkChannel}），由这里的 {@link #register()} 把服务端方向
+ * 的监听加到同一条通道上（收 C2S 包走 {@code ClientCustomPayloadEvent}，
+ * 按「包的来向」命名，见 MpNetForge 类注释的方向表）。
  * 引擎未激活时监听里第一行就返回。
  */
 public final class LanNetForge {
