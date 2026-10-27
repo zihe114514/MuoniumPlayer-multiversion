@@ -92,6 +92,10 @@ error-report-*/
 # ---- 排查用临时转储（GL 命令 / javap 字节码 / 版本 diff 草稿），用完即弃 ----
 /tmp-*.txt
 /diff*.txt
+# 点开头的临时工作目录（如 .tmp-mpsync-coretest 的 javac 编译检查产物）。
+# 上面那条 /tmp-*.txt 匹配不到点开头的目录，这类目录一直漏网。
+/.tmp*/
+.tmp*/
 
 # ZCode 工具的本地索引配置
 /.zcodeignore
