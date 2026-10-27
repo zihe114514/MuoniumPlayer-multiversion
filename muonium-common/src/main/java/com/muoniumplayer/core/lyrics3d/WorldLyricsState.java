@@ -1065,7 +1065,12 @@ public final class WorldLyricsState {
         }
         double sPx = PX_TO_WORLD * params.scale() * (d / DISTANCE_NORM);
         double halfW = Math.toDegrees(Math.atan2(maxW * sPx / 2.0, d));
-        double spreadLimit = Math.max(4.0, hHalf - halfW - 2.0);
+        // 散开角再乘一道「等视觉散布」钳制：spreadDeg 是为默认 10.5 格标定的观感
+        //（横向 ±5.25 格），距离拉远后同样的角度会散出 ±24 格 —— 在宽屏上就是
+        // 「字生成在玩家左右侧」。横向偏移钳到 10.5 格基线的量级。
+        double lateralCap = Math.toDegrees(Math.asin(Math.min(1.0,
+                10.5 * Math.sin(Math.toRadians(params.spreadDeg())) / d)));
+        double spreadLimit = Math.max(2.0, Math.min(hHalf - halfW - 2.0, lateralCap));
         double yaw = camera.yawDeg()
                 + (random.nextDouble() * 2.0 - 1.0) * Math.min(params.spreadDeg(), spreadLimit);
         // pitch = player.pitch − 3 − rnd×10（不下沉时随视线，整体略低），
