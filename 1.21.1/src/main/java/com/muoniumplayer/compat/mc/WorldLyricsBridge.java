@@ -130,11 +130,18 @@ public final class WorldLyricsBridge {
             //    之后，isRenderingWorld 已复位 → Iris 不再拦截原版着色器）用原版
             //    textSeeThrough 直画在最终画面上 —— 观感与无光影时一致。
             if (ShaderPackProbe.isActive() && HudConfig.worldLyricsHudDraw) {
-                hudProjection.set(RenderSystem.getProjectionMatrix());
-                hudProjectionValid = true;
+                // 手机翻译层首帧投影可能是 Infinity/NaN（实测 m00=m11=Infinity）
+                // —— 不可用的矩阵不捕获，本帧走世界路线兜底
+                org.joml.Matrix4f captured = RenderSystem.getProjectionMatrix();
+                if (captured != null && isFinite(captured)) {
+                    hudProjection.set(captured);
+                    hudProjectionValid = true;
+                } else {
+                    hudProjectionValid = false;
+                }
                 hudBasePose.rotationX((float) Math.toRadians(camera.getXRot()))
                         .rotateY((float) Math.toRadians(camera.getYRot() + 180.0));
-                hudCameraValid = true;
+                hudCameraValid = hudProjectionValid;
                 // 连续多帧 HUD 直画都没完成（异常/回调缺失）→ 世界阶段兜底重画：
                 // 光影加工总比整句消失强。hudDrawMisses 在 hudPhaseDraw 成功画完时清零。
                 if (hudDrawMisses < 12) {
@@ -149,6 +156,15 @@ public final class WorldLyricsBridge {
                 }
             }
             hudCameraValid = false;
+
+            // 诊断（手机取证用）：hudDraw 开着时每秒一行世界路线的相机/投影/锚点，
+            // 与 [hud] 行同格式同频率 —— 开关一次即可从同一份日志对比两条路线。
+            if (diagFrame % 60 == 0) {
+                org.joml.Matrix4f P = RenderSystem.getProjectionMatrix();
+                System.out.println("[WorldLyrics/diag][world" + (ShaderPackProbe.isActive() ? "+" : "-")
+                        + (HudConfig.worldLyricsHudDraw ? "hud" : "") + "] " + diagLine(camera, P));
+            }
+            diagFrame++;
 
             // 1. 镜头转向自己算（相机朝向独立计算）
             Matrix4f basePose = new Matrix4f()
@@ -242,6 +258,11 @@ public final class WorldLyricsBridge {
             try {
                 WorldBillboard.forceVanillaType = true;
                 renderInner(hudBasePose, mc, mc.gameRenderer.getMainCamera());
+                if (hudDiagFrame++ % 60 == 0) {
+                    Camera c = mc.gameRenderer.getMainCamera();
+                    org.joml.Matrix4f P = RenderSystem.getProjectionMatrix();
+                    System.out.println("[WorldLyrics/diag][hud] " + diagLine(c, P));
+                }
             } finally {
                 WorldBillboard.forceVanillaType = false;
                 GlCompat.depthTest(true);
@@ -265,6 +286,36 @@ public final class WorldLyricsBridge {
             }
         }
     }
+
+    /** 诊断行：相机朝向/眼位 + 投影矩阵关键元素 + 当前句世界锚点（两路线同格式）。 */
+    private static String diagLine(Camera c, org.joml.Matrix4f P) {
+        return "cam(yaw=" + fmt(c.getYRot()) + " pitch=" + fmt(c.getXRot())
+                + " eye=" + fmt(c.getPosition().x) + "," + fmt(c.getPosition().y) + "," + fmt(c.getPosition().z)
+                + ") P(m00=" + fmt(P.m00()) + " m11=" + fmt(P.m11())
+                + " m23=" + fmt(P.m23()) + " m33=" + fmt(P.m33())
+                + ") activePos=" + activeLineDebugPos();
+    }
+
+    private static String fmt(double v) {
+        return String.format(java.util.Locale.ROOT, "%.2f", v);
+    }
+
+    private static boolean isFinite(org.joml.Matrix4f m) {
+        return org.joml.Math.isFinite(m.m00()) && org.joml.Math.isFinite(m.m11())
+                && org.joml.Math.isFinite(m.m23()) && org.joml.Math.isFinite(m.m33());
+    }
+
+    /** 诊断用：当前句的世界锚点（无活动句返回空串）。 */
+    private static String activeLineDebugPos() {
+        try {
+            return WorldLyricsState.activeLineDebugPos();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    private static int hudDiagFrame;
+    private static int diagFrame;
 
     private static void renderInner(Matrix4f basePose, Minecraft mc, Camera camera) {
         CameraAccess cameraAccess = CameraAccess.capture(0f);
