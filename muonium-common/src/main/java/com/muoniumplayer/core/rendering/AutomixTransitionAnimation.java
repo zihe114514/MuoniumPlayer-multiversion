@@ -3,6 +3,7 @@ package com.muoniumplayer.core.rendering;
 import com.muoniumplayer.core.ncm.music.AutomixTransitionCurve;
 import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
+import com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.render.skija.SkijaGfx;
 import com.muoniumplayer.render.skija.SkijaShapes;
@@ -101,7 +102,23 @@ public final class AutomixTransitionAnimation {
         Snapshot snapshot = snapshot();
         if (snapshot == null || AutomixSettings.getTransitionAnimationStyle()
                 == AutomixSettings.TransitionAnimationStyle.CURVE) return;
-        draw(snapshot);
+        // 与灵动岛/频谱同一轴：布局轴几何 + 自带 correction 矩阵层，物理占屏比与
+        // GUI Scale 档位无关。owned 守卫防嵌套（NCMScreen 括号内不重复进出）。
+        boolean ownedLayout = !RenderSystem.FIXED_SCALE;
+        if (ownedLayout) WindowAdaptiveScale.beginForced();
+        try {
+            com.muoniumplayer.api.OpenAPI api = com.muoniumplayer.core.interfaces.SharedConstants.api;
+            api.getGLStateManager().pushMatrix();
+            api.getGLStateManager().scale(WindowAdaptiveScale.correctionX(),
+                    WindowAdaptiveScale.correctionY(), 1);
+            try {
+                draw(snapshot);
+            } finally {
+                api.getGLStateManager().popMatrix();
+            }
+        } finally {
+            if (ownedLayout) WindowAdaptiveScale.end();
+        }
     }
 
     /** 同一份暂停/取消/退场时钟的只读帧，供灵动岛参与其自身布局与裁剪。 */
@@ -145,8 +162,9 @@ public final class AutomixTransitionAnimation {
     private static void draw(Snapshot snapshot) {
         Canvas canvas = SkijaGfx.canvas();
         if (!SkijaGfx.active() || canvas == null) return;
-        double width = RenderSystem.getWidth();
-        double height = RenderSystem.getHeight();
+        // 布局轴（render() 已进布局括号）：圆环居中在布局视口，物理位置恒定。
+        double width = RenderSystem.getLayoutWidth();
+        double height = RenderSystem.getLayoutHeight();
         if (width <= 0.0 || height <= 0.0) return;
 
         double size = Math.max(104.0, Math.min(168.0, Math.min(width, height) * .42));

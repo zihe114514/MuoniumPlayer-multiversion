@@ -34,14 +34,26 @@ public final class WindowAdaptiveScale {
         return RenderSystem.FIXED_SCALE;
     }
 
+    /**
+     * 布局轴 → 当前画布坐标的缩放因子。
+     *
+     * <p>分子恒为 GUI 逻辑宽（canvas 的初始 scale 是 guiScale，布局单位必须先乘这一层才能
+     * 落到正确的物理尺寸）；分母恒为布局轴宽 {@link RenderSystem#getLayoutWidth()}——
+     * 不读 {@link RenderSystem#getWidth()}，那个返回值随 FIXED_SCALE 状态翻转，用它做分母
+     * 会让本方法在固定布局括号外退化成 1.0（HUD 覆盖层从未进过任何括号，叠加层于是整体
+     * 随 GUI Scale 档位变大移位，3x/4x 档尤其明显）。括号内分母本就等于布局轴宽，
+     * 播放器/编辑器里的值不受影响。</p>
+     */
     public static double correctionX() {
-        double layoutWidth = RenderSystem.getWidth();
-        return layoutWidth <= 0.0 ? 1.0 : RenderSystem.getWidthNotScaled() / layoutWidth;
+        double guiWidth = RenderSystem.getWidthNotScaled();
+        double layoutWidth = RenderSystem.getLayoutWidth();
+        return guiWidth <= 0.0 || layoutWidth <= 0.0 ? 1.0 : guiWidth / layoutWidth;
     }
 
     public static double correctionY() {
-        double layoutHeight = RenderSystem.getHeight();
-        return layoutHeight <= 0.0 ? 1.0 : RenderSystem.getHeightNotScaled() / layoutHeight;
+        double guiHeight = RenderSystem.getHeightNotScaled();
+        double layoutHeight = RenderSystem.getLayoutHeight();
+        return guiHeight <= 0.0 || layoutHeight <= 0.0 ? 1.0 : guiHeight / layoutHeight;
     }
 
     public static int layoutWidth() {
@@ -53,17 +65,55 @@ public final class WindowAdaptiveScale {
     }
 
     // ------------------------------------------------------------------
+    // 灵动岛锚点：布局轴 → 当前上下文坐标
+    // ------------------------------------------------------------------
+
+    /**
+     * 灵动岛锚点（固定按布局轴上报）→ 当前渲染上下文的坐标。
+     *
+     * <p>锚点生产方（{@code DownloadDynamicIsland.getAnchorBounds}）不进任何固定布局括号、
+     * 也不依赖「窗口自适应缩放」开关，恒按布局轴书写；消费方（播放器展开/收回转场、岛内
+     * 搜索浮层）则工作在两种上下文之一：固定布局括号内几何本身就是布局轴（恒等），GUI 轴
+     * 模式下要乘 correction 折算成本上下文的坐标 —— 转场内部随后会再用 {@link #toLayoutX}
+     * 系列换回布局轴，两段相乘恰好把锚点送到播放器的布局坐标系。</p>
+     */
+    public static double islandToCurrentX(double value) {
+        return RenderSystem.FIXED_SCALE ? value : value * correctionX();
+    }
+
+    public static double islandToCurrentY(double value) {
+        return RenderSystem.FIXED_SCALE ? value : value * correctionY();
+    }
+
+    public static double islandToCurrentWidth(double value) {
+        return RenderSystem.FIXED_SCALE ? value : value * correctionX();
+    }
+
+    public static double islandToCurrentHeight(double value) {
+        return RenderSystem.FIXED_SCALE ? value : value * correctionY();
+    }
+
+    /** 半径用 X/Y correction 的均值折算，与 {@link #toLayoutRadius(double)} 互为镜像。 */
+    public static double islandToCurrentRadius(double value) {
+        if (RenderSystem.FIXED_SCALE) return value;
+        double scaleX = correctionX();
+        double scaleY = correctionY();
+        return scaleX <= 0.0 || scaleY <= 0.0 ? value : value * ((scaleX + scaleY) * .5);
+    }
+
+    // ------------------------------------------------------------------
     // CSS px 那一档布局（folia 风格的 HUD 设置界面用）
     // ------------------------------------------------------------------
 
     /**
      * 强制进入固定布局，不看玩家的「窗口自适应缩放」开关。
      *
-     * <p>folia 的整套排版尺寸本来就是 CSS px，照搬过来的常量（面板 896、行 72、字 14）只有在
-     * 同一个坐标系里才成立。用 Minecraft 的 GUI 逻辑宽高去套，面板会从占屏 47% 变成占屏 94%，
-     * 形状也从接近正方形被压成一条横幅 —— 界面看着像另一个设计。所以这一套界面固定按
-     * 「物理窗口归一到 ≤1920 宽」的那条轴画，与 GUI Scale 无关，正如浏览器里的字不会因为
-     * Minecraft 的缩放档位而变化。</p>
+     * <p>消费方是两类「固定设计」的渲染：HUD 编辑器（GuiHudEditorPro 的面板排版常量只有
+     * 在同一坐标系里才成立，预览还必须与真实 HUD 同轴），以及 HUD 覆盖层自身的括号
+     * （灵动岛/频谱/Automix 动画的渲染入口各自包一层，见各 render 方法的 ownedLayout 守卫）。
+     * 这一轴是「物理窗口归一到 ≤1920 宽再对折」，与 GUI Scale 无关 —— 正如浏览器里的字
+     * 不会因为 Minecraft 的缩放档位而变化。配套的矩阵层是 {@link #correctionX()}：
+     * 布局 × correction = GUI 逻辑，再由 canvas 的 guiScale 上屏。</p>
      */
     public static boolean beginForced() {
         RenderSystem.FIXED_SCALE = true;
@@ -217,5 +267,35 @@ public final class WindowAdaptiveScale {
         if (isTransforming()) return false;
         begin();
         return true;
+    }
+
+    // ------------------------------------------------------------------
+    // 无条件布局轴（HUD 编辑器专用，不理会「窗口自适应缩放」开关）
+    // ------------------------------------------------------------------
+
+    /**
+     * GUI 坐标 → 布局轴，无视「窗口自适应缩放」开关的 {@link #toLayoutX(double)}。
+     *
+     * <p>HUD 编辑器（GuiHudEditorPro）是固定设计界面，且真实 HUD 覆盖层已经无条件按布局轴
+     * 渲染 —— 编辑器的预览与命中必须同轴，否则玩家关掉自适应开关后编辑器里鼠标点不中预览。
+     * 普通播放器界面继续用带开关闸的版本。</p>
+     */
+    public static double toLayoutXForced(double x) {
+        double scale = correctionX();
+        return scale <= 0.0 ? x : x / scale;
+    }
+
+    public static double toLayoutYForced(double y) {
+        double scale = correctionY();
+        return scale <= 0.0 ? y : y / scale;
+    }
+
+    /** 同 {@link #toLayoutXForced(double)}，入参/出参按 GUI 整数坐标（编辑器鼠标换算用）。 */
+    public static int toLayoutXForced(int x) {
+        return (int) Math.round(toLayoutXForced((double) x));
+    }
+
+    public static int toLayoutYForced(int y) {
+        return (int) Math.round(toLayoutYForced((double) y));
     }
 }

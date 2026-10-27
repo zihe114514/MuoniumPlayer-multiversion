@@ -8,6 +8,7 @@ import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
+import com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.render.skija.SkijaGfx;
 
@@ -30,12 +31,24 @@ public final class MusicSpectrumRenderer {
         if(!HudConfig.spectrumEnabled || !HudConfig.spectrumInHud || failed) return;
         IslandVisibilityGate.Scene scene=IslandVisibilityGate.capture();
         if(!IslandVisibilityGate.allowSpectrumHud(scene)) return;
-        float width=(float)RenderSystem.getWidth(), height=(float)RenderSystem.getHeight();
-        if(width<32f || height<32f) return;
-        boolean fullWidth=HudConfig.spectrumHudStyle!=1;
-        float wing=SpectrumVisualMath.wingWidth(width);
-        if(!fullWidth && (wing<24f || height<120f)) return;
+        // 布局轴几何 + 自带 correction 矩阵层：满屏/两翼条带的物理占屏比与 GUI Scale 档位
+        // 无关（与灵动岛、两块 widget 同一轴）。renderPlayer/renderFullscreen 是播放器
+        // 内部路径（已在使用方坐标系里拿矩形），不走这一层。
+        boolean ownedLayout = !RenderSystem.FIXED_SCALE;
+        if(ownedLayout) WindowAdaptiveScale.beginForced();
+        try { renderHudInner(); } finally { if(ownedLayout) WindowAdaptiveScale.end(); }
+    }
+    private static void renderHudInner() {
+        com.muoniumplayer.api.OpenAPI api=com.muoniumplayer.core.interfaces.SharedConstants.api;
+        api.getGLStateManager().pushMatrix();
+        api.getGLStateManager().scale(WindowAdaptiveScale.correctionX(),
+                WindowAdaptiveScale.correctionY(), 1);
         try {
+            float width=(float)RenderSystem.getLayoutWidth(), height=(float)RenderSystem.getLayoutHeight();
+            if(width<32f || height<32f) return;
+            boolean fullWidth=HudConfig.spectrumHudStyle!=1;
+            float wing=SpectrumVisualMath.wingWidth(width);
+            if(!fullWidth && (wing<24f || height<120f)) return;
             if(!tick()) return;
             if(fullWidth) {
                 int barLimit = SpectrumVisualMath.fullWidthBarLimit(
@@ -49,6 +62,9 @@ public final class MusicSpectrumRenderer {
                 RIGHT.draw(SkijaGfx.canvas(),DISPLAY,BANDS/2,BANDS/2,width-16f-wing,height-7f,wing,high,opacity,colorB,colorA);
             }
         } catch(Throwable failure) { fail(failure); }
+        finally {
+            api.getGLStateManager().popMatrix();
+        }
     }
     public static void renderPlayer(double x,double y,double width,double height,float alpha) {
         if(!HudConfig.spectrumEnabled || !HudConfig.spectrumInPlayer || failed || alpha<.04f || width<90 || height<12) return;

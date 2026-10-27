@@ -455,8 +455,8 @@ public class GuiHudEditorPro extends GuiScreen {
             RenderSystem.refreshResolution();
             adaptive = beginAdaptiveLayout();
             if (adaptive) {
-                mouseX = WindowAdaptiveScale.toLayoutX(mouseX);
-                mouseY = WindowAdaptiveScale.toLayoutY(mouseY);
+                mouseX = WindowAdaptiveScale.toLayoutXForced(mouseX);
+                mouseY = WindowAdaptiveScale.toLayoutYForced(mouseY);
                 // 自适应分支里全部几何（面板 + HUD 预览段）统一按布局轴书写，这里一次性
                 // 把布局单位放大到 canvas 的 GUI 逻辑坐标（与 NCMScreen 同方向同因子）：
                 // 布局 × correction = GUI 逻辑，再由 canvas 的 guiScale 上屏。于是「每布局
@@ -633,7 +633,10 @@ public class GuiHudEditorPro extends GuiScreen {
     /** 进入窗口自适应布局：临时把 Screen 的宽高换成由物理窗口推导出的逻辑宽高。 */
     private boolean beginAdaptiveLayout() {
         RenderSystem.refreshResolution();
-        WindowAdaptiveScale.begin();
+        // 强制布局轴（不理会「窗口自适应缩放」开关）：编辑器是固定设计界面，且真实 HUD
+        // 覆盖层已无条件按布局轴渲染 —— 预览必须同轴，否则开关关闭时预览与实物差一个
+        // correction 因子。坐标换算配套用 toLayout*Forced（同样跳过开关闸）。
+        WindowAdaptiveScale.beginForced();
         if (!WindowAdaptiveScale.isTransforming()) return false;
         savedAdaptiveWidth = width;
         savedAdaptiveHeight = height;
@@ -1609,8 +1612,8 @@ public class GuiHudEditorPro extends GuiScreen {
     protected void mouseClicked(int mouseX, int mouseY, int button) throws IOException {
         boolean adaptive = beginAdaptiveLayout();
         if (adaptive) {
-            mouseX = WindowAdaptiveScale.toLayoutX(mouseX);
-            mouseY = WindowAdaptiveScale.toLayoutY(mouseY);
+            mouseX = WindowAdaptiveScale.toLayoutXForced(mouseX);
+            mouseY = WindowAdaptiveScale.toLayoutYForced(mouseY);
         }
         try {
             mouseClickedImpl(mouseX, mouseY, button);
@@ -2146,8 +2149,8 @@ public class GuiHudEditorPro extends GuiScreen {
     protected void mouseReleased(int mouseX, int mouseY, int state) {
         boolean adaptive = beginAdaptiveLayout();
         if (adaptive) {
-            mouseX = WindowAdaptiveScale.toLayoutX(mouseX);
-            mouseY = WindowAdaptiveScale.toLayoutY(mouseY);
+            mouseX = WindowAdaptiveScale.toLayoutXForced(mouseX);
+            mouseY = WindowAdaptiveScale.toLayoutYForced(mouseY);
         }
         try {
             mouseReleasedImpl(mouseX, mouseY, state);
@@ -2948,7 +2951,10 @@ public class GuiHudEditorPro extends GuiScreen {
         // 裁剪层无条件压一层，好和 endScissor 配对。宽高非法时退化成「不裁剪」，
         // 与旧实现关掉 GL_SCISSOR_TEST 的效果一致——画多一点比整块内容凭空消失容易发现。
         if (w <= 0 || h <= 0) {
-            SkijaClip.scissorBegin(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
+            // 宽高非法时退化成「全画布不裁」：编辑器全程在布局括号内，用布局轴访问器
+            // 把语义钉死，不依赖括号状态。
+            SkijaClip.scissorBegin(0, 0, (int) RenderSystem.getLayoutWidth(),
+                    (int) RenderSystem.getLayoutHeight());
         } else {
             SkijaClip.scissorBegin(x, y, w, h);
         }

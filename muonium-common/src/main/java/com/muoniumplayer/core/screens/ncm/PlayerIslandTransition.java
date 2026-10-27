@@ -478,20 +478,22 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
 
     private static void captureStart() {
         double[] island = DownloadDynamicIsland.getLiveAnchorBounds();
-        startX = WindowAdaptiveScale.toLayoutX(island[0]);
-        startY = WindowAdaptiveScale.toLayoutY(island[1]);
-        startWidth = WindowAdaptiveScale.toLayoutWidth(island[2]);
-        startHeight = WindowAdaptiveScale.toLayoutHeight(island[3]);
-        startRadius = WindowAdaptiveScale.toLayoutRadius(island[4]);
+        // 岛锚点恒按布局轴上报；islandToCurrent* 把它折算成「本捕获发生时的上下文坐标」，
+        // 再由 toLayout* 换回布局轴 —— 两段相乘在括号内/外、开关开/关下都是恒等闭环。
+        startX = WindowAdaptiveScale.toLayoutX(WindowAdaptiveScale.islandToCurrentX(island[0]));
+        startY = WindowAdaptiveScale.toLayoutY(WindowAdaptiveScale.islandToCurrentY(island[1]));
+        startWidth = WindowAdaptiveScale.toLayoutWidth(WindowAdaptiveScale.islandToCurrentWidth(island[2]));
+        startHeight = WindowAdaptiveScale.toLayoutHeight(WindowAdaptiveScale.islandToCurrentHeight(island[3]));
+        startRadius = WindowAdaptiveScale.toLayoutRadius(WindowAdaptiveScale.islandToCurrentRadius(island[4]));
     }
 
     private static void captureCapsule() {
         double[] island = DownloadDynamicIsland.getAnchorBounds();
-        capsuleX = WindowAdaptiveScale.toLayoutX(island[0]);
-        capsuleY = WindowAdaptiveScale.toLayoutY(island[1]);
-        capsuleWidth = WindowAdaptiveScale.toLayoutWidth(island[2]);
-        capsuleHeight = WindowAdaptiveScale.toLayoutHeight(island[3]);
-        capsuleRadius = WindowAdaptiveScale.toLayoutRadius(island[4]);
+        capsuleX = WindowAdaptiveScale.toLayoutX(WindowAdaptiveScale.islandToCurrentX(island[0]));
+        capsuleY = WindowAdaptiveScale.toLayoutY(WindowAdaptiveScale.islandToCurrentY(island[1]));
+        capsuleWidth = WindowAdaptiveScale.toLayoutWidth(WindowAdaptiveScale.islandToCurrentWidth(island[2]));
+        capsuleHeight = WindowAdaptiveScale.toLayoutHeight(WindowAdaptiveScale.islandToCurrentHeight(island[3]));
+        capsuleRadius = WindowAdaptiveScale.toLayoutRadius(WindowAdaptiveScale.islandToCurrentRadius(island[4]));
     }
 
     /** 仅在源主题/样式颜色变化时重建小型不可变颜色渐变。 */
