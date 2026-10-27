@@ -135,9 +135,24 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         this.camX = camX;
         this.camY = camY;
         this.camZ = camZ;
+        // 「更激进的适配」采集模式：光影激活 + 开关开 → 本帧不 submit，
+        // 平滑字形/特效改记进 present 兜底缓冲（WorldLyricsHudDraw 类注释）。
+        // 像素字路径不进采集（原版名牌同路径，光影下本就正常）。
+        this.captureMode = WorldLyricsHudDraw.captureModeThisFrame();
+        if (captureMode) {
+            LyricPresentRenderer.beginFrame();
+        }
     }
 
+    /** 本帧是否在采集（capture 模式下 submit 全部旁路）。 */
+    private boolean captureMode;
+
     public void end() {
+        if (captureMode) {
+            boolean got = LyricPresentRenderer.endFrame();
+            WorldLyricsHudDraw.onCaptureEnd(got);
+            captureMode = false;
+        }
         this.poseStack = null;
         this.collector = null;
     }
@@ -263,6 +278,20 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         int argb = (((int) (alpha * 255f) & 0xFF) << 24) | (rgb & 0xFFFFFF);
 
+        // ---- 更激进的适配：采集模式 —— 不 submit，把 quad 记进 present 兜底缓冲 ----
+        // 顶点坐标口径 = 「公告牌矩阵 × 行内坐标」的合成结果再拆回相机相对世界轴：
+        // submit 通路里这一步发生在 GPU（视图旋转 × 根矩阵 × billboard），采集通路
+        // 在 CPU 上用同一个 billboard 矩阵（poseStack 栈顶）变换出世界轴坐标。
+        if (captureMode) {
+            captureGlyphQuad(pageRl, qLeft, qTop, qRight, qBottom, cx, cy, cos, sin, s, argb, u0, v0, u1, v1);
+            if (TRACE && !tracedSmooth) {
+                tracedSmooth = true;
+                System.out.println("[WorldLyrics/trace] 现代档字形 quad 已采集（present 兜底）: '" + c
+                        + "' cell=" + cell.w + "x" + cell.h);
+            }
+            return;
+        }
+
         RenderType renderType = currentWorldTextType(pageRl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
@@ -308,6 +337,100 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 .setUv1(0, 0);
     }
 
+    // ==================== 更激进的适配：present 兜底采集 ====================
+
+    /**
+     * 把一个字形 quad 按当前 billboard 矩阵变换成「相机相对世界轴」坐标后记入
+     * present 兜底缓冲。GPU 端 submit 通路的变换链是 视图旋转 × 根矩阵 × billboard；
+     * 采集通路在 CPU 上只乘 billboard（根矩阵 = 单位矩阵，26.3 收集期如此），
+     * 剩下的视图旋转交给 present 端的 MVP（CameraRenderState.viewRotationMatrix）。
+     */
+    private void captureGlyphQuad(Identifier pageRl,
+                                  float qLeft, float qTop, float qRight, float qBottom,
+                                  float cx, float cy, float cos, float sin, float s,
+                                  int argb, float u0, float v0, float u1, float v1) {
+        Matrix4f mat = poseStack != null ? poseStack.last().pose() : null;
+        if (mat == null) return;
+        int texId = pageGlId(pageRl);
+        if (texId == 0) return;
+        // 四角先绕字中心旋转/缩放（与 putGlyphVertex 同式），再进 billboard 矩阵
+        float ax = cx + ((qLeft - cx) * cos - (qTop - cy) * sin) * s;
+        float ay = cy + ((qLeft - cx) * sin + (qTop - cy) * cos) * s;
+        float bx = cx + ((qLeft - cx) * cos - (qBottom - cy) * sin) * s;
+        float by = cy + ((qLeft - cx) * sin + (qBottom - cy) * cos) * s;
+        float gx = cx + ((qRight - cx) * cos - (qBottom - cy) * sin) * s;
+        float gy = cy + ((qRight - cx) * sin + (qBottom - cy) * cos) * s;
+        float dx = cx + ((qRight - cx) * cos - (qTop - cy) * sin) * s;
+        float dy = cy + ((qRight - cx) * sin + (qTop - cy) * cos) * s;
+        // transformPosition = addVertex(Matrix4f) 的同款数学（billboard 无透视分量）
+        LyricPresentRenderer.addQuad(texId,
+                matX(mat, ax, ay), matY(mat, ax, ay), u0, v0,
+                matX(mat, bx, by), matY(mat, bx, by), u0, v1,
+                matX(mat, gx, gy), matY(mat, gx, gy), u1, v1,
+                matX(mat, dx, dy), matY(mat, dx, dy), u1, v0,
+                argb);
+    }
+
+    /** billboard 矩阵 × (x,y,0) 的 X 分量（Matrix4fc.transformPosition 的展开式）。 */
+    private static float matX(Matrix4f m, float x, float y) {
+        return m.m00() * x + m.m10() * y + m.m30();
+    }
+
+    /** billboard 矩阵 × (x,y,0) 的 Y 分量。 */
+    private static float matY(Matrix4f m, float x, float y) {
+        return m.m01() * x + m.m11() * y + m.m31();
+    }
+
+    /**
+     * 特效 quad 的采集：四角（公告牌行内坐标）按 billboard 矩阵变换后记入缓冲。
+     * 径迹/光晕/星芒/爆闪/拖尾画布共用 —— 顶点序与其他通路一致：
+     * 左上 → 左下 → 右下 → 右上。
+     */
+    private void captureEffectQuad(Identifier rl,
+                                   float ax, float ay, float au, float av,
+                                   float bx, float by, float bu, float bv,
+                                   float gx, float gy, float gu, float gv,
+                                   float dx, float dy, float du, float dv,
+                                   int argb) {
+        Matrix4f mat = poseStack != null ? poseStack.last().pose() : null;
+        if (mat == null) return;
+        int texId = pageGlId(rl);
+        if (texId == 0) return;
+        LyricPresentRenderer.addQuad(texId,
+                matX(mat, ax, ay), matY(mat, ax, ay), au, av,
+                matX(mat, bx, by), matY(mat, bx, by), bu, bv,
+                matX(mat, gx, gy), matY(mat, gx, gy), gu, gv,
+                matX(mat, dx, dy), matY(mat, dx, dy), du, dv,
+                argb);
+    }
+
+    /**
+     * 页纹理的 GL 纹理名（present 端裸 GL 绑定用）：Identifier → TextureManager →
+     * DynamicTexture.getTexture() → GlTexture.glId()（26.3 公开方法，javap 核对）。
+     * 一次失败永久熔断（页 id 拿不到 = present 直画不可用，回退世界路由）。
+     */
+    private static int pageGlId(Identifier rl) {
+        if (pageGlIdFailed) return 0;
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null || mc.getTextureManager() == null) return 0;
+            net.minecraft.client.renderer.texture.AbstractTexture tex = mc.getTextureManager().getTexture(rl);
+            if (tex == null || tex.getTexture() == null) return 0;
+            if (tex.getTexture() instanceof com.mojang.renderpearl.backend.opengl.GlTexture gl) {
+                return gl.glId();
+            }
+            // 非 GL 后端（Vulkan）：本通路按设计不工作
+            pageGlIdFailed = true;
+            return 0;
+        } catch (Throwable t) {
+            pageGlIdFailed = true;
+            System.out.println("[MuoniumPlayer/WorldLyrics] 字形页 GL 纹理名获取失败，present 兜底停用: " + t);
+            return 0;
+        }
+    }
+
+    private static boolean pageGlIdFailed;
+
     @Override
     public void drawTrail(float[] xs, float[] ys, int count,
                           int argb, float widthPx) {
@@ -333,6 +456,13 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         final int baseAlpha = (argb >>> 24) & 0xFF;
         final int rgb = argb & 0xFFFFFF;
 
+        // 采集模式：径迹 quad 带直接按 billboard 矩阵变换记入缓冲（两层 bloom 同发射序）
+        if (captureMode) {
+            emitTrailCapture(rl, xsC, ysC, ptCount, half, baseAlpha, rgb, 1f, 1f);
+            emitTrailCapture(rl, xsC, ysC, ptCount, half, baseAlpha, rgb, 3f, 0.35f);
+            return;
+        }
+
         RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
@@ -345,6 +475,34 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             });
         } finally {
             poseStack.popPose();
+        }
+    }
+
+    /** 径迹 quad 带的采集版：与 {@link #emitTrail} 同几何，顶点直接进 present 缓冲。 */
+    private void emitTrailCapture(Identifier rl, float[] xs, float[] ys, int count,
+                                  float half, int baseAlpha, int rgb,
+                                  float widthScale, float alphaScale) {
+        float hw = half * widthScale;
+        int a = Math.min(255, (int) (baseAlpha * alphaScale));
+        int argb = (a << 24) | rgb;
+        for (int i = 0; i < count - 1; i++) {
+            float x0 = xs[i], y0 = ys[i];
+            float x1 = xs[i + 1], y1 = ys[i + 1];
+            int p0 = Math.max(0, i - 1), q0 = Math.min(count - 1, i + 1);
+            float dx0 = xs[q0] - xs[p0], dy0 = ys[q0] - ys[p0];
+            float l0 = (float) Math.sqrt(dx0 * dx0 + dy0 * dy0);
+            float n0x = l0 < 1e-4f ? 0f : -dy0 / l0, n0y = l0 < 1e-4f ? 1f : dx0 / l0;
+            int p1 = i, q1 = Math.min(count - 1, i + 2);
+            float dx1 = xs[q1] - xs[p1], dy1 = ys[q1] - ys[p1];
+            float l1 = (float) Math.sqrt(dx1 * dx1 + dy1 * dy1);
+            float n1x = l1 < 1e-4f ? 0f : -dy1 / l1, n1y = l1 < 1e-4f ? 1f : dx1 / l1;
+            // UV 钉在白纹理不透明行（与 putTrailVertex 同参数）；白纹理与字形页共用本通路
+            captureEffectQuad(rl,
+                    x0 + n0x * hw, y0 + n0y * hw, 0.5f, 0.03f,
+                    x0 - n0x * hw, y0 - n0y * hw, 0.5f, 0.03f,
+                    x1 - n1x * hw, y1 - n1y * hw, 0.5f, 0.03f,
+                    x1 + n1x * hw, y1 + n1y * hw, 0.5f, 0.03f,
+                    argb);
         }
     }
 
@@ -461,6 +619,16 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             return false;
         }
         int argb = Math.min(255, (int) (alpha * 255f)) << 24 | 0xFFFFFF;
+        // 采集模式：拖尾画布 quad 直接记入 present 缓冲（纹理像素已在本调用中上传完）
+        if (captureMode) {
+            captureEffectQuad(rl,
+                    planeX, planeY, 0f, 0f,
+                    planeX, planeY + planeH, 0f, 1f,
+                    planeX + planeW, planeY + planeH, 1f, 1f,
+                    planeX + planeW, planeY, 1f, 0f,
+                    argb);
+            return true;
+        }
         RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
@@ -573,6 +741,16 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         if (rl == null) return;
         final float half = Math.max(1f, sizePx * 0.5f);
 
+        if (captureMode) {
+            captureEffectQuad(rl,
+                    cx - half, cy - half, 0f, 0f,
+                    cx - half, cy + half, 0f, 1f,
+                    cx + half, cy + half, 1f, 1f,
+                    cx + half, cy - half, 1f, 0f,
+                    argb);
+            return;
+        }
+
         RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
@@ -654,6 +832,16 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 回调内只做乘加（延迟采集版）。
         final float cos = (float) Math.cos(Math.toRadians(rotDeg));
         final float sin = (float) Math.sin(Math.toRadians(rotDeg));
+
+        if (captureMode) {
+            captureEffectQuad(rl,
+                    cx + rot2(-half, -half, cos, sin)[0], cy + rot2(-half, -half, cos, sin)[1], 0f, 0f,
+                    cx + rot2(-half, half, cos, sin)[0], cy + rot2(-half, half, cos, sin)[1], 0f, 1f,
+                    cx + rot2(half, half, cos, sin)[0], cy + rot2(half, half, cos, sin)[1], 1f, 1f,
+                    cx + rot2(half, -half, cos, sin)[0], cy + rot2(half, -half, cos, sin)[1], 1f, 0f,
+                    argb);
+            return;
+        }
 
         RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
@@ -760,6 +948,19 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         final float sin = (float) Math.sin(Math.toRadians(rotDeg));
         final float hw = Math.max(0.5f, width * 0.5f);
         final float hh = Math.max(0.5f, height * 0.5f);
+
+        if (captureMode) {
+            // 四角 = 中心 ± 长轴半宽·轴向 ± 短轴半宽·法向（旋转由 cos/sin 合成）
+            float axX = cos, axY = sin;
+            float nX = -sin, nY = cos;
+            captureEffectQuad(rl,
+                    cx - axX * hw - nX * hh, cy - axY * hw - nY * hh, 0f, 0f,
+                    cx - axX * hw + nX * hh, cy - axY * hw + nY * hh, 0f, 1f,
+                    cx + axX * hw + nX * hh, cy + axY * hw + nY * hh, 1f, 1f,
+                    cx + axX * hw - nX * hh, cy + axY * hw - nY * hh, 1f, 0f,
+                    argb);
+            return;
+        }
 
         RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose

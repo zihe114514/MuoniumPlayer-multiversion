@@ -62,6 +62,11 @@ public class GlSurfaceMixin {
 
     @Inject(method = "present()V", at = @At("HEAD"))
     private void muonium$compositeSkijaFrame(CallbackInfo ci) {
+        // 「更激进的适配」（26.x）：把世界阶段采集的歌词 quad 直接画上 FBO 0 ——
+        // 必须在 Skija 合成之前（歌词画在模组 HUD 之下，与其他树语义一致）。
+        // 此刻 Iris 合成链早已收工（finalPass 在 LevelRenderer.render 的 popMatrix），
+        // 这些像素不会再被任何光影 pass 加工。
+        com.muoniumplayer.compat.mc.WorldLyricsHudDraw.presentComposite();
         // 无论本帧有没有内容都要调用：compositeFrame 同时负责复位「本帧已清屏」标志。
         SkijaHost.compositeFrame();
     }
