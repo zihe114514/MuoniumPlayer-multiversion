@@ -125,40 +125,12 @@ error-report-*/
 # 仓库大扫除的回收站：历史遗留垃圾先移进来等确认，确认无误后整个删掉
 /_trash/
 
+# ---- 不入库的两个根目录（2026-10-27 已从全部 git 历史中抹除，仅本地保留）----
+# docs/：内部实现文档、宣发与竞品资料、审查报告 —— 不公开
+# tools/：构建/发布/同步脚本、测试探针 —— 内部工作流
+# 注意 build-all.bat 仍引用 tools\build-all.ps1，本地删了目录构建会挂
+/docs/
+/tools/
+
 # 不公开:agent 记忆库与内部文档(宣发/竞品研究/审查报告等,仅本地保留)
 .workbuddy/
-docs/MuoniumPlayer-产品宣发与功能全景档案.md
-docs/宣传视频脚本-JS程序化动画版.md
-docs/宣传视频脚本-功能要点版.md
-docs/宣传视频脚本-无口播分镜.md
-docs/项目亮点盘点与全网竞品对比-宣传部基准.md
-docs/官网内容规划.md
-docs/维护总纲-网站-分发仓库-汽水后端.md
-docs/审查报告-三链路互扰.md
-docs/审查报告-近期改动-按严重程度.md
-docs/AUTOMIX智能过渡对比-Folia-vs-MuoniumPlayer.md
-docs/歌词自动匹配方案对比-Folia-vs-MuoniumPlayer.md
-docs/Spotify音源可行性与文本歌单导入方案.md
-docs/Folia全屏歌词背景移植.md
-docs/绘光文字效果移植方案.md
-docs/绘光歌词样式研究-folia-lumiere.md
-docs/QQ音乐协议能力补齐-QQMusicApi对照.md
-docs/酷狗概念版API对等.md
-docs/一起听房间Automix-实现方案.md
-docs/直连房间-实现方案.md
-docs/一起听全链路说明.html
-docs/一起听v2-使用指导.md
-docs/HUD歌词发光配置重做.md
-docs/HUD设置分类收口-12页到7页.md
-docs/HUD设置整改与歌词默认值.md
-docs/桌面歌词-Blossom样式.md
-docs/界面字体切换.md
-docs/灵动岛-封面与间距.md
-docs/首启引导即播放器骨架.md
-docs/dynamic-island-notification-scheduling.md
-docs/music-spectrum-adaptation.md
-docs/rendering-loading-performance.md
-docs/oneconfig-integration.md
-docs/img/hud-glow-sliders.png
-docs/img/island-artwork-spacing.png
-docs/img/osd-blossom.png
