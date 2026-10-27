@@ -1,0 +1,69 @@
+MuoniumPlayer
+Copyright 2026 MuoniumPlayer Team
+
+本产品采用 Apache License 2.0 授权，完整文本见同目录 LICENSE。
+
+────────────────────────────────────────
+第三方组件与许可
+────────────────────────────────────────
+
+Skija
+  https://github.com/JetBrains/skija
+  Apache License 2.0
+  界面渲染后端（JVM 绑定）。
+
+Skia
+  https://skia.org/
+  BSD 3-Clause
+  界面渲染引擎，经 Skija 调用。
+
+lx-music-desktop
+  https://github.com/lyswhut/lx-music-desktop
+  Apache License 2.0
+  自定义音源的脚本协议与接口约定。本项目未内嵌其代码，仅兼容其脚本格式。
+
+Closure Compiler
+  https://github.com/google/closure-compiler
+  Apache License 2.0
+  自定义源脚本的语法降级（按需下载，不随包分发）。
+
+Rhino
+  https://github.com/mozilla/rhino
+  Mozilla Public License 2.0
+  JavaScript 脚本引擎，用于执行自定义音源脚本。
+
+ModernUI
+  https://github.com/BloCamLimb/ModernUI
+  可选集成：HUD 设置页面渲染。
+
+OneConfig
+  https://github.com/Polyfrost/OneConfig
+  可选集成：HUD 设置界面。
+
+AMLL TTML DB
+  https://github.com/amll-dev/amll-ttml-db
+  逐字歌词数据来源之一。
+
+ytmusicapi
+  https://github.com/sigma67/ytmusicapi
+  MIT
+  YouTube Music 链路的协议实现参考，未内嵌其代码。
+
+folia-major
+  https://github.com/chthollyphile/folia-major
+  视觉灵感来源（绘光歌词样式），未复制其代码。
+
+────────────────────────────────────────
+说明
+────────────────────────────────────────
+
+各 Minecraft 版本目录下的 licenses/ 子目录包含随包分发的第三方
+许可全文（如 LICENSE-Skia.txt、LICENSE-Skija.txt）。
+
+Minecraft 是 Mojang AB 的商标。本项目与 Mojang AB 无关，
+未获得其认可或赞助。
+
+本项目支持的各音乐平台（网易云音乐、QQ 音乐、酷狗音乐、汽水音乐、
+YouTube Music、哔哩哔哩、Spotify、GD 音乐台）的名称、图标与商标
+归各自权利人所有。README 中展示这些标识仅用于说明本 Mod 支持哪些
+平台，不表示任何隶属、合作或背书关系。

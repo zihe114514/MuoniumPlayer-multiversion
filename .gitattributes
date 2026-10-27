@@ -21,3 +21,7 @@ gradlew text eol=lf
 *.jpg binary
 *.ico binary
 *.zip binary
+
+# 演示媒体：Git LFS 不启用，直接存二进制，禁止行尾转换
+*.mp4 binary
+*.gif binary
