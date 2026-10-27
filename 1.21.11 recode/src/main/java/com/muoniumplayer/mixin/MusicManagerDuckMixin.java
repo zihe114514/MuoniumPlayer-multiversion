@@ -44,7 +44,7 @@ public abstract class MusicManagerDuckMixin {
             this.muonium$stoppedCurrentMusic = true;
             try {
                 MusicManager self = (MusicManager) (Object) this;
-                SoundInstance current = MusicManagerAccessor.muonium$getCurrentMusic(self);
+                SoundInstance current = ((MusicManagerAccessor) (Object) self).muonium$getCurrentMusic();
                 if (current != null) {
                     Minecraft.getInstance().getSoundManager().stop(current);
                 }

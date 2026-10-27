@@ -34,7 +34,7 @@ class HudSettingsTaxonomyStaticTest {
             "歌词样式", "3D 歌词", "面板与卡片", "灵动岛", "无缝切换", "界面与主题", "信息栏与封面", "缓存与公告");
 
     /** 与 {@link #TITLES} 同序的条目数；总和必须等于 {@link #TOTAL}。 */
-    private static final List<Integer> COUNTS = Arrays.asList(21, 19, 8, 24, 20, 33, 5, 3);
+    private static final List<Integer> COUNTS = Arrays.asList(21, 19, 8, 24, 21, 33, 5, 3);
 
     /** 「界面与主题」那页 2026-09-30 从 19 条长到 21 条：真玻璃材质组多了「实时背景采集」与
      *  「帧率不够时自动摘玻璃」两个开关；同日傍晚又长到 26 条：多了四面各自的模糊倍率
@@ -50,7 +50,7 @@ class HudSettingsTaxonomyStaticTest {
      *  2026-10-27 「3D 歌词」页放置组新增「更激进的适配」（光影包激活时歌词推迟到
      *  HUD 阶段用原版着色器直画）—— 3D 歌词页 18 → 19 条，128 → 133（期间
      *  「界面与主题」页增长 5 条未被此文件记录，见 COUNTS）。 */
-    private static final int TOTAL = 133;
+    private static final int TOTAL = 134;
 
     @Test
     @DisplayName("分类就是这 7 页，顺序与每页条目数都不许悄悄变")

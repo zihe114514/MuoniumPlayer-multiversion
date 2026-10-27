@@ -433,6 +433,7 @@ public final class HudSettingsModel {
         };
         HudConfig.worldLyricsQualityTier = tier;
         applyQualityTierNow(tier);
+        saveNow();
     }
 
     /** 解析设置档（0=自动按帧缓冲高度）并落到图集。 */
@@ -458,6 +459,16 @@ public final class HudSettingsModel {
         }
     }
 
+    private static String[] engineChoices() {
+        AutomixSettings.Engine[] engines = AutomixSettings.Engine.values();
+        String[] labels = new String[engines.length];
+        for (int i = 0; i < engines.length; i++) labels[i] = engines[i].getLabel();
+        return labels;
+    }
+
+    private static void setEngineChoice(String value) {
+        AutomixSettings.setEngine(AutomixSettings.Engine.fromStored(value));
+    }
     private static String keywordPresetLabel() {
         return keywordPresetOf(HudConfig.worldLyricsKeywordColors);
     }
@@ -1166,17 +1177,20 @@ public final class HudSettingsModel {
                                                 AutomixSettings.setEnabled(!AutomixSettings.isEnabled());
                                             }
                                         }),
-                                choice("处理方案", "原版＝等功率淡化与低架处理；Folia 三档＝本地模型分析结构、节奏与调性后选切拍与交接方式，档位越高处理越主动。效果发生在队列自动切歌的交接瞬间。",
+                                choice("处理方案", "原版＝等功率淡化与低架处理；Folia＝本地模型分析结构、节奏与调性后选切拍与交接方式。效果发生在队列自动切歌的交接瞬间。",
                                         new Supplier<String>() {
-                                            public String get() { return automixPlanName(); }
+                                            public String get() { return AutomixSettings.getEngineLabel(); }
                                         }, new Runnable() {
-                                            public void run() { cycleAutomixPlan(); }
-                                        }, new String[] {"原版", "Folia 稳健", "Folia 表现", "Folia 进阶"},
-                                        HudSettingsModel::setAutomixPlan,
+                                            public void run() { AutomixSettings.cycleEngine(); }
+                                        }, engineChoices(), HudSettingsModel::setEngineChoice,
                                         new String[] {"保留现有等功率淡化与低架处理。",
-                                                "分析后挑切拍与交接方式，始终走保守的自动过渡。",
-                                                "允许更主动的分轨与尾奏处理。",
-                                                "交接点放开到整首歌按八项打分挑最优，含队列排列与双侧人声处理；每首初播要在后台多解一遍整曲。"}),
+                                                "分析后挑切拍与交接方式；配合下面的「进阶模式」可达最深分析。"}),
+                                toggle("进阶模式", "把交接点从曲尾这几秒放开到整首歌：扫完整曲包络后，在「从哪退、从哪进」的所有候选里按八项打分挑一对，分不够就不挑；同时打开队列的「排列」按钮与双侧人声处理。代价是每首初播要在后台多解一遍整曲。它是独立的分析深度开关——处理方案选原版或 Folia 都能开，模型/包络不可用时自动回落普通切歌。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() { return AutomixSettings.isAdvancedModeEnabled(); }
+                                        }, new Runnable() {
+                                            public void run() { AutomixSettings.setAdvancedModeEnabled(!AutomixSettings.isAdvancedModeEnabled()); }
+                                        }),
                                 toggle("过渡动画", "圆环保留中央交接提示；EQ 曲线在半透明灵动岛内滚动，衔接时小幅展开、结束后收回。曲线样式需要开启灵动岛；关闭动画不影响音频处理。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() { return AutomixSettings.isTransitionAnimationEnabled(); }
@@ -1867,41 +1881,6 @@ public final class HudSettingsModel {
         saveNow();
     }
 
-    // ---------- 无缝切换处理方案（四档单选，取代「引擎 + 表现 + 进阶」三个条目） ----------
-
-    private static final String[] AUTOMIX_PLANS = { "原版", "Folia 稳健", "Folia 表现", "Folia 进阶" };
-
-    /** 当前档位。原三字段仍是唯一事实来源，这里只做读侧映射：进阶包含表现，表现包含 Folia。 */
-    static String automixPlanName() {
-        if (!AutomixSettings.isFoliaEngine()) return AUTOMIX_PLANS[0];
-        if (AutomixSettings.isAdvancedModeEnabled()) return AUTOMIX_PLANS[3];
-        if (AutomixSettings.isPerformanceModeEnabled()) return AUTOMIX_PLANS[2];
-        return AUTOMIX_PLANS[1];
-    }
-
-    private static void cycleAutomixPlan() {
-        for (int i = 0; i < AUTOMIX_PLANS.length; i++) {
-            if (AUTOMIX_PLANS[i].equals(automixPlanName())) {
-                setAutomixPlan(AUTOMIX_PLANS[(i + 1) % AUTOMIX_PLANS.length]);
-                return;
-            }
-        }
-        setAutomixPlan(AUTOMIX_PLANS[0]);
-    }
-
-    /** 四档写入：引擎 + 表现 + 进阶一次定好，三者的隐含关系（进阶 ⊃ 表现）不再让用户自己拼。 */
-    static void setAutomixPlan(String value) {
-        boolean folia = !AUTOMIX_PLANS[0].equals(value);
-        boolean performance = AUTOMIX_PLANS[2].equals(value) || AUTOMIX_PLANS[3].equals(value);
-        boolean advanced = AUTOMIX_PLANS[3].equals(value);
-        if (folia != AutomixSettings.isFoliaEngine()) {
-            AutomixSettings.setEngine(folia ? AutomixSettings.Engine.FOLIA : AutomixSettings.Engine.LEGACY);
-        }
-        AutomixSettings.setPerformanceModeEnabled(performance);
-        AutomixSettings.setAdvancedModeEnabled(advanced);
-        saveNow();
-    }
-
     /**
      * 播放态来源的当前取值。
      *
@@ -2029,6 +2008,8 @@ public final class HudSettingsModel {
     private static void setInfoEnabled(boolean enabled) {
         try {
             MuoniumPlayerExtension.getInstance().musicInfo.setEnabled(enabled);
+            HudConfig.musicInfoEnabled = enabled;
+            saveNow();
         } catch (Throwable ignored) {
         }
     }
@@ -2044,6 +2025,8 @@ public final class HudSettingsModel {
     private static void setLyricsEnabled(boolean enabled) {
         try {
             MuoniumPlayerExtension.getInstance().musicLyrics.setEnabled(enabled);
+            HudConfig.musicLyricsEnabled = enabled;
+            saveNow();
         } catch (Throwable ignored) {
         }
     }

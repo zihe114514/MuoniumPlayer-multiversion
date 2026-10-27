@@ -15,6 +15,7 @@ import com.muoniumplayer.core.screens.GuiFfmpegNotice;
 import com.muoniumplayer.core.screens.GuiUpdateNotice;
 import com.muoniumplayer.core.screens.hud.GuiHudEditorPro;
 import com.muoniumplayer.core.screens.hud.ModernUiHudBridge;
+import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.screens.ncm.IslandSearchOverlay;
@@ -471,10 +472,20 @@ public final class MuoniumPlayerClient {
      * <p>仍然压一层变换与绘制状态：业务代码里存在 push/pop 不配对的写法，
      * 压一层能把影响限制在本帧（宿主层每帧还会再兜一次底）。
      */
+    /** 当前打开的界面；无则 null。各版本取法不同，收在这里。 */
+    private static Screen currentScreen() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null) return null;
+        return mc.screen;
+    }
+
     private void onHudRenderUnguarded() {
         // HUD 设置编辑器自带两块 widget 的实时预览；真实 HUD 若照常渲染就与预览同屏各一份。
-        // 整段跳过，只留给编辑器画（编辑器预览走 renderEditorPreview，不经过这里）。
-        if (currentScreenIsHudEditor()) {
+        // 背包/原版设置/聊天等任何其它界面同理：mod 的 HUD 附加层叠在上面挡操作又无意义。
+        // 全屏播放器不走这条回调（自管）；下载进度灵动岛保留——它是主动触发的进度反馈。
+        Screen open = currentScreen();
+        if (open != null && !(open instanceof NCMScreen)
+                && !DownloadDynamicIsland.isDownloadActive()) {
             return;
         }
         api.getGLStateManager().pushAttrib();
@@ -619,11 +630,15 @@ public final class MuoniumPlayerClient {
         // 即时合成的版本可在 Screen 画完后直接刷新底图；避免液态玻璃继续拿到 Screen
         // 出现前缓存的游戏世界。captureTopmostBackdrop 自己限频，失败不影响覆盖层。
         SkijaHost.captureTopmostBackdrop();
-        // HUD 设置界面自己画灵动岛的专用预览，这里再画一次会叠成双层。
-        if (DownloadDynamicIsland.isDownloadActive()
-                || !(screen instanceof GuiHudEditorPro)) {
+        // HUD 设置界面自己画灵动岛的专用预览，这里再画一次会叠成双层；
+        // 背包/原版设置等其它界面也不叠常驻岛与切换动画（全屏播放器自管）。
+        boolean editorOrOtherUi = screen instanceof GuiHudEditorPro
+                || (screen != null && !(screen instanceof NCMScreen));
+        if (DownloadDynamicIsland.isDownloadActive() || !editorOrOtherUi) {
             DownloadDynamicIsland.render();
         }
-        AutomixTransitionAnimation.render();
+        if (!editorOrOtherUi) {
+            AutomixTransitionAnimation.render();
+        }
     }
 }

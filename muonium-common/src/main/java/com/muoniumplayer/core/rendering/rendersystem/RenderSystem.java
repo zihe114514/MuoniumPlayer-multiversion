@@ -128,6 +128,23 @@ public class RenderSystem implements SharedConstants {
     }
 
     /**
+     * 恒定的布局轴宽高（不受 {@link #FIXED_SCALE} 当前状态影响）。
+     *
+     * <p>布局轴 = 「物理窗口归一到 ≤1920 宽后的一半」，一单位对应的物理像素只随真实窗口大小
+     * 变化、与 Minecraft 的 GUI Scale 档位完全无关。{@link #getWidth()} 的返回值取决于调用时
+     * FIXED_SCALE 的状态（HUD 回调里是 GUI 逻辑宽、NCMScreen 里是布局宽），跨两种上下文共享
+     * 几何的代码（HUD widget 的位置/尺寸、编辑器的预览与命中）必须用这一对访问器，否则
+     * 「控件大小跟随游戏 GUI 倍率」「预览与实物对不上」都会回来。</p>
+     */
+    public static double getLayoutWidth() {
+        return getFixedWidth() * .5;
+    }
+
+    public static double getLayoutHeight() {
+        return getFixedHeight() * .5;
+    }
+
+    /**
      * 设置「当前颜色」。位序是 ARGB：f 是 alpha，f1/f2/f3 依次是 R/G/B。
      * 这个顺序看着别扭但不能动——45 个文件按这个约定传色。
      */

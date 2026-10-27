@@ -15,8 +15,10 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 @Mixin(MusicManager.class)
 public interface MusicManagerAccessor {
 
+    // 1.21.11 档的 loom 用 TinyRemapper 织 mixin：@Accessor 只认「无参 getter / 单值 setter」
+    // 的实例形（静态带参形报 "is not getter or setter"，remapJar 直接失败；26.3 的新 loom
+    // 容忍静态形，两树写法从此不同，别随手对齐）。调用点在 MusicManagerDuckMixin 内部，
+    // 那里本来就持有 MusicManager 实例。
     @Accessor("currentMusic")
-    static SoundInstance muonium$getCurrentMusic(MusicManager manager) {
-        throw new AssertionError("accessor 未织入");
-    }
+    SoundInstance muonium$getCurrentMusic();
 }

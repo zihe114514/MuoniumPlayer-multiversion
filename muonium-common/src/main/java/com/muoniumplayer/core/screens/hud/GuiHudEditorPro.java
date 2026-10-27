@@ -72,7 +72,6 @@ public class GuiHudEditorPro extends GuiScreen {
     private static final int PANEL_MARGIN = 12;
     private static final int PANEL_MAX_W = 604;
     private static final int PANEL_MAX_H = 492;
-    private static final int PANEL_MIN_W = 380;
     private static final int HEADER_H = 52;
     private static final int FOOTER_H = 34;
     private static final int NAV_W = 156;
@@ -85,6 +84,8 @@ public class GuiHudEditorPro extends GuiScreen {
     private static final int SEARCH_H = 22;
     private static final int GROUP_HEADER_H = 24;
     private static final int ROW_H = 44;
+    /** 说明折成两行的条目行高。 */
+    private static final int ROW_H_TWO_LINES = 54;
     private static final int CARD_GAP = 8;
     private static final int CARD_RADIUS = 10;
     private static final int EMPTY_STATE_H = 78;
@@ -456,6 +457,10 @@ public class GuiHudEditorPro extends GuiScreen {
             if (adaptive) {
                 mouseX = WindowAdaptiveScale.toLayoutX(mouseX);
                 mouseY = WindowAdaptiveScale.toLayoutY(mouseY);
+                // 自适应分支里全部几何（面板 + HUD 预览段）统一按布局轴书写，这里一次性
+                // 把布局单位放大到 canvas 的 GUI 逻辑坐标（与 NCMScreen 同方向同因子）：
+                // 布局 × correction = GUI 逻辑，再由 canvas 的 guiScale 上屏。于是「每布局
+                // 单位的物理像素」= pixel/布局宽，恒定、与 GUI Scale 档位无关。
                 SharedConstants.api.getGLStateManager().pushMatrix();
                 SharedConstants.api.getGLStateManager().scale(
                         WindowAdaptiveScale.correctionX(), WindowAdaptiveScale.correctionY(), 1);
@@ -515,24 +520,13 @@ public class GuiHudEditorPro extends GuiScreen {
 
             // ==== 两块 HUD 的实时预览与舞台交互（面板之外的区域） ====
             //
-            // 坐标系必须与真实渲染一致：widget 在游戏里的实际绘制走 HUD 回调（GUI 逻辑空间，
-            // 跨度 = RenderSystem 宽高，无任何 correction）。而本界面在自适应布局模式下整体
-            // 乘了 correction（布局空间）。若预览/选框直接用布局空间算，屏幕上就会与真实控件
-            // 差一个 correction 因子 —— 表现为「预览框与实际渲染的大小/位置严重不符」。
-            // 这里把预览整段撤回 GUI 逻辑空间：跨度换回 RenderSystem 宽高，矩阵反向缩放，
-            // 鼠标坐标同样换算，命中与所见继续共用一套几何。
-            float hudSpaceScaleX = 1f;
-            float hudSpaceScaleY = 1f;
-            if (adaptive) {
-                hudSpaceScaleX = (float) WindowAdaptiveScale.correctionX();
-                hudSpaceScaleY = (float) WindowAdaptiveScale.correctionY();
-                SharedConstants.api.getGLStateManager().pushMatrix();
-                SharedConstants.api.getGLStateManager().scale(1f / hudSpaceScaleX, 1f / hudSpaceScaleY, 1);
-            }
-            int hudSpaceWidth = (int) RenderSystem.getWidth();
-            int hudSpaceHeight = (int) RenderSystem.getHeight();
-            int hudMouseX = adaptive ? Math.round(mouseX / hudSpaceScaleX) : mouseX;
-            int hudMouseY = adaptive ? Math.round(mouseY / hudSpaceScaleY) : mouseY;
+            // HUD 预览段与真实渲染同轴：widget 的位置/尺寸走布局轴（getLayoutWidth/Height，
+            // 与 GUI Scale 无关），本段矩阵也是布局轴（上面的 correction），两边的「布局
+            // 单位 → 物理」换算完全一致 —— 预览框、把手、快捷小窗的命中与所见必然重合。
+            // 鼠标已在分支头换算成布局坐标，直接用。
+            int hudSpaceWidth = (int) RenderSystem.getLayoutWidth();
+            int hudSpaceHeight = (int) RenderSystem.getLayoutHeight();
+
             int infoW = (int) (INFO_BASE_W * HudConfig.infoScale);
             int infoH = (int) (INFO_BASE_H * HudConfig.infoScale);
             int infoX = (int) (HudConfig.infoX * (hudSpaceWidth - infoW));
@@ -544,7 +538,8 @@ public class GuiHudEditorPro extends GuiScreen {
             int[] infoRect = { infoX, infoY, infoW, infoH };
             int[] lyricRect = { lyricX, lyricY, lyricW, lyricH };
             // 舞台自己判定点选/拖动/缩放并写回 HudConfig；松手有改动时才落一次盘。
-            boolean stageDirty = stage.update(lmb && !uiBusy, uiBusy ? 0 : wheel, hudMouseX, hudMouseY,
+            // 鼠标坐标已在上面的 adaptive 分支换算成布局轴，与 rect 同轴。
+            boolean stageDirty = stage.update(lmb && !uiBusy, uiBusy ? 0 : wheel, mouseX, mouseY,
                     infoRect, lyricRect, new int[] { INFO_BASE_W, INFO_BASE_H }, hudSpaceWidth, hudSpaceHeight);
             if (stageDirty) HudConfig.save();
 
@@ -558,10 +553,7 @@ public class GuiHudEditorPro extends GuiScreen {
             } else {
                 drawLyricsPlaceholder(fr, lyricX, lyricY, lyricW, lyricH);
             }
-            drawStageOverlays(fr, infoRect, lyricRect, hudMouseX, hudMouseY);
-            if (adaptive) {
-                SharedConstants.api.getGLStateManager().popMatrix();
-            }
+            drawStageOverlays(fr, infoRect, lyricRect, mouseX, mouseY);
 
             // ==== 设置面板 ====
             layerAlpha = plate;
@@ -657,22 +649,37 @@ public class GuiHudEditorPro extends GuiScreen {
         WindowAdaptiveScale.end();
     }
 
+    /**
+     * 面板初始尺寸：全设备统一的窗口占比，而不是固定像素。
+     *
+     * <p>布局空间（{@code min(物理宽,1920)/2} 那条轴）里，一单位的物理大小随设备大幅变化：
+     * 1080p 桌面 ≈1 物理像素、4K/高分本 ≈2、手机横屏外接 ≈1.2——固定 604×492 在老笔记本上占
+     * 宽 88%、在窗口化小屏上 94%，玩家看到的就是「比例巨大」。占比驱动的尺寸让面板在任何
+     * 设备上的初始观感一致：横屏恒占窗口宽的 46%、高的 62%（1080p 桌面 ≈ 880×620 物理像素，
+     * 观感克制且和旧版同档）；竖屏（高 &gt; 宽 ×1.3，手机竖持）转窄高形态，占宽 46%、高 86%。
+     * 绝对上限/下限仍在：超小窗口不小于最小可用宽度，超大屏不无限铺开。</p>
+     */
+    private static final int PANEL_MIN_W = 340;
+    private static final int PANEL_MIN_H = 320;
+
     private int panelWidth() {
-        // 上限是双重的：绝对值（604）管大屏「别无限铺开」，比例封顶（窗口的 52%）管小屏
-        // 「别铺满整屏」。自适应坐标层只保证面板跨 GUI Scale 恒定 —— 布局空间里 604 单位在
-        // 高分屏上恒等于 2×604 物理像素，窗口一矮（手机外接屏 960x434 那类），固定 492 高的
-        // 面板钳完还能占屏高 94%，这就是玩家看到的「页面比例巨大」。比例封顶后小窗口下面板
-        // 跟着窗口收缩，内容列由既有的滚动与压缩逻辑消化。
-        int proportionalCap = (int) (width * 0.52f);
-        return Math.max(PANEL_MIN_W, Math.min(Math.min(PANEL_MAX_W, proportionalCap),
-                width - PANEL_MARGIN * 2));
+        boolean portrait = height > width * 1.3f;
+        int ideal = (int) (width * 0.46f);
+        int cap = portrait ? 460 : PANEL_MAX_W;
+        return Math.max(Math.min(PANEL_MIN_W, width - PANEL_MARGIN * 2),
+                Math.min(cap, Math.min(ideal, width - PANEL_MARGIN * 2)));
     }
 
     private int panelHeight() {
         if (collapsed) return COLLAPSED_H;
-        int proportionalCap = (int) (height * 0.88f);
-        return Math.max(260, Math.min(Math.min(PANEL_MAX_H, proportionalCap),
-                height - PANEL_MARGIN * 2));
+        boolean portrait = height > width * 1.3f;
+        if (portrait) {
+            // 竖屏下面板是纵向长列表，高度跟随窗口（无绝对上限），竖持手机上占高 86%。
+            return Math.max(Math.min(PANEL_MIN_H, height - PANEL_MARGIN * 2),
+                    Math.min(height * 86 / 100, height - PANEL_MARGIN * 2));
+        }
+        return Math.max(Math.min(PANEL_MIN_H, height - PANEL_MARGIN * 2),
+                Math.min(PANEL_MAX_H, Math.min((int) (height * 0.72f), height - PANEL_MARGIN * 2)));
     }
 
     /**
@@ -1179,7 +1186,13 @@ public class GuiHudEditorPro extends GuiScreen {
         int cardTop = cursor;
         for (int index = 0; index < visible.size(); index++) {
             HudSettingsModel.Entry entry = visible.get(index);
-            int h = entry.kind == HudSettingsModel.Kind.THEME_GRID ? themeGridHeight() + 14 : ROW_H;
+            // 行高跟内容走：说明折成两行的条目给 54px（第二行 y+33 起、12px 字底缘 y+45，
+            // 44px 的行会把第二行压到分隔线上——频谱这类长说明被裁得最狠）；
+            // 单行说明维持 44。取色/下拉等控件垂直居中不受影响。
+            int h = entry.kind == HudSettingsModel.Kind.THEME_GRID ? themeGridHeight() + 14
+                    : (entry.description != null && rowW > 0
+                        && FontManager.pf12 != null
+                        && FontManager.pf12.getStringWidth(entry.description) > (rowW - CONTENT_PAD * 2 - controlWidthOf(entry)) ? ROW_H_TWO_LINES : ROW_H);
             rows.add(new Row(entry, entry.getLabel(), null, accent, rowX, cursor, rowW, h,
                     index == 0, index == visible.size() - 1, false, slot));
             cursor += h;
@@ -1310,6 +1323,24 @@ public class GuiHudEditorPro extends GuiScreen {
         if (row.entry.isLocked()) {
             drawRoundedRect(row.x + 2, row.y + 1, row.w - 4, row.h - 2, CARD_RADIUS - 3,
                     0x96141A22);
+        }
+    }
+
+    /** 该条目右侧控件的估算宽度（与 controlLeft 同一口径），用于判断说明是否折行。 */
+    private static int controlWidthOf(HudSettingsModel.Entry entry) {
+        switch (entry.kind) {
+            case SLIDER:
+                return VALUE_W + TRACK_W;
+            case TOGGLE:
+                return SWITCH_W;
+            case COLOR:
+                return SWATCH_W;
+            case CHOICE:
+                return choicePillWidth(FontManager.pf12, entry.getValueText());
+            case ACTION:
+                return actionButtonWidth(FontManager.pf12, entry.getLabel());
+            default:
+                return 0;
         }
     }
 
@@ -2394,16 +2425,18 @@ public class GuiHudEditorPro extends GuiScreen {
         return kind == HudOverlayStage.Kind.INFO ? "歌曲信息" : "桌面歌词";
     }
 
-    /** 从配置算某块叠加层当前的屏幕矩形（与 drawScreen 同一套公式）。 */
+    /** 从配置算某块叠加层当前的屏幕矩形（布局轴，与 drawScreen 的 HUD 段同一套公式）。 */
     private int[] widgetRect(HudOverlayStage.Kind kind) {
         if (kind == HudOverlayStage.Kind.INFO) {
             int w = (int) (INFO_BASE_W * HudConfig.infoScale);
             int h = (int) (INFO_BASE_H * HudConfig.infoScale);
-            return new int[] { (int) (HudConfig.infoX * (width - w)), (int) (HudConfig.infoY * (height - h)), w, h };
+            return new int[] { (int) (HudConfig.infoX * (RenderSystem.getLayoutWidth() - w)),
+                    (int) (HudConfig.infoY * (RenderSystem.getLayoutHeight() - h)), w, h };
         }
         int w = (int) (HudConfig.lyricWidth * HudConfig.lyricScale);
         int h = (int) (HudConfig.lyricHeight * HudConfig.lyricScale);
-        return new int[] { (int) (HudConfig.lyricX * (width - w)), (int) (HudConfig.lyricY * (height - h)), w, h };
+        return new int[] { (int) (HudConfig.lyricX * (RenderSystem.getLayoutWidth() - w)),
+                (int) (HudConfig.lyricY * (RenderSystem.getLayoutHeight() - h)), w, h };
     }
 
     private int widgetPopoverH() {
@@ -2420,8 +2453,11 @@ public class GuiHudEditorPro extends GuiScreen {
 
     private int[] widgetPopoverBounds() {
         if (!stage.hasSelection()) return new int[] { 0, 0, WIDGET_POPOVER_W, widgetPopoverH() };
+        // 小窗与它锚定的 widget 同处布局轴：widgetRect 是布局坐标，屏幕跨度也必须是布局宽高
+        // （width/height 此时是 GUI 逻辑或布局取决于调用点，直接用会跨轴）。
         return HudOverlayStage.popoverBounds(widgetRect(stage.selected()),
-                WIDGET_POPOVER_W, widgetPopoverH(), width, height);
+                WIDGET_POPOVER_W, widgetPopoverH(),
+                (int) RenderSystem.getLayoutWidth(), (int) RenderSystem.getLayoutHeight());
     }
 
     /**
@@ -2463,7 +2499,7 @@ public class GuiHudEditorPro extends GuiScreen {
             // 尺寸读数气泡：拖把手时贴着选中块上沿中央，颜色跟块的 accent。
             int textW = fr.getStringWidth(stage.bubble);
             int chipW = textW + 18;
-            int chipX = Math.max(4, Math.min(width - chipW - 4, r[0] + (r[2] - chipW) / 2));
+            int chipX = Math.max(4, Math.min((int) RenderSystem.getLayoutWidth() - chipW - 4, r[0] + (r[2] - chipW) / 2));
             int chipY = Math.max(4, r[1] - 24);
             drawRoundedRect(chipX, chipY, chipW, 18, 9, 0xE61A202A);
             drawText(FontManager.pf12bold, stage.bubble, chipX + 9, chipY + 5, accent);
@@ -2555,7 +2591,8 @@ public class GuiHudEditorPro extends GuiScreen {
         SkijaGfx.pushMatrix();
         try {
             SkijaGfx.setBlendMode(SkijaGfx.fromGlBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA));
-            info.widget.render();
+            int[] rect = widgetRect(HudOverlayStage.Kind.INFO);
+            info.renderEditorPreview(rect[0], rect[1], HudConfig.infoScale);
         } finally {
             SkijaGfx.popMatrix();
             SkijaGfx.popAttrib();

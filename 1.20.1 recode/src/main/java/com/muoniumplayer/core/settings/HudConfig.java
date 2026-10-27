@@ -425,6 +425,11 @@ public final class HudConfig {
 
     /** 全局下载灵动岛。 */
     /** Passive FFT visualizer: no analysis jobs while neither HUD nor player consumes it. */
+    /** 歌曲信息 HUD 组件显隐（编辑器/快捷键切换，随存档走）。 */
+    public static boolean musicInfoEnabled = true;
+    /** 桌面歌词 HUD 组件显隐（编辑器/快捷键切换，随存档走）。 */
+    public static boolean musicLyricsEnabled = true;
+
     public static boolean spectrumEnabled = true;
     public static boolean spectrumInHud = true;
     /** HUD presentation: 0 = full-width bottom spectrum (default), 1 = split wings. */
@@ -954,6 +959,8 @@ public final class HudConfig {
             secondaryOpacity = clamp(getFloat(o, "secondaryOpacity", secondaryOpacity), 0.30f, 1.0f);
 
             spectrumEnabled = getBoolean(o, "spectrumEnabled", spectrumEnabled);
+            musicInfoEnabled = getBoolean(o, "musicInfoEnabled", musicInfoEnabled);
+            musicLyricsEnabled = getBoolean(o, "musicLyricsEnabled", musicLyricsEnabled);
             spectrumInHud = getBoolean(o, "spectrumInHud", spectrumInHud);
             spectrumHudStyle = clampInt(getInt(o, "spectrumHudStyle", spectrumHudStyle), 0, 1);
             spectrumInPlayer = getBoolean(o, "spectrumInPlayer", spectrumInPlayer);
@@ -1140,6 +1147,8 @@ public final class HudConfig {
             o.addProperty("secondaryOpacity", secondaryOpacity);
 
             o.addProperty("spectrumEnabled", spectrumEnabled);
+        o.addProperty("musicInfoEnabled", musicInfoEnabled);
+        o.addProperty("musicLyricsEnabled", musicLyricsEnabled);
             o.addProperty("spectrumInHud", spectrumInHud);
             o.addProperty("spectrumHudStyle", spectrumHudStyle);
             o.addProperty("spectrumInPlayer", spectrumInPlayer);
