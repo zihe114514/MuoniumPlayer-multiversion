@@ -233,6 +233,13 @@ public final class WorldLyricsState {
 
         /** Above ground：歌词中心不低于眼睛下方 0.5 格（不沉进地面）。 */
         default boolean aboveGround() { return false; }
+
+        /**
+         * 更激进的适配：光影包激活时歌词推迟到 HUD 阶段（光影后处理链之后）用原版
+         * 着色器直画 —— 光影的打光/雾/色调映射/后处理完全碰不到歌词。只在树侧的
+         * 绘制编排里读，状态机不感知。
+         */
+        default boolean hudDraw() { return false; }
     }
 
     /** 一行歌词这一帧的最终落点与字形状态，渲染层只读。 */

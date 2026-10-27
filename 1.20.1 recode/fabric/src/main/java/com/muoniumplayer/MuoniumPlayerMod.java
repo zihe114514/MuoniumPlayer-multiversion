@@ -53,6 +53,10 @@ public class MuoniumPlayerMod implements ClientModInitializer {
 
         // 4. 事件挂点
         ClientTickEvents.END_CLIENT_TICK.register(client::onClientTick);
+        // 更激进的适配：光影包激活时 3D 歌词推迟到 HUD 阶段直画（Oculus 后处理链之后）。
+        // 注册序 = 调用序，放在 HUD 回调之前 → 歌词画在 HUD 之下。
+        HudRenderCallback.EVENT.register((drawContext, tickDelta) ->
+                com.muoniumplayer.compat.mc.WorldLyricsBridge.hudPhaseDraw());
         HudRenderCallback.EVENT.register((drawContext, tickDelta) -> {
             client.onHudRender();
             // 第二行是给「渲染层没起来」时的原版 GUI 提示：Skia 那条路整个跳过时，

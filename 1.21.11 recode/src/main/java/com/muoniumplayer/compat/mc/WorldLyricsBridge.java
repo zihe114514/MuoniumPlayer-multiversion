@@ -96,6 +96,14 @@ public final class WorldLyricsBridge {
             // 0. 光影包探测（帧头一次，本帧内渲染层读缓存值）：
             //    光影包激活时 WorldBillboard 改走信标全亮程序（ShaderPackProbe 类注释）
             ShaderPackProbe.refresh();
+            // 「更激进的适配」关闭沿检测：HUD 阶段的连续失败可能把渲染器锁死，
+            // 用户关掉开关回到世界阶段路径时立即恢复（不用重启游戏）。
+            if (tracedHudDraw && !HudConfig.worldLyricsHudDraw) {
+                com.muoniumplayer.core.lyrics3d.WorldLyricsRenderer.clearBrokenLatch();
+                hudDrawMisses = 0;
+                if (TRACE) System.out.println("[WorldLyrics/trace] 更激进的适配已关闭：渲染器锁已清除，恢复世界阶段绘制");
+            }
+            tracedHudDraw = HudConfig.worldLyricsHudDraw;
             if (TRACE) {
                 boolean shaderNow = ShaderPackProbe.isActive();
                 if (shaderNow != tracedShaderActive) {
@@ -104,6 +112,10 @@ public final class WorldLyricsBridge {
                             + (shaderNow ? "光影模式（信标全亮程序）" : "普通模式（textSeeThrough）"));
                 }
             }
+
+            // 0.5 更激进的适配（hudDraw）：1.21.11 暂不启用 —— GUI 已 deferred 化（GuiGraphicsExtractor），
+            // 回调期间即时 endBatch 实测不落最终画面；需等 renderpearl 原生 HUD 提交通路。
+            // 这里恒走世界阶段绘制（beaconBeam 路由），开关在本树是无害的 no-op。
 
             // 1. 镜头转向自己算（相机朝向独立计算）
             Matrix4f basePose = new Matrix4f()
@@ -139,6 +151,29 @@ public final class WorldLyricsBridge {
             broken = true;
             logger.error("3D 歌词渲染失败，已整体停用（重启游戏恢复）", t);
         }
+    }
+
+    // ==================== 更激进的适配：HUD 阶段直画（1.21.11 暂不启用） ====================
+
+    // 1.21.11 的 GUI 已全面 deferred 化（GuiGraphicsExtractor）：HudRenderCallback
+    // 回调期间用 BufferSource 即时 endBatch 的顶点不落最终画面（实测隐形）——
+    // 即时通路要等 renderpearl 原生的 HUD 提交（低层 RenderPass + 私有顶点缓冲），
+    // 投入产出比当前不成立。开关在本树是无害的 no-op，世界阶段恒走 beaconBeam
+    // 路由（光影加工的版本）。字段暂留占位：hudDrawMisses/tracedHudDraw 供
+    // 未来接入 renderpearl 通路时复用。
+    private static int hudDrawMisses;
+    private static boolean tracedHudDraw;
+
+    /**
+     * HUD 阶段直画入口（fabric HudRenderCallback / neoforge RenderGuiEvent.Pre 调）。
+     * Iris 的 composite + finalPass 已写完主帧缓冲且 isRenderingWorld 已复位 ——
+     * 原版 textSeeThrough 直出「无光影时的样子」。投影用世界阶段捕获的透视矩阵，
+     * GUI 正交投影先备份后还原。
+     */
+    public static void hudPhaseDraw() {
+        if (broken || !HudConfig.worldLyricsEnabled) return;
+        // 1.21.11：HUD 直画通路暂不启用（见 worldRenderEnd 注释）—— 恒 no-op。
+        hudDrawMisses = 0;
     }
 
     private static void renderInner(Matrix4f basePose, Minecraft mc, Camera camera) {

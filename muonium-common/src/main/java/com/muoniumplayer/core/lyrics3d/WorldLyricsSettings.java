@@ -22,6 +22,7 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     @Override public boolean huiguang() { return huiguang; }
     @Override public boolean stayOnScreen() { return stayOnScreen; }
     @Override public boolean aboveGround() { return aboveGround; }
+    @Override public boolean hudDraw() { return hudDraw; }
 
     public boolean enabled;
     public double distance = 10.5;
@@ -49,6 +50,9 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     public boolean stayOnScreen;
     /** Above ground：歌词中心不低于眼睛下方 0.5 格。 */
     public boolean aboveGround;
+    /** 更激进的适配（hudDraw）：光影包激活时绕开光影管线，推迟到 HUD 阶段用原版
+     *  着色器画在最终画面上 —— 观感与无光影时一致，光影的打光/雾/后处理不再碰歌词。 */
+    public boolean hudDraw;
     /** 绘光关键字表（folia wordColors）：格式「词:RRGGBB,词:RRGGBB,…」；空 = 无关键字。 */
     public String keywordColors = "";
 
@@ -79,6 +83,7 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
         s.huiguang = HudConfig.worldLyricsHuiguang;
         s.stayOnScreen = HudConfig.worldLyricsStayOnScreen;
         s.aboveGround = HudConfig.worldLyricsAboveGround;
+        s.hudDraw = HudConfig.worldLyricsHudDraw;
         s.keywordColors = HudConfig.worldLyricsKeywordColors != null
                 ? HudConfig.worldLyricsKeywordColors : "";
         if (!s.glowEnabled) s.glowStrength = 0f;

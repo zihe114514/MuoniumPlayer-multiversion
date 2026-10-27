@@ -206,6 +206,16 @@ public final class WorldLyricsRenderer {
     /** 渲染层整体停用旗标（Bridge 一并在入口短路）。 */
     private static volatile boolean broken;
 
+    /**
+     * 用户自恢复口：清掉连续失败锁与停用旗标。Bridge 在「更激进的适配」开关刚被
+     * 关掉时调用 —— HUD 阶段的绘制环境与世界阶段不同，可能造成连续失败把这里
+     * 锁死；用户关掉开关回到世界阶段路径时应立即恢复，而不是重启游戏。
+     */
+    public static void clearBrokenLatch() {
+        broken = false;
+        consecutiveFailures = 0;
+    }
+
     private static void renderGuarded(WorldLyricsState state, WorldLyricsState.CameraView camera,
                                       WorldLyricsSettings settings, Host host, long nowNanos) {
         if (broken || !settings.enabled || !WorldLyricsState.hasLyrics() || camera == null || host == null) {

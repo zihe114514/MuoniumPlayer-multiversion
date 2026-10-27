@@ -62,6 +62,12 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     // ==================== 光影包适配：渲染类型单点分发 ====================
 
     /**
+     * HUD 阶段直画（「更激进的适配」）时强制原版 textSeeThrough：此时 Iris 已收工，
+     * 原版着色器就是「无光影的样子」；beaconBeam 信标类型只在光影管线的世界阶段有意义。
+     */
+    static boolean forceVanillaType;
+
+    /**
      * 光影包激活时的渲染类型：信标光柱程序（全亮、不采样光照图、无 alpha 裁剪）
      * + 我们的动态纹理 + 半透明混合 + 无深度测试。其余状态镜像 textSeeThrough。
      * 每纹理懒建并缓存 —— RenderType 是无状态对象，同纹理复用同一实例
@@ -94,14 +100,16 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 挂起合批不会跨模式串批（模式若在帧间翻转，挂起键在 begin 里重置）。
      */
     private RenderType currentGlyphType(ResourceLocation pageRl) {
-        return ShaderPackProbe.isActive() ? shaderTextType(pageRl)
-                : RenderType.textSeeThrough(pageRl);
+        return forceVanillaType || !ShaderPackProbe.isActive()
+                ? RenderType.textSeeThrough(pageRl)
+                : shaderTextType(pageRl);
     }
 
     /** 同 {@link #currentGlyphType}，特效通道（拖尾/光晕/星芒/爆闪/环/拖尾画布）。 */
     private RenderType currentEffectType(ResourceLocation rl) {
-        return ShaderPackProbe.isActive() ? shaderTextType(rl)
-                : RenderType.textSeeThrough(rl);
+        return forceVanillaType || !ShaderPackProbe.isActive()
+                ? RenderType.textSeeThrough(rl)
+                : shaderTextType(rl);
     }
 
     /** 事件入口（worldRenderEnd 的矩阵在 Bridge 里已设好）。 */

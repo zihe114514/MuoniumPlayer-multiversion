@@ -1849,6 +1849,33 @@ public class CloudMusic implements SharedConstants {
                         System.err.println("[Music/Switch] 自动换源流水线异常 "
                                 + song.getStableKey() + ": " + failure);
                     }
+                } else if (!lxStillLoading) {
+                    // 账本拦住了重搜（10 分钟内这首已经自动换过一次源），但成功账里可能
+                    // 躺着上次验证过的替身：用户从歌单重播这首歌时点到的还是原曲对象，
+                    // 「明明换过源的重播却报无音频源」说的就是这一步。直链不缓存，重新
+                    // 解析一次（几秒）；替身这次要是也取不到流，还有第二级触发兜底。
+                    replacement = CrossSourceSwitcher.knownReplacementFor(song);
+                    if (replacement != null) {
+                        replacement.url = null;
+                        DownloadDynamicIsland.showCrossSourceSearching(song.getName());
+                    }
+                }
+                if (replacement != null && replacement.url == null) {
+                    // 成功账路径：Match 不带直链，对替身重新取流；取不到按没找到处理。
+                    try {
+                        Tuple<String, String> standInUrl = replacement.music.getPlayUrl();
+                        if (standInUrl != null && !isPlaybackCancelled() && !playListChanged()) {
+                            replacement.url = standInUrl;
+                        }
+                    } catch (Throwable failure) {
+                        System.err.println("[Music/Switch] 已知替身重新取流失败 "
+                                + replacement.music.getStableKey() + ": " + failure);
+                    }
+                    if (replacement.url == null) {
+                        // 已知替身也取不到流了（脚本关了/候选下架）：成功账过期，下次重搜。
+                        CrossSourceSwitcher.expireKnownReplacement(replacement.music);
+                        replacement = null;
+                    }
                 }
                 if (replacement == null || isPlaybackCancelled() || playListChanged()) {
                     // 用户在流水线跑的十几秒里切了歌：这张失败通报不属于眼前这首，
@@ -3296,19 +3323,29 @@ public class CloudMusic implements SharedConstants {
          */
         private void armCrossSourceRescue(Music song, int index, long armGeneration, long armRevision,
                                           String failureHint) {
-            if (armTrialSwitches >= 2 || !CrossSourceSwitcher.canAutoSwitch(song)) {
+            if (armTrialSwitches >= 2) {
                 if (failureHint != null) {
                     DownloadDynamicIsland.showPlaybackFailure(song.getName(), failureHint);
                 }
                 return;
             }
-            DownloadDynamicIsland.showCrossSourceSearching(song.getName());
             CrossSourceSwitcher.Match replacement = null;
-            try {
-                replacement = CrossSourceSwitcher.findReplacementForAuto(song, CloudMusic.quality);
-            } catch (Throwable failure) {
-                System.err.println("[Music/Switch] 预备期换源流水线异常 "
-                        + song.getStableKey() + ": " + failure);
+            if (CrossSourceSwitcher.canAutoSwitch(song)) {
+                DownloadDynamicIsland.showCrossSourceSearching(song.getName());
+                try {
+                    replacement = CrossSourceSwitcher.findReplacementForAuto(song, CloudMusic.quality);
+                } catch (Throwable failure) {
+                    System.err.println("[Music/Switch] 预备期换源流水线异常 "
+                            + song.getStableKey() + ": " + failure);
+                }
+            } else {
+                // 账拦住了重搜（10 分钟内换过）：成功账里有验证过的替身就直接采用 ——
+                // 不用它的旧直链（分钟级过期），录取后下一轮 arm 会对替身重新取流预备。
+                replacement = CrossSourceSwitcher.knownReplacementFor(song);
+                if (replacement != null) {
+                    replacement.url = null;
+                    DownloadDynamicIsland.showCrossSourceSearching(song.getName());
+                }
             }
             if (replacement == null) {
                 // 预备期没换成不报错：这一首真到队尾时 playSong 的三级触发还会再兜一次，

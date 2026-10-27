@@ -861,6 +861,17 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         }, () -> HudConfig.worldLyricsEnabled),
+                                toggle("更激进的适配", "光影包激活时，歌词完全绕开光影管线：推迟到光影后处理链全部跑完之后，用原版着色器画在最终画面上 —— 观感与不开光影时一致（代价：歌词会画在 HUD 之下、且不再与云/玻璃等世界元素有前后关系）。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsHudDraw;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsHudDraw = !HudConfig.worldLyricsHudDraw;
+                                                saveNow();
+                                            }
+                                        }, () -> HudConfig.worldLyricsEnabled),
                                 toggle("现代化渲染", "开 = Skija 超采样矢量字形 + 高级发光烘焙，跟随界面字体设置；关 = 原版像素字体。动效组里的心象与绘光也依赖它。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {

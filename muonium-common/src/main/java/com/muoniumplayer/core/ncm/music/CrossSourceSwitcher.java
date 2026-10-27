@@ -157,6 +157,19 @@ public final class CrossSourceSwitcher {
      */
     private static final Map<String, Long> AUTO_ATTEMPTED =
             new ConcurrentHashMap<String, Long>();
+    /**
+     * 「这首的死流原曲 → 已验证可播的替身」成功账。
+     *
+     * <p>只记失败不记成功是半个账本：录取点把替身写进播放队列的那一格，但用户从歌单
+     * （面板列表持的还是原曲对象）重新点这首歌时，点到的仍是死流原曲 —— 官方链路对它
+     * 还是死的，自动换源又被 AUTO_ATTEMPTED/负缓存拦住（防重烧额度，本意没错），
+     * 结果就是「这首明明刚换过源，重播却报没有可用音频源」。成功账让重播直接采用
+     * 已知的替身：一次搜索服务整张歌单里的所有格。直链刻意不存 —— 它按分钟过期，
+     * 存 URL 只会让重播拿到死链；存替身本体，取流交给 {@code getPlayUrl} 重跑。
+     * 与负缓存同窗口过期，超 512 条整体清空。</p>
+     */
+    private static final Map<String, Music> KNOWN_REPLACEMENTS =
+            new ConcurrentHashMap<String, Music>();
     private static final Set<String> IN_FLIGHT =
             Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
 
@@ -176,10 +189,16 @@ public final class CrossSourceSwitcher {
 
     // ── 对外入口 ────────────────────────────────────────────────────────────
 
-    /** 一次换源的结果：新曲目本体 + 已验证可播的直链 + 匹配度。 */
+    /**
+     * 一次换源的结果：新曲目本体 + 已验证可播的直链 + 匹配度。
+     *
+     * <p>{@code url} 为 null 表示来自成功账（{@link #knownReplacementFor}）——替身可信、
+     * 直链已过期，调用方必须对替身重新 {@code getPlayUrl()} 取流，不能直接用 url。
+     * 字段刻意非 final：成功账路径是「先发 Match 再补直链」，补完才算一次完整录取。</p>
+     */
     public static final class Match {
         public final Music music;
-        public final Tuple<String, String> url;
+        public Tuple<String, String> url;
         public final double score;
         public final String platformLabel;
 
@@ -361,7 +380,36 @@ public final class CrossSourceSwitcher {
             if (AUTO_ATTEMPTED.size() > GUARD_SET_LIMIT) AUTO_ATTEMPTED.clear();
             AUTO_ATTEMPTED.put(key, System.currentTimeMillis());
         }
-        return findReplacement(current, quality);
+        Match match = findReplacement(current, quality);
+        // 成功也要落账：重播这首歌（用户从歌单点的是原曲对象）时账本会拦住重搜，
+        // 没有这份成功账，「明明换过源的重播却报无音频源」就是必然。
+        if (match != null && key != null && !key.isEmpty()) {
+            if (KNOWN_REPLACEMENTS.size() > GUARD_SET_LIMIT) KNOWN_REPLACEMENTS.clear();
+            KNOWN_REPLACEMENTS.put(key, match.music);
+        }
+        return match;
+    }
+
+    /**
+     * 这首死流原曲是否已有验证过的替身（成功账）；有就基于它拼一次录取。
+     *
+     * <p>给自动触发被 {@code AUTO_ATTEMPTED}/负缓存拦住时的兜底用：直链不缓存，
+     * {@code url} 交回调用方重新解析（分钟级过期，旧链只会 403）。</p>
+     */
+    public static Match knownReplacementFor(Music current) {
+        if (current == null) return null;
+        String key = current.getStableKey();
+        if (key == null || key.isEmpty()) return null;
+        Music standIn = KNOWN_REPLACEMENTS.get(key);
+        if (standIn == null || standIn.equals(current)) return null;
+        return new Match(standIn, null, 1.0,
+                standIn.getSource() == null ? "其他平台" : standIn.getSource().getDisplayName());
+    }
+
+    /** 已知替身这次也取不到流了（脚本关了/候选下架）：账过期，下次重播给一次重搜。 */
+    public static void expireKnownReplacement(Music standIn) {
+        if (standIn == null) return;
+        KNOWN_REPLACEMENTS.values().removeIf(music -> music == standIn || music.equals(standIn));
     }
 
     /**
