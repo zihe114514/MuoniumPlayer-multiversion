@@ -900,9 +900,14 @@ public final class WorldLyricsState {
                     Math.min(1.0, (camera.eyeY() - groundFloor) / len))));
             lowLim = Math.min(lowLim, floorPitch - playerPitch);
         }
-        double tYaw = Math.max(-hLim, Math.min(hLim, dYaw));
-        double tPitch = lowLim >= -vLim
-                ? Math.max(-vLim, Math.min(lowLim, dPitch))
+        // 回屏目标收进边缘内侧 4°：钳制目标若正好是视野边缘，视野外的句子会被
+        // 拉到边缘「停住」——用户看到的是它停在画面边缘线上而不是回到画面里。
+        // 收进内侧让它明显回到视野中，之后由正常的边缘钳制接管。
+        double innerH = Math.max(0.0, hLim - 4.0);
+        double innerV = Math.max(0.0, vLim - 4.0);
+        double tYaw = Math.max(-innerH, Math.min(innerH, dYaw));
+        double tPitch = lowLim >= -innerV
+                ? Math.max(-innerV, Math.min(lowLim, dPitch))
                 : lowLim;
 
         // 偏出去多少（边界以内就是 0）
