@@ -104,6 +104,9 @@ final class LyricPresentRenderer {
     private static int uTexLoc;
     /** 窗口像素尺寸（presentComposite 每帧传入，视口用）。 */
     private static volatile int windowWidth = 1, windowHeight = 1;
+    /** 诊断：最近一次 draw 实际提交的 quad 数 / 采集端累计拒绝数（缓冲满/段满）。 */
+    private static volatile int lastDrawnQuads;
+    private static int rejectedQuads;
 
     static void setWindowSize(int w, int h) {
         if (w > 0 && h > 0) { windowWidth = w; windowHeight = h; }
@@ -135,11 +138,11 @@ final class LyricPresentRenderer {
                         int argb) {
         if (FAILED.get() || capturedDone()) return;
         Batch b = batches[front];
-        if (b.quadCount >= MAX_QUADS) return;
+        if (b.quadCount >= MAX_QUADS) { rejectedQuads++; return; }
         int tex = texGlId;
         // 跨页开新段（同页连续 quad 归同段；页序即绘制序）
         if (segCount == 0 || segTexIds[segCount - 1] != tex) {
-            if (segCount >= segTexIds.length) return;
+            if (segCount >= segTexIds.length) { rejectedQuads++; return; }
             segTexIds[segCount] = tex;
             segQuadStart[segCount] = b.quadCount;
             segQuadCount[segCount] = 0;
@@ -177,6 +180,16 @@ final class LyricPresentRenderer {
 
     static int quadCount() {
         return batches[front].quadCount;
+    }
+
+    /** 诊断：最近一次 draw 实际提交的 quad 数；-1 = 尚未 draw 过。 */
+    static int lastDrawnQuads() {
+        return lastDrawnQuads;
+    }
+
+    /** 诊断：采集端累计拒绝的 quad 数（缓冲/段表满）。 */
+    static int rejectedQuads() {
+        return rejectedQuads;
     }
 
     /** 丢弃当前帧采集（异常/矩阵不可用路径）。 */
@@ -241,6 +254,7 @@ final class LyricPresentRenderer {
                         GL11.GL_UNSIGNED_INT, segQuadStart[s] * 6L * 4);
                 drawn += segQuadCount[s];
             }
+            lastDrawnQuads = drawn;
             GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
             GL30.glBindVertexArray(0);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);

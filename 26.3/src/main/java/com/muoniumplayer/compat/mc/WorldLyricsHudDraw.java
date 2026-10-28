@@ -63,7 +63,12 @@ public final class WorldLyricsHudDraw {
 
     /**
      * 采集帧的收尾（collectInner 完成后调）：本帧采到顶点则标记成功；
-     * 连续 12 帧没采到（图集全回退/异常）→ 回退世界路由。
+     * 连续 120 帧（约 2~6 秒）没采到才回退世界路由。
+     *
+     * <p>为什么不能太敏感：字形图集按帧预算烘焙（每帧 4 格），换句歌词的最初几帧
+     * 新字还没烘出来、huiguang 模式下静默跳过 —— 采集天然会间歇空几帧
+     * （2026-10-28 真机日志：quads 40→0→13 交替）。12 帧就回退会把这种正常
+     * 窗口误判成通路不可用，造成「回退打印刷屏 + 世界路由双画」。</p>
      *
      * @param captured 本帧是否采到顶点
      * @return true = 采集成功、本帧跳过世界 submit；false = 回退世界路由
@@ -77,13 +82,13 @@ public final class WorldLyricsHudDraw {
             }
             return true;
         }
-        if (presentMisses < 12) {
+        if (presentMisses < 120) {
             presentMisses++;
             return true;
         }
-        if (presentMisses == 12) {
-            // 首次兜底无条件打印（用户侧排障不依赖 -D 开关）
-            System.out.println("[MuoniumPlayer/WorldLyrics] present 兜底直画连续 12 帧未完成，"
+        if (presentMisses == 120) {
+            presentMisses++; // 只打一次；之后保持 >120 恒 false，不再刷屏
+            System.out.println("[MuoniumPlayer/WorldLyrics] present 兜底采集连续 120 帧为空，"
                     + "已回退到世界阶段绘制（光影会加工歌词；开着更激进的适配却没生效"
                     + "多半是 present 直画在此环境不可用）");
         }
@@ -120,7 +125,9 @@ public final class WorldLyricsHudDraw {
             }
             if (diagFrame++ % 60 == 0) {
                 System.out.println("[WorldLyrics/diag][present] cam(yaw=" + crs.yRot + " pitch=" + crs.xRot
-                        + ") quads=" + LyricPresentRenderer.quadCount() + " activePos="
+                        + ") quads=" + LyricPresentRenderer.quadCount()
+                        + " drawn=" + LyricPresentRenderer.lastDrawnQuads()
+                        + " rej=" + LyricPresentRenderer.rejectedQuads() + " activePos="
                         + com.muoniumplayer.core.lyrics3d.WorldLyricsState.activeLineDebugPos());
             }
             com.mojang.blaze3d.platform.Window win = mc.getWindow();
