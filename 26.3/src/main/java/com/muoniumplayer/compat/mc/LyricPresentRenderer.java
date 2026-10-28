@@ -6,6 +6,8 @@ import org.lwjgl.opengl.GL14;
 import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL30;
+import org.lwjgl.opengl.GL31;
+import org.lwjgl.opengl.GL33;
 import org.lwjgl.system.MemoryStack;
 
 import java.nio.FloatBuffer;
@@ -46,7 +48,7 @@ final class LyricPresentRenderer {
     private static final int FLOATS_PER_QUAD = FLOATS_PER_VERTEX * 4;
 
     private static final String VS = """
-            #version 330 core
+            #version 150
             uniform mat4 uMvp;
             layout(location=0) in vec3 aPos;
             layout(location=1) in vec4 aColor;
@@ -61,7 +63,7 @@ final class LyricPresentRenderer {
             """;
 
     private static final String FS = """
-            #version 330 core
+            #version 150
             uniform sampler2D uTex;
             in vec4 vColor;
             in vec2 vUv;
@@ -202,6 +204,145 @@ final class LyricPresentRenderer {
         return lastCenterPixel;
     }
 
+    // ==================== 呈现链关键件（照 DangoMusic 的 McCompat 移植） ====================
+    // 我们此前「画上 FBO 0 却看不见」的原因（px 读回证明 GPU 真写了）：
+    // ① 绑的 FBO 0 不是原版认可的绘制面 —— 原版按「颜色+深度贴图视图」从 FrameBufferCache
+    //    取 FBO，且 GlStateManager 记着的绑定号与实际不一致时后续 pass 会重绑覆盖；
+    // ② 原版给纹理单元绑的 sampler 会盖掉贴图过滤设置；
+    // ③ 用 CameraRenderState 的原始透视矩阵，丢了视角摇晃（bob）合成，与世界画面有偏差。
+    // 以下照抄 DangoMusic McCompat 的三件套：显存读投影 / mainFramebuffer / bindFramebuffer。
+
+    /** GlBuffer.handle 字段（private，反射取）——显存读投影用。 */
+    private static java.lang.reflect.Field bufferHandleField;
+    private static boolean bufferHandleSearched;
+    private static final java.nio.FloatBuffer readback16 = java.nio.ByteBuffer
+            .allocateDirect(64).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer();
+
+    /**
+     * 从显存里把原版当前投影 UBO 读出来（含视角摇晃合成，和原版画世界用的完全一样）。
+     * 读不到时退回 CameraRenderState 的原始透视（调用方传入的 fallback）。
+     */
+    static boolean readProjectionFromUbo(org.joml.Matrix4f dest) {
+        try {
+            com.mojang.renderpearl.api.buffers.GpuBufferSlice slice =
+                    com.mojang.blaze3d.systems.RenderSystem.getProjectionMatrixBuffer();
+            if (slice == null) return false;
+            if (!(slice.buffer() instanceof com.mojang.renderpearl.backend.opengl.GlBuffer glBuf)) return false;
+            if (!bufferHandleSearched) {
+                bufferHandleSearched = true;
+                try {
+                    // handle() 在 26.3 是 public（javap 核对），26.2 若没有则反射字段
+                    bufferHandleField = com.mojang.renderpearl.backend.opengl.GlBuffer.class
+                            .getDeclaredField("handle");
+                    bufferHandleField.setAccessible(true);
+                } catch (Throwable ignored) {
+                }
+            }
+            int handle;
+            try {
+                handle = glBuf.handle();
+            } catch (Throwable t) {
+                if (bufferHandleField == null) return false;
+                handle = bufferHandleField.getInt(glBuf);
+            }
+            int prev = GL11.glGetInteger(GL31.GL_COPY_READ_BUFFER);
+            GL15.glBindBuffer(GL31.GL_COPY_READ_BUFFER, handle);
+            readback16.clear();
+            GL15.glGetBufferSubData(GL31.GL_COPY_READ_BUFFER, slice.offset(), readback16);
+            GL15.glBindBuffer(GL31.GL_COPY_READ_BUFFER, prev);
+            dest.set(readback16);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** 反射找 GlDevice 上的 directStateAccess() / frameBufferCache()（DangoMusic 同款）。 */
+    private static Object glBackend() {
+        try {
+            Object device = com.mojang.blaze3d.systems.RenderSystem.getDevice();
+            java.lang.reflect.Field f = null;
+            for (Class<?> c = device.getClass(); c != null && f == null; c = c.getSuperclass()) {
+                for (java.lang.reflect.Field sf : c.getDeclaredFields()) {
+                    if (sf.getName().equals("backend")) { f = sf; break; }
+                }
+            }
+            if (f == null) return null;
+            f.setAccessible(true);
+            return f.get(device);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static java.lang.reflect.Method directStateAccessMethod;
+    private static java.lang.reflect.Method frameBufferCacheMethod;
+    private static boolean backendMethodsSearched;
+    private static int dummyFramebuffer;
+
+    private static java.lang.reflect.Method backendMethod(String name) {
+        if (!backendMethodsSearched) {
+            backendMethodsSearched = true;
+            try {
+                Object backend = glBackend();
+                if (backend != null) {
+                    directStateAccessMethod = backend.getClass().getDeclaredMethod(name.equals("directStateAccess") ? "directStateAccess" : name);
+                    directStateAccessMethod.setAccessible(true);
+                }
+            } catch (Throwable t) {
+                try {
+                    Object backend = glBackend();
+                    if (backend != null) {
+                        frameBufferCacheMethod = backend.getClass().getDeclaredMethod("frameBufferCache");
+                        frameBufferCacheMethod.setAccessible(true);
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        return name.equals("directStateAccess") ? directStateAccessMethod : frameBufferCacheMethod;
+    }
+
+    /**
+     * 主渲染目标的帧缓冲编号 —— 与原版自己画东西时用的是同一个
+     * （原版按「颜色+深度贴图视图」从缓存取）。拿不到退回当前绑定。
+     */
+    @SuppressWarnings("unchecked")
+    static int mainFramebuffer(net.minecraft.client.Minecraft mc) {
+        try {
+            com.mojang.blaze3d.pipeline.RenderTarget target = mc.gameRenderer.mainRenderTarget();
+            Object backend = glBackend();
+            if (backend == null) return GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+            java.lang.reflect.Method dsaM = null, cacheM = null;
+            for (java.lang.reflect.Method m : backend.getClass().getDeclaredMethods()) {
+                if (m.getName().equals("directStateAccess")) dsaM = m;
+                if (m.getName().equals("frameBufferCache")) cacheM = m;
+            }
+            if (dsaM == null || cacheM == null) return GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+            Object dsa = dsaM.invoke(backend);
+            Object cache = cacheM.invoke(backend);
+            com.mojang.renderpearl.api.textures.GpuTextureView color = target.getColorTextureView();
+            com.mojang.renderpearl.api.textures.GpuTextureView depth = target.getDepthTextureView();
+            if (!(color instanceof com.mojang.renderpearl.backend.opengl.FrameBufferAttachment)) {
+                return GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+            }
+            java.util.List<com.mojang.renderpearl.backend.opengl.FrameBufferAttachment> attachments =
+                    java.util.List.of((com.mojang.renderpearl.backend.opengl.FrameBufferAttachment) color);
+            return cacheM.invoke(cache, dsa, attachments,
+                    depth instanceof com.mojang.renderpearl.backend.opengl.FrameBufferAttachment ? depth : null) instanceof Integer i ? i
+                    : GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+        } catch (Throwable t) {
+            return GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+        }
+    }
+
+    /** 绑帧缓冲并让原版 GlStateManager 记的值与实际一致（先绑 dummy 再绑真值）。 */
+    static void bindFramebufferRefreshed(int target, int id) {
+        if (dummyFramebuffer == 0) dummyFramebuffer = GL30.glGenFramebuffers();
+        com.mojang.renderpearl.backend.opengl.GlStateManager._glBindFramebuffer(target, dummyFramebuffer);
+        com.mojang.renderpearl.backend.opengl.GlStateManager._glBindFramebuffer(target, id);
+    }
+
     /** 丢弃当前帧采集（异常/矩阵不可用路径）。 */
     static void reset() {
         batches[front].quadCount = 0;
@@ -223,8 +364,27 @@ final class LyricPresentRenderer {
             ensureResources();
             if (FAILED.get()) return;
 
+            // 投影优先从显存 UBO 读（含视角摇晃合成，与原版画世界完全同源，
+            // DangoMusic 同款）；读不到退回 CameraRenderState 的原始透视。
+            org.joml.Matrix4f worldProj = new org.joml.Matrix4f(projection);
+            readProjectionFromUbo(worldProj);
             // 相对采到的相机相对坐标，视图旋转含共轭四元数（无平移）：MVP = P×V
-            org.joml.Matrix4f mvp = new org.joml.Matrix4f(projection).mul(viewRotation);
+            org.joml.Matrix4f mvp = worldProj.mul(viewRotation);
+
+            // 绑定【原版主渲染目标的 FBO】而不是 0 —— 26.x 原版按「颜色+深度贴图视图」
+            // 从 FrameBufferCache 取 FBO；GlStateManager 记的绑定号必须与实际一致，
+            // 否则后续 pass 按缓存重绑会覆盖我们的输出（此前画 FBO 0 不可见的根因，
+            // DangoMusic bindFramebuffer 同款）。
+            net.minecraft.client.Minecraft mcD = net.minecraft.client.Minecraft.getInstance();
+            int prevFbo = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+            int mainFbo = mainFramebuffer(mcD);
+            bindFramebufferRefreshed(GL30.GL_FRAMEBUFFER, mainFbo);
+            com.mojang.blaze3d.pipeline.RenderTarget mainTarget = mcD.gameRenderer.mainRenderTarget();
+            GL11.glViewport(0, 0, mainTarget.width, mainTarget.height);
+
+            // 原版给纹理单元绑的 sampler 会盖掉贴图自己的过滤/边缘设置 —— 解开
+            //（DangoMusic beforeDraw 同款；原版自己每次画都会重绑，无需还原）
+            for (int unit = 0; unit < 4; unit++) GL33.glBindSampler(unit, 0);
 
             GL20.glUseProgram(program);
             // 自检开关（-Dmuonium.lyricsPresentDebug=1）：用 identity MVP 画一个
@@ -273,10 +433,6 @@ final class LyricPresentRenderer {
             GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
                     GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
 
-            // 视口设到全屏：present 时 FBO 0 的 viewport 是渲染管线遗留值，
-            // 不重设的话顶点会被旧视口裁掉（症状=完全看不见）
-            GL11.glViewport(0, 0, windowWidth, windowHeight);
-
             GL30.glBindVertexArray(vao);
             GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo);
             // 复用巨型 VBO：一次上传整帧浮动数组（~4096 quad × 36f × 4B ≈ 590KB 上限）
@@ -298,6 +454,8 @@ final class LyricPresentRenderer {
             lastDrawnQuads = drawn;
             GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
             GL30.glBindVertexArray(0);
+            // 恢复原 FBO 绑定（同款刷新机制，保证 GlStateManager 与实际一致）
+            bindFramebufferRefreshed(GL30.GL_FRAMEBUFFER, prevFbo);
             // 诊断（每 16 帧一次）：读回 FBO 中心像素。alpha>0 = GPU 真写进去了
             //（问题在呈现链）；alpha=0 = 绘制没落地（问题在 GL 状态/图元/矩阵）。
             if ((diagTick++ & 15) == 0) {
@@ -334,6 +492,9 @@ final class LyricPresentRenderer {
             program = GL20.glCreateProgram();
             GL20.glAttachShader(program, vs);
             GL20.glAttachShader(program, fs);
+            GL20.glBindAttribLocation(program, 0, "aPos");
+            GL20.glBindAttribLocation(program, 1, "aColor");
+            GL20.glBindAttribLocation(program, 2, "aUv");
             GL20.glLinkProgram(program);
             if (GL20.glGetProgrami(program, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
                 throw new IllegalStateException("link failed: " + GL20.glGetProgramInfoLog(program));
