@@ -138,3 +138,9 @@ error-report-*/
 
 # 不公开:agent 记忆库与内部文档(宣发/竞品研究/审查报告等,仅本地保留)
 .workbuddy/
+
+# 本地救援备份（reset 丢改动后的恢复产物），确认无用后整个删掉
+/.recover-backup/
+
+# 本地测试用光影包（shaderpack，仅真机调 3D 歌词用，不入库）
+/光影/
