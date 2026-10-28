@@ -111,13 +111,20 @@ public final class WorldLyricsHudDraw {
 
     public static void worldRenderDraw() {
         wrActiveFrames++;
+        Minecraft mcDiag = Minecraft.getInstance();
         if (wrDiagFrame++ % 60 == 0) {
             // 入口探针：确认 mixin 生效 + 各早退条件状态
+            CameraRenderState crsD = mcDiag != null && mcDiag.gameRenderer != null
+                    && mcDiag.gameRenderer.gameRenderState() != null
+                    ? mcDiag.gameRenderer.gameRenderState().levelRenderState.cameraRenderState : null;
+            Matrix4f pD = crsD != null ? crsD.projectionMatrix : null;
             System.out.println("[WorldLyrics/diag][worldDraw] broken2=" + broken2
-                    + " enabled=" + HudConfig.worldLyricsEnabled
                     + " captureMode=" + captureModeThisFrame()
                     + " probe=" + ShaderPackProbe.isActive()
-                    + " activeFrames=" + wrActiveFrames);
+                    + " activeFrames=" + wrActiveFrames
+                    + " noViewRot=" + NO_VIEW_ROT
+                    + " P=(" + (pD == null ? "null" : pD.m03() + "," + pD.m13() + "," + pD.m23()
+                        + " | " + pD.m00() + "," + pD.m11()) + ")");
         }
         if (broken2 || !HudConfig.worldLyricsEnabled) return;
         if (!captureModeThisFrame()) return;
@@ -134,7 +141,8 @@ public final class WorldLyricsHudDraw {
             CameraRenderState crs = mc.gameRenderer.gameRenderState() != null
                     ? mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState : null;
             Matrix4f proj = crs != null ? crs.projectionMatrix : null;
-            Matrix4f view = crs != null ? crs.viewRotationMatrix : null;
+            Matrix4f view = NO_VIEW_ROT ? new Matrix4f()
+                    : (crs != null ? crs.viewRotationMatrix : null);
             if (proj == null || view == null || !isFinite(proj) || !isFinite(view)) return;
 
             com.mojang.blaze3d.pipeline.RenderTarget target = mc.gameRenderer.mainRenderTarget();
@@ -153,6 +161,8 @@ public final class WorldLyricsHudDraw {
 
     /** worldRenderDraw 自身异常熔断（present 旧通路仍可用作后备）。 */
     private static volatile boolean broken2;
+    /** A/B 对照：-Dmuonium.lyricsNoViewRot=1 = MVP 不乘视图旋转矩阵。 */
+    static final boolean NO_VIEW_ROT = Boolean.getBoolean("muonium.lyricsNoViewRot");
 
     /** present 钩子（GlSurfaceMixin 调）：主绘制已迁走，这里只做兜底复位。 */
     public static void presentComposite() {
