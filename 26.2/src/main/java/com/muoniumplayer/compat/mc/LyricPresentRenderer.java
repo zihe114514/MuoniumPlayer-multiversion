@@ -99,8 +99,15 @@ final class LyricPresentRenderer {
     private static int program;
     private static int vbo;
     private static int vao;
+    private static int ebo;
     private static int uMvpLoc;
     private static int uTexLoc;
+    /** 窗口像素尺寸（presentComposite 每帧传入，视口用）。 */
+    private static volatile int windowWidth = 1, windowHeight = 1;
+
+    static void setWindowSize(int w, int h) {
+        if (w > 0 && h > 0) { windowWidth = w; windowHeight = h; }
+    }
 
     private LyricPresentRenderer() {
     }
@@ -212,18 +219,29 @@ final class LyricPresentRenderer {
             GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
                     GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
 
+            // 视口设到全屏：present 时 FBO 0 的 viewport 是渲染管线遗留值，
+            // 不重设的话顶点会被旧视口裁掉（症状=完全看不见）
+            GL11.glViewport(0, 0, windowWidth, windowHeight);
+
             GL30.glBindVertexArray(vao);
             GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo);
             // 复用巨型 VBO：一次上传整帧浮动数组（~4096 quad × 36f × 4B ≈ 590KB 上限）
             GL15.glBufferData(GL15.GL_ARRAY_BUFFER, b.floats, GL15.GL_STREAM_DRAW);
 
+            // GL 3.3 core / GLES 都没有 QUADS 图元（ES 下 glDrawArrays(GL_QUADS)
+            // 直接 INVALID_ENUM 静默不画 —— 2026-10-28 真机「开激进适配全隐」的
+            // 真因）。改 TRIANGLES 索引绘制：每 quad 4 顶点 + 6 索引（EBO 一次性建）。
+            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, ebo);
+
             int drawn = 0;
             for (int s = 0; s < segCount; s++) {
                 if (segQuadCount[s] <= 0) continue;
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, segTexIds[s]);
-                GL11.glDrawArrays(GL11.GL_QUADS, segQuadStart[s] * 4, segQuadCount[s] * 4);
+                GL11.glDrawElements(GL11.GL_TRIANGLES, segQuadCount[s] * 6,
+                        GL11.GL_UNSIGNED_INT, segQuadStart[s] * 6L * 4);
                 drawn += segQuadCount[s];
             }
+            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
             GL30.glBindVertexArray(0);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
             GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
@@ -266,7 +284,18 @@ final class LyricPresentRenderer {
             GL20.glVertexAttribPointer(1, 4, GL11.GL_FLOAT, false, FLOATS_PER_VERTEX * 4, 3 * 4);
             GL20.glEnableVertexAttribArray(2);
             GL20.glVertexAttribPointer(2, 2, GL11.GL_FLOAT, false, FLOATS_PER_VERTEX * 4, 7 * 4);
+            // EBO：quad 顶点序 左上→左下→右下→右上（0,1,2,3）→ 两三角 (0,1,2)(0,2,3)
+            ebo = GL15.glGenBuffers();
+            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, ebo);
+            int[] idx = new int[MAX_QUADS * 6];
+            for (int q = 0; q < MAX_QUADS; q++) {
+                int v = q * 4, o = q * 6;
+                idx[o] = v;     idx[o+1] = v+1; idx[o+2] = v+2;
+                idx[o+3] = v;   idx[o+4] = v+2; idx[o+5] = v+3;
+            }
+            GL15.glBufferData(GL15.GL_ELEMENT_ARRAY_BUFFER, idx, GL15.GL_STATIC_DRAW);
             GL30.glBindVertexArray(0);
+            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
             GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
             GL20.glDeleteShader(vs);
             GL20.glDeleteShader(fs);

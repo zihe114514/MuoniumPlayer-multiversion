@@ -123,6 +123,10 @@ public final class WorldLyricsHudDraw {
                         + ") quads=" + LyricPresentRenderer.quadCount() + " activePos="
                         + com.muoniumplayer.core.lyrics3d.WorldLyricsState.activeLineDebugPos());
             }
+            com.mojang.blaze3d.platform.Window win = mc.getWindow();
+            if (win != null) {
+                LyricPresentRenderer.setWindowSize(win.getWidth(), win.getHeight());
+            }
             LyricPresentRenderer.draw(proj, view);
         } catch (Throwable t) {
             // 刻意不置全局 broken：present 直画失败只损失本帧，采集端下一帧照常。
