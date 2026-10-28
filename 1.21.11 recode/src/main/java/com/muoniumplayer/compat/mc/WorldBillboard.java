@@ -315,8 +315,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 // 光影模式走信标管线（BLOCK 格式带 Normal）：公告牌面向相机，
                 // 法线恒为局部 +Z。beacon 与 Iris BEACON(FULLBRIGHT) 着色器都不读它，
                 // 但 BufferBuilder 逐顶点校验格式完整性 —— 缺 Normal 直接抛异常。
-                .setNormal(0f, 0f, 1f)
-                .setUv1(0, 0);
+                // 注意 BLOCK 不含 UV1：顶点链不能再发 setUv1（同样抛 Missing
+                // elements，2026-10-28 真机实测）。
+                .setNormal(0f, 0f, 1f);
     }
 
     @Override
@@ -384,8 +385,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 // 光影模式走信标管线（BLOCK 格式带 Normal）：公告牌面向相机，
                 // 法线恒为局部 +Z。beacon 与 Iris BEACON(FULLBRIGHT) 着色器都不读它，
                 // 但 BufferBuilder 逐顶点校验格式完整性 —— 缺 Normal 直接抛异常。
-                .setNormal(0f, 0f, 1f)
-                .setUv1(0, 0);
+                // 注意 BLOCK 不含 UV1：顶点链不能再发 setUv1（同样抛 Missing
+                // elements，2026-10-28 真机实测）。
+                .setNormal(0f, 0f, 1f);
     }
 
     /**
@@ -491,8 +493,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 // 光影模式走信标管线（BLOCK 格式带 Normal）：公告牌面向相机，
                 // 法线恒为局部 +Z。beacon 与 Iris BEACON(FULLBRIGHT) 着色器都不读它，
                 // 但 BufferBuilder 逐顶点校验格式完整性 —— 缺 Normal 直接抛异常。
-                .setNormal(0f, 0f, 1f)
-                .setUv1(0, 0);
+                // 注意 BLOCK 不含 UV1：顶点链不能再发 setUv1（同样抛 Missing
+                // elements，2026-10-28 真机实测）。
+                .setNormal(0f, 0f, 1f);
     }
 
     // ==================== 绘光拖尾画布（Skija 光栅化通路的宿主侧） ====================
@@ -760,8 +763,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 // 光影模式走信标管线（BLOCK 格式带 Normal）：公告牌面向相机，
                 // 法线恒为局部 +Z。beacon 与 Iris BEACON(FULLBRIGHT) 着色器都不读它，
                 // 但 BufferBuilder 逐顶点校验格式完整性 —— 缺 Normal 直接抛异常。
-                .setNormal(0f, 0f, 1f)
-                .setUv1(0, 0);
+                // 注意 BLOCK 不含 UV1：顶点链不能再发 setUv1（同样抛 Missing
+                // elements，2026-10-28 真机实测）。
+                .setNormal(0f, 0f, 1f);
     }
 
     /**

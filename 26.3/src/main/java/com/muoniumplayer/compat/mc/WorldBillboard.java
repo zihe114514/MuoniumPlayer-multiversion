@@ -333,8 +333,11 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 .setUv(u, v)
                 // packed light 拆两个坐标（BakedGlyph 同款）：u = 低半（方块光）、v = 高半（天空光）。
                 // 传 (0, 240) 会把方块光压成 0 —— 夜里光查出来几乎全黑，字形被乘成黑方块。
-                .setUv2(FULL_BRIGHT & 0xFFFF, (FULL_BRIGHT >> 16) & 0xFFFF)
-                .setUv1(0, 0);
+                .setUv2(FULL_BRIGHT & 0xFFFF, (FULL_BRIGHT >> 16) & 0xFFFF);
+        // 不发 setUv1：光影路由的 beaconBeam 管线是 BLOCK 顶点格式
+        //（Position/Color/UV0/UV2 四元素，javap 核对），BufferBuilder.endLastVertex
+        // 逐顶点校验「格式里有但没填」的元素 —— 多发一个 setUv1 直接
+        // IllegalStateException: Missing elements（2026-10-28 真机实测）。
     }
 
     // ==================== 更激进的适配：present 兜底采集 ====================
@@ -543,8 +546,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         vc.addVertex(mat, x, y, 0f)
                 .setColor(argb)
                 .setUv(0.5f, 0.03f)
-                .setUv2(FULL_BRIGHT & 0xFFFF, (FULL_BRIGHT >> 16) & 0xFFFF)
-                .setUv1(0, 0);
+                .setUv2(FULL_BRIGHT & 0xFFFF, (FULL_BRIGHT >> 16) & 0xFFFF);
+        // 不发 setUv1：beaconBeam 管线是 BLOCK 格式（无该元素），多发即 Missing elements
     }
 
     // ==================== 绘光拖尾画布（Skija 光栅化通路的宿主侧） ====================
@@ -774,8 +777,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         vc.addVertex(mat, x, y, 0f)
                 .setColor(argb)
                 .setUv(u, v)
-                .setUv2(FULL_BRIGHT & 0xFFFF, (FULL_BRIGHT >> 16) & 0xFFFF)
-                .setUv1(0, 0);
+                .setUv2(FULL_BRIGHT & 0xFFFF, (FULL_BRIGHT >> 16) & 0xFFFF);
+        // 不发 setUv1：beaconBeam 管线是 BLOCK 格式（无该元素），多发即 Missing elements
     }
 
     /**
@@ -989,8 +992,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         vc.addVertex(mat, x, y, 0f)
                 .setColor(argb)
                 .setUv(u, v)
-                .setUv2(FULL_BRIGHT & 0xFFFF, (FULL_BRIGHT >> 16) & 0xFFFF)
-                .setUv1(0, 0);
+                .setUv2(FULL_BRIGHT & 0xFFFF, (FULL_BRIGHT >> 16) & 0xFFFF);
+        // 不发 setUv1：beaconBeam 管线是 BLOCK 格式（无该元素），多发即 Missing elements
     }
 
     /**
