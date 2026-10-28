@@ -320,7 +320,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 // packed light 拆两个坐标（BakedGlyph 同款）：u = 低半（方块光）、v = 高半（天空光）。
                 // 传 (0, 240) 会把方块光压成 0 —— 夜里光查出来几乎全黑，字形被乘成黑方块。
                 .setUv2(LightCoordsUtil.FULL_BRIGHT & 0xFFFF,
-                        (LightCoordsUtil.FULL_BRIGHT >> 16) & 0xFFFF);
+                        (LightCoordsUtil.FULL_BRIGHT >> 16) & 0xFFFF)
+                .setNormal(0f, 0f, 1f)
+                .setUv1(0, 0);
     }
 
     // ==================== 更激进的适配：present 兜底采集 ====================
@@ -531,7 +533,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 .setColor(argb)
                 .setUv(0.5f, 0.03f)
                 .setUv2(LightCoordsUtil.FULL_BRIGHT & 0xFFFF,
-                        (LightCoordsUtil.FULL_BRIGHT >> 16) & 0xFFFF);
+                        (LightCoordsUtil.FULL_BRIGHT >> 16) & 0xFFFF)
+                .setNormal(0f, 0f, 1f)
+                .setUv1(0, 0);
     }
 
     /**
@@ -790,7 +794,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 .setColor(argb)
                 .setUv(u, v)
                 .setUv2(LightCoordsUtil.FULL_BRIGHT & 0xFFFF,
-                        (LightCoordsUtil.FULL_BRIGHT >> 16) & 0xFFFF);
+                        (LightCoordsUtil.FULL_BRIGHT >> 16) & 0xFFFF)
+                .setNormal(0f, 0f, 1f)
+                .setUv1(0, 0);
     }
 
     /**
@@ -1009,7 +1015,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 .setColor(argb)
                 .setUv(u, v)
                 .setUv2(LightCoordsUtil.FULL_BRIGHT & 0xFFFF,
-                        (LightCoordsUtil.FULL_BRIGHT >> 16) & 0xFFFF);
+                        (LightCoordsUtil.FULL_BRIGHT >> 16) & 0xFFFF)
+                .setNormal(0f, 0f, 1f)
+                .setUv1(0, 0);
     }
 
     /**

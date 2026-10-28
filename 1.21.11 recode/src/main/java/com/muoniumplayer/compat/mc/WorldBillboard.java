@@ -315,9 +315,12 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 // 光影模式走信标管线（BLOCK 格式带 Normal）：公告牌面向相机，
                 // 法线恒为局部 +Z。beacon 与 Iris BEACON(FULLBRIGHT) 着色器都不读它，
                 // 但 BufferBuilder 逐顶点校验格式完整性 —— 缺 Normal 直接抛异常。
-                // 注意 BLOCK 不含 UV1：顶点链不能再发 setUv1（同样抛 Missing
-                // elements，2026-10-28 真机实测）。
-                .setNormal(0f, 0f, 1f);
+                // Iris 激活时还会把 BLOCK 动态扩成 TERRAIN（追加 UV1 等，
+                // MixinBufferBuilder iris$extendFormat）—— UV1 也必须发，缺一个就是
+                // Missing elements（2026-10-28 真机两轮实测）；无光影时 BLOCK 的
+                // UV1 位不存在，beginElement 短路无害。
+                .setNormal(0f, 0f, 1f)
+                .setUv1(0, 0);
     }
 
     @Override
@@ -385,9 +388,12 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 // 光影模式走信标管线（BLOCK 格式带 Normal）：公告牌面向相机，
                 // 法线恒为局部 +Z。beacon 与 Iris BEACON(FULLBRIGHT) 着色器都不读它，
                 // 但 BufferBuilder 逐顶点校验格式完整性 —— 缺 Normal 直接抛异常。
-                // 注意 BLOCK 不含 UV1：顶点链不能再发 setUv1（同样抛 Missing
-                // elements，2026-10-28 真机实测）。
-                .setNormal(0f, 0f, 1f);
+                // Iris 激活时还会把 BLOCK 动态扩成 TERRAIN（追加 UV1 等，
+                // MixinBufferBuilder iris$extendFormat）—— UV1 也必须发，缺一个就是
+                // Missing elements（2026-10-28 真机两轮实测）；无光影时 BLOCK 的
+                // UV1 位不存在，beginElement 短路无害。
+                .setNormal(0f, 0f, 1f)
+                .setUv1(0, 0);
     }
 
     /**
@@ -493,9 +499,12 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 // 光影模式走信标管线（BLOCK 格式带 Normal）：公告牌面向相机，
                 // 法线恒为局部 +Z。beacon 与 Iris BEACON(FULLBRIGHT) 着色器都不读它，
                 // 但 BufferBuilder 逐顶点校验格式完整性 —— 缺 Normal 直接抛异常。
-                // 注意 BLOCK 不含 UV1：顶点链不能再发 setUv1（同样抛 Missing
-                // elements，2026-10-28 真机实测）。
-                .setNormal(0f, 0f, 1f);
+                // Iris 激活时还会把 BLOCK 动态扩成 TERRAIN（追加 UV1 等，
+                // MixinBufferBuilder iris$extendFormat）—— UV1 也必须发，缺一个就是
+                // Missing elements（2026-10-28 真机两轮实测）；无光影时 BLOCK 的
+                // UV1 位不存在，beginElement 短路无害。
+                .setNormal(0f, 0f, 1f)
+                .setUv1(0, 0);
     }
 
     // ==================== 绘光拖尾画布（Skija 光栅化通路的宿主侧） ====================
@@ -763,9 +772,12 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 // 光影模式走信标管线（BLOCK 格式带 Normal）：公告牌面向相机，
                 // 法线恒为局部 +Z。beacon 与 Iris BEACON(FULLBRIGHT) 着色器都不读它，
                 // 但 BufferBuilder 逐顶点校验格式完整性 —— 缺 Normal 直接抛异常。
-                // 注意 BLOCK 不含 UV1：顶点链不能再发 setUv1（同样抛 Missing
-                // elements，2026-10-28 真机实测）。
-                .setNormal(0f, 0f, 1f);
+                // Iris 激活时还会把 BLOCK 动态扩成 TERRAIN（追加 UV1 等，
+                // MixinBufferBuilder iris$extendFormat）—— UV1 也必须发，缺一个就是
+                // Missing elements（2026-10-28 真机两轮实测）；无光影时 BLOCK 的
+                // UV1 位不存在，beginElement 短路无害。
+                .setNormal(0f, 0f, 1f)
+                .setUv1(0, 0);
     }
 
     /**
