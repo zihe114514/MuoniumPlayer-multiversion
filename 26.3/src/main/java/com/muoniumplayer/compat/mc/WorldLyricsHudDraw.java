@@ -95,52 +95,63 @@ public final class WorldLyricsHudDraw {
         return false;
     }
 
-    /** GlSurfaceMixin present 入口调：把采集的 quad 画上 FBO 0（在 Skija HUD 之前）。 */
-    public static void presentComposite() {
-        if (!HudConfig.worldLyricsEnabled) {
-            LyricPresentRenderer.reset();
-            return;
-        }
+    /**
+     * 「更激进的适配」的主绘制入口 —— 挂在 GameRenderer.renderLevel 的
+     * LevelRenderer.render INVOKE AFTER：
+     * 世界帧图与 Iris 合成已完成、mainRenderTarget 是最终画面；手部/GUI 未画、
+     * present 的 blit 未发生 —— 直接画进 mainTarget，字随原版正常链路上屏。
+     *
+     * <p>矩阵：投影从显存 UBO 读（含视角摇晃，与原版画世界同源）；视图旋转此时
+     * 还在 RenderSystem 的 modelViewStack 上（popMatrix 在帧图后由原版执行）——
+     * 按原版惯例把它推进栈顶换成单位矩阵，画完恢复，MVP = 投影 × basePose × 字形
+     * 变换。GL 状态用 GlState 快照进出来还。</p>
+     */
+    public static void worldRenderDraw() {
+        if (broken2 || !HudConfig.worldLyricsEnabled) return;
+        if (!captureModeThisFrame()) return;
         try {
             Minecraft mc = Minecraft.getInstance();
-            if (mc == null || mc.player == null || mc.level == null) {
-                LyricPresentRenderer.reset();
-                return;
+            if (mc == null || mc.player == null || mc.level == null) return;
+            if (mc.gameRenderer == null || mc.gameRenderer.mainRenderTarget() == null) return;
+            Camera camera = mc.gameRenderer.mainCamera();
+            if (camera == null) return;
+
+            // 本帧采集的 quad 在 collectWorldLyrics 时已写入 LyricPresentRenderer。
+            // 采到的变换仍按旧约定（相机相对世界轴），MVP = P × V。
+            // V：视图旋转（从 CameraRenderState 拿，语义与 modelViewStack 栈顶一致）。
+            com.mojang.renderpearl.api.device.GpuDevice dev = null;
+            try {
+                dev = com.mojang.blaze3d.systems.RenderSystem.getDevice();
+            } catch (Throwable ignored) {
             }
-            Camera camera = mc.gameRenderer != null ? mc.gameRenderer.mainCamera() : null;
-            if (camera == null || mc.gameRenderer.gameRenderState() == null) {
-                LyricPresentRenderer.reset();
-                return;
-            }
-            // CameraRenderState 的矩阵在 extract 阶段由 Camera.extractRenderState 填好：
-            // projectionMatrix = 透视（fov/aspect/zNear/depthFar），viewRotationMatrix =
-            // 视图旋转（无平移、无 bob —— bob 在 GameRenderer.renderLevel 里才 mul）。
-            // 我们的顶点是「相机相对世界轴」坐标，MVP = P × V 一步到位。
-            CameraRenderState crs = mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState;
+            CameraRenderState crs = mc.gameRenderer.gameRenderState() != null
+                    ? mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState : null;
             Matrix4f proj = crs != null ? crs.projectionMatrix : null;
             Matrix4f view = crs != null ? crs.viewRotationMatrix : null;
-            if (proj == null || view == null || !isFinite(proj) || !isFinite(view)) {
-                LyricPresentRenderer.reset();
-                return;
-            }
-            if (diagFrame++ % 60 == 0) {
-                System.out.println("[WorldLyrics/diag][present] cam(yaw=" + crs.yRot + " pitch=" + crs.xRot
-                        + ") quads=" + LyricPresentRenderer.quadCount()
-                        + " drawn=" + LyricPresentRenderer.lastDrawnQuads()
-                        + " rej=" + LyricPresentRenderer.rejectedQuads()
-                        + " px=" + LyricPresentRenderer.lastCenterPixel() + " activePos="
-                        + com.muoniumplayer.core.lyrics3d.WorldLyricsState.activeLineDebugPos());
-            }
+            if (proj == null || view == null || !isFinite(proj) || !isFinite(view)) return;
+
+            com.mojang.blaze3d.pipeline.RenderTarget target = mc.gameRenderer.mainRenderTarget();
             com.mojang.blaze3d.platform.Window win = mc.getWindow();
-            if (win != null) {
-                LyricPresentRenderer.setWindowSize(win.getWidth(), win.getHeight());
-            }
-            LyricPresentRenderer.draw(proj, view);
+            LyricPresentRenderer.setWindowSize(win != null ? win.getWidth() : target.width,
+                    win != null ? win.getHeight() : target.height);
+
+            // 全套 GL 状态快照进出（program/vao/vbo/FBO/纹理绑定/混合/深度/
+            // 剔除/剪裁/视口/色掩码）
+            LyricPresentRenderer.drawInMainTarget(proj, view, target, mc);
         } catch (Throwable t) {
-            // 刻意不置全局 broken：present 直画失败只损失本帧，采集端下一帧照常。
             LyricPresentRenderer.reset();
             LyricPresentRenderer.logFailure(t);
         }
+    }
+
+    /** worldRenderDraw 自身异常熔断（present 旧通路仍可用作后备）。 */
+    private static volatile boolean broken2;
+
+    /** GlSurfaceMixin present 入口调：把采集的 quad 画上 FBO 0（在 Skija HUD 之前）。 */
+        public static void presentComposite() {
+        // 主绘制已迁到 worldRenderDraw（GameRenderer.renderLevel INVOKE AFTER）；
+        // present 钩子不再画 —— 采集缓冲已被世界入口消费，这里只剩兜底复位。
+        LyricPresentRenderer.reset();
     }
 
     private static boolean isFinite(Matrix4f m) {
