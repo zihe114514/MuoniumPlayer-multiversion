@@ -121,7 +121,11 @@ class MultiLoaderStaticTest {
     void 通道保持裸负载() throws IOException {
         String net = stripComments(read(ProjectPaths.forge().resolve(Paths.get(
                 "src", "main", "java", "com", "muoniumplayer", "party", "net", "MpNetForge.java"))));
-        assertTrue(net.contains("eventNetworkChannel()"),
+        // 两种等价注册形态都认：ChannelBuilder 链式的 eventNetworkChannel() 与
+        // NetworkRegistry.newEventChannel(...) —— 最终都走同一个 createInstance，
+        // 返回同一个 EventNetworkChannel（裸 FriendlyByteBuf，无判别字节）。
+        assertTrue(net.contains("eventNetworkChannel()")
+                        || net.contains("newEventChannel("),
                 "必须用 EventNetworkChannel：它把 FriendlyByteBuf 原样交出来");
         assertFalse(net.contains("simpleChannel()") || net.contains("registerMessage("),
                 "SimpleChannel 的 IndexedMessageCodec 会在负载前面写一个消息判别号，"
