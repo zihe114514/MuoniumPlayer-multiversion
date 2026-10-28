@@ -96,64 +96,49 @@ public final class WorldLyricsHudDraw {
     }
 
     /**
-     * 「更激进的适配」的主绘制入口 —— 挂在 GameRenderer.renderLevel 的
-     * LevelRenderer.render INVOKE AFTER：
-     * 世界帧图与 Iris 合成已完成、mainRenderTarget 是最终画面；手部/GUI 未画、
-     * present 的 blit 未发生 —— 直接画进 mainTarget，字随原版正常链路上屏。
-     *
-     * <p>矩阵：投影从显存 UBO 读（含视角摇晃，与原版画世界同源）；视图旋转此时
-     * 还在 RenderSystem 的 modelViewStack 上（popMatrix 在帧图后由原版执行）——
-     * 按原版惯例把它推进栈顶换成单位矩阵，画完恢复，MVP = 投影 × basePose × 字形
-     * 变换。GL 状态用 GlState 快照进出来还。</p>
+     * 「更激进的适配」矩阵快照入口 —— 挂在 GameRenderer.renderLevel 的
+     * LevelRenderer.render INVOKE AFTER：世界帧图与 Iris 合成已完成，
+     * CameraRenderState 的世界矩阵仍然有效。这里只把本帧的投影/视图旋转
+     * 抓进静态快照供 present 阶段使用，不画任何东西。
      */
     private static int wrDiagFrame;
     private static int wrActiveFrames;
+    /** 本帧矩阵快照（worldRenderDraw 写、presentComposite 消费）。 */
+    private static final Matrix4f snapProj = new Matrix4f();
+    private static final Matrix4f snapView = new Matrix4f();
+    private static boolean snapValid;
 
     public static void worldRenderDraw() {
         wrActiveFrames++;
-        Minecraft mcDiag = Minecraft.getInstance();
         if (wrDiagFrame++ % 60 == 0) {
-            // 入口探针：确认 mixin 生效 + 各早退条件状态
-            CameraRenderState crsD = mcDiag != null && mcDiag.gameRenderer != null
-                    && mcDiag.gameRenderer.gameRenderState() != null
-                    ? mcDiag.gameRenderer.gameRenderState().levelRenderState.cameraRenderState : null;
-            Matrix4f pD = crsD != null ? crsD.projectionMatrix : null;
             System.out.println("[WorldLyrics/diag][worldDraw] broken2=" + broken2
                     + " captureMode=" + captureModeThisFrame()
                     + " probe=" + ShaderPackProbe.isActive()
                     + " activeFrames=" + wrActiveFrames
-                    + " noViewRot=" + NO_VIEW_ROT
-                    + " P=(" + (pD == null ? "null" : pD.m03() + "," + pD.m13() + "," + pD.m23()
-                        + " | " + pD.m00() + "," + pD.m11()) + ")");
+                    + " quads=" + LyricPresentRenderer.quadCount()
+                    + " drawn=" + LyricPresentRenderer.lastDrawnQuads()
+                    + " z=[" + LyricPresentRenderer.lastVertexZRange() + "]");
         }
         if (broken2 || !HudConfig.worldLyricsEnabled) return;
         if (!captureModeThisFrame()) return;
         try {
             Minecraft mc = Minecraft.getInstance();
             if (mc == null || mc.player == null || mc.level == null) return;
-            if (mc.gameRenderer == null || mc.gameRenderer.mainRenderTarget() == null) return;
-            Camera camera = mc.gameRenderer.mainCamera();
-            if (camera == null) return;
-
-            // 本帧采集的 quad 在 collectWorldLyrics 时已写入 LyricPresentRenderer。
-            // 采到的变换仍按旧约定（相机相对世界轴），MVP = P × V。
-            // V：视图旋转（从 CameraRenderState 拿，语义与 modelViewStack 栈顶一致）。
             CameraRenderState crs = mc.gameRenderer.gameRenderState() != null
                     ? mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState : null;
-            Matrix4f proj = crs != null ? crs.projectionMatrix : null;
-            Matrix4f view = NO_VIEW_ROT ? new Matrix4f()
-                    : (crs != null ? crs.viewRotationMatrix : null);
-            if (proj == null || view == null || !isFinite(proj) || !isFinite(view)) return;
-
-            com.mojang.blaze3d.pipeline.RenderTarget target = mc.gameRenderer.mainRenderTarget();
-            com.mojang.blaze3d.platform.Window win = mc.getWindow();
-            LyricPresentRenderer.setWindowSize(win != null ? win.getWidth() : target.width,
-                    win != null ? win.getHeight() : target.height);
-
-            // 全套 GL 状态快照进出（program/vao/vbo/FBO/纹理绑定/混合/深度/
-            // 剔除/剪裁/视口/色掩码）
-            LyricPresentRenderer.drawInMainTarget(proj, view, target, mc);
+            if (crs == null) return;
+            Matrix4f proj = crs.projectionMatrix;
+            Matrix4f view = crs.viewRotationMatrix;
+            if (proj == null || view == null || !isFinite(proj) || !isFinite(view)) {
+                snapValid = false;
+                return;
+            }
+            // 快照拷贝（CameraRenderState 的矩阵下一帧会被复用改写）
+            snapProj.set(proj);
+            snapView.set(view);
+            snapValid = true;
         } catch (Throwable t) {
+            snapValid = false;
             LyricPresentRenderer.reset();
             LyricPresentRenderer.logFailure(t);
         }
@@ -161,14 +146,42 @@ public final class WorldLyricsHudDraw {
 
     /** worldRenderDraw 自身异常熔断（present 旧通路仍可用作后备）。 */
     private static volatile boolean broken2;
-    /** A/B 对照：-Dmuonium.lyricsNoViewRot=1 = MVP 不乘视图旋转矩阵。 */
-    static final boolean NO_VIEW_ROT = Boolean.getBoolean("muonium.lyricsNoViewRot");
 
-    /** present 钩子（GlSurfaceMixin 调）：主绘制已迁走，这里只做兜底复位。 */
+    /**
+     * present 钩子（GlSurfaceMixin 调，GlSurface.present() HEAD）：最终画面已
+     * blit 进 FBO 0、交换未发生 —— 把采集的 quad 直接画上 FBO 0。此刻在一切
+     * 渲染/后处理/合成之后，画上的像素物理上不可能再被任何 pass 加工。
+     */
     public static void presentComposite() {
-        // 主绘制已迁到 worldRenderDraw（GameRenderer.renderLevel INVOKE AFTER）；
-        // present 钩子不再画 —— 采集缓冲已被世界入口消费，这里只剩兜底复位。
-        LyricPresentRenderer.reset();
+        if (!HudConfig.worldLyricsEnabled) {
+            LyricPresentRenderer.reset();
+            return;
+        }
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null || mc.player == null || mc.level == null || !snapValid) {
+                LyricPresentRenderer.reset();
+                return;
+            }
+            if (!captureModeThisFrame()) {
+                LyricPresentRenderer.reset();
+                return;
+            }
+            com.mojang.blaze3d.pipeline.RenderTarget target = mc.gameRenderer.mainRenderTarget();
+            if (target == null) {
+                LyricPresentRenderer.reset();
+                return;
+            }
+            com.mojang.blaze3d.platform.Window win = mc.getWindow();
+            LyricPresentRenderer.drawToFbo0(snapProj, snapView,
+                    win != null ? win.getWidth() : target.width,
+                    win != null ? win.getHeight() : target.height);
+        } catch (Throwable t) {
+            LyricPresentRenderer.reset();
+            LyricPresentRenderer.logFailure(t);
+        } finally {
+            snapValid = false;
+        }
     }
 
     private static boolean isFinite(Matrix4f m) {

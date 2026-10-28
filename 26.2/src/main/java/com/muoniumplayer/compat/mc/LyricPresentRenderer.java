@@ -1,157 +1,86 @@
 package com.muoniumplayer.compat.mc;
 
-import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL13;
-import org.lwjgl.opengl.GL14;
-import org.lwjgl.opengl.GL15;
-import org.lwjgl.opengl.GL20;
-import org.lwjgl.opengl.GL30;
-import org.lwjgl.opengl.GL31;
-import org.lwjgl.opengl.GL33;
-import org.lwjgl.system.MemoryStack;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.texture.AbstractTexture;
+import net.minecraft.client.renderer.texture.TextureManager;
 
-import java.nio.FloatBuffer;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 3D 歌词的帧末兜底直画器（26.x「更激进的适配」的落屏端）——
- * <b>裸 GL 3.3 + 自管 VBO/着色器，把采集的公告牌 quad 画上窗口 FBO 0</b>。
+ * 3D 歌词「更激进的适配」的采集缓冲（26.x）。
  *
- * <h2>为什么是裸 GL</h2>
- * {@code GlSurface#present()} 入口（{@code GlSurfaceMixin} 注入点）时原版帧图、
- * Iris 合成链、GUI 批全部收工，画面已 blit 进 FBO 0、只差交换 —— 此时任何
- * 原版渲染 API（RenderType/GuiGraphics）都不再有效，仓内此槽位的先例
- * （Skija 合成）就是纯 GL 互操作。本类用同样的姿态：最小状态、自管资源、
- * 进出快照恢复（GlStateManager 契约：改了什么还什么）。
+ * <p>采集端（{@link WorldBillboard} capture 模式）逐字形调 {@link #addQuad}：
+ * 每顶点 9 float = pos3 + rgba4 + uv2，坐标为<b>完整 3D 相机相对世界轴值</b>
+ * （billboard 矩阵三行全取 —— z 是深度行，丢 z 顶点全贴相机平面，透视近平面
+ * 整帧裁剪）；quad 按纹理页分连续段。缓冲是双份大数组 + 帧计数复用（零逐帧分配）。
  *
- * <h2>采集协议</h2>
- * 世界采集阶段（{@link WorldBillboard} capture 模式）逐字形调
- * {@link #addQuad}：四个顶点 = <b>相机相对世界轴坐标</b>（与 submit 通路
- * 同口径：rx=世界−相机，视图旋转把它转回相机空间）+ ARGB + UV + 纹理页 id。
- * 缓冲是双份大数组 + 帧计数复用（零逐帧分配）；MVP 由
- * {@link WorldLyricsHudDraw#presentComposite} 从 CameraRenderState 算好传入。
- *
- * <h2>着色器</h2>
- * 单一 GLSL 330 core 对：v_mvp（P×V）、v_tex（图集）、u_tex0（页纹理）。
- * 片元 = texture × 顶点色、SRC_ALPHA 混合、无深度无剔除 —— 语义与原版
- * textSeeThrough 完全一致（全亮、透墙、透明混合）。多页纹理按页分批画。
- *
- * <p>全部 GL 调用包在 try/finally 里熔断：一次失败永久停用（回退世界路由），
- * 首次失败无条件打日志。MobileGlues 走 GL ES 3.2 → GL 3.3 翻译，同 Skija
- * 已验证的兼容等级。</p>
+ * <p>落屏端在 {@link #drawToFbo0}（GlSurface.present() 入口裸 GL 直画 FBO 0，
+ * 画面已定、交换未发生 —— 物理上不可能再被任何渲染/后处理加工）。</p>
  */
 final class LyricPresentRenderer {
 
     /** 单帧 quad 容量上限（一行 ~60 字 × 8 层特效 ≈ 500，翻倍冗余）。 */
-    private static final int MAX_QUADS = 4096;
-    private static final int FLOATS_PER_VERTEX = 9; // x,y,z,r,g,b,a,u,v
-    private static final int FLOATS_PER_QUAD = FLOATS_PER_VERTEX * 4;
-
-    private static final String VS = """
-            #version 150
-            uniform mat4 uMvp;
-            layout(location=0) in vec3 aPos;
-            layout(location=1) in vec4 aColor;
-            layout(location=2) in vec2 aUv;
-            out vec4 vColor;
-            out vec2 vUv;
-            void main() {
-                gl_Position = uMvp * vec4(aPos, 1.0);
-                vColor = aColor;
-                vUv = aUv;
-            }
-            """;
-
-    private static final String FS = """
-            #version 150
-            uniform sampler2D uTex;
-            in vec4 vColor;
-            in vec2 vUv;
-            out vec4 fragColor;
-            void main() {
-                fragColor = texture(uTex, vUv) * vColor;
-            }
-            """;
-
-    private static final AtomicBoolean FAILED = new AtomicBoolean(false);
-    /** 自检开关：-Dmuonium.lyricsPresentDebug=1 = 每帧先画全屏白块再画歌词。 */
-    private static final boolean DEBUG_FULLSCREEN = Boolean.getBoolean("muonium.lyricsPresentDebug");
-    private static int diagTick;
-    private static boolean failureLogged;
+    static final int MAX_QUADS = 4096;
+    static final int FLOATS_PER_VERTEX = 9; // x,y,z,r,g,b,a,u,v
+    static final int FLOATS_PER_QUAD = FLOATS_PER_VERTEX * 4;
 
     /** 顶点数据：浮点直接摊平（颜色拆 rgba），quad 按纹理页分组。 */
-    private static final class Batch {
-        /** 页纹理 id → 本页 quad 起止（按 addQuad 顺序）。分批段首动态数组。 */
+    static final class Batch {
         final float[] floats = new float[MAX_QUADS * FLOATS_PER_QUAD];
         int quadCount;
-        /** 本 quad 用的 GL 纹理 id（页纹理按 addQuad 时的页分组；跨页按序分批）。 */
-        int texId = 0;
     }
 
-    /** 帧交替双缓冲：采集端写 front，present 端画 back，present 后交换。 */
+    /** 帧交替双缓冲：采集端写 front，落屏端画完交换。 */
     private static final Batch[] batches = { new Batch(), new Batch() };
     private static int front;
-    /** 本帧有至少一个采集页（present 后清零）。 */
+    /** 本帧有至少一个采集页（落屏后清零）。 */
     private static boolean captured;
 
-    /** 采集的页纹理 id 序列（quad 顺序，页切换即记录 —— 同页连续 quad 合一段）。 */
-    private static final int[] segTexIds = new int[256];
+    /** 采集的纹理段序列（quad 顺序，页切换即记录 —— 同页连续 quad 合一段）。
+     *  段存页纹理资源路径：落屏端按它解析 GpuTextureView（官方通路不经裸 GL）。 */
+    private static final Object[] segTextures = new Object[256];
     private static final int[] segQuadStart = new int[256];
     private static final int[] segQuadCount = new int[256];
     private static int segCount;
 
-    /** GL 资源（首次 draw 惰性建）。 */
-    private static int program;
-    private static int vbo;
-    private static int vao;
-    private static int ebo;
-    private static int uMvpLoc;
-    private static int uTexLoc;
-    /** 窗口像素尺寸（presentComposite 每帧传入，视口用）。 */
-    private static volatile int windowWidth = 1, windowHeight = 1;
     /** 诊断：最近一次 draw 实际提交的 quad 数 / 采集端累计拒绝数（缓冲满/段满）。 */
     private static volatile int lastDrawnQuads;
     private static int rejectedQuads;
-    /** 诊断：最近一次 draw 后从 FBO 中心读回的 RGBA（画没画上的决定性证据）。 */
-    private static volatile String lastCenterPixel = "-";
-
-    static void setWindowSize(int w, int h) {
-        if (w > 0 && h > 0) { windowWidth = w; windowHeight = h; }
-    }
+    /** 诊断：最近一次 draw 的顶点 z 范围（近平面裁剪判定依据；全 0 = 采集丢深度）。 */
+    private static volatile String lastVertexZRange = "-";
 
     private LyricPresentRenderer() {
     }
 
-    // ==================== 采集端（世界渲染线程，collect 阶段） ====================
+    // ==================== 采集端（collect 阶段） ====================
 
     /** 帧头清空采集缓冲（collectWorldLyrics 进 capture 模式时先调）。 */
     static void beginFrame() {
-        Batch b = batches[front];
-        b.quadCount = 0;
-        b.texId = 0;
+        batches[front].quadCount = 0;
         segCount = 0;
         captured = false;
-        consumedThisFrame = false;
     }
 
     /**
      * 记一个字形/特效 quad。四顶点顺序与其他通路一致：
-     * 左上 → 左下 → 右下 → 右上；颜色为 ARGB int；texGlId = 页纹理的 GL 名。
+     * 左上 → 左下 → 右下 → 右上；坐标为完整 3D 相机相对世界轴值（z 不可丢：
+     * 投影的近平面裁剪按它判定，z=0 会被整帧静默裁掉）；颜色为 ARGB int；
+     * pageRl = 页纹理资源路径（落屏端解析成 GpuTextureView）。
      */
-    static void addQuad(int texGlId,
-                        float x0, float y0, float u0, float v0,
-                        float x1, float y1, float u1, float v1,
-                        float x2, float y2, float u2, float v2,
-                        float x3, float y3, float u3, float v3,
+    static void addQuad(net.minecraft.resources.Identifier pageRl,
+                        float x0, float y0, float z0, float u0, float v0,
+                        float x1, float y1, float z1, float u1, float v1,
+                        float x2, float y2, float z2, float u2, float v2,
+                        float x3, float y3, float z3, float u3, float v3,
                         int argb) {
-        if (FAILED.get() || capturedDone()) return;
+        if (FAILED.get()) return;
         Batch b = batches[front];
         if (b.quadCount >= MAX_QUADS) { rejectedQuads++; return; }
-        int tex = texGlId;
+        Object tex = pageRl;
         // 跨页开新段（同页连续 quad 归同段；页序即绘制序）
-        if (segCount == 0 || segTexIds[segCount - 1] != tex) {
-            if (segCount >= segTexIds.length) { rejectedQuads++; return; }
-            segTexIds[segCount] = tex;
+        if (segCount == 0 || !java.util.Objects.equals(segTextures[segCount - 1], tex)) {
+            if (segCount >= segTextures.length) { rejectedQuads++; return; }
+            segTextures[segCount] = tex;
             segQuadStart[segCount] = b.quadCount;
             segQuadCount[segCount] = 0;
             segCount++;
@@ -165,13 +94,13 @@ final class LyricPresentRenderer {
         int o = b.quadCount * FLOATS_PER_QUAD;
         float[] f = b.floats;
         // 左上
-        f[o] = x0; f[o+1] = y0; f[o+2] = 0f; f[o+3] = r; f[o+4] = g; f[o+5] = bl; f[o+6] = a; f[o+7] = u0; f[o+8] = v0;
+        f[o] = x0; f[o+1] = y0; f[o+2] = z0; f[o+3] = r; f[o+4] = g; f[o+5] = bl; f[o+6] = a; f[o+7] = u0; f[o+8] = v0;
         // 左下
-        f[o+9] = x0; f[o+10] = y1; f[o+11] = 0f; f[o+12] = r; f[o+13] = g; f[o+14] = bl; f[o+15] = a; f[o+16] = u1; f[o+17] = v1;
+        f[o+9] = x1; f[o+10] = y1; f[o+11] = z1; f[o+12] = r; f[o+13] = g; f[o+14] = bl; f[o+15] = a; f[o+16] = u1; f[o+17] = v1;
         // 右下
-        f[o+18] = x1; f[o+19] = y1; f[o+20] = 0f; f[o+21] = r; f[o+22] = g; f[o+23] = bl; f[o+24] = a; f[o+25] = u2; f[o+26] = v2;
+        f[o+18] = x2; f[o+19] = y2; f[o+20] = z2; f[o+21] = r; f[o+22] = g; f[o+23] = bl; f[o+24] = a; f[o+25] = u2; f[o+26] = v2;
         // 右上
-        f[o+27] = x1; f[o+28] = y0; f[o+29] = 0f; f[o+30] = r; f[o+31] = g; f[o+32] = bl; f[o+33] = a; f[o+34] = u3; f[o+35] = v3;
+        f[o+27] = x3; f[o+28] = y3; f[o+29] = z3; f[o+30] = r; f[o+31] = g; f[o+32] = bl; f[o+33] = a; f[o+34] = u3; f[o+35] = v3;
         b.quadCount++;
         captured = true;
     }
@@ -181,16 +110,11 @@ final class LyricPresentRenderer {
         return captured;
     }
 
-    /** 防止 present 已画后采集端仍写（不会发生：present 在帧末、采集在帧头；防御性）。 */
-    private static boolean capturedDone() {
-        return false;
-    }
-
     static int quadCount() {
         return batches[front].quadCount;
     }
 
-    /** 诊断：最近一次 draw 实际提交的 quad 数；-1 = 尚未 draw 过。 */
+    /** 诊断：最近一次 draw 实际提交的 quad 数。 */
     static int lastDrawnQuads() {
         return lastDrawnQuads;
     }
@@ -200,133 +124,14 @@ final class LyricPresentRenderer {
         return rejectedQuads;
     }
 
-    /** 诊断：最近一次 draw 后 FBO 中心像素 RGBA（0-255，逗号分隔）。 */
+    /** 诊断：最近一次 draw 的顶点 z 范围（全 0 = 采集丢深度）。 */
+    static String lastVertexZRange() {
+        return lastVertexZRange;
+    }
+
     static String lastCenterPixel() {
-        return lastCenterPixel;
-    }
-
-    // ==================== 呈现链关键件 ====================
-    // 此前「画上 FBO 0 却看不见」的原因（px 读回证明 GPU 真写了）：
-    // ① 绑的 FBO 0 不是原版认可的绘制面 —— 原版按「颜色+深度贴图视图」从 FrameBufferCache
-    //    取 FBO，且 GlStateManager 记着的绑定号与实际不一致时后续 pass 会重绑覆盖；
-    // ② 原版给纹理单元绑的 sampler 会盖掉贴图过滤设置；
-    // ③ 用 CameraRenderState 的原始透视矩阵，丢了视角摇晃（bob）合成。
-    // 三件套：显存读投影 / mainFramebuffer / bindFramebuffer。
-
-    /** GlBuffer.handle 字段（private，反射取）——显存读投影用。 */
-    private static java.lang.reflect.Field bufferHandleField;
-    private static boolean bufferHandleSearched;
-    private static final java.nio.FloatBuffer readback16 = java.nio.ByteBuffer
-            .allocateDirect(64).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer();
-
-    /**
-     * 从显存里把原版当前投影 UBO 读出来（含视角摇晃合成，和原版画世界用的完全一样）。
-     * 读不到时退回 CameraRenderState 的原始透视（调用方传入的 fallback）。
-     */
-    static boolean readProjectionFromUbo(org.joml.Matrix4f dest) {
-        try {
-            com.mojang.blaze3d.buffers.GpuBufferSlice slice =
-                    com.mojang.blaze3d.systems.RenderSystem.getProjectionMatrixBuffer();
-            if (slice == null) return false;
-            if (!(slice.buffer() instanceof com.mojang.blaze3d.opengl.GlBuffer glBuf)) return false;
-            if (!bufferHandleSearched) {
-                bufferHandleSearched = true;
-                try {
-                    // handle() 在 26.3 是 public（javap 核对），26.2 若没有则反射字段
-                    bufferHandleField = com.mojang.blaze3d.opengl.GlBuffer.class
-                            .getDeclaredField("handle");
-                    bufferHandleField.setAccessible(true);
-                } catch (Throwable ignored) {
-                }
-            }
-            int handle;
-            try {
-                handle = glBuf.handle();
-            } catch (Throwable t) {
-                if (bufferHandleField == null) return false;
-                handle = bufferHandleField.getInt(glBuf);
-            }
-            int prev = GL11.glGetInteger(GL31.GL_COPY_READ_BUFFER);
-            GL15.glBindBuffer(GL31.GL_COPY_READ_BUFFER, handle);
-            readback16.clear();
-            GL15.glGetBufferSubData(GL31.GL_COPY_READ_BUFFER, slice.offset(), readback16);
-            GL15.glBindBuffer(GL31.GL_COPY_READ_BUFFER, prev);
-            dest.set(readback16);
-            return true;
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
-    /** 反射找 GlDevice 上的 directStateAccess() / frameBufferCache()。 */
-    private static Object glBackend() {
-        try {
-            Object device = com.mojang.blaze3d.systems.RenderSystem.getDevice();
-            java.lang.reflect.Field f = null;
-            for (Class<?> c = device.getClass(); c != null && f == null; c = c.getSuperclass()) {
-                for (java.lang.reflect.Field sf : c.getDeclaredFields()) {
-                    if (sf.getName().equals("backend")) { f = sf; break; }
-                }
-            }
-            if (f == null) return null;
-            f.setAccessible(true);
-            return f.get(device);
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
-    private static int dummyFramebuffer;
-
-    /** GlDevice.directStateAccess() 实例（反射；26.3 javap 核对方法存在）。 */
-    static com.mojang.blaze3d.opengl.DirectStateAccess directStateAccessInstance() {
-        try {
-            Object backend = glBackend();
-            if (backend == null) return null;
-            java.lang.reflect.Method m = backend.getClass().getDeclaredMethod("directStateAccess");
-            m.setAccessible(true);
-            return (com.mojang.blaze3d.opengl.DirectStateAccess) m.invoke(backend);
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
-    /**
-     * 主渲染目标的帧缓冲编号 —— 与原版自己画东西时用的是同一个
-     * （原版按「颜色+深度贴图视图」从缓存取）。拿不到退回当前绑定。
-     */
-    @SuppressWarnings("unchecked")
-    static int mainFramebuffer(net.minecraft.client.Minecraft mc) {
-        try {
-            com.mojang.blaze3d.pipeline.RenderTarget target = mc.gameRenderer.mainRenderTarget();
-            Object backend = glBackend();
-            if (backend == null) return GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
-            java.lang.reflect.Method dsaM = backend.getClass().getDeclaredMethod("directStateAccess");
-            dsaM.setAccessible(true);
-            Object dsa = dsaM.invoke(backend);
-            java.lang.reflect.Method cacheM = backend.getClass().getDeclaredMethod("frameBufferCache");
-            cacheM.setAccessible(true);
-            Object cache = cacheM.invoke(backend);
-            com.mojang.blaze3d.textures.GpuTextureView color = target.getColorTextureView();
-            com.mojang.blaze3d.textures.GpuTextureView depth = target.getDepthTextureView();
-            if (!(color instanceof com.mojang.blaze3d.opengl.FrameBufferAttachment)) {
-                return GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
-            }
-            java.util.List<com.mojang.blaze3d.opengl.FrameBufferAttachment> attachments =
-                    java.util.List.of((com.mojang.blaze3d.opengl.FrameBufferAttachment) color);
-            Object r = cacheM.invoke(cache, dsa, attachments,
-                    depth instanceof com.mojang.blaze3d.opengl.FrameBufferAttachment ? depth : null);
-            return r instanceof Integer i ? i : GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
-        } catch (Throwable t) {
-            return GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
-        }
-    }
-
-    /** 绑帧缓冲并让原版 GlStateManager 记的值与实际一致（先绑 dummy 再绑真值）。 */
-    static void bindFramebufferRefreshed(int target, int id) {
-        if (dummyFramebuffer == 0) dummyFramebuffer = GL30.glGenFramebuffers();
-        com.mojang.blaze3d.opengl.GlStateManager._glBindFramebuffer(target, dummyFramebuffer);
-        com.mojang.blaze3d.opengl.GlStateManager._glBindFramebuffer(target, id);
+        // 官方通路没有裸 GL 读回口；GPU 是否落像素由画面本身验证
+        return "-";
     }
 
     /** 丢弃当前帧采集（异常/矩阵不可用路径）。 */
@@ -336,165 +141,165 @@ final class LyricPresentRenderer {
         captured = false;
     }
 
-    // ==================== 落屏端（present 线程，GlSurfaceMixin 注入） ====================
+    private static final AtomicBoolean FAILED = new AtomicBoolean(false);
+    private static boolean failureLogged;
 
-    /**
-     * 把上一采集帧的 quad 画上当前绑定的帧缓冲（FBO 0）。
-     * mvp = 投影 × 视图旋转（顶点已是相机相对坐标，无平移分量）。
-     */
-    static void draw(org.joml.Matrix4f projection, org.joml.Matrix4f viewRotation) {
+    /** 一次失败永久熔断（回退世界路由）；首例无条件打印。 */
+    static void logFailure(Throwable t) {
+        if (FAILED.compareAndSet(false, true)) {
+            System.out.println("[MuoniumPlayer/WorldLyrics] present 直画失败，已停用"
+                    + "（回退世界路由）: " + t);
+        } else if (!failureLogged) {
+            failureLogged = true;
+            System.out.println("[MuoniumPlayer/WorldLyrics] present 直画后续失败（只报一次）: " + t);
+        }
+    }
+
+    /** 落屏端报告本帧实际提交 quad 数并消费缓冲（交换双缓冲）。 */
+    static void noteConsumed(int drawn) {
+        lastDrawnQuads = drawn;
+        front = 1 - front;
+        batches[front].quadCount = 0;
+        segCount = 0;
+        captured = false;
+    }
+
+    /** 扫描本帧顶点缓冲的 z 分量范围（stride 9，z 在槽 2）。 */
+    private static void scanVertexZ(Batch b) {
+        float zMin = Float.POSITIVE_INFINITY, zMax = Float.NEGATIVE_INFINITY;
+        int n = b.quadCount * 4;
+        for (int i = 0; i < n; i++) {
+            float z = b.floats[i * FLOATS_PER_VERTEX + 2];
+            if (z < zMin) zMin = z;
+            if (z > zMax) zMax = z;
+        }
+        lastVertexZRange = b.quadCount == 0 ? "-"
+                : String.format("%.2f..%.2f", zMin, zMax);
+    }
+
+    // ==================== 落屏端只读视图 ====================
+
+    /** 落屏端对采集缓冲的只读访问口（本帧待画数据）。 */
+    static final class BatchView {
+        float[] floats() { return batches[front].floats; }
+        int quadCount() { return batches[front].quadCount; }
+        int segmentCount() { return segCount; }
+        int segmentQuadStart(int s) { return segQuadStart[s]; }
+        int segmentQuadCount(int s) { return segQuadCount[s]; }
+        /** 段 s 的页纹理资源路径（采集端记录，落屏端解析成 GpuTextureView）。 */
+        Object segmentTexture(int s) { return segTextures[s]; }
+        boolean isFailed() { return FAILED.get(); }
+        void scanZ() { scanVertexZ(batches[front]); }
+    }
+
+    static final BatchView VIEW = new BatchView();
+
+    // ==================== 落屏端（present 阶段，裸 GL 直画 FBO 0） ====================
+    // 此前这条路的真凶：glGetBufferSubData 在 MobileGL 上不存在，失败后把零缓冲
+    // 写进投影矩阵（MVP=0 → 整帧被近平面裁剪）。矩阵现在由调用方传入
+    // CameraRenderState 快照（官方通路已验证能出画面），不再读任何显存。
+
+    static void drawToFbo0(org.joml.Matrix4f projection, org.joml.Matrix4f viewRotation,
+                           int windowW, int windowH) {
         if (FAILED.get()) return;
         Batch b = batches[front];
         if (b.quadCount == 0 || segCount == 0) return;
+        scanVertexZ(b);
+        if (!ensureGlResources()) return;
         try {
-            ensureResources();
-            if (FAILED.get()) return;
+            org.joml.Matrix4f mvp = new org.joml.Matrix4f(projection).mul(viewRotation);
 
-            // 投影优先从显存 UBO 读（含视角摇晃合成，与原版画世界完全同源）；
-            // 读不到退回 CameraRenderState 的原始透视。
-            org.joml.Matrix4f worldProj = new org.joml.Matrix4f(projection);
-            readProjectionFromUbo(worldProj);
-            // 相对采到的相机相对坐标，视图旋转含共轭四元数（无平移）：MVP = P×V
-            org.joml.Matrix4f mvp = worldProj.mul(viewRotation);
+            int prevProgram = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20.GL_CURRENT_PROGRAM);
+            int prevVao = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_VERTEX_ARRAY_BINDING);
+            int prevVbo = org.lwjgl.opengl.GL15.glGetInteger(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER_BINDING);
+            int prevActiveTex = org.lwjgl.opengl.GL13.glGetInteger(org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE);
+            org.lwjgl.opengl.GL13.glActiveTexture(org.lwjgl.opengl.GL13.GL_TEXTURE0);
+            int prevTex0 = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+            boolean prevBlend = org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_BLEND);
+            int pSrcRgb = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL14.GL_BLEND_SRC_RGB);
+            int pDstRgb = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL14.GL_BLEND_DST_RGB);
+            int pSrcA = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL14.GL_BLEND_SRC_ALPHA);
+            int pDstA = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL14.GL_BLEND_DST_ALPHA);
+            int[] prevViewport = new int[4];
+            org.lwjgl.opengl.GL11.glGetIntegerv(org.lwjgl.opengl.GL11.GL_VIEWPORT, prevViewport);
+            int prevDrawFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_DRAW_FRAMEBUFFER_BINDING);
 
-            // 绑定【原版主渲染目标的 FBO】而不是 0 —— 26.x 原版按「颜色+深度贴图视图」
-            // 从 FrameBufferCache 取 FBO；GlStateManager 记的绑定号必须与实际一致，
-            // 否则后续 pass 按缓存重绑会覆盖我们的输出（此前画 FBO 0 不可见的根因）。
-            net.minecraft.client.Minecraft mcD = net.minecraft.client.Minecraft.getInstance();
-            int prevFbo = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
-            int mainFbo = mainFramebuffer(mcD);
-            bindFramebufferRefreshed(GL30.GL_FRAMEBUFFER, mainFbo);
-            com.mojang.blaze3d.pipeline.RenderTarget mainTarget = mcD.gameRenderer.mainRenderTarget();
-            GL11.glViewport(0, 0, mainTarget.width, mainTarget.height);
-
-            // 原版给纹理单元绑的 sampler 会盖掉贴图自己的过滤/边缘设置 —— 解开
-            //（原版自己每次画都会重绑，无需还原）
-            for (int unit = 0; unit < 4; unit++) GL33.glBindSampler(unit, 0);
-
-            GL20.glUseProgram(program);
-            // 自检开关（-Dmuonium.lyricsPresentDebug=1）：用 identity MVP 画一个
-            // 不透明白色全屏 quad —— 屏幕变白 = FBO/GL 链通（问题在矩阵/纹理）；
-            // 没变白 = 绘制根本没落地（问题在 FBO/图元/状态）。
-            if (DEBUG_FULLSCREEN) {
-                try (MemoryStack st2 = MemoryStack.stackPush()) {
-                    FloatBuffer idm = st2.mallocFloat(16);
-                    new org.joml.Matrix4f().get(idm);
-                    GL20.glUniformMatrix4fv(uMvpLoc, false, idm);
-                }
-                GL11.glDisable(GL11.GL_BLEND);
-                GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
-                float[] white = new float[] {
-                        -1, -1, 0, 1, 1, 1, 1, 0, 0,
-                        -1,  1, 0, 1, 1, 1, 1, 0, 1,
-                         1,  1, 0, 1, 1, 1, 1, 1, 1,
-                         1, -1, 0, 1, 1, 1, 1, 1, 0};
-                GL15.glBufferData(GL15.GL_ARRAY_BUFFER, white, GL15.GL_STREAM_DRAW);
-                GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 6);
-                GL11.glEnable(GL11.GL_BLEND);
-                GL20.glUseProgram(0);
-                GL30.glBindVertexArray(0);
-                GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
-                GL20.glUseProgram(program);
-                try (MemoryStack st3 = MemoryStack.stackPush()) {
-                    FloatBuffer m2 = st3.mallocFloat(16);
-                    mvp.get(m2);
-                    GL20.glUniformMatrix4fv(uMvpLoc, false, m2);
-                }
-                GL30.glBindVertexArray(vao);
-                GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, ebo);
-            }
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                FloatBuffer m = stack.mallocFloat(16);
-                mvp.get(m);
-                GL20.glUniformMatrix4fv(uMvpLoc, false, m);
-            }
-            GL13.glActiveTexture(GL13.GL_TEXTURE0);
-            GL20.glUniform1i(uTexLoc, 0);
-
-            GL11.glDisable(GL11.GL_DEPTH_TEST);
-            GL11.glDepthMask(false);
-            GL11.glDisable(GL11.GL_CULL_FACE);
-            GL11.glEnable(GL11.GL_BLEND);
-            GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
-                    GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
-
-            GL30.glBindVertexArray(vao);
-            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo);
-            // 复用巨型 VBO：一次上传整帧浮动数组（~4096 quad × 36f × 4B ≈ 590KB 上限）
-            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, b.floats, GL15.GL_STREAM_DRAW);
-
-            // GL 3.3 core / GLES 都没有 QUADS 图元（ES 下 glDrawArrays(GL_QUADS)
-            // 直接 INVALID_ENUM 静默不画 —— 2026-10-28 真机「开激进适配全隐」的
-            // 真因）。改 TRIANGLES 索引绘制：每 quad 4 顶点 + 6 索引（EBO 一次性建）。
-            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, ebo);
-
-            int drawn = 0;
-            for (int s = 0; s < segCount; s++) {
-                if (segQuadCount[s] <= 0) continue;
-                GL11.glBindTexture(GL11.GL_TEXTURE_2D, segTexIds[s]);
-                GL11.glDrawElements(GL11.GL_TRIANGLES, segQuadCount[s] * 6,
-                        GL11.GL_UNSIGNED_INT, segQuadStart[s] * 6L * 4);
-                drawn += segQuadCount[s];
-            }
-            lastDrawnQuads = drawn;
-            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
-            GL30.glBindVertexArray(0);
-            GL20.glUseProgram(0);
-
-            // ============ 关键：把 mainTarget 重新 blit 到 FBO 0 ============
-            // 我们在 present() HEAD（原版 blit mainTarget→FBO0 之后）画进 mainTarget，
-            // FBO 0 里还是画字之前的旧画面 —— 不补一次 blit，字永远不会上屏。
-            // 照抄 GlCommandEncoder.presentTexture 的做法（javap 逐行核对）：
-            // 关剪裁、全屏视口、写全色、绑颜色纹理、blitFrameBuffers。
             try {
-                com.mojang.blaze3d.opengl.DirectStateAccess dsa = directStateAccessInstance();
-                if (dsa != null) {
-                    com.mojang.blaze3d.systems.RenderSystem.getDevice().createCommandEncoder();
-                    com.mojang.blaze3d.opengl.GlStateManager._disableScissorTest();
-                    com.mojang.blaze3d.opengl.GlStateManager._depthMask(true);
-                    com.mojang.blaze3d.opengl.GlStateManager._colorMask(15);
-                    int rtW = mainTarget.width, rtH = mainTarget.height;
-                    int dstY = Math.max(0, windowHeight - rtH);
-                    int drawW = Math.min(windowWidth, rtW);
-                    int drawH = Math.min(windowHeight, rtH);
-                    com.mojang.blaze3d.opengl.GlStateManager._viewport(0, 0, windowWidth, windowHeight);
-                    GL11.glViewport(0, 0, windowWidth, windowHeight);
-                    // 目标切回 FBO 0（swap 即将发生的地方）
-                    com.mojang.blaze3d.opengl.GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
-                    org.lwjgl.opengl.GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
-                    com.mojang.blaze3d.opengl.GlTexture colorTex =
-                            (com.mojang.blaze3d.opengl.GlTexture) mainTarget.getColorTexture();
-                    dsa.bindFrameBufferTextures(colorTex.glId(), 0, 0, 0, 0);
-                    dsa.blitFrameBuffers(mainFbo, 0,
-                            0, 0, drawW, drawH,
-                            0, dstY, drawW, dstY + drawH,
-                            16384 /*COLOR*/, 9728 /*NEAREST*/);
-                    // 恢复 mainTarget 的 FBO 绑定（原版后续 encoder 操作按它走）
-                    bindFramebufferRefreshed(GL30.GL_FRAMEBUFFER, mainFbo);
-                } else {
-                    // 拿不到 DSA：退回直接画 FBO 0（旧行为，聊胜于无）
-                    bindFramebufferRefreshed(GL30.GL_FRAMEBUFFER, prevFbo);
+                // 目标恒为窗口默认帧缓冲：此刻画面已 blit 进来，只差交换
+                org.lwjgl.opengl.GL30.glBindFramebuffer(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, 0);
+                org.lwjgl.opengl.GL11.glViewport(0, 0, windowW, windowH);
+                // 原版/光影留在纹理单元上的 sampler 会盖掉贴图过滤 —— 解开（原版每画必重绑）
+                for (int unit = 0; unit < 4; unit++) org.lwjgl.opengl.GL33.glBindSampler(unit, 0);
+
+                org.lwjgl.opengl.GL20.glUseProgram(glProgram);
+                try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+                    java.nio.FloatBuffer m = stack.mallocFloat(16);
+                    mvp.get(m);
+                    org.lwjgl.opengl.GL20.glUniformMatrix4fv(glUMvp, false, m);
                 }
-            } catch (Throwable t2) {
-                bindFramebufferRefreshed(GL30.GL_FRAMEBUFFER, prevFbo);
-            }
-            // 诊断（每 16 帧一次）：读回 FBO 中心像素。alpha>0 = GPU 真写进去了
-            //（问题在呈现链）；alpha=0 = 绘制没落地（问题在 GL 状态/图元/矩阵）。
-            if ((diagTick++ & 15) == 0) {
-                java.nio.ByteBuffer px = java.nio.ByteBuffer.allocateDirect(4);
-                GL11.glReadPixels(windowWidth / 2, windowHeight / 2, 1, 1,
-                        GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, px);
-                lastCenterPixel = (px.get(0) & 0xFF) + "," + (px.get(1) & 0xFF) + ","
-                        + (px.get(2) & 0xFF) + "," + (px.get(3) & 0xFF);
-                if (DEBUG_FULLSCREEN) {
-                    int err = GL11.glGetError();
-                    if (err != 0) lastCenterPixel += " glErr=" + err;
+                org.lwjgl.opengl.GL13.glActiveTexture(org.lwjgl.opengl.GL13.GL_TEXTURE0);
+                org.lwjgl.opengl.GL20.glUniform1i(glUTex, 0);
+
+                org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+                org.lwjgl.opengl.GL11.glDepthMask(false);
+                org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_CULL_FACE);
+                org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_BLEND);
+                org.lwjgl.opengl.GL14.glBlendFuncSeparate(
+                        org.lwjgl.opengl.GL11.GL_SRC_ALPHA, org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA,
+                        org.lwjgl.opengl.GL11.GL_ONE, org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA);
+
+                org.lwjgl.opengl.GL30.glBindVertexArray(glVao);
+                org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER, glVbo);
+                org.lwjgl.opengl.GL15.glBufferData(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER, b.floats, org.lwjgl.opengl.GL15.GL_STREAM_DRAW);
+                org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ELEMENT_ARRAY_BUFFER, glEbo);
+
+                int drawn = 0;
+                TextureManager tm = Minecraft.getInstance().getTextureManager();
+                for (int s = 0; s < segCount; s++) {
+                    int segQuads = segQuadCount[s];
+                    if (segQuads <= 0) continue;
+                    Object segTex = segTextures[s];
+                    if (!(segTex instanceof net.minecraft.resources.Identifier segRl)) continue;
+                    AbstractTexture tex = tm.getTexture(segRl);
+                    if (tex == null || tex.getTexture() == null) continue;
+                    int glId;
+                    try {
+                        // 26.3 公开方法（javap 核对）；Vulkan 后端此处必然不匹配 → 熔断
+                        glId = ((com.mojang.blaze3d.opengl.GlTexture) tex.getTexture()).glId();
+                    } catch (ClassCastException e) {
+                        logFailure(e);
+                        return;
+                    }
+                    org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, glId);
+                    org.lwjgl.opengl.GL11.glDrawElements(org.lwjgl.opengl.GL11.GL_TRIANGLES,
+                            segQuads * 6, org.lwjgl.opengl.GL11.GL_UNSIGNED_INT,
+                            (long) segQuadStart[s] * 6L * 4L);
+                    drawn += segQuads;
                 }
+                lastDrawnQuads = drawn;
+
+                org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
+                org.lwjgl.opengl.GL30.glBindVertexArray(0);
+                org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER, 0);
+                org.lwjgl.opengl.GL20.glUseProgram(0);
+            } finally {
+                org.lwjgl.opengl.GL13.glActiveTexture(org.lwjgl.opengl.GL13.GL_TEXTURE0);
+                org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, prevTex0);
+                org.lwjgl.opengl.GL13.glActiveTexture(prevActiveTex);
+                if (prevBlend) org.lwjgl.opengl.GL11.glEnable(org.lwjgl.opengl.GL11.GL_BLEND);
+                else org.lwjgl.opengl.GL11.glDisable(org.lwjgl.opengl.GL11.GL_BLEND);
+                org.lwjgl.opengl.GL14.glBlendFuncSeparate(pSrcRgb, pDstRgb, pSrcA, pDstA);
+                org.lwjgl.opengl.GL11.glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+                org.lwjgl.opengl.GL20.glUseProgram(prevProgram);
+                org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER, prevVbo);
+                org.lwjgl.opengl.GL30.glBindVertexArray(prevVao);
+                // FBO 绑定走 GlStateManager 缓存口径还回去（dummy 双绑防短路）
+                com.mojang.blaze3d.opengl.GlStateManager._glBindFramebuffer(
+                        org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, 0);
+                com.mojang.blaze3d.opengl.GlStateManager._glBindFramebuffer(
+                        org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, prevDrawFbo);
             }
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
-            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
-            GL20.glUseProgram(0);
-            // 采集缓冲已消费：交换双缓冲，下一帧采集写另一份
+            // 采集缓冲已消费：交换双缓冲
             front = 1 - front;
             batches[front].quadCount = 0;
             segCount = 0;
@@ -504,206 +309,102 @@ final class LyricPresentRenderer {
         }
     }
 
-    /**
-     * 把采集的 quad 画进主渲染目标（同类 3D 歌词 mod 验证过的时机与方式）。
-     * 全套 GL 状态快照进出：program/vao/vbo/FBO/activeTex/绑定纹理/混合/深度/
-     * 剔除/剪裁/视口/色掩码 —— 世界阶段原版随时接续渲染，状态不能脏。
-     */
-    static void drawInMainTarget(org.joml.Matrix4f projection, org.joml.Matrix4f viewRotation,
-                                 com.mojang.blaze3d.pipeline.RenderTarget target,
-                                 net.minecraft.client.Minecraft mc) {
-        if (FAILED.get()) return;
-        Batch b = batches[front];
-        if (b.quadCount == 0 || segCount == 0) return;
-        try {
-            ensureResources();
-            if (FAILED.get()) return;
-
-            // ---- 快照（GlState 语义） ----
-            int prevProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
-            int prevVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
-            int prevVbo = GL15.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING);
-            int prevDrawFbo = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
-            int prevActiveTex = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
-            int prevTex0 = 0, prevTex1 = 0;
-            GL13.glActiveTexture(GL13.GL_TEXTURE0);
-            prevTex0 = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
-            GL13.glActiveTexture(GL13.GL_TEXTURE1);
-            prevTex1 = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
-            boolean prevBlend = GL11.glIsEnabled(GL11.GL_BLEND);
-            int pSrcRgb = GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB), pDstRgb = GL11.glGetInteger(GL14.GL_BLEND_DST_RGB);
-            int pSrcA = GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA), pDstA = GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA);
-            boolean prevDepthTest = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
-            boolean prevDepthMask = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
-            boolean prevCull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
-            boolean prevScissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
-            int[] prevViewport = new int[4];
-            GL11.glGetIntegerv(GL11.GL_VIEWPORT, prevViewport);
-            java.nio.ByteBuffer prevColorMask = java.nio.ByteBuffer.allocateDirect(4);
-            GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK, prevColorMask);
-            int[] prevScissorBox = new int[4];
-            GL11.glGetIntegerv(GL11.GL_SCISSOR_BOX, prevScissorBox);
-
-            try {
-                // ---- 投影：显存 UBO 优先（含 bob），fallback CameraRenderState ----
-                org.joml.Matrix4f worldProj = new org.joml.Matrix4f(projection);
-                readProjectionFromUbo(worldProj);
-                org.joml.Matrix4f mvp = worldProj.mul(viewRotation);
-
-                // ---- 绑定主渲染目标的 FBO（原版 FrameBufferCache 那个）----
-                int mainFbo = mainFramebuffer(mc);
-                bindFramebufferRefreshed(GL30.GL_FRAMEBUFFER, mainFbo);
-                GL11.glViewport(0, 0, target.width, target.height);
-                for (int unit = 0; unit < 4; unit++) GL33.glBindSampler(unit, 0);
-
-                GL20.glUseProgram(program);
-                try (MemoryStack stack = MemoryStack.stackPush()) {
-                    FloatBuffer m = stack.mallocFloat(16);
-                    mvp.get(m);
-                    GL20.glUniformMatrix4fv(uMvpLoc, false, m);
-                }
-                GL13.glActiveTexture(GL13.GL_TEXTURE0);
-                GL20.glUniform1i(uTexLoc, 0);
-
-                GL11.glDisable(GL11.GL_DEPTH_TEST);
-                GL11.glDepthMask(false);
-                GL11.glDisable(GL11.GL_CULL_FACE);
-                GL11.glDisable(GL11.GL_SCISSOR_TEST);
-                GL11.glEnable(GL11.GL_BLEND);
-                GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
-                        GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
-                GL11.glColorMask(true, true, true, true);
-
-                GL30.glBindVertexArray(vao);
-                GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo);
-                GL15.glBufferData(GL15.GL_ARRAY_BUFFER, b.floats, GL15.GL_STREAM_DRAW);
-                GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, ebo);
-
-                int drawn = 0;
-                for (int sIdx = 0; sIdx < segCount; sIdx++) {
-                    if (segQuadCount[sIdx] <= 0) continue;
-                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, segTexIds[sIdx]);
-                    GL11.glDrawElements(GL11.GL_TRIANGLES, segQuadCount[sIdx] * 6,
-                            GL11.GL_UNSIGNED_INT, segQuadStart[sIdx] * 6L * 4);
-                    drawn += segQuadCount[sIdx];
-                }
-                lastDrawnQuads = drawn;
-                GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
-                GL30.glBindVertexArray(0);
-                GL20.glUseProgram(0);
-                // 采集缓冲已消费：交换双缓冲
-                front = 1 - front;
-                batches[front].quadCount = 0;
-                segCount = 0;
-                captured = false;
-                consumedThisFrame = true;
-            } finally {
-                // ---- 恢复（GlState.restore 语义） ----
-                GL13.glActiveTexture(GL13.GL_TEXTURE0);
-                GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex0);
-                GL13.glActiveTexture(GL13.GL_TEXTURE1);
-                GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex1);
-                GL13.glActiveTexture(prevActiveTex);
-                if (prevBlend) GL11.glEnable(GL11.GL_BLEND); else GL11.glDisable(GL11.GL_BLEND);
-                GL14.glBlendFuncSeparate(pSrcRgb, pDstRgb, pSrcA, pDstA);
-                if (prevDepthTest) GL11.glEnable(GL11.GL_DEPTH_TEST); else GL11.glDisable(GL11.GL_DEPTH_TEST);
-                GL11.glDepthMask(prevDepthMask);
-                if (prevCull) GL11.glEnable(GL11.GL_CULL_FACE); else GL11.glDisable(GL11.GL_CULL_FACE);
-                if (prevScissor) GL11.glEnable(GL11.GL_SCISSOR_TEST); else GL11.glDisable(GL11.GL_SCISSOR_TEST);
-                GL11.glScissor(prevScissorBox[0], prevScissorBox[1], prevScissorBox[2], prevScissorBox[3]);
-                GL11.glColorMask(prevColorMask.get(0) != 0, prevColorMask.get(1) != 0,
-                        prevColorMask.get(2) != 0, prevColorMask.get(3) != 0);
-                com.mojang.blaze3d.opengl.GlStateManager._viewport(prevViewport[0], prevViewport[1],
-                        prevViewport[2], prevViewport[3]);
-                GL11.glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
-                GL20.glUseProgram(prevProgram);
-                GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, prevVbo);
-                bindFramebufferRefreshed(GL30.GL_DRAW_FRAMEBUFFER, prevDrawFbo);
-                GL30.glBindVertexArray(prevVao);
+    /** GLSL 150 对：GLSL 150 无 layout(location)，链前 glBindAttribLocation 钉死属性槽。 */
+    private static final String GL_VS = """
+            #version 150
+            uniform mat4 uMvp;
+            in vec3 aPos;
+            in vec4 aColor;
+            in vec2 aUv;
+            out vec4 vColor;
+            out vec2 vUv;
+            void main() {
+                gl_Position = uMvp * vec4(aPos, 1.0);
+                vColor = aColor;
+                vUv = aUv;
             }
-        } catch (Throwable t) {
-            logFailure(t);
-        }
-    }
+            """;
+    private static final String GL_FS = """
+            #version 150
+            uniform sampler2D uTex;
+            in vec4 vColor;
+            in vec2 vUv;
+            out vec4 fragColor;
+            void main() {
+                fragColor = texture(uTex, vUv) * vColor;
+            }
+            """;
 
-    /** 本帧 present/世界路由是否已消费采集缓冲（避免双消费）。 */
-    private static boolean consumedThisFrame;
+    private static int glProgram, glVbo, glVao, glEbo, glUMvp, glUTex;
 
-    /** 一次性建 program/vbo/vao；失败即永久熔断（回退世界路由）。 */
-    private static void ensureResources() {
-        if (program != 0) return;
+    /** 一次性建裸 GL 资源；失败永久熔断（回退世界路由）。 */
+    private static boolean ensureGlResources() {
+        if (glProgram != 0) return true;
         int vs = 0, fs = 0;
         try {
-            vs = compile(GL20.GL_VERTEX_SHADER, VS);
-            fs = compile(GL20.GL_FRAGMENT_SHADER, FS);
-            program = GL20.glCreateProgram();
-            GL20.glAttachShader(program, vs);
-            GL20.glAttachShader(program, fs);
-            GL20.glBindAttribLocation(program, 0, "aPos");
-            GL20.glBindAttribLocation(program, 1, "aColor");
-            GL20.glBindAttribLocation(program, 2, "aUv");
-            GL20.glLinkProgram(program);
-            if (GL20.glGetProgrami(program, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
-                throw new IllegalStateException("link failed: " + GL20.glGetProgramInfoLog(program));
+            vs = compileShader(org.lwjgl.opengl.GL20.GL_VERTEX_SHADER, GL_VS);
+            fs = compileShader(org.lwjgl.opengl.GL20.GL_FRAGMENT_SHADER, GL_FS);
+            glProgram = org.lwjgl.opengl.GL20.glCreateProgram();
+            org.lwjgl.opengl.GL20.glAttachShader(glProgram, vs);
+            org.lwjgl.opengl.GL20.glAttachShader(glProgram, fs);
+            org.lwjgl.opengl.GL20.glBindAttribLocation(glProgram, 0, "aPos");
+            org.lwjgl.opengl.GL20.glBindAttribLocation(glProgram, 1, "aColor");
+            org.lwjgl.opengl.GL20.glBindAttribLocation(glProgram, 2, "aUv");
+            org.lwjgl.opengl.GL20.glLinkProgram(glProgram);
+            if (org.lwjgl.opengl.GL20.glGetProgrami(glProgram, org.lwjgl.opengl.GL20.GL_LINK_STATUS)
+                    == org.lwjgl.opengl.GL11.GL_FALSE) {
+                throw new IllegalStateException("link failed: "
+                        + org.lwjgl.opengl.GL20.glGetProgramInfoLog(glProgram));
             }
-            uMvpLoc = GL20.glGetUniformLocation(program, "uMvp");
-            uTexLoc = GL20.glGetUniformLocation(program, "uTex");
+            glUMvp = org.lwjgl.opengl.GL20.glGetUniformLocation(glProgram, "uMvp");
+            glUTex = org.lwjgl.opengl.GL20.glGetUniformLocation(glProgram, "uTex");
 
-            vao = GL30.glGenVertexArrays();
-            GL30.glBindVertexArray(vao);
-            vbo = GL15.glGenBuffers();
-            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo);
-            // stride = 9 floats: pos(3) color(4) uv(2)
-            GL20.glEnableVertexAttribArray(0);
-            GL20.glVertexAttribPointer(0, 3, GL11.GL_FLOAT, false, FLOATS_PER_VERTEX * 4, 0);
-            GL20.glEnableVertexAttribArray(1);
-            GL20.glVertexAttribPointer(1, 4, GL11.GL_FLOAT, false, FLOATS_PER_VERTEX * 4, 3 * 4);
-            GL20.glEnableVertexAttribArray(2);
-            GL20.glVertexAttribPointer(2, 2, GL11.GL_FLOAT, false, FLOATS_PER_VERTEX * 4, 7 * 4);
-            // EBO：quad 顶点序 左上→左下→右下→右上（0,1,2,3）→ 两三角 (0,1,2)(0,2,3)
-            ebo = GL15.glGenBuffers();
-            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, ebo);
+            glVao = org.lwjgl.opengl.GL30.glGenVertexArrays();
+            org.lwjgl.opengl.GL30.glBindVertexArray(glVao);
+            glVbo = org.lwjgl.opengl.GL15.glGenBuffers();
+            org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER, glVbo);
+            // stride 36B：pos3 + color4 + uv2（与采集缓冲逐字节一致）
+            org.lwjgl.opengl.GL20.glEnableVertexAttribArray(0);
+            org.lwjgl.opengl.GL20.glVertexAttribPointer(0, 3, org.lwjgl.opengl.GL11.GL_FLOAT, false, FLOATS_PER_VERTEX * 4, 0);
+            org.lwjgl.opengl.GL20.glEnableVertexAttribArray(1);
+            org.lwjgl.opengl.GL20.glVertexAttribPointer(1, 4, org.lwjgl.opengl.GL11.GL_FLOAT, false, FLOATS_PER_VERTEX * 4, 3 * 4);
+            org.lwjgl.opengl.GL20.glEnableVertexAttribArray(2);
+            org.lwjgl.opengl.GL20.glVertexAttribPointer(2, 2, org.lwjgl.opengl.GL11.GL_FLOAT, false, FLOATS_PER_VERTEX * 4, 7 * 4);
+            glEbo = org.lwjgl.opengl.GL15.glGenBuffers();
+            org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ELEMENT_ARRAY_BUFFER, glEbo);
             int[] idx = new int[MAX_QUADS * 6];
             for (int q = 0; q < MAX_QUADS; q++) {
                 int v = q * 4, o = q * 6;
-                idx[o] = v;     idx[o+1] = v+1; idx[o+2] = v+2;
-                idx[o+3] = v;   idx[o+4] = v+2; idx[o+5] = v+3;
+                idx[o] = v; idx[o+1] = v+1; idx[o+2] = v+2;
+                idx[o+3] = v; idx[o+4] = v+2; idx[o+5] = v+3;
             }
-            GL15.glBufferData(GL15.GL_ELEMENT_ARRAY_BUFFER, idx, GL15.GL_STATIC_DRAW);
-            GL30.glBindVertexArray(0);
-            GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
-            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
-            GL20.glDeleteShader(vs);
-            GL20.glDeleteShader(fs);
+            java.nio.IntBuffer ib = java.nio.ByteBuffer
+                    .allocateDirect(idx.length * 4).order(java.nio.ByteOrder.nativeOrder()).asIntBuffer();
+            ib.put(idx).flip();
+            org.lwjgl.opengl.GL15.glBufferData(org.lwjgl.opengl.GL15.GL_ELEMENT_ARRAY_BUFFER, ib, org.lwjgl.opengl.GL15.GL_STATIC_DRAW);
+            org.lwjgl.opengl.GL30.glBindVertexArray(0);
+            org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER, 0);
+            org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
+            org.lwjgl.opengl.GL20.glDeleteShader(vs);
+            org.lwjgl.opengl.GL20.glDeleteShader(fs);
+            return true;
         } catch (Throwable t) {
-            if (vs != 0) GL20.glDeleteShader(vs);
-            if (fs != 0) GL20.glDeleteShader(fs);
+            if (vs != 0) org.lwjgl.opengl.GL20.glDeleteShader(vs);
+            if (fs != 0) org.lwjgl.opengl.GL20.glDeleteShader(fs);
             logFailure(t);
+            return false;
         }
     }
 
-    private static int compile(int type, String src) {
-        int sh = GL20.glCreateShader(type);
-        GL20.glShaderSource(sh, src);
-        GL20.glCompileShader(sh);
-        if (GL20.glGetShaderi(sh, GL20.GL_COMPILE_STATUS) == GL11.GL_FALSE) {
-            String log = GL20.glGetShaderInfoLog(sh);
-            GL20.glDeleteShader(sh);
-            throw new IllegalStateException("shader compile failed: " + log);
+    private static int compileShader(int type, String source) {
+        int sh = org.lwjgl.opengl.GL20.glCreateShader(type);
+        org.lwjgl.opengl.GL20.glShaderSource(sh, source);
+        org.lwjgl.opengl.GL20.glCompileShader(sh);
+        if (org.lwjgl.opengl.GL20.glGetShaderi(sh, org.lwjgl.opengl.GL20.GL_COMPILE_STATUS)
+                == org.lwjgl.opengl.GL11.GL_FALSE) {
+            throw new IllegalStateException("shader compile failed: "
+                    + org.lwjgl.opengl.GL20.glGetShaderInfoLog(sh));
         }
         return sh;
-    }
-
-    /** 首次失败无条件打日志；此后熔断（回退世界路由），静默。 */
-    static void logFailure(Throwable t) {
-        if (FAILED.compareAndSet(false, true)) {
-            System.out.println("[MuoniumPlayer/WorldLyrics] present 兜底直画失败，已停用"
-                    + "（回退世界路由，光影会加工歌词）: " + t);
-            if (t.getStackTrace().length > 0) {
-                System.out.println("    at " + t.getStackTrace()[0]);
-            }
-        } else if (!failureLogged) {
-            failureLogged = true;
-        }
     }
 }

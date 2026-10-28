@@ -359,8 +359,6 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                                   int argb, float u0, float v0, float u1, float v1) {
         Matrix4f mat = poseStack != null ? poseStack.last().pose() : null;
         if (mat == null) return;
-        int texId = pageGlId(pageRl);
-        if (texId == 0) return;
         // 四角先绕字中心旋转/缩放（与 putGlyphVertex 同式），再进 billboard 矩阵
         float ax = cx + ((qLeft - cx) * cos - (qTop - cy) * sin) * s;
         float ay = cy + ((qLeft - cx) * sin + (qTop - cy) * cos) * s;
@@ -370,12 +368,13 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         float gy = cy + ((qRight - cx) * sin + (qBottom - cy) * cos) * s;
         float dx = cx + ((qRight - cx) * cos - (qTop - cy) * sin) * s;
         float dy = cy + ((qRight - cx) * sin + (qTop - cy) * cos) * s;
-        // transformPosition = addVertex(Matrix4f) 的同款数学（billboard 无透视分量）
-        LyricPresentRenderer.addQuad(texId,
-                matX(mat, ax, ay), matY(mat, ax, ay), u0, v0,
-                matX(mat, bx, by), matY(mat, bx, by), u0, v1,
-                matX(mat, gx, gy), matY(mat, gx, gy), u1, v1,
-                matX(mat, dx, dy), matY(mat, dx, dy), u1, v0,
+        // transformPosition = addVertex(Matrix4f) 的同款数学（billboard 无透视分量）；
+        // 三行全取 —— z 行是深度，丢 z 顶点贴相机平面，透视近平面整帧静默裁剪
+        LyricPresentRenderer.addQuad(pageRl,
+                matX(mat, ax, ay), matY(mat, ax, ay), matZ(mat, ax, ay), u0, v0,
+                matX(mat, bx, by), matY(mat, bx, by), matZ(mat, bx, by), u0, v1,
+                matX(mat, gx, gy), matY(mat, gx, gy), matZ(mat, gx, gy), u1, v1,
+                matX(mat, dx, dy), matY(mat, dx, dy), matZ(mat, dx, dy), u1, v0,
                 argb);
     }
 
@@ -387,6 +386,11 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     /** billboard 矩阵 × (x,y,0) 的 Y 分量。 */
     private static float matY(Matrix4f m, float x, float y) {
         return m.m01() * x + m.m11() * y + m.m31();
+    }
+
+    /** billboard 矩阵 × (x,y,0) 的 Z 分量（深度行，m32 = 相对相机的纵深）。 */
+    private static float matZ(Matrix4f m, float x, float y) {
+        return m.m02() * x + m.m12() * y + m.m32();
     }
 
     /**
@@ -402,42 +406,13 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                                    int argb) {
         Matrix4f mat = poseStack != null ? poseStack.last().pose() : null;
         if (mat == null) return;
-        int texId = pageGlId(rl);
-        if (texId == 0) return;
-        LyricPresentRenderer.addQuad(texId,
-                matX(mat, ax, ay), matY(mat, ax, ay), au, av,
-                matX(mat, bx, by), matY(mat, bx, by), bu, bv,
-                matX(mat, gx, gy), matY(mat, gx, gy), gu, gv,
-                matX(mat, dx, dy), matY(mat, dx, dy), du, dv,
+        LyricPresentRenderer.addQuad(rl,
+                matX(mat, ax, ay), matY(mat, ax, ay), matZ(mat, ax, ay), au, av,
+                matX(mat, bx, by), matY(mat, bx, by), matZ(mat, bx, by), bu, bv,
+                matX(mat, gx, gy), matY(mat, gx, gy), matZ(mat, gx, gy), gu, gv,
+                matX(mat, dx, dy), matY(mat, dx, dy), matZ(mat, dx, dy), du, dv,
                 argb);
     }
-
-    /**
-     * 页纹理的 GL 纹理名（present 端裸 GL 绑定用）：Identifier → TextureManager →
-     * DynamicTexture.getTexture() → GlTexture.glId()（26.3 公开方法，javap 核对）。
-     * 一次失败永久熔断（页 id 拿不到 = present 直画不可用，回退世界路由）。
-     */
-    private static int pageGlId(Identifier rl) {
-        if (pageGlIdFailed) return 0;
-        try {
-            Minecraft mc = Minecraft.getInstance();
-            if (mc == null || mc.getTextureManager() == null) return 0;
-            net.minecraft.client.renderer.texture.AbstractTexture tex = mc.getTextureManager().getTexture(rl);
-            if (tex == null || tex.getTexture() == null) return 0;
-            if (tex.getTexture() instanceof com.mojang.renderpearl.backend.opengl.GlTexture gl) {
-                return gl.glId();
-            }
-            // 非 GL 后端（Vulkan）：本通路按设计不工作
-            pageGlIdFailed = true;
-            return 0;
-        } catch (Throwable t) {
-            pageGlIdFailed = true;
-            System.out.println("[MuoniumPlayer/WorldLyrics] 字形页 GL 纹理名获取失败，present 兜底停用: " + t);
-            return 0;
-        }
-    }
-
-    private static boolean pageGlIdFailed;
 
     @Override
     public void drawTrail(float[] xs, float[] ys, int count,

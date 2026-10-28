@@ -81,7 +81,7 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/core/screens/TitleMenuAnnouncementButton.java",
             "com/muoniumplayer/core/screens/hud/HudSettingsModel.java"));
 
-    /** 只在部分树存在的（mixin 注入点、各树网络通道）。 */
+    /** 只在部分树存在的（mixin 注入点、各树网络通道、光影期直画通路）。 */
     private static final Set<String> OPTIONAL_MAIN_JAVA = new LinkedHashSet<String>(Arrays.asList(
             "com/muoniumplayer/mixin/FramebufferMixin.java",
             "com/muoniumplayer/mixin/GlSurfaceMixin.java",
@@ -89,6 +89,11 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/mixin/MouseButtonStateMixin.java",
             "com/muoniumplayer/mixin/MusicManagerAccessor.java",
             "com/muoniumplayer/mixin/MusicManagerDuckMixin.java",
+            // --- 26.x 光影期直画：renderpearl 类路径 + GameRenderer 注入点，仅 26.2/26.3 ---
+            "com/muoniumplayer/compat/mc/LyricPresentRenderer.java",
+            "com/muoniumplayer/compat/mc/LyricBlaze3DRenderer.java",
+            "com/muoniumplayer/compat/mc/WorldLyricsHudDraw.java",
+            "com/muoniumplayer/mixin/GameRendererRenderLevelMixin.java",
             "com/muoniumplayer/party/net/MpPayloads.java"));
 
     /** 五棵树各自的版本差异测试（ProjectPaths 例外，它已经收进共享层）。 */
