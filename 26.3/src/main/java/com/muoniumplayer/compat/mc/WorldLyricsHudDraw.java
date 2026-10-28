@@ -127,7 +127,8 @@ public final class WorldLyricsHudDraw {
                 System.out.println("[WorldLyrics/diag][present] cam(yaw=" + crs.yRot + " pitch=" + crs.xRot
                         + ") quads=" + LyricPresentRenderer.quadCount()
                         + " drawn=" + LyricPresentRenderer.lastDrawnQuads()
-                        + " rej=" + LyricPresentRenderer.rejectedQuads() + " activePos="
+                        + " rej=" + LyricPresentRenderer.rejectedQuads()
+                        + " px=" + LyricPresentRenderer.lastCenterPixel() + " activePos="
                         + com.muoniumplayer.core.lyrics3d.WorldLyricsState.activeLineDebugPos());
             }
             com.mojang.blaze3d.platform.Window win = mc.getWindow();

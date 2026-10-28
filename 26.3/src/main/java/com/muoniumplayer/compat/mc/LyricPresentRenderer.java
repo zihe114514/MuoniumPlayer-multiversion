@@ -72,6 +72,9 @@ final class LyricPresentRenderer {
             """;
 
     private static final AtomicBoolean FAILED = new AtomicBoolean(false);
+    /** 自检开关：-Dmuonium.lyricsPresentDebug=1 = 每帧先画全屏白块再画歌词。 */
+    private static final boolean DEBUG_FULLSCREEN = Boolean.getBoolean("muonium.lyricsPresentDebug");
+    private static int diagTick;
     private static boolean failureLogged;
 
     /** 顶点数据：浮点直接摊平（颜色拆 rgba），quad 按纹理页分组。 */
@@ -107,6 +110,8 @@ final class LyricPresentRenderer {
     /** 诊断：最近一次 draw 实际提交的 quad 数 / 采集端累计拒绝数（缓冲满/段满）。 */
     private static volatile int lastDrawnQuads;
     private static int rejectedQuads;
+    /** 诊断：最近一次 draw 后从 FBO 中心读回的 RGBA（画没画上的决定性证据）。 */
+    private static volatile String lastCenterPixel = "-";
 
     static void setWindowSize(int w, int h) {
         if (w > 0 && h > 0) { windowWidth = w; windowHeight = h; }
@@ -192,6 +197,11 @@ final class LyricPresentRenderer {
         return rejectedQuads;
     }
 
+    /** 诊断：最近一次 draw 后 FBO 中心像素 RGBA（0-255，逗号分隔）。 */
+    static String lastCenterPixel() {
+        return lastCenterPixel;
+    }
+
     /** 丢弃当前帧采集（异常/矩阵不可用路径）。 */
     static void reset() {
         batches[front].quadCount = 0;
@@ -217,6 +227,37 @@ final class LyricPresentRenderer {
             org.joml.Matrix4f mvp = new org.joml.Matrix4f(projection).mul(viewRotation);
 
             GL20.glUseProgram(program);
+            // 自检开关（-Dmuonium.lyricsPresentDebug=1）：用 identity MVP 画一个
+            // 不透明白色全屏 quad —— 屏幕变白 = FBO/GL 链通（问题在矩阵/纹理）；
+            // 没变白 = 绘制根本没落地（问题在 FBO/图元/状态）。
+            if (DEBUG_FULLSCREEN) {
+                try (MemoryStack st2 = MemoryStack.stackPush()) {
+                    FloatBuffer idm = st2.mallocFloat(16);
+                    new org.joml.Matrix4f().get(idm);
+                    GL20.glUniformMatrix4fv(uMvpLoc, false, idm);
+                }
+                GL11.glDisable(GL11.GL_BLEND);
+                GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+                float[] white = new float[] {
+                        -1, -1, 0, 1, 1, 1, 1, 0, 0,
+                        -1,  1, 0, 1, 1, 1, 1, 0, 1,
+                         1,  1, 0, 1, 1, 1, 1, 1, 1,
+                         1, -1, 0, 1, 1, 1, 1, 1, 0};
+                GL15.glBufferData(GL15.GL_ARRAY_BUFFER, white, GL15.GL_STREAM_DRAW);
+                GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 6);
+                GL11.glEnable(GL11.GL_BLEND);
+                GL20.glUseProgram(0);
+                GL30.glBindVertexArray(0);
+                GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
+                GL20.glUseProgram(program);
+                try (MemoryStack st3 = MemoryStack.stackPush()) {
+                    FloatBuffer m2 = st3.mallocFloat(16);
+                    mvp.get(m2);
+                    GL20.glUniformMatrix4fv(uMvpLoc, false, m2);
+                }
+                GL30.glBindVertexArray(vao);
+                GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, ebo);
+            }
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 FloatBuffer m = stack.mallocFloat(16);
                 mvp.get(m);
@@ -257,6 +298,19 @@ final class LyricPresentRenderer {
             lastDrawnQuads = drawn;
             GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
             GL30.glBindVertexArray(0);
+            // 诊断（每 16 帧一次）：读回 FBO 中心像素。alpha>0 = GPU 真写进去了
+            //（问题在呈现链）；alpha=0 = 绘制没落地（问题在 GL 状态/图元/矩阵）。
+            if ((diagTick++ & 15) == 0) {
+                java.nio.ByteBuffer px = java.nio.ByteBuffer.allocateDirect(4);
+                GL11.glReadPixels(windowWidth / 2, windowHeight / 2, 1, 1,
+                        GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, px);
+                lastCenterPixel = (px.get(0) & 0xFF) + "," + (px.get(1) & 0xFF) + ","
+                        + (px.get(2) & 0xFF) + "," + (px.get(3) & 0xFF);
+                if (DEBUG_FULLSCREEN) {
+                    int err = GL11.glGetError();
+                    if (err != 0) lastCenterPixel += " glErr=" + err;
+                }
+            }
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
             GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
             GL20.glUseProgram(0);
