@@ -451,6 +451,11 @@ public final class HudConfig {
 
     public static boolean dynamicIslandEnabled = true;
     public static float dynamicIslandScale = 0.88f;
+    /**
+     * 岛顶部相对默认位置的偏移（布局像素）。0 = 距屏顶 6（回弹样式 7）的历史默认；
+     * 正值下移。负值允许略微上移，但clamp 后的下限保证入场滑动起点不穿出屏幕。
+     */
+    public static float dynamicIslandY = 0.0f;
     /** 灵动岛排版缩放。长内容在被截断前自动缩小。 */
     public static float dynamicIslandTextScale = 1.0f;
     /** 首选静止宽度。长通知可能动画变宽以保持完整文字可见。 */
@@ -775,6 +780,7 @@ public final class HudConfig {
     public static void resetDynamicIslandAppearance() {
         dynamicIslandEnabled = true;
         dynamicIslandScale = 0.88f;
+        dynamicIslandY = 0.0f;
         dynamicIslandTextScale = 1.0f;
         dynamicIslandMaxWidth = 280.68964f;
         dynamicIslandProgressHeight = 1.35f;
@@ -977,6 +983,7 @@ public final class HudConfig {
             dynamicIslandEnabled = getBoolean(o, "dynamicIslandEnabled", dynamicIslandEnabled);
             islandSearchEnabled = getBoolean(o, "islandSearchEnabled", islandSearchEnabled);
             dynamicIslandScale = clamp(getFloat(o, "dynamicIslandScale", dynamicIslandScale), 0.60f, 1.35f);
+            dynamicIslandY = clamp(getFloat(o, "dynamicIslandY", dynamicIslandY), -20.0f, 400.0f);
             dynamicIslandTextScale = clamp(getFloat(o, "dynamicIslandTextScale", dynamicIslandTextScale), 0.82f, 1.18f);
             dynamicIslandMaxWidth = clamp(getFloat(o, "dynamicIslandMaxWidth", dynamicIslandMaxWidth), 160.0f, 720.0f);
             dynamicIslandProgressHeight = clamp(getFloat(o, "dynamicIslandProgressHeight", dynamicIslandProgressHeight), 0.75f, 4.0f);
@@ -1165,6 +1172,7 @@ public final class HudConfig {
             o.addProperty("dynamicIslandEnabled", dynamicIslandEnabled);
             o.addProperty("islandSearchEnabled", islandSearchEnabled);
             o.addProperty("dynamicIslandScale", dynamicIslandScale);
+            o.addProperty("dynamicIslandY", dynamicIslandY);
             o.addProperty("dynamicIslandTextScale", dynamicIslandTextScale);
             o.addProperty("dynamicIslandMaxWidth", dynamicIslandMaxWidth);
             o.addProperty("dynamicIslandProgressHeight", dynamicIslandProgressHeight);

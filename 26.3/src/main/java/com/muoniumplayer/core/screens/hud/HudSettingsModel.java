@@ -1041,6 +1041,8 @@ public final class HudSettingsModel {
                                         () -> HudConfig.dynamicIslandEnabled),
                                 slider(HudSetting.DYNAMIC_ISLAND_SCALE, "整体大小。",
                                         () -> HudConfig.dynamicIslandEnabled),
+                                slider(HudSetting.DYNAMIC_ISLAND_Y, "上下位置。越大越靠下，0 = 屏幕顶部默认位置。",
+                                        () -> HudConfig.dynamicIslandEnabled),
                                 slider(HudSetting.DYNAMIC_ISLAND_TEXT_SCALE, "岛内文字的字号缩放。",
                                         () -> HudConfig.dynamicIslandEnabled),
                                 slider(HudSetting.DYNAMIC_ISLAND_MAX_WIDTH, "基础宽度。文案更长时仍会自动伸展。",
@@ -2061,6 +2063,7 @@ public final class HudSettingsModel {
                 return Math.round(value * 100.0f) + "%";
             case DYNAMIC_ISLAND_MAX_WIDTH:
             case DYNAMIC_ISLAND_PROGRESS_HEIGHT:
+            case DYNAMIC_ISLAND_Y:
                 return String.format("%.1f px", value);
             case DYNAMIC_ISLAND_COMPLETION_HOLD:
             case DYNAMIC_ISLAND_QUEUE_INTERVAL:

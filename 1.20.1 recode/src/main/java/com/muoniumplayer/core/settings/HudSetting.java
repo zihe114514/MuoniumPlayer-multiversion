@@ -112,7 +112,9 @@ public enum HudSetting {
     WORLD_LYRICS_SPREAD("3D歌词 散开角", 0.0f, 60.0f),
     WORLD_LYRICS_SCALE("3D歌词 缩放", 0.4f, 6.0f),
     WORLD_LYRICS_GLOW_STRENGTH("3D歌词 发光强度", 0.00f, 1.00f),
-    WORLD_LYRICS_GLOW_SPREAD("3D歌词 发光扩散", 0.50f, 1.80f);
+    WORLD_LYRICS_GLOW_SPREAD("3D歌词 发光扩散", 0.50f, 1.80f),
+    /** 岛顶部相对默认位置的偏移。接在末尾：这套条目的 id 有按序号落盘的历史。 */
+    DYNAMIC_ISLAND_Y("灵动岛位置", -20.0f, 400.0f);
 
     private final String label;
     private final float min;
@@ -157,6 +159,7 @@ public enum HudSetting {
             case SCROLL_SMOOTHNESS: return HudConfig.scrollSmoothness;
             case SECONDARY_OPACITY: return HudConfig.secondaryOpacity;
             case DYNAMIC_ISLAND_SCALE: return HudConfig.dynamicIslandScale;
+            case DYNAMIC_ISLAND_Y: return HudConfig.dynamicIslandY;
             case DYNAMIC_ISLAND_TEXT_SCALE: return HudConfig.dynamicIslandTextScale;
             case DYNAMIC_ISLAND_MAX_WIDTH: return HudConfig.dynamicIslandMaxWidth;
             case DYNAMIC_ISLAND_PROGRESS_HEIGHT: return HudConfig.dynamicIslandProgressHeight;
@@ -236,6 +239,7 @@ public enum HudSetting {
             case SCROLL_SMOOTHNESS: HudConfig.scrollSmoothness = clamped; break;
             case SECONDARY_OPACITY: HudConfig.secondaryOpacity = clamped; break;
             case DYNAMIC_ISLAND_SCALE: HudConfig.dynamicIslandScale = clamped; break;
+            case DYNAMIC_ISLAND_Y: HudConfig.dynamicIslandY = clamped; break;
             case DYNAMIC_ISLAND_TEXT_SCALE: HudConfig.dynamicIslandTextScale = clamped; break;
             case DYNAMIC_ISLAND_MAX_WIDTH: HudConfig.dynamicIslandMaxWidth = clamped; break;
             case DYNAMIC_ISLAND_PROGRESS_HEIGHT: HudConfig.dynamicIslandProgressHeight = clamped; break;

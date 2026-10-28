@@ -447,7 +447,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         // 消费方（播放器转场、岛内搜索）用 WindowAdaptiveScale.islandToCurrent* 折算。
         double centerX = RenderSystem.getLayoutWidth() * .5;
         double x = centerX - width * .5;
-        double y = bounceStyle ? BounceIslandMath.TOP : TOP_MARGIN;
+        // 与 drawIsland 的 topMargin 同一公式：转场落点、岛内搜索起点必须落在岛真实的位置上。
+        double y = (bounceStyle ? BounceIslandMath.TOP : TOP_MARGIN)
+                + DynamicIslandMath.clamp(HudConfig.dynamicIslandY, -20.0, 400.0);
         return new double[]{x, y, width, height, localRadius * configuredScale};
     }
 
@@ -2046,7 +2048,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
         double visibilityEase = DynamicIslandMath.smoothStep(alpha);
         // 回弹胶囊的静息位置比其他样式低 1px；入场滑动的起点跟着一起挪，否则收起高度会出现两套。
-        double topMargin = bounce ? BounceIslandMath.TOP : TOP_MARGIN;
+        // 玩家的「灵动岛位置」偏移直接加在静息 y 上：入场滑动、缩放锚点、实时轮廓换算
+        // 全部从 topMargin 派生，一处相加全链路一致。
+        double topMargin = (bounce ? BounceIslandMath.TOP : TOP_MARGIN)
+                + DynamicIslandMath.clamp(HudConfig.dynamicIslandY, -20.0, 400.0);
         double y = topMargin - (height + 11.0) * (1.0 - visibilityEase);
 
         double entryScale = 1.0;
