@@ -10,6 +10,7 @@ import com.muoniumplayer.core.ncm.music.BilibiliMusicService;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.KuGouMusicService;
+import com.muoniumplayer.core.ncm.kugou.KuGouAuth;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseAccountProfiles;
 import com.muoniumplayer.core.ncm.music.QishuiLoginBridge;
@@ -2430,7 +2431,13 @@ public class AccountManagerOverlay extends NcmSheet {
             // 而这次会话选的是「下一次扫码用哪个身份」，与已经登着的那个不是一回事。
             String name = KuGouMusicService.getAccountName();
             String label = KuGouMusicService.getProfileLabel();
-            return name == null || name.isEmpty() ? label + " · 已登录" : label + " · " + name;
+            String meta = name == null || name.isEmpty() ? label + " · 已登录" : label + " · " + name;
+            // 概念版身份但 user_verify 没过：最常见原因是拿标准版 App 扫了概念版码。
+            // 只提示不拦截——网络抖动也会落在这里，凭证本身未必无效。
+            if (KuGouMusicService.isConceptProfile() && !KuGouAuth.isUserVerified()) {
+                meta += " · 凭证校验未过，建议用概念版 App 重扫";
+            }
+            return meta;
         }
         return platform.getDisplayName() + " · 已登录";
     }

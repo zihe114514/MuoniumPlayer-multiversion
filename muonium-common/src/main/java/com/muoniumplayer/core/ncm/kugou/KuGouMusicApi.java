@@ -48,6 +48,20 @@ public final class KuGouMusicApi {
      */
     private static final String STREAM_CLIENT_VER = "11430";
 
+    /** 包级只读出口：auth 取流链路（{@link KuGouAuth}）的 {@code version} 参数用同一个值。 */
+    static String streamClientVer() {
+        return STREAM_CLIENT_VER;
+    }
+
+    /**
+     * auth 两个端点（{@code /v1/authorization} 与 {@code /tracker/v5/url}）要求的 {@code clientver}。
+     *
+     * <p>对照 {@code song_auth.js}/{@code song_url_auth.js}：写死 {@code 11561}，不随身份变。
+     * 常量本体与语义说明在 {@link KuGouAuth#AUTH_CLIENT_VER}，这里只是一个别名，
+     * 让「取流要用哪套 clientver」的三种取值（11430 / 11561 / 身份默认）在同文件里能对齐着看。</p>
+     */
+    public static final String AUTH_CLIENT_VER = KuGouAuth.AUTH_CLIENT_VER;
+
     /**
      * 老 {@code /i/v2/} 兜底链路的 {@code pid}。
      *
@@ -113,6 +127,15 @@ public final class KuGouMusicApi {
          * 阶梯自动跳过它——而不是拿一个低档的 hash 去冒充高档，那正是 {@code status=2} 的成因。</p>
          */
         public final Map<String, String> hashesByQuality = new LinkedHashMap<String, String>();
+
+        /**
+         * {@link KuGouQuality#key()} → 该档是否需要会员（来自 {@code privilegeLite} 的
+         * {@code relate_goods} 解析，见 {@link Privilege#vipLockedByQuality}）。
+         *
+         * <p>非会员账号上为 true 的档会被 {@link #songUrl(Track, KuGouQuality)} 的阶梯跳过：
+         * 反正上游必拒，先跳过能省一次注定 {@code status=2} 的请求。</p>
+         */
+        public final Map<String, Boolean> vipLockedByQuality = new LinkedHashMap<String, Boolean>();
 
         /**
          * 取流时该传的 {@code album_audio_id}。
@@ -1354,15 +1377,45 @@ public final class KuGouMusicApi {
      */
     public static Stream songUrl(Track track, KuGouQuality requested) {
         if (track == null) return null;
+        boolean authFirst = KuGouProfile.active() == KuGouProfile.CONCEPT
+                && com.muoniumplayer.core.screens.ncm.NCMPlayerConfig.isKuGouAuthStreamEnabled();
         for (KuGouQuality quality : KuGouQuality.ladderFrom(requested)) {
             String hash = hashFor(track, quality);
             if (KuGouSign.isBlank(hash)) continue;
-            Stream stream = resolveViaGateway(track, KuGouSign.lower(hash), quality.key());
+            if (isVipLockedForCurrentAccount(track, quality)) continue;
+            String lower = KuGouSign.lower(hash);
+            if (authFirst) {
+                Stream stream = KuGouAuth.resolveViaAuth(track, lower, quality.key());
+                if (stream != null) return stream;
+            }
+            Stream stream = resolveViaGateway(track, lower, quality.key());
             if (stream != null) return stream;
         }
         // 逐档都拿不到时，最后试一次标准档：它一定有 hash，且是唯一匿名也可用的档位。
         String standard = hashFor(track, KuGouQuality.STANDARD);
-        return KuGouSign.isBlank(standard) ? null : resolveViaGateway(track, KuGouSign.lower(standard), "128");
+        if (KuGouSign.isBlank(standard)) return null;
+        String lower = KuGouSign.lower(standard);
+        if (authFirst) {
+            Stream stream = KuGouAuth.resolveViaAuth(track, lower, KuGouQuality.STANDARD.key());
+            if (stream != null) return stream;
+        }
+        return resolveViaGateway(track, lower, "128");
+    }
+
+    /**
+     * 这一档对当前账号是不是「需要会员且账号没有」——是的话上游必拒，阶梯直接跳过它。
+     *
+     * <p>判据完全来自 {@code privilegeLite} 探到的 {@code relate_goods}（见
+     * {@link Track#vipLockedByQuality}），不发请求。<b>只有非会员账号才跳</b>：会员账号
+     * （含概念版 VIP）对会员档有授权，跳过它们等于把这条链路的主场景（付费歌核销会员权益）
+     * 整个关死。探测没覆盖到的档不在表里，照旧打请求让上游裁决。</p>
+     */
+    private static boolean isVipLockedForCurrentAccount(Track track, KuGouQuality quality) {
+        Boolean locked = track.vipLockedByQuality.get(quality.key());
+        if (locked == null || !locked || KuGouDevice.isVip()) return false;
+        System.err.println("[Music/KuGou] 跳过 " + quality.label() + "（" + quality.key()
+                + "）：探测到该档需要会员，当前账号非会员");
+        return true;
     }
 
     /**
@@ -1481,6 +1534,14 @@ public final class KuGouMusicApi {
         public final Map<String, String> hashesByQuality = new LinkedHashMap<String, String>();
         /** {@link KuGouQuality#key()} → 该档文件字节数。 */
         public final Map<String, Long> bytesByQuality = new LinkedHashMap<String, Long>();
+        /**
+         * {@link KuGouQuality#key()} → 该档是否「需要会员/付费」。
+         *
+         * <p>来源是 {@code relate_goods[]} 的 {@code privilege} 字段（0 免费，非 0 需会员）。
+         * 只在探测到该档存在时才有值：调用方用它跳过「非会员对会员档」的注定失败请求，
+         * 不在这里替代上游判定——取流仍以上游为准，这里只是省请求。</p>
+         */
+        public final Map<String, Boolean> vipLockedByQuality = new LinkedHashMap<String, Boolean>();
 
         /** 这份结果里最高的可用档位；一个 hash 都没探到时返回 {@link KuGouQuality#STANDARD}。 */
         public KuGouQuality bestQuality() {
@@ -1532,6 +1593,7 @@ public final class KuGouMusicApi {
         privilege.durationMillis = normalizedDuration(source, "duration", "timelength", "interval");
         privilege.privilege = privilegeFromDownload(node);
         privilege.vip = privilege.privilege == 10;
+        parseRelateGoods(node, privilege);
         collectQualityFields(node, privilege, 0);
         if (privilege.hash.isEmpty() && privilege.name.isEmpty()) return null;
         return privilege;
@@ -1539,6 +1601,29 @@ public final class KuGouMusicApi {
 
     /** 递归深度上限。响应最深也就三四层，设上限是为了防止结构变化时转不出来。 */
     private static final int PRIVILEGE_WALK_DEPTH = 5;
+
+    /**
+     * 读 {@code relate_goods[]}，把「每档要不要会员」记进 {@link Privilege#vipLockedByQuality}。
+     *
+     * <p>{@code relate_goods} 是上游按音质逐条给权益的数组，每条的 {@code privilege}
+     * 0 表示免费、非 0 表示需要会员/付费（实测付费歌为 10 且 {@code pay_type=3}）。字段名大小写
+     * 与档位字面量都照抄上游，匹配 {@link KuGouQuality#fromKey} 时不认识档位就跳过——
+     * 上游扩档位不会把解析打崩，只是那一档没进判定表。</p>
+     *
+     * <p>包级可见只为了单测：黄金用例直接喂 JSON 断言归档结果。</p>
+     */
+    static void parseRelateGoods(JsonObject node, Privilege privilege) {
+        if (node == null || privilege == null) return;
+        JsonArray goods = array(node, "relate_goods");
+        if (goods == null) return;
+        for (JsonElement element : goods) {
+            if (element == null || !element.isJsonObject()) continue;
+            JsonObject item = element.getAsJsonObject();
+            KuGouQuality quality = KuGouQuality.fromKey(text(item, "quality"));
+            if (quality == null) continue;
+            privilege.vipLockedByQuality.put(quality.key(), integer(item, "privilege") != 0);
+        }
+    }
 
     private static void collectQualityFields(JsonObject node, Privilege privilege, int depth) {
         if (node == null || depth > PRIVILEGE_WALK_DEPTH) return;

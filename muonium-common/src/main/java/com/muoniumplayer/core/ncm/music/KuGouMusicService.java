@@ -2,6 +2,7 @@ package com.muoniumplayer.core.ncm.music;
 
 import com.google.gson.JsonObject;
 import com.muoniumplayer.core.ncm.kugou.KrcLyrics;
+import com.muoniumplayer.core.ncm.kugou.KuGouAuth;
 import com.muoniumplayer.core.ncm.kugou.KuGouDevice;
 import com.muoniumplayer.core.ncm.kugou.KuGouMusicApi;
 import com.muoniumplayer.core.ncm.kugou.KuGouProfile;
@@ -441,8 +442,9 @@ public final class KuGouMusicService {
      */
     private static void probeQualities(KuGouMusicApi.Track track) {
         if (track == null || isBlank(track.hash)) return;
-        if (PROBED_TRACKS.containsKey(probeKey(track))) {
-            mergeCached(track);
+        ProbedQualities cached = PROBED_TRACKS.get(probeKey(track));
+        if (cached != null) {
+            mergeCached(track, cached);
             return;
         }
         List<KuGouMusicApi.Privilege> probed;
@@ -454,14 +456,18 @@ public final class KuGouMusicService {
         }
         if (probed == null || probed.isEmpty()) return;
         KuGouMusicApi.Privilege privilege = probed.get(0);
-        Map<String, String> copy = new LinkedHashMap<String, String>(privilege.hashesByQuality);
-        PROBED_TRACKS.put(probeKey(track), copy);
-        track.hashesByQuality.putAll(copy);
+        ProbedQualities value = new ProbedQualities();
+        value.hashes.putAll(privilege.hashesByQuality);
+        value.vipLocked.putAll(privilege.vipLockedByQuality);
+        PROBED_TRACKS.put(probeKey(track), value);
+        track.hashesByQuality.putAll(value.hashes);
+        track.vipLockedByQuality.putAll(value.vipLocked);
     }
 
-    private static void mergeCached(KuGouMusicApi.Track track) {
-        Map<String, String> cached = PROBED_TRACKS.get(probeKey(track));
-        if (cached != null && !cached.isEmpty()) track.hashesByQuality.putAll(cached);
+    private static void mergeCached(KuGouMusicApi.Track track, ProbedQualities cached) {
+        if (cached == null) return;
+        if (!cached.hashes.isEmpty()) track.hashesByQuality.putAll(cached.hashes);
+        if (!cached.vipLocked.isEmpty()) track.vipLockedByQuality.putAll(cached.vipLocked);
     }
 
     /** 缓存键用标准档 hash：它在任何曲目上都存在，且不随音质变化。 */
@@ -469,12 +475,18 @@ public final class KuGouMusicService {
         return track.hash.trim().toLowerCase(Locale.ROOT);
     }
 
+    /** 缓存值：一次探测里「各档 hash」与「各档要不要会员」。 */
+    private static final class ProbedQualities {
+        final Map<String, String> hashes = new LinkedHashMap<String, String>();
+        final Map<String, Boolean> vipLocked = new LinkedHashMap<String, Boolean>();
+    }
+
     /** 会话级音质探测缓存。键是曲目的标准档 hash。 */
-    private static final Map<String, Map<String, String>> PROBED_TRACKS
+    private static final Map<String, ProbedQualities> PROBED_TRACKS
             = java.util.Collections.synchronizedMap(
-            new LinkedHashMap<String, Map<String, String>>() {
+            new LinkedHashMap<String, ProbedQualities>() {
                 @Override
-                protected boolean removeEldestEntry(Map.Entry<String, Map<String, String>> eldest) {
+                protected boolean removeEldestEntry(Map.Entry<String, ProbedQualities> eldest) {
                     return size() > PROBED_CACHE_LIMIT;
                 }
             });
@@ -892,6 +904,7 @@ public final class KuGouMusicService {
             refreshVipStatus();
             refreshUserPlaylists(true);
             afterAccountChanged();
+            verifyConceptCredentialIfNeeded();
         }
         return status.code;
     }
@@ -916,7 +929,21 @@ public final class KuGouMusicService {
         refreshVipStatus();
         refreshUserPlaylists(true);
         afterAccountChanged();
+        verifyConceptCredentialIfNeeded();
         return true;
+    }
+
+    /**
+     * 概念版身份下的登录自检：调一次 {@code /user/verify}，把结论落进 {@link KuGouAuth}。
+     *
+     * <p>概念版最常见的身份错位是「用标准版 App 扫了概念版二维码」：那样拿到的是标准版 token，
+     * 却被记成概念版身份，之后「面板显示会员、取流全灭」。user_verify 对这种凭证会给出
+     * {@code valid != 1} 或直接失败，这里把原因打清楚，账号面板据此提示重扫。网络抖动同样会
+     * 落在「未通过」上，所以面板把它当提示、不当硬判定。</p>
+     */
+    private static void verifyConceptCredentialIfNeeded() {
+        if (KuGouProfile.active() != KuGouProfile.CONCEPT) return;
+        KuGouAuth.userVerify();
     }
 
     /** 当前凭证所属身份的展示名（「酷狗音乐」/「酷狗概念版」）。 */
@@ -939,6 +966,8 @@ public final class KuGouMusicService {
     private static void afterAccountChanged() {
         KuGouLikedCache.clear();
         PROBED_TRACKS.clear();
+        // auth 缓存与 (userid, token) 绑定，换账号必须清干净，否则旧账号的用户 auth 会被新账号复用。
+        KuGouAuth.invalidate();
         // 清完就要重建，否则新账号在下次重启前都是「全部未收藏」——这正是要补齐的冷启动问题。
         warmLikedSongsAsync();
     }
