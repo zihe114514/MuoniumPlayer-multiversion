@@ -6,7 +6,8 @@
   "client": [
     "MusicManagerAccessor",
     "MusicManagerDuckMixin",
-    "GlSurfaceMixin"
+    "GlSurfaceMixin",
+    "GameRendererRenderLevelMixin"
   ],
   "injectors": {
     "defaultRequire": 1

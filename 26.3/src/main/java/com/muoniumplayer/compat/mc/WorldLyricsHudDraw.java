@@ -106,7 +106,19 @@ public final class WorldLyricsHudDraw {
      * 按原版惯例把它推进栈顶换成单位矩阵，画完恢复，MVP = 投影 × basePose × 字形
      * 变换。GL 状态用 GlState 快照进出来还。</p>
      */
+    private static int wrDiagFrame;
+    private static int wrActiveFrames;
+
     public static void worldRenderDraw() {
+        wrActiveFrames++;
+        if (wrDiagFrame++ % 60 == 0) {
+            // 入口探针：确认 mixin 生效 + 各早退条件状态
+            System.out.println("[WorldLyrics/diag][worldDraw] broken2=" + broken2
+                    + " enabled=" + HudConfig.worldLyricsEnabled
+                    + " captureMode=" + captureModeThisFrame()
+                    + " probe=" + ShaderPackProbe.isActive()
+                    + " activeFrames=" + wrActiveFrames);
+        }
         if (broken2 || !HudConfig.worldLyricsEnabled) return;
         if (!captureModeThisFrame()) return;
         try {
@@ -119,11 +131,6 @@ public final class WorldLyricsHudDraw {
             // 本帧采集的 quad 在 collectWorldLyrics 时已写入 LyricPresentRenderer。
             // 采到的变换仍按旧约定（相机相对世界轴），MVP = P × V。
             // V：视图旋转（从 CameraRenderState 拿，语义与 modelViewStack 栈顶一致）。
-            com.mojang.renderpearl.api.device.GpuDevice dev = null;
-            try {
-                dev = com.mojang.blaze3d.systems.RenderSystem.getDevice();
-            } catch (Throwable ignored) {
-            }
             CameraRenderState crs = mc.gameRenderer.gameRenderState() != null
                     ? mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState : null;
             Matrix4f proj = crs != null ? crs.projectionMatrix : null;
@@ -147,8 +154,8 @@ public final class WorldLyricsHudDraw {
     /** worldRenderDraw 自身异常熔断（present 旧通路仍可用作后备）。 */
     private static volatile boolean broken2;
 
-    /** GlSurfaceMixin present 入口调：把采集的 quad 画上 FBO 0（在 Skija HUD 之前）。 */
-        public static void presentComposite() {
+    /** present 钩子（GlSurfaceMixin 调）：主绘制已迁走，这里只做兜底复位。 */
+    public static void presentComposite() {
         // 主绘制已迁到 worldRenderDraw（GameRenderer.renderLevel INVOKE AFTER）；
         // present 钩子不再画 —— 采集缓冲已被世界入口消费，这里只剩兜底复位。
         LyricPresentRenderer.reset();
