@@ -275,33 +275,23 @@ final class LyricPresentRenderer {
         }
     }
 
-    private static java.lang.reflect.Method directStateAccessMethod;
-    private static java.lang.reflect.Method frameBufferCacheMethod;
-    private static boolean backendMethodsSearched;
     private static int dummyFramebuffer;
 
-    private static java.lang.reflect.Method backendMethod(String name) {
-        if (!backendMethodsSearched) {
-            backendMethodsSearched = true;
-            try {
-                Object backend = glBackend();
-                if (backend != null) {
-                    directStateAccessMethod = backend.getClass().getDeclaredMethod(name.equals("directStateAccess") ? "directStateAccess" : name);
-                    directStateAccessMethod.setAccessible(true);
-                }
-            } catch (Throwable t) {
-                try {
-                    Object backend = glBackend();
-                    if (backend != null) {
-                        frameBufferCacheMethod = backend.getClass().getDeclaredMethod("frameBufferCache");
-                        frameBufferCacheMethod.setAccessible(true);
-                    }
-                } catch (Throwable ignored) {
-                }
-            }
+    /** GlDevice.directStateAccess() 实例（反射；26.2 javap 核对方法存在）。 */
+    static com.mojang.blaze3d.opengl.DirectStateAccess directStateAccessInstance() {
+        try {
+            Object backend = glBackend();
+            if (backend == null) return null;
+            java.lang.reflect.Method m = backend.getClass().getDeclaredMethod("directStateAccess");
+            m.setAccessible(true);
+            return (com.mojang.blaze3d.opengl.DirectStateAccess) m.invoke(backend);
+        } catch (Throwable t) {
+            return null;
         }
-        return name.equals("directStateAccess") ? directStateAccessMethod : frameBufferCacheMethod;
     }
+
+    private static java.lang.reflect.Method frameBufferCacheMethod;
+    private static boolean backendMethodsSearched;
 
     /**
      * 主渲染目标的帧缓冲编号 —— 与原版自己画东西时用的是同一个
@@ -454,8 +444,39 @@ final class LyricPresentRenderer {
             lastDrawnQuads = drawn;
             GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
             GL30.glBindVertexArray(0);
-            // 恢复原 FBO 绑定（同款刷新机制，保证 GlStateManager 与实际一致）
-            bindFramebufferRefreshed(GL30.GL_FRAMEBUFFER, prevFbo);
+            GL20.glUseProgram(0);
+
+            // ============ 关键：把 mainTarget 重新 blit 到 FBO 0 ============
+            // present() HEAD 时原版已把 mainTarget blit 到 FBO 0；我们画进 mainTarget
+            // 的字必须补一次 blit 才能上屏。照抄 GlCommandEncoder.presentTexture。
+            try {
+                com.mojang.blaze3d.opengl.DirectStateAccess dsa = directStateAccessInstance();
+                if (dsa != null) {
+                    com.mojang.blaze3d.opengl.GlStateManager._disableScissorTest();
+                    com.mojang.blaze3d.opengl.GlStateManager._depthMask(true);
+                    com.mojang.blaze3d.opengl.GlStateManager._colorMask(15);
+                    int rtW = mainTarget.width, rtH = mainTarget.height;
+                    int dstY = Math.max(0, windowHeight - rtH);
+                    int drawW = Math.min(windowWidth, rtW);
+                    int drawH = Math.min(windowHeight, rtH);
+                    com.mojang.blaze3d.opengl.GlStateManager._viewport(0, 0, windowWidth, windowHeight);
+                    GL11.glViewport(0, 0, windowWidth, windowHeight);
+                    com.mojang.blaze3d.opengl.GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
+                    org.lwjgl.opengl.GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
+                    com.mojang.blaze3d.opengl.GlTexture colorTex =
+                            (com.mojang.blaze3d.opengl.GlTexture) mainTarget.getColorTexture();
+                    dsa.bindFrameBufferTextures(colorTex.glId(), 0, 0, 0, 0);
+                    dsa.blitFrameBuffers(mainFbo, 0,
+                            0, 0, drawW, drawH,
+                            0, dstY, drawW, dstY + drawH,
+                            16384 /*COLOR*/, 9728 /*NEAREST*/);
+                    bindFramebufferRefreshed(GL30.GL_FRAMEBUFFER, mainFbo);
+                } else {
+                    bindFramebufferRefreshed(GL30.GL_FRAMEBUFFER, prevFbo);
+                }
+            } catch (Throwable t2) {
+                bindFramebufferRefreshed(GL30.GL_FRAMEBUFFER, prevFbo);
+            }
             // 诊断（每 16 帧一次）：读回 FBO 中心像素。alpha>0 = GPU 真写进去了
             //（问题在呈现链）；alpha=0 = 绘制没落地（问题在 GL 状态/图元/矩阵）。
             if ((diagTick++ & 15) == 0) {
