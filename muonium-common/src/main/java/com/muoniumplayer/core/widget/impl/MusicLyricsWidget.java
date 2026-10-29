@@ -190,6 +190,13 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
 
         // HUD 位置 + 缩放（HudConfig，由 GuiHudEditor 拖拽/滚轮调整）。
         // 位置公式与参考实现一致：pixel = pos * (screen - baseSize * scale)；缩放围绕左上锚点等比进行。
+        // 跨度取布局轴（getLayoutWidth/Height，与 GUI Scale 无关）：玩家把游戏 GUI 倍率调大时
+        // 控件不再跟着变巨，物理占屏比例恒定，与 HUD 编辑器面板、其它窗口同一套比例语言。
+        // 矩阵同步补上 correction（布局单位 → 当前 canvas 的 GUI 逻辑坐标）：canvas 已按
+        // guiScale 缩放，布局单位必须先乘这一层，物理尺寸才与 GUI Scale 档位脱钩（NCMScreen
+        // 同款方向）。编辑器预览除外：编辑器 HUD 段的外层矩阵已经带 correction（预览选框
+        // 与它对齐），这里再乘就是双乘——选框和实物会差一个 correction 因子（guiScale=3
+        // 时 11% 的尺寸差与明显错位）。所以 correction 只在真实 HUD 回调路径压入。
         float hudScale = editorPreviewActive ? editorPreviewScale : HudConfig.lyricScale;
         float baseW = HudConfig.lyricWidth;
         float baseH = HudConfig.lyricHeight;
@@ -197,13 +204,19 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         wpsInterface.setHeight(baseH);
         float hudX = editorPreviewActive
                 ? editorPreviewX
-                : (float) (HudConfig.lyricX * (getWidth() - baseW * hudScale));
+                : (float) (HudConfig.lyricX * (RenderSystem.getLayoutWidth() - baseW * hudScale));
         float hudY = editorPreviewActive
                 ? editorPreviewY
-                : (float) (HudConfig.lyricY * (getHeight() - baseH * hudScale));
+                : (float) (HudConfig.lyricY * (RenderSystem.getLayoutHeight() - baseH * hudScale));
         wpsInterface.setX(hudX);
         wpsInterface.setY(hudY);
 
+        boolean needCorrection = !editorPreviewActive;
+        if (needCorrection) {
+            api.getGLStateManager().pushMatrix();
+            api.getGLStateManager().scale(com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale.correctionX(),
+                    com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale.correctionY(), 1);
+        }
         api.getGLStateManager().pushMatrix();
         api.getGLStateManager().translate(hudX, hudY, 0);
         api.getGLStateManager().scale(hudScale, hudScale, 1);
@@ -323,6 +336,10 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         }
 
         api.getGLStateManager().popMatrix();
+        if (needCorrection) {
+            // 弹掉真实 HUD 路径压入的 correction 层（见入口注释；预览路径没有这一层）。
+            api.getGLStateManager().popMatrix();
+        }
     }
 
     private boolean shouldRender() {

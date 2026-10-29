@@ -4,7 +4,10 @@
   "package": "com.muoniumplayer.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
+    "MusicManagerAccessor",
+    "MusicManagerDuckMixin",
     "GlSurfaceMixin",
+    "GameRendererRenderLevelMixin",
     "MouseScrollMixin",
     "MouseButtonStateMixin",
     "LevelRendererAlwaysOnTopGateMixin"

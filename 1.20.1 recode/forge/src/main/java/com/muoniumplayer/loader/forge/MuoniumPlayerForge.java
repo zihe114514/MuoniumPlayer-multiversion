@@ -54,6 +54,8 @@ public final class MuoniumPlayerForge {
         IEventBus gameBus = MinecraftForge.EVENT_BUS;
         gameBus.addListener(this::onClientTick);
         gameBus.addListener(this::onRenderGui);
+        // 更激进的适配：光影包激活时 3D 歌词推迟到 HUD 阶段（Oculus 后处理链之后）直画。
+        gameBus.addListener(this::onRenderGuiPre);
         gameBus.addListener(this::onScreenRendered);
         gameBus.addListener(this::onScreenInit);
         gameBus.addListener(this::onRenderLevelStage);
@@ -103,6 +105,11 @@ public final class MuoniumPlayerForge {
     }
 
     /** 对应 Fabric 的 HudRenderCallback：原版 HUD 全部画完之后。 */
+    /** 3D 歌词的 HUD 阶段直画（「更激进的适配」），Pre = 画在原版 HUD 之下。 */
+    private void onRenderGuiPre(RenderGuiEvent.Pre event) {
+        com.muoniumplayer.compat.mc.WorldLyricsBridge.hudPhaseDraw();
+    }
+
     private void onRenderGui(RenderGuiEvent.Post event) {
         MuoniumPlayerClient.getInstance().onHudRender();
         // 停用时的原版 GUI 提示：Skia 那条路没起来时，只有原版 GUI 还能说话。

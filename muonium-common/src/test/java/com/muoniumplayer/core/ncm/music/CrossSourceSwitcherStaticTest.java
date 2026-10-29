@@ -278,17 +278,20 @@ public class CrossSourceSwitcherStaticTest {
 
     @Test
     public void propagateUnblockLabelKeepsScriptBadgeOnBothSides() {
-        // 替身是脚本解出来的流：验证关已经把「脚本名·渠道键」写在它自己身上了。
+        // 替身是脚本解出来的流：验证关已经把「lx/渠道」写在它自己身上了。
         // 行对象（面板 widget 绑定的老引用）要同一份，替身自己那份也要留着（面板重建读它）。
         Music row = toTestMusic(200_000L);
         Music replacement = toTestMusic(200_000L);
-        replacement.setUnblockedSourceLabel("野花·kw");
+        replacement.setUnblockedSourceLabel("lx/酷我");
         CrossSourceSwitcher.propagateUnblockLabel(row, replacement);
-        assertEquals("野花·kw", row.getUnblockedSourceLabel());
-        assertEquals("野花·kw", replacement.getUnblockedSourceLabel());
+        assertEquals("lx/酷我", row.getUnblockedSourceLabel());
+        assertEquals("lx/酷我", replacement.getUnblockedSourceLabel());
         // 前缀要说「已换源」而不是「解灰」：换进来的是另一首歌，不只是另一条取流地址。
         assertTrue(row.isCrossSourceSwitched(), "行对象没被标成换源来的，界面上会念成解灰");
         assertTrue(replacement.isCrossSourceSwitched(), "替身自己也要标：面板重建后读的是它");
+        // 两侧互持同一把配对钥匙：行 widget 绑老对象，高亮靠它才跟得上替身。
+        assertTrue(row.isCrossSourcePeerOf(replacement), "原曲与替身没有立起换源配对");
+        assertTrue(replacement.isCrossSourcePeerOf(row), "配对必须是双向的");
     }
 
     @Test
@@ -306,6 +309,30 @@ public class CrossSourceSwitcherStaticTest {
         assertTrue(replacement.isCrossSourceSwitched());
         // 只有这一个地方置位：正常播放链路上解出来的第三方流不许被念成换源。
         assertFalse(toTestMusic(200_000L).isCrossSourceSwitched());
+        // 没参与换源的曲目与任何人都不是配对（含空键自反）。
+        assertFalse(toTestMusic(200_000L).isCrossSourcePeerOf(toTestMusic(200_000L)),
+                "空配对键不许把两首陌生曲目配成一对");
+    }
+
+    @Test
+    public void secondHopSwitchKeepsTheSamePeerKey() {
+        // 二级换源（试听救援会换到上一轮的替身）：钥匙必须沿用而不是重发 ——
+        // 面板行 widget 绑的还是最初的原曲对象，换钥等于把最早那侧的高亮甩下线。
+        Music row = toTestMusic(200_000L);
+        Music firstStandIn = toTestMusic(200_000L);
+        firstStandIn.setSource(MusicPlatform.KUWO);
+        CrossSourceSwitcher.propagateUnblockLabel(row, firstStandIn);
+        String firstKey = row.getCrossSourcePeerKey();
+        assertFalse(firstKey.isEmpty());
+
+        Music secondStandIn = toTestMusic(200_000L);
+        secondStandIn.setSource(MusicPlatform.MIGU);
+        CrossSourceSwitcher.propagateUnblockLabel(firstStandIn, secondStandIn);
+        assertEquals(firstKey, secondStandIn.getCrossSourcePeerKey(),
+                "二级换源换了钥匙：最初那一行的高亮会丢");
+        assertTrue(row.isCrossSourcePeerOf(secondStandIn),
+                "原曲与二代替身必须仍在同一格配对里");
+        assertTrue(row.isCrossSourcePeerOf(firstStandIn));
     }
 
     @Test
@@ -335,8 +362,8 @@ public class CrossSourceSwitcherStaticTest {
         // 两条都齐时读脚本那一条：它既说明走了第三方，又说明是哪个渠道解的。
         Music replacement = toTestMusic(200_000L);
         replacement.setSource(MusicPlatform.NETEASE);
-        replacement.setUnblockedSourceLabel("野花·wy");
-        assertEquals("野花·wy", CrossSourceSwitcher.destinationBadge(replacement));
+        replacement.setUnblockedSourceLabel("lx/网易云");
+        assertEquals("lx/网易云", CrossSourceSwitcher.destinationBadge(replacement));
         // 官方流的网易云替身 → 平台显示名。
         Music official = toTestMusic(200_000L);
         official.setSource(MusicPlatform.NETEASE);
@@ -348,16 +375,119 @@ public class CrossSourceSwitcherStaticTest {
     }
 
     @Test
-    public void scriptBadgeAppendsChannelKeyWithoutDoublingIt() {
-        assertEquals("野花·kw", LxSourceService.badgeLabel("野花", "kw"));
-        // 键缺失（脚本自己没上报渠道）时只剩脚本名，不能拼出「野花·」这种半截。
-        assertEquals("野花", LxSourceService.badgeLabel("野花", ""));
-        assertEquals("野花", LxSourceService.badgeLabel("野花", null));
-        // 脚本名缺失时按渠道名显示，徽标这一位不该整枚消失。
-        assertEquals("wy", LxSourceService.badgeLabel("", "wy"));
+    public void scriptBadgeReadsAsLxSlashChannelDisplayName() {
+        // 徽标是给玩家读的：渠道键翻回平台显示名，挂 lx 前缀说明走的是自定义源。
+        assertEquals("lx/酷我", LxSourceService.badgeLabel("野花", "kw"));
+        assertEquals("lx/咪咕", LxSourceService.badgeLabel("野花", "mg"));
+        assertEquals("lx/网易云", LxSourceService.badgeLabel("野花", "wy"));
+        // 「XX音乐」一律剥短：QQ 音乐在行上念「QQ」，与酷狗 → 酷狗同一规则。
+        assertEquals("lx/QQ", LxSourceService.badgeLabel("野草", "tx"));
+        // 键缺失时这枚徽标没有落点可说，整枚不发。
+        assertEquals("", LxSourceService.badgeLabel("野花", ""));
+        assertEquals("", LxSourceService.badgeLabel("野花", null));
         assertEquals("", LxSourceService.badgeLabel(null, null));
-        // 脚本自己把渠道写进名字末尾了，就别再拼一次。
-        assertEquals("野草·tx", LxSourceService.badgeLabel("野草·tx", "tx"));
+        // 映射没跟上的键（上游将来加了新源）退键本身，宁可露生词也不丢落点。
+        assertEquals("lx/joox", LxSourceService.badgeLabel("野花", "joox"));
+    }
+
+    // ── 高亮配对（PlaybackPresentation.isSelected 的换源兜底）───────────────
+
+    @Test
+    public void selectionFollowsReplacementThroughCrossSourcePeerKey() {
+        // 行 widget 绑着原曲，正在出声的是替身：stableKey 已经不等（平台与 id 都换了），
+        // 高亮靠配对键活着；没参与换源的替身不许碰瓷别的行的焦点。
+        Music row = toTestMusic(200_000L);
+        Music replacement = toTestMusic(200_000L);
+        replacement.setSource(MusicPlatform.KUWO);
+        CrossSourceSwitcher.propagateUnblockLabel(row, replacement);
+
+        PlaybackPresentation presentation = new PlaybackPresentation(replacement, null, 0L);
+        assertTrue(presentation.isSelected(row),
+                "换源后原曲那一行丢了正在播放的高亮");
+        assertTrue(presentation.isSelected(replacement));
+
+        Music stranger = toTestMusic(200_000L);
+        stranger.setSource(MusicPlatform.MIGU);
+        assertFalse(presentation.isSelected(stranger), "陌生行不许被配对键误点亮");
+    }
+
+    @Test
+    public void selectionStillKeyedByIdentityWithoutCrossSource() {
+        // 没有配对键时行为与从前一致：id 不同就算同名同歌手也不亮。
+        Music audible = toTestMusic(200_000L);
+        PlaybackPresentation presentation = new PlaybackPresentation(audible, null, 0L);
+        assertFalse(presentation.isSelected(toTestMusicWithId(2L)), "没参与换源的替身不许碰瓷别的行的焦点");
+        assertTrue(presentation.isSelected(audible));
+        assertFalse(presentation.isSelected(null));
+    }
+
+    // ── 落点平台记录与徽标恢复判据 ──────────────────────────────────────────
+
+    @Test
+    public void landedPlatformIsOnlyRecordedOnTheReplacementSide() {
+        // 录取点只给替身记落点：原曲侧重播时 getPlayUrl 的恢复判据必须失格（landed==null），
+        // 否则用户重播原曲（走它自己平台的官方链路）会挂上一轮「已换源」的旧落点徽标。
+        Music row = toTestMusic(200_000L);
+        Music replacement = toTestMusic(200_000L);
+        replacement.setSource(MusicPlatform.KUWO);
+        CrossSourceSwitcher.propagateUnblockLabel(row, replacement);
+        assertEquals(MusicPlatform.KUWO, replacement.getCrossSourceLandedPlatform(),
+                "替身侧没记落点，重播时徽标兜底会失效");
+        assertNull(row.getCrossSourceLandedPlatform(),
+                "原曲侧不许有落点记录，否则重播原曲会错误恢复旧落点徽标");
+    }
+
+    @Test
+    public void queueIdentityCopyIsolatesRunStateFromTheOriginalCell() {
+        // 「下一首播放」插拷贝体：静态身份（equals/stableKey/封面/会员标记）齐全，
+        // 而「上一格发生过什么」的运行态（徽标、配对键、换源标记）不跟着走。
+        Music original = toTestMusic(200_000L);
+        original.setSource(MusicPlatform.KUWO);
+        original.setVipRestricted(true);
+        Music standIn = toTestMusic(200_000L);
+        standIn.setSource(MusicPlatform.MIGU);
+        CrossSourceSwitcher.propagateUnblockLabel(original, standIn);
+
+        Music copy = original.queueIdentityCopy();
+        assertEquals(original, copy, "拷贝体必须与原对象 equals（账本/高亮判据不变）");
+        assertEquals(original.getStableKey(), copy.getStableKey());
+        assertEquals(original.getDuration(), copy.getDuration());
+        assertTrue(copy.hasVipRestriction(), "取流判据需要的静态身份字段要带上");
+        assertEquals("", copy.getUnblockedSourceLabel(), "徽标是原格的运行态，不许跟着拷贝");
+        assertFalse(copy.isCrossSourceSwitched(), "换源标记同样是原格的运行态");
+        assertEquals("", copy.getCrossSourcePeerKey(), "配对键同样不许跟着拷贝");
+        assertNull(copy.getCrossSourceLandedPlatform());
+        // 拷贝体与替身不是配对：另一格还没换过源。
+        assertFalse(copy.isCrossSourcePeerOf(standIn));
+    }
+
+    // ── 候选录取的 VIP 淘汰 ────────────────────────────────────────────────
+
+    @Test
+    public void vipFlaggedCandidatesAreRejectedBeforeScoring() {
+        // 搜索侧自带「会员/付费受限」的候选，在本机拿不到该平台完整流时淘汰：
+        // 非会员换过去只能拿到试听片段，而这首歌唯一一次自动换源机会已经被烧掉，
+        // 等起播的试听判定再兜底就晚了。无头环境未登录 → 网易云的 hasVipAccess 为 false。
+        Music vipCandidate = toTestMusic(200_000L);
+        vipCandidate.setVipRestricted(true);
+        CrossSourceSwitcher.Candidate rejected = new CrossSourceSwitcher.Candidate(
+                vipCandidate, MusicPlatform.NETEASE, 1.0, 0L);
+        assertEquals(0.0, CrossSourceSwitcher.candidateAcceptance(
+                "测试曲名", "测试艺人", 200_000L, rejected), EPS);
+
+        // 无标记的同一首照常录取。
+        Music cleanCandidate = toTestMusic(200_000L);
+        CrossSourceSwitcher.Candidate accepted = new CrossSourceSwitcher.Candidate(
+                cleanCandidate, MusicPlatform.NETEASE, 1.0, 0L);
+        assertTrue(CrossSourceSwitcher.candidateAcceptance(
+                "测试曲名", "测试艺人", 200_000L, accepted) > 0.0);
+
+        // GD/B 站恒有权限（hasVipAccess 恒 true）：VIP 标记不淘汰这两家的候选。
+        CrossSourceSwitcher.Candidate gdCandidate = new CrossSourceSwitcher.Candidate(
+                vipCandidate, MusicPlatform.GD, 1.0, 0L);
+        assertTrue(CrossSourceSwitcher.candidateAcceptance(
+                "测试曲名", "测试艺人", 200_000L, gdCandidate) > 0.0,
+                "免费聚合池的候选不该被 VIP 标记一票否决");
     }
 
     private static CrossSourceSwitcher.Candidate newTestCandidate(double score, long durationDeltaMillis) {
@@ -372,6 +502,14 @@ public class CrossSourceSwitcherStaticTest {
 
     /** 按 {@code Music#fromCadenceTrack} 使用的同一条显式构造器造一条最小曲目。 */
     private static Music toTestMusic(long durationMillis) {
+        return toTestMusicWithId(1L, durationMillis);
+    }
+
+    private static Music toTestMusicWithId(long id) {
+        return toTestMusicWithId(id, 200_000L);
+    }
+
+    private static Music toTestMusicWithId(long id, long durationMillis) {
         java.util.List<com.muoniumplayer.core.ncm.music.dto.Artist> artists =
                 new ArrayList<com.muoniumplayer.core.ncm.music.dto.Artist>();
         artists.add(new com.muoniumplayer.core.ncm.music.dto.Artist(1L, "测试艺人",
@@ -379,7 +517,7 @@ public class CrossSourceSwitcherStaticTest {
         com.muoniumplayer.core.ncm.music.dto.Album album =
                 new com.muoniumplayer.core.ncm.music.dto.Album(1L, "测试专辑", "",
                         java.util.Collections.emptyList());
-        return new Music("测试曲名", "测试曲名", "", 1L, artists,
+        return new Music("测试曲名", "测试曲名", "", id, artists,
                 java.util.Collections.emptyList(), album, durationMillis, 0L, 0L,
                 java.util.Collections.emptyList());
     }

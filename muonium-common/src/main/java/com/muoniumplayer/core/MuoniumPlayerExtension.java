@@ -87,11 +87,11 @@ public class MuoniumPlayerExtension {
         api.registerFeature(this.musicLyrics);
         api.registerFeature(this.musicLyrics.widget);
 
-        // 歌曲信息 HUD / 歌词 HUD：默认开启，位置与缩放由 HudConfig 归一化字段决定。
-        // 故默认开启 + 加载 HudConfig 持久化位置，并提供快捷键开关（TOGGLE_MUSIC_INFO / TOGGLE_LYRICS）
-        // 与 HUD 编辑器（EDIT_HUD，参考 cloudmusic/mod/gui/GuiOverlayEditor）。
-        this.musicInfo.setEnabled(true);
-        this.musicLyrics.setEnabled(true);
+        // 歌曲信息 HUD / 歌词 HUD：显隐随存档走（HudConfig.musicInfoEnabled/musicLyricsEnabled，
+        // 编辑器与快捷键切换时落盘）。此前每次启动都硬编码 setEnabled(true)，用户关掉的
+        // HUD 组件重启全部回来——这正是「HUD 组件关闭不记忆」的根因。
+        this.musicInfo.setEnabled(HudConfig.musicInfoEnabled);
+        this.musicLyrics.setEnabled(HudConfig.musicLyricsEnabled);
         NCMTheme.load();
         this.musicLyrics.loadHudEditorSettings();
     }

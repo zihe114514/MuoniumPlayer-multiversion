@@ -82,6 +82,33 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private WorldBillboard() {
     }
 
+    // ==================== 光影包适配：渲染类型单点分发 ====================
+
+    /**
+     * 光影包激活时的渲染类型：原版信标光柱工厂（beaconBeam）自带全亮管线
+     * （BEACON_BEAM_TRANSLUCENT —— 不采样光照图、无 alpha 裁剪、半透明混合），
+     * 纹理直接换成我们的动态图集。每纹理懒建并缓存。
+     * 布尔参数 true = translucent 变体（false 是 opaque 信标柱）。
+     * 挂起合批模式不存在（26.x 是 submit-collect，无延迟批次），帧间模式翻转天然安全。
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<Identifier, RenderType> SHADER_TYPES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static RenderType shaderTextType(Identifier rl) {
+        return SHADER_TYPES.computeIfAbsent(rl, r ->
+                RenderTypes.beaconBeam(r, true));
+    }
+
+    /**
+     * 歌词世界绘制的渲染类型入口 —— 全部字形/特效 quad 的唯一取发点。
+     * 光影包激活（ShaderPackProbe 本帧值）走信标全亮程序，否则原版 textSeeThrough。
+     * refresh() 在帧头调用，帧中读的是本帧缓存值，同一帧内模式恒定。
+     */
+    private static RenderType currentWorldTextType(Identifier rl) {
+        return ShaderPackProbe.isActive() ? shaderTextType(rl)
+                : RenderTypes.textSeeThrough(rl);
+    }
+
     /** 事件入口（worldRenderEnd 的矩阵在 Bridge 里已设好）。 */
     public void begin(PoseStack poseStack, Minecraft mc,
                       double camX, double camY, double camZ) {
@@ -90,9 +117,24 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         this.camX = camX;
         this.camY = camY;
         this.camZ = camZ;
+        // 「更激进的适配」采集模式：光影激活 + 开关开 → 本帧不 submit，
+        // 平滑字形/特效改记进 present 兜底缓冲（WorldLyricsHudDraw 类注释）。
+        // 像素字路径不进采集（原版名牌同路径，光影下本就正常）。
+        this.captureMode = WorldLyricsHudDraw.captureModeThisFrame();
+        if (captureMode) {
+            LyricPresentRenderer.beginFrame();
+        }
     }
 
+    /** 本帧是否在采集（capture 模式下 submit 全部旁路）。 */
+    private boolean captureMode;
+
     public void end() {
+        if (captureMode) {
+            boolean got = LyricPresentRenderer.endFrame();
+            WorldLyricsHudDraw.onCaptureEnd(got);
+            captureMode = false;
+        }
         this.poseStack = null;
         this.mc = null;
     }
@@ -225,7 +267,18 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         int argb = (((int) (alpha * 255f) & 0xFF) << 24) | (rgb & 0xFFFFFF);
 
-        RenderType renderType = RenderTypes.textSeeThrough(pageRl);
+        // ---- 更激进的适配：采集模式 —— 不 submit，把 quad 记进 present 兜底缓冲 ----
+        if (captureMode) {
+            captureGlyphQuad(pageRl, qLeft, qTop, qRight, qBottom, cx, cy, cos, sin, s, argb, u0, v0, u1, v1);
+            if (TRACE && !tracedSmooth) {
+                tracedSmooth = true;
+                System.out.println("[WorldLyrics/trace] 现代档字形 quad 已采集（present 兜底）: '" + c
+                        + "' cell=" + cell.w + "x" + cell.h);
+            }
+            return;
+        }
+
+        RenderType renderType = currentWorldTextType(pageRl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
         poseStack.pushPose();
@@ -268,7 +321,105 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 // 传 (0, 240) 会把方块光压成 0 —— 夜里光查出来几乎全黑，字形被乘成黑方块。
                 .setUv2(LightCoordsUtil.FULL_BRIGHT & 0xFFFF,
                         (LightCoordsUtil.FULL_BRIGHT >> 16) & 0xFFFF)
+                .setNormal(0f, 0f, 1f)
                 .setUv1(0, 0);
+    }
+
+    // ==================== 更激进的适配：present 兜底采集 ====================
+
+    /**
+     * 把一个字形 quad 按当前 billboard 矩阵变换成「相机相对世界轴」坐标后记入
+     * present 兜底缓冲。GPU 端 submit 通路的变换链是 视图旋转 × 根矩阵 × billboard；
+     * 采集通路在 CPU 上只乘 billboard（根矩阵 = 单位矩阵，26.2 收集期如此），
+     * 剩下的视图旋转交给 present 端的 MVP（CameraRenderState.viewRotationMatrix）。
+     */
+    private void captureGlyphQuad(Identifier pageRl,
+                                  float qLeft, float qTop, float qRight, float qBottom,
+                                  float cx, float cy, float cos, float sin, float s,
+                                  int argb, float u0, float v0, float u1, float v1) {
+        Matrix4f mat = poseStack != null ? poseStack.last().pose() : null;
+        if (mat == null) return;
+        // 四角先绕字中心旋转/缩放（与 putGlyphVertex 同式），再进 billboard 矩阵
+        float ax = cx + ((qLeft - cx) * cos - (qTop - cy) * sin) * s;
+        float ay = cy + ((qLeft - cx) * sin + (qTop - cy) * cos) * s;
+        float bx = cx + ((qLeft - cx) * cos - (qBottom - cy) * sin) * s;
+        float by = cy + ((qLeft - cx) * sin + (qBottom - cy) * cos) * s;
+        float gx = cx + ((qRight - cx) * cos - (qBottom - cy) * sin) * s;
+        float gy = cy + ((qRight - cx) * sin + (qBottom - cy) * cos) * s;
+        float dx = cx + ((qRight - cx) * cos - (qTop - cy) * sin) * s;
+        float dy = cy + ((qRight - cx) * sin + (qTop - cy) * cos) * s;
+        // transformPosition = addVertex(Matrix4f) 的同款数学（billboard 无透视分量）；
+        // 三行全取 —— z 行是深度，丢 z 顶点贴相机平面，透视近平面整帧静默裁剪
+        LyricPresentRenderer.addQuad(pageRl,
+                matX(mat, ax, ay), matY(mat, ax, ay), matZ(mat, ax, ay), u0, v0,
+                matX(mat, bx, by), matY(mat, bx, by), matZ(mat, bx, by), u0, v1,
+                matX(mat, gx, gy), matY(mat, gx, gy), matZ(mat, gx, gy), u1, v1,
+                matX(mat, dx, dy), matY(mat, dx, dy), matZ(mat, dx, dy), u1, v0,
+                argb);
+    }
+
+    /** billboard 矩阵 × (x,y,0) 的 X 分量（Matrix4fc.transformPosition 的展开式）。 */
+    private static float matX(Matrix4f m, float x, float y) {
+        return m.m00() * x + m.m10() * y + m.m30();
+    }
+
+    /** billboard 矩阵 × (x,y,0) 的 Y 分量。 */
+    private static float matY(Matrix4f m, float x, float y) {
+        return m.m01() * x + m.m11() * y + m.m31();
+    }
+
+    /** billboard 矩阵 × (x,y,0) 的 Z 分量（深度行，m32 = 相对相机的纵深）。 */
+    private static float matZ(Matrix4f m, float x, float y) {
+        return m.m02() * x + m.m12() * y + m.m32();
+    }
+
+    /**
+     * 特效 quad 的采集：四角（公告牌行内坐标）按 billboard 矩阵变换后记入缓冲。
+     * 径迹/光晕/星芒/爆闪/拖尾画布共用 —— 顶点序与其他通路一致：
+     * 左上 → 左下 → 右下 → 右上。
+     */
+    private void captureEffectQuad(Identifier rl,
+                                   float ax, float ay, float au, float av,
+                                   float bx, float by, float bu, float bv,
+                                   float gx, float gy, float gu, float gv,
+                                   float dx, float dy, float du, float dv,
+                                   int argb) {
+        Matrix4f mat = poseStack != null ? poseStack.last().pose() : null;
+        if (mat == null) return;
+        LyricPresentRenderer.addQuad(rl,
+                matX(mat, ax, ay), matY(mat, ax, ay), matZ(mat, ax, ay), au, av,
+                matX(mat, bx, by), matY(mat, bx, by), matZ(mat, bx, by), bu, bv,
+                matX(mat, gx, gy), matY(mat, gx, gy), matZ(mat, gx, gy), gu, gv,
+                matX(mat, dx, dy), matY(mat, dx, dy), matZ(mat, dx, dy), du, dv,
+                argb);
+    }
+
+    /** 径迹 quad 带的采集版：与 {@link #emitTrail} 同几何，顶点直接进 present 缓冲。 */
+    private void emitTrailCapture(Identifier rl, float[] xs, float[] ys, int count,
+                                  float half, int baseAlpha, int rgb,
+                                  float widthScale, float alphaScale) {
+        float hw = half * widthScale;
+        int a = Math.min(255, (int) (baseAlpha * alphaScale));
+        int argb = (a << 24) | rgb;
+        for (int i = 0; i < count - 1; i++) {
+            float x0 = xs[i], y0 = ys[i];
+            float x1 = xs[i + 1], y1 = ys[i + 1];
+            int p0 = Math.max(0, i - 1), q0 = Math.min(count - 1, i + 1);
+            float dx0 = xs[q0] - xs[p0], dy0 = ys[q0] - ys[p0];
+            float l0 = (float) Math.sqrt(dx0 * dx0 + dy0 * dy0);
+            float n0x = l0 < 1e-4f ? 0f : -dy0 / l0, n0y = l0 < 1e-4f ? 1f : dx0 / l0;
+            int p1 = i, q1 = Math.min(count - 1, i + 2);
+            float dx1 = xs[q1] - xs[p1], dy1 = ys[q1] - ys[p1];
+            float l1 = (float) Math.sqrt(dx1 * dx1 + dy1 * dy1);
+            float n1x = l1 < 1e-4f ? 0f : -dy1 / l1, n1y = l1 < 1e-4f ? 1f : dx1 / l1;
+            // UV 钉在白纹理不透明行（与 putTrailVertex 同参数）
+            captureEffectQuad(rl,
+                    x0 + n0x * hw, y0 + n0y * hw, 0.5f, 0.03f,
+                    x0 - n0x * hw, y0 - n0y * hw, 0.5f, 0.03f,
+                    x1 - n1x * hw, y1 - n1y * hw, 0.5f, 0.03f,
+                    x1 + n1x * hw, y1 + n1y * hw, 0.5f, 0.03f,
+                    argb);
+        }
     }
 
     @Override
@@ -298,7 +449,14 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         final int baseAlpha = (argb >>> 24) & 0xFF;
         final int rgb = argb & 0xFFFFFF;
 
-        RenderType renderType = RenderTypes.textSeeThrough(rl);
+        // 采集模式：径迹 quad 带直接按 billboard 矩阵变换记入缓冲（两层 bloom 同发射序）
+        if (captureMode) {
+            emitTrailCapture(rl, xsC, ysC, ptCount, half, baseAlpha, rgb, 1f, 1f);
+            emitTrailCapture(rl, xsC, ysC, ptCount, half, baseAlpha, rgb, 3f, 0.35f);
+            return;
+        }
+
+        RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
         poseStack.pushPose();
@@ -352,6 +510,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 .setUv(0.5f, 0.03f)
                 .setUv2(LightCoordsUtil.FULL_BRIGHT & 0xFFFF,
                         (LightCoordsUtil.FULL_BRIGHT >> 16) & 0xFFFF)
+                .setNormal(0f, 0f, 1f)
                 .setUv1(0, 0);
     }
 
@@ -518,7 +677,17 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             return false;
         }
         int argb = Math.min(255, (int) (alpha * 255f)) << 24 | 0xFFFFFF;
-        RenderType renderType = RenderTypes.textSeeThrough(rl);
+        // 采集模式：拖尾画布 quad 直接记入 present 缓冲（纹理像素已在本调用中上传完）
+        if (captureMode) {
+            captureEffectQuad(rl,
+                    planeX, planeY, 0f, 0f,
+                    planeX, planeY + planeH, 0f, 1f,
+                    planeX + planeW, planeY + planeH, 1f, 1f,
+                    planeX + planeW, planeY, 1f, 0f,
+                    argb);
+            return true;
+        }
+        RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
         poseStack.pushPose();
@@ -567,7 +736,17 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         if (submitter == null) return;
         final float half = Math.max(1f, sizePx * 0.5f);
 
-        RenderType renderType = RenderTypes.textSeeThrough(rl);
+        if (captureMode) {
+            captureEffectQuad(rl,
+                    cx - half, cy - half, 0f, 0f,
+                    cx - half, cy + half, 0f, 1f,
+                    cx + half, cy + half, 1f, 1f,
+                    cx + half, cy - half, 1f, 0f,
+                    argb);
+            return;
+        }
+
+        RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
         poseStack.pushPose();
@@ -592,6 +771,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 .setUv(u, v)
                 .setUv2(LightCoordsUtil.FULL_BRIGHT & 0xFFFF,
                         (LightCoordsUtil.FULL_BRIGHT >> 16) & 0xFFFF)
+                .setNormal(0f, 0f, 1f)
                 .setUv1(0, 0);
     }
 
@@ -652,7 +832,17 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         final float cos = (float) Math.cos(Math.toRadians(rotDeg));
         final float sin = (float) Math.sin(Math.toRadians(rotDeg));
 
-        RenderType renderType = RenderTypes.textSeeThrough(rl);
+        if (captureMode) {
+            captureEffectQuad(rl,
+                    cx + rot2(-half, -half, cos, sin)[0], cy + rot2(-half, -half, cos, sin)[1], 0f, 0f,
+                    cx + rot2(-half, half, cos, sin)[0], cy + rot2(-half, half, cos, sin)[1], 0f, 1f,
+                    cx + rot2(half, half, cos, sin)[0], cy + rot2(half, half, cos, sin)[1], 1f, 1f,
+                    cx + rot2(half, -half, cos, sin)[0], cy + rot2(half, -half, cos, sin)[1], 1f, 0f,
+                    argb);
+            return;
+        }
+
+        RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开；
         // 星芒贴图在回调外惰性生成 —— 惰性单例不受延迟采集影响）。
@@ -760,7 +950,20 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         final float hw = Math.max(0.5f, width * 0.5f);
         final float hh = Math.max(0.5f, height * 0.5f);
 
-        RenderType renderType = RenderTypes.textSeeThrough(rl);
+        if (captureMode) {
+            // 四角 = 中心 ± 长轴半宽·轴向 ± 短轴半宽·法向（旋转由 cos/sin 合成）
+            float axX = cos, axY = sin;
+            float nX = -sin, nY = cos;
+            captureEffectQuad(rl,
+                    cx - axX * hw - nX * hh, cy - axY * hw - nY * hh, 0f, 0f,
+                    cx - axX * hw + nX * hh, cy - axY * hw + nY * hh, 0f, 1f,
+                    cx + axX * hw + nX * hh, cy + axY * hw + nY * hh, 1f, 1f,
+                    cx + axX * hw - nX * hh, cy + axY * hw - nY * hh, 1f, 0f,
+                    argb);
+            return;
+        }
+
+        RenderType renderType = currentWorldTextType(rl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开；
         // 条纹贴图在回调外惰性生成 —— 惰性单例不受延迟采集影响）。
@@ -789,6 +992,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 .setUv(u, v)
                 .setUv2(LightCoordsUtil.FULL_BRIGHT & 0xFFFF,
                         (LightCoordsUtil.FULL_BRIGHT >> 16) & 0xFFFF)
+                .setNormal(0f, 0f, 1f)
                 .setUv1(0, 0);
     }
 

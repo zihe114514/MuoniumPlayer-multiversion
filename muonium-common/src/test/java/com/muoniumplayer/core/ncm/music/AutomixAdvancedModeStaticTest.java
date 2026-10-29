@@ -120,17 +120,18 @@ class AutomixAdvancedModeStaticTest {
     }
 
     @Test
-    @DisplayName("模型里有处理方案四档单选，进阶是其中最高的一档")
+    @DisplayName("进阶模式是独立开关，不与处理方案（引擎）绑定")
     void modelExposesTheSwitch() throws Exception {
         String model = read(screens("hud", "HudSettingsModel.java"));
         assertTrue(model.contains("choice(\"处理方案\""),
                 "模型驱动的那套（内置编辑器与 OneConfig 桥）要有处理方案条目");
-        assertTrue(model.contains("new String[] {\"原版\", \"Folia 稳健\", \"Folia 表现\", \"Folia 进阶\"}"),
-                "处理方案是引擎×表现×进阶的三合一单选：三个隐含档位不该再让用户自己拼");
-        assertTrue(model.contains("HudSettingsModel::setAutomixPlan"),
-                "四档要有直写 setter（下拉选择走它，而不是只靠循环）");
-        assertTrue(model.contains("AutomixSettings.setAdvancedModeEnabled(advanced)"),
-                "进阶的开关必须由档位写入路径驱动");
+        assertTrue(model.contains("HudSettingsModel::setEngineChoice"),
+                "处理方案只管引擎选择（下拉直写 setter）");
+        assertTrue(model.contains("toggle(\"进阶模式\""),
+                "进阶模式必须是独立 toggle：分析深度与引擎选择是两个正交维度，不该绑死");
+        int toggleRow = model.indexOf("toggle(\"进阶模式\"");
+        assertTrue(model.indexOf("AutomixSettings.setAdvancedModeEnabled(!AutomixSettings.isAdvancedModeEnabled())", toggleRow) - toggleRow < 600,
+                "进阶 toggle 要直接驱动它自己的开关，不经任何档位映射");
     }
 
     @Test

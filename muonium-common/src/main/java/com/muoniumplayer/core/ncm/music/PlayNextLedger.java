@@ -130,7 +130,12 @@ final class PlayNextLedger {
         if (song == null) return false;
         int run = pendingRun(queue, curIdx);
         for (int index = curIdx + 1; index <= curIdx + run; index++) {
-            if (song.equals(at(queue, index))) return true;
+            Music cell = at(queue, index);
+            if (cell == null) continue;
+            // 换源改写队列格后账上的身份已迁移到替身（replacePendingIdentity），
+            // 而行 widget 还绑着原曲对象：除 equals 外再认一次换源配对，
+            // 面板重建之前「下一首」角标不因换源熄灭。
+            if (song.equals(cell) || cell.isCrossSourcePeerOf(song)) return true;
         }
         return false;
     }

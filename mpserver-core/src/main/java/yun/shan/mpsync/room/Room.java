@@ -416,12 +416,23 @@ public final class Room {
         if (!controls(uuid) && cap > 0 && pendingOf(uuid) >= cap) {
             throw new IllegalStateException("你的排队歌曲已达上限（" + cap + " 首）");
         }
+        // 去重必须含 current：空房点歌会立刻起播并移出 queue（见下面 pollFront），那只扫
+        // queue 的话，起播完成前同一首的第二帧（双击/连点）命中不了去重，会再入队一遍——
+        // 用户看到的就是同一首连播两次。enqueueBatch 的 seen 一直含 current，两处对齐。
+        if (current != null && current.track.key().equals(track.key())) {
+            throw new IllegalStateException("这首歌正在播放");
+        }
         for (QueueEntry e : queue) {
             // 按 source:songId 比，而不是只比 songId：跨平台之后不同平台会撞到相同的数字 id。
             if (e.track.key().equals(track.key())) throw new IllegalStateException("这首歌已经在队列里了");
         }
         QueueEntry entry = new QueueEntry(track, uuid, name);
         entry.tier = playNext && controls(uuid) ? QueueEntry.TIER_JUMP : QueueEntry.TIER_REQUEST;
+        // 点歌自带可用直链时按「点歌人层」记账。不记账（留在 ADOPTED_NONE）的话，这条链
+        // 在分层视角里是「没采纳过任何答案」——任何成员的迟到/伪造 url_supply（层号被
+        // 服务端推导为最不可信的 ASK_EVERYONE）都能把它静默顶掉。记了账，链接真的过期、
+        // 房间重新为它开分层求助时，supplyUrl 会把记账复位回 ADOPTED_NONE，正常路照走。
+        if (track.hasFreshUrl()) entry.adoptedTier = QueueEntry.ADOPTED_REQUESTER;
         queue.add(insertAt(entry.tier), entry);
         if (current == null) {
             startEntry(pollFront(entry), 0L);
@@ -1342,6 +1353,9 @@ public final class Room {
         // ② 已经在等某一层了就别重开：前瞻窗每换一次歌、每动一次队列都会跑一遍，重开会把
         //    刚发出去的那一层抹掉重来，等于一首歌反复问同一批人。
         if (entry.askTier != QueueEntry.ASK_IDLE) return;
+        // 走到这说明这条链已经不新鲜了（requestUrl 的入口判过 hasFreshUrl）：点歌人层记账
+        // 到此作废——之后的分层答案按真实层号记账，重新变得可比。
+        entry.adoptedTier = QueueEntry.ADOPTED_NONE;
         advanceAsk(entry, ASK_MEMBER, quiet);
         if (!quiet && entry.askTier != QueueEntry.ASK_IDLE)
             notice("正在获取《" + entry.track.name + "》的播放地址…");
@@ -1579,6 +1593,13 @@ public final class Room {
                            String reason) {
         QueueEntry entry = askTarget(entryId, source, songId);
         if (entry == null || entry.askTier != tier) return;
+        // reason 必须落日志：排障时「全员 VIP 的房间为什么全层落空」只能靠这里答 ——
+        // 每一层的弃权原因（netease-trial / netease-failed / lx-wy-failed / no-platform）
+        // 是判定「误判弃权」还是「真没人解得出」的唯一证据，聊天栏的 notice 不带它。
+        Member m = members.get(uuid);
+        System.out.println("[mpsync] url_decline entry=" + entryId + " tier=" + tier + " by="
+                + (m == null ? "?" : m.name) + " 原因=" + (reason == null || reason.isBlank()
+                ? "未说明" : reason.trim()));
         if (!entry.decline(uuid)) return;
         advanceAsk(entry, tier + 1, true);
     }
@@ -1614,7 +1635,11 @@ public final class Room {
         if (next == null) return "换源结果缺少曲目 ID";
         if (next.key().equals(entry.track.key())) return null;   // 同一平台同一首，什么都没换
         entry.track = next;
-        entry.adoptedTier = QueueEntry.ADOPTED_NONE;
+        // 替换帧自带直链时按点歌人层记账（ADOPTED_REQUESTER），不带链则清记账等分层问。
+        // 不能停留在 ADOPTED_NONE：那个哨兵与任何层号比较都为真，等于邀请任何成员的
+        // 迟到/伪造 url_supply 把这一格刚换上的链接静默顶掉。
+        entry.adoptedTier = next.hasFreshUrl()
+                ? QueueEntry.ADOPTED_REQUESTER : QueueEntry.ADOPTED_NONE;
         entry.closeAsk();
         // 换完平台，挂在这一格上的派单就作废了：旧那台的答卷迟到时对不上新的身份，
         // 而它也已经不在 rescueTarget 上，switchDecline / track_replace 都会被丢掉。

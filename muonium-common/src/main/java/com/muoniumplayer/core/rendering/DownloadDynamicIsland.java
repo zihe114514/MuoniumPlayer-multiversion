@@ -17,6 +17,7 @@ import com.muoniumplayer.core.rendering.svg.SvgPlayback;
 import com.muoniumplayer.core.rendering.texture.ITextureObject;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
+import com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.utils.Location;
 
@@ -307,13 +308,21 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private DownloadDynamicIsland() {
     }
 
-    // 始终使用未变换的 Minecraft GUI 宽度，以便调用方一次性完成换算。
+    // 布局轴几何 + 自带的 correction 矩阵层：一单位 = 恒定物理像素，与 GUI Scale 档位无关。
+    // 括号由本方法自己进出（owned 守卫防嵌套），调用方零改动；HUD 编辑器的预览路径
+    // （renderEditorPreview）不走这里 —— 编辑器已提供同一层外层矩阵，再包就是双乘。
     public static void render() {
         // 完整字体下载的渲染线程钩子挂在这里（本方法每帧、且只在渲染线程上跑）：
         // 就绪则热启用，未就绪则节流重评。五棵版本树都只调 render()，接线零改动。
         com.muoniumplayer.core.management.FontAssetDownload.pollFromRenderThread();
         prewarmPlayerLayoutOnce();
-        INSTANCE.renderInternal();
+        boolean ownedLayout = !RenderSystem.FIXED_SCALE;
+        if (ownedLayout) WindowAdaptiveScale.beginForced();
+        try {
+            INSTANCE.renderInternal();
+        } finally {
+            if (ownedLayout) WindowAdaptiveScale.end();
+        }
     }
 
     private static void prewarmPlayerLayoutOnce() {
@@ -433,8 +442,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         double height = localHeight * configuredScale;
         double localRadius = compactRadius(style, localHeight);
         /** 更新转码进度，但不发布新的通知版本。 */
-        // 停滞的解码器会停止移动进度条；下方的看门狗正是对此作出反应。
-        double centerX = RenderSystem.getWidthNotScaled() * .5;
+        // 停滞的解码器会停止移动进度条；下方的看门狗正是对此作出响应。
+        // 锚点恒按布局轴上报（与岛渲染同一轴），不随 FIXED_SCALE 状态翻转；
+        // 消费方（播放器转场、岛内搜索）用 WindowAdaptiveScale.islandToCurrent* 折算。
+        double centerX = RenderSystem.getLayoutWidth() * .5;
         double x = centerX - width * .5;
         double y = bounceStyle ? BounceIslandMath.TOP : TOP_MARGIN;
         return new double[]{x, y, width, height, localRadius * configuredScale};
@@ -496,6 +507,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     public static void showVolume(int percent) {
         int safePercent = Math.max(0, Math.min(100, percent));
         publishNotice(IslandNoticeType.VOLUME, "音乐音量", safePercent + "%");
+    }
+
+    /** 「播放时压掉原版音乐」开关的反馈。走 VOLUME 通道：这是音量域的偏好，图标同族。 */
+    public static void showVanillaMusicDucker(boolean enabled) {
+        publishNotice(IslandNoticeType.VOLUME, enabled ? "已压掉游戏音乐" : "游戏音乐已恢复",
+                enabled ? "播放时原版音乐自动让路" : "原版音乐不再被打断");
     }
     /** 仅在配置的模型返回可用证据后才完成实时卡片。 */
     public static void beginTranscode(String trackName, String sourceFormat, String targetFormat) {
@@ -1840,7 +1857,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     completionVisibleClock.record(System.currentTimeMillis());
                 } else completionVisibleClock.pause();
             }
-        });
+        }, true);
     }
 
     private static boolean allowsAutomixCurves(IslandNoticeType type) {
@@ -1850,7 +1867,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     }
 
     private void renderPreviewInternal() {
-        if (RenderSystem.getWidth() <= 0 || RenderSystem.getHeight() <= 0) return;
+        if (RenderSystem.getLayoutWidth() <= 0 || RenderSystem.getLayoutHeight() <= 0) return;
         renderIsolated(new Runnable() {
             @Override
             public void run() {
@@ -1866,10 +1883,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         IslandNoticeType.NONE, "", "", "", "", 1f, 0.0, false,
                         ambient, ambient.isEmpty() ? 0f : 1f, null, true);
             }
-        });
+        }, false);
     }
 
-    private void renderIsolated(Runnable renderer) {
+    private void renderIsolated(Runnable renderer, boolean correctionLayer) {
         SkijaGfx.pushAttrib();
         api.getGLStateManager().pushMatrix();
         try {
@@ -1881,6 +1898,14 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             // 本来就不在任何裁剪层里面，所以只需要把混合方程与当前颜色摆回常态。
             SkijaGfx.setBlendMode(io.github.humbleui.skija.BlendMode.SRC_OVER);
             SkijaGfx.setColor(1f, 1f, 1f, 1f);
+            if (correctionLayer) {
+                // 布局轴几何 → 当前 canvas 的 GUI 逻辑坐标（与 widget 的 correction 层同方向
+                // 同因子）。真实渲染路径（render() 已进布局括号）必须压这一层；编辑器预览
+                // （renderEditorPreview）不压——编辑器 HUD 段的外层矩阵已带同值 correction，
+                // 再压就是双乘，预览和实物会差一个因子。
+                api.getGLStateManager().scale(WindowAdaptiveScale.correctionX(),
+                        WindowAdaptiveScale.correctionY(), 1);
+            }
             renderer.run();
         } finally {
             api.getGLStateManager().popMatrix();
@@ -1898,7 +1923,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                             IslandAmbientStatus.Snapshot ambient, float ambientBlendValue,
                              AutomixIslandRenderer.Frame mixFrame, boolean surfaceActive) {
         double configuredScale = DynamicIslandMath.clamp(HudConfig.dynamicIslandScale, .60, 1.35);
-        double screenWidth = RenderSystem.getWidth();
+        // 布局轴宽（真实渲染已进布局括号、编辑器预览也在编辑器的布局括号内），恒定、
+        // 与 GUI Scale 无关；配合 renderIsolated 的 correction 层落在正确的物理尺寸上。
+        double screenWidth = RenderSystem.getLayoutWidth();
         DynamicIslandStyle style = getStyle();
         boolean bounce = style == DynamicIslandStyle.BOUNCE;
         // 回弹胶囊把所有事件按行堆出来，所以先要问出本帧到底有几行；其他样式不读这个列表。

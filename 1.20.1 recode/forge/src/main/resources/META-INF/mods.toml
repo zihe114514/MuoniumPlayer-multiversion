@@ -37,3 +37,8 @@ logoFile = "assets/muonium/icon.png"
     versionRange = "[${minecraft_version},)"
     ordering = "NONE"
     side = "CLIENT"
+
+# 压原版音乐等客户端修补用的 mixin（与 Fabric 侧共用同一份 com.muoniumplayer.mixin 源码）。
+# Forge 运行期本来就是官方名（本仓库统一 mojmap），不需要 refmap。
+[[mixins]]
+    config = "muonium.mixins.json"

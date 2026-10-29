@@ -138,6 +138,20 @@ public final class ListenTogetherService {
                 : NeteaseListenTogetherService.isActive();
     }
 
+    /**
+     * 互斥判据用的「会话在进行中」：包含 CONNECTING（连接中）。
+     *
+     * <p>三处互斥闸（直连 hostRoom/joinRoom、服务器房间 conflictingSession）原来只查
+     * {@link #isActive()}——它只认 ACTIVE。用户在官方「正在连接」的几秒窗口里开直连/
+     * 服务器房间，两套引擎并行落地：官方 worker 的差分回写跑在检查之前，会把已被房间
+     * S_PLAY 改写的本地播放整表推进刚建的官方房。CONNECTING 虽未 ACTIVE，但动作在飞、
+     * 随时会变 ACTIVE，互斥必须把这一档算进去。</p>
+     */
+    public static boolean isEngaged() {
+        Phase phase = getPhase();
+        return phase == Phase.ACTIVE || phase == Phase.CONNECTING;
+    }
+
     public static boolean isBusy() {
         return ownedByKuGou()
                 ? KuGouListenTogetherService.isBusy()
@@ -362,6 +376,10 @@ public final class ListenTogetherService {
         }
         if (com.muoniumplayer.party.MpPartyClient.inRoom()) {
             reject("已在服务器房间中：先退出房间，再使用官方一起听");
+            return true;
+        }
+        if (com.muoniumplayer.party.direct.MpDirect.isPendingJoin()) {
+            reject("正在连接直连房间：先等它完成或超时，再使用官方一起听");
             return true;
         }
         return false;

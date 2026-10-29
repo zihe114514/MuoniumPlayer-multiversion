@@ -67,6 +67,18 @@ public final class NCMPlayerConfig {
      */
     private static boolean kuGouPrivUrlFallback;
     /**
+     * 概念版 auth 取流链路（{@code /user/verify} → {@code /song/auth} → {@code /tracker/v5/url}）
+     * 是否在概念版身份下作为取流主路径（默认开）。
+     *
+     * <p>概念版 VIP 的权益只在这条链路上核销：老的 {@code /v5/url} 对概念版会员曲一律按非会员对待，
+     * 表现是「面板显示会员、取流每档都被拒」。auth 链路失败时调用方会自动回退 {@code /v5/url}，
+     * 所以开着它的最坏情况等于今天的现状，关掉只会让概念版 VIP 用户失去会员权益。</p>
+     *
+     * <p>与 {@link #kuGouPrivUrlFallback} 相反，这里是「默认开、只在出问题时关」：save 里
+     * 只在<b>关掉</b>时写键，配置文件里没有这个键就等于开着。</p>
+     */
+    private static boolean kuGouAuthStreamDisabled;
+    /**
      * 磁盘音频缓存上限，单位 GB，0 表示不限制。
      *
      * <p>默认 16 GB：足够放下几百首无损，正常使用不会碰到，同时又能挡住「只增不减」
@@ -116,6 +128,9 @@ public final class NCMPlayerConfig {
             }
             if (object != null && object.has("kuGouPrivUrlFallback")) {
                 kuGouPrivUrlFallback = object.get("kuGouPrivUrlFallback").getAsBoolean();
+            }
+            if (object != null && object.has("kuGouAuthStreamDisabled")) {
+                kuGouAuthStreamDisabled = object.get("kuGouAuthStreamDisabled").getAsBoolean();
             }
             if (object != null && object.has("musicCacheLimitGigabytes")) {
                 musicCacheLimitGigabytes = normalizeCacheLimit(object.get("musicCacheLimitGigabytes").getAsInt());
@@ -235,6 +250,20 @@ public final class NCMPlayerConfig {
     public static synchronized void setKuGouPrivUrlFallbackEnabled(boolean enabled) {
         load();
         kuGouPrivUrlFallback = enabled;
+        save();
+    }
+
+    /** 概念版 auth 取流是否启用（默认开，见字段注释）。返回的是「启用」语义。 */
+    public static synchronized boolean isKuGouAuthStreamEnabled() {
+        load();
+        return !kuGouAuthStreamDisabled;
+    }
+
+    public static synchronized void setKuGouAuthStreamEnabled(boolean enabled) {
+        load();
+        boolean disabled = !enabled;
+        if (kuGouAuthStreamDisabled == disabled) return;
+        kuGouAuthStreamDisabled = disabled;
         save();
     }
 
@@ -378,6 +407,8 @@ public final class NCMPlayerConfig {
             object.addProperty("musicSourcePlatform", getMusicSourcePlatform().name());
             // 只在开着的时候写这一行：默认关是这条路径的常态，不必给配置文件添一个恒为 false 的键。
             if (kuGouPrivUrlFallback) object.addProperty("kuGouPrivUrlFallback", true);
+            // 与上一条镜像：默认开，只在关掉时写键。
+            if (kuGouAuthStreamDisabled) object.addProperty("kuGouAuthStreamDisabled", true);
             JsonConfigStorage.writeObject(FILE, GSON, object);
 
         } catch (Throwable ignored) {

@@ -102,6 +102,11 @@ public class AudioPlayer {
      */
     private volatile boolean playRequested;
 
+    /** 只读探测：命令已下、声音未出（或刚出的那一小段）也算。压原版音乐用，见 VanillaMusicDucker。 */
+    public boolean isPlayRequested() {
+        return playRequested;
+    }
+
     public AudioPlayer(File file) {
         finished = false;
         this.player = loadUsableSoundFile(file);

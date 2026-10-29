@@ -210,21 +210,22 @@ public final class IslandSearchTransition implements SharedConstants {
     private static void captureStart() {
         // 岛可见度 > 0.72 时 getLiveAnchorBounds 返回上一帧真实渲染的实时轮廓（已含
         // configuredScale），否则退回公式值 —— 与 PlayerIslandTransition.captureStart 完全同款。
+        // 岛锚点恒按布局轴上报，islandToCurrent* → toLayout* 两段相乘恒等闭环（见那边注释）。
         double[] island = DownloadDynamicIsland.getLiveAnchorBounds();
-        startX = WindowAdaptiveScale.toLayoutX(island[0]);
-        startY = WindowAdaptiveScale.toLayoutY(island[1]);
-        startWidth = WindowAdaptiveScale.toLayoutWidth(island[2]);
-        startHeight = WindowAdaptiveScale.toLayoutHeight(island[3]);
-        startRadius = WindowAdaptiveScale.toLayoutRadius(island[4]);
+        startX = WindowAdaptiveScale.toLayoutX(WindowAdaptiveScale.islandToCurrentX(island[0]));
+        startY = WindowAdaptiveScale.toLayoutY(WindowAdaptiveScale.islandToCurrentY(island[1]));
+        startWidth = WindowAdaptiveScale.toLayoutWidth(WindowAdaptiveScale.islandToCurrentWidth(island[2]));
+        startHeight = WindowAdaptiveScale.toLayoutHeight(WindowAdaptiveScale.islandToCurrentHeight(island[3]));
+        startRadius = WindowAdaptiveScale.toLayoutRadius(WindowAdaptiveScale.islandToCurrentRadius(island[4]));
     }
 
     private static void captureCapsule() {
         double[] island = DownloadDynamicIsland.getAnchorBounds();
-        capsuleX = WindowAdaptiveScale.toLayoutX(island[0]);
-        capsuleY = WindowAdaptiveScale.toLayoutY(island[1]);
-        capsuleWidth = WindowAdaptiveScale.toLayoutWidth(island[2]);
-        capsuleHeight = WindowAdaptiveScale.toLayoutHeight(island[3]);
-        capsuleRadius = WindowAdaptiveScale.toLayoutRadius(island[4]);
+        capsuleX = WindowAdaptiveScale.toLayoutX(WindowAdaptiveScale.islandToCurrentX(island[0]));
+        capsuleY = WindowAdaptiveScale.toLayoutY(WindowAdaptiveScale.islandToCurrentY(island[1]));
+        capsuleWidth = WindowAdaptiveScale.toLayoutWidth(WindowAdaptiveScale.islandToCurrentWidth(island[2]));
+        capsuleHeight = WindowAdaptiveScale.toLayoutHeight(WindowAdaptiveScale.islandToCurrentHeight(island[3]));
+        capsuleRadius = WindowAdaptiveScale.toLayoutRadius(WindowAdaptiveScale.islandToCurrentRadius(island[4]));
     }
 
     private static double clamp01(double value) {

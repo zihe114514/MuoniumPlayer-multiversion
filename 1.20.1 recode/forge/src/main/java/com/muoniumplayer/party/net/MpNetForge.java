@@ -33,6 +33,16 @@ import java.util.UUID;
  * 同理：{@code EventNetworkChannel} 只提供接收侧的原样投递，发送侧走
  * {@link ServerboundCustomPayloadPacket} 是唯一不会被加壳的路径。
  *
+ * <h2>监听的事件类型按「包的来向」命名，方向别搞反</h2>
+ * Forge 47 的 {@code NetworkDirection} 命名指的是<b>包从哪来</b>，不是在哪处理：
+ * 收到 S2C 包（{@code PLAY_TO_CLIENT}）时 {@code NetworkInstance.dispatch} 投递的是
+ * {@code ServerCustomPayloadEvent}（「来自服务器的包」），收到 C2S 包（
+ * {@code PLAY_TO_SERVER}）投递的是 {@code ClientCustomPayloadEvent}（「来自客户端的包」）。
+ * 客户端监听 S2C 必须收 {@code ServerCustomPayloadEvent}——收 {@code ClientCustomPayloadEvent}
+ * 的话事件类型对不上、监听器永远不触发，{@code dispatch} 返回未处理，vanilla 就把每一帧
+ * S2C 当「Unknown custom packet identifier」丢掉（C2S 反向正好配对，所以才会出现
+ * 「建房正常、同步全瞎」的单向失聪）。两侧用 {@code newEventChannel} 同一注册入口。
+ *
  * <h2>版本协商刻意全放开</h2>
  * 两个 accepted-versions 谓词都恒真：本 mod 的定位是「服务器没装服务端 mod 也照常单机用」，
  * 谓词收紧的话，连不带这个通道的普通服务器都会在登录握手阶段被 Forge 判为不兼容。
@@ -62,7 +72,9 @@ public final class MpNetForge implements MpHost {
 
         MpPartyClient.bind(com.muoniumplayer.party.direct.MpHostRouter.wrap(INSTANCE));
 
-        s2cChannel.addListener((NetworkEvent.ClientCustomPayloadEvent event) -> {
+        // S2C 包（PLAY_TO_CLIENT）投递的事件类是 ServerCustomPayloadEvent ——
+        // 事件名里的 Server 说的是「包从服务端来」，见类注释的方向表。
+        s2cChannel.addListener((NetworkEvent.ServerCustomPayloadEvent event) -> {
             FriendlyByteBuf buf = event.getPayload();
             if (buf != null) {
                 // netty 缓冲在事件返回后即释放，必须先拷出来。
@@ -70,7 +82,7 @@ public final class MpNetForge implements MpHost {
                 buf.readBytes(data);
                 MpPartyClient.onFrame(data);
             }
-            // 不标已处理的话 Forge 会在日志里刷「payload 没人要」的警告。
+            // 不标已处理的话 vanilla 会把这一帧当未知包再走一遍并刷警告。
             event.getSource().get().setPacketHandled(true);
         });
 
@@ -81,24 +93,21 @@ public final class MpNetForge implements MpHost {
     }
 
     private static EventNetworkChannel channel(ResourceLocation id) {
-        return NetworkRegistry.ChannelBuilder.named(id)
-                .networkProtocolVersion(() -> PROTOCOL_VERSION)
-                .clientAcceptedVersions(version -> true)
-                .serverAcceptedVersions(version -> true)
-                .eventNetworkChannel();
+        return NetworkRegistry.newEventChannel(id,
+                () -> PROTOCOL_VERSION,
+                version -> true,
+                version -> true);
     }
 
     /**
      * 给 C2S 通道加一个服务端方向的监听（内嵌引擎用，见 {@code lan/LanNetForge}）。
      *
-     * <p>{@code EventNetworkChannel} 的 {@code ClientCustomPayloadEvent} 与
-     * {@code ServerCustomPayloadEvent} 按包流向天然分流：同一 JVM 里集成服务端
-     * 收到 C2S 走 Server 事件、客户端收到 S2C 走 Client 事件，互不干扰。
-     * 只在客户端入口里被调（本 mod 不加载到专用服务器），监听体第一行就判
-     * 引擎激活与否，未激活零成本直返。
+     * <p>两个方向投递的事件类按<b>包的来向</b>命名（见类注释的方向表）：
+     * 集成服务端收 C2S 包，投递的是 {@code ClientCustomPayloadEvent}（「来自客户端的包」）。
+     * 只在客户端入口里被调（本 mod 不加载到专用服务器）。</p>
      */
     public static void addServerListener(java.util.function.BiConsumer<ServerPlayer, byte[]> sink) {
-        c2sChannel.addListener((NetworkEvent.ServerCustomPayloadEvent event) -> {
+        c2sChannel.addListener((NetworkEvent.ClientCustomPayloadEvent event) -> {
             FriendlyByteBuf buf = event.getPayload();
             if (buf != null) {
                 byte[] data = new byte[Math.min(buf.readableBytes(), MpProto.MAX_FRAME)];

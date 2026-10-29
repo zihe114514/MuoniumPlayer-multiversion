@@ -248,7 +248,10 @@ public class MusicWidget extends RoundedRectWidget {
                     lblMusicName.centerVertically();
                     lblMusicName.setPosition(cover.getRelativeX() + cover.getWidth() + 4, lblMusicName.getRelativeY() - lblMusicName.getHeight() * .5 - 2);
                     // 为时长/操作按钮和版权徽章预留空间，确保没有徽章会与被截断的标题重叠。
-                    lblMusicName.setMaxWidth(Math.max(1.0, this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4
+                    // 下限 40px 而不是 1px：窄面板 + 长落点徽标（已换源 · lx/哔哩哔哩）堆叠时，
+                    // 1px 下限会让歌名整条消失而徽标还占着位 —— 与其留一格尸体，不如让
+                    // 标题保住最小可读宽度，徽标（SCROLL 限宽 + 现算宽）自己向下挤压。
+                    lblMusicName.setMaxWidth(Math.max(40.0, this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4
                             + rightActionsReserve() + (musicDirty ? (dirtyIndicatorSize + 4) : 0)
                             + accessBadgeReserve + unblockBadgeReserve[0])));
                 });
@@ -763,8 +766,8 @@ public class MusicWidget extends RoundedRectWidget {
      * 换源 / 解灰 / 灰色标签。
      *
      * <p>一枚徽标三种念法，前缀说的是<b>换了什么</b>：别的平台换进来的曲目 →
-     * 「已换源 · 落点」，本平台自己解出来的第三方流 → 「解灰 · 源名」，其中脚本流的源名带
-     * <b>渠道键</b>（「野花·kw」），换源落到某平台官方流时落点是那个平台的显示名（「网易云」）；
+     * 「已换源 · 落点」，本平台自己解出来的第三方流 → 「解灰 · 源名」，其中脚本流的源名是
+     * 「lx/渠道显示名」（例：{@code lx/酷我}），换源落到某平台官方流时落点是那个平台的显示名（「网易云」）；
      * 官方链路取不到流且「音乐是否可用」判定为不可用 → 「灰」。合成一枚而不是三枚，是因为
      * 这些状态互斥，分开占位会在长标题上白白吃掉一段宽度。</p>
      *

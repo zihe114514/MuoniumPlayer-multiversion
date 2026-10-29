@@ -207,6 +207,48 @@ class RoomPlaylistQueueStaticTest {
                         + "不按布尔跳变瞬移、也不留一块空");
     }
 
+    @Test
+    @DisplayName("随机排入走二级菜单：触发一颗按钮，数量收在浮层里，洗牌只在本机内存里")
+    void shuffledImportUsesATwoLevelMenu() throws IOException {
+        String client = read(PARTY.resolve("MpPartyClient.java"));
+        String entry = region(client, "public static boolean requestPlaylistShuffled(PlayList playlist, int count)",
+                "private static String playlistTitle(PlayList playlist)");
+        assertTrue(entry.contains("loadMusicsWithCallback"),
+                "随机批次同样要先等曲目表加载完，不能直接读 getMusics() 拿到半张单");
+        assertTrue(entry.contains("Collections.shuffle"), "抽样要在发送前洗牌");
+        assertTrue(entry.contains("sendBatch("), "随机批次走的是同一条分帧发送路径");
+        assertFalse(entry.contains("C_PLAY_NOW") && entry.contains("MpProto.C_NEXT"),
+                "随机批次同样不许碰播放头与下一曲");
+        // 服务端拒绝整批（全重复/全非法）时洗牌后的顺序无所谓，但发给服务端的必须是
+        // 已洗过的一份拷贝 —— 不能把播放器侧栏正在展示的原列表原地打乱。
+        assertTrue(entry.contains("new ArrayList<Music>"), "洗牌对象是拷贝，不是 PlayList 原表");
+
+        String overlay = read(PARTY.resolve("ui").resolve("MpPartyOverlay.java"));
+        String row = region(overlay, "private void buildPlaylistRow(final ListView list, final int slot,",
+                "private MpRoomPlaylists.Item playlistAt(");
+        assertTrue(row.contains("openShuffleMenu"),
+                "行内只放一颗触发按钮，数量选择收进二级菜单 —— 不在一行里堆「随机 10/50/100」");
+        assertFalse(row.contains("requestPlaylistShuffled"),
+                "行内按钮只负责开菜单：真正的随机调用发生在菜单的数量行上，两处职责不混");
+        assertTrue(row.contains("MpPartyClient::canPlaylist"),
+                "触发入口与整张排入受同一套权限约束：服务端配了 adminOnly 就一起置灰");
+
+        String menu = region(overlay, "private void openShuffleMenu(final MpRoomPlaylists.Item item, final Row anchor)",
+                "private boolean closeShuffleMenu()");
+        assertTrue(menu.contains("requestPlaylistShuffled"),
+                "数量行才真正发起随机排入：菜单项带上各自的数量");
+        assertTrue(menu.contains("closeShuffleMenu()"),
+                "点数量先收菜单再发请求：两步同在一个回调里，菜单不会开着等网络");
+        assertTrue(menu.contains("SHUFFLE_COUNTS"),
+                "可选数量是一份常量表，想调档位改一处就行");
+        assertTrue(menu.contains("setOnClickCallback") && menu.contains("closeShuffleMenu();"),
+                "点遮罩收菜单：浮层要有「点外面」这条退路");
+        // closeShuffleMenu 本体在终点锚之后，region 取不到；对整个 overlay 源码断言。
+        assertTrue(overlay.contains("getChildren().remove(shuffleScrim)")
+                && overlay.contains("getChildren().remove(shuffleMenu)"),
+                "收菜单是显式摘除两份浮层，不是等下一次页面重建顺手带走");
+    }
+
     // ═══════════════════════ 协议读回 ═══════════════════════
 
     @Test

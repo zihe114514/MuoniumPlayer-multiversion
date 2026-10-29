@@ -48,7 +48,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 封面、歌词、收藏、最近播放全部按新平台的真曲目走。所以自动触发点排在解灰<b>之后</b>。</p>
  *
  * <p>徽标说的是<b>落点</b>，两种前缀分开：跨平台换源换来的曲目 → 「已换源 · 网易云」或
- * 「已换源 · 野花·kw」；本平台自己解出来的第三方流（解灰 / 脚本）→ 「解灰 · 野花·wy」。
+ * 「已换源 · lx/酷我」；本平台自己解出来的第三方流（解灰 / 脚本）→ 「解灰 · lx/网易云」。
  * 徽标内容由 {@link #destinationBadge} 定、由 {@link #propagateUnblockLabel} 在录取点写好，
  * 行对象与替身对象各一份 —— 界面上「换到了哪家」必须一眼读得出，否则换源成功与换源失败
  * 在歌曲行上是同一个样子。</p>
@@ -85,8 +85,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>搜索响应没有时长的源（GD），或任何时长信息缺失的配对，相似度门槛抬到 0.85 才收 ——
  *       没有时长闸门兜底时宁可错杀。</li>
  *   <li>GD 有额度与健康度门（同解灰）：额度不足或处于冷却就整个跳过，不挤兑共享池。</li>
- *   <li>自动触发每首歌每进程只试一次（{@link #AUTO_ATTEMPTED}），失败结论缓存 10 分钟
- *       （{@link #NEGATIVE_CACHE}），不会每次点击都重烧整张候选表的额度。</li>
+ *   <li>自动触发每首歌 10 分钟内只试一次（{@link #AUTO_ATTEMPTED}，带时间戳过期），
+ *       失败结论缓存 10 分钟（{@link #NEGATIVE_CACHE}），不会每次点击都重烧整张候选表的
+ *       额度，也不会把脚本转译器下载期烧掉的那一首永久焊死。</li>
  *   <li>一起听（官方房间）与 party 房间内不做<b>自动</b>换源：房间按曲目本体同步，
  *       本地悄悄换一首会让整房脱队。</li>
  *   <li>每个源的搜索有 6 秒硬超时，整条流水线有墙钟上限；全部网络都发生在
@@ -105,11 +106,13 @@ public final class CrossSourceSwitcher {
             // 上游 lx 的一个自定义源里各渠道互为备份，kg 死了换 kw/mg 正是它的原生玩法。
             MusicPlatform.KUWO,
             MusicPlatform.MIGU,
+            // 质量垫底的聚合 / 免费池：主流平台（含 LX 覆盖的渠道）全部落空才轮到。
             MusicPlatform.GD,
             MusicPlatform.BILIBILI,
-            // 垫底：汽水上游对完整版有风控门，很多账号即使有会员也取不到完整流，
-            // 前面的源都试过再轮到它。LX 自定义源不是一行候选而是一个通道（见 lxCovers），
-            // 它覆盖的网易云 / QQ / 酷狗天然坐在各自平台的位次上，优先级高于 B 站。
+            // 最末：汽水上游对完整版有风控门，很多账号即使有会员也取不到完整流。
+            // LX 自定义源不是一行候选而是一个通道（见 lxCovers），
+            // 它覆盖的网易云 / QQ / 酷狗 / 酷我 / 咪咕天然坐在各自平台的位次上，
+            // 优先级高于 B 站 —— 主流平台全空时才轮到 B 站 / GD 这两家。
             MusicPlatform.QISHUI,
     };
 
@@ -143,8 +146,30 @@ public final class CrossSourceSwitcher {
 
     private static final Map<String, Long> NEGATIVE_CACHE =
             new ConcurrentHashMap<String, Long>();
-    private static final Set<String> AUTO_ATTEMPTED =
-            Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    /**
+     * 「这首歌本进程已经自动换过一次源」的记账，值是记账时刻。
+     *
+     * <p>必须带时间戳：脚本转译器下载（最长 10 分钟）或脚本 init 超时的场景下，第一次
+     * 点歌时整条流水线必然空手，永久记账会把这首歌到进程结束的自动换源全烧掉 ——
+     * 用户等不到「下一首自然就好了」，只能重启。按与负缓存同一个 10 分钟窗口过期，
+     * 过期后重播同一首会重新给一次机会（ автомix 预备的 isLoading 防线挡的是同一件事
+     * 的另一半：让路时不记账）。</p>
+     */
+    private static final Map<String, Long> AUTO_ATTEMPTED =
+            new ConcurrentHashMap<String, Long>();
+    /**
+     * 「这首的死流原曲 → 已验证可播的替身」成功账。
+     *
+     * <p>只记失败不记成功是半个账本：录取点把替身写进播放队列的那一格，但用户从歌单
+     * （面板列表持的还是原曲对象）重新点这首歌时，点到的仍是死流原曲 —— 官方链路对它
+     * 还是死的，自动换源又被 AUTO_ATTEMPTED/负缓存拦住（防重烧额度，本意没错），
+     * 结果就是「这首明明刚换过源，重播却报没有可用音频源」。成功账让重播直接采用
+     * 已知的替身：一次搜索服务整张歌单里的所有格。直链刻意不存 —— 它按分钟过期，
+     * 存 URL 只会让重播拿到死链；存替身本体，取流交给 {@code getPlayUrl} 重跑。
+     * 与负缓存同窗口过期，超 512 条整体清空。</p>
+     */
+    private static final Map<String, Music> KNOWN_REPLACEMENTS =
+            new ConcurrentHashMap<String, Music>();
     private static final Set<String> IN_FLIGHT =
             Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
 
@@ -164,10 +189,16 @@ public final class CrossSourceSwitcher {
 
     // ── 对外入口 ────────────────────────────────────────────────────────────
 
-    /** 一次换源的结果：新曲目本体 + 已验证可播的直链 + 匹配度。 */
+    /**
+     * 一次换源的结果：新曲目本体 + 已验证可播的直链 + 匹配度。
+     *
+     * <p>{@code url} 为 null 表示来自成功账（{@link #knownReplacementFor}）——替身可信、
+     * 直链已过期，调用方必须对替身重新 {@code getPlayUrl()} 取流，不能直接用 url。
+     * 字段刻意非 final：成功账路径是「先发 Match 再补直链」，补完才算一次完整录取。</p>
+     */
     public static final class Match {
         public final Music music;
-        public final Tuple<String, String> url;
+        public Tuple<String, String> url;
         public final double score;
         public final String platformLabel;
 
@@ -187,14 +218,16 @@ public final class CrossSourceSwitcher {
      * {@code resolveLxPlayUrl} 时只写进了替身。两个都写才两头都看得见：行 widget 那一侧靠回写，
      * 面板重建 / 全屏播放页那一侧读的是替身自己。</p>
      *
-     * <p>文案由 {@link #destinationBadge} 定：脚本流是「脚本名·渠道键」（例：{@code 野花·kw}），
+     * <p>文案由 {@link #destinationBadge} 定：脚本流是「lx / 渠道显示名」（例：{@code lx/酷我}），
      * 官方流是平台显示名（例：{@code 网易云}）。之所以必须自己算而不是「照抄替身那一跳留下的值」：
      * 官方链路根本不会写这个字段，换源换到某平台的官方完整流时它是空串，界面上就与
      * 「没换成」长得一模一样。无条件覆写：行对象自己那一跳留下的旧徽标同样要改掉，
      * 现在播的已经不是它了。</p>
      *
      * <p>同时把两个对象都标成「换源换来的」（{@code Music.markCrossSourceSwitched}），
-     * 前缀由此从「解灰 · 」变成「已换源 · 」—— 换的是曲目本身，与「只换一条取流地址」不是一回事。</p>
+     * 前缀由此从「解灰 · 」变成「已换源 · 」—— 换的是曲目本身，与「只换一条取流地址」不是一回事；
+     * 并互持同一把换源配对钥匙（{@code Music#isCrossSourcePeerOf}），行 widget 的「正在播放」
+     * 高亮与待播角标靠它跟上替身。二级换源沿用旧钥匙，同一格的钥匙一辈子不变。</p>
      */
     public static void propagateUnblockLabel(Music replaced, Music replacement) {
         if (replaced == null || replacement == null) return;
@@ -204,10 +237,52 @@ public final class CrossSourceSwitcher {
         // 前缀要说的是「换了一首歌」而不是「换了一条取流地址」：这一位只有这里会置位。
         replacement.markCrossSourceSwitched();
         replaced.markCrossSourceSwitched();
+        // 落点平台只记给替身：重播路径上脚本/解灰链路开头会清徽标、官方链路成功又不写，
+        // getPlayUrl 的徽标恢复靠这一位自证「本次官方流确实来自录取时的落点」——
+        // 原曲侧没有这份记录，重播它时绝不恢复旧落点（那会让徽标归因错平台）。
+        replacement.setCrossSourceLandedPlatform(replacement.getSource());
+        // 同一格两侧互持一把配对钥匙：行 widget（绑着 replaced）与替身在 stableKey 上
+        // 已经对不上（平台与 id 都换了），高亮 / 待播角标靠这一位才跟得上声音。
+        // 二级换源（试听救援会换到上一轮的替身）不再发新钥匙：replaced 已持钥时沿用
+        // 那一把 —— 面板行 widget 绑的还是最初的原曲对象，换钥等于把最早那侧甩下线。
+        String peerKey = replaced.getCrossSourcePeerKey();
+        if (peerKey.isEmpty()) peerKey = replacement.getCrossSourcePeerKey();
+        if (peerKey.isEmpty()) peerKey = java.util.UUID.randomUUID().toString();
+        replacement.setCrossSourcePeerKey(peerKey);
+        replaced.setCrossSourcePeerKey(peerKey);
     }
 
     /**
-     * 换源落点的徽标文案：脚本流保持「脚本名·渠道键」，官方流写平台显示名。
+     * 让队列里与 {@code replaced} 同身份的其它格也拿到这次救援的<b>替身本体</b>。
+     *
+     * <p>{@code playNext} 插的是 {@link Music#queueIdentityCopy() 拷贝体}，同一首歌可以在
+     * 队列里占多格。换源只录取其中一格的话，其余格轮到时仍是死流原曲：账本（按
+     * stableKey 记）拦住第二次自动救援，用户对着一首「明明刚换过源」的歌连续吃硬停。
+     * 所以录取点把替身引用直接 set 进所有 equals 兄弟格 —— 它们与被救格从此同内容、
+     * 同钥匙、同徽标，多行同亮也不会出现（isSelected 的 stableKey 主判定命中的是
+     * 唯一的替身身份）。纯内存 O(n)，无感。</p>
+     */
+    public static void propagatePeerKeyToSiblings(List<Music> queue, Music replaced, Music replacement) {
+        if (queue == null || replaced == null || replacement == null) return;
+        try {
+            int size = queue.size();
+            for (int index = 0; index < size; index++) {
+                Music sibling = queue.get(index);
+                if (sibling == null || sibling == replaced || sibling == replacement) continue;
+                if (!sibling.equals(replaced)) continue;
+                // 直接让兄弟格引用替身本体：钥匙、徽标、switched、landed 与替身完全同源，
+                // 永不说谎（只发钥不发内容的旧写法会让兄弟格轮到时挂着「已换源」徽标
+                // 却按原曲死流再烧一遍流水线 —— 它本来就该播替身的内容）。同一首歌以
+                // 同一替身占多格是歌单重复的原生形态，写同一引用不产生新问题。
+                queue.set(index, replacement);
+            }
+        } catch (Throwable ignored) {
+            // 队列正被遍历/修改：兄弟格没补上只损失一帧高亮，playSong 那边还会接管。
+        }
+    }
+
+    /**
+     * 换源落点的徽标文案：脚本流是「lx/渠道显示名」，官方流写平台显示名。
      *
      * <p>{@code MusicWidget} 与全屏页把这一位拼在前缀之后（换源换来的那一首前缀是「已换源 · 」），
      * 一行读完就知道声音出自哪里。平台名用 {@link MusicPlatform#getDisplayName()} 而不是枚举名，
@@ -261,8 +336,30 @@ public final class CrossSourceSwitcher {
         if (!allowInRoom && MpPartyClient.inRoom()) return false;
         String key = current.getStableKey();
         if (key == null || key.isEmpty()) return false;
-        if (AUTO_ATTEMPTED.contains(key)) return false;
+        // 手动右键正在给同一首跑流水线时自动路径让路：用户显式指定的结果必须赢，
+        // 两条流水线并发录取会让耳朵、底栏、面板行指向两个不同替身（自动结果回来
+        // 还会静默覆盖用户刚选的）。让路不记账 —— 手动那条的结论会落账。
+        if (IN_FLIGHT.contains(key)) return false;
+        Long attemptedAt = AUTO_ATTEMPTED.get(key);
+        if (attemptedAt != null) {
+            if (System.currentTimeMillis() - attemptedAt < NEGATIVE_CACHE_MILLIS) return false;
+            // 记账已过期（典型场景：脚本转译器下载期烧掉的那次）：重播同一首要给新机会。
+            AUTO_ATTEMPTED.remove(key, attemptedAt);
+        }
         return !isNegativelyCached(key, System.currentTimeMillis());
+    }
+
+    /**
+     * 这一首当前是否有<b>手动右键</b>的换源流水线在跑。
+     *
+     * <p>自动录取点用它让路：用户显式指定的换源结果必须赢，两个替身先后录取会让
+     * 耳朵、底栏、面板行指向两个不同平台，灵动岛还会连播两条互相矛盾的战报。
+     * {@code canAutoSwitch} 在起跑前查的同一本账；录取在十几秒后，中间用户随时可能
+     * 右键，所以录取前还要再查一次。</p>
+     */
+    public static boolean manualSwitchInFlight(Music current) {
+        String key = current == null ? null : current.getStableKey();
+        return key != null && !key.isEmpty() && IN_FLIGHT.contains(key);
     }
 
     /**
@@ -281,9 +378,38 @@ public final class CrossSourceSwitcher {
         String key = current == null ? null : current.getStableKey();
         if (key != null && !key.isEmpty()) {
             if (AUTO_ATTEMPTED.size() > GUARD_SET_LIMIT) AUTO_ATTEMPTED.clear();
-            AUTO_ATTEMPTED.add(key);
+            AUTO_ATTEMPTED.put(key, System.currentTimeMillis());
         }
-        return findReplacement(current, quality);
+        Match match = findReplacement(current, quality);
+        // 成功也要落账：重播这首歌（用户从歌单点的是原曲对象）时账本会拦住重搜，
+        // 没有这份成功账，「明明换过源的重播却报无音频源」就是必然。
+        if (match != null && key != null && !key.isEmpty()) {
+            if (KNOWN_REPLACEMENTS.size() > GUARD_SET_LIMIT) KNOWN_REPLACEMENTS.clear();
+            KNOWN_REPLACEMENTS.put(key, match.music);
+        }
+        return match;
+    }
+
+    /**
+     * 这首死流原曲是否已有验证过的替身（成功账）；有就基于它拼一次录取。
+     *
+     * <p>给自动触发被 {@code AUTO_ATTEMPTED}/负缓存拦住时的兜底用：直链不缓存，
+     * {@code url} 交回调用方重新解析（分钟级过期，旧链只会 403）。</p>
+     */
+    public static Match knownReplacementFor(Music current) {
+        if (current == null) return null;
+        String key = current.getStableKey();
+        if (key == null || key.isEmpty()) return null;
+        Music standIn = KNOWN_REPLACEMENTS.get(key);
+        if (standIn == null || standIn.equals(current)) return null;
+        return new Match(standIn, null, 1.0,
+                standIn.getSource() == null ? "其他平台" : standIn.getSource().getDisplayName());
+    }
+
+    /** 已知替身这次也取不到流了（脚本关了/候选下架）：账过期，下次重播给一次重搜。 */
+    public static void expireKnownReplacement(Music standIn) {
+        if (standIn == null) return;
+        KNOWN_REPLACEMENTS.values().removeIf(music -> music == standIn || music.equals(standIn));
     }
 
     /**
@@ -327,10 +453,15 @@ public final class CrossSourceSwitcher {
                         try {
                             List<Music> musics = playList.getMusics();
                             if (musics != null && index >= 0 && index < musics.size()) {
-                                musics.set(index, result.music);
-                                // 队列格子换了人：automix 里按旧曲目预备好的那张牌（整条解码链 +
-                                // 交接计划）必须作废，否则下一曲照样交接给换源前的旧流。
-                                CloudMusic.queueRevision++;
+                                // 身份闸（与 armCrossSourceRescue 同款）：流水线跑的十几秒里
+                                // 用户可能删了前面的行 / automix 救援改写了这一格，只查边界
+                                // 会把替身写进别人的格子 —— 正在播的那首从队列里消失。
+                                if (musics.get(index) == current) {
+                                    musics.set(index, result.music);
+                                    // 队列格子换了人：automix 里按旧曲目预备好的那张牌（整条解码链 +
+                                    // 交接计划）必须作废，否则下一曲照样交接给换源前的旧流。
+                                    CloudMusic.queueRevision++;
+                                }
                             }
                         } catch (Throwable ignored) {
                             // 列表正被面板遍历：替换失败也不该弄丢这次的换源结果提示。
@@ -338,6 +469,9 @@ public final class CrossSourceSwitcher {
                         // 行 widget 绑的是老对象（列表 set 也换不掉已建好的 widget）：
                         // 替身是脚本解出来的流时，把徽标回写过去，界面这行才看得到。
                         propagateUnblockLabel(current, result.music);
+                        // 同身份的兄弟格（playNext 拷贝体）跟着换内容，别让它们轮到时
+                        // 照播死流再烧一遍自动救援。
+                        propagatePeerKeyToSiblings(playList.getMusics(), current, result.music);
                         DownloadDynamicIsland.showCrossSourceSwitched(result.music.getName(),
                                 result.platformLabel);
                         try {
@@ -392,8 +526,14 @@ public final class CrossSourceSwitcher {
         // 最坏把整段 deadline 烧在第一个源上。每轮小睡让出 CPU，任一源完成即处理。
         boolean[] settled = new boolean[futures.size()];
         int remainingCount = futures.size();
+        boolean interrupted = false;
         while (remainingCount > 0) {
-            if (Thread.currentThread().isInterrupted()) break;
+            if (Thread.currentThread().isInterrupted()) {
+                // 调用方（旧 PlayThread 被切歌）发来的中断：这是「这首已经不用换了」，
+                // 不是「搜过了没有」。记进负缓存会把中断冒充成失败结论。
+                interrupted = true;
+                break;
+            }
             long remaining = deadline - System.currentTimeMillis();
             if (remaining <= 0L) break;
             boolean progressed = false;
@@ -426,13 +566,15 @@ public final class CrossSourceSwitcher {
             if (!progressed && remainingCount > 0) {
                 try {
                     Thread.sleep(50L);
-                } catch (InterruptedException interrupted) {
+                } catch (InterruptedException sleepInterrupted) {
                     Thread.currentThread().interrupt();
+                    interrupted = true;
                     break;
                 }
             }
         }
 
+        if (interrupted) return null;
         if (pool.isEmpty()) {
             markNegative(current);
             return null;
@@ -611,13 +753,35 @@ public final class CrossSourceSwitcher {
             Music candidate = results.get(index);
             if (candidate == null) continue;
             if (currentKey != null && currentKey.equals(candidate.getStableKey())) continue;
-            double score = acceptanceScore(title, artist, durationMillis,
-                    candidate.getName(), candidate.getArtistsName(), candidate.getDuration());
-            if (score <= 0.0) continue;
             long diff = durationDeltaMillis(durationMillis, candidate.getDuration());
+            Candidate entry = new Candidate(candidate, platform, 0.0, diff);
+            double score = candidateAcceptance(title, artist, durationMillis, entry);
+            if (score <= 0.0) continue;
             candidates.add(new Candidate(candidate, platform, score, diff));
         }
         return candidates;
+    }
+
+    /**
+     * 一条<b>已成候选</b>的录取判定：先 VIP 淘汰，再走相似度 + 时长闸门。
+     *
+     * <p>搜索侧自带「会员/付费受限」标记的候选，只在<b>本机拿不到该平台完整流</b>时淘汰
+     * （返回 0）：非会员换到这种候选拿到的必然是试听片段，而取流验证只验「取得到流」
+     * 验不出「是完整的」—— 等起播的试听判定再兜底，这首歌唯一一次自动换源机会
+     * （{@code AUTO_ATTEMPTED}）已经烧掉了。三条「拿得到」的路都放行：本家有会员
+     * （{@link #hasVipAccess} 的登录态判据）；脚本覆盖该渠道（{@link #lxCovers}，取流时
+     * 脚本优先，VIP 曲借脚本通道拿完整版）。有会员的账号不淘汰 —— 那正是它能换到的
+     * 最高音质候选，误杀会把会员逼到 GD/B 站的 320k。</p>
+     */
+    static double candidateAcceptance(String title, String artist, long durationMillis,
+                                      Candidate candidate) {
+        if (candidate.music.hasVipRestriction()
+                && !hasVipAccess(candidate.platform) && !lxCovers(candidate.platform)) {
+            return 0.0;
+        }
+        return acceptanceScore(title, artist, durationMillis,
+                candidate.music.getName(), candidate.music.getArtistsName(),
+                candidate.music.getDuration());
     }
 
     /**
@@ -732,6 +896,20 @@ public final class CrossSourceSwitcher {
         return declaredMillis - decodedMillis >= TRIAL_CHECK_MIN_GAP_MILLIS;
     }
 
+    /**
+     * 「声明时长其实是解码器回填的」曲目（GD 落点）的试听旁路判定。
+     *
+     * <p>{@link #isIncompleteStream} 对这类曲目自指失效：搜索响应不带时长 → 解码后 30 秒
+     * 试听被 {@code applyDecodedDuration} 回填成「声明时长」→ 「声明 ≥90 秒」的闸一票放行，
+     * 残曲被 automix 当完整曲目预备、交接、放完。这里改用绝对时长：一首没有任何上游时长
+     * 参照的歌解出来连两分钟都不到，当完整曲目交给无人值守的下一曲交接太冒险 ——
+     * 换到 GD 的候选宁可被多问一次（playSong 的试听归因），也不放 30 秒残曲静默过场。
+     * 阈值取 120 秒：正常歌曲几乎不可能这么短，而试听片段常见 30/60 秒。</p>
+     */
+    static boolean isDecoderBackedShortStream(long declaredMillis, long decodedMillis) {
+        return declaredMillis <= 0L && decodedMillis > 0L && decodedMillis < 120_000L;
+    }
+
     static long durationDeltaMillis(long originalMillis, long candidateMillis) {
         if (originalMillis <= 0L || candidateMillis <= 0L) return 0L;
         return Math.abs(originalMillis - candidateMillis);
@@ -799,17 +977,22 @@ public final class CrossSourceSwitcher {
      * B 站 / 汽水没有 LX 概念恒为 false）。纯查已加载脚本的元数据，不发网络。脚本只声明
      * 它真能解的 key，所以这里跟着 {@code sourceKeyFor} 的正反两次映射走，不自作主张放行。
      *
-     * <p>对 kw / mg 这一票就是生死判：它们的曲目没有本家流，脚本解不出的渠道不值得进候选。</p>
+     * <p>对 kw / mg 这一票就是生死判：它们的曲目没有本家流，脚本解不出的渠道不值得进候选。
+     * 脚本<b>起失败</b>（FAILED：语法错误 / init 超时 / 中途崩溃）时同样判否 —— LOADING
+     * 按映射放行赌的是「马上就好」，FAILED 是既成事实，放行只会让 kw/mg 候选白吃一轮
+     * 必死的搜索加验证（每首 6-24 秒），脚本修好前的每一首 LX-only 曲都在交这笔税。</p>
      */
     public static boolean lxCovers(MusicPlatform platform) {
         if (!LxSourceService.isEnabled()) return false;
         String key = lxChannelKey(platform);
         if (key == null) return false;
-        // 脚本已经跑起来了就再看深一层：只认它真正声明了这个源 + musicUrl 动作。
-        // 还没加载（首次换源早于脚本启动）时按映射放行 —— 即便放行早了，验证关的
-        // tryPlayable 也只会在官方链路与脚本都拿不出流时才淘汰这一路，不会乱换。
         LxRuntime runtime = LxSourceService.getRuntime();
-        if (runtime == null || runtime.getState() != LxRuntime.State.READY) return true;
+        if (runtime == null) return true;
+        LxRuntime.State state = runtime.getState();
+        if (state == LxRuntime.State.FAILED) return false;
+        // 还没加载完（LOADING，含转译器下载）时按映射放行 —— 即便放行早了，验证关的
+        // tryPlayable 也只会在官方链路与脚本都拿不出流时才淘汰这一路，不会乱换。
+        if (state != LxRuntime.State.READY) return true;
         LxRuntime.SourceDecl decl = runtime.getSources().get(key);
         return decl != null && decl.supports("musicUrl");
     }

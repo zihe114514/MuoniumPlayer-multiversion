@@ -394,6 +394,8 @@ public final class HudConfig {
     public static boolean worldLyricsStayOnScreen = false;
     /** Above ground：歌词中心不低于眼睛下方 0.5 格，不沉进地面。 */
     public static boolean worldLyricsAboveGround = false;
+    /** 更激进的适配：光影包激活时歌词推迟到 HUD 阶段（光影后处理链之后）用原版着色器直画。 */
+    public static boolean worldLyricsHudDraw = false;
 
     // OSD KTV 动画。这些值独立于全屏歌词渲染器。
     public static float osdKaraokeTransitionWidth = 14.0f;
@@ -423,6 +425,11 @@ public final class HudConfig {
 
     /** 全局下载灵动岛。 */
     /** Passive FFT visualizer: no analysis jobs while neither HUD nor player consumes it. */
+    /** 歌曲信息 HUD 组件显隐（编辑器/快捷键切换，随存档走）。 */
+    public static boolean musicInfoEnabled = true;
+    /** 桌面歌词 HUD 组件显隐（编辑器/快捷键切换，随存档走）。 */
+    public static boolean musicLyricsEnabled = true;
+
     public static boolean spectrumEnabled = true;
     public static boolean spectrumInHud = true;
     /** HUD presentation: 0 = full-width bottom spectrum (default), 1 = split wings. */
@@ -747,6 +754,7 @@ public final class HudConfig {
         worldLyricsQualityTier = 0;
         worldLyricsStayOnScreen = false;
         worldLyricsAboveGround = false;
+        worldLyricsHudDraw = false;
         osdKaraokeTransitionWidth = 14.0f;
         osdKaraokePulseStrength = 0.00f;
         osdKaraokeSmoothing = 0.85f;
@@ -935,6 +943,7 @@ public final class HudConfig {
             worldLyricsQualityTier = (int) clamp(getInt(o, "worldLyricsQualityTier", worldLyricsQualityTier), 0, 7);
             worldLyricsStayOnScreen = getBoolean(o, "worldLyricsStayOnScreen", worldLyricsStayOnScreen);
             worldLyricsAboveGround = getBoolean(o, "worldLyricsAboveGround", worldLyricsAboveGround);
+            worldLyricsHudDraw = getBoolean(o, "worldLyricsHudDraw", worldLyricsHudDraw);
 
             osdKaraokeTransitionWidth = clamp(getFloat(o, "osdKaraokeTransitionWidth", osdKaraokeTransitionWidth), 4.0f, 32.0f);
             osdKaraokePulseStrength = clamp(getFloat(o, "osdKaraokePulseStrength", osdKaraokePulseStrength), 0.0f, 0.15f);
@@ -950,6 +959,8 @@ public final class HudConfig {
             secondaryOpacity = clamp(getFloat(o, "secondaryOpacity", secondaryOpacity), 0.30f, 1.0f);
 
             spectrumEnabled = getBoolean(o, "spectrumEnabled", spectrumEnabled);
+            musicInfoEnabled = getBoolean(o, "musicInfoEnabled", musicInfoEnabled);
+            musicLyricsEnabled = getBoolean(o, "musicLyricsEnabled", musicLyricsEnabled);
             spectrumInHud = getBoolean(o, "spectrumInHud", spectrumInHud);
             spectrumHudStyle = clampInt(getInt(o, "spectrumHudStyle", spectrumHudStyle), 0, 1);
             spectrumInPlayer = getBoolean(o, "spectrumInPlayer", spectrumInPlayer);
@@ -1121,6 +1132,7 @@ public final class HudConfig {
             o.addProperty("worldLyricsQualityTier", worldLyricsQualityTier);
             o.addProperty("worldLyricsStayOnScreen", worldLyricsStayOnScreen);
             o.addProperty("worldLyricsAboveGround", worldLyricsAboveGround);
+            o.addProperty("worldLyricsHudDraw", worldLyricsHudDraw);
             o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
             o.addProperty("osdKaraokePulseStrength", osdKaraokePulseStrength);
             o.addProperty("osdKaraokeSmoothing", osdKaraokeSmoothing);
@@ -1135,6 +1147,8 @@ public final class HudConfig {
             o.addProperty("secondaryOpacity", secondaryOpacity);
 
             o.addProperty("spectrumEnabled", spectrumEnabled);
+        o.addProperty("musicInfoEnabled", musicInfoEnabled);
+        o.addProperty("musicLyricsEnabled", musicLyricsEnabled);
             o.addProperty("spectrumInHud", spectrumInHud);
             o.addProperty("spectrumHudStyle", spectrumHudStyle);
             o.addProperty("spectrumInPlayer", spectrumInPlayer);

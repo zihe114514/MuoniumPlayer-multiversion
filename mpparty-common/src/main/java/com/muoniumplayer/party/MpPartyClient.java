@@ -229,6 +229,17 @@ public final class MpPartyClient {
         // 直连房间活跃时不探测 MC 通道：帧走 socket，这 worlds join 与它无关，
         // 探测只会把 hello 打到第三方服务器上。
         if (com.muoniumplayer.party.direct.MpDirect.isActive()) return;
+        // 会话级残留要在这里清：普通换服走 DISCONNECT→onDisconnect 已清；但经代理
+        // （Velocity 后端切换）时客户端→代理的连接不变、JOIN 不重触发也就罢了——
+        // 一旦某环境 JOIN 确实再触发（或同一连接重进），上一台服务器的房间快照、
+        // proto 与封禁横幅会整段带进新后端：UI 显示 A 的假房间、B 的大厅被 A 的
+        // banned 禁死。onDisconnect 的完整清理在这里补一次，与它共用同一份逻辑。
+        boolean wasInRoom = room != null;
+        clearServerScopeState();
+        if (wasInRoom) {
+            reset();
+            MpPlayback.stop();
+        }
         helloAcked = false;
         helloProbes = 0;
         serverPresent = available();
@@ -271,14 +282,30 @@ public final class MpPartyClient {
         // 清掉它就是把正在放的一起听一起杀掉。关房/断开时 MpDirect 会自己调一次本方法。
         if (com.muoniumplayer.party.direct.MpDirect.isActive()) return;
         boolean had = room != null;
+        clearServerScopeState();
+        reset();
+        if (had) MpPlayback.stop();
+        notifyListeners();
+    }
+
+    /**
+     * 清掉「这一台服务器的」全部客户端状态。
+     *
+     * <p>两条路径共用：MC 通道断开（{@link #onDisconnect}），以及切进直连会话前
+     * （{@link #resetForDirectSession}）。直连的 S_HELLO 到达后会覆写其中大半字段
+     * （proto / serverAdmin / channelEnabled / serverResolve / channelCode…），清掉是
+     * 纯收益；但 <b>banned 不会被任何直连帧覆写</b> —— S_HELLO 分支不碰它，不清的话
+     * 上一个服务器的封禁横幅会整段挂进直连会话。公开房间列表、待处理邀请与在线态
+     * 同理：直连配置关掉了公开房，这些数据在直连期间不会再被刷新。</p>
+     */
+    private static void clearServerScopeState() {
         serverPresent = false;
         helloAcked = false;
         helloProbes = 0;
-        // 这几份是「这台服务器的」状态，换服务器必须清干净，否则上一台的公开房间列表、
-        // 待处理邀请和封禁横幅会跟着显示在新服务器上。
         serverProto = 0;
         serverAdmin = false;
         channelEnabled = false;
+        channelCode = "";
         publicRoomsEnabled = true;
         serverResolve = false;
         banned = false;
@@ -287,6 +314,12 @@ public final class MpPartyClient {
         presenceList = Collections.emptyList();
         publicRooms = Collections.emptyList();
         pendingInvites = Collections.emptyList();
+        // v1 的邀请横幅三兄弟与 v2 的待处理邀请列表同口径：换服务器/切直连会话时一起作废
+        //（旧房间的邀请码在新的会话里 join 必然失败）。主动离房（S_LEFT→reset）不清这两者——
+        // 离开 A 房间不等于拒绝 B 房间的邀请。
+        inviteCode = "";
+        inviteRoomName = "";
+        inviteFrom = "";
         onlineCount = 0;
         // 这是「这台服务器的」交叠开关，换服务器必须清掉：新服务端会在它自己的 hello 里
         // 重新下发，收不到（老服务端）就保持 0 = 不交叠。
@@ -296,15 +329,14 @@ public final class MpPartyClient {
         RoomAutomix.setAssigned(false, 0L);
         RoomAutomix.setNobodyCanAnalyze(false);
         RoomAutomix.setOwner(false);
-        reset();
-        if (had) MpPlayback.stop();
-        notifyListeners();
     }
 
     private static int heartbeatCounter;
     private static int presenceCounter;
     /** 上一次真正发出在线态查询的时刻：面板打开时的「立即补一轮」判据。 */
     private static volatile long lastPresencePull;
+    /** 上一次探测配额续杯的时刻；0 = 还没续过。 */
+    private static volatile long lastProbeRefill;
 
     private static void tick() {
         try {
@@ -319,6 +351,16 @@ public final class MpPartyClient {
             // 停留 5 分钟，就是三百多次。日志里那行「[MpParty] 发送失败」正是它刷出来的。
             if (!helloAcked && inGame()) {
                 if (available()) serverPresent = true;
+                // 配额烧完后的慢速续杯：通道仍被声明（available）说明对端 mod 在，只是
+                // 引擎此刻答不上（典型：主机侧引擎被直连托管占用，LAN 成员被让位静默）。
+                // 引擎随时可能回来（直连释放自动重挂）——固定 30 发会把配额烧死，引擎
+                // 回来后这些成员永远探测不到，只能退世界重进。每 60 秒还一笔，代价是
+                // 每分钟一发无应答的 hello，换来让位结束后 LAN 一起听自动恢复。
+                if (helloProbes >= HELLO_PROBE_LIMIT) {
+                    if (System.currentTimeMillis() - lastProbeRefill < 60_000L) return;
+                    lastProbeRefill = System.currentTimeMillis();
+                    helloProbes = HELLO_PROBE_LIMIT - 5;
+                }
                 probeHello();
             }
             if (!usable()) return;
@@ -605,14 +647,14 @@ public final class MpPartyClient {
     // ── 写接口 ───────────────────────────────────────────────────────────────
 
     public static void createRoom(String name) {
-        if (officialRoomConflict()) return;
+        if (officialRoomConflict() || directRoomConflict()) return;
         JsonObject m = MpProto.msg(MpProto.C_CREATE);
         if (name != null && !name.trim().isEmpty()) m.addProperty("name", name.trim());
         send(m);
     }
 
     public static void joinRoom(String code) {
-        if (officialRoomConflict()) return;
+        if (officialRoomConflict() || directRoomConflict()) return;
         JsonObject m = MpProto.msg(MpProto.C_JOIN);
         m.addProperty("code", code == null ? "" : code.trim());
         send(m);
@@ -621,11 +663,35 @@ public final class MpPartyClient {
     /**
      * 与官方一起听（网易云/酷狗）互斥：两套引擎都想独占播放器，同时开会互相拉扯
      * （官方 worker 每秒差分本地播放并整表回写房间，MC 房间的 S_PLAY 又改写本地播放）。
-     * 入口挡死并写明原因。
+     * 入口挡死并写明原因。判据用 isEngaged（含 CONNECTING）：官方「正在连接」的几秒里
+     * 动作在飞，放进来就是两套引擎并行落地。
      */
     private static boolean officialRoomConflict() {
-        if (!ListenTogetherService.isActive()) return false;
+        if (!ListenTogetherService.isEngaged()) return false;
         note("官方一起听正在进行：先退出官方房间，再使用服务器房间", true);
+        return true;
+    }
+
+    /**
+     * 直连会话中挡住「服务器房间」页的创建/加入。
+     *
+     * <p>直连活跃时发送路由已指向本机直连引擎（MpHostRouter.current()=socket），
+     * 这里再点「创建房间」不是无效操作，而是会在同一个引擎里凭空开出第二个房间：
+     * 自动建房帧（MpDirect.sendCreate）稍后被「已在房间中」拒掉，用户看到的就成了
+     * 一个名字、密码、端口都对不上直连邀请串的房间，且关房时被连带清掉。与
+     * officialRoomConflict 同位加闸——房间的创建权归直连会话自己的建房流程。</p>
+     *
+     * <p>建连窗口（{@code pendingJoin}，后台最长 16s）同样要挡：此刻路由仍指 MC 通道、
+     * 直连守卫还没立起来，放进来的 C_CREATE 会在真实 MC 服务器上开一间房，等直连落地
+     * resetForDirectSession 又把它静默拽出——房主自己都不知道自己开过房。</p>
+     */
+    private static boolean directRoomConflict() {
+        if (com.muoniumplayer.party.direct.MpDirect.isPendingJoin()) {
+            note("正在连接直连房间，请等连接完成或超时", true);
+            return true;
+        }
+        if (!com.muoniumplayer.party.direct.MpDirect.isActive()) return false;
+        note("直连房间正在进行：房间操作请到直连房间页进行", true);
         return true;
     }
 
@@ -1058,7 +1124,51 @@ public final class MpPartyClient {
                 @Override
                 public void onMusicsLoaded(List<Music> musics) {
                     // 回调可能在查询线程上跑，而 sendBatch 自己会再转一次后台线程，这里不额外处理。
-                    sendBatch(musics, label);
+                    sendBatch(musics, label, false);
+                }
+            });
+        } catch (Throwable throwable) {
+            note("读取这张歌单失败了：" + throwable, true);
+        }
+        return true;
+    }
+
+    /**
+     * 从一张歌单里<b>随机抽 {@code count} 首</b>排进房间。
+     *
+     * <p>为什么成员协作场景需要它：账号歌单动辄几百上千首，整张灌进去会被单次上限截断，
+     * 而且排在队尾的那几百首多半永远轮不到 —— 「随机 50」给出的正是「这张单今天听这些」的
+     * 体验，一次投放轻、别人点歌也还有位置。洗牌只发生在客户端内存里，协议与服务端
+     * 都不感知「随机」这件事（{@code enqueue_batch} 收到的就是普通一批）。</p>
+     *
+     * <p>长单子的曲目表可能分批到位：{@code loadMusicsWithCallback} 在没拉完时回调的只是
+     * <b>当下已有</b>的那一段，随机抽样也就只在那段里抽 —— 这对「随机」语义是可接受的退化
+     * （抽到的是歌单头部的一段随机子集，而不是全单均匀抽样），不值得为它把整张千首单子拉完。</p>
+     *
+     * @param count 想抽多少首；超过单次上限时会被 {@code playlistBatchLimit} 截断（发送侧提示语会说明）
+     */
+    public static boolean requestPlaylistShuffled(PlayList playlist, int count) {
+        if (playlist == null) return false;
+        if (count <= 0) return requestPlaylist(playlist);
+        if (!canPlaylist()) {
+            note(inChannel() ? "服务器频道不支持播放整张歌单，请一首一首点"
+                    : playlistBatchLimit <= 0 ? "当前服务器未开启播放歌单功能"
+                    : "这个房间只有房主与管理员能播放整张歌单", true);
+            return true;
+        }
+        if (!requireChannel()) return true;
+        final String label = playlistTitle(playlist);
+        note("正在读取歌单《" + label + "》，准备随机抽 " + Math.min(count, playlistBatchLimit) + " 首…", false);
+        try {
+            playlist.loadMusicsWithCallback(new PlayList.MusicsLoadedCallback() {
+                @Override
+                public void onMusicsLoaded(List<Music> musics) {
+                    // 回调可能在查询线程上跑：在这里把整段拷一份再洗，不动原列表的顺序 ——
+                    // 播放器侧栏还按原顺序展示这张单子。
+                    List<Music> pool = new ArrayList<Music>(musics == null ? Collections.<Music>emptyList() : musics);
+                    Collections.shuffle(pool);
+                    List<Music> picked = pool.size() > count ? pool.subList(0, count) : pool;
+                    sendBatch(new ArrayList<Music>(picked), label, true);
                 }
             });
         } catch (Throwable throwable) {
@@ -1080,6 +1190,19 @@ public final class MpPartyClient {
      * 十几帧注定只被读前半段的负载。上限取<b>两边较小</b>的那个，谁的配置 tighter 就用谁的。</p>
      */
     private static void sendBatch(final List<Music> songs, final String label) {
+        sendBatch(songs, label, false);
+    }
+
+    /**
+     * 分帧把这批歌排进房间，全部落在「歌单待播」那一档。
+     *
+     * <p>客户端也按 {@code playlistBatchLimit} 截一次：服务端会截，但让它截意味着我们要多发
+     * 十几帧注定只被读前半段的负载。上限取<b>两边较小</b>的那个，谁的配置 tighter 就用谁的。</p>
+     *
+     * @param shuffled 这批是不是「随机抽出来的」——只影响提示语：随机批次说「已随机排入 N 首」，
+     *                 整张灌的提示保留「按单次上限截断」那半句，两种动作的意外不同
+     */
+    private static void sendBatch(final List<Music> songs, final String label, final boolean shuffled) {
         if (songs == null || songs.isEmpty()) {
             note("歌单《" + label + "》是空的，什么也没排", true);
             return;
@@ -1112,10 +1235,12 @@ public final class MpPartyClient {
                     send(m);
                     sent += to - from;
                 }
-                note(sent < usable.size()
+                note(shuffled
+                        ? "已从《" + label + "》随机排入 " + sent + " 首到房间"
+                        : (sent < usable.size()
                         ? "已把歌单《" + label + "》的前 " + sent + " 首排进房间（这张单有 "
                                 + usable.size() + " 首，按单次上限截断）"
-                        : "已把歌单《" + label + "》的 " + sent + " 首排进房间", false);
+                        : "已把歌单《" + label + "》的 " + sent + " 首排进房间"), false);
             }
         });
     }
@@ -1549,7 +1674,13 @@ public final class MpPartyClient {
         // 接收是各树 MpNet 直接回调本方法——不拦的话，玩家连着服务器的同时开直连，
         // 两个房间的快照会互相覆盖（UI 在两个房间之间跳变）。
         // 直连 socket 的帧由 DirectClient 回调进来，带 directSource 标记放行。
-        if (com.muoniumplayer.party.direct.MpDirect.isActive() && !directSource.get()) return;
+        boolean direct = directSource.get();
+        if (com.muoniumplayer.party.direct.MpDirect.isActive() && !direct) return;
+        // 带标记的直连帧还要过一道会话存活校验：close()/onSessionClosed 先复位 active
+        // 再关 socket，readLoop 里的最后一两帧可能在那之后才投到——此时闸门两个条件都
+        // 不成立，帧会穿透进 dispatch，把刚被 onDisconnect 清零的 room/时钟覆写成一份
+        // 死房间快照。会话已终结（这条连接不再是当前 client/回环）的迟到帧按过期丢弃。
+        if (direct && !com.muoniumplayer.party.direct.MpDirect.frameSinkLive()) return;
         JsonObject msg = MpProto.decode(data);
         if (msg == null) return;
         applyingRemote = true;
@@ -1990,6 +2121,15 @@ public final class MpPartyClient {
             declineUrl(entryId, tier, src, songId, "no-platform");
             return;
         }
+        // 「贡献会员解析」关掉 = 不替别人解析。用户按 UI 承诺关掉它（不想被拉去解歌），
+        // 服务端兜底层（ASK_INSTALLED/ASK_EVERYONE，只看登录态不看贡献位）仍会问到 ——
+        // 不在这里挡的话，关了贡献照样每次被兜底拉去烧自己的会员解析。弃权带明因，
+        // 服务端立即推进下一层；本机自己点歌不受影响（那是 upload 的路，不走这里）。
+        // LX 那一路（customSourceUrl）本来就有 contributeLx 硬闸，两条路对称。
+        if (MpProto.SOURCE_NETEASE.equals(src) && !contributeVip() && !contributeLx()) {
+            declineUrl(entryId, tier, src, songId, "vip-contribute-off");
+            return;
+        }
         final long expected = known == null ? 0L : known.durationMs;
 
         MultiThreadingUtil.runAsync(new Runnable() {
@@ -2309,9 +2449,18 @@ public final class MpPartyClient {
      * <p>两个时长都来自网易云自己（歌曲长度 vs 链接实际提供的长度），不用额外请求；
      * 80% 的阈值容忍不同转码之间的尾部差异。其他平台不报后者（传 0），这条保护对它们不生效 ——
      * 这是共享直链模型的既有代价。
+     *
+     * <p>实测流时长超过 90 秒就不再判试听：servedMs 与 trackMs 来自两个不同的接口，同名不同
+     * 版本可以差出 20% 以上，纯比例判据会把一条完整版对着偏长的元数据误判成试听 —— 而误判是
+     * 确定性的，房间里每个会员都会在同一个判定上弃权，全层落空后再被换源救援改成别的平台。
+     * 真实试听固定 30/60 秒量级，90 秒以上的流必然是完整歌。与服务端 {@code Track.isTrialClip}
+     * 的豁免线同源，两端不一致会出现「客户端放行、服务端拒收」的劈叉。
      */
+    private static final long TRIAL_CLIP_SERVED_FLOOR_MS = 90_000L;
+
     private static boolean isTrialClip(long servedMs, long trackMs) {
         if (servedMs <= 0L || trackMs <= 0L) return false;   // 未知就放行
+        if (servedMs > TRIAL_CLIP_SERVED_FLOOR_MS) return false;
         return servedMs < trackMs * 0.8;
     }
 
@@ -2419,6 +2568,10 @@ public final class MpPartyClient {
         appliedSeq = -1L;
         waitingUrl = false;
         selfPaused = false;
+        // 邀请横幅刻意不在这里清：S_LEFT（主动离房）也会走到 reset，而「离开了 A 房间」
+        // 不等于「不想去 B 房间」——收到过的邀请仍然有效，清掉等于砍掉玩家的一键加入入口
+        // （v2 的 pendingInvites 同样不在离房路径清，两条链路口径一致）。真正的清理点是
+        // clearServerScopeState()：换服务器/切直连会话时旧房间的邀请全部作废。
         // 离房：收走队列里多出来的那一格与已预置的下一首，别让它跟着本机自己的队列继续播。
         // 交叠开关本身不动 —— 它来自服务端 hello，跟房间无关。
         // 播放的停止由调用方负责（onDisconnect / resetForDirectSession 各自判断 had）。
@@ -2438,14 +2591,21 @@ public final class MpPartyClient {
      * <p>如果本机在服务器房间里，会先发一帧离房（让服务端把人请出去、别的成员看到
      * 离开提示），再清本机状态。直连房间自己（{@code MpDirect.isActive()} 为 true）
      * 时不做任何事——那次的清理由直连会话自己的生命周期负责。</p>
+     *
+     * <p>清理范围与 {@link #onDisconnect()} 对齐（{@link #clearServerScopeState()}）：
+     * 只清房间不足以甩掉上一个服务器的痕迹 —— 封禁横幅、公开房间列表、待处理邀请
+     * 都不属于「房间」，却会整段挂进直连会话（公开房被直连配置关掉后不会再被刷新，
+     * 封禁位没有任何直连帧会覆写）。</p>
      */
     public static void resetForDirectSession() {
         if (com.muoniumplayer.party.direct.MpDirect.isActive()) return;
         boolean had = room != null;
         if (had) {
             // 通知服务端离房（fire-and-forget：发出去了就行，不等回执）。
+            // 必须在 clearServerScopeState 之前发：那时通道还指向 MC 服务器。
             sendQuiet(MpProto.msg(MpProto.C_LEAVE));
         }
+        clearServerScopeState();
         reset();
         if (had) MpPlayback.stop();
         notifyListeners();

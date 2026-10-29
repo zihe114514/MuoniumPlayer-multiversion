@@ -260,7 +260,7 @@ class WorldLyricsMathTest {
 
     @Test
     void textLayoutConstantsMatchReference() {
-        assertEquals(0xF7E1D7, WorldLyricsState.TEXT_RGB, "暖白偏粉的字色");
+        assertEquals(0xFFFFFF, WorldLyricsState.TEXT_RGB, "默认字色纯白");
         assertEquals(10f, WorldLyricsState.LYRIC_SIZE, 1e-6f);
         assertEquals(11f, WorldLyricsState.LINE_H, 1e-6f);
         assertEquals(0.4f, WorldLyricsState.FADE_SECONDS, 1e-6f);

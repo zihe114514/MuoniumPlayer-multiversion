@@ -12,8 +12,11 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.RenderStateShard;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.ResourceLocation;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import org.joml.Matrix4f;
 
 /**
@@ -56,6 +59,59 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private WorldBillboard() {
     }
 
+    // ==================== 光影包适配：渲染类型单点分发 ====================
+
+    /**
+     * HUD 阶段直画（「更激进的适配」）时强制原版 textSeeThrough：此时 Iris 已收工，
+     * 原版着色器就是「无光影的样子」；beaconBeam 信标类型只在光影管线的世界阶段有意义。
+     */
+    static boolean forceVanillaType;
+
+    /**
+     * 光影包激活时的渲染类型：信标光柱程序（全亮、不采样光照图、无 alpha 裁剪）
+     * + 我们的动态纹理 + 半透明混合 + 无深度测试。其余状态镜像 textSeeThrough。
+     * 每纹理懒建并缓存 —— RenderType 是无状态对象，同纹理复用同一实例
+     * 才能吃到 BufferSource 的同批合批。
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<ResourceLocation, RenderType> SHADER_TYPES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static RenderType shaderTextType(ResourceLocation rl) {
+        return SHADER_TYPES.computeIfAbsent(rl, r -> {
+            RenderType.CompositeState state = RenderType.CompositeState.builder()
+                    .setShaderState(RenderStateShard.RENDERTYPE_BEACON_BEAM_SHADER)
+                    .setTextureState(new RenderStateShard.TextureStateShard(r, false, false))
+                    .setTransparencyState(RenderStateShard.TRANSLUCENT_TRANSPARENCY)
+                    .setDepthTestState(RenderStateShard.NO_DEPTH_TEST)
+                    .setCullState(RenderStateShard.NO_CULL)
+                    .setLightmapState(RenderStateShard.NO_LIGHTMAP)
+                    .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                    .createCompositeState(false);
+            return RenderType.create("muonium_lyrics_world_text",
+                    DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
+                    VertexFormat.Mode.QUADS, 1536, false, true, state);
+        });
+    }
+
+    /**
+     * 歌词世界绘制的渲染类型入口 —— 全部字形 quad 的唯一取发点。
+     * 光影包激活（ShaderPackProbe 本帧值）走信标全亮程序，否则原版 textSeeThrough。
+     * refresh() 在帧头调用，帧中读的是本帧缓存值，同一帧内模式恒定 ——
+     * 挂起合批不会跨模式串批（模式若在帧间翻转，挂起键在 begin 里重置）。
+     */
+    private RenderType currentGlyphType(ResourceLocation pageRl) {
+        return forceVanillaType || !ShaderPackProbe.isActive()
+                ? RenderType.textSeeThrough(pageRl)
+                : shaderTextType(pageRl);
+    }
+
+    /** 同 {@link #currentGlyphType}，特效通道（拖尾/光晕/星芒/爆闪/环/拖尾画布）。 */
+    private RenderType currentEffectType(ResourceLocation rl) {
+        return forceVanillaType || !ShaderPackProbe.isActive()
+                ? RenderType.textSeeThrough(rl)
+                : shaderTextType(rl);
+    }
+
     /** 事件入口（worldRenderEnd 的矩阵在 Bridge 里已设好）。 */
     public void begin(PoseStack poseStack, MultiBufferSource.BufferSource buffers,
                       double camX, double camY, double camZ) {
@@ -64,20 +120,33 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         this.camX = camX;
         this.camY = camY;
         this.camZ = camZ;
+        // 帧间模式翻转（用户中途开关光影包）时，挂起的合批记录若残留，
+        // end() 会用新模式收旧模式的批 —— 直接清掉，下一帧重新合批（无观感差异）
+        if (pendingEffectRl != null || pendingGlyphPage != null) {
+            pendingEffectRl = null;
+            pendingGlyphPage = null;
+            pendingGlyphCount = 0;
+        }
     }
 
     public void end() {
-        // 帧尾把挂起的字形与特效批次收掉（列顺序无关紧要：深度测试已关、文字后画）
-        if (buffers != null && pendingGlyphPage != null) {
-            buffers.endBatch(RenderType.textSeeThrough(
-                    ((LyricGlyphAtlasBridge.PageHandle) pendingGlyphPage).resourceLocation()));
+        // 帧尾把挂起的字形与特效批次收掉（列顺序无关紧要：深度测试已关、文字后画）。
+        // 挂起记录先复位再收批（finally 保证）：若 endBatch 抛异常，记录也不能残留到
+        // 下一帧 —— 否则下一帧 begin 丢弃记录后，这批孤儿顶点会被原版在任意时点
+        // 以错误状态冲刷（幽灵字形）。
+        try {
+            if (buffers != null && pendingGlyphPage != null) {
+                buffers.endBatch(currentGlyphType(
+                        ((LyricGlyphAtlasBridge.PageHandle) pendingGlyphPage).resourceLocation()));
+            }
+            if (buffers != null && pendingEffectRl != null) {
+                buffers.endBatch(currentEffectType(pendingEffectRl));
+            }
+        } finally {
+            pendingGlyphPage = null;
+            pendingGlyphCount = 0;
+            pendingEffectRl = null;
         }
-        if (buffers != null && pendingEffectRl != null) {
-            buffers.endBatch(RenderType.textSeeThrough(pendingEffectRl));
-        }
-        pendingGlyphPage = null;
-        pendingGlyphCount = 0;
-        pendingEffectRl = null;
         this.poseStack = null;
         this.buffers = null;
     }
@@ -180,7 +249,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 参数相同、跨页显式 flush 保证不串页。
         if (pendingGlyphPage != cell.page) {
             if (pendingGlyphPage != null) {
-                buffers.endBatch(RenderType.textSeeThrough(
+                buffers.endBatch(currentGlyphType(
                         ((LyricGlyphAtlasBridge.PageHandle) pendingGlyphPage).resourceLocation()));
             }
             pendingGlyphPage = cell.page;
@@ -217,7 +286,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         int argb = (((int) (alpha * 255f) & 0xFF) << 24) | (rgb & 0xFFFFFF);
 
-        VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(pageRl));
+        VertexConsumer vc = buffers.getBuffer(currentGlyphType(pageRl));
         Matrix4f mat = poseStack.last().pose();
         // 四顶点：左上 → 左下 → 右下 → 右上（QUADS 环绕序）
         putGlyphVertex(vc, mat, qLeft, qTop, cx, cy, cos, sin, s, argb, u0, v0);
@@ -271,7 +340,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         int baseAlpha = (argb >>> 24) & 0xFF;
         int rgb = argb & 0xFFFFFF;
 
-        VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(rl));
+        VertexConsumer vc = buffers.getBuffer(currentEffectType(rl));
         Matrix4f mat = poseStack.last().pose();
         emitTrail(vc, mat, xs, ys, count, half, baseAlpha, rgb, 1f, 1f);
         emitTrail(vc, mat, xs, ys, count, half * 3f, baseAlpha, rgb, 1f, 0.35f);
@@ -329,7 +398,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         if (rl == null) return;
         float half = Math.max(1f, sizePx * 0.5f);
 
-        VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(rl));
+        VertexConsumer vc = buffers.getBuffer(currentEffectType(rl));
         Matrix4f mat = poseStack.last().pose();
         putHaloVertex(vc, mat, cx - half, cy - half, 0f, 0f, argb);
         putHaloVertex(vc, mat, cx - half, cy + half, 0f, 1f, argb);
@@ -348,7 +417,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
     private void flushEffectBatch(ResourceLocation newRl) {
         if (pendingEffectRl != null && pendingEffectRl != newRl) {
-            buffers.endBatch(RenderType.textSeeThrough(pendingEffectRl));
+            buffers.endBatch(currentEffectType(pendingEffectRl));
         }
         pendingEffectRl = newRl;
     }
@@ -395,7 +464,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 改写/释放纹理 —— 否则同帧双拖尾行时后行像素覆盖前行 quad（同尺寸）、
         // 或 release 后挂起 quad 引用已删纹理画出缺失纹理（变尺寸）
         if (pendingEffectRl == rl && buffers != null) {
-            buffers.endBatch(RenderType.textSeeThrough(rl));
+            buffers.endBatch(currentEffectType(rl));
             pendingEffectRl = null;
         }
         try {
@@ -442,7 +511,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             return false;
         }
         int argb = Math.min(255, (int) (alpha * 255f)) << 24 | 0xFFFFFF;
-        VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(rl));
+        VertexConsumer vc = buffers.getBuffer(currentEffectType(rl));
         Matrix4f mat = poseStack.last().pose();
         putHaloVertex(vc, mat, planeX, planeY, 0f, 0f, argb);
         putHaloVertex(vc, mat, planeX, planeY + planeH, 0f, 1f, argb);
@@ -502,7 +571,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 贴图旋转（folia star.rotation）：绕星心转四角
         float cos = (float) Math.cos(Math.toRadians(rotDeg));
         float sin = (float) Math.sin(Math.toRadians(rotDeg));
-        VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(rl));
+        VertexConsumer vc = buffers.getBuffer(currentEffectType(rl));
         Matrix4f mat = poseStack.last().pose();
         // rot2 内联成标量（原先每角两次调用各 new float[2]，4 角 8 个分配）
         putHaloVertex(vc, mat, cx + (-half * cos + half * sin), cy + (-half * sin - half * cos), 0f, 0f, argb);
@@ -603,7 +672,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         float sin = (float) Math.sin(Math.toRadians(rotDeg));
         float hw = Math.max(0.5f, width * 0.5f);
         float hh = Math.max(0.5f, height * 0.5f);
-        VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(rl));
+        VertexConsumer vc = buffers.getBuffer(currentEffectType(rl));
         Matrix4f mat = poseStack.last().pose();
         // 四角 = 中心 ± 长轴半宽·轴向 ± 短轴半宽·法向（旋转由 rot2 合成）
         float axX = cos, axY = sin;
@@ -662,7 +731,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         ResourceLocation rl = ringTexture();
         if (rl == null) return;
         float half = Math.max(1f, sizePx * 0.5f);
-        VertexConsumer vc = buffers.getBuffer(RenderType.textSeeThrough(rl));
+        VertexConsumer vc = buffers.getBuffer(currentEffectType(rl));
         Matrix4f mat = poseStack.last().pose();
         putHaloVertex(vc, mat, cx - half, cy - half, 0f, 0f, argb);
         putHaloVertex(vc, mat, cx - half, cy + half, 0f, 1f, argb);

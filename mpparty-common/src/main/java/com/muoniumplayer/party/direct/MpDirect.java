@@ -53,6 +53,27 @@ public final class MpDirect {
         return active;
     }
 
+    /** 建连进行中（后台线程最长 16s）；UI 据此挡第二次「加入」与建连窗口内的其他会话操作。 */
+    public static boolean isPendingJoin() {
+        return pendingJoin;
+    }
+
+    /**
+     * 直连帧接收侧的会话存活校验（供 MpPartyClient.onFrame 闸门用）。
+     *
+     * <p>{@code active} 只能证明「有会话意图」，不能证明「这条带 directSource 标记的帧
+     * 还属于一个活着的会话」：close()/onSessionClosed 都先复位 active 再关 socket，
+     * readLoop 里的残余帧会在复位之后才投到。这里按「还有任何一条活会话」判——
+     * 迟到的孤儿帧（会话已被顶掉或终结）据此按过期丢弃，不再污染刚清零的客户端状态。
+     * 活会话期间恒为 true，不增加任何开销。</p>
+     */
+    public static boolean frameSinkLive() {
+        DirectClient c = client;
+        if (c != null && c.isConnected()) return true;
+        DirectClient l = loopback;
+        return l != null && l.isConnected();
+    }
+
     public static boolean isHosting() {
         return server != null && server.isRunning();
     }
@@ -140,7 +161,7 @@ public final class MpDirect {
         if (pendingJoin) return "正在连接好友的直连房间，请先等它完成或超时";
         if (port < 1024 || port > 65535) return "端口要在 1024–65535 之间";
         // 与官方一起听互斥（两套引擎都想独占播放器，与 LAN 互斥同一批理由）。
-        if (com.muoniumplayer.core.ncm.music.ListenTogetherService.isActive()) {
+        if (com.muoniumplayer.core.ncm.music.ListenTogetherService.isEngaged()) {
             return "官方一起听正在进行，请先退出官方房间再开直连房间";
         }
         // 与局域网一起听互斥：两者共用同一个 MpParty 引擎单例，直连 init 会把 LAN
@@ -188,36 +209,47 @@ public final class MpDirect {
         } catch (Throwable ignored) {
         }
 
-        // 房主回环自连：走与其他成员完全相同的握手/帧链路。
-        DirectClient self = new DirectClient("127.0.0.1", port, auth);
-        DirectClient.ConnectResult r = self.connect();
-        if (!r.ok) {
-            s.stop();
-            MpParty.shutdown();
-            server = null;
-            hostAuth = "";
-            com.muoniumplayer.party.lan.LanMpParty.onDirectReleased();
-            return "本机回环连接失败：" + r.error;
-        }
-        // 服务端与回环会话都立住了，这一步才算真的切过去——此刻才扔服务器房间的
-        // 残留（在房间里的先发离房帧）。开房失败时玩家还能留在原地。
-        MpPartyClient.resetForDirectSession();
-        loopback = self;
-        MpHostRouter router = MpHostRouter.instance();
-        if (router != null) router.attachDirect(self);
-        active = true;
-        // 等 S_HELLO 到达（客户端变 usable）再发建房帧；就绪后回调 UI。
+        // 服务端立住了，这一步才算真的切过去——此刻才扔服务器房间的残留
+        // （在房间里的先发离房帧）。回环连接在后台做：DirectClient.connect 阻塞
+        // 最长 16 秒（TCP 连接 8s + 握手读 8s），在渲染线程上做就是「点开房冻结
+        // 整个 UI 半分钟」——joinRoom 为此特意后台化，这条路径漏了同款处理。
+        // 后台化后失败路径与 joinRoom 同构：回调里回滚 + 报错。
+        final DirectServer myServer = s;
+        final long myGeneration = generation;
         Thread t = new Thread(() -> {
-            for (int i = 0; i < 50 && !MpPartyClient.serverPresent(); i++) {
-                try {
-                    Thread.sleep(100L);
-                } catch (InterruptedException e) {
-                    return;
-                }
+            // 房主回环自连：走与其他成员完全相同的握手/帧链路。
+            DirectClient self = new DirectClient("127.0.0.1", port, auth);
+            DirectClient.ConnectResult r = self.connect();
+            if (myGeneration != generation || server != myServer) {
+                // 等待/连接期间用户已经关过房（或正在关）：本条连接是旧世界的遗腹子，
+                // 回滚这套半成品托管（close 已经清过一遍的幂等，不重复清状态）。
+                self.close();
+                return;
             }
+            if (!r.ok) {
+                if (myGeneration != generation || server != myServer) return;
+                s.stop();
+                MpParty.shutdown();
+                server = null;
+                hostAuth = "";
+                com.muoniumplayer.party.lan.LanMpParty.onDirectReleased();
+                if (onReady != null) onReady.run();
+                return;
+            }
+            // 服务端与回环会话都立住了：扔服务器房间的残留、接路由、置位。
+            // close() 在窗口里跑过的话，代次/引用核对会把整段工作作废，到不了这里。
+            MpPartyClient.resetForDirectSession();
+            loopback = self;
+            MpHostRouter router = MpHostRouter.instance();
+            if (router != null) router.attachDirect(self);
+            active = true;
+            // connect() 成功即已收到回环 S_HELLO（它在握手窗内等到了才返回），
+            // serverPresent 已为真，直接建房；再核对一次代次/引用——路由切换的
+            // 几条语句之间用户也可能关房，关房后这帧 C_CREATE 绝不能发往 MC 通道。
+            if (myGeneration != generation || server != myServer) return;
             sendCreate();
             if (onReady != null) onReady.run();
-        }, "muonium-direct-create");
+        }, "muonium-direct-host");
         t.setDaemon(true);
         t.start();
         return null;
@@ -290,7 +322,7 @@ public final class MpDirect {
     public static String joinRoom(String invite, java.util.function.Consumer<String> done) {
         if (isHosting()) return "本机正在托管直连房间，先关房再加入";
         if (isJoined()) return "已经加入直连房间，请先断开再加入别的房间";
-        if (com.muoniumplayer.core.ncm.music.ListenTogetherService.isActive()) {
+        if (com.muoniumplayer.core.ncm.music.ListenTogetherService.isEngaged()) {
             return "官方一起听正在进行，请先退出官方房间再加入直连房间";
         }
         // 建连在后台跑（最长 16s），期间按钮仍可点：用占位挡住第二次「加入」
@@ -487,6 +519,10 @@ public final class MpDirect {
         boolean wasLoop = c != null && c == loopback;
         if (!wasMember && !wasLoop) return false;
 
+        // 会话终结是一次全量清理点，与 close() 同样推进代次（类注释声明的不变量）：
+        // 托管回环被动死亡后的在途 join 线程落地时，代次已变就会主动放弃，
+        // 不至于把一个没人管的僵尸会话注册成新会话。
+        generation++;
         if (wasMember) client = null;
         if (wasLoop) loopback = null;
         joinAuth = "";

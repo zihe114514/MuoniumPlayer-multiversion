@@ -54,6 +54,7 @@ public final class WorldLyricsBridge {
     private static boolean tracedReady;
     private static boolean tracedNoLyrics;
     private static boolean tracedRendered;
+    private static boolean tracedShaderActive;
 
     /** 一次性诊断日志（Set 去重；仅 muonium.debug.worldLyrics 开启时输出）。
      *  与 1.21.1 标杆同名同参 —— mip 链熔断等深层模块都经它报一次。 */
@@ -92,6 +93,60 @@ public final class WorldLyricsBridge {
             Camera camera = mc.gameRenderer.getMainCamera();
             if (camera == null) return;
 
+            // 0. 光影包探测（帧头一次，本帧内渲染层读缓存值）：
+            //    光影包激活时 WorldBillboard 改走信标全亮程序（ShaderPackProbe 类注释）
+            ShaderPackProbe.refresh();
+            // 「更激进的适配」关闭沿检测：HUD 阶段的连续失败可能把渲染器锁死，
+            // 用户关掉开关回到世界阶段路径时立即恢复（不用重启游戏）。
+            if (tracedHudDraw && !HudConfig.worldLyricsHudDraw) {
+                com.muoniumplayer.core.lyrics3d.WorldLyricsRenderer.clearBrokenLatch();
+                hudDrawMisses = 0;
+                if (TRACE) System.out.println("[WorldLyrics/trace] 更激进的适配已关闭：渲染器锁已清除，恢复世界阶段绘制");
+            }
+            tracedHudDraw = HudConfig.worldLyricsHudDraw;
+            if (TRACE) {
+                boolean shaderNow = ShaderPackProbe.isActive();
+                if (shaderNow != tracedShaderActive) {
+                    tracedShaderActive = shaderNow;
+                    System.out.println("[WorldLyrics/trace] 光影包状态切换 → "
+                            + (shaderNow ? "光影模式（信标全亮程序）" : "普通模式（textSeeThrough）"));
+                }
+            }
+
+            // 0.5 更激进的适配（HudConfig.worldLyricsHudDraw）：光影包激活时不在这里画
+            //    （世界阶段的批会被 Iris 合成链二次加工），改为捕获本帧关卡透视切片，
+            //    推迟到 HUD 阶段直画。Iris 的 composite+finalPass 在
+            //    LevelRenderer.renderLevel 的 popMatrix 处收工（MixinLevelRenderer
+            //    iris$endLevelRender），GUI 阶段（Gui.render → 本树两个加载器的回调）
+            //    时 isRenderingWorld 已复位、主目标颜色就是最终画面 —— 原版
+            //    textSeeThrough 直出「无光影时的样子」。2026-10 复核：HudRenderCallback
+            //    期间 BufferSource.endBatch 是真实 RenderPass（RenderType.draw 自建
+            //    pass 落主目标，javap 核对），帧图不会吞它；此前「实测隐形」的真凶是
+            //    1.21.11 投影改 GpuBufferSlice 后矩阵没挂对 —— 这里捕获的切片正是
+            //    世界路线今天就在用的那个（位置正确性有现帧证据）。
+            if (ShaderPackProbe.isActive() && HudConfig.worldLyricsHudDraw) {
+                // 此刻 RenderSystem 的投影切片 = 关卡透视（含视角摇晃的合成矩阵，
+                // levelProjectionMatrixBuffer 每帧只在 matrices 区写一次，内容本帧不变）
+                hudProjectionSlice = RenderSystem.getProjectionMatrixBuffer();
+                hudBasePose.rotationX((float) Math.toRadians(camera.xRot()))
+                        .rotateY((float) Math.toRadians(camera.yRot() + 180.0));
+                hudCameraValid = hudProjectionSlice != null;
+                // 连续多帧 HUD 直画都没完成（异常/回调缺失）→ 世界阶段兜底重画：
+                // 光影加工总比整句消失强。hudDrawMisses 在 hudPhaseDraw 画完时清零。
+                if (hudDrawMisses < 12) {
+                    hudDrawMisses++;
+                    return;
+                }
+                if (hudDrawMisses == 12) {
+                    // 首次兜底无条件打印（用户侧排障不依赖 -D 开关）
+                    System.out.println("[MuoniumPlayer/WorldLyrics] HUD 直画连续 12 帧未完成，"
+                            + "已回退到世界阶段绘制（光影会加工歌词；开着更激进的适配却没生效"
+                            + "多半是 HUD 阶段绘制在此环境不可用）");
+                }
+            } else {
+                hudCameraValid = false;
+            }
+
             // 1. 镜头转向自己算（相机朝向独立计算）
             Matrix4f basePose = new Matrix4f()
                     .rotateX((float) Math.toRadians(camera.xRot()))
@@ -125,6 +180,118 @@ public final class WorldLyricsBridge {
         } catch (Throwable t) {
             broken = true;
             logger.error("3D 歌词渲染失败，已整体停用（重启游戏恢复）", t);
+        }
+        if (diagFrame++ % 60 == 0) {
+            Minecraft mc1 = Minecraft.getInstance();
+            Camera c1 = mc1 != null && mc1.gameRenderer != null ? mc1.gameRenderer.getMainCamera() : null;
+            if (c1 != null) {
+                System.out.println("[WorldLyrics/diag][world" + (ShaderPackProbe.isActive() ? "+" : "-")
+                        + (HudConfig.worldLyricsHudDraw ? "hud" : "") + "] cam(yaw=" + c1.yRot()
+                        + " pitch=" + c1.xRot() + " eye=" + c1.position().x + "," + c1.position().y
+                        + "," + c1.position().z + ") activePos="
+                        + com.muoniumplayer.core.lyrics3d.WorldLyricsState.activeLineDebugPos());
+            }
+        }
+    }
+
+    // ==================== 更激进的适配：HUD 阶段直画 ====================
+
+    /**
+     * 世界阶段捕获的关卡透视切片。1.21.11 的 RenderSystem 无 Matrix4f 投影
+     * 读取口（getProjectionMatrixBuffer 只回 GpuBufferSlice），且关卡矩阵在
+     * renderLevel 的 matrices 区写进 levelProjectionMatrixBuffer 后整帧不变 ——
+     * HUD 阶段原样挂回这个切片就是「本帧关卡透视」，不用自己重算 fov
+     *（GameRenderer.getFov 是 private，瞬时 FOV 拿不到，切片反而精确）。
+     * 切片指向的 UBO 内容确定性靠的是：世界阶段直画与原版关卡渲染共用它，
+     * 若其内容被复写，世界路线当帧就会错位 —— 有现帧证据兜底。
+     */
+    private static com.mojang.blaze3d.buffers.GpuBufferSlice hudProjectionSlice;
+    /** HUD 阶段的公告牌根姿态（rotateX(pitch)·rotateY(yaw+180)，世界阶段算好）。 */
+    private static final Matrix4f hudBasePose = new Matrix4f();
+    private static boolean hudCameraValid;
+    /** HUD 直画连续缺席帧数（世界阶段兜底重画的触发器；画完即清零）。 */
+    private static int hudDrawMisses;
+    private static boolean hudFailureLogged;
+    private static boolean tracedHudDraw;
+    private static int hudDiagFrame;
+    /** 世界阶段 60 帧诊断行计数（与 hud 侧各自独立）。 */
+    private static int diagFrame;
+
+    /**
+     * HUD 阶段直画入口（fabric HudRenderCallback / neoforge RenderGuiEvent.Pre 调）。
+     *
+     * <p>此时 Iris 的 composite + finalPass 已把最终画面写进主渲染目标，且
+     * isRenderingWorld=false —— Iris 对原版着色器的全部拦截（打光程序替换、
+     * 深度/颜色掩码锁）都已失效，原版 textSeeThrough 就是「无光影时的样子」。
+     * 矩阵：投影恢复为世界阶段捕获的关卡透视切片；模型视图推单位矩阵
+     *（1.21.11 的 Matrix4fStack 是 RenderSystem 直接持有的同一个栈对象，
+     * 就地改即生效、无 applyModelViewMatrix）。GUI 正交投影先备份后还原。</p>
+     */
+    public static void hudPhaseDraw() {
+        if (broken || !HudConfig.worldLyricsEnabled) return;
+        if (hudDiagFrame++ % 60 == 0) {
+            Minecraft mc0 = Minecraft.getInstance();
+            Camera c0 = mc0 != null && mc0.gameRenderer != null ? mc0.gameRenderer.getMainCamera() : null;
+            if (c0 != null) {
+                System.out.println("[WorldLyrics/diag][hud" + (hudCameraValid ? "+" : "-")
+                        + "] cam(yaw=" + c0.yRot() + " pitch=" + c0.xRot() + ") activePos="
+                        + com.muoniumplayer.core.lyrics3d.WorldLyricsState.activeLineDebugPos());
+            }
+        }
+        if (!hudCameraValid) {
+            hudDrawMisses = 0;
+            return;
+        }
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null || mc.player == null || mc.level == null) return;
+            if (mc.gameRenderer == null) return;
+            Camera camera = mc.gameRenderer.getMainCamera();
+            if (camera == null) return;
+            com.mojang.blaze3d.buffers.GpuBufferSlice slice = hudProjectionSlice;
+            if (slice == null) return;
+            hudCameraValid = false; // 每帧只画一次；世界阶段下一帧会重新置位
+
+            // 备份 GUI 的正交切片（GuiRenderer.render 在本回调之后执行，会自己
+            // setProjectionMatrix 正交 —— 备份是防御性的，还原让状态干净退出）
+            RenderSystem.backupProjectionMatrix();
+            RenderSystem.setProjectionMatrix(slice, com.mojang.blaze3d.ProjectionType.PERSPECTIVE);
+
+            // 1.21.11：getModelViewStack 返回的栈就是渲染用的栈，就地改即生效
+            RenderSystem.getModelViewStack().pushMatrix();
+            RenderSystem.getModelViewStack().identity();
+
+            GlCompat.blend(true);
+            GlCompat.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, GL11.GL_ONE, GL11.GL_ZERO);
+            GlCompat.depthTest(false);
+            GlCompat.depthMask(false);
+            GlCompat.cull(false);
+            GlCompat.activeTexture(GL13.GL_TEXTURE0);
+
+            try {
+                WorldBillboard.forceVanillaType = true;
+                renderInner(hudBasePose, mc, camera);
+                hudDrawMisses = 0;
+            } finally {
+                WorldBillboard.forceVanillaType = false;
+                GlCompat.depthTest(true);
+                GlCompat.depthMask(true);
+                GlCompat.cull(true);
+                GlCompat.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
+                        GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                RenderSystem.getModelViewStack().popMatrix();
+                RenderSystem.restoreProjectionMatrix();
+            }
+        } catch (Throwable t) {
+            // 刻意不置 broken：HUD 直画失败只损失本帧，下一帧世界阶段照常兜底 ——
+            // 若这里也锁死整个 3D 歌词，用户连关掉开关都救不回来。
+            // 首次失败无条件打日志（用户排障不依赖 -D 开关），之后 TRACE 节流。
+            if (!hudFailureLogged) {
+                hudFailureLogged = true;
+                logger.warn("3D 歌词 HUD 阶段直画失败（本帧跳过，12 帧后回退世界阶段绘制）", t);
+            } else if (TRACE) {
+                System.out.println("[WorldLyrics/trace] HUD 阶段直画失败（本帧跳过）: " + t);
+            }
         }
     }
 

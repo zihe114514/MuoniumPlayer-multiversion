@@ -239,8 +239,8 @@ class PartyTieredResolveStaticTest {
                 "用户的自动换源总开关必须继续管着这一路：它管的是「愿不愿意去别的平台搜一圈」");
         assertTrue(gate.contains("candidatePlatforms(current.getSource()).isEmpty()"),
                 "没有够得着的候选平台就别发，救援也一样");
-        assertTrue(gate.contains("AUTO_ATTEMPTED.contains(key)"),
-                "本机刚为这首歌搜过一遍就别再搜第二遍");
+        assertTrue(gate.contains("AUTO_ATTEMPTED.get(key)"),
+                "本机刚为这首歌搜过一遍就别再搜第二遍（账带时间戳：10 分钟后过期给新机会）");
     }
 
     @Test

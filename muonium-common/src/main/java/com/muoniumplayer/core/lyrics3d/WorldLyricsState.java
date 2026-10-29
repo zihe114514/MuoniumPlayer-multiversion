@@ -32,8 +32,8 @@ public final class WorldLyricsState {
 
     // ==================== 布局与动效常量 ====================
 
-    /** 歌词文字颜色（暖白偏粉）。 */
-    public static final int TEXT_RGB = 0xF7E1D7;
+    /** 歌词文字颜色（默认纯白；取色器可自定义）。 */
+    public static final int TEXT_RGB = 0xFFFFFF;
     /** 平滑字体的字号（和 MC 字体大写字高差不多）。 */
     public static final float LYRIC_SIZE = 10f;
     /** 多行换行的行高。 */
@@ -233,6 +233,13 @@ public final class WorldLyricsState {
 
         /** Above ground：歌词中心不低于眼睛下方 0.5 格（不沉进地面）。 */
         default boolean aboveGround() { return false; }
+
+        /**
+         * 更激进的适配：光影包激活时歌词推迟到 HUD 阶段（光影后处理链之后）用原版
+         * 着色器直画 —— 光影的打光/雾/色调映射/后处理完全碰不到歌词。只在树侧的
+         * 绘制编排里读，状态机不感知。
+         */
+        default boolean hudDraw() { return false; }
     }
 
     /** 一行歌词这一帧的最终落点与字形状态，渲染层只读。 */
@@ -575,6 +582,16 @@ public final class WorldLyricsState {
             }
         }
 
+        // 生命线防线（传送缺口）：跨维度传送/远距传送瞬间，句锚点还留在旧维度的
+        // 世界坐标上，与相机相减是几十万格的巨量差值 —— 回屏/避让弹簧一步就把锚点
+        // 推出发散区，之后 atan2/asin 全 NaN 且永不退出（顶点 NaN 被 GPU 剔除 =
+        // 歌词「永久消失」，重进服务器也不恢复，因为 SpawnedLine 是进程级单例）。
+        // 帧头扫描：锚点非有限、或离相机超过「距离上限×4 + 64」的句子直接重锚到
+        // 当前视线下方（与新生成的句子同位），角速度清零，下一帧正常。
+        float anchorMaxLen = (float) (params.distance() * 4.0 + 64.0);
+        if (active != null) checkAnchorSanity(active, camera, params, anchorMaxLen);
+        for (SpawnedLine f : fading) checkAnchorSanity(f, camera, params, anchorMaxLen);
+
         // 回屏保持 / 不沉入地面（stayOnScreen / aboveGround）：
         // 在画之前把越界句拉回视野（fading 句也 follow —— 与上游同序）
         clampIntoView(camera, params);
@@ -741,6 +758,32 @@ public final class WorldLyricsState {
 
     private long keepNanos;
 
+    /**
+     * 单句锚点的生命线检查：坐标非有限、或离相机远超合理范围（传送/维度切换的
+     * 残留锚点）时，把句子重锚到当前视线的生成位（等价于这句话刚生成），
+     * 角速度一并清零 —— 弹簧从静止状态重新收敛。
+     */
+    private void checkAnchorSanity(SpawnedLine f, WorldLyricsState.CameraView camera,
+                                   Params params, float maxLen) {
+        double rx = f.x - camera.eyeX();
+        double ry = f.y - camera.eyeY();
+        double rz = f.z - camera.eyeZ();
+        boolean insane = !Double.isFinite(rx) || !Double.isFinite(ry) || !Double.isFinite(rz)
+                || (rx * rx + ry * ry + rz * rz) > (double) maxLen * maxLen;
+        if (!insane) return;
+        double d = params.distance();
+        double yaw = camera.yawDeg();
+        double pitch = Math.max(-60.0, Math.min(30.0, camera.pitchDeg() - 5.0));
+        double yr = Math.toRadians(yaw), pr = Math.toRadians(pitch);
+        f.x = camera.eyeX() - Math.sin(yr) * Math.cos(pr) * d;
+        f.y = camera.eyeY() - Math.sin(pr) * d;
+        f.z = camera.eyeZ() + Math.cos(yr) * Math.cos(pr) * d;
+        f.spawnYawDeg = (float) yaw;
+        f.spawnPitchDeg = (float) pitch;
+        f.vYaw = 0;
+        f.vPitch = 0;
+    }
+
     /** 角度归一到 -180..180。 */
     private static double wrapDegrees(double d) {
         double v = d % 360.0;
@@ -798,19 +841,37 @@ public final class WorldLyricsState {
         double playerPitch = camera.pitchDeg();
 
         // active 与 fading 都 follow（上游同序；fading 句被 turn away 时也要回屏）
-        if (active != null) springTowardView(active, camera, s, vHalf, hHalf, playerYaw, playerPitch, dt);
-        for (SpawnedLine f : fading) springTowardView(f, camera, s, vHalf, hHalf, playerYaw, playerPitch, dt);
+        double targetLen = params.distance();
+        if (active != null) springTowardView(active, camera, targetLen, s, vHalf, hHalf, playerYaw, playerPitch, dt);
+        for (SpawnedLine f : fading) springTowardView(f, camera, targetLen, s, vHalf, hHalf, playerYaw, playerPitch, dt);
     }
 
     /** 单句的回屏弹簧步进。dt 是本帧秒数。 */
     private void springTowardView(SpawnedLine f, WorldLyricsState.CameraView camera,
-                                double s, double vHalf, double hHalf,
+                                double targetLen, double s, double vHalf, double hHalf,
                                 double playerYaw, double playerPitch, double dt) {
         double rx = f.x - camera.eyeX();
         double ry = f.y - camera.eyeY();
         double rz = f.z - camera.eyeZ();
         double len = Math.sqrt(rx * rx + ry * ry + rz * rz);
         if (len < 1e-4) return;
+
+        // 距离回中：玩家走远/走近后，句子还钉在旧的世界锚点上，越挂越远
+        //（实测手机档 48~56 格，又小又淡像"位置错了"）。回屏保持的语义是
+        // "跟着玩家屏幕"—— 沿视线方向把句子平滑拉回/推回设定距离（0.5s
+        // 时间常数），1 格以内不动（走路晃动不触发）。转向弹簧只管方向，
+        // 距离以前没人管，就是这个缺口。
+        if (Math.abs(len - targetLen) > 1.0) {
+            double newLen = len + (targetLen - len) * (1.0 - Math.exp(-dt / 0.5));
+            double k = newLen / len;
+            rx *= k;
+            ry *= k;
+            rz *= k;
+            f.x = camera.eyeX() + rx;
+            f.y = camera.eyeY() + ry;
+            f.z = camera.eyeZ() + rz;
+            len = newLen;
+        }
 
         // 字本身占的角度：留一半宽/高，再多留 2 度边距
         float maxW = 0f;
@@ -839,9 +900,14 @@ public final class WorldLyricsState {
                     Math.min(1.0, (camera.eyeY() - groundFloor) / len))));
             lowLim = Math.min(lowLim, floorPitch - playerPitch);
         }
-        double tYaw = Math.max(-hLim, Math.min(hLim, dYaw));
-        double tPitch = lowLim >= -vLim
-                ? Math.max(-vLim, Math.min(lowLim, dPitch))
+        // 回屏目标收进边缘内侧 4°：钳制目标若正好是视野边缘，视野外的句子会被
+        // 拉到边缘「停住」——用户看到的是它停在画面边缘线上而不是回到画面里。
+        // 收进内侧让它明显回到视野中，之后由正常的边缘钳制接管。
+        double innerH = Math.max(0.0, hLim - 4.0);
+        double innerV = Math.max(0.0, vLim - 4.0);
+        double tYaw = Math.max(-innerH, Math.min(innerH, dYaw));
+        double tPitch = lowLim >= -innerV
+                ? Math.max(-innerV, Math.min(lowLim, dPitch))
                 : lowLim;
 
         // 偏出去多少（边界以内就是 0）
@@ -977,13 +1043,43 @@ public final class WorldLyricsState {
                 Math.max(REVEAL_MIN_MS, chars * REVEAL_PER_CHAR_MS),
                 lineDur * REVEAL_LINE_RATIO);
 
-        double yaw = camera.yawDeg() + (random.nextDouble() * 2.0 - 1.0) * params.spreadDeg();
+        double d = params.distance();
+        // 散开角随距离收缩：spreadDeg 是为默认 10.5 格标定的（±30° 在近处都在视野内），
+        // 同样的角度放到 48 格外字占的视角小一半以上，再叠 ±30° 就有一半句子生成在
+        // 视野边缘之外 —— 回屏弹簧只能把它们拉到视野边缘停住（钳制目标就是边缘），
+        // 看起来就是「字生成在背后/拉不回来」。这里把散开角钳到「该距离下可见锥内」：
+        // 视野半角 − 字占半角 − 2° 边距，下限 4°（贴着视线也有散落感）。
+        double vHalf = Math.max(1.0, camera.fovDeg()) / 2.0;
+        double aspect = camera.windowWidth() > 0 && camera.windowHeight() > 0
+                ? (double) camera.windowWidth() / Math.max(1, camera.windowHeight())
+                : 16.0 / 9.0;
+        double hHalf = Math.toDegrees(Math.atan(Math.tan(Math.toRadians(vHalf)) * aspect));
+        float maxW = 0f;
+        for (String s2 : wrapped) {
+            float w = 0f;
+            for (int i = 0; i < s2.length(); i++) {
+                float adv = LyricGlyphAtlas.designAdvance(s2.charAt(i));
+                w += adv > 0 ? adv : 9f;
+            }
+            maxW = Math.max(maxW, w);
+        }
+        double sPx = PX_TO_WORLD * params.scale() * (d / DISTANCE_NORM);
+        double halfW = Math.toDegrees(Math.atan2(maxW * sPx / 2.0, d));
+        // 散开角再乘一道「等视觉散布」钳制：spreadDeg 是为默认 10.5 格标定的观感
+        //（横向 ±5.25 格），距离拉远后同样的角度会散出 ±24 格 —— 在宽屏上就是
+        // 「字生成在玩家左右侧」。横向偏移钳到 10.5 格基线的量级。
+        double lateralCap = Math.toDegrees(Math.asin(Math.min(1.0,
+                10.5 * Math.sin(Math.toRadians(params.spreadDeg())) / d)));
+        double spreadLimit = Math.max(2.0, Math.min(hHalf - halfW - 2.0, lateralCap));
+        double yaw = camera.yawDeg()
+                + (random.nextDouble() * 2.0 - 1.0) * Math.min(params.spreadDeg(), spreadLimit);
         // pitch = player.pitch − 3 − rnd×10（不下沉时随视线，整体略低），
         // 再夹 -60..30。之前把 player.pitch 也取了负 —— 平视时看不出，抬头/低头时歌词会跑到另一侧。
-        double pitch = clampPitch(camera.pitchDeg() - SPAWN_PITCH_DROP
-                - random.nextDouble() * SPAWN_PITCH_RANDOM);
+        double vLimSpawn = Math.max(4.0, vHalf - 2.0);
+        double pitchDrop = Math.min(SPAWN_PITCH_DROP
+                + random.nextDouble() * SPAWN_PITCH_RANDOM, vLimSpawn);
+        double pitch = clampPitch(camera.pitchDeg() - pitchDrop);
         double[] dir = yawPitchDirectionStatic(yaw, pitch);
-        double d = params.distance();
         // 不沉入地面（aboveGround）：生成时就不让歌词沉到地面下，
         // 之后的回屏弹簧继续把约束维持住
         if (params.aboveGround()) {
@@ -1757,7 +1853,7 @@ public final class WorldLyricsState {
                                 g.dx = (float) pose.dx;
                                 g.dy = (float) pose.dy;
                                 g.tokenRgb = CadenzaMotion.tokenColor(token,
-                                        heroIndexOf(cadenzaTokens), line.hashCode(), 0xF7E1D7);
+                                        heroIndexOf(cadenzaTokens), line.hashCode(), TEXT_RGB);
                                 g.cadenzaGlow = (float) CadenzaMotion.glowPulse(token, elapsedMs);
                                 g.tokenActive = elapsedMs >= token.startMs
                                         && elapsedMs <= token.endMs;
@@ -2102,6 +2198,12 @@ public final class WorldLyricsState {
 
     /** 单例：3D 歌词是全局唯一的常驻渲染。 */
     private static final WorldLyricsState INSTANCE = new WorldLyricsState();
+
+    /** 诊断用（TRACE）：当前句的世界锚点；无活动句返回空串。 */
+    public static String activeLineDebugPos() {
+        SpawnedLine a = INSTANCE.active;
+        return a == null ? "" : (a.x + "," + a.y + "," + a.z);
+    }
 
     public static WorldLyricsState get() {
         return INSTANCE;

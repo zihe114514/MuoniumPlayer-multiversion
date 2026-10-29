@@ -7,6 +7,7 @@ import com.muoniumplayer.api.interfaces.EventHandler;
 import com.muoniumplayer.api.interfaces.modules.values.BooleanValue;
 import com.muoniumplayer.api.interfaces.modules.values.NumberValue;
 import com.muoniumplayer.core.interfaces.SharedConstants;
+import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.AutomixCueMarker;
@@ -91,19 +92,54 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
 
     /** automix 接缝记号的平滑与换歌记号，见 {@link AutomixCueMarker.Glide}。 */
     private final AutomixCueMarker.Glide cueGlide = new AutomixCueMarker.Glide();
+    /** HUD 编辑器预览态：为 true 时 onRender 不再压 correction（编辑器外层已带）。 */
+    private boolean editorPreviewActive;
     private final TrackSelectionMotion selectionMotion = new TrackSelectionMotion();
     private long cueSongId = Long.MIN_VALUE;
+
+    /**
+     * 渲染与游戏中相同的信息卡路径，但位于 HUD 编辑器中选择的位置。
+     * 持久化的 HudConfig 位置不被此预览修改（与 MusicLyricsWidget.renderEditorPreview 同款）。
+     */
+    public void renderEditorPreview(float x, float y, float scale) {
+        editorPreviewActive = true;
+        this.editorPreviewX = x;
+        this.editorPreviewY = y;
+        this.editorPreviewScale = scale;
+        try {
+            onRender();
+        } finally {
+            editorPreviewActive = false;
+        }
+    }
+
+    private float editorPreviewX;
+    private float editorPreviewY;
+    private float editorPreviewScale;
 
     public void onRender() {
 
         // HUD 位置 + 缩放（HudConfig，由 GuiHudEditor 拖拽/滚轮调整）。
         // 位置公式与参考实现一致：pixel = pos * (screen - baseSize * scale)；缩放围绕左上锚点等比进行。
-        float hudScale = HudConfig.infoScale;
-        float hudX = (float) (HudConfig.infoX * (getWidth() - 230 * hudScale));
-        float hudY = (float) (HudConfig.infoY * (getHeight() - 56 * hudScale));
+        // 跨度取布局轴（与 GUI Scale 无关），理由同 MusicLyricsWidget。
+        float hudScale = editorPreviewActive ? editorPreviewScale : HudConfig.infoScale;
+        float hudX = editorPreviewActive ? editorPreviewX
+                : (float) (HudConfig.infoX * (RenderSystem.getLayoutWidth() - 230 * hudScale));
+        float hudY = editorPreviewActive ? editorPreviewY
+                : (float) (HudConfig.infoY * (RenderSystem.getLayoutHeight() - 56 * hudScale));
         posInterface.setX(hudX);
         posInterface.setY(hudY);
 
+        // 布局轴 → 当前 canvas 的 GUI 逻辑坐标（NCMScreen 同款方向）。这一层保证
+        // 「每布局单位的物理像素」恒定：GUI 倍率变化不再改变控件的物理占屏比。
+        // 编辑器预览路径不压：编辑器 HUD 段外层矩阵已带 correction，再乘就是双乘，
+        // 预览选框和实物会差一个 correction 因子（见 MusicLyricsWidget 同位置注释）。
+        boolean needCorrection = !editorPreviewActive;
+        if (needCorrection) {
+            api.getGLStateManager().pushMatrix();
+            api.getGLStateManager().scale(com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale.correctionX(),
+                    com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale.correctionY(), 1);
+        }
         api.getGLStateManager().pushMatrix();
         api.getGLStateManager().translate(hudX, hudY, 0);
         api.getGLStateManager().scale(hudScale, hudScale, 1);
@@ -330,6 +366,10 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
         posInterface.setHeight((float) (height + downloadProgHeight));
 
         api.getGLStateManager().popMatrix();
+        if (needCorrection) {
+            // 弹掉真实 HUD 路径压入的 correction 层（与上面 pushMatrix 配对）。
+            api.getGLStateManager().popMatrix();
+        }
     }
 
     /**

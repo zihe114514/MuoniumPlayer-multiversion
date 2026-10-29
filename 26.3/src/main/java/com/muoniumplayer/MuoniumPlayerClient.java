@@ -19,6 +19,7 @@ import com.muoniumplayer.core.screens.hud.ModernUiHudBridge;
 import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.screens.ncm.IslandSearchOverlay;
+import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.update.AnnouncementChecker;
 import com.muoniumplayer.core.update.UpdateChecker;
 import com.muoniumplayer.core.screens.RenderLayerNotice;
@@ -471,10 +472,14 @@ public final class MuoniumPlayerClient {
      * 压一层能把影响限制在本帧（宿主层每帧还会再兜一次底）。
      */
     private void onHudRenderUnguarded() {
-        // HUD 设置编辑器自带两块 widget 的实时预览；真实 HUD 若照常渲染就与预览同屏各一份
-        //（26.x 的 HUD 回调在 Screen 打开期间并不停）。整段跳过，只留给编辑器画。
-        if (Minecraft.getInstance().gui.screen() instanceof GuiHudEditorPro) {
-            return;
+        // 26.x 的 HUD 回调在 Screen 打开期间照常触发。有两类要让路：
+        // 1) HUD 设置编辑器自带两块 widget 的实时预览，真实 HUD 再画就同屏各一份；
+        // 2) 背包/原版设置/聊天等任何其它界面——mod 的 HUD 附加层叠在上面既挡操作又无意义
+        //   （全屏播放器 NCMScreen 不走这条回调，自己管理岛与频谱；下载进度灵动岛保留，
+        //    它是用户主动触发的进度反馈，跟随界面消失反而丢失状态）。
+        Screen open = Minecraft.getInstance().gui.screen();
+        if (open != null && !(open instanceof NCMScreen)) {
+            if (!(DownloadDynamicIsland.isDownloadActive())) return;
         }
         api.getGLStateManager().pushAttrib();
         api.getGLStateManager().pushMatrix();
@@ -616,12 +621,17 @@ public final class MuoniumPlayerClient {
         Interpolations.calcFrameDelta();
 
         Runnable islandOverlay = () -> {
-            // HUD 设置界面自己画灵动岛的专用预览，这里再画一次会叠成双层。
-            if (DownloadDynamicIsland.isDownloadActive()
-                    || !(screen instanceof GuiHudEditorPro)) {
+            // HUD 设置界面自己画灵动岛的专用预览，这里再画一次会叠成双层；
+            // 背包/原版设置/聊天等界面也不该叠 mod 的常驻岛与切换动画（全屏播放器
+            // NCMScreen 不走这条路径，自己的覆盖层自管）。下载进度灵动岛始终保留。
+            boolean editorOrOtherUi = screen instanceof GuiHudEditorPro
+                    || (screen != null && !(screen instanceof NCMScreen));
+            if (DownloadDynamicIsland.isDownloadActive() || !editorOrOtherUi) {
                 DownloadDynamicIsland.render();
             }
-            AutomixTransitionAnimation.render();
+            if (!editorOrOtherUi) {
+                AutomixTransitionAnimation.render();
+            }
         };
         if (!SkijaHost.deferPostCompositeOverlay(islandOverlay)) islandOverlay.run();
     }

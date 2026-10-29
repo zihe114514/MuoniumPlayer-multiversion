@@ -5,6 +5,8 @@ import com.muoniumplayer.core.input.TouchGestures;
 import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.VanillaMusicDucker;
+import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.utils.cursor.CursorUtils;
@@ -25,6 +27,8 @@ public final class VolumeControl implements SharedRenderingConstants {
 
     private double renderedBarHeight = MIN_BAR_HEIGHT;
     private boolean dragging;
+    /** 右键的按压沿锁存：按下沿置位，抬起沿结算（与音量条左键的 prevMouse 同一手法）。 */
+    private boolean rightPressed;
 
     /**
      * 渲染通用的全屏播放器音量呈现：低/高
@@ -67,6 +71,18 @@ public final class VolumeControl implements SharedRenderingConstants {
             double rawPercent = (mouseX - sliderX) / sliderWidth;
             CloudMusic.setVolume((float) rawPercent, true);
         }
+
+        // 右键切换「播放时压掉原版游戏音乐」：这是音量域的偏好，挂在音量条上是它的自然位置
+        // （与 automix 挂在播放模式右键是同一个设计语言）。只在悬停时结算，按压沿触发，
+        // 避免模态浮层下面误穿 —— 与上面左键的 isModalOverlayActive 闸同一条。
+        boolean rightDownNow = Mouse.isButtonDown(1);
+        if (rightDownNow && hovering && !rightPressed
+                && !NCMScreen.getInstance().isModalOverlayActive()) {
+            boolean enabled = !VanillaMusicDucker.isEnabled();
+            VanillaMusicDucker.setEnabled(enabled);
+            DownloadDynamicIsland.showVanillaMusicDucker(enabled);
+        }
+        rightPressed = rightDownNow;
 
         renderedBarHeight = Interpolations.interpolate(renderedBarHeight,
                 (hovering || dragging) ? MAX_BAR_HEIGHT : MIN_BAR_HEIGHT, .28f);

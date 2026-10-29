@@ -50,6 +50,10 @@ public final class Track {
      *
      * @throws IllegalArgumentException 带一句面向用户的中文原因，说明这份负载为什么不能入队。
      */
+    /** 客户端自报时长的可信上限（毫秒）。正常曲目最长不过二十来分钟；超过它的负载
+     *  只可能是点歌人（或换源替身）想用一首「歌」占住整间房。 */
+    public static final long MAX_PLAUSIBLE_DURATION_MS = 30 * 60 * 1000L;
+
     public static Track fromJson(JsonObject o, MpConfig cfg) {
         if (o == null) throw new IllegalArgumentException("缺少歌曲信息");
         // 老客户端不发 source，按网易云处理。
@@ -68,6 +72,11 @@ public final class Track {
         String cover = Proto.str(o, "cover", "");
         t.cover = SourceGuard.isAllowedUrl(cover, cfg.allowedHosts) ? cover : "";
         t.durationMs = Math.max(0L, Proto.num(o, "duration", 0L));
+        if (t.durationMs > MAX_PLAUSIBLE_DURATION_MS) {
+            // 没有时长判不出交接点会让房间卡死（enqueue 已挡 0），时长离谱则反过来——
+            // 房间被一首「歌」合法占住半小时起步，频道里只能靠投票解。两个方向都封死。
+            throw new IllegalArgumentException("曲目时长超出可信范围，已拒绝");
+        }
         String url = Proto.str(o, "url", "");
         long served = Proto.num(o, "urlDuration", 0L);
         // 点歌人自己上传的那条链同样可能是「算出来的」长度（酷狗 / LX 一路），判据必须与
@@ -130,8 +139,28 @@ public final class Track {
         return isTrialClip(servedMs, trackMs, cfg, false);
     }
 
+    /**
+     * 实测路（{@code estimated=false}）的绝对豁免线：这条流本身服务了这么久，就不再判试听。
+     *
+     * <p>为什么需要：servedMs 与 trackMs 来自<b>两个不同的接口</b> —— servedMs 是取流接口报的
+     * 「这条链接实际服务多长」，trackMs 是点歌人上传的曲目元数据时长。同名不同版本（专辑版 /
+     * 单曲版 / 重制版）两者可以差出 20% 以上，纯比例判据（0.8）会把一条 3 分 55 秒的完整版
+     * 对着 5 分钟的元数据误判成试听。这种误判是<b>确定性的</b>：房间里每个会员解出的都是同一条
+     * 流、算出同一个比例、在同一个判定上集体弃权，于是「全员 VIP」的房间照样全层落空，
+     * 再被换源救援改成别的平台版本。而真实的试听片段固定是 30/60 秒量级 —— 一条超过 90 秒的流
+     * 必然不是试听。90 秒这条线与客户端换源判据 {@code TRIAL_CHECK_MIN_DECLARED_MILLIS} 同源：
+     * 短于此的曲目本来就可能就这么长，比例判定照旧兜着。
+     *
+     * <p>估算路（{@code estimated=true}，阈值更宽的 0.5）<b>不适用</b>这条豁免：估算值本身就
+     * 可能偏差大，码率猜错时 90 秒的截断流能被估成三分钟，豁免会把真试听放进房间。
+     */
+    public static final long TRIAL_CLIP_SERVED_FLOOR_MS = 90_000L;
+
     public static boolean isTrialClip(long servedMs, long trackMs, MpConfig cfg, boolean estimated) {
         if (servedMs <= 0L || trackMs <= 0L) return false;
+        // 实测的流时长超过豁免线：不可能是试听。比例判定对「元数据与实际流版本错位」无能为力，
+        // 见方法注释 —— 这是「全员 VIP 房间集体弃权会员曲」的根因。
+        if (!estimated && servedMs > TRIAL_CLIP_SERVED_FLOOR_MS) return false;
         double ratio = estimated ? cfg.estimatedStreamDurationRatio : cfg.minStreamDurationRatio;
         return servedMs < trackMs * ratio;
     }

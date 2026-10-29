@@ -61,6 +61,8 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/compat/mc/WorldBillboard.java",
             "com/muoniumplayer/compat/mc/WorldLyricsBridge.java",
             "com/muoniumplayer/compat/mc/LyricGlyphAtlasBridge.java",
+            // --- 光影包适配：各树 RenderState/Shader API 差异大，探测器各树一份 ---
+            "com/muoniumplayer/compat/mc/ShaderPackProbe.java",
             "com/muoniumplayer/MuoniumPlayerClient.java",
             "com/muoniumplayer/render/skija/SkijaHost.java",
             "com/muoniumplayer/api/impl/GLStateManagerImpl.java",
@@ -79,12 +81,19 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/core/screens/TitleMenuAnnouncementButton.java",
             "com/muoniumplayer/core/screens/hud/HudSettingsModel.java"));
 
-    /** 只在部分树存在的（mixin 注入点、各树网络通道）。 */
+    /** 只在部分树存在的（mixin 注入点、各树网络通道、光影期直画通路）。 */
     private static final Set<String> OPTIONAL_MAIN_JAVA = new LinkedHashSet<String>(Arrays.asList(
             "com/muoniumplayer/mixin/FramebufferMixin.java",
             "com/muoniumplayer/mixin/GlSurfaceMixin.java",
             "com/muoniumplayer/mixin/MouseScrollMixin.java",
             "com/muoniumplayer/mixin/MouseButtonStateMixin.java",
+            "com/muoniumplayer/mixin/MusicManagerAccessor.java",
+            "com/muoniumplayer/mixin/MusicManagerDuckMixin.java",
+            // --- 26.x 光影期直画：renderpearl 类路径 + GameRenderer 注入点，仅 26.2/26.3 ---
+            "com/muoniumplayer/compat/mc/LyricPresentRenderer.java",
+            "com/muoniumplayer/compat/mc/LyricBlaze3DRenderer.java",
+            "com/muoniumplayer/compat/mc/WorldLyricsHudDraw.java",
+            "com/muoniumplayer/mixin/GameRendererRenderLevelMixin.java",
             "com/muoniumplayer/party/net/MpPayloads.java"));
 
     /** 五棵树各自的版本差异测试（ProjectPaths 例外，它已经收进共享层）。 */

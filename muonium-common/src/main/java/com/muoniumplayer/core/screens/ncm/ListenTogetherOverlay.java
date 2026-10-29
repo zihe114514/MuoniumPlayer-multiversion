@@ -349,12 +349,17 @@ public final class ListenTogetherOverlay extends NcmSheet {
         });
     }
 
-    /** 右上角 pill 的文案：按活跃会话分级。 */
+    /**
+     * 右上角 pill 的文案：按活跃会话分级。
+     *
+     * <p>直连会话的房间快照与服务器房间写的是<b>同一个字段</b>（{@code MpPartyClient.room}），
+     * 所以 {@code inRoom()} 在直连会话里恒为真 —— 不能拿它当「MC 服务器会话」的证据，
+     * 否则直连会话会被误报成「双会话并行」。直连优先判定后再看 inRoom。</p>
+     */
     private String sourcePillLabel() {
         boolean inRoom = MpPartyClient.inRoom();
         boolean directOn = com.muoniumplayer.party.direct.MpDirect.isActive();
-        if (inRoom && directOn) return "双会话并行";
-        if (directOn) return "直连房间 · 在听";
+        if (directOn) return inRoom ? "直连房间 · 在听" : "直连房间";
         if (inRoom) return "服务器房间 · 在房";
         return "服务器房间";
     }
@@ -366,19 +371,23 @@ public final class ListenTogetherOverlay extends NcmSheet {
 
     /**
      * 来源状态行：一句话讲清当前会话来自哪条链路。
-     * 三个来源互不互斥由各自引擎决定，这里只做如实呈现。
+     *
+     * <p>与 {@link #sourcePillLabel()} 同一条规则：直连活跃时 {@code inRoom()} 读到的是
+     * 直连快照，不能并列报成两条会话 —— 传输层（{@code MpHostRouter}）同一时刻只有一路，
+     * 客户端永远只在一个房间里。</p>
      */
     private String sourceStateLine() {
         java.util.List<String> parts = new java.util.ArrayList<>();
-        if (MpPartyClient.inRoom()) {
-            MpRoom room = MpPartyClient.room();
-            parts.add("MC 服务器（" + (room == null || !room.channel
-                    ? "mpsync 服务端" : "频道") + "）");
-        }
+        boolean directOn = com.muoniumplayer.party.direct.MpDirect.isActive();
         if (com.muoniumplayer.party.direct.MpDirect.isHosting()) {
             parts.add("直连房间（本机托管）");
         } else if (com.muoniumplayer.party.direct.MpDirect.isJoined()) {
             parts.add("直连房间（好友托管）");
+        }
+        if (!directOn && MpPartyClient.inRoom()) {
+            MpRoom room = MpPartyClient.room();
+            parts.add("MC 服务器（" + (room == null || !room.channel
+                    ? "mpsync 服务端" : "频道") + "）");
         }
         if (ListenTogetherService.isActive()) {
             parts.add("官方一起听（" + ListenTogetherService.backendLabel() + "）");

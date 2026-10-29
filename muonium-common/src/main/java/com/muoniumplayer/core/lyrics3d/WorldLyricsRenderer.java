@@ -206,6 +206,16 @@ public final class WorldLyricsRenderer {
     /** 渲染层整体停用旗标（Bridge 一并在入口短路）。 */
     private static volatile boolean broken;
 
+    /**
+     * 用户自恢复口：清掉连续失败锁与停用旗标。Bridge 在「更激进的适配」开关刚被
+     * 关掉时调用 —— HUD 阶段的绘制环境与世界阶段不同，可能造成连续失败把这里
+     * 锁死；用户关掉开关回到世界阶段路径时应立即恢复，而不是重启游戏。
+     */
+    public static void clearBrokenLatch() {
+        broken = false;
+        consecutiveFailures = 0;
+    }
+
     private static void renderGuarded(WorldLyricsState state, WorldLyricsState.CameraView camera,
                                       WorldLyricsSettings settings, Host host, long nowNanos) {
         if (broken || !settings.enabled || !WorldLyricsState.hasLyrics() || camera == null || host == null) {
@@ -285,17 +295,16 @@ public final class WorldLyricsRenderer {
             WorldLyricsState.LyricGlyphs glyphs = WorldLyricsState.buildGlyphs(
                     f, songNowMs, row.alpha, settings.wordPop, !row.active, widthOf,
                     cadenza, huiguang, keywordMatch);
-            // 心象模式的分块配色基准色：取色器自定义过的色原样用（选白就是纯白），
-            // 没动过时用心象的「暖白当主色」—— 块的 hero/柔色/白三层关系在
-            // CadenzaMotion.tokenColor 里按基准色派生。
+            // 心象模式的分块配色基准色：取色器自定义过的色原样用，没动过时纯白
+            //（TEXT_RGB）—— 块的 hero/柔色/白三层关系在 CadenzaMotion.tokenColor
+            // 里按基准色派生。
             int baseRgb = settings.colorCustom
                     ? settings.colorRgb
                     : WorldLyricsState.TEXT_RGB;
 
-                // 文字颜色：取色器自定义过的色原样显示（选白色就是纯白 0xFFFFFF）；
-                // 没动过取色器时用暖白默认（TEXT_RGB）观感。
+                // 文字颜色：取色器自定义过的色原样显示；没动过取色器时用默认纯白。
                 // 「是否自定义」必须是独立旗标 —— 0xFFFFFF 本身是合法的自定义色，
-                // 以前拿值当旗标，选白色被回落成暖白，看起来就是「偏肉色」。
+                // 以前拿值当旗标会丢失「自定义白」与「默认白」的区分。
                 int inkRgb = baseRgb;
             // 夜色系数 0..1（4 档量化）：宿主采样世界亮度，调制未唱字的
             // 冷暗档（白天暗墨 / 夜晚自发光冰蓝）与发光档

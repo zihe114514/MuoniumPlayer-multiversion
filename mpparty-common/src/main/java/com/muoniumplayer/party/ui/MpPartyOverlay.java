@@ -204,6 +204,20 @@ public final class MpPartyOverlay extends NCMPanel {
     private String hint = "";
     private int hintColor = 0xAEB5C4;
 
+    /**
+     * 随机排入的数量菜单：挂在哪一行（歌单名），null = 收着。
+     *
+     * <p>同一时间只开一份 —— 它是行内「随机」按钮的二级菜单，不是一套可以叠两层的弹窗；
+     * 换行再点、点遮罩、翻页、ESC，四条路都只是把它收掉。两份浮层控件的引用握在
+     * {@link #shuffleScrim} / {@link #shuffleMenu} 上，收起时显式摘除，不依赖页面重建。</p>
+     */
+    private String shuffleMenuFor;
+    /** 菜单的入场进度，驱动淡入与那一小段上浮。 */
+    private double shuffleMenuPresentation;
+    /** 开着的那份浮层：scrim 在先、菜单在后（后加的画在上层）。 */
+    private RectWidget shuffleScrim;
+    private Panel shuffleMenu;
+
     private long copiedAt;
 
     /**
@@ -262,6 +276,8 @@ public final class MpPartyOverlay extends NCMPanel {
     }
 
     public void handleEscape() {
+        // 随机菜单开着时 ESC 只收菜单：它比页面浅一层，按一次只退一层。
+        if (closeShuffleMenu()) return;
         if (page == Page.OVERVIEW) {
             dispose();
         } else {
@@ -482,8 +498,18 @@ public final class MpPartyOverlay extends NCMPanel {
         StringBuilder sb = new StringBuilder(source);
         sb.append("在线 ").append(Math.max(0, MpPartyClient.onlineCount())).append(" 人");
         if (!MpPartyClient.v2()) {
-            sb.append(" · 服务端是旧版协议 v").append(MpPartyClient.serverProtocol())
-                    .append("，在线态与公开房间不可用");
+            // proto==0 = 从没处理过任何 S_HELLO，与「对端回了 hello 但协议是 v1」是两回事：
+            // 前者多半不是服务端没装，而是帧没回来 —— 直连托管占用了本世界的引擎（主机侧），
+            // 或者服务端 mod 启动异常 / 版本过旧。文案要让用户能对着这两种情况自查，
+            // 而不是把「明明装了 mod」误读成「旧版本」。
+            if (MpPartyClient.serverProtocol() <= 0) {
+                sb.append(" · 服务端没有应答握手：若这是自己的世界且开着直连房间，"
+                        + "局域网一起听正被直连托管占用（关闭直连后自动恢复）；"
+                        + "否则请检查服务端 mod 是否正常启动或版本过旧");
+            } else {
+                sb.append(" · 服务端是旧版协议 v").append(MpPartyClient.serverProtocol())
+                        .append("，在线态与公开房间不可用");
+            }
             return sb.toString();
         }
         sb.append("  ·  会员解析 ").append(MpPartyClient.serverResolve() ? "服务端已配置" : "靠玩家贡献");
@@ -2914,6 +2940,19 @@ public final class MpPartyOverlay extends NCMPanel {
 
         final Panel tools = rowTools(bg);
 
+        // 随机排入走二级菜单而不是一排「随机 10/50/100」：一行三颗按钮就是一堵按钮墙，
+        // 而这三个数字回答的是同一个问题「抽多少」。一颗触发按钮 + 一份浮层，行内布局
+        // 与单颗按钮时一致。洗牌发生在本机内存里，服务端收到的仍是普通的一批
+        // enqueue_batch，协议不感知「随机」。
+        btn(tools, () -> PartyIcons.SHUFFLE, () -> "随机 ▾", MpPartyClient::canPlaylist, () -> {
+            MpRoomPlaylists.Item item = playlistAt(list, slot, items);
+            if (item == null) return;
+            openShuffleMenu(item, bg);
+        }, STYLE_ROW_PRIMARY, b -> {
+            b.setBounds(78, 26);
+            b.setPosition(bg.getWidth() - 92, 8);
+        });
+
         btn(tools, () -> PartyIcons.PLAY_NEXT,
                 () -> pendingCountOf(list, slot, items) > 0 ? "撤回" : "排入房间",
                 MpPartyClient::canPlaylist, () -> {
@@ -2923,7 +2962,7 @@ public final class MpPartyOverlay extends NCMPanel {
             else MpPartyClient.requestPlaylist(item.playlist);
         }, STYLE_ROW_PRIMARY, b -> {
             b.setBounds(78, 26);
-            b.setPosition(bg.getWidth() - 92, 8);
+            b.setPosition(bg.getWidth() - 180, 8);
         });
     }
 
@@ -2931,6 +2970,126 @@ public final class MpPartyOverlay extends NCMPanel {
                                             final List<MpRoomPlaylists.Item> items) {
         int index = list.base() + slot;
         return index >= 0 && index < items.size() ? items.get(index) : null;
+    }
+
+    // ──────────────────────────── 随机排入的二级菜单 ────────────────────────────
+
+    /** 菜单可选的抽取数量。照着一颗行内按钮的量感定的：50 ≈ 单次上限的一半。 */
+    private static final int[] SHUFFLE_COUNTS = {10, 25, 50, 100};
+    /** 菜单里每一行的高度。 */
+    private static final double SHUFFLE_ROW_H = 30.0;
+    /** 数量行的起始 y（标题行占掉的上沿）。 */
+    private static final double SHUFFLE_ROW_TOP = 24.0;
+
+    /**
+     * 打开「随机抽多少首」的二级菜单，锚定在触发行上方。
+     *
+     * <p>同一时间只有一份：先收掉旧的再开新的，换行连点表现是「菜单跳到新行」而不是叠两层。
+     * 锚点是触发按钮这颗控件本体，菜单贴着它的上沿弹出；列表滚动、行 hover 变化时菜单
+     * 跟着锚点走，不悬空。翻页重建控件树时浮层随之销毁，{@link #closeShuffleMenu} 摘除
+     * 不存在的节点是无害的，状态在这里与 {@link #onRender} 两头兜底。</p>
+     */
+    private void openShuffleMenu(final MpRoomPlaylists.Item item, final Row anchor) {
+        closeShuffleMenu();
+        shuffleMenuFor = item.title;
+        shuffleMenuPresentation = 0.0;
+
+        // 遮罩：垫在菜单底下、盖住整张面板。点它收菜单，不碰页面本身。
+        final RectWidget scrim = new RectWidget();
+        addChild(scrim);
+        shuffleScrim = scrim;
+        scrim.setColor(0x000000).setClickable(true);
+        scrim.setOnClickCallback((x, y, button) -> {
+            if (button == 0) closeShuffleMenu();
+            return button == 0;
+        });
+        scrim.setBeforeRenderCallback(() -> {
+            scrim.setMargin(0);
+            // 比整页弹窗的遮罩浅得多：这里只是「点外面收起来」的暗示，不是一层模态。
+            scrim.setAlpha((float) (shuffleMenuPresentation * .18));
+            scrim.setBounds(Math.max(1, getWidth()), Math.max(1, getHeight()));
+            scrim.setPosition(0, 0);
+        });
+
+        final Panel menu = new Panel();
+        addChild(menu);
+        shuffleMenu = menu;
+        menu.setOnClickCallback((x, y, button) -> true);   // 点菜单本体不冒泡到 scrim
+        menu.setBeforeRenderCallback(() -> {
+            shuffleMenuPresentation = Interpolations.interpolate(shuffleMenuPresentation, 1.0, .28f);
+            final double w = 152;
+            final double h = SHUFFLE_ROW_TOP + SHUFFLE_COUNTS.length * SHUFFLE_ROW_H + 6;
+            menu.setBounds(w, h);
+            // 锚定：贴着触发按钮的上沿、右对齐（菜单从按钮「长」出来）。
+            // getX()/getY() 沿父链累加到屏幕坐标，anchor 与 menu 都是本 overlay 的后代，
+            // 差值就是菜单该落的相对位置。列表滚动时锚点自己会动，菜单一并跟着走。
+            double x = anchor.getX() - this.getX() + anchor.getWidth() - w;
+            double y = anchor.getY() - this.getY() - h - 4;
+            if (y < 4) y = anchor.getY() - this.getY() + anchor.getHeight() + 4;
+            menu.setPosition(x, y);
+            menu.setAlpha((float) shuffleMenuPresentation);
+        });
+
+        final RoundedRectWidget bg = new RoundedRectWidget();
+        menu.addChild(bg);
+        bg.setClickable(false).setRadius(10).setBeforeRenderCallback(() -> {
+            bg.setMargin(0);
+            bg.setBounds(Math.max(1, menu.getWidth()), Math.max(1, menu.getHeight()));
+            bg.setPosition(0, 0);
+            bg.setColor(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
+            bg.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+        });
+        bg.setGlassSheet(GlassLook.Surface.PLAYER);
+        stroke(bg, 10, () -> NCMScreen.getColor(NCMScreen.ColorType.BORDER), () -> .8);
+
+        // 标题行：「随机排入」说了这层菜单在问什么，数量行才是可选项。
+        final LabelWidget head = label(menu, () -> shuffleMenuFor == null ? "随机排入"
+                : "随机排入 · " + trimLabel(shuffleMenuFor), FontManager.pf10bold);
+        head.setBeforeRenderCallback(() -> {
+            head.setColor(secondary());
+            head.setMaxWidth(Math.max(1, menu.getWidth() - 20));
+            head.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            head.setPosition(10, 7);
+        });
+
+        for (int i = 0; i < SHUFFLE_COUNTS.length; i++) {
+            final int count = SHUFFLE_COUNTS[i];
+            final int row = i;
+            final RoundedButtonWidget entry = btn(menu, () -> PartyIcons.SHUFFLE,
+                    () -> "抽 " + count + " 首", null, () -> {
+                closeShuffleMenu();
+                MpPartyClient.requestPlaylistShuffled(item.playlist, count);
+            }, STYLE_ROW, b -> {
+                b.setBounds(Math.max(1, menu.getWidth() - 12), SHUFFLE_ROW_H - 4);
+                b.setPosition(6, SHUFFLE_ROW_TOP + row * SHUFFLE_ROW_H);
+            });
+            entry.setBeforeRenderCallback(() -> entry.setColor(entry.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)));
+        }
+    }
+
+    /** 收掉随机菜单。返回 true 表示它原来开着（ESC 层次判断用）。 */
+    private boolean closeShuffleMenu() {
+        boolean wasOpen = shuffleMenuFor != null || shuffleScrim != null || shuffleMenu != null;
+        shuffleMenuFor = null;
+        shuffleMenuPresentation = 0.0;
+        // 显式摘除，而不是等下一次页面重建：菜单开着时用户点一条数量、或者点遮罩，
+        // 都发生在页面重建之前 —— 不摘的话这两份浮层会一直垫在界面上吃点击。
+        if (shuffleScrim != null) {
+            getChildren().remove(shuffleScrim);
+            shuffleScrim = null;
+        }
+        if (shuffleMenu != null) {
+            getChildren().remove(shuffleMenu);
+            shuffleMenu = null;
+        }
+        return wasOpen;
+    }
+
+    /** 菜单标题里用的歌单名：太长截断，不留省略号算法在 lambda 里写两遍。 */
+    private static String trimLabel(String s) {
+        return s.length() <= 12 ? s : s.substring(0, 11) + "…";
     }
 
     /** 这一槽那张单子当前在队列里挂着多少首（槽位空着时 0）。 */
