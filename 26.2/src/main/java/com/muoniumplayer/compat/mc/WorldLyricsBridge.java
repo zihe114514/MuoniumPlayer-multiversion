@@ -62,6 +62,31 @@ public final class WorldLyricsBridge {
     private static boolean tracedRendered;
     private static boolean tracedShaderActive;
 
+    /** 光影包激活的聊天警告只发一次（跨状态翻转不重复打扰）。 */
+    private static boolean shaderChatWarned;
+
+    /**
+     * 光影包激活首检 → 聊天栏警告。3D 歌词在光影下默认通路（信标程序/世界阶段）
+     * 可能被包的后处理加工（打光/变暗），开「更激进的适配」（present 直画）可
+     * 完全绕开；未开则一并提示开启路径。只发一次。
+     */
+    private static void warnShaderPackIfNeeded(boolean shaderActive) {
+        if (!shaderActive || shaderChatWarned) return;
+        shaderChatWarned = true;
+        try {
+            String hint = HudConfig.worldLyricsHudDraw
+                    ? "检测到光影包：3D 歌词已走「更激进的适配」（直画最终画面）。"
+                    + "若歌词仍异常请反馈。"
+                    : "检测到光影包：3D 歌词可能被光影后处理影响（变暗/忽明忽暗）。"
+                            + "如遇异常，请在 播放器设置 → 歌词样式 中开启「更激进的适配」。";
+            Minecraft.getInstance().gui.hud.getChat()
+                    .addClientSystemMessage(net.minecraft.network.chat.Component.literal(hint));
+        } catch (Throwable t) {
+            // 聊天栏不可用（极早期/异常界面状态）不打扰渲染：只留一行日志。
+            logger.info("光影包聊天警告未送达: " + t);
+        }
+    }
+
     /** 一次性诊断日志（Set 去重；仅 muonium.debug.worldLyrics 开启时输出）。
      *  与 1.21.1 标杆同名同参 —— 深层模块的熔断都经它报一次。 */
     static void traceOnce(String msg) {
@@ -108,14 +133,15 @@ public final class WorldLyricsBridge {
             // 0. 光影包探测（帧头一次，本帧内渲染层读缓存值）：
             //    光影包激活时 WorldBillboard 改走信标全亮程序（ShaderPackProbe 类注释）
             ShaderPackProbe.refresh();
+            boolean shaderActiveNow = ShaderPackProbe.isActive();
             if (TRACE) {
-                boolean shaderNow = ShaderPackProbe.isActive();
-                if (shaderNow != tracedShaderActive) {
-                    tracedShaderActive = shaderNow;
+                if (shaderActiveNow != tracedShaderActive) {
+                    tracedShaderActive = shaderActiveNow;
                     System.out.println("[WorldLyrics/trace] 光影包状态切换 → "
-                            + (shaderNow ? "光影模式（信标全亮程序）" : "普通模式（textSeeThrough）"));
+                            + (shaderActiveNow ? "光影模式（信标全亮程序）" : "普通模式（textSeeThrough）"));
                 }
             }
+            warnShaderPackIfNeeded(shaderActiveNow);
             WorldBillboard.WorldLyricsBridgeAccess.current = collector;
 
             // 根矩阵必须是单位矩阵 —— 相机旋转已经在模型视图栈上（LevelRenderer.render
@@ -126,7 +152,20 @@ public final class WorldLyricsBridge {
             // 症状正是「玩家视角向左、字向右」。1.21.1 的 basePose 公式
             // 只适用于「事件时视图矩阵是单位矩阵」的旧管线。
             // 顶点坐标仍然用镜头相对坐标（rx = 世界 − 相机），视图旋转把它转回相机空间。
+            //
+            // bob 防抖（view bobbing / 受击摇晃）：26.x 把摇晃合成进投影 UBO
+            //（P·B，见 WorldLyricsHudDraw.noteLevelProjection），歌词顶点跟着抖，
+            // 走路时晕 3D。根矩阵乘 bob 共轭阵 M = viewᵀ·B⁻¹·view 把 B 精确对消：
+            // GPU 端变 P·B·view·M·billboard = P·view·billboard —— 世界照旧抖，
+            // 歌词钉在无摇晃视角上。共轭阵无效（本帧捕获缺席/过期）= 单位阵，旧行为。
+            //
+            // capture 模式（更激进的适配）例外：顶点在采集期就被根矩阵 bake，
+            // present 端 MVP 还会再乘一次 M —— 根矩阵再乘就成 M²，画错位置。
+            // 该模式由 present 端的 MVP 一次性对消，这里保持单位阵。
             Matrix4f basePose = new Matrix4f();
+            if (WorldLyricsHudDraw.bobConjValid() && !WorldLyricsHudDraw.captureModeThisFrame()) {
+                WorldLyricsHudDraw.bobConjSnapshot(basePose);
+            }
 
             renderInner(basePose, mc, camera);
         } catch (Throwable t) {

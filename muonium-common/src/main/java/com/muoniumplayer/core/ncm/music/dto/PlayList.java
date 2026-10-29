@@ -250,6 +250,24 @@ public class PlayList {
                         loadedMusics.add(music);
                     }
                 }
+            } else if (getPlatform() == MusicPlatform.APPLE) {
+                // Apple 的 platformPlaylistId 有四种形状：pl.…. 是 catalog 公开歌单、p.数字 是
+                // 资料库歌单、"library-songs" 是资料库歌曲虚拟单、"album:<id>" 是专辑——由服务层
+                // 按形状分派。缺这一支的话 Apple 歌单会掉进下面的 else，拿一个 pl.… id 去调
+                // 网易云的 playlistTrackAll —— 静默返回空列表，界面一片空白。
+                List<com.muoniumplayer.core.ncm.apple.AppleMusicService.Track> appleTracks =
+                        com.muoniumplayer.core.ncm.apple.AppleMusicService
+                                .playlistTracks(getPlatformPlaylistId(), Math.max(100, count > 0 ? count : 100));
+                if (appleTracks == null) {
+                    throw new IllegalStateException("Apple playlist track response is null");
+                }
+                loadedMusics = new ArrayList<>(appleTracks.size());
+                for (com.muoniumplayer.core.ncm.apple.AppleMusicService.Track track : appleTracks) {
+                    Music music = Music.fromAppleTrack(track);
+                    if (music != null) {
+                        loadedMusics.add(music);
+                    }
+                }
             } else if (getPlatform() == MusicPlatform.YOUTUBE) {
                 // YouTube 的 platformPlaylistId 有两种：裸的 PL/RD/OLAK… 是歌单（内部再补 VL 前缀），
                 // radio:<videoId> 是「以某首为种子的电台」——与汽水电台同一套前缀约定。

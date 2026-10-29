@@ -17,6 +17,7 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.reflection.Reflection;
 import com.muoniumplayer.core.rendering.RGBA;
+import com.muoniumplayer.core.ncm.music.CoverThemePalette;
 import com.muoniumplayer.core.rendering.ScissorClipManager;
 import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.StencilClipManager;
@@ -1486,14 +1487,50 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
      * HUD 编辑器拥有歌词外观的持久化。在绘制时从 HudConfig 解析颜色，
      * 使当前颜色选择器永远无法通过旧版 ClickGUI ColorValue 实例
      * 修改普通歌词颜色。
+     *
+     * <p>「颜色跟随封面」开着时改取封面调色板的主色（Blossom 样式不经过这里，
+     * 它在 render 处分流时自带颜色参数，所以这个开关天然只对经典样式生效）。</p>
      */
     private int getBaseLyricColor(int alpha) {
-        return getHudConfiguredColor(HudConfig.lyricColorRgb, alpha);
+        return getHudConfiguredColor(followCoverColor(HudConfig.lyricColorRgb, false), alpha);
     }
 
     /** 当前颜色专用于已裁剪的、定时的 KTV 前景字形。 */
     private int getCurrentLyricColor(int alpha) {
-        return getHudConfiguredColor(HudConfig.currentLyricColorRgb, alpha);
+        return getHudConfiguredColor(followCoverColor(HudConfig.currentLyricColorRgb, true), alpha);
+    }
+
+    /**
+     * 「桌面歌词颜色跟随封面」的取色闸。关着原样返回；开着时从 {@link CoverThemePalette}
+     * 快照取最亮的颜色当基色 —— 桌面歌词浮在任何画面上，太暗的颜色会直接糊进背景里。
+     * 当前行的 KTV 前景提亮一档，与未唱底色保持可辨的明度差（经典样式读色即所见）。
+     * 调色板还没就绪（无歌/封面未解码）时回落玩家配置的颜色，不闪黑。
+     */
+    private static int followCoverColor(int fallbackArgb, boolean foreground) {
+        if (!HudConfig.osdLyricColorFollowCover) return fallbackArgb;
+        int[] palette = CoverThemePalette.snapshot();
+        if (palette == null || palette.length == 0) return fallbackArgb;
+        int best = -1;
+        long bestLuma = -1;
+        for (int argb : palette) {
+            int r = (argb >> 16) & 0xFF, g = (argb >> 8) & 0xFF, b = argb & 0xFF;
+            long luma = Math.round(r * 0.2126 + g * 0.7152 + b * 0.0722)
+                    + (foreground ? 96 : 0);
+            if (luma > bestLuma) {
+                bestLuma = luma;
+                best = argb;
+            }
+        }
+        if (best < 0) return fallbackArgb;
+        if (foreground) {
+            // KTV 前景向白推 35%：封面整体偏暗时已唱部分仍读得出「正在唱到这里」。
+            int r = (best >> 16) & 0xFF, g = (best >> 8) & 0xFF, b = best & 0xFF;
+            r = Math.min(255, Math.round(r + (255 - r) * .35f));
+            g = Math.min(255, Math.round(g + (255 - g) * .35f));
+            b = Math.min(255, Math.round(b + (255 - b) * .35f));
+            best = (r << 16) | (g << 8) | b;
+        }
+        return 0xFF000000 | best;
     }
 
     private int getHudConfiguredColor(int configuredArgb, int requestedAlpha) {

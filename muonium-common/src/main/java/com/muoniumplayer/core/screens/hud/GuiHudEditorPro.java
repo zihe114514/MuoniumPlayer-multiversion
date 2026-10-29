@@ -286,6 +286,12 @@ public class GuiHudEditorPro extends GuiScreen {
 
     private HudSetting draggingSlider;
     private int draggingSliderTrackX;
+    /**
+     * 滑条数值的「点击直接输入」。非空 = 正在以文本方式编辑该滑条（值文本框已聚焦，
+     * 渲染层把那一行画成输入态）；提交/失焦后置回 null。同一时刻最多一个。
+     */
+    private HudSetting editingSliderValue;
+    private GuiTextField sliderValueInput;
     private HudSettingsModel.ColorTarget editingColor = HudSettingsModel.ColorTarget.NONE;
     private float pickerHue;
     private float pickerSaturation;
@@ -1377,18 +1383,47 @@ public class GuiHudEditorPro extends GuiScreen {
 
     private void drawSliderControl(CFontRenderer fr, HudSetting setting, int rowRight,
                                    int centerY, int accent, float knobProgress) {
+        if (editingSliderValue == setting && sliderValueInput != null
+                && sliderValueInput.isFocused()) {
+            // 输入态：原数值文本换成输入框。文字与光标手绘（hexColorInput 同款范式——
+            // compat 文本框只当状态容器，渲染全部自己来），位置与正常值文本同锚。
+            int inputW = VALUE_W + 8;
+            int inputX = rowRight - inputW;
+            ensureSliderValueInput();
+            sliderValueInput.xPosition = inputX + 4;
+            sliderValueInput.yPosition = centerY - 7;
+            sliderValueInput.width = inputW - 8;
+            sliderValueInput.height = 14;
+            drawRoundedRect(inputX, centerY - 9, inputW, 18, 4, 0x2E46526B);
+            drawRoundedRect(inputX, centerY - 9, inputW, 18, 4, 0x4E5FD3E8);
+            drawText(fr, sliderValueInput.getText(), inputX + 5, centerY - 3, TEXT_PRIMARY);
+            if (sliderValueInput.isFocused()) {
+                int caretX = inputX + 6 + fr.getStringWidth(sliderValueInput.getText());
+                drawRoundedRect(caretX, centerY - 5, 1, 10, 1, 0xFFEAF3FF);
+            }
+            drawTrackAndKnob(fr, setting, rowRight, centerY, accent, knobProgress,
+                    trackX(rowRight), true);
+            return;
+        }
         String value = HudSettingsModel.formatValue(setting, setting.getValue());
         drawText(fr, value, rowRight - fr.getStringWidth(value), centerY - 3,
                 mix(TEXT_SECONDARY, TEXT_PRIMARY, knobProgress));
 
         int trackX = trackX(rowRight);
+        drawTrackAndKnob(fr, setting, rowRight, centerY, accent, knobProgress, trackX, false);
+    }
+
+    /** 轨道 + 把手。输入态下轨道照画但把手降透明度：此刻数值由文本框主导。 */
+    private void drawTrackAndKnob(CFontRenderer fr, HudSetting setting, int rowRight,
+                                  int centerY, int accent, float knobProgress,
+                                  int trackX, boolean inputMode) {
         double trackY = centerY - 2;
         float span = setting.getMax() - setting.getMin();
         float progress = span <= 0f ? 0f : clamp01((setting.getValue() - setting.getMin()) / span);
         double fillW = TRACK_W * progress;
         drawRoundedRect(trackX, trackY, TRACK_W, 4, 2, TRACK_BG);
         if (fillW > 0.5) {
-            drawRoundedRect(trackX, trackY, fillW, 4, 2, accent);
+            drawRoundedRect(trackX, trackY, fillW, 4, 2, inputMode ? fade(accent, .55f) : accent);
         }
         // 把手悬停/拖动时略微放大，并把光晕铺开：这是「可以抓住它」最直接的反馈。
         double knobX = trackX + fillW;
@@ -1398,7 +1433,8 @@ public class GuiHudEditorPro extends GuiScreen {
                     radius + 3, fade(accent, 0.24f * knobProgress));
         }
         drawRoundedRect(knobX - radius, trackY + 2 - radius + 1, radius * 2, radius * 2, radius, 0x55000000);
-        drawRoundedRect(knobX - radius, trackY + 2 - radius, radius * 2, radius * 2, radius, 0xFFF6F8FC);
+        drawRoundedRect(knobX - radius, trackY + 2 - radius, radius * 2, radius * 2, radius,
+                inputMode ? 0xCCF6F8FC : 0xFFF6F8FC);
     }
 
     private static int trackX(int rowRight) {
@@ -1628,6 +1664,9 @@ public class GuiHudEditorPro extends GuiScreen {
             if (button == 0) handleResetConfirmationClick(mouseX, mouseY);
             return;
         }
+        // 任何一次左键点击都先结算输入中的滑条数值（点击本身就是输入框外的落点，
+        // 语义 = 提交）。activateRow 里点回轨道/值文本的分支随后会按需重新进入输入态。
+        if (button == 0) commitSliderValueEdit();
         if (button != 0) {
             super.mouseClicked(mouseX, mouseY, button);
             return;
@@ -1930,7 +1969,15 @@ public class GuiHudEditorPro extends GuiScreen {
                 int trackX = trackX(row.x + row.w - 14);
                 // 只有点在轨道附近才动数值。之前整行都算命中，于是点标签或说明文字会把滑块
                 // 直接甩到最小值 —— 一个很容易误触又不可撤销的操作。
-                if (mouseX < trackX - 8 || mouseX > trackX + TRACK_W + 8) break;
+                if (mouseX < trackX - 8 || mouseX > trackX + TRACK_W + 8) {
+                    // 轨道左侧是数值文本：点它进入「直接输入」而不是拖动。
+                    beginSliderValueEdit(row.entry.setting);
+                    break;
+                }
+                if (editingSliderValue != null) {
+                    // 输入途中按回轨道 = 放弃输入改拖动，先落一次盘再交接。
+                    commitSliderValueEdit();
+                }
                 draggingSlider = row.entry.setting;
                 draggingSliderTrackX = trackX;
                 setSliderFromMouse(row.entry.setting, mouseX, trackX);
@@ -2271,6 +2318,22 @@ public class GuiHudEditorPro extends GuiScreen {
             stage.clearSelection();
             return;
         }
+        // 滑条数值输入：回车提交（立即落盘），ESC 丢弃，其余交给文本框实时写回。
+        if (editingSliderValue != null && sliderValueInput != null && sliderValueInput.isFocused()) {
+            if (keyCode == Keyboard.KEY_RETURN || keyCode == Keyboard.KEY_NUMPADENTER
+                    || keyCode == Keyboard.KEY_ESCAPE) {
+                commitSliderValueEdit();
+                return;
+            }
+            if (sliderValueInput.textboxKeyTyped(typedChar, keyCode)) {
+                Float parsed = parseSliderInput(sliderValueInput.getText());
+                if (parsed != null) {
+                    editingSliderValue.setValue(parsed);
+                    settingsDirty = true;
+                }
+            }
+            return;
+        }
         if (editingColor != HudSettingsModel.ColorTarget.NONE && hexColorInput != null
                 && hexColorInput.isFocused()) {
             if (keyCode == Keyboard.KEY_RETURN || keyCode == Keyboard.KEY_NUMPADENTER) {
@@ -2342,6 +2405,69 @@ public class GuiHudEditorPro extends GuiScreen {
         if (!normalized.matches("[0-9a-fA-F]{6}")) return null;
         try {
             return new Color(Integer.parseInt(normalized, 16));
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    // ==================== 滑条数值直接输入 ====================
+
+    /**
+     * 点击滑条右端的数值文本进入输入态。再点一次同一条不重新清空（保留已敲到一半的
+     * 内容），点别的滑条则把输入焦点整体挪过去。
+     */
+    private void beginSliderValueEdit(HudSetting setting) {
+        if (editingSliderValue == setting && sliderValueInput != null
+                && sliderValueInput.isFocused()) return;
+        commitSliderValueEdit();
+        ensureSliderValueInput();
+        editingSliderValue = setting;
+        sliderValueInput.setText(formatSliderInput(setting.getValue()));
+        sliderValueInput.setFocused(true);
+        sliderValueInput.setCursorPosition(sliderValueInput.getText().length());
+    }
+
+    /**
+     * 结束输入：解析文本写回（超界交给 {@code HudSetting.setValue} 的钳制），失败则
+     * 静默丢弃 —— 输入框回到正常显示。任何退出路径（回车/点外面/开取色器）都会走到这。
+     */
+    private void commitSliderValueEdit() {
+        if (editingSliderValue == null) return;
+        HudSetting setting = editingSliderValue;
+        editingSliderValue = null;
+        if (sliderValueInput != null) sliderValueInput.setFocused(false);
+        Float parsed = parseSliderInput(sliderValueInput == null ? null : sliderValueInput.getText());
+        if (parsed == null) return;
+        if (parsed != setting.getValue()) {
+            setting.setValue(parsed);
+            settingsDirty = true;
+            HudConfig.save();
+        }
+    }
+
+    /** 输入框初值：不带单位的裸数字（单位在正常渲染里已有，敲的时候它是负担）。 */
+    private static String formatSliderInput(float value) {
+        float rounded = Math.round(value * 100f) / 100f;
+        if (rounded == Math.rint(rounded)) return String.valueOf((int) rounded);
+        return String.valueOf(rounded);
+    }
+
+    /**
+     * 解析输入：接受裸数字与带 % 的百分数。百分数按滑条区间换算（58% 在 0.60–1.35 的
+     * 滑条上是 1.047），裸数字就是设置本值 —— 两种都合法，肉眼读什么就敲什么。
+     */
+    private static Float parseSliderInput(String text) {
+        if (text == null) return null;
+        String normalized = text.trim();
+        if (normalized.isEmpty()) return null;
+        try {
+            if (normalized.endsWith("%")) {
+                String bare = normalized.substring(0, normalized.length() - 1).trim();
+                if (!bare.matches("-?[0-9]+(\\.[0-9]+)?")) return null;
+                return Float.parseFloat(bare) / 100f;
+            }
+            if (!normalized.matches("-?[0-9]+(\\.[0-9]+)?")) return null;
+            return Float.parseFloat(normalized);
         } catch (NumberFormatException ignored) {
             return null;
         }
@@ -2688,6 +2814,14 @@ public class GuiHudEditorPro extends GuiScreen {
             hexColorInput = new GuiTextField(0, fontRendererObj, 0, 0, HEX_INPUT_W - 12, HEX_INPUT_H - 8);
             hexColorInput.setEnableBackgroundDrawing(false);
             hexColorInput.setMaxStringLength(7);
+        }
+    }
+
+    private void ensureSliderValueInput() {
+        if (sliderValueInput == null) {
+            sliderValueInput = new GuiTextField(2, fontRendererObj, 0, 0, 64, 12);
+            sliderValueInput.setEnableBackgroundDrawing(false);
+            sliderValueInput.setMaxStringLength(9);
         }
     }
 

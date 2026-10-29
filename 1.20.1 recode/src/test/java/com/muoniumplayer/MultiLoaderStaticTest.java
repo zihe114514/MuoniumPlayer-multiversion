@@ -9,9 +9,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -100,20 +102,42 @@ class MultiLoaderStaticTest {
     }
 
     @Test
-    @DisplayName("access widener 保持无条目，Forge 侧因此不需要等价 AT")
-    void accessWidener保持无条目() throws IOException {
+    @DisplayName("access widener 与 Forge AT 条目数同步 —— 一条 AW 必须对应一条 AT")
+    void accessWidener与Forge_AT同步() throws IOException {
+        // 3D 歌词光影包适配（WorldBillboard.shaderTextType）起，AW 有意携带条目
+        // （RenderType$CompositeState 等 9 条），Forge 侧 accesstransformer.cfg 是
+        // 它的等价镜像。守护的不变量从「两边都空」改为「两边同步」：
+        // 条目数相等（AT 文件的注释行不计），且 AT 文件必须存在、逐类对得上。
+        List<String> awEntries = new ArrayList<>();
         for (String line : read(FABRIC_RESOURCES.resolve("muoniumplayer.accesswidener")).split("\n")) {
             String trimmed = line.trim();
             if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("accessWidener")) {
                 continue;
             }
-            throw new AssertionError("access widener 又有条目了: " + trimmed
-                    + "（Skija 渲染层不碰 Framebuffer 的附件字段；每加一条，Forge 侧就要在"
-                    + " META-INF/accesstransformer.cfg 里维护一份等价的 AT）");
+            awEntries.add(trimmed);
         }
-        assertFalse(Files.exists(ProjectPaths.forge()
-                        .resolve(Paths.get("src", "main", "resources", "META-INF", "accesstransformer.cfg"))),
-                "AW 无条目时不该存在 AT 文件：两边同时为空才说明它们确实是同步的");
+        assertFalse(awEntries.isEmpty(), "AW 至少要保留光影适配的条目；真要清空请连 AT 一起清并同步本测试");
+        Path at = ProjectPaths.forge()
+                .resolve(Paths.get("src", "main", "resources", "META-INF", "accesstransformer.cfg"));
+        assertTrue(Files.exists(at), "AW 有条目时 Forge 侧必须有等价 accesstransformer.cfg");
+        List<String> atEntries = new ArrayList<>();
+        for (String line : read(at).split("\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                continue;
+            }
+            // AT 行尾允许 `f_110139_ # TRANSLUCENT_TRANSPARENCY` 这类 mojmap 注释
+            atEntries.add(trimmed.split("\\s+#")[0].trim());
+        }
+        assertEquals(awEntries.size(), atEntries.size(),
+                "AW 与 AT 条目数必须相等（AW=" + awEntries.size() + " AT=" + atEntries.size()
+                        + "）：加/删 AW 条目时同步维护 AT，反之亦然");
+        // 类条目两边都是 mojmap/官方名，直接点名比对；字段名两边语法不同（AW 用官方名，
+        // AT 用 SRG 名），数量对齐 + 抽查关键字段即可。
+        assertTrue(atEntries.stream().anyMatch(e -> e.contains("RenderType$CompositeState")),
+                "AT 缺 RenderType$CompositeState 类条目");
+        assertTrue(atEntries.stream().anyMatch(e -> e.contains("f_110139_")),
+                "AT 缺 TRANSLUCENT_TRANSPARENCY 对应的 SRG 字段条目");
     }
 
     @Test

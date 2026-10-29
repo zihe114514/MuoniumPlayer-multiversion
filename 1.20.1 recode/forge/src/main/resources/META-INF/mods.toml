@@ -3,7 +3,7 @@
 modLoader = "javafml"
 loaderVersion = "[47,)"
 license = "All-Rights-Reserved"
-issueTrackerURL = "https://github.com/zihe114514/MuoniumPlayer/issues"
+issueTrackerURL = "https://github.com/zihe114514/MuoniumPlayer-multiversion/issues"
 
 [[mods]]
 modId = "muonium"
@@ -11,7 +11,7 @@ version = "${version}"
 displayName = "MuoniumPlayer"
 authors = "云杉, 心事抱抱, N0ne, eyz2021"
 description = '''
-Music player for Minecraft ${minecraft_version} Forge.
+Minecraft music client mod: 8 sources (NetEase / QQ / KuGou / Bilibili / Qishui / YouTube Music / Spotify / GD), word-by-word lyrics, Dynamic Island, Automix crossfade, listen-together rooms. Client-only.
 '''
 displayURL = "https://melodifymc.cc.cd/"
 logoFile = "assets/muonium/icon.png"

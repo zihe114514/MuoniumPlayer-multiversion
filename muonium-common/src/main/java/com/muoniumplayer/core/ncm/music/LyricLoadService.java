@@ -301,6 +301,18 @@ final class LyricLoadService {
             }
         }
 
+        // ── 1.7) Apple 自己的 TTML 歌词 ────────────────────────────────────────
+        // 与 YouTube 早段同一哲学：Apple 行的 catalog id 精确对应一条官方逐词时间轴，
+        // 拿 id 取词不存在「匹配错版本」的问题；AMLL 的按标题匹配只该给它兜空。
+        // 账号态（media-user-token）在时拿到的是逐词/逐音节版，游客态经常为空 ——
+        // 空串按「这一源没有结果」处理，照常落到 AMLL 兜底，不挡链路。
+        if (music.isApple()) {
+            LyricLoadResult apple = appleTtmlLyrics(music);
+            if (apple != null) {
+                return apple;
+            }
+        }
+
         // ── 1.8) 平台自己的歌词（网易云 lyricNew），一次请求三用 ─────────────────
         // 这一个请求同时带回 yrc（平台逐字）、lrc（行级正文）与翻译轨：
         //   · yrc 是 songId 精确取回的逐字时间轴——绝不匹配错，存在就直接采用，
@@ -530,6 +542,33 @@ final class LyricLoadService {
             return new LyricLoadResult(json, lines);
         } catch (Throwable throwable) {
             System.err.println("[Music/YouTube] 歌词取回失败 " + videoId + ": " + throwable);
+            return null;
+        }
+    }
+
+    /**
+     * Apple 官方 TTML → 共享时间轴。
+     *
+     * <p>解析走 {@code LyricParser.parseTtml}（AMLL 同一条路），返回前用
+     * {@code hasWordByWordTiming} 自检：Apple 游客态经常只给行级甚至空串，行级 TTML
+     * 不算数 —— 按 null 处理，照常落到 AMLL 兜底，绝不拿一份没有逐字的时间轴去喂
+     * 逐词渲染器。缓存 JSON 直接包 TTML 原文，与内嵌歌词同一形态。</p>
+     */
+    private static LyricLoadResult appleTtmlLyrics(Music music) {
+        String songId = music.getSourceId();
+        if (songId == null || songId.trim().isEmpty()) return null;
+        try {
+            String ttml = com.muoniumplayer.core.ncm.apple.AppleMusicService.ttml(songId);
+            if (ttml == null || ttml.trim().isEmpty()) return null;
+            List<LyricLine> parsed = new ArrayList<>();
+            LyricParser.parseTtml(ttml, parsed);
+            if (!LyricParser.hasWordByWordTiming(parsed)) return null;
+            System.out.println("[Music/Apple] 官方 TTML 歌词 " + parsed.size() + " 行 for "
+                    + music.getStableKey());
+            return new LyricLoadResult(createEmbeddedLyricJson(ttml), parsed);
+        } catch (Throwable throwable) {
+            System.err.println("[Music/Lyric] Apple TTML 取回失败 " + music.getStableKey()
+                    + ": " + throwable);
             return null;
         }
     }

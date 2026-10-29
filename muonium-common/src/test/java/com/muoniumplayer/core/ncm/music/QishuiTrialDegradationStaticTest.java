@@ -154,10 +154,12 @@ class QishuiTrialDegradationStaticTest {
                 "播放条不许有试听徽标：标识只在全屏页与歌曲列表");
 
         // 全屏页：试听时音质 pill 本身替换成试听说明（WARN 色），不再单独立一枚。
+        // Apple 的 30 秒 preview 兜底（appleTrial）与汽水试听共用这条 WARN 通道，
+        // 但文案各走各的：汽水说「试听+归因」，Apple 说「试听片段 · 30 秒」。
         String nowPlaying = read(SCREENS + "NowPlayingInfo.java");
         String pills = methodBody(nowPlaying, "private List<Pill> pillsOf(Music music)");
-        assertTrue(pills.contains("qishuiTrial ? WARN : NEUTRAL"),
-                "音质 pill 在试听态必须转 WARN 色");
+        assertTrue(pills.contains("qishuiTrial || appleTrial ? WARN : NEUTRAL"),
+                "音质 pill 在试听态必须转 WARN 色（汽水试听与 Apple preview 兜底共用）");
         assertTrue(pills.contains("QishuiMusicService.trialBadgeLabel()"),
                 "替换文案与播放失败归因共用一份（trialBadgeLabel）");
         // 音质文案方法原样保留——非试听时 pill 仍显示「所选 → 实得」。

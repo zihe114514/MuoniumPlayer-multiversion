@@ -226,20 +226,22 @@ public class AccountManagerOverlay extends NcmSheet {
         requestRunning = false;
         beginPage();
 
-        final Panel dialog = sheet(468, () -> HEADER_H + LEAD + OVERVIEW_ROW * 2 + 44);
+        final Panel dialog = sheet(468, () -> HEADER_H + LEAD + OVERVIEW_ROW * 3 + 44);
         header(dialog, PartyIcons.PERSON, "账号与登录",
-                () -> "凭据只保存在本地 · 五个来源各自独立",
+                () -> "凭据只保存在本地 · 各来源各自独立",
                 () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
 
         final Panel body = body(dialog, () -> HEADER_H, () -> 44.0);
         final ScrollPanel feed = feed(body);
         // 开头让出几像素：格子悬停时绕着自己中心长，第一行贴着滚动区上边的话会被硬裁切掉圆角。
         strip(feed, LEAD);
-        // 3 + 2 两行铺开：五个平台凑不出规整的满格矩阵，与其挖一个窟窿，不如下一行收一列
-        // 整体居中 —— 两行共用一根中轴，视觉上仍然是对称的。
+        // 3 + 2 + 1 三行：Apple 加入后六个平台凑成 3-2-1 的阶梯（下一行收一列整体居中，
+        // 两两共用一根中轴，视觉上仍是对称的）—— 与其硬凑 3×2 的满格矩阵留两个窟窿，
+        // 不如让每行都比上一行少一格，收尾自然。
         final MusicPlatform[][] rows = {
                 {MusicPlatform.NETEASE, MusicPlatform.QQ, MusicPlatform.KUGOU},
-                {MusicPlatform.QISHUI, MusicPlatform.BILIBILI}};
+                {MusicPlatform.QISHUI, MusicPlatform.BILIBILI},
+                {MusicPlatform.APPLE}};
         int slot = 0;
         for (int r = 0; r < rows.length; r++) {
             final int rowSlot = r;
@@ -273,7 +275,9 @@ public class AccountManagerOverlay extends NcmSheet {
             }
         }
         // YouTube 与 Spotify 不在这里：它们的登录不是扫码 / Cookie 导入，各自的登录页
-        // 挂在音源浮层（MusicSourceOverlay）自己的卡上。
+        // 挂在音源浮层（MusicSourceOverlay）自己的卡上。Apple 虽然也是 cookies 形态，
+        // 但它有独立的登录页（gamdl 整包状态 + cookies 导入 + 播放偏好），进这边的
+        // 详情页统一管理。
 
         // 页脚说明走页脚那一档：格子逐张落位之后它才到场，退场时也先于格子收回去。
         tip(veil(dialog, this::footerGate), () -> PartyIcons.LOCK,
@@ -564,7 +568,12 @@ public class AccountManagerOverlay extends NcmSheet {
         final boolean qishuiBridgeReady = platform == MusicPlatform.QISHUI
                 && QishuiLoginBridge.isAvailable();
         final boolean qishuiCookieOnly = platform == MusicPlatform.QISHUI && !qishuiBridgeReady;
-        final boolean qrVisible = (!loggedIn || addAccountByQr) && !qishuiCookieOnly;
+        // Apple 不取码：账号态在 cookies 文件里，登录页是 cookie 导入表单（与汽水
+        // 「缺外部工具」同形态——二维码区收起，身份卡照常展示）。
+        final boolean appleCookieOnly = platform == MusicPlatform.APPLE;
+        final boolean qrVisible = (!loggedIn || addAccountByQr) && !qishuiCookieOnly
+                && !appleCookieOnly;
+        final boolean identityVisible = !qrVisible && (loggedIn || !qishuiCookieOnly || appleCookieOnly);
         final boolean qqChannelPicker = platform == MusicPlatform.QQ && !loggedIn;
         final boolean wechat = platform == MusicPlatform.QQ && qqLoginChannel == QQLoginChannel.WECHAT;
         // 酷狗的身份要在取码之前就定下来（两种客户端签的是两种凭证），所以选择器与二维码同页。
@@ -611,7 +620,7 @@ public class AccountManagerOverlay extends NcmSheet {
         // 内容按「分区」累加，和下面挂进滚动区的顺序一一对应：
         //   顶部 12 → [扫码 / 身份卡] → 12 → 状态说明 → [12 → 登录方式] → 底部交给页脚的 12。
         // 每个分区内部是「标题 20 + 间隙 12 + 内容」，所以整页的纵向节奏都是 12 的整数倍。
-        final boolean identityVisible = !qrVisible && (loggedIn || !qishuiCookieOnly);
+        
         final boolean segmentVisible = qqChannelPicker || kugouVariantPicker;
         double content = SECTION_GAP;
         if (qrVisible) {
@@ -661,6 +670,9 @@ public class AccountManagerOverlay extends NcmSheet {
         // 谁和谁并排是排版决定，页高只认行数（footerRows）。
         final boolean paired;
         if (addAccountByQr) {
+            paired = false;
+        } else if (platform == MusicPlatform.APPLE) {
+            // Apple 没有扫码：主按钮就是「导入 / 更新 cookies」，独占一行。
             paired = false;
         } else if (platform == MusicPlatform.NETEASE) {
             // 未登录：扫码与 Cookie 是两条平等入口，并排；已登录：退出登录独占一行。
@@ -1083,12 +1095,15 @@ public class AccountManagerOverlay extends NcmSheet {
         // 汽水没登录、又没装外部取码工具时，主按钮才是 Cookie 登录：不该挂一颗必然取码失败的按钮。
         final boolean qishuiCookie = platform == MusicPlatform.QISHUI && !loggedIn && !addAccountByQr
                 && !QishuiLoginBridge.isAvailable();
+        // Apple 没有扫码：登录 = 导入 cookies，退出 = 清 cookies。主按钮的两种形态都指向
+        // 同一个登录页（页内已登录时主按钮是退出，登录页页脚里才是重新导入）。
+        final boolean appleCookie = platform == MusicPlatform.APPLE && !addAccountByQr && !signOut;
         final RoundedButtonWidget button = action(dialog,
                 () -> signOut ? PartyIcons.LOGOUT : requestRunning ? PartyIcons.HOURGLASS : PartyIcons.KEY,
                 () -> signOut ? "退出登录"
                         : requestRunning ? "等待扫码…"
                         : addAccountByQr ? "重新获取二维码"
-                        : qishuiCookie ? "Cookie 登录" : "开始扫码登录",
+                        : appleCookie ? "导入 cookies 登录" : qishuiCookie ? "Cookie 登录" : "开始扫码登录",
                 FontManager.pf12bold, () -> 0xFFFFFF,
                 () -> {
                     if (addAccountByQr) {
@@ -1098,6 +1113,8 @@ public class AccountManagerOverlay extends NcmSheet {
                         } else {
                             startQrLogin(platform, pageGeneration.get(), true);
                         }
+                    } else if (appleCookie) {
+                        showAppleCookieLogin();
                     } else if (NeteaseMusicService.isLoggedIn(platform)) {
                         logout(platform);
                     } else if (qishuiCookie) {
@@ -1343,6 +1360,142 @@ public class AccountManagerOverlay extends NcmSheet {
 
     /** 「粘贴」这颗次按钮的固定宽度，剩下的都给「验证并登录」。 */
     private static final double QISHUI_PASTE_W = 96.0;
+
+    // ── Apple Music：cookies 导入登录页 ─────────────────────────────────────
+
+    /**
+     * Apple 的 Cookie 登录页（汽水同款版式）。
+     *
+     * <p>cookies 是<b>多行</b>的 Netscape 文件，单行输入框装不下——与音源浮层那页
+     * 同一决策：导入走「从剪贴板导入」按钮直接读剪贴板，摘要行只展示当前凭据状态。
+     * 校验走 {@code AppleApiClient.probeAccount()}（amp_api.py 助手），归因三类
+     * （订阅有效 / 有效无订阅 / 网络或凭据失败）如实落状态行。</p>
+     */
+    private void showAppleCookieLogin() {
+        final long token = pageGeneration.incrementAndGet();
+        detailPlatform = MusicPlatform.APPLE;
+        requestRunning = false;
+        statusText = com.muoniumplayer.core.ncm.apple.AppleMusicService.describeStatus();
+        statusTone = com.muoniumplayer.core.ncm.apple.AppleMusicService.isLoggedIn() ? 1 : 0;
+        beginPage();
+
+        final double contentTop = HEADER_H + SECTION_GAP;
+        final double statusTop = contentTop + SECTION_LABEL_BLOCK + CREDENTIAL_FIELD_H + SECTION_GAP;
+        final Panel dialog = sheet(468, () -> HEADER_H + SECTION_GAP + SECTION_LABEL_BLOCK
+                + CREDENTIAL_FIELD_H + SECTION_GAP + STATUS_BLOCK
+                + FOOTER_TOP_GAP + CREDENTIAL_FIELD_H + FOOTER_BOTTOM);
+        detailHeader(dialog, back(() -> showDetail(MusicPlatform.APPLE)),
+                MusicPlatform.APPLE, () -> "cookies 登录",
+                () -> "music.apple.com 网页端导出 · 解锁本人歌单与逐词歌词");
+
+        // 摘要行：展示当前凭据状态（不做输入框——多行 cookies 装不进单行框，导入走页脚按钮）。
+        final RoundedRectWidget field = new RoundedRectWidget();
+        dialog.addChild(field);
+        field.setClickable(false);
+        field.setRadius(6.0);
+        field.setBeforeRenderCallback(() -> {
+            field.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), CREDENTIAL_FIELD_H);
+            field.setPosition(PAD + CARD_INSET, contentTop);
+            field.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+        });
+        stroke(field, 6.0, MusicPlatform.APPLE::getBrandColor,
+                () -> requestRunning ? .62 : 0.0);
+        final LabelWidget digest = label(field,
+                com.muoniumplayer.core.ncm.apple.AppleCookieSupport::describe, FontManager.pf12);
+        digest.setBeforeRenderCallback(() -> {
+            digest.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            digest.setMaxWidth(Math.max(1, field.getWidth() - 22));
+            digest.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            digest.setPosition(11, inkTop(digest, CREDENTIAL_FIELD_H * .5));
+        });
+
+        tip(veil(dialog, this::footerGate), this::statusGlyph, () -> statusText, this::statusColor,
+                () -> statusTop);
+
+        // 页脚两颗并排：导入（读剪贴板→落盘→联网校验）与退出登录。
+        final double half = Math.max(1, (dialog.getWidth() - (PAD + CARD_INSET) * 2 - BUTTON_GAP) * .5);
+        final RoundedButtonWidget paste = action(dialog, () -> PartyIcons.LINK,
+                () -> "从剪贴板导入 cookies", FontManager.pf12bold,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                () -> submitAppleCookiesFromClipboard(token));
+        paste.setRadius(6.0);
+        paste.setBeforeRenderCallback(() -> {
+            paste.setClickable(footerGate() > .5);
+            paste.setAlpha((float) footerGate());
+            paste.setBounds(half, CREDENTIAL_FIELD_H);
+            paste.setPosition(PAD + CARD_INSET, dialog.getHeight() - FOOTER_BOTTOM - CREDENTIAL_FIELD_H);
+            paste.setColor(paste.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+        final RoundedButtonWidget signOut = action(dialog, () -> PartyIcons.LOGOUT, () -> "退出登录",
+                FontManager.pf12bold, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                () -> logout(MusicPlatform.APPLE));
+        signOut.setRadius(6.0);
+        signOut.setBeforeRenderCallback(() -> {
+            signOut.setClickable(footerGate() > .5);
+            signOut.setAlpha((float) footerGate());
+            signOut.setBounds(half, CREDENTIAL_FIELD_H);
+            signOut.setPosition(PAD + CARD_INSET + half + BUTTON_GAP,
+                    dialog.getHeight() - FOOTER_BOTTOM - CREDENTIAL_FIELD_H);
+            signOut.setColor(signOut.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+    }
+
+    /** 导入动作：读剪贴板 → 后台落盘校验（/v1/me/account 实测）→ 主线程写状态行。 */
+    private void submitAppleCookiesFromClipboard(final long token) {
+        if (requestRunning || token != pageGeneration.get()) return;
+        final String cookies = KeyboardUtils.getClipboardString();
+        if (cookies == null || cookies.trim().isEmpty()) {
+            statusText = "剪贴板是空的：先在浏览器里导出 cookies.txt 并复制全部内容";
+            statusTone = 2;
+            return;
+        }
+        requestRunning = true;
+        statusText = "正在校验 cookies…";
+        statusTone = 3;
+        MultiThreadingUtil.runAsync(() -> {
+            String outcome;
+            int tone;
+            try {
+                String imported = com.muoniumplayer.core.ncm.apple.AppleCookieSupport
+                        .importCookies(cookies);
+                if (imported == null) {
+                    outcome = "这不像一份 cookies.txt：应包含多行制表符分隔的 cookie 记录";
+                    tone = 2;
+                } else {
+                    com.muoniumplayer.core.ncm.apple.AppleApiClient.AccountProbe probe =
+                            com.muoniumplayer.core.ncm.apple.AppleApiClient.probeAccount();
+                    if (probe.valid && probe.subscriptionActive) {
+                        outcome = "已导入并验证：订阅有效，本人歌单与逐词歌词已解锁";
+                        tone = 1;
+                    } else if (probe.valid) {
+                        outcome = imported.isEmpty()
+                                ? "已导入（游客 cookies：无 media-user-token，无本人歌单）"
+                                : "已导入：账号有效，但该 Apple ID 无 Apple Music 订阅（完整版不可用）";
+                        tone = 0;
+                    } else {
+                        outcome = "已导入，但验证未通过：" + probe.reason;
+                        tone = 2;
+                    }
+                }
+            } catch (Throwable throwable) {
+                outcome = "导入失败：" + (throwable.getMessage() == null
+                        ? throwable.getClass().getSimpleName() : throwable.getMessage());
+                tone = 2;
+            }
+            final String finalOutcome = outcome;
+            final int finalTone = tone;
+            MultiThreadingUtil.runOnMainThread(() -> {
+                if (token != pageGeneration.get()) return;
+                requestRunning = false;
+                statusText = finalOutcome;
+                statusTone = finalTone;
+            });
+        });
+    }
 
     /**
      * 汽水音乐的手动 Cookie 入口。
@@ -2439,6 +2592,12 @@ public class AccountManagerOverlay extends NcmSheet {
             }
             return meta;
         }
+        if (platform == MusicPlatform.APPLE) {
+            // Apple 不暴露账号标识；cookies 里有 media-user-token 也只是个 opaque 令牌，
+            // 展示它只会诱导用户把它当密码贴去别处。
+            return com.muoniumplayer.core.ncm.apple.AppleMusicService.isLoggedIn()
+                    ? "Apple Music · cookies 已验证" : "Apple Music · 未登录";
+        }
         return platform.getDisplayName() + " · 已登录";
     }
 
@@ -2448,6 +2607,11 @@ public class AccountManagerOverlay extends NcmSheet {
         }
         if (platform == MusicPlatform.BILIBILI) {
             return NeteaseMusicService.isLoggedIn(platform) && BilibiliMusicService.isVipAccount();
+        }
+        if (platform == MusicPlatform.APPLE) {
+            // cookies 里没有可查的订阅档位；不写这条会掉进 isNeteaseVip 的默认档 ——
+            // 它对非 NETEASE 平台恒 false，行为碰巧正确，但那是个巧合不是约定。
+            return false;
         }
         return isNeteaseVip(platform);
     }

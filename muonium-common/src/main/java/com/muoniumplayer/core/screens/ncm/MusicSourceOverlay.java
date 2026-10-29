@@ -124,12 +124,16 @@ public final class MusicSourceOverlay extends NcmSheet {
     private static final int PAGE_YOUTUBE_PROXY = 3;
     private static final int PAGE_YOUTUBE_LOGIN = 4;
     private static final int PAGE_SPOTIFY_LOGIN = 5;
+    private static final int PAGE_APPLE_LOGIN = 6;
 
     /** Cookie 校验要联网（最坏 25 秒），期间把按钮钉成「正在验证…」，不让人连点。 */
     private boolean youtubeLoginBusy;
 
     /** OAuth 有一次浏览器往返（可能几分钟），期间登录态由 SpotifyOAuthFlow 的阶段接管。 */
     private boolean spotifyLoginBusy;
+
+    /** Apple 的 cookies 校验要联网（一次 /v1/me，最坏 15 秒），期间钉住「正在验证…」。 */
+    private boolean appleLoginBusy;
 
     /** 网址导入弹窗的开合。组件随页面重建，开合状态由它独立保管。 */
     private boolean lxUrlDialogOpen;
@@ -242,21 +246,21 @@ public final class MusicSourceOverlay extends NcmSheet {
     // ════════════════════════════ 一级页：来源总览 ════════════════════════════
 
     /**
-     * 总览页：3 × 3 方格矩阵，一格一个可切换项。
+     * 总览页：3 × 4 方格矩阵，一格一个可切换项（Apple 加入后第十格落第四行行首）。
      *
-     * <p>可切换项恰好九个 —— 七个官方源 + GD 聚合 + LX 自定义 —— 三列三行填满，一格不空：
-     * 这是这批条目唯一不需要拿占位块去凑的规整矩阵（四列九格必然剩三个窟窿）。
-     * 旧版七张 67px 的大卡加三行分组标题加两行页脚开关，目标高度 750 上下，一屏根本放不下，
-     * 首屏永远截在一半；压成方格之后整页 ~480，绝大多数视口不再需要滚动。</p>
+     * <p>官方源 + GD 聚合 + LX 自定义共十项，前三行填满、第四行单格收尾 —— 矩阵不再是
+     * 「一格不空」，但比四列九格留三窟窿的排法规整：缺口集中在最后一行右端，视线扫过去
+     * 是一条完整的 3 列光栅。旧版七张 67px 的大卡加三行分组标题加两行页脚开关，目标高度
+     * 750 上下，一屏根本放不下；压成方格之后整页 ~560，绝大多数视口不再需要滚动。</p>
      *
      * <p>格子按行主序排：上两行是官方源（第一行网易云/QQ/酷狗，第二行 YouTube/B站/汽水，
-     * 第三行 Spotify/GD/LX）。选中的格子整块铺品牌色，扫一眼就知道现在用着谁。</p>
+     * 第三行 Spotify/Apple/GD），第四行 LX。选中的格子整块铺品牌色，扫一眼就知道现在用着谁。</p>
      */
     private void showOverview() {
         page = PAGE_OVERVIEW;
         beginPage();
 
-        final Panel dialog = sheet(476, () -> HEADER_H + LABEL_ROW + CELL_ROW_H * 3 + FOOTER_H);
+        final Panel dialog = sheet(476, () -> HEADER_H + LABEL_ROW + CELL_ROW_H * 4 + FOOTER_H);
         header(dialog, PartyIcons.NOTE, "音乐来源",
                 () -> "点按任一格即切换；官方源、聚合源与自定义脚本源各自独立",
                 () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
@@ -275,10 +279,13 @@ public final class MusicSourceOverlay extends NcmSheet {
         gridRow(feed, 1, cell -> officialCell(cell, 3, MusicPlatform.YOUTUBE),
                 cell -> officialCell(cell, 4, MusicPlatform.BILIBILI),
                 cell -> officialCell(cell, 5, MusicPlatform.QISHUI));
-        // 第三行混排：官方源收尾 + 两个「入口」格（GD/LX 进二级页，不直接切换）。
+        // 第三行官方源收尾 + GD 入口格；第四行 LX 入口格（进二级页，不直接切换）。
         // 同一行同规格，规整优先于分组 —— 分组信息由格子自己的颜色体系（品牌色/靛蓝/紫）承担。
         gridRow(feed, 2, cell -> officialCell(cell, 6, MusicPlatform.SPOTIFY),
-                this::gdCell, this::lxCell);
+                cell -> officialCell(cell, 7, MusicPlatform.APPLE),
+                this::gdCell);
+        // 第十格（LX）独占一行行首：空出的两格是隐形 Panel，不画任何东西。
+        gridRow(feed, 3, this::lxCell, cell -> { }, cell -> { });
 
         settingsRow(dialog);
         tip(dialog, () -> "GD音乐台来源由 music-api.gdstudio.xyz 提供，请遵循上游服务的使用要求",
@@ -482,6 +489,11 @@ public final class MusicSourceOverlay extends NcmSheet {
                     () -> NeteaseMusicService.isLoggedIn(MusicPlatform.SPOTIFY),
                     this::showSpotifyLogin, 0);
         }
+        if (platform == MusicPlatform.APPLE) {
+            cornerButton(card, PartyIcons.KEY, MusicPlatform.APPLE,
+                    () -> NeteaseMusicService.isLoggedIn(MusicPlatform.APPLE),
+                    this::showAppleLogin, 0);
+        }
     }
 
     /** 名字行右端的让位宽度：角标钮（YouTube 两颗）> 勾标 > 无。勾标让位随补间连续变化。 */
@@ -489,6 +501,7 @@ public final class MusicSourceOverlay extends NcmSheet {
         double badgeReserve = 12.0 + 18.0 * pickedProgress;
         if (platform == MusicPlatform.YOUTUBE) return CELL_CORNER * 2 + 4.0 + 8.0;
         if (platform == MusicPlatform.SPOTIFY) return CELL_CORNER + 8.0;
+        if (platform == MusicPlatform.APPLE) return CELL_CORNER + 8.0;
         return badgeReserve;
     }
 
@@ -563,14 +576,15 @@ public final class MusicSourceOverlay extends NcmSheet {
             case BILIBILI -> MusicBrandIcons.BILIBILI_MONOGRAM;
             case QISHUI -> MusicBrandIcons.QISHUI_MONOGRAM;
             case SPOTIFY -> MusicBrandIcons.SPOTIFY_MONOGRAM;
+            case APPLE -> MusicBrandIcons.APPLE_MONOGRAM;
             default -> MusicBrandIcons.NETEASE_CLOUD_MUSIC;
         };
     }
 
-    /** 品牌字形的兜底字体。酷狗/哔哩/汽水/Spotify 用正文字体画一枚汉字字标。 */
+    /** 品牌字形的兜底字体。酷狗/哔哩/汽水/Spotify/Apple 用正文字体画一枚字符字标。 */
     private CFontRenderer brandFont(final MusicPlatform platform) {
         return switch (platform) {
-            case KUGOU, BILIBILI, QISHUI, SPOTIFY -> FontManager.pf34bold;
+            case KUGOU, BILIBILI, QISHUI, SPOTIFY, APPLE -> FontManager.pf34bold;
             case YOUTUBE -> FontManager.youtubeIcon34;
             case QQ -> FontManager.qqMusicIcon68;
             default -> FontManager.musicBrand52;
@@ -582,7 +596,7 @@ public final class MusicSourceOverlay extends NcmSheet {
      */
     private void gdCell(final Panel cell) {
         final BooleanSupplier picked = this::isGdActive;
-        final Card card = gridCell(cell, 7, MusicPlatform.GD::getBrandColor, picked, true, null);
+        final Card card = gridCell(cell, 8, MusicPlatform.GD::getBrandColor, picked, true, null);
         card.setShouldOverrideMouseCursor(true);
         card.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -629,7 +643,7 @@ public final class MusicSourceOverlay extends NcmSheet {
     /** LX 自定义源格：进入脚本管理页。与 GD 同一套入口版式，紫色系。 */
     private void lxCell(final Panel cell) {
         final BooleanSupplier picked = LxSourceService::isEnabled;
-        final Card card = gridCell(cell, 8, () -> LX_COLOR, picked, true, null);
+        final Card card = gridCell(cell, 9, () -> LX_COLOR, picked, true, null);
         card.setShouldOverrideMouseCursor(true);
         card.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
@@ -1098,6 +1112,301 @@ public final class MusicSourceOverlay extends NcmSheet {
             return PartyIcons.HOURGLASS;
         }
         if (flow == SpotifyOAuthFlow.Status.FAILED) return PartyIcons.WARNING;
+        return statusTone == 1 ? PartyIcons.CHECK : statusTone == 2 ? PartyIcons.WARNING : PartyIcons.INFO;
+    }
+
+    // ── Apple Music 登录（粘贴 cookies.txt + gamdl 伴生管理） ────────────────
+
+    /**
+     * 二级页：Apple Music 凭据与伴生后端。
+     *
+     * <p>与 YouTube 的粘贴 Cookie 同一版式，多两块本平台特有的东西：gamdl 伴生后端状态行
+     * （与汽水源卡片同款的实时状态）和两个行为开关。cookies 是<b>多行</b>的 Netscape 文件，
+     * 单行输入框装不下 —— 导入走「从剪贴板导入」按钮直接读剪贴板（汽水同款交互），
+     * 输入框只作只读摘要展示，不承接输入。</p>
+     */
+    private void showAppleLogin() {
+        page = PAGE_APPLE_LOGIN;
+        beginPage();
+
+        statusText = com.muoniumplayer.core.ncm.apple.AppleMusicService.describeStatus();
+        statusTone = com.muoniumplayer.core.ncm.apple.AppleMusicService.isLoggedIn() ? 1 : 0;
+        appleLoginBusy = false;
+
+        final Panel dialog = sheet(476, () -> 430.0);
+        subHeader(dialog, back(this::showOverview), () -> "Apple Music · 凭据",
+                () -> "搜索无需登录 · cookies 换来本人歌单与逐词歌词 · 完整版走 gamdl 伴生",
+                MusicPlatform.APPLE::getBrandColor);
+        tip(dialog, this::appleStatusGlyph, this::appleLiveStatus, this::appleLiveColor, () -> 60.0);
+
+        final Panel body = body(dialog, () -> 88.0, () -> 54.0);
+        final ScrollPanel feed = feed(body);
+        sectionLabel(strip(feed, 20.0), "cookies.txt（music.apple.com 导出）", () -> 4.0,
+                MusicPlatform.APPLE::getBrandColor);
+        appleCookieDigestRow(strip(feed, 46.0));
+        sectionLabel(strip(feed, 20.0), "gamdl 伴生后端（完整版音频）", () -> 4.0,
+                MusicPlatform.APPLE::getBrandColor);
+        appleCompanionRow(strip(feed, 46.0));
+        sectionLabel(strip(feed, 20.0), "播放偏好", () -> 4.0,
+                MusicPlatform.APPLE::getBrandColor);
+        applePreferenceRows(strip(feed, 84.0));
+        appleManualGamdlRow(strip(feed, 46.0));
+        appleLoginFooter(dialog);
+    }
+
+    /** cookies 摘要行：只读展示当前凭据状态，导入动作在页脚按钮上。 */
+    private void appleCookieDigestRow(final Panel row) {
+        final RoundedRectWidget field = new RoundedRectWidget();
+        row.addChild(field);
+        field.setGlassRim(GlassLook.Surface.PLAYER);
+        field.setClickable(false);
+        field.setRadius(9);
+        field.setBeforeRenderCallback(() -> {
+            field.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 40);
+            field.setPosition(PAD + CARD_INSET, 4.0);
+            field.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+            field.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+        });
+        final LabelWidget digest = label(field,
+                com.muoniumplayer.core.ncm.apple.AppleCookieSupport::describe,
+                FontManager.pf12);
+        digest.setBeforeRenderCallback(() -> {
+            digest.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            digest.setMaxWidth(Math.max(1, field.getWidth() - 22));
+            digest.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            digest.setPosition(11, inkTop(digest, 20.0));
+        });
+        stroke(field, 9.0, MusicPlatform.APPLE::getBrandColor,
+                () -> appleLoginBusy ? .62 : 0.0);
+    }
+
+    /** 伴生状态行：实时轮询 AppleCompanionDownload 的状态机 + 行内「一键安装」钮。 */
+    private void appleCompanionRow(final Panel row) {
+        final RoundedRectWidget surface = new RoundedRectWidget();
+        row.addChild(surface);
+        surface.setGlassRim(GlassLook.Surface.PLAYER);
+        surface.setClickable(false);
+        surface.setRadius(11);
+        surface.setBeforeRenderCallback(() -> {
+            surface.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 40);
+            surface.setPosition(PAD + CARD_INSET, 4.0);
+            surface.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            surface.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+        });
+        final LabelWidget status = label(surface,
+                com.muoniumplayer.core.ncm.apple.AppleGamdlBridge::describeStatus,
+                FontManager.pf12);
+        status.setBeforeRenderCallback(() -> {
+            status.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            status.setMaxWidth(Math.max(1, surface.getWidth() - 130));
+            status.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            status.setPosition(14, inkTop(status, 20.0));
+        });
+        final RoundedButtonWidget install = action(surface, () -> PartyIcons.ADD,
+                () -> com.muoniumplayer.core.ncm.apple.AppleCompanionDownload.isReady()
+                        ? "重新验证" : "一键安装",
+                FontManager.pf12bold, () -> 0xFFFFFF,
+                com.muoniumplayer.core.ncm.apple.AppleCompanionDownload::startManualInstall);
+        install.setBeforeRenderCallback(() -> {
+            install.setBounds(96, 26);
+            install.setPosition(surface.getWidth() - 104, 7);
+            install.setColor(install.isHovering()
+                    ? mix(MusicPlatform.APPLE.getBrandColor(), 0xFFFFFF, .16)
+                    : MusicPlatform.APPLE.getBrandColor());
+        });
+    }
+
+    /** 两条偏好开关：gamdl 完整播放总开关 + 30 秒试听兜底开关（汽水 toggle 同款）。 */
+    private void applePreferenceRows(final Panel row) {
+        final RoundedRectWidget surface = new RoundedRectWidget();
+        row.addChild(surface);
+        surface.setGlassRim(GlassLook.Surface.PLAYER);
+        surface.setClickable(false);
+        surface.setRadius(11);
+        surface.setBeforeRenderCallback(() -> {
+            surface.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 78);
+            surface.setPosition(PAD + CARD_INSET, 4.0);
+            surface.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            surface.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+        });
+        final LabelWidget gamdlTitle = label(surface, "gamdl 完整播放", FontManager.pf12bold);
+        gamdlTitle.setBeforeRenderCallback(() -> {
+            gamdlTitle.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            gamdlTitle.setPosition(14, 12.0);
+        });
+        toggle(surface,
+                () -> com.muoniumplayer.core.ncm.apple.AppleConfigStore.snapshot().gamdlEnabled,
+                () -> com.muoniumplayer.core.ncm.apple.AppleConfigStore
+                        .saveGamdlEnabled(!com.muoniumplayer.core.ncm.apple.AppleConfigStore
+                                .snapshot().gamdlEnabled),
+                () -> surface.getWidth() - 14.0, () -> 21.0, MusicPlatform.APPLE::getBrandColor);
+        final LabelWidget previewTitle = label(surface, "30 秒试听兜底（换源也失败时）",
+                FontManager.pf12bold);
+        previewTitle.setBeforeRenderCallback(() -> {
+            previewTitle.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            previewTitle.setPosition(14, 48.0);
+        });
+        toggle(surface,
+                () -> com.muoniumplayer.core.ncm.apple.AppleConfigStore.snapshot().previewFallback,
+                () -> com.muoniumplayer.core.ncm.apple.AppleConfigStore
+                        .savePreviewFallback(!com.muoniumplayer.core.ncm.apple.AppleConfigStore
+                                .snapshot().previewFallback),
+                () -> surface.getWidth() - 14.0, () -> 57.0, MusicPlatform.APPLE::getBrandColor);
+    }
+
+    /**
+     * 非 Windows 用户的降级入口：手动指定 gamdl 可执行文件路径。
+     *
+     * <p>每个按键都落盘是有意的：这份 JSON 只有几百字节、原子写，存配置的代价比
+     * 「填完忘了点保存，重启后路径丢了」小得多。</p>
+     */
+    private void appleManualGamdlRow(final Panel row) {
+        final RoundedRectWidget field = new RoundedRectWidget();
+        row.addChild(field);
+        field.setGlassRim(GlassLook.Surface.PLAYER);
+        field.setClickable(false);
+        field.setRadius(9);
+        field.setBeforeRenderCallback(() -> {
+            field.setBounds(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2), 40);
+            field.setPosition(PAD + CARD_INSET, 4.0);
+            field.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+            field.setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+        });
+        final TextFieldWidget input = new TextFieldWidget(FontManager.pf12);
+        row.addChild(input);
+        input.setEnabled(true);
+        input.setPlaceholder("（可选）手动指定 gamdl 可执行文件完整路径");
+        String saved = com.muoniumplayer.core.ncm.apple.AppleConfigStore.snapshot().manualGamdlPath;
+        if (!saved.isEmpty()) input.setText(saved);
+        input.drawUnderline(false);
+        input.setTextChangedCallback(newText -> com.muoniumplayer.core.ncm.apple.AppleConfigStore
+                .saveManualGamdlPath(newText));
+        input.setBeforeRenderCallback(() -> {
+            input.setBounds(Math.max(1, field.getWidth() - 22), 24);
+            input.setPosition(field.getRelativeX() + 11, field.getRelativeY() + 8);
+            input.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            input.setDisabledTextColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        });
+        stroke(field, 9.0, MusicPlatform.APPLE::getBrandColor, () -> input.isFocused() ? .62 : 0.0);
+    }
+
+    private void appleLoginFooter(final Panel dialog) {
+        final RoundedButtonWidget paste = action(dialog, () -> PartyIcons.LINK,
+                () -> "从剪贴板导入 cookies", FontManager.pf12bold,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                this::submitAppleCookiesFromClipboard);
+        paste.setBeforeRenderCallback(() -> {
+            paste.setBounds(footerTripleWidth(dialog), 30);
+            paste.setPosition(PAD + CARD_INSET, dialog.getHeight() - 46);
+            paste.setColor(paste.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+
+        final RoundedButtonWidget install = action(dialog, () -> PartyIcons.ADD,
+                () -> "一键安装伴生", FontManager.pf12bold, () -> 0xFFFFFF,
+                com.muoniumplayer.core.ncm.apple.AppleCompanionDownload::startManualInstall);
+        install.setBeforeRenderCallback(() -> {
+            install.setBounds(footerTripleWidth(dialog), 30);
+            install.setPosition(PAD + CARD_INSET + footerTripleWidth(dialog) + 8.0,
+                    dialog.getHeight() - 46);
+            install.setColor(install.isHovering()
+                    ? mix(MusicPlatform.APPLE.getBrandColor(), 0xFFFFFF, .16)
+                    : MusicPlatform.APPLE.getBrandColor());
+        });
+
+        final RoundedButtonWidget signOut = action(dialog, () -> PartyIcons.LOGOUT, () -> "退出登录",
+                FontManager.pf12bold, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
+                () -> {
+                    if (!NeteaseMusicService.isLoggedIn(MusicPlatform.APPLE)) {
+                        statusText = "现在本来就是未登录状态";
+                        statusTone = 0;
+                        return;
+                    }
+                    // 走账号分派那一层，别在这里直接清文件：账号名缓存要一起失效。
+                    NeteaseMusicService.logout(MusicPlatform.APPLE);
+                    statusText = com.muoniumplayer.core.ncm.apple.AppleMusicService.describeStatus();
+                    statusTone = 0;
+                });
+        signOut.setBeforeRenderCallback(() -> {
+            signOut.setBounds(footerTripleWidth(dialog), 30);
+            signOut.setPosition(PAD + CARD_INSET + (footerTripleWidth(dialog) + 8.0) * 2,
+                    dialog.getHeight() - 46);
+            signOut.setColor(signOut.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+    }
+
+    /** 页脚导入按钮：读剪贴板 → 后台落盘校验（/v1/me 实测），回主线程写状态。 */
+    private void submitAppleCookiesFromClipboard() {
+        if (appleLoginBusy) return;
+        final String cookies = KeyboardUtils.getClipboardString();
+        if (cookies == null || cookies.trim().isEmpty()) {
+            statusText = "剪贴板是空的：先在浏览器里导出 cookies.txt 并复制全部内容";
+            statusTone = 2;
+            return;
+        }
+        appleLoginBusy = true;
+        statusText = "正在校验 cookies…";
+        statusTone = 3;
+        MultiThreadingUtil.runAsync(() -> {
+            String outcome;
+            int tone;
+            try {
+                String token = com.muoniumplayer.core.ncm.apple.AppleCookieSupport
+                        .importCookies(cookies);
+                if (token == null) {
+                    outcome = "这不像一份 cookies.txt：应包含多行制表符分隔的 cookie 记录";
+                    tone = 2;
+                } else {
+                    // /v1/me/account 实测账号态与订阅；无订阅不当致命错误 —— 目录能力
+                    // 照常可用，换源替身也不受影响，但状态行要说清「完整版没有着落」。
+                    com.muoniumplayer.core.ncm.apple.AppleApiClient.AccountProbe probe =
+                            com.muoniumplayer.core.ncm.apple.AppleApiClient.probeAccount();
+                    if (probe.valid && probe.subscriptionActive) {
+                        outcome = "已导入并验证：订阅有效，本人歌单与逐词歌词已解锁";
+                        tone = 1;
+                    } else if (probe.valid) {
+                        outcome = token.isEmpty()
+                                ? "已导入（游客 cookies：无 media-user-token，无本人歌单）"
+                                : "已导入：账号有效，但该 Apple ID 无 Apple Music 订阅（完整版不可用）";
+                        tone = 0;
+                    } else {
+                        // 归因分两类：网络抖动（重试即可，cookies 别删）与凭据被拒（重导）。
+                        outcome = "已导入，但验证未通过：" + probe.reason;
+                        tone = 2;
+                    }
+                }
+            } catch (Throwable throwable) {
+                outcome = "导入失败：" + (throwable.getMessage() == null
+                        ? throwable.getClass().getSimpleName() : throwable.getMessage());
+                tone = 2;
+            }
+            final String finalOutcome = outcome;
+            final int finalTone = tone;
+            MultiThreadingUtil.runOnMainThread(() -> {
+                appleLoginBusy = false;
+                statusText = finalOutcome;
+                statusTone = finalTone;
+            });
+        });
+    }
+
+    /** 活状态行：校验进行中直接说校验，其余显示最近一次操作反馈。 */
+    private String appleLiveStatus() {
+        if (appleLoginBusy) return "正在校验 cookies（最坏 15 秒）…";
+        return statusText;
+    }
+
+    private int appleLiveColor() {
+        if (appleLoginBusy) return NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+        return statusTone == 1 ? OK_COLOR : statusTone == 2 ? BAD_COLOR
+                : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+    }
+
+    private String appleStatusGlyph() {
+        if (appleLoginBusy) return PartyIcons.HOURGLASS;
         return statusTone == 1 ? PartyIcons.CHECK : statusTone == 2 ? PartyIcons.WARNING : PartyIcons.INFO;
     }
 
@@ -2128,6 +2437,16 @@ public final class MusicSourceOverlay extends NcmSheet {
             return SpotifyMusicService.isConfigured()
                     ? "未登录 · 已配置，开浏览器授权后可浏览本人歌单"
                     : "未登录 · 元数据源，搜索无需登录，登录需自备 Client ID";
+        }
+        if (platform == MusicPlatform.APPLE) {
+            // 与 Spotify 同理：目录搜索公开，登录只是账号能力；gamdl 是完整版的另一条腿，
+            // 它的状态由 AppleGamdlBridge 的活状态行承担，这里只说账号与能力边界。
+            if (NeteaseMusicService.isLoggedIn(platform)) {
+                return "已登录 · 本人歌单与逐词歌词已解锁";
+            }
+            return com.muoniumplayer.core.ncm.apple.AppleMusicService.isConfigured()
+                    ? "cookies 已导入 · 待验证或已过期，重新导入即可"
+                    : "未登录 · 搜索无需登录，cookies 换来本人歌单与逐词歌词";
         }
         if (NeteaseMusicService.isLoggedIn(platform)) {
             return "已登录 · " + NeteaseMusicService.getAccountName(platform);

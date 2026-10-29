@@ -262,6 +262,10 @@ final class AmllTtmlLyricService {
             else if (platform.equals("tencent")) addParameter(parameters, "qqMusicId", sourceId);
             else if (platform.equals("apple")) addParameter(parameters, "appleMusicId", sourceId);
             else if (platform.equals("spotify")) addParameter(parameters, "spotifyId", sourceId);
+        } else if (music.isApple()) {
+            // Apple 行的 catalog 数字 id 就是 AMLL DB 认的 appleMusicId —— 官方 TTML 兜底
+            // （LyricLoadService 的 Apple 早段拿不到时，AMLL 的库还有社区存的同曲词）。
+            addParameter(parameters, "appleMusicId", sourceId);
         }
         return parameters;
     }

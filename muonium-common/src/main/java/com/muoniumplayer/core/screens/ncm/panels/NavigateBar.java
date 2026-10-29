@@ -988,14 +988,16 @@ public class NavigateBar extends NCMPanel {
         boolean bilibiliMode = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.BILIBILI;
         boolean qishuiMode = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.QISHUI;
         boolean spotifyMode = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.SPOTIFY;
+        boolean appleMode = NeteaseMusicService.getCurrentPlatform() == MusicPlatform.APPLE;
         // GD 聚合源沿用网易云那一套入口（原来 neteaseMode 就是这个含义），这里只把自有入口的平台单独拆出来。
         // Spotify 沿用网易云的发现入口（它的搜索就是网易云同款形态），账号歌单走自己的快照。
         boolean neteaseMode = !qqMode && !kugouMode && !youtubeMode && !bilibiliMode && !qishuiMode
-                && !spotifyMode;
+                && !spotifyMode && !appleMode;
         {
             LabelWidget lblDiscovery = new LabelWidget(
                     qishuiMode ? "汽水音乐" : bilibiliMode ? "哔哩哔哩" : youtubeMode ? "YouTube Music"
                             : kugouMode ? "酷狗音乐发现" : spotifyMode ? "Spotify"
+                            : appleMode ? "Apple Music"
                             : qqMode ? "QQ 音乐发现" : "网易云发现", FontManager.pf14bold);
             lblDiscovery.setClickable(false);
             lblDiscovery.setBeforeRenderCallback(() -> {
@@ -1007,8 +1009,8 @@ public class NavigateBar extends NCMPanel {
             // 排行榜：网易云的榜单页最终展示的是 HomePanel 卡片墙，先取数据再一次切页（navigateAsync），
             // 否则会先闪一个空的中转页、历史栈里也会多出一条回不去的记录。
             // QQ 的榜单不一样 —— 它是真的留在 NeteaseDiscoveryPanel 里按歌曲行展示，所以照旧直接切页。
-            // Spotify 没有对齐的榜单对象，发现区只留账号歌单。
-            if (!youtubeMode && !bilibiliMode && !qishuiMode && !spotifyMode) {
+            // Spotify 没有对齐的榜单对象，发现区只留账号歌单；Apple 同理（v1 不做榜单 UI）。
+            if (!youtubeMode && !bilibiliMode && !qishuiMode && !spotifyMode && !appleMode) {
                 this.addSidebarRow("nav:chart", new PlaylistItem(FontelloIcons.LEADERBOARD, FontManager.fontello16,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "排行榜", () -> {
@@ -1063,6 +1065,10 @@ public class NavigateBar extends NCMPanel {
                 this.addSidebarRow("nav:recent", new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "最近播放", () -> NCMScreen.getInstance()
                         .navigateAsync("最近播放", NeteaseDiscoveryPanel::loadRecentSongsPanel)));
+                this.addSidebarRow("nav:radio", new PlaylistItem("台", FontManager.pf12bold,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        () -> "电台 · 播客", () -> NCMScreen.getInstance().navigateAsync(
+                        "电台 · 播客", RadioHubPanel::new)));
                 this.addSidebarRow("nav:fm", new PlaylistItem(MusicBrandIcons.PERSONAL_FM, FontManager.musicBrand16,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
                         () -> "私人 FM", () -> NCMScreen.getInstance().setCurrentPanel(new PersonalFmPanel())));
@@ -1213,13 +1219,14 @@ public class NavigateBar extends NCMPanel {
             }
         }
 
-        // QQ / 酷狗 / B 站 / 汽水 / Spotify 的账号歌单都是异步加载的快照；网易云继续使用现有 CloudMusic 缓存。
+        // QQ / 酷狗 / B 站 / 汽水 / Spotify / Apple 的账号歌单都是异步加载的快照；网易云继续使用现有 CloudMusic 缓存。
         List<PlayList> pl = qqMode
                 ? NeteaseMusicService.getQQUserPlaylistsSnapshot()
                 : kugouMode ? KuGouMusicService.getUserPlaylistsSnapshot()
                 : bilibiliMode ? BilibiliFavoriteService.getUserPlaylistsSnapshot()
                 : qishuiMode ? QishuiMusicService.getUserPlaylistsSnapshot()
                 : spotifyMode ? com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.getUserPlaylistsSnapshot()
+                : appleMode ? com.muoniumplayer.core.ncm.apple.AppleMusicService.getUserPlaylistsSnapshot()
                 : youtubeMode ? Collections.emptyList() : CloudMusic.playLists;
 
         if (qqMode && NeteaseMusicService.isLoggedIn(MusicPlatform.QQ)
@@ -1247,11 +1254,16 @@ public class NavigateBar extends NCMPanel {
             com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.ensureUserPlaylistsAsync(() ->
                     MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().markDirty()));
         }
+        if (appleMode && NeteaseMusicService.isLoggedIn(MusicPlatform.APPLE)
+                && !com.muoniumplayer.core.ncm.apple.AppleMusicService.areUserPlaylistsLoaded()) {
+            com.muoniumplayer.core.ncm.apple.AppleMusicService.ensureUserPlaylistsAsync(() ->
+                    MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().markDirty()));
+        }
 
         // QQ 的创建/收藏歌单统一显示在“我的账号歌单”下，不再因为平台切换而隐藏整个入口。
         lblPlaylists.setHidden(false);
         if (pl != null && !pl.isEmpty()) {
-            if (qqMode || kugouMode || bilibiliMode || qishuiMode || spotifyMode) {
+            if (qqMode || kugouMode || bilibiliMode || qishuiMode || spotifyMode || appleMode) {
                 for (PlayList playList : pl) {
                     PlaylistItem item = new PlaylistItem("D",
                             () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
@@ -1278,7 +1290,7 @@ public class NavigateBar extends NCMPanel {
                     this.addSidebarRow(playlistRowKey("account", playList), item);
                 }
             }
-        } else if (qqMode || kugouMode || bilibiliMode || qishuiMode || spotifyMode) {
+        } else if (qqMode || kugouMode || bilibiliMode || qishuiMode || spotifyMode || appleMode) {
             String status;
             if (bilibiliMode) {
                 status = !NeteaseMusicService.isLoggedIn(MusicPlatform.BILIBILI)
@@ -1300,6 +1312,11 @@ public class NavigateBar extends NCMPanel {
                         ? "完成 Spotify 授权后加载歌单（音源浮层里登录）"
                         : (com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.areUserPlaylistsLoading()
                         ? "正在加载 Spotify 歌单…" : "暂无可用 Spotify 歌单");
+            } else if (appleMode) {
+                status = !NeteaseMusicService.isLoggedIn(MusicPlatform.APPLE)
+                        ? "导入 Apple cookies 后加载歌单（音源浮层里登录）"
+                        : (com.muoniumplayer.core.ncm.apple.AppleMusicService.areUserPlaylistsLoading()
+                        ? "正在加载 Apple 歌单…" : "暂无可用 Apple 歌单");
             } else {
                 status = !NeteaseMusicService.isLoggedIn(MusicPlatform.QQ)
                         ? "登录 QQ 音乐后加载歌单"
@@ -1322,7 +1339,7 @@ public class NavigateBar extends NCMPanel {
 
         // 收藏歌单是网易云独有的分组：QQ 与酷狗的收藏歌单都已经并入上面的"我的账号歌单"。
         lblSubscribed.setHidden(qqMode || kugouMode || youtubeMode || bilibiliMode || qishuiMode
-                || spotifyMode);
+                || spotifyMode || appleMode);
         this.addSidebarSection("section:subscribed", lblSubscribed);
 
         if (neteaseMode && pl != null) {
@@ -2610,9 +2627,11 @@ public class NavigateBar extends NCMPanel {
 
         final boolean bilibiliSearch = searchPlatform == MusicPlatform.BILIBILI;
         final boolean spotifySearch = searchPlatform == MusicPlatform.SPOTIFY;
+        final boolean appleSearch = searchPlatform == MusicPlatform.APPLE;
         final boolean searchPlaylists = searchPlaylistMode
                 && (searchPlatform == MusicPlatform.NETEASE || searchPlatform == MusicPlatform.KUGOU
-                || searchPlatform == MusicPlatform.QISHUI || bilibiliSearch || spotifySearch);
+                || searchPlatform == MusicPlatform.QISHUI || bilibiliSearch || spotifySearch
+                || appleSearch);
         if (searchPlaylists) {
             final long ticket = screen.beginContentRequest();
             final boolean kugouSearch = searchPlatform == MusicPlatform.KUGOU;
@@ -2627,10 +2646,14 @@ public class NavigateBar extends NCMPanel {
                         : spotifySearch
                         // Spotify 的公开歌单也走关键词搜索；本人歌单与喜欢的歌另在发现页列出。
                         ? spotifyPlaylistSearch(query)
+                        : appleSearch
+                        // Apple 的 catalog 公开歌单走 AMP 关键词搜索；资料库歌单另在发现页列出。
+                        ? applePlaylistSearch(query)
                         : searchNeteasePlaylists(query);
                 String title = (bilibiliSearch ? "B 站合集 / 分P搜索"
                         : qishuiSearch ? "汽水歌单搜索" : kugouSearch ? "酷狗歌单搜索"
-                        : spotifySearch ? "Spotify 歌单搜索" : "歌单搜索")
+                        : spotifySearch ? "Spotify 歌单搜索" : appleSearch ? "Apple 歌单搜索"
+                        : "歌单搜索")
                         + " · " + query + " · " + results.size();
                 MultiThreadingUtil.runOnMainThread(() -> {
                     if (!screen.isContentRequestCurrent(ticket)
@@ -3027,6 +3050,17 @@ public class NavigateBar extends NCMPanel {
         for (com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.Playlist playlist
                 : com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.searchPlaylists(keyword, 30)) {
             PlayList card = com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.toPlayListCard(playlist);
+            if (card != null) results.add(card);
+        }
+        return results;
+    }
+
+    /** Apple 公开歌单（catalog）的关键词搜索，映射成本播放器的歌单卡片。 */
+    private List<PlayList> applePlaylistSearch(String keyword) {
+        List<PlayList> results = new ArrayList<>();
+        for (com.muoniumplayer.core.ncm.apple.AppleMusicService.Playlist playlist
+                : com.muoniumplayer.core.ncm.apple.AppleMusicService.searchPlaylists(keyword, 25)) {
+            PlayList card = com.muoniumplayer.core.ncm.apple.AppleMusicService.toPlayListCard(playlist);
             if (card != null) results.add(card);
         }
         return results;

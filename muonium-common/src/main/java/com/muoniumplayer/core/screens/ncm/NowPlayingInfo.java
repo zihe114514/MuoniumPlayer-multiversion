@@ -222,12 +222,17 @@ final class NowPlayingInfo implements SharedRenderingConstants {
         // 试听时这枚 pill 直接换成试听说明（音质本来就拿不到，档位箭头没有信息量），
         // 并转 WARN 色——试听的原因（后端/登录/权益）就地说明，不再单独立一枚。
         boolean qishuiTrial = music.isQishui() && music.isQishuiTrialResolve();
+        // Apple 的 30 秒 preview 兜底是「设计终点」，徽标直接说「试听 30 秒」，归因留给
+        // 设置页（gamdl/换源两级的失败原因在那里看得到）；音质档位对半首歌没有信息量。
+        boolean appleTrial = music.isApple() && music.isApplePreviewOnly();
         String quality = qualityLabel(music, english);
-        if (!quality.isEmpty()) {
-            pills.add(new Pill(qishuiTrial
+        if (!quality.isEmpty() || appleTrial) {
+            pills.add(new Pill(appleTrial
+                            ? (english ? "PREVIEW · 30s" : "试听片段 · 30 秒")
+                            : qishuiTrial
                             ? (english ? "TRIAL · " + trialBadgeEn() : QishuiMusicService.trialBadgeLabel())
                             : quality,
-                    qishuiTrial ? WARN : NEUTRAL));
+                    qishuiTrial || appleTrial ? WARN : NEUTRAL));
         }
         String lyric = lyricLabel(english);
         if (!lyric.isEmpty()) pills.add(new Pill(lyric, NEUTRAL));
@@ -270,6 +275,11 @@ final class NowPlayingInfo implements SharedRenderingConstants {
                 return "QISHUI";
             case GD:
                 return "GD STUDIO";
+            case SPOTIFY:
+                // 之前漏了 Spotify：英文模式它一直顶着「NETEASE」的名字（顺手修的历史 bug）。
+                return "SPOTIFY";
+            case APPLE:
+                return "APPLE MUSIC";
             case NETEASE:
             default:
                 return "NETEASE";

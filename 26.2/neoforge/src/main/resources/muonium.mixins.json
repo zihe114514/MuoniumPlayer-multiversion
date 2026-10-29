@@ -7,7 +7,9 @@
     "MusicManagerAccessor",
     "MusicManagerDuckMixin",
     "GlSurfaceMixin",
-    "GameRendererRenderLevelMixin"
+    "GameRendererRenderLevelMixin",
+    "GameRendererAccessor",
+    "ProjectionMatrixBufferMixin"
   ],
   "injectors": {
     "defaultRequire": 1

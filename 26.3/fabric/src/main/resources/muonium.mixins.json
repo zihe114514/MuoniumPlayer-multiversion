@@ -8,6 +8,8 @@
     "MusicManagerDuckMixin",
     "GlSurfaceMixin",
     "GameRendererRenderLevelMixin",
+    "GameRendererAccessor",
+    "ProjectionMatrixBufferMixin",
     "MouseScrollMixin",
     "MouseButtonStateMixin",
     "LevelRendererAlwaysOnTopGateMixin"

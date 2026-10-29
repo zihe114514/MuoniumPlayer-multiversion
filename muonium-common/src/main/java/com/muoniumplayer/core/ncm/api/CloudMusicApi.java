@@ -1101,4 +1101,188 @@ public class CloudMusicApi {
         return RequestUtil.createRequest("/api/v3/discovery/recommend/songs", null, OptionsUtil.createOptions("weapi"));
     }
 
+    // ── 电台 / 播客（djradio）────────────────────────────────────────────────
+    // 网易云把"播客"并入电台体系：播客就是 djradio，播客里的声音就是节目（program）。
+    // 端点与参数严格对齐 api-enhanced 的 module/dj_*.js。
+
+    /** 电台分类列表（{@code /api/djradio/category/get}）。 */
+    public RequestUtil.RequestAnswer djCategoryList() {
+        return RequestUtil.createRequest("/api/djradio/category/get", new HashMap<>(), OptionsUtil.createOptions("weapi"));
+    }
+
+    /** 精选电台推荐，需要登录（{@code /api/djradio/recommend/v1}）。 */
+    public RequestUtil.RequestAnswer djRecommend() {
+        return RequestUtil.createRequest("/api/djradio/recommend/v1", new HashMap<>(), OptionsUtil.createOptions("weapi"));
+    }
+
+    /** 按分类推荐电台（{@code /api/djradio/recommend}），cateId 取自 {@link #djCategoryList()}。 */
+    public RequestUtil.RequestAnswer djRecommendByCategory(String cateId) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("cateId", cateId == null || cateId.trim().isEmpty() ? "2001" : cateId.trim());
+        return RequestUtil.createRequest("/api/djradio/recommend", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    /** 热门电台分页（{@code /api/djradio/hot/v1}）。 */
+    public RequestUtil.RequestAnswer djHot(int limit, int offset) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("limit", Math.max(1, Math.min(100, limit)));
+        data.put("offset", Math.max(0, offset));
+        return RequestUtil.createRequest("/api/djradio/hot/v1", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    /** 电台个性推荐（{@code /api/djradio/personalize/rcmd}），需要登录。 */
+    public RequestUtil.RequestAnswer djPersonalizeRecommend(int limit) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("limit", Math.max(1, Math.min(30, limit)));
+        return RequestUtil.createRequest("/api/djradio/personalize/rcmd", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    /** 新晋/热门电台榜（{@code /api/djradio/toplist}），type：0 新晋、1 热门。 */
+    public RequestUtil.RequestAnswer djToplist(int type, int limit, int offset) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("type", type == 1 ? 1 : 0);
+        data.put("limit", Math.max(1, Math.min(100, limit)));
+        data.put("offset", Math.max(0, offset));
+        return RequestUtil.createRequest("/api/djradio/toplist", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    /** 付费精选电台（{@code /api/djradio/home/paygift/list}）。 */
+    public RequestUtil.RequestAnswer djPaygift(int limit, int offset) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("limit", Math.max(1, Math.min(100, limit)));
+        data.put("offset", Math.max(0, offset));
+        data.put("_nmclfl", 1);
+        return RequestUtil.createRequest("/api/djradio/home/paygift/list", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    /** 电台详情（{@code /api/djradio/v2/get}），含订阅态、DJ、分类与简介。 */
+    public RequestUtil.RequestAnswer djDetail(long rid) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("id", rid);
+        return RequestUtil.createRequest("/api/djradio/v2/get", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    /** 电台的节目列表（{@code /api/dj/program/byradio}），asc=false 时按发布时间倒序。 */
+    public RequestUtil.RequestAnswer djProgramByRadio(long rid, int limit, int offset, boolean asc) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("radioId", rid);
+        data.put("limit", Math.max(1, Math.min(100, limit)));
+        data.put("offset", Math.max(0, offset));
+        data.put("asc", asc);
+        return RequestUtil.createRequest("/api/dj/program/byradio", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    /** 单个节目详情（{@code /api/dj/program/detail}），mainSong 才是可播放对象。 */
+    public RequestUtil.RequestAnswer djProgramDetail(long programId) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("id", programId);
+        return RequestUtil.createRequest("/api/dj/program/detail", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    /** 订阅/取消订阅电台（{@code /api/djradio/sub} / {@code /api/djradio/unsub}），需要登录。 */
+    public RequestUtil.RequestAnswer djSub(long rid, boolean sub) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("id", rid);
+        return RequestUtil.createRequest("/api/djradio/" + (sub ? "sub" : "unsub"), data, OptionsUtil.createOptions("weapi"));
+    }
+
+    /** 我的电台订阅列表（{@code /api/djradio/get/subed}），需要登录。 */
+    public RequestUtil.RequestAnswer djSublist(int limit, int offset) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("limit", Math.max(1, Math.min(100, limit)));
+        data.put("offset", Math.max(0, offset));
+        data.put("total", true);
+        return RequestUtil.createRequest("/api/djradio/get/subed", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    /** 最近播放-播客（{@code /api/play-record/djradio/list}），需要登录。 */
+    public RequestUtil.RequestAnswer recordRecentDjRadio(int limit) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("limit", Math.max(1, Math.min(100, limit)));
+        return RequestUtil.createRequest("/api/play-record/djradio/list", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    // ── DIFM 电台（按曲风连续播放的策展频道，走默认 eapi 链路）────────────────
+
+    /** DIFM 全部分类频道（{@code /api/dj/difm/all/style/channel/v2}），sources 形如 {@code "[0]"}。 */
+    public RequestUtil.RequestAnswer djDifmStyleChannels(String sources) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("sources", sources == null || sources.trim().isEmpty() ? "[0]" : sources.trim());
+        return RequestUtil.createRequest("/api/dj/difm/all/style/channel/v2", data, OptionsUtil.createOptions());
+    }
+
+    /** DIFM 我的收藏频道（{@code /api/dj/difm/subscribe/channels/get/v2}）。 */
+    public RequestUtil.RequestAnswer djDifmSubscribedChannels(String sources) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("sources", sources == null || sources.trim().isEmpty() ? "[0]" : sources.trim());
+        return RequestUtil.createRequest("/api/dj/difm/subscribe/channels/get/v2", data, OptionsUtil.createOptions());
+    }
+
+    /** 收藏 DIFM 频道（{@code /api/dj/difm/channel/subscribe}）。 */
+    public RequestUtil.RequestAnswer djDifmSubscribeChannel(long channelId) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("id", channelId);
+        return RequestUtil.createRequest("/api/dj/difm/channel/subscribe", data, OptionsUtil.createOptions());
+    }
+
+    /** 取消收藏 DIFM 频道（{@code /api/dj/difm/channel/unsubscribe}）。 */
+    public RequestUtil.RequestAnswer djDifmUnsubscribeChannel(long channelId) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("id", channelId);
+        return RequestUtil.createRequest("/api/dj/difm/channel/unsubscribe", data, OptionsUtil.createOptions());
+    }
+
+    /** DIFM 频道正在播的曲目列表（{@code /api/dj/difm/playing/tracks/list}）。 */
+    public RequestUtil.RequestAnswer djDifmPlayingTracks(int source, long channelId, int limit) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("source", source);
+        data.put("channelId", channelId);
+        data.put("limit", Math.max(1, Math.min(50, limit)));
+        return RequestUtil.createRequest("/api/dj/difm/playing/tracks/list", data, OptionsUtil.createOptions());
+    }
+
+    // ── 广播电台（真实 FM，浏览/收藏；直播流播放见 RadioPanel 的降级说明）──────
+
+    /** 广播电台分类/地区信息（{@code /api/voice/broadcast/category/region/get}）。 */
+    public RequestUtil.RequestAnswer broadcastCategoryRegion() {
+        return RequestUtil.createRequest("/api/voice/broadcast/category/region/get", new HashMap<>(), OptionsUtil.createOptions());
+    }
+
+    /** 广播电台列表分页（{@code /api/voice/broadcast/channel/list}），id 取 0 表示从头。 */
+    public RequestUtil.RequestAnswer broadcastChannelList(long categoryId, long regionId, int limit, long lastId) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("categoryId", categoryId <= 0 ? "0" : String.valueOf(categoryId));
+        data.put("regionId", regionId <= 0 ? "0" : String.valueOf(regionId));
+        data.put("limit", Math.max(1, Math.min(50, limit)));
+        data.put("lastId", lastId <= 0 ? "0" : String.valueOf(lastId));
+        data.put("score", "-1");
+        return RequestUtil.createRequest("/api/voice/broadcast/channel/list", data, OptionsUtil.createOptions());
+    }
+
+    /** 广播电台当前节目信息（{@code /api/voice/broadcast/channel/currentinfo}）。 */
+    public RequestUtil.RequestAnswer broadcastChannelCurrentInfo(long channelId) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("channelId", channelId);
+        return RequestUtil.createRequest("/api/voice/broadcast/channel/currentinfo", data, OptionsUtil.createOptions());
+    }
+
+    /** 我的广播电台收藏（{@code /api/content/channel/collect/list}），需要登录。 */
+    public RequestUtil.RequestAnswer broadcastChannelCollectList() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("contentType", "BROADCAST");
+        data.put("limit", "99999");
+        data.put("timeReverseOrder", "true");
+        data.put("startDate", "4762584922000");
+        return RequestUtil.createRequest("/api/content/channel/collect/list", data, OptionsUtil.createOptions());
+    }
+
+    /** 收藏/取消收藏广播电台（{@code /api/content/interact/collect}），需要登录。 */
+    public RequestUtil.RequestAnswer broadcastCollect(long channelId, boolean collect) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("contentType", "BROADCAST");
+        data.put("contentId", channelId);
+        data.put("cancelCollect", collect ? "false" : "true");
+        return RequestUtil.createRequest("/api/content/interact/collect", data, OptionsUtil.createOptions());
+    }
+
 }

@@ -141,6 +141,25 @@ public class Music {
     private transient boolean foreignCover;
     /** 当前封面提取出的代表色，供歌词页主题与流体背景实时取用；不进入歌单序列化。 */
     private transient volatile int[] coverPalette;
+    /**
+     * 电台 / 播客节目标记。节目名是"第 N 期 · xxx"这类串行标题，拿去别的平台按歌名匹配
+     * 只会换来一首先人后鬼的替身，所以这一位一旦置上，自动换源救援对该条目全程短路
+     * （放不出来就报失败，绝不悄悄换成别的平台搜出来的同名歌）。
+     */
+    private transient boolean djProgram;
+    /**
+     * Apple 官方 30 秒试听地址（{@link #fromAppleTrack} 填入）。
+     *
+     * <p>试听兜底播放时省一次单曲详情请求；缓存到行上而不是每次现查，是因为兜底只发生
+     * 在「换源与 gamdl 都失败」的链路末端，再来一次网络往返只会让失败体感更差。</p>
+     */
+    private transient String applePreviewUrl;
+    /**
+     * 本行正在走「30 秒 preview 兜底」。与汽水的 {@code qishuiTrialResolve} 同族的 transient
+     * 运行态：true 时缓存键带 {@code pv_} 标记（试听文件不冒充完整版），试听片段检测对它
+     * 放行（这是设计终点不是故障）。gamdl 完整链路每次尝试前都会复位为 false。
+     */
+    private transient volatile boolean applePreviewOnly;
     /** 自由选择的 GD 曲目的 GD Studio 聚合源 key（netease/joox/...）。 */
     private transient String gdPlatform;
     private transient String gdPicId;
@@ -639,6 +658,53 @@ public class Music {
     }
 
     /**
+     * 由一条 Apple Music 曲目元数据构造 {@link Music} 行。
+     *
+     * <p>与 {@link #fromSpotifyTrack} 同族但不同命：Apple 行<b>不是纯元数据行</b>——官方有
+     * 30 秒 preview，且 gamdl 伴生后端可用时能拉到完整版。所以 {@link #getPlayUrl()} 对它
+     * 走三段：伪 URL（{@code muonium-apple://}，由伴生链路兑现成完整版本地文件）→
+     * 返回空落换源替身 → 试听兜底（{@code CloudMusic} 的 Apple 特例）。{@code id} 用
+     * Apple catalog 数字 id 的稳定哈希，封面 / 缓存按 {@link #getStableKey()} 落盘。</p>
+     *
+     * <p>{@code previewUrl} 暂存在行上：试听兜底时省一次单曲详情请求。</p>
+     */
+    public static Music fromAppleTrack(
+            com.muoniumplayer.core.ncm.apple.AppleMusicService.Track track) {
+        if (track == null) return null;
+        String trackId = nonNull(track.id).trim();
+        if (trackId.isEmpty()) return null;
+        long stableId = stableLong("apple:" + trackId);
+
+        List<Artist> artistList = new ArrayList<>();
+        String artists = nonNull(track.artist);
+        if (!artists.trim().isEmpty()) {
+            for (String artistName : artists.split("\\s*/\\s*")) {
+                if (artistName.trim().isEmpty()) continue;
+                artistList.add(new Artist(stableLong("apple:artist:" + artistName), artistName.trim(),
+                        Collections.emptyList(), Collections.emptyList()));
+            }
+        }
+        if (artistList.isEmpty()) {
+            artistList.add(new Artist(0L, "Unknown Artist", Collections.emptyList(), Collections.emptyList()));
+        }
+
+        String albumName = nonNull(track.album);
+        String cover = nonNull(track.coverUrl);
+        Album album = new Album(stableLong("apple:album:" + nonNull(track.albumId)), albumName, cover,
+                Collections.emptyList());
+        Music music = new Music(nonNull(track.name), nonNull(track.name), "", stableId,
+                artistList, Collections.emptyList(), album, track.durationMillis, 0L, 0L,
+                Collections.emptyList());
+        music.source = MusicPlatform.APPLE;
+        music.sourceId = trackId;
+        music.sourceMid = trackId;
+        music.externalCoverUrl = cover;
+        music.foreignCover = !cover.isEmpty();
+        music.applePreviewUrl = nonNull(track.previewUrl);
+        return music;
+    }
+
+    /**
      * 为「同一首歌在队列里占第二格」复制一份<b>独立的队列身份</b>。
      *
      * <p>{@code playNext} 若把同一对象引用插进队列，之后换源录取点写在对象上的徽标与
@@ -809,6 +875,27 @@ public class Music {
      */
     public boolean isSpotify() {
         return getSource() == MusicPlatform.SPOTIFY;
+    }
+
+    /**
+     * Apple Music 行：目录元数据公开、完整音轨 DRM 保护。取流顺序
+     * gamdl 伴生 → 跨平台换源 → 30 秒 preview 兜底，见 {@code AppleMusicService} 类注释。
+     */
+    public boolean isApple() {
+        return getSource() == MusicPlatform.APPLE;
+    }
+
+    /** Apple 官方 30 秒试听地址（{@link #fromAppleTrack} 填入）；空串 = 尚未取到。 */
+    public String getApplePreviewUrl() {
+        return applePreviewUrl == null ? "" : applePreviewUrl;
+    }
+
+    public boolean isApplePreviewOnly() {
+        return applePreviewOnly;
+    }
+
+    public void setApplePreviewOnly(boolean previewOnly) {
+        applePreviewOnly = previewOnly;
     }
 
     /** 酷我 / 咪咕：宿主只内置了它们的搜索（供换源匹配），取流完全依赖自定义源。 */
@@ -999,6 +1086,14 @@ public class Music {
         // spotify id 会被 Cadence 当网易云 id 解析，放出完全不相干的歌。
         if (isSpotify()) return null;
 
+        // Apple Music：gamdl 伴生后端可用时给一条伪 URL（cachedAudioFile 里兑换成完整版
+        // 本地文件）；伴生不可用/未启用返回 null 落换源替身；都失败还有试听兜底（CloudMusic
+        // 的 Apple 特例）。与 Spotify 同理绝不能继续往下掉 —— apple 的数字 id 会被 Cadence
+        // 当网易云 id 解析，放出完全不相干的歌。
+        if (isApple()) {
+            return resolveApplePlayUrl();
+        }
+
         if (isYouTube()) {
             return resolveYouTubePlayUrl();
         }
@@ -1042,6 +1137,24 @@ public class Music {
         result = resolveCadenceWithStandardFallback();
         if (result != null) return result;
         return resolveNeteaseUnblock();
+    }
+
+    /**
+     * Apple 的 gamdl 伴生伪 URL。
+     *
+     * <p>第二元素给 {@code m4a}：伴生链路最终交付的就是 AAC 256 的 m4a 本地文件，
+     * 缓存键与容器探测都按这个语义走。伴生不可用（未安装 / 未启用 / 非 Windows 且未配
+     * 手动路径）返回 null —— 点播链路随即落进换源替身，用户无感。</p>
+     */
+    private Tuple<String, String> resolveApplePlayUrl() {
+        // 完整版尝试先复位试听标记：上一轮兜底留下的 pv_ 键位不能延续到这一轮，
+        // 否则 gamdl 就绪后点歌还在命中试听缓存键位（键位由 audioCachePrefix 生成）。
+        this.applePreviewOnly = false;
+        String pseudo = com.muoniumplayer.core.ncm.apple.ApplePlaybackResolver
+                .resolvePseudoUrl(getSourceId());
+        if (pseudo == null) return null;
+        playbackQuality = PlaybackQuality.HQ;
+        return new Tuple<>(pseudo, "m4a");
     }
 
     /** 一起听房间下发的链接，没有则返回 null（照常走本机解析链路）。 */

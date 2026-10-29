@@ -70,11 +70,8 @@ public class GlSurfaceMixin {
     @Inject(method = "present()V", at = @At("HEAD"))
     private void muonium$compositeSkijaFrame(CallbackInfo ci) {
         // 无论本帧有没有内容都要调用：compositeFrame 同时负责复位「本帧已清屏」标志。
-        // 必须先于歌词直画 —— compositeFrame 里的玻璃背景采集会从 FBO 0 blit，
-        // 若先画字再采集，字会被印进玻璃背景纹理（下一帧重复出现 = 闪烁）。
+        // 3D 歌词直画也在 compositeFrame 内部（玻璃采集后、Skija 合成前的插槽），
+        // 保证歌词落在模组界面之下；这里不再单独调 presentComposite 防双画。
         SkijaHost.compositeFrame();
-        // 「更激进的适配」（26.x）：present 钩子链的最后一笔。此刻 Skija 合成完成、
-        // 交换未发生 —— 字直接落 FBO 0，物理上不可能再被任何渲染/采集/合成碰。
-        com.muoniumplayer.compat.mc.WorldLyricsHudDraw.presentComposite();
     }
 }

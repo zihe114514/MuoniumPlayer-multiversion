@@ -12,8 +12,11 @@ import java.util.List;
  *
  * <p>上报的 MIME 类型和 URL 后缀仅供参考：调用方在选择解码器前
  * 必须先用 {@link #detectContainer(File)}。</p>
+ *
+ * <p><b>public</b>：除了 music 包内的缓存流水线，apple 包的 gamdl 桥接在把伴生产物
+ * 收编进缓存键位前也要做同一道字节校验 —— 容器探测是通用工具，不该因包界复制一份。</p>
  */
-final class AudioContainerSupport {
+public final class AudioContainerSupport {
 
     private static final List<String> SUPPORTED_CONTAINERS =
             Arrays.asList("flac", "wav", "mp3", "aac", "m4a", "mp4");
@@ -21,11 +24,11 @@ final class AudioContainerSupport {
     private AudioContainerSupport() {
     }
 
-    static boolean isSupportedContainer(String container) {
+    public static boolean isSupportedContainer(String container) {
         return container != null && SUPPORTED_CONTAINERS.contains(container);
     }
 
-    static List<String> getSupportedContainers() {
+    public static List<String> getSupportedContainers() {
         return SUPPORTED_CONTAINERS;
     }
 
@@ -72,7 +75,7 @@ final class AudioContainerSupport {
      * 根据字节识别真实容器，而不是盲信 URL 后缀或 API 类型。
      * AAC ADTS 在 MPEG 音频之前检查，因为两者都以 {@code 0xFFF} 同步字开头。
      */
-    static String detectContainer(File file) {
+    public static String detectContainer(File file) {
         if (file == null || !file.isFile() || file.length() < 4L) {
             return null;
         }
