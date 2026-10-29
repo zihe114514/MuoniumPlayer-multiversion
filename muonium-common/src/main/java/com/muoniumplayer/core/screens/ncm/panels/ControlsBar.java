@@ -609,6 +609,8 @@ public class ControlsBar extends NCMPanel {
 
         LabelWidget lblRemainingTime = new LabelWidget(
                 () -> {
+                    // 直播态：没有总时长，右侧时间标让位给 LIVE 徽标；左侧照旧走已收听时长。
+                    if (com.muoniumplayer.core.ncm.music.LiveStreamSession.isActive()) return "LIVE";
                     if (presentation.preparing) return "--:--";
                     if (!CloudMusic.hasPlaybackClock())
                         return "00:00";
@@ -624,9 +626,15 @@ public class ControlsBar extends NCMPanel {
 
         lblRemainingTime
                 .setClickable(false)
-                .setBeforeRenderCallback(() -> lblRemainingTime
-                        .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
-                        .setPosition(progressBarBg.getRelativeX() + progressBarBg.getWidth() + 4, lblCurTime.getRelativeY()));
+                .setBeforeRenderCallback(() -> {
+                    boolean live = com.muoniumplayer.core.ncm.music.LiveStreamSession.isActive();
+                    lblRemainingTime
+                            // LIVE 用强调色点亮：与「正在播放」的音柱同一语言。
+                            .setColor(live ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
+                                    : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
+                            .setPosition(progressBarBg.getRelativeX() + progressBarBg.getWidth() + 4,
+                                    lblCurTime.getRelativeY());
+                });
 
         LabelWidget lblMusicName = new LabelWidget(() -> presentation.displayTrack == null ? "未在播放" : presentation.displayTrack.getName(), FontManager.pf14bold);
         this.addChild(lblMusicName);

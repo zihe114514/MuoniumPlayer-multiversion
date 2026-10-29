@@ -369,6 +369,36 @@ public final class DjRadioService {
         return direct;
     }
 
+    /**
+     * 广播电台的直播流信息（{@code /api/voice/broadcast/channel/currentinfo} 的
+     * {@code data.playUrl}）。实测是 ICECAST 风格的 HTTP 直推 MPEG 流
+     * （{@code https://lhttp.qtfm.cn/live/&lt;id&gt;/64k.mp3}），交给 {@link LiveStreamPlayer}
+     * 实时解码；拿不到地址（未开播/下线/风控）返回 {@code null}，调用方给降级提示。
+     */
+    public static BroadcastLiveInfo fetchBroadcastLiveInfo(long channelId) {
+        try {
+            JsonObject root = CloudMusicApi.broadcastChannelCurrentInfo(channelId).toJsonObject();
+            JsonObject data = object(root, "data");
+            if (data == null) data = root;
+            String playUrl = text(data, "playUrl", "play_url", "streamUrl");
+            if (playUrl.isEmpty()) return null;
+            BroadcastLiveInfo info = new BroadcastLiveInfo();
+            info.playUrl = playUrl;
+            info.channelName = text(data, "channelName", "name");
+            info.nowPlaying = broadcastNowPlayingText(root);
+            return info;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /** 直播流会话信息：{@link #fetchBroadcastLiveInfo} 的产物。 */
+    public static final class BroadcastLiveInfo {
+        public String playUrl = "";
+        public String channelName = "";
+        public String nowPlaying = "";
+    }
+
     // ── 通用工具 ─────────────────────────────────────────────────────────────
 
     /**

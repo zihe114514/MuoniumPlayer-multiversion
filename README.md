@@ -6,12 +6,12 @@
 
 **把音乐装进 Minecraft。**
 
-<sub>*A full-featured in-game music player for Minecraft — NetEase Cloud Music, QQ Music, Kugou, Qishui, YouTube Music, Bilibili, Spotify. Word-by-word lyrics, 3D world lyrics, ViPER audio effects, gapless automix, listen-together rooms. Fabric / Forge / NeoForge, Windows / Linux / macOS / Android.*</sub>
+<sub>*A full-featured in-game music player for Minecraft — NetEase Cloud Music, QQ Music, Kugou, Qishui, YouTube Music, Bilibili, Spotify, Apple Music. Word-by-word lyrics, 3D world lyrics, radio & podcasts, ViPER audio effects, gapless automix, listen-together rooms. Fabric / Forge / NeoForge, Windows / Linux / macOS / Android.*</sub>
 
 一个 Minecraft 客户端 Mod：手机音乐 App 般的播放器、逐字歌词、灵动岛、一起听房间、无缝切歌 —— 全部画在游戏里，不弹浏览器、不切窗口。<br>
 纯客户端，普通服务器**不用装任何东西**。
 
-[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-2.1.0-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
+[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-2.2.0-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
 [![下载](https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-melodifymc.cc.cd-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
 [![MC 百科](https://img.shields.io/badge/MC%E7%99%BE%E7%A7%91-class%2F30544-3d8528?style=flat-square&labelColor=2b2b33)](https://www.mcmod.cn/class/30544.html)
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.20.1%20%7C%201.21.1%20%7C%201.21.11%20%7C%2026.2%20%7C%2026.3-3d8528?style=flat-square&labelColor=2b2b33)](#支持的版本)
@@ -27,7 +27,7 @@
 
 <sub>技术问题、玩法交流、抢先看新版本 —— <a href="https://qm.qq.com/q/uNHkCoTusU">点此加群</a></sub>
 
-[演示](#演示) &nbsp;·&nbsp; [音源](#8-个聚合音源一个播放器) &nbsp;·&nbsp; [LX 脚本](#lx-自定义脚本音源) &nbsp;·&nbsp; [音效](#音效系统蝰蛇音效--jamesdsp-混响) &nbsp;·&nbsp; [一起听](#一起听三种开法两种不需要服务端) &nbsp;·&nbsp; [汽水](#汽水音乐用你自己的会员听完整版) &nbsp;·&nbsp; [版本](#支持的版本) &nbsp;·&nbsp; [安装](#安装三步装好) &nbsp;·&nbsp; [赞助](#赞助)
+[演示](#演示) &nbsp;·&nbsp; [音源](#9-个聚合音源一个播放器) &nbsp;·&nbsp; [LX 脚本](#lx-自定义脚本音源) &nbsp;·&nbsp; [音效](#音效系统蝰蛇音效--jamesdsp-混响) &nbsp;·&nbsp; [一起听](#一起听三种开法两种不需要服务端) &nbsp;·&nbsp; [汽水](#汽水音乐用你自己的会员听完整版) &nbsp;·&nbsp; [版本](#支持的版本) &nbsp;·&nbsp; [安装](#安装三步装好) &nbsp;·&nbsp; [赞助](#赞助)
 
 </div>
 
@@ -83,7 +83,7 @@
 
 ## 功能
 
-### 8 个聚合音源，一个播放器
+### 9 个聚合音源，一个播放器
 
 <table>
 <tr>
@@ -96,7 +96,13 @@
 <td align="center" width="25%"><a href="https://www.bilibili.com/"><img src="assets/brands/bilibili.png" width="56" alt="哔哩哔哩"></a><br><sub><b>哔哩哔哩</b></sub></td>
 <td align="center" width="25%"><a href="https://qishui.douyin.com/"><img src="assets/brands/qishui.png" width="56" alt="汽水音乐"></a><br><sub><b>汽水音乐</b></sub></td>
 <td align="center" width="25%"><a href="https://open.spotify.com/"><img src="assets/brands/spotify.png" width="56" alt="Spotify"></a><br><sub><b>Spotify</b></sub></td>
+<td align="center" width="25%"><sub><b>🎵 Apple Music</b></sub></td>
+</tr>
+<tr>
 <td align="center" width="25%"><img src="assets/brands/gd.png" width="56" alt="GD 音乐台"><br><sub><b>GD 音乐台</b></sub></td>
+<td align="center" width="25%"><sub><b>LX 自定义脚本</b></sub></td>
+<td></td>
+<td></td>
 </tr>
 </table>
 
@@ -111,12 +117,14 @@
 | **哔哩哔哩** | 免登录 / 扫码 | 歌曲、视频、分 P | 收藏夹、公开歌单 | 仅逐行 | 原码率 |
 | **汽水音乐** | 扫码 / 贴 Cookie | 歌曲、歌单 | 账号歌单、收藏、发现流、电台 | ✅ | 权益内最高档 |
 | **Spotify** | 自备 Client ID | 歌曲、公开歌单 | 本人歌单、喜欢的歌 | — | 不出声，自动换源 |
+| **Apple Music** | 账号管理里登录 | 歌曲 | — | — | 完整播放 / 自动换源 / 30 秒试听 |
 | **GD 音乐台** | 免登录 | 聚合搜索 | 跨平台歌单 | 视平台而定 | 受额度限制 |
 | **LX 自定义脚本** | 导入脚本 | 看脚本 | 看脚本 | 看脚本 | 128k / 320k / FLAC / 24bit |
 
-两个提醒：
+三个提醒：
 
 - **Spotify 只提供歌单和资料，放不出声。** 官方接口没有音频出口，所以点播时会自动换到别的平台找同一首 —— 就是下面「自动换源」那套。
+- **Apple Music 的歌能完整播放。** 首次使用按提示一键装好伴生工具；放不了时自动换到能播的平台，实在不行也有 30 秒试听。账号在「账号管理」里登录。
 - **YouTube Music 和哔哩哔哩的歌词是逐行级别的**，不是逐字。能跟着唱，但没有一个字一个字亮起来的效果。
 
 ### LX 自定义脚本音源
@@ -134,6 +142,16 @@
 无版权的曲目不再是一行灰字。开启后，官方拿不到音频时按**歌名 + 歌手**去别的平台找同一首歌，找到就直接播 —— 点下去就响，不用管它是从哪家来的。
 
 不满意可以右键手动换源，从候选里自己挑。
+
+**换来的歌还会再核对一遍歌词**：跨平台匹配偶尔会把同名的现场版、翻唱当成原曲放进来，2.2.0 起会比对歌词正文，发现不是同一首就换下一个候选 —— 尽量不让你听到「名字一样但不是那首歌」的版本。
+
+### 电台·播客：电台也进了游戏
+
+网易云的**电台和播客**可以直接浏览、订阅、播放 —— 脱口秀、广播剧、音乐电台都在播放器里。
+
+- **DIFM 曲风频道**：电音、古典、爵士……选个口味直接开听
+- **世界各地的广播电台**：按地区和曲风挑
+- **电台节目保持原声**：节目不会被自动换源换成别的平台，听到什么就是什么
 
 
 ### 音效系统：蝰蛇音效 + JamesDSP 混响
@@ -192,13 +210,14 @@
 
 - **十种全屏排版样式**，每种都有独立参数可调
 - **3D 世界歌词**：歌词直接画进游戏世界，好几种动效
+- **装了光影包也能看 3D 歌词**：开光影时 3D 歌词不再消失 —— 进游戏会提示你一键开启（1.20.1 到 26.3 全支持）
 - **译文与罗马音**都支持，中日英混着听也不怕
 - **找错歌词可以直接换源**：列表里中键一点，几个候选逐字预览挑一个，选定后这首歌就一直用你挑的那份
 - 歌词来源记在歌上，切歌、重启都不会丢
 
 ### 灵动岛
 
-切歌、音量、下载进度、报错，全从顶部胶囊显示。8 种形态、四级优先级调度，播放器收起时动画合入岛。游戏内 **Ctrl+F** 从岛上长出快捷搜索栏，不切出游戏就能找歌。
+切歌、音量、下载进度、报错，全从顶部胶囊显示。8 种形态、四级优先级调度，播放器收起时动画合入岛。游戏内 **Ctrl+F** 从岛上长出快捷搜索栏，不切出游戏就能找歌。位置也能调 —— 新增上下滑条，通知条摆在哪你说了算。
 
 ### Automix 无缝切歌
 
@@ -213,8 +232,9 @@
 - **频谱**：实时频谱跟着音乐跳，HUD 和全屏播放器里都有
 - **系统联动**：键盘上的多媒体键、耳机线控都能控制游戏内播放；你在外面用别的播放器，游戏里也会跟着显示那一首
 - **游戏内中文输入**：直接敲拼音搜歌，不用切出去
-- **液态玻璃界面**：真的边缘折射毛玻璃，15 套主题，字体随便换，颜色跟着封面变
-- **桌面歌词**：游戏外也能挂着看词
+- **液态玻璃界面**：真的边缘折射毛玻璃，15 套主题，字体随便换，颜色跟着封面变；HUD 信息卡也有真玻璃质感，还有全透明档可选
+- **桌面歌词**：游戏外也能挂着看词，还能按当前歌曲的封面颜色自动配色
+- **设置更顺手**：第一页新增「常用」快捷组，高频设置不用翻页；滑条数值可以直接键入
 - **触屏手势**：列表惯性滑动、队列长按拖动排序
 - 放歌时自动压掉原版游戏音乐 —— 只让路「音乐」，音效和环境音不受影响
 
@@ -342,7 +362,7 @@ MuoniumPlayer 是一个 **Minecraft 音乐播放器 Mod**，把完整的音乐�
 - 玩整合包 / 空岛 / 建筑服时想要游戏内电台和歌词
 - 和好友远程一起听歌
 
-**关键词**：Minecraft 音乐播放器、我的世界音乐 Mod、Minecraft 内置音乐、游戏内听歌、MC 听歌 Mod、网易云音乐 Minecraft、QQ 音乐 Mod、酷狗音乐 Mod、汽水音乐 Mod、逐字歌词 Mod、3D 歌词、游戏内歌词显示、一起听、同步听歌、无缝切歌、Fabric 音乐 Mod、Forge 音乐 Mod、NeoForge 音乐 Mod、Minecraft music player、in-game music mod、Minecraft Spotify。
+**关键词**：Minecraft 音乐播放器、我的世界音乐 Mod、Minecraft 内置音乐、游戏内听歌、MC 听歌 Mod、网易云音乐 Minecraft、QQ 音乐 Mod、酷狗音乐 Mod、汽水音乐 Mod、Apple Music Mod、电台播客 Mod、逐字歌词 Mod、3D 歌词、游戏内歌词显示、一起听、同步听歌、无缝切歌、Fabric 音乐 Mod、Forge 音乐 Mod、NeoForge 音乐 Mod、Minecraft music player、in-game music mod、Minecraft Spotify。
 
 支持 **1.20.1 / 1.21.1 / 1.21.11 / 26.2 / 26.3**，加载器 **Fabric / Forge / NeoForge**，平台 **Windows / Linux / macOS / Android**。
 

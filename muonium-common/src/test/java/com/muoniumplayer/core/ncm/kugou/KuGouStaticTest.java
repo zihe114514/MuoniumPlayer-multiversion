@@ -244,6 +244,28 @@ class KuGouStaticTest {
     }
 
     @Test
+    @DisplayName("云端歌单必须分页取全：单页 300 首是上游行为，只打一页就是「前 300 之外没了」")
+    void collectionTracksPaginates() throws Exception {
+        String api = read("KuGouMusicApi.java");
+        String loop = methodBody(api, "public static List<Track> collectionTracks(String globalCollectionId, int limit)",
+                "private static final int COLLECTION_TRACK_PAGE_SIZE");
+        assertTrue(loop.contains("collectionTracksPage(globalCollectionId, MAX_PAGE_SIZE, page)"),
+                "每页 300：begin_idx=(page-1)*pagesize 是这条端点唯一的分页手段");
+        assertTrue(loop.contains("batch.size() < MAX_PAGE_SIZE"),
+                "页不满即最后一页，不依赖响应里的总数（上游不保证回它）");
+        assertTrue(loop.contains("result.size() == before"),
+                "越界 begin_idx 可能被上游回成重复页：一页没贡献新曲目就是翻到头的信号");
+        assertTrue(api.contains("COLLECTION_TRACK_MAX_PAGES"),
+                "翻页要有绝对页数上限，防上游异常回包把循环拖死");
+        String service = readService("KuGouMusicService.java");
+        assertTrue(service.contains("KuGouMusicApi.collectionTracks(collectionIdOf(id), target)"),
+                "云端歌单的载入上限要跟着期望值走，不能钉死在 300");
+        String playList = readService("dto/PlayList.java");
+        assertTrue(playList.contains(".playlistTracks(getPlatformPlaylistId(), count > 0 ? count : 300)"),
+                "歌单曲目数要传给服务层，否则分页循环不知道该取多少");
+    }
+
+    @Test
     @DisplayName("搜索端点不能用 Audioid 当 album_audio_id：那是另一套 ID，会把别首歌的文件交回来")
     void searchTrackKeepsIdSpace() throws Exception {
         String api = read("KuGouMusicApi.java");
