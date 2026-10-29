@@ -52,6 +52,9 @@ public final class VanillaMusicDucker {
     /** 本 mod 正在出声：原版音乐该让路。 */
     public static boolean shouldDuck() {
         try {
+            // 直播流不经 AudioPlayer（独立 SourceDataLine 通道）：照原样只看引擎会让
+            // 广播收听期间原版音乐照常满音量放，两边打架。直播在响就算。
+            if (LiveStreamSession.isPlaying()) return true;
             AudioPlayer player = CloudMusic.player;
             if (player == null) return false;
             // 引擎线程态在响，或命令已下、声音还没出来的那一小段，都算。

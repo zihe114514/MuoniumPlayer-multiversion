@@ -950,6 +950,8 @@ public class CloudMusic implements SharedConstants {
         if (fadingPlayer != null && fadingPlayer != activePlayer) {
             fadingPlayer.setVolume(safeVolume);
         }
+        // 直播流跟随同一根滑块：LiveStreamPlayer 内部为 no-op（无直播时）。
+        LiveStreamSession.applyVolume(safeVolume);
 
         if (showNotice) {
             DownloadDynamicIsland.showVolume(Math.round(safeVolume * 100.0f));
@@ -977,6 +979,8 @@ public class CloudMusic implements SharedConstants {
  */
     public static boolean seekByMillis(float deltaMillis) {
         if (MpPartyClient.interceptSeekBy(deltaMillis)) return true;
+        // 直播不能 seek：拖动的是"已收听时长"，不是媒体位置，跳了也只是数字游戏。
+        if (LiveStreamSession.isActive()) return false;
         if (ExternalPlayback.isMirroring()) {
             ExternalSnapshot external = ExternalPlayback.rawSnapshot();
             long target = Math.max(0L, Math.min(external.durationMs(),
@@ -1149,6 +1153,11 @@ public class CloudMusic implements SharedConstants {
      * @return 本次调用的实际结果；没有可操作的播放时返回 {@link PlayPauseResult#UNAVAILABLE}
      */
     public static PlayPauseResult togglePlayPause() {
+        // 直播：暂停/继续由 LiveStreamSession 处理（广播不追进度，暂停即漏播）。
+        if (LiveStreamSession.isActive()) {
+            LiveStreamSession.togglePause();
+            return LiveStreamSession.isPlaying() ? PlayPauseResult.RESUMED : PlayPauseResult.PAUSED;
+        }
         // 镜像态下这条命令的对象是外部播放器，不是我们的音频引擎。结果按「当前是不是在响」
         // 乐观回报：真正的状态下一拍（≤500ms）由 SMTC 快照纠正，而玩家点按钮那一下
         // 必须立刻有一句反馈，否则会被当成按键没生效。
@@ -1209,6 +1218,9 @@ public class CloudMusic implements SharedConstants {
     @SneakyThrows
     public static boolean stopPlaybackAndClear(Music expected) {
         if (expected != null && currentlyPlaying != expected) return false;
+
+        // 直播与引擎互斥的另一侧：显式停播把直播也收掉（底栏停止键的语义是"别响了"）。
+        LiveStreamSession.stop("stopPlaybackAndClear");
 
         // 走和「换一条队列」同一条收尾路径：它会让 session 失效、取消预备与正在淡出的另外两副
         // 牌，并关掉播放线程自己持有的那一副。
@@ -1405,6 +1417,10 @@ public class CloudMusic implements SharedConstants {
         // 这里是 play() 与 playFm() 的共用入口，拦这一处就够了，界面上不必各写一份。
         if (ExternalPlayback.refuseInternalPlayback()) return;
 
+        // 直播流在响时点歌：先停掉直播再起引擎（与镜像同一互斥纪律，只是方向相反——
+        // 用户点了明确的歌，直播让位是预期行为）。
+        LiveStreamSession.stop("startPlaybackList");
+
         // 一起听房间里传输控制权归服务端：本地起播改成点歌，由服务端安排给全房同时播。
         // 房间自己下发的那一首会被放行（MpPlayback 起播时带着身份标记）。
         if (MpPartyClient.interceptStartPlayback(songs, startIdx)) {
@@ -1499,6 +1515,28 @@ public class CloudMusic implements SharedConstants {
         }
     }
 
+    /**
+     * 直播起播前的引擎让位（{@link LiveStreamSession#start} 调用）：与
+     * {@link #stopExistingPlayThread()} 同一条收尾链路，只是把受检异常就地吞掉 ——
+     * 直播这边已经在自己的线程里，join 超时顶多是新旧两路声源叠半秒，不值得为此打断起流。
+     */
+    static void stopExistingPlayThreadForLiveStream() {
+        try {
+            stopExistingPlayThread();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * 直播起播前的 FM 会话退出（{@link LiveStreamSession#start} 调用）：引擎停了
+     * {@code personalFmActive} 不能还挂着，否则 FM 专属的按钮语义会泄漏到直播态。
+     * {@code exitPersonalFmSession} 是 synchronized 的静态方法，直播线程进来排队即可。
+     */
+    static void exitPersonalFmSessionForLiveStream() {
+        exitPersonalFmSession();
+    }
+
     private static int handleRandomPlayMode(List<Music> songs, int startIdx) {
         if (startIdx == -1) {
             Collections.shuffle(songs);
@@ -1541,6 +1579,7 @@ public class CloudMusic implements SharedConstants {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             doBreak = true;
             playing.set(false);
+            LiveStreamSession.shutdown();
             Thread active = playThread;
             if (active instanceof PlayThread) {
                 ((PlayThread) active).cancelPlayback();
@@ -5202,6 +5241,16 @@ public class CloudMusic implements SharedConstants {
     }
 
     public static PlaybackSnapshot getSnapshot() {
+        // 直播流快照：互斥纪律保证走到这里时内部引擎是空的，一条分支不会与下面打架。
+        // 直播没有总时长，durationMs 取已收听时长会让进度条恒满 —— 直接给 0，
+        // 界面（ControlsBar）对直播态按「无进度条 + 已收听时长」绘制。
+        if (LiveStreamSession.isActive()) {
+            Music m = currentlyPlaying;
+            long sid = currentSession == null ? -1L : currentSession.sessionId;
+            long songId = m == null ? -1L : m.getId();
+            return new PlaybackSnapshot(sid, songId, LiveStreamSession.elapsedMillis(), 0L,
+                    LiveStreamSession.isPlaying(), null, m);
+        }
         // 系统播放器镜像：整条渲染时钟只在这里分叉一次。
         //
         // 之所以能只改这一处，是因为下面那套墙钟外推本来就是为「音频时钟只在解码回调里
@@ -5293,6 +5342,7 @@ public class CloudMusic implements SharedConstants {
      */
     public static boolean isAudibleNow() {
         if (ExternalPlayback.isMirroring()) return ExternalPlayback.rawSnapshot().isPlaying();
+        if (LiveStreamSession.isActive()) return LiveStreamSession.isPlaying();
         AudioPlayer active = player;
         return active != null && !active.isPausing();
     }
@@ -5309,6 +5359,7 @@ public class CloudMusic implements SharedConstants {
             ExternalSnapshot external = ExternalPlayback.rawSnapshot();
             return external.hasSession() && !external.isStopped();
         }
+        if (LiveStreamSession.isActive()) return true;
         AudioPlayer active = player;
         return active != null && !active.isFinished();
     }
@@ -5320,6 +5371,8 @@ public class CloudMusic implements SharedConstants {
      * 播放器，只能取快照里那份（外报位置已经过同一套墙钟外推，逐帧仍然连续）。</p>
      */
     public static long positionMsNow() {
+        // 直播：进度条画的是已收听时长（墙钟），不是媒体位置。
+        if (LiveStreamSession.isActive()) return LiveStreamSession.elapsedMillis();
         AudioPlayer active = player;
         if (ExternalPlayback.isMirroring() || active == null) return getSnapshot().positionMs;
         return Math.round(active.getCurrentTimeMillis());
@@ -5327,9 +5380,47 @@ public class CloudMusic implements SharedConstants {
 
     /** 这一帧该显示的总时长，毫秒。口径与 {@link #positionMsNow()} 一致。 */
     public static long durationMsNow() {
+        // 直播：总时长为 0，界面据此切换到「直播态」绘制（不画进度条、画 LIVE 标）。
+        if (LiveStreamSession.isActive()) return 0L;
         AudioPlayer active = player;
         if (ExternalPlayback.isMirroring() || active == null) return getSnapshot().durationMs;
         return Math.round(active.getTotalTimeMillis());
+    }
+
+    /**
+     * 直播起播后把「正在播放」指向频道的替身模型：底栏歌名、灵动岛、桌面歌词读的
+     * {@code currentlyPlaying} 因此显示频道名。引擎字段（player/queue/session）一律不动
+     * ——出声的是 LiveStreamPlayer，这里只是把展示层对齐。
+     */
+    public static void adoptLiveStreamNowPlaying(Object station, Object liveInfo) {
+        // station 是 DjRadio（面板侧规避了 core→screens 的依赖方向），这里同样以 Object
+        // 接住再窄化：真正要的是名字与封面。
+        if (!(station instanceof com.muoniumplayer.core.ncm.music.dto.DjRadio radio)) return;
+        Music standIn = new Music(radio.displayName(), radio.displayName(), "", radio.getId(),
+                java.util.Collections.singletonList(
+                        new com.muoniumplayer.core.ncm.music.dto.Artist(0L, "广播电台 · " + radio.getCategoryName(),
+                                java.util.Collections.emptyList(), java.util.Collections.emptyList())),
+                java.util.Collections.emptyList(),
+                new com.muoniumplayer.core.ncm.music.dto.Album(0L, radio.displayName(), radio.coverUrl(),
+                        java.util.Collections.emptyList()),
+                0L, 0L, 0L, java.util.Collections.emptyList());
+        standIn.setExternalCoverUrl(radio.coverUrl());
+        standIn.setDjProgram(true);
+        currentlyPlaying = standIn;
+        playList = new ArrayList<>();
+        curIdx = 0;
+        currentSession = new PlaybackSession(generation.incrementAndGet(), standIn.getStableKey(), standIn.getId());
+        playing.set(true);
+        // 直播没有歌词：主动清掉上一首的时间轴，桌面歌词/歌词页显示"暂无歌词"。
+        synchronized (lyrics) {
+            lyrics.clear();
+            lyricsRevision++;
+        }
+        currentLyric = null;
+        lyricsTrackKey = null;
+        haveNoWords = true;
+        hasTransLyrics = false;
+        hasRomanization = false;
     }
 
     /**

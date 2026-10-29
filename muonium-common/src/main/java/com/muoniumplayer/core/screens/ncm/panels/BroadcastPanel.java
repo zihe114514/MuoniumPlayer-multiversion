@@ -2,7 +2,9 @@ package com.muoniumplayer.core.screens.ncm.panels;
 
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
+import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.DjRadioService;
+import com.muoniumplayer.core.ncm.music.LiveStreamSession;
 import com.muoniumplayer.core.ncm.music.dto.DjRadio;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.FontelloIcons;
@@ -80,7 +82,7 @@ public final class BroadcastPanel extends NCMPanel {
                 .setPosition(MARGIN, MARGIN));
 
         LabelWidget subtitle = new LabelWidget(
-                () -> status.isEmpty() ? "左键查看当前节目 · 右键收藏电台" : status, FontManager.pf12);
+                () -> status.isEmpty() ? "左键收听直播 · 右键收藏电台" : status, FontManager.pf12);
         addChild(subtitle);
         subtitle.setClickable(false);
         subtitle.setBeforeRenderCallback(() -> subtitle
@@ -303,30 +305,41 @@ public final class BroadcastPanel extends NCMPanel {
         if (this.pendingCardIndex >= total) this.pendingCards = null;
     }
 
-    /** 直播流暂不支持播放：查询当前节目信息给岛屿反馈，把能力边界讲清楚。 */
+    /**
+     * 左键 = 起播直播流。先取 currentinfo 拿 playUrl（带时效签名，每次现取），成功即交给
+     * {@link LiveStreamSession}（它负责停掉既有引擎/旧台再拉新流）；拿不到流时保留旧行为
+     * ——把能查到的节目信息给岛屿反馈，把失败讲清楚。
+     */
     private void showCurrentInfo(DjRadio channel) {
         MultiThreadingUtil.runAsync(() -> {
-            String nowPlaying = "";
+            DjRadioService.BroadcastLiveInfo info = null;
             boolean requestFailed = false;
             try {
-                nowPlaying = DjRadioService.broadcastNowPlayingText(
-                        CloudMusicApi.broadcastChannelCurrentInfo(channel.getId()).toJsonObject());
+                info = DjRadioService.fetchBroadcastLiveInfo(channel.getId());
             } catch (Throwable ignored) {
                 requestFailed = true;
             }
-            final String info = nowPlaying;
+            final DjRadioService.BroadcastLiveInfo live = info;
             final boolean failed = requestFailed;
             MultiThreadingUtil.runOnMainThread(() -> {
                 if (failed) {
                     DownloadDynamicIsland.showModelOperationResult("广播电台 · " + channel.displayName(),
-                            "查询节目信息失败，请稍后重试", false);
+                            "查询直播流失败，请稍后重试", false);
                     return;
                 }
-                DownloadDynamicIsland.showModelOperationResult("广播电台 · " + channel.displayName(),
-                        info.isEmpty()
-                                ? "直播流播放将在后续版本支持 · 暂无节目信息"
-                                : "正在播： " + info + " · 直播流播放将在后续版本支持",
-                        true);
+                if (live == null || live.playUrl.isEmpty()) {
+                    DownloadDynamicIsland.showModelOperationResult("广播电台 · " + channel.displayName(),
+                            "这个频道暂时没有直播流（未开播或已下线）", false);
+                    return;
+                }
+                // CloudMusic 的快照/底栏要显示频道名：把当前播放模型换成这张卡的替身。
+                boolean started = LiveStreamSession.start(channel, channel.displayName(), live.playUrl, null);
+                if (started) {
+                    CloudMusic.adoptLiveStreamNowPlaying(channel, live);
+                    DownloadDynamicIsland.showModelOperationResult("广播电台 · " + channel.displayName(),
+                            live.nowPlaying.isEmpty() ? "正在连接直播流…"
+                                    : "正在播：" + live.nowPlaying, true);
+                }
             });
         });
     }
