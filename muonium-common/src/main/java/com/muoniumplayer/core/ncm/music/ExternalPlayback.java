@@ -98,6 +98,14 @@ public final class ExternalPlayback {
         return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
     }
 
+    /**
+     * Spotify Connect 镜像（{@code SpotifyConnectMirror}）要接管时请 SMTC 让位。
+     * 两个镜像写的是同一组全局字段，一个系统里只能有一个在供态——谁后开谁接管。
+     */
+    public static void forceDetachIfMirroring() {
+        if (mirroring) detach("系统播放器镜像让位给 Spotify 设备");
+    }
+
     /** 用户是否选了镜像模式。 */
     public static boolean enabled() {
         return supportsPlatform()
@@ -138,6 +146,13 @@ public final class ExternalPlayback {
      */
     public static void onClientTick() {
         try {
+            // Spotify Connect 镜像接管期间 SMTC 整条路让位：不起助手、不读快照，也不把
+            // 已经让出去的接管状态抢回来（用户在设置里还开着镜像模式时，tick 每拍都会
+            // 尝试把它拉起来，必须在最前面拦住）。
+            if (com.muoniumplayer.core.ncm.spotify.SpotifyConnectMirror.isMirroring()) {
+                if (mirroring) detach("系统播放器镜像让位给 Spotify 设备");
+                return;
+            }
             if (!enabled()) {
                 if (mirroring) detach("");
                 return;
@@ -240,6 +255,9 @@ public final class ExternalPlayback {
             }
             CloudMusic.player = null;
         }
+        // 直播流也在被停之列：它不写 CloudMusic.player，上面的判断看不见它 —— 不显式
+        // 停掉就是系统播放器与广播电台同时出声。
+        LiveStreamSession.stop("mirrorTakeover");
 
         // 与播放线程同一套身份协议：先递增 generation 让上一段会话作废，再建会话，
         // 这样任何还在飞的旧歌词任务都会在提交前自己认输。

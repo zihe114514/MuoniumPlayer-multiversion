@@ -38,6 +38,7 @@ import com.muoniumplayer.core.utils.other.WrappedInputStream;
 import com.muoniumplayer.core.utils.other.multithreading.BackgroundWork;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 import com.muoniumplayer.party.MpPartyClient;
+import com.muoniumplayer.core.ncm.spotify.SpotifyConnectMirror;
 
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
@@ -416,6 +417,10 @@ public class CloudMusic implements SharedConstants {
     public static volatile boolean dontAdd = false;
 
     public static void prev() {
+        if (SpotifyConnectMirror.isMirroring()) {
+            SpotifyConnectMirror.previous();
+            return;
+        }
         if (ExternalPlayback.isMirroring()) {
             ExternalPlayback.previous();
             return;
@@ -462,6 +467,10 @@ public class CloudMusic implements SharedConstants {
     public static void next() {
         // 镜像态下「下一首」属于外部播放器：我们的队列是空的，走下面的路径会变成
         // 在本机悄悄起播一首自己的歌，而玩家的意图是让外部播放器切歌。
+        if (SpotifyConnectMirror.isMirroring()) {
+            SpotifyConnectMirror.next();
+            return;
+        }
         if (ExternalPlayback.isMirroring()) {
             ExternalPlayback.next();
             return;
@@ -904,6 +913,7 @@ public class CloudMusic implements SharedConstants {
      * 内置播放器按外部音量出声，退出镜像后还会留下一份被悄悄改掉的玩家音量设置。</p>
      */
     public static float displayVolume() {
+        if (SpotifyConnectMirror.isMirroring()) return SpotifyConnectMirror.volumeOr(getVolume());
         return ExternalPlayback.volumeOr(getVolume());
     }
 
@@ -918,6 +928,13 @@ public class CloudMusic implements SharedConstants {
         // 镜像态下这根滑块管的是外部播放器在音量合成器里的那一格：既不写持久化配置，也不碰
         // 内部播放器，否则玩家只是拖了一下外部音量，回来发现自己播放器的音量被改了。
         if (ExternalPlayback.writeVolume(safeVolume)) {
+            if (showNotice) {
+                DownloadDynamicIsland.showVolume(Math.round(displayVolume() * 100.0f));
+            }
+            return true;
+        }
+        // Spotify 接管态同理：滑块管的是 Spotify 设备的音量（PUT /me/player/volume）。
+        if (SpotifyConnectMirror.writeVolume(safeVolume)) {
             if (showNotice) {
                 DownloadDynamicIsland.showVolume(Math.round(displayVolume() * 100.0f));
             }
@@ -981,6 +998,10 @@ public class CloudMusic implements SharedConstants {
         if (MpPartyClient.interceptSeekBy(deltaMillis)) return true;
         // 直播不能 seek：拖动的是"已收听时长"，不是媒体位置，跳了也只是数字游戏。
         if (LiveStreamSession.isActive()) return false;
+        if (SpotifyConnectMirror.isMirroring()) {
+            SpotifyConnectMirror.seekBy(deltaMillis);
+            return SpotifyConnectMirror.canSeek();
+        }
         if (ExternalPlayback.isMirroring()) {
             ExternalSnapshot external = ExternalPlayback.rawSnapshot();
             long target = Math.max(0L, Math.min(external.durationMs(),
@@ -1020,6 +1041,10 @@ public class CloudMusic implements SharedConstants {
      */
     public static boolean seekToMillis(float absoluteMillis) {
         if (MpPartyClient.interceptSeekTo(absoluteMillis)) return true;
+        if (SpotifyConnectMirror.isMirroring()) {
+            SpotifyConnectMirror.seekTo((long) absoluteMillis);
+            return SpotifyConnectMirror.canSeek();
+        }
         if (ExternalPlayback.isMirroring()) {
             ExternalPlayback.seekTo((long) absoluteMillis);
             return ExternalPlayback.rawSnapshot().canSeek();
@@ -1161,6 +1186,11 @@ public class CloudMusic implements SharedConstants {
         // 镜像态下这条命令的对象是外部播放器，不是我们的音频引擎。结果按「当前是不是在响」
         // 乐观回报：真正的状态下一拍（≤500ms）由 SMTC 快照纠正，而玩家点按钮那一下
         // 必须立刻有一句反馈，否则会被当成按键没生效。
+        if (SpotifyConnectMirror.isMirroring()) {
+            boolean wasPlaying = SpotifyConnectMirror.isPlaying();
+            SpotifyConnectMirror.toggle();
+            return wasPlaying ? PlayPauseResult.PAUSED : PlayPauseResult.RESUMED;
+        }
         if (ExternalPlayback.isMirroring()) {
             boolean wasPlaying = ExternalPlayback.rawSnapshot().isPlaying();
             ExternalPlayback.toggle();
@@ -1416,6 +1446,7 @@ public class CloudMusic implements SharedConstants {
         // 同放是体验事故，而把镜像悄悄切回内部又是一次玩家没要求的模式变更。
         // 这里是 play() 与 playFm() 的共用入口，拦这一处就够了，界面上不必各写一份。
         if (ExternalPlayback.refuseInternalPlayback()) return;
+        if (SpotifyConnectMirror.refuseInternalPlayback()) return;
 
         // 直播流在响时点歌：先停掉直播再起引擎（与镜像同一互斥纪律，只是方向相反——
         // 用户点了明确的歌，直播让位是预期行为）。
@@ -1516,9 +1547,11 @@ public class CloudMusic implements SharedConstants {
     }
 
     /**
-     * 直播起播前的引擎让位（{@link LiveStreamSession#start} 调用）：与
-     * {@link #stopExistingPlayThread()} 同一条收尾链路，只是把受检异常就地吞掉 ——
-     * 直播这边已经在自己的线程里，join 超时顶多是新旧两路声源叠半秒，不值得为此打断起流。
+     * 直播起播前的引擎让位（{@link LiveStreamSession#start} 经 runOnMainThread 在主线程
+     * 调用）：与 {@link #stopExistingPlayThread()} 同一条收尾链路，只是把受检异常就地吞掉。
+     * 注意 join(1s) 发生在主线程上——引擎线程卡在下载里不理 interrupt 时，起播那一拍
+     * UI 最多冻结 1 秒；无死锁（PlayThread 收尾不引用 LiveStreamSession、不取类锁），
+     * 属可接受的罕见代价，不值得为此把起播搬到后台线程再排回来。
      */
     static void stopExistingPlayThreadForLiveStream() {
         try {
@@ -5261,6 +5294,12 @@ public class CloudMusic implements SharedConstants {
             PlaybackSnapshot mirrored = mirroredSnapshot();
             if (mirrored != null) return mirrored;
         }
+        // Spotify Connect 镜像：与 SMTC 同一条分叉纪律，只是供态源是 /me/player 轮询 +
+        // 墙钟外推（3 秒一拍），快照内部已补成逐帧连续的读数。
+        if (SpotifyConnectMirror.isMirroring()) {
+            PlaybackSnapshot mirrored = spotifyMirrorSnapshot();
+            if (mirrored != null) return mirrored;
+        }
         AudioPlayer p = player;
         Music m = currentlyPlaying;
         PlaybackSession s = currentSession;
@@ -5300,13 +5339,36 @@ public class CloudMusic implements SharedConstants {
     }
 
     /**
+     * Spotify Connect 镜像的一次快照，形态与 {@link #mirroredSnapshot()} 同构。
+     *
+     * <p>{@code player} 恒为 {@code null}：出声的是 Spotify 设备，本机音频链路完全没参与。
+     * 位置来自 {@code SpotifyConnectMirror.positionMs()}——那已是「快照位置 + 墙钟外推」的
+     * 连续读数，喂进 {@link #smoothPositionMs} 后逐帧仍然连续。</p>
+     */
+    private static PlaybackSnapshot spotifyMirrorSnapshot() {
+        Music m = currentlyPlaying;
+        if (m == null || !SpotifyConnectMirror.hasSession()) return null;
+        PlaybackSession s = currentSession;
+        long sid = s == null ? -1L : s.sessionId;
+        boolean playing = SpotifyConnectMirror.isPlaying();
+        long mirrorDuration = SpotifyConnectMirror.durationMs();
+        long durationMs = mirrorDuration > 0L ? mirrorDuration : m.getDuration();
+        long positionMs = smoothPositionMs(m.getId(), SpotifyConnectMirror.positionMs(),
+                durationMs, !playing);
+        return new PlaybackSnapshot(sid, m.getId(), positionMs, durationMs, playing, null, m);
+    }
+
+    /**
      * 这一帧有没有一个可用的播放时钟。
      *
      * <p>界面上原先写的是 {@code CloudMusic.player != null}，那在镜像态下是假的：
      * 外部播放器在响，只是不经过我们的音频引擎。这个判断就是给那几处用的。</p>
      */
     public static boolean hasPlaybackClock() {
-        return ExternalPlayback.isMirroring() || player != null;
+        // 直播也有"时钟"（已收听墙钟）：不加这一支，冷启动直接开电台时底栏时间标会
+        // 恒显 00:00（player==null 且未镜像时被当成"没有时钟"）。
+        return ExternalPlayback.isMirroring() || SpotifyConnectMirror.isMirroring()
+                || LiveStreamSession.isActive() || player != null;
     }
 
     /**
@@ -5328,7 +5390,7 @@ public class CloudMusic implements SharedConstants {
      */
     public static AutomixCueMarker automixCueNow() {
         if (!AutomixSettings.isCueMarkerEnabled() || !AutomixSettings.isEnabled()) return null;
-        if (ExternalPlayback.isMirroring()) return null;
+        if (ExternalPlayback.isMirroring() || SpotifyConnectMirror.isMirroring()) return null;
         Thread thread = playThread;
         if (!(thread instanceof PlayThread)) return null;
         return ((PlayThread) thread).automixCueView();
@@ -5341,6 +5403,7 @@ public class CloudMusic implements SharedConstants {
      * 的逐字段语义（播完一首但引擎还在也算「在响」，跟旧行为一致），只额外接上镜像。</p>
      */
     public static boolean isAudibleNow() {
+        if (SpotifyConnectMirror.isMirroring()) return SpotifyConnectMirror.isPlaying();
         if (ExternalPlayback.isMirroring()) return ExternalPlayback.rawSnapshot().isPlaying();
         if (LiveStreamSession.isActive()) return LiveStreamSession.isPlaying();
         AudioPlayer active = player;
@@ -5355,6 +5418,7 @@ public class CloudMusic implements SharedConstants {
      * 什么都没多出来」。内部播放的语义这里一个字都不改：还是「引擎在且这首没放完」。</p>
      */
     public static boolean hasLiveTrack() {
+        if (SpotifyConnectMirror.isMirroring()) return SpotifyConnectMirror.hasSession();
         if (ExternalPlayback.isMirroring()) {
             ExternalSnapshot external = ExternalPlayback.rawSnapshot();
             return external.hasSession() && !external.isStopped();
@@ -5374,7 +5438,8 @@ public class CloudMusic implements SharedConstants {
         // 直播：进度条画的是已收听时长（墙钟），不是媒体位置。
         if (LiveStreamSession.isActive()) return LiveStreamSession.elapsedMillis();
         AudioPlayer active = player;
-        if (ExternalPlayback.isMirroring() || active == null) return getSnapshot().positionMs;
+        if (ExternalPlayback.isMirroring() || SpotifyConnectMirror.isMirroring()
+                || active == null) return getSnapshot().positionMs;
         return Math.round(active.getCurrentTimeMillis());
     }
 
@@ -5383,7 +5448,8 @@ public class CloudMusic implements SharedConstants {
         // 直播：总时长为 0，界面据此切换到「直播态」绘制（不画进度条、画 LIVE 标）。
         if (LiveStreamSession.isActive()) return 0L;
         AudioPlayer active = player;
-        if (ExternalPlayback.isMirroring() || active == null) return getSnapshot().durationMs;
+        if (ExternalPlayback.isMirroring() || SpotifyConnectMirror.isMirroring()
+                || active == null) return getSnapshot().durationMs;
         return Math.round(active.getTotalTimeMillis());
     }
 
@@ -5408,6 +5474,9 @@ public class CloudMusic implements SharedConstants {
         standIn.setDjProgram(true);
         currentlyPlaying = standIn;
         playList = new ArrayList<>();
+        // 队列换成空列表，「下一首播放」的账也跟着作废：账本按曲目身份记账，残留的话
+        // 直播后再播到相同歌曲会凭空长出待播行（与 ExternalPlayback.apply 同一口径）。
+        clearQueuedNext();
         curIdx = 0;
         currentSession = new PlaybackSession(generation.incrementAndGet(), standIn.getStableKey(), standIn.getId());
         playing.set(true);
@@ -5445,6 +5514,37 @@ public class CloudMusic implements SharedConstants {
         haveNoWords = false;
         hasTransLyrics = false;
         hasRomanization = false;
+    }
+
+    /**
+     * 外部镜像（Spotify Connect，见 {@code SpotifyConnectMirror}）落地「正在播放」的入口。
+     *
+     * <p>协议与 {@link ExternalPlayback} 的 apply 一致：接管前必须先把内部音频真的停下来
+     * （否则「内置播放的一首」与「Spotify 在放的另一首」同时存在，界面却只显示后者）；
+     * 然后按「递增 generation 作废旧会话 → 新建 PlaybackSession → 写 currentlyPlaying →
+     * 清队列」的顺序换血。放在这一侧而不是镜像侧，是因为队列与 queued-next 的清理要碰
+     * 包内私有成员。歌词走 {@link #loadLyric}：Spotify 行没有本家词，会落进按标题搜索的
+     * 兜底链，找不到就显示「暂无歌词」。</p>
+     */
+    public static void adoptExternalMirrorTrack(Music music) {
+        if (player != null) {
+            try {
+                stopPlaybackAndClear(currentlyPlaying);
+            } catch (Throwable failure) {
+                System.err.println("[Music/Spotify] 接管前停内部播放失败: " + failure);
+            }
+            player = null;
+        }
+        // 直播流与 SMTC 接管同一条互斥纪律：不写 player，得显式停（否则双声源）。
+        LiveStreamSession.stop("mirrorTakeover");
+        long sessionId = generation.incrementAndGet();
+        PlaybackSession session = new PlaybackSession(sessionId, music.getStableKey(), music.getId());
+        currentSession = session;
+        currentlyPlaying = music;
+        playList = new ArrayList<Music>();
+        curIdx = 0;
+        clearQueuedNext();
+        loadLyric(music, session);
     }
 
     // ── 渲染侧平滑播放位置 ──────────────────────────────────────────────────────

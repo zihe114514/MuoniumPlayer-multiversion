@@ -182,6 +182,8 @@ public final class BroadcastPanel extends NCMPanel {
             this.hoverColor = NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER);
             this.revealQueue.beginFrame();
             this.revealQueue.setAnimationsSuppressed(this.grid != null && this.grid.isScrollActive());
+            // chip 游标每帧归位（回调先于子控件跑）：不归位就是每帧累加，chip 漂出屏幕。
+            cursor[0] = MARGIN;
             RadioCardWidget.layoutGrid(Math.max(1.0, getWidth() - MARGIN * 2.0), this.cardWidgets);
         });
 
@@ -212,6 +214,10 @@ public final class BroadcastPanel extends NCMPanel {
             return;
         }
 
+        // 重建整列时重新武装首屏错峰档（与 NeteaseDiscoveryPanel 同一约定）：
+        // beginFrame 只在上一帧发过号后关闭首屏让位，不 restart 的话重建后的
+        // 首屏卡片拿不到 90ms 让位档，进场与整页转场叠帧。
+        this.revealQueue.restart();
         this.pendingCards = new ArrayList<>(this.channels);
         this.pendingCardIndex = 0;
         buildPendingCards();
@@ -278,6 +284,13 @@ public final class BroadcastPanel extends NCMPanel {
                 });
             }
         });
+    }
+
+    /** 每帧推进卡片分帧构建：renderLayout 只铺首屏 32 张，其余由渲染帧补齐。 */
+    @Override
+    public void onRender(double mouseX, double mouseY) {
+        buildPendingCards();
+        super.onRender(mouseX, mouseY);
     }
 
     private void buildPendingCards() {
@@ -355,8 +368,9 @@ public final class BroadcastPanel extends NCMPanel {
             final boolean success = ok;
             MultiThreadingUtil.runOnMainThread(() -> {
                 DownloadDynamicIsland.showModelOperationResult("广播电台收藏",
-                        (collect ? "已收藏「" : "已取消收藏「") + channel.displayName() + "」"
-                                + (success ? "" : "（请求失败）"),
+                        success
+                                ? (collect ? "已收藏「" : "已取消收藏「") + channel.displayName() + "」"
+                                : "收藏请求失败",
                         success);
                 if (success && showCollected) load();
             });

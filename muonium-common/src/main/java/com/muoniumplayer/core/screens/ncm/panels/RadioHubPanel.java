@@ -62,6 +62,11 @@ public final class RadioHubPanel extends NCMPanel {
     private int loadGeneration;
 
     private final List<String[]> categories = new ArrayList<>();
+    /**
+     * 分类目录的不可变快照（{@code ensureCategories} 解析结果的原样带回）。后台线程读
+     * 这一份，不碰 {@link #categories}（那只属于主线程），两侧就不会撞 CME。
+     */
+    private volatile List<String[]> categoriesSnapshot;
     private String selectedCategoryId = "";
 
     private volatile boolean searchMode;
@@ -110,8 +115,14 @@ public final class RadioHubPanel extends NCMPanel {
         // 分区 chips：四个内容 tab + 视觉上隔开一点的 DIFM / 广播两个次级入口。
         // 游标从左往右走，每个 chip 的宽度在 beforeRender 里按文案实测量 —— 字体图集
         // 晚于首帧就绪时第一帧先按估算宽摆位，下一帧自然校正。
+        // 游标在面板级 beforeRender 里每帧复位（回调先于所有子控件跑），chip 排版
+        // 因此是"每帧从固定起点重排"而不是"在上一帧的累计值上再推一格"——后者会
+        // 让整排 chip 以每帧一个身位的速度向右漂出屏幕。
         final double[] chipCursor = {MARGIN};
-        for (final Tab tab : Tab.values()) {
+        final Tab[] tabs = Tab.values();
+        for (int tabIndex = 0; tabIndex < tabs.length; tabIndex++) {
+            final Tab tab = tabs[tabIndex];
+            final boolean lastTab = tabIndex == tabs.length - 1;
             RoundedButtonWidget chip = new RoundedButtonWidget(tab.label, FontManager.pf12);
             addChild(chip);
             chip.setShouldOverrideMouseCursor(true);
@@ -123,9 +134,12 @@ public final class RadioHubPanel extends NCMPanel {
             chip.setBeforeRenderCallback(() -> {
                 layoutChip(chip, tab.label, chipCursor, TAB_ROW_Y);
                 paintChip(chip, !this.searchMode && tab == this.currentTab);
+                // 最后一个 tab 多推进一段：DIFM/广播两个次级入口与内容 tab 之间的视觉间隔
+                // 由排版游标自己携带，不靠 renderLayout 的一次性赋值（那在每帧复位后失效）。
+                if (lastTab) chipCursor[0] += 14.0;
             });
         }
-        chipCursor[0] += 14.0;
+        // 入口 chip 与 tab chip 共用同一条每帧复位的游标：DIFM/广播前留 14px 视觉间隔。
         attachEntryChip(chipCursor, "DIFM", () -> NCMScreen.getInstance().setCurrentPanel(new DifmPanel()));
         attachEntryChip(chipCursor, "广播", () -> NCMScreen.getInstance().setCurrentPanel(new BroadcastPanel()));
 
@@ -155,6 +169,10 @@ public final class RadioHubPanel extends NCMPanel {
             this.hoverColor = NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER);
             this.revealQueue.beginFrame();
             this.revealQueue.setAnimationsSuppressed(this.grid != null && this.grid.isScrollActive());
+            // chip 游标每帧归位：chip 的 beforeRender 每帧都跑一次排版，游标不归位
+            // 就是每帧累加一次，整排 chip 会漂出屏幕。复位后由第一个 tab chip 从头
+            // 推进；入口 chip 前的 14px 间隔由最后一个 tab chip 的排版补上。
+            chipCursor[0] = MARGIN;
             // 网格视口宽 = 面板宽 - 页边距：列宽在这一帧分给所有卡片，ScrollPanel 稍后摆位。
             RadioCardWidget.layoutGrid(Math.max(1.0, getWidth() - MARGIN * 2.0), this.cardWidgets);
         });
@@ -189,6 +207,10 @@ public final class RadioHubPanel extends NCMPanel {
         }
 
         // 卡片分帧构建：与主页网格同一条 32/帧的批处理。
+        // 重建整列时重新武装首屏错峰档（与 NeteaseDiscoveryPanel 同一约定）：
+        // beginFrame 只在上一帧发过号后关闭首屏让位，不 restart 的话重建后的
+        // 首屏卡片拿不到 90ms 让位档，进场与整页转场叠帧。
+        this.revealQueue.restart();
         this.pendingCards = new ArrayList<>(this.cards);
         this.pendingCardIndex = 0;
         buildPendingCards();
@@ -199,6 +221,9 @@ public final class RadioHubPanel extends NCMPanel {
         addChild(field);
         this.searchField = field;
         field.setPlaceholder("搜索电台 / 播客…");
+        // 搜索结果页重建布局时把关键词回填：结果到达/切 tab 都会重跑 renderLayout，
+        // 不回填的话搜索完成后输入框是空的，改关键词必须全量重输。
+        if (searchMode && !searchKeyword.isEmpty()) field.setText(searchKeyword);
         field.setShouldOverrideMouseCursor(true);
         field.setOnKeyTypedCallback((character, keyCode) -> {
             if (!field.isFocused()) return false;
@@ -246,7 +271,8 @@ public final class RadioHubPanel extends NCMPanel {
                 Math.max(1.0, getWidth() - MARGIN * 2.0), CHIP_HEIGHT));
 
         // 选中态按类目 id 判断；点击已选中的类目不再重发请求。
-        final double[] railCursor = {0.0};
+        // rail 是 HORIZONTAL ScrollPanel：横向摆位由 alignChildren 按滚动偏移每帧计算，
+        // chip 这里只定宽度与配色，绝不能 setPosition —— 钉回去横向滚动就永远不动。
         for (final String[] category : categories) {
             RoundedButtonWidget chip = new RoundedButtonWidget(category[1], FontManager.pf12);
             rail.addChild(chip);
@@ -260,7 +286,8 @@ public final class RadioHubPanel extends NCMPanel {
                 return true;
             });
             chip.setBeforeRenderCallback(() -> {
-                layoutChip(chip, category[1], railCursor, 0.0);
+                double textWidth = FontManager.pf12.getStringWidthD(category[1]);
+                chip.setBounds(Math.max(28.0, textWidth + 16.0), RadioChips.CHIP_HEIGHT);
                 paintChip(chip, category[0].equals(selectedCategoryId));
             });
         }
@@ -293,11 +320,14 @@ public final class RadioHubPanel extends NCMPanel {
                 switch (tab) {
                     case CATEGORY: {
                         ensureCategories(generation);
-                        String cateId = selectedCategoryId.isEmpty() && !categories.isEmpty()
-                                ? categories.get(0)[0] : selectedCategoryId;
+                        // 分类目录读本地快照（ensureCategories 带回的解析结果），不跨线程读
+                        // categories 主线程集合。快照为空说明目录还没回来，退回默认分类。
+                        List<String[]> cats = categoriesSnapshot;
+                        String cateId = selectedCategoryId.isEmpty() && cats != null && !cats.isEmpty()
+                                ? cats.get(0)[0] : selectedCategoryId;
                         List<DjRadio> result = DjRadioService.parseRadios(
                                 CloudMusicApi.djRecommendByCategory(cateId).toJsonObject());
-                        String cateName = categoryName(cateId);
+                        String cateName = categoryNameFromSnapshot(cats, cateId);
                         statusText = (cateName.isEmpty() ? "分类推荐" : "分类 · " + cateName)
                                 + (result.isEmpty() ? " · 暂无内容" : " · " + result.size() + " 个电台");
                         loaded = result;
@@ -350,19 +380,32 @@ public final class RadioHubPanel extends NCMPanel {
 
     /** 分类 tab：分类目录只取一次；结果到达时若本页还活着就补铺 rail。 */
     private void ensureCategories(int generation) {
-        if (!categories.isEmpty()) return;
+        // 竞态要点：categories 只在主线程读写。后台线程自己 fetch 并解析（ensureCategories
+        // 本来就跑在后台），把解析结果原样带回来，绝不跨线程读 categories —— 之前在后台
+        // 读 categories.get(0)/categoryName 会与主线程的 clear()+addAll() 撞出 CME。
+        if (categoriesSnapshot != null) return;
         JsonObject root = CloudMusicApi.djCategoryList().toJsonObject();
         List<String[]> parsed = DjRadioService.parseCategories(root);
         MultiThreadingUtil.runOnMainThread(() -> {
             if (generation != loadGeneration || parsed.isEmpty()) return;
             categories.clear();
             categories.addAll(parsed);
+            categoriesSnapshot = parsed;
             renderLayout();
         });
     }
 
     private String categoryName(String cateId) {
         for (String[] category : categories) {
+            if (category[0].equals(cateId)) return category[1];
+        }
+        return "";
+    }
+
+    /** 后台线程版：只在 ensureCategories 带回的快照里查，不碰主线程集合。 */
+    private static String categoryNameFromSnapshot(List<String[]> snapshot, String cateId) {
+        if (snapshot == null) return "";
+        for (String[] category : snapshot) {
             if (category[0].equals(cateId)) return category[1];
         }
         return "";
@@ -429,6 +472,13 @@ public final class RadioHubPanel extends NCMPanel {
     }
 
     // ── 卡片 ─────────────────────────────────────────────────────────────────
+
+    /** 每帧推进卡片分帧构建：renderLayout 只铺首屏 32 张，其余由渲染帧补齐。 */
+    @Override
+    public void onRender(double mouseX, double mouseY) {
+        buildPendingCards();
+        super.onRender(mouseX, mouseY);
+    }
 
     private void buildPendingCards() {
         if (pendingCards == null) return;

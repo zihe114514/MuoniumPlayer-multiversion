@@ -741,6 +741,10 @@ public class Music {
         copy.cloudSong = cloudSong;
         copy.externalCoverUrl = externalCoverUrl;
         copy.foreignCover = foreignCover;
+        // 电台节目标记是"曲目身份"（这条内容是什么），不是"这一格发生过什么"的运行态：
+        // 拷贝体进"下一首播放"队列后若丢了标，取流失败时自动换源闸（canAutoSwitch）会
+        // 拿节目名去全平台搜同名歌，录取一个毫不相干的替身 —— 标记必须随拷贝走。
+        copy.djProgram = djProgram;
         copy.artistsName = artistsName;
         copy.translatedNames = translatedNames;
         return copy;

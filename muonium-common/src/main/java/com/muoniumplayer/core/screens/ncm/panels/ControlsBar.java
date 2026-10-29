@@ -399,29 +399,47 @@ public class ControlsBar extends NCMPanel {
 
         prev
                 .setOnClickCallback((x, y, i) -> {
+                    // 直播没有上一首：按了只提示，不吞掉点击的反馈。
+                    if (com.muoniumplayer.core.ncm.music.LiveStreamSession.isActive()) {
+                        DownloadDynamicIsland.showModelOperationResult("广播电台",
+                                "广播电台没有上一首/下一首，切台请在广播页点选", true);
+                        return true;
+                    }
                     if (CloudMusic.hasPlaybackClock() && CloudMusic.currentlyPlaying != null)
                         CloudMusic.prev();
 
                     return true;
                 })
-                .setBeforeRenderCallback(() -> prev
-                        .center()
-                        .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
-                        .setPosition(prev.getRelativeX() - 20 - prev.getWidth() * .5 - centerShift, prev.getRelativeY() + buttonsYOffset));
+                .setBeforeRenderCallback(() -> {
+                    boolean liveDisabled = com.muoniumplayer.core.ncm.music.LiveStreamSession.isActive();
+                    prev.center()
+                            .setColor(NCMScreen.getColor(liveDisabled
+                                    ? NCMScreen.ColorType.SECONDARY_TEXT : NCMScreen.ColorType.PRIMARY_TEXT))
+                            .setPosition(prev.getRelativeX() - 20 - prev.getWidth() * .5 - centerShift, prev.getRelativeY() + buttonsYOffset);
+                });
         IconWidget next = new IconWidget("E", FontManager.icon30, 0, 0, 20, 20);
         this.addChild(next);
 
         next
                 .setOnClickCallback((x, y, i) -> {
+                    // 直播没有下一首：同上一首，给一句说明而不是静默吞掉。
+                    if (com.muoniumplayer.core.ncm.music.LiveStreamSession.isActive()) {
+                        DownloadDynamicIsland.showModelOperationResult("广播电台",
+                                "广播电台没有上一首/下一首，切台请在广播页点选", true);
+                        return true;
+                    }
                     if (CloudMusic.hasPlaybackClock() && CloudMusic.currentlyPlaying != null)
                         CloudMusic.next();
 
                     return true;
                 })
-                .setBeforeRenderCallback(() -> next
-                        .center()
-                        .setPosition(next.getRelativeX() + next.getWidth() * .5 + 20 - centerShift, next.getRelativeY() + buttonsYOffset)
-                        .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)));
+                .setBeforeRenderCallback(() -> {
+                    boolean liveDisabled = com.muoniumplayer.core.ncm.music.LiveStreamSession.isActive();
+                    next.center()
+                            .setPosition(next.getRelativeX() + next.getWidth() * .5 + 20 - centerShift, next.getRelativeY() + buttonsYOffset)
+                            .setColor(NCMScreen.getColor(liveDisabled
+                                    ? NCMScreen.ColorType.SECONDARY_TEXT : NCMScreen.ColorType.PRIMARY_TEXT));
+                });
         // 播放模式与核心控件并列：顺序播放 → 随机播放 → 单曲循环。
         ThemedTextureIconWidget playMode = new ThemedTextureIconWidget(
                 () -> CloudMusic.isPersonalFmActive() ? null : PlayerIconAssets.forPlayMode(CloudMusic.playMode),
@@ -590,6 +608,9 @@ public class ControlsBar extends NCMPanel {
         LabelWidget lblCurTime = new LabelWidget(
                 () -> {
                     if (presentation.preparing) return "准备中";
+                    // 直播：左侧时间标是已收听时长（右侧让位给 LIVE 徽标）。
+                    if (com.muoniumplayer.core.ncm.music.LiveStreamSession.isActive())
+                        return formatDuration((float) com.muoniumplayer.core.ncm.music.LiveStreamSession.elapsedMillis());
                     if (!CloudMusic.hasPlaybackClock())
                         return "00:00";
                     return formatDuration((float) CloudMusic.positionMsNow());

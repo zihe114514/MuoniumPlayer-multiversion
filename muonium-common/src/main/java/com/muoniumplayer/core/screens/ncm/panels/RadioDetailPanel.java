@@ -58,6 +58,8 @@ public final class RadioDetailPanel extends NCMPanel {
     private volatile boolean programsLoading = true;
     private volatile boolean programsFailed;
     private volatile boolean complete;
+    /** 下一页的上游节目序号：翻页账按上游原始条数记，跳过坏条目不影响 offset。 */
+    private volatile int nextOffset;
     private volatile boolean loadingMore;
     private volatile boolean togglingSubscribe;
 
@@ -221,6 +223,8 @@ public final class RadioDetailPanel extends NCMPanel {
         }
 
         // 增量发布已解析好的节目行：重建布局时（详情信息到达）已发布的行不重播进场。
+        // 全量重建（rowWidgets 已被清空）时重新武装首屏错峰档，与发现页同一约定。
+        if (this.rowWidgets.isEmpty()) this.revealQueue.restart();
         this.pendingRowIndex = this.rowWidgets.size();
         buildPendingRows();
     }
@@ -302,14 +306,21 @@ public final class RadioDetailPanel extends NCMPanel {
         }
         MultiThreadingUtil.runAsync(() -> {
             List<Music> page = Collections.emptyList();
+            int upstreamCount = 0;
             boolean requestFailed = false;
             try {
-                page = DjRadioService.parsePrograms(
+                DjRadioService.ProgramPage parsed = DjRadioService.parseProgramsPage(
                         CloudMusicApi.djProgramByRadio(radio.getId(), PAGE_SIZE, offset, false).toJsonObject());
+                page = parsed.programs;
+                upstreamCount = parsed.upstreamCount;
             } catch (Throwable throwable) {
                 requestFailed = offset == 0; // 翻页失败静默，本页先到先得
             }
             final List<Music> loaded = page;
+            // 翻页账按上游记：offset 是上游节目序号，"解析后条数"会因跳过无 mainSong 的
+            // 条目而错位（丢尾页或重复行）。complete 同样看上游——本页没给满就是到底了。
+            final int nextOffset = offset + upstreamCount;
+            final boolean pageComplete = upstreamCount < PAGE_SIZE;
             final boolean failedFirstPage = requestFailed;
             MultiThreadingUtil.runOnMainThread(() -> {
                 programsLoading = false;
@@ -319,7 +330,8 @@ public final class RadioDetailPanel extends NCMPanel {
                     if (programs.isEmpty()) renderLayout();
                     return;
                 }
-                this.complete = loaded.size() < PAGE_SIZE;
+                this.complete = pageComplete;
+                this.nextOffset = nextOffset;
                 if (offset == 0) {
                     programs.clear();
                     contextList.getMusics().clear();
@@ -353,8 +365,9 @@ public final class RadioDetailPanel extends NCMPanel {
                 togglingSubscribe = false;
                 if (success) radio.setSubscribed(subscribe);
                 DownloadDynamicIsland.showModelOperationResult("订阅电台",
-                        (subscribe ? "已订阅「" : "已取消订阅「") + radio.displayName() + "」"
-                                + (success ? "" : "（请求失败）"),
+                        success
+                                ? (subscribe ? "已订阅「" : "已取消订阅「") + radio.displayName() + "」"
+                                : (subscribe ? "订阅请求失败" : "取消订阅请求失败"),
                         success);
             });
         });
@@ -400,7 +413,7 @@ public final class RadioDetailPanel extends NCMPanel {
         // 滚到底自动翻页：complete 之后不再发请求。
         if (!complete && !loadingMore && !programsLoading && !programs.isEmpty()
                 && this.list != null && this.list.isScrolledToEnd()) {
-            loadPrograms(programs.size());
+            loadPrograms(nextOffset);
         }
         super.onRender(mouseX, mouseY);
     }

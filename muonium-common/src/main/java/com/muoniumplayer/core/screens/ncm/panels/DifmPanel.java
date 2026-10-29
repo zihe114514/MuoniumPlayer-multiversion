@@ -163,6 +163,8 @@ public final class DifmPanel extends NCMPanel {
             this.hoverColor = NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER);
             this.revealQueue.beginFrame();
             this.revealQueue.setAnimationsSuppressed(this.grid != null && this.grid.isScrollActive());
+            // chip 游标每帧归位（回调先于子控件跑）：不归位就是每帧累加，chip 漂出屏幕。
+            cursor[0] = MARGIN;
             RadioCardWidget.layoutGrid(Math.max(1.0, getWidth() - MARGIN * 2.0), this.cardWidgets);
         });
 
@@ -193,6 +195,10 @@ public final class DifmPanel extends NCMPanel {
             return;
         }
 
+        // 重建整列时重新武装首屏错峰档（与 NeteaseDiscoveryPanel 同一约定）：
+        // beginFrame 只在上一帧发过号后关闭首屏让位，不 restart 的话重建后的
+        // 首屏卡片拿不到 90ms 让位档，进场与整页转场叠帧。
+        this.revealQueue.restart();
         this.pendingCards = new ArrayList<>(this.channels);
         this.pendingCardIndex = 0;
         buildPendingCards();
@@ -236,6 +242,13 @@ public final class DifmPanel extends NCMPanel {
         });
     }
 
+    /** 每帧推进卡片分帧构建：renderLayout 只铺首屏 32 张，其余由渲染帧补齐。 */
+    @Override
+    public void onRender(double mouseX, double mouseY) {
+        buildPendingCards();
+        super.onRender(mouseX, mouseY);
+    }
+
     private void buildPendingCards() {
         if (pendingCards == null) return;
         int total = pendingCards.size();
@@ -267,8 +280,13 @@ public final class DifmPanel extends NCMPanel {
             List<Music> tracks = Collections.emptyList();
             boolean requestFailed = false;
             try {
+                // 优先用频道自己记录的来源（ categoryName 槽位，解析时写入）：收藏视图里
+                // 点跨曲风收藏的频道时，页面 selectedSource 与频道真实来源对不上，
+                // 按页面的 source 请求会拿空。
+                int source = parseInt(channel.getCategoryName());
+                if (source < 0) source = parseInt(selectedSource);
                 tracks = DjRadioService.parseDifmTracks(CloudMusicApi
-                        .djDifmPlayingTracks(parseInt(selectedSource), channel.getId(), 20).toJsonObject());
+                        .djDifmPlayingTracks(source, channel.getId(), 20).toJsonObject());
             } catch (Throwable ignored) {
                 requestFailed = true;
             }
@@ -293,8 +311,9 @@ public final class DifmPanel extends NCMPanel {
             boolean ok = DjRadioService.setDifmChannelSubscribed(channel.getId(), subscribe);
             MultiThreadingUtil.runOnMainThread(() -> {
                 DownloadDynamicIsland.showModelOperationResult("DIFM 收藏",
-                        (subscribe ? "已收藏「" : "已取消收藏「") + channel.displayName() + "」"
-                                + (ok ? "" : "（请求失败）"),
+                        ok
+                                ? (subscribe ? "已收藏「" : "已取消收藏「") + channel.displayName() + "」"
+                                : "收藏请求失败",
                         ok);
                 if (ok && showCollected) load(); // 收藏列表里取消后当场刷新
             });
@@ -303,7 +322,10 @@ public final class DifmPanel extends NCMPanel {
 
     private static int parseInt(String value) {
         try {
-            return Integer.parseInt(value == null ? "0" : value.trim());
+            String trimmed = value == null ? "" : value.trim();
+            // 空串 = 频道没带来源（收藏端点旧形状），返回 -1 让调用方退回页面选中值。
+            if (trimmed.isEmpty()) return -1;
+            return Integer.parseInt(trimmed);
         } catch (NumberFormatException ignored) {
             return 0;
         }

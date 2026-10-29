@@ -297,6 +297,9 @@ public final class LocalPlaylistStore {
         addIfPresent(x, "kugouAlbumAudioId", music.getKugouAlbumAudioId());
         addIfPresent(x, "kugouCoverTemplate", music.getKugouCoverTemplate());
         if (music.isCloudSong()) x.addProperty("cloudSong", true);
+        // 电台节目标记：transient 被 Gson 跳过，不落盘的话重载后 djProgram=false，
+        // 该行播放失败时自动换源闸失效，节目名会被拿去全平台搜同名歌。
+        if (music.isDjProgram()) x.addProperty("djProgram", true);
         track.add("_x", x);
         return track;
     }
@@ -328,6 +331,7 @@ public final class LocalPlaylistStore {
         music.setKugouAlbumAudioId(string(x, "kugouAlbumAudioId"));
         music.setKugouCoverTemplate(string(x, "kugouCoverTemplate"));
         music.setCloudSong(x.has("cloudSong") && truthy(x, "cloudSong"));
+        music.setDjProgram(x.has("djProgram") && truthy(x, "djProgram"));
         return music;
     }
 

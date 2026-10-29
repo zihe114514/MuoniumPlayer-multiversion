@@ -98,13 +98,17 @@ class DjRadioServiceTest {
                   {"id":222,"name":"坏数据，没有 mainSong"}
                 ]}""");
 
-        List<Music> programs = DjRadioService.parsePrograms(root);
+        DjRadioService.ProgramPage page = DjRadioService.parseProgramsPage(root);
+        List<Music> programs = page.programs;
         // 没有 mainSong 也没有 mainSongId 的第二条被跳过，而不是让整页报错。
         assertEquals(1, programs.size());
+        // 上游计数不受坏条目影响：分页 offset 按它记账。
+        assertEquals(2, page.upstreamCount);
         Music music = programs.get(0);
         assertEquals(90001L, music.getId(), "必须用 mainSong 的真实 songId");
         assertEquals("binaryify", music.getArtistsName());
         assertEquals(1800000L, music.getDuration());
+        assertEquals(8, music.getFee(), "mainSong 的 fee 要保留（VIP 标与失败归因）");
         // 节目一律带 djProgram 标记：换源闸门（自动 + 手动）据此对它短路。
         assertTrue(music.isDjProgram(), "节目必须打 djProgram 标以禁用换源");
     }

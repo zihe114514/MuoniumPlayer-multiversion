@@ -92,19 +92,34 @@ public final class DjRadioService {
     // ── 节目 → Music ─────────────────────────────────────────────────────────
 
     /**
-     * 电台节目列表（{@code /api/dj/program/byradio}）→ 可播放的 {@link Music} 列表。
-     * 没带 mainSong 的节目跳过 —— 没有 songId 就没有播放与歌词，留着只会点到报错。
+     * 电台节目列表（{@code /api/dj/program/byradio}）→ 分页解析结果。没带 mainSong 的
+     * 节目跳过 —— 没有 songId 就没有播放与歌词，留着只会点到报错。
+     *
+     * <p>{@link ProgramPage#upstreamCount} 是上游本页的<b>原始</b>条数：分页 offset 是
+     * 上游节目序号，用"解析后条数"当下一页 offset 会因跳条目而错位（丢尾页或重复行），
+     * 所以翻页账必须按上游记。</p>
      */
-    public static List<Music> parsePrograms(JsonObject root) {
+    public static ProgramPage parseProgramsPage(JsonObject root) {
         JsonArray programs = nestedArray(root, "programs", "djPrograms");
-        if (programs == null) return Collections.emptyList();
+        if (programs == null) return new ProgramPage(Collections.emptyList(), 0);
         List<Music> result = new ArrayList<>();
         for (JsonElement element : programs) {
             if (element == null || !element.isJsonObject()) continue;
             Music music = programToMusic(element.getAsJsonObject());
             if (music != null) result.add(music);
         }
-        return result;
+        return new ProgramPage(result, programs.size());
+    }
+
+    /** 节目列表页：解析后的可播放曲目 + 上游本页原始条数（分页账用）。 */
+    public static final class ProgramPage {
+        public final List<Music> programs;
+        public final int upstreamCount;
+
+        public ProgramPage(List<Music> programs, int upstreamCount) {
+            this.programs = programs == null ? Collections.emptyList() : programs;
+            this.upstreamCount = upstreamCount;
+        }
     }
 
     /**
@@ -141,8 +156,12 @@ public final class DjRadioService {
         if (songId <= 0L) return null;
         String djName = text(object(program, "dj"), "nickname", "name");
         if (djName.isEmpty()) djName = text(object(program, "radio"), "name");
+        // fee 从节目或内嵌 mainSong 的残影里取：兜底曲目也要带对 VIP 标，播放失败时的
+        // 归因才不会把"没买"说成"坏了"。
+        int fee = (int) number(program, "fee");
+        if (fee == 0) fee = (int) number(object(program, "mainSong"), "fee");
         return minimalMusic(songId, text(program, "name"), djName, text(program, "coverUrl"),
-                number(program, "duration"));
+                number(program, "duration"), fee);
     }
 
     /** 按节目 id 取详情并转成 {@link Music}；失败返回 {@code null}（调用方给降级提示）。 */
@@ -263,27 +282,31 @@ public final class DjRadioService {
         List<DjRadio> result = new ArrayList<>();
         if (data != null && data.size() > 0 && data.get(0).isJsonObject()
                 && data.get(0).getAsJsonObject().has("styles")) {
-            // 分组形状：展开每一组的 styles[].channels[]。
+            // 分组形状：展开每一组的 styles[].channels[]。source（0 电音/1 古典/2 爵士）
+            // 记进卡片的 categoryName 槽位——"我的收藏"视图里点跨曲风收藏的频道时，
+            // 取曲目列表要按频道自己的 source 请求，用页面当前选中的 source 会拿空。
             for (JsonElement group : data) {
                 if (group == null || !group.isJsonObject()) continue;
-                JsonArray styles = array(group.getAsJsonObject(), "styles");
+                JsonObject groupObj = group.getAsJsonObject();
+                int source = (int) number(groupObj, "source");
+                JsonArray styles = array(groupObj, "styles");
                 if (styles == null) continue;
                 for (JsonElement style : styles) {
                     if (style == null || !style.isJsonObject()) continue;
                     JsonObject styleObj = style.getAsJsonObject();
-                    appendDifmChannels(array(styleObj, "channels"), result);
+                    appendDifmChannels(array(styleObj, "channels"), result, source);
                 }
             }
             return result;
         }
-        appendDifmChannels(data, result);
+        appendDifmChannels(data, result, -1);
         if (result.isEmpty()) {
-            appendDifmChannels(nestedArray(root, "channelList", "channels", "list"), result);
+            appendDifmChannels(nestedArray(root, "channelList", "channels", "list"), result, -1);
         }
         return result;
     }
 
-    private static void appendDifmChannels(JsonArray channels, List<DjRadio> result) {
+    private static void appendDifmChannels(JsonArray channels, List<DjRadio> result, int source) {
         if (channels == null) return;
         for (JsonElement element : channels) {
             if (element == null || !element.isJsonObject()) continue;
@@ -300,6 +323,8 @@ public final class DjRadioService {
             card.setPicUrl(text(item, "cover", "coverUrl", "picUrl"));
             card.setKind(DjRadio.Kind.DIFM_CHANNEL);
             card.setDesc(text(item, "description", "desc"));
+            // categoryName 槽位对 DIFM 存来源 id（数字转字符串），-1 表示未分组/收藏端点没给。
+            card.setCategoryName(source >= 0 ? String.valueOf(source) : "");
             result.add(card);
         }
     }
@@ -447,7 +472,7 @@ public final class DjRadioService {
     }
 
     /** mainSong 缺失时的最小 {@link Music}：真 id 优先没有，就用节目自身 id 兜底。 */
-    private static Music minimalMusic(long id, String name, String artist, String coverUrl, long duration) {
+    private static Music minimalMusic(long id, String name, String artist, String coverUrl, long duration, int fee) {
         List<Artist> artists = new ArrayList<>();
         artists.add(new Artist(0L, artist == null || artist.isEmpty() ? "未知主播" : artist,
                 Collections.emptyList(), Collections.emptyList()));
@@ -456,6 +481,7 @@ public final class DjRadioService {
                 Collections.emptyList(), new Album(0L, "", coverUrl == null ? "" : coverUrl,
                 Collections.emptyList()),
                 duration, 0L, 0L, Collections.emptyList());
+        music.setFee(fee);
         music.setExternalCoverUrl(coverUrl == null ? "" : coverUrl);
         // 最小兜底同样是节目，同样禁止换源。
         music.setDjProgram(true);

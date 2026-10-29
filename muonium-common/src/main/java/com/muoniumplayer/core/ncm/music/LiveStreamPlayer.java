@@ -142,7 +142,9 @@ public class LiveStreamPlayer {
         paused.set(false);
         Thread thread = this.decodeThread;
         if (thread != null) {
-            // 解码线程阻塞在 line.write / 网络读上：interrupt 让两者尽快抛出退出。
+            // interrupt 能立刻打断 line.write 与各 sleep 点；对阻塞中的 socket read 无效
+            //（HttpURLConnection 的流不是 InterruptibleChannel），那条路靠 20s 读超时兜底，
+            // 期间旧 line 已因缓冲耗尽而无声，但对象要等线程退出才释放 —— 有界滞留，非泄漏。
             thread.interrupt();
         }
         Runnable callback = this.onClosed;
@@ -154,14 +156,19 @@ public class LiveStreamPlayer {
 
     private void runLoop() {
         int consecutiveFailures = 0;
+        // onStarted 只在第一次真正出声时报：断流重连成功是恢复，不是又一次起播，
+        // 再弹一条"正在收听"会把恢复误报成新起播。
+        boolean announcedStart = false;
         try {
             while (!closed.get()) {
                 try (InputStream http = openStream(streamUrl)) {
                     Bitstream bitstream = new Bitstream(new PausableInputStream(http, paused, closed));
                     Decoder decoder = new Decoder();
+                    // Decoder 的声道布局在首帧 initialize 后固定：mid-stream 声道数变化时
+                    // 必须连解码器一起换，否则按旧声道合成会交错错位（同名不同形）。
+                    int decoderChannels = 0;
                     SourceDataLine line = null;
                     AudioFormat lineFormat = null;
-                    boolean announcedStart = false;
                     try {
                         while (!closed.get()) {
                             Header header = bitstream.readFrame();
@@ -169,13 +176,42 @@ public class LiveStreamPlayer {
                                 // EOF：上游断流。抛出走外层重连。
                                 throw new IOException("live stream ended");
                             }
-                            SampleBuffer output = (SampleBuffer) decoder.decodeFrame(header, bitstream);
+                            SampleBuffer output;
+                            try {
+                                output = (SampleBuffer) decoder.decodeFrame(header, bitstream);
+                            } catch (repackage.javazoom.jl.decoder.DecoderException frameFailure) {
+                                // 帧体坏是 ICECAST 丢包最常见的形态：跳过这一帧继续读，
+                                // 与网络故障共用连续失败计数，攒满 12 次才算真断流。
+                                bitstream.closeFrame();
+                                consecutiveFailures++;
+                                if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                                    fail("连续解码失败（流数据损坏）: " + rootMessage(frameFailure));
+                                    return;
+                                }
+                                continue;
+                            }
                             bitstream.closeFrame();
                             decodedFrameCount.incrementAndGet();
+                            consecutiveFailures = 0;
 
+                            // SampleBuffer 的底层数组固定 2304 长（OBUFFERSIZE），本帧有效
+                            // 采样数在 getBufferLength() 里。用数组全长转字节的话，单声道
+                            // 流（有效 1152）会多写一倍残留数据 —— 播放半速且叠残影。
                             short[] pcm = output.getBuffer();
-                            if (pcm.length == 0) continue;
+                            int validSamples = output.getBufferLength();
+                            if (validSamples <= 0) continue;
 
+                            int channels = header.mode() == Header.SINGLE_CHANNEL ? 1 : 2;
+                            if (channels != decoderChannels) {
+                                // 声道数变了（含首帧）：解码器与输出线都要按新布局重建。
+                                decoder = new Decoder();
+                                decoderChannels = channels;
+                                if (line != null) {
+                                    line.drain();
+                                    line.close();
+                                    line = null;
+                                }
+                            }
                             if (line == null || lineFormatChanged(lineFormat, header)) {
                                 // 第一帧才知道流的真实参数（码率/声道/采样率由内容决定）。
                                 if (line != null) {
@@ -193,7 +229,7 @@ public class LiveStreamPlayer {
                                 listener.onStarted(this);
                             }
 
-                            byte[] bytes = toByteArray(pcm);
+                            byte[] bytes = toByteArray(pcm, validSamples);
                             // 阻塞写：音频消费多快写多快，天然背压。暂停时 PausableInputStream
                             // 在读端拦住，这里的写很快耗尽缓冲然后停住——不占 CPU。
                             while (!closed.get() && !paused.get()) {
@@ -289,9 +325,10 @@ public class LiveStreamPlayer {
     }
 
     /** short PCM → little-endian bytes（JavaSound 期望的 S16LE）。 */
-    private static byte[] toByteArray(short[] samples) {
-        byte[] out = new byte[samples.length * 2];
-        for (int i = 0; i < samples.length; i++) {
+    /** short PCM → little-endian bytes（JavaSound 期望的 S16LE）；只转换前 validCount 个有效采样。 */
+    private static byte[] toByteArray(short[] samples, int validCount) {
+        byte[] out = new byte[validCount * 2];
+        for (int i = 0; i < validCount; i++) {
             out[i * 2] = (byte) (samples[i] & 0xFF);
             out[i * 2 + 1] = (byte) ((samples[i] >> 8) & 0xFF);
         }

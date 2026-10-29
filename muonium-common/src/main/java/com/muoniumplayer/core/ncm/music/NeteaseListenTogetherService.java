@@ -232,6 +232,10 @@ public final class NeteaseListenTogetherService {
      * @param invite 分享链接、{@code roomId#inviterId} 短码，或只有 roomId（此时需要另给 inviterId）
      */
     public static void joinRoom(String invite, long fallbackInviterId) {
+        // 直播中加房：先停直播。房间的状态同步读 currentlyPlaying/player，直播替身进去
+        // 要么被当成假暂停、要么把电台 id 广播成歌曲 id（见 reportPlaybackDiff 的守卫）；
+        // 与起播互斥同一纪律，进房即回归常规曲库世界。
+        LiveStreamSession.stop("joinRoom");
         final String targetRoom = parseRoomId(invite);
         final long targetInviter = parseInviterId(invite, fallbackInviterId);
         if (targetRoom.isEmpty()) {
@@ -473,6 +477,10 @@ public final class NeteaseListenTogetherService {
     private static void reportPlaybackDiff() {
         Music current = CloudMusic.currentlyPlaying;
         AudioPlayer player = CloudMusic.player;
+        // 直播态（替身 Music，player==null 且 LiveStreamSession 活着）：替身带着电台 id 且
+        // 是 NETEASE 源，照常上报会把电台 id 当歌曲 id 发 GOTO，指挥全房切一首不存在的"歌"。
+        // 直播不是房间可同步的对象，跳过上报；等直播结束/切歌恢复常规曲目后继续。
+        if (current != null && player == null && LiveStreamSession.isActive()) return;
         long songId = current != null && current.isNetease() ? current.getId() : 0L;
         boolean paused = player == null || player.isPausing();
         long progress = player == null ? 0L : (long) player.getCurrentTimeMillis();
@@ -550,6 +558,8 @@ public final class NeteaseListenTogetherService {
     private static void sendHeartbeat() {
         Music current = CloudMusic.currentlyPlaying;
         AudioPlayer player = CloudMusic.player;
+        // 直播态不上报（同 reportPlaybackDiff：替身的电台 id 不能进房间的歌曲命名空间）。
+        if (current != null && player == null && LiveStreamSession.isActive()) return;
         long songId = current != null && current.isNetease() ? current.getId() : 0L;
         boolean paused = player == null || player.isPausing();
         long progress = player == null ? 0L : (long) player.getCurrentTimeMillis();

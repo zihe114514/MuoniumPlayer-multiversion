@@ -51,6 +51,15 @@ public final class LiveStreamSession {
                     "一起听房间中不能收听广播电台：房间播放以房主的队列为准");
             return false;
         }
+        // 系统播放器镜像（SMTC / Spotify Connect）接管中：镜像路径只停 CloudMusic.player，
+        // 停不到直播这条独立通道，放行就是外部播放器与直播双声源并存；而且镜像态下音量
+        // 滑块被外部电平截走，用户连关小直播都做不到。与 refuseInternalPlayback 同一口径。
+        if (ExternalPlayback.isMirroring()
+                || com.muoniumplayer.core.ncm.spotify.SpotifyConnectMirror.isMirroring()) {
+            DownloadDynamicIsland.showPlaybackFailure(stationName,
+                    "系统播放器镜像开启中，先关镜像才能收听广播电台");
+            return false;
+        }
         if (playUrl == null || playUrl.trim().isEmpty()) {
             DownloadDynamicIsland.showPlaybackFailure(stationName,
                     "这个频道暂时没有直播流（未开播或已下线）");
@@ -66,17 +75,21 @@ public final class LiveStreamSession {
 
         LiveStreamPlayer.Listener listener = new LiveStreamPlayer.Listener() {
             @Override public void onStarted(LiveStreamPlayer player) {
+                // 台名快照：clearState 会把 activeStationName 清空，弹岛 lambda 主线程执行时
+                // 再读静态字段，换台竞态下旧流的提示会盖着新台名出现。
+                String nameSnapshot = stationName == null ? "" : stationName;
                 MultiThreadingUtil.runOnMainThread(() -> DownloadDynamicIsland
-                        .showModelOperationResult("广播电台", "正在收听「" + activeStationName + "」直播", true));
+                        .showModelOperationResult("广播电台", "正在收听「" + nameSnapshot + "」直播", true));
                 if (listenerOpt != null) listenerOpt.onStarted(player);
             }
 
             @Override public void onStreamEnded(LiveStreamPlayer player, String reason) {
                 // 只有仍是当前会话的断流才清场：换台瞬间旧流的遗言不该抹掉新台。
                 if (ACTIVE.get() == player) {
+                    String nameSnapshot = activeStationName;
                     clearState();
                     MultiThreadingUtil.runOnMainThread(() -> DownloadDynamicIsland
-                            .showPlaybackFailure(activeStationName, "直播中断：" + reason + "，可重新点击频道重试"));
+                            .showPlaybackFailure(nameSnapshot, "直播中断：" + reason + "，可重新点击频道重试"));
                 }
                 if (listenerOpt != null) listenerOpt.onStreamEnded(player, reason);
             }
