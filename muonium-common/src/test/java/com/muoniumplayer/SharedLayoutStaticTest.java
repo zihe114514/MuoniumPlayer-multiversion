@@ -94,6 +94,8 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/compat/mc/LyricBlaze3DRenderer.java",
             "com/muoniumplayer/compat/mc/WorldLyricsHudDraw.java",
             "com/muoniumplayer/mixin/GameRendererRenderLevelMixin.java",
+            "com/muoniumplayer/mixin/GameRendererAccessor.java",
+            "com/muoniumplayer/mixin/ProjectionMatrixBufferMixin.java",
             "com/muoniumplayer/party/net/MpPayloads.java"));
 
     /** 五棵树各自的版本差异测试（ProjectPaths 例外，它已经收进共享层）。 */

@@ -144,3 +144,12 @@ error-report-*/
 
 # 本地测试用光影包（shaderpack，仅真机调 3D 歌词用，不入库）
 /光影/
+
+# 上游音源 API 参考实现（Node，仅本地对照参数用，随时可重解包，不参与构建）
+/api-enhanced/
+
+# 上游命令行搜歌工具参考实现（Go，仅本地查阅用，不入库）
+/go-music-dl/
+
+# Cloudflare wrangler 本地缓存与状态（预览/部署的运行产物，不入库）
+/.wrangler/

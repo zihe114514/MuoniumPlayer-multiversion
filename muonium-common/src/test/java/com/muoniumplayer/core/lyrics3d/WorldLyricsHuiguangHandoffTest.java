@@ -305,4 +305,41 @@ class WorldLyricsHuiguangHandoffTest {
                 + Math.pow(newRow.z - oldRow.z, 2));
         assertTrue(dist > 0.05, "旧句应向上让位（两行空间距离应拉开），实际 " + dist);
     }
+
+    @Test
+    void lingerDoesNotProtectDimIncomingLine() {
+        // 换句交接（余光窗口）里，旧句的 huiguangLinger 不得触发双向保护压暗：
+        // 生成钳制（散开角收进可见锥 / 横向钳到 10.5 格基线）让相邻两句锚点
+        // 常驻 8 格内，保护压暗会在整个 1.2s 余光窗口把新句摁在 0.4~0.7 档 ——
+        // 新句的逐字点亮/闪点/光晕全被压灭，观感即「上一句没消失前新句不点亮、
+        // 全是暗字」（用户实证的长期缺陷）。余光句自带熄灭曲线 + 让位滑开，
+        // 重叠由交接动效自己管理；跳过保护也不会出现 P2-7 的主次颠倒
+        //（旧句 0.75 < 新句 1.0）。本测试 PARAMS 用 spreadDeg=0（相邻锚点几乎
+        // 重合，旧代码下保护压暗必触发 0.4 地板档）来锁死该回归。
+        CloudMusic.lyrics.add(line(0L, "第一句"));
+        CloudMusic.lyrics.add(line(4000L, "第二句"));
+
+        state.update(CAMERA, PARAMS, 1_000_000_000L, true, 100L);
+        WorldLyricsState.Frame f2 = state.update(CAMERA, PARAMS, 1_100_000_000L, true, 4100L);
+        WorldLyricsState.SpawnedLine s2 = activeOf(f2);
+        assertNotNull(s2.huiguangPrev, "换句应建立交接（旧句进余光）");
+
+        // 余光窗口内（换句后 0.1s，旧句 0.75 档还在）：新句不得被压暗
+        WorldLyricsState.Frame f3 = state.update(CAMERA, PARAMS, 1_200_000_000L, true, 4400L);
+        WorldLyricsState.Row newRow = null;
+        WorldLyricsState.Row oldRow = null;
+        for (WorldLyricsState.Row r : f3.rows) {
+            if (r.floating == s2) newRow = r;
+            else oldRow = r;
+        }
+        assertNotNull(newRow, "新句应在场");
+        assertNotNull(oldRow, "余光旧句应在场");
+        assertEquals(1f, newRow.protectDim, 0.001f,
+                "余光句不得触发对新句的保护压暗，实际 " + newRow.protectDim);
+        assertEquals(1f, newRow.alpha, 0.001f,
+                "新句 alpha 不应被余光句压暗，实际 " + newRow.alpha);
+        // 旧句只走自己的余光曲线（0.75 档），不被双向压暗再乘一道
+        assertEquals(0.75f, oldRow.alpha, 0.02f,
+                "余光旧句应保持自身熄灭曲线的 0.75 档，实际 " + oldRow.alpha);
+    }
 }

@@ -22,6 +22,7 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     @Override public boolean huiguang() { return huiguang; }
     @Override public boolean stayOnScreen() { return stayOnScreen; }
     @Override public boolean aboveGround() { return aboveGround; }
+    @Override public boolean keepDistance() { return keepDistance; }
     @Override public boolean hudDraw() { return hudDraw; }
 
     public boolean enabled;
@@ -48,6 +49,8 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     public boolean huiguang;
     /** 回屏保持（stayOnScreen）：转开视角时歌词滑回视野边缘。 */
     public boolean stayOnScreen;
+    /** 距离保持：移动时锚点随玩家整体平移（含上下），径向距离恒收敛到设定值。 */
+    public boolean keepDistance = true;
     /** Above ground：歌词中心不低于眼睛下方 0.5 格。 */
     public boolean aboveGround;
     /** 更激进的适配（hudDraw）：光影包激活时绕开光影管线，推迟到 HUD 阶段用原版
@@ -82,6 +85,7 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
         s.cadenza = HudConfig.worldLyricsCadenza;
         s.huiguang = HudConfig.worldLyricsHuiguang;
         s.stayOnScreen = HudConfig.worldLyricsStayOnScreen;
+        s.keepDistance = HudConfig.worldLyricsKeepDistance;
         s.aboveGround = HudConfig.worldLyricsAboveGround;
         s.hudDraw = HudConfig.worldLyricsHudDraw;
         s.keywordColors = HudConfig.worldLyricsKeywordColors != null

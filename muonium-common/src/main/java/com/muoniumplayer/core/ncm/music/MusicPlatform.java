@@ -32,7 +32,18 @@ public enum MusicPlatform {
      *
      * <p>同样<b>追加在末尾</b>，理由同 {@link #SMTC}：稳定键按 {@code name()} 落盘。</p>
      */
-    SPOTIFY("Spotify", 0x1DB954);
+    SPOTIFY("Spotify", 0x1DB954),
+    /**
+     * Apple Music：<b>元数据源 + gamdl 伴生完整播放</b>。官方 AMP API 的目录能力（搜索、
+     * 歌单、榜单、歌词）是公开的；但完整音轨是 FairPlay DRM 保护的，官方接口只有 30 秒
+     * preview。点播顺序：gamdl 伴生后端（{@code AppleCompanionDownload} 安装的整包，用户
+     * 自备订阅 cookies）拉完整版 → 拿不到就走 {@code CrossSourceSwitcher} 换源替身 →
+     * 还不行才落 30 秒 preview 兜底（试听角标，设置可关）。与 Spotify 同理，它<b>绝不能</b>
+     * 进换源候选表 {@code CANDIDATE_ORDER} —— 它没有完整流可以给别人换。
+     *
+     * <p><b>追加在末尾</b>，理由同 {@link #SMTC}：稳定键按 {@code name()} 落盘。</p>
+     */
+    APPLE("Apple Music", 0xFA243C);
 
     private final String displayName;
     private final int brandColor;

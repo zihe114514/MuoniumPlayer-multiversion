@@ -57,7 +57,12 @@ public final class GlassLook {
         /** 桌面歌词卡片（Blossom 那套毛玻璃面板）。 */
         DESKTOP_LYRIC,
         /** 三套 HUD 编辑器自己的面板。 */
-        EDITORS
+        EDITORS,
+        /**
+         * 歌曲信息卡（游戏内 HUD 上的那张卡片）。默认档不吃这一面（走自己原来的封面糊底），
+         * 只有玩家把「信息卡背景」切到液态玻璃时才启用。
+         */
+        INFO_CARD
     }
 
     private GlassLook() {
@@ -466,6 +471,10 @@ public final class GlassLook {
                 return HudConfig.glassSurfaceIsland;
             case DESKTOP_LYRIC:
                 return HudConfig.glassSurfaceDesktopLyric;
+            case INFO_CARD:
+                // 信息卡没有独立玻璃开关：它的「液态玻璃」档位本身就是开关（见
+                // HudConfig.infoCardBackdrop 的消费方 MusicInfoWidget）。
+                return true;
             case EDITORS:
             default:
                 return HudConfig.glassSurfaceEditors;

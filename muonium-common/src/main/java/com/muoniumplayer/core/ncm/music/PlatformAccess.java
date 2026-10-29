@@ -49,6 +49,10 @@ public final class PlatformAccess {
                     // 系统媒体会话只是「外部播放器正在播什么」，本机没有它的任何账号态。
                     // 不写这一条会掉进 default 去问 Cadence 的登录态，那答案是错的。
                     return false;
+                case APPLE:
+                    // Apple 的登录态 = cookies.txt 在位且 media-user-token 未被远端拒绝；
+                    // 掉进 default 会为了问登录态去初始化一整套网易云会话（同 SPOTIFY 的坑）。
+                    return com.muoniumplayer.core.ncm.apple.AppleMusicService.isLoggedIn();
                 default:
                     return NeteaseMusicService.isLoggedIn(platform);
             }
@@ -90,6 +94,10 @@ public final class PlatformAccess {
                 case MIGU:
                 case GD:
                     return Boolean.FALSE;
+                case APPLE:
+                    // Apple 的订阅档位在 cookies 里没有可查的只读字段；登录了也不谎报，
+                    // 交给试听片段检测那一级去拦（同 QQ / YouTube 的「说不准」语义）。
+                    return NeteaseMusicService.isLoggedIn(MusicPlatform.APPLE) ? null : Boolean.FALSE;
                 default:
                     return null;
             }

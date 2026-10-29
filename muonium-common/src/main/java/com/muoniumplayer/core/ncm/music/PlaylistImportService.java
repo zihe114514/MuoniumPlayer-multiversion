@@ -121,6 +121,20 @@ public final class PlaylistImportService {
                 return importBilibili(cleaned);
             case YOUTUBE:
                 return importYouTube(cleaned);
+            case APPLE: {
+                // cleaned 已是 platformPlaylistId（pl.… 或 album:<id>）：拉一次卡片元数据
+                // 落成 PlayList 引用返回（持久化由 PlaylistImportOverlay 的
+                // ImportedPlaylistStore.add 负责，与其他平台同一条路）。
+                com.muoniumplayer.core.ncm.apple.AppleMusicService.Playlist card =
+                        cleaned.startsWith(com.muoniumplayer.core.ncm.apple.AppleMusicService.ALBUM_PREFIX)
+                                ? com.muoniumplayer.core.ncm.apple.AppleMusicService.albumCard(
+                                        cleaned.substring(com.muoniumplayer.core.ncm.apple.AppleMusicService.ALBUM_PREFIX.length()))
+                                : com.muoniumplayer.core.ncm.apple.AppleMusicService.playlistCard(cleaned);
+                if (card == null) {
+                    throw new IllegalArgumentException("Apple Music 歌单/专辑拉取失败：链接可能已失效");
+                }
+                return com.muoniumplayer.core.ncm.apple.AppleMusicService.toPlayListCard(card);
+            }
             default:
                 throw new IllegalArgumentException("该平台暂不支持导入歌单");
         }
@@ -175,6 +189,31 @@ public final class PlaylistImportService {
         if (containsAny(haystack, "qishui", "music.douyin.com", "snssdk", "amemv")
                 || text.contains("汽水")) {
             return new Detection(MusicPlatform.QISHUI, text);
+        }
+        if (containsAny(haystack, "music.apple.com", "itunes.apple.com")) {
+            // Apple 的歌单/专辑链接两种形态：/playlist/<slug>/<pl.id> 与 /album/<slug>/<id>。
+            // 曲库公开、无需登录，随导随拉。
+            String playlistId = com.muoniumplayer.core.ncm.apple.AppleMusicService
+                    .extractPlaylistId(link.isEmpty() ? text : link);
+            if (!playlistId.isEmpty()) {
+                return new Detection(MusicPlatform.APPLE, playlistId);
+            }
+            String albumId = com.muoniumplayer.core.ncm.apple.AppleMusicService
+                    .extractAlbumId(link.isEmpty() ? text : link);
+            if (!albumId.isEmpty()) {
+                return new Detection(MusicPlatform.APPLE,
+                        com.muoniumplayer.core.ncm.apple.AppleMusicService.ALBUM_PREFIX + albumId);
+            }
+            String songId = com.muoniumplayer.core.ncm.apple.AppleMusicService
+                    .extractSongId(link.isEmpty() ? text : link);
+            if (!songId.isEmpty()) {
+                // 单曲链接没有「歌单」可进：转成一张单曲专辑卡（与 B 站「单 P」同思路），
+                // 点开时由专辑曲目端点兜着——单曲详情拉不出专辑曲目时界面报错说清。
+                throw new IllegalArgumentException(
+                        "这是 Apple Music 的单曲链接，暂不支持直接导入；请粘贴专辑或歌单链接");
+            }
+            throw new IllegalArgumentException(
+                    "这是 Apple Music 的链接，但里面没有歌单或专辑编号");
         }
         if (link.startsWith("http")) {
             throw new IllegalArgumentException("识别不出这是哪个平台的歌单链接，换一条试试");

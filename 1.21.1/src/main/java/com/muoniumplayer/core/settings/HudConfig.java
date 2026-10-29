@@ -395,6 +395,9 @@ public final class HudConfig {
     public static int worldLyricsQualityTier = 0;
     /** 回屏保持（stayOnScreen）：转开视角时歌词沿离视线最近的方向滑回视野边缘。 */
     public static boolean worldLyricsStayOnScreen = false;
+    /** 距离保持（keepDistance）：移动时歌词锚点随玩家整体平移（含上下），
+     *  径向距离恒收敛到设定值，走近不再糊脸。开启时「自动避让」不参与。 */
+    public static boolean worldLyricsKeepDistance = true;
     /** Above ground：歌词中心不低于眼睛下方 0.5 格，不沉进地面。 */
     public static boolean worldLyricsAboveGround = false;
     /** 更激进的适配：光影包激活时歌词推迟到 HUD 阶段（光影后处理链之后）用原版着色器直画。 */
@@ -451,6 +454,20 @@ public final class HudConfig {
 
     public static boolean dynamicIslandEnabled = true;
     public static float dynamicIslandScale = 0.88f;
+    /**
+     * 岛顶部相对默认位置的偏移（布局像素）。0 = 距屏顶 6（回弹样式 7）的历史默认；
+     * 正值下移。负值允许略微上移，但clamp 后的下限保证入场滑动起点不穿出屏幕。
+     */
+    public static float dynamicIslandY = 0.0f;
+    /**
+     * 歌曲信息卡的背景画法。0 = 默认（封面糊底 + 压暗），1 = 液态玻璃（真背景折射，
+     * 走 GlassLook.Surface.INFO_CARD，受主题真玻璃强度与手机档闸约束），2 = 完全透明
+     * （不画任何底，只画文字/封面/进度条）。存序号，中间不能插项。
+     */
+    public static int infoCardBackdrop = 0;
+    public static final int INFO_CARD_BACKDROP_MAX = 2;
+    /** 桌面歌词（仅经典样式）文本颜色是否跟随当前封面取色。 */
+    public static boolean osdLyricColorFollowCover = false;
     /** 灵动岛排版缩放。长内容在被截断前自动缩小。 */
     public static float dynamicIslandTextScale = 1.0f;
     /** 首选静止宽度。长通知可能动画变宽以保持完整文字可见。 */
@@ -756,6 +773,7 @@ public final class HudConfig {
         worldLyricsKeywordColors = "";
         worldLyricsQualityTier = 0;
         worldLyricsStayOnScreen = false;
+        worldLyricsKeepDistance = true;
         worldLyricsAboveGround = false;
         worldLyricsHudDraw = false;
         osdKaraokeTransitionWidth = 14.0f;
@@ -775,6 +793,7 @@ public final class HudConfig {
     public static void resetDynamicIslandAppearance() {
         dynamicIslandEnabled = true;
         dynamicIslandScale = 0.88f;
+        dynamicIslandY = 0.0f;
         dynamicIslandTextScale = 1.0f;
         dynamicIslandMaxWidth = 280.68964f;
         dynamicIslandProgressHeight = 1.35f;
@@ -945,6 +964,7 @@ public final class HudConfig {
             worldLyricsKeywordColors = getString(o, "worldLyricsKeywordColors", worldLyricsKeywordColors);
             worldLyricsQualityTier = (int) clamp(getInt(o, "worldLyricsQualityTier", worldLyricsQualityTier), 0, 7);
             worldLyricsStayOnScreen = getBoolean(o, "worldLyricsStayOnScreen", worldLyricsStayOnScreen);
+            worldLyricsKeepDistance = getBoolean(o, "worldLyricsKeepDistance", worldLyricsKeepDistance);
             worldLyricsAboveGround = getBoolean(o, "worldLyricsAboveGround", worldLyricsAboveGround);
             worldLyricsHudDraw = getBoolean(o, "worldLyricsHudDraw", worldLyricsHudDraw);
 
@@ -977,6 +997,9 @@ public final class HudConfig {
             dynamicIslandEnabled = getBoolean(o, "dynamicIslandEnabled", dynamicIslandEnabled);
             islandSearchEnabled = getBoolean(o, "islandSearchEnabled", islandSearchEnabled);
             dynamicIslandScale = clamp(getFloat(o, "dynamicIslandScale", dynamicIslandScale), 0.60f, 1.35f);
+            dynamicIslandY = clamp(getFloat(o, "dynamicIslandY", dynamicIslandY), -20.0f, 400.0f);
+            infoCardBackdrop = clampInt(getInt(o, "infoCardBackdrop", infoCardBackdrop), 0, INFO_CARD_BACKDROP_MAX);
+            osdLyricColorFollowCover = getBoolean(o, "osdLyricColorFollowCover", osdLyricColorFollowCover);
             dynamicIslandTextScale = clamp(getFloat(o, "dynamicIslandTextScale", dynamicIslandTextScale), 0.82f, 1.18f);
             dynamicIslandMaxWidth = clamp(getFloat(o, "dynamicIslandMaxWidth", dynamicIslandMaxWidth), 160.0f, 720.0f);
             dynamicIslandProgressHeight = clamp(getFloat(o, "dynamicIslandProgressHeight", dynamicIslandProgressHeight), 0.75f, 4.0f);
@@ -1134,6 +1157,7 @@ public final class HudConfig {
             o.addProperty("worldLyricsKeywordColors", worldLyricsKeywordColors);
             o.addProperty("worldLyricsQualityTier", worldLyricsQualityTier);
             o.addProperty("worldLyricsStayOnScreen", worldLyricsStayOnScreen);
+            o.addProperty("worldLyricsKeepDistance", worldLyricsKeepDistance);
             o.addProperty("worldLyricsAboveGround", worldLyricsAboveGround);
             o.addProperty("worldLyricsHudDraw", worldLyricsHudDraw);
             o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
@@ -1165,6 +1189,9 @@ public final class HudConfig {
             o.addProperty("dynamicIslandEnabled", dynamicIslandEnabled);
             o.addProperty("islandSearchEnabled", islandSearchEnabled);
             o.addProperty("dynamicIslandScale", dynamicIslandScale);
+            o.addProperty("dynamicIslandY", dynamicIslandY);
+            o.addProperty("infoCardBackdrop", infoCardBackdrop);
+            o.addProperty("osdLyricColorFollowCover", osdLyricColorFollowCover);
             o.addProperty("dynamicIslandTextScale", dynamicIslandTextScale);
             o.addProperty("dynamicIslandMaxWidth", dynamicIslandMaxWidth);
             o.addProperty("dynamicIslandProgressHeight", dynamicIslandProgressHeight);

@@ -164,6 +164,9 @@ public final class NeteaseMusicService {
         if (currentPlatform == MusicPlatform.SPOTIFY) {
             return searchSpotify(keyword, limit);
         }
+        if (currentPlatform == MusicPlatform.APPLE) {
+            return searchApple(keyword, limit);
+        }
         try {
             List<Track> tracks = SERVICE.search(currentPlatform.toCadenceSource(), keyword.trim(), Math.max(1, limit));
             return adaptTracks(tracks);
@@ -179,6 +182,17 @@ public final class NeteaseMusicService {
         for (com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.Track track
                 : com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.search(keyword, limit)) {
             Music adapted = Music.fromSpotifyTrack(track);
+            if (adapted != null) result.add(adapted);
+        }
+        return result;
+    }
+
+    /** Apple Music 搜索：目录元数据行（完整版走 gamdl 伴生，preview 只是兜底）。 */
+    private static List<Music> searchApple(String keyword, int limit) {
+        List<Music> result = new ArrayList<>();
+        for (com.muoniumplayer.core.ncm.apple.AppleMusicService.Track track
+                : com.muoniumplayer.core.ncm.apple.AppleMusicService.search(keyword, limit)) {
+            Music adapted = Music.fromAppleTrack(track);
             if (adapted != null) result.add(adapted);
         }
         return result;
@@ -294,6 +308,8 @@ public final class NeteaseMusicService {
         // Spotify 没有候选用途：它在这里只可能是用户显式选中的平台。行是元数据行，
         // 播放由换源流水线在其余平台找替身（Music#getPlayUrl 对它恒返回空）。
         if (platform == MusicPlatform.SPOTIFY) return searchSpotify(keyword, limit);
+        // Apple 同理没有候选用途（没有完整流可以给别人换），只服务用户显式选中的搜索。
+        if (platform == MusicPlatform.APPLE) return searchApple(keyword, limit);
         if (!platform.isCadenceBacked()) return Collections.emptyList();
         initialize(OptionsUtil.getCookie());
         try {
@@ -498,6 +514,11 @@ public final class NeteaseMusicService {
             // CrossSourceSwitcher。继续往下会把它当网易云曲目，拿 spotify id 解出别人的歌。
             return null;
         }
+        if (music.isApple()) {
+            // Apple 行同理：完整版走 gamdl 伴生（Music#resolveApplePlayUrl 的伪 URL 链），
+            // 这条统一取流链路只认网易云 id。继续往下会拿 apple 数字 id 解出别人的歌。
+            return null;
+        }
         initialize(OptionsUtil.getCookie());
         try {
             Track track = music.toCadenceTrack();
@@ -550,6 +571,11 @@ public final class NeteaseMusicService {
         if (music.isLxOnlyChannel()) {
             // 酷我 / 咪咕没有本家歌词通道；null 让调用方继续走标题匹配的 AMLL 兜底，
             // 绝不能把酷我的数字 id 当网易云 id 送去拿词（会拿到别的歌的词）。
+            return null;
+        }
+        if (music.isApple()) {
+            // Apple 的歌词走自己的 TTML 链（LyricLoadService 里的 Apple 早段），这里
+            // 返回 null；继续往下会把 apple 数字 id 当网易云 id 送去拿词。
             return null;
         }
         initialize(OptionsUtil.getCookie());
@@ -746,6 +772,9 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.YOUTUBE || platform == MusicPlatform.BILIBILI) {
             return;
         }
+        if (platform == MusicPlatform.APPLE) {
+            return; // Apple 的 cookies 在导入那一刻已由 AppleCookieSupport 原子落盘。
+        }
         if (platform == MusicPlatform.QISHUI) {
             return; // QishuiMusicService 在扫码确认时已经原子写入自己的凭据文件。
         }
@@ -790,6 +819,12 @@ public final class NeteaseMusicService {
             com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.logout();
             return;
         }
+        if (platform == MusicPlatform.APPLE) {
+            // 同理挡在 initialize 之前：Apple 的 cookies.txt 与网易云 cookie 互不相干，
+            // 掉进下面的 else 会把网易云账号一起注销。
+            com.muoniumplayer.core.ncm.apple.AppleMusicService.logout();
+            return;
+        }
         initialize(OptionsUtil.getCookie());
         if (platform == MusicPlatform.QQ) {
             SERVICE.getQq().clearLogin();
@@ -819,6 +854,9 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.SPOTIFY) {
             return com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.isLoggedIn();
         }
+        if (platform == MusicPlatform.APPLE) {
+            return com.muoniumplayer.core.ncm.apple.AppleMusicService.isLoggedIn();
+        }
         initializeIfNeeded();
         if (platform == MusicPlatform.QQ) {
             return SERVICE.getQq().getLoggedIn();
@@ -838,6 +876,9 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.getAccountName();
         if (platform == MusicPlatform.SPOTIFY) {
             return com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.getAccountName();
+        }
+        if (platform == MusicPlatform.APPLE) {
+            return com.muoniumplayer.core.ncm.apple.AppleMusicService.getAccountName();
         }
         if (platform == MusicPlatform.QQ) {
             QQUserInfo info = qqUserInfo;
@@ -869,6 +910,10 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.SPOTIFY) {
             return com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.getAvatarUrl();
         }
+        if (platform == MusicPlatform.APPLE) {
+            // Apple 不提供账号头像；空串让 UI 落到字母头像兜底。
+            return "";
+        }
         if (platform == MusicPlatform.QQ) return getQQAvatarUrl();
         if (CloudMusic.profile == null) return "";
         String url = nonNull(CloudMusic.profile.getAvatarUrl());
@@ -888,6 +933,7 @@ public final class NeteaseMusicService {
      */
     public static Location getAccountAvatarLocation(MusicPlatform platform) {
         if (platform == MusicPlatform.YOUTUBE) return null;
+        if (platform == MusicPlatform.APPLE) return null; // 无头像可下，走字母头像兜底。
         if (platform == MusicPlatform.SPOTIFY) {
             // Spotify 头像走 AccountAvatar 的远端下载路径，与 B 站 / 汽水同一形态。
             return com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.getAvatarUrl().isEmpty()

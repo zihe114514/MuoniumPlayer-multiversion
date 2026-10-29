@@ -170,6 +170,11 @@ public final class NeteaseSearchSuggestService {
             // 汽水：/luna/pc/sug 签名代理优先、免签移动端兜底，解析在服务层（见那边的注释）。
             return QishuiMusicService.searchSuggest(keyword);
         }
+        if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.APPLE) {
+            // Apple 没有可用的公开联想端点：返回空让搜索框不出联想（而不是拿 apple 关键词
+            // 去查网易云的联想词，联想出完全不相干的内容）。
+            return Collections.emptyList();
+        }
         List<Suggestion> keywords = parseKeyword(read(keyword, true));
         if (!keywords.isEmpty()) return keywords;
         return parseWeb(read(keyword, false));

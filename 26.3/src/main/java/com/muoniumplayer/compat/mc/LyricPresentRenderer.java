@@ -200,6 +200,7 @@ final class LyricPresentRenderer {
     // CameraRenderState 快照（官方通路已验证能出画面），不再读任何显存。
 
     static void drawToFbo0(org.joml.Matrix4f projection, org.joml.Matrix4f viewRotation,
+                           org.joml.Matrix4f bobConjugate,
                            int windowW, int windowH) {
         if (FAILED.get()) return;
         Batch b = batches[front];
@@ -207,7 +208,12 @@ final class LyricPresentRenderer {
         scanVertexZ(b);
         if (!ensureGlResources()) return;
         try {
-            org.joml.Matrix4f mvp = new org.joml.Matrix4f(projection).mul(viewRotation);
+            // MVP = P·B·view·bobConj（bobConjugate=null 时与旧行为同源）。
+            // 投影带 bob 合成（P·B）时共轭阵 M = viewᵀ·B⁻¹·view 把 B 精确对消：
+            // P·B·view·M = P·view —— 歌词钉在无摇晃视角上（世界照旧抖，防晕 3D）。
+            org.joml.Matrix4f mvp = bobConjugate == null
+                    ? new org.joml.Matrix4f(projection).mul(viewRotation)
+                    : new org.joml.Matrix4f(projection).mul(viewRotation).mul(bobConjugate);
 
             int prevProgram = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20.GL_CURRENT_PROGRAM);
             int prevVao = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_VERTEX_ARRAY_BINDING);
@@ -220,6 +226,9 @@ final class LyricPresentRenderer {
             int pDstRgb = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL14.GL_BLEND_DST_RGB);
             int pSrcA = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL14.GL_BLEND_SRC_ALPHA);
             int pDstA = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL14.GL_BLEND_DST_ALPHA);
+            boolean prevDepthTest = org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_DEPTH_TEST);
+            boolean prevDepthMask = org.lwjgl.opengl.GL11.glGetBoolean(org.lwjgl.opengl.GL11.GL_DEPTH_WRITEMASK);
+            boolean prevCull = org.lwjgl.opengl.GL11.glIsEnabled(org.lwjgl.opengl.GL11.GL_CULL_FACE);
             int[] prevViewport = new int[4];
             org.lwjgl.opengl.GL11.glGetIntegerv(org.lwjgl.opengl.GL11.GL_VIEWPORT, prevViewport);
             int prevDrawFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_DRAW_FRAMEBUFFER_BINDING);
@@ -293,6 +302,20 @@ final class LyricPresentRenderer {
                 org.lwjgl.opengl.GL20.glUseProgram(prevProgram);
                 org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER, prevVbo);
                 org.lwjgl.opengl.GL30.glBindVertexArray(prevVao);
+                // 深度/掩码/剔除走 GlStateManager 还：这类状态带「值相等即短路」缓存，
+                // 上面裸 GL 改过硬件值，缓存还停在改后的值 —— 先 dummy 双调刷掉缓存
+                // 差异，真值才能落到硬件。漏还任何一项，深度缓冲的清屏与测试都会
+                // 失常（glClear 受深度掩码约束），观感为世界随移动闪烁。
+                com.mojang.renderpearl.backend.opengl.GlStateManager._disableDepthTest();
+                if (prevDepthTest) {
+                    com.mojang.renderpearl.backend.opengl.GlStateManager._enableDepthTest();
+                }
+                com.mojang.renderpearl.backend.opengl.GlStateManager._depthMask(false);
+                com.mojang.renderpearl.backend.opengl.GlStateManager._depthMask(prevDepthMask);
+                com.mojang.renderpearl.backend.opengl.GlStateManager._disableCull();
+                if (prevCull) {
+                    com.mojang.renderpearl.backend.opengl.GlStateManager._enableCull();
+                }
                 // FBO 绑定走 GlStateManager 缓存口径还回去（dummy 双绑防短路）
                 com.mojang.renderpearl.backend.opengl.GlStateManager._glBindFramebuffer(
                         org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, 0);

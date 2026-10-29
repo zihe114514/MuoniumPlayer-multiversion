@@ -326,6 +326,9 @@ public final class CrossSourceSwitcher {
      */
     public static boolean canAutoSwitch(Music current, boolean allowInRoom) {
         if (current == null) return false;
+        // 电台 / 播客节目永不自动换源：节目名是"第 N 期 · xxx"式的串行标题，
+        // 拿去别的平台按歌名搜索只会匹配到毫不相干的歌，替身比失败更伤内容。
+        if (current.isDjProgram()) return false;
         if (!SwitchSourceSettings.isEnabled()) return false;
         if (candidatePlatforms(current.getSource()).isEmpty()) return false;
         // 一起听 / party 房间按曲目本体同步，本地悄悄换一首就是整房脱队。
@@ -420,6 +423,13 @@ public final class CrossSourceSwitcher {
      */
     public static void requestManualSwitch(final Music current, final PlayList playList, final int index) {
         if (current == null || playList == null) return;
+        // 电台 / 播客节目与自动路径同理不换源：右键的语义是"在本平台的放法不好，去别处找
+        // 同一首"，而节目不是"同一首歌在别家也有"的东西，匹配只会换来串台内容。
+        if (current.isDjProgram()) {
+            DownloadDynamicIsland.showCrossSourceFailure(current.getName(),
+                    "电台节目不支持换源：节目是电台专属内容，其他平台没有对应条目");
+            return;
+        }
         final String key = current.getStableKey();
         if (key == null || key.isEmpty()) return;
         if (candidatePlatforms(current.getSource()).isEmpty()) {

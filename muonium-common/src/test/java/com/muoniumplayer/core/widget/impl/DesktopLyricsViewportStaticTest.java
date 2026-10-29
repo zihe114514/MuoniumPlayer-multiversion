@@ -70,7 +70,8 @@ class DesktopLyricsViewportStaticTest {
     @DisplayName("设置界面提供宽高，编辑器命中框使用同一尺寸")
     void bothSettingsSurfacesExposeViewportSize() throws IOException {
         String model = read(hud("HudSettingsModel.java"));
-        assertTrue(model.contains("new Group(\"大小与换行\""));
+        // 组名随 HUD 设置分类收口从「大小与换行」改到「样式与大小」（面板与卡片分类）。
+        assertTrue(model.contains("new Group(\"样式与大小\""));
         assertTrue(model.contains("slider(HudSetting.OSD_WIDTH"));
         assertTrue(model.contains("slider(HudSetting.OSD_HEIGHT"));
         assertTrue(model.contains("syncLyricViewportModuleValues()"));

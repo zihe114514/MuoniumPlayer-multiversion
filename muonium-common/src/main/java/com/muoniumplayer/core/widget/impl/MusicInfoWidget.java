@@ -26,6 +26,7 @@ import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.texture.ITextureObject;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
 import com.muoniumplayer.core.settings.HudConfig;
+import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.Tuple;
 import com.muoniumplayer.core.utils.WidgetWrapper;
@@ -86,6 +87,8 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
     float downloadPanelAlpha = 0.0f;
 
     float musicBgAlpha = 0.0f;
+    /** 封面小图自己的淡入系数：与糊底（musicBgAlpha）解耦，糊图慢/失败不拖累封面。 */
+    float coverFadeAlpha = 0.0f;
     ITextureObject prevBlurredBg = null;
     ITextureObject prevBg = null;
     Music prevMusic = null;
@@ -192,52 +195,76 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
                 api.getGLStateManager().scale(scale, scale, 1);
                 api.getGLStateManager().translate(-(posInterface.getX() + posInterface.getWidth() * .5), -(posInterface.getY() + posInterface.getHeight() * .5), 0);
 
-                this.roundedRect(posInterface.getX(), posInterface.getY(), width, height + downloadProgHeight, bgRound, 1, 0, 0, 0, alpha * 0.7f);
+                if (!transparentBackdrop()) {
+                    this.roundedRect(posInterface.getX(), posInterface.getY(), width, height + downloadProgHeight, bgRound, 1, 0, 0, 0, alpha * 0.7f);
+                }
 
                 api.getGLStateManager().popMatrix();
             });
 
-            {
+            // 「液态玻璃」档：与灵动岛 LIQUID_GLASS 款同一套表面（renderLiquidGlassSurface
+            // 的移植版）。真玻璃铺得上就直接整面返回；铺不上（主题没开真玻璃/手机档）走
+            // 同款多层假玻璃回退，而不是一层均匀的半透明灰底。
+            if (liquidGlassBackdrop()) {
+                renderLiquidGlassCard(posInterface.getX(), posInterface.getY(),
+                        width, height + downloadProgHeight, bgRound, alpha);
+            }
+            // 状态更新无条件执行：prevBg/musicBgAlpha 同时喂给下面的封面小图绘制，
+            // 透明/玻璃档跳过它们会让封面永久消失（musicBgAlpha 卡在 0）。
+            double posX = posInterface.getX();
+            double posY = posInterface.getY();
 
-                double posX = posInterface.getX();
-                double posY = posInterface.getY();
+            // 用上面那个已经判过空的局部量，别再读一遍 CloudMusic.currentlyPlaying：
+            // 「先判空再取值」这种写法在停播那一帧就会读到 null。
+            // 镜像中且外部播放器给了封面时，这张底由那张图现算（CloudMusic 那一处统一分叉）。
+            Location musicCoverBlurred = CloudMusic.preferredBlurredCoverLocation(playingMusic);
 
-                // 用上面那个已经判过空的局部量，别再读一遍 CloudMusic.currentlyPlaying：
-                // 「先判空再取值」这种写法在停播那一帧就会读到 null。
-                // 镜像中且外部播放器给了封面时，这张底由那张图现算（CloudMusic 那一处统一分叉）。
-                Location musicCoverBlurred = CloudMusic.preferredBlurredCoverLocation(playingMusic);
+            TextureManager textureManager = TextureManager.getInstance();
+            ITextureObject texBg = textureManager.getTexture(musicCoverBlurred);
 
-                TextureManager textureManager = TextureManager.getInstance();
-                ITextureObject texBg = textureManager.getTexture(musicCoverBlurred);
-
-                if (texBg != null || prevBlurredBg != null) {
-
-                    if (playingMusic != prevMusic) {
-                        prevBlurredBg = prevMusic == null ? null : textureManager.getTexture(prevMusic.getBlurredCoverLocation());
-                        prevBg = prevMusic == null ? null : textureManager.getTexture(prevMusic.getCoverLocation());
-                        prevMusic = playingMusic;
-                        musicBgAlpha = 0.0f;
-                    }
-
-                    double v = (height) / width;
-
-                    if (prevBlurredBg != null && musicBgAlpha < 0.99f) {
-                        api.getGLStateManager().bindTexture(prevBlurredBg.getGlTextureId());
-                        prevBlurredBg.linearFilter();
-                        this.roundedRectTextured(posX, posY, width, height + downloadProgHeight, 0, v, 1, v, bgRound, 1, alpha);
-                    }
-
-                    if (texBg != null) {
-                        this.musicBgAlpha = Interpolations.interpolate(this.musicBgAlpha, 1.0f, 0.3f);
-                        api.getGLStateManager().bindTexture(texBg.getGlTextureId());
-                        texBg.linearFilter();
-                        this.roundedRectTextured(posX, posY, width, height + downloadProgHeight, 0, .5 - v * .5, 1, v, bgRound, 1, this.musicBgAlpha * alpha);
-                    }
-
+            // 换歌检测与状态推进无条件执行（不依赖糊图纹理就绪）：prevBg 供封面小图
+            // 交叉淡入，musicBgAlpha 同时驱动糊底与封面小图的淡入系数。把这段绑在
+            // 「糊图已装出来」之下会让封面跟着糊图的异步加载一起卡死——糊图没就绪时
+            // musicBgAlpha 恒 0，封面小图（乘同一系数）就永远透明，切歌后看不到新封面。
+            if (playingMusic != prevMusic) {
+                // 用 stableKey 而不是对象引用：播放器切页/换源重查询会 new 出内容相同的
+                // Music，引用比较会把它当成「同一首」跳过重置，封面淡入就被卡住。
+                boolean sameTrack = playingMusic.getStableKey().equals(
+                        prevMusic == null ? "" : prevMusic.getStableKey());
+                if (!sameTrack) {
+                    prevBlurredBg = prevMusic == null ? null
+                            : textureManager.getTexture(CloudMusic.preferredBlurredCoverLocation(prevMusic));
+                    // 取上一首「当时实际在显示」的那张（可能是动态封面），而不是死板地查
+                    // 静态图——否则动态封面切静态图时旧封面会闪没。
+                    prevBg = prevMusic == null ? null
+                            : textureManager.getTexture(CloudMusic.preferredCoverLocation(
+                                    prevMusic, prevMusic.getSmallCoverLocation()));
+                    prevMusic = playingMusic;
+                    musicBgAlpha = 0.0f;
+                    coverFadeAlpha = 0.0f;
                 }
             }
 
-            this.roundedRect(posInterface.getX(), posInterface.getY(), width, height + downloadProgHeight, bgRound, 1, 0, 0, 0, alpha * 0.25f);
+            double v = (height) / width;
+
+            // 默认档才画糊底。液态玻璃档的折射底在上面已经铺过，糊图叠上去会把它整个盖死；
+            // 完全透明档什么都不垫。
+            boolean drawBlurredBackdrop = !transparentBackdrop() && !liquidGlassBackdrop();
+            if (drawBlurredBackdrop && prevBlurredBg != null && musicBgAlpha < 0.99f) {
+                api.getGLStateManager().bindTexture(prevBlurredBg.getGlTextureId());
+                prevBlurredBg.linearFilter();
+                this.roundedRectTextured(posX, posY, width, height + downloadProgHeight, 0, v, 1, v, bgRound, 1, alpha);
+            }
+
+            if (drawBlurredBackdrop && texBg != null) {
+                this.musicBgAlpha = Interpolations.interpolate(this.musicBgAlpha, 1.0f, 0.3f);
+                api.getGLStateManager().bindTexture(texBg.getGlTextureId());
+                texBg.linearFilter();
+                this.roundedRectTextured(posX, posY, width, height + downloadProgHeight, 0, .5 - v * .5, 1, v, bgRound, 1, this.musicBgAlpha * alpha);
+            }
+
+            this.roundedRect(posInterface.getX(), posInterface.getY(), width, height + downloadProgHeight,
+                    bgRound, 1, 0, 0, 0, transparentBackdrop() ? 0f : alpha * 0.25f);
 
             // 渲染下载面板
 
@@ -257,18 +284,23 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
                     this.roundedRect(imgX, offsetY + fr.getHeight() + 4, downloadFillWidth, 6, Math.min(2, downloadFillWidth * .5), 1, 1, 1, downloadPanelAlpha);
             }
 
-            if (prevBg != null) {
+            // 封面小图交叉淡入。淡入系数独立于糊底（coverAlpha）：糊图是异步解码的大图，
+            // 慢/失败都不该拖累封面——旧图淡出、新图淡进，糊图什么时候就绪什么时候参与。
+            float coverAlpha = Interpolations.interpolate(this.coverFadeAlpha,
+                    texture != null ? 1.0f : 0.0f, 0.25f);
+            this.coverFadeAlpha = coverAlpha;
+            if (prevBg != null && coverAlpha < 0.99f) {
                 api.getGLStateManager().bindTexture(prevBg.getGlTextureId());
                 prevBg.linearFilter();
                 double exp = 0;
-                this.roundedRectTextured(imgX - exp, imgY - exp, imgSize + exp * 2, imgSize + exp * 2, coverRound, alpha);
+                this.roundedRectTextured(imgX - exp, imgY - exp, imgSize + exp * 2, imgSize + exp * 2, coverRound, (1f - coverAlpha) * alpha);
             }
 
             if (texture != null) {
                 api.getGLStateManager().bindTexture(texture.getGlTextureId());
                 texture.linearFilter();
                 double exp = 0;
-                this.roundedRectTextured(imgX - exp, imgY - exp, imgSize + exp * 2, imgSize + exp * 2, coverRound, this.musicBgAlpha * alpha);
+                this.roundedRectTextured(imgX - exp, imgY - exp, imgSize + exp * 2, imgSize + exp * 2, coverRound, coverAlpha * alpha);
             }
 
             String secondaryText = presentation.preparing
@@ -397,6 +429,98 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
         }
         AutomixCuePainter.paint(barX, barTop, barWidth, barHeight,
                 cueGlide.update(cue), cue.fading, alpha, playbackFraction);
+    }
+
+    /** 「完全透明」档：不画任何底（bloom 底、封面糊底、压暗层全部跳过）。 */
+    private static boolean transparentBackdrop() {
+        return HudConfig.infoCardBackdrop == 2;
+    }
+
+    /**
+     * 「液态玻璃」档。GlassLook.amount 内部已含手机档闸与主题真玻璃强度，闸关着时
+     * paintFrost 返回 false，由 {@link #renderLiquidGlassCard} 走假玻璃回退层。
+     */
+    private static boolean liquidGlassBackdrop() {
+        return HudConfig.infoCardBackdrop == 1;
+    }
+
+    // 玻璃色与灵动岛液态玻璃款同源（DownloadDynamicIsland.GLASS_TINT/.GLASS_TINT_BRIGHT）：
+    // 取色一律来自玻璃色而不是主题强调色，玻璃不该跟着封面/主题偏色跑。
+    private static final int CARD_GLASS_TINT = 0x8FB4EC;
+    private static final int CARD_GLASS_TINT_BRIGHT = 0xCADEFB;
+
+    private static int clamp255(float value) {
+        return Math.max(0, Math.min(255, Math.round(value)));
+    }
+
+    /**
+     * 歌曲信息卡的液态玻璃表面 —— 灵动岛「液态玻璃」款（renderLiquidGlassSurface）的
+     * 1:1 移植，只在两处不同：生效面是 {@link GlassLook.Surface#INFO_CARD}，色值用
+     * 本类自己的 CARD_GLASS_TINT 常量。层次与岛完全一致：真玻璃镜铺得上时整面即返
+     * （不许再叠实色底）；铺不上时按同款回退 —— 深色基底 + 竖向体积渐变 + 横向色散
+     * + 折射亮带 + 边缘折射 + 随时间转动的四角边缘光。
+     */
+    private void renderLiquidGlassCard(double x, double y, double width, double height,
+                                       double radius, float alpha) {
+        double seconds = System.currentTimeMillis() / 1000.0;
+        int accentBright = CARD_GLASS_TINT_BRIGHT;
+        double innerRadius = Math.max(1.0, radius - 1.0);
+
+        boolean frosted = GlassLook.paintFrost(GlassLook.Surface.INFO_CARD, x, y, width, height,
+                radius, alpha);
+        float thin = frosted ? GlassLook.tintedAlpha(GlassLook.Surface.INFO_CARD, 1.0f) : 1.0f;
+        if (frosted) {
+            // 参考透镜已提供整面 + 方向性增益 + 边缘行为，上面不许再叠实色底。
+            return;
+        }
+        float glow = GlassLook.edgeGlow(GlassLook.Surface.INFO_CARD);
+
+        // 玻璃本体：偏冷的深色基底压住背景，再叠一层玻璃色的竖向渐变当作体积感。
+        roundedRect(x, y, width, height, radius, hexColor(.043f, .055f, .078f, alpha * .82f * thin));
+        roundedRectGradientVertical(x, y, width, height, radius,
+                new Color((CARD_GLASS_TINT_BRIGHT & 0xFFFFFF) | clamp255(alpha * .17f * thin * 255) << 24, true),
+                new Color((CARD_GLASS_TINT & 0xFFFFFF) | clamp255(alpha * .07f * thin * 255) << 24, true));
+        // 冷白到紫蓝的横向色散。
+        roundedRectGradientHorizontal(x, y, width, height, radius,
+                new Color(222, 241, 255, clamp255(alpha * 34f)),
+                new Color(122, 152, 240, clamp255(alpha * 26f)));
+
+        // 折射：上半部亮带 + 底部回弹的强调色反射。
+        roundedRectGradientVertical(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0),
+                Math.max(1.0, height * .52), innerRadius,
+                new Color(255, 255, 255, clamp255(alpha * 46f)),
+                new Color(255, 255, 255, 0));
+        roundedRectGradientVertical(x + 1.0, y + height * .60, Math.max(1.0, width - 2.0),
+                Math.max(1.0, height * .38), innerRadius,
+                new Color(255, 255, 255, 0),
+                new Color((accentBright & 0xFFFFFF) | clamp255(alpha * .13f * 255) << 24, true));
+
+        // 真玻璃的边缘折射：背后画面沿轮廓法线掰一下再采，画在底色与亮带之后。
+        GlassLook.paintEdge(GlassLook.Surface.INFO_CARD, x, y, width, height, radius, alpha);
+
+        // 边缘动态取色：四角取自玻璃色的四个色相相位，整圈随时间缓慢转动。
+        // （岛那边用 DynamicIslandMath.shiftHue，本类在另一个包够不到，逻辑原样内联。）
+        float phase = (float) ((seconds * 26.0) % 360.0);
+        roundedOutlineGradient(x, y, width, height, radius, 1.0,
+                new Color((shiftHueForCard(accentBright, phase) & 0xFFFFFF) | clamp255(alpha * .80f * glow * 255) << 24, true),
+                new Color((shiftHueForCard(accentBright, phase + 70f) & 0xFFFFFF) | clamp255(alpha * .92f * glow * 255) << 24, true),
+                new Color((shiftHueForCard(accentBright, phase + 140f) & 0xFFFFFF) | clamp255(alpha * .74f * glow * 255) << 24, true),
+                new Color((shiftHueForCard(accentBright, phase + 210f) & 0xFFFFFF) | clamp255(alpha * .90f * glow * 255) << 24, true));
+        roundedOutline(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height - 2.0),
+                innerRadius, .55, new Color(255, 255, 255, clamp255(alpha * 30f * glow)));
+    }
+
+    /**
+     * 把颜色沿色相环旋转指定角度，并保证饱和度与明度下限 —— 玻璃边缘的动态取色光。
+     * 玻璃色本身可能很浅，直接旋转会得到一条看不见的边；与岛那边的 shiftHue 同参数。
+     */
+    private static int shiftHueForCard(int color, float degrees) {
+        float[] hsb = Color.RGBtoHSB((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF, null);
+        float hue = (float) ((hsb[0] + degrees / 360.0f) % 1.0);
+        if (hue < 0f) hue += 1.0f;
+        float saturation = Math.max(.42f, Math.min(1f, hsb[1]));
+        float brightness = Math.max(.82f, Math.min(1f, hsb[2]));
+        return Color.HSBtoRGB(hue, saturation, brightness) & 0xFFFFFF;
     }
 
 }

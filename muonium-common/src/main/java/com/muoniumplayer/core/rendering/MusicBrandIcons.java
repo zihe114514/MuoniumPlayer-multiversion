@@ -47,6 +47,13 @@ public final class MusicBrandIcons {
      */
     public static final String SPOTIFY_MONOGRAM = "S";
 
+    /**
+     * Apple Music 的兜底字标，理由同 {@link #KUGOU_MONOGRAM}。正常路径上已经让位给
+     * {@link BrandVectorIcons} 里的那枚圆角方块音符。取「♪」是正文字体里必然存在的音符字形，
+     * 比字母 A 更贴近品牌的视觉联想。
+     */
+    public static final String APPLE_MONOGRAM = "♪";
+
     private MusicBrandIcons() {
     }
 }

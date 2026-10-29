@@ -315,6 +315,37 @@ public class MusicWidget extends RoundedRectWidget {
             nextAccessBadgeX += 28.0;
         }
 
+        // Apple「试听」标：preview 兜底播过的行由播放层点亮 isApplePreviewOnly（transient
+        // 运行态，与汽水的 isQishuiTrialResolve 同族）。它与 VIP/权益无关——这行的 30 秒
+        // 是 gamdl 与换源都落空后的官方试听，徽标只负责说清「这不是完整版」。
+        if (music.isApple()) {
+            final double trialOffset = nextAccessBadgeX;
+            LabelWidget trialText = new LabelWidget("试听", FontManager.pf12bold);
+            RoundedRectWidget trialBadge = new RoundedRectWidget(0, 0, 25, 10);
+            this.addChild(trialBadge);
+            trialBadge.setClickable(false);
+            trialBadge.setBeforeRenderCallback(() -> {
+                if (!music.isApplePreviewOnly()) {
+                    trialBadge.setAlpha(0f);
+                    trialText.setAlpha(0f);
+                    return;
+                }
+                trialBadge.setAlpha(.92f);
+                trialText.setAlpha(1f);
+                trialBadge.setRadius(2.5);
+                trialBadge.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER));
+                trialBadge.setPosition(lblMusicName.getRelativeX() + lblMusicName.getWidth() + 3 + trialOffset,
+                        lblMusicName.getRelativeY() + lblMusicName.getHeight() * .5 - trialBadge.getHeight() * .5);
+            });
+            trialBadge.addChild(trialText);
+            trialText.setClickable(false);
+            trialText.setBeforeRenderCallback(() -> {
+                trialText.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                trialText.center();
+            });
+            nextAccessBadgeX += 28.0;
+        }
+
         if (digitalAlbumTrack) {
             final double albumBadgeOffset = nextAccessBadgeX;
             RoundedRectWidget albumBadge = new RoundedRectWidget(0, 0, 25, 10);

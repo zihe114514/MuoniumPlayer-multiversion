@@ -50,13 +50,14 @@ class BrandVectorIconsStaticTest {
     }
 
     @Test
-    @DisplayName("只有酷狗、哔哩哔哩、汽水、Spotify 接了矢量标识，其余各家必须老实回落")
+    @DisplayName("只有酷狗、哔哩哔哩、汽水、Spotify、Apple 接了矢量标识，其余各家必须老实回落")
     void onlyTheThreeProvidersUseVectorMarks() {
         for (MusicPlatform platform : MusicPlatform.values()) {
             boolean expected = platform == MusicPlatform.KUGOU
                     || platform == MusicPlatform.BILIBILI
                     || platform == MusicPlatform.QISHUI
-                    || platform == MusicPlatform.SPOTIFY;
+                    || platform == MusicPlatform.SPOTIFY
+                    || platform == MusicPlatform.APPLE;
             assertEquals(expected, BrandVectorIcons.has(platform),
                     platform + " 的矢量标识接线状态不对：接了的家会盖掉字形字标，没接的家必须继续走字形");
         }
@@ -72,6 +73,8 @@ class BrandVectorIconsStaticTest {
         assertAspect(MusicPlatform.QISHUI, 0.8840);
         // Spotify 用的是 simple-icons 的 24 网格圆形路径，等比之后就是一枚正圆。
         assertAspect(MusicPlatform.SPOTIFY, 1.0);
+        // Apple 的 simple-icons 路径是一枚撑满 24 网格的圆角方块，等比后同样是正方。
+        assertAspect(MusicPlatform.APPLE, 1.0);
     }
 
     @Test
@@ -79,7 +82,7 @@ class BrandVectorIconsStaticTest {
     void rasterKeepsTheAspectAndLeavesInk() {
         for (MusicPlatform platform : new MusicPlatform[]{
                 MusicPlatform.KUGOU, MusicPlatform.BILIBILI, MusicPlatform.QISHUI,
-                MusicPlatform.SPOTIFY}) {
+                MusicPlatform.SPOTIFY, MusicPlatform.APPLE}) {
             int[][] grid = raster(platform);
             double[] size = BrandVectorIcons.inkSizeFor(platform);
             assertNotNull(size, platform + " 没有归一化尺寸");

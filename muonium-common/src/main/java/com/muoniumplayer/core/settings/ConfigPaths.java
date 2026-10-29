@@ -108,6 +108,19 @@ public final class ConfigPaths {
     public static final File SPOTIFY_AUTH = new File(CONFIG_DIRECTORY, "spotify_auth.json");
 
     /**
+     * Apple Music 的本机配置：media-user-token、storefront 与本音源的偏好开关。
+     *
+     * <p>与 {@link #KUGOU_AUTH}、{@link #QISHUI_AUTH}、{@link #SPOTIFY_AUTH} 同样的理由单开一个文件：
+     * {@link #MUSIC_AUTH} 由 Cadence 的凭据存储整段重写，只认识网易云 cookie 与 QQ 的
+     * musicid/musickey，Apple 的 media-user-token 放进去会在下一次保存时被丢掉。</p>
+     *
+     * <p>注意 cookies.txt（gamdl 伴生工具的凭据）不在这里，而在 {@link #APPLE_MUSIC_DIR} 下——
+     * 它是整份明文的 Netscape cookie 文件，比 JSON 配置里的 token 敏感一个量级，分开放方便
+     * 用户理解「删哪个是删凭据」。</p>
+     */
+    public static final File APPLE_MUSIC_AUTH = new File(CONFIG_DIRECTORY, "apple_music_auth.json");
+
+    /**
      * 用户用「粘贴分享链接/ID」导入的汽水音乐歌单。
      *
      * <p>只存歌单引用（歌单 ID + 标题 + 封面 + 曲目数），曲目每次点开时才匿名向上游拉取，
@@ -204,6 +217,15 @@ public final class ConfigPaths {
      * 目录进去，会让「这个 exe 是我自己放的还是工具生成的」变模糊。</p>
      */
     public static final File QISHUI_BRIDGE_DIR = new File(CONFIG_DIRECTORY, "qishui-bridge");
+
+    /**
+     * Apple Music 伴生后端（gamdl 整包）与 cookies.txt 的安装目录。
+     *
+     * <p>整包 = 内嵌 Python + 预装好的 gamdl，由 {@code AppleCompanionDownload} 从镜像梯队
+     * 下载解压到这里（汽水伴生后端 {@code qishui-backend/} 的同款目录约定）。cookies.txt 与
+     * Python 环境放同一层：伴生清扫陈旧文件时要保住用户凭据，同层最容易被「保留名单」照顾到。</p>
+     */
+    public static final File APPLE_MUSIC_DIR = new File(CONFIG_DIRECTORY, "apple-music");
 
     // 由开发版构建产生的中间 Muonium 命名。
     public static final File CACHE_DIR = new File(CONFIG_DIRECTORY, "cache");

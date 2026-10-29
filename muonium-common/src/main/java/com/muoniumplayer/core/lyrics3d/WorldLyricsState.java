@@ -231,6 +231,14 @@ public final class WorldLyricsState {
         /** 回屏保持（stayOnScreen）：转开视角时歌词滑回视野边缘。 */
         default boolean stayOnScreen() { return false; }
 
+        /**
+         * 距离保持：移动时歌词锚点随玩家整体平移（含上下），径向距离始终收敛到
+         * 设定值 —— 走路/跳跃/飞行时歌词与玩家的距离恒定，不会因走近而糊脸。
+         * 开启时 {@link #keepAway()} 与回屏弹簧的「距离回中」都不再参与
+         * （距离已由本机制管理）。
+         */
+        default boolean keepDistance() { return true; }
+
         /** Above ground：歌词中心不低于眼睛下方 0.5 格（不沉进地面）。 */
         default boolean aboveGround() { return false; }
 
@@ -592,6 +600,10 @@ public final class WorldLyricsState {
         if (active != null) checkAnchorSanity(active, camera, params, anchorMaxLen);
         for (SpawnedLine f : fading) checkAnchorSanity(f, camera, params, anchorMaxLen);
 
+        // 距离保持 / 回屏垂直跟随：把锚点随玩家位移整体平移（在回屏弹簧之前，
+        // active 与 fading 都 follow —— 与上游同序）
+        applyAnchorFollow(camera, params);
+
         // 回屏保持 / 不沉入地面（stayOnScreen / aboveGround）：
         // 在画之前把越界句拉回视野（fading 句也 follow —— 与上游同序）
         clampIntoView(camera, params);
@@ -609,6 +621,13 @@ public final class WorldLyricsState {
         // 双向保护压暗（folia windowProtection 的 3D 等价）：两牌中心 < 8 格起
         // 渐入、< 3 格到 PROTECT_FLOOR=0.4 —— active 与 fading 双方都压（R5 审查
         // P2-7：单向压暗会出现「旧句比新句亮」的主次颠倒）。
+        // 例外：绘光余光句（huiguangLinger）不参与双向压 —— 它是换句交接的旧句，
+        // 重叠本来就由交接动效自己管理（0.75 余光 → 0 的熄灭曲线 + 让位滑开）；
+        // 而生成钳制（散开角收进可见锥、横向钳到 10.5 格基线）让相邻两句锚点
+        // 常驻 8 格内，保护压暗会在整个 1.2s 余光窗口把新句摁在 0.4 档 —— 新句
+        // 的逐字点亮/闪点/光晕全被压灭，观感即「上一句没消失前新句不点亮、
+        // 全是暗字」。余光句自带熄灭曲线，跳过保护也不会出现 P2-7 的
+        // 「旧句比新句亮」颠倒（0.75 < 新句 1.0）。
         List<Row> out = new ArrayList<>(1 + fading.size());
         float curH = active != null ? active.lines.size() * LINE_H : 0f;
         for (SpawnedLine f : fading) {
@@ -619,7 +638,7 @@ public final class WorldLyricsState {
                 float lift = t * FADE_LIFT;
                 Row r = WorldLyricsState.resolveFrozen(f, camera, params, a, false, lift);
                 float dim = 1f;
-                if (active != null) {
+                if (active != null && !f.huiguangLinger) {
                     dim = protectDimBetween(f, active);
                     if (dim < 0.999f) a *= dim;
                 }
@@ -647,6 +666,9 @@ public final class WorldLyricsState {
                     resumeFadeOf(active, nowNanos), true, 0f);
             float dim = 1f;
             for (SpawnedLine f : fading) {
+                // 余光句不压新句（见上方组帧注释）：整段 1.2s 交接窗口里
+                // 新句的逐字点亮必须全档进行
+                if (f.huiguangLinger) continue;
                 dim = Math.min(dim, protectDimBetween(f, active));
             }
             if (dim < 0.999f) {
@@ -759,6 +781,13 @@ public final class WorldLyricsState {
     private long keepNanos;
 
     /**
+     * 距离保持/回屏垂直跟随的上一帧眼位（NaN = 首帧或刚失效，只记录不平移）。
+     * 距离保持记全 XYZ；仅回屏保持只用到 Y —— 同一组字段复用，功能切换时
+     * 由 applyAnchorFollow 的失效分支重置，不会拿旧维度的数据乱平移。
+     */
+    private double followEyeX = Double.NaN, followEyeY, followEyeZ;
+
+    /**
      * 单句锚点的生命线检查：坐标非有限、或离相机远超合理范围（传送/维度切换的
      * 残留锚点）时，把句子重锚到当前视线的生成位（等价于这句话刚生成），
      * 角速度一并清零 —— 弹簧从静止状态重新收敛。
@@ -802,6 +831,112 @@ public final class WorldLyricsState {
     }
 
     /**
+     * 距离保持（keepDistance）：把本帧玩家位移量整体平移到每句锚点上（含 fading），
+     * 偏移向量（锚点−眼睛）精确守恒 —— 移动中「玩家↔歌词」距离零偏差、上下精确
+     * 跟随、方向不随视角甩。随后 {@link #glideLen} 把径向长度收敛到设定值，处理
+     * 开关刚打开/中途改距离/传送重锚这类离散事件（平时恒等，锁空转）。
+     *
+     * <p>仅回屏保持（keepDistance 关、stayOnScreen 开）时只平移 Y：玩家跳跃/上高山
+     * 歌词跟上来，水平方向仍由回屏弹簧的距离回中管理。Y 平移保持「锚点−眼睛」的
+     * 纵向相对关系不变，弹簧的角度误差不被平移激发，两者零冲突。</p>
+     *
+     * <p>眼位位移模长超过 {@code 16} 格（传送、或 renderGuarded 短路若干帧后恢复）
+     * 视作非连续移动：跳过平移只重记录眼位，由 sanity/滑锁各自收敛。</p>
+     */
+    private void applyAnchorFollow(WorldLyricsState.CameraView camera, Params params) {
+        boolean followAll = params.keepDistance();
+        boolean followY = !followAll && params.stayOnScreen();
+        if (Double.isNaN(followEyeX)) {
+            // 首帧 / 刚被失效：只记录基准眼位，本帧不平移（无跳变）
+            followEyeX = camera.eyeX();
+            followEyeY = camera.eyeY();
+            followEyeZ = camera.eyeZ();
+            return;
+        }
+        double dx = camera.eyeX() - followEyeX;
+        double dy = camera.eyeY() - followEyeY;
+        double dz = camera.eyeZ() - followEyeZ;
+        followEyeX = camera.eyeX();
+        followEyeY = camera.eyeY();
+        followEyeZ = camera.eyeZ();
+        if (!followAll && !followY) {
+            // 两个机制都没开：失效记录，恢复开启时从当前眼位重新起算
+            followEyeX = Double.NaN;
+            return;
+        }
+        double dispSq = dx * dx + dy * dy + dz * dz;
+        if (dispSq > 16.0 * 16.0) return; // 传送 / 断流恢复：不平移
+
+        // dt 供滑锁用（keepNanos 由 clampIntoView 每帧无条件刷新，语义即帧间隔）
+        double dtFrame = keepNanos == 0L ? 0.016 : Math.max(0.0, Math.min(0.1,
+                (System.nanoTime() - keepNanos) / 1.0E9));
+        if (active != null) followAnchor(active, camera, params, dx, dy, dz, followAll, dtFrame);
+        for (SpawnedLine f : fading) followAnchor(f, camera, params, dx, dy, dz, followAll, dtFrame);
+    }
+
+    /** 单句的跟随平移 + 径向滑锁。translateAll=false = 仅回屏保持的 Y 平移。 */
+    private void followAnchor(SpawnedLine f, WorldLyricsState.CameraView camera, Params params,
+                              double dx, double dy, double dz,
+                              boolean translateAll, double dtFrame) {
+        if (translateAll) {
+            f.x += dx;
+            f.y += dy;
+            f.z += dz;
+            double rx = f.x - camera.eyeX();
+            double ry = f.y - camera.eyeY();
+            double rz = f.z - camera.eyeZ();
+            double len = Math.sqrt(rx * rx + ry * ry + rz * rz);
+            if (len < 1e-6) return;
+            double target = params.distance();
+            double newLen = glideLen(len, target, dtFrame);
+            if (newLen != len) {
+                double k = newLen / len;
+                f.x = camera.eyeX() + rx * k;
+                f.y = camera.eyeY() + ry * k;
+                f.z = camera.eyeZ() + rz * k;
+                len = newLen;
+            }
+            // 不沉入地面：地面约束优先于距离锁（夹 y，径向长度随之微变，下帧锁回）。
+            // 不读 groundFloor —— 它只在 stayOnScreen 开启时由 clampIntoView 维护，
+            // 单独开 aboveGround 时恒 NaN；跟随趟里锚点 Y 本就随眼平移、相对几何
+            // 不变，用即时眼高夹持同样平滑，不会抽动。
+            if (params.aboveGround()) {
+                double floor = camera.eyeY() - GROUND_MARGIN;
+                if (f.y < floor) f.y = floor;
+            }
+        } else {
+            f.y += dy;
+        }
+    }
+
+    /**
+     * 距离保持的径向滑锁：指数收敛到目标距离，无死区 —— 平移已保证移动中距离
+     * 不变，锁只处理离散事件（开关打开瞬间、改距离、传送重锚），τ=0.2s 观感上
+     * 是一次轻推而不是跳变。纯静态供单测。
+     */
+    static double glideLen(double len, double target, double dt) {
+        if (len <= 1e-6) return len;
+        if (Math.abs(len - target) < 1e-4) return target;
+        double k = 1.0 - Math.exp(-dt / 0.2);
+        return len + (target - len) * k;
+    }
+
+    /**
+     * 回屏弹簧的距离回中（keepDistance 关闭时管理距离的唯一防线）：死区 0.5 格
+     * （走路视差抖动不触发），常规 τ=0.3s；len 低于避让线（0.6×目标）时进入
+     * 临界区 τ=0.12s —— 距离设得很近时快速拉出，糊脸窗口从秒级压到百毫秒级。
+     * 纯静态供单测。
+     */
+    static double recenteredLen(double len, double target, double dt) {
+        double deadZone = 0.5;
+        if (Math.abs(len - target) <= deadZone) return len;
+        boolean critical = len < target * KEEP_AWAY_MIN_RATIO;
+        double tau = critical ? 0.12 : 0.3;
+        double k = 1.0 - Math.exp(-dt / tau);
+        return len + (target - len) * k;
+    }
+
+    /**
      * Stay on screen：歌词（连同字宽）超出视野时，沿离视线最近的方向滑回屏幕边上。
      * 视野按设置的 FOV 与窗口宽高比算；离镜头距离不变。回屏用临界阻尼弹簧
      * （有速度、平滑加减速；子步长 1/240s，低帧率也稳定）。Above ground 的
@@ -841,15 +976,18 @@ public final class WorldLyricsState {
         double playerPitch = camera.pitchDeg();
 
         // active 与 fading 都 follow（上游同序；fading 句被 turn away 时也要回屏）
+        // keepDistance 开启时距离由跟随趟管理，弹簧跳过距离回中（只管角度）
         double targetLen = params.distance();
-        if (active != null) springTowardView(active, camera, targetLen, s, vHalf, hHalf, playerYaw, playerPitch, dt);
-        for (SpawnedLine f : fading) springTowardView(f, camera, targetLen, s, vHalf, hHalf, playerYaw, playerPitch, dt);
+        boolean skipRecenter = params.keepDistance();
+        if (active != null) springTowardView(active, camera, targetLen, s, vHalf, hHalf, playerYaw, playerPitch, dt, skipRecenter);
+        for (SpawnedLine f : fading) springTowardView(f, camera, targetLen, s, vHalf, hHalf, playerYaw, playerPitch, dt, skipRecenter);
     }
 
-    /** 单句的回屏弹簧步进。dt 是本帧秒数。 */
+    /** 单句的回屏弹簧步进。dt 是本帧秒数。skipRecenter = 距离交由距离保持管理。 */
     private void springTowardView(SpawnedLine f, WorldLyricsState.CameraView camera,
                                 double targetLen, double s, double vHalf, double hHalf,
-                                double playerYaw, double playerPitch, double dt) {
+                                double playerYaw, double playerPitch, double dt,
+                                boolean skipRecenter) {
         double rx = f.x - camera.eyeX();
         double ry = f.y - camera.eyeY();
         double rz = f.z - camera.eyeZ();
@@ -858,19 +996,22 @@ public final class WorldLyricsState {
 
         // 距离回中：玩家走远/走近后，句子还钉在旧的世界锚点上，越挂越远
         //（实测手机档 48~56 格，又小又淡像"位置错了"）。回屏保持的语义是
-        // "跟着玩家屏幕"—— 沿视线方向把句子平滑拉回/推回设定距离（0.5s
-        // 时间常数），1 格以内不动（走路晃动不触发）。转向弹簧只管方向，
-        // 距离以前没人管，就是这个缺口。
-        if (Math.abs(len - targetLen) > 1.0) {
-            double newLen = len + (targetLen - len) * (1.0 - Math.exp(-dt / 0.5));
-            double k = newLen / len;
-            rx *= k;
-            ry *= k;
-            rz *= k;
-            f.x = camera.eyeX() + rx;
-            f.y = camera.eyeY() + ry;
-            f.z = camera.eyeZ() + rz;
-            len = newLen;
+        // "跟着玩家屏幕"—— 沿视线方向把句子平滑拉回/推回设定距离（keepDistance
+        // 关闭时它管理距离：死区 0.5 格，临界区 0.12s 快拉，见 recenteredLen）。
+        // 距离保持开启时这里空转 —— 距离由跟随趟的滑锁管，双重收敛既浪费又
+        // 不可预测。
+        if (!skipRecenter) {
+            double newLen = recenteredLen(len, targetLen, dt);
+            if (newLen != len) {
+                double k = newLen / len;
+                rx *= k;
+                ry *= k;
+                rz *= k;
+                f.x = camera.eyeX() + rx;
+                f.y = camera.eyeY() + ry;
+                f.z = camera.eyeZ() + rz;
+                len = newLen;
+            }
         }
 
         // 字本身占的角度：留一半宽/高，再多留 2 度边距
@@ -1425,9 +1566,13 @@ public final class WorldLyricsState {
         double rz = f.z - camera.eyeZ();
         double len = Math.sqrt(rx * rx + ry * ry + rz * rz);
 
-        // keep away：太近就沿方向推回最小距离，位置从此改变
+        // keep away：太近就沿方向推回最小距离，位置从此改变。
+        // 距离保持开启时跳过 —— 距离由跟随趟的滑锁平滑收敛，这里再硬推会把
+        // 平滑锁的中间态瞬间跳掉（观感抽动），且 len 恒 >= 0.6×distance 它本来
+        // 也轮不到触发。
         double minD = params.distance() * KEEP_AWAY_MIN_RATIO;
-        if (allowKeepAway && params.keepAway() && len > 1e-4 && len < minD) {
+        if (allowKeepAway && params.keepAway() && !params.keepDistance()
+                && len > 1e-4 && len < minD) {
             double k = minD / len;
             f.x = camera.eyeX() + rx * k;
             f.y = camera.eyeY() + ry * k;
@@ -2227,6 +2372,7 @@ public final class WorldLyricsState {
         lastPlayingNanos = 0;
         wasPaused = false;
         lastFramePosMs = Long.MIN_VALUE;
+        followEyeX = Double.NaN;
         cachedSplitLines = null;
         cachedSplitRevision = -1;
         cachedFilteredLines = null;

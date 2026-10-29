@@ -447,7 +447,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         // 消费方（播放器转场、岛内搜索）用 WindowAdaptiveScale.islandToCurrent* 折算。
         double centerX = RenderSystem.getLayoutWidth() * .5;
         double x = centerX - width * .5;
-        double y = bounceStyle ? BounceIslandMath.TOP : TOP_MARGIN;
+        // 与 drawIsland 的 topMargin 同一公式：转场落点、岛内搜索起点必须落在岛真实的位置上。
+        double y = (bounceStyle ? BounceIslandMath.TOP : TOP_MARGIN)
+                + DynamicIslandMath.clamp(HudConfig.dynamicIslandY, -20.0, 400.0);
         return new double[]{x, y, width, height, localRadius * configuredScale};
     }
 
@@ -693,6 +695,39 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     public static void showQishuiBackendReady() {
         completePersistentNotice(IslandNoticeType.QISHUI_BACKEND, IslandNoticeType.QISHUI_BACKEND_SUCCESS,
                 "汽水音乐源", "签名后端已就绪 · 完整版可用");
+    }
+
+    // ─────────────────────── Apple gamdl 完整版兑换 ───────────────────────
+
+    /**
+     * Apple 曲目进入 gamdl 兑换（持久卡）。
+     *
+     * <p>与 GD 的「正在连接」同形态：gamdl 要跑授权 + 下载 + 解封装，单曲十几秒起步，
+     * 没有这张卡用户看到的就是「点了没反应」（实机反馈：首播完全没有准备中动画）。
+     * 持久卡意味着它一直挂着直到 {@link #showAppleGamdlResolved} /
+     * {@link #showAppleGamdlFailure} 收尾 —— 兑换失败后会自动落换源替身，那张
+     * 「正在换源」卡会自然接力，本卡不会悬空。</p>
+     */
+    public static void showAppleGamdlPreparing(String trackName) {
+        publishOperation(IslandNoticeType.APPLE_GAMDL, "Apple Music · 准备完整版",
+                safeNoticeValue(trackName, "当前歌曲") + " · gamdl 下载解密中", "current");
+    }
+
+    /** 兑换成功：文件已收编进缓存，即将起播。 */
+    public static void showAppleGamdlResolved(String trackName) {
+        completePersistentNotice(IslandNoticeType.APPLE_GAMDL, IslandNoticeType.APPLE_GAMDL_SUCCESS,
+                "Apple 完整版已就绪",
+                safeNoticeValue(trackName, "当前歌曲") + " · Apple Music 256k AAC",
+                IslandNoticeType.APPLE_GAMDL.name());
+    }
+
+    /** 兑换失败：归因随 {@code reason} 透出（超时 / cookies 过期 / 未订阅形态各异）。 */
+    public static void showAppleGamdlFailure(String trackName, String reason) {
+        completePersistentNotice(IslandNoticeType.APPLE_GAMDL, IslandNoticeType.APPLE_GAMDL_ERROR,
+                "Apple 完整版获取失败",
+                safeNoticeValue(trackName, "当前歌曲") + " · "
+                        + safeNoticeValue(reason, "gamdl 未交付") + " · 将尝试换源",
+                IslandNoticeType.APPLE_GAMDL.name());
     }
 
     /**
@@ -2046,7 +2081,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
         double visibilityEase = DynamicIslandMath.smoothStep(alpha);
         // 回弹胶囊的静息位置比其他样式低 1px；入场滑动的起点跟着一起挪，否则收起高度会出现两套。
-        double topMargin = bounce ? BounceIslandMath.TOP : TOP_MARGIN;
+        // 玩家的「灵动岛位置」偏移直接加在静息 y 上：入场滑动、缩放锚点、实时轮廓换算
+        // 全部从 topMargin 派生，一处相加全链路一致。
+        double topMargin = (bounce ? BounceIslandMath.TOP : TOP_MARGIN)
+                + DynamicIslandMath.clamp(HudConfig.dynamicIslandY, -20.0, 400.0);
         double y = topMargin - (height + 11.0) * (1.0 - visibilityEase);
 
         double entryScale = 1.0;
@@ -3810,7 +3848,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         /** 汽水签名后端已就绪（进程已拉起、健康检查通过）。 */
         QISHUI_BACKEND_SUCCESS,
         /** 汽水签名后端安装/启动失败（会自动重试，期间汽水源降级试听）。 */
-        QISHUI_BACKEND_ERROR
+        QISHUI_BACKEND_ERROR,
+        /** Apple gamdl 完整版兑换中（点播 Apple 歌且伴生就绪时触发，持久卡）。 */
+        APPLE_GAMDL,
+        /** Apple 完整版兑换完成（文件已收编进缓存）。 */
+        APPLE_GAMDL_SUCCESS,
+        /** Apple 兑换失败（随后落换源替身或试听兜底）。 */
+        APPLE_GAMDL_ERROR
     }
 
 

@@ -106,18 +106,155 @@ public final class WorldLyricsHudDraw {
     /** 本帧矩阵快照（worldRenderDraw 写、presentComposite 消费）。 */
     private static final Matrix4f snapProj = new Matrix4f();
     private static final Matrix4f snapView = new Matrix4f();
+    /** 本帧 bob 共轭阵快照（worldRenderDraw 从 bobConj 拷入、presentComposite 消费）。 */
+    private static final Matrix4f snapBobConj = new Matrix4f();
+    private static boolean snapBobConjValid;
     private static boolean snapValid;
+
+    /** 关卡投影捕获（ProjectionMatrixBufferMixin 写、worldRenderDraw 读后清）。 */
+    private static final Matrix4f liveProj = new Matrix4f();
+    private static boolean liveProjFresh;
+    /** level 实例缓存（惰性取一次；取不到 = mixin 环境异常，恒走 crs 兜底）。 */
+    private static Object levelBufferInstance;
+    private static boolean levelBufferSearched;
+    /** 诊断：最近一帧快照的投影来源。 */
+    private static volatile String projSrc = "-";
+
+    /**
+     * ProjectionMatrixBufferMixin 调（getBuffer(Matrix4f) HEAD）：level 实例上
+     * 的调用携带 renderLevel 即将上传 UBO 的合成矩阵（extract 透视 × bob ×
+     * portal 屏效），与画世界逐字节同源。非本实例的调用（hud3d/Iris 自建缓冲）
+     * 全过滤。
+     *
+     * <p>同时在这里拆出「无 bob 投影」：合成矩阵 P×B 减去 extract 纯透视 P
+     * 就是摇晃+屏效增量 B（B⁻¹ = (P×B)⁻¹ × P，P 可逆）。歌词用它构造
+     * bob 共轭阵 —— 世界照旧抖，歌词钉在无摇晃视角上（防晕 3D）。</p>
+     */
+    public static void noteLevelProjection(Object buffer, Matrix4f matrix) {
+        if (!HudConfig.worldLyricsEnabled) return;
+        if (levelBufferSearched) {
+            if (buffer != levelBufferInstance) return;
+        } else {
+            // 惰性比对：第一次到达的实例先记下，等 GameRendererAccessor 解析后核对。
+            // accessor 解析失败（环境异常）时清空实例，后续调用全过滤、恒走 crs 兜底。
+            Object resolved = resolveLevelBuffer();
+            levelBufferSearched = true;
+            levelBufferInstance = resolved;
+            if (resolved == null || buffer != resolved) return;
+        }
+        if (matrix == null || !isFinite(matrix)) return;
+        liveProj.set(matrix);
+        liveProjFresh = true;
+        updateBobConjugate();
+    }
+
+    /**
+     * 由 liveProj（P×B）与 crs.projectionMatrix（P）拆出 B⁻¹，共轭进视图旋转：
+     * M = viewᵀ · B⁻¹ · view。歌词顶点在世界路由的变换链是
+     * P·B·view·(billboard)，根矩阵乘 M 后变 P·B·view·M·(billboard) =
+     * P·view·(billboard) —— 与「无摇晃视角」逐字节同源。B=I（不移动/关摇晃）
+     * 时 M=I，矩阵保留原值零影响。
+     *
+     * <p>crs 缺席（extract 时序边缘）则 B⁻¹ 取单位阵 —— 本帧歌词与世界同抖，
+     * 与旧行为一致，下帧自动恢复。</p>
+     */
+    private static void updateBobConjugate() {
+        bobConjStampNanos = 0;
+        Matrix4f p = extractProj();
+        if (p == null) return;
+        try {
+            // B⁻¹ = (P×B)⁻¹ × P；M = viewᵀ · B⁻¹ · view（view 也是正交旋转，viewᵀ=view⁻¹）
+            Matrix4f bInv = new Matrix4f(liveProj).invert();
+            if (!isFinite(bInv)) return;
+            bInv.mul(p);
+            Matrix4f view = extractViewRot();
+            if (view == null) return;
+            Matrix4f m = new Matrix4f(view).transpose().mul(bInv).mul(view);
+            if (!isFinite(m)) return;
+            bobConj.set(m);
+            bobConjStampNanos = System.nanoTime();
+        } catch (Throwable ignored) {
+            bobConjStampNanos = 0;
+        }
+    }
+
+    private static Matrix4f extractProj() {
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null || mc.gameRenderer == null) return null;
+            net.minecraft.client.renderer.state.level.CameraRenderState crs =
+                    mc.gameRenderer.gameRenderState() != null
+                            ? mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState : null;
+            if (crs == null || crs.projectionMatrix == null || !isFinite(crs.projectionMatrix)) return null;
+            return crs.projectionMatrix;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static Matrix4f extractViewRot() {
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null || mc.gameRenderer == null) return null;
+            net.minecraft.client.renderer.state.level.CameraRenderState crs =
+                    mc.gameRenderer.gameRenderState() != null
+                            ? mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState : null;
+            if (crs == null || crs.viewRotationMatrix == null || !isFinite(crs.viewRotationMatrix)) return null;
+            return crs.viewRotationMatrix;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 本帧 bob 共轭阵（updateBobConjugate 写、present 直画与世界根矩阵读）。 */
+    private static final Matrix4f bobConj = new Matrix4f();
+    /**
+     * 共轭阵生成时间戳（纳秒）。捕获（renderLevel 前段的 getBuffer）与消费
+     * （collect / worldRenderDraw）在同帧内相邻发生 —— 时间窗只为兜住
+     * 「mixin 本帧缺席」时的陈旧值，过期即退回旧行为（歌词与世界同抖）。
+     * 不能用「collect 帧头失效」做新鲜度守卫：getBuffer 在 collect 之前，
+     * 帧头失效会把本帧刚算好的共轭阵作废，防线等于永远不生效。
+     */
+    private static volatile long bobConjStampNanos;
+    private static final long BOB_CONJ_FRESH_NANOS = 100_000_000L;
+
+    /** 本帧是否拿到了有效的 bob 共轭阵；false = 歌词与世界同抖（旧行为）。 */
+    static boolean bobConjValid() {
+        long t = bobConjStampNanos;
+        return t != 0 && System.nanoTime() - t < BOB_CONJ_FRESH_NANOS;
+    }
+
+    /** bob 共轭阵快照（只读；先查 {@link #bobConjValid()}）。 */
+    static Matrix4f bobConjSnapshot(Matrix4f dst) {
+        dst.set(bobConj);
+        return dst;
+    }
+
+    /** 经 accessor 解析 level 缓冲实例；反射/mixin 环境异常返回 null（不重试）。 */
+    private static Object resolveLevelBuffer() {
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null || mc.gameRenderer == null) return null;
+            return ((com.muoniumplayer.mixin.GameRendererAccessor) mc.gameRenderer)
+                    .muonium$levelProjectionMatrixBuffer();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
 
     public static void worldRenderDraw() {
         wrActiveFrames++;
-        if (wrDiagFrame++ % 60 == 0) {
+        // 诊断日志默认关：3D 歌词链路已稳定，留在 TRACE 后面按需开
+        //（-Dmuonium.debug.worldLyrics=true），避免正常游玩时刷屏
+        if (TRACE && wrDiagFrame++ % 60 == 0) {
             System.out.println("[WorldLyrics/diag][worldDraw] broken2=" + broken2
                     + " captureMode=" + captureModeThisFrame()
                     + " probe=" + ShaderPackProbe.isActive()
                     + " activeFrames=" + wrActiveFrames
                     + " quads=" + LyricPresentRenderer.quadCount()
                     + " drawn=" + LyricPresentRenderer.lastDrawnQuads()
-                    + " z=[" + LyricPresentRenderer.lastVertexZRange() + "]");
+                    + " z=[" + LyricPresentRenderer.lastVertexZRange() + "]"
+                    + " projSrc=" + projSrc);
         }
         if (broken2 || !HudConfig.worldLyricsEnabled) return;
         if (!captureModeThisFrame()) return;
@@ -127,15 +264,23 @@ public final class WorldLyricsHudDraw {
             CameraRenderState crs = mc.gameRenderer.gameRenderState() != null
                     ? mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState : null;
             if (crs == null) return;
-            Matrix4f proj = crs.projectionMatrix;
+            // 投影优先取本帧 getBuffer(Matrix4f) 捕获（含 bob 合成，与画世界同源）；
+            // 捕获缺席（mixin 未生效/异常）退回 crs 原值 = 旧行为。读后清标志防跨帧陈旧。
+            Matrix4f proj = liveProjFresh ? liveProj : crs.projectionMatrix;
+            projSrc = liveProjFresh ? "live" : "crs";
+            liveProjFresh = false;
             Matrix4f view = crs.viewRotationMatrix;
             if (proj == null || view == null || !isFinite(proj) || !isFinite(view)) {
                 snapValid = false;
                 return;
             }
-            // 快照拷贝（CameraRenderState 的矩阵下一帧会被复用改写）
+            // 快照拷贝（这些矩阵下一帧会被复用改写）
             snapProj.set(proj);
             snapView.set(view);
+            // bob 共轭阵随帧快照（present 直画用它把摇晃从歌词里减掉；
+            // 共轭阵缺席 = 旧行为，歌词与世界同抖）
+            snapBobConjValid = bobConjValid();
+            if (snapBobConjValid) snapBobConj.set(bobConj);
             snapValid = true;
         } catch (Throwable t) {
             snapValid = false;
@@ -167,6 +312,13 @@ public final class WorldLyricsHudDraw {
                 LyricPresentRenderer.reset();
                 return;
             }
+            // 层序守卫：本帧开着界面（背包/设置/聊天/播放器 Screen）就不画 ——
+            // present 直画落在一切之后，画了必然盖在原版 GUI 之上；不画，
+            // 歌词与被界面盖住的世界保持同层（GUI 打开时它们一起被盖住）。
+            if (mc.gui != null && mc.gui.screen() != null) {
+                LyricPresentRenderer.reset();
+                return;
+            }
             com.mojang.blaze3d.pipeline.RenderTarget target = mc.gameRenderer.mainRenderTarget();
             if (target == null) {
                 LyricPresentRenderer.reset();
@@ -174,6 +326,7 @@ public final class WorldLyricsHudDraw {
             }
             com.mojang.blaze3d.platform.Window win = mc.getWindow();
             LyricPresentRenderer.drawToFbo0(snapProj, snapView,
+                    snapBobConjValid ? snapBobConj : null,
                     win != null ? win.getWidth() : target.width,
                     win != null ? win.getHeight() : target.height);
         } catch (Throwable t) {

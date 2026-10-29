@@ -3,7 +3,7 @@
   "id": "muonium",
   "version": "${version}",
   "name": "MuoniumPlayer",
-  "description": "Music player for Minecraft 1.20.1 Fabric",
+  "description": "Minecraft music client mod: 8 sources (NetEase/QQ/KuGou/Bilibili/Qishui/YouTube Music/Spotify/GD), word-by-word lyrics, Dynamic Island, Automix crossfade, listen-together rooms. Client-only.",
   "icon": "assets/muonium/icon.png",
   "authors": [
     "云杉",
@@ -13,7 +13,7 @@
   ],
   "contact": {
     "homepage": "https://melodifymc.cc.cd/",
-    "sources": "https://github.com/zihe114514/MuoniumPlayer"
+    "sources": "https://github.com/zihe114514/MuoniumPlayer-multiversion"
   },
   "license": "All-Rights-Reserved",
   "environment": "client",

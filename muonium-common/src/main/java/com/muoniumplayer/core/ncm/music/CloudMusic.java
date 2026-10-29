@@ -1887,6 +1887,10 @@ public class CloudMusic implements SharedConstants {
                             // 却又能放 —— 归因要说清是自定义源还没准备好。
                             DownloadDynamicIsland.showPlaybackFailure(song.getName(),
                                     "自定义源正在准备，稍后重播即可");
+                        } else if (tryApplePreviewFallback(song, session)) {
+                            // Apple 试听兜底：gamdl 与整条候选表都落空，30 秒官方 preview
+                            // 至少让用户确认「这首歌是对的」。播完照常走队列推进。
+                            return true;
                         } else {
                             handleUnplayableSong(song);
                         }
@@ -1953,11 +1957,46 @@ public class CloudMusic implements SharedConstants {
                     }
                 }
             }
+            if (!started && isSessionUsable(session) && !isPlaybackCancelled() && !playListChanged()) {
+                // Apple 试听兜底（第二触发点）：gamdl 兑换失败 → 二次换源又落空的路径。
+                // 与第一触发点共用同一个方法与同一个开关（Apple 设置页可关）。
+                if (tryApplePreviewFallback(song, session)) return true;
+            }
             if (started && isSessionUsable(session)) {
                 DownloadDynamicIsland.showPlaybackQuality(
                         song.getPlaybackQuality().getDisplayName(), playUrl.getB());
             }
             return started;
+        }
+
+        /**
+         * Apple 试听兜底：换源替身与 gamdl 完整链路都落空后，用官方 30 秒 preview 收尾。
+         *
+         * <p>设置页可关（{@code AppleConfigStore} 的 previewFallback，默认开）。preview 地址
+         * 优先用行上缓存（搜索/歌单拉行时就带了），没有才现查一次单曲详情。pv_ 键位隔离
+         * 由 {@code audioCachePrefix} 按行上的 {@code applePreviewOnly} 标记生效——必须
+         * <b>先置标记再进 {@code initializeAndPlaySong}</b>，键位才是 pv_ 命名空间。
+         * 只对 Apple 原行生效：走到这里的若是换源替身（非 Apple），直接放过。</p>
+         */
+        private boolean tryApplePreviewFallback(Music song, PlaybackSession fallbackSession) {
+            if (song == null || !song.isApple()) return false;
+            if (!com.muoniumplayer.core.ncm.apple.AppleConfigStore.snapshot().previewFallback) {
+                return false;
+            }
+            String previewUrl = song.getApplePreviewUrl();
+            if (previewUrl.isEmpty()) {
+                try {
+                    previewUrl = com.muoniumplayer.core.ncm.apple.AppleMusicService
+                            .previewUrl(song.getSourceId());
+                } catch (Throwable failure) {
+                    System.err.println("[Music/Apple] 试听地址获取失败 "
+                            + song.getStableKey() + ": " + failure);
+                }
+            }
+            if (previewUrl == null || previewUrl.isEmpty()) return false;
+            song.setApplePreviewOnly(true);
+            System.out.println("[Music/Apple] 试听兜底播放: " + song.getName());
+            return initializeAndPlaySong(song, new Tuple<>(previewUrl, "m4a"), fallbackSession);
         }
 
         /**
@@ -2068,6 +2107,16 @@ public class CloudMusic implements SharedConstants {
                     song.setQishuiTrialResolve(true);
                     lastStreamIncomplete = false;
                     System.out.println("[Music/Qishui] 仅试听播放（自动换源未开启，不打断）："
+                            + song.getName() + "，解码 " + (decodedMillis / 1000L) + "s / 声明 "
+                            + (song.getDuration() / 1000L) + "s");
+                } else if (song.isApple()) {
+                    // Apple 的 30 秒 preview 是兜底链路的「设计终点」而不是故障：gamdl 与
+                    // 换源都失败后，官方试听是用户此刻真实能拿到的东西。文件落在 pv_ 键位
+                    // （不会冒充完整版），照常播完；automix/预备路径不适用——无人值守时
+                    // 预备半首到点才现原形更糟。
+                    song.setApplePreviewOnly(true);
+                    lastStreamIncomplete = false;
+                    System.out.println("[Music/Apple] 仅试听播放（gamdl 与换源均未命中）："
                             + song.getName() + "，解码 " + (decodedMillis / 1000L) + "s / 声明 "
                             + (song.getDuration() / 1000L) + "s");
                 } else {
@@ -2365,11 +2414,16 @@ public class CloudMusic implements SharedConstants {
          * 任一翻转就换一代——后端未就绪窗口里落盘的试听文件，不能在就绪后继续被当成完整版命中
          * （键原样不变的话，点歌直接命中缓存，重新解析出的完整流 URL 会被丢弃）。其它音源
          * 没有这个问题，名字保持原样，不牵连它们的缓存。</p>
+         *
+         * <p>Apple 的「试听兜底」也走键位隔离：preview 是 30 秒文件，落进完整版键位后，
+         * 用户哪天装好了 gamdl 伴生，点歌却还命中那份半首的缓存。{@code pv_} 标记让两代
+         * 文件互不相认；标记在行上（{@code applePreviewOnly}），gamdl 链路重试时会清掉。</p>
          */
         private static String audioCachePrefix(Music song) {
             return song.getStableKey() + "_"
                     + (song.isKuGou() ? KuGouMusicApi.AUDIO_CACHE_EPOCH : "")
-                    + (song.isQishui() ? QishuiMusicService.audioCacheEpoch() + "_" : "");
+                    + (song.isQishui() ? QishuiMusicService.audioCacheEpoch() + "_" : "")
+                    + (song.isApple() && song.isApplePreviewOnly() ? "pv_" : "");
         }
 
         /** 下载缓存的主键（不含扩展名），淘汰分组的组名也因此天然带上世代标记。 */
@@ -2446,6 +2500,22 @@ public class CloudMusic implements SharedConstants {
             }
             if (!downloadIfMissing) {
                 return null;
+            }
+
+            // Apple 伴生兑换：伪 URL 不指向网络资源，完整版由 gamdl 子进程直接产出到
+            // 缓存键位上（下载/解密在伴生进程内完成）。失败抛出 —— 上层 playSong 的
+            // brokenStream 救援把它推进换源替身链，用户视角是「自动换了源」。
+            if (playUrl != null && playUrl.startsWith(
+                    com.muoniumplayer.core.ncm.apple.ApplePlaybackResolver.PSEUDO_URL_PREFIX)) {
+                File appleFile = com.muoniumplayer.core.ncm.apple.AppleGamdlBridge
+                        .ensureLocalAudioFile(musicCacheDir, cacheKey, song, quality);
+                if (appleFile == null) {
+                    throw new IllegalStateException("apple gamdl companion did not deliver: " + cacheKey);
+                }
+                removeOtherQualityCaches(musicCacheDir, song, quality.getQuality());
+                MusicAudioCache.touch(appleFile);
+                MusicAudioCache.enforceLimitAsync();
+                return appleFile;
             }
 
             // 绝不把下载了一半的文件暴露给解码器或缓存查找。
@@ -4791,7 +4861,9 @@ public class CloudMusic implements SharedConstants {
      * <p>只判「是不是这类源」，不判「此刻值不值得」——后者由调用点的位置闸与磁盘命中检查管。</p>
      */
     static boolean worthAudioPrefetch(Music song) {
-        return song != null && (song.isYouTube() || song.isQishui());
+        // Apple 与 YouTube/汽水同款：gamdl 兑换要跑授权+下载+解封装（秒级起步），
+        // 现取就是「点下去等 gamdl」的黑屏；替身链上的解码边车对 Apple 行同样成立。
+        return song != null && (song.isYouTube() || song.isQishui() || song.isApple());
     }
 
     /**

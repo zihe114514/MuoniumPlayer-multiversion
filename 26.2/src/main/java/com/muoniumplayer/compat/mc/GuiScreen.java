@@ -175,8 +175,26 @@ public abstract class GuiScreen extends Screen {
     }
 
     @Override
+    public void added() {
+        super.added();
+        // 26.2 的 TextInputManager 每个客户端刻都会检查文本输入态：不处于该态时，
+        // 只要窗口聚焦且系统 IME 开着，就走 tickOutsideTextInput() 用
+        // glfwSetInputMode(window, GLFW_IME, FALSE) 把输入法强制关掉（这是 GLFW 时代
+        // 的机制，26.3 换成 SDL 的 owner 制后已无此强制点）。原版靠 EditBox 聚焦时调
+        // Minecraft#onTextInputFocusChange 开启，而本项目的输入框全是自绘的，
+        // 没有原版控件替我们开——不声明的话输入法会被每刻强制切回英文，一个字都打不进。
+        // 走 onTextInputFocusChange 而不是直接调 textInputManager().startTextInput()：
+        // 前者还会让 KeyboardHandler 重放上一次的 preedit 事件，与原版 EditBox 路径一致。
+        mc.onTextInputFocusChange(this, true);
+    }
+
+    @Override
     public void removed() {
         onGuiClosed();
+        // onTextInputFocusChange(false) 内部就是 stopTextInput()，与原版 EditBox
+        // 失焦路径一致。gui.setScreen 在新屏非 null 时不会代为停止，必须自己关；
+        // 声明态一撤，tickOutsideTextInput 恢复强制关 IME（等于恢复「游戏界面」语义）。
+        mc.onTextInputFocusChange(this, false);
     }
 
     @Override

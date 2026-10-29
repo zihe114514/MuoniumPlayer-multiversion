@@ -615,7 +615,10 @@ public final class SkijaHost {
         boolean hadContent = pendingComposite;
         pendingComposite = false;
         frameCleared = false;
+        // 渲染层停用时没有 Skija 界面也没有玻璃采集，歌词直画照旧独立执行
+        //（保持停用前的行为）；渲染层活着时它插在玻璃采集之后、合成之前。
         if (disabled || DEBUG_DRAW_DIRECT || offscreen == null || context == null) {
+            com.muoniumplayer.compat.mc.WorldLyricsHudDraw.presentComposite();
             return;
         }
         if (inFrame) {
@@ -633,6 +636,11 @@ public final class SkijaHost {
         }
         GlassBackdrop.captureNow(0, window.getWidth(), window.getHeight(),
                 client != null && client.gui != null && client.gui.screen() != null);
+
+        // 3D 歌词插槽：玻璃底图采集完之后、Skija（播放器等界面）合成之前 ——
+        // 歌词落在模组界面之下；再晚 Skija 就盖不上它了。插槽自身带 Screen
+        // 守卫（原版 GUI 已在 FBO 0 上，present 时点直画必然盖它）。
+        com.muoniumplayer.compat.mc.WorldLyricsHudDraw.presentComposite();
 
         if (hadContent) {
             try {

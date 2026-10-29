@@ -34,7 +34,7 @@ class HudSettingsTaxonomyStaticTest {
             "歌词样式", "3D 歌词", "面板与卡片", "灵动岛", "无缝切换", "界面与主题", "信息栏与封面", "缓存与公告");
 
     /** 与 {@link #TITLES} 同序的条目数；总和必须等于 {@link #TOTAL}。 */
-    private static final List<Integer> COUNTS = Arrays.asList(21, 19, 8, 24, 21, 33, 5, 3);
+    private static final List<Integer> COUNTS = Arrays.asList(28, 20, 9, 25, 21, 33, 6, 3);
 
     /** 「界面与主题」那页 2026-09-30 从 19 条长到 21 条：真玻璃材质组多了「实时背景采集」与
      *  「帧率不够时自动摘玻璃」两个开关；同日傍晚又长到 26 条：多了四面各自的模糊倍率
@@ -49,8 +49,19 @@ class HudSettingsTaxonomyStaticTest {
      *  无缝切换「引擎+表现+进阶」三合一成「处理方案」四档 —— 132 → 128。
      *  2026-10-27 「3D 歌词」页放置组新增「更激进的适配」（光影包激活时歌词推迟到
      *  HUD 阶段用原版着色器直画）—— 3D 歌词页 18 → 19 条，128 → 133（期间
-     *  「界面与主题」页增长 5 条未被此文件记录，见 COUNTS）。 */
-    private static final int TOTAL = 134;
+     *  「界面与主题」页增长 5 条未被此文件记录，见 COUNTS）。
+     *  2026-10-28 「灵动岛」页外观组新增「灵动岛位置」（Y 轴上下偏移滑条）—— 灵动岛页
+     *  24 → 25 条，134 → 135。
+     *  2026-10-29 「歌词样式」页当前行组新增「桌面歌词取色跟随封面」（仅经典样式），
+     *  「信息栏与封面」页显示与摆放组新增「信息卡背景」（默认/液态玻璃/完全透明）——
+     *  歌词样式页 21 → 22 条、信息栏与封面页 5 → 6 条，135 → 137。
+     *  2026-10-29 常用前置重排：第一页顶部新增「常用」快捷组（桌面歌词样式/3D 动效
+     *  风格/灵动岛样式/信息卡背景/播放器主题/频谱配色六条 CHOICE 的<b>同对象引用</b>，
+     *  原位保留）—— 歌词样式页 22 → 28（+6 引用）；「3D 歌词」页独立「动效」组并入
+     *  「放置」组（同对象引用两处计）19 → 20；「面板与卡片」页样式条目同时出现在
+     *  「样式与大小」与「卡片样式」两组 8 → 9 —— 引用计数使总数 137 → 143（功能条目
+     *  实际没有增减，滑条唯一性不受影响：引用的六条全是 CHOICE）。 */
+    private static final int TOTAL = 145;
 
     @Test
     @DisplayName("分类就是这 7 页，顺序与每页条目数都不许悄悄变")
@@ -91,7 +102,7 @@ class HudSettingsTaxonomyStaticTest {
     }
 
     @Test
-    @DisplayName("滑块条目不重复，覆盖 53 个生效设置，不暴露退役的毛玻璃 Bloom / Fusion")
+    @DisplayName("滑块条目不重复，覆盖 54 个生效设置，不暴露退役的毛玻璃 Bloom / Fusion")
     void slidersAppearExactlyOnce() {
         List<String> settings = new ArrayList<String>();
         for (HudSettingsModel.Category category : HudSettingsModel.categories()) {
@@ -104,8 +115,9 @@ class HudSettingsTaxonomyStaticTest {
             }
         }
         // 2026-10-16 起 3D 歌词那页带 5 个滑块（距离/散开角/缩放/发光强度/发光扩散）；
-        // 2026-10-24 「设置界面缩放」随 Folia 样式一起下架，54 → 53。
-        assertEquals(53, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱自定义柱数、透明度与高度都是有效设置");
+        // 2026-10-24 「设置界面缩放」随 Folia 样式一起下架，54 → 53；
+        // 2026-10-28 灵动岛新增「灵动岛位置」Y 偏移滑条，53 → 54。
+        assertEquals(54, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱自定义柱数、透明度与高度都是有效设置");
         assertFalse(settings.contains("GLASS_BLOOM"), "退役的磨砂 bloom 不能作为无效设置暴露");
         assertFalse(settings.contains("GLASS_FUSION"), "参考透镜不使用旧融合描边");
         assertEquals(settings.size(), new HashSet<String>(settings).size(),
