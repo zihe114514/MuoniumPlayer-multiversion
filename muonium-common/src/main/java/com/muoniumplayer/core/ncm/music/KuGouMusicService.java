@@ -49,6 +49,11 @@ public final class KuGouMusicService {
 
     /** 歌单曲目单次最多取多少首。酷狗单页上限比这个大，但一屏几百首已经够用且更快。 */
     private static final int PLAYLIST_TRACK_LIMIT = 300;
+    /**
+     * 分页取全后的载入上限：防「歌单详情的 trackCount 是个天文数字」把内存与加载时间拖爆。
+     * 2000 首远超正常账号歌单的规模（网易云同款上限也是这个量级）。
+     */
+    private static final int PLAYLIST_TRACK_MAX = 2000;
 
     /**
      * 跨源检索时最多给多少个候选打分。
@@ -301,13 +306,30 @@ public final class KuGouMusicService {
      *                               返回空列表会被当成"这个歌单真的是空的"
      */
     public static List<Music> playlistTracks(String platformPlaylistId) {
+        return playlistTracks(platformPlaylistId, 0);
+    }
+
+    /**
+     * 读取曲目，带「这个歌单一共有多少首」的期望值。
+     *
+     * <p>云端歌单（{@code collection:} 前缀）按 {@code begin_idx} 分页循环取全，
+     * {@code expectedTracks} 是载入上限——账号歌单普遍几百上千首，不传期望值就只取
+     * 一页 300 首。榜单/专辑/歌手的端点没有分页协议，保持单页上限不变。
+     * 期望值只放大不缩小：传得比实际少不会截断取全的循环，只是省不下请求。</p>
+     *
+     * @throws IllegalStateException 上游明确失败时抛出，让 {@link PlayList} 保持"未加载"以便下次重试；
+     *                               返回空列表会被当成"这个歌单真的是空的"
+     */
+    public static List<Music> playlistTracks(String platformPlaylistId, int expectedTracks) {
         String id = nonNull(platformPlaylistId).trim();
         if (id.isEmpty()) return Collections.emptyList();
+        // 期望值夹到安全上限：防「歌单详情给了个天文数字」把内存拖爆；0/负数按旧上限处理。
+        int target = expectedTracks > 0 ? Math.min(expectedTracks, PLAYLIST_TRACK_MAX) : PLAYLIST_TRACK_LIMIT;
         List<KuGouMusicApi.Track> tracks;
         if (id.startsWith(RANK_PREFIX)) {
             tracks = KuGouMusicApi.rankSongs(id.substring(RANK_PREFIX.length()), PLAYLIST_TRACK_LIMIT);
         } else if (id.startsWith(COLLECTION_PREFIX)) {
-            tracks = KuGouMusicApi.collectionTracks(collectionIdOf(id), PLAYLIST_TRACK_LIMIT);
+            tracks = KuGouMusicApi.collectionTracks(collectionIdOf(id), target);
         } else if (id.startsWith(ALBUM_PREFIX)) {
             tracks = KuGouMusicApi.albumSongs(id.substring(ALBUM_PREFIX.length()), PLAYLIST_TRACK_LIMIT);
         } else if (id.startsWith(ARTIST_PREFIX)) {

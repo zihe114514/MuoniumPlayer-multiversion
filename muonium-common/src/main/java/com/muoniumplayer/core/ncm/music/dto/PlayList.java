@@ -211,8 +211,9 @@ public class PlayList {
             } else if (getPlatform() == MusicPlatform.KUGOU) {
                 // 酷狗有三种歌单（精选 specialid / 榜单 rankid / 用户 global_collection_id），
                 // 取曲目的端点不同，前缀编码在 platformPlaylistId 里，由服务层分派。
+                // count 一起带上：云端歌单靠它决定分页取全的载入上限，不传只会拿到第一页 300 首。
                 loadedMusics = com.muoniumplayer.core.ncm.music.KuGouMusicService
-                        .playlistTracks(getPlatformPlaylistId());
+                        .playlistTracks(getPlatformPlaylistId(), count > 0 ? count : 300);
                 if (loadedMusics == null) {
                     throw new IllegalStateException("KuGou playlist track response is null");
                 }

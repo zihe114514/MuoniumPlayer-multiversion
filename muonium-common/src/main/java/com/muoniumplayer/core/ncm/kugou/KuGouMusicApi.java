@@ -5,10 +5,12 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 酷狗音乐的接口客户端。
@@ -814,27 +816,64 @@ public final class KuGouMusicApi {
     }
 
     /**
-     * 云端歌单曲目（{@code global_collection_id}）。
+     * 云端歌单曲目（{@code global_collection_id}）——<b>分页取全</b>。
      *
      * <p>公开歌单、用户歌单、搜索结果里的歌单都用这个主键。曲目字段比老端点全，
      * 但音质档位藏在 {@code relate_goods} 数组里而不是扁平的 {@code 320hash}/{@code sqhash}。</p>
+     *
+     * <p><b>单页只有 {@link #MAX_PAGE_SIZE} 首是上游的行为，不是 bug</b>：账号歌单普遍几百上千首，
+     * 只打一页就是「前 300 首之后没了」。这里按 {@code begin_idx} 循环翻页直到取全，
+     * 停止条件全部不依赖响应里的总数（上游不保证回它）：页不满即停、一页没贡献新 hash 即停、
+     * 到 {@code limit} 上限即停。{@code limit} 是<b>载入总量上限</b>而不是页大小，
+     * 传 0 按 {@link #MAX_PAGE_SIZE} 处理（与分页前的旧行为一致）。</p>
+     *
+     * @param limit 要载入的最大曲目数；0 表示只取一页（300）
      */
     public static List<Track> collectionTracks(String globalCollectionId, int limit) {
-        return collectionTracks(globalCollectionId, limit, 1);
+        List<Track> result = new ArrayList<Track>();
+        if (KuGouSign.isBlank(globalCollectionId)) return result;
+        int cap = limit > 0 ? limit : MAX_PAGE_SIZE;
+        Set<String> seenHashes = new HashSet<String>();
+        for (int page = 1; page <= COLLECTION_TRACK_MAX_PAGES; page++) {
+            List<Track> batch = collectionTracksPage(globalCollectionId, MAX_PAGE_SIZE, page);
+            int before = result.size();
+            for (Track track : batch) {
+                String key = KuGouSign.lower(KuGouSign.nonNull(track.hash).trim());
+                if (!key.isEmpty() && !seenHashes.add(key)) continue;
+                result.add(track);
+            }
+            // 页不满即最后一页：这一页的曲目已经全部入列，直接收工。
+            if (batch.size() < MAX_PAGE_SIZE) break;
+            // 上游对越界 begin_idx 的行为没有承诺：可能回空页，也可能把最后一页重复交回来。
+            // 「这一页没贡献任何新曲目」就是翻到头的信号，再翻只会死循环。
+            if (result.size() == before) break;
+            if (result.size() >= cap) break;
+        }
+        return result;
     }
 
-    public static List<Track> collectionTracks(String globalCollectionId, int limit, int page) {
+    /** 单页上限；同时是分页前的旧硬顶。 */
+    private static final int COLLECTION_TRACK_PAGE_SIZE = MAX_PAGE_SIZE;
+
+    /** 翻页的绝对上限（20 页 × 300 = 6000 首）：防御上游异常回包把循环拖死。 */
+    private static final int COLLECTION_TRACK_MAX_PAGES = 20;
+
+    /**
+     * 云端歌单的<b>单页</b>曲目。参数对照 {@code module/playlist_track_all.js}：
+     * {@code begin_idx = (page-1)*pagesize} 是唯一的分页手段，没有 page 参数。
+     */
+    private static List<Track> collectionTracksPage(String globalCollectionId, int pageSize, int page) {
         List<Track> result = new ArrayList<Track>();
         if (KuGouSign.isBlank(globalCollectionId)) return result;
 
         Map<String, String> params = KuGouHttp.deviceParams();
         params.put("area_code", "1");
-        params.put("begin_idx", String.valueOf((Math.max(1, page) - 1) * clampPageSize(limit)));
+        params.put("begin_idx", String.valueOf((Math.max(1, page) - 1) * pageSize));
         params.put("plat", "1");
         params.put("type", "1");
         params.put("mode", "1");
         params.put("personal_switch", "1");
-        params.put("pagesize", String.valueOf(clampPageSize(limit)));
+        params.put("pagesize", String.valueOf(pageSize));
         params.put("global_collection_id", globalCollectionId.trim());
 
         JsonObject root = KuGouHttp.get(KuGouHttp.GATEWAY,
