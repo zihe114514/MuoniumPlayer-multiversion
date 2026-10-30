@@ -261,6 +261,7 @@ public final class DifmPanel extends NCMPanel {
                 RadioCardWidget card = new RadioCardWidget(channel,
                         () -> playChannel(channel),
                         () -> toggleCollect(channel));
+                card.setGridContainer(this.grid);
                 card.setEntranceAnimation(this.revealQueue);
                 this.cardWidgets.add(card);
                 batch.add(card);

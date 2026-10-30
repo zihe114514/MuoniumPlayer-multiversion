@@ -490,6 +490,7 @@ public final class RadioHubPanel extends NCMPanel {
                 DjRadio radio = pendingCards.get(index);
                 if (radio == null) continue;
                 RadioCardWidget card = new RadioCardWidget(radio, () -> openRadio(radio), null);
+                card.setGridContainer(this.grid);
                 card.setEntranceAnimation(this.revealQueue);
                 this.cardWidgets.add(card);
                 batch.add(card);

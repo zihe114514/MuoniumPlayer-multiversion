@@ -7,6 +7,7 @@ import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.texture.Textures;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
+import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedImageWidget;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
@@ -48,6 +49,10 @@ public class RadioCardWidget extends AbstractWidget<RadioCardWidget> {
     private final CFontRenderer subtitleFont = FontManager.pf12;
 
     private double cardWidth = 110.0;
+    /** 上一次真正落到 bounds 的宽度：变了才碰 setBounds 与容器布局签名。 */
+    private double width = -1.0;
+    /** 所属网格容器：宽度变化时失效它的排版签名（layoutGrid 分发后由面板回填）。 */
+    private ScrollPanel gridContainer;
     private double emphasizeAnim;
     private boolean coverLoaded = false;
     /** 封面加载重试节拍器：与歌单卡同一条 20 帧（约 1/3 秒）节拍。 */
@@ -61,6 +66,12 @@ public class RadioCardWidget extends AbstractWidget<RadioCardWidget> {
         this.radio = radio;
         this.clickAction = clickAction;
         this.rightClickAction = rightClickAction;
+
+        // 卡片构造即占位宽：VERTICAL_WITH_HORIZONTAL_FILL 的 ScrollPanel 在 addChild 的
+        // 当帧就按子项尺寸排版。宽 0 的卡挤进同一行（全部叠在网格最左），下一帧宽到位后
+        // 若没人失效布局签名，错位摆位就被冻结 —— 截图里"扇形叠牌"的根因。
+        // 先按默认列宽占位（后面 layoutGrid 每帧校正），再在宽度真的变化时主动失效容器。
+        this.width = 110.0;
 
         this.cover = new RoundedImageWidget(this::getCoverLocation, 0, 0, 1.0, 1.0);
         this.addChild(cover);
@@ -91,7 +102,7 @@ public class RadioCardWidget extends AbstractWidget<RadioCardWidget> {
 
         this.setBeforeRenderCallback(() -> {
             this.updateCoverLoad();
-            this.setBounds(Math.max(1.0, this.cardWidth), this.coverSide() + TEXT_BLOCK_HEIGHT);
+            this.applyWidth();
 
             final double target = cover.isHovering() ? COVER_HOVER_EXPANSION : 0.0;
             this.emphasizeAnim = Interpolations.interpolate(this.emphasizeAnim, target, .2f);
@@ -116,6 +127,25 @@ public class RadioCardWidget extends AbstractWidget<RadioCardWidget> {
                 .setPosition(0, this.coverSide() + TITLE_TOP_GAP + 18)
                 .setMaxWidth(Math.max(1.0, this.getWidth()))
                 .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH));
+    }
+
+    /**
+     * 把 layoutGrid 分到的列宽真正落到 bounds。宽度没变时只是一次 double 比较（滚动、
+     * 悬停、进场期间零开销）；变了才 setBounds 并失效容器排版签名 —— ScrollPanel 的
+     * VERTICAL_WITH_HORIZONTAL_FILL 按"子项当前宽"换行，宽变而签名不失效，错位摆位
+     * 会被冻结（截图里的叠牌 bug）。
+     */
+    private void applyWidth() {
+        double target = Math.max(1.0, this.cardWidth);
+        if (this.width == target && this.getWidth() == target) return;
+        this.width = target;
+        this.setBounds(target, this.coverSide() + TEXT_BLOCK_HEIGHT);
+        if (this.gridContainer != null) this.gridContainer.invalidateLayout();
+    }
+
+    /** 面板在建卡后回填网格容器引用，供宽度变化时失效布局签名。 */
+    public void setGridContainer(ScrollPanel container) {
+        this.gridContainer = container;
     }
 
     /** 按视口宽度算列数并把列宽分给所有卡片；面板每帧调一次。 */

@@ -305,6 +305,7 @@ public final class BroadcastPanel extends NCMPanel {
                 RadioCardWidget card = new RadioCardWidget(channel,
                         () -> showCurrentInfo(channel),
                         () -> toggleCollect(channel));
+                card.setGridContainer(this.grid);
                 card.setEntranceAnimation(this.revealQueue);
                 this.cardWidgets.add(card);
                 batch.add(card);
