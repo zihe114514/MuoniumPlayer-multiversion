@@ -97,6 +97,12 @@ public final class WorldLyricsState {
      */
     private static final long PAUSE_DEBOUNCE_NANOS = 150_000_000L; // 150ms
     private long lastPlayingNanos;
+    /**
+     * 单句停留上限（毫秒）：当前行的播放区间超过它就正常退场。时间轴里一行
+     * 挂十几秒本来正常（前奏/间奏后的长句），但末句挂到曲尾、或平台恒在的
+     * 占位行漏过文本过滤时，同一句会永远占据画面 —— 超时即按换句路径淡出。
+     */
+    static final long ACTIVE_MAX_STAY_MS = 12_000L;
     private final Random random = new Random();
 
     // ==================== 数据模型 ====================
@@ -457,6 +463,14 @@ public final class WorldLyricsState {
         // idx 即使暂停也算（indexAt 按时间戳二分），恢复时 idx==lastIndex 才算「恢复」而不是「换行」。
         List<LyricLine> lines = effectiveLines(params.splitLines());
         int idx = indexAtTimestamp(lines, snapshotPositionMs);
+        // 单句停留门禁：一句话的「当前行」区间超过上限（时间轴稀疏/末句挂到曲尾，
+        // 或平台返回恒在的占位行漏过了过滤）就正常退场 —— 走 retire 的标准淡出，
+        // 与换句交接同一条路径。播放位置按 snapshotPositionMs 算句龄，暂停自然冻结。
+        if (active != null && !paused
+                && snapshotPositionMs - active.startMs > ACTIVE_MAX_STAY_MS) {
+            retireActive(nowNanos);
+            lastSpawnedIdx = -1;   // 超时退场不是「认回」素材：同句不再捞回
+        }
         if (paused) {
             retireActive(nowNanos);
             wasPaused = true;
@@ -2252,7 +2266,11 @@ public final class WorldLyricsState {
         String t = sb.toString();
         return t.equals("纯音乐") || t.equals("纯音乐请欣赏") || t.equals("纯音乐请您欣赏")
                 || t.equals("没有填词的纯音乐") || t.equals("instrumental")
-                || t.equals("没有填词的纯音乐") || t.equals("instrumental");
+                || t.equals("暂无歌词") || t.equals("无歌词") || t.equals("没有歌词")
+                || t.equals("暂时没有歌词") || t.equals("还没有歌词") || t.equals("歌词暂缺")
+                || t.equals("等待填词") || t.equals("等待歌词") || t.equals("未填词")
+                || t.equals("lyrics") || t.equals("nolyrics") || t.equals("nolyric")
+                || t.equals("nolysics") || t.equals("music");
     }
 
     /**

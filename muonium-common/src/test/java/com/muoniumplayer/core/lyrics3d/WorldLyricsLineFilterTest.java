@@ -156,6 +156,9 @@ class WorldLyricsLineFilterTest {
                 "纯音乐", "纯音乐，请欣赏", "纯音乐请欣赏", "纯音乐 请欣赏",
                 "纯音乐，请您欣赏", "没有填词的纯音乐", "没有填词的 纯音乐",
                 "Instrumental", "INSTRUMENTAL",
+                "暂无歌词", "暂无歌词。", "无歌词", "没有歌词", "暂时没有歌词",
+                "还没有歌词", "歌词暂缺", "等待填词", "等待歌词", "未填词",
+                "no lyrics", "No Lyrics", "music",
         };
         for (String p : placeholders) {
             assertTrue(WorldLyricsState.isPlaceholderLine(p), "应判定为纯音乐占位行：" + p);
@@ -165,6 +168,8 @@ class WorldLyricsLineFilterTest {
                 "没有填词的纯音乐不算音乐",      // 含口吻但多了内容
                 "这首纯音乐真好听",
                 "Instrumental version",
+                "歌词里的世界",                  // 含「歌词」但多了内容
+                "音乐的海洋",                    // 恰好是「音乐」+内容，不等于 "music"
         };
         for (String l : realLyrics) {
             assertFalse(WorldLyricsState.isPlaceholderLine(l), "不应误判为占位行：" + l);
@@ -298,6 +303,41 @@ class WorldLyricsLineFilterTest {
         WorldLyricsState.Frame resumed = state.update(CAMERA, PARAMS, 1_400_000_000L, true, 1000L);
         WorldLyricsState.SpawnedLine s2 = activeOf(resumed);
         assertEquals(s1, s2, "同位置恢复播放应认回原句（恢复路径），不因暂停期位置记录误判");
+    }
+
+    // ==================== 单句停留门禁（12s 超时退场） ====================
+
+    @Test
+    @DisplayName("单句播放区间超过 12s：正常退场（走淡出），不永远占据画面")
+    void longHeldLineRetiresAfterTimeout() {
+        // 末句 0..60s（挂到曲尾）：12s 后必须退场，而不是一直显示到歌结束。
+        CloudMusic.lyrics.add(line(0L, "一句挂到曲尾的长句"));
+
+        WorldLyricsState.Frame f1 = state.update(CAMERA, PARAMS, 1_000_000_000L, true, 11_000L);
+        WorldLyricsState.SpawnedLine s1 = activeOf(f1);
+        assertNotNull(s1, "11s 时仍应显示（未到门限）");
+
+        // 12.5s：超过 ACTIVE_MAX_STAY_MS，active 必须已转淡出。
+        WorldLyricsState.Frame f2 = state.update(CAMERA, PARAMS, 1_100_000_000L, true, 12_500L);
+        WorldLyricsState.SpawnedLine s2 = activeOf(f2);
+        assertTrue(f2.rows.get(0).floating == s1 && !f2.rows.get(0).active,
+                "超时句应转淡出（身份不变，不再是 active）");
+    }
+
+    @Test
+    @DisplayName("12s 内的正常长句不受门禁影响；暂停冻结句龄")
+    void normalLongLineAndPauseStayWithinGate() {
+        CloudMusic.lyrics.add(line(0L, "一句 11 秒的长句"));
+        CloudMusic.lyrics.add(line(11_000L, "下一句"));
+
+        WorldLyricsState.Frame f1 = state.update(CAMERA, PARAMS, 1_000_000_000L, true, 11_900L);
+        assertNotNull(activeOf(f1), "11.9s 时仍应显示（未到门限）");
+
+        // 暂停 3s：句龄按播放位置算，暂停不推进 → 不触发超时。
+        state.update(CAMERA, PARAMS, 1_100_000_000L, false, 11_900L);
+        state.update(CAMERA, PARAMS, 1_400_000_000L, false, 11_900L);
+        WorldLyricsState.Frame resumed = state.update(CAMERA, PARAMS, 1_500_000_000L, true, 11_900L);
+        assertNotNull(activeOf(resumed), "暂停期间句龄冻结，恢复后 11.9s 仍在门限内");
     }
 
     private static WorldLyricsState.SpawnedLine activeOf(WorldLyricsState.Frame frame) {
