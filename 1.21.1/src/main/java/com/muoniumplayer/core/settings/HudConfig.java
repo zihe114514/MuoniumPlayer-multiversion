@@ -587,6 +587,17 @@ public final class HudConfig {
     public static float hudEditorPanelY = -1.0f;
     /** 上次停留在哪个设置分类（0 起）。重开面板时回到这一页，而不是每次都从第一页点起。 */
     public static int hudEditorLastCategory = 0;
+    /**
+     * 现代 HUD 设置面板的用户尺寸，归一化到「当前窗口宽/高」的 0..1。
+     *
+     * <p>{@code -1} 是哨兵值，意思是「用户从没拽过右下角缩放角标」，此时面板尺寸仍走
+     * 按窗口推导的公式（占屏 46% 宽 / 72% 高，竖屏另有上限）。存比例而不是像素：
+     * 换分辨率、改 GUI Scale 后按当前窗口重新折算，面板占比不变，不会出现
+     * 「换个屏幕面板小得没法用/大得出屏」。</p>
+     */
+    public static float hudEditorPanelScaleW = -1.0f;
+    /** 见 {@link #hudEditorPanelScaleW}。 */
+    public static float hudEditorPanelScaleH = -1.0f;
 
     /**
      * 播放器界面打开/关闭时那层整屏淡入淡出的速度倍率。当前默认 3.0，1.0 = 历史速度，越大越快。
@@ -1030,6 +1041,8 @@ public final class HudConfig {
         hudEditorPanelX = clamp(getFloat(o, "hudEditorPanelX", hudEditorPanelX), -1.0f, 1.0f);
         hudEditorPanelY = clamp(getFloat(o, "hudEditorPanelY", hudEditorPanelY), -1.0f, 1.0f);
         hudEditorLastCategory = (int) clamp(getFloat(o, "hudEditorLastCategory", hudEditorLastCategory), 0.0f, 31.0f);
+        hudEditorPanelScaleW = clamp(getFloat(o, "hudEditorPanelScaleW", hudEditorPanelScaleW), -1.0f, 1.0f);
+        hudEditorPanelScaleH = clamp(getFloat(o, "hudEditorPanelScaleH", hudEditorPanelScaleH), -1.0f, 1.0f);
         dynamicIslandAmbientRotate = getBoolean(o, "dynamicIslandAmbientRotate", dynamicIslandAmbientRotate);
         // 1.3.0 及更早只有一个「常驻轮换间隔」。拆成两页各自的时长后，用旧键当两个新键的默认值,
         // 这样此前手动调过间隔的配置会平移到两边,而不是被悄悄重置回新默认值。
@@ -1218,6 +1231,8 @@ public final class HudConfig {
         o.addProperty("hudEditorPanelX", hudEditorPanelX);
         o.addProperty("hudEditorPanelY", hudEditorPanelY);
         o.addProperty("hudEditorLastCategory", hudEditorLastCategory);
+        o.addProperty("hudEditorPanelScaleW", hudEditorPanelScaleW);
+        o.addProperty("hudEditorPanelScaleH", hudEditorPanelScaleH);
         o.addProperty("dynamicIslandAmbientStatusSeconds", dynamicIslandAmbientStatusSeconds);
         o.addProperty("dynamicIslandAmbientNowPlayingSeconds", dynamicIslandAmbientNowPlayingSeconds);
 

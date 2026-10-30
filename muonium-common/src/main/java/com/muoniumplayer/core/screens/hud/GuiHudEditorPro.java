@@ -287,6 +287,16 @@ public class GuiHudEditorPro extends GuiScreen {
     private HudSetting draggingSlider;
     private int draggingSliderTrackX;
     /**
+     * 右下角缩放角标。非 null = 正在拖拽（面板尺寸跟着鼠标走）；悬浮时也记下矩形做高亮。
+     * 收起态不画也不命中（收起面板只有一条标题栏，没有可缩放的内容区）。
+     */
+    private boolean resizingPanel;
+    private boolean resizeGripHover;
+    private int resizePressW;
+    private int resizePressH;
+    private int resizePressX;
+    private int resizePressY;
+    /**
      * 滑条数值的「点击直接输入」。非空 = 正在以文本方式编辑该滑条（值文本框已聚焦，
      * 渲染层把那一行画成输入态）；提交/失焦后置回 null。同一时刻最多一个。
      */
@@ -503,6 +513,8 @@ public class GuiHudEditorPro extends GuiScreen {
             int panelY = panel[1];
             int panelW = panel[2];
             int panelH = panel[3];
+            // 缩放角标拖拽：改的是尺寸，取矩形前推进，本帧绘制与命中立即用新尺寸。
+            if (!retiring) updatePanelResize(mouseX, mouseY, panelX, panelY);
 
             if (!DownloadDynamicIsland.isDownloadActive()) DownloadDynamicIsland.renderEditorPreview();
 
@@ -671,17 +683,33 @@ public class GuiHudEditorPro extends GuiScreen {
     private static final int PANEL_MIN_W = 340;
     private static final int PANEL_MIN_H = 320;
 
+    /** 用户拖过缩放角标的尺寸占比上限（窗口宽/高的 88%）：再大内容命中就开始贴屏边。 */
+    private static final float PANEL_MAX_SCALE = 0.88f;
+
     private int panelWidth() {
         boolean portrait = height > width * 1.3f;
         int ideal = (int) (width * 0.46f);
         int cap = portrait ? 460 : PANEL_MAX_W;
-        return Math.max(Math.min(PANEL_MIN_W, width - PANEL_MARGIN * 2),
+        int auto = Math.max(Math.min(PANEL_MIN_W, width - PANEL_MARGIN * 2),
                 Math.min(cap, Math.min(ideal, width - PANEL_MARGIN * 2)));
+        // 用户拽过角标：按当前窗口折算比例，钳在「最小可用」与「88% 窗口宽」之间。
+        // 哨兵 -1 = 没拽过，走公式默认值。
+        if (HudConfig.hudEditorPanelScaleW >= 0f) {
+            int userW = Math.round(HudConfig.hudEditorPanelScaleW * width);
+            return Math.max(Math.min(PANEL_MIN_W, width - PANEL_MARGIN * 2),
+                    Math.min(userW, width - PANEL_MARGIN * 2));
+        }
+        return auto;
     }
 
     private int panelHeight() {
         if (collapsed) return COLLAPSED_H;
         boolean portrait = height > width * 1.3f;
+        if (HudConfig.hudEditorPanelScaleH >= 0f) {
+            int userH = Math.round(HudConfig.hudEditorPanelScaleH * height);
+            return Math.max(Math.min(PANEL_MIN_H, height - PANEL_MARGIN * 2),
+                    Math.min(userH, height - PANEL_MARGIN * 2));
+        }
         if (portrait) {
             // 竖屏下面板是纵向长列表，高度跟随窗口（无绝对上限），竖持手机上占高 86%。
             return Math.max(Math.min(PANEL_MIN_H, height - PANEL_MARGIN * 2),
@@ -756,6 +784,77 @@ public class GuiHudEditorPro extends GuiScreen {
         int nx = Math.max(0, Math.min(maxX, desiredX));
         int ny = Math.max(0, Math.min(maxY, desiredY));
         return new float[] { maxX > 0 ? nx / (float) maxX : 0f, maxY > 0 ? ny / (float) maxY : 0f };
+    }
+
+    // ==================== 右下角缩放角标 ====================
+
+    /** 角标的可视/命中大小。命中带往外多 4px，圆角附近的盲区也能抓住。 */
+    private static final int GRIP_SIZE = 14;
+    private static final int GRIP_HIT_EXPAND = 4;
+
+    /** 缩放角标的矩形（右下角，贴面板内缘）。收起态与入场动画中不提供。 */
+    private int[] resizeGripRect(int panelX, int panelY, int panelW, int panelH) {
+        if (collapsed || plate < 1f) return null;
+        return new int[] { panelX + panelW - GRIP_SIZE - 5,
+                panelY + panelH - GRIP_SIZE - 5, GRIP_SIZE, GRIP_SIZE };
+    }
+
+    /** 鼠标是否落在角标命中区（矩形外扩 GRIP_HIT_EXPAND）。 */
+    private boolean overResizeGrip(int[] grip, int mouseX, int mouseY) {
+        return grip != null && isInside(mouseX, mouseY,
+                grip[0] - GRIP_HIT_EXPAND, grip[1] - GRIP_HIT_EXPAND,
+                grip[2] + GRIP_HIT_EXPAND * 2, grip[3] + GRIP_HIT_EXPAND * 2);
+    }
+
+    /**
+     * 角标拖拽推进：按住期间把「按下时尺寸 + 鼠标位移」折算成窗口占比写回配置。
+     * 钳制链：PANEL_MIN_* 保证最小可用 → 屏幕减边距防出屏 → 88% 窗口占比封顶。
+     * 松手（含鼠标丢失的兜底）落一次盘。
+     */
+    private void updatePanelResize(int mouseX, int mouseY, int panelX, int panelY) {
+        if (!resizingPanel) return;
+        if (!Mouse.isButtonDown(0)) {
+            resizingPanel = false;
+            HudConfig.save();
+            return;
+        }
+        int wantW = resizePressW + (mouseX - resizePressX);
+        int wantH = resizePressH + (mouseY - resizePressY);
+        int maxW = Math.min((int) (width * PANEL_MAX_SCALE), width - PANEL_MARGIN * 2);
+        int maxH = Math.min((int) (height * PANEL_MAX_SCALE), height - PANEL_MARGIN * 2);
+        wantW = Math.max(Math.min(PANEL_MIN_W, width - PANEL_MARGIN * 2), Math.min(wantW, maxW));
+        wantH = Math.max(Math.min(PANEL_MIN_H, height - PANEL_MARGIN * 2), Math.min(wantH, maxH));
+        HudConfig.hudEditorPanelScaleW = width > 0 ? wantW / (float) width : -1f;
+        HudConfig.hudEditorPanelScaleH = height > 0 ? wantH / (float) height : -1f;
+    }
+
+    /** 尺寸读数气泡（拖拽时的 "W × H" 提示），与 HudOverlayStage 的尺寸气泡同语言。 */
+    private void drawResizeBubble(CFontRenderer fr, int panelX, int panelY, int panelW, int panelH) {
+        String text = panelW + " × " + panelH;
+        int w = fr.getStringWidth(text) + 16;
+        int x = panelX + panelW - w;
+        int y = panelY + panelH - 46;
+        drawSoftShadow(x, y, w, 22, 8);
+        drawRoundedRect(x, y, w, 22, 8, 0xE8222A38);
+        drawText(fr, text, x + 8, y + 7, 0xFFE7ECF4);
+    }
+
+    /** 角标本体：三条斜杠把手，悬浮/拖拽中亮起。返回命中矩形供点击判定复用。 */
+    private int[] drawResizeGrip(CFontRenderer fr, int panelX, int panelY, int panelW, int panelH,
+                                 int mouseX, int mouseY) {
+        int[] grip = resizeGripRect(panelX, panelY, panelW, panelH);
+        if (grip == null) return null;
+        resizeGripHover = resizingPanel || overResizeGrip(grip, mouseX, mouseY);
+        int color = resizeGripHover ? 0xCCEAF3FF : 0x55FFFFFF;
+        // 三条 45° 斜杠，从角向内排——窗口缩放角标的通用视觉语言。
+        for (int i = 0; i < 3; i++) {
+            double off = 3.0 + i * 4.0;
+            double gx = grip[0] + grip[2] - off;
+            double gy = grip[1] + grip[3] - off;
+            drawRoundedRect(gx - 1, gy - 6, 2, 7, 1, color);
+            drawRoundedRect(gx - 6, gy - 1, 7, 2, 1, color);
+        }
+        return grip;
     }
 
     /** 屏幕很窄时侧边栏会挤掉内容列，这时把它收成一条只有图标的窄栏。 */
@@ -893,6 +992,12 @@ public class GuiHudEditorPro extends GuiScreen {
             drawFooter(fr, panelX, panelY + panelH - FOOTER_H, panelW, mouseX, mouseY);
         } finally {
             layerAlpha = footerOuter;
+        }
+
+        // 右下角缩放角标：最后画（盖在 footer/滚动条上），拖拽中带尺寸读数气泡。
+        int[] grip = drawResizeGrip(fr, panelX, panelY, panelW, panelH, mouseX, mouseY);
+        if (resizingPanel && grip != null) {
+            drawResizeBubble(fr, panelX, panelY, panelW, panelH);
         }
     }
 
@@ -1743,6 +1848,21 @@ public class GuiHudEditorPro extends GuiScreen {
             }
         }
 
+        // 右下角缩放角标：先于标题栏拖动区判定（它在面板最角落，宽高命中带互不相交，
+        // 但收起态面板太矮、角标已隐藏）。命中即进入拖拽，尺寸跟着鼠标走到松手落盘。
+        int[] grip = resizeGripRect(panelX, panelY, panelW, panelH);
+        if (grip != null && overResizeGrip(grip, mouseX, mouseY)) {
+            resizingPanel = true;
+            resizePressW = panelW;
+            resizePressH = panelH;
+            resizePressX = mouseX;
+            resizePressY = mouseY;
+            editingColor = HudSettingsModel.ColorTarget.NONE;
+            draggingSlider = null;
+            if (searchInput != null) searchInput.setFocused(false);
+            return;
+        }
+
         // 标题栏剩下的空白处即拖动区。放在按钮判定之后，按钮才不会被拖动吞掉。
         if (isInside(mouseX, mouseY, panelX, panelY, panelW, headerHeight(panelH))) {
             long now = System.currentTimeMillis();
@@ -2214,6 +2334,10 @@ public class GuiHudEditorPro extends GuiScreen {
         }
         if (state == 0 && draggingPanel) {
             draggingPanel = false;
+            HudConfig.save();
+        }
+        if (state == 0 && resizingPanel) {
+            resizingPanel = false;
             HudConfig.save();
         }
         draggingSaturationBrightness = false;
