@@ -15,7 +15,7 @@
     "homepage": "https://melodifymc.cc.cd/",
     "sources": "https://github.com/zihe114514/MuoniumPlayer-multiversion"
   },
-  "license": "All-Rights-Reserved",
+  "license": "Apache-2.0",
   "environment": "client",
   "entrypoints": {
     "client": [

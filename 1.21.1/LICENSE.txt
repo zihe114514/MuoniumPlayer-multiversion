@@ -1,2 +1,13 @@
-Copyright (c) 2026 
-All rights reserved.
+MuoniumPlayer
+Copyright 2026 MuoniumPlayer Team（作者：云杉、心事抱抱、N0ne、eyz2021）
+
+本 Mod 以 Apache License 2.0 授权。
+
+- 完整许可文本（Apache License 2.0 全文）随包附带，见本 jar 内的
+  licenses/LICENSE.apache-2.0.txt，或仓库根的 LICENSE 文件：
+  https://github.com/zihe114514/MuoniumPlayer-multiversion/blob/main/LICENSE
+- 第三方组件署名与许可见仓库根的 NOTICE 与各 licenses/ 条目
+- 商标声明：Minecraft 是 Mojang AB 的商标；各音乐平台名称与商标归各自权利人所有
+
+你可以依据 Apache License 2.0 自由使用、修改与再分发本 Mod
+（含整合包内置、镜像与二次打包），须保留本许可与署名声明。
