@@ -791,12 +791,14 @@ public class GuiHudEditorPro extends GuiScreen {
     /** 角标的可视/命中大小。命中带往外多 4px，圆角附近的盲区也能抓住。 */
     private static final int GRIP_SIZE = 14;
     private static final int GRIP_HIT_EXPAND = 4;
+    /** 角标底部离面板底边的距离：抬高到 footer 之上，不遮「恢复默认」按钮。 */
+    private static final int GRIP_BOTTOM_INSET = FOOTER_H + 2;
 
-    /** 缩放角标的矩形（右下角，贴面板内缘）。收起态与入场动画中不提供。 */
+    /** 缩放角标的矩形（右下角、footer 上方）。收起态与入场动画中不提供。 */
     private int[] resizeGripRect(int panelX, int panelY, int panelW, int panelH) {
         if (collapsed || plate < 1f) return null;
-        return new int[] { panelX + panelW - GRIP_SIZE - 5,
-                panelY + panelH - GRIP_SIZE - 5, GRIP_SIZE, GRIP_SIZE };
+        return new int[] { panelX + panelW - GRIP_SIZE - 7,
+                panelY + panelH - GRIP_SIZE - GRIP_BOTTOM_INSET, GRIP_SIZE, GRIP_SIZE };
     }
 
     /** 鼠标是否落在角标命中区（矩形外扩 GRIP_HIT_EXPAND）。 */
