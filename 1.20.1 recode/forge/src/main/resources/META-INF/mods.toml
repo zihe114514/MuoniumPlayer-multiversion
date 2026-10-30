@@ -2,7 +2,7 @@
 # 1.20.1 的文件名是 META-INF/mods.toml（NeoForge 1.20.2+ 才改叫 neoforge.mods.toml）。
 modLoader = "javafml"
 loaderVersion = "[47,)"
-license = "All-Rights-Reserved"
+license = "Apache-2.0"
 issueTrackerURL = "https://github.com/zihe114514/MuoniumPlayer-multiversion/issues"
 
 [[mods]]
