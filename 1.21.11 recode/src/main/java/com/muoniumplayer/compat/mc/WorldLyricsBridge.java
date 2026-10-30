@@ -157,6 +157,10 @@ public final class WorldLyricsBridge {
             RenderSystem.getModelViewStack().pushMatrix();
             RenderSystem.getModelViewStack().identity();
 
+            // 2.5 bob 防抖：投影临时换成纯 fov 透视（剔除 bobHurt/bobView 的摇晃增量），
+            //     画完还原 —— 世界照旧抖，歌词不抖
+            boolean bobFreed = bobFreeApply(mc, camera);
+
             // 3. 世界文字的 GL 状态（ModernWorld.worldState 一比一）
             GlCompat.blend(true);
             GlCompat.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA, GL11.GL_ONE, GL11.GL_ZERO);
@@ -175,13 +179,14 @@ public final class WorldLyricsBridge {
                 GlCompat.cull(true);
                 GlCompat.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
                         GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                if (bobFreed) bobFreeRestore();
                 RenderSystem.getModelViewStack().popMatrix();
             }
         } catch (Throwable t) {
             broken = true;
             logger.error("3D 歌词渲染失败，已整体停用（重启游戏恢复）", t);
         }
-        if (diagFrame++ % 60 == 0) {
+        if (TRACE && diagFrame++ % 60 == 0) {
             Minecraft mc1 = Minecraft.getInstance();
             Camera c1 = mc1 != null && mc1.gameRenderer != null ? mc1.gameRenderer.getMainCamera() : null;
             if (c1 != null) {
@@ -229,7 +234,7 @@ public final class WorldLyricsBridge {
      */
     public static void hudPhaseDraw() {
         if (broken || !HudConfig.worldLyricsEnabled) return;
-        if (hudDiagFrame++ % 60 == 0) {
+        if (TRACE && hudDiagFrame++ % 60 == 0) {
             Minecraft mc0 = Minecraft.getInstance();
             Camera c0 = mc0 != null && mc0.gameRenderer != null ? mc0.gameRenderer.getMainCamera() : null;
             if (c0 != null) {
@@ -257,6 +262,10 @@ public final class WorldLyricsBridge {
             RenderSystem.backupProjectionMatrix();
             RenderSystem.setProjectionMatrix(slice, com.mojang.blaze3d.ProjectionType.PERSPECTIVE);
 
+            // bob 防抖：捕获的关卡切片含 bob 合成，歌词直画同样换成纯 fov 透视
+            //（失败则保留含 bob 切片 = 旧行为）
+            boolean bobFreed = bobFreeApply(mc, camera);
+
             // 1.21.11：getModelViewStack 返回的栈就是渲染用的栈，就地改即生效
             RenderSystem.getModelViewStack().pushMatrix();
             RenderSystem.getModelViewStack().identity();
@@ -279,6 +288,7 @@ public final class WorldLyricsBridge {
                 GlCompat.cull(true);
                 GlCompat.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
                         GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                if (bobFreed) bobFreeRestore();
                 RenderSystem.getModelViewStack().popMatrix();
                 RenderSystem.restoreProjectionMatrix();
             }
@@ -295,10 +305,84 @@ public final class WorldLyricsBridge {
         }
     }
 
+    // ==================== bob 防抖（视角摇晃不带动歌词，防晕 3D） ====================
+
+    /**
+     * 1.21.11 的 bob 与 26.x 同构（javap renderLevel）：fov 透视 P 乘上
+     * bobHurt/bobView（+ nausea 屏效）后经 levelProjectionMatrixBuffer 上传全球
+     * —— 歌词直画换的只是模型视图栈，投影里的 bob 照样作用于歌词顶点，走路时
+     * 歌词跟着视角一起晃。
+     *
+     * <p>剔除法：歌词直画窗口内把投影临时换成「纯 fov 透视」
+     * （{@code gameRenderer.getProjectionMatrix(getFov(camera, partialTick, true))}
+     * —— 两个方法都 public，不需要 mixin/AT），画完还原。世界照旧抖，
+     * 歌词钉在无摇晃视角上。投影为 GpuBufferSlice：关卡切片内容整帧不变、
+     * 无需备份，restoreProjectionMatrix 回 GUI 的正交切片（备份是防御性的）。</p>
+     */
+    private static net.minecraft.client.renderer.PerspectiveProjectionMatrixBuffer bobFreeProjBuffer;
+    private static boolean bobFreeProjFailed;
+    /** getFov 反射句柄（三树都是 private；一次性查找缓存，失败置 NO_SUCH 驻null 不再重试）。 */
+    private static volatile java.lang.reflect.Method bobFovMethod;
+    private static boolean bobFovLookupFailed;
+
+    /**
+     * 直画前调：把投影换成无 bob 的纯 fov 透视。返回 false = 本帧拿不到
+     * （异常/边缘时序），调用方照旧直画（与世界同抖的旧行为），下一帧重试。
+     * 配对调 {@link #bobFreeRestore()}。
+     */
+    private static boolean bobFreeApply(Minecraft mc, Camera camera) {
+        if (bobFreeProjFailed) return false;
+        try {
+            net.minecraft.client.renderer.GameRenderer gr = mc.gameRenderer;
+            // getFov(camera, partialTick, useFovSetting=true) 与 renderLevel 头部的
+            // fov 读取完全同参（Camera.getPartialTickTime 同源），纯 P 与关卡 P 只差 bob。
+            // getFov 是 private —— 反射调（句柄缓存，与原版同签名恒匹配）。
+            java.lang.reflect.Method fovM = bobFovMethod;
+            if (fovM == null && !bobFovLookupFailed) {
+                fovM = net.minecraft.client.renderer.GameRenderer.class
+                        .getDeclaredMethod("getFov", Camera.class, float.class, boolean.class);
+                fovM.setAccessible(true);
+                bobFovMethod = fovM;
+            }
+            if (fovM == null) { bobFreeProjFailed = true; return false; }
+            float fov = (Float) fovM.invoke(gr, camera, camera.getPartialTickTime(), true);
+            Matrix4f pure = gr.getProjectionMatrix(fov);
+            if (pure == null || !isFinite(pure)) return false;
+            if (bobFreeProjBuffer == null) {
+                bobFreeProjBuffer = new net.minecraft.client.renderer.PerspectiveProjectionMatrixBuffer(
+                        "muonium-worldlyrics-bobfree");
+            }
+            RenderSystem.backupProjectionMatrix();
+            RenderSystem.setProjectionMatrix(bobFreeProjBuffer.getBuffer(pure),
+                    com.mojang.blaze3d.ProjectionType.PERSPECTIVE);
+            return true;
+        } catch (Throwable t) {
+            // 一次性熔断：投影通路异常时不再反复尝试（歌词与世界同抖总比反复异常强）
+            bobFreeProjFailed = true;
+            if (!TRACE) {
+                System.out.println("[MuoniumPlayer/WorldLyrics] bob 防抖不可用（歌词将随视角摇晃）: " + t);
+            }
+            return false;
+        }
+    }
+
+    /** 直画后调：还原 GUI 阶段的投影切片（与 {@link #bobFreeApply} 配对）。 */
+    private static void bobFreeRestore() {
+        try {
+            RenderSystem.restoreProjectionMatrix();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean isFinite(Matrix4f m) {
+        return Float.isFinite(m.m00()) && Float.isFinite(m.m11())
+                && Float.isFinite(m.m22()) && Float.isFinite(m.m23())
+                && Float.isFinite(m.m33());
+    }
+
     private static void renderInner(Matrix4f basePose, Minecraft mc, Camera camera) {
         CameraAccess cameraAccess = CameraAccess.capture(0f);
         if (cameraAccess == null) return;
-
         WorldLyricsSettings settings = WorldLyricsSettings.snapshot();
         if (!settings.enabled) return;
         // 画质档同步（幂等）：自动档按当前帧缓冲高度解析——用户改窗口大小后

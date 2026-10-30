@@ -159,7 +159,7 @@ public final class WorldLyricsBridge {
 
             // 诊断（手机取证用）：hudDraw 开着时每秒一行世界路线的相机/投影/锚点，
             // 与 [hud] 行同格式同频率 —— 开关一次即可从同一份日志对比两条路线。
-            if (diagFrame % 60 == 0) {
+            if (TRACE && diagFrame % 60 == 0) {
                 org.joml.Matrix4f P = RenderSystem.getProjectionMatrix();
                 System.out.println("[WorldLyrics/diag][world" + (ShaderPackProbe.isActive() ? "+" : "-")
                         + (HudConfig.worldLyricsHudDraw ? "hud" : "") + "] " + diagLine(camera, P));
@@ -175,6 +175,10 @@ public final class WorldLyricsBridge {
             RenderSystem.getModelViewStack().pushMatrix();
             RenderSystem.getModelViewStack().identity();
             RenderSystem.applyModelViewMatrix();
+
+            // 2.5 bob 防抖：投影临时换成纯 fov 透视（剔除 bobHurt/bobView 的摇晃增量），
+            //     画完还原 —— 世界照旧抖，歌词不抖
+            boolean bobFreed = bobFreeApply(mc, camera);
 
             // 3. 世界文字的 GL 状态（ModernWorld.worldState 一比一）
             GlCompat.blend(true);
@@ -194,6 +198,7 @@ public final class WorldLyricsBridge {
                 GlCompat.cull(true);
                 GlCompat.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
                         GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                if (bobFreed) bobFreeRestore();
                 RenderSystem.getModelViewStack().popMatrix();
                 RenderSystem.applyModelViewMatrix();
             }
@@ -244,6 +249,13 @@ public final class WorldLyricsBridge {
             RenderSystem.setProjectionMatrix(new org.joml.Matrix4f(hudProjection),
                     VertexSorting.ORTHOGRAPHIC_Z);
 
+            // bob 防抖：捕获的关卡投影含 bob 合成，歌词直画同样换成纯 fov 透视
+            //（失败则保留含 bob 投影 = 旧行为）。bobFreeBackup 覆写掉刚备份的
+            // previousProjection 没关系 —— 还原链是 bobFreeRestore → previousProjection，
+            // 两步都走、顺序固定。
+            Camera hudCam = mc.gameRenderer.getMainCamera();
+            boolean bobFreed = hudCam != null && bobFreeApply(mc, hudCam);
+
             RenderSystem.getModelViewStack().pushMatrix();
             RenderSystem.getModelViewStack().identity();
             RenderSystem.applyModelViewMatrix();
@@ -258,7 +270,7 @@ public final class WorldLyricsBridge {
             try {
                 WorldBillboard.forceVanillaType = true;
                 renderInner(hudBasePose, mc, mc.gameRenderer.getMainCamera());
-                if (hudDiagFrame++ % 60 == 0) {
+                if (TRACE && hudDiagFrame++ % 60 == 0) {
                     Camera c = mc.gameRenderer.getMainCamera();
                     org.joml.Matrix4f P = RenderSystem.getProjectionMatrix();
                     System.out.println("[WorldLyrics/diag][hud] " + diagLine(c, P));
@@ -270,6 +282,7 @@ public final class WorldLyricsBridge {
                 GlCompat.cull(true);
                 GlCompat.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
                         GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                if (bobFreed) bobFreeRestore();
                 RenderSystem.getModelViewStack().popMatrix();
                 RenderSystem.applyModelViewMatrix();
                 RenderSystem.setProjectionMatrix(previousProjection, VertexSorting.ORTHOGRAPHIC_Z);
@@ -316,6 +329,73 @@ public final class WorldLyricsBridge {
 
     private static int hudDiagFrame;
     private static int diagFrame;
+
+    // ==================== bob 防抖（视角摇晃不带动歌词，防晕 3D） ====================
+
+    /**
+     * 1.21.1 的 bob 与 26.x 同构（javap renderLevel）：fov 透视 P 乘上
+     * bobHurt/bobView 后经 resetProjectionMatrix 上传全球 —— 歌词直画换的只是
+     * 模型视图栈，投影里的 bob 照样作用于歌词顶点，走路时歌词跟着视角一起晃。
+     *
+     * <p>剔除法：歌词直画窗口内把投影临时换成「纯 fov 透视」
+     *（{@code gameRenderer.getProjectionMatrix(getFov(camera, partialTick, true))}
+     * —— 两个方法都 public，不需要 mixin/AT），画完还原。世界照旧抖，
+     * 歌词钉在无摇晃视角上。partialTick 取 {@code mc.getTimer()
+     * .getGameTimeDeltaPartialTick(true)}（与 renderLevel 传给 bobHurt/bobView
+     * 的同一帧插值）。</p>
+     */
+    private static boolean bobFreeProjFailed;
+    /** getFov 反射句柄（private；一次性查找缓存）。 */
+    private static volatile java.lang.reflect.Method bobFovMethod;
+    private static boolean bobFovLookupFailed;
+
+    /**
+     * 直画前调：把投影换成无 bob 的纯 fov 透视。返回 false = 本帧拿不到
+     *（异常/边缘时序），调用方照旧直画（与世界同抖的旧行为），下一帧重试。
+     * 配对调 {@link #bobFreeRestore()}。
+     */
+    private static boolean bobFreeApply(Minecraft mc, Camera camera) {
+        if (bobFreeProjFailed) return false;
+        try {
+            net.minecraft.client.renderer.GameRenderer gr = mc.gameRenderer;
+            // getFov(camera, partialTick, useFovSetting=true) 与 renderLevel 头部的
+            // fov 读取完全同参，纯 P 与关卡 P 只差 bob。getFov 是 private —— 反射调。
+            java.lang.reflect.Method fovM = bobFovMethod;
+            if (fovM == null && !bobFovLookupFailed) {
+                fovM = net.minecraft.client.renderer.GameRenderer.class
+                        .getDeclaredMethod("getFov", Camera.class, float.class, boolean.class);
+                fovM.setAccessible(true);
+                bobFovMethod = fovM;
+            }
+            if (fovM == null) { bobFreeProjFailed = true; return false; }
+            float partialTick = mc.getTimer().getGameTimeDeltaPartialTick(true);
+            double fov = (Double) fovM.invoke(gr, camera, partialTick, true);
+            org.joml.Matrix4f pure = gr.getProjectionMatrix(fov);
+            if (pure == null || !isFinite(pure)) return false;
+            bobFreeBackup.set(RenderSystem.getProjectionMatrix());
+            RenderSystem.setProjectionMatrix(new org.joml.Matrix4f(pure), VertexSorting.DISTANCE_TO_ORIGIN);
+            return true;
+        } catch (Throwable t) {
+            // 一次性熔断：投影通路异常时不再反复尝试（歌词与世界同抖总比反复异常强）
+            bobFreeProjFailed = true;
+            if (!TRACE) {
+                System.out.println("[MuoniumPlayer/WorldLyrics] bob 防抖不可用（歌词将随视角摇晃）: " + t);
+            }
+            return false;
+        }
+    }
+
+    /** 直画后调：还原进入前的投影矩阵（与 {@link #bobFreeApply} 配对）。 */
+    private static void bobFreeRestore() {
+        try {
+            RenderSystem.setProjectionMatrix(new org.joml.Matrix4f(bobFreeBackup),
+                    VertexSorting.DISTANCE_TO_ORIGIN);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** bobFreeApply 备份的关卡投影（1.21.1 投影是 Matrix4f 值，需手动备份）。 */
+    private static final org.joml.Matrix4f bobFreeBackup = new org.joml.Matrix4f();
 
     private static void renderInner(Matrix4f basePose, Minecraft mc, Camera camera) {
         CameraAccess cameraAccess = CameraAccess.capture(0f);
