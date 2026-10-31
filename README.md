@@ -87,22 +87,18 @@
 
 <table>
 <tr>
-<td align="center" width="25%"><a href="https://music.163.com/"><img src="assets/brands/netease.png" width="56" alt="网易云音乐"></a><br><sub><b>网易云音乐</b></sub></td>
-<td align="center" width="25%"><a href="https://y.qq.com/"><img src="assets/brands/qqmusic.png" width="56" alt="QQ 音乐"></a><br><sub><b>QQ 音乐</b></sub></td>
-<td align="center" width="25%"><a href="https://www.kugou.com/"><img src="assets/brands/kugou.png" width="56" alt="酷狗音乐"></a><br><sub><b>酷狗音乐</b></sub></td>
-<td align="center" width="25%"><a href="https://music.youtube.com/"><img src="assets/brands/ytmusic.png" width="56" alt="YouTube Music"></a><br><sub><b>YouTube Music</b></sub></td>
+<td align="center" width="20%"><a href="https://music.163.com/"><img src="assets/brands/netease.png" width="56" alt="网易云音乐"></a><br><sub><b>网易云音乐</b></sub></td>
+<td align="center" width="20%"><a href="https://y.qq.com/"><img src="assets/brands/qqmusic.png" width="56" alt="QQ 音乐"></a><br><sub><b>QQ 音乐</b></sub></td>
+<td align="center" width="20%"><a href="https://www.kugou.com/"><img src="assets/brands/kugou.png" width="56" alt="酷狗音乐"></a><br><sub><b>酷狗音乐</b></sub></td>
+<td align="center" width="20%"><a href="https://music.youtube.com/"><img src="assets/brands/ytmusic.png" width="56" alt="YouTube Music"></a><br><sub><b>YouTube Music</b></sub></td>
+<td align="center" width="20%"><a href="https://www.bilibili.com/"><img src="assets/brands/bilibili.png" width="56" alt="哔哩哔哩"></a><br><sub><b>哔哩哔哩</b></sub></td>
 </tr>
 <tr>
-<td align="center" width="25%"><a href="https://www.bilibili.com/"><img src="assets/brands/bilibili.png" width="56" alt="哔哩哔哩"></a><br><sub><b>哔哩哔哩</b></sub></td>
-<td align="center" width="25%"><a href="https://qishui.douyin.com/"><img src="assets/brands/qishui.png" width="56" alt="汽水音乐"></a><br><sub><b>汽水音乐</b></sub></td>
-<td align="center" width="25%"><a href="https://open.spotify.com/"><img src="assets/brands/spotify.png" width="56" alt="Spotify"></a><br><sub><b>Spotify</b></sub></td>
-<td align="center" width="25%"><sub><b>🎵 Apple Music</b></sub></td>
-</tr>
-<tr>
-<td align="center" width="25%"><img src="assets/brands/gd.png" width="56" alt="GD 音乐台"><br><sub><b>GD 音乐台</b></sub></td>
-<td align="center" width="25%"><sub><b>LX 自定义脚本</b></sub></td>
-<td></td>
-<td></td>
+<td align="center" width="20%"><a href="https://qishui.douyin.com/"><img src="assets/brands/qishui.png" width="56" alt="汽水音乐"></a><br><sub><b>汽水音乐</b></sub></td>
+<td align="center" width="20%"><a href="https://open.spotify.com/"><img src="assets/brands/spotify.png" width="56" alt="Spotify"></a><br><sub><b>Spotify</b></sub></td>
+<td align="center" width="20%"><img src="assets/brands/apple.png" width="56" alt="Apple Music"><br><sub><b>Apple Music</b></sub></td>
+<td align="center" width="20%"><img src="assets/brands/gd.png" width="56" alt="GD 音乐台"><br><sub><b>GD 音乐台</b></sub></td>
+<td align="center" width="20%"><img src="assets/brands/lx.png" width="56" alt="LX 自定义脚本"><br><sub><b>LX 自定义脚本</b></sub></td>
 </tr>
 </table>
 
