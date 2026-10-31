@@ -28,7 +28,7 @@ public class MuoniumPlayerExtension {
 
     public static final String NAME = "MuoniumPlayer";
     public static final String AUTHOR = "MuoniumPlayer Contributors";
-    public static final String VERSION = "2.2.0";
+    public static final String VERSION = "2.3.0";
 
     @Getter
     private static final MuoniumPlayerExtension instance = new MuoniumPlayerExtension();
@@ -70,11 +70,6 @@ public class MuoniumPlayerExtension {
         // 汽水签名后端:装了伴生包就随游戏隐藏拉起(独立进程,游戏退出自动收掉);
         // 还没装则不惊动,首次点进汽水源时按需下载伴生包。
         QishuiBackendLifecycle.ensureStartedForGame();
-        // Apple 的 gamdl 整包同款「游戏启动即预装」:后台守护线程做判断就走,四重闸
-        // (Windows 门 / PACK 已发布 / 已就绪跳过 / 冷却+在跑跳过)兜着——装好的用户这里
-        // 零开销直落;没装的用户在开游戏的几分钟里后台拉完 33 MB,点播 Apple 歌时
-        // 伴生已是就绪态,不必吃「第一次点播才开始装」的等待。
-        com.muoniumplayer.core.ncm.apple.AppleCompanionDownload.ensureInstalledAsync();
         Reflection.init(api);
 
         this.fontManager = new FontManager();

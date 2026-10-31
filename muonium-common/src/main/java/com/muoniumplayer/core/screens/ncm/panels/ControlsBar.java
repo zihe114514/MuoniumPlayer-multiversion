@@ -887,10 +887,12 @@ public class ControlsBar extends NCMPanel {
             NCMScreen.getInstance().openViperEffects();
             return true;
         });
-        // 与点亮状态同步：图标亮着说明 ViPER 在跑，说明里的「开启中」让这层含义不用猜。
+        // 与点亮状态同步：图标亮着说明两条链至少一条在跑（蝰蛇或场景声学），
+        // 说明里的「开启中」让这层含义不用猜。面板里蝰蛇与场景声学各占一页。
         viperToggle.setTooltip(() -> ViperRuntime.isEnabled()
-                ? "音效调音台（蝰蛇 · 开启中）"
-                : "音效调音台（蝰蛇）");
+                        || com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings.isEnabled()
+                ? "音效调音台（蝰蛇 · 场景声学 · 开启中）"
+                : "音效调音台（蝰蛇 · 场景声学）");
 
         // 下一首播放列表：队列抽屉的开关排在音质按钮左边，沿用右下角次级控件的同一条锚点链。
         // 用「播放三角 + 列表」（player-action-icons U+E144）而不是歌曲行那枚「下一首播放」

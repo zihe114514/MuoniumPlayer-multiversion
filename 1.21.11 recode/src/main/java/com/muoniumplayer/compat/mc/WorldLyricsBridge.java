@@ -170,7 +170,14 @@ public final class WorldLyricsBridge {
             GlCompat.activeTexture(GL13.GL_TEXTURE0);
 
             try {
+                // 世界阶段辉光（无光影 / 光影但关掉更激进的适配时走这里）：本体进
+                // 缓冲的同时双写 mask，画完后跑 bloom 加色补能量。
+                hudBloom.beginPass();
+                // mask MVP：bobFreeApply 成功 = pure fov（bobActiveProjection 已 set）；
+                // 失败（三映射名全 miss 的极端环境）= null → endPass 跳过辉光，
+                // 本体照画 —— 绝不拿陈旧矩阵画晕（会整屏错位）。
                 renderInner(basePose, mc, camera);
+                hudBloom.endPass(mc, bobFreed ? bobActiveProjection : null);
             } finally {
                 // 恢复状态：视图矩阵 + 我们改过的 GL 状态（上游用 GlState 快照恢复，
                 // 这里逐项还原等价的几项，避免泄漏给本帧后续的绘制）。
@@ -217,6 +224,10 @@ public final class WorldLyricsBridge {
     /** HUD 直画连续缺席帧数（世界阶段兜底重画的触发器；画完即清零）。 */
     private static int hudDrawMisses;
     private static boolean hudFailureLogged;
+    /** 辉光后处理调度（mask 采集 + bloom 合成；未配置/熔断时整段零成本跳过）。 */
+    private static final HudBloomPass hudBloom = new HudBloomPass();
+    /** 本帧直画实际生效的透视投影（bobFreeApply 写；辉光 mask 的 MVP 来源）。 */
+    private static final Matrix4f bobActiveProjection = new Matrix4f();
     private static boolean tracedHudDraw;
     private static int hudDiagFrame;
     /** 世界阶段 60 帧诊断行计数（与 hud 侧各自独立）。 */
@@ -279,7 +290,12 @@ public final class WorldLyricsBridge {
 
             try {
                 WorldBillboard.forceVanillaType = true;
+                // 辉光后处理：renderInner 期间字形 quad 双写进 mask，画完后跑 bloom
+                // —— 合成是加色混合，与本体绘制先后无关；字芯能量再叠一层。
+                // 管线熔断/未配置/mask 空时整段跳过。
+                hudBloom.beginPass();
                 renderInner(hudBasePose, mc, camera);
+                hudBloom.endPass(mc, bobFreed ? bobActiveProjection : null);
                 hudDrawMisses = 0;
             } finally {
                 WorldBillboard.forceVanillaType = false;
@@ -326,6 +342,18 @@ public final class WorldLyricsBridge {
     private static boolean bobFovLookupFailed;
 
     /**
+     * getFov 的运行时真名：dev/named 环境是 {@code getFov}，生产 Fabric 是
+     * intermediary {@code method_3196}、生产 Forge 是 SRG {@code m_109141_}。
+     * 只按 named 找在生产环境必然 NoSuchMethodException → bob 防抖永久熔断
+     * （连带辉光 mask 的 MVP 停在单位阵、晕整帧不可见）。逐个尝试并缓存命中。
+     */
+    private static String fovMethodName() {
+        return new String[] {"getFov", "method_3196", "m_109141_"}[bobFovNameIndex];
+    }
+
+    private static int bobFovNameIndex;
+
+    /**
      * 直画前调：把投影换成无 bob 的纯 fov 透视。返回 false = 本帧拿不到
      * （异常/边缘时序），调用方照旧直画（与世界同抖的旧行为），下一帧重试。
      * 配对调 {@link #bobFreeRestore()}。
@@ -338,16 +366,24 @@ public final class WorldLyricsBridge {
             // fov 读取完全同参（Camera.getPartialTickTime 同源），纯 P 与关卡 P 只差 bob。
             // getFov 是 private —— 反射调（句柄缓存，与原版同签名恒匹配）。
             java.lang.reflect.Method fovM = bobFovMethod;
-            if (fovM == null && !bobFovLookupFailed) {
-                fovM = net.minecraft.client.renderer.GameRenderer.class
-                        .getDeclaredMethod("getFov", Camera.class, float.class, boolean.class);
-                fovM.setAccessible(true);
-                bobFovMethod = fovM;
+            while (fovM == null && !bobFovLookupFailed) {
+                try {
+                    fovM = net.minecraft.client.renderer.GameRenderer.class
+                            .getDeclaredMethod(fovMethodName(), Camera.class, float.class, boolean.class);
+                    fovM.setAccessible(true);
+                    bobFovMethod = fovM;
+                } catch (NoSuchMethodException missing) {
+                    if (++bobFovNameIndex >= 3) {
+                        bobFovLookupFailed = true;
+                    }
+                }
             }
             if (fovM == null) { bobFreeProjFailed = true; return false; }
             float fov = (Float) fovM.invoke(gr, camera, camera.getPartialTickTime(), true);
             Matrix4f pure = gr.getProjectionMatrix(fov);
             if (pure == null || !isFinite(pure)) return false;
+            // 本帧实际生效的透视投影（辉光 mask 顶点变换同源用；失败不更新 = 旧值）
+            bobActiveProjection.set(pure);
             if (bobFreeProjBuffer == null) {
                 bobFreeProjBuffer = new net.minecraft.client.renderer.PerspectiveProjectionMatrixBuffer(
                         "muonium-worldlyrics-bobfree");

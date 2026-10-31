@@ -122,6 +122,8 @@ public class AudioPlayer {
         next.setOnFinished(() -> finished = true);
 
         releaseAutomixChain();
+        // 换曲：声场修饰的滤波器与延迟线里还留着上一首的余音，一并清掉。
+        com.muoniumplayer.core.ncm.music.acoustics.AcousticsRuntime.onTrackChanged();
         SoundFile previous = this.player;
         this.player = next;
         finished = false;
@@ -212,6 +214,8 @@ public class AudioPlayer {
             }
             this.player.resyncTimeStretch();
             this.player.amp(effectiveAmp());
+            // 拖进度后声音内容不连续了：声场里的余音一并作废，否则旧句的尾巴会叠在新句上。
+            com.muoniumplayer.core.ncm.music.acoustics.AcousticsRuntime.onTrackChanged();
         } catch (RuntimeException ignored) {
             // 定位是尽力而为。畸形流绝不能让界面崩溃。
         }
@@ -958,6 +962,9 @@ public class AudioPlayer {
         // ViPER 音效：与设备兜底同一时机挂接输出处理器 —— Engine 的创建与设备选择
         // 就发生在下面的 new SoundFile 里，在这里挂接不改变任何设备选择时序。
         ViperRuntime.ensureInstalled();
+        // 场景声学：挂在主效果链之后的尾槽，看的是蝰蛇处理完的最终信号。
+        // 同样的幂等语义，挂接失败不拦截本次装载。
+        com.muoniumplayer.core.ncm.music.acoustics.AcousticsRuntime.ensureInstalled();
 
         SoundFile candidate;
         try {

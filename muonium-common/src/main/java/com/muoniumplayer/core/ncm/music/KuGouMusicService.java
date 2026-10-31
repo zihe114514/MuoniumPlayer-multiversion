@@ -837,6 +837,39 @@ public final class KuGouMusicService {
         } catch (Throwable throwable) {
             System.err.println("[Music/KuGou] 会员状态查询失败: " + throwable.getMessage());
         }
+        claimDailyConceptVipQuietly();
+    }
+
+    /** 最近一次尝试领取的标记（{@code userid@yyyy-MM-dd}，东八区）。进程内去重，跨天自动失效。 */
+    private static volatile String dailyVipClaimMark = "";
+
+    /**
+     * 概念版身份下自动领取「听歌领会员」。
+     *
+     * <p>挂在会员状态刷新之后：登录、换账号都会走一遍，配合进程内「每账号每天最多一次」
+     * 的去重，用户什么都不用做。三条纪律：只在概念版身份下发起（标准版没有这个活动）；
+     * 永远在后台线程（不阻塞登录回调）；任何失败都不上抛——这是锦上添花的事，
+     * 领不到就明天再试，不该让用户看到任何提示。</p>
+     */
+    private static void claimDailyConceptVipQuietly() {
+        if (KuGouProfile.active() != KuGouProfile.CONCEPT || !isLoggedIn()) return;
+        java.text.SimpleDateFormat day = new java.text.SimpleDateFormat("yyyy-MM-dd");
+        day.setTimeZone(java.util.TimeZone.getTimeZone("Asia/Shanghai"));
+        String mark = KuGouDevice.userId() + "@" + day.format(new java.util.Date());
+        if (dailyVipClaimMark.equals(mark)) return;
+        dailyVipClaimMark = mark;
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                if (KuGouMusicApi.claimDailyConceptVip(mark.substring(mark.indexOf('@') + 1))) {
+                    // 领到手了，把面板上的会员状态补成最新，否则要等下次登录才会变。
+                    KuGouMusicApi.VipStatus latest = KuGouMusicApi.vipInfo();
+                    if (latest != null) KuGouDevice.saveVip(latest.vipType, latest.expiresAt);
+                    System.out.println("[Music/KuGou] 今日听歌会员已领取");
+                }
+            } catch (Throwable throwable) {
+                System.err.println("[Music/KuGou] 每日会员领取失败（不影响播放）: " + throwable.getMessage());
+            }
+        });
     }
 
     /** 申请扫码会话（当前身份）；返回 {@code null} 表示这次没拿到。 */

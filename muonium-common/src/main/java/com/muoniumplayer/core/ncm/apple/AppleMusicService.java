@@ -21,8 +21,8 @@ import java.util.regex.Pattern;
  *
  * <h3>这个平台的边界要先说清楚</h3>
  * <p>Apple 的目录能力（搜索/歌单/榜单/歌词）是公开的；但<b>完整音轨是 FairPlay DRM 保护</b>，
- * 官方接口只有 30 秒 preview。所以这里产出的行是「半元数据行」：点播先走 gamdl 伴生后端
- * （{@code AppleGamdlBridge}，用户自备订阅 cookies）拉完整版，拿不到由换源流水线找替身，
+ * 官方接口只有 30 秒 preview。所以这里产出的行是「半元数据行」：点播先走本机引擎
+ * （{@code AppleNativeEngine}，用户自备订阅 cookies）拉完整版，拿不到由换源流水线找替身，
  * 最后才落 preview 兜底。与 Spotify 同理，Apple 行<b>绝不进换源候选表</b>——它没有完整流
  * 可以给别人换。</p>
  *
@@ -56,6 +56,21 @@ public final class AppleMusicService {
     private AppleMusicService() {
     }
 
+    /**
+     * amp-api 传输：纯 Java 直连（HttpClient）。amp_api.py 助手已退役，
+     * 失败即按该能力的空值语义返回（搜索空表/歌词空串/卡片 null），
+     * 由调用方按「无数据」画，不再回落 Python。</p>
+     */
+    private static <T> T viaTransport(java.util.function.Supplier<T> direct) {
+        try {
+            T result = direct.get();
+            if (result != null) return result;
+        } catch (RuntimeException throwable) {
+            System.err.println("[Music/Apple] Java 直连失败: " + throwable.getMessage());
+        }
+        return null;
+    }
+
     // ── 模型 ────────────────────────────────────────────────────────────────
 
     /** 一条 Apple 曲目的元数据。{@code artist} 用 " / " 分隔，方便映射时拆回多歌手。 */
@@ -85,68 +100,28 @@ public final class AppleMusicService {
     /**
      * 搜曲目。失败（含网络被墙）返回空列表，让 UI 与换源流水线按「没有结果」处理。
      *
-     * <p>走 amp_api.py 助手（Python TLS 指纹）：amp-api 拒绝 Java 客户端的 TLS 指纹，
-     * 直连 catalog 也稳定 401 —— 助手缺失时才回退 Java 直连（老指纹时代可能仍有效）。</p>
+     * <p>纯 Java 直连(HttpClient)。历史上的 TLS 指纹结论已被推翻:毒变量是
+     * HttpURLConnection 的请求形态,换 HttpClient 即过(tools/apple-native-probe 实测)。</p>
      */
     public static List<Track> search(String keyword, int limit) {
         if (keyword == null || keyword.trim().isEmpty()) return Collections.emptyList();
-        JsonObject helper = AppleAmpHelper.call("search", "{\"term\":"
-                + AppleApiClient.jsonQuote(keyword.trim()) + ",\"limit\":"
-                + Math.max(1, Math.min(limit, SEARCH_LIMIT_MAX)) + ",\"storefront\":"
-                + AppleApiClient.jsonQuote(AppleConfigStore.storefront()) + "}");
-        if (helper != null && AppleAmpHelper.bool(helper, "ok")) {
-            List<Track> out = new ArrayList<>();
-            for (JsonElement element : AppleAmpHelper.array(helper, "songs")) {
-                Track parsed = trackFromHelper(element);
-                if (parsed != null) out.add(parsed);
+        return viaTransport(() -> {
+            try {
+                Map<String, String> query = new LinkedHashMap<>();
+                query.put("term", keyword.trim());
+                query.put("types", "songs");
+                query.put("limit", String.valueOf(Math.max(1, Math.min(limit, SEARCH_LIMIT_MAX))));
+                JsonObject payload = AppleApiClient.getCatalog(catalogPath("/search", query));
+                List<Track> tracks = readSearchTracks(payload, "songs");
+                return tracks.isEmpty() ? null : tracks;
+            } catch (IOException | AppleApiClient.AppleApiException throwable) {
+                System.err.println("[Music/Apple] Java 搜索失败: " + throwable.getMessage());
+                return null;
             }
-            return out;
-        }
-        Map<String, String> query = new LinkedHashMap<>();
-        query.put("term", keyword.trim());
-        query.put("types", "songs");
-        query.put("limit", String.valueOf(Math.max(1, Math.min(limit, SEARCH_LIMIT_MAX))));
-        try {
-            JsonObject payload = AppleApiClient.getCatalog(catalogPath("/search", query));
-            return readSearchTracks(payload, "songs");
-        } catch (IOException | AppleApiClient.AppleApiException throwable) {
-            logFailure("搜索", throwable);
-            return Collections.emptyList();
-        }
+        });
     }
 
-    /** 助手 JSON 行 → Track。 */
-    private static Track trackFromHelper(JsonElement element) {
-        if (element == null || !element.isJsonObject()) return null;
-        JsonObject o = element.getAsJsonObject();
-        Track track = new Track();
-        track.id = AppleAmpHelper.text(o, "id");
-        track.name = AppleAmpHelper.text(o, "name");
-        if (track.id.isEmpty() || track.name.isEmpty()) return null;
-        track.artist = AppleAmpHelper.text(o, "artist");
-        track.album = AppleAmpHelper.text(o, "album");
-        track.albumId = AppleAmpHelper.text(o, "albumId");
-        track.coverUrl = AppleAmpHelper.text(o, "coverUrl");
-        track.previewUrl = AppleAmpHelper.text(o, "previewUrl");
-        track.durationMillis = o.has("durationMillis") && o.get("durationMillis").isJsonPrimitive()
-                ? o.get("durationMillis").getAsLong() : 0L;
-        return track;
-    }
 
-    /** 助手 JSON 行 → Playlist。 */
-    private static Playlist playlistFromHelper(JsonElement element) {
-        if (element == null || !element.isJsonObject()) return null;
-        JsonObject o = element.getAsJsonObject();
-        Playlist card = new Playlist();
-        card.id = AppleAmpHelper.text(o, "id");
-        card.name = AppleAmpHelper.text(o, "name");
-        if (card.id.isEmpty() || card.name.isEmpty()) return null;
-        card.owner = AppleAmpHelper.text(o, "owner");
-        card.coverUrl = AppleAmpHelper.text(o, "coverUrl");
-        card.trackCount = o.has("trackCount") && o.get("trackCount").isJsonPrimitive()
-                ? o.get("trackCount").getAsInt() : 0;
-        return card;
-    }
 
     /** 搜公开歌单（关键词）。歌单搜索框的 Apple 结果。助手优先，同 {@link #search}。 */
     public static List<Playlist> searchPlaylists(String keyword, int limit) {
@@ -175,7 +150,7 @@ public final class AppleMusicService {
     public static List<Track> playlistTracks(String platformPlaylistId, int max) {
         String id = platformPlaylistId == null ? "" : platformPlaylistId.trim();
         // 各 viaHelper 分支已各自捕获降级（助手→直连→空表），这里只做形状分派。
-        if (id.equals(LIBRARY_SONGS_PLAYLIST_ID)) return librarySongsViaHelper(max);
+        if (id.equals(LIBRARY_SONGS_PLAYLIST_ID)) return librarySongsViaHelper(LIBRARY_SONGS_PLAYLIST_ID, max);
         if (id.startsWith("p.")) return libraryPlaylistTracksViaHelper(id, Math.max(1, max));
         if (id.startsWith(ALBUM_PREFIX)) {
             return albumTracksViaHelper(id.substring(ALBUM_PREFIX.length()));
@@ -183,99 +158,57 @@ public final class AppleMusicService {
         return catalogPlaylistTracksViaHelper(id, Math.max(1, max));
     }
 
-    private static List<Track> librarySongsViaHelper(int max) {
-        JsonObject helper = AppleAmpHelper.call("librarySongs",
-                "{\"mediaUserToken\":" + AppleApiClient.jsonQuote(AppleConfigStore.mediaUserToken())
-                        + ",\"max\":" + max + "}");
-        if (helper != null && AppleAmpHelper.bool(helper, "ok")) {
-            List<Track> out = new ArrayList<>();
-            for (JsonElement element : AppleAmpHelper.array(helper, "tracks")) {
-                Track parsed = trackFromHelper(element);
-                if (parsed != null) out.add(parsed);
+    private static List<Track> librarySongsViaHelper(String playlistId, int max) {
+        return viaTransport(() -> {
+            try {
+                List<Track> tracks = librarySongs(max);
+                return tracks.isEmpty() ? null : tracks;
+            } catch (IOException | AppleApiClient.AppleApiException throwable) {
+                System.err.println("[Music/Apple] Java 资料库歌曲失败: " + throwable.getMessage());
+                return null;
             }
-            return out;
-        }
-        try {
-            return librarySongs(max);
-        } catch (IOException | AppleApiClient.AppleApiException throwable) {
-            logFailure("资料库歌曲", throwable);
-            return Collections.emptyList();
-        }
+        });
     }
 
     private static List<Track> libraryPlaylistTracksViaHelper(String playlistId, int max) {
-        JsonObject helper = AppleAmpHelper.call("libraryPlaylistTracks",
-                "{\"mediaUserToken\":" + AppleApiClient.jsonQuote(AppleConfigStore.mediaUserToken())
-                        + ",\"playlistId\":" + AppleApiClient.jsonQuote(playlistId)
-                        + ",\"max\":" + max + "}");
-        if (helper != null && AppleAmpHelper.bool(helper, "ok")) {
-            List<Track> out = new ArrayList<>();
-            for (JsonElement element : AppleAmpHelper.array(helper, "tracks")) {
-                Track parsed = trackFromHelper(element);
-                if (parsed != null) out.add(parsed);
+        return viaTransport(() -> {
+            try {
+                List<Track> tracks = libraryPlaylistTracks(playlistId, max);
+                return tracks.isEmpty() ? null : tracks;
+            } catch (IOException | AppleApiClient.AppleApiException throwable) {
+                System.err.println("[Music/Apple] Java 资料库歌单曲目失败: " + throwable.getMessage());
+                return null;
             }
-            return out;
-        }
-        try {
-            return libraryPlaylistTracks(playlistId, max);
-        } catch (IOException | AppleApiClient.AppleApiException throwable) {
-            logFailure("资料库歌单曲目", throwable);
-            return Collections.emptyList();
-        }
+        });
     }
 
     private static List<Track> albumTracksViaHelper(String albumId) {
-        JsonObject helper = AppleAmpHelper.call("album",
-                "{\"albumId\":" + AppleApiClient.jsonQuote(albumId)
-                        + ",\"storefront\":" + AppleApiClient.jsonQuote(AppleConfigStore.storefront()) + "}");
-        if (helper != null && AppleAmpHelper.bool(helper, "ok")) {
-            List<Track> out = new ArrayList<>();
-            for (JsonElement element : AppleAmpHelper.array(helper, "tracks")) {
-                Track parsed = trackFromHelper(element);
-                if (parsed != null) out.add(parsed);
+        return viaTransport(() -> {
+            try {
+                List<Track> tracks = albumTracks(albumId, Integer.MAX_VALUE);
+                return tracks.isEmpty() ? null : tracks;
+            } catch (IOException | AppleApiClient.AppleApiException throwable) {
+                System.err.println("[Music/Apple] Java 专辑曲目失败: " + throwable.getMessage());
+                return null;
             }
-            return out;
-        }
-        try {
-            return albumTracks(albumId, Integer.MAX_VALUE);
-        } catch (IOException | AppleApiClient.AppleApiException throwable) {
-            logFailure("专辑曲目", throwable);
-            return Collections.emptyList();
-        }
+        });
     }
 
     private static List<Track> catalogPlaylistTracksViaHelper(String playlistId, int max) {
-        JsonObject helper = AppleAmpHelper.call("playlist",
-                "{\"playlistId\":" + AppleApiClient.jsonQuote(playlistId)
-                        + ",\"storefront\":" + AppleApiClient.jsonQuote(AppleConfigStore.storefront())
-                        + ",\"max\":" + max + "}");
-        if (helper != null && AppleAmpHelper.bool(helper, "ok")) {
-            List<Track> out = new ArrayList<>();
-            for (JsonElement element : AppleAmpHelper.array(helper, "tracks")) {
-                Track parsed = trackFromHelper(element);
-                if (parsed != null) out.add(parsed);
+        return viaTransport(() -> {
+            try {
+                List<Track> tracks = catalogPlaylistTracks(playlistId, max);
+                return tracks.isEmpty() ? null : tracks;
+            } catch (IOException | AppleApiClient.AppleApiException throwable) {
+                System.err.println("[Music/Apple] Java 歌单曲目失败: " + throwable.getMessage());
+                return null;
             }
-            return out;
-        }
-        try {
-            return catalogPlaylistTracks(playlistId, max);
-        } catch (IOException | AppleApiClient.AppleApiException throwable) {
-            logFailure("歌单曲目", throwable);
-            return Collections.emptyList();
-        }
+        });
     }
 
-    /** 专辑当卡片：封面与曲目数来自专辑本体，曲目由 {@link #playlistTracks} 的前缀分支拉。助手优先。 */
+    /** 专辑当卡片：封面与曲目数来自专辑本体，曲目由 {@link #playlistTracks} 的前缀分支拉。 */
     public static Playlist albumCard(String albumId) {
         if (albumId == null || albumId.trim().isEmpty()) return null;
-        JsonObject helper = AppleAmpHelper.call("album",
-                "{\"albumId\":" + AppleApiClient.jsonQuote(albumId.trim())
-                        + ",\"storefront\":" + AppleApiClient.jsonQuote(AppleConfigStore.storefront()) + "}");
-        if (helper != null && AppleAmpHelper.bool(helper, "ok")) {
-            JsonElement cardElement = helper.has("card") && helper.get("card").isJsonObject()
-                    ? helper.get("card") : null;
-            return cardElement == null ? null : playlistFromHelper(cardElement);
-        }
         Map<String, String> query = new LinkedHashMap<>();
         query.put("extend", "extendedAssetUrls");
         try {
@@ -286,17 +219,15 @@ public final class AppleMusicService {
             if (data == null || data.size() == 0) return null;
             return readPlaylistCard(data.get(0).getAsJsonObject(), "Apple Music 专辑");
         } catch (IOException | AppleApiClient.AppleApiException throwable) {
-            logFailure("专辑详情", throwable);
-            return null;
+            System.err.println("[Music/Apple] Java 专辑卡片失败: " + throwable.getMessage());
         }
+        return null;
     }
 
     /** catalog 公开歌单当卡片（链接导入用）；资料库歌单走账号快照，不经过这里。 */
     public static Playlist playlistCard(String playlistId) {
         String id = playlistId == null ? "" : playlistId.trim();
         if (id.isEmpty()) return null;
-        // 助手没有 playlistCard 子命令：playlist 子命令返回曲目但不回卡片——这里带一次
-        // album/playlist 卡片的直连尝试，助手-only 环境下链接导入退化为「拉到曲目即用」。
         Map<String, String> query = new LinkedHashMap<>();
         query.put("extend", "extendedAssetUrls");
         try {
@@ -324,72 +255,58 @@ public final class AppleMusicService {
     public static String ttml(String songId) {
         String id = songId == null ? "" : songId.trim();
         if (id.isEmpty()) return "";
-        JsonObject helper = AppleAmpHelper.call("ttml",
-                "{\"songId\":" + AppleApiClient.jsonQuote(id)
-                        + ",\"storefront\":" + AppleApiClient.jsonQuote(AppleConfigStore.storefront())
-                        + ",\"mediaUserToken\":" + AppleApiClient.jsonQuote(AppleConfigStore.mediaUserToken()) + "}");
-        if (helper != null && AppleAmpHelper.bool(helper, "ok")) {
-            return AppleAmpHelper.text(helper, "ttml");
-        }
-        Map<String, String> query = new LinkedHashMap<>();
-        query.put("extend", "extendedAssetUrls");
-        query.put("include", "lyrics");
-        try {
-            JsonObject payload = AppleApiClient.getCatalog(
-                    catalogPath("/catalog/" + AppleConfigStore.storefront() + "/songs/" + id, query));
-            JsonArray data = payload.getAsJsonArray("data");
-            if (data == null || data.size() == 0) return "";
-            JsonObject relationships = data.get(0).getAsJsonObject().getAsJsonObject("relationships");
-            if (relationships == null) return "";
-            JsonArray lyrics = relationships.getAsJsonArray("lyrics");
-            if (lyrics == null) return "";
-            JsonObject lyricsRelation = lyrics.size() > 0 ? lyrics.get(0).getAsJsonObject() : null;
-            JsonArray lyricData = lyricsRelation == null ? null
-                    : lyricsRelation.getAsJsonArray("data");
-            if (lyricData == null) return "";
-            for (JsonElement element : lyricData) {
-                if (element == null || !element.isJsonObject()) continue;
-                JsonObject attributes = element.getAsJsonObject().getAsJsonObject("attributes");
-                String ttml = attributes == null ? "" : text(attributes, "ttml");
-                if (!ttml.isEmpty()) return ttml;
+        return viaTransport(() -> {
+            try {
+                Map<String, String> query = new LinkedHashMap<>();
+                query.put("extend", "extendedAssetUrls");
+                query.put("include", "lyrics");
+                JsonObject payload = AppleApiClient.getCatalog(
+                        catalogPath("/catalog/" + AppleConfigStore.storefront() + "/songs/" + id, query));
+                JsonArray data = payload.getAsJsonArray("data");
+                if (data == null || data.size() == 0) return null;
+                JsonObject relationships = data.get(0).getAsJsonObject().getAsJsonObject("relationships");
+                if (relationships == null) return null;
+                JsonArray lyrics = relationships.getAsJsonArray("lyrics");
+                if (lyrics == null) return null;
+                JsonObject lyricsRelation = lyrics.size() > 0 ? lyrics.get(0).getAsJsonObject() : null;
+                JsonArray lyricData = lyricsRelation == null ? null
+                        : lyricsRelation.getAsJsonArray("data");
+                if (lyricData == null) return null;
+                for (JsonElement element : lyricData) {
+                    if (element == null || !element.isJsonObject()) continue;
+                    JsonObject attributes = element.getAsJsonObject().getAsJsonObject("attributes");
+                    String ttml = attributes == null ? "" : text(attributes, "ttml");
+                    if (!ttml.isEmpty()) return ttml;
+                }
+                return null;
+            } catch (IOException | AppleApiClient.AppleApiException throwable) {
+                System.err.println("[Music/Apple] Java 歌词失败: " + throwable.getMessage());
+                return null;
             }
-            return "";
-        } catch (IOException | AppleApiClient.AppleApiException throwable) {
-            logFailure("歌词", throwable);
-            return "";
-        }
+        });
     }
 
     /** 单曲详情：preview 兜底播放要的 30 秒试听地址。助手优先，拿不到返回空串。 */
     public static String previewUrl(String songId) {
         String id = songId == null ? "" : songId.trim();
         if (id.isEmpty()) return "";
-        JsonObject helper = AppleAmpHelper.call("preview",
-                "{\"songId\":" + AppleApiClient.jsonQuote(id)
-                        + ",\"storefront\":" + AppleApiClient.jsonQuote(AppleConfigStore.storefront())
-                        + ",\"mediaUserToken\":" + AppleApiClient.jsonQuote(AppleConfigStore.mediaUserToken()) + "}");
-        if (helper != null && AppleAmpHelper.bool(helper, "ok")) {
-            return AppleAmpHelper.text(helper, "previewUrl");
-        }
-        Map<String, String> query = new LinkedHashMap<>();
-        query.put("extend", "extendedAssetUrls");
-        try {
-            JsonObject payload = AppleApiClient.getCatalog(
-                    catalogPath("/catalog/" + AppleConfigStore.storefront() + "/songs/" + id, query));
-            JsonArray data = payload.getAsJsonArray("data");
-            if (data == null || data.size() == 0) return "";
-            return previewOf(data.get(0).getAsJsonObject());
-        } catch (IOException | AppleApiClient.AppleApiException throwable) {
-            logFailure("试听地址", throwable);
-            return "";
-        }
+        return viaTransport(() -> {
+            try {
+                Map<String, String> query = new LinkedHashMap<>();
+                query.put("extend", "extendedAssetUrls");
+                JsonObject payload = AppleApiClient.getCatalog(
+                        catalogPath("/catalog/" + AppleConfigStore.storefront() + "/songs/" + id, query));
+                JsonArray data = payload.getAsJsonArray("data");
+                if (data == null || data.size() == 0) return null;
+                String url = previewOf(data.get(0).getAsJsonObject());
+                return url.isEmpty() ? null : url;
+            } catch (IOException | AppleApiClient.AppleApiException throwable) {
+                System.err.println("[Music/Apple] Java 试听地址失败: " + throwable.getMessage());
+                return null;
+            }
+        });
     }
 
-    /** gamdl 命令行要的歌曲页面地址（它认这个不认裸 id）。 */
-    public static String songWebUrl(String songId) {
-        return "https://music.apple.com/" + AppleConfigStore.storefront() + "/song/"
-                + (songId == null ? "" : songId.trim());
-    }
 
     // ── 分享链接解析 ─────────────────────────────────────────────────────────
 
@@ -502,22 +419,6 @@ public final class AppleMusicService {
         librarySongs.owner = "我";
         cards.add(toPlayListCard(librarySongs));
 
-        JsonObject helper = AppleAmpHelper.call("libraryPlaylists",
-                "{\"mediaUserToken\":" + AppleApiClient.jsonQuote(AppleConfigStore.mediaUserToken()) + "}");
-        if (helper != null && AppleAmpHelper.bool(helper, "ok")) {
-            for (JsonElement element : AppleAmpHelper.array(helper, "playlists")) {
-                Playlist playlist = playlistFromHelper(element);
-                if (playlist != null) {
-                    PlayList card = toPlayListCard(playlist);
-                    if (card != null) cards.add(card);
-                }
-            }
-            userPlaylistsSnapshot = cards;
-            userPlaylistsLoaded = true;
-            AppleApiClient.markAccountValid();
-            return;
-        }
-
         int offset = 0;
         while (offset < 500) {
             Map<String, String> query = new LinkedHashMap<>();
@@ -527,8 +428,8 @@ public final class AppleMusicService {
             try {
                 payload = AppleApiClient.getAccount(catalogPath("/v1/me/library/playlists", query));
             } catch (IOException | AppleApiClient.AppleApiException throwable) {
-                logFailure("本人歌单", throwable);
-                return; // 失败保留旧快照：上次的结果还在，别把侧栏刷空。
+                System.err.println("[Music/Apple] Java 本人歌单失败: " + throwable.getMessage());
+                break;
             }
             List<Playlist> page = readResourcePlaylists(payload);
             if (page.isEmpty()) break;
@@ -568,7 +469,7 @@ public final class AppleMusicService {
             return "未登录：粘贴 music.apple.com 的 cookies.txt 后，可浏览本人资料库歌单与逐词歌词";
         }
         if (AppleApiClient.isAccountInvalid()) return "cookies 已失效，请重新导出并导入";
-        return "已导入 cookies · 播放由 gamdl 完整版 → 跨平台换源 → 30 秒试听兜底";
+        return "已导入 cookies · 完整版本机解密播放 → 跨平台换源 → 30 秒试听兜底";
     }
 
     /** 退出登录：清 cookies 与账号歌单快照（偏好与 storefront 保留）。 */
@@ -632,7 +533,7 @@ public final class AppleMusicService {
         return out;
     }
 
-    /** 资料库歌单曲目。library 曲目优先用 playParams.catalogId（gamdl 认 catalog id）。 */
+    /** 资料库歌单曲目。library 曲目优先用 playParams.catalogId（catalog id 形态更稳）。 */
     private static List<Track> libraryPlaylistTracks(String playlistId, int max) throws IOException {
         List<Track> out = new ArrayList<>();
         int offset = 0;
@@ -766,7 +667,7 @@ public final class AppleMusicService {
 
     /**
      * 曲目主键。catalog 行直接是数字 id；library 行是库内 id，能匹配到 catalog 时
-     * {@code playParams.catalogId} 会带上真正的 catalog id——gamdl 与 preview 都认它。
+     * {@code playParams.catalogId} 会带上真正的 catalog id——换源与 preview 都认它。
      */
     private static String catalogIdOf(JsonObject resource) {
         String id = text(resource, "id");

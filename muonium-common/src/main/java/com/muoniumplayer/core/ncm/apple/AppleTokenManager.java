@@ -26,7 +26,7 @@ public final class AppleTokenManager {
     private static final String HOMEPAGE = "https://music.apple.com";
     /**
      * 首页里前端 bundle 的引用。2026-10 起是 {@code /assets/index~<hash>.js}（老形态
-     * {@code index-legacy~} 已弃用但兼容匹配）；正则照 gamdl 3.9.1 的
+     * {@code index-legacy~} 已弃用但兼容匹配）；正则按公开前端的
      * {@code assets/index[~-]} 对齐，两代形态都认。
      */
     private static final Pattern BUNDLE_PATTERN =

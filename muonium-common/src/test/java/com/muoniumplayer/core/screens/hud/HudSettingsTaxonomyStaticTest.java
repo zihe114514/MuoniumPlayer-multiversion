@@ -31,10 +31,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class HudSettingsTaxonomyStaticTest {
 
     private static final List<String> TITLES = Arrays.asList(
-            "歌词样式", "3D 歌词", "面板与卡片", "灵动岛", "无缝切换", "界面与主题", "信息栏与封面", "缓存与公告");
+            "歌词样式", "3D 歌词", "面板与卡片", "灵动岛", "播放", "界面与主题", "信息栏与封面", "缓存与公告");
 
     /** 与 {@link #TITLES} 同序的条目数；总和必须等于 {@link #TOTAL}。 */
-    private static final List<Integer> COUNTS = Arrays.asList(28, 20, 9, 25, 21, 33, 6, 3);
+    private static final List<Integer> COUNTS = Arrays.asList(28, 22, 9, 25, 26, 33, 6, 3);
 
     /** 「界面与主题」那页 2026-09-30 从 19 条长到 21 条：真玻璃材质组多了「实时背景采集」与
      *  「帧率不够时自动摘玻璃」两个开关；同日傍晚又长到 26 条：多了四面各自的模糊倍率
@@ -60,8 +60,17 @@ class HudSettingsTaxonomyStaticTest {
      *  原位保留）—— 歌词样式页 22 → 28（+6 引用）；「3D 歌词」页独立「动效」组并入
      *  「放置」组（同对象引用两处计）19 → 20；「面板与卡片」页样式条目同时出现在
      *  「样式与大小」与「卡片样式」两组 8 → 9 —— 引用计数使总数 137 → 143（功能条目
-     *  实际没有增减，滑条唯一性不受影响：引用的六条全是 CHOICE）。 */
-    private static final int TOTAL = 145;
+     *  实际没有增减，滑条唯一性不受影响：引用的六条全是 CHOICE）。
+     *  2026-10-30 「3D 歌词」页放置组新增「显示翻译」（主句下方小号暗色副行，
+     *  与 2D 界面同一数据口；心象模式不画）—— 3D 歌词页 20 → 21 条，145 → 146。
+     *  同日「显示翻译」升三档 choice（关/整行淡入/逐字点亮，条目数不变），
+     *  放置组新增「翻译副行特效」（仅逐字点亮档可见）—— 3D 歌词页 21 → 22 条，
+     *  146 → 147。
+     *  2026-10-31 「无缝切换」分类随语义改名为「播放」（交接 + 输出修饰），其下新增
+     *  「场景声学」组 5 条（总开关 / 水面之下 / 封闭空间 / 降水天气 / 强度四档 choice；
+     *  细调滑条在音效调音台的场景声学子页）—— 播放页 21 → 26 条，147 → 152。
+     *  不新开分类页：ModernUI 分类条横排 8 格已满（见下方封顶测试）。 */
+    private static final int TOTAL = 152;
 
     @Test
     @DisplayName("分类就是这 7 页，顺序与每页条目数都不许悄悄变")

@@ -161,17 +161,4 @@ class AppleApiClientStaticTest {
         assertEquals(403, exception.statusCode);
         assertTrue(exception.getMessage().contains("insufficient permissions"));
     }
-
-    @Test
-    @DisplayName("PACK 占位语义：sha256 为空 = 整包未发布，常量与镜像链自洽")
-    void companionPackPlaceholders() {
-        assertTrue(AppleCompanionDownload.PACK.fileName().endsWith(".zip"));
-        assertTrue(AppleCompanionDownload.EXECUTABLE_ENTRY.endsWith("gamdl.exe"),
-                "整包入口必须是 gamdl.exe（AppleGamdlBridge 与验证器都认它）");
-        assertFalse(AppleCompanionDownload.MIRRORS.isEmpty(), "镜像链不能为空");
-        for (String mirror : AppleCompanionDownload.MIRRORS) {
-            assertTrue(mirror.endsWith("apple-companion/"),
-                    "镜像路径必须落在 apple-companion/ 目录: " + mirror);
-        }
-    }
 }

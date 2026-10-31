@@ -34,8 +34,15 @@ public final class SpotifyMusicService {
     /** 专辑当歌单卡片时的前缀（与酷狗的 {@code album:} 约定一致）。 */
     public static final String ALBUM_PREFIX = "album:";
 
-    /** 搜索单页上限。Spotify 端点上限 50，留出分页空间。 */
+    /** 搜索结果的总量上限（UI 一次搜索期望拿到的行数）。 */
     public static final int SEARCH_LIMIT_MAX = 50;
+    /**
+     * 搜索单次请求的页大小。2026-02 迁移指南把开发模式应用的 {@code /search} limit 上限
+     * 从 50 压到 10（默认 20→5）——再按 50 发一次请求会直接 400，搜索表现为「什么都搜不到」。
+     * 这里固定按 10 一页、用 offset 循环补齐调用方要的总量；扩展配额应用（上限仍是 50）
+     * 按 10 要也一样合法，只是多翻几页。
+     */
+    public static final int SEARCH_PAGE_LIMIT = 10;
 
     private SpotifyMusicService() {
     }
@@ -73,30 +80,54 @@ public final class SpotifyMusicService {
 
     public static List<Track> search(String keyword, int limit, int offset) {
         if (keyword == null || keyword.trim().isEmpty()) return Collections.emptyList();
-        Map<String, String> query = baseSearchQuery(keyword, Math.max(1, Math.min(limit, SEARCH_LIMIT_MAX)));
-        if (offset > 0) query.put("offset", String.valueOf(offset));
-        query.put("type", "track");
+        int total = Math.max(1, Math.min(limit, SEARCH_LIMIT_MAX));
+        List<Track> out = new ArrayList<>();
+        int cursor = Math.max(0, offset);
         try {
-            JsonObject payload = SpotifyWebApiClient.getJson("/search", query);
-            return readTracks(payload, "tracks");
+            while (out.size() < total) {
+                int requested = Math.min(SEARCH_PAGE_LIMIT, total - out.size());
+                Map<String, String> query = baseSearchQuery(keyword, requested);
+                if (cursor > 0) query.put("offset", String.valueOf(cursor));
+                query.put("type", "track");
+                JsonObject payload = SpotifyWebApiClient.getJson("/search", query);
+                List<Track> page = readTracks(payload, "tracks");
+                out.addAll(page);
+                // 短页就是末页：返回数少于要的数，后面没有了。不判这条，每个歌单结尾
+                // 都要多打一次空请求。
+                if (page.size() < requested) break;
+                cursor += page.size();
+                if (cursor >= 200) break; // 安全阀：分页异常时别无限翻。
+            }
         } catch (IOException | SpotifyWebApiClient.SpotifyApiException throwable) {
             logFailure("搜索", throwable);
-            return Collections.emptyList();
+            // 已拿到的页照常返回：翻页翻一半断了，好过把前几页也一起丢掉。
         }
+        return out;
     }
 
     /** 搜公开歌单（关键词）。换源流水线不用它；它是歌单搜索框的 SP 结果。 */
     public static List<Playlist> searchPlaylists(String keyword, int limit) {
         if (keyword == null || keyword.trim().isEmpty()) return Collections.emptyList();
-        Map<String, String> query = baseSearchQuery(keyword, Math.max(1, Math.min(limit, SEARCH_LIMIT_MAX)));
-        query.put("type", "playlist");
+        int total = Math.max(1, Math.min(limit, SEARCH_LIMIT_MAX));
+        List<Playlist> out = new ArrayList<>();
+        int cursor = 0;
         try {
-            JsonObject payload = SpotifyWebApiClient.getJson("/search", query);
-            return readPlaylists(payload, "playlists");
+            while (out.size() < total) {
+                int requested = Math.min(SEARCH_PAGE_LIMIT, total - out.size());
+                Map<String, String> query = baseSearchQuery(keyword, requested);
+                if (cursor > 0) query.put("offset", String.valueOf(cursor));
+                query.put("type", "playlist");
+                JsonObject payload = SpotifyWebApiClient.getJson("/search", query);
+                List<Playlist> page = readPlaylists(payload, "playlists");
+                out.addAll(page);
+                if (page.size() < requested) break; // 短页即末页。
+                cursor += page.size();
+                if (cursor >= 200) break;
+            }
         } catch (IOException | SpotifyWebApiClient.SpotifyApiException throwable) {
             logFailure("搜歌单", throwable);
-            return Collections.emptyList();
         }
+        return out;
     }
 
     /**
@@ -284,8 +315,9 @@ public final class SpotifyMusicService {
                 + " · 播放始终由跨平台换源匹配";
     }
 
-    /** 退出登录：清凭据与账号歌单快照。 */
+    /** 退出登录：清凭据与账号歌单快照；Connect 镜像（若在接管）一并断开。 */
     public static void logout() {
+        SpotifyConnectMirror.stop("已退出 Spotify 登录");
         SpotifyAuthStore.clear();
         clearPlaylistCache();
     }
@@ -321,12 +353,13 @@ public final class SpotifyMusicService {
         List<Track> out = new ArrayList<>();
         int offset = 0;
         while (out.size() < max) {
+            int requested = Math.min(50, max - out.size());
             Map<String, String> query = new LinkedHashMap<>();
-            query.put("limit", String.valueOf(Math.min(50, max - out.size())));
+            query.put("limit", String.valueOf(requested));
             query.put("offset", String.valueOf(offset));
             JsonObject payload = SpotifyWebApiClient.getJson("/me/tracks", query);
             int page = readTracksInto(out, payload.getAsJsonArray("items"));
-            if (page == 0) break;
+            if (page < requested) break; // 短页即末页，别多打一次空请求。
             offset += page;
             if (offset >= 2000) break; // 安全阀：JSON 分页异常时别无限拉。
         }
@@ -337,12 +370,23 @@ public final class SpotifyMusicService {
         List<Track> out = new ArrayList<>();
         int offset = 0;
         while (out.size() < max) {
+            int requested = Math.min(100, max - out.size());
             Map<String, String> query = new LinkedHashMap<>();
-            query.put("limit", String.valueOf(Math.min(100, max - out.size())));
+            query.put("limit", String.valueOf(requested));
             query.put("offset", String.valueOf(offset));
-            JsonObject payload = SpotifyWebApiClient.getJson("/playlists/" + playlistId + "/tracks", query);
+            // 2026-02 迁移：开发模式应用的端点从 /tracks 改名 /items；旧端点只对扩展配额应用还在。
+            // 新端点 404（扩展配额应用没拿到新端点）时回落一次旧端点，两种应用都能读。
+            JsonObject payload;
+            try {
+                payload = SpotifyWebApiClient.getJson("/playlists/" + playlistId + "/items", query);
+            } catch (SpotifyWebApiClient.SpotifyApiException notFound) {
+                if (notFound.statusCode != 404) throw notFound;
+                payload = SpotifyWebApiClient.getJson("/playlists/" + playlistId + "/tracks", query);
+            }
+            // 迁移还规定：开发模式下只有本人（或协作）歌单会带条目，别人的歌单只有元数据 ——
+            // items 缺席时 readTracksInto 拿到 null、本页记 0，循环按空单收场。
             int page = readTracksInto(out, payload.getAsJsonArray("items"));
-            if (page == 0) break;
+            if (page < requested) break; // 短页即末页。
             offset += page;
             if (offset >= 2000) break;
         }
@@ -353,12 +397,13 @@ public final class SpotifyMusicService {
         List<Track> out = new ArrayList<>();
         int offset = 0;
         while (out.size() < max) {
+            int requested = Math.min(50, max - out.size());
             Map<String, String> query = new LinkedHashMap<>();
-            query.put("limit", String.valueOf(Math.min(50, max - out.size())));
+            query.put("limit", String.valueOf(requested));
             query.put("offset", String.valueOf(offset));
             JsonObject payload = SpotifyWebApiClient.getJson("/albums/" + albumId + "/tracks", query);
             int page = readAlbumTracksInto(out, payload, albumId, max - out.size());
-            if (page == 0) break;
+            if (page < requested) break; // 短页即末页。
             offset += page;
             if (offset >= 2000) break;
         }
@@ -393,7 +438,12 @@ public final class SpotifyMusicService {
         return out;
     }
 
-    /** 常规曲目分页条目：{@code item.track}。返回本页读到的条数（含被跳过的本地行）。 */
+    /**
+     * 常规曲目分页条目：{@code item.track}。返回本页读到的条数（含被跳过的本地行）。
+     *
+     * <p>2026-02 迁移把包装键从 {@code track} 改名 {@code item}（{@code tracks.tracks.track →
+     * items.items.item}），两个名字都认。</p>
+     */
     private static int readTracksInto(List<Track> out, JsonArray items) {
         if (items == null) return 0;
         int count = 0;
@@ -402,7 +452,9 @@ public final class SpotifyMusicService {
             count++;
             JsonObject wrapper = element.getAsJsonObject();
             JsonObject track = wrapper.has("track") && wrapper.get("track").isJsonObject()
-                    ? wrapper.getAsJsonObject("track") : wrapper;
+                    ? wrapper.getAsJsonObject("track")
+                    : wrapper.has("item") && wrapper.get("item").isJsonObject()
+                            ? wrapper.getAsJsonObject("item") : wrapper;
             Track parsed = readTrack(track);
             if (parsed != null) out.add(parsed);
         }
@@ -439,8 +491,11 @@ public final class SpotifyMusicService {
         }
     }
 
-    /** 单条曲目对象 → 模型。本地文件与无 id 的行返回 null（没法跨平台匹配，留着只会添乱）。 */
-    private static Track readTrack(JsonObject track) {
+    /**
+     * 单条曲目对象 → 模型。本地文件与无 id 的行返回 null（没法跨平台匹配，留着只会添乱）。
+     * 包内可见：{@link SpotifyConnectService} 解析 {@code /me/player} 的 {@code item} 复用同一条路。
+     */
+    static Track readTrack(JsonObject track) {
         if (track == null) return null;
         Track out = new Track();
         out.local = track.has("is_local") && track.get("is_local").isJsonPrimitive()
@@ -481,8 +536,7 @@ public final class SpotifyMusicService {
             Playlist card = new Playlist();
             card.id = id;
             card.name = text(object, "name");
-            card.trackCount = object.has("tracks") && object.getAsJsonObject("tracks").has("total")
-                    ? object.getAsJsonObject("tracks").get("total").getAsInt() : 0;
+            card.trackCount = playlistTrackCount(object);
             card.coverUrl = firstImageUrl(object.getAsJsonArray("images"));
             if (object.has("owner") && object.get("owner").isJsonObject()) {
                 card.owner = text(object.getAsJsonObject("owner"), "display_name");
@@ -490,6 +544,21 @@ public final class SpotifyMusicService {
             out.add(card);
         }
         return out;
+    }
+
+    /** 歌单卡片上的曲目数。2026-02 迁移把字段从 {@code tracks.total} 改名 {@code items.total}，两个都认。 */
+    private static int playlistTrackCount(JsonObject object) {
+        for (String key : new String[]{"tracks", "items"}) {
+            if (!object.has(key) || !object.get(key).isJsonObject()) continue;
+            JsonObject box = object.getAsJsonObject(key);
+            if (box.has("total") && box.get("total").isJsonPrimitive()) {
+                try {
+                    return Math.max(0, box.get("total").getAsInt());
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        return 0;
     }
 
     private static String joinArtistNames(JsonArray artists) {

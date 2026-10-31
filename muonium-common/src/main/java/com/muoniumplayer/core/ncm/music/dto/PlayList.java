@@ -252,10 +252,18 @@ public class PlayList {
                     }
                 }
             } else if (getPlatform() == MusicPlatform.APPLE) {
-                // Apple 的 platformPlaylistId 有四种形状：pl.…. 是 catalog 公开歌单、p.数字 是
-                // 资料库歌单、"library-songs" 是资料库歌曲虚拟单、"album:<id>" 是专辑——由服务层
-                // 按形状分派。缺这一支的话 Apple 歌单会掉进下面的 else，拿一个 pl.… id 去调
-                // 网易云的 playlistTrackAll —— 静默返回空列表，界面一片空白。
+                // Apple 的 platformPlaylistId 有五种形状:chart:<sf> 是 RSS 榜单虚拟单、pl.… 是
+                // catalog 公开歌单、p.数字 是资料库歌单、"library-songs" 是资料库歌曲虚拟单、
+                // "album:<id>" 是专辑——由服务层按形状分派。缺这一支的话 Apple 歌单会掉进
+                // 下面的 else,拿一个 pl.… id 去调网易云的 playlistTrackAll —— 静默返回空列表。
+                String appleShape = getPlatformPlaylistId();
+                if (appleShape != null
+                        && appleShape.startsWith(com.muoniumplayer.core.ncm.apple.chart.AppleChartsService.CHART_PLAYLIST_PREFIX)) {
+                    String chartSf = appleShape.substring(
+                            com.muoniumplayer.core.ncm.apple.chart.AppleChartsService.CHART_PLAYLIST_PREFIX.length());
+                    loadedMusics = new ArrayList<>(com.muoniumplayer.core.ncm.apple.chart.AppleChartsService
+                            .chartTracks(chartSf));
+                } else {
                 List<com.muoniumplayer.core.ncm.apple.AppleMusicService.Track> appleTracks =
                         com.muoniumplayer.core.ncm.apple.AppleMusicService
                                 .playlistTracks(getPlatformPlaylistId(), Math.max(100, count > 0 ? count : 100));
@@ -268,6 +276,7 @@ public class PlayList {
                     if (music != null) {
                         loadedMusics.add(music);
                     }
+                }
                 }
             } else if (getPlatform() == MusicPlatform.YOUTUBE) {
                 // YouTube 的 platformPlaylistId 有两种：裸的 PL/RD/OLAK… 是歌单（内部再补 VL 前缀），

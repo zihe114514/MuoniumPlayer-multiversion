@@ -1010,7 +1010,7 @@ public class NavigateBar extends NCMPanel {
             // 否则会先闪一个空的中转页、历史栈里也会多出一条回不去的记录。
             // QQ 的榜单不一样 —— 它是真的留在 NeteaseDiscoveryPanel 里按歌曲行展示，所以照旧直接切页。
             // Spotify 没有对齐的榜单对象，发现区只留账号歌单；Apple 同理（v1 不做榜单 UI）。
-            if (!youtubeMode && !bilibiliMode && !qishuiMode && !spotifyMode && !appleMode) {
+            if (!youtubeMode && !bilibiliMode && !qishuiMode && !spotifyMode) {
                 this.addSidebarRow("nav:chart", new PlaylistItem(FontelloIcons.LEADERBOARD, FontManager.fontello16,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "排行榜", () -> {
@@ -1023,6 +1023,10 @@ public class NavigateBar extends NCMPanel {
                             List<PlayList> ranks = KuGouMusicService.rankPlaylists();
                             return new HomePanel(ranks, "酷狗榜单 · " + ranks.size());
                         });
+                    } else if (appleMode) {
+                        // Apple 榜单:RSS feed 无需登录,一张卡片一个地区,点进由 chart: 懒加载。
+                        NCMScreen.getInstance().navigateAsync("排行榜",
+                                com.muoniumplayer.core.ncm.apple.chart.AppleChartsPanels::loadTopListsPanel);
                     } else {
                         NCMScreen.getInstance().navigateAsync("排行榜", NeteaseDiscoveryPanel::loadTopListsPanel);
                     }
@@ -1083,6 +1087,13 @@ public class NavigateBar extends NCMPanel {
                         FontManager.musicBrand16,
                         () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
                         () -> "发现流 FM", () -> NCMScreen.getInstance().setCurrentPanel(new PersonalFmPanel())));
+            }
+            if (spotifyMode) {
+                // Spotify 的设备控制：遥控 / 接管账号里正在播放的 Spotify 客户端
+                //（Web API 客户端控制，见 SpotifyConnectSheet 与 SpotifyConnectMirror）。
+                this.addSidebarRow("nav:spotify-devices", new PlaylistItem("控", FontManager.pf12bold,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        () -> "设备控制", () -> NCMScreen.getInstance().openSpotifyConnectSheet()));
             }
         }
         // 「Mu本地歌单」独立成栏，排在账号歌单之上：这一栏里的单子只活在本机 —— 上面几张是用户

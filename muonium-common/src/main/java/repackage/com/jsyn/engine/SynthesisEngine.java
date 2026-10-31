@@ -81,16 +81,37 @@ public class SynthesisEngine implements Synthesizer {
         void process(double[] interleaved, int channels, int sampleRate);
     }
     private volatile OutputProcessor outputProcessor;
+    /** 追加在 {@link #outputProcessor} 之后跑的第二级；两级各自 try,一级挂了不连累另一级。 */
+    private volatile OutputProcessor trailingProcessor;
+
     public void setOutputProcessor(OutputProcessor processor) { outputProcessor = processor; }
+
+    /**
+     * 挂到输出链末端的附加级:先跑 {@link #outputProcessor}(主效果链),它改写完的样本
+     * 再交给这一级。给「在最终信号上做全局声场修饰」的处理器用 —— 那类效果必须看到
+     * 主链处理完的声音才有意义。同样要求 real-time safe;抛异常即被摘除,不影响主链。
+     */
+    public void setTrailingOutputProcessor(OutputProcessor processor) { trailingProcessor = processor; }
 
     private void processOutput() {
         OutputProcessor processor = outputProcessor;
-        if (processor == null || outputBuffer == null) return;
-        try {
-            processor.process(outputBuffer.interleavedBuffer, outputBuffer.blockBuffers.length, getFrameRate());
-        } catch (Throwable failure) {
-            // An effect must never reach the playback loop's error path or silence music.
-            outputProcessor = null;
+        if (outputBuffer == null) return;
+        if (processor != null) {
+            try {
+                processor.process(outputBuffer.interleavedBuffer, outputBuffer.blockBuffers.length, getFrameRate());
+            } catch (Throwable failure) {
+                // An effect must never reach the playback loop's error path or silence music.
+                outputProcessor = null;
+            }
+        }
+        OutputProcessor trailing = trailingProcessor;
+        if (trailing != null) {
+            try {
+                trailing.process(outputBuffer.interleavedBuffer, outputBuffer.blockBuffers.length, getFrameRate());
+            } catch (Throwable failure) {
+                // 附加级自保即可:主效果链的输出不因它出问题而中断。
+                trailingProcessor = null;
+            }
         }
     }
 

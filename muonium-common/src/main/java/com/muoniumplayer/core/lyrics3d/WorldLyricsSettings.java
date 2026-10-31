@@ -23,6 +23,8 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     @Override public boolean stayOnScreen() { return stayOnScreen; }
     @Override public boolean aboveGround() { return aboveGround; }
     @Override public boolean keepDistance() { return keepDistance; }
+    @Override public int translationMode() { return translation; }
+    @Override public boolean translationEffects() { return translationEffects; }
     @Override public boolean hudDraw() { return hudDraw; }
 
     public boolean enabled;
@@ -35,7 +37,7 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     public boolean styleModern = true;
     public boolean splitLines = true;
     public boolean glowEnabled = true;
-    public float glowStrength = 0.35f;
+    public float glowStrength = 0.6f;
     public float glowSpread = 1.3f;
     public int glowColorRgb = 0xFFFFFF;
     public int colorRgb = 0xFFFFFF;
@@ -53,6 +55,10 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     public boolean keepDistance = true;
     /** Above ground：歌词中心不低于眼睛下方 0.5 格。 */
     public boolean aboveGround;
+    /** 显示翻译档：0 关 / 1 整行淡入 / 2 逐字点亮（WorldLyricsState.TRANSLATION_*）。 */
+    public int translation = 1;
+    /** 翻译副行的绘光特效（点亮闪点 + 微飞径迹）：仅逐字点亮档有意义。 */
+    public boolean translationEffects = false;
     /** 更激进的适配（hudDraw）：光影包激活时绕开光影管线，推迟到 HUD 阶段用原版
      *  着色器画在最终画面上 —— 观感与无光影时一致，光影的打光/雾/后处理不再碰歌词。 */
     public boolean hudDraw;
@@ -76,7 +82,7 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
         s.splitLines = HudConfig.worldLyricsSplitLines;
         s.glowEnabled = HudConfig.worldLyricsGlowEnabled;
         s.glowStrength = (float) clamp(HudConfig.worldLyricsGlowStrength, 0.0, 1.0);
-        s.glowSpread = (float) clamp(HudConfig.worldLyricsGlowSpread, 0.5, 1.8);
+        s.glowSpread = (float) clamp(HudConfig.worldLyricsGlowSpread, 0.0, 1.8);
         s.glowColorRgb = HudConfig.worldLyricsGlowColorRgb & 0xFFFFFF;
         s.colorRgb = HudConfig.worldLyricsColorRgb & 0xFFFFFF;
         s.colorCustom = HudConfig.worldLyricsColorCustom;
@@ -87,6 +93,8 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
         s.stayOnScreen = HudConfig.worldLyricsStayOnScreen;
         s.keepDistance = HudConfig.worldLyricsKeepDistance;
         s.aboveGround = HudConfig.worldLyricsAboveGround;
+        s.translation = HudConfig.worldLyricsTranslation;
+        s.translationEffects = HudConfig.worldLyricsTransEffects;
         s.hudDraw = HudConfig.worldLyricsHudDraw;
         s.keywordColors = HudConfig.worldLyricsKeywordColors != null
                 ? HudConfig.worldLyricsKeywordColors : "";

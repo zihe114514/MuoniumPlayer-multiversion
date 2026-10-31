@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -51,6 +52,8 @@ class WorldLyricsLineFilterTest {
         @Override public boolean facePlayer() { return true; }
         @Override public boolean keepAway() { return false; }
         @Override public boolean wordPop() { return true; }
+        // 副行轴用例按逐字点亮档测（FADE 档轴为 null，另有专测）
+        @Override public int translationMode() { return WorldLyricsState.TRANSLATION_KARAOKE; }
     };
 
     private WorldLyricsState state;
@@ -322,6 +325,217 @@ class WorldLyricsLineFilterTest {
         WorldLyricsState.SpawnedLine s2 = activeOf(f2);
         assertTrue(f2.rows.get(0).floating == s1 && !f2.rows.get(0).active,
                 "超时句应转淡出（身份不变，不再是 active）");
+    }
+
+    // ==================== 翻译副行（translationLines 独立通道） ====================
+
+    /**
+     * getSecondaryLyrics 内部读 MuoniumPlayerExtension → OpenAPI 静态链（运行时
+     * 由树侧装配）。测试 JVM 装一个最小 stub：getValueManager 用真实现（值对象
+     * 是纯内存的），其余注册口空操作 —— 与 2D 同一数据口的采集路径因此可测。
+     */
+    private static void installOpenApiStub() {
+        if (com.muoniumplayer.api.OpenAPI.getInstance() != null) return;
+        com.muoniumplayer.api.OpenAPI.setInstance(new com.muoniumplayer.api.OpenAPI() {
+            @Override public void registerEvent(com.muoniumplayer.api.interfaces.EventHandler handler) { }
+            @Override public void unregisterEvent(com.muoniumplayer.api.interfaces.EventHandler handler) { }
+            @Override public void registerFeature(Object feature) { }
+            @Override public void displayScreen(com.muoniumplayer.api.features.ExtensionScreen screen) { }
+            @Override public void printMessage(String message) { }
+            @Override public com.muoniumplayer.api.interfaces.modules.values.ValueManager getValueManager() {
+                return new com.muoniumplayer.api.impl.ValueManagerImpl();
+            }
+            @Override public com.muoniumplayer.api.interfaces.render.GLStateManager getGLStateManager() { return null; }
+            @Override public com.muoniumplayer.api.interfaces.render.ShaderUtil getShaderUtil() { return null; }
+            @Override public com.muoniumplayer.api.interfaces.render.FontUtil getFontUtil() { return null; }
+            @Override public com.muoniumplayer.api.interfaces.render.RenderUtil getRenderUtil() { return null; }
+        });
+    }
+
+    @Test
+    @DisplayName("有翻译：translationLines 拆行独立存放，不混入主文本流")
+    void translationGoesToSideChannel() {
+        installOpenApiStub();
+        CloudMusic.hasTransLyrics = true;
+        try {
+            LyricLine l = line(0L, "第一句主文本");
+            l.translationText = "First line of translation";
+            CloudMusic.lyrics.add(l);
+
+            WorldLyricsState.SpawnedLine s = activeOf(state.update(
+                    CAMERA, PARAMS, 1_000_000_000L, true, 500L));
+            assertNotNull(s);
+            assertNotNull(s.translationLines, "有翻译时副行列表应非空");
+            assertTrue(s.translationLines.get(0).contains("First line"),
+                    "副行应是翻译文本，实际 " + s.translationLines.get(0));
+            assertTrue(s.lines.get(0).contains("主文本"), "主行不受影响");
+            for (String t : s.translationLines) {
+                assertFalse(s.lines.contains(t), "翻译行不得混入主文本流");
+            }
+        } finally {
+            CloudMusic.hasTransLyrics = false;
+        }
+    }
+
+    @Test
+    @DisplayName("无翻译/开关关：translationLines 为 null，零开销")
+    void translationAbsentWhenDisabledOrMissing() {
+        installOpenApiStub();
+        // 歌没有翻译
+        CloudMusic.lyrics.add(line(0L, "只有主文本的句子"));
+        WorldLyricsState.SpawnedLine noTrans = activeOf(state.update(
+                CAMERA, PARAMS, 1_000_000_000L, true, 500L));
+        assertNotNull(noTrans);
+        assertNull(noTrans.translationLines, "无翻译时应为 null");
+
+        // 有翻译但开关关
+        state.resetForTest();
+        CloudMusic.hasTransLyrics = true;
+        try {
+            LyricLine l = line(0L, "开关关闭的句子");
+            l.translationText = "Should not be captured";
+            CloudMusic.lyrics.add(l);
+            WorldLyricsState.Params off = new WorldLyricsState.Params() {
+                @Override public double distance() { return 6.5; }
+                @Override public boolean splitLines() { return false; }
+                @Override public double spreadDeg() { return 0; }
+                @Override public double scale() { return 1; }
+                @Override public boolean facePlayer() { return true; }
+                @Override public boolean keepAway() { return false; }
+                @Override public boolean wordPop() { return true; }
+                @Override public int translationMode() { return WorldLyricsState.TRANSLATION_OFF; }
+            };
+            WorldLyricsState.SpawnedLine s = activeOf(state.update(
+                    CAMERA, off, 1_100_000_000L, true, 500L));
+            assertNotNull(s);
+            assertNull(s.translationLines, "档位关时不采集翻译");
+            assertNull(s.translationCharTimes, "档位关时无翻译轴");
+        } finally {
+            CloudMusic.hasTransLyrics = false;
+        }
+    }
+
+    @Test
+    @DisplayName("逐字点亮档：translationCharTimes 按主行进度比例插值铺满演唱区间")
+    void karaokeModeProducesMappedTimeline() {
+        installOpenApiStub();
+        CloudMusic.hasTransLyrics = true;
+        try {
+            LyricLine l = line(0L, "主行甲乙丙丁");
+            l.translationText = "one two three four five six";
+            CloudMusic.lyrics.add(l);
+
+            WorldLyricsState.SpawnedLine s = activeOf(state.update(
+                    CAMERA, PARAMS, 1_000_000_000L, true, 500L));
+            assertNotNull(s);
+            assertNotNull(s.translationCharTimes, "逐字档（默认档位）应生成翻译轴");
+            int transNonWs = 0;
+            for (String t : s.translationLines) {
+                for (int i = 0; i < t.length(); i++) {
+                    if (!Character.isWhitespace(t.charAt(i))) transNonWs++;
+                }
+            }
+            assertEquals(transNonWs, s.translationCharTimes.length, "轴长 = 翻译非空白字符数");
+            // 首尾对齐主轴：第一个字 ≥ 主轴首字、最后一个字 ≤ 主轴末字（扫光同步推进）
+            assertTrue(s.translationCharTimes[0] >= s.charTimes[0] - 1,
+                    "翻译轴起点应不早于主轴起点");
+            assertTrue(s.translationCharTimes[s.translationCharTimes.length - 1]
+                            <= s.charTimes[s.charTimes.length - 1] + 1,
+                    "翻译轴终点应不晚于主轴终点");
+            // 单调不减（插值保序）
+            for (int i = 1; i < s.translationCharTimes.length; i++) {
+                assertTrue(s.translationCharTimes[i] >= s.translationCharTimes[i - 1],
+                        "翻译轴应单调不减");
+            }
+        } finally {
+            CloudMusic.hasTransLyrics = false;
+        }
+    }
+
+    @Test
+    @DisplayName("拉丁主行：副行走均匀轴 —— 等间隔、主行半程展示完")
+    void latinMainLineGetsUniformTimeline() {
+        installOpenApiStub();
+        CloudMusic.hasTransLyrics = true;
+        try {
+            LyricLine l = line(0L, "Don't stop believin'");
+            l.translationText = "不要停止相信";
+            CloudMusic.lyrics.add(l);
+
+            WorldLyricsState.SpawnedLine s = activeOf(state.update(
+                    CAMERA, PARAMS, 1_000_000_000L, true, 500L));
+            assertNotNull(s);
+            assertNotNull(s.translationCharTimes, "拉丁主行逐字档仍应有轴（均匀轴）");
+            int n = s.translationCharTimes.length;
+            // 等间隔：相邻差恒定
+            for (int i = 2; i < n; i++) {
+                assertEquals(s.translationCharTimes[1] - s.translationCharTimes[0],
+                        s.translationCharTimes[i] - s.translationCharTimes[i - 1],
+                        "均匀轴相邻字间隔应恒定");
+            }
+            // 主行半程展示完：末字 ≤ 主轴末字时刻的一半（向上取整余量）
+            long mainEnd = s.charTimes[s.charTimes.length - 1];
+            assertTrue(s.translationCharTimes[n - 1] <= mainEnd / 2 + 1,
+                    "拉丁副行末字应在主行半程前入场，实际 "
+                            + s.translationCharTimes[n - 1] + " vs 半程 " + (mainEnd / 2));
+        } finally {
+            CloudMusic.hasTransLyrics = false;
+        }
+    }
+
+    @Test
+    @DisplayName("整行淡入档（FADE）：轴为 null，走整行淡入路径")
+    void fadeModeProducesNoAxis() {
+        installOpenApiStub();
+        CloudMusic.hasTransLyrics = true;
+        try {
+            LyricLine l = line(0L, "主行甲乙丙丁");
+            l.translationText = "First line of translation";
+            CloudMusic.lyrics.add(l);
+            WorldLyricsState.Params fade = new WorldLyricsState.Params() {
+                @Override public double distance() { return 6.5; }
+                @Override public boolean splitLines() { return false; }
+                @Override public double spreadDeg() { return 0; }
+                @Override public double scale() { return 1; }
+                @Override public boolean facePlayer() { return true; }
+                @Override public boolean keepAway() { return false; }
+                @Override public boolean wordPop() { return true; }
+                @Override public int translationMode() { return WorldLyricsState.TRANSLATION_FADE; }
+            };
+            WorldLyricsState.SpawnedLine s = activeOf(state.update(
+                    CAMERA, fade, 1_000_000_000L, true, 500L));
+            assertNotNull(s);
+            assertNotNull(s.translationLines, "FADE 档副行文本仍在");
+            assertNull(s.translationCharTimes, "FADE 档轴为 null（整行淡入接管）");
+            assertFalse(s.transKaraokeMode, "FADE 档不走逐字分支");
+        } finally {
+            CloudMusic.hasTransLyrics = false;
+        }
+    }
+
+    @Test
+    @DisplayName("爆闪规划只数主文本：huiguangBursts 锚点不落在翻译字符上")
+    void burstPlanningExcludesTranslation() {
+        CloudMusic.hasTransLyrics = true;
+        try {
+            LyricLine l = line(0L, "一二三");
+            l.translationText = "one two three four five";
+            CloudMusic.lyrics.add(l);
+
+            WorldLyricsState.SpawnedLine s = activeOf(state.update(
+                    CAMERA, PARAMS, 1_000_000_000L, true, 500L));
+            assertNotNull(s);
+            // planBursts 的 nonWs 在 spawn 内按 wrapped（仅主文本）计 —— 这里断言
+            // 爆闪锚点 charIdx 全部落在主文本非空白序（3 个字）范围内。
+            if (s.huiguangBursts != null) {
+                for (int bi = 0; bi < s.huiguangBursts.length / 4; bi++) {
+                    int charIdx = (int) s.huiguangBursts[bi * 4];
+                    assertTrue(charIdx < 3, "爆闪锚点应落在主文本（3 字）内，实际 " + charIdx);
+                }
+            }
+        } finally {
+            CloudMusic.hasTransLyrics = false;
+        }
     }
 
     @Test

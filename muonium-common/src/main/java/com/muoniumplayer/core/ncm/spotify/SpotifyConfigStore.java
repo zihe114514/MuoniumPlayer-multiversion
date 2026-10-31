@@ -34,10 +34,16 @@ public final class SpotifyConfigStore {
     /**
      * 授权要申请的 scopes。
      *
-     * <p>全部是「读」：搜与播是匿名的元数据能力，登录换来的只有本人曲库
-     * （歌单、喜欢的歌、账号展示资料）。写回操作本轮不做，所以不申请
+     * <p>曲库全是「读」：搜与播是匿名的元数据能力，登录换来的只有本人曲库
+     * （歌单、喜欢的歌、账号展示资料）。写回曲库的操作不做，所以不申请
      * {@code playlist-modify-*} / {@code user-library-modify} —— scope 越少，
      * 用户在授权页上看到的警告越小。</p>
+     *
+     * <p>末尾两条是「客户端控制」（Spotify Connect）的入场券：{@code user-read-playback-state}
+     * 读当前播放状态与设备列表，{@code user-modify-playback-state} 发播放/暂停/切歌/seek/音量
+     * （仅对 Premium 账号生效，非 Premium 会在运行时收到 403）。改这份列表要记得：已登录用户
+     * 的旧 token 不带新 scope，{@code SpotifyAuthStore.Session#hasPlaybackScopes()} 会判 false，
+     * 设备面板据此提示重新授权。</p>
      */
     public static final String[] SCOPES = {
             "user-read-private",
@@ -45,6 +51,8 @@ public final class SpotifyConfigStore {
             "playlist-read-collaborative",
             "user-library-read",
             "user-top-read",
+            "user-read-playback-state",
+            "user-modify-playback-state",
     };
 
     public static final String DEFAULT_MARKET = "US";

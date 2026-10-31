@@ -201,9 +201,21 @@ final class LyricPresentRenderer {
 
     static void drawToFbo0(org.joml.Matrix4f projection, org.joml.Matrix4f viewRotation,
                            org.joml.Matrix4f bobConjugate,
-                           int windowW, int windowH) {
+                           int windowW, int windowH,
+                           com.muoniumplayer.core.lyrics3d.MaskQuadCollector glowMask,
+                           boolean captureMode) {
         if (FAILED.get()) return;
         Batch b = batches[front];
+        // 世界 submit 路由（captureMode=false）：本体已由帧图画出，这里只跑
+        // bloom-only 合成 —— mask 缓冲在采集期为同一次遍历双写，几何仍逐帧对齐。
+        if (!captureMode) {
+            runGlowOnly(glowMask, projection, viewRotation, bobConjugate, windowW, windowH);
+            front = 1 - front;
+            batches[front].quadCount = 0;
+            segCount = 0;
+            captured = false;
+            return;
+        }
         if (b.quadCount == 0 || segCount == 0) return;
         scanVertexZ(b);
         if (!ensureGlResources()) return;
@@ -214,6 +226,26 @@ final class LyricPresentRenderer {
             org.joml.Matrix4f mvp = bobConjugate == null
                     ? new org.joml.Matrix4f(projection).mul(viewRotation)
                     : new org.joml.Matrix4f(projection).mul(viewRotation).mul(bobConjugate);
+
+            // 辉光后处理（清晰本体之前）：mask 平色 → bloom → 加色垫到 FBO 0。
+            // 合成是加法、本体随后 alpha 混合 —— 晕垫底、字芯被能量推白。
+            // mask 空/未配置/熔断时整段跳过，随后本体照常画。
+            if (glowMask != null) {
+                com.muoniumplayer.core.lyrics3d.GlowBloom.Params gp =
+                        com.muoniumplayer.core.lyrics3d.GlowBloom.take();
+                if (gp != null && glowMask.quadCount() > 0) {
+                    if (glowBloom == null) glowBloom = new BloomComposite();
+                    if (!glowBloom.failed()) {
+                        glowBloom.run(glowMask.floats(), glowMask.quadCount(), mvp,
+                                windowW, windowH,
+                                ((gp.tintRgb >>> 16) & 0xFF) / 255f,
+                                ((gp.tintRgb >>> 8) & 0xFF) / 255f,
+                                (gp.tintRgb & 0xFF) / 255f,
+                                gp.exposure, gp.spread, 0.12f);
+                    }
+                }
+                glowMask.beginFrame();   // 已消费，防陈旧
+            }
 
             int prevProgram = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20.GL_CURRENT_PROGRAM);
             int prevVao = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_VERTEX_ARRAY_BINDING);
@@ -359,6 +391,32 @@ final class LyricPresentRenderer {
             """;
 
     private static int glProgram, glVbo, glVao, glEbo, glUMvp, glUTex;
+
+    /**
+     * bloom-only 合成（世界 submit 路由）：MVP 与世界帧图展开的字体管线同源
+     * （P·view·bobConj），mask 能量加色垫到 FBO 0。未配置/空 mask/熔断时零成本。
+     */
+    private static void runGlowOnly(com.muoniumplayer.core.lyrics3d.MaskQuadCollector glowMask,
+                                    org.joml.Matrix4f projection, org.joml.Matrix4f viewRotation,
+                                    org.joml.Matrix4f bobConjugate, int windowW, int windowH) {
+        if (glowMask == null || windowW <= 0 || windowH <= 0) return;
+        com.muoniumplayer.core.lyrics3d.GlowBloom.Params gp =
+                com.muoniumplayer.core.lyrics3d.GlowBloom.take();
+        if (gp == null || glowMask.quadCount() == 0) return;
+        if (glowBloom == null) glowBloom = new BloomComposite();
+        if (glowBloom.failed()) return;
+        org.joml.Matrix4f mvp = bobConjugate == null
+                ? new org.joml.Matrix4f(projection).mul(viewRotation)
+                : new org.joml.Matrix4f(projection).mul(viewRotation).mul(bobConjugate);
+        glowBloom.run(glowMask.floats(), glowMask.quadCount(), mvp, windowW, windowH,
+                ((gp.tintRgb >>> 16) & 0xFF) / 255f,
+                ((gp.tintRgb >>> 8) & 0xFF) / 255f,
+                (gp.tintRgb & 0xFF) / 255f,
+                gp.exposure, gp.spread, 0.12f);
+    }
+
+    /** 辉光后处理管线（惰性建；熔断后 permanently 跳过）。 */
+    private static BloomComposite glowBloom;
 
     /** 一次性建裸 GL 资源；失败永久熔断（回退世界路由）。 */
     private static boolean ensureGlResources() {

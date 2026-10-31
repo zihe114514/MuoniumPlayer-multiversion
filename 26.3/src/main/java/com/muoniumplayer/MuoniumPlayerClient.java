@@ -62,7 +62,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "2.2.0";
+    public static final String MOD_VERSION = "2.3.0";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -218,6 +218,14 @@ public final class MuoniumPlayerClient {
             return;
         }
 
+        // ---- Gnetum 共存兼容：检测 + 自动关其「muonium」HUD 元素缓存 + 聊天栏告知 ----
+        // Gnetum 的 HUD 分帧缓存只认走原版 GUI 管线的回调；本 mod 的 HUD 是 Skija 离屏 +
+        // 帧末合成的旁路渲染，它的缓存 FBO 里没有我们的像素，回调被跳帧 = HUD 整块消失
+        //（闪烁）。进世界后第一个 tick 查一次，改 gnetum.json 并反射 reload 即时生效。
+        // 内部自带「本次启动只查一次」「已关就不说话」闸门，未装 Gnetum 时零成本。
+        com.muoniumplayer.core.thirdparty.GnetumCompat.clientTick(
+                mc.player != null && mc.level != null, this.api);
+
         // ---- 驱动所有注册的 EventHandler（如 MuoniumPlayerEventHandler 的调度队列）----
         for (EventHandler handler : this.api.getEventHandlers()) {
             handler.onLoop();
@@ -269,6 +277,13 @@ public final class MuoniumPlayerClient {
         // 加几个布尔判断。放在按键检测之前，是因为按键那一段要求 mc.player != null，而镜像
         // 在主菜单里也该继续跟随外部播放器（岛的常驻页在那儿也画）。
         ExternalPlayback.onClientTick();
+
+        // ---- 场景声学 ----
+        // 每 tick 问一次环境采样器;内部自带 200ms 节流与全 Throwable 闸,主菜单
+        // (采不到听者)会把目标量送回静息。真正的方块遍历只发生在节流窗口到期
+        // 的那一 tick,其余时候是一次布尔判断。
+        com.muoniumplayer.core.ncm.music.acoustics.AcousticsRuntime.onClientTick(
+                com.muoniumplayer.compat.mc.ListenerProbe.of(mc));
 
         // ---- ModernUI 控制中心的页签注册 ----
         // 每 tick 问一次、闸门在桥里（没装 / 本树没面板 / 已挂过 都是一次布尔比较）：

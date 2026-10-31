@@ -4,6 +4,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.muoniumplayer.compat.lwjgl2.Mouse;
 import com.muoniumplayer.core.input.TouchGestures;
+import com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings;
 import com.muoniumplayer.core.settings.TouchSettings;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.rendering.GlassLook;
@@ -25,14 +26,17 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /**
- * 蝰蛇音效（ViPER）面板：总开关、预设列表（选用 / 导入 / 删除）与一条状态行。
+ * 音效调音台：蝰蛇音效（ViPER）与场景声学共用的单面板。
  *
- * <p>所有读写都走 {@link ViperRuntime}，面板不直接碰配置文件与音频链 —— 改开关 / 换预设 /
- * 导入 / 删除都会立即落盘并重配处理器（下一个音频缓冲生效），所以这里没有「保存」按钮。</p>
+ * <p>蝰蛇页：总开关、预设列表（选用 / 导入 / 删除）与一条状态行，读写都走
+ * {@link ViperRuntime}；场景声学页：分项开关与强度滑条，读写走
+ * {@link AcousticsSettings}。两条链都不直接碰配置文件与音频器 —— 改开关 / 换预设 /
+ * 导入 / 删除都立即落盘并在下一个音频缓冲生效，所以这里没有「保存」按钮。</p>
  *
  * <p><b>重建时机</b>：动作在点击回调里只置一个修订号，真正的重建放在 {@link #onRender} ——
  * {@code renderWidget} 先调 {@code onRender}、之后才遍历子组件，此时清空子组件列表不会撞上
- * 遍历（与 {@link MusicSourceOverlay} 的自定义源页、{@code FontPickerOverlay} 同一处理）。</p>
+ * 遍历（与 {@link MusicSourceOverlay} 的自定义源页、{@code FontPickerOverlay} 同一处理）。
+ * 场景声学页是纯声明页（无列表状态），直接重走 {@link #showAcoustics()} 即可。</p>
  */
 public final class ViperOverlay extends NcmSheet {
 
@@ -103,8 +107,8 @@ public final class ViperOverlay extends NcmSheet {
 
         final Panel dialog = sheet(SHEET_W, () -> BODY_TOP
                 + Math.min(contentHeight(presets.size()), CONTENT_MAX) + FOOTER_H);
-        header(dialog, PartyIcons.HEADPHONES, "蝰蛇音效",
-                () -> "ViPER 音频效果链 · 兼容官方配置文件格式，作用于所有音源的播放输出",
+        header(dialog, PartyIcons.HEADPHONES, "音效调音台",
+                () -> "ViPER 效果链（兼容官方配置文件格式）与场景声学 · 作用于所有音源的播放输出",
                 () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
         tip(dialog, this::statusGlyph, () -> statusText, this::statusColor, () -> STATUS_TOP);
 
@@ -241,10 +245,11 @@ public final class ViperOverlay extends NcmSheet {
     private void showFooter(final Panel dialog) {
         divider(dialog, () -> dialog.getHeight() - FOOTER_H + 2);
 
-        footerButton(dialog, 0, 3, () -> PartyIcons.FOLDER_OPEN,
+        footerButton(dialog, 0, 4, () -> PartyIcons.FOLDER_OPEN,
                 () -> importing ? "正在导入…" : "从文件导入", this::browseForPreset);
-        footerButton(dialog, 1, 3, () -> PartyIcons.TEXT_FORMAT, () -> "调参", this::showTuningGroups);
-        footerButton(dialog, 2, 3, () -> PartyIcons.SYNC, () -> "重新加载", () -> {
+        footerButton(dialog, 1, 4, () -> PartyIcons.TEXT_FORMAT, () -> "调参", this::showTuningGroups);
+        footerButton(dialog, 2, 4, () -> PartyIcons.PUBLIC_ROOM, () -> "场景声学", this::showAcoustics);
+        footerButton(dialog, 3, 4, () -> PartyIcons.SYNC, () -> "重新加载", () -> {
             ViperRuntime.reload();
             statusText = ViperRuntime.describe();
             statusTone = describeTone();
@@ -855,5 +860,175 @@ public final class ViperOverlay extends NcmSheet {
         return statusTone == 1 ? PartyIcons.CHECK : statusTone == 2 ? PartyIcons.WARNING
                 : statusTone == 3 ? PartyIcons.HOURGLASS
                 : PartyIcons.INFO;
+    }
+
+    // ════════════════════════════ 场景声学 ════════════════════════════
+
+    /** 场景声学行高：标题 + 一行说明,比调参行矮一档。 */
+    private static final double ACOUSTICS_ROW_H = 44.0;
+
+    /** 场景声学页：分项开关 ×3、强度滑条与页脚总开关。 */
+    private void showAcoustics() {
+        beginPage();
+        final Panel dialog = sheet(SHEET_W, () -> BODY_TOP
+                + 6.0 + LABEL_ROW + ACOUSTICS_ROW_H * 3 + 12.0 + LABEL_ROW + 52.0 + 10.0 + FOOTER_H);
+        subHeader(dialog, back(this::showEffects), () -> "场景声学",
+                () -> "播放输出随听者所处位置的声学环境变化 · 改动即时落盘生效",
+                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        tip(dialog, () -> AcousticsSettings.isEnabled() ? PartyIcons.CHECK : PartyIcons.INFO,
+                this::acousticsStatusText, this::acousticsStatusColor, () -> STATUS_TOP);
+
+        final Panel body = body(dialog, () -> BODY_TOP, () -> FOOTER_H);
+        final ScrollPanel feed = feed(body);
+        strip(feed, 6.0);
+
+        sectionLabel(strip(feed, LABEL_ROW), "响应项",
+                () -> 5.0, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        acousticsRow(strip(feed, ACOUSTICS_ROW_H), "水面之下", "耳朵没进水里才算数；湿透的输出会在半秒内闷下来",
+                AcousticsSettings::isSubmersion, on -> AcousticsSettings.setSubmersion(on));
+        acousticsRow(strip(feed, ACOUSTICS_ROW_H), "封闭空间", "头顶有遮挡添房间反射，四壁合围加重成洞窟回响",
+                AcousticsSettings::isEnclosure, on -> AcousticsSettings.setEnclosure(on));
+        acousticsRow(strip(feed, ACOUSTICS_ROW_H), "降水天气", "雨雪雷暴时输出整体让路，给游戏的环境声腾位置",
+                AcousticsSettings::isRainfall, on -> AcousticsSettings.setRainfall(on));
+        strip(feed, 12.0);
+
+        sectionLabel(strip(feed, LABEL_ROW), "强度",
+                () -> 5.0, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        // 标题、读数与滑条都住同一格 strip 里：滚动区自己会按行堆叠子组件，
+        // 任何直接挂在 feed 上的控件都会被绝对坐标钉在内容顶部、压住上面的行。
+        final Panel strengthStrip = strip(feed, 52.0);
+        final LabelWidget strengthCaption = label(strengthStrip, "整体强度", FontManager.pf12bold);
+        strengthCaption.setBeforeRenderCallback(() -> {
+            strengthCaption.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            strengthCaption.setPosition(PAD + CARD_INSET, inkTop(strengthCaption, 11.0));
+        });
+        final LabelWidget strengthValue = label(strengthStrip, () -> AcousticsSettings.strengthPercent() + "%",
+                FontManager.pf12bold);
+        strengthValue.setBeforeRenderCallback(() -> {
+            strengthValue.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+            strengthValue.setPosition(
+                    Math.max(PAD + CARD_INSET, strengthStrip.getWidth() - PAD - CARD_INSET - strengthValue.getWidth()),
+                    inkTop(strengthValue, 11.0));
+        });
+        final AcousticsSlider slider = new AcousticsSlider();
+        strengthStrip.addChild(slider);
+        slider.setBeforeRenderCallback(() -> {
+            slider.setBounds(Math.max(1, strengthStrip.getWidth() - (PAD + CARD_INSET) * 2), 16);
+            slider.setPosition(PAD + CARD_INSET, strengthStrip.getHeight() - 22);
+        });
+        strip(feed, 10.0);
+
+        divider(dialog, () -> dialog.getHeight() - FOOTER_H + 2);
+        icon(dialog, () -> PartyIcons.PUBLIC_ROOM, ICON_S,
+                () -> PAD + CARD_INSET + ICON_S * .5, () -> dialog.getHeight() - 64.0,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        final LabelWidget caption = label(dialog, "启用场景声学", FontManager.pf12bold);
+        caption.setBeforeRenderCallback(() -> {
+            caption.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            caption.setMaxWidth(Math.max(1, dialog.getWidth() - PAD * 2 - ICON_S - 60));
+            caption.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            caption.setPosition(PAD + CARD_INSET + ICON_S + 7.0,
+                    inkTop(caption, dialog.getHeight() - 64.0));
+        });
+        toggle(dialog, AcousticsSettings::isEnabled, () ->
+                        AcousticsSettings.setEnabled(!AcousticsSettings.isEnabled()),
+                () -> dialog.getWidth() - PAD - CARD_INSET, () -> dialog.getHeight() - 64.0,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        tip(dialog, () -> PartyIcons.INFO,
+                () -> "效果挂在输出链主效果之后一节；开关与强度即时生效、自动保存",
+                () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                () -> dialog.getHeight() - 32.0);
+    }
+
+    /** 一行分项：标题 + 说明 + 右侧开关。 */
+    private void acousticsRow(final Panel row, final String title, final String note,
+                              final BooleanSupplier state, final java.util.function.Consumer<Boolean> flip) {
+        final LabelWidget caption = label(row, title, FontManager.pf14bold);
+        caption.setBeforeRenderCallback(() -> {
+            caption.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            caption.setPosition(PAD + CARD_INSET, inkTop(caption, 14.0));
+        });
+        final LabelWidget detail = label(row, note, FontManager.pf12);
+        detail.setBeforeRenderCallback(() -> {
+            detail.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            detail.setMaxWidth(Math.max(1, row.getWidth() - (PAD + CARD_INSET) * 2 - 52.0));
+            detail.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            detail.setPosition(PAD + CARD_INSET, inkTop(detail, 31.0));
+        });
+        toggle(row, state, () -> {
+                    boolean next = !state.getAsBoolean();
+                    System.out.println("[MuoniumPlayer/Acoustics] 分项开关: " + title + " → " + (next ? "开" : "关"));
+                    flip.accept(next);
+                },
+                () -> row.getWidth() - PAD - CARD_INSET, () -> row.getHeight() * .5,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+    }
+
+    private String acousticsStatusText() {
+        return AcousticsSettings.isEnabled()
+                ? "生效中 · 进入水面、屋顶下或降水天气时输出随之变化"
+                : "关闭中 · 播放输出与所处声学环境无关";
+    }
+
+    private int acousticsStatusColor() {
+        return AcousticsSettings.isEnabled() ? OK_COLOR
+                : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+    }
+
+    /**
+     * 强度滑条：值由渲染轮询写入，松手即已落盘（snapshot 原子写）。
+     * 行为对齐调参页的滑条：纵向手势锁定（滚列表）时让位。
+     */
+    private final class AcousticsSlider extends RoundedRectWidget {
+
+        private boolean dragging;
+
+        @Override
+        public void onRender(double mouseX, double mouseY) {
+            final double x = getX();
+            final double y = getY();
+            final double w = Math.max(1.0, getWidth());
+            final double h = Math.max(1.0, getHeight());
+            final float alpha = getAlpha();
+
+            final boolean hovered = testHovered(mouseX, mouseY);
+            final boolean down = Mouse.isButtonDown(0);
+            if (!down) {
+                dragging = false;
+            } else if (TouchGestures.get().isVerticalDrag()) {
+                dragging = false;
+            } else if (hovered) {
+                dragging = true;
+            }
+            if (dragging) {
+                int pct = (int) Math.round(clamp01((mouseX - x) / w) * 100.0);
+                if (pct != AcousticsSettings.strengthPercent()) {
+                    AcousticsSettings.setStrengthPercent(pct);
+                }
+            }
+
+            final double t = clamp01(AcousticsSettings.strengthPercent() / 100.0);
+            roundedRect(x, y + h * .5 - 2.5, w, 5, 2.5,
+                    RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.BORDER), alpha * .8f));
+            final double filled = Math.max(0.0, Math.min(w, w * t));
+            if (filled > .5) {
+                roundedRect(x, y + h * .5 - 2.5, filled, 5, 2.5,
+                        RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), alpha));
+            }
+            final double knob = 10.0;
+            roundedRect(x + Math.max(0.0, Math.min(w - knob, w * t - knob * .5)),
+                    y + h * .5 - knob * .5, knob, knob, knob * .5,
+                    RenderSystem.reAlpha(0xFFFFFF, alpha * .95f));
+
+            if (hovered || dragging) {
+                setShouldOverrideMouseCursor(true);
+            }
+        }
+
+        @Override
+        public boolean onMouseClicked(double relativeX, double relativeY, int mouseButton) {
+            // 值由 onRender 的轮询路径设置；这里只吞掉点击，防止穿透到底下的弹窗遮罩。
+            return true;
+        }
     }
 }

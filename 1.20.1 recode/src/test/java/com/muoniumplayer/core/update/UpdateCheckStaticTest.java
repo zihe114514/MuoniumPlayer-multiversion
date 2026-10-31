@@ -29,7 +29,7 @@ class UpdateCheckStaticTest {
     private static final Path SHARED_JAVA = ProjectPaths.sharedJava();
 
     private static final String MC_VERSION = "1.20.1";
-    private static final String MOD_VERSION = "2.2.0";
+    private static final String MOD_VERSION = "2.3.0";
     private static final String LOADER_ID = "forge";
 
     @Test

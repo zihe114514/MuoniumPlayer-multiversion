@@ -30,6 +30,33 @@ import java.util.regex.Pattern;
  */
 public final class WorldLyricsState {
 
+    /**
+     * 辉光链路一次性诊断（-Dmuonium.debug.worldLyrics 开启时输出，去重）：
+     * 定位「参数拉满也没晕」断在哪一环 —— mask 采集 / 参数配置 / bloom 运行。
+     */
+    public static void traceGlowOnce(String msg) {
+        if (!Boolean.getBoolean("muonium.debug.worldLyrics")) return;
+        if (!TRACE_GLOW_SEEN.add(msg)) return;
+        System.out.println("[WorldLyrics/glow] " + msg);
+    }
+
+    /**
+     * 辉光参数 trace：消息含动态值（开关/曝光/扩散），同一前缀只节流不 dedup ——
+     * 参数变化立刻可见。每秒最多一条防刷屏。
+     */
+    public static void traceGlowParams(String msg) {
+        if (!Boolean.getBoolean("muonium.debug.worldLyrics")) return;
+        long now = System.nanoTime();
+        if (now - TRACE_GLOW_LAST < 1_000_000_000L) return;
+        TRACE_GLOW_LAST = now;
+        System.out.println("[WorldLyrics/glow] " + msg);
+    }
+
+    private static long TRACE_GLOW_LAST;
+
+    private static final java.util.Set<String> TRACE_GLOW_SEEN =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     // ==================== 布局与动效常量 ====================
 
     /** 歌词文字颜色（默认纯白；取色器可自定义）。 */
@@ -112,6 +139,20 @@ public final class WorldLyricsState {
      */
     public static final class SpawnedLine {
         public final List<String> lines;      // wrap 拆行后的文本
+        /** 翻译/罗马音的 wrap 拆行（与 2D 界面同一数据口 getSecondaryLyrics；
+         *  null = 无翻译或开关关）。独立于 lines：不进 charTimes/爆闪规划/关键词
+         *  匹配，心象模式的分块也不读它。 */
+        public final List<String> translationLines;
+        /** 翻译副行的逐字时刻（相对句首 ms，与 charTimes 同口径）：表意主行按
+         *  进度比例插值铺满演唱区间；拉丁主行为均匀轴（主行半程展示完）。
+         *  null = 无逐字副行（整行淡入档）。 */
+        public final long[] translationCharTimes;
+        /** 副行走逐字点亮分支的定格（显示翻译 = 逐字点亮档 && 轴非空）。
+         *  buildGlyphs 只读它 —— 修掉「FADE 档因轴恒非空而从未生效」的旧问题。 */
+        public final boolean transKaraokeMode;
+        /** 绘光副行特效（点亮闪点 + 微飞径迹）：仅逐字点亮档有意义，spawn 时
+         *  按开关定格 —— buildGlyphs/渲染层只读这个标志，不再各自查设置。 */
+        public final boolean transEffects;
         public final long startMs;
         public final long revealMs;           // 逐字出现的总时长
         /** 时间线里的行下标：去抖恢复（takeFadingIfSameLine）按它认回同一句。 */
@@ -123,11 +164,17 @@ public final class WorldLyricsState {
         /** 每个非空白字符出现的时间（相对这句开始，毫秒）——word pop 用。 */
         public final long[] charTimes;
 
-        SpawnedLine(List<String> lines, long startMs, long revealMs,
+        SpawnedLine(List<String> lines, List<String> translationLines, long[] translationCharTimes,
+                 boolean transEffects,
+                 long startMs, long revealMs,
                  int lineIndex,
                  double x, double y, double z, double spawnYawDeg, double spawnPitchDeg,
                  long[] charTimes) {
             this.lines = lines;
+            this.translationLines = translationLines;
+            this.translationCharTimes = translationCharTimes;
+            this.transKaraokeMode = translationCharTimes != null && translationCharTimes.length > 0;
+            this.transEffects = transEffects;
             this.startMs = startMs;
             this.revealMs = revealMs;
             this.lineIndex = lineIndex;
@@ -139,11 +186,11 @@ public final class WorldLyricsState {
             this.charTimes = charTimes;
         }
 
-        /** 测试等直接构造入口：不带时间线行下标（去抖恢复按 -1 视作不可认回）。 */
+        /** 测试等直接构造入口：不带时间线行下标（去抖恢复按 -1 视作不可认回），无翻译行。 */
         public SpawnedLine(List<String> lines, long startMs, long revealMs,
                         double x, double y, double z, double spawnYawDeg, double spawnPitchDeg,
                         long[] charTimes) {
-            this(lines, startMs, revealMs, -1, x, y, z, spawnYawDeg, spawnPitchDeg, charTimes);
+            this(lines, null, null, false, startMs, revealMs, -1, x, y, z, spawnYawDeg, spawnPitchDeg, charTimes);
         }
 
         // ---- 心象模式缓存（句身持有：分块与词云布局都是行的纯函数，一次算好多帧复用；
@@ -254,6 +301,27 @@ public final class WorldLyricsState {
          * 绘制编排里读，状态机不感知。
          */
         default boolean hudDraw() { return false; }
+
+        /**
+         * 显示翻译：spawn 时把翻译/罗马音（与 2D 界面同一数据口）存进句身的
+         * 独立列表，非心象动效在主句下方画小号暗色副行。心象模式不画。
+         *
+         * @deprecated 用 {@link #translationMode()}（三档：关/整行淡入/逐字点亮）。
+         */
+        @Deprecated
+        default boolean translation() { return translationMode() != TRANSLATION_OFF; }
+
+        /**
+         * 翻译副行显示档：{@link #TRANSLATION_OFF}（关）/ {@link #TRANSLATION_FADE}
+         * （整行随主句淡入）/ {@link #TRANSLATION_KARAOKE}（逐字点亮 + 唱到弹出）。
+         */
+        default int translationMode() { return TRANSLATION_FADE; }
+
+        /**
+         * 翻译副行的绘光特效（点亮闪点 + 微飞径迹）：仅逐字点亮档有意义。
+         * 径迹开销最高（每字一条贝塞尔折线逐帧重采），独立成开关。
+         */
+        default boolean translationEffects() { return false; }
     }
 
     /** 一行歌词这一帧的最终落点与字形状态，渲染层只读。 */
@@ -1241,7 +1309,17 @@ public final class WorldLyricsState {
             pitch = (float) Math.min(pitch, maxPitchFor(d));
             dir = yawPitchDirectionStatic(yaw, pitch);
         }
-        SpawnedLine f = new SpawnedLine(wrapped, line.timestamp, reveal, lineIndex,
+        List<String> transLines = translationLinesOf(line, params);
+        // 逐字点亮分支的定格：仅 KARAOKE 档算轴；FADE 档轴置 null（整行淡入
+        // 路径接管）—— 三档语义自此真正生效。
+        boolean transKaraoke = transLines != null
+                && params.translationMode() == TRANSLATION_KARAOKE;
+        SpawnedLine f = new SpawnedLine(wrapped, transLines,
+                transKaraoke
+                        ? translationCharTimesOf(line, wrapped, transLines, charTimes, nextMs)
+                        : null,
+                transKaraoke && params.translationEffects(),
+                line.timestamp, reveal, lineIndex,
                 camera.eyeX() + dir[0] * d, camera.eyeY() + dir[1] * d, camera.eyeZ() + dir[2] * d,
                 yaw, pitch, charTimes);
         // 十字爆闪规划（folia planBursts sung 模式的 3D 版）：spawn 时按种子定格
@@ -1254,6 +1332,107 @@ public final class WorldLyricsState {
         f.huiguangBursts = HuiguangMotion.planBursts(lineIndex, charTimes, nonWs,
                 line.lyric != null ? line.lyric.hashCode() : lineIndex, 0.32f, 2);
         return f;
+    }
+
+    /**
+     * 翻译行采集：与 2D 界面同一数据口（getSecondaryLyrics —— 有翻译给翻译、
+     * 日语歌开了罗马音给罗马音、空行给 ""）。wrap 拆行后独立存放，不混入
+     * 主文本流（charTimes/爆闪/关键词/心象分块都只数主文本）。档位关闭或无
+     * 翻译返回 null（句身零开销）。
+     */
+    private static List<String> translationLinesOf(LyricLine line, Params params) {
+        if (params.translationMode() == TRANSLATION_OFF) return null;
+        try {
+            String sec = CloudMusic.getSecondaryLyrics(line);
+            if (sec == null || sec.trim().isEmpty()) return null;
+            return wrap(sec, WRAP_WIDTH);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 拉丁主行判定阈值：非空白字符中拉丁字母（含扩展拉丁）占比 ≥ 此值即按
+     *  「表音文字行」处理副行轴（英文歌等）。与 splitWords 的 CJK 判定位同口径。 */
+    private static final double LATIN_RATIO_THRESHOLD = 0.7;
+    /** 拉丁主行副行的逐字间隔下限（ms）：与主行 charTimesOf 的 80ms/字口径对齐。 */
+    private static final long TRANS_LATIN_PER_CHAR_MS = 90L;
+    /** 拉丁主行副行的铺开时长占演唱区间比例：主行唱到约一半时副行全部展示完。 */
+    private static final double TRANS_LATIN_SPAN_RATIO = 0.5;
+
+    /**
+     * 主行是否以拉丁字母为主（英文歌等表音文字行）：非空白字符中「字母且非
+     * CJK/谚文/表意区间」的占比 ≥ {@link #LATIN_RATIO_THRESHOLD}。空串/纯标点
+     * 返回 false（退回插值轴）。中日韩混唱行（如「Say so 远くまで」）占比不足，
+     * 维持逐字插值 —— 每句独立判定。
+     */
+    private static boolean isMostlyLatin(String text) {
+        if (text == null) return false;
+        int latin = 0, total = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (Character.isWhitespace(c)) continue;
+            total++;
+            if (Character.isLetter(c) && c < 0x2E80) latin++;
+        }
+        return total > 0 && (double) latin / total >= LATIN_RATIO_THRESHOLD;
+    }
+
+    /**
+     * 翻译副行的逐字时刻。两种口径：
+     * <ul>
+     *   <li><b>表意主行（日/韩/中）</b>：把主行演唱区间按进度比例铺到翻译字符上
+     *       —— 翻译第 i 字时刻 = 主行同比例进度处的时刻（线性插值，两端对齐）。
+     *       主行逐字与翻译逐字一一对应感强；主行无逐字轴时主 charTimes 本身就是
+     *       均分轴，映射结果同为均分。</li>
+     *   <li><b>拉丁主行（英文歌）</b>：主轴是「词内快滑 + 词间停顿」的字母轴，
+     *       按比例插值会让中文点亮时刻落在英文单词内部、逐字蹦跳。改用<b>均匀轴</b>：
+     *       时刻等间隔铺满 [0, span]，span = min(演唱区间×0.5, 字数×90ms) ——
+     *       副行在主行演唱约一半时全部展示完，入场曲线不变，观感为「字连续流入
+     *       浮现」。</li>
+     * </ul>
+     */
+    private static long[] translationCharTimesOf(LyricLine line, List<String> wrapped,
+                                                 List<String> transLines, long[] mainTimes,
+                                                 long nextMs) {
+        int mainCount = mainTimes != null ? mainTimes.length : 0;
+        if (mainCount == 0) return null;
+        // 主行非空白总长（含标点 —— charTimes 按非空白序，与主字形一致）
+        int total = 0;
+        for (String w : wrapped) {
+            for (int i = 0; i < w.length(); i++) {
+                if (!Character.isWhitespace(w.charAt(i))) total++;
+            }
+        }
+        if (total == 0) return null;
+        int transCount = 0;
+        for (String t : transLines) {
+            for (int i = 0; i < t.length(); i++) {
+                if (!Character.isWhitespace(t.charAt(i))) transCount++;
+            }
+        }
+        if (transCount == 0) return null;
+        long[] out = new long[transCount];
+        if (isMostlyLatin(line.lyric)) {
+            // 拉丁主行：均匀轴。span 封顶「字数×90ms」（超长行不无限拉长）、
+            // 「主轴末字一半」（主行唱到中段副行已全部就位）与「演唱区间一半」。
+            long span = Math.min(
+                    Math.min(Math.max(400L, nextMs - line.timestamp) / 2L,
+                            TRANS_LATIN_PER_CHAR_MS * transCount),
+                    mainTimes[mainCount - 1] / 2L);
+            for (int i = 0; i < transCount; i++) {
+                out[i] = transCount > 1 ? span * i / (transCount - 1) : 0L;
+            }
+            return out;
+        }
+        for (int i = 0; i < transCount; i++) {
+            // 进度比例 → 主轴下标（浮点）→ 相邻两字时刻线性插值
+            double p = total > 1 ? (double) i * (total - 1) / Math.max(1, transCount - 1) : 0;
+            int lo = (int) Math.floor(p);
+            int hi = Math.min(mainCount - 1, lo + 1);
+            double frac = p - lo;
+            out[i] = (long) (mainTimes[lo] + (mainTimes[hi] - mainTimes[lo]) * frac);
+        }
+        return out;
     }
 
     /** 中西文标点集（词字号压小档用）。 */
@@ -1626,6 +1805,14 @@ public final class WorldLyricsState {
     private static final float EXIT_STAGGER_MS = 220f;
     /** 出场缩小下限：字缩到 0.85 再随行 alpha 一起消失。 */
     private static final float EXIT_SCALE_MIN = 0.85f;
+    /** 翻译副行字形相位键基值：负空间与主字（0..N）完全隔离，抖动/级联互不影响。 */
+    private static final int TRANSLATION_KEY_BASE = -1_000_000;
+    /** 翻译副行显示档：关。 */
+    public static final int TRANSLATION_OFF = 0;
+    /** 翻译副行显示档：整行随主句进度淡入（无逐字点亮）。 */
+    public static final int TRANSLATION_FADE = 1;
+    /** 翻译副行显示档：逐字点亮 + 唱到弹出（扫光按主行演唱进度同步推进）。 */
+    public static final int TRANSLATION_KARAOKE = 2;
 
     /** ease-out-back：先过冲再落回，比 smoothstep 多一分弹性与华丽感。 */
     private static float easeOutBack(float t) {
@@ -1848,6 +2035,7 @@ public final class WorldLyricsState {
         int k = 0;      // 字形下标（含空白）
         int n = 0;      // 非空白字符序号（仅 flashMode 推进 —— 与既有语义一致）
         int hwN = 0;    // 绘光自己的非空白计数器（飞行定义按它索引；见 huiguang 分支）
+        int transKaraokeIdx = 0;   // 翻译副行的非空白计数器（逐字档按它索引翻译轴）
         for (String line : lines) {
             float w = pixelWidthOf.widthOf(line);
             float x = -w / 2f;
@@ -2057,6 +2245,112 @@ public final class WorldLyricsState {
                 k++;
             }
             y += LINE_H;
+        }
+
+        // ---- 翻译副行（非心象动效：简洁 + 绘光）：主块下方 0.35 行距的空隙后，
+        //      小号（pop 0.72）暗色（alpha ×0.55）整行随主句进度淡入 —— 不进
+        //      charTimes/爆闪/光斑/关键词，卡拉OK扫光只作用主行。心象模式
+        //      的分块布局按 lines 构建，这里不追加（保持词云舞台原样）。
+        //      逐字点亮档（translationCharTimes 非空）：副行走与主行同款点亮——
+        //      扫光按主行演唱进度同步推进，唱到的字弹一下（word pop 同款回弹）
+        //      并带小幅上浮入场；恒显档（null）维持整行淡入。
+        if (!cadenza && f.translationLines != null) {
+            // 逐字点亮分支的定格（spawn 时已按「显示翻译 = 逐字点亮档」算好轴；
+            // 整行淡入档轴为 null）。修掉旧问题：此前只看轴非空，FADE 档从未生效。
+            boolean transKaraoke = f.transKaraokeMode;
+            // 整行淡入档的淡入曲线：用主行真实演唱进度 —— 有逐字轴时以主轴末字
+            // 时刻为准（revealMs 是 chars×55ms 的估算，与真实演唱进度无关，
+            // 有轴歌在 33% 进度就全亮）；无轴歌维持 revealMs 口径。
+            float secFadeBase = 1f;
+            if (f.charTimes != null && f.charTimes.length > 0
+                    && f.charTimes[f.charTimes.length - 1] > 0) {
+                secFadeBase = (float) clamp01((double) elapsedMs
+                        / f.charTimes[f.charTimes.length - 1]);
+            } else if (f.revealMs > 0) {
+                secFadeBase = (float) clamp01((double) elapsedMs / f.revealMs);
+            }
+            float secAlphaMul = alphaMul * 0.95f * (0.5f + 0.5f * secFadeBase);
+            if (secAlphaMul > 0.02f) {
+                float ty = y + LINE_H * 0.35f;   // y 已停在主块最后一行基线之后
+                for (String tLine : f.translationLines) {
+                    float tw = pixelWidthOf.widthOf(tLine);
+                    float tx = -tw / 2f;
+                    for (int i = 0; i < tLine.length(); i++) {
+                        char c = tLine.charAt(i);
+                        if (Character.isWhitespace(c)) {
+                            tx += pixelWidthOf.widthOf(String.valueOf(c));
+                            continue;
+                        }
+                        // k 用独立负相位键 —— 确定性抖动/出场级联的相位空间与主字隔离
+                        int key = TRANSLATION_KEY_BASE + k;
+                        if (transKaraoke) {
+                            // ---- 逐字点亮档：与主行同款入场曲线（落位上浮 + smoothstep
+                            //      淡入）+ 唱到弹一下（word pop 同式回弹，幅度按副行
+                            //      字号收敛到 0.35），点亮进度走主行同一条 lit 曲线口径
+                            //      （翻译轴相邻字时刻差 < LIGHT_UP_MS 时补到下限）。
+                            int ti = Math.min(transKaraokeIdx, f.translationCharTimes.length - 1);
+                            float tAt = f.translationCharTimes[ti];
+                            float tEnter = (elapsedMs - tAt) / ENTER_MS;
+                            float litWin = HuiguangMotion.LIGHT_UP_MS;
+                            if (ti + 1 < f.translationCharTimes.length) {
+                                litWin = Math.max(HuiguangMotion.LIGHT_UP_MS,
+                                        f.translationCharTimes[ti + 1] - tAt);
+                            }
+                            float tLit = HuiguangMotion.smooth01((elapsedMs - tAt) / litWin);
+                            if (tEnter > 0f && tLit > 0.001f) {
+                                float landed = (float) clamp01(tEnter);
+                                float back = easeOutBack(landed);
+                                float fadeT = (float) clamp01(tEnter / 0.6f);
+                                float fade = fadeT * fadeT * (3f - 2f * fadeT);
+                                float gy = ty + (1f - back) * (CHAR_LIFT_PX * 0.5f);
+                                float pop = 0.72f;
+                                if (wordPop) {
+                                    float popT = (elapsedMs - tAt) / 160f;
+                                    float back01 = (float) clamp01(1f - popT);
+                                    pop *= 1f + 0.35f * back01 * back01;
+                                }
+                            float a = alphaMul * 0.95f * fade;
+                            if (a > 0.02f) {
+                                LyricGlyph g = new LyricGlyph(c, tx, gy, a, key, pop);
+                                g.huiguangLit = tLit;
+                                if (huiguang) {
+                                    // 副行特效（transEffects 开关驱动，spawn 时已定格
+                                    // 到句身）：点亮瞬间闪一下（与主字同一包络）。
+                                    if (f.transEffects) {
+                                        g.huiguangFlash = HuiguangMotion.flashEnvelope(
+                                                elapsedMs - tAt);
+                                    }
+                                }
+                                out.glyphs.add(g);
+                                out.appearAts.add(tAt);
+                                // 副行特效开 = 微飞 Flight（落位点上方 0.6 字号落到位，
+                                // 短时长）：径迹/飞行白化数据就位；关 = null 占位。
+                                if (huiguang) {
+                                    out.huiguangFlights.add(f.transEffects
+                                            ? HuiguangMotion.flight(key, seed,
+                                                    tx, ty - LYRIC_SIZE * 0.6f, tx, gy,
+                                                    LYRIC_SIZE * 0.72f, false)
+                                            : null);
+                                }
+                            }
+                            }
+                            transKaraokeIdx++;
+                        } else {
+                            // ---- 整行淡入档：恒显（无入场逐字动画），alpha 只由
+                            //      句身淡入淡出与副行淡入系数决定
+                            float a = secAlphaMul;
+                            if (a > 0.02f) {
+                                out.glyphs.add(new LyricGlyph(c, tx, ty, a, key, 0.72f));
+                                out.appearAts.add(0f);
+                                if (huiguang) out.huiguangFlights.add(null);
+                            }
+                        }
+                        tx += pixelWidthOf.widthOf(String.valueOf(c));
+                        k++;
+                    }
+                    ty += LINE_H;
+                }
+            }
         }
 
         // ---- 出场级联：行 alpha 已经是统一淡出系数（alphaMul），

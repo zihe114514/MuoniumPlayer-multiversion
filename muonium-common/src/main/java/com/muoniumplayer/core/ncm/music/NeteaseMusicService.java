@@ -187,7 +187,7 @@ public final class NeteaseMusicService {
         return result;
     }
 
-    /** Apple Music 搜索：目录元数据行（完整版走 gamdl 伴生，preview 只是兜底）。 */
+    /** Apple Music 搜索：目录元数据行（完整版走本机引擎，preview 只是兜底）。 */
     private static List<Music> searchApple(String keyword, int limit) {
         List<Music> result = new ArrayList<>();
         for (com.muoniumplayer.core.ncm.apple.AppleMusicService.Track track
@@ -515,7 +515,7 @@ public final class NeteaseMusicService {
             return null;
         }
         if (music.isApple()) {
-            // Apple 行同理：完整版走 gamdl 伴生（Music#resolveApplePlayUrl 的伪 URL 链），
+            // Apple 行同理：完整版走本机引擎（Music#resolveApplePlayUrl 的伪 URL 链），
             // 这条统一取流链路只认网易云 id。继续往下会拿 apple 数字 id 解出别人的歌。
             return null;
         }

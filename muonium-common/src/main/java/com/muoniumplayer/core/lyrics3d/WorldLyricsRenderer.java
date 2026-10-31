@@ -172,6 +172,16 @@ public final class WorldLyricsRenderer {
          */
         default void flushGlyphBatch(Object pageKey) {
         }
+
+        /**
+         * 辉光 mask 采集（宿主支持后处理辉光时实现）：直画端帧头配置辉光后返回其
+         * mask 缓冲 —— 本帧 drawSmoothGlyph 发的字形 quad 同时记进它（平色、无
+         * 阴影/特效），直画端先画 mask → bloom → 加色垫底，再画清晰本体。
+         * 返回 null = 本帧不采集（后处理不跑）。
+         */
+        default MaskQuadCollector glowMaskTarget() {
+            return null;
+        }
     }
 
     /** 连续绘制失败熔断阈值：超过即整体停用（与 Bridge 的 broken 同一口径）。 */
@@ -236,6 +246,19 @@ public final class WorldLyricsRenderer {
         }
 
         long songNowMs = snap.positionMs;
+
+        // 辉光后处理帧头配置：mask 采集是否激活、bloom 参数（曝光/扩散/色）。
+        // 树侧直画端在本方法返回后 take() 一次性消费（configured/take 都清零，
+        // 这里定参）。mask 缓冲无条件清空 —— 辉光关闭的帧也不能让上一帧的
+        // quad 残留进下一次 bloom。
+        boolean smoothStyle = settings.styleModern;
+        GlowBloom.configure(settings, smoothStyle);
+        WorldLyricsState.traceGlowParams("configure: glowEnabled=" + settings.glowEnabled
+                + " strength=" + settings.glowStrength + " spread=" + settings.glowSpread
+                + " → params=" + (GlowBloom.configured ? "on" : "off")
+                + " maskHost=" + (host.glowMaskTarget() != null));
+        MaskQuadCollector glowMaskBuf = host.glowMaskTarget();
+        if (glowMaskBuf != null) glowMaskBuf.beginFrame();
 
         // 淡出中的先画（下层），active 后画（上层）。
         // 画布槽位：active 行 0、淡出行从 1 起 —— 同帧两行都进拖尾窗口时
@@ -329,7 +352,16 @@ public final class WorldLyricsRenderer {
                 //      指数平滑（folia 8 样本平均）；尺寸 5×字号、沿行进方向拉长
                 //      ×1.6（两枚错位圆近似椭圆）、alpha 0.07、唱后 0.6s 淡出。
                 long spotElapsed = glyphs.huiguangElapsedMs;
-                int spotCount = glyphs.glyphs.size();
+                // 光斑默认只在主字形上走（截到第一个负相位键）。副行特效开 =
+                // 逐字点亮档副行的 appearAt（主行演唱进度的映射轴）单调递增接在
+                // 主行之后，光斑唱完主行顺势爬进副行、与扫光同步 —— 放行全部字形。
+                // 整行淡入档副行 appearAt 恒 0（会污染窗口端点），恒截断。
+                int spotCount = 0;
+                int spotCountLimit = glyphs.glyphs.size();
+                if (!f.transEffects) {
+                    while (spotCount < spotCountLimit
+                            && glyphs.glyphs.get(spotCount).k >= 0) spotCount++;
+                }
                 if (row.active && spotCount > 0 && glyphs.huiguangLayout != null) {
                     float firstA = glyphs.appearAts.get(0);
                     float lastA = glyphs.appearAts.get(spotCount - 1);
@@ -652,6 +684,10 @@ public final class WorldLyricsRenderer {
                         // 观感是「黑色透明影子」。folia 的邻行槽位是可见的亮字，
                         // 这里同样直接画亮档满色；唱到转正后照常走卡拉OK双色
                         if (glyphs.huiguangElapsedMs < 0f) lit = 1f;
+                        // 翻译副行（k<0）：特效开 = 走自身 lit（卡拉OK扫光爬进副行，
+                        // 与主行同步推进，扫光经过就是暖白满亮）；关 = 恒走暗档
+                        //（原克制语义：副行只叙事不参与点亮）。
+                        if (g.k < 0 && !f.transEffects) lit = 0f;
                         // 关键字着色（folia keywordLight）：点亮后字身按 0.6 混入
                         // 关键字色相（先拉满亮度只取色相，再归一回光色亮度），保证
                         // 「仍是发光体」
@@ -662,6 +698,12 @@ public final class WorldLyricsRenderer {
                         // folia「未点亮的字保持冷色」：暗档从未混色 inkRgb 派生，
                         // 只有亮档走关键字混色 —— 未唱关键字字不带淡色相
                         int dim = huiguangUnlitInk(inkRgb & 0xFFFFFF, huiguangNight);
+                        // 翻译副行特效关时豁免「未唱压暗」（UNLIT_DIM 0.45 会把
+                        // 副行压成看不清，用户实测）：只取夜色冰蓝成分保色调对比。
+                        // 特效开时走正常暗档 —— 扫光经过前是未唱冷色，语义完整。
+                        if (g.k < 0 && !f.transEffects) {
+                            dim = mixRgb(inkRgb & 0xFFFFFF, HUIGUANG_ICE_RGB, huiguangNight * 0.55f);
+                        }
                         if (lit < 0.999f) {
                             float da = Math.min(1f, g.alpha * (1f + 0.45f * huiguangNight)) * (1f - lit);
                             if (da > 0.02f) {

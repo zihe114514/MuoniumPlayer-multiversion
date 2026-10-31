@@ -91,9 +91,9 @@ class AutomixCueMarkerStaticTest {
         String getter = between(read(CLOUD_MUSIC),
                 "public static AutomixCueMarker automixCueNow() {",
                 "return ((PlayThread) thread).automixCueView();");
-        ordered(getter, "关设置 → 关无缝 → 镜像态 → 拿不到播放线程",
+        ordered(getter, "关设置 → 关无缝 → 镜像态（SMTC 与 Spotify 接管都要让） → 拿不到播放线程",
                 "if (!AutomixSettings.isCueMarkerEnabled() || !AutomixSettings.isEnabled()) return null;",
-                "if (ExternalPlayback.isMirroring()) return null;",
+                "if (ExternalPlayback.isMirroring() || SpotifyConnectMirror.isMirroring()) return null;",
                 "if (!(thread instanceof PlayThread)) return null;");
     }
 

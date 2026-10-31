@@ -142,10 +142,26 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         if (captureMode) {
             LyricPresentRenderer.beginFrame();
         }
+        // 辉光 mask 采集恒开（非 capture 的世界 submit 也要双写 —— present 端的
+        // bloom-only 合成靠它）：GlowBloom 已配置则返回缓冲，未配置 null 零成本。
+        this.glowMask = WorldLyricsHudDraw.glowMaskTarget();
+        com.muoniumplayer.core.lyrics3d.WorldLyricsState.traceGlowOnce(
+                "billboard.begin: captureMode=" + captureMode
+                        + " glowMask=" + (this.glowMask != null));
     }
 
     /** 本帧是否在采集（capture 模式下 submit 全部旁路）。 */
     private boolean captureMode;
+
+    @Override
+    public com.muoniumplayer.core.lyrics3d.MaskQuadCollector glowMaskTarget() {
+        return glowMask;
+    }
+
+    /** 辉光 mask 采集（present 兜底帧激活；null = 本帧不采集）。 */
+    private com.muoniumplayer.core.lyrics3d.MaskQuadCollector glowMask;
+    /** 辉光诊断计数（渲染线程单线程使用）：drawSmoothGlyph 调用数 vs mask 写入数。 */
+    private static int glowGlyphCalls, glowMaskWrites;
 
     public void end() {
         if (captureMode) {
@@ -155,6 +171,11 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         }
         this.poseStack = null;
         this.collector = null;
+        com.muoniumplayer.core.lyrics3d.WorldLyricsState.traceGlowOnce(
+                "billboard.end: glyphCalls=" + glowGlyphCalls
+                        + " maskWrites=" + glowMaskWrites);
+        glowGlyphCalls = 0;
+        glowMaskWrites = 0;
     }
 
     @Override
@@ -219,6 +240,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                                 int rgb, float alpha, float rot, float dx, float dy, float sc,
                                 float glowMul) {
         if (poseStack == null || collector == null) return;
+        glowGlyphCalls++;
         // 发光参数取本帧快照（Bridge 在帧头装配好；没装配时按无发光查格）
         com.muoniumplayer.core.lyrics3d.WorldLyricsSettings settings =
                 WorldLyricsBridge.currentSettings;
@@ -227,6 +249,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         int glowColor = settings != null ? settings.glowColorRgb : 0xFFFFFF;
         // 心象的发光脉冲：正在唱的块满档、其余块压档 —— 查格前乘上去（缓存键已量化）。
         glowStrength *= glowMul;
+        // 辉光后处理接管发光：本帧 mask 采集激活时字形按零烘焙强度取格 ——
+        // 晕全由 bloom 从 mask 生成，烘焙晕与后处理晕不再叠加（能量翻倍会糊）。
+        if (glowMask != null) glowStrength = 0f;
 
         LyricGlyphAtlas.GlyphCell cell = LyricGlyphAtlas.getGlyph(
                 c, rgb & 0xFFFFFF, glowStrength, glowSpread, glowColor);
@@ -283,6 +308,13 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // submit 通路里这一步发生在 GPU（视图旋转 × 根矩阵 × billboard），采集通路
         // 在 CPU 上用同一个 billboard 矩阵（poseStack 栈顶）变换出世界轴坐标。
         if (captureMode) {
+            if (glowMask != null) {
+                Matrix4f gmat = poseStack != null ? poseStack.last().pose() : null;
+                if (gmat != null) {
+                    glowMask.addQuad(gmat, qLeft, qTop, qLeft, qBottom, qRight, qBottom, qRight, qTop,
+                            cx, cy, cos, sin, s, ((int) (alpha * 255f) & 0xFF) << 24);
+                }
+            }
             captureGlyphQuad(pageRl, qLeft, qTop, qRight, qBottom, cx, cy, cos, sin, s, argb, u0, v0, u1, v1);
             if (TRACE && !tracedSmooth) {
                 tracedSmooth = true;
@@ -292,6 +324,16 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             return;
         }
 
+        // 非 capture（世界 submit）模式同样双写 mask —— present 端的 bloom-only
+        // 合成靠它，几何与帧图展开的字形同一次遍历、逐帧对齐。
+        if (glowMask != null) {
+            Matrix4f gmat = poseStack != null ? poseStack.last().pose() : null;
+            if (gmat != null) {
+                glowMask.addQuad(gmat, qLeft, qTop, qLeft, qBottom, qRight, qBottom, qRight, qTop,
+                        cx, cy, cos, sin, s, ((int) (alpha * 255f) & 0xFF) << 24);
+                glowMaskWrites++;
+            }
+        }
         RenderType renderType = currentWorldTextType(pageRl);
         // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
         // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。

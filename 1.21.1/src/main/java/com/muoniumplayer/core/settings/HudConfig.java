@@ -361,7 +361,7 @@ public final class HudConfig {
     public static boolean worldLyricsGlowEnabled = true;
 
     /** 3D 歌词：发光强度 0..1（烘焙进纹理时只传这一次，渲染层不得再乘）。 */
-    public static float worldLyricsGlowStrength = 0.35f;
+    public static float worldLyricsGlowStrength = 0.6f;
 
     /** 3D 歌词：发光扩散倍率（与全屏页 lyricGlowSpread 同口径）。 */
     public static float worldLyricsGlowSpread = 1.3181034f;
@@ -400,6 +400,10 @@ public final class HudConfig {
     public static boolean worldLyricsKeepDistance = true;
     /** Above ground：歌词中心不低于眼睛下方 0.5 格，不沉进地面。 */
     public static boolean worldLyricsAboveGround = false;
+    /** 显示翻译档：0 关 / 1 整行淡入 / 2 逐字点亮+弹出（与 2D 界面同一数据口，心象模式不画）。 */
+    public static int worldLyricsTranslation = 1;
+    /** 翻译副行的绘光特效（点亮闪点 + 微飞径迹）：仅「逐字点亮」档有意义。 */
+    public static boolean worldLyricsTransEffects = false;
     /** 更激进的适配：光影包激活时歌词推迟到 HUD 阶段（光影后处理链之后）用原版着色器直画。 */
     public static boolean worldLyricsHudDraw = false;
 
@@ -772,7 +776,7 @@ public final class HudConfig {
         worldLyricsModernStyle = true;
         worldLyricsSplitLines = true;
         worldLyricsGlowEnabled = true;
-        worldLyricsGlowStrength = 0.35f;
+        worldLyricsGlowStrength = 0.6f;
         worldLyricsGlowSpread = 1.3181034f;
         worldLyricsGlowColorRgb = 0xFFFFFF;
         worldLyricsColorRgb = 0xFFFFFF;
@@ -786,6 +790,8 @@ public final class HudConfig {
         worldLyricsStayOnScreen = false;
         worldLyricsKeepDistance = true;
         worldLyricsAboveGround = false;
+        worldLyricsTranslation = 1;
+        worldLyricsTransEffects = false;
         worldLyricsHudDraw = false;
         osdKaraokeTransitionWidth = 14.0f;
         osdKaraokePulseStrength = 0.00f;
@@ -964,7 +970,7 @@ public final class HudConfig {
             worldLyricsSplitLines = getBoolean(o, "worldLyricsSplitLines", worldLyricsSplitLines);
             worldLyricsGlowEnabled = getBoolean(o, "worldLyricsGlowEnabled", worldLyricsGlowEnabled);
             worldLyricsGlowStrength = clamp01(getFloat(o, "worldLyricsGlowStrength", worldLyricsGlowStrength));
-            worldLyricsGlowSpread = clamp(getFloat(o, "worldLyricsGlowSpread", worldLyricsGlowSpread), 0.5f, 1.8f);
+            worldLyricsGlowSpread = clamp(getFloat(o, "worldLyricsGlowSpread", worldLyricsGlowSpread), 0.0f, 1.8f);
             worldLyricsGlowColorRgb = getInt(o, "worldLyricsGlowColorRgb", worldLyricsGlowColorRgb);
             worldLyricsColorRgb = getInt(o, "worldLyricsColorRgb", worldLyricsColorRgb);
             worldLyricsColorCustom = getBoolean(o, "worldLyricsColorCustom", worldLyricsColorCustom);
@@ -977,6 +983,8 @@ public final class HudConfig {
             worldLyricsStayOnScreen = getBoolean(o, "worldLyricsStayOnScreen", worldLyricsStayOnScreen);
             worldLyricsKeepDistance = getBoolean(o, "worldLyricsKeepDistance", worldLyricsKeepDistance);
             worldLyricsAboveGround = getBoolean(o, "worldLyricsAboveGround", worldLyricsAboveGround);
+            worldLyricsTranslation = clampInt(getInt(o, "worldLyricsTranslation", worldLyricsTranslation), 0, 2);
+            worldLyricsTransEffects = getBoolean(o, "worldLyricsTransEffects", worldLyricsTransEffects);
             worldLyricsHudDraw = getBoolean(o, "worldLyricsHudDraw", worldLyricsHudDraw);
 
             osdKaraokeTransitionWidth = clamp(getFloat(o, "osdKaraokeTransitionWidth", osdKaraokeTransitionWidth), 4.0f, 32.0f);
@@ -1172,6 +1180,8 @@ public final class HudConfig {
             o.addProperty("worldLyricsStayOnScreen", worldLyricsStayOnScreen);
             o.addProperty("worldLyricsKeepDistance", worldLyricsKeepDistance);
             o.addProperty("worldLyricsAboveGround", worldLyricsAboveGround);
+            o.addProperty("worldLyricsTranslation", worldLyricsTranslation);
+            o.addProperty("worldLyricsTransEffects", worldLyricsTransEffects);
             o.addProperty("worldLyricsHudDraw", worldLyricsHudDraw);
             o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
             o.addProperty("osdKaraokePulseStrength", osdKaraokePulseStrength);

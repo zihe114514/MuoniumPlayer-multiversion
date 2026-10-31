@@ -189,7 +189,17 @@ public final class WorldLyricsBridge {
             GlCompat.activeTexture(GL13.GL_TEXTURE0);
 
             try {
+                // 世界阶段辉光（无光影 / 光影但关掉更激进的适配时走这里）：本体进
+                // 缓冲的同时双写 mask，画完（endBatch 已把本体写进主帧缓冲）后跑
+                // bloom 加色补能量 —— LAST 之后只剩云/天气，层序自洽；有光影时这
+                // 里的画面还要过 Iris 合成链，bloom 只在 HUD 直画通路跑。
+                hudBloom.beginPass();
+                // mask MVP = 本体 endBatch 实际用的 RenderSystem 投影（bobFreeApply
+                // 成功时是 pure fov、失败时是关卡投影 —— 无论哪条，此刻 RenderSystem
+                // 里躺着的这份就是本体正在用的），直接快照，彻底同源；不再依赖反射成败。
+                bobActiveProjection.set(RenderSystem.getProjectionMatrix());
                 renderInner(basePose, mc, camera);
+                hudBloom.endPass(mc, bobActiveProjection);
             } finally {
                 // 恢复状态：视图矩阵 + 我们改过的 GL 状态（上游用 GlState 快照恢复，
                 // 这里逐项还原等价的几项，避免泄漏给本帧后续的绘制）。
@@ -219,6 +229,8 @@ public final class WorldLyricsBridge {
     /** HUD 直画连续缺席帧数（兜底世界阶段重画的触发器；成功画完即清零）。 */
     private static int hudDrawMisses;
     private static boolean hudFailureLogged;
+    /** 辉光后处理调度（mask 采集 + bloom 合成；未配置/熔断时整段零成本跳过）。 */
+    private static final HudBloomPass hudBloom = new HudBloomPass();
 
     /**
      * HUD 阶段直画入口（fabric HudRenderCallback / neoforge RenderGuiEvent.Pre 调）。
@@ -269,7 +281,13 @@ public final class WorldLyricsBridge {
 
             try {
                 WorldBillboard.forceVanillaType = true;
+                // 辉光后处理：renderInner 期间字形 quad 双写进 mask，画完（endBatch
+                // 已把本体写进帧缓冲）后跑 bloom —— 合成是加色混合，与本体绘制
+                // 先后无关；字芯能量再叠一层，观感即「晕垫底、字芯被推白」。
+                // 管线熔断/未配置/mask 空时整段跳过。
+                hudBloom.beginPass();
                 renderInner(hudBasePose, mc, mc.gameRenderer.getMainCamera());
+                hudBloom.endPass(mc);
                 if (TRACE && hudDiagFrame++ % 60 == 0) {
                     Camera c = mc.gameRenderer.getMainCamera();
                     org.joml.Matrix4f P = RenderSystem.getProjectionMatrix();
@@ -350,6 +368,18 @@ public final class WorldLyricsBridge {
     private static boolean bobFovLookupFailed;
 
     /**
+     * getFov 的运行时真名：dev/named 环境是 {@code getFov}，生产 Fabric 是
+     * intermediary {@code method_3196}、生产 Forge 是 SRG {@code m_109141_}。
+     * 只按 named 找在生产环境必然 NoSuchMethodException → bob 防抖永久熔断
+     * （连带辉光 mask 的 MVP 停在单位阵、晕整帧不可见）。逐个尝试并缓存命中。
+     */
+    private static String fovMethodName() {
+        return new String[] {"getFov", "method_3196", "m_109141_"}[bobFovNameIndex];
+    }
+
+    private static int bobFovNameIndex;
+
+    /**
      * 直画前调：把投影换成无 bob 的纯 fov 透视。返回 false = 本帧拿不到
      *（异常/边缘时序），调用方照旧直画（与世界同抖的旧行为），下一帧重试。
      * 配对调 {@link #bobFreeRestore()}。
@@ -361,11 +391,17 @@ public final class WorldLyricsBridge {
             // getFov(camera, partialTick, useFovSetting=true) 与 renderLevel 头部的
             // fov 读取完全同参，纯 P 与关卡 P 只差 bob。getFov 是 private —— 反射调。
             java.lang.reflect.Method fovM = bobFovMethod;
-            if (fovM == null && !bobFovLookupFailed) {
-                fovM = net.minecraft.client.renderer.GameRenderer.class
-                        .getDeclaredMethod("getFov", Camera.class, float.class, boolean.class);
-                fovM.setAccessible(true);
-                bobFovMethod = fovM;
+            while (fovM == null && !bobFovLookupFailed) {
+                try {
+                    fovM = net.minecraft.client.renderer.GameRenderer.class
+                            .getDeclaredMethod(fovMethodName(), Camera.class, float.class, boolean.class);
+                    fovM.setAccessible(true);
+                    bobFovMethod = fovM;
+                } catch (NoSuchMethodException missing) {
+                    if (++bobFovNameIndex >= 3) {
+                        bobFovLookupFailed = true;
+                    }
+                }
             }
             if (fovM == null) { bobFreeProjFailed = true; return false; }
             float partialTick = mc.getTimer().getGameTimeDeltaPartialTick(true);
@@ -374,6 +410,8 @@ public final class WorldLyricsBridge {
             if (pure == null || !isFinite(pure)) return false;
             bobFreeBackup.set(RenderSystem.getProjectionMatrix());
             RenderSystem.setProjectionMatrix(new org.joml.Matrix4f(pure), VertexSorting.DISTANCE_TO_ORIGIN);
+            // 本体 endBatch 就在这份 pure 透视下发生 —— 辉光 mask 的 MVP 取它同源
+            bobActiveProjection.set(pure);
             return true;
         } catch (Throwable t) {
             // 一次性熔断：投影通路异常时不再反复尝试（歌词与世界同抖总比反复异常强）
@@ -396,6 +434,8 @@ public final class WorldLyricsBridge {
 
     /** bobFreeApply 备份的关卡投影（1.21.1 投影是 Matrix4f 值，需手动备份）。 */
     private static final org.joml.Matrix4f bobFreeBackup = new org.joml.Matrix4f();
+    /** 本帧本体直画实际生效的透视投影（bobFreeApply 写；辉光 mask 的 MVP 来源）。 */
+    private static final org.joml.Matrix4f bobActiveProjection = new org.joml.Matrix4f();
 
     private static void renderInner(Matrix4f basePose, Minecraft mc, Camera camera) {
         CameraAccess cameraAccess = CameraAccess.capture(0f);

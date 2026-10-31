@@ -52,14 +52,33 @@ public final class SpotifyWebApiClient {
         public final String url;
         public final String method;
         public final Map<String, String> headers;
-        /** application/x-www-form-urlencoded 的请求体；GET 为 null。已编码。 */
+        /** application/x-www-form-urlencoded 的请求体；GET/无体请求为 null。已编码。 */
         public final String formBody;
+        /** application/json 的请求体（Spotify Connect 的 PUT/POST 端点用）；无体请求为 null。 */
+        public final String jsonBody;
 
         Request(String url, String method, Map<String, String> headers, String formBody) {
+            this(url, method, headers, formBody, null);
+        }
+
+        Request(String url, String method, Map<String, String> headers,
+                String formBody, String jsonBody) {
             this.url = url;
             this.method = method;
             this.headers = headers;
             this.formBody = formBody;
+            this.jsonBody = jsonBody;
+        }
+
+        /** 本请求要带出去的请求体；null 表示无体。 */
+        String body() {
+            return jsonBody != null ? jsonBody : formBody;
+        }
+
+        String contentType() {
+            return jsonBody != null
+                    ? "application/json; charset=utf-8"
+                    : "application/x-www-form-urlencoded";
         }
     }
 
@@ -105,7 +124,27 @@ public final class SpotifyWebApiClient {
      * @param query 可为 null 的 query 参数（值在此编码）
      */
     public static JsonObject getJson(String path, Map<String, String> query) throws IOException {
-        return requestWithAuth("GET", SpotifyConfigStore.API_BASE + path, query, null, 0);
+        return requestWithAuth("GET", SpotifyConfigStore.API_BASE + path, query, null, null, 0);
+    }
+
+    /**
+     * 带 Bearer 的 PUT（Spotify Connect 的转移/播放/暂停/seek/音量都是 PUT）。
+     * {@code jsonBody} 为 null 时发一个 {@code Content-Length: 0} 的空体。
+     */
+    public static JsonObject putJson(String path, Map<String, String> query,
+                                     JsonObject jsonBody) throws IOException {
+        return requestWithAuth("PUT", SpotifyConfigStore.API_BASE + path, query, null,
+                jsonBody == null ? null : jsonBody.toString(), 0);
+    }
+
+    /** 无体的带 Bearer PUT（{@code /me/player/pause} 这类端点不接受也不需要请求体）。 */
+    public static JsonObject put(String path, Map<String, String> query) throws IOException {
+        return putJson(path, query, null);
+    }
+
+    /** 无体的带 Bearer POST（{@code /me/player/next}、{@code /previous}）。 */
+    public static JsonObject post(String path, Map<String, String> query) throws IOException {
+        return requestWithAuth("POST", SpotifyConfigStore.API_BASE + path, query, null, null, 0);
     }
 
     /** 不带认证的 form POST：token 端点（授权码交换与刷新）专用。 */
@@ -124,7 +163,7 @@ public final class SpotifyWebApiClient {
 
     private static JsonObject requestWithAuth(String method, String url,
                                               Map<String, String> query, String formBody,
-                                              int attempt) throws IOException {
+                                              String jsonBody, int attempt) throws IOException {
         SpotifyAuthStore.Session session = SpotifyAuthStore.snapshot();
         if (session.isReauthRequired() && !session.tokenReady()) {
             throw new SpotifyApiException(0, "REAUTH_REQUIRED", true);
@@ -134,14 +173,15 @@ public final class SpotifyWebApiClient {
         headers.put("Authorization", "Bearer " + token);
         String urlWithQuery = appendQuery(url, query);
 
-        Response response = transport().send(new Request(urlWithQuery, method, headers, formBody));
+        Response response = transport().send(new Request(urlWithQuery, method, headers,
+                formBody, jsonBody));
 
         if (response.code == 401) {
             // access token 失效（过期/被轮换/远端吊销）。强制刷新一次再重放；
             // 重放仍 401 就不是「该刷新了」而是凭据已死，转重新授权。
             if (attempt == 0) {
                 invalidateAccessToken();
-                return requestWithAuth(method, url, query, formBody, attempt + 1);
+                return requestWithAuth(method, url, query, formBody, jsonBody, attempt + 1);
             }
             SpotifyAuthStore.markReauthRequired();
             throw new SpotifyApiException(401, "REAUTH_REQUIRED", true);
@@ -150,12 +190,12 @@ public final class SpotifyWebApiClient {
             long waitMillis = retryAfterMillis(response);
             if (waitMillis >= 0 && waitMillis <= MAX_RETRY_AFTER_MILLIS) {
                 sleepQuietly(waitMillis + 250L);
-                return requestWithAuth(method, url, query, formBody, attempt + 1);
+                return requestWithAuth(method, url, query, formBody, jsonBody, attempt + 1);
             }
         }
         if (response.code >= 500 && attempt == 0) {
             sleepQuietly(400L);
-            return requestWithAuth(method, url, query, formBody, attempt + 1);
+            return requestWithAuth(method, url, query, formBody, jsonBody, attempt + 1);
         }
 
         JsonObject payload = parseBody(response);
@@ -244,14 +284,24 @@ public final class SpotifyWebApiClient {
                 connection.setRequestProperty(entry.getKey(), entry.getValue());
             }
         }
-        if (request.formBody != null) {
+        String body = request.body();
+        if (body != null) {
             connection.setDoOutput(true);
             connection.setUseCaches(false);
-            connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-            byte[] body = request.formBody.getBytes(StandardCharsets.UTF_8);
-            connection.setFixedLengthStreamingMode(body.length);
+            connection.setRequestProperty("Content-Type", request.contentType());
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(bytes.length);
             try (OutputStream out = connection.getOutputStream()) {
-                out.write(body);
+                out.write(bytes);
+            }
+        } else if (!"GET".equalsIgnoreCase(request.method)
+                && !"HEAD".equalsIgnoreCase(request.method)) {
+            // 无体的 PUT/POST 也要把 Content-Length: 0 说出去：不声明长度的请求体
+            // 有的网关会一直等到超时才肯处理。
+            connection.setDoOutput(true);
+            connection.setUseCaches(false);
+            connection.setFixedLengthStreamingMode(0);
+            try (OutputStream ignored = connection.getOutputStream()) {
             }
         }
         int code = connection.getResponseCode();

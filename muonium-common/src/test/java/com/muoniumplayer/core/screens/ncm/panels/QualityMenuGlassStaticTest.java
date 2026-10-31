@@ -30,7 +30,8 @@ class QualityMenuGlassStaticTest {
     private static String source() throws Exception {
         Path path = ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer", "core",
                 "screens", "ncm", "panels", "ControlsBar.java"));
-        return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+        // autocrlf=true 检出会把工作区转成 CRLF，逐字节源码断言按 LF 钳 —— 先归一
+        return new String(Files.readAllBytes(path), StandardCharsets.UTF_8).replace("\r\n", "\n");
     }
 
     /** 取某个控件从自己那次 setColor 之前到回调结束那一段。 */

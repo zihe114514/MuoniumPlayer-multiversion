@@ -347,6 +347,12 @@ public final class KuGouHttp {
         }
     }
 
+    /** form 类响应的解码：上游这些端点回的是 UTF-8 JSON 文本，不是二进制。 */
+    public static String asText(byte[] data) {
+        if (data == null) return "";
+        return new String(data, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     private static String describe(Throwable throwable) {
         if (throwable == null) return "unknown";
         String message = throwable.getMessage();

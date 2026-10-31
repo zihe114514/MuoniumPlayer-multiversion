@@ -151,6 +151,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     /** 二级音乐来源菜单：固定内容平台与 GD音乐台 聚合音源统一在此处管理。 */
     public MusicSourceOverlay musicSourceOverlay = null;
+    /** Spotify 设备控制面板（含「接管到模组界面」镜像开关）。 */
+    public SpotifyConnectSheet spotifyConnectSheet = null;
 
     /** 一起听房间面板。与来源/账号面板同层，仅在网易云官方源下可以打开。 */
     public ListenTogetherOverlay listenTogetherOverlay = null;
@@ -158,7 +160,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     /** 服务器一起听（mpsync 服务端 mod）的房间面板。与网易云一起听同层，互不相干。 */
     public MpPartyOverlay mpPartyOverlay = null;
 
-    /** 蝰蛇音效（ViPER）面板：播放条右下角那颗调音图标打开的单页浮层（总开关 + 预设列表）。 */
+    /** 音效调音台面板：播放条右下角那颗调音图标打开的浮层（蝰蛇预设页 + 场景声学页）。 */
     public ViperOverlay viperOverlay = null;
 
     /** 主题调色板：主题按钮右键打开的二级菜单，实时预览主题颜色配置项。 */
@@ -736,6 +738,20 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             if (this.musicSourceOverlay.shouldClose()) {
                 this.musicSourceOverlay.dispose();
                 this.musicSourceOverlay = null;
+            }
+            StencilClipManager.endClip();
+        }
+
+        // Spotify 设备控制面板与来源菜单同层：侧栏 Spotify 栏目的二级入口，样式同族。
+        if (this.spotifyConnectSheet != null) {
+            StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+            this.spotifyConnectSheet.setBounds(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight());
+            this.spotifyConnectSheet.setAlpha(alpha);
+            this.spotifyConnectSheet.renderWidget(mouseX, mouseY, dWheel);
+            if (this.spotifyConnectSheet.shouldClose()) {
+                this.spotifyConnectSheet.dispose();
+                this.spotifyConnectSheet = null;
             }
             StencilClipManager.endClip();
         }
@@ -1360,7 +1376,15 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     }
 
     public void openAccountManager() {
-        openAccountManager(null);
+        openAccountManager((SheetHeroRelay.Origin) null);
+    }
+
+    /** 打开账号管理并直接落到某个平台的账号页（音源浮层的账号角标用）。 */
+    public void openAccountManager(com.muoniumplayer.core.ncm.music.MusicPlatform landingPlatform) {
+        openAccountManager((SheetHeroRelay.Origin) null);
+        if (landingPlatform != null && this.accountManagerOverlay != null) {
+            this.accountManagerOverlay.openPlatform(landingPlatform);
+        }
     }
 
     /**
@@ -1375,6 +1399,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.accountManagerOverlay = new AccountManagerOverlay();
         this.accountManagerOverlay.claimHero(heroFrom);
         this.accountManagerOverlay.onInit();
+    }
+
+    /** 打开 Spotify 设备控制面板；重复打开时先回收上一次的实例，避免两层叠在一起。 */
+    public void openSpotifyConnectSheet() {
+        if (this.spotifyConnectSheet != null) this.spotifyConnectSheet.dispose();
+        this.spotifyConnectSheet = new SpotifyConnectSheet();
+        this.spotifyConnectSheet.onInit();
     }
 
     /** 打开主题调色板；重复打开时先回收上一次的实例，避免两层叠在一起。 */
@@ -1479,7 +1510,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.musicSourceOverlay.onInit();
     }
 
-    /** 打开蝰蛇音效面板；重复打开时先回收上一次的实例，避免两层叠在一起。 */
+    /** 打开音效调音台（蝰蛇 / 场景声学）；重复打开时先回收上一次的实例，避免两层叠在一起。 */
     public void openViperEffects() {
         if (this.viperOverlay != null) this.viperOverlay.dispose();
         this.viperOverlay = new ViperOverlay();
@@ -1606,6 +1637,16 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             return;
         }
 
+        if (this.spotifyConnectSheet != null) {
+            if (this.spotifyConnectSheet.onKeyTypedReceived(typedChar, keyCode)) {
+                return;
+            }
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                this.spotifyConnectSheet.handleEscape();
+            }
+            return;
+        }
+
         if (this.viperOverlay != null) {
             if (this.viperOverlay.onKeyTypedReceived(typedChar, keyCode)) {
                 return;
@@ -1709,6 +1750,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 || this.qishuiCloudPlaylistSheet != null
                 || this.lyricSearchOverlay != null
                 || this.musicSourceOverlay != null
+                || this.spotifyConnectSheet != null
                 || this.viperOverlay != null
                 || this.listenTogetherOverlay != null
                 || this.mpPartyOverlay != null
@@ -1821,6 +1863,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         if (this.musicSourceOverlay != null) {
             this.musicSourceOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            return;
+        }
+        if (this.spotifyConnectSheet != null) {
+            this.spotifyConnectSheet.onMouseClickReceived(mouseX, mouseY, mouseButton);
             return;
         }
         if (this.viperOverlay != null) {

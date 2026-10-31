@@ -153,3 +153,6 @@ error-report-*/
 
 # Cloudflare wrangler 本地缓存与状态（预览/部署的运行产物，不入库）
 /.wrangler/
+
+# Widevine/Apple 许可调试产物（一次性素材，含设备指纹，不入库）
+/g6work/

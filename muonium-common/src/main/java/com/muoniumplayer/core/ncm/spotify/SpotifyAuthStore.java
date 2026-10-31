@@ -74,6 +74,26 @@ public final class SpotifyAuthStore {
         public boolean isReauthRequired() {
             return reauthRequired;
         }
+
+        /**
+         * 已授权的 scope 串里是否带着「客户端控制」需要的那两条。
+         *
+         * <p>播放 scope 是后来加的：在这之前完成授权的用户 token 仍然有效，只是没有控制
+         * 播放的权限——这种「登录着但差权限」不算凭据死了，不该走 {@link #markReauthRequired}
+         * 清凭据，由设备面板提示重新授权一遍就好。</p>
+         */
+        public boolean hasPlaybackScopes() {
+            return hasGrantedScope("user-read-playback-state")
+                    && hasGrantedScope("user-modify-playback-state");
+        }
+
+        private boolean hasGrantedScope(String wanted) {
+            if (scope.isEmpty()) return false;
+            for (String granted : scope.split("\\s+")) {
+                if (granted.equals(wanted)) return true;
+            }
+            return false;
+        }
     }
 
     public static Session snapshot() {

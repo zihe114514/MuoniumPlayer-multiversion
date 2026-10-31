@@ -13,7 +13,7 @@ import java.util.List;
  * <p>上报的 MIME 类型和 URL 后缀仅供参考：调用方在选择解码器前
  * 必须先用 {@link #detectContainer(File)}。</p>
  *
- * <p><b>public</b>：除了 music 包内的缓存流水线，apple 包的 gamdl 桥接在把伴生产物
+ * <p><b>public</b>：除了 music 包内的缓存流水线，apple 包的本机引擎在把产物流
  * 收编进缓存键位前也要做同一道字节校验 —— 容器探测是通用工具，不该因包界复制一份。</p>
  */
 public final class AudioContainerSupport {

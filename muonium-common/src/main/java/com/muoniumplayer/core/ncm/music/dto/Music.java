@@ -151,13 +151,13 @@ public class Music {
      * Apple 官方 30 秒试听地址（{@link #fromAppleTrack} 填入）。
      *
      * <p>试听兜底播放时省一次单曲详情请求；缓存到行上而不是每次现查，是因为兜底只发生
-     * 在「换源与 gamdl 都失败」的链路末端，再来一次网络往返只会让失败体感更差。</p>
+     * 在「换源与完整版链路都失败」的末端，再来一次网络往返只会让失败体感更差。</p>
      */
     private transient String applePreviewUrl;
     /**
      * 本行正在走「30 秒 preview 兜底」。与汽水的 {@code qishuiTrialResolve} 同族的 transient
      * 运行态：true 时缓存键带 {@code pv_} 标记（试听文件不冒充完整版），试听片段检测对它
-     * 放行（这是设计终点不是故障）。gamdl 完整链路每次尝试前都会复位为 false。
+     * 放行（这是设计终点不是故障）。完整版链路每次尝试前都会复位为 false。
      */
     private transient volatile boolean applePreviewOnly;
     /** 自由选择的 GD 曲目的 GD Studio 聚合源 key（netease/joox/...）。 */
@@ -661,7 +661,7 @@ public class Music {
      * 由一条 Apple Music 曲目元数据构造 {@link Music} 行。
      *
      * <p>与 {@link #fromSpotifyTrack} 同族但不同命：Apple 行<b>不是纯元数据行</b>——官方有
-     * 30 秒 preview，且 gamdl 伴生后端可用时能拉到完整版。所以 {@link #getPlayUrl()} 对它
+     * 30 秒 preview，且本机引擎可用时能拉到完整版。所以 {@link #getPlayUrl()} 对它
      * 走三段：伪 URL（{@code muonium-apple://}，由伴生链路兑现成完整版本地文件）→
      * 返回空落换源替身 → 试听兜底（{@code CloudMusic} 的 Apple 特例）。{@code id} 用
      * Apple catalog 数字 id 的稳定哈希，封面 / 缓存按 {@link #getStableKey()} 落盘。</p>
@@ -883,7 +883,7 @@ public class Music {
 
     /**
      * Apple Music 行：目录元数据公开、完整音轨 DRM 保护。取流顺序
-     * gamdl 伴生 → 跨平台换源 → 30 秒 preview 兜底，见 {@code AppleMusicService} 类注释。
+     * 本机引擎 → 跨平台换源 → 30 秒 preview 兜底，见 {@code AppleMusicService} 类注释。
      */
     public boolean isApple() {
         return getSource() == MusicPlatform.APPLE;
@@ -1090,7 +1090,7 @@ public class Music {
         // spotify id 会被 Cadence 当网易云 id 解析，放出完全不相干的歌。
         if (isSpotify()) return null;
 
-        // Apple Music：gamdl 伴生后端可用时给一条伪 URL（cachedAudioFile 里兑换成完整版
+        // Apple Music：本机引擎可用时给一条伪 URL（cachedAudioFile 里兑换成完整版
         // 本地文件）；伴生不可用/未启用返回 null 落换源替身；都失败还有试听兜底（CloudMusic
         // 的 Apple 特例）。与 Spotify 同理绝不能继续往下掉 —— apple 的数字 id 会被 Cadence
         // 当网易云 id 解析，放出完全不相干的歌。
@@ -1144,7 +1144,7 @@ public class Music {
     }
 
     /**
-     * Apple 的 gamdl 伴生伪 URL。
+     * Apple 的本机引擎伪 URL。
      *
      * <p>第二元素给 {@code m4a}：伴生链路最终交付的就是 AAC 256 的 m4a 本地文件，
      * 缓存键与容器探测都按这个语义走。伴生不可用（未安装 / 未启用 / 非 Windows 且未配
@@ -1152,7 +1152,7 @@ public class Music {
      */
     private Tuple<String, String> resolveApplePlayUrl() {
         // 完整版尝试先复位试听标记：上一轮兜底留下的 pv_ 键位不能延续到这一轮，
-        // 否则 gamdl 就绪后点歌还在命中试听缓存键位（键位由 audioCachePrefix 生成）。
+        // 否则引擎就绪后点歌还在命中试听缓存键位（键位由 audioCachePrefix 生成）。
         this.applePreviewOnly = false;
         String pseudo = com.muoniumplayer.core.ncm.apple.ApplePlaybackResolver
                 .resolvePseudoUrl(getSourceId());

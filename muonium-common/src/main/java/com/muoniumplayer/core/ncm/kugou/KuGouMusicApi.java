@@ -2121,6 +2121,85 @@ public final class KuGouMusicApi {
                 firstText(data, "vip_end_time", "m_reset_time"));
     }
 
+    // ── 概念版每日会员 ──────────────────────────────────────────────────────
+
+    /**
+     * 查当前会员状态（概念版口径，带产品类型参数）。
+     *
+     * <p>与 {@link #vipInfo()} 同一端点，但多带 {@code opt_product_types}/{@code product_type}：
+     * 上游按产品线拆分返回，{@code busi_vip[]} 数组里每条是一种产品（畅听/豪华/概念版），
+     * 只看顶层字段的查法在某些账号上会漏掉仍在生效的产品线。</p>
+     */
+    private static JsonObject unionVipFull() {
+        Map<String, String> params = KuGouHttp.deviceParams();
+        params.put("busi_type", "concept");
+        params.put("opt_product_types", "dvip,qvip");
+        params.put("product_type", "svip");
+        return KuGouHttp.get(KuGouHttp.VIP, "/v1/get_union_vip", params, KuGouHttp.Sign.ANDROID);
+    }
+
+    /** 会员是否在生效：顶层字段与 {@code busi_vip[]} 任一命中即算。 */
+    private static boolean unionVipActive(JsonObject root) {
+        JsonObject data = object(root, "data");
+        if (data == null) return false;
+        if (integer(data, "vip_type") != 0 || integer(data, "is_vip") == 1) return true;
+        JsonArray busi = array(data, "busi_vip");
+        if (busi == null) return false;
+        for (JsonElement element : busi) {
+            if (element == null || !element.isJsonObject()) continue;
+            JsonObject item = element.getAsJsonObject();
+            if (integer(item, "vip_type") != 0 || integer(item, "is_vip") == 1) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 概念版的「听歌领会员」：领一天会员时长再升级成畅听 VIP。
+     *
+     * <p>两条都是 form 表单 POST（{@code application/x-www-form-urlencoded}），
+     * 参数走<b>查询串</b>参与 Android 签名——body 留空，这是上游客户端的原始形态。
+     * 第二条依赖第一条：不先领到时长，升级必然失败。</p>
+     *
+     * <p>失败全程静默（返回 {@code false}）：领取是「锦上添花」，任何一环挂掉都不该影响播放，
+     * 也不值得弹提示——明天还会再试。</p>
+     *
+     * @param receiveDay {@code yyyy-MM-dd}，按东八区算「今天」
+     * @return 升级成功 {@code true}；仅领取成功也 {@code true}（时长已入账，能用）
+     */
+    public static boolean claimDailyConceptVip(String receiveDay) {
+        if (!KuGouDevice.isLoggedIn() || KuGouProfile.active() != KuGouProfile.CONCEPT) return false;
+
+        JsonObject union = unionVipFull();
+        if (unionVipActive(union)) return true;
+
+        Map<String, String> receiveParams = KuGouHttp.deviceParams();
+        receiveParams.put("source_id", "90139");
+        receiveParams.put("receive_day", KuGouSign.nonNull(receiveDay).trim());
+        byte[] receiveBody = KuGouHttp.postRaw(KuGouHttp.GATEWAY, "/youth/v1/recharge/receive_vip_listen_song",
+                receiveParams, "", KuGouHttp.Sign.ANDROID, null, FORM_CONTENT_TYPE);
+        JsonObject receive = KuGouHttp.parseText(KuGouHttp.asText(receiveBody));
+        if (!isOk(receive)) {
+            System.err.println("[Music/KuGou] 今日会员领取未成功（可能已领过或活动结束）");
+            return false;
+        }
+
+        Map<String, String> upgradeParams = KuGouHttp.deviceParams();
+        upgradeParams.put("kugouid", KuGouDevice.userId());
+        upgradeParams.put("ad_type", "1");
+        byte[] upgradeBody = KuGouHttp.postRaw(KuGouHttp.GATEWAY, "/youth/v1/listen_song/upgrade_vip_reward",
+                upgradeParams, "", KuGouHttp.Sign.ANDROID, null, FORM_CONTENT_TYPE);
+        JsonObject upgrade = KuGouHttp.parseText(KuGouHttp.asText(upgradeBody));
+        if (!isOk(upgrade)) {
+            // 时长已经入账，只是没升级成畅听：下次取流前重试升级就行，不算失败。
+            System.err.println("[Music/KuGou] 会员时长已领取，升级畅听未成功（稍后重试）");
+            return false;
+        }
+        return true;
+    }
+
+    /** form 表单 POST 的统一 Content-Type。 */
+    private static final String FORM_CONTENT_TYPE = "application/x-www-form-urlencoded";
+
     // ── 账号歌单 ────────────────────────────────────────────────────────────
 
     /**

@@ -80,17 +80,35 @@ public final class TextGlow {
             // 壳，删掉由墨色本体自己提供「亮边」）。晕形仍然是文字形状的
             // blur 副本，但因为 alpha 低、无小 σ 层，笔画边缘由墨色抗锯齿
             // 灰阶直接过渡到柔晕，不再是「色壳包字」。
+            //
+            // 白芯偏置：内层（小 σ、紧贴笔画）的颜色向白混 50% —— 加色混合下
+            // 紧贴笔画处先到白色，光色留给外圈，观感从「单色雾」变成「白热芯 +
+            // 彩晕」（真实发光体的能量分布）。外层保持纯光色不混白：色相信息
+            // 全在外圈，混白只会让整团晕发灰。白芯贴着墨色本体，不会形成色壳
+            // —— 壳是 alpha 覆盖叠出来的，加色只增亮。
             for (int layer = 0; layer < 2; layer++) {
                 double layerAlpha = clampedAlpha * clampedStrength * LAYER_ALPHA[layer];
                 if (layerAlpha <= .003) {
                     continue;
                 }
-                font.drawGlyphsOn(canvas, text, x, y, withAlpha(rgb, layerAlpha), 255,
+                int layerRgb = layer == 1 ? whiteMix(rgb & 0xFFFFFF, 0.5) : (rgb & 0xFFFFFF);
+                font.drawGlyphsOn(canvas, text, x, y, withAlpha(layerRgb, layerAlpha), 255,
                         (float) (scale * SIGMA_RATIO[layer]), null);
             }
         } finally {
             SkijaGfx.setBlendMode(previousBlend);
         }
+    }
+
+    /** 光色向白混 t（0=原色，1=纯白），逐通道线性。 */
+    private static int whiteMix(int rgb, double t) {
+        int r = (rgb >> 16) & 0xFF;
+        int g = (rgb >> 8) & 0xFF;
+        int b = rgb & 0xFF;
+        int mr = (int) Math.round(r + (255 - r) * t);
+        int mg = (int) Math.round(g + (255 - g) * t);
+        int mb = (int) Math.round(b + (255 - b) * t);
+        return (mr << 16) | (mg << 8) | mb;
     }
 
     /**

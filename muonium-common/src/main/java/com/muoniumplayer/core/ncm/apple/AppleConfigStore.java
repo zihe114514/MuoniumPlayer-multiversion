@@ -17,7 +17,7 @@ import java.util.Locale;
  * bearer token（{@link AppleTokenManager}，无需登录），账号能力（本人资料库歌单）靠
  * 用户从浏览器导出的 cookies 里的 {@code media-user-token}。所以这里存的是「token +
  * 偏好」，整份 cookies.txt 由 {@link AppleCookieSupport} 单独写在
- * {@link ConfigPaths#APPLE_MUSIC_DIR} 下（gamdl 需要文件路径）。</p>
+ * {@link ConfigPaths#APPLE_MUSIC_DIR} 下（引擎按文件路径读取）。</p>
  */
 public final class AppleConfigStore {
 
@@ -37,23 +37,23 @@ public final class AppleConfigStore {
     public static final class Config {
         public final String mediaUserToken;
         public final String storefront;
-        /** gamdl 完整播放总开关（默认开；关掉后 Apple 行为退化为纯元数据源 + 试听兜底）。 */
-        public final boolean gamdlEnabled;
-        /** 30 秒 preview 兜底开关（默认开：换源与 gamdl 都失败时至少能听 30 秒）。 */
+        /** 30 秒 preview 兜底开关（默认开：本机引擎与换源都失败时至少能听 30 秒）。 */
         public final boolean previewFallback;
         /** 可选代理 host:port，CN 直连 amp-api 不稳时用；空串 = 不走代理。 */
         public final String proxy;
-        /** 非 Windows 用户的降级路径：手动指定 gamdl 可执行文件；空串 = 未指定。 */
-        public final String manualGamdlPath;
+        /** 纯 Java 播放引擎总开关（配置文件可关；UI 不暴露）。 */
+        public final boolean nativeEngineEnabled;
+        /** 外置 .wvd 设备文件路径；空串 = 用内置设备。 */
+        public final String wvdDevicePath;
 
         Config(Data source) {
             this.mediaUserToken = nonBlank(source.mediaUserToken);
             String storefront = nonBlank(source.storefront).trim().toLowerCase(Locale.ROOT);
             this.storefront = storefront.isEmpty() ? DEFAULT_STOREFRONT : storefront;
-            this.gamdlEnabled = source.gamdlEnabled;
             this.previewFallback = source.previewFallback;
             this.proxy = nonBlank(source.proxy);
-            this.manualGamdlPath = nonBlank(source.manualGamdlPath);
+            this.nativeEngineEnabled = source.nativeEngineEnabled;
+            this.wvdDevicePath = nonBlank(source.wvdDevicePath);
         }
 
         /** media-user-token 在手 = 账号能力可用（资料库歌单、逐词歌词）。 */
@@ -111,15 +111,6 @@ public final class AppleConfigStore {
         }
     }
 
-    public static void saveGamdlEnabled(boolean enabled) {
-        synchronized (LOCK) {
-            ensureLoaded();
-            data.gamdlEnabled = enabled;
-            data.updatedAt = System.currentTimeMillis();
-            persistLocked();
-        }
-    }
-
     public static void savePreviewFallback(boolean enabled) {
         synchronized (LOCK) {
             ensureLoaded();
@@ -138,10 +129,19 @@ public final class AppleConfigStore {
         }
     }
 
-    public static void saveManualGamdlPath(String rawInput) {
+    public static void saveNativeEngineEnabled(boolean enabled) {
         synchronized (LOCK) {
             ensureLoaded();
-            data.manualGamdlPath = nonBlank(rawInput);
+            data.nativeEngineEnabled = enabled;
+            data.updatedAt = System.currentTimeMillis();
+            persistLocked();
+        }
+    }
+
+    public static void saveWvdDevicePath(String rawInput) {
+        synchronized (LOCK) {
+            ensureLoaded();
+            data.wvdDevicePath = nonBlank(rawInput);
             data.updatedAt = System.currentTimeMillis();
             persistLocked();
         }
@@ -150,12 +150,12 @@ public final class AppleConfigStore {
     // ── 测试钩子：静测不许碰磁盘，用内存替身撑起同一套语义 ────────────────────
 
     static void putForTest(String mediaUserToken, String storefront,
-                           boolean gamdlEnabled, boolean previewFallback) {
+                           boolean nativeEngineEnabled, boolean previewFallback) {
         synchronized (LOCK) {
             data = new Data();
             data.mediaUserToken = mediaUserToken == null ? "" : mediaUserToken;
             data.storefront = storefront == null ? "" : storefront;
-            data.gamdlEnabled = gamdlEnabled;
+            data.nativeEngineEnabled = nativeEngineEnabled;
             data.previewFallback = previewFallback;
             loaded = true;
         }
@@ -204,10 +204,12 @@ public final class AppleConfigStore {
     private static final class Data {
         String mediaUserToken = "";
         String storefront = DEFAULT_STOREFRONT;
-        boolean gamdlEnabled = true;
         boolean previewFallback = true;
         String proxy = "";
-        String manualGamdlPath = "";
+        /** 纯 Java 播放引擎总开关。 */
+        boolean nativeEngineEnabled = true;
+        /** 外置 .wvd 设备文件路径；空串 = 用内置设备。 */
+        String wvdDevicePath = "";
         long updatedAt;
     }
 }

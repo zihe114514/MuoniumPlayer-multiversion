@@ -114,7 +114,7 @@ public final class ConfigPaths {
      * {@link #MUSIC_AUTH} 由 Cadence 的凭据存储整段重写，只认识网易云 cookie 与 QQ 的
      * musicid/musickey，Apple 的 media-user-token 放进去会在下一次保存时被丢掉。</p>
      *
-     * <p>注意 cookies.txt（gamdl 伴生工具的凭据）不在这里，而在 {@link #APPLE_MUSIC_DIR} 下——
+     * <p>注意 cookies.txt（Apple 引擎的凭据）不在这里，而在 {@link #APPLE_MUSIC_DIR} 下——
      * 它是整份明文的 Netscape cookie 文件，比 JSON 配置里的 token 敏感一个量级，分开放方便
      * 用户理解「删哪个是删凭据」。</p>
      */
@@ -196,6 +196,16 @@ public final class ConfigPaths {
     public static final File VANILLA_MUSIC_DUCKER = new File(CONFIG_DIRECTORY, "vanilla_music_ducker.json");
 
     /**
+     * 场景声学的开关与分项。
+     *
+     * <p>单独一个文件而不是塞进 {@link #PLAYER}：这条链的读写频率比播放器主配置高
+     * （面板上每颗开关、滑条都要立即落盘），而它读失败的代价只是「回到关闭」，不该有
+     * 机会牵连主配置。分项（浸液/围合/降水/强度）与总开关放同一份：它们只在总开关
+     * 打开时才有意义，分开存会让「总开关关了、分项还是旧值」成为常态。</p>
+     */
+    public static final File SCENE_ACOUSTICS = new File(CONFIG_DIRECTORY, "scene_acoustics.json");
+
+    /**
      * 仅在新文件不存在时迁移。已有的新文件始终优先，
      * 因此用户可安全地在旁边保留旧配置的备份。
      */
@@ -219,11 +229,7 @@ public final class ConfigPaths {
     public static final File QISHUI_BRIDGE_DIR = new File(CONFIG_DIRECTORY, "qishui-bridge");
 
     /**
-     * Apple Music 伴生后端（gamdl 整包）与 cookies.txt 的安装目录。
-     *
-     * <p>整包 = 内嵌 Python + 预装好的 gamdl，由 {@code AppleCompanionDownload} 从镜像梯队
-     * 下载解压到这里（汽水伴生后端 {@code qishui-backend/} 的同款目录约定）。cookies.txt 与
-     * Python 环境放同一层：伴生清扫陈旧文件时要保住用户凭据，同层最容易被「保留名单」照顾到。</p>
+     * Apple Music 的 cookies.txt 等本机凭据目录。
      */
     public static final File APPLE_MUSIC_DIR = new File(CONFIG_DIRECTORY, "apple-music");
 

@@ -8,16 +8,16 @@ import java.nio.file.Files;
 import java.util.Locale;
 
 /**
- * Netscape cookies.txt 的解析、校验与落盘（gamdl 的凭据入口）。
+ * Netscape cookies.txt 的解析、校验与落盘（Apple 引擎的凭据入口）。
  *
- * <p><b>为什么 cookies.txt 是唯一凭据入口</b>：gamdl 的账号与播放请求都从浏览器导出的
+ * <p><b>为什么 cookies.txt 是唯一凭据入口</b>：引擎的账号与播放请求都从浏览器导出的
  * cookies 文件取身份，里面真正起作用的是 {@code media-user-token}（AMP API 的账号态）
  * 和若干会话 cookie。本类把它拆成两份用途——API 侧只留 media-user-token（进
- * {@link AppleConfigStore}），gamdl 侧把原文写到
+ * {@link AppleConfigStore}），引擎侧把原文写到
  * {@link ConfigPaths#APPLE_MUSIC_DIR}/cookies.txt（它要文件路径）。</p>
  *
  * <p><b>敏感等级</b>：这是整份明文浏览器 cookie，等价于 Apple ID 的音乐会话。只落盘在
- * 本机 config 目录、只传给本机的 gamdl 进程，日志与异常信息绝不带 cookie 内容。</p>
+ * 本机 config 目录、只喂给本机引擎，日志与异常信息绝不带 cookie 内容。</p>
  */
 public final class AppleCookieSupport {
 
@@ -63,11 +63,11 @@ public final class AppleCookieSupport {
     }
 
     /**
-     * 导入一份 cookies.txt：落盘给 gamdl + 把 media-user-token 存进配置。
+     * 导入一份 cookies.txt：落盘给引擎 + 把 media-user-token 存进配置。
      *
      * <p>落盘前做<b>列序归一化</b>：Netscape 第 2 列是「是否包含子域」，CPython 的
-     * MozillaCookieJar（gamdl 用它读文件）断言「该列必须与域首点一致」—— Apple 网页
-     * 真实导出的 media-user-token 行常是「域带首点 + 列为 FALSE」，gamdl 3.9.1 直接
+     * 严格解析器（python cookiejar）断言「该列必须与域首点一致」—— Apple 网页
+     * 真实导出的 media-user-token 行常是「域带首点 + 列为 FALSE」，严格解析器直接
      * AssertionError 拒载。导入即修复，用户看到的就是「一次成功」。（真实 cookies
      * 实测踩中，见 E2E 记录。）</p>
      *
@@ -77,7 +77,7 @@ public final class AppleCookieSupport {
         if (!looksLikeCookiesFile(cookiesTxt)) return null;
         java.io.File file = cookiesFile();
         if (!file.getParentFile().isDirectory() && !file.getParentFile().mkdirs()) {
-            throw new IOException("无法创建伴生目录: " + file.getParentFile());
+            throw new IOException("无法创建凭据目录: " + file.getParentFile());
         }
         Files.write(file.toPath(), normalizeNetscapeColumnOrder(cookiesTxt).getBytes(StandardCharsets.UTF_8));
         String token = parse(cookiesTxt).mediaUserToken;
@@ -121,7 +121,7 @@ public final class AppleCookieSupport {
         return out.toString();
     }
 
-    /** gamdl 用的 cookies 文件路径；不存在时返回 null（调用方给「未导入凭据」的提示）。 */
+    /** cookies 文件路径；不存在时返回 null（调用方给「未导入凭据」的提示）。 */
     public static java.io.File cookiesFileOrNull() {
         java.io.File file = cookiesFile();
         return file.isFile() && file.length() > 0 ? file : null;

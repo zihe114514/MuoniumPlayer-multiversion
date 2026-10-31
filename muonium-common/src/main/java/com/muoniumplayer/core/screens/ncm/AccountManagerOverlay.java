@@ -197,6 +197,11 @@ public class AccountManagerOverlay extends NcmSheet {
         showOverview();
     }
 
+    /** 直接落到某个平台的账号页（音源浮层的账号角标跳进来用，免去再点一次）。 */
+    public void openPlatform(MusicPlatform platform) {
+        showDetail(platform);
+    }
+
     @Override
     public void dispose() {
         super.dispose();
@@ -584,6 +589,8 @@ public class AccountManagerOverlay extends NcmSheet {
         statusText = addAccountByQr ? "正在准备扫码添加账号…"
                 : qishuiExpired ? "Cookie 已被上游拒绝：用外部工具重新获取一份 Cookie，再点下方按钮导入"
                 : loggedIn ? "当前账号已登录"
+                : platform == MusicPlatform.APPLE
+                ? "从 music.apple.com 网页端导出 cookies.txt，复制全部内容后点下方按钮导入"
                 : platform == MusicPlatform.QQ
                 ? (wechat ? "已选择微信登录，点下方按钮获取二维码" : "先选一种登录方式")
                 : platform == MusicPlatform.KUGOU && kuGouConceptLogin
@@ -641,6 +648,7 @@ public class AccountManagerOverlay extends NcmSheet {
                 () -> addAccountByQr ? "扫码成功后自动回到已保存账号"
                         : loggedIn ? "本地已保存这个账号的登录凭据"
                         : qishuiCookieOnly ? "未找到外部取码工具 · 可改用 Cookie 登录"
+                        : platform == MusicPlatform.APPLE ? "cookies 导入 · 完整版本机解密播放"
                         : "请使用" + scanClientName(platform) + "扫码并确认");
 
         final Panel body = body(dialog, () -> HEADER_H, () -> footer);
@@ -1379,6 +1387,9 @@ public class AccountManagerOverlay extends NcmSheet {
         statusTone = com.muoniumplayer.core.ncm.apple.AppleMusicService.isLoggedIn() ? 1 : 0;
         beginPage();
 
+        // 与汽水 Cookie 页同一套纵向网格与 468 页宽（见 showQishuiCookieLogin）。
+        // cookies 是多行 Netscape 文件，单行输入框装不下 —— 这里只放只读摘要，
+        // 导入动作在页脚按钮上直接读剪贴板。
         final double contentTop = HEADER_H + SECTION_GAP;
         final double statusTop = contentTop + SECTION_LABEL_BLOCK + CREDENTIAL_FIELD_H + SECTION_GAP;
         final Panel dialog = sheet(468, () -> HEADER_H + SECTION_GAP + SECTION_LABEL_BLOCK
@@ -1388,46 +1399,35 @@ public class AccountManagerOverlay extends NcmSheet {
                 MusicPlatform.APPLE, () -> "cookies 登录",
                 () -> "music.apple.com 网页端导出 · 解锁本人歌单与逐词歌词");
 
-        // 摘要行：展示当前凭据状态（不做输入框——多行 cookies 装不进单行框，导入走页脚按钮）。
+        // 摘要行：分区标签 + 只读凭据状态（与凭据输入行同一套摆位）。
+        final Panel gate = veil(dialog, () -> cardGate(0));
+        sectionLabel(gate, "登录凭据", () -> contentTop, MusicPlatform.APPLE::getBrandColor);
+        final double fieldTop = contentTop + SECTION_LABEL_BLOCK;
         final RoundedRectWidget field = new RoundedRectWidget();
-        dialog.addChild(field);
+        gate.addChild(field);
         field.setClickable(false);
-        field.setRadius(6.0);
+        field.setRadius(6);
         field.setBeforeRenderCallback(() -> {
             field.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2), CREDENTIAL_FIELD_H);
-            field.setPosition(PAD + CARD_INSET, contentTop);
+            field.setPosition(PAD + CARD_INSET, fieldTop);
             field.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
         stroke(field, 6.0, MusicPlatform.APPLE::getBrandColor,
                 () -> requestRunning ? .62 : 0.0);
-        final LabelWidget digest = label(field,
+        final LabelWidget digest = label(gate,
                 com.muoniumplayer.core.ncm.apple.AppleCookieSupport::describe, FontManager.pf12);
         digest.setBeforeRenderCallback(() -> {
             digest.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             digest.setMaxWidth(Math.max(1, field.getWidth() - 22));
             digest.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            digest.setPosition(11, inkTop(digest, CREDENTIAL_FIELD_H * .5));
+            digest.setPosition(11, inkTop(digest, fieldTop + CREDENTIAL_FIELD_H * .5));
         });
 
         tip(veil(dialog, this::footerGate), this::statusGlyph, () -> statusText, this::statusColor,
                 () -> statusTop);
 
-        // 页脚两颗并排：导入（读剪贴板→落盘→联网校验）与退出登录。
-        final double half = Math.max(1, (dialog.getWidth() - (PAD + CARD_INSET) * 2 - BUTTON_GAP) * .5);
-        final RoundedButtonWidget paste = action(dialog, () -> PartyIcons.LINK,
-                () -> "从剪贴板导入 cookies", FontManager.pf12bold,
-                () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
-                () -> submitAppleCookiesFromClipboard(token));
-        paste.setRadius(6.0);
-        paste.setBeforeRenderCallback(() -> {
-            paste.setClickable(footerGate() > .5);
-            paste.setAlpha((float) footerGate());
-            paste.setBounds(half, CREDENTIAL_FIELD_H);
-            paste.setPosition(PAD + CARD_INSET, dialog.getHeight() - FOOTER_BOTTOM - CREDENTIAL_FIELD_H);
-            paste.setColor(paste.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-        });
+        // 页脚两颗：主按钮「从剪贴板导入」占右侧吃剩余（导入是这一页唯一的主动作，
+        // 用强调色），「退出登录」固定宽在左。整排接页脚闸。
         final RoundedButtonWidget signOut = action(dialog, () -> PartyIcons.LOGOUT, () -> "退出登录",
                 FontManager.pf12bold, () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT),
                 () -> logout(MusicPlatform.APPLE));
@@ -1435,12 +1435,27 @@ public class AccountManagerOverlay extends NcmSheet {
         signOut.setBeforeRenderCallback(() -> {
             signOut.setClickable(footerGate() > .5);
             signOut.setAlpha((float) footerGate());
-            signOut.setBounds(half, CREDENTIAL_FIELD_H);
-            signOut.setPosition(PAD + CARD_INSET + half + BUTTON_GAP,
-                    dialog.getHeight() - FOOTER_BOTTOM - CREDENTIAL_FIELD_H);
+            signOut.setBounds(QISHUI_PASTE_W, CREDENTIAL_FIELD_H);
+            signOut.setPosition(PAD + CARD_INSET, dialog.getHeight() - FOOTER_BOTTOM - CREDENTIAL_FIELD_H);
             signOut.setColor(signOut.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+        final RoundedButtonWidget paste = action(dialog,
+                () -> requestRunning ? PartyIcons.HOURGLASS : PartyIcons.LINK,
+                () -> requestRunning ? "正在校验…" : "从剪贴板导入 cookies", FontManager.pf12bold,
+                () -> 0xFFFFFF,
+                () -> submitAppleCookiesFromClipboard(token));
+        paste.setRadius(6.0);
+        paste.setBeforeRenderCallback(() -> {
+            paste.setClickable(footerGate() > .5 && !requestRunning);
+            paste.setAlpha((float) footerGate());
+            paste.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) * 2
+                    - QISHUI_PASTE_W - BUTTON_GAP), CREDENTIAL_FIELD_H);
+            paste.setPosition(PAD + CARD_INSET + QISHUI_PASTE_W + BUTTON_GAP,
+                    dialog.getHeight() - FOOTER_BOTTOM - CREDENTIAL_FIELD_H);
+            paste.setColor(mix(MusicPlatform.APPLE.getBrandColor(), 0xFFFFFF,
+                    paste.isHovering() ? .16 : 0.0));
         });
     }
 
@@ -2646,6 +2661,7 @@ public class AccountManagerOverlay extends NcmSheet {
         if (platform == MusicPlatform.KUGOU) return MusicBrandIcons.KUGOU_MONOGRAM;
         if (platform == MusicPlatform.QISHUI) return MusicBrandIcons.QISHUI_MONOGRAM;
         if (platform == MusicPlatform.BILIBILI) return MusicBrandIcons.BILIBILI_MONOGRAM;
+        if (platform == MusicPlatform.APPLE) return MusicBrandIcons.APPLE_MONOGRAM;
         return platform == MusicPlatform.QQ ? MusicBrandIcons.QQ_MUSIC : MusicBrandIcons.NETEASE_CLOUD_MUSIC;
     }
 

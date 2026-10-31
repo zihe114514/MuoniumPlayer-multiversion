@@ -19,10 +19,13 @@
 | `com/muoniumplayer/compat/mc/ScaledResolution.java` | FORK | 五树都有 | 26.x 改名为桌面缩放体系 |
 | `com/muoniumplayer/compat/mc/ScreenCapture.java` | FORK | 五树都有 | 截帧 API：26.x 走 renderpearl |
 | `com/muoniumplayer/compat/mc/CameraAccess.java` | FORK | 五树都有 | 3D 世界歌词：相机/玩家读取按版本 API 各树一份（共享层只放语义） |
+| `com/muoniumplayer/compat/mc/ListenerProbe.java` | FORK | 五树都有 | 场景声学：玩家环境采样（水下/天光/降水/方块射线）按版本 API 各树一份（共享层只放纯数据） |
 | `com/muoniumplayer/compat/mc/WorldBillboard.java` | FORK | 五树都有 | 3D 世界歌词：BufferSource/VertexConsumer/RenderType 按版本图形接口各树一份 |
 | `com/muoniumplayer/compat/mc/WorldLyricsBridge.java` | FORK | 五树都有 | 3D 世界歌词：世界渲染事件入口随加载器与版本不同形 |
 | `com/muoniumplayer/compat/mc/LyricGlyphAtlasBridge.java` | FORK | 五树都有 | 3D 世界歌词现代化档：字形图集页纹理宿主（整页分配 + 子矩形上传 + LINEAR 过滤保超采样），按版本纹理接口各树一份 |
 | `com/muoniumplayer/compat/mc/ShaderPackProbe.java` | FORK | 五树都有 | 光影包适配：Iris/Oculus/Embeddium 的 ShaderPack 与 RenderState 访问路径随版本/加载器各树一份 |
+| `com/muoniumplayer/compat/mc/BloomComposite.java` | FORK | 五树都有 | 3D 歌词辉光后处理管线本体（裸 GL 3.2 core）：熔断日志走各树 Bridge/HudDraw 的 traceOnce |
+| `com/muoniumplayer/compat/mc/HudBloomPass.java` | FORK | 1.20.1/1.21.1/1.21.11 | HUD 直画通路的辉光调度：26.x 的 bloom 在 present 落屏端（drawToFbo0），此件仅 1.20.1-1.21.11 需要 |
 | `com/muoniumplayer/core/rendering/IslandAmbientStatus.java` | FORK | 五树都有 | 26.x 取当前屏幕改用 mc.gui.screen() |
 | `com/muoniumplayer/core/rendering/IslandVisibilityGate.java` | FORK | 五树都有 | 26.x 取当前屏幕改用 mc.gui.screen() |
 | `com/muoniumplayer/core/screens/GuiAnnouncements.java` | FORK | 五树都有 | 26.x 关闭屏幕改用 mc.gui.setScreen(null) |

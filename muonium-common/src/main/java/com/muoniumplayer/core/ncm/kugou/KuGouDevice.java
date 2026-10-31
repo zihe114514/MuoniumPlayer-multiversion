@@ -40,6 +40,10 @@ public final class KuGouDevice {
     private static volatile String guid = "";
     private static volatile String mid = "";
     private static volatile String dfid = "";
+    /** 上游设备注册形态里的 {@code dev} 串（随机十六进制）。旧凭证文件没有它，读不到就现生成。 */
+    private static volatile String dev = "";
+    /** 风控指纹里的伪 MAC（形如 {@code AA:BB:CC:DD:EE:FF}，纯随机、不含真实硬件信息）。 */
+    private static volatile String mac = "";
     private static volatile String token = "";
     private static volatile String userId = "";
     private static volatile String nickname = "";
@@ -68,6 +72,21 @@ public final class KuGouDevice {
     public static String dfid() {
         ensureLoaded();
         return dfid;
+    }
+
+    /**
+     * 上游设备形态里的 {@code dev} 串。与 {@link #guid} 一起构成更完整的设备画像，
+     * 一起保持稳定——新账号对「每次请求都是全新设备」的风控更敏感。
+     */
+    public static String dev() {
+        ensureLoaded();
+        return dev;
+    }
+
+    /** 风控指纹用的伪 MAC，纯随机生成，与真实网卡无关。 */
+    public static String mac() {
+        ensureLoaded();
+        return mac;
     }
 
     /**
@@ -225,6 +244,8 @@ public final class KuGouDevice {
                     JsonObject root = new JsonParser().parse(text).getAsJsonObject();
                     guid = readString(root, "guid");
                     dfid = readString(root, "dfid");
+                    dev = readString(root, "dev");
+                    mac = readString(root, "mac");
                     token = readString(root, "token");
                     userId = readString(root, "userid");
                     nickname = readString(root, "nickname");
@@ -240,10 +261,23 @@ public final class KuGouDevice {
             if (KuGouSign.isBlank(guid)) guid = UUID.randomUUID().toString();
             mid = KuGouSign.mid(guid);
             if (KuGouSign.isBlank(dfid)) dfid = randomDfid();
+            if (KuGouSign.isBlank(dev)) dev = randomHex(10);
+            if (KuGouSign.isBlank(mac)) mac = randomHex(6).replaceAll("(.{2})", "$1:").substring(0, 17);
             loaded = true;
             persist();
         }
     }
+
+    /** 大写十六进制随机串，{@code bytes} 个字节（输出 {@code bytes*2} 个字符）。 */
+    private static String randomHex(int bytes) {
+        StringBuilder builder = new StringBuilder(bytes * 2);
+        for (int index = 0; index < bytes * 2; index++) {
+            builder.append(HEX_ALPHABET.charAt(RANDOM.nextInt(HEX_ALPHABET.length())));
+        }
+        return builder.toString();
+    }
+
+    private static final String HEX_ALPHABET = "0123456789ABCDEF";
 
     /** 随机 24 位 {@code dfid}，与参考实现在取流时的做法一致。 */
     private static String randomDfid() {
@@ -264,6 +298,8 @@ public final class KuGouDevice {
             JsonObject root = new JsonObject();
             root.addProperty("guid", guid);
             root.addProperty("dfid", dfid);
+            root.addProperty("dev", dev);
+            root.addProperty("mac", mac);
             root.addProperty("token", token);
             root.addProperty("userid", userId);
             root.addProperty("nickname", nickname);

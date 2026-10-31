@@ -4,15 +4,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.Proxy;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -36,7 +28,9 @@ import java.util.Map;
  *   <li><b>token 抓取单飞</b>在 {@link AppleTokenManager} 内部，这里不做。</li>
  * </ul>
  *
- * <p>HTTP 层不用 {@code HttpUtils}：需要读状态码做分流，与 Spotify 同一个理由。</p>
+ * <p>HTTP 层走 {@link AppleHttp}（{@code java.net.http.HttpClient} 封装）：
+ * amp-api 拒收 {@code HttpURLConnection} 的请求形态（稳定 401），HttpClient 直连即过；
+ * 也不用 {@code HttpUtils}：需要读状态码做分流，与 Spotify 同一个理由。</p>
  */
 public final class AppleApiClient {
 
@@ -111,21 +105,10 @@ public final class AppleApiClient {
     /**
      * /v1/me/account 探测：cookies 里的账号态与订阅是否仍然有效。
      *
-     * <p><b>走 amp_api.py 助手（Python TLS 指纹）</b>：amp-api 拒绝 Java 客户端的
-     * TLS 指纹（Java 25 稳定 401，逐头二分排除后确证），直连路径只对老指纹时代
-     * 有效 —— 助手缺失（伴生未装且无手动路径/无系统 python）时才回退直连，
-     * 失败归因照旧透出。端点是 gamdl 3.9.1 的 account-info 同款
-     * （{@code /v1/me} 不存在，404 掩盖了「tokens 其实有效」的真像，E2E 实测踩中）。</p>
+     * <p>端点与主流下载器的 account-info 同款（{@code /v1/me} 不存在，404 掩盖了
+     * 「tokens 其实有效」的真像，E2E 实测踩中）；探测失败的原因写入 {@code reason}。</p>
      */
     public static AccountProbe probeAccount() {
-        // 首选助手：Python 指纹，凭据有效性判断的唯一可靠路径。
-        JsonObject helper = AppleAmpHelper.call("probe",
-                "{\"mediaUserToken\":" + jsonQuote(AppleConfigStore.mediaUserToken()) + "}");
-        if (helper != null && AppleAmpHelper.bool(helper, "ok")) {
-            markAccountValid();
-            return new AccountProbe(true, AppleAmpHelper.bool(helper, "subscriptionActive"), "");
-        }
-
         try {
             JsonObject payload = getAccount("/v1/me/account?meta=subscription&l=zh-Hans-CN");
             markAccountValid();
@@ -277,52 +260,8 @@ public final class AppleApiClient {
     // ── 真实 HTTP ────────────────────────────────────────────────────────────
 
     private static Response realSend(Request request) throws IOException {
-        Proxy proxy = AppleProxySupport.currentProxyOrNull();
-        HttpURLConnection connection = proxy != null
-                ? (HttpURLConnection) new URL(request.url).openConnection(proxy)
-                : (HttpURLConnection) new URL(request.url).openConnection();
-        connection.setRequestMethod(request.method);
-        connection.setConnectTimeout(CONNECT_TIMEOUT_MILLIS);
-        connection.setReadTimeout(READ_TIMEOUT_MILLIS);
-        connection.setUseCaches(false);
-        if (request.headers != null) {
-            for (Map.Entry<String, String> entry : request.headers.entrySet()) {
-                connection.setRequestProperty(entry.getKey(), entry.getValue());
-            }
-        }
-        // AMP 的 GET 不带 body，但显式声明无输出避免某些 JDK 缓存默认值。
-        connection.setDoOutput(false);
-        int code = connection.getResponseCode();
-        long retryAfter = -1L;
-        String retryHeader = connection.getHeaderField("Retry-After");
-        if (retryHeader != null && !retryHeader.trim().isEmpty()) {
-            try {
-                retryAfter = Long.parseLong(retryHeader.trim());
-            } catch (NumberFormatException ignored) {
-            }
-        }
-        String stream = readStream(code >= 400 ? connection.getErrorStream() : connection.getInputStream());
-        connection.disconnect();
-        return new Response(code, retryAfter, stream);
-    }
-
-    private static String readStream(InputStream raw) throws IOException {
-        if (raw == null) return "";
-        StringBuilder out = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(raw, StandardCharsets.UTF_8))) {
-            char[] buffer = new char[8192];
-            int read;
-            while ((read = reader.read(buffer)) != -1) {
-                out.append(buffer, 0, read);
-            }
-        } finally {
-            try {
-                raw.close();
-            } catch (IOException ignored) {
-            }
-        }
-        return out.toString();
+        return AppleHttp.send(request.method, request.url, request.headers, null,
+                READ_TIMEOUT_MILLIS);
     }
 
     // ── 小工具 ───────────────────────────────────────────────────────────────

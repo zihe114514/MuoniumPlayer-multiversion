@@ -119,15 +119,10 @@ class AppleMappingStaticTest {
     // ── 伪 URL 协议 ──────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("伪 URL 往返：resolve 与还原互为逆运算；未启用 gamdl 时拒绝")
+    @DisplayName("伪 URL 往返：resolve 与还原互为逆运算；前缀即协议")
     void pseudoUrlRoundTrip() {
         AppleConfigStore.putForTest("token", "cn", true, true);
         try {
-            if (!AppleCompanionDownload.isReady()
-                    && ApplePlaybackResolver.manualExecutableOrNull() == null) {
-                // 测试机上伴生不可用：未启用 gamdl 必须拒绝出伪 URL（上游落换源替身）。
-                assertEquals(null, ApplePlaybackResolver.resolvePseudoUrl("1440833098"));
-            }
             // 还原与常量：前缀改了等于改协议，CloudMusic 的分派要跟着改。
             assertEquals("1440833098",
                     ApplePlaybackResolver.songIdFromPseudoUrl("muonium-apple://song/1440833098"));
@@ -139,8 +134,8 @@ class AppleMappingStaticTest {
     }
 
     @Test
-    @DisplayName("gamdl 总开关关掉时不给伪 URL（退化为纯元数据源 + 试听兜底）")
-    void gamdlDisabledBlocksPseudoUrl() {
+    @DisplayName("引擎开关关掉时不给伪 URL（退化为纯元数据源 + 试听兜底）")
+    void nativeEngineDisabledBlocksPseudoUrl() {
         AppleConfigStore.putForTest("token", "cn", false, true);
         try {
             assertEquals(null, ApplePlaybackResolver.resolvePseudoUrl("1440833098"));

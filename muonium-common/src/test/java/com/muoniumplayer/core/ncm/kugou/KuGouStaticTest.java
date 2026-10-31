@@ -266,6 +266,28 @@ class KuGouStaticTest {
     }
 
     @Test
+    @DisplayName("每日听歌会员：三条端点与参数字面量固定，只在概念版身份下发起")
+    void dailyVipClaimProtocol() throws Exception {
+        String api = read("KuGouMusicApi.java");
+        assertTrue(api.contains("\"/v1/get_union_vip\"") && api.contains("\"opt_product_types\", \"dvip,qvip\"")
+                        && api.contains("\"product_type\", \"svip\""),
+                "会员查询要带产品线参数：只看顶层字段会漏掉仍在生效的产品线（busi_vip[]）");
+        assertTrue(api.contains("\"/youth/v1/recharge/receive_vip_listen_song\"")
+                        && api.contains("\"source_id\", \"90139\"") && api.contains("\"receive_day\""),
+                "领取时长是 form POST，source_id 与东八区日期缺一不可");
+        assertTrue(api.contains("\"/youth/v1/listen_song/upgrade_vip_reward\"")
+                        && api.contains("\"kugouid\"") && api.contains("\"ad_type\", \"1\""),
+                "升级畅听依赖已领到的时长，必须第二条调用");
+        assertTrue(api.contains("application/x-www-form-urlencoded"),
+                "两条领取接口都是 form 表单 POST，参数走查询串参与签名");
+        String service = readService("KuGouMusicService.java");
+        assertTrue(service.contains("KuGouProfile.CONCEPT") && service.contains("dailyVipClaimMark"),
+                "只在概念版身份下发起，且每账号每天最多试一次（进程内去重）");
+        assertTrue(service.contains("runAsync"),
+                "领取在后台线程：不阻塞登录回调");
+    }
+
+    @Test
     @DisplayName("搜索端点不能用 Audioid 当 album_audio_id：那是另一套 ID，会把别首歌的文件交回来")
     void searchTrackKeepsIdSpace() throws Exception {
         String api = read("KuGouMusicApi.java");

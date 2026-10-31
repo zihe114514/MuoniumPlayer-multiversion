@@ -6,12 +6,12 @@
 
 **把音乐装进 Minecraft。**
 
-<sub>*A full-featured in-game music player for Minecraft — NetEase Cloud Music, QQ Music, Kugou, Qishui, YouTube Music, Bilibili, Spotify, Apple Music. Word-by-word lyrics, 3D world lyrics, radio & podcasts, ViPER audio effects, gapless automix, listen-together rooms. Fabric / Forge / NeoForge, Windows / Linux / macOS / Android.*</sub>
+<sub>*A full-featured in-game music player for Minecraft — NetEase Cloud Music, QQ Music, Kugou, Qishui, YouTube Music, Bilibili, Spotify, Apple Music. Word-by-word lyrics, 3D world lyrics, radio & podcasts, ViPER audio effects, scene acoustics, gapless automix, listen-together rooms. Fabric / Forge / NeoForge, Windows / Linux / macOS / Android.*</sub>
 
 一个 Minecraft 客户端 Mod：手机音乐 App 般的播放器、逐字歌词、灵动岛、一起听房间、无缝切歌 —— 全部画在游戏里，不弹浏览器、不切窗口。<br>
 纯客户端，普通服务器**不用装任何东西**。
 
-[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-2.2.0-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
+[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-2.3.0-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
 [![下载](https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-melodifymc.cc.cd-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
 [![MC 百科](https://img.shields.io/badge/MC%E7%99%BE%E7%A7%91-class%2F30544-3d8528?style=flat-square&labelColor=2b2b33)](https://www.mcmod.cn/class/30544.html)
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.20.1%20%7C%201.21.1%20%7C%201.21.11%20%7C%2026.2%20%7C%2026.3-3d8528?style=flat-square&labelColor=2b2b33)](#支持的版本)
@@ -27,7 +27,7 @@
 
 <sub>技术问题、玩法交流、抢先看新版本 —— <a href="https://qm.qq.com/q/uNHkCoTusU">点此加群</a></sub>
 
-[演示](#演示) &nbsp;·&nbsp; [音源](#9-个聚合音源一个播放器) &nbsp;·&nbsp; [LX 脚本](#lx-自定义脚本音源) &nbsp;·&nbsp; [音效](#音效系统蝰蛇音效--jamesdsp-混响) &nbsp;·&nbsp; [一起听](#一起听三种开法两种不需要服务端) &nbsp;·&nbsp; [汽水](#汽水音乐用你自己的会员听完整版) &nbsp;·&nbsp; [版本](#支持的版本) &nbsp;·&nbsp; [安装](#安装三步装好) &nbsp;·&nbsp; [赞助](#赞助)
+[演示](#演示) &nbsp;·&nbsp; [音源](#9-个聚合音源一个播放器) &nbsp;·&nbsp; [LX 脚本](#lx-自定义脚本音源) &nbsp;·&nbsp; [音效](#音效系统蝰蛇音效--jamesdsp--场景声学) &nbsp;·&nbsp; [一起听](#一起听三种开法两种不需要服务端) &nbsp;·&nbsp; [汽水](#汽水音乐用你自己的会员听完整版) &nbsp;·&nbsp; [版本](#支持的版本) &nbsp;·&nbsp; [安装](#安装三步装好) &nbsp;·&nbsp; [赞助](#赞助)
 
 </div>
 
@@ -117,14 +117,14 @@
 | **哔哩哔哩** | 免登录 / 扫码 | 歌曲、视频、分 P | 收藏夹、公开歌单 | 仅逐行 | 原码率 |
 | **汽水音乐** | 扫码 / 贴 Cookie | 歌曲、歌单 | 账号歌单、收藏、发现流、电台 | ✅ | 权益内最高档 |
 | **Spotify** | 自备 Client ID | 歌曲、公开歌单 | 本人歌单、喜欢的歌 | — | 不出声，自动换源 |
-| **Apple Music** | 账号管理里登录 | 歌曲 | — | — | 完整播放 / 自动换源 / 30 秒试听 |
+| **Apple Music** | 账号管理里贴 cookies | 歌曲 | 排行榜（8 地区）、资料库歌曲与歌单 | ✅ 逐词 | AAC 256k 完整播放 / 自动换源 / 30 秒试听 |
 | **GD 音乐台** | 免登录 | 聚合搜索 | 跨平台歌单 | 视平台而定 | 受额度限制 |
 | **LX 自定义脚本** | 导入脚本 | 看脚本 | 看脚本 | 看脚本 | 128k / 320k / FLAC / 24bit |
 
 三个提醒：
 
-- **Spotify 只提供歌单和资料，放不出声。** 官方接口没有音频出口，所以点播时会自动换到别的平台找同一首 —— 就是下面「自动换源」那套。
-- **Apple Music 的歌能完整播放。** 首次使用按提示一键装好伴生工具；放不了时自动换到能播的平台，实在不行也有 30 秒试听。账号在「账号管理」里登录。
+- **Spotify 只提供歌单和资料，放不出声。** 官方接口没有音频出口，所以点播时会自动换到别的平台找同一首 —— 就是下面「自动换源」那套。2.3.0 起还能**跨设备接管**：把游戏里这首歌转到你手机上的 Spotify 继续播，反过来也行（已适配 Spotify 接口新规，搜索与歌单照常）
+- **Apple Music 的歌能完整播放。** 内置纯 Java 引擎（授权、解密、重封装全在 JVM 里完成），**不需要装任何外部程序**；放不了时自动换到能播的平台，实在不行也有 30 秒试听。账号在「账号管理」里贴 cookies 登录，排行榜与逐词歌词同步解锁。
 - **YouTube Music 和哔哩哔哩的歌词是逐行级别的**，不是逐字。能跟着唱，但没有一个字一个字亮起来的效果。
 
 ### LX 自定义脚本音源
@@ -154,7 +154,7 @@
 - **电台节目保持原声**：节目不会被自动换源换成别的平台，听到什么就是什么
 
 
-### 音效系统：蝰蛇音效 + JamesDSP 混响
+### 音效系统：蝰蛇音效 + JamesDSP + 场景声学
 
 游戏里自带两套音效引擎，播放条右下角的调音图标进去就能调，**改完立刻听到**，不用重启也不用等下一首。
 
@@ -168,15 +168,24 @@
 
 > 想试的话，先开「大厅 1」或「板式（亮）」，这两个和默认差别最明显。
 
+**场景声学（2.3.0 新增）** —— 游戏会实测你所在的空间，让音乐跟着环境走：
+
+- **进洞、进屋、下水、下雨，听感实时变化**：洞窟里有真实的回声，回声带方向（能听出墙面在哪边），余音随洞的大小伸缩；贴着羊毛墙的房间更干更闷；水下只剩闷响；雨天整体让一让，雨声雷声自己浮上来
+- 这套效果基于射线实测：墙面材质（石头亮、羊毛吸）、房间大小、反射能不能到你耳朵，都是现场算的，不是贴标签
+- 和蝰蛇 / JamesDSP 互不打架：它修饰的是处理完的最终信号，三层效果可以同时开
+- 音效调音台新增「场景声学」页，总开关、分项（水下 / 封闭 / 降水）、强度档都能调；HUD 设置里也有一份
+
 ### 一起听：三种开法，两种不需要服务端
 
 和朋友听同一首歌。**直连与局域网两种开法什么都不用装** —— 服主不装插件、也不用开服务器：
 
 | 开法 | 需要什么 | 房主退出服务器后 |
 | --- | --- | --- |
-| **服务器房间** | 服主装 mpsync | 房间结束 |
+| **服务器房间** | 服主装 [mpsync](https://github.com/zihe114514/mpsync) | 房间结束 |
 | **直连房间** | 什么都不用装 | **房间照常继续** |
 | **局域网房间** | 什么都不用装，同一网络自动发现 | **房间照常继续** |
+
+> **mpsync**（[GitHub](https://github.com/zihe114514/mpsync)）是本 mod 的官方服务端组件：装进服务器后全服可开房间，覆盖 1.20.1 到 26.3 的 Fabric / Forge / NeoForge / Paper 四种服务端。想让你的 Mod 也能加入房间？线协议开放，接入指南见 mpsync 仓库的 [docs/接入指南.md](https://github.com/zihe114514/mpsync/blob/main/docs/%E6%8E%A5%E5%85%A5%E6%8C%87%E5%8D%97.md)。
 
 **直连房间**最好用：房主点开房，复制一条邀请串发给好友，对方粘贴就进来了。房主自己退出那个第三方服务器，房间照样开着 —— 因为房间引擎就在房主的游戏里跑。
 
@@ -212,6 +221,7 @@
 - **3D 世界歌词**：歌词直接画进游戏世界，好几种动效
 - **装了光影包也能看 3D 歌词**：开光影时 3D 歌词不再消失 —— 进游戏会提示你一键开启（1.20.1 到 26.3 全支持）
 - **译文与罗马音**都支持，中日英混着听也不怕
+- **翻译副行也带动效**：外文歌的翻译在主句下方逐字点亮，扫光、光晕、微飞径迹随便配（2.3.0）
 - **找错歌词可以直接换源**：列表里中键一点，几个候选逐字预览挑一个，选定后这首歌就一直用你挑的那份
 - 歌词来源记在歌上，切歌、重启都不会丢
 
@@ -382,7 +392,7 @@ MuoniumPlayer 是一个 **Minecraft 音乐播放器 Mod**，把完整的音乐�
 | [AMLL TTML](https://github.com/amll-dev/amll-ttml-db) | 歌词格式支持 |
 | [ModernUI](https://github.com/BloCamLimb/ModernUI) 与 [OneConfig](https://github.com/Polyfrost/OneConfig) | HUD 设置的可选集成 |
 | Melodify（modernMP） | 同源联动项目 —— 与本客户端共用一套房间协议的另一个客户端 |
-| MusicParty（mpsync） | 托管「服务器房间」的服务端组件 |
+| [MusicParty（mpsync）](https://github.com/zihe114514/mpsync) | 托管「服务器房间」的服务端组件 —— [接入指南](https://github.com/zihe114514/mpsync/blob/main/docs/%E6%8E%A5%E5%85%A5%E6%8C%87%E5%8D%97.md) |
 | [folia-major](https://github.com/chthollyphile/folia-major) | 视觉灵感来源（绘光歌词样式） |
 
 ---

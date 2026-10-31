@@ -165,6 +165,7 @@ public class Engine {
         if (this.synth instanceof repackage.com.jsyn.engine.SynthesisEngine) {
             ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setOutputObserver(outputObserver);
             ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setOutputProcessor(outputProcessor);
+            ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setTrailingOutputProcessor(trailingOutputProcessor);
         }
 		// try {
 			// 如果没有带输入的设备，这可能是-1
@@ -458,6 +459,20 @@ public class Engine {
         outputProcessor = processor;
         if (this.synth instanceof repackage.com.jsyn.engine.SynthesisEngine) {
             ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setOutputProcessor(processor);
+        }
+    }
+
+    /**
+     * Attach a trailing mutable output processor that runs after the main one, seeing the samples
+     * the main processor has already rewritten. Same real-time-safety contract; kept across audio
+     * driver switches (re-applied in {@link #createSynth}).
+     */
+    private volatile repackage.com.jsyn.engine.SynthesisEngine.OutputProcessor trailingOutputProcessor;
+
+    public void setTrailingOutputProcessor(repackage.com.jsyn.engine.SynthesisEngine.OutputProcessor processor) {
+        trailingOutputProcessor = processor;
+        if (this.synth instanceof repackage.com.jsyn.engine.SynthesisEngine) {
+            ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setTrailingOutputProcessor(processor);
         }
     }
 

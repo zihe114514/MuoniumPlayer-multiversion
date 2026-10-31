@@ -56,7 +56,24 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private boolean tracedOnce;
     private boolean tracedSmooth;
 
+    /** 辉光 mask 采集（直画端帧头放进来；null = 本帧不采集）。 */
+    private com.muoniumplayer.core.lyrics3d.MaskQuadCollector glowMask;
+
     private WorldBillboard() {
+    }
+
+    /** 直画端帧头：放进 mask 缓冲让本帧字形双写；end 后收回。 */
+    public void beginGlowMask(com.muoniumplayer.core.lyrics3d.MaskQuadCollector mask) {
+        this.glowMask = mask;
+    }
+
+    public void endGlowMask() {
+        this.glowMask = null;
+    }
+
+    @Override
+    public com.muoniumplayer.core.lyrics3d.MaskQuadCollector glowMaskTarget() {
+        return glowMask;
     }
 
     // ==================== 光影包适配：渲染类型单点分发 ====================
@@ -75,6 +92,31 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      */
     private static final java.util.concurrent.ConcurrentHashMap<ResourceLocation, RenderType> SHADER_TYPES =
             new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 特效通道的加色混合渲染类型（hologram 语义）：纹理采样 × 顶点色后以
+     * srcAlpha,one 叠加 —— 光效罩到亮背景也只会更亮，不再像透明覆盖那样
+     * 显灰。闪电程序自带全亮 + 无深度写入；其余镜像 shaderTextType。
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<ResourceLocation, RenderType> ADDITIVE_TYPES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static RenderType additiveType(ResourceLocation rl) {
+        return ADDITIVE_TYPES.computeIfAbsent(rl, r -> {
+            RenderType.CompositeState state = RenderType.CompositeState.builder()
+                    .setShaderState(RenderStateShard.RENDERTYPE_BEACON_BEAM_SHADER)
+                    .setTextureState(new RenderStateShard.TextureStateShard(r, false, false))
+                    .setTransparencyState(RenderStateShard.LIGHTNING_TRANSPARENCY)
+                    .setDepthTestState(RenderStateShard.NO_DEPTH_TEST)
+                    .setCullState(RenderStateShard.NO_CULL)
+                    .setLightmapState(RenderStateShard.NO_LIGHTMAP)
+                    .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                    .createCompositeState(false);
+            return RenderType.create("muonium_lyrics_world_fx",
+                    DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
+                    VertexFormat.Mode.QUADS, 1536, false, true, state);
+        });
+    }
 
     private static RenderType shaderTextType(ResourceLocation rl) {
         return SHADER_TYPES.computeIfAbsent(rl, r -> {
@@ -105,11 +147,13 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 : shaderTextType(pageRl);
     }
 
-    /** 同 {@link #currentGlyphType}，特效通道（拖尾/光晕/星芒/爆闪/环/拖尾画布）。 */
+    /**
+     * 特效通道（拖尾/光晕/星芒/爆闪/环/拖尾画布）：恒走加色混合 —— 柔边光效
+     * 在 alpha 混合下永远只是「盖一层灰」，加色才是光的语义（亮背景也不被
+     * 压灰）。HUD 直画窗口内走同一张表（Iris 已收工，信标/闪电程序不被拦）。
+     */
     private RenderType currentEffectType(ResourceLocation rl) {
-        return forceVanillaType || !ShaderPackProbe.isActive()
-                ? RenderType.textSeeThrough(rl)
-                : shaderTextType(rl);
+        return additiveType(rl);
     }
 
     /** 事件入口（worldRenderEnd 的矩阵在 Bridge 里已设好）。 */
@@ -221,6 +265,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         int glowColor = settings != null ? settings.glowColorRgb : 0xFFFFFF;
         // 心象的发光脉冲：正在唱的块满档、其余块压档 —— 查格前乘上去（缓存键已量化）。
         glowStrength *= glowMul;
+        // 辉光后处理接管发光：本帧 mask 采集激活时字形按零烘焙强度取格 ——
+        // 晕全由 bloom 从 mask 生成，烘焙晕与后处理晕不再叠加（能量翻倍会糊）。
+        if (glowMask != null) glowStrength = 0f;
 
         LyricGlyphAtlas.GlyphCell cell = LyricGlyphAtlas.getGlyph(
                 c, rgb & 0xFFFFFF, glowStrength, glowSpread, glowColor);
@@ -293,6 +340,13 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         putGlyphVertex(vc, mat, qLeft, qBottom, cx, cy, cos, sin, s, argb, u0, v1);
         putGlyphVertex(vc, mat, qRight, qBottom, cx, cy, cos, sin, s, argb, u1, v1);
         putGlyphVertex(vc, mat, qRight, qTop, cx, cy, cos, sin, s, argb, u1, v0);
+
+        // 辉光 mask 双写：同一份几何（绕中心变换前）记进平色缓冲。alpha 随
+        // 字形顶点 —— 入场淡入的语义进 bloom 能量，晕和字同呼吸。
+        if (glowMask != null) {
+            glowMask.addQuad(mat, qLeft, qTop, qLeft, qBottom, qRight, qBottom, qRight, qTop,
+                    cx, cy, cos, sin, s, ((int) (alpha * 255f) & 0xFF) << 24);
+        }
 
         // 同页合批：这里不再逐字 endBatch —— 页切换/帧尾统一收（见上）。
 
