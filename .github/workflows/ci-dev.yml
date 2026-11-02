@@ -102,6 +102,7 @@ jobs:
           curl -sfL --retry 3             "https://maven.aliyun.com/repository/public/io/github/humbleui/skija-linux-x64/0.143.17/skija-linux-x64-0.143.17.jar"             -o "$GITHUB_WORKSPACE/skija-native/skija-linux-x64.jar"
           cd "$GITHUB_WORKSPACE/skija-native"
           unzip -o -q skija-linux-x64.jar
+          ls -la io/github/humbleui/skija/linux/x64/
           # .so 在 io/github/humbleui/skija/linux/x64/ 下，Skija 的
           # skija.library.path 口子按 <dir>/libskija.so 找 —— 指到那个叶子目录
           echo "SKIJA_LIB_DIR=$GITHUB_WORKSPACE/skija-native/io/github/humbleui/skija/linux/x64" >> "$GITHUB_ENV"

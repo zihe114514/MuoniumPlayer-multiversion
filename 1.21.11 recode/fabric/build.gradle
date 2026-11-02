@@ -230,6 +230,11 @@ test {
     if (System.getenv('SKIJA_LIB_DIR')) {
         jvmArgs "-Djava.library.path=${System.getenv('SKIJA_LIB_DIR')}"
     }
+    doFirst {
+        println "[skija-diag] SKIJA_LIB_DIR=" + System.getenv('SKIJA_LIB_DIR')
+        def d = System.getenv('SKIJA_LIB_DIR')
+        if (d) { def f = new File(d); println "[skija-diag] exists=" + f.exists() + " files=" + f.list()?.toList() }
+    }
     testLogging {
         events 'passed', 'failed', 'skipped'
         showStandardStreams = false
