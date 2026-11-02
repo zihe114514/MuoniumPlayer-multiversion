@@ -197,8 +197,8 @@ class AutomixAudioThreadExecutionStaticTest {
         String player = read(music("AudioPlayer.java"));
         String frame = body(player, "void applyAutomixFrame(float fade, float bassDb, float vocalDepth, float midDb, float highDb)");
 
-        assertTrue(frame.contains("this.player.setAmplitudeNow(this.volume * this.fadeGain)"),
-                "振幅必须直写，否则交叉淡化会晚一块生效");
+        assertTrue(frame.contains("this.player.setAmplitudeNow(this.volume * this.fadeGain * FocusVolumeDucker.gain())"),
+                "振幅必须直写，否则交叉淡化会晚一块生效；失焦压低倍率也得乘在这里");
         assertTrue(frame.contains("chain.setTargetsNow("),
                 "四个 DSP 目标必须一次性发布");
         String speed = body(player, "private void applySpeedAndPitchNow(float tempo, float pitch)");
