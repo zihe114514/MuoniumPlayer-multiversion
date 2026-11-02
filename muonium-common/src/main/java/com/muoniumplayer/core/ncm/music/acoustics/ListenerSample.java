@@ -77,4 +77,36 @@ public interface ListenerSample {
      * 返回共享实例即可 —— 采样线程内写完才读,交接后不再变。</p>
      */
     EnergyField bandHistogram();
+
+    // ---- 世界声源(树侧实现了才有效;default = 旧行为「玩家即声源」) ----
+
+    /**
+     * 音乐正从一个世界中的声源(虚拟音箱)发出。true 时:
+     * <ul>
+     *   <li>几何字段(抽头/直方图/围合)来自<b>以音箱为原点</b>的射线场 ——
+     *       每条抽头是真实的「源→墙→耳」路径,混响是音箱所在房间的物理混响;</li>
+     *   <li>反射抽头的延迟是<b>相对直达声</b>的(全路径 − 直达路程),因为
+     *       渲染里直达声零延迟;</li>
+     *   <li>直射声字段({@link #directDistanceMeters()} 等)有效,音频侧对
+     *       干声做距离衰减/遮挡闷音/双耳定位。</li>
+     * </ul>
+     */
+    default boolean hasDirectSource() {
+        return false;
+    }
+
+    /** 直达路程(米,源→耳直线);无声源时 0。 */
+    default float directDistanceMeters() {
+        return 0f;
+    }
+
+    /** 直射遮挡量:路径上穿透方块的遮挡累计(实心 1.0 / 非实心 0.15);无声源 0。 */
+    default float directOcclusion() {
+        return 0f;
+    }
+
+    /** 直达声像 −1(源在正左)..1(源在正右):源方向在玩家右手方向的投影。 */
+    default float directPan() {
+        return 0f;
+    }
 }

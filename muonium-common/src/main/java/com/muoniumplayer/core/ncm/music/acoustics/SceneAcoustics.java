@@ -20,6 +20,12 @@ package com.muoniumplayer.core.ncm.music.acoustics;
  *       偏置就会撑爆内部动态;进网络前先过一节一阶高通(≈10Hz)。</li>
  *   <li><b>干声让位</b>:湿声大时干声按计划压低(duck),混响才不被满幅干声
  *       掩蔽;整体响度(浸液/降水)最后统一乘。</li>
+ *   <li><b>直达声链(世界声源)</b>:玩家把「虚拟音箱」放到世界里时,干声
+ *       不再等于「贴脸」—— M/S 等功率分解:M 分量(定位)按直达增益衰减、
+ *       过动态低通(遮挡/空气吸收的闷)、过双耳小环加真 ITD;S 分量(立体声
+ *       宽度)原样保留。pan=0 且满增益且截止全开时逐样本恒等 —— 无声源
+ *       零染色。直达声零延迟,反射抽头的时序由树侧按「全路径 − 直达路程」
+ *       相对化(见 {@link ListenerSample#hasDirectSource()})。</li>
  *   <li><b>频带上限</b>:每声道一条双二阶低通(RBJ,Q=1/&radic;2),截止在
  *       对数域滑移 —— 浸液那条链,与混响无关。</li>
  * </ul>
@@ -104,6 +110,10 @@ public final class SceneAcoustics {
     private static volatile float targetDecayLowSec = 0f;
     private static volatile float targetDecayHighSec = 0f;
     private static volatile float targetTone = 0.28f;
+    /** 直达声链目标量(世界声源;gain=1/fc=open/pan=0 = 恒等直通)。 */
+    private static volatile float targetDirectGain = 1f;
+    private static volatile double targetDirectCutoff = DirectPath.FC_OPEN;
+    private static volatile float targetDirectPan = 0f;
     /** 不可变房间计划(volatile 引用交接);抽头延迟/能量/声像的真来源。 */
     private static volatile RoomPlan targetPlan = RoomPlan.idle();
     /** 换曲/seek 的清态请求(volatile 标志;音频线程缓冲头消费,见 {@link #flush()})。 */
@@ -120,6 +130,10 @@ public final class SceneAcoustics {
     private static float decayLowSec;
     private static float decayHighSec;
     private static float tone = 0.28f;
+    /** 直达声链现状(仅音频线程触碰)。 */
+    private static float directGain = 1f;
+    private static float directCutoff = (float) DirectPath.FC_OPEN;
+    private static float directPan;
 
     private static int ownedRate = -1;
     private static double lastCoefBand = -1.0;
@@ -146,8 +160,7 @@ public final class SceneAcoustics {
     private static double shelfXL1, shelfYL1;
     private static double shelfXR1, shelfYR1;
 
-    /** 节拍侧链:低频包络(二阶低通 @110Hz)+ 滑动最大值 hold(openal-soft
-     *  SlidingHold 同款)—— 瞬态到达瞬间压、hold 住、瞬间放。双声道检测取
+    /** 节拍侧链:低频包络(二阶低通 @110Hz)+ 滑动最大值 hold(openal-soft     *  SlidingHold 同款)—— 瞬态到达瞬间压、hold 住、瞬间放。双声道检测取
      *  max(|L|,|R|)(单侧瞬态不再被 mono 平均稀释)。 */
     private static final double SIDECHAIN_LP_HZ = 110.0;
     private static final float SIDECHAIN_DUCK = 0.55f;    // 最低压到 0.7(-3.1dB):防冲击的主力已是低切+搁架,侧链只做轻呼吸
@@ -163,6 +176,17 @@ public final class SceneAcoustics {
     private static double scLpX1R, scLpY1R;               // 包络低通状态(R)
     private static double scLpCoef;                       // 低通系数(rebuild 算)
     private static float sidechainGain = 1f;              // 当前 duck 增益(音频线程)
+
+    /** 直达声链(世界声源):M 分量的一阶低通(动态系数,逐帧整定)+ 双耳
+     *  小环(真 ITD;M 是 mono,一条环配左右读位即可,不必两条)。 */
+    private static final int DIRECT_RING_SEC_SAMPLES = 96; // 容量余量:ITD 上限 28 样,取 3 倍余
+    private static float[] directRing = new float[0];
+    private static int directPos;
+    private static double directLpCoef;                   // 一阶低通系数(逐帧按目标 fc 整定)
+    private static double directLpState;
+    private static int directItdMax;
+    /** 直达静息阈:gain≥此值且截止全开 → 整条链逐样本直通(零开销)。 */
+    private static final float DIRECT_IDLE_GAIN = 0.999f;
 
     /** 尾部预延迟线(可变读距)。 */
     private static float[] preDelayBuf = new float[0];
@@ -225,6 +249,11 @@ public final class SceneAcoustics {
         targetDecayLowSec = Math.max(0f, Math.min(5.6f, safe.decayLowSec));
         targetDecayHighSec = Math.max(0f, Math.min(5.6f, safe.decayHighSec));
         targetTone = (float) Math.max(0.10, Math.min(0.45, safe.tone));
+        targetDirectGain = clamp01(safe.directGain);
+        targetDirectCutoff = Double.isNaN(safe.directCutoffHz)
+                ? DirectPath.FC_OPEN
+                : Math.max(200.0, Math.min(DirectPath.FC_OPEN, safe.directCutoffHz));
+        targetDirectPan = DirectPath.clampPan(safe.directPan);
         targetPlan = safe;
     }
 
@@ -254,6 +283,11 @@ public final class SceneAcoustics {
         decayLowSec = targetDecayLowSec;
         decayHighSec = targetDecayHighSec;
         tone = targetTone;
+        directGain = targetDirectGain;
+        directCutoff = (float) targetDirectCutoff;
+        directPan = targetDirectPan;
+        directLpState = 0.0;
+        if (directRing.length > 0) java.util.Arrays.fill(directRing, 0f);
         for (double[] ch : bandState) java.util.Arrays.fill(ch, 0.0);
         if (preDelayBuf.length > 0) java.util.Arrays.fill(preDelayBuf, 0f);
         if (erRingL.length > 0) java.util.Arrays.fill(erRingL, 0f);
@@ -308,6 +342,9 @@ public final class SceneAcoustics {
         final float tDecayLow = targetDecayLowSec;
         final float tDecayHigh = targetDecayHighSec;
         final float tTone = targetTone;
+        final float tDirectGain = targetDirectGain;
+        final float tDirectCutoff = (float) targetDirectCutoff;
+        final float tDirectPan = targetDirectPan;
 
         final double bandStep = 1.0 - Math.exp(-frames / (sampleRate * BAND_TAU_SEC));
         final float wetStep = (float) (1.0 - Math.exp(-frames / (sampleRate * WET_TAU_SEC)));
@@ -320,12 +357,17 @@ public final class SceneAcoustics {
         decayLowSec += (tDecayLow - decayLowSec) * wetStep;
         decayHighSec += (tDecayHigh - decayHighSec) * wetStep;
         tone += (tTone - tone) * wetStep;
-
+        directGain += (tDirectGain - directGain) * wetStep;
+        directCutoff += (tDirectCutoff - directCutoff) * wetStep;
+        directPan += (tDirectPan - directPan) * wetStep;
 
         final boolean bandActive = logBand < LOG_BAND_OPEN - 0.001;
         final boolean wetActive = wet > WET_FLOOR;
         final boolean loudActive = loudness < 0.999f || dryGain < 0.999f;
-        if (!bandActive && !wetActive && !loudActive) {
+        final boolean directActive = directGain < DIRECT_IDLE_GAIN
+                || directCutoff < DirectPath.FC_OPEN - 1.0
+                || Math.abs(directPan) > 0.001f;
+        if (!bandActive && !wetActive && !loudActive && !directActive) {
             activeLogged = false; // 回到静息:下次再生效时允许再报一条。
             return;
         }
@@ -399,6 +441,20 @@ public final class SceneAcoustics {
         final int itdMax = itdMaxSamples;
         final float tapStep = (float) (1.0 - Math.exp(-frames / (sampleRate * TAP_GAIN_TAU_SEC)));
 
+        // 直达声链的逐缓冲整定:低通系数按当前截止导出(收敛是缓的,系数
+        // 跳变在缓变里听不见);ITD 读距按当前声像。静息态(directActive=false)
+        // 下面整段跳过 —— 左右原样直通,与没有这条链逐样本一致。
+        final boolean doDirect = directActive && directRing.length > 1;
+        final int dRingLen = doDirect ? directRing.length : 0;
+        // 截止全开(近场无遮挡)时低通旁路:M 原样进环 —— 一阶低通在 20kHz
+        // 也有 -1.6dB,「全带宽」语义必须是真恒等。
+        final boolean dLpOpen = directCutoff >= DirectPath.FC_OPEN - 1.0;
+        if (doDirect && !dLpOpen) {
+            final double fc = Math.min(directCutoff, sampleRate * 0.45);
+            directLpCoef = 1.0 - Math.exp(-2.0 * Math.PI * fc / sampleRate);
+            directItdMax = Math.max(1, (int) Math.round(ITD_MAX_SEC * sampleRate));
+        }
+
         int idx = 0;
         for (int frame = 0; frame < frames; frame++) {
             double left = interleaved[idx];
@@ -409,6 +465,40 @@ public final class SceneAcoustics {
                 if (state1 != null) {
                     right = biquad(right, state1);
                 }
+            }
+
+            // ---- 直射声链(M/S 等功率 + 动态低通 + 真 ITD) ----
+            if (doDirect) {
+                // M/S 分解:M = 中置定位分量(声源方向),S = 立体声宽度。
+                final double mid = (left + right) * 0.5;
+                final double side = (left - right) * 0.5;
+                // M 过一阶低通(遮挡/空气吸收的「闷」;截止全开时旁路),写单环。
+                directLpState = dLpOpen ? mid
+                        : directLpState + directLpCoef * (mid - directLpState);
+                final float mSample = (float) directLpState;
+                directRing[directPos] = mSample;
+                // 真 ITD:源在右(pan>0)右耳先到 —— 右耳读位近(年龄小),
+                // 左耳读位远(晚到),与 ER 抽头的约定同向。
+                final int itd = (int) (directPan * directItdMax);
+                int readL = directPos + itd;
+                if (readL >= dRingLen) {
+                    readL -= dRingLen;
+                }
+                int readR = directPos - itd;
+                if (readR < 0) {
+                    readR += dRingLen;
+                }
+                final double mL = directRing[readL];
+                final double mR = directRing[readR];
+                directPos = directPos + 1 == dRingLen ? 0 : directPos + 1;
+                // 等功率对:g(pan) = (cos((pan+1)π/4)·√2, sin((pan+1)π/4)·√2)
+                // —— pan=0 时 gL=gR=1(恒等),全偏时单耳 ×√2(等功率)。
+                final double gl = DirectPath.gainL(directPan) * Math.sqrt(2.0);
+                final double gr = DirectPath.gainR(directPan) * Math.sqrt(2.0);
+                // M 分量:衰减后的直达,左右耳各按自己的 ITD 读(时间差即定位)。
+                // S 分量原样保留 —— 立体声宽度不被声源化稀释。
+                left = mL * gl * directGain + side;
+                right = mR * gr * directGain - side;
             }
 
             float wetL = 0f;
@@ -689,6 +779,12 @@ public final class SceneAcoustics {
         erRingL = new float[ringLen];
         erRingR = new float[ringLen];
         erPos = 0;
+
+        // 直达声环:容量 = ITD 上限 ×3 的余量(M 单环,读位 ±ITD 内)。
+        directItdMax = itdMaxSamples;
+        directRing = new float[Math.max(8, DIRECT_RING_SEC_SAMPLES + 2 * itdMaxSamples)];
+        directPos = 0;
+        directLpState = 0.0;
         final RoomPlan plan = targetPlan;
         buildTapSet(tapPosA, tapPanA, tapGLA, tapGRA, tapAirCoefA, plan, rate);
         tapCountA = plan.tapCount;
