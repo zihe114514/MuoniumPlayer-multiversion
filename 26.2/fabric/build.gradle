@@ -186,6 +186,12 @@ dependencies {
     // 离线光栅测试要在 JUnit 里真跑 Skia：原生库已不随主包内置，
     // 这里只进测试类路径，不会进成品 jar
     testImplementation 'io.github.humbleui:skija-windows-x64:0.143.17'
+    // CI（ubuntu）跑共享测试时 Skija 原生库换 linux 变体：windows-x64 的 dll 在
+    // Linux 加载不了，muonium.skija.autoDownload=false 又禁了自下载。本机 Windows
+    // 两条都会上 classpath，加载器按 os 选对的那个，互不影响。
+    if (!org.gradle.internal.os.OperatingSystem.current().isWindows()) {
+        testImplementation 'io.github.humbleui:skija-linux-x64:0.143.17'
+    }
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
