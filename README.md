@@ -310,7 +310,7 @@ Windows 开箱即用；Linux 与安卓首次启动自动补齐组件，按提示
 
 <div align="center">
 
-### QQ 群 · 27635246
+### QQ 群 · 276352246
 
 **「Melodify & MuoniumPlayer 的联动小屋喵」**
 
