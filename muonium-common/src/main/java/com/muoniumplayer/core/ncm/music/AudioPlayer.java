@@ -373,9 +373,7 @@ public class AudioPlayer {
         this.midGainDb = Float.isFinite(midDb) ? Math.max(-3f, Math.min(3f, midDb)) : 0f;
         this.highGainDb = Float.isFinite(highDb) ? Math.max(-3f, Math.min(3f, highDb)) : 0f;
         if (!isUsable()) return;
-        // 失焦压低也要乘进来：交叉淡化期间走的是这条音频线程路径，漏乘的话切出去时
-        // 正赶上交接，音量会弹回满值。
-        this.player.setAmplitudeNow(this.volume * this.fadeGain * FocusVolumeDucker.gain());
+        this.player.setAmplitudeNow(this.volume * this.fadeGain);
         AutomixDeckChain chain = this.automixChain;
         if (chain != null) chain.setTargetsNow(this.bassGainDb, routeVocalDepth(this.vocalDuckDepth),
                 this.midGainDb, this.highGainDb);
@@ -744,16 +742,11 @@ public class AudioPlayer {
         }
     }
 
-    /** 交给引擎的有效振幅：持久化音量 × 交叉淡化增益 × 失焦压低倍率。 */
+    /** 交给引擎的有效振幅：持久化音量乘以交叉淡化增益。 */
     private float effectiveAmp() {
-        float amp = this.volume * this.fadeGain * FocusVolumeDucker.gain();
+        float amp = this.volume * this.fadeGain;
         if (Float.isNaN(amp) || Float.isInfinite(amp)) return 0.0f;
         return Math.max(0.0f, Math.min(1.0f, amp));
-    }
-
-    /** 失焦压低倍率变了：按当前状态把有效振幅重新交给引擎。供 {@link FocusVolumeDucker} 用。 */
-    void refreshAmp() {
-        applyAmp();
     }
 
     private void applyAmp() {
