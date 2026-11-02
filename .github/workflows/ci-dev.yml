@@ -114,11 +114,10 @@ jobs:
           # 编译 + 该加载器的单测（muonium-common 共享测试从各树挂载跑）
           # setup-java 已把 JAVA_HOME 指到矩阵对应的 JDK；无 java.home 属性时
           # Gradle 守护进程直接用 JAVA_HOME
-          EXTRA=""
+          # daemon 由本 step 进程启动（继承 step 环境），java.library.path
+          # 随 GRADLE_OPTS 进 daemon → fork 测试 JVM 启动期就带上
           if [ "${{ matrix.loader }}" = "fabric" ] && [ -n "$SKIJA_LIB_DIR" ]; then
-            # 两条属性都要：skija.library.path 是 SkijaNatives 的口子，
-            # java.library.path 是 Skija 内部 System.loadLibrary 真正读的
-            EXTRA="-Dskija.library.path=$SKIJA_LIB_DIR"
+            export GRADLE_OPTS="-Djava.library.path=$SKIJA_LIB_DIR $GRADLE_OPTS"
           fi
           ./gradlew ":${{ matrix.loader }}:test" ":${{ matrix.loader }}:build" \
             --console=plain --stacktrace
