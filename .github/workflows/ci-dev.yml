@@ -17,8 +17,8 @@ concurrency:
 jobs:
   # ---------------------------------------------------------------
   # 五棵版本树各自独立 Gradle 构建（JDK / 映射 / 插件各不同，禁止合并）。
-  # gradle.properties 里钉了本机 JDK 绝对路径（org.gradle.java.home），
-  # CI 上不存在这些路径 —— 用 -Dorg.gradle.java.home= 空覆盖 + JAVA_HOME 兜底。
+  # gradle.properties 钉了本机 JDK 绝对路径与本机代理（127.0.0.1:7890），
+  # CI 上两者都不存在 —— 由 Sanitize 步骤在工作副本里摘除。
   # ---------------------------------------------------------------
   build-and-test:
     name: ${{ matrix.tree }} · ${{ matrix.loader }}
@@ -82,14 +82,34 @@ jobs:
         env:
           # CI 上无视本机 JDK 路径；setup-java 已把 JAVA_HOME 指到对应 JDK
           GRADLE_OPTS: "-Dorg.gradle.java.home="
+      - name: Sanitize gradle.properties for CI
+        shell: bash
+        run: |
+          cd "${{ matrix.tree }}"
+          # gradle.properties 钉了本机设定，CI 上必须摘除（只改工作副本，不回写仓库）：
+          #   1) org.gradle.java.home=C:/Users/... —— CI 无此路径，Gradle 直接拒启
+          #   2) systemProp.*proxyHost/Port=127.0.0.1:7890 —— CI 无本地代理，
+          #      走它会全军覆没（含 Gradle Central Plugin Portal 拉 shadow 插件）
+          sed -i \
+            -e '/^org\.gradle\.java\.home=/d' \
+            -e '/^systemProp\.http\.proxyHost=/d' \
+            -e '/^systemProp\.http\.proxyPort=/d' \
+            -e '/^systemProp\.https\.proxyHost=/d' \
+            -e '/^systemProp\.https\.proxyPort=/d' \
+            gradle.properties
+          echo "--- sanitized gradle.properties (proxy/java.home removed) ---"
+          grep -E 'java.home|proxyHost' gradle.properties || echo "(clean)"
+
+      - name: Build & Test (${{ matrix.tree }} / ${{ matrix.loader }})
+        shell: bash
         run: |
           cd "${{ matrix.tree }}"
           chmod +x gradlew
           # 编译 + 该加载器的单测（muonium-common 共享测试从各树挂载跑）
+          # setup-java 已把 JAVA_HOME 指到矩阵对应的 JDK；无 java.home 属性时
+          # Gradle 守护进程直接用 JAVA_HOME
           ./gradlew ":${{ matrix.loader }}:test" ":${{ matrix.loader }}:build" \
-            --console=plain --stacktrace \
-            -Dorg.gradle.java.home= \
-            -Dmaven.repo.override=none
+            --console=plain --stacktrace
 
       - name: Upload jars
         uses: actions/upload-artifact@v4
