@@ -118,7 +118,11 @@ public final class SpeakerRenderBridge {
         }
         final float nx = dx / len, ny = dy / len, nz = dz / len;
         final int r = (rgb >> 16) & 0xFF, g = (rgb >> 8) & 0xFF, b = rgb & 0xFF;
-        c.addVertex(pose.pose(), ax, ay, az).setColor(r, g, b, a).setNormal(pose, nx, ny, nz);
-        c.addVertex(pose.pose(), bx, by, bz).setColor(r, g, b, a).setNormal(pose, nx, ny, nz);
+        // 26.3 的 lines 管线格式是 POSITION_COLOR_NORMAL_LINE_WIDTH —— 每顶点
+        // 必须带线宽,漏一项 BufferBuilder 直接抛「Missing elements in vertex」。
+        c.addVertex(pose.pose(), ax, ay, az).setColor(r, g, b, a)
+                .setNormal(pose, nx, ny, nz).setLineWidth(1.0f);
+        c.addVertex(pose.pose(), bx, by, bz).setColor(r, g, b, a)
+                .setNormal(pose, nx, ny, nz).setLineWidth(1.0f);
     }
 }
