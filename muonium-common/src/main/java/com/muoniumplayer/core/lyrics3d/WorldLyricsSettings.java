@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.lyrics3d;
 
+import com.muoniumplayer.core.rendering.font.TextGlow;
 import com.muoniumplayer.core.settings.HudConfig;
 
 /**
@@ -40,8 +41,8 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     public float glowStrength = 0.35f;
     public float glowSpread = 1.3f;
 
-    /** 发光质量档（TextGlow.GLOW_TIER_*）：0 Standard / 1 High(默认) / 2 Ultra。 */
-    public int glowTier = 1;
+    /** 发光质量档（TextGlow.GLOW_TIER_*）：0 Standard / 1 High / 2 Ultra(默认，HDR bloom)。 */
+    public int glowTier = TextGlow.GLOW_TIER_DEFAULT;
     public int glowColorRgb = 0xFFFFFF;
     /** 发光颜色来源档：0 = 跟随字色（逐字联动文字色/渐变/关键字） / 1 = 自定义色板。 */
     public int glowColorMode = 1;

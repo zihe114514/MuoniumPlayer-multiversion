@@ -44,11 +44,257 @@ public final class TextGlow {
     /** 晕格层的不透明度上限（乘发光强度）。加色混合下叠加即增亮，可给到全量程。 */
     private static final double[] GLOW_LAYER_ALPHA = {0.40, 0.85};
 
-    /** 发光质量档（用户可选）：单层宽晕（最省）/ HQ（默认，最平衡）/ Ultra（最华丽）。 */
+    /** 发光质量档（用户可选）：单层宽晕（最省）/ HQ（最平衡）/ Ultra（默认，HDR bloom 管线）。 */
     public static final int GLOW_TIER_STANDARD = 0;
     public static final int GLOW_TIER_HIGH = 1;
     public static final int GLOW_TIER_ULTRA = 2;
-    public static final int GLOW_TIER_DEFAULT = GLOW_TIER_HIGH;
+    public static final int GLOW_TIER_DEFAULT = GLOW_TIER_ULTRA;
+
+    // ==================== Ultra 档 HDR bloom 烘焙管线 ====================
+    // 探针五轮收敛的定案（_scratch/glowprobe GlowProbe2~5）：soft-knee bright-pass →
+    // γ2.2 → 高斯预低通 → mip 链 1/2→1/4→1/8（每级先低通再降采样，防高频混叠）→
+    // dual-filtering 上行（每步只放大 ~2×，逐级双线性 + 相加 + 轻高斯）→ γ1/2.2 →
+    // 分层加色（宽晕场/外圈饱和/内圈字色）→ 字色白核。σ 以 50px 字号为基准，
+    // 按实际烘焙字号等比缩放。逐字晕格 PLUS 叠加 ≈ 整行 bloom（晕/墨分离架构下
+    // 跨字重叠由晕格 quad 的加色天然合成）。
+
+    /** 管线版本：算法或参数变更时 +1，随晕格缓存键走，防旧格跨版本复用。 */
+    public static final int BLOOM_PIPELINE_VERSION = 1;
+
+    /** 晕格独立烘焙超采样（设计像素 ×3）：晕是低频光形，3× 域 mip 链可运行、格小烘焙快。 */
+    public static final int GLOW_BAKE_SCALE = 3;
+
+    private static final float BLOOM_THRESH = 0.13f;
+    private static final float BLOOM_KNEE = 0.30f;
+    private static final float BLOOM_SIGMA_PRE = 2.0f;
+    private static final float BLOOM_SIGMA_M1 = 1.6f;
+    private static final float BLOOM_SIGMA_M2 = 1.8f;
+    private static final float BLOOM_SIGMA_M3 = 1.8f;
+    private static final float BLOOM_SIGMA_UP1 = 0.6f;
+    private static final float BLOOM_SIGMA_UP2 = 0.7f;
+    private static final float BLOOM_SIGMA_CORE = 2.2f;
+    private static final float BLOOM_GAIN_WIDE = 0.34f;
+    private static final float BLOOM_GAIN_OUTER = 0.16f;
+    private static final float BLOOM_GAIN_INNER = 0.38f;
+    private static final float BLOOM_GAIN_CORE = 0.16f;
+    private static final float BLOOM_WHITEN_INNER = 0.06f;
+    private static final float BLOOM_WHITEN_CORE = 0.65f;
+    private static final float BLOOM_SAT_OUTER = 1.14f;
+
+    /**
+     * Ultra 档晕格的宽晕等效 σ（调用方所在域的像素）。mip 链各级 σ 折算回
+     * 掩码域（×2^i）后与预低通求和 —— 高斯尾巴 3σ 外不可见，pad 取它的 3 倍。
+     */
+    public static float bloomWideSigma(float fontPx, double spread) {
+        float k = (float) (fontPx / 50.0 * Math.max(.05, spread));
+        return (BLOOM_SIGMA_PRE + BLOOM_SIGMA_M1 * 2 + BLOOM_SIGMA_M2 * 4 + BLOOM_SIGMA_M3 * 8) * k;
+    }
+
+    /**
+     * Ultra 档晕格像素烘焙。输入字形覆盖掩码（0..1），输出<b>直通 alpha</b> 的
+     * ARGB int[]（rgb 存满强度光色、alpha 存强度 —— GL (SRC_ALPHA, ONE) 加色下
+     * 贡献 = rgb×alpha 无损；全透明 texel 为 (0,0,0,0)，边缘渗色由调用方做
+     * RGB 延拓）。任何异常返回 null，调用方回退旧分层烘焙。
+     *
+     * @param mask    字形覆盖度，长 w×h
+     * @param fontPx  掩码所在域的字号（像素），σ 按 fontPx/50 等比缩放
+     */
+    public static int[] bakeBloomGlowPixels(float[] mask, int w, int h, float fontPx,
+                                            double spread, double strength, int lightRgb) {
+        try {
+            float clamped = (float) clamp01(strength);
+            if (mask == null || w <= 0 || h <= 0 || mask.length < w * h || clamped <= .004f) {
+                return null;
+            }
+            if ((lightRgb & 0xFFFFFF) == 0) {
+                return null;   // 黑光色 = 不发光（白核的提白会把黑变成灰，必须显式回退旧路径）
+            }
+            float k = (float) (fontPx / 50.0 * Math.max(.05, spread));
+            float lr = ((lightRgb >> 16) & 255) / 255f;
+            float lg = ((lightRgb >> 8) & 255) / 255f;
+            float lb = (lightRgb & 255) / 255f;
+
+            // ---- bright-pass（soft-knee）→ 线性域 ----
+            float[] b = new float[w * h];
+            for (int i = 0; i < b.length; i++) {
+                float v = Math.max(0f, mask[i]);
+                if (v <= 1e-4f) {
+                    continue;   // 无光：膝部形状在 v=0 处仍有残值，必须显式归零
+                }
+                float hard = Math.max(v - BLOOM_THRESH, 0);
+                float soft = BLOOM_KNEE * Math.max(0f, Math.min(v - BLOOM_THRESH + BLOOM_KNEE, 2 * BLOOM_KNEE));
+                soft = soft * soft / (4 * BLOOM_KNEE + 1e-4f);
+                b[i] = (float) Math.pow(Math.max(hard, soft), 2.2);
+            }
+            // ---- 下行链：每级先低通再降采样（防高频混叠成块）----
+            gaussBlur(b, w, h, BLOOM_SIGMA_PRE * k);
+            int w1 = w / 2, h1 = h / 2, w2 = w1 / 2, h2 = h1 / 2, w3 = w2 / 2, h3 = h2 / 2;
+            if (w3 < 1 || h3 < 1) {
+                return null;
+            }
+            float[] m1 = down2(b, w, h);
+            gaussBlur(m1, w1, h1, BLOOM_SIGMA_M1 * k);
+            float[] m2 = down2(m1, w1, h1);
+            gaussBlur(m2, w2, h2, BLOOM_SIGMA_M2 * k);
+            float[] m3 = down2(m2, w2, h2);
+            gaussBlur(m3, w3, h3, BLOOM_SIGMA_M3 * k);
+            // ---- 上行链：每步只放大 ~2×，相加后轻高斯压台阶 ----
+            float[] u = upTo(m3, w3, h3, w2, h2);
+            addInto(u, m2);
+            gaussBlur(u, w2, h2, BLOOM_SIGMA_UP1 * k);
+            u = upTo(u, w2, h2, w1, h1);
+            addInto(u, m1);
+            gaussBlur(u, w1, h1, BLOOM_SIGMA_UP2 * k);
+            u = upTo(u, w1, h1, w, h);
+            gammaBack(u);
+            // 外圈/内圈层在小域上 γ 返程后双线性放大到全网格（探针 addBilin 口径）
+            gammaBack(m3);
+            gammaBack(m1);
+
+            // ---- 分层加色：宽晕场 / 外圈饱和 / 内圈字色 / 字色白核 ----
+            float[] gR = new float[w * h], gG = new float[w * h], gB = new float[w * h];
+            addLayerTinted(gR, gG, gB, u, BLOOM_GAIN_WIDE * clamped, lr, lg, lb, 0f, 1f);
+            addLayerTinted(gR, gG, gB, upTo(m3, w3, h3, w, h),
+                    BLOOM_GAIN_OUTER * clamped, lr, lg, lb, 0f, BLOOM_SAT_OUTER);
+            addLayerTinted(gR, gG, gB, upTo(m1, w1, h1, w, h),
+                    BLOOM_GAIN_INNER * clamped, lr, lg, lb, BLOOM_WHITEN_INNER, 1f);
+            float[] core = new float[w * h];
+            System.arraycopy(mask, 0, core, 0, w * h);
+            gaussBlur(core, w, h, BLOOM_SIGMA_CORE * k);
+            addLayerTinted(gR, gG, gB, core, BLOOM_GAIN_CORE * clamped, lr, lg, lb, BLOOM_WHITEN_CORE, 1f);
+
+            // ---- 直通 alpha 输出：a = max 通道，rgb 除回满强度（GL 加色贡献 rgb×a 不变）----
+            int[] out = new int[w * h];
+            for (int i = 0; i < out.length; i++) {
+                float r = Math.max(0f, gR[i]), g = Math.max(0f, gG[i]), bl = Math.max(0f, gB[i]);
+                float mx = Math.max(r, Math.max(g, bl));
+                if (mx <= 0.001f) {
+                    out[i] = 0;
+                    continue;
+                }
+                if (mx > 1f) {
+                    r /= mx; g /= mx; bl /= mx; mx = 1f;
+                }
+                int ri = Math.round(r / mx * 255f), gi = Math.round(g / mx * 255f), bi = Math.round(bl / mx * 255f);
+                int a = Math.round(mx * 255f);
+                out[i] = (a << 24) | (Math.min(255, ri) << 16) | (Math.min(255, gi) << 8) | Math.min(255, bi);
+            }
+            return out;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 灰度场 γ 返程（负值钳零 —— 滑窗浮点误差的微负值经 pow 会成 NaN，碎屏根源）。 */
+    private static void gammaBack(float[] a) {
+        for (int i = 0; i < a.length; i++) {
+            float v = a[i];
+            a[i] = (float) Math.pow(v < 0 ? 0 : v, 1f / 2.2f);
+        }
+    }
+
+    /** 颜色场累加：src × gain × tint（tint = 光色按 satK 调饱和后再向白提 whiten）。 */
+    private static void addLayerTinted(float[] gR, float[] gG, float[] gB, float[] src,
+                                       float gain, float lr, float lg, float lb,
+                                       float whiten, float satK) {
+        if (gain <= 0) {
+            return;
+        }
+        float gray = 0.299f * lr + 0.587f * lg + 0.114f * lb;
+        float tr = gray + (lr - gray) * satK;
+        float tg = gray + (lg - gray) * satK;
+        float tb = gray + (lb - gray) * satK;
+        tr += (1f - tr) * whiten;
+        tg += (1f - tg) * whiten;
+        tb += (1f - tb) * whiten;
+        for (int i = 0; i < gR.length; i++) {
+            float v = src[i] * gain;
+            gR[i] += v * tr;
+            gG[i] += v * tg;
+            gB[i] += v * tb;
+        }
+    }
+
+    /** 真高斯核分离模糊（各向同性；输出钳非负）。 */
+    private static void gaussBlur(float[] a, int w, int h, float sigma) {
+        if (sigma <= 0.05f) {
+            return;
+        }
+        int r = Math.max(1, (int) Math.ceil(sigma * 2.5f));
+        float[] k = new float[2 * r + 1];
+        float s2 = 2f * sigma * sigma;
+        float sum = 0;
+        for (int i = -r; i <= r; i++) {
+            float v = (float) Math.exp(-i * i / s2);
+            k[i + r] = v;
+            sum += v;
+        }
+        for (int i = 0; i < k.length; i++) {
+            k[i] /= sum;
+        }
+        float[] t = new float[w * h];
+        for (int y = 0; y < h; y++) {
+            int row = y * w;
+            for (int x = 0; x < w; x++) {
+                float acc = 0;
+                for (int i = -r; i <= r; i++) {
+                    int sx = Math.max(0, Math.min(w - 1, x + i));
+                    acc += a[row + sx] * k[i + r];
+                }
+                t[row + x] = acc;
+            }
+        }
+        for (int x = 0; x < w; x++) {
+            for (int y = 0; y < h; y++) {
+                float acc = 0;
+                for (int i = -r; i <= r; i++) {
+                    int sy = Math.max(0, Math.min(h - 1, y + i));
+                    acc += t[sy * w + x] * k[i + r];
+                }
+                a[y * w + x] = Math.max(0f, acc);
+            }
+        }
+    }
+
+    /** 2×2 box 下采样（天然低通）。 */
+    private static float[] down2(float[] s, int w, int h) {
+        int dw = w / 2, dh = h / 2;
+        float[] d = new float[dw * dh];
+        for (int dy = 0; dy < dh; dy++) {
+            int y0 = dy * 2, y1 = Math.min(h - 1, dy * 2 + 1);
+            for (int dx = 0; dx < dw; dx++) {
+                int x0 = dx * 2, x1 = Math.min(w - 1, dx * 2 + 1);
+                d[dy * dw + dx] = (s[y0 * w + x0] + s[y0 * w + x1] + s[y1 * w + x0] + s[y1 * w + x1]) * 0.25f;
+            }
+        }
+        return d;
+    }
+
+    /** 双线性放大到任意目标尺寸（上行链每步 ~2×，杜绝碎块）。 */
+    private static float[] upTo(float[] s, int w, int h, int uw, int uh) {
+        float[] d = new float[uw * uh];
+        for (int y = 0; y < uh; y++) {
+            float fy = (y + 0.5f) * h / (float) uh - 0.5f;
+            int y0 = Math.max(0, Math.min(h - 1, (int) Math.floor(fy)));
+            int y1 = Math.min(h - 1, y0 + 1);
+            float ty = Math.max(0f, Math.min(1f, fy - y0));
+            for (int x = 0; x < uw; x++) {
+                float fx = (x + 0.5f) * w / (float) uw - 0.5f;
+                int x0 = Math.max(0, Math.min(w - 1, (int) Math.floor(fx)));
+                int x1 = Math.min(w - 1, x0 + 1);
+                float tx = Math.max(0f, Math.min(1f, fx - x0));
+                d[y * uw + x] = (s[y0 * w + x0] * (1 - tx) + s[y0 * w + x1] * tx) * (1 - ty)
+                        + (s[y1 * w + x0] * (1 - tx) + s[y1 * w + x1] * tx) * ty;
+            }
+        }
+        return d;
+    }
+
+    private static void addInto(float[] d, float[] s) {
+        for (int i = 0; i < d.length; i++) {
+            d[i] += s[i];
+        }
+    }
 
     /** 各档的层参数：σ 比例（×字号×spread）× 层 α（×强度）。探针实测定格。 */
     private static final double[][] TIER_SIGMAS = {
@@ -224,12 +470,17 @@ public final class TextGlow {
         return glowPadding(font, spread, GLOW_TIER_DEFAULT);
     }
 
-    /** 指定档的晕格留白：3×最宽层 σ。Ultra 的 0.55 层比旧口径宽得多，pad 必须跟档走。 */
+    /** 指定档的晕格留白。Ultra 走 HDR bloom 管线：3×宽晕等效 σ（折算到晕格 3× 烘焙域）。 */
     public static int glowPadding(CFontRenderer font, double spread, int tier) {
         if (font == null) {
             return 0;
         }
         int t = Math.max(GLOW_TIER_STANDARD, Math.min(GLOW_TIER_ULTRA, tier));
+        if (t == GLOW_TIER_ULTRA) {
+            // font.sizePx 是墨格 5× 域字号；晕格在 3× 域烘焙，σ 随域字号等比缩放
+            float sigmaGlowDomain = bloomWideSigma(font.sizePx, spread) * (GLOW_BAKE_SCALE / 5.0f);
+            return (int) Math.ceil(3.0 * sigmaGlowDomain);
+        }
         double widest = TIER_SIGMAS[t][0];
         return (int) Math.ceil(3.0 * font.sizePx * Math.max(.05, spread) * widest);
     }
