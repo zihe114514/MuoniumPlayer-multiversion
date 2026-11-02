@@ -1,0 +1,101 @@
+name: CI (dev)
+
+on:
+  push:
+    branches: ["dev"]
+  pull_request:
+    branches: ["dev"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------
+  # 五棵版本树各自独立 Gradle 构建（JDK / 映射 / 插件各不同，禁止合并）。
+  # gradle.properties 里钉了本机 JDK 绝对路径（org.gradle.java.home），
+  # CI 上不存在这些路径 —— 用 -Dorg.gradle.java.home= 空覆盖 + JAVA_HOME 兜底。
+  # ---------------------------------------------------------------
+  build-and-test:
+    name: ${{ matrix.tree }} · ${{ matrix.loader }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 1.20.1 / 1.21.1 / 1.21.11 → Java 21（loom 要求守护进程 JVM ≥ 21）
+          - tree: "1.20.1 recode"
+            loader: fabric
+            java: 21
+          - tree: "1.20.1 recode"
+            loader: forge
+            java: 21
+          - tree: "1.21.1"
+            loader: fabric
+            java: 21
+          - tree: "1.21.1"
+            loader: neoforge
+            java: 21
+          - tree: "1.21.11 recode"
+            loader: fabric
+            java: 21
+          - tree: "1.21.11 recode"
+            loader: neoforge
+            java: 21
+          # 26.2 / 26.3 → Java 25（官方 jar 无混淆，release 25）
+          - tree: "26.2"
+            loader: fabric
+            java: 25
+          - tree: "26.2"
+            loader: neoforge
+            java: 25
+          - tree: "26.3"
+            loader: fabric
+            java: 25
+          - tree: "26.3"
+            loader: neoforge
+            java: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ matrix.java }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+
+      - name: Setup Gradle (cache per tree)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          # 缓存按「树+加载器」分桶；PR 上只读
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+          gradle-home-cache-key: gradle-${{ matrix.tree }}-${{ matrix.loader }}
+
+      - name: Build & Test (${{ matrix.tree }} / ${{ matrix.loader }})
+        shell: bash
+        env:
+          # CI 上无视本机 JDK 路径；setup-java 已把 JAVA_HOME 指到对应 JDK
+          GRADLE_OPTS: "-Dorg.gradle.java.home="
+        run: |
+          cd "${{ matrix.tree }}"
+          chmod +x gradlew
+          # 编译 + 该加载器的单测（muonium-common 共享测试从各树挂载跑）
+          ./gradlew ":${{ matrix.loader }}:test" ":${{ matrix.loader }}:build" \
+            --console=plain --stacktrace \
+            -Dorg.gradle.java.home= \
+            -Dmaven.repo.override=none
+
+      - name: Upload jars
+        uses: actions/upload-artifact@v4
+        with:
+          name: jars-${{ matrix.tree }}-${{ matrix.loader }}
+          path: |
+            ${{ matrix.tree }}/*/build/libs/*.jar
+          if-no-files-found: error
+          retention-days: 7
