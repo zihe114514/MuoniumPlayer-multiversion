@@ -205,6 +205,9 @@ public final class ConfigPaths {
     /** 「播放时压掉原版音乐」的开关（VanillaMusicDucker）。单布尔，默认开。 */
     public static final File VANILLA_MUSIC_DUCKER = new File(CONFIG_DIRECTORY, "vanilla_music_ducker.json");
 
+    /** 「游戏窗口失焦时压低音乐」的开关与压低档位（FocusVolumeDucker）。 */
+    public static final File FOCUS_VOLUME_DUCKER = new File(CONFIG_DIRECTORY, "focus_volume_ducker.json");
+
     /**
      * 场景声学的开关与分项。
      *

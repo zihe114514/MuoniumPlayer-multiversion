@@ -295,7 +295,7 @@ public class LiveStreamPlayer {
                 new javax.sound.sampled.DataLine.Info(SourceDataLine.class, format, bufferSize);
         SourceDataLine line = (SourceDataLine) AudioSystem.getLine(info);
         line.open(format, bufferSize);
-        applyVolume(line, this.volume);
+        applyVolume(line, this.volume * FocusVolumeDucker.gain());
         line.start();
         return line;
     }
@@ -335,9 +335,12 @@ public class LiveStreamPlayer {
         return out;
     }
 
-    /** 音量在解码线程的写路径上随写随刷（setVolume 只改字段，这里真正作用到线上）。 */
+    /**
+     * 音量在解码线程的写路径上随写随刷（setVolume 只改字段，这里真正作用到线上）。
+     * 失焦压低倍率也在这里乘：每次写线都重算，所以 FocusVolumeDucker 不必主动推。
+     */
     void refreshVolumeOnLine(SourceDataLine line) {
-        applyVolume(line, this.volume);
+        applyVolume(line, this.volume * FocusVolumeDucker.gain());
     }
 
     private void fail(String reason) {

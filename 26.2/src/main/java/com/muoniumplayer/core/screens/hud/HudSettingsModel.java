@@ -4,6 +4,7 @@ import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings;
 import com.muoniumplayer.core.ncm.music.ExternalPlayback;
+import com.muoniumplayer.core.ncm.music.FocusVolumeDucker;
 import com.muoniumplayer.core.ncm.music.FoliaModelManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.MusicAudioCache;
@@ -1413,6 +1414,16 @@ public final class HudSettingsModel {
                                         () -> HudConfig.dynamicIslandEnabled))),
 
                 new Category("播放", "两首歌自动衔接不断片，外加场景音效", 0xFF5FD3E8, HudSettingsIcons.SPEED,
+                        new Group("切出游戏时", HudSettingsIcons.TUNE,
+                                toggle("失焦压低音乐", "切屏、最小化或点到别的窗口时，音乐在一秒多里渐渐变小；回到游戏再渐渐恢复。不改你设的音量，也不碰系统播放器镜像。",
+                                        FocusVolumeDucker::isEnabled,
+                                        () -> FocusVolumeDucker.setEnabled(!FocusVolumeDucker.isEnabled())),
+                                choice("压低到", "失焦时音量降到原来的多少。选「静音」就是切出去听不到。",
+                                        FocusVolumeDucker::getLevelLabel,
+                                        FocusVolumeDucker::cycleLevel,
+                                        FocusVolumeDucker.levelLabels(),
+                                        FocusVolumeDucker::setLevelByLabel,
+                                        FocusVolumeDucker::isEnabled)),
                         new Group("基本设置", HudSettingsIcons.SPEED,
                                 toggle("无缝切换", "打开后提前解码下一首并交叉淡化；关掉则切歌时先停下再重新下载解码，中间有静音间隙。",
                                         new BooleanSupplier() {

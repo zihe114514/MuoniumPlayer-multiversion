@@ -91,6 +91,21 @@ public class Engine {
 		if (task != null) Engine.getEngine().synth.addAudioTask(task);
 	}
 
+	/**
+	 * 整个输出链最末一级的处理器（见 {@code SynthesisEngine#setFinalOutputProcessor}）。
+	 * 静态保存：引擎还没建时也能先登记，建引擎 / 切音频驱动时在 {@link #createSynth} 里自动挂上。
+	 * 登记这件事本身不会把音频设备开起来。
+	 */
+	private static volatile repackage.com.jsyn.engine.SynthesisEngine.OutputProcessor finalOutputProcessor;
+
+	public static void installFinalOutputProcessor(repackage.com.jsyn.engine.SynthesisEngine.OutputProcessor processor) {
+		finalOutputProcessor = processor;
+		Engine engine = Engine.singleton;
+		if (engine != null && engine.synth instanceof repackage.com.jsyn.engine.SynthesisEngine) {
+			((repackage.com.jsyn.engine.SynthesisEngine) engine.synth).setFinalOutputProcessor(processor);
+		}
+	}
+
 	/** 注销一个先前用 {@link #addAudioTask(Runnable)} 注册的控制任务。 */
 	public static void removeAudioTask(Runnable task) {
 		if (task != null && Engine.singleton != null) Engine.singleton.synth.removeAudioTask(task);
@@ -166,6 +181,7 @@ public class Engine {
             ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setOutputObserver(outputObserver);
             ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setOutputProcessor(outputProcessor);
             ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setTrailingOutputProcessor(trailingOutputProcessor);
+            ((repackage.com.jsyn.engine.SynthesisEngine) this.synth).setFinalOutputProcessor(finalOutputProcessor);
         }
 		// try {
 			// 如果没有带输入的设备，这可能是-1
