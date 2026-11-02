@@ -500,7 +500,7 @@ public class CrossSourceSwitcherStaticTest {
                 score, durationDeltaMillis);
     }
 
-    /** 按 {@code Music#fromCadenceTrack} 使用的同一条显式构造器造一条最小曲目。 */
+    /** 按 {@code Music#toMuTrack} 使用的同一条显式构造器造一条最小曲目。 */
     private static Music toTestMusic(long durationMillis) {
         return toTestMusicWithId(1L, durationMillis);
     }

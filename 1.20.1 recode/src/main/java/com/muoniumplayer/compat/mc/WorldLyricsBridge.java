@@ -172,16 +172,7 @@ public final class WorldLyricsBridge {
             GlCompat.cull(false);
             GlCompat.activeTexture(GL13.GL_TEXTURE0);
 
-            try {
-                // 世界阶段辉光（无光影 / 光影但关掉更激进的适配时走这里）：本体进
-                // 缓冲的同时双写 mask，画完后跑 bloom 加色补能量。
-                hudBloom.beginPass();
-                // mask MVP = 本体 endBatch 实际用的 RenderSystem 投影（bobFreeApply
-                // 成功时是 pure fov、失败时是关卡投影 —— 无论哪条，此刻 RenderSystem
-                // 里躺着的这份就是本体正在用的），直接快照，彻底同源；不再依赖反射成败。
-                bobActiveProjection.set(RenderSystem.getProjectionMatrix());
-                renderInner(basePose, mc, camera);
-                hudBloom.endPass(mc, bobActiveProjection);
+            try {                renderInner(basePose, mc, camera);
             } finally {
                 // 恢复状态：视图矩阵 + 我们改过的 GL 状态。逐项还原成 1.20.1 的
                 // 原版默认（defaultBlendFunc = SRC_ALPHA/ONE_MINUS_SRC_ALPHA,
@@ -218,8 +209,6 @@ public final class WorldLyricsBridge {
     /** HUD 直画连续缺席帧数（兜底世界阶段重画的触发器；成功画完即清零）。 */
     private static int hudDrawMisses;
     private static boolean hudFailureLogged;
-    /** 辉光后处理调度（mask 采集 + bloom 合成；未配置/熔断时整段零成本跳过）。 */
-    private static final HudBloomPass hudBloom = new HudBloomPass();
     private static boolean tracedHudDraw;
 
     /**
@@ -270,12 +259,7 @@ public final class WorldLyricsBridge {
             GlCompat.activeTexture(GL13.GL_TEXTURE0);
 
             try {
-                WorldBillboard.forceVanillaType = true;
-                // 辉光后处理：renderInner 期间字形 quad 双写进 mask，画完后跑 bloom
-                // —— 合成是加色混合，与本体绘制先后无关；字芯能量再叠一层。
-                hudBloom.beginPass();
-                renderInner(hudBasePose, mc, mc.gameRenderer.getMainCamera());
-                hudBloom.endPass(mc);
+                WorldBillboard.forceVanillaType = true;                renderInner(hudBasePose, mc, mc.gameRenderer.getMainCamera());
             } finally {
                 WorldBillboard.forceVanillaType = false;
                 GlCompat.depthTest(true);
@@ -360,7 +344,6 @@ public final class WorldLyricsBridge {
             double fov = (Double) fovM.invoke(gr, camera, partialTick, true);
             org.joml.Matrix4f pure = gr.getProjectionMatrix(fov);
             if (pure == null || !isFinite(pure)) return false;
-            bobActiveProjection.set(pure);
                         bobFreeBackup.set(RenderSystem.getProjectionMatrix());
             RenderSystem.setProjectionMatrix(new org.joml.Matrix4f(pure), VertexSorting.DISTANCE_TO_ORIGIN);
             return true;
@@ -385,8 +368,6 @@ public final class WorldLyricsBridge {
 
     /** bobFreeApply 备份的关卡投影（1.20.1 投影是 Matrix4f 值，需手动备份）。 */
     private static final org.joml.Matrix4f bobFreeBackup = new org.joml.Matrix4f();
-    /** 本帧本体直画实际生效的透视投影（bobFreeApply 写；辉光 mask 的 MVP 来源）。 */
-    private static final org.joml.Matrix4f bobActiveProjection = new org.joml.Matrix4f();
 
     private static boolean isFinite(org.joml.Matrix4f m) {
         return Float.isFinite(m.m00()) && Float.isFinite(m.m11())

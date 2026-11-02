@@ -215,7 +215,9 @@ class AnnouncementStaticTest {
                 "GuiAnnouncements.java")));
         assertTrue(host.contains("AnnouncementChecker.markShownThisSession()"),
                 "弹出来那一刻就要记账，否则回到主菜单会再弹一次");
-        assertTrue(host.contains("renderWidget(mouseX, mouseY, Mouse.getDWheel())"),
+        // 滚轮转发现在包在布局轴括号里（renderWidget 的鼠标坐标带 sx/sy 换算）；
+        // 钉「renderWidget + getDWheel 同框」而不是整段文本，括号改版不用跟着改这里。
+        assertTrue(host.contains("overlay.renderWidget(") && host.contains("Mouse.getDWheel()"),
                 "滚轮必须转发：公告是条数不定的一批内容，不转发的话窄窗口里下面的几条永远看不到");
         assertTrue(host.contains("overlay.dispose()"),
                 "宿主的 onClose 也要走 dispose，已读记账挂在收起动作上，从哪条路离开都得记账");

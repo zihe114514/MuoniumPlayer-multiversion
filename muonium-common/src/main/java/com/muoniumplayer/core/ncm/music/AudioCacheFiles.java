@@ -19,11 +19,54 @@ final class AudioCacheFiles {
     private AudioCacheFiles() {
     }
 
+    /**
+     * AAC/M4A 解码出的 WAV 边车的落点。
+     *
+     * <p>下载缓存里的文件边车就落在缓存目录旁边（同目录、同名 + {@code .decoded.wav}），
+     * 与往常一致。<b>本地音乐文件</b>（用户磁盘上的原文件，见 {@code LocalMusicLibrary}）
+     * 绝不能在用户的音乐目录里写边车——那是用户的只读资产。它的边车按「绝对路径的稳定
+     * 哈希」落进模组自己的解码缓存目录，两个不同目录里的同名歌也不会互相顶掉。</p>
+     */
     static File getDecodedWavFile(File sourceFile) {
         String name = sourceFile.getName();
         int extensionIndex = name.lastIndexOf('.');
         String baseName = extensionIndex > 0 ? name.substring(0, extensionIndex) : name;
-        return new File(sourceFile.getParentFile(), baseName + ".decoded.wav");
+        File parent = sourceFile.getParentFile();
+        if (parent != null && !isManagedCacheDirectory(parent)) {
+            // 用户自己的音频目录：边车改落模组缓存，键是源文件绝对路径的哈希。
+            String sidecarKey = stableSidecarKey(sourceFile);
+            File sidecarDir = new File(com.muoniumplayer.core.settings.ConfigPaths.DECODED_WAV_DIR,
+                    sidecarKey);
+            return new File(sidecarDir, baseName + ".decoded.wav");
+        }
+        return new File(parent == null ? new File(".") : parent, baseName + ".decoded.wav");
+    }
+
+    /** 源文件是不是活在模组自己管理的缓存目录里（下载缓存 / 本地封面 / 解码缓存）。 */
+    private static boolean isManagedCacheDirectory(File directory) {
+        try {
+            String path = directory.getCanonicalPath();
+            String managed = com.muoniumplayer.core.settings.ConfigPaths.CACHE_DIR.getCanonicalPath();
+            return path.startsWith(managed + File.separator) || path.equals(managed);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static String stableSidecarKey(File sourceFile) {
+        String identity;
+        try {
+            identity = sourceFile.getCanonicalPath().toLowerCase(java.util.Locale.ROOT);
+        } catch (Throwable ignored) {
+            identity = sourceFile.getAbsolutePath().toLowerCase(java.util.Locale.ROOT);
+        }
+        byte[] bytes = identity.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        long hash = 0xcbf29ce484222325L;
+        for (byte b : bytes) {
+            hash ^= b & 0xffL;
+            hash *= 0x100000001b3L;
+        }
+        return Long.toUnsignedString(hash & Long.MAX_VALUE);
     }
 
     static boolean isReusableDecodedWav(File sourceFile, File decodedFile) {

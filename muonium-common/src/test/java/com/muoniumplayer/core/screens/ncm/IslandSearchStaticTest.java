@@ -187,8 +187,13 @@ class IslandSearchStaticTest {
     @DisplayName("输入即搜：防抖消费接在 drawScreen 主循环里")
     void typingTriggersSearch() throws IOException {
         String draw = body(read(OVERLAY), "void drawScreen(int mouseX, int mouseY)");
-        assertTrue(draw.contains("consumeDueSearch"), "每帧要问防抖到期没有");
-        assertTrue(draw.contains("IslandSearchTransition.tick()"),
+        // drawScreen 拆了内外两层（外层只管布局轴括号，主循环在 drawScreenInner）；
+        // 钉整条调用链：括号层必须转调内层，内层才放主循环与防抖消费。
+        assertTrue(draw.contains("drawScreenInner"),
+                "外层括号层必须转调内层主循环，别在这里复制一份");
+        String inner = body(read(OVERLAY), "void drawScreenInner(int mouseX, int mouseY)");
+        assertTrue(inner.contains("consumeDueSearch"), "每帧要问防抖到期没有");
+        assertTrue(inner.contains("IslandSearchTransition.tick()"),
                 "转场时钟必须在读几何之前推进");
     }
 

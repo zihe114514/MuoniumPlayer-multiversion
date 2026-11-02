@@ -30,6 +30,7 @@ class SceneAcousticsTest {
                                  float predelaySec, float decaySec, float tone,
                                  float[] tapDelay, float[] tapGL, float[] tapGR) {
         return new RoomPlan(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
+                decaySec * 1.35f, decaySec * 0.8f, 1f,
                 tapDelay, tapGL, tapGR);
     }
 

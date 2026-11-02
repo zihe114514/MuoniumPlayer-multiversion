@@ -251,15 +251,23 @@ class KuGouStaticTest {
                 "private static final int COLLECTION_TRACK_PAGE_SIZE");
         assertTrue(loop.contains("collectionTracksPage(globalCollectionId, MAX_PAGE_SIZE, page)"),
                 "每页 300：begin_idx=(page-1)*pagesize 是这条端点唯一的分页手段");
-        assertTrue(loop.contains("batch.size() < MAX_PAGE_SIZE"),
-                "页不满即最后一页，不依赖响应里的总数（上游不保证回它）");
-        assertTrue(loop.contains("result.size() == before"),
-                "越界 begin_idx 可能被上游回成重复页：一页没贡献新曲目就是翻到头的信号");
+        assertTrue(loop.contains("batch.rawCount < MAX_PAGE_SIZE"),
+                "页不满即最后一页，判据必须是上游原始条数——酷狗版权状态不稳，满页里混着"
+                        + "无 Hash 死歌很常见，按解析后条数判会被误判成最后一页，后续页全丢");
+        assertFalse(loop.contains("batch.size() < MAX_PAGE_SIZE"),
+                "禁止用解析后条数判满页：死歌会让 size 小于 300，恰好踩中这个缺陷的反馈");
+        assertTrue(loop.contains("return null") && loop.contains("batch.failed"),
+                "翻页中途失败必须整单返回 null，不能把半截数据当完整结果发布");
+        assertTrue(loop.contains("previousHashes.equals(batch.rawHashes)"),
+                "越界 begin_idx 可能被上游回成重复页：整页 hash 序列与上一页相同就是翻到头的信号，"
+                        + "页内逐首去重会把歌单里合法的重复曲目吞掉");
         assertTrue(api.contains("COLLECTION_TRACK_MAX_PAGES"),
                 "翻页要有绝对页数上限，防上游异常回包把循环拖死");
         String service = readService("KuGouMusicService.java");
         assertTrue(service.contains("KuGouMusicApi.collectionTracks(collectionIdOf(id), target)"),
                 "云端歌单的载入上限要跟着期望值走，不能钉死在 300");
+        assertTrue(service.contains("分页加载中断"),
+                "null（中途失败）要转成异常，让 PlayList 保持未加载以便重试");
         String playList = readService("dto/PlayList.java");
         assertTrue(playList.contains(".playlistTracks(getPlatformPlaylistId(), count > 0 ? count : 300)"),
                 "歌单曲目数要传给服务层，否则分页循环不知道该取多少");

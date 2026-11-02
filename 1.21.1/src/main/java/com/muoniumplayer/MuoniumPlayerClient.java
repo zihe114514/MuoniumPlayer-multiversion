@@ -61,7 +61,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "2.3.0";
+    public static final String MOD_VERSION = "2.3.1";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -110,6 +110,8 @@ public final class MuoniumPlayerClient {
     public static KeyMapping keyTogglePause;
     /** 游戏内唤出灵动岛搜索栏，默认 Ctrl+F（见 onClientTick 里的修饰键说明）。 */
     public static KeyMapping keyQuickSearch;
+    /** 立即按当前环境切一首（环境选曲手动入口），默认不占键位，需玩家自行绑定。 */
+    public static KeyMapping keyAmbientNow;
 
     private static final MuoniumPlayerClient INSTANCE = new MuoniumPlayerClient();
 
@@ -145,8 +147,10 @@ public final class MuoniumPlayerClient {
         // 快捷搜索默认 F；绑定仍是默认键时由 tick 里要求 Ctrl 一起按下（即 Ctrl+F），
         // 玩家改绑其它键后直接触发，不再要求修饰键。
         keyQuickSearch = key("key.muonium.quick_search", Keyboard.KEY_F);
+        // 环境选曲手动切换：默认不占键位（KEY_NONE），想要键位的玩家在控制设置里自行绑定。
+        keyAmbientNow = key("key.muonium.ambient_now", Keyboard.KEY_NONE);
         return List.of(keyOpenMusic, keyEditHud, keyPreviousTrack, keyNextTrack,
-                keyVolumeUp, keyVolumeDown, keyTogglePause, keyQuickSearch);
+                keyVolumeUp, keyVolumeDown, keyTogglePause, keyQuickSearch, keyAmbientNow);
     }
 
     private static KeyMapping key(String translationKey, int lwjgl2DefaultKey) {
@@ -274,6 +278,12 @@ public final class MuoniumPlayerClient {
         com.muoniumplayer.core.ncm.music.acoustics.AcousticsRuntime.onClientTick(
                 com.muoniumplayer.compat.mc.ListenerProbe.of(mc));
 
+        // ---- 环境选曲 ----
+        // 每 tick 送一帧环境快照;控制器自带稳定期/冷却与全 Throwable 闸,开关关着
+        // 时是一次布尔判断。采样只有十几次方块读 + 一次实体盒查询,与声学射线同量级。
+        com.muoniumplayer.core.ncm.music.ambient.AmbientMusicController.onClientTick(
+                com.muoniumplayer.compat.mc.AmbientProbe.captureOrNull(mc));
+
         // ---- ModernUI 控制中心的页签注册 ----
         // 每 tick 问一次、闸门在桥里（没装 / 本树没面板 / 已挂过 都是一次布尔比较）：
         // ModernUI 的初始化时机不由我们掌握，注册晚了就赶不上第一次打开控制中心。
@@ -329,6 +339,11 @@ public final class MuoniumPlayerClient {
                     IslandSearchOverlay.toggle();
                 }
             }
+
+            // 环境选曲手动切换：默认不占键位，绑了才触发；动作与灵动岛反馈都在 MusicHotkeys 里。
+            if (keyAmbientNow.consumeClick()) {
+                MusicHotkeys.triggerAmbientNow();
+            }
         } else {
             // 打开 GUI 时把这一 tick 积累的边沿消费掉，避免关掉界面的瞬间一次性全部触发。
             // 1.8.9 靠 Forge 的按键处理天然不会积累；现在 consumeClick 的计数会留到下次读取。
@@ -340,6 +355,7 @@ public final class MuoniumPlayerClient {
             keyVolumeDown.consumeClick();
             keyTogglePause.consumeClick();
             keyQuickSearch.consumeClick();
+            keyAmbientNow.consumeClick();
         }
     }
 

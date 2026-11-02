@@ -129,7 +129,11 @@ public final class AppleChartsService {
         }
     }
 
-    /** 带缓存的 feed 拉取;空结果不缓存(瞬时失败不该把整页钉在空白上)。 */
+    /**
+     * 带缓存的 feed 拉取。RSS 源在 CN 慢且抖,策略是三层:
+     * ① TTL 内直接回缓存;② 过期缓存先顶上、后台刷新(体感零等待);
+     * ③ 现拉失败时过期缓存兜底(榜单纯展示,旧几分钟无妨)。空结果不缓存。
+     */
     public static List<ChartEntry> topChartCached(String storefront) {
         String sf = normalize(storefront);
         CachedFeed cached = FEED_CACHE.get(sf);
@@ -139,6 +143,17 @@ public final class AppleChartsService {
         List<ChartEntry> entries = topChart(sf);
         if (!entries.isEmpty()) {
             FEED_CACHE.put(sf, new CachedFeed(entries, System.currentTimeMillis()));
+            return entries;
+        }
+        if (cached != null) {
+            // 现拉失败但手里有旧数据:再试一次后台刷新,本次先用旧的。
+            com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil.runAsync(() -> {
+                List<ChartEntry> fresh = topChart(sf);
+                if (!fresh.isEmpty()) {
+                    FEED_CACHE.put(sf, new CachedFeed(fresh, System.currentTimeMillis()));
+                }
+            });
+            return cached.entries;
         }
         return entries;
     }

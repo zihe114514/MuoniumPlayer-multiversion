@@ -164,7 +164,7 @@ public class MusicCoverServiceStaticTest {
         return music;
     }
 
-    /** 按 {@code Music#fromCadenceTrack} 使用的同一条显式构造器造一条可打分的曲目。 */
+    /** 按 {@code Music#toMuTrack} 使用的同一条显式构造器造一条可打分的曲目。 */
     private static Music track(MusicPlatform platform, long id, String name, String artist,
                               long durationMillis) {
         List<Artist> artists = new ArrayList<Artist>();

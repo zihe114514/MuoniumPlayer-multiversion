@@ -125,6 +125,15 @@ public class CloudMusic implements SharedConstants {
     private static volatile boolean personalFmActive;
     private static volatile PlayMode playModeBeforePersonalFm = PlayMode.Sequential;
 
+    /**
+     * 从上次会话续播的起始偏移（毫秒）。只在启动恢复后对<b>队列的起始曲目</b>生效一次：
+     * {@link PlayThread} 起播第一首时消费它，之后任何曲目（含自动接续）都是 0。
+     *
+     * <p>任何用户主动动作（点歌 / 上一首 / 下一首 / 恢复后第一次 togglePlayPause 走起的路径）
+     * 都会把它作废——「从上次的位置继续」只服务「用户什么都没动、直接按播放」这一种意图。</p>
+     */
+    private static volatile long pendingResumeOffsetMillis = -1L;
+
     public static Quality quality = Quality.LOSSLESS;
 
     public static final List<LyricLine> lyrics = new CopyOnWriteArrayList<>();
@@ -163,7 +172,7 @@ public class CloudMusic implements SharedConstants {
     public static void initNCM() {
         String cookie = getCookieFromFileOrOptions();
         NeteaseMusicService.initialize(cookie);
-        // Cadence 的凭证存储可能持有从新版账号管理中保存的网易云 Cookie。
+        // 内置音源层的凭证存储可能持有从新版账号管理中保存的网易云 Cookie。
         // 初始化后重新读取 Options，保证旧资料/歌单加载链路仍可复用。
         if (cookie.isEmpty()) {
             cookie = OptionsUtil.getCookie();
@@ -180,6 +189,52 @@ public class CloudMusic implements SharedConstants {
         // 用户再点一次就是重复收藏——网易云那边由 likeList 天然不会有这个问题，这是酷狗补齐的对等项。
         KuGouLikedCache.restoreFromDisk();
         KuGouMusicService.warmLikedSongsAsync();
+        restoreLastSession();
+    }
+
+    /**
+     * 恢复「上次播放到哪」：队列、当前歌、播放模式、歌单上下文全部就位，但<b>不出声</b>——
+     * 不起 PlayThread、不碰音频、不发网络请求；用户点播放时才从上次的位置继续
+     * （见 {@link #pendingResumeOffsetMillis}）。挂在 {@link #initNCM()} 最末，
+     * 必须在 {@link #loadNCM} 里的 {@code onStop()} <b>之后</b>执行——那条登录收尾链路
+     * 会清掉进行中的播放，恢复放它前面等于白做。
+     *
+     * <p>防御性要点（这一功能的不确定因素全在这里被兜住）：</p>
+     * <ul>
+     *   <li>快照任何校验不过 → 返回 null → 这里什么都不做，启动流程照旧；</li>
+     *   <li>FM 会话不恢复（快照写入侧就拒了 FM，这里是第二道闸）；</li>
+     *   <li>{@code context} 重建失败回落 null——「无来源的队列」是合法状态；</li>
+     *   <li>{@code currentlyPlaying} 指向队列里那首但 {@code player == null} 是<b>既有受支持
+     *       状态</b>（取流失败停下等操作就是这个形态），界面所有读取点都按判空写；</li>
+     *   <li>不设 {@code playedFrom}：听歌打卡从真正续播那一刻才开始。</li>
+     * </ul>
+     */
+    private static void restoreLastSession() {
+        try {
+            PlaybackResumeStore.Snapshot snapshot = PlaybackResumeStore.read();
+            if (snapshot == null || personalFmActive) return;
+            List<Music> queue = new ArrayList<>(snapshot.queue);
+            int index = Math.max(0, Math.min(snapshot.index, queue.size() - 1));
+
+            playList = queue;
+            curIdx = index;
+            playMode = snapshot.playMode == null ? PlayMode.Sequential : snapshot.playMode;
+            currentPlaylistContext = snapshot.context;
+            currentlyPlaying = queue.get(index);
+            pendingResumeOffsetMillis = Math.max(0L, snapshot.positionMillis);
+            System.out.println("[NCM] Restored last session: " + queue.size() + " tracks, at "
+                    + queue.get(index).getName() + " (" + pendingResumeOffsetMillis + " ms)");
+            // 播放条的大封面/总时长都来自「当前歌的资源预载」，正常点歌路径由 prepareForPlayback
+            // 触发；恢复态没有播放线程，谁都不调它的话大封面没纹理、进度条两端全 00:00 ——
+            // 看起来就像「记忆的歌丢了元数据」。封面服务自己有磁盘缓存，这里多半只是一次文件读。
+            loadMusicCover(queue.get(index));
+            NCMScreen.getInstance().markDirty();
+            MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().reloadCurrentPanel());
+        } catch (Throwable failure) {
+            // 恢复失败只是「这次启动没记忆」；启动链路本身绝不能被它打断。
+            System.err.println("[NCM] Session restore skipped: " + failure);
+            pendingResumeOffsetMillis = -1L;
+        }
     }
 
     @SneakyThrows
@@ -445,6 +500,7 @@ public class CloudMusic implements SharedConstants {
         }
 
         if (player != null) {
+            discardResumeOffset();
             prepareForTrackChange();
             curIdx--;
             stopCurrentPlayback();
@@ -509,6 +565,7 @@ public class CloudMusic implements SharedConstants {
         }
 
         if (player != null) {
+            discardResumeOffset();
             updatePlayCountIfNeeded();
             prepareForTrackChange();
             curIdx++;
@@ -1029,6 +1086,7 @@ public class CloudMusic implements SharedConstants {
         MusicLyricsWidget.resetProgress(actual);
         MusicLyricsPanel.resetProgress(actual);
         onSeekApplied();
+        noteSeekForResume();
         return true;
     }
 
@@ -1066,6 +1124,7 @@ public class CloudMusic implements SharedConstants {
         MusicLyricsWidget.resetProgress(actual);
         MusicLyricsPanel.resetProgress(actual);
         onSeekApplied();
+        noteSeekForResume();
         return true;
     }
 
@@ -1096,6 +1155,46 @@ public class CloudMusic implements SharedConstants {
         } catch (Throwable ignored) {
             // 进度条是用户操作：automix 这边出任何意外都不能让它不生效。
         }
+    }
+
+    // ─────────────────────────── 播放记忆快照（PlaybackResumeStore 的捕获点） ───────────────────────────
+    //
+    // 全部是一行转发：读活状态 → 交给 store。store 自己有 FM/房间两道闸与全 catch，
+    // 所以这里的纪律只有一条——快照读出来的 (playList, curIdx) 可能不一致（两个字段分属
+    // 不同线程写），但恢复侧对 index 有 clamp、对队列有逐条校验，写下去的哪怕歪一格，
+    // 读回来也不会越界。position 只在能读到播放器时才可信。
+
+    /** 当前播放位置（毫秒）；读不到时 0。永不抛出。 */
+    private static long currentPlaybackPositionMillis() {
+        try {
+            AudioPlayer active = player;
+            return active == null ? 0L : (long) active.getCurrentTimeMillis();
+        } catch (Throwable ignored) {
+            return 0L;
+        }
+    }
+
+    /** 切歌/队列推进等终态边界：无条件落盘。任何线程可调，store 内部自锁。 */
+    private static void notePlaybackEvent() {
+        PlaybackResumeStore.noteTrackEvent(playList, curIdx, currentPlaybackPositionMillis(),
+                playMode, currentPlaylistContext);
+    }
+
+    /** seek 去抖落盘（连拖进度条时不必每次都写）。 */
+    private static void noteSeekForResume() {
+        PlaybackResumeStore.noteSeekThrottled(playList, curIdx, currentPlaybackPositionMillis(),
+                playMode, currentPlaylistContext);
+    }
+
+    /** 播放中的心跳落盘（15s 一拍，强杀时最多丢一段）。 */
+    private static void noteHeartbeatForResume() {
+        PlaybackResumeStore.noteHeartbeat(playList, curIdx, currentPlaybackPositionMillis(),
+                playMode, currentPlaylistContext);
+    }
+
+    /** 用户主动放弃续播：点歌/切歌/恢复后的第一次播放操作都算。 */
+    private static void discardResumeOffset() {
+        pendingResumeOffsetMillis = -1L;
     }
 
     private static boolean canPlayNext() {
@@ -1202,14 +1301,28 @@ public class CloudMusic implements SharedConstants {
         if (party == 2) return PlayPauseResult.RESUMED;
         if (party == 3) return PlayPauseResult.UNAVAILABLE;
         AudioPlayer activePlayer = player;
+        // 播放记忆恢复态：队列和当前歌都在、引擎没出声、还有没用掉的续播偏移——
+        // 这一下「播放」的语义就是「接着上次的位置放」。不处理的话按钮是死的
+        // （下面那道 UNAVAILABLE 闸把它拦住），用户得自己去队列里把那首歌找出来点一遍。
+        // startPlaybackList 会消费偏移、从保存的位置起播；失败时回落 UNAVAILABLE 语义。
+        if (activePlayer == null && currentlyPlaying != null && pendingResumeOffsetMillis >= 0L
+                && !playList.isEmpty() && curIdx >= 0 && curIdx < playList.size()) {
+            // 用户在恢复态动过 curIdx（prev/next）时偏移可能已不属于 curIdx 这一首——
+            // startPlayback 的 clamp 会把它兜进新歌的时长内，顶多接近曲尾，可接受；
+            // 比把按钮卡死强。startPlaybackList 内部消费偏移，之后本闸不再触发。
+            startPlaybackList(playList, curIdx);
+            return PlayPauseResult.RESUMED;
+        }
         if (currentlyPlaying == null || activePlayer == null || activePlayer.isFinished()) {
             return PlayPauseResult.UNAVAILABLE;
         }
         if (activePlayer.isPausing()) {
             activePlayer.unpause();
+            notePlaybackEvent();
             return PlayPauseResult.RESUMED;
         }
         activePlayer.pause();
+        notePlaybackEvent();
         return PlayPauseResult.PAUSED;
     }
 
@@ -1278,12 +1391,16 @@ public class CloudMusic implements SharedConstants {
             playList = new ArrayList<>();
             curIdx = 0;
             playing.set(false);
+            // 「停止并清空」的语义就是不想听了：快照一起删，下次启动绝不复活被亲手清掉的队列。
+            discardResumeOffset();
+            PlaybackResumeStore.clear();
         });
         return true;
     }
 
     /** 仅在一首曲目失败后用户明确执行上一首/下一首操作时才重启队列。 */
     private static void restartFromUserTrackSelection() {
+        discardResumeOffset();
         awaitingPlaybackAction = false;
         startPlaybackList(playList, curIdx);
     }
@@ -1586,7 +1703,12 @@ public class CloudMusic implements SharedConstants {
     }
 
     private static void startNewPlayThread(List<Music> songs, int startIdx) {
-        playThread = new PlayThread(songs, startIdx);
+        // 续播偏移是「给这次起播队列的起始曲」的一次性礼物：取走即清零，之后的
+        // 自动接续、自动换源重试、房间下发全都从 0 开始。读-清是这里做出的所有权转移——
+        // PlayThread 拿到的是本地值，之后的用户动作作废不了它（那本来就是新意图）。
+        long resumeOffset = pendingResumeOffsetMillis;
+        pendingResumeOffsetMillis = -1L;
+        playThread = new PlayThread(songs, startIdx, Math.max(0L, resumeOffset));
         // 守护线程：游戏关闭时 JVM 的退出不再被「正在放歌」这件事拖住。26.x 起关闭路径有
         // 看门狗（ClientShutdownWatchdog），主线程退出后若还有非守护线程活着，等超时就生成
         // 「Watchdog (Client shutdown from post-main)」崩溃报告——PlayThread 的
@@ -1610,6 +1732,13 @@ public class CloudMusic implements SharedConstants {
         // 关闭钩子里不 join 不等待——守护化已保证 JVM 不会被 PlayThread 拖住，这里能停多少
         // 算多少，纯优化。与 QishuiBackendLifecycle 同一模式（static 块装钩子、只管自己的资源）。
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            // 先把「最后听到的位置」写进快照，再做播放收尾——收尾会拆掉播放器，
+            // 之后就再也读不到位置了。store 全 catch，钩子里不可能被它拖住。
+            try {
+                PlaybackResumeStore.noteTrackEvent(playList, curIdx, currentPlaybackPositionMillis(),
+                        playMode, currentPlaylistContext);
+            } catch (Throwable ignored) {
+            }
             doBreak = true;
             playing.set(false);
             LiveStreamSession.shutdown();
@@ -1625,6 +1754,12 @@ public class CloudMusic implements SharedConstants {
     private static class PlayThread extends Thread {
         private volatile List<Music> songs;
         private final int startIdx;
+        /**
+         * 起始曲目的续播偏移（毫秒，≥0）。只对队列的第一首生效一次，消费即归零；
+         * 0 与「没有偏移」在这里合流——playFrom(0) 与 play() 对一首还没出声的
+         * deck 等价，不值得为它分叉两条起播路径。仅在播放线程上读写。
+         */
+        private long startOffsetMillis;
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
         private PlaybackSession session;
         private volatile AudioPlayer ownedPlayer;
@@ -1704,9 +1839,14 @@ public class CloudMusic implements SharedConstants {
         private volatile boolean automixAudioTaskRegistered;
 
         public PlayThread(List<Music> songs, int startIdx) {
+            this(songs, startIdx, 0L);
+        }
+
+        public PlayThread(List<Music> songs, int startIdx, long startOffsetMillis) {
             this.songs = songs;
             this.setName("Play Thread");
             this.startIdx = startIdx;
+            this.startOffsetMillis = Math.max(0L, startOffsetMillis);
         }
 
         /**
@@ -1878,6 +2018,21 @@ public class CloudMusic implements SharedConstants {
                 }
                 return "当前账号权益拿不到完整版";
             }
+            if (song != null && song.getSource() == MusicPlatform.QQ) {
+                // QQ 有取流层的 result 码，按码表说人话（对齐 QQMusicApi download.md）；
+                // 解码时长只说明「播了半首」，为什么是半首由这里回答。
+                switch (song.getQqResultCode()) {
+                    case 104003:
+                        return "需要 QQ 音乐绿钻会员（或该曲无版权）";
+                    case 104004:
+                        return "QQ 取流 VKey 失败，重播一次通常可恢复";
+                    case 104013:
+                        return "QQ 音乐登录设备已达上限，请在 App 内移除设备后重播";
+                    default:
+                        break;
+                }
+                return "当前账号只能拿到试听片段";
+            }
             return "当前账号只能拿到试听片段";
         }
 
@@ -1895,6 +2050,9 @@ public class CloudMusic implements SharedConstants {
             noteQueuedTrackStarted(song);
             // 封面可能已经由上一轮预加载完成；切歌这一刻才把它提升为活动主题色。
             CoverThemePalette.set(song.getCoverPalette());
+            // 代表色同款提升：否则渐变歌词要等新封面下载完才换色（预加载过的歌
+            // 切过去一直是上一首的渐变）。
+            CoverGradientColors.set(song.getRepresentativeColors());
             // 有了 FM 预备之后，推进不再每首都经过 PersonalFmManager.requestBatch，界面同步必须在这里补。
             if (personalFmActive) PersonalFmManager.noteFmTrackStarted(song);
             // 动态封面查找是可选的，绝不会阻塞音频启动或静态封面渲染。
@@ -2101,6 +2259,7 @@ public class CloudMusic implements SharedConstants {
             // 更要紧的是二次换源（直链放不出来那一路）时 oldSong 可能是上一轮的替身，而那个身份
             // 恰好是用户在后面排着队的那首 —— 在这里 forget 一次就会把真待播的那格弄断。
             CoverThemePalette.set(replacement.music.getCoverPalette());
+            CoverGradientColors.set(replacement.music.getRepresentativeColors());
             if (personalFmActive) PersonalFmManager.noteFmTrackStarted(replacement.music);
             loadMusicCover(replacement.music);
             loadDynamicMusicCover(replacement.music);
@@ -2237,6 +2396,8 @@ public class CloudMusic implements SharedConstants {
                 }
                 NeteasePlaybackHistoryReporter.observe(activePlayer);
                 KuGouPlaybackReporter.observe(activePlayer);
+                // 播放记忆心跳：store 内部按 15s 去抖，绝大多数 tick 是一次墙钟比较就返回。
+                CloudMusic.noteHeartbeatForResume();
 
                 // 10 ms 监督 tick 兼任交叉淡化时钟：粒度足以
                 // 平滑渐变，并且已经绑定了上面的会话/取消检查。
@@ -2368,10 +2529,30 @@ public class CloudMusic implements SharedConstants {
             AudioPlayer activePlayer = ownedPlayer;
             if (activePlayer == null || !isSessionUsable(targetSession)) return false;
 
+            // 续播偏移只给队列的起始曲目（curIdx == startIdx 那一首），消费即归零：
+            // 起播失败后的重试、换源重试、房间重下发都算新的起播，不再带旧位置。
+            long offset = 0L;
+            if (startOffsetMillis > 0L && curIdx == startIdx) {
+                offset = startOffsetMillis;
+                startOffsetMillis = 0L;
+            }
+
             try {
                 synchronized (PLAYER_STATE_LOCK) {
                     if (!isSessionUsable(targetSession) || ownedPlayer != activePlayer) return false;
-                    activePlayer.play();
+                    if (offset > 0L) {
+                        // automix 交接同一条 playFrom 路径（cue 后 play 复用同一 voice）。
+                        // clamp 到曲长：快照里的位置可能长于试听片段/损坏文件的实际时长。
+                        float total = activePlayer.getTotalTimeMillis();
+                        float target = total > 0f ? Math.min((float) offset, Math.max(0f, total - 1f)) : 0f;
+                        if (target > 0f) {
+                            activePlayer.playFrom(target);
+                        } else {
+                            activePlayer.play();
+                        }
+                    } else {
+                        activePlayer.play();
+                    }
                 }
             } catch (ChannelMismatchException mismatch) {
                 try {
@@ -2398,6 +2579,7 @@ public class CloudMusic implements SharedConstants {
 
             if (!isSessionUsable(targetSession)) return false;
             playing.set(true);
+            CloudMusic.notePlaybackEvent();
             // 进阶模式：这首歌<b>现在是出场方</b>了，下一条交接要的是它的整曲包络。起播这一刻
             // 起扫，预算就是整首歌的播放时长——这是唯一来得及的时机，预备窗只有 30 秒。
             // 总开关关闭时这个方法第一行就返回：不排队、不起线程、不读盘。
@@ -2594,6 +2776,29 @@ public class CloudMusic implements SharedConstants {
                 return nativeFile;
             }
 
+            // 本地文件直读：muonium-local:// 伪 URL 兑换成用户磁盘上的原文件。
+            // 不下载、不进音频缓存（容量淘汰动用户的音乐文件是荒谬的）、不写缓存键位 ——
+            // 每次点播都从原文件现读，文件本身就是那份「缓存」。文件缺失携带归因抛出，
+            // 但 LOCAL 行 canAutoSwitch 为 false（没有候选替身），上层只会如实报错，
+            // 绝不会悄悄换成在线平台的同名歌。
+            if (playUrl != null && playUrl.startsWith(
+                    com.muoniumplayer.core.ncm.music.dto.Music.LOCAL_PSEUDO_URL_PREFIX)) {
+                final File localFile = resolveLocalPseudoUrl(song);
+                if (localFile == null) {
+                    throw new IllegalStateException("本地文件已移动或删除: "
+                            + (song == null ? cacheKey : song.getName()));
+                }
+                // 扩展名可以骗人（.ogg 改名 .mp3 混进来），字节不会。坏容器在这里拦下，
+                // 归因说清是「文件本身不是受支持的音频」，与下载链的容器校验同一立场。
+                final String container = AudioContainerSupport.detectContainer(localFile);
+                if (!AudioContainerSupport.isSupportedContainer(container)) {
+                    throw new IllegalStateException("本地文件不是受支持的音频容器: "
+                            + localFile.getName());
+                }
+                MusicAudioCache.touch(localFile);
+                return localFile;
+            }
+
             // 绝不把下载了一半的文件暴露给解码器或缓存查找。
             File temporaryMusic = new File(musicCacheDir, cacheKey + ".download");
             if (temporaryMusic.exists() && !temporaryMusic.delete()) {
@@ -2673,6 +2878,11 @@ public class CloudMusic implements SharedConstants {
             if (decodedFile.exists() && !decodedFile.delete()) {
                 throw new IllegalStateException("Unable to replace invalid decoded audio cache: "
                         + decodedFile.getName());
+            }
+            // 本地文件的边车落在模组缓存深处（按路径哈希分目录），父目录可能还不存在；
+            // 下载缓存里的边车目录本来就是现成的，多调一次无妨。
+            if (decodedFile.getParentFile() != null) {
+                decodedFile.getParentFile().mkdirs();
             }
 
             long transcodeStartedAt = System.currentTimeMillis();
@@ -4779,6 +4989,8 @@ public class CloudMusic implements SharedConstants {
                 else curIdx++;
                 return;
             }
+            // 换歌边界先记账：推进前的那首是「最后一次完整听到」的位置。
+            notePlaybackEvent();
             if (playMode == PlayMode.LoopSingle) {
                 // 单曲循环只影响自然播放结束；用户手动上一首/下一首仍可正常切歌。
                 if (dontAdd) {
@@ -5310,7 +5522,12 @@ public class CloudMusic implements SharedConstants {
         long sid = s == null ? -1L : s.sessionId;
         long songId = m == null ? -1L : m.getId();
         long rawPositionMs = (p == null || m == null) ? 0L : Math.round(p.getCurrentTimeMillis());
-        long durationMs = (p == null || m == null) ? 0L : Math.round(p.getTotalTimeMillis());
+        // 引擎没起（player == null）但有当前歌时，总时长回退到曲目的声明时长：
+        // 播放记忆恢复态正是这个形状——「有歌、有位置记忆、引擎没出声」。不回退的话
+        // 进度条两端全 00:00，用户看到的是「元数据丢了」。位置没有可回退的来源，保持 0。
+        long durationMs = (p == null || m == null)
+                ? (m == null ? 0L : Math.max(0L, m.getDuration()))
+                : Math.round(p.getTotalTimeMillis());
         // 这里回答的是“从用户视角看它算不算在播放”，与暂停
 // 图标读取的是同一来源（二者都调用 isPausing()）。它过去只测试 isFinished()，因此一条暂停的曲目——以及
 // 一条尚未开始的已解码曲目——都被上报为 playing == true：该字段
@@ -6017,6 +6234,17 @@ public class CloudMusic implements SharedConstants {
         FAILED_LYRIC_KEYS.clear();
     }
 
+    /**
+     * muonium-local:// 伪 URL 的兑换：磁盘原文件在就返回它，缺失返回 null。
+     *
+     * <p>收成独立方法是为了让「文件在不在」这一步可测（缓存分派点在私有内部类里）。
+     * 容器合法性不在这里拦——{@code cachedAudioFileLocked} 的本地分支紧接着做
+     * {@code detectContainer} 检查，坏容器按「不是受支持的音频」抛归因异常。</p>
+     */
+    static File resolveLocalPseudoUrl(Music song) {
+        return song == null ? null : song.localFile();
+    }
+
     public static void loadLyric(Music music, PlaybackSession session) {
         loadLyric(music, session, null);
     }
@@ -6029,8 +6257,12 @@ public class CloudMusic implements SharedConstants {
             // 时间轴归属照旧由会话校验链路推进（失败那次已经提交过空结果）。
             return;
         }
-        final File embeddedLyricFile = music.isCloudSong()
-                ? LyricLoadService.resolveEmbeddedLyricFile(playbackFile) : null;
+        // 嵌入歌词的读取源：网盘歌曲是它的下载缓存文件；本地音乐就是用户磁盘上的原文件。
+        // 两者同一待遇——文件标签里的 USLT/Vorbis/©lyr 才是这首歌的第一手歌词。
+        final File embeddedLyricFile = music.isLocal()
+                ? music.localFile()
+                : (music.isCloudSong()
+                        ? LyricLoadService.resolveEmbeddedLyricFile(playbackFile) : null);
 
         MultiThreadingUtil.runAsync(() -> {
             User currentProfile = profile;
@@ -6161,12 +6393,12 @@ public class CloudMusic implements SharedConstants {
     }
 
     public static List<Music> search(String keyWord) {
-        List<Music> cadenceResults = NeteaseMusicService.search(keyWord, 50);
+        List<Music> muResults = NeteaseMusicService.search(keyWord, 50);
         MusicPlatform platform = NeteaseMusicService.getCurrentPlatform();
         // 只有网易云才有"原 API 兜底"这条退路。这里按"不是网易云就直接返回"来判定，而不是把非网易云的
         // 平台一个个列出来 —— 漏掉一个（酷狗就差点漏掉）就会让该平台的空搜索结果偷偷落到网易云搜索上。
-        if (!cadenceResults.isEmpty() || platform != MusicPlatform.NETEASE) {
-            return cadenceResults;
+        if (!muResults.isEmpty() || platform != MusicPlatform.NETEASE) {
+            return muResults;
         }
 
         return NeteaseAccountRepository.searchSongs(keyWord);

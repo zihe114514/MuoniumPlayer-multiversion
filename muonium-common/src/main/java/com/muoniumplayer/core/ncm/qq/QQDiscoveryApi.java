@@ -13,9 +13,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * QQ 音乐里 Cadence（{@code music-api} 库）没有覆盖的发现页接口。
+ * QQ 音乐里内置音源层没有覆盖的发现页接口。
  *
- * <p>Cadence 只提供"取某一个榜单的曲目"（{@code getToplist(topId, limit)}），没有"榜单有哪些"，
+ * <p>内置音源层 只提供"取某一个榜单的曲目"（{@code getToplist(topId, limit)}），没有"榜单有哪些"，
  * 所以 QQ 的排行榜页原来只能硬编码两个榜 id。这里补上榜单列表与热搜，让 QQ 的这两个入口与网易云同形。</p>
  *
  * <p>两个端点各用一种上游风格：榜单列表走老 CGI（{@code fcg_myqq_toplist.fcg}，免签，返回 JSON），
@@ -30,7 +30,7 @@ public final class QQDiscoveryApi {
     private QQDiscoveryApi() {
     }
 
-    /** 一个 QQ 榜单。{@code id} 就是 Cadence {@code getToplist} 要的 topId。 */
+    /** 一个 QQ 榜单。{@code id} 就是 内置音源层 {@code getToplist} 要的 topId。 */
     public static final class TopList {
         public final int id;
         public final String title;

@@ -120,8 +120,15 @@ public final class ExternalArtwork {
             try {
                 if (!file.equals(loadedFile)) return;
                 int[] palette = CoverPalette.extract(snapshot, 6);
-                if (target != null) target.setCoverPalette(palette);
-                if (target == CloudMusic.currentlyPlaying) CoverThemePalette.set(palette);
+                int[] representatives = CoverRepresentativeColors.extract(snapshot, 4);
+                if (target != null) {
+                    target.setCoverPalette(palette);
+                    target.setRepresentativeColors(representatives);
+                }
+                if (target == CloudMusic.currentlyPlaying) {
+                    CoverThemePalette.set(palette);
+                    CoverGradientColors.set(representatives);
+                }
                 if (!file.equals(loadedFile)) return;
                 Textures.loadTexture(blurred, MusicCoverService.blurCover(snapshot));
             } catch (Throwable failure) {

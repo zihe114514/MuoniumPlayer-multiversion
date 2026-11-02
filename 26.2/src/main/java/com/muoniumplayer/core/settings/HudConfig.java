@@ -361,13 +361,18 @@ public final class HudConfig {
     public static boolean worldLyricsGlowEnabled = true;
 
     /** 3D 歌词：发光强度 0..1（烘焙进纹理时只传这一次，渲染层不得再乘）。 */
-    public static float worldLyricsGlowStrength = 0.6f;
+    public static float worldLyricsGlowStrength = 0.35f;
 
-    /** 3D 歌词：发光扩散倍率（与全屏页 lyricGlowSpread 同口径）。 */
-    public static float worldLyricsGlowSpread = 1.3181034f;
+    /** 3D 歌词：发光扩散倍率（晕/墨分离口径：σ 链与晕格留白全跟随此值）。 */
+    public static float worldLyricsGlowSpread = 1.3f;
 
-    /** 3D 歌词：发光颜色（RGB 低 24 位，alpha 由渲染层按进出场计算）。 */
+    /** 3D 歌词：发光颜色（RGB 低 24 位，alpha 由渲染层按进出场计算）。
+     *  仅 glowColorMode=1（自定义色板）时参与烘焙；0（跟随字色）时由渲染层逐字解析。 */
     public static int worldLyricsGlowColorRgb = 0xFFFFFF;
+
+    /** 3D 歌词：发光颜色来源档。0 = 跟随字色（联动文字色/封面渐变/取色，逐字同步）
+     *  / 1 = 自定义色板（worldLyricsGlowColorRgb）。 */
+    public static int worldLyricsGlowColorMode = 1;
 
     /** 3D 歌词：文字颜色（RGB 低 24 位）。0xFFFFFF 且未自定义时渲染层回落暖白默认。 */
     public static int worldLyricsColorRgb = 0xFFFFFF;
@@ -401,6 +406,17 @@ public final class HudConfig {
     public static int worldLyricsTranslation = 1;
     /** 翻译副行的绘光特效（点亮闪点 + 微飞径迹）：仅「逐字点亮」档有意义。 */
     public static boolean worldLyricsTransEffects = false;
+    /** 发光质量档：0 Standard / 1 High(默认) / 2 Ultra（TextGlow.GLOW_TIER_*）。 */
+    public static int worldLyricsGlowTier = 1;
+    /** 封面代表色来源档：0 关 / 1 自动提取 / 2 手动色板。 */
+    public static int worldLyricsCoverColorMode = 0;
+    /** 封面渐变：歌词与翻译按色板从左到右渐变（需来源档非关）。 */
+    public static boolean worldLyricsCoverGradient = false;
+    /** 手动色板 4 色（0xRRGGBB，从左到右）：来源档 = 手动时生效。 */
+    public static int worldLyricsCoverPaletteRgb0 = 0xF2A7C3;
+    public static int worldLyricsCoverPaletteRgb1 = 0xA7C8F2;
+    public static int worldLyricsCoverPaletteRgb2 = 0xC3F2A7;
+    public static int worldLyricsCoverPaletteRgb3 = 0xF2E3A7;
     /** 更激进的适配：光影包激活时歌词推迟到 HUD 阶段（光影后处理链之后）用原版着色器直画。 */
     public static boolean worldLyricsHudDraw = false;
 
@@ -773,9 +789,10 @@ public final class HudConfig {
         worldLyricsModernStyle = true;
         worldLyricsSplitLines = true;
         worldLyricsGlowEnabled = true;
-        worldLyricsGlowStrength = 0.6f;
-        worldLyricsGlowSpread = 1.3181034f;
+        worldLyricsGlowStrength = 0.35f;
+        worldLyricsGlowSpread = 1.3f;
         worldLyricsGlowColorRgb = 0xFFFFFF;
+        worldLyricsGlowColorMode = 1;
         worldLyricsColorRgb = 0xFFFFFF;
         worldLyricsColorCustom = false;
         worldLyricsWordPop = false;
@@ -789,6 +806,13 @@ public final class HudConfig {
         worldLyricsAboveGround = false;
         worldLyricsTranslation = 1;
         worldLyricsTransEffects = false;
+        worldLyricsGlowTier = 1;
+        worldLyricsCoverColorMode = 0;
+        worldLyricsCoverGradient = false;
+        worldLyricsCoverPaletteRgb0 = 0xF2A7C3;
+        worldLyricsCoverPaletteRgb1 = 0xA7C8F2;
+        worldLyricsCoverPaletteRgb2 = 0xC3F2A7;
+        worldLyricsCoverPaletteRgb3 = 0xF2E3A7;
         worldLyricsHudDraw = false;
         osdKaraokeTransitionWidth = 14.0f;
         osdKaraokePulseStrength = 0.00f;
@@ -967,8 +991,9 @@ public final class HudConfig {
             worldLyricsSplitLines = getBoolean(o, "worldLyricsSplitLines", worldLyricsSplitLines);
             worldLyricsGlowEnabled = getBoolean(o, "worldLyricsGlowEnabled", worldLyricsGlowEnabled);
             worldLyricsGlowStrength = clamp01(getFloat(o, "worldLyricsGlowStrength", worldLyricsGlowStrength));
-            worldLyricsGlowSpread = clamp(getFloat(o, "worldLyricsGlowSpread", worldLyricsGlowSpread), 0.0f, 1.8f);
+            worldLyricsGlowSpread = clamp(getFloat(o, "worldLyricsGlowSpread", worldLyricsGlowSpread), 0.5f, 3.0f);
             worldLyricsGlowColorRgb = getInt(o, "worldLyricsGlowColorRgb", worldLyricsGlowColorRgb);
+            worldLyricsGlowColorMode = clampInt(getInt(o, "worldLyricsGlowColorMode", worldLyricsGlowColorMode), 0, 1);
             worldLyricsColorRgb = getInt(o, "worldLyricsColorRgb", worldLyricsColorRgb);
             worldLyricsColorCustom = getBoolean(o, "worldLyricsColorCustom", worldLyricsColorCustom);
             worldLyricsWordPop = getBoolean(o, "worldLyricsWordPop", worldLyricsWordPop);
@@ -982,6 +1007,13 @@ public final class HudConfig {
             worldLyricsAboveGround = getBoolean(o, "worldLyricsAboveGround", worldLyricsAboveGround);
             worldLyricsTranslation = clampInt(getInt(o, "worldLyricsTranslation", worldLyricsTranslation), 0, 2);
             worldLyricsTransEffects = getBoolean(o, "worldLyricsTransEffects", worldLyricsTransEffects);
+            worldLyricsGlowTier = clampInt(getInt(o, "worldLyricsGlowTier", worldLyricsGlowTier), 0, 2);
+            worldLyricsCoverColorMode = clampInt(getInt(o, "worldLyricsCoverColorMode", worldLyricsCoverColorMode), 0, 2);
+            worldLyricsCoverGradient = getBoolean(o, "worldLyricsCoverGradient", worldLyricsCoverGradient);
+            worldLyricsCoverPaletteRgb0 = getInt(o, "worldLyricsCoverPaletteRgb0", worldLyricsCoverPaletteRgb0);
+            worldLyricsCoverPaletteRgb1 = getInt(o, "worldLyricsCoverPaletteRgb1", worldLyricsCoverPaletteRgb1);
+            worldLyricsCoverPaletteRgb2 = getInt(o, "worldLyricsCoverPaletteRgb2", worldLyricsCoverPaletteRgb2);
+            worldLyricsCoverPaletteRgb3 = getInt(o, "worldLyricsCoverPaletteRgb3", worldLyricsCoverPaletteRgb3);
             worldLyricsHudDraw = getBoolean(o, "worldLyricsHudDraw", worldLyricsHudDraw);
 
             osdKaraokeTransitionWidth = clamp(getFloat(o, "osdKaraokeTransitionWidth", osdKaraokeTransitionWidth), 4.0f, 32.0f);
@@ -1166,6 +1198,7 @@ public final class HudConfig {
             o.addProperty("worldLyricsGlowStrength", worldLyricsGlowStrength);
             o.addProperty("worldLyricsGlowSpread", worldLyricsGlowSpread);
             o.addProperty("worldLyricsGlowColorRgb", worldLyricsGlowColorRgb);
+            o.addProperty("worldLyricsGlowColorMode", worldLyricsGlowColorMode);
             o.addProperty("worldLyricsColorRgb", worldLyricsColorRgb);
             o.addProperty("worldLyricsColorCustom", worldLyricsColorCustom);
             o.addProperty("worldLyricsWordPop", worldLyricsWordPop);
@@ -1179,6 +1212,13 @@ public final class HudConfig {
             o.addProperty("worldLyricsAboveGround", worldLyricsAboveGround);
             o.addProperty("worldLyricsTranslation", worldLyricsTranslation);
             o.addProperty("worldLyricsTransEffects", worldLyricsTransEffects);
+            o.addProperty("worldLyricsGlowTier", worldLyricsGlowTier);
+            o.addProperty("worldLyricsCoverColorMode", worldLyricsCoverColorMode);
+            o.addProperty("worldLyricsCoverGradient", worldLyricsCoverGradient);
+            o.addProperty("worldLyricsCoverPaletteRgb0", worldLyricsCoverPaletteRgb0);
+            o.addProperty("worldLyricsCoverPaletteRgb1", worldLyricsCoverPaletteRgb1);
+            o.addProperty("worldLyricsCoverPaletteRgb2", worldLyricsCoverPaletteRgb2);
+            o.addProperty("worldLyricsCoverPaletteRgb3", worldLyricsCoverPaletteRgb3);
             o.addProperty("worldLyricsHudDraw", worldLyricsHudDraw);
             o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
             o.addProperty("osdKaraokePulseStrength", osdKaraokePulseStrength);

@@ -6,6 +6,7 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.muoniumplayer.core.lyrics3d.HuiguangMotion;
 import com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas;
 import com.muoniumplayer.core.lyrics3d.WorldLyricsRenderer;
+import com.muoniumplayer.mixin.RenderTypeAccessors;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.OrderedSubmitNodeCollector;
 import net.minecraft.client.renderer.rendertype.RenderType;
@@ -100,6 +101,49 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     }
 
     /**
+     * 晕格通道的<b>加色</b>渲染类型：光晕以 srcAlpha,one 叠加 —— 只增不减，
+     * 亮背景上光晕融入、暗背景上浮出，永远不会像 alpha 混合那样把背景压成
+     * 灰雾（「真发光不糊」的混合模型，见 TextGlow.drawGlowOn）。
+     *
+     * <p>26.2 的 RenderType.create 是包私有 —— 照抄原版 beaconBeam(rl,true) 的
+     * 组装（javap 核对）：自建 RenderPipeline（BEACON_BEAM_SNIPPET 同内容 +
+     * BlendFunction.LIGHTNING 换混合）→ RenderSetup.builder(pipeline)
+     * .withTexture("Sampler0", rl).sortOnUpload() → RenderType.create（accessor）。
+     * 光晕属瞬时发光体，不吃光照图、不进 OIT（与 beaconBeam translucent 同判）。</p>
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<Identifier, RenderType> GLOW_TYPES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static RenderType glowType(Identifier rl) {
+        return GLOW_TYPES.computeIfAbsent(rl, r -> {
+            com.mojang.blaze3d.pipeline.RenderPipeline pipeline =
+                    com.mojang.blaze3d.pipeline.RenderPipeline.builder()
+                            .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
+                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.GLOBALS)
+                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.PROJECTION)
+                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.DYNAMIC_TRANSFORMS)
+                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.FOG)
+                            .withBindGroupLayout(net.minecraft.client.renderer.BindGroupLayouts.SAMPLER0)
+                            .withVertexShader("core/rendertype_beacon_beam")
+                            .withFragmentShader("core/rendertype_beacon_beam")
+                            .withVertexBinding(0, com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK)
+                            // 26.2 的枚举类路径与 26.3 不同：PrimitiveTopology 在 blaze3d 根、
+                            // CompareOp 在 blaze3d.platform（javap 核对）
+                            .withPrimitiveTopology(com.mojang.blaze3d.PrimitiveTopology.QUADS)
+                            .withColorTargetState(new com.mojang.blaze3d.pipeline.ColorTargetState(
+                                    com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING))
+                            .withDepthStencilState(new com.mojang.blaze3d.pipeline.DepthStencilState(
+                                    com.mojang.blaze3d.platform.CompareOp.GREATER_THAN_OR_EQUAL, false))
+                            .build();
+            return RenderTypeAccessors.muonium$create("muonium_lyric_glow",
+                    net.minecraft.client.renderer.rendertype.RenderSetup.builder(pipeline)
+                            .withTexture("Sampler0", r)
+                            .sortOnUpload()
+                            .createRenderSetup());
+        });
+    }
+
+    /**
      * 歌词世界绘制的渲染类型入口 —— 全部字形/特效 quad 的唯一取发点。
      * 光影包激活（ShaderPackProbe 本帧值）走信标全亮程序，否则原版 textSeeThrough。
      * refresh() 在帧头调用，帧中读的是本帧缓存值，同一帧内模式恒定。
@@ -124,21 +168,10 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         if (captureMode) {
             LyricPresentRenderer.beginFrame();
         }
-        // 辉光 mask 采集恒开（非 capture 的世界 submit 也要双写 —— present 端的
-        // bloom-only 合成靠它）：GlowBloom 已配置则返回缓冲，未配置 null 零成本。
-        this.glowMask = WorldLyricsHudDraw.glowMaskTarget();
     }
 
     /** 本帧是否在采集（capture 模式下 submit 全部旁路）。 */
     private boolean captureMode;
-
-    @Override
-    public com.muoniumplayer.core.lyrics3d.MaskQuadCollector glowMaskTarget() {
-        return glowMask;
-    }
-
-    /** 辉光 mask 采集（present 兜底帧激活；null = 本帧不采集）。 */
-    private com.muoniumplayer.core.lyrics3d.MaskQuadCollector glowMask;
 
     public void end() {
         if (captureMode) {
@@ -215,7 +248,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     @Override
     public void drawSmoothGlyph(char c, float x, float y, float sizePx,
                                 int rgb, float alpha, float rot, float dx, float dy, float sc,
-                                float glowMul) {
+                                float glowMul, boolean glowOn, int glowColorRgb, int inkRgb) {
         if (poseStack == null || mc == null) return;
         OrderedSubmitNodeCollector submitter = WorldLyricsBridgeAccess.submitter(mc);
         if (submitter == null) return;
@@ -224,15 +257,12 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 WorldLyricsBridge.currentSettings;
         float glowStrength = settings != null ? settings.glowStrength : 0f;
         float glowSpread = settings != null ? settings.glowSpread : 1f;
-        int glowColor = settings != null ? settings.glowColorRgb : 0xFFFFFF;
         // 心象的发光脉冲：正在唱的块满档、其余块压档 —— 查格前乘上去（缓存键已量化）。
         glowStrength *= glowMul;
-        // 辉光后处理接管发光：本帧 mask 采集激活时字形按零烘焙强度取格 ——
-        // 晕全由 bloom 从 mask 生成，烘焙晕与后处理晕不再叠加（能量翻倍会糊）。
-        if (glowMask != null) glowStrength = 0f;
+        boolean glowActive = glowOn && glowStrength > 0.004f;
 
-        LyricGlyphAtlas.GlyphCell cell = LyricGlyphAtlas.getGlyph(
-                c, rgb & 0xFFFFFF, glowStrength, glowSpread, glowColor);
+        // 墨格：无发光留白（晕在独立晕格，墨格回归防裁切最小 pad）
+        LyricGlyphAtlas.GlyphCell cell = LyricGlyphAtlas.getInkCell(c, rgb & 0xFFFFFF);
         if (cell == null) {
             // 绘光模式下「预算内暂时没烘出来」不回退像素字 —— 那正是用户看到的
             // 「有时退回原版渲染风格」：字形瞬闪像素风再换回烘焙字形，非常扎眼。
@@ -249,13 +279,23 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         if (!(cell.page instanceof LyricGlyphAtlasBridge.PageHandle)) {
             return;
         }
-        net.minecraft.resources.Identifier pageRl =
+        net.minecraft.resources.Identifier inkRl =
                 ((LyricGlyphAtlasBridge.PageHandle) cell.page).resourceLocation();
+
+        // 晕格：独立烘焙（只含高斯光形）。晕格未就绪（预算/页满）只丢晕不丢字。
+        LyricGlyphAtlas.GlyphCell glowCell = glowActive
+                ? LyricGlyphAtlas.getGlowCell(c, glowStrength, glowSpread,
+                        glowColorRgb & 0xFFFFFF, rgb & 0xFFFFFF,
+                        settings != null ? settings.glowTier : 1)
+                : null;
+        net.minecraft.resources.Identifier glowRl = null;
+        if (glowCell != null && glowCell.page instanceof LyricGlyphAtlasBridge.PageHandle) {
+            glowRl = ((LyricGlyphAtlasBridge.PageHandle) glowCell.page).resourceLocation();
+        }
 
         // 烘焙像素 → 设计像素。字形顶点 (x, y) 是「字位框左上角」在<b>行内坐标</b>里的位置
         // （buildGlyphs 逐字推进的坐标），格内墨迹原点 (inkX, inkY) 对到它 —— quad 四角
-        // 必须加上 (x, y) 再进公告牌矩阵。初版漏加，整行所有字都叠在公告牌原点。
-        // 档位运行时化：读 volatile int（bakeScale）实时除，切档即时生效
+        // 必须加上 (x, y) 再进公告牌矩阵。档位运行时化：读 volatile int（bakeScale）实时除
         float inv = 1f / LyricGlyphAtlas.bakeScale();
         float qLeft = x - cell.inkX * inv;
         float qTop = y - cell.inkY * inv;
@@ -266,10 +306,6 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // UV 半像素内缩：LINEAR 采样时 quad 边缘正落 texel 边界会混入邻格
         // （页内格间零间隔）——内缩半个 texel 让采样核完全落在格内，去边缘灰缝
         float halfTexel = 0.5f / pageF;
-        float u0 = cell.x / pageF + halfTexel;
-        float v0 = cell.y / pageF + halfTexel;
-        float u1 = (cell.x + cell.w) / pageF - halfTexel;
-        float v1 = (cell.y + cell.h) / pageF - halfTexel;
 
         // 绕字中心（行内坐标：半个 advance × 半个字位框）的旋转/缩放（上游 withWiggle 同构）
         float cx = x + (cell.advance * inv) * 0.5f;
@@ -281,45 +317,73 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         int argb = (((int) (alpha * 255f) & 0xFF) << 24) | (rgb & 0xFFFFFF);
 
+        // 晕格 quad（晕格 pad ≥ 墨格 pad，锚点对齐后 quad 更大、盖过墨格）。
+        // lambda 捕获要求：一次赋值后不再改写（glowRl 为 null 时保持零值不进 lambda）
+        final float gLeft, gTop, gRight, gBottom;
+        final float gu0, gv0, gu1, gv1;
+        final int glowArgb;
+        if (glowRl != null) {
+            float gInv = 1f / LyricGlyphAtlas.bakeScale();
+            gLeft = x - glowCell.inkX * gInv;
+            gTop = y - glowCell.inkY * gInv;
+            gRight = gLeft + glowCell.w * gInv;
+            gBottom = gTop + glowCell.h * gInv;
+            gu0 = glowCell.x / pageF + halfTexel;
+            gv0 = glowCell.y / pageF + halfTexel;
+            gu1 = (glowCell.x + glowCell.w) / pageF - halfTexel;
+            gv1 = (glowCell.y + glowCell.h) / pageF - halfTexel;
+            // 晕的顶点 alpha 用墨格同一进出场 alpha —— 晕格能量已按 strength 烘进像素
+            glowArgb = argb & 0x00FFFFFF | (((int) (alpha * 255f) & 0xFF) << 24);
+        } else {
+            gLeft = gTop = gRight = gBottom = 0f;
+            gu0 = gv0 = gu1 = gv1 = 0f;
+            glowArgb = 0;
+        }
+
         // ---- 更激进的适配：采集模式 —— 不 submit，把 quad 记进 present 兜底缓冲 ----
         if (captureMode) {
-            if (glowMask != null) {
-                Matrix4f gmat = poseStack != null ? poseStack.last().pose() : null;
-                if (gmat != null) {
-                    glowMask.addQuad(gmat, qLeft, qTop, qLeft, qBottom, qRight, qBottom, qRight, qTop,
-                            cx, cy, cos, sin, s, ((int) (alpha * 255f) & 0xFF) << 24);
-                }
+            // 晕在下（先采集，同批内先画）加色段；墨在上正常段
+            if (glowRl != null) {
+                captureGlyphQuad(glowRl, gLeft, gTop, gRight, gBottom, cx, cy, cos, sin, s,
+                        glowArgb, gu0, gv0, gu1, gv1, true);
             }
-            captureGlyphQuad(pageRl, qLeft, qTop, qRight, qBottom, cx, cy, cos, sin, s, argb, u0, v0, u1, v1);
+            captureGlyphQuad(inkRl, qLeft, qTop, qRight, qBottom, cx, cy, cos, sin, s,
+                    argb, cell.x / pageF + halfTexel, cell.y / pageF + halfTexel,
+                    (cell.x + cell.w) / pageF - halfTexel, (cell.y + cell.h) / pageF - halfTexel,
+                    false);
             if (TRACE && !tracedSmooth) {
                 tracedSmooth = true;
                 System.out.println("[WorldLyrics/trace] 现代档字形 quad 已采集（present 兜底）: '" + c
-                        + "' cell=" + cell.w + "x" + cell.h);
+                        + "' cell=" + cell.w + "x" + cell.h + (glowRl != null ? " +glow" : ""));
             }
             return;
         }
-
-        // 非 capture（世界 submit）模式同样双写 mask —— present 端的 bloom-only
-        // 合成靠它，几何与帧图展开的字形同一次遍历、逐帧对齐。
-        if (glowMask != null) {
-            Matrix4f gmat = poseStack != null ? poseStack.last().pose() : null;
-            if (gmat != null) {
-                glowMask.addQuad(gmat, qLeft, qTop, qLeft, qBottom, qRight, qBottom, qRight, qTop,
-                        cx, cy, cos, sin, s, ((int) (alpha * 255f) & 0xFF) << 24);
-            }
-        }
-        RenderType renderType = currentWorldTextType(pageRl);
-        // 提交进 alwaysOnTop 相位（submit 拷走提交时的 pose，pushPose/popPose
-        // 维持栈平衡；回调在世界渲染的稍后阶段才被调用，四角全部在回调里展开）。
+        // 提交进 alwaysOnTop 相位：晕先（加色 RenderType，srcAlpha,one）、墨后。
         poseStack.pushPose();
         try {
+            if (glowRl != null) {
+                // 晕格恒走加色管线（不随光影探测切换，与 present 通路语义一致）
+                RenderType glowRt = glowType(glowRl);
+                LyricOnTopSubmitter.submitCustomGeometry(submitter, poseStack, glowRt, (pose, vc) -> {
+                    Matrix4f mat = pose.pose();
+                    putGlyphVertex(vc, mat, gLeft, gTop, cx, cy, cos, sin, s, glowArgb, gu0, gv0);
+                    putGlyphVertex(vc, mat, gLeft, gBottom, cx, cy, cos, sin, s, glowArgb, gu0, gv1);
+                    putGlyphVertex(vc, mat, gRight, gBottom, cx, cy, cos, sin, s, glowArgb, gu1, gv1);
+                    putGlyphVertex(vc, mat, gRight, gTop, cx, cy, cos, sin, s, glowArgb, gu1, gv0);
+                });
+            }
+            RenderType renderType = currentWorldTextType(inkRl);
             LyricOnTopSubmitter.submitCustomGeometry(submitter, poseStack, renderType, (pose, vc) -> {
                 Matrix4f mat = pose.pose();
                 // 四顶点：左上 → 左下 → 右下 → 右上（QUADS 环绕序）
-                putGlyphVertex(vc, mat, qLeft, qTop, cx, cy, cos, sin, s, argb, u0, v0);
-                putGlyphVertex(vc, mat, qLeft, qBottom, cx, cy, cos, sin, s, argb, u0, v1);
-                putGlyphVertex(vc, mat, qRight, qBottom, cx, cy, cos, sin, s, argb, u1, v1);
-                putGlyphVertex(vc, mat, qRight, qTop, cx, cy, cos, sin, s, argb, u1, v0);
+                putGlyphVertex(vc, mat, qLeft, qTop, cx, cy, cos, sin, s, argb,
+                        cell.x / pageF + halfTexel, cell.y / pageF + halfTexel);
+                putGlyphVertex(vc, mat, qLeft, qBottom, cx, cy, cos, sin, s, argb,
+                        cell.x / pageF + halfTexel, (cell.y + cell.h) / pageF - halfTexel);
+                putGlyphVertex(vc, mat, qRight, qBottom, cx, cy, cos, sin, s, argb,
+                        (cell.x + cell.w) / pageF - halfTexel, (cell.y + cell.h) / pageF - halfTexel);
+                putGlyphVertex(vc, mat, qRight, qTop, cx, cy, cos, sin, s, argb,
+                        (cell.x + cell.w) / pageF - halfTexel, cell.y / pageF + halfTexel);
             });
         } finally {
             poseStack.popPose();
@@ -328,7 +392,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         if (TRACE && !tracedSmooth) {
             tracedSmooth = true;
             System.out.println("[WorldLyrics/trace] 现代档字形 quad 已提交: '" + c
-                    + "' cell=" + cell.w + "x" + cell.h + " pad=" + cell.inkX);
+                    + "' cell=" + cell.w + "x" + cell.h + (glowRl != null ? " +glow" : ""));
         }
     }
 
@@ -366,7 +430,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private void captureGlyphQuad(Identifier pageRl,
                                   float qLeft, float qTop, float qRight, float qBottom,
                                   float cx, float cy, float cos, float sin, float s,
-                                  int argb, float u0, float v0, float u1, float v1) {
+                                  int argb, float u0, float v0, float u1, float v1,
+                                  boolean additive) {
         Matrix4f mat = poseStack != null ? poseStack.last().pose() : null;
         if (mat == null) return;
         // 四角先绕字中心旋转/缩放（与 putGlyphVertex 同式），再进 billboard 矩阵
@@ -385,7 +450,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 matX(mat, bx, by), matY(mat, bx, by), matZ(mat, bx, by), u0, v1,
                 matX(mat, gx, gy), matY(mat, gx, gy), matZ(mat, gx, gy), u1, v1,
                 matX(mat, dx, dy), matY(mat, dx, dy), matZ(mat, dx, dy), u1, v0,
-                argb);
+                argb, additive);
     }
 
     /** billboard 矩阵 × (x,y,0) 的 X 分量（Matrix4fc.transformPosition 的展开式）。 */
@@ -421,7 +486,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 matX(mat, bx, by), matY(mat, bx, by), matZ(mat, bx, by), bu, bv,
                 matX(mat, gx, gy), matY(mat, gx, gy), matZ(mat, gx, gy), gu, gv,
                 matX(mat, dx, dy), matY(mat, dx, dy), matZ(mat, dx, dy), du, dv,
-                argb);
+                argb, false);
     }
 
     /** 径迹 quad 带的采集版：与 {@link #emitTrail} 同几何，顶点直接进 present 缓冲。 */

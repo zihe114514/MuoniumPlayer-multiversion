@@ -348,6 +348,29 @@ final class LyricLoadService {
             }
         }
 
+        // ── 1.9) 本地文件的嵌入歌词 ────────────────────────────────────────────
+        // 排在自动逐字匹配<b>之前</b>，理由与 YouTube/Apple 早段同一哲学：文件标签里那份
+        // （USLT / Vorbis LYRICS / ©lyr，可能是逐字 awlrc）就是这首歌的第一手歌词，不存在
+        // 「匹配错版本」的问题；拿歌名去在线词库匹配只该给它兜空。逐字轨照常交给
+        // {@code LyricParser.parseLyricText} 的格式嗅探（LRC / awlrc / WEBVTT 都认）。
+        if (music.isLocal() && embeddedLyricFile != null) {
+            try {
+                String embeddedText = EmbeddedLyricsReader.read(embeddedLyricFile);
+                if (!embeddedText.isEmpty()) {
+                    List<LyricLine> embedded = LyricParser.parseLyricText(embeddedText, "", "");
+                    if (!embedded.isEmpty()) {
+                        System.out.println("[Music/Local] Loaded embedded lyrics ("
+                                + embedded.size() + " 行) for " + trackKey);
+                        SERVED.put(trackKey, LyricSourceMemory.PLATFORM);
+                        return new LyricLoadResult(createEmbeddedLyricJson(embeddedText), embedded);
+                    }
+                }
+            } catch (Throwable throwable) {
+                System.err.println("[Music/Local] Embedded lyric read failed for " + trackKey + ": "
+                        + throwable.getMessage());
+            }
+        }
+
         // ── 2) 自动：逐字歌词永远优先于普通歌词 ────────────────────────────────
         // 每个第三方源的结果都要过 LyricContentCheck：平台行级歌词（songId 精确取回，
         // 绝无匹配错）当身份指纹，拦下同名不同曲的擦边匹配。
@@ -376,7 +399,8 @@ final class LyricLoadService {
             }
         }
 
-        if (!cloudLyricsLoaded && embeddedLyricFile != null) {
+        // 本地文件的嵌入歌词已在 1.9 早段取过（当时有逐字轨就直接短路了），不重复读一遍文件。
+        if (!cloudLyricsLoaded && !music.isLocal() && embeddedLyricFile != null) {
             try {
                 String embeddedText = EmbeddedLyricsReader.read(embeddedLyricFile);
                 if (!embeddedText.isEmpty()) {
@@ -400,9 +424,9 @@ final class LyricLoadService {
 
         if (parsed.isEmpty()) {
             try {
-                top.fpsmaster.music.Lyric cadenceLyric = NeteaseMusicService.getLyric(music);
-                if (cadenceLyric != null) {
-                    parsed = LyricParser.fromCadence(cadenceLyric, music.getDuration(), false);
+                com.muoniumplayer.core.music.source.Lyric muLyric = NeteaseMusicService.getLyric(music);
+                if (muLyric != null) {
+                    parsed = LyricParser.fromMuSource(muLyric, music.getDuration(), false);
                 }
             } catch (Throwable throwable) {
                 System.err.println("[Music/Netease] Unified lyric conversion failed for " + trackKey + ": "

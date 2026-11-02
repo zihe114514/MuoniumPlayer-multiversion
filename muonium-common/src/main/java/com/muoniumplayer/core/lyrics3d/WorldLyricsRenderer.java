@@ -1,6 +1,7 @@
 package com.muoniumplayer.core.lyrics3d;
 
 import com.muoniumplayer.core.screens.ncm.LyricLine;
+import com.muoniumplayer.core.settings.HudConfig;
 
 import java.util.List;
 
@@ -53,6 +54,19 @@ public final class WorldLyricsRenderer {
         /** 原版像素字一批（y 是字顶；阴影按原版规则拆开单独画）。 */
         void drawPixelText(String text, float x, float y, int argb, boolean shadow);
 
+        /**
+         * 原版样式的行级光晕（辉光开关开 + 现代档关时由渲染层调用）：
+         * 在当前公告牌平面内、文字之前画一个光晕 quad 垫底。
+         *
+         * @param text      已显现前缀（逐字渐显期间光晕跟着已出的字走）
+         * @param widthPx   行宽（设计像素，MC 字体量）
+         * @param glowColor 光晕颜色（低 24 位）
+         * @param alpha     整行 alpha（进出场乘数）
+         */
+        default void drawGlowBackdrop(String text, float widthPx,
+                                      int glowColor, float alpha) {
+        }
+
         /** 原版像素字宽。 */
         float pixelWidth(String text);
 
@@ -64,10 +78,24 @@ public final class WorldLyricsRenderer {
          * 四量（0/0/0/1 = 不动），宿主在纹理四边形上实现旋转/位移/缩放；
          * glowMul 是发光强度乘数（简洁模式恒 1；心象模式下正在唱的块 1、
          * 其余块 0.35 —— 宿主据此选发光烘焙档），alpha 是顶点透明度。
+         *
+         * @param glowColorRgb 晕格的发光颜色（低 24 位）——由渲染层按发光颜色
+         *                     模式逐字解析后传入（跟随字色/自定义色板），
+         *                     宿主不再读全局设置
+         * @param glowOn       本字是否画晕层。false = 宿主零开销跳过晕格
+         *                     （发光关/强度≈0/未唱字压晕档），墨格照画
          */
+        default void drawSmoothGlyph(char c, float x, float y, float sizePx,
+                                     int rgb, float alpha, float rot, float dx, float dy, float sc,
+                                     float glowMul) {
+            drawSmoothGlyph(c, x, y, sizePx, rgb, alpha, rot, dx, dy, sc,
+                    glowMul, glowMul > 0.02f, 0xFFFFFF, rgb & 0xFFFFFF);
+        }
+
+        /** 晕/墨分离的完整入口：晕色与晕开关逐字由渲染层决定（见上）。 */
         void drawSmoothGlyph(char c, float x, float y, float sizePx,
                              int rgb, float alpha, float rot, float dx, float dy, float sc,
-                             float glowMul);
+                             float glowMul, boolean glowOn, int glowColorRgb, int inkRgb);
 
         /**
          * 绘光拖尾（径迹）：把一条折线画成圆头描边（folia trackLayer 的
@@ -173,15 +201,6 @@ public final class WorldLyricsRenderer {
         default void flushGlyphBatch(Object pageKey) {
         }
 
-        /**
-         * 辉光 mask 采集（宿主支持后处理辉光时实现）：直画端帧头配置辉光后返回其
-         * mask 缓冲 —— 本帧 drawSmoothGlyph 发的字形 quad 同时记进它（平色、无
-         * 阴影/特效），直画端先画 mask → bloom → 加色垫底，再画清晰本体。
-         * 返回 null = 本帧不采集（后处理不跑）。
-         */
-        default MaskQuadCollector glowMaskTarget() {
-            return null;
-        }
     }
 
     /** 连续绘制失败熔断阈值：超过即整体停用（与 Bridge 的 broken 同一口径）。 */
@@ -247,19 +266,6 @@ public final class WorldLyricsRenderer {
 
         long songNowMs = snap.positionMs;
 
-        // 辉光后处理帧头配置：mask 采集是否激活、bloom 参数（曝光/扩散/色）。
-        // 树侧直画端在本方法返回后 take() 一次性消费（configured/take 都清零，
-        // 这里定参）。mask 缓冲无条件清空 —— 辉光关闭的帧也不能让上一帧的
-        // quad 残留进下一次 bloom。
-        boolean smoothStyle = settings.styleModern;
-        GlowBloom.configure(settings, smoothStyle);
-        WorldLyricsState.traceGlowParams("configure: glowEnabled=" + settings.glowEnabled
-                + " strength=" + settings.glowStrength + " spread=" + settings.glowSpread
-                + " → params=" + (GlowBloom.configured ? "on" : "off")
-                + " maskHost=" + (host.glowMaskTarget() != null));
-        MaskQuadCollector glowMaskBuf = host.glowMaskTarget();
-        if (glowMaskBuf != null) glowMaskBuf.beginFrame();
-
         // 淡出中的先画（下层），active 后画（上层）。
         // 画布槽位：active 行 0、淡出行从 1 起 —— 同帧两行都进拖尾窗口时
         //（短句/seek），26 系延迟提交的宿主按槽位各持纹理，后上传不串位。
@@ -315,9 +321,13 @@ public final class WorldLyricsRenderer {
             // resolveGlyphKeywordColors 的字符区间精确命中）
             parseKeywordTable(settings.keywordColors);
             int[] keywordMatch = huiguang ? matchKeywords(f) : null;
+            // 封面取色/渐变（每帧一次组装，帧内共享）：主色/渐变 LUT 均为 null 时
+            // 走原配色。快照空（封面未就绪/提取为空）回落原配置色。
+            int[] coverLut = coverGradientLut(settings);
+            int coverMain = coverMainColor(settings);
             WorldLyricsState.LyricGlyphs glyphs = WorldLyricsState.buildGlyphs(
                     f, songNowMs, row.alpha, settings.wordPop, !row.active, widthOf,
-                    cadenza, huiguang, keywordMatch);
+                    cadenza, huiguang, keywordMatch, coverLut);
             // 心象模式的分块配色基准色：取色器自定义过的色原样用，没动过时纯白
             //（TEXT_RGB）—— 块的 hero/柔色/白三层关系在 CadenzaMotion.tokenColor
             // 里按基准色派生。
@@ -329,6 +339,7 @@ public final class WorldLyricsRenderer {
                 // 「是否自定义」必须是独立旗标 —— 0xFFFFFF 本身是合法的自定义色，
                 // 以前拿值当旗标会丢失「自定义白」与「默认白」的区分。
                 int inkRgb = baseRgb;
+                if (coverMain >= 0) inkRgb = coverMain;
             // 夜色系数 0..1（4 档量化）：宿主采样世界亮度，调制未唱字的
             // 冷暗档（白天暗墨 / 夜晚自发光冰蓝）与发光档
             float huiguangNight = 1f - Math.max(0f, Math.min(1f, host.worldLightLevel()));
@@ -402,8 +413,12 @@ public final class WorldLyricsRenderer {
                         float fadeOut = 1f - Math.max(0f, Math.min(1f, (spotElapsed - lastA - 150f) / 600f));
                         float spotA = row.alpha * (0.10f + 0.5f * burstBoost) * fadeIn * fadeOut;
                         if (spotA > 0.008f) {
-                            int glowColor = settings.glowEnabled ? settings.glowColorRgb
-                                    : (inkRgb & 0xFFFFFF);
+                            // 光斑跟随发光颜色模式（跟随字色档：光斑跟着当前字走）
+                            int aInk = a.rgbOverride != 0 ? a.rgbOverride
+                                    : (a.tokenRgb != 0 ? a.tokenRgb & 0xFFFFFF : (inkRgb & 0xFFFFFF));
+                            int glowColor = settings.glowEnabled
+                                    ? resolveGlowColor(settings, aInk, a.keywordRgb, a.rgbOverride)
+                                    : aInk;
                             int argb = ((int) (Math.min(1f, spotA) * 255f) << 24) | (glowColor & 0xFFFFFF);
                             // 椭圆 = 两枚错位圆（沿 x 各偏 0.3×半径），等效 ×1.6 拉长
                             float r = WorldLyricsState.LYRIC_SIZE * 2.5f;
@@ -435,11 +450,14 @@ public final class WorldLyricsRenderer {
                         HuiguangMotion.burstPose(ageS, length, BURST_POSE);
                         float env = BURST_POSE[0];
                         if (env < 0.01f) continue;
-                        int glowColor = settings.glowEnabled ? settings.glowColorRgb
-                                : (inkRgb & 0xFFFFFF);
+                        int anchorInk = anchor.rgbOverride != 0 ? anchor.rgbOverride
+                                : (anchor.tokenRgb != 0 ? anchor.tokenRgb & 0xFFFFFF : (inkRgb & 0xFFFFFF));
+                        int glowColor = settings.glowEnabled
+                                ? resolveGlowColor(settings, anchorInk, anchor.keywordRgb, anchor.rgbOverride)
+                                : anchorInk;
                         // 关键字字的爆闪染色（folia keywordBurstColor 0.7 权重）
                         int burstBase = glowColor & 0xFFFFFF;
-                        if (anchor.keywordRgb != 0) {
+                        if (anchor.keywordRgb != 0 && anchor.rgbOverride == 0) {
                             burstBase = keywordLight(burstBase, anchor.keywordRgb, 0.7f);
                         }
                         int glowTint = HuiguangMotion.dimRgb(burstBase, 1.1f);
@@ -571,7 +589,12 @@ public final class WorldLyricsRenderer {
                             if (strength > HuiguangMotion.TRAIL_MIN_STRENGTH) {
                                 // Skija 光栅化：折线进共享画布（多层辉光 + 沿程渐变 +
                                 // 圆头圆接，Skija AA 无锯齿），帧尾整块上屏
-                                int trailRgb = HuiguangMotion.dimRgb(inkRgb & 0xFFFFFF, 1.3f);
+                                // 拖尾色：跟随发光颜色模式（发光关则跟随字色）
+                                int gTrailInk = g.rgbOverride != 0 ? g.rgbOverride : (inkRgb & 0xFFFFFF);
+                                int trailBase = settings.glowEnabled
+                                        ? resolveGlowColor(settings, gTrailInk, g.keywordRgb, g.rgbOverride)
+                                        : gTrailInk;
+                                int trailRgb = HuiguangMotion.dimRgb(trailBase, 1.3f);
                                 float trailA = Math.min(1f,
                                         row.alpha * HuiguangMotion.TRAIL_ALPHA * strength);
                                 if (trailCanvasActive) {
@@ -607,11 +630,11 @@ public final class WorldLyricsRenderer {
                         float w = host.smoothCharWidth(g.c, WorldLyricsState.LYRIC_SIZE);
                         float haloSize = WorldLyricsState.LYRIC_SIZE
                                 * (1.7f + 0.5f * g.huiguangLit + 0.4f * g.huiguangFlash);
-                        int glowColor = settings.glowEnabled ? settings.glowColorRgb
-                                : (inkRgb & 0xFFFFFF);
-                        if (g.keywordRgb != 0) {
-                            glowColor = keywordLight(glowColor & 0xFFFFFF, g.keywordRgb, 0.7f);
-                        }
+                        int gInk = g.rgbOverride != 0 ? g.rgbOverride
+                                : (g.tokenRgb != 0 ? g.tokenRgb & 0xFFFFFF : (inkRgb & 0xFFFFFF));
+                        int glowColor = settings.glowEnabled
+                                ? resolveGlowColor(settings, gInk, g.keywordRgb, g.rgbOverride)
+                                : gInk;
                         int argb = ((int) (Math.min(1f, haloA) * 255f) << 24) | (glowColor & 0xFFFFFF);
                         host.drawHalo(g.x + w * 0.5f, g.y + WorldLyricsState.LYRIC_SIZE * 0.5f,
                                 haloSize, argb);
@@ -649,12 +672,40 @@ public final class WorldLyricsRenderer {
                     }
                 }
             }
+            if (!smooth && settings.glowEnabled && settings.glowStrength > 0.02f
+                    && glyphs.glyphs.size() > 0) {
+                // 原版样式的行级光晕：把已显现前缀交宿主烘光晕垫底。前缀按可见
+                // 字形的 x 顺序拼，出现间隙（逐字点亮中段未出）即停 —— 否则会
+                // 画出「真空带」。
+                StringBuilder vis = new StringBuilder();
+                float right = 0f;
+                int count = 0;
+                for (WorldLyricsState.LyricGlyph g : glyphs.glyphs) {
+                    if (g.alpha <= 0.02f) continue;
+                    if (count > 0 && g.x > right + 0.5f) break;
+                    vis.append(g.c);
+                    right = g.x + widthOf.widthOf(String.valueOf(g.c));
+                    count++;
+                }
+                if (count > 0) {
+                    // 原版像素风格没有逐字晕格，行级垫底晕跟随发光颜色模式：
+                    // 跟随字色档用行首字的墨色派生（无关键字/渐变的像素档够用）
+                    int backdropInk = glyphs.glyphs.get(0).rgbOverride != 0
+                            ? glyphs.glyphs.get(0).rgbOverride : (inkRgb & 0xFFFFFF);
+                    host.drawGlowBackdrop(vis.toString(), right,
+                            resolveGlowColor(settings, backdropInk,
+                                    glyphs.glyphs.get(0).keywordRgb,
+                                    glyphs.glyphs.get(0).rgbOverride) & 0xFFFFFF,
+                            row.alpha);
+                }
+            }
             for (int gi = 0; gi < glyphs.glyphs.size(); gi++) {
                 WorldLyricsState.LyricGlyph g = glyphs.glyphs.get(gi);
                 // g.pop 恒生效的弹性缩放（入场飞入回弹 / word pop 回弹 / 出场收拢），
                 // 宿主绕字中心应用 —— withWiggle 的 pop 通路。
                 if (smooth) {
-                    int rgb = inkRgb;
+                    // 封面渐变覆盖优先（含心象块色/关键字/主行统一墨色——色相已由封面决定）。
+                    int rgb = g.rgbOverride != 0 ? g.rgbOverride : inkRgb;
                     float glowMul = 1f;
                     if (g.tokenRgb != 0) {
                         // 心象：块墨色 + 正在唱的块提亮（心象 ACTIVE_BRIGHTEN 一比一）。
@@ -662,6 +713,14 @@ public final class WorldLyricsRenderer {
                                 ? CadenzaMotion.brighten(g.tokenRgb & 0xFFFFFF, CadenzaMotion.ACTIVE_BRIGHTEN)
                                 : g.tokenRgb & 0xFFFFFF;
                     }
+                    // 本字晕层颜色：跟随字色档 = 字墨色提亮（晕比墨亮一档，光从字里
+                    // 长出来）；自定义色板档 = 设置色原样。晕开关 = 发光总开关 && 强度>0
+                    // && glowMul 未被压到近零（心象未唱块 0.35 仍有晕，0 就没有）。
+                    boolean glowOn = settings.glowEnabled && settings.glowStrength > 0.02f
+                            && glowMul > 0.02f;
+                    int glowColor = glowOn
+                            ? resolveGlowColor(settings, rgb, g.keywordRgb, g.rgbOverride)
+                            : 0;
                     if (g.cadenzaGlow > 0f) {
                         // 心象：唱到的块用满档发光（块脉冲走 alpha 顶点色通道，
                         // 发光烘焙按两档强度分格 —— 见 drawSmoothGlyph 宿主侧）。
@@ -691,8 +750,9 @@ public final class WorldLyricsRenderer {
                         // 关键字着色（folia keywordLight）：点亮后字身按 0.6 混入
                         // 关键字色相（先拉满亮度只取色相，再归一回光色亮度），保证
                         // 「仍是发光体」
-                        int full = inkRgb & 0xFFFFFF;
-                        if (g.keywordRgb != 0) {
+                        int full = g.rgbOverride != 0 ? g.rgbOverride : (inkRgb & 0xFFFFFF);
+                        // 渐变时色相已由封面决定，关键字不再叠加染色。
+                        if (g.keywordRgb != 0 && g.rgbOverride == 0) {
                             full = keywordLight(full, g.keywordRgb, 0.6f);
                         }
                         // folia「未点亮的字保持冷色」：暗档从未混色 inkRgb 派生，
@@ -707,22 +767,28 @@ public final class WorldLyricsRenderer {
                         if (lit < 0.999f) {
                             float da = Math.min(1f, g.alpha * (1f + 0.45f * huiguangNight)) * (1f - lit);
                             if (da > 0.02f) {
-                                // 未唱字的发光档压到近零：冷暗档 + 双字叠加期
-                                // （暗/亮格交叉淡化）各自带一轮暖晕加色，正是
-                                // 「字包了一层色」的来源之一 —— 未唱=不发光，
+                                // 未唱字的发光档压到近零：冷暗档不发光（未唱=不发光），
                                 // 只在夜晚保留极低的环境晕（冰蓝靠亮度对比即可）
                                 host.drawSmoothGlyph(g.c, g.x, g.y, WorldLyricsState.LYRIC_SIZE,
-                                        dim, da, g.rot, g.dx, g.dy, g.pop, 0.06f * huiguangNight);
+                                        dim, da, g.rot, g.dx, g.dy, g.pop, 0.06f * huiguangNight,
+                                        glowOn && huiguangNight > 0.01f, glowColor, dim);
                             }
                         }
                         if (lit > 0.001f) {
                             float fa = g.alpha * lit;
                             if (fa > 0.02f) {
                                 // 飞行白化（folia hot 色 += flying×0.25 的等价物）：
-                                // 飞行中的字提高发光烘焙乘数，像带电粒子
+                                // 飞行中的字提高发光烘焙乘数，像带电粒子。
+                                // 亮档晕色重新解析：full 是「关键字混色后的墨色」，
+                                // 跟随字色档的晕要跟着它走
                                 float glow = 1f + (g.flyingWhite ? 0.25f : 0f);
+                                boolean on = glowOn && glowMul > 0.02f;
+                                int litGlow = on
+                                        ? resolveGlowColor(settings, full, g.keywordRgb, g.rgbOverride)
+                                        : 0;
                                 host.drawSmoothGlyph(g.c, g.x, g.y, WorldLyricsState.LYRIC_SIZE,
-                                        full, fa, g.rot, g.dx, g.dy, g.pop, glow);
+                                        full, fa, g.rot, g.dx, g.dy, g.pop, glow, on, litGlow,
+                                        g.rgbOverride != 0 ? g.rgbOverride : full);
                             }
                         }
                         // ---- 四芒闪点（folia stars 一比一校准）：逐字大小差
@@ -742,18 +808,23 @@ public final class WorldLyricsRenderer {
                             float u2 = WorldLyricsState.seededJitter(g.k, 0L, 71, glyphs.seed + 1) * 0.5f + 0.5f;
                             float cy = g.y + WorldLyricsState.LYRIC_SIZE * 0.5f
                                     + (-0.62f + (float) Math.pow(u2, 1.4f) * 0.9f) * WorldLyricsState.LYRIC_SIZE;
-                            int glowColor = settings.glowEnabled ? settings.glowColorRgb
-                                    : (inkRgb & 0xFFFFFF);
+                            int starInk = g.rgbOverride != 0 ? g.rgbOverride : (inkRgb & 0xFFFFFF);
+                            int starGlow = settings.glowEnabled
+                                    ? resolveGlowColor(settings, starInk, g.keywordRgb, g.rgbOverride)
+                                    : starInk;
                             int argb = ((int) (Math.min(1f, row.alpha * g.huiguangFlash * 0.55f) * 255f) << 24)
-                                    | (glowColor & 0xFFFFFF);
+                                    | (starGlow & 0xFFFFFF);
                             host.drawStar(cx, cy, starSize, rotDeg, argb);
                         }
                         continue;
                     }
                     host.drawSmoothGlyph(g.c, g.x, g.y, WorldLyricsState.LYRIC_SIZE,
-                            rgb, g.alpha, g.rot, g.dx, g.dy, g.pop, glowMul);
+                            rgb, g.alpha, g.rot, g.dx, g.dy, g.pop, glowMul,
+                            glowOn && glowMul > 0.02f, glowColor,
+                            g.rgbOverride != 0 ? g.rgbOverride : (rgb & 0xFFFFFF));
                 } else {
-                    int argb = ((int) (g.alpha * 255f) << 24) | (inkRgb & 0xFFFFFF);
+                    int pxRgb = g.rgbOverride != 0 ? g.rgbOverride : (inkRgb & 0xFFFFFF);
+                    int argb = ((int) (g.alpha * 255f) << 24) | pxRgb;
                     // 阴影由宿主按原版规则拆开画（原版 pixelText 的做法）
                     host.drawPixelText(String.valueOf(g.c), g.x, g.y, argb, true);
                 }
@@ -819,6 +890,115 @@ public final class WorldLyricsRenderer {
         int b2 = (int) ((a & 0xFF) + ((b & 0xFF) - (a & 0xFF)) * t);
         return (r << 16) | (g << 8) | b2;
     }
+
+    /**
+     * 本字的晕层颜色（发光颜色模式解析，逐字调用）。
+     *
+     * <p>跟随字色档（mode 0）：晕 = 字墨色提亮到近白（「光从字里长出来」，
+     * 与文字色/封面渐变/心象块色/关键字染色全部联动）；关键字字再按 0.7 混入
+     * 关键字色相（与爆闪/光斑的 keywordLight 权重一致）。自定义色板档（mode 1）：
+     * 设置色原样，关键字不染色 —— 色板是用户的明确意图。</p>
+     *
+     * @param ink         本字墨色（rgbOverride/块色/渐变已解析完的最终墨色）
+     * @param keywordRgb  关键字色（0 = 无）
+     * @param rgbOverride 原始 override（0 = 无；非 0 时关键字不再叠加，与墨色同规则）
+     */
+    static int resolveGlowColor(WorldLyricsSettings settings, int ink, int keywordRgb, int rgbOverride) {
+        if (settings.glowColorMode != 0) {
+            return settings.glowColorRgb & 0xFFFFFF;
+        }
+        // 字墨色 → 近白提亮：白墨字晕仍白、蓝墨字晕淡蓝白，恒比墨亮一档。
+        // GLOW_FROM_INK_T = 0.62：留 38% 墨色，晕不至于全白失去联动感。
+        int glow = mixRgb(ink & 0xFFFFFF, 0xFFFFFF, GLOW_FROM_INK_T);
+        if (keywordRgb != 0 && rgbOverride == 0) {
+            glow = keywordLight(glow, keywordRgb, 0.7f);
+        }
+        return glow;
+    }
+
+    /** 跟随字色档：晕色 = 墨色向白提亮的比例（见 resolveGlowColor）。 */
+    private static final float GLOW_FROM_INK_T = 0.62f;
+    // ==================== 封面取色 / 封面渐变 ====================
+
+    /** 渐变 LUT 缓存（按快照 version + 档位组合；渲染线程单线程）。 */
+    private static int cachedCoverVersion = -1;
+    private static int cachedCoverMode = -1;
+    private static boolean cachedCoverGradient;
+    private static int[] cachedCoverLut;
+    /** 主色缓存（同键）；-1 = 无封面色可用。 */
+    private static int cachedCoverMain = -1;
+
+    /**
+     * 生效色板（4 色 0xRRGGBB，主色在前）：来源档为「自动提取」走封面快照，
+     * 「手动」走 HudConfig 的 4 个手动 RGB 字段。快照/手动都不可用时返回 null。
+     */
+    private static int[] effectiveCoverPalette(WorldLyricsSettings settings) {
+        if (settings.coverColorMode == 0) return null;
+        if (settings.coverColorMode == 1) {
+            int[] snap = com.muoniumplayer.core.ncm.music.CoverGradientColors.snapshot();
+            return snap != null && snap.length > 0 ? snap : null;
+        }
+        int[] manual = new int[] {
+                HudConfig.worldLyricsCoverPaletteRgb0,
+                HudConfig.worldLyricsCoverPaletteRgb1,
+                HudConfig.worldLyricsCoverPaletteRgb2,
+                HudConfig.worldLyricsCoverPaletteRgb3,
+        };
+        return manual;
+    }
+
+    /**
+     * 色板 → 16 级渐变查找表：position∈[0,1] 在色序列上线性插值，单色直返。
+     * 级数 = 同句 rgb 去重后的图集烘焙键数（缓存键含字色）——64 级会让一句话
+     * 产生几十个新烘焙格，4 格/帧预算下后到的字要等好几帧才亮（渐变首帧的
+     * 「逐字延迟」）。16 级平滑度肉眼与 64 级无差，但烘焙键 ≤16 个。
+     */
+    private static int[] buildCoverLut(int[] colors) {
+        int levels = 16;
+        int[] lut = new int[levels];
+        if (colors == null || colors.length == 0) return lut;
+        if (colors.length == 1) {
+            java.util.Arrays.fill(lut, colors[0] & 0xFFFFFF);
+            return lut;
+        }
+        for (int i = 0; i < levels; i++) {
+            float at = (float) i / (levels - 1) * (colors.length - 1);
+            int index = Math.min(colors.length - 2, (int) at);
+            float t = at - index;
+            int a = colors[index] & 0xFFFFFF;
+            int b = colors[index + 1] & 0xFFFFFF;
+            int r = (int) (((a >> 16 & 255) * (1f - t) + (b >> 16 & 255) * t) + 0.5f);
+            int g = (int) (((a >> 8 & 255) * (1f - t) + (b >> 8 & 255) * t) + 0.5f);
+            int b2 = (int) (((a & 255) * (1f - t) + (b & 255) * t) + 0.5f);
+            lut[i] = (r << 16) | (g << 8) | b2;
+        }
+        return lut;
+    }
+
+    /** 封面渐变 LUT（按快照 version+档位缓存；不可用时 null）。 */
+    private static int[] coverGradientLut(WorldLyricsSettings settings) {
+        if (!settings.coverColorGradient || settings.coverColorMode == 0) return null;
+        int version = settings.coverColorMode == 1
+                ? com.muoniumplayer.core.ncm.music.CoverGradientColors.version() : 0;
+        if (version == cachedCoverVersion && cachedCoverMode == settings.coverColorMode
+                && cachedCoverGradient && cachedCoverLut != null) {
+            return cachedCoverLut;
+        }
+        int[] palette = effectiveCoverPalette(settings);
+        cachedCoverLut = palette != null ? buildCoverLut(palette) : null;
+        cachedCoverVersion = version;
+        cachedCoverMode = settings.coverColorMode;
+        cachedCoverGradient = true;
+        return cachedCoverLut;
+    }
+
+    /** 封面主色（取色开、渐变关时的整句单色；不可用返回 -1 走原配色）。 */
+    private static int coverMainColor(WorldLyricsSettings settings) {
+        if (settings.coverColorMode == 0) return -1;
+        int[] palette = effectiveCoverPalette(settings);
+        return palette != null && palette.length > 0 ? palette[0] & 0xFFFFFF : -1;
+    }
+
     // ==================== 绘光关键字着色（folia keywordColors 完整版） ====================
 
     /** 关键字表解析缓存（按设置字符串；渲染线程单线程）。 */

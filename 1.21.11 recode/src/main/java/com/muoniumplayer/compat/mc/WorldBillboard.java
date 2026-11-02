@@ -54,25 +54,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private int pendingGlyphCount;
     private boolean tracedOnce;
     private boolean tracedSmooth;
-
-    /** 辉光 mask 采集（直画端帧头放进来；null = 本帧不采集）。 */
-    private com.muoniumplayer.core.lyrics3d.MaskQuadCollector glowMask;
-
     private WorldBillboard() {
-    }
-
-    /** 直画端帧头：放进 mask 缓冲让本帧字形双写；end 后收回。 */
-    public void beginGlowMask(com.muoniumplayer.core.lyrics3d.MaskQuadCollector mask) {
-        this.glowMask = mask;
-    }
-
-    public void endGlowMask() {
-        this.glowMask = null;
-    }
-
-    @Override
-    public com.muoniumplayer.core.lyrics3d.MaskQuadCollector glowMaskTarget() {
-        return glowMask;
     }
 
     // ==================== 光影包适配：渲染类型单点分发 ====================
@@ -217,21 +199,18 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     @Override
     public void drawSmoothGlyph(char c, float x, float y, float sizePx,
                                 int rgb, float alpha, float rot, float dx, float dy, float sc,
-                                float glowMul) {
+                                float glowMul, boolean glowOn, int glowColorRgb, int inkRgb) {
         if (poseStack == null || buffers == null) return;
         // 发光参数取本帧快照（Bridge 在帧头装配好；没装配时按无发光查格）
         WorldLyricsSettings settings = WorldLyricsBridge.currentSettings;
         float glowStrength = settings != null ? settings.glowStrength : 0f;
         float glowSpread = settings != null ? settings.glowSpread : 1f;
-        int glowColor = settings != null ? settings.glowColorRgb : 0xFFFFFF;
         // 心象的发光脉冲：正在唱的块满档、其余块压档 —— 查格前乘上去（缓存键已量化）。
         glowStrength *= glowMul;
-        // 辉光后处理接管发光：本帧 mask 采集激活时字形按零烘焙强度取格 ——
-        // 晕全由 bloom 从 mask 生成，烘焙晕与后处理晕不再叠加（能量翻倍会糊）。
-        if (glowMask != null) glowStrength = 0f;
+        boolean glowActive = glowOn && glowStrength > 0.004f;
 
-        LyricGlyphAtlas.GlyphCell cell = LyricGlyphAtlas.getGlyph(
-                c, rgb & 0xFFFFFF, glowStrength, glowSpread, glowColor);
+        // 墨格：无发光留白（晕在独立晕格，墨格回归防裁切最小 pad）
+        LyricGlyphAtlas.GlyphCell cell = LyricGlyphAtlas.getInkCell(c, rgb & 0xFFFFFF);
         if (cell == null) {
             // 绘光模式下「预算内暂时没烘出来」不回退像素字 —— 那正是用户看到的
             // 「有时退回原版渲染风格」：字形瞬闪像素风再换回烘焙字形，非常扎眼。
@@ -248,7 +227,19 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         if (!(cell.page instanceof LyricGlyphAtlasBridge.PageHandle)) {
             return;
         }
-        Identifier pageRl = ((LyricGlyphAtlasBridge.PageHandle) cell.page).resourceLocation();
+        Identifier inkRl = ((LyricGlyphAtlasBridge.PageHandle) cell.page).resourceLocation();
+
+        // 晕格：独立烘焙（只含高斯光形，TextGlow.drawGlowOn）。晕格未就绪（预算/页满）
+        // 只丢晕不丢字。
+        LyricGlyphAtlas.GlyphCell glowCell = glowActive
+                ? LyricGlyphAtlas.getGlowCell(c, glowStrength, glowSpread,
+                        glowColorRgb & 0xFFFFFF, rgb & 0xFFFFFF,
+                        settings != null ? settings.glowTier : 1)
+                : null;
+        Identifier glowRl = null;
+        if (glowCell != null && glowCell.page instanceof LyricGlyphAtlasBridge.PageHandle) {
+            glowRl = ((LyricGlyphAtlasBridge.PageHandle) glowCell.page).resourceLocation();
+        }
 
         // 同页合批：页切换（或首次）时把上一页的字形批次收掉 —— 一句 40 字
         // 从每字一次 endBatch 降到每页一次。页内 endBatch 省略不影响正确性：
@@ -279,10 +270,6 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // UV 半像素内缩：LINEAR 采样时 quad 边缘正落 texel 边界会混入邻格
         // （页内格间零间隔）——内缩半个 texel 让采样核完全落在格内，去边缘灰缝
         float halfTexel = 0.5f / pageF;
-        float u0 = cell.x / pageF + halfTexel;
-        float v0 = cell.y / pageF + halfTexel;
-        float u1 = (cell.x + cell.w) / pageF - halfTexel;
-        float v1 = (cell.y + cell.h) / pageF - halfTexel;
 
         // 绕字中心（行内坐标：半个 advance × 半个字位框）的旋转/缩放（上游 withWiggle 同构）
         float cx = x + (cell.advance * inv) * 0.5f;
@@ -296,26 +283,49 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         // 1.21.11：textSeeThrough 工厂在 RenderTypes（RenderType 本体只剩 draw/format，
         // javap 核对），参数类型是 Identifier。
-        VertexConsumer vc = buffers.getBuffer(currentGlyphType(pageRl));
+        // 晕格先画（加色 currentEffectType），墨格后进挂起合批 —— 观感上晕在字下。
+        if (glowRl != null) {
+            float gInv = 1f / LyricGlyphAtlas.bakeScale();
+            float gLeft = x - glowCell.inkX * gInv;
+            float gTop = y - glowCell.inkY * gInv;
+            float gRight = gLeft + glowCell.w * gInv;
+            float gBottom = gTop + glowCell.h * gInv;
+            // 晕的顶点 alpha 用墨格同一进出场 alpha —— 晕格能量已按 strength 烘进像素
+            int glowArgb = argb & 0x00FFFFFF | (((int) (alpha * 255f) & 0xFF) << 24);
+            Matrix4f gmat = poseStack.last().pose();
+            VertexConsumer gvc = buffers.getBuffer(currentEffectType(glowRl));
+            putGlyphVertex(gvc, gmat, gLeft, gTop, cx, cy, cos, sin, s, glowArgb,
+                    glowCell.x / pageF + halfTexel, glowCell.y / pageF + halfTexel);
+            putGlyphVertex(gvc, gmat, gLeft, gBottom, cx, cy, cos, sin, s, glowArgb,
+                    glowCell.x / pageF + halfTexel, (glowCell.y + glowCell.h) / pageF - halfTexel);
+            putGlyphVertex(gvc, gmat, gRight, gBottom, cx, cy, cos, sin, s, glowArgb,
+                    (glowCell.x + glowCell.w) / pageF - halfTexel, (glowCell.y + glowCell.h) / pageF - halfTexel);
+            putGlyphVertex(gvc, gmat, gRight, gTop, cx, cy, cos, sin, s, glowArgb,
+                    (glowCell.x + glowCell.w) / pageF - halfTexel, glowCell.y / pageF + halfTexel);
+            // 加色批立即收：currentEffectType 与墨格的 textSeeThrough 不同类型，
+            // getBuffer 换类型时原版会自动收前一批，但显式 endBatch 保证晕层
+            // 不与后续特效（halo/burst 同类型）串页
+            buffers.endBatch(currentEffectType(glowRl));
+        }
+
+        VertexConsumer vc = buffers.getBuffer(currentGlyphType(inkRl));
         Matrix4f mat = poseStack.last().pose();
         // 四顶点：左上 → 左下 → 右下 → 右上（QUADS 环绕序）
-        putGlyphVertex(vc, mat, qLeft, qTop, cx, cy, cos, sin, s, argb, u0, v0);
-        putGlyphVertex(vc, mat, qLeft, qBottom, cx, cy, cos, sin, s, argb, u0, v1);
-        putGlyphVertex(vc, mat, qRight, qBottom, cx, cy, cos, sin, s, argb, u1, v1);
-        putGlyphVertex(vc, mat, qRight, qTop, cx, cy, cos, sin, s, argb, u1, v0);
-
-        // 辉光 mask 双写：同一份几何（绕中心变换前）记进平色缓冲，alpha 随字形顶点。
-        if (glowMask != null) {
-            glowMask.addQuad(mat, qLeft, qTop, qLeft, qBottom, qRight, qBottom, qRight, qTop,
-                    cx, cy, cos, sin, s, ((int) (alpha * 255f) & 0xFF) << 24);
-        }
+        putGlyphVertex(vc, mat, qLeft, qTop, cx, cy, cos, sin, s, argb,
+                cell.x / pageF + halfTexel, cell.y / pageF + halfTexel);
+        putGlyphVertex(vc, mat, qLeft, qBottom, cx, cy, cos, sin, s, argb,
+                cell.x / pageF + halfTexel, (cell.y + cell.h) / pageF - halfTexel);
+        putGlyphVertex(vc, mat, qRight, qBottom, cx, cy, cos, sin, s, argb,
+                (cell.x + cell.w) / pageF - halfTexel, (cell.y + cell.h) / pageF - halfTexel);
+        putGlyphVertex(vc, mat, qRight, qTop, cx, cy, cos, sin, s, argb,
+                (cell.x + cell.w) / pageF - halfTexel, cell.y / pageF + halfTexel);
 
         // 同页合批：这里不再逐字 endBatch —— 页切换/帧尾统一收（见上）。
 
         if (TRACE && !tracedSmooth) {
             tracedSmooth = true;
             System.out.println("[WorldLyrics/trace] 现代档字形 quad 已发: '" + c
-                    + "' cell=" + cell.w + "x" + cell.h + " pad=" + cell.inkX);
+                    + "' cell=" + cell.w + "x" + cell.h + (glowRl != null ? " +glow" : ""));
         }
     }
 

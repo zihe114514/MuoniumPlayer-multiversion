@@ -386,6 +386,38 @@ public class CFontRenderer implements Closeable, SharedConstants {
     }
 
     /**
+     * 往回退链<b>末尾</b>追加一个字体：韩文回退字体下载完成后的热接入入口。
+     *
+     * <p>与 {@link #swapFallbackFont} 同一条线程约定（只能在渲染线程调）与重建方式
+     * （重新派生回退字体 + {@code buildSkiaFonts} 失效字形索引/宽度缓存）。放链尾是刻意的：
+     * 字形解析按链序取第一个命中，拉丁与中文在前面的字体里就已经解决，韩文只接住
+     * 前面全部缺字的那一格。链里已有同一个实例（重复消费/重复下载）则什么都不做。</p>
+     *
+     * @return 链尾追加了返回 true；{@code font} 为 null 或链里已有它返回 false
+     */
+    public boolean appendFallbackFont(Font font) {
+        if (font == null) {
+            return false;
+        }
+        for (Font existing : this.sourceFallbacks) {
+            if (existing == font) {
+                return false;
+            }
+        }
+        Font[] grown = new Font[this.sourceFallbacks.length + 1];
+        System.arraycopy(this.sourceFallbacks, 0, grown, 0, this.sourceFallbacks.length);
+        grown[this.sourceFallbacks.length] = font;
+        this.sourceFallbacks = grown;
+        this.fallBackFonts = new Font[this.sourceFallbacks.length];
+        for (int i = 0; i < this.sourceFallbacks.length; i++) {
+            this.fallBackFonts[i] = this.sourceFallbacks[i]
+                    .deriveFont(this.sizePx * 2 * cffScaleFactor(this.sourceFallbacks[i]));
+        }
+        buildSkiaFonts();
+        return true;
+    }
+
+    /**
      * 用当前已登记的字体字节重建 Skia 侧的字体与度量。渲染层热启用的收尾动作。
      *
      * <p>无原生库窗口期构造的渲染器，{@link #buildSkiaFonts()} 拿到的 Typeface 全是 null，

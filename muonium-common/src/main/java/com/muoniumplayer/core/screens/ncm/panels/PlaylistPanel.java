@@ -11,6 +11,7 @@ import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.ncm.music.dto.User;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.FontelloIcons;
+import com.muoniumplayer.core.rendering.FoliaLucideIcons;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
@@ -68,6 +69,7 @@ public class PlaylistPanel extends NCMPanel {
         this.revealQueue.beginFrame();
         this.revealQueue.setAnimationsSuppressed(this.musicsPanel != null && this.musicsPanel.isScrollActive());
         this.buildPendingMusicWidgets();
+        this.autoScrollToPlayingIfNeeded();
         super.onRender(mouseX, mouseY);
     }
 
@@ -96,6 +98,20 @@ public class PlaylistPanel extends NCMPanel {
     private int pendingMusicIndex;
     private String musicFilterText = "";
     private boolean emptyMusicMessageAdded;
+
+    /**
+     * 「定位到正在播放」：头部一枚 locate 按钮 + 打开页面时的一次自动滚。
+     *
+     * <p>按钮只在当前歌真的属于这张歌单时可见（按 {@link CloudMusic#playbackPresentation()} 的
+     * 展示键比对，跨源替身也认）；点击把列表滚到那一行，行上本来就有 EQ 条与主题高亮，
+     * 这里不再另做选中动画。</p>
+     *
+     * <p>自动滚走 {@code NcmSheet.scrollHeroIntoViewIfNeeded} 同一套「只一次」闸：曲目行是
+     * 分帧批量建的，定位目标那行没建出来之前不动（offset 算出来必是错的）；等全量建完、
+     * 打开后的头几帧里滚一次，用户随后手动滚动不受到任何约束。仅当打开的就是
+     * {@code CloudMusic.currentPlaylistContext} 那张单时才触发——在别的歌单页上乱滚是惊吓。</p>
+     */
+    private boolean autoScrolledToPlaying;
 
     @Override
     public void onInit() {
@@ -497,6 +513,50 @@ public class PlaylistPanel extends NCMPanel {
                 return false;
             });
 
+            // 「定位到正在播放」：当前歌属于这张歌单时才出现（搜索结果页没有这个概念，
+            // 走 else 分支整颗不建）。用图标按钮而不是文字按钮：它要贴着搜索框右侧，
+            // 文字版的「定位歌曲」会把整条按钮排挤出窄窗。
+            // 图标不能走 RoundedButtonWidget 的文字标签——那会用 fontello 字体渲染
+            // "locate-fixed" 这个字符串，fontello 里没有这个字形，画出来是空白。
+            // 正确画法（NavigateBar 的 SidebarActionButton 同款）：按钮只当圆角底，
+            // lucide 路径由 FoliaLucideIcons.draw 在回调里按中心点手画。
+            if (!playList.isSearchMode()) {
+                RoundedButtonWidget btnLocate = new RoundedButtonWidget("", FontManager.pf12);
+                btnLocate.setGlassPlate(GlassLook.Surface.PLAYER)
+                        .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
+                this.addChild(btnLocate);
+                btnLocate.setBeforeRenderCallback(() -> {
+                    // 每帧现判（当前歌可能切走），但只在「有/没有」跨越时才改可见性：
+                    // 用 alpha 渐变而不是 setHidden——hidden 的控件回调整帧不跑，
+                    // 一旦在起播前一帧藏掉就永远没有机会自己回来（与「排进房间」同一教训）。
+                    boolean relevant = playlistContainsCurrentTrack();
+                    float targetAlpha = relevant ? 1.0f : 0.0f;
+                    float alpha = Interpolations.interpolate(btnLocate.getWidgetAlpha(), targetAlpha, .3f);
+                    btnLocate.setAlpha(alpha);
+                    btnLocate.setClickable(alpha > .5f);
+                    btnLocate.setBounds(28, 22);
+                    btnLocate.setPosition(Math.max(8, getWidth() - btnLocate.getWidth() - 48),
+                            btnCoverflow.getRelativeY() + (btnCoverflow.getHeight() - 22) * .5);
+                    btnLocate.setRadius(6);
+                    btnLocate.setColor(btnLocate.isHovering()
+                            ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                            : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+                    // 字形画在按钮自己的 alpha 之下：悬停加深、淡出跟随按钮。
+                    int ink = btnLocate.isHovering()
+                            ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)
+                            : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+                    FoliaLucideIcons.draw(FoliaLucideIcons.LOCATE,
+                            btnLocate.getRelativeX() + btnLocate.getWidth() * .5,
+                            btnLocate.getRelativeY() + btnLocate.getHeight() * .5,
+                            14.0, RenderSystem.reAlpha(ink, alpha));
+                });
+                btnLocate.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+                    if (mouseButton != 0 || !playlistContainsCurrentTrack()) return false;
+                    scrollToPlayingTrack();
+                    return true;
+                });
+            }
+
             tfSearch.setBeforeRenderCallback(() -> {
                 tfSearch.drawUnderline(false);
                 tfSearch.setMargin(2);
@@ -847,6 +907,76 @@ public class PlaylistPanel extends NCMPanel {
 
         String secureUrl = creator.getAvatarUrl().replace("http://", "https://");
         Textures.downloadTextureAndLoadAsync(secureUrl + "?param=32y32", avatarLoc);
+    }
+
+    // ─────────────────────────── 定位到正在播放 ───────────────────────────
+
+    /**
+     * 当前展示曲目是否属于这张歌单。判据与行高亮完全同一条：
+     * {@link CloudMusic#playbackPresentation()} 的展示键（含跨源替身），保证「按钮出现了」
+     * 与「滚过去真的有一行在亮」永远一致——按钮消失而 EQ 条还亮着（或反过来）都是骗局。
+     */
+    private boolean playlistContainsCurrentTrack() {
+        String displayKey = CloudMusic.playbackPresentation().displayKey();
+        if (displayKey == null || displayKey.isEmpty()) return false;
+        List<Music> musics = playList.getMusics();
+        if (musics == null || musics.isEmpty()) return false;
+        for (Music candidate : musics) {
+            if (candidate == null) continue;
+            if (displayKey.equals(candidate.getStableKey())) return true;
+            if (CloudMusic.playbackPresentation().isSelected(candidate)) return true;
+        }
+        return false;
+    }
+
+    /** 定位按钮：把当前播放那行滚进视口并多留一点余量，让它不被列表上下沿贴边裁掉。 */
+    private void scrollToPlayingTrack() {
+        if (this.musicsPanel == null) return;
+        int row = playingRowOffset();
+        if (row < 0) return;
+        // 统一 30px 快照行高（spacing 0）；过滤态下行高不再是常量，但按钮在过滤时可点与否
+        // 不受影响——不精确算也只会差出小半行，比在每帧回调里累计可见行高便宜得多。
+        double offset = row * 30.0;
+        double viewport = this.musicsPanel.getHeight();
+        if (viewport > 0) {
+            offset = Math.max(0.0, offset - viewport * .5 + 15.0);
+        }
+        this.musicsPanel.scrollToOffsetImmediately(offset);
+    }
+
+    /** 当前展示曲目在本歌单里的行号；不在本单返回 -1。 */
+    private int playingRowOffset() {
+        String displayKey = CloudMusic.playbackPresentation().displayKey();
+        List<Music> musics = playList.getMusics();
+        if (displayKey == null || displayKey.isEmpty() || musics == null) return -1;
+        for (int i = 0; i < musics.size(); i++) {
+            Music candidate = musics.get(i);
+            if (candidate == null) continue;
+            if (displayKey.equals(candidate.getStableKey())
+                    || CloudMusic.playbackPresentation().isSelected(candidate)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * 打开页面时自动滚到正在播放的那一行（只一次）。三道闸缺一不可：
+     * 只在「打开的就是当前队列来源的那张单」时触发、曲目行全量建完才动（分帧构建没到目标行时
+     * offset 是错的）、布尔闸保证整个面板生命周期只滚这一回——用户随后往哪滚都随他。
+     */
+    private void autoScrollToPlayingIfNeeded() {
+        if (this.autoScrolledToPlaying) return;
+        if (this.pendingMusicBuild != null) return;   // 行还没建完
+        if (this.musicsPanel == null || this.musicsPanel.getHeight() <= 1.0) return;
+        if (this.musicsPanel.getChildren().isEmpty()) return;
+        // 只认「这张单就是当前队列的来源」：正在放的是搜索队列/别的歌单时，打开这张单不滚。
+        PlayList context = CloudMusic.currentPlaylistContext;
+        boolean fromThisList = context != null && context == this.playList;
+        this.autoScrolledToPlaying = true;   // 无论结论如何都只判一次，别每帧白扫
+        if (!fromThisList) return;
+        if (playingRowOffset() < 0) return;
+        scrollToPlayingTrack();
     }
 
 }

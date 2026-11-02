@@ -69,7 +69,12 @@ public final class HudSettingsModel {
         /** 3D 世界歌词的文字颜色（存 HudConfig.worldLyricsColorRgb，无 OneConfig 值对象）。 */
         WORLD_LYRICS,
         /** 3D 世界歌词的发光颜色（存 HudConfig.worldLyricsGlowColorRgb，同上直写）。 */
-        WORLD_LYRICS_GLOW
+        WORLD_LYRICS_GLOW,
+        /** 3D 歌词手动色板 0..3（封面渐变端点，存 HudConfig.worldLyricsCoverPaletteRgbN）。 */
+        WORLD_LYRICS_PALETTE_0,
+        WORLD_LYRICS_PALETTE_1,
+        WORLD_LYRICS_PALETTE_2,
+        WORLD_LYRICS_PALETTE_3
     }
 
     public static final class Entry {
@@ -250,6 +255,10 @@ public final class HudSettingsModel {
                 if (colorTarget == ColorTarget.NORMAL) return lyrics.lyricColor.getValue();
                 if (colorTarget == ColorTarget.WORLD_LYRICS) return new Color(HudConfig.worldLyricsColorRgb);
                 if (colorTarget == ColorTarget.WORLD_LYRICS_GLOW) return new Color(HudConfig.worldLyricsGlowColorRgb);
+                if (colorTarget == ColorTarget.WORLD_LYRICS_PALETTE_0) return new Color(HudConfig.worldLyricsCoverPaletteRgb0);
+                if (colorTarget == ColorTarget.WORLD_LYRICS_PALETTE_1) return new Color(HudConfig.worldLyricsCoverPaletteRgb1);
+                if (colorTarget == ColorTarget.WORLD_LYRICS_PALETTE_2) return new Color(HudConfig.worldLyricsCoverPaletteRgb2);
+                if (colorTarget == ColorTarget.WORLD_LYRICS_PALETTE_3) return new Color(HudConfig.worldLyricsCoverPaletteRgb3);
             } catch (RuntimeException ignored) {
             }
             return new Color(0x9AA6B8);
@@ -273,6 +282,22 @@ public final class HudSettingsModel {
             }
             if (colorTarget == ColorTarget.WORLD_LYRICS_GLOW) {
                 HudConfig.worldLyricsGlowColorRgb = selected.getRGB() & 0xFFFFFF;
+                return;
+            }
+            if (colorTarget == ColorTarget.WORLD_LYRICS_PALETTE_0) {
+                HudConfig.worldLyricsCoverPaletteRgb0 = selected.getRGB() & 0xFFFFFF;
+                return;
+            }
+            if (colorTarget == ColorTarget.WORLD_LYRICS_PALETTE_1) {
+                HudConfig.worldLyricsCoverPaletteRgb1 = selected.getRGB() & 0xFFFFFF;
+                return;
+            }
+            if (colorTarget == ColorTarget.WORLD_LYRICS_PALETTE_2) {
+                HudConfig.worldLyricsCoverPaletteRgb2 = selected.getRGB() & 0xFFFFFF;
+                return;
+            }
+            if (colorTarget == ColorTarget.WORLD_LYRICS_PALETTE_3) {
+                HudConfig.worldLyricsCoverPaletteRgb3 = selected.getRGB() & 0xFFFFFF;
                 return;
             }
             MusicLyricsWidget lyrics = lyrics();
@@ -1031,6 +1056,47 @@ public final class HudSettingsModel {
                                         new String[] {"不显示翻译副行。",
                                                 "副行整行随主句进度淡入，亮度到主行一致。",
                                                 "副行扫光按主行演唱进度同步逐字点亮，唱到的字弹一下。"}),
+                                choice("封面代表色", "歌词配色来源：自动从当前封面提取最多四种彼此色相拉开的代表色，或手动设置四种颜色。提取在后台完成，换封面自动跟上。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return HudConfig.worldLyricsCoverColorMode == 2 ? "手动"
+                                                        : HudConfig.worldLyricsCoverColorMode == 1 ? "自动提取" : "关";
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsCoverColorMode = (HudConfig.worldLyricsCoverColorMode + 1) % 3;
+                                                saveNow();
+                                            }
+                                        }, new String[] {"关", "自动提取", "手动"},
+                                        v -> {
+                                            HudConfig.worldLyricsCoverColorMode =
+                                                    "手动".equals(v) ? 2 : ("自动提取".equals(v) ? 1 : 0);
+                                            saveNow();
+                                        },
+                                        () -> HudConfig.worldLyricsEnabled,
+                                        new String[] {"用文字颜色设置里的颜色。",
+                                                "后台提取封面代表色（过滤零散杂色与暗部弱偏色），主色作整句色。",
+                                                "用下面的手动色板（四个取色器逐色设置）。"}),
+                                toggle("封面渐变", "歌词与翻译行从左到右按代表色序列渐变：每个字的颜色由它在整句里的排版位置决定，弹出/微动/飞行不改变同一字的颜色。需要「封面代表色」非关。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsCoverGradient;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsCoverGradient = !HudConfig.worldLyricsCoverGradient;
+                                                saveNow();
+                                            }
+                                        }, () -> HudConfig.worldLyricsEnabled
+                                                && HudConfig.worldLyricsCoverColorMode != 0),
+                                color("色板 1", "渐变起点色。", ColorTarget.WORLD_LYRICS_PALETTE_0)
+                                        .lockedWhen(() -> HudConfig.worldLyricsCoverColorMode != 2),
+                                color("色板 2", "渐变第二色。", ColorTarget.WORLD_LYRICS_PALETTE_1)
+                                        .lockedWhen(() -> HudConfig.worldLyricsCoverColorMode != 2),
+                                color("色板 3", "渐变第三色。", ColorTarget.WORLD_LYRICS_PALETTE_2)
+                                        .lockedWhen(() -> HudConfig.worldLyricsCoverColorMode != 2),
+                                color("色板 4", "渐变终点色。", ColorTarget.WORLD_LYRICS_PALETTE_3)
+                                        .lockedWhen(() -> HudConfig.worldLyricsCoverColorMode != 2),
                                 toggle("翻译副行特效", "「逐字点亮」档下，副行跟着扫光加光晕和飞入动画。最吃性能的一档，低帧率可关。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
@@ -1114,7 +1180,7 @@ public final class HudSettingsModel {
                                                 "6× 烘焙：2K 屏推荐，烘焙成本 +44%。",
                                                 "7× 烘焙：4K/望远镜党，烘焙成本 +96%，显存占用略增。"})),
                         new Group("发光", HudSettingsIcons.SPARKLE,
-                                toggle("发光", "歌词带光晕。",
+                                toggle("发光", "歌词带光晕。晕与字分离渲染：光晕加色混合真正照亮背景，字保持锐利。",
                                         new BooleanSupplier() {
                                             public boolean getAsBoolean() {
                                                 return HudConfig.worldLyricsGlowEnabled;
@@ -1125,12 +1191,54 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         }, () -> HudConfig.worldLyricsEnabled),
+                                choice("发光质量", "辉光的分层管线：Standard 单层宽晕最省；High 默认 —— 柔晕+背景融合+贴字亮环（光从字里长出来，与字色自然过渡）；Ultra 加多尺度 Bloom 与白芯提亮，最华丽，烘焙开销约 1.5 倍。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return HudConfig.worldLyricsGlowTier == 2 ? "Ultra"
+                                                        : HudConfig.worldLyricsGlowTier == 0 ? "Standard" : "High";
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsGlowTier = (HudConfig.worldLyricsGlowTier + 1) % 3;
+                                                saveNow();
+                                            }
+                                        }, new String[] {"Standard", "High", "Ultra"},
+                                        v -> {
+                                            HudConfig.worldLyricsGlowTier =
+                                                    "Ultra".equals(v) ? 2 : ("Standard".equals(v) ? 0 : 1);
+                                            saveNow();
+                                        },
+                                        () -> HudConfig.worldLyricsEnabled && HudConfig.worldLyricsGlowEnabled,
+                                        new String[] {"单层宽晕，最省。",
+                                                "柔晕 + 背景融合 + 贴字亮环，最平衡（推荐）。",
+                                                "多尺度 Bloom + 白芯，最华丽。"}),
                                 slider(HudSetting.WORLD_LYRICS_GLOW_STRENGTH, "发光强度。",
                                         () -> HudConfig.worldLyricsEnabled && HudConfig.worldLyricsGlowEnabled),
                                 slider(HudSetting.WORLD_LYRICS_GLOW_SPREAD, "光晕铺多远。",
                                         () -> HudConfig.worldLyricsEnabled && HudConfig.worldLyricsGlowEnabled),
+                                choice("发光颜色", "光晕的颜色来源：跟随字色（光从字里长出来，联动文字色/封面渐变/关键字染色），或独立色板。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return HudConfig.worldLyricsGlowColorMode == 0 ? "跟随字色" : "自定义";
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsGlowColorMode =
+                                                        HudConfig.worldLyricsGlowColorMode == 0 ? 1 : 0;
+                                                saveNow();
+                                            }
+                                        }, new String[] {"跟随字色", "自定义"},
+                                        v -> {
+                                            HudConfig.worldLyricsGlowColorMode =
+                                                    "跟随字色".equals(v) ? 0 : 1;
+                                            saveNow();
+                                        },
+                                        () -> HudConfig.worldLyricsEnabled && HudConfig.worldLyricsGlowEnabled,
+                                        new String[] {"晕随每个字的颜色变：白字白晕、蓝字蓝晕，封面渐变下晕跟着渐变走。",
+                                                "用下面的发光颜色取色器。"}),
                                 color("发光颜色", "光晕的颜色。",
-                                        ColorTarget.WORLD_LYRICS_GLOW))),
+                                        ColorTarget.WORLD_LYRICS_GLOW)
+                                        .lockedWhen(() -> HudConfig.worldLyricsGlowColorMode != 1))),
                         // 「动效」组已并入上面「放置」组（动效风格紧跟总开关，见 quickWorldEffect）。,
 
                 new Category("面板与卡片", "桌面歌词的宽高与 Blossom 卡片", 0xFFE087C0, HudSettingsIcons.CAPTION,

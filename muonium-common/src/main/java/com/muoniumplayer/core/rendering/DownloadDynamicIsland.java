@@ -634,10 +634,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 "字体资源下载失败", safeNoticeValue(reason, "网络不可用") + " · 稍后自动重试");
     }
 
-    /** 完整字体已热启用：本次会话起生僻字与繁体即刻可用。 */
+    /** 完整字体已热启用：本次会话起生僻字、繁体与韩文即刻可用。 */
     public static void showFontAssetReady() {
         completePersistentNotice(IslandNoticeType.FONT_ASSET, IslandNoticeType.FONT_ASSET_SUCCESS,
-                "字体资源", "完整字体已启用 · 生僻字可用");
+                "字体资源", "完整字体已启用 · 生僻字/韩文可用");
     }
 
     /**
@@ -977,6 +977,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     public static void showAutomixToggle(boolean enabled, String detail) {
         publishNotice(IslandNoticeType.AUTOMIX, enabled ? "无缝切换已开启" : "无缝切换已关闭",
                 safeNoticeValue(detail, enabled ? "切歌时自动交叉淡化" : "切歌恢复为直接切换"));
+    }
+
+    /** 环境选曲按心情起播/切歌的反馈：标题是心情，细节是落点的歌。 */
+    public static void showAmbientScene(String moodLabel, String trackName) {
+        publishNotice(IslandNoticeType.AMBIENT_SCENE, safeNoticeValue(moodLabel, "环境选曲"),
+                safeNoticeValue(trackName, "正在按环境选歌"));
     }
 
     // 未知通道：把岛屿交回等待中的通知，而不是
@@ -3854,7 +3860,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         /** Apple 完整版兑换完成（文件已收编进缓存）。 */
         APPLE_GAMDL_SUCCESS,
         /** Apple 兑换失败（随后落换源替身或试听兜底）。 */
-        APPLE_GAMDL_ERROR
+        APPLE_GAMDL_ERROR,
+        /** 环境选曲按心情自动切歌。 */
+        AMBIENT_SCENE
     }
 
 

@@ -1,10 +1,10 @@
 package com.muoniumplayer.core.ncm.lxsource;
 
-import org.mozilla.javascript.BaseFunction;
-import org.mozilla.javascript.Context;
-import org.mozilla.javascript.Scriptable;
-import org.mozilla.javascript.ScriptableObject;
-import org.mozilla.javascript.Undefined;
+import muonium.rhino.BaseFunction;
+import muonium.rhino.Context;
+import muonium.rhino.Scriptable;
+import muonium.rhino.ScriptableObject;
+import muonium.rhino.Undefined;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;

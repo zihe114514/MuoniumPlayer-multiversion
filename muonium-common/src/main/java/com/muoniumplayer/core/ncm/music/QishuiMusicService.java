@@ -9,8 +9,8 @@ import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
 import com.muoniumplayer.core.screens.ncm.LyricParser;
 import com.muoniumplayer.core.utils.Location;
-import top.fpsmaster.music.QrCode;
-import top.fpsmaster.music.QrLoginState;
+import com.muoniumplayer.core.music.source.QrCode;
+import com.muoniumplayer.core.music.source.QrLoginState;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;

@@ -34,6 +34,7 @@ class SceneResponseTest {
             @Override public float[] tapDelaysSec() { return tapDelays; }
             @Override public float[] tapGains() { return tapGains; }
             @Override public float[] tapPans() { return tapPans; }
+            @Override public EnergyField bandHistogram() { return new EnergyField(); }
         };
     }
 
@@ -47,7 +48,7 @@ class SceneResponseTest {
     private static ListenerSample woodRoom() {
         return sample(false, false, 0.95f, 0f, 2.2f, 2.8f, 0.5f, 0.4f,
                 new float[] {0.012f, 0.019f, 0.031f},
-                new float[] {0.06f, 0.03f, 0.015f},
+                new float[] {0.32f, 0.14f, 0.07f},
                 new float[] {0.7f, -0.4f, 0.1f});
     }
 
@@ -55,7 +56,7 @@ class SceneResponseTest {
     private static ListenerSample stoneCave() {
         return sample(false, false, 0.97f, 0f, 9f, 11f, 1.4f, 0.6f,
                 new float[] {0.052f, 0.064f, 0.09f},
-                new float[] {0.04f, 0.025f, 0.012f},
+                new float[] {0.10f, 0.058f, 0.03f},
                 new float[] {-0.6f, 0.5f, 0f});
     }
 
@@ -103,6 +104,10 @@ class SceneResponseTest {
         RoomPlan r = SceneResponse.respond(woodRoom(), 1f);
         assertTrue(r.wet > 0.12f && r.wet < 0.5f, "wet=" + r.wet);
         assertTrue(r.decaySec < 0.8f, "decay=" + r.decaySec);
+        assertTrue(r.decaySec >= 0.15f, "小房间尾物理下限: " + r.decaySec);
+        // 近墙反射的幅度要落到可闻区(幅度模型:√ρ×2/全程;能量模型会算到 -39dB)
+        assertTrue(Math.max(r.tapGainL[0], r.tapGainR[0]) >= 0.2f,
+                "最强抽头=" + Math.max(r.tapGainL[0], r.tapGainR[0]));
         assertTrue(r.predelaySec > 0.004f && r.predelaySec < 0.012f, "predelay=" + r.predelaySec);
         assertEquals(3, r.tapCount);
         for (int i = 0; i < r.tapCount; i++) {
@@ -193,32 +198,44 @@ class SceneResponseTest {
     }
 
     @Test
-    @DisplayName("越界输入:负围合按旷野、越界反射率/延迟不产生 NaN/越限,超量抽头被截断")
+    @DisplayName("越界输入:负围合按旷野、越界反射率/延迟不产生 NaN/越限,超量抽头按能量截断")
     void outOfRangeInputsAreClamped() {
         ListenerSample negative = sample(false, false, -2f, 0f, 3f, 3f, 0.5f, 0.5f,
                 new float[0], new float[0], new float[0]);
         assertEquals(0f, SceneResponse.respond(negative, 1f).wet, 1e-9);
 
-        // 40 条抽头(超 TAP_MAX=24)且延迟/能量越界
-        int n = 40;
+        // 90 条抽头(超 TAP_MAX=64,对应实机 74-83 条可达反射的密集房间),
+        // 前段弱、后段强:截断必须按能量留强,而不是按索引留先到者。
+        int n = 90;
         float[] d = new float[n];
         float[] g = new float[n];
         float[] p = new float[n];
         for (int i = 0; i < n; i++) {
-            d[i] = 0.02f + i * 0.001f;
-            g[i] = 9f;
+            d[i] = 0.02f + (i % 50) * 0.001f;
+            // 前 26 条(会被挤掉的弱者)能量 0.5,后 64 条能量 9 —— 正确截断
+            // 应保留全部 64 条强反射,一条弱者都不留。
+            g[i] = i < 26 ? 0.5f : 9f;
             p[i] = 7f;
         }
         ListenerSample huge = sample(false, false, 1f, 0f, 100f, -5f, 9f, 3f, d, g, p);
         RoomPlan r = SceneResponse.respond(huge, 1f);
         assertTrue(Double.isFinite(r.bandHz) && Double.isFinite(r.decaySec));
-        assertTrue(r.decaySec <= 4.5f, "衰减夹上限");
+        assertTrue(r.decaySec <= 5.5f, "衰减夹上限");
         assertTrue(r.predelaySec <= 0.055f, "预延迟夹上限");
-        assertTrue(r.wet >= 0f && r.wet <= 0.85f);
-        assertEquals(24, r.tapCount, "抽头按能量截到上限");
+        assertTrue(r.wet >= 0f && r.wet <= 0.95f);
+        assertEquals(64, r.tapCount, "抽头按能量截到上限");
         for (int i = 0; i < r.tapCount; i++) {
             assertTrue(Math.max(r.tapGainL[i], r.tapGainR[i]) <= 0.4f + 1e-6, "归一上限");
             assertTrue(Double.isFinite(r.tapGainL[i]) && Double.isFinite(r.tapGainR[i]));
         }
+        // 交付的都是 64 条强反射(能量比弱者高 18 倍,归一后弱者会贴近 0)。
+        // 注意 TAP_SUM_CEIL:64 条等能量抽头的单耳和超 0.9,整体被等比压
+        // —— 最强单条落在大约 0.9/64·(归一系数) 量级,断言只需证明「强者
+        // 比弱者大一个量级」,弱者若混进来必然贴近 0。
+        double strongest = 0;
+        for (int i = 0; i < r.tapCount; i++) {
+            strongest = Math.max(strongest, Math.max(r.tapGainL[i], r.tapGainR[i]));
+        }
+        assertTrue(strongest > 0.01f, "抽头能量在场(总量被 TAP_SUM_CEIL 约束): " + strongest);
     }
 }

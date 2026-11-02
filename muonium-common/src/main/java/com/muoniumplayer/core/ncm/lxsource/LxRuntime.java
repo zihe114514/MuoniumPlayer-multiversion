@@ -4,13 +4,13 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import org.mozilla.javascript.ClassShutter;
-import org.mozilla.javascript.Context;
-import org.mozilla.javascript.ContextFactory;
-import org.mozilla.javascript.Function;
-import org.mozilla.javascript.Scriptable;
-import org.mozilla.javascript.ScriptableObject;
-import org.mozilla.javascript.Undefined;
+import muonium.rhino.ClassShutter;
+import muonium.rhino.Context;
+import muonium.rhino.ContextFactory;
+import muonium.rhino.Function;
+import muonium.rhino.Scriptable;
+import muonium.rhino.ScriptableObject;
+import muonium.rhino.Undefined;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -551,8 +551,8 @@ public final class LxRuntime {
         int newline = message.indexOf('\n');
         if (newline > 0) message = message.substring(0, newline);
         // 脚本异常带源文件名与行号：贴上去，界面才知道崩在哪（转译后仍保留多行与行号）。
-        if (failure instanceof org.mozilla.javascript.RhinoException) {
-            org.mozilla.javascript.RhinoException re = (org.mozilla.javascript.RhinoException) failure;
+        if (failure instanceof muonium.rhino.RhinoException) {
+            muonium.rhino.RhinoException re = (muonium.rhino.RhinoException) failure;
             String source = re.sourceName();
             int line = re.lineNumber();
             if (source != null && !source.isEmpty()) {

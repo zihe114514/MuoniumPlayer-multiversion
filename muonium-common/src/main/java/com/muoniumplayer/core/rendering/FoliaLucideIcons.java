@@ -425,6 +425,17 @@ public final class FoliaLucideIcons {
         "M8 6v8",
     };
 
+    /** 歌单页「定位当前播放」按钮（lucide {@code locate-fixed}）。 */
+    public static final String LOCATE = "locate-fixed";
+    static final String[] D_LOCATE = {
+        "M2 12 L5 12",
+        "M19 12 L22 12",
+        "M12 2 L12 5",
+        "M12 19 L12 22",
+        "M5 12 a7 7 0 1 0 14 0 a7 7 0 1 0 -14 0",
+        "M9 12 a3 3 0 1 0 6 0 a3 3 0 1 0 -6 0",
+    };
+
     /** 音质·标准（lucide {@code signal-low}）。 */
     public static final String SIGNAL_LOW = "signal-low";
     static final String[] D_SIGNAL_LOW = {
@@ -644,6 +655,7 @@ public final class FoliaLucideIcons {
         TABLE.put("a-large-small", D_TYPOGRAPHY);
         TABLE.put("scaling", D_SCALING);
         TABLE.put("megaphone", D_MEGAPHONE);
+        TABLE.put("locate-fixed", D_LOCATE);
         TABLE.put("signal-low", D_SIGNAL_LOW);
         TABLE.put("signal-medium", D_SIGNAL_MEDIUM);
         TABLE.put("signal-high", D_SIGNAL_HIGH);

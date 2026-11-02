@@ -231,12 +231,11 @@ public final class AppleNativeEngine {
 
     /** 步骤① webplayback → ctrp256 流 m3u8 URL;失败返回 null(已记录归因)。 */
     private static String webplaybackStreamUrl(HttpClient client, String token, String mut,
-                                               String songId) throws Exception {
-        HttpResponse<String> resp = postJson(client, WEBPLAYBACK_URL, token, mut,
+                                               String songId) throws Exception {        HttpResponse<String> resp = postJson(client, WEBPLAYBACK_URL, token, mut,
                 "{\"salableAdamId\":" + songId + ",\"language\":\"zh-CN\"}");
         if (resp.statusCode() != 200 || resp.body().contains("failureType")) {
             recordFailure("webplayback 拒绝(HTTP " + resp.statusCode()
-                    + "),可能风控/会话过期");
+                    + "): " + describeWebplaybackFailure(resp.body()));
             return null;
         }
         Matcher assets = Pattern.compile("\"assets\"\\s*:\\s*\\[").matcher(resp.body());
@@ -270,6 +269,22 @@ public final class AppleNativeEngine {
         }
         recordFailure("webplayback 无 ctrp256 资产");
         return null;
+    }
+
+    /**
+     * webplayback 拒绝的归因:提 failureType 与 dialog 文案,已知码给行动建议。
+     * 3076 = 曲目在账号店面不可用(区域/版权),这是玩家侧最常见的完整版失败。
+     */
+    private static String describeWebplaybackFailure(String body) {
+        Matcher type = Pattern.compile("\"failureType\"\\s*:\\s*\"?([0-9]+)\"?").matcher(body);
+        String code = type.find() ? type.group(1) : "?";
+        if ("3076".equals(code)) {
+            return "failureType=3076 该曲目在当前店面不可用(账号区 "
+                    + AppleConfigStore.snapshot().storefront + " 与曲目店面/版权不匹配)";
+        }
+        Matcher msg = Pattern.compile("\"message\"\\s*:\\s*\"([^\"]{1,80})").matcher(body);
+        if (msg.find()) return "failureType=" + code + "," + msg.group(1);
+        return "failureType=" + code + "(可能风控/会话过期)";
     }
 
     /** 步骤② 流 m3u8 → ISO-23001-7 KID 与物理媒体 URL。 */

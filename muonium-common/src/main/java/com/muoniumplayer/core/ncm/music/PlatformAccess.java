@@ -47,7 +47,10 @@ public final class PlatformAccess {
                     return false;
                 case SMTC:
                     // 系统媒体会话只是「外部播放器正在播什么」，本机没有它的任何账号态。
-                    // 不写这一条会掉进 default 去问 Cadence 的登录态，那答案是错的。
+                    // 不写这一条会掉进 default 去问 内置音源层登录态，那答案是错的。
+                    return false;
+                case LOCAL:
+                    // 本地文件没有账号概念；掉进 default 同样会初始化网易云会话。
                     return false;
                 case APPLE:
                     // Apple 的登录态 = cookies.txt 在位且 media-user-token 未被远端拒绝；
@@ -94,6 +97,9 @@ public final class PlatformAccess {
                 case MIGU:
                 case GD:
                     return Boolean.FALSE;
+                case LOCAL:
+                    // 本地文件不卖会员。
+                    return Boolean.FALSE;
                 case APPLE:
                     // Apple 的订阅档位在 cookies 里没有可查的只读字段；登录了也不谎报，
                     // 交给试听片段检测那一级去拦（同 QQ / YouTube 的「说不准」语义）。
@@ -115,7 +121,9 @@ public final class PlatformAccess {
      */
     public static boolean needsMembership(MusicPlatform platform) {
         if (platform == null) return true;
-        return platform != MusicPlatform.GD && platform != MusicPlatform.BILIBILI;
+        // LOCAL 与 GD / B 站同一档：不卖会员，「不是会员」不构成答不上的理由。
+        return platform != MusicPlatform.GD && platform != MusicPlatform.BILIBILI
+                && platform != MusicPlatform.LOCAL;
     }
 
     /**

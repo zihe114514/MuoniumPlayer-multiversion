@@ -2,8 +2,9 @@ plugins {
     // NeoForge 官方 Gradle 插件。26.x 的官方 jar 不混淆，与 Fabric 侧看到的类名完全相同，
     // 因此这一版连映射转换都不需要，共享源码原封不动同时喂给两个加载器。
     id 'net.neoforged.moddev' version '2.0.144'
-    // NeoForge 没有 Loom 的 Jar-in-Jar 等价物，第三方库用 shadow 直接塞进 mod jar。
-    id 'com.gradleup.shadow' version '8.3.6'
+    // skija-shared / types 已改走 MDG 内置的 JarJar（见下面 dependencies 的 jarJar 段），
+    // shadow 只剩 zxing / rhino / music-api 这批还解包平铺的库。shadowJar 官方任务仍禁用。
+    id 'com.gradleup.shadow' version '8.3.11'
 }
 
 base {
@@ -75,6 +76,18 @@ repositories {
 //   * music-api 是 Kotlin 编译产物，relocate kotlin.* 容易踩到反射/元数据。
 // 代价是与其它同样自带这些库的 mod 可能撞版本，出现时再按需 relocate 非 JNI 的那几个。
 configurations {
+    devSkija {
+        // ==== dev 期 skija 供给（只进开发期类路径，不进发布 jar）====
+        // skija-shared / types 已改走 JarJar（见 dependencies 的 jarJar 段），不在 embeddedLibs 里；
+        // 但开发期 runClient 不走 JarJar（mod 以 classesDirs/目录形态加载），Skia 的类靠
+        // shade→flatten→classesDirs（1.20.1/1.21.1）或 runtimeOnly flatten jar（1.21.11/26.x）
+        // 这条链供给，必须把这两个坐标喂回 shade（见 shadeEmbeddedLibs 的 configurations）。
+        // 发布 jar 由 jar 任务的 exclude 'io/github/humbleui/**' 挡住——这条链只服务 dev。
+        // 不喂的后果：轻则 SkijaHost 静默停用（不崩溃、游戏内一个像素都不显示），
+        // 重则字体初始化 NoClassDefFoundError 直接崩（1.20.1 Forge runClient 实测）。
+        canBeResolved = true
+        canBeConsumed = false
+    }
     embeddedLibs {
         // ==== 绝不能重复打包 Minecraft 自己就带的库 ====
         // 1.20.1（BootstrapLauncher 1.1.2）与 1.21.1（2.0.2）的开发期运行把
@@ -94,14 +107,74 @@ configurations {
     }
 }
 
+// ==================== rhino relocate：org.mozilla.javascript → muonium.rhino ====================
+// rhino 不再直接进 embeddedLibs：WorldEdit 7.3.8 把未 relocate 的 rhino shade 进自己的
+// jar（模块名 worldedit），与平铺进主 jar 的我们导出同一个 org.mozilla.javascript 包，
+// 装一起就是 split package ResolutionException（整合包用户实测，1.21.1 NeoForge）。
+// 这种「对方解包合并进自己模块」的形态 JarJar 的跨 mod 去重管不到，唯一解法是 relocate：
+// 把 rhino 整体改名到 muonium.rhino 前缀再进主 jar，任何 mod 带任何形态的 rhino 都再撞不到我们。
+// relocate 改的不止包路径：shadow 会同步改写字节码里的类引用与字符串常量（含 rhino 内部
+// 反射按名加载自己的地方），资源目录 org/mozilla/javascript/resources（多语言
+// Messages.properties）一并改名。rhino 无 META-INF/services、无 module-info、
+// 非 Multi-Release，是 relocate 的干净对象。
+def relocateRhino = tasks.register('relocateRhino', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
+    group = 'shadow'
+    description = '把 rhino 改名到 muonium.rhino 前缀，避免与其它 mod 自带的 rhino split package'
+    destinationDirectory.set(layout.buildDirectory.dir('tmp/relocateRhino'))
+    archiveClassifier.set('rhino-relocated')
+    // 单库任务：直接从 configurations 单独解析 rhino，不碰 embeddedLibs（它引用本任务，会循环）
+    configurations = [project.configurations.detachedConfiguration(
+            project.dependencies.create('org.mozilla:rhino:1.7.15'))]
+    mergeServiceFiles()
+    exclude 'META-INF/MANIFEST.MF'
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    exclude 'module-info.class'
+    // shadow 默认自带这个规则的行为：relocate class/resources/字节码常量三件套
+    // rhino jar 里还有个 org.mozilla.classfile 包（字节码生成器，javascript 引擎内部用），
+    // 也要一起改名，否则 org.mozilla.classfile 又成了新的 split package 隐患。
+    relocate 'org.mozilla.javascript', 'muonium.rhino'
+    relocate 'org.mozilla.classfile', 'muonium.rhino.classfile'
+}
+
 dependencies {
     embeddedLibs 'com.google.zxing:core:3.5.3'
-    embeddedLibs 'org.mozilla:rhino:1.7.15'
+    // rhino 走上面 relocateRhino 的改名产物（files(...) 传任务，Gradle 自动挂任务依赖）。
+    // 编译期也用同一份：共享层 LxBuffer/LxRuntime import 的已是 muonium.rhino.*，
+    // 原 rhino 坐标不再出现在任何 classpath 上（防止有人手滑又引回去）。
+    embeddedLibs files(relocateRhino)
+    compileOnly files(relocateRhino)
     // gson / jna / jna-platform 刻意不列：Minecraft 自带，见上面 configurations 里的排除说明。
     // 编译期用的就是 Minecraft 提供的那几个版本，所以这里也不需要 compileOnly 再声明一遍。
-    embeddedLibs 'muoniumplayer.libs:music-api:0.1.1'
-    embeddedLibs 'io.github.humbleui:skija-shared:0.143.17'
-    embeddedLibs 'io.github.humbleui:types:0.2.0'
+    // Cadence 音源 SDK 已吸收进仓（com.muoniumplayer.core.music.cadence，2026-11），
+    // 不再挂 libs/music-api-0.1.1.jar。
+
+    // ==================== skija-shared / types：JarJar 嵌原 jar，不再 shadow 平铺 ====================
+    // MDG 内置 JarJar：jarJar 配置 + jarJar 任务把原始 jar 连同 META-INF/jarjar/metadata.json
+    // 挂进 jar 任务输出，与 Loom include() 同型。为什么这两个库必须换掉 shadow：
+    //   shadow 把类解包平铺进主 jar，主 jar 成为 JPMS 自动模块后导出 io.github.humbleui.types；
+    //   任何以「独立嵌 jar」形态带同一库的 mod（atomchat 内嵌 types-0.1.1）一参与模块解析就
+    //   split package，ResolutionException 在 modlauncher 阶段炸掉，游戏一行日志都没有。
+    // JarJar 运行时按 group:artifact 聚合所有 mod 的嵌 jar、取版本区间交集选最高版：
+    //   * types：具名模块（自带 module-info），API 是稳定数据类 —— strictly [0.1,1.0) 宽区间，
+    //     与嵌 0.1.1 的 mod 共存时自动选我们的 0.2.0；
+    //   * skija-shared：0.x ABI 不保稳，保持默认开区间 [0.143.17,)，不放宽。
+    //   * 两库都是 Multi-Release jar，嵌原 jar 清单还在，Java 9+ 实现继续生效。
+    // 编译期与开发期运行时仍走 flatten 链路（compileOnly + classes 任务提取），与 JarJar 互不相干。
+    jarJar('io.github.humbleui:types:0.2.0') {
+        version {
+            strictly '[0.1, 1.0)'
+            prefer '0.2.0'
+        }
+    }
+    jarJar 'io.github.humbleui:skija-shared:0.143.17'
+    compileOnly 'io.github.humbleui:skija-shared:0.143.17'
+    compileOnly 'io.github.humbleui:types:0.2.0'
+    // dev 期 skija 供给：喂给 shadeEmbeddedLibs（见上面 devSkija），只服务开发期类路径
+    devSkija 'io.github.humbleui:skija-shared:0.143.17'
+    devSkija 'io.github.humbleui:types:0.2.0'
+
     // 开发期 runClient 用：只进运行时类路径，不进成品 jar（成品全平台走伴生包自动下载）
     runtimeOnly 'io.github.humbleui:skija-windows-x64:0.143.17'
     // skija 的原生库不随主包内置：Windows 与其余六个平台一样走伴生包自动下载
@@ -120,7 +193,8 @@ def shadeEmbeddedLibs = tasks.register('shadeEmbeddedLibs', com.github.jengelman
     description = '把第三方库合并成一个 jar，再整体塞进 mod jar'
     destinationDirectory.set(layout.buildDirectory.dir('tmp/shadeEmbeddedLibs'))
     archiveClassifier.set('embedded-libs')
-    configurations = [project.configurations.embeddedLibs]
+    // devSkija 一起喂：skija-shared/types 只进 dev 类路径，发布 jar 由 jar 任务 exclude 挡掉
+    configurations = [project.configurations.embeddedLibs, project.configurations.devSkija]
     mergeServiceFiles()
     exclude 'META-INF/MANIFEST.MF'
     exclude 'META-INF/*.SF'
@@ -215,6 +289,10 @@ jar {
         rename { "${it}_${project.archives_base_name}" }
     }
     from({ zipTree(flattenEmbeddedLibs.get().archiveFile) })
+    // skija-shared / types 已改走 JarJar 嵌原 jar（见 dependencies）：发布 jar 里不再平铺
+    // 这两个库的类 —— 它们留在主 jar 会成为自动模块导出的包，与别的 mod 嵌的同名模块 split package。
+    // flatten 产物仍含它们（dev 期编译与 runClient 还靠 classes 任务提取那一份），这里只挡发布 jar。
+    exclude 'io/github/humbleui/**'
 }
 
 tasks.register('dumpCompileClasspath') {

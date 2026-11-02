@@ -17,7 +17,7 @@ import java.nio.file.Files;
  * Cookie 可能只是临时被风控，所以只打标记不清凭据；Spotify 的 refresh token 一旦被
  * {@code invalid_grant} 判死（或 401 重放仍被拒）就是真死了，见 {@link #markReauthRequired}。</p>
  *
- * <p>与酷狗 / 汽水 / B 站同理单开一个文件：{@code music_auth.json} 由 Cadence 的凭据存储
+ * <p>与酷狗 / 汽水 / B 站同理单开一个文件：{@code music_auth.json} 由内置音源层 的凭据存储
  * 整段重写，只认识网易云与 QQ，写进去的第三方凭据会在它下一次保存时被丢掉。</p>
  */
 public final class SpotifyAuthStore {

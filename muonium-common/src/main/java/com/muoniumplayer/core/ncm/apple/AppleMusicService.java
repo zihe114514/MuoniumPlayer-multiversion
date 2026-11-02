@@ -538,17 +538,19 @@ public final class AppleMusicService {
         List<Track> out = new ArrayList<>();
         int offset = 0;
         while (out.size() < max) {
+            int limit = Math.min(100, max - out.size());
             Map<String, String> query = new LinkedHashMap<>();
-            query.put("limit", String.valueOf(Math.min(100, max - out.size())));
+            query.put("limit", String.valueOf(limit));
             query.put("offset", String.valueOf(offset));
             JsonObject payload = AppleApiClient.getAccount(catalogPath(
                     "/v1/me/library/playlists/" + playlistId + "/tracks", query));
             JsonArray data = payload.getAsJsonArray("data");
             if (data == null || data.size() == 0) break;
-            int before = out.size();
             readTracksInto(out, data);
-            offset += out.size() - before;
-            if (out.size() == before) break;
+            // 判停与推进都按上游原始条数:混在页里的不可播行(自有上传/MV)被过滤后,
+            // 按「过滤后增量」推进 offset 会在中途截断后续页 —— 歌单越靠后越缺歌。
+            offset += data.size();
+            if (data.size() < limit) break;
             if (offset >= 2000) break; // 安全阀：JSON 分页异常时别无限拉。
         }
         return out;
@@ -559,16 +561,16 @@ public final class AppleMusicService {
         List<Track> out = new ArrayList<>();
         int offset = 0;
         while (out.size() < max) {
+            int limit = Math.min(100, max - out.size());
             Map<String, String> query = new LinkedHashMap<>();
-            query.put("limit", String.valueOf(Math.min(100, max - out.size())));
+            query.put("limit", String.valueOf(limit));
             query.put("offset", String.valueOf(offset));
             JsonObject payload = AppleApiClient.getAccount(catalogPath("/v1/me/library/songs", query));
             JsonArray data = payload.getAsJsonArray("data");
             if (data == null || data.size() == 0) break;
-            int before = out.size();
             readTracksInto(out, data);
-            offset += out.size() - before;
-            if (out.size() == before) break;
+            offset += data.size();
+            if (data.size() < limit) break;
             if (offset >= 2000) break;
         }
         return out;
@@ -644,11 +646,19 @@ public final class AppleMusicService {
         return out;
     }
 
-    /** 单条曲目资源 → 模型。library 行优先取 catalog id；无 id 的行丢弃。 */
+    /**
+     * 单条曲目资源 → 模型。library 行优先取 catalog id；无 id 的行丢弃。
+     *
+     * <p>无 catalogId 的库内行（自有上传、匹配失败的音频、MV）保留原库内 id 而不是
+     * 整行丢掉：完整版在引擎侧对非 catalog id 快速失败，随后换源替身按歌名兜底 ——
+     * 比歌单里凭空少一首歌体感好。真实流里这类行常见于自建歌单，是「加载不全」的
+     * 另一半原因。</p>
+     */
     private static Track readTrack(JsonObject resource) {
         if (resource == null) return null;
         Track out = new Track();
         out.id = catalogIdOf(resource);
+        if (out.id.isEmpty()) out.id = text(resource, "id");
         if (out.id.isEmpty()) return null;
         JsonObject attributes = resource.getAsJsonObject("attributes");
         if (attributes == null) return null;

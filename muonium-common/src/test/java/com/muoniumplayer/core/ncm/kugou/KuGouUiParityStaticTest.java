@@ -98,8 +98,8 @@ class KuGouUiParityStaticTest {
     @Test
     @DisplayName("概念版优先用上游回的二维码图，标准版仍是本地生成")
     void conceptUsesUpstreamQrImage() throws Exception {
-        String cadence = read(MUSIC, "NeteaseMusicService.java");
-        String branch = slice(cadence, "if (platform == MusicPlatform.KUGOU) {",
+        String serviceSource = read(MUSIC, "NeteaseMusicService.java");
+        String branch = slice(serviceSource, "if (platform == MusicPlatform.KUGOU) {",
                 "initialize(OptionsUtil.getCookie());", "酷狗取码分支");
         assertTrue(branch.contains("KuGouMusicService.createQrSession("),
                 "要走带身份的会话，不能再用不带身份的 createQrKey()");

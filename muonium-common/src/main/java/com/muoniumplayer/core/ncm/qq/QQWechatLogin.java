@@ -20,7 +20,7 @@ import java.util.regex.Pattern;
  *
  * <p>这是微信开放平台的网页 OAuth：{@code open.weixin.qq.com} 发一张二维码，确认后长轮询会给出一个
  * OAuth {@code code}，再用它向 QQ 音乐的 musicu 换出 {@code musicid}/{@code musickey}。
- * 它与项目里已有的 QQ 扫码（{@code ssl.ptlogin2.qq.com}，由 Cadence 承载）<b>没有任何共用步骤</b>，
+ * 它与项目里已有的 QQ 扫码（{@code ssl.ptlogin2.qq.com}，由内置音源层 承载）<b>没有任何共用步骤</b>，
  * 唯一相同的是最后那一次 musicu 调用，而那一次必须带 {@code tmeLoginType = 1}（微信）而不是 QQ 的值 ——
  * 用错这个数字，换出来的凭证在后续每个接口上都会被拒。</p>
  *
@@ -233,7 +233,7 @@ public final class QQWechatLogin {
      *
      * <p>{@code QIMEI}/{@code QIMEI36} 留空：完整的 QIMEI 引导要一整套 RSA + AES 的设备注册链路，
      * 而这个字段在协议里本来就是可空的。设备标识每次进程随机生成而不是持久化，是因为它只在这一次
-     * 兑换里用到 —— 凭证本身由 Cadence 的凭证库保存。</p>
+     * 兑换里用到 —— 凭证本身由 内置凭证库保存。</p>
      */
     private static JsonObject comm() {
         String openUdid = randomHex(32);

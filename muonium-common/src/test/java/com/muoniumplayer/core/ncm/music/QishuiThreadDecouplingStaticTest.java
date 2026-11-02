@@ -103,8 +103,8 @@ class QishuiThreadDecouplingStaticTest {
         assertTrue(avatar.contains("SHA-256"), "头像位置应以账号和头像 URL 的稳定摘要隔离");
         assertFalse(avatar.contains("qishui_avatar.png"), "所有账号不能再共享固定头像位置");
 
-        String cadence = read(MUSIC + "NeteaseMusicService.java");
-        String location = methodBody(cadence, "public static Location getAccountAvatarLocation(MusicPlatform platform)");
+        String serviceSource = read(MUSIC + "NeteaseMusicService.java");
+        String location = methodBody(serviceSource, "public static Location getAccountAvatarLocation(MusicPlatform platform)");
         assertTrue(location.contains("QishuiMusicService.avatarLocation"),
                 "当前账号头像与已保存账号行必须共用头像键生成器");
     }

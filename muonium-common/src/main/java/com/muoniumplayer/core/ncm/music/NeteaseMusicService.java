@@ -4,17 +4,19 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import top.fpsmaster.music.AudioQuality;
-import top.fpsmaster.music.Lyric;
-import top.fpsmaster.music.MusicPlaylist;
-import top.fpsmaster.music.MusicService;
-import top.fpsmaster.music.QQUserInfo;
-import top.fpsmaster.music.QrCode;
-import top.fpsmaster.music.QrLoginState;
-import top.fpsmaster.music.SongUrl;
-import top.fpsmaster.music.Track;
-import top.fpsmaster.music.http.MusicHttp;
-import top.fpsmaster.music.store.MusicCredentialStore;
+import com.muoniumplayer.core.music.source.AudioQuality;
+import com.muoniumplayer.core.music.source.Lyric;
+import com.muoniumplayer.core.music.source.MusicPlaylist;
+import com.muoniumplayer.core.music.source.MuMusicApi;
+import com.muoniumplayer.core.music.source.MuQQApi;
+import com.muoniumplayer.core.music.source.MusicSource;
+import com.muoniumplayer.core.music.source.QQUserInfo;
+import com.muoniumplayer.core.music.source.QrCode;
+import com.muoniumplayer.core.music.source.QrLoginState;
+import com.muoniumplayer.core.music.source.SongUrl;
+import com.muoniumplayer.core.music.source.Track;
+import com.muoniumplayer.core.music.source.MuHttp;
+import com.muoniumplayer.core.music.source.MuCredentialStore;
 import com.muoniumplayer.core.ncm.OptionsUtil;
 import com.muoniumplayer.core.ncm.kugou.KuGouProfile;
 import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
@@ -35,15 +37,15 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 /**
- * Cadence 的宿主适配层。所有 QQ 音乐请求和新的跨平台网易云请求都从这里进入，
- * UI/播放器不直接持有 Cadence 的登录态与凭证文件。
+ * 内置音源层宿主适配。所有 QQ 音乐请求和新的跨平台网易云请求都从这里进入，
+ * UI/播放器不直接持有 内置音源层登录态与凭证文件。
  */
 public final class NeteaseMusicService {
 
-    private static final MusicService SERVICE = new MusicService();
-    private static final MusicCredentialStore CREDENTIALS = new MusicCredentialStore(
+    private static final MuMusicApi SERVICE = new MuMusicApi();
+    private static final MuCredentialStore CREDENTIALS = new MuCredentialStore(
             ConfigPaths.MUSIC_AUTH);
-    private static final MusicHttp QQ_HTTP = new MusicHttp();
+    private static final MuHttp QQ_HTTP = new MuHttp();
     private static final Object QQ_PLAYLIST_LOCK = new Object();
     private static final long QQ_PLAYLIST_RETRY_DELAY_MS = 15_000L;
 
@@ -69,6 +71,7 @@ public final class NeteaseMusicService {
             initialized = true;
             if (SERVICE.getQq().getLoggedIn()) {
                 refreshQQAccountDataAsyncSafe(null, false);
+                refreshQQCredentialSilentlyIfDue();
             }
         }
 
@@ -168,7 +171,7 @@ public final class NeteaseMusicService {
             return searchApple(keyword, limit);
         }
         try {
-            List<Track> tracks = SERVICE.search(currentPlatform.toCadenceSource(), keyword.trim(), Math.max(1, limit));
+            List<Track> tracks = SERVICE.search(currentPlatform.toMuSource(), keyword.trim(), Math.max(1, limit));
             return adaptTracks(tracks);
         } catch (Throwable throwable) {
             System.err.println("[Music/Netease] Search failed for " + currentPlatform + ": " + throwable.getMessage());
@@ -301,7 +304,7 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.YOUTUBE) return searchYouTube(keyword, limit);
         if (platform == MusicPlatform.BILIBILI) return searchBilibili(keyword, limit);
         if (platform == MusicPlatform.QISHUI) return searchQishui(keyword, limit);
-        // 酷我 / 咪咕没有 Cadence 通道，宿主照上游 musicSdk 内置了它们的搜索（供
+        // 酷我 / 咪咕没有内置音源层通道，宿主照上游 musicSdk 内置了它们的搜索（供
         // 换源流水线拿它们当候选）；取流则只认自定义源，见 Music#getPlayUrl 的早退。
         if (platform == MusicPlatform.KUWO) return KuwoMusicService.search(keyword, limit);
         if (platform == MusicPlatform.MIGU) return MiguMusicService.search(keyword, limit);
@@ -310,10 +313,10 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.SPOTIFY) return searchSpotify(keyword, limit);
         // Apple 同理没有候选用途（没有完整流可以给别人换），只服务用户显式选中的搜索。
         if (platform == MusicPlatform.APPLE) return searchApple(keyword, limit);
-        if (!platform.isCadenceBacked()) return Collections.emptyList();
+        if (!platform.isMuSourceBacked()) return Collections.emptyList();
         initialize(OptionsUtil.getCookie());
         try {
-            return adaptTracks(SERVICE.search(platform.toCadenceSource(), keyword.trim(), Math.max(1, limit)));
+            return adaptTracks(SERVICE.search(platform.toMuSource(), keyword.trim(), Math.max(1, limit)));
         } catch (Throwable throwable) {
             System.err.println("[Music/Netease] Manual source search failed for " + platform + ": " + throwable.getMessage());
             return Collections.emptyList();
@@ -452,7 +455,7 @@ public final class NeteaseMusicService {
                 } catch (Throwable ignored) {
                 }
             }
-        }, "Cadence QQ Refresh");
+        }, "Mu QQ Refresh");
         thread.setDaemon(true);
         thread.start();
     }
@@ -468,7 +471,7 @@ public final class NeteaseMusicService {
         return getSongUrl(music, CloudMusic.quality);
     }
 
-    /** 在不改动全局偏好的前提下，按显式档位解析一次 Cadence 流尝试。 */
+    /** 在不改动全局偏好的前提下，按显式档位解析一次内置音源层流尝试。 */
     public static Tuple<String, String> getSongUrl(Music music, Quality requestedQuality) {
         if (music == null) return null;
         if (music.isYouTube()) {
@@ -505,7 +508,7 @@ public final class NeteaseMusicService {
             }
         }
         if (music.isLxOnlyChannel()) {
-            // 酷我 / 咪咕没有内置取流：继续往下会把它们当成 Cadence 网易云曲目，
+            // 酷我 / 咪咕没有内置取流：继续往下会把它们当成内置音源层网易云曲目，
             // 拿错平台的 id 解出别人的歌。这一路的活路是自定义源（Music#resolveLxPlayUrl）。
             return null;
         }
@@ -519,14 +522,31 @@ public final class NeteaseMusicService {
             // 这条统一取流链路只认网易云 id。继续往下会拿 apple 数字 id 解出别人的歌。
             return null;
         }
+        if (music.isLocal()) {
+            // 本地行取流走 muonium-local:// 伪 URL（Music#resolveLocalPlayUrl → CloudMusic
+            // 分派点直读磁盘）。这条链路只认网易云 id，LOCAL 行的 sourceId 是磁盘路径，
+            // 送下去只会解出别人的歌。
+            return null;
+        }
         initialize(OptionsUtil.getCookie());
         try {
-            Track track = music.toCadenceTrack();
+            // 上一次解析残留的归因先清掉：本次失败时不读，避免播放层把旧失败说成这次的。
+            music.setQqResultCode(-1);
+            music.setQqTrialResolve(false);
+            Track track = music.toMuTrack();
             Quality effectiveQuality = requestedQuality == null ? Quality.LOSSLESS : requestedQuality;
             SongUrl result = SERVICE.getSongUrl(track, mapQuality(effectiveQuality));
             if (result == null || !result.getAvailable() || isBlank(result.getUrl())) {
+                // 失败归因留给播放层读：result 码落行上（104003/104004/104013 分级文案）。
+                if (result != null && track.getSource() == MusicSource.QQ) {
+                    music.setQqResultCode(result.getResultCode());
+                    music.setQqTrialResolve(false);
+                }
                 return null;
             }
+            // 试听/命中档位是取流层权益状态，随流落行——播放层不再靠解码时长瞎猜。
+            music.setQqResultCode(result.getResultCode());
+            music.setQqTrialResolve(result.isTrial());
             String format = isBlank(result.getFormat()) ? inferFormat(result.getUrl()) : result.getFormat();
             return new Tuple<>(result.getUrl(), format);
         } catch (Throwable throwable) {
@@ -560,8 +580,8 @@ public final class NeteaseMusicService {
                 if (lrc == null) return null;
                 String original = lrc.getA() == null ? "" : lrc.getA();
                 String translated = lrc.getB() == null ? "" : lrc.getB();
-                List<top.fpsmaster.music.LyricLine> lines =
-                        top.fpsmaster.music.lyric.LyricParser.INSTANCE.parse(original, translated, "");
+                List<com.muoniumplayer.core.music.source.LyricLine> lines =
+                        com.muoniumplayer.core.music.source.LyricParser.INSTANCE.parse(original, translated, "");
                 return new Lyric(original, translated, "", lines);
             } catch (Throwable throwable) {
                 System.err.println("[Music/GD] Lyric failed for " + music.getStableKey() + ": " + throwable.getMessage());
@@ -578,9 +598,15 @@ public final class NeteaseMusicService {
             // 返回 null；继续往下会把 apple 数字 id 当网易云 id 送去拿词。
             return null;
         }
+        if (music.isLocal()) {
+            // 本地文件的歌词：嵌入轨（LyricLoadService 的 LOCAL 早段）+ 按标题的在线逐字匹配
+            // （AMLL/QQ QRC/酷狗）。这条统一兜底链只认网易云 id，LOCAL 行的 sourceId 是磁盘
+            // 路径，送下去只会拿到别人的词。null 让调用方继续走匹配兜底。
+            return null;
+        }
         initialize(OptionsUtil.getCookie());
         try {
-            return SERVICE.getLyric(music.toCadenceTrack());
+            return SERVICE.getLyric(music.toMuTrack());
         } catch (Throwable throwable) {
             System.err.println("[Music/Netease] Lyric failed for " + music.getStableKey() + ": " + throwable.getMessage());
             return null;
@@ -598,8 +624,8 @@ public final class NeteaseMusicService {
         try {
             String lrc = BilibiliSubtitleService.getLyricText(music.getSourceId());
             if (isBlank(lrc)) return null;
-            List<top.fpsmaster.music.LyricLine> lines =
-                    top.fpsmaster.music.lyric.LyricParser.INSTANCE.parse(lrc, "", "");
+            List<com.muoniumplayer.core.music.source.LyricLine> lines =
+                    com.muoniumplayer.core.music.source.LyricParser.INSTANCE.parse(lrc, "", "");
             return new Lyric(lrc, "", "", lines);
         } catch (Throwable throwable) {
             System.err.println("[Music/Bilibili] Lyric failed for " + music.getStableKey() + ": "
@@ -651,7 +677,7 @@ public final class NeteaseMusicService {
             return new QrCode(session.key, KuGouMusicService.qrContent(session.key, kuGouConcept));
         }
         initialize(OptionsUtil.getCookie());
-        return SERVICE.createQrCode(platform.toCadenceSource());
+        return SERVICE.createQrCode(platform.toMuSource());
     }
 
     /**
@@ -671,7 +697,7 @@ public final class NeteaseMusicService {
     }
 
     /**
-     * QQ 微信扫码的一次状态检查。确认后立刻把凭证写入 Cadence 的 QQ 会话并落盘。
+     * QQ 微信扫码的一次状态检查。确认后立刻把凭证写入 内置音源层 QQ 会话并落盘。
      *
      * <p>写入用的是 {@code str_musicid} 优先的那个 id（由 {@code QQWechatLogin} 解析），
      * 微信凭证的 {@code musicid} 字段里是占位值。</p>
@@ -726,7 +752,7 @@ public final class NeteaseMusicService {
      * 导致新扫码的网易云账号无法持久化。
      *
      * <p>QR 会话仅由 {@link #createQrCode(MusicPlatform)} 初始化一次。
-     * QQ 调用方保留同一 Cadence 状态，刻意不改动。</p>
+     * QQ 调用方保留同一内置音源层状态，刻意不改动。</p>
      */
     public static QrLoginState checkQrCodeSession(MusicPlatform platform, QrCode qrCode) {
         if (platform == null || qrCode == null) {
@@ -745,7 +771,7 @@ public final class NeteaseMusicService {
             return state;
         }
         if (platform == MusicPlatform.KUGOU) {
-            // 酷狗不经 Cadence：上游给的是原始码，这里翻成宿主的状态机。
+            // 酷狗不经内置音源层：上游给的是原始码，这里翻成宿主的状态机。
             switch (KuGouMusicService.checkQr(qrCode.getKey())) {
                 case 4:
                     KuGouMusicService.ensureUserPlaylistsAsync(null);
@@ -761,7 +787,7 @@ public final class NeteaseMusicService {
             }
         }
         initializeIfNeeded();
-        QrLoginState state = SERVICE.checkQrCode(platform.toCadenceSource(), qrCode);
+        QrLoginState state = SERVICE.checkQrCode(platform.toMuSource(), qrCode);
         if (state == QrLoginState.CONFIRMED) {
             persistLogin(platform);
         }
@@ -784,6 +810,14 @@ public final class NeteaseMusicService {
         }
         if (platform == MusicPlatform.QQ) {
             CREDENTIALS.setQq(SERVICE.getQq().getMusicid(), SERVICE.getQq().getMusicKey());
+            // 扫码响应里的续期材料随登录落盘（refresh_key 等）；QQLogin 响应不带这些
+            // 字段时落空串，续期链路对空材料有保护（探针已确认刷新端点形状被接受）。
+            CREDENTIALS.setQqRefreshMaterial(SERVICE.getQq().consumeLastLoginRefreshKey(),
+                    SERVICE.getQq().consumeLastLoginRefreshToken(),
+                    SERVICE.getQq().consumeLastLoginOpenid(),
+                    SERVICE.getQq().consumeLastLoginUnionid(),
+                    SERVICE.getQq().consumeLastLoginType(),
+                    SERVICE.getQq().consumeLastLoginExpiredAt());
             refreshQQUserInfo();
         } else {
             String cookie = SERVICE.getNetease().getCookie();
@@ -850,12 +884,16 @@ public final class NeteaseMusicService {
         if (platform == MusicPlatform.QISHUI) return QishuiMusicService.isLoggedIn();
         if (platform == MusicPlatform.KUGOU) return KuGouMusicService.isLoggedIn();
         // 必须挡在 initializeIfNeeded 之前：Spotify 的登录态与网易云 cookie 无关，
-        // 掉进下面的 Cadence 分支会为了查登录态去初始化一整套网易云会话。
+        // 掉进下面的 内置音源层 分支会为了查登录态去初始化一整套网易云会话。
         if (platform == MusicPlatform.SPOTIFY) {
             return com.muoniumplayer.core.ncm.spotify.SpotifyMusicService.isLoggedIn();
         }
         if (platform == MusicPlatform.APPLE) {
             return com.muoniumplayer.core.ncm.apple.AppleMusicService.isLoggedIn();
+        }
+        // 本地文件没有账号态；挡在这里避免为它初始化网易云会话。
+        if (platform == MusicPlatform.LOCAL) {
+            return false;
         }
         initializeIfNeeded();
         if (platform == MusicPlatform.QQ) {
@@ -1008,7 +1046,55 @@ public final class NeteaseMusicService {
                     }
                 }
             }
-        }, "Cadence QQ Account");
+        }, "内置音源层 QQ Account");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /**
+     * QQ 凭证静默续期（到期前 3 天窗口内触发一次）。续期材料（refresh_key 等）存
+     * {@link MuCredentialStore}；QQ 扫码通道此前拿不到这套材料，探针确认能刷才生效，
+     * 拿不到时本方法静默退出、维持重扫语义。失败只记日志：续期不是播放的前置条件。
+     */
+    private static volatile boolean qqCredentialRefreshAttempted;
+
+    private static void refreshQQCredentialSilentlyIfDue() {
+        if (qqCredentialRefreshAttempted) return;
+        long expiredAt = CREDENTIALS.getQqExpiredAt();
+        if (expiredAt <= 0L) {
+            // 旧档案没有到期时间戳：探针形态——没材料就退，不打无效请求。
+            if (CREDENTIALS.getQqRefreshKey().isEmpty() && CREDENTIALS.getQqRefreshToken().isEmpty()) {
+                return;
+            }
+        }
+        long now = System.currentTimeMillis();
+        // 3 天内到期（或已过期）才刷；远未到期不动。
+        if (expiredAt > 0L && expiredAt - now > 3L * 24 * 3600 * 1000L) return;
+        qqCredentialRefreshAttempted = true;
+        Thread thread = new Thread(() -> {
+            try {
+                MuQQApi.RefreshResult result = SERVICE.getQq().refreshCredential(
+                        CREDENTIALS.getQqMusicId(), CREDENTIALS.getQqMusicKey(),
+                        CREDENTIALS.getQqRefreshKey(), CREDENTIALS.getQqRefreshToken(),
+                        CREDENTIALS.getQqOpenid(), CREDENTIALS.getQqUnionid(),
+                        CREDENTIALS.getQqLoginType(), CREDENTIALS.getQqExpiredAt());
+                if (!result.ok) {
+                    System.out.println("[Music/QQ] 凭证静默续期未成（维持重扫语义）: " + result.reason);
+                    return;
+                }
+                synchronized (NeteaseMusicService.class) {
+                    SERVICE.getQq().setMusicid(result.musicid);
+                    SERVICE.getQq().setMusicKey(result.musicKey);
+                    CREDENTIALS.setQq(result.musicid, result.musicKey);
+                    CREDENTIALS.setQqRefreshMaterial(result.refreshKey, result.refreshToken,
+                            result.openid, result.unionid, CREDENTIALS.getQqLoginType(),
+                            result.expiredAt);
+                }
+                System.out.println("[Music/QQ] 凭证静默续期成功");
+            } catch (Throwable t) {
+                System.err.println("[Music/QQ] 凭证静默续期异常: " + t.getMessage());
+            }
+        }, "内置音源层 QQ Credential Refresh");
         thread.setDaemon(true);
         thread.start();
     }
@@ -1103,7 +1189,7 @@ public final class NeteaseMusicService {
 
     private static JsonObject qqGetJson(String url, Map<String, String> query,
                                         Map<String, String> headers, Map<String, String> cookies) {
-        MusicHttp.Response response = QQ_HTTP.get(url, query, headers, cookies);
+        MuHttp.Response response = QQ_HTTP.get(url, query, headers, cookies);
         if (response == null || response.getStatus() < 200 || response.getStatus() >= 300) {
             throw new IllegalStateException("HTTP " + (response == null ? "null" : response.getStatus()));
         }
@@ -1260,7 +1346,7 @@ public final class NeteaseMusicService {
         List<Music> result = new ArrayList<>();
         if (tracks == null) return result;
         for (Track track : tracks) {
-            if (track != null) result.add(Music.fromCadenceTrack(track));
+            if (track != null) result.add(Music.fromMuSourceTrack(track));
         }
         return result;
     }

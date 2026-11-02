@@ -5,6 +5,8 @@ import com.google.gson.JsonObject;
 import com.muoniumplayer.compat.lwjgl2.Mouse;
 import com.muoniumplayer.core.input.TouchGestures;
 import com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings;
+import com.muoniumplayer.core.ncm.music.ambient.AmbientMusicController;
+import com.muoniumplayer.core.ncm.music.ambient.AmbientSettings;
 import com.muoniumplayer.core.settings.TouchSettings;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.rendering.GlassLook;
@@ -245,11 +247,12 @@ public final class ViperOverlay extends NcmSheet {
     private void showFooter(final Panel dialog) {
         divider(dialog, () -> dialog.getHeight() - FOOTER_H + 2);
 
-        footerButton(dialog, 0, 4, () -> PartyIcons.FOLDER_OPEN,
+        footerButton(dialog, 0, 5, () -> PartyIcons.FOLDER_OPEN,
                 () -> importing ? "正在导入…" : "从文件导入", this::browseForPreset);
-        footerButton(dialog, 1, 4, () -> PartyIcons.TEXT_FORMAT, () -> "调参", this::showTuningGroups);
-        footerButton(dialog, 2, 4, () -> PartyIcons.PUBLIC_ROOM, () -> "场景声学", this::showAcoustics);
-        footerButton(dialog, 3, 4, () -> PartyIcons.SYNC, () -> "重新加载", () -> {
+        footerButton(dialog, 1, 5, () -> PartyIcons.TEXT_FORMAT, () -> "调参", this::showTuningGroups);
+        footerButton(dialog, 2, 5, () -> PartyIcons.PUBLIC_ROOM, () -> "场景声学", this::showAcoustics);
+        footerButton(dialog, 3, 5, () -> PartyIcons.EXPLORE, () -> "环境选曲", this::showAmbient);
+        footerButton(dialog, 4, 5, () -> PartyIcons.SYNC, () -> "重新加载", () -> {
             ViperRuntime.reload();
             statusText = ViperRuntime.describe();
             statusTone = describeTone();
@@ -973,6 +976,156 @@ public final class ViperOverlay extends NcmSheet {
     private int acousticsStatusColor() {
         return AcousticsSettings.isEnabled() ? OK_COLOR
                 : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+    }
+
+    // ════════════════════════════ 环境选曲 ════════════════════════════
+
+    /** 环境选曲页：稳定期滑条与页脚总开关。声明页,与场景声学同构。 */
+    private void showAmbient() {
+        beginPage();
+        final Panel dialog = sheet(SHEET_W, () -> BODY_TOP
+                + 6.0 + LABEL_ROW + ACOUSTICS_ROW_H + 12.0 + LABEL_ROW + 52.0 + 10.0 + FOOTER_H);
+        subHeader(dialog, back(this::showEffects), () -> "环境选曲",
+                () -> "跟随身处环境（群系/天气/敌情/深浅）自动按心情选歌 · 改动即时落盘生效",
+                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        tip(dialog, () -> AmbientSettings.isEnabled() ? PartyIcons.CHECK : PartyIcons.INFO,
+                this::ambientStatusText, this::ambientStatusColor, () -> STATUS_TOP);
+
+        final Panel body = body(dialog, () -> BODY_TOP, () -> FOOTER_H);
+        final ScrollPanel feed = feed(body);
+        strip(feed, 6.0);
+
+        sectionLabel(strip(feed, LABEL_ROW), "触发稳定期",
+                () -> 5.0, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        // 标题、读数与滑条同住一格 strip（理由同场景声学页:滚动区按行堆叠子组件,
+        // 直接挂 feed 的控件会被绝对坐标钉在内容顶部）。
+        final Panel stableStrip = strip(feed, 52.0);
+        final LabelWidget stableCaption = label(stableStrip, "心情保持多久才切歌", FontManager.pf12bold);
+        stableCaption.setBeforeRenderCallback(() -> {
+            stableCaption.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            stableCaption.setPosition(PAD + CARD_INSET, inkTop(stableCaption, 11.0));
+        });
+        final LabelWidget stableValue = label(stableStrip, this::ambientStableText,
+                FontManager.pf12bold);
+        stableValue.setBeforeRenderCallback(() -> {
+            stableValue.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+            stableValue.setPosition(
+                    Math.max(PAD + CARD_INSET, stableStrip.getWidth() - PAD - CARD_INSET - stableValue.getWidth()),
+                    inkTop(stableValue, 11.0));
+        });
+        final AmbientStableSlider stableSlider = new AmbientStableSlider();
+        stableStrip.addChild(stableSlider);
+        stableSlider.setBeforeRenderCallback(() -> {
+            stableSlider.setBounds(Math.max(1, stableStrip.getWidth() - (PAD + CARD_INSET) * 2), 16);
+            stableSlider.setPosition(PAD + CARD_INSET, stableStrip.getHeight() - 22);
+        });
+        strip(feed, 10.0);
+
+        divider(dialog, () -> dialog.getHeight() - FOOTER_H + 2);
+        icon(dialog, () -> PartyIcons.EXPLORE, ICON_S,
+                () -> PAD + CARD_INSET + ICON_S * .5, () -> dialog.getHeight() - 64.0,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        final LabelWidget caption = label(dialog, "启用环境选曲", FontManager.pf12bold);
+        caption.setBeforeRenderCallback(() -> {
+            caption.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            caption.setMaxWidth(Math.max(1, dialog.getWidth() - PAD * 2 - ICON_S - 60));
+            caption.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            caption.setPosition(PAD + CARD_INSET + ICON_S + 7.0,
+                    inkTop(caption, dialog.getHeight() - 64.0));
+        });
+        toggle(dialog, AmbientSettings::isEnabled, () -> {
+                    boolean next = !AmbientSettings.isEnabled();
+                    AmbientSettings.setEnabled(next);
+                    if (next) {
+                        // 开关打开：防抖状态从零起算，让当前环境立刻进入稳定期计时，
+                        // 而不是背着上一段会话的旧 playingLabel/稳定期残值。
+                        AmbientMusicController.reset();
+                    }
+                },
+                () -> dialog.getWidth() - PAD - CARD_INSET, () -> dialog.getHeight() - 64.0,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+        tip(dialog, () -> PartyIcons.INFO,
+                () -> "一起听/派对房间内不会抢歌;搜索跟随当前音源平台",
+                () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                () -> dialog.getHeight() - 32.0);
+    }
+
+    private String ambientStatusText() {
+        return AmbientSettings.isEnabled()
+                ? "生效中 · 心情稳定后自动按环境换歌，一起听/派对中让路"
+                : "关闭中 · 播放完全由自己掌控";
+    }
+
+    private int ambientStatusColor() {
+        return AmbientSettings.isEnabled() ? OK_COLOR
+                : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+    }
+
+    /** 稳定期读数:秒以下不显示,120s 显示为 2 分钟。 */
+    private String ambientStableText() {
+        int ms = AmbientSettings.stableMs();
+        return ms % 60_000 == 0 && ms >= 60_000
+                ? (ms / 60_000) + " 分钟" : (ms / 1000) + " 秒";
+    }
+
+    /**
+     * 稳定期滑条：渲染轮询写值，松手即已落盘。滑条行程 0..100 均匀映射
+     * 5s..120s（对数感不必要 —— 玩家只关心「快慢」两端）。
+     */
+    private final class AmbientStableSlider extends RoundedRectWidget {
+
+        private boolean dragging;
+
+        @Override
+        public void onRender(double mouseX, double mouseY) {
+            final double x = getX();
+            final double y = getY();
+            final double w = Math.max(1.0, getWidth());
+            final double h = Math.max(1.0, getHeight());
+            final float alpha = getAlpha();
+
+            final boolean hovered = testHovered(mouseX, mouseY);
+            final boolean down = Mouse.isButtonDown(0);
+            if (!down) {
+                dragging = false;
+            } else if (TouchGestures.get().isVerticalDrag()) {
+                dragging = false;
+            } else if (hovered) {
+                dragging = true;
+            }
+            if (dragging) {
+                int pct = (int) Math.round(clamp01((mouseX - x) / w) * 100.0);
+                int ms = AmbientSettings.STABLE_MS_MIN
+                        + (AmbientSettings.STABLE_MS_MAX - AmbientSettings.STABLE_MS_MIN) * pct / 100;
+                if (ms != AmbientSettings.stableMs()) {
+                    AmbientSettings.setStableMs(ms);
+                }
+            }
+
+            final double t = clamp01((AmbientSettings.stableMs() - AmbientSettings.STABLE_MS_MIN)
+                    / (double) (AmbientSettings.STABLE_MS_MAX - AmbientSettings.STABLE_MS_MIN));
+            roundedRect(x, y + h * .5 - 2.5, w, 5, 2.5,
+                    RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.BORDER), alpha * .8f));
+            final double filled = Math.max(0.0, Math.min(w, w * t));
+            if (filled > .5) {
+                roundedRect(x, y + h * .5 - 2.5, filled, 5, 2.5,
+                        RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), alpha));
+            }
+            final double knob = 10.0;
+            roundedRect(x + Math.max(0.0, Math.min(w - knob, w * t - knob * .5)),
+                    y + h * .5 - knob * .5, knob, knob, knob * .5,
+                    RenderSystem.reAlpha(0xFFFFFF, alpha * .95f));
+
+            if (hovered || dragging) {
+                setShouldOverrideMouseCursor(true);
+            }
+        }
+
+        @Override
+        public boolean onMouseClicked(double relativeX, double relativeY, int mouseButton) {
+            // 值由 onRender 的轮询路径设置；这里只吞掉点击，防止穿透到底下的弹窗遮罩。
+            return true;
+        }
     }
 
     /**

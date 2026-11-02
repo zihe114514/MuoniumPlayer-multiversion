@@ -30,32 +30,6 @@ import java.util.regex.Pattern;
  */
 public final class WorldLyricsState {
 
-    /**
-     * 辉光链路一次性诊断（-Dmuonium.debug.worldLyrics 开启时输出，去重）：
-     * 定位「参数拉满也没晕」断在哪一环 —— mask 采集 / 参数配置 / bloom 运行。
-     */
-    public static void traceGlowOnce(String msg) {
-        if (!Boolean.getBoolean("muonium.debug.worldLyrics")) return;
-        if (!TRACE_GLOW_SEEN.add(msg)) return;
-        System.out.println("[WorldLyrics/glow] " + msg);
-    }
-
-    /**
-     * 辉光参数 trace：消息含动态值（开关/曝光/扩散），同一前缀只节流不 dedup ——
-     * 参数变化立刻可见。每秒最多一条防刷屏。
-     */
-    public static void traceGlowParams(String msg) {
-        if (!Boolean.getBoolean("muonium.debug.worldLyrics")) return;
-        long now = System.nanoTime();
-        if (now - TRACE_GLOW_LAST < 1_000_000_000L) return;
-        TRACE_GLOW_LAST = now;
-        System.out.println("[WorldLyrics/glow] " + msg);
-    }
-
-    private static long TRACE_GLOW_LAST;
-
-    private static final java.util.Set<String> TRACE_GLOW_SEEN =
-            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     // ==================== 布局与动效常量 ====================
 
@@ -436,6 +410,13 @@ public final class WorldLyricsState {
         public final int k;        // 非空白字符序号（确定性随机/出场级联的相位键）
         /** 恒生效的弹性缩放（入场飞入回弹 / word pop 回弹 / 出场收拢），1 = 无。 */
         public float pop;
+        /** 字符在整句中的水平排版位置 0..1（含空白、按原始排版计）—— 封面渐变按它
+         *  定色；弹出/微动/飞行只改 gx/gy/pop/rot，不改本值，同一字颜色恒定。
+         *  -1 = 未参与渐变（无 LUT）。 */
+        public float position = -1f;
+        /** 封面渐变覆盖色（0xRRGGBB）：渐变 LUT 按.position 采样写入；0 = 无覆盖
+         *  （走行统一墨色）。渲染层优先于 inkRgb/keywordRgb。 */
+        public int rgbOverride;
         /** 心象模式：块姿态（度 / 设计像素 / 乘法项），简洁模式全零。 */
         public float rot, dx, dy, scale;
         /** 心象模式：块墨色（0xRRGGBB 已带 alpha，简洁模式 0 = 用行统一墨色）。 */
@@ -1435,6 +1416,19 @@ public final class WorldLyricsState {
         return out;
     }
 
+    /** 字符中心的水平排版位置 0..1（行宽内）；行宽为零时 0。 */
+    private static float layoutPosition(float charX, float rowWidth, PixelWidthOf widthOf) {
+        if (rowWidth <= 0f) return 0f;
+        return (charX + rowWidth / 2f) / rowWidth;
+    }
+
+    /** 渐变 LUT 采样：position∈[0,1] → 0xRRGGBB。 */
+    private static int lutSample(int[] lut, float position) {
+        float p = Math.max(0f, Math.min(1f, position));
+        int idx = (int) (p * (lut.length - 1));
+        return lut[Math.min(idx, lut.length - 1)] & 0xFFFFFF;
+    }
+
     /** 中西文标点集（词字号压小档用）。 */
     private static final String PUNCTUATION_CHARS = "!?,.;:()[]{}<>-—…\"'‘’“”";
     /** 虚词/语气字（folia wordStyle 的功能词压小档；中文常用集）。 */
@@ -1855,12 +1849,20 @@ public final class WorldLyricsState {
     public static LyricGlyphs buildGlyphs(SpawnedLine f, long songNowMs, float alphaMul,
                                           boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf,
                                           boolean cadenza) {
-        return buildGlyphs(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf, cadenza, false, null);
+        return buildGlyphs(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf, cadenza, false, null, null);
     }
 
     public static LyricGlyphs buildGlyphs(SpawnedLine f, long songNowMs, float alphaMul,
                                           boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf,
                                           boolean cadenza, boolean huiguang, int[] keywordMatch) {
+        return buildGlyphs(f, songNowMs, alphaMul, wordPop, exiting, pixelWidthOf, cadenza,
+                huiguang, keywordMatch, null);
+    }
+
+    public static LyricGlyphs buildGlyphs(SpawnedLine f, long songNowMs, float alphaMul,
+                                          boolean wordPop, boolean exiting, PixelWidthOf pixelWidthOf,
+                                          boolean cadenza, boolean huiguang, int[] keywordMatch,
+                                          int[] gradientLut) {
         List<String> lines = f.lines;
         long elapsedMs = songNowMs - f.startMs;
         // 逐字轴在 → 逐字点亮（卡拉OK扫掠）。原门控是 wordPop（弹跳设置），
@@ -2164,6 +2166,9 @@ public final class WorldLyricsState {
                             LyricGlyph g = new LyricGlyph(c, gx, gy, a, k, scale);
                             g.rot = rot;
                             g.pop = scale;
+                            g.position = layoutPosition(huiguangLayout != null
+                                    ? layoutX : x, w, pixelWidthOf);
+                            if (gradientLut != null) g.rgbOverride = lutSample(gradientLut, g.position);
                             g.huiguangLit = lit;
                             g.huiguangFlash = flash;
                             g.flyingWhite = flying && flyingGlow > 0.15f;
@@ -2196,6 +2201,8 @@ public final class WorldLyricsState {
                                 float gy = y + (float) (token.homeY);
                                 LyricGlyph g = new LyricGlyph(c, gx, gy, a, k,
                                         (float) pose.scale);
+                                g.position = layoutPosition(x, w, pixelWidthOf);
+                                if (gradientLut != null) g.rgbOverride = lutSample(gradientLut, g.position);
                                 g.rot = (float) pose.rotation;
                                 g.dx = (float) pose.dx;
                                 g.dy = (float) pose.dy;
@@ -2236,7 +2243,10 @@ public final class WorldLyricsState {
                         }
                         float a = fade * alphaMul;
                         if (a > 0.02f) {
-                            out.glyphs.add(new LyricGlyph(c, x, gy, a, k, scale));
+                            LyricGlyph g = new LyricGlyph(c, x, gy, a, k, scale);
+                            g.position = layoutPosition(x, w, pixelWidthOf);
+                            if (gradientLut != null) g.rgbOverride = lutSample(gradientLut, g.position);
+                            out.glyphs.add(g);
                             out.appearAts.add(appearAt);
                         }
                     }
@@ -2312,6 +2322,8 @@ public final class WorldLyricsState {
                             float a = alphaMul * 0.95f * fade;
                             if (a > 0.02f) {
                                 LyricGlyph g = new LyricGlyph(c, tx, gy, a, key, pop);
+                                g.position = layoutPosition(tx, tw, pixelWidthOf);
+                                if (gradientLut != null) g.rgbOverride = lutSample(gradientLut, g.position);
                                 g.huiguangLit = tLit;
                                 if (huiguang) {
                                     // 副行特效（transEffects 开关驱动，spawn 时已定格
@@ -2340,7 +2352,10 @@ public final class WorldLyricsState {
                             //      句身淡入淡出与副行淡入系数决定
                             float a = secAlphaMul;
                             if (a > 0.02f) {
-                                out.glyphs.add(new LyricGlyph(c, tx, ty, a, key, 0.72f));
+                                LyricGlyph g = new LyricGlyph(c, tx, ty, a, key, 0.72f);
+                                g.position = layoutPosition(tx, tw, pixelWidthOf);
+                                if (gradientLut != null) g.rgbOverride = lutSample(gradientLut, g.position);
+                                out.glyphs.add(g);
                                 out.appearAts.add(0f);
                                 if (huiguang) out.huiguangFlights.add(null);
                             }

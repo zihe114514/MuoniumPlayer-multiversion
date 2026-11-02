@@ -1,7 +1,7 @@
 package com.muoniumplayer.core.ncm.music;
 
 /**
- * 当前播放器所使用的音乐平台。该枚举属于宿主 MOD，避免 UI 直接依赖 Cadence 的实现类型。
+ * 当前播放器所使用的音乐平台。该枚举属于宿主 MOD，避免 UI 直接依赖内置音源层的实现类型。
  */
 public enum MusicPlatform {
     NETEASE("网易云", 0xE94747),
@@ -16,7 +16,7 @@ public enum MusicPlatform {
     /**
      * 系统媒体会话（Windows SMTC）：外部播放器正在播的那首。
      *
-     * <p>它不是一个可取流的平台 —— {@link #isCadenceBacked()} 为假，播放列表与取流链路都不该
+     * <p>它不是一个可取流的平台 —— {@link #isMuSourceBacked()} 为假，播放列表与取流链路都不该
      * 认它。存在意义是「身份与来源标记」：稳定键前缀、徽标显示、以及设置页能说清这一首
      * 是从外面进来的。<b>追加在末尾</b>：稳定键里带着 {@code name()}，插在中间会让已经
      * 落盘的歌词与封面缓存整体错行。</p>
@@ -43,7 +43,22 @@ public enum MusicPlatform {
      *
      * <p><b>追加在末尾</b>，理由同 {@link #SMTC}：稳定键按 {@code name()} 落盘。</p>
      */
-    APPLE("Apple Music", 0xFA243C);
+    APPLE("Apple Music", 0xFA243C),
+    /**
+     * 本地文件：用户磁盘上的音频文件（mp3 / flac / wav / m4a / aac），经「导入本地文件夹」
+     * 灌进本地歌单。取流是<b>零网络</b>的 —— {@code Music#getPlayUrl()} 给一条
+     * {@code muonium-local://} 伪 URL，由 {@code CloudMusic.cachedAudioFileLocked} 的分派点
+     * 兑换成磁盘原文件（不下载、不占音频缓存容量）；元数据（标题/歌手/专辑/封面/嵌入歌词）
+     * 由 {@code LocalAudioMetadata} 从文件标签里读。
+     *
+     * <p>与 Spotify 同理它<b>绝不能</b>进换源候选表 {@code CANDIDATE_ORDER}——本地文件没有
+     * 「流」可以被别的平台换走；反过来 LOCAL 行自己取流永远成功（文件在就在，不在报错），
+     * 也不需要别人替它换。歌词与封面按 stableKey（路径哈希）落盘，与在线平台同一套缓存键位。</p>
+     *
+     * <p><b>追加在末尾</b>，理由同 {@link #SMTC}：稳定键按 {@code name()} 落盘，
+     * 插进中间会让已落盘的歌词与封面缓存整体错行。</p>
+     */
+    LOCAL("本地音乐", 0x6C7A92);
 
     private final String displayName;
     private final int brandColor;
@@ -62,23 +77,23 @@ public enum MusicPlatform {
     }
 
     /**
-     * 该平台是否由 Cadence（{@code music-api} 库）承载。
+     * 该平台是否由内置音源层（吸收自原 music-api jar）承载。
      *
-     * <p>酷狗、YouTube、哔哩哔哩与 GD 都是宿主自己实现的，{@link #toCadenceSource()} 对它们只能给出一个不正确的兜底值；
-     * 任何要走 Cadence 的调用点都必须先问这个方法，而不是直接转换。</p>
+     * <p>酷狗、YouTube、哔哩哔哩与 GD 都是宿主自己实现的，{@link #toMuSource()} 对它们只能给出一个不正确的兜底值；
+     * 任何要走内置音源层的调用点都必须先问这个方法，而不是直接转换。</p>
      */
-    public boolean isCadenceBacked() {
+    public boolean isMuSourceBacked() {
         return this == NETEASE || this == QQ;
     }
 
     /**
-     * @deprecated 只对 {@link #isCadenceBacked()} 为真的平台有意义；其余平台会落到 NETEASE 兜底。
+     * @deprecated 只对 {@link #isMuSourceBacked()} 为真的平台有意义；其余平台会落到 NETEASE 兜底。
      */
-    public top.fpsmaster.music.MusicSource toCadenceSource() {
-        return this == QQ ? top.fpsmaster.music.MusicSource.QQ : top.fpsmaster.music.MusicSource.NETEASE;
+    public com.muoniumplayer.core.music.source.MusicSource toMuSource() {
+        return this == QQ ? com.muoniumplayer.core.music.source.MusicSource.QQ : com.muoniumplayer.core.music.source.MusicSource.NETEASE;
     }
 
-    public static MusicPlatform fromCadence(top.fpsmaster.music.MusicSource source) {
-        return source == top.fpsmaster.music.MusicSource.QQ ? QQ : NETEASE;
+    public static MusicPlatform fromMuSource(com.muoniumplayer.core.music.source.MusicSource source) {
+        return source == com.muoniumplayer.core.music.source.MusicSource.QQ ? QQ : NETEASE;
     }
 }

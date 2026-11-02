@@ -114,6 +114,9 @@ public final class CrossSourceSwitcher {
             // 它覆盖的网易云 / QQ / 酷狗 / 酷我 / 咪咕天然坐在各自平台的位次上，
             // 优先级高于 B 站 —— 主流平台全空时才轮到 B 站 / GD 这两家。
             MusicPlatform.QISHUI,
+            // LOCAL 绝不进候选表（与 Spotify/Apple 同理）：本地文件没有「流」可以被别的平台
+            // 换走；反过来在线行也永远不该被「换」成本地文件——替身的身份会跟着队列落盘
+            // （播放恢复/一起听），一个指向用户磁盘路径的替身在别的机器上必然是死行。
     };
 
     static final int MAX_CANDIDATES_PER_SOURCE = 8;
@@ -329,6 +332,9 @@ public final class CrossSourceSwitcher {
         // 电台 / 播客节目永不自动换源：节目名是"第 N 期 · xxx"式的串行标题，
         // 拿去别的平台按歌名搜索只会匹配到毫不相干的歌，替身比失败更伤内容。
         if (current.isDjProgram()) return false;
+        // 本地文件永不换源：取流失败意味着文件没了/坏了，换一个在线平台的同名歌
+        // 就是「用户没点过的歌在放」，比报错糟得多。LOCAL 也不在候选表里，双向都堵死。
+        if (current.isLocal()) return false;
         if (!SwitchSourceSettings.isEnabled()) return false;
         if (candidatePlatforms(current.getSource()).isEmpty()) return false;
         // 一起听 / party 房间按曲目本体同步，本地悄悄换一首就是整房脱队。

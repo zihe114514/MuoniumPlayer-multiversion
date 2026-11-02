@@ -2,7 +2,9 @@ package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.core.management.FontManager;
+import com.muoniumplayer.core.ncm.music.LocalMusicLibrary;
 import com.muoniumplayer.core.ncm.music.LocalPlaylistStore;
+import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
@@ -42,11 +44,16 @@ public final class PlaylistCreateSheet extends NcmSheet {
     private static final String IDLE_TEXT = "只存在本机 · 可以收进任意音源的歌曲 · 不上传到任何平台";
     private static final String IDLE_TEXT_RENAME = "只改本机这一张的名字 · 里面的曲目与所属音源都不动";
 
+    /** 「导入本地文件夹」按钮的宽度。三个按钮一排，比链接导入那颗窄不了多少。 */
+    private static final double LOCAL_IMPORT_W = 128.0;
+
     private TextFieldWidget input;
     /** 非空即「重命名这一张」模式；为 null 时是新建。 */
     private final PlayList renaming;
     private String statusText = IDLE_TEXT;
     private boolean failed;
+    /** 「导入本地文件夹」的选择器在打开中；同一张建单页同一时刻只许一枚系统对话框。 */
+    private boolean folderImportInFlight;
 
     public PlaylistCreateSheet() {
         this(null);
@@ -142,12 +149,28 @@ public final class PlaylistCreateSheet extends NcmSheet {
             importFromLink.setHidden(renaming != null);
         });
 
+        // 本地文件夹是第三条路：扫磁盘上的音频文件灌成一张单。与「从链接导入」并列——
+        // 两条路互不依赖，用户有本地音乐就该有一个直达入口，而不是先建一张空单再想办法。
+        // 同样只在新建模式显示；重命名模式那颗「保存」按 importFromLink 隐藏后的位置排。
+        final RoundedButtonWidget importFromDisk = action(dialog, () -> PartyIcons.ALBUM,
+                () -> "导入本地文件夹", FontManager.pf12bold,
+                () -> NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), this::openLocalFolderImport);
+        importFromDisk.setBeforeRenderCallback(() -> {
+            importFromDisk.setBounds(LOCAL_IMPORT_W, BUTTON_H);
+            importFromDisk.setPosition(importFromLink.getRelativeX() + IMPORT_W + BUTTON_GAP,
+                    dialog.getHeight() - BUTTON_H - 10);
+            importFromDisk.setColor(importFromDisk.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            importFromDisk.setHidden(renaming != null);
+        });
+
         final RoundedButtonWidget confirm = action(dialog, () -> PartyIcons.CHECK,
                 () -> renaming == null ? "新建" : "保存", FontManager.pf12bold,
                 () -> 0xFFFFFF, this::submit);
         confirm.setBeforeRenderCallback(() -> {
             double left = renaming == null
-                    ? importFromLink.getRelativeX() + IMPORT_W + BUTTON_GAP
+                    ? importFromDisk.getRelativeX() + LOCAL_IMPORT_W + BUTTON_GAP
                     : cancel.getRelativeX() + CANCEL_W + BUTTON_GAP;
             confirm.setBounds(Math.max(1, dialog.getWidth() - (PAD + CARD_INSET) - left), BUTTON_H);
             confirm.setPosition(left, dialog.getHeight() - BUTTON_H - 10);
@@ -168,6 +191,86 @@ public final class PlaylistCreateSheet extends NcmSheet {
         // 先把自己收掉：两层浮层叠着的话，导入面板关掉后会露出这张空白的建单页。
         dispose();
         NCMScreen.getInstance().openPlaylistImport();
+    }
+
+    /**
+     * 「导入本地文件夹」：系统目录选择器挑一个磁盘目录，扫描其中的音频文件灌成一张新歌单。
+     *
+     * <p>先关掉自己再弹选择器：JFileChooser 是模态的系统对话框（{@code FoliaModelManager} 已有
+     * 同款先例），底下压着一张浮层会让关掉选择器后的画面多一帧残影。扫描在后台线程上跑
+     * （一个几百首的目录逐个读标签要几秒），完成后回主线程建单、灌曲、进详情页——
+     * {@code LocalPlaylistStore} 的落盘在主线程做与现有写入路径同一约定。</p>
+     *
+     * <p>防重入：选择器开着时按钮还能被点到（系统对话框吞不到我们的鼠标事件），加一扇闸。</p>
+     */
+    private void openLocalFolderImport() {
+        if (folderImportInFlight) return;
+        folderImportInFlight = true;
+        try {
+            String initial = LocalMusicLibrary.directories().isEmpty()
+                    ? new java.io.File("").getAbsolutePath() : LocalMusicLibrary.directories().get(0);
+            javax.swing.JFileChooser chooser = new javax.swing.JFileChooser(initial);
+            chooser.setFileSelectionMode(javax.swing.JFileChooser.DIRECTORIES_ONLY);
+            chooser.setDialogTitle("选择音乐文件夹");
+            chooser.setApproveButtonText("导入这个文件夹");
+            // 点击回调本身就跑在主线程上（addScheduledTask 有同线程 fast path，直接执行不排队），
+            // showOpenDialog 在这里模态弹出即可，FoliaModelManager.chooseDirectory 同款先例。
+            int choice = chooser.showOpenDialog(null);
+            if (choice != javax.swing.JFileChooser.APPROVE_OPTION) {
+                return;
+            }
+            final java.io.File picked = chooser.getSelectedFile();
+            if (picked == null || !picked.isDirectory()) {
+                return;
+            }
+            final String directory = picked.getAbsolutePath();
+            dispose();
+            com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil.runAsync(() -> {
+                try {
+                    LocalMusicLibrary.addDirectory(directory);
+                    java.util.List<com.muoniumplayer.core.ncm.music.dto.Music> tracks =
+                            LocalMusicLibrary.scanDirectory(directory);
+                    com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil
+                            .runOnMainThread(() -> finishLocalFolderImport(directory, tracks));
+                } catch (Throwable failure) {
+                    com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil
+                            .runOnMainThread(() -> DownloadDynamicIsland.showModelOperationResult(
+                                    "本地音乐", "导入失败：" + failure.getMessage(), false));
+                }
+            });
+        } finally {
+            folderImportInFlight = false;
+        }
+    }
+
+    /** 扫描完成后的主线程收尾：建单、灌曲、进详情页。空目录也要说话，不能静默吞掉。 */
+    private void finishLocalFolderImport(String directory,
+                                         java.util.List<com.muoniumplayer.core.ncm.music.dto.Music> tracks) {
+        final java.io.File dirFile = new java.io.File(directory);
+        final String name = dirFile.getName() == null || dirFile.getName().trim().isEmpty()
+                ? "本地音乐" : dirFile.getName();
+        if (tracks == null || tracks.isEmpty()) {
+            DownloadDynamicIsland.showModelOperationResult("本地音乐",
+                    "「" + name + "」里没有支持的音频文件（mp3 / flac / wav / m4a / aac）", false);
+            return;
+        }
+        final PlayList created;
+        try {
+            created = LocalPlaylistStore.create(name);
+        } catch (Throwable failure) {
+            DownloadDynamicIsland.showModelOperationResult("本地音乐",
+                    "建单失败：" + failure.getMessage(), false);
+            return;
+        }
+        int added = 0;
+        for (com.muoniumplayer.core.ncm.music.dto.Music track : tracks) {
+            if (LocalPlaylistStore.addTrack(created, track)) added++;
+        }
+        // 目录列表变了，侧栏下一次展开要重读；与建单路径同一句 markDirty。
+        NCMScreen.getInstance().markDirty();
+        DownloadDynamicIsland.showModelOperationResult("本地音乐",
+                "已导入 " + added + " 首 → 「" + created.getName() + "」", true);
+        NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(created));
     }
 
     private void submit() {

@@ -19,7 +19,7 @@ import java.util.Map;
  * 本地保存 Bilibili 的 Web Cookie 与账号展示资料。
  *
  * <p>形状与 {@link QishuiSessionStore} 一致：同一个原子写流程、同一份「快照不可变」的读接口。
- * 之所以不复用 {@code music_auth.json}，理由和酷狗/汽水那条注释相同 —— 那个文件由 Cadence 的
+ * 之所以不复用 {@code music_auth.json}，理由和酷狗/汽水那条注释相同 —— 那个文件由内置音源层的
  * {@code MusicCredentialStore} 整段重写，它只认识网易云 cookie 与 QQ 的 musicid/musickey，
  * 写进去的 B 站凭据会在下一次保存时被丢掉。</p>
  *

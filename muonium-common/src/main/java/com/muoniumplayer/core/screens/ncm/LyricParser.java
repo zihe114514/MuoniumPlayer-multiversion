@@ -7,7 +7,7 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXParseException;
-import top.fpsmaster.music.Lyric;
+import com.muoniumplayer.core.music.source.Lyric;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -100,10 +100,10 @@ public class LyricParser {
 
         // 统一 API 模型仍负责普通 LRC 与平台翻译；这里只接受真实逐字数据，不再伪造字符时间轴。
         try {
-            List<top.fpsmaster.music.LyricLine> remote = top.fpsmaster.music.lyric.LyricParser.INSTANCE
+            List<com.muoniumplayer.core.music.source.LyricLine> remote = com.muoniumplayer.core.music.source.LyricParser.INSTANCE
                     .parse(replace(lrc), replace(translated), "");
-            Lyric cadenceLyric = new Lyric(lrc, translated, "", remote);
-            List<LyricLine> converted = fromCadence(cadenceLyric, 0L, false);
+            Lyric muLyric = new Lyric(lrc, translated, "", remote);
+            List<LyricLine> converted = fromMuSource(muLyric, 0L, false);
             if (!converted.isEmpty()) {
                 applyRomanization(input, converted);
                 return converted;
@@ -118,12 +118,12 @@ public class LyricParser {
         return lyricLines;
     }
 
-    /** 把 Cadence 的统一歌词模型转换为项目现有渲染模型。 */
-    public static List<LyricLine> fromCadence(Lyric lyric, long trackDurationMs, boolean estimateMissingWords) {
+    /** 把 内置音源层 的统一歌词模型转换为项目现有渲染模型。 */
+    public static List<LyricLine> fromMuSource(Lyric lyric, long trackDurationMs, boolean estimateMissingWords) {
         List<LyricLine> result = new ArrayList<>();
         if (lyric == null || lyric.getLines() == null) return result;
 
-        for (top.fpsmaster.music.LyricLine source : lyric.getLines()) {
+        for (com.muoniumplayer.core.music.source.LyricLine source : lyric.getLines()) {
             if (source == null || source.isMetadata()) continue;
             String text = replace(source.getText()).trim();
             if (text.isEmpty()) continue;
@@ -134,11 +134,11 @@ public class LyricParser {
                 line.translationText = replace(source.getTranslation()).trim();
             }
 
-            List<top.fpsmaster.music.LyricWord> sourceWords = source.getWords();
+            List<com.muoniumplayer.core.music.source.LyricWord> sourceWords = source.getWords();
             if (sourceWords != null && !sourceWords.isEmpty()) {
                 List<TimedText> words = new ArrayList<>();
                 String pendingPrefix = "";
-                for (top.fpsmaster.music.LyricWord sourceWord : sourceWords) {
+                for (com.muoniumplayer.core.music.source.LyricWord sourceWord : sourceWords) {
                     if (sourceWord == null || sourceWord.getText() == null) continue;
                     String wordText = replace(sourceWord.getText());
                     if (wordText.isEmpty()) continue;

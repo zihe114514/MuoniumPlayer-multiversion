@@ -103,22 +103,6 @@ public final class WorldLyricsHudDraw {
      */
     private static int wrDiagFrame;
     private static int wrActiveFrames;
-    /** 辉光 mask 缓冲（capture 期 WorldBillboard 双写字形 quad、present 期 bloom 消费）。 */
-    private static final com.muoniumplayer.core.lyrics3d.MaskQuadCollector glowMask =
-            new com.muoniumplayer.core.lyrics3d.MaskQuadCollector();
-    private static BloomComposite glowBloom;
-
-    /**
-     * WorldBillboard.begin 取（恒返回缓冲；beginFrame 由渲染层帧头清）。
-     * 不能判 GlowBloom.configured：begin（collect 期）比渲染层的 configure()
-     * 早一阶段，而上一帧 present 的 take() 已把 configured 清零 —— 按它门控
-     * 会让 mask 采集永远关闭（bloom 从第一帧起就不跑）。未配置帧 mask 有
-     * quadCount==0 短路，恒返回零成本。
-     */
-    static com.muoniumplayer.core.lyrics3d.MaskQuadCollector glowMaskTarget() {
-        return glowMask;
-    }
-
         /** 本帧矩阵快照（worldRenderDraw 写、presentComposite 消费）。 */
     private static final Matrix4f snapProj = new Matrix4f();
     private static final Matrix4f snapView = new Matrix4f();
@@ -344,8 +328,7 @@ public final class WorldLyricsHudDraw {
             LyricPresentRenderer.drawToFbo0(snapProj, snapView,
                     snapBobConjValid ? snapBobConj : null,
                     win != null ? win.getWidth() : target.width,
-                    win != null ? win.getHeight() : target.height,
-                    glowMask, captureModeThisFrame());
+                    win != null ? win.getHeight() : target.height);
         } catch (Throwable t) {
             LyricPresentRenderer.reset();
             LyricPresentRenderer.logFailure(t);
@@ -360,11 +343,6 @@ public final class WorldLyricsHudDraw {
                 && Float.isFinite(m.m22()) && Float.isFinite(m.m33())
                 && Float.isFinite(m.m23()) && Float.isFinite(m.m30())
                 && Float.isFinite(m.m31()) && Float.isFinite(m.m32());
-    }
-
-    /** 一次性诊断（转 Bridge 同名；BloomComposite 等深层模块共用）。 */
-    static void traceOnce(String msg) {
-        WorldLyricsBridge.traceOnce(msg);
     }
 
         /** present 侧诊断/日志封装（放 LyricPresentRenderer 里以便共用熔断）。 */

@@ -1,7 +1,7 @@
 package com.muoniumplayer.core.screens.ncm;
 
-import top.fpsmaster.music.QrCode;
-import top.fpsmaster.music.QrLoginState;
+import com.muoniumplayer.core.music.source.QrCode;
+import com.muoniumplayer.core.music.source.QrLoginState;
 import com.google.gson.JsonObject;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.OptionsUtil;
@@ -2356,8 +2356,8 @@ public class AccountManagerOverlay extends NcmSheet {
                 int transientErrors = 0;
 
                 while (isCurrent(platform, token)) {
-                    // 二维码已经初始化了 Cadence 的登录会话。不要在每次轮询时重新套用旧的网易云
-                    // cookie：那会在 Cadence 落盘之前就把刚扫上的账号弄失效。
+                    // 二维码已经初始化了 内置音源层 的登录会话。不要在每次轮询时重新套用旧的网易云
+                    // cookie：那会在 内置音源层 落盘之前就把刚扫上的账号弄失效。
                     QrLoginState state = wechat
                             ? NeteaseMusicService.checkQqWechatQrCode(qr)
                             : NeteaseMusicService.checkQrCodeSession(platform, qr);

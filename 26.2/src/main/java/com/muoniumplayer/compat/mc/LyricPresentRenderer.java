@@ -41,6 +41,8 @@ final class LyricPresentRenderer {
     private static final Object[] segTextures = new Object[256];
     private static final int[] segQuadStart = new int[256];
     private static final int[] segQuadCount = new int[256];
+    /** 段的混合模式：true = 加色（晕格，srcAlpha,one）/ false = 标准 alpha（墨格）。 */
+    private static final boolean[] segAdditive = new boolean[256];
     private static int segCount;
 
     /** 诊断：最近一次 draw 实际提交的 quad 数 / 采集端累计拒绝数（缓冲满/段满）。 */
@@ -72,17 +74,19 @@ final class LyricPresentRenderer {
                         float x1, float y1, float z1, float u1, float v1,
                         float x2, float y2, float z2, float u2, float v2,
                         float x3, float y3, float z3, float u3, float v3,
-                        int argb) {
+                        int argb, boolean additive) {
         if (FAILED.get()) return;
         Batch b = batches[front];
         if (b.quadCount >= MAX_QUADS) { rejectedQuads++; return; }
         Object tex = pageRl;
-        // 跨页开新段（同页连续 quad 归同段；页序即绘制序）
-        if (segCount == 0 || !java.util.Objects.equals(segTextures[segCount - 1], tex)) {
+        // 跨「页+混合模式」开新段（同页同模式连续 quad 归同段；段序即绘制序）
+        if (segCount == 0 || !java.util.Objects.equals(segTextures[segCount - 1], tex)
+                || segAdditive[segCount - 1] != additive) {
             if (segCount >= segTextures.length) { rejectedQuads++; return; }
             segTextures[segCount] = tex;
             segQuadStart[segCount] = b.quadCount;
             segQuadCount[segCount] = 0;
+            segAdditive[segCount] = additive;
             segCount++;
         }
         segQuadCount[segCount - 1]++;
@@ -201,21 +205,9 @@ final class LyricPresentRenderer {
 
     static void drawToFbo0(org.joml.Matrix4f projection, org.joml.Matrix4f viewRotation,
                            org.joml.Matrix4f bobConjugate,
-                           int windowW, int windowH,
-                           com.muoniumplayer.core.lyrics3d.MaskQuadCollector glowMask,
-                           boolean captureMode) {
+                           int windowW, int windowH) {
         if (FAILED.get()) return;
         Batch b = batches[front];
-        // 世界 submit 路由（captureMode=false）：本体已由帧图画出，这里只跑
-        // bloom-only 合成 —— mask 缓冲在采集期为同一次遍历双写，几何仍逐帧对齐。
-        if (!captureMode) {
-            runGlowOnly(glowMask, projection, viewRotation, bobConjugate, windowW, windowH);
-            front = 1 - front;
-            batches[front].quadCount = 0;
-            segCount = 0;
-            captured = false;
-            return;
-        }
         if (b.quadCount == 0 || segCount == 0) return;
         scanVertexZ(b);
         if (!ensureGlResources()) return;
@@ -226,26 +218,6 @@ final class LyricPresentRenderer {
             org.joml.Matrix4f mvp = bobConjugate == null
                     ? new org.joml.Matrix4f(projection).mul(viewRotation)
                     : new org.joml.Matrix4f(projection).mul(viewRotation).mul(bobConjugate);
-
-            // 辉光后处理（清晰本体之前）：mask 平色 → bloom → 加色垫到 FBO 0。
-            // 合成是加法、本体随后 alpha 混合 —— 晕垫底、字芯被能量推白。
-            // mask 空/未配置/熔断时整段跳过，随后本体照常画。
-            if (glowMask != null) {
-                com.muoniumplayer.core.lyrics3d.GlowBloom.Params gp =
-                        com.muoniumplayer.core.lyrics3d.GlowBloom.take();
-                if (gp != null && glowMask.quadCount() > 0) {
-                    if (glowBloom == null) glowBloom = new BloomComposite();
-                    if (!glowBloom.failed()) {
-                        glowBloom.run(glowMask.floats(), glowMask.quadCount(), mvp,
-                                windowW, windowH,
-                                ((gp.tintRgb >>> 16) & 0xFF) / 255f,
-                                ((gp.tintRgb >>> 8) & 0xFF) / 255f,
-                                (gp.tintRgb & 0xFF) / 255f,
-                                gp.exposure, gp.spread, 0.12f);
-                    }
-                }
-                glowMask.beginFrame();   // 已消费，防陈旧
-            }
 
             int prevProgram = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL20.GL_CURRENT_PROGRAM);
             int prevVao = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_VERTEX_ARRAY_BINDING);
@@ -303,6 +275,17 @@ final class LyricPresentRenderer {
                     if (!(segTex instanceof net.minecraft.resources.Identifier segRl)) continue;
                     AbstractTexture tex = tm.getTexture(segRl);
                     if (tex == null || tex.getTexture() == null) continue;
+                    // 晕格段 = 加色（srcAlpha,one）：只增不减，光晕真正「照亮」背景；
+                    // 墨格段 = 标准 alpha。段间差一次 glBlendFuncSeparate，其余状态不动
+                    if (segAdditive[s]) {
+                        org.lwjgl.opengl.GL14.glBlendFuncSeparate(
+                                org.lwjgl.opengl.GL11.GL_SRC_ALPHA, org.lwjgl.opengl.GL11.GL_ONE,
+                                org.lwjgl.opengl.GL11.GL_ONE, org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA);
+                    } else {
+                        org.lwjgl.opengl.GL14.glBlendFuncSeparate(
+                                org.lwjgl.opengl.GL11.GL_SRC_ALPHA, org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA,
+                                org.lwjgl.opengl.GL11.GL_ONE, org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA);
+                    }
                     int glId;
                     try {
                         // 26.3 公开方法（javap 核对）；Vulkan 后端此处必然不匹配 → 熔断
@@ -391,32 +374,6 @@ final class LyricPresentRenderer {
             """;
 
     private static int glProgram, glVbo, glVao, glEbo, glUMvp, glUTex;
-
-    /**
-     * bloom-only 合成（世界 submit 路由）：MVP 与世界帧图展开的字体管线同源
-     * （P·view·bobConj），mask 能量加色垫到 FBO 0。未配置/空 mask/熔断时零成本。
-     */
-    private static void runGlowOnly(com.muoniumplayer.core.lyrics3d.MaskQuadCollector glowMask,
-                                    org.joml.Matrix4f projection, org.joml.Matrix4f viewRotation,
-                                    org.joml.Matrix4f bobConjugate, int windowW, int windowH) {
-        if (glowMask == null || windowW <= 0 || windowH <= 0) return;
-        com.muoniumplayer.core.lyrics3d.GlowBloom.Params gp =
-                com.muoniumplayer.core.lyrics3d.GlowBloom.take();
-        if (gp == null || glowMask.quadCount() == 0) return;
-        if (glowBloom == null) glowBloom = new BloomComposite();
-        if (glowBloom.failed()) return;
-        org.joml.Matrix4f mvp = bobConjugate == null
-                ? new org.joml.Matrix4f(projection).mul(viewRotation)
-                : new org.joml.Matrix4f(projection).mul(viewRotation).mul(bobConjugate);
-        glowBloom.run(glowMask.floats(), glowMask.quadCount(), mvp, windowW, windowH,
-                ((gp.tintRgb >>> 16) & 0xFF) / 255f,
-                ((gp.tintRgb >>> 8) & 0xFF) / 255f,
-                (gp.tintRgb & 0xFF) / 255f,
-                gp.exposure, gp.spread, 0.12f);
-    }
-
-    /** 辉光后处理管线（惰性建；熔断后 permanently 跳过）。 */
-    private static BloomComposite glowBloom;
 
     /** 一次性建裸 GL 资源；失败永久熔断（回退世界路由）。 */
     private static boolean ensureGlResources() {

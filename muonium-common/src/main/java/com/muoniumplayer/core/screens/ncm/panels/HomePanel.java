@@ -395,7 +395,7 @@ public class HomePanel extends NCMPanel {
         MultiThreadingUtil.runAsync(() -> {
             List<PlayList> result = Collections.emptyList();
             try {
-                // Cadence 已提供 QQ 发现页 GetRecommendFeed，优先展示真实推荐歌单。
+                // 内置音源层 已提供 QQ 发现页 GetRecommendFeed，优先展示真实推荐歌单。
                 result = NeteaseMusicService.getQQRecommendPlaylists(QQ_HOME_TARGET);
                 if (result.isEmpty()) {
                     // 推荐接口临时不可用时才回退到排行榜，避免主页整页空白。

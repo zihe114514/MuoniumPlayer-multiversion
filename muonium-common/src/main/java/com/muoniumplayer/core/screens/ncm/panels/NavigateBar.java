@@ -91,7 +91,7 @@ public class NavigateBar extends NCMPanel {
         }
     };
     /**
-     * 网易云搜索同时支持单曲和歌单；QQ Cadence 目前只提供单曲。
+     * 网易云搜索同时支持单曲和歌单；QQ 内置音源层 目前只提供单曲。
      */
     private boolean playlistSearchMode;
     ScrollPanel playlistPanel = new ScrollPanel();

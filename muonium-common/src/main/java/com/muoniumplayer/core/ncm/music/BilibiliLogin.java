@@ -1,8 +1,8 @@
 package com.muoniumplayer.core.ncm.music;
 
 import com.google.gson.JsonObject;
-import top.fpsmaster.music.QrCode;
-import top.fpsmaster.music.QrLoginState;
+import com.muoniumplayer.core.music.source.QrCode;
+import com.muoniumplayer.core.music.source.QrLoginState;
 
 import java.net.URI;
 import java.net.URLEncoder;

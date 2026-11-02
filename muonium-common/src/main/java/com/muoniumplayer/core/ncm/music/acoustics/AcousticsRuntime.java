@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.ncm.music.acoustics;
 
+import com.muoniumplayer.core.utils.other.multithreading.BackgroundWork;
 import repackage.com.jsyn.engine.SynthesisEngine;
 import repackage.processing.sound.Engine;
 /**
@@ -8,9 +9,16 @@ import repackage.processing.sound.Engine;
  * <h2>线程与闸门</h2>
  * <ul>
  *   <li><b>游戏线程</b>:{@link #onClientTick(Object)} 由各版本树的共享 tick 桥调进来
- *       (参数是树的 {@code Minecraft} 实例,由树侧的采样器消费,这里不认识它)。
- *       每 tick 只做:开关判断、节流、把采样交给推导、结果写进 {@link SceneAcoustics}
- *       的 volatile 目标量。全部 try/Throwable 包住 —— tick 上的任何异常都不能带崩游戏。</li>
+ *       (参数是树的 {@code Minecraft} 实例)。每 tick 只做:开关判断、节流、
+ *       <b>把采样任务投递到后台池</b>(latest-wins)—— 主线程零方块读,射线
+ *       的几十上百次体素投射全部发生在 MIN_PRIORITY 工作线程上,画面对采样
+ *       完全无感。全部 try/Throwable 包住 —— tick 上的任何异常都不能带崩游戏。</li>
+ *   <li><b>后台线程</b>:消费树侧采样器 {@code capture()}(那里才知道树的
+ *       Minecraft),把一帧 {@link ListenerSample} 交给推导,结果写进
+ *       {@link SceneAcoustics} 的 volatile 目标量。同一时刻至多一个采样任务在飞
+ *       (AtomicBoolean 闸):任务没跑完时新 tick 的投递被<b>跳过</b>(busy-skip)
+ *       —— 采样周期拉长为 max(200ms, 采样+排队时长),没有待办记忆,但下一个
+ *       达标 tick 必然重采,不存在永久丢失;采样幂等,乱序无意义。</li>
  *   <li><b>音频线程</b>:{@link OutputChain} 只做 double→float→double 的搬运和最终
  *       交付,具体滤波在 {@link SceneAcoustics#render} 里,实时纪律见那边的类注释。</li>
  * </ul>
@@ -30,15 +38,17 @@ public final class AcousticsRuntime {
 
     private static boolean installed;
 
-    /** 同一环境连续 tick 的复用窗口(毫秒):采样要遍历方块,空旷场景一 tick 几十次
-     *  方块读不算贵但也不白给;环境本身变化尺度是秒级,200ms 足够平滑。 */
+    /** 同一环境连续 tick 的复用窗口(毫秒):射线采样要遍历方块,后台线程跑也
+     *  不白给;环境本身变化尺度是秒级,200ms 足够平滑。 */
     private static final long SAMPLE_INTERVAL_MS = 200;
 
     private static long lastSampleMs;
-    private static boolean lastHadListener;
-    /** 一次性诊断:首次成功采样 / 首次 tick 异常 / 房间跨越,各自只打一条。 */
+    /** 采样任务在飞标记(latest-wins 的闸):true = 后台还有一轮没跑完。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean SAMPLING =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+    /** 一次性诊断:首次成功采样 / 首次采样异常 / 房间跨越,各自只打一条。 */
     private static boolean sampleLogged;
-    private static boolean tickFailureLogged;
+    private static boolean sampleFailureLogged;
     private static boolean roomLogged;
     /** 房间声学诊断的触发阈:低于它的湿声不值得占日志。 */
     private static final float ROOM_LOG_WET = 0.05f;
@@ -54,7 +64,7 @@ public final class AcousticsRuntime {
      * 引擎创建,而引擎在构造那一刻快照式选定音频设备管理器。设备兜底探测
      * ({@code installAudioDeviceFallbackIfMissing})必须在引擎创建<b>之前</b>完成,
      * 晚了就换不掉了 —— 提前建出来的引擎用着默认(可能是坏的)设备线,播放写进去
-     * 引擎线程卡死,表现就是「下载解码都完成、进度条不走」。tick 只写目标量,
+     * 引擎线程卡死,表现就是「下载解码都完成、进度条不走」。tick 只投递采样任务,
      * 目标量先于尾槽存在毫无问题:链路装上后的第一个缓冲就会读到它们。</p>
      */
     public static void ensureInstalled() {
@@ -80,40 +90,60 @@ public final class AcousticsRuntime {
     /**
      * 每 tick 入口,由树的共享 client tick 调。
      *
-     * <p><b>本方法不触碰音频引擎</b> —— 不创建、不查询、不挂接。引擎的创建时机归
-     * deck 装载路径管(见 {@link #ensureInstalled} 的时序说明);这里只把采样结果
-     * 写进 {@link SceneAcoustics} 的 volatile 目标量,链路装上前的写入会在第一个
-     * 缓冲被读到。</p>
+     * <p><b>本方法不触碰音频引擎</b> —— 不创建、不查询、不挂接。也不做几何采样:
+     * 节流窗口到期时把采样投到后台池(latest-wins),游戏线程立刻返回。后台
+     * 任务里再完成「采一帧 → 推导 → 写目标量」的全程。</p>
      *
      * @param sampler 树侧的采样器;传 {@code null} 表示「当前采不到」(主菜单等),
      *                等价于把目标量回静息。
      */
     public static void onClientTick(ListenerSampler sampler) {
         try {
-            if (!AcousticsSettings.isEnabled()) {
-                lastHadListener = false;
+            if (!AcousticsSettings.isEnabled() || sampler == null) {
+                // 关闭/采不到(主菜单):目标量回静息。闸不主动清 —— 在飞任务
+                // 的 finally 自会复位;清早了会与在飞任务竞态出第二个采样
+                // (BackgroundWork 并发 2),破坏「至多一个在飞」的契约。
+                // lastSampleMs 清零:下次进世界/重开开关立刻可采。
+                lastSampleMs = 0L;
                 SceneAcoustics.clearTarget();
                 return;
             }
-
             final long now = System.currentTimeMillis();
-            if (now - lastSampleMs < SAMPLE_INTERVAL_MS && lastHadListener) {
-                return; // 复用窗口内不重采;目标量保持上一帧,收敛交给音频线程。
+            if (now - lastSampleMs < SAMPLE_INTERVAL_MS) {
+                return; // 复用窗口内不投递;目标量保持上一帧,收敛交给音频线程。
             }
             lastSampleMs = now;
+            if (!SAMPLING.compareAndSet(false, true)) {
+                return; // 上一轮还没跑完:本轮跳过(latest-wins 由闸语义保证)
+            }
+            final ListenerSampler task = sampler;
+            BackgroundWork.submit(() -> {
+                try {
+                    runSample(task);
+                } finally {
+                    SAMPLING.set(false);
+                }
+            });
+        } catch (Throwable failure) {
+            // 投递失败(池关闭等)不当回事:下个 tick 再试。
+            SAMPLING.set(false);
+        }
+    }
 
-            ListenerSample sample = sampler == null ? null : sampler.capture();
+    /** 后台线程:采一帧 → 诊断 → 推导 → 写目标量。任何异常静默跳过本轮。 */
+    private static void runSample(ListenerSampler sampler) {
+        try {
+            ListenerSample sample = sampler.capture();
             if (sample != null && !sampleLogged) {
                 sampleLogged = true;
                 System.out.println("[MuoniumPlayer/Acoustics] 首次采样: 浸液=" + sample.submerged()
                         + " 天光=" + sample.openSky() + " 围合=" + String.format("%.2f", sample.enclosure())
                         + " 降水=" + sample.precipitation());
             }
-            lastHadListener = sample != null;
-            RoomPlan plan = SceneResponse.respond(sample, AcousticsSettings.strength());
+            final RoomPlan plan = SceneResponse.respond(sample, AcousticsSettings.strength());
             // 房间跨越诊断:湿声从静息爬过可闻阈时打一条 —— 实机一眼看出
             // 探针有没有「看见」房间,数值合不合理(回静息复位,可反复报)。
-            if (plan.wet >= ROOM_LOG_WET && !roomLogged) {
+            if (plan.wet >= ROOM_LOG_WET && sample != null && !roomLogged) {
                 roomLogged = true;
                 System.out.println("[MuoniumPlayer/Acoustics] 房间声学: 围合="
                         + String.format("%.2f", sample.enclosure())
@@ -129,9 +159,9 @@ public final class AcousticsRuntime {
         } catch (Throwable failure) {
             // 环境采样是锦上添花:任何异常都宁可让效果僵在上一帧,也不往上抛。
             // 但静默吞掉会让「没效果」无从排查 —— 同一种异常只报一次。
-            if (!tickFailureLogged) {
-                tickFailureLogged = true;
-                System.out.println("[MuoniumPlayer/Acoustics] tick 异常(此后同类静默):" + failure);
+            if (!sampleFailureLogged) {
+                sampleFailureLogged = true;
+                System.out.println("[MuoniumPlayer/Acoustics] 采样异常(此后同类静默):" + failure);
             }
         }
     }

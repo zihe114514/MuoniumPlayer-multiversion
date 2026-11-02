@@ -659,6 +659,24 @@ final class MusicCoverService {
     }
 
     private static void loadMainCoverAsync(Music music, Location musicCover, Location musicCoverBlur) {
+        // 本地文件没有「封面 URL」可下：图在文件标签里（APIC / METADATA_BLOCK_PICTURE / covr），
+        // 由 LocalMusicLibrary 提取落盘成 PNG。提取不到（没嵌图/坏图）就走 IOException 兜底，
+        // 界面落到字母占位，与在线平台取不到封面同一待遇。
+        if (music != null && music.isLocal()) {
+            MultiThreadingUtil.runAsync(() -> {
+                try {
+                    if (!LocalMusicLibrary.ensureCoverExtracted(music)) return;
+                    BufferedImage coverImage = ImageIO.read(
+                            com.muoniumplayer.core.ncm.music.LocalMusicLibrary.coverFileOf(music));
+                    if (coverImage != null) {
+                        loadCoverTextures(music, coverImage, musicCover, musicCoverBlur);
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            });
+            return;
+        }
         MultiThreadingUtil.runAsync(() -> {
             try {
                 @Cleanup
@@ -678,11 +696,14 @@ final class MusicCoverService {
     private static void loadCoverTextures(Music music, BufferedImage coverImage,
                                           Location musicCover, Location musicCoverBlur) {
         int[] palette = CoverPalette.extract(coverImage, 6);
+        int[] representatives = CoverRepresentativeColors.extract(coverImage, 4);
         if (music != null) {
             music.setCoverPalette(palette);
+            music.setRepresentativeColors(representatives);
         }
         if (music == CloudMusic.currentlyPlaying) {
             CoverThemePalette.set(palette);
+            CoverGradientColors.set(representatives);
         }
         Textures.loadTexture(musicCover, coverImage);
         // 低优先级池：31 半径的高斯模糊是纯 CPU 卷积，一张 320×320 的封面就能吃满一个核几十毫秒。
@@ -713,6 +734,22 @@ final class MusicCoverService {
     }
 
     private static void loadSmallCoverAsync(Music music, Location musicCoverSmall) {
+        // 本地文件与主封面同一来源：标签里的嵌入图直接缩读，没有 URL 可下。
+        if (music != null && music.isLocal()) {
+            MultiThreadingUtil.runAsync(() -> {
+                try {
+                    if (!LocalMusicLibrary.ensureCoverExtracted(music)) return;
+                    try (InputStream smallCoverStream = new java.io.FileInputStream(
+                            LocalMusicLibrary.coverFileOf(music))) {
+                        BufferedImage smallCoverImage = DynamicTexture.readImage(smallCoverStream);
+                        Textures.loadTexture(musicCoverSmall, smallCoverImage);
+                    }
+                } catch (Throwable t) {
+                    System.err.println("[Music] 本地小封面加载失败: " + t);
+                }
+            });
+            return;
+        }
         MultiThreadingUtil.runAsync(() -> {
             // 与主封面路径同款 try-with-resources：不 close 的话每首小封面都漏一条网络连接，
             // DynamicTexture.readImage 只读不关。

@@ -146,6 +146,13 @@ public class FontManager extends AbstractManager {
         private Font builtinFallback;
         private final FontKerning builtinKerning;
         /**
+         * 韩文回退（Noto Sans KR）。主包刻意不带：首启动为 {@code null}，字体包下载完成后由
+         * {@link FontManager#applyKoreanFallback} 追加进链并登记到这里，之后用户换字体/
+         * 换回内置的组链都会带上它；字体包更新重下时按身份整体替换
+         * （见 {@link #swapKoreanFallback}）。
+         */
+        private Font koreanFallback;
+        /**
          * 内置字体下的行盒，锁定用。
          *
          * <p>懒取而不是构造时取：{@link CFontRenderer#lineBox()} 要等 Skia 把字体解析出来才有值，
@@ -180,6 +187,16 @@ public class FontManager extends AbstractManager {
                 this.builtinFallback = newBold;
             }
         }
+
+        /**
+         * 韩文字体包热接入/换版时同步这里：按身份替换（两把都是 {@code null} 也是一次合法
+         * 替换——首启动下载完成，槽位从无到有）。
+         */
+        private void swapKoreanFallback(Font oldKorean, Font newKorean) {
+            if (this.koreanFallback == oldKorean) {
+                this.koreanFallback = newKorean;
+            }
+        }
     }
 
     /**
@@ -198,7 +215,7 @@ public class FontManager extends AbstractManager {
                 continue;
             }
             slot.renderer.retarget(main,
-                    new Font[]{slot.builtinMain, slot.builtinFallback},
+                    withKorean(slot, new Font[]{slot.builtinMain, slot.builtinFallback}),
                     slot.lockedLineBox(),
                     slot.bold ? fakeBoldBold : fakeBoldRegular,
                     null);
@@ -210,10 +227,22 @@ public class FontManager extends AbstractManager {
     /** 换回随 mod 打包的字体：连字间距表一起还原，度量口径也不再锁。 */
     public static void restoreBuiltinTextFonts() {
         for (TextSlot slot : TEXT_SLOTS) {
-            slot.renderer.retarget(slot.builtinMain, new Font[]{slot.builtinFallback},
+            slot.renderer.retarget(slot.builtinMain,
+                    withKorean(slot, new Font[]{slot.builtinFallback}),
                     -1, false, slot.builtinKerning);
         }
         com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas.onFontChanged();
+    }
+
+    /** 组回退链时把韩文回退（若已就位）挂在链尾；没就位就原样返回。 */
+    private static Font[] withKorean(TextSlot slot, Font[] base) {
+        if (slot.koreanFallback == null) {
+            return base;
+        }
+        Font[] grown = new Font[base.length + 1];
+        System.arraycopy(base, 0, grown, 0, base.length);
+        grown[base.length] = slot.koreanFallback;
+        return grown;
     }
 
     /** 内置正文字体的主字体实例。用户挑的字体解析不出 AWT 句柄时拿它兜底量墨迹。 */
@@ -227,9 +256,10 @@ public class FontManager extends AbstractManager {
     }
 
     /**
-     * 完整字体热启用：把所有渲染器回退链里的<b>子集</b>苹方换成同款全量实例。
+     * 完整字体热启用：把所有渲染器回退链里的<b>子集</b>苹方换成同款全量实例，
+     * 并把韩文回退（Noto Sans KR 两档）挂进正文渲染器的链尾。
      *
-     * <p>调用约定：{@code newNormal}/{@code newBold} 必须已在 {@code SkijaText}
+     * <p>调用约定：四个 {@code Font} 必须已在 {@code SkijaText}
      * 登记过字节（{@link FontAssetDownload} 在下载线程上解析好再传过来），
      * 且本方法只能在<b>渲染线程</b>上调——引用替换本身不碰 GL，但渲染器内部的
      * Skia 字体对象要就地重建。渲染器实例一概不换：预热控件树、按实例缓存的
@@ -238,7 +268,8 @@ public class FontManager extends AbstractManager {
      * @return 成功换掉返回 true；启动路径没走全（缓存里没有旧实例）时返回 false，
      *         完整字体留待下次启动由 {@link #readFont} 的缓存优先路径自然启用
      */
-    public static boolean applyFullFontAssets(Font newNormal, Font newBold) {
+    public static boolean applyFullFontAssets(Font newNormal, Font newBold,
+                                              Font newKoreanRegular, Font newKoreanBold) {
         String normalPath = builtinFallbackPath(false);
         String boldPath = builtinFallbackPath(true);
         Font oldNormal = fonts.get(normalPath);
@@ -264,11 +295,56 @@ public class FontManager extends AbstractManager {
         }
         System.out.println("[MuoniumPlayer] 完整字体热启用：更新了 " + swappedRenderers
                 + " 个渲染器的回退链");
+        if (newKoreanRegular != null && newKoreanBold != null) {
+            // 韩文接入自己会作废一次 3D 歌词图集；下面苹方的收尾再作废一次，幂等无害。
+            applyKoreanFallback(newKoreanRegular, newKoreanBold);
+        }
         // 3D 歌词的烘焙字体是独立派生渲染器（deriveAtSize），不会随上面的
         // swapFallbackFont 自动失效 —— CJK 字形来自回退链，热启用后不失效图集
         // 就会出现「界面已是全量字体、3D 歌词还是旧子集字形」。本方法只在渲染线程调。
         com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas.onFontChanged();
         return true;
+    }
+
+    /**
+     * 韩文回退字体热接入：把 Noto Sans KR（常规/粗体）挂进所有正文渲染器的回退链尾。
+     *
+     * <p>两种入口形态：首启动字体包刚下完——链里还没有韩文，{@code fonts} 里也查不到
+     * 旧实例，走 {@link CFontRenderer#appendFallbackFont} 追加；之后字体包更新重下——
+     * 链里是旧实例，走 {@link CFontRenderer#swapFallbackFont} 按身份替换。
+     * 调用约定与 {@link #applyFullFontAssets} 相同：字体字节先在 {@code SkijaText}
+     * 登记过，且只能在渲染线程上调。{@link TextSlot#koreanFallback} 同步登记，
+     * 用户之后再换字体/换回内置时韩文不会从链里丢掉。</p>
+     *
+     * @return 有渲染器的回退链被改动返回 true
+     */
+    public static boolean applyKoreanFallback(Font newRegular, Font newBold) {
+        if (newRegular == null || newBold == null) {
+            return false;
+        }
+        String regularPath = builtinKoreanPath(false);
+        String boldPath = builtinKoreanPath(true);
+        Font oldRegular = fonts.get(regularPath);
+        Font oldBold = fonts.get(boldPath);
+        fonts.put(regularPath, newRegular);
+        fonts.put(boldPath, newBold);
+        int changed = 0;
+        for (TextSlot slot : TEXT_SLOTS) {
+            Font old = slot.bold ? oldBold : oldRegular;
+            Font replacement = slot.bold ? newBold : newRegular;
+            slot.swapKoreanFallback(old, replacement);
+            boolean hit = old != null && old != replacement
+                    ? slot.renderer.swapFallbackFont(old, replacement)
+                    : slot.renderer.appendFallbackFont(replacement);
+            if (hit) {
+                changed++;
+            }
+        }
+        System.out.println("[MuoniumPlayer] 韩文回退热接入：更新了 " + changed
+                + " 个渲染器的回退链");
+        // 3D 歌词的烘焙字体从正文槽派生，韩文进链后图集同样要作废重烘焙。
+        com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas.onFontChanged();
+        return changed > 0;
     }
 
     public static List<CFontRenderer> getAllFontRenderers() {
@@ -557,13 +633,24 @@ public class FontManager extends AbstractManager {
      * 建一档<b>正文</b>渲染器并登记进 {@link #TEXT_SLOTS}，于是它能被用户换字体。
      *
      * <p>图标字号一律走 {@link #create}：换掉图标字体等于把界面上所有图标画成别的字形。</p>
+     *
+     * <p>韩文回退在启动装配期就尝试挂链：字体缓存里已有全量 Noto Sans KR（此前某次启动
+     * 下载好了）就启动即用；没有就是 {@code null}，链里先不放韩文，等
+     * {@link FontAssetDownload} 下载完成后由 {@link #applyKoreanFallback} 热接入。
+     * 此刻渲染还没开始，{@code appendFallbackFont} 与构造器是一回事。</p>
      */
     private static CFontRenderer createText(float size, String name) {
         CFontRenderer renderer = create(size, name);
         boolean bold = "pf_middleblack".equals(name);
         String mainPath = builtinMainPath(bold);
-        TEXT_SLOTS.add(new TextSlot(renderer, bold, readFont(mainPath),
-                readFont(builtinFallbackPath(bold)), readFontKerning(mainPath)));
+        Font korean = koreanFontOrNull(bold);
+        if (korean != null) {
+            renderer.appendFallbackFont(korean);
+        }
+        TextSlot slot = new TextSlot(renderer, bold, readFont(mainPath),
+                readFont(builtinFallbackPath(bold)), readFontKerning(mainPath));
+        slot.koreanFallback = korean;
+        TEXT_SLOTS.add(slot);
         return renderer;
     }
 
@@ -575,6 +662,30 @@ public class FontManager extends AbstractManager {
     /** 内置正文字体的中文回退（苹方）。 */
     private static String builtinFallbackPath(boolean bold) {
         return bold ? "/muonium/fonts/pf_middleblack.ttf" : "/muonium/fonts/pf_normal.ttf";
+    }
+
+    /** 内置正文字体的韩文回退（Noto Sans KR）。主包不带，走 {@code readFontBytes} 的缓存优先路径。 */
+    private static String builtinKoreanPath(boolean bold) {
+        return bold ? "/muonium/fonts/notosanskr_bold.ttf" : "/muonium/fonts/notosanskr_regular.ttf";
+    }
+
+    /**
+     * 韩文回退字体：只在字体缓存里已有全量文件时读（{@link FontAssetDownload} 下载完成之后
+     * 的启动起生效）。缓存没有就安静地返回 {@code null}——主包刻意不带韩文子集，这个
+     * {@code null} 是正常形态，不算错误、不打堆栈。
+     */
+    private static Font koreanFontOrNull(boolean bold) {
+        String path = builtinKoreanPath(bold);
+        String fileName = path.substring(path.lastIndexOf('/') + 1);
+        long pinned = FontAssetDownload.pinnedBytes(fileName);
+        if (pinned <= 0) {
+            return null;
+        }
+        java.io.File cached = FontAssetDownload.cachedFile(fileName);
+        if (!cached.isFile() || cached.length() != pinned) {
+            return null;
+        }
+        return readFont(path);
     }
 
     @Override

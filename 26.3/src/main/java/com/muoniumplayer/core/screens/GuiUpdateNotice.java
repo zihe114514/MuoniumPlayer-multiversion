@@ -4,6 +4,7 @@ import com.muoniumplayer.compat.lwjgl2.Keyboard;
 import com.muoniumplayer.compat.mc.GuiScreen;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.screens.ncm.UpdateNoticeOverlay;
+import com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale;
 import com.muoniumplayer.core.update.UpdateChecker;
 import com.muoniumplayer.render.skija.SkijaGfx;
 import net.minecraft.client.Minecraft;
@@ -83,18 +84,34 @@ public class GuiUpdateNotice extends GuiScreen {
         // 提示显示期间不渲染 HUD，RenderSystem 的分辨率会停在上一次游戏帧；不刷新的话窗口 resize
         // 或改 GUI Scale 之后布局与鼠标映射都会错位（这是它自己在 javadoc 里写明的用法）。
         RenderSystem.refreshResolution();
-        RenderSystem.FIXED_SCALE = false;
-        overlay.setBounds(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
-        overlay.renderWidget(mouseX, mouseY, 0);
-        if (overlay.shouldClose()) {
-            dismiss();
+        // 强制布局轴（与公告中心同款）：浮层排版常量按布局轴书写，GUI 轴下跟随 GUI Scale 缩放。
+        WindowAdaptiveScale.beginForced();
+        try {
+            double sx = RenderSystem.getWidthNotScaled() / RenderSystem.getWidth();
+            double sy = RenderSystem.getHeightNotScaled() / RenderSystem.getHeight();
+            overlay.setBounds(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
+            overlay.renderWidget((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy), 0);
+            if (overlay.shouldClose()) {
+                dismiss();
+            }
+        } finally {
+            WindowAdaptiveScale.end();
         }
     }
 
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
         // 悬停状态是上一帧渲染时算出来的，所以派发要放在渲染之后——调用点本来就是这个顺序。
-        overlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+        // 与 drawScreen 同括号同换算：绘制与命中必须同轴。
+        WindowAdaptiveScale.beginForced();
+        try {
+            double sx = RenderSystem.getWidthNotScaled() / RenderSystem.getWidth();
+            double sy = RenderSystem.getHeightNotScaled() / RenderSystem.getHeight();
+            overlay.onMouseClickReceived((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy),
+                    mouseButton);
+        } finally {
+            WindowAdaptiveScale.end();
+        }
     }
 
     @Override

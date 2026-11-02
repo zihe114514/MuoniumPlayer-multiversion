@@ -33,8 +33,18 @@ class HudSettingsTaxonomyStaticTest {
     private static final List<String> TITLES = Arrays.asList(
             "歌词样式", "3D 歌词", "面板与卡片", "灵动岛", "播放", "界面与主题", "信息栏与封面", "缓存与公告");
 
-    /** 与 {@link #TITLES} 同序的条目数；总和必须等于 {@link #TOTAL}。 */
-    private static final List<Integer> COUNTS = Arrays.asList(28, 22, 9, 25, 26, 33, 6, 3);
+    /**
+     * 3D 页条目数按树分支：26.x 的 3D 页有「封面代表色」四色板与「封面渐变」
+     * （取色 8 条），1.20.1~1.21.11 的面板还没搬这组（取色只有文字色/发光色 2 条），
+     * 3D 页 23 条。共享测试一份源跑五棵树 —— 基准随树取，禁止悄悄改某一个数的口径
+     * 与 26.x 版注释同款。
+     */
+    private static final List<Integer> COUNTS =
+            Arrays.asList(28, 30, 9, 25, 26, 33, 6, 3);
+
+    private static String versionName() {
+        return ProjectPaths.versionRoot().getFileName().toString();
+    }
 
     /** 「界面与主题」那页 2026-09-30 从 19 条长到 21 条：真玻璃材质组多了「实时背景采集」与
      *  「帧率不够时自动摘玻璃」两个开关；同日傍晚又长到 26 条：多了四面各自的模糊倍率
@@ -69,8 +79,17 @@ class HudSettingsTaxonomyStaticTest {
      *  2026-10-31 「无缝切换」分类随语义改名为「播放」（交接 + 输出修饰），其下新增
      *  「场景声学」组 5 条（总开关 / 水面之下 / 封闭空间 / 降水天气 / 强度四档 choice；
      *  细调滑条在音效调音台的场景声学子页）—— 播放页 21 → 26 条，147 → 152。
+     *  2026-11-01 「3D 歌词」页发光组新增「发光颜色」（跟随字色/自定义 两档 choice；
+     *  晕/墨分离发光改造的配套条目，取色器条目在自定义档外锁定不变）——
+     *  3D 歌词页 28 → 29 条，152 → 153。
+     *  同日「封面代表色」（关/自动提取/手动三档 choice）+「封面渐变」toggle +
+     *  手动色板 4 个取色条目同步到五树（此前 26.x 独有的组完成回迁）——
+     *  3D 歌词页 29 → 35 条（取色 8 条），153 → 159；按树分支的
+     *  LEGACY_PALETTE_ABSENT 旧口径随之删除。
+     *  同日发光组新增「发光质量」choice（Standard/High/Ultra 三档分层管线，默认 High）——
+     *  3D 歌词页 +1 条。
      *  不新开分类页：ModernUI 分类条横排 8 格已满（见下方封顶测试）。 */
-    private static final int TOTAL = 152;
+    private static final int TOTAL = 160;
 
     @Test
     @DisplayName("分类就是这 7 页，顺序与每页条目数都不许悄悄变")
@@ -152,8 +171,15 @@ class HudSettingsTaxonomyStaticTest {
                 }
             }
         }
-        assertEquals(Arrays.asList("歌词样式", "歌词样式", "3D 歌词", "3D 歌词"), colorPages,
-                "桌面歌词的两个取色条目同页（一个地方配完），3D 歌词的文字色与发光色取色在自己那一页");
+        // 3D 页的取色：文字色 + 发光色 + 「封面代表色」手动色板 4 色（封面渐变
+        // 端点）—— 五树同构（发光颜色的 choice 条目不是 COLOR kind，不计入）。
+        List<String> expected3D = Arrays.asList("3D 歌词", "3D 歌词",
+                "3D 歌词", "3D 歌词", "3D 歌词", "3D 歌词");
+        List<String> expectedColorPages = new ArrayList<String>(
+                Arrays.asList("歌词样式", "歌词样式"));
+        expectedColorPages.addAll(expected3D);
+        assertEquals(expectedColorPages, colorPages,
+                "桌面歌词的两个取色条目同页（一个地方配完），3D 歌词的文字色/发光色/手动色板取色在自己那一页");
         assertTrue(targets.contains(HudSettingsModel.ColorTarget.CURRENT)
                         && targets.contains(HudSettingsModel.ColorTarget.NORMAL),
                 "当前行与普通行的颜色入口少了一个");

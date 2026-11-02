@@ -439,21 +439,21 @@ public class LxSourceProtocolStaticTest {
     @Test
     @DisplayName("搜索接线：脚本优先、空结果落回内置，且默认不问")
     public void searchIsWiredIntoPlayerSearch() throws IOException {
-        String cadence = readJava(Path.of("com", "muoniumplayer", "core", "ncm",
+        String serviceSource = readJava(Path.of("com", "muoniumplayer", "core", "ncm",
                 "music", "NeteaseMusicService.java").toString());
-        int body = cadence.indexOf("public static List<Music> search(String keyword, int limit)");
+        int body = serviceSource.indexOf("public static List<Music> search(String keyword, int limit)");
         assertTrue(body > 0, "找不到 search(String, int)");
-        int lxCall = cadence.indexOf("searchViaLxSource(keyword, limit)", body);
+        int lxCall = serviceSource.indexOf("searchViaLxSource(keyword, limit)", body);
         assertTrue(lxCall > body, "搜索链路没有问自定义源");
         // 必须排在内置分发之前（与取流同一口径：用户启用脚本就是为了用它）。
-        assertTrue(lxCall < cadence.indexOf("KuGouMusicService.search(keyword, limit)", body),
+        assertTrue(lxCall < serviceSource.indexOf("KuGouMusicService.search(keyword, limit)", body),
                 "自定义源应当排在内置各平台搜索之前");
-        assertTrue(cadence.contains("if (!fromScript.isEmpty()) return fromScript;"),
+        assertTrue(serviceSource.contains("if (!fromScript.isEmpty()) return fromScript;"),
                 "脚本没搜到时必须继续走内置链路");
         // 脚本答不上时不该白跑一次网易云会话初始化 —— 所以扩展问句要在 initialize 之前。
-        assertTrue(lxCall < cadence.indexOf("initialize(OptionsUtil.getCookie());", body),
+        assertTrue(lxCall < serviceSource.indexOf("initialize(OptionsUtil.getCookie());", body),
                 "自定义源搜索应当排在 initialize 之前，答上了就不必建会话");
-        assertTrue(cadence.contains("platformForSourceKey(sourceKey) == null"),
+        assertTrue(serviceSource.contains("platformForSourceKey(sourceKey) == null"),
                 "没有对应平台的源（kw / mg）不该被拿去搜索，结果拼不出可播曲目");
 
         String service = readJava(Path.of("com", "muoniumplayer", "core", "ncm",

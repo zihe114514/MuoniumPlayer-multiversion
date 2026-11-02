@@ -280,6 +280,10 @@ final class NowPlayingInfo implements SharedRenderingConstants {
                 return "SPOTIFY";
             case APPLE:
                 return "APPLE MUSIC";
+            case LOCAL:
+                // 本地文件没有英文短名约定；中文模式走 getDisplayName()（"本地音乐"），
+                // 英文模式给一个通用的，别让它顶着「NETEASE」的名字。
+                return "LOCAL FILES";
             case NETEASE:
             default:
                 return "NETEASE";

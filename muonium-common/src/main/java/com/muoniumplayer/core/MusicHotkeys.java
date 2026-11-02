@@ -1,6 +1,8 @@
 package com.muoniumplayer.core;
 
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.ambient.AmbientMusicController;
+import com.muoniumplayer.core.ncm.music.ambient.AmbientSettings;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 
 /**
@@ -52,6 +54,23 @@ public final class MusicHotkeys {
             return CloudMusic.currentlyPlaying == null ? null : CloudMusic.currentlyPlaying.getName();
         } catch (Throwable ignored) {
             return null;
+        }
+    }
+
+    /**
+     * 立即按当前环境切一首（环境选曲的手动入口）。
+     *
+     * <p>与自动路径共用 {@link AmbientMusicController} 的同一套防抖与护栏；功能没开时
+     * 给一句提示而不是静默——用户会以为按键没生效。</p>
+     */
+    public static void triggerAmbientNow() {
+        try {
+            if (!AmbientSettings.isEnabled()) {
+                DownloadDynamicIsland.showAmbientScene("环境选曲未开启", "在设置里打开后可用");
+                return;
+            }
+            AmbientMusicController.triggerNow();
+        } catch (Throwable ignored) {
         }
     }
 }

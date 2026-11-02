@@ -304,7 +304,7 @@ class BilibiliFeatureStaticTest {
 
         String store = read(MUSIC_DIR, "BilibiliSessionStore.java");
         assertFalse(store.contains("MUSIC_AUTH"),
-                "music_auth.json 由 Cadence 的凭据存储整段重写，写进去的 B 站 Cookie 会被丢掉");
+                "music_auth.json 由内置音源层的凭据存储整段重写，写进去的 B 站 Cookie 会被丢掉");
         assertTrue(store.contains("BILIBILI_AUTH"));
 
         for (String screen : List.of("AccountManagerOverlay.java", "MusicSourceOverlay.java")) {
@@ -335,9 +335,9 @@ class BilibiliFeatureStaticTest {
         assertTrue(like.contains("BilibiliFavoriteService.setFavourite"), "红心没接收藏写入");
         assertTrue(widget.contains("canAddToPlaylist"), "「加入歌单」没按源分开（B 站该隐藏它）");
 
-        String cadence = read(MUSIC_DIR, "NeteaseMusicService.java");
-        assertTrue(cadence.contains("BilibiliSubtitleService.getLyricText"), "歌词没接字幕链路");
-        assertTrue(cadence.contains("BilibiliLogin.createQrCode"), "登录没接扫码");
+        String serviceSource = read(MUSIC_DIR, "NeteaseMusicService.java");
+        assertTrue(serviceSource.contains("BilibiliSubtitleService.getLyricText"), "歌词没接字幕链路");
+        assertTrue(serviceSource.contains("BilibiliLogin.createQrCode"), "登录没接扫码");
     }
 
     // ════════════════════════════ 小工具 ════════════════════════════

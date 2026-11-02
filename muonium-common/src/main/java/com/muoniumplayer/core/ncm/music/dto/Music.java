@@ -3,7 +3,7 @@ package com.muoniumplayer.core.ncm.music.dto;
 import com.google.gson.JsonObject;
 import com.google.gson.annotations.SerializedName;
 import lombok.Data;
-import top.fpsmaster.music.Track;
+import com.muoniumplayer.core.music.source.Track;
 import com.muoniumplayer.core.ncm.RequestUtil;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
@@ -59,6 +59,10 @@ public class Music {
     static final int DOLBY_ATMOS = 262144;
     static final int DIRTY = 1048576;
     static final long HIRES = 17179869184L;
+
+    /** 本地文件的伪 URL 前缀。与 {@code ApplePlaybackResolver.PSEUDO_URL_PREFIX} 同族：
+     *  不指向任何网络资源，由 {@code CloudMusic.cachedAudioFileLocked} 的分派点兑换成磁盘原文件。 */
+    public static final String LOCAL_PSEUDO_URL_PREFIX = "muonium-local://file/";
 
     @SerializedName("name")
     private final String name;
@@ -141,6 +145,8 @@ public class Music {
     private transient boolean foreignCover;
     /** 当前封面提取出的代表色，供歌词页主题与流体背景实时取用；不进入歌单序列化。 */
     private transient volatile int[] coverPalette;
+    /** 封面的代表色序列（色相彼此拉开、最多 4 色，主色在前）：歌词渐变消费；不进入歌单序列化。 */
+    private transient volatile int[] representativeColors;
     /**
      * 电台 / 播客节目标记。节目名是"第 N 期 · xxx"这类串行标题，拿去别的平台按歌名匹配
      * 只会换来一首先人后鬼的替身，所以这一位一旦置上，自动换源救援对该条目全程短路
@@ -160,6 +166,17 @@ public class Music {
      * 放行（这是设计终点不是故障）。完整版链路每次尝试前都会复位为 false。
      */
     private transient volatile boolean applePreviewOnly;
+    /**
+     * 本次 QQ 取流是否试听（取流层 {@code SongUrl#isTrial} 的镜像，与汽水/Apple 的
+     * transient 运行态同族）。QQ 侧此前靠解码时长推断，现在取流层直接带权益状态。
+     */
+    private transient volatile boolean qqTrialResolve;
+    /**
+     * 本次 QQ 取流的上游 result 码（{@code SongUrl#getResultCode} 的镜像）。
+     * 104003=无权限 / 104004=VKey 失败 / 104013=设备受限；-1=未取到。
+     * 播放失败归因按它说人话，不再笼统「当前账号拿不到完整版」。
+     */
+    private transient volatile int qqResultCode = -1;
     /** 自由选择的 GD 曲目的 GD Studio 聚合源 key（netease/joox/...）。 */
     private transient String gdPlatform;
     private transient String gdPicId;
@@ -222,7 +239,7 @@ public class Music {
     private transient boolean cloudSong;
     /** 歌曲/特权元数据宣称的最高提供方档位；空表示未提供。 */
     private transient String highestQualityLabel = "";
-    private transient Track cadenceTrack;
+    private transient Track muTrack;
 
     /** 为当前播放请求解析出的实际流质量。 */
     private transient volatile PlaybackQuality playbackQuality = PlaybackQuality.UNKNOWN;
@@ -326,7 +343,7 @@ public class Music {
         }
     }
 
-    /** 应用可选的网易云歌曲/特权字段，而不假定它们对 QQ/Cadence 曲目存在。 */
+    /** 应用可选的网易云歌曲/特权字段，而不假定它们对 QQ/内置音源层 曲目存在。 */
     public void applyNeteaseMetadata(JsonObject song, JsonObject privilege) {
         if (!isNetease()) return;
         cloudSong = cloudSong || isCloudMarked(song) || isCloudMarked(privilege);
@@ -414,8 +431,8 @@ public class Music {
             return fallback;
         }
     }
-    public static Music fromCadenceTrack(Track track) {
-        MusicPlatform platform = MusicPlatform.fromCadence(track.getSource());
+    public static Music fromMuSourceTrack(Track track) {
+        MusicPlatform platform = MusicPlatform.fromMuSource(track.getSource());
         String id = nonNull(track.getId());
         long stableId = platform == MusicPlatform.NETEASE
                 ? parseNeteaseId(id, track.getMid())
@@ -448,7 +465,7 @@ public class Music {
         music.sourceMid = track.getMid();
         music.externalCoverUrl = track.getCoverUrl();
         music.vip = track.getVip();
-        music.cadenceTrack = track;
+        music.muTrack = track;
         return music;
     }
 
@@ -658,6 +675,28 @@ public class Music {
     }
 
     /**
+     * 由一个本地音频文件构造 {@link Music} 行（{@code LocalMusicLibrary} 的落点签名；
+     * 字段拼装在那边完成，这里只补与平台耦合的公共约定）。
+     *
+     * <p>单独保留这个入口的意义：LOCAL 行的 {@code sourceId} 是磁盘路径（不是哈希），而
+     * {@link #getSourceId()} 对空 sourceId 会退化成 {@code String.valueOf(id)}——任何走
+     * 通用路径误用 LOCAL 行的代码都会拿到一串哈希数字当路径，那条失败模式必须在类型上
+     * 就断掉。播放走 {@link #resolveLocalPlayUrl()} 的伪 URL，零网络。</p>
+     */
+    public boolean isLocal() {
+        return getSource() == MusicPlatform.LOCAL;
+    }
+
+    /**
+     * 本地行的磁盘文件；缺失/已移动返回 null（播放链路据此报「文件已移动或删除」）。
+     * 语义完全委托 {@code LocalMusicLibrary.fileOf}，这里只是给播放链一个不用 import
+     * 具体实现类的读取点。
+     */
+    public java.io.File localFile() {
+        return com.muoniumplayer.core.ncm.music.LocalMusicLibrary.fileOf(this);
+    }
+
+    /**
      * 由一条 Apple Music 曲目元数据构造 {@link Music} 行。
      *
      * <p>与 {@link #fromSpotifyTrack} 同族但不同命：Apple 行<b>不是纯元数据行</b>——官方有
@@ -713,7 +752,7 @@ public class Music {
      * 徽标 / 配对键 / 播放态这些「这一格发生过什么」的 transient 运行态就互相隔离开了。</p>
      *
      * <p>拷贝体带上<b>取流与显示必需</b>的静态身份（12 个 final 字段 + source/sourceId/
-     * sourceMid/GD 与酷狗主键 + cadenceTrack 缓存 + 会员标记 + 封面链接），{@code equals}
+     * sourceMid/GD 与酷狗主键 + muTrack 缓存 + 会员标记 + 封面链接），{@code equals}
      * （platform+id）与账本、高亮、队列去重的判据完全不变。刻意<b>不带</b>：解灰 / 换源
      * 徽标、crossSourceSwitched、配对键、解码时长、播放质量、汽水一次性 play_auth ——
      * 这些描述的是「原来那一格的这一次点播」，第二格还没播过，留默认才是对的。</p>
@@ -736,7 +775,7 @@ public class Music {
         copy.kugouAlbumId = kugouAlbumId;
         copy.kugouAlbumAudioId = kugouAlbumAudioId;
         copy.kugouCoverTemplate = kugouCoverTemplate;
-        copy.cadenceTrack = cadenceTrack;
+        copy.muTrack = muTrack;
         copy.vip = vip;
         copy.cloudSong = cloudSong;
         copy.externalCoverUrl = externalCoverUrl;
@@ -813,18 +852,18 @@ public class Music {
         return duration <= 0L && decodedDurationMillis > 0L;
     }
 
-    public Track toCadenceTrack() {
-        if (cadenceTrack != null) return cadenceTrack;
+    public Track toMuTrack() {
+        if (muTrack != null) return muTrack;
         // 必须走 getSource() 而不是直接读字段：Music 声明了显式构造器，Lombok 的 @Data 因此
         // 不再补无参构造器，Gson 只能用 Unsafe.allocateInstance 建实例 —— 那条路径不执行任何
         // 字段初始化式，所以 `source = MusicPlatform.NETEASE` 这个默认值对所有 JSON 解析出来的
         // 歌曲都不生效，字段实际是 null（歌单、私人 FM、一起听下发的曲目全都如此）。
         // 直接读字段会在这里抛 NPE，把整条歌词链路吞掉（日志里的
         // "[Music/Netease] Lyric failed ... this.source is null" 就是它）。
-        cadenceTrack = new Track(getSource().toCadenceSource(), getSourceId(), sourceMid, nonNull(name),
+        muTrack = new Track(getSource().toMuSource(), getSourceId(), sourceMid, nonNull(name),
                 getArtistsName(), album == null ? "" : nonNull(album.getName()), duration,
                 getBaseCoverUrl(), vip);
-        return cadenceTrack;
+        return muTrack;
     }
 
     public String getSourceId() {
@@ -902,6 +941,24 @@ public class Music {
         applePreviewOnly = previewOnly;
     }
 
+    /** 本次 QQ 取流是否试听（取流层权益状态镜像，transient）。 */
+    public boolean isQqTrialResolve() {
+        return qqTrialResolve;
+    }
+
+    public void setQqTrialResolve(boolean trial) {
+        qqTrialResolve = trial;
+    }
+
+    /** 本次 QQ 取流的上游 result 码；-1 = 未取到（transient）。 */
+    public int getQqResultCode() {
+        return qqResultCode;
+    }
+
+    public void setQqResultCode(int code) {
+        qqResultCode = code;
+    }
+
     /** 酷我 / 咪咕：宿主只内置了它们的搜索（供换源匹配），取流完全依赖自定义源。 */
     public boolean isLxOnlyChannel() {
         return isKuwo() || isMigu();
@@ -909,7 +966,7 @@ public class Music {
 
     /**
      * 返回提供方是否把本曲目标记为会员或付费内容受限。
-     * Cadence 为 QQ 曲目提供该标志；网易云 fee 从其特权载荷复制。
+     * 内置音源层 为 QQ 曲目提供该标志；网易云 fee 从其特权载荷复制。
      */
     public boolean hasVipRestriction() {
         return vip || (isNetease() && fee != 0);
@@ -1040,7 +1097,7 @@ public class Music {
      *
      * <p>默认配置是无损优先：先请求无损；曲目没有无损、账号没有 VIP、接口返回空链接、
      * 解析异常或超时时，再明确降级到标准音质。网易云在主解析器失败后继续切换
-     * 备用解析器；QQ 仅能使用 Cadence，但同样执行无损到标准的降级。</p>
+     * 备用解析器；QQ 仅能使用内置音源层，但同样执行无损到标准的降级。</p>
      *
      * <p>外面这层还负责换源替身重播的徽标兜底：解析链（{@link #resolveLxSource} /
      * {@link #resolveNeteaseUnblock}）都先清掉旧标再干活，走脚本 / 解灰成功会写一枚新的，
@@ -1087,12 +1144,20 @@ public class Music {
 
         // Spotify 是元数据源：官方 Web API 没有任何音频出口（preview_url 已下线），返回 null
         // 让点播链路落进 CrossSourceSwitcher 按同名同歌手找替身。同样绝不能继续往下掉 ——
-        // spotify id 会被 Cadence 当网易云 id 解析，放出完全不相干的歌。
+        // spotify id 会被 内置音源层 当网易云 id 解析，放出完全不相干的歌。
         if (isSpotify()) return null;
+
+        // 本地文件：零网络直读磁盘。伪 URL 只是把「缓存键位 + 容器类型」带给
+        // CloudMusic 的分派点（与 Apple 的 muonium-apple:// 同一模式），真身永远是
+        // 用户磁盘上的原文件。绝不继续往下掉 —— LOCAL 行没有数字 id，掉进内置音源层
+        // 会拿哈希当网易云 id 解析。文件缺失由分派点报「文件已移动或删除」。
+        if (isLocal()) {
+            return resolveLocalPlayUrl();
+        }
 
         // Apple Music：本机引擎可用时给一条伪 URL（cachedAudioFile 里兑换成完整版
         // 本地文件）；伴生不可用/未启用返回 null 落换源替身；都失败还有试听兜底（CloudMusic
-        // 的 Apple 特例）。与 Spotify 同理绝不能继续往下掉 —— apple 的数字 id 会被 Cadence
+        // 的 Apple 特例）。与 Spotify 同理绝不能继续往下掉 —— apple 的数字 id 会被内置音源层
         // 当网易云 id 解析，放出完全不相干的歌。
         if (isApple()) {
             return resolveApplePlayUrl();
@@ -1114,12 +1179,12 @@ public class Music {
             return resolveKuGouPlayUrl();
         }
         if (isQQ()) {
-            return resolveCadenceWithStandardFallback();
+            return resolveMuSourceWithStandardFallback();
         }
 
-        // Cadence 搜索得到的网易云歌曲仍优先保持原来源，且该来源内部先尝试无损。
-        if (cadenceTrack != null) {
-            Tuple<String, String> result = resolveCadenceWithStandardFallback();
+        // 内置音源层 搜索得到的网易云歌曲仍优先保持原来源，且该来源内部先尝试无损。
+        if (muTrack != null) {
+            Tuple<String, String> result = resolveMuSourceWithStandardFallback();
             if (result != null) return result;
             result = resolveWithTimeout(new Callable<Tuple<String, String>>() {
                 @Override
@@ -1138,7 +1203,7 @@ public class Music {
             }
         }, "built-in NetEase API");
         if (result != null) return result;
-        result = resolveCadenceWithStandardFallback();
+        result = resolveMuSourceWithStandardFallback();
         if (result != null) return result;
         return resolveNeteaseUnblock();
     }
@@ -1159,6 +1224,19 @@ public class Music {
         if (pseudo == null) return null;
         playbackQuality = PlaybackQuality.HQ;
         return new Tuple<>(pseudo, "m4a");
+    }
+
+    /**
+     * 本地文件的伪 URL（{@code muonium-local://file/<stableKey>}）。
+     *
+     * <p>取流永远「成功」——伪 URL 本身不需要任何 IO；文件在不在是
+     * {@code CloudMusic} 分派点的事（不在就报错，绝没有「换个平台试试」的余地）。
+     * 容器类型留空：分派点按磁盘字节探测（{@code AudioContainerSupport.detectContainer}），
+     * 扩展名可以骗人，字节不会。</p>
+     */
+    private Tuple<String, String> resolveLocalPlayUrl() {
+        playbackQuality = PlaybackQuality.UNKNOWN;
+        return new Tuple<>(LOCAL_PSEUDO_URL_PREFIX + Long.toUnsignedString(id), "");
     }
 
     /** 一起听房间下发的链接，没有则返回 null（照常走本机解析链路）。 */
@@ -1399,7 +1477,7 @@ public class Music {
                 // （本曲曾当过兄弟格/替身），这次成功后前缀会念成「已换源 · …」——本次并没有
                 // 换曲目，复位让它回到「解灰 · …」的本义。
                 crossSourceSwitched = false;
-                playbackQuality = detectCadencePlaybackQuality(normalized.getB(), requestedQuality);
+                playbackQuality = detectSourcePlaybackQuality(normalized.getB(), requestedQuality);
                 considerHighestQuality(normalized.getB(), 0L);
                 return normalized;
             }
@@ -1494,7 +1572,7 @@ public class Music {
                 YouTubeMusicService.ResolveResult result =
                         YouTubeMusicService.getSongUrl(getSourceId(), requestedQuality);
                 if (result == null) return null;
-                playbackQuality = detectCadencePlaybackQuality(result.format, requestedQuality);
+                playbackQuality = detectSourcePlaybackQuality(result.format, requestedQuality);
                 considerHighestQuality(result.format, 0L);
                 return new Tuple<>(result.url, result.format);
             }
@@ -1517,7 +1595,7 @@ public class Music {
                 setQishuiPlayAuth(result.playAuth);
                 setQishuiActualTier(result.actualTier);
                 setQishuiTrialResolve(!result.full);
-                playbackQuality = detectCadencePlaybackQuality(result.format, requestedQuality);
+                playbackQuality = detectSourcePlaybackQuality(result.format, requestedQuality);
                 considerHighestQuality(result.format, result.bitrate);
                 return new Tuple<>(result.url, result.format);
             }
@@ -1532,7 +1610,7 @@ public class Music {
                 BilibiliMusicService.ResolveResult result =
                         BilibiliMusicService.getSongUrl(getSourceId(), requestedQuality);
                 if (result == null) return null;
-                playbackQuality = detectCadencePlaybackQuality(result.format, requestedQuality);
+                playbackQuality = detectSourcePlaybackQuality(result.format, requestedQuality);
                 considerHighestQuality(result.format, 0L);
                 return new Tuple<>(result.url, result.format);
             }
@@ -1563,7 +1641,7 @@ public class Music {
                 DownloadDynamicIsland.showGdSourceResolved(result.isFallback()
                         ? "已回退 " + GdStudioMusicService.displayName(result.platform)
                         : "GD音乐台 · " + result.platform.toUpperCase(Locale.ROOT), result.format);
-                playbackQuality = detectCadencePlaybackQuality(result.format, requestedQuality);
+                playbackQuality = detectSourcePlaybackQuality(result.format, requestedQuality);
                 considerHighestQuality(result.format, 0L);
                 return new Tuple<>(result.url, result.format);
             }
@@ -1586,7 +1664,7 @@ public class Music {
                 if (result == null) return null;
                 DownloadDynamicIsland.showGdSourceResolved("已回退 "
                         + GdStudioMusicService.displayName(result.platform), result.format);
-                playbackQuality = detectCadencePlaybackQuality(result.format, requestedQuality);
+                playbackQuality = detectSourcePlaybackQuality(result.format, requestedQuality);
                 considerHighestQuality(result.format, 0L);
                 return new Tuple<>(result.url, result.format);
             }
@@ -1623,7 +1701,7 @@ public class Music {
                 Tuple<String, String> resolved = normalizePlayUrl(
                         com.muoniumplayer.core.ncm.music.KuGouMusicService.getSongUrl(Music.this, requestedQuality));
                 if (resolved != null) {
-                    playbackQuality = detectCadencePlaybackQuality(resolved.getB(), requestedQuality);
+                    playbackQuality = detectSourcePlaybackQuality(resolved.getB(), requestedQuality);
                     considerHighestQuality(resolved.getB(), 0L);
                 }
                 return resolved;
@@ -1631,29 +1709,29 @@ public class Music {
         }, "KuGou " + requestedQuality.getQuality());
     }
 
-    /** 先按配置档位试一次，再试一条已知可播放的标准 Cadence 流。 */
-    private Tuple<String, String> resolveCadenceWithStandardFallback() {
+    /** 先按配置档位试一次，再试一条已知可播放的标准 内置音源层流。 */
+    private Tuple<String, String> resolveMuSourceWithStandardFallback() {
         final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
         Tuple<String, String> result = resolveWithTimeout(new Callable<Tuple<String, String>>() {
             @Override
             public Tuple<String, String> call() {
-                return resolveWithCadence(requestedQuality);
+                return resolveWithMuSource(requestedQuality);
             }
-        }, "Cadence " + requestedQuality.getQuality());
+        }, "内置音源层 " + requestedQuality.getQuality());
         if (result != null || requestedQuality == Quality.STANDARD) return result;
 
         return resolveWithTimeout(new Callable<Tuple<String, String>>() {
             @Override
             public Tuple<String, String> call() {
-                return resolveWithCadence(Quality.STANDARD);
+                return resolveWithMuSource(Quality.STANDARD);
             }
-        }, "Cadence standard fallback");
+        }, "内置音源层 standard fallback");
     }
 
-    private Tuple<String, String> resolveWithCadence(Quality requestedQuality) {
+    private Tuple<String, String> resolveWithMuSource(Quality requestedQuality) {
         Tuple<String, String> resolved = normalizePlayUrl(NeteaseMusicService.getSongUrl(this, requestedQuality));
         if (resolved != null) {
-            this.playbackQuality = detectCadencePlaybackQuality(resolved.getB(), requestedQuality);
+            this.playbackQuality = detectSourcePlaybackQuality(resolved.getB(), requestedQuality);
             considerHighestQuality(resolved.getB(), 0L);
         }
         return resolved;
@@ -1758,11 +1836,11 @@ public class Music {
         return PlaybackQuality.STANDARD;
     }
 
-    private PlaybackQuality detectCadencePlaybackQuality(String format, Quality requestedQuality) {
+    private PlaybackQuality detectSourcePlaybackQuality(String format, Quality requestedQuality) {
         if (isLosslessFormat(format)) {
             return PlaybackQuality.LOSSLESS;
         }
-        // Cadence 不为每个提供方提供码率。一个无损请求
+        // 内置音源层 不为每个提供方提供码率。一个无损请求
         //返回有损容器的，被当作真正的标准兜底。
         return (requestedQuality == Quality.HIGHER
                 || requestedQuality == Quality.EXHIGH || requestedQuality == Quality.SKY)

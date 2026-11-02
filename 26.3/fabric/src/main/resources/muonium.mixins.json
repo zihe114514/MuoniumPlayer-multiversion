@@ -9,6 +9,7 @@
     "GlSurfaceMixin",
     "GameRendererRenderLevelMixin",
     "GameRendererAccessor",
+    "RenderTypeAccessors",
     "ProjectionMatrixBufferMixin",
     "MouseScrollMixin",
     "MouseButtonStateMixin",

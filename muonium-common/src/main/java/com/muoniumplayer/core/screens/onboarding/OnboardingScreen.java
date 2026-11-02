@@ -17,6 +17,7 @@ import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.screens.ncm.AccountManagerOverlay;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
+import com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale;
 import com.muoniumplayer.core.screens.onboarding.steps.AccountStep;
 import com.muoniumplayer.core.screens.onboarding.steps.AppearanceStep;
 import com.muoniumplayer.core.screens.onboarding.steps.AutomixModelStep;
@@ -108,7 +109,11 @@ public final class OnboardingScreen extends ExtensionScreen
     @Override
     public void drawScreen(int mouseX, int mouseY) {
         RenderSystem.refreshResolution();
-        RenderSystem.FIXED_SCALE = false;
+        // 强制布局轴（无视「窗口自适应缩放」开关）：账号登录浮层（AccountManagerOverlay）
+        // 的排版常量按布局轴书写，在播放器括号内与在引导页必须同尺寸 —— 引导页曾显式
+        // 退回 GUI 轴，登录菜单于是整体跟随 GUI Scale 缩放。sx/sy 换算与矩阵全在方法里，
+        // 这里换轴后自动生效。
+        WindowAdaptiveScale.beginForced();
         alpha = Interpolations.interpolate((float) alpha, 1f, .18f);
 
         double width = RenderSystem.getWidth();
@@ -170,6 +175,7 @@ public final class OnboardingScreen extends ExtensionScreen
             api.getGLStateManager().popMatrix();
             SkijaGfx.popMatrix();
             SkijaGfx.popAttrib();
+            WindowAdaptiveScale.end();
         }
     }
 
@@ -612,7 +618,16 @@ public final class OnboardingScreen extends ExtensionScreen
     public void mouseClicked(int mouseX, int mouseY, int mouseButton) {
         if (mouseButton != 0) return;
         RenderSystem.refreshResolution();
-        RenderSystem.FIXED_SCALE = false;
+        // 与 drawScreen 同括号：sx 换算与浮层命中都要布局轴才有真值。
+        WindowAdaptiveScale.beginForced();
+        try {
+            mouseClickedInner(mouseX, mouseY, mouseButton);
+        } finally {
+            WindowAdaptiveScale.end();
+        }
+    }
+
+    private void mouseClickedInner(int mouseX, int mouseY, int mouseButton) {
         double width = RenderSystem.getWidth();
         double height = RenderSystem.getHeight();
         double sx = RenderSystem.getWidthNotScaled() / width;

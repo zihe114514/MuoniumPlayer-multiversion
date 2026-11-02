@@ -337,6 +337,10 @@ public final class KuGouMusicService {
         } else {
             tracks = KuGouMusicApi.playlistTracks(id, PLAYLIST_TRACK_LIMIT);
         }
+        if (tracks == null) {
+            // 分页中途失败：宁可整单标成「未加载」等重试，也不能把半截列表当完整结果。
+            throw new IllegalStateException("酷狗歌单 " + id + " 分页加载中断");
+        }
         if (tracks.isEmpty()) {
             throw new IllegalStateException("酷狗歌单 " + id + " 没有返回曲目");
         }

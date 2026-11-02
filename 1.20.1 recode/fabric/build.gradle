@@ -1,5 +1,7 @@
 plugins {
     id 'fabric-loom' version '1.17.20'
+    // 只用它的 ShadowJar 任务给 rhino 做 relocate；不用它打 fat-jar。
+    id 'com.gradleup.shadow' version '8.3.11'
 }
 
 base {
@@ -111,6 +113,34 @@ repositories {
     }
 }
 
+
+// ==================== rhino relocate：org.mozilla.javascript → muonium.rhino ====================
+// WorldEdit 7.3.8 把未 relocate 的 rhino shade 进自己的 jar（模块名 worldedit），与平铺进
+// 主 jar 的我们导出同一个 org.mozilla.javascript 包，装一起就是 split package
+// ResolutionException（整合包用户实测，1.21.1 NeoForge；loader 侧已同步改）。Fabric 的
+// include(JiJ) 虽然按嵌套 jar 隔离加载，但成品里同样不该再带一份原包名 rhino：
+// relocate 到 muonium.rhino 前缀后，任何 mod 带任何形态的 rhino 都再撞不到我们。
+// relocate 改的不止包路径：shadow 会同步改写字节码里的类引用与字符串常量（含 rhino 内部
+// 反射按名加载自己的地方），资源目录 org/mozilla/javascript/resources 一并改名。
+// rhino 无 META-INF/services、无 module-info、非 Multi-Release，是 relocate 的干净对象。
+def relocateRhino = tasks.register('relocateRhino', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
+    group = 'shadow'
+    description = '把 rhino 改名到 muonium.rhino 前缀，避免与其它 mod 自带的 rhino split package'
+    destinationDirectory.set(layout.buildDirectory.dir('tmp/relocateRhino'))
+    archiveClassifier.set('rhino-relocated')
+    configurations = [project.configurations.detachedConfiguration(
+            project.dependencies.create('org.mozilla:rhino:1.7.15'))]
+    mergeServiceFiles()
+    exclude 'META-INF/MANIFEST.MF'
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    exclude 'module-info.class'
+    // rhino jar 里的两个包树都要改名（classfile 是它的字节码生成器，引擎内部用）
+    relocate 'org.mozilla.javascript', 'muonium.rhino'
+    relocate 'org.mozilla.classfile', 'muonium.rhino.classfile'
+}
+
 dependencies {
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     // 共享源码统一用 Mojang 官方名（mojmap），这样同一份 src/ 也能编进 Forge 侧。
@@ -130,14 +160,32 @@ dependencies {
     // 实测 MC 1.20.1 自身已提供 guava / commons-lang3 / commons-io / httpclient / log4j / asm，
     // 故这些不重复打包（见 build/bundle-deps.txt 的解析结果）。
     implementation include('com.google.zxing:core:3.5.3')
-    implementation include('org.mozilla:rhino:1.7.15')
+    // rhino 走上面 relocateRhino 的改名产物（files(...) 传任务，Gradle 自动挂任务依赖）。
+    // 编译与测试类路径也用同一份：共享层 LxBuffer/LxRuntime import 的已是 muonium.rhino.*，
+    // 原 rhino 坐标不再出现在任何 classpath 上（防止有人手滑又引回去）。
+    // rhino 嵌套进成品走 libs/ 的模块坐标（Loom processIncludeJars 拒收无组件身份的
+    // 文件产物：include(files(task)) 直传报 "not a module component and has no
+    // capabilities"，与 26.3 / 1.21.11 同款收口）；编译/测试类路径仍用文件依赖
+    // （Gradle 自动挂任务依赖）。relocateRhino 跑完刷新 libs/ 里的拷贝。
+    implementation include('muoniumplayer:rhino-relocated:1.7.15')
+    compileOnly files(relocateRhino)
+    testImplementation files(relocateRhino)
+    def relocatedJarInLibs = rootProject.file('libs/rhino-relocated-1.7.15.jar')
+    relocateRhino.configure {
+        doLast {
+            java.nio.file.Files.copy(archiveFile.get().asFile.toPath(),
+                    relocatedJarInLibs.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
     // MC 1.20.1 自带 gson 2.10，而 Cadence 相关代码按 2.11 API 编写，必须自带 2.11。
     implementation include('com.google.code.gson:gson:2.11.0')
     // JNA：DeviceIdGenerator 读注册表 CPU 名 + CursorUtils 切光标。
     implementation include('net.java.dev.jna:jna:5.14.0')
     implementation include('net.java.dev.jna:jna-platform:5.14.0')
     // 对应 libs/ 下的本地 jar（Cadence 音源 SDK）。
-    implementation include('muoniumplayer.libs:music-api:0.1.1')
+    // Cadence 音源 SDK 已吸收进仓（com.muoniumplayer.core.music.cadence，2026-11），
+    // 不再挂 libs/music-api-0.1.1.jar。
 
     // ==================== Skija（渲染层重写）====================
     // Skia 的 Java 绑定。渲染层重写后，文字整形/光栅、圆角、裁剪、模糊、渐变、阴影

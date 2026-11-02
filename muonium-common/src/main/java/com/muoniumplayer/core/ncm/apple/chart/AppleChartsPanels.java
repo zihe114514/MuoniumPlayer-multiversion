@@ -22,26 +22,59 @@ public final class AppleChartsPanels {
     /**
      * 榜单入口页:8 个地区各一张卡;feed 全挂返回 null(调用方维持原页面)。
      *
-     * <p>调用方在后台线程里跑本方法(navigateAsync),所以这里敢逐地区拉 feed:
-     * 卡面用该地区冠军曲的封面(榜单没有自己的封面图),曲目数用 feed 实际条数。
-     * 拉过的 feed 进缓存,点进详情的曲目懒加载直接复用,不重打。</p>
+     * <p>调用方在后台线程里跑本方法(navigateAsync)。8 个 feed **并行**拉取 ——
+     * RSS 源在 CN 慢且抖,串行是「各地区最慢耗时 × 8」的体感;并行后页开时间
+     * 等于最慢的一个。卡面用该地区冠军曲的封面(榜单没有自己的封面图),
+     * 曲目数用 feed 实际条数;拉过的 feed 进缓存,详情懒加载直接复用。</p>
      */
     public static NCMPanel loadTopListsPanel() {
+        java.util.Map<String, java.util.List<AppleChartsService.ChartEntry>> feeds =
+                new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(
+                AppleChartsService.STOREFRONTS.size());
+        java.util.concurrent.ExecutorService pool =
+                java.util.concurrent.Executors.newFixedThreadPool(
+                        Math.min(8, AppleChartsService.STOREFRONTS.size()), r -> {
+                            Thread t = new Thread(r, "muonium-chart-feed");
+                            t.setDaemon(true);
+                            return t;
+                        });
+        try {
+            for (String storefront : AppleChartsService.STOREFRONTS) {
+                pool.execute(() -> {
+                    try {
+                        feeds.put(storefront, AppleChartsService.topChartCached(storefront));
+                    } finally {
+                        done.countDown();
+                    }
+                });
+            }
+            try {
+                // 总闸:RSS 再慢也不让页面干等超过 15 秒,没回来的地区先按空卡画。
+                done.await(15, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
         List<PlayList> cards = new ArrayList<>();
+        boolean anyFeed = false;
         for (String storefront : AppleChartsService.STOREFRONTS) {
-            List<AppleChartsService.ChartEntry> feed =
-                    AppleChartsService.topChartCached(storefront);
+            java.util.List<AppleChartsService.ChartEntry> feed =
+                    feeds.getOrDefault(storefront, java.util.Collections.emptyList());
+            if (!feed.isEmpty()) anyFeed = true;
             String cover = feed.isEmpty() ? "" : feed.get(0).coverUrl;
-            int trackCount = feed.size();
             PlayList card = new PlayList(
                     stableCardId(storefront),
                     AppleChartsService.chartTitle(storefront),
-                    cover, trackCount, 0L, null, "Apple Music 榜单", 0L);
+                    cover, feed.size(), 0L, null, "Apple Music 榜单", 0L);
             card.setPlatform(MusicPlatform.APPLE);
             card.setPlatformPlaylistId(AppleChartsService.CHART_PLAYLIST_PREFIX + storefront);
             cards.add(card);
         }
-        if (cards.isEmpty()) return null;
+        if (!anyFeed) return null;
         return new HomePanel(cards, "Apple Music 排行榜 · " + cards.size());
     }
 

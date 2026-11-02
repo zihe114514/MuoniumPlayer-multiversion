@@ -5,12 +5,10 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * 酷狗音乐的接口客户端。
@@ -823,31 +821,44 @@ public final class KuGouMusicApi {
      *
      * <p><b>单页只有 {@link #MAX_PAGE_SIZE} 首是上游的行为，不是 bug</b>：账号歌单普遍几百上千首，
      * 只打一页就是「前 300 首之后没了」。这里按 {@code begin_idx} 循环翻页直到取全，
-     * 停止条件全部不依赖响应里的总数（上游不保证回它）：页不满即停、一页没贡献新 hash 即停、
-     * 到 {@code limit} 上限即停。{@code limit} 是<b>载入总量上限</b>而不是页大小，
-     * 传 0 按 {@link #MAX_PAGE_SIZE} 处理（与分页前的旧行为一致）。</p>
+     * 停止条件全部不依赖响应里的总数（上游不保证回它）：按<b>原始条数</b>判「页不满即停」
+     * （解析失败的条目——无 Hash 死歌、灰色曲目——算在满页里，酷狗版权状态不稳，
+     * 一页里混进几首很常见；按解析后条数判会让满页被误当成最后一页，后续页全部丢失）、
+     * 整页 hash 序列与上一页相同即停（上游对越界 {@code begin_idx} 的行为没有承诺，
+     * 可能重复交回最后一页）、到 {@code limit} 上限即停。{@code limit} 是<b>载入总量上限</b>
+     * 而不是页大小，传 0 按 {@link #MAX_PAGE_SIZE} 处理（与分页前的旧行为一致）。</p>
      *
      * @param limit 要载入的最大曲目数；0 表示只取一页（300）
+     * @return 取到的曲目；<b>翻页中途失败返回 {@code null}</b>——调用方必须把它当成
+     *         「本次没有取全」去处理（重试），绝不能把 null 前的半截数据当完整结果发布
      */
     public static List<Track> collectionTracks(String globalCollectionId, int limit) {
         List<Track> result = new ArrayList<Track>();
         if (KuGouSign.isBlank(globalCollectionId)) return result;
         int cap = limit > 0 ? limit : MAX_PAGE_SIZE;
-        Set<String> seenHashes = new HashSet<String>();
+        List<String> previousHashes = null;
         for (int page = 1; page <= COLLECTION_TRACK_MAX_PAGES; page++) {
-            List<Track> batch = collectionTracksPage(globalCollectionId, MAX_PAGE_SIZE, page);
-            int before = result.size();
-            for (Track track : batch) {
-                String key = KuGouSign.lower(KuGouSign.nonNull(track.hash).trim());
-                if (!key.isEmpty() && !seenHashes.add(key)) continue;
+            CollectionPage batch = collectionTracksPage(globalCollectionId, MAX_PAGE_SIZE, page);
+            if (batch.failed) {
+                System.err.println("[Music/KuGou] 歌单 " + globalCollectionId + " 第 " + page
+                        + " 页加载失败，本次取全作废（已得 " + result.size() + " 首）");
+                return null;
+            }
+            for (Track track : batch.tracks) {
+                if (result.size() >= cap) break;
                 result.add(track);
             }
-            // 页不满即最后一页：这一页的曲目已经全部入列，直接收工。
-            if (batch.size() < MAX_PAGE_SIZE) break;
-            // 上游对越界 begin_idx 的行为没有承诺：可能回空页，也可能把最后一页重复交回来。
-            // 「这一页没贡献任何新曲目」就是翻到头的信号，再翻只会死循环。
-            if (result.size() == before) break;
-            if (result.size() >= cap) break;
+            // 页不满即最后一页（按原始条数，见方法注释）：这一页已全部入列，直接收工。
+            if (batch.rawCount < MAX_PAGE_SIZE) break;
+            if (result.size() >= cap) {
+                System.err.println("[Music/KuGou] 歌单 " + globalCollectionId + " 超过载入上限 "
+                        + cap + " 首，已截断");
+                break;
+            }
+            // 上一页与本页的原始 hash 序列完全相同 = 上游在重复交回最后一页，翻到头了。
+            // 页内不逐首去重：歌单里合法的重复曲目不该被吞掉。
+            if (previousHashes != null && previousHashes.equals(batch.rawHashes)) break;
+            previousHashes = batch.rawHashes;
         }
         return result;
     }
@@ -859,11 +870,33 @@ public final class KuGouMusicApi {
     private static final int COLLECTION_TRACK_MAX_PAGES = 20;
 
     /**
+     * 一次取页的原始结果。
+     *
+     * <p>「原始」是相对 {@link #parseCollectionTrack} 而言：解析失败的条目（无 Hash 死歌、
+     * 歌名缺失的灰色曲目）不会出现在 {@link #tracks} 里，但<b>算在 {@link #rawCount} 与
+     * {@link #rawHashes} 里</b>——满页判定与重复页判定都必须基于原始数据，
+     * 否则一个混着死歌的满页会被误判成最后一页。</p>
+     */
+    private static final class CollectionPage {
+        final List<Track> tracks = new ArrayList<Track>();
+        /** 上游本页返回的原始条目数（含解析失败的）。 */
+        int rawCount;
+        /** 本页原始条目的 hash（小写、保持顺序，解析失败的条目也算）。 */
+        final List<String> rawHashes = new ArrayList<String>();
+        /** 请求本身失败（网络异常 / 响应不可解析 / 没有曲目数组）。 */
+        boolean failed;
+    }
+
+    /**
      * 云端歌单的<b>单页</b>曲目。参数对照 {@code module/playlist_track_all.js}：
      * {@code begin_idx = (page-1)*pagesize} 是唯一的分页手段，没有 page 参数。
+     *
+     * <p>上游 paramsMap 里还有 {@code extend_fields='abtags,hot_cmt,popularization'}
+     * （专辑标签/热评/推广元数据），这里<b>刻意不带</b>：{@code parseCollectionTrack}
+     * 一个都不读，省掉的是每首几 KB 的无效负载，不影响解析。</p>
      */
-    private static List<Track> collectionTracksPage(String globalCollectionId, int pageSize, int page) {
-        List<Track> result = new ArrayList<Track>();
+    private static CollectionPage collectionTracksPage(String globalCollectionId, int pageSize, int page) {
+        CollectionPage result = new CollectionPage();
         if (KuGouSign.isBlank(globalCollectionId)) return result;
 
         Map<String, String> params = KuGouHttp.deviceParams();
@@ -878,12 +911,20 @@ public final class KuGouMusicApi {
 
         JsonObject root = KuGouHttp.get(KuGouHttp.GATEWAY,
                 "/pubsongs/v2/get_other_list_file_nofilt", params, KuGouHttp.Sign.ANDROID);
-        JsonArray songs = array(object(root, "data"), "songs", "info", "list");
-        if (songs == null) return result;
+        JsonArray songs = root == null ? null : array(object(root, "data"), "songs", "info", "list");
+        if (songs == null) {
+            // 网络失败与「响应里没有曲目数组」都算请求失败：它们与「越界的合法空页」
+            // 必须区分开，否则翻页中途的抖动会把半截数据标成完整结果。
+            result.failed = true;
+            return result;
+        }
+        result.rawCount = songs.size();
         for (JsonElement element : songs) {
             if (element == null || !element.isJsonObject()) continue;
-            Track track = parseCollectionTrack(element.getAsJsonObject());
-            if (track != null) result.add(track);
+            JsonObject item = element.getAsJsonObject();
+            result.rawHashes.add(KuGouSign.lower(text(item, "hash")));
+            Track track = parseCollectionTrack(item);
+            if (track != null) result.tracks.add(track);
         }
         return result;
     }

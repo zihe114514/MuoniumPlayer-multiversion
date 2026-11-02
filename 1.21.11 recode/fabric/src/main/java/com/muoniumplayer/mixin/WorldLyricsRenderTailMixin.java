@@ -45,5 +45,8 @@ public class WorldLyricsRenderTailMixin {
             at = @At("TAIL"))
     private void muonium$renderWorldLyricsAfterFrameGraph(CallbackInfo ci) {
         WorldLyricsBridge.worldRenderEnd();
+        // 场景声学调参:射线可视化(debug 文件 showRays=true 时画;内部第一行
+        // 就判开关,关闭时一次布尔读)。
+        com.muoniumplayer.compat.mc.AcousticsRayDebugRenderer.render();
     }
 }

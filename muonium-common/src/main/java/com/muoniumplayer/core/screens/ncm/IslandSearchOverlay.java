@@ -2,6 +2,7 @@ package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.api.features.ExtensionScreen;
 import com.muoniumplayer.core.interfaces.SharedConstants;
+import com.muoniumplayer.core.screens.ncm.WindowAdaptiveScale;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
@@ -103,7 +104,16 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
             overlay.closeAndRestore();
             return;
         }
-        double[] target = overlay.capsuleTarget();
+        // 目标矩形按布局轴捕获（转场几何恒按布局轴存储）；热键触发点不在播放器括号内，
+        // 这里自备临时括号——否则初始目标按 GUI 轴算，转场起点在高档位上错位。
+        boolean ownedLayout = !RenderSystem.FIXED_SCALE;
+        if (ownedLayout) WindowAdaptiveScale.beginForced();
+        double[] target;
+        try {
+            target = overlay.capsuleTarget();
+        } finally {
+            if (ownedLayout) WindowAdaptiveScale.end();
+        }
         if (!IslandSearchTransition.open(target[0], target[1], target[2], target[3], target[4])) {
             return;
         }
@@ -152,7 +162,19 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
     @Override
     public void drawScreen(int mouseX, int mouseY) {
         RenderSystem.refreshResolution();
+        // 强制布局轴（与转场几何同一轴）：转场锚点恒按布局轴存储，本界面不进括号的话
+        // 只在「GUI 宽 == 布局宽」的档位上碰巧对齐（如 1920 屏 × 2x），其余档位目标
+        // 矩形与岛锚点错位。owned 守卫防嵌套。
+        boolean ownedLayout = !RenderSystem.FIXED_SCALE;
+        if (ownedLayout) WindowAdaptiveScale.beginForced();
+        try {
+            drawScreenInner(mouseX, mouseY);
+        } finally {
+            if (ownedLayout) WindowAdaptiveScale.end();
+        }
+    }
 
+    private void drawScreenInner(int mouseX, int mouseY) {
         // 转场时钟：读几何之前必须先 tick（与 PlayerIslandTransition.tick 同一条规矩）。
         IslandSearchTransition.tick();
 
@@ -452,6 +474,17 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
 
     @Override
     public void mouseClicked(int mX, int mY, int mouseButton) {
+        // 与 drawScreen 同括号：换算因子只有进布局轴才有真值。
+        boolean ownedLayout = !RenderSystem.FIXED_SCALE;
+        if (ownedLayout) WindowAdaptiveScale.beginForced();
+        try {
+            mouseClickedInner(mX, mY, mouseButton);
+        } finally {
+            if (ownedLayout) WindowAdaptiveScale.end();
+        }
+    }
+
+    private void mouseClickedInner(int mX, int mY, int mouseButton) {
         double xScale = RenderSystem.getWidthNotScaled() / RenderSystem.getWidth();
         double yScale = RenderSystem.getHeightNotScaled() / RenderSystem.getHeight();
         double mouseX = mX / xScale;
@@ -469,8 +502,9 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
             return;
         }
 
-        // 输入框命中。
-        if (this.searchField.mouseClicked(mX, mY, mouseButton)) {
+        // 输入框命中。searchField 的 bounds 在绘制段按布局轴设置，这里必须喂换算后的
+        // 布局坐标——直接传 Screen 的 GUI 坐标会在 3x/4x 档位错位（点不中输入框）。
+        if (this.searchField.mouseClicked((int) Math.round(mouseX), (int) Math.round(mouseY), mouseButton)) {
             return;
         }
 

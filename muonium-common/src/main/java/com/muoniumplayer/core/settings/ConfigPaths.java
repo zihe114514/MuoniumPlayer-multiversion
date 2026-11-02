@@ -48,7 +48,7 @@ public final class ConfigPaths {
     public static final Path MUSIC_AUTH = CONFIG_DIRECTORY.toPath().resolve("music_auth.json");
     public static final File NETEASE_ACCOUNTS = new File(CONFIG_DIRECTORY, "netease_accounts.json");
 
-    /** 旧版网易云 cookie 回退，与 Cadence 的凭据存储分开保存。 */
+    /** 旧版网易云 cookie 回退，与内置音源层的凭据存储分开保存。 */
     public static final File NETEASE_COOKIE = new File(CONFIG_DIRECTORY, "netease_cookie.txt");
 
     /**
@@ -73,7 +73,7 @@ public final class ConfigPaths {
     /**
      * 酷狗的设备标识与登录凭证。
      *
-     * <p>不能塞进 {@link #MUSIC_AUTH}：那个文件由 Cadence（{@code music-api} 库）的
+     * <p>不能塞进 {@link #MUSIC_AUTH}：那个文件由内置音源层（吸收自原 music-api jar）的
      * {@code MusicCredentialStore} 独占读写，它只认识网易云 cookie 与 QQ 的 musicid/musickey，
      * 写进去的第三个平台会在它下一次保存时被整段丢掉。</p>
      */
@@ -82,7 +82,7 @@ public final class ConfigPaths {
     /**
      * 汽水音乐的 Passport Cookie 与本地账号资料。
      *
-     * <p>同样不能写进 {@link #MUSIC_AUTH}；该文件由 Cadence 的凭据存储整段重写。汽水登录
+     * <p>同样不能写进 {@link #MUSIC_AUTH}；该文件由内置音源层的凭据存储整段重写。汽水登录
      * 由宿主自己完成，单独保存也便于退出登录时只清除汽水凭据。</p>
      */
     public static final File QISHUI_AUTH = new File(CONFIG_DIRECTORY, "qishui_auth.json");
@@ -102,7 +102,7 @@ public final class ConfigPaths {
      * Spotify 的 OAuth token 与账号展示资料（PKCE 授权后落盘）。
      *
      * <p>与 {@link #KUGOU_AUTH}、{@link #QISHUI_AUTH} 同样的理由单开一个文件：
-     * {@link #MUSIC_AUTH} 由 Cadence 的凭据存储整段重写，只认识网易云 cookie 与 QQ 的
+     * {@link #MUSIC_AUTH} 由内置音源层的凭据存储整段重写，只认识网易云 cookie 与 QQ 的
      * musicid/musickey，Spotify 的 access/refresh token 放进去会在下一次保存时被丢掉。</p>
      */
     public static final File SPOTIFY_AUTH = new File(CONFIG_DIRECTORY, "spotify_auth.json");
@@ -111,7 +111,7 @@ public final class ConfigPaths {
      * Apple Music 的本机配置：media-user-token、storefront 与本音源的偏好开关。
      *
      * <p>与 {@link #KUGOU_AUTH}、{@link #QISHUI_AUTH}、{@link #SPOTIFY_AUTH} 同样的理由单开一个文件：
-     * {@link #MUSIC_AUTH} 由 Cadence 的凭据存储整段重写，只认识网易云 cookie 与 QQ 的
+     * {@link #MUSIC_AUTH} 由内置音源层的凭据存储整段重写，只认识网易云 cookie 与 QQ 的
      * musicid/musickey，Apple 的 media-user-token 放进去会在下一次保存时被丢掉。</p>
      *
      * <p>注意 cookies.txt（Apple 引擎的凭据）不在这里，而在 {@link #APPLE_MUSIC_DIR} 下——
@@ -149,10 +149,20 @@ public final class ConfigPaths {
     public static final File LOCAL_PLAYLISTS = new File(CONFIG_DIRECTORY, "local_playlists.json");
 
     /**
+     * 本地音乐库的注册目录列表（「导入本地文件夹」扫出来的那几个磁盘目录）。
+     *
+     * <p>与 {@link #LOCAL_PLAYLISTS} 分开一个文件：目录列表是「这台机器上有哪些音乐文件夹」，
+     * 曲目存档是「歌单里有哪些歌」，重建（删除并重扫）目录列表不应该碰任何一张歌单。
+     * 只存绝对路径字符串；目录被移动/删除后由 {@code LocalMusicLibrary} 在播放时按文件
+     * 缺失安全失败，不做任何自动迁移。</p>
+     */
+    public static final File LOCAL_LIBRARY = new File(CONFIG_DIRECTORY, "local_library.json");
+
+    /**
      * Bilibili 的 Web Cookie 与本地账号资料（扫码登录后落盘）。
      *
      * <p>与 {@link #KUGOU_AUTH}、{@link #QISHUI_AUTH} 同样的理由单开一个文件：
-     * {@link #MUSIC_AUTH} 由 Cadence 的凭据存储整段重写，只认识网易云 cookie 与 QQ 的
+     * {@link #MUSIC_AUTH} 由内置音源层的凭据存储整段重写，只认识网易云 cookie 与 QQ 的
      * musicid/musickey。B 站的 {@code SESSDATA}/{@code bili_jct} 放进去会在下一次保存时被丢掉。</p>
      */
     public static final File BILIBILI_AUTH = new File(CONFIG_DIRECTORY, "bilibili_auth.json");
@@ -206,6 +216,23 @@ public final class ConfigPaths {
     public static final File SCENE_ACOUSTICS = new File(CONFIG_DIRECTORY, "scene_acoustics.json");
 
     /**
+     * 环境选曲（Ambient auto-DJ）的开关与稳定期。
+     *
+     * <p>单独一个文件，理由同 {@link #SCENE_ACOUSTICS}：设置页上每颗开关/滑条都要
+     * 立即落盘，读失败的代价只是「回到关闭」，不该牵连播放器主配置。</p>
+     */
+    public static final File AMBIENT_DJ = new File(CONFIG_DIRECTORY, "ambient_dj.json");
+
+    /**
+     * 「上次播放到哪」的会话快照（播放记忆）。
+     *
+     * <p>与所有设置文件分开：这份内容是<b>易失的会话状态</b>，损坏/缺失的代价只是「这次启动
+     * 不恢复」，恢复逻辑本身就要把它当不可信输入逐条校验。它不该有机会牵连任何真正的偏好
+     * 设置，也不该被偏好设置链路的读写节奏带着走（它由播放线程按事件+心跳写，频率完全不同）。</p>
+     */
+    public static final File PLAYBACK_RESUME = new File(CONFIG_DIRECTORY, "playback_resume.json");
+
+    /**
      * 仅在新文件不存在时迁移。已有的新文件始终优先，
      * 因此用户可安全地在旁边保留旧配置的备份。
      */
@@ -246,6 +273,20 @@ public final class ConfigPaths {
      * 重新走一遍网络链路，不会丢任何用户数据。放在 cache 而不是配置根，就是为了让这个语义清楚。</p>
      */
     public static final File LYRIC_CACHE = new File(CACHE_DIR, "lyrics");
+
+    /**
+     * 本地音乐的封面提取缓存：嵌入专辑图解出来后按 stableKey 落成 PNG，供
+     * 封面渲染链按 {@code Music#getCoverLocation()} 的既有键位读取。
+     */
+    public static final File LOCAL_ART_DIR = new File(CACHE_DIR, "local_art");
+
+    /**
+     * 本地音乐 AAC/M4A 解码出的 WAV 边车缓存（按源文件路径哈希分目录）。
+     *
+     * <p>本地文件的用户目录是只读资产，边车必须改落模组缓存；与下载缓存分开一个目录，
+     * 是为了让「清空下载缓存」不必顺带删掉这些大文件，也让「删边车」不必翻下载缓存。</p>
+     */
+    public static final File DECODED_WAV_DIR = new File(CACHE_DIR, "decoded_wav");
 
     /**
      * 酷狗「我喜欢」的本地全量索引（按账号分键存 hash 列表）。

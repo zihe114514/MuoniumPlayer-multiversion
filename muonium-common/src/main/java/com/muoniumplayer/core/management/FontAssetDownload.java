@@ -20,14 +20,19 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * 完整界面字体（苹方常规/中黑）的自动下载器。
+ * 完整界面字体（苹方常规/中黑 + 韩文 Noto Sans KR 常规/粗体）的自动下载器。
  *
  * <h2>为什么需要它</h2>
  * 两份全量中文字体各约 10 MB，打进主包要让十个发行渠道每个都背上约 17 MB（压缩后）。
  * 主包里因此只留<b>精简子集</b>（GB2312 全部汉字 + 假名 + 常用标点，每份约 2.2 MB），
  * 首启动够用；本类把完整版从公开的清单仓库拉到 {@code config/muonium/fonts/}，
- * 校验字节数与 sha256 后<b>热启用</b>——{@link FontManager#applyFullFontAssets(byte[], byte[])}
+ * 校验字节数与 sha256 后<b>热启用</b>——{@link FontManager#applyFullFontAssets}
  * 在渲染线程上换掉所有渲染器回退链里的子集实例，不重启、不重建控件树。
+ *
+ * <p>韩文两份（Noto Sans KR，各约 6 MB）主包<b>完全不</b>带：韩文界面文字本来就少，
+ * 首启动等几十秒下载即可，不值得每个发行渠道都背上这份体积。下载完成后由
+ * {@link FontManager#applyKoreanFallback} 追加进正文渲染器的回退链尾，同一会话内
+ * 韩文即刻可显示。</p>
  *
  * <h2>与 Skija 伴生包下载器（{@code SkijaCompanionDownload}）的异同</h2>
  * 同一套形状：三源镜像链、钉死字节数 + sha256、会话内尝试预算与冷却、后台守护线程、
@@ -40,15 +45,16 @@ import java.util.Locale;
  *
  * <h2>触发条件（同时满足才下载）</h2>
  * <ol>
- *   <li>缓存目录里两份字体没有全部就位（存在但大小不符钉值视为未就位，会重下那一份）；</li>
+ *   <li>缓存目录里四份字体没有全部就位（存在但大小不符钉值视为未就位，会重下那一份）；</li>
  *   <li>没有被 {@value #PROP_ENABLED} 显式关掉；</li>
  *   <li>不在下载中，且本会话的尝试预算与冷却时间还允许。</li>
  * </ol>
  *
  * <h2>钉死字节数与 sha256</h2>
  * 换字体文件时三处必须一起改：清单仓库 {@code fonts/} 目录里的文件、本类的
- * {@link #PACKS}、主包资源里的精简子集（子集必须<b>小于</b>钉住的全量字节数，
- * 静态测试会盯）。{@code -Dmuonium.fonts.dir=...} 可从本地目录取包（离线核对用），
+ * {@link #PACKS}、主包资源里的精简子集（苹方两份才有主包子集；韩文两份刻意不进主包，
+ * 子集必须<b>小于</b>钉住的全量字节数，静态测试会盯）。
+ * {@code -Dmuonium.fonts.dir=...} 可从本地目录取包（离线核对用），
  * 校验判据与网络路径完全一致。
  */
 public final class FontAssetDownload {
@@ -94,14 +100,20 @@ public final class FontAssetDownload {
     }
 
     /**
-     * 两份完整字体，与清单仓库 {@code fonts/} 目录里实际托管的文件一致
-     * （sha256 以仓库文件为准，发布时由静态测试对拍）。
+     * 四份完整字体，与清单仓库 {@code fonts/} 目录里实际托管的文件一致
+     * （sha256 以仓库文件为准，发布时由静态测试对拍）。前两份是苹方（主包带精简子集），
+     * 后两份是韩文 Noto Sans KR（Google Fonts 静态字重 400/700，OFL 许可，
+     * 主包刻意不带——首启动下载，见类注释）。
      */
     static final List<Pack> PACKS = List.of(
             new Pack("pf_normal.ttf", 10_757_580L,
                     "4e8f76364b3473e758f39ccba589655edd279de70e3dfd8d62c63727c801f0db"),
             new Pack("pf_middleblack.ttf", 10_606_736L,
-                    "ebf0c40a72eb8f1ebca9713853556e85276d3d227dde985cb24c1f5e9eca3d7c"));
+                    "ebf0c40a72eb8f1ebca9713853556e85276d3d227dde985cb24c1f5e9eca3d7c"),
+            new Pack("notosanskr_regular.ttf", 6_191_364L,
+                    "b4a747e78805bc25b610dcfc3003cb5fb2e2ec034763774b24216ed15889eef4"),
+            new Pack("notosanskr_bold.ttf", 6_189_424L,
+                    "c76f806dc46b8e7981410cb083801f7f124b7f8bc0d181cdae80e78f16d0e9cc"));
 
     /** 下载状态机；日志与排查用（进度展示走灵动岛，不逐帧读它）。 */
     enum Phase {
@@ -124,8 +136,8 @@ public final class FontAssetDownload {
     /** 全部就位后置位；渲染线程在 {@link #pollFromRenderThread()} 里取走并热启用。 */
     private static volatile boolean pendingSwap;
     /**
-     * 下载线程上先行解析好的两个全量 {@code Font} 实例（已登记 Skija）。
-     * 解析 20 MB 字体要几百毫秒，放下载线程做，渲染线程只做引用替换，
+     * 下载线程上先行解析好的四个全量 {@code Font} 实例（苹方两份 + 韩文两份，已登记 Skija）。
+     * 解析 30 MB 字体要几百毫秒，放下载线程做，渲染线程只做引用替换，
      * 热启用那一帧不掉帧。
      */
     private static volatile java.awt.Font[] pendingFonts;
@@ -241,10 +253,10 @@ public final class FontAssetDownload {
     /** 把下载线程解析好的全量实例交给 {@link FontManager} 热启用。 */
     private static boolean applySwapped() {
         java.awt.Font[] fonts = pendingFonts;
-        if (fonts == null || fonts.length != 2) {
+        if (fonts == null || fonts.length != PACKS.size()) {
             return false;
         }
-        boolean applied = FontManager.applyFullFontAssets(fonts[0], fonts[1]);
+        boolean applied = FontManager.applyFullFontAssets(fonts[0], fonts[1], fonts[2], fonts[3]);
         if (!applied) {
             // 字体缓存还没填好（FontManager 尚未 init）：实例不消费，下一帧再试，
             // 否则这一份解析结果会被扔掉、本会话只能停在子集。
@@ -252,26 +264,27 @@ public final class FontAssetDownload {
         }
         pendingFonts = null;
         com.muoniumplayer.core.rendering.DownloadDynamicIsland.showFontAssetReady();
-        System.out.println("[MuoniumPlayer/FontAsset] 完整字体已热启用（本会话内生僻字/繁体即刻可用）");
+        System.out.println("[MuoniumPlayer/FontAsset] 完整字体已热启用（本会话内生僻字/繁体/韩文即刻可用）");
         return true;
     }
 
     /**
-     * 下载线程的收尾：读出两份已校验的字体字节、解析成 AWT Font 并登记 Skija，
-     * 然后置位待热启用。解析失败按整体失败处理（文件在磁盘上，冷却重试时
+     * 下载线程的收尾：读出四份已校验的字体字节（苹方两份 + 韩文两份）、解析成 AWT Font
+     * 并登记 Skija，然后置位待热启用。解析失败按整体失败处理（文件在磁盘上，冷却重试时
      * 只会重走这一步而不会重新下载）。
      */
     private static void preparePendingFonts() throws IOException {
-        byte[] normal = Files.readAllBytes(cachedFile(PACKS.get(0).fileName()).toPath());
-        byte[] bold = Files.readAllBytes(cachedFile(PACKS.get(1).fileName()).toPath());
+        java.awt.Font[] parsed = new java.awt.Font[PACKS.size()];
         try {
-            pendingFonts = new java.awt.Font[]{
-                    FontManager.createRegisteredFont(normal),
-                    FontManager.createRegisteredFont(bold)};
+            for (int i = 0; i < PACKS.size(); i++) {
+                byte[] data = Files.readAllBytes(cachedFile(PACKS.get(i).fileName()).toPath());
+                parsed[i] = FontManager.createRegisteredFont(data);
+            }
         } catch (Exception failure) {
             pendingFonts = null;
             throw new IOException("全量字体解析失败：" + failure, failure);
         }
+        pendingFonts = parsed;
         pendingSwap = true;
     }
 
@@ -358,7 +371,7 @@ public final class FontAssetDownload {
             for (String mirror : MIRRORS) {
                 urls.add(mirror + pack.fileName());
             }
-            // 两份字体共享一张进度卡：领先路字节加上前几份的 baseBytes 再换算总百分比。
+            // 四份字体共享一张进度卡：领先路字节加上前几份的 baseBytes 再换算总百分比。
             HttpDownloadRace.fetch(urls, pack.bytes(), pack.sha256(), part, raceDone -> {
                 long overall = Math.min(totalBytes, baseBytes + raceDone);
                 announceProgress((int) Math.min(100L, overall * 100L / totalBytes));

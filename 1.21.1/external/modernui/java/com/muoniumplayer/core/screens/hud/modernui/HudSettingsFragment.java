@@ -437,6 +437,7 @@ public final class HudSettingsFragment extends Fragment implements ScreenCallbac
                 if (value.length() != 6) return;
                 try {
                     int rgb = Integer.parseInt(value, 16);
+                    if (entry.isLocked()) return;   // 锁死行（如色板在非手动档）不接受改写
                     entry.setColor(new Color(rgb));
                     paintSwatch(swatch, new Color(rgb));
                     dirty = true;

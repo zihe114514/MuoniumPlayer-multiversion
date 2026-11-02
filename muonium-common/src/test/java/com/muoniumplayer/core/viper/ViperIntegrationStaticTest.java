@@ -20,7 +20,10 @@ class ViperIntegrationStaticTest {
 
     private static String shared(String relative) throws IOException {
         Path path = ProjectPaths.sharedJava().resolve(relative);
-        return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+        // 行尾免疫:编辑器把文件按 CRLF 重存时(git autocrlf 下 diff 看不出来),
+        // 按 \n 写的断言会集体误红 —— 静态测试看的是结构,不是字节。
+        return new String(Files.readAllBytes(path), StandardCharsets.UTF_8)
+                .replace("\r\n", "\n");
     }
 
     @Test

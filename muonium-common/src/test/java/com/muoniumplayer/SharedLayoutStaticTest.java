@@ -63,6 +63,8 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/compat/mc/LyricGlyphAtlasBridge.java",
             // --- 场景声学：玩家环境采样是 MC 触点（水下/天光/降水/方块射线），各树一份 ---
             "com/muoniumplayer/compat/mc/ListenerProbe.java",
+            // --- 环境选曲：环境采样是 MC 触点（群系 tag/方块调色板/实体盒/天光），各树一份 ---
+            "com/muoniumplayer/compat/mc/AmbientProbe.java",
             // --- 光影包适配：各树 RenderState/Shader API 差异大，探测器各树一份 ---
             "com/muoniumplayer/compat/mc/ShaderPackProbe.java",
             "com/muoniumplayer/MuoniumPlayerClient.java",
@@ -91,16 +93,17 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/mixin/MouseButtonStateMixin.java",
             "com/muoniumplayer/mixin/MusicManagerAccessor.java",
             "com/muoniumplayer/mixin/MusicManagerDuckMixin.java",
-            // --- 3D 歌词辉光后处理：bloom 管线本体（裸 GL 3.2，traceOnce 归属各树 Bridge/HudDraw）---
-            "com/muoniumplayer/compat/mc/BloomComposite.java",
-            // --- HUD 直画通路的辉光调度（26.x 的 bloom 在 present 端，无需此件）---
-            "com/muoniumplayer/compat/mc/HudBloomPass.java",
             // --- 26.x 光影期直画：renderpearl 类路径 + GameRenderer 注入点，仅 26.2/26.3 ---
             "com/muoniumplayer/compat/mc/LyricPresentRenderer.java",
             "com/muoniumplayer/compat/mc/LyricBlaze3DRenderer.java",
             "com/muoniumplayer/compat/mc/WorldLyricsHudDraw.java",
+            // --- 场景声学调试：声场射线可视化，MC 渲染 API 触点各树一份（暂仅 26.3）---
+            "com/muoniumplayer/compat/mc/AcousticsDebugLoader.java",
+            "com/muoniumplayer/compat/mc/AcousticsRayDebugRenderer.java",
             "com/muoniumplayer/mixin/GameRendererRenderLevelMixin.java",
             "com/muoniumplayer/mixin/GameRendererAccessor.java",
+            // --- 3D 歌词晕格加色：RenderType.create 包私有 accessor（仅 26.2/26.3）---
+            "com/muoniumplayer/mixin/RenderTypeAccessors.java",
             "com/muoniumplayer/mixin/ProjectionMatrixBufferMixin.java",
             "com/muoniumplayer/party/net/MpPayloads.java"));
 

@@ -37,9 +37,14 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     public boolean styleModern = true;
     public boolean splitLines = true;
     public boolean glowEnabled = true;
-    public float glowStrength = 0.6f;
+    public float glowStrength = 0.35f;
     public float glowSpread = 1.3f;
+
+    /** 发光质量档（TextGlow.GLOW_TIER_*）：0 Standard / 1 High(默认) / 2 Ultra。 */
+    public int glowTier = 1;
     public int glowColorRgb = 0xFFFFFF;
+    /** 发光颜色来源档：0 = 跟随字色（逐字联动文字色/渐变/关键字） / 1 = 自定义色板。 */
+    public int glowColorMode = 1;
     public int colorRgb = 0xFFFFFF;
     /** 文字颜色是否被取色器自定义过（false = 用默认纯白）。 */
     public boolean colorCustom;
@@ -59,6 +64,10 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     public int translation = 1;
     /** 翻译副行的绘光特效（点亮闪点 + 微飞径迹）：仅逐字点亮档有意义。 */
     public boolean translationEffects = false;
+    /** 封面代表色来源档：0 关 / 1 自动提取 / 2 手动色板。 */
+    public int coverColorMode = 0;
+    /** 封面渐变：歌词与翻译按色板从左到右渐变（需 coverColorMode != 0）。 */
+    public boolean coverColorGradient = false;
     /** 更激进的适配（hudDraw）：光影包激活时绕开光影管线，推迟到 HUD 阶段用原版
      *  着色器画在最终画面上 —— 观感与无光影时一致，光影的打光/雾/后处理不再碰歌词。 */
     public boolean hudDraw;
@@ -82,8 +91,10 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
         s.splitLines = HudConfig.worldLyricsSplitLines;
         s.glowEnabled = HudConfig.worldLyricsGlowEnabled;
         s.glowStrength = (float) clamp(HudConfig.worldLyricsGlowStrength, 0.0, 1.0);
-        s.glowSpread = (float) clamp(HudConfig.worldLyricsGlowSpread, 0.0, 1.8);
+        s.glowSpread = (float) clamp(HudConfig.worldLyricsGlowSpread, 0.0, 3.0);
+        s.glowTier = HudConfig.worldLyricsGlowTier;
         s.glowColorRgb = HudConfig.worldLyricsGlowColorRgb & 0xFFFFFF;
+        s.glowColorMode = clampInt(HudConfig.worldLyricsGlowColorMode, 0, 1);
         s.colorRgb = HudConfig.worldLyricsColorRgb & 0xFFFFFF;
         s.colorCustom = HudConfig.worldLyricsColorCustom;
         s.wordPop = HudConfig.worldLyricsWordPop;
@@ -95,6 +106,8 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
         s.aboveGround = HudConfig.worldLyricsAboveGround;
         s.translation = HudConfig.worldLyricsTranslation;
         s.translationEffects = HudConfig.worldLyricsTransEffects;
+        s.coverColorMode = HudConfig.worldLyricsCoverColorMode;
+        s.coverColorGradient = HudConfig.worldLyricsCoverGradient;
         s.hudDraw = HudConfig.worldLyricsHudDraw;
         s.keywordColors = HudConfig.worldLyricsKeywordColors != null
                 ? HudConfig.worldLyricsKeywordColors : "";
@@ -111,6 +124,10 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     }
 
     private static double clamp(double v, double min, double max) {
+        return v < min ? min : (v > max ? max : v);
+    }
+
+    private static int clampInt(int v, int min, int max) {
         return v < min ? min : (v > max ? max : v);
     }
 }

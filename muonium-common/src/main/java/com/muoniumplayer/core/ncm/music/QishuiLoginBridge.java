@@ -3,7 +3,7 @@ package com.muoniumplayer.core.ncm.music;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.muoniumplayer.core.settings.ConfigPaths;
-import top.fpsmaster.music.QrCode;
+import com.muoniumplayer.core.music.source.QrCode;
 
 import java.io.File;
 import java.io.IOException;

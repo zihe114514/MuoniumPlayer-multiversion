@@ -35,8 +35,11 @@ import java.util.Map;
  * 格子的 (inkX, inkY) = (pad, pad) 就是「字形顶点」在格内的位置，世界侧把
  * billboard 上的字形坐标 (x, y)（buildGlyphs 的字顶口径）对到这一格的 (inkX, inkY)。</p>
  *
- * <p>发光在栅格化时用 {@link TextGlow#drawOn}（三层高斯、加色混合）烘进同一张格子，
- * 四周按 {@link TextGlow#padding} 留白。<b>strength 在这里只传一次</b>——
+ * <p>发光走<b>晕/墨分离</b>：墨格（{@link #getInkCell}）只烘字本体、保持锐利；
+ * 晕格（{@link #getGlowCell}）只烘高斯光形（{@link TextGlow#drawGlowOn}），渲染层
+ * 把晕格 quad 画在墨格之下、以<b>加色</b>混合 —— 光晕真正「照亮」背景而不是像
+ * alpha 混合那样把背景压成灰雾。两格以同一 (x,y) 锚点对齐，pad 差就是光晕外圈。
+ * <b>strength 在这里只传一次</b>——
  * docs/歌词发光-高斯重写.md 记过 Apple 样式双乘的前车之鉴。颜色烘死在像素里
  * （ink 用 inkRgb、glow 用 glowColorRgb），进出场 alpha 由世界侧顶点色承担。</p>
  *
@@ -233,16 +236,29 @@ public final class LyricGlyphAtlas {
     }
 
     /**
-     * 取一个字形格子，没有就烘焙。任何失败返回 null（渲染层回退像素字）。
+     * 取一个字形格子（墨格：只含字本体 + 抗锯齿边，无光晕），没有就烘焙。
+     * 任何失败返回 null（渲染层回退像素字）。发光由 {@link #getGlowCell}
+     * 的独立晕格承担 —— 晕/墨分离后墨格不再烘光，字保持锐利。
      *
      * @param ch           字符
      * @param inkRgb       本体颜色（低 24 位，烘死进像素）
-     * @param glowStrength 发光强度 0..1（0 = 不发光）
+     * @param glowStrength 发光强度 0..1（0 = 不发光；仍进键，切开关即刻生效）
      * @param glowSpread   发光扩散倍率
      * @param glowColorRgb 发光颜色（低 24 位）
+     * @deprecated 晕/墨分离后墨格不再携带发光参数；保留旧签名兼容像素回退路径，
+     *              新调用请传 0 强度或改用 {@link #getInkCell}。
      */
+    @Deprecated
     public static GlyphCell getGlyph(char ch, int inkRgb,
                                      float glowStrength, float glowSpread, int glowColorRgb) {
+        return getInkCell(ch, inkRgb);
+    }
+
+    /**
+     * 取墨格（只含字本体，无光晕）。颜色烘死进像素，进出场 alpha 由世界侧
+     * 顶点色承担。发光一律走 {@link #getGlowCell}。
+     */
+    public static GlyphCell getInkCell(char ch, int inkRgb) {
         Host h = host;
         if (h == null) return null;
         synchronized (LOCK) {
@@ -250,18 +266,48 @@ public final class LyricGlyphAtlas {
             CFontRenderer font = bakeFont;
             if (font == null || font.fontHeight <= 0) return null;
 
-            String key = cacheKey(ch, inkRgb, glowStrength, glowSpread, glowColorRgb);
+            String key = inkKey(ch, inkRgb);
             GlyphCell cell = CELLS.get(key);
             if (cell != null) {
                 touchLocked(cell);
                 return cell;
             }
 
-            // ---- 帧内烘焙预算 ----
-            // 烘焙是 Skija 高斯模糊 + 像素读回 + 新页 4MB 分配，一格毫秒级。一行首次
-            // 出现 = 一帧内 N 次连续烘焙，N 大时单帧掉到个位数 fps。同一帧超过预算
-            // 后不再开新烘焙，返回 null（渲染层已有像素字回退），剩余字由后续帧逐步
-            // 补齐 —— 字逐个“长”出来比一次卡死观感好得多。
+            GlyphCell made = bakeInkLocked(h, font, key, ch, inkRgb);
+            if (made == null) return null;
+            CELLS.put(key, made);
+            return made;
+        }
+    }
+
+    /**
+     * 取独立晕格（只含高斯光形，无字本体）。渲染层把晕格 quad 画在墨格之下、
+     * 以<b>加色</b>混合 —— 加色只增不减，是「真发光不糊」的混合模型（详见
+     * TextGlow.drawGlowOn 注释）。发光关闭（strength≈0）返回 null，调用方
+     * 零开销跳过晕层。
+     *
+     * <p>晕格与墨格共用 PAGES 池与烘焙预算；晕格 pad 大（3σ₀×spread），
+     * 大扩散档一格可到 ~120 烘焙px，页消耗约为墨格的 3~4 倍 —— 8 页 LRU
+     * 在「一行 20 字 × 双色档」的最坏组合下仍够（墨 ~10 格/页 + 晕 ~3 格/页）。
+     */
+    public static GlyphCell getGlowCell(char ch, float glowStrength, float glowSpread,
+                                        int glowColorRgb, int inkRgb, int tier) {
+        if (glowStrength <= 0.004f) return null;
+        Host h = host;
+        if (h == null) return null;
+        synchronized (LOCK) {
+            ensureBakeFontLocked();
+            CFontRenderer font = bakeFont;
+            if (font == null || font.fontHeight <= 0) return null;
+
+            String key = glowKey(ch, glowStrength, glowSpread, glowColorRgb, inkRgb, tier);
+            GlyphCell cell = CELLS.get(key);
+            if (cell != null) {
+                touchLocked(cell);
+                return cell;
+            }
+
+            // ---- 帧内烘焙预算（与墨格共享同一预算池）----
             long now = System.nanoTime();
             if (bakeFrameEndNanos != now) {
                 bakeFrameEndNanos = now;
@@ -272,7 +318,8 @@ public final class LyricGlyphAtlas {
             }
             bakesThisFrame++;
 
-            GlyphCell made = bakeLocked(h, font, key, ch, inkRgb, glowStrength, glowSpread, glowColorRgb);
+            GlyphCell made = bakeGlowLocked(h, font, key, ch, glowStrength, glowSpread,
+                    glowColorRgb, inkRgb, tier);
             if (made == null) return null;
             CELLS.put(key, made);
             return made;
@@ -363,6 +410,29 @@ public final class LyricGlyphAtlas {
                 + "|" + fontGeneration;
     }
 
+    /** 墨格键（晕/墨分离后墨格只依赖字与本体色）。"i|" 前缀防与晕格键相撞。 */
+    static String inkKey(char ch, int inkRgb) {
+        return "i|" + ch
+                + "|" + Integer.toHexString(inkRgb & 0xFFFFFF)
+                + "|" + fontGeneration;
+    }
+
+    /**
+     * 晕格键。spread 上限 3.0（16 档量化 → 每档 0.167）；strength 64 档。
+     * 颜色烘死进晕格像素 —— 跟随字色模式下渐变逐字变色会多烘几组晕格，
+     * 但晕格 LRU 与烘焙预算兜底，量化档让滑块抖动不触发重烘。
+     */
+    static String glowKey(char ch, float glowStrength, float glowSpread, int glowColorRgb,
+                          int inkRgb, int tier) {
+        return "g|" + ch
+                + "|" + Math.round(clamp01(glowStrength) * 64f)
+                + "|" + Math.round(clamp01(glowSpread / 3.0f) * 16f)
+                + "|" + Integer.toHexString(glowColorRgb & 0xFFFFFF)
+                + "|" + Integer.toHexString(inkRgb & 0xFFFFFF)
+                + "|" + tier
+                + "|" + fontGeneration;
+    }
+
     private static void touchLocked(GlyphCell cell) {
         long now = System.nanoTime();
         for (Page p : PAGES) {
@@ -373,72 +443,30 @@ public final class LyricGlyphAtlas {
         }
     }
 
-    /** 烘焙一个字符。失败（Skija 缺位/页满/超尺寸/上传失败）返回 null。 */
-    private static GlyphCell bakeLocked(Host h, CFontRenderer font, String key, char ch,
-                                        int inkRgb, float glowStrength, float glowSpread, int glowColorRgb) {
+    /**
+     * 烘焙一个<b>墨格</b>（只含字本体，无光晕）。失败返回 null。
+     * 晕/墨分离：墨格 pad 回到防裁切最小余量，字形边缘由抗锯齿灰阶直接到
+     * 格外 —— 晕的可见成分全在独立晕格里。
+     */
+    private static GlyphCell bakeInkLocked(Host h, CFontRenderer font, String key, char ch,
+                                           int inkRgb) {
         if (!SkijaNatives.ensureLoaded()) return null;
-
-        // advance 与字位框：全部取自烘焙字体自己的度量（与 drawGlyphsOn 同一引擎），
-        // 单位是烘焙像素（该字体 sizePx = 50 的 GUI 像素即烘焙像素）。
         float advanceBake = (float) font.getStringWidthD(String.valueOf(ch));
-        if (advanceBake <= 0.01f) return null; // 空白/不可见字符不进图集
+        if (advanceBake <= 0.01f) return null;
         int inkH = Math.max(1, font.lineBox());
         if (inkH <= 0) return null;
 
-        // 发光留白（烘焙像素）。TextGlow.padding 的口径 = 3σ × 字号 × spread，
-        // 传入的就是 50px 的烘焙字体 —— 出来直接是烘焙像素。
-        int glowPad = glowStrength > 0.004f ? TextGlow.padding(font, glowSpread) : 0;
-        int pad = Math.max(minPadBake(), glowPad);
+        int pad = minPadBake();
         int cellW = (int) Math.ceil(advanceBake) + pad * 2;
         int cellH = inkH + pad * 2;
         if (cellW > PAGE_SIZE || cellH > PAGE_SIZE) return null;
 
-        // ---- 占位（烘焙成功才提交，失败不留洞）----
-        Page page = null;
-        int cellX = 0, cellY = 0;
-        for (Page p : PAGES) {
-            int[] at = p.probe(cellW, cellH);
-            if (at != null) {
-                page = p;
-                cellX = at[0];
-                cellY = at[1];
-                break;
-            }
-        }
-        if (page == null) {
-            // 防抖：刚逐出过页（<1s）说明工作集已超图集容量，再建页只会陷入
-            // 「建 4MB 页 → 挤掉整页活格 → 又建页」的抖动。直接放弃这一格，
-            // 渲染层回退像素字 —— 歌唱到哪补到哪，比来回砸显存好。
-            if (PAGES.size() >= MAX_PAGES) {
-                if (System.nanoTime() - lastEvictNanos < 1_000_000_000L) {
-                    return null;
-                }
-                evictLocked();
-                lastEvictNanos = System.nanoTime();
-            }
-            Object handle;
-            try {
-                handle = h.createPage(PAGE_SIZE, PAGE_SIZE);
-            } catch (Throwable t) {
-                return null;
-            }
-            if (handle == null) return null;
-            page = new Page(handle, PAGE_SIZE, PAGE_SIZE);
-            PAGES.add(page);
-            int[] at = page.probe(cellW, cellH);
-            if (at == null) { // 单格超页（不可能，前面已拦），防御
-                try {
-                    h.deletePage(handle);
-                } catch (Throwable ignored) {
-                }
-                PAGES.remove(page);
-                return null;
-            }
-            cellX = at[0];
-            cellY = at[1];
-        }
+        int[] at = probeOrMakePageLocked(h, cellW, cellH);
+        if (at == null) return null;
+        Page page = PAGES.get(at[2]);
+        int cellX = at[0], cellY = at[1];
 
-        // ---- 离屏栅格化（纯 CPU，不碰 GPU/Skija GPU Surface）----
+        // ---- 离屏栅格化：只画墨迹 ----
         int[] pixelsArgb;
         try (Bitmap bitmap = new Bitmap()) {
             ImageInfo info = ImageInfo.makeN32Premul(cellW, cellH);
@@ -449,11 +477,6 @@ public final class LyricGlyphAtlas {
                 // yTop = pad + 2：CFontRenderer 内部按 y-2 落基线，墨迹顶正好落在 pad。
                 float yTop = pad + 2f;
                 int argb = 0xFF000000 | (inkRgb & 0xFFFFFF);
-                if (glowStrength > 0.004f) {
-                    // 强度只传这一次（TextGlow 内部按层分配透明度）——不得再乘
-                    TextGlow.drawOn(canvas, font, String.valueOf(ch),
-                            pad, yTop, glowColorRgb, 1.0, glowStrength, glowSpread);
-                }
                 font.drawGlyphsOn(canvas, String.valueOf(ch), pad, yTop, argb, 255, 0f, null);
             } finally {
                 canvas.close();
@@ -464,7 +487,6 @@ public final class LyricGlyphAtlas {
         }
         if (pixelsArgb == null) return null;
 
-        // ---- 上传 + 提交占位 ----
         try {
             h.uploadCell(page.handle, cellX, cellY, cellW, cellH, pixelsArgb);
         } catch (Throwable t) {
@@ -474,6 +496,106 @@ public final class LyricGlyphAtlas {
         page.lastUseNanos = System.nanoTime();
         return new GlyphCell(page.handle, cellX, cellY, cellW, cellH,
                 pad, pad, advanceBake, inkH);
+    }
+
+    /**
+     * 烘焙一个<b>晕格</b>（只含高斯光形，无字本体）。晕格坐标口径与墨格一致
+     * （pad 起点对齐字位框），渲染层以同一 (x,y) 锚点画两格即可像素级对齐 ——
+     * 晕格 pad ≥ 墨格 pad，多出的就是光晕的外圈。
+     */
+    private static GlyphCell bakeGlowLocked(Host h, CFontRenderer font, String key, char ch,
+                                            float glowStrength, float glowSpread, int glowColorRgb,
+                                            int inkRgb, int tier) {
+        if (!SkijaNatives.ensureLoaded()) return null;
+        float advanceBake = (float) font.getStringWidthD(String.valueOf(ch));
+        if (advanceBake <= 0.01f) return null;
+        int inkH = Math.max(1, font.lineBox());
+        if (inkH <= 0) return null;
+
+        int glowPad = TextGlow.glowPadding(font, glowSpread, tier);
+        int pad = Math.max(minPadBake(), glowPad);
+        int cellW = (int) Math.ceil(advanceBake) + pad * 2;
+        int cellH = inkH + pad * 2;
+        if (cellW > PAGE_SIZE || cellH > PAGE_SIZE) return null;
+
+        int[] at = probeOrMakePageLocked(h, cellW, cellH);
+        if (at == null) return null;
+        Page page = PAGES.get(at[2]);
+        int cellX = at[0], cellY = at[1];
+
+        // ---- 离屏栅格化：只画光形 ----
+        int[] pixelsArgb;
+        try (Bitmap bitmap = new Bitmap()) {
+            ImageInfo info = ImageInfo.makeN32Premul(cellW, cellH);
+            if (!bitmap.allocPixels(info)) return null;
+            Canvas canvas = new Canvas(bitmap);
+            try {
+                canvas.clear(0x00000000);
+                float yTop = pad + 2f;
+                TextGlow.drawGlowOn(canvas, font, String.valueOf(ch),
+                        pad, yTop, glowColorRgb & 0xFFFFFF, inkRgb & 0xFFFFFF,
+                        glowStrength, glowSpread, tier);
+            } finally {
+                canvas.close();
+            }
+            pixelsArgb = readPixelsArgb(bitmap, cellW, cellH);
+        } catch (Throwable t) {
+            return null;
+        }
+        if (pixelsArgb == null) return null;
+
+        try {
+            h.uploadCell(page.handle, cellX, cellY, cellW, cellH, pixelsArgb);
+        } catch (Throwable t) {
+            return null;
+        }
+        page.commit(cellX, cellY, cellW, cellH);
+        page.lastUseNanos = System.nanoTime();
+        return new GlyphCell(page.handle, cellX, cellY, cellW, cellH,
+                pad, pad, advanceBake, inkH);
+    }
+
+    /**
+     * 页内探测 +（必要时）建新页。返回 {x, y, pageIndex}（pageIndex = 落点页在
+     * PAGES 里的下标，新建页在末尾）。放不下/防抖放弃返回 null。
+     */
+    private static int[] probeOrMakePageLocked(Host h, int cellW, int cellH) {
+        for (int i = 0; i < PAGES.size(); i++) {
+            Page p = PAGES.get(i);
+            int[] at = p.probe(cellW, cellH);
+            if (at != null) {
+                return new int[] {at[0], at[1], i};
+            }
+        }
+        if (PAGES.size() >= MAX_PAGES) {
+            // 防抖：刚逐出过页（<1s）说明工作集已超图集容量，再建页只会陷入
+            // 「建 4MB 页 → 挤掉整页活格 → 又建页」的抖动。直接放弃这一格，
+            // 渲染层回退像素字 —— 歌唱到哪补到哪，比来回砸显存好。
+            if (System.nanoTime() - lastEvictNanos < 1_000_000_000L) {
+                return null;
+            }
+            evictLocked();
+            lastEvictNanos = System.nanoTime();
+        }
+        Object handle;
+        try {
+            handle = h.createPage(PAGE_SIZE, PAGE_SIZE);
+        } catch (Throwable t) {
+            return null;
+        }
+        if (handle == null) return null;
+        Page page = new Page(handle, PAGE_SIZE, PAGE_SIZE);
+        PAGES.add(page);
+        int[] at = page.probe(cellW, cellH);
+        if (at == null) { // 单格超页（不可能，前面已拦），防御
+            try {
+                h.deletePage(handle);
+            } catch (Throwable ignored) {
+            }
+            PAGES.remove(page);
+            return null;
+        }
+        return new int[] {at[0], at[1], PAGES.size() - 1};
     }
 
     /** LRU 逐出一页（最久未用的；本帧正用的页 lastUseNanos 新，不会被选中）。 */
