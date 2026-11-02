@@ -118,7 +118,7 @@ jobs:
           if [ "${{ matrix.loader }}" = "fabric" ] && [ -n "$SKIJA_LIB_DIR" ]; then
             # 两条属性都要：skija.library.path 是 SkijaNatives 的口子，
             # java.library.path 是 Skija 内部 System.loadLibrary 真正读的
-            EXTRA="-Dskija.library.path=$SKIJA_LIB_DIR -Djava.library.path=$SKIJA_LIB_DIR"
+            EXTRA="-Dskija.library.path=$SKIJA_LIB_DIR"
           fi
           ./gradlew ":${{ matrix.loader }}:test" ":${{ matrix.loader }}:build" \
             --console=plain --stacktrace
