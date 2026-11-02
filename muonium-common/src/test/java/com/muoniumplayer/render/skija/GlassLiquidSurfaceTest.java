@@ -12,8 +12,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /** Actual pixels, not just source-text checks: the same drawOn is used by the live GPU renderer. */
+@RequiresSkijaNative
 class GlassLiquidSurfaceTest {
     @BeforeAll static void loadNative() { assertTrue(SkijaNatives.ensureLoaded()); }
 

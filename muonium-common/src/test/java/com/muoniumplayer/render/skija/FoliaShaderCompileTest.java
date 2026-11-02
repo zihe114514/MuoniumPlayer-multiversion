@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.fail;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * SkSL 语法闸门：把 {@code shaders/folia/*.sksl} 逐个交给 Skia 编译。
@@ -17,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * 画出一块纯色，日志里只有一行警告，非常容易被当成「参数没生效」。这一层把「能不能编译」
  * 与「画得对不对」分开：这里失败就是语法或 uniform 声明的问题，与像素无关。</p>
  */
+@RequiresSkijaNative
 class FoliaShaderCompileTest {
 
     @Test

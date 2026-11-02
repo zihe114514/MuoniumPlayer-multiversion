@@ -7,7 +7,9 @@ import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import static org.junit.jupiter.api.Assertions.*;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
+@RequiresSkijaNative
 class SpectrumRibbonTest {
     @BeforeAll static void load() {assertTrue(SkijaNatives.ensureLoaded());}
     private static float[] sample(float phase) {

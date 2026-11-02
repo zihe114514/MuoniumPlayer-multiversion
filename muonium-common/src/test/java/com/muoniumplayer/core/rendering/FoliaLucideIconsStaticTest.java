@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * Folia 界面那批 lucide 图标的静态测试：CPU 光栅，不需要 GL、不需要启动客户端。
@@ -45,6 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <b>带填充图元的图标没被生成脚本丢掉那一半</b>，以及<b>产物与生成脚本同源</b>
  * —— 手改过生成文件、或者脚本换了 lucide 版本却没重跑，都会被这条拦下。</p>
  */
+@RequiresSkijaNative
 class FoliaLucideIconsStaticTest {
 
     /** 光栅边长 = 24 网格 × 4，够量清「该对称的两枚不对称了」这个量级的问题。 */

@@ -233,6 +233,10 @@ test {
     useJUnitPlatform()
     // 测试 JVM 不许真去下载伴生包：断网/超时会拖垮整轮测试
     systemProperty 'muonium.skija.autoDownload', 'false'
+    // CI（ubuntu）无 Skija 可用的原生加载链路：给需要原生库的测试类整类禁用
+    if (!org.gradle.internal.os.OperatingSystem.current().isWindows()) {
+        systemProperty 'muonium.ci.skipSkijaNative', 'true'
+    }
     // CI（ubuntu）跑共享测试：把 Staging 步骤解好的 libskija.so 目录
     // 喂进测试 JVM 的 java.library.path（loadLibrary 只认启动期这条）。
     // 本机 Windows 无 SKIJA_LIB_DIR，windows-x64 的 dll 照常走 Maven 依赖。

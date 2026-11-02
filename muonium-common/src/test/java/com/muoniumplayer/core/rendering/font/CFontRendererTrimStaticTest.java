@@ -12,6 +12,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * 折叠（{@code trim}）与行高（{@code getStringHeight}）重写后的等价性测试。
@@ -23,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>用真的 {@code pf_normal.ttf} 走真 Skia 量宽，不用假字宽：全角括号替换、中日韩字符的宽步进、
  * 以及字距项「前字符替换后、后字符用原字符」这一不对称口径，只有在真字体上才量得出来。</p>
  */
+@RequiresSkijaNative
 class CFontRendererTrimStaticTest {
 
     private static CFontRenderer plain;

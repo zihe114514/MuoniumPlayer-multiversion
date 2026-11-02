@@ -12,7 +12,9 @@ import java.nio.file.Paths;
 import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.*;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
+@RequiresSkijaNative
 class AutomixIslandRendererTest {
     private static final int WIDTH = 200, HEIGHT = 70;
 

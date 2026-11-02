@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * 绘光拖尾 Skija 画布的往返测试：begin → strokeTrail → readPixelsArgb。
@@ -15,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * skija.dll EXCEPTION_ACCESS_VIOLation——编译过、其余 95 测试全绿也挡不住，
  * 因为当时没有任何测试碰过这个类。本类就是那个测试。</p>
  */
+@RequiresSkijaNative
 class HuiguangTrailCanvasTest {
 
     @AfterAll

@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * 品牌矢量标识的静态测试：CPU 光栅，不需要 GL、不需要启动客户端。
@@ -38,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 以及<b>哪一份素材配了哪一家</b> —— 那两份素材的文件名与内容接反过一次，
  * 见 {@link #theTwoAssetsAreNotSwapped()}。</p>
  */
+@RequiresSkijaNative
 class BrandVectorIconsStaticTest {
 
     /** 光栅边长：够看清「上重下轻」这种量级的不对称，又够把字形的连通块分开，还不至于慢。 */

@@ -22,6 +22,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * Skija 文字链路的静态测试：完全在 CPU 上跑，不需要 GL、不需要启动客户端。
@@ -35,6 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>失败时会把光栅结果写到 {@code build/skija-text-*.png}，可以直接打开看。
  */
+@RequiresSkijaNative
 class SkijaTextStaticTest {
 
     private static final String LATIN = "Skija OK 1.3.0 AVWij";
