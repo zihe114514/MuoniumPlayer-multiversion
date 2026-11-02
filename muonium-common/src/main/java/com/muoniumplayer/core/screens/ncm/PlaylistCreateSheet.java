@@ -213,10 +213,13 @@ public final class PlaylistCreateSheet extends NcmSheet {
             chooser.setFileSelectionMode(javax.swing.JFileChooser.DIRECTORIES_ONLY);
             chooser.setDialogTitle("选择音乐文件夹");
             chooser.setApproveButtonText("导入这个文件夹");
-            // 点击回调本身就跑在主线程上（addScheduledTask 有同线程 fast path，直接执行不排队），
-            // showOpenDialog 在这里模态弹出即可，FoliaModelManager.chooseDirectory 同款先例。
-            int choice = chooser.showOpenDialog(null);
-            if (choice != javax.swing.JFileChooser.APPROVE_OPTION) {
+            // 点击回调本身就跑在主线程上（addScheduledTask 有同线程 fast path，直接执行不排队）。
+            // 必须经 withHeadful：原版 Main 的静态初始化把 java.awt.headless 写死成 true，
+            // 直接 showOpenDialog 会抛 HeadlessException，表现就是「点了没反应」。
+            Boolean approved = com.muoniumplayer.core.utils.SwingDialogs.withHeadful(
+                    () -> chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION,
+                    Boolean.FALSE);
+            if (!approved) {
                 return;
             }
             final java.io.File picked = chooser.getSelectedFile();

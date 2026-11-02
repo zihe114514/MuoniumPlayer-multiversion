@@ -103,7 +103,12 @@ public final class FoliaModelManager {
         javax.swing.JFileChooser chooser = new javax.swing.JFileChooser(modelsDir);
         chooser.setFileSelectionMode(javax.swing.JFileChooser.DIRECTORIES_ONLY);
         chooser.setDialogTitle("选择 Folia 模型目录");
-        if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) {
+        // 必须经 withHeadful：原版 Main 静态初始化把 java.awt.headless 写死成 true，
+        // 直接 showOpenDialog 会抛 HeadlessException（表现是「点了没反应」）。
+        Boolean approved = com.muoniumplayer.core.utils.SwingDialogs.withHeadful(
+                () -> chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION,
+                Boolean.FALSE);
+        if (approved) {
             setDirectory(chooser.getSelectedFile());
             return "模型位置: " + modelsDir.getAbsolutePath();
         }
