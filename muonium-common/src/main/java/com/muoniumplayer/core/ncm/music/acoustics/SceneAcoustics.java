@@ -478,15 +478,21 @@ public final class SceneAcoustics {
                 final float mSample = (float) directLpState;
                 directRing[directPos] = mSample;
                 // 真 ITD:源在右(pan>0)右耳先到 —— 右耳读位近(年龄小),
-                // 左耳读位远(晚到),与 ER 抽头的约定同向。
+                // 左耳读位远(晚到),与 ER 抽头的约定同向。读位双向 wrap:
+                // pan>0 时 readL 向上溢、readR 向下溢;pan<0 恰好相反 ——
+                // 两个方向都要收(漏一侧就是环形数组越界,音频链会整个熔断)。
                 final int itd = (int) (directPan * directItdMax);
                 int readL = directPos + itd;
                 if (readL >= dRingLen) {
                     readL -= dRingLen;
+                } else if (readL < 0) {
+                    readL += dRingLen;
                 }
                 int readR = directPos - itd;
                 if (readR < 0) {
                     readR += dRingLen;
+                } else if (readR >= dRingLen) {
+                    readR -= dRingLen;
                 }
                 final double mL = directRing[readL];
                 final double mR = directRing[readR];
