@@ -240,6 +240,79 @@ class SceneAcousticsTest {
         for (double v : quad) assertTrue(Double.isFinite(v));
     }
 
+    @Test
+    @DisplayName("直达链恒等:pan=0、gain=1、截止全开 → 逐样本不变")
+    void directChainIdentityAtNeutral() {
+        SceneAcoustics.applyTarget(planNoTaps(20000, 0f, 1f, 1f, 0f, 0f, 0.28f,
+                1f, DirectPath.FC_OPEN, 0f, 0f));
+        warmup(50);
+        double[] pcm = new double[] {0.3, -0.31, 0.42, -0.1, -0.2, 0.11};
+        double[] copy = pcm.clone();
+        SceneAcoustics.render(pcm, CHANNELS, RATE);
+        for (int i = 0; i < pcm.length; i++) {
+            assertEquals(copy[i], pcm[i], 1e-9, "index " + i);
+        }
+    }
+
+    @Test
+    @DisplayName("直达链:pan=1(gain 满档)声能移到右耳;纯 mono 激励左右守恒")
+    void directChainPansEnergy() {
+        // 纯 mono 激励(side=0)时:L' = M·gL·d, R' = M·gR·d —— 等功率下
+        // (gL²+gR²)=2,总能量守恒(d=1 时)。pan=1 全右:gR²=2, gL=0。
+        SceneAcoustics.applyTarget(planNoTaps(20000, 0f, 1f, 1f, 0f, 0f, 0.28f,
+                1f, DirectPath.FC_OPEN, 1f, 0f));
+        // 参数一阶收敛太慢(τ=0.3s):flush 让声像一步到位,再灌几块稳住环。
+        SceneAcoustics.flush();
+        warmup(4);
+        double[] pcm = new double[CHANNELS * 512];
+        java.util.Arrays.fill(pcm, 0.25);
+        SceneAcoustics.render(pcm, CHANNELS, RATE);
+        double eL = 0;
+        double eR = 0;
+        for (int f = 128; f < 512; f++) { // 避开环填充首段
+            eL += pcm[f * CHANNELS] * pcm[f * CHANNELS];
+            eR += pcm[f * CHANNELS + 1] * pcm[f * CHANNELS + 1];
+        }
+        assertTrue(eR > eL * 20.0, "右耳应主导: L=" + eL + " R=" + eR);
+    }
+
+    @Test
+    @DisplayName("直达链衰减:gain=0.25 时 mono 激励的总能量按比例收缩(S 保留不适用于纯 mono)")
+    void directChainAttenuates() {
+        SceneAcoustics.applyTarget(planNoTaps(20000, 0f, 1f, 1f, 0f, 0f, 0.28f,
+                0.25f, DirectPath.FC_OPEN, 0f, 0f));
+        warmup(50);
+        double[] pcm = new double[CHANNELS * 512];
+        java.util.Arrays.fill(pcm, 0.25);
+        double inE = 0;
+        for (double v : pcm) inE += v * v;
+        SceneAcoustics.render(pcm, CHANNELS, RATE);
+        double outE = 0;
+        for (int f = 128; f < 512; f++) {
+            outE += pcm[f * CHANNELS] * pcm[f * CHANNELS];
+            outE += pcm[f * CHANNELS + 1] * pcm[f * CHANNELS + 1];
+        }
+        double inE2 = 0;
+        for (int f = 128; f < 512; f++) {
+            inE2 += 0.25 * 0.25 * 2;
+        }
+        assertTrue(outE < inE2 * 0.5, "衰减后能量应明显降低: out=" + outE + " in=" + inE2);
+        for (double v : pcm) {
+            assertTrue(Double.isFinite(v));
+        }
+    }
+
+    /** 带直达链参数的计划(世界声源 DSP 测试)。 */
+    private static RoomPlan planNoTaps(double bandHz, float wet, float dryGain, float loudness,
+                                       float predelaySec, float decaySec, float tone,
+                                       float directGain, double directCutoff,
+                                       float directPan, float directDist) {
+        return new RoomPlan(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
+                decaySec * 1.35f, decaySec * 0.8f, 1f,
+                new float[0], new float[0], new float[0],
+                directGain, directCutoff, directPan, directDist);
+    }
+
     /** 喂 n 个静音缓冲(每块新建数组):render 是原地改写,复用同一数组会把上一块
      *  的输出回灌成输入;灌直流则会在湿声入口的直流阻断器上留阶跃斑点。参数
      *  收敛发生在早退判断之前,静音缓冲一样能把湿声/回授推到目标。 */

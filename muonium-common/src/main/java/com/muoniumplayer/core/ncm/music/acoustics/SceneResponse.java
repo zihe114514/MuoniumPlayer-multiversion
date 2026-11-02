@@ -86,6 +86,15 @@ public final class SceneResponse {
 
             predelay = (float) Math.max(PRED_MIN_SEC,
                     Math.min(PRED_MAX_SEC, nearest / SPEED_OF_SOUND));
+            // 世界声源:预延迟也是「相对直达」的时序 —— 首反射的完整旅程是
+            // 源→墙→耳(nearest 只是出发段;回程以同尺度近似),减去直达路程
+            // 才是「直达声之后多久,尾部的第一波开始」。远处音箱(直达 30m、
+            // 首反射 10m)的预延迟因此接近 0 而不是凭空的 29ms。
+            if (sample.hasDirectSource()) {
+                predelay = (float) Math.max(PRED_MIN_SEC,
+                        Math.min(PRED_MAX_SEC, (nearest * 2 - sample.directDistanceMeters())
+                                / SPEED_OF_SOUND));
+            }
             // 衰减时长:每弹能量保留 e,−60dB 所需弹射数 × 每弹耗时。
             // ρ 直接夹 [0.10,0.92] —— 早期的「低 ρ 抬升线」会把羊毛(0.1)
             // 抬到 0.485,与木头(0.6)几乎同尾,材质的吸音差异被抹平
@@ -219,10 +228,25 @@ public final class SceneResponse {
         final float loudFinal = 1f - (1f - loud) * s;
         // 干声让位:湿声越大干声越退(最多 DRY_DUCK),混响才不被满幅干声掩蔽。
         final float duck = 1f - DRY_DUCK_MAX * Math.min(1f, wet * 1.25f);
+
+        // ---- 直射声链(世界声源;无声源 = 恒等直通) ----
+        float directGain = 1f;
+        double directCutoff = DirectPath.FC_OPEN;
+        float directPan = 0f;
+        float directDist = 0f;
+        if (sample.hasDirectSource()) {
+            directDist = Math.max(0f, sample.directDistanceMeters());
+            final double occl = Math.max(0.0, sample.directOcclusion());
+            directGain = (float) DirectPath.directGain(directDist, occl);
+            directCutoff = DirectPath.totalCutoffHz(occl, directDist);
+            directPan = DirectPath.clampPan(sample.directPan());
+        }
+
         return new RoomPlan(Math.pow(10.0, logBand), wet, loudFinal * duck, loudFinal,
                 predelay, decay, NEUTRAL_TONE + (tone - NEUTRAL_TONE) * s,
                 decayLow, decayHigh, diffusion,
-                tapDelay, tapGainL, tapGainR);
+                tapDelay, tapGainL, tapGainR,
+                directGain, directCutoff, directPan, directDist);
     }
 
     /**

@@ -37,10 +37,31 @@ public final class RoomPlan {
     public final float[] tapGainL;
     public final float[] tapGainR;
 
+    /** 直达声总增益 0..1(距离 × 遮挡);1 = 无声源或贴脸(不衰减)。 */
+    public final float directGain;
+    /** 直达声低通截止(Hz);≥20000 = 不压(无声源/近场无遮挡)。 */
+    public final double directCutoffHz;
+    /** 直达声像 −1(源在左)..1(源在右)。 */
+    public final float directPan;
+    /** 直达路程(米):抽头相对时序的基准(渲染里直达零延迟)。 */
+    public final float directDistanceMeters;
+
     public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
                     float predelaySec, float decaySec, float tone,
                     float decayLowSec, float decayHighSec, float diffusion,
                     float[] tapDelaySec, float[] tapGainL, float[] tapGainR) {
+        this(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
+                decayLowSec, decayHighSec, diffusion,
+                tapDelaySec, tapGainL, tapGainR,
+                1f, DirectPath.FC_OPEN, 0f, 0f);
+    }
+
+    public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
+                    float predelaySec, float decaySec, float tone,
+                    float decayLowSec, float decayHighSec, float diffusion,
+                    float[] tapDelaySec, float[] tapGainL, float[] tapGainR,
+                    float directGain, double directCutoffHz, float directPan,
+                    float directDistanceMeters) {
         this.bandHz = bandHz;
         this.wet = wet;
         this.dryGain = dryGain;
@@ -55,13 +76,18 @@ public final class RoomPlan {
         this.tapDelaySec = tapDelaySec;
         this.tapGainL = tapGainL;
         this.tapGainR = tapGainR;
+        this.directGain = directGain;
+        this.directCutoffHz = directCutoffHz;
+        this.directPan = directPan;
+        this.directDistanceMeters = directDistanceMeters;
     }
 
     /** 静息计划:直通。 */
     public static RoomPlan idle() {
         return new RoomPlan(SceneAcoustics.bandOpenHz(), 0f, 1f, 1f, 0f, 0f,
                 SceneResponse.NEUTRAL_TONE, 0f, 0f, 1f,
-                new float[0], new float[0], new float[0]);
+                new float[0], new float[0], new float[0],
+                1f, DirectPath.FC_OPEN, 0f, 0f);
     }
 
     @Override
@@ -74,6 +100,8 @@ public final class RoomPlan {
                 + " 高=" + String.format("%.2f", decayHighSec)
                 + " 扩散=" + String.format("%.2f", diffusion)
                 + " 预延迟=" + String.format("%.1f", predelaySec * 1000) + "ms"
-                + " 抽头=" + tapCount;
+                + " 抽头=" + tapCount
+                + " 直达=" + String.format("%.2f", directGain)
+                + "@" + String.format("%.0f", directCutoffHz) + "Hz";
     }
 }
