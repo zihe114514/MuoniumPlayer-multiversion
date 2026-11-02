@@ -76,11 +76,6 @@ jobs:
           # 缓存按「树+加载器」分桶；PR 上只读
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
-      - name: Build & Test (${{ matrix.tree }} / ${{ matrix.loader }})
-        shell: bash
-        env:
-          # CI 上无视本机 JDK 路径；setup-java 已把 JAVA_HOME 指到对应 JDK
-          GRADLE_OPTS: "-Dorg.gradle.java.home="
       - name: Sanitize gradle.properties for CI
         shell: bash
         run: |
@@ -99,7 +94,7 @@ jobs:
           echo "--- sanitized gradle.properties (proxy/java.home removed) ---"
           grep -E 'java.home|proxyHost' gradle.properties || echo "(clean)"
 
-      - name: Build & Test (${{ matrix.tree }} / ${{ matrix.loader }})
+      - name: Build and Test (${{ matrix.tree }} / ${{ matrix.loader }})
         shell: bash
         run: |
           cd "${{ matrix.tree }}"
