@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * 覆盖层那两枚招呼字的时间轴：来回放、满字端停两秒、hello 与 welcome 轮着来、
@@ -33,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 曲线连不连续、一枚字什么时候交棒给下一枚、哪一帧该是一个像素都不画。真机截图只能证明截到的
  * 那一帧对不对，这里证明的是整条时间轴。</p>
  */
+@RequiresSkijaNative
 class OnboardingGreetingStaticTest {
 
     /** 一个好算的假素材长度（秒）。真实长度另有一根钉子。 */
