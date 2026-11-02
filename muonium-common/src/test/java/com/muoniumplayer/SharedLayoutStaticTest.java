@@ -102,6 +102,9 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/compat/mc/AcousticsRayDebugRenderer.java",
             "com/muoniumplayer/mixin/GameRendererRenderLevelMixin.java",
             "com/muoniumplayer/mixin/GameRendererAccessor.java",
+            // --- 世界声源：放置交互/状态判定与世界线框标记,MC 触点各树一份(暂仅 26.3)---
+            "com/muoniumplayer/compat/mc/SpeakerManager.java",
+            "com/muoniumplayer/compat/mc/SpeakerRenderBridge.java",
             // --- 3D 歌词晕格加色：RenderType.create 包私有 accessor（仅 26.2/26.3）---
             "com/muoniumplayer/mixin/RenderTypeAccessors.java",
             "com/muoniumplayer/mixin/ProjectionMatrixBufferMixin.java",

@@ -124,6 +124,8 @@ public final class MuoniumPlayerNeoForge {
      */
     private void onSubmitCustomGeometry(SubmitCustomGeometryEvent event) {
         WorldLyricsBridge.collectWorldLyrics(event.getSubmitNodeCollector());
+        // 世界声源线框标记(与歌词同一收集阶段,先后无碍)。
+        com.muoniumplayer.compat.mc.SpeakerRenderBridge.collect(event.getSubmitNodeCollector());
     }
 
     /**
