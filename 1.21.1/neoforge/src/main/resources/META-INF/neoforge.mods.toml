@@ -8,7 +8,7 @@ issueTrackerURL = "https://github.com/zihe114514/MuoniumPlayer-multiversion/issu
 modId = "muonium"
 version = "${version}"
 displayName = "MuoniumPlayer"
-authors = "云杉, 心事抱抱, N0ne, eyz2021"
+authors = "云杉, 心事抱抱, N0ne, eyz2021, Chryui (Cherry7593)"
 description = '''
 Minecraft music client mod: 8 sources (NetEase / QQ / KuGou / Bilibili / Qishui / YouTube Music / Spotify / GD), word-by-word lyrics, Dynamic Island, Automix crossfade, listen-together rooms. Client-only.
 '''
