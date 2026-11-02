@@ -271,6 +271,11 @@ public final class MuoniumPlayerClient {
         // 在主菜单里也该继续跟随外部播放器（岛的常驻页在那儿也画）。
         ExternalPlayback.onClientTick();
 
+        // ---- 失焦压低音乐 ----
+        // 切出游戏窗口时把本 mod 的输出按档位压下去，回来再推回。焦点状态由树内读、传给共享层
+        // （共享层不碰 MC 符号）；内部带时间斜坡与全 Throwable 闸，稳态下是一次浮点比较。
+        com.muoniumplayer.core.ncm.music.FocusVolumeDucker.onClientTick(mc.isWindowActive());
+
         // ---- 场景声学 ----
         // 每 tick 问一次环境采样器;内部自带 200ms 节流与全 Throwable 闸,主菜单
         // (采不到听者)会把目标量送回静息。真正的方块遍历只发生在节流窗口到期

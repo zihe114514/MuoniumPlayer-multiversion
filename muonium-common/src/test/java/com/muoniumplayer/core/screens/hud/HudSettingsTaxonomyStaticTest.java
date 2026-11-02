@@ -40,7 +40,7 @@ class HudSettingsTaxonomyStaticTest {
      * 与 26.x 版注释同款。
      */
     private static final List<Integer> COUNTS =
-            Arrays.asList(28, 30, 9, 25, 26, 33, 6, 3);
+            Arrays.asList(28, 30, 9, 25, 28, 33, 6, 3);
 
     private static String versionName() {
         return ProjectPaths.versionRoot().getFileName().toString();
@@ -88,8 +88,10 @@ class HudSettingsTaxonomyStaticTest {
      *  LEGACY_PALETTE_ABSENT 旧口径随之删除。
      *  同日发光组新增「发光质量」choice（Standard/High/Ultra 三档分层管线，默认 High）——
      *  3D 歌词页 +1 条。
+     *  2026-11-03 「播放」页新增「切出游戏时」组 2 条（失焦压低音乐 toggle +
+     *  压低到 四档 choice，后者仅在开关打开时可见）—— 播放页 26 → 28 条，160 → 162。
      *  不新开分类页：ModernUI 分类条横排 8 格已满（见下方封顶测试）。 */
-    private static final int TOTAL = 160;
+    private static final int TOTAL = 162;
 
     @Test
     @DisplayName("分类就是这 7 页，顺序与每页条目数都不许悄悄变")
