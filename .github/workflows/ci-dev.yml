@@ -75,7 +75,6 @@ jobs:
         with:
           # 缓存按「树+加载器」分桶；PR 上只读
           cache-read-only: ${{ github.event_name == 'pull_request' }}
-          gradle-home-cache-key: gradle-${{ matrix.tree }}-${{ matrix.loader }}
 
       - name: Build & Test (${{ matrix.tree }} / ${{ matrix.loader }})
         shell: bash
