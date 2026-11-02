@@ -562,13 +562,38 @@ public final class MuQQApi {
 
     // ── QQ 扫码登录 ────────────────────────────────────────────────────────
 
+    /**
+     * 带 cookie jar 的 GET（对应原 jar 的 jarGet）：请求携带 jar，响应 Set-Cookie 并回。
+     * 扫码链路（ptqrshow → ptqrlogin → check_sig → authorize）全部依赖这条语义——
+     * qrsig / p_skey 等中间票据都住在 jar 里，漏一步后面全断。
+     */
+    private MuHttp.Response jarGet(String url, Map<String, String> query, String referer) {
+        MuHttp.Response r = http.get(url, query, linkedStr("Referer", referer), loginJar);
+        mergeIntoJar(r.getSetCookies());
+        return r;
+    }
+
+    private MuHttp.Response jarPostForm(String url, Map<String, String> form, String referer) {
+        MuHttp.Response r = http.postForm(url, form, new LinkedHashMap<>(), loginJar);
+        mergeIntoJar(r.getSetCookies());
+        return r;
+    }
+
+    private void mergeIntoJar(Map<String, String> setCookies) {
+        if (setCookies == null) return;
+        for (Map.Entry<String, String> entry : setCookies.entrySet()) {
+            if (entry.getValue() != null && !entry.getValue().isEmpty()) {
+                loginJar.put(entry.getKey(), entry.getValue());
+            }
+        }
+    }
+
     public QrCode createQrCode() {
         loginJar.clear();
         Map<String, String> query = linkedStr("appid", "716027609", "e", "2", "l", "M",
                 "s", "3", "d", "72", "v", "4", "t", "0." + loginNonce(),
                 "daid", "383", "pt_3rd_aid", "100497308");
-        http.get("https://ssl.ptlogin2.qq.com/ptqrshow", query,
-                linkedStr("Referer", "https://xui.ptlogin2.qq.com/"), loginJar);
+        jarGet("https://ssl.ptlogin2.qq.com/ptqrshow", query, "https://xui.ptlogin2.qq.com/");
         String qrsig = loginJar.get("qrsig");
         if (qrsig == null) {
             throw new MusicApiException("QQ：获取 qrsig 失败", null);
@@ -585,8 +610,8 @@ public final class MuQQApi {
                 "js_ver", "20102616", "js_type", "1", "login_sig", "",
                 "pt_uistyle", "40", "aid", "716027609", "daid", "383",
                 "pt_3rd_aid", "100497308", "has_onekey", "1");
-        MuHttp.Response resp = http.get("https://ssl.ptlogin2.qq.com/ptqrlogin", args,
-                linkedStr("Referer", "https://xui.ptlogin2.qq.com/"), loginJar);
+        MuHttp.Response resp = jarGet("https://ssl.ptlogin2.qq.com/ptqrlogin", args,
+                "https://xui.ptlogin2.qq.com/");
         Matcher cb = PTUI_CB.matcher(resp.getBody());
         if (!cb.find()) return QrLoginState.ERROR;
         String sigx = cb.group(1);
@@ -635,8 +660,8 @@ public final class MuQQApi {
                 "j_later", "0", "low_login_hour", "0", "regmaster", "0",
                 "pt_login_type", "3", "pt_aid", "0", "pt_aaid", "16", "pt_light", "0",
                 "pt_3rd_aid", "100497308");
-        http.get("https://ssl.ptlogin2.graph.qq.com/check_sig", checkSig,
-                linkedStr("Referer", "https://xui.ptlogin2.qq.com/"), loginJar);
+        jarGet("https://ssl.ptlogin2.graph.qq.com/check_sig", checkSig,
+                "https://xui.ptlogin2.qq.com/");
         String pSkey = loginJar.get("p_skey");
         if (pSkey == null) {
             throw new MusicApiException("QQ：获取 p_skey 失败", null);
@@ -648,8 +673,8 @@ public final class MuQQApi {
                 "from_ptlogin", "1", "src", "1", "update_auth", "1", "openapi", "1010_1030",
                 "g_tk", String.valueOf(MuHash33.hash33(pSkey, 5381)),
                 "auth_time", loginNonce(), "ui", UUID.randomUUID().toString());
-        MuHttp.Response authorize = http.postForm("https://graph.qq.com/oauth2.0/authorize",
-                form, new LinkedHashMap<>(), loginJar);
+        MuHttp.Response authorize = jarPostForm("https://graph.qq.com/oauth2.0/authorize",
+                form, "https://graph.qq.com/");
         String code = followForCode(authorize);
         Map<String, Object> param = linked("code", code);
         Map<String, Object> extraComm = linked("tmeLoginType", 2);
@@ -723,8 +748,7 @@ public final class MuQQApi {
         if (code != null) return code;
         for (int hop = 0; loc != null && hop < 6; hop++) {
             String url = loc.startsWith("http") ? loc : "https://graph.qq.com" + loc;
-            MuHttp.Response r = http.get(url, new LinkedHashMap<>(),
-                    linkedStr("Referer", "https://graph.qq.com/"), loginJar);
+            MuHttp.Response r = jarGet(url, new LinkedHashMap<>(), "https://graph.qq.com/");
             body = r.getBody();
             loc = r.header("Location");
             code = extractCode(loc);
