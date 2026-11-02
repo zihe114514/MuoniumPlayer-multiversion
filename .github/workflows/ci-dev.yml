@@ -94,6 +94,16 @@ jobs:
           echo "--- sanitized gradle.properties (proxy/java.home removed) ---"
           grep -E 'java.home|proxyHost' gradle.properties || echo "(clean)"
 
+      - name: Stage Skija Linux native (fabric only)
+        if: matrix.loader == 'fabric'
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/skija-native"
+          curl -sfL --retry 3             "https://maven.aliyun.com/repository/public/io/github/humbleui/skija-linux-x64/0.143.17/skija-linux-x64-0.143.17.jar"             -o "$GITHUB_WORKSPACE/skija-native/skija-linux-x64.jar"
+          cd "$GITHUB_WORKSPACE/skija-native"
+          unzip -o -q skija-linux-x64.jar
+          echo "SKIJA_LIB_DIR=$GITHUB_WORKSPACE/skija-native" >> "$GITHUB_ENV"
+
       - name: Build and Test (${{ matrix.tree }} / ${{ matrix.loader }})
         shell: bash
         run: |
@@ -102,6 +112,10 @@ jobs:
           # 编译 + 该加载器的单测（muonium-common 共享测试从各树挂载跑）
           # setup-java 已把 JAVA_HOME 指到矩阵对应的 JDK；无 java.home 属性时
           # Gradle 守护进程直接用 JAVA_HOME
+          EXTRA=""
+          if [ "${{ matrix.loader }}" = "fabric" ] && [ -n "$SKIJA_LIB_DIR" ]; then
+            EXTRA="-Dskija.library.path=$SKIJA_LIB_DIR"
+          fi
           ./gradlew ":${{ matrix.loader }}:test" ":${{ matrix.loader }}:build" \
             --console=plain --stacktrace
 
