@@ -21,7 +21,7 @@ jobs:
   # CI 上两者都不存在 —— 由 Sanitize 步骤在工作副本里摘除。
   # ---------------------------------------------------------------
   build-and-test:
-    name: ${{ matrix.tree }} · ${{ matrix.loader }}
+    name: ${{ matrix.tree }} - ${{ matrix.loader }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
