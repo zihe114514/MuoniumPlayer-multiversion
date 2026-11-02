@@ -97,4 +97,47 @@ class AcousticsWiringStaticTest {
         assertTrue(viper >= 0 && acoustics > viper, "挂接顺序:声学应在 ViPER 之后同一时机");
         assertTrue(src.contains("AcousticsRuntime.onTrackChanged"), "换曲/seek 必须清声场");
     }
+
+    // ---- 世界声源(暂仅 26.3;铺树后把 26.3 专属断言并入全树循环) ----
+
+    private static final String SPEAKER_TREE = "26.3";
+
+    @Test
+    @DisplayName("26.3:世界声源的按键、tick 判定、探针源点切换与渲染桥都在")
+    void speakerWiringOn263() throws IOException {
+        Path root = repoRoot();
+        String client = read(root.resolve(SPEAKER_TREE)
+                .resolve("src/main/java/com/muoniumplayer/MuoniumPlayerClient.java"));
+        // 26.3 的 MuoniumPlayerClient 是 FORK:字段/构造/tick 消费都断言
+        assertTrue(client.contains("keySpeakerPlace"), "26.3 缺声源按键定义");
+        assertTrue(client.contains("SpeakerManager.toggle()"), "26.3 tick 没消费声源放置键");
+        assertTrue(client.contains("SpeakerManager.tick()"), "26.3 tick 没跑声源降级判定");
+        assertTrue(client.contains("SpeakerManager.init()"), "26.3 init 没恢复声源锚点");
+
+        String probe = read(root.resolve(SPEAKER_TREE)
+                .resolve("src/main/java/com/muoniumplayer/compat/mc/ListenerProbe.java"));
+        assertTrue(probe.contains("SpeakerManager.samplingOrigin"), "26.3 探针没接声源采样原点");
+        assertTrue(probe.contains("directOcclusion"), "26.3 探针没采直射遮挡");
+        assertTrue(probe.contains("hasDirectSource"), "26.3 采样没交付直射声字段");
+
+        Path manager = root.resolve(SPEAKER_TREE)
+                .resolve("src/main/java/com/muoniumplayer/compat/mc/SpeakerManager.java");
+        assertTrue(Files.isRegularFile(manager), "26.3 缺 SpeakerManager");
+        String mgr = read(manager);
+        assertTrue(mgr.contains("SpeakerState.RANGE_METERS"), "SpeakerManager 没用共享射程常量");
+        assertTrue(mgr.contains("SpeakerStore.load") && mgr.contains("SpeakerStore.save"),
+                "SpeakerManager 没接锚点持久化");
+
+        String render = read(root.resolve(SPEAKER_TREE)
+                .resolve("src/main/java/com/muoniumplayer/compat/mc/SpeakerRenderBridge.java"));
+        assertTrue(render.contains("submitCustomGeometry"), "渲染桥没走 submit-collect");
+
+        // 两个加载器都要注册渲染桥
+        String fabric = read(root.resolve(SPEAKER_TREE)
+                .resolve("fabric/src/main/java/com/muoniumplayer/MuoniumPlayerMod.java"));
+        assertTrue(fabric.contains("SpeakerRenderBridge.collect"), "26.3 fabric 没注册声源渲染桥");
+        String neo = read(root.resolve(SPEAKER_TREE)
+                .resolve("neoforge/src/main/java/com/muoniumplayer/loader/neoforge/MuoniumPlayerNeoForge.java"));
+        assertTrue(neo.contains("SpeakerRenderBridge.collect"), "26.3 neoforge 没注册声源渲染桥");
+    }
 }

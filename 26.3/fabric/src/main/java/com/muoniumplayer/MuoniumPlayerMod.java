@@ -81,6 +81,9 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         // partialTick 不需要（歌词动画走歌曲毫秒时钟）。
         LevelRenderEvents.COLLECT_SUBMITS.register(context ->
                 WorldLyricsBridge.collectWorldLyrics(context.submitNodeCollector()));
+        // 世界声源线框标记:同一收集阶段,排在歌词之后先后无碍(各自 submit)。
+        LevelRenderEvents.COLLECT_SUBMITS.register(context ->
+                com.muoniumplayer.compat.mc.SpeakerRenderBridge.collect(context.submitNodeCollector()));
         ScreenEvents.AFTER_INIT.register((minecraft, screen, scaledWidth, scaledHeight) -> {
             ScreenEvents.afterExtract(screen).register(
                     (renderedScreen, extractor, mouseX, mouseY, tickDelta) -> {

@@ -107,6 +107,8 @@ public final class MuoniumPlayerClient {
     public static KeyMapping keyOpenMusic;
     /** 打开 HUD 位置/缩放编辑器，默认 H。可在「选项 → 控制」中修改。 */
     public static KeyMapping keyEditHud;
+    /** 世界声源放置/移除（单键智能切换），默认不占键位。可在「选项 → 控制」中修改。 */
+    public static KeyMapping keySpeakerPlace;
     /** 切换到上一曲，默认 Page Up。可在「选项 → 控制」中修改。 */
     public static KeyMapping keyPreviousTrack;
     /** 切换到下一曲，默认 Page Down。可在「选项 → 控制」中修改。 */
@@ -158,8 +160,12 @@ public final class MuoniumPlayerClient {
         keyQuickSearch = key("key.muonium.quick_search", Keyboard.KEY_F);
         // 环境选曲手动切换：默认不占键位（KEY_NONE），想要键位的玩家在控制设置里自行绑定。
         keyAmbientNow = key("key.muonium.ambient_now", Keyboard.KEY_NONE);
+        // 世界声源放置/移除（单键智能切换）：默认不占键位,同 keyAmbientNow 的理由 ——
+        // 玩家自己决定要不要把音乐「放进世界」。
+        keySpeakerPlace = key("key.muonium.speaker_place", Keyboard.KEY_NONE);
         return List.of(keyOpenMusic, keyEditHud, keyPreviousTrack, keyNextTrack,
-                keyVolumeUp, keyVolumeDown, keyTogglePause, keyQuickSearch, keyAmbientNow);
+                keyVolumeUp, keyVolumeDown, keyTogglePause, keyQuickSearch, keyAmbientNow,
+                keySpeakerPlace);
     }
 
     private static KeyMapping key(String translationKey, int lwjgl2DefaultKey) {
@@ -202,6 +208,9 @@ public final class MuoniumPlayerClient {
         // 5. 公告：与更新检查读同一份远端清单，但自己拉、自己记「哪些看过」，两条路互不牵连。
         //    有未读时由 GuiAnnouncements 在主菜单弹一次，关掉即整批记为已读；拉不到什么都不提示。
         AnnouncementChecker.beginFetch(MOD_VERSION, MC_VERSION, loaderId);
+
+        // 6. 世界声源:读回上次放置的锚点(speaker.json,坏数据按无锚点)。
+        com.muoniumplayer.compat.mc.SpeakerManager.init();
     }
 
     /** 供加载器侧的事件回调判断初始化是否已完成（NeoForge 的事件可能早于 clientSetup 触发）。 */
@@ -362,6 +371,13 @@ public final class MuoniumPlayerClient {
             if (keyAmbientNow.consumeClick()) {
                 MusicHotkeys.triggerAmbientNow();
             }
+
+            // 世界声源放置/移除:单键智能切换(瞄准空处=放置,瞄准声源=移除)。
+            // 随后 SpeakerManager.tick 做逐帧降级判定,两个调用都必须在游戏线程。
+            if (keySpeakerPlace.consumeClick()) {
+                com.muoniumplayer.compat.mc.SpeakerManager.toggle();
+            }
+            com.muoniumplayer.compat.mc.SpeakerManager.tick();
         } else {
             // 打开 GUI 时把这一 tick 积累的边沿消费掉，避免关掉界面的瞬间一次性全部触发。
             // 1.8.9 靠 Forge 的按键处理天然不会积累；现在 consumeClick 的计数会留到下次读取。
@@ -374,6 +390,7 @@ public final class MuoniumPlayerClient {
             keyTogglePause.consumeClick();
             keyQuickSearch.consumeClick();
             keyAmbientNow.consumeClick();
+            keySpeakerPlace.consumeClick();
         }
     }
 
