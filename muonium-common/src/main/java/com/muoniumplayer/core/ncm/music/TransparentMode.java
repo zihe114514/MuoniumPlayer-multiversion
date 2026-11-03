@@ -12,9 +12,9 @@ import java.io.File;
  * 「通透模式」：跟着正在播放的音乐节拍，把视野里的生物与玩家模型像果冻一样压扁回弹。
  *
  * <h3>节拍从哪来</h3>
- * <p>直接读 {@link PlaybackPulse#beat()} —— 它挂在正在响的那一路输出上做 onset 检测，
- * 任何歌、任何格式都自动卡点，切歌不用管，停下来自然归零。这里不做任何音频分析，
- * 也不维护自己的时钟。</p>
+ * <p>读 {@link BeatPulseSource#beat()} —— 三级节拍链：Folia 模型分析的节拍网格
+ * （BPM + 相位，纯乐理拍，没鼓点也按拍子弹）→ 实时 onset 自相关估算 →
+ * {@link PlaybackPulse} 能量脉冲兜底。这里不做任何音频分析，也不维护自己的时钟。</p>
  *
  * <h3>压缩数学</h3>
  * <p>一套经典的果冻挤压：高度按 {@code 1 - 幅度×squash} 压下去，宽度按
@@ -136,7 +136,7 @@ public final class TransparentMode {
      * 状态不做同步。</p>
      */
     static float springSquash() {
-        float target = clamp01(PlaybackPulse.beat());
+        float target = clamp01(BeatPulseSource.beat());
         long now = System.nanoTime();
         float dt = lastSpringNanos == 0L ? 0f : (now - lastSpringNanos) / 1.0e9f;
         lastSpringNanos = now;
