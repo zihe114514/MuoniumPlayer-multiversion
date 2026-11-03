@@ -74,4 +74,17 @@ class BeatPulseSourceTest {
         assertTrue(BeatPulseSource.estimatedConfidenceForTest() < 0.55f,
                 "乱间隔也收敛了，回退链就断了");
     }
+
+    @Test
+    void estimateSurvivesAcrossBeatCalls() {
+        // 回归锁：估算收敛后必须能被后续 beat() 消费（换歌重置前那次报的病）。
+        BeatPulseSource.resetForTest();
+        long now = 1_000_000_000L;
+        for (int i = 0; i < 14; i++) {
+            BeatPulseSource.feedEnergyForTest(0.8f);
+            now += 500_000_000L;
+            BeatPulseSource.advanceClockForTest(now);
+        }
+        assertTrue(BeatPulseSource.estimatedPeriodNanosForTest() > 0f, "前置：估算应已收敛");
+    }
 }

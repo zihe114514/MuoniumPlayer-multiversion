@@ -44,6 +44,10 @@ public final class BeatPulseSource {
     private static float estimatedPeriodNanos;
     private static float estimatedConfidence;
 
+    /** 会话归属：换歌/换会话时估算与网格全部作废重建。 */
+    private static long lastSessionId = Long.MIN_VALUE;
+    private static long lastSongId = Long.MIN_VALUE;
+
     private BeatPulseSource() {
     }
 
@@ -51,11 +55,23 @@ public final class BeatPulseSource {
      * 当前节拍脉冲 0..1：拍点上冲高、拍间落下，簧见 {@link TransparentMode}。
      *
      * <p>同一帧里 {@link TransparentMode} 的两个入口各调一次是安全的：拍点判定
-     * 用单调的墙上时钟推进，走过一个拍点只报一次。</p>
+     * 用单调的墙上时钟推进，走过一个拍点只报一次。暂停时返回 0 ——
+     * 节拍跟着播放状态走，暂停下继续弹是 bug 不是特性。</p>
      */
     public static float beat() {
+        CloudMusic.PlaybackSnapshot snapshot = CloudMusic.getSnapshot();
+        if (snapshot == null || !snapshot.playing) {
+            resetPlaybackState();
+            return 0f;
+        }
+        // 换歌/换会话：旧歌的网格相位、估算与 onset 窗全是错的，全部作废。
+        if (snapshot.sessionId != lastSessionId || snapshot.songId != lastSongId) {
+            resetPlaybackState();
+            lastSessionId = snapshot.sessionId;
+            lastSongId = snapshot.songId;
+        }
         long now = System.nanoTime();
-        Grid grid = currentGrid(now);
+        Grid grid = currentGrid(snapshot, now);
         if (grid != null) {
             // 网格拍：相位=0 处打满、按 1/4 拍宽指数回落 —— 弹簧再把这包络顺成压-弹。
             double elapsed = now - grid.phaseNanos();
@@ -74,6 +90,17 @@ public final class BeatPulseSource {
         // 能量回退期把 onset 事件喂给估算器养节拍：PlaybackPulse.pulse 升沿即拍。
         noteEnergyOnset(energy);
         return energy;
+    }
+
+    /** 清播放期状态：onset 窗、估算、能量升沿记忆。归属键由调用方重记。 */
+    private static void resetPlaybackState() {
+        onsetCount = 0;
+        lastOnsetNanos = 0L;
+        lastBeatNanos = 0L;
+        estimatedPeriodNanos = 0f;
+        estimatedConfidence = 0f;
+        lastEnergy = 0f;
+        java.util.Arrays.fill(ONSET_NANOS, 0f);
     }
 
     /** 能量脉冲升沿检测：上一帧低、这一帧高，视为一次 onset。 */
@@ -95,9 +122,7 @@ public final class BeatPulseSource {
     private record Grid(double periodNanos, double phaseNanos) {
     }
 
-    private static Grid currentGrid(long now) {
-        CloudMusic.PlaybackSnapshot snapshot = CloudMusic.getSnapshot();
-        if (snapshot == null || !snapshot.playing) return null;
+    private static Grid currentGrid(CloudMusic.PlaybackSnapshot snapshot, long now) {
         // 用户口径：装了模型 + 开了智能混音才走这条（「智能过度」= Folia 引擎）。
         if (!FoliaModelManager.isInstalled(FoliaModelManager.Kind.BEAT_THIS)) return null;
         if (!AutomixSettings.isFoliaEngine()) return null;
@@ -106,7 +131,7 @@ public final class BeatPulseSource {
         double periodNanos = 60_000_000_000.0 / profile.bpm;
         // profile 的相位锚在曲首：拍点在曲内时刻 t 满足 (t - phaseMillis) ≡ 0 (mod period)。
         // 换算成墙上时钟锚：now - (positionMs - phaseMillis)，即「最近一个拍点的墙上时刻」。
-        double anchorNanos = System.nanoTime()
+        double anchorNanos = now
                 - (snapshot.positionMs - profile.beatPhaseMillis) * 1_000_000.0;
         return new Grid(periodNanos, anchorNanos);
     }
@@ -183,14 +208,11 @@ public final class BeatPulseSource {
     }
 
     static void resetForTest() {
-        onsetCount = 0;
-        lastOnsetNanos = 0L;
-        lastBeatNanos = 0L;
-        estimatedPeriodNanos = 0f;
-        estimatedConfidence = 0f;
-        lastEnergy = 0f;
+        resetPlaybackState();
+        lastSessionId = Long.MIN_VALUE;
+        lastSongId = Long.MIN_VALUE;
         testClockHooked = false;
-        java.util.Arrays.fill(ONSET_NANOS, 0f);
+        testNowNanos = 1_000_000_000L; // JUnit 方法序随机：时钟也必须归位
         ANALYSIS_IN_FLIGHT.set(false);
     }
 
