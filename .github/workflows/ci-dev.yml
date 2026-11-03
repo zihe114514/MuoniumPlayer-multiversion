@@ -127,7 +127,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: jars-${{ matrix.tree }}-${{ matrix.loader }}
-          path: |
-            ${{ matrix.tree }}/*/build/libs/*.jar
+          # 只归档主 jar：build/libs 里混着 *-sources.jar（约 9 MB），那是给
+          # 开发者看源码用的，CI 归档不需要
+          path: ${{ matrix.tree }}/*/build/libs/MuoniumPlayer-*.jar
           if-no-files-found: error
           retention-days: 7
