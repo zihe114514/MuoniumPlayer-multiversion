@@ -152,15 +152,13 @@ public final class OpenAlReverbBus {
         // 湿声发送源:mono,3D 定位在音箱位
         source = AL10.alGenSources();
         AL10.alSourcef(source, AL10.AL_GAIN, 1.0f);
-        // 距离模型:INVERSE_DISTANCE_CLAMPED + ref=2m + rolloff=1 ——
-        // 公式 gain = ref/(ref + (d−ref)),即【纯 1/d 幅度】(−6dB/倍距,
-        // 点源球面波的真实规律):4m=0.5、16m=0.125、96m=0.013。
-        // 此前自研 inverse(1/(1+(d/8−1)²))16m 就掉到 0.5 以下、24m 0.2
-        // —— 「稍远就没声」的元凶;真物理 16m 只有 -18dB,24m -21.6dB,
-        // 48m 的音箱在安静房间里依然清晰可闻。
+        // 距离模型:INVERSE_DISTANCE_CLAMPED + ref=8m + rolloff=0.75 ——
+        // 8m 内全增益(音箱本体的近场),之后 −4.5dB/倍距(游戏惯例,比
+        // 纯 1/d 的 −6dB 缓一档):16m=0.57、32m=0.31、64m=0.16、96m=0.11
+        // —— 96m 的音箱依然 -19dB 清晰可闻,160m 淡出。
         AL10.alDistanceModel(AL10.AL_INVERSE_DISTANCE_CLAMPED);
-        AL10.alSourcef(source, AL10.AL_ROLLOFF_FACTOR, 1.0f);
-        AL10.alSourcef(source, AL10.AL_REFERENCE_DISTANCE, 2.0f);
+        AL10.alSourcef(source, AL10.AL_ROLLOFF_FACTOR, 0.75f);
+        AL10.alSourcef(source, AL10.AL_REFERENCE_DISTANCE, 8.0f);
         AL10.alSourcei(source, AL10.AL_LOOPING, AL10.AL_FALSE);
         // 直路低通(遮挡闷音)与湿路发送低通
         directFilter = EXTEfx.alGenFilters();

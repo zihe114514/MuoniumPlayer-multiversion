@@ -536,9 +536,9 @@ public final class SceneAcoustics {
             directDistSmoothed += (dTarget - directDistSmoothed) * dStep;
             final double dMet = directDistSmoothed;
             final double wetSpread = plan.hasSpeakerAnchor
-                    ? Math.max(0.0, Math.min(1.0,
-                            (1.0 / (1.0 + Math.pow(Math.max(0.0, dMet / 16.0 - 1.0), 2.0)))
-                                    * Math.exp(-Math.max(0.0, dMet - 6.0) / 32.0) * 1.15))
+                    ? Math.max(0.12, Math.min(1.0,
+                            (1.0 / (1.0 + Math.pow(Math.max(0.0, dMet / 48.0 - 1.0), 2.0)))
+                                    * Math.exp(-Math.max(0.0, dMet - 6.0) / 64.0) * 1.15))
                     : 1.0;
             busFull.setSendGain((float) Math.min(1f, wet * 1.2f * wetSpread));
             busFull.setReverbParams(Float.NaN,
