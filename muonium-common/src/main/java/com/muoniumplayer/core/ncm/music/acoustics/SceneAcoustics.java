@@ -552,10 +552,15 @@ public final class SceneAcoustics {
             busFull.setSideGain((float) width);
             // S 直连也要直达距离延迟(宽度和 M 一样从音箱飞过来,飞行时间一致;
             // 不延迟的话远距音箱的 S 超前于 M+EAX 湿声,时间结构错乱)。
-            final int directDelaySamples = plan.hasSpeakerAnchor
-                    ? (int) Math.min(sampleRate * 0.9,
-                            Math.round(plan.directDistanceMeters / SPEED_OF_SOUND * sampleRate))
-                    : 0;
+            // 分数延迟(照 libspatialaudio 的 AmbisonicEncoderDist):距离换算成
+            // 样本时保留小数,读出时两相邻样本线性插值 —— 距离连续滑动时延迟
+            // 线性跟随,整数样本跳变(20µs/样 @48k)的可闻 zipper 消失。
+            final double delaySamplesExact = plan.hasSpeakerAnchor
+                    ? Math.min(sampleRate * 0.9,
+                            plan.directDistanceMeters / SPEED_OF_SOUND * sampleRate)
+                    : 0.0;
+            final int directDelaySamples = (int) delaySamplesExact;
+            final float delayFrac = (float) (delaySamplesExact - directDelaySamples);
             if (directDelaySamples > 0) {
                 final int dLen = directDelaySamples + frames + 8;
                 if (directDelayL.length < dLen) {
@@ -563,8 +568,9 @@ public final class SceneAcoustics {
                     directDelayR = new short[dLen];
                 }
             }
-            final boolean applyDelay = directDelaySamples > 0;
+            final boolean applyDelay = delaySamplesExact > 0.0;
             final int delayN = applyDelay ? directDelaySamples : 0;
+            final float dFrac = applyDelay ? delayFrac : 0f;
             // M/S 拆分进 PCM16 直通缓冲:本帧干声(带 band 低通后的原始输入,
             // 不乘 dryGain —— AL 的距离衰减就是「干声让位」的物理版)。
             // 有音箱时 M 与 S 都过直达延迟环(声音从音箱飞到耳朵的时间,
@@ -581,9 +587,14 @@ public final class SceneAcoustics {
                     directDelayR[w * 2 + 1] = toPcm16(-(l - r) * 0.5 * 2.0);
                     final int rd = (directDelayPos + i - delayN + directDelayL.length * 2)
                             % directDelayL.length;
-                    busMono[i] = directDelayL[rd];
-                    busSide[i * 2] = directDelayR[rd * 2];
-                    busSide[i * 2 + 1] = directDelayR[rd * 2 + 1];
+                    final int rdNext = rd + 1 == directDelayL.length ? 0 : rd + 1;
+                    // 分数插值:out = A·(1−frac) + B·frac
+                    busMono[i] = (short) (directDelayL[rd] * (1f - dFrac)
+                            + directDelayL[rdNext] * dFrac);
+                    busSide[i * 2] = (short) (directDelayR[rd * 2] * (1f - dFrac)
+                            + directDelayR[rdNext * 2] * dFrac);
+                    busSide[i * 2 + 1] = (short) (directDelayR[rd * 2 + 1] * (1f - dFrac)
+                            + directDelayR[rdNext * 2 + 1] * dFrac);
                 } else {
                     busMono[i] = toPcm16((l + r) * 0.5);
                     busSide[i * 2] = toPcm16((l - r) * 0.5 * 2.0);
