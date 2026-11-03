@@ -197,6 +197,10 @@ public final class SceneAcoustics {
     private static short[] busMono = new short[0];
     private static float[] busOut = new float[0];
     private static short[] busSide = new short[0];
+    /** 直达距离延迟环(声音从音箱飞到耳朵的飞行时间;M 与 S 同延迟)。 */
+    private static short[] directDelayL = new short[0];
+    private static short[] directDelayR = new short[0];
+    private static int directDelayPos;
     /** 听者位姿(游戏线程写,音频线程读;AL 的 listener 需要)。 */
     private static volatile double listenerX, listenerY, listenerZ;
     private static volatile float listenerFwdX, listenerFwdY, listenerFwdZ;
@@ -526,15 +530,48 @@ public final class SceneAcoustics {
             // S 宽度收缩(保留上一轮的物理:一点源的宽度随距离收敛)
             final double width = 0.35 + 0.65 * Math.min(1.0, directGain * 1.4);
             busFull.setSideGain((float) width);
+            // S 直连也要直达距离延迟(宽度和 M 一样从音箱飞过来,飞行时间一致;
+            // 不延迟的话远距音箱的 S 超前于 M+EAX 湿声,时间结构错乱)。
+            final int directDelaySamples = plan.hasSpeakerAnchor
+                    ? (int) Math.min(sampleRate * 0.9,
+                            Math.round(plan.directDistanceMeters / SPEED_OF_SOUND * sampleRate))
+                    : 0;
+            if (directDelaySamples > 0) {
+                final int dLen = directDelaySamples + frames + 8;
+                if (directDelayL.length < dLen) {
+                    directDelayL = new short[dLen];
+                    directDelayR = new short[dLen];
+                }
+            }
+            final boolean applyDelay = directDelaySamples > 0;
+            final int delayN = applyDelay ? directDelaySamples : 0;
             // M/S 拆分进 PCM16 直通缓冲:本帧干声(带 band 低通后的原始输入,
             // 不乘 dryGain —— AL 的距离衰减就是「干声让位」的物理版)。
+            // 有音箱时 M 与 S 都过直达延迟环(声音从音箱飞到耳朵的时间,
+            // 160m ≈ 0.47s;跨过这个时间差,直达/反射/混响的时间结构才真实)。
             for (int i = 0; i < frames; i++) {
                 final int o = i * channels;
                 final double l = interleaved[o];
                 final double r = ch > 1 ? interleaved[o + 1] : l;
-                busMono[i] = toPcm16((l + r) * 0.5);
-                busSide[i * 2] = toPcm16((l - r) * 0.5 * 2.0);
-                busSide[i * 2 + 1] = toPcm16(-(l - r) * 0.5 * 2.0);
+                if (applyDelay) {
+                    // 写入当前样本到环尾,读「delayN 帧之前」的样本喂 AL。
+                    final int w = (directDelayPos + i) % directDelayL.length;
+                    directDelayL[w] = toPcm16((l + r) * 0.5);
+                    directDelayR[w * 2] = toPcm16((l - r) * 0.5 * 2.0);
+                    directDelayR[w * 2 + 1] = toPcm16(-(l - r) * 0.5 * 2.0);
+                    final int rd = (directDelayPos + i - delayN + directDelayL.length * 2)
+                            % directDelayL.length;
+                    busMono[i] = directDelayL[rd];
+                    busSide[i * 2] = directDelayR[rd * 2];
+                    busSide[i * 2 + 1] = directDelayR[rd * 2 + 1];
+                } else {
+                    busMono[i] = toPcm16((l + r) * 0.5);
+                    busSide[i * 2] = toPcm16((l - r) * 0.5 * 2.0);
+                    busSide[i * 2 + 1] = toPcm16(-(l - r) * 0.5 * 2.0);
+                }
+            }
+            if (applyDelay) {
+                directDelayPos = (directDelayPos + frames) % directDelayL.length;
             }
             busFull.render(busMono, busSide, busOut);
             // 读回结果原样写回缓冲(已含直射 3D + S + 混响;限幅照做)。

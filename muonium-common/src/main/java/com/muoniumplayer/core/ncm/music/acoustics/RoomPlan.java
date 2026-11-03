@@ -56,6 +56,8 @@ public final class RoomPlan {
     /** EAX 混响 diffusion 0..1:材质粗糙度 —— 岩壁亮面 vs 羊毛漫射。 */
     public final float reverbDiffusion;
     /** 声源世界坐标(EAX 总线的 3D 定位;无声源 0,0,0)。 */
+    /** 有没有音箱锚点(false = 玩家即声源:source 贴头零衰减零方向)。 */
+    public final boolean hasSpeakerAnchor;
     public final double speakerX;
     public final double speakerY;
     public final double speakerZ;
@@ -68,7 +70,7 @@ public final class RoomPlan {
                 decayLowSec, decayHighSec, diffusion,
                 tapDelaySec, tapGainL, tapGainR,
                 1f, DirectPath.FC_OPEN, 0f, 0f,
-                false, 1f, 0.5f, 0, 0, 0);
+                false, 1f, 0.5f, false, 0, 0, 0);
     }
 
     public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
@@ -81,7 +83,7 @@ public final class RoomPlan {
                 decayLowSec, decayHighSec, diffusion,
                 tapDelaySec, tapGainL, tapGainR,
                 directGain, directCutoffHz, directPan, directDistanceMeters,
-                false, 1f, 0.5f, 0, 0, 0);
+                false, 1f, 0.5f, false, 0, 0, 0);
     }
 
     public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
@@ -91,6 +93,7 @@ public final class RoomPlan {
                     float directGain, double directCutoffHz, float directPan,
                     float directDistanceMeters,
                     boolean useOpenAlReverb, float reverbDecayHfRatio, float reverbDiffusion,
+                    boolean hasSpeakerAnchor,
                     double speakerX, double speakerY, double speakerZ) {
         this.bandHz = bandHz;
         this.wet = wet;
@@ -113,6 +116,7 @@ public final class RoomPlan {
         this.useOpenAlReverb = useOpenAlReverb;
         this.reverbDecayHfRatio = reverbDecayHfRatio;
         this.reverbDiffusion = reverbDiffusion;
+        this.hasSpeakerAnchor = hasSpeakerAnchor;
         this.speakerX = speakerX;
         this.speakerY = speakerY;
         this.speakerZ = speakerZ;
@@ -124,7 +128,7 @@ public final class RoomPlan {
                 SceneResponse.NEUTRAL_TONE, 0f, 0f, 1f,
                 new float[0], new float[0], new float[0],
                 1f, DirectPath.FC_OPEN, 0f, 0f,
-                false, 1f, 0.5f, 0, 0, 0);
+                false, 1f, 0.5f, false, 0, 0, 0);
     }
 
     @Override

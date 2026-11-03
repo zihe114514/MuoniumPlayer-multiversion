@@ -10,6 +10,7 @@ import org.lwjgl.openal.ALC;
 import org.lwjgl.openal.AL;
 import org.lwjgl.openal.EXTEfx;
 import org.lwjgl.openal.SOFTLoopback;
+import org.lwjgl.openal.SOFTHRTF;
 
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
@@ -105,12 +106,17 @@ public final class OpenAlReverbBus {
         // loopback 的输出格式在 createContext 的 attribs 里一次给全(LWJGL 3.3.x
         // 没有 alcDeviceAttributeSOFT 便捷口):频率/通道布局/采样类型 + 源数量。
         ALC10.alcMakeContextCurrent(0);
-        IntBuffer attrs = BufferUtils.createIntBuffer(16);
+        // HRTF(= MC 设置里的『定向音频』,ALC_HRTF_SOFT):OpenAL Soft 的 mhr
+        // 频谱库给 3D source 的直射加上耳廓滤波 —— 前后/上下的音色区分,
+        // 『真 3D』与『左右 pan』的分水岭。默认开(游戏同名设置默认关,
+        // 我们的声学系统以空间感为核心卖点)。
+        IntBuffer attrs = BufferUtils.createIntBuffer(18);
         attrs.put(ALC10.ALC_FREQUENCY).put(sampleRate)
                 .put(SOFTLoopback.ALC_FORMAT_CHANNELS_SOFT).put(SOFTLoopback.ALC_STEREO_SOFT)
                 .put(SOFTLoopback.ALC_FORMAT_TYPE_SOFT).put(SOFTLoopback.ALC_SHORT_SOFT)
                 .put(ALC11.ALC_MONO_SOURCES).put(1)
                 .put(ALC11.ALC_STEREO_SOURCES).put(1)
+                .put(SOFTHRTF.ALC_HRTF_SOFT).put(1)
                 .put(0);
         attrs.flip();
         context = ALC10.alcCreateContext(device, attrs);
@@ -132,6 +138,10 @@ public final class OpenAlReverbBus {
             return false;
         }
         ALC10.alcMakeContextCurrent(context);
+        IntBuffer hrtfState = BufferUtils.createIntBuffer(1);
+        ALC10.alcGetIntegerv(device, SOFTHRTF.ALC_HRTF_STATUS_SOFT, hrtfState);
+        System.out.println(TAG + "HRTF 状态: " + hrtfState.get(0)
+                + " (0=未启用 1=启用 2=被拒绝 3=必须格式不支持)");
 
         // EAX Reverb 效果 + 辅助槽
         reverbEffect = EXTEfx.alGenEffects();

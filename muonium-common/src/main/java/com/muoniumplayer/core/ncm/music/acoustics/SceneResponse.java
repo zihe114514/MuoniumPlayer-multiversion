@@ -275,6 +275,7 @@ public final class SceneResponse {
                 tapDelay, tapGainL, tapGainR,
                 directGain, directCutoff, directPan, directDist,
                 useEax, reverbHfRatio, reverbDiff,
+                sample.hasDirectSource(),
                 sample.speakerX(), sample.speakerY(), sample.speakerZ());
     }
 
