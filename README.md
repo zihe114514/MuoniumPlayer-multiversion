@@ -14,7 +14,7 @@
 [![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-2.4.0-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
 [![下载](https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-melodifymc.cc.cd-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
 [![MC 百科](https://img.shields.io/badge/MC%E7%99%BE%E7%A7%91-class%2F30544-3d8528?style=flat-square&labelColor=2b2b33)](https://www.mcmod.cn/class/30544.html)
-[![Minecraft](https://img.shields.io/badge/Minecraft-1.20.1%20%7C%201.21.1%20%7C%201.21.11%20%7C%2026.2%20%7C%2026.3-3d8528?style=flat-square&labelColor=2b2b33)](#支持的版本)
+[![Minecraft](https://img.shields.io/badge/Minecraft-1.20.1%20%7C%201.21.1%20%7C%201.21.10%20%7C%201.21.11%20%7C%2026.1.2%20%7C%2026.2%20%7C%2026.3-3d8528?style=flat-square&labelColor=2b2b33)](#支持的版本)
 [![加载器](https://img.shields.io/badge/%E5%8A%A0%E8%BD%BD%E5%99%A8-Fabric%20%7C%20Forge%20%7C%20NeoForge-7a4fd0?style=flat-square&labelColor=2b2b33)](#支持的版本)
 [![Java](https://img.shields.io/badge/Java-17%20%7C%2021%20%7C%2025-e08a1e?style=flat-square&labelColor=2b2b33)](#支持的版本)
 [![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Android-2f7fd0?style=flat-square&labelColor=2b2b33)](#全平台)
@@ -320,13 +320,15 @@ Windows / Linux / macOS / Android，电脑和手机启动器都能跑。
 
 ## 支持的版本
 
-共 5 个 Minecraft 版本、10 个构建（Fabric 5 个、NeoForge 4 个、Forge 1 个）。
+共 7 个 Minecraft 版本、14 个构建（Fabric 7 个、NeoForge 6 个、Forge 1 个）。
 
 | Minecraft | 加载器 | Java |
 | --- | --- | --- |
 | 1.20.1 | Fabric / Forge | 17 |
 | 1.21.1 | Fabric / NeoForge | 21 |
+| 1.21.10 | Fabric / NeoForge | 21 |
 | 1.21.11 | Fabric / NeoForge | 21 |
+| 26.1.2 | Fabric / NeoForge | 25 |
 | 26.2 | Fabric / NeoForge | 25 |
 | 26.3 | Fabric / NeoForge | 25 |
 
@@ -342,7 +344,7 @@ Windows / Linux / macOS / Android，电脑和手机启动器都能跑。
 
 Windows 开箱即用；Linux 与安卓首次启动自动补齐组件，按提示重启即可。
 
-产物命名 `MuoniumPlayer-<MC版本>-<加载器>-<mod版本>.jar`。**认准文件名里的 MC 版本号**，1.21.1 和 1.21.11 只差一个字符，装错不会工作。
+产物命名 `MuoniumPlayer-<MC版本>-<加载器>-<mod版本>.jar`。**认准文件名里的 MC 版本号**，1.21.1、1.21.10、1.21.11 相互只差一两个字符，装错不会工作。
 
 ### 手机上游玩
 
@@ -440,7 +442,7 @@ MuoniumPlayer 是一个 **Minecraft 音乐播放器 Mod**，把完整的音乐�
 
 **关键词**：Minecraft 音乐播放器、我的世界音乐 Mod、Minecraft 内置音乐、游戏内听歌、MC 听歌 Mod、网易云音乐 Minecraft、QQ 音乐 Mod、酷狗音乐 Mod、汽水音乐 Mod、Apple Music Mod、电台播客 Mod、逐字歌词 Mod、3D 歌词、游戏内歌词显示、一起听、同步听歌、无缝切歌、Fabric 音乐 Mod、Forge 音乐 Mod、NeoForge 音乐 Mod、Minecraft music player、in-game music mod、Minecraft Spotify。
 
-支持 **1.20.1 / 1.21.1 / 1.21.11 / 26.2 / 26.3**，加载器 **Fabric / Forge / NeoForge**，平台 **Windows / Linux / macOS / Android**。
+支持 **1.20.1 / 1.21.1 / 1.21.10 / 1.21.11 / 26.1.2 / 26.2 / 26.3**，加载器 **Fabric / Forge / NeoForge**，平台 **Windows / Linux / macOS / Android**。
 
 ---
 
