@@ -1,0 +1,121 @@
+package com.muoniumplayer.compat.mc;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.Camera;
+import net.minecraft.world.phys.Vec3;
+
+import com.muoniumplayer.core.lyrics3d.WorldLyricsState;
+
+/**
+ * 3D 世界歌词的相机/玩家访问 shim：把 MC 的相机状态翻译成 common 侧的
+ * {@link WorldLyricsState.CameraView}。
+ *
+ * <p>照 {@code IslandAmbientStatus} 的直接 MC 引用模式 —— common 里碰 MC 的先例
+ * 本来就只有寥寥几处工具路径，世界渲染这一条整条住在树侧，common 只认接口。</p>
+ *
+ * <p>1.21.11 与 1.21.1 的差异（javap 核对）：{@code getPosition()} →
+ * {@code position()}、{@code getXRot()/getYRot()} → {@code xRot()/yRot()}、
+ * 1.21.10 仍是 1.21.1 形状的 {@code getLookVector()}（Vector3f）、getYRot()/getXRot()；1.21.11 才改名 forwardVector()/yRot()/xRot()。</p>
+ */
+public final class CameraAccess implements WorldLyricsState.CameraView {
+
+    private final Camera camera;
+    private final float partialTick;
+
+    private CameraAccess(Camera camera, float partialTick) {
+        this.camera = camera;
+        this.partialTick = partialTick;
+    }
+
+    /**
+     * 从当前游戏状态取一帧相机视图。不在世界里（主菜单/无玩家）返回 null。
+     */
+    public static CameraAccess capture(float partialTick) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.player == null || mc.level == null || mc.gameRenderer == null) {
+            return null;
+        }
+        Camera camera = mc.gameRenderer.getMainCamera();
+        if (camera == null) {
+            return null;
+        }
+        return new CameraAccess(camera, partialTick);
+    }
+
+    @Override
+    public double eyeX() {
+        Vec3 pos = camera.position();
+        return pos.x;
+    }
+
+    @Override
+    public double eyeY() {
+        Vec3 pos = camera.position();
+        return pos.y;
+    }
+
+    @Override
+    public double eyeZ() {
+        Vec3 pos = camera.position();
+        return pos.z;
+    }
+
+    @Override
+    public double lookX() {
+        org.joml.Vector3fc dir = camera.getLookVector();
+        return dir.x();
+    }
+
+    @Override
+    public double lookY() {
+        org.joml.Vector3fc dir = camera.getLookVector();
+        return dir.y();
+    }
+
+    @Override
+    public double lookZ() {
+        org.joml.Vector3fc dir = camera.getLookVector();
+        return dir.z();
+    }
+
+    @Override
+    public double yawDeg() {
+        return camera.getYRot();
+    }
+
+    @Override
+    public double pitchDeg() {
+        return camera.getXRot();
+    }
+
+    @Override
+    public double fovDeg() {
+        // 设置里的垂直 FOV（GameRenderer.getFov 是 private，动效/望远镜的瞬时
+        // FOV 拿不到）—— Stay on screen 的视野边界用它；望远镜放大时 FOV 会
+        // 显著小于实际视野，弹簧的边界会偏保守（更早回屏），观感可接受
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.options == null) return 70.0;
+        try {
+            return mc.options.fov().get().intValue();
+        } catch (Throwable t) {
+            return 70.0;
+        }
+    }
+
+    @Override
+    public int windowWidth() {
+        Minecraft mc = Minecraft.getInstance();
+        return mc != null && mc.getWindow() != null ? mc.getWindow().getWidth() : 0;
+    }
+
+    @Override
+    public int windowHeight() {
+        Minecraft mc = Minecraft.getInstance();
+        return mc != null && mc.getWindow() != null ? mc.getWindow().getHeight() : 0;
+    }
+
+    /** 本帧的 partialTick（逐词动画插值用）。 */
+    public float partialTick() {
+        return partialTick;
+    }
+}
