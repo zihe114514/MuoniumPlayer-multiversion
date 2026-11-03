@@ -56,6 +56,11 @@ public final class OpenAlReverbBus {
     private int reverbSendFilter;
     private int reverbEffect;
     private int auxSlot;
+    /** 立体声直连源:世界声源激活时承载干声的 S 分量(宽度),AL_ROLLOFF=0。 */
+    private int sideSource;
+    private int sideBuffers;
+    private int sideBufferHead;
+    private int[] sideBufferIds = new int[0];
     /** 读回的交错立体声(short,引擎采样率)。 */
     private ShortBuffer renderBuf;
     private int framesPerBuffer;
@@ -105,7 +110,7 @@ public final class OpenAlReverbBus {
                 .put(SOFTLoopback.ALC_FORMAT_CHANNELS_SOFT).put(SOFTLoopback.ALC_STEREO_SOFT)
                 .put(SOFTLoopback.ALC_FORMAT_TYPE_SOFT).put(SOFTLoopback.ALC_SHORT_SOFT)
                 .put(ALC11.ALC_MONO_SOURCES).put(1)
-                .put(ALC11.ALC_STEREO_SOURCES).put(0)
+                .put(ALC11.ALC_STEREO_SOURCES).put(1)
                 .put(0);
         attrs.flip();
         context = ALC10.alcCreateContext(device, attrs);
@@ -150,6 +155,16 @@ public final class OpenAlReverbBus {
         EXTEfx.alFilteri(reverbSendFilter, EXTEfx.AL_FILTER_TYPE, EXTEfx.AL_FILTER_LOWPASS);
         EXTEfx.alFilterf(reverbSendFilter, EXTEfx.AL_LOWPASS_GAIN, 1f);
         AL11.alSource3i(source, EXTEfx.AL_AUXILIARY_SEND_FILTER, auxSlot, 0, reverbSendFilter);
+
+        // 立体声直连源:承载干声 S 分量(宽度),无距离衰减无发送。
+        sideSource = AL10.alGenSources();
+        AL10.alSourcef(sideSource, AL10.AL_GAIN, 1.0f);
+        AL10.alSourcef(sideSource, AL10.AL_ROLLOFF_FACTOR, 0.0f);
+        AL10.alSourcei(sideSource, AL10.AL_LOOPING, AL10.AL_FALSE);
+        AL10.alSourcei(sideSource, EXTEfx.AL_DIRECT_FILTER, 0);
+        sideBuffers = 4;
+        sideBufferIds = new int[sideBuffers];
+        AL10.alGenBuffers(sideBufferIds);
 
         this.framesPerBuffer = framesPerBuffer;
         renderBuf = BufferUtils.createShortBuffer(framesPerBuffer * 2);
@@ -244,14 +259,45 @@ public final class OpenAlReverbBus {
     }
 
     /**
-     * 喂一缓冲 mono 湿声输入(short PCM16),读回立体声渲染结果到
-     * {@code outLR}(float,-1..1,长度 = frames×2)。调用方是音频线程。
+     * 听者位姿(世界坐标 + 朝向/上向):AL 距离衰减/声像/HRTF 的基准。
+     * 音频线程每缓冲调一次。
+     */
+    public void setListener(double ex, double ey, double ez,
+                            float fx, float fy, float fz,
+                            float ux, float uy, float uz) {
+        if (broken) {
+            return;
+        }
+        try {
+            AL10.alListener3f(AL10.AL_POSITION, (float) ex, (float) ey, (float) ez);
+            AL10.alListenerfv(AL10.AL_ORIENTATION, new float[] {fx, fy, fz, ux, uy, uz});
+        } catch (Throwable t) {
+            broken("setListener", t);
+        }
+    }
+
+    /** S 直连源的音量(宽度收缩系数;0 = 关)。 */
+    public void setSideGain(float gain) {
+        if (broken) {
+            return;
+        }
+        try {
+            AL10.alSourcef(sideSource, AL10.AL_GAIN, Math.max(0f, Math.min(1f, gain)));
+        } catch (Throwable t) {
+            broken("setSideGain", t);
+        }
+    }
+
+    /**
+     * 喂一缓冲湿声输入(mono short)+ 可选立体声直连输入(short 交错),
+     * 读回完整渲染(直射 3D + S 直连 + 混响)到 {@code outLR}
+     * (float,-1..1,长度 = frames×2)。调用方是音频线程。
      *
      * <p>同步契约:queue 后<b>循环渲染直到读满</b> —— alcRenderSamplesSOFT
      * 每次只推混器的一个步长,不保证一次给齐;EAX 网络是零延迟 IIR,喂多少
      * 最终读多少,AL 内部的混响延迟线状态跨调用保持。</p>
      */
-    public void render(short[] monoIn, float[] outLR) {
+    public void render(short[] monoIn, short[] sideStereoIn, float[] outLR) {
         if (broken || monoIn == null || outLR == null || renderBuf == null) {
             return;
         }
@@ -262,8 +308,20 @@ public final class OpenAlReverbBus {
             renderBuf.put(monoIn, 0, frames).flip();
             AL10.alBufferData(buf, AL10.AL_FORMAT_MONO16, renderBuf, contextRate());
             AL10.alSourceQueueBuffers(source, buf);
+            // S 直连:立体声交错喂 sideSource 的环形缓冲池
+            if (sideStereoIn != null && sideBufferIds.length > 0) {
+                int sb = sideBufferIds[sideBufferHead];
+                sideBufferHead = (sideBufferHead + 1) % sideBufferIds.length;
+                renderBuf.clear();
+                renderBuf.put(sideStereoIn, 0, frames * 2).flip();
+                AL10.alBufferData(sb, AL10.AL_FORMAT_STEREO16, renderBuf, contextRate());
+                AL10.alSourceQueueBuffers(sideSource, sb);
+            }
             if (!started) {
                 AL10.alSourcePlay(source);
+                if (sideStereoIn != null) {
+                    AL10.alSourcePlay(sideSource);
+                }
                 started = true;
             }
             int produced = 0;
@@ -282,11 +340,15 @@ public final class OpenAlReverbBus {
                     break; // 渲染器拒绝推进:丢弃本帧剩余,下个缓冲继续
                 }
             }
-            // 回收已消费的队列缓冲
+            // 回收已消费的队列缓冲(mono 源的临时缓冲直接删;side 池循环复用)
             int processed = AL10.alGetSourcei(source, AL10.AL_BUFFERS_PROCESSED);
             while (processed-- > 0) {
                 int done = AL10.alSourceUnqueueBuffers(source);
                 AL10.alDeleteBuffers(done);
+            }
+            int sideProcessed = AL10.alGetSourcei(sideSource, AL10.AL_BUFFERS_PROCESSED);
+            while (sideProcessed-- > 0) {
+                AL10.alSourceUnqueueBuffers(sideSource);
             }
         } catch (Throwable t) {
             broken("render", t);
