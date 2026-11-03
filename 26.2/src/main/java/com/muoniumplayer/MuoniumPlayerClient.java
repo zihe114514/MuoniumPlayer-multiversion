@@ -15,6 +15,7 @@ import com.muoniumplayer.core.screens.GuiAnnouncements;
 import com.muoniumplayer.core.screens.GuiFfmpegNotice;
 import com.muoniumplayer.core.screens.GuiUpdateNotice;
 import com.muoniumplayer.core.screens.hud.GuiHudEditorPro;
+import com.muoniumplayer.core.screens.hud.MConfigHudScreen;
 import com.muoniumplayer.core.screens.hud.ModernUiHudBridge;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
@@ -630,7 +631,10 @@ public final class MuoniumPlayerClient {
     private long devTriggerSeenAt;
     private long devTriggerDelayNanos;
 
-    /** 按用户选择打开 HUD 设置；外部界面（ModernUI / OneConfig）不可用时自动回退到内置界面。 */
+    /**
+     * 按用户选择打开 HUD 设置；外部界面（ModernUI / OneConfig）不可用时自动回退到内置界面。
+     * MuoniumConfig（mconfig）是自带呈现、永远可用，排在两外部层之后、内置兜底之前。
+     */
     private void openHudEditor(Minecraft mc) {
         if (HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)
                 && ModernUiHudBridge.open()) {
@@ -638,6 +642,10 @@ public final class MuoniumPlayerClient {
         }
         if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(HudConfig.hudEditorUi)
                 && OneConfigHudBridge.open()) {
+            return;
+        }
+        if (HudConfig.HUD_EDITOR_UI_MCONFIG.equals(HudConfig.hudEditorUi)) {
+            mc.gui.setScreen(new MConfigHudScreen());
             return;
         }
         mc.gui.setScreen(new GuiHudEditorPro());

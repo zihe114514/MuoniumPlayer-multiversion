@@ -560,6 +560,8 @@ public final class HudConfig {
      */
     /** HUD 设置界面的选择：内置界面、OneConfig 或 ModernUI。外部界面不可用时自动回退内置界面。 */
     public static final String HUD_EDITOR_UI_BUILTIN = "builtin";
+    /** 私有的现代化呈现（MuoniumConfig），随本 mod 自带、永远可用。 */
+    public static final String HUD_EDITOR_UI_MCONFIG = "mconfig";
     public static final String HUD_EDITOR_UI_ONECONFIG = "oneconfig";
     /**
      * 交给 ModernUI 渲染。它只需要玩家装了 ModernUI 就算「可用」的一半，另一半是本版本树
@@ -1376,6 +1378,7 @@ public final class HudConfig {
     }
 
     private static String normalizeHudEditorUi(String value) {
+        if (HUD_EDITOR_UI_MCONFIG.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MCONFIG;
         if (HUD_EDITOR_UI_ONECONFIG.equalsIgnoreCase(value)) return HUD_EDITOR_UI_ONECONFIG;
         if (HUD_EDITOR_UI_MODERNUI.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MODERNUI;
         return HUD_EDITOR_UI_BUILTIN;

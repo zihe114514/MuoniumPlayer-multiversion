@@ -1661,7 +1661,8 @@ public final class HudSettingsModel {
                                 slider(HudSetting.SPECTRUM_HEIGHT, "仅调整频谱高度，不改变播放器或通知的尺寸。",
                                         () -> HudConfig.spectrumEnabled)),
                         new Group("设置界面", HudSettingsIcons.MODERN_UI,
-                                choice("设置界面由谁渲染", "内置＝本项目自绘的界面；OneConfig / ModernUI＝交给已安装的外部界面。"
+                                choice("设置界面由谁渲染", "MuoniumConfig＝本项目自绘的现代化界面；内置＝本项目自绘的经典界面；"
+                                        + "OneConfig / ModernUI＝交给已安装的外部界面。"
                                         + "选中的外部界面不可用时自动回退内置，不报错也不弹提示，切换在下次按 H 时生效。",
                                         new Supplier<String>() {
                                             public String get() {
@@ -1671,9 +1672,10 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 cycleUiLayer();
                                             }
-                                        }, new String[] {"内置", "OneConfig", "ModernUI"},
+                                        }, new String[] {"内置", "MuoniumConfig", "OneConfig", "ModernUI"},
                                                 HudSettingsModel::setUiLayerChoice,
-                                                new String[] {"自绘，不依赖任何 mod。",
+                                                new String[] {"自绘经典界面，不依赖任何 mod。",
+                                                        "自绘现代化界面（MuoniumConfig），同样不依赖任何 mod。",
                                                         "OneConfig 的 MuoniumPlayer HUD 页，需已安装 OneConfig v1。",
                                                         "ModernUI 的面板，需已安装 ModernUI 且本 Minecraft 版本有对应构件。"})),
                         new Group("外部播放器", HudSettingsIcons.NOTE,
@@ -2252,6 +2254,9 @@ public final class HudSettingsModel {
      * 这两种情况的处理办法完全不同。
      */
     public static String uiLayerLabel() {
+        if (HudConfig.HUD_EDITOR_UI_MCONFIG.equals(HudConfig.hudEditorUi)) {
+            return "MuoniumConfig";
+        }
         if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(HudConfig.hudEditorUi)) {
             return OneConfigHudBridge.isAvailable() ? "OneConfig" : "OneConfig（未安装·回退内置）";
         }
@@ -2262,10 +2267,12 @@ public final class HudSettingsModel {
         return "内置";
     }
 
-    /** 内置 → OneConfig → ModernUI 循环。不可用的那层照旧能选中，只是打开时回退并写明原因。 */
+    /** 内置 → MuoniumConfig → OneConfig → ModernUI 循环。不可用的那层照旧能选中，只是打开时回退并写明原因。 */
     private static void cycleUiLayer() {
         String current = HudConfig.hudEditorUi;
         if (HudConfig.HUD_EDITOR_UI_BUILTIN.equals(current)) {
+            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MCONFIG;
+        } else if (HudConfig.HUD_EDITOR_UI_MCONFIG.equals(current)) {
             HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
         } else if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(current)) {
             HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MODERNUI;
@@ -2277,7 +2284,9 @@ public final class HudSettingsModel {
 
     private static void setUiLayerChoice(String value) {
         if (value == null) return;
-        if ("OneConfig".equalsIgnoreCase(value)) {
+        if ("MuoniumConfig".equalsIgnoreCase(value)) {
+            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MCONFIG;
+        } else if ("OneConfig".equalsIgnoreCase(value)) {
             HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
         } else if ("ModernUI".equalsIgnoreCase(value)) {
             HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MODERNUI;
