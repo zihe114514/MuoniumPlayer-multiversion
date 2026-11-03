@@ -509,9 +509,13 @@ public final class SceneAcoustics {
         // EAX 湿发送);S(宽度)→ 立体声直连源 × 收缩系数;一次读回全部
         // (直射 + 混响)。走这条路的缓冲,下面的手搓直射链与 FDN 全跳过 ——
         // AL 的曲线就是业界打磨过的那套,听感对齐 Channel。
-        OpenAlReverbBus busFull = useEaxBus && plan.useOpenAlReverb
+        //
+        // 「玩家即声源」(无音箱)同样全 AL:source 贴在听者头部
+        // (AL_ROLLOFF=0,零距离衰减零方向),混响参数照常来自探针 ——
+        // 用户定论「整个环境声学混响都用 OpenAL,不走自研」。
+        OpenAlReverbBus busFull = useEaxBus
                 ? OpenAlReverbBus.get() : null;
-        if (busFull != null && frames > 0) {
+        if (busFull != null && frames > 0 && wetActive && plan.useOpenAlReverb) {
             if (busMono.length < frames || busOut.length < frames * 2
                     || busSide.length < frames * 2) {
                 busMono = new short[frames];
@@ -522,12 +526,21 @@ public final class SceneAcoustics {
             busFull.setListener(listenerX, listenerY, listenerZ,
                     listenerFwdX, listenerFwdY, listenerFwdZ,
                     listenerUpX, listenerUpY, listenerUpZ);
-            busFull.setSourcePose(plan.speakerX, plan.speakerY, plan.speakerZ,
-                    1f, directCutoff >= DirectPath.FC_OPEN ? 1f : 0.5f);
-            // 湿发送乘传播稀释:混响能量也要从音箱飞 d 米到耳朵(此前只在
-            // 自研分支有,EAX 分支漏了 —— 96m 外隔着岩层的音箱混响照样贴脸,
-            // 「不符合物理」的另一半)。几何 inverse(参考 16m)+ 空气 /32m,
-            // 与直达延迟同源;96m ≈ ×0.08,混响跟着直达一起死。
+            if (plan.hasSpeakerAnchor) {
+                busFull.setSourcePose(plan.speakerX, plan.speakerY, plan.speakerZ,
+                        1f, directCutoff >= DirectPath.FC_OPEN ? 1f : 0.5f);
+                busFull.setSidePose(plan.speakerX, plan.speakerY, plan.speakerZ);
+                busFull.setSourceRolloff(0.75f);
+            } else {
+                // 玩家即声源:source 贴在头部 —— 直射恒等(零衰减零方向),
+                // 混响发送照常(EAX 参数驱动)。坐标用听者位姿。
+                busFull.setSourcePose(listenerX, listenerY, listenerZ, 1f, 1f);
+                busFull.setSidePose(listenerX, listenerY, listenerZ);
+                busFull.setSourceRolloff(0f);
+            }
+            // 湿发送乘传播稀释:混响能量也要从音箱飞 d 米到耳朵 —— 96m 外隔着
+            // 岩层的音箱混响照样贴脸是「不符合物理」的另一半。几何 inverse
+            // (参考 48m)+ 空气 /64m;96m ≈ ×0.14,混响跟着直达一起衰减。
             // 距离走收敛(τ=0.25s):探针 500ms 节流交付的目标若直接用,
             // 延迟环与稀释会每半秒跳一阶 —— 「渐远没有过度」的另一半。
             final double dTarget = plan.hasSpeakerAnchor
@@ -547,8 +560,9 @@ public final class SceneAcoustics {
                     Float.NaN, Float.NaN, Float.NaN,
                     Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN,
                     Float.NaN, Float.NaN);
-            // S 宽度收缩(保留上一轮的物理:一点源的宽度随距离收敛)
-            final double width = 0.35 + 0.65 * Math.min(1.0, directGain * 1.4);
+            // S 宽度收缩(物理:一点源的宽度随距离收敛;玩家模式 = 贴脸宽度 1)
+            final double width = plan.hasSpeakerAnchor
+                    ? 0.35 + 0.65 * Math.min(1.0, directGain * 1.4) : 1.0;
             busFull.setSideGain((float) width);
             // S 直连也要直达距离延迟(宽度和 M 一样从音箱飞过来,飞行时间一致;
             // 不延迟的话远距音箱的 S 超前于 M+EAX 湿声,时间结构错乱)。

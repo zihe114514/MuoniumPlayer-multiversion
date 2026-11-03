@@ -171,10 +171,14 @@ public final class OpenAlReverbBus {
         EXTEfx.alFilterf(reverbSendFilter, EXTEfx.AL_LOWPASS_GAIN, 1f);
         AL11.alSource3i(source, EXTEfx.AL_AUXILIARY_SEND_FILTER, auxSlot, 0, reverbSendFilter);
 
-        // 立体声直连源:承载干声 S 分量(宽度),无距离衰减无发送。
+        // 立体声直连源:承载干声 S 分量(宽度)。与 M 源同款距离模型 ——
+        // 宽度也从音箱位置发出,必须吃同一份 1/d 衰减(此前 rolloff=0 零
+        // 衰减,远距时 S 以 width 音量直连 = 「离很远还有伴奏底音」)。
+        // rolloff=0 只在玩家贴头模式(setSourceRolloff 切)。
         sideSource = AL10.alGenSources();
         AL10.alSourcef(sideSource, AL10.AL_GAIN, 1.0f);
-        AL10.alSourcef(sideSource, AL10.AL_ROLLOFF_FACTOR, 0.0f);
+        AL10.alSourcef(sideSource, AL10.AL_ROLLOFF_FACTOR, 0.75f);
+        AL10.alSourcef(sideSource, AL10.AL_REFERENCE_DISTANCE, 8.0f);
         AL10.alSourcei(sideSource, AL10.AL_LOOPING, AL10.AL_FALSE);
         AL10.alSourcei(sideSource, EXTEfx.AL_DIRECT_FILTER, 0);
         sideBuffers = 4;
@@ -206,7 +210,7 @@ public final class OpenAlReverbBus {
             return;
         }
         try {
-            AL10.alSource3f(source, AL10.AL_POSITION, (float) x, (float) y, (float) z);
+            AL10.alSource3f(source, AL10.AL_POSITION, (float) x, (float) y, (float) -z);
             float g = Math.max(0f, Math.min(1f, directGain));
             EXTEfx.alFilterf(directFilter, EXTEfx.AL_LOWPASS_GAIN, g);
             EXTEfx.alFilterf(directFilter, EXTEfx.AL_LOWPASS_GAINHF,
@@ -284,10 +288,40 @@ public final class OpenAlReverbBus {
             return;
         }
         try {
-            AL10.alListener3f(AL10.AL_POSITION, (float) ex, (float) ey, (float) ez);
-            AL10.alListenerfv(AL10.AL_ORIENTATION, new float[] {fx, fy, fz, ux, uy, uz});
+            // MC→AL 手性转换:MC 的「面南 yaw=0」把前方指到 +Z,而 AL(右手系,
+            // 前方惯例 -Z、+X 向右)对同一向量的叉乘得出与 MC 玩家右手相反的
+            // 「右」—— 实机表现就是声像左右颠倒。坐标统一在总线边界做一次
+            // Z 取反(位置与朝向、上向量都要),内部一切用 AL 语义。
+            AL10.alListener3f(AL10.AL_POSITION, (float) ex, (float) ey, (float) -ez);
+            AL10.alListenerfv(AL10.AL_ORIENTATION, new float[] {fx, fy, -fz, ux, uy, -uz});
         } catch (Throwable t) {
             broken("setListener", t);
+        }
+    }
+
+    /** 3D 源的距离模型:1=物理线性(音箱),0=零衰减(玩家贴头)。 */
+    public void setSourceRolloff(float rolloff) {
+        if (broken) {
+            return;
+        }
+        try {
+            AL10.alSourcef(source, AL10.AL_ROLLOFF_FACTOR, Math.max(0f, rolloff));
+            // S 源同步(M 与 S 是同一音箱的两路,距离模型必须一致)
+            AL10.alSourcef(sideSource, AL10.AL_ROLLOFF_FACTOR, Math.max(0f, rolloff));
+        } catch (Throwable t) {
+            broken("setSourceRolloff", t);
+        }
+    }
+
+    /** S 直连源的位置(与 M 同一音箱;玩家模式=听者头部)。 */
+    public void setSidePose(double x, double y, double z) {
+        if (broken) {
+            return;
+        }
+        try {
+            AL10.alSource3f(sideSource, AL10.AL_POSITION, (float) x, (float) y, (float) -z);
+        } catch (Throwable t) {
+            broken("setSidePose", t);
         }
     }
 

@@ -55,9 +55,9 @@ public final class RoomPlan {
     public final float reverbDecayHfRatio;
     /** EAX 混响 diffusion 0..1:材质粗糙度 —— 岩壁亮面 vs 羊毛漫射。 */
     public final float reverbDiffusion;
-    /** 声源世界坐标(EAX 总线的 3D 定位;无声源 0,0,0)。 */
     /** 有没有音箱锚点(false = 玩家即声源:source 贴头零衰减零方向)。 */
     public final boolean hasSpeakerAnchor;
+    /** 声源世界坐标(EAX 总线的 3D 定位;无声源 0,0,0)。 */
     public final double speakerX;
     public final double speakerY;
     public final double speakerZ;
