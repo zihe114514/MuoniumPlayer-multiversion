@@ -99,16 +99,23 @@ public class GuiAnnouncements extends GuiScreen {
         // 或改 GUI Scale 之后布局与鼠标映射都会错位。
         RenderSystem.refreshResolution();
         // 强制布局轴（无视「窗口自适应缩放」开关）：浮层的排版常量按布局轴书写，GUI 轴下
-        // 整个界面跟随 GUI Scale 档位缩放。鼠标换算配套除 correction。
+        // 整个界面跟随 GUI Scale 档位缩放。配套两件事缺一不可：矩阵压 sx/sy（布局单位放大
+        // 到 GUI 逻辑坐标，canvas 再按 guiScale 上屏），鼠标除 sx/sy 换算（与绘制同轴）。
         WindowAdaptiveScale.beginForced();
         try {
             double sx = RenderSystem.getWidthNotScaled() / RenderSystem.getWidth();
             double sy = RenderSystem.getHeightNotScaled() / RenderSystem.getHeight();
-            overlay.setBounds(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
-            overlay.renderWidget((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy),
-                    Mouse.getDWheel());
-            if (overlay.shouldClose()) {
-                dismiss();
+            SkijaGfx.pushMatrix();
+            SkijaGfx.scale(sx, sy);
+            try {
+                overlay.setBounds(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
+                overlay.renderWidget((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy),
+                        Mouse.getDWheel());
+                if (overlay.shouldClose()) {
+                    dismiss();
+                }
+            } finally {
+                SkijaGfx.popMatrix();
             }
         } finally {
             WindowAdaptiveScale.end();

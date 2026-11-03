@@ -104,11 +104,17 @@ public class GuiAnnouncements extends GuiScreen {
         try {
             double sx = RenderSystem.getWidthNotScaled() / RenderSystem.getWidth();
             double sy = RenderSystem.getHeightNotScaled() / RenderSystem.getHeight();
+            SkijaGfx.pushMatrix();
+            SkijaGfx.scale(sx, sy);
+            try {
             overlay.setBounds(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
             overlay.renderWidget((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy),
                     Mouse.getDWheel());
             if (overlay.shouldClose()) {
                 dismiss();
+            }
+            } finally {
+                SkijaGfx.popMatrix();
             }
         } finally {
             WindowAdaptiveScale.end();

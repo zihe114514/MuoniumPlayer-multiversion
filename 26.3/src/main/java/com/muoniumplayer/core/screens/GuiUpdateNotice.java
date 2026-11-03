@@ -85,14 +85,21 @@ public class GuiUpdateNotice extends GuiScreen {
         // 或改 GUI Scale 之后布局与鼠标映射都会错位（这是它自己在 javadoc 里写明的用法）。
         RenderSystem.refreshResolution();
         // 强制布局轴（与公告中心同款）：浮层排版常量按布局轴书写，GUI 轴下跟随 GUI Scale 缩放。
+        // 矩阵压 sx/sy 与鼠标除 sx/sy 必须成对——只换坐标不压矩阵就是「偏右放大」。
         WindowAdaptiveScale.beginForced();
         try {
             double sx = RenderSystem.getWidthNotScaled() / RenderSystem.getWidth();
             double sy = RenderSystem.getHeightNotScaled() / RenderSystem.getHeight();
-            overlay.setBounds(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
-            overlay.renderWidget((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy), 0);
-            if (overlay.shouldClose()) {
-                dismiss();
+            SkijaGfx.pushMatrix();
+            SkijaGfx.scale(sx, sy);
+            try {
+                overlay.setBounds(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
+                overlay.renderWidget((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy), 0);
+                if (overlay.shouldClose()) {
+                    dismiss();
+                }
+            } finally {
+                SkijaGfx.popMatrix();
             }
         } finally {
             WindowAdaptiveScale.end();
