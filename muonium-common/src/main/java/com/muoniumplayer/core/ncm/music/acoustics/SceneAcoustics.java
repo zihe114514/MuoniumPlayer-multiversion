@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.ncm.music.acoustics;
 
+import com.muoniumplayer.core.ncm.music.audio.OpenAlReverbBus;
+
 /**
  * 场景声学:按听者所处的声学环境实时修饰播放输出。全部效果在音频线程上对
  * 交错的 PCM 帧原地完成。
@@ -655,21 +657,24 @@ public final class SceneAcoustics {
                         }
                         busMono[i] = (short) v;
                     }
+                    speakerX = plan.speakerX;
+                    speakerY = plan.speakerY;
+                    speakerZ = plan.speakerZ;
                     bus.setSourcePose(speakerX, speakerY, speakerZ,
                             (float) Math.min(1.0, directGain + 0.15), directCutoff >= DirectPath.FC_OPEN ? 1f : 0.55f);
                     bus.setSendGain(Math.min(1f, wet * 1.2f));
                     bus.setReverbParams(Float.NaN,
                             plan.reverbDiffusion, Math.max(0.1f, decaySec), plan.reverbDecayHfRatio,
-                            Float.NaN, Math.max(0.004f, predelaySec),
+                            Float.NaN, Math.max(0.004f, preDelaySec),
                             directPan * 0.7f, Float.NaN, Float.NaN,
                             Float.NaN, Float.NaN, directPan * 0.5f, Float.NaN, Float.NaN,
                             Float.NaN, Float.NaN);
                     bus.render(busMono, busOut);
+                    // EAX 全接管本帧湿声(ER 抽头/FDN 不跑,省 CPU;总线挂了
+                    // 自然回退自研链)。输出已含 3D 定位与混响方向,不再搁架 ——
+                    // EAX 的 DECAY_HFRATIO 已表达「软面尾更暗」。
                     wetL = busOut[0] * wet * sc;
                     wetR = busOut[1] * wet * sc;
-                    // FDN/ER 本帧不跑:EAX 全接管(省 CPU;总线挂了自然回退)
-                    wetL = (float) (shelfXL1 = wetL);
-                    wetR = (float) (shelfXR1 = wetR);
                 } else {
                     fdn.process(tailInL, tailInR, fdnOut);
 

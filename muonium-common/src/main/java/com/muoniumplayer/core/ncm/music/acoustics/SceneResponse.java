@@ -274,7 +274,8 @@ public final class SceneResponse {
                 decayLow, decayHigh, diffusion,
                 tapDelay, tapGainL, tapGainR,
                 directGain, directCutoff, directPan, directDist,
-                useEax, reverbHfRatio, reverbDiff);
+                useEax, reverbHfRatio, reverbDiff,
+                sample.speakerX(), sample.speakerY(), sample.speakerZ());
     }
 
     /**
