@@ -65,6 +65,8 @@ public final class SceneResponse {
         float decayHigh = 0f;
         float diffusion = 1f;
         float tone = NEUTRAL_TONE;
+        // 反射率(方法级:直射链的 EAX 参数推导在块外也要读;块内更新)
+        float rho = DEFAULT_REFLECTIVITY;
         int tapCount = 0;
         float[] tapDelay = EMPTY;
         float[] tapGainL = EMPTY;
@@ -78,9 +80,9 @@ public final class SceneResponse {
             if (segment <= 0d) {
                 segment = nearest; // 没有弹射段(贴脸小间)时按首命中距离兜底
             }
-            float rho = sample.meanReflectivity();
-            if (rho <= 0f) {
-                rho = DEFAULT_REFLECTIVITY;
+            final float rhoSampled = sample.meanReflectivity();
+            if (rhoSampled > 0f) {
+                rho = rhoSampled;
             }
             final float reach = clamp01(sample.reachableFraction());
 
@@ -247,19 +249,32 @@ public final class SceneResponse {
         double directCutoff = DirectPath.FC_OPEN;
         float directPan = 0f;
         float directDist = 0f;
+        boolean useEax = false;
+        float reverbHfRatio = 1f;
+        float reverbDiff = 0.5f;
         if (sample.hasDirectSource()) {
             directDist = Math.max(0f, sample.directDistanceMeters());
             final double occl = Math.max(0.0, sample.directOcclusion());
             directGain = (float) DirectPath.directGain(directDist, occl);
             directCutoff = DirectPath.totalCutoffHz(occl, directDist);
             directPan = DirectPath.clampPan(sample.directPan());
+            // 世界声源:湿声走 OpenAL EAX Reverb 总线(音频线程在总线不可用
+            // 时自动回退 FDN)。EAX 参数从同一份几何推导(照 Channel 的
+            // 参数化):HF 比随音色(软面尾更暗),diffusion 用直方图扩散度
+            // 与材质粗糙度的混合。
+            useEax = true;
+            reverbHfRatio = (float) Math.max(0.15, Math.min(1.6,
+                    0.4 + 0.8 * (Math.min(rho, 1.5f) / 1.5f) + (1 - tone)));
+            reverbDiff = (float) Math.max(0.1, Math.min(1.0,
+                    0.4 * diffusion + 0.6 * (1.0 - Math.min(1.0, rho))));
         }
 
         return new RoomPlan(Math.pow(10.0, logBand), wet, loudFinal * duck, loudFinal,
                 predelay, decay, NEUTRAL_TONE + (tone - NEUTRAL_TONE) * s,
                 decayLow, decayHigh, diffusion,
                 tapDelay, tapGainL, tapGainR,
-                directGain, directCutoff, directPan, directDist);
+                directGain, directCutoff, directPan, directDist,
+                useEax, reverbHfRatio, reverbDiff);
     }
 
     /**

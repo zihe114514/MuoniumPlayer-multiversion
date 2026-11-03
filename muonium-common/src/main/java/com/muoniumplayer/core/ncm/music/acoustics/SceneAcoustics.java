@@ -188,6 +188,13 @@ public final class SceneAcoustics {
     /** 直达静息阈:gain≥此值且截止全开 → 整条链逐样本直通(零开销)。 */
     private static final float DIRECT_IDLE_GAIN = 0.999f;
 
+    // ---- OpenAL EAX Reverb 总线(世界声源的湿声;音频线程独占) ----
+    /** 总线探测每缓冲一次;null/失败即 false,湿声走 FDN 兜底。 */
+    private static boolean useEaxBus;
+    private static double speakerX, speakerY, speakerZ;
+    private static short[] busMono = new short[0];
+    private static float[] busOut = new float[0];
+
     /** 尾部预延迟线(可变读距)。 */
     private static float[] preDelayBuf = new float[0];
     private static int preDelayPos;
@@ -627,14 +634,52 @@ public final class SceneAcoustics {
                 float tailInL = (float) (duckedMid + (delayedL - monoMix));
                 float tailInR = (float) (duckedMid + (delayedR - monoMix));
 
-                fdn.process(tailInL, tailInR, fdnOut);
+                // ---- 湿声路由:EAX Reverb 总线优先,FDN 兜底 ----
+                final OpenAlReverbBus bus = useEaxBus && plan.useOpenAlReverb
+                        ? OpenAlReverbBus.get() : null;
+                if (bus != null) {
+                    // 世界声源:mono 尾输入喂 AL 3D source(音箱位 + 遮挡低通
+                    // + EAX 发送),渲染读回立体声 —— 距离衰减/声像/混响全是
+                    // OpenAL 原生曲线,混响还带「从哪来」的方向(EAX pan)。
+                    final int n = Math.max(1, frames);
+                    if (busMono.length < n) {
+                        busMono = new short[n];
+                        busOut = new float[n * 2];
+                    }
+                    for (int i = 0; i < n; i++) {
+                        double v = i < frames ? (tailInL + tailInR) * 0.5 * 32767.0 : 0;
+                        if (v > 32767.0) {
+                            v = 32767.0;
+                        } else if (v < -32768.0) {
+                            v = -32768.0;
+                        }
+                        busMono[i] = (short) v;
+                    }
+                    bus.setSourcePose(speakerX, speakerY, speakerZ,
+                            (float) Math.min(1.0, directGain + 0.15), directCutoff >= DirectPath.FC_OPEN ? 1f : 0.55f);
+                    bus.setSendGain(Math.min(1f, wet * 1.2f));
+                    bus.setReverbParams(Float.NaN,
+                            plan.reverbDiffusion, Math.max(0.1f, decaySec), plan.reverbDecayHfRatio,
+                            Float.NaN, Math.max(0.004f, predelaySec),
+                            directPan * 0.7f, Float.NaN, Float.NaN,
+                            Float.NaN, Float.NaN, directPan * 0.5f, Float.NaN, Float.NaN,
+                            Float.NaN, Float.NaN);
+                    bus.render(busMono, busOut);
+                    wetL = busOut[0] * wet * sc;
+                    wetR = busOut[1] * wet * sc;
+                    // FDN/ER 本帧不跑:EAX 全接管(省 CPU;总线挂了自然回退)
+                    wetL = (float) (shelfXL1 = wetL);
+                    wetR = (float) (shelfXR1 = wetR);
+                } else {
+                    fdn.process(tailInL, tailInR, fdnOut);
 
-                wetL = (erL * AcousticsDebugTuning.erBoost(1f)
-                        + fdnOut[0] * AcousticsDebugTuning.tailMakeup((float) TAIL_MAKEUP))
-                        * wet * sc;
-                wetR = (erR * AcousticsDebugTuning.erBoost(1f)
-                        + fdnOut[1] * AcousticsDebugTuning.tailMakeup((float) TAIL_MAKEUP))
-                        * wet * sc;
+                    wetL = (erL * AcousticsDebugTuning.erBoost(1f)
+                            + fdnOut[0] * AcousticsDebugTuning.tailMakeup((float) TAIL_MAKEUP))
+                            * wet * sc;
+                    wetR = (erR * AcousticsDebugTuning.erBoost(1f)
+                            + fdnOut[1] * AcousticsDebugTuning.tailMakeup((float) TAIL_MAKEUP))
+                            * wet * sc;
+                }
 
                 // 湿声输出低频搁架(一阶减法):低通提取 <150Hz 成分,
                 // 湿声减去 (1-KEEP)×低频 —— 鼓的低频反射是「冲击」的最后
@@ -756,6 +801,21 @@ public final class SceneAcoustics {
         ownedRate = rate;
         bandState = new double[channels][4];
         for (double[] s : bandState) java.util.Arrays.fill(s, 0.0);
+
+        // EAX Reverb 总线:每条引擎采样率一个;失败静默(useEaxBus=false → FDN 兜底)。
+        // 只在音频线程(rebuild 由 render 调)执行 —— AL 上下文绑定纪律同 OpenALAudioDevice。
+        try {
+            if (useEaxBus || com.muoniumplayer.core.ncm.music.audio.OpenAlReverbBus.get() == null) {
+                com.muoniumplayer.core.ncm.music.audio.OpenAlReverbBus created =
+                        com.muoniumplayer.core.ncm.music.audio.OpenAlReverbBus.createIfAvailable(rate, 512);
+                useEaxBus = created != null;
+            } else {
+                useEaxBus = true;
+            }
+        } catch (Throwable t) {
+            useEaxBus = false;
+            System.out.println("[MuoniumPlayer/Acoustics] EAX 总线不可用,湿声走自研链: " + t);
+        }
 
         preDelayBuf = new float[Math.max(2, (int) (PRE_DELAY_MAX_MS * rate / 1000.0) + 2)];
         preDelayPos = 0;
