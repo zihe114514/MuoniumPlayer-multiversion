@@ -1,0 +1,307 @@
+plugins {
+    // NeoForge 官方 Gradle 插件。26.x 的官方 jar 不混淆，与 Fabric 侧看到的类名完全相同，
+    // 因此这一版连映射转换都不需要，共享源码原封不动同时喂给两个加载器。
+    id 'net.neoforged.moddev' version '2.0.144'
+    // skija-shared / types 已改走 MDG 内置的 JarJar（见下面 dependencies 的 jarJar 段），
+    // shadow 只剩 zxing / rhino / music-api 这批还解包平铺的库。shadowJar 官方任务仍禁用。
+    id 'com.gradleup.shadow' version '8.3.11'
+}
+
+base {
+    // 产物名带上 Minecraft 版本，这样四个版本工程的 8 个 jar 平铺到一个 dist/ 里不会撞名，
+    // 用户下载后也一眼看出这个 jar 是给哪个版本、哪个加载器的：MuoniumPlayer-<mc>-<loader>-<modver>.jar
+    archivesName = "${project.archives_base_name}-${project.minecraft_version}-neoforge"
+}
+
+neoForge {
+    version = project.neoforge_version
+
+    // 客户端专用 mod：只需要 client run。
+    runs {
+        client {
+            client()
+            def quickPlay = System.getenv('MU_QUICKPLAY')
+            if (quickPlay) {
+                programArguments.addAll('--quickPlaySingleplayer', quickPlay)
+            }
+        }
+    }
+
+    mods {
+        muonium {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+// 与 fabric/ 子工程挂的是同一份共享源码，绝不复制。
+sourceSets {
+    main {
+        java.srcDirs = [
+                'src/main/java',                                       // NeoForge 外壳
+                rootProject.file('../muonium-common/src/main/java'),   // 五树共享主体（版本中立）
+                rootProject.file('src/main/java'),                     // 本树版本差异层（compat / mixin / 功能集）
+                rootProject.file('../mpparty-common/src/main/java'),   // 一起听共用源码
+                rootProject.file('../mpserver-core/src/main/java')      // 内嵌一起听房间引擎（服务端 core 镜像）
+        ]
+        resources.srcDirs = [
+                'src/main/resources',                                  // neoforge.mods.toml / pack.mcmeta
+                rootProject.file('../muonium-common/src/main/resources'), // 五树共享资源（字体、纹理、svg、lx、automix）
+                rootProject.file('src/main/resources')                 // 本树资源（lang 随版本 API 变动）
+        ]
+    }
+}
+
+def centralHosts = ['repo.maven.apache.org', 'repo1.maven.org', 'repo.maven.org'] as Set
+def retargetCentral = { repo ->
+    if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository
+            && repo.url != null && centralHosts.contains(repo.url.host)) {
+        repo.url = 'https://maven.aliyun.com/repository/public'
+    }
+}
+repositories.all(retargetCentral)
+buildscript.repositories.all(retargetCentral)
+
+repositories {
+    maven { url = 'https://maven.aliyun.com/repository/public' }
+    maven { url = 'https://maven.aliyun.com/repository/google' }
+    maven { url = 'https://maven.neoforged.net/releases' }
+    maven { url = 'https://thedarkcolour.github.io/KotlinForForge/' }
+    flatDir { dirs rootProject.file('libs') }
+}
+
+// ==================== 第三方库：shadow 打进 jar ====================
+// 与 Fabric 侧 include() 的那一批完全一致，只是手段不同。刻意不做 relocate：
+//   * skija 是 JNI 库，原生符号里写死了类名，relocate 会让 native 方法找不到；
+//   * music-api 是 Kotlin 编译产物，relocate kotlin.* 容易踩到反射/元数据。
+// 代价是与其它同样自带这些库的 mod 可能撞版本，出现时再按需 relocate 非 JNI 的那几个。
+configurations {
+    devSkija {
+        // ==== dev 期 skija 供给（只进开发期类路径，不进发布 jar）====
+        // skija-shared / types 已改走 JarJar（见 dependencies 的 jarJar 段），不在 embeddedLibs 里；
+        // 但开发期 runClient 不走 JarJar（mod 以 classesDirs/目录形态加载），Skia 的类靠
+        // shade→flatten→classesDirs（1.20.1/1.21.1）或 runtimeOnly flatten jar（1.21.11/26.x）
+        // 这条链供给，必须把这两个坐标喂回 shade（见 shadeEmbeddedLibs 的 configurations）。
+        // 发布 jar 由 jar 任务的 exclude 'io/github/humbleui/**' 挡住——这条链只服务 dev。
+        // 不喂的后果：轻则 SkijaHost 静默停用（不崩溃、游戏内一个像素都不显示），
+        // 重则字体初始化 NoClassDefFoundError 直接崩（1.20.1 Forge runClient 实测）。
+        canBeResolved = true
+        canBeConsumed = false
+    }
+    embeddedLibs {
+        // ==== 绝不能重复打包 Minecraft 自己就带的库 ====
+        // 1.20.1（BootstrapLauncher 1.1.2）与 1.21.1（2.0.2）的开发期运行把
+        // legacyClassPath 里的每个 jar 都变成 JPMS 自动模块，两个模块导出同一个包时
+        // JVM 在解析阶段就崩：
+        //   ResolutionException: Modules com.google.gson and MuoniumPlayer.<loader>.embedded.libs
+        //   export package com.google.gson to module org.lz4.java
+        // 游戏一行日志都打不出来。用「本 jar 的包名集合 ∩ clientLegacyClasspath.txt 里每个 jar
+        // 的包名集合」实测过，重合的只有下面这四个，全部由 Minecraft 提供（版本按 MC 走，
+        // 我们只是不再自带一份）：gson、jna、jna-platform、error_prone_annotations。
+        // 1.21.11 / 26.2 的开发期不走模块路径，所以那两版原本没暴露这个问题，
+        // 但发布 jar 里同样不该塞重复库，四个版本统一排除。
+        exclude group: 'com.google.code.gson', module: 'gson'
+        exclude group: 'net.java.dev.jna', module: 'jna'
+        exclude group: 'net.java.dev.jna', module: 'jna-platform'
+        exclude group: 'com.google.errorprone', module: 'error_prone_annotations'
+    }
+}
+
+// ==================== rhino relocate：org.mozilla.javascript → muonium.rhino ====================
+// rhino 不再直接进 embeddedLibs：WorldEdit 7.3.8 把未 relocate 的 rhino shade 进自己的
+// jar（模块名 worldedit），与平铺进主 jar 的我们导出同一个 org.mozilla.javascript 包，
+// 装一起就是 split package ResolutionException（整合包用户实测，1.21.1 NeoForge）。
+// 这种「对方解包合并进自己模块」的形态 JarJar 的跨 mod 去重管不到，唯一解法是 relocate：
+// 把 rhino 整体改名到 muonium.rhino 前缀再进主 jar，任何 mod 带任何形态的 rhino 都再撞不到我们。
+// relocate 改的不止包路径：shadow 会同步改写字节码里的类引用与字符串常量（含 rhino 内部
+// 反射按名加载自己的地方），资源目录 org/mozilla/javascript/resources（多语言
+// Messages.properties）一并改名。rhino 无 META-INF/services、无 module-info、
+// 非 Multi-Release，是 relocate 的干净对象。
+def relocateRhino = tasks.register('relocateRhino', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
+    group = 'shadow'
+    description = '把 rhino 改名到 muonium.rhino 前缀，避免与其它 mod 自带的 rhino split package'
+    destinationDirectory.set(layout.buildDirectory.dir('tmp/relocateRhino'))
+    archiveClassifier.set('rhino-relocated')
+    // 单库任务：直接从 configurations 单独解析 rhino，不碰 embeddedLibs（它引用本任务，会循环）
+    configurations = [project.configurations.detachedConfiguration(
+            project.dependencies.create('org.mozilla:rhino:1.7.15'))]
+    mergeServiceFiles()
+    exclude 'META-INF/MANIFEST.MF'
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    exclude 'module-info.class'
+    // shadow 默认自带这个规则的行为：relocate class/resources/字节码常量三件套
+    // rhino jar 里还有个 org.mozilla.classfile 包（字节码生成器，javascript 引擎内部用），
+    // 也要一起改名，否则 org.mozilla.classfile 又成了新的 split package 隐患。
+    relocate 'org.mozilla.javascript', 'muonium.rhino'
+    relocate 'org.mozilla.classfile', 'muonium.rhino.classfile'
+}
+
+dependencies {
+    embeddedLibs 'com.google.zxing:core:3.5.3'
+    // rhino 走上面 relocateRhino 的改名产物（files(...) 传任务，Gradle 自动挂任务依赖）。
+    // 编译期也用同一份：共享层 LxBuffer/LxRuntime import 的已是 muonium.rhino.*，
+    // 原 rhino 坐标不再出现在任何 classpath 上（防止有人手滑又引回去）。
+    embeddedLibs files(relocateRhino)
+    compileOnly files(relocateRhino)
+    // gson / jna / jna-platform 刻意不列：Minecraft 自带，见上面 configurations 里的排除说明。
+    // 编译期用的就是 Minecraft 提供的那几个版本，所以这里也不需要 compileOnly 再声明一遍。
+    // Cadence 音源 SDK 已吸收进仓（com.muoniumplayer.core.music.cadence，2026-11），
+    // 不再挂 libs/music-api-0.1.1.jar。
+
+    // ==================== skija-shared / types：JarJar 嵌原 jar，不再 shadow 平铺 ====================
+    // MDG 内置 JarJar：jarJar 配置 + jarJar 任务把原始 jar 连同 META-INF/jarjar/metadata.json
+    // 挂进 jar 任务输出，与 Loom include() 同型。为什么这两个库必须换掉 shadow：
+    //   shadow 把类解包平铺进主 jar，主 jar 成为 JPMS 自动模块后导出 io.github.humbleui.types；
+    //   任何以「独立嵌 jar」形态带同一库的 mod（atomchat 内嵌 types-0.1.1）一参与模块解析就
+    //   split package，ResolutionException 在 modlauncher 阶段炸掉，游戏一行日志都没有。
+    // JarJar 运行时按 group:artifact 聚合所有 mod 的嵌 jar、取版本区间交集选最高版：
+    //   * types：具名模块（自带 module-info），API 是稳定数据类 —— strictly [0.1,1.0) 宽区间，
+    //     与嵌 0.1.1 的 mod 共存时自动选我们的 0.2.0；
+    //   * skija-shared：0.x ABI 不保稳，保持默认开区间 [0.143.17,)，不放宽。
+    //   * 两库都是 Multi-Release jar，嵌原 jar 清单还在，Java 9+ 实现继续生效。
+    // 编译期与开发期运行时仍走 flatten 链路（compileOnly + classes 任务提取），与 JarJar 互不相干。
+    jarJar('io.github.humbleui:types:0.2.0') {
+        version {
+            strictly '[0.1, 1.0)'
+            prefer '0.2.0'
+        }
+    }
+    jarJar 'io.github.humbleui:skija-shared:0.143.17'
+    compileOnly 'io.github.humbleui:skija-shared:0.143.17'
+    compileOnly 'io.github.humbleui:types:0.2.0'
+    // dev 期 skija 供给：喂给 shadeEmbeddedLibs（见上面 devSkija），只服务开发期类路径
+    devSkija 'io.github.humbleui:skija-shared:0.143.17'
+    devSkija 'io.github.humbleui:types:0.2.0'
+
+    // 开发期 runClient 用：只进运行时类路径，不进成品 jar（成品全平台走伴生包自动下载）
+    runtimeOnly 'io.github.humbleui:skija-windows-x64:0.143.17'
+    // skija 的原生库不随主包内置：Windows 与其余六个平台一样走伴生包自动下载
+
+    // Kotlin 运行时由前置统一提供，不再随本 mod 打包。
+    implementation "thedarkcolour:kotlinforforge-neoforge:${project.kotlinforforge_version}"
+
+    // 1.18.30 在 JDK 25 上直接起不来（javac 内部 API 变了），必须用支持 25 的版本。
+    compileOnly 'org.projectlombok:lombok:1.18.46'
+    annotationProcessor 'org.projectlombok:lombok:1.18.46'
+    compileOnly 'org.jetbrains:annotations:20.1.0'
+}
+
+def shadeEmbeddedLibs = tasks.register('shadeEmbeddedLibs', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
+    group = 'shadow'
+    description = '把第三方库合并成一个 jar，再整体塞进 mod jar'
+    destinationDirectory.set(layout.buildDirectory.dir('tmp/shadeEmbeddedLibs'))
+    archiveClassifier.set('embedded-libs')
+    // devSkija 一起喂：skija-shared/types 只进 dev 类路径，发布 jar 由 jar 任务 exclude 挡掉
+    configurations = [project.configurations.embeddedLibs, project.configurations.devSkija]
+    mergeServiceFiles()
+    exclude 'META-INF/MANIFEST.MF'
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    exclude 'module-info.class'
+}
+tasks.named('shadowJar').configure { enabled = false }
+
+// ==================== 压平 Multi-Release jar ====================
+// embeddedLibs 里的 skija-shared / types / gson / kotlin-stdlib 都是 Multi-Release jar：
+// 根目录下那份类是 Java 8 实现，META-INF/versions/9/ 下才是 Java 9+ 实现，
+// 由清单里的 Multi-Release: true 告诉 JVM 该用哪一份。
+//
+// shadow 合并时 exclude 掉了各输入 jar 的 MANIFEST.MF，这个属性随之丢失，
+// 运行期就只剩根目录下的 Java 8 实现了。skija 的
+// io.github.humbleui.skija.impl.Cleanable 基线实现要 sun.misc.Cleaner
+// （JDK 9 起已从 JDK 里删除），静态初始化必然抛 NoClassDefFoundError，
+// 于是任何 Skia 原生对象都造不出来，SkijaHost 会直接停用整个渲染层
+// ——症状正是「mod 装上了、不崩溃、游戏内一个像素都不显示」。
+// Fabric 侧不受影响：Loom 的 include() 是把原 jar 整个嵌进去（JiJ），清单还在。
+//
+// 与其赌各加载器对 Multi-Release 的支持，这里直接把 versions/N 里的类提到根目录、
+// 覆盖 Java 8 基线实现。四个版本要求的最低 Java 都在 17 以上，
+// 这与「JVM 按 Multi-Release 规则挑最高可用版本」完全等价，且不依赖任何清单属性。
+def flattenEmbeddedLibs = tasks.register('flattenEmbeddedLibs', Jar) {
+    dependsOn(shadeEmbeddedLibs)
+    group = 'shadow'
+    description = '把 Multi-Release jar 的 versions/N 类提到根目录，覆盖 Java 8 基线实现'
+    destinationDirectory.set(layout.buildDirectory.dir('tmp/flattenEmbeddedLibs'))
+    archiveClassifier.set('embedded-libs')
+    // 先加入的条目胜出，所以 versions/N 那一批必须排在基线之前。
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    includeEmptyDirs = false
+
+    from({ zipTree(shadeEmbeddedLibs.get().archiveFile) }) {
+        include 'META-INF/versions/**'
+        // 版本目录里的 module-info 不能提上来：会把这个 jar 变成具名模块，
+        // 进而在 FML 的模块层里读不到别的模块。
+        exclude '**/module-info.class'
+        eachFile { it.path = it.path.replaceFirst('^META-INF/versions/\\d+/', '') }
+    }
+    from({ zipTree(shadeEmbeddedLibs.get().archiveFile) }) {
+        exclude 'META-INF/versions/**'
+    }
+}
+
+dependencies {
+    implementation files(flattenEmbeddedLibs.map { it.archiveFile })
+    // 开发期 runClient 也要能加载这些库。
+    // MDG 的 additionalRuntimeClasspath 只在 1.21.1 及更早可用；新版本直接报
+    // "there is no additional classpath anymore for Minecraft <ver>"，改用标准配置。
+    runtimeOnly files(flattenEmbeddedLibs.map { it.archiveFile })
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.dependsOn(flattenEmbeddedLibs)
+}
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'minecraft_version', project.minecraft_version
+    inputs.property 'neoforge_version', project.neoforge_version
+    inputs.property 'neoforge_min_version', project.neoforge_min_version
+    inputs.property 'kotlinforforge_version', project.kotlinforforge_version
+    filteringCharset 'UTF-8'
+
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand 'version': project.version,
+                'minecraft_version': project.minecraft_version,
+                'neoforge_version': project.neoforge_version,
+                'neoforge_min_version': project.neoforge_min_version,
+                'kotlinforforge_version': project.kotlinforforge_version
+    }
+}
+
+def targetJavaVersion = 25
+tasks.withType(JavaCompile).configureEach {
+    it.options.encoding = 'UTF-8'
+    it.options.release.set(targetJavaVersion)
+    it.options.compilerArgs.addAll(['-Xmaxerrs', '5000'])
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    withSourcesJar()
+}
+
+jar {
+    dependsOn(flattenEmbeddedLibs)
+    from(rootProject.file('LICENSE.txt')) {
+        rename { "${it}_${project.archives_base_name}" }
+    }
+    from({ zipTree(flattenEmbeddedLibs.get().archiveFile) })
+    // skija-shared / types 已改走 JarJar 嵌原 jar（见 dependencies）：发布 jar 里不再平铺
+    // 这两个库的类 —— 它们留在主 jar 会成为自动模块导出的包，与别的 mod 嵌的同名模块 split package。
+    // flatten 产物仍含它们（dev 期编译与 runClient 还靠 classes 任务提取那一份），这里只挡发布 jar。
+    exclude 'io/github/humbleui/**'
+}
+
+tasks.register('dumpCompileClasspath') {
+    def out = layout.buildDirectory.file('compile-classpath.txt')
+    def cp = sourceSets.main.compileClasspath
+    outputs.file(out)
+    doLast {
+        def f = out.get().asFile
+        f.parentFile.mkdirs()
+        f.text = cp.asPath
+    }
+}
