@@ -43,6 +43,31 @@ public final class TransparentMode {
     /** 最大变宽幅度百分比：squash=1 时模型宽度涨到 1+width/100。 */
     private static float widthPercent = 50f;
 
+    // ---- 果冻弹簧（渲染线程单消费者，非线程安全；见 springSquash）----
+    /** 弹簧当前位移：0 = 原样，正 = 压扁，负 = 过冲拉高。 */
+    private static float springOffset;
+    /** 弹簧当前速度。 */
+    private static float springVelocity;
+    private static long lastSpringNanos;
+
+    /**
+     * 弹簧固有频率（rad/s）。约 0.45s 一个整周期：下压半程 ~0.24s，正好贴住
+     * friendswine 那条 Blockbench 关键帧曲线（0→满压 0.25s）的手感——比
+     * {@link PlaybackPulse} 的脉冲衰减（tau≈0.19s）慢半拍，鼓点打进来的是
+     * 「顺势一压」而不是「瞬间打满」。
+     */
+    private static final float SPRING_OMEGA = 14f;
+    /** 阻尼比 ζ≈0.4：明显欠阻尼，释放时过冲到负值（拉高变瘦）再稳住，果冻感所在。 */
+    private static final float SPRING_DAMPING = 0.4f;
+    /** 单帧最大推进秒数：卡顿一下不该让弹簧炸开。 */
+    private static final float MAX_FRAME_SECONDS = 0.1f;
+    /**
+     * 积分子步上限（秒）。半隐式欧拉的稳定域大约在 ω·dt ≤ 2：ω=14 时整帧 dt>0.14s
+     * 就越界，掉帧到 100ms 已经贴着危险区。按 1/120s 切子步，任何真实帧长都落在
+     * 稳定域深处，代价可以忽略（每帧至多 12 次乘加）。
+     */
+    private static final float MAX_SUBSTEP_SECONDS = 1f / 120f;
+
     private TransparentMode() {
     }
 
@@ -88,29 +113,99 @@ public final class TransparentMode {
      */
     public static float heightScale() {
         if (!isEnabled()) return 1f;
-        return heightScale(PlaybackPulse.beat(), compressionPercent());
+        return heightScale(springSquash(), compressionPercent());
     }
 
     /** 当前帧的宽度缩放：与高度互补，压扁的同时往两边涨，深度（Z）不变。 */
     public static float widthScale() {
         if (!isEnabled()) return 1f;
-        return widthScale(PlaybackPulse.beat(), widthPercent());
+        return widthScale(springSquash(), widthPercent());
+    }
+
+    /**
+     * 过了弹簧的压缩量：目标就是原始节拍脉冲（0..1），但位移按欠阻尼弹簧追它。
+     *
+     * <p>直接画原始包络为什么不行：onset 那一帧脉冲从 0 瞬间打到峰值，渲染出来就是
+     * 「咔一下压扁、再慢慢弹回」，原版没有任何平滑。这里让位移带速度地追目标——
+     * 下压被弹簧顺住，回弹时欠阻尼地过冲到负值（模型短暂拉高变瘦）再稳住，
+     * 才有果冻的弹性。弹簧参数的取舍见常量注释。</p>
+     *
+     * <p>推进按墙上时钟做，与 {@code PlaybackPulse} 同款约定：同帧多消费者安全；
+     * 关联的取值入口（{@link #heightScale()}/{@link #widthScale()}）每帧各调一次，
+     * 先后两次推进的间隔小于半毫秒时直接复用上一次结果。渲染线程单消费者，
+     * 状态不做同步。</p>
+     */
+    static float springSquash() {
+        float target = clamp01(PlaybackPulse.beat());
+        long now = System.nanoTime();
+        float dt = lastSpringNanos == 0L ? 0f : (now - lastSpringNanos) / 1.0e9f;
+        lastSpringNanos = now;
+        if (dt <= 0f) return springOffset; // 首帧或同帧重复调用：不动
+        float[] next = integrate(springOffset, springVelocity, target, dt);
+        springOffset = next[0];
+        springVelocity = next[1];
+        return springOffset;
+    }
+
+    /** 半隐式欧拉积分（可切子步）；纯函数——不碰弹簧状态，commit 由调用方决定。 */
+    private static float[] integrate(float offset, float velocity, float target, float dt) {
+        float omega = SPRING_OMEGA;
+        float stiffness = omega * omega;
+        float damping = 2f * SPRING_DAMPING * omega;
+        int steps = Math.max(1, (int) Math.ceil(dt / MAX_SUBSTEP_SECONDS));
+        float h = dt / steps;
+        for (int i = 0; i < steps; i++) {
+            velocity += (stiffness * (target - offset) - damping * velocity) * h;
+            offset += velocity * h;
+        }
+        // 数值兜底：异常输入下位移不允许画出翻转型模型。
+        if (!Float.isFinite(offset) || Math.abs(offset) > 4f) {
+            offset = 0f;
+            velocity = 0f;
+        }
+        return new float[] {offset, velocity};
+    }
+
+    /**
+     * 测试专用：与 {@link #springSquash()} 同一积分器，但目标与帧长由调用方给，
+     * 不碰墙上时钟与节拍源。生产路径不走这里。
+     */
+    static final class SpringProbe {
+        private float offset;
+        private float velocity;
+
+        float step(float target, float dtSeconds) {
+            float clampedTarget = clamp01(target);
+            float dt = Math.max(0f, Math.min(MAX_FRAME_SECONDS, dtSeconds));
+            if (dt == 0f) return offset;
+            float[] next = integrate(offset, velocity, clampedTarget, dt);
+            offset = next[0];
+            velocity = next[1];
+            return offset;
+        }
     }
 
     /** 纯数学：给定脉冲与幅度求高度缩放。静态测试直接钉这条曲线。 */
     public static float heightScale(float squash, float compressionPercent) {
         float percent = Math.max(COMPRESSION_MIN, Math.min(COMPRESSION_MAX, compressionPercent));
-        return 1f - percent / 100f * clamp01(squash);
+        // 弹簧位移可过冲到负值（拉高）：负 squash 不钳零，负号即「比原样高」。
+        return 1f - percent / 100f * clampAbs(squash);
     }
 
     /** 纯数学：给定脉冲与幅度求宽度缩放。 */
     public static float widthScale(float squash, float widthPercent) {
         float percent = Math.max(WIDTH_MIN, Math.min(WIDTH_MAX, widthPercent));
-        return 1f + percent / 100f * clamp01(squash);
+        return 1f + percent / 100f * clampAbs(squash);
     }
 
     private static float clamp01(float value) {
         return Math.max(0f, Math.min(1f, value));
+    }
+
+    /** 允许负过冲（拉高/变瘦），但钳住幅度不画出翻转型模型。 */
+    private static float clampAbs(float value) {
+        if (!Float.isFinite(value)) return 0f;
+        return Math.max(-1f, Math.min(1f, value));
     }
 
     private static void write(Boolean enable, Float compression, Float width) {
