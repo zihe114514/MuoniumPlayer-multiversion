@@ -11,7 +11,9 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import static org.junit.jupiter.api.Assertions.*;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
+@RequiresSkijaNative
 class CFontRendererCacheTest {
     private static java.awt.Font latin;
     private static java.awt.Font cjk;

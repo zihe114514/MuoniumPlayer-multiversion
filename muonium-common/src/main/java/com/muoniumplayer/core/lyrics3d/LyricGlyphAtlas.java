@@ -126,11 +126,14 @@ public final class LyricGlyphAtlas {
     /** 字体世代：invalidateAll 自增，进缓存键防跨世代复用。 */
     private static int fontGeneration;
 
-    /** 帧内烘焙预算：同一帧最多烘焙多少格（渲染线程帧内同步烘焙的掉帧闸）。 */
+    /** 帧内烘焙预算：同一帧最多烘焙多少格 + 多少毫秒（渲染线程帧内同步烘焙的掉帧闸）。
+     * 毫秒闸兜住 HDR bloom 晕格（单格 ~3ms）与普通格混跑时的最坏帧。 */
     private static final int BAKES_PER_FRAME_BUDGET = 4;
+    private static final long BAKE_NANOS_BUDGET = 8_000_000L;
     /** 预算记账（nanoTime 值天然唯一，当帧标记用）。 */
     private static long bakeFrameEndNanos;
     private static int bakesThisFrame;
+    private static long bakeNanosThisFrame;
     /** 上次页逐出的时刻（防抖：刚逐出过就不再建新页）。 */
     private static long lastEvictNanos;
 
@@ -157,7 +160,7 @@ public final class LyricGlyphAtlas {
         return host;
     }
 
-    /** 一格字形。坐标全部是烘焙像素；世界侧除以 {@link #BAKE_SCALE} 得设计像素。 */
+    /** 一格字形。坐标全部是烘焙像素；世界侧除以 {@link GlyphCell#scale} 得设计像素。 */
     public static final class GlyphCell {
         /** 树侧页句柄（Host.createPage 的返回值）。 */
         public final Object page;
@@ -169,9 +172,12 @@ public final class LyricGlyphAtlas {
         public final float advance;
         /** 字位框高（烘焙像素，= 烘焙字体 lineBox），诊断用。 */
         public final int inkHeight;
+        /** 本格烘焙域倍率：墨格 = bakeScale（5× 超采样）；晕格 = 3×（HDR bloom 低频域）。
+         * 世界侧 quad 尺寸按各自 scale 折算 —— 晕/墨两格域不同，绝不能共用一个除数。 */
+        public final int scale;
 
         GlyphCell(Object page, int x, int y, int w, int h,
-                  int inkX, int inkY, float advance, int inkHeight) {
+                  int inkX, int inkY, float advance, int inkHeight, int scale) {
             this.page = page;
             this.x = x;
             this.y = y;
@@ -181,6 +187,7 @@ public final class LyricGlyphAtlas {
             this.inkY = inkY;
             this.advance = advance;
             this.inkHeight = inkHeight;
+            this.scale = scale;
         }
     }
 
@@ -312,14 +319,17 @@ public final class LyricGlyphAtlas {
             if (bakeFrameEndNanos != now) {
                 bakeFrameEndNanos = now;
                 bakesThisFrame = 0;
+                bakeNanosThisFrame = 0;
             }
-            if (bakesThisFrame >= BAKES_PER_FRAME_BUDGET) {
+            if (bakesThisFrame >= BAKES_PER_FRAME_BUDGET || bakeNanosThisFrame >= BAKE_NANOS_BUDGET) {
                 return null;
             }
             bakesThisFrame++;
+            long bakeStart = System.nanoTime();
 
             GlyphCell made = bakeGlowLocked(h, font, key, ch, glowStrength, glowSpread,
                     glowColorRgb, inkRgb, tier);
+            bakeNanosThisFrame += System.nanoTime() - bakeStart;
             if (made == null) return null;
             CELLS.put(key, made);
             return made;
@@ -373,6 +383,7 @@ public final class LyricGlyphAtlas {
             CELLS.clear();
             ADVANCE_CACHE.clear();
             bakeFont = null;
+            glowFont = null;
             fontGeneration++;
         }
         if (h != null) {
@@ -397,6 +408,20 @@ public final class LyricGlyphAtlas {
             bakeFont = base.deriveAtSize(DESIGN_SIZE * bakeScale);
         } catch (Throwable t) {
             bakeFont = null;
+        }
+    }
+
+    /** HDR bloom 晕格的独立烘焙字体（{@code DESIGN_SIZE × GLOW_BAKE_SCALE} 3× 低频域）。 */
+    private static volatile CFontRenderer glowFont;
+
+    private static void ensureGlowFontLocked() {
+        if (glowFont != null) return;
+        CFontRenderer base = FontManager.pf25bold;
+        if (base == null || base.fontHeight <= 0) return;
+        try {
+            glowFont = base.deriveAtSize(DESIGN_SIZE * TextGlow.GLOW_BAKE_SCALE);
+        } catch (Throwable t) {
+            glowFont = null;
         }
     }
 
@@ -430,6 +455,7 @@ public final class LyricGlyphAtlas {
                 + "|" + Integer.toHexString(glowColorRgb & 0xFFFFFF)
                 + "|" + Integer.toHexString(inkRgb & 0xFFFFFF)
                 + "|" + tier
+                + "|v" + TextGlow.BLOOM_PIPELINE_VERSION
                 + "|" + fontGeneration;
     }
 
@@ -495,17 +521,97 @@ public final class LyricGlyphAtlas {
         page.commit(cellX, cellY, cellW, cellH);
         page.lastUseNanos = System.nanoTime();
         return new GlyphCell(page.handle, cellX, cellY, cellW, cellH,
-                pad, pad, advanceBake, inkH);
+                pad, pad, advanceBake, inkH, bakeScale);
     }
 
     /**
-     * 烘焙一个<b>晕格</b>（只含高斯光形，无字本体）。晕格坐标口径与墨格一致
-     * （pad 起点对齐字位框），渲染层以同一 (x,y) 锚点画两格即可像素级对齐 ——
-     * 晕格 pad ≥ 墨格 pad，多出的就是光晕的外圈。
+     * 烘焙一个<b>晕格</b>。Ultra 档走 HDR bloom 管线（独立 3× 低频域，见
+     * {@link #bakeBloomLocked}）；其余档走 Skija 分层高斯（5× 域）。两条路径
+     * 失败互相兜底 —— 新管线在任何环境下炸掉都只降级回旧观感，不丢晕。
      */
     private static GlyphCell bakeGlowLocked(Host h, CFontRenderer font, String key, char ch,
                                             float glowStrength, float glowSpread, int glowColorRgb,
                                             int inkRgb, int tier) {
+        if (tier == TextGlow.GLOW_TIER_ULTRA) {
+            GlyphCell bloom = bakeBloomLocked(h, ch, glowStrength, glowSpread, glowColorRgb);
+            if (bloom != null) {
+                return bloom;
+            }
+            // 新管线失败（掩码/内存/异常）：回退旧分层烘焙，同 key 落格
+        }
+        return bakeGlowLegacyLocked(h, font, key, ch, glowStrength, glowSpread,
+                glowColorRgb, inkRgb, tier);
+    }
+
+    /**
+     * Ultra 档晕格：HDR bloom 管线（{@link TextGlow#bakeBloomGlowPixels}）。
+     * 独立 3× 烘焙域（晕是低频光形，3× 足够且 mip 链可运行、格小烘焙快）——
+     * 与墨格 5× 域不同，世界侧按 {@code cell.scale} 各自折算。
+     */
+    private static GlyphCell bakeBloomLocked(Host h, char ch,
+                                             float glowStrength, float glowSpread, int glowColorRgb) {
+        if (!SkijaNatives.ensureLoaded()) return null;
+        ensureGlowFontLocked();
+        CFontRenderer font = glowFont;
+        if (font == null || font.fontHeight <= 0) return null;
+        float advanceBake = (float) font.getStringWidthD(String.valueOf(ch));
+        if (advanceBake <= 0.01f) return null;
+        int inkH = Math.max(1, font.lineBox());
+        if (inkH <= 0) return null;
+
+        int glowPad = TextGlow.glowPadding(font, glowSpread, TextGlow.GLOW_TIER_ULTRA);
+        int pad = Math.max(2 * TextGlow.GLOW_BAKE_SCALE, glowPad);
+        int cellW = (int) Math.ceil(advanceBake) + pad * 2;
+        int cellH = inkH + pad * 2;
+        if (cellW > PAGE_SIZE || cellH > PAGE_SIZE) return null;
+
+        // ---- 字形覆盖掩码（白字 premul 的 alpha 通道即覆盖度）----
+        float[] mask;
+        try (Bitmap bitmap = new Bitmap()) {
+            if (!bitmap.allocPixels(ImageInfo.makeN32Premul(cellW, cellH))) return null;
+            Canvas canvas = new Canvas(bitmap);
+            try {
+                canvas.clear(0x00000000);
+                font.drawGlyphsOn(canvas, String.valueOf(ch), pad, pad + 2f, 0xFFFFFFFF, 255, 0f, null);
+            } finally {
+                canvas.close();
+            }
+            byte[] src = bitmap.readPixels();
+            if (src == null || src.length < cellW * cellH * 4) return null;
+            mask = new float[cellW * cellH];
+            for (int i = 0; i < mask.length; i++) {
+                mask[i] = (src[i * 4 + 3] & 0xFF) / 255f;
+            }
+        } catch (Throwable t) {
+            return null;
+        }
+
+        int[] pixelsArgb = TextGlow.bakeBloomGlowPixels(mask, cellW, cellH, font.sizePx,
+                glowSpread, glowStrength, glowColorRgb & 0xFFFFFF);
+        if (pixelsArgb == null) return null;
+        dilateTransparentRgb(pixelsArgb, cellW, cellH);
+
+        int[] at = probeOrMakePageLocked(h, cellW, cellH);
+        if (at == null) return null;
+        Page page = PAGES.get(at[2]);
+        try {
+            h.uploadCell(page.handle, at[0], at[1], cellW, cellH, pixelsArgb);
+        } catch (Throwable t) {
+            return null;
+        }
+        page.commit(at[0], at[1], cellW, cellH);
+        page.lastUseNanos = System.nanoTime();
+        return new GlyphCell(page.handle, at[0], at[1], cellW, cellH,
+                pad, pad, advanceBake, inkH, TextGlow.GLOW_BAKE_SCALE);
+    }
+
+    /**
+     * 旧分层烘焙路径（TextGlow.drawGlowOn 的 Skija 高斯分层，5× 域）—— Standard/High 档主路，
+     * 也是 Ultra 新管线的兜底。
+     */
+    private static GlyphCell bakeGlowLegacyLocked(Host h, CFontRenderer font, String key, char ch,
+                                                  float glowStrength, float glowSpread, int glowColorRgb,
+                                                  int inkRgb, int tier) {
         if (!SkijaNatives.ensureLoaded()) return null;
         float advanceBake = (float) font.getStringWidthD(String.valueOf(ch));
         if (advanceBake <= 0.01f) return null;
@@ -552,7 +658,7 @@ public final class LyricGlyphAtlas {
         page.commit(cellX, cellY, cellW, cellH);
         page.lastUseNanos = System.nanoTime();
         return new GlyphCell(page.handle, cellX, cellY, cellW, cellH,
-                pad, pad, advanceBake, inkH);
+                pad, pad, advanceBake, inkH, bakeScale);
     }
 
     /**

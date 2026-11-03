@@ -112,22 +112,22 @@ public final class OnboardingScreen extends ExtensionScreen
         // 强制布局轴（无视「窗口自适应缩放」开关）：账号登录浮层（AccountManagerOverlay）
         // 的排版常量按布局轴书写，在播放器括号内与在引导页必须同尺寸 —— 引导页曾显式
         // 退回 GUI 轴，登录菜单于是整体跟随 GUI Scale 缩放。sx/sy 换算与矩阵全在方法里，
-        // 这里换轴后自动生效。
+        // 这里换轴后自动生效。beginForced 紧贴 try：它一旦抛不出也要保证 end() 落到，
+        // 中间不留任何可能泄漏 FIXED_SCALE 的空隙。
         WindowAdaptiveScale.beginForced();
-        alpha = Interpolations.interpolate((float) alpha, 1f, .18f);
-
-        double width = RenderSystem.getWidth();
-        double height = RenderSystem.getHeight();
-        double sx = RenderSystem.getWidthNotScaled() / width;
-        double sy = RenderSystem.getHeightNotScaled() / height;
-        double mx = mouseX / sx;
-        double my = mouseY / sy;
-
-        SkijaGfx.pushAttrib();
-        SkijaGfx.pushMatrix();
-        api.getGLStateManager().pushMatrix();
-        api.getGLStateManager().scale(sx, sy, 1);
         try {
+            alpha = Interpolations.interpolate((float) alpha, 1f, .18f);
+
+            double width = RenderSystem.getWidth();
+            double height = RenderSystem.getHeight();
+            double sx = RenderSystem.getWidthNotScaled() / width;
+            double sy = RenderSystem.getHeightNotScaled() / height;
+            double mx = mouseX / sx;
+            double my = mouseY / sy;
+
+            SkijaGfx.pushAttrib();
+            SkijaGfx.pushMatrix();
+            api.getGLStateManager().scale(sx, sy, 1);
             // 底：抓回来的那一帧游戏画面（糊过、压暗）。抓帧是异步的，到货之后它自己淡入，
             // 淡没满之前下面一直垫着官网那套黑曜石氛围底——两段之间是交叉溶，不是硬切。
             backdrop.prepare();

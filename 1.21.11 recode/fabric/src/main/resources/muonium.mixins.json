@@ -7,7 +7,9 @@
     "MusicManagerAccessor",
     "MusicManagerDuckMixin",
     "FramebufferMixin",
-    "WorldLyricsRenderTailMixin"
+    "WorldLyricsRenderTailMixin",
+    "TransparentEntityMixin",
+    "TransparentCameraMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -7,7 +7,9 @@ import io.github.humbleui.skija.Surface;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
+@RequiresSkijaNative
 class SkijaFluidBackgroundTest {
     @Test
     void allQPlayerStylesDrawAndRespondToTimeAndAudio() {

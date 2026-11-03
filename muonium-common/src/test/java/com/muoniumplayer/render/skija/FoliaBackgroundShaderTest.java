@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * folia 背景三支 SkSL 的离屏栅格测试。
@@ -32,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>所以每个着色器都断言：非黑像素足够多、推进时间后画面变化、改关键参数后画面变化。</p>
  */
+@RequiresSkijaNative
 class FoliaBackgroundShaderTest {
 
     private static final int W = 96;

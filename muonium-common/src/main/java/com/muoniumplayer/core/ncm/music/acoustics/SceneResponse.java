@@ -65,6 +65,8 @@ public final class SceneResponse {
         float decayHigh = 0f;
         float diffusion = 1f;
         float tone = NEUTRAL_TONE;
+        // 反射率(方法级:直射链的 EAX 参数推导在块外也要读;块内更新)
+        float rho = DEFAULT_REFLECTIVITY;
         int tapCount = 0;
         float[] tapDelay = EMPTY;
         float[] tapGainL = EMPTY;
@@ -78,9 +80,9 @@ public final class SceneResponse {
             if (segment <= 0d) {
                 segment = nearest; // 没有弹射段(贴脸小间)时按首命中距离兜底
             }
-            float rho = sample.meanReflectivity();
-            if (rho <= 0f) {
-                rho = DEFAULT_REFLECTIVITY;
+            final float rhoSampled = sample.meanReflectivity();
+            if (rhoSampled > 0f) {
+                rho = rhoSampled;
             }
             final float reach = clamp01(sample.reachableFraction());
 
@@ -149,6 +151,19 @@ public final class SceneResponse {
                     ? (float) Math.max(0.0, Math.min(1.0, hist.diffusion))
                     : 1f;
 
+            // 世界声源的传播稀释:射线场在「源所在房间」里采样,围合/反射率/
+            // 可达全是源侧几何,但湿声最终要在「玩家所在位置」被听到 —— 87m
+            // 外坑里的石洞混响不能贴着地表玩家全响(实机:直达 0.01 的同时
+            // 湿声 0.86,音乐糊成一团找不到声源)。传播两项:几何 inverse
+            // 曲线(参考 16m —— 扩散场比直达耐稀释)、空气项(/32m,漫反射
+            // 长路径比直达慢一档)。8m 内不稀释;24m ≈ ×0.52;68m ≈ ×0.08。
+            if (sample.hasDirectSource()) {
+                final double d = sample.directDistanceMeters();
+                final double over = Math.max(0.0, d / 16.0 - 1.0);
+                final double spread = 1.0 / (1.0 + over * over)
+                        * Math.exp(-Math.max(0.0, d - 6.0) / 32.0);
+                wet *= (float) Math.min(1.0, Math.max(0.08, spread * 1.15));
+            }
             wet = (float) Math.min(WET_CEIL, enclosure
                     * (WET_BASE + WET_REACH_SPAN * reach)
                     * wetMaterialFactor(rho)
@@ -234,6 +249,17 @@ public final class SceneResponse {
         double directCutoff = DirectPath.FC_OPEN;
         float directPan = 0f;
         float directDist = 0f;
+        boolean useEax = false;
+        float reverbHfRatio = 1f;
+        float reverbDiff = 0.5f;
+        // 世界声源与「玩家即声源」统一:混响永远走 OpenAL EAX(用户定论
+        // 「不走完全自研」)。玩家模式下混响参数同样来自探针几何(围合/反射率/
+        // 直方图),只是没有音箱 —— 声学上玩家站在房间里,房间混响贴身发生。
+        useEax = true;
+        reverbHfRatio = (float) Math.max(0.15, Math.min(1.6,
+                0.4 + 0.8 * (Math.min(rho, 1.5f) / 1.5f) + (1 - tone)));
+        reverbDiff = (float) Math.max(0.1, Math.min(1.0,
+                0.4 * diffusion + 0.6 * (1.0 - Math.min(1.0, rho))));
         if (sample.hasDirectSource()) {
             directDist = Math.max(0f, sample.directDistanceMeters());
             final double occl = Math.max(0.0, sample.directOcclusion());
@@ -246,7 +272,10 @@ public final class SceneResponse {
                 predelay, decay, NEUTRAL_TONE + (tone - NEUTRAL_TONE) * s,
                 decayLow, decayHigh, diffusion,
                 tapDelay, tapGainL, tapGainR,
-                directGain, directCutoff, directPan, directDist);
+                directGain, directCutoff, directPan, directDist,
+                useEax, reverbHfRatio, reverbDiff,
+                sample.hasDirectSource(),
+                sample.speakerX(), sample.speakerY(), sample.speakerZ());
     }
 
     /**

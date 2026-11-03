@@ -202,7 +202,10 @@ public class JavaSoundAudioDevice implements AudioDeviceManager {
             for (int i = 0; i < count; i++) {
                 // 在强制类型转换前先做偏移，以避免使用 floor()。
                 // 同时加上 0.5 进行四舍五入，使极小的信号归零。
-                double temp = (32767.0 * buffer[i + start]) + 32768.5;
+                // TPDF dither(±1 LSB 三角分布):量化误差与信号去相关,
+                // 安静段的量化「颗粒」消失。两个均匀随机数相减 = 三角分布。
+                double dither = (Math.random() - Math.random());
+                double temp = (32767.0 * buffer[i + start]) + 32768.5 + dither;
                 int sample = ((int) temp) - 32768;
                 if (sample > Short.MAX_VALUE) {
                     sample = Short.MAX_VALUE;

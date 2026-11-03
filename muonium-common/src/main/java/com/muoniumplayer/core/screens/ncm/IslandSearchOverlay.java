@@ -63,12 +63,19 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
     private static final double CONTENT_INSET = 10.0;
 
     /** 控件树根：布局单位坐标，绘制与命中都在同一轴上。 */
-    private final Panel root = new Panel();
+    private final Panel root = new Panel() {
+        @Override
+        public void onRender(double mouseX, double mouseY) {
+            // 胶囊底板随根走：进树才能吃到本帧的位置与 alpha（此前裸 renderWidget
+            // 曾把胶囊画到画布原点——setBounds 四参版连位置一起写）。
+            drawCapsuleSurfaceInline();
+        }
+    };
     /** 胶囊底板：玻璃 PLATE 档。 */
     private final RoundedRectWidget capsuleBg = new RoundedRectWidget();
     /** 结果列的滚动容器：融合组（挨着的行按一块玻璃收尾，与 PlaylistPanel 同机制）。 */
     private ScrollPanel resultsPanel;
-    /** 结果行宿主：负责把 ScrollPanel 摆进胶囊剩余高度。 */
+    /** 结果行宿主：负责把 ScrollPanel 摆进胶囊剩余高度（挂在 root 下，见构造器）。 */
     private final Panel resultsHost = new Panel();
     private final List<MusicWidget> resultRows = new ArrayList<>();
     /** 建行时代次：与 IslandSearchModel.resultsRevision 比对，变了才重建。 */
@@ -87,6 +94,10 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
     private double capsuleX, capsuleY, capsuleWidth, capsuleHeight;
 
     private IslandSearchOverlay() {
+        // 结果列宿主必须真的挂进树：上一版它一直是孤儿节点，root.renderWidget 递归
+        // 不到它，歌曲行连同整棵子树一帧都没画过（真机「歌曲全部不显示」）。
+        // ScrollPanel 每次重建换新实例，宿主只在这里挂这一次。
+        this.root.addChild(this.resultsHost);
     }
 
     // ------------------------------------------------------------------ 打开 / 关闭
@@ -104,18 +115,20 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
             overlay.closeAndRestore();
             return;
         }
-        // 目标矩形按布局轴捕获（转场几何恒按布局轴存储）；热键触发点不在播放器括号内，
-        // 这里自备临时括号——否则初始目标按 GUI 轴算，转场起点在高档位上错位。
+        // 目标矩形与转场捕获都必须按布局轴（转场几何恒按布局轴存储）；热键触发点不在
+        // 播放器括号内，这里自备临时括号。IslandSearchTransition.open 的 captureStart/
+        // captureCapsule 走 toLayout* 系——它们带「窗口自适应缩放」开关闸，括号外调用
+        // 时锚点落 GUI 轴、与括号内算出的布局轴目标混插值（开关关 + 高档位下胶囊从
+        // 错位 2× 的地方长出来），所以 open() 必须在同一括号内执行。
         boolean ownedLayout = !RenderSystem.FIXED_SCALE;
         if (ownedLayout) WindowAdaptiveScale.beginForced();
-        double[] target;
         try {
-            target = overlay.capsuleTarget();
+            double[] target = overlay.capsuleTarget();
+            if (!IslandSearchTransition.open(target[0], target[1], target[2], target[3], target[4])) {
+                return;
+            }
         } finally {
             if (ownedLayout) WindowAdaptiveScale.end();
-        }
-        if (!IslandSearchTransition.open(target[0], target[1], target[2], target[3], target[4])) {
-            return;
         }
         IslandSearchModel.reset();
         overlay.searchField.setText("");
@@ -205,21 +218,31 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
         this.capsuleHeight = bounds[3];
         double radius = bounds[4];
         float alpha = (float) IslandSearchTransition.contentAlpha();
+        this.surfaceAlpha = alpha;
+        this.surfaceRadius = radius;
 
         // ---- 布局轴：与播放器 drawScreen 同款 —— 除以修正因子后按 scale 画，命中与绘制同轴。
         // 先复位到已知 2D 状态：透明浮层叠在游戏画面上，不能继承上一段绘制留下的混合与颜色。
         SkijaGfx.pushMatrix();
         SkijaGfx.setBlendMode(io.github.humbleui.skija.BlendMode.SRC_OVER);
         SkijaGfx.setColor(1.0F, 1.0F, 1.0F, 1.0F);
-        api.getGLStateManager().pushMatrix();
+        // ★ Skija 画布基变换是「帧缓冲像素 / MC GUI 宽」，而本浮层的几何全是播放器布局轴。
+        //   两者只在「布局宽 == GUI 宽」的档位碰巧相等；GUI Scale 3x/1x 下所有内容都会错位
+        //   放大（真机：胶囊顶满半屏、文字画出可视区）。这里给 Skija 乘上同一条换算，
+        //   与下面 GL 矩阵的 scale 成对——Skija 绘制（文字/圆角/玻璃）跟 GL 绘制同轴落地。
+        //   推导：canvas 基 B = pixel/guiScaled；目标 pixel/layout = B·E ⇒ E = xScale/B，
+        //   其中 xScale = notScaled/layout。布局==GUI 的档位上 xScale==B，E=1 恒等不跳。
         double xScale = RenderSystem.getWidthNotScaled() / RenderSystem.getWidth();
         double yScale = RenderSystem.getHeightNotScaled() / RenderSystem.getHeight();
+        double skijaExtraX = xScale / SkijaGfx.guiScale();
+        double skijaExtraY = yScale / SkijaGfx.guiScale();
+        SkijaGfx.scale(skijaExtraX, skijaExtraY);
+        api.getGLStateManager().pushMatrix();
         api.getGLStateManager().scale(xScale, yScale, 1);
         double mx = mouseX / xScale;
         double my = mouseY / yScale;
 
         try {
-            drawCapsuleSurface(radius, alpha);
             drawCapsuleContent(mx, my, alpha);
         } finally {
             api.getGLStateManager().popMatrix();
@@ -227,23 +250,25 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
         }
     }
 
-    /** 玻璃胶囊表面：ISLAND 面的 paintFrost 铺底，铺不上退回深色底（GlassLook 内建降级）。 */
-    private void drawCapsuleSurface(double radius, float alpha) {
+    /** 本帧表面参数缓存：胶囊底板由根的 onRender 画（与内容同树同轴同 alpha）。 */
+    private float surfaceAlpha;
+    private double surfaceRadius;
+
+    /** 供 root.onRender 调用：此刻 root 的边界/位置已是本帧胶囊矩形。 */
+    private void drawCapsuleSurfaceInline() {
+        float alpha = this.surfaceAlpha;
         if (alpha <= .02f) return;
         boolean frosted = GlassLook.paintFrost(GlassLook.Surface.ISLAND,
-                capsuleX, capsuleY, capsuleWidth, capsuleHeight, radius, alpha);
+                capsuleX, capsuleY, capsuleWidth, capsuleHeight, this.surfaceRadius, alpha);
         int base = NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND);
         // frosted=false（手机档/主题没开/这一帧还没采到背景）时给一层压薄的实色，
         // 观感退回「深色胶囊」，绝不会画成透明洞。
         int argb = GlassLook.tintedArgb(GlassLook.Surface.ISLAND,
                 base | ((int) (alpha * (frosted ? 255 : 224)) << 24));
-        capsuleBg.setRadius(radius);
-        // setBounds 的四参版会连位置一起写，写 (0,0,w,h) 就把胶囊拍回屏幕原点
-        //（2026-10-21 真机截图）。位置与尺寸分开设。
+        capsuleBg.setRadius(this.surfaceRadius);
         capsuleBg.setBounds(capsuleX, capsuleY, capsuleWidth, capsuleHeight);
         capsuleBg.setColor(argb);
         capsuleBg.setAlpha(alpha);
-        // 直接画这一块（不进控件树：它没有子控件也没有命中语义）。
         capsuleBg.renderWidget(-1, -1, 0);
     }
 
@@ -271,11 +296,14 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
         double listHeight = Math.max(0.0, capsuleHeight - listTop - CONTENT_INSET);
 
         ensureResultRows();
+        // 宿主是 root 的孩子：这里的位置/尺寸都是相对 root 的（root 已就位胶囊矩形）。
         resultsHost.setBounds(Math.max(1.0, capsuleWidth - CONTENT_INSET * 2.0), Math.max(0.0, listHeight));
         resultsHost.setPosition(CONTENT_INSET, listTop);
         resultsHost.setAlpha(alpha);
 
         int wheel = com.muoniumplayer.compat.lwjgl2.Mouse.getDWheel();
+        // 底板（root.onRender 里的 drawCapsuleSurfaceInline）→ 宿主（结果行）一棵树画完，
+        // 顺序即遮挡顺序：底板在最下、结果列表压在上面。
         root.renderWidget(mouseX, mouseY, wheel);
 
         // 输入框画在控件树之上（它不是树成员，命中在 keyTyped/mouseClicked 里手工转发）。
@@ -294,6 +322,10 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
     }
 
     private void rebuildResultRows() {
+        // getChildren() 返回的是活列表（lombok @Getter 不拷贝）——直接清空就是「换整张列表」。
+        // 没有公开的 removeChild：此前这里每次重建都 addChild 新 ScrollPanel 而旧的留在
+        // 列表里，几次搜索后宿主里会叠出多张旧列表、一起渲染。
+        this.resultsHost.getChildren().clear();
         if (this.resultsPanel != null) {
             this.resultsPanel.getChildren().forEach(AbstractWidget::onViewportExit);
         }
@@ -366,7 +398,8 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
                     ? NCMScreen.ColorType.ELEMENT_HOVER : NCMScreen.ColorType.GENERIC_BACKGROUND);
             RoundedRectWidget rowBg = new RoundedRectWidget();
             rowBg.setRadius(8);
-            rowBg.setBounds(0, 0, capsuleWidth, 22);
+            // setBounds 四参版连位置一起写——写 (0,0) 会把联想底条拍到画布原点。
+            rowBg.setBounds(capsuleX, y, capsuleWidth, 22);
             rowBg.setColor(bg | ((int) (alpha * 255) << 24));
             rowBg.renderWidget(-1, -1, 0);
             drawSuggestionRow(suggestion.text, suggestion.detail,
@@ -474,10 +507,12 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
 
     @Override
     public void mouseClicked(int mX, int mY, int mouseButton) {
-        // 与 drawScreen 同括号：换算因子只有进布局轴才有真值。
+        // 与 drawScreen 同括号：换算因子只有进布局轴才有真值。先刷分辨率——窗口 resize
+        // 与点击落进同一帧间隙时，缓存的 GUI 宽是旧值，sx 会变成「旧G/新L」混合轴。
         boolean ownedLayout = !RenderSystem.FIXED_SCALE;
         if (ownedLayout) WindowAdaptiveScale.beginForced();
         try {
+            RenderSystem.refreshResolution();
             mouseClickedInner(mX, mY, mouseButton);
         } finally {
             if (ownedLayout) WindowAdaptiveScale.end();

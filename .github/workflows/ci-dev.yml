@@ -1,0 +1,134 @@
+name: CI (dev)
+
+"on":
+  push:
+    branches: ["dev"]
+  pull_request:
+    branches: ["dev"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------
+  # 五棵版本树各自独立 Gradle 构建（JDK / 映射 / 插件各不同，禁止合并）。
+  # gradle.properties 钉了本机 JDK 绝对路径与本机代理（127.0.0.1:7890），
+  # CI 上两者都不存在 —— 由 Sanitize 步骤在工作副本里摘除。
+  # ---------------------------------------------------------------
+  build-and-test:
+    name: ${{ matrix.tree }} - ${{ matrix.loader }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 1.20.1 / 1.21.1 / 1.21.11 → Java 21（loom 要求守护进程 JVM ≥ 21）
+          - tree: "1.20.1 recode"
+            loader: fabric
+            java: 21
+          - tree: "1.20.1 recode"
+            loader: forge
+            java: 21
+          - tree: "1.21.1"
+            loader: fabric
+            java: 21
+          - tree: "1.21.1"
+            loader: neoforge
+            java: 21
+          - tree: "1.21.11 recode"
+            loader: fabric
+            java: 21
+          - tree: "1.21.11 recode"
+            loader: neoforge
+            java: 21
+          # 26.2 / 26.3 → Java 25（官方 jar 无混淆，release 25）
+          - tree: "26.2"
+            loader: fabric
+            java: 25
+          - tree: "26.2"
+            loader: neoforge
+            java: 25
+          - tree: "26.3"
+            loader: fabric
+            java: 25
+          - tree: "26.3"
+            loader: neoforge
+            java: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ matrix.java }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+
+      - name: Setup Gradle (cache per tree)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          # 缓存按「树+加载器」分桶；PR 上只读
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: Sanitize gradle.properties for CI
+        shell: bash
+        run: |
+          cd "${{ matrix.tree }}"
+          # gradle.properties 钉了本机设定，CI 上必须摘除（只改工作副本，不回写仓库）：
+          #   1) org.gradle.java.home=C:/Users/... —— CI 无此路径，Gradle 直接拒启
+          #   2) systemProp.*proxyHost/Port=127.0.0.1:7890 —— CI 无本地代理，
+          #      走它会全军覆没（含 Gradle Central Plugin Portal 拉 shadow 插件）
+          sed -i \
+            -e '/^org\.gradle\.java\.home=/d' \
+            -e '/^systemProp\.http\.proxyHost=/d' \
+            -e '/^systemProp\.http\.proxyPort=/d' \
+            -e '/^systemProp\.https\.proxyHost=/d' \
+            -e '/^systemProp\.https\.proxyPort=/d' \
+            gradle.properties
+          echo "--- sanitized gradle.properties (proxy/java.home removed) ---"
+          grep -E 'java.home|proxyHost' gradle.properties || echo "(clean)"
+
+      - name: Stage Skija Linux native (fabric only)
+        if: matrix.loader == 'fabric'
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/skija-native"
+          curl -sfL --retry 3             "https://maven.aliyun.com/repository/public/io/github/humbleui/skija-linux-x64/0.143.17/skija-linux-x64-0.143.17.jar"             -o "$GITHUB_WORKSPACE/skija-native/skija-linux-x64.jar"
+          cd "$GITHUB_WORKSPACE/skija-native"
+          unzip -o -q skija-linux-x64.jar
+          ls -la io/github/humbleui/skija/linux/x64/
+          # .so 在 io/github/humbleui/skija/linux/x64/ 下，Skija 的
+          # skija.library.path 口子按 <dir>/libskija.so 找 —— 指到那个叶子目录
+          echo "SKIJA_LIB_DIR=$GITHUB_WORKSPACE/skija-native/io/github/humbleui/skija/linux/x64" >> "$GITHUB_ENV"
+
+      - name: Build and Test (${{ matrix.tree }} / ${{ matrix.loader }})
+        shell: bash
+        run: |
+          cd "${{ matrix.tree }}"
+          chmod +x gradlew
+          # 编译 + 该加载器的单测（muonium-common 共享测试从各树挂载跑）
+          # setup-java 已把 JAVA_HOME 指到矩阵对应的 JDK；无 java.home 属性时
+          # Gradle 守护进程直接用 JAVA_HOME
+          # daemon 由本 step 进程启动（继承 step 环境），java.library.path
+          # 随 GRADLE_OPTS 进 daemon → fork 测试 JVM 启动期就带上
+          if [ "${{ matrix.loader }}" = "fabric" ] && [ -n "$SKIJA_LIB_DIR" ]; then
+            export GRADLE_OPTS="-Djava.library.path=$SKIJA_LIB_DIR $GRADLE_OPTS"
+          fi
+          ./gradlew ":${{ matrix.loader }}:test" ":${{ matrix.loader }}:build" \
+            --console=plain --stacktrace
+
+      - name: Upload jars
+        uses: actions/upload-artifact@v4
+        with:
+          name: jars-${{ matrix.tree }}-${{ matrix.loader }}
+          # 只归档主 jar：build/libs 里混着 *-sources.jar（约 9 MB），那是给
+          # 开发者看源码用的，CI 归档不需要
+          path: ${{ matrix.tree }}/*/build/libs/MuoniumPlayer-*.jar
+          if-no-files-found: error
+          retention-days: 7

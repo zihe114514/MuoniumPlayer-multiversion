@@ -36,9 +36,9 @@ public final class SpeakerState {
         CHUNK_UNLOADED
     }
 
-    /** 有效射程(米):与探针射线射程一致 —— 射线场本来就追到 96 格,
-     *  声源在 96 格内,「源→墙→耳」的几何才追得全。 */
-    public static final double RANGE_METERS = 96.0;
+    /** 有效射程(米):与探针射线射程一致(160 格)—— 声源在射程内,
+     *  「源→墙→耳」的几何才追得全;超出即 OUT_OF_RANGE 淡出。 */
+    public static final double RANGE_METERS = 160.0;
 
     /** 当前生效的锚点(null = 没有音箱,一切按「玩家即声源」旧语义)。 */
     private static volatile SpeakerState current;

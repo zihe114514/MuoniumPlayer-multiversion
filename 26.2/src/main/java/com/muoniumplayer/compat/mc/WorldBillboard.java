@@ -5,6 +5,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.muoniumplayer.core.lyrics3d.HuiguangMotion;
 import com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas;
+import com.muoniumplayer.core.rendering.font.TextGlow;
 import com.muoniumplayer.core.lyrics3d.WorldLyricsRenderer;
 import com.muoniumplayer.mixin.RenderTypeAccessors;
 import net.minecraft.client.Minecraft;
@@ -286,7 +287,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         LyricGlyphAtlas.GlyphCell glowCell = glowActive
                 ? LyricGlyphAtlas.getGlowCell(c, glowStrength, glowSpread,
                         glowColorRgb & 0xFFFFFF, rgb & 0xFFFFFF,
-                        settings != null ? settings.glowTier : 1)
+                        settings != null ? settings.glowTier : TextGlow.GLOW_TIER_DEFAULT)
                 : null;
         net.minecraft.resources.Identifier glowRl = null;
         if (glowCell != null && glowCell.page instanceof LyricGlyphAtlasBridge.PageHandle) {
@@ -295,8 +296,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         // 烘焙像素 → 设计像素。字形顶点 (x, y) 是「字位框左上角」在<b>行内坐标</b>里的位置
         // （buildGlyphs 逐字推进的坐标），格内墨迹原点 (inkX, inkY) 对到它 —— quad 四角
-        // 必须加上 (x, y) 再进公告牌矩阵。档位运行时化：读 volatile int（bakeScale）实时除
-        float inv = 1f / LyricGlyphAtlas.bakeScale();
+        // 晕/墨两格烘焙域不同（晕格 HDR bloom 在 3× 低频域、墨格 5× 超采样），
+        // 各按自己的 cell.scale 折算，绝不能共用一个除数。
+        float inv = 1f / cell.scale;
         float qLeft = x - cell.inkX * inv;
         float qTop = y - cell.inkY * inv;
         float qRight = qLeft + cell.w * inv;
@@ -323,7 +325,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         final float gu0, gv0, gu1, gv1;
         final int glowArgb;
         if (glowRl != null) {
-            float gInv = 1f / LyricGlyphAtlas.bakeScale();
+            float gInv = 1f / glowCell.scale;
             gLeft = x - glowCell.inkX * gInv;
             gTop = y - glowCell.inkY * gInv;
             gRight = gLeft + glowCell.w * gInv;

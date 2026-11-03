@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * 玻璃取样坐标的静态测试：完全在 CPU 上跑，不启动客户端。
@@ -51,6 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       表现是一句没头没尾的 {@code Can't wrap nullptr}（真机踩过一次）。</li>
  * </ol>
  */
+@RequiresSkijaNative
 class GlassCoordinateStaticTest {
 
     /** 背景图边长（图像素）。 */

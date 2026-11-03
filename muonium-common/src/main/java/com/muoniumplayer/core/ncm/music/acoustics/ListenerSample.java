@@ -109,4 +109,19 @@ public interface ListenerSample {
     default float directPan() {
         return 0f;
     }
+
+    /** 声源世界坐标 X(树侧 SpeakerState);无声源 0。EAX 总线的 3D 定位用。 */
+    default double speakerX() {
+        return 0;
+    }
+
+    /** 声源世界坐标 Y。 */
+    default double speakerY() {
+        return 0;
+    }
+
+    /** 声源世界坐标 Z。 */
+    default double speakerZ() {
+        return 0;
+    }
 }

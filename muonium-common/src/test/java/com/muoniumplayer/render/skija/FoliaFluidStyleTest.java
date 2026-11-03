@@ -7,6 +7,7 @@ import io.github.humbleui.skija.Surface;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * 本项目 移植风格（Latent / Sora / Nomand）的离屏栅格测试。
@@ -15,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 对分段频段（Latent/Nomand）与主题色（Sora）有可见响应。shader 编译失败
  * 会让 render 走 fallback 底色路径，nonBlack 断言当场抓住。</p>
  */
+@RequiresSkijaNative
 class FoliaFluidStyleTest {
 
     @Test

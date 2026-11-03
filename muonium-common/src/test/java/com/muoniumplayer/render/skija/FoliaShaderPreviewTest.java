@@ -23,12 +23,14 @@ import java.nio.file.Paths;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * 两支着色器（隐现 / 漫游）的离屏预览图（落在 {@code <repo>/.scratch/folia-visual/}）。
  *
  * <p>只用来人眼核对，不做像素断言；断言版本在 {@link FoliaBackgroundShaderTest}。</p>
  */
+@RequiresSkijaNative
 class FoliaShaderPreviewTest {
 
     private static final int W = 640;

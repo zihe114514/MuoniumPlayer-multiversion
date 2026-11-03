@@ -64,7 +64,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "2.3.1";
+    public static final String MOD_VERSION = "2.4.0";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -270,6 +270,11 @@ public final class MuoniumPlayerClient {
         // 加几个布尔判断。放在按键检测之前，是因为按键那一段要求 mc.player != null，而镜像
         // 在主菜单里也该继续跟随外部播放器（岛的常驻页在那儿也画）。
         ExternalPlayback.onClientTick();
+
+        // ---- 失焦压低音乐 ----
+        // 切出游戏窗口时把本 mod 的输出按档位压下去，回来再推回。焦点状态由树内读、传给共享层
+        // （共享层不碰 MC 符号）；内部带时间斜坡与全 Throwable 闸，稳态下是一次浮点比较。
+        com.muoniumplayer.core.ncm.music.FocusVolumeDucker.onClientTick(mc.isWindowActive());
 
         // ---- 场景声学 ----
         // 每 tick 问一次环境采样器;内部自带 200ms 节流与全 Throwable 闸,主菜单

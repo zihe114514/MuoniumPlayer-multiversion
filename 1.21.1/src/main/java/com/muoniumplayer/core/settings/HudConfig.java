@@ -410,7 +410,7 @@ public final class HudConfig {
     /** 翻译副行的绘光特效（点亮闪点 + 微飞径迹）：仅「逐字点亮」档有意义。 */
     public static boolean worldLyricsTransEffects = false;
     /** 发光质量档：0 Standard / 1 High(默认) / 2 Ultra（TextGlow.GLOW_TIER_*）。 */
-    public static int worldLyricsGlowTier = 1;
+    public static int worldLyricsGlowTier = 2;
     /** 封面代表色来源档：0 关 / 1 自动提取 / 2 手动色板。 */
     public static int worldLyricsCoverColorMode = 0;
     /** 封面渐变：歌词与翻译按色板从左到右渐变（需来源档非关）。 */
@@ -809,7 +809,7 @@ public final class HudConfig {
         worldLyricsAboveGround = false;
         worldLyricsTranslation = 1;
         worldLyricsTransEffects = false;
-        worldLyricsGlowTier = 1;
+        worldLyricsGlowTier = 2;
         worldLyricsCoverColorMode = 0;
         worldLyricsCoverGradient = false;
         worldLyricsCoverPaletteRgb0 = 0xF2A7C3;

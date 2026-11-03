@@ -53,19 +53,17 @@ import com.muoniumplayer.core.ncm.music.acoustics.SpeakerState;
  */
 public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
 
-    /** 射线条数:后台线程无预算压力;512 条角分辨率 9°(Steam Audio
-     *  实时档同级),直方图每桶 ~32 条命中,T60 拟合与抽头密度达到
-     *  实时实现的高配。 */
-    private static final int RAY_COUNT = 512;
-    /** 首次命中之后最多再弹几次:直方图窗 2s ⇒ 路径要追到 ~600m 才不缺尾部;
-     *  3 弹 × 28m 的路径上限只有 ~150m(0.44s),晚期尾全是真空,T60 拟合
-     *  读到的只是「回声到达密度」(实机日志:洞穴 ρ=1.30 拟合出 0.38s)。
-     *  12 弹 × 40m ≈ 500m 路径,覆盖 1.4s 尾。 */
-    private static final int MAX_BOUNCES = 12;
-    /** 单段射程(格):96 格 = 2s 声程,与直方图窗对齐 —— 旷野/大峡谷的
-     *  远墙一次反射(真实中 100-400ms 后可闻)也能被采到,而不是被
-     *  「40 格内没墙 = 逃逸」误判成空旷。 */
-    private static final double RAY_RANGE = 96.0;
+    /** 射线条数:后台线程无预算压力;1024 条角分辨率 6.4°(Steam Audio
+     *  离线档量级),直方图每桶 ~64 条命中 —— T60 拟合的统计噪声减半,
+     *  抽头密度与回声「丝滑度」直接受益。 */
+    private static final int RAY_COUNT = 1024;
+    /** 首次命中之后最多再弹几次:直方图窗 3s ⇒ 路径要追到 ~1km 才不缺
+     *  尾部。16 弹 × 160m 上限 ≈ 2.5km,真实大厅/峡谷的多次回声(3-4 次可闻
+     *  拍击)也能进直方图,而不是被弹数上限截断。 */
+    private static final int MAX_BOUNCES = 16;
+    /** 单段射程(格):160 格 ≈ 0.47s 声程 —— 旷野/大峡谷的远墙一次反射
+     *  (真实中 100-400ms 后可闻)采得到,洞口对面的第二次回声也采得到。 */
+    private static final double RAY_RANGE = 160.0;
     /** 黄金角(弧度):经度步进,配纬度均匀分层构成斐波那契格。 */
     private static final double GOLDEN_ANGLE = 2.399963229728653;
     /** 反射/回测起点沿法线抬离墙面的距离,避免立刻重新命中同一面。 */
@@ -197,6 +195,9 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
             @Override public float directDistanceMeters() { return directDist; }
             @Override public float directOcclusion() { return directOccl; }
             @Override public float directPan() { return directPan; }
+            @Override public double speakerX() { return hasSource ? speaker.x() : 0; }
+            @Override public double speakerY() { return hasSource ? speaker.y() : 0; }
+            @Override public double speakerZ() { return hasSource ? speaker.z() : 0; }
         };
     }
 

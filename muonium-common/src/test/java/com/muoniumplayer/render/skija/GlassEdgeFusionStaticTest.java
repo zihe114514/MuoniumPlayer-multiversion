@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * 一组玻璃边缘攒成一张距离场那件事的不变量。
@@ -36,6 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       （错了不会崩，只会「融合边缘这一层静默停用」）。</li>
  * </ol>
  */
+@RequiresSkijaNative
 class GlassEdgeFusionStaticTest {
 
     private static String read(String name) throws Exception {

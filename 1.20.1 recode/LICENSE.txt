@@ -1,5 +1,6 @@
 MuoniumPlayer
 Copyright 2026 MuoniumPlayer Team（作者：云杉、心事抱抱、N0ne、eyz2021）
+贡献者：Chryui (Cherry7593)
 
 本 Mod 以 Apache License 2.0 授权。
 

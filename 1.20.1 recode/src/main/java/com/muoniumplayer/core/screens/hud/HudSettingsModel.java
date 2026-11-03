@@ -4,8 +4,10 @@ import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings;
 import com.muoniumplayer.core.ncm.music.ExternalPlayback;
+import com.muoniumplayer.core.ncm.music.FocusVolumeDucker;
 import com.muoniumplayer.core.ncm.music.FoliaModelManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.TransparentMode;
 import com.muoniumplayer.core.ncm.music.MusicAudioCache;
 import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
@@ -1423,6 +1425,24 @@ public final class HudSettingsModel {
                                         () -> HudConfig.dynamicIslandEnabled))),
 
                 new Category("播放", "两首歌自动衔接不断片，外加场景音效", 0xFF5FD3E8, HudSettingsIcons.SPEED,
+                        new Group("切出游戏时", HudSettingsIcons.TUNE,
+                                toggle("失焦压低音乐", "切屏、最小化或点到别的窗口时，音乐在一秒多里渐渐变小；回到游戏再渐渐恢复。不改你设的音量，也不碰系统播放器镜像。",
+                                        FocusVolumeDucker::isEnabled,
+                                        () -> FocusVolumeDucker.setEnabled(!FocusVolumeDucker.isEnabled())),
+                                choice("压低到", "失焦时音量降到原来的多少。选「静音」就是切出去听不到。",
+                                        FocusVolumeDucker::getLevelLabel,
+                                        FocusVolumeDucker::cycleLevel,
+                                        FocusVolumeDucker.levelLabels(),
+                                        FocusVolumeDucker::setLevelByLabel,
+                                        FocusVolumeDucker::isEnabled)),
+                        new Group("通透模式", HudSettingsIcons.SPEED,
+                                toggle("\"通透模式\"", "整活特效：跟着正在放的音乐节拍，把视野里的生物和玩家（含自己）像果冻一样压扁再回弹。节拍是实时从播放信号上测的，任何歌都自动卡点；只在本机画面生效，不改变碰撞箱。",
+                                        TransparentMode::isEnabled,
+                                        () -> TransparentMode.setEnabled(!TransparentMode.isEnabled())),
+                                slider(HudSetting.TRANSPARENT_COMPRESSION,
+                                        "鼓点最响那一刻压多扁：50% 就是压到一半高。0 等于不压，只看别人变宽。"),
+                                slider(HudSetting.TRANSPARENT_WIDTH,
+                                        "压扁的同时往两边涨多少：50% 就是模型横向胖一半。深度不变。")),
                         new Group("基本设置", HudSettingsIcons.SPEED,
                                 toggle("无缝切换", "打开后提前解码下一首并交叉淡化；关掉则切歌时先停下再重新下载解码，中间有静音间隙。",
                                         new BooleanSupplier() {

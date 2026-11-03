@@ -205,6 +205,9 @@ public final class ConfigPaths {
     /** 「播放时压掉原版音乐」的开关（VanillaMusicDucker）。单布尔，默认开。 */
     public static final File VANILLA_MUSIC_DUCKER = new File(CONFIG_DIRECTORY, "vanilla_music_ducker.json");
 
+    /** 「游戏窗口失焦时压低音乐」的开关与压低档位（FocusVolumeDucker）。 */
+    public static final File FOCUS_VOLUME_DUCKER = new File(CONFIG_DIRECTORY, "focus_volume_ducker.json");
+
     /**
      * 场景声学的开关与分项。
      *
@@ -231,6 +234,15 @@ public final class ConfigPaths {
      * 立即落盘，读失败的代价只是「回到关闭」，不该牵连播放器主配置。</p>
      */
     public static final File AMBIENT_DJ = new File(CONFIG_DIRECTORY, "ambient_dj.json");
+
+    /**
+     * 「通透模式」的开关与两档幅度（随节拍压缩生物/玩家模型的整活特效）。
+     *
+     * <p>单独一个文件，理由同 {@link #SCENE_ACOUSTICS}：设置页上每颗开关/滑条都要
+     * 立即落盘，读失败的代价只是「回到关闭」，不该牵连播放器主配置。不进 {@link #HUD}
+     * 的原因也同：HudConfig 是五棵版本树各自一份的留守文件，每加一个字段要改五份。</p>
+     */
+    public static final File TRANSPARENT_MODE = new File(CONFIG_DIRECTORY, "transparent_mode.json");
 
     /**
      * 「上次播放到哪」的会话快照（播放记忆）。

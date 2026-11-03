@@ -10,7 +10,9 @@
     "GameRendererRenderLevelMixin",
     "GameRendererAccessor",
     "RenderTypeAccessors",
-    "ProjectionMatrixBufferMixin"
+    "ProjectionMatrixBufferMixin",
+    "TransparentEntityMixin",
+    "TransparentCameraMixin"
   ],
   "injectors": {
     "defaultRequire": 1

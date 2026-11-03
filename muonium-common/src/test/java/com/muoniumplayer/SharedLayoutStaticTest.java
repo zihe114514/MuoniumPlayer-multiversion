@@ -108,6 +108,10 @@ class SharedLayoutStaticTest {
             // --- 3D 歌词晕格加色：RenderType.create 包私有 accessor（仅 26.2/26.3）---
             "com/muoniumplayer/mixin/RenderTypeAccessors.java",
             "com/muoniumplayer/mixin/ProjectionMatrixBufferMixin.java",
+            // --- 通透模式：果冻压缩注入点两代不同形 —— 26.x extract/submit 状态架构，
+            //     1.20.1~1.21.11 的 EntityRenderDispatcher.render(...)（暂仅 26.3）---
+            "com/muoniumplayer/mixin/TransparentEntityMixin.java",
+            "com/muoniumplayer/mixin/TransparentCameraMixin.java",
             "com/muoniumplayer/party/net/MpPayloads.java"));
 
     /** 五棵树各自的版本差异测试（ProjectPaths 例外，它已经收进共享层）。 */

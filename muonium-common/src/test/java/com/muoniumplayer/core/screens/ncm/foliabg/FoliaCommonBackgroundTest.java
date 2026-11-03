@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * 「通用 / Common」背景的离屏栅格测试。
@@ -37,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>另有参数分布探针：照抄 folia 的抽取顺序后，15 个形状与 20 颗光点仍必须落在
  * §4.4.1 给的区间内。</p>
  */
+@RequiresSkijaNative
 class FoliaCommonBackgroundTest {
 
     private static final int W = 480;

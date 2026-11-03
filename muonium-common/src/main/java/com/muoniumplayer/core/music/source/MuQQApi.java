@@ -593,12 +593,18 @@ public final class MuQQApi {
         Map<String, String> query = linkedStr("appid", "716027609", "e", "2", "l", "M",
                 "s", "3", "d", "72", "v", "4", "t", "0." + loginNonce(),
                 "daid", "383", "pt_3rd_aid", "100497308");
-        jarGet("https://ssl.ptlogin2.qq.com/ptqrshow", query, "https://xui.ptlogin2.qq.com/");
+        MuHttp.Response show = jarGet("https://ssl.ptlogin2.qq.com/ptqrshow", query,
+                "https://xui.ptlogin2.qq.com/");
         String qrsig = loginJar.get("qrsig");
         if (qrsig == null) {
             throw new MusicApiException("QQ：获取 qrsig 失败", null);
         }
-        return new QrCode(qrsig, "");
+        // ptqrshow 的响应体就是二维码 PNG 本体（探针实测 440+ 字节）；UI 直接渲染
+        // data URL（AccountManagerOverlay 的 upstreamImage 路径），漏了它就是
+        // 「二维码图片为空」——2026-11-03 实机截图报错即此。
+        String dataUrl = "data:image/png;base64,"
+                + Base64.getEncoder().encodeToString(show.getBytes());
+        return new QrCode(qrsig, dataUrl);
     }
 
     public QrLoginState checkQrCode(QrCode qr) {

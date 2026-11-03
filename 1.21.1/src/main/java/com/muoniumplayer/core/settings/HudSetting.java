@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.settings;
 
+import com.muoniumplayer.core.ncm.music.TransparentMode;
+
 /**
  * 描述一个已持久化的浮点 HUD 外观设置。
  *
@@ -114,7 +116,12 @@ public enum HudSetting {
     WORLD_LYRICS_GLOW_STRENGTH("3D歌词 发光强度", 0.00f, 1.00f),
     WORLD_LYRICS_GLOW_SPREAD("3D歌词 发光扩散", 0.00f, 3.00f),
     /** 岛顶部相对默认位置的偏移。接在末尾：这套条目的 id 有按序号落盘的历史。 */
-    DYNAMIC_ISLAND_Y("灵动岛位置", -20.0f, 400.0f);
+    DYNAMIC_ISLAND_Y("灵动岛位置", -20.0f, 400.0f),
+    // ---- 通透模式（接在末尾：这套条目的 id 有按序号落盘的历史，插中间会让老配置错位）----
+    /** 节拍最大压扁幅度：百分比，0 关闭压缩。开关与落盘在 TransparentMode，这里只出滑条。 */
+    TRANSPARENT_COMPRESSION("通透模式 压缩幅度", 0.0f, 90.0f),
+    /** 节拍最大变宽幅度：最大压缩时额外涨出的横向宽度百分比。 */
+    TRANSPARENT_WIDTH("通透模式 变宽幅度", 0.0f, 200.0f);
 
     private final String label;
     private final float min;
@@ -213,6 +220,8 @@ public enum HudSetting {
             case WORLD_LYRICS_SCALE: return HudConfig.worldLyricsScale;
             case WORLD_LYRICS_GLOW_STRENGTH: return HudConfig.worldLyricsGlowStrength;
             case WORLD_LYRICS_GLOW_SPREAD: return HudConfig.worldLyricsGlowSpread;
+            case TRANSPARENT_COMPRESSION: return TransparentMode.compressionPercent();
+            case TRANSPARENT_WIDTH: return TransparentMode.widthPercent();
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }
@@ -297,6 +306,8 @@ public enum HudSetting {
             case WORLD_LYRICS_SCALE: HudConfig.worldLyricsScale = clamped; break;
             case WORLD_LYRICS_GLOW_STRENGTH: HudConfig.worldLyricsGlowStrength = clamped; break;
             case WORLD_LYRICS_GLOW_SPREAD: HudConfig.worldLyricsGlowSpread = clamped; break;
+            case TRANSPARENT_COMPRESSION: TransparentMode.setCompressionPercent(clamped); break;
+            case TRANSPARENT_WIDTH: TransparentMode.setWidthPercent(clamped); break;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }

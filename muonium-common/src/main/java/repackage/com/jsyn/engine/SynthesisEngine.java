@@ -93,6 +93,15 @@ public class SynthesisEngine implements Synthesizer {
      */
     public void setTrailingOutputProcessor(OutputProcessor processor) { trailingProcessor = processor; }
 
+    /**
+     * 最末一级：在主效果链与尾槽都改写完之后、写设备之前跑。给「整体音量」这类只乘倍率的处理器用：
+     * 放在这里，前面的压缩器 / 自动增益看不到它的动作，也就不会反过来把电平推回去。
+     * 同样要求 real-time safe；抛异常即被摘除。
+     */
+    private volatile OutputProcessor finalProcessor;
+
+    public void setFinalOutputProcessor(OutputProcessor processor) { finalProcessor = processor; }
+
     private void processOutput() {
         OutputProcessor processor = outputProcessor;
         if (outputBuffer == null) return;
@@ -111,6 +120,14 @@ public class SynthesisEngine implements Synthesizer {
             } catch (Throwable failure) {
                 // 附加级自保即可:主效果链的输出不因它出问题而中断。
                 trailingProcessor = null;
+            }
+        }
+        OutputProcessor last = finalProcessor;
+        if (last != null) {
+            try {
+                last.process(outputBuffer.interleavedBuffer, outputBuffer.blockBuffers.length, getFrameRate());
+            } catch (Throwable failure) {
+                finalProcessor = null;
             }
         }
     }

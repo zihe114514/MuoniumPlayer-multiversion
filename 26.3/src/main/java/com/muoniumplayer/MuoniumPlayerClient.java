@@ -62,7 +62,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "2.3.1";
+    public static final String MOD_VERSION = "2.4.0";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -291,12 +291,33 @@ public final class MuoniumPlayerClient {
         // 在主菜单里也该继续跟随外部播放器（岛的常驻页在那儿也画）。
         ExternalPlayback.onClientTick();
 
+        // ---- 失焦压低音乐 ----
+        // 切出游戏窗口时把本 mod 的输出按档位压下去，回来再推回。焦点状态由树内读、传给共享层
+        // （共享层不碰 MC 符号）；内部带时间斜坡与全 Throwable 闸，稳态下是一次浮点比较。
+        com.muoniumplayer.core.ncm.music.FocusVolumeDucker.onClientTick(mc.isWindowActive());
+
         // ---- 场景声学 ----
         // 每 tick 问一次环境采样器;内部自带 200ms 节流与全 Throwable 闸,主菜单
         // (采不到听者)会把目标量送回静息。真正的方块遍历只发生在节流窗口到期
         // 的那一 tick,其余时候是一次布尔判断。
         com.muoniumplayer.core.ncm.music.acoustics.AcousticsRuntime.onClientTick(
                 com.muoniumplayer.compat.mc.ListenerProbe.of(mc));
+        // 听者位姿每 tick 投递(50ms):转头/移动的 AL listener 更新粒度,
+        // 决定 HRTF 声场的连续性 —— 走探针(500ms)会整块跳变,生硬。
+        if (mc.player != null) {
+            final double ex = mc.player.getX();
+            final double ey = mc.player.getEyeY();
+            final double ez = mc.player.getZ();
+            final float yaw = mc.player.getYRot() * ((float) Math.PI / 180f);
+            final float pitch = mc.player.getXRot() * ((float) Math.PI / 180f);
+            // MC 坐标系:yaw=0 面南(+Z);视线 = (−sinYaw·cosPitch, −sinPitch, cosYaw·cosPitch)
+            com.muoniumplayer.core.ncm.music.acoustics.SceneAcoustics.setListenerPose(
+                    ex, ey, ez,
+                    (float) (-Math.sin(yaw) * Math.cos(pitch)),
+                    (float) (-Math.sin(pitch)),
+                    (float) (Math.cos(yaw) * Math.cos(pitch)),
+                    0f, 1f, 0f);
+        }
 
         // ---- 环境选曲 ----
         // 每 tick 送一帧环境快照;控制器自带稳定期/冷却与全 Throwable 闸,开关关着

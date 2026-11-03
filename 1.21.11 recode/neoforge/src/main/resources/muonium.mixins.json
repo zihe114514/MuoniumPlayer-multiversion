@@ -6,7 +6,9 @@
   "client": [
     "MusicManagerAccessor",
     "MusicManagerDuckMixin",
-    "FramebufferMixin"
+    "FramebufferMixin",
+    "TransparentEntityMixin",
+    "TransparentCameraMixin"
   ],
   "injectors": {
     "defaultRequire": 1

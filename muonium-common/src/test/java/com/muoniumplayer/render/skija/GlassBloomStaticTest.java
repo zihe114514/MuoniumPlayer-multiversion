@@ -13,6 +13,7 @@ import java.nio.file.Paths;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * 亮部溢出（bloom）这一层的三条不变量。
@@ -29,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       症状是「这一层悄悄停用」，只有编译自检能把它抓住。</li>
  * </ol>
  */
+@RequiresSkijaNative
 class GlassBloomStaticTest {
 
     private static String read(String... parts) throws Exception {

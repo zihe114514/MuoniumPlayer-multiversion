@@ -85,14 +85,21 @@ public class GuiUpdateNotice extends GuiScreen {
         // 或改 GUI Scale 之后布局与鼠标映射都会错位（这是它自己在 javadoc 里写明的用法）。
         RenderSystem.refreshResolution();
         // 强制布局轴（与公告中心同款）：浮层排版常量按布局轴书写，GUI 轴下跟随 GUI Scale 缩放。
+        // 矩阵压 sx/sy 与鼠标除 sx/sy 必须成对——只换坐标不压矩阵就是「偏右放大」。
         WindowAdaptiveScale.beginForced();
         try {
             double sx = RenderSystem.getWidthNotScaled() / RenderSystem.getWidth();
             double sy = RenderSystem.getHeightNotScaled() / RenderSystem.getHeight();
-            overlay.setBounds(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
-            overlay.renderWidget((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy), 0);
-            if (overlay.shouldClose()) {
-                dismiss();
+            SkijaGfx.pushMatrix();
+            SkijaGfx.scale(sx, sy);
+            try {
+                overlay.setBounds(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
+                overlay.renderWidget((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy), 0);
+                if (overlay.shouldClose()) {
+                    dismiss();
+                }
+            } finally {
+                SkijaGfx.popMatrix();
             }
         } finally {
             WindowAdaptiveScale.end();
@@ -102,9 +109,11 @@ public class GuiUpdateNotice extends GuiScreen {
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
         // 悬停状态是上一帧渲染时算出来的，所以派发要放在渲染之后——调用点本来就是这个顺序。
-        // 与 drawScreen 同括号同换算：绘制与命中必须同轴。
+        // 与 drawScreen 同括号同换算：绘制与命中必须同轴。先刷分辨率——resize 与点击
+        // 落进同一帧间隙时，缓存的 GUI 宽是旧值，sx 会变成「旧G/新L」混合轴。
         WindowAdaptiveScale.beginForced();
         try {
+            RenderSystem.refreshResolution();
             double sx = RenderSystem.getWidthNotScaled() / RenderSystem.getWidth();
             double sy = RenderSystem.getHeightNotScaled() / RenderSystem.getHeight();
             overlay.onMouseClickReceived((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy),

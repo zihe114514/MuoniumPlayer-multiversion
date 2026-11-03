@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * 动画 SVG 引擎的静态测试：CPU 光栅，不启动客户端、不需要 GL。
@@ -30,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * （对同一批素材取 {@code getBoundingClientRect()} 与 {@code getBBox()}），不是照着本引擎
  * 的输出回填的。引擎和浏览器对不上，就是引擎错。</p>
  */
+@RequiresSkijaNative
 class SmilSvgStaticTest {
 
     /** 光栅边长。128 够把「两帧不一样」量出来，七枚素材跑一轮也不至于慢。 */

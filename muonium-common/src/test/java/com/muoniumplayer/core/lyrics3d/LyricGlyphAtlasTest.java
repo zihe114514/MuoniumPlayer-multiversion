@@ -12,12 +12,14 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import com.muoniumplayer.testsupport.RequiresSkijaNative;
 
 /**
  * 字形图集的打包/缓存语义。烘焙路径依赖 Skija 原生库（离线环境不可用），
  * 这里用假 Host + 反射可及的打包逻辑测：shelf 打包不重叠、键量化、LRU 逐出、
  * 预乘→直通换算。
  */
+@RequiresSkijaNative
 class LyricGlyphAtlasTest {
 
     /** 记录 create/delete 调用的假宿主。upload 直接吞掉。 */

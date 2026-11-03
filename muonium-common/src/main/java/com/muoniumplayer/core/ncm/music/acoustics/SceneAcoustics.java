@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.ncm.music.acoustics;
 
+import com.muoniumplayer.core.ncm.music.audio.OpenAlReverbBus;
+
 /**
  * 场景声学:按听者所处的声学环境实时修饰播放输出。全部效果在音频线程上对
  * 交错的 PCM 帧原地完成。
@@ -144,8 +146,8 @@ public final class SceneAcoustics {
     private static double[][] bandState = new double[0][];
     private static double cB0, cB1, cB2, cA1, cA2;
 
-    /** 湿声入口直流阻断的记忆位。 */
-    private static double dcX, dcY;
+    /** 湿声入口直流阻断的记忆位(左右通道各一组 —— 立体声喂环后两耳内容不同)。 */
+    private static double dcXL, dcYL, dcXR, dcYR;
 
     /** 中频人声保护:尾输入里 0.8-4kHz 段的提取带通(二阶带通)与其压制比。 */
     private static final double MID_PROTECT_RATIO = 0.45; // ≈ -7dB 轻压
@@ -187,6 +189,51 @@ public final class SceneAcoustics {
     private static int directItdMax;
     /** 直达静息阈:gain≥此值且截止全开 → 整条链逐样本直通(零开销)。 */
     private static final float DIRECT_IDLE_GAIN = 0.999f;
+
+    // ---- OpenAL EAX Reverb 总线(世界声源的湿声;音频线程独占) ----
+    /** 总线探测每缓冲一次;null/失败即 false,湿声走 FDN 兜底。 */
+    private static boolean useEaxBus;
+    private static double speakerX, speakerY, speakerZ;
+    private static short[] busMono = new short[0];
+    private static float[] busOut = new float[0];
+    private static short[] busSide = new short[0];
+    /** 直达距离延迟环(声音从音箱飞到耳朵的飞行时间;M 与 S 同延迟)。 */
+    private static short[] directDelayL = new short[0];
+    private static short[] directDelayR = new short[0];
+    private static int directDelayPos;
+    /** 平滑后的源距(探针 500ms 目标朝它收敛,移动时过渡连续)。 */
+    private static double directDistSmoothed;
+    /** 听者位姿(游戏线程写,音频线程读;AL 的 listener 需要)。 */
+    private static volatile double listenerX, listenerY, listenerZ;
+    private static volatile float listenerFwdX, listenerFwdY, listenerFwdZ;
+    private static volatile float listenerUpX, listenerUpY, listenerUpZ;
+
+    /** 游戏线程每缓冲投递听者位姿(树侧从玩家眼位与视角算)。 */
+    public static void setListenerPose(double ex, double ey, double ez,
+                                       float fx, float fy, float fz,
+                                       float ux, float uy, float uz) {
+        listenerX = ex;
+        listenerY = ey;
+        listenerZ = ez;
+        listenerFwdX = fx;
+        listenerFwdY = fy;
+        listenerFwdZ = fz;
+        listenerUpX = ux;
+        listenerUpY = uy;
+        listenerUpZ = uz;
+    }
+
+    /** double → PCM16(与 OpenALAudioDevice.write 同一条转换公式)。 */
+    private static short toPcm16(double v) {
+        double x = v * 32767.0 + 32768.5;
+        int i = ((int) x) - 32768;
+        if (i > 32767) {
+            i = 32767;
+        } else if (i < -32768) {
+            i = -32768;
+        }
+        return (short) i;
+    }
 
     /** 尾部预延迟线(可变读距)。 */
     private static float[] preDelayBuf = new float[0];
@@ -288,6 +335,8 @@ public final class SceneAcoustics {
         directPan = targetDirectPan;
         directLpState = 0.0;
         if (directRing.length > 0) java.util.Arrays.fill(directRing, 0f);
+        directDistSmoothed = targetDirectGain > 0 && targetPlan.hasSpeakerAnchor
+                ? targetPlan.directDistanceMeters : 0.0;
         for (double[] ch : bandState) java.util.Arrays.fill(ch, 0.0);
         if (preDelayBuf.length > 0) java.util.Arrays.fill(preDelayBuf, 0f);
         if (erRingL.length > 0) java.util.Arrays.fill(erRingL, 0f);
@@ -298,8 +347,7 @@ public final class SceneAcoustics {
         java.util.Arrays.fill(tapAirStateRB, 0f);
         preDelayPos = 0;
         erPos = 0;
-        dcX = 0;
-        dcY = 0;
+        dcXL = dcYL = dcXR = dcYR = 0.0;
         midBPX1 = midBPX2 = midBPY1 = midBPY2 = 0.0;
         shelfXL1 = shelfYL1 = 0.0;
         shelfXR1 = shelfYR1 = 0.0;
@@ -455,6 +503,141 @@ public final class SceneAcoustics {
             directItdMax = Math.max(1, (int) Math.round(ITD_MAX_SEC * sampleRate));
         }
 
+        // ---- 全 AL 渲染(世界声源;Channel 同款架构) ----
+        // 声源激活且总线可用时,把【整条输出】拆 M/S 送进 loopback:M(定位)
+        // → 3D source(音箱位 + AL 原生距离衰减/声像/HRTF + 遮挡低通 +
+        // EAX 湿发送);S(宽度)→ 立体声直连源 × 收缩系数;一次读回全部
+        // (直射 + 混响)。走这条路的缓冲,下面的手搓直射链与 FDN 全跳过 ——
+        // AL 的曲线就是业界打磨过的那套,听感对齐 Channel。
+        //
+        // 「玩家即声源」(无音箱)同样全 AL:source 贴在听者头部
+        // (AL_ROLLOFF=0,零距离衰减零方向),混响参数照常来自探针 ——
+        // 用户定论「整个环境声学混响都用 OpenAL,不走自研」。
+        OpenAlReverbBus busFull = useEaxBus
+                ? OpenAlReverbBus.get() : null;
+        if (busFull != null && frames > 0 && wetActive && plan.useOpenAlReverb) {
+            if (busMono.length < frames || busOut.length < frames * 2
+                    || busSide.length < frames * 2) {
+                busMono = new short[frames];
+                busOut = new float[frames * 2];
+                busSide = new short[frames * 2];
+            }
+            // AL 需要听者位姿:树侧每缓冲经 volatile 交接(游戏线程写入)。
+            busFull.setListener(listenerX, listenerY, listenerZ,
+                    listenerFwdX, listenerFwdY, listenerFwdZ,
+                    listenerUpX, listenerUpY, listenerUpZ);
+            if (plan.hasSpeakerAnchor) {
+                busFull.setSourcePose(plan.speakerX, plan.speakerY, plan.speakerZ,
+                        1f, directCutoff >= DirectPath.FC_OPEN ? 1f : 0.5f);
+                busFull.setSidePose(plan.speakerX, plan.speakerY, plan.speakerZ);
+                busFull.setSourceRolloff(0.75f);
+            } else {
+                // 玩家即声源:source 贴在头部 —— 直射恒等(零衰减零方向),
+                // 混响发送照常(EAX 参数驱动)。坐标用听者位姿。
+                busFull.setSourcePose(listenerX, listenerY, listenerZ, 1f, 1f);
+                busFull.setSidePose(listenerX, listenerY, listenerZ);
+                busFull.setSourceRolloff(0f);
+            }
+            // 湿发送乘传播稀释:混响能量也要从音箱飞 d 米到耳朵 —— 96m 外隔着
+            // 岩层的音箱混响照样贴脸是「不符合物理」的另一半。几何 inverse
+            // (参考 48m)+ 空气 /64m;96m ≈ ×0.14,混响跟着直达一起衰减。
+            // 距离走收敛(τ=0.25s):探针 500ms 节流交付的目标若直接用,
+            // 延迟环与稀释会每半秒跳一阶 —— 「渐远没有过度」的另一半。
+            final double dTarget = plan.hasSpeakerAnchor
+                    ? Math.max(0.0, plan.directDistanceMeters) : 0.0;
+            final double dStep = 1.0 - Math.exp(-frames / (sampleRate * 0.25));
+            directDistSmoothed += (dTarget - directDistSmoothed) * dStep;
+            final double dMet = directDistSmoothed;
+            final double wetSpread = plan.hasSpeakerAnchor
+                    ? Math.max(0.12, Math.min(1.0,
+                            (1.0 / (1.0 + Math.pow(Math.max(0.0, dMet / 48.0 - 1.0), 2.0)))
+                                    * Math.exp(-Math.max(0.0, dMet - 6.0) / 64.0) * 1.15))
+                    : 1.0;
+            busFull.setSendGain((float) Math.min(1f, wet * 1.2f * wetSpread));
+            busFull.setReverbParams(Float.NaN,
+                    plan.reverbDiffusion, Math.max(0.1f, decaySec), plan.reverbDecayHfRatio,
+                    Float.NaN, Math.max(0.004f, preDelaySec),
+                    Float.NaN, Float.NaN, Float.NaN,
+                    Float.NaN, Float.NaN, Float.NaN, Float.NaN, Float.NaN,
+                    Float.NaN, Float.NaN);
+            // S 宽度收缩(物理:一点源的宽度随距离收敛;玩家模式 = 贴脸宽度 1)
+            final double width = plan.hasSpeakerAnchor
+                    ? 0.35 + 0.65 * Math.min(1.0, directGain * 1.4) : 1.0;
+            busFull.setSideGain((float) width);
+            // S 直连也要直达距离延迟(宽度和 M 一样从音箱飞过来,飞行时间一致;
+            // 不延迟的话远距音箱的 S 超前于 M+EAX 湿声,时间结构错乱)。
+            // 分数延迟(照 libspatialaudio 的 AmbisonicEncoderDist):距离换算成
+            // 样本时保留小数,读出时两相邻样本线性插值 —— 距离连续滑动时延迟
+            // 线性跟随,整数样本跳变(20µs/样 @48k)的可闻 zipper 消失。
+            final double delaySamplesExact = plan.hasSpeakerAnchor
+                    ? Math.min(sampleRate * 0.9,
+                            plan.directDistanceMeters / SPEED_OF_SOUND * sampleRate)
+                    : 0.0;
+            final int directDelaySamples = (int) delaySamplesExact;
+            final float delayFrac = (float) (delaySamplesExact - directDelaySamples);
+            if (directDelaySamples > 0) {
+                final int dLen = directDelaySamples + frames + 8;
+                if (directDelayL.length < dLen) {
+                    directDelayL = new short[dLen];
+                    directDelayR = new short[dLen];
+                }
+            }
+            final boolean applyDelay = delaySamplesExact > 0.0;
+            final int delayN = applyDelay ? directDelaySamples : 0;
+            final float dFrac = applyDelay ? delayFrac : 0f;
+            // M/S 拆分进 PCM16 直通缓冲:本帧干声(带 band 低通后的原始输入,
+            // 不乘 dryGain —— AL 的距离衰减就是「干声让位」的物理版)。
+            // 有音箱时 M 与 S 都过直达延迟环(声音从音箱飞到耳朵的时间,
+            // 160m ≈ 0.47s;跨过这个时间差,直达/反射/混响的时间结构才真实)。
+            for (int i = 0; i < frames; i++) {
+                final int o = i * channels;
+                final double l = interleaved[o];
+                final double r = ch > 1 ? interleaved[o + 1] : l;
+                if (applyDelay) {
+                    // 写入当前样本到环尾,读「delayN 帧之前」的样本喂 AL。
+                    final int w = (directDelayPos + i) % directDelayL.length;
+                    directDelayL[w] = toPcm16((l + r) * 0.5);
+                    directDelayR[w * 2] = toPcm16((l - r) * 0.5 * 2.0);
+                    directDelayR[w * 2 + 1] = toPcm16(-(l - r) * 0.5 * 2.0);
+                    final int rd = (directDelayPos + i - delayN + directDelayL.length * 2)
+                            % directDelayL.length;
+                    final int rdNext = rd + 1 == directDelayL.length ? 0 : rd + 1;
+                    // 分数插值:out = A·(1−frac) + B·frac
+                    busMono[i] = (short) (directDelayL[rd] * (1f - dFrac)
+                            + directDelayL[rdNext] * dFrac);
+                    busSide[i * 2] = (short) (directDelayR[rd * 2] * (1f - dFrac)
+                            + directDelayR[rdNext * 2] * dFrac);
+                    busSide[i * 2 + 1] = (short) (directDelayR[rd * 2 + 1] * (1f - dFrac)
+                            + directDelayR[rdNext * 2 + 1] * dFrac);
+                } else {
+                    busMono[i] = toPcm16((l + r) * 0.5);
+                    busSide[i * 2] = toPcm16((l - r) * 0.5 * 2.0);
+                    busSide[i * 2 + 1] = toPcm16(-(l - r) * 0.5 * 2.0);
+                }
+            }
+            if (applyDelay) {
+                directDelayPos = (directDelayPos + frames) % directDelayL.length;
+            }
+            busFull.render(busMono, busSide, busOut);
+            // 读回结果原样写回缓冲(已含直射 3D + S + 混响;限幅照做)。
+            final float limiterKneeEarly = (float) LIMITER_KNEE * loudness;
+            for (int i = 0; i < frames; i++) {
+                final int o = i * channels;
+                interleaved[o] = softLimit(busOut[i * 2] * dryGain, limiterKneeEarly);
+                if (ch > 1) {
+                    interleaved[o + 1] = softLimit(busOut[i * 2 + 1] * dryGain, limiterKneeEarly);
+                }
+            }
+            // 抽头能量平滑照走(读回路径没跑 ER,但平滑是针对下一个缓冲的)
+            if (!tapFading && tapCountA == plan.tapCount) {
+                for (int i = 0; i < tapCountA; i++) {
+                    tapGLA[i] += (plan.tapGainL[i] - tapGLA[i]) * tapStep;
+                    tapGRA[i] += (plan.tapGainR[i] - tapGRA[i]) * tapStep;
+                }
+            }
+            return; // 本缓冲完成:全 AL 渲染接管,不走下面的逐样本链
+        }
+
         int idx = 0;
         for (int frame = 0; frame < frames; frame++) {
             double left = interleaved[idx];
@@ -501,24 +684,38 @@ public final class SceneAcoustics {
                 // —— pan=0 时 gL=gR=1(恒等),全偏时单耳 ×√2(等功率)。
                 final double gl = DirectPath.gainL(directPan) * Math.sqrt(2.0);
                 final double gr = DirectPath.gainR(directPan) * Math.sqrt(2.0);
-                // M 分量:衰减后的直达,左右耳各按自己的 ITD 读(时间差即定位)。
-                // S 分量原样保留 —— 立体声宽度不被声源化稀释。
-                left = mL * gl * directGain + side;
-                right = mR * gr * directGain - side;
+                // S 收缩:真实立体声音乐的 side 能量很大,只动 M 时定位被稀释
+                // (实机:左右声道不明显)。物理:一点源发出的「立体声宽度」
+                // 随距离收敛 —— 离得越远两只音箱相对听者的夹角越小。宽度系数
+                // width = mix(1 → 0.35,direct 越小收得越多;gain=1 时 =1 恒等)。
+                // pan 的作用:把 S 的中心从「玩家正前」挪到「源的方向」——
+                // L 减 R 加(源在右),量 = |pan|×side;pan=0 时零作用,恒等。
+                final double width = 0.35 + 0.65 * Math.min(1.0, directGain * 1.4);
+                final double sShift = Math.abs(directPan) * side * (1.0 - width);
+                left = mL * gl * directGain + side * width - sShift;
+                right = mR * gr * directGain - side * width + sShift;
             }
 
             float wetL = 0f;
             float wetR = 0f;
             if (wetActive) {
-                final double mono = (left + right) * 0.5;
-                final double blocked = mono - dcX + 0.9985 * dcY;
-                dcX = mono;
-                dcY = blocked;
+                // 直流阻断按各通道独立(立体声喂环的前提:左右耳各自的 DC 偏置
+                // 单独清,不然宽度分量被 DC 阻断器的共模抑制吃掉)。
+                final double blockedL = left - dcXL + 0.9985 * dcYL;
+                dcXL = left;
+                dcYL = blockedL;
+                final double blockedR = right - dcXR + 0.9985 * dcYR;
+                dcXR = right;
+                dcYR = blockedR;
+                final double blocked = (blockedL + blockedR) * 0.5;
 
-                // 早期反射:mono 写双环,抽头按「基准 ± pan·ITD」双耳分读
-                final float sampleVal = (float) blocked;
-                erRingL[erPos] = sampleVal;
-                erRingR[erPos] = sampleVal;
+                // 早期反射:【立体声喂环】—— 左环喂 L、右环喂 R。每条反射在
+                // 左右耳的内容天然携带输入的耳间差(立体声音乐的宽度信息在
+                // 反射里保留),叠加抽头级 ITD 读位差与 ILD(tapGL/tapGR),
+                // 双耳线索三件套(ITD/ILD/频谱)全齐;此前 mono 喂双环,
+                // 反射内容的耳间差被平均掉,只剩增益差 —— 立体声感弱的根因。
+                erRingL[erPos] = (float) blockedL;
+                erRingR[erPos] = (float) blockedR;
                 erPos = erPos + 1 == ringLen ? 0 : erPos + 1;
 
                 // 节拍侧链(预测式):mono 过 110Hz 低通提低频包络。【上升率】
@@ -601,10 +798,11 @@ public final class SceneAcoustics {
                 // 双耳预延迟:左右各一条写入位差一点点的环,读同一位 ——
                 // 等效左右进尾的信号带 <1ms 的互质时差,配 FDN 内的去相关
                 // 预延迟,中高频的尾有真实立体声图案;低频已被 HPF 拦掉。
+                // 写入也立体声化:进尾的左右内容各自带宽度(与 ER 喂环同理)。
                 final float delayedL = preDelayBuf[preRead];
                 final int preReadR = preRead + 1 == preDelayBuf.length ? 0 : preRead + 1;
                 final float delayedR = preDelayBuf[preReadR];
-                preDelayBuf[preDelayPos] = sampleVal;
+                preDelayBuf[preDelayPos] = (float) ((blockedL + blockedR) * 0.5);
                 preDelayPos = preDelayPos + 1 == preDelayBuf.length ? 0 : preDelayPos + 1;
 
                 // 中频人声保护:人声核心段(0.8-4kHz)进尾前轻压 —— 歌词清晰度
@@ -621,25 +819,39 @@ public final class SceneAcoustics {
                 float tailInL = (float) (duckedMid + (delayedL - monoMix));
                 float tailInR = (float) (duckedMid + (delayedR - monoMix));
 
-                fdn.process(tailInL, tailInR, fdnOut);
+                // ---- 湿声路由:EAX Reverb 总线优先,FDN 兜底 ----
+                final OpenAlReverbBus bus = useEaxBus && plan.useOpenAlReverb
+                        ? OpenAlReverbBus.get() : null;
+                if (bus != null) {
+                    // 世界声源(全 AL 渲染,Channel 同款架构):本缓冲的湿声
+                    // 已在循环外整缓冲送入总线 —— 这里只取回渲染结果。直射 3D
+                    // (距离衰减/声像/HRTF)+ S 直连(宽度收缩)+ EAX 混响
+                    // (含 ER/LR 方向)全部由 OpenAL 原生完成。
+                    wetL = busOut[0] * sc;
+                    wetR = busOut[1] * sc;
+                } else {
+                    fdn.process(tailInL, tailInR, fdnOut);
 
-                wetL = (erL * AcousticsDebugTuning.erBoost(1f)
-                        + fdnOut[0] * AcousticsDebugTuning.tailMakeup((float) TAIL_MAKEUP))
-                        * wet * sc;
-                wetR = (erR * AcousticsDebugTuning.erBoost(1f)
-                        + fdnOut[1] * AcousticsDebugTuning.tailMakeup((float) TAIL_MAKEUP))
-                        * wet * sc;
+                    wetL = (erL * AcousticsDebugTuning.erBoost(1f)
+                            + fdnOut[0] * AcousticsDebugTuning.tailMakeup((float) TAIL_MAKEUP))
+                            * wet * sc;
+                    wetR = (erR * AcousticsDebugTuning.erBoost(1f)
+                            + fdnOut[1] * AcousticsDebugTuning.tailMakeup((float) TAIL_MAKEUP))
+                            * wet * sc;
+                }
 
-                // 湿声输出低频搁架(一阶减法):低通提取 <150Hz 成分,
-                // 湿声减去 (1-KEEP)×低频 —— 鼓的低频反射是「冲击」的最后
-                // 来源(FDN 输入已低切,但 ER 抽头是全频的)。行业惯例
-                // low shelf on wet only:低音体感由干声承担,湿声低频退场。
-                final double lpL = shelfYL1 + shelfB0 * (wetL - shelfYL1);
-                shelfYL1 = lpL;
-                wetL = (float) (shelfXL1 = wetL - (1.0 - WET_SHELF_KEEP) * lpL);
-                final double lpR = shelfYR1 + shelfB0 * (wetR - shelfYR1);
-                shelfYR1 = lpR;
-                wetR = (float) (shelfXR1 = wetR - (1.0 - WET_SHELF_KEEP) * lpR);
+                // 湿声输出低频搁架仅自研链走(渲染结果已含 3D 定位与混响方向,
+                // EAX 的 DECAY_HFRATIO 已表达「软面尾更暗」;再搁架会双重压低)。
+                if (bus == null) {
+                    final double lpL = shelfYL1 + shelfB0 * (wetL - shelfYL1);
+                    shelfYL1 = lpL;
+                    wetL = (float) (shelfXL1 = wetL - (1.0 - WET_SHELF_KEEP) * lpL);
+                    final double lpR = shelfYR1 + shelfB0 * (wetR - shelfYR1);
+                    shelfYR1 = lpR;
+                    wetR = (float) (shelfXR1 = wetR - (1.0 - WET_SHELF_KEEP) * lpR);
+                } else {
+                    shelfXL1 = shelfXR1 = 0.0;
+                }
             }
 
             // 干+湿合成:湿声与抽头和的最大值有物理上限(ER 抽头 64 条同时
@@ -750,6 +962,21 @@ public final class SceneAcoustics {
         ownedRate = rate;
         bandState = new double[channels][4];
         for (double[] s : bandState) java.util.Arrays.fill(s, 0.0);
+
+        // EAX Reverb 总线:每条引擎采样率一个;失败静默(useEaxBus=false → FDN 兜底)。
+        // 只在音频线程(rebuild 由 render 调)执行 —— AL 上下文绑定纪律同 OpenALAudioDevice。
+        try {
+            if (useEaxBus || com.muoniumplayer.core.ncm.music.audio.OpenAlReverbBus.get() == null) {
+                com.muoniumplayer.core.ncm.music.audio.OpenAlReverbBus created =
+                        com.muoniumplayer.core.ncm.music.audio.OpenAlReverbBus.createIfAvailable(rate, 512);
+                useEaxBus = created != null;
+            } else {
+                useEaxBus = true;
+            }
+        } catch (Throwable t) {
+            useEaxBus = false;
+            System.out.println("[MuoniumPlayer/Acoustics] EAX 总线不可用,湿声走自研链: " + t);
+        }
 
         preDelayBuf = new float[Math.max(2, (int) (PRE_DELAY_MAX_MS * rate / 1000.0) + 2)];
         preDelayPos = 0;

@@ -45,6 +45,22 @@ public final class RoomPlan {
     public final float directPan;
     /** 直达路程(米):抽头相对时序的基准(渲染里直达零延迟)。 */
     public final float directDistanceMeters;
+    /**
+     * 世界声源模式下湿声走 OpenAL EAX Reverb 总线(探针参数直驱);
+     * false = 自研 FDN 链(无声源/安卓/总线不可用)。EAX 参数由
+     * {@code SceneResponse} 从同一份几何推导,音频线程逐缓冲下放。
+     */
+    public final boolean useOpenAlReverb;
+    /** EAX 混响 HF 衰减比(0.1..2):反射率越低(软面)尾越暗。 */
+    public final float reverbDecayHfRatio;
+    /** EAX 混响 diffusion 0..1:材质粗糙度 —— 岩壁亮面 vs 羊毛漫射。 */
+    public final float reverbDiffusion;
+    /** 有没有音箱锚点(false = 玩家即声源:source 贴头零衰减零方向)。 */
+    public final boolean hasSpeakerAnchor;
+    /** 声源世界坐标(EAX 总线的 3D 定位;无声源 0,0,0)。 */
+    public final double speakerX;
+    public final double speakerY;
+    public final double speakerZ;
 
     public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
                     float predelaySec, float decaySec, float tone,
@@ -53,7 +69,8 @@ public final class RoomPlan {
         this(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
                 decayLowSec, decayHighSec, diffusion,
                 tapDelaySec, tapGainL, tapGainR,
-                1f, DirectPath.FC_OPEN, 0f, 0f);
+                1f, DirectPath.FC_OPEN, 0f, 0f,
+                false, 1f, 0.5f, false, 0, 0, 0);
     }
 
     public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
@@ -62,6 +79,22 @@ public final class RoomPlan {
                     float[] tapDelaySec, float[] tapGainL, float[] tapGainR,
                     float directGain, double directCutoffHz, float directPan,
                     float directDistanceMeters) {
+        this(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
+                decayLowSec, decayHighSec, diffusion,
+                tapDelaySec, tapGainL, tapGainR,
+                directGain, directCutoffHz, directPan, directDistanceMeters,
+                false, 1f, 0.5f, false, 0, 0, 0);
+    }
+
+    public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
+                    float predelaySec, float decaySec, float tone,
+                    float decayLowSec, float decayHighSec, float diffusion,
+                    float[] tapDelaySec, float[] tapGainL, float[] tapGainR,
+                    float directGain, double directCutoffHz, float directPan,
+                    float directDistanceMeters,
+                    boolean useOpenAlReverb, float reverbDecayHfRatio, float reverbDiffusion,
+                    boolean hasSpeakerAnchor,
+                    double speakerX, double speakerY, double speakerZ) {
         this.bandHz = bandHz;
         this.wet = wet;
         this.dryGain = dryGain;
@@ -80,6 +113,13 @@ public final class RoomPlan {
         this.directCutoffHz = directCutoffHz;
         this.directPan = directPan;
         this.directDistanceMeters = directDistanceMeters;
+        this.useOpenAlReverb = useOpenAlReverb;
+        this.reverbDecayHfRatio = reverbDecayHfRatio;
+        this.reverbDiffusion = reverbDiffusion;
+        this.hasSpeakerAnchor = hasSpeakerAnchor;
+        this.speakerX = speakerX;
+        this.speakerY = speakerY;
+        this.speakerZ = speakerZ;
     }
 
     /** 静息计划:直通。 */
@@ -87,7 +127,8 @@ public final class RoomPlan {
         return new RoomPlan(SceneAcoustics.bandOpenHz(), 0f, 1f, 1f, 0f, 0f,
                 SceneResponse.NEUTRAL_TONE, 0f, 0f, 1f,
                 new float[0], new float[0], new float[0],
-                1f, DirectPath.FC_OPEN, 0f, 0f);
+                1f, DirectPath.FC_OPEN, 0f, 0f,
+                false, 1f, 0.5f, false, 0, 0, 0);
     }
 
     @Override

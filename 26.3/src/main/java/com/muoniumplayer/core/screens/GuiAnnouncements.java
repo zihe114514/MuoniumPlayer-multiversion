@@ -99,16 +99,23 @@ public class GuiAnnouncements extends GuiScreen {
         // 或改 GUI Scale 之后布局与鼠标映射都会错位。
         RenderSystem.refreshResolution();
         // 强制布局轴（无视「窗口自适应缩放」开关）：浮层的排版常量按布局轴书写，GUI 轴下
-        // 整个界面跟随 GUI Scale 档位缩放。鼠标换算配套除 correction。
+        // 整个界面跟随 GUI Scale 档位缩放。配套两件事缺一不可：矩阵压 sx/sy（布局单位放大
+        // 到 GUI 逻辑坐标，canvas 再按 guiScale 上屏），鼠标除 sx/sy 换算（与绘制同轴）。
         WindowAdaptiveScale.beginForced();
         try {
             double sx = RenderSystem.getWidthNotScaled() / RenderSystem.getWidth();
             double sy = RenderSystem.getHeightNotScaled() / RenderSystem.getHeight();
-            overlay.setBounds(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
-            overlay.renderWidget((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy),
-                    Mouse.getDWheel());
-            if (overlay.shouldClose()) {
-                dismiss();
+            SkijaGfx.pushMatrix();
+            SkijaGfx.scale(sx, sy);
+            try {
+                overlay.setBounds(0, 0, RenderSystem.getWidth(), RenderSystem.getHeight());
+                overlay.renderWidget((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy),
+                        Mouse.getDWheel());
+                if (overlay.shouldClose()) {
+                    dismiss();
+                }
+            } finally {
+                SkijaGfx.popMatrix();
             }
         } finally {
             WindowAdaptiveScale.end();
@@ -118,9 +125,11 @@ public class GuiAnnouncements extends GuiScreen {
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
         // 悬停状态是上一帧渲染时算出来的，所以派发要放在渲染之后 —— 调用点本来就是这个顺序。
-        // 与 drawScreen 同括号同换算：绘制与命中必须同轴。
+        // 与 drawScreen 同括号同换算：绘制与命中必须同轴。先刷分辨率——resize 与点击
+        // 落进同一帧间隙时，缓存的 GUI 宽是旧值，sx 会变成「旧G/新L」混合轴。
         WindowAdaptiveScale.beginForced();
         try {
+            RenderSystem.refreshResolution();
             double sx = RenderSystem.getWidthNotScaled() / RenderSystem.getWidth();
             double sy = RenderSystem.getHeightNotScaled() / RenderSystem.getHeight();
             overlay.onMouseClickReceived((int) Math.round(mouseX / sx), (int) Math.round(mouseY / sy),

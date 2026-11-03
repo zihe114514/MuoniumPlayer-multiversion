@@ -282,7 +282,8 @@ public final class OpenALAudioDevice implements AudioDeviceManager {
             }
             // 与 JavaSoundAudioDevice.write 同一条转换公式，逐采样 LittleEndian PCM16。
             for (int i = 0; i < count; i++) {
-                double temp = (32767.0 * buffer[i + start]) + 32768.5;
+                double dither = (Math.random() - Math.random());
+                double temp = (32767.0 * buffer[i + start]) + 32768.5 + dither;
                 int sample = ((int) temp) - 32768;
                 if (sample > Short.MAX_VALUE) {
                     sample = Short.MAX_VALUE;
