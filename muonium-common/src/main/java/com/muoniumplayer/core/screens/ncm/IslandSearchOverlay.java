@@ -104,18 +104,20 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
             overlay.closeAndRestore();
             return;
         }
-        // 目标矩形按布局轴捕获（转场几何恒按布局轴存储）；热键触发点不在播放器括号内，
-        // 这里自备临时括号——否则初始目标按 GUI 轴算，转场起点在高档位上错位。
+        // 目标矩形与转场捕获都必须按布局轴（转场几何恒按布局轴存储）；热键触发点不在
+        // 播放器括号内，这里自备临时括号。IslandSearchTransition.open 的 captureStart/
+        // captureCapsule 走 toLayout* 系——它们带「窗口自适应缩放」开关闸，括号外调用
+        // 时锚点落 GUI 轴、与括号内算出的布局轴目标混插值（开关关 + 高档位下胶囊从
+        // 错位 2× 的地方长出来），所以 open() 必须在同一括号内执行。
         boolean ownedLayout = !RenderSystem.FIXED_SCALE;
         if (ownedLayout) WindowAdaptiveScale.beginForced();
-        double[] target;
         try {
-            target = overlay.capsuleTarget();
+            double[] target = overlay.capsuleTarget();
+            if (!IslandSearchTransition.open(target[0], target[1], target[2], target[3], target[4])) {
+                return;
+            }
         } finally {
             if (ownedLayout) WindowAdaptiveScale.end();
-        }
-        if (!IslandSearchTransition.open(target[0], target[1], target[2], target[3], target[4])) {
-            return;
         }
         IslandSearchModel.reset();
         overlay.searchField.setText("");
@@ -474,10 +476,12 @@ public final class IslandSearchOverlay extends ExtensionScreen implements Shared
 
     @Override
     public void mouseClicked(int mX, int mY, int mouseButton) {
-        // 与 drawScreen 同括号：换算因子只有进布局轴才有真值。
+        // 与 drawScreen 同括号：换算因子只有进布局轴才有真值。先刷分辨率——窗口 resize
+        // 与点击落进同一帧间隙时，缓存的 GUI 宽是旧值，sx 会变成「旧G/新L」混合轴。
         boolean ownedLayout = !RenderSystem.FIXED_SCALE;
         if (ownedLayout) WindowAdaptiveScale.beginForced();
         try {
+            RenderSystem.refreshResolution();
             mouseClickedInner(mX, mY, mouseButton);
         } finally {
             if (ownedLayout) WindowAdaptiveScale.end();
