@@ -1,43 +1,68 @@
 package com.muoniumplayer.mixin;
 
 import com.muoniumplayer.core.ncm.music.TransparentMode;
-import com.mojang.blaze3d.vertex.PoseStack;
-import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
-import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.client.renderer.entity.state.EntityRenderState;
+import com.mojang.blaze3d.vertex.PoseStack;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+import java.util.Collections;
+import java.util.Map;
+import java.util.WeakHashMap;
 
 /**
  * 「通透模式」的实体压缩：把果冻矩阵包住原版的实体渲染括号。
  *
- * <p>1.20.1~1.21.11 走单段式 {@code render(Entity, ...)}：在首次
- * {@code translate} 落地后压矩阵，在火焰动画读取前还原——火焰、阴影、
- * 碰撞箱调试框都画在括号外。26.x 的 extract/submit 双段式见各该树的
- * 同名 mixin。缩放只动本机画面，不碰碰撞箱与服务端状态。</p>
+ * <p>1.21.2 起 {@code EntityRenderDispatcher} 就是「extract → submit」两段式
+ * （与 26.x 同构，与 1.21.1 的 {@code render(...)} 不同形）：extract 阶段按实体
+ * 算一次缩放存进 {@link WeakHashMap}（extract 每帧每实体一次，submit 可能被
+ * 多次重放），submit 阶段在原版首次 {@code translate} 落地后压矩阵、在火焰
+ * 动画读取前还原——火焰、阴影、碰撞箱调试框都画在括号外。缩放只动本机
+ * 画面，不碰碰撞箱与服务端状态。</p>
  */
 @Mixin(EntityRenderDispatcher.class)
 abstract class TransparentEntityMixin {
 
-    @Inject(method = "render", at = @At(value = "INVOKE",
-            target = "Lcom/mojang/blaze3d/vertex/PoseStack;translate(DDD)V", ordinal = 0, shift = At.Shift.AFTER))
-    private void transmode$begin(Entity entity, double x, double y, double z, float yaw, float partialTick,
-                                 PoseStack pose, MultiBufferSource buffers, int light, CallbackInfo ci) {
-        if (!(entity instanceof LivingEntity)) return;
-        float heightScale = TransparentMode.heightScale();
-        if (heightScale >= 1f) return;
-        pose.pushPose();
-        pose.scale(TransparentMode.widthScale(), heightScale, 1f);
+    @Unique
+    private static final Map<EntityRenderState, float[]> TRANSMODE_SCALES =
+            Collections.synchronizedMap(new WeakHashMap<>());
+
+    @Inject(method = "extractEntity", at = @At("RETURN"))
+    private void transmode$extract(net.minecraft.world.entity.Entity entity, float tick,
+                                   CallbackInfoReturnable<EntityRenderState> cir) {
+        EntityRenderState state = cir.getReturnValue();
+        if (state == null) return;
+        if (!TransparentMode.isEnabled()) {
+            // 关着也要清残留：上个节拍留下的映射不该在下一帧复活。
+            TRANSMODE_SCALES.remove(state);
+            return;
+        }
+        TRANSMODE_SCALES.put(state, new float[] {
+                TransparentMode.widthScale(), TransparentMode.heightScale()});
     }
 
-    @Inject(method = "render", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/world/entity/Entity;displayFireAnimation()Z"))
-    private void transmode$end(Entity entity, double x, double y, double z, float yaw, float partialTick,
-                               PoseStack pose, MultiBufferSource buffers, int light, CallbackInfo ci) {
-        // popPose 只在 push 过才需要；关着时 heightScale 恒为 1，begin 不会 push。
-        if (entity instanceof LivingEntity && TransparentMode.isEnabled()) pose.popPose();
+    @Inject(method = "submit", at = @At(value = "INVOKE",
+            target = "Lcom/mojang/blaze3d/vertex/PoseStack;translate(DDD)V", ordinal = 0, shift = At.Shift.AFTER))
+    private void transmode$begin(EntityRenderState state, net.minecraft.client.renderer.state.CameraRenderState camera,
+                                 double x, double y, double z, PoseStack pose, SubmitNodeCollector collector,
+                                 CallbackInfo ci) {
+        float[] scales = TRANSMODE_SCALES.get(state);
+        if (scales == null) return;
+        pose.pushPose();
+        pose.scale(scales[0], scales[1], 1f);
+    }
+
+    @Inject(method = "submit", at = @At(value = "FIELD",
+            target = "Lnet/minecraft/client/renderer/entity/state/EntityRenderState;displayFireAnimation:Z", ordinal = 0))
+    private void transmode$end(EntityRenderState state, net.minecraft.client.renderer.state.CameraRenderState camera,
+                               double x, double y, double z, PoseStack pose, SubmitNodeCollector collector,
+                               CallbackInfo ci) {
+        if (TRANSMODE_SCALES.containsKey(state)) pose.popPose();
     }
 }

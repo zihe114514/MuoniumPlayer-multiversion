@@ -17,9 +17,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /**
  * 「通透模式」的摄像机跟随：玩家自己也被压扁时，镜头眼高跟着一起降。
  *
- * <p>挂在 {@code setup} 里首个 {@code setPosition(DDD)} 之后——那正是原版按
- * {@code eyeHeight} 定好眼位锚点的地方；在这里按同一比例修正，第三人称反转、
- * 缩放碰撞与移动都发生在后面，不受影响。模型矩阵那半在 TransparentEntityMixin。</p>
+ * <p>1.21.11 没有 26.x 的 {@code alignWithEntity}，眼位锚点就在 {@code setup} 内
+ * 首个（也是唯一一个）{@code setPosition(DDD)}——按 eyeHeight lerp 完成的那个；
+ * 在这里按同一比例修正，第三人称反转、缩放碰撞与移动都发生在后面，不受影响。
+ * 模型矩阵那半在 TransparentEntityMixin。</p>
  */
 @Mixin(Camera.class)
 abstract class TransparentCameraMixin {
