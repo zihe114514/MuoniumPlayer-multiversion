@@ -43,14 +43,13 @@ class BeatPulseSourceTest {
         // 8 个间隔后估算必须收敛到 120BPM ±2%。
         BeatPulseSource.resetForTest();
         long now = 1_000_000_000L;
+        BeatPulseSource.advanceClockForTest(now); // 先挂上测试时钟，feed 才不落真实 nanoTime
         float[] jitter = {0f, 0.012f, -0.008f, 0.02f, -0.015f, 0.005f, -0.02f, 0.01f, 0f, -0.01f, 0.015f, -0.005f};
         for (int i = 0; i < 14; i++) {
-            // 经 noteEnergyOnset 的升沿路径喂（与生产一致）。
-            float quiet = i % 2 == 0 ? 0f : 0f;
-            BeatPulseSource.feedEnergyForTest(0f);            // 拍间安静
-            BeatPulseSource.feedEnergyForTest(0.8f);          // 拍点冲击
             now += (long) ((0.5f + jitter[i % jitter.length]) * 1e9f);
-            BeatPulseSource.advanceClockForTest(now);
+            BeatPulseSource.advanceClockForTest(now); // 先推进
+            BeatPulseSource.feedEnergyForTest(0f);    // 拍间安静
+            BeatPulseSource.feedEnergyForTest(0.8f);  // 拍点冲击（升沿 → onset@now）
         }
         float period = BeatPulseSource.estimatedPeriodNanosForTest();
         float confidence = BeatPulseSource.estimatedConfidenceForTest();
@@ -65,11 +64,12 @@ class BeatPulseSourceTest {
         // 全是乱间隔（没人拍手的现场）不该收敛：置信度必须低于阈值，继续走能量回退。
         BeatPulseSource.resetForTest();
         long now = 1_000_000_000L;
+        BeatPulseSource.advanceClockForTest(now);
         float[] chaos = {0.31f, 0.9f, 0.42f, 1.7f, 0.5f, 0.33f, 1.1f, 0.47f, 0.95f, 0.6f};
         for (int i = 0; i < chaos.length; i++) {
-            BeatPulseSource.feedEnergyForTest(0.8f);
             now += (long) (chaos[i] * 1e9f);
             BeatPulseSource.advanceClockForTest(now);
+            BeatPulseSource.feedEnergyForTest(0.8f);
         }
         assertTrue(BeatPulseSource.estimatedConfidenceForTest() < 0.55f,
                 "乱间隔也收敛了，回退链就断了");
@@ -80,11 +80,15 @@ class BeatPulseSourceTest {
         // 回归锁：估算收敛后必须能被后续 beat() 消费（换歌重置前那次报的病）。
         BeatPulseSource.resetForTest();
         long now = 1_000_000_000L;
+        BeatPulseSource.advanceClockForTest(now);
         for (int i = 0; i < 14; i++) {
-            BeatPulseSource.feedEnergyForTest(0.8f);
             now += 500_000_000L;
             BeatPulseSource.advanceClockForTest(now);
+            BeatPulseSource.feedEnergyForTest(0f);   // 拍间安静
+            BeatPulseSource.feedEnergyForTest(0.8f); // 拍点冲击 —— 构成升沿才有 onset
         }
-        assertTrue(BeatPulseSource.estimatedPeriodNanosForTest() > 0f, "前置：估算应已收敛");
+        assertTrue(BeatPulseSource.estimatedPeriodNanosForTest() > 0f,
+                "前置：估算应已收敛 period=" + BeatPulseSource.estimatedPeriodNanosForTest()
+                + " conf=" + BeatPulseSource.estimatedConfidenceForTest());
     }
 }

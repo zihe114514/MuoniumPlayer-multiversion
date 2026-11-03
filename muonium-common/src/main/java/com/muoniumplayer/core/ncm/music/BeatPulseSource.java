@@ -218,8 +218,10 @@ public final class BeatPulseSource {
 
     // ---- 测试专用钩子：隔离墙上时钟与 CloudMusic 快照，只驱动估算器纯逻辑 ----
 
-    /** 按生产同款升沿路径喂能量值（测估算收敛用）。 */
+    /** 按生产同款升沿路径喂能量值（测估算收敛用）。未挂钩测试时钟时直接忽略：
+     *  否则 recordOnset 会拿真实 nanoTime 当样本，与后续测试时钟的间隔变成负数全丢。 */
     static void feedEnergyForTest(float energy) {
+        if (!testClockHooked) return;
         if (energy > 0.35f && lastEnergy <= 0.35f) recordOnset(testNowNanos);
         lastEnergy = energy;
     }
