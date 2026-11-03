@@ -26,18 +26,18 @@ abstract class TransparentEntityMixin {
             target = "Lcom/mojang/blaze3d/vertex/PoseStack;translate(DDD)V", ordinal = 0, shift = At.Shift.AFTER))
     private void transmode$begin(Entity entity, double x, double y, double z, float yaw, float partialTick,
                                  PoseStack pose, MultiBufferSource buffers, int light, CallbackInfo ci) {
-        if (!(entity instanceof LivingEntity)) return;
-        float heightScale = TransparentMode.heightScale();
-        if (heightScale >= 1f) return;
+        // push/pop 的条件必须逐字对称：begin 按节拍早退、end 按开关 pop 的话，
+        // 「开着但无节拍」时每个生物被多 pop 一次，帧尾 checkPoseStack 直接崩
+        // （Pose stack not empty，实测）。无节拍就 scale(1,1,1)，代价可忽略。
+        if (!(entity instanceof LivingEntity) || !TransparentMode.isEnabled()) return;
         pose.pushPose();
-        pose.scale(TransparentMode.widthScale(), heightScale, 1f);
+        pose.scale(TransparentMode.widthScale(), TransparentMode.heightScale(), 1f);
     }
 
     @Inject(method = "render", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/world/entity/Entity;displayFireAnimation()Z"))
     private void transmode$end(Entity entity, double x, double y, double z, float yaw, float partialTick,
                                PoseStack pose, MultiBufferSource buffers, int light, CallbackInfo ci) {
-        // popPose 只在 push 过才需要；关着时 heightScale 恒为 1，begin 不会 push。
         if (entity instanceof LivingEntity && TransparentMode.isEnabled()) pose.popPose();
     }
 }
