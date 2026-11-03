@@ -302,6 +302,22 @@ public final class MuoniumPlayerClient {
         // 的那一 tick,其余时候是一次布尔判断。
         com.muoniumplayer.core.ncm.music.acoustics.AcousticsRuntime.onClientTick(
                 com.muoniumplayer.compat.mc.ListenerProbe.of(mc));
+        // 听者位姿每 tick 投递(50ms):转头/移动的 AL listener 更新粒度,
+        // 决定 HRTF 声场的连续性 —— 走探针(500ms)会整块跳变,生硬。
+        if (mc.player != null) {
+            final double ex = mc.player.getX();
+            final double ey = mc.player.getEyeY();
+            final double ez = mc.player.getZ();
+            final float yaw = mc.player.getYRot() * ((float) Math.PI / 180f);
+            final float pitch = mc.player.getXRot() * ((float) Math.PI / 180f);
+            // MC 坐标系:yaw=0 面南(+Z);视线 = (−sinYaw·cosPitch, −sinPitch, cosYaw·cosPitch)
+            com.muoniumplayer.core.ncm.music.acoustics.SceneAcoustics.setListenerPose(
+                    ex, ey, ez,
+                    (float) (-Math.sin(yaw) * Math.cos(pitch)),
+                    (float) (-Math.sin(pitch)),
+                    (float) (Math.cos(yaw) * Math.cos(pitch)),
+                    0f, 1f, 0f);
+        }
 
         // ---- 环境选曲 ----
         // 每 tick 送一帧环境快照;控制器自带稳定期/冷却与全 Throwable 闸,开关关着

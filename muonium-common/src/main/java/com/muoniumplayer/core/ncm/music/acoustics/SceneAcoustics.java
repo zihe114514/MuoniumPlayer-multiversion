@@ -201,6 +201,8 @@ public final class SceneAcoustics {
     private static short[] directDelayL = new short[0];
     private static short[] directDelayR = new short[0];
     private static int directDelayPos;
+    /** 平滑后的源距(探针 500ms 目标朝它收敛,移动时过渡连续)。 */
+    private static double directDistSmoothed;
     /** 听者位姿(游戏线程写,音频线程读;AL 的 listener 需要)。 */
     private static volatile double listenerX, listenerY, listenerZ;
     private static volatile float listenerFwdX, listenerFwdY, listenerFwdZ;
@@ -333,6 +335,8 @@ public final class SceneAcoustics {
         directPan = targetDirectPan;
         directLpState = 0.0;
         if (directRing.length > 0) java.util.Arrays.fill(directRing, 0f);
+        directDistSmoothed = targetDirectGain > 0 && targetPlan.hasSpeakerAnchor
+                ? targetPlan.directDistanceMeters : 0.0;
         for (double[] ch : bandState) java.util.Arrays.fill(ch, 0.0);
         if (preDelayBuf.length > 0) java.util.Arrays.fill(preDelayBuf, 0f);
         if (erRingL.length > 0) java.util.Arrays.fill(erRingL, 0f);
@@ -520,7 +524,23 @@ public final class SceneAcoustics {
                     listenerUpX, listenerUpY, listenerUpZ);
             busFull.setSourcePose(plan.speakerX, plan.speakerY, plan.speakerZ,
                     1f, directCutoff >= DirectPath.FC_OPEN ? 1f : 0.5f);
-            busFull.setSendGain(Math.min(1f, wet * 1.2f));
+            // 湿发送乘传播稀释:混响能量也要从音箱飞 d 米到耳朵(此前只在
+            // 自研分支有,EAX 分支漏了 —— 96m 外隔着岩层的音箱混响照样贴脸,
+            // 「不符合物理」的另一半)。几何 inverse(参考 16m)+ 空气 /32m,
+            // 与直达延迟同源;96m ≈ ×0.08,混响跟着直达一起死。
+            // 距离走收敛(τ=0.25s):探针 500ms 节流交付的目标若直接用,
+            // 延迟环与稀释会每半秒跳一阶 —— 「渐远没有过度」的另一半。
+            final double dTarget = plan.hasSpeakerAnchor
+                    ? Math.max(0.0, plan.directDistanceMeters) : 0.0;
+            final double dStep = 1.0 - Math.exp(-frames / (sampleRate * 0.25));
+            directDistSmoothed += (dTarget - directDistSmoothed) * dStep;
+            final double dMet = directDistSmoothed;
+            final double wetSpread = plan.hasSpeakerAnchor
+                    ? Math.max(0.0, Math.min(1.0,
+                            (1.0 / (1.0 + Math.pow(Math.max(0.0, dMet / 16.0 - 1.0), 2.0)))
+                                    * Math.exp(-Math.max(0.0, dMet - 6.0) / 32.0) * 1.15))
+                    : 1.0;
+            busFull.setSendGain((float) Math.min(1f, wet * 1.2f * wetSpread));
             busFull.setReverbParams(Float.NaN,
                     plan.reverbDiffusion, Math.max(0.1f, decaySec), plan.reverbDecayHfRatio,
                     Float.NaN, Math.max(0.004f, preDelaySec),

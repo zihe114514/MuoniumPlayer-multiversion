@@ -113,17 +113,6 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         }
 
         final Vec3 eye = client.player.getEyePosition();
-        // 听者位姿投递(EAX 总线的 AL listener 需要):眼位 + 视线向量 + 头顶向量。
-        // 从欧拉角现算(俯仰/偏航),不上 MC 的相机对象 —— 探针跑在后台线程。
-        final float yaw = client.player.getYRot() * ((float) Math.PI / 180f);
-        final float pitch = client.player.getXRot() * ((float) Math.PI / 180f);
-        // MC 坐标系:yaw=0 面南(+Z);视线 = (−sinYaw·cosPitch, −sinPitch, cosYaw·cosPitch)
-        final double fx = -Math.sin(yaw) * Math.cos(pitch);
-        final double fy = -Math.sin(pitch);
-        final double fz = Math.cos(yaw) * Math.cos(pitch);
-        com.muoniumplayer.core.ncm.music.acoustics.SceneAcoustics.setListenerPose(
-                eye.x, eye.y, eye.z,
-                (float) fx, (float) fy, (float) fz, 0f, 1f, 0f);
         final BlockPos eyePos = BlockPos.containing(eye.x, eye.y, eye.z);
         final boolean submerged = AcousticsRuntime.wantsSubmersion() && client.player.isUnderWater();
         final boolean openSky = world.canSeeSky(eyePos);
