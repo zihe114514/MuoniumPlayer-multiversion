@@ -35,7 +35,8 @@ abstract class TransparentEntityMixin {
             Collections.synchronizedMap(new WeakHashMap<>());
 
     @Inject(method = "extractEntity", at = @At("RETURN"))
-    private void transmode$extract(Object entity, float tick, CallbackInfoReturnable<EntityRenderState> cir) {
+    private void transmode$extract(net.minecraft.world.entity.Entity entity, float tick,
+                                   CallbackInfoReturnable<EntityRenderState> cir) {
         EntityRenderState state = cir.getReturnValue();
         if (state == null) return;
         if (!TransparentMode.isEnabled()) {
