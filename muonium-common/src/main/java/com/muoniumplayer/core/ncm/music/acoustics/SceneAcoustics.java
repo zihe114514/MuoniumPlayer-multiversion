@@ -635,8 +635,8 @@ public final class SceneAcoustics {
                 float tailInR = (float) (duckedMid + (delayedR - monoMix));
 
                 // ---- 湿声路由:EAX Reverb 总线优先,FDN 兜底 ----
-                final OpenAlReverbBus bus = useEaxBus && plan.useOpenAlReverb
-                        ? OpenAlReverbBus.get() : null;
+                final com.muoniumplayer.core.ncm.music.audio.OpenAlReverbBus bus = useEaxBus && plan.useOpenAlReverb
+                        ? com.muoniumplayer.core.ncm.music.audio.OpenAlReverbBus.get() : null;
                 if (bus != null) {
                     // 世界声源:mono 尾输入喂 AL 3D source(音箱位 + 遮挡低通
                     // + EAX 发送),渲染读回立体声 —— 距离衰减/声像/混响全是
@@ -660,7 +660,7 @@ public final class SceneAcoustics {
                     bus.setSendGain(Math.min(1f, wet * 1.2f));
                     bus.setReverbParams(Float.NaN,
                             plan.reverbDiffusion, Math.max(0.1f, decaySec), plan.reverbDecayHfRatio,
-                            Float.NaN, Math.max(0.004f, predelaySec),
+                            Float.NaN, Math.max(0.004f, preDelaySec),
                             directPan * 0.7f, Float.NaN, Float.NaN,
                             Float.NaN, Float.NaN, directPan * 0.5f, Float.NaN, Float.NaN,
                             Float.NaN, Float.NaN);
