@@ -40,7 +40,7 @@ class HudSettingsTaxonomyStaticTest {
      * 与 26.x 版注释同款。
      */
     private static final List<Integer> COUNTS =
-            Arrays.asList(28, 30, 9, 25, 28, 33, 6, 3);
+            Arrays.asList(28, 30, 9, 25, 31, 33, 6, 3);
 
     private static String versionName() {
         return ProjectPaths.versionRoot().getFileName().toString();
@@ -90,8 +90,11 @@ class HudSettingsTaxonomyStaticTest {
      *  3D 歌词页 +1 条。
      *  2026-11-03 「播放」页新增「切出游戏时」组 2 条（失焦压低音乐 toggle +
      *  压低到 四档 choice，后者仅在开关打开时可见）—— 播放页 26 → 28 条，160 → 162。
+     *  同日「播放」页新增「通透模式」组 3 条（"通透模式" toggle + 压缩幅度 / 变宽幅度
+     *  两条滑条；开关与幅度存共享层 TransparentMode 自己的配置文件，不经 HudConfig）——
+     *  播放页 28 → 31 条，162 → 165。
      *  不新开分类页：ModernUI 分类条横排 8 格已满（见下方封顶测试）。 */
-    private static final int TOTAL = 162;
+    private static final int TOTAL = 165;
 
     @Test
     @DisplayName("分类就是这 7 页，顺序与每页条目数都不许悄悄变")
@@ -147,7 +150,9 @@ class HudSettingsTaxonomyStaticTest {
         // 2026-10-16 起 3D 歌词那页带 5 个滑块（距离/散开角/缩放/发光强度/发光扩散）；
         // 2026-10-24 「设置界面缩放」随 Folia 样式一起下架，54 → 53；
         // 2026-10-28 灵动岛新增「灵动岛位置」Y 偏移滑条，53 → 54。
-        assertEquals(54, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱自定义柱数、透明度与高度都是有效设置");
+        // 2026-11-03 通透模式新增「压缩幅度 / 变宽幅度」两条滑条（值存共享层
+        // TransparentMode 的配置文件，不经 HudConfig），54 → 56。
+        assertEquals(56, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱自定义柱数、透明度与高度都是有效设置");
         assertFalse(settings.contains("GLASS_BLOOM"), "退役的磨砂 bloom 不能作为无效设置暴露");
         assertFalse(settings.contains("GLASS_FUSION"), "参考透镜不使用旧融合描边");
         assertEquals(settings.size(), new HashSet<String>(settings).size(),

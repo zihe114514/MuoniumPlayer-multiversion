@@ -13,7 +13,9 @@
     "ProjectionMatrixBufferMixin",
     "MouseScrollMixin",
     "MouseButtonStateMixin",
-    "LevelRendererAlwaysOnTopGateMixin"
+    "LevelRendererAlwaysOnTopGateMixin",
+    "TransparentEntityMixin",
+    "TransparentCameraMixin"
   ],
   "injectors": {
     "defaultRequire": 1

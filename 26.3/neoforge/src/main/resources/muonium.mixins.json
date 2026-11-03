@@ -12,7 +12,9 @@
     "RenderTypeAccessors",
     "ProjectionMatrixBufferMixin",
     "MouseScrollMixin",
-    "MouseButtonStateMixin"
+    "MouseButtonStateMixin",
+    "TransparentEntityMixin",
+    "TransparentCameraMixin"
   ],
   "injectors": {
     "defaultRequire": 1
