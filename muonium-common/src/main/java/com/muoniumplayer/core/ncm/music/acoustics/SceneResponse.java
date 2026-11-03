@@ -252,21 +252,20 @@ public final class SceneResponse {
         boolean useEax = false;
         float reverbHfRatio = 1f;
         float reverbDiff = 0.5f;
+        // 世界声源与「玩家即声源」统一:混响永远走 OpenAL EAX(用户定论
+        // 「不走完全自研」)。玩家模式下混响参数同样来自探针几何(围合/反射率/
+        // 直方图),只是没有音箱 —— 声学上玩家站在房间里,房间混响贴身发生。
+        useEax = true;
+        reverbHfRatio = (float) Math.max(0.15, Math.min(1.6,
+                0.4 + 0.8 * (Math.min(rho, 1.5f) / 1.5f) + (1 - tone)));
+        reverbDiff = (float) Math.max(0.1, Math.min(1.0,
+                0.4 * diffusion + 0.6 * (1.0 - Math.min(1.0, rho))));
         if (sample.hasDirectSource()) {
             directDist = Math.max(0f, sample.directDistanceMeters());
             final double occl = Math.max(0.0, sample.directOcclusion());
             directGain = (float) DirectPath.directGain(directDist, occl);
             directCutoff = DirectPath.totalCutoffHz(occl, directDist);
             directPan = DirectPath.clampPan(sample.directPan());
-            // 世界声源:湿声走 OpenAL EAX Reverb 总线(音频线程在总线不可用
-            // 时自动回退 FDN)。EAX 参数从同一份几何推导(照 Channel 的
-            // 参数化):HF 比随音色(软面尾更暗),diffusion 用直方图扩散度
-            // 与材质粗糙度的混合。
-            useEax = true;
-            reverbHfRatio = (float) Math.max(0.15, Math.min(1.6,
-                    0.4 + 0.8 * (Math.min(rho, 1.5f) / 1.5f) + (1 - tone)));
-            reverbDiff = (float) Math.max(0.1, Math.min(1.0,
-                    0.4 * diffusion + 0.6 * (1.0 - Math.min(1.0, rho))));
         }
 
         return new RoomPlan(Math.pow(10.0, logBand), wet, loudFinal * duck, loudFinal,
