@@ -11,7 +11,7 @@
 一个 Minecraft 客户端 Mod：手机音乐 App 般的播放器、逐字歌词、灵动岛、一起听房间、无缝切歌 —— 全部画在游戏里，不弹浏览器、不切窗口。<br>
 纯客户端，普通服务器**不用装任何东西**。
 
-[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-2.3.1-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
+[![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-2.4.0-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
 [![下载](https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-melodifymc.cc.cd-e44050?style=flat-square&labelColor=2b2b33)](https://melodifymc.cc.cd/download)
 [![MC 百科](https://img.shields.io/badge/MC%E7%99%BE%E7%A7%91-class%2F30544-3d8528?style=flat-square&labelColor=2b2b33)](https://www.mcmod.cn/class/30544.html)
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.20.1%20%7C%201.21.1%20%7C%201.21.11%20%7C%2026.2%20%7C%2026.3-3d8528?style=flat-square&labelColor=2b2b33)](#支持的版本)
@@ -239,6 +239,22 @@
 - **翻译副行也带动效**：外文歌的翻译在主句下方逐字点亮，扫光、光晕、微飞径迹随便配（2.3.0）
 - **找错歌词可以直接换源**：列表里中键一点，几个候选逐字预览挑一个，选定后这首歌就一直用你挑的那份
 - 歌词来源记在歌上，切歌、重启都不会丢
+
+### 真 3D 空间音效 —— HRTF + 世界声源
+
+耳机里能听出声音的**方位和距离**——声源在左边就从左边来，在远处就带距离衰减。声音来源有真实世界坐标，源→墙→耳的声学追踪全链路落地。
+
+- **干湿声分离渲染**：混响与原声互不干扰，回声细节更丰富、底噪更干净
+- **通透模式**：HUD 随音乐节拍压扁回弹的果冻弹性动效——歌一放就跟着律动；暂停即停弹、换歌自动重置节拍
+- **采样 48kHz**：射线声学的计算基础更真实
+
+### 失焦自动压音
+
+切出去看攻略，音乐自动变小；回到游戏，音量平滑恢复——不爆音，不打断播放。
+
+### 3D 歌词 HDR bloom
+
+Ultra 档换 HDR bloom 烘焙管线，辉光更有质感，默认档直接就是 Ultra。
 
 ### 环境选曲（自动 DJ）
 
