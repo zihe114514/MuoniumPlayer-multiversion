@@ -33,6 +33,16 @@ public final class TransitionCurveCache {
      */
     public static final CachedBezier SPRING_LAND = new CachedBezier(0.34, 1.56, 0.64, 1.0);
 
+    /**
+     * easeOutExpo 的 bezier 近似（标准近似式 {@code cubic-bezier(0.16, 1, 0.3, 1)}）。
+     * MuoniumConfig 那一族用它：整个界面的开关（scale 0.9→1）与换页横滑走同一条
+     * 「前 20% 时间走完大半行程，尾巴长而轻」的曲线，是 OneConfig 观感的骨架之一。
+     *
+     * <p>与 {@link #MOTION}（M3 emphasized，出速更匀）的差别在前段：EXPO 起手更陡，
+     * 适合「整个面板从无到有」这类大位移通道；小位移（几像素的落位）用它反而显得急。</p>
+     */
+    public static final CachedBezier EXPO = new CachedBezier(0.16, 1.0, 0.3, 1.0);
+
     private TransitionCurveCache() {
     }
 

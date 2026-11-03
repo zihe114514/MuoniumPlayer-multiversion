@@ -28,13 +28,17 @@ class HudExternalUiStaticTest {
     private static final Path SHARED_JAVA = ProjectPaths.sharedJava();
 
     @Test
-    @DisplayName("hudEditorUi 认 modernui 这个值，并且只认三个值")
+    @DisplayName("hudEditorUi 认 modernui / mconfig 这两个值，并且只认四个值")
     void configAcceptsModernUiLayer() throws IOException {
         String config = read(settings("HudConfig.java"));
         assertTrue(config.contains("public static final String HUD_EDITOR_UI_MODERNUI = \"modernui\""),
                 "少了 modernui 这一档常量");
         assertTrue(config.contains("HUD_EDITOR_UI_MODERNUI.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MODERNUI"),
                 "load() 的归一化必须认 modernui，否则存了下次就读不回来");
+        assertTrue(config.contains("public static final String HUD_EDITOR_UI_MCONFIG = \"mconfig\""),
+                "少了 mconfig（MuoniumConfig 私有呈现）这一档常量");
+        assertTrue(config.contains("HUD_EDITOR_UI_MCONFIG.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MCONFIG"),
+                "load() 的归一化必须认 mconfig，否则存了下次就读不回来");
         assertTrue(config.contains("return HUD_EDITOR_UI_BUILTIN;"),
                 "归一化仍要有兜底：手改坏的配置文件要回到内置界面");
         assertTrue(config.contains("o.addProperty(\"hudEditorUi\", hudEditorUi)"));
@@ -55,26 +59,29 @@ class HudExternalUiStaticTest {
     }
 
     @Test
-    @DisplayName("打开顺序：modernui 在 oneconfig 之前，两者都在内置界面回落之前")
+    @DisplayName("打开顺序：modernui 在 oneconfig 之前，mconfig 在 oneconfig 之后，全部在内置界面回落之前")
     void dispatchTriesModernUiThenOneConfigThenBuiltin() throws IOException {
         String client = read(ProjectPaths.sourceFile(Paths.get(
                 "com", "muoniumplayer", "MuoniumPlayerClient.java")));
         int modern = client.indexOf("HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)");
         int oneConfig = client.indexOf("HUD_EDITOR_UI_ONECONFIG.equals(HudConfig.hudEditorUi)");
+        int mconfig = client.indexOf("HUD_EDITOR_UI_MCONFIG.equals(HudConfig.hudEditorUi)");
         // 回落那一档只认构造调用：26.x 是 mc.gui.setScreen(...)，更早的树是 mc.setScreen(...)。
         int builtin = client.indexOf("new GuiHudEditorPro())");
-        assertTrue(modern >= 0 && oneConfig >= 0 && builtin >= 0, "三档分派都在 openHudEditor 里");
-        assertTrue(modern < oneConfig && oneConfig < builtin,
-                "外部层要先试，最后才回落到内置界面：" + modern + "," + oneConfig + "," + builtin);
+        assertTrue(modern >= 0 && oneConfig >= 0 && mconfig >= 0 && builtin >= 0,
+                "四档分派都在 openHudEditor 里");
+        assertTrue(modern < oneConfig && oneConfig < mconfig && mconfig < builtin,
+                "外部层先试，mconfig（自带呈现）在其后，最后才回落到内置界面："
+                        + modern + "," + oneConfig + "," + mconfig + "," + builtin);
     }
 
     @Test
-    @DisplayName("三套内置界面共用的模型里有「设置界面由谁渲染」，且不可用时把原因写在值上")
+    @DisplayName("各套界面共用的模型里有「设置界面由谁渲染」，且不可用时把原因写在值上")
     void modelExposesLayerChoiceWithReason() throws IOException {
         String model = read(hud("HudSettingsModel.java"));
         assertTrue(model.contains("choice(\"设置界面由谁渲染\""),
                 "用户要能在设置里选外部层，而不是只能改配置文件");
-        assertTrue(model.contains("new String[] {\"内置\", \"OneConfig\", \"ModernUI\"}"));
+        assertTrue(model.contains("new String[] {\"内置\", \"MuoniumConfig\", \"OneConfig\", \"ModernUI\"}"));
         assertTrue(model.contains("HudSettingsModel::setUiLayerChoice"));
         assertTrue(model.contains("ModernUiHudBridge.statusLabel()"),
                 "选中的层不可用时要在当前值上写明原因，否则玩家分不清没装还是没有本版本构件");
