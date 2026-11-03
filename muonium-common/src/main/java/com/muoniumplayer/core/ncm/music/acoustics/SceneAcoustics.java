@@ -146,8 +146,8 @@ public final class SceneAcoustics {
     private static double[][] bandState = new double[0][];
     private static double cB0, cB1, cB2, cA1, cA2;
 
-    /** 湿声入口直流阻断的记忆位。 */
-    private static double dcX, dcY;
+    /** 湿声入口直流阻断的记忆位(左右通道各一组 —— 立体声喂环后两耳内容不同)。 */
+    private static double dcXL, dcYL, dcXR, dcYR;
 
     /** 中频人声保护:尾输入里 0.8-4kHz 段的提取带通(二阶带通)与其压制比。 */
     private static final double MID_PROTECT_RATIO = 0.45; // ≈ -7dB 轻压
@@ -339,8 +339,7 @@ public final class SceneAcoustics {
         java.util.Arrays.fill(tapAirStateRB, 0f);
         preDelayPos = 0;
         erPos = 0;
-        dcX = 0;
-        dcY = 0;
+        dcXL = dcYL = dcXR = dcYR = 0.0;
         midBPX1 = midBPX2 = midBPY1 = midBPY2 = 0.0;
         shelfXL1 = shelfYL1 = 0.0;
         shelfXR1 = shelfYR1 = 0.0;
@@ -618,15 +617,23 @@ public final class SceneAcoustics {
             float wetL = 0f;
             float wetR = 0f;
             if (wetActive) {
-                final double mono = (left + right) * 0.5;
-                final double blocked = mono - dcX + 0.9985 * dcY;
-                dcX = mono;
-                dcY = blocked;
+                // 直流阻断按各通道独立(立体声喂环的前提:左右耳各自的 DC 偏置
+                // 单独清,不然宽度分量被 DC 阻断器的共模抑制吃掉)。
+                final double blockedL = left - dcXL + 0.9985 * dcYL;
+                dcXL = left;
+                dcYL = blockedL;
+                final double blockedR = right - dcXR + 0.9985 * dcYR;
+                dcXR = right;
+                dcYR = blockedR;
+                final double blocked = (blockedL + blockedR) * 0.5;
 
-                // 早期反射:mono 写双环,抽头按「基准 ± pan·ITD」双耳分读
-                final float sampleVal = (float) blocked;
-                erRingL[erPos] = sampleVal;
-                erRingR[erPos] = sampleVal;
+                // 早期反射:【立体声喂环】—— 左环喂 L、右环喂 R。每条反射在
+                // 左右耳的内容天然携带输入的耳间差(立体声音乐的宽度信息在
+                // 反射里保留),叠加抽头级 ITD 读位差与 ILD(tapGL/tapGR),
+                // 双耳线索三件套(ITD/ILD/频谱)全齐;此前 mono 喂双环,
+                // 反射内容的耳间差被平均掉,只剩增益差 —— 立体声感弱的根因。
+                erRingL[erPos] = (float) blockedL;
+                erRingR[erPos] = (float) blockedR;
                 erPos = erPos + 1 == ringLen ? 0 : erPos + 1;
 
                 // 节拍侧链(预测式):mono 过 110Hz 低通提低频包络。【上升率】
@@ -709,10 +716,11 @@ public final class SceneAcoustics {
                 // 双耳预延迟:左右各一条写入位差一点点的环,读同一位 ——
                 // 等效左右进尾的信号带 <1ms 的互质时差,配 FDN 内的去相关
                 // 预延迟,中高频的尾有真实立体声图案;低频已被 HPF 拦掉。
+                // 写入也立体声化:进尾的左右内容各自带宽度(与 ER 喂环同理)。
                 final float delayedL = preDelayBuf[preRead];
                 final int preReadR = preRead + 1 == preDelayBuf.length ? 0 : preRead + 1;
                 final float delayedR = preDelayBuf[preReadR];
-                preDelayBuf[preDelayPos] = sampleVal;
+                preDelayBuf[preDelayPos] = (float) ((blockedL + blockedR) * 0.5);
                 preDelayPos = preDelayPos + 1 == preDelayBuf.length ? 0 : preDelayPos + 1;
 
                 // 中频人声保护:人声核心段(0.8-4kHz)进尾前轻压 —— 歌词清晰度
