@@ -197,6 +197,9 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
             @Override public float directDistanceMeters() { return directDist; }
             @Override public float directOcclusion() { return directOccl; }
             @Override public float directPan() { return directPan; }
+            @Override public double speakerX() { return hasSource ? speaker.x() : 0; }
+            @Override public double speakerY() { return hasSource ? speaker.y() : 0; }
+            @Override public double speakerZ() { return hasSource ? speaker.z() : 0; }
         };
     }
 
