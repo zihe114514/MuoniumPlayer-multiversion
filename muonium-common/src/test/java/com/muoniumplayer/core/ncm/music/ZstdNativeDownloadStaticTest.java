@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li>{@link ZstdNativeDownload} 钉住的字节数与 sha256；</li>
  *   <li>五源镜像都指向清单仓库的 libs/ 目录；</li>
  *   <li>主包对 {@code com.github.luben.zstd} 零编译期依赖（只许反射桥里的字符串类名）；</li>
- *   <li>十份构建脚本里没有 zstd 的打包行（摘依赖要摘干净）；</li>
+ *   <li>十四份构建脚本里没有 zstd 的打包行（摘依赖要摘干净）；</li>
  *   <li>接线：登录触发下载、上报轮次有就绪门控、压缩走反射桥、灵动岛三张卡。</li>
  * </ol>
  */
@@ -102,13 +102,15 @@ class ZstdNativeDownloadStaticTest {
     }
 
     @Test
-    @DisplayName("十份构建脚本里没有 zstd 的打包行")
+    @DisplayName("十四份构建脚本里没有 zstd 的打包行")
     void buildScriptsDropZstdEntirely() throws IOException {
         List<String> offenders = new ArrayList<>();
         String[][] scripts = {
                 {"1.20.1 recode", "fabric"}, {"1.20.1 recode", "forge"},
                 {"1.21.1", "fabric"}, {"1.21.1", "neoforge"},
+                {"1.21.10", "fabric"}, {"1.21.10", "neoforge"},
                 {"1.21.11 recode", "fabric"}, {"1.21.11 recode", "neoforge"},
+                {"26.1.2", "fabric"}, {"26.1.2", "neoforge"},
                 {"26.2", "fabric"}, {"26.2", "neoforge"},
                 {"26.3", "fabric"}, {"26.3", "neoforge"},
         };

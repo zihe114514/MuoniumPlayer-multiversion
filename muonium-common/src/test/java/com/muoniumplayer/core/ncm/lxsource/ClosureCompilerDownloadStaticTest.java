@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li>镜像 URL 指向公开清单仓库的 libs/ 目录；</li>
  *   <li><b>主包对 closure 零编译期依赖</b>——所有 Java 源里只许出现字符串形式（反射桥），
  *       谁要是写回 import，摘依赖就白做了、测试编译期就会红；</li>
- *   <li>十份构建脚本（五棵树 × fabric/forge）里没有 closure 的打包行；</li>
+ *   <li>十四份构建脚本（五棵树 × fabric/forge）里没有 closure 的打包行；</li>
  *   <li>接线：进自定义源界面要触发下载、运行状态行要有转译器状态、灵动岛要有三张卡。</li>
  * </ol>
  */
@@ -103,13 +103,15 @@ class ClosureCompilerDownloadStaticTest {
     }
 
     @Test
-    @DisplayName("十份构建脚本里没有 closure 的打包行")
+    @DisplayName("十四份构建脚本里没有 closure 的打包行")
     void buildScriptsDropClosureEntirely() throws IOException {
         List<String> offenders = new ArrayList<>();
         String[][] scripts = {
                 {"1.20.1 recode", "fabric"}, {"1.20.1 recode", "forge"},
                 {"1.21.1", "fabric"}, {"1.21.1", "neoforge"},
+                {"1.21.10", "fabric"}, {"1.21.10", "neoforge"},
                 {"1.21.11 recode", "fabric"}, {"1.21.11 recode", "neoforge"},
+                {"26.1.2", "fabric"}, {"26.1.2", "neoforge"},
                 {"26.2", "fabric"}, {"26.2", "neoforge"},
                 {"26.3", "fabric"}, {"26.3", "neoforge"},
         };

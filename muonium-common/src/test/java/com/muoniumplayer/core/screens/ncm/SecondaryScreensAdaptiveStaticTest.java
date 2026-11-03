@@ -114,7 +114,7 @@ class SecondaryScreensAdaptiveStaticTest {
     void allTreesCarryTheBrackets() throws IOException {
         Path repo = ProjectPaths.repoRoot();
         List<String> missing = new ArrayList<>();
-        for (String tree : Arrays.asList("1.20.1 recode", "1.21.1", "1.21.11 recode", "26.2", "26.3")) {
+        for (String tree : Arrays.asList("1.20.1 recode", "1.21.1", "1.21.10", "1.21.11 recode", "26.1.2", "26.2", "26.3")) {
             for (String rel : HOST_SCREENS) {
                 Path file = repo.resolve(tree + File.separatorChar + "src" + File.separatorChar
                         + "main" + File.separatorChar + "java" + File.separatorChar
