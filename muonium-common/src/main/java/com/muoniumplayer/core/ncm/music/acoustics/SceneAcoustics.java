@@ -501,10 +501,16 @@ public final class SceneAcoustics {
                 // —— pan=0 时 gL=gR=1(恒等),全偏时单耳 ×√2(等功率)。
                 final double gl = DirectPath.gainL(directPan) * Math.sqrt(2.0);
                 final double gr = DirectPath.gainR(directPan) * Math.sqrt(2.0);
-                // M 分量:衰减后的直达,左右耳各按自己的 ITD 读(时间差即定位)。
-                // S 分量原样保留 —— 立体声宽度不被声源化稀释。
-                left = mL * gl * directGain + side;
-                right = mR * gr * directGain - side;
+                // S 收缩:真实立体声音乐的 side 能量很大,只动 M 时定位被稀释
+                // (实机:左右声道不明显)。物理:一点源发出的「立体声宽度」
+                // 随距离收敛 —— 离得越远两只音箱相对听者的夹角越小。宽度系数
+                // width = mix(1 → 0.35,direct 越小收得越多;gain=1 时 =1 恒等)。
+                // pan 的作用:把 S 的中心从「玩家正前」挪到「源的方向」——
+                // L 减 R 加(源在右),量 = |pan|×side;pan=0 时零作用,恒等。
+                final double width = 0.35 + 0.65 * Math.min(1.0, directGain * 1.4);
+                final double sShift = Math.abs(directPan) * side * (1.0 - width);
+                left = mL * gl * directGain + side * width - sShift;
+                right = mR * gr * directGain - side * width + sShift;
             }
 
             float wetL = 0f;

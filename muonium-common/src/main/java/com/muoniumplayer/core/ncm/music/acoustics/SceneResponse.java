@@ -149,6 +149,19 @@ public final class SceneResponse {
                     ? (float) Math.max(0.0, Math.min(1.0, hist.diffusion))
                     : 1f;
 
+            // 世界声源的传播稀释:射线场在「源所在房间」里采样,围合/反射率/
+            // 可达全是源侧几何,但湿声最终要在「玩家所在位置」被听到 —— 87m
+            // 外坑里的石洞混响不能贴着地表玩家全响(实机:直达 0.01 的同时
+            // 湿声 0.86,音乐糊成一团找不到声源)。传播两项:几何 inverse
+            // 曲线(参考 16m —— 扩散场比直达耐稀释)、空气项(/32m,漫反射
+            // 长路径比直达慢一档)。8m 内不稀释;24m ≈ ×0.52;68m ≈ ×0.08。
+            if (sample.hasDirectSource()) {
+                final double d = sample.directDistanceMeters();
+                final double over = Math.max(0.0, d / 16.0 - 1.0);
+                final double spread = 1.0 / (1.0 + over * over)
+                        * Math.exp(-Math.max(0.0, d - 6.0) / 32.0);
+                wet *= (float) Math.min(1.0, Math.max(0.08, spread * 1.15));
+            }
             wet = (float) Math.min(WET_CEIL, enclosure
                     * (WET_BASE + WET_REACH_SPAN * reach)
                     * wetMaterialFactor(rho)
