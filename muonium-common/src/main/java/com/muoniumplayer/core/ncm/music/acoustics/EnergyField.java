@@ -29,7 +29,7 @@ public final class EnergyField {
      *  拟合窗 [−2.5,−0.5]dB 要完整落在观察窗内需要窗长 ≥ 0.42·T60 ——
      *  2s 窗对 5s 尾的拟合终点压线(2.08s),T60 被钳在 ~4.1;3s 窗下
      *  5.5s 尾的拟合终点 2.29s 完整落窗。512 射线 × 13 弹 ≈ 6.6k 命中
-     *  分摊到 150 桶,每桶 ~44 条,统计密度充裕。 */
+     *  分摊到 150 桶,每桶 ~64 条,统计密度充裕(1024 射线档)。 */
     public static final int BINS = 150;
     /** 每桶时长(秒)。 */
     public static final double BIN_DURATION_SEC = 0.02;

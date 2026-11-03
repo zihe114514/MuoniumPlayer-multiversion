@@ -134,7 +134,9 @@ public class Engine {
 	// 用于控制全局输出音量的每个输出通道的乘数
 	private Multiply[] volume;
 
-	private int sampleRate = 44100;
+	// 48kHz:现代声卡/蓝牙耳机的原生档 —— 44.1k 会被系统重采样(劣化+延迟)。
+	// 引擎全部延迟线/混响按此走;JavaSound 对不支持的设备会自行重采样兜底。
+	private int sampleRate = 48000;
 
 	protected int inputDevice = -1;
 	protected int outputDevice = -1;
