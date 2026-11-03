@@ -89,6 +89,7 @@ class SharedLayoutStaticTest {
     private static final Set<String> OPTIONAL_MAIN_JAVA = new LinkedHashSet<String>(Arrays.asList(
             "com/muoniumplayer/mixin/FramebufferMixin.java",
             "com/muoniumplayer/mixin/GlSurfaceMixin.java",
+            "com/muoniumplayer/mixin/RenderTargetPresentMixin.java",
             "com/muoniumplayer/mixin/MouseScrollMixin.java",
             "com/muoniumplayer/mixin/MouseButtonStateMixin.java",
             "com/muoniumplayer/mixin/MusicManagerAccessor.java",
@@ -125,6 +126,8 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/LoaderDependencyStaticTest.java",
             "com/muoniumplayer/MultiLoaderStaticTest.java",
             "com/muoniumplayer/Port1211StaticTest.java",
+            "com/muoniumplayer/Port12110StaticTest.java",
+            "com/muoniumplayer/render/skija/Port2612StaticTest.java",
             "com/muoniumplayer/core/rendering/animation/AnimationSpeedStaticTest.java",
             "com/muoniumplayer/core/settings/PlayerFadeSpeedProbeTest.java",
             "com/muoniumplayer/render/skija/Port121StaticTest.java",
