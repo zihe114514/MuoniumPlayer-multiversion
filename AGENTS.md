@@ -29,6 +29,7 @@ mod id 是 `muonium`。
 | `.zcode/` | 会话产物（plans 等），非权威文档 | 随意 |
 | `dist/` `交付/` | 构建产物与发版交付快照（gitignore） | 别提交 |
 | `api-enhanced/` `gamdl/` `go-music-dl/` | 伴生/外部工程，各有人家自己的 README / AGENTS.md | 以人家为准 |
+| `harmonium/` | **OneConfig 精简 fork**（改名为 Harmonium，独立 git 仓）：muonium 的设置界面 + HUD 编辑器，仅 1.21.11 Fabric。构建/改动规矩看它自己的 AGENTS.md | 以人家为准 |
 | `光影/` `shader-compat-work/` | 光影测试素材与适配工作区 | 谨慎 |
 | `_mcref/` `_folia_ref/` | MC 反编译参考（`classes-26.3.txt` 等）与 Folia 参考检出版 | ⛔ 只读 |
 | `_trash/` `.recover-backup/` `.scratch/` `_scratch/` | 垃圾与快照 | ⛔ 别碰别提交 |
