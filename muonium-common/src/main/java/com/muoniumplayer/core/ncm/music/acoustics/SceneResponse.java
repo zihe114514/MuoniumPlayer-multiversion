@@ -257,6 +257,13 @@ public final class SceneResponse {
         // 空间化(M/S 等功率 + 真 ITD + 距离延迟)。EAX 总线代码保留作
         // 实验通道,默认不启用。
         if (sample.hasDirectSource()) {
+            // 音响模式:干声 M 送 loopback 的 AL 3D source 走【HRTF 直射】
+            // (IRCAM Listen 真测量 HRIR,前后/上下的耳廓谱线索 —— 等功率 pan
+            // 物理上给不了)。发送量恒 0,EAX 混响不参与,湿声仍由自研射线
+            // 链出 —— 直射-only 的总线用法。
+            useEax = true;
+            reverbHfRatio = 1f;
+            reverbDiff = 0.5f;
             directDist = Math.max(0f, sample.directDistanceMeters());
             final double occl = Math.max(0.0, sample.directOcclusion());
             directGain = (float) DirectPath.directGain(directDist, occl);
