@@ -241,4 +241,20 @@ public final class BeatPulseSource {
     static float estimatedConfidenceForTest() {
         return estimatedConfidence;
     }
+
+    // ---- 卡点运镜（CineBeatSource）的包私有探针：读二级估算网格，不触发任何推进 ----
+
+    /**
+     * 实时估算的 {周期纳秒, 置信度}；未收敛返回 null。
+     * 与 {@link #beat()} 的收敛阈值一致（&ge;0.55），保证两级链口径相同。
+     */
+    static float[] estimatedBeatForCine() {
+        if (estimatedPeriodNanos <= 0f || estimatedConfidence < 0.55f) return null;
+        return new float[] {estimatedPeriodNanos, estimatedConfidence};
+    }
+
+    /** 估算网格的墙上时钟锚（最近一个估算拍点）；未收敛时返回 0。 */
+    static double estimatedPhaseNanosForCine(long nowNanos) {
+        return lastBeatNanos;
+    }
 }

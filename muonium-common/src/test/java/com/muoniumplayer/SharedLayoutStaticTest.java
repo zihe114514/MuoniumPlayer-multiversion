@@ -113,6 +113,12 @@ class SharedLayoutStaticTest {
             //     1.20.1~1.21.11 的 EntityRenderDispatcher.render(...)（暂仅 26.3）---
             "com/muoniumplayer/mixin/TransparentEntityMixin.java",
             "com/muoniumplayer/mixin/TransparentCameraMixin.java",
+            // --- 卡点运镜：相机/FOV 注入点两代不同形（26.x alignWithEntity/getFov vs
+            //     1.21.11 前 setup；1.20.1 setRotation 无 roll），探针触 MC 状态（暂仅 26.3）---
+            "com/muoniumplayer/mixin/CineCameraMixin.java",
+            "com/muoniumplayer/mixin/CineFovMixin.java",
+            "com/muoniumplayer/mixin/CineHudMixin.java",
+            "com/muoniumplayer/compat/mc/CineProbe.java",
             "com/muoniumplayer/party/net/MpPayloads.java"));
 
     /** 五棵树各自的版本差异测试（ProjectPaths 例外，它已经收进共享层）。 */
