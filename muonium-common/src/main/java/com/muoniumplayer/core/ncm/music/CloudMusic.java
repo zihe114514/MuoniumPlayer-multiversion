@@ -2867,7 +2867,8 @@ public class CloudMusic implements SharedConstants {
                 throw new IllegalStateException("Cached audio has an unsupported or invalid container: "
                         + sourceFile.getName());
             }
-            if (!AudioContainerSupport.requiresAacDecode(container)) {
+            if (!AudioContainerSupport.requiresAacDecode(container)
+                    && !AudioContainerSupport.requiresOggDecode(container)) {
                 return sourceFile;
             }
 
@@ -2896,17 +2897,21 @@ public class CloudMusic implements SharedConstants {
                 DownloadDynamicIsland.beginTranscode(trackName, container, targetFormat);
             }
             try {
-                AacAudioDecoder.decodeToWav(sourceFile, container, decodedFile,
-                        new AacAudioDecoder.ProgressListener() {
-                            @Override
-                            public void onProgress(double progress) {
-                                if (!quietTranscode) {
-                                    DownloadDynamicIsland.updateTranscodeProgress(trackName, progress);
-                                }
+                // 两个解码器的进度回调共用同一个挡点闭包：转码卡片挡点保持 4 处
+                // （begin/进度/cancel/finish，RoomPrefetchStaticTest 的哨兵计数钉着）。
+                final java.util.function.DoubleConsumer transcodeProgress =
+                        progress -> {
+                            if (!quietTranscode) {
+                                DownloadDynamicIsland.updateTranscodeProgress(trackName, progress);
                             }
-                        });
+                        };
+                if (AudioContainerSupport.requiresOggDecode(container)) {
+                    OggAudioDecoder.decodeToWav(sourceFile, decodedFile, transcodeProgress::accept);
+                } else {
+                    AacAudioDecoder.decodeToWav(sourceFile, container, decodedFile, transcodeProgress::accept);
+                }
                 if (!AudioCacheFiles.isReusableDecodedWav(sourceFile, decodedFile)) {
-                    throw new IOException("Decoded AAC cache is invalid: " + sourceFile.getName());
+                    throw new IOException("Decoded audio cache is invalid: " + sourceFile.getName());
                 }
             } catch (Throwable exception) {
                 if (!quietTranscode) {
@@ -5291,7 +5296,8 @@ public class CloudMusic implements SharedConstants {
         if (cached == null || !cached.isFile()) return null;
         try {
             String container = AudioContainerSupport.detectContainer(cached);
-            if (!AudioContainerSupport.requiresAacDecode(container)) return cached;
+            if (!AudioContainerSupport.requiresAacDecode(container)
+                    && !AudioContainerSupport.requiresOggDecode(container)) return cached;
             File decoded = AudioCacheFiles.getDecodedWavFile(cached);
             return AudioCacheFiles.isReusableDecodedWav(cached, decoded) ? decoded : null;
         } catch (Throwable ignored) {
