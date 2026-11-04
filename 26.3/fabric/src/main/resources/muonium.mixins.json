@@ -15,7 +15,10 @@
     "MouseButtonStateMixin",
     "LevelRendererAlwaysOnTopGateMixin",
     "TransparentEntityMixin",
-    "TransparentCameraMixin"
+    "TransparentCameraMixin",
+    "CineCameraMixin",
+    "CineFovMixin",
+    "CineHudMixin"
   ],
   "injectors": {
     "defaultRequire": 1
