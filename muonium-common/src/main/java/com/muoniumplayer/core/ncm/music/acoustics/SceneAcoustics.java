@@ -181,7 +181,9 @@ public final class SceneAcoustics {
 
     /** 直达声链(世界声源):M 分量的一阶低通(动态系数,逐帧整定)+ 双耳
      *  小环(真 ITD;M 是 mono,一条环配左右读位即可,不必两条)。 */
-    private static final int DIRECT_RING_SEC_SAMPLES = 96; // 容量余量:ITD 上限 28 样,取 3 倍余
+    /** 直达环容量余量:ITD 上限 28 样 + 直达距离延迟(160m ≈ 22.4k 样 @48k)。 */
+    private static final int DIRECT_RING_SEC_SAMPLES = 96;
+    private static final int DIRECT_DELAY_MAX_SAMPLES = (int) (160.0 / 343.0 * 48000.0) + 8;
     private static float[] directRing = new float[0];
     private static int directPos;
     private static double directLpCoef;                   // 一阶低通系数(逐帧按目标 fc 整定)
@@ -203,6 +205,8 @@ public final class SceneAcoustics {
     private static int directDelayPos;
     /** 平滑后的源距(探针 500ms 目标朝它收敛,移动时过渡连续)。 */
     private static double directDistSmoothed;
+    /** 自研直射链的距离延迟(样本,分数;directDistSmoothed/343×采样率)。 */
+    private static double directDelayN;
     /** 听者位姿(游戏线程写,音频线程读;AL 的 listener 需要)。 */
     private static volatile double listenerX, listenerY, listenerZ;
     private static volatile float listenerFwdX, listenerFwdY, listenerFwdZ;
@@ -513,7 +517,17 @@ public final class SceneAcoustics {
         // 「玩家即声源」(无音箱)同样全 AL:source 贴在听者头部
         // (AL_ROLLOFF=0,零距离衰减零方向),混响参数照常来自探针 ——
         // 用户定论「整个环境声学混响都用 OpenAL,不走自研」。
-        OpenAlReverbBus busFull = useEaxBus
+                    // 距离平滑(两路共用:busFull 的湿稀释与自研直射延迟都吃):混响能量也要从音箱飞 d 米到耳朵 —— 96m 外隔着
+            // 岩层的音箱混响照样贴脸是「不符合物理」的另一半。几何 inverse
+            // (参考 48m)+ 空气 /64m;96m ≈ ×0.14,混响跟着直达一起衰减。
+            // 距离走收敛(τ=0.25s):探针 500ms 节流交付的目标若直接用,
+            // 延迟环与稀释会每半秒跳一阶 —— 「渐远没有过度」的另一半。
+            final double dTarget = plan.hasSpeakerAnchor
+                    ? Math.max(0.0, plan.directDistanceMeters) : 0.0;
+            final double dStep = 1.0 - Math.exp(-frames / (sampleRate * 0.25));
+            directDistSmoothed += (dTarget - directDistSmoothed) * dStep;
+
+OpenAlReverbBus busFull = useEaxBus
                 ? OpenAlReverbBus.get() : null;
         if (busFull != null && frames > 0 && wetActive && plan.useOpenAlReverb) {
             if (busMono.length < frames || busOut.length < frames * 2
@@ -538,15 +552,6 @@ public final class SceneAcoustics {
                 busFull.setSidePose(listenerX, listenerY, listenerZ);
                 busFull.setSourceRolloff(0f);
             }
-            // 湿发送乘传播稀释:混响能量也要从音箱飞 d 米到耳朵 —— 96m 外隔着
-            // 岩层的音箱混响照样贴脸是「不符合物理」的另一半。几何 inverse
-            // (参考 48m)+ 空气 /64m;96m ≈ ×0.14,混响跟着直达一起衰减。
-            // 距离走收敛(τ=0.25s):探针 500ms 节流交付的目标若直接用,
-            // 延迟环与稀释会每半秒跳一阶 —— 「渐远没有过度」的另一半。
-            final double dTarget = plan.hasSpeakerAnchor
-                    ? Math.max(0.0, plan.directDistanceMeters) : 0.0;
-            final double dStep = 1.0 - Math.exp(-frames / (sampleRate * 0.25));
-            directDistSmoothed += (dTarget - directDistSmoothed) * dStep;
             final double dMet = directDistSmoothed;
             final double wetSpread = plan.hasSpeakerAnchor
                     ? Math.max(0.12, Math.min(1.0,
@@ -655,10 +660,25 @@ public final class SceneAcoustics {
                 // M/S 分解:M = 中置定位分量(声源方向),S = 立体声宽度。
                 final double mid = (left + right) * 0.5;
                 final double side = (left - right) * 0.5;
-                // M 过一阶低通(遮挡/空气吸收的「闷」;截止全开时旁路),写单环。
+                // M 过一阶低通(遮挡/空气吸收的「闷」;截止全开时旁路)。
                 directLpState = dLpOpen ? mid
                         : directLpState + directLpCoef * (mid - directLpState);
-                final float mSample = (float) directLpState;
+                // 直达距离延迟(d/343,分数插值 —— 照 libspatialaudio 的
+                // AmbisonicEncoderDist):声音从音箱飞到耳朵的时间。玩家即
+                // 声源时距离≈0,延迟 0,恒等不变。
+                double delayed = directLpState;
+                if (directDelayN > 0.0) {
+                    final int w = directDelayPos;
+                    directDelayL[w] = toPcm16(directLpState);
+                    final int rd = w - (int) directDelayN;
+                    final int rdW = ((rd % directDelayL.length) + directDelayL.length)
+                            % directDelayL.length;
+                    final int rdNext = rdW + 1 == directDelayL.length ? 0 : rdW + 1;
+                    final float frac = (float) (directDelayN - (int) directDelayN);
+                    delayed = directDelayL[rdW] * (1f - frac) + directDelayL[rdNext] * frac;
+                    directDelayPos = w + 1 == directDelayL.length ? 0 : w + 1;
+                }
+                final float mSample = (float) delayed;
                 directRing[directPos] = mSample;
                 // 真 ITD:源在右(pan>0)右耳先到 —— 右耳读位近(年龄小),
                 // 左耳读位远(晚到),与 ER 抽头的约定同向。读位双向 wrap:
@@ -1015,7 +1035,8 @@ public final class SceneAcoustics {
 
         // 直达声环:容量 = ITD 上限 ×3 的余量(M 单环,读位 ±ITD 内)。
         directItdMax = itdMaxSamples;
-        directRing = new float[Math.max(8, DIRECT_RING_SEC_SAMPLES + 2 * itdMaxSamples)];
+        directRing = new float[Math.max(8,
+                DIRECT_RING_SEC_SAMPLES + 2 * itdMaxSamples + DIRECT_DELAY_MAX_SAMPLES)];
         directPos = 0;
         directLpState = 0.0;
         final RoomPlan plan = targetPlan;

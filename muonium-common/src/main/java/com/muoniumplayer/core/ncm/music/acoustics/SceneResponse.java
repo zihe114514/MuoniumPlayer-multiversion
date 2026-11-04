@@ -252,17 +252,11 @@ public final class SceneResponse {
         boolean useEax = false;
         float reverbHfRatio = 1f;
         float reverbDiff = 0.5f;
-        // 路线分工(用户定论):环境声学(玩家即声源)走【自研射线链】——
-        // 1024 射线 → EDC 拟合逐频带 T60 → FDN 尾 + 64 条「源→墙→耳」真抽头 ER
-        // (双耳线索三件套),频带物理精度比 EAX 的单标量 HF 比更高;
-        // 音响(世界声源)走【全 OpenAL 渲染】—— 3D 定位/距离衰减/HRTF/EAX
-        // 混响,一点源在空间中的完整物理链。两条路线各用最强的。
+        // 路线定稿(用户拍板):两种模式统一走【自研射线链】—— 真抽头 ER +
+        // 逐频带 T60 FDN,物理精度高于 EAX 的标量参数;直射声由自研直射链
+        // 空间化(M/S 等功率 + 真 ITD + 距离延迟)。EAX 总线代码保留作
+        // 实验通道,默认不启用。
         if (sample.hasDirectSource()) {
-            useEax = true;
-            reverbHfRatio = (float) Math.max(0.15, Math.min(1.6,
-                    0.4 + 0.8 * (Math.min(rho, 1.5f) / 1.5f) + (1 - tone)));
-            reverbDiff = (float) Math.max(0.1, Math.min(1.0,
-                    0.4 * diffusion + 0.6 * (1.0 - Math.min(1.0, rho))));
             directDist = Math.max(0f, sample.directDistanceMeters());
             final double occl = Math.max(0.0, sample.directOcclusion());
             directGain = (float) DirectPath.directGain(directDist, occl);
