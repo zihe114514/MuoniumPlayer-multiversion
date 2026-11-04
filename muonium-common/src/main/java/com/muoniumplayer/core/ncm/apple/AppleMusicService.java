@@ -111,7 +111,8 @@ public final class AppleMusicService {
                 query.put("term", keyword.trim());
                 query.put("types", "songs");
                 query.put("limit", String.valueOf(Math.max(1, Math.min(limit, SEARCH_LIMIT_MAX))));
-                JsonObject payload = AppleApiClient.getCatalog(catalogPath("/search", query));
+                JsonObject payload = AppleApiClient.getCatalog(catalogPath(
+                        "/catalog/" + AppleConfigStore.storefront() + "/search", query));
                 List<Track> tracks = readSearchTracks(payload, "songs");
                 return tracks.isEmpty() ? null : tracks;
             } catch (IOException | AppleApiClient.AppleApiException throwable) {
@@ -126,14 +127,13 @@ public final class AppleMusicService {
     /** 搜公开歌单（关键词）。歌单搜索框的 Apple 结果。助手优先，同 {@link #search}。 */
     public static List<Playlist> searchPlaylists(String keyword, int limit) {
         if (keyword == null || keyword.trim().isEmpty()) return Collections.emptyList();
-        // 助手没有 searchPlaylists 子命令：catalog 歌单搜索对 Java 也 401（TLS 指纹），
-        // v1 暂以「搜歌曲」代替出现概率最高的需求，歌单搜索框在助手缺失时才走直连。
         Map<String, String> query = new LinkedHashMap<>();
         query.put("term", keyword.trim());
         query.put("types", "playlists");
         query.put("limit", String.valueOf(Math.max(1, Math.min(limit, SEARCH_LIMIT_MAX))));
         try {
-            JsonObject payload = AppleApiClient.getCatalog(catalogPath("/search", query));
+            JsonObject payload = AppleApiClient.getCatalog(catalogPath(
+                    "/catalog/" + AppleConfigStore.storefront() + "/search", query));
             return readSearchPlaylists(payload, "playlists");
         } catch (IOException | AppleApiClient.AppleApiException throwable) {
             logFailure("搜歌单", throwable);
