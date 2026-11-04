@@ -25,9 +25,9 @@ import java.nio.ShortBuffer;
  *
  * <h2>设备纪律(血泪约定)</h2>
  * <p>这是本进程的<b>第二个 ALC 设备</b>(第一个是 {@link OpenALAudioDevice} 的
- * 兜底设备,第三个是 MC 自己的)。桌面允许;安卓<b>绝对禁用</b> —— 第二个设备
+ * 兜底设备,第三个是 MC 自己的)。loopback 设备不占声卡,实测安卓(FCL)可正常创建。
  * 在部分启动器的 libopenal 上是 SIGSEGV(见 OpenAlAudioDeviceStaticTest 的类注释),
- * 安卓上 {@code available()} 恒 false,湿声回退自研链。loopback 设备不占真实
+ * loopback 设备不占真实
  * 声卡,与 MC 的输出设备天然隔离。</p>
  *
  * <h2>信号流</h2>
@@ -47,7 +47,7 @@ public final class OpenAlReverbBus {
 
     private static final String TAG = "[MuoniumPlayer/ReverbBus] ";
 
-    /** 单例;null = 不可用(未初始化失败/安卓/loopback 扩展缺失)。 */
+    /** 单例;null = 不可用(未初始化失败/loopback 扩展缺失)。 */
     private static volatile OpenAlReverbBus instance;
 
     private long device;
@@ -72,7 +72,7 @@ public final class OpenAlReverbBus {
     private OpenAlReverbBus() {
     }
 
-    /** 初始化;失败/不支持返回 null。桌面(非安卓)才允许调用。 */
+    /** 初始化;失败/不支持返回 null。 */
     public static OpenAlReverbBus createIfAvailable(int sampleRate, int framesPerBuffer) {
         if (instance != null) {
             return instance;
