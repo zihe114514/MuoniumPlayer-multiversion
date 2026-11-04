@@ -12,7 +12,10 @@
     "RenderTypeAccessors",
     "ProjectionMatrixBufferMixin",
     "TransparentEntityMixin",
-    "TransparentCameraMixin"
+    "TransparentCameraMixin",
+    "CineCameraMixin",
+    "CineFovMixin",
+    "CineHudMixin"
   ],
   "injectors": {
     "defaultRequire": 1

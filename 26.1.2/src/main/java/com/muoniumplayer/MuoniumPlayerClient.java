@@ -374,6 +374,22 @@ public final class MuoniumPlayerClient {
             keyQuickSearch.consumeClick();
             keyAmbientNow.consumeClick();
         }
+
+        // ---- 卡点运镜（MuoniumCine）----
+        // 每 tick 送一帧场景快照;状态机在共享层,开关关着/音乐停着时是一次布尔判断。
+        // isActive 翻转沿上做树侧执行器(切第三人称/隐藏 HUD 及其恢复)——共享层
+        // 不碰 MC 符号,翻转检测只能在树桥。
+        boolean cineWasActive = com.muoniumplayer.core.cine.CineDirector.isActive();
+        com.muoniumplayer.core.cine.CineDirector.onClientTick(
+                com.muoniumplayer.compat.mc.CineProbe.of(mc));
+        boolean cineIsActive = com.muoniumplayer.core.cine.CineDirector.isActive();
+        if (cineIsActive != cineWasActive) {
+            if (cineIsActive) {
+                com.muoniumplayer.compat.mc.CineProbe.entered();
+            } else {
+                com.muoniumplayer.compat.mc.CineProbe.left();
+            }
+        }
     }
 
     /**
