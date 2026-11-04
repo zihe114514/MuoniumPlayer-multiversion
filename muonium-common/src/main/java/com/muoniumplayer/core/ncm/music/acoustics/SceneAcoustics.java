@@ -207,6 +207,8 @@ public final class SceneAcoustics {
     private static double directDistSmoothed;
     /** 自研直射链的距离延迟(样本,分数;directDistSmoothed/343×采样率)。 */
     private static double directDelayN;
+    /** 本缓冲的干声已经过总线 HRTF(直射-only):逐样本的手搓直射链跳过。 */
+    private static boolean hrtfDirectApplied;
     /** 听者位姿(游戏线程写,音频线程读;AL 的 listener 需要)。 */
     private static volatile double listenerX, listenerY, listenerZ;
     private static volatile float listenerFwdX, listenerFwdY, listenerFwdZ;
@@ -496,6 +498,7 @@ public final class SceneAcoustics {
         // 直达声链的逐缓冲整定:低通系数按当前截止导出(收敛是缓的,系数
         // 跳变在缓变里听不见);ITD 读距按当前声像。静息态(directActive=false)
         // 下面整段跳过 —— 左右原样直通,与没有这条链逐样本一致。
+        hrtfDirectApplied = false;
         final boolean doDirect = directActive && directRing.length > 1;
         final int dRingLen = doDirect ? directRing.length : 0;
         // 截止全开(近场无遮挡)时低通旁路:M 原样进环 —— 一阶低通在 20kHz
@@ -507,16 +510,13 @@ public final class SceneAcoustics {
             directItdMax = Math.max(1, (int) Math.round(ITD_MAX_SEC * sampleRate));
         }
 
-        // ---- 全 AL 渲染(世界声源;Channel 同款架构) ----
-        // 声源激活且总线可用时,把【整条输出】拆 M/S 送进 loopback:M(定位)
-        // → 3D source(音箱位 + AL 原生距离衰减/声像/HRTF + 遮挡低通 +
-        // EAX 湿发送);S(宽度)→ 立体声直连源 × 收缩系数;一次读回全部
-        // (直射 + 混响)。走这条路的缓冲,下面的手搓直射链与 FDN 全跳过 ——
-        // AL 的曲线就是业界打磨过的那套,听感对齐 Channel。
-        //
-        // 「玩家即声源」(无音箱)同样全 AL:source 贴在听者头部
-        // (AL_ROLLOFF=0,零距离衰减零方向),混响参数照常来自探针 ——
-        // 用户定论「整个环境声学混响都用 OpenAL,不走自研」。
+        // ---- 直射 HRTF(世界声源;真测量数据的耳廓滤波) ----
+        // 用户定论「真 3D 要物理测量数据,不要预设滤波」:世界声源激活时,
+        // 干声 M 送 loopback 的 AL 3D source —— OpenAL Soft 内建 HRTF
+        // (IRCAM Listen 真测量 HRIR,前后/上下的耳廓谱线索)+ 原生距离
+        // 衰减 + 遮挡低通;发送量恒 0(不走 EAX 混响,湿声仍由自研射线链
+        // 出,频带物理精度更高)。读回的 HRTF 直射替换原直射;S(宽度)
+        // 经直连源同位渲染。玩家模式(贴头)无方向,不走总线。
                     // 距离平滑(两路共用:busFull 的湿稀释与自研直射延迟都吃):混响能量也要从音箱飞 d 米到耳朵 —— 96m 外隔着
             // 岩层的音箱混响照样贴脸是「不符合物理」的另一半。几何 inverse
             // (参考 48m)+ 空气 /64m;96m ≈ ×0.14,混响跟着直达一起衰减。
@@ -529,7 +529,8 @@ public final class SceneAcoustics {
 
 OpenAlReverbBus busFull = useEaxBus
                 ? OpenAlReverbBus.get() : null;
-        if (busFull != null && frames > 0 && wetActive && plan.useOpenAlReverb) {
+        if (busFull != null && frames > 0 && plan.useOpenAlReverb
+                && plan.hasSpeakerAnchor && (wetActive || directActive)) {
             if (busMono.length < frames || busOut.length < frames * 2
                     || busSide.length < frames * 2) {
                 busMono = new short[frames];
@@ -558,7 +559,8 @@ OpenAlReverbBus busFull = useEaxBus
                             (1.0 / (1.0 + Math.pow(Math.max(0.0, dMet / 48.0 - 1.0), 2.0)))
                                     * Math.exp(-Math.max(0.0, dMet - 6.0) / 64.0) * 1.15))
                     : 1.0;
-            busFull.setSendGain((float) Math.min(1f, wet * 1.2f * wetSpread));
+            // 直射-only:HRTF 总线不做混响(EAX send 关死),湿声由自研链出。
+            busFull.setSendGain(0f);
             busFull.setReverbParams(Float.NaN,
                     plan.reverbDiffusion, Math.max(0.1f, decaySec), plan.reverbDecayHfRatio,
                     Float.NaN, Math.max(0.004f, preDelaySec),
@@ -624,7 +626,9 @@ OpenAlReverbBus busFull = useEaxBus
                 directDelayPos = (directDelayPos + frames) % directDelayL.length;
             }
             busFull.render(busMono, busSide, busOut);
-            // 读回结果原样写回缓冲(已含直射 3D + S + 混响;限幅照做)。
+            // 读回 = HRTF 化的干声(直射 3D + S);湿声由本函数后续的逐样本
+            // 自研链出。干声写回后【不 return】,继续走湿声网络 —— 直射的
+            // HRTF 化与湿声的自研链在此汇流。
             final float limiterKneeEarly = (float) LIMITER_KNEE * loudness;
             for (int i = 0; i < frames; i++) {
                 final int o = i * channels;
@@ -640,7 +644,7 @@ OpenAlReverbBus busFull = useEaxBus
                     tapGRA[i] += (plan.tapGainR[i] - tapGRA[i]) * tapStep;
                 }
             }
-            return; // 本缓冲完成:全 AL 渲染接管,不走下面的逐样本链
+            hrtfDirectApplied = true; // 供下方湿声链判断:干声已含 HRTF,跳过手搓直射
         }
 
         int idx = 0;
@@ -656,7 +660,9 @@ OpenAlReverbBus busFull = useEaxBus
             }
 
             // ---- 直射声链(M/S 等功率 + 动态低通 + 真 ITD) ----
-            if (doDirect) {
+            // HRTF 干声已由总线交付时跳过:总线读回的 interleaved 已是
+            // 空间化后的干声,再做一遍 M/S pan 会双重定位。
+            if (doDirect && !hrtfDirectApplied) {
                 // M/S 分解:M = 中置定位分量(声源方向),S = 立体声宽度。
                 final double mid = (left + right) * 0.5;
                 final double side = (left - right) * 0.5;
@@ -884,10 +890,13 @@ OpenAlReverbBus busFull = useEaxBus
             // 不在小音量下引入多余的非线性。
             final float limiterKnee = (float) LIMITER_KNEE * loudness;
             if (ch > 1) {
-                interleaved[idx] = softLimit(left * dryGain + wetL, limiterKnee);
-                interleaved[idx + 1] = softLimit(right * dryGain + wetR, limiterKnee);
+                // hrtfDirectApplied:干声写回时已乘 dryGain,这里只加湿声
+                final float dryHere = hrtfDirectApplied ? 1f : dryGain;
+                interleaved[idx] = softLimit(left * dryHere + wetL, limiterKnee);
+                interleaved[idx + 1] = softLimit(right * dryHere + wetR, limiterKnee);
             } else {
-                interleaved[idx] = softLimit(left * dryGain + (wetL + wetR) * 0.5f, limiterKnee);
+                final float dryHereM = hrtfDirectApplied ? 1f : dryGain;
+                interleaved[idx] = softLimit(left * dryHereM + (wetL + wetR) * 0.5f, limiterKnee);
             }
             idx += channels;
         }
