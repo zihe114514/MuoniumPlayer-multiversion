@@ -138,6 +138,8 @@ public class HomePanel extends NCMPanel {
             loadBilibiliHome();
         } else if (platform == MusicPlatform.QISHUI) {
             loadQishuiHome();
+        } else if (platform == MusicPlatform.APPLE) {
+            loadAppleHome();
         } else {
             loadNeteaseHome();
         }
@@ -544,6 +546,90 @@ public class HomePanel extends NCMPanel {
      * <p>B 站没有推荐歌单这个接口，能拿得出手的是<b>自己的收藏夹</b>，所以这一页登录后就是收藏夹
      * 卡片。未登录时保持原来的提示文案 —— 匿名浏览和播放本来就是通的，别写成「请先登录」。</p>
      */
+    // ── Apple 主页 ──────────────────────────────────────────────────────────
+
+    private static List<PlayList> appleHomePlaylists;
+    private static boolean appleHomeLoading;
+
+    /**
+     * Apple 主页:登录时展示个性化推荐歌单(/v1/me/recommendations),未登录或推荐
+     * 拿不到时用 8 地区榜单卡兜底 —— 主页不空白。
+     */
+    private void loadAppleHome() {
+        List<PlayList> cached = appleHomePlaylists;
+        if (cached != null && !cached.isEmpty()) {
+            layout(cached, "推荐歌单 · " + cached.size());
+            return;
+        }
+        layoutPlaceholder("正在获取 Apple Music 推荐…", true);
+        synchronized (HomePanel.class) {
+            if (appleHomeLoading) {
+                MultiThreadingUtil.runAsync(this::awaitAppleHomeCache);
+                return;
+            }
+            appleHomeLoading = true;
+        }
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                List<PlayList> recs = com.muoniumplayer.core.ncm.apple.AppleMusicService
+                        .recommendationPlaylists();
+                List<PlayList> result = recs;
+                String title = "推荐歌单";
+                if (result.isEmpty()) {
+                    List<PlayList> charts =
+                            com.muoniumplayer.core.ncm.apple.chart.AppleChartsPanels.chartCards();
+                    result = charts == null ? Collections.emptyList() : charts;
+                    title = "Apple Music 排行榜";
+                }
+                appleHomePlaylists = Collections.unmodifiableList(new ArrayList<>(result));
+                final List<PlayList> displayed = new ArrayList<>(result);
+                final String titleLine = title + " · " + displayed.size();
+                MultiThreadingUtil.runOnMainThread(() -> {
+                    if (NeteaseMusicService.getCurrentPlatform() != MusicPlatform.APPLE) return;
+                    if (!displayed.isEmpty()) {
+                        layout(displayed, titleLine);
+                    } else {
+                        layoutPlaceholder("Apple Music 推荐获取失败，请稍后重试", false);
+                    }
+                });
+            } finally {
+                appleHomeLoading = false;
+            }
+        });
+    }
+
+    /** 等另一次 Apple 主页加载填好缓存（最多 20 秒），超时按失败处理。 */
+    private void awaitAppleHomeCache() {
+        for (int i = 0; i < 100; i++) {
+            List<PlayList> cached = appleHomePlaylists;
+            if (cached != null && !cached.isEmpty()) {
+                if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.APPLE) {
+                    MultiThreadingUtil.runOnMainThread(() -> {
+                        if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.APPLE) {
+                            List<PlayList> shown = appleHomePlaylists;
+                            if (shown != null && !shown.isEmpty()) {
+                                layout(shown, "推荐歌单 · " + shown.size());
+                            }
+                        }
+                    });
+                }
+                return;
+            }
+            if (!appleHomeLoading) break;
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        MultiThreadingUtil.runOnMainThread(() -> {
+            if (NeteaseMusicService.getCurrentPlatform() == MusicPlatform.APPLE) {
+                layoutPlaceholder("Apple Music 推荐获取失败，请稍后重试", false);
+            }
+        });
+    }
+
     private void loadBilibiliHome() {
         if (!NeteaseMusicService.isLoggedIn(MusicPlatform.BILIBILI)) {
             layout(Collections.emptyList(), "哔哩哔哩 · 搜索、粘贴 BV号或视频链接");

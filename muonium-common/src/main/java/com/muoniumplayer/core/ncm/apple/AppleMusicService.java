@@ -453,6 +453,55 @@ public final class AppleMusicService {
         return AppleCookieSupport.isLoggedIn() && !AppleApiClient.isAccountInvalid();
     }
 
+    /**
+     * 主页推荐歌单:{@code /v1/me/recommendations} 的 playlists 组(需登录;未登录/失败返回空表)。
+     * 返回的卡带 catalog 歌单 id(platformPlaylistId),曲目由 playlistTracks 的 catalog 分支拉。
+     */
+    public static List<PlayList> recommendationPlaylists() {
+        List<PlayList> out = new ArrayList<>();
+        if (!isConfigured()) return out;
+        try {
+            JsonObject payload = AppleApiClient.getAccount("/v1/me/recommendations?limit=5");
+            JsonArray data = payload.getAsJsonArray("data");
+            if (data == null) return out;
+            for (JsonElement group : data) {
+                if (!group.isJsonObject()) continue;
+                JsonObject relationships = group.getAsJsonObject().getAsJsonObject("relationships");
+                if (relationships == null || !relationships.has("contents")) continue;
+                JsonArray contents = relationships.getAsJsonObject("contents").getAsJsonArray("data");
+                if (contents == null) continue;
+                for (JsonElement item : contents) {
+                    if (!item.isJsonObject()) continue;
+                    JsonObject o = item.getAsJsonObject();
+                    if (!"playlists".equals(text(o, "type"))) continue;
+                    String plId = text(o, "id");
+                    JsonObject attributes = o.getAsJsonObject("attributes");
+                    if (plId.isEmpty() || attributes == null) continue;
+                    String name = text(attributes, "name");
+                    if (name.isEmpty()) continue;
+                    PlayList card = new PlayList(stableCardId(plId), name, artworkUrl(attributes),
+                            0, 0L, null, text(attributes, "curatorName"), 0L);
+                    card.setPlatform(MusicPlatform.APPLE);
+                    card.setPlatformPlaylistId(plId);
+                    out.add(card);
+                }
+            }
+        } catch (IOException | AppleApiClient.AppleApiException throwable) {
+            System.err.println("[Music/Apple] 推荐歌单失败: " + throwable.getMessage());
+        }
+        return out;
+    }
+
+    /** 歌单卡稳定键(FNV 形状与榜单卡一致):catalog 歌单 id 是字符串,转数值卡 id。 */
+    private static long stableCardId(String key) {
+        long h = 0x811C9DC5L;
+        for (int i = 0; i < key.length(); i++) {
+            h ^= key.charAt(i);
+            h *= 0x01000193L;
+        }
+        return -4_200_000L - (h & 0xFFFFFL);
+    }
+
     public static String getAccountName() {
         if (AppleCookieSupport.cookiesFileOrNull() == null) return "未登录";
         if (AppleApiClient.isAccountInvalid()) return "cookies 已失效，请重新导入";
@@ -519,8 +568,15 @@ public final class AppleMusicService {
         if (data == null || data.size() == 0) return out;
         JsonObject relationships = data.get(0).getAsJsonObject().getAsJsonObject("relationships");
         if (relationships == null) return out;
-        readTracksInto(out, relationships.getAsJsonArray("tracks"));
-        String next = text(relationships, "next");
+        // tracks 是关系对象{href, data[, next]}(Apple 歌单详情同款形状),曲目数组在其 data 里;
+        // 直接 getAsJsonArray("tracks") 会类型转换炸掉 —— 这条路以前在游戏内从未被走过。
+        JsonElement tracksElement = relationships.get("tracks");
+        if (tracksElement == null || !tracksElement.isJsonObject()) return out;
+        JsonObject tracksRelationship = tracksElement.getAsJsonObject();
+        JsonElement tracksData = tracksRelationship.get("data");
+        if (tracksData == null || !tracksData.isJsonArray()) return out;
+        readTracksInto(out, tracksData.getAsJsonArray());
+        String next = text(tracksRelationship, "next");
         while (!next.isEmpty() && out.size() < max) {
             JsonObject page = AppleApiClient.getCatalog(next.startsWith("/") ? next : "/" + next);
             JsonArray pageData = page.getAsJsonArray("data");
