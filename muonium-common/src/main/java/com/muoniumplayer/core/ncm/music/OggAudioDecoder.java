@@ -171,7 +171,9 @@ final class OggAudioDecoder {
                 if (read < 0) {
                     throw new EOFException("OGG stream ended before all Vorbis headers");
                 }
-                sync.write(buffer, 0, read);
+                int fill = sync.buffer(read);
+                System.arraycopy(buffer, 0, sync.data, fill, read);
+                sync.wrote(read);
                 while (headerPackets < 3) {
                     Page page = new Page();
                     int pageResult = sync.pageout(page);
@@ -207,7 +209,9 @@ final class OggAudioDecoder {
                 int read = stream.read(buffer);
                 if (read >= 0) {
                     consumedBytes += read;
-                    sync.write(buffer, 0, read);
+                    int fill = sync.buffer(read);
+                    System.arraycopy(buffer, 0, sync.data, fill, read);
+                    sync.wrote(read);
                 }
                 while (true) {
                     Page page = new Page();
@@ -221,19 +225,19 @@ final class OggAudioDecoder {
                         if (packetResult == 0) break;
                         if (packetResult == -1) continue;
                         if (block.synthesis(packet) == 0) {
-                            int samples = dsp.synthesis(pcmHolder, indexHolder);
-                            if (samples > 0) {
-                                writer.write(pcmHolder[0], info.channels, samples);
-                                decodedSamples += samples;
+                            // jorbis 的 PCM 取出是拉模式：blockin 入队，pcmout 分批取，
+                            // read(n) 消费。一次 blockin 可能产出多批。
+                            if (dsp.synthesis_blockin(block) == 0) {
+                                int samples;
+                                while ((samples = dsp.synthesis_pcmout(pcmHolder, indexHolder)) > 0) {
+                                    writer.write(pcmHolder[0], info.channels, samples);
+                                    decodedSamples += samples;
+                                    dsp.synthesis_read(samples);
+                                }
                             }
                         }
                     }
-                    if (sync.eof() != 0) {
-                        if (decodedSamples == 0) {
-                            throw new IOException("jorbis decoded zero samples (corrupt or non-Vorbis OGG)");
-                        }
-                        return;
-                    }
+
                 }
                 if (read < 0) {
                     // 流结束而 sync 还没报 eof：按已解码量定论。
