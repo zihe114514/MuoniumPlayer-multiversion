@@ -96,7 +96,8 @@ public final class MuoniumPlayerClient {
      *
      * <p>1.20.1 时这里是一个字符串翻译键（{@code "key.categories.muonium"}）。26.2 把它
      * 换成了 {@code KeyMapping.Category} 记录类型，由一个 {@link Identifier} 构造，
-     * 标题的翻译键由它自己按 {@code key.categories.<namespace>.<path>} 推导。
+     * 标题的翻译键由它自己按 {@code key.category.<namespace>.<path>} 推导（单数，不是旧式的
+     * {@code key.categories.*}）。
      * 所以语言文件里的键名需要相应调整，见 {@code assets/muonium/lang/*.json}。
      */
     public static final KeyMapping.Category KEY_CATEGORY =
