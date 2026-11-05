@@ -36,12 +36,35 @@ class ConfigPathLayoutStaticTest {
                 "播放器配置必须落在 config/muonium/player.json");
         assertTrue(source.contains("THEME = new File(CONFIG_DIRECTORY, \"theme.json\")"),
                 "主题配置必须落在 config/muonium/theme.json");
-        assertTrue(source.contains("NETEASE_COOKIE = new File(CONFIG_DIRECTORY, \"netease_cookie.txt\")"),
-                "旧版网易云 Cookie 兜底也必须进入统一配置目录");
+        assertTrue(source.contains("NETEASE_COOKIE = new File(AUTH_ROOT, \"netease_cookie.txt\")"),
+                "旧版网易云 Cookie 兜底必须进入 MuoniumPlayer/auth 凭据目录（issue #11：不能被整合包打包）");
         assertTrue(source.contains("MUSIC_CACHE = new File(CACHE_DIR, \"music\")"),
                 "音频缓存必须在 mod 私有 cache 目录下，不能留在游戏根目录");
         assertTrue(source.contains("SKIJA_NATIVE_ROOT = new File(CONFIG_DIRECTORY, \"native/skija\")"),
                 "Skija 原生库兜底解压目录不能留在游戏根目录");
+    }
+
+    @Test
+    @DisplayName("issue #11 双根口径：凭据在 MuoniumPlayer/auth、缓存在 MuoniumPlayer/cache、运行资产仍留 config")
+    void dataRootSplitMatchesIssueEleven() throws IOException {
+        String source = read(shared("ConfigPaths.java"));
+
+        assertTrue(source.contains("DATA_ROOT = new File(\"MuoniumPlayer\")"),
+                "必须有游戏根 MuoniumPlayer/ 数据根（issue #11）");
+        assertTrue(source.contains("AUTH_ROOT = new File(DATA_ROOT, \"auth\")"),
+                "凭据根必须是 MuoniumPlayer/auth：整合包导出打包 config/ 时绝不能裹进账号");
+        assertTrue(source.contains("CACHE_DIR = CACHE_ROOT"),
+                "CACHE_DIR 必须指向 MuoniumPlayer/cache：1.7GB 级音频缓存不能进导出包");
+        // 运行资产刻意留在 config：整合包作者自取舍，带了用户装机即用省下载
+        assertTrue(source.contains("BIN_DIR = new File(CONFIG_DIRECTORY, \"bin\")"),
+                "ffmpeg 等运行资产留在 config（整合包作者自取舍）");
+        assertTrue(source.contains("SKIJA_NATIVE_ROOT = new File(CONFIG_DIRECTORY, \"native/skija\")"),
+                "Skija 原生库留在 config（同上）");
+        // 迁移代码存在且参数化可测
+        assertTrue(source.contains("static void migrateDataOut("),
+                "issue #11 迁移必须抽成可测方法");
+        assertTrue(source.contains("migrateDataOut(CONFIG_DIRECTORY, CACHE_DIR, AUTH_ROOT, AUTH_MIGRATION_TARGET)"),
+                "静态块必须真的调用迁移");
     }
 
     @Test

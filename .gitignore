@@ -156,3 +156,9 @@ error-report-*/
 
 # Widevine/Apple 许可调试产物（一次性素材，含设备指纹，不入库）
 /g6work/
+
+# ---- issue #11：游戏根下的可再生日志根（缓存 + 账号凭据），七树的 run 产物不入库 ----
+/*/fabric/MuoniumPlayer/
+/*/neoforge/MuoniumPlayer/
+/*/forge/MuoniumPlayer/
+/MuoniumPlayer/

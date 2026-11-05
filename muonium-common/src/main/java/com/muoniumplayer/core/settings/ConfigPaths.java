@@ -10,15 +10,38 @@ import java.nio.file.StandardCopyOption;
 /**
  * MuoniumPlayer 持久化路径的集中注册表。
  *
- * <p>本模组自有的文件从不直接放在游戏目录下。所有内容都保存在
- * {@code config/muonium/} 下，这是 Minecraft 模组启动器和配置备份工具
- * 所期望的布局。旧的根目录文件和目录在首次使用时迁移；新位置已存在的
- * 文件始终优先。</p>
+ * <p>本模组自有的文件从不直接放在游戏目录下。持久化状态分两处：</p>
+ * <ul>
+ *   <li><b>{@code config/muonium/}</b> —— 配置、附件与运行时下载资产（ffmpeg、汽水后端、
+ *       字体、模型、Skija 原生库…）。这是 Minecraft 模组启动器和配置备份工具所期望的布局；
+ *       运行资产刻意留在这里：整合包作者发布时自己取舍带不带，带了用户装机即用、不必再
+ *       下载一遍。</li>
+ *   <li><b>{@code MuoniumPlayer/}</b>（游戏根目录）—— <b>可再生缓存</b>与<b>账号凭据</b>。
+ *       前者会涨到几个 GB（GitHub issue #11：整合包导出时启动器默认把 {@code config/}
+ *       整个打包，音乐缓存裹进去就是灾难）；后者是登录凭据，绝不能被打进分享出去的整合包。
+ *       两类都可在启动器导出向导里被默认排除，但目录挪出去之后连「作者忘了排除」都不怕。</li>
+ * </ul>
+ * <p>历史位置（游戏根散文件 → config/muonium；config/muonium/cache → MuoniumPlayer/cache；
+ * 凭据 → MuoniumPlayer/auth）在首次使用时自动迁移；新位置已存在的文件始终优先，
+ * 迁移任何一步失败都留在原地继续用——宁可多占一点空间，绝不丢用户数据。</p>
  */
 public final class ConfigPaths {
 
     /** 唯一由本模组自有的根目录。所有持久化状态都挂在此目录下。 */
     private static final File CONFIG_DIRECTORY = new File("config", "muonium");
+
+    /**
+     * 游戏根下的可再生日志根：缓存与账号凭据都在这里（类注释里的分工见上）。
+     * 与 {@link #CONFIG_DIRECTORY} 同为「本模组自有」，但生命周期不同——
+     * 整个目录删掉只损失缓存与登录态，配置与附件完好无损。
+     */
+    private static final File DATA_ROOT = new File("MuoniumPlayer");
+
+    /** 账号凭据根：所有平台的登录态（cookie / token / 账号列表）都收进这里。 */
+    private static final File AUTH_ROOT = new File(DATA_ROOT, "auth");
+
+    /** 可再生缓存根：音频缓存、歌词、封面、解码边车……整目录删掉只是退化成重走网络。 */
+    private static final File CACHE_ROOT = new File(DATA_ROOT, "cache");
 
     public static final File HUD = new File(CONFIG_DIRECTORY, "hud.json");
     public static final File PLAYER = new File(CONFIG_DIRECTORY, "player.json");
@@ -45,11 +68,11 @@ public final class ConfigPaths {
     /** Folia 背景的自定义图片（莫奈 / 漫游 / 嵌入共用一张）。 */
     public static final File FOLIA_BACKGROUND_DIR = new File(CONFIG_DIRECTORY, "folia_background");
 
-    public static final Path MUSIC_AUTH = CONFIG_DIRECTORY.toPath().resolve("music_auth.json");
-    public static final File NETEASE_ACCOUNTS = new File(CONFIG_DIRECTORY, "netease_accounts.json");
+    public static final Path MUSIC_AUTH = AUTH_ROOT.toPath().resolve("music_auth.json");
+    public static final File NETEASE_ACCOUNTS = new File(AUTH_ROOT, "netease_accounts.json");
 
     /** 旧版网易云 cookie 回退，与内置音源层的凭据存储分开保存。 */
-    public static final File NETEASE_COOKIE = new File(CONFIG_DIRECTORY, "netease_cookie.txt");
+    public static final File NETEASE_COOKIE = new File(AUTH_ROOT, "netease_cookie.txt");
 
     /**
      * YouTube 专用 HTTP 代理。
@@ -66,7 +89,7 @@ public final class ConfigPaths {
      * 取流仍然走匿名的那条 Android 客户端——实测登录态对它没必要，而把 Cookie
      * 发给每一个 CDN 请求反而是多余的暴露面。</p>
      */
-    public static final File YOUTUBE_AUTH = new File(CONFIG_DIRECTORY, "youtube_auth.json");
+    public static final File YOUTUBE_AUTH = new File(AUTH_ROOT, "youtube_auth.json");
     /** Automix（无缝曲目交接）偏好设置。 */
     public static final File GD_SOURCE = new File(CONFIG_DIRECTORY, "gd_source.json");
 
@@ -77,7 +100,7 @@ public final class ConfigPaths {
      * {@code MusicCredentialStore} 独占读写，它只认识网易云 cookie 与 QQ 的 musicid/musickey，
      * 写进去的第三个平台会在它下一次保存时被整段丢掉。</p>
      */
-    public static final File KUGOU_AUTH = new File(CONFIG_DIRECTORY, "kugou_auth.json");
+    public static final File KUGOU_AUTH = new File(AUTH_ROOT, "kugou_auth.json");
 
     /**
      * 汽水音乐的 Passport Cookie 与本地账号资料。
@@ -85,9 +108,9 @@ public final class ConfigPaths {
      * <p>同样不能写进 {@link #MUSIC_AUTH}；该文件由内置音源层的凭据存储整段重写。汽水登录
      * 由宿主自己完成，单独保存也便于退出登录时只清除汽水凭据。</p>
      */
-    public static final File QISHUI_AUTH = new File(CONFIG_DIRECTORY, "qishui_auth.json");
+    public static final File QISHUI_AUTH = new File(AUTH_ROOT, "qishui_auth.json");
     /** 汽水已保存账号列表；与当前活动会话分开，切换失败不会覆盖现账号。 */
-    public static final File QISHUI_ACCOUNTS = new File(CONFIG_DIRECTORY, "qishui_accounts.json");
+    public static final File QISHUI_ACCOUNTS = new File(AUTH_ROOT, "qishui_accounts.json");
 
     /**
      * Spotify 的本机配置：用户自备的 Client ID 与市场代码。
@@ -105,7 +128,7 @@ public final class ConfigPaths {
      * {@link #MUSIC_AUTH} 由内置音源层的凭据存储整段重写，只认识网易云 cookie 与 QQ 的
      * musicid/musickey，Spotify 的 access/refresh token 放进去会在下一次保存时被丢掉。</p>
      */
-    public static final File SPOTIFY_AUTH = new File(CONFIG_DIRECTORY, "spotify_auth.json");
+    public static final File SPOTIFY_AUTH = new File(AUTH_ROOT, "spotify_auth.json");
 
     /**
      * Apple Music 的本机配置：media-user-token、storefront 与本音源的偏好开关。
@@ -118,7 +141,7 @@ public final class ConfigPaths {
      * 它是整份明文的 Netscape cookie 文件，比 JSON 配置里的 token 敏感一个量级，分开放方便
      * 用户理解「删哪个是删凭据」。</p>
      */
-    public static final File APPLE_MUSIC_AUTH = new File(CONFIG_DIRECTORY, "apple_music_auth.json");
+    public static final File APPLE_MUSIC_AUTH = new File(AUTH_ROOT, "apple_music_auth.json");
 
     /**
      * 用户用「粘贴分享链接/ID」导入的汽水音乐歌单。
@@ -165,7 +188,7 @@ public final class ConfigPaths {
      * {@link #MUSIC_AUTH} 由内置音源层的凭据存储整段重写，只认识网易云 cookie 与 QQ 的
      * musicid/musickey。B 站的 {@code SESSDATA}/{@code bili_jct} 放进去会在下一次保存时被丢掉。</p>
      */
-    public static final File BILIBILI_AUTH = new File(CONFIG_DIRECTORY, "bilibili_auth.json");
+    public static final File BILIBILI_AUTH = new File(AUTH_ROOT, "bilibili_auth.json");
 
     /**
      * 一起听的行为开关。
@@ -288,10 +311,11 @@ public final class ConfigPaths {
     /**
      * Apple Music 的 cookies.txt 等本机凭据目录。
      */
-    public static final File APPLE_MUSIC_DIR = new File(CONFIG_DIRECTORY, "apple-music");
+    public static final File APPLE_MUSIC_DIR = new File(AUTH_ROOT, "apple-music");
 
-    // 由开发版构建产生的中间 Muonium 命名。
-    public static final File CACHE_DIR = new File(CONFIG_DIRECTORY, "cache");
+    // 可再生缓存根（GitHub issue #11）：音频缓存会涨到几个 GB，绝不能留在会被整合包
+    // 整体打包的 config/ 里。整目录删掉只是退化成重走网络，不丢任何用户数据。
+    public static final File CACHE_DIR = CACHE_ROOT;
 
     // 归一化之前的发布名称，过去曾位于游戏根目录。
     public static final File MUSIC_CACHE = new File(CACHE_DIR, "music");
@@ -493,6 +517,35 @@ public final class ConfigPaths {
     public static final File VIPER_SETTINGS = new File(VIPER_DIR, "settings.json");
     public static final File VIPER_PRESETS = new File(VIPER_DIR, "presets");
 
+    /**
+     * 凭据文件的旧→新映射表。声明顺序无关；用 LinkedHashMap 保持可读性。
+     * key 是 config/muonium 下的旧文件，value 是 MuoniumPlayer/auth 下的新文件。
+     */
+    private static final java.util.LinkedHashMap<File, File> AUTH_MIGRATION_TARGET = buildAuthMigration();
+
+    /** 旧凭据文件清单（迁移用）；新位置常量已在上面逐个改指 {@link #AUTH_ROOT}。 */
+    private static final File[] AUTH_MIGRATION_LEGACY;
+
+    private static java.util.LinkedHashMap<File, File> buildAuthMigration() {
+        java.util.LinkedHashMap<File, File> m = new java.util.LinkedHashMap<>();
+        m.put(new File(CONFIG_DIRECTORY, "music_auth.json"), MUSIC_AUTH.toFile());
+        m.put(new File(CONFIG_DIRECTORY, "netease_accounts.json"), NETEASE_ACCOUNTS);
+        m.put(new File(CONFIG_DIRECTORY, "netease_cookie.txt"), NETEASE_COOKIE);
+        m.put(new File(CONFIG_DIRECTORY, "youtube_auth.json"), YOUTUBE_AUTH);
+        m.put(new File(CONFIG_DIRECTORY, "kugou_auth.json"), KUGOU_AUTH);
+        m.put(new File(CONFIG_DIRECTORY, "qishui_auth.json"), QISHUI_AUTH);
+        m.put(new File(CONFIG_DIRECTORY, "qishui_accounts.json"), QISHUI_ACCOUNTS);
+        m.put(new File(CONFIG_DIRECTORY, "spotify_auth.json"), SPOTIFY_AUTH);
+        m.put(new File(CONFIG_DIRECTORY, "apple_music_auth.json"), APPLE_MUSIC_AUTH);
+        m.put(new File(CONFIG_DIRECTORY, "bilibili_auth.json"), BILIBILI_AUTH);
+        return m;
+    }
+
+    static {
+        java.util.LinkedHashMap<File, File> m = AUTH_MIGRATION_TARGET;
+        AUTH_MIGRATION_LEGACY = m.keySet().toArray(new File[0]);
+    }
+
     static {
         migrateLegacyFiles();
     }
@@ -518,9 +571,39 @@ public final class ConfigPaths {
         migrate(new File("NCMCookie.txt"), NETEASE_COOKIE);
         migrateDirectory(new File("MusicCache"), MUSIC_CACHE);
 
+        // ── issue #11：缓存与凭据迁出 config/muonium（新位置见 DATA_ROOT 的类注释）──
+        // 迁移全程「尽力而为」：任何一步失败都留在原地，下次启动再试。
+        // 凭据在迁移成功前绝不会被丢弃——move() 失败时旧文件原样在原位，读取方两个位置都找不到
+        // 新文件时会照常重新登录，但已迁移完成的场景（绝大多数）对用户完全无感。
+        migrateDataOut(CONFIG_DIRECTORY, CACHE_DIR, AUTH_ROOT, AUTH_MIGRATION_TARGET);
     }
 
-    private static void migrate(File legacy, File target) {
+    /**
+     * issue #11 的「缓存 + 凭据迁出 config」迁移，参数化以便测试：
+     * 把 {@code configDir/cache} 整目录挪到 {@code cacheDir}，把 {@code authMap} 里
+     * 旧文件逐个挪到新文件，再把 {@code configDir/apple-music} 挪到 {@code authRoot/apple-music}。
+     *
+     * <p>无感语义的三条保证：新位置已存在时旧文件原样保留（已有数据优先，绝不覆盖）；
+     * move 失败（被锁/跨盘失败）时旧文件留在原地，下次启动再试；迁移后 config 下的
+     * 空 cache 壳删掉，导出包里不再出现空目录。</p>
+     */
+    static void migrateDataOut(File configDir, File cacheDir, File authRoot,
+                               java.util.LinkedHashMap<File, File> authMap) {
+        migrateDirectory(new File(configDir, "cache"), cacheDir);
+        for (java.util.Map.Entry<File, File> e : authMap.entrySet()) {
+            migrate(e.getKey(), e.getValue());
+        }
+        migrateDirectory(new File(configDir, "apple-music"), new File(authRoot, "apple-music"));
+        File legacyCache = new File(configDir, "cache");
+        File[] leftover = legacyCache.listFiles();
+        if (leftover != null && leftover.length == 0) {
+            // noinspection ResultOfMethodCallIgnored
+            legacyCache.delete();
+        }
+    }
+
+
+    static void migrate(File legacy, File target) {
         if (legacy == null || target == null || !legacy.isFile() || target.exists()) {
             return;
         }
@@ -534,7 +617,7 @@ public final class ConfigPaths {
      * 移动旧版目录。如果目标已存在，则逐个合并子项；
      * 冲突项保留在旧位置而不是被覆盖。
      */
-    private static void migrateDirectory(File legacy, File target) {
+    static void migrateDirectory(File legacy, File target) {
         if (legacy == null || target == null || !legacy.isDirectory()) {
             return;
         }
@@ -569,7 +652,7 @@ public final class ConfigPaths {
         }
     }
 
-    private static void move(File legacy, File target) {
+    static void move(File legacy, File target) {
         try {
             Files.move(legacy.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException atomicMoveUnsupported) {
@@ -581,7 +664,7 @@ public final class ConfigPaths {
         }
     }
 
-    private static boolean ensureDirectory(File directory) {
+    static boolean ensureDirectory(File directory) {
         return directory == null || directory.isDirectory() || directory.mkdirs();
     }
 }
