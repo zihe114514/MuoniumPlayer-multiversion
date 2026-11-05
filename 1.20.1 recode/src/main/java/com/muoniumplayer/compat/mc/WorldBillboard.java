@@ -444,7 +444,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         int baseAlpha = (argb >>> 24) & 0xFF;
         int rgb = argb & 0xFFFFFF;
 
-        VertexConsumer vc = buffers.getBuffer(currentEffectType(rl));
+        VertexConsumer vc = buffers.getBuffer(currentGlyphType(rl));
         Matrix4f mat = poseStack.last().pose();
         emitTrail(vc, mat, xs, ys, count, half, baseAlpha, rgb, 1f, 1f);
         emitTrail(vc, mat, xs, ys, count, half * 3f, baseAlpha, rgb, 1f, 0.35f);
@@ -629,7 +629,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         float y0 = -(planeH * 0.5f);
         int argb = ((int) (Math.min(1f, alpha) * 255f) << 24) | (glowColor & 0xFFFFFF);
 
-        VertexConsumer vc = buffers.getBuffer(currentEffectType(glowRl));
+        VertexConsumer vc = buffers.getBuffer(currentGlyphType(glowRl));
         Matrix4f mat = poseStack.last().pose();
         float uMax = (float) w / glowW;
         float vMax = (float) h / glowH;
@@ -652,7 +652,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         if (rl == null) return;
         float half = Math.max(1f, sizePx * 0.5f);
 
-        VertexConsumer vc = buffers.getBuffer(currentEffectType(rl));
+        VertexConsumer vc = buffers.getBuffer(currentGlyphType(rl));
         Matrix4f mat = poseStack.last().pose();
         putHaloVertex(vc, mat, cx - half, cy - half, 0f, 0f, argb);
         putHaloVertex(vc, mat, cx - half, cy + half, 0f, 1f, argb);
@@ -719,7 +719,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 改写/释放纹理 —— 否则同帧双拖尾行时后行像素覆盖前行 quad（同尺寸）、
         // 或 release 后挂起 quad 引用已删纹理画出缺失纹理（变尺寸）
         if (pendingEffectRl == rl && buffers != null) {
-            buffers.endBatch(currentEffectType(rl));
+            buffers.endBatch(currentGlyphType(rl));
             pendingEffectRl = null;
         }
         try {
@@ -766,7 +766,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             return false;
         }
         int argb = Math.min(255, (int) (alpha * 255f)) << 24 | 0xFFFFFF;
-        VertexConsumer vc = buffers.getBuffer(currentEffectType(rl));
+        VertexConsumer vc = buffers.getBuffer(currentGlyphType(rl));
         Matrix4f mat = poseStack.last().pose();
         float uMax = (float) w / trailCanvasW[slot];
         float vMax = (float) h / trailCanvasH[slot];
@@ -829,7 +829,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 贴图旋转（folia star.rotation）：绕星心转四角
         float cos = (float) Math.cos(Math.toRadians(rotDeg));
         float sin = (float) Math.sin(Math.toRadians(rotDeg));
-        VertexConsumer vc = buffers.getBuffer(currentEffectType(rl));
+        VertexConsumer vc = buffers.getBuffer(currentGlyphType(rl));
         Matrix4f mat = poseStack.last().pose();
         // rot2 内联成标量（原先每角两次调用各 new float[2]，4 角 8 个分配）
         putHaloVertex(vc, mat, cx + (-half * cos + half * sin), cy + (-half * sin - half * cos), 0f, 0f, argb);
@@ -930,7 +930,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         float sin = (float) Math.sin(Math.toRadians(rotDeg));
         float hw = Math.max(0.5f, width * 0.5f);
         float hh = Math.max(0.5f, height * 0.5f);
-        VertexConsumer vc = buffers.getBuffer(currentEffectType(rl));
+        VertexConsumer vc = buffers.getBuffer(currentGlyphType(rl));
         Matrix4f mat = poseStack.last().pose();
         // 四角 = 中心 ± 长轴半宽·轴向 ± 短轴半宽·法向（旋转由 cos/sin 合成）
         float axX = cos, axY = sin;
@@ -994,7 +994,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         ResourceLocation rl = ringTexture();
         if (rl == null) return;
         float half = Math.max(1f, sizePx * 0.5f);
-        VertexConsumer vc = buffers.getBuffer(currentEffectType(rl));
+        VertexConsumer vc = buffers.getBuffer(currentGlyphType(rl));
         Matrix4f mat = poseStack.last().pose();
         putHaloVertex(vc, mat, cx - half, cy - half, 0f, 0f, argb);
         putHaloVertex(vc, mat, cx - half, cy + half, 0f, 1f, argb);
