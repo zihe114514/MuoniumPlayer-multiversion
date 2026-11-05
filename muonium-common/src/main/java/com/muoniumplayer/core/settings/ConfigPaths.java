@@ -493,6 +493,15 @@ public final class ConfigPaths {
     public static final File VIPER_SETTINGS = new File(VIPER_DIR, "settings.json");
     public static final File VIPER_PRESETS = new File(VIPER_DIR, "presets");
 
+    /**
+     * 模板预设：玩家自建与导入的预设（{@code *.mpreset.json}）。内置预设在 jar 里
+     * （{@code /muonium/presets/builtin/}），直接从类路径读、不铺副本，随 mod 更新。
+     */
+    public static final File PRESETS_DIR = new File(CONFIG_DIRECTORY, "presets");
+
+    /** 模板预设：每次套用前的自动备份，「撤销上次套用」从这里取，只保留最近几份。 */
+    public static final File PRESETS_BACKUP_DIR = new File(PRESETS_DIR, "backups");
+
     static {
         migrateLegacyFiles();
     }

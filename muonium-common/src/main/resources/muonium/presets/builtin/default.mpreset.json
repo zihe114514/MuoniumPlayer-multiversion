@@ -1,0 +1,29 @@
+{
+  "format": "muonium.preset",
+  "formatVersion": 1,
+  "base": "defaults",
+  "meta": {
+    "id": "builtin:default",
+    "name": "默认",
+    "author": "MuoniumPlayer",
+    "description": "恢复出厂：歌词、背景、灵动岛、主题、字体、动效、运镜、蝰蛇与场景声学全部回到初始值。布局位置与画质性能默认不动，需要时勾上。"
+  },
+  "facets": [
+    "visibility",
+    "lyrics",
+    "background",
+    "world",
+    "island",
+    "panel",
+    "theme",
+    "spectrum",
+    "font",
+    "motion",
+    "camera",
+    "layout",
+    "performance",
+    "viper",
+    "acoustics"
+  ],
+  "domains": {}
+}
