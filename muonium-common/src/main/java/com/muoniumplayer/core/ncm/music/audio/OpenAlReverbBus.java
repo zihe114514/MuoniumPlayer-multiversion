@@ -82,6 +82,14 @@ public final class OpenAlReverbBus {
         if (instance != null) {
             return instance;
         }
+        // 安卓(OpenSL 后端)实测:loopback 的 alcRenderSamplesSOFT 静默失败,
+        // 读回全 0 → 干声被顶掉(「放音响就没音乐」)。移动端行业惯例是
+        // 效果 DSP 全自研在 PCM 流上(与输出设备解耦),不依赖厂商 OpenAL
+        // 的效果扩展 —— 安卓永远走自研射线链。
+        if (com.muoniumplayer.render.skija.SkijaNatives.mappedPlatform().startsWith("android")) {
+            System.out.println(TAG + "安卓:移动端效果 DSP 全自研(不依赖 loopback),湿声走自研射线链");
+            return null;
+        }
         // 急停开关:哪台机器上总线另有古怪,-Dmuonium.acoustics.eax=false 一键退自研链,
         // 不用等发版(照 AudioPlayer 里 muonium.audio.openal 的先例)。
         if ("false".equalsIgnoreCase(System.getProperty("muonium.acoustics.eax", "true"))) {
