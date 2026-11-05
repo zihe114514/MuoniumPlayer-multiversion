@@ -140,6 +140,12 @@ public final class FoliaBackgroundConfig {
     public static String[] embedItems = new String[0];
     public static int embedSelected = -1;
 
+    /**
+     * 出厂值快照：全部字段初值落定之后、任何 {@link #load()} 之前抓一次 {@link #toJson()}。
+     * 必须声明在所有静态字段之后（静态初始化按文本顺序执行）。模板预设的「默认」读它。
+     */
+    private static final JsonObject DEFAULTS = toJson();
+
     // ==================== 读写 ====================
 
     private static File file() {
@@ -153,6 +159,22 @@ public final class FoliaBackgroundConfig {
         try {
             JsonObject root = JsonConfigStorage.readObject(target, GSON);
             if (root == null) return;
+            applyJson(root);
+        } catch (Throwable ignored) {
+            // 读坏了就保持当前值：下一个 addProperty 会把整份配置写回干净状态。
+        }
+    }
+
+    /**
+     * 按读档语义套用一份 JSON：逐项夹取与旧格式迁移和 {@link #load()} 完全一致；<b>不落盘</b>。
+     *
+     * <p>模板预设先取 {@link #toJson()} 的完整快照、叠上预设里的值再整份交给这里。注意这一份里
+     * {@code backgroundKind} / {@code mode} 的缺省值不是当前值（旧格式迁移需要），所以只该喂完整快照，
+     * 不要喂稀疏片段。</p>
+     */
+    public static synchronized void applyJson(JsonObject root) {
+        if (root == null) return;
+        try {
             backgroundKind = clampInt(getInt(root, "backgroundKind",
                     getBoolean(root, "enabled", true) ? 2 : 0), 0, 2);
             mode = readMode(root);
@@ -211,84 +233,92 @@ public final class FoliaBackgroundConfig {
             embedItems = readEmbedItems(embed);
             embedSelected = clampInt(getInt(embed, "selected", embedSelected), -1, embedItems.length - 1);
         } catch (Throwable ignored) {
-            // 读坏了就保持当前值：下一个 addProperty 会把整份配置写回干净状态。
+            // 同 load()：坏在哪一项就停在哪一项，前面已读进来的保留。
         }
     }
 
     /** 把当前值整份写回磁盘。调用点只在「松手 / 点一下开关」之后。 */
     public static synchronized void save() {
         try {
-            JsonObject root = new JsonObject();
-            root.addProperty("backgroundKind", backgroundKind);
-            root.addProperty("mode", mode);
-            root.addProperty("staticMode", staticMode);
-            root.addProperty("audioResponse", audioResponse);
-
-            JsonObject common = new JsonObject();
-            common.addProperty("useCoverColorBg", commonUseCoverColorBg);
-            common.addProperty("coverOpacity", commonCoverOpacity);
-            common.addProperty("disableGeometric", commonDisableGeometric);
-            common.addProperty("disableVignette", commonDisableVignette);
-            root.add("common", common);
-
-            JsonObject latent = new JsonObject();
-            latent.addProperty("displayMode", latentDisplayMode);
-            latent.addProperty("colorSource", latentColorSource);
-            latent.addProperty("dynamicOnlyInPlayer", latentDynamicOnlyInPlayer);
-            latent.addProperty("enhancedBeatResponse", latentEnhancedBeatResponse);
-            latent.addProperty("ditheringSpeed", latentDitheringSpeed);
-            latent.addProperty("ditheringAudioSpeed", latentDitheringAudioSpeed);
-            latent.addProperty("ditheringSize", latentDitheringSize);
-            latent.addProperty("ditheringOpacity", latentDitheringOpacity);
-            latent.addProperty("meshSpeed", latentMeshSpeed);
-            latent.addProperty("meshAudioSpeed", latentMeshAudioSpeed);
-            latent.addProperty("meshDistortion", latentMeshDistortion);
-            latent.addProperty("meshSwirl", latentMeshSwirl);
-            latent.addProperty("overlayEnabled", latentOverlayEnabled);
-            latent.addProperty("overlayOpacity", latentOverlayOpacity);
-            root.add("latent", latent);
-
-
-            JsonObject nomand = new JsonObject();
-            nomand.addProperty("imageSource", nomandImageSource);
-            nomand.addProperty("effect", nomandEffect);
-            nomand.addProperty("ditheringType", nomandDitheringType);
-            nomand.addProperty("size", nomandSize);
-            nomand.addProperty("colorSteps", nomandColorSteps);
-            nomand.addProperty("originalColors", nomandOriginalColors);
-            nomand.addProperty("inverted", nomandInverted);
-            nomand.addProperty("flutedGlassSize", nomandFlutedGlassSize);
-            nomand.addProperty("flutedGlassDistortion", nomandFlutedGlassDistortion);
-            nomand.addProperty("flutedGlassBlur", nomandFlutedGlassBlur);
-            nomand.addProperty("paperTextureContrast", nomandPaperTextureContrast);
-            nomand.addProperty("paperTextureRoughness", nomandPaperTextureRoughness);
-            nomand.addProperty("paperTextureFiber", nomandPaperTextureFiber);
-            nomand.addProperty("halftoneDotsSize", nomandHalftoneDotsSize);
-            nomand.addProperty("halftoneDotsRadius", nomandHalftoneDotsRadius);
-            nomand.addProperty("halftoneDotsContrast", nomandHalftoneDotsContrast);
-            nomand.addProperty("halftoneDotsOriginalColors", nomandHalftoneDotsOriginalColors);
-            nomand.addProperty("halftoneDotsInverted", nomandHalftoneDotsInverted);
-            nomand.addProperty("lensDistortionSpread", nomandLensDistortionSpread);
-            nomand.addProperty("lensDistortionBulge", nomandLensDistortionBulge);
-            nomand.addProperty("lensDistortionDispersion", nomandLensDistortionDispersion);
-            nomand.addProperty("overlayEnabled", nomandOverlayEnabled);
-            nomand.addProperty("overlayOpacity", nomandOverlayOpacity);
-            root.add("nomand", nomand);
-
-            JsonObject embed = new JsonObject();
-            StringBuilder list = new StringBuilder();
-            for (int i = 0; i < embedItems.length; i++) {
-                if (i > 0) list.append('\n');
-                list.append(embedItems[i]);
-            }
-            embed.addProperty("items", list.toString());
-            embed.addProperty("selected", embedSelected);
-            root.add("embed", embed);
-
-            JsonConfigStorage.writeObject(file(), GSON, root);
+            JsonConfigStorage.writeObject(file(), GSON, toJson());
         } catch (Throwable ignored) {
             // 落盘失败不阻断渲染：下一次改动会再试。
         }
+    }
+
+    /** 当前全部可落盘状态的 JSON 投影（即 {@link #save()} 写盘的那一份）；纯内存，不碰磁盘。 */
+    public static synchronized JsonObject toJson() {
+        JsonObject root = new JsonObject();
+        root.addProperty("backgroundKind", backgroundKind);
+        root.addProperty("mode", mode);
+        root.addProperty("staticMode", staticMode);
+        root.addProperty("audioResponse", audioResponse);
+
+        JsonObject common = new JsonObject();
+        common.addProperty("useCoverColorBg", commonUseCoverColorBg);
+        common.addProperty("coverOpacity", commonCoverOpacity);
+        common.addProperty("disableGeometric", commonDisableGeometric);
+        common.addProperty("disableVignette", commonDisableVignette);
+        root.add("common", common);
+
+        JsonObject latent = new JsonObject();
+        latent.addProperty("displayMode", latentDisplayMode);
+        latent.addProperty("colorSource", latentColorSource);
+        latent.addProperty("dynamicOnlyInPlayer", latentDynamicOnlyInPlayer);
+        latent.addProperty("enhancedBeatResponse", latentEnhancedBeatResponse);
+        latent.addProperty("ditheringSpeed", latentDitheringSpeed);
+        latent.addProperty("ditheringAudioSpeed", latentDitheringAudioSpeed);
+        latent.addProperty("ditheringSize", latentDitheringSize);
+        latent.addProperty("ditheringOpacity", latentDitheringOpacity);
+        latent.addProperty("meshSpeed", latentMeshSpeed);
+        latent.addProperty("meshAudioSpeed", latentMeshAudioSpeed);
+        latent.addProperty("meshDistortion", latentMeshDistortion);
+        latent.addProperty("meshSwirl", latentMeshSwirl);
+        latent.addProperty("overlayEnabled", latentOverlayEnabled);
+        latent.addProperty("overlayOpacity", latentOverlayOpacity);
+        root.add("latent", latent);
+
+        JsonObject nomand = new JsonObject();
+        nomand.addProperty("imageSource", nomandImageSource);
+        nomand.addProperty("effect", nomandEffect);
+        nomand.addProperty("ditheringType", nomandDitheringType);
+        nomand.addProperty("size", nomandSize);
+        nomand.addProperty("colorSteps", nomandColorSteps);
+        nomand.addProperty("originalColors", nomandOriginalColors);
+        nomand.addProperty("inverted", nomandInverted);
+        nomand.addProperty("flutedGlassSize", nomandFlutedGlassSize);
+        nomand.addProperty("flutedGlassDistortion", nomandFlutedGlassDistortion);
+        nomand.addProperty("flutedGlassBlur", nomandFlutedGlassBlur);
+        nomand.addProperty("paperTextureContrast", nomandPaperTextureContrast);
+        nomand.addProperty("paperTextureRoughness", nomandPaperTextureRoughness);
+        nomand.addProperty("paperTextureFiber", nomandPaperTextureFiber);
+        nomand.addProperty("halftoneDotsSize", nomandHalftoneDotsSize);
+        nomand.addProperty("halftoneDotsRadius", nomandHalftoneDotsRadius);
+        nomand.addProperty("halftoneDotsContrast", nomandHalftoneDotsContrast);
+        nomand.addProperty("halftoneDotsOriginalColors", nomandHalftoneDotsOriginalColors);
+        nomand.addProperty("halftoneDotsInverted", nomandHalftoneDotsInverted);
+        nomand.addProperty("lensDistortionSpread", nomandLensDistortionSpread);
+        nomand.addProperty("lensDistortionBulge", nomandLensDistortionBulge);
+        nomand.addProperty("lensDistortionDispersion", nomandLensDistortionDispersion);
+        nomand.addProperty("overlayEnabled", nomandOverlayEnabled);
+        nomand.addProperty("overlayOpacity", nomandOverlayOpacity);
+        root.add("nomand", nomand);
+
+        JsonObject embed = new JsonObject();
+        StringBuilder list = new StringBuilder();
+        for (int i = 0; i < embedItems.length; i++) {
+            if (i > 0) list.append('\n');
+            list.append(embedItems[i]);
+        }
+        embed.addProperty("items", list.toString());
+        embed.addProperty("selected", embedSelected);
+        root.add("embed", embed);
+        return root;
+    }
+
+    /** 出厂值的 JSON 投影（深拷贝）。 */
+    public static JsonObject defaultsJson() {
+        return DEFAULTS.deepCopy();
     }
 
     /** 把全部字段恢复出厂（folia 默认）。 */

@@ -107,6 +107,12 @@ public final class CineSettings {
      */
     private static float minShotSeconds = MIN_SHOT_SECONDS_DEFAULT;
 
+    /**
+     * 出厂值快照：全部字段初值落定之后、任何 load 之前抓一次。必须声明在所有静态字段之后。
+     * 模板预设的「默认」读它。
+     */
+    private static final JsonObject DEFAULTS = toJsonLocked();
+
     private CineSettings() {
     }
 
@@ -443,6 +449,36 @@ public final class CineSettings {
         return Math.max(min, Math.min(max, value));
     }
 
+    /** 当前全部设置的 JSON 投影（即 cine.json 的内容）。模板预设取快照用。 */
+    public static JsonObject toJson() {
+        load();
+        synchronized (LOCK) {
+            return toJsonLocked();
+        }
+    }
+
+    /** 出厂值的 JSON 投影（深拷贝）。 */
+    public static JsonObject defaultsJson() {
+        return DEFAULTS.deepCopy();
+    }
+
+    /**
+     * 按读档语义套用一份 JSON 并立即落盘：逐项钳制与 {@code load()} 完全一致，缺的键保留当前值。
+     * 模板预设的入口。
+     */
+    public static void applyJson(JsonObject root) {
+        if (root == null) return;
+        load();
+        synchronized (LOCK) {
+            try {
+                readLocked(root);
+            } catch (Throwable ignored) {
+                // 同 load()：坏在哪一项就停在哪一项。
+            }
+            saveLocked();
+        }
+    }
+
     private static void load() {
         synchronized (LOCK) {
             if (loaded) return;
@@ -453,28 +489,33 @@ public final class CineSettings {
                 if (!file.isFile()) return;
                 JsonObject root = JsonConfigStorage.readObject(file, GSON);
                 if (root == null) return;
-                enabled = optBool(root, "enabled", false);
-                idleSeconds = clamp(optInt(root, "idleSeconds", idleSeconds), IDLE_SECONDS_MIN, IDLE_SECONDS_MAX);
-                shotBeats = clamp(optInt(root, "shotBeats", shotBeats), SHOT_BEATS_MIN, SHOT_BEATS_MAX);
-                speedMultiplier = clamp(optFloat(root, "speedMultiplier", speedMultiplier), SPEED_MIN, SPEED_MAX);
-                fovPunchDegrees = clamp(optFloat(root, "fovPunchDegrees", fovPunchDegrees), FOV_PUNCH_MIN, FOV_PUNCH_MAX);
-                handheldIntensity = clamp(optFloat(root, "handheldIntensity", handheldIntensity), HANDHELD_MIN, HANDHELD_MAX);
-                hideHud = optBool(root, "hideHud", hideHud);
-                showCinematicBars = optBool(root, "showCinematicBars", showCinematicBars);
-                cinematicBarPercent = clamp(optInt(root, "cinematicBarPercent", cinematicBarPercent), 0, BAR_PERCENT_MAX);
-                transitionMask = optInt(root, "transitionMask", transitionMask) & TRANSITION_MASK_ALL;
-                transitionSeconds = clamp(optFloat(root, "transitionSeconds", transitionSeconds), 0.1f, 3f);
-                enableMobFocus = optBool(root, "enableMobFocus", enableMobFocus);
-                mobFocusRange = clamp(optFloat(root, "mobFocusRange", mobFocusRange), MOB_RANGE_MIN, MOB_RANGE_MAX);
-                excludeHostileMobs = optBool(root, "excludeHostileMobs", excludeHostileMobs);
-                excludeBats = optBool(root, "excludeBats", excludeBats);
-                trackingSoftness = clamp(optFloat(root, "trackingSoftness", trackingSoftness), SOFTNESS_MIN, SOFTNESS_MAX);
-                showStatusMessages = optBool(root, "showStatusMessages", showStatusMessages);
-                minShotSeconds = clamp(optFloat(root, "minShotSeconds", minShotSeconds), MIN_SHOT_SECONDS_MIN, MIN_SHOT_SECONDS_MAX);
+                readLocked(root);
             } catch (Throwable ignored) {
                 // 配置坏了用默认值,不能影响播放。
             }
         }
+    }
+
+    /** 逐项读入并钳制；缺的键保留当前值。调用方持有 LOCK。 */
+    private static void readLocked(JsonObject root) {
+        enabled = optBool(root, "enabled", enabled);
+        idleSeconds = clamp(optInt(root, "idleSeconds", idleSeconds), IDLE_SECONDS_MIN, IDLE_SECONDS_MAX);
+        shotBeats = clamp(optInt(root, "shotBeats", shotBeats), SHOT_BEATS_MIN, SHOT_BEATS_MAX);
+        speedMultiplier = clamp(optFloat(root, "speedMultiplier", speedMultiplier), SPEED_MIN, SPEED_MAX);
+        fovPunchDegrees = clamp(optFloat(root, "fovPunchDegrees", fovPunchDegrees), FOV_PUNCH_MIN, FOV_PUNCH_MAX);
+        handheldIntensity = clamp(optFloat(root, "handheldIntensity", handheldIntensity), HANDHELD_MIN, HANDHELD_MAX);
+        hideHud = optBool(root, "hideHud", hideHud);
+        showCinematicBars = optBool(root, "showCinematicBars", showCinematicBars);
+        cinematicBarPercent = clamp(optInt(root, "cinematicBarPercent", cinematicBarPercent), 0, BAR_PERCENT_MAX);
+        transitionMask = optInt(root, "transitionMask", transitionMask) & TRANSITION_MASK_ALL;
+        transitionSeconds = clamp(optFloat(root, "transitionSeconds", transitionSeconds), 0.1f, 3f);
+        enableMobFocus = optBool(root, "enableMobFocus", enableMobFocus);
+        mobFocusRange = clamp(optFloat(root, "mobFocusRange", mobFocusRange), MOB_RANGE_MIN, MOB_RANGE_MAX);
+        excludeHostileMobs = optBool(root, "excludeHostileMobs", excludeHostileMobs);
+        excludeBats = optBool(root, "excludeBats", excludeBats);
+        trackingSoftness = clamp(optFloat(root, "trackingSoftness", trackingSoftness), SOFTNESS_MIN, SOFTNESS_MAX);
+        showStatusMessages = optBool(root, "showStatusMessages", showStatusMessages);
+        minShotSeconds = clamp(optFloat(root, "minShotSeconds", minShotSeconds), MIN_SHOT_SECONDS_MIN, MIN_SHOT_SECONDS_MAX);
     }
 
     private static void saveLocked() {

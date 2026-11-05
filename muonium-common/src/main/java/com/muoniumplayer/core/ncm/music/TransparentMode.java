@@ -36,12 +36,16 @@ public final class TransparentMode {
     /** 变宽幅度的合法区间（百分比）：最大压缩时额外涨出的横向宽度，深度不变。 */
     public static final float WIDTH_MIN = 0f, WIDTH_MAX = 200f;
 
+    /** 出厂值：字段初值与模板预设的「默认」共用这一份。 */
+    public static final boolean DEFAULT_ENABLED = false;
+    public static final float DEFAULT_COMPRESSION = 50f, DEFAULT_WIDTH = 50f;
+
     private static boolean loaded;
-    private static boolean enabled;
+    private static boolean enabled = DEFAULT_ENABLED;
     /** 最大压缩幅度百分比：squash=1 时模型高度压到 1-compression/100。 */
-    private static float compressionPercent = 50f;
+    private static float compressionPercent = DEFAULT_COMPRESSION;
     /** 最大变宽幅度百分比：squash=1 时模型宽度涨到 1+width/100。 */
-    private static float widthPercent = 50f;
+    private static float widthPercent = DEFAULT_WIDTH;
 
     // ---- 果冻弹簧（渲染线程单消费者，非线程安全；见 springSquash）----
     /** 弹簧当前位移：0 = 原样，正 = 压扁，负 = 过冲拉高。 */
@@ -114,6 +118,23 @@ public final class TransparentMode {
 
     public static void setWidthPercent(float value) {
         write(null, null, value);
+    }
+
+    /**
+     * 一次写入三项、只落一次盘（模板预设用）。开关翻转时与 {@link #setEnabled} 一样把弹簧归位。
+     *
+     * <p>先 {@code load()}：单项 setter 不读盘，若在从未读过的状态下写入，会把磁盘上另外两项覆盖成初值。</p>
+     */
+    public static void applyAll(boolean enable, float compression, float width) {
+        load();
+        boolean flipped;
+        synchronized (LOCK) {
+            flipped = enabled != enable;
+        }
+        if (flipped) {
+            resetSpring();
+        }
+        write(enable, compression, width);
     }
 
     /**

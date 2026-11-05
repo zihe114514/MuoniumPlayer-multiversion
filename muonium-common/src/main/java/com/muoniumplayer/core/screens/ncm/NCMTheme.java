@@ -277,30 +277,47 @@ public final class NCMTheme {
             if (!themeEntry.getValue().isJsonObject()) {
                 continue;
             }
-            EnumMap<NCMScreen.ColorType, Integer> map = new EnumMap<NCMScreen.ColorType, Integer>(NCMScreen.ColorType.class);
-            for (Map.Entry<String, com.google.gson.JsonElement> colorEntry
-                    : themeEntry.getValue().getAsJsonObject().entrySet()) {
-                NCMScreen.ColorType type = parseColorType(colorEntry.getKey());
-                if (type == null) {
-                    continue;
-                }
-                try {
-                    String raw = colorEntry.getValue().getAsString();
-                    if (raw == null) {
-                        continue;
-                    }
-                    raw = raw.trim();
-                    if (raw.startsWith("#")) {
-                        raw = raw.substring(1);
-                    }
-                    map.put(type, Integer.valueOf((int) (Long.parseLong(raw, 16) & 0xFFFFFFL)));
-                } catch (Throwable ignored) {
-                }
-            }
+            EnumMap<NCMScreen.ColorType, Integer> map = parseColorMap(themeEntry.getValue().getAsJsonObject());
             if (!map.isEmpty()) {
                 CUSTOM_BY_THEME.put(themeEntry.getKey(), map);
             }
         }
+    }
+
+    /** 一款主题的调色表：{@code {"ACCENT": "#RRGGBB", ...}}。认不出的键与坏值逐项跳过。 */
+    private static EnumMap<NCMScreen.ColorType, Integer> parseColorMap(JsonObject colors) {
+        EnumMap<NCMScreen.ColorType, Integer> map = new EnumMap<NCMScreen.ColorType, Integer>(NCMScreen.ColorType.class);
+        for (Map.Entry<String, com.google.gson.JsonElement> colorEntry : colors.entrySet()) {
+            NCMScreen.ColorType type = parseColorType(colorEntry.getKey());
+            if (type == null) {
+                continue;
+            }
+            try {
+                String raw = colorEntry.getValue().getAsString();
+                if (raw == null) {
+                    continue;
+                }
+                raw = raw.trim();
+                if (raw.startsWith("#")) {
+                    raw = raw.substring(1);
+                }
+                map.put(type, Integer.valueOf((int) (Long.parseLong(raw, 16) & 0xFFFFFFL)));
+            } catch (Throwable ignored) {
+            }
+        }
+        return map;
+    }
+
+    private static JsonObject writeColorMap(EnumMap<NCMScreen.ColorType, Integer> map) {
+        JsonObject colors = new JsonObject();
+        if (map == null) {
+            return colors;
+        }
+        for (Map.Entry<NCMScreen.ColorType, Integer> colorEntry : map.entrySet()) {
+            colors.addProperty(colorEntry.getKey().name(),
+                    String.format("#%06X", Integer.valueOf(colorEntry.getValue().intValue() & 0xFFFFFF)));
+        }
+        return colors;
     }
 
     private static JsonObject writeCustomColors() {
@@ -309,14 +326,120 @@ public final class NCMTheme {
             if (themeEntry.getValue() == null || themeEntry.getValue().isEmpty()) {
                 continue;
             }
-            JsonObject colors = new JsonObject();
-            for (Map.Entry<NCMScreen.ColorType, Integer> colorEntry : themeEntry.getValue().entrySet()) {
-                colors.addProperty(colorEntry.getKey().name(),
-                        String.format("#%06X", Integer.valueOf(colorEntry.getValue().intValue() & 0xFFFFFF)));
-            }
-            root.add(themeEntry.getKey(), colors);
+            root.add(themeEntry.getKey(), writeColorMap(themeEntry.getValue()));
         }
         return root;
+    }
+
+    // ==================== 模板预设视图 ====================
+    //
+    // {"theme": {"id": "aurora_tide", "customColors": {...}}, "colorSource": 0}
+    //
+    // 预设只带「当前主题 + 这一款的自定义配色 + 配色来源」：其余主题的私人调色不属于这一套外观，
+    // 也不该随分享流出去。主题 id 与它的自定义配色是<b>一个整体</b>：调色归属于某一款主题，拆成两个
+    // 键的话，只写了主题 id 的预设会把「当前主题的调色」错套到新主题上。
+    // 配色来源虽然落在 hud.json，切换却必须走 setColorSource（过渡动画与动态配色的重置都在那里），
+    // 所以由这里代管，HUD 那一侧把它排除在预设之外。
+
+    /** 出厂主题。 */
+    public static ThemePreset defaultTheme() {
+        return ThemePreset.VELVET_ROSE;
+    }
+
+    /** 按 id 查主题；认不出返回 {@code null}（{@code ThemePreset.fromId} 会静默回落到默认主题，预设里不能这样）。 */
+    public static ThemePreset byIdOrNull(String id) {
+        if (id == null) {
+            return null;
+        }
+        for (ThemePreset preset : ThemePreset.values()) {
+            if (preset.getId().equalsIgnoreCase(id.trim())) {
+                return preset;
+            }
+        }
+        return null;
+    }
+
+    /** 当前外观的预设视图。 */
+    public static synchronized JsonObject presetView() {
+        load();
+        JsonObject view = new JsonObject();
+        view.add("theme", themeUnit(current, CUSTOM_BY_THEME.get(current.getId())));
+        view.addProperty("colorSource", HudConfig.themeColorSource);
+        return view;
+    }
+
+    /** 出厂视图：默认主题、没有自定义配色、配色跟随主题。 */
+    public static JsonObject defaultPresetView() {
+        JsonObject view = new JsonObject();
+        view.add("theme", themeUnit(defaultTheme(), null));
+        view.addProperty("colorSource", ThemeColorSource.PRESET.ordinal());
+        return view;
+    }
+
+    private static JsonObject themeUnit(ThemePreset theme, EnumMap<NCMScreen.ColorType, Integer> colors) {
+        JsonObject unit = new JsonObject();
+        unit.addProperty("id", theme.getId());
+        unit.add("customColors", writeColorMap(colors));
+        return unit;
+    }
+
+    /**
+     * 套用一份预设视图：切到目标主题；视图里带了 {@code customColors} 就把<b>这一款</b>主题的自定义
+     * 配色整体换成给定值，没带就保留这一款原有的调色。主题或配色有变化时走与手动切换同一条
+     * 950ms 平滑过渡，并立即落盘。
+     *
+     * @return {@code null} 表示主题部分已套用；否则是一句给玩家看的原因（版本里没有这款主题 /
+     *         当前设备不可选），此时主题与配色都保持不变，配色来源照常套用
+     */
+    public static synchronized String applyPresetView(JsonObject view) {
+        load();
+        if (view == null) {
+            return null;
+        }
+        String problem = null;
+        ThemePreset target = current;
+        JsonObject unit = view.has("theme") && view.get("theme").isJsonObject()
+                ? view.getAsJsonObject("theme") : null;
+        if (unit != null && unit.has("id") && unit.get("id").isJsonPrimitive()) {
+            String id = unit.get("id").getAsString();
+            ThemePreset found = byIdOrNull(id);
+            if (found == null) {
+                problem = "主题「" + id + "」在这个版本里没有，保留当前主题";
+            } else if (!selectableLocked(found)) {
+                problem = "「" + found.getDisplayName() + "」在当前设备上不可用，保留当前主题";
+            } else {
+                target = found;
+            }
+        }
+        if (unit != null && problem == null) {
+            EnumMap<NCMScreen.ColorType, Integer> colors = null;
+            if (unit.has("customColors") && unit.get("customColors").isJsonObject()) {
+                colors = parseColorMap(unit.getAsJsonObject("customColors"));
+            }
+            EnumMap<NCMScreen.ColorType, Integer> before = CUSTOM_BY_THEME.get(target.getId());
+            boolean colorsChange = colors != null && !colors.equals(before == null
+                    ? new EnumMap<NCMScreen.ColorType, Integer>(NCMScreen.ColorType.class) : before);
+            if (target != current || colorsChange) {
+                // 先以「当前画面」为起点开过渡，再改主题与配色：反过来的话起点就已经是新颜色，看不到过渡。
+                beginTransitionLocked();
+                if (colorsChange) {
+                    if (colors.isEmpty()) {
+                        CUSTOM_BY_THEME.remove(target.getId());
+                    } else {
+                        CUSTOM_BY_THEME.put(target.getId(), colors);
+                    }
+                }
+                current = target;
+                save();
+            }
+        }
+        if (view.has("colorSource") && view.get("colorSource").isJsonPrimitive()) {
+            try {
+                setColorSource(view.get("colorSource").getAsInt());
+            } catch (Throwable ignored) {
+            }
+        }
+        return problem;
     }
 
     private static NCMScreen.ColorType parseColorType(String name) {

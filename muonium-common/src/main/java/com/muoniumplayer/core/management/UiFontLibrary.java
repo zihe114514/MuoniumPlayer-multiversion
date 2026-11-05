@@ -190,13 +190,102 @@ public final class UiFontLibrary {
             return UiFont.system(family, localizedFamilyName(family));
         }
         if (savedId.startsWith("file:")) {
-            File file = new File(ConfigPaths.FONT_DIR, savedId.substring("file:".length()));
-            if (!file.isFile()) {
+            File file = fontDirFile(savedId.substring("file:".length()));
+            if (file == null || !file.isFile()) {
                 return null;
             }
             return UiFont.external(file, stripExtension(file.getName()));
         }
         return null;
+    }
+
+    /**
+     * {@code file:} id 里的名字只认 fonts 目录里的<b>一个文件名</b>；带路径分隔符、{@code .} / {@code ..}，
+     * 或规范化之后不在目录里的一律返回 {@code null}。
+     *
+     * <p>以前这个 id 只来自本机自己写的 ui_font.json，直接拼路径无妨；现在它也可能来自别人分享的
+     * 模板预设，{@code file:../../x.ttf} 这种写法不拦就是路径穿越。</p>
+     */
+    private static File fontDirFile(String name) {
+        if (name == null || name.isEmpty() || name.equals(".") || name.equals("..")
+                || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.indexOf('\0') >= 0) {
+            return null;
+        }
+        File file = new File(ConfigPaths.FONT_DIR, name);
+        try {
+            File parent = file.getCanonicalFile().getParentFile();
+            if (parent == null || !parent.equals(ConfigPaths.FONT_DIR.getCanonicalFile())) {
+                return null;
+            }
+        } catch (Throwable unresolvable) {
+            return null;
+        }
+        return file;
+    }
+
+    // ════════════════════════════ 模板预设 ════════════════════════════
+
+    /** 当前生效（或正在装配）的字体 id：{@code builtin} / {@code system:族名} / {@code file:文件名}。 */
+    public static String activeId() {
+        String pending = pendingId;
+        if (pending != null) {
+            return pending;
+        }
+        UiFont font = active;
+        return font == null ? UiFont.BUILTIN.getId() : font.getId();
+    }
+
+    /** 出厂字体的 id（首次运行时的首选）。 */
+    public static String defaultFontId() {
+        return DEFAULT_FONT_ID;
+    }
+
+    /**
+     * 按持久化 id 切换字体。与 {@link #select} 同一条路：解析在后台、装配在主线程。
+     *
+     * <p>出厂字体本机没有时回内置字体，与首次启动的口径一致；其它字体本机没有就保持当前字体不动。</p>
+     *
+     * @return {@code null} 表示已开始切换（或本来就是它）；否则是一句给玩家看的「为什么没换」
+     */
+    public static String selectById(String id) {
+        String wanted = id == null ? "" : id.trim();
+        String problem = unavailableReason(wanted);
+        if (problem != null) {
+            return problem;
+        }
+        if (wanted.equals(activeId())) {
+            return null;
+        }
+        UiFont font = UiFont.BUILTIN.getId().equals(wanted) ? null : resolveSaved(wanted);
+        if (font == null) {
+            // 内置字体，或本机没有的出厂字体：都回内置，与首次启动同一口径。
+            if (!UiFont.BUILTIN.getId().equals(activeId())) {
+                restoreBuiltin();
+            }
+            return null;
+        }
+        select(font);
+        return null;
+    }
+
+    /**
+     * 这个字体 id 在本机能不能套用：{@code null} = 能；否则是一句给玩家看的原因。只读，不切换。
+     *
+     * <p>出厂字体本机没有不算「不能」：套用时会回到内置字体，与首次启动一致。</p>
+     */
+    public static String unavailableReason(String id) {
+        String wanted = id == null ? "" : id.trim();
+        if (wanted.isEmpty()) {
+            return "预设里没有写字体，保留当前字体";
+        }
+        if (UiFont.BUILTIN.getId().equals(wanted) || DEFAULT_FONT_ID.equals(wanted) || wanted.equals(activeId())) {
+            return null;
+        }
+        if (resolveSaved(wanted) != null) {
+            return null;
+        }
+        int colon = wanted.indexOf(':');
+        return "本机没有字体「" + (colon >= 0 ? wanted.substring(colon + 1) : wanted) + "」，保留当前字体";
     }
 
     // ════════════════════════════ 切换 ════════════════════════════

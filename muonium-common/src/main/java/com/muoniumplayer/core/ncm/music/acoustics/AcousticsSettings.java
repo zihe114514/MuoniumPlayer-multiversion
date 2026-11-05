@@ -21,13 +21,20 @@ public final class AcousticsSettings {
     private static final Gson GSON = new GsonBuilder().create();
     private static final Object LOCK = new Object();
 
+    /** 出厂值:字段初值、读档兜底与模板预设的「默认」共用这一份。 */
+    public static final boolean DEFAULT_ENABLED = false;
+    public static final boolean DEFAULT_SUBMERSION = true;
+    public static final boolean DEFAULT_ENCLOSURE = true;
+    public static final boolean DEFAULT_RAINFALL = true;
+    public static final int DEFAULT_STRENGTH_PERCENT = 100;
+
     private static boolean loaded;
-    private static boolean enabled;
-    private static boolean submersion = true;
-    private static boolean enclosure = true;
-    private static boolean rainfall = true;
+    private static boolean enabled = DEFAULT_ENABLED;
+    private static boolean submersion = DEFAULT_SUBMERSION;
+    private static boolean enclosure = DEFAULT_ENCLOSURE;
+    private static boolean rainfall = DEFAULT_RAINFALL;
     /** 强度档 0..100(直接存 UI 口径,避免两套单位换算)。 */
-    private static int strengthPercent = 100;
+    private static int strengthPercent = DEFAULT_STRENGTH_PERCENT;
 
     private AcousticsSettings() {
     }
@@ -125,11 +132,11 @@ public final class AcousticsSettings {
                 if (!file.isFile()) return;
                 JsonObject root = JsonConfigStorage.readObject(file, GSON);
                 if (root == null) return;
-                enabled = optBool(root, "enabled", false);
-                submersion = optBool(root, "submersion", true);
-                enclosure = optBool(root, "enclosure", true);
-                rainfall = optBool(root, "rainfall", true);
-                strengthPercent = optInt(root, "strength", 100);
+                enabled = optBool(root, "enabled", DEFAULT_ENABLED);
+                submersion = optBool(root, "submersion", DEFAULT_SUBMERSION);
+                enclosure = optBool(root, "enclosure", DEFAULT_ENCLOSURE);
+                rainfall = optBool(root, "rainfall", DEFAULT_RAINFALL);
+                strengthPercent = optInt(root, "strength", DEFAULT_STRENGTH_PERCENT);
             } catch (Throwable ignored) {
                 // 配置坏了用默认值,不能影响播放。
             }
