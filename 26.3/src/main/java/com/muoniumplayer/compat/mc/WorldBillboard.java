@@ -85,6 +85,15 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     static final boolean TRACE = Boolean.getBoolean("muonium.debug.worldLyrics");
 
     /**
+     * 字形阴影的右下偏移（设计像素）。3D 歌词的 billboard 设计字号远大于界面字，
+     * (1,1) 不可见 —— (2,3) 是探针四档对比的定案（out7.png 行 3）：立体感明确
+     * 且不喧宾（「一点点阴影」的钉死常数，不设设置项）。
+     */
+    static final float SHADOW_OFFSET_PX = 2f;
+    /** 阴影的 Y 偏移（设计像素）：与 X 异值 —— 光照习惯上来自上方，纵向更沉。 */
+    static final float SHADOW_OFFSET_Y_PX = 3f;
+
+    /**
      * 全亮度光值（1.21.1 的 {@code LightTexture.FULL_BRIGHT}）。26.3 该常量类已删除，
      * 值 15728880（0xF000F0）在原版实体渲染器中照旧裸写。
      */
@@ -386,9 +395,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             if (settings != null && settings.huiguang && LyricGlyphAtlas.isFunctional()) {
                 return;
             }
-            // 图集不可用/超尺寸：像素字兜底（无阴影，与平滑档的无阴影语义一致）
+            // 图集不可用/超尺寸：像素字兜底（带阴影 —— 与平滑档的立体感语义一致）
             int argb = ((int) (alpha * 255f) << 24) | (rgb & 0xFFFFFF);
-            drawPixelText(String.valueOf(c), x, y, argb, false);
+            drawPixelText(String.valueOf(c), x, y, argb, true);
             return;
         }
         if (!(cell.page instanceof LyricGlyphAtlasBridge.PageHandle)) {
@@ -433,6 +442,16 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         int argb = (((int) (alpha * 255f) & 0xFF) << 24) | (rgb & 0xFFFFFF);
 
+        // 一点点立体感：墨格同格重画一遍、右下偏移、顶点色压暗（原版阴影 ×0.25 口径）。
+        // 不新烘格 —— 同一张墨格页纹理，UV 相同；只多一个 quad 的开销。
+        final float shOff = SHADOW_OFFSET_PX;
+        final int shadowRgb = (((rgb >> 16) & 255) >> 2) << 16
+                | (((rgb >> 8) & 255) >> 2) << 8
+                | ((rgb & 255) >> 2);
+        final int shadowArgb = (argb & 0xFF000000) | shadowRgb;
+        final float shLeft = qLeft + shOff, shTop = qTop + SHADOW_OFFSET_Y_PX;
+        final float shRight = qRight + shOff, shBottom = qBottom + SHADOW_OFFSET_Y_PX;
+
         // 晕格 quad（晕格 pad ≥ 墨格 pad，锚点对齐后 quad 更大、盖过墨格）。
         // lambda 捕获要求：一次赋值后不再改写（glowCell 为 null 时保持零值不进 lambda）
         final float gLeft, gTop, gRight, gBottom;
@@ -458,7 +477,11 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         // ---- 更激进的适配：采集模式 —— 不 submit，把 quad 记进 present 兜底缓冲 ----
         if (captureMode) {
-            // 晕在下（先采集，同批内先画）加色段；墨在上正常段
+            // 阴影 → 晕 → 墨（阴影与晕同为整格 quad，先后无遮挡语义，压暗段在墨前即可）
+            captureGlyphQuad(inkRl, shLeft, shTop, shRight, shBottom, cx, cy, cos, sin, s,
+                    shadowArgb, cell.x / pageF + halfTexel, cell.y / pageF + halfTexel,
+                    (cell.x + cell.w) / pageF - halfTexel, (cell.y + cell.h) / pageF - halfTexel,
+                    false);
             if (glowRl != null) {
                 captureGlyphQuad(glowRl, gLeft, gTop, gRight, gBottom, cx, cy, cos, sin, s,
                         glowArgb, gu0, gv0, gu1, gv1, true);
@@ -480,6 +503,19 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 无需同批内的顺序保证。
         poseStack.pushPose();
         try {
+            // 阴影先（普通 alpha 段、同页纹理压暗色）—— 在晕之后墨之前，立体感垫层
+            RenderType shadowRt = currentWorldTextType(inkRl);
+            LyricOnTopSubmitter.submitCustomGeometry(collector, poseStack, shadowRt, (pose, vc) -> {
+                Matrix4f mat = pose.pose();
+                putGlyphVertex(vc, mat, shLeft, shTop, cx, cy, cos, sin, s, shadowArgb,
+                        cell.x / pageF + halfTexel, cell.y / pageF + halfTexel);
+                putGlyphVertex(vc, mat, shLeft, shBottom, cx, cy, cos, sin, s, shadowArgb,
+                        cell.x / pageF + halfTexel, (cell.y + cell.h) / pageF - halfTexel);
+                putGlyphVertex(vc, mat, shRight, shBottom, cx, cy, cos, sin, s, shadowArgb,
+                        (cell.x + cell.w) / pageF - halfTexel, (cell.y + cell.h) / pageF - halfTexel);
+                putGlyphVertex(vc, mat, shRight, shTop, cx, cy, cos, sin, s, shadowArgb,
+                        (cell.x + cell.w) / pageF - halfTexel, cell.y / pageF + halfTexel);
+            });
             if (glowRl != null) {
                 // 晕格恒走加色管线（自建 beacon_beam × LIGHTNING，见 glowType）——
                 // 不随光影探测切换：加色就是光晕的定义，光影下也无需 beacon 变体

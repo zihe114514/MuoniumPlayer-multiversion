@@ -45,6 +45,15 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     /** 一次性诊断开关。 */
     static final boolean TRACE = Boolean.getBoolean("muonium.debug.worldLyrics");
 
+    /**
+     * 字形阴影的右下偏移（设计像素）。3D 歌词的 billboard 设计字号远大于界面字，
+     * (1,1) 不可见 —— (2,3) 是探针四档对比的定案（out7.png 行 3）：立体感明确
+     * 且不喧宾（「一点点阴影」的钉死常数，不设设置项）。
+     */
+    static final float SHADOW_OFFSET_PX = 2f;
+    /** 阴影的 Y 偏移（设计像素）：与 X 异值 —— 光照习惯上来自上方，纵向更沉。 */
+    static final float SHADOW_OFFSET_Y_PX = 3f;
+
     /** 每帧共享实例。 */
     public static final WorldBillboard INSTANCE = new WorldBillboard();
 
@@ -259,9 +268,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             if (settings != null && settings.huiguang && LyricGlyphAtlas.isFunctional()) {
                 return;
             }
-            // 图集不可用/超尺寸：像素字兜底（无阴影，与平滑档的无阴影语义一致）
+            // 图集不可用/超尺寸：像素字兜底（带阴影 —— 与平滑档的立体感语义一致）
             int argb = ((int) (alpha * 255f) << 24) | (rgb & 0xFFFFFF);
-            drawPixelText(String.valueOf(c), x, y, argb, false);
+            drawPixelText(String.valueOf(c), x, y, argb, true);
             return;
         }
         if (!(cell.page instanceof LyricGlyphAtlasBridge.PageHandle)) {
@@ -346,6 +355,25 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             // 不与后续特效（halo/burst 同类型）串页
             buffers.endBatch(currentEffectType(glowRl));
         }
+
+        // 阴影：墨格同格重画、右下偏移、顶点色压暗（×0.25，原版阴影口径）——
+        // 同 text 类型挂起合批，画在晕上、被墨盖住，只露右下缘的立体感垫层
+        int shadowRgb = (((rgb >> 16) & 255) >> 2) << 16
+                | (((rgb >> 8) & 255) >> 2) << 8
+                | ((rgb & 255) >> 2);
+        int shadowArgb = (argb & 0xFF000000) | shadowRgb;
+        float shLeft = qLeft + SHADOW_OFFSET_PX, shTop = qTop + SHADOW_OFFSET_Y_PX;
+        float shRight = qRight + SHADOW_OFFSET_PX, shBottom = qBottom + SHADOW_OFFSET_Y_PX;
+        VertexConsumer svc = buffers.getBuffer(currentGlyphType(inkRl));
+        Matrix4f smat = poseStack.last().pose();
+        putGlyphVertex(svc, smat, shLeft, shTop, cx, cy, cos, sin, s, shadowArgb,
+                cell.x / pageF + halfTexel, cell.y / pageF + halfTexel);
+        putGlyphVertex(svc, smat, shLeft, shBottom, cx, cy, cos, sin, s, shadowArgb,
+                cell.x / pageF + halfTexel, (cell.y + cell.h) / pageF - halfTexel);
+        putGlyphVertex(svc, smat, shRight, shBottom, cx, cy, cos, sin, s, shadowArgb,
+                (cell.x + cell.w) / pageF - halfTexel, (cell.y + cell.h) / pageF - halfTexel);
+        putGlyphVertex(svc, smat, shRight, shTop, cx, cy, cos, sin, s, shadowArgb,
+                (cell.x + cell.w) / pageF - halfTexel, cell.y / pageF + halfTexel);
 
         VertexConsumer vc = buffers.getBuffer(currentGlyphType(inkRl));
         Matrix4f mat = poseStack.last().pose();
