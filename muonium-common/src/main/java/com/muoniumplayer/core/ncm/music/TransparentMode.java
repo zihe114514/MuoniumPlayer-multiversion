@@ -49,6 +49,16 @@ public final class TransparentMode {
     /** 弹簧当前速度。 */
     private static float springVelocity;
     private static long lastSpringNanos;
+    /** 同帧复用缓存：最近一次完整推进的位移。 */
+    private static float lastSpringValue;
+
+    /** 开关翻转/换歌时把弹簧归位：关着积累的位移不该在下次开着的首帧突然释放。 */
+    private static void resetSpring() {
+        springOffset = 0f;
+        springVelocity = 0f;
+        lastSpringNanos = 0L;
+        lastSpringValue = 0f;
+    }
 
     /**
      * 弹簧固有频率（rad/s）。约 0.45s 一个整周期：下压半程 ~0.24s，正好贴住
@@ -80,6 +90,7 @@ public final class TransparentMode {
     }
 
     public static void setEnabled(boolean value) {
+        resetSpring(); // 开关翻转即归位：关着积累的位移不该在下次开着的首帧突然释放
         write(value, null, null);
     }
 
@@ -139,11 +150,17 @@ public final class TransparentMode {
         float target = clamp01(BeatPulseSource.beat());
         long now = System.nanoTime();
         float dt = lastSpringNanos == 0L ? 0f : (now - lastSpringNanos) / 1.0e9f;
+        if (dt <= 0.0005f && lastSpringNanos != 0L) {
+            // 同帧复用（<半毫秒）：heightScale/widthScale 一帧各调一次，第二次
+            // 直接吃缓存值。弹簧一帧只积分一次，行为与帧率严格解耦。
+            return lastSpringValue;
+        }
         lastSpringNanos = now;
-        if (dt <= 0f) return springOffset; // 首帧或同帧重复调用：不动
+        if (dt <= 0f) return springOffset; // 首帧：不动
         float[] next = integrate(springOffset, springVelocity, target, dt);
         springOffset = next[0];
         springVelocity = next[1];
+        lastSpringValue = springOffset;
         return springOffset;
     }
 
