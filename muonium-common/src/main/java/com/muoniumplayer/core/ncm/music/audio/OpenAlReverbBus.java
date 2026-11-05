@@ -495,6 +495,11 @@ public final class OpenAlReverbBus {
         if (!broken) {
             broken = true;
             System.out.println(TAG + where + " 失败,总线永久下线: " + t);
+            // 一次性诊断:栈顶 5 帧(定位越界/失败的具体行,定位后可精简)
+            final StackTraceElement[] st = t.getStackTrace();
+            for (int i = 0; i < Math.min(5, st.length); i++) {
+                System.out.println(TAG + "  at " + st[i]);
+            }
         }
     }
 
