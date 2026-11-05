@@ -17,7 +17,6 @@
     "TransparentEntityMixin",
     "TransparentCameraMixin",
     "CineCameraMixin",
-    "CineFovMixin",
     "CineHudMixin"
   ],
   "injectors": {

@@ -21,12 +21,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * 遮罩自己的绘制入口也关掉了（2026-11-05 实机复盘：转场机在轮转、屏幕
  * 没有任何遮罩）。</p>
  *
- * <p>照 AmbientCamera Fabric 版的 {@code HudMixin} 同款解法：注入
- * {@code extractRenderState} 的 TAIL —— 该注入点在 hidden 闸门之外
- * （闸门只跳中间的 extract 分支），运镜遮罩因此「HUD 隐藏时照画」，
- * 这正是运镜需要的语义（遮罩比 HUD 更该在）。NeoForge 侧走
- * {@code RenderGuiEvent.Post} 无此问题，本 mixin 两侧同挂也无害
- * （同帧两次 draw 只在罕见的双重注册下发生）。</p>
+ * <p>绘制走 {@link com.muoniumplayer.render.skija.SkijaHost#deferPostCompositeOverlay}：
+ * 帧末合成（灵动岛同链）之后再画，那一刻默认帧缓冲已是最终画面、且不处在
+ * MC 的 extract 收集阶段。此前「extract TAIL 处自开 Skija 帧」会做一次完整
+ * 的 FBO 切换 + GL 快照捕获/还原——与同一 extract 阶段的其它 Skija 调用方
+ * （HUD 元素回调、Screen afterExtract）同帧交错时，快照还原会回滚 MC 的
+ * 收集中间态，实机表现为偶发方块全黑/画面抽搐（2026-11-05 实机复盘，
+ * ESC 开菜单恢复 = 帧序被重置）。defer 路的 FBO 操作发生在帧末边界，
+ * 与 MC 的收集阶段完全解耦。</p>
  */
 @Mixin(Hud.class)
 abstract class CineHudMixin {
@@ -35,14 +37,9 @@ abstract class CineHudMixin {
     private void muonium$cineOverlay(GuiGraphicsExtractor graphics, DeltaTracker deltaTracker,
                                      CallbackInfo ci) {
         if (!CineDirector.isActive()) return;
-        // extract 阶段不在 inSkijaFrame 括号内,自己开:与 onHudRender 同款
-        // begin/end 对,内容累积到同一张帧末离屏图(GlSurfaceMixin 合成)。
-        if (com.muoniumplayer.render.skija.SkijaHost.beginFrame() == null) return;
-        try {
-            CineTransition.render();
-            CineBars.render();
-        } finally {
-            com.muoniumplayer.render.skija.SkijaHost.endFrame();
+        Runnable overlay = CineDirector.cineOverlayRunnable();
+        if (overlay != null) {
+            com.muoniumplayer.render.skija.SkijaHost.deferPostCompositeOverlay(overlay);
         }
     }
 }

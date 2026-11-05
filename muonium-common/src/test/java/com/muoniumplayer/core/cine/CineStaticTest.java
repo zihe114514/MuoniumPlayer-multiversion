@@ -89,12 +89,15 @@ class CineStaticTest {
     void 树mixin注册与注入点形状() throws Exception {
         // 当前树（26.3 先行）的两份 mixin 清单都要注册；versionRoot 是 <树>/，
         // loader 子工程在其下。
+        boolean is263 = ProjectPaths.versionRoot().getFileName().toString().equals("26.3");
         for (String loader : new String[]{"fabric", secondLoader()}) {
             Path json = ProjectPaths.versionRoot()
                     .resolve(Paths.get(loader, "src", "main", "resources", "muonium.mixins.json"));
             String source = new String(Files.readAllBytes(json), StandardCharsets.UTF_8);
             assertTrue(source.contains("CineCameraMixin"), loader + " 必须注册 CineCameraMixin");
-            assertTrue(source.contains("CineFovMixin"), loader + " 必须注册 CineFovMixin");
+            if (!is263) {
+                assertTrue(source.contains("CineFovMixin"), loader + " 必须注册 CineFovMixin");
+            }
         }
         // 相机 mixin:26.x 注 alignWithEntity 首个 setPosition AFTER;旧世代注 setup 同点
         String camera = readTree("mixin", "CineCameraMixin.java");
@@ -108,13 +111,17 @@ class CineStaticTest {
         }
         assertTrue(camera.contains("CineDirector.isActive()"),
                 "接管必须以 isActive() 为门");
-        // FOV mixin:26.x 挂 Camera.getFov;旧世代挂 GameRenderer.getFov
-        String fov = readTree("mixin", "CineFovMixin.java");
-        assertTrue(fov.contains("getFov") && fov.contains("RETURN"),
-                "FOV punch 必须挂在 getFov 的返回值上");
-        if (!is26x()) {
-            assertTrue(fov.contains("GameRenderer.class"),
-                    "旧世代 FOV 在 GameRenderer.getFov(Camera,float,boolean)");
+        // FOV mixin:旧世代挂 GameRenderer.getFov(主投影);26.3 有意不注册——
+        // 26.x 的 getFov() 只被 3D 歌词投影消费,主投影走 Projection 对象,
+        // punch 无主画面效果反而带偏歌词投影(2026-11-05 实机复盘下架)。
+        if (!is263) {
+            String fov = readTree("mixin", "CineFovMixin.java");
+            assertTrue(fov.contains("getFov") && fov.contains("RETURN"),
+                    "FOV punch 必须挂在 getFov 的返回值上");
+            if (!is26x()) {
+                assertTrue(fov.contains("GameRenderer.class"),
+                        "旧世代 FOV 在 GameRenderer.getFov(Camera,float,boolean)");
+            }
         }
     }
 
@@ -167,10 +174,17 @@ class CineStaticTest {
             assertTrue(mixin.contains("@Mixin(Gui.class)") && mixin.contains("TAIL"),
                     "26.1.2 与旧世代遮罩走 Gui 的 TAIL(在 hidden 闸门之外)");
         }
-        assertTrue(mixin.contains("CineTransition.render()") && mixin.contains("CineBars.render()"),
-                "转场与黑边都在这条注入点驱动");
-        assertTrue(mixin.contains("beginFrame") && mixin.contains("endFrame"),
-                "extract 阶段不在 inSkijaFrame 括号内,必须自己开 Skija 帧");
+        assertTrue(mixin.contains("deferPostCompositeOverlay"),
+                "遮罩绘制必须 defer 到帧末合成后 —— extract TAIL 处自开 beginFrame"
+                        + " 会做 FBO 切换+GL 快照还原,与同帧其它 Skija 调用方交错时"
+                        + "回滚 MC 收集中间态(实机:偶发方块全黑/画面抽搐)");
+        assertFalse(mixin.contains("beginFrame"),
+                "mixin 里不许自开 Skija 帧(抽搐根因,已改 defer 路)");
+        String director = readShared("core", "cine", "CineDirector.java");
+        assertTrue(director.contains("cineOverlayRunnable"),
+                "遮罩/黑边打包成帧末合成任务由 CineDirector 提供");
+        assertTrue(director.contains("CineTransition.render()") && director.contains("CineBars.render()"),
+                "转场与黑边都在这个任务里驱动");
         String transition = readShared("core", "cine", "CineTransition.java");
         assertTrue(transition.contains("SkijaGfx.canvas()"),
                 "绘制走 Skija 栈(与 mod 其余部分同路径)");

@@ -226,6 +226,19 @@ public final class CineDirector {
     }
 
     /**
+     * 遮罩/黑边的帧末合成任务（供 CineHudMixin 走 deferPostCompositeOverlay）。
+     * 返回 null 表示本帧没有要画的（active=false 或遮罩/黑边全关）——
+     * 调用方一次布尔判断。
+     */
+    public static Runnable cineOverlayRunnable() {
+        if (!active) return null;
+        return () -> {
+            CineTransition.render();
+            CineBars.render();
+        };
+    }
+
+    /**
      * 当前帧的转场遮罩状态；CineTransition 每帧读。
      *
      * @return {effect, progress0..1, covering01} 或 null（无转场）

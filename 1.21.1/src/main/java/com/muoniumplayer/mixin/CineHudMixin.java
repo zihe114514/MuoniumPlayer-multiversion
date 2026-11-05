@@ -26,12 +26,12 @@ abstract class CineHudMixin {
     private void muonium$cineOverlay(GuiGraphics graphics, DeltaTracker deltaTracker,
                                      CallbackInfo ci) {
         if (!CineDirector.isActive()) return;
-        if (com.muoniumplayer.render.skija.SkijaHost.beginFrame() == null) return;
-        try {
-            CineTransition.render();
-            CineBars.render();
-        } finally {
-            com.muoniumplayer.render.skija.SkijaHost.endFrame();
+        // 遮罩绘制 defer 到帧末合成后(与灵动岛同链):在 extract/render 收集阶段
+        // 自开 Skija 帧会做 FBO 切换+GL 快照还原,与同帧其它 Skija 调用方交错时
+        // 回滚 MC 收集中间态(实机:偶发方块全黑/画面抽搐)。
+        Runnable overlay = CineDirector.cineOverlayRunnable();
+        if (overlay != null) {
+            com.muoniumplayer.render.skija.SkijaHost.deferPostCompositeOverlay(overlay);
         }
     }
 }
