@@ -5,6 +5,7 @@ import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.FoliaModelManager;
 import com.muoniumplayer.core.rendering.FoliaLucideIcons;
 import com.muoniumplayer.core.screens.onboarding.OnboardingController;
+import com.muoniumplayer.core.screens.onboarding.OnboardingMetrics;
 import com.muoniumplayer.core.screens.onboarding.OnboardingStepView;
 import com.muoniumplayer.core.screens.onboarding.OnboardingUi;
 import com.muoniumplayer.party.ui.PartyIcons;
@@ -41,11 +42,15 @@ public final class AutomixModelStep implements OnboardingStepView {
             PartyIcons.NOTE, PartyIcons.SYNC, PartyIcons.FRAME
     };
 
-    private static final double ROW_H = 56;
+    private static final double BASE_ROW_H = 56;
     private static final double ROW_GAP = 11;
     private static final double CTA_W = 188;
     private static final double CTA_H = 42;
     private static final double CTA_GAP = 16;
+    /** 主按钮与右边状态框之间的间距。 */
+    private static final double NOTE_GAP = 14;
+    /** 状态框的最小宽度：再窄就只剩一枚图标，那不如不画。 */
+    private static final double NOTE_MIN_W = 96;
 
     private volatile FoliaModelManager.Kind activeKind;
     private volatile String message = "模型是可选组件；不下载仍可使用原版智能淡化。";
@@ -65,83 +70,103 @@ public final class AutomixModelStep implements OnboardingStepView {
             double rowY = rowY(y, i);
             boolean installed = FoliaModelManager.isInstalled(kind);
             boolean active = activeKind == kind;
-            boolean hover = OnboardingUi.inside(mouseX, mouseY, x, rowY, width, ROW_H);
+            boolean hover = OnboardingUi.inside(mouseX, mouseY, x, rowY, width, rowHeight());
+            double buttonW = Math.min(92, Math.max(56, width * .28));
+            double buttonX = x + width - buttonW - 12;
 
-            OnboardingUi.roundedRect(x, rowY, width, ROW_H, OnboardingUi.CARD_RADIUS,
+            OnboardingUi.roundedRect(x, rowY, width, rowHeight(), OnboardingUi.CARD_RADIUS,
                     installed ? OnboardingUi.colorWithAlpha(OnboardingUi.GREEN, 22)
                             : (hover ? OnboardingUi.surfaceHover() : OnboardingUi.surface()));
-            OnboardingUi.roundedOutline(x, rowY, width, ROW_H, OnboardingUi.CARD_RADIUS,
+            OnboardingUi.roundedOutline(x, rowY, width, rowHeight(), OnboardingUi.CARD_RADIUS,
                     installed ? 1.4 : 1,
                     OnboardingUi.awtColorWithAlpha(installed ? OnboardingUi.GREEN : OnboardingUi.hairline(),
                             installed ? 175 : 150));
             double box = 32;
-            OnboardingUi.roundedRect(x + 12, rowY + (ROW_H - box) * .5, box, box, box * .3,
+            OnboardingUi.roundedRect(x + 12, rowY + (rowHeight() - box) * .5, box, box, box * .3,
                     OnboardingUi.colorWithAlpha(installed ? OnboardingUi.GREEN : OnboardingUi.BRAND, 34));
             OnboardingUi.drawIcon(installed ? FoliaLucideIcons.CHECK : LUCIDE[i],
                     installed ? PartyIcons.CHECK : FALLBACK[i],
-                    x + 12 + box * .5, rowY + ROW_H * .5, box * .62f,
+                    x + 12 + box * .5, rowY + rowHeight() * .5, box * .62f,
                     installed ? OnboardingUi.GREEN : OnboardingUi.BRAND_2);
-            OnboardingUi.drawText(FontManager.pf14bold, TITLES[i], x + 56, rowY + 12,
+            OnboardingUi.drawText(OnboardingUi.metric().labelBold(), TITLES[i], x + 56, rowY + 12,
                     OnboardingUi.textPrimary());
-            OnboardingUi.drawText(FontManager.pf12,
+            // 描述右边要给下载按钮让位：原来写死 x + 56 起画、整串不截，
+            // 窄档下「识别人声与伴奏结构 · 约 104 MB」会直接压到按钮上。
+            OnboardingUi.drawTextReserving(OnboardingUi.metric().bodyFont(),
                     active ? FoliaModelManager.statusLabel(kind) : DESCRIPTIONS[i],
-                    x + 56, rowY + 31, active ? OnboardingUi.BRAND_2 : OnboardingUi.textMuted());
+                    x + 56, rowY + 31, x + width - 12, buttonW + 12,
+                    active ? OnboardingUi.BRAND_2 : OnboardingUi.textMuted());
 
-            double buttonW = 92;
-            double buttonX = x + width - buttonW - 12;
-            OnboardingUi.roundedRect(buttonX, rowY + (ROW_H - 31) * .5, buttonW, 31, 16,
+            OnboardingUi.roundedRect(buttonX, rowY + (rowHeight() - 31) * .5, buttonW, 31, 16,
                     installed ? OnboardingUi.colorWithAlpha(OnboardingUi.GREEN, 22)
                             : OnboardingUi.colorWithAlpha(OnboardingUi.BRAND,
                                     active ? 30 : (hover ? 205 : 165)));
-            OnboardingUi.drawCentered(FontManager.pf12bold,
+            OnboardingUi.drawCentered(OnboardingUi.metric().labelBold(),
                     installed ? "已安装" : (active ? "下载中" : "下载"),
-                    buttonX + buttonW * .5, rowY + (ROW_H - 31) * .5 + 8,
+                    buttonX + buttonW * .5, rowY + (rowHeight() - 31) * .5 + 8,
                     installed ? OnboardingUi.GREEN : OnboardingUi.textPrimary());
         }
 
-        double actionY = rowsBottom(y) + CTA_GAP;
-        boolean actionHover = OnboardingUi.inside(mouseX, mouseY, x, actionY, CTA_W, CTA_H);
-        OnboardingUi.roundedGradient(x, actionY, CTA_W, CTA_H, CTA_H * .5,
+        double actionY = ctaY(y);
+        // 主行动条：按钮固定宽，右边那块状态框吃掉剩下的。窄档下按钮跟着收，
+        // 但状态框至少留得下一枚图标 —— 两样都不画就等于这一页没有反馈。
+        double ctaW = ctaWidth(width);
+        boolean actionHover = OnboardingUi.inside(mouseX, mouseY, x, actionY, ctaW, CTA_H);
+        OnboardingUi.roundedGradient(x, actionY, ctaW, CTA_H, CTA_H * .5,
                 allInstalled ? OnboardingUi.colorWithAlpha(OnboardingUi.GREEN, 180) : OnboardingUi.BRAND,
                 allInstalled ? OnboardingUi.colorWithAlpha(OnboardingUi.AQUA, 190) : OnboardingUi.BRAND_2);
         if (actionHover) {
-            OnboardingUi.roundedOutline(x, actionY, CTA_W, CTA_H, CTA_H * .5, 1.3,
+            OnboardingUi.roundedOutline(x, actionY, ctaW, CTA_H, CTA_H * .5, 1.3,
                     OnboardingUi.awtColorWithAlpha(OnboardingUi.textPrimary(), 150));
         }
         // 主行动按钮上带一枚图标：这一页只有这一个「大动作」，光靠一句字在七种字号里不够跳。
         OnboardingUi.drawIcon(allInstalled ? FoliaLucideIcons.CHECK : FoliaLucideIcons.AUTOMIX,
                 allInstalled ? PartyIcons.CHECK : PartyIcons.SYNC,
                 x + 22, actionY + CTA_H * .5, 17, OnboardingUi.textPrimary());
-        OnboardingUi.drawText(FontManager.pf14bold,
-                allInstalled ? "已就绪 · 启用 Folia"
-                        : (installingAll ? "正在安装全部组件" : "下载全部并启用 Folia"),
-                x + 38, actionY + 13, OnboardingUi.textPrimary());
+        // 按钮文案按按钮自己那一截量，放不下就改用短句（不是截断成「下载全部并启…」）。
+        String cta = allInstalled ? "已就绪 · 启用 Folia"
+                : (installingAll ? "正在安装全部组件" : "下载全部并启用 Folia");
+        double ctaTextRight = x + ctaW - 12;
+        if (!OnboardingUi.fits(OnboardingUi.metric().labelBold(), cta, ctaTextRight - (x + 38))) {
+            cta = allInstalled ? "已就绪" : (installingAll ? "安装中" : "下载全部");
+        }
+        OnboardingUi.drawTextReserving(OnboardingUi.metric().labelBold(), cta,
+                x + 38, actionY + 13, ctaTextRight, 0, OnboardingUi.textPrimary());
 
-        double noteX = x + CTA_W + 14;
-        OnboardingUi.roundedRect(noteX, actionY, width - CTA_W - 14, CTA_H, OnboardingUi.CARD_RADIUS - 2,
-                messageError ? OnboardingUi.colorWithAlpha(OnboardingUi.BRAND, 55) : OnboardingUi.surfaceHover());
-        OnboardingUi.drawIcon(messageError ? FoliaLucideIcons.WARNING : FoliaLucideIcons.INFO,
-                messageError ? PartyIcons.WARNING : PartyIcons.INFO,
-                noteX + 19, actionY + CTA_H * .5, 18,
-                messageError ? OnboardingUi.BRAND_2 : OnboardingUi.textMuted());
-        OnboardingUi.drawText(FontManager.pf12, compactMessage(message), noteX + 37, actionY + 14,
-                messageError ? OnboardingUi.BRAND_2 : OnboardingUi.textSecondary());
+        double noteX = x + ctaW + NOTE_GAP;
+        double noteW = Math.max(0, x + width - noteX);
+        // 状态框窄到放不下文字时整块不画：一枚孤零零的图标说明不了任何事。
+        if (noteW >= NOTE_MIN_W) {
+            OnboardingUi.roundedRect(noteX, actionY, noteW, CTA_H, OnboardingUi.CARD_RADIUS - 2,
+                    messageError ? OnboardingUi.colorWithAlpha(OnboardingUi.BRAND, 55) : OnboardingUi.surfaceHover());
+            OnboardingUi.drawIcon(messageError ? FoliaLucideIcons.WARNING : FoliaLucideIcons.INFO,
+                    messageError ? PartyIcons.WARNING : PartyIcons.INFO,
+                    noteX + 19, actionY + CTA_H * .5, 18,
+                    messageError ? OnboardingUi.BRAND_2 : OnboardingUi.textMuted());
+            // 按框宽截断，不再固定切 42 个字符 —— 那个数在窄框上仍会溢出、在宽框上又白截。
+            OnboardingUi.drawText(OnboardingUi.metric().bodyFont(),
+                    OnboardingUi.ellipsize(OnboardingUi.metric().bodyFont(), message, noteW - 52),
+                    noteX + 37, actionY + 14,
+                    messageError ? OnboardingUi.BRAND_2 : OnboardingUi.textSecondary());
+        }
 
-        OnboardingUi.drawText(FontManager.pf12,
+        // 页脚那句「稍后可在 HUD 设置…」只在放得下的时候画（也是唯一一处能省的长文）。
+        OnboardingUi.drawTextReserving(OnboardingUi.metric().bodyFont(),
                 "稍后可在 HUD 设置 → 无缝切换 → 分析模型中安装、重试或更换目录。",
-                x, actionY + CTA_H + 16, OnboardingUi.textMuted());
+                x, actionY + CTA_H + 16, width, 0, OnboardingUi.textMuted());
     }
 
     static double rowY(double y, int index) {
-        return y + OnboardingUi.BODY_OFFSET + index * (ROW_H + ROW_GAP);
+        return y + OnboardingUi.metric().bodyOffset + index * (rowHeight() + ROW_GAP);
     }
 
     static double rowsBottom(double y) {
-        return rowY(y, KINDS.length - 1) + ROW_H;
+        return rowY(y, KINDS.length - 1) + rowHeight();
     }
 
+    /** 模型行高度跟着排版档走，绘制与命中测试读同一份。 */
     static double rowHeight() {
-        return ROW_H;
+        return Math.max(44, BASE_ROW_H + (OnboardingUi.metric().cardHeight - 56));
     }
 
     static int rowCount() {
@@ -153,18 +178,28 @@ public final class AutomixModelStep implements OnboardingStepView {
         return rowsBottom(0) + CTA_GAP + CTA_H + 16 + 14;
     }
 
+    /** 主行动按钮的宽度，随内容带收放。绘制与命中测试读同一份。 */
+    static double ctaWidth(double width) {
+        return Math.min(CTA_W, Math.max(96, width * .46));
+    }
+
+    /** 主行动条的 y（相对页顶）。 */
+    static double ctaY(double y) {
+        return rowsBottom(y) + CTA_GAP;
+    }
+
     @Override
     public boolean mouseClicked(OnboardingController controller,
                                 double x, double y, double width, double height,
                                 double mouseX, double mouseY, int mouseButton) {
         if (mouseButton != 0) return false;
         for (int i = 0; i < KINDS.length; i++) {
-            if (OnboardingUi.inside(mouseX, mouseY, x, rowY(y, i), width, ROW_H)) {
+            if (OnboardingUi.inside(mouseX, mouseY, x, rowY(y, i), width, rowHeight())) {
                 installOne(KINDS[i], false);
                 return true;
             }
         }
-        if (OnboardingUi.inside(mouseX, mouseY, x, rowsBottom(y) + CTA_GAP, CTA_W, CTA_H)) {
+        if (OnboardingUi.inside(mouseX, mouseY, x, ctaY(y), ctaWidth(width), CTA_H)) {
             if (allInstalled()) {
                 AutomixSettings.setEngine(AutomixSettings.Engine.FOLIA);
                 message = "智能混音已启用。";
@@ -209,11 +244,6 @@ public final class AutomixModelStep implements OnboardingStepView {
         AutomixSettings.setEngine(AutomixSettings.Engine.FOLIA);
         message = "全部组件安装完成，智能混音已启用。";
         messageError = false;
-    }
-
-    private static String compactMessage(String value) {
-        if (value == null) return "";
-        return value.length() <= 42 ? value : value.substring(0, 41) + "…";
     }
 
     private static boolean allInstalled() {

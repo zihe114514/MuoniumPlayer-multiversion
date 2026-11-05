@@ -31,7 +31,7 @@ class StepLayoutStaticTest {
     @DisplayName("六页的第一块内容落在同一根线上（翻页时不上下跳）")
     void everyPageStartsItsBodyOnTheSameLine() {
         double body = Y + OnboardingUi.BODY_OFFSET;
-        assertEquals(body, SourceStep.cardY(Y, 0), 1e-9,
+        assertEquals(body, SourceStep.cardY(Y, WIDTH, 0), 1e-9,
                 "音源页第一排卡不在表头下面那条公共线上");
         assertEquals(body, AppearanceStep.cardY(Y), 1e-9,
                 "外观页那三张主题卡不在公共线上");
@@ -54,9 +54,9 @@ class StepLayoutStaticTest {
         for (int a = 0; a < count; a++) {
             for (int b = a + 1; b < count; b++) {
                 double ax = SourceStep.cardX(X, WIDTH, a);
-                double ay = SourceStep.cardY(Y, a);
+                double ay = SourceStep.cardY(Y, WIDTH, a);
                 double bx = SourceStep.cardX(X, WIDTH, b);
-                double by = SourceStep.cardY(Y, b);
+                double by = SourceStep.cardY(Y, WIDTH, b);
                 boolean sameRow = Math.abs(ay - by) < 1e-9;
                 boolean sameColumn = Math.abs(ax - bx) < 1e-9;
                 if (sameRow) {

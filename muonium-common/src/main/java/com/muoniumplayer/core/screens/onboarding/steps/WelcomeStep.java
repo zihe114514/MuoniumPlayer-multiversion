@@ -1,8 +1,10 @@
 package com.muoniumplayer.core.screens.onboarding.steps;
 
+import com.muoniumplayer.core.MuoniumPlayerExtension;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.rendering.FoliaLucideIcons;
 import com.muoniumplayer.core.screens.onboarding.OnboardingController;
+import com.muoniumplayer.core.screens.onboarding.OnboardingMetrics;
 import com.muoniumplayer.core.screens.onboarding.OnboardingStepView;
 import com.muoniumplayer.core.screens.onboarding.OnboardingUi;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
@@ -41,6 +43,9 @@ public final class WelcomeStep implements OnboardingStepView {
             PartyIcons.TEXT_FORMAT, PartyIcons.INFO, PartyIcons.GROUP, PartyIcons.SYNC
     };
 
+    /** 小标里那半句固定的前缀；版本号按版本号单入口拼在后面。 */
+    private static final String EYEBROW = "MINECRAFT MUSIC CLIENT · ";
+
     /** 胶囊里图标占的宽度与它和文字之间的间距。宽度算的是实测文字 + 这一截。 */
     private static final double PILL_ICON_W = 14;
     private static final double PILL_ICON_GAP = 7;
@@ -67,19 +72,34 @@ public final class WelcomeStep implements OnboardingStepView {
         double[] pillWidths = pillWidths();
         double pillsHeight = pillsHeight(pillWidths, width);
 
-        double blockHeight = EYEBROW_H + GAP_EYEBROW_TITLE + TITLE_H + GAP_TITLE_SUBTITLE
-                + SUBTITLE_H + GAP_SUBTITLE_PILLS + pillsHeight;
+        // 每一段的行高按<b>这一档实际用的字体</b>量出来，不再写死 44/16 ——
+        // 大屏换了 pf50 还按 44 排，标题的下一段就会压进字身里。
+        double titleH = OnboardingMetrics.lineHeight(OnboardingUi.metric().titleFont());
+        double subtitleH = OnboardingMetrics.lineHeight(OnboardingUi.metric().subtitleFont());
+        double blockHeight = EYEBROW_H + GAP_EYEBROW_TITLE + titleH + GAP_TITLE_SUBTITLE
+                + subtitleH + GAP_SUBTITLE_PILLS + pillsHeight;
         // 块比带子高时贴着顶走（超出部分由内容带裁掉），不要算出负数把标题推到带外。
         double top = y + Math.max(0.0, (height - blockHeight) * .5);
 
-        OnboardingUi.drawEyebrowCentered("MINECRAFT MUSIC CLIENT · 1.9.2", centerX, top);
+        OnboardingUi.drawEyebrowCentered(EYEBROW + MuoniumPlayerExtension.VERSION, centerX, top);
         double titleY = top + EYEBROW_H + GAP_EYEBROW_TITLE;
-        OnboardingUi.drawCentered(FontManager.pf40bold, "把音乐装进 Minecraft", centerX, titleY,
+        OnboardingUi.drawCentered(OnboardingUi.metric().titleFont(),
+                OnboardingUi.ellipsize(OnboardingUi.metric().titleFont(),
+                        "把音乐装进 Minecraft", width), centerX, titleY,
                 OnboardingUi.textPrimary());
-        double subtitleY = titleY + TITLE_H + GAP_TITLE_SUBTITLE;
-        OnboardingUi.drawCentered(FontManager.pf14, "连接账号、选择音源、定制外观，再让 Automix 在本机理解节拍。",
-                centerX, subtitleY, OnboardingUi.textSecondary());
-        renderPills(pillWidths, centerX, subtitleY + SUBTITLE_H + GAP_SUBTITLE_PILLS, width);
+        double subtitleY = titleY + titleH + GAP_TITLE_SUBTITLE;
+        if (OnboardingUi.metric().tier.showsSubtitle()) {
+            OnboardingUi.drawCentered(OnboardingUi.metric().subtitleFont(),
+                    OnboardingUi.ellipsize(OnboardingUi.metric().subtitleFont(),
+                            "连接账号、选择音源、定制外观，再让 Automix 在本机理解节拍。", width),
+                    centerX, subtitleY, OnboardingUi.textSecondary());
+        }
+        renderPills(pillWidths, centerX, subtitleY + subtitleH + GAP_SUBTITLE_PILLS, width);
+    }
+
+    /** 胶囊高度：跟着档位走，大屏更高一些。 */
+    private static double pillHeight() {
+        return PILL_H + (OnboardingUi.metric().cardHeight - 56) * .35;
     }
 
     /**
@@ -90,14 +110,15 @@ public final class WelcomeStep implements OnboardingStepView {
         double[] widths = new double[TAGS.length];
         for (int i = 0; i < TAGS.length; i++) {
             widths[i] = PILL_ICON_W + PILL_ICON_GAP
-                    + OnboardingUi.textWidth(FontManager.pf12bold, TAGS[i]) + PILL_PAD_X * 2;
+                    + OnboardingUi.textWidth(OnboardingUi.metric().labelBold(), TAGS[i]) + PILL_PAD_X * 2;
         }
         return widths;
     }
 
     /** 一行排得下就一行，排不下就按两行算（胶囊是点缀，不该把内容带撑破）。 */
     private static double pillsHeight(double[] widths, double available) {
-        return rowsFor(widths, available) > 1 ? PILL_H * PILL_ROWS + PILL_GAP_Y : PILL_H;
+        double h = pillHeight();
+        return rowsFor(widths, available) > 1 ? h * PILL_ROWS + PILL_GAP_Y : h;
     }
 
     private static void renderPills(double[] widths, double centerX, double top, double available) {
@@ -112,7 +133,7 @@ public final class WelcomeStep implements OnboardingStepView {
                 rowWidth += widths[i] + (i > from ? PILL_GAP_X : 0);
             }
             double cursorX = centerX - rowWidth * .5;
-            double rowY = top + row * (PILL_H + PILL_GAP_Y);
+            double rowY = top + row * (pillHeight() + PILL_GAP_Y);
             for (int i = from; i < to; i++) {
                 renderPill(i, cursorX, rowY, widths[i], i == widths.length - 1);
                 cursorX += widths[i] + PILL_GAP_X;
@@ -122,19 +143,20 @@ public final class WelcomeStep implements OnboardingStepView {
 
     private static void renderPill(int index, double left, double top, double pillWidth,
                                    boolean highlight) {
-        OnboardingUi.roundedRect(left, top, pillWidth, PILL_H, PILL_H * .5,
+        double h = pillHeight();
+        OnboardingUi.roundedRect(left, top, pillWidth, h, h * .5,
                 highlight ? OnboardingUi.themed(NCMScreen.ColorType.ACCENT, .18f)
                         : OnboardingUi.surface());
-        OnboardingUi.roundedOutline(left, top, pillWidth, PILL_H, PILL_H * .5, 1,
+        OnboardingUi.roundedOutline(left, top, pillWidth, h, h * .5, 1,
                 highlight ? OnboardingUi.accent() : OnboardingUi.hairline());
         // 内容（图标 + 间距 + 文字）整组居中：胶囊宽就是「这一组 + 左右各 PILL_PAD_X」量出来的，
         // 所以内容起点正好落在 left + PILL_PAD_X 上，不必再算一遍居中。
         int contentColor = highlight ? OnboardingUi.textPrimary() : OnboardingUi.textSecondary();
         OnboardingUi.drawIcon(TAG_ICONS[index], TAG_FALLBACK[index],
-                left + PILL_PAD_X + PILL_ICON_W * .5, top + PILL_H * .5, PILL_ICON_W,
+                left + PILL_PAD_X + PILL_ICON_W * .5, top + h * .5, PILL_ICON_W,
                 highlight ? OnboardingUi.accent() : OnboardingUi.textMuted());
-        OnboardingUi.drawText(FontManager.pf12bold, TAGS[index],
-                left + PILL_PAD_X + PILL_ICON_W + PILL_ICON_GAP, top + PILL_H * .5 - 5, contentColor);
+        OnboardingUi.drawText(OnboardingUi.metric().labelBold(), TAGS[index],
+                left + PILL_PAD_X + PILL_ICON_W + PILL_ICON_GAP, top + h * .5 - 5, contentColor);
     }
 
     /** 需要几行：一行放得下就是 1，否则按 {@value #PILL_ROWS} 行贪心排。 */

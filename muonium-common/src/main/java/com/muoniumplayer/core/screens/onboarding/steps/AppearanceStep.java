@@ -8,6 +8,7 @@ import com.muoniumplayer.core.rendering.RGBA;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.screens.onboarding.OnboardingController;
+import com.muoniumplayer.core.screens.onboarding.OnboardingMetrics;
 import com.muoniumplayer.core.screens.onboarding.OnboardingStepView;
 import com.muoniumplayer.core.screens.onboarding.OnboardingUi;
 import com.muoniumplayer.core.settings.HudSetting;
@@ -17,10 +18,17 @@ import com.muoniumplayer.party.ui.PartyIcons;
 public final class AppearanceStep implements OnboardingStepView {
 
     /** 一张主题卡：上面那块迷你播放器预览 + 下面名称与状态，六页里唯一会「变样」的一张卡。 */
-    private static final double CARD_H = 126;
+    private static final double BASE_CARD_H = 126;
     /** 预览块在卡里的内缩与高度。 */
     private static final double PREVIEW_INSET = 10;
     private static final double PREVIEW_H = 58;
+    /** 字体块与步进器的高度。绘制与命中测试读同一份。 */
+    static final double FONT_BOX_H = 46;
+    /** 界面动画那个步进器：卡高、加减按钮的宽高与内缩。 */
+    static final double STEPPER_H = 48;
+    static final double STEP_BUTTON_W = 28;
+    static final double STEP_BUTTON_H = 18;
+    static final double STEP_BUTTON_INSET = 12;
 
     @Override
     public void render(OnboardingController controller,
@@ -36,29 +44,35 @@ public final class AppearanceStep implements OnboardingStepView {
             NCMTheme.ThemePreset theme = themes[Math.floorMod(start + i, themes.length)];
             double cardX = cardX(x, width, i);
             boolean selected = theme == controller.selectedTheme();
-            boolean hover = OnboardingUi.inside(mouseX, mouseY, cardX, cardY, cardWidth(width), CARD_H);
+            boolean hover = OnboardingUi.inside(mouseX, mouseY, cardX, cardY, cardWidth(width), cardHeight());
             drawCard(controller, theme, cardX, cardY, cardWidth(width), selected, hover);
         }
 
-        double fontY = cardY + CARD_H + 22;
+        double fontY = fontY(y);
         drawSectionTitle(FoliaLucideIcons.TYPOGRAPHY, PartyIcons.TEXT_FORMAT, "字体", x, fontY);
         UiFont font = controller.selectedFont();
         String name = font == null ? "内置字体" : font.getDisplayName();
-        OnboardingUi.drawText(FontManager.pf12, name + " · 点击切换",
-                x + 22 + OnboardingUi.textWidth(FontManager.pf14bold, "字体") + 12, fontY + 2,
-                OnboardingUi.textMuted());
-        double fontBoxY = fontY + 24;
-        OnboardingUi.roundedRect(x, fontBoxY, width, 46, OnboardingUi.CARD_RADIUS - 1,
-                OnboardingUi.surfaceHover());
-        OnboardingUi.roundedOutline(x, fontBoxY, width, 46, OnboardingUi.CARD_RADIUS - 1, 1,
-                OnboardingUi.awtColorWithAlpha(OnboardingUi.hairline(), 170));
-        OnboardingUi.drawText(FontManager.pf18, UiFontLibrary.sampleText(),
-                x + 16, fontBoxY + 13, OnboardingUi.CYAN);
+        // 字体名放得下才画在段标题右边，放不下就整段收掉——段标题本身已经说了这是「字体」。
+        OnboardingUi.drawTextReserving(OnboardingUi.metric().bodyFont(), name + " · 点击切换",
+                x + 22 + OnboardingUi.textWidth(OnboardingUi.metric().labelBold(), "字体") + 12, fontY + 2,
+                width - 22, 0, OnboardingUi.textMuted());
 
-        double animationY = fontBoxY + 46 + 26;
+        double fontBoxY = fontBoxY(y);
+        OnboardingUi.roundedRect(x, fontBoxY, width, FONT_BOX_H, OnboardingUi.CARD_RADIUS - 1,
+                OnboardingUi.surfaceHover());
+        OnboardingUi.roundedOutline(x, fontBoxY, width, FONT_BOX_H, OnboardingUi.CARD_RADIUS - 1, 1,
+                OnboardingUi.awtColorWithAlpha(OnboardingUi.hairline(), 170));
+        // 样例文字按框宽截断：换一套宽字体的样例串可能比整张卡还长。
+        // 字号固定 pf18 而不跟档位：这一块展示的是<b>玩家选的那套字体</b>，
+        // 让它跟着引导的排版档一起缩，等于把「预览」也变成了随窗口变的东西。
+        OnboardingUi.drawText(FontManager.pf18,
+                OnboardingUi.ellipsize(FontManager.pf18, UiFontLibrary.sampleText(),
+                        width - 32), x + 16, fontBoxY + (FONT_BOX_H - 18) * .5, OnboardingUi.CYAN);
+
+        double animationY = animationY(y);
         drawSectionTitle(FoliaLucideIcons.SPEED, PartyIcons.SYNC, "界面动画", x, animationY);
         drawStepper(controller, HudSetting.PLAYER_UI_SWITCH_SPEED,
-                x, animationY + 24, width, mouseX, mouseY);
+                x, stepperY(y), width, mouseX, mouseY);
     }
 
     /**
@@ -78,21 +92,27 @@ public final class AppearanceStep implements OnboardingStepView {
         // 卡片不响应悬停高亮，预览压一层底色纱，右下角标「手机不可用」。
         boolean lockedTheme = !NCMTheme.isSelectable(theme);
         hover &= !lockedTheme;
-        OnboardingUi.roundedRect(x, y, width, CARD_H, OnboardingUi.CARD_RADIUS + 1,
+        OnboardingUi.roundedRect(x, y, width, cardHeight(), OnboardingUi.CARD_RADIUS + 1,
                 lockedTheme ? OnboardingUi.surface()
                         : selected ? of(theme, NCMScreen.ColorType.ACCENT, .16f)
                         : (hover ? OnboardingUi.surfaceHover() : OnboardingUi.surface()));
         if (selected) {
-            OnboardingUi.roundedOutline(x, y, width, CARD_H, OnboardingUi.CARD_RADIUS + 1, 1.6,
+            OnboardingUi.roundedOutline(x, y, width, cardHeight(), OnboardingUi.CARD_RADIUS + 1, 1.6,
                     OnboardingUi.awtColorWithAlpha(of(theme, NCMScreen.ColorType.ACCENT, 1.0f), 235));
         }
         drawMiniPlayer(theme, x + PREVIEW_INSET, y + PREVIEW_INSET,
                 width - PREVIEW_INSET * 2, selected);
 
-        double labelY = y + PREVIEW_INSET + PREVIEW_H + 10;
+        // 卡高会随档位长高，名称与状态两行得跟着下移到「预览块之下、卡片之内」居中，
+        // 否则大屏上它们贴死在预览块下面，卡片下半截空一大块。
+        double nameBlockTop = y + PREVIEW_INSET + PREVIEW_H + 10;
+        double nameBlockBottom = y + cardHeight() - PREVIEW_INSET;
+        double labelY = nameBlockTop + Math.max(0, (nameBlockBottom - nameBlockTop - 30) * .5);
         OnboardingUi.drawIcon(FoliaLucideIcons.PALETTE, PartyIcons.TEXT_FORMAT,
                 x + 19, labelY + 9, 14, of(theme, NCMScreen.ColorType.ACCENT, 1.0f));
-        OnboardingUi.drawText(FontManager.pf12bold, theme.getDisplayName(),
+        OnboardingUi.drawText(OnboardingUi.metric().labelBold(),
+                OnboardingUi.ellipsize(OnboardingUi.metric().labelBold(), theme.getDisplayName(),
+                        width - 36),
                 x + 32, labelY + 2, lockedTheme ? OnboardingUi.textMuted() : OnboardingUi.textPrimary());
         OnboardingUi.drawText(FontManager.pf10bold,
                 lockedTheme ? "手机不可用" : (selected ? "SELECTED" : "PREVIEW"),
@@ -141,35 +161,59 @@ public final class AppearanceStep implements OnboardingStepView {
     private static void drawSectionTitle(String lucide, String fallback, String title,
                                          double x, double y) {
         OnboardingUi.drawIcon(lucide, fallback, x + 7, y + 8, 14, OnboardingUi.textMuted());
-        OnboardingUi.drawText(FontManager.pf14bold, title, x + 22, y, OnboardingUi.textPrimary());
+        OnboardingUi.drawText(OnboardingUi.metric().labelBold(), title, x + 22, y, OnboardingUi.textPrimary());
     }
 
+    /**
+     * 一行步进器：左边标签、中间数值、右边加减。
+     *
+     * <p>原来标签写死 {@code x + 14}、数值 {@code x + width * .5}，卡宽跟着容器缩到某一档时
+     * 两者直接压在一起（标签「界面动画」四个字就有一百来像素）。现在先量：标签放得下才画，
+     * 数值只在「标签右边到加号左边」这一截里居中——两头都是实测的，不再靠猜半宽。</p>
+     */
     private static void drawStepper(OnboardingController controller, HudSetting setting,
                                     double x, double y, double width,
                                     double mouseX, double mouseY) {
-        OnboardingUi.roundedRect(x, y, width, 48, OnboardingUi.CARD_RADIUS - 1,
+        OnboardingUi.roundedRect(x, y, width, STEPPER_H, OnboardingUi.CARD_RADIUS - 1,
                 OnboardingUi.surfaceHover());
-        OnboardingUi.roundedOutline(x, y, width, 48, OnboardingUi.CARD_RADIUS - 1, 1,
+        OnboardingUi.roundedOutline(x, y, width, STEPPER_H, OnboardingUi.CARD_RADIUS - 1, 1,
                 OnboardingUi.awtColorWithAlpha(OnboardingUi.hairline(), 165));
-        OnboardingUi.drawText(FontManager.pf12bold, setting.getLabel(), x + 14, y + 10,
-                OnboardingUi.textSecondary());
-        // 数值居中：以前写死 x + width * .5 - 20，那是「3.00x」四个字符的半个宽度，
-        // 换成 12.50x 或者别的字体就整个偏右。
-        OnboardingUi.drawCentered(FontManager.pf14bold,
-                String.format(java.util.Locale.ROOT, "%.2fx", controller.hudValue(setting)),
-                x + width * .5, y + 10, OnboardingUi.textPrimary());
 
-        drawStepButton(x + 12, y + 26, "-", mouseX, mouseY);
-        drawStepButton(x + width - 40, y + 26, "+", mouseX, mouseY);
+        double buttonSize = Math.min(STEP_BUTTON_W, Math.max(18, width * .16));
+        double minusX = x + STEP_BUTTON_INSET;
+        double plusX = x + width - STEP_BUTTON_INSET - buttonSize;
+
+        // 标签在左、数值在右，两者之间的空隙是「量出来的」：标签宽度实测，数值自己量。
+        double labelWidth = OnboardingUi.textWidth(OnboardingUi.metric().labelBold(), setting.getLabel());
+        String value = String.format(java.util.Locale.ROOT, "%.2fx", controller.hudValue(setting));
+        double valueWidth = OnboardingUi.textWidth(OnboardingUi.metric().labelBold(), value);
+        double topRowRight = x + width - STEP_BUTTON_INSET;
+        boolean sameRow = 14 + labelWidth + 10 + valueWidth <= width - STEP_BUTTON_INSET * 2;
+        if (sameRow) {
+            OnboardingUi.drawText(OnboardingUi.metric().labelBold(), setting.getLabel(), x + 14, y + 10,
+                    OnboardingUi.textSecondary());
+            OnboardingUi.drawText(OnboardingUi.metric().labelBold(), value, topRowRight - valueWidth, y + 10,
+                    OnboardingUi.textPrimary());
+        } else {
+            // 窄档：标签先截断（它左边那截最有信息量），数值另起一行居中，谁也压不到谁。
+            OnboardingUi.drawTextReserving(OnboardingUi.metric().labelBold(), setting.getLabel(),
+                    x + 14, y + 8, width - STEP_BUTTON_INSET, STEP_BUTTON_INSET,
+                    OnboardingUi.textSecondary());
+            OnboardingUi.drawCentered(OnboardingUi.metric().labelBold(), value, x + width * .5,
+                    y + STEPPER_H - 26, OnboardingUi.textPrimary());
+        }
+
+        drawStepButton(minusX, y + STEPPER_H - 26, buttonSize, "-", mouseX, mouseY);
+        drawStepButton(plusX, y + STEPPER_H - 26, buttonSize, "+", mouseX, mouseY);
     }
 
     /** 加减按钮：只画，按下在哪由 {@link #mouseClicked} 用同一份坐标算。 */
-    private static void drawStepButton(double x, double y, String glyph,
+    private static void drawStepButton(double x, double y, double size, String glyph,
                                        double mouseX, double mouseY) {
-        boolean hover = OnboardingUi.inside(mouseX, mouseY, x, y, 28, 18);
-        OnboardingUi.roundedRect(x, y, 28, 18, 9,
+        boolean hover = OnboardingUi.inside(mouseX, mouseY, x, y, size, STEP_BUTTON_H);
+        OnboardingUi.roundedRect(x, y, size, STEP_BUTTON_H, STEP_BUTTON_H * .5,
                 hover ? OnboardingUi.colorWithAlpha(OnboardingUi.BLUE, 190) : OnboardingUi.surface());
-        OnboardingUi.drawCentered(FontManager.pf12bold, glyph, x + 14, y + 4,
+        OnboardingUi.drawCentered(OnboardingUi.metric().labelBold(), glyph, x + size * .5, y + 4,
                 OnboardingUi.textPrimary());
     }
 
@@ -191,11 +235,55 @@ public final class AppearanceStep implements OnboardingStepView {
     }
 
     static double cardY(double y) {
-        return y + OnboardingUi.BODY_OFFSET;
+        return y + OnboardingUi.metric().bodyOffset;
     }
 
+    /** 主题卡高：预览块是固定比例的小播放器，卡高只加下面那两行字的余量。 */
     static double cardHeight() {
-        return CARD_H;
+        return BASE_CARD_H + Math.max(0, OnboardingUi.metric().cardHeight - 56) * .5;
+    }
+
+    /** 段与段之间的纵向留白，跟着档位放：大屏每段之间更松，紧凑档收紧。 */
+    private static double sectionGap() {
+        return OnboardingUi.metric().tier == OnboardingMetrics.Tier.COMPACT ? 14
+                : OnboardingUi.metric().tier == OnboardingMetrics.Tier.REGULAR ? 22
+                : 30;
+    }
+
+    /** 字体段标题的 y（相对页顶）。 */
+    static double fontY(double y) {
+        return cardY(y) + cardHeight() + sectionGap();
+    }
+
+    /** 字体块（那块点一下就换字体的卡片）的 y。 */
+    static double fontBoxY(double y) {
+        return fontY(y) + 22 + sectionGap() * .1;
+    }
+
+    /** 「界面动画」段标题的 y。 */
+    static double animationY(double y) {
+        return fontBoxY(y) + FONT_BOX_H + sectionGap() + 4;
+    }
+
+    /** 步进器卡的 y。 */
+    static double stepperY(double y) {
+        return animationY(y) + 22 + sectionGap() * .1;
+    }
+
+    /** 加减按钮的尺寸，随卡宽收放；绘制与命中测试读同一份。 */
+    static double stepButtonWidth(double width) {
+        return Math.min(STEP_BUTTON_W, Math.max(18, width * .16));
+    }
+
+    /** 某一侧加减按钮的 x。{@code plus} 为 true 取右边那枚。 */
+    static double stepButtonX(double x, double width, boolean plus) {
+        double size = stepButtonWidth(width);
+        return plus ? x + width - STEP_BUTTON_INSET - size : x + STEP_BUTTON_INSET;
+    }
+
+    /** 加减按钮的 y（在步进器卡里）。 */
+    static double stepButtonY(double y) {
+        return stepperY(y) + STEPPER_H - 26;
     }
 
     @Override
@@ -211,7 +299,7 @@ public final class AppearanceStep implements OnboardingStepView {
         double cardY = cardY(y);
         for (int i = 0; i < 3; i++) {
             double cardX = cardX(x, width, i);
-            if (OnboardingUi.inside(mouseX, mouseY, cardX, cardY, cardWidth(width), CARD_H)) {
+            if (OnboardingUi.inside(mouseX, mouseY, cardX, cardY, cardWidth(width), cardHeight())) {
                 NCMTheme.ThemePreset target = themes[Math.floorMod(start + i, themes.length)];
                 // 手机档点真玻璃主题卡：吞掉点击但什么都不做（卡片已画成灰的）。
                 if (NCMTheme.isSelectable(target)) {
@@ -221,18 +309,20 @@ public final class AppearanceStep implements OnboardingStepView {
             }
         }
 
-        double fontBoxY = cardY + CARD_H + 22 + 24;
-        if (OnboardingUi.inside(mouseX, mouseY, x, fontBoxY, width, 46)) {
+        if (OnboardingUi.inside(mouseX, mouseY, x, fontBoxY(y), width, FONT_BOX_H)) {
             controller.cycleFont();
             return true;
         }
 
-        double stepperY = fontBoxY + 46 + 26 + 24;
-        if (OnboardingUi.inside(mouseX, mouseY, x + 12, stepperY + 26, 28, 18)) {
+        double buttonSize = stepButtonWidth(width);
+        double buttonY = stepButtonY(y);
+        if (OnboardingUi.inside(mouseX, mouseY,
+                stepButtonX(x, width, false), buttonY, buttonSize, STEP_BUTTON_H)) {
             controller.adjustHudSetting(HudSetting.PLAYER_UI_SWITCH_SPEED, -0.10f);
             return true;
         }
-        if (OnboardingUi.inside(mouseX, mouseY, x + width - 40, stepperY + 26, 28, 18)) {
+        if (OnboardingUi.inside(mouseX, mouseY,
+                stepButtonX(x, width, true), buttonY, buttonSize, STEP_BUTTON_H)) {
             controller.adjustHudSetting(HudSetting.PLAYER_UI_SWITCH_SPEED, 0.10f);
             return true;
         }

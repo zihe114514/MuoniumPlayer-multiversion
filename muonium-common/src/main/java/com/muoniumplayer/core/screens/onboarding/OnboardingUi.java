@@ -88,6 +88,32 @@ public final class OnboardingUi {
     }
 
     /**
+     * 引导里算「账号通不通」要看的那几家。
+     *
+     * <p>必须和 {@code AccountManagerOverlay} 那张账号表是同一份名单（那里三行六格：
+     * 网易云 / QQ / 酷狗、汽水 / 哔哩哔哩、Apple）。只轮询前三家的话，在账号管理器里登录了
+     * 汽水、哔哩哔哩或 Apple 的玩家回到引导页仍然看到「未登录」，完成页摘要也写「稍后登录」——
+     * 而他刚刚就在这个界面里登录过。</p>
+     *
+     * <p>YouTube 与 Spotify 不在这张表里：前者免登录（匿名就能搜能播），后者是元数据源、
+     * 登录态只影响搜索与本人歌单，两者都不该把一个「还没有账号」的玩家判成没配好。</p>
+     */
+    public static final MusicPlatform[] ACCOUNT_PLATFORMS = {
+            MusicPlatform.NETEASE, MusicPlatform.QQ, MusicPlatform.KUGOU,
+            MusicPlatform.QISHUI, MusicPlatform.BILIBILI, MusicPlatform.APPLE
+    };
+
+    /** 这几家里有没有任一已登录。账号页那条状态条与完成页摘要共用，免得两处各写一份清单。 */
+    public static boolean anyAccountLoggedIn() {
+        for (MusicPlatform platform : ACCOUNT_PLATFORMS) {
+            if (com.muoniumplayer.core.ncm.music.NeteaseMusicService.isLoggedIn(platform)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * 主题色 + 一个 alpha，折回一个 ARGB。
      *
      * <p>必须自己拼 alpha：主题色只带 RGB（{@code ACCENT} 就是 {@code 0x00RRGGBB}），
@@ -101,8 +127,31 @@ public final class OnboardingUi {
     private static final Map<CFontRenderer, GlyphInkMetrics> PARTY_EM_SQUARE =
             new IdentityHashMap<CFontRenderer, GlyphInkMetrics>();
     private static float stepAlpha = 1.0f;
+    /**
+     * 当前这一页的排版档。
+     *
+     * <p>六页的签名是 {@code render(controller, x, y, width, height, mouseX, mouseY)}，为了不把
+     * 「字号」再塞成第五个参数（那会牵动六个文件与全部调用点），档位挂在绘制上下文里，
+     * 由 {@link OnboardingScreen} 在每次 {@code render} 前后成对设置。和 {@link #stepAlpha}
+     * 是同一套写法、同一个生命周期，所以转场时新旧两页各自带着自己那一档画，不会串。</p>
+     */
+    private static OnboardingMetrics metric = OnboardingMetrics.forTier(OnboardingMetrics.Tier.REGULAR);
 
     private OnboardingUi() {
+    }
+
+    public static void beginMetric(OnboardingMetrics metrics) {
+        metric = metrics == null ? OnboardingMetrics.forTier(OnboardingMetrics.Tier.REGULAR) : metrics;
+    }
+
+    /** 恢复成常规档。{@code OnboardingScreen} 那条 {@code finally} 里调，和 {@code endStep} 成对。 */
+    public static void endMetric() {
+        metric = OnboardingMetrics.forTier(OnboardingMetrics.Tier.REGULAR);
+    }
+
+    /** 当前这一页该用的排版档。六页从这里取字号与间距，不再各自写 {@code pf12} / {@code +52}。 */
+    public static OnboardingMetrics metric() {
+        return metric;
     }
 
     public static void beginStep(float alpha) {
@@ -198,15 +247,20 @@ public final class OnboardingUi {
     /**
      * 画一页的表头：eyebrow + 标题 + 副标题。
      *
-     * <p>{@code y} 是内容带的顶，正文自己从 {@code y + }{@link #BODY_OFFSET} 起排。</p>
+     * <p>{@code y} 是内容带的顶，正文自己从 {@link #metric()}{@code .bodyOffset} 起排。
+     * 字号与三段偏移全部取自当前档位：大屏标题升到 pf40/pf50，极小窗口收到 pf20 并把副标题整段收掉
+     * —— 副标题那一长句在 272 宽的带子里本来就画不全，留着它只会压到下面的卡片上。</p>
      */
     public static void drawHeader(String eyebrow, String title, String subtitle,
                                   double x, double y) {
-        if (eyebrow != null && !eyebrow.isEmpty()) {
-            drawEyebrow(eyebrow, x, y + EYEBROW_OFFSET);
+        OnboardingMetrics m = metric();
+        if (eyebrow != null && !eyebrow.isEmpty() && m.tier.showsSubtitle()) {
+            drawEyebrow(eyebrow, x, y + m.eyebrowOffset);
         }
-        drawText(FontManager.pf34bold, title, x, y + TITLE_OFFSET, textPrimary());
-        drawText(FontManager.pf14, subtitle, x, y + SUBTITLE_OFFSET, textSecondary());
+        drawText(m.titleFont(), title, x, y + m.titleOffset, textPrimary());
+        if (subtitle != null && !subtitle.isEmpty() && m.tier.showsSubtitle()) {
+            drawText(m.subtitleFont(), subtitle, x, y + m.subtitleOffset, textSecondary());
+        }
     }
 
     /**
@@ -226,6 +280,75 @@ public final class OnboardingUi {
             return 0.0;
         }
         return font.getStringWidthD(text);
+    }
+
+    /**
+     * 这段文字在 {@code available} 宽里放不放得下。
+     *
+     * <p>卡片里的文字位置过去是写死的（{@code x + 52}、{@code x + width * .5}），而卡片宽度是
+     * 跟着容器缩的——窄到某个程度，两段文字就<b>自己压到自己身上</b>。所以凡是「一段字的右边
+     * 还有另一段字 / 一个按钮」的地方，都先问一句这里放不放得下，放不下就走降级：
+     * 收掉副标题、缩短文案、或者整段不画。宁可少一行字，也不许两行叠在一起。</p>
+     */
+    public static boolean fits(CFontRenderer font, String text, double available) {
+        return available > 0 && textWidth(font, text) <= available;
+    }
+
+    /**
+     * 把 {@code text} 截到 {@code maxWidth} 里，超出部分换成省略号。
+     *
+     * <p>按<b>实测宽度</b>逐字退，不是按字符数：中文一个字 12 逻辑像素、英文一个字母 6 个，
+     * 按字数切会让「YouTube Music」这种串被切得只剩一半却还留着三个字的空。</p>
+     *
+     * <p>退到最后一个字符都放不下时返回空串——调用方据此整段不画，而不是画一个孤零零的「…」。</p>
+     */
+    public static String ellipsize(CFontRenderer font, String text, double maxWidth) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        if (maxWidth <= 0) {
+            return "";
+        }
+        // 字体不在位时量不出宽度，也就没法截。返回空串而不是原样放行：
+        // 原样放行在真机上等于「这行一定会画到边界外」，而没有字体的那一帧
+        // 本来也画不出任何东西，收掉它不会少看到什么。
+        if (font == null) {
+            return "";
+        }
+        if (font.getStringWidthD(text) <= maxWidth) {
+            return text;
+        }
+        double ellipsis = font.getStringWidthD("…");
+        double budget = maxWidth - ellipsis;
+        if (budget <= 0) {
+            return "";
+        }
+        int end = text.length();
+        while (end > 0 && font.getStringWidthD(text.substring(0, end)) > budget) {
+            end--;
+        }
+        // 退到一半正好停在代理对中间时再退一格，免得切出一个孤立的高位代理画成方块。
+        if (end > 0 && Character.isHighSurrogate(text.charAt(end - 1))) {
+            end--;
+        }
+        return end <= 0 ? "" : text.substring(0, end) + "…";
+    }
+
+    /**
+     * 画一行「左边一段、右边还有东西」的文字，并保证它们不相撞。
+     *
+     * @param rightReserve 右边要留出来的宽度（按钮、图标、另一段文字）
+     * @return 真的画了才 true；空间不够（截完什么都不剩）时返回 false，调用方可以改走别的表达
+     */
+    public static boolean drawTextReserving(CFontRenderer font, String text,
+                                            double x, double y, double width, double rightReserve,
+                                            int color) {
+        String fitted = ellipsize(font, text, width - rightReserve);
+        if (fitted.isEmpty()) {
+            return false;
+        }
+        drawText(font, fitted, x, y, color);
+        return true;
     }
 
     /**
