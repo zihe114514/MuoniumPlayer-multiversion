@@ -81,6 +81,24 @@ class HttpDownloadRaceStaticTest {
     }
 
     @Test
+    @DisplayName("断点续传：Range 接着拉、200 全量回退清残片、终验整包盖住前缀")
+    void resumeSemanticsPinned() throws Exception {
+        String race = raceSource();
+        assertTrue(race.contains("\"Range\", \"bytes=\" + rangeFrom + \"-\""),
+                "续传必须挂 Range 头（bytes=<已收>-）");
+        assertTrue(race.contains("code != 206") && race.contains("续传未生效"),
+                "续传必须核对服务端回 206，不是 206 就算这路失败");
+        assertTrue(race.contains("resumeBytes(part, expectedBytes)"),
+                "开跑前必须经 resumeBytes 判定残片可续（越界/满额残片要清）");
+        assertTrue(race.contains("new FileOutputStream(part, already > 0L)"),
+                "续传必须以追加模式写残片，不能截断重写");
+        // 残片前缀不单独过哈希，但整包 sha256 终验把它一起盖住——这条不许退回去。
+        assertTrue(race.contains("sha256 不符"), "终验 sha256 是前缀污染的唯一防线");
+        assertTrue(race.indexOf("resumeBytes") < race.indexOf("openFollowing(URI.create(url).toURL(), 0, already)"),
+                "Range 头的起点必须来自 resumeBytes 的判定结果");
+    }
+
+    @Test
     @DisplayName("开关只认显式 false；冠军判定用 CAS，只有一条路能改名")
     void gateAndSwitchSemantics() throws Exception {
         String race = raceSource();

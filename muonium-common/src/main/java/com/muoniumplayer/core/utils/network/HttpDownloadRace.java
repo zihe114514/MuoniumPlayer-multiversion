@@ -49,9 +49,12 @@ import java.util.function.IntConsumer;
  *       引擎每次过新字节都会尝试推，频率由节流器压住。</li>
  *   <li><b>失败语义</b>：<b>所有已启动的路</b>都失败才抛（每路错误一行摘要日志）；任何一路
  *       成功即成功。整轮重试预算（{@code MAX_ATTEMPTS} / 冷却）仍由调用方管，这里不管。</li>
- *   <li><b>断点续传有意放弃</b>：竞速下各路从零开始，旧「单一 .part + Range 续传」方案
- *       不再成立。gh-proxy 中途截断的场景由「换一路重拉」的并发能力兜住（别的路先到）；
- *       要回旧行为，{@code -Dmuonium.downloadRace=false}，各下载器里串行回退路径原样保留。</li>
+ *   <li><b>断点续传（2026-11 起）</b>：上一轮竞速留下的合法残片 {@code .race<N>} 不再作废——
+ *       每路开跑前若自己槽位的残片存在（0 &lt; 已收 &lt; 钉死字节数），挂 {@code Range} 接着拉；
+ *       服务端不认 Range（回全量 200）就把残片清掉从头来。已收前缀不再过哈希，但
+ *       <b>整包 sha256 终验把它一起盖住</b>：前缀损坏（内容被污染/上次版本不符）必然在
+ *       终验现形，该路判负、残片被清。旧方案「单一 .part」在竞速下不成立的问题由
+ *       「每路一个槽位文件」天然解决——不同轮里同一路继续用同一个槽位，天然同前缀。</li>
  * </ul>
  *
  * <h2>线程</h2>
@@ -297,20 +300,36 @@ public final class HttpDownloadRace {
     /**
      * 单路下载主体：建连 → 校验头 → 流式读（同步 sha256 + 领先路进度）→ 终验。
      * 通过后由调用方（{@link #fetch} 的工作线程）抢冠改名；这里只负责把文件拉对。
+     *
+     * <p>续传：本槽位残片合法存在时挂 {@code Range: bytes=<已收>-} 接着拉，服务端回
+     * 206 则前缀直接沿用（终验整包 sha256 盖住它），回 200（不认 Range）则清残片重来。
+     * progress 口径仍是「含前缀的全局字节数」，调用方无感知。</p>
      */
     private static void downloadOne(String url, File part, long expectedBytes, String expectedSha256,
                                     AtomicBoolean settled, AtomicLong leaderBytes,
                                     IntConsumer onProgress) throws IOException {
-        HttpURLConnection connection = openFollowing(URI.create(url).toURL(), 0);
+        long already = resumeBytes(part, expectedBytes);
+        HttpURLConnection connection = openFollowing(URI.create(url).toURL(), 0, already);
         try {
             int code = connection.getResponseCode();
+            if (already > 0L && code == 200) {
+                // 服务端不认 Range（回全量 200）：残片清掉按从头下处理。
+                connection.disconnect();
+                deleteQuietly(part);
+                already = 0L;
+                connection = openFollowing(URI.create(url).toURL(), 0, 0L);
+                code = connection.getResponseCode();
+            }
             if (code < 200 || code >= 300) {
                 throw new IOException("HTTP " + code);
             }
+            if (already > 0L && code != 206) {
+                throw new IOException("续传未生效：HTTP " + code);
+            }
             long contentLength = connection.getContentLengthLong();
-            if (contentLength > 0 && contentLength != expectedBytes) {
+            if (contentLength > 0 && contentLength != expectedBytes - already) {
                 throw new IOException("Content-Length 不符：得到 " + contentLength
-                        + "，应为 " + expectedBytes);
+                        + "，应为 " + (expectedBytes - already));
             }
             MessageDigest digest;
             try {
@@ -318,9 +337,11 @@ public final class HttpDownloadRace {
             } catch (Exception broken) {
                 throw new IOException("JVM 缺 SHA-256", broken);
             }
-            long done = 0L;
+            long done = already;
             try (InputStream input = new BufferedInputStream(connection.getInputStream());
-                 FileOutputStream output = new FileOutputStream(part)) {
+                 FileOutputStream output = new FileOutputStream(part, already > 0L)) {
+                // 已收前缀在续传时不再过哈希：整包 sha256 校验在收完后照做，前缀损坏
+                // （内容被污染 / 上次版本不符）会在那里被抓住、本路判负、残片被清。
                 byte[] buffer = new byte[64 * 1024];
                 int read;
                 while ((read = input.read(buffer)) >= 0) {
@@ -350,6 +371,22 @@ public final class HttpDownloadRace {
     }
 
     /**
+     * 本槽位残片可续传的字节数：0 = 从头下。残片超过钉死字节数视为外来异物，清掉；
+     * 恰好等于钉值反而可疑（上一轮已完整却没改名？），也清掉从零来——终验反正要整包算。
+     */
+    private static long resumeBytes(File part, long expectedBytes) {
+        if (part == null || !part.isFile()) {
+            return 0L;
+        }
+        long length = part.length();
+        if (length <= 0L || length >= expectedBytes) {
+            deleteQuietly(part);
+            return 0L;
+        }
+        return length;
+    }
+
+    /**
      * 进度上报：本路字节尝试刷新 {@code leaderBytes}（只增不减），刷新成功（＝自己此刻
      * 就是全局领先者）才推一次回调。落后路到这里原样返回，进度永不回跳。
      */
@@ -370,6 +407,11 @@ public final class HttpDownloadRace {
 
     /** 建连接并自己跟重定向（镜像会 30x 到 CDN），超时与各下载器旧值一致。 */
     private static HttpURLConnection openFollowing(URL url, int depth) throws IOException {
+        return openFollowing(url, depth, 0L);
+    }
+
+    /** rangeFrom &gt; 0 时挂 {@code Range} 续传头（服务端须回 206，由调用方核对）。 */
+    private static HttpURLConnection openFollowing(URL url, int depth, long rangeFrom) throws IOException {
         if (depth > MAX_REDIRECTS) {
             throw new IOException("重定向过多");
         }
@@ -378,6 +420,9 @@ public final class HttpDownloadRace {
         connection.setConnectTimeout(CONNECT_TIMEOUT_MILLIS);
         connection.setReadTimeout(READ_TIMEOUT_MILLIS);
         connection.setRequestProperty("User-Agent", "MuoniumPlayer-DownloadRace/1.0");
+        if (rangeFrom > 0L) {
+            connection.setRequestProperty("Range", "bytes=" + rangeFrom + "-");
+        }
         try {
             int code = connection.getResponseCode();
             if (code >= 300 && code < 400) {
