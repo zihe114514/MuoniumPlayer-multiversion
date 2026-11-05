@@ -586,7 +586,10 @@ OpenAlReverbBus busFull = useEaxBus
                 final int dLen = directDelaySamples + frames + 8;
                 if (directDelayL.length < dLen) {
                     directDelayL = new short[dLen];
-                    directDelayR = new short[dLen];
+                    // R 是立体声交错(M/S),需要 2× 槽位 —— 上一版只分配
+                    // dLen,写 [w*2+1] 越界(dLen=431 时 Index 431 崩,总线
+                    // 熔断 → 尾槽直通 → 环境声学全失效的实机事故)。
+                    directDelayR = new short[dLen * 2];
                 }
             }
             final boolean applyDelay = delaySamplesExact > 0.0;
