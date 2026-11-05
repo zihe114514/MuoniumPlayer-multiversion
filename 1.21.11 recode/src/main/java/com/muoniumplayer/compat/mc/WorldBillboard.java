@@ -521,6 +521,15 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private static boolean trailError;
     private static int rlCounter;
 
+    /** 向上取 2 的幂（≥1）。动态纹理按容量分配：内容增长落在已有纹理内不重建。 */
+    private static int nextPow2(int v) {
+        int p = 1;
+        while (p < v) p <<= 1;
+        return p;
+    }
+
+
+
     // ==================== 行级光晕垫底 ====================
 
     /**
@@ -554,9 +563,10 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         int w = com.muoniumplayer.core.lyrics3d.RowGlowSprite.width();
         int h = com.muoniumplayer.core.lyrics3d.RowGlowSprite.height();
         if (w <= 0 || h <= 0 || px.length < w * h) return;
-        if (!key.equals(glowKey) || glowTex == null || w != glowW || h != glowH) {
+        if (!key.equals(glowKey) || glowTex == null || glowW < w || glowH < h) {
             try {
-                NativeImage img = new NativeImage(NativeImage.Format.RGBA, w, h, false);
+                int capW = nextPow2(w), capH = nextPow2(h);
+                NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
                 for (int y = 0, i = 0; y < h; y++) {
                     for (int x = 0; x < w; x++, i++) {
                         img.setPixelABGR(x, y, px[i]);
@@ -572,8 +582,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 Minecraft.getInstance().getTextureManager().register(rl, tex);
                 glowRl = rl;
                 glowTex = tex;
-                glowW = w;
-                glowH = h;
+                glowW = capW;
+                glowH = capH;
             } catch (Throwable t) {
                 glowError = true;
                 return;
@@ -592,10 +602,12 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         VertexConsumer vc = buffers.getBuffer(currentEffectType(glowRl));
         Matrix4f mat = poseStack.last().pose();
+        float uMax = (float) w / glowW;
+        float vMax = (float) h / glowH;
         putHaloVertex(vc, mat, x0, y0, 0f, 0f, argb);
-        putHaloVertex(vc, mat, x0, y0 + planeH, 0f, 1f, argb);
-        putHaloVertex(vc, mat, x0 + planeW, y0 + planeH, 1f, 1f, argb);
-        putHaloVertex(vc, mat, x0 + planeW, y0, 1f, 0f, argb);
+        putHaloVertex(vc, mat, x0, y0 + planeH, 0f, vMax, argb);
+        putHaloVertex(vc, mat, x0 + planeW, y0 + planeH, uMax, vMax, argb);
+        putHaloVertex(vc, mat, x0 + planeW, y0, uMax, 0f, argb);
         flushEffectBatch(glowRl);
     }
 
@@ -690,12 +702,13 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             pendingEffectRl = null;
         }
         try {
-            if (tex == null || trailCanvasW[slot] != w || trailCanvasH[slot] != h) {
+            if (tex == null || trailCanvasW[slot] < w || trailCanvasH[slot] < h) {
                 if (rl != null) {
                     Minecraft.getInstance().getTextureManager().release(rl);
                     trailCanvasTex[slot] = null;
                 }
-                NativeImage img = new NativeImage(NativeImage.Format.RGBA, w, h, false);
+                int capW = nextPow2(w), capH = nextPow2(h);
+                NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
                 tex = new TrailTexture(img);
                 // 1.21.11 的 ResourceLocation 已更名 Identifier，工厂方法是
                 // Identifier.fromNamespaceAndPath（同径迹贴图的口径）。
@@ -704,8 +717,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 Minecraft.getInstance().getTextureManager().register(rl, tex);
                 trailCanvasRl[slot] = rl;
                 trailCanvasTex[slot] = tex;
-                trailCanvasW[slot] = w;
-                trailCanvasH[slot] = h;
+                trailCanvasW[slot] = capW;
+                trailCanvasH[slot] = capH;
             }
             NativeImage img = tex.getPixels();
             if (img == null || px.length < w * h) return false;
@@ -735,10 +748,12 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // javap 核对），参数类型是 Identifier。
         VertexConsumer vc = buffers.getBuffer(currentEffectType(rl));
         Matrix4f mat = poseStack.last().pose();
+        float uMax = (float) w / trailCanvasW[slot];
+        float vMax = (float) h / trailCanvasH[slot];
         putHaloVertex(vc, mat, planeX, planeY, 0f, 0f, argb);
-        putHaloVertex(vc, mat, planeX, planeY + planeH, 0f, 1f, argb);
-        putHaloVertex(vc, mat, planeX + planeW, planeY + planeH, 1f, 1f, argb);
-        putHaloVertex(vc, mat, planeX + planeW, planeY, 1f, 0f, argb);
+        putHaloVertex(vc, mat, planeX, planeY + planeH, 0f, vMax, argb);
+        putHaloVertex(vc, mat, planeX + planeW, planeY + planeH, uMax, vMax, argb);
+        putHaloVertex(vc, mat, planeX + planeW, planeY, uMax, 0f, argb);
         flushEffectBatch(rl);
         return true;
     }
