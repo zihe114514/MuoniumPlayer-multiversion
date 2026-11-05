@@ -518,15 +518,13 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         int w = com.muoniumplayer.core.lyrics3d.RowGlowSprite.width();
         int h = com.muoniumplayer.core.lyrics3d.RowGlowSprite.height();
         if (w <= 0 || h <= 0 || px.length < w * h) return;
-        if (!key.equals(glowKey) || glowTex == null || glowW < w || glowH < h) {
+        // 两步式生命周期（与 26.3 标杆同构）：容量不足才 release+重建 ——
+        // 卡拉OK逐字点亮中 key 每帧变，若走重建路径，同帧已挂起 quad 会握着
+        // 释放掉的纹理（黑紫方块闪帧）；key 变更只重传像素。
+        if (glowTex == null || glowW < w || glowH < h) {
             try {
                 int capW = nextPow2(w), capH = nextPow2(h);
                 NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
-                for (int y = 0, i = 0; y < h; y++) {
-                    for (int x = 0; x < w; x++, i++) {
-                        img.setPixelRGBA(x, y, px[i]);
-                    }
-                }
                 if (glowTex != null) {
                     Minecraft.getInstance().getTextureManager().release(glowRl);
                     glowTex = null;
@@ -539,11 +537,27 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 glowTex = tex;
                 glowW = capW;
                 glowH = capH;
+                glowKey = null;
             } catch (Throwable t) {
                 glowError = true;
                 return;
             }
-            glowKey = key;
+        }
+        if (!key.equals(glowKey)) {
+            try {
+                NativeImage img = glowTex.getPixels();
+                if (img == null) return;
+                for (int y = 0, i = 0; y < h; y++) {
+                    for (int x = 0; x < w; x++, i++) {
+                        img.setPixelRGBA(x, y, px[i]);
+                    }
+                }
+                glowTex.upload();
+                glowKey = key;
+            } catch (Throwable t) {
+                glowError = true;
+                return;
+            }
         }
 
         // 对位：sprite 位图含 pad 外扩（设计像素），quad 覆盖「pad 外扩后的行 bbox」，
@@ -653,8 +667,6 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                     Minecraft.getInstance().getTextureManager().release(rl);
                     trailCanvasTex[slot] = null;
                 }
-                // 直接按 (w,h) 构造：prepareImage 只分配 0 级，mip 链在
-                // setupMipChain 里一次性扩好；每帧只整图重传 0 级 + 重生成
                 int capW = nextPow2(w), capH = nextPow2(h);
                 NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
                 tex = new TrailTexture(img);
@@ -680,11 +692,6 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 }
             }
             tex.upload();
-            // 0 级每帧全变 → 重生成 mip 链（画布已按设备像素封顶 1600²，亚毫秒）
-            if (tex.mipTop > 0) {
-                org.lwjgl.opengl.GL30.glGenerateMipmap(
-                        com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D);
-            }
         } catch (Throwable t) {
             trailCanvasError = true;
             trailCanvasErrSlot = slot;
@@ -992,77 +999,24 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * （与 LyricGlyphAtlasBridge.PageTexture 同一强制点）。
      */
     /**
-     * 特效贴图（拖尾渐变带/光晕/星芒/条纹/环）：构造时生成一次 mip 链，绑定
-     * 过滤强制三线性 —— 光晕/星芒按 1.7~2.4 字号（17~24 设计像素）上屏而贴图
-     * 128²/256²，正常视距下缩小 5~7 倍，双线性会随移动闪烁（高频边缘欠采样）；
-     * 三线性把各级预均摊，光斑移动平滑无噪点。
-     */
-    /**
-     * 特效贴图（拖尾渐变带/光晕/星芒/条纹/环/拖尾画布）：强制 LINEAR。
-     * 曾试过三线性 mip（构造时 glGenerateMipmap + 解开 prepareImage 钉死的
-     * MAX_LEVEL/MAX_LOD），游戏内特效贴图整块渲染发黑（采样链路异常），
-     * 回退到已验证的纯 LINEAR —— 拖尾的抗锯齿由 CPU 光栅化保证，不靠 mip。
+     * 特效贴图（拖尾渐变带/光晕/星芒/条纹/环/拖尾画布）：强制纯 LINEAR，
+     * 与 26.3 标杆同口径。历史上试过三线性 mip（解 MAX_LEVEL/MAX_LOD +
+     * glGenerateMipmap），游戏内特效贴图整块渲染发黑；26.x 时代另一轮实验
+     * 同样回退 —— 拖尾的抗锯齿由 CPU 光栅化保证，不靠 mip，注释与代码
+     * 曾经矛盾（声称 LINEAR 却挂 mip 链），此版收口。
      */
     private static final class TrailTexture extends DynamicTexture {
-        /** 本贴图的 mip 顶层数（floor(log2(min(w,h)))）；-1 = 已熔断纯 LINEAR。 */
-        final int mipTop;
-
         TrailTexture(NativeImage img) {
             super(img);
-            bind();
-            this.mipTop = setupMipChain(img != null ? img.getWidth() : 0,
-                    img != null ? img.getHeight() : 0);
         }
 
         TrailTexture(int w, int h) {
             super(w, h, true);
-            bind();
-            this.mipTop = setupMipChain(w, h);
         }
 
         @Override
         public void setFilter(boolean blur, boolean mipmap) {
-            super.setFilter(true, mipTop > 0);
-        }
-    }
-
-    /**
-     * 安全 mip 链（与 LyricGlyphAtlasBridge.PageTexture 同配方）：解钳
-     * MAX_LEVEL/MAX_LOD（prepareImage 钉死 0，MAX_LOD 不解开则 LOD 恒 0、
-     * 三线性静默退化双线性）→ glGenerateMipmap 自管扩级 → 读回自检，失败
-     * 返回 -1（setFilter 据此永久落纯 LINEAR，绝不产生不完整采样）。
-     * 调用前提：本纹理当前已绑定。
-     */
-    private static int setupMipChain(int width, int height) {
-        try {
-            int top = 31 - Integer.numberOfLeadingZeros(Math.min(width, height));
-            if (top < 1) return -1;
-            com.muoniumplayer.compat.gl.GL11.glTexParameteri(
-                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D,
-                    org.lwjgl.opengl.GL12.GL_TEXTURE_MAX_LEVEL, top);
-            com.muoniumplayer.compat.gl.GL11.glTexParameteri(
-                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D,
-                    org.lwjgl.opengl.GL12.GL_TEXTURE_MIN_LOD, 0);
-            com.muoniumplayer.compat.gl.GL11.glTexParameterf(
-                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D,
-                    org.lwjgl.opengl.GL13.GL_TEXTURE_MAX_LOD, (float) top);
-            org.lwjgl.opengl.GL30.glGenerateMipmap(
-                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D);
-            int tailW = org.lwjgl.opengl.GL11.glGetTexLevelParameteri(
-                    com.muoniumplayer.compat.gl.GL11.GL_TEXTURE_2D, top,
-                    org.lwjgl.opengl.GL11.GL_TEXTURE_WIDTH);
-            int err = org.lwjgl.opengl.GL11.glGetError();
-            if (err != 0 || tailW != Math.max(1, width >> top)) {
-                com.muoniumplayer.compat.mc.WorldLyricsBridge.traceOnce(
-                        "特效贴图 mip 链自检失败（err=0x" + Integer.toHexString(err)
-                                + " tailW=" + tailW + "），熔断回纯 LINEAR");
-                return -1;
-            }
-            return top;
-        } catch (Throwable t) {
-            com.muoniumplayer.compat.mc.WorldLyricsBridge.traceOnce(
-                    "特效贴图 mip 链生成异常，熔断回纯 LINEAR: " + t);
-            return -1;
+            super.setFilter(true, false);
         }
     }
 

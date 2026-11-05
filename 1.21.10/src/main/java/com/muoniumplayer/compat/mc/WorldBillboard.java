@@ -230,9 +230,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             if (settings != null && settings.huiguang && LyricGlyphAtlas.isFunctional()) {
                 return;
             }
-            // 图集不可用/超尺寸：像素字兜底（无阴影，与平滑档的无阴影语义一致）
+            // 图集不可用/超尺寸：像素字兜底（带阴影 —— 与平滑档的立体感语义一致）
             int argb = ((int) (alpha * 255f) << 24) | (rgb & 0xFFFFFF);
-            drawPixelText(String.valueOf(c), x, y, argb, false);
+            drawPixelText(String.valueOf(c), x, y, argb, true);
             return;
         }
         if (!(cell.page instanceof LyricGlyphAtlasBridge.PageHandle)) {
@@ -567,14 +567,16 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         int w = com.muoniumplayer.core.lyrics3d.RowGlowSprite.width();
         int h = com.muoniumplayer.core.lyrics3d.RowGlowSprite.height();
         if (w <= 0 || h <= 0 || px.length < w * h) return;
-        if (!key.equals(glowKey) || glowTex == null || glowW < w || glowH < h) {
+        // 两步式生命周期（与 26.3 标杆同构）：容量不足才 release+重建 ——
+        // 卡拉OK逐字点亮中 key 每帧变，若走重建路径，同帧已挂起 quad 会握着
+        // 释放掉的纹理（黑紫方块闪帧）；重建前先收掉本纹理的挂起批。
+        if (glowTex == null || glowW < w || glowH < h) {
             try {
                 int capW = nextPow2(w), capH = nextPow2(h);
                 NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
-                for (int y = 0, i = 0; y < h; y++) {
-                    for (int x = 0; x < w; x++, i++) {
-                        img.setPixelABGR(x, y, px[i]);
-                    }
+                if (glowRl != null && glowRl.equals(pendingEffectRl) && buffers != null) {
+                    buffers.endBatch(currentEffectType(glowRl));
+                    pendingEffectRl = null;
                 }
                 if (glowTex != null) {
                     Minecraft.getInstance().getTextureManager().release(glowRl);
@@ -589,11 +591,27 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 glowTex = tex;
                 glowW = capW;
                 glowH = capH;
+                glowKey = null;
             } catch (Throwable t) {
                 glowError = true;
                 return;
             }
-            glowKey = key;
+        }
+        if (!key.equals(glowKey)) {
+            try {
+                NativeImage img = glowTex.getPixels();
+                if (img == null) return;
+                for (int y = 0, i = 0; y < h; y++) {
+                    for (int x = 0; x < w; x++, i++) {
+                        img.setPixelABGR(x, y, px[i]);
+                    }
+                }
+                glowTex.upload();
+                glowKey = key;
+            } catch (Throwable t) {
+                glowError = true;
+                return;
+            }
         }
 
         // 对位：sprite 位图含 pad 外扩（设计像素），quad 覆盖「pad 外扩后的行 bbox」，

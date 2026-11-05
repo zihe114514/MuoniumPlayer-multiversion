@@ -577,15 +577,14 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         int w = com.muoniumplayer.core.lyrics3d.RowGlowSprite.width();
         int h = com.muoniumplayer.core.lyrics3d.RowGlowSprite.height();
         if (w <= 0 || h <= 0 || px.length < w * h) return;
-        if (!key.equals(glowKey) || glowTex == null || glowW < w || glowH < h) {
+        // 两步式生命周期（与 26.3 标杆同构）：容量不足才 release+重建 ——
+        // 卡拉OK逐字点亮中 key 每帧变，若走重建路径就是逐字一次纹理对象
+        // churn（release/register/new NativeImage/mip 链），且同帧前行 quad
+        // 挂起时重建会释放它引用的纹理（黑紫方块闪帧窗口）。
+        if (glowTex == null || glowW < w || glowH < h) {
             try {
                 int capW = nextPow2(w), capH = nextPow2(h);
                 NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
-                for (int y = 0, i = 0; y < h; y++) {
-                    for (int x = 0; x < w; x++, i++) {
-                        img.setPixelRGBA(x, y, px[i]);
-                    }
-                }
                 if (glowTex != null) {
                     Minecraft.getInstance().getTextureManager().release(glowRl);
                     glowTex = null;
@@ -598,11 +597,27 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 glowTex = tex;
                 glowW = capW;
                 glowH = capH;
+                glowKey = null;
             } catch (Throwable t) {
                 glowError = true;
                 return;
             }
-            glowKey = key;
+        }
+        if (!key.equals(glowKey)) {
+            try {
+                NativeImage img = glowTex.getPixels();
+                if (img == null) return;
+                for (int y = 0, i = 0; y < h; y++) {
+                    for (int x = 0; x < w; x++, i++) {
+                        img.setPixelRGBA(x, y, px[i]);
+                    }
+                }
+                glowTex.upload();
+                glowKey = key;
+            } catch (Throwable t) {
+                glowError = true;
+                return;
+            }
         }
 
         // 对位：sprite 位图含 pad 外扩（设计像素），quad 覆盖「pad 外扩后的行 bbox」，

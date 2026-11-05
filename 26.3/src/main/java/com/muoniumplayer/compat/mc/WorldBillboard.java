@@ -536,7 +536,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 无需同批内的顺序保证。
         poseStack.pushPose();
         try {
-            // 阴影先（普通 alpha 段、同页纹理压暗色）—— 在晕之后墨之前，立体感垫层
+            // 阴影先（普通 alpha 段、同页纹理压暗色）→ 晕（加色）→ 墨。
+            // 阴影压在晕上：加色不可交换，晕能量 × 阴影 alpha(≤0.22) 的重叠带
+            // 二阶差可忽略；墨最后 —— 立体感垫层的三层序。
             RenderType shadowRt = currentWorldTextType(inkRl);
             LyricOnTopSubmitter.submitCustomGeometry(collector, poseStack, shadowRt, (pose, vc) -> {
                 Matrix4f mat = pose.pose();
@@ -1094,6 +1096,68 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 与字形同一 alwaysOnTop 相位：渲染层逐字调 drawSmoothGlyph 之后才调
      * drawStar，submit 顺序即绘制顺序 —— 星芒压在字上。
      */
+    @Override
+    public void drawRing(float cx, float cy, float sizePx, int argb) {
+        if (poseStack == null || collector == null || (argb >>> 24) == 0) return;
+        Identifier rl = ringTexture();
+        if (rl == null) return;
+        final float half = Math.max(1f, sizePx * 0.5f);
+        if (captureMode) {
+            captureEffectQuad(rl,
+                    cx - half, cy - half, 0f, 0f,
+                    cx - half, cy + half, 0f, 1f,
+                    cx + half, cy + half, 1f, 1f,
+                    cx + half, cy - half, 1f, 0f,
+                    argb);
+            return;
+        }
+        RenderType renderType = currentWorldTextType(rl);
+        poseStack.pushPose();
+        try {
+            LyricOnTopSubmitter.submitCustomGeometry(collector, poseStack, renderType, (pose, vc) -> {
+                Matrix4f mat = pose.pose();
+                putHaloVertex(vc, mat, cx - half, cy - half, 0f, 0f, argb);
+                putHaloVertex(vc, mat, cx - half, cy + half, 0f, 1f, argb);
+                putHaloVertex(vc, mat, cx + half, cy + half, 1f, 1f, argb);
+                putHaloVertex(vc, mat, cx + half, cy - half, 1f, 0f, argb);
+            });
+        } finally {
+            poseStack.popPose();
+        }
+    }
+
+    /** 冲击环贴图：128×128 白色圆环（folia bokeh 环的等价物）——
+     *  环心 r=0.62、环宽半高斯 σ=0.05，外缘/内缘平滑收零；LINEAR 下无台阶。 */
+    private static Identifier ringRl;
+    private static boolean ringError;
+
+    private static Identifier ringTexture() {
+        if (ringError) return null;
+        if (ringRl == null) {
+            try {
+                NativeImage img = new NativeImage(NativeImage.Format.RGBA, 128, 128, false);
+                for (int y = 0; y < 128; y++) {
+                    for (int x = 0; x < 128; x++) {
+                        float dx = (x + 0.5f) / 64f - 1f;
+                        float dy = (y + 0.5f) / 64f - 1f;
+                        float r = (float) Math.sqrt(dx * dx + dy * dy);
+                        float band = (float) Math.exp(-((r - 0.62f) * (r - 0.62f)) / (2f * 0.05f * 0.05f));
+                        img.setPixelABGR(x, y, 0xFFFFFF | ((int) (255 * band) << 24));
+                    }
+                }
+                DynamicTexture tex = new TrailTexture(img);
+                ringRl = Identifier.fromNamespaceAndPath("muoniumplayer",
+                        "dynamic/worldlyrics_ring_" + (rlCounter++));
+                Minecraft.getInstance().getTextureManager().register(ringRl, tex);
+            } catch (Throwable t) {
+                ringError = true;
+                if (TRACE) System.out.println("[WorldLyrics/trace] 冲击环纹理生成失败，环停用: " + t);
+                return null;
+            }
+        }
+        return ringRl;
+    }
+
     @Override
     public void drawStar(float cx, float cy, float sizePx, float rotDeg, int argb) {
         if (poseStack == null || collector == null || (argb >>> 24) == 0) return;
