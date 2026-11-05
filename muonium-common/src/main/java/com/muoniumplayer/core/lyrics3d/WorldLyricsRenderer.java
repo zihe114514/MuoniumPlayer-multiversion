@@ -707,14 +707,16 @@ public final class WorldLyricsRenderer {
                 }
                 if (count > 0) {
                     // 行级晕跟随发光颜色模式；跟随字色档用行首字的墨色派生
-                    // （无关键字/渐变的像素档够用）
+                    // （无关键字/渐变的像素档够用）。
+                    // 行级垫底同样吃白天过曝抑制（白天 0.45 倍、夜晚全量）——
+                    // 它是辉光形态下唯一的晕层，不吃调制白天整团白得更狠。
                     int backdropInk = glyphs.glyphs.get(0).rgbOverride != 0
                             ? glyphs.glyphs.get(0).rgbOverride : (inkRgb & 0xFFFFFF);
                     host.drawGlowBackdrop(vis.toString(), right,
                             resolveGlowColor(settings, backdropInk,
                                     glyphs.glyphs.get(0).keywordRgb,
                                     glyphs.glyphs.get(0).rgbOverride) & 0xFFFFFF,
-                            row.alpha, canvasSlot);
+                            row.alpha * (0.45f + 0.55f * huiguangNight), canvasSlot);
                 }
             }
             for (int gi = 0; gi < glyphs.glyphs.size(); gi++) {
@@ -750,6 +752,11 @@ public final class WorldLyricsRenderer {
                         // 心象下不在唱的块压低发光（与简洁模式「整行恒定发光」区分）。
                         glowMul = 0.35f;
                     }
+                    // 白天过曝抑制：加色晕在亮天空上把亮度加到饱和（整团白）。
+                    // 夜色系数（白天≈0 夜晚≈1，4 档量化）反相调制晕能量 ——
+                    // 白天 0.45 倍收敛、夜晚全量，黄昏/黎明随档平滑。
+                    // 放在心象分档之后：任何分支定下的基础能量统一吃环境调制。
+                    glowMul *= 0.45f + 0.55f * huiguangNight;
                     if (huiguang) {
                         // ---- 卡拉OK双色：冷暗档 / 暖亮档两张烘焙格，顶点 alpha 交叉淡化
                         //      （folia tint 混色的 alpha 通道等价物）。每字恰好两格 ——
@@ -801,8 +808,10 @@ public final class WorldLyricsRenderer {
                                 // 飞行白化（folia hot 色 += flying×0.25 的等价物）：
                                 // 飞行中的字提高发光烘焙乘数，像带电粒子。
                                 // 亮档晕色重新解析：full 是「关键字混色后的墨色」，
-                                // 跟随字色档的晕要跟着它走
-                                float glow = 1f + (g.flyingWhite ? 0.25f : 0f);
+                                // 跟随字色档的晕要跟着它走。
+                                // 同样吃白天过曝抑制（与暗档同一环境调制口径）。
+                                float glow = (1f + (g.flyingWhite ? 0.25f : 0f))
+                                        * (0.45f + 0.55f * huiguangNight);
                                 boolean on = glowOn && glowMul > 0.02f;
                                 int litGlow = on
                                         ? resolveGlowColor(settings, full, g.keywordRgb, g.rgbOverride)

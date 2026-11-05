@@ -911,7 +911,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                     Minecraft.getInstance().getTextureManager().release(glowRl[s]);
                     glowTex[s] = null;
                 }
-                NativeImage img = new NativeImage(NativeImage.Format.RGBA, w, h, false);
+                NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
                 tex = new TrailTexture(
                         () -> "muoniumplayer_worldlyrics_rowglow", img);
                 Identifier rl = Identifier.fromNamespaceAndPath("muoniumplayer",

@@ -93,8 +93,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     static final float SHADOW_OFFSET_Y_PX = 1f;
     /**
      * 阴影强度（顶点 alpha 系数）。字色×0.25 的「原版口径」在加色晕垫底下仍是
-     * 一团实色（重影感的另一半）—— 改成黑 ×0.35：浅底上是轻描的暗边、深底上
-     * 融进背景，任何背景下都只是「一点点」。
+     * 一团实色（重影感的另一半）—— 纯黑 ×0.22：浅底上是轻描的暗边、深底上
+     * 融进背景，任何背景下都只是「一点点」（游戏内三轮收敛定案）。
      */
     static final float SHADOW_STRENGTH = 0.22f;
 
