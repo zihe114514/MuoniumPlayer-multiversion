@@ -185,6 +185,7 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
             @Override public float firstHitMeanMeters() { return stats.firstHitMean; }
             @Override public float bounceSegmentMeanMeters() { return stats.segMean; }
             @Override public float meanReflectivity() { return stats.reflectivity; }
+            @Override public float[] bandReflectivities() { return stats.bandRho; }
             @Override public float reachableFraction() { return stats.reachable; }
             @Override public int tapCount() { return stats.tapCount; }
             @Override public float[] tapDelaysSec() { return stats.tapDelays; }
@@ -203,7 +204,8 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
 
     /** 射线场的统计摘要;{@link #NONE} 即「没采/旷野」。 */
     private static final class GeomStats {
-        static final GeomStats NONE = new GeomStats(0f, ListenerSample.NO_HIT, 0f, 0f, 0f,
+        static final GeomStats NONE = new GeomStats(0f, ListenerSample.NO_HIT, 0f, 0f,
+                new float[0], 0f,
                 0, new float[0], new float[0], new float[0], new float[0], new float[0],
                 new EnergyField());
 
@@ -211,6 +213,8 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         final float firstHitMean;
         final float segMean;
         final float reflectivity;
+        /** 三频带反射率均值 {低,中,高}:逐频带 T60 的材质驱动。 */
+        final float[] bandRho;
         final float reachable;
         final int tapCount;
         final float[] tapDelays;
@@ -223,7 +227,7 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         final EnergyField histogram;
 
         GeomStats(float enclosure, float firstHitMean, float segMean,
-                  float reflectivity, float reachable,
+                  float reflectivity, float[] bandRho, float reachable,
                   int tapCount, float[] tapDelays, float[] tapGains,
                   float[] tapArrX, float[] tapArrZ, float[] tapHoriz,
                   EnergyField histogram) {
@@ -231,6 +235,7 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
             this.firstHitMean = firstHitMean;
             this.segMean = segMean;
             this.reflectivity = reflectivity;
+            this.bandRho = bandRho;
             this.reachable = reachable;
             this.tapCount = tapCount;
             this.tapDelays = tapDelays;
@@ -251,6 +256,7 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         double firstSum = 0;
         double segSum = 0;
         double reflectSum = 0;
+        final double[] bandRhoSum = new double[EnergyField.BANDS];
 
         // 早期反射抽头:每条确认可达的反射记一次(容量 = 射线 × 弹次上限)。
         final int tapCapacity = RAY_COUNT * (MAX_BOUNCES + 1);
@@ -301,6 +307,9 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
                 final float[] surfaceRho = reflectivity(world, hit);
                 reflectHits++;
                 reflectSum += (surfaceRho[0] + surfaceRho[1] + surfaceRho[2]) / 3.0;
+                for (int band = 0; band < EnergyField.BANDS; band++) {
+                    bandRhoSum[band] += surfaceRho[band];
+                }
                 bounces++;
                 // 逐弹幅度保留:√反射率(三带均值)夹进物理幅度区间后连乘 ——
                 // 早期反射是「幅度」量,按能量模型连乘会把近墙反射算到听不见
@@ -350,8 +359,13 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         final float firstMean = (float) (firstSum / firstHits);
         final float segMean = segCount > 0 ? (float) (segSum / segCount) : firstMean;
         final float reflectivity = reflectHits > 0 ? (float) (reflectSum / reflectHits) : DEFAULT_REFLECTIVITY;
+        final float[] bandRho = new float[EnergyField.BANDS];
+        for (int band = 0; band < EnergyField.BANDS; band++) {
+            bandRho[band] = reflectHits > 0 ? (float) (bandRhoSum[band] / reflectHits) : DEFAULT_REFLECTIVITY;
+        }
         final float reach = bounces > 0 ? reachable / (float) bounces : 0f;
-        return new GeomStats(firstHits / (float) RAY_COUNT, firstMean, segMean, reflectivity, reach,
+        return new GeomStats(firstHits / (float) RAY_COUNT, firstMean, segMean, reflectivity,
+                bandRho, reach,
                 tapCount, tapDelays, tapGains, tapArrX, tapArrZ, tapHoriz, histogram);
     }
 

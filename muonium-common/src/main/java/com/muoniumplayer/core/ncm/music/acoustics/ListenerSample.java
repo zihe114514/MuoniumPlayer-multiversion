@@ -100,6 +100,15 @@ public interface ListenerSample {
         return 0f;
     }
 
+    /**
+     * 三频带反射率 {低,中,高}(材质表原值,未平均):逐频带 T60 的
+     * 材质驱动来源 —— 羊毛高频 ρ=0.03 vs 中频 0.1,高频尾应快一倍;
+     * 石头全频亮,三带同尾。default 交 null = 旧采样器,走均值近似。
+     */
+    default float[] bandReflectivities() {
+        return null;
+    }
+
     /** 直射遮挡量:路径上穿透方块的遮挡累计(实心 1.0 / 非实心 0.15);无声源 0。 */
     default float directOcclusion() {
         return 0f;

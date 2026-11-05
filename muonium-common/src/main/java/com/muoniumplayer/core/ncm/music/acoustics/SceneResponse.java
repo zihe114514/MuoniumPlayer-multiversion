@@ -137,13 +137,28 @@ public final class SceneResponse {
                             * (Float.isNaN(lowScale) ? 1f : lowScale));
                 }
                 if (hist.decayHighSec > 0.0) {
-                    highFinal = clampDecay(Math.max(decay * DECAY_HIGH_FALLBACK,
+                    highFinal = clampDecayHigh(Math.max(decay * DECAY_HIGH_FALLBACK,
                             hist.decayHighSec * enclosureDecayFactor)
                             * (Float.isNaN(midScale) ? 1f : midScale));
                 }
             } else {
-                lowFinal = clampDecay(decay * DECAY_LOW_FALLBACK * (Float.isNaN(lowScale) ? 1f : lowScale));
-                highFinal = clampDecay(decay * DECAY_HIGH_FALLBACK * (Float.isNaN(midScale) ? 1f : midScale));
+                // 逐频带兜底(拟合失败=小房间窗内能量不足):每弹能量保留比
+                // 的对数比即 T60 之比 —— T60_band/T60_mid = log(ρMid)/log(ρBand)。
+                // 羊毛 {0.2,0.1,0.03}:高频 ×0.68(软面吃高频);石头
+                // {1.5,1.5,1.45}:×1.0(全频亮,clamp 到 1 —— 比中频还长
+                // 不物理,高频衰减永不慢于中频)。低频绕射强,×1.15 温和偏置。
+                lowFinal = clampDecay(decay * 1.15 * (Float.isNaN(lowScale) ? 1f : lowScale));
+                final float[] bands = sample.bandReflectivities();
+                double highRatio;
+                if (bands != null && bands.length >= 3 && bands[2] > 0.02f && bands[1] > 0.02f
+                        && bands[2] < 1f && bands[1] < 1f) {
+                    highRatio = Math.max(0.35, Math.min(1.0,
+                            Math.log(Math.max(0.05, bands[1])) / Math.log(Math.max(0.05, bands[2]))));
+                } else {
+                    // 旧采样器无三带数据:均值近似(rho 低 → 高频占比低)
+                    highRatio = Math.max(0.45, Math.min(1.0, 0.62 + 0.3 * Math.min(rho, 1.0f)));
+                }
+                highFinal = clampDecayHigh(decay * highRatio * (Float.isNaN(midScale) ? 1f : midScale));
             }
             decayLow = lowFinal;
             decayHigh = highFinal;
@@ -198,8 +213,12 @@ public final class SceneResponse {
                     tapDelay[i] = sample.tapDelaysSec()[picked[i]];
                     maxGain = Math.max(maxGain, sample.tapGains()[picked[i]]);
                 }
-                // 归一:最强一条 ≤0.4(湿声总量另算,抽头只跟自己的相对能量成比例)
-                final float norm = maxGain > 1e-6f ? Math.min(1f, TAP_GAIN_CEIL / maxGain) : 0f;
+                // 归一撤销(材质区分的根本修复):raw gain = √ρ×2/path 已经
+                // 是材质的真实响度(石头 0.38 vs 羊毛 0.12,3 倍)。此前
+                // maxGain 归一把每房最强抽头都抬/压到同一档 —— 「吸音房回声
+                // 轻」被归一抹平,材质只剩湿声一路有差异。现在:上限夹取
+                // (单条过响防爆音)代替归一,材质差原样保留。
+                final float norm = 1f;
                 // 总能量约束:密集房间可达 74-83 条反射,64 条相近能量的抽头同时
                 // 叠加,单耳瞬时和可达最强条的 10-20 倍 —— DJ 音乐满幅输入下
                 // ER 通路自身就能超 1.0 削波。把「单耳幅度和」约束到
@@ -345,6 +364,12 @@ public final class SceneResponse {
         return (float) Math.max(RT60_MIN_SEC, Math.min(RT60_MAX_SEC, sec));
     }
 
+    /** 高频带夹取:下限放宽到 0.04s —— 软面(羊毛)的高频 T60 物理上比
+     *  中频短一半,中频的「防死寂」下限不该抬住它;余音感由中频载体。 */
+    private static float clampDecayHigh(double sec) {
+        return (float) Math.max(0.04, Math.min(RT60_MAX_SEC, sec));
+    }
+
     private static final float[] EMPTY = new float[0];
     private static final int[] EMPTY_INDEX = new int[0];
 
@@ -370,7 +395,10 @@ public final class SceneResponse {
     private static final double DECAY_ENERGY_MIN = 0.10;
     private static final double DECAY_ENERGY_MAX = 0.92;
     /** 低反射率端抬升:e = 0.45+0.35ρ 封 0.88 —— 小房间余音从「录音棚」回到「卧室」。 */
-    private static final double RT60_MIN_SEC = 0.15;
+    /** 短尾下限:0.15s 曾把羊毛(0.05s)/木头(0.19s)与石头的差异在
+     *  小房间全被夹平 —— 0.06s 是「贴脸小间啪一下」的可闻下限,之下的
+     *  材质衰减差(羊毛高频 0.10s)有分辨空间。 */
+    private static final double RT60_MIN_SEC = 0.06;
     /** T60 上限 5.5s:实测洞穴拟合 4.1s 贴着旧上限 4.5,余量不足;
      *  5.5 给真实大厅/sub-bass 尾留空间。 */
     private static final double RT60_MAX_SEC = 5.5;
