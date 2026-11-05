@@ -1194,6 +1194,24 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         }, () -> HudConfig.worldLyricsEnabled),
+                                choice("发光形态", "两种并列的观感，二选一。经典：晕与字分离，逐字有贴边的亮环，字始终锐利。辉光：整行一团大范围柔光，字芯过曝发白、外圈保留字色 —— 光晕明显更大更「亮」，逐字亮环不再出现。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return HudConfig.worldLyricsGlowMode == 1 ? "辉光" : "经典";
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsGlowMode = (HudConfig.worldLyricsGlowMode + 1) % 2;
+                                                saveNow();
+                                            }
+                                        }, new String[] {"经典", "辉光"},
+                                        v -> {
+                                            HudConfig.worldLyricsGlowMode = "辉光".equals(v) ? 1 : 0;
+                                            saveNow();
+                                        },
+                                        () -> HudConfig.worldLyricsEnabled && HudConfig.worldLyricsGlowEnabled,
+                                        new String[] {"逐字晕格 + 贴字亮环，字保持锐利。",
+                                                "行级金字塔大光晕，字芯白热。"}),
                                 choice("发光质量", "辉光的分层管线：Standard 单层宽晕最省；High 默认 —— 柔晕+背景融合+贴字亮环（光从字里长出来，与字色自然过渡）；Ultra 加多尺度 Bloom 与白芯提亮，最华丽，烘焙开销约 1.5 倍。",
                                         new Supplier<String>() {
                                             public String get() {
