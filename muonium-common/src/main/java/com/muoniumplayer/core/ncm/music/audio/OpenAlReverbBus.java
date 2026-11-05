@@ -107,6 +107,11 @@ public final class OpenAlReverbBus {
         return instance;
     }
 
+    /** 场景侧检测到读回静音等失效模式时调用:总线永久下线回自研链。 */
+    public void markBroken() {
+        broken("外部判定失效", new IllegalStateException("readback silence"));
+    }
+
     private boolean init(int sampleRate, int framesPerBuffer) {
         // loopback 设备:不占声卡,渲染结果只能 alcRenderSamplesSOFT 读回。
         device = SOFTLoopback.alcLoopbackOpenDeviceSOFT((ByteBuffer) null);

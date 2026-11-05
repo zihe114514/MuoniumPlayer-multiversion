@@ -209,6 +209,8 @@ public final class SceneAcoustics {
     private static double directDelayN;
     /** 本缓冲的干声已经过总线 HRTF(直射-only):逐样本的手搓直射链跳过。 */
     private static boolean hrtfDirectApplied;
+    /** 读回静音连续计数(总线失效检测)。 */
+    private static int silentRounds;
     /** 听者位姿(游戏线程写,音频线程读;AL 的 listener 需要)。 */
     private static volatile double listenerX, listenerY, listenerZ;
     private static volatile float listenerFwdX, listenerFwdY, listenerFwdZ;
@@ -227,6 +229,24 @@ public final class SceneAcoustics {
         listenerUpX = ux;
         listenerUpY = uy;
         listenerUpZ = uz;
+    }
+
+    /** PCM16 缓冲的 RMS(静音检测)。 */
+    private static float rmsOf(short[] buf, int n) {
+        double sum = 0;
+        for (int i = 0; i < n && i < buf.length; i++) {
+            sum += buf[i] * (double) buf[i];
+        }
+        return n > 0 ? (float) Math.sqrt(sum / n) / 32768f : 0f;
+    }
+
+    private static float rmsOfOut(float[] buf, int frames) {
+        double sum = 0;
+        int n = Math.min(frames * 2, buf.length);
+        for (int i = 0; i < n; i++) {
+            sum += buf[i] * (double) buf[i];
+        }
+        return n > 0 ? (float) Math.sqrt(sum / n) : 0f;
     }
 
     /** double → PCM16(与 OpenALAudioDevice.write 同一条转换公式)。 */
