@@ -562,9 +562,16 @@ OpenAlReverbBus busFull = useEaxBus
                     listenerFwdX, listenerFwdY, listenerFwdZ,
                     listenerUpX, listenerUpY, listenerUpZ);
             if (plan.hasSpeakerAnchor) {
-                busFull.setSourcePose(plan.speakerX, plan.speakerY, plan.speakerZ,
+                // 声源位置平滑(Wwise 参数 EMA 同款):plan 每 500ms 跳一次,
+                // AL source 直接吃会瞬移 —— 挪动/重放的声源听感生硬。
+                // τ=0.25s 与距离收敛同档;XYZ 三轴独立收敛。
+                final double posStep = 1.0 - Math.exp(-frames / (sampleRate * 0.25));
+                speakerX += (plan.speakerX - speakerX) * posStep;
+                speakerY += (plan.speakerY - speakerY) * posStep;
+                speakerZ += (plan.speakerZ - speakerZ) * posStep;
+                busFull.setSourcePose(speakerX, speakerY, speakerZ,
                         1f, directCutoff >= DirectPath.FC_OPEN ? 1f : 0.5f);
-                busFull.setSidePose(plan.speakerX, plan.speakerY, plan.speakerZ);
+                busFull.setSidePose(speakerX, speakerY, speakerZ);
                 busFull.setSourceRolloff(0.75f);
             } else {
                 // 玩家即声源:source 贴在头部 —— 直射恒等(零衰减零方向),
