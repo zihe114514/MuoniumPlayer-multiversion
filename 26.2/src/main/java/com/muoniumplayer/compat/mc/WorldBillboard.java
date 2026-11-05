@@ -77,9 +77,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * (1,1) 不可见 —— (2,3) 是探针四档对比的定案（out7.png 行 3）：立体感明确
      * 且不喧宾（「一点点阴影」的钉死常数，不设设置项）。
      */
-    static final float SHADOW_OFFSET_PX = 2f;
+    static final float SHADOW_OFFSET_PX = 0.5f;
     /** 阴影的 Y 偏移（设计像素）：与 X 异值 —— 光照习惯上来自上方，纵向更沉。 */
-    static final float SHADOW_OFFSET_Y_PX = 3f;
+    static final float SHADOW_OFFSET_Y_PX = 1f;
     /**
      * 阴影强度（顶点 alpha 系数）。字色×0.25 的「原版口径」在加色晕垫底下仍是
      * 一团实色（重影感的另一半）—— 改成黑 ×0.22：浅底上是轻描的暗边、深底上
