@@ -66,20 +66,35 @@ public class MConfigHudScreen extends GuiScreen {
     // ==================== 面板尺寸（布局轴） ====================
 
     private static final int HEADER_H = 54;
+    /** 矮窗口下页眉压到这一档：面包屑那行可以省，标题与搜索框必须留着。 */
+    private static final int HEADER_H_COMPACT = 40;
     private static final int NAV_W = 168;
     private static final int NAV_ROW_H = 34;
+    /** 侧栏行高的压缩下限：再矮就连图标都画不完整，宁可滚动。 */
+    private static final int NAV_ROW_MIN_H = 26;
     private static final int NAV_BOTTOM_H = 68;
     private static final int FOOTER_H = 32;
 
     private static final int CONTENT_PAD = 16;
     private static final int GROUP_HEADER_H = 26;
-    private static final int ROW_H = 32;
+    /**
+     * 卡片折叠态高度：标题 + 说明两行，右侧留给主控件与展开箭头。
+     * 说明在双列半宽里几乎必然折行，留一行会变成「水面之下 / 耳朵没进水」这种半句话；
+     * 两行说明 + 这块高度是参考图那种「标题+副标题」卡片的实际读法。
+     */
+    private static final int CARD_H = 68;
+    /** 卡片展开后追加的详情区高度（滑条 / 完整说明）。 */
+    private static final int DETAIL_H = 46;
+    /** 同一列里上下两张卡之间的缝。 */
+    private static final int CARD_GAP_V = 10;
     private static final int CARD_GAP = 12;
-    private static final int CARD_RADIUS = 12;
+    private static final int CARD_RADIUS = 16;
     private static final int EMPTY_STATE_H = 78;
-    private static final int PANEL_RADIUS = 14;
+    private static final int PANEL_RADIUS = 18;
     /** 双列格子之间的缝。 */
     private static final int CELL_GAP = 12;
+    /** 卡片右侧展开箭头的点击区宽度。 */
+    private static final int ARROW_W = 26;
 
     private static final int TRACK_W = 170;
     private static final int VALUE_W = 44;
@@ -133,6 +148,8 @@ public class MConfigHudScreen extends GuiScreen {
     /** 侧栏胶囊指示条换位（OneConfig 是 EaseOutExpo 300ms）。 */
     private static final double INDICATOR_MS = 300.0;
     private static final double POP_MS = 170.0;
+    /** 卡片展开 / 收起：详情区高度与箭头旋转共用这一档。 */
+    private static final double EXPAND_MS = 240.0;
     /** 配置页 ↔ 编辑舞台的双态切换。 */
     private static final double EDIT_MS = 220.0;
 
@@ -215,7 +232,6 @@ public class MConfigHudScreen extends GuiScreen {
     }
 
     private final List<MRow> rows = new ArrayList<MRow>();
-    private final List<int[]> cards = new ArrayList<int[]>();
     private int contentHeight;
 
     // ==================== 状态 ====================
@@ -232,6 +248,8 @@ public class MConfigHudScreen extends GuiScreen {
     private float choiceGate;
     private HudSettingsModel.Entry flashEntry;
     private long flashDeadline;
+    /** MD3 卡片展开态：同一时刻只留一张，点箭头或卡片主体切换。 */
+    private HudSettingsModel.Entry expandedEntry;
 
     private HudSetting draggingSlider;
     private int draggingSliderTrackX;
@@ -278,6 +296,9 @@ public class MConfigHudScreen extends GuiScreen {
             new IdentityHashMap<HudSettingsModel.Entry, float[]>();
     private final Map<HudSettingsModel.Entry, Channel[]> rowChannels =
             new IdentityHashMap<HudSettingsModel.Entry, Channel[]>();
+    /** 卡片展开度通道：按条目身份存，展开/收起都从当前值续着走（首帧也吃动画）。 */
+    private final Map<HudSettingsModel.Entry, Channel> expandChannels =
+            new IdentityHashMap<HudSettingsModel.Entry, Channel>();
 
     private float displayScroll;
     private int scrollOwner = Integer.MIN_VALUE;
@@ -537,12 +558,61 @@ public class MConfigHudScreen extends GuiScreen {
     private int savedAdaptiveWidth;
     private int savedAdaptiveHeight;
 
-    // ==================== 面板几何（固定居中，OneConfig 形态） ====================
+    // ==================== 面板几何（固定居中） ====================
 
+    /**
+     * 面板矩形：优先吃掉可用空间，但**永远不超出窗口**。
+     *
+     * <p>旧版是 {@code max(520, min(680, width*0.60))} —— 下限写死 520，窗口比它窄时
+     * 面板会直接顶出屏幕右边（手机上尤其明显）。这里改成先从可用宽度里减去左右边距再取，
+     * 下限只作为「再窄也不缩到不可用」的兜底，并且被 {@code width - 2*margin} 二次夹紧。</p>
+     */
     private int[] panelBounds() {
-        int panelW = Math.max(520, Math.min(680, Math.round(width * 0.60f)));
-        int panelH = Math.max(380, Math.min(560, Math.round(height * 0.80f)));
+        int margin = Math.max(6, Math.round(Math.min(width, height) * 0.015f));
+        int maxW = Math.max(220, width - margin * 2);
+        int maxH = Math.max(220, height - margin * 2);
+        // 目标宽度按屏幕比例取，但下限只到「侧栏图标档 + 一张卡片」的可用宽度（约 320），
+        // 不再出现「下限 440 > 可用宽度」时面板反而比屏幕宽的情况。
+        // 大屏给足上限：1280 宽时面板应接近 900，侧栏才摆得下文字而不是被迫收成图标条。
+        int targetW = Math.round(width * 0.74f);
+        int panelW = Math.max(Math.min(360, maxW), Math.min(920, targetW));
+        int targetH = Math.round(height * 0.86f);
+        int panelH = Math.max(Math.min(300, maxH), Math.min(760, targetH));
+        panelW = Math.min(panelW, maxW);
+        panelH = Math.min(panelH, maxH);
         return new int[] { (width - panelW) / 2, (height - panelH) / 2, panelW, panelH };
+    }
+
+    /**
+     * 内容区够不够摆两列。窄窗口（手机竖屏、小尺寸 GUI 缩放）下强行双列会把
+     * 卡内文字压成两三个字一行，此时退回单列，卡片仍然有展开箭头。
+     */
+    private boolean twoColumns(int contentW) {
+        return contentW - CONTENT_PAD * 2 - 4 >= 460;
+    }
+
+    /**
+     * 侧栏在窄面板里必须让位，否则内容列会被挤成一条缝（560 宽窗口下内容只剩 200px 出头，
+     * 卡片连标题都放不下）。三档：完整文字栏 → 窄文字栏 → 只留图标。
+     */
+    private int navWidth(int panelW) {
+        if (panelW >= 620) return NAV_W;
+        if (panelW >= 460) return Math.max(96, Math.round(NAV_W * 0.62f));
+        return 48;
+    }
+
+    /** 侧栏是否只画图标（窄档），此时不写分类标题与项数。 */
+    private boolean navCompact(int navW) {
+        return navW < 90;
+    }
+
+    /**
+     * 页眉实际高度：矮窗口下压到 {@link #HEADER_H_COMPACT}。
+     * 绘制、命中、滚动补偿全走这一个入口 —— 页眉高度一旦在几处各算一遍，
+     * 小窗下「标题看起来在 40」而「鼠标按 54 判定」就会点错行。
+     */
+    private int headerHeight(int panelH) {
+        return panelH < 420 ? HEADER_H_COMPACT : HEADER_H;
     }
 
     // ==================== 面板绘制 ====================
@@ -571,17 +641,19 @@ public class MConfigHudScreen extends GuiScreen {
 
         float headerOuter = pushAlpha(gate(HEADER_FIRST, HEADER_TRAVEL));
         try {
-            drawHeader(fr, panelX, panelY, panelW, active, mouseX, mouseY);
+            drawHeader(fr, panelX, panelY, panelW, panelH, active, mouseX, mouseY);
         } finally {
             layerAlpha = headerOuter;
         }
 
-        int bodyY = panelY + HEADER_H;
-        int bodyH = panelH - HEADER_H - FOOTER_H;
-        drawNav(fr, panelX, bodyY, NAV_W, bodyH, categories, mouseX, mouseY);
+        int headerH = headerHeight(panelH);
+        int bodyY = panelY + headerH;
+        int bodyH = Math.max(80, panelH - headerH - FOOTER_H);
+        int navW = navWidth(panelW);
+        drawNav(fr, panelX, bodyY, navW, bodyH, categories, mouseX, mouseY);
 
-        int contentX = panelX + NAV_W;
-        int contentW = panelW - NAV_W;
+        int contentX = panelX + navW;
+        int contentW = panelW - navW;
 
         int owner = scrollKey();
         if (owner != scrollOwner) {
@@ -613,14 +685,17 @@ public class MConfigHudScreen extends GuiScreen {
         float outerAlpha = layerAlpha;
         tooltipSeenThisFrame = false;
         try {
-            for (int[] card : cards) {
-                if (card[1] + card[3] < listY - 4 || card[1] > listY + listH + 4) continue;
-                float reveal = revealOf(card[4]);
+            // 先把所有卡片底画完，再画行内容：卡片之间彼此独立，不能出现「下一张卡盖住上一张的说明」。
+            for (MRow row : rows) {
+                if (row.isGroupHeader() || row.emptyState) continue;
+                if (row.y + row.h < listY - 4 || row.y > listY + listH + 4) continue;
+                float reveal = revealOf(row.slot);
                 SkijaGfx.pushMatrix();
                 SkijaGfx.translate(slideX(reveal), slideY(reveal));
                 try {
                     layerAlpha = outerAlpha * reveal;
-                    drawRoundedRect(card[0], card[1], card[2], card[3], CARD_RADIUS, MConfigTheme.CARD_BG);
+                    drawCardSurface(row, row.left, mouseX, mouseY);
+                    if (row.right != null) drawCardSurface(row, row.right, mouseX, mouseY);
                 } finally {
                     SkijaGfx.popMatrix();
                 }
@@ -670,25 +745,31 @@ public class MConfigHudScreen extends GuiScreen {
 
     // ==================== 头部（品牌 + 面包屑 + 搜索） ====================
 
-    private void drawHeader(CFontRenderer fr, int panelX, int panelY, int panelW,
+    private void drawHeader(CFontRenderer fr, int panelX, int panelY, int panelW, int panelH,
                             HudSettingsModel.Category active, int mouseX, int mouseY) {
-        drawText(FontManager.pf16bold, "MUONIUM", panelX + 18, panelY + 9, MConfigTheme.WHITE_95);
+        boolean compact = headerHeight(panelH) < HEADER_H;
+        drawText(FontManager.pf16bold, "MUONIUM", panelX + 18, panelY + (compact ? 6 : 9),
+                MConfigTheme.WHITE_95);
         double brandW = FontManager.pf16bold.getStringWidthD("MUONIUM");
-        drawText(FontManager.pf16bold, "CONFIG", panelX + 18 + brandW + 6, panelY + 9, MConfigTheme.WHITE_40);
+        drawText(FontManager.pf16bold, "CONFIG", panelX + 18 + brandW + 6, panelY + (compact ? 6 : 9),
+                MConfigTheme.WHITE_40);
 
-        // 面包屑：上级 WHITE_40、当前 WHITE_90（OneConfig 语言）。
-        double crumbY = panelY + 31;
-        drawText(fr, "设置", panelX + 18, crumbY, MConfigTheme.WHITE_40);
-        double setw = fr.getStringWidthD("设置");
-        drawIcon(FontManager.settingsIcon24, HudSettingsIcons.CHEVRON_RIGHT,
-                panelX + 18 + setw + 12, crumbY + 6, MConfigTheme.WHITE_25);
-        drawText(FontManager.pf12bold, active.title, panelX + 18 + setw + 26, crumbY, MConfigTheme.WHITE_90);
+        // 面包屑：上级 WHITE_40、当前 WHITE_90。矮窗口下省掉这一行（高度不够，留标题更要紧）。
+        if (!compact) {
+            double crumbY = panelY + 31;
+            drawText(fr, "设置", panelX + 18, crumbY, MConfigTheme.WHITE_40);
+            double setw = fr.getStringWidthD("设置");
+            drawIcon(FontManager.settingsIcon24, HudSettingsIcons.CHEVRON_RIGHT,
+                    panelX + 18 + setw + 12, crumbY + 6, MConfigTheme.WHITE_25);
+            drawText(FontManager.pf12bold, active.title, panelX + 18 + setw + 26, crumbY,
+                    MConfigTheme.WHITE_90);
+        }
 
         int searchX = panelX + panelW - CONTENT_PAD - SEARCH_W;
-        int searchY = panelY + (HEADER_H - SEARCH_H) / 2;
+        int searchY = panelY + (headerHeight(panelH) - SEARCH_H) / 2;
         drawSearch(fr, searchX, searchY, mouseX, mouseY);
 
-        drawRoundedRect(panelX + 1, panelY + HEADER_H - 1, panelW - 2, 1, 1,
+        drawRoundedRect(panelX + 1, panelY + headerHeight(panelH) - 1, panelW - 2, 1, 1,
                 fade(MConfigTheme.GRAY_700, 0.9f));
     }
 
@@ -742,51 +823,85 @@ public class MConfigHudScreen extends GuiScreen {
 
     // ==================== 侧栏（胶囊 + 底部动作） ====================
 
+    /**
+     * 侧栏列表区高度：整条侧栏减去标题条（24）、标题与列表之间的空隙（12）与底部两个动作。
+     *
+     * <p>这 12 必须算进去：绘制里 {@code listTop = navY + 24}，而列表区若按 24 起算，
+     * 底部就会多出 12px 被最后一行「借走」，表现出来正是「最后一项被分隔线压住一半」。</p>
+     */
+    private int navListHeight(int navH) {
+        return Math.max(24, navH - 36 - NAV_BOTTOM_H);
+    }
+
+    /**
+     * 侧栏每行的实际高度：拿得到就按设计值 {@link #NAV_ROW_H}，放不下就均分压缩，
+     * 下限 {@link #NAV_ROW_MIN_H}。**这是窗口高度适配的唯一入口** ——
+     * 绘制、命中、滚动量三处都必须读它，否则矮窗口下「看到的行」和「点得到的行」会错位。
+     */
+    private int navRowHeight(int listH, int count) {
+        if (count <= 0) return NAV_ROW_H;
+        int even = listH / count;
+        return Math.max(NAV_ROW_MIN_H, Math.min(NAV_ROW_H, even));
+    }
+
     private void drawNav(CFontRenderer fr, int navX, int navY, int navW, int navH,
                          HudSettingsModel.Category[] categories, int mouseX, int mouseY) {
         int listTop = navY + 24;
-        int listH = navH - 24 - NAV_BOTTOM_H;
-        int rowH = NAV_ROW_H;
+        int listH = navListHeight(navH);
+        int rowH = navRowHeight(listH, categories.length);
         navScroll = Math.max(0, Math.min(navMaxScroll(listH, categories.length, rowH), navScroll));
         int navTop = listTop - navScroll;
+        boolean compactNav = navCompact(navW);
 
-        drawText(FontManager.pf12bold, "HUD 设置", navX + 12, navY + 7, MConfigTheme.WHITE_25);
+        if (!compactNav) {
+            drawText(FontManager.pf12bold, "HUD 设置", navX + 12, navY + 7, MConfigTheme.WHITE_25);
+        }
 
         int selected = clampCategory();
         float targetY = navTop + selected * rowH;
         navIndicator = motion("nav.indicator", targetY, INDICATOR_MS, TransitionCurveCache.EXPO);
-        navIndicator = Math.max(listTop, Math.min(navY + navH - NAV_BOTTOM_H - rowH, navIndicator));
+        navIndicator = Math.max(listTop, Math.min(listTop + listH - rowH, navIndicator));
 
         float plateOuter = pushAlpha(navGate(selected));
         try {
-            drawRoundedRect(navX + 8, navIndicator, navW - 16, rowH, 9, MConfigTheme.primaryDark());
+            drawRoundedRect(navX + 8, navIndicator, navW - 16, rowH, rowH >= 30 ? 11 : 8,
+                    MConfigTheme.primaryDark());
         } finally {
             layerAlpha = plateOuter;
         }
 
-        for (int index = 0; index < categories.length; index++) {
-            HudSettingsModel.Category category = categories[index];
-            float reveal = navGate(index);
-            if (reveal <= 0.002f) continue;
-            float rowOuter = pushAlpha(reveal);
-            SkijaGfx.pushMatrix();
-            try {
-                drawNavRow(fr, category, index, selected, navX, navTop, navW, rowH, navH,
-                        mouseX, mouseY, listTop, listH);
-            } finally {
-                SkijaGfx.popMatrix();
-                layerAlpha = rowOuter;
+        beginScissor(navX, listTop, navW, listH);
+        try {
+            for (int index = 0; index < categories.length; index++) {
+                HudSettingsModel.Category category = categories[index];
+                float reveal = navGate(index);
+                if (reveal <= 0.002f) continue;
+                float rowOuter = pushAlpha(reveal);
+                SkijaGfx.pushMatrix();
+                try {
+                    drawNavRow(fr, category, index, selected, navX, navTop, navW, rowH, navH,
+                            mouseX, mouseY, listTop, listH);
+                } finally {
+                    SkijaGfx.popMatrix();
+                    layerAlpha = rowOuter;
+                }
             }
+        } finally {
+            endScissor();
         }
 
         // 底部固定动作：编辑 HUD / 关闭（OneConfig 侧栏底部的同位语言）。
         int bottomY = navY + navH - NAV_BOTTOM_H + 6;
-        drawRoundedRect(navX + 8, bottomY - 6, navW - 16, 1, 1, fade(MConfigTheme.GRAY_700, 0.7f));
-        int[] edit = editHudButton(navX, navY, navH);
-        drawNavAction(fr, "nav.edithud", HudSettingsIcons.MOVE, "编辑 HUD", edit, mouseX, mouseY,
-                false);
-        int[] close = closeButton(navX, navY, navH);
-        drawNavAction(fr, "nav.close", HudSettingsIcons.CLOSE, "关闭", close, mouseX, mouseY, true);
+        // 分隔线贴着列表区的下沿画，而不是贴着底部动作的起点 —— 两者差 24px 时，
+        // 最后一行会压在线上，看起来像「被裁掉了半截」。
+        drawRoundedRect(navX + 8, listTop + listH + 6, navW - 16, 1, 1,
+                fade(MConfigTheme.GRAY_700, 0.7f));
+        int[] edit = editHudButton(navX, navY, navH, navW);
+        drawNavAction(fr, "nav.edithud", HudSettingsIcons.MOVE,
+                compactNav ? null : "编辑 HUD", edit, mouseX, mouseY, false);
+        int[] close = closeButton(navX, navY, navH, navW);
+        drawNavAction(fr, "nav.close", HudSettingsIcons.CLOSE,
+                compactNav ? null : "关闭", close, mouseX, mouseY, true);
     }
 
     private void drawNavRow(CFontRenderer fr, HudSettingsModel.Category category, int index,
@@ -798,13 +913,24 @@ public class MConfigHudScreen extends GuiScreen {
         boolean current = index == selected;
         float hp = named("nav." + index, hovered && !current);
         if (hp > 0.02f && !current) {
-            drawRoundedRect(navX + 8, rowY, navW - 16, rowH, 9, fade(MConfigTheme.WHITE_6, hp));
+            drawRoundedRect(navX + 8, rowY, navW - 16, rowH, rowH >= 30 ? 11 : 8,
+                    fade(MConfigTheme.WHITE_6, hp));
         }
-        drawIcon(FontManager.settingsIcon24, category.icon, navX + 24, rowY + rowH / 2.0,
+        double iconCy = rowY + rowH / 2.0;
+        boolean compactNav = navCompact(navW);
+        double iconCx = compactNav ? navX + navW / 2.0 : navX + 24;
+        drawIcon(FontManager.settingsIcon24, category.icon, iconCx, iconCy,
                 current ? 0xFFFFFFFF : mix(0xFF7E8A9C, MConfigTheme.TEXT_SECONDARY, hp));
+        if (compactNav) return;
         int titleColor = current ? 0xFFFFFFFF : mix(MConfigTheme.TEXT_SECONDARY, MConfigTheme.TEXT_PRIMARY, hp);
-        drawText(FontManager.pf12bold, category.title, navX + 40, rowY + 8, titleColor);
-        drawText(fr, category.entryCount() + " 项", navX + 40, rowY + 21, MConfigTheme.WHITE_25);
+        if (rowH >= 32) {
+            // 只有高度够时才摆两行（标题 + 项数）；压缩档下项数省略，标题垂直居中。
+            drawText(FontManager.pf12bold, category.title, navX + 40, rowY + 6, titleColor);
+            drawText(fr, category.entryCount() + " 项", navX + 40, rowY + 20, MConfigTheme.WHITE_25);
+        } else {
+            drawText(FontManager.pf12bold, category.title, navX + 40,
+                    iconCy - 6, titleColor);
+        }
     }
 
     /** 侧栏底部动作胶囊。destructive = 关闭，hover 走危险色（OneConfig TERTIARY_DESTRUCTIVE）。 */
@@ -818,16 +944,26 @@ public class MConfigHudScreen extends GuiScreen {
         int tint = destructive
                 ? mix(MConfigTheme.TEXT_SECONDARY, MConfigTheme.DANGER_HOVER, hp)
                 : mix(MConfigTheme.TEXT_SECONDARY, MConfigTheme.TEXT_PRIMARY, hp);
+        // label 为 null = 窄侧栏的图标态：只画居中的图标。
+        if (label == null) {
+            drawIcon(FontManager.settingsIcon24, glyph, box[0] + box[2] / 2.0,
+                    box[1] + box[3] / 2.0, tint);
+            return;
+        }
         drawIcon(FontManager.settingsIcon24, glyph, box[0] + 14, box[1] + box[3] / 2.0, tint);
         drawText(FontManager.pf12bold, label, box[0] + 27, box[1] + box[3] / 2.0 - 4, tint);
     }
 
-    private int[] editHudButton(int navX, int navY, int navH) {
-        return new int[] { navX + 8, navY + navH - NAV_BOTTOM_H + 6, NAV_W - 16, 28 };
+    /**
+     * 侧栏底部两个动作按钮的矩形。宽度取**当前面板的侧栏宽**而不是常量：
+     * 窄窗口下侧栏会缩窄，写死 NAV_W 会让按钮戳出面板右边。
+     */
+    private int[] editHudButton(int navX, int navY, int navH, int navW) {
+        return new int[] { navX + 8, navY + navH - NAV_BOTTOM_H + 6, navW - 16, 28 };
     }
 
-    private int[] closeButton(int navX, int navY, int navH) {
-        return new int[] { navX + 8, navY + navH - NAV_BOTTOM_H + 38, NAV_W - 16, 28 };
+    private int[] closeButton(int navX, int navY, int navH, int navW) {
+        return new int[] { navX + 8, navY + navH - NAV_BOTTOM_H + 38, navW - 16, 28 };
     }
 
     // ==================== 底栏 ====================
@@ -846,14 +982,21 @@ public class MConfigHudScreen extends GuiScreen {
         float hp = named("footer.reset", isInside(mouseX, mouseY, reset[0], reset[1], reset[2], reset[3]));
         drawRoundedRect(reset[0], reset[1], reset[2], reset[3], 9,
                 mix(MConfigTheme.WHITE_6, MConfigTheme.GRAY_600, hp));
-        drawIcon(FontManager.settingsIcon24, HudSettingsIcons.RESTORE, reset[0] + 14,
+        boolean iconOnly = reset[2] < 40;
+        double iconCx = iconOnly ? reset[0] + reset[2] / 2.0 : reset[0] + 14;
+        drawIcon(FontManager.settingsIcon24, HudSettingsIcons.RESTORE, iconCx,
                 reset[1] + reset[3] / 2.0, mix(MConfigTheme.TEXT_SECONDARY, MConfigTheme.DANGER_HOVER, hp));
-        drawText(FontManager.pf12bold, "恢复默认", reset[0] + 27, reset[1] + reset[3] / 2.0 - 4,
-                mix(MConfigTheme.TEXT_SECONDARY, MConfigTheme.TEXT_PRIMARY, hp));
+        if (!iconOnly) {
+            drawText(FontManager.pf12bold, "恢复默认", reset[0] + 27, reset[1] + reset[3] / 2.0 - 4,
+                    mix(MConfigTheme.TEXT_SECONDARY, MConfigTheme.TEXT_PRIMARY, hp));
+        }
     }
 
     private int[] resetButton(int panelX, int footerY, int panelW) {
-        int w = 27 + (FontManager.pf12 == null ? 52 : FontManager.pf12.getStringWidth("恢复默认")) + 14;
+        double textW = FontManager.pf12 == null ? 52 : FontManager.pf12.getStringWidthD("恢复默认");
+        // 窄面板下不写「恢复默认」四个字，只留图标 —— 否则按钮会吃掉整条底栏，
+        // 左边的位置摘要就没地方摆了。
+        int w = panelW < 420 ? 26 : (int) Math.round(27 + textW + 14);
         return new int[] { panelX + panelW - 16 - w, footerY + 5, w, 22 };
     }
 
@@ -861,7 +1004,6 @@ public class MConfigHudScreen extends GuiScreen {
 
     private void layoutRows(int contentX, int listY, int contentW, HudSettingsModel.Category active) {
         rows.clear();
-        cards.clear();
         int rowX = contentX + CONTENT_PAD;
         int rowW = contentW - CONTENT_PAD * 2 - 4;
         int cursor = listY - Math.round(displayScroll);
@@ -884,18 +1026,11 @@ public class MConfigHudScreen extends GuiScreen {
             if (!any) {
                 rows.add(new MRow(null, null, "没有匹配「" + searchQuery.trim() + "」的设置项",
                         HudSettingsIcons.SEARCH, active.accent, rowX, cursor, rowW, EMPTY_STATE_H,
-                        true, true, true, cards.size()));
+                        true, true, true, 0));
                 cursor += EMPTY_STATE_H;
             }
         }
         contentHeight = cursor - top + 6;
-    }
-
-    /** 双列资格：紧凑控件才配对，滑条 / 色板 / 主题卡独占整行（OneConfig size 语义）。 */
-    private static boolean isPairable(HudSettingsModel.Entry entry) {
-        return entry.kind == HudSettingsModel.Kind.TOGGLE
-                || entry.kind == HudSettingsModel.Kind.CHOICE
-                || (entry.kind == HudSettingsModel.Kind.ACTION && entry.inlineButton);
     }
 
     private int appendGroup(HudSettingsModel.Group group, String categoryTitle, int accent,
@@ -906,38 +1041,139 @@ public class MConfigHudScreen extends GuiScreen {
         }
         if (visible.isEmpty()) return cursor;
 
-        int slot = cards.size();
         String title = searching ? categoryTitle + " · " + group.title : group.title;
         rows.add(new MRow(null, null, title, group.icon, accent, rowX, cursor, rowW,
-                GROUP_HEADER_H, false, false, false, slot));
+                GROUP_HEADER_H, false, false, false, 0));
         cursor += GROUP_HEADER_H;
 
-        int cardTop = cursor;
+        // MD3 卡片网格：每一项自己是独立卡片，两列并排；展开态卡片独占一行并追加详情区。
+        int cellW = (rowW - CELL_GAP) / 2;
+        boolean twoCol = twoColumns(rowW);
         int index = 0;
         while (index < visible.size()) {
             HudSettingsModel.Entry entry = visible.get(index);
-            HudSettingsModel.Entry next = index + 1 < visible.size() ? visible.get(index + 1) : null;
-            if (isPairable(entry) && next != null && isPairable(next)) {
-                int cellW = (rowW - CELL_GAP) / 2;
-                rows.add(new MRow(new Cell(entry, rowX, cellW),
-                        new Cell(next, rowX + cellW + CELL_GAP, rowW - cellW - CELL_GAP),
-                        null, null, accent, rowX, cursor, rowW, ROW_H,
-                        index == 0, index + 1 == visible.size() - 1, false, slot));
-                cursor += ROW_H;
-                index += 2;
-            } else {
-                int h = entry.kind == HudSettingsModel.Kind.THEME_GRID ? themeGridHeight() + 10 : ROW_H;
-                rows.add(new MRow(new Cell(entry, rowX, rowW), null, null, null, accent,
-                        rowX, cursor, rowW, h, index == 0, index == visible.size() - 1, false, slot));
-                cursor += h;
-                index += 1;
+            // 展开的卡片、主题色板都独占整行 —— 展开后要放滑条，半列宽会把轨道压到几乎点不中。
+            boolean full = !twoCol || isExpanded(entry)
+                    || entry.kind == HudSettingsModel.Kind.THEME_GRID;
+            if (!full) {
+                HudSettingsModel.Entry next = index + 1 < visible.size() ? visible.get(index + 1) : null;
+                if (next != null && !isExpanded(next)
+                        && next.kind != HudSettingsModel.Kind.THEME_GRID) {
+                    int h = Math.max(cardHeight(entry, cellW), cardHeight(next, cellW));
+                    rows.add(new MRow(new Cell(entry, rowX, cellW),
+                            new Cell(next, rowX + cellW + CELL_GAP, rowW - cellW - CELL_GAP),
+                            null, null, accent, rowX, cursor, rowW, h,
+                            false, false, false, 0));
+                    cursor += h + CARD_GAP_V;
+                    index += 2;
+                    continue;
+                }
             }
+            int h = cardHeight(entry, full ? rowW : cellW);
+            rows.add(new MRow(new Cell(entry, rowX, rowW), null, null, null, accent,
+                    rowX, cursor, rowW, h, false, false, false, 0));
+            cursor += h + CARD_GAP_V;
+            index += 1;
         }
-        cards.add(new int[] { rowX, cardTop, rowW, cursor - cardTop, slot });
-        return cursor + CARD_GAP;
+        // 组尾留一档呼吸，别让下一组标题贴住本组最后一张卡。
+        return cursor + CARD_GAP - CARD_GAP_V;
+    }
+
+    /**
+     * 卡片高度：折叠态按「说明实际需要几行」定，展开态再追加详情区；主题色板按预设行数算。
+     *
+     * <p>展开追加的高度也走补间（不是一步跳到位）—— 否则点箭头的那一帧下面所有卡片会瞬移，
+     * 而详情内容还在淡入，看起来像列表「抖了一下」。高度取整后才能保证绘制与命中共用同一份矩形。</p>
+     */
+    private int cardHeight(HudSettingsModel.Entry entry, int cellW) {
+        if (entry.kind == HudSettingsModel.Kind.THEME_GRID) {
+            return CARD_H + themeGridHeight() + 12;
+        }
+        return baseCardHeight(entry, cellW) + Math.round(DETAIL_H * expandProgress(entry));
+    }
+
+    /**
+     * 折叠态卡片高度。说明是这项唯一的信息来源，所以按它实际折出来的行数给高度，
+     * 而不是写死两个行距 —— 窄卡片里硬塞两行只会把后半句变成「…」，
+     * 然后每个条目都得靠悬停气泡才读得全。
+     */
+    private int baseCardHeight(HudSettingsModel.Entry entry, int cellW) {
+        int lines = descriptionLines(entry, cellW);
+        return CARD_H + (lines - 2) * 13;
+    }
+
+    /**
+     * 该条目在给定卡片宽度下，说明需要几行。
+     *
+     * <p>最少 2 行、最多 3 行：同一行里的两张卡按较高的那张对齐，屏上节奏才整齐；
+     * 但也不能无限长 —— 说明是辅助信息，把卡片撑到半屏反而看不到几项。</p>
+     */
+    private int descriptionLines(HudSettingsModel.Entry entry, int cellW) {
+        CFontRenderer fr = FontManager.pf12;
+        if (fr == null || entry.description == null || entry.description.isEmpty()) return 2;
+        int labelW = Math.max(40, cellW - 14 * 2 - (hasDetail(entry) ? ARROW_W : 0)
+                - controlWidth(fr, entry) - 12);
+        int needed = countWrappedLines(fr, entry.description, labelW);
+        return Math.max(2, Math.min(3, needed));
+    }
+
+    /** 该条目当前是否处于展开态（每组同时只展开一张，避免列表被撑得过长）。 */
+    private boolean isExpanded(HudSettingsModel.Entry entry) {
+        return expandedEntry == entry && hasDetail(entry);
+    }
+
+    /**
+     * 只有真有「更多内容」的类型才允许展开。
+     *
+     * <p>滑条折叠态不露轨道，需要展开才能调；非 inline 动作按钮折叠态只是个标签，
+     * 展开后才出现可点的按钮。开关 / 下拉 / 色板 / 主题色板折叠态已经把全部信息
+     * （标签、说明、完整控件）摆出来了，再展开只会得到一块空白 —— 所以箭头不出现。</p>
+     */
+    private static boolean hasDetail(HudSettingsModel.Entry entry) {
+        return entry.kind == HudSettingsModel.Kind.SLIDER
+                || (entry.kind == HudSettingsModel.Kind.ACTION && !entry.inlineButton);
+    }
+
+    /** 展开态进度：折叠 0 → 展开 1，用于详情区高度与箭头旋转。 */
+    private float expandProgress(HudSettingsModel.Entry entry) {
+        Channel chan = expandChannels.get(entry);
+        if (chan == null) {
+            chan = new Channel();
+            chan.from = chan.to = chan.current = isExpanded(entry) ? 1f : 0f;
+            chan.startNanos = System.nanoTime();
+            expandChannels.put(entry, chan);
+            return chan.current;
+        }
+        return motion(chan, isExpanded(entry) ? 1f : 0f, EXPAND_MS);
     }
 
     // ==================== 行绘制 ====================
+
+    /**
+     * 一张设置卡片的表面：大圆角 + 三级色调面，悬停/展开各亮一档。
+     *
+     * <p>不用描边表达层级 —— 深色底上 1px 白线会显得脏；这里靠三级表面色（主题「控件底色」→
+     * 「控件悬停」→ 悬停往主色偏一点）拉开「静止 / 悬停 / 展开」。三级全部问 {@link MConfigTheme}
+     * 要，而它读的是播放器主题，所以切主题时这一页的面色跟着变。
+     * 卡片高度由 {@code cardHeight} 给出，展开时详情区高度随时间补间，这里只负责铺面。</p>
+     */
+    private void drawCardSurface(MRow row, Cell cell, int mouseX, int mouseY) {
+        if (cell == null) return;
+        boolean hovered = isInside(mouseX, mouseY, cell.x, row.y, cell.w, row.h);
+        boolean expanded = isExpanded(cell.entry);
+        float hp = named("card." + System.identityHashCode(cell.entry), hovered && !expanded);
+        float ep = expandProgress(cell.entry);
+        // 三级面全部来自播放器主题：控件底色 → 控件悬停 → 悬停往主色偏一点（展开态）。
+        int fill = mix(mix(MConfigTheme.surface(), MConfigTheme.surfaceHover(), hp),
+                MConfigTheme.surfaceActive(), ep);
+        drawRoundedRect(cell.x, row.y, cell.w, row.h, CARD_RADIUS, fill);
+        // 展开态左侧一道主色指示条：和侧栏选中条同一套语言，说明「这张卡是当前操作对象」。
+        if (ep > 0.02f) {
+            double barH = (row.h - 20) * ep;
+            drawRoundedRect(cell.x, row.y + (row.h - barH) / 2.0, 3, barH, 1.5,
+                    fade(MConfigTheme.primary(), ep));
+        }
+    }
 
     private void drawRow(CFontRenderer fr, MRow row, int mouseX, int mouseY) {
         if (row.emptyState) {
@@ -958,6 +1194,13 @@ public class MConfigHudScreen extends GuiScreen {
         if (row.right != null) drawCell(fr, row, row.right, mouseX, mouseY);
     }
 
+    /**
+     * 卡片内容：标题 + 一行说明 + 右侧主控件 + 展开箭头。
+     *
+     * <p>箭头是这张卡的「更多」入口：点它或点卡片空白区切换展开，展开后追加详情区
+     * （滑条轨道 / 完整说明 / 动作按钮）。主控件（开关、色板、下拉药丸）仍然直接可点，
+     * 不与展开冲突 —— 这是参考图里那种「一眼能开，想细调再展开」的分层。</p>
+     */
     private void drawCell(CFontRenderer fr, MRow row, Cell cell, int mouseX, int mouseY) {
         HudSettingsModel.Entry entry = cell.entry;
         boolean hovered = isInside(mouseX, mouseY, cell.x, row.y, cell.w, row.h);
@@ -967,79 +1210,196 @@ public class MConfigHudScreen extends GuiScreen {
         state[0] = motion(chan[0], hovered || dragging ? 1f : 0f, HOVER_MS);
         state[2] = motion(chan[2], dragging ? 1f : (hovered ? 0.6f : 0f), HOVER_MS);
         float hp = state[0];
+        float ep = expandProgress(entry);
 
-        if (!row.firstInCard && row.right == null && cell.x == row.x) {
-            drawRoundedRect(cell.x + 10, row.y, cell.w - 20, 1, 1, MConfigTheme.DIVIDER);
+        if (hovered && !entry.isLocked()) {
+            drawRoundedRect(cell.x, row.y, cell.w, row.h, CARD_RADIUS,
+                    fade(MConfigTheme.WHITE_6, hp * 0.45f));
         }
-        if (hp > 0.01f) {
-            drawRoundedRect(cell.x, row.y + 1, cell.w, row.h - 2, 8, fade(MConfigTheme.WHITE_6, hp));
-        }
-
-        trackTooltip(entry, hovered, row, cell);
-
-        if (entry.kind == HudSettingsModel.Kind.THEME_GRID) {
-            drawText(FontManager.pf12bold, entry.getLabel(), cell.x + 12, row.y + 7, MConfigTheme.WHITE_90);
-            drawThemeChips(cell.x + 12, row.y + 26, mouseX, mouseY);
-            return;
-        }
-
-        int controlRight = cell.x + cell.w - 12;
-        int centerY = row.y + row.h / 2;
-        drawText(FontManager.pf12bold, entry.getLabel(), cell.x + 12, centerY - 6, MConfigTheme.WHITE_90);
 
         // 搜索跳转后的定位脉冲。
         if (entry == flashEntry) {
             float pulse = flashPulse();
             if (pulse > 0.01f) {
-                drawRoundedRect(cell.x, row.y + 1, cell.w, row.h - 2, 8,
-                        fade(cellAccent(entry, row.accent), 0.28f * pulse));
-                drawRoundedRect(cell.x + 1, row.y + 1, 2, row.h - 2, 1,
-                        fade(cellAccent(entry, row.accent), pulse));
+                drawOutline(cell.x, row.y, cell.w, row.h, CARD_RADIUS, 1.5,
+                        fade(cellAccent(entry, row.accent), 0.85f * pulse));
             }
         }
 
-        switch (entry.kind) {
-            case SLIDER:
-                drawSliderControl(fr, cell, centerY, cellAccent(entry, row.accent), state[2]);
-                break;
-            case TOGGLE: {
-                state[1] = motion(chan[1], entry.isOn() ? 1f : 0f, KNOB_MS,
-                        TransitionCurveCache.SPRING_LAND);
-                drawSwitch(controlRight - SWITCH_W, centerY - SWITCH_H / 2, state[1], hp);
-                break;
+        int padX = 14;
+        int textRight = cell.x + cell.w - padX - ARROW_W;
+        // 卡片上半部高度 = 总高 − 已展开的详情区；绘制与布局用的是同一个函数（baseCardHeight）。
+        int detailPx = Math.round(DETAIL_H * ep);
+        int topH = baseCardHeight(entry, cell.w);
+        if (entry.kind == HudSettingsModel.Kind.THEME_GRID) {
+            drawText(FontManager.pf12bold, entry.getLabel(), cell.x + padX, row.y + 12,
+                    MConfigTheme.TEXT_PRIMARY);
+            drawDescription(fr, entry, cell.x + padX, row.y + 30, cell.w - padX * 2);
+            drawThemeChips(cell.x + padX, row.y + CARD_H - 8, mouseX, mouseY);
+            return;
+        }
+
+        // 控件右边界要给箭头留位置；没有箭头（开关这类）就直接贴到卡片内边距。
+        int controlRight = cell.x + cell.w - padX - (hasDetail(entry) ? ARROW_W : 0);
+        // 主控件与箭头共用一条竖直中线，且这条中线在「标题 + 说明」那一块的正中间。
+        // 控件若按整卡高度居中，展开态会被推到底部详情区里去。
+        int centerY = row.y + topH / 2;
+        // 说明必须止步于控件左缘 —— 否则开关会直接压在文字上（控制区宽度随类型变化，不能写死）。
+        int controlW = controlWidth(fr, entry);
+        int textLimit = controlRight - (controlW > 0 ? controlW + 12 : 0);
+        int labelW = Math.max(40, textLimit - (cell.x + padX));
+
+        drawText(FontManager.pf12bold, entry.getLabel(), cell.x + padX, centerY - 16,
+                MConfigTheme.TEXT_PRIMARY);
+        // 说明折行：行数由布局那条公式给出（同一张卡在绘制与命中里必须一致）。
+        int descLines = descriptionLines(entry, cell.w);
+        String[] desc = wrapByWidth(fr, entry.description, labelW, descLines);
+        boolean descTruncated = countWrappedLines(fr, entry.description, labelW) > descLines;
+        int descOffset = descLines >= 3 ? -6 : 0;
+        for (int line = 0; line < desc.length; line++) {
+            drawText(fr, desc[line], cell.x + padX, centerY + descOffset + line * 13 - 1,
+                    MConfigTheme.descriptionText());
+        }
+        trackTooltip(entry, hovered, row, cell, descTruncated, mouseX, mouseY);
+
+        // 折叠态只露主控件；滑条收进详情区，避免半列宽把轨道压到点不中。
+        if (entry.kind != HudSettingsModel.Kind.SLIDER || isExpanded(entry)) {
+            switch (entry.kind) {
+                case TOGGLE: {
+                    state[1] = motion(chan[1], entry.isOn() ? 1f : 0f, KNOB_MS,
+                            TransitionCurveCache.SPRING_LAND);
+                    drawSwitch(controlRight - SWITCH_W, centerY - SWITCH_H / 2, state[1], hp);
+                    break;
+                }
+                case COLOR:
+                    drawSwatch(controlRight - SWATCH_W, centerY - SWATCH_H / 2, entry.getColor(),
+                            editingColor == entry.colorTarget, hp);
+                    break;
+                case CHOICE: {
+                    String value = entry.getValueText();
+                    int pillW = choicePillWidth(fr, value);
+                    boolean open = openChoice == entry;
+                    drawRoundedRect(controlRight - pillW, centerY - 10, pillW, 20, 10,
+                            mix(MConfigTheme.GRAY_500, MConfigTheme.GRAY_400,
+                                    Math.max(hp, open ? 1f : 0f)));
+                    drawText(fr, fr.trim(value, pillW - 30), controlRight - pillW + 10, centerY - 4,
+                            MConfigTheme.TEXT_PRIMARY);
+                    drawIcon(FontManager.settingsIcon24, HudSettingsIcons.CHEVRON_RIGHT,
+                            controlRight - 10 + (open ? 1.5 : 0), centerY,
+                            mix(MConfigTheme.TEXT_SECONDARY, MConfigTheme.TEXT_PRIMARY,
+                                    Math.max(hp, open ? 1f : 0f)));
+                    break;
+                }
+                case ACTION: {
+                    if (entry.inlineButton) {
+                        int w = 62;
+                        drawRoundedRect(controlRight - w, centerY - 10, w, 20, 10,
+                                MConfigTheme.primaryDark());
+                        drawText(FontManager.pf12bold, "执行", controlRight - w / 2.0
+                                - FontManager.pf12.getStringWidth("执行") / 2.0, centerY - 4, 0xFFFFFFFF);
+                    }
+                    break;
+                }
+                default:
+                    break;
             }
-            case COLOR:
-                drawSwatch(controlRight - SWATCH_W, centerY - SWATCH_H / 2, entry.getColor(),
-                        editingColor == entry.colorTarget, hp);
-                break;
-            case CHOICE: {
-                String value = entry.getValueText();
-                int pillW = choicePillWidth(fr, value);
-                boolean open = openChoice == entry;
-                drawRoundedRect(controlRight - pillW, centerY - 10, pillW, 20, 10,
-                        mix(MConfigTheme.GRAY_500, MConfigTheme.GRAY_400,
-                                Math.max(hp, open ? 1f : 0f)));
-                drawText(fr, fr.trim(value, pillW - 30), controlRight - pillW + 10, centerY - 4,
-                        MConfigTheme.WHITE_90);
-                drawIcon(FontManager.settingsIcon24, HudSettingsIcons.CHEVRON_RIGHT,
-                        controlRight - 10 + (open ? 1.5 : 0), centerY,
-                        mix(MConfigTheme.TEXT_SECONDARY, MConfigTheme.TEXT_PRIMARY,
-                                Math.max(hp, open ? 1f : 0f)));
-                break;
+        }
+
+        drawExpandArrow(row, cell, ep, hovered, topH);
+        // 展开详情区：高度随 ep 长出来，内容在裁剪里淡入。
+        if (ep > 0.01f) {
+            int detailTop = row.y + topH;
+            int detailH = (int) Math.round(DETAIL_H * ep);
+            if (detailH > 2) {
+                beginScissor(cell.x + 1, detailTop, cell.w - 2, detailH);
+                float outer = pushAlpha(ep);
+                try {
+                    drawCompactDivider(cell.x + padX, detailTop, cell.w - padX * 2);
+                    drawCellDetail(fr, row, cell, detailTop, mouseX, mouseY);
+                } finally {
+                    layerAlpha = outer;
+                    endScissor();
+                }
             }
-            case ACTION: {
-                int w = 62;
-                drawRoundedRect(controlRight - w, centerY - 10, w, 20, 10, MConfigTheme.primaryDark());
-                drawText(FontManager.pf12bold, "执行", controlRight - w / 2.0
-                        - FontManager.pf12.getStringWidth("执行") / 2.0, centerY - 4, 0xFFFFFFFF);
-                break;
-            }
-            default:
-                break;
         }
 
         if (entry.isLocked()) {
-            drawRoundedRect(cell.x, row.y + 1, cell.w, row.h - 2, 8, 0x96141A22);
+            drawRoundedRect(cell.x, row.y, cell.w, row.h, CARD_RADIUS, 0x96141A22);
+        }
+    }
+
+    /** 一行说明：放得下就一行，放不下按宽度截断，展开后详情区给全文。 */
+    private void drawDescription(CFontRenderer fr, HudSettingsModel.Entry entry,
+                                 double x, double y, double width) {
+        String description = entry.description;
+        if (description == null || description.isEmpty() || width <= 8) return;
+        drawText(fr, fr.trim(description, width), x, y, MConfigTheme.descriptionText());
+    }
+
+    /**
+     * 折叠态右侧控件要占的宽度。说明折行、标题截断都以它为准 ——
+     * 三种控件的宽度差得很远（开关 34、色板 44、下拉药丸随文案变），写死一个数必然有一类压字。
+     */
+    private int controlWidth(CFontRenderer fr, HudSettingsModel.Entry entry) {
+        switch (entry.kind) {
+            case TOGGLE:
+                return SWITCH_W;
+            case COLOR:
+                return SWATCH_W;
+            case CHOICE:
+                return choicePillWidth(fr, entry.getValueText());
+            case ACTION:
+                return entry.inlineButton ? 62 : 0;
+            default:
+                return 0;
+        }
+    }
+
+    private void drawCompactDivider(double x, double y, double w) {
+        drawRoundedRect(x, y, w, 1, 1, MConfigTheme.divider());
+    }
+
+    /**
+     * 详情区：滑条的完整轨道、非 compact 动作按钮的大按钮形态。
+     *
+     * <p>开关 / 下拉 / 色板在折叠态已经把说明完整写出来了，再展开一遍是重复信息 ——
+     * 那些类型的展开态只保留左侧指示条与翻转的箭头，不再抄一遍同一句话。</p>
+     */
+    private void drawCellDetail(CFontRenderer fr, MRow row, Cell cell, int detailTop,
+                                int mouseX, int mouseY) {
+        HudSettingsModel.Entry entry = cell.entry;
+        int centerY = detailTop + DETAIL_H / 2 + 2;
+        int left = cell.x + 14;
+        if (entry.kind == HudSettingsModel.Kind.SLIDER) {
+            drawSliderControl(fr, cell, detailTop, cellAccent(entry, row.accent),
+                    expandProgress(entry));
+            return;
+        }
+        if (entry.kind == HudSettingsModel.Kind.ACTION && !entry.inlineButton) {
+            int w = Math.min(120, cell.w - 28);
+            drawRoundedRect(left, centerY - 11, w, 22, 11, MConfigTheme.primaryDark());
+            drawText(FontManager.pf12bold, entry.getLabel(),
+                    left + (w - FontManager.pf12.getStringWidth(entry.getLabel())) / 2.0,
+                    centerY - 4, 0xFFFFFFFF);
+        }
+    }
+
+    /** 卡片右上角的展开箭头：收起时朝下（提示「还有更多」），展开时转向上。 */
+    private void drawExpandArrow(MRow row, Cell cell, float ep, boolean hovered, int topH) {
+        // 没有详情区的类型不画箭头 —— 画了一个点下去什么都不动的箭头比没有更糟。
+        if (!hasDetail(cell.entry)) return;
+        double cx = cell.x + cell.w - 14 - ARROW_W / 2.0 + 4;
+        // 与主控件同一水平中线：折叠态箭头不该孤零零贴在卡片竖直正中偏下。
+        double cy = row.y + topH / 2.0;
+        float shade = Math.max(hovered ? 0.6f : 0.35f, ep);
+        SkijaGfx.pushMatrix();
+        try {
+            SkijaGfx.translate(cx, cy);
+            SkijaGfx.rotateZ(90f + 90f * ep);
+            drawIcon(FontManager.settingsIcon24, HudSettingsIcons.CHEVRON_RIGHT, 0, 0,
+                    mix(MConfigTheme.TEXT_TERTIARY, MConfigTheme.TEXT_PRIMARY, shade));
+        } finally {
+            SkijaGfx.popMatrix();
         }
     }
 
@@ -1052,45 +1412,43 @@ public class MConfigHudScreen extends GuiScreen {
 
     // ==================== 控件 ====================
 
-    private void drawSliderControl(CFontRenderer fr, Cell cell, int centerY, int accent,
+    /** 展开卡片详情区里的滑条：全宽轨道 + 右端数值框（点数值框可直接键入）。 */
+    private void drawSliderControl(CFontRenderer fr, Cell cell, int detailTop, int accent,
                                    float knobProgress) {
         HudSetting setting = cell.entry.setting;
-        int controlRight = cell.x + cell.w - 12;
-        int trackW = sliderTrackW(cell);
-        int trackX = controlRight - VALUE_W - 10 - trackW;
-        if (editingSliderValue == setting && sliderValueInput != null && sliderValueInput.isFocused()) {
-            int inputW = VALUE_W + 8;
-            int inputX = controlRight - inputW;
-            ensureSliderValueInput();
+        int centerY = detailTop + DETAIL_H / 2 + 2;
+        int inputX = cell.x + cell.w - 14 - VALUE_W;
+        int trackX = cell.x + 14;
+        int trackW = Math.max(60, inputX - 10 - trackX);
+        ensureSliderValueInput();
+        boolean inputting = editingSliderValue == setting && sliderValueInput != null
+                && sliderValueInput.isFocused();
+        if (inputting) {
             sliderValueInput.xPosition = inputX + 5;
             sliderValueInput.yPosition = centerY - 7;
-            sliderValueInput.width = inputW - 10;
+            sliderValueInput.width = VALUE_W - 10;
             sliderValueInput.height = 14;
-            drawRoundedRect(inputX, centerY - 10, inputW, 20, 6, MConfigTheme.GRAY_850);
-            drawOutline(inputX, centerY - 10, inputW, 20, 6, 1, MConfigTheme.primary());
-            drawText(fr, sliderValueInput.getText(), inputX + 6, centerY - 4, MConfigTheme.TEXT_PRIMARY);
+            drawRoundedRect(inputX, centerY - 10, VALUE_W, 20, 6, MConfigTheme.GRAY_850);
+            drawOutline(inputX, centerY - 10, VALUE_W, 20, 6, 1, MConfigTheme.primary());
+            drawText(fr, sliderValueInput.getText(), inputX + 6, centerY - 4,
+                    MConfigTheme.TEXT_PRIMARY);
             if (sliderValueInput.isFocused()) {
                 int caretX = inputX + 7 + fr.getStringWidth(sliderValueInput.getText());
                 drawRoundedRect(caretX, centerY - 6, 1, 12, 1, 0xFFEAF3FF);
             }
-            drawTrackAndKnob(setting, trackX, trackW, centerY, accent, knobProgress, true);
-            return;
+        } else {
+            String value = HudSettingsModel.formatValue(setting, setting.getValue());
+            drawText(fr, value, inputX + (VALUE_W - fr.getStringWidth(value)) / 2.0, centerY - 4,
+                    mix(MConfigTheme.TEXT_SECONDARY, MConfigTheme.TEXT_PRIMARY, knobProgress));
         }
-        String value = HudSettingsModel.formatValue(setting, setting.getValue());
-        drawText(fr, value, controlRight - fr.getStringWidth(value), centerY - 4,
-                mix(MConfigTheme.TEXT_SECONDARY, MConfigTheme.TEXT_PRIMARY, knobProgress));
-        drawTrackAndKnob(setting, trackX, trackW, centerY, accent, knobProgress, false);
+        drawTrackAndKnob(setting, trackX, trackW, centerY, accent, knobProgress, inputting);
     }
 
-    /**
-     * 滑条轨道宽度：单元格宽 − 标签 − 数值框 − 缝隙，钳在 [56, TRACK_W]。
-     * 双列格比整行窄一半，固定 170 会压到标签，所以按格现算。
-     */
-    private int sliderTrackW(Cell cell) {
-        CFontRenderer fr = FontManager.pf12bold;
-        int labelW = fr == null ? 60 : fr.getStringWidth(cell.entry.getLabel());
-        int available = cell.w - 24 - labelW - 12 - VALUE_W - 10;
-        return Math.max(56, Math.min(TRACK_W, available));
+    /** 展开卡片里滑条轨道的起点与宽度：绘制与命中共用，避免两边各算一套。 */
+    private int[] sliderTrackBounds(Cell cell) {
+        int inputX = cell.x + cell.w - 14 - VALUE_W;
+        int trackX = cell.x + 14;
+        return new int[] { trackX, Math.max(60, inputX - 10 - trackX) };
     }
 
     /** OneConfig 滑条：3px 灰轨道 + 5px 主色已滑过 + 白圆把手，悬停时把手内嵌主色点。 */
@@ -1200,13 +1558,25 @@ public class MConfigHudScreen extends GuiScreen {
      * 悬停追踪：同一格连续悬停超过 TOOLTIP_DELAY_MS 后开始淡入。
      * 直接持有条目引用（条目声明是静态常量，身份稳定）；本帧是否悬停在格上由
      * {@code tooltipSeenThisFrame} 标记（drawPanel 每帧清零，drawCell 命中时置位）。
+     *
+     * <p>卡片本身已经写了两行说明，tooltip 只在「说明确实被截断」时才补全文 ——
+     * 否则鼠标一停就多出一块气泡压住下面的卡，信息没有增加，只有遮挡。</p>
      */
-    private void trackTooltip(HudSettingsModel.Entry entry, boolean hovered, MRow row, Cell cell) {
-        if (!hovered || entry.description == null || entry.description.isEmpty()) return;
-        if (tooltipEntry != entry) {
+    private void trackTooltip(HudSettingsModel.Entry entry, boolean hovered, MRow row, Cell cell,
+                              boolean descriptionTruncated, int mouseX, int mouseY) {
+        if (!hovered || !descriptionTruncated
+                || entry.description == null || entry.description.isEmpty()) return;
+        // 只有「换到另一张卡」或「鼠标真的动了」才重新计时。鼠标静止时反复调用会把
+        // tooltipSince 一直往前推，气泡就变成常驻浮层，把下面的卡片压住。
+        boolean moved = Math.abs(mouseX - lastTooltipMouseX) > 2
+                || Math.abs(mouseY - lastTooltipMouseY) > 2;
+        if (tooltipEntry != entry || moved) {
             tooltipEntry = entry;
             tooltipSince = System.currentTimeMillis();
+            lastTooltipMouseX = mouseX;
+            lastTooltipMouseY = mouseY;
         }
+        // 贴着卡片上沿出，而不是屏幕顶部：气泡要解释的是这一张卡。
         tooltipRowY = row.y;
         tooltipCenterX = cell.x + cell.w / 2.0;
         tooltipSeenThisFrame = true;
@@ -1218,22 +1588,26 @@ public class MConfigHudScreen extends GuiScreen {
         tooltipAlpha = (float) TransitionCurveCache.MOTION.at(clamp01(
                 show ? (now - tooltipSince - TOOLTIP_DELAY_MS) / (float) TOOLTIP_FADE_MS : 0f));
         if (tooltipAlpha <= 0.01f) return;
-        String[] lines = wrapToTwoLines(fr, tooltipEntry.description, 240);
+        // 全文按 240 宽折行；不要再走 wrapToTwoLines 的两行截断，气泡存在的理由就是看全那句说明。
+        List<String> lines = wrapByWidthList(fr, tooltipEntry.description, 240);
         double w = 0;
-        for (String line : lines) {
-            if (line != null) w = Math.max(w, fr.getStringWidthD(line));
-        }
+        for (String line : lines) w = Math.max(w, fr.getStringWidthD(line));
         w += 20;
-        int h = 10 + (lines[1] != null ? 26 : 14);
+        int h = 8 + lines.size() * 13;
         int x = (int) Math.max(4, Math.min(width - w - 4, tooltipCenterX - w / 2.0));
-        int y = Math.max(4, tooltipRowY - h - 6);
+        // 气泡统一挂在卡片下方：卡片高度是已知量，往下放永远有位置，
+        // 而往上放要依赖「上面还剩多少空间」，在窄窗口里会一路顶到标题栏上。
+        int cardTop = tooltipRowY;
+        int y = cardTop + CARD_H + 6;
+        if (y + h > height - 4) {
+            y = Math.max(4, cardTop - h - 6);
+        }
         float outer = pushAlpha(tooltipAlpha);
         try {
-            drawRoundedRect(x, y, w, h, 8, MConfigTheme.GRAY_700);
-            drawOutline(x, y, w, h, 8, 1, 0x4DCCCCCC);
-            drawText(fr, lines[0], x + 10, y + 5, MConfigTheme.WHITE_80);
-            if (lines[1] != null) {
-                drawText(fr, lines[1], x + 10, y + 18, MConfigTheme.WHITE_80);
+            drawRoundedRect(x, y, w, h, 8, MConfigTheme.floatSurface());
+            drawOutline(x, y, w, h, 8, 1, MConfigTheme.divider());
+            for (int i = 0; i < lines.size(); i++) {
+                drawText(fr, lines.get(i), x + 10, y + 5 + i * 13, MConfigTheme.TEXT_PRIMARY);
             }
         } finally {
             layerAlpha = outer;
@@ -1245,6 +1619,9 @@ public class MConfigHudScreen extends GuiScreen {
     private int tooltipRowY;
     private double tooltipCenterX;
     private boolean tooltipSeenThisFrame;
+    /** 上一次触发 tooltip 计时时的鼠标位置：静止不刷新，只有真的移动才重新计时。 */
+    private int lastTooltipMouseX;
+    private int lastTooltipMouseY;
 
     // ==================== CHOICE 下拉浮层 ====================
 
@@ -1276,7 +1653,7 @@ public class MConfigHudScreen extends GuiScreen {
         int itemH = hinted ? DROP_ITEM_H : DROP_ITEM_COMPACT_H;
         int visible = Math.min(choices.length, DROP_MAX_VISIBLE);
         int h = visible * itemH + 8;
-        int bodyY = panel[1] + HEADER_H;
+        int bodyY = panel[1] + headerHeight(panel[3]);
         int bodyBottom = panel[1] + panel[3] - FOOTER_H;
         int x = Math.max(panel[0] + 8, Math.min(panel[0] + panel[2] - 8 - w,
                 anchor.x + anchor.w - w));
@@ -1364,7 +1741,7 @@ public class MConfigHudScreen extends GuiScreen {
     }
 
     private int pickerY(int[] panel) {
-        return panel[1] + Math.max(HEADER_H + 6, (panel[3] - PICKER_H) / 2);
+        return panel[1] + Math.max(headerHeight(panel[3]) + 6, (panel[3] - PICKER_H) / 2);
     }
 
     private static String pickerTitle(HudSettingsModel.ColorTarget target) {
@@ -1547,27 +1924,30 @@ public class MConfigHudScreen extends GuiScreen {
             return;
         }
 
-        int bodyY = panelY + HEADER_H;
-        int bodyH = panelH - HEADER_H - FOOTER_H;
+        int headerH = headerHeight(panelH);
+        int bodyY = panelY + headerH;
+        int bodyH = Math.max(80, panelH - headerH - FOOTER_H);
         HudSettingsModel.Category[] categories = HudSettingsModel.categories();
 
-        if (mouseX < panelX + NAV_W) {
-            int[] edit = editHudButton(panelX, bodyY, bodyH);
+        int navW = navWidth(panelW);
+        if (mouseX < panelX + navW) {
+            int[] edit = editHudButton(panelX, bodyY, bodyH, navW);
             if (isInside(mouseX, mouseY, edit[0], edit[1], edit[2], edit[3])) {
                 enterEditMode();
                 return;
             }
-            int[] close = closeButton(panelX, bodyY, bodyH);
+            int[] close = closeButton(panelX, bodyY, bodyH, navW);
             if (isInside(mouseX, mouseY, close[0], close[1], close[2], close[3])) {
                 beginRetire();
                 return;
             }
             int listTop = bodyY + 24;
-            int listH = bodyH - 24 - NAV_BOTTOM_H;
-            int navMax = Math.max(0, Math.min(navMaxScroll(listH, categories.length, NAV_ROW_H), navScroll));
+            int listH = navListHeight(bodyH);
+            int navRowH = navRowHeight(listH, categories.length);
+            int navMax = Math.max(0, Math.min(navMaxScroll(listH, categories.length, navRowH), navScroll));
             for (int index = 0; index < categories.length; index++) {
-                int rowY = listTop - navMax + index * NAV_ROW_H;
-                if (isInside(mouseX, mouseY, panelX + 8, rowY, NAV_W - 16, NAV_ROW_H)) {
+                int rowY = listTop - navMax + index * navRowH;
+                if (isInside(mouseX, mouseY, panelX + 8, rowY, navW - 16, navRowH)) {
                     categoryIndex = index;
                     editingColor = HudSettingsModel.ColorTarget.NONE;
                     clearSearch();
@@ -1577,10 +1957,10 @@ public class MConfigHudScreen extends GuiScreen {
             return;
         }
 
-        int contentX = panelX + NAV_W;
-        int contentW = panelW - NAV_W;
+        int contentX = panelX + navW;
+        int contentW = panelW - navW;
         int searchX = panelX + panelW - CONTENT_PAD - SEARCH_W;
-        int searchY = panelY + (HEADER_H - SEARCH_H) / 2;
+        int searchY = panelY + (headerHeight(panelH) - SEARCH_H) / 2;
         ensureSearchInput();
         if (!searchInput.getText().isEmpty()) {
             int[] clear = searchClearButton(searchX, searchY);
@@ -1663,11 +2043,22 @@ public class MConfigHudScreen extends GuiScreen {
 
     private void activateCell(MRow row, Cell cell, int mouseX, int mouseY) {
         HudSettingsModel.Entry entry = cell.entry;
+        // 展开/收起优先：箭头命中区与卡片右上角空白都算「更多」。
+        if (isInside(mouseX, mouseY, cell.x + cell.w - 14 - ARROW_W, row.y, ARROW_W + 14, CARD_H)) {
+            toggleExpanded(entry);
+            return;
+        }
         if (entry.isLocked()) return;
         switch (entry.kind) {
             case SLIDER: {
-                int trackW = sliderTrackW(cell);
-                int trackX = cell.x + cell.w - 12 - VALUE_W - 10 - trackW;
+                // 折叠态滑条不露轨道：点卡片先展开，展开后再点/拖才是调值。
+                if (!isExpanded(entry)) {
+                    toggleExpanded(entry);
+                    break;
+                }
+                int[] track = sliderTrackBounds(cell);
+                int trackX = track[0];
+                int trackW = track[1];
                 if (mouseX < trackX - 8 || mouseX > trackX + trackW + 8) {
                     beginSliderValueEdit(entry.setting);
                     break;
@@ -1682,7 +2073,14 @@ public class MConfigHudScreen extends GuiScreen {
                 break;
             }
             case TOGGLE:
+                entry.activate();
+                break;
             case ACTION:
+                // 非 inline 动作按钮画在详情区，折叠态点卡片先展开；inline 的紧凑胶囊仍直接执行。
+                if (!entry.inlineButton && !isExpanded(entry)) {
+                    toggleExpanded(entry);
+                    break;
+                }
                 entry.activate();
                 break;
             case CHOICE:
@@ -1692,7 +2090,7 @@ public class MConfigHudScreen extends GuiScreen {
                 beginColorEdit(entry);
                 break;
             case THEME_GRID: {
-                int chip = themeChipIndexAt(mouseX, mouseY, cell.x + 12, row.y + 26);
+                int chip = themeChipIndexAt(mouseX, mouseY, cell.x + 14, row.y + CARD_H - 4);
                 if (chip >= 0) {
                     NCMTheme.ThemePreset preset = NCMTheme.ThemePreset.values()[chip];
                     if (!NCMTheme.isSelectable(preset)) break;
@@ -1703,6 +2101,16 @@ public class MConfigHudScreen extends GuiScreen {
             }
             default:
                 break;
+        }
+    }
+
+    /** 展开态切换：同一时刻只留一张卡展开，点第二张会把上一张收回去。 */
+    private void toggleExpanded(HudSettingsModel.Entry entry) {
+        expandedEntry = expandedEntry == entry ? null : entry;
+        if (expandedEntry != null) {
+            openChoice = null;
+            editingColor = HudSettingsModel.ColorTarget.NONE;
+            if (searchInput != null) searchInput.setFocused(false);
         }
     }
 
@@ -2478,12 +2886,14 @@ public class MConfigHudScreen extends GuiScreen {
     private int clampNavScroll(int value) {
         HudSettingsModel.Category[] categories = HudSettingsModel.categories();
         int listH = panelHeightNav();
-        return Math.max(0, Math.min(navMaxScroll(listH, categories.length, NAV_ROW_H), value));
+        // 行高跟绘制/命中共用同一个函数：矮窗口下行被压缩，滚动上限也随之缩小到 0。
+        int rowH = navRowHeight(listH, categories.length);
+        return Math.max(0, Math.min(navMaxScroll(listH, categories.length, rowH), value));
     }
 
     private int panelHeightNav() {
         int[] panel = panelBounds();
-        return panel[3] - HEADER_H - FOOTER_H - 24 - NAV_BOTTOM_H;
+        return navListHeight(panel[3] - headerHeight(panel[3]) - FOOTER_H);
     }
 
     private void ensureSearchInput() {
@@ -2677,6 +3087,47 @@ public class MConfigHudScreen extends GuiScreen {
         drawRoundedRect(x, y + h - t, w, t, t, color);
         drawRoundedRect(x, y, t, h, t, color);
         drawRoundedRect(x + w - t, y, t, h, t, color);
+    }
+
+    /**
+     * 按真实字宽折行，最多 {@code maxLines} 行，末行超出部分以省略号收尾。
+     *
+     * <p>与 {@link #wrapToTwoLines} 的区别：那个是先按宽度找首行断点、再把剩余整段交给
+     * {@code trim} —— 中文没有空格，第二行会原样保留超宽内容，直接压到右侧控件上。
+     * 这里每一行都从原文续着量，保证任何一行都不超过给定宽度。</p>
+     */
+    private static String[] wrapByWidth(CFontRenderer fr, String text, double width, int maxLines) {
+        List<String> lines = wrapByWidthList(fr, text, width);
+        if (lines.size() <= maxLines) return lines.toArray(new String[0]);
+        List<String> capped = new ArrayList<String>(lines.subList(0, maxLines));
+        String last = capped.get(maxLines - 1);
+        if (last.length() > 1) last = last.substring(0, last.length() - 1).trim();
+        capped.set(maxLines - 1, last + "…");
+        return capped.toArray(new String[0]);
+    }
+
+    /** 同上但不截断行数；tooltip 要的就是全文。 */
+    private static List<String> wrapByWidthList(CFontRenderer fr, String text, double width) {
+        List<String> lines = new ArrayList<String>();
+        if (text == null || text.isEmpty() || width <= 8) return lines;
+        int start = 0;
+        while (start < text.length()) {
+            int fit = start;
+            for (int i = start + 1; i <= text.length(); i++) {
+                if (fr.getStringWidth(text.substring(start, i)) > width) break;
+                fit = i;
+            }
+            if (fit <= start) fit = Math.min(text.length(), start + 1);
+            String line = text.substring(start, fit).trim();
+            start = fit;
+            if (!line.isEmpty()) lines.add(line);
+        }
+        return lines;
+    }
+
+    /** 这段说明在该宽度下需要几行；用来判断卡片里的两行是否已经把全文放完。 */
+    private static int countWrappedLines(CFontRenderer fr, String text, double width) {
+        return wrapByWidthList(fr, text, width).size();
     }
 
     /** 实线边框（整数坐标版，编辑态框用）。 */

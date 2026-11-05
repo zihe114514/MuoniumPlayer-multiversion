@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.screens.hud;
 
+import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
 
 import java.awt.Color;
@@ -41,6 +42,11 @@ public final class MConfigTheme {
     /** 滑条轨道 / 描边。 */
     public static final int GRAY_300 = 0xFF494F5C;
 
+    /** MD3 色调阶梯：设置卡片是面板之上的一层面，靠亮度差而不是描边分层。 */
+    public static final int SURFACE_1 = 0xFF1B1E23;
+    public static final int SURFACE_2 = 0xFF21252B;
+    public static final int SURFACE_3 = 0xFF272C33;
+
     // ==================== 白 alpha 档（OneConfig WHITE_50..95 的用法） ====================
 
     public static final int WHITE_95 = 0xF2FFFFFF;
@@ -60,9 +66,26 @@ public final class MConfigTheme {
     public static final int TEXT_PRIMARY = 0xFFF2F5FA;
     public static final int TEXT_SECONDARY = WHITE_60;
     public static final int TEXT_TERTIARY = WHITE_40;
+    /**
+     * 卡片说明行。比 {@code TEXT_SECONDARY} 亮一档：卡片底下是透明玻璃，
+     * 天空这类亮画面透上来时 60% 白会糊成一片，读不清「这项影响什么」。
+     */
+    public static final int TEXT_DESCRIPTION = 0xCCD6DEE9;
 
-    /** 卡片底。玻璃上要透一点游戏画面，所以不是全不透明的 GRAY_900。 */
-    public static final int CARD_BG = 0xBF0D0E0F;
+    /**
+     * 卡片底。玻璃上要透一点游戏画面，但不能薄到读不清字：
+     * 面板本身已经被 {@code tintedArgb} 按浓度压薄过，卡片再压一次就会把天空直接放进来。
+     * 所以卡片的 alpha 保持接近实心，透感交给面板那一层。
+     *
+     * <p><b>色相来自播放器主题</b>：{@link #surface()} 取 {@code ELEMENT_BACKGROUND}，
+     * 于是「丝绒玫瑰」的卡片偏紫、「瓷白墨」的卡片偏米白，而不是所有主题共用一套硬编码深灰。</p>
+     */
+    public static final int CARD_BG = 0xFA1B1E23;
+    /** 卡片悬停 / 展开态：比常态亮一档，MD3 里这就是「状态层」而不是描边。 */
+    public static final int CARD_BG_HOVER = 0xFF23272E;
+    public static final int CARD_BG_ACTIVE = 0xFF272C33;
+    /** 卡片描边：极低对比，只在深色底上勾一层轮廓。 */
+    public static final int CARD_OUTLINE = 0x14FFFFFF;
     /** 浮层（下拉 / 取色器 / 确认框 / 快捷小窗）：不透明深灰，压得住下面的内容。 */
     public static final int FLOAT_BG = 0xF7151617;
     /** 主内容分隔线（同一张卡内的行与行之间）。 */
@@ -80,6 +103,98 @@ public final class MConfigTheme {
     /** 危险动作（恢复默认确认钮）。 */
     public static final int DANGER = 0xFFD92020;
     public static final int DANGER_HOVER = 0xFFF2756B;
+
+    // ==================== 主题面（跟随播放器主题，不是自定一套灰） ====================
+    //
+    // 这一页曾经把 OneConfig 的灰阶整套抄进来：深灰面板 + 更深的卡片 + 白 alpha 三档。
+    // 结果是切到「瓷白墨」这类浅主题时，播放器别处是米白，只有这一页仍然一片黑 ——
+    // 卡片和文字都读不出主题身份。现在卡片面、悬停面、说明文字、分隔线全部问 NCMTheme 要，
+    // 本类只保留「主题没就绪时」的兜底值。所有 alpha 仍按面板那套语义补足（见类注释末段）。
+
+    private static int themeCacheKey = Integer.MIN_VALUE;
+    private static int surfaceCache;
+    private static int surfaceHoverCache;
+    private static int surfaceActiveCache;
+    private static int descriptionCache;
+    private static int dividerCache;
+    private static int floatCache;
+    private static boolean themeResolved;
+
+    /**
+     * 卡片面 = 主题「控件底色」。卡片本身就是这一页的控件容器，
+     * 用 {@code ELEMENT_BACKGROUND} 才能和播放器里的行卡片对上。
+     */
+    public static int surface() {
+        resolveThemeColors();
+        return surfaceCache;
+    }
+
+    /** 卡片悬停面 = 主题「控件悬停」，原样使用（主题自己已经把它提亮过一档）。 */
+    public static int surfaceHover() {
+        resolveThemeColors();
+        return surfaceHoverCache;
+    }
+
+    /** 卡片展开面：悬停面再往主色偏一点，表达「这张卡正在被操作」。 */
+    public static int surfaceActive() {
+        resolveThemeColors();
+        return surfaceActiveCache;
+    }
+
+    /** 卡片说明文字 = 主题「次要文字」，补足可读 alpha。 */
+    public static int descriptionText() {
+        resolveThemeColors();
+        return descriptionCache;
+    }
+
+    /** 卡片内分隔线：主题描边色压到很低，只留一道「这里分层了」的暗示。 */
+    public static int divider() {
+        resolveThemeColors();
+        return dividerCache;
+    }
+
+    /** 浮层（tooltip / 下拉 / 取色器）：主题输入框底色再压深一点，保证压得住下面的内容。 */
+    public static int floatSurface() {
+        resolveThemeColors();
+        return floatCache;
+    }
+
+    private static void resolveThemeColors() {
+        int accent = 0xFF1967FF;
+        int element = 0xFF30212C;
+        int hover = 0xFF493342;
+        int secondary = 0xC2AAB7;
+        int border = 0x604252;
+        try {
+            accent = 0xFF000000 | NCMTheme.getAccentColor();
+            element = 0xFF000000 | NCMTheme.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND);
+            hover = 0xFF000000 | NCMTheme.getColor(NCMScreen.ColorType.ELEMENT_HOVER);
+            secondary = 0xFF000000 | NCMTheme.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+            border = 0xFF000000 | NCMTheme.getColor(NCMScreen.ColorType.BORDER);
+        } catch (Throwable ignored) {
+            // 主题系统未就绪（极早打开编辑器）时用丝绒玫瑰的同位色兜底，不至于画成纯黑。
+            hover = 0xFF493342;
+            secondary = 0xC2AAB7;
+            border = 0x604252;
+        }
+        // 主题切换是 0.95 秒平滑过渡的，颜色每帧都可能变；缓存键带上当前一套色，变了就重算。
+        int key = accent ^ (element * 31) ^ (hover * 17) ^ (secondary * 7) ^ border;
+        if (themeResolved && key == themeCacheKey) return;
+        themeResolved = true;
+        themeCacheKey = key;
+
+        // 卡片面保持接近实心（见 CARD_BG 注释），色相完全来自主题。
+        surfaceCache = withAlpha(element, 0xFA);
+        surfaceHoverCache = withAlpha(hover, 0xFC);
+        surfaceActiveCache = mix(hover, accent, 0.16f) | 0xFC000000;
+        descriptionCache = withAlpha(secondary, 0xE6);
+        dividerCache = withAlpha(border, 0x40);
+        floatCache = withAlpha(mix(element, 0xFF000000, 0.35f) & 0xFFFFFF, 0xFC);
+    }
+
+    private static int withAlpha(int rgb, int alpha) {
+        return (alpha << 24) | (rgb & 0xFFFFFF);
+    }
 
     // ==================== 主色（主题 accent → 600/500 双档） ====================
 
