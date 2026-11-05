@@ -135,7 +135,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                                         .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
                                         .withVertexShader("core/rendertype_beacon_beam")
                                         .withFragmentShader("core/rendertype_beacon_beam")
-                                        .withVertexFormat(DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, VertexFormat.Mode.QUADS)
+                                        .withVertexFormat(DefaultVertexFormat.BLOCK, VertexFormat.Mode.QUADS)
                                         .withBlend(com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING)
                                         .withDepthTestFunction(com.mojang.blaze3d.platform.DepthTestFunction.NO_DEPTH_TEST)
                                         .withColorWrite(true, false)
