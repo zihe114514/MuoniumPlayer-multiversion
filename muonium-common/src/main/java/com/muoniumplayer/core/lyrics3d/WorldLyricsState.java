@@ -296,7 +296,22 @@ public final class WorldLyricsState {
          * 径迹开销最高（每字一条贝塞尔折线逐帧重采），独立成开关。
          */
         default boolean translationEffects() { return false; }
+
+        /**
+         * 发光形态：{@link #GLOW_CLASSIC}（逐字晕格 / 经典行级高斯）或
+         * {@link #GLOW_BLOOM}（行级多级金字塔 + 指数色调映射）。
+         *
+         * <p>两套是并列可选的观感，不是新旧替换 —— 玩家在设置里二选一：经典保留
+         * 现有的「晕/墨分离」贴边亮环，辉光换成整行一团大范围柔光、字芯白热。
+         * 辉光形态下逐字晕格与默认字色的行级高斯都不再参与，两套不会叠加。</p>
+         */
+        default int glowMode() { return GLOW_CLASSIC; }
     }
+
+    /** 发光形态：经典（逐字晕格 + 行级高斯）。 */
+    public static final int GLOW_CLASSIC = 0;
+    /** 发光形态：辉光（行级多级金字塔 + 指数色调映射，字芯白热）。 */
+    public static final int GLOW_BLOOM = 1;
 
     /** 一行歌词这一帧的最终落点与字形状态，渲染层只读。 */
     public static final class Row {

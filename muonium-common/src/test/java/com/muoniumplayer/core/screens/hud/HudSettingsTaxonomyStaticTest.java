@@ -38,9 +38,12 @@ class HudSettingsTaxonomyStaticTest {
      * （取色 8 条），1.20.1~1.21.11 的面板还没搬这组（取色只有文字色/发光色 2 条），
      * 3D 页 23 条。共享测试一份源跑五棵树 —— 基准随树取，禁止悄悄改某一个数的口径
      * 与 26.x 版注释同款。
+     *
+     * <p>2026-11-05 「发光」组新增「发光形态」choice（经典 / 辉光），三页里
+     * 只有 3D 歌词页 +1（30 → 31）；其余页不变。</p>
      */
     private static final List<Integer> COUNTS =
-            Arrays.asList(28, 30, 9, 25, 41, 33, 6, 3);
+            Arrays.asList(28, 31, 9, 25, 41, 33, 6, 3);
 
     private static String versionName() {
         return ProjectPaths.versionRoot().getFileName().toString();
@@ -96,9 +99,10 @@ class HudSettingsTaxonomyStaticTest {
      *  2026-11-05 「播放」页新增「卡点运镜」组 10 条（总开关 + 挂机多久启动/切换频率/
      *  最短镜头/运镜速度/转场效果五个 choice + 隐藏 HUD/电影黑边/追踪生物/鼓点变焦
      *  四个 toggle；开关与全部参数存共享层 CineSettings 自己的 cine.json，不经
-     *  HudConfig；后九条仅在总开关打开时可见）—— 播放页 31 → 41 条，165 → 175。
+     *  HudConfig；后九条仅在总开关打开时可见）—— 播放页 31 → 41 条，165 → 175；
+     *  2026-11-05 3D 歌词页「发光形态」+1，175 → 176。
      *  不新开分类页：ModernUI 分类条横排 8 格已满（见下方封顶测试）。 */
-    private static final int TOTAL = 175;
+    private static final int TOTAL = 176;
 
     @Test
     @DisplayName("分类就是这 7 页，顺序与每页条目数都不许悄悄变")

@@ -49,9 +49,15 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * (1,1) 不可见 —— (2,3) 是探针四档对比的定案（out7.png 行 3）：立体感明确
      * 且不喧宾（「一点点阴影」的钉死常数，不设设置项）。
      */
-    static final float SHADOW_OFFSET_PX = 2f;
-    /** 阴影的 Y 偏移（设计像素）：与 X 异值 —— 光照习惯上来自上方，纵向更沉。 */
-    static final float SHADOW_OFFSET_Y_PX = 3f;
+    static final float SHADOW_OFFSET_PX = 0.5f;
+    /** 阴影的 Y 偏移（设计像素）：略沉于 X，光照习惯上来自上方。 */
+    static final float SHADOW_OFFSET_Y_PX = 1f;
+    /**
+     * 阴影强度（顶点 alpha 系数）。字色×0.25 的「原版口径」在加色晕垫底下仍是
+     * 一团实色（重影感的另一半）—— 改成黑 ×0.22：浅底上是轻描的暗边、深底上
+     * 融进背景，任何背景下都只是「一点点」。
+     */
+    static final float SHADOW_STRENGTH = 0.22f;
 
     /** 每帧共享实例。 */
     public static final WorldBillboard INSTANCE = new WorldBillboard();
@@ -319,12 +325,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             buffers.endBatch(currentEffectType(glowRl));
         }
 
-        // 阴影：墨格同格重画、右下偏移、顶点色压暗（×0.25，原版阴影口径）——
-        // 同 text 类型挂起合批，画在晕上、被墨盖住，只露右下缘的立体感垫层
-        int shadowRgb = (((rgb >> 16) & 255) >> 2) << 16
-                | (((rgb >> 8) & 255) >> 2) << 8
-                | ((rgb & 255) >> 2);
-        int shadowArgb = (argb & 0xFF000000) | shadowRgb;
+        // 阴影：墨格同格重画、右下偏移、半透明黑（游戏实测字色压暗在加色晕垫底
+        // 下读作重影）—— 同 text 类型挂起合批，画在晕上、被墨盖住，只露右下缘
+        int shadowArgb = (int) (((argb >>> 24) & 0xFF) * SHADOW_STRENGTH) << 24;
         float shLeft = qLeft + SHADOW_OFFSET_PX, shTop = qTop + SHADOW_OFFSET_Y_PX;
         float shRight = qRight + SHADOW_OFFSET_PX, shBottom = qBottom + SHADOW_OFFSET_Y_PX;
         VertexConsumer svc = buffers.getBuffer(currentGlyphType(inkRl));
@@ -517,6 +520,84 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private static Identifier trailRl;
     private static boolean trailError;
     private static int rlCounter;
+
+    // ==================== 行级光晕垫底 ====================
+
+    /**
+     * 行光晕纹理（单槽）：本树是即时发射顶点的通路，quad 在调用当帧就写进
+     * 顶点缓冲并收批 —— 后一行换掉纹理内容也不会影响已提交的顶点，
+     * 因此不需要 26.x 那种按行分槽的纹理池。
+     */
+    private static Identifier glowRl;
+    private static TrailTexture glowTex;
+    private static int glowW, glowH;
+    private static String glowKey = "";
+    private static boolean glowError;
+
+    @Override
+    public void drawGlowBackdrop(String text, float widthPx,
+                                 int glowColor, float alpha) {
+        if (poseStack == null || buffers == null || glowError
+                || text == null || text.isEmpty()) return;
+        com.muoniumplayer.core.lyrics3d.WorldLyricsSettings settings =
+                WorldLyricsBridge.currentSettings;
+        float strength = settings != null ? settings.glowStrength : 0f;
+        float spread = settings != null ? settings.glowSpread : 1f;
+        String key = text + "|" + Integer.toHexString(glowColor & 0xFFFFFF)
+                + "|" + Math.round(strength * 64f) + "|" + Math.round(spread * 16f);
+
+        // 烘/复用：key 变才重烘像素并重灌纹理（尺寸不变时只重传，不重建）。
+        int[] px = com.muoniumplayer.core.lyrics3d.RowGlowSprite.bake(
+                text, glowColor, strength, spread);
+        if (px == null) return;
+        float pad = com.muoniumplayer.core.lyrics3d.RowGlowSprite.padPx(strength, spread);
+        int w = com.muoniumplayer.core.lyrics3d.RowGlowSprite.width();
+        int h = com.muoniumplayer.core.lyrics3d.RowGlowSprite.height();
+        if (w <= 0 || h <= 0 || px.length < w * h) return;
+        if (!key.equals(glowKey) || glowTex == null || w != glowW || h != glowH) {
+            try {
+                NativeImage img = new NativeImage(NativeImage.Format.RGBA, w, h, false);
+                for (int y = 0, i = 0; y < h; y++) {
+                    for (int x = 0; x < w; x++, i++) {
+                        img.setPixelABGR(x, y, px[i]);
+                    }
+                }
+                if (glowTex != null) {
+                    Minecraft.getInstance().getTextureManager().release(glowRl);
+                    glowTex = null;
+                }
+                TrailTexture tex = new TrailTexture(img);
+                Identifier rl = Identifier.fromNamespaceAndPath("muoniumplayer",
+                        "dynamic/worldlyrics_rowglow_" + (rlCounter++));
+                Minecraft.getInstance().getTextureManager().register(rl, tex);
+                glowRl = rl;
+                glowTex = tex;
+                glowW = w;
+                glowH = h;
+            } catch (Throwable t) {
+                glowError = true;
+                return;
+            }
+            glowKey = key;
+        }
+
+        // 对位：sprite 位图含 pad 外扩（设计像素），quad 覆盖「pad 外扩后的行 bbox」，
+        // 中心原点坐标系（公告牌平面）。文字宽用 sprite 自量 —— 与晕逐像素对上。
+        float textW = com.muoniumplayer.core.lyrics3d.RowGlowSprite.textWidth();
+        float planeW = textW + pad * 2f;
+        float planeH = com.muoniumplayer.core.lyrics3d.WorldLyricsState.LINE_H + pad * 2f;
+        float x0 = -(textW * 0.5f) - pad;
+        float y0 = -(planeH * 0.5f);
+        int argb = ((int) (Math.min(1f, alpha) * 255f) << 24) | (glowColor & 0xFFFFFF);
+
+        VertexConsumer vc = buffers.getBuffer(currentEffectType(glowRl));
+        Matrix4f mat = poseStack.last().pose();
+        putHaloVertex(vc, mat, x0, y0, 0f, 0f, argb);
+        putHaloVertex(vc, mat, x0, y0 + planeH, 0f, 1f, argb);
+        putHaloVertex(vc, mat, x0 + planeW, y0 + planeH, 1f, 1f, argb);
+        putHaloVertex(vc, mat, x0 + planeW, y0, 1f, 0f, argb);
+        flushEffectBatch(glowRl);
+    }
 
     /**
      * 绘光逐字光晕（folia halos）：径向渐变柔光点 quad 垫在字下。

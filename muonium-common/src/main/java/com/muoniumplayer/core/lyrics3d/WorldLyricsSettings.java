@@ -26,6 +26,7 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
     @Override public boolean keepDistance() { return keepDistance; }
     @Override public int translationMode() { return translation; }
     @Override public boolean translationEffects() { return translationEffects; }
+    @Override public int glowMode() { return glowMode; }
     @Override public boolean hudDraw() { return hudDraw; }
 
     public boolean enabled;
@@ -43,6 +44,8 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
 
     /** 发光质量档（TextGlow.GLOW_TIER_*）：0 Standard / 1 High / 2 Ultra(默认，HDR bloom)。 */
     public int glowTier = TextGlow.GLOW_TIER_DEFAULT;
+    /** 发光形态（WorldLyricsState.GLOW_*）：0 经典（逐字晕格）/ 1 辉光（行级金字塔）。 */
+    public int glowMode = WorldLyricsState.GLOW_CLASSIC;
     public int glowColorRgb = 0xFFFFFF;
     /** 发光颜色来源档：0 = 跟随字色（逐字联动文字色/渐变/关键字） / 1 = 自定义色板。 */
     public int glowColorMode = 1;
@@ -94,6 +97,7 @@ public final class WorldLyricsSettings implements WorldLyricsState.Params {
         s.glowStrength = (float) clamp(HudConfig.worldLyricsGlowStrength, 0.0, 1.0);
         s.glowSpread = (float) clamp(HudConfig.worldLyricsGlowSpread, 0.0, 3.0);
         s.glowTier = HudConfig.worldLyricsGlowTier;
+        s.glowMode = clampInt(HudConfig.worldLyricsGlowMode, 0, 1);
         s.glowColorRgb = HudConfig.worldLyricsGlowColorRgb & 0xFFFFFF;
         s.glowColorMode = clampInt(HudConfig.worldLyricsGlowColorMode, 0, 1);
         s.colorRgb = HudConfig.worldLyricsColorRgb & 0xFFFFFF;

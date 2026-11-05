@@ -65,6 +65,18 @@ public final class WorldLyricsRenderer {
          */
         default void drawGlowBackdrop(String text, float widthPx,
                                       int glowColor, float alpha) {
+            drawGlowBackdrop(text, widthPx, glowColor, alpha, 0);
+        }
+
+        /**
+         * 带槽位的行级光晕。26.x 的几何提交是延迟展开的，同一帧可能有多行
+         * （活跃行 + 淡出行）同时需要垫光晕 —— 共用一张纹理时后一行的像素会
+         * 覆盖先提交 quad 的内容。宿主按 slot 各持一张纹理；即时发射顶点的
+         * 实现可以忽略 slot。
+         */
+        default void drawGlowBackdrop(String text, float widthPx,
+                                      int glowColor, float alpha, int slot) {
+            drawGlowBackdrop(text, widthPx, glowColor, alpha);
         }
 
         /** 原版像素字宽。 */
@@ -672,11 +684,17 @@ public final class WorldLyricsRenderer {
                     }
                 }
             }
-            if (!smooth && settings.glowEnabled && settings.glowStrength > 0.02f
-                    && glyphs.glyphs.size() > 0) {
-                // 原版样式的行级光晕：把已显现前缀交宿主烘光晕垫底。前缀按可见
-                // 字形的 x 顺序拼，出现间隙（逐字点亮中段未出）即停 —— 否则会
-                // 画出「真空带」。
+            // ---- 行级光晕垫底 ----
+            // 两种发光形态共用「已显现前缀」的收集：
+            //   * 经典形态只在原版像素字样式下画（现代样式已有逐字晕格，行级会重复）；
+            //   * 辉光形态两种样式都画 —— 它就是现代样式缺的那层大范围柔光，
+            //     且逐字晕格已在下面被抑制，不会有第二套叠上来。
+            boolean bloomGlow = settings.glowMode() == WorldLyricsState.GLOW_BLOOM;
+            boolean wantBackdrop = settings.glowEnabled && settings.glowStrength > 0.02f
+                    && glyphs.glyphs.size() > 0 && (bloomGlow || !smooth);
+            if (wantBackdrop) {
+                // 前缀按可见字形的 x 顺序拼，出现间隙（逐字点亮中段未出）即停 ——
+                // 否则会画出「真空带」。
                 StringBuilder vis = new StringBuilder();
                 float right = 0f;
                 int count = 0;
@@ -688,15 +706,15 @@ public final class WorldLyricsRenderer {
                     count++;
                 }
                 if (count > 0) {
-                    // 原版像素风格没有逐字晕格，行级垫底晕跟随发光颜色模式：
-                    // 跟随字色档用行首字的墨色派生（无关键字/渐变的像素档够用）
+                    // 行级晕跟随发光颜色模式；跟随字色档用行首字的墨色派生
+                    // （无关键字/渐变的像素档够用）
                     int backdropInk = glyphs.glyphs.get(0).rgbOverride != 0
                             ? glyphs.glyphs.get(0).rgbOverride : (inkRgb & 0xFFFFFF);
                     host.drawGlowBackdrop(vis.toString(), right,
                             resolveGlowColor(settings, backdropInk,
                                     glyphs.glyphs.get(0).keywordRgb,
                                     glyphs.glyphs.get(0).rgbOverride) & 0xFFFFFF,
-                            row.alpha);
+                            row.alpha, canvasSlot);
                 }
             }
             for (int gi = 0; gi < glyphs.glyphs.size(); gi++) {
@@ -716,7 +734,10 @@ public final class WorldLyricsRenderer {
                     // 本字晕层颜色：跟随字色档 = 字墨色提亮（晕比墨亮一档，光从字里
                     // 长出来）；自定义色板档 = 设置色原样。晕开关 = 发光总开关 && 强度>0
                     // && glowMul 未被压到近零（心象未唱块 0.35 仍有晕，0 就没有）。
-                    boolean glowOn = settings.glowEnabled && settings.glowStrength > 0.02f
+                    // 辉光形态下行级金字塔接管发光，逐字晕格关掉 —— 两套叠在一起会
+                    // 变成「亮环裹着一团柔光」，两种观感互相污染。
+                    boolean glowOn = !bloomGlow && settings.glowEnabled
+                            && settings.glowStrength > 0.02f
                             && glowMul > 0.02f;
                     int glowColor = glowOn
                             ? resolveGlowColor(settings, rgb, g.keywordRgb, g.rgbOverride)

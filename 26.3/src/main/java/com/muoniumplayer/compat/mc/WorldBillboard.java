@@ -85,13 +85,18 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     static final boolean TRACE = Boolean.getBoolean("muonium.debug.worldLyrics");
 
     /**
-     * 字形阴影的右下偏移（设计像素）。3D 歌词的 billboard 设计字号远大于界面字，
-     * (1,1) 不可见 —— (2,3) 是探针四档对比的定案（out7.png 行 3）：立体感明确
-     * 且不喧宾（「一点点阴影」的钉死常数，不设设置项）。
+     * 字形阴影的右下偏移（设计像素）。游戏实测（浅色天空背景）(2,3) 在加色晕的
+     * 垫底下读作「重影」—— 收到 (1,1.5)：紧贴字缘的暗边，立体可察而不脱形。
      */
-    static final float SHADOW_OFFSET_PX = 2f;
-    /** 阴影的 Y 偏移（设计像素）：与 X 异值 —— 光照习惯上来自上方，纵向更沉。 */
-    static final float SHADOW_OFFSET_Y_PX = 3f;
+    static final float SHADOW_OFFSET_PX = 0.5f;
+    /** 阴影的 Y 偏移（设计像素）：略沉于 X，光照习惯上来自上方。 */
+    static final float SHADOW_OFFSET_Y_PX = 1f;
+    /**
+     * 阴影强度（顶点 alpha 系数）。字色×0.25 的「原版口径」在加色晕垫底下仍是
+     * 一团实色（重影感的另一半）—— 改成黑 ×0.35：浅底上是轻描的暗边、深底上
+     * 融进背景，任何背景下都只是「一点点」。
+     */
+    static final float SHADOW_STRENGTH = 0.22f;
 
     /**
      * 全亮度光值（1.21.1 的 {@code LightTexture.FULL_BRIGHT}）。26.3 该常量类已删除，
@@ -235,13 +240,19 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         poseStack.popPose();
     }
 
-    // ==================== 原版样式的行级光晕（辉光开关 + 原版档） ====================
+    // ==================== 行级光晕垫底 ====================
 
-    /** 行光晕纹理（单槽：同一时刻只有一行在画；key 变 = 重灌像素）。 */
-    private static Identifier glowRl;
-    private static TrailTexture glowTex;
-    private static int glowW, glowH;
-    private static String glowKey = "";
+    /**
+     * 行光晕纹理池。同一帧里可能有活跃行 + 若干淡出行同时要垫光晕，而 26.x 的
+     * 几何提交是<b>延迟展开</b>的 —— 若共用一张纹理，后一行的像素会覆盖先提交
+     * quad 的内容，光晕整块串到别的行上。按槽位各持一张，槽位按活跃行序号轮转。
+     */
+    private static final int GLOW_SLOTS = 4;
+    private static final Identifier[] glowRl = new Identifier[GLOW_SLOTS];
+    private static final TrailTexture[] glowTex = new TrailTexture[GLOW_SLOTS];
+    private static final int[] glowW = new int[GLOW_SLOTS];
+    private static final int[] glowH = new int[GLOW_SLOTS];
+    private static final String[] glowKey = new String[GLOW_SLOTS];
     private static boolean glowError;
 
     /** 光晕 sprite 的设计像素尺寸（padPx 外扩后），对位 quad 用。 */
@@ -250,6 +261,12 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     @Override
     public void drawGlowBackdrop(String text, float widthPx,
                                  int glowColor, float alpha) {
+        drawGlowBackdrop(text, widthPx, glowColor, alpha, 0);
+    }
+
+    @Override
+    public void drawGlowBackdrop(String text, float widthPx,
+                                 int glowColor, float alpha, int slot) {
         if (poseStack == null || collector == null || glowError
                 || text == null || text.isEmpty()) return;
         com.muoniumplayer.core.lyrics3d.WorldLyricsSettings settings =
@@ -259,41 +276,50 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         String key = text + "|" + Integer.toHexString(glowColor & 0xFFFFFF)
                 + "|" + Math.round(strength * 64f) + "|" + Math.round(spread * 16f);
 
-        // 烘/复用：key 变才重烘像素并重灌纹理（尺寸不变时只重传，不重建）。
+        // 槽位由渲染层给（同 trailCanvas 口径）：延迟提交下每行必须
+        // 有独立纹理，否则后一行像素会盖掉先提交 quad 的内容。
+        int s = slot % GLOW_SLOTS;
         int[] px = com.muoniumplayer.core.lyrics3d.RowGlowSprite.bake(
                 text, glowColor, strength, spread);
         if (px == null) return;
         glowPad = com.muoniumplayer.core.lyrics3d.RowGlowSprite.padPx(strength, spread);
         int w = com.muoniumplayer.core.lyrics3d.RowGlowSprite.width();
         int h = com.muoniumplayer.core.lyrics3d.RowGlowSprite.height();
-        if (w <= 0 || h <= 0) return;
-        if (!key.equals(glowKey) || glowTex == null || w != glowW || h != glowH) {
-            try {
+        if (w <= 0 || h <= 0 || px.length < w * h) return;
+        try {
+            TrailTexture tex = glowTex[s];
+            if (tex == null || glowW[s] != w || glowH[s] != h) {
+                if (glowRl[s] != null) {
+                    Minecraft.getInstance().getTextureManager().release(glowRl[s]);
+                    glowTex[s] = null;
+                }
                 NativeImage img = new NativeImage(NativeImage.Format.RGBA, w, h, false);
-                for (int y = 0, i = 0; y < h; y++) {
-                    for (int x = 0; x < w; x++, i++) {
-                        img.setPixelABGR(x, y, px[i]);
+                tex = new TrailTexture(img);
+                Identifier rl = Identifier.fromNamespaceAndPath("muoniumplayer",
+                        "dynamic/worldlyrics_rowglow_" + s + "_" + (rlCounter++));
+                Minecraft.getInstance().getTextureManager().register(rl, tex);
+                glowRl[s] = rl;
+                glowTex[s] = tex;
+                glowW[s] = w;
+                glowH[s] = h;
+                glowKey[s] = key;
+            }
+            if (!key.equals(glowKey[s])) {
+                // 内容变了才重传；像素量 = 行 bbox，远小于拖尾画布
+                NativeImage img = tex.getPixels();
+                if (img == null) return;
+                for (int row = 0, i = 0; row < h; row++) {
+                    for (int col = 0; col < w; col++, i++) {
+                        img.setPixelABGR(col, row, px[i]);
                     }
                 }
-                if (glowTex != null) {
-                    Minecraft.getInstance().getTextureManager()
-                            .release(glowRl);
-                    glowTex = null;
-                }
-                TrailTexture tex = new TrailTexture(img);
-                Identifier rl = Identifier.fromNamespaceAndPath("muoniumplayer",
-                        "dynamic/worldlyrics_rowglow_" + (rlCounter++));
-                Minecraft.getInstance().getTextureManager().register(rl, tex);
-                glowRl = rl;
-                glowTex = tex;
-                glowW = w;
-                glowH = h;
-            } catch (Throwable t) {
-                glowError = true;
-                if (TRACE) System.out.println("[WorldLyrics/trace] 行光晕纹理失败: " + t);
-                return;
+                tex.upload();
+                glowKey[s] = key;
             }
-            glowKey = key;
+        } catch (Throwable t) {
+            glowError = true;
+            if (TRACE) System.out.println("[WorldLyrics/trace] 行光晕纹理失败: " + t);
+            return;
         }
 
         // 对位：sprite 位图含 pad 外扩（设计像素），quad 覆盖「pad 外扩后的行 bbox」，
@@ -307,7 +333,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         float x0 = -(textW * 0.5f) - glowPad;
         float y0 = -(planeH * 0.5f);
         int argb = ((int) (Math.min(1f, alpha) * 255f) << 24) | (glowColor & 0xFFFFFF);
-        final Identifier rl = glowRl;
+        final Identifier rl = glowRl[s];
 
         if (captureMode) {
             captureEffectQuad(rl,
@@ -442,13 +468,11 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         int argb = (((int) (alpha * 255f) & 0xFF) << 24) | (rgb & 0xFFFFFF);
 
-        // 一点点立体感：墨格同格重画一遍、右下偏移、顶点色压暗（原版阴影 ×0.25 口径）。
+        // 一点点立体感：墨格同格重画一遍、右下偏移、半透明黑压暗。
         // 不新烘格 —— 同一张墨格页纹理，UV 相同；只多一个 quad 的开销。
         final float shOff = SHADOW_OFFSET_PX;
-        final int shadowRgb = (((rgb >> 16) & 255) >> 2) << 16
-                | (((rgb >> 8) & 255) >> 2) << 8
-                | ((rgb & 255) >> 2);
-        final int shadowArgb = (argb & 0xFF000000) | shadowRgb;
+        final int shadowA = (int) (((argb >>> 24) & 0xFF) * SHADOW_STRENGTH);
+        final int shadowArgb = (shadowA << 24);   // 纯黑 × 进出场 alpha × 0.35
         final float shLeft = qLeft + shOff, shTop = qTop + SHADOW_OFFSET_Y_PX;
         final float shRight = qRight + shOff, shBottom = qBottom + SHADOW_OFFSET_Y_PX;
 

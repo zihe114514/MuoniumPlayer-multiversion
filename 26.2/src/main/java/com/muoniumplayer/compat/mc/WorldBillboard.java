@@ -80,6 +80,12 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     static final float SHADOW_OFFSET_PX = 2f;
     /** 阴影的 Y 偏移（设计像素）：与 X 异值 —— 光照习惯上来自上方，纵向更沉。 */
     static final float SHADOW_OFFSET_Y_PX = 3f;
+    /**
+     * 阴影强度（顶点 alpha 系数）。字色×0.25 的「原版口径」在加色晕垫底下仍是
+     * 一团实色（重影感的另一半）—— 改成黑 ×0.22：浅底上是轻描的暗边、深底上
+     * 融进背景，任何背景下都只是「一点点」。
+     */
+    static final float SHADOW_STRENGTH = 0.22f;
 
     /** 每帧共享实例。 */
     public static final WorldBillboard INSTANCE = new WorldBillboard();
@@ -331,10 +337,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 一点点立体感：墨格同格重画一遍、右下偏移、顶点色压暗（原版阴影 ×0.25 口径）。
         // 不新烘格 —— 同一张墨格页纹理，UV 相同；只多一个 quad 的开销。
         final float shOff = SHADOW_OFFSET_PX;
-        final int shadowRgb = (((rgb >> 16) & 255) >> 2) << 16
-                | (((rgb >> 8) & 255) >> 2) << 8
-                | ((rgb & 255) >> 2);
-        final int shadowArgb = (argb & 0xFF000000) | shadowRgb;
+        final int shadowA = (int) (((argb >>> 24) & 0xFF) * SHADOW_STRENGTH);
+        final int shadowArgb = (shadowA << 24);   // 纯黑 × 进出场 alpha × 0.22
         final float shLeft = qLeft + shOff, shTop = qTop + SHADOW_OFFSET_Y_PX;
         final float shRight = qRight + shOff, shBottom = qBottom + SHADOW_OFFSET_Y_PX;
 
@@ -853,6 +857,123 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 见 MipDynamicTexture），上传后无需重生成链。</p>
      */
     
+    /**
+     * 绘光逐字光晕（folia halos）：径向渐变柔光点 quad 垫在字下。
+     * folia haloAlpha = glyphAlpha × lit × (0.03+0.14illum+0.08flash)、
+     * size = fontPx × (2.2+0.8illum)；渲染层已按 lit 算好 size/alpha。
+     * 与字形同一 alwaysOnTop 相位：渲染层先逐字调 drawHalo 再逐字调
+     * drawSmoothGlyph，submit 顺序即绘制顺序 —— 晕垫在字下。
+    // ==================== 行级光晕垫底 ====================
+
+    /**
+     * 行光晕纹理池：延迟提交下同帧多行（活跃 + 淡出）同时需要垫光晕，
+     * 共用一张纹理会让后一行的像素盖掉先提交 quad 的内容。
+     */
+    private static final int GLOW_SLOTS = 4;
+    private static final Identifier[] glowRl = new Identifier[GLOW_SLOTS];
+    private static final TrailTexture[] glowTex = new TrailTexture[GLOW_SLOTS];
+    private static final int[] glowW = new int[GLOW_SLOTS];
+    private static final int[] glowH = new int[GLOW_SLOTS];
+    private static final String[] glowKey = new String[GLOW_SLOTS];
+    private static boolean glowError;
+
+    @Override
+    public void drawGlowBackdrop(String text, float widthPx,
+                                 int glowColor, float alpha) {
+        drawGlowBackdrop(text, widthPx, glowColor, alpha, 0);
+    }
+
+    @Override
+    public void drawGlowBackdrop(String text, float widthPx,
+                                 int glowColor, float alpha, int slot) {
+        if (poseStack == null || mc == null || glowError
+                || text == null || text.isEmpty()) return;
+        com.muoniumplayer.core.lyrics3d.WorldLyricsSettings settings =
+                WorldLyricsBridge.currentSettings;
+        float strength = settings != null ? settings.glowStrength : 0f;
+        float spread = settings != null ? settings.glowSpread : 1f;
+        String key = text + "|" + Integer.toHexString(glowColor & 0xFFFFFF)
+                + "|" + Math.round(strength * 64f) + "|" + Math.round(spread * 16f);
+        int s = Math.abs(slot) % GLOW_SLOTS;
+
+        int[] px = com.muoniumplayer.core.lyrics3d.RowGlowSprite.bake(
+                text, glowColor, strength, spread);
+        if (px == null) return;
+        float pad = com.muoniumplayer.core.lyrics3d.RowGlowSprite.padPx(strength, spread);
+        int w = com.muoniumplayer.core.lyrics3d.RowGlowSprite.width();
+        int h = com.muoniumplayer.core.lyrics3d.RowGlowSprite.height();
+        if (w <= 0 || h <= 0 || px.length < w * h) return;
+        try {
+            TrailTexture tex = glowTex[s];
+            if (tex == null || glowW[s] != w || glowH[s] != h) {
+                if (glowRl[s] != null) {
+                    Minecraft.getInstance().getTextureManager().release(glowRl[s]);
+                    glowTex[s] = null;
+                }
+                NativeImage img = new NativeImage(NativeImage.Format.RGBA, w, h, false);
+                tex = new TrailTexture(
+                        () -> "muoniumplayer_worldlyrics_rowglow", img);
+                Identifier rl = Identifier.fromNamespaceAndPath("muoniumplayer",
+                        "dynamic/worldlyrics_rowglow_" + s + "_" + (rlCounter++));
+                Minecraft.getInstance().getTextureManager().register(rl, tex);
+                glowRl[s] = rl;
+                glowTex[s] = tex;
+                glowW[s] = w;
+                glowH[s] = h;
+                glowKey[s] = key;
+            }
+            if (!key.equals(glowKey[s])) {
+                NativeImage img = tex.getPixels();
+                if (img == null) return;
+                for (int row = 0, i = 0; row < h; row++) {
+                    for (int col = 0; col < w; col++, i++) {
+                        img.setPixelABGR(col, row, px[i]);
+                    }
+                }
+                tex.upload();
+                glowKey[s] = key;
+            }
+        } catch (Throwable t) {
+            glowError = true;
+            return;
+        }
+
+        Identifier rl = glowRl[s];
+        if (rl == null) return;
+        float textW = com.muoniumplayer.core.lyrics3d.RowGlowSprite.textWidth();
+        float planeW = textW + pad * 2f;
+        float planeH = com.muoniumplayer.core.lyrics3d.WorldLyricsState.LINE_H + pad * 2f;
+        float x0 = -(textW * 0.5f) - pad;
+        float y0 = -(planeH * 0.5f);
+        int argb = ((int) (Math.min(1f, alpha) * 255f) << 24) | (glowColor & 0xFFFFFF);
+
+        if (captureMode) {
+            captureEffectQuad(rl,
+                    x0, y0, 0f, 0f,
+                    x0, y0 + planeH, 0f, 1f,
+                    x0 + planeW, y0 + planeH, 1f, 1f,
+                    x0 + planeW, y0, 1f, 0f,
+                    argb);
+            return;
+        }
+
+        OrderedSubmitNodeCollector submitter = WorldLyricsBridgeAccess.submitter(mc);
+        if (submitter == null) return;
+        RenderType renderType = currentWorldTextType(rl);
+        poseStack.pushPose();
+        try {
+            LyricOnTopSubmitter.submitCustomGeometry(submitter, poseStack, renderType, (pose, vc) -> {
+                Matrix4f mat = pose.pose();
+                putHaloVertex(vc, mat, x0, y0, 0f, 0f, argb);
+                putHaloVertex(vc, mat, x0, y0 + planeH, 0f, 1f, argb);
+                putHaloVertex(vc, mat, x0 + planeW, y0 + planeH, 1f, 1f, argb);
+                putHaloVertex(vc, mat, x0 + planeW, y0, 1f, 0f, argb);
+            });
+        } finally {
+            poseStack.popPose();
+        }
+    }
+
     /**
      * 绘光逐字光晕（folia halos）：径向渐变柔光点 quad 垫在字下。
      * folia haloAlpha = glyphAlpha × lit × (0.03+0.14illum+0.08flash)、
