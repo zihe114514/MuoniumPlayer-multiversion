@@ -76,9 +76,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 字形阴影的右下偏移（设计像素）。游戏实测 (2,3) 与字色压暗口径在加色晕垫底
      * 下读作「重影」—— 终版 (0.5,1) + 纯黑 ×0.22：紧贴字缘的轻暗边。
      */
-    static final float SHADOW_OFFSET_PX = 1.5f;
+    static final float SHADOW_OFFSET_PX = 0.5f;
     /** 阴影的 Y 偏移（设计像素）：略沉于 X，光照习惯上来自上方。 */
-    static final float SHADOW_OFFSET_Y_PX = 2f;
+    static final float SHADOW_OFFSET_Y_PX = 1f;
     /** 阴影强度（顶点 alpha 系数，纯黑 × 进出场 alpha）。 */
     static final float SHADOW_STRENGTH = 0.22f;
 
