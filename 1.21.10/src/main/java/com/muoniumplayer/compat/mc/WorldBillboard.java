@@ -2,7 +2,9 @@ package com.muoniumplayer.compat.mc;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas;
 import com.muoniumplayer.core.rendering.font.TextGlow;
@@ -14,6 +16,7 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.RenderStateShard;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.ResourceLocation;
 import org.joml.Matrix4f;
@@ -108,6 +111,35 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         return forceVanillaType || !ShaderPackProbe.isActive()
                 ? RenderType.textSeeThrough(rl)
                 : shaderTextType(rl);
+    }
+
+    /**
+     * 晕格通道的<b>加色</b>渲染类型（与 26.3 标杆 glowType 同语义）：beacon_beam
+     * 着色器 × BlendFunction.LIGHTNING（srcAlpha,one）—— 加色只增不减，亮背景上
+     * 光晕融入、暗背景上浮出。beaconBeam(rl,true) 工厂自带的是 TRANSLUCENT alpha
+     * 混合（信标光柱本体），不是加色 —— 晕格用它会在亮背景上消失（游戏实测）。
+     * 四参 create 包私有 → RenderTypeCreateAccessor Invoker 暴露。
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<ResourceLocation, net.minecraft.client.renderer.RenderType>
+            GLOW_TYPES = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static net.minecraft.client.renderer.RenderType glowType(ResourceLocation rl) {
+        return GLOW_TYPES.computeIfAbsent(rl, r -> com.muoniumplayer.mixin.RenderTypeCreateAccessor.muonium$create(
+                "muonium_lyrics_glow", 1536,
+                com.mojang.blaze3d.pipeline.RenderPipeline.builder()
+                        .withLocation(net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("muonium", "lyric_glow"))
+                        .withVertexShader("core/rendertype_beacon_beam")
+                        .withFragmentShader("core/rendertype_beacon_beam")
+                        .withVertexFormat(DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, VertexFormat.Mode.QUADS)
+                        .withBlend(com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING)
+                        .withDepthTestFunction(com.mojang.blaze3d.platform.DepthTestFunction.NO_DEPTH_TEST)
+                        .withColorWrite(true, false)
+                        .withCull(false)
+                        .build(),
+                RenderType.CompositeState.builder()
+                        .setTextureState(new RenderStateShard.TextureStateShard(r, false))
+                        .setLightmapState(RenderStateShard.NO_LIGHTMAP)
+                        .createCompositeState(false)));
     }
 
     /** 事件入口（worldRenderEnd 的矩阵在 Bridge 里已设好）。 */
@@ -305,7 +337,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             // 晕的顶点 alpha 用墨格同一进出场 alpha —— 晕格能量已按 strength 烘进像素
             int glowArgb = argb & 0x00FFFFFF | (((int) (alpha * 255f) & 0xFF) << 24);
             Matrix4f gmat = poseStack.last().pose();
-            VertexConsumer gvc = buffers.getBuffer(shaderTextType(glowRl));
+            VertexConsumer gvc = buffers.getBuffer(glowType(glowRl));
             putGlyphVertex(gvc, gmat, gLeft, gTop, cx, cy, cos, sin, s, glowArgb,
                     glowCell.x / pageF + halfTexel, glowCell.y / pageF + halfTexel);
             putGlyphVertex(gvc, gmat, gLeft, gBottom, cx, cy, cos, sin, s, glowArgb,
@@ -317,7 +349,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             // 加色批立即收：晕格恒走加色（shaderTextType = beaconBeam translucent，
             // 与 26.3 glowType 同判、不随光影探测切换），显式 endBatch 保证晕层
             // 不与后续特效（halo/burst 同类型）串页
-            buffers.endBatch(shaderTextType(glowRl));
+            buffers.endBatch(glowType(glowRl));
         }
 
         // 阴影：墨格同格重画、右下偏移、半透明黑 —— 同 text 类型挂起合批，

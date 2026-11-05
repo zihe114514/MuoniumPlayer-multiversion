@@ -5,6 +5,7 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "MusicManagerAccessor",
+    "RenderTypeCreateAccessor",
     "MusicManagerDuckMixin",
     "FramebufferMixin",
     "TransparentEntityMixin",

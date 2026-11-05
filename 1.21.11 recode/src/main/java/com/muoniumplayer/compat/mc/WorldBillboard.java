@@ -3,7 +3,9 @@ package com.muoniumplayer.compat.mc;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.FilterMode;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas;
 import com.muoniumplayer.core.rendering.font.TextGlow;
@@ -113,6 +115,35 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         return forceVanillaType || !ShaderPackProbe.isActive()
                 ? RenderTypes.textSeeThrough(rl)
                 : shaderTextType(rl);
+    }
+
+    /**
+     * 晕格通道的<b>加色</b>渲染类型（与 26.3 标杆 glowType 同语义）：beacon_beam
+     * 着色器 × BlendFunction.LIGHTNING（srcAlpha,one）—— 加色只增不减，亮背景上
+     * 光晕融入、暗背景上浮出。beaconBeam(rl,true) 工厂自带的是 TRANSLUCENT alpha
+     * 混合（信标光柱本体），不是加色 —— 晕格用它会在亮背景上消失（游戏实测）。
+     * RenderType.create(String, RenderSetup) 包私有 → RenderTypeAccessors Invoker。
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<Identifier, net.minecraft.client.renderer.rendertype.RenderType>
+            GLOW_TYPES = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static net.minecraft.client.renderer.rendertype.RenderType glowType(Identifier rl) {
+        return GLOW_TYPES.computeIfAbsent(rl, r -> com.muoniumplayer.mixin.RenderTypeAccessors.muonium$create(
+                "muonium_lyrics_glow",
+                net.minecraft.client.renderer.rendertype.RenderSetup.builder(
+                                com.mojang.blaze3d.pipeline.RenderPipeline.builder()
+                                        .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
+                                        .withVertexShader("core/rendertype_beacon_beam")
+                                        .withFragmentShader("core/rendertype_beacon_beam")
+                                        .withVertexFormat(DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP, VertexFormat.Mode.QUADS)
+                                        .withBlend(com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING)
+                                        .withDepthTestFunction(com.mojang.blaze3d.platform.DepthTestFunction.NO_DEPTH_TEST)
+                                        .withColorWrite(true, false)
+                                        .withCull(false)
+                                        .build())
+                        .withTexture("Sampler0", r)
+                        .sortOnUpload()
+                        .createRenderSetup()));
     }
 
     /** 事件入口（worldRenderEnd 的矩阵在 Bridge 里已设好）。 */
@@ -310,7 +341,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             // 晕的顶点 alpha 用墨格同一进出场 alpha —— 晕格能量已按 strength 烘进像素
             int glowArgb = argb & 0x00FFFFFF | (((int) (alpha * 255f) & 0xFF) << 24);
             Matrix4f gmat = poseStack.last().pose();
-            VertexConsumer gvc = buffers.getBuffer(shaderTextType(glowRl));
+            VertexConsumer gvc = buffers.getBuffer(glowType(glowRl));
             putGlyphVertex(gvc, gmat, gLeft, gTop, cx, cy, cos, sin, s, glowArgb,
                     glowCell.x / pageF + halfTexel, glowCell.y / pageF + halfTexel);
             putGlyphVertex(gvc, gmat, gLeft, gBottom, cx, cy, cos, sin, s, glowArgb,
@@ -322,7 +353,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             // 加色批立即收：currentEffectType 与墨格的 textSeeThrough 不同类型，
             // getBuffer 换类型时原版会自动收前一批，但显式 endBatch 保证晕层
             // 不与后续特效（halo/burst 同类型）串页
-            buffers.endBatch(shaderTextType(glowRl));
+            buffers.endBatch(glowType(glowRl));
         }
 
         // 阴影：墨格同格重画、右下偏移、半透明黑（游戏实测字色压暗在加色晕垫底
@@ -571,7 +602,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 int capW = nextPow2(w), capH = nextPow2(h);
                 NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
                 if (glowRl != null && glowRl.equals(pendingEffectRl) && buffers != null) {
-                    buffers.endBatch(shaderTextType(glowRl));
+                    buffers.endBatch(glowType(glowRl));
                     pendingEffectRl = null;
                 }
                 if (glowTex != null) {
