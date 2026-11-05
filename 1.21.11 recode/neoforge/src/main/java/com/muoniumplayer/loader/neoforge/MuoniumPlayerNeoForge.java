@@ -120,6 +120,8 @@ public final class MuoniumPlayerNeoForge {
      */
     private void onRenderLevelStage(RenderLevelStageEvent.AfterLevel event) {
         WorldLyricsBridge.worldRenderEnd();
+        // 世界声源线框(有音箱才画;内部第一行判空)。
+        com.muoniumplayer.compat.mc.SpeakerRenderBridge.render();
     }
 
     /** 对应 Fabric 的 ScreenEvents.afterRender：界面画完之后叠灵动岛。 */
