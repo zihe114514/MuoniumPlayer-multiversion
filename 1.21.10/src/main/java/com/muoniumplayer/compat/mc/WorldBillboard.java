@@ -305,7 +305,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             // 晕的顶点 alpha 用墨格同一进出场 alpha —— 晕格能量已按 strength 烘进像素
             int glowArgb = argb & 0x00FFFFFF | (((int) (alpha * 255f) & 0xFF) << 24);
             Matrix4f gmat = poseStack.last().pose();
-            VertexConsumer gvc = buffers.getBuffer(currentEffectType(glowRl));
+            VertexConsumer gvc = buffers.getBuffer(shaderTextType(glowRl));
             putGlyphVertex(gvc, gmat, gLeft, gTop, cx, cy, cos, sin, s, glowArgb,
                     glowCell.x / pageF + halfTexel, glowCell.y / pageF + halfTexel);
             putGlyphVertex(gvc, gmat, gLeft, gBottom, cx, cy, cos, sin, s, glowArgb,
@@ -314,10 +314,10 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                     (glowCell.x + glowCell.w) / pageF - halfTexel, (glowCell.y + glowCell.h) / pageF - halfTexel);
             putGlyphVertex(gvc, gmat, gRight, gTop, cx, cy, cos, sin, s, glowArgb,
                     (glowCell.x + glowCell.w) / pageF - halfTexel, glowCell.y / pageF + halfTexel);
-            // 加色批立即收：currentEffectType 与墨格的 textSeeThrough 不同类型，
-            // getBuffer 换类型时原版会自动收前一批，但显式 endBatch 保证晕层
+            // 加色批立即收：晕格恒走加色（shaderTextType = beaconBeam translucent，
+            // 与 26.3 glowType 同判、不随光影探测切换），显式 endBatch 保证晕层
             // 不与后续特效（halo/burst 同类型）串页
-            buffers.endBatch(currentEffectType(glowRl));
+            buffers.endBatch(shaderTextType(glowRl));
         }
 
         // 阴影：墨格同格重画、右下偏移、半透明黑 —— 同 text 类型挂起合批，

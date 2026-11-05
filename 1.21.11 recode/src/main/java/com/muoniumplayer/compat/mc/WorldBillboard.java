@@ -310,7 +310,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             // 晕的顶点 alpha 用墨格同一进出场 alpha —— 晕格能量已按 strength 烘进像素
             int glowArgb = argb & 0x00FFFFFF | (((int) (alpha * 255f) & 0xFF) << 24);
             Matrix4f gmat = poseStack.last().pose();
-            VertexConsumer gvc = buffers.getBuffer(currentEffectType(glowRl));
+            VertexConsumer gvc = buffers.getBuffer(shaderTextType(glowRl));
             putGlyphVertex(gvc, gmat, gLeft, gTop, cx, cy, cos, sin, s, glowArgb,
                     glowCell.x / pageF + halfTexel, glowCell.y / pageF + halfTexel);
             putGlyphVertex(gvc, gmat, gLeft, gBottom, cx, cy, cos, sin, s, glowArgb,
@@ -322,7 +322,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             // 加色批立即收：currentEffectType 与墨格的 textSeeThrough 不同类型，
             // getBuffer 换类型时原版会自动收前一批，但显式 endBatch 保证晕层
             // 不与后续特效（halo/burst 同类型）串页
-            buffers.endBatch(currentEffectType(glowRl));
+            buffers.endBatch(shaderTextType(glowRl));
         }
 
         // 阴影：墨格同格重画、右下偏移、半透明黑（游戏实测字色压暗在加色晕垫底
@@ -571,7 +571,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 int capW = nextPow2(w), capH = nextPow2(h);
                 NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
                 if (glowRl != null && glowRl.equals(pendingEffectRl) && buffers != null) {
-                    buffers.endBatch(currentEffectType(glowRl));
+                    buffers.endBatch(shaderTextType(glowRl));
                     pendingEffectRl = null;
                 }
                 if (glowTex != null) {
