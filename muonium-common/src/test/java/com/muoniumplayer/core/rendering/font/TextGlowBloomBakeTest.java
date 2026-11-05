@@ -126,6 +126,7 @@ class TextGlowBloomBakeTest {
     @DisplayName("管线版本是正整数（晕格缓存键携带，防跨版本复用旧格）")
     void pipelineVersionPresent() {
         assertTrue(TextGlow.BLOOM_PIPELINE_VERSION >= 1);
-        assertEquals(3, TextGlow.GLOW_BAKE_SCALE, "晕格烘焙域倍率：低频光形 3× 足够");
+        assertTrue(TextGlow.GLOW_BAKE_SCALE >= 3 && TextGlow.GLOW_BAKE_SCALE <= 5,
+                "晕格烘焙域倍率：≥3 保 LINEAR 放大不糊，≤5 保格尺寸/烘焙成本可控");
     }
 }

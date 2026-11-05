@@ -59,10 +59,14 @@ public final class TextGlow {
     // 跨字重叠由晕格 quad 的加色天然合成）。
 
     /** 管线版本：算法或参数变更时 +1，随晕格缓存键走，防旧格跨版本复用。 */
-    public static final int BLOOM_PIPELINE_VERSION = 1;
+    public static final int BLOOM_PIPELINE_VERSION = 2;
 
-    /** 晕格独立烘焙超采样（设计像素 ×3）：晕是低频光形，3× 域 mip 链可运行、格小烘焙快。 */
-    public static final int GLOW_BAKE_SCALE = 3;
+    /**
+     * 晕格独立烘焙超采样（设计像素 ×4）。4 是丝滑度与成本的平衡点：LINEAR 放大
+     * 回设计域只剩 1.25×，跨格亮度差不再被放大出块感（3× 时 1.67× 放大是游戏里
+     * 晕"割裂"的成因之一）；mip 链 1/8 级仍 ≥ 可运行的格宽。
+     */
+    public static final int GLOW_BAKE_SCALE = 4;
 
     private static final float BLOOM_THRESH = 0.13f;
     private static final float BLOOM_KNEE = 0.30f;
@@ -164,20 +168,30 @@ public final class TextGlow {
             addLayerTinted(gR, gG, gB, core, BLOOM_GAIN_CORE * clamped, lr, lg, lb, BLOOM_WHITEN_CORE, 1f);
 
             // ---- 直通 alpha 输出：a = max 通道，rgb 除回满强度（GL 加色贡献 rgb×a 不变）----
+            // ING 有序抖动（Jimenez 2014，±0.5 LSB）：晕的暗端 alpha < 16 的尾部在
+            // 8bit 量化下出现同心台阶（游戏里叠在动态背景上显形为"割裂"），
+            // 抖动把台阶打散成空间噪声 —— 人眼读作连续渐变。
             int[] out = new int[w * h];
-            for (int i = 0; i < out.length; i++) {
-                float r = Math.max(0f, gR[i]), g = Math.max(0f, gG[i]), bl = Math.max(0f, gB[i]);
-                float mx = Math.max(r, Math.max(g, bl));
-                if (mx <= 0.001f) {
-                    out[i] = 0;
-                    continue;
+            for (int y = 0; y < h; y++) {
+                int row = y * w;
+                for (int x = 0; x < w; x++) {
+                    int i = row + x;
+                    float dither = ing(x, y) / 255f;
+                    float r = Math.max(0f, gR[i] + dither);
+                    float g = Math.max(0f, gG[i] + dither);
+                    float bl = Math.max(0f, gB[i] + dither);
+                    float mx = Math.max(r, Math.max(g, bl));
+                    if (mx <= 0.001f) {
+                        out[i] = 0;
+                        continue;
+                    }
+                    if (mx > 1f) {
+                        r /= mx; g /= mx; bl /= mx; mx = 1f;
+                    }
+                    int ri = Math.round(r / mx * 255f), gi = Math.round(g / mx * 255f), bi = Math.round(bl / mx * 255f);
+                    int a = Math.round(mx * 255f);
+                    out[i] = (a << 24) | (Math.min(255, ri) << 16) | (Math.min(255, gi) << 8) | Math.min(255, bi);
                 }
-                if (mx > 1f) {
-                    r /= mx; g /= mx; bl /= mx; mx = 1f;
-                }
-                int ri = Math.round(r / mx * 255f), gi = Math.round(g / mx * 255f), bi = Math.round(bl / mx * 255f);
-                int a = Math.round(mx * 255f);
-                out[i] = (a << 24) | (Math.min(255, ri) << 16) | (Math.min(255, gi) << 8) | Math.min(255, bi);
             }
             return out;
         } catch (Throwable t) {
@@ -294,6 +308,16 @@ public final class TextGlow {
         for (int i = 0; i < d.length; i++) {
             d[i] += s[i];
         }
+    }
+
+    /** Interleaved Gradient Noise（Jimenez 2014）：±0.5 LSB 有序抖动，消 8bit 量化条带。 */
+    private static float ing(int x, int y) {
+        float v = 52.9829189f * fract(0.06711056f * x + 0.00583715f * y);
+        return fract(v) - 0.5f;
+    }
+
+    private static float fract(float v) {
+        return v - (float) Math.floor(v);
     }
 
     /** 各档的层参数：σ 比例（×字号×spread）× 层 α（×强度）。探针实测定格。 */
@@ -477,7 +501,7 @@ public final class TextGlow {
         }
         int t = Math.max(GLOW_TIER_STANDARD, Math.min(GLOW_TIER_ULTRA, tier));
         if (t == GLOW_TIER_ULTRA) {
-            // font.sizePx 是墨格 5× 域字号；晕格在 3× 域烘焙，σ 随域字号等比缩放
+            // font.sizePx 是墨格 5× 域字号；晕格在 GLOW_BAKE_SCALE× 域烘焙，σ 随域字号等比缩放
             float sigmaGlowDomain = bloomWideSigma(font.sizePx, spread) * (GLOW_BAKE_SCALE / 5.0f);
             return (int) Math.ceil(3.0 * sigmaGlowDomain);
         }

@@ -948,13 +948,15 @@ public final class WorldLyricsRenderer {
     }
 
     /**
-     * 色板 → 16 级渐变查找表：position∈[0,1] 在色序列上线性插值，单色直返。
+     * 色板 → 32 级渐变查找表：position∈[0,1] 在色序列上线性插值，单色直返。
      * 级数 = 同句 rgb 去重后的图集烘焙键数（缓存键含字色）——64 级会让一句话
      * 产生几十个新烘焙格，4 格/帧预算下后到的字要等好几帧才亮（渐变首帧的
-     * 「逐字延迟」）。16 级平滑度肉眼与 64 级无差，但烘焙键 ≤16 个。
+     * 「逐字延迟」）。16→32 级：HDR bloom 晕格的晕色跟字色走，16 级下相邻字
+     * 的晕色差被晕的可见半径放大出"色块接缝"；32 级减半且烘焙键仍受控
+     * （晕格另有 4ms 毫秒闸 + LRU 兜底）。
      */
     private static int[] buildCoverLut(int[] colors) {
-        int levels = 16;
+        int levels = 32;
         int[] lut = new int[levels];
         if (colors == null || colors.length == 0) return lut;
         if (colors.length == 1) {
