@@ -568,6 +568,8 @@ public final class FoliaLucideIcons {
 
     /** Automix·HTDemucs（人声与伴奏）（lucide {@code wand-sparkles}）。 */
     public static final String SEPARATION = "wand-sparkles";
+    /** 模板预设入口：同一枚魔法棒，语义是「一键换风格」。 */
+    public static final String PRESET = "wand-sparkles";
     static final String[] D_SEPARATION = {
                     "m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2"
             +             " 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72",
