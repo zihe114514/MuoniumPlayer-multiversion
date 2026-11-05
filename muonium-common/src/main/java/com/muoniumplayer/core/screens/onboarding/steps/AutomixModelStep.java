@@ -52,6 +52,13 @@ public final class AutomixModelStep implements OnboardingStepView {
     /** 状态框的最小宽度：再窄就只剩一枚图标，那不如不画。 */
     private static final double NOTE_MIN_W = 96;
 
+    /** 沉浸感那两张卡。 */
+    private static final String[] IMMERSION_TITLES = {"场景声学", "环境选曲"};
+    private static final String[] IMMERSION_NOTES = {
+            "水下、室内、雨天各有自己的混响与闷响 · 默认关闭",
+            "按周围环境的心情自动换歌（洞穴、森林、夜晚）· 默认关闭"
+    };
+
     private volatile FoliaModelManager.Kind activeKind;
     private volatile String message = "模型是可选组件；不下载仍可使用原版智能淡化。";
     private volatile boolean messageError;
@@ -61,56 +68,134 @@ public final class AutomixModelStep implements OnboardingStepView {
     public void render(OnboardingController controller,
                        double x, double y, double width, double height,
                        double mouseX, double mouseY) {
-        OnboardingUi.drawHeader("AUTOMIX · LOCAL AI", "让每一次切歌踩在节拍上",
-                "Folia 在你的电脑上分析节拍、人声和乐段；模型只保存在本机。", x, y);
+        OnboardingUi.drawHeader("AUTOMIX · IMMERSION", "让音乐跟着世界一起变",
+                "Folia 在本机分析节拍与乐段；声学与环境选曲决定音乐要不要回应你所处的环境。", x, y);
 
-        boolean allInstalled = allInstalled();
+        // 这一页有两组彼此独立的东西：三张模型卡（要下载、要点）和两张沉浸感开关卡。
+        // 竖着排下来在常规档要多占 74 逻辑像素，主按钮会被挤出内容带 —— 而 854×480 正是
+        // 真机最常用的一档。所以分成左右两栏：左栏模型（窄一点，它本来也只要一行字 + 一个按钮），
+        // 右栏两张开关卡。窄到排不开两栏时（compact）才退回竖排，那时两张开关卡会被裁掉下半截，
+        // 由内容带下沿那道渐隐交代 —— 但主按钮永远在第一屏。
+        boolean twoColumns = OnboardingUi.metric().cardColumns() > 1;
+        if (!twoColumns) {
+            renderStacked(controller, x, y, width, height, mouseX, mouseY);
+            return;
+        }
+
+        double gap = OnboardingUi.metric().cardGap * 1.5;
+        double leftW = Math.max(0, (width - gap) * .62);
+        double rightW = width - gap - leftW;
+        renderModels(controller, x, y, leftW, height, mouseX, mouseY);
+        renderImmersion(controller, x + leftW + gap, immersionY(y), rightW, mouseX, mouseY);
+        renderActionBar(controller, x, y, width, height, mouseX, mouseY);
+    }
+
+    /** 紧凑档：竖着排，卡片都会被裁一点，但顺序不变。 */
+    private void renderStacked(OnboardingController controller,
+                               double x, double y, double width, double height,
+                               double mouseX, double mouseY) {
+        renderModels(controller, x, y, width, 0, mouseX, mouseY);
+        // 竖排时沉浸感排在模型列<b>之后</b>：起点是模型列下沿再加一道栏间距。
+        // （两栏时它才与模型卡共用顶线，见 render 里那条。）
+        renderImmersion(controller, x, rowsBottom(y) + OnboardingUi.metric().cardGap,
+                width, mouseX, mouseY);
+        renderActionBar(controller, x, y, width, height, mouseX, mouseY);
+    }
+
+    /** 三张模型卡。 */
+    private void renderModels(OnboardingController controller,
+                              double x, double y, double width, double height,
+                              double mouseX, double mouseY) {
         for (int i = 0; i < KINDS.length; i++) {
             FoliaModelManager.Kind kind = KINDS[i];
             double rowY = rowY(y, i);
             boolean installed = FoliaModelManager.isInstalled(kind);
             boolean active = activeKind == kind;
             boolean hover = OnboardingUi.inside(mouseX, mouseY, x, rowY, width, rowHeight());
-            double buttonW = Math.min(92, Math.max(56, width * .28));
-            double buttonX = x + width - buttonW - 12;
+            double buttonW = Math.min(92, Math.max(48, width * .3));
 
-            OnboardingUi.roundedRect(x, rowY, width, rowHeight(), OnboardingUi.CARD_RADIUS,
-                    installed ? OnboardingUi.colorWithAlpha(OnboardingUi.GREEN, 22)
-                            : (hover ? OnboardingUi.surfaceHover() : OnboardingUi.surface()));
-            OnboardingUi.roundedOutline(x, rowY, width, rowHeight(), OnboardingUi.CARD_RADIUS,
-                    installed ? 1.4 : 1,
-                    OnboardingUi.awtColorWithAlpha(installed ? OnboardingUi.GREEN : OnboardingUi.hairline(),
-                            installed ? 175 : 150));
-            double box = 32;
-            OnboardingUi.roundedRect(x + 12, rowY + (rowHeight() - box) * .5, box, box, box * .3,
-                    OnboardingUi.colorWithAlpha(installed ? OnboardingUi.GREEN : OnboardingUi.BRAND, 34));
-            OnboardingUi.drawIcon(installed ? FoliaLucideIcons.CHECK : LUCIDE[i],
+            // 外壳统一走 OnboardingUi.card：六页的卡从此是同一副长相，只有代表色不同。
+            int accent = installed ? OnboardingUi.GREEN : OnboardingUi.BRAND_2;
+            OnboardingUi.CardState state = installed ? OnboardingUi.CardState.SELECTED
+                    : (hover ? OnboardingUi.CardState.HOVER : OnboardingUi.CardState.IDLE);
+            double[] content = OnboardingUi.card(x, rowY, width, rowHeight(), state, accent);
+            double textX = OnboardingUi.cardIcon(
+                    installed ? FoliaLucideIcons.CHECK : LUCIDE[i],
                     installed ? PartyIcons.CHECK : FALLBACK[i],
-                    x + 12 + box * .5, rowY + rowHeight() * .5, box * .62f,
-                    installed ? OnboardingUi.GREEN : OnboardingUi.BRAND_2);
-            OnboardingUi.drawText(OnboardingUi.metric().labelBold(), TITLES[i], x + 56, rowY + 12,
-                    OnboardingUi.textPrimary());
-            // 描述右边要给下载按钮让位：原来写死 x + 56 起画、整串不截，
-            // 窄档下「识别人声与伴奏结构 · 约 104 MB」会直接压到按钮上。
-            OnboardingUi.drawTextReserving(OnboardingUi.metric().bodyFont(),
+                    content, Math.min(32, content[3] * .6), accent, state);
+            OnboardingUi.cardText(content, textX, TITLES[i],
                     active ? FoliaModelManager.statusLabel(kind) : DESCRIPTIONS[i],
-                    x + 56, rowY + 31, x + width - 12, buttonW + 12,
-                    active ? OnboardingUi.BRAND_2 : OnboardingUi.textMuted());
+                    buttonW + 10, state);
 
-            OnboardingUi.roundedRect(buttonX, rowY + (rowHeight() - 31) * .5, buttonW, 31, 16,
+            // 下载按钮压在卡右端，垂直居中。
+            double buttonX = content[0] + content[2] - buttonW;
+            double buttonH = Math.min(31, content[3]);
+            double buttonY = content[1] + (content[3] - buttonH) * .5;
+            OnboardingUi.roundedRect(buttonX, buttonY, buttonW, buttonH, buttonH * .5,
                     installed ? OnboardingUi.colorWithAlpha(OnboardingUi.GREEN, 22)
                             : OnboardingUi.colorWithAlpha(OnboardingUi.BRAND,
                                     active ? 30 : (hover ? 205 : 165)));
             OnboardingUi.drawCentered(OnboardingUi.metric().labelBold(),
-                    installed ? "已安装" : (active ? "下载中" : "下载"),
-                    buttonX + buttonW * .5, rowY + (rowHeight() - 31) * .5 + 8,
+                    installed ? "已装" : (active ? "下载中" : "下载"),
+                    buttonX + buttonW * .5, buttonY + (buttonH - OnboardingMetrics.lineHeight(
+                            OnboardingUi.metric().labelBold())) * .5,
                     installed ? OnboardingUi.GREEN : OnboardingUi.textPrimary());
         }
+    }
 
-        double actionY = ctaY(y);
-        // 主行动条：按钮固定宽，右边那块状态框吃掉剩下的。窄档下按钮跟着收，
-        // 但状态框至少留得下一枚图标 —— 两样都不画就等于这一页没有反馈。
+    /**
+     * 两张沉浸感开关卡：场景声学、环境选曲。
+     *
+     * <p>两张都是「总开关」粒度，不做分项（水下/室内/降水）——引导要的是「你要不要这个方向」，
+     * 细项留给 HUD 设置。分项全默认开着，所以总开关一开就是完整效果。</p>
+     */
+    private void renderImmersion(OnboardingController controller,
+                                 double x, double top, double width,
+                                 double mouseX, double mouseY) {
+        double cardH = immersionCardHeight();
+        double gap = OnboardingUi.metric().cardGap;
+        for (int i = 0; i < 2; i++) {
+            double cardY = top + i * (cardH + gap);
+            boolean on = i == 0 ? controller.acousticsEnabled() : controller.ambientEnabled();
+            boolean hover = OnboardingUi.inside(mouseX, mouseY, x, cardY, width, cardH);
+            int accent = i == 0 ? OnboardingUi.AQUA : OnboardingUi.VIOLET;
+            OnboardingUi.CardState state = on ? OnboardingUi.CardState.SELECTED
+                    : (hover ? OnboardingUi.CardState.HOVER : OnboardingUi.CardState.IDLE);
+            double[] content = OnboardingUi.card(x, cardY, width, cardH, state, accent);
+            double textX = OnboardingUi.cardIcon(
+                    i == 0 ? FoliaLucideIcons.RUNTIME : FoliaLucideIcons.SPARKLE,
+                    i == 0 ? PartyIcons.FRAME : PartyIcons.NOTE,
+                    content, Math.min(28, content[3] * .6), accent, state);
+            double switchW = Math.min(20, content[3] * .62) * 1.75;
+            OnboardingUi.cardText(content, textX, IMMERSION_TITLES[i],
+                    IMMERSION_NOTES[i], switchW + 10, state);
+            OnboardingUi.cardSwitch(content, on, accent);
+        }
+    }
+
+    /** 主行动条：按钮 + 右边状态框。 */
+    private void renderActionBar(OnboardingController controller,
+                                 double x, double y, double width, double height,
+                                 double mouseX, double mouseY) {
+        double actionY = ctaY(y, height);
+        boolean allInstalled = allInstalled();
         double ctaW = ctaWidth(width);
+
+        // 按钮被钉到底部时，卡片流会从它背后穿过去（427×240、640×360@70% 那两档）。
+        // 先铺一块和面板同色的底板把背面盖住，再接缝上方一道渐隐——
+        // 否则会出现「半张模型卡从按钮底下长出来」这种一眼就看出坏了的样子。
+        if (actionY < contentBottom(y)) {
+            double barTop = actionY - ACTION_BAR_PAD;
+            double barBottom = y + height;
+            OnboardingUi.roundedRect(x - 2, barTop, width + 4, barBottom - barTop,
+                    OnboardingUi.CARD_RADIUS * .6f,
+                    OnboardingUi.themed(com.muoniumplayer.core.screens.ncm.NCMScreen.ColorType
+                            .GENERIC_BACKGROUND, .96f));
+            OnboardingUi.verticalFade(x - 2, barTop - 16, width + 4, 16,
+                    OnboardingUi.colorWithAlpha(OnboardingUi.BACKDROP, 0),
+                    OnboardingUi.colorWithAlpha(OnboardingUi.BACKDROP, 210));
+        }
+
         boolean actionHover = OnboardingUi.inside(mouseX, mouseY, x, actionY, ctaW, CTA_H);
         OnboardingUi.roundedGradient(x, actionY, ctaW, CTA_H, CTA_H * .5,
                 allInstalled ? OnboardingUi.colorWithAlpha(OnboardingUi.GREEN, 180) : OnboardingUi.BRAND,
@@ -149,11 +234,38 @@ public final class AutomixModelStep implements OnboardingStepView {
                     noteX + 37, actionY + 14,
                     messageError ? OnboardingUi.BRAND_2 : OnboardingUi.textSecondary());
         }
+    }
 
-        // 页脚那句「稍后可在 HUD 设置…」只在放得下的时候画（也是唯一一处能省的长文）。
-        OnboardingUi.drawTextReserving(OnboardingUi.metric().bodyFont(),
-                "稍后可在 HUD 设置 → 无缝切换 → 分析模型中安装、重试或更换目录。",
-                x, actionY + CTA_H + 16, width, 0, OnboardingUi.textMuted());
+    /** 沉浸感每张卡的高度。跟排版档走，但比模型行矮一点（它们没有按钮）。 */
+    static double immersionCardHeight() {
+        return Math.max(46, OnboardingUi.metric().cardHeight - 4);
+    }
+
+    /** 沉浸感两张卡的起点：与模型卡<b>同一条顶线</b>（两栏排版时它们是并排的两列）。 */
+    static double immersionY(double y) {
+        return rowY(y, 0);
+    }
+
+    /** 沉浸感那两张卡占的总高（含中间那道缝）。 */
+    static double immersionHeight() {
+        return immersionCardHeight() * 2 + OnboardingUi.metric().cardGap;
+    }
+
+    /**
+     * 这一页最后一行的下沿。
+     *
+     * <p>两栏排版时取两列里<b>更高的那一列</b>：模型列三张卡、沉浸感列两张卡，谁长听谁的。
+     * 竖排（紧凑档）时两列首尾相接，所以是加起来的。</p>
+     */
+    static double contentBottom(double y) {
+        double models = rowsBottom(y);
+        double immersion = immersionY(y) + immersionHeight();
+        boolean twoColumns = OnboardingUi.metric().cardColumns() > 1;
+        if (twoColumns) {
+            return Math.max(models, immersion);
+        }
+        // 竖排：沉浸感排在模型行之后，中间留一道栏间距。
+        return models + OnboardingUi.metric().cardGap + immersionHeight();
     }
 
     static double rowY(double y, int index) {
@@ -173,9 +285,9 @@ public final class AutomixModelStep implements OnboardingStepView {
         return KINDS.length;
     }
 
-    /** 整页要占多高：三行 + 主行动条 + 底下那句提示。 */
+    /** 整页要占多高：三张模型卡 + 两张沉浸感卡 + 主行动条。 */
     static double contentHeight() {
-        return rowsBottom(0) + CTA_GAP + CTA_H + 16 + 14;
+        return contentBottom(0) + CTA_GAP + CTA_H;
     }
 
     /** 主行动按钮的宽度，随内容带收放。绘制与命中测试读同一份。 */
@@ -183,23 +295,62 @@ public final class AutomixModelStep implements OnboardingStepView {
         return Math.min(CTA_W, Math.max(96, width * .46));
     }
 
-    /** 主行动条的 y（相对页顶）。 */
-    static double ctaY(double y) {
-        return rowsBottom(y) + CTA_GAP;
+    /**
+     * 主行动条的 y（相对页顶）。
+     *
+     * <p>钉在内容带<b>底部</b>，而不是跟在卡片流后面：这一页是全引导最高的一页
+     * （三张模型卡 + 两张沉浸感卡 + 主按钮），在 427×240、640×360@70% 这类又宽又矮的
+     * 档位上，卡片流会超到内容带外面去。主按钮是这一页唯一必须点得到的东西，
+     * 所以它反着算——从带子底部往上留 {@link #CTA_BOTTOM_GAP}，卡片流超出的部分由
+     * {@code clipStep} 裁掉（裁卡片只是「窗口太小」，丢掉主按钮才是「这页没法完成」）。</p>
+     */
+    static double ctaY(double y, double height) {
+        double fromBottom = y + height - CTA_BOTTOM_GAP - CTA_H;
+        // 卡片流本来就没那么长时（大屏），按钮跟着卡片流走，不悬在屏幕最底下。
+        double afterContent = contentBottom(y) + CTA_GAP;
+        return Math.min(fromBottom, afterContent);
     }
+
+    /** 主按钮距内容带下沿的间距。 */
+    private static final double CTA_BOTTOM_GAP = 10;
+    /** 主按钮被钉到底部时，那块底板往上多留一点，免得按钮贴着卡片边缘。 */
+    private static final double ACTION_BAR_PAD = 8;
 
     @Override
     public boolean mouseClicked(OnboardingController controller,
                                 double x, double y, double width, double height,
                                 double mouseX, double mouseY, int mouseButton) {
         if (mouseButton != 0) return false;
+        // 两栏时模型卡只占左栏，沉浸感卡在右栏；命中测试必须用与绘制的同一套栏宽，
+        // 否则左右两栏会互相吃到对方的点击（点右边那张开关卡，落在左边模型卡的范围里）。
+        boolean twoColumns = OnboardingUi.metric().cardColumns() > 1;
+        double gap = OnboardingUi.metric().cardGap * 1.5;
+        double leftW = twoColumns ? Math.max(0, (width - gap) * .62) : width;
+        double rightX = twoColumns ? x + leftW + gap : x;
+        double rightW = twoColumns ? width - gap - leftW : width;
+        double rightTop = twoColumns ? y : immersionY(y);
+
         for (int i = 0; i < KINDS.length; i++) {
-            if (OnboardingUi.inside(mouseX, mouseY, x, rowY(y, i), width, rowHeight())) {
+            if (OnboardingUi.inside(mouseX, mouseY, x, rowY(y, i), leftW, rowHeight())) {
                 installOne(KINDS[i], false);
                 return true;
             }
         }
-        if (OnboardingUi.inside(mouseX, mouseY, x, ctaY(y), ctaWidth(width), CTA_H)) {
+        // 两张沉浸感开关卡：点整张卡都能翻，不必非得点中那枚胶囊。
+        double immersionH = immersionCardHeight();
+        double immersionTop = twoColumns ? immersionY(y) : rightTop;
+        for (int i = 0; i < 2; i++) {
+            double cardY = immersionTop + i * (immersionH + OnboardingUi.metric().cardGap);
+            if (OnboardingUi.inside(mouseX, mouseY, rightX, cardY, rightW, immersionH)) {
+                if (i == 0) {
+                    controller.setAcousticsEnabled(!controller.acousticsEnabled());
+                } else {
+                    controller.setAmbientEnabled(!controller.ambientEnabled());
+                }
+                return true;
+            }
+        }
+        if (OnboardingUi.inside(mouseX, mouseY, x, ctaY(y, height), ctaWidth(width), CTA_H)) {
             if (allInstalled()) {
                 AutomixSettings.setEngine(AutomixSettings.Engine.FOLIA);
                 message = "智能混音已启用。";

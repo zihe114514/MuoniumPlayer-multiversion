@@ -986,6 +986,28 @@ public final class OnboardingScreen extends ExtensionScreen
         HudConfig.save();
     }
 
+    // ------------------------------------------------ 沉浸感
+
+    @Override
+    public boolean acousticsEnabled() {
+        return com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings.isEnabled();
+    }
+
+    @Override
+    public void setAcousticsEnabled(boolean value) {
+        com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings.setEnabled(value);
+    }
+
+    @Override
+    public boolean ambientEnabled() {
+        return com.muoniumplayer.core.ncm.music.ambient.AmbientSettings.isEnabled();
+    }
+
+    @Override
+    public void setAmbientEnabled(boolean value) {
+        com.muoniumplayer.core.ncm.music.ambient.AmbientSettings.setEnabled(value);
+    }
+
     private void saveConfiguration() {
         NeteaseMusicService.setCurrentPlatform(selectedPlatform);
         NCMTheme.setCurrent(selectedTheme);

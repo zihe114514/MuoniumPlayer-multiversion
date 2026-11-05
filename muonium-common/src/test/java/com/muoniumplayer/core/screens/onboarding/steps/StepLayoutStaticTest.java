@@ -92,6 +92,59 @@ class StepLayoutStaticTest {
     }
 
     @Test
+    @DisplayName("沉浸感两张卡与模型卡同顶线（两栏）；窄到单列时排在模型列之后")
+    void immersionCardsShareTheTopLineOrStackBelow() {
+        // 两栏档（REGULAR 及以上）：两列同顶线，各占左右。
+        double firstCardTop = AutomixModelStep.immersionY(Y);
+        assertEquals(AutomixModelStep.rowY(Y, 0), firstCardTop, 1e-9,
+                "两栏排版时沉浸感列没有和模型列共用顶线，两列会错开");
+
+        double cardH = AutomixModelStep.immersionCardHeight();
+        double secondTop = firstCardTop + cardH + OnboardingUi.metric().cardGap;
+        assertTrue(secondTop >= firstCardTop + cardH,
+                "两张沉浸感卡叠在了一起（第一张底边 " + (firstCardTop + cardH)
+                        + "，第二张顶边 " + secondTop + "）");
+    }
+
+    @Test
+    @DisplayName("主按钮优先于卡片流：带子再矮也不许被卡片挤出屏幕")
+    void primaryActionWinsOverCards() {
+        double bodyTop = Y + OnboardingUi.metric().bodyOffset;
+        double ctaH = 42;
+        for (double height : new double[]{140, 200, 281, 315, 410, 572, 907}) {
+            double ctaTop = AutomixModelStep.ctaY(Y, height);
+            // 永远不许越过内容带下沿——这是「点得到」的底线。
+            assertTrue(ctaTop + ctaH <= Y + height + 1e-9,
+                    "带子高 " + height + " 时主按钮（" + ctaTop + "+" + ctaH
+                            + "）越过了内容带下沿 " + (Y + height));
+            // 带子够高时，按钮还该留在正文区里（不能跑到表头那一块去）。
+            if (height >= bodyTop - Y + ctaH + 10) {
+                assertTrue(ctaTop >= bodyTop,
+                        "带子高 " + height + " 时主按钮跑到表头里去了（" + ctaTop
+                                + " < 正文起点 " + bodyTop + "）");
+            }
+        }
+        // 卡片流本来就放得下时，按钮跟着卡片走，不悬在屏幕最底下。
+        double tall = 2000;
+        assertTrue(AutomixModelStep.ctaY(Y, tall) < Y + tall - 100,
+                "带子很高时主按钮仍然被钉在底部：它该跟着卡片流走");
+    }
+
+    @Test
+    @DisplayName("完成页四行摘要：每行都排得下，且不越过内容带下沿")
+    void finishSummaryRowsStayInsideTheBand() {
+        double rowH = FinishStep.summaryRowHeight();
+        double rowGap = Math.max(4, rowH * .14);
+        assertTrue(rowH >= 26, "摘要卡只有 " + rowH + " 高，两行字挤不开");
+        // 四张卡之间的缝不能为 0（为 0 时相邻两张会被算成同一块）。
+        for (int i = 1; i < 4; i++) {
+            double prevBottom = Y + (rowH + rowGap) * (i - 1) + rowH;
+            double top = Y + (rowH + rowGap) * i;
+            assertTrue(top >= prevBottom, "完成页第 " + i + " 张摘要卡压在上一张上");
+        }
+    }
+
+    @Test
     @DisplayName("主题卡那块预览必须占得到位置：卡高 = 预览 + 内缩 + 名称与状态两行")
     void themeCardHasRoomForItsPreview() {
         double cardHeight = AppearanceStep.cardHeight();

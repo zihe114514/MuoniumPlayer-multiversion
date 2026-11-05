@@ -27,7 +27,8 @@ import com.muoniumplayer.party.ui.PartyIcons;
  */
 public final class WelcomeStep implements OnboardingStepView {
 
-    private static final String[] TAGS = {"逐字歌词", "灵动岛通知", "一起听房间", "智能混音"};
+    /** 这一页念的四件事。加了「场景声学」——它是这一版新进引导、也最容易被玩家忽略的一项。 */
+    private static final String[] TAGS = {"逐字歌词", "灵动岛通知", "场景声学", "智能混音"};
     /**
      * 四枚胶囊各自那枚图标。
      *
@@ -37,10 +38,10 @@ public final class WelcomeStep implements OnboardingStepView {
      */
     private static final String[] TAG_ICONS = {
             FoliaLucideIcons.SUBTITLES, FoliaLucideIcons.ISLAND,
-            FoliaLucideIcons.USER, FoliaLucideIcons.AUTOMIX
+            FoliaLucideIcons.RUNTIME, FoliaLucideIcons.AUTOMIX
     };
     private static final String[] TAG_FALLBACK = {
-            PartyIcons.TEXT_FORMAT, PartyIcons.INFO, PartyIcons.GROUP, PartyIcons.SYNC
+            PartyIcons.TEXT_FORMAT, PartyIcons.INFO, PartyIcons.FRAME, PartyIcons.SYNC
     };
 
     /** 小标里那半句固定的前缀；版本号按版本号单入口拼在后面。 */
@@ -91,7 +92,7 @@ public final class WelcomeStep implements OnboardingStepView {
         if (OnboardingUi.metric().tier.showsSubtitle()) {
             OnboardingUi.drawCentered(OnboardingUi.metric().subtitleFont(),
                     OnboardingUi.ellipsize(OnboardingUi.metric().subtitleFont(),
-                            "连接账号、选择音源、定制外观，再让 Automix 在本机理解节拍。", width),
+                            "连接账号、选择音源、定制外观，再决定音乐要不要跟着世界一起变。", width),
                     centerX, subtitleY, OnboardingUi.textSecondary());
         }
         renderPills(pillWidths, centerX, subtitleY + subtitleH + GAP_SUBTITLE_PILLS, width);

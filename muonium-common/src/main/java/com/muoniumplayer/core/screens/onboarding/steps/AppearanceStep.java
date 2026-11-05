@@ -92,14 +92,17 @@ public final class AppearanceStep implements OnboardingStepView {
         // 卡片不响应悬停高亮，预览压一层底色纱，右下角标「手机不可用」。
         boolean lockedTheme = !NCMTheme.isSelectable(theme);
         hover &= !lockedTheme;
-        OnboardingUi.roundedRect(x, y, width, cardHeight(), OnboardingUi.CARD_RADIUS + 1,
+        // 主题卡有自己的「整卡铺一层该主题的底色」需求（它要演示的就是那套配色），
+        // 所以外壳不走 OnboardingUi.card 的通用填色，只共用圆角与描边规则。
+        OnboardingUi.roundedRect(x, y, width, cardHeight(), OnboardingUi.CARD_RADIUS,
                 lockedTheme ? OnboardingUi.surface()
                         : selected ? of(theme, NCMScreen.ColorType.ACCENT, .16f)
                         : (hover ? OnboardingUi.surfaceHover() : OnboardingUi.surface()));
-        if (selected) {
-            OnboardingUi.roundedOutline(x, y, width, cardHeight(), OnboardingUi.CARD_RADIUS + 1, 1.6,
-                    OnboardingUi.awtColorWithAlpha(of(theme, NCMScreen.ColorType.ACCENT, 1.0f), 235));
-        }
+        OnboardingUi.roundedOutline(x, y, width, cardHeight(), OnboardingUi.CARD_RADIUS,
+                selected ? 1.6 : 1,
+                selected ? OnboardingUi.awtColorWithAlpha(
+                        of(theme, NCMScreen.ColorType.ACCENT, 1.0f), 235)
+                        : OnboardingUi.awtColorWithAlpha(OnboardingUi.hairline(), 160));
         drawMiniPlayer(theme, x + PREVIEW_INSET, y + PREVIEW_INSET,
                 width - PREVIEW_INSET * 2, selected);
 

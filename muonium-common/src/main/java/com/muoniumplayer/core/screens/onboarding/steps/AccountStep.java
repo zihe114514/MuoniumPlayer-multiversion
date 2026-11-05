@@ -1,6 +1,5 @@
 package com.muoniumplayer.core.screens.onboarding.steps;
 
-import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.rendering.FoliaLucideIcons;
@@ -40,54 +39,49 @@ public final class AccountStep implements OnboardingStepView {
 
         boolean anyLogged = OnboardingUi.anyAccountLoggedIn();
         double statusY = statusY(y);
-        OnboardingUi.roundedRect(x, statusY, width, STATUS_H, OnboardingUi.CARD_RADIUS - 2,
-                OnboardingUi.surfaceHover());
-        OnboardingUi.roundedOutline(x, statusY, width, STATUS_H, OnboardingUi.CARD_RADIUS - 2, 1,
-                OnboardingUi.awtColorWithAlpha(anyLogged ? OnboardingUi.GREEN : OnboardingUi.hairline(), 175));
+        // 状态条走同一张卡的壳：它也是「一块有边界的区域」，过去它的圆角比下面的平台卡小 2，
+        // 摆在一起看着像两套控件。
+        double[] status = OnboardingUi.card(x, statusY, width, STATUS_H,
+                anyLogged ? OnboardingUi.CardState.SELECTED : OnboardingUi.CardState.IDLE,
+                anyLogged ? OnboardingUi.GREEN : OnboardingUi.textMuted());
         // 状态用一个盾形图标而不是一个色点：这一条说的是「账号到底通不通」，
         // 色点要凑近了看才知道是绿是灰，图标一眼就读得出来。
         OnboardingUi.drawIcon(anyLogged ? FoliaLucideIcons.SHIELD : FoliaLucideIcons.INFO,
                 anyLogged ? PartyIcons.CHECK : PartyIcons.INFO,
-                x + 24, statusY + STATUS_H * .5, 18,
+                status[0] + 10, status[1] + status[3] * .5, 18,
                 anyLogged ? OnboardingUi.GREEN : OnboardingUi.textMuted());
         OnboardingUi.drawText(OnboardingUi.metric().labelBold(), anyLogged ? "已登录" : "未登录",
-                x + 42, statusY + 14, anyLogged ? OnboardingUi.GREEN : OnboardingUi.textMuted());
-        // 后半句的起点按前一句的实测宽度算，不再写死 +52 —— 「未登录」和「已登录」一样宽是巧合。
-        double afterStatus = x + 42 + OnboardingUi.textWidth(OnboardingUi.metric().labelBold(),
-                anyLogged ? "已登录" : "未登录") + 10;
-        OnboardingUi.drawTextReserving(OnboardingUi.metric().bodyFont(),
-                anyLogged ? "账号状态会实时更新" : "可以稍后在主界面登录",
-                afterStatus, statusY + 14, x + width - 12, 0, OnboardingUi.textMuted());
+                status[0] + 28, status[1] + status[3] * .5 - OnboardingMetrics.lineHeight(
+                        OnboardingUi.metric().labelBold()) * .5,
+                anyLogged ? OnboardingUi.GREEN : OnboardingUi.textMuted());
 
         for (int i = 0; i < PLATFORMS.length; i++) {
             MusicPlatform platform = PLATFORMS[i];
             double rowY = rowY(y, i);
             boolean logged = NeteaseMusicService.isLoggedIn(platform);
             boolean hover = OnboardingUi.inside(mouseX, mouseY, x, rowY, width, rowHeight());
-            OnboardingUi.roundedRect(x, rowY, width, rowHeight(), OnboardingUi.CARD_RADIUS,
-                    hover ? OnboardingUi.surfaceHover() : OnboardingUi.surface());
-            OnboardingUi.roundedOutline(x, rowY, width, rowHeight(), OnboardingUi.CARD_RADIUS,
-                    logged ? 1.4 : 1,
-                    OnboardingUi.awtColorWithAlpha(platform.getBrandColor(), logged ? 210 : 105));
-            double box = 28;
-            OnboardingUi.roundedRect(x + 13, rowY + (rowHeight() - box) * .5, box, box, box * .32,
-                    OnboardingUi.colorWithAlpha(platform.getBrandColor(), 85));
-            OnboardingUi.drawPlatformIcon(platform, x + 13 + box * .5, rowY + rowHeight() * .5, box,
+            int brand = platform.getBrandColor();
+            OnboardingUi.CardState state = logged ? OnboardingUi.CardState.SELECTED
+                    : (hover ? OnboardingUi.CardState.HOVER : OnboardingUi.CardState.IDLE);
+            double[] content = OnboardingUi.card(x, rowY, width, rowHeight(), state, brand);
+
+            double box = Math.min(28, content[3] * .64);
+            double iconCenterY = content[1] + content[3] * .5;
+            OnboardingUi.roundedRect(content[0], iconCenterY - box * .5, box, box, box * .32,
+                    OnboardingUi.colorWithAlpha(brand, 85));
+            OnboardingUi.drawPlatformIcon(platform, content[0] + box * .5, iconCenterY, box,
                     OnboardingUi.textPrimary());
-            OnboardingUi.drawText(OnboardingUi.metric().labelBold(),
-                    OnboardingUi.ellipsize(OnboardingUi.metric().labelBold(), platform.getDisplayName(),
-                            width - 52 - ROW_CHEVRON_RESERVE),
-                    x + 52, rowY + 12, OnboardingUi.textPrimary());
-            // 账号名可以很长（网易云的昵称没有长度上限），右边那枚对勾/箭头是定死的。
-            // 按「卡片宽 − 左侧 52 − 右侧图标那一截」截断，别让它一路画到箭头身上。
-            OnboardingUi.drawTextReserving(OnboardingUi.metric().bodyFont(),
+
+            double textX = content[0] + box + 12;
+            OnboardingUi.cardText(content, textX, platform.getDisplayName(),
                     logged ? NeteaseMusicService.getAccountName(platform) : "未登录 · 点击连接",
-                    x + 52, rowY + 30, x + width - 22, ROW_CHEVRON_RESERVE,
-                    logged ? OnboardingUi.GREEN : OnboardingUi.textMuted());
+                    ROW_CHEVRON_RESERVE, state);
+            // 右侧那枚状态图标：登陆过是勾、没登录是箭头。它是「点进去」的方向指示，
+            // 所以即使在选中态也画，位置固定在内容区右端。
             OnboardingUi.drawIcon(logged ? FoliaLucideIcons.CHECK : FoliaLucideIcons.CHEVRON_RIGHT,
                     logged ? PartyIcons.CHECK : PartyIcons.CHEVRON_RIGHT,
-                    x + width - 22, rowY + rowHeight() * .5, 20,
-                    logged ? OnboardingUi.GREEN : OnboardingUi.BLUE);
+                    content[0] + content[2] - 8, iconCenterY, 18,
+                    logged ? OnboardingUi.GREEN : OnboardingUi.textMuted());
         }
     }
 

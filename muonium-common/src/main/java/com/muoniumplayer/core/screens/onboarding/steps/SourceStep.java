@@ -1,6 +1,5 @@
 package com.muoniumplayer.core.screens.onboarding.steps;
 
-import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.rendering.FoliaLucideIcons;
 import com.muoniumplayer.core.screens.onboarding.OnboardingController;
@@ -37,32 +36,29 @@ public final class SourceStep implements OnboardingStepView {
             double cardY = cardY(y, width, i);
             boolean selected = controller.selectedPlatform() == platform;
             boolean hover = OnboardingUi.inside(mouseX, mouseY, cardX, cardY, cardWidth(width), cardHeight());
-            OnboardingUi.roundedRect(cardX, cardY, cardWidth(width), cardHeight(), OnboardingUi.CARD_RADIUS,
-                    selected ? OnboardingUi.colorWithAlpha(OnboardingUi.BLUE, 50)
-                            : (hover ? OnboardingUi.surfaceHover() : OnboardingUi.surface()));
-            OnboardingUi.roundedOutline(cardX, cardY, cardWidth(width), cardHeight(),
-                    OnboardingUi.CARD_RADIUS, selected ? 1.6 : 1,
-                    OnboardingUi.awtColorWithAlpha(selected ? OnboardingUi.BLUE : OnboardingUi.hairline(),
-                            selected ? 230 : 160));
+            int brand = platform.getBrandColor();
+            OnboardingUi.CardState state = selected ? OnboardingUi.CardState.SELECTED
+                    : (hover ? OnboardingUi.CardState.HOVER : OnboardingUi.CardState.IDLE);
+            double[] content = OnboardingUi.card(cardX, cardY, cardWidth(width), cardHeight(),
+                    state, brand);
 
             // 徽标压在一块底盘上：七家的品牌图形一大一小（网易云是个圆、bilibili 是一对耳朵），
-            // 直接按同一个尺寸画，读起来就是「这七张卡没对齐」。
-            double box = 30;
-            OnboardingUi.roundedRect(cardX + 13, cardY + (cardHeight() - box) * .5, box, box, box * .32,
-                    OnboardingUi.colorWithAlpha(selected ? OnboardingUi.BRAND_2
-                            : platform.getBrandColor(), selected ? 60 : 42));
-            OnboardingUi.drawPlatformIcon(platform, cardX + 13 + box * .5, cardY + cardHeight() * .5, box,
+            // 直接按同一个尺寸画，读起来就是「这七张卡没对齐」。图标走 cardIcon 那个统一入口，
+            // 但平台徽标是品牌矢量，不是 lucide，所以底盘单独画、位置从 content 推。
+            double box = Math.min(30, content[3] * .66);
+            double iconCenterY = content[1] + content[3] * .5;
+            OnboardingUi.roundedRect(content[0], iconCenterY - box * .5, box, box, box * .32,
+                    OnboardingUi.colorWithAlpha(selected ? OnboardingUi.BRAND_2 : brand,
+                            selected ? 60 : 42));
+            OnboardingUi.drawPlatformIcon(platform, content[0] + box * .5, iconCenterY, box,
                     selected ? OnboardingUi.CYAN : OnboardingUi.textSecondary());
-            OnboardingUi.drawText(OnboardingUi.metric().labelBold(),
-                    OnboardingUi.ellipsize(OnboardingUi.metric().labelBold(), platform.getDisplayName(),
-                            cardWidth(width) - 52 - 30),
-                    cardX + 52, cardY + 12, OnboardingUi.textPrimary());
-            drawStatusDot(selected, cardX + 52, cardY + 34);
-            OnboardingUi.drawText(OnboardingUi.metric().bodyFont(), selected ? "当前使用" : "点击选择",
-                    cardX + 62, cardY + 30, selected ? OnboardingUi.GREEN : OnboardingUi.textMuted());
+
+            double textX = content[0] + box + 12;
+            double badgeW = selected ? 22 : 0;
+            OnboardingUi.cardText(content, textX, platform.getDisplayName(),
+                    selected ? "当前使用" : "点击选择", badgeW + 6, state);
             if (selected) {
-                OnboardingUi.drawIcon(FoliaLucideIcons.CHECK, PartyIcons.CHECK,
-                        cardX + cardWidth(width) - 24, cardY + cardHeight() * .5, 20, OnboardingUi.CYAN);
+                OnboardingUi.cardSelectedBadge(content, OnboardingUi.CYAN, 18);
             }
         }
 
@@ -74,14 +70,6 @@ public final class SourceStep implements OnboardingStepView {
         OnboardingUi.drawTextReserving(OnboardingUi.metric().bodyFont(),
                 "YouTube 与哔哩哔哩无需登录；汽水音乐需用外部工具（网盘 / QQ群）获取 Cookie 登录；GD 沿用现有配置。",
                 x + 22, noteY, x + width, 0, OnboardingUi.textMuted());
-    }
-
-    /** 「当前使用」前面那颗小圆点：选中是绿的、未选是灰的，和文字同一基线。 */
-    private static void drawStatusDot(boolean selected, double x, double y) {
-        double dot = 3;
-        OnboardingUi.roundedRect(x, y - dot, dot * 2, dot * 2, dot,
-                selected ? OnboardingUi.GREEN : OnboardingUi.themed(
-                        com.muoniumplayer.core.screens.ncm.NCMScreen.ColorType.SECONDARY_TEXT, .4f));
     }
 
     /**

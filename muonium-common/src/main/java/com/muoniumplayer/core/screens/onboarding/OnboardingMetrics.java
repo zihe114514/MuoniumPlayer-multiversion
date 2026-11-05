@@ -207,17 +207,44 @@ public final class OnboardingMetrics {
     /**
      * 按内容带的宽高选一档。
      *
-     * <p>只读宽度：高度那一头由 {@code stepScale} 与 {@code clipStep} 管（内容高了会被裁，
-     * 那是「窗口太矮」而不是「该换字号」）。用宽度判还有一个实际原因——侧栏是固定比例，
-     * 窄窗口的宽度最先吃紧，而字号的纵向预算反而没那么敏感。</p>
+     * <p>宽度决定字号档；高度只做一件事——<b>太矮就降级</b>。因为字号变大会把内容条一起撑高，
+     * 而一个又宽又矮的带子（427×240：854×480 开 GUI Scale 2）正好落进「宽到该升字号、
+     * 矮到放不下」的那一格，升完之后主按钮会被挤出内容带。</p>
+     *
+     * <p>降级的判据是「这一档的正文块 + 主按钮在这么矮的带子里放不放得下」，
+     * 用 {@link #MIN_BODY_HEIGHT} 这一组经验值近似，纯算术、可测。</p>
      */
     public static OnboardingMetrics of(double contentWidth, double contentHeight) {
         double width = Math.max(0, contentWidth);
+        double height = Math.max(0, contentHeight);
         Tier tier = width < COMPACT_MAX ? Tier.COMPACT
                 : width < REGULAR_MAX ? Tier.REGULAR
                 : width < WIDE_MAX ? Tier.WIDE
                 : Tier.ROOMY;
+        // 矮档降级：WIDE / ROOMY 的字号与间距都更大，带子矮下来时退回小一档，
+        // 免得字号升上去把内容顶出屏幕。**只降到 REGULAR 为止** —— 再往下是 COMPACT，
+        // 而 COMPACT 不只是字号更小，它的卡片是<b>单列竖排</b>，比两栏还高，
+        // 降下去等于拿一个更长的版面去塞一个更矮的带子。
+        while (tier.ordinal() > Tier.REGULAR.ordinal() && height < minBodyHeight(tier)) {
+            tier = Tier.values()[tier.ordinal() - 1];
+        }
         return cached(tier);
+    }
+
+    /**
+     * 这一档至少要有这么高的内容带，正文才排得开。
+     *
+     * <p>数值是「表头（bodyOffset）+ 三张模型卡 + 主按钮」的实测总和，再加一成余量：
+     * 引导里最长的一页是 Automix（三张模型卡 + 两张沉浸感卡 + 主按钮），两栏排版时
+     * 沉浸感竖着占两张卡的高度，所以按「表头 + 3 卡 + 按钮」这一档定。</p>
+     */
+    private static double minBodyHeight(Tier tier) {
+        switch (tier) {
+            case ROOMY: return 96 + 3 * 80 + 46 + 16 + 42;
+            case WIDE: return 88 + 3 * 68 + 42 + 16 + 42;
+            case REGULAR: return 72 + 3 * 56 + 42 + 16 + 42;
+            default: return 0;
+        }
     }
 
     /** 只按档位取（测试与不想重新判档的调用方用）。 */
