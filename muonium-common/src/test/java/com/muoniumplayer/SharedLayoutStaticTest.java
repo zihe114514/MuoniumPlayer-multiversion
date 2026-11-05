@@ -63,6 +63,9 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/compat/mc/LyricGlyphAtlasBridge.java",
             // --- 场景声学：玩家环境采样是 MC 触点（水下/天光/降水/方块射线），各树一份 ---
             "com/muoniumplayer/compat/mc/ListenerProbe.java",
+            // --- 世界声源：放置交互/状态判定与世界线框标记,MC 触点各树一份(七树) ---
+            "com/muoniumplayer/compat/mc/SpeakerManager.java",
+            "com/muoniumplayer/compat/mc/SpeakerRenderBridge.java",
             // --- 环境选曲：环境采样是 MC 触点（群系 tag/方块调色板/实体盒/天光），各树一份 ---
             "com/muoniumplayer/compat/mc/AmbientProbe.java",
             // --- 光影包适配：各树 RenderState/Shader API 差异大，探测器各树一份 ---
@@ -103,9 +106,6 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/compat/mc/AcousticsRayDebugRenderer.java",
             "com/muoniumplayer/mixin/GameRendererRenderLevelMixin.java",
             "com/muoniumplayer/mixin/GameRendererAccessor.java",
-            // --- 世界声源：放置交互/状态判定与世界线框标记,MC 触点各树一份(暂仅 26.3)---
-            "com/muoniumplayer/compat/mc/SpeakerManager.java",
-            "com/muoniumplayer/compat/mc/SpeakerRenderBridge.java",
             // --- 3D 歌词晕格加色：RenderType.create 包私有 accessor（仅 26.2/26.3）---
             "com/muoniumplayer/mixin/RenderTypeAccessors.java",
             "com/muoniumplayer/mixin/ProjectionMatrixBufferMixin.java",
