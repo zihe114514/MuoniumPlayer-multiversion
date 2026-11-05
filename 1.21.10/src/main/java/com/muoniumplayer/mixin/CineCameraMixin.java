@@ -4,6 +4,7 @@ import com.muoniumplayer.core.cine.CineDirector;
 import com.muoniumplayer.core.cine.CinePose;
 import net.minecraft.client.Camera;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -39,7 +40,8 @@ abstract class CineCameraMixin {
     @Inject(method = "setup", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/Camera;setPosition(DDD)V", ordinal = 0,
             shift = At.Shift.AFTER))
-    private void muonium$cinePose(net.minecraft.world.level.BlockGetter level, CallbackInfo ci) {
+    private void muonium$cinePose(net.minecraft.world.level.BlockGetter level, Entity entityRef, boolean detached,
+                                   boolean thirdPersonReverse, float partialTick, CallbackInfo ci) {
         if (!CineDirector.isActive()) return;
         if (!(entity instanceof net.minecraft.world.entity.player.Player player)
                 || player != net.minecraft.client.Minecraft.getInstance().player
@@ -55,7 +57,8 @@ abstract class CineCameraMixin {
     }
 
     @Inject(method = "setup", at = @At("TAIL"))
-    private void muonium$cineFinalize(net.minecraft.world.level.BlockGetter level, CallbackInfo ci) {
+    private void muonium$cineFinalize(net.minecraft.world.level.BlockGetter level, Entity entityRef, boolean detached,
+                                   boolean thirdPersonReverse, float partialTick, CallbackInfo ci) {
         if (!CineDirector.isActive()) return;
         Camera self = (Camera) (Object) this;
         Vec3 pos = self.getPosition();
