@@ -9,6 +9,12 @@
 // 都停在 1.21.11），所以共享源码写的就是官方名，两个加载器天然共用同一份——
 // 这一版是四个版本工程里唯一不需要处理映射差异的。
 
+// 在根工程预声明 Kotlin 插件，让两个子工程共用插件类加载器。
+plugins {
+    id 'org.jetbrains.kotlin.jvm' apply false
+    id 'org.jetbrains.kotlin.plugin.lombok' apply false
+}
+
 allprojects {
     group = project.maven_group
     version = project.mod_version

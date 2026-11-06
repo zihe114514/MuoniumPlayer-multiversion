@@ -1,5 +1,9 @@
 // 26.1.2 多加载器构建：共享源码在 src/，加载器外壳在 fabric/ 与 neoforge/。
 pluginManagement {
+    plugins {
+        id 'org.jetbrains.kotlin.jvm' version '2.4.21'
+        id 'org.jetbrains.kotlin.plugin.lombok' version '2.4.21'
+    }
     repositories {
         maven {
             name = 'Fabric'

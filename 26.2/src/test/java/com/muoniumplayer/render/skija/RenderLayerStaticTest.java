@@ -79,8 +79,9 @@ class RenderLayerStaticTest {
     @DisplayName("业务代码里不再引用任何旧渲染门面")
     void 业务代码不再调用旧门面() throws IOException {
         List<String> offenders = new ArrayList<>();
-        for (Path file : ProjectPaths.allJavaFiles()) {
-            String code = stripComments(Files.readString(file, StandardCharsets.UTF_8));
+        for (Path file : ProjectPaths.allSourceFiles()) {
+            String text = Files.readString(file, StandardCharsets.UTF_8);
+            String code = file.toString().endsWith(".java") ? stripComments(text) : text;
             for (String forbidden : FORBIDDEN_USAGES) {
                 if (code.contains(forbidden)) {
                     offenders.add(file + " -> " + forbidden);
@@ -94,12 +95,13 @@ class RenderLayerStaticTest {
     @DisplayName("渲染层里只有 SkijaHost 认识 Minecraft")
     void 只有宿主层耦合Minecraft() throws IOException {
         List<String> offenders = new ArrayList<>();
-        for (Path file : ProjectPaths.javaFilesIn("com/muoniumplayer/render/skija")) {
+        for (Path file : ProjectPaths.sourceFilesIn("com/muoniumplayer/render/skija")) {
             String name = file.getFileName().toString();
             if (name.equals("SkijaHost.java")) {
                 continue;
             }
-            String code = stripComments(Files.readString(file, StandardCharsets.UTF_8));
+            String text = Files.readString(file, StandardCharsets.UTF_8);
+            String code = file.toString().endsWith(".java") ? stripComments(text) : text;
             if (code.contains("net.minecraft") || code.contains("com.mojang")) {
                 offenders.add(name);
             }
