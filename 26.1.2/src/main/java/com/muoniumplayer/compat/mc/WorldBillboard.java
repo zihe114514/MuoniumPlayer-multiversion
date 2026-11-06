@@ -132,15 +132,24 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             // 的 Builder 还是 1.21.x 形状——uniform 走 withUniform、顶点布局/拓扑合并成
             // withVertexFormat(VertexFormat, VertexFormat.Mode)，没有 bind-group 这一概念
             //（javap 核对 26.1.2 jar：无 BindGroupLayouts / PrimitiveTopology 类）。
-            // GUI/字体的 uniforms（GLOBALS/PROJECTION/DYNAMIC_TRANSFORMS/FOG）在 26.1.2
-            // 由 RenderSetup 侧按 shader 需求自动供给，不需要在这里点名。
+            //
+            // 【必须从 BEACON_BEAM_SNIPPET 起手】早先这里用空 builder 手搓，以为
+            // 「uniforms 由 RenderSetup 侧按 shader 需求自动供给」—— 这是错的。
+            // 26.1.2 的 GlProgram.setupUniforms 与 1.21.10/1.21.11 逐段相同：
+            // 只给管线声明过的 uniform/sampler 建槽，没声明的一律跳过，于是：
+            //   - DynamicTransforms 不在 BUILT_IN_UNIFORMS（只有 Projection/Lighting/
+            //     Fog/Globals）→ ModelViewMat 永不绑定 → 顶点塌到原点；
+            //   - Sampler0 同理不建 → texture() 采到 0 号空白纹理。
+            // 实机日志坐实：`Found unknown and unsupported uniform DynamicTransforms
+            // in muonium:lyric_glow`，同时 CPU 侧 `现代档字形 quad 已提交: '+glow'`
+            // 说明晕格纹理已取到 —— 断的就是 GPU 绑定这一环。
+            // snippet 自带 MATRICES_FOG_SNIPPET（DynamicTransforms/Projection/Fog）
+            // + withSampler("Sampler0") + BLOCK/QUADS，照原版 BEACON_BEAM_TRANSLUCENT
+            // 「以 snippet 为底只覆盖差异项」的正规做法。
             com.mojang.blaze3d.pipeline.RenderPipeline pipeline =
-                    com.mojang.blaze3d.pipeline.RenderPipeline.builder()
+                    com.mojang.blaze3d.pipeline.RenderPipeline.builder(
+                                    net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_SNIPPET)
                             .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
-                            .withVertexShader("core/rendertype_beacon_beam")
-                            .withFragmentShader("core/rendertype_beacon_beam")
-                            .withVertexFormat(com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK,
-                                    com.mojang.blaze3d.vertex.VertexFormat.Mode.QUADS)
                             .withColorTargetState(new com.mojang.blaze3d.pipeline.ColorTargetState(
                                     com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING))
                             .withDepthStencilState(new com.mojang.blaze3d.pipeline.DepthStencilState(
