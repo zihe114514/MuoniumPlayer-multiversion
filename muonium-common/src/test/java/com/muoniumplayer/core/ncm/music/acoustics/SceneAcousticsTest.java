@@ -126,6 +126,74 @@ class SceneAcousticsTest {
     }
 
     @Test
+    @DisplayName("过渡时长:计划给了短过渡就比默认 τ 收敛得更快(跨房间跟得上脚步)")
+    void shortTransitionConvergesFaster() {
+        // 关键:不能用 flush() 预热 —— doFlush 会把现状直接设成目标值,之后
+        // 两边都没有收敛过程,测出来必然相等。这里从静息态起步,只喂少量
+        // 缓冲,比「离目标还有多远」。
+        final int blocks = 12;   // 12 × 64 帧 ≈ 17ms,远小于任一时间常数
+
+        // 默认(transitionSec=0 → WET_TAU_SEC = 0.30s)
+        SceneAcoustics.clearTarget();
+        warmup(2);
+        SceneAcoustics.applyTarget(planNoTaps(400, 0.8f, 0.7f, 1f, 0.006f, 0.5f, 0.28f));
+        warmup(blocks);
+        double defaultEnergy = measureResidualAfterImpulse();
+
+        // 短过渡(0.10s 下界)
+        SceneAcoustics.clearTarget();
+        warmup(2);
+        SceneAcoustics.applyTarget(new RoomPlan(400, 0.8f, 0.7f, 1f, 0.006f, 0.5f, 0.28f,
+                0.675f, 0.4f, 1f,
+                new float[0], new float[0], new float[0],
+                1f, DirectPath.FC_OPEN, 0f, 0f,
+                false, 1f, 0.5f, false, 0, 0, 0, 0.10f));
+        warmup(blocks);
+        double fastEnergy = measureResidualAfterImpulse();
+
+        assertTrue(fastEnergy > defaultEnergy * 1.15,
+                "短过渡应更快逼近满湿声(湿声能量更高): fast=" + fastEnergy
+                        + " default=" + defaultEnergy);
+    }
+
+    /** 灌一个脉冲后测尾音能量:湿声收敛得越多,尾音越大。 */
+    private static double measureResidualAfterImpulse() {
+        double[] pulse = new double[CHANNELS * 64];
+        pulse[0] = 0.5;
+        pulse[1] = 0.5;
+        SceneAcoustics.render(pulse, CHANNELS, RATE);
+        double energy = 0;
+        for (int block = 0; block < 6; block++) {
+            double[] silence = new double[CHANNELS * 64];
+            SceneAcoustics.render(silence, CHANNELS, RATE);
+            for (int f = 4; f < 64; f++) {
+                energy += silence[f * CHANNELS] * silence[f * CHANNELS]
+                        + silence[f * CHANNELS + 1] * silence[f * CHANNELS + 1];
+            }
+        }
+        return energy;
+    }
+
+    @Test
+    @DisplayName("过渡时长夹取:越界值不产生 NaN/异常,静息语义不变")
+    void transitionSecIsClamped() {
+        for (float t : new float[] {-1f, 0f, 1e9f, Float.NaN}) {
+            SceneAcoustics.applyTarget(new RoomPlan(400, 0.5f, 0.7f, 1f, 0.006f, 0.5f, 0.28f,
+                    0.675f, 0.4f, 1f,
+                    new float[0], new float[0], new float[0],
+                    1f, DirectPath.FC_OPEN, 0f, 0f,
+                    false, 1f, 0.5f, false, 0, 0, 0, t));
+            warmup(4);
+            double[] pcm = new double[CHANNELS * 128];
+            java.util.Arrays.fill(pcm, 0.2);
+            SceneAcoustics.render(pcm, CHANNELS, RATE);
+            for (double v : pcm) {
+                assertTrue(Double.isFinite(v), "transitionSec=" + t + " 产生了非有限值");
+            }
+        }
+    }
+
+    @Test
     @DisplayName("目标写完后 render 若干块,输出朝目标收敛(静息直通恢复)")
     void targetConvergesBackToPassthrough() {
         SceneAcoustics.applyTarget(planNoTaps(400, 0.5f, 0.7f, 0.85f, 0.006f, 0.5f, 0.28f));

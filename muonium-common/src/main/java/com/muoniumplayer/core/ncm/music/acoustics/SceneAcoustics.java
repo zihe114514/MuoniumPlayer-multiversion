@@ -47,11 +47,17 @@ public final class SceneAcoustics {
     private static final double MIN_BAND_HZ = 120.0;
     private static final double LOG_BAND_OPEN = Math.log10(BAND_OPEN_HZ);
 
-    /** 参数收敛时间常数(秒)。频带慢一点听感自然,其余共用稍快的一档。 */
+    /** 参数收敛时间常数(秒)。频带慢一点听感自然,其余共用稍快的一档。
+     *  这两个是「计划没交付 transitionSec」时的默认值(0 = 走这里)。 */
     private static final double BAND_TAU_SEC = 0.22;
     private static final double WET_TAU_SEC = 0.30;
     /** 抽头能量收敛时间常数(秒):比参数快,慢于房间变化,杜绝能量台阶。 */
     private static final double TAP_GAIN_TAU_SEC = 0.12;
+
+    /** 过渡时长的夹取区间(秒)。下界防「快到像瞬切」(抽头位置跳变会咔哒);
+     *  上界防「慢到像卡住」。 */
+    private static final double TRANSITION_MIN_SEC = 0.10;
+    private static final double TRANSITION_MAX_SEC = 1.20;
 
     /** 湿声低于此值视为关:省掉整条网络。 */
     private static final float WET_FLOOR = 0.003f;
@@ -116,6 +122,8 @@ public final class SceneAcoustics {
     private static volatile float targetDirectGain = 1f;
     private static volatile double targetDirectCutoff = DirectPath.FC_OPEN;
     private static volatile float targetDirectPan = 0f;
+    /** 过渡时长目标(秒;0 = 用编译期默认 τ)。见 {@link RoomPlan#transitionSec}。 */
+    private static volatile float targetTransitionSec = 0f;
     /** 不可变房间计划(volatile 引用交接);抽头延迟/能量/声像的真来源。 */
     private static volatile RoomPlan targetPlan = RoomPlan.idle();
     /** 换曲/seek 的清态请求(volatile 标志;音频线程缓冲头消费,见 {@link #flush()})。 */
@@ -346,6 +354,7 @@ public final class SceneAcoustics {
                 ? DirectPath.FC_OPEN
                 : Math.max(200.0, Math.min(DirectPath.FC_OPEN, safe.directCutoffHz));
         targetDirectPan = DirectPath.clampPan(safe.directPan);
+        targetTransitionSec = Math.max(0f, Math.min((float) TRANSITION_MAX_SEC, safe.transitionSec));
         targetPlan = safe;
     }
 
@@ -444,8 +453,17 @@ public final class SceneAcoustics {
         final float tDirectCutoff = (float) targetDirectCutoff;
         final float tDirectPan = targetDirectPan;
 
-        final double bandStep = 1.0 - Math.exp(-frames / (sampleRate * BAND_TAU_SEC));
-        final float wetStep = (float) (1.0 - Math.exp(-frames / (sampleRate * WET_TAU_SEC)));
+        // 过渡时长:计划交付了 transitionSec 就用它(跨房间快、室内抖动慢),
+        // 否则回落到编译期默认 —— 0 表示「这帧没意见」。
+        final float tTransition = targetTransitionSec;
+        final double bandTau = tTransition > 0f
+                ? Math.max(TRANSITION_MIN_SEC, Math.min(TRANSITION_MAX_SEC, tTransition))
+                : BAND_TAU_SEC;
+        final double wetTau = tTransition > 0f
+                ? Math.max(TRANSITION_MIN_SEC, Math.min(TRANSITION_MAX_SEC, tTransition))
+                : WET_TAU_SEC;
+        final double bandStep = 1.0 - Math.exp(-frames / (sampleRate * bandTau));
+        final float wetStep = (float) (1.0 - Math.exp(-frames / (sampleRate * wetTau)));
         logBand += (tLogBand - logBand) * bandStep;
         wet += (tWet - wet) * wetStep;
         loudness += (tLoudness - loudness) * wetStep;
