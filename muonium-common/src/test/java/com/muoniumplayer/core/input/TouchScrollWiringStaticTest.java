@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -31,14 +32,20 @@ class TouchScrollWiringStaticTest {
         assertTrue(source.contains("pendingClickActive") && source.contains("pendingClickButton"),
                 "按下只记账（pendingClick 字段）");
         assertTrue(source.contains("if (TouchSettings.ENABLED) {")
-                        && source.contains("dispatchClick(mouseX, mouseY, mouseButton);"),
-                "功能关闭时必须立即分发（一键回滚旧行为）");
+                        && source.contains("dispatchClick(mouseX, mouseY, mouseButton,"),
+                "功能关闭时必须立即分发（一键回滚旧行为）；联想可见性以按下快照传入");
         assertTrue(source.contains("public void mouseReleased(int mX, int mY, int state)"),
                 "松手沿必须接管补发");
         assertTrue(source.contains("state == 0 && !TouchGestures.get().consumeTap()"),
                 "左键必须经手势层结算：拖动吞掉、点按补发");
         assertTrue(source.contains("TouchGestures.get().advance(System.nanoTime()"),
                 "drawScreen 头部必须推进手势层（消费者之前的唯一喂数点）");
+        // 穿透修复（2026-11-04）：联想面板状态每帧会变，可见性必须以按下瞬间的快照裁决，
+        // 否则「按下面板在、松手面板没了」的点击会从联想层漏到底下的歌单条目。
+        assertTrue(source.contains("pendingClickSuggestionVisible"),
+                "按下时必须拍联想可见性快照（pendingClickSuggestionVisible）");
+        assertTrue(source.contains("suggestionLayerVisibleNow()"),
+                "快照必须取自 NavigateBar#suggestionLayerVisibleNow");
     }
 
     @Test
@@ -69,6 +76,44 @@ class TouchScrollWiringStaticTest {
                 "歌词行 seek 必须走松手沿点按判定（tapReleaseEdge）");
         assertTrue(source.contains("this.styleQuickPanel.advanceTouchDrag()"),
                 "快捷面板的触摸滚动由歌词页驱动（先于歌词列认领）");
+    }
+
+    @Test
+    void 触屏门禁与联想快照接线() throws Exception {
+        String settings = read(Paths.get("core", "settings", "TouchSettings.java").toString());
+        // 门禁（2026-11-04）：手势层存在的唯一理由是 FCL/Zalith 把触屏映射成左键。
+        // 桌面 Windows/Linux/macOS 没有这层映射，必须整体关闭——否则队列排序要长按、
+        // 全部点击有延迟，用户感知就是「坏了」。
+        assertTrue(settings.contains("ENABLED = detectTouchRuntime()"),
+                "总闸必须由启动期门禁判定，不是恒 true");
+        for (String signal : new String[]{"pojav.path.minecraft", "FCL_NATIVEDIR",
+                "FCL_VERSION_CODE", "POJAV_NATIVEDIR", "startsWith(\"Android\")"}) {
+            assertTrue(settings.contains(signal), "门禁缺家族指纹 " + signal);
+        }
+        // 桌面上用户配置里的 enabled 不许把手势层重新打开。
+        assertTrue(settings.contains("if (ENABLED) {"),
+                "配置文件的 enabled 只允许在触屏会话里覆盖");
+
+        String screen = read(Paths.get("core", "screens", "ncm", "NCMScreen.java").toString());
+        String bar = read(Paths.get("core", "screens", "ncm", "panels", "NavigateBar.java").toString());
+        // 快照两件套：可见性防穿透、悬停行防「点了没反应」（面板换茬后几何命中落空）。
+        assertTrue(screen.contains("pendingClickSuggestionVisible")
+                        && screen.contains("pendingClickSuggestionRow"),
+                "按下沿必须拍联想可见性 + 悬停行两份快照");
+        assertTrue(screen.contains("suggestionVisible, suggestionRow)"),
+                "松手分发必须把两份快照都传给联想层");
+        assertTrue(bar.contains("suggestionHoveredRowAt(double mouseX, double mouseY)"),
+                "NavigateBar 必须提供按下沿悬停行探针（接收已换算的布局坐标）");
+        assertTrue(screen.contains("suggestionHoveredRowAt(mouseX, mouseY)"),
+                "悬停行快照必须用 mouseClicked 已换算的布局坐标");
+        assertTrue(bar.contains("if (index < 0 && pressHoveredRow >= 0) index = pressHoveredRow;"),
+                "几何命中落空时必须退回按下沿的悬停行");
+        // 回归防线（2026-11-04 交叉评审）：五棵树的 compat Mouse.getY() 是底原点
+        // framebuffer 轴，联想层自己从裸 Mouse 重推坐标必然翻错方向——命中必须复用
+        // NCMScreen 已换算的布局坐标。
+        assertFalse(bar.contains("compat.lwjgl2.Mouse"),
+                "联想层禁止从裸 Mouse 重推坐标：getY() 是底原点 framebuffer 轴，"
+                        + "重推必翻错；必须用 mouseClicked 已换算的布局坐标");
     }
 
     @Test

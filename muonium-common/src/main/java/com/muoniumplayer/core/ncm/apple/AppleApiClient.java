@@ -92,9 +92,16 @@ public final class AppleApiClient {
 
     // ── 对外入口 ─────────────────────────────────────────────────────────────
 
-    /** 公开目录 GET。返回顶层 JSON（{@code data} / {@code results} / {@code next}）。 */
+    /**
+     * 公开目录 GET。返回顶层 JSON（{@code data} / {@code results} / {@code next}）。
+     *
+     * <p>调用方传 {@code /catalog/{sf}/...} 形状（不写 /v1）；翻页的 {@code next}
+     * 自带 /v1 —— 这里统一补齐，两条路一个都不少。曾经少了 /v1：搜索、专辑与
+     * catalog 歌单全 404，UI 表现为「一直加载」。</p>
+     */
     public static JsonObject getCatalog(String pathWithQuery) throws IOException {
-        return get("GET", AMP_API_BASE + pathWithQuery, false, 0);
+        String path = pathWithQuery.startsWith("/v1/") ? pathWithQuery : "/v1" + pathWithQuery;
+        return get("GET", AMP_API_BASE + path, false, 0);
     }
 
     /** 账号能力 GET（{@code /v1/me/...}）。media-user-token 失效抛 {@code reauthRequired} 异常。 */
@@ -192,6 +199,9 @@ public final class AppleApiClient {
 
     private static JsonObject get(String method, String url, boolean account, int attempt)
             throws IOException {
+        if (Boolean.getBoolean("apple.native.diag")) {
+            System.out.println("[diag] " + method + " " + url);
+        }
         Map<String, String> headers = new LinkedHashMap<>();
         headers.put("Authorization", "Bearer " + AppleTokenManager.current());
         headers.put("Origin", HOMEPAGE_ORIGIN);

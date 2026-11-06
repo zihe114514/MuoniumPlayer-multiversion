@@ -65,7 +65,11 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         // 3D 世界歌词：世界渲染的最后（Fabric WorldRenderEvents.LAST）。
         // 矩阵与 GL 状态由 WorldLyricsBridge 自己设（Fabric/Forge 给的矩阵不一致，
         // 自算两边结果一致），partialTick 不需要（歌词动画走歌曲毫秒时钟）。
-        WorldRenderEvents.LAST.register(context -> WorldLyricsBridge.worldRenderEnd());
+        WorldRenderEvents.LAST.register(context -> {
+            WorldLyricsBridge.worldRenderEnd();
+            // 世界声源线框(有音箱才画;内部第一行判空)
+            com.muoniumplayer.compat.mc.SpeakerRenderBridge.render();
+        });
         ScreenEvents.AFTER_INIT.register((minecraft, screen, scaledWidth, scaledHeight) -> {
             ScreenEvents.afterRender(screen).register(
                     (renderedScreen, drawContext, mouseX, mouseY, tickDelta) -> {

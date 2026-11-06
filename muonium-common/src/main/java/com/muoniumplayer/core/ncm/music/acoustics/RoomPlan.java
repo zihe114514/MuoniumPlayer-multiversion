@@ -57,6 +57,27 @@ public final class RoomPlan {
     public final float reverbDiffusion;
     /** 有没有音箱锚点(false = 玩家即声源:source 贴头零衰减零方向)。 */
     public final boolean hasSpeakerAnchor;
+    /**
+     * 本计划的过渡时长(秒):音频线程按它决定朝目标收敛的快慢。
+     *
+     * <p>跨房间(围合度/衰减大跨度跳变)要快 —— 走进山洞的听感必须跟得上
+     * 脚步,慢了就是「人已经进去了,回响还在路上」;而房间内的微小抖动
+     * 要慢,否则参数一直追着噪声跑,听感发毛。行业做法就是按变化幅度
+     * 选时间常数(Wwise 的 Snapshot 过渡时间可配,跨房间 1.5s、小变化
+     * 200ms)。</p>
+     *
+     * <p>0 = 用音频线程的默认值(修前行为)。</p>
+     */
+    public final float transitionSec;
+
+    /**
+     * 直达声是否走了绕射路径(源→遮挡边缘→耳)。
+     *
+     * <p>只作诊断口径:<b>声学量已经折进</b> {@link #directGain} /
+     * {@link #directCutoffHz} / {@link #directPan}(绕射成立时它们是绕射路径
+     * 的值,不是穿透值)。渲染链不需要为它分支。</p>
+     */
+    public final boolean diffracted;
     /** 声源世界坐标(EAX 总线的 3D 定位;无声源 0,0,0)。 */
     public final double speakerX;
     public final double speakerY;
@@ -95,6 +116,44 @@ public final class RoomPlan {
                     boolean useOpenAlReverb, float reverbDecayHfRatio, float reverbDiffusion,
                     boolean hasSpeakerAnchor,
                     double speakerX, double speakerY, double speakerZ) {
+        this(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
+                decayLowSec, decayHighSec, diffusion,
+                tapDelaySec, tapGainL, tapGainR,
+                directGain, directCutoffHz, directPan, directDistanceMeters,
+                useOpenAlReverb, reverbDecayHfRatio, reverbDiffusion,
+                hasSpeakerAnchor, speakerX, speakerY, speakerZ, 0f, false);
+    }
+
+    /** 完整构造:多一个过渡时长(0 = 用音频线程默认值)。 */
+    public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
+                    float predelaySec, float decaySec, float tone,
+                    float decayLowSec, float decayHighSec, float diffusion,
+                    float[] tapDelaySec, float[] tapGainL, float[] tapGainR,
+                    float directGain, double directCutoffHz, float directPan,
+                    float directDistanceMeters,
+                    boolean useOpenAlReverb, float reverbDecayHfRatio, float reverbDiffusion,
+                    boolean hasSpeakerAnchor,
+                    double speakerX, double speakerY, double speakerZ,
+                    float transitionSec) {
+        this(bandHz, wet, dryGain, loudness, predelaySec, decaySec, tone,
+                decayLowSec, decayHighSec, diffusion,
+                tapDelaySec, tapGainL, tapGainR,
+                directGain, directCutoffHz, directPan, directDistanceMeters,
+                useOpenAlReverb, reverbDecayHfRatio, reverbDiffusion,
+                hasSpeakerAnchor, speakerX, speakerY, speakerZ, transitionSec, false);
+    }
+
+    /** 完整构造:多一个过渡时长(0 = 用音频线程默认值)与绕射标记。 */
+    public RoomPlan(double bandHz, float wet, float dryGain, float loudness,
+                    float predelaySec, float decaySec, float tone,
+                    float decayLowSec, float decayHighSec, float diffusion,
+                    float[] tapDelaySec, float[] tapGainL, float[] tapGainR,
+                    float directGain, double directCutoffHz, float directPan,
+                    float directDistanceMeters,
+                    boolean useOpenAlReverb, float reverbDecayHfRatio, float reverbDiffusion,
+                    boolean hasSpeakerAnchor,
+                    double speakerX, double speakerY, double speakerZ,
+                    float transitionSec, boolean diffracted) {
         this.bandHz = bandHz;
         this.wet = wet;
         this.dryGain = dryGain;
@@ -117,6 +176,8 @@ public final class RoomPlan {
         this.reverbDecayHfRatio = reverbDecayHfRatio;
         this.reverbDiffusion = reverbDiffusion;
         this.hasSpeakerAnchor = hasSpeakerAnchor;
+        this.transitionSec = Math.max(0f, transitionSec);
+        this.diffracted = diffracted;
         this.speakerX = speakerX;
         this.speakerY = speakerY;
         this.speakerZ = speakerZ;

@@ -408,6 +408,8 @@ public final class HudConfig {
     public static boolean worldLyricsTransEffects = false;
     /** 发光质量档：0 Standard / 1 High(默认) / 2 Ultra（TextGlow.GLOW_TIER_*）。 */
     public static int worldLyricsGlowTier = 2;
+    /** 发光形态：0 经典（逐字晕格）/ 1 辉光（行级金字塔，字芯白热）。 */
+    public static int worldLyricsGlowMode = 0;
     /** 封面代表色来源档：0 关 / 1 自动提取 / 2 手动色板。 */
     public static int worldLyricsCoverColorMode = 0;
     /** 封面渐变：歌词与翻译按色板从左到右渐变（需来源档非关）。 */
@@ -560,6 +562,8 @@ public final class HudConfig {
      */
     /** HUD 设置界面的选择：内置界面、OneConfig 或 ModernUI。外部界面不可用时自动回退内置界面。 */
     public static final String HUD_EDITOR_UI_BUILTIN = "builtin";
+    /** 私有的现代化呈现（MuoniumConfig），随本 mod 自带、永远可用。 */
+    public static final String HUD_EDITOR_UI_MCONFIG = "mconfig";
     public static final String HUD_EDITOR_UI_ONECONFIG = "oneconfig";
     /**
      * 交给 ModernUI 渲染。它只需要玩家装了 ModernUI 就算「可用」的一半，另一半是本版本树
@@ -807,6 +811,7 @@ public final class HudConfig {
         worldLyricsTranslation = 1;
         worldLyricsTransEffects = false;
         worldLyricsGlowTier = 2;
+        worldLyricsGlowMode = 0;
         worldLyricsCoverColorMode = 0;
         worldLyricsCoverGradient = false;
         worldLyricsCoverPaletteRgb0 = 0xF2A7C3;
@@ -1007,6 +1012,7 @@ public final class HudConfig {
             worldLyricsAboveGround = getBoolean(o, "worldLyricsAboveGround", worldLyricsAboveGround);
             worldLyricsTranslation = clampInt(getInt(o, "worldLyricsTranslation", worldLyricsTranslation), 0, 2);
             worldLyricsTransEffects = getBoolean(o, "worldLyricsTransEffects", worldLyricsTransEffects);
+            worldLyricsGlowMode = clampInt(getInt(o, "worldLyricsGlowMode", worldLyricsGlowMode), 0, 1);
             worldLyricsGlowTier = clampInt(getInt(o, "worldLyricsGlowTier", worldLyricsGlowTier), 0, 2);
             worldLyricsCoverColorMode = clampInt(getInt(o, "worldLyricsCoverColorMode", worldLyricsCoverColorMode), 0, 2);
             worldLyricsCoverGradient = getBoolean(o, "worldLyricsCoverGradient", worldLyricsCoverGradient);
@@ -1213,6 +1219,7 @@ public final class HudConfig {
             o.addProperty("worldLyricsTranslation", worldLyricsTranslation);
             o.addProperty("worldLyricsTransEffects", worldLyricsTransEffects);
             o.addProperty("worldLyricsGlowTier", worldLyricsGlowTier);
+            o.addProperty("worldLyricsGlowMode", worldLyricsGlowMode);
             o.addProperty("worldLyricsCoverColorMode", worldLyricsCoverColorMode);
             o.addProperty("worldLyricsCoverGradient", worldLyricsCoverGradient);
             o.addProperty("worldLyricsCoverPaletteRgb0", worldLyricsCoverPaletteRgb0);
@@ -1376,6 +1383,7 @@ public final class HudConfig {
     }
 
     private static String normalizeHudEditorUi(String value) {
+        if (HUD_EDITOR_UI_MCONFIG.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MCONFIG;
         if (HUD_EDITOR_UI_ONECONFIG.equalsIgnoreCase(value)) return HUD_EDITOR_UI_ONECONFIG;
         if (HUD_EDITOR_UI_MODERNUI.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MODERNUI;
         return HUD_EDITOR_UI_BUILTIN;

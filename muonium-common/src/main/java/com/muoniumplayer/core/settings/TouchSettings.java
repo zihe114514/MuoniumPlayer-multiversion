@@ -20,8 +20,40 @@ import java.io.File;
  */
 public final class TouchSettings {
 
-    /** 触屏手势层总开关（拖动滚动 + 松手触发点击）。false = 完整回退旧行为。 */
-    public static boolean ENABLED = true;
+    /**
+     * 触屏手势层总开关（拖动滚动 + 松手触发点击）。false = 完整回退旧行为。
+     *
+     * <p>启动期由 {@link #detectTouchRuntime()} 做门禁：手势层存在的唯一理由是
+     * FCL / Zalith 系启动器把触屏映射成左键；桌面 Windows / Linux / macOS 没有这层
+     * 映射，手势层只带来坏处（按下不分发、排序要长按、点击有延迟），所以在桌面
+     * 强制关闭——用户配置里的 {@code enabled} 只在移动端家族里被尊重，
+     * 桌面写 true 也不生效（否则一个错误配置就把整套桌面手感拖回触屏语义）。</p>
+     */
+    public static boolean ENABLED = detectTouchRuntime();
+
+    /**
+     * 本机是不是「触屏会话」：FCL / Zalith（pojav 家族）启动器注入的 env/属性指纹。
+     *
+     * <p>判定与 {@code MobileRendererEnv} 的家族标记同源（pojav.path.minecraft 属性、
+     * FCL_NATIVEDIR / FCL_VERSION_CODE / POJAV_NATIVEDIR env、os.version 以 Android
+     * 开头），刻意<b>不</b>看 os.name=Linux——真桌面 Linux 用户不该被误伤。
+     * 桌面 Windows/Linux/macOS 全部落空 → false → 手势层整体关闭，
+     * 队列排序恢复「按下即拖」、点击恢复「按下即分发」。</p>
+     */
+    private static boolean detectTouchRuntime() {
+        try {
+            if (System.getProperty("pojav.path.minecraft") != null) return true;
+            for (String key : new String[]{"FCL_NATIVEDIR", "FCL_VERSION_CODE", "POJAV_NATIVEDIR"}) {
+                String value = System.getenv(key);
+                if (value != null && !value.isBlank()) return true;
+            }
+            String osVersion = System.getProperty("os.version", "");
+            return osVersion.startsWith("Android");
+        } catch (Throwable unreadable) {
+            // 判定失败按移动端处理：手势层开着顶多多一步长按，关错了却是桌面全套点击变延迟。
+            return true;
+        }
+    }
 
     /**
      * 按下后累计位移超过该值才锁定为拖动（GUI 像素）。
@@ -66,7 +98,11 @@ public final class TouchSettings {
             if (o == null) {
                 return;
             }
-            ENABLED = booleanOf(o, "enabled", ENABLED);
+            // enabled 只在触屏会话里生效：桌面（门禁已判 false）写 true 也不允许
+            // 把桌面手感拖回触屏语义；桌面想试手势层得在移动端改。
+            if (ENABLED) {
+                ENABLED = booleanOf(o, "enabled", ENABLED);
+            }
             DRAG_THRESHOLD_PX = clamp(doubleOf(o, "dragThresholdPx", DRAG_THRESHOLD_PX), 1.0, 64.0);
             FLING_DECEL = clamp(doubleOf(o, "flingDecel", FLING_DECEL), 0.4, 12.0);
             FLING_MAX_DISTANCE = clamp(doubleOf(o, "flingMaxDistance", FLING_MAX_DISTANCE), 200.0, 20000.0);

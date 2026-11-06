@@ -28,6 +28,13 @@ public final class AppleChartsPanels {
      * 曲目数用 feed 实际条数;拉过的 feed 进缓存,详情懒加载直接复用。</p>
      */
     public static NCMPanel loadTopListsPanel() {
+        List<PlayList> cards = chartCards();
+        if (cards == null) return null;
+        return new HomePanel(cards, "Apple Music 排行榜 · " + cards.size());
+    }
+
+    /** 榜单卡构建(主页兜底复用);feed 全挂返回 null。 */
+    public static List<PlayList> chartCards() {
         java.util.Map<String, java.util.List<AppleChartsService.ChartEntry>> feeds =
                 new java.util.concurrent.ConcurrentHashMap<>();
         java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(
@@ -75,7 +82,7 @@ public final class AppleChartsPanels {
             cards.add(card);
         }
         if (!anyFeed) return null;
-        return new HomePanel(cards, "Apple Music 排行榜 · " + cards.size());
+        return cards;
     }
 
     /** 卡片 id 稳定键(FNV 形状与其他平台一致),不同地区不冲突。 */

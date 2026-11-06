@@ -7,6 +7,7 @@ import com.muoniumplayer.core.ncm.music.ExternalPlayback;
 import com.muoniumplayer.core.ncm.music.FocusVolumeDucker;
 import com.muoniumplayer.core.ncm.music.FoliaModelManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.cine.CineSettings;
 import com.muoniumplayer.core.ncm.music.TransparentMode;
 import com.muoniumplayer.core.ncm.music.MusicAudioCache;
 import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
@@ -1193,6 +1194,24 @@ public final class HudSettingsModel {
                                                 saveNow();
                                             }
                                         }, () -> HudConfig.worldLyricsEnabled),
+                                choice("发光形态", "两种并列的观感，二选一。经典：晕与字分离，逐字有贴边的亮环，字始终锐利。辉光：整行一团大范围柔光，字芯过曝发白、外圈保留字色 —— 光晕明显更大更「亮」，逐字亮环不再出现。",
+                                        new Supplier<String>() {
+                                            public String get() {
+                                                return HudConfig.worldLyricsGlowMode == 1 ? "辉光" : "经典";
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsGlowMode = (HudConfig.worldLyricsGlowMode + 1) % 2;
+                                                saveNow();
+                                            }
+                                        }, new String[] {"经典", "辉光"},
+                                        v -> {
+                                            HudConfig.worldLyricsGlowMode = "辉光".equals(v) ? 1 : 0;
+                                            saveNow();
+                                        },
+                                        () -> HudConfig.worldLyricsEnabled && HudConfig.worldLyricsGlowEnabled,
+                                        new String[] {"逐字晕格 + 贴字亮环，字保持锐利。",
+                                                "行级金字塔大光晕，字芯白热。"}),
                                 choice("发光质量", "辉光的分层管线：Standard 单层宽晕最省；High 默认 —— 柔晕+背景融合+贴字亮环（光从字里长出来，与字色自然过渡）；Ultra 加多尺度 Bloom 与白芯提亮，最华丽，烘焙开销约 1.5 倍。",
                                         new Supplier<String>() {
                                             public String get() {
@@ -1433,6 +1452,111 @@ public final class HudSettingsModel {
                                         "鼓点最响那一刻压多扁：50% 就是压到一半高。0 等于不压，只看别人变宽。"),
                                 slider(HudSetting.TRANSPARENT_WIDTH,
                                         "压扁的同时往两边涨多少：50% 就是模型横向胖一半。深度不变。")),
+                        new Group("卡点运镜", HudSettingsIcons.SPEED,
+                                toggle("卡点运镜", "电影化自动运镜：播放中挂机一阵后，镜头按音乐节拍在「环绕玩家 / 风景 / 移动生物」之间切换，切点压在拍点上；任何输入立即恢复你的视角。开关与全部参数存在 cine.json。",
+                                        CineSettings::isEnabled,
+                                        () -> CineSettings.setEnabled(!CineSettings.isEnabled())),
+                                choice("挂机多久启动", "播放中持续无输入多少秒后进入运镜。越长越接近屏保，越短越容易在你操作间隙突然接管。",
+                                        () -> {
+                                            int s = CineSettings.idleSeconds();
+                                            return s + " 秒";
+                                        },
+                                        () -> {
+                                            int s = CineSettings.idleSeconds();
+                                            int[] steps = {10, 30, 60, 120, 300, 600};
+                                            int idx = 0;
+                                            for (int i = 0; i < steps.length; i++) if (s >= steps[i]) idx = i;
+                                            idx = (idx + 1) % steps.length;
+                                            CineSettings.setIdleSeconds(steps[idx]);
+                                        },
+                                        new String[]{"10 秒", "30 秒", "60 秒", "2 分钟", "5 分钟", "10 分钟"},
+                                        v -> {
+                                            int minutes = v.endsWith("分钟") ? Integer.parseInt(v.replace(" 分钟", "").replace("分钟", "").trim()) : 0;
+                                            CineSettings.setIdleSeconds(minutes > 0 ? minutes * 60 : 10);
+                                        },
+                                        CineSettings::isEnabled),
+                                choice("切换频率", "每个镜头多久切一次。拍数越少切换越密（MV 快切感），越多越舒缓；实际时长受歌曲快慢与能量影响，但不会短于下面的「最短镜头」。仅参考节拍的会话生效。",
+                                        () -> CineSettings.shotBeats() + " 拍",
+                                        () -> CineSettings.setShotBeats(
+                                                CineSettings.shotBeats() >= 16 ? 2 : CineSettings.shotBeats() * 2),
+                                        new String[]{"2 拍", "4 拍", "8 拍", "16 拍"},
+                                        v -> CineSettings.setShotBeats(Integer.parseInt(v.replace(" 拍", "").trim())),
+                                        CineSettings::isEnabled),
+                                choice("最短镜头", "再快的歌，单个镜头也不短于这个秒数：防快歌闪切看晕。默认 3 秒；调到 1 秒就是极限快切。",
+                                        () -> {
+                                            float f = CineSettings.minShotSeconds();
+                                            return f == (int) f ? (int) f + " 秒" : f + " 秒";
+                                        },
+                                        () -> CineSettings.setMinShotSeconds(
+                                                CineSettings.minShotSeconds() >= 12f ? 1f
+                                                        : Math.round((CineSettings.minShotSeconds() + 1f) * 10f) / 10f),
+                                        new String[]{"1 秒", "2 秒", "3 秒", "5 秒", "8 秒", "12 秒"},
+                                        v -> CineSettings.setMinShotSeconds(Float.parseFloat(v.replace(" 秒", "").trim())),
+                                        CineSettings::isEnabled),
+                                choice("运镜速度", "镜头内环绕/推拉的速度乘数。0 = 机位冻结（只剩切镜），2 以上相当激进。",
+                                        () -> {
+                                            float f = CineSettings.speedMultiplier();
+                                            return f == (int) f ? (int) f + "×" : f + "×";
+                                        },
+                                        () -> CineSettings.setSpeedMultiplier(Math.round(CineSettings.speedMultiplier() * 10f) >= 40f
+                                                ? 0f : Math.round((CineSettings.speedMultiplier() + 0.1f) * 10f) / 10f),
+                                        new String[]{"0×", "0.5×", "0.7×", "1×", "1.5×", "2×", "3×", "4×"},
+                                        v -> CineSettings.setSpeedMultiplier(
+                                                Float.parseFloat(v.replace("×", "").trim())),
+                                        CineSettings::isEnabled),
+                                toggle("隐藏 HUD", "运镜时隐藏全部 HUD（退出时恢复原状）。注意：隐藏时转场遮罩与黑边仍会显示。",
+                                        CineSettings::hideHud,
+                                        () -> CineSettings.setHideHud(!CineSettings.hideHud()),
+                                        CineSettings::isEnabled),
+                                toggle("电影黑边", "画面顶部与底部各加一条黑边（宽银幕造型）。每侧高度 13% ≈ 2.39:1。",
+                                        CineSettings::showCinematicBars,
+                                        () -> CineSettings.setShowCinematicBars(!CineSettings.showCinematicBars()),
+                                        CineSettings::isEnabled),
+                                toggle("追踪生物", "允许镜头专门切给附近正在移动的生物；敌对生物与蝙蝠默认排除。",
+                                        CineSettings::enableMobFocus,
+                                        () -> CineSettings.setEnableMobFocus(!CineSettings.enableMobFocus()),
+                                        CineSettings::isEnabled),
+                                toggle("鼓点变焦", "鼓点上 FOV 瞬间冲出再回落（呼吸冲击感）。0% 等于关闭。",
+                                        () -> CineSettings.fovPunchDegrees() > 0f,
+                                        () -> CineSettings.setFovPunchDegrees(
+                                                CineSettings.fovPunchDegrees() > 0f ? 0f : 8f),
+                                        CineSettings::isEnabled),
+                                choice("转场效果", "切镜瞬间的全屏遮罩样式：黑淡 / 白淡 / 横擦 / 竖擦 / 光圈。循环选择；要混用多种去改 cine.json 的 transitionMask 位掩码。",
+                                        () -> {
+                                            int m = CineSettings.transitionMask();
+                                            if (m == 0) return "硬切";
+                                            if (m == 0b00001) return "黑淡";
+                                            if (m == 0b00010) return "白淡";
+                                            if (m == 0b00100) return "横擦";
+                                            if (m == 0b01000) return "竖擦";
+                                            if (m == 0b10000) return "光圈";
+                                            if (m == CineSettings.TRANSITION_MASK_ALL) return "全部随机";
+                                            return "自定义 " + Integer.bitCount(m) + " 种";
+                                        },
+                                        () -> {
+                                            // 单选循环:黑淡→白淡→横擦→竖擦→光圈→硬切→黑淡;全开/自定义归位到黑淡
+                                            int m = CineSettings.transitionMask();
+                                            int next = switch (m) {
+                                                case 0b00001 -> 0b00010;
+                                                case 0b00010 -> 0b00100;
+                                                case 0b00100 -> 0b01000;
+                                                case 0b01000 -> 0b10000;
+                                                case 0b10000 -> 0b00001;
+                                                default -> 0b00001;
+                                            };
+                                            CineSettings.setTransitionMask(next);
+                                        },
+                                        new String[]{"硬切", "黑淡", "白淡", "横擦", "竖擦", "光圈", "全部随机", "自定义"},
+                                        v -> CineSettings.setTransitionMask(switch (v) {
+                                            case "硬切" -> 0;
+                                            case "黑淡" -> 0b00001;
+                                            case "白淡" -> 0b00010;
+                                            case "横擦" -> 0b00100;
+                                            case "竖擦" -> 0b01000;
+                                            case "光圈" -> 0b10000;
+                                            default -> CineSettings.TRANSITION_MASK_ALL;
+                                        }),
+                                        CineSettings::isEnabled)),
                         new Group("基本设置", HudSettingsIcons.SPEED,
                                 toggle("无缝切换", "打开后提前解码下一首并交叉淡化；关掉则切歌时先停下再重新下载解码，中间有静音间隙。",
                                         new BooleanSupplier() {
@@ -1661,7 +1785,8 @@ public final class HudSettingsModel {
                                 slider(HudSetting.SPECTRUM_HEIGHT, "仅调整频谱高度，不改变播放器或通知的尺寸。",
                                         () -> HudConfig.spectrumEnabled)),
                         new Group("设置界面", HudSettingsIcons.MODERN_UI,
-                                choice("设置界面由谁渲染", "内置＝本项目自绘的界面；OneConfig / ModernUI＝交给已安装的外部界面。"
+                                choice("设置界面由谁渲染", "MuoniumConfig＝本项目自绘的现代化界面；内置＝本项目自绘的经典界面；"
+                                        + "OneConfig / ModernUI＝交给已安装的外部界面。"
                                         + "选中的外部界面不可用时自动回退内置，不报错也不弹提示，切换在下次按 H 时生效。",
                                         new Supplier<String>() {
                                             public String get() {
@@ -1671,9 +1796,10 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 cycleUiLayer();
                                             }
-                                        }, new String[] {"内置", "OneConfig", "ModernUI"},
+                                        }, new String[] {"内置", "MuoniumConfig", "OneConfig", "ModernUI"},
                                                 HudSettingsModel::setUiLayerChoice,
-                                                new String[] {"自绘，不依赖任何 mod。",
+                                                new String[] {"自绘经典界面，不依赖任何 mod。",
+                                                        "自绘现代化界面（MuoniumConfig），同样不依赖任何 mod。",
                                                         "OneConfig 的 MuoniumPlayer HUD 页，需已安装 OneConfig v1。",
                                                         "ModernUI 的面板，需已安装 ModernUI 且本 Minecraft 版本有对应构件。"})),
                         new Group("外部播放器", HudSettingsIcons.NOTE,
@@ -2252,6 +2378,9 @@ public final class HudSettingsModel {
      * 这两种情况的处理办法完全不同。
      */
     public static String uiLayerLabel() {
+        if (HudConfig.HUD_EDITOR_UI_MCONFIG.equals(HudConfig.hudEditorUi)) {
+            return "MuoniumConfig";
+        }
         if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(HudConfig.hudEditorUi)) {
             return OneConfigHudBridge.isAvailable() ? "OneConfig" : "OneConfig（未安装·回退内置）";
         }
@@ -2262,10 +2391,12 @@ public final class HudSettingsModel {
         return "内置";
     }
 
-    /** 内置 → OneConfig → ModernUI 循环。不可用的那层照旧能选中，只是打开时回退并写明原因。 */
+    /** 内置 → MuoniumConfig → OneConfig → ModernUI 循环。不可用的那层照旧能选中，只是打开时回退并写明原因。 */
     private static void cycleUiLayer() {
         String current = HudConfig.hudEditorUi;
         if (HudConfig.HUD_EDITOR_UI_BUILTIN.equals(current)) {
+            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MCONFIG;
+        } else if (HudConfig.HUD_EDITOR_UI_MCONFIG.equals(current)) {
             HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
         } else if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(current)) {
             HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MODERNUI;
@@ -2277,7 +2408,9 @@ public final class HudSettingsModel {
 
     private static void setUiLayerChoice(String value) {
         if (value == null) return;
-        if ("OneConfig".equalsIgnoreCase(value)) {
+        if ("MuoniumConfig".equalsIgnoreCase(value)) {
+            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MCONFIG;
+        } else if ("OneConfig".equalsIgnoreCase(value)) {
             HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
         } else if ("ModernUI".equalsIgnoreCase(value)) {
             HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MODERNUI;

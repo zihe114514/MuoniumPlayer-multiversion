@@ -1,0 +1,10 @@
+accessWidener	v2	named
+# 1.20.1 时这里放开过 net/minecraft/client/gl/Framebuffer 的 depthAttachment / colorAttachment：
+# 那是旧渲染层的 StencilClipManager 需要把主 framebuffer 的 depth-only 附件换成 depth-stencil。
+# 现在两条都删掉，原因有两条，缺一条都不足以删：
+#   1. 渲染层已经换成 Skija，裁剪由 SkijaClip 用 Skia 自己的 render target 做，
+#      不再需要改 Minecraft 的附件（全工程 grep 不到这两个字段的任何引用）；
+#   2. 1.21.1 的 Framebuffer 把这两个字段本身就声明成 public int（1.20.1 是 protected），
+#      即使还要用也不需要 access widener。
+# 文件必须保留（fabric.mod.json 里声明了 accessWidener），只是不再有条目。
+# Loom 会打印一句 "Cannot remap modifiers ... in any of the targets []"，无条目时属无害提示。

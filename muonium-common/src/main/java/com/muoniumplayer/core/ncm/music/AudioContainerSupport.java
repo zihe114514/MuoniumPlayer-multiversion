@@ -19,7 +19,7 @@ import java.util.List;
 public final class AudioContainerSupport {
 
     private static final List<String> SUPPORTED_CONTAINERS =
-            Arrays.asList("flac", "wav", "mp3", "aac", "m4a", "mp4");
+            Arrays.asList("flac", "wav", "mp3", "aac", "m4a", "mp4", "ogg");
 
     private AudioContainerSupport() {
     }
@@ -34,6 +34,11 @@ public final class AudioContainerSupport {
 
     static boolean requiresAacDecode(String container) {
         return "aac".equals(container) || "m4a".equals(container) || "mp4".equals(container);
+    }
+
+    /** OGG Vorbis 不在 javax.sound 的内置解码清单里，播放前要走 {@link OggAudioDecoder} 转码。 */
+    static boolean requiresOggDecode(String container) {
+        return "ogg".equals(container);
     }
 
     /**

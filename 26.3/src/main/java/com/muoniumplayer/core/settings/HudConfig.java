@@ -408,6 +408,8 @@ public final class HudConfig {
     public static boolean worldLyricsTransEffects = false;
     /** 发光质量档：0 Standard / 1 High(默认) / 2 Ultra（TextGlow.GLOW_TIER_*）。 */
     public static int worldLyricsGlowTier = 2;
+    /** 发光形态：0 经典（逐字晕格）/ 1 辉光（行级金字塔，字芯白热）。 */
+    public static int worldLyricsGlowMode = 0;
     /** 封面代表色来源档：0 关 / 1 自动提取 / 2 手动色板。 */
     public static int worldLyricsCoverColorMode = 0;
     /** 封面渐变：歌词与翻译按色板从左到右渐变（需来源档非关）。 */
@@ -555,20 +557,26 @@ public final class HudConfig {
     public static boolean animatedCoverEnabled = true;
 
     /**
-     * HUD 设置界面用哪一层：内置界面、OneConfig 或 ModernUI。
-     * 外部那两层不可用时自动回退内置界面。
+     * HUD 设置界面用哪一层：MuoniumConfig（默认）、OneConfig 或 ModernUI。
+     *
+     * <p>内置自绘界面（{@link #HUD_EDITOR_UI_BUILTIN}）已不作为可选档位：本项目的路线是
+     * 「走魔改 OneConfig」，设置界面统一交给 MuoniumConfig。常量保留只为读档兼容 ——
+     * 老配置里存着 {@code "builtin"} 的人会被 {@link #normalizeHudEditorUi} 归到 MuoniumConfig，
+     * 不会因为找不到那个值而回退到什么奇怪的状态。</p>
      */
-    /** HUD 设置界面的选择：内置界面、OneConfig 或 ModernUI。外部界面不可用时自动回退内置界面。 */
     public static final String HUD_EDITOR_UI_BUILTIN = "builtin";
+    /** 私有化的 OneConfig（MuoniumConfig），随本 mod 自动下载，界面默认由它渲染。 */
+    public static final String HUD_EDITOR_UI_MCONFIG = "mconfig";
     public static final String HUD_EDITOR_UI_ONECONFIG = "oneconfig";
     /**
      * 交给 ModernUI 渲染。它只需要玩家装了 ModernUI 就算「可用」的一半，另一半是本版本树
      * 编入了面板实现 —— 后者取决于该 Minecraft 版本有没有对应的 ModernUI 构件。
-     * 缺任何一半都回退内置界面，见 {@code ModernUiHudBridge}。
+     * 缺任何一半都回退 MuoniumConfig，见 {@code ModernUiHudBridge}。
      */
     public static final String HUD_EDITOR_UI_MODERNUI = "modernui";
 
-    public static String hudEditorUi = HUD_EDITOR_UI_BUILTIN;
+    /** 默认走 MuoniumConfig：它是本项目的设置界面，界面的样式与条目都在那边统一维护。 */
+    public static String hudEditorUi = HUD_EDITOR_UI_MCONFIG;
 
     /**
      * 播放态由谁供给：内部播放器，还是系统里正在播的外部播放器（Windows SMTC）。
@@ -807,6 +815,7 @@ public final class HudConfig {
         worldLyricsTranslation = 1;
         worldLyricsTransEffects = false;
         worldLyricsGlowTier = 2;
+        worldLyricsGlowMode = 0;
         worldLyricsCoverColorMode = 0;
         worldLyricsCoverGradient = false;
         worldLyricsCoverPaletteRgb0 = 0xF2A7C3;
@@ -1007,6 +1016,7 @@ public final class HudConfig {
             worldLyricsAboveGround = getBoolean(o, "worldLyricsAboveGround", worldLyricsAboveGround);
             worldLyricsTranslation = clampInt(getInt(o, "worldLyricsTranslation", worldLyricsTranslation), 0, 2);
             worldLyricsTransEffects = getBoolean(o, "worldLyricsTransEffects", worldLyricsTransEffects);
+            worldLyricsGlowMode = clampInt(getInt(o, "worldLyricsGlowMode", worldLyricsGlowMode), 0, 1);
             worldLyricsGlowTier = clampInt(getInt(o, "worldLyricsGlowTier", worldLyricsGlowTier), 0, 2);
             worldLyricsCoverColorMode = clampInt(getInt(o, "worldLyricsCoverColorMode", worldLyricsCoverColorMode), 0, 2);
             worldLyricsCoverGradient = getBoolean(o, "worldLyricsCoverGradient", worldLyricsCoverGradient);
@@ -1213,6 +1223,7 @@ public final class HudConfig {
             o.addProperty("worldLyricsTranslation", worldLyricsTranslation);
             o.addProperty("worldLyricsTransEffects", worldLyricsTransEffects);
             o.addProperty("worldLyricsGlowTier", worldLyricsGlowTier);
+            o.addProperty("worldLyricsGlowMode", worldLyricsGlowMode);
             o.addProperty("worldLyricsCoverColorMode", worldLyricsCoverColorMode);
             o.addProperty("worldLyricsCoverGradient", worldLyricsCoverGradient);
             o.addProperty("worldLyricsCoverPaletteRgb0", worldLyricsCoverPaletteRgb0);
@@ -1375,10 +1386,16 @@ public final class HudConfig {
         }
     }
 
+    /**
+     * 归一到三个可用档位。
+     *
+     * <p>老配置里的 {@code "builtin"} 归到 MuoniumConfig：内置自绘界面已下线，
+     * 留着这个值会让人以为还能选回去。未知值同样归到 MuoniumConfig，因为它是默认档。</p>
+     */
     private static String normalizeHudEditorUi(String value) {
         if (HUD_EDITOR_UI_ONECONFIG.equalsIgnoreCase(value)) return HUD_EDITOR_UI_ONECONFIG;
         if (HUD_EDITOR_UI_MODERNUI.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MODERNUI;
-        return HUD_EDITOR_UI_BUILTIN;
+        return HUD_EDITOR_UI_MCONFIG;
     }
 
     /**

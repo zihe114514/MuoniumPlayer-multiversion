@@ -8,6 +8,7 @@ import org.lwjgl.openal.ALC11;
 import org.lwjgl.openal.ALCCapabilities;
 import org.lwjgl.openal.ALC;
 import org.lwjgl.openal.AL;
+import org.lwjgl.openal.EXTThreadLocalContext;
 import org.lwjgl.openal.EXTEfx;
 import org.lwjgl.openal.SOFTLoopback;
 import org.lwjgl.openal.SOFTHRTF;
@@ -25,9 +26,9 @@ import java.nio.ShortBuffer;
  *
  * <h2>设备纪律(血泪约定)</h2>
  * <p>这是本进程的<b>第二个 ALC 设备</b>(第一个是 {@link OpenALAudioDevice} 的
- * 兜底设备,第三个是 MC 自己的)。桌面允许;安卓<b>绝对禁用</b> —— 第二个设备
+ * 兜底设备,第三个是 MC 自己的)。loopback 设备不占声卡,实测安卓(FCL)可正常创建。
  * 在部分启动器的 libopenal 上是 SIGSEGV(见 OpenAlAudioDeviceStaticTest 的类注释),
- * 安卓上 {@code available()} 恒 false,湿声回退自研链。loopback 设备不占真实
+ * loopback 设备不占真实
  * 声卡,与 MC 的输出设备天然隔离。</p>
  *
  * <h2>信号流</h2>
@@ -40,14 +41,18 @@ import java.nio.ShortBuffer;
  * </pre>
  *
  * <p>音频线程独占:write/参数更新全部发生在 JSyn 音频线程(尾槽回调),
- * AL 上下文每次进入先 makeCurrent —— 与 OpenALAudioDevice 同一款绑定纪律。
- * 全程 try/Throwable,任何失败永久降级到自研湿声链,绝不带崩播放。</p>
+ * AL 上下文用 {@code alcSetThreadContext} 绑<b>线程局部</b> —— 绝不碰
+ * {@code alcMakeContextCurrent}(2026-11-04 用户实机复盘:2.4.0 在 init 里先清空
+ * 再绑进程级指针,失败路径不恢复,MC 声音线程从此拿不到当前上下文,一首歌放完
+ * 游戏全哑;主界面 Watermedia 的 ALEngine 同因建不出来,视频背景丢失)。
+ * 全程 try/Throwable,任何失败永久降级到自研湿声链,绝不带崩播放;
+ * {@code -Dmuonium.acoustics.eax=false} 可一键下线总线(照 muonium.audio.openal 先例)。</p>
  */
 public final class OpenAlReverbBus {
 
     private static final String TAG = "[MuoniumPlayer/ReverbBus] ";
 
-    /** 单例;null = 不可用(未初始化失败/安卓/loopback 扩展缺失)。 */
+    /** 单例;null = 不可用(未初始化失败/loopback 扩展缺失)。 */
     private static volatile OpenAlReverbBus instance;
 
     private long device;
@@ -72,10 +77,24 @@ public final class OpenAlReverbBus {
     private OpenAlReverbBus() {
     }
 
-    /** 初始化;失败/不支持返回 null。桌面(非安卓)才允许调用。 */
+    /** 初始化;失败/不支持返回 null。 */
     public static OpenAlReverbBus createIfAvailable(int sampleRate, int framesPerBuffer) {
         if (instance != null) {
             return instance;
+        }
+        // 安卓(OpenSL 后端)实测:loopback 的 alcRenderSamplesSOFT 静默失败,
+        // 读回全 0 → 干声被顶掉(「放音响就没音乐」)。移动端行业惯例是
+        // 效果 DSP 全自研在 PCM 流上(与输出设备解耦),不依赖厂商 OpenAL
+        // 的效果扩展 —— 安卓永远走自研射线链。
+        if (com.muoniumplayer.render.skija.SkijaNatives.mappedPlatform().startsWith("android")) {
+            System.out.println(TAG + "安卓:移动端效果 DSP 全自研(不依赖 loopback),湿声走自研射线链");
+            return null;
+        }
+        // 急停开关:哪台机器上总线另有古怪,-Dmuonium.acoustics.eax=false 一键退自研链,
+        // 不用等发版(照 AudioPlayer 里 muonium.audio.openal 的先例)。
+        if ("false".equalsIgnoreCase(System.getProperty("muonium.acoustics.eax", "true"))) {
+            System.out.println(TAG + "已被 -Dmuonium.acoustics.eax=false 显式关闭,湿声走自研链");
+            return null;
         }
         try {
             OpenAlReverbBus bus = new OpenAlReverbBus();
@@ -91,9 +110,25 @@ public final class OpenAlReverbBus {
         }
     }
 
-    /** 当前总线;null = 不可用。 */
+    /** 当前总线;null = 不可用。已熔断的实例仍会返回(见 {@link #isBroken()})。 */
     public static OpenAlReverbBus get() {
         return instance;
+    }
+
+    /**
+     * 总线是否已熔断(初始化失败后的失败路径、或运行期被判定失效)。
+     *
+     * <p>调用方必须查这一位:<b>熔断后的 {@link #render} 会直接 return,读回缓冲
+     * 保持原样(全零)</b> —— 把它当正常结果写回输出就是「整首歌没声」。
+     * 场景声学据此在每个缓冲回退到自研直射链。</p>
+     */
+    public boolean isBroken() {
+        return broken;
+    }
+
+    /** 场景侧检测到读回静音等失效模式时调用:总线永久下线回自研链。 */
+    public void markBroken() {
+        broken("外部判定失效", new IllegalStateException("readback silence"));
     }
 
     private boolean init(int sampleRate, int framesPerBuffer) {
@@ -105,7 +140,6 @@ public final class OpenAlReverbBus {
         }
         // loopback 的输出格式在 createContext 的 attribs 里一次给全(LWJGL 3.3.x
         // 没有 alcDeviceAttributeSOFT 便捷口):频率/通道布局/采样类型 + 源数量。
-        ALC10.alcMakeContextCurrent(0);
         // HRTF(= MC 设置里的『定向音频』,ALC_HRTF_SOFT):OpenAL Soft 的 mhr
         // 频谱库给 3D source 的直射加上耳廓滤波 —— 前后/上下的音色区分,
         // 『真 3D』与『左右 pan』的分水岭。默认开(游戏同名设置默认关,
@@ -127,17 +161,51 @@ public final class OpenAlReverbBus {
             return false;
         }
         ALCCapabilities alcCaps = ALC.createCapabilities(device);
-        AL.createCapabilities(alcCaps);
-        if (!SOFTLoopback.alcIsRenderFormatSupportedSOFT(device, sampleRate,
-                SOFTLoopback.ALC_STEREO_SOFT, SOFTLoopback.ALC_SHORT_SOFT)) {
-            ALC10.alcDestroyContext(context);
-            ALC10.alcCloseDevice(device);
-            device = 0;
-            context = 0;
-            System.out.println(TAG + "渲染格式(立体声 short @" + sampleRate + "Hz)不受支持");
+        // 绑定纪律(2026-11-04 实机事故的唯一解):只走 alcSetThreadContext 线程局部,
+        // 绝不碰 alcMakeContextCurrent —— 那是进程级全局指针,2.4.0 的 init 在这里
+        // 先把它清 0 再绑 loopback,中间任何一步失败都不恢复;而 MC 的专设
+        // Sound engine 线程正是靠那个进程级回退拿上下文,被清之后每一声
+        // alGenSources 都是 AL_INVALID_OPERATION(实机日志 1154 条
+        // 「Allocate new source: Invalid operation」,游戏全哑),主界面
+        // Watermedia 的视频背景同因建不出 ALEngine。缺扩展就放弃总线。
+        if (!alcCaps.ALC_EXT_thread_local_context) {
+            releaseDevice();
+            System.out.println(TAG + "缺 ALC_EXT_thread_local_context,EAX 总线下线(湿声走自研链)");
             return false;
         }
-        ALC10.alcMakeContextCurrent(context);
+        long prevCtx = EXTThreadLocalContext.alcGetThreadContext();
+        if (!EXTThreadLocalContext.alcSetThreadContext(context)) {
+            releaseDevice();
+            System.out.println(TAG + "alcSetThreadContext 失败,EAX 总线下线(湿声走自研链)");
+            return false;
+        }
+        boolean ok = false;
+        try {
+            // AL 函数指针的解析需要「本线程有当前上下文」,必须排在绑定之后。
+            AL.createCapabilities(alcCaps);
+            if (!SOFTLoopback.alcIsRenderFormatSupportedSOFT(device, sampleRate,
+                    SOFTLoopback.ALC_STEREO_SOFT, SOFTLoopback.ALC_SHORT_SOFT)) {
+                System.out.println(TAG + "渲染格式(立体声 short @" + sampleRate + "Hz)不受支持");
+                return false;
+            }
+            ok = initLocked(framesPerBuffer);
+            return ok;
+        } finally {
+            // init 收尾把线程局部还原成进入前的状态(桌面通常是 0;安卓上同一根
+            // JSyn 线程可能还持着 OpenALAudioDevice 的输出上下文,它每次 write
+            // 会自己重绑)。渲染与参数口每次进入都会重绑,这里不留绑定态。
+            EXTThreadLocalContext.alcSetThreadContext(prevCtx);
+            if (!ok) {
+                releaseDevice();
+            }
+        }
+    }
+
+    /**
+     * 绑定态下的实体创建(效果/源/滤波/缓冲)。只允许 {@link #init} 在
+     * alcSetThreadContext 之后调用;返回 false = 渲染格式不受支持等可预期下线。
+     */
+    private boolean initLocked(int framesPerBuffer) {
         IntBuffer hrtfState = BufferUtils.createIntBuffer(1);
         ALC10.alcGetIntegerv(device, SOFTHRTF.ALC_HRTF_STATUS_SOFT, hrtfState);
         System.out.println(TAG + "HRTF 状态: " + hrtfState.get(0)
@@ -192,7 +260,7 @@ public final class OpenAlReverbBus {
 
     /** 湿声总量(混响发送):0 = 静默,1 = 满发送。 */
     public void setSendGain(float gain) {
-        if (broken) {
+        if (broken || !bind()) {
             return;
         }
         try {
@@ -201,12 +269,14 @@ public final class OpenAlReverbBus {
             AL11.alSource3i(source, EXTEfx.AL_AUXILIARY_SEND_FILTER, auxSlot, 0, reverbSendFilter);
         } catch (Throwable t) {
             broken("setSendGain", t);
+        } finally {
+            unbind();
         }
     }
 
     /** 3D 源参数:世界坐标(音箱)+ 直路遮挡增益/HF。 */
     public void setSourcePose(double x, double y, double z, float directGain, float directHf) {
-        if (broken) {
+        if (broken || !bind()) {
             return;
         }
         try {
@@ -218,6 +288,8 @@ public final class OpenAlReverbBus {
             AL10.alSourcei(source, EXTEfx.AL_DIRECT_FILTER, directFilter);
         } catch (Throwable t) {
             broken("setSourcePose", t);
+        } finally {
+            unbind();
         }
     }
 
@@ -229,7 +301,7 @@ public final class OpenAlReverbBus {
                                 float erGain, float erDelay, float erPanX, float erPanY, float erPanZ,
                                 float lrGain, float lrDelay, float lrPanX, float lrPanY, float lrPanZ,
                                 float echoTime, float echoDepth) {
-        if (broken) {
+        if (broken || !bind()) {
             return;
         }
         try {
@@ -274,6 +346,8 @@ public final class OpenAlReverbBus {
             EXTEfx.alAuxiliaryEffectSloti(auxSlot, EXTEfx.AL_EFFECTSLOT_EFFECT, reverbEffect);
         } catch (Throwable t) {
             broken("setReverbParams", t);
+        } finally {
+            unbind();
         }
     }
 
@@ -284,7 +358,7 @@ public final class OpenAlReverbBus {
     public void setListener(double ex, double ey, double ez,
                             float fx, float fy, float fz,
                             float ux, float uy, float uz) {
-        if (broken) {
+        if (broken || !bind()) {
             return;
         }
         try {
@@ -296,12 +370,14 @@ public final class OpenAlReverbBus {
             AL10.alListenerfv(AL10.AL_ORIENTATION, new float[] {fx, fy, -fz, ux, uy, -uz});
         } catch (Throwable t) {
             broken("setListener", t);
+        } finally {
+            unbind();
         }
     }
 
     /** 3D 源的距离模型:1=物理线性(音箱),0=零衰减(玩家贴头)。 */
     public void setSourceRolloff(float rolloff) {
-        if (broken) {
+        if (broken || !bind()) {
             return;
         }
         try {
@@ -310,30 +386,36 @@ public final class OpenAlReverbBus {
             AL10.alSourcef(sideSource, AL10.AL_ROLLOFF_FACTOR, Math.max(0f, rolloff));
         } catch (Throwable t) {
             broken("setSourceRolloff", t);
+        } finally {
+            unbind();
         }
     }
 
     /** S 直连源的位置(与 M 同一音箱;玩家模式=听者头部)。 */
     public void setSidePose(double x, double y, double z) {
-        if (broken) {
+        if (broken || !bind()) {
             return;
         }
         try {
             AL10.alSource3f(sideSource, AL10.AL_POSITION, (float) x, (float) y, (float) -z);
         } catch (Throwable t) {
             broken("setSidePose", t);
+        } finally {
+            unbind();
         }
     }
 
     /** S 直连源的音量(宽度收缩系数;0 = 关)。 */
     public void setSideGain(float gain) {
-        if (broken) {
+        if (broken || !bind()) {
             return;
         }
         try {
             AL10.alSourcef(sideSource, AL10.AL_GAIN, Math.max(0f, Math.min(1f, gain)));
         } catch (Throwable t) {
             broken("setSideGain", t);
+        } finally {
+            unbind();
         }
     }
 
@@ -348,6 +430,9 @@ public final class OpenAlReverbBus {
      */
     public void render(short[] monoIn, short[] sideStereoIn, float[] outLR) {
         if (broken || monoIn == null || outLR == null || renderBuf == null) {
+            return;
+        }
+        if (!bind()) {
             return;
         }
         try {
@@ -401,6 +486,8 @@ public final class OpenAlReverbBus {
             }
         } catch (Throwable t) {
             broken("render", t);
+        } finally {
+            unbind();
         }
     }
 
@@ -419,6 +506,48 @@ public final class OpenAlReverbBus {
         if (!broken) {
             broken = true;
             System.out.println(TAG + where + " 失败,总线永久下线: " + t);
+            // 一次性诊断:栈顶 5 帧(定位越界/失败的具体行,定位后可精简)
+            final StackTraceElement[] st = t.getStackTrace();
+            for (int i = 0; i < Math.min(5, st.length); i++) {
+                System.out.println(TAG + "  at " + st[i]);
+            }
+        }
+    }
+
+    /**
+     * 本线程线程局部绑上我们的上下文;每个 AL 入口先调。失败 = 总线永久下线。
+     * 绝不碰 alcMakeContextCurrent:那是进程级全局指针,MC 的 Sound engine
+     * 线程靠它拿上下文(2026-11-04 实机事故),线程局部绑定 MC 抢不走、我们也
+     * 不动 MC 的。OpenALAudioDevice 同款纪律。
+     */
+    private boolean bind() {
+        if (EXTThreadLocalContext.alcSetThreadContext(context)) {
+            return true;
+        }
+        if (!broken) {
+            broken = true;
+            System.out.println(TAG + "alcSetThreadContext 失败,总线永久下线");
+        }
+        return false;
+    }
+
+    /**
+     * 用完解绑:同一根 JSyn 音频线程还要继续喂主输出(OpenALAudioDevice 路径,
+     * 它每次 write 自会重绑),不留越权绑定。
+     */
+    private void unbind() {
+        EXTThreadLocalContext.alcSetThreadContext(0);
+    }
+
+    /** 销毁设备与上下文;只允许在本线程已解绑(或从未绑定)后调用。 */
+    private void releaseDevice() {
+        if (context != 0) {
+            ALC10.alcDestroyContext(context);
+            context = 0;
+        }
+        if (device != 0) {
+            ALC10.alcCloseDevice(device);
+            device = 0;
         }
     }
 }

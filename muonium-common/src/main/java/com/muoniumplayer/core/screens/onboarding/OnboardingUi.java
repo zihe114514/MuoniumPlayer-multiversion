@@ -88,6 +88,32 @@ public final class OnboardingUi {
     }
 
     /**
+     * 引导里算「账号通不通」要看的那几家。
+     *
+     * <p>必须和 {@code AccountManagerOverlay} 那张账号表是同一份名单（那里三行六格：
+     * 网易云 / QQ / 酷狗、汽水 / 哔哩哔哩、Apple）。只轮询前三家的话，在账号管理器里登录了
+     * 汽水、哔哩哔哩或 Apple 的玩家回到引导页仍然看到「未登录」，完成页摘要也写「稍后登录」——
+     * 而他刚刚就在这个界面里登录过。</p>
+     *
+     * <p>YouTube 与 Spotify 不在这张表里：前者免登录（匿名就能搜能播），后者是元数据源、
+     * 登录态只影响搜索与本人歌单，两者都不该把一个「还没有账号」的玩家判成没配好。</p>
+     */
+    public static final MusicPlatform[] ACCOUNT_PLATFORMS = {
+            MusicPlatform.NETEASE, MusicPlatform.QQ, MusicPlatform.KUGOU,
+            MusicPlatform.QISHUI, MusicPlatform.BILIBILI, MusicPlatform.APPLE
+    };
+
+    /** 这几家里有没有任一已登录。账号页那条状态条与完成页摘要共用，免得两处各写一份清单。 */
+    public static boolean anyAccountLoggedIn() {
+        for (MusicPlatform platform : ACCOUNT_PLATFORMS) {
+            if (com.muoniumplayer.core.ncm.music.NeteaseMusicService.isLoggedIn(platform)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * 主题色 + 一个 alpha，折回一个 ARGB。
      *
      * <p>必须自己拼 alpha：主题色只带 RGB（{@code ACCENT} 就是 {@code 0x00RRGGBB}），
@@ -101,8 +127,31 @@ public final class OnboardingUi {
     private static final Map<CFontRenderer, GlyphInkMetrics> PARTY_EM_SQUARE =
             new IdentityHashMap<CFontRenderer, GlyphInkMetrics>();
     private static float stepAlpha = 1.0f;
+    /**
+     * 当前这一页的排版档。
+     *
+     * <p>六页的签名是 {@code render(controller, x, y, width, height, mouseX, mouseY)}，为了不把
+     * 「字号」再塞成第五个参数（那会牵动六个文件与全部调用点），档位挂在绘制上下文里，
+     * 由 {@link OnboardingScreen} 在每次 {@code render} 前后成对设置。和 {@link #stepAlpha}
+     * 是同一套写法、同一个生命周期，所以转场时新旧两页各自带着自己那一档画，不会串。</p>
+     */
+    private static OnboardingMetrics metric = OnboardingMetrics.forTier(OnboardingMetrics.Tier.REGULAR);
 
     private OnboardingUi() {
+    }
+
+    public static void beginMetric(OnboardingMetrics metrics) {
+        metric = metrics == null ? OnboardingMetrics.forTier(OnboardingMetrics.Tier.REGULAR) : metrics;
+    }
+
+    /** 恢复成常规档。{@code OnboardingScreen} 那条 {@code finally} 里调，和 {@code endStep} 成对。 */
+    public static void endMetric() {
+        metric = OnboardingMetrics.forTier(OnboardingMetrics.Tier.REGULAR);
+    }
+
+    /** 当前这一页该用的排版档。六页从这里取字号与间距，不再各自写 {@code pf12} / {@code +52}。 */
+    public static OnboardingMetrics metric() {
+        return metric;
     }
 
     public static void beginStep(float alpha) {
@@ -198,15 +247,20 @@ public final class OnboardingUi {
     /**
      * 画一页的表头：eyebrow + 标题 + 副标题。
      *
-     * <p>{@code y} 是内容带的顶，正文自己从 {@code y + }{@link #BODY_OFFSET} 起排。</p>
+     * <p>{@code y} 是内容带的顶，正文自己从 {@link #metric()}{@code .bodyOffset} 起排。
+     * 字号与三段偏移全部取自当前档位：大屏标题升到 pf40/pf50，极小窗口收到 pf20 并把副标题整段收掉
+     * —— 副标题那一长句在 272 宽的带子里本来就画不全，留着它只会压到下面的卡片上。</p>
      */
     public static void drawHeader(String eyebrow, String title, String subtitle,
                                   double x, double y) {
-        if (eyebrow != null && !eyebrow.isEmpty()) {
-            drawEyebrow(eyebrow, x, y + EYEBROW_OFFSET);
+        OnboardingMetrics m = metric();
+        if (eyebrow != null && !eyebrow.isEmpty() && m.tier.showsSubtitle()) {
+            drawEyebrow(eyebrow, x, y + m.eyebrowOffset);
         }
-        drawText(FontManager.pf34bold, title, x, y + TITLE_OFFSET, textPrimary());
-        drawText(FontManager.pf14, subtitle, x, y + SUBTITLE_OFFSET, textSecondary());
+        drawText(m.titleFont(), title, x, y + m.titleOffset, textPrimary());
+        if (subtitle != null && !subtitle.isEmpty() && m.tier.showsSubtitle()) {
+            drawText(m.subtitleFont(), subtitle, x, y + m.subtitleOffset, textSecondary());
+        }
     }
 
     /**
@@ -226,6 +280,75 @@ public final class OnboardingUi {
             return 0.0;
         }
         return font.getStringWidthD(text);
+    }
+
+    /**
+     * 这段文字在 {@code available} 宽里放不放得下。
+     *
+     * <p>卡片里的文字位置过去是写死的（{@code x + 52}、{@code x + width * .5}），而卡片宽度是
+     * 跟着容器缩的——窄到某个程度，两段文字就<b>自己压到自己身上</b>。所以凡是「一段字的右边
+     * 还有另一段字 / 一个按钮」的地方，都先问一句这里放不放得下，放不下就走降级：
+     * 收掉副标题、缩短文案、或者整段不画。宁可少一行字，也不许两行叠在一起。</p>
+     */
+    public static boolean fits(CFontRenderer font, String text, double available) {
+        return available > 0 && textWidth(font, text) <= available;
+    }
+
+    /**
+     * 把 {@code text} 截到 {@code maxWidth} 里，超出部分换成省略号。
+     *
+     * <p>按<b>实测宽度</b>逐字退，不是按字符数：中文一个字 12 逻辑像素、英文一个字母 6 个，
+     * 按字数切会让「YouTube Music」这种串被切得只剩一半却还留着三个字的空。</p>
+     *
+     * <p>退到最后一个字符都放不下时返回空串——调用方据此整段不画，而不是画一个孤零零的「…」。</p>
+     */
+    public static String ellipsize(CFontRenderer font, String text, double maxWidth) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        if (maxWidth <= 0) {
+            return "";
+        }
+        // 字体不在位时量不出宽度，也就没法截。返回空串而不是原样放行：
+        // 原样放行在真机上等于「这行一定会画到边界外」，而没有字体的那一帧
+        // 本来也画不出任何东西，收掉它不会少看到什么。
+        if (font == null) {
+            return "";
+        }
+        if (font.getStringWidthD(text) <= maxWidth) {
+            return text;
+        }
+        double ellipsis = font.getStringWidthD("…");
+        double budget = maxWidth - ellipsis;
+        if (budget <= 0) {
+            return "";
+        }
+        int end = text.length();
+        while (end > 0 && font.getStringWidthD(text.substring(0, end)) > budget) {
+            end--;
+        }
+        // 退到一半正好停在代理对中间时再退一格，免得切出一个孤立的高位代理画成方块。
+        if (end > 0 && Character.isHighSurrogate(text.charAt(end - 1))) {
+            end--;
+        }
+        return end <= 0 ? "" : text.substring(0, end) + "…";
+    }
+
+    /**
+     * 画一行「左边一段、右边还有东西」的文字，并保证它们不相撞。
+     *
+     * @param rightReserve 右边要留出来的宽度（按钮、图标、另一段文字）
+     * @return 真的画了才 true；空间不够（截完什么都不剩）时返回 false，调用方可以改走别的表达
+     */
+    public static boolean drawTextReserving(CFontRenderer font, String text,
+                                            double x, double y, double width, double rightReserve,
+                                            int color) {
+        String fitted = ellipsize(font, text, width - rightReserve);
+        if (fitted.isEmpty()) {
+            return false;
+        }
+        drawText(font, fitted, x, y, color);
+        return true;
     }
 
     /**
@@ -407,6 +530,160 @@ public final class OnboardingUi {
             return;
         }
         drawPartyIcon(PartyIcons.CHECK, centerX, centerY, box, color);
+    }
+
+    // ------------------------------------------------ 统一的卡片
+    //
+    // 六页过去各画各的：音源页是两列网格、账号页是整宽三行、Automix 页是整宽三行带按钮、
+    // 完成页是一行摘要条。它们的内缩、圆角、选中态、hover 亮度都不一样，翻页时右侧那一块
+    // 整片在换形状 —— 玩家读起来像「换了一个界面」，而不是「同一页换了个话题」。
+    //
+    // 下面这一组把「一张卡」定死：底色 / 描边 / 圆角 / 选中态 / 悬停 / 图标底盘 / 两行文字的
+    // 位置，全部只在这里算一次。六页只决定「这一页有几张卡、每张写什么」。
+
+    /** 一张卡的三种状态。 */
+    public enum CardState {
+        /** 没选中、没悬停。 */
+        IDLE,
+        /** 鼠标悬停，但没选中。 */
+        HOVER,
+        /** 选中（当前值）。 */
+        SELECTED,
+        /** 不可选（手机档的真玻璃主题）。灰掉，点了不生效。 */
+        LOCKED
+    }
+
+    /**
+     * 画一张卡的外壳，返回它内部「内容区」的矩形。
+     *
+     * <p>返回 {@code double[]}{@code {contentX, contentY, contentWidth, contentHeight}}：
+     * 卡里的图标与文字都从这四个数推，不再各自写 {@code x + 13} / {@code rowY + 12} 这种字面量。
+     * 卡高变（跟排版档走）时里面的东西会自动跟着居中，不会像过去那样「卡变高了，字还贴在上沿」。</p>
+     *
+     * @param accent 这张卡的代表色；选中与悬停时用它描边，{@code IDLE} 时只用于图标
+     */
+    public static double[] card(double x, double y, double width, double height,
+                                CardState state, int accent) {
+        if (state == null) {
+            state = CardState.IDLE;
+        }
+        double radius = CARD_RADIUS;
+        int fill;
+        int border;
+        double borderWidth;
+        switch (state) {
+            case SELECTED:
+                // 选中态：一小片强调色底 + 一道实描边。不整块填满强调色——
+                // 六张卡里同时出现两三个整块色，那一页就只剩颜色没有内容了。
+                fill = colorWithAlpha(accent, 42);
+                border = colorWithAlpha(accent, 225);
+                borderWidth = 1.6;
+                break;
+            case HOVER:
+                fill = surfaceHover();
+                border = colorWithAlpha(accent, 150);
+                borderWidth = 1.1;
+                break;
+            case LOCKED:
+                fill = surface();
+                border = hairline();
+                borderWidth = 1;
+                break;
+            default:
+                fill = surface();
+                border = hairline();
+                borderWidth = 1;
+                break;
+        }
+        roundedRect(x, y, width, height, radius, fill);
+        roundedOutline(x, y, width, height, radius, borderWidth, border);
+        // 内缩：卡高越大内缩越多，大屏上卡片不会「一张大纸上一堆小字挤在左上角」。
+        double inset = clampVar(height * .16, 8, 18);
+        return new double[]{x + inset, y + inset, width - inset * 2, height - inset * 2};
+    }
+
+    /**
+     * 画卡里的图标底盘 + 图标，返回底盘右侧文字该从哪儿起。
+     *
+     * @param box 底盘边长
+     * @param content {@link #card} 返回的那个内容区
+     */
+    public static double cardIcon(String lucide, String fallback, double[] content,
+                                  double box, int accent, CardState state) {
+        double centerY = content[1] + content[3] * .5;
+        double alphaScale = state == CardState.LOCKED ? .45f : 1f;
+        roundedRect(content[0], centerY - box * .5, box, box, box * .3,
+                colorWithAlpha(accent, (int) ((state == CardState.SELECTED ? 86 : 42) * alphaScale)));
+        drawIcon(lucide, fallback, content[0] + box * .5, centerY, box * .62,
+                state == CardState.LOCKED ? textMuted()
+                        : (state == CardState.SELECTED ? accent : textSecondary()));
+        return content[0] + box + 12;
+    }
+
+    /**
+     * 卡里的两行字：主标题 + 副标题。
+     *
+     * <p>两行都按内容区右边界截断，主标题也不会压到卡片右边的角标（{@code rightReserve}）。
+     * 大字号档上主标题自带的字身比行距高，所以基线用 {@code textH * .5} 现算，不写死 +12。</p>
+     *
+     * @param rightReserve 右侧要留出来的宽度（勾选角标、按钮、数值）
+     * @return 副标题真的画了才 true（紧凑档或放不下时它是被收掉的）
+     */
+    public static boolean cardText(double[] content, double textX, String title, String subtitle,
+                                   double rightReserve, CardState state) {
+        com.muoniumplayer.core.rendering.font.CFontRenderer titleFont = metric().labelBold();
+        com.muoniumplayer.core.rendering.font.CFontRenderer subFont = metric().bodyFont();
+        double available = content[0] + content[2] - textX - rightReserve;
+        boolean hasSubtitle = metric().tier.showsCardDetail() && subtitle != null && !subtitle.isEmpty();
+        int titleColor = state == CardState.LOCKED ? textMuted()
+                : (state == CardState.SELECTED ? textPrimary() : textSecondary());
+        int subColor = state == CardState.SELECTED ? textSecondary() : textMuted();
+
+        double titleH = OnboardingMetrics.lineHeight(titleFont);
+        double subH = OnboardingMetrics.lineHeight(subFont);
+        double total = hasSubtitle ? titleH + subH : titleH;
+        // 两行整组在内容区里垂直居中；只有一行时也居中，而不是贴着上沿。
+        double top = content[1] + (content[3] - total) * .5;
+
+        drawText(titleFont, ellipsize(titleFont, title, available), textX, top, titleColor);
+        if (hasSubtitle) {
+            drawText(subFont, ellipsize(subFont, subtitle, available), textX, top + titleH, subColor);
+        }
+        return hasSubtitle;
+    }
+
+    /**
+     * 卡右端那枚勾选角标（选中时才画）。
+     *
+     * <p>单独一个入口，是因为三处（音源、账号、Automix）过去各画各的：有的是勾、有的是箭头、
+     * 有的干脆没有。选中态在整页里只该有一种长相。</p>
+     */
+    public static void cardSelectedBadge(double[] content, int accent, double box) {
+        double centerX = content[0] + content[2] - box * .5;
+        double centerY = content[1] + content[3] * .5;
+        double radius = box * .5;
+        roundedRect(centerX - box * .5, centerY - box * .5, box, box, radius,
+                colorWithAlpha(accent, 210));
+        drawCheckBadge(centerX, centerY, box * .62, 0xFF0B0C11);
+    }
+
+    /** 卡里的开关（沉浸感那一页用）：一枚胶囊，开是强调色 + 圆点在右。 */
+    public static void cardSwitch(double[] content, boolean on, int accent) {
+        double h = Math.min(20, content[3] * .62);
+        double w = h * 1.75;
+        double x = content[0] + content[2] - w;
+        double y = content[1] + (content[3] - h) * .5;
+        roundedRect(x, y, w, h, h * .5, on ? colorWithAlpha(accent, 225) : surfaceHover());
+        if (!on) {
+            roundedOutline(x, y, w, h, h * .5, 1, hairline());
+        }
+        double knob = h - 4;
+        double knobX = on ? x + w - knob - 2 : x + 2;
+        roundedRect(knobX, y + 2, knob, knob, knob * .5, on ? 0xFFFFFFFF : textMuted());
+    }
+
+    private static double clampVar(double value, double low, double high) {
+        return Math.max(low, Math.min(high, value));
     }
 
     public static String stepIcon(OnboardingStep step) {

@@ -1769,6 +1769,23 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     private double pendingClickX;
     private double pendingClickY;
     private int pendingClickButton;
+    /**
+     * 按下瞬间「搜索联想遮挡层是否可见」的快照（{@link NavigateBar#suggestionLayerVisibleNow()}）。
+     *
+     * <p>联想面板的状态是每帧变的：异步结果到达、入场动画、提交搜索都会让它消失/变形，
+     * 而触屏时代的分发隔着按下→松手一整段时间。可见性若在松手时现查，「按下面板在、
+     * 松手面板没了」的那一下点击就会从联想层漏过去，穿透到底下的歌单条目/音乐来源卡片。
+     * 几何照旧用松手时刻的（行还点得中），唯独可见性裁决用按下时的快照。</p>
+     */
+    private boolean pendingClickSuggestionVisible;
+    /**
+     * 按下瞬间悬停的联想行下标（{@link NavigateBar#suggestionHoveredRowNow()}）。
+     *
+     * <p>面板内容在按下→松手之间被异步新结果换过一茬时，松手时刻的几何命中会落空
+     * （{@code suggestionRowAt} 返回 -1），表现就是「点了联想词没反应」。用户瞄准的是
+     * 按下时看到的那一行，用它兜底。</p>
+     */
+    private int pendingClickSuggestionRow = -1;
 
     /**
      * 触屏时代的点击时机：按下只记账，松手才分发。
@@ -1802,22 +1819,40 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         if (TouchSettings.ENABLED) {
             // 按下只记账（坐标已换算到布局空间，与 dispatchClick 内部口径一致）；
-            // 松手沿上由 TouchGestures 判定这是点按还是拖动滚动。
+            // 松手沿上由 TouchGestures 判定这是点按还是拖动滚动。联想可见性与悬停行
+            // 在此拍快照：它是每帧都可能消失/换内容的层，松手时现查会把「按下面板在、
+            // 松手面板没了/换了」的点击漏给下层（穿透误点）或落空（点了没反应）。
+            // 悬停行用的是本方法刚换算好的布局坐标——绝不让联想层自己从裸 Mouse 重推
+            // （compat Mouse.getY() 是底原点 framebuffer 轴，自己换算必翻错方向）。
             this.pendingClickActive = true;
             this.pendingClickX = mouseX;
             this.pendingClickY = mouseY;
             this.pendingClickButton = mouseButton;
+            this.pendingClickSuggestionVisible = this.playlistsPanel != null
+                    && this.playlistsPanel.suggestionLayerVisibleNow();
+            this.pendingClickSuggestionRow = this.pendingClickSuggestionVisible
+                    ? this.playlistsPanel.suggestionHoveredRowAt(mouseX, mouseY) : -1;
             return;
         }
-        dispatchClick(mouseX, mouseY, mouseButton);
+        // 即时路径：按下即分发，可见性现查（与延迟路径的快照语义等价——此刻就是「按下时」）。
+        dispatchClick(mouseX, mouseY, mouseButton,
+                this.playlistsPanel != null && this.playlistsPanel.suggestionLayerVisibleNow(),
+                this.playlistsPanel == null ? -1
+                        : this.playlistsPanel.suggestionHoveredRowAt(mouseX, mouseY));
     }
 
     /**
      * 真正的点击分发：原 {@code mouseClicked} 的完整主体（模态浮层优先级、队列/联想前置
      * 消费、侧键导航、歌词搜索页的换轴换算）原样保留。「按下即分发」（功能关闭时的回滚
      * 路径）与「松手补发」共用这一段，保证两条路径的行为永远一致。
+     *
+     * @param suggestionVisible 联想遮挡层的可见性裁决：延迟分发路径传按下时拍的快照，
+     *                          即时路径传现查值（按下即松手，两者等价）
+     * @param suggestionRow     按下时悬停的联想行下标：面板内容在按压期间被异步结果
+     *                          换茬时，松手的几何命中会落空，用它兜底选中
      */
-    private void dispatchClick(double mouseX, double mouseY, int mouseButton) {
+    private void dispatchClick(double mouseX, double mouseY, int mouseButton,
+                               boolean suggestionVisible, int suggestionRow) {
         if (this.modelInstallNoticeOverlay != null) {
             this.modelInstallNoticeOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
             return;
@@ -1907,9 +1942,12 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             }
             // 搜索联想下拉遮住了侧栏的歌单条目与音乐来源卡片，同样必须前置消费。
             // 光靠组件树内部「命中即 return」管不住：下面这三行是连续调用、没有早退，
-            // 而 onMouseClickReceived 返回 void，谁也拿不到「已经被吃掉」这个信息。
+            // 而 onMouseClickReceived 返回的是 void，谁也拿不到「已经被吃掉」这个信息。
+            // 可见性用按下时拍的快照（dispatchClick 的入参），防「按下面板在、松手面板
+            // 没了」的时间窗里点击从联想层漏下去。
             if (this.playlistsPanel != null
-                    && this.playlistsPanel.consumeSuggestionClick(mouseX, mouseY, mouseButton)) {
+                    && this.playlistsPanel.consumeSuggestionClick(mouseX, mouseY, mouseButton,
+                    suggestionVisible, suggestionRow)) {
                 return;
             }
             this.basePanel.onMouseClickReceived(mouseX, mouseY, mouseButton);
@@ -1962,7 +2000,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         if (state == 0 && !TouchGestures.get().consumeTap()) {
             return;
         }
-        dispatchClick(this.pendingClickX, this.pendingClickY, state);
+        // 可见性用按下时的快照，不是松手时的现值——那正是穿透的时间窗。
+        dispatchClick(this.pendingClickX, this.pendingClickY, state,
+                this.pendingClickSuggestionVisible, this.pendingClickSuggestionRow);
     }
 
     /** 播放器主题的颜色语义；具体颜色由 {@link NCMTheme} 提供。 */

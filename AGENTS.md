@@ -8,7 +8,7 @@
 ## 仓库一句话
 
 MuoniumPlayer：多版本 Minecraft **纯客户端**音乐 mod（网易云 / QQ / 酷狗 / 汽水 / YouTube / Spotify / Apple…）。
-五棵版本树 × 各 2 个加载器 = **10 个独立 Gradle 构建**；共享代码只有一份，改一处五树生效。
+七棵版本树（Fabric 7 + NeoForge 6 + Forge 1 = **14 个独立 Gradle 构建**）；共享代码只有一份，改一处七树生效。
 
 mod id 是 `muonium`。
 
@@ -18,8 +18,8 @@ mod id 是 `muonium`。
 | --- | --- | --- |
 | `muonium-common/` | 五树共享主体（源码 ~830 + 资源 + 测试 ~110），由各树 build.gradle 挂载，**不单独构建** | ✅ 守铁律 |
 | `1.20.1 recode/` | 版本树（Fabric + Forge）。目录名带空格，shell 里记得引号 | ✅ |
-| `1.21.1/` `1.21.11 recode/` | 版本树（Fabric + NeoForge） | ✅ |
-| `26.2/` `26.3/` | 版本树（Fabric + NeoForge）。**26.3 是主开发树** | ✅ |
+| `1.21.1/` `1.21.10/` `1.21.11 recode/` | 版本树（Fabric + NeoForge） | ✅ |
+| `26.1.2/` `26.2/` `26.3/` | 版本树（Fabric + NeoForge）。**26.3 是主开发树** | ✅ |
 | `<树>/src/main/java/…/` | 树内层：入口 `MuoniumPlayerClient`、`mixin/`、`compat/`（版本差异层） | ✅ |
 | `<树>/fabric/` `<树>/forge|neoforge/` | 加载器外壳子工程 | ✅ |
 | `mpparty-common/` | 一起听客户端共用源码，同 muonium-common 方式挂载 | ✅ |
@@ -52,10 +52,11 @@ mod id 是 `muonium`。
 | --- | --- | --- | --- | --- |
 | `1.20.1 recode` | 1.20.1 | 17 | Fabric + Forge | Forge 保持 `mods.toml` + ForgeGradle 6 模式 |
 | `1.21.1` | 1.21.1 | 21 | Fabric + NeoForge | |
+| `1.21.10` | 1.21.10 | 21 | Fabric + NeoForge | GUI/外壳是 1.21.1 世代、GL/输入已是 1.21.9 世代的过渡档 |
 | `1.21.11 recode` | 1.21.11 | 21 | Fabric + NeoForge | |
-| `26.2` / `26.3` | 26.x | 25 | Fabric + NeoForge | 官方 jar 无混淆、无 `client_mappings`；源码直接官方名，Loom **不重映射** |
+| `26.1.2` / `26.2` / `26.3` | 26.x | 25 | Fabric + NeoForge | 官方 jar 无混淆、无 `client_mappings`；源码直接官方名，Loom **不重映射** |
 
-- 五棵树是**五个独立 Gradle 构建**（JDK / 映射 / 插件各不同），禁止合并成一个多项目构建；
+- 七棵树是**七个独立 Gradle 构建**（JDK / 映射 / 插件各不同），禁止合并成一个多项目构建；
   守护进程 JDK 已按树钉死在 `org.gradle.java.home`（1.20.1~1.21.11 → ms-21，26.x → temurin-25）。
 - Fabric 全树用 `loom.officialMojangMappings()`：**写 mojmap 名，别写 Yarn 名**。
 - `mixin/` 注入点本就各树一份（manifest 里的 ONLY），别试图共享。
