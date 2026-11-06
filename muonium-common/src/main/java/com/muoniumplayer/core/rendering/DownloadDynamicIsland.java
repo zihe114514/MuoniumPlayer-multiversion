@@ -511,6 +511,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         publishNotice(IslandNoticeType.VOLUME, "音乐音量", safePercent + "%");
     }
 
+    /** 模板预设的反馈（套用 / 撤销 / 复制分享码）。走 STYLE 通道：整套风格的切换，图标与「灵动岛样式」同族。 */
+    public static void showPresetNotice(String title, String detail) {
+        publishNotice(IslandNoticeType.STYLE, safeNoticeValue(title, "模板预设"), safeNoticeValue(detail, "已完成"));
+    }
+
     /** 「播放时压掉原版音乐」开关的反馈。走 VOLUME 通道：这是音量域的偏好，图标同族。 */
     public static void showVanillaMusicDucker(boolean enabled) {
         publishNotice(IslandNoticeType.VOLUME, enabled ? "已压掉游戏音乐" : "游戏音乐已恢复",
