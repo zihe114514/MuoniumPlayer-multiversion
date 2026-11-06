@@ -3,9 +3,7 @@ package com.muoniumplayer.compat.mc;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.muoniumplayer.core.lyrics3d.LyricGlyphAtlas;
 import com.muoniumplayer.core.rendering.font.TextGlow;
@@ -123,6 +121,23 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 光晕融入、暗背景上浮出。beaconBeam(rl,true) 工厂自带的是 TRANSLUCENT alpha
      * 混合（信标光柱本体），不是加色 —— 晕格用它会在亮背景上消失（游戏实测）。
      * RenderType.create(String, RenderSetup) 包私有 → RenderTypeAccessors Invoker。
+     *
+     * <h2>必须从 BEACON_BEAM_SNIPPET 起手（发光整层不可见的根因修复）</h2>
+     * <p>早先这里用<b>空 builder</b> 手搓整条管线，把原版 snippet 里的
+     * {@code MATRICES_FOG_SNIPPET}（DynamicTransforms / Projection / Fog 三个
+     * uniform block）与 {@code withSampler("Sampler0")} 全部丢了。后果不是「发光变淡」
+     * 而是<b>整层不画</b>，机制在 gl 后端（javap 核对 1.21.11 jar）：</p>
+     * <ul>
+     *   <li>{@code GlProgram.setupUniforms} 只给<b>管线声明过的</b> uniform / sampler 建槽；
+     *       没声明的一律跳过（哪怕 shader 里在用）；</li>
+     *   <li>{@code RenderType.draw} 里 {@code setUniform("DynamicTransforms", …)} 是无条件的，
+     *       但它只把值放进 HashMap 标 dirty，<b>不校验管线是否需要</b>；真正消费它在
+     *       {@code GlCommandEncoder.trySetup}，而那里遍历的是<b>建出来的槽</b>；</li>
+     *   <li>于是 {@code ModelViewMat} / {@code ProjMat} 永不绑定（矩阵全零 → 顶点塌到原点），
+     *       {@code Sampler0} 永不绑定（texture() 采到 0 号空白纹理）。</li>
+     * </ul>
+     * <p>原版 {@code BEACON_BEAM_TRANSLUCENT} 的正规做法就是「以 snippet 为底，只覆盖
+     * blend / depthWrite」。这里照做 —— snippet 已含顶点格式 BLOCK + QUADS，不必重复声明。</p>
      */
     private static final java.util.concurrent.ConcurrentHashMap<Identifier, net.minecraft.client.renderer.rendertype.RenderType>
             GLOW_TYPES = new java.util.concurrent.ConcurrentHashMap<>();
@@ -131,13 +146,12 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         return GLOW_TYPES.computeIfAbsent(rl, r -> com.muoniumplayer.mixin.RenderTypeAccessors.muonium$create(
                 "muonium_lyrics_glow",
                 net.minecraft.client.renderer.rendertype.RenderSetup.builder(
-                                com.mojang.blaze3d.pipeline.RenderPipeline.builder()
+                                com.mojang.blaze3d.pipeline.RenderPipeline.builder(
+                                                net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_SNIPPET)
                                         .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
-                                        .withVertexShader("core/rendertype_beacon_beam")
-                                        .withFragmentShader("core/rendertype_beacon_beam")
-                                        .withVertexFormat(DefaultVertexFormat.BLOCK, VertexFormat.Mode.QUADS)
                                         .withBlend(com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING)
                                         .withDepthTestFunction(com.mojang.blaze3d.platform.DepthTestFunction.NO_DEPTH_TEST)
+                                        .withDepthWrite(false)
                                         .withColorWrite(true, false)
                                         .withCull(false)
                                         .build())
