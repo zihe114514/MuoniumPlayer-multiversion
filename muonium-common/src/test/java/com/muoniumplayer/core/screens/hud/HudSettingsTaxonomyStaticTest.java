@@ -40,7 +40,7 @@ class HudSettingsTaxonomyStaticTest {
      * 与 26.x 版注释同款。
      */
     private static final List<Integer> COUNTS =
-            Arrays.asList(28, 30, 9, 25, 41, 38, 6, 3);
+            Arrays.asList(28, 30, 9, 25, 41, 34, 6, 3);
 
     private static String versionName() {
         return ProjectPaths.versionRoot().getFileName().toString();
@@ -98,10 +98,10 @@ class HudSettingsTaxonomyStaticTest {
      *  四个 toggle；开关与全部参数存共享层 CineSettings 自己的 cine.json，不经
      *  HudConfig；后九条仅在总开关打开时可见）—— 播放页 31 → 41 条，165 → 175。
      *  不新开分类页：ModernUI 分类条横排 8 格已满（见下方封顶测试）。
-     *  2026-11-06 「界面与主题」页顶部新增「模板预设」组 5 条（打开面板 action + 简约 / 撤销 /
-     *  复制外观分享码 / 粘贴并套用四颗 button；逻辑在共享层 PresetQuickActions）—— 界面与主题页
-     *  33 → 38 条，175 → 180。同样不新开分类页。 */
-    private static final int TOTAL = 180;
+     *  2026-11-06 「界面与主题」页顶部新增「模板预设」组 1 条（打开模板预设）。内置界面的入口是
+     *  标题栏的魔法棒（弹窗开在设置页里），这一行在那里自动藏起，只给 MuoniumConfig / OneConfig /
+     *  ModernUI 兼底 —— 界面与主题页 33 → 34 条，175 → 176。同样不新开分类页。 */
+    private static final int TOTAL = 176;
 
     @Test
     @DisplayName("分类就是这 7 页，顺序与每页条目数都不许悄悄变")

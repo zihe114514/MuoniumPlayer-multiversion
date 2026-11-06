@@ -1738,19 +1738,12 @@ public final class HudSettingsModel {
                                             public void run() { cycleStrengthStep(); }
                                         }, STRENGTH_STEPS, HudSettingsModel::setStrengthStep))),
 
-                new Category("界面与主题", "模板预设、主题皮肤、频谱、真玻璃和播放器来源", 0xFFE59AC8, HudSettingsIcons.NOTE,
-                        // 模板预设快捷入口：逻辑全在共享层 PresetQuickActions，七棵树这一组逐字相同。
+                new Category("界面与主题", "主题皮肤、频谱、真玻璃和播放器来源", 0xFFE59AC8, HudSettingsIcons.NOTE,
+                        // 模板预设：内置界面的入口是标题栏那根魔法棒（弹窗开在设置页里），这一行在那里自动藏起；
+                        // MuoniumConfig / OneConfig / ModernUI 没有那排标题栏按钮，靠它兜底。逻辑在共享层，七树逐字相同。
                         new Group("模板预设", HudSettingsIcons.SPARKLE,
-                                action(PresetQuickActions::openPanelLabel, PresetQuickActions.OPEN_PANEL_HINT,
-                                        PresetQuickActions::openPanel),
-                                button(PresetQuickActions::minimalLabel, PresetQuickActions.MINIMAL_HINT,
-                                        PresetQuickActions::applyMinimal, () -> true),
-                                button(PresetQuickActions::undoLabel, PresetQuickActions.UNDO_HINT,
-                                        PresetQuickActions::undo, () -> true),
-                                button(PresetQuickActions::copyLabel, PresetQuickActions.COPY_HINT,
-                                        PresetQuickActions::copyAppearance, () -> true),
-                                button(PresetQuickActions::pasteLabel, PresetQuickActions.PASTE_HINT,
-                                        PresetQuickActions::pasteAndApply, () -> true)),
+                                action(PresetQuickActions.OPEN_PANEL_LABEL, PresetQuickActions.OPEN_PANEL_HINT,
+                                        PresetQuickActions::openPanel, PresetQuickActions::listedInModel)),
                         new Group("音乐频谱", HudSettingsIcons.NOTE,
                                 toggle("音乐频谱", "频谱总开关；隐藏时停止采样，不影响播放。",
                                         () -> HudConfig.spectrumEnabled,
