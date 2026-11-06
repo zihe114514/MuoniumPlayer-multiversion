@@ -82,9 +82,10 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
     /** 每米能量衰减系数(近似 26.3 标准):{低,中,高}。 */
     private static final double[] AIR_ENERGY_PER_METER = {0.9990, 0.9970, 0.9920};
 
-    /** 站定缓存(仅采样线程触碰):上次几何 + 上次眼位/维度 + 采样计数。 */
+    /** 站定缓存(仅采样线程触碰):上次几何 + 上次原点/眼位/维度 + 采样计数。 */
     private static GeomStats cachedStats;
-    private static Vec3 cachedEye;
+    private static Vec3 cachedOrigin;
+    private static Vec3 cachedEar;
     private static Level cachedWorld;
     private static int capturesSinceCast;
 
@@ -106,7 +107,8 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         if (world == null || client.player == null) {
             // 退出世界回主菜单:静态缓存别钉住已卸载的 ClientLevel(整包 chunk)
             cachedStats = null;
-            cachedEye = null;
+            cachedOrigin = null;
+            cachedEar = null;
             cachedWorld = null;
             capturesSinceCast = 0;
             return null;
@@ -132,17 +134,24 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         if (!AcousticsRuntime.wantsEnclosure()) {
             stats = GeomStats.NONE;
             cachedStats = null;
-            cachedEye = null;
+            cachedOrigin = null;
+            cachedEar = null;
             cachedWorld = null;
             capturesSinceCast = 0;
         } else {
-            final boolean moved = cachedEye == null || cachedWorld != world
-                    || cachedEye.distanceToSqr(origin) > STATIONARY_SQ;
+            // 两个点都要看:原点决定射线从哪儿发出,眼位决定「可达」回测的
+            // 终点与声像 —— 音箱模式下玩家走动时原点不动、但整张抽头的
+            // 延迟/可达性都在变,只看原点会把几何冻结到下一个 5s 强制重算。
+            final boolean moved = cachedOrigin == null || cachedEar == null
+                    || cachedWorld != world
+                    || cachedOrigin.distanceToSqr(origin) > STATIONARY_SQ
+                    || cachedEar.distanceToSqr(eye) > STATIONARY_SQ;
             capturesSinceCast++;
             if (moved || cachedStats == null || capturesSinceCast >= STALE_EVERY) {
                 stats = castField(world, origin, eye);
                 cachedStats = stats;
-                cachedEye = origin;
+                cachedOrigin = origin;
+                cachedEar = eye;
                 cachedWorld = world;
                 capturesSinceCast = 0;
             } else {
@@ -291,7 +300,10 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
             double retention = 1;
 
             for (int bounce = 0; bounce <= MAX_BOUNCES; bounce++) {
-                BlockHitResult hit = rayCast(world, origin, origin.add(dir.scale(RAY_RANGE)), ignore);
+                // 起点必须是 from(上一次的反弹落点),不是 origin —— 从第二弹
+                // 起方向已经是反射后的,起点还钉在声源的话命中点与真实几何
+                // 无关:段长/累计路径/入桶时刻/反射率统计全部失真。
+                BlockHitResult hit = rayCast(world, from, from.add(dir.scale(RAY_RANGE)), ignore);
                 if (hit.getType() == HitResult.Type.MISS) {
                     break; // 逃逸到开阔:这条方向没有更多的反射可记
                 }
@@ -325,7 +337,11 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
                     final double returnDist = surface.distanceTo(ear);
                     final double path = outPath + returnDist;
                     if (tapCount < tapCapacity) {
-                        tapDelays[tapCount] = (float) (path / SPEED_OF_SOUND);
+                        // 时序相对化:渲染里直达声零延迟,抽头必须按「全路径 −
+                        // 直达路程」交付,否则远处音箱的每条早反射都凭空晚
+                        // directDist/343 秒(ER 与直达/尾部的时间结构错乱)。
+                        // 玩家即声源时 directBase=0,与修前逐值一致。
+                        tapDelays[tapCount] = (float) ((path - directBase) / SPEED_OF_SOUND);
                         tapGains[tapCount] = (float) (retention * 2.0 / path);
                         final double ax = ear.x - surface.x;
                         final double az = ear.z - surface.z;
@@ -336,9 +352,12 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
                     }
 
                     // 多频带能量入桶:能量 = 幅度保留² × 分频带反射率 × 空气吸收
-                    // × 几何 1/距离²;时间 = 全路径 ÷ 声速。幅度保留是三带共用的
-                    // 「几何+平均表面」项,分频带差异由反射率与空气吸收给出。
-                    final double arrival = path / SPEED_OF_SOUND;
+                    // × 几何 1/距离²;时间与抽头同口径(相对直达的到达时刻)——
+                    // 直方图喂 T60 拟合,而拟合窗 [−2.5,−0.5]dB 的横轴语义必须
+                    // 与渲染里「尾部从直达声之后多久开始」一致。玩家即声源时
+                    // directBase=0,与修前逐值一致。负值(直达极远的极端几何)
+                    // 由 EnergyField.accumulate 直接忽略。
+                    final double arrival = (path - directBase) / SPEED_OF_SOUND;
                     final double geometric = retention * retention * 4.0 / (path * path);
                     for (int band = 0; band < EnergyField.BANDS; band++) {
                         final double air = Math.pow(AIR_ENERGY_PER_METER[band], path);
