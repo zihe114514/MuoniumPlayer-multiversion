@@ -137,13 +137,28 @@ public final class SceneResponse {
                             * (Float.isNaN(lowScale) ? 1f : lowScale));
                 }
                 if (hist.decayHighSec > 0.0) {
-                    highFinal = clampDecay(Math.max(decay * DECAY_HIGH_FALLBACK,
+                    highFinal = clampDecayHigh(Math.max(decay * DECAY_HIGH_FALLBACK,
                             hist.decayHighSec * enclosureDecayFactor)
                             * (Float.isNaN(midScale) ? 1f : midScale));
                 }
             } else {
-                lowFinal = clampDecay(decay * DECAY_LOW_FALLBACK * (Float.isNaN(lowScale) ? 1f : lowScale));
-                highFinal = clampDecay(decay * DECAY_HIGH_FALLBACK * (Float.isNaN(midScale) ? 1f : midScale));
+                // 逐频带兜底(拟合失败=小房间窗内能量不足):每弹能量保留比
+                // 的对数比即 T60 之比 —— T60_band/T60_mid = log(ρMid)/log(ρBand)。
+                // 羊毛 {0.2,0.1,0.03}:高频 ×0.68(软面吃高频);石头
+                // {1.5,1.5,1.45}:×1.0(全频亮,clamp 到 1 —— 比中频还长
+                // 不物理,高频衰减永不慢于中频)。低频绕射强,×1.15 温和偏置。
+                lowFinal = clampDecay(decay * 1.15 * (Float.isNaN(lowScale) ? 1f : lowScale));
+                final float[] bands = sample.bandReflectivities();
+                double highRatio;
+                if (bands != null && bands.length >= 3 && bands[2] > 0.02f && bands[1] > 0.02f
+                        && bands[2] < 1f && bands[1] < 1f) {
+                    highRatio = Math.max(0.35, Math.min(1.0,
+                            Math.log(Math.max(0.05, bands[1])) / Math.log(Math.max(0.05, bands[2]))));
+                } else {
+                    // 旧采样器无三带数据:均值近似(rho 低 → 高频占比低)
+                    highRatio = Math.max(0.45, Math.min(1.0, 0.62 + 0.3 * Math.min(rho, 1.0f)));
+                }
+                highFinal = clampDecayHigh(decay * highRatio * (Float.isNaN(midScale) ? 1f : midScale));
             }
             decayLow = lowFinal;
             decayHigh = highFinal;
@@ -157,6 +172,14 @@ public final class SceneResponse {
             // 湿声 0.86,音乐糊成一团找不到声源)。传播两项:几何 inverse
             // 曲线(参考 16m —— 扩散场比直达耐稀释)、空气项(/32m,漫反射
             // 长路径比直达慢一档)。8m 内不稀释;24m ≈ ×0.52;68m ≈ ×0.08。
+            //
+            // 乘在 wet 的公式之后(公式是赋值不是累乘,放在前面会被抹掉)。
+            // 顺序在长尾折减/水下折减之前,所以这些后续折减都在稀释后的量上叠。
+            wet = (float) Math.min(WET_CEIL, enclosure
+                    * (WET_BASE + WET_REACH_SPAN * reach)
+                    * wetMaterialFactor(rho)
+                    * MUSIC_WET_BOOST
+                    * AcousticsDebugTuning.wetBoost(1f));
             if (sample.hasDirectSource()) {
                 final double d = sample.directDistanceMeters();
                 final double over = Math.max(0.0, d / 16.0 - 1.0);
@@ -164,11 +187,6 @@ public final class SceneResponse {
                         * Math.exp(-Math.max(0.0, d - 6.0) / 32.0);
                 wet *= (float) Math.min(1.0, Math.max(0.08, spread * 1.15));
             }
-            wet = (float) Math.min(WET_CEIL, enclosure
-                    * (WET_BASE + WET_REACH_SPAN * reach)
-                    * wetMaterialFactor(rho)
-                    * MUSIC_WET_BOOST
-                    * AcousticsDebugTuning.wetBoost(1f));
             // 长尾微折减:洞穴/矿洞(T60>2.5s)的湿声轻收最多 8% —— 实机
             // 反馈大空间混响略过;小房间(T60<0.5s)完全不受影响。
             if (decay > LONG_TAIL_SOFTEN_FROM) {
@@ -198,8 +216,12 @@ public final class SceneResponse {
                     tapDelay[i] = sample.tapDelaysSec()[picked[i]];
                     maxGain = Math.max(maxGain, sample.tapGains()[picked[i]]);
                 }
-                // 归一:最强一条 ≤0.4(湿声总量另算,抽头只跟自己的相对能量成比例)
-                final float norm = maxGain > 1e-6f ? Math.min(1f, TAP_GAIN_CEIL / maxGain) : 0f;
+                // 归一撤销(材质区分的根本修复):raw gain = √ρ×2/path 已经
+                // 是材质的真实响度(石头 0.38 vs 羊毛 0.12,3 倍)。此前
+                // maxGain 归一把每房最强抽头都抬/压到同一档 —— 「吸音房回声
+                // 轻」被归一抹平,材质只剩湿声一路有差异。现在:上限夹取
+                // (单条过响防爆音)代替归一,材质差原样保留。
+                final float norm = 1f;
                 // 总能量约束:密集房间可达 74-83 条反射,64 条相近能量的抽头同时
                 // 叠加,单耳瞬时和可达最强条的 10-20 倍 —— DJ 音乐满幅输入下
                 // ER 通路自身就能超 1.0 削波。把「单耳幅度和」约束到
@@ -345,6 +367,12 @@ public final class SceneResponse {
         return (float) Math.max(RT60_MIN_SEC, Math.min(RT60_MAX_SEC, sec));
     }
 
+    /** 高频带夹取:下限放宽到 0.04s —— 软面(羊毛)的高频 T60 物理上比
+     *  中频短一半,中频的「防死寂」下限不该抬住它;余音感由中频载体。 */
+    private static float clampDecayHigh(double sec) {
+        return (float) Math.max(0.04, Math.min(RT60_MAX_SEC, sec));
+    }
+
     private static final float[] EMPTY = new float[0];
     private static final int[] EMPTY_INDEX = new int[0];
 
@@ -370,7 +398,10 @@ public final class SceneResponse {
     private static final double DECAY_ENERGY_MIN = 0.10;
     private static final double DECAY_ENERGY_MAX = 0.92;
     /** 低反射率端抬升:e = 0.45+0.35ρ 封 0.88 —— 小房间余音从「录音棚」回到「卧室」。 */
-    private static final double RT60_MIN_SEC = 0.15;
+    /** 短尾下限:0.15s 曾把羊毛(0.05s)/木头(0.19s)与石头的差异在
+     *  小房间全被夹平 —— 0.06s 是「贴脸小间啪一下」的可闻下限,之下的
+     *  材质衰减差(羊毛高频 0.10s)有分辨空间。 */
+    private static final double RT60_MIN_SEC = 0.06;
     /** T60 上限 5.5s:实测洞穴拟合 4.1s 贴着旧上限 4.5,余量不足;
      *  5.5 给真实大厅/sub-bass 尾留空间。 */
     private static final double RT60_MAX_SEC = 5.5;
@@ -418,14 +449,14 @@ public final class SceneResponse {
     /** 抽头上限(超出按能量截断):实机日志显示密集房间可测到 74-83 条可达反射,
      *  只交付 24 条会肉眼可见地「稀」—— 早声场密度就是细腻感的本体。 */
     private static final int TAP_MAX = 64;
-    /** 归一后最强抽头的能量上限:单条太响是「点射/slap」,摊薄到很多条中弱反射
-     *  才是真实小房间的样子。 */
-    private static final float TAP_GAIN_CEIL = 0.22f;
     /** 单耳抽头幅度和上限:密集房间几十条相近抽头同时叠加会周期性超 1.0
      *  (DJ 满幅音乐下直接削波炸耳);超出整体等比压缩 —— 扩散场能量守恒。
      *  1.1 = 原 0.9 × 1.22:小空间的混响密度感主要来自早反射能量和,
      *  提升让 ER 通路能量 ×1.49(小空间听感「更差」的同源修复);
-     *  逐样本软限幅兜住合成后的峰值。 */
+     *  逐样本软限幅兜住合成后的峰值。
+     *  <p>这是唯一的幅度上限:单条抽头不做逐条封顶 —— 近墙抽头
+     *  (retention·2/path,2m 处可达 0.9)本来就该响,逐条压会把直达感
+     *  一起削掉。过密的能量由这条和约束整体摊薄。</p> */
     private static final float TAP_SUM_CEIL = 1.1f;
     /** 抽头延迟上限:更晚的反射归尾部管。 */
     private static final float ER_MAX_SEC = 0.14f;

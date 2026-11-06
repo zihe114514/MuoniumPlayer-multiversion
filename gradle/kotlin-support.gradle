@@ -1,0 +1,122 @@
+// apply from 的脚本不继承 plugins 块的编译类路径，枚举从已加载插件取。
+def kotlinLoader = project.plugins.getPlugin('org.jetbrains.kotlin.jvm').class.classLoader
+def jvmTargets = kotlinLoader.loadClass('org.jetbrains.kotlin.gradle.dsl.JvmTarget')
+def kotlinVersions = kotlinLoader.loadClass('org.jetbrains.kotlin.gradle.dsl.KotlinVersion')
+
+// 编译工具只走现有 Central 镜像，不让 Loom 的 Mojang 仓库先尝试 Kotlin 构件。
+def kotlinRepository = repositories.maven {
+    name = 'Muonium Kotlin compiler'
+    url = 'https://maven.aliyun.com/repository/public'
+}
+repositories.exclusiveContent {
+    forRepositories(kotlinRepository)
+    filter {
+        includeGroup 'org.jetbrains.kotlin'
+        includeGroup 'org.jetbrains.kotlinx'
+    }
+}
+
+// 只补混编接线：Java 入口、Mixin、业务代码与运行时前置保持原样。
+// Gradle 插件统一用支持 Gradle 9.6 的版本；旧 Forge 的编译器单独兼容 Kotlin 1.8。
+def lanes = [
+        '1.20.1': [compiler: '2.1.20', language: '1.8', stdlib: '1.8.22'],
+        '1.21.1': [compiler: '2.4.21', language: '2.0', stdlib: '2.0.0'],
+        '1.21.10': [compiler: '2.4.21', language: '2.2', stdlib: '2.2.20'],
+        '1.21.11': [compiler: '2.4.21', language: '2.2', stdlib: '2.2.20'],
+        '26.1.2': [compiler: '2.4.21', language: '2.4', stdlib: '2.4.0'],
+        '26.2': [compiler: '2.4.21', language: '2.4', stdlib: '2.4.0'],
+        '26.3': [compiler: '2.4.21', language: '2.4', stdlib: '2.4.0']
+]
+def lane = lanes[project.minecraft_version]
+if (lane == null) {
+    throw new GradleException("未登记 Kotlin 版本车道：${project.minecraft_version}")
+}
+
+// compilerVersion 与编译器插件必须配套，不能把 2.4 的 Lombok 插件交给旧编译器。
+configurations.matching { it.name.startsWith('kotlinCompilerPluginClasspath') }.configureEach {
+    resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == 'org.jetbrains.kotlin'
+                && details.requested.name == 'kotlin-lombok-compiler-plugin-embeddable') {
+            details.useVersion(lane.compiler)
+        }
+    }
+}
+
+kotlin {
+    compilerVersion.set(lane.compiler)
+    compilerOptions {
+        jvmTarget.set(java.toolchain.languageVersion.map { jvmTargets.fromTarget(it.asInt().toString()) })
+        languageVersion.set(kotlinVersions.fromVersion(lane.language))
+        apiVersion.set(kotlinVersions.fromVersion(lane.language))
+    }
+    sourceSets {
+        main {
+            kotlin.srcDirs = [
+                    'src/main/kotlin',
+                    rootProject.file('../muonium-common/src/main/kotlin'),
+                    rootProject.file('src/main/kotlin'),
+                    rootProject.file('../mpparty-common/src/main/kotlin'),
+                    rootProject.file('../mpserver-core/src/main/kotlin')
+            ]
+        }
+        test {
+            if (project.name == 'fabric') {
+                kotlin.srcDirs = [
+                        'src/test/kotlin',
+                        rootProject.file('../muonium-common/src/test/kotlin'),
+                        rootProject.file('src/test/kotlin')
+                ]
+            }
+        }
+    }
+}
+
+// Fabric 前置比旧版 KFF 新，不能让其传递依赖抬高编译期标准库。
+// 只隔离编译类路径；运行类路径仍完整沿用 FLK/KFF，不自带第二份 kotlin.*。
+def kotlinApi = configurations.create('muoniumKotlinApi') {
+    canBeResolved = true
+    canBeConsumed = false
+}
+configurations.matching { it.name == 'compileClasspath' || it.name.endsWith('CompileClasspath') }.configureEach {
+    exclude group: 'org.jetbrains.kotlin'
+    exclude group: 'org.jetbrains.kotlinx'
+    // 前置本身不供业务 API；旧编译器不能读取 FLK 2.4 的 adapter 元数据。
+    exclude group: 'net.fabricmc', module: 'fabric-language-kotlin'
+    exclude group: 'thedarkcolour'
+}
+dependencies {
+    muoniumKotlinApi("org.jetbrains.kotlin:kotlin-stdlib:${lane.stdlib}") {
+        transitive = false
+    }
+    // 普通 JVM 测试不会解开旧 KFF 的嵌套 jar，这份只服务测试，不进发布包。
+    testRuntimeOnly "org.jetbrains.kotlin:kotlin-stdlib:${lane.stdlib}"
+}
+sourceSets.configureEach {
+    compileClasspath += kotlinApi
+}
+
+// 验收样例是独立 sourceSet，不参与 main、sourcesJar 或发布 jar。
+sourceSets {
+    kotlinSmoke {
+        java.srcDirs = [rootProject.file('../gradle/kotlin-smoke/src/main/java')]
+        kotlin.srcDirs = [rootProject.file('../gradle/kotlin-smoke/src/main/kotlin')]
+        resources.srcDirs = []
+        compileClasspath += sourceSets.main.compileClasspath
+        runtimeClasspath += kotlinApi
+    }
+}
+// Kotlin 源根被显式替换后，要把同轮 Java 输入也交给 Kotlin 编译器解析。
+sourceSets.configureEach { sourceSet ->
+    sourceSet.kotlin.srcDirs(sourceSet.java.srcDirs)
+}
+configurations.kotlinSmokeAnnotationProcessor.extendsFrom(configurations.annotationProcessor)
+tasks.register('kotlinSmokeTest', JavaExec) {
+    group = 'verification'
+    description = '验证 Kotlin/Java 双向混编、标准库基线与 JVM 目标，不改变 mod 业务'
+    dependsOn tasks.named('kotlinSmokeClasses')
+    classpath = sourceSets.kotlinSmoke.runtimeClasspath
+    mainClass.set('com.muoniumplayer.build.KotlinSmokeTest')
+}
+tasks.named('check') {
+    dependsOn tasks.named('kotlinSmokeTest')
+}

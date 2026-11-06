@@ -5355,7 +5355,7 @@ public class CloudMusic implements SharedConstants {
 
     /**
      * 预热这一首的 <b>automix 单曲 profile</b>：把 Folia 那套 Python 分析（节拍栅格 + stem 分离）
-     * 的结果落进 {@code config/cache/automix-profiles}，等它真轮到交接时直接读盘。
+     * 的结果落进 {@code MuoniumPlayer/cache/automix-profiles}，等它真轮到交接时直接读盘。
      *
      * <h3>刻意不算配对计划（pair plan）</h3>
      * {@code AutomixPlanCache.keyOf} 的键带着「退出曲的最后一句人声位置」与两路 deck 的缓存文件名，

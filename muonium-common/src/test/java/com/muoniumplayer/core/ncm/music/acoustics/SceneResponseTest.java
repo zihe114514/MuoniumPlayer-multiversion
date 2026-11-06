@@ -286,4 +286,63 @@ class SceneResponseTest {
         }
         assertTrue(strongest > 0.01f, "抽头能量在场(总量被 TAP_SUM_CEIL 约束): " + strongest);
     }
+
+    // ---- 世界声源(音箱模式)----
+
+    /** 在基础采样上挂世界声源字段。 */
+    private static ListenerSample withSource(ListenerSample base, float directDistance) {
+        return new ListenerSample() {
+            @Override public boolean submerged() { return base.submerged(); }
+            @Override public boolean openSky() { return base.openSky(); }
+            @Override public float enclosure() { return base.enclosure(); }
+            @Override public float precipitation() { return base.precipitation(); }
+            @Override public float firstHitMeanMeters() { return base.firstHitMeanMeters(); }
+            @Override public float bounceSegmentMeanMeters() { return base.bounceSegmentMeanMeters(); }
+            @Override public float meanReflectivity() { return base.meanReflectivity(); }
+            @Override public float reachableFraction() { return base.reachableFraction(); }
+            @Override public int tapCount() { return base.tapCount(); }
+            @Override public float[] tapDelaysSec() { return base.tapDelaysSec(); }
+            @Override public float[] tapGains() { return base.tapGains(); }
+            @Override public float[] tapPans() { return base.tapPans(); }
+            @Override public EnergyField bandHistogram() { return base.bandHistogram(); }
+            @Override public float[] bandReflectivities() { return base.bandReflectivities(); }
+            @Override public boolean hasDirectSource() { return true; }
+            @Override public float directDistanceMeters() { return directDistance; }
+            @Override public double speakerX() { return 10; }
+            @Override public double speakerY() { return 64; }
+            @Override public double speakerZ() { return 10; }
+        };
+    }
+
+    @Test
+    @DisplayName("世界声源的湿声必须随距离稀释 —— 稀释不能写在赋值之前(会被整个抹掉)")
+    void directSourceWetDilutesWithDistance() {
+        ListenerSample near = withSource(stoneCave(), 4f);
+        ListenerSample mid = withSource(stoneCave(), 24f);
+        ListenerSample far = withSource(stoneCave(), 68f);
+        RoomPlan rNear = SceneResponse.respond(near, 1f);
+        RoomPlan rMid = SceneResponse.respond(mid, 1f);
+        RoomPlan rFar = SceneResponse.respond(far, 1f);
+        // 8m 内不稀释:近距的湿声就是「玩家即声源」档
+        assertEquals(SceneResponse.respond(stoneCave(), 1f).wet, rNear.wet, 1e-4f,
+                "8m 内不该稀释");
+        assertTrue(rMid.wet < rNear.wet * 0.75f,
+                "24m 应明显稀释: near=" + rNear.wet + " mid=" + rMid.wet);
+        assertTrue(rFar.wet < rMid.wet * 0.5f,
+                "68m 应继续稀释: mid=" + rMid.wet + " far=" + rFar.wet);
+        assertTrue(rFar.wet > 0f, "最少留一点,不能归零");
+    }
+
+    @Test
+    @DisplayName("世界声源:直射链字段有效(增益衰减/截止/声像),且湿声不再走 EAX 混响")
+    void directSourceFillsDirectChain() {
+        RoomPlan near = SceneResponse.respond(withSource(stoneCave(), 4f), 1f);
+        RoomPlan far = SceneResponse.respond(withSource(stoneCave(), 96f), 1f);
+        assertEquals(1f, near.directGain, 1e-3f, "8m 内直达全增益");
+        assertTrue(far.directGain < 0.05f, "96m 直达 ≈ −42dB: " + far.directGain);
+        assertTrue(near.hasSpeakerAnchor);
+        // 路线定稿:自研射线链出湿声,总线只做直射 HRTF —— RoomPlan 仍然
+        // 标记 useOpenAlReverb,但 SceneAcoustics 已不再拿总线读回当湿声。
+        assertTrue(near.tapCount > 0, "世界声源也要交付 ER 抽头");
+    }
 }

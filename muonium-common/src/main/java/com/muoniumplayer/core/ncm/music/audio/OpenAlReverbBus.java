@@ -82,6 +82,14 @@ public final class OpenAlReverbBus {
         if (instance != null) {
             return instance;
         }
+        // 安卓(OpenSL 后端)实测:loopback 的 alcRenderSamplesSOFT 静默失败,
+        // 读回全 0 → 干声被顶掉(「放音响就没音乐」)。移动端行业惯例是
+        // 效果 DSP 全自研在 PCM 流上(与输出设备解耦),不依赖厂商 OpenAL
+        // 的效果扩展 —— 安卓永远走自研射线链。
+        if (com.muoniumplayer.render.skija.SkijaNatives.mappedPlatform().startsWith("android")) {
+            System.out.println(TAG + "安卓:移动端效果 DSP 全自研(不依赖 loopback),湿声走自研射线链");
+            return null;
+        }
         // 急停开关:哪台机器上总线另有古怪,-Dmuonium.acoustics.eax=false 一键退自研链,
         // 不用等发版(照 AudioPlayer 里 muonium.audio.openal 的先例)。
         if ("false".equalsIgnoreCase(System.getProperty("muonium.acoustics.eax", "true"))) {
@@ -102,9 +110,25 @@ public final class OpenAlReverbBus {
         }
     }
 
-    /** 当前总线;null = 不可用。 */
+    /** 当前总线;null = 不可用。已熔断的实例仍会返回(见 {@link #isBroken()})。 */
     public static OpenAlReverbBus get() {
         return instance;
+    }
+
+    /**
+     * 总线是否已熔断(初始化失败后的失败路径、或运行期被判定失效)。
+     *
+     * <p>调用方必须查这一位:<b>熔断后的 {@link #render} 会直接 return,读回缓冲
+     * 保持原样(全零)</b> —— 把它当正常结果写回输出就是「整首歌没声」。
+     * 场景声学据此在每个缓冲回退到自研直射链。</p>
+     */
+    public boolean isBroken() {
+        return broken;
+    }
+
+    /** 场景侧检测到读回静音等失效模式时调用:总线永久下线回自研链。 */
+    public void markBroken() {
+        broken("外部判定失效", new IllegalStateException("readback silence"));
     }
 
     private boolean init(int sampleRate, int framesPerBuffer) {
@@ -482,6 +506,11 @@ public final class OpenAlReverbBus {
         if (!broken) {
             broken = true;
             System.out.println(TAG + where + " 失败,总线永久下线: " + t);
+            // 一次性诊断:栈顶 5 帧(定位越界/失败的具体行,定位后可精简)
+            final StackTraceElement[] st = t.getStackTrace();
+            for (int i = 0; i < Math.min(5, st.length); i++) {
+                System.out.println(TAG + "  at " + st[i]);
+            }
         }
     }
 

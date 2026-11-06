@@ -63,6 +63,8 @@ public class PlaylistPanel extends NCMPanel {
 
     /** 左上角那张大封面。返回时要问它现在在屏幕上的哪儿，好把接力交回主页卡片。 */
     private RoundedImageWidget heroCover;
+    /** 「定位到正在播放」按钮；图标在面板 onRender 尾部手画（见 onRender 尾注）。 */
+    private RoundedButtonWidget btnLocate;
 
     @Override
     public void onRender(double mouseX, double mouseY) {
@@ -71,6 +73,28 @@ public class PlaylistPanel extends NCMPanel {
         this.buildPendingMusicWidgets();
         this.autoScrollToPlayingIfNeeded();
         super.onRender(mouseX, mouseY);
+        drawLocateIcon();
+    }
+
+    /**
+     * 「定位到正在播放」的 lucide 字形。必须在 {@code super.onRender} <b>之后</b>画：
+     * 那时按钮矩形已由它自己的回调写定、Skija 帧必然活跃，坐标取 {@code getX/getY}
+     * （屏幕坐标，递归父链）才是真位置。曾经放在 beforeRender 回调里用
+     * {@code getRelativeX}（相对面板偏移）当屏幕坐标用，字形被甩出面板原点一份——
+     * 就是「图标与按钮底板错位」的那张截图。
+     */
+    private void drawLocateIcon() {
+        RoundedButtonWidget button = this.btnLocate;
+        if (button == null || button.isHidden()) return;
+        float alpha = button.getWidgetAlpha();
+        if (alpha <= .02f) return;
+        int ink = button.isHovering()
+                ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)
+                : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
+        FoliaLucideIcons.draw(FoliaLucideIcons.LOCATE,
+                button.getX() + button.getWidth() * .5,
+                button.getY() + button.getHeight() * .5,
+                14.0, RenderSystem.reAlpha(ink, alpha));
     }
 
     /**
@@ -125,6 +149,9 @@ public class PlaylistPanel extends NCMPanel {
         this.pendingMusicIndex = 0;
         this.musicFilterText = "";
         this.emptyMusicMessageAdded = false;
+        // onInit 会在账户元数据异步到达时重建整页：字段指着的旧按钮已随 getChildren().clear()
+        // 脱树，不置空的话搜索模式页（不建按钮）会把字形画到脱离树的旧按钮坐标上。
+        this.btnLocate = null;
 
         // 搜索结果页不放返回按钮：搜索是从左侧导航栏的搜索框直接进入的，右上角这枚返回键在那里
         // 没有对应的"上一页"，只会把内容区右上角挤掉一块。歌单详情、发现页曲目列表照旧保留。
@@ -521,10 +548,11 @@ public class PlaylistPanel extends NCMPanel {
             // 正确画法（NavigateBar 的 SidebarActionButton 同款）：按钮只当圆角底，
             // lucide 路径由 FoliaLucideIcons.draw 在回调里按中心点手画。
             if (!playList.isSearchMode()) {
-                RoundedButtonWidget btnLocate = new RoundedButtonWidget("", FontManager.pf12);
+                btnLocate = new RoundedButtonWidget("", FontManager.pf12);
                 btnLocate.setGlassPlate(GlassLook.Surface.PLAYER)
                         .setFillAlpha(GlassLook.washAlpha(GlassLook.Surface.PLAYER, 1.0f));
                 this.addChild(btnLocate);
+                final RoundedButtonWidget btnLocateRef = btnLocate;
                 btnLocate.setBeforeRenderCallback(() -> {
                     // 每帧现判（当前歌可能切走），但只在「有/没有」跨越时才改可见性：
                     // 用 alpha 渐变而不是 setHidden——hidden 的控件回调整帧不跑，
@@ -541,14 +569,7 @@ public class PlaylistPanel extends NCMPanel {
                     btnLocate.setColor(btnLocate.isHovering()
                             ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                             : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-                    // 字形画在按钮自己的 alpha 之下：悬停加深、淡出跟随按钮。
-                    int ink = btnLocate.isHovering()
-                            ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)
-                            : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT);
-                    FoliaLucideIcons.draw(FoliaLucideIcons.LOCATE,
-                            btnLocate.getRelativeX() + btnLocate.getWidth() * .5,
-                            btnLocate.getRelativeY() + btnLocate.getHeight() * .5,
-                            14.0, RenderSystem.reAlpha(ink, alpha));
+                    // 字形不在这里画：beforeRender 阶段只改属性，画留在面板 onRender 尾部。
                 });
                 btnLocate.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
                     if (mouseButton != 0 || !playlistContainsCurrentTrack()) return false;

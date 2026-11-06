@@ -48,5 +48,7 @@ public class WorldLyricsRenderTailMixin {
         // 场景声学调参:射线可视化(debug 文件 showRays=true 时画;内部第一行
         // 就判开关,关闭时一次布尔读)。
         com.muoniumplayer.compat.mc.AcousticsRayDebugRenderer.render();
+        // 世界声源线框(有音箱才画;内部第一行判空)
+        com.muoniumplayer.compat.mc.SpeakerRenderBridge.render();
     }
 }

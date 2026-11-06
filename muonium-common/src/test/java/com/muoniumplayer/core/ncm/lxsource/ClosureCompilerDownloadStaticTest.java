@@ -88,7 +88,7 @@ class ClosureCompilerDownloadStaticTest {
     @DisplayName("主包零编译期依赖：全部 Java 源里不许有 com.google.javascript 的 import")
     void noCompileTimeDependencyAnywhere() throws IOException {
         List<String> offenders = new ArrayList<>();
-        for (Path java : ProjectPaths.allJavaFiles()) {
+        for (Path java : ProjectPaths.allSourceFiles()) {
             String source = new String(Files.readAllBytes(java), StandardCharsets.UTF_8);
             for (String line : source.split("\n", -1)) {
                 String trimmed = line.trim();

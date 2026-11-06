@@ -249,26 +249,30 @@ class GlassEdgeFusionStaticTest {
                 "私人 FM 历史那一列没接融合");
         final java.nio.file.Path root = ProjectPaths.sharedJava();
         final List<String> wired = new ArrayList<>();
-        for (java.nio.file.Path shareWalkRoot : ProjectPaths.javaRoots()) Files.walkFileTree(shareWalkRoot, new java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
-            @Override
-            public java.nio.file.FileVisitResult visitFile(java.nio.file.Path file,
-                                                           java.nio.file.attribute.BasicFileAttributes attrs) {
-                String name = file.getFileName().toString();
-                if (name.endsWith(".java")) {
-                    try {
-                        String src = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
-                        int at = src.indexOf(".setGlassFusion(");
-                        if (at >= 0 && !file.endsWith(ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer",
-                                "core", "rendering", "ui", "AbstractWidget.java")))) {
-                            wired.add(root.relativize(file).toString());
-                        }
-                    } catch (IOException ignored) {
-                        // 读不到的文件不算接线
-                    }
-                }
-                return java.nio.file.FileVisitResult.CONTINUE;
+        for (java.nio.file.Path shareWalkRoot : ProjectPaths.sourceRoots()) {
+            if (!Files.isDirectory(shareWalkRoot)) {
+                continue;
             }
-        });
+            Files.walkFileTree(shareWalkRoot, new java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+                @Override
+                public java.nio.file.FileVisitResult visitFile(java.nio.file.Path file,
+                                                               java.nio.file.attribute.BasicFileAttributes attrs) {
+                    if (ProjectPaths.isSourceFile(file)) {
+                        try {
+                            String src = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
+                            int at = src.indexOf(".setGlassFusion(");
+                            if (at >= 0 && !file.endsWith(ProjectPaths.sourceFile(Paths.get("com", "muoniumplayer",
+                                    "core", "rendering", "ui", "AbstractWidget.java")))) {
+                                wired.add(root.relativize(file).toString());
+                            }
+                        } catch (IOException ignored) {
+                            // 读不到的文件不算接线
+                        }
+                    }
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+            });
+        }
         assertEquals(2, wired.size(), "点名融合的第 3 处出现了：" + wired
                 + "。每一处都要先确认那一层裁剪里真的排着几块挨着的 PLATE，"
                 + "接在没有成片兄弟的容器上等于白接，接在含融合容器的外层上会把内层的边拖到界外画");

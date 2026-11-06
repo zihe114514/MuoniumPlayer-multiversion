@@ -65,9 +65,9 @@ class Port1211StaticTest {
     @Test
     @DisplayName("共享源码里没有任何加载器 API")
     void 共享源码与加载器无关() throws IOException {
-        { Stream<Path> files = ProjectPaths.allJavaFiles().stream();
+        { Stream<Path> files = ProjectPaths.allSourceFiles().stream();
             List<Path> offenders = files
-                    .filter(p -> p.toString().endsWith(".java"))
+                    .filter(ProjectPaths::isSourceFile)
                     .filter(Port1211StaticTest::mentionsLoaderApi)
                     .toList();
             assertTrue(offenders.isEmpty(),
@@ -274,9 +274,9 @@ class Port1211StaticTest {
         assertTrue(body.contains("isSameThread()"),
                 "GLFW 剪贴板函数只能在渲染线程调用，必须先判线程");
 
-        { Stream<Path> files = ProjectPaths.allJavaFiles().stream();
+        { Stream<Path> files = ProjectPaths.allSourceFiles().stream();
             List<Path> offenders = files
-                    .filter(p -> p.toString().endsWith(".java"))
+                    .filter(ProjectPaths::isSourceFile)
                     .filter(Port1211StaticTest::usesAwtClipboard)
                     .toList();
             assertTrue(offenders.isEmpty(),
@@ -286,7 +286,8 @@ class Port1211StaticTest {
 
     private static boolean usesAwtClipboard(Path file) {
         try {
-            String body = stripComments(new String(Files.readAllBytes(file), StandardCharsets.UTF_8));
+            String text = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
+            String body = file.toString().endsWith(".java") ? stripComments(text) : text;
             return body.contains("getSystemClipboard") || body.contains("StringSelection");
         } catch (IOException e) {
             throw new AssertionError("读不了 " + file, e);
@@ -295,7 +296,8 @@ class Port1211StaticTest {
 
     private static boolean mentionsLoaderApi(Path file) {
         try {
-            String body = stripComments(new String(Files.readAllBytes(file), StandardCharsets.UTF_8));
+            String text = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
+            String body = file.toString().endsWith(".java") ? stripComments(text) : text;
             return body.contains("net.fabricmc") || body.contains("net.neoforged");
         } catch (IOException e) {
             throw new AssertionError("读不了 " + file, e);

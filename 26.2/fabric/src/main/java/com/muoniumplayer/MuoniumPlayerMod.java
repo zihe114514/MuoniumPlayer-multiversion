@@ -79,6 +79,9 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         // 是文字 submit 的最后窗口。矩阵与提交由 WorldLyricsBridge 自己管）。
         LevelRenderEvents.COLLECT_SUBMITS.register((LevelRenderContext context) ->
                 WorldLyricsBridge.worldRenderCollect(context.submitNodeCollector()));
+        // 世界声源线框标记:同一收集阶段,排在歌词之后先后无碍(各自 submit)。
+        LevelRenderEvents.COLLECT_SUBMITS.register((LevelRenderContext context) ->
+                com.muoniumplayer.compat.mc.SpeakerRenderBridge.collect(context.submitNodeCollector()));
         // afterRender 在 26.2 改名 afterExtract：GUI 变成延迟批处理后，
         // 这个回调的实际语义是「Screen 已经把自己的元素录入 render state 之后」，
         // 而不是「已经画完」。对本渲染层没有影响，因为合成本来就推迟到帧末。

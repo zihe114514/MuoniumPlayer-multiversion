@@ -2,6 +2,8 @@ plugins {
     id 'fabric-loom' version '1.17.20'
     // 只用它的 ShadowJar 任务给 rhino 做 relocate；不用它打 fat-jar。
     id 'com.gradleup.shadow' version '8.3.11'
+    id 'org.jetbrains.kotlin.jvm'
+    id 'org.jetbrains.kotlin.plugin.lombok'
 }
 
 base {
@@ -265,6 +267,8 @@ java {
     toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
     withSourcesJar()
 }
+
+apply from: rootProject.file('../gradle/kotlin-support.gradle')
 
 jar {
     from(rootProject.file('LICENSE.txt')) {

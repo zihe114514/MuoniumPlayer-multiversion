@@ -85,7 +85,7 @@ class ZstdNativeDownloadStaticTest {
     @DisplayName("主包零编译期依赖：com.github.luben.zstd 只许出现在反射桥的字符串里")
     void noCompileTimeDependencyAnywhere() throws IOException {
         List<String> offenders = new ArrayList<>();
-        for (Path java : ProjectPaths.allJavaFiles()) {
+        for (Path java : ProjectPaths.allSourceFiles()) {
             String source = new String(Files.readAllBytes(java), StandardCharsets.UTF_8);
             for (String line : source.split("\n", -1)) {
                 String trimmed = line.trim();

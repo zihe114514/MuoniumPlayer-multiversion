@@ -72,6 +72,16 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     /** 一次性诊断开关。 */
     static final boolean TRACE = Boolean.getBoolean("muonium.debug.worldLyrics");
 
+    /**
+     * 字形阴影的右下偏移（设计像素）。游戏实测 (2,3) 与字色压暗口径在加色晕垫底
+     * 下读作「重影」—— 终版 (0.5,1) + 纯黑 ×0.22：紧贴字缘的轻暗边。
+     */
+    static final float SHADOW_OFFSET_PX = 0.5f;
+    /** 阴影的 Y 偏移（设计像素）：略沉于 X，光照习惯上来自上方。 */
+    static final float SHADOW_OFFSET_Y_PX = 1f;
+    /** 阴影强度（顶点 alpha 系数，纯黑 × 进出场 alpha）。 */
+    static final float SHADOW_STRENGTH = 0.22f;
+
     /** 每帧共享实例。 */
     public static final WorldBillboard INSTANCE = new WorldBillboard();
 
@@ -122,15 +132,24 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             // 的 Builder 还是 1.21.x 形状——uniform 走 withUniform、顶点布局/拓扑合并成
             // withVertexFormat(VertexFormat, VertexFormat.Mode)，没有 bind-group 这一概念
             //（javap 核对 26.1.2 jar：无 BindGroupLayouts / PrimitiveTopology 类）。
-            // GUI/字体的 uniforms（GLOBALS/PROJECTION/DYNAMIC_TRANSFORMS/FOG）在 26.1.2
-            // 由 RenderSetup 侧按 shader 需求自动供给，不需要在这里点名。
+            //
+            // 【必须从 BEACON_BEAM_SNIPPET 起手】早先这里用空 builder 手搓，以为
+            // 「uniforms 由 RenderSetup 侧按 shader 需求自动供给」—— 这是错的。
+            // 26.1.2 的 GlProgram.setupUniforms 与 1.21.10/1.21.11 逐段相同：
+            // 只给管线声明过的 uniform/sampler 建槽，没声明的一律跳过，于是：
+            //   - DynamicTransforms 不在 BUILT_IN_UNIFORMS（只有 Projection/Lighting/
+            //     Fog/Globals）→ ModelViewMat 永不绑定 → 顶点塌到原点；
+            //   - Sampler0 同理不建 → texture() 采到 0 号空白纹理。
+            // 实机日志坐实：`Found unknown and unsupported uniform DynamicTransforms
+            // in muonium:lyric_glow`，同时 CPU 侧 `现代档字形 quad 已提交: '+glow'`
+            // 说明晕格纹理已取到 —— 断的就是 GPU 绑定这一环。
+            // snippet 自带 MATRICES_FOG_SNIPPET（DynamicTransforms/Projection/Fog）
+            // + withSampler("Sampler0") + BLOCK/QUADS，照原版 BEACON_BEAM_TRANSLUCENT
+            // 「以 snippet 为底只覆盖差异项」的正规做法。
             com.mojang.blaze3d.pipeline.RenderPipeline pipeline =
-                    com.mojang.blaze3d.pipeline.RenderPipeline.builder()
+                    com.mojang.blaze3d.pipeline.RenderPipeline.builder(
+                                    net.minecraft.client.renderer.RenderPipelines.BEACON_BEAM_SNIPPET)
                             .withLocation(Identifier.fromNamespaceAndPath("muonium", "lyric_glow"))
-                            .withVertexShader("core/rendertype_beacon_beam")
-                            .withFragmentShader("core/rendertype_beacon_beam")
-                            .withVertexFormat(com.mojang.blaze3d.vertex.DefaultVertexFormat.BLOCK,
-                                    com.mojang.blaze3d.vertex.VertexFormat.Mode.QUADS)
                             .withColorTargetState(new com.mojang.blaze3d.pipeline.ColorTargetState(
                                     com.mojang.blaze3d.pipeline.BlendFunction.LIGHTNING))
                             .withDepthStencilState(new com.mojang.blaze3d.pipeline.DepthStencilState(
@@ -272,9 +291,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             if (settings != null && settings.huiguang && LyricGlyphAtlas.isFunctional()) {
                 return;
             }
-            // 图集不可用/超尺寸：像素字兜底（无阴影，与平滑档的无阴影语义一致）
+            // 图集不可用/超尺寸：像素字兜底（带阴影 —— 与平滑档的立体感语义一致）
             int argb = ((int) (alpha * 255f) << 24) | (rgb & 0xFFFFFF);
-            drawPixelText(String.valueOf(c), x, y, argb, false);
+            drawPixelText(String.valueOf(c), x, y, argb, true);
             return;
         }
         if (!(cell.page instanceof LyricGlyphAtlasBridge.PageHandle)) {
@@ -319,6 +338,11 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         int argb = (((int) (alpha * 255f) & 0xFF) << 24) | (rgb & 0xFFFFFF);
 
+        // 一点点立体感：墨格同格重画一遍、右下偏移、半透明黑 —— 零新烘焙
+        final int shadowArgb = (int) (((argb >>> 24) & 0xFF) * SHADOW_STRENGTH) << 24;
+        final float shLeft = qLeft + SHADOW_OFFSET_PX, shTop = qTop + SHADOW_OFFSET_Y_PX;
+        final float shRight = qRight + SHADOW_OFFSET_PX, shBottom = qBottom + SHADOW_OFFSET_Y_PX;
+
         // 晕格 quad（晕格 pad ≥ 墨格 pad，锚点对齐后 quad 更大、盖过墨格）。
         // lambda 捕获要求：一次赋值后不再改写（glowRl 为 null 时保持零值不进 lambda）
         final float gLeft, gTop, gRight, gBottom;
@@ -344,7 +368,11 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         // ---- 更激进的适配：采集模式 —— 不 submit，把 quad 记进 present 兜底缓冲 ----
         if (captureMode) {
-            // 晕在下（先采集，同批内先画）加色段；墨在上正常段
+            // 阴影 → 晕 → 墨（阴影与晕同为整格 quad，压暗段在墨前即可）
+            captureGlyphQuad(inkRl, shLeft, shTop, shRight, shBottom, cx, cy, cos, sin, s,
+                    shadowArgb, cell.x / pageF + halfTexel, cell.y / pageF + halfTexel,
+                    (cell.x + cell.w) / pageF - halfTexel, (cell.y + cell.h) / pageF - halfTexel,
+                    false);
             if (glowRl != null) {
                 captureGlyphQuad(glowRl, gLeft, gTop, gRight, gBottom, cx, cy, cos, sin, s,
                         glowArgb, gu0, gv0, gu1, gv1, true);
@@ -363,6 +391,19 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 提交进 alwaysOnTop 相位：晕先（加色 RenderType，srcAlpha,one）、墨后。
         poseStack.pushPose();
         try {
+            // 阴影先（普通 alpha 段、同页纹理压暗色）—— 在晕之后墨之前，立体感垫层
+            RenderType shadowRt = currentWorldTextType(inkRl);
+            LyricOnTopSubmitter.submitCustomGeometry(submitter, poseStack, shadowRt, (pose, vc) -> {
+                Matrix4f mat = pose.pose();
+                putGlyphVertex(vc, mat, shLeft, shTop, cx, cy, cos, sin, s, shadowArgb,
+                        cell.x / pageF + halfTexel, cell.y / pageF + halfTexel);
+                putGlyphVertex(vc, mat, shLeft, shBottom, cx, cy, cos, sin, s, shadowArgb,
+                        cell.x / pageF + halfTexel, (cell.y + cell.h) / pageF - halfTexel);
+                putGlyphVertex(vc, mat, shRight, shBottom, cx, cy, cos, sin, s, shadowArgb,
+                        (cell.x + cell.w) / pageF - halfTexel, (cell.y + cell.h) / pageF - halfTexel);
+                putGlyphVertex(vc, mat, shRight, shTop, cx, cy, cos, sin, s, shadowArgb,
+                        (cell.x + cell.w) / pageF - halfTexel, cell.y / pageF + halfTexel);
+            });
             if (glowRl != null) {
                 // 晕格恒走加色管线（不随光影探测切换，与 present 通路语义一致）
                 RenderType glowRt = glowType(glowRl);
@@ -700,6 +741,14 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
     private static boolean trailError;
     private static int rlCounter;
 
+    /** 向上取 2 的幂（≥1）。动态纹理按容量分配：内容增长落在已有纹理内不重建。 */
+    private static int nextPow2(int v) {
+        int p = 1;
+        while (p < v) p <<= 1;
+        return p;
+    }
+
+
     // ==================== 绘光拖尾画布（Skija 光栅化通路的宿主侧） ====================
 
     // 按槽位各持一张画布纹理：同一帧 active 行 + 淡出行都进拖尾窗口时
@@ -736,12 +785,13 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         Identifier rl = trailCanvasRl[slot];
         TrailTexture tex = trailCanvasTex[slot];
         try {
-            if (tex == null || trailCanvasW[slot] != w || trailCanvasH[slot] != h) {
+            int capW = nextPow2(w), capH = nextPow2(h);
+            if (tex == null || trailCanvasW[slot] < w || trailCanvasH[slot] < h) {
                 if (rl != null) {
                     Minecraft.getInstance().getTextureManager().release(rl);
                     trailCanvasTex[slot] = null;
                 }
-                NativeImage img = new NativeImage(NativeImage.Format.RGBA, w, h, false);
+                NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
                 tex = new TrailTexture(
                         () -> "muoniumplayer_worldlyrics_trailcanvas", img);
                 rl = Identifier.fromNamespaceAndPath("muoniumplayer",
@@ -749,8 +799,8 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 Minecraft.getInstance().getTextureManager().register(rl, tex);
                 trailCanvasRl[slot] = rl;
                 trailCanvasTex[slot] = tex;
-                trailCanvasW[slot] = w;
-                trailCanvasH[slot] = h;
+                trailCanvasW[slot] = capW;
+                trailCanvasH[slot] = capH;
             }
             NativeImage img = tex.getPixels();
             if (img == null || px.length < w * h) return false;
@@ -775,12 +825,14 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         }
         int argb = Math.min(255, (int) (alpha * 255f)) << 24 | 0xFFFFFF;
         // 采集模式：拖尾画布 quad 直接记入 present 缓冲（纹理像素已在本调用中上传完）
+        float uMax = (float) w / trailCanvasW[slot];
+        float vMax = (float) h / trailCanvasH[slot];
         if (captureMode) {
             captureEffectQuad(rl,
                     planeX, planeY, 0f, 0f,
-                    planeX, planeY + planeH, 0f, 1f,
-                    planeX + planeW, planeY + planeH, 1f, 1f,
-                    planeX + planeW, planeY, 1f, 0f,
+                    planeX, planeY + planeH, 0f, vMax,
+                    planeX + planeW, planeY + planeH, uMax, vMax,
+                    planeX + planeW, planeY, uMax, 0f,
                     argb);
             return true;
         }
@@ -793,9 +845,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                 Matrix4f mat = pose.pose();
                 // 四顶点：左上 → 左下 → 右下 → 右上（QUADS 环绕序，同 drawHalo）
                 putHaloVertex(vc, mat, planeX, planeY, 0f, 0f, argb);
-                putHaloVertex(vc, mat, planeX, planeY + planeH, 0f, 1f, argb);
-                putHaloVertex(vc, mat, planeX + planeW, planeY + planeH, 1f, 1f, argb);
-                putHaloVertex(vc, mat, planeX + planeW, planeY, 1f, 0f, argb);
+                putHaloVertex(vc, mat, planeX, planeY + planeH, 0f, vMax, argb);
+                putHaloVertex(vc, mat, planeX + planeW, planeY + planeH, uMax, vMax, argb);
+                putHaloVertex(vc, mat, planeX + planeW, planeY, uMax, 0f, argb);
             });
         } finally {
             poseStack.popPose();
@@ -816,7 +868,124 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 镜像同步写，用于诊断与全量重传兜底。26.x 无 mip（texStorage 型单级，
      * 见 MipDynamicTexture），上传后无需重生成链。</p>
      */
-    
+
+    // ==================== 行级光晕垫底 ====================
+
+    /**
+     * 行光晕纹理池：延迟提交下同帧多行（活跃 + 淡出）同时需要垫光晕，
+     * 共用一张纹理会让后一行的像素盖掉先提交 quad 的内容。
+     */
+    private static final int GLOW_SLOTS = 4;
+    private static final Identifier[] glowRl = new Identifier[GLOW_SLOTS];
+    private static final TrailTexture[] glowTex = new TrailTexture[GLOW_SLOTS];
+    private static final int[] glowW = new int[GLOW_SLOTS];
+    private static final int[] glowH = new int[GLOW_SLOTS];
+    private static final String[] glowKey = new String[GLOW_SLOTS];
+    private static boolean glowError;
+
+    @Override
+    public void drawGlowBackdrop(String text, float widthPx,
+                                 int glowColor, float alpha) {
+        drawGlowBackdrop(text, widthPx, glowColor, alpha, 0);
+    }
+
+    @Override
+    public void drawGlowBackdrop(String text, float widthPx,
+                                 int glowColor, float alpha, int slot) {
+        if (poseStack == null || mc == null || glowError
+                || text == null || text.isEmpty()) return;
+        com.muoniumplayer.core.lyrics3d.WorldLyricsSettings settings =
+                WorldLyricsBridge.currentSettings;
+        float strength = settings != null ? settings.glowStrength : 0f;
+        float spread = settings != null ? settings.glowSpread : 1f;
+        String key = text + "|" + Integer.toHexString(glowColor & 0xFFFFFF)
+                + "|" + Math.round(strength * 64f) + "|" + Math.round(spread * 16f);
+        int s = Math.abs(slot) % GLOW_SLOTS;
+
+        int[] px = com.muoniumplayer.core.lyrics3d.RowGlowSprite.bake(
+                text, glowColor, strength, spread);
+        if (px == null) return;
+        float pad = com.muoniumplayer.core.lyrics3d.RowGlowSprite.padPx(strength, spread);
+        int w = com.muoniumplayer.core.lyrics3d.RowGlowSprite.width();
+        int h = com.muoniumplayer.core.lyrics3d.RowGlowSprite.height();
+        if (w <= 0 || h <= 0 || px.length < w * h) return;
+        try {
+            // 纹理按容量（2 的幂）分配：卡拉OK逐字点亮中行宽逐帧增长，逐帧
+            // release+重建会让已提交 quad 读死纹理（黑紫方块闪帧）—— 行变长
+            // 落在已有纹理内只重传像素。
+            int capW = nextPow2(w), capH = nextPow2(h);
+            TrailTexture tex = glowTex[s];
+            if (tex == null || glowW[s] < w || glowH[s] < h) {
+                if (glowRl[s] != null) {
+                    Minecraft.getInstance().getTextureManager().release(glowRl[s]);
+                    glowTex[s] = null;
+                }
+                NativeImage img = new NativeImage(NativeImage.Format.RGBA, capW, capH, false);
+                tex = new TrailTexture(
+                        () -> "muoniumplayer_worldlyrics_rowglow", img);
+                Identifier rl = Identifier.fromNamespaceAndPath("muoniumplayer",
+                        "dynamic/worldlyrics_rowglow_" + s + "_" + (rlCounter++));
+                Minecraft.getInstance().getTextureManager().register(rl, tex);
+                glowRl[s] = rl;
+                glowTex[s] = tex;
+                glowW[s] = capW;
+                glowH[s] = capH;
+                glowKey[s] = null;
+            }
+            if (!key.equals(glowKey[s])) {
+                NativeImage img = tex.getPixels();
+                if (img == null) return;
+                for (int row = 0, i = 0; row < h; row++) {
+                    for (int col = 0; col < w; col++, i++) {
+                        img.setPixelABGR(col, row, px[i]);
+                    }
+                }
+                tex.upload();
+                glowKey[s] = key;
+            }
+        } catch (Throwable t) {
+            glowError = true;
+            return;
+        }
+
+        Identifier rl = glowRl[s];
+        if (rl == null) return;
+        float textW = com.muoniumplayer.core.lyrics3d.RowGlowSprite.textWidth();
+        float planeW = textW + pad * 2f;
+        float planeH = com.muoniumplayer.core.lyrics3d.WorldLyricsState.LINE_H + pad * 2f;
+        float x0 = -(textW * 0.5f) - pad;
+        float y0 = -(planeH * 0.5f);
+        int argb = ((int) (Math.min(1f, alpha) * 255f) << 24) | (glowColor & 0xFFFFFF);
+
+        float uMax = (float) w / glowW[s];
+        float vMax = (float) h / glowH[s];
+        if (captureMode) {
+            captureEffectQuad(rl,
+                    x0, y0, 0f, 0f,
+                    x0, y0 + planeH, 0f, vMax,
+                    x0 + planeW, y0 + planeH, uMax, vMax,
+                    x0 + planeW, y0, uMax, 0f,
+                    argb);
+            return;
+        }
+
+        OrderedSubmitNodeCollector submitter = WorldLyricsBridgeAccess.submitter(mc);
+        if (submitter == null) return;
+        RenderType renderType = currentWorldTextType(rl);
+        poseStack.pushPose();
+        try {
+            LyricOnTopSubmitter.submitCustomGeometry(submitter, poseStack, renderType, (pose, vc) -> {
+                Matrix4f mat = pose.pose();
+                putHaloVertex(vc, mat, x0, y0, 0f, 0f, argb);
+                putHaloVertex(vc, mat, x0, y0 + planeH, 0f, vMax, argb);
+                putHaloVertex(vc, mat, x0 + planeW, y0 + planeH, uMax, vMax, argb);
+                putHaloVertex(vc, mat, x0 + planeW, y0, uMax, 0f, argb);
+            });
+        } finally {
+            poseStack.popPose();
+        }
+    }
+
     /**
      * 绘光逐字光晕（folia halos）：径向渐变柔光点 quad 垫在字下。
      * folia haloAlpha = glyphAlpha × lit × (0.03+0.14illum+0.08flash)、

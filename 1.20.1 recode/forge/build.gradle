@@ -7,6 +7,8 @@ plugins {
     // skija-shared / types 已改走 legacyforge 插件内置的 JarJar（见下面 dependencies 的 jarJar 段），
     // shadow 只剩 zxing / rhino / music-api 这批还解包平铺的库。shadowJar 官方任务仍禁用。
     id 'com.gradleup.shadow' version '8.3.11'
+    id 'org.jetbrains.kotlin.jvm'
+    id 'org.jetbrains.kotlin.plugin.lombok'
 }
 
 base {
@@ -312,7 +314,8 @@ tasks.named('classes') {
     doLast {
         copy {
             from(zipTree(flattenEmbeddedLibs.get().archiveFile))
-            into sourceSets.main.output.classesDirs.singleFile
+            // Kotlin 增加第二个类输出目录，不能用 classesDirs.singleFile；仍提取到原 Java 输出目录。
+            into tasks.named('compileJava', JavaCompile).get().destinationDirectory.get().asFile
             includeEmptyDirs = false
             duplicatesStrategy = DuplicatesStrategy.EXCLUDE
         }
@@ -351,6 +354,8 @@ java {
     toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
     withSourcesJar()
 }
+
+apply from: rootProject.file('../gradle/kotlin-support.gradle')
 
 jar {
     from(rootProject.file('LICENSE.txt')) {

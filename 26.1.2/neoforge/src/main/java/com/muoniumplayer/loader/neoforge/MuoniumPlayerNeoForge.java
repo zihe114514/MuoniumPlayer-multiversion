@@ -117,6 +117,8 @@ public final class MuoniumPlayerNeoForge {
      */
     private void onSubmitCustomGeometry(SubmitCustomGeometryEvent event) {
         WorldLyricsBridge.worldRenderCollect(event.getSubmitNodeCollector());
+        // 世界声源线框标记(同一收集阶段,先后无碍)。
+        com.muoniumplayer.compat.mc.SpeakerRenderBridge.collect(event.getSubmitNodeCollector());
     }
 
     /**

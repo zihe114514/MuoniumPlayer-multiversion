@@ -11,6 +11,12 @@
 // 为什么共享源码用 mojmap 而不是 yarn：Forge/NeoForge 侧只有 mojmap 一种命名。
 // 统一到 mojmap 后四个版本工程的源码命名也一致了，同一处 API 差异只需要看一遍。
 
+// 在根工程预声明 Kotlin 插件，让两个子工程共用插件类加载器。
+plugins {
+    id 'org.jetbrains.kotlin.jvm' apply false
+    id 'org.jetbrains.kotlin.plugin.lombok' apply false
+}
+
 allprojects {
     group = project.maven_group
     version = project.mod_version

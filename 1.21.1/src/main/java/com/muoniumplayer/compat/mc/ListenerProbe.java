@@ -18,16 +18,25 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 import com.muoniumplayer.core.ncm.music.acoustics.AcousticsRuntime;
 import com.muoniumplayer.core.ncm.music.acoustics.EnergyField;
 import com.muoniumplayer.core.ncm.music.acoustics.ListenerSample;
+import com.muoniumplayer.core.ncm.music.acoustics.SpeakerState;
 
 /**
  * 听者环境的采样 shim:把当前游戏状态翻译成 common 侧的 {@link ListenerSample}。
- * 几何部分用斐波那契球面射线:从听者向球面均匀撒 {@link #RAY_COUNT} 条方向
- * (经度走黄金角、纬度均匀分层,天然铺满球面),每条投射到第一次撞上的方块或
- * 流体面,再按镜面反射最多 {@link #MAX_BOUNCES} 次;每次命中沿法线抬起一点向
- * 听者回测「这条反射能不能无遮挡到达」。确认可达的反射逐条记进<b>早期反射
- * 抽头</b>(延迟/相对幅度/到达方向);围合度、房间尺度、墙面反射率、可达比例
- * 是这批射线的统计摘要;<b>多频带能量直方图</b>按 3 频带 × 20ms 桶累积每条
- * 反射的能量到达。世界状态住在树侧,common 只认纯数据。
+ * 几何部分用斐波那契球面射线:从<b>声源原点</b>向球面均匀撒一批
+ * 条方向(经度走黄金角、纬度均匀分层,天然铺满球面),每条投射到第一次撞上的
+ * 方块或流体面,再按镜面反射最多 {@link #MAX_BOUNCES} 次;每次命中沿法线抬起
+ * 一点向<b>听者眼位</b>回测「这条反射能不能无遮挡到达」。确认可达的反射逐条
+ * 记进<b>早期反射抽头</b>(延迟/相对幅度/到达方向);围合度、房间尺度、墙面
+ * 反射率、可达比例是这批射线的统计摘要;<b>多频带能量直方图</b>按 3 频带 ×
+ * 20ms 桶累积每条反射的能量到达。世界状态住在树侧,common 只认纯数据。
+ *
+ * <h2>声源原点:玩家或世界音箱</h2>
+ * <p>没有世界声源时原点 = 玩家眼位(「玩家即声源」旧语义);玩家放置了虚拟
+ * 音箱({@link SpeakerState#active()})时原点 = 音箱锚点 —— 整套射线场自动
+ * 变成「源→墙→耳」的真实几何:抽头 path 是全路径,反射时序在交付时按
+ * 「全路径 − 直达路程」相对化(渲染里直达声零延迟),回测终点仍是眼位,
+ * 可达性检查零改动。同时新增<b>直射声采样</b>:源→眼一条射线,累加穿透
+ * 方块的遮挡量(实心 1.0 / 非实心 0.15),量出直达路程与方向声像。</p>
  *
  * <h2>线程模型(完全体:采样在后台线程)</h2>
  * <p>本类由 {@code AcousticsRuntime} 在<b>后台工作线程</b>(MIN_PRIORITY 池)上调
@@ -44,19 +53,29 @@ import com.muoniumplayer.core.ncm.music.acoustics.ListenerSample;
  */
 public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
 
-    /** 射线条数:后台线程无预算压力;512 条角分辨率 9°(Steam Audio
-     *  实时档同级),直方图每桶 ~32 条命中,T60 拟合与抽头密度达到
-     *  实时实现的高配。 */
-    private static final int RAY_COUNT = 512;
-    /** 首次命中之后最多再弹几次:直方图窗 2s ⇒ 路径要追到 ~600m 才不缺尾部;
-     *  3 弹 × 28m 的路径上限只有 ~150m(0.44s),晚期尾全是真空,T60 拟合
-     *  读到的只是「回声到达密度」(实机日志:洞穴 ρ=1.30 拟合出 0.38s)。
-     *  12 弹 × 40m ≈ 500m 路径,覆盖 1.4s 尾。 */
-    private static final int MAX_BOUNCES = 12;
-    /** 单段射程(格):96 格 = 2s 声程,与直方图窗对齐 —— 旷野/大峡谷的
-     *  远墙一次反射(真实中 100-400ms 后可闻)也能被采到,而不是被
-     *  「40 格内没墙 = 逃逸」误判成空旷。 */
-    private static final double RAY_RANGE = 96.0;
+    /**
+     * 射线条数,两档自适应(照 Wwise 的 CPU Limit Mode:移动时降密保响应,
+     * 站定时升密保精度)。
+     *
+     * <p>为什么移动时 256 够:判「我进没进洞」只需要围合度/首命中的量级,
+     * 256 条斐波那契分布的围合度估计误差 &lt;3% —— 房间判定不会因为降密而
+     * 翻面。1024 条的真正价值是<b>直方图统计密度</b>(T60 拟合每桶 ~64 条
+     * 命中),那是站定后才需要的东西。</p>
+     *
+     * <p>为什么站定也降到 512:512 条时每桶仍有 ~32 条命中,拟合噪声只
+     * 比 1024 高 1.4 倍,听感上不可辨;而射线工作量砍一半。需要极限精度时
+     * 把它调回 1024 即可。</p>
+     */
+    private static final int RAY_COUNT_SETTLED = 512;
+    private static final int RAY_COUNT_MOVING = 256;
+
+    /** 首次命中之后最多再弹几次:直方图窗 3s ⇒ 路径要追到 ~1km 才不缺
+     *  尾部。16 弹 × 160m 上限 ≈ 2.5km,真实大厅/峡谷的多次回声(3-4 次可闻
+     *  拍击)也能进直方图,而不是被弹数上限截断。 */
+    private static final int MAX_BOUNCES = 16;
+    /** 单段射程(格):160 格 ≈ 0.47s 声程 —— 旷野/大峡谷的远墙一次反射
+     *  (真实中 100-400ms 后可闻)采得到,洞口对面的第二次回声也采得到。 */
+    private static final double RAY_RANGE = 160.0;
     /** 黄金角(弧度):经度步进,配纬度均匀分层构成斐波那契格。 */
     private static final double GOLDEN_ANGLE = 2.399963229728653;
     /** 反射/回测起点沿法线抬离墙面的距离,避免立刻重新命中同一面。 */
@@ -68,16 +87,17 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
 
     /** 站定判据(平方距离,格²):挪动不足 0.5 格视为没动。 */
     private static final double STATIONARY_SQ = 0.25;
-    /** 站定期间每 N 次采样强制重算几何(200ms × 25 = 5s):方块可能变了。 */
-    private static final int STALE_EVERY = 25;
+    /** 站定期间每 N 次采样强制重算几何(500ms × 12 = 6s):方块可能变了。 */
+    private static final int STALE_EVERY = 12;
 
     // ---- 分频带空气吸收(能量比例 @ 观察窗内典型路程):高频走得远被吃得多 ----
     /** 每米能量衰减系数(近似 26.3 标准):{低,中,高}。 */
     private static final double[] AIR_ENERGY_PER_METER = {0.9990, 0.9970, 0.9920};
 
-    /** 站定缓存(仅采样线程触碰):上次几何 + 上次眼位/维度 + 采样计数。 */
+    /** 站定缓存(仅采样线程触碰):上次几何 + 上次原点/眼位/维度 + 采样计数。 */
     private static GeomStats cachedStats;
-    private static Vec3 cachedEye;
+    private static Vec3 cachedOrigin;
+    private static Vec3 cachedEar;
     private static Level cachedWorld;
     private static int capturesSinceCast;
 
@@ -99,7 +119,8 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         if (world == null || client.player == null) {
             // 退出世界回主菜单:静态缓存别钉住已卸载的 ClientLevel(整包 chunk)
             cachedStats = null;
-            cachedEye = null;
+            cachedOrigin = null;
+            cachedEar = null;
             cachedWorld = null;
             capturesSinceCast = 0;
             return null;
@@ -114,21 +135,36 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
                 ? (world.isThundering() ? 1f : 0.5f)
                 : 0f;
 
+        // 世界声源:锚点在本维度且玩家在射程内才切换射线原点。判定读的是
+        // SpeakerManager 每 tick 写的运行状态(它才有 chunk 加载语义)。
+        final SpeakerState speaker = SpeakerManager.samplingOrigin(world);
+        final Vec3 origin = speaker != null
+                ? new Vec3(speaker.x(), speaker.y(), speaker.z())
+                : eye;
+
         final GeomStats stats;
         if (!AcousticsRuntime.wantsEnclosure()) {
             stats = GeomStats.NONE;
             cachedStats = null;
-            cachedEye = null;
+            cachedOrigin = null;
+            cachedEar = null;
             cachedWorld = null;
             capturesSinceCast = 0;
         } else {
-            final boolean moved = cachedEye == null || cachedWorld != world
-                    || cachedEye.distanceToSqr(eye) > STATIONARY_SQ;
+            // 两个点都要看:原点决定射线从哪儿发出,眼位决定「可达」回测的
+            // 终点与声像 —— 音箱模式下玩家走动时原点不动、但整张抽头的
+            // 延迟/可达性都在变,只看原点会把几何冻结到下一个强制重算。
+            final boolean moved = cachedOrigin == null || cachedEar == null
+                    || cachedWorld != world
+                    || cachedOrigin.distanceToSqr(origin) > STATIONARY_SQ
+                    || cachedEar.distanceToSqr(eye) > STATIONARY_SQ;
             capturesSinceCast++;
             if (moved || cachedStats == null || capturesSinceCast >= STALE_EVERY) {
-                stats = castField(world, eye);
+                // 射线数自适应(见 RAY_COUNT_*):移动时降密保响应,站定升密保精度。
+                stats = castField(world, origin, eye, moved ? RAY_COUNT_MOVING : RAY_COUNT_SETTLED);
                 cachedStats = stats;
-                cachedEye = eye;
+                cachedOrigin = origin;
+                cachedEar = eye;
                 cachedWorld = world;
                 capturesSinceCast = 0;
             } else {
@@ -136,10 +172,32 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
             }
         }
 
-        // 玩家即声源:声像 = 到达方向在玩家右手方向上的水平投影,每次采样按当前
-        // 视角重算(站定时几何走缓存,这一步是唯一的逐帧几何计算)。
+        // 声像 = 到达方向在玩家右手方向上的水平投影,每次采样按当前视角重算
+        // (站定时几何走缓存,这一步是唯一的逐帧几何计算)。
         final float yawRad = client.player.getYRot() * ((float) Math.PI / 180f);
         final float[] pans = computePans(stats, yawRad);
+
+        // 直射声(世界声源才有):源→眼直线路程、遮挡量、方向声像。
+        final boolean hasSource = speaker != null;
+        final float directDist;
+        final float directOccl;
+        final float directPan;
+        if (hasSource) {
+            directDist = (float) origin.distanceTo(eye);
+            directOccl = directOcclusion(world, origin, eye);
+            // 源方向在玩家右手方向上的投影(与抽头声像同款投影)
+            final double dx = eye.x - origin.x;
+            final double dz = eye.z - origin.z;
+            final double horiz = Math.sqrt(dx * dx + dz * dz);
+            directPan = horiz > 1e-6
+                    ? (float) Math.max(-1.0, Math.min(1.0,
+                            (dx * -Math.cos(yawRad) + dz * -Math.sin(yawRad)) / horiz))
+                    : 0f;
+        } else {
+            directDist = 0f;
+            directOccl = 0f;
+            directPan = 0f;
+        }
 
         return new ListenerSample() {
             @Override public boolean submerged() { return submerged; }
@@ -149,18 +207,61 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
             @Override public float firstHitMeanMeters() { return stats.firstHitMean; }
             @Override public float bounceSegmentMeanMeters() { return stats.segMean; }
             @Override public float meanReflectivity() { return stats.reflectivity; }
+            @Override public float[] bandReflectivities() { return stats.bandRho; }
             @Override public float reachableFraction() { return stats.reachable; }
             @Override public int tapCount() { return stats.tapCount; }
             @Override public float[] tapDelaysSec() { return stats.tapDelays; }
             @Override public float[] tapGains() { return stats.tapGains; }
             @Override public float[] tapPans() { return pans; }
             @Override public EnergyField bandHistogram() { return stats.histogram; }
+            @Override public boolean hasDirectSource() { return hasSource; }
+            @Override public float directDistanceMeters() { return directDist; }
+            @Override public float directOcclusion() { return directOccl; }
+            @Override public float directPan() { return directPan; }
+            @Override public double speakerX() { return hasSource ? speaker.x() : 0; }
+            @Override public double speakerY() { return hasSource ? speaker.y() : 0; }
+            @Override public double speakerZ() { return hasSource ? speaker.z() : 0; }
         };
     }
 
+    /**
+     * 采样原点(共享层据此判站定、切采样周期):世界声源在用时返回锚点,
+     * 否则返回眼位。
+     *
+     * <p><b>主线程每 tick 调用</b> —— 因此复用同一个数组,不新建。返回值
+     * 的持有者只读不存,不存在跨线程共享问题(游戏线程写、游戏线程读)。</p>
+     */
+    @Override
+    public double[] originMeters() {
+        try {
+            final Minecraft client = Minecraft.getInstance();
+            if (client == null || client.player == null) {
+                return null;
+            }
+            final SpeakerState speaker = SpeakerManager.samplingOrigin(client.level);
+            if (speaker != null) {
+                ORIGIN[0] = speaker.x();
+                ORIGIN[1] = speaker.y();
+                ORIGIN[2] = speaker.z();
+                return ORIGIN;
+            }
+            final Vec3 eye = client.player.getEyePosition();
+            ORIGIN[0] = eye.x;
+            ORIGIN[1] = eye.y;
+            ORIGIN[2] = eye.z;
+            return ORIGIN;
+        } catch (Throwable ignored) {
+            return null;   // 采不到就不参与站定判定(退化为快周期)
+        }
+    }
+
+    /** 站定判定的复用缓冲(仅游戏线程读写)。 */
+    private static final double[] ORIGIN = new double[3];
+
     /** 射线场的统计摘要;{@link #NONE} 即「没采/旷野」。 */
     private static final class GeomStats {
-        static final GeomStats NONE = new GeomStats(0f, ListenerSample.NO_HIT, 0f, 0f, 0f,
+        static final GeomStats NONE = new GeomStats(0f, ListenerSample.NO_HIT, 0f, 0f,
+                new float[0], 0f,
                 0, new float[0], new float[0], new float[0], new float[0], new float[0],
                 new EnergyField());
 
@@ -168,6 +269,8 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         final float firstHitMean;
         final float segMean;
         final float reflectivity;
+        /** 三频带反射率均值 {低,中,高}:逐频带 T60 的材质驱动。 */
+        final float[] bandRho;
         final float reachable;
         final int tapCount;
         final float[] tapDelays;
@@ -180,7 +283,7 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         final EnergyField histogram;
 
         GeomStats(float enclosure, float firstHitMean, float segMean,
-                  float reflectivity, float reachable,
+                  float reflectivity, float[] bandRho, float reachable,
                   int tapCount, float[] tapDelays, float[] tapGains,
                   float[] tapArrX, float[] tapArrZ, float[] tapHoriz,
                   EnergyField histogram) {
@@ -188,6 +291,7 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
             this.firstHitMean = firstHitMean;
             this.segMean = segMean;
             this.reflectivity = reflectivity;
+            this.bandRho = bandRho;
             this.reachable = reachable;
             this.tapCount = tapCount;
             this.tapDelays = tapDelays;
@@ -199,7 +303,8 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         }
     }
 
-    private static GeomStats castField(Level world, Vec3 eye) {
+    private static GeomStats castField(Level world, Vec3 origin, Vec3 ear, int rayCount) {
+        final int rays = Math.max(32, rayCount);   // 防御:低于 32 条统计无意义
         int firstHits = 0;
         int segCount = 0;
         int reflectHits = 0;
@@ -208,9 +313,10 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         double firstSum = 0;
         double segSum = 0;
         double reflectSum = 0;
+        final double[] bandRhoSum = new double[EnergyField.BANDS];
 
         // 早期反射抽头:每条确认可达的反射记一次(容量 = 射线 × 弹次上限)。
-        final int tapCapacity = RAY_COUNT * (MAX_BOUNCES + 1);
+        final int tapCapacity = rays * (MAX_BOUNCES + 1);
         final float[] tapDelays = new float[tapCapacity];
         final float[] tapGains = new float[tapCapacity];
         final float[] tapArrX = new float[tapCapacity];
@@ -218,31 +324,38 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         final float[] tapHoriz = new float[tapCapacity];
         int tapCount = 0;
 
+        // 反射时序相对化的基准:声源激发时直达路程(渲染里直达声零延迟,
+        // 全路径延迟要减掉它 —— 否则远处的第一反射会凭空提前几十毫秒)。
+        final double directBase = origin.distanceTo(ear);
+
         final EnergyField histogram = new EnergyField();
 
-        for (int i = 0; i < RAY_COUNT; i++) {
+        for (int i = 0; i < rays; i++) {
             // 精细化:黄金角逆序 + 纬度抖动。逆序让相邻两轮采样的方向序列
-            // 交错(玩家移动时直方图/抽头过渡更连贯);纬度加 1/3 桶的
+            // 交错(移动时直方图/抽头过渡更连贯);纬度加 1/3 桶的
             // 固定偏移打破高纬度的环状对称(纯斐波那契格的伪影)。
-            final double idx = (RAY_COUNT - 1 - i) + 0.5;
+            final double idx = (rays - 1 - i) + 0.5;
             final double longitude = GOLDEN_ANGLE * idx;
-            final double latitude = Math.asin((double) idx / RAY_COUNT * 2.0 - 1.0
+            final double latitude = Math.asin((double) idx / rays * 2.0 - 1.0
                     + 0.0033 * Math.sin(idx * 12.9898));
             Vec3 dir = new Vec3(
                     Math.cos(latitude) * Math.cos(longitude),
                     Math.sin(latitude),
                     Math.cos(latitude) * Math.sin(longitude));
-            Vec3 origin = eye;
-            BlockPos ignore = BlockPos.containing(eye);
+            Vec3 from = origin;
+            BlockPos ignore = BlockPos.containing(origin);
             double outPath = 0;
             double retention = 1;
 
             for (int bounce = 0; bounce <= MAX_BOUNCES; bounce++) {
-                BlockHitResult hit = rayCast(world, origin, origin.add(dir.scale(RAY_RANGE)), ignore);
+                // 起点必须是 from(上一次的反弹落点),不是 origin —— 从第二弹
+                // 起方向已经是反射后的,起点还钉在声源的话命中点与真实几何
+                // 无关:段长/累计路径/入桶时刻/反射率统计全部失真。
+                BlockHitResult hit = rayCast(world, from, from.add(dir.scale(RAY_RANGE)), ignore);
                 if (hit.getType() == HitResult.Type.MISS) {
                     break; // 逃逸到开阔:这条方向没有更多的反射可记
                 }
-                final double segLen = origin.distanceTo(hit.getLocation());
+                final double segLen = from.distanceTo(hit.getLocation());
                 outPath += segLen;
                 if (bounce == 0) {
                     firstHits++;
@@ -254,6 +367,9 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
                 final float[] surfaceRho = reflectivity(world, hit);
                 reflectHits++;
                 reflectSum += (surfaceRho[0] + surfaceRho[1] + surfaceRho[2]) / 3.0;
+                for (int band = 0; band < EnergyField.BANDS; band++) {
+                    bandRhoSum[band] += surfaceRho[band];
+                }
                 bounces++;
                 // 逐弹幅度保留:√反射率(三带均值)夹进物理幅度区间后连乘 ——
                 // 早期反射是「幅度」量,按能量模型连乘会把近墙反射算到听不见
@@ -263,16 +379,20 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
 
                 Vec3 normal = normalOf(hit);
                 Vec3 surface = hit.getLocation().add(normal.scale(SKIN));
-                if (rayCast(world, surface, eye, null).getType() == HitResult.Type.MISS) {
+                if (rayCast(world, surface, ear, null).getType() == HitResult.Type.MISS) {
                     reachable++;
                     // 玩家即声源:全路径 = 出发段累计 + 回听者直线;几何按 1/距离(幅度)
-                    final double returnDist = surface.distanceTo(eye);
+                    final double returnDist = surface.distanceTo(ear);
                     final double path = outPath + returnDist;
                     if (tapCount < tapCapacity) {
-                        tapDelays[tapCount] = (float) (path / SPEED_OF_SOUND);
+                        // 时序相对化:渲染里直达声零延迟,抽头必须按「全路径 −
+                        // 直达路程」交付,否则远处音箱的每条早反射都凭空晚
+                        // directDist/343 秒(ER 与直达/尾部的时间结构错乱)。
+                        // 玩家即声源时 directBase=0,与修前逐值一致。
+                        tapDelays[tapCount] = (float) ((path - directBase) / SPEED_OF_SOUND);
                         tapGains[tapCount] = (float) (retention * 2.0 / path);
-                        final double ax = eye.x - surface.x;
-                        final double az = eye.z - surface.z;
+                        final double ax = ear.x - surface.x;
+                        final double az = ear.z - surface.z;
                         tapArrX[tapCount] = (float) ax;
                         tapArrZ[tapCount] = (float) az;
                         tapHoriz[tapCount] = (float) Math.sqrt(ax * ax + az * az);
@@ -280,9 +400,12 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
                     }
 
                     // 多频带能量入桶:能量 = 幅度保留² × 分频带反射率 × 空气吸收
-                    // × 几何 1/距离²;时间 = 全路径 ÷ 声速。幅度保留是三带共用的
-                    // 「几何+平均表面」项,分频带差异由反射率与空气吸收给出。
-                    final double arrival = path / SPEED_OF_SOUND;
+                    // × 几何 1/距离²;时间与抽头同口径(相对直达的到达时刻)——
+                    // 直方图喂 T60 拟合,而拟合窗 [−2.5,−0.5]dB 的横轴语义必须
+                    // 与渲染里「尾部从直达声之后多久开始」一致。玩家即声源时
+                    // directBase=0,与修前逐值一致。负值(直达极远的极端几何)
+                    // 由 EnergyField.accumulate 直接忽略。
+                    final double arrival = (path - directBase) / SPEED_OF_SOUND;
                     final double geometric = retention * retention * 4.0 / (path * path);
                     for (int band = 0; band < EnergyField.BANDS; band++) {
                         final double air = Math.pow(AIR_ENERGY_PER_METER[band], path);
@@ -292,7 +415,7 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
 
                 // 镜面反射:d − 2(d·n)n,从抬离墙面的点继续
                 dir = dir.subtract(normal.scale(2.0 * dir.dot(normal)));
-                origin = surface;
+                from = surface;
                 ignore = hit.getBlockPos();
             }
         }
@@ -303,8 +426,13 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         final float firstMean = (float) (firstSum / firstHits);
         final float segMean = segCount > 0 ? (float) (segSum / segCount) : firstMean;
         final float reflectivity = reflectHits > 0 ? (float) (reflectSum / reflectHits) : DEFAULT_REFLECTIVITY;
+        final float[] bandRho = new float[EnergyField.BANDS];
+        for (int band = 0; band < EnergyField.BANDS; band++) {
+            bandRho[band] = reflectHits > 0 ? (float) (bandRhoSum[band] / reflectHits) : DEFAULT_REFLECTIVITY;
+        }
         final float reach = bounces > 0 ? reachable / (float) bounces : 0f;
-        return new GeomStats(firstHits / (float) RAY_COUNT, firstMean, segMean, reflectivity, reach,
+        return new GeomStats(firstHits / (float) rays, firstMean, segMean, reflectivity,
+                bandRho, reach,
                 tapCount, tapDelays, tapGains, tapArrX, tapArrZ, tapHoriz, histogram);
     }
 
@@ -361,6 +489,33 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
     private static Vec3 normalOf(BlockHitResult hit) {
         Direction face = hit.getDirection();
         return new Vec3(face.getStepX(), face.getStepY(), face.getStepZ());
+    }
+
+    /**
+     * 直射遮挡量:源→耳直线穿过路径上每个非空气方块记一次遮挡 —— 实心方块
+     * 1.0、非实心(栅栏/玻璃/树叶等无完整碰撞箱)0.15(sonicether/Sound-Physics
+     * 同款记账)。与反射回测不同,这条不设 SKIN 抬升与提前终止:穿墙的「闷」
+     * 就来自把每个挡路的格子都算上。世界未加载区段直接按 MISS 处理(体素
+     * DDA 对未加载 chunk 读到空气,与「旷野」一致 —— 防御性降级)。
+     */
+    private static float directOcclusion(Level world, Vec3 from, Vec3 to) {
+        double[] occlusion = {0};
+        BlockGetter.traverseBlocks(from, to, world, (getter, pos) -> {
+            BlockState state = getter.getBlockState(pos);
+            if (state.isAir()) {
+                return null;
+            }
+            VoxelShape shape = ClipContext.Block.COLLIDER.get(state, getter, pos, CollisionContext.empty());
+            if (!shape.isEmpty()) {
+                // 实心整块 1.0、非完整碰撞箱(栅栏/玻璃板/楼梯)0.15 —— Sound
+                // Physics 同款记账。
+                occlusion[0] += state.isCollisionShapeFullBlock(getter, pos) ? 1.0 : 0.15;
+            }
+            // 回调返回 null = 继续推进:把整条路径上的遮挡都记完
+            return null;
+        }, getter -> BlockHitResult.miss(to, Direction.getNearest(
+                from.x - to.x, from.y - to.y, from.z - to.z), BlockPos.containing(to)));
+        return (float) Math.min(6.0, occlusion[0]);
     }
 
     /**

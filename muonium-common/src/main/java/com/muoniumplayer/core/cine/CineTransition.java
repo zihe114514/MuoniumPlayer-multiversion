@@ -44,14 +44,21 @@ public final class CineTransition {
         double t = CineShots.smootherstep(frame.progress());
         // 遮出（covering=true）：覆盖从 0→1；揭入：覆盖从 1→0。
         double coverage = frame.covering() ? t : 1d - t;
-        switch (frame.effect()) {
-            case 1 -> drawFade(canvas, width, height, coverage, false);
-            case 2 -> drawFade(canvas, width, height, coverage, true);
-            case 3 -> drawWipe(canvas, width, height, coverage, true);
-            case 4 -> drawWipe(canvas, width, height, coverage, false);
-            case 5 -> drawIris(canvas, width, height, coverage);
-            default -> {
+        // 与 AutomixTransitionAnimation 同款纪律:画刷/混合等绘制状态进出配对,
+        // 不渗给同帧的其它 Skija 调用方(灵动岛/播放器界面)。
+        SkijaGfx.pushAttrib();
+        try {
+            switch (frame.effect()) {
+                case 1 -> drawFade(canvas, width, height, coverage, false);
+                case 2 -> drawFade(canvas, width, height, coverage, true);
+                case 3 -> drawWipe(canvas, width, height, coverage, true);
+                case 4 -> drawWipe(canvas, width, height, coverage, false);
+                case 5 -> drawIris(canvas, width, height, coverage);
+                default -> {
+                }
             }
+        } finally {
+            SkijaGfx.popAttrib();
         }
     }
 

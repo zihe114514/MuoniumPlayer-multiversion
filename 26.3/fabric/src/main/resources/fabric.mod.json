@@ -34,7 +34,9 @@
     "fabricloader": ">=${loader_min_version}",
     "fabric-api": "*",
     "minecraft": "~${minecraft_version}",
-    "java": ">=25"
+    "java": ">=25",
+    "muoniumconfigv1": "*",
+    "compose-multiplatform": "*"
   },
   "suggests": {
     "oneconfigv1": "*"

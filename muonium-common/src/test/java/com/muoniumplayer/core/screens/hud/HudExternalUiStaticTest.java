@@ -92,9 +92,9 @@ class HudExternalUiStaticTest {
     @DisplayName("共享源码不得在编译期依赖 ModernUI，否则拿不到构件的版本树整棵编不过")
     void sharedSourceNeverImportsModernUi() throws IOException {
         final List<Path> offenders = new ArrayList<Path>();
-        { java.util.stream.Stream<Path> walk = ProjectPaths.allJavaFiles().stream();
+        { java.util.stream.Stream<Path> walk = ProjectPaths.allSourceFiles().stream();
             walk.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().endsWith(".java"))
+                    .filter(ProjectPaths::isSourceFile)
                     .forEach(p -> {
                         try {
                             String text = new String(Files.readAllBytes(p), StandardCharsets.UTF_8);

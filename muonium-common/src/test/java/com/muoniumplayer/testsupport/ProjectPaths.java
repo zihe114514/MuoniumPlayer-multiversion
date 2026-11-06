@@ -19,7 +19,8 @@ import java.util.List;
  * {@code muonium-common/src/main/java}），版本差异层在各树自己的 {@link #versionJava()}
  * （{@code compat/}、{@code mixin/} 与功能集不同的那几个文件）。
  * 定位单个文件用 {@link #sourceFile(String)}，它两个根都找；
- * <b>遍历全仓必须用 {@link #javaRoots()} 或 {@link #allJavaFiles()}</b> ——
+ * <b>Java 专用扫描用 {@link #javaRoots()} 或 {@link #allJavaFiles()}，
+ * 跨语言扫描用 {@link #sourceRoots()} 或 {@link #allSourceFiles()}</b> ——
  * 只扫一个根的话，「所有文件都不许出现 X」这类断言会悄悄少扫一半，
  * 而且是绿着少扫，出问题时看不出来。
  */
@@ -66,12 +67,69 @@ public final class ProjectPaths {
         return versionRoot().resolve(Paths.get("src", "main", "java"));
     }
 
+    /** 共享 Kotlin 主源码，与 Java 主体共用同一份归属约定。 */
+    public static Path sharedKotlin() {
+        return repoRoot().resolve(COMMON).resolve(Paths.get("src", "main", "kotlin"));
+    }
+
+    /** 本树 Kotlin 版本差异层，新增文件仍须登记留守原因。 */
+    public static Path versionKotlin() {
+        return versionRoot().resolve(Paths.get("src", "main", "kotlin"));
+    }
+
     /** 两个源码根，共享在前。全仓遍历用它，别只挑一个。 */
     public static List<Path> javaRoots() {
         List<Path> roots = new ArrayList<Path>();
         roots.add(sharedJava());
         roots.add(versionJava());
         return roots;
+    }
+
+    /** 主体与版本差异层的 Java/Kotlin 源码根；旧 Java 专用接口保留。 */
+    public static List<Path> sourceRoots() {
+        List<Path> roots = new ArrayList<Path>(javaRoots());
+        roots.add(sharedKotlin());
+        roots.add(versionKotlin());
+        return roots;
+    }
+
+    public static boolean isSourceFile(Path file) {
+        String name = file.getFileName().toString();
+        return name.endsWith(".java") || name.endsWith(".kt");
+    }
+
+    /** 全语言的主体与版本差异源码，不枚举资源或构建脚本。 */
+    public static List<Path> allSourceFiles() throws IOException {
+        return sourceFilesUnder(sourceRoots());
+    }
+
+    /** 同一包下的 Java/Kotlin 并集。 */
+    public static List<Path> sourceFilesIn(String relativeDir) throws IOException {
+        List<Path> dirs = new ArrayList<Path>();
+        for (Path root : sourceRoots()) {
+            dirs.add(root.resolve(relativeDir));
+        }
+        return sourceFilesUnder(dirs);
+    }
+
+    private static List<Path> sourceFilesUnder(List<Path> roots) throws IOException {
+        List<Path> all = new ArrayList<Path>();
+        for (Path root : roots) {
+            if (!Files.isDirectory(root)) {
+                continue;
+            }
+            Files.walkFileTree(root, new java.nio.file.SimpleFileVisitor<Path>() {
+                @Override
+                public java.nio.file.FileVisitResult visitFile(Path file,
+                        java.nio.file.attribute.BasicFileAttributes attrs) {
+                    if (isSourceFile(file)) {
+                        all.add(file);
+                    }
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+            });
+        }
+        return all;
     }
 
     /**
@@ -86,13 +144,15 @@ public final class ProjectPaths {
 
     /** 同 {@link #sourceFile(String)}，参数是 {@code Paths.get("a","b",...)} 拼出来的相对路径。 */
     public static Path sourceFile(Path relative) {
-        for (Path root : javaRoots()) {
+        boolean kotlin = relative.getFileName().toString().endsWith(".kt");
+        List<Path> roots = kotlin ? sourceRoots() : javaRoots();
+        for (Path root : roots) {
             Path candidate = root.resolve(relative);
             if (Files.exists(candidate)) {
                 return candidate;
             }
         }
-        return sharedJava().resolve(relative);
+        return (kotlin ? sharedKotlin() : sharedJava()).resolve(relative);
     }
 
     /** 两个根里实际存在的同名目录（用来「把这个包下的文件都看一遍」）。 */

@@ -65,6 +65,18 @@ public final class WorldLyricsRenderer {
          */
         default void drawGlowBackdrop(String text, float widthPx,
                                       int glowColor, float alpha) {
+            drawGlowBackdrop(text, widthPx, glowColor, alpha, 0);
+        }
+
+        /**
+         * 带槽位的行级光晕。26.x 的几何提交是延迟展开的，同一帧可能有多行
+         * （活跃行 + 淡出行）同时需要垫光晕 —— 共用一张纹理时后一行的像素会
+         * 覆盖先提交 quad 的内容。宿主按 slot 各持一张纹理；即时发射顶点的
+         * 实现可以忽略 slot。
+         */
+        default void drawGlowBackdrop(String text, float widthPx,
+                                      int glowColor, float alpha, int slot) {
+            drawGlowBackdrop(text, widthPx, glowColor, alpha);
         }
 
         /** 原版像素字宽。 */
@@ -672,11 +684,17 @@ public final class WorldLyricsRenderer {
                     }
                 }
             }
-            if (!smooth && settings.glowEnabled && settings.glowStrength > 0.02f
-                    && glyphs.glyphs.size() > 0) {
-                // 原版样式的行级光晕：把已显现前缀交宿主烘光晕垫底。前缀按可见
-                // 字形的 x 顺序拼，出现间隙（逐字点亮中段未出）即停 —— 否则会
-                // 画出「真空带」。
+            // ---- 行级光晕垫底 ----
+            // 两种发光形态共用「已显现前缀」的收集：
+            //   * 经典形态只在原版像素字样式下画（现代样式已有逐字晕格，行级会重复）；
+            //   * 辉光形态两种样式都画 —— 它就是现代样式缺的那层大范围柔光，
+            //     且逐字晕格已在下面被抑制，不会有第二套叠上来。
+            boolean bloomGlow = settings.glowMode() == WorldLyricsState.GLOW_BLOOM;
+            boolean wantBackdrop = settings.glowEnabled && settings.glowStrength > 0.02f
+                    && glyphs.glyphs.size() > 0 && (bloomGlow || !smooth);
+            if (wantBackdrop) {
+                // 前缀按可见字形的 x 顺序拼，出现间隙（逐字点亮中段未出）即停 ——
+                // 否则会画出「真空带」。
                 StringBuilder vis = new StringBuilder();
                 float right = 0f;
                 int count = 0;
@@ -688,15 +706,17 @@ public final class WorldLyricsRenderer {
                     count++;
                 }
                 if (count > 0) {
-                    // 原版像素风格没有逐字晕格，行级垫底晕跟随发光颜色模式：
-                    // 跟随字色档用行首字的墨色派生（无关键字/渐变的像素档够用）
+                    // 行级晕跟随发光颜色模式；跟随字色档用行首字的墨色派生
+                    // （无关键字/渐变的像素档够用）。
+                    // 行级垫底同样吃白天过曝抑制（白天 0.45 倍、夜晚全量）——
+                    // 它是辉光形态下唯一的晕层，不吃调制白天整团白得更狠。
                     int backdropInk = glyphs.glyphs.get(0).rgbOverride != 0
                             ? glyphs.glyphs.get(0).rgbOverride : (inkRgb & 0xFFFFFF);
                     host.drawGlowBackdrop(vis.toString(), right,
                             resolveGlowColor(settings, backdropInk,
                                     glyphs.glyphs.get(0).keywordRgb,
                                     glyphs.glyphs.get(0).rgbOverride) & 0xFFFFFF,
-                            row.alpha);
+                            row.alpha * (0.45f + 0.55f * huiguangNight), canvasSlot);
                 }
             }
             for (int gi = 0; gi < glyphs.glyphs.size(); gi++) {
@@ -716,7 +736,10 @@ public final class WorldLyricsRenderer {
                     // 本字晕层颜色：跟随字色档 = 字墨色提亮（晕比墨亮一档，光从字里
                     // 长出来）；自定义色板档 = 设置色原样。晕开关 = 发光总开关 && 强度>0
                     // && glowMul 未被压到近零（心象未唱块 0.35 仍有晕，0 就没有）。
-                    boolean glowOn = settings.glowEnabled && settings.glowStrength > 0.02f
+                    // 辉光形态下行级金字塔接管发光，逐字晕格关掉 —— 两套叠在一起会
+                    // 变成「亮环裹着一团柔光」，两种观感互相污染。
+                    boolean glowOn = !bloomGlow && settings.glowEnabled
+                            && settings.glowStrength > 0.02f
                             && glowMul > 0.02f;
                     int glowColor = glowOn
                             ? resolveGlowColor(settings, rgb, g.keywordRgb, g.rgbOverride)
@@ -729,6 +752,11 @@ public final class WorldLyricsRenderer {
                         // 心象下不在唱的块压低发光（与简洁模式「整行恒定发光」区分）。
                         glowMul = 0.35f;
                     }
+                    // 白天过曝抑制：加色晕在亮天空上把亮度加到饱和（整团白）。
+                    // 夜色系数（白天≈0 夜晚≈1，4 档量化）反相调制晕能量 ——
+                    // 白天 0.45 倍收敛、夜晚全量，黄昏/黎明随档平滑。
+                    // 放在心象分档之后：任何分支定下的基础能量统一吃环境调制。
+                    glowMul *= 0.45f + 0.55f * huiguangNight;
                     if (huiguang) {
                         // ---- 卡拉OK双色：冷暗档 / 暖亮档两张烘焙格，顶点 alpha 交叉淡化
                         //      （folia tint 混色的 alpha 通道等价物）。每字恰好两格 ——
@@ -780,8 +808,10 @@ public final class WorldLyricsRenderer {
                                 // 飞行白化（folia hot 色 += flying×0.25 的等价物）：
                                 // 飞行中的字提高发光烘焙乘数，像带电粒子。
                                 // 亮档晕色重新解析：full 是「关键字混色后的墨色」，
-                                // 跟随字色档的晕要跟着它走
-                                float glow = 1f + (g.flyingWhite ? 0.25f : 0f);
+                                // 跟随字色档的晕要跟着它走。
+                                // 同样吃白天过曝抑制（与暗档同一环境调制口径）。
+                                float glow = (1f + (g.flyingWhite ? 0.25f : 0f))
+                                        * (0.45f + 0.55f * huiguangNight);
                                 boolean on = glowOn && glowMul > 0.02f;
                                 int litGlow = on
                                         ? resolveGlowColor(settings, full, g.keywordRgb, g.rgbOverride)
