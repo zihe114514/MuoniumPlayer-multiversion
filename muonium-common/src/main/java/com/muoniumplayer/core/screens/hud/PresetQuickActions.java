@@ -8,7 +8,9 @@ import com.muoniumplayer.core.preset.model.StylePreset;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.onboarding.OnboardingManager;
+import com.muoniumplayer.core.screens.onboarding.OnboardingState;
 import com.muoniumplayer.core.utils.KeyboardUtils;
+import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
 import java.util.EnumSet;
 import java.util.Set;
@@ -19,6 +21,10 @@ import java.util.Set;
  *
  * <p>设置界面拿不到套用页那种分面勾选，所以这里的操作都用默认勾选（布局位置、画质性能不动），并且都可撤销。
  * 点完的结果在按钮文字上停留几秒（标签是 Supplier，每帧现读），同时发一条灵动岛提示。</p>
+ *
+ * <p><b>线程</b>：五个动作都经 {@link MultiThreadingUtil#runOnMainThread} 执行。内置 / MConfig / OneConfig 三层本来就在客户端主线程，
+ * 这是原地直接跑；ModernUI 那一层的点击回调在它自己的 UI 线程上，而切屏幕、读写剪贴板（GLFW）、套用预设
+ * （改 HUD 组件与主题）都只能在主线程做，所以排到下一 tick。</p>
  */
 public final class PresetQuickActions {
 
@@ -47,9 +53,17 @@ public final class PresetQuickActions {
     }
 
     public static void openPanel() {
+        MultiThreadingUtil.runOnMainThread(PresetQuickActions::openPanelNow);
+    }
+
+    private static void openPanelNow() {
         try {
             OnboardingManager.openPlayerEntry();
-            NCMScreen.getInstance().openPresets();
+            // 新手引导还没做完时，上面打开的是引导页：别给后台那个播放器实例挂预设面板，
+            // 否则等玩家走完引导，第一眼看到的会是一块莫名其妙的面板。
+            if (OnboardingState.isCompleted()) {
+                NCMScreen.getInstance().openPresets();
+            }
         } catch (Throwable failure) {
             flash("open", "打不开播放器", failure.getMessage());
         }
@@ -62,12 +76,20 @@ public final class PresetQuickActions {
     }
 
     public static void applyMinimal() {
-        StylePreset minimal = builtin("builtin:minimal");
-        if (minimal == null) {
-            flash("minimal", "找不到内置「简约」", null);
-            return;
+        MultiThreadingUtil.runOnMainThread(PresetQuickActions::applyMinimalNow);
+    }
+
+    private static void applyMinimalNow() {
+        try {
+            StylePreset minimal = builtin("builtin:minimal");
+            if (minimal == null) {
+                flash("minimal", "找不到内置「简约」", null);
+                return;
+            }
+            report("minimal", "已套用「简约」", service().apply(minimal, service().defaultSelection(minimal)));
+        } catch (Throwable failure) {
+            flash("minimal", "套用失败", failure.getMessage());
         }
-        report("minimal", "已套用「简约」", service().apply(minimal, service().defaultSelection(minimal)));
     }
 
     // ---- 撤销 ----
@@ -77,15 +99,23 @@ public final class PresetQuickActions {
     }
 
     public static void undo() {
-        if (!service().canUndo()) {
-            flash("undo", "没有可以撤销的套用", null);
-            return;
-        }
-        CompatReport result = service().undo();
-        if (result == null) {
-            flash("undo", "备份读不出来", null);
-        } else {
-            report("undo", "已撤销", result);
+        MultiThreadingUtil.runOnMainThread(PresetQuickActions::undoNow);
+    }
+
+    private static void undoNow() {
+        try {
+            if (!service().canUndo()) {
+                flash("undo", "没有可以撤销的套用", null);
+                return;
+            }
+            CompatReport result = service().undo();
+            if (result == null) {
+                flash("undo", "备份读不出来", null);
+            } else {
+                report("undo", "已撤销", result);
+            }
+        } catch (Throwable failure) {
+            flash("undo", "撤销失败", failure.getMessage());
         }
     }
 
@@ -96,6 +126,10 @@ public final class PresetQuickActions {
     }
 
     public static void copyAppearance() {
+        MultiThreadingUtil.runOnMainThread(PresetQuickActions::copyAppearanceNow);
+    }
+
+    private static void copyAppearanceNow() {
         try {
             Set<Facet> facets = EnumSet.noneOf(Facet.class);
             for (Facet facet : Facet.withoutOptIn(Facet.ofGroup(Facet.Group.APPEARANCE))) {
@@ -119,6 +153,10 @@ public final class PresetQuickActions {
     }
 
     public static void pasteAndApply() {
+        MultiThreadingUtil.runOnMainThread(PresetQuickActions::pasteAndApplyNow);
+    }
+
+    private static void pasteAndApplyNow() {
         try {
             StylePreset imported = service().importText(KeyboardUtils.getClipboardString());
             report("paste", "已套用「" + imported.meta().name() + "」",
