@@ -46,6 +46,23 @@ public final class PresetQuickActions {
     private PresetQuickActions() {
     }
 
+    // ---- 设置声明里那一行兜底入口（内置界面用标题栏的魔法棒，这一行在那里藏起） ----
+
+    public static final String OPEN_PANEL_LABEL = "打开模板预设";
+
+    /** 内置设置界面开着：它的标题栏有魔法棒。 */
+    private static volatile boolean headerEntryShown;
+
+    /** 内置设置界面打开 / 关闭时各调一次。 */
+    static void setHeaderEntryShown(boolean shown) {
+        headerEntryShown = shown;
+    }
+
+    /** 这一行该不该出现：内置界面里不出现，其余几层照常出现。 */
+    public static boolean listedInModel() {
+        return !headerEntryShown;
+    }
+
     // ---- 打开面板 ----
 
     public static String openPanelLabel() {
