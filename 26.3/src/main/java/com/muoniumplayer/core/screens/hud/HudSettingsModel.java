@@ -1794,9 +1794,11 @@ public final class HudSettingsModel {
                                 slider(HudSetting.SPECTRUM_HEIGHT, "仅调整频谱高度，不改变播放器或通知的尺寸。",
                                         () -> HudConfig.spectrumEnabled)),
                         new Group("设置界面", HudSettingsIcons.MODERN_UI,
-                                choice("设置界面由谁渲染", "MuoniumConfig＝本项目自绘的现代化界面；内置＝本项目自绘的经典界面；"
-                                        + "OneConfig / ModernUI＝交给已安装的外部界面。"
-                                        + "选中的外部界面不可用时自动回退内置，不报错也不弹提示，切换在下次按 H 时生效。",
+                                choice("设置界面由谁渲染",
+                                        "MuoniumConfig 是本项目魔改的 OneConfig，界面与条目都由它维护（默认）。"
+                                        + "OneConfig / ModernUI 则交给玩家各自安装的界面。"
+                                        + "选中的外部界面不可用时自动回退 MuoniumConfig，不报错也不弹提示，"
+                                        + "切换在下次按 H 时生效。",
                                         new Supplier<String>() {
                                             public String get() {
                                                 return uiLayerLabel();
@@ -1805,12 +1807,10 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 cycleUiLayer();
                                             }
-                                        }, new String[] {"内置", "MuoniumConfig", "OneConfig", "ModernUI"},
+                                        }, new String[] {"MuoniumConfig", "ModernUI"},
                                                 HudSettingsModel::setUiLayerChoice,
-                                                new String[] {"自绘经典界面，不依赖任何 mod。",
-                                                        "自绘现代化界面（MuoniumConfig），同样不依赖任何 mod。",
-                                                        "OneConfig 的 MuoniumPlayer HUD 页，需已安装 OneConfig v1。",
-                                                        "ModernUI 的面板，需已安装 ModernUI 且本 Minecraft 版本有对应构件。"})),
+                                                new String[] {"本项目魔改的 OneConfig，界面与条目统一在这里维护（默认）。",
+                                                        "玩家自己装的 ModernUI，需本 Minecraft 版本有对应构件。"})),
                         new Group("外部播放器", HudSettingsIcons.NOTE,
                                 choice("播放态来源", "内置＝只播本模组自己队列里的歌（默认）。"
                                         + "系统镜像＝不发声，改由系统里正在播的外部播放器供态：曲名、进度、播放状态取自 Windows 的系统媒体控制，"
@@ -2406,45 +2406,32 @@ public final class HudSettingsModel {
      * 这两种情况的处理办法完全不同。
      */
     public static String uiLayerLabel() {
-        if (HudConfig.HUD_EDITOR_UI_MCONFIG.equals(HudConfig.hudEditorUi)) {
-            return "MuoniumConfig";
-        }
-        if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(HudConfig.hudEditorUi)) {
-            return OneConfigHudBridge.isAvailable() ? "OneConfig" : "OneConfig（未安装·回退内置）";
-        }
         if (HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)) {
             String status = ModernUiHudBridge.statusLabel();
-            return "可用".equals(status) ? "ModernUI" : "ModernUI（" + status + "·回退内置）";
+            return "可用".equals(status) ? "ModernUI" : "ModernUI（" + status + "·回退 MuoniumConfig）";
         }
-        return "内置";
+        // MuoniumConfig 与 OneConfig 走同一套 API，由 OneConfigHudBridge 统一打开。
+        // 未安装时写清「回退自绘」——玩家得知道按 H 出来的是哪一层、为什么。
+        return OneConfigHudBridge.isAvailable() ? "MuoniumConfig" : "MuoniumConfig（未安装·回退自绘）";
     }
 
-    /** 内置 → MuoniumConfig → OneConfig → ModernUI 循环。不可用的那层照旧能选中，只是打开时回退并写明原因。 */
+    /**
+     * MuoniumConfig → ModernUI 循环。
+     *
+     * <p>没有「内置」这一档：设置界面统一由 MuoniumConfig 渲染，自绘界面只在它未安装时兜底。
+     * 不可用的那层照旧能选中，只是打开时回退并写明原因。</p>
+     */
     private static void cycleUiLayer() {
-        String current = HudConfig.hudEditorUi;
-        if (HudConfig.HUD_EDITOR_UI_BUILTIN.equals(current)) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MCONFIG;
-        } else if (HudConfig.HUD_EDITOR_UI_MCONFIG.equals(current)) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
-        } else if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(current)) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MODERNUI;
-        } else {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_BUILTIN;
-        }
+        HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)
+                ? HudConfig.HUD_EDITOR_UI_MCONFIG
+                : HudConfig.HUD_EDITOR_UI_MODERNUI;
         saveNow();
     }
 
     private static void setUiLayerChoice(String value) {
-        if (value == null) return;
-        if ("MuoniumConfig".equalsIgnoreCase(value)) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MCONFIG;
-        } else if ("OneConfig".equalsIgnoreCase(value)) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
-        } else if ("ModernUI".equalsIgnoreCase(value)) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MODERNUI;
-        } else {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_BUILTIN;
-        }
+        HudConfig.hudEditorUi = "ModernUI".equalsIgnoreCase(value)
+                ? HudConfig.HUD_EDITOR_UI_MODERNUI
+                : HudConfig.HUD_EDITOR_UI_MCONFIG;
         saveNow();
     }
 

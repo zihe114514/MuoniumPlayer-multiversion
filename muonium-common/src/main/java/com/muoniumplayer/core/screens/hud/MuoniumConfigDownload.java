@@ -56,8 +56,8 @@ public final class MuoniumConfigDownload {
      * 与 Stonecutter 的 {@code <版本>-<加载器>} 命名保持一致。</p>
      */
     private static final Map<String, Build> BUILDS = Map.of(
-            "26.3/fabric", new Build("muoniumconfig-1.6.1.jar", 9937711L,
-                    "697fb9e2f4d5efd23e4e9359c95f56903df2a655bff297c67ca6538bf4077894"));
+            "26.3/fabric", new Build("muoniumconfig-1.6.1.jar", 9937804L,
+                    "abd1ff85340e583119877692e36282f0def2b452a690167b810a102a5bc44c00"));
 
     /** 一个可下载的构建：文件名 + 钉死的字节数与 sha256。 */
     private static final class Build {

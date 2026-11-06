@@ -702,22 +702,24 @@ public final class MuoniumPlayerClient {
     private long devTriggerDelayNanos;
 
     /**
-     * 按用户选择打开 HUD 设置；外部界面（ModernUI / OneConfig）不可用时自动回退到内置界面。
-     * MuoniumConfig（mconfig）是自带呈现、永远可用，排在两外部层之后、内置兜底之前。
+     * 按用户选择打开 HUD 设置。
+     *
+     * <p>默认走 MuoniumConfig（本项目魔改的 OneConfig，界面与条目统一在那边维护），由
+     * {@link OneConfigHudBridge#open()} 打开它的 Compose 界面。它没装时——首次启动正在下载、
+     * 或玩家手动删了——退回自绘界面，让玩家至少还能调 HUD，而不是按 H 没反应。
+     * 自绘界面只剩兜底这一条路径，不再是一个可选项。</p>
      */
     private void openHudEditor(Minecraft mc) {
         if (HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)
                 && ModernUiHudBridge.open()) {
             return;
         }
-        if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(HudConfig.hudEditorUi)
-                && OneConfigHudBridge.open()) {
+        // "oneconfig" 与 "mconfig" 都指向同一个界面：前者是玩家自己装的 OneConfig，
+        // 后者是本项目魔改并自动下载的那一份，两者 API 相同，由 OneConfigHudBridge 统一接。
+        if (OneConfigHudBridge.open()) {
             return;
         }
-        if (HudConfig.HUD_EDITOR_UI_MCONFIG.equals(HudConfig.hudEditorUi)) {
-            mc.gui.setScreen(new MConfigHudScreen());
-            return;
-        }
+        // MuoniumConfig 不在：兜底的自绘界面，只为了让玩家还能动 HUD
         mc.gui.setScreen(new GuiHudEditorPro());
     }
 
