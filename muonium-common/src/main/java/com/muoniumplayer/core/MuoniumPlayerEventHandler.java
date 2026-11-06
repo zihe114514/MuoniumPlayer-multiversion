@@ -95,6 +95,9 @@ public class MuoniumPlayerEventHandler implements EventHandler {
         Runnable islandOverlay = () -> {
             DownloadDynamicIsland.render();
             AutomixTransitionAnimation.render();
+            // 卡点运镜的转场遮罩/黑边不在常规 HUD 路:26.3 的 Hud.extractRenderState
+            // 在 isHidden 时跳过 HUD 元素列表,而运镜开着 hideHud —— 遮罩入口被
+            // 自己关掉。改走 CineHudMixin(extractRenderState TAIL,闸门之外)。
         };
         if (!SkijaHost.deferPostCompositeOverlay(islandOverlay)) islandOverlay.run();
     }

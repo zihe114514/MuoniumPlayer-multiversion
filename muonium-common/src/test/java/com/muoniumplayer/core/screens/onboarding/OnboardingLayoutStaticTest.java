@@ -217,6 +217,49 @@ class OnboardingLayoutStaticTest {
                 "小屏上主按钮出了面板");
     }
 
+    @Test
+    @DisplayName("正文列：永不超出内容带，大屏收成中间一栏且居中")
+    void stepColumnStaysInsideTheBandAndCentresOnBigScreens() {
+        for (double[] window : WINDOW_SIZES) {
+            for (double scale : PLAYER_SCALES) {
+                String where = window[0] + "×" + window[1] + " @播放器 " + Math.round(scale * 100) + "%";
+                double[] column = OnboardingScreen.stepColumnForTest(window[0], window[1], scale);
+                double columnWidth = column[0];
+                double columnLeft = column[1];
+                double designWidth = column[3];
+                assertTrue(columnWidth > 0, where + "：正文列算成了 0 宽，这一档一个字都排不下");
+                assertTrue(columnLeft >= 0 && columnLeft + columnWidth <= designWidth + EPS,
+                        where + "：正文列（" + columnLeft + "+" + columnWidth + "）超出了 "
+                                + designWidth + " 宽的设计空间");
+                if (designWidth > OnboardingMetrics.CONTENT_MAX_WIDTH) {
+                    assertTrue(columnWidth <= OnboardingMetrics.CONTENT_MAX_WIDTH + EPS,
+                            where + "：大屏没有限宽，正文列被拉到 " + columnWidth);
+                }
+                // 居中：左右留白相等。大屏上这一列如果偏左，玩家会觉得「界面贴着侧栏」。
+                double rightGap = designWidth - (columnLeft + columnWidth);
+                assertTrue(Math.abs(columnLeft - rightGap) < 1e-6,
+                        where + "：正文列没居中（左 " + columnLeft + "，右 " + rightGap + "）");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("真正的大屏会走到宽屏档：1537 宽的内容带不该还按常规档排")
+    void bigScreensActuallyReachTheWiderTiers() {
+        // 1920×1080 全屏、播放器 100%：内容带实测 1536.8 宽，是设计稿的两倍半。
+        // 这一档必须升到 WIDE 以上，否则「大屏字号升级」等于没接上。
+        double[] wide = OnboardingScreen.stepColumnForTest(1920, 1080, 1.00);
+        assertTrue(wide[3] >= 1400, "1920 全屏的设计宽只有 " + wide[3] + "，用例的前提变了");
+        assertTrue(wide[2] >= OnboardingMetrics.Tier.WIDE.ordinal(),
+                "1920×1080 全屏落回了 " + OnboardingMetrics.Tier.values()[(int) wide[2]]
+                        + " 档：大屏没有升字号");
+        // 反过来，真机最小那一档必须落到紧凑档。
+        double[] tiny = OnboardingScreen.stepColumnForTest(284, 160, 0.70);
+        assertTrue(tiny[2] == OnboardingMetrics.Tier.COMPACT.ordinal(),
+                "284×160 @70% 没有被判成紧凑档（实际判成 "
+                        + OnboardingMetrics.Tier.values()[(int) tiny[2]] + "）");
+    }
+
     private interface LayoutCheck {
         void check(double[] band, double windowWidth, double windowHeight, String where);
     }

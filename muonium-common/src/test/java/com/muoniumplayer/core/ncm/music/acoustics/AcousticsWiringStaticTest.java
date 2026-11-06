@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AcousticsWiringStaticTest {
 
     private static final String[] TREES = {
-            "1.20.1 recode", "1.21.1", "1.21.11 recode", "26.2", "26.3",
+            "1.20.1 recode", "1.21.1", "1.21.10", "1.21.11 recode", "26.1.2", "26.2", "26.3",
     };
 
     private static Path repoRoot() {

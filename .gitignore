@@ -3,6 +3,11 @@
 
 # ---- 构建产物 / 本地缓存 ----
 build/
+# Kotlin 混编验收的 build 是源码包名，不是构建输出。
+!gradle/kotlin-smoke/src/main/java/com/muoniumplayer/build/
+!gradle/kotlin-smoke/src/main/kotlin/com/muoniumplayer/build/
+# Kotlin 编译器的本地状态。
+.kotlin/
 # 各版本 buildAll 汇总产物的统一目录（rootProject/dist，由 collectDist 任务写入）
 dist/
 .gradle/
@@ -156,3 +161,9 @@ error-report-*/
 
 # Widevine/Apple 许可调试产物（一次性素材，含设备指纹，不入库）
 /g6work/
+
+# ---- issue #11：游戏根下的可再生日志根（缓存 + 账号凭据），七树的 run 产物不入库 ----
+/*/fabric/MuoniumPlayer/
+/*/neoforge/MuoniumPlayer/
+/*/forge/MuoniumPlayer/
+/MuoniumPlayer/

@@ -250,6 +250,35 @@ public class FontManager extends AbstractManager {
         return readFont(builtinMainPath(bold));
     }
 
+    /**
+     * 给别的 UI（MuoniumConfig 的设置界面）取当前生效字体的原始字节。
+     *
+     * <p>优先用 {@code UiFontLibrary} 记录下来的 AWT 句柄去 {@code SkijaText} 的字节表里查：
+     * 那份数据就是当初解析进 Skia 的同一份，不必重新读盘，也不必猜玩家的字体文件在哪。
+     * 玩家没换过字体时（句柄为 null）回落到内置正文/粗体字体的字节。</p>
+     *
+     * @param wantBold 要粗体那一档；返回 null 表示没有独立的粗体字节，调用方应退回常规档
+     */
+    public static byte[] fontBytesForUi(UiFont font, boolean wantBold) {
+        Font handle = wantBold ? UiFontLibrary.getWiredBoldAwt() : UiFontLibrary.getWiredRegularAwt();
+        if (handle != null) {
+            byte[] bytes = com.muoniumplayer.render.skija.SkijaText.sourceBytesFor(handle);
+            if (bytes != null) {
+                return bytes;
+            }
+        }
+        if (wantBold && UiFontLibrary.getWiredBoldAwt() == null
+                && UiFontLibrary.getWiredRegularAwt() != null) {
+            // 换过字体但没有独立粗体：让调用方用合成粗体，别再叠一份内置字体
+            return null;
+        }
+        try {
+            return readFontBytes(builtinMainPath(wantBold));
+        } catch (java.io.IOException e) {
+            return null;
+        }
+    }
+
     /** 从字体字节建 AWT Font 并登记给 Skia；完整字体包在下载线程上先行解析时用。 */
     static Font createRegisteredFont(byte[] data) throws Exception {
         return createAndRegister(new java.io.ByteArrayInputStream(data));

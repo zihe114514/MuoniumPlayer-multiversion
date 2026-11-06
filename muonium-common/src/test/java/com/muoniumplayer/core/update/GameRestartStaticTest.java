@@ -26,7 +26,7 @@ class GameRestartStaticTest {
 
     /** 五棵版本树（各树 MuoniumPlayerClient 的 tick 钩子是重启唯一的执行入口）。 */
     private static final String[] TREES = {
-            "1.20.1 recode", "1.21.1", "1.21.11 recode", "26.2", "26.3"};
+            "1.20.1 recode", "1.21.1", "1.21.10", "1.21.11 recode", "26.1.2", "26.2", "26.3"};
 
     @Test
     @DisplayName("安全阀：只在主菜单停人；ESC 拆雷；至多一次重启；标记两小时过期")

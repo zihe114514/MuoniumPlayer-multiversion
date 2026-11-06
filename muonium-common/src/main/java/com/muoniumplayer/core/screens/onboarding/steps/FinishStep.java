@@ -1,9 +1,9 @@
 package com.muoniumplayer.core.screens.onboarding.steps;
 
 import com.muoniumplayer.core.management.FontManager;
-import com.muoniumplayer.core.ncm.music.NeteaseMusicService;
 import com.muoniumplayer.core.rendering.FoliaLucideIcons;
 import com.muoniumplayer.core.screens.onboarding.OnboardingController;
+import com.muoniumplayer.core.screens.onboarding.OnboardingMetrics;
 import com.muoniumplayer.core.screens.onboarding.OnboardingStep;
 import com.muoniumplayer.core.screens.onboarding.OnboardingStepView;
 import com.muoniumplayer.core.screens.onboarding.OnboardingUi;
@@ -14,9 +14,9 @@ public final class FinishStep implements OnboardingStepView {
 
     private static final double TITLE_H = 44;
     private static final double SUBTITLE_H = 20;
-    private static final double ROW_H = 28;
-    private static final double ROW_GAP = 6;
     private static final double NOTE_H = 14;
+    /** 摘要卡有几行：账号 / 音源 / 主题 / 沉浸感。 */
+    private static final int SUMMARY_ROWS = 4;
 
     @Override
     public void render(OnboardingController controller,
@@ -55,53 +55,97 @@ public final class FinishStep implements OnboardingStepView {
                 x + icon * .5, top + icon * .5 + 1, icon * .56, OnboardingUi.GREEN);
 
         double titleY = top + icon + gapIconTitle;
-        OnboardingUi.drawText(FontManager.pf40bold, "一切就绪", x, titleY, OnboardingUi.textPrimary());
-        OnboardingUi.drawText(FontManager.pf20, "MuoniumPlayer 已准备好陪你播放下一首。",
+        OnboardingUi.drawText(OnboardingUi.metric().titleFont(), "一切就绪", x, titleY, OnboardingUi.textPrimary());
+        OnboardingUi.drawText(OnboardingUi.metric().subtitleFont(), "MuoniumPlayer 已准备好陪你播放下一首。",
                 x, titleY + TITLE_H - 6, OnboardingUi.textSecondary());
 
         double summaryY = titleY + TITLE_H - 6 + SUBTITLE_H + gapSubSummary;
-        renderSummary(OnboardingStep.ACCOUNT, "账号", accountSummary(controller), x, summaryY, width);
-        renderSummary(OnboardingStep.SOURCE, "音源", controller.selectedPlatform().getDisplayName(),
-                x, summaryY + ROW_H + ROW_GAP, width);
-        renderSummary(OnboardingStep.APPEARANCE, "主题", controller.selectedTheme().getDisplayName(),
-                x, summaryY + (ROW_H + ROW_GAP) * 2, width);
-        if (note) {
-            OnboardingUi.drawText(FontManager.pf14, "点击右下角开始使用，随时可以回到主界面继续调整。",
-                    x, summaryY + (ROW_H + ROW_GAP) * 2 + ROW_H + gapNote, OnboardingUi.textMuted());
+        // 四张摘要卡：账号 / 音源 / 主题 / 沉浸感。走和前面几页同一套卡壳，
+        // 这样「完成」这一屏不是另画一套摘要条，而是刚才那一路选下来的同一批卡片。
+        double rowH = summaryRowHeight();
+        double rowGap = Math.max(4, rowH * .14);
+        String[] labels = {"账号", "音源", "主题", "沉浸感"};
+        String[] values = {
+                accountSummary(),
+                controller.selectedPlatform().getDisplayName(),
+                controller.selectedTheme().getDisplayName(),
+                immersionSummary(controller)
+        };
+        OnboardingStep[] icons = {
+                OnboardingStep.ACCOUNT, OnboardingStep.SOURCE,
+                OnboardingStep.APPEARANCE, OnboardingStep.AUTOMIX
+        };
+        for (int i = 0; i < labels.length; i++) {
+            renderSummaryCard(icons[i], labels[i], values[i], x,
+                    summaryY + (rowH + rowGap) * i, width, rowH);
+            if (summaryY + (rowH + rowGap) * (i + 1) > y + height) {
+                // 内容带装不下四张就不往下画：被裁掉半张卡比少一张更难读。
+                break;
+            }
         }
+        if (note) {
+            OnboardingUi.drawText(OnboardingUi.metric().bodyFont(), "点击右下角开始使用，随时可以回到主界面继续调整。",
+                    x, summaryY + (rowH + rowGap) * labels.length + gapNote, OnboardingUi.textMuted());
+        }
+    }
+
+    /** 沉浸感那一行摘要：两项都开、只开一项、都没开。 */
+    private static String immersionSummary(OnboardingController controller) {
+        boolean acoustics = controller.acousticsEnabled();
+        boolean ambient = controller.ambientEnabled();
+        if (acoustics && ambient) return "声学 + 环境选曲";
+        if (acoustics) return "场景声学";
+        if (ambient) return "环境选曲";
+        return "保持关闭";
+    }
+
+    /** 摘要卡的高度：跟排版档走，比正文卡矮一点（它只有一行）。 */
+    static double summaryRowHeight() {
+        return Math.max(26, OnboardingUi.metric().cardHeight * .5);
     }
 
     private static double blockHeight(double icon, double gapIconTitle, double gapSubSummary,
                                       double gapNote, boolean note) {
+        double rowH = summaryRowHeight();
+        double rowGap = Math.max(4, rowH * .14);
         double height = icon + gapIconTitle + TITLE_H + SUBTITLE_H + gapSubSummary
-                + ROW_H * 3 + ROW_GAP * 2;
+                + rowH * SUMMARY_ROWS + rowGap * (SUMMARY_ROWS - 1);
         return note ? height + gapNote + NOTE_H : height;
     }
 
-    private static String accountSummary(OnboardingController controller) {
-        boolean netease = NeteaseMusicService.isLoggedIn(com.muoniumplayer.core.ncm.music.MusicPlatform.NETEASE);
-        boolean qq = NeteaseMusicService.isLoggedIn(com.muoniumplayer.core.ncm.music.MusicPlatform.QQ);
-        boolean kugou = NeteaseMusicService.isLoggedIn(com.muoniumplayer.core.ncm.music.MusicPlatform.KUGOU);
-        if (netease || qq || kugou) {
-            return "已登录";
-        }
-        return "稍后登录";
+    private static String accountSummary() {
+        // 与账号页那条状态条同一份判定（六家全看），否则在管理器里登了汽水/Apple 的玩家
+        // 会在最后一页看到「稍后登录」——而他明明刚登录过。
+        return OnboardingUi.anyAccountLoggedIn() ? "已登录" : "稍后登录";
     }
 
     /**
-     * 一行摘要：图标 + 标签 + 结果。
+     * 一行摘要卡：图标 + 标签 + 结果。
      *
      * <p>标签与结果之间的位置<b>量出来</b>，不是写死 {@code x + 74}：那只是「账号」两个字的宽度，
-     * 换成「主题」或者标签字体一大一档，结果就往左压到标签上。图标走侧栏同一套
-     * （{@link OnboardingUi#drawStepIcon}），这一页念的三件事和左边那一列是同一件事。</p>
+     * 换成「主题」或者标签字体一大一档，结果就往左压到标签上。结果本身再按右边界截断
+     * （音源名「YouTube Music」配大字号时能撞到卡右边）。</p>
      */
-    private static void renderSummary(OnboardingStep step, String label, String value,
-                                      double x, double y, double width) {
-        OnboardingUi.roundedRect(x, y, width, ROW_H, 9, OnboardingUi.surfaceHover());
-        OnboardingUi.drawStepIcon(step, x + 20, y + ROW_H * .5, 14, OnboardingUi.textMuted());
-        OnboardingUi.drawText(FontManager.pf12, label, x + 34, y + 9, OnboardingUi.textMuted());
-        OnboardingUi.drawText(FontManager.pf12bold, value,
-                x + 34 + OnboardingUi.textWidth(FontManager.pf12, label) + 12, y + 9,
+    private static void renderSummaryCard(OnboardingStep step, String label, String value,
+                                          double x, double y, double width, double rowH) {
+        double[] content = OnboardingUi.card(x, y, width, rowH,
+                OnboardingUi.CardState.IDLE, OnboardingUi.textMuted());
+        OnboardingUi.drawStepIcon(step, content[0] + 8, content[1] + content[3] * .5, 14,
+                OnboardingUi.textMuted());
+        double labelX = content[0] + 24;
+        OnboardingUi.drawText(OnboardingUi.metric().bodyFont(), label, labelX,
+                content[1] + content[3] * .5 - OnboardingMetrics.lineHeight(
+                        OnboardingUi.metric().bodyFont()) * .5,
+                OnboardingUi.textMuted());
+        double valueX = labelX + OnboardingUi.textWidth(OnboardingUi.metric().bodyFont(), label) + 12;
+        // 结果靠右对齐到内容区右端：四行读下来是「标签一列、结果一列」，比跟在标签后面更好扫。
+        double available = content[0] + content[2] - valueX;
+        String fitted = OnboardingUi.ellipsize(OnboardingUi.metric().labelBold(), value, available);
+        double valueW = OnboardingUi.textWidth(OnboardingUi.metric().labelBold(), fitted);
+        OnboardingUi.drawText(OnboardingUi.metric().labelBold(), fitted,
+                content[0] + content[2] - valueW,
+                content[1] + content[3] * .5 - OnboardingMetrics.lineHeight(
+                        OnboardingUi.metric().labelBold()) * .5,
                 OnboardingUi.textPrimary());
     }
 

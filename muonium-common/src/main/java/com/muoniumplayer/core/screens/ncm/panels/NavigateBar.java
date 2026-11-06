@@ -2524,15 +2524,42 @@ public class NavigateBar extends NCMPanel {
      * 依赖它就等于依赖「这一帧确实渲染过、而且没有被别的组件抢走悬停」，而这个前置口是在渲染之外
      * 被调用的。</p>
      *
+     * <h2>面板状态是每帧变的：以按下时的快照为准（穿透修复）</h2>
+     * 触屏时代的点击是「按下只记账、松手才分发」，中间隔着任意长的时间。而联想面板恰恰
+     * 是全界面里状态最易变的消费者：异步联想结果到达时行数增减、{@code suggestReveal}
+     * 入场动画每帧上移、提交搜索后立刻整体隐藏。于是出现时间窗——按下的瞬间面板还在
+     * （用户看到并瞄准的就是联想面板），松手那一刻面板已经没了：本方法的可见性判断直接
+     * 放行，同一次点击穿透到底下的歌单条目/音乐来源卡片。所以 {@link NCMScreen} 在按下时
+     * 用 {@link #suggestionLayerVisibleNow()} 拍一份快照、松手分发时原样传回来：面板几何
+     * 用松手时刻的（行还点得中，信息不过期），<b>可见性裁决只用按下时的</b>——按下面板
+     * 挡着的那一下点击，永远归联想层消费。
+     *
+     * @param pressVisible 按下瞬间的 {@link #suggestionLayerVisibleNow()} 快照；即时路径
+     *                     （手势层关闭）传按下即松手的现值即可
      * @return 是否吃掉了这次点击
      */
-    public boolean consumeSuggestionClick(double mouseX, double mouseY, int mouseButton) {
-        if (!this.suggestionsVisible || this.suggestionPanel.isHidden()) return false;
+    public boolean consumeSuggestionClick(double mouseX, double mouseY, int mouseButton,
+                                          boolean pressVisible, int pressHoveredRow) {
+        if (!pressVisible) return false;
+        boolean visibleNow = this.suggestionsVisible && !this.suggestionPanel.isHidden();
+        if (!visibleNow) {
+            // 面板此刻已经不在了：这一下仍然整体吃掉。按下面板挡着，用户的意图是点面板
+            // 或关面板——一次点按的位移在阈值（8 GUI 像素）内，不可能在这段时间里合法地
+            // 瞄准一个「刚从面板底下露出来的」目标，落到新旧哪套几何上都不许漏给下层
+            // （评审修正：旧实现拿隐藏层的过期矩形做判定，窗口 resize 后会漏）。
+            // 面板没了没有行可选，也不需要再收起——下一帧 layoutSuggestions 自己会收干净。
+            return true;
+        }
 
         if (this.isHovered(mouseX, mouseY, this.suggestionPanel.getX(), this.suggestionPanel.getY(),
                 this.suggestionPanel.getWidth(), this.suggestionPanel.getHeight())) {
             if (mouseButton == 0) {
+                // 行下标先按松手时刻的几何算（正常路径：按下面板在、松手面板也在，
+                // 同一茬行直接命中）。面板内容在按下→松手之间被换过一茬（异步新结果
+                // 到达）时按几何可能落不进任何一行——那时退回按下沿记录的悬停下标，
+                // 用户瞄准的就是那一行。两路都没有才算「点了留白」，只吃掉不选中。
                 int index = this.suggestionRowAt(mouseX, mouseY);
+                if (index < 0 && pressHoveredRow >= 0) index = pressHoveredRow;
                 if (index >= 0) this.selectSuggestion(index);
             }
             // 落在面板留白（上下各 3 px）上的点击也要吃掉：它盖住的仍然是歌单条目。
@@ -2551,6 +2578,35 @@ public class NavigateBar extends NCMPanel {
         // 侧栏之外（右侧列表、底部控制条）没有任何视觉遮挡，那里的点击照常生效：
         // 输入框失焦后面板下一帧自己就会收起，不在这里额外记「这个词不再提示」。
         return false;
+    }
+
+    /**
+     * 联想遮挡层此刻是否可见（面板本体或收起层任一在场）。
+     *
+     * <p>给 {@code NCMScreen} 在按下沿拍快照用：触屏时代的松手分发与按下之间隔着
+     * 任意长的时间，而联想面板恰恰是每帧都可能消失/变形的层——可见性必须以按下
+     * 瞬间为准，否则「按下面板在、松手面板没了」的那一下点击会穿透到底下的歌单条目。
+     * 渲染线程专用，只读两个布尔。</p>
+     */
+    public boolean suggestionLayerVisibleNow() {
+        return (this.suggestionsVisible && !this.suggestionPanel.isHidden())
+                || !this.suggestionDismissLayer.isHidden();
+    }
+
+    /**
+     * 按下沿悬停的联想行下标（无悬停返回 -1）。坐标是调用方已换算好的<b>布局轴</b>。
+     *
+     * <p>与可见性快照同拍：面板内容在按下→松手之间被异步结果换过一茬时，松手时刻的
+     * 几何命中会落空——用户瞄准的是按下时看到的那一行，用它兜底，点击才不会「吃了没反应」。</p>
+     *
+     * <p>坐标纪律（2026-11-04 评审修正）：本方法<b>绝不自己从裸 Mouse 重推坐标</b>——
+     * 五棵树的 compat {@code Mouse.getY()} 是底原点 framebuffer 轴（LWJGL2 语义），
+     * 自己换算必然翻错方向；必须复用 {@code NCMScreen.mouseClicked} 已经换算好的
+     * 布局坐标（{@code mX / WindowAdaptiveScale.correctionX()} 同一条链）。</p>
+     */
+    public int suggestionHoveredRowAt(double mouseX, double mouseY) {
+        if (!this.suggestionsVisible || this.suggestionPanel.isHidden()) return -1;
+        return this.suggestionRowAt(mouseX, mouseY);
     }
 
     /** 命中的联想行下标；没命中返回负一。 */

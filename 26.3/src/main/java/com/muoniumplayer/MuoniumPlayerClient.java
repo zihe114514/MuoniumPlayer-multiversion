@@ -15,6 +15,7 @@ import com.muoniumplayer.core.screens.GuiAnnouncements;
 import com.muoniumplayer.core.screens.GuiFfmpegNotice;
 import com.muoniumplayer.core.screens.GuiUpdateNotice;
 import com.muoniumplayer.core.screens.hud.GuiHudEditorPro;
+import com.muoniumplayer.core.screens.hud.MConfigHudScreen;
 import com.muoniumplayer.core.screens.hud.ModernUiHudBridge;
 import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
 import com.muoniumplayer.core.settings.HudConfig;
@@ -62,7 +63,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "2.4.0";
+    public static final String MOD_VERSION = "2.4.2";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -95,7 +96,8 @@ public final class MuoniumPlayerClient {
      *
      * <p>1.20.1 时这里是一个字符串翻译键（{@code "key.categories.muonium"}）。26.2 把它
      * 换成了 {@code KeyMapping.Category} 记录类型，由一个 {@link Identifier} 构造，
-     * 标题的翻译键由它自己按 {@code key.categories.<namespace>.<path>} 推导。
+     * 标题的翻译键由它自己按 {@code key.category.<namespace>.<path>} 推导（单数，不是旧式的
+     * {@code key.categories.*}）。
      * 所以语言文件里的键名需要相应调整，见 {@code assets/muonium/lang/*.json}。
      */
     public static final KeyMapping.Category KEY_CATEGORY =
@@ -230,6 +232,10 @@ public final class MuoniumPlayerClient {
         if (this.api == null) {
             return;
         }
+
+        // MuoniumConfig 的「常用」页在 client init 时可能注册不上（它的嵌套 jar 那时还没进
+        // 类加载器）。这里每 tick 试一次，成功后就只是空判断。
+        com.muoniumplayer.core.screens.hud.MuoniumFavorites.ensureRegistered();
 
         // ---- Gnetum 共存兼容：检测 + 自动关其「muonium」HUD 元素缓存 + 聊天栏告知 ----
         // Gnetum 的 HUD 分帧缓存只认走原版 GUI 管线的回调；本 mod 的 HUD 是 Skija 离屏 +
@@ -408,6 +414,22 @@ public final class MuoniumPlayerClient {
             keyAmbientNow.consumeClick();
             keySpeakerPlace.consumeClick();
         }
+
+        // ---- 卡点运镜（MuoniumCine）----
+        // 每 tick 送一帧场景快照;状态机在共享层,开关关着/音乐停着时是一次布尔判断。
+        // isActive 翻转沿上做树侧执行器(切第三人称/隐藏 HUD 及其恢复)——共享层
+        // 不碰 MC 符号,翻转检测只能在树桥:翻转前后各读一次,一次性成本两次布尔比较。
+        boolean cineWasActive = com.muoniumplayer.core.cine.CineDirector.isActive();
+        com.muoniumplayer.core.cine.CineDirector.onClientTick(
+                com.muoniumplayer.compat.mc.CineProbe.of(mc));
+        boolean cineIsActive = com.muoniumplayer.core.cine.CineDirector.isActive();
+        if (cineIsActive != cineWasActive) {
+            if (cineIsActive) {
+                com.muoniumplayer.compat.mc.CineProbe.entered();
+            } else {
+                com.muoniumplayer.compat.mc.CineProbe.left();
+            }
+        }
     }
 
     /**
@@ -540,14 +562,38 @@ public final class MuoniumPlayerClient {
      * <p>仍然压一层变换与绘制状态：业务代码里存在 push/pop 不配对的写法，
      * 压一层能把影响限制在本帧（宿主层每帧还会再兜一次底）。
      */
+    /**
+     * 当前 Screen 是不是 HUD 编辑器。
+     *
+     * <p>只认白名单类名，别的一律返回 false（HUD 不画）。这里刻意不用
+     * 「继承自 GuiScreen 且类名含 Hud」这种宽口径：一旦把背包、聊天或别的 mod 的界面
+     * 误判成编辑器，HUD 就会叠上去挡住操作，那个 bug 比「编辑器里没有预览」严重得多。</p>
+     *
+     * <p>外部编辑器（MuoniumConfig 的 HUD 设计器）在编译期不可见，只能按类名认；
+     * 它改名或换实现时这里会静默失效，表现回到「编辑器里看不到预览」，不会更糟。</p>
+     */
+    private static boolean isHudEditorScreen(Screen screen) {
+        if (screen instanceof GuiHudEditorPro || screen instanceof MConfigHudScreen) {
+            return true;
+        }
+        String name = screen.getClass().getName();
+        return name.equals("org.polyfrost.oneconfig.internal.ui.compose.impls.HudEditorUIScreen");
+    }
+
     private void onHudRenderUnguarded() {
-        // 26.x 的 HUD 回调在 Screen 打开期间照常触发。有两类要让路：
-        // 1) HUD 设置编辑器自带两块 widget 的实时预览，真实 HUD 再画就同屏各一份；
+        // 26.x 的 HUD 回调在 Screen 打开期间照常触发。两头要区别对待：
+        // 1) HUD 编辑器需要看到真实 HUD —— 编辑器的意义就是「一边拖一边看效果」。
+        //    外部编辑器（OneConfig / MuoniumConfig）尤其必要：它的 Hud 对象是我们通过
+        //    NormalizedHudProvider 接进去的空壳（Content() 不画东西），真正画 HUD 的
+        //    仍是本方法；不放行就是一片空白。
         // 2) 背包/原版设置/聊天等任何其它界面——mod 的 HUD 附加层叠在上面既挡操作又无意义
         //   （全屏播放器 NCMScreen 不走这条回调，自己管理岛与频谱；下载进度灵动岛保留，
         //    它是用户主动触发的进度反馈，跟随界面消失反而丢失状态）。
+        //
+        // 判断刻意只认白名单类名：认不出就按「不是编辑器」处理，宁可编辑器里看不到预览，
+        // 也不能让 HUD 盖到背包/聊天上——后者会挡住操作，更容易被当成 bug 报上来。
         Screen open = Minecraft.getInstance().gui.screen();
-        if (open != null && !(open instanceof NCMScreen)) {
+        if (open != null && !(open instanceof NCMScreen) && !isHudEditorScreen(open)) {
             if (!(DownloadDynamicIsland.isDownloadActive())) return;
         }
         api.getGLStateManager().pushAttrib();
@@ -655,16 +701,25 @@ public final class MuoniumPlayerClient {
     private long devTriggerSeenAt;
     private long devTriggerDelayNanos;
 
-    /** 按用户选择打开 HUD 设置；外部界面（ModernUI / OneConfig）不可用时自动回退到内置界面。 */
+    /**
+     * 按用户选择打开 HUD 设置。
+     *
+     * <p>默认走 MuoniumConfig（本项目魔改的 OneConfig，界面与条目统一在那边维护），由
+     * {@link OneConfigHudBridge#open()} 打开它的 Compose 界面。它没装时——首次启动正在下载、
+     * 或玩家手动删了——退回自绘界面，让玩家至少还能调 HUD，而不是按 H 没反应。
+     * 自绘界面只剩兜底这一条路径，不再是一个可选项。</p>
+     */
     private void openHudEditor(Minecraft mc) {
         if (HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)
                 && ModernUiHudBridge.open()) {
             return;
         }
-        if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(HudConfig.hudEditorUi)
-                && OneConfigHudBridge.open()) {
+        // "oneconfig" 与 "mconfig" 都指向同一个界面：前者是玩家自己装的 OneConfig，
+        // 后者是本项目魔改并自动下载的那一份，两者 API 相同，由 OneConfigHudBridge 统一接。
+        if (OneConfigHudBridge.open()) {
             return;
         }
+        // MuoniumConfig 不在：兜底的自绘界面，只为了让玩家还能动 HUD
         mc.gui.setScreen(new GuiHudEditorPro());
     }
 

@@ -59,10 +59,14 @@ public final class TextGlow {
     // 跨字重叠由晕格 quad 的加色天然合成）。
 
     /** 管线版本：算法或参数变更时 +1，随晕格缓存键走，防旧格跨版本复用。 */
-    public static final int BLOOM_PIPELINE_VERSION = 1;
+    public static final int BLOOM_PIPELINE_VERSION = 2;
 
-    /** 晕格独立烘焙超采样（设计像素 ×3）：晕是低频光形，3× 域 mip 链可运行、格小烘焙快。 */
-    public static final int GLOW_BAKE_SCALE = 3;
+    /**
+     * 晕格独立烘焙超采样（设计像素 ×4）。4 是丝滑度与成本的平衡点：LINEAR 放大
+     * 回设计域只剩 1.25×，跨格亮度差不再被放大出块感（3× 时 1.67× 放大是游戏里
+     * 晕"割裂"的成因之一）；mip 链 1/8 级仍 ≥ 可运行的格宽。
+     */
+    public static final int GLOW_BAKE_SCALE = 4;
 
     private static final float BLOOM_THRESH = 0.13f;
     private static final float BLOOM_KNEE = 0.30f;
@@ -164,20 +168,30 @@ public final class TextGlow {
             addLayerTinted(gR, gG, gB, core, BLOOM_GAIN_CORE * clamped, lr, lg, lb, BLOOM_WHITEN_CORE, 1f);
 
             // ---- 直通 alpha 输出：a = max 通道，rgb 除回满强度（GL 加色贡献 rgb×a 不变）----
+            // ING 有序抖动（Jimenez 2014，±0.5 LSB）：晕的暗端 alpha < 16 的尾部在
+            // 8bit 量化下出现同心台阶（游戏里叠在动态背景上显形为"割裂"），
+            // 抖动把台阶打散成空间噪声 —— 人眼读作连续渐变。
             int[] out = new int[w * h];
-            for (int i = 0; i < out.length; i++) {
-                float r = Math.max(0f, gR[i]), g = Math.max(0f, gG[i]), bl = Math.max(0f, gB[i]);
-                float mx = Math.max(r, Math.max(g, bl));
-                if (mx <= 0.001f) {
-                    out[i] = 0;
-                    continue;
+            for (int y = 0; y < h; y++) {
+                int row = y * w;
+                for (int x = 0; x < w; x++) {
+                    int i = row + x;
+                    float dither = ing(x, y) / 255f;
+                    float r = Math.max(0f, gR[i] + dither);
+                    float g = Math.max(0f, gG[i] + dither);
+                    float bl = Math.max(0f, gB[i] + dither);
+                    float mx = Math.max(r, Math.max(g, bl));
+                    if (mx <= 0.001f) {
+                        out[i] = 0;
+                        continue;
+                    }
+                    if (mx > 1f) {
+                        r /= mx; g /= mx; bl /= mx; mx = 1f;
+                    }
+                    int ri = Math.round(r / mx * 255f), gi = Math.round(g / mx * 255f), bi = Math.round(bl / mx * 255f);
+                    int a = Math.round(mx * 255f);
+                    out[i] = (a << 24) | (Math.min(255, ri) << 16) | (Math.min(255, gi) << 8) | Math.min(255, bi);
                 }
-                if (mx > 1f) {
-                    r /= mx; g /= mx; bl /= mx; mx = 1f;
-                }
-                int ri = Math.round(r / mx * 255f), gi = Math.round(g / mx * 255f), bi = Math.round(bl / mx * 255f);
-                int a = Math.round(mx * 255f);
-                out[i] = (a << 24) | (Math.min(255, ri) << 16) | (Math.min(255, gi) << 8) | Math.min(255, bi);
             }
             return out;
         } catch (Throwable t) {
@@ -294,6 +308,265 @@ public final class TextGlow {
         for (int i = 0; i < d.length; i++) {
             d[i] += s[i];
         }
+    }
+
+    /** 带权重的累加（行级辉光上行链用：各级贡献按比例计，避免能量重复叠加）。 */
+    private static void addInto(float[] d, float[] s, float weight) {
+        for (int i = 0; i < d.length; i++) {
+            d[i] += s[i] * weight;
+        }
+    }
+
+    // ==================== 行级辉光（指数色调映射管线）====================
+    // 与上面的 Ultra 晕格管线并列的第二套算法，服务「整行一枚光晕 quad」的通路：
+    // 单格金字塔 + 指数色调映射合成。两者刻意不复用参数：
+    //
+    //   * 晕格是逐字的，一格只有几像素宽，σ 必须贴合单字笔画，靠分层加色把
+    //     「墨 → 光」的亮度阶梯拼出来；
+    //   * 行级是一整行一张，格宽是格高的十几倍，可以直接把整行的光能铺开——
+    //     于是换成指数色调映射 c = 1 - exp(-e)，亮处自己趋向白、暗尾永远不断，
+    //     不需要再手工分「宽晕场 / 外圈饱和 / 内圈字色 / 白核」四层。
+    //
+    // 下标 0 是最小一级（最大范围），逐级放大叠回来：小级给弥散的大光晕，
+    // 大级给贴着笔画的亮边。
+
+    /**
+     * 行级辉光的降采样级数。7 级到 1/128：行级位图本身已按 2× 超采样烘，
+     * 再降 7 级后最外层的光能铺满整行，肉眼看是贴在字后的一大团柔光。
+     */
+    public static final int ROW_GLOW_LEVELS = 7;
+
+    /**
+     * 行级辉光上采样的叠加强度：<b>必须小于 1</b>。
+     *
+     * <p>上行链是「本级能量 + gain × 放大后的更小一级」。gain ≥ 1 时这个序列
+     * 不收敛 —— 每级都放大一点，六级下来整张画布被推进指数色调映射的饱和区，
+     * 光晕退化成一块实心白（能量表实测：gain=1.15 时 92% 像素饱和）。
+     * gain 越小，光晕里「大范围弥散」的比重越低、越贴字。</p>
+     *
+     * <p>0.30 ~ 0.45 是实测区间：字芯仍能到白热，同时只有不到 1% 的像素饱和。</p>
+     */
+    private static final float ROW_GLOW_GAIN_BASE = 0.30f;
+    private static final float ROW_GLOW_GAIN_SPREAD = 0.15f;
+
+    /**
+     * 行级辉光的曝光系数。指数色调映射 c = 1 - exp(-e) 在 e = 1 时到 0.63、
+     * e = 2 时到 0.86、e = 3 时 0.95 —— 乘 4 让满强度的字芯稳稳过曝成白，
+     * 而晕的外圈还留在 0.1 上下，形成「中心白热、外圈带色」的层次。
+     */
+    private static final float ROW_GLOW_EXPOSURE = 4.0f;
+
+    /**
+     * 行级辉光合成时向白色靠拢的力度（0 = 完全不提白，1 = 高能区全白）。
+     * 指数色调映射本身已让高能区趋白；再补这一档让字芯越过「亮」到「白热」。
+     * 1.0 是实测定案：字芯三通道齐平 255 附近，外圈色相不受影响。
+     */
+    private static final float ROW_GLOW_WHITEN = 1.0f;
+
+    /**
+     * 行级辉光烘焙。输入整行字形覆盖掩码（0..1），输出<b>直通 alpha</b> 的
+     * ARGB int[]（rgb 存满强度光色、alpha 存强度 —— 加色混合下贡献 rgb×alpha
+     * 无损；全透明 texel 为 0）。
+     *
+     * <p>管线：soft-knee 亮部提取 → γ2.2 进线性域 → 逐级 1/2 降采样（每级先
+     * 低通，防高频混叠成块）→ 从最小一级逐级放大叠加（8 点帐篷滤波，轴向 ×1、
+     * 对角 ×2）→ 指数色调映射合成 → 直通 alpha 输出。</p>
+     *
+     * <p><b>不做任何抖动</b>：本通路刻意保持像素的干净量化，暗尾的台阶由调用方
+     * 的超采样与纹理 LINEAR 过滤消化。</p>
+     *
+     * @param mask     字形覆盖度（0..1），长 w×h，行主序
+     * @param fontPx   掩码所在域的字号（像素）；σ 按 fontPx/50 等比缩放
+     * @param spread   扩散 0..1，越大光晕越散
+     * @param strength 发光强度 0..1
+     * @param lightRgb 光色（低 24 位）
+     * @return 直通 alpha 的 ARGB 像素；参数非法或异常时返回 null
+     */
+    public static int[] bakeRowGlowPixels(float[] mask, int w, int h, float fontPx,
+                                          double spread, double strength, int lightRgb) {
+        try {
+            float clamped = (float) clamp01(strength);
+            if (mask == null || w <= 0 || h <= 0 || mask.length < w * h || clamped <= .004f) {
+                return null;
+            }
+            if ((lightRgb & 0xFFFFFF) == 0) {
+                return null;   // 黑光色 = 不发光
+            }
+            // 行级不等宽：金字塔级数受短边约束，密铺的小行少降几级
+            int levels = ROW_GLOW_LEVELS;
+            while (levels > 1 && (Math.min(w, h) >> levels) < 2) {
+                levels--;
+            }
+            float k = (float) (fontPx / 50.0 * Math.max(.05, spread));
+            float lr = ((lightRgb >> 16) & 255) / 255f;
+            float lg = ((lightRgb >> 8) & 255) / 255f;
+            float lb = (lightRgb & 255) / 255f;
+
+            // ---- 亮部提取（soft-knee）→ 线性域 ----
+            float[] base = new float[w * h];
+            for (int i = 0; i < base.length; i++) {
+                float v = Math.max(0f, mask[i]);
+                if (v <= 1e-4f) {
+                    continue;
+                }
+                float hard = Math.max(v - BLOOM_THRESH, 0);
+                float soft = BLOOM_KNEE * Math.max(0f, Math.min(v - BLOOM_THRESH + BLOOM_KNEE, 2 * BLOOM_KNEE));
+                soft = soft * soft / (4 * BLOOM_KNEE + 1e-4f);
+                base[i] = (float) Math.pow(Math.max(hard, soft), 2.2);
+            }
+
+            // ---- 下行：逐级先低通再降采样 ----
+            // 只有第一级在原网格上做高斯（这一级负责把抗锯齿边缘揉开，是唯一的
+            // 大半径卷积）；之后每级都在已经缩小的网格上低通，σ 折算回本级域后
+            // 只有 0.8~1.2px，成本随面积平方下降。
+            float[][] lv = new float[levels][];
+            int[] lw = new int[levels];
+            int[] lh = new int[levels];
+            gaussBlur(base, w, h, BLOOM_SIGMA_PRE * k);
+            float[] cur = base;
+            int cw = w, ch = h;
+            for (int i = 0; i < levels; i++) {
+                // down2 内部按 w/2 取尺寸（向下取整）；这里必须用同一口径，
+                // 否则短边为奇数时下一轮越界（行级格宽常是奇数）
+                int nw = Math.max(1, cw / 2);
+                int nh = Math.max(1, ch / 2);
+                cur = down2(cur, cw, ch);
+                cw = nw;
+                ch = nh;
+                // 降采样后的本级域低通：σ 按域比例折回（像素域 σ / 2^i）
+                gaussBlur(cur, cw, ch, BLOOM_SIGMA_M1 * k);
+                lv[i] = cur;
+                lw[i] = cw;
+                lh[i] = ch;
+            }
+
+            // ---- 上行：从小到大逐级叠加（8 点帐篷）----
+            // 口径（标准 bloom 上行）：每级把「更小一级的结果」放大到本级，
+            // 乘扩散系数后叠加到<b>本级自身的能量</b>上；本级能量只计一次。
+            //
+            // 帐篷滤波是均值型、能量守恒，所以这里不需要再除级数；早期版本
+            // 额外给每级乘了 stepGain 的同时又把上一级全额累加，等于「平均 ×
+            // 逐级放大」，七级下来 mean 涨到 9 倍，整张画布推进 1-exp 饱和区，
+            // 光晕退化成实心白（探针实拍 + 逐级能量表确认）。
+            //
+            // 扩散由 gain 控制：gain 越大，大范围的成分占比越高，光晕越散。
+            float gain = ROW_GLOW_GAIN_BASE
+                    + (float) clamp01(spread) * ROW_GLOW_GAIN_SPREAD;
+            float[] up = lv[levels - 1];
+            int uw = lw[levels - 1], uh = lh[levels - 1];
+            for (int i = levels - 2; i >= 0; i--) {
+                // 先把本级内容接过来，再把放大后的模糊级按 gain 叠上去
+                float[] acc = lv[i];
+                addInto(acc, tentUp(up, uw, uh, lw[i], lh[i]), gain);
+                up = acc;
+                uw = lw[i];
+                uh = lh[i];
+            }
+            // 回到原网格
+            float[] energy = (uw == w && uh == h) ? up : upTo(up, uw, uh, w, h);
+
+            // ---- 指数色调映射合成 → 直通 alpha ----
+            // e 是线性域的累计光能。c = 1 - exp(-e × exposure) 永不硬截断：
+            // 亮处渐近 1（白热），暗处按比例保留，尾巴一直拖到 0。
+            int[] out = new int[w * h];
+            for (int i = 0; i < out.length; i++) {
+                float e = energy[i] * clamped * ROW_GLOW_EXPOSURE;
+                if (e <= 1e-4f) {
+                    out[i] = 0;
+                    continue;
+                }
+                float c = 1f - (float) Math.exp(-e);
+                // 白热：按「超出中灰的程度」做幂次提白。指数色调映射本身让亮处
+                // 趋近 1，但那只把 <b>亮度</b> 拉满，光色仍留在色相上 —— 红光的
+                // 字芯会停在 (255,120,110) 这种「很亮的红」而不是白。这里用
+                // (c-0.35)/0.65 的平方做权重，只在真正的高能区才把三通道推向白，
+                // 外圈几乎不动，色相保留。
+                float over = Math.max(0f, (c - 0.35f) / 0.65f);
+                float whiten = over * over * ROW_GLOW_WHITEN;
+                float r = lr + (1f - lr) * whiten;
+                float g = lg + (1f - lg) * whiten;
+                float bl = lb + (1f - lb) * whiten;
+                int a = Math.round(Math.min(1f, c) * 255f);
+                if (a <= 0) {
+                    out[i] = 0;
+                    continue;
+                }
+                out[i] = (a << 24)
+                        | (Math.min(255, Math.round(r * 255f)) << 16)
+                        | (Math.min(255, Math.round(g * 255f)) << 8)
+                        | Math.min(255, Math.round(bl * 255f));
+            }
+            return out;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * 行级辉光的留白（烘焙像素）：金字塔最外一层的 3σ 之外已不可见。
+     *
+     * <p>口径与管线严格对齐 —— 每一级的等效半径 = 本级自身低通 σ 加上「缩小
+     * 前那一级的累计半径 ÷ 2」（光能随降采样等比缩进）。从第 0 级递推到最后
+     * 一级即最外层半径，而不是把各级 σ 直接相加（那样会高估成 15 倍）。</p>
+     */
+    public static int rowGlowPadding(float fontPx, double spread) {
+        float k = (float) (fontPx / 50.0 * Math.max(.05, spread));
+        // 第 0 级（降 1 次后）的等效半径：原网格预低通 + 本级低通
+        float sigma = (BLOOM_SIGMA_PRE * k + BLOOM_SIGMA_M1 * k) * 0.5f;
+        for (int i = 1; i < ROW_GLOW_LEVELS; i++) {
+            sigma = sigma * 0.5f + BLOOM_SIGMA_M1 * k;
+        }
+        return (int) Math.ceil(3.0 * sigma);
+    }
+
+    /**
+     * 8 点帐篷滤波放大：轴向 4 个 ×1、对角 4 个 ×2，合计 /12。
+     * 比双线性多带一圈对角权重，放大时不出现十字状的方向性台阶。
+     * 均值型、能量守恒 —— 扩散强度和叠加比例由调用方决定，这里不乘任何系数。
+     */
+    private static float[] tentUp(float[] s, int w, int h, int uw, int uh) {
+        float[] d = new float[uw * uh];
+        float sx = w / (float) uw;
+        float sy = h / (float) uh;
+        for (int y = 0; y < uh; y++) {
+            float fy = (y + 0.5f) * sy - 0.5f;
+            for (int x = 0; x < uw; x++) {
+                float fx = (x + 0.5f) * sx - 0.5f;
+                float acc = sample(s, w, h, fx, fy) * 4f
+                        + sample(s, w, h, fx - sx, fy)
+                        + sample(s, w, h, fx + sx, fy)
+                        + sample(s, w, h, fx + sx, fy - sy)
+                        + sample(s, w, h, fx - sx, fy + sy)
+                        + sample(s, w, h, fx - sx, fy - sy) * 2f
+                        + sample(s, w, h, fx + sx, fy - sy) * 2f
+                        + sample(s, w, h, fx + sx, fy + sy) * 2f
+                        + sample(s, w, h, fx - sx, fy + sy) * 2f;
+                d[y * uw + x] = acc / 12f;
+            }
+        }
+        return d;
+    }
+
+    /** 双线性采样单点（越界钳到边缘，光能不外泄成空洞）。 */
+    private static float sample(float[] s, int w, int h, float x, float y) {
+        int x0 = Math.max(0, Math.min(w - 1, (int) Math.floor(x)));
+        int y0 = Math.max(0, Math.min(h - 1, (int) Math.floor(y)));
+        int x1 = Math.min(w - 1, x0 + 1);
+        int y1 = Math.min(h - 1, y0 + 1);
+        float tx = Math.max(0f, Math.min(1f, x - x0));
+        float ty = Math.max(0f, Math.min(1f, y - y0));
+        return (s[y0 * w + x0] * (1 - tx) + s[y0 * w + x1] * tx) * (1 - ty)
+                + (s[y1 * w + x0] * (1 - tx) + s[y1 * w + x1] * tx) * ty;
+    }
+
+    /** Interleaved Gradient Noise（Jimenez 2014）：±0.5 LSB 有序抖动，消 8bit 量化条带。 */
+    private static float ing(int x, int y) {
+        float v = 52.9829189f * fract(0.06711056f * x + 0.00583715f * y);
+        return fract(v) - 0.5f;
+    }
+
+    private static float fract(float v) {
+        return v - (float) Math.floor(v);
     }
 
     /** 各档的层参数：σ 比例（×字号×spread）× 层 α（×强度）。探针实测定格。 */
@@ -477,7 +750,7 @@ public final class TextGlow {
         }
         int t = Math.max(GLOW_TIER_STANDARD, Math.min(GLOW_TIER_ULTRA, tier));
         if (t == GLOW_TIER_ULTRA) {
-            // font.sizePx 是墨格 5× 域字号；晕格在 3× 域烘焙，σ 随域字号等比缩放
+            // font.sizePx 是墨格 5× 域字号；晕格在 GLOW_BAKE_SCALE× 域烘焙，σ 随域字号等比缩放
             float sigmaGlowDomain = bloomWideSigma(font.sizePx, spread) * (GLOW_BAKE_SCALE / 5.0f);
             return (int) Math.ceil(3.0 * sigmaGlowDomain);
         }

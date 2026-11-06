@@ -6,7 +6,7 @@ public enum OnboardingStep {
     ACCOUNT("连接账号", "Account"),
     SOURCE("选择音源", "Source"),
     APPEARANCE("个性化播放器", "Appearance"),
-    AUTOMIX("Automix 模型", "Automix"),
+    AUTOMIX("听感与沉浸", "Automix"),
     FINISH("设置完成", "Finish");
 
     private final String title;

@@ -105,8 +105,10 @@ class SceneResponseTest {
         assertTrue(r.wet > 0.12f && r.wet < 0.5f, "wet=" + r.wet);
         assertTrue(r.decaySec < 0.8f, "decay=" + r.decaySec);
         assertTrue(r.decaySec >= 0.15f, "小房间尾物理下限: " + r.decaySec);
-        // 近墙反射的幅度要落到可闻区(幅度模型:√ρ×2/全程;能量模型会算到 -39dB)
-        assertTrue(Math.max(r.tapGainL[0], r.tapGainR[0]) >= 0.2f,
+        // 近墙反射的幅度要落到可闻区。材质归一后:最强抽头 = 0.22×材质因子,
+        // 木头房(ρ=0.5,因子≈0.34)≈ 0.075 —— 「吸音房回声轻」是正确行为;
+        // 关键是与石头房的【对比】(见 stoneVsWoodTapContrast)。
+        assertTrue(Math.max(r.tapGainL[0], r.tapGainR[0]) >= 0.05f,
                 "最强抽头=" + Math.max(r.tapGainL[0], r.tapGainR[0]));
         assertTrue(r.predelaySec > 0.004f && r.predelaySec < 0.012f, "predelay=" + r.predelaySec);
         assertEquals(3, r.tapCount);
@@ -124,6 +126,52 @@ class SceneResponseTest {
         }
         // 最强抽头(pan 0.7 → 右耳为主)能量确实偏右
         assertTrue(r.tapGainR[0] > r.tapGainL[0], "pan>0 应偏右");
+    }
+
+    @Test
+    @DisplayName("材质区分:石头房回声响、木头房轻、羊毛高频尾快 —— 吸音感可闻")
+    void materialContrast() {
+        // 石头房 vs 羊毛房:抽头响度与高频尾都应显著不同
+        final ListenerSample stone = withBands(
+                sample(false, false, 0.95f, 0f, 2.2f, 2.8f, 1.47f, 0.4f,
+                        new float[] {0.012f}, new float[] {0.9f}, new float[] {0f}),
+                new float[] {1.5f, 1.5f, 1.45f});
+        final ListenerSample wool = withBands(
+                sample(false, false, 0.95f, 0f, 2.2f, 2.8f, 0.11f, 0.4f,
+                        new float[] {0.012f}, new float[] {0.21f}, new float[] {0f}),
+                new float[] {0.2f, 0.1f, 0.03f});
+        RoomPlan rs = SceneResponse.respond(stone, 1f);
+        RoomPlan rw = SceneResponse.respond(wool, 1f);
+        // 抽头响度:石头房 ≥ 羊毛房 × 3(材质归一后的物理差)
+        double tapS = Math.max(rs.tapGainL[0], rs.tapGainR[0]);
+        double tapW = Math.max(rw.tapGainL[0], rw.tapGainR[0]);
+        assertTrue(tapS > tapW * 3.0, "石头=" + tapS + " 羊毛=" + tapW);
+        // 湿声:石头房 > 羊毛房 × 2
+        assertTrue(rs.wet > rw.wet * 2.0, "石头湿=" + rs.wet + " 羊毛湿=" + rw.wet);
+        // 高频尾:羊毛房的高/中频 T60 比应 < 0.75(软面吃高频);石头 ≈ 1
+        double woolRatio = rw.decayHighSec / Math.max(0.01f, rw.decaySec);
+        double stoneRatio = rs.decayHighSec / Math.max(0.01f, rs.decaySec);
+        assertTrue(woolRatio < stoneRatio - 0.05, "羊毛高频比=" + woolRatio + " 石头=" + stoneRatio);
+    }
+
+    /** 给采样帧叠加三频带反射率(材质区分测试用)。 */
+    private static ListenerSample withBands(ListenerSample base, float[] bands) {
+        return new ListenerSample() {
+            @Override public boolean submerged() { return base.submerged(); }
+            @Override public boolean openSky() { return base.openSky(); }
+            @Override public float enclosure() { return base.enclosure(); }
+            @Override public float precipitation() { return base.precipitation(); }
+            @Override public float firstHitMeanMeters() { return base.firstHitMeanMeters(); }
+            @Override public float bounceSegmentMeanMeters() { return base.bounceSegmentMeanMeters(); }
+            @Override public float meanReflectivity() { return base.meanReflectivity(); }
+            @Override public float reachableFraction() { return base.reachableFraction(); }
+            @Override public int tapCount() { return base.tapCount(); }
+            @Override public float[] tapDelaysSec() { return base.tapDelaysSec(); }
+            @Override public float[] tapGains() { return base.tapGains(); }
+            @Override public float[] tapPans() { return base.tapPans(); }
+            @Override public EnergyField bandHistogram() { return base.bandHistogram(); }
+            @Override public float[] bandReflectivities() { return bands; }
+        };
     }
 
     @Test
@@ -237,5 +285,64 @@ class SceneResponseTest {
             strongest = Math.max(strongest, Math.max(r.tapGainL[i], r.tapGainR[i]));
         }
         assertTrue(strongest > 0.01f, "抽头能量在场(总量被 TAP_SUM_CEIL 约束): " + strongest);
+    }
+
+    // ---- 世界声源(音箱模式)----
+
+    /** 在基础采样上挂世界声源字段。 */
+    private static ListenerSample withSource(ListenerSample base, float directDistance) {
+        return new ListenerSample() {
+            @Override public boolean submerged() { return base.submerged(); }
+            @Override public boolean openSky() { return base.openSky(); }
+            @Override public float enclosure() { return base.enclosure(); }
+            @Override public float precipitation() { return base.precipitation(); }
+            @Override public float firstHitMeanMeters() { return base.firstHitMeanMeters(); }
+            @Override public float bounceSegmentMeanMeters() { return base.bounceSegmentMeanMeters(); }
+            @Override public float meanReflectivity() { return base.meanReflectivity(); }
+            @Override public float reachableFraction() { return base.reachableFraction(); }
+            @Override public int tapCount() { return base.tapCount(); }
+            @Override public float[] tapDelaysSec() { return base.tapDelaysSec(); }
+            @Override public float[] tapGains() { return base.tapGains(); }
+            @Override public float[] tapPans() { return base.tapPans(); }
+            @Override public EnergyField bandHistogram() { return base.bandHistogram(); }
+            @Override public float[] bandReflectivities() { return base.bandReflectivities(); }
+            @Override public boolean hasDirectSource() { return true; }
+            @Override public float directDistanceMeters() { return directDistance; }
+            @Override public double speakerX() { return 10; }
+            @Override public double speakerY() { return 64; }
+            @Override public double speakerZ() { return 10; }
+        };
+    }
+
+    @Test
+    @DisplayName("世界声源的湿声必须随距离稀释 —— 稀释不能写在赋值之前(会被整个抹掉)")
+    void directSourceWetDilutesWithDistance() {
+        ListenerSample near = withSource(stoneCave(), 4f);
+        ListenerSample mid = withSource(stoneCave(), 24f);
+        ListenerSample far = withSource(stoneCave(), 68f);
+        RoomPlan rNear = SceneResponse.respond(near, 1f);
+        RoomPlan rMid = SceneResponse.respond(mid, 1f);
+        RoomPlan rFar = SceneResponse.respond(far, 1f);
+        // 8m 内不稀释:近距的湿声就是「玩家即声源」档
+        assertEquals(SceneResponse.respond(stoneCave(), 1f).wet, rNear.wet, 1e-4f,
+                "8m 内不该稀释");
+        assertTrue(rMid.wet < rNear.wet * 0.75f,
+                "24m 应明显稀释: near=" + rNear.wet + " mid=" + rMid.wet);
+        assertTrue(rFar.wet < rMid.wet * 0.5f,
+                "68m 应继续稀释: mid=" + rMid.wet + " far=" + rFar.wet);
+        assertTrue(rFar.wet > 0f, "最少留一点,不能归零");
+    }
+
+    @Test
+    @DisplayName("世界声源:直射链字段有效(增益衰减/截止/声像),且湿声不再走 EAX 混响")
+    void directSourceFillsDirectChain() {
+        RoomPlan near = SceneResponse.respond(withSource(stoneCave(), 4f), 1f);
+        RoomPlan far = SceneResponse.respond(withSource(stoneCave(), 96f), 1f);
+        assertEquals(1f, near.directGain, 1e-3f, "8m 内直达全增益");
+        assertTrue(far.directGain < 0.05f, "96m 直达 ≈ −42dB: " + far.directGain);
+        assertTrue(near.hasSpeakerAnchor);
+        // 路线定稿:自研射线链出湿声,总线只做直射 HRTF —— RoomPlan 仍然
+        // 标记 useOpenAlReverb,但 SceneAcoustics 已不再拿总线读回当湿声。
+        assertTrue(near.tapCount > 0, "世界声源也要交付 ER 抽头");
     }
 }

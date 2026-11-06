@@ -1,0 +1,289 @@
+plugins {
+    id 'fabric-loom' version '1.17.20'
+    // 只用它的 ShadowJar 任务给 rhino 做 relocate；不用它打 fat-jar。
+    id 'com.gradleup.shadow' version '8.3.11'
+    id 'org.jetbrains.kotlin.jvm'
+    id 'org.jetbrains.kotlin.plugin.lombok'
+}
+
+base {
+    // 产物名带上 Minecraft 版本，这样四个版本工程的 8 个 jar 平铺到一个 dist/ 里不会撞名，
+    // 用户下载后也一眼看出这个 jar 是给哪个版本、哪个加载器的：MuoniumPlayer-<mc>-<loader>-<modver>.jar
+    archivesName = "${project.archives_base_name}-${project.minecraft_version}-fabric"
+}
+
+loom {
+    // 客户端专用 mod（原 Forge 侧 clientSideOnly = true）：
+    // 不启用 splitEnvironmentSourceSets，全部代码留在 main，与共享源树目录结构一一对应。
+    accessWidenerPath = file('src/main/resources/muoniumplayer.accesswidener')
+
+    // 移植期验收辅助：设了 MU_QUICKPLAY=<存档文件夹名> 就直接进存档，
+    // 不用在标题界面盲点鼠标（合成按键只在有焦点的窗口生效，标题界面点起来很不稳）。
+    // MU_DEBUG_WORLD_LYRICS=1 顺手挂上 3D 歌词的链路 trace（[WorldLyrics/trace]）。
+    runs {
+        client {
+            def quickPlay = System.getenv('MU_QUICKPLAY')
+            if (quickPlay) {
+                programArgs '--quickPlaySingleplayer', quickPlay
+            }
+            if (System.getenv('MU_DEBUG_WORLD_LYRICS')) {
+                property 'muonium.debug.worldLyrics', 'true'
+            }
+        }
+    }
+}
+
+// 共享代码与资源在上一级目录，两个加载器子工程各自挂同一份，绝不复制。
+//
+// ModernUI 面板实现在 external/modernui/java —— 与 1.21.11 那棵树同构（mVUS 3.12 API）：
+// 1.21.10 没有上游 ModernUI 构件（上游止于 26.1.2 与 1.21.8），只有 Tealeste 的 mVUS 分支有
+// 1.21.9~11 的构建，所以这里不能照抄 1.21.1 那份的 3.13 API 写法（两处方法名/入口不同，
+// 见 external/modernui 里 HudSettingsFragment 的注释）。这份源码**不能**进 rootProject 的
+// src/main/java：共享源一旦 import icyllis.modernui 就把另外几棵树一起编挂。
+// HudExternalUiStaticTest 里有一条断言专门守这件事。
+def modernUiEnabled = !project.hasProperty('skipModernUi')
+
+sourceSets {
+    main {
+        java.srcDirs = [
+                'src/main/java',                                       // Fabric 外壳
+                rootProject.file('../muonium-common/src/main/java'),   // 五树共享主体（版本中立）
+                rootProject.file('src/main/java'),                     // 本树版本差异层（compat / mixin / 功能集）
+                rootProject.file('../mpparty-common/src/main/java'),   // 一起听共用源码
+                rootProject.file('../mpserver-core/src/main/java')      // 内嵌一起听房间引擎（服务端 core 镜像）
+        ]
+        if (modernUiEnabled) {
+            java.srcDirs += rootProject.file('external/modernui/java') // ModernUI 版 HUD 设置面板
+        }
+        resources.srcDirs = [
+                'src/main/resources',                                  // fabric.mod.json / accesswidener / mixins
+                rootProject.file('../muonium-common/src/main/resources'), // 五树共享资源（字体、纹理、svg、lx、automix）
+                rootProject.file('src/main/resources')                 // 本树资源（lang 随版本 API 变动）
+        ]
+    }
+    test {
+        java.srcDirs = [
+                rootProject.file('../muonium-common/src/test/java'),   // 五树共享测试
+                rootProject.file('src/test/java')                      // 本树版本差异测试
+        ]
+    }
+}
+
+// repo.maven.apache.org 在本机既不能直连（connect timeout），走 7890 代理时 Gradle 侧
+// 也会 "Remote host terminated the handshake"（curl 同一 URL 走代理却是 200，原因未查明）。
+// 阿里云公共仓库直连可用且已实测含 org.lwjgl:3.3.1 全部 classifier，故把所有
+// Maven Central 仓库（含 Loom 自己注入的 mavenCentral()）统一改写到阿里云。
+def centralHosts = ['repo.maven.apache.org', 'repo1.maven.org', 'repo.maven.org'] as Set
+def retargetCentral = { repo ->
+    if (repo instanceof org.gradle.api.artifacts.repositories.MavenArtifactRepository
+            && repo.url != null && centralHosts.contains(repo.url.host)) {
+        repo.url = 'https://maven.aliyun.com/repository/public'
+    }
+}
+repositories.all(retargetCentral)
+buildscript.repositories.all(retargetCentral)
+
+repositories {
+    maven { url = 'https://maven.aliyun.com/repository/public' }
+    maven { url = 'https://maven.aliyun.com/repository/google' }
+    // libs/ 里的本地 jar 必须以「模块」形式出现，否则 Loom 的 include（Jar-in-Jar）
+    // 会报 "not a module component and has no capabilities"（file 依赖没有坐标）。
+    // flatDir 按 <name>-<version>.jar 匹配，group 任意。
+    flatDir { dirs rootProject.file('libs') }
+
+    // ==================== ModernUI 的编译期构件（社区分支 mVUS）====================
+    // 上游只发到 26.1.2 / 1.21.8 那一代，1.21.9~11 只有 Tealeste 的 mVUS 分支有构建，
+    // 而它**不进 Maven**，只挂在 GitHub Releases 上。这里用 ivy 仓库把 release 的资源名直接映射出来：
+    // 下载与缓存都交给 Gradle（第一次之后离线可用）、仓库里不躺 24MB 第三方二进制，
+    // 而且它是以「模块」形式出现的 —— Loom 会按本树的 mojmap 把 jar 里的 intermediary 引用重映射一遍，
+    // ActionCenterTab 里那个 MuiModApi.OnScreenChangeListener#onScreenChange(Screen, Screen) 才编得过。
+    // 拉不到（没网、被墙、分支改版）就 -PskipModernUi=true，代价只是这一棵树没有面板。
+    if (modernUiEnabled) {
+        ivy {
+            name 'ModernUI mVUS (GitHub Releases)'
+            url 'https://github.com/Tealeste/ModernUI-MC-mVUS/releases/download/'
+            patternLayout {
+                // [revision] 既是 release 的 tag，也是资源名里版本那一段：
+                // 3.12.0.5-build.4 -> .../download/3.12.0.5-build.4/ModernUI-MC-3.12.0.5-build.4+mc1.21.10-fabric.jar
+                artifact '[revision]/[module]-[revision]+mc1.21.10-fabric.[ext]'
+            }
+            metadataSources { artifact() }
+            content { includeGroup 'mvus.icyllis.modernui' }
+        }
+    }
+}
+
+
+// ==================== rhino relocate：org.mozilla.javascript → muonium.rhino ====================
+// WorldEdit 7.3.8 把未 relocate 的 rhino shade 进自己的 jar（模块名 worldedit），与平铺进
+// 主 jar 的我们导出同一个 org.mozilla.javascript 包，装一起就是 split package
+// ResolutionException（整合包用户实测，1.21.1 NeoForge；loader 侧已同步改）。Fabric 的
+// include(JiJ) 虽然按嵌套 jar 隔离加载，但成品里同样不该再带一份原包名 rhino：
+// relocate 到 muonium.rhino 前缀后，任何 mod 带任何形态的 rhino 都再撞不到我们。
+// relocate 改的不止包路径：shadow 会同步改写字节码里的类引用与字符串常量（含 rhino 内部
+// 反射按名加载自己的地方），资源目录 org/mozilla/javascript/resources 一并改名。
+// rhino 无 META-INF/services、无 module-info、非 Multi-Release，是 relocate 的干净对象。
+def relocateRhino = tasks.register('relocateRhino', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
+    group = 'shadow'
+    description = '把 rhino 改名到 muonium.rhino 前缀，避免与其它 mod 自带的 rhino split package'
+    destinationDirectory.set(layout.buildDirectory.dir('tmp/relocateRhino'))
+    archiveClassifier.set('rhino-relocated')
+    configurations = [project.configurations.detachedConfiguration(
+            project.dependencies.create('org.mozilla:rhino:1.7.15'))]
+    mergeServiceFiles()
+    exclude 'META-INF/MANIFEST.MF'
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    exclude 'module-info.class'
+    // rhino jar 里的两个包树都要改名（classfile 是它的字节码生成器，引擎内部用）
+    relocate 'org.mozilla.javascript', 'muonium.rhino'
+    relocate 'org.mozilla.classfile', 'muonium.rhino.classfile'
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    // 共享源码统一用 Mojang 官方名（mojmap），这样同一份 src/ 也能编进 NeoForge 侧。
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    compileOnly 'org.projectlombok:lombok:1.18.30'
+    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+
+    // Loom 的 include（Jar-in-Jar）：Loader 为每个嵌套 jar 建独立的类加载视图，
+    // 天然避免与 MC / 其它 mod 自带库撞版本。NeoForge 侧没有等价机制，
+    // 那边用 shadow 把同一批库直接塞进 jar（见 neoforge/build.gradle）。
+    implementation include('com.google.zxing:core:3.5.3')
+    // rhino 走上面 relocateRhino 的改名产物（files(...) 传任务，Gradle 自动挂任务依赖）。
+    // 编译与测试类路径也用同一份：共享层 LxBuffer/LxRuntime import 的已是 muonium.rhino.*，
+    // 原 rhino 坐标不再出现在任何 classpath 上（防止有人手滑又引回去）。
+    // rhino 嵌套进成品走 libs/ 的模块坐标（Loom processIncludeJars 拒收无组件身份的
+    // 文件产物：include(files(task)) 直传报 "not a module component and has no
+    // capabilities"，与 26.3 / 1.21.11 同款收口）；编译/测试类路径仍用文件依赖
+    // （Gradle 自动挂任务依赖）。relocateRhino 跑完刷新 libs/ 里的拷贝。
+    implementation include('muoniumplayer:rhino-relocated:1.7.15')
+    compileOnly files(relocateRhino)
+    testImplementation files(relocateRhino)
+    def relocatedJarInLibs = rootProject.file('libs/rhino-relocated-1.7.15.jar')
+    relocateRhino.configure {
+        doLast {
+            java.nio.file.Files.copy(archiveFile.get().asFile.toPath(),
+                    relocatedJarInLibs.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+    implementation include('com.google.code.gson:gson:2.11.0')
+    implementation include('net.java.dev.jna:jna:5.14.0')
+    implementation include('net.java.dev.jna:jna-platform:5.14.0')
+    // Cadence 音源 SDK 已吸收进仓（com.muoniumplayer.core.music.cadence，2026-11），
+    // 不再挂 libs/music-api-0.1.1.jar。
+
+    // ==================== Skija（渲染层）====================
+    // Kotlin 运行时由 Fabric Language Kotlin 统一提供，不再随本 mod 打包。
+    implementation "net.fabricmc:fabric-language-kotlin:${project.fabric_language_kotlin_version}"
+    implementation include('io.github.humbleui:skija-shared:0.143.17')
+    implementation include('io.github.humbleui:types:0.2.0')
+    // 开发期 runClient 用：只进运行时类路径，不进成品 jar（成品全平台走伴生包自动下载）
+    runtimeOnly 'io.github.humbleui:skija-windows-x64:0.143.17'
+    compileOnly 'org.jetbrains:annotations:20.1.0'
+
+    // ==================== ModernUI（HUD 设置面板的可选外部渲染层）====================
+    // 只 compileOnly：成品 jar 里不含 ModernUI 一个字节，玩家装了才生效、没装零影响，
+    // 也满足它的 LGPL-3.0（库必须能被用户单独替换，见 docs/接入ModernUI可行性-HUD设置面板.md §四）。
+    // mVUS 的包是自足的（framework 与 mc 两侧类都在同一个 jar 里），所以不像 1.21.1 那样
+    // 再补 modernui-core / Markflow —— 而且 core 在 Maven Central 上根本没有 3.12.0。
+    if (modernUiEnabled) {
+        modCompileOnly 'mvus.icyllis.modernui:ModernUI-MC:3.12.0.5-build.4'
+    }
+
+    // 离线探针（不需要 GL / 不需要启动客户端就能跑的断言）。
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    // 离线光栅测试要在 JUnit 里真跑 Skia：原生库已不随主包内置，
+    // 这里只进测试类路径，不会进成品 jar
+    testImplementation 'io.github.humbleui:skija-windows-x64:0.143.17'
+    // CI（ubuntu）跑共享测试时 Skija 原生库换 linux 变体：windows-x64 的 dll 在
+    // Linux 加载不了，muonium.skija.autoDownload=false 又禁了自下载。本机 Windows
+    // 两条都会上 classpath，加载器按 os 选对的那个，互不影响。
+    if (!org.gradle.internal.os.OperatingSystem.current().isWindows()) {
+        testImplementation 'io.github.humbleui:skija-linux-x64:0.143.17'
+    }
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+    // 测试 JVM 不许真去下载伴生包：断网/超时会拖垮整轮测试
+    systemProperty 'muonium.skija.autoDownload', 'false'
+    // CI（ubuntu）无 Skija 可用的原生加载链路：给需要原生库的测试类整类禁用
+    if (!org.gradle.internal.os.OperatingSystem.current().isWindows()) {
+        systemProperty 'muonium.ci.skipSkijaNative', 'true'
+    }
+    // CI（ubuntu）跑共享测试：把 Staging 步骤解好的 libskija.so 目录
+    // 喂进测试 JVM 的 java.library.path（loadLibrary 只认启动期这条）。
+    // 本机 Windows 无 SKIJA_LIB_DIR，windows-x64 的 dll 照常走 Maven 依赖。
+    if (System.getenv('SKIJA_LIB_DIR')) {
+        jvmArgs "-Djava.library.path=${System.getenv('SKIJA_LIB_DIR')}"
+    }
+    doFirst {
+        println "[skija-diag] SKIJA_LIB_DIR=" + System.getenv('SKIJA_LIB_DIR')
+        def d = System.getenv('SKIJA_LIB_DIR')
+        if (d) { def f = new File(d); println "[skija-diag] exists=" + f.exists() + " files=" + f.list()?.toList() }
+    }
+    testLogging {
+        events 'passed', 'failed', 'skipped'
+        showStandardStreams = false
+    }
+}
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'minecraft_version', project.minecraft_version
+    inputs.property 'loader_version', project.loader_version
+    inputs.property 'loader_min_version', project.loader_min_version
+    inputs.property 'fabric_language_kotlin_version', project.fabric_language_kotlin_version
+    filteringCharset 'UTF-8'
+
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version,
+                'minecraft_version': project.minecraft_version,
+                'loader_version': project.loader_version,
+                'loader_min_version': project.loader_min_version,
+                'fabric_language_kotlin_version': project.fabric_language_kotlin_version
+    }
+}
+
+def targetJavaVersion = 21
+tasks.withType(JavaCompile).configureEach {
+    // 源码含中文注释与字符串字面量，默认 GBK 会破坏 UI/歌词文案。
+    it.options.encoding = 'UTF-8'
+    it.options.release.set(targetJavaVersion)
+    // 移植期间需要一次看到全部错误，javac 默认只报 100 条。
+    it.options.compilerArgs.addAll(['-Xmaxerrs', '5000'])
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    withSourcesJar()
+}
+
+apply from: rootProject.file('../gradle/kotlin-support.gradle')
+
+jar {
+    from(rootProject.file('LICENSE.txt')) {
+        rename { "${it}_${project.archives_base_name}" }
+    }
+}
+
+// 移植期辅助：把编译类路径导出到文件，便于用 javap 实测 API 签名（禁止凭记忆写 API）。
+tasks.register('dumpCompileClasspath') {
+    def out = layout.buildDirectory.file('compile-classpath.txt')
+    def cp = sourceSets.main.compileClasspath
+    outputs.file(out)
+    doLast {
+        def f = out.get().asFile
+        f.parentFile.mkdirs()
+        f.text = cp.asPath
+    }
+}

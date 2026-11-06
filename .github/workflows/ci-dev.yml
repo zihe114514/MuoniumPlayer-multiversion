@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------
-  # 五棵版本树各自独立 Gradle 构建（JDK / 映射 / 插件各不同，禁止合并）。
+  # 七棵版本树各自独立 Gradle 构建（JDK / 映射 / 插件各不同，禁止合并）。
   # gradle.properties 钉了本机 JDK 绝对路径与本机代理（127.0.0.1:7890），
   # CI 上两者都不存在 —— 由 Sanitize 步骤在工作副本里摘除。
   # ---------------------------------------------------------------
@@ -27,7 +27,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 1.20.1 / 1.21.1 / 1.21.11 → Java 21（loom 要求守护进程 JVM ≥ 21）
+          # 1.20.1 / 1.21.1 / 1.21.10 / 1.21.11 → Java 21（loom 要求守护进程 JVM ≥ 21）
           - tree: "1.20.1 recode"
             loader: fabric
             java: 21
@@ -43,10 +43,22 @@ jobs:
           - tree: "1.21.11 recode"
             loader: fabric
             java: 21
+          - tree: "1.21.10"
+            loader: fabric
+            java: 21
+          - tree: "1.21.10"
+            loader: neoforge
+            java: 21
           - tree: "1.21.11 recode"
             loader: neoforge
             java: 21
-          # 26.2 / 26.3 → Java 25（官方 jar 无混淆，release 25）
+          # 26.1.2 / 26.2 / 26.3 → Java 25（官方 jar 无混淆，release 25）
+          - tree: "26.1.2"
+            loader: fabric
+            java: 25
+          - tree: "26.1.2"
+            loader: neoforge
+            java: 25
           - tree: "26.2"
             loader: fabric
             java: 25

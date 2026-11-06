@@ -15,6 +15,7 @@ import com.muoniumplayer.core.screens.GuiAnnouncements;
 import com.muoniumplayer.core.screens.GuiFfmpegNotice;
 import com.muoniumplayer.core.screens.GuiUpdateNotice;
 import com.muoniumplayer.core.screens.hud.GuiHudEditorPro;
+import com.muoniumplayer.core.screens.hud.MConfigHudScreen;
 import com.muoniumplayer.core.screens.hud.ModernUiHudBridge;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
@@ -61,7 +62,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "2.4.0";
+    public static final String MOD_VERSION = "2.4.2";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -112,6 +113,8 @@ public final class MuoniumPlayerClient {
     public static KeyMapping keyQuickSearch;
     /** 立即按当前环境切一首（环境选曲手动入口），默认不占键位，需玩家自行绑定。 */
     public static KeyMapping keyAmbientNow;
+    /** 世界声源放置/移除（单键智能切换），默认不占键位。可在「选项 → 控制」中修改。 */
+    public static KeyMapping keySpeakerPlace;
 
     private static final MuoniumPlayerClient INSTANCE = new MuoniumPlayerClient();
 
@@ -149,8 +152,10 @@ public final class MuoniumPlayerClient {
         keyQuickSearch = key("key.muonium.quick_search", Keyboard.KEY_F);
         // 环境选曲手动切换：默认不占键位（KEY_NONE），想要键位的玩家在控制设置里自行绑定。
         keyAmbientNow = key("key.muonium.ambient_now", Keyboard.KEY_NONE);
+        // 世界声源放置/移除（单键智能切换）：默认不占键位,同 keyAmbientNow 的理由。
+        keySpeakerPlace = key("key.muonium.speaker_place", Keyboard.KEY_NONE);
         return List.of(keyOpenMusic, keyEditHud, keyPreviousTrack, keyNextTrack,
-                keyVolumeUp, keyVolumeDown, keyTogglePause, keyQuickSearch, keyAmbientNow);
+                keyVolumeUp, keyVolumeDown, keyTogglePause, keyQuickSearch, keyAmbientNow, keySpeakerPlace);
     }
 
     private static KeyMapping key(String translationKey, int lwjgl2DefaultKey) {
@@ -191,7 +196,9 @@ public final class MuoniumPlayerClient {
         // 5. 公告：与更新检查读同一份远端清单，但自己拉、自己记「哪些看过」，两条路互不牵连。
         //    有未读时由 GuiAnnouncements 在主菜单弹一次，关掉即整批记为已读；拉不到什么都不提示。
         AnnouncementChecker.beginFetch(MOD_VERSION, MC_VERSION, loaderId);
-    }
+
+        // 世界声源:读回上次放置的锚点(speaker.json,坏数据按无锚点)。
+        com.muoniumplayer.compat.mc.SpeakerManager.init();    }
 
     /** 供加载器侧的事件回调判断初始化是否已完成（NeoForge 的事件可能早于 clientSetup 触发）。 */
     public boolean isReady() {
@@ -282,7 +289,17 @@ public final class MuoniumPlayerClient {
         // 的那一 tick,其余时候是一次布尔判断。
         com.muoniumplayer.core.ncm.music.acoustics.AcousticsRuntime.onClientTick(
                 com.muoniumplayer.compat.mc.ListenerProbe.of(mc));
-
+        // 听者位姿每 tick 投递(50ms):HRTF/直射声像的更新粒度。
+        if (mc.player != null) {
+            final float lpYaw = mc.player.getYRot() * ((float) Math.PI / 180f);
+            final float lpPitch = mc.player.getXRot() * ((float) Math.PI / 180f);
+            com.muoniumplayer.core.ncm.music.acoustics.SceneAcoustics.setListenerPose(
+                    mc.player.getX(), mc.player.getEyeY(), mc.player.getZ(),
+                    (float) (-Math.sin(lpYaw) * Math.cos(lpPitch)),
+                    (float) (-Math.sin(lpPitch)),
+                    (float) (Math.cos(lpYaw) * Math.cos(lpPitch)),
+                    0f, 1f, 0f);
+        }
         // ---- 环境选曲 ----
         // 每 tick 送一帧环境快照;控制器自带稳定期/冷却与全 Throwable 闸,开关关着
         // 时是一次布尔判断。采样只有十几次方块读 + 一次实体盒查询,与声学射线同量级。
@@ -348,6 +365,12 @@ public final class MuoniumPlayerClient {
             // 环境选曲手动切换：默认不占键位，绑了才触发；动作与灵动岛反馈都在 MusicHotkeys 里。
             if (keyAmbientNow.consumeClick()) {
                 MusicHotkeys.triggerAmbientNow();
+
+            // 世界声源放置/移除:单键智能切换(瞄准空处=放置,瞄准声源=移除)。
+            if (keySpeakerPlace.consumeClick()) {
+                com.muoniumplayer.compat.mc.SpeakerManager.toggle();
+            }
+            com.muoniumplayer.compat.mc.SpeakerManager.tick();
             }
         } else {
             // 打开 GUI 时把这一 tick 积累的边沿消费掉，避免关掉界面的瞬间一次性全部触发。
@@ -361,6 +384,23 @@ public final class MuoniumPlayerClient {
             keyTogglePause.consumeClick();
             keyQuickSearch.consumeClick();
             keyAmbientNow.consumeClick();
+            keySpeakerPlace.consumeClick();
+        }
+
+        // ---- 卡点运镜（MuoniumCine）----
+        // 每 tick 送一帧场景快照;状态机在共享层,开关关着/音乐停着时是一次布尔判断。
+        // isActive 翻转沿上做树侧执行器(切第三人称/隐藏 HUD 及其恢复)——共享层
+        // 不碰 MC 符号,翻转检测只能在树桥。
+        boolean cineWasActive = com.muoniumplayer.core.cine.CineDirector.isActive();
+        com.muoniumplayer.core.cine.CineDirector.onClientTick(
+                com.muoniumplayer.compat.mc.CineProbe.of(mc));
+        boolean cineIsActive = com.muoniumplayer.core.cine.CineDirector.isActive();
+        if (cineIsActive != cineWasActive) {
+            if (cineIsActive) {
+                com.muoniumplayer.compat.mc.CineProbe.entered();
+            } else {
+                com.muoniumplayer.compat.mc.CineProbe.left();
+            }
         }
     }
 
@@ -614,7 +654,10 @@ public final class MuoniumPlayerClient {
     private long devTriggerSeenAt;
     private long devTriggerDelayNanos;
 
-    /** 按用户选择打开 HUD 设置；外部界面（ModernUI / OneConfig）不可用时自动回退到内置界面。 */
+    /**
+     * 按用户选择打开 HUD 设置；外部界面（ModernUI / OneConfig）不可用时自动回退到内置界面。
+     * MuoniumConfig（mconfig）是自带呈现、永远可用，排在两外部层之后、内置兜底之前。
+     */
     private void openHudEditor(Minecraft mc) {
         if (HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)
                 && ModernUiHudBridge.open()) {
@@ -622,6 +665,10 @@ public final class MuoniumPlayerClient {
         }
         if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(HudConfig.hudEditorUi)
                 && OneConfigHudBridge.open()) {
+            return;
+        }
+        if (HudConfig.HUD_EDITOR_UI_MCONFIG.equals(HudConfig.hudEditorUi)) {
+            mc.setScreen(new MConfigHudScreen());
             return;
         }
         mc.setScreen(new GuiHudEditorPro());

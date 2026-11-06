@@ -202,13 +202,13 @@ class IslandSearchStaticTest {
     // ProjectPaths.allJavaFiles() 只扫「共享层 + 跑测试的这一棵树」，看不见另外四棵树的
     // FORK 文件；跨树契约直接在仓库根上逐树逐文件读（路径由本测试自己钉）。
 
-    /** 五棵版本树的名字。新树进来要同时补这里与 SHARE-MANIFEST。 */
+    /** 各版本树的名字。新树进来要同时补这里与 SHARE-MANIFEST。 */
     private static final String[] TREES = {
-            "1.20.1 recode", "1.21.1", "1.21.11 recode", "26.2", "26.3"
+            "1.20.1 recode", "1.21.1", "1.21.10", "1.21.11 recode", "26.1.2", "26.2", "26.3"
     };
 
     @Test
-    @DisplayName("五棵树的 MuoniumPlayerClient 都注册并消费 keyQuickSearch")
+    @DisplayName("每棵树的 MuoniumPlayerClient 都注册并消费 keyQuickSearch")
     void allTreesRegisterQuickSearch() throws IOException {
         Path repo = ProjectPaths.repoRoot();
         int register = 0;
@@ -221,12 +221,12 @@ class IslandSearchStaticTest {
             if (source.contains("key.muonium.quick_search")) register++;
             if (source.contains("keyQuickSearch.consumeClick()")) consume++;
         }
-        assertEquals(5, register, "五棵树都要注册 key.muonium.quick_search");
-        assertEquals(5, consume, "五棵树都要在 tick 里消费 keyQuickSearch");
+        assertEquals(TREES.length, register, "每棵树都要注册 key.muonium.quick_search");
+        assertEquals(TREES.length, consume, "每棵树都要在 tick 里消费 keyQuickSearch");
     }
 
     @Test
-    @DisplayName("五棵树的 HudConfig 都有 islandSearchEnabled 的 load/save")
+    @DisplayName("每棵树的 HudConfig 都有 islandSearchEnabled 的 load/save")
     void allTreesCarryConfig() throws IOException {
         Path repo = ProjectPaths.repoRoot();
         int declared = 0;
@@ -241,18 +241,18 @@ class IslandSearchStaticTest {
             if (source.contains("islandSearchEnabled = getBoolean(o, \"islandSearchEnabled\"")) loaded++;
             if (source.contains("o.addProperty(\"islandSearchEnabled\"")) saved++;
         }
-        assertEquals(5, declared, "五棵树都要有字段声明");
-        assertEquals(5, loaded, "五棵树都要 load");
-        assertEquals(5, saved, "五棵树都要 save");
+        assertEquals(TREES.length, declared, "每棵树都要有字段声明");
+        assertEquals(TREES.length, loaded, "每棵树都要 load");
+        assertEquals(TREES.length, saved, "每棵树都要 save");
     }
 
     @Test
-    @DisplayName("五棵树的 lang 文件都带 quick_search 翻译")
+    @DisplayName("每棵树的 lang 文件都带 quick_search 翻译")
     void allTreesCarryLang() throws IOException {
         int en = 0;
         int zh = 0;
         Path repo = ProjectPaths.repoRoot();
-        for (String tree : new String[]{"1.20.1 recode", "1.21.1", "1.21.11 recode", "26.2", "26.3"}) {
+        for (String tree : new String[]{"1.20.1 recode", "1.21.1", "1.21.10", "1.21.11 recode", "26.1.2", "26.2", "26.3"}) {
             for (String lang : new String[]{"en_us.json", "zh_cn.json"}) {
                 Path file = repo.resolve(Paths.get(tree, "src", "main", "resources",
                         "assets", "muonium", "lang", lang));
@@ -263,8 +263,8 @@ class IslandSearchStaticTest {
                 }
             }
         }
-        assertEquals(5, en, "五棵树 en_us 都要有 key.muonium.quick_search");
-        assertEquals(5, zh, "五棵树 zh_cn 都要有 key.muonium.quick_search");
+        assertEquals(TREES.length, en, "每棵树 en_us 都要有 key.muonium.quick_search");
+        assertEquals(TREES.length, zh, "每棵树 zh_cn 都要有 key.muonium.quick_search");
     }
 
     // ------------------------------------------------------------------ 工具

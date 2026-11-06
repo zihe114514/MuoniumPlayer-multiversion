@@ -100,8 +100,79 @@ public interface ListenerSample {
         return 0f;
     }
 
+    /**
+     * 三频带反射率 {低,中,高}(材质表原值,未平均):逐频带 T60 的
+     * 材质驱动来源 —— 羊毛高频 ρ=0.03 vs 中频 0.1,高频尾应快一倍;
+     * 石头全频亮,三带同尾。default 交 null = 旧采样器,走均值近似。
+     */
+    default float[] bandReflectivities() {
+        return null;
+    }
+
     /** 直射遮挡量:路径上穿透方块的遮挡累计(实心 1.0 / 非实心 0.15);无声源 0。 */
     default float directOcclusion() {
+        return 0f;
+    }
+
+    /**
+     * 是否找到一阶绕射路径(源→遮挡边缘→耳)。
+     *
+     * <p>物理:声波碰到硬边缘会拐弯继续传播,这条路径往往比「穿透方块」
+     * 强一个量级 —— 实机听感差异就是「音箱在墙角后面,声音从墙角绕过来」
+     * 而不是「突然变小变闷」。树侧在直达被挡时沿遮挡边缘搜索折线路径。</p>
+     *
+     * <p>default false = 旧采样器没有这份数据,退化为纯遮挡(修前行为)。</p>
+     */
+    default boolean hasDiffraction() {
+        return false;
+    }
+
+    /**
+     * 绕射路径全长(米,源→边缘→耳)。{@link #hasDiffraction()} 为 false 时无意义。
+     */
+    default float diffractionPathMeters() {
+        return 0f;
+    }
+
+    /**
+     * 绕射路径相对直达直线的额外出程(米,≥0):决定绕射衰减的大小
+     * —— 绕得越远损失越多。
+     */
+    default float diffractionExcessMeters() {
+        return 0f;
+    }
+
+    /**
+     * 绕射折角(度):源→边缘 与 边缘→耳 两段的夹角。0 = 近乎直线,
+     * 180 = 绕过一整面墙。与额外出程一起决定衰减与染色。
+     */
+    default float diffractionBendDegrees() {
+        return 0f;
+    }
+
+    /**
+     * 绕射边缘的世界坐标(米):音频侧把虚拟声源挪到这里,声像因此偏向
+     * 墙角/门缝 —— 这是「听出声音从哪儿绕过来」的关键,不是纯音量变化。
+     */
+    default double diffractionEdgeX() {
+        return 0.0;
+    }
+
+    default double diffractionEdgeY() {
+        return 0.0;
+    }
+
+    default double diffractionEdgeZ() {
+        return 0.0;
+    }
+
+    /**
+     * 绕射声像 −1(正左)..1(正右):边缘方向在玩家右手方向上的投影。
+     *
+     * <p>与 {@link #directPan()} 同一投影口径,但基准是「边缘→耳」而不是
+     * 「源→耳」—— 绕射声被人耳定位在缺口/墙角处,这是绕射感的核心线索。</p>
+     */
+    default float diffractionPan() {
         return 0f;
     }
 

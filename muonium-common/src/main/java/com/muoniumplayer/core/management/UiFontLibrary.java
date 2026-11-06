@@ -83,6 +83,14 @@ public final class UiFontLibrary {
     /** 系统字体 + 外部字体，已按显示名排好序。内置那一项不在里面，界面单独列在最前。 */
     private static volatile List<UiFont> catalog = Collections.emptyList();
     private static volatile UiFont active = UiFont.BUILTIN;
+    /**
+     * 上一次 {@link #wire} 装上去的两个 AWT 句柄。
+     *
+     * <p>给 MuoniumConfig 的设置界面用：它要按对象身份去 {@code SkijaText} 的字节表里取同一份
+     * 字体数据，才能跟着玩家换字体、并且是热切换。留 null 表示还没换过（用内置字体）。</p>
+     */
+    private static volatile Font wiredRegularAwt;
+    private static volatile Font wiredBoldAwt;
     /** 正在装配的那一项的 id：切换要读文件、解析字体，慢的话界面上得看得出来在忙。 */
     private static volatile String pendingId;
     private static volatile String status = "";
@@ -236,10 +244,17 @@ public final class UiFontLibrary {
     public static void restoreBuiltin() {
         pendingId = null;
         FontManager.restoreBuiltinTextFonts();
+        // 句柄清零：MuoniumConfig 那边据此回到它自带的字体，而不是继续画旧的那一款
+        wiredRegularAwt = null;
+        wiredBoldAwt = null;
         active = UiFont.BUILTIN;
         status = "已回到内置字体";
         statusBad = false;
         save(UiFont.BUILTIN);
+        try {
+            com.muoniumplayer.core.screens.hud.MuoniumFontBridge.clear();
+        } catch (Throwable ignored) {
+        }
     }
     private static void finish(UiFont font, Prepared prepared, String error) {
         // 解析期间用户又点了别的字体、或者点了「恢复内置」，这一次的结果就不该再装上去 ——
@@ -265,8 +280,28 @@ public final class UiFontLibrary {
     private static void wire(Prepared prepared) {
         SkijaText.registerTypeface(prepared.regularAwt, prepared.regular);
         SkijaText.registerTypeface(prepared.boldAwt, prepared.bold);
+        // 记下当前 AWT 句柄：MuoniumConfig 的设置界面要拿它们的字节来跟随这套字体。
+        // SkijaText 的字节表按对象身份查，所以必须存这两个实例本身。
+        wiredRegularAwt = prepared.regularAwt;
+        wiredBoldAwt = prepared.boldAwt;
         FontManager.retargetTextFonts(prepared.regularAwt, prepared.boldAwt,
                 prepared.fakeBoldRegular, prepared.fakeBoldBold);
+        // 顺带把 MuoniumConfig 的设置界面也换过去（没装就静默跳过）。
+        // 放在 wire() 里是为了同时覆盖「启动装配」与「运行时切换」两条路径。
+        try {
+            com.muoniumplayer.core.screens.hud.MuoniumFontBridge.sync();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 当前生效的正文字体 AWT 句柄；未换过字体时为 null。 */
+    public static Font getWiredRegularAwt() {
+        return wiredRegularAwt;
+    }
+
+    /** 当前生效的粗体 AWT 句柄；未换过字体时为 null。 */
+    public static Font getWiredBoldAwt() {
+        return wiredBoldAwt;
     }
 
     /** 同步装配（启动时用；这时还没有渲染线程要让）。 */
@@ -656,6 +691,31 @@ public final class UiFontLibrary {
         return out;
     }
 
+    /**
+     * 判定字形覆盖用的探针文本。
+     *
+     * <p>首字符必须留在原位（下标 0 是 Latin 的判定），其余是中文。
+     *
+     * <p>为什么是一整串而不是单个「一」：原先只查 U+4E00 一个字，对这种字体会误判 ——
+     * Noto Sans KR 收了「一」和「好」，却没「这」「你」「汉」，于是它被判成「含中文」
+     * 并接管了设置界面，实际显示出来是一整屏方块。查一组常用字才能反映真实覆盖面。</p>
+     */
+    private static final String PROBE_TEXT = "A\u4e00\u8fd9\u4f60\u6c49\u597d\u7684\u662f\u4e0d\u4e86";
+
+    /**
+     * 探针文本里的中文是否全部有字形。
+     *
+     * <p>要求「全部」而不是「至少一个」：设置界面里这些字都会出现，缺任何一个就是方块。
+     * 判定偏严的代价只是少接管一次字体（退回内置），偏松的代价是整屏不可读。</p>
+     */
+    private static boolean coversChinese(short[] glyphs) {
+        // glyphs[0] 是 Latin 探针，从 1 开始
+        for (int i = 1; i < PROBE_TEXT.length(); i++) {
+            if (i >= glyphs.length || glyphs[i] == 0) return false;
+        }
+        return PROBE_TEXT.length() > 1;
+    }
+
     /** 读一个字体文件，量出显示名与字形覆盖。读不出来返回 null（坏文件不该出现在列表里）。 */
     private static UiFont probeExternal(File file) {
         try {
@@ -667,9 +727,9 @@ public final class UiFontLibrary {
             boolean latin = false;
             boolean cjk = false;
             try (io.github.humbleui.skija.Font probe = new io.github.humbleui.skija.Font(typeface, 16f)) {
-                short[] glyphs = probe.getStringGlyphs("A\u4e00");
+                short[] glyphs = probe.getStringGlyphs(PROBE_TEXT);
                 latin = glyphs.length > 0 && glyphs[0] != 0;
-                cjk = glyphs.length > 1 && glyphs[1] != 0;
+                cjk = coversChinese(glyphs);
             }
             String name = typeface.getFamilyName();
             boolean bold = typeface.getFontStyle().getWeight() >= 600

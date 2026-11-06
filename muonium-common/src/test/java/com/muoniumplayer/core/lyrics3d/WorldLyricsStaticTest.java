@@ -82,17 +82,23 @@ class WorldLyricsStaticTest {
     void commonLyrics3dPackageIsMcFree() throws IOException {
         Path dir = ProjectPaths.sharedJava().resolve("com/muoniumplayer/core/lyrics3d");
         assertTrue(Files.isDirectory(dir), "core/lyrics3d 包必须在共享层");
-        try (var files = Files.walk(dir)) {
-            files.filter(p -> p.toString().endsWith(".java")).forEach(p -> {
-                try {
-                    String src = Files.readString(p);
-                    assertTrue(!src.contains("net.minecraft"),
-                            p.getFileName() + " 属于共享层，不得 import net.minecraft；"
-                                    + "MC 触点只许在版本树的 compat/mc/ 里");
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            });
+        for (Path root : java.util.Arrays.asList(ProjectPaths.sharedJava(), ProjectPaths.sharedKotlin())) {
+            Path packageDir = root.resolve("com/muoniumplayer/core/lyrics3d");
+            if (!Files.isDirectory(packageDir)) {
+                continue;
+            }
+            try (var files = Files.walk(packageDir)) {
+                files.filter(ProjectPaths::isSourceFile).forEach(p -> {
+                    try {
+                        String src = Files.readString(p);
+                        assertTrue(!src.contains("net.minecraft"),
+                                p.getFileName() + " 属于共享层，不得 import net.minecraft；"
+                                        + "MC 触点只许在版本树的 compat/mc/ 里");
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+            }
         }
     }
 

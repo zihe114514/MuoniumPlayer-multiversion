@@ -211,6 +211,27 @@ class FoliaOnnxStaticTest {
     }
 
     @Test
+    @DisplayName("模型下载走竞速引擎：R2 镜像在首位，HttpDownloadRace.enabled 闸门在，串行回退保留")
+    void modelDownloadGoesThroughRaceEngine() throws IOException {
+        String manager = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music",
+                "FoliaModelManager.java"));
+        assertTrue(manager.contains("HttpDownloadRace.fetch("),
+                "模型/运行包下载必须走竞速引擎 HttpDownloadRace.fetch");
+        assertTrue(manager.contains("HttpDownloadRace.enabled()"),
+                "竞速关闭时必须退回串行回退（enabled 闸门）");
+        String mirrors = manager.substring(manager.indexOf("MIRRORS = {"),
+                manager.indexOf("};", manager.indexOf("MIRRORS = {")));
+        assertTrue(mirrors.contains("https://file.melodifymc.cc.cd/folia/"),
+                "镜像链首路必须是 R2 对象存储（isTierA 的 A 档前缀，与其它伴生包同一托管面）");
+        assertTrue(mirorsContainsHf(mirrors), "HuggingFace 两路原始源必须保留");
+    }
+
+    private static boolean mirorsContainsHf(String mirrors) {
+        return mirrors.contains("https://hf-mirror.com/HUAI4236/folia-models/resolve/main/")
+                && mirrors.contains("https://huggingface.co/HUAI4236/folia-models/resolve/main/");
+    }
+
+    @Test
     @DisplayName("只有安卓走进程内 ONNX；桌面 preferOnnxInference 恒 false（引擎是 Python 子进程）")
     void onlyAndroidPrefersOnnx() throws IOException {
         String manager = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music",

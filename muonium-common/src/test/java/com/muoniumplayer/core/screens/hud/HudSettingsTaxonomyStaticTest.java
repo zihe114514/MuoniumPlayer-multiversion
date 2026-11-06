@@ -31,16 +31,47 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class HudSettingsTaxonomyStaticTest {
 
     private static final List<String> TITLES = Arrays.asList(
-            "歌词样式", "3D 歌词", "面板与卡片", "灵动岛", "播放", "界面与主题", "信息栏与封面", "缓存与公告");
-
+            "常用", "歌词样式", "面板与卡片", "灵动岛", "信息栏与封面", "界面与主题", "播放", "3D 歌词", "缓存与公告");
     /**
      * 3D 页条目数按树分支：26.x 的 3D 页有「封面代表色」四色板与「封面渐变」
      * （取色 8 条），1.20.1~1.21.11 的面板还没搬这组（取色只有文字色/发光色 2 条），
      * 3D 页 23 条。共享测试一份源跑五棵树 —— 基准随树取，禁止悄悄改某一个数的口径
      * 与 26.x 版注释同款。
+     *
+     * <p>2026-11-05 「发光」组新增「发光形态」choice（经典 / 辉光），三页里
+     * 只有 3D 歌词页 +1（30 → 31）；其余页不变。</p>
      */
     private static final List<Integer> COUNTS =
-            Arrays.asList(28, 30, 9, 25, 31, 33, 6, 3);
+            Arrays.asList(12, 22, 9, 25, 4, 33, 41, 31, 3);
+
+    /**
+     * 「常用」页只在 26.3 起存在。
+     *
+     * <p>其余六棵树还没搬这次分类重构（它们的 {@code HudSettingsModel} 是各自目录下的副本）。
+     * 共享测试一份源跑七棵树，所以预期值必须按树取 —— 否则要么 26.3 过不了、要么其余六棵全红。
+     * 等分类重构下沉到其余树时删掉这个开关，把 TITLES/COUNTS 收回单一口径。</p>
+     */
+    private static boolean hasFavoritesPage() {
+        return "26.3".equals(versionName());
+    }
+
+    private static List<String> expectedTitles() {
+        return hasFavoritesPage()
+                ? TITLES
+                // 其余六树的旧结构（2026-11-06 之前）
+                : Arrays.asList("歌词样式", "3D 歌词", "面板与卡片", "灵动岛",
+                        "播放", "界面与主题", "信息栏与封面", "缓存与公告");
+    }
+
+    private static List<Integer> expectedCounts() {
+        return hasFavoritesPage()
+                ? COUNTS
+                : Arrays.asList(28, 31, 9, 25, 41, 33, 6, 3);
+    }
+
+    private static int expectedTotal() {
+        return hasFavoritesPage() ? TOTAL : 176;
+    }
 
     private static String versionName() {
         return ProjectPaths.versionRoot().getFileName().toString();
@@ -93,8 +124,20 @@ class HudSettingsTaxonomyStaticTest {
      *  同日「播放」页新增「通透模式」组 3 条（"通透模式" toggle + 压缩幅度 / 变宽幅度
      *  两条滑条；开关与幅度存共享层 TransparentMode 自己的配置文件，不经 HudConfig）——
      *  播放页 28 → 31 条，162 → 165。
-     *  不新开分类页：ModernUI 分类条横排 8 格已满（见下方封顶测试）。 */
-    private static final int TOTAL = 165;
+     *  2026-11-05 「播放」页新增「卡点运镜」组 10 条（总开关 + 挂机多久启动/切换频率/
+     *  最短镜头/运镜速度/转场效果五个 choice + 隐藏 HUD/电影黑边/追踪生物/鼓点变焦
+     *  四个 toggle；开关与全部参数存共享层 CineSettings 自己的 cine.json，不经
+     *  HudConfig；后九条仅在总开关打开时可见）—— 播放页 31 → 41 条，165 → 175；
+     *  2026-11-05 3D 歌词页「发光形态」+1，175 → 176。
+     *  2026-11-06 「常用」提升为顶层第 1 页（12 条：6 个组件总开关 + 6 个常用样式档位，
+     *  后六条与各自原位是同一批 Entry 对象的引用）。同时清掉两处重复：
+     *  「歌词样式」页顶部的「常用」组 6 条随提升移出（28 → 22）；
+     *  「信息栏与封面」页的「歌曲信息栏 / 桌面歌词」两个 toggle 移入新页
+     *  （6 → 4）。总数 176 → 180：净增 4 条来自新页多出来的四个总开关
+     *  （灵动岛 / 音乐频谱 / 3D 歌词 / 场景声学）—— 它们原先只存在于各自分类里，
+     *  现在是同一对象的引用，两个位置都可操作。
+     *  分类从 8 页变 9 页，排序改由 {@code CATEGORY_ORDER} 表决定（声明顺序不再等于展示顺序）。 */
+    private static final int TOTAL = 180;
 
     @Test
     @DisplayName("分类就是这 7 页，顺序与每页条目数都不许悄悄变")
@@ -106,17 +149,21 @@ class HudSettingsTaxonomyStaticTest {
             titles.add(category.title);
             counts.add(count(category));
         }
-        assertEquals(TITLES, titles, "分类名或顺序变了：改结构可以，但要连同本测试的预期一起改，"
+        assertEquals(expectedTitles(), titles, "分类名或顺序变了：改结构可以，但要连同本测试的预期一起改，"
                 + "并确认没有条目在搬运中丢失");
-        assertEquals(COUNTS, counts, "某一页的条目数变了");
-        assertEquals(TOTAL, sum(counts), "条目总数不再是 " + TOTAL + " 条：重新分类不该增减条目");
+        assertEquals(expectedCounts(), counts, "某一页的条目数变了");
+        assertEquals(expectedTotal(), sum(counts), "条目总数不再是 " + expectedTotal() + " 条：重新分类不该增减条目");
     }
 
     @Test
-    @DisplayName("分类总数封顶：ModernUI 面板的分类条是横排，页多了第 7 格起会被窗口裁掉")
+    @DisplayName("分类总数封顶：分类条是横排，页太多会被窗口裁掉")
     void categoryCountStaysWithinSidebarBudget() {
-        assertTrue(HudSettingsModel.categories().length <= 8,
-                "分类页超过 8 个就又回到「侧栏一半是空页」的老问题了");
+        // 2026-11-06 上限 8 → 9：新开「常用」页（仅 26.3 起）。现代界面（MuoniumConfig /
+        // Classic / Folia）的分类条会换行，9 格放得下；只有 1.20.1~1.21.11 的 ModernUI 是固定横排，
+        // 而 26.x 不再带 ModernUI 面板，所以这条约束只对老树有实际意义。
+        int cap = hasFavoritesPage() ? 9 : 8;
+        assertTrue(HudSettingsModel.categories().length <= cap,
+                "分类页超过 " + cap + " 个就又开始「侧栏一半是空页」了；再加页先确认各界面分类条放得下");
     }
 
     @Test

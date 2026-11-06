@@ -218,13 +218,27 @@ public final class OnboardingScreen extends ExtensionScreen
         double localHeight = contentHeight / scale;
         double localMouseX = (mouseX - contentX - offsetX) / scale;
         double localMouseY = (mouseY - contentY) / scale;
+        // 内容列限宽居中：大屏不再把卡片拉到面板两边。
+        //
+        // 判档用的是 localWidth —— 也就是<b>放回设计空间之后的宽度</b>（内容带宽 ÷ stepScale），
+        // 不是屏幕逻辑宽度。这两者只在 scale == 1 时相等，而 scale 在常规窗口上一般小于 1：
+        // 854×480 的 631 宽内容带除 0.87 得到 722，那才是「这一页真的有多少地方能排字」。
+        // 用屏幕宽度判会把每一档都误算子一档，大屏升字号这件事永远不触发。
+        // （scale 被 MIN_READABLE_SCALE 夹住时 localWidth 会比真实可用宽更大，那是对的：
+        //   那时内容确实按设计空间排，多出来的部分由 clipStep 裁掉。）
+        OnboardingMetrics metrics = OnboardingMetrics.of(localWidth, localHeight);
+        double columnWidth = metrics.columnWidth(localWidth);
+        double columnX = (localWidth - columnWidth) * .5;
+        double columnMouseX = localMouseX - columnX;
 
         OnboardingUi.beginStep(alpha);
+        OnboardingUi.beginMetric(metrics);
         SkijaGfx.pushMatrix();
-        SkijaGfx.translate(contentX + offsetX, contentY);
+        SkijaGfx.translate(contentX + offsetX + columnX * scale, contentY);
         SkijaGfx.scale(scale, scale);
-        step.render(this, 0.0, 0.0, localWidth, localHeight, localMouseX, localMouseY);
+        step.render(this, 0.0, 0.0, columnWidth, localHeight, columnMouseX, localMouseY);
         SkijaGfx.popMatrix();
+        OnboardingUi.endMetric();
         OnboardingUi.endStep();
     }
 
@@ -703,9 +717,25 @@ public final class OnboardingScreen extends ExtensionScreen
         double scale = stepScale(bands.width, bands.height);
         double localMouseX = (x - bands.x) / scale;
         double localMouseY = (y - bands.y) / scale;
-        steps[stepIndex].mouseClicked(this, 0.0, 0.0,
-                bands.width / scale, bands.height / scale,
-                localMouseX, localMouseY, mouseButton);
+        // 与 {@link #renderStep} 同一套：正文住在限宽居中的那一列里，命中测试必须减掉同一个左余量、
+        // 用同一个档位，否则大屏上「看得见却点不到」——这一列右移多少，鼠标就得跟着右移多少。
+        double boardWidth = bands.width / scale;
+        double boardHeight = bands.height / scale;
+        OnboardingMetrics metrics = OnboardingMetrics.of(boardWidth, boardHeight);
+        double columnWidth = metrics.columnWidth(boardWidth);
+        double columnX = (boardWidth - columnWidth) * .5;
+        // 落在内容列之外的那一截是留白，不是控件。
+        if (localMouseX < columnX || localMouseX > columnX + columnWidth) {
+            return;
+        }
+        OnboardingUi.beginMetric(metrics);
+        try {
+            steps[stepIndex].mouseClicked(this, 0.0, 0.0,
+                    columnWidth, boardHeight,
+                    localMouseX - columnX, localMouseY, mouseButton);
+        } finally {
+            OnboardingUi.endMetric();
+        }
     }
 
     /** 覆盖层收干净：落一次状态，此后这页就是纯粹的引导。 */
@@ -956,6 +986,28 @@ public final class OnboardingScreen extends ExtensionScreen
         HudConfig.save();
     }
 
+    // ------------------------------------------------ 沉浸感
+
+    @Override
+    public boolean acousticsEnabled() {
+        return com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings.isEnabled();
+    }
+
+    @Override
+    public void setAcousticsEnabled(boolean value) {
+        com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings.setEnabled(value);
+    }
+
+    @Override
+    public boolean ambientEnabled() {
+        return com.muoniumplayer.core.ncm.music.ambient.AmbientSettings.isEnabled();
+    }
+
+    @Override
+    public void setAmbientEnabled(boolean value) {
+        com.muoniumplayer.core.ncm.music.ambient.AmbientSettings.setEnabled(value);
+    }
+
     private void saveConfiguration() {
         NeteaseMusicService.setCurrentPlatform(selectedPlatform);
         NCMTheme.setCurrent(selectedTheme);
@@ -1013,6 +1065,25 @@ public final class OnboardingScreen extends ExtensionScreen
      */
     private static void clipStep(double x, double y, double width, double height) {
         SkijaClip.beginClip(() -> SkijaShapes.roundedRect(x, y, width, height, 0, 0xFFFFFFFF));
+    }
+
+    /**
+     * 只给测试：某个逻辑窗口尺寸下，正文那一列实际有多宽、左端在哪、该用哪一档。
+     *
+     * <p>{@code layoutForTest} 管的是骨架与三条带；这一条管的是<b>正文在带子里怎么排</b>——
+     * 限宽居中与档位判据。两者合起来才说明「屏幕上真的有地方写字」。
+     * {@code 0} = 列宽，{@code 1} = 列在带子里的左余，{@code 2} = 档位序号，{@code 3} = 判档用的设计宽。</p>
+     */
+    static double[] stepColumnForTest(double width, double height, double playerScale) {
+        OnboardingChrome.Panel chrome = OnboardingChrome.of(width, height, playerScale);
+        Bands bands = Bands.of(chrome);
+        double scale = stepScale(bands.width, bands.height);
+        double boardWidth = bands.width / scale;
+        double boardHeight = bands.height / scale;
+        OnboardingMetrics metrics = OnboardingMetrics.of(boardWidth, boardHeight);
+        double columnWidth = metrics.columnWidth(boardWidth);
+        double columnX = (boardWidth - columnWidth) * .5;
+        return new double[]{columnWidth, columnX, metrics.tier.ordinal(), boardWidth, boardHeight};
     }
 
     /**

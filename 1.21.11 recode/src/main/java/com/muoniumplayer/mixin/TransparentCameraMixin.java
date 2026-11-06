@@ -6,7 +6,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -30,7 +30,7 @@ abstract class TransparentCameraMixin {
 
     @Inject(method = "setup", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/Camera;setPosition(DDD)V", ordinal = 0, shift = At.Shift.AFTER))
-    private void transmode$camera(BlockGetter level, Entity entity, boolean detached,
+    private void transmode$camera(Level level, Entity entity, boolean detached,
                                   boolean thirdPersonReverse, float partialTick, CallbackInfo ci) {
         if (!(entity instanceof Player player) || player != Minecraft.getInstance().player
                 || !player.isAlive() || player.isSleeping()) return;

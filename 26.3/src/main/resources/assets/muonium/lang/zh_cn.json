@@ -1,5 +1,5 @@
 {
-  "key.categories.muonium.player": "MuoniumPlayer",
+  "key.category.muonium.player": "MuoniumPlayer",
   "key.muonium.open_music": "打开音乐界面",
   "key.muonium.edit_hud": "编辑 HUD 位置",
   "key.muonium.previous_track": "上一曲",
@@ -8,5 +8,6 @@
   "key.muonium.volume_down": "降低音乐音量",
   "key.muonium.toggle_pause": "暂停 / 继续播放",
   "key.muonium.quick_search": "快捷搜索（从灵动岛唤出）",
+  "key.muonium.ambient_now": "立即按环境切一首",
   "key.muonium.speaker_place": "放置 / 移除世界声源（音箱）"
 }

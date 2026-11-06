@@ -59,6 +59,22 @@ public final class SkijaText {
     }
 
     /**
+     * 取这个 AWT 字体当初登记进来的原始字节，没有就返回 null。
+     *
+     * <p>给「别处也要用同一份字体」的场景（MuoniumConfig 的设置界面跟随玩家字体）：
+     * 按对象身份查，所以拿到的必然是被登记的那个实例本身，派生对象查不到——这正是
+     * {@link #typefaceFor} 的同一条约定。</p>
+     */
+    public static byte[] sourceBytesFor(java.awt.Font awtFont) {
+        if (awtFont == null) {
+            return null;
+        }
+        synchronized (SOURCE_BYTES) {
+            return SOURCE_BYTES.get(awtFont);
+        }
+    }
+
+    /**
      * 取这个 AWT 字体对应的 Skia Typeface。
      *
      * @param awtFont 必须是 {@link #register} 登记过的那个实例本身，

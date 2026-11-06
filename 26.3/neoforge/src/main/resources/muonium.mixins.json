@@ -14,7 +14,9 @@
     "MouseScrollMixin",
     "MouseButtonStateMixin",
     "TransparentEntityMixin",
-    "TransparentCameraMixin"
+    "TransparentCameraMixin",
+    "CineCameraMixin",
+    "CineHudMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -124,6 +124,8 @@ public final class MuoniumPlayerForge {
     private void onRenderLevelStage(RenderLevelStageEvent event) {
         if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_LEVEL) return;
         WorldLyricsBridge.worldRenderEnd();
+        // 世界声源线框(有音箱才画;内部第一行判空)。
+        com.muoniumplayer.compat.mc.SpeakerRenderBridge.render();
     }
 
     /** 对应 Fabric 的 ScreenEvents.afterRender：界面画完之后叠灵动岛。 */

@@ -4,6 +4,8 @@ plugins {
     id 'net.fabricmc.fabric-loom' version '1.17.20'
     // 只用它的 ShadowJar 任务给 rhino 做 relocate；不用它打 fat-jar。
     id 'com.gradleup.shadow' version '8.3.11'
+    id 'org.jetbrains.kotlin.jvm'
+    id 'org.jetbrains.kotlin.plugin.lombok'
 }
 
 base {
@@ -183,6 +185,23 @@ dependencies {
     implementation include('io.github.humbleui:types:0.2.0')
     // 开发期 runClient 用：只进运行时类路径，不进成品 jar（成品全平台走伴生包自动下载）
     runtimeOnly 'io.github.humbleui:skija-windows-x64:0.143.17'
+
+    // ==================== MuoniumConfig（按需下载的 HUD/设置界面库）====================
+    // MuoniumConfig 是 OneConfig 的精简分支（独立仓库 E:\oneconfig lite\MuoniumConfig-src），
+    // 与上游不再同步。它带整套 Compose 界面，**不进成品**：首次启动由
+    // MuoniumConfigDownload 拉取到 mods/，与 Skija 伴生包同一套做法（多镜像竞速 +
+    // 字节数/sha256 双钉 + 装好后重启生效——Fabric 只在启动阶段扫 mods/ 并织入 mixin，
+    // 运行中塞进去的 jar 不会被加载，热加载没有可行性）。
+    //
+    // 这里保留 implementation 只为开发期：runClient 需要一个真的 MuoniumConfig 才能
+    // 打开界面调样式，否则每次都要等下载 + 重启。
+    //
+    // 同步命令见 tools/sync-muoniumconfig.ps1；jar 更新后重跑一次，
+    // 并把 MuoniumConfigDownload 里钉的 FILE_NAME / BYTES / SHA256 一起改掉。
+    implementation 'muonium:muoniumconfig:1.6.1'
+    // Compose：编译期与开发期都要，但同样不进成品 —— 它是独立前置 mod，由玩家自装。
+    compileOnly 'muonium:muonium-compose-bundle:2.1.0'
+    runtimeOnly 'muonium:muonium-compose-bundle:2.1.0'
     // skija-shared 的 provided 依赖，只在编译期需要（@Nullable 之类）。
     compileOnly 'org.jetbrains:annotations:20.1.0'
 
@@ -257,6 +276,8 @@ java {
     toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
     withSourcesJar()
 }
+
+apply from: rootProject.file('../gradle/kotlin-support.gradle')
 
 jar {
     from(rootProject.file('LICENSE.txt')) {

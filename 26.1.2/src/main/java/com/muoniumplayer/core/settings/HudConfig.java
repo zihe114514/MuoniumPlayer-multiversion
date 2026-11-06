@@ -1,0 +1,1462 @@
+package com.muoniumplayer.core.settings;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
+
+import java.io.File;
+
+/**
+ * 音乐 HUD 的位置、缩放和内置编辑器外观设置。
+ *
+ * <p>位置以 0..1 的分数存储。桌面歌词外观设置保存在此处，
+ * 使内置 HUD 编辑器可预览并持久化它们，而不必依赖外部的
+ * ClickGUI 值存储。</p>
+ */
+public final class HudConfig {
+
+    public static final float SCALE_MIN = 0.5f;
+    public static final float SCALE_MAX = 2.0f;
+
+    /** 灵动岛样式索引上限,与 {@code DownloadDynamicIsland.DynamicIslandStyle} 的数量保持一致。 */
+    public static final int DYNAMIC_ISLAND_STYLE_MAX = 6;
+
+    /** 全屏歌词样式索引上限,与 {@code FullscreenLyricStyle} 的数量保持一致。 */
+    public static final int FULLSCREEN_LYRIC_STYLE_MAX = 10;
+
+
+
+    /** 全屏歌词背景类型：0 QPlayer 流体，1 模糊封面。 */
+
+    public static final int FULLSCREEN_LYRIC_BACKGROUND_MODE_MAX = 1;
+
+    /**
+     * QPlayer 流体算法索引上限，与 {@code SkijaFluidBackground} 的风格表长度保持一致。
+     *
+     * <p>0-2 是 QPlayer 原生三种（Pixi 四层 / AMLL 网格 / Classic warp），3-5 是
+     * 上游移植的融合风格，6-11 是层叠形态（无底 / Latent 网格 / 抖动层 /
+     * 星空层 / Nomand 两特效；8-9 是叠加层内部代号，不该出现在配置里，但钳制
+     * 按合法风格值上限算所以一并放行）。追加新风格时只改这个常量与风格表。</p>
+     */
+    public static final int FULLSCREEN_LYRIC_FLUID_STYLE_MAX = 11;
+
+    /** 主题颜色来源索引上限，与 {@code ThemeColorSource} 的数量保持一致。 */
+    public static final int THEME_COLOR_SOURCE_MAX = 1;
+
+    /** 桌面歌词样式索引上限，与 {@code BlossomLyricStyle} 支持的样式数量保持一致。 */
+    public static final int OSD_LYRIC_STYLE_MAX = 1;
+
+    private static final File FILE = ConfigPaths.HUD;
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+
+    // 当前歌词 / 正在唱的 KTV 字。
+    public static float infoX = 0.00f;
+    public static float infoY = 0.43429846f;
+    public static float infoScale = 1.0f;
+
+    /** 当前行辉光、泛光和呼吸效果的总开关。 */
+    public static float playerVolume = 1.00f;
+
+    /** OSD 逐字辉光和保持缩放强调的总开关。 */
+    public static float lyricX = 0.5f;
+    public static float lyricY = 0.8688119f;
+    public static float lyricScale = 0.84999996f;
+    /** 普通歌词行辉光和泛光的总开关。 */
+    public static float lyricWidth = 450.0f;
+    public static float lyricHeight = 120.0f;
+
+    /** 允许在不改变配置尺寸的情况下禁用视口边缘淡出。 */
+    public static int lyricColorRgb = 0xFFFFFFFF;
+    public static int currentLyricColorRgb = 0xFFFFFFFF;
+
+    // OSD KTV 动画。这些值与全屏歌词渲染器相互独立。
+    // 普通（非当前）歌词行。
+    public static boolean currentLyricEffectsEnabled = true;
+    /** 全局下载 Dynamic Island。 */
+    public static boolean osdKaraokeEmphasisEnabled = true;
+    /** Dynamic Island 字体缩放。长内容在被截断前自动缩小。 */
+    public static boolean normalLyricEffectsEnabled = true;
+    /** 首选静止宽度。较长的通知可能动画变宽，以保持完整文本可见。 */
+    public static boolean lyricEdgeFadeEnabled = true;
+
+    public static float currentLineScale = 1.0115517f;
+    public static float currentWordScale = 0.00f;
+
+    /**
+     * 当前行的发光强度，读数就是「唱到这个字时它有多亮」。
+     *
+     * <p>桌面歌词唯一的发光输入。原来它旁边还有「晕染程度」「发光范围」，OSD 分组里又有一份
+     * 「OSD 发光/晕染程度」跟它相乘——四个滑块描述同一束光。而发光改成真高斯之后，这一项
+     * 折算出的 sigma 不到一个像素，从 0 拉到 1 肉眼没有区别，看得见的光其实全来自「晕染」。
+     * 现在只留这一个强度，光晕铺多远交给 {@link #lyricGlowSpread}。</p>
+     */
+    public static float currentGlowStrength = 1.00f;
+
+    /**
+     * 歌词光晕的扩散倍率，1.0 是标定好的默认口径。
+     *
+     * <p>三层高斯的 sigma 是按字号取比例的（见 {@code TextGlow}），所以桌面歌词、全屏歌词页
+     * 共用这一个倍率就能得到成比例的观感，不必各留一个像素单位的「半径」滑块——那个口径
+     * 在 14px 的桌面歌词和 32.5px 的全屏歌词上根本不是一回事。</p>
+     *
+     * <p>调大它会同时把离屏合成的留白撑宽（{@code TextGlow.padding}），否则光晕会被纹理
+     * 边界切成方块。</p>
+     */
+    public static float lyricGlowSpread = 1.3181034f;
+
+    /**
+     * 全屏歌词页逐字发光的上限强度。
+     *
+     * <p>发光是"随这个字已经唱了多久"逐渐变亮的：每个字的发光透明度 = 该字的演唱进度 ×
+     * 这个上限。写成单独一个上限而不是复用 {@link #currentGlowStrength}，是因为后者同时
+     * 作用于 OSD 桌面歌词的整行光晕，调大它会让桌面歌词一起过曝。</p>
+     */
+    public static float fullscreenGlowStrength = 0.278481f;
+
+    /**
+     * 全屏歌词页的展示样式索引，对应 {@code FullscreenLyricStyle} 的序号。
+     *
+     * <p>存索引而不是枚举名：枚举名一改配置就读不回来了，而索引只要求新样式往后追加。
+     * 越界时渲染层退回经典样式。</p>
+     */
+    public static int fullscreenLyricStyle = 0;
+    /** 全屏歌词背景类型：0 QPlayer 流体，1 传统模糊封面。 */
+    public static int fullscreenLyricBackgroundMode = 0;
+    /** QPlayer 全屏歌词流体算法：0 PixiRenderer、1 AMLL MeshGradient、2 Classic。 */
+    public static int fullscreenLyricFluidStyle = 0;
+    /** QPlayer 全屏歌词流体饱和度，100 为原始值。 */
+    public static float fullscreenLyricFluidSaturation = 100.0f;
+    /** QPlayer 的省电静态背景模式；默认保持完整动态与音频响应。 */
+    public static boolean fullscreenLyricFluidStatic = false;
+    /** 全屏歌词页「未到歌词模糊」：未唱到的行带外渐进高斯模糊，正在唱的行保持清晰（移植 qplayer edgeBlur）。 */
+    public static boolean fullscreenLyricEdgeBlur = false;
+    /**
+     * QPlayer 流体（含 folia 移植风格）的音频律动跟随强度，0 = 完全无视音频。
+     *
+     * <p>与 {@link #fullscreenGlowStrength} 分开：那个管的是逐字发光，这里管的是
+     * 背景流体随音乐响应的<b>全部路径</b>——分段频段（Latent/Nomand 的低/中频响应）、
+     * shader 亮度包络（三种 QPlayer 原生算法也读它）与运动时钟的惯性加速。0 =
+     * 完全无视音频，画面保持各风格固有的缓慢基速漂移；100 为原版口径，200 为两倍
+     * 灵敏。存的是 0..200 的百分比。</p>
+     */
+    public static float fullscreenLyricFluidAudio = 100.0f;
+
+    /**
+     * folia 背景的叠加层位掩码（对齐上游的多层合成：LatentBackground 的
+     * mesh+dithering 双层、SoraBackground 的加色星点都是独立可叠的层）。
+     *
+     * <p>bit0 = Latent 抖动层（宿主用 soft-light 混合，对齐原版的 mixBlendMode），
+     * bit1 = Sora 星空层（加色，对齐星点的预乘 alpha additive）。叠加层开启时，
+     * 融合形态的底层（Latent 整体/Sora 整体/Nomand 整体）会被渲染层自动换成
+     * 对应拆分层，避免同一效果画两遍。</p>
+     */
+    public static int fullscreenLyricBackgroundLayers = 0;
+    /** Latent 抖动叠加层的不透明度，0..100（folia 的 tuning.ditheringOpacity 默认 0.55 → 55）。 */
+    public static float fullscreenLyricLayerLatentDither = 55.0f;
+    /** Sora 星空叠加层的不透明度，0..100。 */
+    public static float fullscreenLyricLayerSora = 80.0f;
+
+
+    /** 主题颜色来源。0 保留用户当前主题预设，1 使用当前歌曲封面自动配色。 */
+    public static int themeColorSource = 0;
+
+    /**
+     * 桌面歌词（OSD）的展示样式索引。{@code 0} 经典，{@code 1} Blossom。
+     *
+     * <p>与 {@link #fullscreenLyricStyle} 同一套约定：存索引而不是枚举名，新样式只能往后追加。
+     * 越界时渲染层退回经典样式。</p>
+     */
+    public static int osdLyricStyle = 1;
+
+    /** Blossom：卡片背后实时模糊的强度。0 完全不模糊，1 全量替换成模糊背景。 */
+    public static float blossomBackdropBlur = 1.00f;
+
+    /**
+     * Blossom：卡片深色底的不透明度。
+     *
+     * <p>出厂 0.31 是 mp 的原值。压得低才能透出背后的模糊——这一层的作用是压住背景的对比度
+     * 让字读得清，而不是当一块实心板。</p>
+     */
+    public static float blossomPanelOpacity = 0.5258621f;
+
+    /** Blossom：卡片里同时显示几行。为 1 时不滚动，当前行整块垂直居中。 */
+    public static int blossomVisibleLines = 3;
+
+    /** Blossom：是否画随鼓点呼吸的描边，颜色取当前歌词色。 */
+    public static boolean blossomRhythmBorder = true;
+
+    /** Blossom：描边强度。它同时缩放描边的透明度与线宽。 */
+    public static float blossomBorderStrength = 0.65f;
+
+    // ---- 「律动词云」背景装饰的配色 ----
+
+    /** 自定义调色板的槽位数。想加槽位只需要改大它，旧配置里少的那几槽会补默认色。 */
+    public static final int CADENZA_PALETTE_SLOTS = 6;
+
+    /** 参与轮换的颜色个数下限。只有一个颜色就等于不换色，那用「跟随主题」更省事。 */
+    public static final int CADENZA_COLOR_COUNT_MIN = 2;
+
+    public static final int CADENZA_BEATS_PER_COLOR_MIN = 1;
+    public static final int CADENZA_BEATS_PER_COLOR_MAX = 16;
+
+    /**
+     * 调色板默认色：只存 RGB 低 24 位。
+     *
+     * <p>alpha 不存在这里——装饰层的透明度是按「形状 / 粒子 / 光斑」分别算出来的（见
+     * {@code CadenzaDecorLayer}），如果这里也带一份 alpha，两边会互相打架。</p>
+     */
+    private static final int[] CADENZA_DEFAULT_COLORS = {
+            0xFF4D6D, 0xFF9A4D, 0xFFE04D, 0x4DE0A0, 0x4DA8FF, 0xB44DFF
+    };
+
+    /**
+     * 背景装饰（几何形状 / 上升光点 / 踩点光斑）的取色来源。
+     *
+     * <p>{@code 0} = 跟随播放器主题强调色，也就是加这个开关之前的唯一行为；{@code 1} = 用下面的
+     * 自定义调色板，并按 {@link #cadenzaBeatsPerColor} 每若干拍换一个颜色。</p>
+     *
+     * <p>只影响背景装饰，歌词文字本身永远跟随主题强调色——否则自定义一个低饱和度的颜色就会把字
+     * 一起弄糊。</p>
+     */
+    public static int cadenzaDecorColorMode = 1;
+
+    /**
+     * 自定义调色板，长度恒为 {@link #CADENZA_PALETTE_SLOTS}，只有前 {@link #cadenzaDecorColorCount}
+     * 个参与轮换。存成定长数组而不是变长 List：越界读写在渲染热路径上是致命的，定长 + 取模最省心。
+     */
+    public static int[] cadenzaDecorColors = CADENZA_DEFAULT_COLORS.clone();
+
+    /** 调色板实际参与轮换的颜色个数，{@link #CADENZA_COLOR_COUNT_MIN}..{@link #CADENZA_PALETTE_SLOTS}。 */
+    public static int cadenzaDecorColorCount = 6;
+
+    /** 打满这么多拍换下一个颜色。拍是实时包络数出来的，不是 BPM 推的。 */
+    public static int cadenzaBeatsPerColor = 6;
+
+    /**
+     * 全屏歌词「文字 PV」样式的字号倍率。
+     *
+     * <p>各样式的字号本来都由 {@code FullscreenLyricStage.baseFontPx} 按视口算出来，这一项在那之上
+     * 再乘一次，于是「觉得字太大/太小」不用去动每套样式各自的参数。</p>
+     *
+     * <p>只作用于移植过来的那几套样式：「逐行滚动」有自己的整行/普通缩放滑块，「律动词云」是自动挑
+     * 字号档位的（挑不到比最大档更大的档），硬接上来会出现「往大调没反应」，所以不接。</p>
+     */
+    public static float lyricFontScale = 0.60f;
+
+    // ---- 各套「文字 PV」全屏歌词样式的可调参数（移植自上游） ----
+    // 默认值取参考实现的 DEFAULT_*_TUNING，只有少数几项按本项目的视口尺寸重新标定（见各自注释）。
+
+    /** 流光：字词之间的间距系数。 */
+    public static float luminousWordSpacing = 0.70f;
+
+    /** 流光：整块随呼吸/节拍上下浮动的倍率，0 表示完全静止。 */
+    public static float luminousFloatAmount = 1.00f;
+
+    /** 流光：是否给每个字词一个小角度的静态旋转。 */
+    public static boolean luminousWordRotation = true;
+
+    /** 云阶：每一级左右错落量的下限（参考实现单位是像素，渲染层再按视口比例缩放）。 */
+    public static float partitaStaggerMin = 20.0f;
+
+    /** 云阶：每一级左右错落量的上限。 */
+    public static float partitaStaggerMax = 100.0f;
+
+    /** 云阶：是否画每一级外侧的指示线。 */
+    public static boolean partitaGuideLines = true;
+
+    /** 浮名：唱过的段落淡到底色需要多久的倍率，越大留得越久。 */
+    public static float fumeTextHoldRatio = 1.00f;
+
+    /** 浮名：镜头跟随速度倍率。 */
+    public static float fumeCameraSpeed = 1.00f;
+
+    /** 浮名：主行字号倍率。 */
+    public static float fumeHeroScale = 1.00f;
+
+    /** 浮名：是否画背景几何体。参考实现默认关闭。 */
+    public static boolean fumeGeometricBackground = false;
+
+    /** 群唱：气泡最大宽度占视口宽度的比例。 */
+    public static float cappellaBubbleWidth = 0.72f;
+
+    /**
+     * 群唱：头像来源。{@code 0} = 专辑封面，{@code 1} = 主题色圆，{@code 2} = 内置头像（默认）。
+     *
+     * <p>内置头像取自参考实现的 folia-chan 素材（AI 生成，其 README 声明不受该仓库 AGPL 约束），
+     * 重新压成一张 384×192 的 4×2 精灵图，8 个头像共 54 KB。</p>
+     */
+    public static int cappellaAvatarSource = 0;
+
+    /** 群唱：是否在歌词之间随机插入表情气泡。 */
+    public static boolean cappellaEmojiEnabled = true;
+
+    /**
+     * 群唱：单条歌词后面插入表情气泡的概率。
+     *
+     * <p>还有两道硬约束在渲染器里：相邻表情至少隔 2 条歌词，且一屏窗口里最多占 1/6。
+     * 光靠概率会出现「连着刷五张」的情况，参考实现同样是概率 + 间隔 + 配额三件套。</p>
+     */
+    public static float cappellaEmojiChance = 0.45f;
+
+    /** 倾诉：把一行拆成多段的概率系数。 */
+    public static float tiltSplitProbability = 0.75f;
+
+    /** 倾诉：某一段采用「斜体 + 拉开字距 + 逐字错动」的概率。 */
+    public static float tiltStyleProbability = 0.35f;
+
+    /** 倾诉：配色方案。0 = 普通段主色 / 斜体段强调色，1 = 互换，2 = 全强调色，3 = 全主色。 */
+    public static int tiltColorScheme = 0;
+
+    /** 镜台：景深间隔倍率，越大层次拉得越开。 */
+    public static float dioramaDepthSpread = 1.00f;
+
+    /** 镜台：是否画浮尘粒子。 */
+    public static boolean dioramaDust = true;
+
+    /** 时计：弧半径占视口短边的比例。 */
+    public static float pendoloArcRadius = 0.41518986f;
+
+    /** 时计：可见弧的张角，度。 */
+    public static float pendoloArcAngle = 100.0f;
+
+    /** 时计：当前行的放大倍率。 */
+    public static float pendoloActiveScale = 1.25f;
+
+    /** 时计：是否画左侧的齿轮刻度装饰。 */
+    public static boolean pendoloGearDecor = true;
+
+    // ---- 3D 世界歌词 ----
+    // 与全屏歌词页/桌面歌词完全独立的第三条歌词通路：把当前行附近的歌词以公告牌四边形
+    // 画进 3D 世界（玩家视线前方 N 格）。渲染链在 muonium-common 的 core/lyrics3d/，
+    // 字段语义见 WorldLyricsSettings。
+
+    /** 3D 歌词总开关。关 = 不进世界渲染通路，其余 3D 参数无效果。 */
+    public static boolean worldLyricsEnabled = false;
+
+    /** 3D 歌词：锚点距玩家眼睛的距离（方块）。 */
+    public static float worldLyricsDistance = 10.5f;
+
+    /** 3D 歌词：billboard 朝向跟随玩家。关 = 行首次出现时冻结朝向，绕到侧面被透视压扁。 */
+    public static boolean worldLyricsFacePlayer = true;
+
+    /** 3D 歌词：玩家走近时锚点自动后退拉开距离，防止穿过文字。 */
+    public static boolean worldLyricsKeepAway = true;
+
+    /** 3D 歌词：多行左右散开的最大角（度）。行内容为种子的确定性偏角。 */
+    public static float worldLyricsSpreadDeg = 30.0f;
+
+    /** 3D 歌词：整体缩放。1.0 = 行高约 0.9 方块。 */
+    public static float worldLyricsScale = 1.0f;
+
+    /** 3D 歌词：现代化渲染风格（Skija 5× 超采样字形 + TextGlow 烘焙发光，随界面字体切换）。
+     *  关 = 原版像素字体直绘。渲染通道开关，几何行为不受影响。 */
+    public static boolean worldLyricsModernStyle = true;
+
+    /** 3D 歌词：把「两句挤一行」（网易云脏数据，分隔符 / ／）拆成两行独立渲染。 */
+    public static boolean worldLyricsSplitLines = true;
+
+    /** 3D 歌词：发光总开关。 */
+    public static boolean worldLyricsGlowEnabled = true;
+
+    /** 3D 歌词：发光强度 0..1（烘焙进纹理时只传这一次，渲染层不得再乘）。 */
+    public static float worldLyricsGlowStrength = 0.35f;
+
+    /** 3D 歌词：发光扩散倍率（晕/墨分离口径：σ 链与晕格留白全跟随此值）。 */
+    public static float worldLyricsGlowSpread = 1.3f;
+
+    /** 3D 歌词：发光颜色（RGB 低 24 位，alpha 由渲染层按进出场计算）。
+     *  仅 glowColorMode=1（自定义色板）时参与烘焙；0（跟随字色）时由渲染层逐字解析。 */
+    public static int worldLyricsGlowColorRgb = 0xFFFFFF;
+
+    /** 3D 歌词：发光颜色来源档。0 = 跟随字色（联动文字色/封面渐变/取色，逐字同步）
+     *  / 1 = 自定义色板（worldLyricsGlowColorRgb）。 */
+    public static int worldLyricsGlowColorMode = 1;
+
+    /** 3D 歌词：文字颜色（RGB 低 24 位）。0xFFFFFF 且未自定义时渲染层回落暖白默认。 */
+    public static int worldLyricsColorRgb = 0xFFFFFF;
+
+    /** 3D 歌词：文字颜色是否被取色器改过（0xFFFFFF 同时是合法的自定义色「纯白」，
+     *  不能再拿值本身当旗标 —— 那会让「选白色」显示成暖白肉色）。 */
+    public static boolean worldLyricsColorCustom = false;
+
+    /** 3D 歌词：逐词弹出 Word Pop（词被唱到的瞬间弹一下；无逐字轴的歌自动无效果）。 */
+    public static boolean worldLyricsWordPop = false;
+
+    /** 3D 歌词：按节拍闪 Text Flash（PlaybackPulse 拍边沿触发）。 */
+    public static boolean worldLyricsTextFlash = false;
+    /** 心象动效模式（现代化引擎）：整行分块、按块的出入场动画/呼吸/块色画。 */
+    public static boolean worldLyricsCadenza = false;
+    /** 绘光动效模式（现代化引擎）：换句逐字飞行重排 + 径迹拖尾 + 卡拉OK点亮（绘光移植）。 */
+    public static boolean worldLyricsHuiguang = false;
+    /** 绘光关键字表（keywordColors）：格式「词:RRGGBB,词:RRGGBB,…」；空 = 无关键字。 */
+    public static String worldLyricsKeywordColors = "";
+
+    /** 3D 歌词字形烘焙超采样档：0=自动按帧缓冲高度；4~7=手动强制对应烘焙倍率。 */
+    public static int worldLyricsQualityTier = 0;
+    /** 回屏保持（stayOnScreen）：转开视角时歌词沿离视线最近的方向滑回视野边缘。 */
+    public static boolean worldLyricsStayOnScreen = false;
+    /** 距离保持（keepDistance）：移动时歌词锚点随玩家整体平移（含上下），
+     *  径向距离恒收敛到设定值，走近不再糊脸。开启时「自动避让」不参与。 */
+    public static boolean worldLyricsKeepDistance = true;
+    /** Above ground：歌词中心不低于眼睛下方 0.5 格，不沉进地面。 */
+    public static boolean worldLyricsAboveGround = false;
+    /** 显示翻译档：0 关 / 1 整行淡入 / 2 逐字点亮+弹出（与 2D 界面同一数据口，心象模式不画）。 */
+    public static int worldLyricsTranslation = 1;
+    /** 翻译副行的绘光特效（点亮闪点 + 微飞径迹）：仅「逐字点亮」档有意义。 */
+    public static boolean worldLyricsTransEffects = false;
+    /** 发光质量档：0 Standard / 1 High(默认) / 2 Ultra（TextGlow.GLOW_TIER_*）。 */
+    public static int worldLyricsGlowTier = 2;
+    /** 发光形态：0 经典（逐字晕格）/ 1 辉光（行级金字塔，字芯白热）。 */
+    public static int worldLyricsGlowMode = 0;
+    /** 封面代表色来源档：0 关 / 1 自动提取 / 2 手动色板。 */
+    public static int worldLyricsCoverColorMode = 0;
+    /** 封面渐变：歌词与翻译按色板从左到右渐变（需来源档非关）。 */
+    public static boolean worldLyricsCoverGradient = false;
+    /** 手动色板 4 色（0xRRGGBB，从左到右）：来源档 = 手动时生效。 */
+    public static int worldLyricsCoverPaletteRgb0 = 0xF2A7C3;
+    public static int worldLyricsCoverPaletteRgb1 = 0xA7C8F2;
+    public static int worldLyricsCoverPaletteRgb2 = 0xC3F2A7;
+    public static int worldLyricsCoverPaletteRgb3 = 0xF2E3A7;
+    /** 更激进的适配：光影包激活时歌词推迟到 HUD 阶段（光影后处理链之后）用原版着色器直画。 */
+    public static boolean worldLyricsHudDraw = false;
+
+    // OSD KTV 动画。这些值独立于全屏歌词渲染器。
+    public static float osdKaraokeTransitionWidth = 14.0f;
+    public static float osdKaraokePulseStrength = 0.00f;
+    public static float osdKaraokeSmoothing = 0.85f;
+    /**
+     * 桌面歌词里对唱两行的左右分列幅度。
+     *
+     * <p>{@code 1} = 一行完全贴内容区左边缘、另一行完全贴右边缘（改动之前的行为）；{@code 0} = 两行
+     * 都摆在正中间（还是分两行渲染，只是不再左右分开）。中间值是在「完全居中」和「完全贴边」之间线性
+     * 插值，所以调小只会让两行往中间收，永远不会把文字推出内容区。</p>
+     *
+     * <p>只作用于桌面歌词（OSD）。全屏歌词页的对唱分列走的是 {@code LyricDuetGroups.columnLeft}
+     * 那条独立的分栏逻辑，不受这一项影响。</p>
+     */
+    public static float osdDuetSpread = 0.55f;
+
+    // 普通（非当前）歌词行。
+    public static float normalOpacity = 0.48f;
+    public static float normalScale = 0.94f;
+    /** 非当前行的发光强度。口径与 {@link #currentGlowStrength} 完全相同，只是默认调得很淡。 */
+    public static float normalGlowStrength = 0.1625f;
+    public static float normalLineSpacing = 8.965517f;
+    public static float edgeFadeSize = 53.448273f;
+    public static float scrollSmoothness = 0.65f;
+    public static float secondaryOpacity = 0.78f;
+
+    /** 全局下载灵动岛。 */
+    /** Passive FFT visualizer: no analysis jobs while neither HUD nor player consumes it. */
+    /** 歌曲信息 HUD 组件显隐（编辑器/快捷键切换，随存档走）。 */
+    public static boolean musicInfoEnabled = true;
+    /** 桌面歌词 HUD 组件显隐（编辑器/快捷键切换，随存档走）。 */
+    public static boolean musicLyricsEnabled = true;
+
+    public static boolean spectrumEnabled = true;
+    public static boolean spectrumInHud = true;
+    /** HUD presentation: 0 = full-width bottom spectrum (default), 1 = split wings. */
+    public static int spectrumHudStyle = 0;
+    public static boolean spectrumInPlayer = true;
+    /** Fullscreen lyric-player style: 0 = denser full-width bars, 1 = adapted edge-to-edge split ribbon. */
+    public static int spectrumFullscreenStyle = 0;
+    /** HUD full-width spectrum bar preset: 0=64, 1=96, 2=128, 3=160, 4=192, 5=custom. */
+    public static int spectrumBarCountPreset = 0;
+    /** Custom HUD bar count used only when spectrumBarCountPreset is 5. */
+    public static int spectrumCustomBarCount = 128;
+    /** 0 follows the current player theme, 1 derives a restrained palette from the current cover. */
+    public static int spectrumColorSource = 0;
+    public static float spectrumOpacity = .58f;
+    public static float spectrumHeight = 1.0f;
+
+    public static boolean dynamicIslandEnabled = true;
+    public static float dynamicIslandScale = 0.88f;
+    /**
+     * 岛顶部相对默认位置的偏移（布局像素）。0 = 距屏顶 6（回弹样式 7）的历史默认；
+     * 正值下移。负值允许略微上移，但clamp 后的下限保证入场滑动起点不穿出屏幕。
+     */
+    public static float dynamicIslandY = 0.0f;
+    /**
+     * 歌曲信息卡的背景画法。0 = 默认（封面糊底 + 压暗），1 = 液态玻璃（真背景折射，
+     * 走 GlassLook.Surface.INFO_CARD，受主题真玻璃强度与手机档闸约束），2 = 完全透明
+     * （不画任何底，只画文字/封面/进度条）。存序号，中间不能插项。
+     */
+    public static int infoCardBackdrop = 0;
+    public static final int INFO_CARD_BACKDROP_MAX = 2;
+    /** 桌面歌词（仅经典样式）文本颜色是否跟随当前封面取色。 */
+    public static boolean osdLyricColorFollowCover = false;
+    /** 灵动岛排版缩放。长内容在被截断前自动缩小。 */
+    public static float dynamicIslandTextScale = 1.0f;
+    /** 首选静止宽度。长通知可能动画变宽以保持完整文字可见。 */
+    public static float dynamicIslandMaxWidth = 280.68964f;
+    /** 进度条厚度（逻辑像素）。 */
+    public static float dynamicIslandProgressHeight = 1.35f;
+    /** 隐藏前保持完成状态可见的秒数。 */
+    public static float dynamicIslandCompletionHoldSeconds = 2.1120691f;
+    /** 多个通知排队时，每个排队通知的显示秒数。 */
+    public static float dynamicIslandQueueIntervalSeconds = 1.9698277f;
+    /**
+     * 全局灵动岛的视觉预设：0 胶囊、1 玻璃、2 紧凑、3 卡片、4 系统卡片、
+     * 5 music focus, 6 liquid glass.
+     */
+    public static int dynamicIslandStyle = 2;
+
+    // 灵动岛动画节奏。1.0 表示历史默认速度,数值越大越快;时长以毫秒计。
+    /** 弹出/展开阶段的逼近速度倍率。 */
+    public static float dynamicIslandExpandSpeed = 1.0f;
+    /** 收起/隐藏阶段的逼近速度倍率。 */
+    public static float dynamicIslandCollapseSpeed = 1.0f;
+    /** 文案切换、成功态变形等内容过渡的速度倍率。 */
+    public static float dynamicIslandContentSpeed = 1.0f;
+    /** 首次入场动画时长(毫秒)。 */
+    public static float dynamicIslandEntranceDuration = 420.0f;
+    /** 入场回弹幅度倍率,0 为完全不回弹。 */
+    public static float dynamicIslandOvershoot = 1.0f;
+    /** 加载指示器的旋转速度倍率。 */
+    public static float dynamicIslandSpinnerSpeed = 1.0f;
+
+    /**
+     * 常驻灵动岛。打开后即使没有下载和通知,灵动岛也留在屏幕顶部显示实时状态;
+     * 通知到来时它只做内容交叉淡入,不会重播入场动画,排队机制与关闭常驻时完全一致。
+     */
+    public static boolean dynamicIslandAlwaysOn = true;
+    /** 常驻时显示游戏帧率。 */
+    public static boolean dynamicIslandAmbientFps = true;
+    /** 常驻时显示服务器延迟。单机或未进服时显示 "--"。 */
+    public static boolean dynamicIslandAmbientPing = true;
+    /** 常驻时显示系统时间(时:分)。 */
+    public static boolean dynamicIslandAmbientClock = true;
+    /**
+     * 常驻时把"正在播放"作为一页参与显示:左侧换成歌曲封面(有动态封面时优先),右侧显示歌名与歌手。
+     * 没有正在播放的歌曲时这一页自动跳过,不会留一张空卡片。
+     */
+    public static boolean dynamicIslandAmbientNowPlaying = true;
+    /**
+     * 常驻内容轮换。打开后"状态页(帧率/延迟/时间)"与"正在播放页"交替显示;关掉则固定停在状态页
+     * (状态三项全关时才固定显示正在播放页)。两页各自的停留时长分别由
+     * {@link #dynamicIslandAmbientStatusSeconds} 与 {@link #dynamicIslandAmbientNowPlayingSeconds} 决定。
+     */
+    public static boolean dynamicIslandAmbientRotate = true;
+    /**
+     * 状态页(帧率/延迟/时间)的停留时长(秒)。
+     *
+     * <p>与歌曲页分开配置的原因很实际:状态页是三个数字,扫一眼就够了;歌曲页要读歌名和歌手,
+     * 常常还是长标题,需要更久才看得完。两者用同一个间隔时,要么状态页停得过久,要么歌名还没读完
+     * 就翻页了。</p>
+     */
+    public static float dynamicIslandAmbientStatusSeconds = 5.0f;
+    /** 正在播放页的停留时长(秒)。默认比状态页长一些,留出读完歌名与歌手的时间。 */
+    public static float dynamicIslandAmbientNowPlayingSeconds = 8.0f;
+
+    /**
+     * 网易云动态封面(需要外部 ffmpeg 抽帧)。关掉后桌面歌曲信息、全屏歌词页与播放条一律用静态封面。
+     * 这里是唯一的真实来源,HUD 编辑器与模块开关都读写它。
+     */
+    public static boolean animatedCoverEnabled = true;
+
+    /**
+     * HUD 设置界面用哪一层：内置界面、OneConfig 或 ModernUI。
+     * 外部那两层不可用时自动回退内置界面。
+     */
+    /** HUD 设置界面的选择：内置界面、OneConfig 或 ModernUI。外部界面不可用时自动回退内置界面。 */
+    public static final String HUD_EDITOR_UI_BUILTIN = "builtin";
+    /** 私有的现代化呈现（MuoniumConfig），随本 mod 自带、永远可用。 */
+    public static final String HUD_EDITOR_UI_MCONFIG = "mconfig";
+    public static final String HUD_EDITOR_UI_ONECONFIG = "oneconfig";
+    /**
+     * 交给 ModernUI 渲染。它只需要玩家装了 ModernUI 就算「可用」的一半，另一半是本版本树
+     * 编入了面板实现 —— 后者取决于该 Minecraft 版本有没有对应的 ModernUI 构件。
+     * 缺任何一半都回退内置界面，见 {@code ModernUiHudBridge}。
+     */
+    public static final String HUD_EDITOR_UI_MODERNUI = "modernui";
+
+    public static String hudEditorUi = HUD_EDITOR_UI_BUILTIN;
+
+    /**
+     * 播放态由谁供给：内部播放器，还是系统里正在播的外部播放器（Windows SMTC）。
+     *
+     * <p>镜像模式下本模组不出声：它把外部播放器的曲名、进度与状态写成自己的播放态，
+     * 于是桌面歌词、全屏歌词页、灵动岛与封面链路全部原样可用，而歌词与封面走的是
+     * 本模组自己的跨平台匹配（外部那两样 SMTC 本来也不给）。两个取值互斥而不是叠加，
+     * 理由很直接：一个系统里同时有两个「正在播放」会让人分不清进度条是谁的。</p>
+     */
+    public static final String HUD_PLAYBACK_FEED_INTERNAL = "internal";
+    public static final String HUD_PLAYBACK_FEED_MIRROR = "mirror";
+
+    public static String playbackFeed = HUD_PLAYBACK_FEED_INTERNAL;
+
+    /**
+     * 歌词搜索弹窗（手动选词那一页）的整体缩放倍率：
+     * 那一页照抄的是 folia 的 CSS px，1.0 就是「一单位一个物理像素」，在游戏窗口里正文只有
+     * 14 像素、比播放器其它界面小一半；这一档把弹窗所在的那条轴整体放大，面板、文字、间距、
+     * 控件一起等比走，弹窗内部与 folia 的比例不变。读数处是
+     * {@code WindowAdaptiveScale.lyricSearchUnitsPerLayout()}。
+     */
+    public static float lyricSearchUiScale = 1.50f;
+
+    /**
+     * 现代 HUD 设置面板左上角的位置,归一化到「可摆放范围」的 0..1。
+     *
+     * <p>{@code -1} 是哨兵值,意思是「用户从没拖过」,此时面板仍走默认摆位(靠右、纵向居中)。
+     * 用哨兵而不是直接存 0..1 的默认值:面板尺寸会随窗口大小变,把默认位置存成具体比例的话,
+     * 换个分辨率再打开就会偏到奇怪的地方;而只要没拖过,默认摆位每次都按当前窗口重新算。</p>
+     */
+    public static float hudEditorPanelX = -1.0f;
+    /** 见 {@link #hudEditorPanelX}。 */
+    public static float hudEditorPanelY = -1.0f;
+    /** 上次停留在哪个设置分类（0 起）。重开面板时回到这一页，而不是每次都从第一页点起。 */
+    public static int hudEditorLastCategory = 0;
+    /**
+     * 现代 HUD 设置面板的用户尺寸，归一化到「当前窗口宽/高」的 0..1。
+     *
+     * <p>{@code -1} 是哨兵值，意思是「用户从没拽过右下角缩放角标」，此时面板尺寸仍走
+     * 按窗口推导的公式（占屏 46% 宽 / 72% 高，竖屏另有上限）。存比例而不是像素：
+     * 换分辨率、改 GUI Scale 后按当前窗口重新折算，面板占比不变，不会出现
+     * 「换个屏幕面板小得没法用/大得出屏」。</p>
+     */
+    public static float hudEditorPanelScaleW = -1.0f;
+    /** 见 {@link #hudEditorPanelScaleW}。 */
+    public static float hudEditorPanelScaleH = -1.0f;
+
+    /**
+     * 播放器界面打开/关闭时那层整屏淡入淡出的速度倍率。当前默认 3.0，1.0 = 历史速度，越大越快。
+     *
+     * <p>只作用于 {@code NCMScreen} 与 {@code CoverflowOverlay} 的整屏 alpha,也就是
+     * "界面出现/消失"那一下。界面内部的面板、列表、封面等动画一律不受它影响——
+     * 那些动画之间有既定的节奏关系,统一提速会让节奏走形,而这种走形肉眼很难定位。</p>
+     */
+    public static float playerFadeSpeed = 3.0f;
+
+    /**
+     * 播放器界面内部「栏目切换」类过渡的速度倍率,越大越快。
+     *
+     * <p>管的正是 {@link #playerFadeSpeed} 明确不碰的那部分：左侧导航换栏目时内容页的
+     * 淡入缩放（{@code NCMScreen} 的 {@code alphaInterpolateSpeed}）与侧栏选中指示条的
+     * 滑动（{@code NavigateBar} 的 leading/trailing 逼近系数）。</p>
+     *
+     * <p>当前默认 3.0 —— 明显快于历史速度；1.25 是上一版默认，1.0 是历史速度。
+     * 应用处的逼近系数最终钳在 .95 以下：指数逼近系数到 1 就是一帧到位,再大反而越过目标。</p>
+     */
+    public static float playerUiSwitchSpeed = 3.0f;
+
+    // ------------------------------------------------------------------ 真玻璃材质
+    // 只有主题带「真玻璃」（NCMTheme.isTrueGlass()）时这一组才起作用；普通主题下
+    // 采集整条链路都不会启动（GlassBackdrop.wanted() 直接返回 false），零开销。
+
+    /** 真玻璃生效在播放器主面板上。关掉后那块面板退回原来的渐变高光。 */
+    public static boolean glassSurfacePlayer = true;
+    /** 真玻璃生效在顶部灵动岛上。岛面积小，折射读不出来，主要吃的是背景透色与边缘光。 */
+    public static boolean glassSurfaceIsland = true;
+    /** 游戏内 Ctrl+F 从灵动岛长出的快捷搜索栏。关掉后快捷键不再响应。 */
+    public static boolean islandSearchEnabled = true;
+    /** 真玻璃生效在桌面歌词卡片上。 */
+    public static boolean glassSurfaceDesktopLyric = true;
+    /** 真玻璃生效在三套 HUD 设置界面的面板上。这几块面板平时是不透明的，所以它同时决定底色压不压薄。 */
+    public static boolean glassSurfaceEditors = true;
+
+    /**
+     * 背景采集的降采样倍数：1 原尺寸、2 一半、4 四分之一。
+     *
+     * <p>这个值同时决定<b>成本</b>与<b>底噪</b>：倍数越大，每帧 blit 与随后模糊要处理的像素越少，
+     * 而放大回面板尺寸本身就是糊的——所以低配机往大了调，比把模糊强度调低更划算。
+     * 只接受 1/2/4 三档（设置面板里是选项而不是滑块）。</p>
+     */
+    public static int glassBackdropScale = 2;
+
+    /** 可选的透镜背景柔化，单位背景图像素；默认 0.75，0 仍保留清晰折射。 */
+    public static float glassBlurSigma = 0.75f;
+
+    /**
+     * 四处界面各自在「玻璃模糊」之上的<em>倍率</em>，1 = 与全局同档。
+     *
+     * <p>为什么是倍率而不是四个绝对值：全局那一档还要决定采集下来那张底糊成什么样，
+     * 玩家拖它是一次「整页风格」的操作；绝对值会让「把全局模糊调到 0」这件事
+     * 只关掉其中三面，读起来像 bug。倍率之下 0 就是全 0，语义只有一处。
+     *
+     * <p>默认值不等：岛只有几十像素高，用到与面板同档的糊会把轮廓整个吃掉（看不出色散与边缘光）；
+     * 桌面歌词卡片背后通常是亮天空，糊得比面板重一点字才立得住。
+     */
+    public static float glassBlurPlayer = 1.0f;
+    public static float glassBlurIsland = 0.75f;
+    public static float glassBlurDesktopLyric = 1.15f;
+    public static float glassBlurEditors = 1.0f;
+
+    /**
+     * 亮部溢出（bloom）强度：玻璃后面那团亮东西（天空、火、霓虹）会往面内软软地晕开多少。
+     *
+     * <p>默认 0 是故意的——这一项要真机看才知道多大算过，先让功能可开，出厂值等观感定。
+     * 0 的时候整条 bloom 链路一格像素都不许多画（不建纹理、不重糊、不挂 shader）。
+     */
+    public static float glassBloom = 0.0f;
+
+    /**
+     * 相邻玻璃的<em>融合半径</em>，画布局部像素；0 = 每块玻璃各画各的边。
+     *
+     * <p>&gt; 0 之后，被容器点名的那几组（歌曲列表的可见行等）在同一次绘制里登记各自的轮廓，
+     * 收尾时按一整张 soft-min 距离场画边缘，于是挨着的那些块中间会鼓出一道颈。
+     * 默认 0 是故意的：这一档改的是「整片列表看起来是一块还是一排」，属于观感取向，
+     * 出厂值要等真机截图定（与 {@link #glassBloom} 同一判据）。</p>
+     */
+    public static float glassFusion = 0.0f;
+
+    /** 玻璃自身颜色的浓度：0 完全透出背景，1 背景基本看不见。 */
+    public static float glassTintStrength = 0.12f;
+
+    /** 参考透镜的方向性亮暗强度；0 关闭光照增益，不关闭背景折射。 */
+    public static float glassEdgeGlow = 0.90f;
+
+    /** 实时刷新透镜背景，默认开启；采集仍受防重复的帧间闸保护。 */
+    public static boolean glassRealtimeCapture = true;
+
+    /**
+     * 「真玻璃（实验）」开关：只在手机档的 Mesa 真驱动渲染器（Zink / VirGL / Freedreno /
+     * Panfrost）上生效，翻译层渲染器（MobileGlues / MobileGL / GL4ES）与桌面忽略它。
+     * 默认关——性能未经真机标定，用户自担。加载与改动时推入 {@code GlassMobileTier#setUserOptIn}。
+     */
+    public static boolean glassMobileExperimental = false;
+
+    private HudConfig() {
+    }
+
+    /** 把播放器界面的淡入淡出与切换动画速度恢复到默认。 */
+    public static void resetPlayerAnimation() {
+        playerFadeSpeed = 3.0f;
+        playerUiSwitchSpeed = 3.0f;
+    }
+
+    /** 仅恢复桌面歌词外观，不改动 HUD 位置。 */
+    public static void resetLyricAppearance() {
+        lyricColorRgb = 0xFFFFFFFF;
+        currentLyricColorRgb = 0xFFFFFFFF;
+        currentLyricEffectsEnabled = true;
+        osdKaraokeEmphasisEnabled = true;
+        normalLyricEffectsEnabled = true;
+        lyricEdgeFadeEnabled = true;
+        currentLineScale = 1.0115517f;
+        currentWordScale = 0.00f;
+        currentGlowStrength = 1.00f;
+        lyricGlowSpread = 1.3181034f;
+        fullscreenGlowStrength = 0.278481f;
+        fullscreenLyricStyle = 0;
+        fullscreenLyricBackgroundMode = 0;
+        fullscreenLyricFluidStyle = 0;
+        fullscreenLyricFluidSaturation = 100.0f;
+        fullscreenLyricFluidStatic = false;
+        fullscreenLyricEdgeBlur = false;
+        fullscreenLyricFluidAudio = 100.0f;
+        fullscreenLyricBackgroundLayers = 0;
+        fullscreenLyricLayerLatentDither = 55.0f;
+        fullscreenLyricLayerSora = 80.0f;
+        themeColorSource = 0;
+        osdLyricStyle = 1;
+        blossomBackdropBlur = 1.00f;
+        blossomPanelOpacity = 0.5258621f;
+        blossomVisibleLines = 3;
+        blossomRhythmBorder = true;
+        blossomBorderStrength = 0.65f;
+        cadenzaDecorColorMode = 1;
+        cadenzaDecorColors = CADENZA_DEFAULT_COLORS.clone();
+        cadenzaDecorColorCount = 6;
+        cadenzaBeatsPerColor = 6;
+        lyricFontScale = 0.60f;
+        luminousWordSpacing = 0.70f;
+        luminousFloatAmount = 1.00f;
+        luminousWordRotation = true;
+        partitaStaggerMin = 20.0f;
+        partitaStaggerMax = 100.0f;
+        partitaGuideLines = true;
+        fumeTextHoldRatio = 1.00f;
+        fumeCameraSpeed = 1.00f;
+        fumeHeroScale = 1.00f;
+        fumeGeometricBackground = false;
+        cappellaBubbleWidth = 0.72f;
+        cappellaAvatarSource = 0;
+        cappellaEmojiEnabled = true;
+        cappellaEmojiChance = 0.45f;
+        tiltSplitProbability = 0.75f;
+        tiltStyleProbability = 0.35f;
+        tiltColorScheme = 0;
+        dioramaDepthSpread = 1.00f;
+        dioramaDust = true;
+        pendoloArcRadius = 0.41518986f;
+        pendoloArcAngle = 100.0f;
+        pendoloActiveScale = 1.25f;
+        pendoloGearDecor = true;
+        worldLyricsEnabled = false;
+        worldLyricsDistance = 10.5f;
+        worldLyricsFacePlayer = true;
+        worldLyricsKeepAway = true;
+        worldLyricsSpreadDeg = 30.0f;
+        worldLyricsScale = 1.0f;
+        worldLyricsModernStyle = true;
+        worldLyricsSplitLines = true;
+        worldLyricsGlowEnabled = true;
+        worldLyricsGlowStrength = 0.35f;
+        worldLyricsGlowSpread = 1.3f;
+        worldLyricsGlowColorRgb = 0xFFFFFF;
+        worldLyricsGlowColorMode = 1;
+        worldLyricsColorRgb = 0xFFFFFF;
+        worldLyricsColorCustom = false;
+        worldLyricsWordPop = false;
+        worldLyricsTextFlash = false;
+        worldLyricsCadenza = false;
+        worldLyricsHuiguang = false;
+        worldLyricsKeywordColors = "";
+        worldLyricsQualityTier = 0;
+        worldLyricsStayOnScreen = false;
+        worldLyricsKeepDistance = true;
+        worldLyricsAboveGround = false;
+        worldLyricsTranslation = 1;
+        worldLyricsTransEffects = false;
+        worldLyricsGlowTier = 2;
+        worldLyricsGlowMode = 0;
+        worldLyricsCoverColorMode = 0;
+        worldLyricsCoverGradient = false;
+        worldLyricsCoverPaletteRgb0 = 0xF2A7C3;
+        worldLyricsCoverPaletteRgb1 = 0xA7C8F2;
+        worldLyricsCoverPaletteRgb2 = 0xC3F2A7;
+        worldLyricsCoverPaletteRgb3 = 0xF2E3A7;
+        worldLyricsHudDraw = false;
+        osdKaraokeTransitionWidth = 14.0f;
+        osdKaraokePulseStrength = 0.00f;
+        osdKaraokeSmoothing = 0.85f;
+        osdDuetSpread = 0.55f;
+        normalOpacity = 0.48f;
+        normalScale = 0.94f;
+        normalGlowStrength = 0.1625f;
+        normalLineSpacing = 8.965517f;
+        edgeFadeSize = 53.448273f;
+        scrollSmoothness = 0.65f;
+        secondaryOpacity = 0.78f;
+    }
+
+    /** 恢复全局下载灵动岛外观。 */
+    public static void resetDynamicIslandAppearance() {
+        dynamicIslandEnabled = true;
+        dynamicIslandScale = 0.88f;
+        dynamicIslandY = 0.0f;
+        dynamicIslandTextScale = 1.0f;
+        dynamicIslandMaxWidth = 280.68964f;
+        dynamicIslandProgressHeight = 1.35f;
+        dynamicIslandCompletionHoldSeconds = 2.1120691f;
+        dynamicIslandQueueIntervalSeconds = 1.9698277f;
+        dynamicIslandStyle = 2;
+        dynamicIslandExpandSpeed = 1.0f;
+        dynamicIslandCollapseSpeed = 1.0f;
+        dynamicIslandContentSpeed = 1.0f;
+        dynamicIslandEntranceDuration = 420.0f;
+        dynamicIslandOvershoot = 1.0f;
+        dynamicIslandSpinnerSpeed = 1.0f;
+        dynamicIslandAlwaysOn = true;
+        dynamicIslandAmbientFps = true;
+        dynamicIslandAmbientPing = true;
+        dynamicIslandAmbientClock = true;
+        dynamicIslandAmbientNowPlaying = true;
+        dynamicIslandAmbientRotate = true;
+        dynamicIslandAmbientStatusSeconds = 5.0f;
+        dynamicIslandAmbientNowPlayingSeconds = 8.0f;
+    }
+
+    /** 恢复封面相关外观。 */
+    public static void resetCoverAppearance() {
+        animatedCoverEnabled = true;
+    }
+
+    /** 加载已保存的设置；格式错误或超出范围的值安全回退。 */
+    public static void load() {
+        if (!FILE.exists()) {
+            return;
+        }
+        try {
+            JsonObject o = JsonConfigStorage.readObject(FILE, GSON);
+            if (o == null) {
+                return;
+            }
+            infoX = clampPos(getFloat(o, "infoX", infoX));
+            infoY = clampPos(getFloat(o, "infoY", infoY));
+            infoScale = clampScale(getFloat(o, "infoScale", infoScale));
+            playerVolume = clamp(getFloat(o, "playerVolume", playerVolume), 0.0f, 1.0f);
+            lyricX = clampPos(getFloat(o, "lyricX", lyricX));
+            lyricY = clampPos(getFloat(o, "lyricY", lyricY));
+            lyricScale = clampScale(getFloat(o, "lyricScale", lyricScale));
+            lyricWidth = clamp(getFloat(o, "lyricWidth", lyricWidth), 225.0f, 900.0f);
+            lyricHeight = clamp(getFloat(o, "lyricHeight", lyricHeight), 60.0f, 480.0f);
+            lyricColorRgb = getInt(o, "lyricColorRgb", lyricColorRgb);
+            currentLyricColorRgb = getInt(o, "currentLyricColorRgb", currentLyricColorRgb);
+
+            currentLyricEffectsEnabled = getBoolean(o, "currentLyricEffectsEnabled", currentLyricEffectsEnabled);
+            osdKaraokeEmphasisEnabled = getBoolean(o, "osdKaraokeEmphasisEnabled", osdKaraokeEmphasisEnabled);
+            normalLyricEffectsEnabled = getBoolean(o, "normalLyricEffectsEnabled", normalLyricEffectsEnabled);
+            lyricEdgeFadeEnabled = getBoolean(o, "lyricEdgeFadeEnabled", lyricEdgeFadeEnabled);
+
+            currentLineScale = clamp(getFloat(o, "currentLineScale", currentLineScale), 0.95f, 1.16f);
+            currentWordScale = clamp(getFloat(o, "currentWordScale", currentWordScale), 0.0f, 0.28f);
+            currentGlowStrength = clamp01(getFloat(o, "currentGlowStrength", currentGlowStrength));
+            // 旧配置里的 currentGlowRadius / currentBloomStrength / osdKaraoke*Strength /
+            // normalBloomStrength 直接忽略：那四项描述的是已经不存在的偏移环画法，
+            // 未知键本来就不会报错，读进来反而会把新口径带偏。
+            lyricGlowSpread = clamp(getFloat(o, "lyricGlowSpread", lyricGlowSpread), 0.5f, 1.8f);
+            fullscreenGlowStrength = clamp01(getFloat(o, "fullscreenGlowStrength", fullscreenGlowStrength));
+            fullscreenLyricStyle = clampInt(getInt(o, "fullscreenLyricStyle", fullscreenLyricStyle), 0,
+                    FULLSCREEN_LYRIC_STYLE_MAX);
+            int legacyBackground = getInt(o, "fullscreenLyricBackground", -1);
+            int backgroundFallback = legacyBackground == 0 ? 1 : fullscreenLyricBackgroundMode;
+            fullscreenLyricBackgroundMode = clampInt(getInt(o, "fullscreenLyricBackgroundMode",
+                    backgroundFallback), 0, FULLSCREEN_LYRIC_BACKGROUND_MODE_MAX);
+            fullscreenLyricFluidStyle = clampInt(getInt(o, "fullscreenLyricFluidStyle",
+                    fullscreenLyricFluidStyle), 0, FULLSCREEN_LYRIC_FLUID_STYLE_MAX);
+            // 8/9 是渲染层的叠加层内部代号，不是合法底层档位：手改配置写进来
+            // 会画出近乎全黑的透明底并让面板标签错位，归一化回默认档。
+            if (fullscreenLyricFluidStyle == 8 || fullscreenLyricFluidStyle == 9) {
+                fullscreenLyricFluidStyle = 0;
+            }
+            fullscreenLyricFluidSaturation = clamp(getFloat(o, "fullscreenLyricFluidSaturation",
+                    fullscreenLyricFluidSaturation), 0.0f, 200.0f);
+            fullscreenLyricFluidStatic = getBoolean(o, "fullscreenLyricFluidStatic",
+                    fullscreenLyricFluidStatic);
+            fullscreenLyricFluidAudio = clamp(getFloat(o, "fullscreenLyricFluidAudio",
+                    fullscreenLyricFluidAudio), 0.0f, 200.0f);
+            fullscreenLyricBackgroundLayers = clampInt(getInt(o, "fullscreenLyricBackgroundLayers",
+                    fullscreenLyricBackgroundLayers), 0, 3);
+            fullscreenLyricLayerLatentDither = clamp(getFloat(o, "fullscreenLyricLayerLatentDither",
+                    fullscreenLyricLayerLatentDither), 0.0f, 100.0f);
+            fullscreenLyricLayerSora = clamp(getFloat(o, "fullscreenLyricLayerSora",
+                    fullscreenLyricLayerSora), 0.0f, 100.0f);
+            fullscreenLyricEdgeBlur = getBoolean(o, "fullscreenLyricEdgeBlur",
+                    fullscreenLyricEdgeBlur);
+            themeColorSource = clampInt(getInt(o, "themeColorSource", themeColorSource), 0,
+                    THEME_COLOR_SOURCE_MAX);
+            osdLyricStyle = clampInt(getInt(o, "osdLyricStyle", osdLyricStyle), 0,
+                    OSD_LYRIC_STYLE_MAX);
+            blossomBackdropBlur = clamp01(getFloat(o, "blossomBackdropBlur", blossomBackdropBlur));
+            com.muoniumplayer.core.rendering.GlassMaterialProfile.migrate(o);
+            glassSurfacePlayer = getBoolean(o, "glassSurfacePlayer", glassSurfacePlayer);
+            glassSurfaceIsland = getBoolean(o, "glassSurfaceIsland", glassSurfaceIsland);
+            glassSurfaceDesktopLyric = getBoolean(o, "glassSurfaceDesktopLyric", glassSurfaceDesktopLyric);
+            glassSurfaceEditors = getBoolean(o, "glassSurfaceEditors", glassSurfaceEditors);
+            // 采集倍数钳在 1~4：0 或负数会让「除以倍数」直接炸，5 以上糊到没法看。
+            glassBackdropScale = clampInt(getInt(o, "glassBackdropScale", glassBackdropScale), 1, 4);
+            glassBlurSigma = clamp(getFloat(o, "glassBlurSigma", glassBlurSigma), 0f, 32f);
+            // 四个倍率钳在 0.25~2：再往下就糊到等于没有背景，再往上这一块玻璃什么都读不出来了。
+            glassBlurPlayer = clamp(getFloat(o, "glassBlurPlayer", glassBlurPlayer), 0.25f, 2f);
+            glassBlurIsland = clamp(getFloat(o, "glassBlurIsland", glassBlurIsland), 0.25f, 2f);
+            glassBlurDesktopLyric = clamp(getFloat(o, "glassBlurDesktopLyric", glassBlurDesktopLyric),
+                    0.25f, 2f);
+            glassBlurEditors = clamp(getFloat(o, "glassBlurEditors", glassBlurEditors), 0.25f, 2f);
+            glassBloom = clamp(getFloat(o, "glassBloom", glassBloom), 0f, 1f);
+            glassFusion = clamp(getFloat(o, "glassFusion", glassFusion), 0f, 32f);
+            glassTintStrength = clamp01(getFloat(o, "glassTintStrength", glassTintStrength));
+            glassEdgeGlow = clamp(getFloat(o, "glassEdgeGlow", glassEdgeGlow), 0f, 1.5f);
+            glassRealtimeCapture = getBoolean(o, "glassRealtimeCapture", glassRealtimeCapture);
+            glassMobileExperimental = getBoolean(o, "glassMobileExperimental", false);
+            blossomPanelOpacity = clamp01(getFloat(o, "blossomPanelOpacity", blossomPanelOpacity));
+            blossomVisibleLines = clampInt(getInt(o, "blossomVisibleLines", blossomVisibleLines), 1, 5);
+            blossomRhythmBorder = getBoolean(o, "blossomRhythmBorder", blossomRhythmBorder);
+            blossomBorderStrength = clamp01(getFloat(o, "blossomBorderStrength", blossomBorderStrength));
+            cadenzaDecorColorMode = clampInt(getInt(o, "cadenzaDecorColorMode", cadenzaDecorColorMode), 0, 1);
+            cadenzaDecorColorCount = clampInt(getInt(o, "cadenzaDecorColorCount", cadenzaDecorColorCount),
+                    CADENZA_COLOR_COUNT_MIN, CADENZA_PALETTE_SLOTS);
+            cadenzaBeatsPerColor = clampInt(getInt(o, "cadenzaBeatsPerColor", cadenzaBeatsPerColor),
+                    CADENZA_BEATS_PER_COLOR_MIN, CADENZA_BEATS_PER_COLOR_MAX);
+            cadenzaDecorColors = getRgbArray(o, "cadenzaDecorColors", cadenzaDecorColors);
+
+            lyricFontScale = clamp(getFloat(o, "lyricFontScale", lyricFontScale), 0.60f, 1.80f);
+            luminousWordSpacing = clamp(getFloat(o, "luminousWordSpacing", luminousWordSpacing), 0.20f, 1.60f);
+            luminousFloatAmount = clamp(getFloat(o, "luminousFloatAmount", luminousFloatAmount), 0.0f, 2.0f);
+            luminousWordRotation = getBoolean(o, "luminousWordRotation", luminousWordRotation);
+            partitaStaggerMin = clamp(getFloat(o, "partitaStaggerMin", partitaStaggerMin), 0.0f, 90.0f);
+            partitaStaggerMax = clamp(getFloat(o, "partitaStaggerMax", partitaStaggerMax), 20.0f, 220.0f);
+            partitaGuideLines = getBoolean(o, "partitaGuideLines", partitaGuideLines);
+            fumeTextHoldRatio = clamp(getFloat(o, "fumeTextHoldRatio", fumeTextHoldRatio), 0.40f, 2.50f);
+            fumeCameraSpeed = clamp(getFloat(o, "fumeCameraSpeed", fumeCameraSpeed), 0.40f, 2.50f);
+            fumeHeroScale = clamp(getFloat(o, "fumeHeroScale", fumeHeroScale), 0.70f, 1.50f);
+            fumeGeometricBackground = getBoolean(o, "fumeGeometricBackground", fumeGeometricBackground);
+            cappellaBubbleWidth = clamp(getFloat(o, "cappellaBubbleWidth", cappellaBubbleWidth), 0.50f, 0.95f);
+            cappellaAvatarSource = clampInt(getInt(o, "cappellaAvatarSource", cappellaAvatarSource), 0, 2);
+            cappellaEmojiEnabled = getBoolean(o, "cappellaEmojiEnabled", cappellaEmojiEnabled);
+            cappellaEmojiChance = clamp(getFloat(o, "cappellaEmojiChance", cappellaEmojiChance), 0.00f, 0.45f);
+            tiltSplitProbability = clamp01(getFloat(o, "tiltSplitProbability", tiltSplitProbability));
+            tiltStyleProbability = clamp01(getFloat(o, "tiltStyleProbability", tiltStyleProbability));
+            tiltColorScheme = clampInt(getInt(o, "tiltColorScheme", tiltColorScheme), 0, 3);
+            dioramaDepthSpread = clamp(getFloat(o, "dioramaDepthSpread", dioramaDepthSpread), 0.40f, 2.00f);
+            dioramaDust = getBoolean(o, "dioramaDust", dioramaDust);
+            pendoloArcRadius = clamp(getFloat(o, "pendoloArcRadius", pendoloArcRadius), 0.25f, 0.70f);
+            pendoloArcAngle = clamp(getFloat(o, "pendoloArcAngle", pendoloArcAngle), 60.0f, 160.0f);
+            pendoloActiveScale = clamp(getFloat(o, "pendoloActiveScale", pendoloActiveScale), 1.00f, 1.60f);
+            pendoloGearDecor = getBoolean(o, "pendoloGearDecor", pendoloGearDecor);
+            worldLyricsEnabled = getBoolean(o, "worldLyricsEnabled", worldLyricsEnabled);
+            worldLyricsDistance = clamp(getFloat(o, "worldLyricsDistance", worldLyricsDistance), 3.0f, 48.0f);
+            worldLyricsFacePlayer = getBoolean(o, "worldLyricsFacePlayer", worldLyricsFacePlayer);
+            worldLyricsKeepAway = getBoolean(o, "worldLyricsKeepAway", worldLyricsKeepAway);
+            worldLyricsSpreadDeg = clamp(getFloat(o, "worldLyricsSpreadDeg", worldLyricsSpreadDeg), 0.0f, 60.0f);
+            worldLyricsScale = clamp(getFloat(o, "worldLyricsScale", worldLyricsScale), 0.4f, 6.0f);
+            worldLyricsModernStyle = getBoolean(o, "worldLyricsModernStyle", worldLyricsModernStyle);
+            worldLyricsSplitLines = getBoolean(o, "worldLyricsSplitLines", worldLyricsSplitLines);
+            worldLyricsGlowEnabled = getBoolean(o, "worldLyricsGlowEnabled", worldLyricsGlowEnabled);
+            worldLyricsGlowStrength = clamp01(getFloat(o, "worldLyricsGlowStrength", worldLyricsGlowStrength));
+            worldLyricsGlowSpread = clamp(getFloat(o, "worldLyricsGlowSpread", worldLyricsGlowSpread), 0.5f, 3.0f);
+            worldLyricsGlowColorRgb = getInt(o, "worldLyricsGlowColorRgb", worldLyricsGlowColorRgb);
+            worldLyricsGlowColorMode = clampInt(getInt(o, "worldLyricsGlowColorMode", worldLyricsGlowColorMode), 0, 1);
+            worldLyricsColorRgb = getInt(o, "worldLyricsColorRgb", worldLyricsColorRgb);
+            worldLyricsColorCustom = getBoolean(o, "worldLyricsColorCustom", worldLyricsColorCustom);
+            worldLyricsWordPop = getBoolean(o, "worldLyricsWordPop", worldLyricsWordPop);
+            worldLyricsTextFlash = getBoolean(o, "worldLyricsTextFlash", worldLyricsTextFlash);
+            worldLyricsCadenza = getBoolean(o, "worldLyricsCadenza", worldLyricsCadenza);
+            worldLyricsHuiguang = getBoolean(o, "worldLyricsHuiguang", worldLyricsHuiguang);
+            worldLyricsKeywordColors = getString(o, "worldLyricsKeywordColors", worldLyricsKeywordColors);
+            worldLyricsQualityTier = (int) clamp(getInt(o, "worldLyricsQualityTier", worldLyricsQualityTier), 0, 7);
+            worldLyricsStayOnScreen = getBoolean(o, "worldLyricsStayOnScreen", worldLyricsStayOnScreen);
+            worldLyricsKeepDistance = getBoolean(o, "worldLyricsKeepDistance", worldLyricsKeepDistance);
+            worldLyricsAboveGround = getBoolean(o, "worldLyricsAboveGround", worldLyricsAboveGround);
+            worldLyricsTranslation = clampInt(getInt(o, "worldLyricsTranslation", worldLyricsTranslation), 0, 2);
+            worldLyricsTransEffects = getBoolean(o, "worldLyricsTransEffects", worldLyricsTransEffects);
+            worldLyricsGlowMode = clampInt(getInt(o, "worldLyricsGlowMode", worldLyricsGlowMode), 0, 1);
+            worldLyricsGlowTier = clampInt(getInt(o, "worldLyricsGlowTier", worldLyricsGlowTier), 0, 2);
+            worldLyricsCoverColorMode = clampInt(getInt(o, "worldLyricsCoverColorMode", worldLyricsCoverColorMode), 0, 2);
+            worldLyricsCoverGradient = getBoolean(o, "worldLyricsCoverGradient", worldLyricsCoverGradient);
+            worldLyricsCoverPaletteRgb0 = getInt(o, "worldLyricsCoverPaletteRgb0", worldLyricsCoverPaletteRgb0);
+            worldLyricsCoverPaletteRgb1 = getInt(o, "worldLyricsCoverPaletteRgb1", worldLyricsCoverPaletteRgb1);
+            worldLyricsCoverPaletteRgb2 = getInt(o, "worldLyricsCoverPaletteRgb2", worldLyricsCoverPaletteRgb2);
+            worldLyricsCoverPaletteRgb3 = getInt(o, "worldLyricsCoverPaletteRgb3", worldLyricsCoverPaletteRgb3);
+            worldLyricsHudDraw = getBoolean(o, "worldLyricsHudDraw", worldLyricsHudDraw);
+
+            osdKaraokeTransitionWidth = clamp(getFloat(o, "osdKaraokeTransitionWidth", osdKaraokeTransitionWidth), 4.0f, 32.0f);
+            osdKaraokePulseStrength = clamp(getFloat(o, "osdKaraokePulseStrength", osdKaraokePulseStrength), 0.0f, 0.15f);
+            osdKaraokeSmoothing = clamp01(getFloat(o, "osdKaraokeSmoothing", osdKaraokeSmoothing));
+            osdDuetSpread = clamp01(getFloat(o, "osdDuetSpread", osdDuetSpread));
+
+            normalOpacity = clamp(getFloat(o, "normalOpacity", normalOpacity), 0.15f, 1.0f);
+            normalScale = clamp(getFloat(o, "normalScale", normalScale), 0.85f, 1.05f);
+            normalGlowStrength = clamp(getFloat(o, "normalGlowStrength", normalGlowStrength), 0.0f, 0.65f);
+            normalLineSpacing = clamp(getFloat(o, "normalLineSpacing", normalLineSpacing), 4.0f, 22.0f);
+            edgeFadeSize = clamp(getFloat(o, "edgeFadeSize", edgeFadeSize), 10.0f, 80.0f);
+            scrollSmoothness = clamp01(getFloat(o, "scrollSmoothness", scrollSmoothness));
+            secondaryOpacity = clamp(getFloat(o, "secondaryOpacity", secondaryOpacity), 0.30f, 1.0f);
+
+            spectrumEnabled = getBoolean(o, "spectrumEnabled", spectrumEnabled);
+            musicInfoEnabled = getBoolean(o, "musicInfoEnabled", musicInfoEnabled);
+            musicLyricsEnabled = getBoolean(o, "musicLyricsEnabled", musicLyricsEnabled);
+            spectrumInHud = getBoolean(o, "spectrumInHud", spectrumInHud);
+            spectrumHudStyle = clampInt(getInt(o, "spectrumHudStyle", spectrumHudStyle), 0, 1);
+            spectrumInPlayer = getBoolean(o, "spectrumInPlayer", spectrumInPlayer);
+            spectrumFullscreenStyle = clampInt(getInt(o, "spectrumFullscreenStyle", spectrumFullscreenStyle), 0, 1);
+            spectrumBarCountPreset = clampInt(getInt(o, "spectrumBarCountPreset", spectrumBarCountPreset), 0, 5);
+            spectrumCustomBarCount = clampInt(getInt(o, "spectrumCustomBarCount", spectrumCustomBarCount), 48, 256);
+            spectrumColorSource = clampInt(getInt(o, "spectrumColorSource", spectrumColorSource), 0, 1);
+            spectrumOpacity = clamp(getFloat(o, "spectrumOpacity", spectrumOpacity), .15f, .85f);
+            spectrumHeight = clamp(getFloat(o, "spectrumHeight", spectrumHeight), .5f, 1.5f);
+
+            dynamicIslandEnabled = getBoolean(o, "dynamicIslandEnabled", dynamicIslandEnabled);
+            islandSearchEnabled = getBoolean(o, "islandSearchEnabled", islandSearchEnabled);
+            dynamicIslandScale = clamp(getFloat(o, "dynamicIslandScale", dynamicIslandScale), 0.60f, 1.35f);
+            dynamicIslandY = clamp(getFloat(o, "dynamicIslandY", dynamicIslandY), -20.0f, 400.0f);
+            infoCardBackdrop = clampInt(getInt(o, "infoCardBackdrop", infoCardBackdrop), 0, INFO_CARD_BACKDROP_MAX);
+            osdLyricColorFollowCover = getBoolean(o, "osdLyricColorFollowCover", osdLyricColorFollowCover);
+            dynamicIslandTextScale = clamp(getFloat(o, "dynamicIslandTextScale", dynamicIslandTextScale), 0.82f, 1.18f);
+            dynamicIslandMaxWidth = clamp(getFloat(o, "dynamicIslandMaxWidth", dynamicIslandMaxWidth), 160.0f, 720.0f);
+            dynamicIslandProgressHeight = clamp(getFloat(o, "dynamicIslandProgressHeight", dynamicIslandProgressHeight), 0.75f, 4.0f);
+            dynamicIslandCompletionHoldSeconds = clamp(getFloat(o, "dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds), 0.5f, 6.0f);
+            dynamicIslandQueueIntervalSeconds = clamp(getFloat(o, "dynamicIslandQueueIntervalSeconds", dynamicIslandQueueIntervalSeconds), 0.5f, 6.0f);
+            dynamicIslandStyle = clampInt(getInt(o, "dynamicIslandStyle", dynamicIslandStyle), 0,
+                    DYNAMIC_ISLAND_STYLE_MAX);
+            dynamicIslandExpandSpeed = clamp(getFloat(o, "dynamicIslandExpandSpeed", dynamicIslandExpandSpeed), 0.40f, 2.50f);
+            dynamicIslandCollapseSpeed = clamp(getFloat(o, "dynamicIslandCollapseSpeed", dynamicIslandCollapseSpeed), 0.40f, 2.50f);
+            dynamicIslandContentSpeed = clamp(getFloat(o, "dynamicIslandContentSpeed", dynamicIslandContentSpeed), 0.40f, 2.50f);
+            dynamicIslandEntranceDuration = clamp(getFloat(o, "dynamicIslandEntranceDuration", dynamicIslandEntranceDuration), 160.0f, 1200.0f);
+            dynamicIslandOvershoot = clamp(getFloat(o, "dynamicIslandOvershoot", dynamicIslandOvershoot), 0.0f, 2.00f);
+            dynamicIslandSpinnerSpeed = clamp(getFloat(o, "dynamicIslandSpinnerSpeed", dynamicIslandSpinnerSpeed), 0.30f, 3.00f);
+            dynamicIslandAlwaysOn = getBoolean(o, "dynamicIslandAlwaysOn", dynamicIslandAlwaysOn);
+            dynamicIslandAmbientFps = getBoolean(o, "dynamicIslandAmbientFps", dynamicIslandAmbientFps);
+            dynamicIslandAmbientPing = getBoolean(o, "dynamicIslandAmbientPing", dynamicIslandAmbientPing);
+            dynamicIslandAmbientClock = getBoolean(o, "dynamicIslandAmbientClock", dynamicIslandAmbientClock);
+        dynamicIslandAmbientNowPlaying = getBoolean(o, "dynamicIslandAmbientNowPlaying", dynamicIslandAmbientNowPlaying);
+        playerFadeSpeed = clamp(getFloat(o, "playerFadeSpeed", playerFadeSpeed), 0.30f, 3.00f);
+        playerUiSwitchSpeed = clamp(getFloat(o, "playerUiSwitchSpeed", playerUiSwitchSpeed), 0.30f, 3.00f);
+        lyricSearchUiScale = clamp(getFloat(o, "lyricSearchUiScale", lyricSearchUiScale), 0.80f, 2.50f);
+        if (o.has("hudEditorUi") && o.get("hudEditorUi").isJsonPrimitive()) {
+            hudEditorUi = normalizeHudEditorUi(o.get("hudEditorUi").getAsString());
+        }
+        if (o.has("playbackFeed") && o.get("playbackFeed").isJsonPrimitive()) {
+            playbackFeed = normalizePlaybackFeed(o.get("playbackFeed").getAsString());
+        }
+        hudEditorPanelX = clamp(getFloat(o, "hudEditorPanelX", hudEditorPanelX), -1.0f, 1.0f);
+        hudEditorPanelY = clamp(getFloat(o, "hudEditorPanelY", hudEditorPanelY), -1.0f, 1.0f);
+        hudEditorLastCategory = (int) clamp(getFloat(o, "hudEditorLastCategory", hudEditorLastCategory), 0.0f, 31.0f);
+        hudEditorPanelScaleW = clamp(getFloat(o, "hudEditorPanelScaleW", hudEditorPanelScaleW), -1.0f, 1.0f);
+        hudEditorPanelScaleH = clamp(getFloat(o, "hudEditorPanelScaleH", hudEditorPanelScaleH), -1.0f, 1.0f);
+        dynamicIslandAmbientRotate = getBoolean(o, "dynamicIslandAmbientRotate", dynamicIslandAmbientRotate);
+        // 1.3.0 及更早只有一个「常驻轮换间隔」。拆成两页各自的时长后，用旧键当两个新键的默认值,
+        // 这样此前手动调过间隔的配置会平移到两边,而不是被悄悄重置回新默认值。
+        float legacyRotateSeconds = clamp(getFloat(o, "dynamicIslandAmbientRotateSeconds", 0.0f), 0.0f, 30.0f);
+        float statusFallback = legacyRotateSeconds >= 2.0f ? legacyRotateSeconds : dynamicIslandAmbientStatusSeconds;
+        float playingFallback = legacyRotateSeconds >= 2.0f ? legacyRotateSeconds : dynamicIslandAmbientNowPlayingSeconds;
+        dynamicIslandAmbientStatusSeconds = clamp(getFloat(o, "dynamicIslandAmbientStatusSeconds",
+                statusFallback), 2.0f, 30.0f);
+        dynamicIslandAmbientNowPlayingSeconds = clamp(getFloat(o, "dynamicIslandAmbientNowPlayingSeconds",
+                playingFallback), 2.0f, 30.0f);
+
+            animatedCoverEnabled = getBoolean(o, "animatedCoverEnabled", animatedCoverEnabled);
+
+            // 手机档实验玻璃的 opt-in 随配置走（桌面 / 翻译层渲染器上该调用无效果）。
+            com.muoniumplayer.core.rendering.GlassMobileTier.setUserOptIn(glassMobileExperimental);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 编辑器交互后持久化设置。 */
+    public static void save() {
+        try {
+            JsonObject o = new JsonObject();
+            o.addProperty("infoX", infoX);
+            o.addProperty("infoY", infoY);
+            o.addProperty("infoScale", infoScale);
+            o.addProperty("playerVolume", playerVolume);
+            o.addProperty("lyricX", lyricX);
+            o.addProperty("lyricY", lyricY);
+            o.addProperty("lyricScale", lyricScale);
+            o.addProperty("lyricWidth", lyricWidth);
+            o.addProperty("lyricHeight", lyricHeight);
+            o.addProperty("lyricColorRgb", lyricColorRgb);
+            o.addProperty("currentLyricColorRgb", currentLyricColorRgb);
+
+            o.addProperty("currentLyricEffectsEnabled", currentLyricEffectsEnabled);
+            o.addProperty("osdKaraokeEmphasisEnabled", osdKaraokeEmphasisEnabled);
+            o.addProperty("normalLyricEffectsEnabled", normalLyricEffectsEnabled);
+            o.addProperty("lyricEdgeFadeEnabled", lyricEdgeFadeEnabled);
+            o.addProperty("currentLineScale", currentLineScale);
+            o.addProperty("currentWordScale", currentWordScale);
+            o.addProperty("currentGlowStrength", currentGlowStrength);
+            o.addProperty("lyricGlowSpread", lyricGlowSpread);
+            o.addProperty("fullscreenGlowStrength", fullscreenGlowStrength);
+            o.addProperty("fullscreenLyricStyle", fullscreenLyricStyle);
+            o.addProperty("fullscreenLyricBackgroundMode", fullscreenLyricBackgroundMode);
+            o.addProperty("fullscreenLyricFluidStyle", fullscreenLyricFluidStyle);
+            o.addProperty("fullscreenLyricFluidSaturation", fullscreenLyricFluidSaturation);
+            o.addProperty("fullscreenLyricFluidStatic", fullscreenLyricFluidStatic);
+            o.addProperty("fullscreenLyricEdgeBlur", fullscreenLyricEdgeBlur);
+            o.addProperty("fullscreenLyricFluidAudio", fullscreenLyricFluidAudio);
+            o.addProperty("fullscreenLyricBackgroundLayers", fullscreenLyricBackgroundLayers);
+            o.addProperty("fullscreenLyricLayerLatentDither", fullscreenLyricLayerLatentDither);
+            o.addProperty("fullscreenLyricLayerSora", fullscreenLyricLayerSora);
+            o.addProperty("themeColorSource", themeColorSource);
+            o.addProperty("osdLyricStyle", osdLyricStyle);
+            o.addProperty("blossomBackdropBlur", blossomBackdropBlur);
+            o.addProperty("glassMaterialVersion", com.muoniumplayer.core.rendering.GlassMaterialProfile.VERSION);
+            o.addProperty("glassSurfacePlayer", glassSurfacePlayer);
+            o.addProperty("glassSurfaceIsland", glassSurfaceIsland);
+            o.addProperty("glassSurfaceDesktopLyric", glassSurfaceDesktopLyric);
+            o.addProperty("glassSurfaceEditors", glassSurfaceEditors);
+            o.addProperty("glassBackdropScale", glassBackdropScale);
+            o.addProperty("glassBlurSigma", glassBlurSigma);
+            o.addProperty("glassBlurPlayer", glassBlurPlayer);
+            o.addProperty("glassBlurIsland", glassBlurIsland);
+            o.addProperty("glassBlurDesktopLyric", glassBlurDesktopLyric);
+            o.addProperty("glassBlurEditors", glassBlurEditors);
+            o.addProperty("glassBloom", glassBloom);
+            o.addProperty("glassFusion", glassFusion);
+            o.addProperty("glassTintStrength", glassTintStrength);
+            o.addProperty("glassEdgeGlow", glassEdgeGlow);
+            o.addProperty("glassRealtimeCapture", glassRealtimeCapture);
+            o.addProperty("glassMobileExperimental", glassMobileExperimental);
+            o.addProperty("blossomPanelOpacity", blossomPanelOpacity);
+            o.addProperty("blossomVisibleLines", blossomVisibleLines);
+            o.addProperty("blossomRhythmBorder", blossomRhythmBorder);
+            o.addProperty("blossomBorderStrength", blossomBorderStrength);
+            o.addProperty("cadenzaDecorColorMode", cadenzaDecorColorMode);
+            o.addProperty("cadenzaDecorColorCount", cadenzaDecorColorCount);
+            o.addProperty("cadenzaBeatsPerColor", cadenzaBeatsPerColor);
+            o.add("cadenzaDecorColors", rgbArray(cadenzaDecorColors));
+            o.addProperty("lyricFontScale", lyricFontScale);
+            o.addProperty("luminousWordSpacing", luminousWordSpacing);
+            o.addProperty("luminousFloatAmount", luminousFloatAmount);
+            o.addProperty("luminousWordRotation", luminousWordRotation);
+            o.addProperty("partitaStaggerMin", partitaStaggerMin);
+            o.addProperty("partitaStaggerMax", partitaStaggerMax);
+            o.addProperty("partitaGuideLines", partitaGuideLines);
+            o.addProperty("fumeTextHoldRatio", fumeTextHoldRatio);
+            o.addProperty("fumeCameraSpeed", fumeCameraSpeed);
+            o.addProperty("fumeHeroScale", fumeHeroScale);
+            o.addProperty("fumeGeometricBackground", fumeGeometricBackground);
+            o.addProperty("cappellaBubbleWidth", cappellaBubbleWidth);
+            o.addProperty("cappellaAvatarSource", cappellaAvatarSource);
+            o.addProperty("cappellaEmojiEnabled", cappellaEmojiEnabled);
+            o.addProperty("cappellaEmojiChance", cappellaEmojiChance);
+            o.addProperty("tiltSplitProbability", tiltSplitProbability);
+            o.addProperty("tiltStyleProbability", tiltStyleProbability);
+            o.addProperty("tiltColorScheme", tiltColorScheme);
+            o.addProperty("dioramaDepthSpread", dioramaDepthSpread);
+            o.addProperty("dioramaDust", dioramaDust);
+            o.addProperty("pendoloArcRadius", pendoloArcRadius);
+            o.addProperty("pendoloArcAngle", pendoloArcAngle);
+            o.addProperty("pendoloActiveScale", pendoloActiveScale);
+            o.addProperty("pendoloGearDecor", pendoloGearDecor);
+            o.addProperty("worldLyricsEnabled", worldLyricsEnabled);
+            o.addProperty("worldLyricsDistance", worldLyricsDistance);
+            o.addProperty("worldLyricsFacePlayer", worldLyricsFacePlayer);
+            o.addProperty("worldLyricsKeepAway", worldLyricsKeepAway);
+            o.addProperty("worldLyricsSpreadDeg", worldLyricsSpreadDeg);
+            o.addProperty("worldLyricsScale", worldLyricsScale);
+            o.addProperty("worldLyricsModernStyle", worldLyricsModernStyle);
+            o.addProperty("worldLyricsSplitLines", worldLyricsSplitLines);
+            o.addProperty("worldLyricsGlowEnabled", worldLyricsGlowEnabled);
+            o.addProperty("worldLyricsGlowStrength", worldLyricsGlowStrength);
+            o.addProperty("worldLyricsGlowSpread", worldLyricsGlowSpread);
+            o.addProperty("worldLyricsGlowColorRgb", worldLyricsGlowColorRgb);
+            o.addProperty("worldLyricsGlowColorMode", worldLyricsGlowColorMode);
+            o.addProperty("worldLyricsColorRgb", worldLyricsColorRgb);
+            o.addProperty("worldLyricsColorCustom", worldLyricsColorCustom);
+            o.addProperty("worldLyricsWordPop", worldLyricsWordPop);
+            o.addProperty("worldLyricsTextFlash", worldLyricsTextFlash);
+            o.addProperty("worldLyricsCadenza", worldLyricsCadenza);
+            o.addProperty("worldLyricsHuiguang", worldLyricsHuiguang);
+            o.addProperty("worldLyricsKeywordColors", worldLyricsKeywordColors);
+            o.addProperty("worldLyricsQualityTier", worldLyricsQualityTier);
+            o.addProperty("worldLyricsStayOnScreen", worldLyricsStayOnScreen);
+            o.addProperty("worldLyricsKeepDistance", worldLyricsKeepDistance);
+            o.addProperty("worldLyricsAboveGround", worldLyricsAboveGround);
+            o.addProperty("worldLyricsTranslation", worldLyricsTranslation);
+            o.addProperty("worldLyricsTransEffects", worldLyricsTransEffects);
+            o.addProperty("worldLyricsGlowTier", worldLyricsGlowTier);
+            o.addProperty("worldLyricsGlowMode", worldLyricsGlowMode);
+            o.addProperty("worldLyricsCoverColorMode", worldLyricsCoverColorMode);
+            o.addProperty("worldLyricsCoverGradient", worldLyricsCoverGradient);
+            o.addProperty("worldLyricsCoverPaletteRgb0", worldLyricsCoverPaletteRgb0);
+            o.addProperty("worldLyricsCoverPaletteRgb1", worldLyricsCoverPaletteRgb1);
+            o.addProperty("worldLyricsCoverPaletteRgb2", worldLyricsCoverPaletteRgb2);
+            o.addProperty("worldLyricsCoverPaletteRgb3", worldLyricsCoverPaletteRgb3);
+            o.addProperty("worldLyricsHudDraw", worldLyricsHudDraw);
+            o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
+            o.addProperty("osdKaraokePulseStrength", osdKaraokePulseStrength);
+            o.addProperty("osdKaraokeSmoothing", osdKaraokeSmoothing);
+            o.addProperty("osdDuetSpread", osdDuetSpread);
+
+            o.addProperty("normalOpacity", normalOpacity);
+            o.addProperty("normalScale", normalScale);
+            o.addProperty("normalGlowStrength", normalGlowStrength);
+            o.addProperty("normalLineSpacing", normalLineSpacing);
+            o.addProperty("edgeFadeSize", edgeFadeSize);
+            o.addProperty("scrollSmoothness", scrollSmoothness);
+            o.addProperty("secondaryOpacity", secondaryOpacity);
+
+            o.addProperty("spectrumEnabled", spectrumEnabled);
+        o.addProperty("musicInfoEnabled", musicInfoEnabled);
+        o.addProperty("musicLyricsEnabled", musicLyricsEnabled);
+            o.addProperty("spectrumInHud", spectrumInHud);
+            o.addProperty("spectrumHudStyle", spectrumHudStyle);
+            o.addProperty("spectrumInPlayer", spectrumInPlayer);
+            o.addProperty("spectrumFullscreenStyle", spectrumFullscreenStyle);
+            o.addProperty("spectrumBarCountPreset", spectrumBarCountPreset);
+            o.addProperty("spectrumCustomBarCount", spectrumCustomBarCount);
+            o.addProperty("spectrumColorSource", spectrumColorSource);
+            o.addProperty("spectrumOpacity", spectrumOpacity);
+            o.addProperty("spectrumHeight", spectrumHeight);
+
+            o.addProperty("dynamicIslandEnabled", dynamicIslandEnabled);
+            o.addProperty("islandSearchEnabled", islandSearchEnabled);
+            o.addProperty("dynamicIslandScale", dynamicIslandScale);
+            o.addProperty("dynamicIslandY", dynamicIslandY);
+            o.addProperty("infoCardBackdrop", infoCardBackdrop);
+            o.addProperty("osdLyricColorFollowCover", osdLyricColorFollowCover);
+            o.addProperty("dynamicIslandTextScale", dynamicIslandTextScale);
+            o.addProperty("dynamicIslandMaxWidth", dynamicIslandMaxWidth);
+            o.addProperty("dynamicIslandProgressHeight", dynamicIslandProgressHeight);
+            o.addProperty("dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds);
+            o.addProperty("dynamicIslandQueueIntervalSeconds", dynamicIslandQueueIntervalSeconds);
+            o.addProperty("dynamicIslandStyle", dynamicIslandStyle);
+            o.addProperty("dynamicIslandExpandSpeed", dynamicIslandExpandSpeed);
+            o.addProperty("dynamicIslandCollapseSpeed", dynamicIslandCollapseSpeed);
+            o.addProperty("dynamicIslandContentSpeed", dynamicIslandContentSpeed);
+            o.addProperty("dynamicIslandEntranceDuration", dynamicIslandEntranceDuration);
+            o.addProperty("dynamicIslandOvershoot", dynamicIslandOvershoot);
+            o.addProperty("dynamicIslandSpinnerSpeed", dynamicIslandSpinnerSpeed);
+            o.addProperty("dynamicIslandAlwaysOn", dynamicIslandAlwaysOn);
+            o.addProperty("dynamicIslandAmbientFps", dynamicIslandAmbientFps);
+            o.addProperty("dynamicIslandAmbientPing", dynamicIslandAmbientPing);
+            o.addProperty("dynamicIslandAmbientClock", dynamicIslandAmbientClock);
+        o.addProperty("dynamicIslandAmbientNowPlaying", dynamicIslandAmbientNowPlaying);
+        o.addProperty("dynamicIslandAmbientRotate", dynamicIslandAmbientRotate);
+        o.addProperty("playerFadeSpeed", playerFadeSpeed);
+        o.addProperty("playerUiSwitchSpeed", playerUiSwitchSpeed);
+        o.addProperty("lyricSearchUiScale", lyricSearchUiScale);
+        o.addProperty("hudEditorUi", hudEditorUi);
+        o.addProperty("playbackFeed", playbackFeed);
+        o.addProperty("hudEditorPanelX", hudEditorPanelX);
+        o.addProperty("hudEditorPanelY", hudEditorPanelY);
+        o.addProperty("hudEditorLastCategory", hudEditorLastCategory);
+        o.addProperty("hudEditorPanelScaleW", hudEditorPanelScaleW);
+        o.addProperty("hudEditorPanelScaleH", hudEditorPanelScaleH);
+        o.addProperty("dynamicIslandAmbientStatusSeconds", dynamicIslandAmbientStatusSeconds);
+        o.addProperty("dynamicIslandAmbientNowPlayingSeconds", dynamicIslandAmbientNowPlayingSeconds);
+
+            o.addProperty("animatedCoverEnabled", animatedCoverEnabled);
+
+            JsonConfigStorage.writeObject(FILE, GSON, o);
+
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public static int clampInt(int v, int min, int max) {
+        return Math.max(min, Math.min(max, v));
+    }
+
+    /** 参与轮换的颜色个数，已经夹到合法区间。渲染层与设置界面都只认这个值，不要直接读字段。 */
+    public static int cadenzaColorCount() {
+        return clampInt(cadenzaDecorColorCount, CADENZA_COLOR_COUNT_MIN, CADENZA_PALETTE_SLOTS);
+    }
+
+    /** 每几拍换色，已经夹到合法区间。 */
+    public static int cadenzaBeatsPerColor() {
+        return clampInt(cadenzaBeatsPerColor, CADENZA_BEATS_PER_COLOR_MIN, CADENZA_BEATS_PER_COLOR_MAX);
+    }
+
+    /**
+     * 调色板里第 {@code index} 轮的颜色，返回不含 alpha 的 RGB。
+     *
+     * <p>{@code index} 是「第几次换色」，可以无限增大也可以是负数（不该出现，但拍计数是 int，
+     * 长时间播放理论上会溢出），这里一律取模到有效槽位，永远不抛。</p>
+     */
+    public static int cadenzaPaletteColor(int index) {
+        int count = cadenzaColorCount();
+        int[] colors = cadenzaDecorColors;
+        if (colors == null || colors.length == 0) {
+            return CADENZA_DEFAULT_COLORS[Math.abs(index) % CADENZA_DEFAULT_COLORS.length];
+        }
+        int slot = ((index % count) + count) % count;
+        if (slot >= colors.length) slot = colors.length - 1;
+        return colors[slot] & 0xFFFFFF;
+    }
+
+    /** 读某一槽的当前颜色（RGB）。越界返回默认色，不抛。 */
+    public static int cadenzaSlotColor(int slot) {
+        if (slot < 0 || slot >= CADENZA_PALETTE_SLOTS) return CADENZA_DEFAULT_COLORS[0];
+        int[] colors = cadenzaDecorColors;
+        if (colors == null || slot >= colors.length) return CADENZA_DEFAULT_COLORS[slot];
+        return colors[slot] & 0xFFFFFF;
+    }
+
+    /** 写某一槽的颜色（只取 RGB 低 24 位）。数组丢了或长度不对会先补齐再写。 */
+    public static void setCadenzaSlotColor(int slot, int rgb) {
+        if (slot < 0 || slot >= CADENZA_PALETTE_SLOTS) return;
+        if (cadenzaDecorColors == null || cadenzaDecorColors.length != CADENZA_PALETTE_SLOTS) {
+            int[] fixed = CADENZA_DEFAULT_COLORS.clone();
+            if (cadenzaDecorColors != null) {
+                for (int i = 0; i < fixed.length && i < cadenzaDecorColors.length; i++) {
+                    fixed[i] = cadenzaDecorColors[i] & 0xFFFFFF;
+                }
+            }
+            cadenzaDecorColors = fixed;
+        }
+        cadenzaDecorColors[slot] = rgb & 0xFFFFFF;
+    }
+
+    /** 某一槽的出厂颜色，供设置界面「重置这一槽」用。 */
+    public static int cadenzaDefaultSlotColor(int slot) {
+        if (slot < 0 || slot >= CADENZA_DEFAULT_COLORS.length) return CADENZA_DEFAULT_COLORS[0];
+        return CADENZA_DEFAULT_COLORS[slot];
+    }
+
+    public static float clampScale(float v) {
+        return clamp(v, SCALE_MIN, SCALE_MAX);
+    }
+
+    public static float clampPos(float v) {
+        return clamp01(v);
+    }
+
+    private static float clamp01(float v) {
+        return clamp(v, 0.0f, 1.0f);
+    }
+
+    private static float clamp(float v, float min, float max) {
+        return Math.max(min, Math.min(max, v));
+    }
+
+    private static float getFloat(JsonObject o, String key, float def) {
+        try {
+            return o.has(key) ? o.get(key).getAsFloat() : def;
+        } catch (Throwable ignored) {
+            return def;
+        }
+    }
+
+    private static String normalizeHudEditorUi(String value) {
+        if (HUD_EDITOR_UI_MCONFIG.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MCONFIG;
+        if (HUD_EDITOR_UI_ONECONFIG.equalsIgnoreCase(value)) return HUD_EDITOR_UI_ONECONFIG;
+        if (HUD_EDITOR_UI_MODERNUI.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MODERNUI;
+        return HUD_EDITOR_UI_BUILTIN;
+    }
+
+    /**
+     * 播放态来源只认两个值。
+     *
+     * <p>默认回到「内部播放器」而不是镜像：这一档不需要任何额外条件就能工作，而镜像
+     * 依赖 Windows、一个外部播放器和一个现场编译出来的助手。配置文件被手改坏、或者
+     * 用户在非 Windows 上打开别人分享的配置时，不该得到一个静默失效的模式。</p>
+     */
+    private static String normalizePlaybackFeed(String value) {
+        if (HUD_PLAYBACK_FEED_MIRROR.equalsIgnoreCase(value)) return HUD_PLAYBACK_FEED_MIRROR;
+        return HUD_PLAYBACK_FEED_INTERNAL;
+    }
+
+    private static boolean getBoolean(JsonObject o, String key, boolean def) {
+        try {
+            return o.has(key) ? o.get(key).getAsBoolean() : def;
+        } catch (Throwable ignored) {
+            return def;
+        }
+    }
+    private static String getString(JsonObject o, String key, String def) {
+        try {
+            return o.has(key) && o.get(key).isJsonPrimitive() ? o.get(key).getAsString() : def;
+        } catch (Throwable ignored) {
+            return def;
+        }
+    }
+
+    private static int getInt(JsonObject o, String key, int def) {
+        try {
+            return o.has(key) ? o.get(key).getAsInt() : def;
+        } catch (Throwable ignored) {
+            return def;
+        }
+    }
+
+    /**
+     * 读一整条调色板。
+     *
+     * <p>存 JSON 数组而不是 {@code color0..color5} 六个键：以后改 {@link #CADENZA_PALETTE_SLOTS}
+     * 时，多出来的元素直接忽略、少的那几槽补默认色，不会因为改了槽位数把用户调好的颜色读丢。
+     * 单个元素坏掉也只影响那一槽。</p>
+     */
+    private static int[] getRgbArray(JsonObject o, String key, int[] def) {
+        int[] result = new int[CADENZA_PALETTE_SLOTS];
+        for (int i = 0; i < result.length; i++) {
+            boolean hasDefault = def != null && i < def.length;
+            result[i] = hasDefault ? (def[i] & 0xFFFFFF) : cadenzaDefaultSlotColor(i);
+        }
+        try {
+            if (!o.has(key) || !o.get(key).isJsonArray()) return result;
+            JsonArray array = o.get(key).getAsJsonArray();
+            for (int i = 0; i < result.length && i < array.size(); i++) {
+                try {
+                    result[i] = array.get(i).getAsInt() & 0xFFFFFF;
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return result;
+    }
+
+    private static JsonArray rgbArray(int[] values) {
+        JsonArray array = new JsonArray();
+        for (int i = 0; i < CADENZA_PALETTE_SLOTS; i++) {
+            boolean present = values != null && i < values.length;
+            array.add(new JsonPrimitive(present ? (values[i] & 0xFFFFFF) : cadenzaDefaultSlotColor(i)));
+        }
+        return array;
+    }
+}

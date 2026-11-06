@@ -2,6 +2,10 @@
 // 这一版用的是 MinecraftForge（1.20.1-47.4.0），不是 NeoForge —— 1.20.1 是 Forge 的最后一个
 // 大版本，社区的 1.20.1 模组生态与整合包也都在 Forge 上；NeoForge 从 1.20.2 才分家。
 pluginManagement {
+    plugins {
+        id 'org.jetbrains.kotlin.jvm' version '2.4.21'
+        id 'org.jetbrains.kotlin.plugin.lombok' version '2.4.21'
+    }
     repositories {
         maven {
             name = 'Fabric'

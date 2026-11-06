@@ -11,6 +11,8 @@ plugins {
     // skija-shared / types 已改走 MDG 内置的 JarJar（见下面 dependencies 的 jarJar 段），
     // shadow 只剩 zxing / rhino / music-api 这批还解包平铺的库。shadowJar 官方任务仍禁用。
     id 'com.gradleup.shadow' version '8.3.11'
+    id 'org.jetbrains.kotlin.jvm'
+    id 'org.jetbrains.kotlin.plugin.lombok'
 }
 
 base {
@@ -289,6 +291,8 @@ java {
     toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
     withSourcesJar()
 }
+
+apply from: rootProject.file('../gradle/kotlin-support.gradle')
 
 jar {
     dependsOn(flattenEmbeddedLibs)

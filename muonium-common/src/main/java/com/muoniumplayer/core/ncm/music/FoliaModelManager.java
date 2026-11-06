@@ -1,6 +1,7 @@
 package com.muoniumplayer.core.ncm.music;
 
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
+import com.muoniumplayer.core.utils.network.HttpDownloadRace;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
 import java.io.BufferedInputStream;
@@ -13,6 +14,8 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -47,12 +50,15 @@ public final class FoliaModelManager {
     public interface Callback { void done(boolean ok, String detail); }
 
     /**
-     * 下载镜像链。两个模型（beat_this / htdemucs）在上面三路 folia-models 仓库；
-     * 安卓 ONNX 运行时 zip 托管在更新清单仓库（MuoniumPlayer-updates），
-     * 后三路与 {@code UpdateChecker} 同款三源（ghfast 代理 / raw / jsdelivr）。
-     * 未命中该文件的镜像会 404，循环会继续往下一路试（见 {@link #downloadBytes}）。
+     * 下载镜像链。首路是 R2 对象存储直链（2026-11 起，两个模型与安卓运行时 zip 全量镜像，
+     * 与其它伴生包同一托管面，竞速 {@code HttpDownloadRace.isTierA} 的 A 档首位）；
+     * 模型（beat_this / htdemucs）另有三路 folia-models 仓库，安卓 ONNX 运行时 zip
+     * 托管在更新清单仓库（MuoniumPlayer-updates），四路 GitHub 系与
+     * {@code UpdateChecker} 同款（hf-mirror / huggingface / GitHub releases / ghfast 代理 / raw / jsdelivr）。
+     * 未命中该文件的镜像会 404，竞速下只是那一路白跑。
      */
     private static final String[] MIRRORS = {
+            "https://file.melodifymc.cc.cd/folia/",
             "https://hf-mirror.com/HUAI4236/folia-models/resolve/main/",
             "https://huggingface.co/HUAI4236/folia-models/resolve/main/",
             "https://github.com/AZURE-HUAI/folia-models/releases/download/weights-v1/",
@@ -364,49 +370,94 @@ public final class FoliaModelManager {
         Files.move(part.toPath(), path(kind).toPath(), StandardCopyOption.REPLACE_EXISTING);
     }
 
+    /**
+     * 取一个文件到 {@code part}：默认走 {@link HttpDownloadRace} 多路竞速（与其它伴生包
+     * 同一引擎，断点续传内置）；{@code -Dmuonium.downloadRace=false} 时退回旧的逐路
+     * 串行回退（保留 Range 续传）。两类镜像混在一条链里（R2 全量镜像 + folia-models /
+     * updates 各自的原始源），未命中该文件的镜像 404，竞速下只是那一路白跑。
+     *
+     * <p>竞速的进度回调是 0~100 的整数百分比，这里换算回 {@code (done, total)} 字节口径
+     * 喂给调用方（设置页与灵动岛都按字节显示），percentToBytes 乘回去即可——display 的
+     * 数字本来就是钉死字节数算出来的，误差不超过一个百分点。</p>
+     */
     private static void downloadBytes(String name, File part, long expectedBytes, String expectedHash,
                                       Progress progress) throws Exception {
+        if (expectedBytes <= 0L || expectedHash == null) {
+            throw new IllegalStateException("下载条目缺字节数或 sha256 钉值：" + name);
+        }
+        List<String> urls = new ArrayList<String>(MIRRORS.length);
+        for (String mirror : MIRRORS) {
+            urls.add(mirror + name);
+        }
+        if (HttpDownloadRace.enabled()) {
+            HttpDownloadRace.fetch(urls, expectedBytes, expectedHash, part, percent -> {
+                if (progress != null) {
+                    progress.onProgress(percent * expectedBytes / 100L, expectedBytes);
+                }
+            });
+            return;
+        }
+        // 串行回退（竞速被关）：与旧实现同形，但补上同路 Range 续传。
         Exception last = null;
         for (String mirror : MIRRORS) {
             try {
                 URL url = URI.create(mirror + name).toURL();
-                HttpURLConnection connection = openFollowing(url, 0);
+                long already = part.isFile() && part.length() > 0L && part.length() < expectedBytes
+                        ? part.length() : 0L;
+                HttpURLConnection connection = openFollowing(url, 0, already);
                 int code = connection.getResponseCode();
+                if (already > 0L && code == 200) {
+                    connection.disconnect();
+                    Files.deleteIfExists(part.toPath());
+                    already = 0L;
+                    connection = openFollowing(url, 0, 0L);
+                    code = connection.getResponseCode();
+                }
                 if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code);
+                if (already > 0L && code != 206) throw new IllegalStateException("resume rejected: HTTP " + code);
                 long total = connection.getContentLengthLong();
-                if (expectedBytes > 0L && total > 0L && total != expectedBytes) total = expectedBytes;
+                if (total > 0L && total != expectedBytes - already) total = expectedBytes;
                 MessageDigest digest = MessageDigest.getInstance("SHA-256");
                 try (InputStream input = new BufferedInputStream(connection.getInputStream());
-                     FileOutputStream output = new FileOutputStream(part)) {
-                    byte[] buffer = new byte[64 * 1024]; long done = 0L; int read;
+                     FileOutputStream output = new FileOutputStream(part, already > 0L)) {
+                    byte[] buffer = new byte[64 * 1024]; long done = already; int read;
                     while ((read = input.read(buffer)) >= 0) {
                         output.write(buffer, 0, read); digest.update(buffer, 0, read); done += read;
                         if (progress != null) progress.onProgress(done, total > 0L ? total : expectedBytes);
                     }
                 }
-                if (expectedBytes > 0L && part.length() != expectedBytes) throw new IllegalStateException("size mismatch");
+                if (part.length() != expectedBytes) throw new IllegalStateException("size mismatch");
                 String actual = hex(digest.digest());
-                if (expectedHash != null && !expectedHash.equalsIgnoreCase(actual)) throw new IllegalStateException("sha256 mismatch");
+                if (!expectedHash.equalsIgnoreCase(actual)) throw new IllegalStateException("sha256 mismatch");
                 return;
             } catch (Exception failure) {
                 last = failure;
-                try { Files.deleteIfExists(part.toPath()); } catch (Throwable ignored) {}
+                // 哈希不符说明已收前缀可疑，续传无意义，清掉；网络错误则保留残片等下一路续。
+                if (String.valueOf(failure.getMessage()).contains("sha256")) {
+                    try { Files.deleteIfExists(part.toPath()); } catch (Throwable ignored) {}
+                }
             }
         }
         throw last == null ? new IllegalStateException("no mirror") : last;
     }
 
-    private static HttpURLConnection openFollowing(URL url, int depth) throws Exception {        if (depth > 6) throw new IllegalStateException("too many redirects");
+    private static HttpURLConnection openFollowing(URL url, int depth, long rangeFrom) throws Exception {
+        if (depth > 6) throw new IllegalStateException("too many redirects");
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setInstanceFollowRedirects(false);
         connection.setConnectTimeout(20_000); connection.setReadTimeout(60_000);
         connection.setRequestProperty("User-Agent", "MuoniumPlayer-Folia/1.0");
+        if (rangeFrom > 0L) {
+            // 续传:从已下载字节之后接着要;对端不认 206 时由调用方删除残件重下。
+            connection.setRequestProperty("Range", "bytes=" + rangeFrom + "-");
+        }
         int code = connection.getResponseCode();
         if (code >= 300 && code < 400) {
             String location = connection.getHeaderField("Location");
             connection.disconnect();
             if (location == null) throw new IllegalStateException("redirect without location");
-            return openFollowing(new URL(url, location), depth + 1);
+            // 重定向后续传基准不变(目标指向同一资源的剩余区间)。
+            return openFollowing(new URL(url, location), depth + 1, rangeFrom);
         }
         return connection;
     }
