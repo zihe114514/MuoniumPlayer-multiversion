@@ -13,17 +13,16 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 音质那一圈（触发按钮 + 弹出菜单 + 八格档位）各归哪一档玻璃。
+ * 音质那一圈（触发芯片 + 弹出菜单 + 八格档位）各归哪一档。
  *
- * <p>2026-09-30 玩家截图指着这块说「添加一下液态玻璃」。三块的位置不一样，档位也就不一样：
- * 触发按钮贴在面板页脚上，背后是这一帧采进来的画面 → PLATE；弹出菜单自己是一块浮在面板上的
- * 玻璃 → PLATE；而菜单<em>里面</em>那八格不能再各自贴一遍真背景 —— 那样每一格透出的都比周围
- * 清楚，读起来是一排挖在玻璃上的洞，所以走 RIM（只上那一圈边缘光）。</p>
+ * <p>触发芯片不再贴玻璃：它常态要和导航栏底色融在一起，悬停时只上一层与传输键同强度的
+ * 淡色底（PRIMARY_TEXT × 40/255）——一块实心白板/玻璃板会在这排控件里跳出来。弹出菜单
+ * 自己是一块浮在面板上的玻璃 → PLATE；而菜单<em>里面</em>那八格不能再各自贴一遍真背景 ——
+ * 那样每一格透出的都比周围清楚，读起来是一排挖在玻璃上的洞，所以走 RIM（只上那一圈边缘光）。</p>
  *
- * <p>之所以钉在源码上而不是跑起来看：这三档的差别在截图上很微妙（都是「有点透」），而把选项
- * 改成 PLATE 这种"顺手统一一下"的改法，只会让那块菜单变成马赛克，谁都不会当这是个 bug。
- * 选中那一格同理：它靠实心强调色表达「现在用的是这一档」，被浓度压薄就等于把选择状态抹掉，
- * 而浓度滑块默认值下压完还剩不到两成，肉眼在暗主题上根本分不出来。</p>
+ * <p>之所以钉在源码上而不是跑起来看：这些差别在截图上很微妙，而把选项改成 PLATE 这种
+ * "顺手统一一下"的改法，只会让那块菜单变成马赛克。选中那一格同理：它靠实心强调色表达
+ * 「现在用的是这一档」，被浓度压薄就等于把选择状态抹掉。</p>
  */
 class QualityMenuGlassStaticTest {
 
@@ -44,14 +43,16 @@ class QualityMenuGlassStaticTest {
     }
 
     @Test
-    @DisplayName("触发按钮与弹出菜单都贴真背景（PLATE），底色按浓度压薄")
-    void selectorAndMenuUsePlate() throws Exception {
+    @DisplayName("触发芯片常态融进底栏、悬停只上淡色底；弹出菜单仍走 PLATE")
+    void selectorBlendsAndMenuUsesPlate() throws Exception {
         String src = source();
         String selector = blockOf(src, "qualitySelector\n");
-        assertTrue(selector.contains("setGlassPlate(GlassLook.Surface.PLAYER)"),
-                "音质按钮没有上 PLATE，它就还是页脚那颗实心深色胶囊");
-        assertTrue(selector.contains("setFillAlpha(GlassLook.washAlpha"),
-                "音质按钮的底色没压薄：贴上去的真背景会被自己的实心色挡回去");
+        assertFalse(selector.contains("setGlassPlate"),
+                "音质芯片又贴了一块玻璃：常态会发白，和底栏背景对不上");
+        assertTrue(selector.contains("setFillAlpha(qualitySelector.isHovering()"),
+                "芯片底色没有按悬停切换：常态应当完全不画底");
+        assertTrue(selector.contains("40f / 255f"),
+                "悬停底色不是和传输键同一强度的 40/255 淡色");
         String menu = blockOf(src, ".setGlassPlate(GlassLook.Surface.PLAYER)\n                .setBeforeRenderCallback");
         assertTrue(menu.contains("setFillAlpha(GlassLook.washAlpha"), "菜单底色没压薄");
     }

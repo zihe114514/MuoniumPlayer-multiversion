@@ -3,6 +3,7 @@ package com.muoniumplayer.core.screens.onboarding;
 import com.muoniumplayer.core.rendering.RGBA;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
+import com.muoniumplayer.core.screens.ncm.panels.ControlsBar;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.screens.ncm.ThemeTransitionRenderer;
@@ -29,7 +30,7 @@ import java.awt.Color;
  *   <tr><td>液态玻璃</td><td>同一个 {@link ThemeTransitionRenderer#renderLiquidGlassSurface}</td><td>{@code ThemeGlassWidget}</td></tr>
  *   <tr><td>侧栏宽</td><td>max(面板宽 × .15, min(92, 面板宽 × .30))</td><td>{@code NavigateBar#layout}</td></tr>
  *   <tr><td>侧栏底色</td><td>NAVIGATION_BACKGROUND，alpha = .9 − 玻璃量 × .22</td><td>同上</td></tr>
- *   <tr><td>底栏高</td><td>min(面板高, max(28, 面板高 × .07))</td><td>{@code NCMScreen#layout} 里 currentPanelBg 让出来的那条</td></tr>
+ *   <tr><td>底栏高</td><td>min(面板高, clamp(面板高 × .10, 42, 50))</td><td>{@code ControlsBar#preferredHeight}（{@code NCMScreen#layout} 里 currentPanelBg 让出来的那条读同一个式子）</td></tr>
  *   <tr><td>底栏底色</td><td>NAVIGATION_BACKGROUND，alpha = .95 − 玻璃量 × .22</td><td>{@code ControlsBar} 的 bg</td></tr>
  *   <tr><td>面板描边</td><td>白 .8 粗 + 一条随玻璃量加深的渐变描边</td><td>{@code NCMScreen#drawScreen} 末尾</td></tr>
  * </table>
@@ -97,7 +98,9 @@ public final class OnboardingChrome {
             this.height = height;
             this.radius = Math.max(8.0, Math.min(18.0, height * .028));
             this.sidebarWidth = Math.max(width * .15, Math.min(92.0, width * .30));
-            this.controlsHeight = Math.min(height, Math.max(28.0, height * .07));
+            // 读播放条自己那份高度（两带版式的下限已经比旧公式高），两边才不会在
+            // 引导结束切到播放器时跳一下。
+            this.controlsHeight = Math.min(height, ControlsBar.preferredHeight(height));
         }
 
         /** 内容区：侧栏右边、底栏上边。引导正文只许画在这里头。 */

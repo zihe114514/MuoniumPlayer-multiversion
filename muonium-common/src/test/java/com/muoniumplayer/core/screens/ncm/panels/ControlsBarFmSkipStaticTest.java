@@ -53,9 +53,11 @@ class ControlsBarFmSkipStaticTest {
         assertTrue(shift.contains("half + 70.0"), "transportRight 不再按「half + 70.0」算居中簇右缘");
         // FM 分支删干净之后，播放条级回调里不应再有 isPersonalFmActive 的布局分支。
         // （播放模式按钮的 F 字形降级在它自己的回调里，不受影响。）
+        // 取到让位量写回中心簇右缘那一句为止；时间标签已经搬进顶部进度带，
+        // 回调里不再有 besideLabel 这个分支，判据换成赋值本身。
         String panelCallback = between(body,
                 "this.setBeforeRenderCallback(() -> {\n            double half = this.getWidth() * .5;",
-                "centerClusterRight = besideLabel");
+                "centerClusterRight =");
         assertFalse(panelCallback.contains("isPersonalFmActive"),
                 "让位回调里还留着 FM 分支：布局又在按模式分叉了");
     }

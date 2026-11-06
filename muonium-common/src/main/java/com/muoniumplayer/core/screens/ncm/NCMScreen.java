@@ -370,7 +370,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.basePanel.addChild(this.currentPanelBg);
 
         this.currentPanelBg.setBeforeRenderCallback(() -> {
-            double controlsHeight = Math.min(this.getPanelHeight(), Math.max(28.0, this.getPanelHeight() * .07));
+            // 底栏高度只由 ControlsBar 这一处定：它现在分「顶部进度带 + 内容带」两段，
+            // 下限要放得下两行歌名/歌手。引导页骨架读的是同一个式子。
+            double controlsHeight = Math.min(this.getPanelHeight(),
+                    ControlsBar.preferredHeight(this.getPanelHeight()));
             this.currentPanelBg.setBounds(
                     playlistsPanel.getWidth(),
                     0,
