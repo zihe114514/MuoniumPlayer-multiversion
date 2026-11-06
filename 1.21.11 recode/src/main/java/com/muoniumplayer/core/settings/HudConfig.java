@@ -717,6 +717,14 @@ public final class HudConfig {
      */
     public static boolean glassMobileExperimental = false;
 
+    /**
+     * 出厂值快照：全部字段初值落定之后、任何 {@link #load()} 之前抓一次 {@link #toJson()}。
+     *
+     * <p>必须声明在所有静态字段之后 —— 静态初始化按文本顺序执行，放前面会抓到还没赋初值的字段。
+     * 模板预设的「默认」与 {@code base: defaults} 都读它，出厂值因此只有字段初值这一个来源。</p>
+     */
+    private static final JsonObject DEFAULTS = toJson();
+
     private HudConfig() {
     }
 
@@ -874,6 +882,23 @@ public final class HudConfig {
             if (o == null) {
                 return;
             }
+            applyJson(o);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 按读档语义套用一份 JSON：逐键钳位、旧键迁移与副作用都与 {@link #load()} 完全一致，
+     * 缺的键保留当前值；<b>不落盘</b>，要持久化再调 {@link #save()}。
+     *
+     * <p>模板预设走这条路：先取 {@link #toJson()} 的完整快照、叠上预设里的值，再整份交给这里 ——
+     * 等价于「手改配置文件后重载」，取值范围与迁移只有读档这一份，不另写一套。</p>
+     */
+    public static void applyJson(JsonObject o) {
+        if (o == null) {
+            return;
+        }
+        try {
             infoX = clampPos(getFloat(o, "infoX", infoX));
             infoY = clampPos(getFloat(o, "infoY", infoY));
             infoScale = clampScale(getFloat(o, "infoScale", infoScale));
@@ -1108,173 +1133,183 @@ public final class HudConfig {
     /** 编辑器交互后持久化设置。 */
     public static void save() {
         try {
-            JsonObject o = new JsonObject();
-            o.addProperty("infoX", infoX);
-            o.addProperty("infoY", infoY);
-            o.addProperty("infoScale", infoScale);
-            o.addProperty("playerVolume", playerVolume);
-            o.addProperty("lyricX", lyricX);
-            o.addProperty("lyricY", lyricY);
-            o.addProperty("lyricScale", lyricScale);
-            o.addProperty("lyricWidth", lyricWidth);
-            o.addProperty("lyricHeight", lyricHeight);
-            o.addProperty("lyricColorRgb", lyricColorRgb);
-            o.addProperty("currentLyricColorRgb", currentLyricColorRgb);
+            JsonConfigStorage.writeObject(FILE, GSON, toJson());
+        } catch (Throwable ignored) {
+        }
+    }
 
-            o.addProperty("currentLyricEffectsEnabled", currentLyricEffectsEnabled);
-            o.addProperty("osdKaraokeEmphasisEnabled", osdKaraokeEmphasisEnabled);
-            o.addProperty("normalLyricEffectsEnabled", normalLyricEffectsEnabled);
-            o.addProperty("lyricEdgeFadeEnabled", lyricEdgeFadeEnabled);
-            o.addProperty("currentLineScale", currentLineScale);
-            o.addProperty("currentWordScale", currentWordScale);
-            o.addProperty("currentGlowStrength", currentGlowStrength);
-            o.addProperty("lyricGlowSpread", lyricGlowSpread);
-            o.addProperty("fullscreenGlowStrength", fullscreenGlowStrength);
-            o.addProperty("fullscreenLyricStyle", fullscreenLyricStyle);
-            o.addProperty("fullscreenLyricBackgroundMode", fullscreenLyricBackgroundMode);
-            o.addProperty("fullscreenLyricFluidStyle", fullscreenLyricFluidStyle);
-            o.addProperty("fullscreenLyricFluidSaturation", fullscreenLyricFluidSaturation);
-            o.addProperty("fullscreenLyricFluidStatic", fullscreenLyricFluidStatic);
-            o.addProperty("fullscreenLyricEdgeBlur", fullscreenLyricEdgeBlur);
-            o.addProperty("fullscreenLyricFluidAudio", fullscreenLyricFluidAudio);
-            o.addProperty("fullscreenLyricBackgroundLayers", fullscreenLyricBackgroundLayers);
-            o.addProperty("fullscreenLyricLayerLatentDither", fullscreenLyricLayerLatentDither);
-            o.addProperty("fullscreenLyricLayerSora", fullscreenLyricLayerSora);
-            o.addProperty("themeColorSource", themeColorSource);
-            o.addProperty("osdLyricStyle", osdLyricStyle);
-            o.addProperty("blossomBackdropBlur", blossomBackdropBlur);
-            o.addProperty("glassMaterialVersion", com.muoniumplayer.core.rendering.GlassMaterialProfile.VERSION);
-            o.addProperty("glassSurfacePlayer", glassSurfacePlayer);
-            o.addProperty("glassSurfaceIsland", glassSurfaceIsland);
-            o.addProperty("glassSurfaceDesktopLyric", glassSurfaceDesktopLyric);
-            o.addProperty("glassSurfaceEditors", glassSurfaceEditors);
-            o.addProperty("glassBackdropScale", glassBackdropScale);
-            o.addProperty("glassBlurSigma", glassBlurSigma);
-            o.addProperty("glassBlurPlayer", glassBlurPlayer);
-            o.addProperty("glassBlurIsland", glassBlurIsland);
-            o.addProperty("glassBlurDesktopLyric", glassBlurDesktopLyric);
-            o.addProperty("glassBlurEditors", glassBlurEditors);
-            o.addProperty("glassBloom", glassBloom);
-            o.addProperty("glassFusion", glassFusion);
-            o.addProperty("glassTintStrength", glassTintStrength);
-            o.addProperty("glassEdgeGlow", glassEdgeGlow);
-            o.addProperty("glassRealtimeCapture", glassRealtimeCapture);
-            o.addProperty("glassMobileExperimental", glassMobileExperimental);
-            o.addProperty("blossomPanelOpacity", blossomPanelOpacity);
-            o.addProperty("blossomVisibleLines", blossomVisibleLines);
-            o.addProperty("blossomRhythmBorder", blossomRhythmBorder);
-            o.addProperty("blossomBorderStrength", blossomBorderStrength);
-            o.addProperty("cadenzaDecorColorMode", cadenzaDecorColorMode);
-            o.addProperty("cadenzaDecorColorCount", cadenzaDecorColorCount);
-            o.addProperty("cadenzaBeatsPerColor", cadenzaBeatsPerColor);
-            o.add("cadenzaDecorColors", rgbArray(cadenzaDecorColors));
-            o.addProperty("lyricFontScale", lyricFontScale);
-            o.addProperty("luminousWordSpacing", luminousWordSpacing);
-            o.addProperty("luminousFloatAmount", luminousFloatAmount);
-            o.addProperty("luminousWordRotation", luminousWordRotation);
-            o.addProperty("partitaStaggerMin", partitaStaggerMin);
-            o.addProperty("partitaStaggerMax", partitaStaggerMax);
-            o.addProperty("partitaGuideLines", partitaGuideLines);
-            o.addProperty("fumeTextHoldRatio", fumeTextHoldRatio);
-            o.addProperty("fumeCameraSpeed", fumeCameraSpeed);
-            o.addProperty("fumeHeroScale", fumeHeroScale);
-            o.addProperty("fumeGeometricBackground", fumeGeometricBackground);
-            o.addProperty("cappellaBubbleWidth", cappellaBubbleWidth);
-            o.addProperty("cappellaAvatarSource", cappellaAvatarSource);
-            o.addProperty("cappellaEmojiEnabled", cappellaEmojiEnabled);
-            o.addProperty("cappellaEmojiChance", cappellaEmojiChance);
-            o.addProperty("tiltSplitProbability", tiltSplitProbability);
-            o.addProperty("tiltStyleProbability", tiltStyleProbability);
-            o.addProperty("tiltColorScheme", tiltColorScheme);
-            o.addProperty("dioramaDepthSpread", dioramaDepthSpread);
-            o.addProperty("dioramaDust", dioramaDust);
-            o.addProperty("pendoloArcRadius", pendoloArcRadius);
-            o.addProperty("pendoloArcAngle", pendoloArcAngle);
-            o.addProperty("pendoloActiveScale", pendoloActiveScale);
-            o.addProperty("pendoloGearDecor", pendoloGearDecor);
-            o.addProperty("worldLyricsEnabled", worldLyricsEnabled);
-            o.addProperty("worldLyricsDistance", worldLyricsDistance);
-            o.addProperty("worldLyricsFacePlayer", worldLyricsFacePlayer);
-            o.addProperty("worldLyricsKeepAway", worldLyricsKeepAway);
-            o.addProperty("worldLyricsSpreadDeg", worldLyricsSpreadDeg);
-            o.addProperty("worldLyricsScale", worldLyricsScale);
-            o.addProperty("worldLyricsModernStyle", worldLyricsModernStyle);
-            o.addProperty("worldLyricsSplitLines", worldLyricsSplitLines);
-            o.addProperty("worldLyricsGlowEnabled", worldLyricsGlowEnabled);
-            o.addProperty("worldLyricsGlowStrength", worldLyricsGlowStrength);
-            o.addProperty("worldLyricsGlowSpread", worldLyricsGlowSpread);
-            o.addProperty("worldLyricsGlowColorMode", worldLyricsGlowColorMode);
-            o.addProperty("worldLyricsGlowColorRgb", worldLyricsGlowColorRgb);
-            o.addProperty("worldLyricsColorRgb", worldLyricsColorRgb);
-            o.addProperty("worldLyricsColorCustom", worldLyricsColorCustom);
-            o.addProperty("worldLyricsWordPop", worldLyricsWordPop);
-            o.addProperty("worldLyricsTextFlash", worldLyricsTextFlash);
-            o.addProperty("worldLyricsCadenza", worldLyricsCadenza);
-            o.addProperty("worldLyricsHuiguang", worldLyricsHuiguang);
-            o.addProperty("worldLyricsKeywordColors", worldLyricsKeywordColors);
-            o.addProperty("worldLyricsQualityTier", worldLyricsQualityTier);
-            o.addProperty("worldLyricsStayOnScreen", worldLyricsStayOnScreen);
-            o.addProperty("worldLyricsKeepDistance", worldLyricsKeepDistance);
-            o.addProperty("worldLyricsAboveGround", worldLyricsAboveGround);
-            o.addProperty("worldLyricsTranslation", worldLyricsTranslation);
-            o.addProperty("worldLyricsTransEffects", worldLyricsTransEffects);
-            o.addProperty("worldLyricsGlowTier", worldLyricsGlowTier);
-            o.addProperty("worldLyricsGlowMode", worldLyricsGlowMode);
-            o.addProperty("worldLyricsCoverColorMode", worldLyricsCoverColorMode);
-            o.addProperty("worldLyricsCoverGradient", worldLyricsCoverGradient);
-            o.addProperty("worldLyricsCoverPaletteRgb0", worldLyricsCoverPaletteRgb0);
-            o.addProperty("worldLyricsCoverPaletteRgb1", worldLyricsCoverPaletteRgb1);
-            o.addProperty("worldLyricsCoverPaletteRgb2", worldLyricsCoverPaletteRgb2);
-            o.addProperty("worldLyricsCoverPaletteRgb3", worldLyricsCoverPaletteRgb3);
-            o.addProperty("worldLyricsHudDraw", worldLyricsHudDraw);
-            o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
-            o.addProperty("osdKaraokePulseStrength", osdKaraokePulseStrength);
-            o.addProperty("osdKaraokeSmoothing", osdKaraokeSmoothing);
-            o.addProperty("osdDuetSpread", osdDuetSpread);
+    /**
+     * 当前全部落盘状态的 JSON 投影，也就是 {@link #save()} 写进 hud.json 的那一份。
+     * 模板预设用它取快照；纯内存操作，不碰磁盘。
+     */
+    public static JsonObject toJson() {
+        JsonObject o = new JsonObject();
+        o.addProperty("infoX", infoX);
+        o.addProperty("infoY", infoY);
+        o.addProperty("infoScale", infoScale);
+        o.addProperty("playerVolume", playerVolume);
+        o.addProperty("lyricX", lyricX);
+        o.addProperty("lyricY", lyricY);
+        o.addProperty("lyricScale", lyricScale);
+        o.addProperty("lyricWidth", lyricWidth);
+        o.addProperty("lyricHeight", lyricHeight);
+        o.addProperty("lyricColorRgb", lyricColorRgb);
+        o.addProperty("currentLyricColorRgb", currentLyricColorRgb);
 
-            o.addProperty("normalOpacity", normalOpacity);
-            o.addProperty("normalScale", normalScale);
-            o.addProperty("normalGlowStrength", normalGlowStrength);
-            o.addProperty("normalLineSpacing", normalLineSpacing);
-            o.addProperty("edgeFadeSize", edgeFadeSize);
-            o.addProperty("scrollSmoothness", scrollSmoothness);
-            o.addProperty("secondaryOpacity", secondaryOpacity);
+        o.addProperty("currentLyricEffectsEnabled", currentLyricEffectsEnabled);
+        o.addProperty("osdKaraokeEmphasisEnabled", osdKaraokeEmphasisEnabled);
+        o.addProperty("normalLyricEffectsEnabled", normalLyricEffectsEnabled);
+        o.addProperty("lyricEdgeFadeEnabled", lyricEdgeFadeEnabled);
+        o.addProperty("currentLineScale", currentLineScale);
+        o.addProperty("currentWordScale", currentWordScale);
+        o.addProperty("currentGlowStrength", currentGlowStrength);
+        o.addProperty("lyricGlowSpread", lyricGlowSpread);
+        o.addProperty("fullscreenGlowStrength", fullscreenGlowStrength);
+        o.addProperty("fullscreenLyricStyle", fullscreenLyricStyle);
+        o.addProperty("fullscreenLyricBackgroundMode", fullscreenLyricBackgroundMode);
+        o.addProperty("fullscreenLyricFluidStyle", fullscreenLyricFluidStyle);
+        o.addProperty("fullscreenLyricFluidSaturation", fullscreenLyricFluidSaturation);
+        o.addProperty("fullscreenLyricFluidStatic", fullscreenLyricFluidStatic);
+        o.addProperty("fullscreenLyricEdgeBlur", fullscreenLyricEdgeBlur);
+        o.addProperty("fullscreenLyricFluidAudio", fullscreenLyricFluidAudio);
+        o.addProperty("fullscreenLyricBackgroundLayers", fullscreenLyricBackgroundLayers);
+        o.addProperty("fullscreenLyricLayerLatentDither", fullscreenLyricLayerLatentDither);
+        o.addProperty("fullscreenLyricLayerSora", fullscreenLyricLayerSora);
+        o.addProperty("themeColorSource", themeColorSource);
+        o.addProperty("osdLyricStyle", osdLyricStyle);
+        o.addProperty("blossomBackdropBlur", blossomBackdropBlur);
+        o.addProperty("glassMaterialVersion", com.muoniumplayer.core.rendering.GlassMaterialProfile.VERSION);
+        o.addProperty("glassSurfacePlayer", glassSurfacePlayer);
+        o.addProperty("glassSurfaceIsland", glassSurfaceIsland);
+        o.addProperty("glassSurfaceDesktopLyric", glassSurfaceDesktopLyric);
+        o.addProperty("glassSurfaceEditors", glassSurfaceEditors);
+        o.addProperty("glassBackdropScale", glassBackdropScale);
+        o.addProperty("glassBlurSigma", glassBlurSigma);
+        o.addProperty("glassBlurPlayer", glassBlurPlayer);
+        o.addProperty("glassBlurIsland", glassBlurIsland);
+        o.addProperty("glassBlurDesktopLyric", glassBlurDesktopLyric);
+        o.addProperty("glassBlurEditors", glassBlurEditors);
+        o.addProperty("glassBloom", glassBloom);
+        o.addProperty("glassFusion", glassFusion);
+        o.addProperty("glassTintStrength", glassTintStrength);
+        o.addProperty("glassEdgeGlow", glassEdgeGlow);
+        o.addProperty("glassRealtimeCapture", glassRealtimeCapture);
+        o.addProperty("glassMobileExperimental", glassMobileExperimental);
+        o.addProperty("blossomPanelOpacity", blossomPanelOpacity);
+        o.addProperty("blossomVisibleLines", blossomVisibleLines);
+        o.addProperty("blossomRhythmBorder", blossomRhythmBorder);
+        o.addProperty("blossomBorderStrength", blossomBorderStrength);
+        o.addProperty("cadenzaDecorColorMode", cadenzaDecorColorMode);
+        o.addProperty("cadenzaDecorColorCount", cadenzaDecorColorCount);
+        o.addProperty("cadenzaBeatsPerColor", cadenzaBeatsPerColor);
+        o.add("cadenzaDecorColors", rgbArray(cadenzaDecorColors));
+        o.addProperty("lyricFontScale", lyricFontScale);
+        o.addProperty("luminousWordSpacing", luminousWordSpacing);
+        o.addProperty("luminousFloatAmount", luminousFloatAmount);
+        o.addProperty("luminousWordRotation", luminousWordRotation);
+        o.addProperty("partitaStaggerMin", partitaStaggerMin);
+        o.addProperty("partitaStaggerMax", partitaStaggerMax);
+        o.addProperty("partitaGuideLines", partitaGuideLines);
+        o.addProperty("fumeTextHoldRatio", fumeTextHoldRatio);
+        o.addProperty("fumeCameraSpeed", fumeCameraSpeed);
+        o.addProperty("fumeHeroScale", fumeHeroScale);
+        o.addProperty("fumeGeometricBackground", fumeGeometricBackground);
+        o.addProperty("cappellaBubbleWidth", cappellaBubbleWidth);
+        o.addProperty("cappellaAvatarSource", cappellaAvatarSource);
+        o.addProperty("cappellaEmojiEnabled", cappellaEmojiEnabled);
+        o.addProperty("cappellaEmojiChance", cappellaEmojiChance);
+        o.addProperty("tiltSplitProbability", tiltSplitProbability);
+        o.addProperty("tiltStyleProbability", tiltStyleProbability);
+        o.addProperty("tiltColorScheme", tiltColorScheme);
+        o.addProperty("dioramaDepthSpread", dioramaDepthSpread);
+        o.addProperty("dioramaDust", dioramaDust);
+        o.addProperty("pendoloArcRadius", pendoloArcRadius);
+        o.addProperty("pendoloArcAngle", pendoloArcAngle);
+        o.addProperty("pendoloActiveScale", pendoloActiveScale);
+        o.addProperty("pendoloGearDecor", pendoloGearDecor);
+        o.addProperty("worldLyricsEnabled", worldLyricsEnabled);
+        o.addProperty("worldLyricsDistance", worldLyricsDistance);
+        o.addProperty("worldLyricsFacePlayer", worldLyricsFacePlayer);
+        o.addProperty("worldLyricsKeepAway", worldLyricsKeepAway);
+        o.addProperty("worldLyricsSpreadDeg", worldLyricsSpreadDeg);
+        o.addProperty("worldLyricsScale", worldLyricsScale);
+        o.addProperty("worldLyricsModernStyle", worldLyricsModernStyle);
+        o.addProperty("worldLyricsSplitLines", worldLyricsSplitLines);
+        o.addProperty("worldLyricsGlowEnabled", worldLyricsGlowEnabled);
+        o.addProperty("worldLyricsGlowStrength", worldLyricsGlowStrength);
+        o.addProperty("worldLyricsGlowSpread", worldLyricsGlowSpread);
+        o.addProperty("worldLyricsGlowColorMode", worldLyricsGlowColorMode);
+        o.addProperty("worldLyricsGlowColorRgb", worldLyricsGlowColorRgb);
+        o.addProperty("worldLyricsColorRgb", worldLyricsColorRgb);
+        o.addProperty("worldLyricsColorCustom", worldLyricsColorCustom);
+        o.addProperty("worldLyricsWordPop", worldLyricsWordPop);
+        o.addProperty("worldLyricsTextFlash", worldLyricsTextFlash);
+        o.addProperty("worldLyricsCadenza", worldLyricsCadenza);
+        o.addProperty("worldLyricsHuiguang", worldLyricsHuiguang);
+        o.addProperty("worldLyricsKeywordColors", worldLyricsKeywordColors);
+        o.addProperty("worldLyricsQualityTier", worldLyricsQualityTier);
+        o.addProperty("worldLyricsStayOnScreen", worldLyricsStayOnScreen);
+        o.addProperty("worldLyricsKeepDistance", worldLyricsKeepDistance);
+        o.addProperty("worldLyricsAboveGround", worldLyricsAboveGround);
+        o.addProperty("worldLyricsTranslation", worldLyricsTranslation);
+        o.addProperty("worldLyricsTransEffects", worldLyricsTransEffects);
+        o.addProperty("worldLyricsGlowTier", worldLyricsGlowTier);
+        o.addProperty("worldLyricsGlowMode", worldLyricsGlowMode);
+        o.addProperty("worldLyricsCoverColorMode", worldLyricsCoverColorMode);
+        o.addProperty("worldLyricsCoverGradient", worldLyricsCoverGradient);
+        o.addProperty("worldLyricsCoverPaletteRgb0", worldLyricsCoverPaletteRgb0);
+        o.addProperty("worldLyricsCoverPaletteRgb1", worldLyricsCoverPaletteRgb1);
+        o.addProperty("worldLyricsCoverPaletteRgb2", worldLyricsCoverPaletteRgb2);
+        o.addProperty("worldLyricsCoverPaletteRgb3", worldLyricsCoverPaletteRgb3);
+        o.addProperty("worldLyricsHudDraw", worldLyricsHudDraw);
+        o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
+        o.addProperty("osdKaraokePulseStrength", osdKaraokePulseStrength);
+        o.addProperty("osdKaraokeSmoothing", osdKaraokeSmoothing);
+        o.addProperty("osdDuetSpread", osdDuetSpread);
 
-            o.addProperty("spectrumEnabled", spectrumEnabled);
+        o.addProperty("normalOpacity", normalOpacity);
+        o.addProperty("normalScale", normalScale);
+        o.addProperty("normalGlowStrength", normalGlowStrength);
+        o.addProperty("normalLineSpacing", normalLineSpacing);
+        o.addProperty("edgeFadeSize", edgeFadeSize);
+        o.addProperty("scrollSmoothness", scrollSmoothness);
+        o.addProperty("secondaryOpacity", secondaryOpacity);
+
+        o.addProperty("spectrumEnabled", spectrumEnabled);
         o.addProperty("musicInfoEnabled", musicInfoEnabled);
         o.addProperty("musicLyricsEnabled", musicLyricsEnabled);
-            o.addProperty("spectrumInHud", spectrumInHud);
-            o.addProperty("spectrumHudStyle", spectrumHudStyle);
-            o.addProperty("spectrumInPlayer", spectrumInPlayer);
-            o.addProperty("spectrumFullscreenStyle", spectrumFullscreenStyle);
-            o.addProperty("spectrumBarCountPreset", spectrumBarCountPreset);
-            o.addProperty("spectrumCustomBarCount", spectrumCustomBarCount);
-            o.addProperty("spectrumColorSource", spectrumColorSource);
-            o.addProperty("spectrumOpacity", spectrumOpacity);
-            o.addProperty("spectrumHeight", spectrumHeight);
+        o.addProperty("spectrumInHud", spectrumInHud);
+        o.addProperty("spectrumHudStyle", spectrumHudStyle);
+        o.addProperty("spectrumInPlayer", spectrumInPlayer);
+        o.addProperty("spectrumFullscreenStyle", spectrumFullscreenStyle);
+        o.addProperty("spectrumBarCountPreset", spectrumBarCountPreset);
+        o.addProperty("spectrumCustomBarCount", spectrumCustomBarCount);
+        o.addProperty("spectrumColorSource", spectrumColorSource);
+        o.addProperty("spectrumOpacity", spectrumOpacity);
+        o.addProperty("spectrumHeight", spectrumHeight);
 
-            o.addProperty("dynamicIslandEnabled", dynamicIslandEnabled);
-            o.addProperty("islandSearchEnabled", islandSearchEnabled);
-            o.addProperty("dynamicIslandScale", dynamicIslandScale);
-            o.addProperty("dynamicIslandY", dynamicIslandY);
-            o.addProperty("infoCardBackdrop", infoCardBackdrop);
-            o.addProperty("osdLyricColorFollowCover", osdLyricColorFollowCover);
-            o.addProperty("dynamicIslandTextScale", dynamicIslandTextScale);
-            o.addProperty("dynamicIslandMaxWidth", dynamicIslandMaxWidth);
-            o.addProperty("dynamicIslandProgressHeight", dynamicIslandProgressHeight);
-            o.addProperty("dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds);
-            o.addProperty("dynamicIslandQueueIntervalSeconds", dynamicIslandQueueIntervalSeconds);
-            o.addProperty("dynamicIslandStyle", dynamicIslandStyle);
-            o.addProperty("dynamicIslandExpandSpeed", dynamicIslandExpandSpeed);
-            o.addProperty("dynamicIslandCollapseSpeed", dynamicIslandCollapseSpeed);
-            o.addProperty("dynamicIslandContentSpeed", dynamicIslandContentSpeed);
-            o.addProperty("dynamicIslandEntranceDuration", dynamicIslandEntranceDuration);
-            o.addProperty("dynamicIslandOvershoot", dynamicIslandOvershoot);
-            o.addProperty("dynamicIslandSpinnerSpeed", dynamicIslandSpinnerSpeed);
-            o.addProperty("dynamicIslandAlwaysOn", dynamicIslandAlwaysOn);
-            o.addProperty("dynamicIslandAmbientFps", dynamicIslandAmbientFps);
-            o.addProperty("dynamicIslandAmbientPing", dynamicIslandAmbientPing);
-            o.addProperty("dynamicIslandAmbientClock", dynamicIslandAmbientClock);
+        o.addProperty("dynamicIslandEnabled", dynamicIslandEnabled);
+        o.addProperty("islandSearchEnabled", islandSearchEnabled);
+        o.addProperty("dynamicIslandScale", dynamicIslandScale);
+        o.addProperty("dynamicIslandY", dynamicIslandY);
+        o.addProperty("infoCardBackdrop", infoCardBackdrop);
+        o.addProperty("osdLyricColorFollowCover", osdLyricColorFollowCover);
+        o.addProperty("dynamicIslandTextScale", dynamicIslandTextScale);
+        o.addProperty("dynamicIslandMaxWidth", dynamicIslandMaxWidth);
+        o.addProperty("dynamicIslandProgressHeight", dynamicIslandProgressHeight);
+        o.addProperty("dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds);
+        o.addProperty("dynamicIslandQueueIntervalSeconds", dynamicIslandQueueIntervalSeconds);
+        o.addProperty("dynamicIslandStyle", dynamicIslandStyle);
+        o.addProperty("dynamicIslandExpandSpeed", dynamicIslandExpandSpeed);
+        o.addProperty("dynamicIslandCollapseSpeed", dynamicIslandCollapseSpeed);
+        o.addProperty("dynamicIslandContentSpeed", dynamicIslandContentSpeed);
+        o.addProperty("dynamicIslandEntranceDuration", dynamicIslandEntranceDuration);
+        o.addProperty("dynamicIslandOvershoot", dynamicIslandOvershoot);
+        o.addProperty("dynamicIslandSpinnerSpeed", dynamicIslandSpinnerSpeed);
+        o.addProperty("dynamicIslandAlwaysOn", dynamicIslandAlwaysOn);
+        o.addProperty("dynamicIslandAmbientFps", dynamicIslandAmbientFps);
+        o.addProperty("dynamicIslandAmbientPing", dynamicIslandAmbientPing);
+        o.addProperty("dynamicIslandAmbientClock", dynamicIslandAmbientClock);
         o.addProperty("dynamicIslandAmbientNowPlaying", dynamicIslandAmbientNowPlaying);
         o.addProperty("dynamicIslandAmbientRotate", dynamicIslandAmbientRotate);
         o.addProperty("playerFadeSpeed", playerFadeSpeed);
@@ -1290,12 +1325,13 @@ public final class HudConfig {
         o.addProperty("dynamicIslandAmbientStatusSeconds", dynamicIslandAmbientStatusSeconds);
         o.addProperty("dynamicIslandAmbientNowPlayingSeconds", dynamicIslandAmbientNowPlayingSeconds);
 
-            o.addProperty("animatedCoverEnabled", animatedCoverEnabled);
+        o.addProperty("animatedCoverEnabled", animatedCoverEnabled);
+        return o;
+    }
 
-            JsonConfigStorage.writeObject(FILE, GSON, o);
-
-        } catch (Throwable ignored) {
-        }
+    /** 出厂值的 JSON 投影（深拷贝，调用方可以随意改）。 */
+    public static JsonObject defaultsJson() {
+        return DEFAULTS.deepCopy();
     }
 
     public static int clampInt(int v, int min, int max) {

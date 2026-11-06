@@ -168,6 +168,14 @@ public final class UpdateChecker {
     private static volatile String currentVersion = "";
     private static volatile String mcVersion = "";
     private static volatile String loaderId = "";
+
+    /**
+     * 当前 Minecraft 版本：由各树入口在 {@link #beginCheck} 时登记，尚未登记时为空串。
+     * 共享层要用版本号（例如模板预设记「由哪个版本生成」）就读这里，不反向引用树内的入口类。
+     */
+    public static String minecraftVersion() {
+        return mcVersion;
+    }
     private static volatile String latestVersion = "";
     private static volatile String downloadPage = DOWNLOAD_PAGE;
     private static volatile String releaseNotes = "";

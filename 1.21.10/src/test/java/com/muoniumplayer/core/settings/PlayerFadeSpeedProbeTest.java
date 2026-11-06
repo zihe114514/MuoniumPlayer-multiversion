@@ -93,6 +93,8 @@ class PlayerFadeSpeedProbeTest {
         allowed.add("PlayerIslandTransition.java");
         allowed.add("NCMScreen.java");
         allowed.add("HudSettingsModel.java");
+        // 模板预设的键策略：只是把这个键列进「动效」分面做导入导出，不读它驱动任何动画。
+        allowed.add("HudPresetDomain.java");
         for (String file : referencing) {
             assertTrue(allowed.contains(file),
                     "不该有别的文件读播放器开关动画速度: " + file + "（需求是只调这一段淡入淡出）");

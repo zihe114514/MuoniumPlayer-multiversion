@@ -162,6 +162,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     /** 音效调音台面板：播放条右下角那颗调音图标打开的浮层（蝰蛇预设页 + 场景声学页）。 */
     public ViperOverlay viperOverlay = null;
+    /** 模板预设面板：与音效调音台同层、同一套版式。 */
+    public PresetOverlay presetOverlay = null;
 
     /** 主题调色板：主题按钮右键打开的二级菜单，实时预览主题颜色配置项。 */
     public ThemePaletteOverlay themePaletteOverlay = null;
@@ -766,6 +768,19 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             if (this.viperOverlay.shouldClose()) {
                 this.viperOverlay.dispose();
                 this.viperOverlay = null;
+            }
+            StencilClipManager.endClip();
+        }
+        // 模板预设面板与音效调音台同层：同一排播放条入口、同一套二级浮层版式。
+        if (this.presetOverlay != null) {
+            StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+            this.presetOverlay.setBounds(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight());
+            this.presetOverlay.setAlpha(alpha);
+            this.presetOverlay.renderWidget(mouseX, mouseY, dWheel);
+            if (this.presetOverlay.shouldClose()) {
+                this.presetOverlay.dispose();
+                this.presetOverlay = null;
             }
             StencilClipManager.endClip();
         }
@@ -1517,6 +1532,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.viperOverlay.onInit();
     }
 
+    /** 打开模板预设面板；重复打开时先回收上一次的实例，避免两层叠在一起。 */
+    public void openPresets() {
+        if (this.presetOverlay != null) this.presetOverlay.dispose();
+        this.presetOverlay = new PresetOverlay();
+        this.presetOverlay.onInit();
+    }
+
     /**
      * 打开一起听面板；重复打开时先回收上一次的实例，避免两层叠在一起。
      *
@@ -1656,6 +1678,16 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             }
             return;
         }
+
+        if (this.presetOverlay != null) {
+            // 「存为预设」页有名字输入框：ESC 要抢在控件树之前（同建单页），否则焦点在框里时按不出去。
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                this.presetOverlay.handleEscape();
+                return;
+            }
+            this.presetOverlay.onKeyTypedReceived(typedChar, keyCode);
+            return;
+        }
         // 一起听的「加入房间」页有可编辑的邀请码输入框，必须先让控件树看到按键，
         // 否则粘贴和输入都会像没反应。
         if (this.listenTogetherOverlay != null) {
@@ -1752,6 +1784,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 || this.musicSourceOverlay != null
                 || this.spotifyConnectSheet != null
                 || this.viperOverlay != null
+                || this.presetOverlay != null
                 || this.listenTogetherOverlay != null
                 || this.mpPartyOverlay != null
                 || this.accountManagerOverlay != null
@@ -1906,6 +1939,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         }
         if (this.viperOverlay != null) {
             this.viperOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            return;
+        }
+        if (this.presetOverlay != null) {
+            this.presetOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
             return;
         }
         if (this.listenTogetherOverlay != null) {

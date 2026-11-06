@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.viper;
 
+import com.google.gson.JsonObject;
 import com.muoniumplayer.core.settings.ConfigPaths;
 
 import java.io.File;
@@ -177,6 +178,75 @@ public final class ViperRuntime {
             return "已启用，但还没有选择预设";
         }
         return "已启用 · 预设「" + preset + "」生效中";
+    }
+
+    // ════════════════════════════ 模板预设 ════════════════════════════
+
+    /** 按名取一份预设的归一化 JSON（schema 2.1，深拷贝）；不存在或解析失败返回 {@code null}。 */
+    public static JsonObject exportPresetJson(String name) {
+        if (name == null || name.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            ViperPreset preset = STORE.load(name);
+            return preset == null ? null : preset.json().deepCopy();
+        } catch (Throwable failure) {
+            return null;
+        }
+    }
+
+    /**
+     * 把一份分享来的预设内容落进 presets 目录，返回落盘名。
+     *
+     * <p>同名且内容相同就直接复用；内容不同则另存为「名字（分享）」「名字（分享 2）」……
+     * <b>绝不覆盖玩家自己的同名预设</b>。比较时剥掉 {@code schemaVersion/name/createdAt} 三个头字段。
+     * 内容先过一遍 {@link ViperPresetParser}：未知字段丢弃、数值钳位，与从文件导入同一条路。</p>
+     *
+     * @throws IllegalArgumentException 内容不是可识别的 ViPER 预设
+     */
+    public static String importPresetJson(JsonObject json, String preferredName) {
+        if (json == null) {
+            throw new IllegalArgumentException("预设内容为空");
+        }
+        ViperPreset incoming = ViperPresetParser.parse(json.toString(), ViperPresetStore.sanitizeName(preferredName));
+        String base = ViperPresetStore.sanitizeName(incoming.name());
+        JsonObject content = withoutHeader(incoming.json());
+        for (int attempt = 1; attempt <= 20; attempt++) {
+            String candidate = attempt == 1 ? base
+                    : ViperPresetStore.sanitizeName(base + "（分享" + (attempt == 2 ? "" : " " + (attempt - 1)) + "）");
+            ViperPreset existing = STORE.load(candidate);
+            if (existing == null) {
+                JsonObject body = incoming.json().deepCopy();
+                body.addProperty(ViperPreset.KEY_NAME, candidate);
+                STORE.save(new ViperPreset(candidate, body));
+                return candidate;
+            }
+            if (withoutHeader(existing.json()).equals(content)) {
+                return candidate;
+            }
+        }
+        throw new IllegalArgumentException("同名预设太多，换个名字再试");
+    }
+
+    /** 一次设置总开关与当前预设（{@code null} 取消选择）：只落一次盘、只重载一次。 */
+    public static void applyState(boolean enabled, String presetName) {
+        updateSettings(current -> {
+            current.setEnabled(enabled);
+            current.setPresetName(presetName);
+        });
+    }
+
+    /** 预设目录里有没有这一份（json 或 xml）。 */
+    public static boolean hasPreset(String name) {
+        return name != null && STORE.find(name) != null;
+    }
+
+    private static JsonObject withoutHeader(JsonObject body) {
+        JsonObject copy = body.deepCopy();
+        copy.remove(ViperPreset.KEY_SCHEMA_VERSION);
+        copy.remove(ViperPreset.KEY_NAME);
+        copy.remove(ViperPreset.KEY_CREATED_AT);
+        return copy;
     }
 
     /** 一行状态描述（日志与未来的调试界面共用）。 */

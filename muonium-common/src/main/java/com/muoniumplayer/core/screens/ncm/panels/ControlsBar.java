@@ -783,11 +783,11 @@ public class ControlsBar extends NCMPanel {
                     if (volumeX <= 0.0 || volumeX >= parentWidth) {
                         volumeX = parentWidth - volumeWidth - 8.0;
                     }
-                    // 音效入口（18 图标）钉死在芯片与音量之间：音量 ←10← 音效 ←10← 芯片。
+                    // 音效入口（18 图标）钉死在芯片与音量之间：音量 ←10← 预设 ←8← 音效 ←10← 芯片。
                     // 原来这里是一段随面板宽度伸缩的空隙（clamp(宽×4.5%,14,38)+26，宽面板上
                     // 60px+ 的死空间），右侧看着永远空一块；改固定间距链之后整条右簇收紧，
-                    // 无论面板多宽四颗入口都排在同一段里。
-                    double selectorGap = 10.0 + 18.0 + 10.0;
+                    // 无论面板多宽入口都排在同一段里。模板预设入口接在音效右侧，音效仍紧贴芯片。
+                    double selectorGap = 10.0 + 18.0 + 8.0 + 18.0 + 10.0;
                     // 箭头交给矢量画，文字里就不该再留那枚全角「﹀」：它既占宽又和文字基线对不齐，
                     // 而 LucideIconWidget 那一枚是随缩放算出来的，和菜单里的勾选/档位图标同一套笔画。
                     // 量宽与渲染必须同一份字体：标签固定 pf12bold，量宽也用它 —— 原来 scale<.9
@@ -893,6 +893,30 @@ public class ControlsBar extends NCMPanel {
                         || com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings.isEnabled()
                 ? "音效调音台（蝰蛇 · 场景声学 · 开启中）"
                 : "音效调音台（蝰蛇 · 场景声学）");
+
+        // 模板预设入口：紧跟在音效右侧（音效右缘 +8），与音效同一条中线、同一套尺寸。
+        // 它管的是「整套外观 + 音效」，放在调音台旁边而不是侧栏：侧栏那排快捷键在常见窗口下
+        // 只放得下四五颗，第六颗多半会被挤掉。
+        final LucideIconWidget presetEntry = new LucideIconWidget(() -> FoliaLucideIcons.PRESET,
+                () -> PartyIcons.EXPLORE, FontManager.partyIcon32, 0, 0, 18, 18);
+        this.addChild(presetEntry);
+        presetEntry.setShouldOverrideMouseCursor(true);
+        presetEntry.setDrawScale(.78);
+        presetEntry.setBeforeRenderCallback(() -> {
+            presetEntry
+                    .setClickable(true)
+                    .setPosition(viperToggle.getRelativeX() + 18.0 + 8.0,
+                            Math.max(1.0, (presetEntry.getParentHeight() - 18.0) * .5 - iconBandLift));
+            presetEntry.setColor(NCMScreen.getInstance().presetOverlay != null
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
+                    : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        });
+        presetEntry.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+            if (mouseButton != 0) return false;
+            NCMScreen.getInstance().openPresets();
+            return true;
+        });
+        presetEntry.setTooltip("模板预设（一键换风格 · 分享配置）");
 
         // 下一首播放列表：队列抽屉的开关排在音质按钮左边，沿用右下角次级控件的同一条锚点链。
         // 用「播放三角 + 列表」（player-action-icons U+E144）而不是歌曲行那枚「下一首播放」

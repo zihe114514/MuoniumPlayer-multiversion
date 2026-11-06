@@ -1747,6 +1747,11 @@ public final class HudSettingsModel {
                                         }, STRENGTH_STEPS, HudSettingsModel::setStrengthStep))),
 
                 new Category("界面与主题", "主题皮肤、频谱、真玻璃和播放器来源", 0xFFE59AC8, HudSettingsIcons.NOTE,
+                        // 模板预设：内置界面的入口是标题栏那根魔法棒（弹窗开在设置页里），这一行在那里自动藏起；
+                        // MuoniumConfig / OneConfig / ModernUI 没有那排标题栏按钮，靠它兜底。逻辑在共享层，七树逐字相同。
+                        new Group("模板预设", HudSettingsIcons.SPARKLE,
+                                action(PresetQuickActions.OPEN_PANEL_LABEL, PresetQuickActions.OPEN_PANEL_HINT,
+                                        PresetQuickActions::openPanel, PresetQuickActions::listedInModel)),
                         new Group("音乐频谱", HudSettingsIcons.NOTE,
                                 toggle("音乐频谱", "频谱总开关；隐藏时停止采样，不影响播放。",
                                         () -> HudConfig.spectrumEnabled,

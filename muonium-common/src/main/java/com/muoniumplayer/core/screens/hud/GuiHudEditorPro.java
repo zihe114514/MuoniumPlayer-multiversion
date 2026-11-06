@@ -87,13 +87,13 @@ public class GuiHudEditorPro extends GuiScreen {
     /** 说明折成两行的条目行高。 */
     private static final int ROW_H_TWO_LINES = 54;
     private static final int CARD_GAP = 8;
-    private static final int CARD_RADIUS = 10;
+    static final int CARD_RADIUS = 10;
     private static final int EMPTY_STATE_H = 78;
 
     private static final int TRACK_W = 116;
     private static final int VALUE_W = 48;
-    private static final int SWITCH_W = 38;
-    private static final int SWITCH_H = 20;
+    static final int SWITCH_W = 38;
+    static final int SWITCH_H = 20;
     private static final int SWATCH_W = 32;
     private static final int SWATCH_H = 20;
 
@@ -137,18 +137,18 @@ public class GuiHudEditorPro extends GuiScreen {
     // 浮层、分段滑块、侧栏高亮条走同一个旋钮。默认 3.0 档下这些数字实际都被除了 3。
 
     /** 悬停：跟手的那一档，太长会显得按钮黏。 */
-    private static final double HOVER_MS = 150.0;
+    static final double HOVER_MS = 150.0;
     /** 开关旋钮走完一次行程。 */
-    private static final double KNOB_MS = 200.0;
+    static final double KNOB_MS = 200.0;
     /** 搜索框聚焦（底色 + 下划线 + 光标）。 */
-    private static final double FOCUS_MS = 160.0;
+    static final double FOCUS_MS = 160.0;
     /**
      * 侧栏高亮条换行的行程。播放器侧栏那一族用的是同一个数字同一条款曲线（越过目标再收回来），
      * 这一页和它是同一个应用里的同一套动效语言，不该漂成两档。
      */
     private static final double INDICATOR_MS = 420.0;
     /** 确认框与取色器这类「凭空出现的一层」的到场时长。 */
-    private static final double POP_MS = 170.0;
+    static final double POP_MS = 170.0;
 
     /**
      * 内容逐块落位的窗口排布：起点、间距、单块行程、并档上限。
@@ -179,20 +179,20 @@ public class GuiHudEditorPro extends GuiScreen {
     // ==================== 配色 ====================
 
     private static final int PANEL_BG = 0xF2141922;
-    private static final int PANEL_EDGE = 0x24FFFFFF;
+    static final int PANEL_EDGE = 0x24FFFFFF;
     private static final int NAV_BG = 0x22000000;
     private static final int NAV_HOVER = 0x14FFFFFF;
     private static final int NAV_SELECTED = 0x22FFFFFF;
-    private static final int CARD_BG = 0x12FFFFFF;
-    private static final int CARD_EDGE = 0x0EFFFFFF;
-    private static final int ROW_HOVER = 0x1AFFFFFF;
-    private static final int TEXT_PRIMARY = 0xFFF2F5FA;
-    private static final int TEXT_SECONDARY = 0xFF98A3B4;
-    private static final int TEXT_TERTIARY = 0xFF6E7A8C;
+    static final int CARD_BG = 0x12FFFFFF;
+    static final int CARD_EDGE = 0x0EFFFFFF;
+    static final int ROW_HOVER = 0x1AFFFFFF;
+    static final int TEXT_PRIMARY = 0xFFF2F5FA;
+    static final int TEXT_SECONDARY = 0xFF98A3B4;
+    static final int TEXT_TERTIARY = 0xFF6E7A8C;
     private static final int TRACK_BG = 0x36FFFFFF;
     private static final int SWITCH_OFF = 0x33FFFFFF;
-    private static final int BUTTON_BG = 0x1FFFFFFF;
-    private static final int BUTTON_HOVER = 0x38FFFFFF;
+    static final int BUTTON_BG = 0x1FFFFFFF;
+    static final int BUTTON_HOVER = 0x38FFFFFF;
 
     // ==================== 一行的几何 ====================
 
@@ -311,6 +311,8 @@ public class GuiHudEditorPro extends GuiScreen {
     private GuiTextField hexColorInput;
     private boolean settingsDirty;
     private boolean resetConfirmationVisible;
+    /** 标题栏魔法棒打开的模板预设弹窗：与播放器里那张同一份内容，换成这一页的画法。 */
+    private final HudPresetDialog presetDialog = new HudPresetDialog(this);
 
     /** 两块叠加层的点选/拖动/边缘缩放/吸附状态机。渲染读它的几何，判定也读它的几何。 */
     private final HudOverlayStage stage = new HudOverlayStage();
@@ -376,6 +378,8 @@ public class GuiHudEditorPro extends GuiScreen {
      */
     private float dialogGate;
     private float pickerGate;
+    /** 模板预设弹窗的到场进度，与确认框同一条纪律：每帧无条件推进。 */
+    private float presetGate;
 
     private boolean introStarted;
 
@@ -431,6 +435,8 @@ public class GuiHudEditorPro extends GuiScreen {
                 HudConfig.hudEditorLastCategory));
         ensureSearchInput();
         ensureHexColorInput();
+        // 标题栏有魔法棒了，设置声明里那一行「打开模板预设」就不必再在这一页出现。
+        PresetQuickActions.setHeaderEntryShown(true);
         // initGui 在窗口缩放时也会被调用。入场动画只在真正打开时播一次，否则每次改分辨率都要重新淡入。
         if (!introStarted) {
             introStarted = true;
@@ -441,6 +447,8 @@ public class GuiHudEditorPro extends GuiScreen {
 
     @Override
     public void onGuiClosed() {
+        PresetQuickActions.setHeaderEntryShown(false);
+        presetDialog.close();
         if (settingsDirty) {
             HudConfig.save();
             settingsDirty = false;
@@ -495,6 +503,7 @@ public class GuiHudEditorPro extends GuiScreen {
                     editingColor != HudSettingsModel.ColorTarget.NONE ? 1f : 0f, POP_MS);
             choiceGate = motion("choice.pop", openChoice != null ? 1f : 0f, DROP_MS);
             popGate = motion("wpop.in", stage.hasSelection() ? 1f : 0f, POP_MS);
+            presetGate = motion("preset.in", presetDialog.isOpen() ? 1f : 0f, POP_MS);
             if (page.isGone()) {
                 // 退场播完才真的把界面收掉：这一帧只剩一个全透明的面板，画它没有意义。
                 closeScreen();
@@ -520,6 +529,13 @@ public class GuiHudEditorPro extends GuiScreen {
 
             int wheel = Mouse.getDWheel();
             if (retiring || resetConfirmationVisible) wheel = 0;
+            // 模板预设弹窗开着时滚轮只归它：面板列表与 HUD 舞台都不动。
+            int presetWheel = 0;
+            boolean presetUp = presetDialog.isOpen();
+            if (presetUp) {
+                presetWheel = wheel;
+                wheel = 0;
+            }
             boolean overPanel = isInside(mouseX, mouseY, panelX, panelY, panelW, panelH);
             boolean overPicker = editingColor != HudSettingsModel.ColorTarget.NONE
                     && isInside(mouseX, mouseY, pickerX(panelX, panelW), pickerY(panelY, panelH), PICKER_W, PICKER_H);
@@ -527,7 +543,7 @@ public class GuiHudEditorPro extends GuiScreen {
                     && isInside(mouseX, mouseY, widgetPopoverX(), widgetPopoverY(),
                             WIDGET_POPOVER_W, widgetPopoverH());
             boolean uiBusy = retiring || resetConfirmationVisible || overPanel || overPicker
-                    || overPopover || draggingPanel;
+                    || overPopover || draggingPanel || presetUp;
 
             if (!retiring && !resetConfirmationVisible) {
                 updateColorPickerWhileDragging(mouseX, mouseY, panelX, panelY, panelW, panelH);
@@ -571,12 +587,15 @@ public class GuiHudEditorPro extends GuiScreen {
             } else {
                 drawLyricsPlaceholder(fr, lyricX, lyricY, lyricW, lyricH);
             }
-            drawStageOverlays(fr, infoRect, lyricRect, mouseX, mouseY);
+            // 弹窗开着：底下的部件不跟着鼠标亮（给一个不在任何地方的坐标）。
+            int underX = presetUp ? -10000 : mouseX;
+            int underY = presetUp ? -10000 : mouseY;
+            drawStageOverlays(fr, infoRect, lyricRect, underX, underY);
 
             // ==== 设置面板 ====
             layerAlpha = plate;
             try {
-                drawPanel(fr, panelX, panelY, panelW, panelH, mouseX, mouseY, wheel, overPanel);
+                drawPanel(fr, panelX, panelY, panelW, panelH, underX, underY, wheel, overPanel && !presetUp);
             } finally {
                 layerAlpha = 1f;
             }
@@ -612,6 +631,17 @@ public class GuiHudEditorPro extends GuiScreen {
             }
 
             super.drawScreen(mouseX, mouseY, partialTicks);
+            // 模板预设弹窗：落在设置面板正中，暗幕只盖住面板；收起的过程中按最后一帧继续淡出。
+            if (presetUp || presetGate > 0.01f) {
+                float outer = pushAlpha(presetGate);
+                try {
+                    presetDialog.draw(panelX, panelY, panelW, panelH,
+                            HudSettingsModel.categories()[clampCategory()].accent,
+                            mouseX, mouseY, presetWheel, slideY(presetGate));
+                } finally {
+                    layerAlpha = outer;
+                }
+            }
             if (resetConfirmationVisible) {
                 float outer = pushAlpha(dialogGate);
                 SkijaGfx.pushMatrix();
@@ -1038,6 +1068,8 @@ public class GuiHudEditorPro extends GuiScreen {
                     restore, mouseX, mouseY, TEXT_SECONDARY, active.accent);
         }
 
+        drawPresetButton(presetButton(panelX, panelY, panelW, panelH), mouseX, mouseY, active.accent);
+
         drawRoundedRect(panelX + 14, panelY + HEADER_H - 1, panelW - 28, 1, 1, 0x1AFFFFFF);
     }
 
@@ -1062,6 +1094,42 @@ public class GuiHudEditorPro extends GuiScreen {
                 ? oneConfigButton(panelX, panelY, panelW, panelH)
                 : collapseButton(panelX, panelY, panelW, panelH);
         return new int[] { anchorButton[0] - 6 - 22, anchorButton[1], 22, 22 };
+    }
+
+    /**
+     * 模板预设（魔法棒）：标题栏按钮排的最左一颗，跟在「回到默认位置」/ OneConfig / 折叠键后面。
+     *
+     * <p>和播放条上那一枚同一个图标（lucide {@code wand-sparkles}），点开的是这一页里的弹窗。
+     * 很多配置本来就在这一页调，不该为了套一个风格再跑去播放器。</p>
+     */
+    private int[] presetButton(int panelX, int panelY, int panelW, int panelH) {
+        int[] anchor = panelMoved() ? restorePositionButton(panelX, panelY, panelW, panelH)
+                : OneConfigHudBridge.isAvailable() ? oneConfigButton(panelX, panelY, panelW, panelH)
+                : collapseButton(panelX, panelY, panelW, panelH);
+        return new int[] { anchor[0] - 6 - 22, anchor[1], 22, 22 };
+    }
+
+    /** 与 {@link #drawGhostButton} 同一套外观；弹窗开着时保持点亮，图标换成强调色。 */
+    private void drawPresetButton(int[] box, int mouseX, int mouseY, int accent) {
+        boolean showing = presetDialog.isOpen();
+        float hp = named("header.preset", isInside(mouseX, mouseY, box[0], box[1], box[2], box[3]));
+        float on = motion("header.preset.on", showing ? 1f : 0f, HOVER_MS);
+        float lit = Math.max(hp, on);
+        drawRoundedRect(box[0], box[1], box[2], box[3], box[3] * 0.5, mix(BUTTON_BG, BUTTON_HOVER, lit));
+        if (lit > 0.02f) {
+            drawRoundedRect(box[0] + box[3] * 0.35, box[1], box[2] - box[3] * 0.7, 1, 1, fade(accent, lit * 0.9f));
+        }
+        int ink = mix(mix(TEXT_PRIMARY, 0xFFFFFFFF, hp * 0.6f), accent, on);
+        HudPresetDialog.drawWand(this, box[0] + box[2] / 2.0, box[1] + box[3] / 2.0, 13, ink);
+    }
+
+    private void openPresetDialog() {
+        editingColor = HudSettingsModel.ColorTarget.NONE;
+        openChoice = null;
+        draggingSlider = null;
+        stage.clearSelection();
+        if (searchInput != null) searchInput.setFocused(false);
+        presetDialog.open();
     }
 
     /** 图标 + 文字的胶囊按钮宽度。绘制与命中都从这里取，改字号也不会两边错开。 */
@@ -1548,7 +1616,7 @@ public class GuiHudEditorPro extends GuiScreen {
         return rowRight - VALUE_W - TRACK_W;
     }
 
-    private void drawSwitch(int x, int y, float progress, int accent, float hover) {
+    void drawSwitch(int x, int y, float progress, int accent, float hover) {
         drawRoundedRect(x, y, SWITCH_W, SWITCH_H, SWITCH_H * 0.5,
                 mix(mix(SWITCH_OFF, 0x45FFFFFF, hover), accent, progress));
         int knob = SWITCH_H - 6;
@@ -1576,7 +1644,7 @@ public class GuiHudEditorPro extends GuiScreen {
      *
      * <p>{@code key} 用来存悬停进度，必须每帧稳定 —— 用常量字符串，别拼可变内容。</p>
      */
-    private void drawGhostButton(String key, CFontRenderer fr, String glyph, String label,
+    void drawGhostButton(String key, CFontRenderer fr, String glyph, String label,
                                  int[] box, int mouseX, int mouseY, int tint, int accent) {
         int x = box[0];
         int y = box[1];
@@ -1767,6 +1835,11 @@ public class GuiHudEditorPro extends GuiScreen {
 
     private void mouseClickedImpl(int mouseX, int mouseY, int button) throws IOException {
         if (page.isDismissing()) return;
+        // 模板预设弹窗是最顶层的模态：开着时所有点击都归它（点在外面 = 收起，这一下不往下传）。
+        if (presetDialog.isOpen()) {
+            presetDialog.mouseClicked(mouseX, mouseY, button);
+            return;
+        }
         if (resetConfirmationVisible) {
             if (button == 0) handleResetConfirmationClick(mouseX, mouseY);
             return;
@@ -1834,6 +1907,11 @@ public class GuiHudEditorPro extends GuiScreen {
         }
 
         if (!collapsed) {
+            int[] preset = presetButton(panelX, panelY, panelW, panelH);
+            if (isInside(mouseX, mouseY, preset[0], preset[1], preset[2], preset[3])) {
+                openPresetDialog();
+                return;
+            }
             if (OneConfigHudBridge.isAvailable()) {
                 int[] oneConfig = oneConfigButton(panelX, panelY, panelW, panelH);
                 if (isInside(mouseX, mouseY, oneConfig[0], oneConfig[1], oneConfig[2], oneConfig[3])) {
@@ -2294,7 +2372,7 @@ public class GuiHudEditorPro extends GuiScreen {
      * 充数 —— trim 装不下时会补省略号，返回串可能比原文还长（省略号是额外字符），拿它当
      * {@code substring} 的下标就出了 {@code StringIndexOutOfBounds}（手机档窄面板必崩）。</p>
      */
-    private static String[] wrapToTwoLines(CFontRenderer fr, String text, double width) {
+    static String[] wrapToTwoLines(CFontRenderer fr, String text, double width) {
         // 先按宽度扫描原文，得出「能完整装进一行的最大字符数」。省略号的位置交给 trim。
         int fitChars = 0;
         for (int i = 1; i <= text.length(); i++) {
@@ -2428,6 +2506,11 @@ public class GuiHudEditorPro extends GuiScreen {
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
         if (page.isDismissing()) return;
+        // 弹窗开着：ESC 只退弹窗（子页先回主页），不会把整个设置页关掉；其余按键给名字输入框。
+        if (presetDialog.isOpen()) {
+            presetDialog.keyTyped(typedChar, keyCode);
+            return;
+        }
         if (resetConfirmationVisible) {
             if (keyCode == Keyboard.KEY_ESCAPE || keyCode == Keyboard.KEY_RCONTROL) {
                 resetConfirmationVisible = false;
@@ -3006,7 +3089,7 @@ public class GuiHudEditorPro extends GuiScreen {
         return motion(chan, target, durationMs, curve);
     }
 
-    private float motion(String key, float target, double durationMs) {
+    float motion(String key, float target, double durationMs) {
         return motion(key, target, durationMs, TransitionCurveCache.MOTION);
     }
 
@@ -3015,7 +3098,7 @@ public class GuiHudEditorPro extends GuiScreen {
      *
      * <p>{@code key} 必须每帧稳定，否则每帧都会从头开始动。</p>
      */
-    private float named(String key, boolean active) {
+    float named(String key, boolean active) {
         return motion(key, active ? 1f : 0f, HOVER_MS);
     }
 
@@ -3058,6 +3141,28 @@ public class GuiHudEditorPro extends GuiScreen {
         return outer;
     }
 
+    /**
+     * 给同包里那几层手画浮层（{@link HudPresetDialog}）用的分层淡入：读当前值、压一层、画完还回去。
+     *
+     * <p>和 {@link #pushAlpha} 同一个收口 —— 浮层不自己乘 alpha，它画的每一笔都经这里的绘制原语，
+     * 所以宿主压下来的到场进度一处不漏地跟着走。调用方同样必须在 {@code finally} 里还回去。</p>
+     */
+    float alpha() {
+        return layerAlpha;
+    }
+
+    void setAlpha(float alpha) {
+        layerAlpha = clamp01(alpha);
+    }
+
+    /** 给浮层建一个文本框：只当编辑状态容器（光标、选区、粘贴），绘制由调用方手画。 */
+    GuiTextField newTextField(int maxLength) {
+        GuiTextField field = new GuiTextField(3, fontRendererObj, 0, 0, 100, 12);
+        field.setEnableBackgroundDrawing(false);
+        field.setMaxStringLength(maxLength);
+        return field;
+    }
+
     /** 在 {@link #pageFade} 这条 t 上开一个缓动过的时间窗。 */
     private float gate(double first, double travel) {
         return (float) TransitionCurveCache.MOTION.at(SheetClock.window(pageFade, first,
@@ -3095,14 +3200,14 @@ public class GuiHudEditorPro extends GuiScreen {
     }
 
     /** 把颜色的 alpha 按比例压低（保留原有 alpha 作为上限）。 */
-    private static int fade(int color, float alpha) {
+    static int fade(int color, float alpha) {
         int base = (color >>> 24) & 0xFF;
         int a = Math.round(base * clamp01(alpha));
         return (Math.max(0, Math.min(255, a)) << 24) | (color & 0xFFFFFF);
     }
 
     /** 在两个 ARGB 之间线性插值，alpha 也一起插。 */
-    private static int mix(int from, int to, float t) {
+    static int mix(int from, int to, float t) {
         float k = clamp01(t);
         int a = channel(from, 24) + Math.round((channel(to, 24) - channel(from, 24)) * k);
         int r = channel(from, 16) + Math.round((channel(to, 16) - channel(from, 16)) * k);
@@ -3139,7 +3244,7 @@ public class GuiHudEditorPro extends GuiScreen {
      * em 方格相对 {@code drawString} 原点的位置 —— 再让这个方格居中，所有图标于是落在与 Material
      * 设计一致的对齐网格上。量测按字号缓存，量不出来就退回行盒居中（位置略偏，但图标仍在）。</p>
      */
-    private void drawIcon(CFontRenderer font, String glyph, double centerX, double centerY, int color) {
+    void drawIcon(CFontRenderer font, String glyph, double centerX, double centerY, int color) {
         if (font == null || glyph == null || glyph.isEmpty()) return;
         int tinted = layerAlpha >= 0.999f ? color : fade(color, layerAlpha);
         if (((tinted >>> 24) & 0xFF) == 0) return;
@@ -3169,7 +3274,7 @@ public class GuiHudEditorPro extends GuiScreen {
         return measured;
     }
 
-    private void drawRoundedRect(double x, double y, double w, double h, double radius, int color) {
+    void drawRoundedRect(double x, double y, double w, double h, double radius, int color) {
         if (w <= 0 || h <= 0) return;
         float alpha = ((color >>> 24) & 0xFF) / 255.0F * layerAlpha;
         if (alpha <= 0.002f) return;
@@ -3179,19 +3284,19 @@ public class GuiHudEditorPro extends GuiScreen {
         SkijaGfx.setBlendMode(SkijaGfx.fromGlBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA));
     }
 
-    private void drawSoftShadow(int x, int y, int w, int h, int radius) {
+    void drawSoftShadow(int x, int y, int w, int h, int radius) {
         drawRoundedRect(x + 1, y + 2, w, h, radius, 0x30000000);
         drawRoundedRect(x + 2, y + 3, w, h, radius, 0x18000000);
     }
 
-    private void drawText(CFontRenderer font, String text, double x, double y, int color) {
+    void drawText(CFontRenderer font, String text, double x, double y, int color) {
         if (font == null || text == null) return;
         int tinted = layerAlpha >= 0.999f ? color : fade(color, layerAlpha);
         if (((tinted >>> 24) & 0xFF) == 0) return;
         font.drawString(text, x, y, tinted);
     }
 
-    private void drawCenteredText(CFontRenderer font, String text, double centerX, double y, int color) {
+    void drawCenteredText(CFontRenderer font, String text, double centerX, double y, int color) {
         if (font == null || text == null) return;
         drawText(font, text, centerX - font.getStringWidthD(text) * .5, y, color);
     }
@@ -3207,7 +3312,7 @@ public class GuiHudEditorPro extends GuiScreen {
      * Skia 的 {@code clipRect} 直接吃当前坐标系（也就是 GUI 坐标），
      * 缩放与翻转都由宿主层一次性处理掉了，这里只剩下「宽高非法时不裁」这一条业务判断。
      */
-    private void beginScissor(int x, int y, int w, int h) {
+    void beginScissor(int x, int y, int w, int h) {
         // 裁剪层无条件压一层，好和 endScissor 配对。宽高非法时退化成「不裁剪」，
         // 与旧实现关掉 GL_SCISSOR_TEST 的效果一致——画多一点比整块内容凭空消失容易发现。
         if (w <= 0 || h <= 0) {
@@ -3222,14 +3327,14 @@ public class GuiHudEditorPro extends GuiScreen {
     }
 
     /** 退出裁剪区。多调用不会出错：旧实现的 {@code glDisable(GL_SCISSOR_TEST)} 也是幂等的。 */
-    private void endScissor() {
+    void endScissor() {
         if (scissorDepth > 0) {
             scissorDepth--;
             SkijaClip.scissorEnd();
         }
     }
 
-    private static boolean isInside(int mx, int my, int x, int y, int w, int h) {
+    static boolean isInside(int mx, int my, int x, int y, int w, int h) {
         return mx >= x && mx <= x + w && my >= y && my <= y + h;
     }
 
@@ -3246,7 +3351,7 @@ public class GuiHudEditorPro extends GuiScreen {
         }
     }
 
-    private static float clamp01(float value) {
+    static float clamp01(float value) {
         return Math.max(0.0f, Math.min(1.0f, value));
     }
 
