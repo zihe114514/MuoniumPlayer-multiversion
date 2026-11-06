@@ -40,6 +40,11 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         MuoniumPlayerClient.setLoaderId("fabric");
         client.init();
 
+        // 把歌词卡 / 信息卡挂进 MuoniumConfig 的 HUD 编辑器（可选集成，没装就静默跳过）。
+        // 时机必须在这里：HudConfig 已在 client.init() 里 load 过，字段有值；
+        // 再晚到进世界之后注册，首帧的 HUD 列表会缺这两块。
+        com.muoniumplayer.core.screens.hud.MuoniumHudProviders.registerAll();
+
         // 2. 一起听（服务端房间）通道：服务器没装一起听服务端 mod 时全程无副作用，
         //    装了则由 MpPartyClient 接管房间内的播放/点歌，复用播放器现有的播放链路。
         MpNetFabric.register();
