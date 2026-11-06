@@ -272,6 +272,7 @@ public final class SceneResponse {
         float directPan = 0f;
         float directDist = 0f;
         boolean useEax = false;
+        boolean diffracted = false;
         float reverbHfRatio = 1f;
         float reverbDiff = 0.5f;
         // 路线定稿(用户拍板):两种模式统一走【自研射线链】—— 真抽头 ER +
@@ -288,9 +289,23 @@ public final class SceneResponse {
             reverbDiff = 0.5f;
             directDist = Math.max(0f, sample.directDistanceMeters());
             final double occl = Math.max(0.0, sample.directOcclusion());
-            directGain = (float) DirectPath.directGain(directDist, occl);
-            directCutoff = DirectPath.totalCutoffHz(occl, directDist);
-            directPan = DirectPath.clampPan(sample.directPan());
+            // 一阶绕射:直达被挡但存在「源→遮挡边缘→耳」的折线路径时,
+            // 走这条路径听感才对 —— 实心墙穿透把中高频闷死,而绕射保留
+            // 相当一段中频,「从墙角/门缝过来」而不是「突然变小」。
+            final boolean hasDiff = sample.hasDiffraction();
+            diffracted = hasDiff;
+            final double diffPath = Math.max(0.0, sample.diffractionPathMeters());
+            final double diffExcess = Math.max(0.0, sample.diffractionExcessMeters());
+            final double bendDeg = Math.max(0.0, Math.min(180.0, sample.diffractionBendDegrees()));
+            directGain = (float) DirectPath.directGain(directDist, occl,
+                    hasDiff, diffPath, diffExcess, bendDeg);
+            directCutoff = DirectPath.totalCutoffHz(occl, directDist, hasDiff, diffExcess);
+            // 声像:绕射成立时声源「听起来在边缘那里」—— 用边缘方向覆盖
+            // 直达方向。这一步是「听出声音从哪儿绕过来」的关键,纯音量
+            // 变化给不了这个线索。
+            directPan = hasDiff
+                    ? DirectPath.clampPan(sample.diffractionPan())
+                    : DirectPath.clampPan(sample.directPan());
         }
 
         return new RoomPlan(Math.pow(10.0, logBand), wet, loudFinal * duck, loudFinal,
@@ -300,7 +315,8 @@ public final class SceneResponse {
                 directGain, directCutoff, directPan, directDist,
                 useEax, reverbHfRatio, reverbDiff,
                 sample.hasDirectSource(),
-                sample.speakerX(), sample.speakerY(), sample.speakerZ());
+                sample.speakerX(), sample.speakerY(), sample.speakerZ(),
+                0f, diffracted);
     }
 
     /**
