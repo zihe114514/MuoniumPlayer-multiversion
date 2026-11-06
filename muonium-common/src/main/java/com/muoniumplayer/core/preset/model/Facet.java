@@ -15,37 +15,37 @@ import java.util.Set;
 public enum Facet {
 
     // ---- 外观 ----
-    VISIBILITY("visibility", "显示开关", Group.APPEARANCE, false,
+    VISIBILITY(1, "visibility", "显示开关", Group.APPEARANCE, false,
             "桌面歌词、信息卡、灵动岛、3D 歌词与 HUD 频谱是否显示"),
-    LYRICS("lyrics", "歌词样式", Group.APPEARANCE, false,
+    LYRICS(2, "lyrics", "歌词样式", Group.APPEARANCE, false,
             "桌面歌词与全屏歌词的字号、颜色、发光、逐字效果与各样式参数"),
-    BACKGROUND("background", "全屏背景", Group.APPEARANCE, false,
+    BACKGROUND(3, "background", "全屏背景", Group.APPEARANCE, false,
             "全屏歌词页的流体背景与 Folia 背景"),
-    WORLD("world", "3D 歌词", Group.APPEARANCE, false,
+    WORLD(4, "world", "3D 歌词", Group.APPEARANCE, false,
             "挂在游戏世界里的 3D 歌词外观"),
-    ISLAND("island", "灵动岛", Group.APPEARANCE, false,
+    ISLAND(5, "island", "灵动岛", Group.APPEARANCE, false,
             "灵动岛的样式、常驻内容与动画速度"),
-    PANEL("panel", "卡片与玻璃", Group.APPEARANCE, false,
+    PANEL(6, "panel", "卡片与玻璃", Group.APPEARANCE, false,
             "Blossom 卡片、真玻璃材质与信息卡底板"),
-    THEME("theme", "主题配色", Group.APPEARANCE, false,
+    THEME(7, "theme", "主题配色", Group.APPEARANCE, false,
             "播放器主题、自定义配色与配色来源"),
-    SPECTRUM("spectrum", "频谱", Group.APPEARANCE, false,
+    SPECTRUM(8, "spectrum", "频谱", Group.APPEARANCE, false,
             "音乐频谱的样式、柱数与配色"),
-    FONT("font", "界面字体", Group.APPEARANCE, false,
+    FONT(9, "font", "界面字体", Group.APPEARANCE, false,
             "播放器界面字体（本机没有的字体会跳过）"),
-    MOTION("motion", "动效", Group.APPEARANCE, false,
+    MOTION(10, "motion", "动效", Group.APPEARANCE, false,
             "界面淡入与切换速度、通透模式"),
-    CAMERA("camera", "卡点运镜", Group.APPEARANCE, false,
+    CAMERA(11, "camera", "卡点运镜", Group.APPEARANCE, false,
             "闲置时随节拍自动运镜的节奏与镜头参数"),
-    LAYOUT("layout", "布局位置", Group.APPEARANCE, true,
+    LAYOUT(12, "layout", "布局位置", Group.APPEARANCE, true,
             "HUD 元素的位置与尺寸——和屏幕有关，默认不套用"),
-    PERFORMANCE("performance", "画质性能", Group.APPEARANCE, true,
+    PERFORMANCE(13, "performance", "画质性能", Group.APPEARANCE, true,
             "玻璃采样、3D 歌词画质档等与机器性能有关的项，默认不套用"),
 
     // ---- 音效 ----
-    VIPER("viper", "蝰蛇音效", Group.AUDIO, false,
+    VIPER(14, "viper", "蝰蛇音效", Group.AUDIO, false,
             "蝰蛇音效开关与当前预设（含 JamesDSP 混响），预设内容随分享一起带走"),
-    ACOUSTICS("acoustics", "场景声学", Group.AUDIO, false,
+    ACOUSTICS(15, "acoustics", "场景声学", Group.AUDIO, false,
             "场景声学开关、分项与强度");
 
     /** 分组：「只分享外观 / 只分享音效」的快捷勾选按它走。 */
@@ -64,13 +64,15 @@ public enum Facet {
         }
     }
 
+    private final int code;
     private final String id;
     private final String displayName;
     private final Group group;
     private final boolean optIn;
     private final String description;
 
-    Facet(String id, String displayName, Group group, boolean optIn, String description) {
+    Facet(int code, String id, String displayName, Group group, boolean optIn, String description) {
+        this.code = code;
         this.id = id;
         this.displayName = displayName;
         this.group = group;
@@ -81,6 +83,24 @@ public enum Facet {
     /** 写进预设文件的稳定 id。 */
     public String id() {
         return id;
+    }
+
+    /**
+     * 分享码里的稳定编号（1 起，对应位掩码的第 code-1 位）。与 {@link #id} 一样一经发布永不改、永不复用；
+     * 新分面取下一个没用过的编号。枚举顺序可以随意调整，编号不跟着动。
+     */
+    public int code() {
+        return code;
+    }
+
+    /** 按分享码编号查分面；认不出返回 {@code null}。 */
+    public static Facet byCode(int code) {
+        for (Facet facet : values()) {
+            if (facet.code == code) {
+                return facet;
+            }
+        }
+        return null;
     }
 
     public String displayName() {

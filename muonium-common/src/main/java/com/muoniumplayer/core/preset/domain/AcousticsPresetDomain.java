@@ -5,6 +5,9 @@ import com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings;
 import com.muoniumplayer.core.preset.model.CompatReport;
 import com.muoniumplayer.core.preset.model.Facet;
 import com.muoniumplayer.core.preset.model.KeyPolicy;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * 场景声学（scene_acoustics.json）。写入走具名 setter，只改有变化的项：
@@ -17,6 +20,14 @@ public final class AcousticsPresetDomain implements PresetDomain {
     private static final KeyPolicy POLICY = KeyPolicy.builder()
             .facet(Facet.ACOUSTICS, "enabled", "submersion", "enclosure", "rainfall", "strength")
             .build();
+
+    /**
+     * 分享码键表（下标 + 1 = 编号）。<b>只许在末尾追加</b>，已发布的位置永不改、永不复用，
+     * 见 {@link PresetDomain#shareKeys()}；排除项不编号。
+     */
+    private static final List<String> SHARE_KEYS = Collections.unmodifiableList(Arrays.asList(
+            /*   1 */ "enabled", "submersion", "enclosure", "rainfall",
+            /*   5 */ "strength"));
 
     @Override
     public String id() {
@@ -31,6 +42,16 @@ public final class AcousticsPresetDomain implements PresetDomain {
     @Override
     public int fragmentVersion() {
         return 1;
+    }
+
+    @Override
+    public int shareCode() {
+        return 7;
+    }
+
+    @Override
+    public List<String> shareKeys() {
+        return SHARE_KEYS;
     }
 
     @Override

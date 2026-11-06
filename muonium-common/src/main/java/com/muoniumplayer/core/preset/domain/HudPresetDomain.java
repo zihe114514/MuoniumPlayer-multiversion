@@ -6,6 +6,9 @@ import com.muoniumplayer.core.preset.model.CompatReport;
 import com.muoniumplayer.core.preset.model.Facet;
 import com.muoniumplayer.core.preset.model.KeyPolicy;
 import com.muoniumplayer.core.settings.HudConfig;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * hud.json（{@link HudConfig}）。
@@ -103,6 +106,54 @@ public final class HudPresetDomain implements PresetDomain {
             .enumMax("infoCardBackdrop", () -> HudConfig.INFO_CARD_BACKDROP_MAX)
             .build();
 
+    /**
+     * 分享码键表（下标 + 1 = 编号）。<b>只许在末尾追加</b>，已发布的位置永不改、永不复用，
+     * 见 {@link PresetDomain#shareKeys()}；排除项不编号。
+     */
+    private static final List<String> SHARE_KEYS = Collections.unmodifiableList(Arrays.asList(
+            /*   1 */ "musicInfoEnabled", "musicLyricsEnabled", "spectrumInHud", "dynamicIslandEnabled",
+            /*   5 */ "worldLyricsEnabled", "lyricColorRgb", "currentLyricColorRgb", "currentLyricEffectsEnabled",
+            /*   9 */ "osdKaraokeEmphasisEnabled", "normalLyricEffectsEnabled", "lyricEdgeFadeEnabled", "currentLineScale",
+            /*  13 */ "currentWordScale", "currentGlowStrength", "lyricGlowSpread", "fullscreenGlowStrength",
+            /*  17 */ "fullscreenLyricStyle", "fullscreenLyricEdgeBlur", "osdLyricStyle", "osdLyricColorFollowCover",
+            /*  21 */ "osdKaraokeTransitionWidth", "osdKaraokePulseStrength", "osdKaraokeSmoothing", "osdDuetSpread",
+            /*  25 */ "normalOpacity", "normalScale", "normalGlowStrength", "normalLineSpacing",
+            /*  29 */ "edgeFadeSize", "scrollSmoothness", "secondaryOpacity", "cadenzaDecorColorMode",
+            /*  33 */ "cadenzaDecorColorCount", "cadenzaBeatsPerColor", "cadenzaDecorColors", "lyricFontScale",
+            /*  37 */ "luminousWordSpacing", "luminousFloatAmount", "luminousWordRotation", "partitaStaggerMin",
+            /*  41 */ "partitaStaggerMax", "partitaGuideLines", "fumeTextHoldRatio", "fumeCameraSpeed",
+            /*  45 */ "fumeHeroScale", "fumeGeometricBackground", "cappellaBubbleWidth", "cappellaAvatarSource",
+            /*  49 */ "cappellaEmojiEnabled", "cappellaEmojiChance", "tiltSplitProbability", "tiltStyleProbability",
+            /*  53 */ "tiltColorScheme", "dioramaDepthSpread", "dioramaDust", "pendoloArcRadius",
+            /*  57 */ "pendoloArcAngle", "pendoloActiveScale", "pendoloGearDecor", "fullscreenLyricBackgroundMode",
+            /*  61 */ "fullscreenLyricFluidStyle", "fullscreenLyricFluidSaturation", "fullscreenLyricFluidAudio", "fullscreenLyricBackgroundLayers",
+            /*  65 */ "fullscreenLyricLayerLatentDither", "fullscreenLyricLayerSora", "worldLyricsDistance", "worldLyricsFacePlayer",
+            /*  69 */ "worldLyricsKeepAway", "worldLyricsSpreadDeg", "worldLyricsScale", "worldLyricsModernStyle",
+            /*  73 */ "worldLyricsSplitLines", "worldLyricsGlowEnabled", "worldLyricsGlowStrength", "worldLyricsGlowSpread",
+            /*  77 */ "worldLyricsGlowColorRgb", "worldLyricsGlowColorMode", "worldLyricsColorRgb", "worldLyricsColorCustom",
+            /*  81 */ "worldLyricsWordPop", "worldLyricsTextFlash", "worldLyricsCadenza", "worldLyricsHuiguang",
+            /*  85 */ "worldLyricsKeywordColors", "worldLyricsStayOnScreen", "worldLyricsKeepDistance", "worldLyricsAboveGround",
+            /*  89 */ "worldLyricsTranslation", "worldLyricsTransEffects", "worldLyricsCoverColorMode", "worldLyricsCoverGradient",
+            /*  93 */ "worldLyricsCoverPaletteRgb0", "worldLyricsCoverPaletteRgb1", "worldLyricsCoverPaletteRgb2", "worldLyricsCoverPaletteRgb3",
+            /*  97 */ "dynamicIslandScale", "dynamicIslandTextScale", "dynamicIslandMaxWidth", "dynamicIslandProgressHeight",
+            /* 101 */ "dynamicIslandCompletionHoldSeconds", "dynamicIslandQueueIntervalSeconds", "dynamicIslandStyle", "dynamicIslandExpandSpeed",
+            /* 105 */ "dynamicIslandCollapseSpeed", "dynamicIslandContentSpeed", "dynamicIslandEntranceDuration", "dynamicIslandOvershoot",
+            /* 109 */ "dynamicIslandSpinnerSpeed", "dynamicIslandAlwaysOn", "dynamicIslandAmbientFps", "dynamicIslandAmbientPing",
+            /* 113 */ "dynamicIslandAmbientClock", "dynamicIslandAmbientNowPlaying", "dynamicIslandAmbientRotate", "dynamicIslandAmbientStatusSeconds",
+            /* 117 */ "dynamicIslandAmbientNowPlayingSeconds", "islandSearchEnabled", "blossomBackdropBlur", "blossomPanelOpacity",
+            /* 121 */ "blossomVisibleLines", "blossomRhythmBorder", "blossomBorderStrength", "glassSurfacePlayer",
+            /* 125 */ "glassSurfaceIsland", "glassSurfaceDesktopLyric", "glassSurfaceEditors", "glassBlurSigma",
+            /* 129 */ "glassBlurPlayer", "glassBlurIsland", "glassBlurDesktopLyric", "glassBlurEditors",
+            /* 133 */ "glassBloom", "glassFusion", "glassTintStrength", "glassEdgeGlow",
+            /* 137 */ "infoCardBackdrop", "animatedCoverEnabled", "spectrumEnabled", "spectrumHudStyle",
+            /* 141 */ "spectrumInPlayer", "spectrumFullscreenStyle", "spectrumBarCountPreset", "spectrumCustomBarCount",
+            /* 145 */ "spectrumColorSource", "spectrumOpacity", "spectrumHeight", "playerFadeSpeed",
+            /* 149 */ "playerUiSwitchSpeed", "infoX", "infoY", "infoScale",
+            /* 153 */ "lyricX", "lyricY", "lyricScale", "lyricWidth",
+            /* 157 */ "lyricHeight", "dynamicIslandY", "lyricSearchUiScale", "glassBackdropScale",
+            /* 161 */ "glassRealtimeCapture", "worldLyricsQualityTier", "worldLyricsGlowTier", "worldLyricsHudDraw",
+            /* 165 */ "fullscreenLyricFluidStatic"));
+
     @Override
     public String id() {
         return ID;
@@ -116,6 +167,16 @@ public final class HudPresetDomain implements PresetDomain {
     @Override
     public int fragmentVersion() {
         return 1;
+    }
+
+    @Override
+    public int shareCode() {
+        return 1;
+    }
+
+    @Override
+    public List<String> shareKeys() {
+        return SHARE_KEYS;
     }
 
     @Override

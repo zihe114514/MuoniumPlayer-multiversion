@@ -6,12 +6,20 @@ import com.muoniumplayer.core.preset.domain.PresetDomain;
 import com.muoniumplayer.core.preset.model.CompatReport;
 import com.muoniumplayer.core.preset.model.KeyPolicy;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 
 /** 测试用的内存配置域：状态就是一个 JsonObject，记录 apply 被调了几次。 */
 final class FakeDomain implements PresetDomain {
 
+    /** 每个假域一个独立的分享码域编号。 */
+    private static final AtomicInteger NEXT_CODE = new AtomicInteger(100);
+
     private final String id;
+    private final int shareCode;
+    private final List<String> shareKeys = new ArrayList<String>();
     private final KeyPolicy policy;
     private final JsonObject defaults;
     JsonObject state;
@@ -20,10 +28,30 @@ final class FakeDomain implements PresetDomain {
     BiFunction<String, JsonElement, JsonElement> sanitizer;
 
     FakeDomain(String id, KeyPolicy policy, JsonObject defaults) {
+        this(id, NEXT_CODE.incrementAndGet(), policy, defaults);
+    }
+
+    FakeDomain(String id, int shareCode, KeyPolicy policy, JsonObject defaults) {
         this.id = id;
+        this.shareCode = shareCode;
         this.policy = policy;
         this.defaults = defaults.deepCopy();
         this.state = defaults.deepCopy();
+        for (String key : policy.allKeys()) {
+            if (!policy.rule(key).excluded()) {
+                shareKeys.add(key);
+            }
+        }
+    }
+
+    @Override
+    public int shareCode() {
+        return shareCode;
+    }
+
+    @Override
+    public List<String> shareKeys() {
+        return shareKeys;
     }
 
     @Override

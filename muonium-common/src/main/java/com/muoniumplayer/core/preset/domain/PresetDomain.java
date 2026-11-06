@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import com.muoniumplayer.core.preset.model.CompatReport;
 import com.muoniumplayer.core.preset.model.KeyPolicy;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -31,6 +32,26 @@ public interface PresetDomain {
 
     /** 本域片段的格式版本；键改名时 +1，并在 {@link #migrate} 里把旧键翻译成新键。 */
     int fragmentVersion();
+
+    /** 分享码里的配置域编号（1 起），一经发布永不改、永不复用。 */
+    int shareCode();
+
+    /**
+     * 分享码键表：第 i 个（从 1 数）就是键编号 i。类似 protobuf 的字段号 ——
+     * <b>只许在末尾追加，已发布的位置永不改、永不复用</b>（{@code PresetShareKeysFreezeTest} 钉着已发布的前缀）。
+     *
+     * <p>编号表达的是「哪一个设置」而不是名字：键改名时原位改名字，旧码照样解到新键；
+     * 不再分享的键留着占位（解码时会被白名单挡掉），绝不删除、不让后面的编号前移。</p>
+     */
+    List<String> shareKeys();
+
+    /**
+     * 分享码里把大块的值压小（例如 ViPER 预设体只留非默认字段），解码后由 {@link #apply} 照常还原。
+     * 默认原样返回。必须是纯函数。
+     */
+    default JsonElement compactValue(String key, JsonElement value) {
+        return value;
+    }
 
     KeyPolicy policy();
 

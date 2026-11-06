@@ -12,6 +12,9 @@ import com.muoniumplayer.core.screens.ncm.foliabg.FoliaBackgroundOptions;
 import com.muoniumplayer.core.settings.ConfigPaths;
 
 import java.io.File;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * 全屏歌词「Folia 背景」（folia_lyrics_background.json，两层嵌套，键按点路径登记）。
@@ -44,6 +47,24 @@ public final class FoliaBackgroundPresetDomain implements PresetDomain {
             .enumMax("backgroundKind", () -> FoliaBackgroundOptions.KIND_LABELS.length - 1)
             .build();
 
+    /**
+     * 分享码键表（下标 + 1 = 编号）。<b>只许在末尾追加</b>，已发布的位置永不改、永不复用，
+     * 见 {@link PresetDomain#shareKeys()}；排除项不编号。
+     */
+    private static final List<String> SHARE_KEYS = Collections.unmodifiableList(Arrays.asList(
+            /*   1 */ "backgroundKind", "mode", "audioResponse", "common.useCoverColorBg",
+            /*   5 */ "common.coverOpacity", "common.disableGeometric", "common.disableVignette", "latent.displayMode",
+            /*   9 */ "latent.colorSource", "latent.dynamicOnlyInPlayer", "latent.enhancedBeatResponse", "latent.ditheringSpeed",
+            /*  13 */ "latent.ditheringAudioSpeed", "latent.ditheringSize", "latent.ditheringOpacity", "latent.meshSpeed",
+            /*  17 */ "latent.meshAudioSpeed", "latent.meshDistortion", "latent.meshSwirl", "latent.overlayEnabled",
+            /*  21 */ "latent.overlayOpacity", "nomand.imageSource", "nomand.effect", "nomand.ditheringType",
+            /*  25 */ "nomand.size", "nomand.colorSteps", "nomand.originalColors", "nomand.inverted",
+            /*  29 */ "nomand.flutedGlassSize", "nomand.flutedGlassDistortion", "nomand.flutedGlassBlur", "nomand.paperTextureContrast",
+            /*  33 */ "nomand.paperTextureRoughness", "nomand.paperTextureFiber", "nomand.halftoneDotsSize", "nomand.halftoneDotsRadius",
+            /*  37 */ "nomand.halftoneDotsContrast", "nomand.halftoneDotsOriginalColors", "nomand.halftoneDotsInverted", "nomand.lensDistortionSpread",
+            /*  41 */ "nomand.lensDistortionBulge", "nomand.lensDistortionDispersion", "nomand.overlayEnabled", "nomand.overlayOpacity",
+            /*  45 */ "staticMode"));
+
     @Override
     public String id() {
         return ID;
@@ -57,6 +78,16 @@ public final class FoliaBackgroundPresetDomain implements PresetDomain {
     @Override
     public int fragmentVersion() {
         return 1;
+    }
+
+    @Override
+    public int shareCode() {
+        return 3;
+    }
+
+    @Override
+    public List<String> shareKeys() {
+        return SHARE_KEYS;
     }
 
     @Override

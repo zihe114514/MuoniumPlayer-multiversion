@@ -40,10 +40,12 @@ public final class PresetService {
 
     private final PresetEngine engine;
     private final PresetRepository repository;
+    private final CompactShareCode shareCode;
 
     public PresetService(PresetEngine engine, PresetRepository repository) {
         this.engine = engine;
         this.repository = repository;
+        this.shareCode = new CompactShareCode(engine.domains());
     }
 
     public static synchronized PresetService get() {
@@ -131,30 +133,42 @@ public final class PresetService {
 
     /** 把当前配置的所选分面存成一份预设（{@code base: defaults}，捕获的是这些分面的全部键）。 */
     public StylePreset saveCurrent(String name, Set<Facet> facets) throws IOException {
+        return repository.saveUser(snapshot(name, facets));
+    }
+
+    /** 把当前配置的所选分面做成一份预设，不落盘（例如 H 键设置页「复制当前外观的分享码」）。 */
+    public StylePreset snapshot(String name, Set<Facet> facets) {
         String cleanName = PresetJson.clean(name, PresetLimits.MAX_NAME_CHARS);
         PresetMeta meta = new PresetMeta("user:" + UUID.randomUUID(),
                 cleanName.isEmpty() ? "我的预设" : cleanName, "", "", now(),
                 MuoniumPlayerExtension.VERSION, UpdateChecker.minecraftVersion());
         Map<String, DomainFragment> fragments = engine.capture(facets);
-        StylePreset preset = new StylePreset(meta, StylePreset.Base.DEFAULTS, facets, null, fragments,
+        return new StylePreset(meta, StylePreset.Base.DEFAULTS, facets, null, fragments,
                 StylePreset.Source.USER, null);
-        return repository.saveUser(preset);
     }
 
-    /** 复制到剪贴板的整段文字：一行可读头 + 分享码。 */
+    /** 复制到剪贴板的一行：短名字 + v2 分享码（只写与出厂值不同的项）。 */
     public String shareText(StylePreset preset) {
-        String json = PresetJson.write(preset, false);
-        return ShareCode.withHeader(ShareCode.encode(json), preset.meta().name(), preset.meta().author());
+        return shareCode.shareLine(preset);
     }
 
-    /** 从一段文字导入（分享码，或直接是预设 JSON），存进「我的预设」。 */
+    /**
+     * 从一段文字导入，存进「我的预设」。认三种：v2 分享码（{@code MPP2:}）、v1 分享码（{@code MPP1:}，
+     * 早期测试包生成的）、直接粘贴的预设 JSON。
+     */
     public StylePreset importText(String text) throws PresetFormatException, IOException {
         String trimmed = text == null ? "" : text.trim();
         if (!trimmed.isEmpty() && trimmed.charAt(0) == '\uFEFF') {
             trimmed = trimmed.substring(1).trim();
         }
-        String json = trimmed.startsWith("{") ? trimmed : ShareCode.decode(text);
-        StylePreset parsed = PresetJson.parse(json, StylePreset.Source.USER, null);
+        StylePreset parsed;
+        if (trimmed.startsWith("{")) {
+            parsed = PresetJson.parse(trimmed, StylePreset.Source.USER, null);
+        } else if (CompactShareCode.contains(text)) {
+            parsed = shareCode.decode(text);
+        } else {
+            parsed = PresetJson.parse(ShareCode.decode(text), StylePreset.Source.USER, null);
+        }
         // 导入的一律换成新的 user id：内置与备份的 id 不许被外来文件冒用。
         PresetMeta meta = parsed.meta().withId("user:" + UUID.randomUUID());
         return repository.saveUser(parsed.withMeta(meta));

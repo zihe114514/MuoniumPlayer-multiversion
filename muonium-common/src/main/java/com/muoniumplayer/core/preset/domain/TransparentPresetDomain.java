@@ -6,6 +6,9 @@ import com.muoniumplayer.core.ncm.music.TransparentMode;
 import com.muoniumplayer.core.preset.model.CompatReport;
 import com.muoniumplayer.core.preset.model.Facet;
 import com.muoniumplayer.core.preset.model.KeyPolicy;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 /** 通透模式（transparent_mode.json）：HUD 随节拍压扁回弹的果冻特效。 */
 public final class TransparentPresetDomain implements PresetDomain {
@@ -15,6 +18,13 @@ public final class TransparentPresetDomain implements PresetDomain {
     private static final KeyPolicy POLICY = KeyPolicy.builder()
             .facet(Facet.MOTION, "enabled", "compression", "width")
             .build();
+
+    /**
+     * 分享码键表（下标 + 1 = 编号）。<b>只许在末尾追加</b>，已发布的位置永不改、永不复用，
+     * 见 {@link PresetDomain#shareKeys()}；排除项不编号。
+     */
+    private static final List<String> SHARE_KEYS = Collections.unmodifiableList(Arrays.asList(
+            /*   1 */ "enabled", "compression", "width"));
 
     @Override
     public String id() {
@@ -29,6 +39,16 @@ public final class TransparentPresetDomain implements PresetDomain {
     @Override
     public int fragmentVersion() {
         return 1;
+    }
+
+    @Override
+    public int shareCode() {
+        return 5;
+    }
+
+    @Override
+    public List<String> shareKeys() {
+        return SHARE_KEYS;
     }
 
     @Override

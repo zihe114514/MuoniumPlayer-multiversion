@@ -63,12 +63,12 @@ public final class ShareCode {
         return header.append('\n').append(code).toString();
     }
 
-    /** 这段文字里看起来有没有分享码或预设 JSON（只做便宜的判断，给按钮状态用）。 */
+    /** 这段文字里看起来有没有分享码（v1 / v2）或预设 JSON（只做便宜的判断，给按钮状态用）。 */
     public static boolean looksLikePreset(String text) {
         if (text == null) {
             return false;
         }
-        return text.contains(PREFIX) || text.contains(SHORT_PREFIX)
+        return text.contains(PREFIX) || text.contains("MPP2:") || text.contains(SHORT_PREFIX)
                 || text.contains("\"" + PresetJson.FORMAT + "\"");
     }
 
@@ -93,7 +93,7 @@ public final class ShareCode {
             if (trimmed.startsWith("{")) {
                 return trimmed;
             }
-            throw new PresetFormatException("剪贴板里没有找到预设分享码（以 " + PREFIX + " 开头）");
+            throw new PresetFormatException("剪贴板里没有找到模板预设的分享码（以 MPP2: 开头）");
         }
 
         StringBuilder payload = new StringBuilder();

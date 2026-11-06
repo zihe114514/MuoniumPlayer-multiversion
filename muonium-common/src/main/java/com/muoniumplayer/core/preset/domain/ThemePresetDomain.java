@@ -7,6 +7,9 @@ import com.muoniumplayer.core.preset.model.Facet;
 import com.muoniumplayer.core.preset.model.KeyPolicy;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.settings.HudConfig;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * 播放器主题（theme.json + hud.json 里的配色来源）。
@@ -24,6 +27,13 @@ public final class ThemePresetDomain implements PresetDomain {
             .enumMax("colorSource", () -> HudConfig.THEME_COLOR_SOURCE_MAX)
             .build();
 
+    /**
+     * 分享码键表（下标 + 1 = 编号）。<b>只许在末尾追加</b>，已发布的位置永不改、永不复用，
+     * 见 {@link PresetDomain#shareKeys()}；排除项不编号。
+     */
+    private static final List<String> SHARE_KEYS = Collections.unmodifiableList(Arrays.asList(
+            /*   1 */ "theme", "colorSource"));
+
     @Override
     public String id() {
         return ID;
@@ -37,6 +47,16 @@ public final class ThemePresetDomain implements PresetDomain {
     @Override
     public int fragmentVersion() {
         return 1;
+    }
+
+    @Override
+    public int shareCode() {
+        return 2;
+    }
+
+    @Override
+    public List<String> shareKeys() {
+        return SHARE_KEYS;
     }
 
     @Override

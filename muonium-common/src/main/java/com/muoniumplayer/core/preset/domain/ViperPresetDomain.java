@@ -8,10 +8,15 @@ import com.muoniumplayer.core.preset.model.CompatReport;
 import com.muoniumplayer.core.preset.model.Facet;
 import com.muoniumplayer.core.preset.model.KeyPolicy;
 import com.muoniumplayer.core.settings.ConfigPaths;
+import com.muoniumplayer.core.viper.ViperPreset;
+import com.muoniumplayer.core.viper.ViperPresetParser;
 import com.muoniumplayer.core.viper.ViperPresetStore;
 import com.muoniumplayer.core.viper.ViperRuntime;
 
 import java.io.File;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * 蝰蛇音效（viper/settings.json + 当前预设的内容，JamesDSP 混响是其中一组）。
@@ -31,6 +36,13 @@ public final class ViperPresetDomain implements PresetDomain {
             .facet(Facet.VIPER, "enabled", "preset", "presetData")
             .build();
 
+    /**
+     * 分享码键表（下标 + 1 = 编号）。<b>只许在末尾追加</b>，已发布的位置永不改、永不复用，
+     * 见 {@link PresetDomain#shareKeys()}；排除项不编号。
+     */
+    private static final List<String> SHARE_KEYS = Collections.unmodifiableList(Arrays.asList(
+            /*   1 */ "enabled", "preset", "presetData"));
+
     @Override
     public String id() {
         return ID;
@@ -44,6 +56,16 @@ public final class ViperPresetDomain implements PresetDomain {
     @Override
     public int fragmentVersion() {
         return 1;
+    }
+
+    @Override
+    public int shareCode() {
+        return 8;
+    }
+
+    @Override
+    public List<String> shareKeys() {
+        return SHARE_KEYS;
     }
 
     @Override
@@ -75,6 +97,52 @@ public final class ViperPresetDomain implements PresetDomain {
         view.add("preset", JsonNull.INSTANCE);
         view.add("presetData", JsonNull.INSTANCE);
         return view;
+    }
+
+    /**
+     * 分享码里的预设体只留「与空预设不同」的字段：对方导入时 {@link ViperPresetParser} 会把缺的分组与字段
+     * 按 schema 默认值补齐，结果与完整内容一致。一份内置预设的完整体有二十多组，压完往往只剩一两组。
+     */
+    @Override
+    public JsonElement compactValue(String key, JsonElement value) {
+        if (!"presetData".equals(key) || value == null || !value.isJsonObject()) {
+            return value;
+        }
+        JsonObject full = value.getAsJsonObject();
+        JsonObject defaults;
+        try {
+            defaults = ViperPresetParser.parse("{\"schemaVersion\":" + ViperPreset.SCHEMA_VERSION + "}", "default").json();
+        } catch (RuntimeException failure) {
+            return value;
+        }
+        JsonObject minimal = new JsonObject();
+        minimal.addProperty("schemaVersion", ViperPreset.SCHEMA_VERSION);
+        JsonElement name = full.get("name");
+        if (name != null) {
+            minimal.add("name", name.deepCopy());
+        }
+        for (java.util.Map.Entry<String, JsonElement> entry : full.entrySet()) {
+            String group = entry.getKey();
+            if ("schemaVersion".equals(group) || "name".equals(group) || "createdAt".equals(group)) {
+                continue;
+            }
+            JsonElement actual = entry.getValue();
+            JsonElement fallback = defaults.get(group);
+            if (actual != null && actual.isJsonObject() && fallback != null && fallback.isJsonObject()) {
+                JsonObject diff = new JsonObject();
+                for (java.util.Map.Entry<String, JsonElement> field : actual.getAsJsonObject().entrySet()) {
+                    if (!field.getValue().equals(fallback.getAsJsonObject().get(field.getKey()))) {
+                        diff.add(field.getKey(), field.getValue().deepCopy());
+                    }
+                }
+                if (diff.size() > 0) {
+                    minimal.add(group, diff);
+                }
+            } else if (actual != null && !actual.equals(fallback)) {
+                minimal.add(group, actual.deepCopy());
+            }
+        }
+        return minimal;
     }
 
     @Override

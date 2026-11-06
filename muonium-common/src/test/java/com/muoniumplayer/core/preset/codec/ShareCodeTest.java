@@ -83,7 +83,7 @@ class ShareCodeTest {
     void 没有分享码时说清楚() {
         PresetFormatException error = assertThrows(PresetFormatException.class,
                 () -> ShareCode.decode("今天天气不错"));
-        assertTrue(error.getMessage().contains(ShareCode.PREFIX));
+        assertTrue(error.getMessage().contains("MPP2:"), "提示里给出当前的分享码前缀：" + error.getMessage());
         assertThrows(PresetFormatException.class, () -> ShareCode.decode("   "));
     }
 

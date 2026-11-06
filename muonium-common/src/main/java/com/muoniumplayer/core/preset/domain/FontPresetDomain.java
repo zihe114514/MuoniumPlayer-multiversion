@@ -6,6 +6,9 @@ import com.muoniumplayer.core.management.UiFontLibrary;
 import com.muoniumplayer.core.preset.model.CompatReport;
 import com.muoniumplayer.core.preset.model.Facet;
 import com.muoniumplayer.core.preset.model.KeyPolicy;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * 界面字体（ui_font.json）。预设只带字体 id，不带字体文件：本机没有这款就保留当前字体并提示。
@@ -21,6 +24,13 @@ public final class FontPresetDomain implements PresetDomain {
             .facet(Facet.FONT, "id")
             .build();
 
+    /**
+     * 分享码键表（下标 + 1 = 编号）。<b>只许在末尾追加</b>，已发布的位置永不改、永不复用，
+     * 见 {@link PresetDomain#shareKeys()}；排除项不编号。
+     */
+    private static final List<String> SHARE_KEYS = Collections.unmodifiableList(Arrays.asList(
+            /*   1 */ "id"));
+
     @Override
     public String id() {
         return ID;
@@ -34,6 +44,16 @@ public final class FontPresetDomain implements PresetDomain {
     @Override
     public int fragmentVersion() {
         return 1;
+    }
+
+    @Override
+    public int shareCode() {
+        return 4;
+    }
+
+    @Override
+    public List<String> shareKeys() {
+        return SHARE_KEYS;
     }
 
     @Override
