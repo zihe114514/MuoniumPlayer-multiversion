@@ -167,7 +167,7 @@ public final class SceneAcoustics {
     private static final double SIDECHAIN_LP_HZ = 110.0;
     private static final float SIDECHAIN_DUCK = 0.55f;    // 最低压到 0.7(-3.1dB):防冲击的主力已是低切+搁架,侧链只做轻呼吸
     private static final float SIDECHAIN_ATTACK_SEC = 0.005f; // 5ms 快起
-    private static final float SIDECHAIN_RELEASE_SEC = 0.35f; // 180ms 慢放:DJ 拍间隔 250ms,两拍间要能放回 0.95+,否则持续 duck 叠成 -6dB
+    private static final float SIDECHAIN_RELEASE_SEC = 0.35f; // 350ms 慢放:DJ 拍间隔 250ms,两拍间要能放回 0.95+,否则持续 duck 叠成 -6dB
     /** 侧链触发阈(包络平方):底鼓 RMS ≈0.2(约 -14dBFS)以上才触发。 */
     private static final double SC_ENV_THRESHOLD = 0.04;
     /** 上升率阈(包络平方/样本):底鼓攻击沿 50ms 从 0 冲到 0.3 ⇒
@@ -192,6 +192,13 @@ public final class SceneAcoustics {
     /** 直达静息阈:gain≥此值且截止全开 → 整条链逐样本直通(零开销)。 */
     private static final float DIRECT_IDLE_GAIN = 0.999f;
 
+    /** 总线读回静音检测:输入 RMS 高于它才算「本来该有声」。 */
+    private static final float SILENCE_IN_RMS = 0.01f;
+    /** 读回 RMS 低于它才算「静音」(与输入阈值留两个数量级余量)。 */
+    private static final float SILENCE_OUT_RMS = 1e-4f;
+    /** 连续多少缓冲静音才判失效:留出曲目淡入/极安静段的余量。 */
+    private static final int SILENCE_ROUNDS = 4;
+
     // ---- OpenAL EAX Reverb 总线(世界声源的湿声;音频线程独占) ----
     /** 总线探测每缓冲一次;null/失败即 false,湿声走 FDN 兜底。 */
     private static boolean useEaxBus;
@@ -203,12 +210,24 @@ public final class SceneAcoustics {
     private static short[] directDelayL = new short[0];
     private static short[] directDelayR = new short[0];
     private static int directDelayPos;
+    /**
+     * 自研直射链的飞行时间延迟环(float 全文,独立于总线的 PCM16 环)。
+     *
+     * <p>单独一条的原因:总线路径的环容量是按「当前距离 + 本缓冲」动态扩的,
+     * 而自研路径在总线不可用时(安卓/急停/熔断)才跑 —— 那时总线环可能是
+     * 空数组或刚好够总线自己用,共用会越界。容量在 rebuild() 按
+     * {@link #DIRECT_DELAY_MAX_SAMPLES}(160m)一次预留,稳态零分配。</p>
+     */
+    private static float[] directPathRing = new float[0];
+    private static int directPathPos;
     /** 平滑后的源距(探针 500ms 目标朝它收敛,移动时过渡连续)。 */
     private static double directDistSmoothed;
     /** 自研直射链的距离延迟(样本,分数;directDistSmoothed/343×采样率)。 */
     private static double directDelayN;
     /** 本缓冲的干声已经过总线 HRTF(直射-only):逐样本的手搓直射链跳过。 */
     private static boolean hrtfDirectApplied;
+    /** 上一缓冲直达链是否激活(仅音频线程):从静息切回激活时清环用。 */
+    private static boolean directChainWasActive;
     /** 读回静音连续计数(总线失效检测)。 */
     private static int silentRounds;
     /** 听者位姿(游戏线程写,音频线程读;AL 的 listener 需要)。 */
@@ -361,6 +380,11 @@ public final class SceneAcoustics {
         directPan = targetDirectPan;
         directLpState = 0.0;
         if (directRing.length > 0) java.util.Arrays.fill(directRing, 0f);
+        if (directPathRing.length > 0) java.util.Arrays.fill(directPathRing, 0f);
+        directPathPos = 0;
+        directDelayN = 0.0;
+        directChainWasActive = false;
+        silentRounds = 0;
         directDistSmoothed = targetDirectGain > 0 && targetPlan.hasSpeakerAnchor
                 ? targetPlan.directDistanceMeters : 0.0;
         for (double[] ch : bandState) java.util.Arrays.fill(ch, 0.0);
@@ -524,11 +548,44 @@ public final class SceneAcoustics {
         // 截止全开(近场无遮挡)时低通旁路:M 原样进环 —— 一阶低通在 20kHz
         // 也有 -1.6dB,「全带宽」语义必须是真恒等。
         final boolean dLpOpen = directCutoff >= DirectPath.FC_OPEN - 1.0;
+        // ITD 上限按采样率整定,与低通是否旁路无关 —— 修前它只在
+        // 「doDirect && !dLpOpen」分支里算,截止全开(遮挡 0 / 近场)时
+        // directItdMax 是 0 或上次的旧采样率值,ITD 直接失效。
+        if (doDirect) {
+            directItdMax = Math.max(1, (int) Math.round(ITD_MAX_SEC * sampleRate));
+        }
         if (doDirect && !dLpOpen) {
             final double fc = Math.min(directCutoff, sampleRate * 0.45);
             directLpCoef = 1.0 - Math.exp(-2.0 * Math.PI * fc / sampleRate);
-            directItdMax = Math.max(1, (int) Math.round(ITD_MAX_SEC * sampleRate));
         }
+        // 直达链从静息切回激活(放回音箱/回到射程内):两条环在停用期间
+        // 不推进,里面躺着上次的旧音频 —— 不先清就是「恢复的瞬间听到 0.3s
+        // 前的自己」。只在跳变这一个缓冲付出 O(环长) 的填充。
+        if (doDirect && !directChainWasActive) {
+            java.util.Arrays.fill(directRing, 0f);
+            if (directPathRing.length > 0) {
+                java.util.Arrays.fill(directPathRing, 0f);
+            }
+            directPos = 0;
+            directPathPos = 0;
+            directLpState = 0.0;
+        }
+        directChainWasActive = doDirect;
+        // 自研直射链的距离延迟(样本,分数):总线不可用时(安卓/急停开关/
+        // 初始化失败/读回静音熔断)由它补「声音从音箱飞到耳朵」的飞行时间,
+        // 否则远距音箱的直达瞬到、反射带延迟,时间结构错乱。
+        // 逐缓冲按目标距离整定(距离已在 directDistSmoothed 上 τ=0.25s 收敛,
+        // 这里的逐缓冲跳变是亚样本级)。环容量在 rebuild() 按 160m 预留。
+        // 夹取上限必须 ≥0:环太小时 length−4 是负数,Math.min 会给出负延迟,
+        // 读位算出来越界(音频链一毫秒的脏数据就够炸一次)。
+        final boolean pathRingReady = directPathRing.length > 8;
+        final double dTargetForDelay = plan.hasSpeakerAnchor
+                ? Math.max(0.0, plan.directDistanceMeters) : 0.0;
+        final double delayCeil = Math.max(0.0, directPathRing.length - 4.0);
+        directDelayN = pathRingReady
+                ? Math.min(delayCeil,
+                        Math.min(sampleRate * 0.9, dTargetForDelay / SPEED_OF_SOUND * sampleRate))
+                : 0.0;
 
         // ---- 直射 HRTF(世界声源;真测量数据的耳廓滤波) ----
         // 用户定论「真 3D 要物理测量数据,不要预设滤波」:世界声源激活时,
@@ -549,6 +606,11 @@ public final class SceneAcoustics {
 
 OpenAlReverbBus busFull = useEaxBus
                 ? OpenAlReverbBus.get() : null;
+        // 熔断的总线不再交付任何东西(render 直接 return,读回缓冲全零),
+        // 继续用它当干声来源 = 整首歌静音。逐缓冲检查(一次字段读)。
+        if (busFull != null && busFull.isBroken()) {
+            busFull = null;
+        }
         if (busFull != null && frames > 0 && plan.useOpenAlReverb
                 && plan.hasSpeakerAnchor && (wetActive || directActive)) {
             if (busMono.length < frames || busOut.length < frames * 2
@@ -580,13 +642,10 @@ OpenAlReverbBus busFull = useEaxBus
                 busFull.setSidePose(listenerX, listenerY, listenerZ);
                 busFull.setSourceRolloff(0f);
             }
-            final double dMet = directDistSmoothed;
-            final double wetSpread = plan.hasSpeakerAnchor
-                    ? Math.max(0.12, Math.min(1.0,
-                            (1.0 / (1.0 + Math.pow(Math.max(0.0, dMet / 48.0 - 1.0), 2.0)))
-                                    * Math.exp(-Math.max(0.0, dMet - 6.0) / 64.0) * 1.15))
-                    : 1.0;
-            // 直射-only:HRTF 总线不做混响(EAX send 关死),湿声由自研链出。
+            // 直射-only:HRTF 总线不做混响(EAX send 关死)。湿声恒定由下方
+            // 自研链出(ER 抽头 + FDN) —— 总线只提供干声的 HRTF 定位。
+            // 湿声的距离稀释在 SceneResponse 里算进 RoomPlan.wet(音频线程
+            // 不再重复乘,否则双重扣);directDistSmoothed 只服务延迟环。
             busFull.setSendGain(0f);
             busFull.setReverbParams(Float.NaN,
                     plan.reverbDiffusion, Math.max(0.1f, decaySec), plan.reverbDecayHfRatio,
@@ -656,15 +715,40 @@ OpenAlReverbBus busFull = useEaxBus
                 directDelayPos = (directDelayPos + frames) % directDelayL.length;
             }
             busFull.render(busMono, busSide, busOut);
+            // 读回静音检测(桌面兜底;安卓已在 createIfAvailable 里整条拒掉):
+            // 输入有信号而连续若干缓冲读回全零 = loopback 渲染静默失败(实机
+            // 出现过:OpenSL 上读回全 0,干声被顶掉 →「放音响就没音乐」)。
+            // 判失败就熔断总线,本缓冲直接用原值、直射回退自研链(下面的
+            // doDirect 段不被 hrtfDirectApplied 跳过)——「无声」变「无感降级」。
+            boolean busLive = true;
+            {
+                final float inRms = rmsOf(busMono, frames);
+                final float outRms = rmsOfOut(busOut, frames);
+                if (inRms > SILENCE_IN_RMS && outRms < SILENCE_OUT_RMS) {
+                    if (++silentRounds >= SILENCE_ROUNDS) {
+                        System.out.println("[MuoniumPlayer/Acoustics] 总线读回连续静音 "
+                                + silentRounds + " 缓冲(输入 RMS " + inRms + "),判定失效");
+                        busFull.markBroken();
+                        silentRounds = 0;
+                        busLive = false;
+                    }
+                } else {
+                    silentRounds = 0;
+                }
+            }
             // 读回 = HRTF 化的干声(直射 3D + S);湿声由本函数后续的逐样本
             // 自研链出。干声写回后【不 return】,继续走湿声网络 —— 直射的
             // HRTF 化与湿声的自研链在此汇流。
-            final float limiterKneeEarly = (float) LIMITER_KNEE * loudness;
-            for (int i = 0; i < frames; i++) {
-                final int o = i * channels;
-                interleaved[o] = softLimit(busOut[i * 2] * dryGain, limiterKneeEarly);
-                if (ch > 1) {
-                    interleaved[o + 1] = softLimit(busOut[i * 2 + 1] * dryGain, limiterKneeEarly);
+            // busLive=false:读回全零,写回就等于本缓冲静音 —— 保留原干声,
+            // 由下方自研直射链接管(下一缓冲 busFull 已熔断,不再进这里)。
+            if (busLive) {
+                final float limiterKneeEarly = (float) LIMITER_KNEE * loudness;
+                for (int i = 0; i < frames; i++) {
+                    final int o = i * channels;
+                    interleaved[o] = softLimit(busOut[i * 2] * dryGain, limiterKneeEarly);
+                    if (ch > 1) {
+                        interleaved[o + 1] = softLimit(busOut[i * 2 + 1] * dryGain, limiterKneeEarly);
+                    }
                 }
             }
             // 抽头能量平滑照走(读回路径没跑 ER,但平滑是针对下一个缓冲的)
@@ -674,7 +758,9 @@ OpenAlReverbBus busFull = useEaxBus
                     tapGRA[i] += (plan.tapGainR[i] - tapGRA[i]) * tapStep;
                 }
             }
-            hrtfDirectApplied = true; // 供下方湿声链判断:干声已含 HRTF,跳过手搓直射
+            // 只有真拿到读回值才算「干声已 HRTF 化」;静音判失败时干声还是
+            // 原值,必须让下方的自研直射链接管,否则本缓冲会完全无声。
+            hrtfDirectApplied = busLive;
         }
 
         int idx = 0;
@@ -701,37 +787,51 @@ OpenAlReverbBus busFull = useEaxBus
                         : directLpState + directLpCoef * (mid - directLpState);
                 // 直达距离延迟(d/343,分数插值 —— 照 libspatialaudio 的
                 // AmbisonicEncoderDist):声音从音箱飞到耳朵的时间。玩家即
-                // 声源时距离≈0,延迟 0,恒等不变。
-                double delayed = directLpState;
-                if (directDelayN > 0.0) {
-                    final int w = directDelayPos;
-                    directDelayL[w] = toPcm16(directLpState);
-                    final int rd = w - (int) directDelayN;
-                    final int rdW = ((rd % directDelayL.length) + directDelayL.length)
-                            % directDelayL.length;
-                    final int rdNext = rdW + 1 == directDelayL.length ? 0 : rdW + 1;
-                    final float frac = (float) (directDelayN - (int) directDelayN);
-                    delayed = directDelayL[rdW] * (1f - frac) + directDelayL[rdNext] * frac;
-                    directDelayPos = w + 1 == directDelayL.length ? 0 : w + 1;
+                // 声源时距离 0 → delaySamples 0 → 逐样本恒等不变。
+                //
+                // 环必须【每样本都写、都推进】,哪怕当前延迟为 0:否则从
+                // 「玩家即声源」切到「世界声源」时,环里躺着上次的陈旧样本,
+                // 读出来的前 delayN 个样本是垃圾(一段突发的旧音频)。
+                float mSample = (float) directLpState;
+                if (directPathRing.length > 1) {
+                    final int len = directPathRing.length;
+                    final int w = directPathPos;
+                    directPathRing[w] = mSample;
+                    directPathPos = w + 1 == len ? 0 : w + 1;
+                    if (directDelayN > 0.0) {
+                        final int delayInt = (int) directDelayN;
+                        final float frac = (float) (directDelayN - delayInt);
+                        // 读位 = 写位 − (delayInt + 1):刚写入的那格是延迟 0,
+                        // 往回一格是延迟 1。双向 wrap 一次收全。
+                        int rd = w - delayInt - 1;
+                        if (rd < 0) {
+                            rd += len;
+                        }
+                        if (rd < 0 || rd >= len) {
+                            rd = 0; // 数值兜底:延迟被上面夹在 len−4 内,理论到不了
+                        }
+                        final int rdNext = rd + 1 == len ? 0 : rd + 1;
+                        mSample = directPathRing[rd] * (1f - frac) + directPathRing[rdNext] * frac;
+                    }
                 }
-                final float mSample = (float) delayed;
                 directRing[directPos] = mSample;
-                // 真 ITD:源在右(pan>0)右耳先到 —— 右耳读位近(年龄小),
-                // 左耳读位远(晚到),与 ER 抽头的约定同向。读位双向 wrap:
-                // pan>0 时 readL 向上溢、readR 向下溢;pan<0 恰好相反 ——
-                // 两个方向都要收(漏一侧就是环形数组越界,音频链会整个熔断)。
+                // 真 ITD:源在右(pan>0)右耳先到。这里没有 base 延迟垫底,
+                // 读位只能往「更老」方向偏(环是因果的),所以按单边年龄差:
+                //   pan>0 → 左耳读 age=|itd|、右耳读 age=0(右耳先到)
+                //   pan<0 → 右耳读 age=|itd|、左耳读 age=0
+                //   pan=0 → 双耳都读 age=0(逐样本恒等,无声源零染色)
+                // 修前是 directPos ± itd —— +itd 绕了整整一圈(≈0.47s @48k),
+                // 单耳被延迟一整个环长,那是回声不是声像。
                 final int itd = (int) (directPan * directItdMax);
-                int readL = directPos + itd;
-                if (readL >= dRingLen) {
-                    readL -= dRingLen;
-                } else if (readL < 0) {
+                final int ageL = itd > 0 ? itd : 0;
+                final int ageR = itd < 0 ? -itd : 0;
+                int readL = directPos - ageL;
+                if (readL < 0) {
                     readL += dRingLen;
                 }
-                int readR = directPos - itd;
+                int readR = directPos - ageR;
                 if (readR < 0) {
                     readR += dRingLen;
-                } else if (readR >= dRingLen) {
-                    readR -= dRingLen;
                 }
                 final double mL = directRing[readL];
                 final double mR = directRing[readR];
@@ -799,13 +899,16 @@ OpenAlReverbBus busFull = useEaxBus
                 for (int i = 0; i < tapCountA; i++) {
                     final int base = tapPosA[i];
                     final int itd = (int) (tapPanA[i] * itdMax);
-                    // 真 ITD:声像在右(pan>0)时右耳先到 —— 右耳读位近(年龄小)、
-                    // 左耳读位远(晚到),与 ILD(tapGainR>tapGainL)同向。
-                    int readL = erPos - base + itd;
+                    // 真 ITD:erPos 已递增,读位越靠后(越接近 erPos)年龄越小。
+                    // 声像在右(pan>0)时【右耳先到】= 右耳读更年轻的样本,
+                    // 左耳读更老的样本:readR 年龄小、readL 年龄大。
+                    // 修前写反(左耳先到),与 ILD(tapGainR>tapGainL)相消,
+                    // 先声效应会把定位往中间拉。
+                    int readL = erPos - base - itd;
                     if (readL < 0) {
                         readL += ringLen;
                     }
-                    int readR = erPos - base - itd;
+                    int readR = erPos - base + itd;
                     if (readR < 0) {
                         readR += ringLen;
                     }
@@ -825,11 +928,12 @@ OpenAlReverbBus busFull = useEaxBus
                     for (int i = 0; i < tapCountB; i++) {
                         final int base = tapPosB[i];
                         final int itd = (int) (tapPanB[i] * itdMax);
-                        int readL = erPos - base + itd;
+                        // 与 A 组同向(见上方 ITD 注释):右耳读年轻、左耳读老。
+                        int readL = erPos - base - itd;
                         if (readL < 0) {
                             readL += ringLen;
                         }
-                        int readR = erPos - base - itd;
+                        int readR = erPos - base + itd;
                         if (readR < 0) {
                             readR += ringLen;
                         }
@@ -875,39 +979,31 @@ OpenAlReverbBus busFull = useEaxBus
                 float tailInL = (float) (duckedMid + (delayedL - monoMix));
                 float tailInR = (float) (duckedMid + (delayedR - monoMix));
 
-                // ---- 湿声路由:EAX Reverb 总线优先,FDN 兜底 ----
-                final OpenAlReverbBus bus = useEaxBus && plan.useOpenAlReverb
-                        ? OpenAlReverbBus.get() : null;
-                if (bus != null) {
-                    // 世界声源(全 AL 渲染,Channel 同款架构):本缓冲的湿声
-                    // 已在循环外整缓冲送入总线 —— 这里只取回渲染结果。直射 3D
-                    // (距离衰减/声像/HRTF)+ S 直连(宽度收缩)+ EAX 混响
-                    // (含 ER/LR 方向)全部由 OpenAL 原生完成。
-                    wetL = busOut[0] * sc;
-                    wetR = busOut[1] * sc;
-                } else {
-                    fdn.process(tailInL, tailInR, fdnOut);
+                // ---- 湿声:恒走自研链(ER 抽头 + FDN 尾)----
+                // 总线是「直射-only」的:setSendGain 恒 0(wet 网络在 AL 侧
+                // 根本没被驱动),读回的 busOut 只有 HRTF 化后的干声 —— 把它
+                // 当湿声用会让每个缓冲叠加同一个采样值(嗡嗡/噗噗),同时 ER
+                // 与 FDN 一次都不跑(房间混响消失)。湿声一律由这里出,总线
+                // 只负责干声的 HRTF 定位(见上方直射段)。
+                fdn.process(tailInL, tailInR, fdnOut);
 
-                    wetL = (erL * AcousticsDebugTuning.erBoost(1f)
-                            + fdnOut[0] * AcousticsDebugTuning.tailMakeup((float) TAIL_MAKEUP))
-                            * wet * sc;
-                    wetR = (erR * AcousticsDebugTuning.erBoost(1f)
-                            + fdnOut[1] * AcousticsDebugTuning.tailMakeup((float) TAIL_MAKEUP))
-                            * wet * sc;
-                }
+                wetL = (erL * AcousticsDebugTuning.erBoost(1f)
+                        + fdnOut[0] * AcousticsDebugTuning.tailMakeup((float) TAIL_MAKEUP))
+                        * wet * sc;
+                wetR = (erR * AcousticsDebugTuning.erBoost(1f)
+                        + fdnOut[1] * AcousticsDebugTuning.tailMakeup((float) TAIL_MAKEUP))
+                        * wet * sc;
 
-                // 湿声输出低频搁架仅自研链走(渲染结果已含 3D 定位与混响方向,
-                // EAX 的 DECAY_HFRATIO 已表达「软面尾更暗」;再搁架会双重压低)。
-                if (bus == null) {
-                    final double lpL = shelfYL1 + shelfB0 * (wetL - shelfYL1);
-                    shelfYL1 = lpL;
-                    wetL = (float) (shelfXL1 = wetL - (1.0 - WET_SHELF_KEEP) * lpL);
-                    final double lpR = shelfYR1 + shelfB0 * (wetR - shelfYR1);
-                    shelfYR1 = lpR;
-                    wetR = (float) (shelfXR1 = wetR - (1.0 - WET_SHELF_KEEP) * lpR);
-                } else {
-                    shelfXL1 = shelfXR1 = 0.0;
-                }
+                // 湿声输出低频搁架(一阶减法):低通提取 <150Hz 成分,
+                // 湿声减去 (1-KEEP)×低频 —— 鼓的低频反射是「冲击」的最后
+                // 来源(FDN 输入已低切,但 ER 抽头是全频的)。行业惯例
+                // low shelf on wet only:低音体感由干声承担,湿声低频退场。
+                final double lpL = shelfYL1 + shelfB0 * (wetL - shelfYL1);
+                shelfYL1 = lpL;
+                wetL = (float) (shelfXL1 = wetL - (1.0 - WET_SHELF_KEEP) * lpL);
+                final double lpR = shelfYR1 + shelfB0 * (wetR - shelfYR1);
+                shelfYR1 = lpR;
+                wetR = (float) (shelfXR1 = wetR - (1.0 - WET_SHELF_KEEP) * lpR);
             }
 
             // 干+湿合成:湿声与抽头和的最大值有物理上限(ER 抽头 64 条同时
@@ -1077,6 +1173,10 @@ OpenAlReverbBus busFull = useEaxBus
         directRing = new float[Math.max(8,
                 DIRECT_RING_SEC_SAMPLES + 2 * itdMaxSamples + DIRECT_DELAY_MAX_SAMPLES)];
         directPos = 0;
+        // 自研直射的飞行时间环:160m 一次预留(≈22.4k 样 @48k)。
+        directPathRing = new float[Math.max(8, DIRECT_DELAY_MAX_SAMPLES)];
+        directPathPos = 0;
+        directDelayN = 0.0;
         directLpState = 0.0;
         final RoomPlan plan = targetPlan;
         buildTapSet(tapPosA, tapPanA, tapGLA, tapGRA, tapAirCoefA, plan, rate);

@@ -110,9 +110,20 @@ public final class OpenAlReverbBus {
         }
     }
 
-    /** 当前总线;null = 不可用。 */
+    /** 当前总线;null = 不可用。已熔断的实例仍会返回(见 {@link #isBroken()})。 */
     public static OpenAlReverbBus get() {
         return instance;
+    }
+
+    /**
+     * 总线是否已熔断(初始化失败后的失败路径、或运行期被判定失效)。
+     *
+     * <p>调用方必须查这一位:<b>熔断后的 {@link #render} 会直接 return,读回缓冲
+     * 保持原样(全零)</b> —— 把它当正常结果写回输出就是「整首歌没声」。
+     * 场景声学据此在每个缓冲回退到自研直射链。</p>
+     */
+    public boolean isBroken() {
+        return broken;
     }
 
     /** 场景侧检测到读回静音等失效模式时调用:总线永久下线回自研链。 */

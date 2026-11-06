@@ -321,4 +321,131 @@ class SceneAcousticsTest {
             SceneAcoustics.render(new double[CHANNELS * 64], CHANNELS, RATE);
         }
     }
+
+    @Test
+    @DisplayName("直达 ITD:pan>0 时右耳先到(右耳领先于左耳,不是被延迟一整圈)")
+    void directChainItdPutsRightEarFirst() {
+        // 冲激定位:pan=1 全右。修前 readL = directPos + itd 绕了整整一圈
+        // (directRing ≈ 22560 样),左耳被延迟 ≈0.47s —— 那不是 ITD。
+        // 正确口径是单边年龄差:右耳 age=0、左耳 age=itd(≤28 样 @44.1k)。
+        SceneAcoustics.applyTarget(planNoTaps(20000, 0f, 1f, 1f, 0f, 0f, 0.28f,
+                1f, DirectPath.FC_OPEN, 1f, 0f));
+        SceneAcoustics.flush();
+        warmup(4);
+        // 一个短促脉冲,数据铺满一个缓冲(64 帧)
+        double[] pulse = new double[CHANNELS * 64];
+        for (int f = 0; f < 8; f++) {
+            pulse[f * CHANNELS] = 0.5;
+            pulse[f * CHANNELS + 1] = 0.5;
+        }
+        SceneAcoustics.render(pulse, CHANNELS, RATE);
+        // 找左右耳的包络峰值所在帧:右耳应早于左耳(或同帧,ITD 小于一帧)
+        int peakL = -1;
+        int peakR = -1;
+        double bestL = 0;
+        double bestR = 0;
+        for (int f = 0; f < 64; f++) {
+            final double vL = Math.abs(pulse[f * CHANNELS]);
+            final double vR = Math.abs(pulse[f * CHANNELS + 1]);
+            if (vL > bestL) { bestL = vL; peakL = f; }
+            if (vR > bestR) { bestR = vR; peakR = f; }
+        }
+        assertTrue(peakR >= 0 && peakL >= 0, "两侧都要有能量");
+        assertTrue(peakR <= peakL,
+                "右耳应不晚于左耳: peakR=" + peakR + " peakL=" + peakL);
+        // 关键回归:左耳没有被延迟一整圈。ITD 上限 0.65ms ≈ 28 样 @44.1k,
+        // 一个 64 帧缓冲内必须已经出现。
+        assertTrue(peakL - peakR <= 32,
+                "ITD 应在一毫秒级,不能是整圈延迟: Δ=" + (peakL - peakR));
+    }
+
+    @Test
+    @DisplayName("自研直射距离延迟:世界声源 96m 的直达声被整体推后 ≈0.28s")
+    void directChainAppliesPropagationDelay() {
+        // 96m / 343 ≈ 0.28s ≈ 12343 样 @44.1k。总线不可用时(安卓/急停/
+        // 熔断)由 directPathRing 补这段飞行时间;修前 directDelayN 从不赋值,
+        // 远距音箱的直达瞬到、反射带延迟。
+        //
+        // 注意:必须用完整构造把 hasSpeakerAnchor 置 true —— 距离延迟只在
+        // 世界声源下有语义(玩家即声源时距离为 0)。d 必须 <1 才会激活直达
+        // 链(directActive 要求 gain/截止/pan 三者之一偏离默认),所以用 0.5:
+        // 距离延迟是链内独立的一环,与增益无关。
+        SceneAcoustics.applyTarget(new RoomPlan(20000, 0f, 1f, 1f, 0f, 0f, 0.28f,
+                0f, 0f, 1f,
+                new float[0], new float[0], new float[0],
+                0.5f, DirectPath.FC_OPEN, 0f, 96f,
+                false, 1f, 0.5f, true, 0.0, 64.0, 0.0));
+        SceneAcoustics.flush();
+        // 灌静音把延迟环填满,参数也收敛到位
+        warmup(200);
+
+        // 单帧脉冲(帧 0),然后逐块追它出现在输出的哪一帧。
+        // 每个缓冲都新分配:render 原地改写,复用会把输出回灌成输入。
+        int firstHeard = -1;
+        double peak = 0;
+        int base = 0;
+        for (int block = 0; block < 200 && firstHeard < 0; block++) {
+            double[] buf = new double[CHANNELS * 64];
+            if (block == 0) {
+                buf[0] = 0.6;      // 左
+                buf[1] = 0.6;      // 右
+            }
+            SceneAcoustics.render(buf, CHANNELS, RATE);
+            for (int f = 0; f < 64; f++) {
+                final double v = Math.abs(buf[f * CHANNELS]);
+                if (v > 0.06) {
+                    firstHeard = base + f;
+                    peak = v;
+                    break;
+                }
+            }
+            base += 64;
+        }
+        assertTrue(firstHeard > 0, "脉冲必须出现在输出里");
+        // 直达增益 0.5 + dryGain 1 → 幅度 0.3,阈值 0.06 留足余量
+        final int expected = (int) (96.0 / 343.0 * RATE);
+        assertTrue(Math.abs(firstHeard - expected) <= 160,
+                "直达声应被推后 ≈" + expected + " 样,实测 " + firstHeard);
+        assertTrue(peak > 0.1, "直达声不该被衰减掉: peak=" + peak);
+    }
+
+    @Test
+    @DisplayName("世界声源 + 湿声:混响是随时间变化的信号,不是每个缓冲一个常数")
+    void speakerWetIsSignalNotPerBufferConstant() {
+        // 回归:曾经总线分支拿 busOut[0] 当整段湿声(单采样值 × 侧链增益),
+        // 听感是「嗡嗡/噗噗」的台阶噪声,且 ER/FDN 一次都不跑。
+        // 判据:同一缓冲内湿声必须逐样本变化(抽头/尾是滤波后的信号);
+        // 「整段同一个值」就是那个 bug 的指纹。
+        SceneAcoustics.applyTarget(new RoomPlan(20000, 0.6f, 1f, 1f, 0.004f, 0.4f, 0.28f,
+                0.54f, 0.32f, 1f,
+                new float[] {0.010f, 0.023f}, new float[] {0.3f, 0.15f}, new float[] {0.3f, 0.15f},
+                1f, DirectPath.FC_OPEN, 0f, 0f,
+                true, 1f, 0.5f, true, 0.0, 64.0, 0.0));
+        warmup(1400);
+
+        // 真实内容的激励(避免静音/直流把 ER 抽头喂成 0)
+        double[] pcm = new double[CHANNELS * 256];
+        int seed = 12345;
+        for (int f = 0; f < 256; f++) {
+            seed = seed * 1103515245 + 12345;
+            final double v = ((seed >> 16) & 0x7FFF) / 32768.0 - 0.5;   // 类噪声
+            pcm[f * CHANNELS] = v * 0.4;
+            pcm[f * CHANNELS + 1] = -v * 0.4;
+        }
+        SceneAcoustics.render(pcm, CHANNELS, RATE);
+
+        // 去掉直达声影响:比较「相隔两个样本」的差分能量。常数湿声的差分恒 0。
+        double diff = 0;
+        double level = 0;
+        for (int f = 2; f < 256; f++) {
+            final double a = pcm[f * CHANNELS];
+            final double b = pcm[(f - 2) * CHANNELS];
+            diff += (a - b) * (a - b);
+            level += a * a;
+        }
+        assertTrue(level > 1e-6, "输出必须有声: level=" + level);
+        assertTrue(diff > level * 1e-3,
+                "湿声必须是随时间变化的信号,不是每缓冲一个常数"
+                        + "(diff=" + diff + " level=" + level + ")");
+    }
 }

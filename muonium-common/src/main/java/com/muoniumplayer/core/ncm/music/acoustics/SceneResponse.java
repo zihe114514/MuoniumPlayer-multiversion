@@ -172,6 +172,14 @@ public final class SceneResponse {
             // 湿声 0.86,音乐糊成一团找不到声源)。传播两项:几何 inverse
             // 曲线(参考 16m —— 扩散场比直达耐稀释)、空气项(/32m,漫反射
             // 长路径比直达慢一档)。8m 内不稀释;24m ≈ ×0.52;68m ≈ ×0.08。
+            //
+            // 乘在 wet 的公式之后(公式是赋值不是累乘,放在前面会被抹掉)。
+            // 顺序在长尾折减/水下折减之前,所以这些后续折减都在稀释后的量上叠。
+            wet = (float) Math.min(WET_CEIL, enclosure
+                    * (WET_BASE + WET_REACH_SPAN * reach)
+                    * wetMaterialFactor(rho)
+                    * MUSIC_WET_BOOST
+                    * AcousticsDebugTuning.wetBoost(1f));
             if (sample.hasDirectSource()) {
                 final double d = sample.directDistanceMeters();
                 final double over = Math.max(0.0, d / 16.0 - 1.0);
@@ -179,11 +187,6 @@ public final class SceneResponse {
                         * Math.exp(-Math.max(0.0, d - 6.0) / 32.0);
                 wet *= (float) Math.min(1.0, Math.max(0.08, spread * 1.15));
             }
-            wet = (float) Math.min(WET_CEIL, enclosure
-                    * (WET_BASE + WET_REACH_SPAN * reach)
-                    * wetMaterialFactor(rho)
-                    * MUSIC_WET_BOOST
-                    * AcousticsDebugTuning.wetBoost(1f));
             // 长尾微折减:洞穴/矿洞(T60>2.5s)的湿声轻收最多 8% —— 实机
             // 反馈大空间混响略过;小房间(T60<0.5s)完全不受影响。
             if (decay > LONG_TAIL_SOFTEN_FROM) {
@@ -446,14 +449,14 @@ public final class SceneResponse {
     /** 抽头上限(超出按能量截断):实机日志显示密集房间可测到 74-83 条可达反射,
      *  只交付 24 条会肉眼可见地「稀」—— 早声场密度就是细腻感的本体。 */
     private static final int TAP_MAX = 64;
-    /** 归一后最强抽头的能量上限:单条太响是「点射/slap」,摊薄到很多条中弱反射
-     *  才是真实小房间的样子。 */
-    private static final float TAP_GAIN_CEIL = 0.22f;
     /** 单耳抽头幅度和上限:密集房间几十条相近抽头同时叠加会周期性超 1.0
      *  (DJ 满幅音乐下直接削波炸耳);超出整体等比压缩 —— 扩散场能量守恒。
      *  1.1 = 原 0.9 × 1.22:小空间的混响密度感主要来自早反射能量和,
      *  提升让 ER 通路能量 ×1.49(小空间听感「更差」的同源修复);
-     *  逐样本软限幅兜住合成后的峰值。 */
+     *  逐样本软限幅兜住合成后的峰值。
+     *  <p>这是唯一的幅度上限:单条抽头不做逐条封顶 —— 近墙抽头
+     *  (retention·2/path,2m 处可达 0.9)本来就该响,逐条压会把直达感
+     *  一起削掉。过密的能量由这条和约束整体摊薄。</p> */
     private static final float TAP_SUM_CEIL = 1.1f;
     /** 抽头延迟上限:更晚的反射归尾部管。 */
     private static final float ER_MAX_SEC = 0.14f;
