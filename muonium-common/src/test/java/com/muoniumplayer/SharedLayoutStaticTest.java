@@ -108,6 +108,10 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/mixin/GameRendererAccessor.java",
             // --- 3D 歌词晕格加色：RenderType.create 包私有 accessor（仅 26.2/26.3）---
             "com/muoniumplayer/mixin/RenderTypeAccessors.java",
+            // --- 同上的 1.21.10 世代形态：四参 create(String,int,RenderPipeline,
+            //     CompositeState) 在 1.21.10 起也包私有，签名与 26.x 的
+            //     create(String,RenderSetup) 不同形，无法与上一行共用一份（仅 1.21.10）---
+            "com/muoniumplayer/mixin/RenderTypeCreateAccessor.java",
             "com/muoniumplayer/mixin/ProjectionMatrixBufferMixin.java",
             // --- 通透模式：果冻压缩注入点两代不同形 —— 26.x extract/submit 状态架构，
             //     1.20.1~1.21.11 的 EntityRenderDispatcher.render(...)（暂仅 26.3）---
