@@ -145,6 +145,10 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/render/skija/Port263StaticTest.java",
             "com/muoniumplayer/render/skija/RasterFrames.java"));
 
+    // 仅铺设 Kotlin 源根，不迁移既有 Java 留守类；未来新增差异类需同步登记工具与本表。
+    private static final Set<String> RETAINED_MAIN_KOTLIN = new LinkedHashSet<String>();
+    private static final Set<String> RETAINED_TEST_KOTLIN = new LinkedHashSet<String>();
+
     private static final List<String> LOADER_SYMBOLS = Arrays.asList(
             "net.fabricmc.", "net.neoforged.", "net.minecraftforge.", "cpw.mods.");
 
@@ -161,6 +165,92 @@ class SharedLayoutStaticTest {
         }
         assertTrue(both.isEmpty(), "这些类在共享层和本树各有一份，javac 会报重复类。"
                 + "要么删掉本树那份回到共享层，要么整族搬回本树：\n" + String.join("\n", both));
+    }
+
+    @Test
+    @DisplayName("Kotlin 源根遵守留守清单，不得绕过 Java 共享治理")
+    void kotlinRootsOnlyHoldRetainedFiles() throws IOException {
+        checkOnlyExpected(ProjectPaths.versionKotlin(), "src/main/kotlin", RETAINED_MAIN_KOTLIN);
+        checkOnlyExpected(ProjectPaths.versionRoot().resolve("src/test/kotlin"),
+                "src/test/kotlin", RETAINED_TEST_KOTLIN);
+    }
+
+    @Test
+    @DisplayName("共享与本树的 Java/Kotlin 源根没有跨语言同名类")
+    void sourceRootsHaveNoCrossLanguageDuplicates() throws IOException {
+        java.util.Map<String, Path> seen = new java.util.LinkedHashMap<String, Path>();
+        List<String> duplicates = new ArrayList<String>();
+        for (Path root : ProjectPaths.sourceRoots()) {
+            for (Path file : filesUnder(root)) {
+                if (!ProjectPaths.isSourceFile(file)) {
+                    continue;
+                }
+                String relative = root.relativize(file).toString().replace('\\', '/');
+                String name = relative.substring(0, relative.lastIndexOf('.'));
+                Path previous = seen.putIfAbsent(name, file);
+                if (previous != null) {
+                    duplicates.add(previous + " <-> " + file);
+                }
+            }
+        }
+        assertTrue(duplicates.isEmpty(), "Java/Kotlin 同名文件会冲突，必须只有一份归属：\n"
+                + String.join("\n", duplicates));
+    }
+
+    @Test
+    @DisplayName("共享 Kotlin 同样不许引用加载器符号（含 alias 与全限定名）")
+    void sharedKotlinHasNoLoaderSymbols() throws IOException {
+        List<String> offenders = new ArrayList<String>();
+        for (Path file : filesUnder(ProjectPaths.sharedKotlin())) {
+            String code = Files.readString(file, StandardCharsets.UTF_8);
+            for (String symbol : LOADER_SYMBOLS) {
+                if (code.contains(symbol)) {
+                    offenders.add(file + " -> " + symbol);
+                }
+            }
+        }
+        assertTrue(offenders.isEmpty(), "共享 Kotlin 仍须零加载器符号：\n"
+                + String.join("\n", offenders));
+    }
+
+    @Test
+    @DisplayName("两侧 Kotlin 编译、共享源码和 smoke 验收接线完整")
+    void bothLoadersWireKotlinSupport() throws IOException {
+        for (Path loader : Arrays.asList(ProjectPaths.fabric(), ProjectPaths.loaderDir())) {
+            String build = Files.readString(loader.resolve("build.gradle"), StandardCharsets.UTF_8);
+            assertTrue(build.contains("id 'org.jetbrains.kotlin.jvm'"), loader + " 未启用 Kotlin 编译");
+            assertTrue(build.contains("id 'org.jetbrains.kotlin.plugin.lombok'"),
+                    loader + " Kotlin 看不到同轮 Lombok 生成的 Java API");
+            assertTrue(build.contains("apply from: rootProject.file('../gradle/kotlin-support.gradle')"),
+                    loader + " 未挂共享 Kotlin 配置");
+            assertTrue(!build.replaceAll("(?m)//[^\\r\\n]*", "").contains("classesDirs.singleFile"),
+                    loader + " 仍假定只有一个编译输出目录，Java/Kotlin 混编会失败");
+        }
+        String settings = Files.readString(ProjectPaths.versionRoot().resolve("settings.gradle"),
+                StandardCharsets.UTF_8);
+        assertTrue(settings.contains("id 'org.jetbrains.kotlin.jvm' version '2.4.21'"));
+        String properties = Files.readString(ProjectPaths.versionRoot().resolve("gradle.properties"),
+                StandardCharsets.UTF_8);
+        assertTrue(properties.contains("kotlin.stdlib.default.dependency=false"),
+                "不能由插件再注入另一份标准库抬高旧 KFF 的编译基线");
+        String support = Files.readString(ProjectPaths.repoRoot().resolve("gradle/kotlin-support.gradle"),
+                StandardCharsets.UTF_8);
+        for (String root : Arrays.asList("../muonium-common/src/main/kotlin",
+                "../muonium-common/src/test/kotlin", "../mpparty-common/src/main/kotlin")) {
+            assertTrue(support.contains(root), "Kotlin 配置漏挂 " + root);
+        }
+        assertTrue(support.contains("kotlinSmokeTest") && support.contains("jvmTarget.set"));
+    }
+
+    @Test
+    @DisplayName("跨语言路径接口保留原 Java 扫描结果，不漏 Kotlin")
+    void sourceEnumerationIncludesJavaAndKotlin() throws IOException {
+        List<Path> files = ProjectPaths.allSourceFiles();
+        assertTrue(files.containsAll(ProjectPaths.allJavaFiles()));
+        assertTrue(ProjectPaths.sourceRoots().contains(ProjectPaths.sharedKotlin()));
+        assertTrue(ProjectPaths.sourceRoots().contains(ProjectPaths.versionKotlin()));
+        assertTrue(ProjectPaths.isSourceFile(Paths.get("Example.kt")));
+        assertTrue(!ProjectPaths.isSourceFile(Paths.get("build.gradle.kts")));
     }
 
     @Test
