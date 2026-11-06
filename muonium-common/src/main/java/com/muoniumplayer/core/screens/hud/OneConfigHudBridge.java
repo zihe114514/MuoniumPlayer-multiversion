@@ -106,7 +106,6 @@ public final class OneConfigHudBridge {
             addMetadata.invoke(tree, "ui_only", Boolean.TRUE);
             addMetadata.invoke(tree, "custom_save", (Runnable) HudConfig::save);
 
-            addUiChoice(tree, functional, addMetadata, put);
             int entryIndex = 0;
             for (HudSettingsModel.Category category : HudSettingsModel.categories()) {
                 for (HudSettingsModel.Group group : category.groups) {
@@ -124,6 +123,10 @@ public final class OneConfigHudBridge {
                     }
                 }
             }
+            // 「界面」排最后：它只有一行（选哪套设置界面渲染），属于「装好之后基本不再动」的
+            // 配置。放在第一位会挤掉真正高频的分类 —— 标签栏的顺序就是属性的插入顺序。
+            addUiChoice(tree, functional, addMetadata, put);
+
 
             Object manager = activeManager.invoke(null);
             register.invoke(manager, tree);

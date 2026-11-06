@@ -44,6 +44,16 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         // 时机必须在这里：HudConfig 已在 client.init() 里 load 过，字段有值；
         // 再晚到进世界之后注册，首帧的 HUD 列表会缺这两块。
         com.muoniumplayer.core.screens.hud.MuoniumHudProviders.registerAll();
+        // 「常用」页：把播放器最高频的几个开关放进 MuoniumConfig 主界面最前面一页。
+        // 必须在 HUD providers 之后 —— 那一页的内容依赖 MuoniumConfig 已装载。
+        com.muoniumplayer.core.screens.hud.MuoniumFavorites.register();
+
+        // 没装 MuoniumConfig 时起一次后台下载，装到 mods/ 下次启动生效。
+        // 必须带上 MC 版本与加载器：MuoniumConfig 是按版本单独编译的（mixin 目标与映射
+        // 各版本不同），装错版本会在启动期崩，比「没有设置界面」严重得多。
+        // 失败不影响听歌：它只提供设置界面，与缺渲染原生库那种致命情况不同。
+        com.muoniumplayer.core.screens.hud.MuoniumConfigDownload.ensureDownloaded(
+                com.muoniumplayer.MuoniumPlayerClient.MC_VERSION, "fabric");
 
         // 2. 一起听（服务端房间）通道：服务器没装一起听服务端 mod 时全程无副作用，
         //    装了则由 MpPartyClient 接管房间内的播放/点歌，复用播放器现有的播放链路。

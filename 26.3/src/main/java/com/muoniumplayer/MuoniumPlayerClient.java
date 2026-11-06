@@ -233,6 +233,10 @@ public final class MuoniumPlayerClient {
             return;
         }
 
+        // MuoniumConfig 的「常用」页在 client init 时可能注册不上（它的嵌套 jar 那时还没进
+        // 类加载器）。这里每 tick 试一次，成功后就只是空判断。
+        com.muoniumplayer.core.screens.hud.MuoniumFavorites.ensureRegistered();
+
         // ---- Gnetum 共存兼容：检测 + 自动关其「muonium」HUD 元素缓存 + 聊天栏告知 ----
         // Gnetum 的 HUD 分帧缓存只认走原版 GUI 管线的回调；本 mod 的 HUD 是 Skija 离屏 +
         // 帧末合成的旁路渲染，它的缓存 FBO 里没有我们的像素，回调被跳帧 = HUD 整块消失
@@ -558,14 +562,38 @@ public final class MuoniumPlayerClient {
      * <p>仍然压一层变换与绘制状态：业务代码里存在 push/pop 不配对的写法，
      * 压一层能把影响限制在本帧（宿主层每帧还会再兜一次底）。
      */
+    /**
+     * 当前 Screen 是不是 HUD 编辑器。
+     *
+     * <p>只认白名单类名，别的一律返回 false（HUD 不画）。这里刻意不用
+     * 「继承自 GuiScreen 且类名含 Hud」这种宽口径：一旦把背包、聊天或别的 mod 的界面
+     * 误判成编辑器，HUD 就会叠上去挡住操作，那个 bug 比「编辑器里没有预览」严重得多。</p>
+     *
+     * <p>外部编辑器（MuoniumConfig 的 HUD 设计器）在编译期不可见，只能按类名认；
+     * 它改名或换实现时这里会静默失效，表现回到「编辑器里看不到预览」，不会更糟。</p>
+     */
+    private static boolean isHudEditorScreen(Screen screen) {
+        if (screen instanceof GuiHudEditorPro || screen instanceof MConfigHudScreen) {
+            return true;
+        }
+        String name = screen.getClass().getName();
+        return name.equals("org.polyfrost.oneconfig.internal.ui.compose.impls.HudEditorUIScreen");
+    }
+
     private void onHudRenderUnguarded() {
-        // 26.x 的 HUD 回调在 Screen 打开期间照常触发。有两类要让路：
-        // 1) HUD 设置编辑器自带两块 widget 的实时预览，真实 HUD 再画就同屏各一份；
+        // 26.x 的 HUD 回调在 Screen 打开期间照常触发。两头要区别对待：
+        // 1) HUD 编辑器需要看到真实 HUD —— 编辑器的意义就是「一边拖一边看效果」。
+        //    外部编辑器（OneConfig / MuoniumConfig）尤其必要：它的 Hud 对象是我们通过
+        //    NormalizedHudProvider 接进去的空壳（Content() 不画东西），真正画 HUD 的
+        //    仍是本方法；不放行就是一片空白。
         // 2) 背包/原版设置/聊天等任何其它界面——mod 的 HUD 附加层叠在上面既挡操作又无意义
         //   （全屏播放器 NCMScreen 不走这条回调，自己管理岛与频谱；下载进度灵动岛保留，
         //    它是用户主动触发的进度反馈，跟随界面消失反而丢失状态）。
+        //
+        // 判断刻意只认白名单类名：认不出就按「不是编辑器」处理，宁可编辑器里看不到预览，
+        // 也不能让 HUD 盖到背包/聊天上——后者会挡住操作，更容易被当成 bug 报上来。
         Screen open = Minecraft.getInstance().gui.screen();
-        if (open != null && !(open instanceof NCMScreen)) {
+        if (open != null && !(open instanceof NCMScreen) && !isHudEditorScreen(open)) {
             if (!(DownloadDynamicIsland.isDownloadActive())) return;
         }
         api.getGLStateManager().pushAttrib();
