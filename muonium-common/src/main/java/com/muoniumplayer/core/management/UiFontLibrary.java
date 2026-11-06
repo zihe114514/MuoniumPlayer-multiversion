@@ -691,6 +691,31 @@ public final class UiFontLibrary {
         return out;
     }
 
+    /**
+     * 判定字形覆盖用的探针文本。
+     *
+     * <p>首字符必须留在原位（下标 0 是 Latin 的判定），其余是中文。
+     *
+     * <p>为什么是一整串而不是单个「一」：原先只查 U+4E00 一个字，对这种字体会误判 ——
+     * Noto Sans KR 收了「一」和「好」，却没「这」「你」「汉」，于是它被判成「含中文」
+     * 并接管了设置界面，实际显示出来是一整屏方块。查一组常用字才能反映真实覆盖面。</p>
+     */
+    private static final String PROBE_TEXT = "A\u4e00\u8fd9\u4f60\u6c49\u597d\u7684\u662f\u4e0d\u4e86";
+
+    /**
+     * 探针文本里的中文是否全部有字形。
+     *
+     * <p>要求「全部」而不是「至少一个」：设置界面里这些字都会出现，缺任何一个就是方块。
+     * 判定偏严的代价只是少接管一次字体（退回内置），偏松的代价是整屏不可读。</p>
+     */
+    private static boolean coversChinese(short[] glyphs) {
+        // glyphs[0] 是 Latin 探针，从 1 开始
+        for (int i = 1; i < PROBE_TEXT.length(); i++) {
+            if (i >= glyphs.length || glyphs[i] == 0) return false;
+        }
+        return PROBE_TEXT.length() > 1;
+    }
+
     /** 读一个字体文件，量出显示名与字形覆盖。读不出来返回 null（坏文件不该出现在列表里）。 */
     private static UiFont probeExternal(File file) {
         try {
@@ -702,9 +727,9 @@ public final class UiFontLibrary {
             boolean latin = false;
             boolean cjk = false;
             try (io.github.humbleui.skija.Font probe = new io.github.humbleui.skija.Font(typeface, 16f)) {
-                short[] glyphs = probe.getStringGlyphs("A\u4e00");
+                short[] glyphs = probe.getStringGlyphs(PROBE_TEXT);
                 latin = glyphs.length > 0 && glyphs[0] != 0;
-                cjk = glyphs.length > 1 && glyphs[1] != 0;
+                cjk = coversChinese(glyphs);
             }
             String name = typeface.getFamilyName();
             boolean bold = typeface.getFontStyle().getWeight() >= 600

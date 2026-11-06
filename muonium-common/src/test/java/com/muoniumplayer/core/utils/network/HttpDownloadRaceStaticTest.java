@@ -140,4 +140,28 @@ class HttpDownloadRaceStaticTest {
         assertTrue(race.contains("started.add(allWorkers[index])") || race.contains("started.add(worker)"),
                 "放量起的 B 档线程必须与 A 档统一收尸（同一个 started 列表）");
     }
+
+    @Test
+    @DisplayName("单路断流立刻重试：同槽位残片续传，不从头下")
+    void perMirrorRetryReusesPartialFile() throws Exception {
+        String race = raceSource();
+        // 断流在真实网络里很常见（实测 R2 三次里有一次只收到 64 KB）。没有单路重试的话，
+        // 8 路同时被掐时只能等调用方的整轮重试（30 秒冷却），玩家白等半分钟。
+        assertTrue(race.contains("downloadWithRetry("),
+                "worker 必须走带重试的入口，而不是直接调 downloadOne");
+        assertTrue(race.contains("PER_MIRROR_ATTEMPTS"),
+                "单路重试预算要有具名常量，别写成魔法数字");
+        assertTrue(race.contains("RETRY_BACKOFF_MILLIS"),
+                "重试之间要有退避，否则网关抖动时会连着撞");
+        // 续传的关键：重试路径不许删残片，downloadOne 才能挂 Range 接上。
+        // worker 的 finally 里那次删除只在整路彻底结束时执行，是合法的。
+        int retry = race.indexOf("private static void downloadWithRetry");
+        int one = race.indexOf("private static void downloadOne");
+        assertTrue(retry > 0 && one > retry, "两个方法都要在，downloadOne 在后");
+        String retryBody = race.substring(retry, one);
+        assertFalse(retryBody.contains("deleteQuietly(part)"),
+                "重试路径不许清理残片：清了就只能从头下，断点续传失去意义");
+        assertTrue(retryBody.contains("settled.get()"),
+                "别路已夺冠时不必再重试");
+    }
 }

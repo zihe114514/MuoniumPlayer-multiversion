@@ -174,8 +174,11 @@ public final class HttpDownloadRace {
                             failure.set("别路先到，本路未开跑");
                             return;
                         }
-                        downloadOne(url, part, expectedBytes, expectedSha256,
-                                settled, leaderBytes, onProgress);
+                        downloadWithRetry(url, part, expectedBytes, expectedSha256,
+                                settled, leaderBytes, onProgress, failure);
+                        if (failure.get() != null) {
+                            return;
+                        }
                         // 这一路完整通过了校验。抢冠：抢到的人原子改名、记 URL；没抢到的退场。
                         if (settled.compareAndSet(false, true)) {
                             Files.move(part.toPath(), target.toPath(),
@@ -295,6 +298,62 @@ public final class HttpDownloadRace {
     /** 第 slot 路的临时文件：正式落点旁的 {@code <名>.race<slot>}。 */
     static File partFile(File target, int slot) {
         return new File(target.getAbsolutePath() + PART_SUFFIX + slot);
+    }
+
+    /**
+     * 单路重试预算：同一条镜像在整轮 {@link #fetch} 内最多尝试几次。
+     *
+     * <p>为什么需要单路重试：{@link #downloadOne} 一次断流就把这条线记为失败，而整轮重试
+     * 由调用方管（{@code MuoniumConfigDownload} 是 30 秒冷却、最多 3 轮）。网关抖动造成的
+     * 截断很常见（实测 R2 三次里有一次只收到 64 KB），若恰好 8 路同时被掐，玩家要白等
+     * 半分钟才有人重新发起。这里让它自己立刻再试一次。</p>
+     *
+     * <p>续传是免费的：上一次的残片还在自己的槽位文件里，{@link #downloadOne} 开跑时
+     * 会自动挂 {@code Range} 从断点接上，不是从头再来。</p>
+     */
+    private static final int PER_MIRROR_ATTEMPTS = 3;
+
+    /** 单路重试之间的退避基数：第 n 次失败后等 {@code n * 该值} 毫秒。 */
+    static final long RETRY_BACKOFF_MILLIS = 400L;
+
+    /**
+     * 带重试的单路下载：断开就立刻续传，最多 {@link #PER_MIRROR_ATTEMPTS} 次。
+     *
+     * <p>失败写进 {@code failure} 而不是抛出，让调用方能区分「这一路最终没成」
+     * 与「冠军已被别路抢走」。别路先到时不再重试——重试已经没有意义。</p>
+     */
+    private static void downloadWithRetry(String url, File part, long expectedBytes, String expectedSha256,
+                                          AtomicBoolean settled, AtomicLong leaderBytes,
+                                          IntConsumer onProgress, AtomicReference<String> failure) {
+        String last = null;
+        for (int attempt = 1; attempt <= PER_MIRROR_ATTEMPTS; attempt++) {
+            if (settled.get()) {
+                failure.set("别路先到，本路未开跑");
+                return;
+            }
+            try {
+                downloadOne(url, part, expectedBytes, expectedSha256, settled, leaderBytes, onProgress);
+                return; // 拉完且校验通过
+            } catch (Throwable thrown) {
+                last = thrown.getClass().getSimpleName()
+                        + (thrown.getMessage() == null ? "" : (": " + thrown.getMessage()));
+                // 别路已夺冠：本路的重试没有意义，残片留给下次启动续传
+                if (settled.get()) {
+                    failure.set(last);
+                    return;
+                }
+                if (attempt < PER_MIRROR_ATTEMPTS) {
+                    try {
+                        Thread.sleep(RETRY_BACKOFF_MILLIS * attempt);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        failure.set(last);
+                        return;
+                    }
+                }
+            }
+        }
+        failure.set(last);
     }
 
     /**
