@@ -39,11 +39,14 @@ class PresetShareKeysFreezeTest {
         }
     }
 
-    /** 2026-11-06 分享码 v2 首发时的键表。 */
+    /**
+     * 分享码 v2 首发时的键表。2026-11-06 定稿；发布前并入上游 dev 时 hud 末尾追加了
+     * {@code worldLyricsGlowMode}（3D 歌词发光形态，165 → 166），前 165 个的指纹未变。
+     */
     private static final Map<String, Frozen> FROZEN = new HashMap<String, Frozen>();
 
     static {
-        FROZEN.put("hud", new Frozen(165, "bf5b71079a72e46b"));
+        FROZEN.put("hud", new Frozen(166, "7c93be7afcd9ab86"));
         FROZEN.put("theme", new Frozen(2, "7c0e005032b3e66f"));
         FROZEN.put("foliaBg", new Frozen(45, "25b4e17a614327fc"));
         FROZEN.put("font", new Frozen(1, "a56145270ce6b3be"));

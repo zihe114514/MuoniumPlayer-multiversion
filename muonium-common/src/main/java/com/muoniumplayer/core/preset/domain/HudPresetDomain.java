@@ -23,6 +23,12 @@ public final class HudPresetDomain implements PresetDomain {
 
     public static final String ID = "hud";
 
+    /**
+     * 3D 歌词发光形态的本地上限：0 经典 / 1 辉光。与七棵树 {@code HudConfig} 读档时的
+     * {@code clampInt(…, 0, 1)} 同一口径（那边没有具名常量）；以后多一种形态要两处一起改。
+     */
+    private static final int WORLD_LYRICS_GLOW_MODE_MAX = 1;
+
     private static final KeyPolicy POLICY = KeyPolicy.builder()
             .facet(Facet.VISIBILITY,
                     "musicInfoEnabled", "musicLyricsEnabled", "spectrumInHud",
@@ -58,7 +64,10 @@ public final class HudPresetDomain implements PresetDomain {
                     "worldLyricsKeepDistance", "worldLyricsAboveGround", "worldLyricsTranslation",
                     "worldLyricsTransEffects", "worldLyricsCoverColorMode", "worldLyricsCoverGradient",
                     "worldLyricsCoverPaletteRgb0", "worldLyricsCoverPaletteRgb1",
-                    "worldLyricsCoverPaletteRgb2", "worldLyricsCoverPaletteRgb3")
+                    "worldLyricsCoverPaletteRgb2", "worldLyricsCoverPaletteRgb3",
+                    // 发光形态（经典逐字晕格 / 行级辉光）是长相而不是画质档，跟着 3D 歌词走；
+                    // 画质那一档（worldLyricsGlowTier）仍在「画质性能」。
+                    "worldLyricsGlowMode")
             .facet(Facet.ISLAND,
                     "dynamicIslandScale", "dynamicIslandTextScale", "dynamicIslandMaxWidth",
                     "dynamicIslandProgressHeight", "dynamicIslandCompletionHoldSeconds",
@@ -104,6 +113,7 @@ public final class HudPresetDomain implements PresetDomain {
             .enumMax("osdLyricStyle", () -> HudConfig.OSD_LYRIC_STYLE_MAX)
             .enumMax("dynamicIslandStyle", () -> HudConfig.DYNAMIC_ISLAND_STYLE_MAX)
             .enumMax("infoCardBackdrop", () -> HudConfig.INFO_CARD_BACKDROP_MAX)
+            .enumMax("worldLyricsGlowMode", () -> WORLD_LYRICS_GLOW_MODE_MAX)
             .build();
 
     /**
@@ -152,7 +162,7 @@ public final class HudPresetDomain implements PresetDomain {
             /* 153 */ "lyricX", "lyricY", "lyricScale", "lyricWidth",
             /* 157 */ "lyricHeight", "dynamicIslandY", "lyricSearchUiScale", "glassBackdropScale",
             /* 161 */ "glassRealtimeCapture", "worldLyricsQualityTier", "worldLyricsGlowTier", "worldLyricsHudDraw",
-            /* 165 */ "fullscreenLyricFluidStatic"));
+            /* 165 */ "fullscreenLyricFluidStatic", "worldLyricsGlowMode"));
 
     @Override
     public String id() {
