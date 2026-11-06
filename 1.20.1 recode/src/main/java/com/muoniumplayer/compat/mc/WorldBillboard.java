@@ -337,7 +337,41 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         int argb = (((int) (alpha * 255f) & 0xFF) << 24) | (rgb & 0xFFFFFF);
 
-        // 晕格先画（加色 currentEffectType），墨格后进挂起合批 —— 观感上晕在字下。
+        // ---- 层序（与 26.3 标杆对齐）：阴影 → 晕（加色） → 墨 ----
+        // 顺序不是随手排的，1.20.1 曾按「晕 → 阴影 → 墨」画，用户实测「整个字发灰、
+        // 像盖了层阴影」。原因有两层：
+        //   1. 阴影是 alpha 混合的黑（0.22），画在加色晕之上会把晕压暗；
+        //   2. 更要命的是阴影与墨共用同一个 RenderType，而原版 textSeeThrough 的
+        //      sortOnUpload=true —— 同一批次内 quad 按 VertexSorting 距离重排。
+        //      阴影 quad 与墨 quad 位置几乎重合（只差 0.5/1 设计像素），距离差
+        //      小于浮点有效位，排序结果不稳定：阴影一旦被排到墨之后，那 22% 的
+        //      黑就均匀盖在整个字身上 —— 正是「字不是纯色了」的观感。
+        // 修法两条一起用：阴影改到最前（先垫在背景上，之后被加色晕照亮、被墨
+        // 盖住中间），并且每字立即 endBatch —— 强制阴影单独成批，不参与墨那批
+        // 的排序，顺序从此确定。每次 endBatch 是一次 draw call，但阴影只在
+        // 现代档逐字走一次，且 1.20.1 的歌词行数有限，代价可接受。
+        int shadowArgb = (int) (((argb >>> 24) & 0xFF) * SHADOW_STRENGTH) << 24;
+        float shLeft = qLeft + SHADOW_OFFSET_PX, shTop = qTop + SHADOW_OFFSET_Y_PX;
+        float shRight = qRight + SHADOW_OFFSET_PX, shBottom = qBottom + SHADOW_OFFSET_Y_PX;
+        RenderType shadowType = currentGlyphType(inkRl);
+        VertexConsumer svc = buffers.getBuffer(shadowType);
+        Matrix4f smat = poseStack.last().pose();
+        putGlyphVertex(svc, smat, shLeft, shTop, cx, cy, cos, sin, s, shadowArgb,
+                cell.x / pageF + halfTexel, cell.y / pageF + halfTexel);
+        putGlyphVertex(svc, smat, shLeft, shBottom, cx, cy, cos, sin, s, shadowArgb,
+                cell.x / pageF + halfTexel, (cell.y + cell.h) / pageF - halfTexel);
+        putGlyphVertex(svc, smat, shRight, shBottom, cx, cy, cos, sin, s, shadowArgb,
+                (cell.x + cell.w) / pageF - halfTexel, (cell.y + cell.h) / pageF - halfTexel);
+        putGlyphVertex(svc, smat, shRight, shTop, cx, cy, cos, sin, s, shadowArgb,
+                (cell.x + cell.w) / pageF - halfTexel, cell.y / pageF + halfTexel);
+        // 立即收批：阴影必须早于晕格上屏，否则加色晕会被这层黑压暗。
+        // 直接按 inkRl 收（此时该批里只有阴影顶点 —— 本字墨格还没进），
+        // 不动 pendingGlyphPage：墨格随后会重新 getBuffer 开一批，
+        // 页切换判定照旧走上面的逻辑。
+        buffers.endBatch(shadowType);
+
+        // 晕格（加色）其次：光叠在阴影上（加色只增不减），把阴影「照亮」成半透暗边。
+        // 墨最后画，盖住阴影与晕的中间部分，只让阴影从字缘外露出一点点。
         if (glowRl != null) {
             float gInv = 1f / glowCell.scale;
             float gLeft = x - glowCell.inkX * gInv;
@@ -362,22 +396,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             buffers.endBatch(currentEffectType(glowRl));
         }
 
-        // 阴影：墨格同格重画、右下偏移、半透明黑（游戏实测字色压暗在加色晕垫底
-        // 下读作重影）—— 同 text 类型挂起合批，画在晕上、被墨盖住，只露右下缘
-        int shadowArgb = (int) (((argb >>> 24) & 0xFF) * SHADOW_STRENGTH) << 24;
-        float shLeft = qLeft + SHADOW_OFFSET_PX, shTop = qTop + SHADOW_OFFSET_Y_PX;
-        float shRight = qRight + SHADOW_OFFSET_PX, shBottom = qBottom + SHADOW_OFFSET_Y_PX;
-        VertexConsumer svc = buffers.getBuffer(currentGlyphType(inkRl));
-        Matrix4f smat = poseStack.last().pose();
-        putGlyphVertex(svc, smat, shLeft, shTop, cx, cy, cos, sin, s, shadowArgb,
-                cell.x / pageF + halfTexel, cell.y / pageF + halfTexel);
-        putGlyphVertex(svc, smat, shLeft, shBottom, cx, cy, cos, sin, s, shadowArgb,
-                cell.x / pageF + halfTexel, (cell.y + cell.h) / pageF - halfTexel);
-        putGlyphVertex(svc, smat, shRight, shBottom, cx, cy, cos, sin, s, shadowArgb,
-                (cell.x + cell.w) / pageF - halfTexel, (cell.y + cell.h) / pageF - halfTexel);
-        putGlyphVertex(svc, smat, shRight, shTop, cx, cy, cos, sin, s, shadowArgb,
-                (cell.x + cell.w) / pageF - halfTexel, cell.y / pageF + halfTexel);
-
+        // 阴影已在晕格之前画完并单独收批（见上），这里只剩墨格本体。
         VertexConsumer vc = buffers.getBuffer(currentGlyphType(inkRl));
         Matrix4f mat = poseStack.last().pose();
         // 四顶点：左上 → 左下 → 右下 → 右上（QUADS 环绕序）
