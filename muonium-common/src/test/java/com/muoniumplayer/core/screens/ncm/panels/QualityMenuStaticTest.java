@@ -85,10 +85,10 @@ class QualityMenuStaticTest {
                 "勾选不再随选中态开关");
         assertTrue(body.contains("new LabelWidget(() -> formatQuality(option)"),
                 "标签里还拼着勾选符号或补位空格");
-        // 「✓」与那两枚全角箭头各只许出现一次：那一次是矢量画不出来时的字体兜底，不是画在界面上的东西。
+        // 「✓」只保留菜单里那一处字体兜底；按钮不再画下拉箭头，两个全角箭头应当彻底绝迹。
         assertEquals(1, count(body, "\u2713"), "「✓」出现了不止一次：文字里大概还留着一个");
-        assertEquals(1, count(body, "\uFE3F"), "全角「︿」出现了不止一次：按钮文字里大概还留着一个");
-        assertEquals(1, count(body, "\uFE40"), "全角「﹀」出现了不止一次：按钮文字里大概还留着一个");
+        assertEquals(0, count(body, "\uFE3F"), "音质按钮不再显示箭头，全角「︿」不该再出现");
+        assertEquals(0, count(body, "\uFE40"), "音质按钮不再显示箭头，全角「﹀」不该再出现");
     }
 
     @Test
