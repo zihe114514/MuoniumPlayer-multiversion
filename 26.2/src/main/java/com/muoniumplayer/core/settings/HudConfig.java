@@ -651,6 +651,15 @@ public final class HudConfig {
     public static boolean glassSurfaceIsland = true;
     /** 游戏内 Ctrl+F 从灵动岛长出的快捷搜索栏。关掉后快捷键不再响应。 */
     public static boolean islandSearchEnabled = true;
+    /**
+     * 音乐胶囊（灵动岛第九款）迷你卡的缩放档位。卡片按 296×130 设计空间整体缩放；
+     * 窄窗口上会再按可用宽高自动收口，不会裁边。
+     */
+    public static float islandMiniCardScale = 1.0f;
+    /** 音乐胶囊收起行与迷你卡主文本是否显示当前歌词行（关掉则恒显歌名 - 歌手）。 */
+    public static boolean islandMusicShowsLyric = true;
+    /** 音乐胶囊是否允许「鼠标悬停展开迷你卡」。关掉后卡片只能通过别的入口看到（收起行照常显示）。 */
+    public static boolean islandHoverExpand = true;
     /** 真玻璃生效在桌面歌词卡片上。 */
     public static boolean glassSurfaceDesktopLyric = true;
     /** 真玻璃生效在三套 HUD 设置界面的面板上。这几块面板平时是不透明的，所以它同时决定底色压不压薄。 */
@@ -1059,6 +1068,9 @@ public final class HudConfig {
 
             dynamicIslandEnabled = getBoolean(o, "dynamicIslandEnabled", dynamicIslandEnabled);
             islandSearchEnabled = getBoolean(o, "islandSearchEnabled", islandSearchEnabled);
+            islandMiniCardScale = clamp(getFloat(o, "islandMiniCardScale", islandMiniCardScale), 0.5f, 2.0f);
+            islandMusicShowsLyric = getBoolean(o, "islandMusicShowsLyric", islandMusicShowsLyric);
+            islandHoverExpand = getBoolean(o, "islandHoverExpand", islandHoverExpand);
             dynamicIslandScale = clamp(getFloat(o, "dynamicIslandScale", dynamicIslandScale), 0.60f, 1.35f);
             dynamicIslandY = clamp(getFloat(o, "dynamicIslandY", dynamicIslandY), -20.0f, 400.0f);
             infoCardBackdrop = clampInt(getInt(o, "infoCardBackdrop", infoCardBackdrop), 0, INFO_CARD_BACKDROP_MAX);
@@ -1279,6 +1291,9 @@ public final class HudConfig {
 
             o.addProperty("dynamicIslandEnabled", dynamicIslandEnabled);
             o.addProperty("islandSearchEnabled", islandSearchEnabled);
+            o.addProperty("islandMiniCardScale", islandMiniCardScale);
+            o.addProperty("islandMusicShowsLyric", islandMusicShowsLyric);
+            o.addProperty("islandHoverExpand", islandHoverExpand);
             o.addProperty("dynamicIslandScale", dynamicIslandScale);
             o.addProperty("dynamicIslandY", dynamicIslandY);
             o.addProperty("infoCardBackdrop", infoCardBackdrop);

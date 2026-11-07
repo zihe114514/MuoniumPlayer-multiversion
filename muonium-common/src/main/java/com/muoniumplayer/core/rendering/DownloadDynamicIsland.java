@@ -125,7 +125,17 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
          * 坐标吸附到物理像素网格。因此它必须<b>追加</b>在枚举末尾——
          * {@code HudConfig.dynamicIslandStyle} 存的是序号，中间插一项会把所有人已选的样式改掉。</p>
          */
-        BOUNCE("回弹胶囊");
+        BOUNCE("回弹胶囊"),
+        /**
+         * 音乐胶囊：收起时是一行「音符 + 当前歌词/歌名 + 频谱跳动条 + 底部进度描边」，
+         * 鼠标悬停约半秒展开成迷你卡（封面 + 歌词 + 进度 + 完整传输控制），点封面/队列
+         * 从岛上长出全屏播放器。同样<b>追加</b>在枚举末尾（序号存档，先例同上）。
+         *
+         * <p>与其它八款最大的不同：它的常驻内容不是状态行而是「正在播放」本身——有歌在放
+         * （或暂停未满 {@code MusicCapsuleCard#PAUSE_TIMEOUT_MILLIS}）时本款自己亮起，
+         * 不依赖「常驻灵动岛」开关；通知/下载/Automix 曲线仍按原优先级接管表面。</p>
+         */
+        MUSIC_CAPSULE("音乐胶囊");
 
         private final String displayName;
 
@@ -283,6 +293,48 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     /** 本帧的秒级帧间隔；弹簧与底色渐变共用，一帧只能推进一次时间戳。 */
     private double bounceFrameDelta = 1.0 / 60.0;
 
+    /*
+     * 以下一组状态只服务「音乐胶囊」款（MUSIC_CAPSULE）。悬停展开迷你卡的状态机：
+     * 悬停驻留 → 展开；移开超时 / 暂停退休 / 通知接管 → 收起。展开后第一次按下交给
+     * {@link com.muoniumplayer.core.screens.ncm.MusicCardOverlay}（全透明输入浮层，
+     * 岛内搜索同款先例），岛继续负责绘制。
+     */
+    /** 迷你卡展开度 0..1，低通逼近目标；只影响本款的绘制与目标尺寸。 */
+    private double cardOpen;
+    private boolean cardOpenTarget;
+    /** 悬停开始时刻；-1 = 不在悬停（含移开超时后）。 */
+    private long cardHoverSinceMs = -1L;
+    /** 鼠标最后落在卡/行上的时刻；配合移开宽限判定。 */
+    private long cardLastActiveMs;
+    /** 左键按下沿锁存：按住期间不重复触发浮层打开。 */
+    private boolean cardPressLatched;
+    /** 本帧迷你卡实际使用的缩放（已按屏幕可用宽高收口），目标计算与绘制共用。 */
+    private float cardFittedScale = 1.0f;
+    /** 悬停驻留阈值；NeoRaven 同款手感取 300ms。 */
+    private static final long MUSIC_CARD_HOVER_DWELL_MS = 300L;
+    /** 鼠标移开后收起的宽限：来回划过胶囊不闪卡。 */
+    private static final long MUSIC_CARD_LEAVE_GRACE_MS = 800L;
+    /** 迷你卡展开期间的实际矩形（布局单位 x,y,w,h），供透明浮层做点击换算；null = 未展开。 */
+    private static volatile double[] MUSIC_CARD_BOUNDS;
+
+    /** 迷你卡此刻是否算展开（透明浮层据此决定去留）。 */
+    public static boolean isMusicCardOpen() {
+        return INSTANCE.cardOpen > .35 && MUSIC_CARD_BOUNDS != null;
+    }
+
+    /** 迷你卡矩形（布局单位 x,y,w,h）；未展开返回 null。供透明浮层换算设计坐标。 */
+    public static double[] musicCardBounds() {
+        return MUSIC_CARD_BOUNDS;
+    }
+
+    /** 收起迷你卡（Esc / 点外部 / 浮层被外部换屏时调用）。 */
+    public static void collapseMusicCard() {
+        INSTANCE.cardOpenTarget = false;
+        INSTANCE.cardHoverSinceMs = -1L;
+        INSTANCE.cardLastActiveMs = 0L;
+        INSTANCE.cardPressLatched = false;
+    }
+
     /** 将播放器表面移交到岛屿并启动撞击响应。 */
     private float contentTransition = 1f;
     /** 当播放器在交接完成前被另一界面替换时取消交接。 */
@@ -376,6 +428,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         INSTANCE.ambientSampledAt = 0L;
         INSTANCE.animatedExpandedWidth = -1.0;
         INSTANCE.animatedExpandedHeight = -1.0;
+        INSTANCE.cardOpen = 0.0;
+        INSTANCE.cardOpenTarget = false;
+        INSTANCE.cardHoverSinceMs = -1L;
+        MUSIC_CARD_BOUNDS = null;
     }
 
     /** 即使没有正在进行的下载，HUD 编辑器也使用此实时尺寸预览。 */
@@ -392,6 +448,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         INSTANCE.animatedExpandedWidth = -1.0;
         INSTANCE.animatedExpandedHeight = -1.0;
         INSTANCE.shownAt = 0L;
+        INSTANCE.cardOpen = 0.0;
+        INSTANCE.cardOpenTarget = false;
+        MUSIC_CARD_BOUNDS = null;
     }
 
     /** 在使用紧凑图标后，于全局岛屿中显示当前主题。 */
@@ -423,9 +482,15 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         double localWidth = bounceStyle
                 ? BounceIslandMath.SIDE_PADDING * 2.0 + BounceIslandMath.LOGO_AREA_WIDTH
                 : (style == DynamicIslandStyle.COMPACT ? 46.0
-                : (style == DynamicIslandStyle.MUSIC_FOCUS ? 48.0 : COMPACT_WIDTH));
+                : (style == DynamicIslandStyle.MUSIC_FOCUS ? 48.0
+                : (style == DynamicIslandStyle.MUSIC_CAPSULE
+                ? (MusicCapsuleCard.rowContentActive() ? MusicCapsuleCard.rowTargetWidth() : COMPACT_WIDTH)
+                : COMPACT_WIDTH)));
         double localHeight = bounceStyle ? BounceIslandMath.ROW_HEIGHT
-                : (style == DynamicIslandStyle.COMPACT ? 14.0 : COMPACT_HEIGHT);
+                : (style == DynamicIslandStyle.COMPACT ? 14.0
+                : (style == DynamicIslandStyle.MUSIC_CAPSULE
+                ? (MusicCapsuleCard.rowContentActive() ? MusicCapsuleCard.ROW_HEIGHT : COMPACT_HEIGHT)
+                : COMPACT_HEIGHT));
 
         /** 显示持久化的音乐音量及配套的进度指示。 */
         /** 显示稳定的转码卡片；进度更新只移动进度条，不会重启入场动画。 */
@@ -1638,13 +1703,23 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             previousAlwaysOn = false;
             ambientSnapshot = IslandAmbientStatus.EMPTY;
             ambientSampledAt = 0L;
+            cardOpen = 0.0;
+            cardOpenTarget = false;
+            cardHoverSinceMs = -1L;
+            MUSIC_CARD_BOUNDS = null;
             pauseNoticeClock();
             completionVisibleClock.pause();
             return;
         }
 
         boolean enabled = HudConfig.dynamicIslandEnabled;
-        boolean alwaysOn = enabled && HudConfig.dynamicIslandAlwaysOn
+        // 音乐胶囊款：「正在播放」本身就是这款的常驻内容——有歌在放（或暂停未退休）时本款
+        // 自己亮起，不依赖「常驻灵动岛」开关；场合门控（播放器界面/Tab 列表）照旧生效。
+        MusicCapsuleCard.observePlayback();
+        boolean musicCapsuleRow = enabled && getStyle() == DynamicIslandStyle.MUSIC_CAPSULE
+                && MusicCapsuleCard.rowContentActive();
+        boolean alwaysOn = enabled
+                && (HudConfig.dynamicIslandAlwaysOn || musicCapsuleRow)
                 && (IslandVisibilityGate.allowAmbient(scene) || playerAbsorbImpact);
         /*
          * 播放器交接回来的那一小段（PLAYER_ABSORB_FEEDBACK_MS）是岛唯一「没有任何事件也必须显示」
@@ -1849,6 +1924,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         spinnerRotation = (spinnerRotation + frameDelta * 7.2
                 * DynamicIslandMath.clamp(HudConfig.dynamicIslandSpinnerSpeed, .30, 3.0)) % 360.0;
 
+        // 音乐胶囊款的悬停/展开状态机：隐藏早退之前推进，收起动画在岛不可见时也能走完。
+        tickMusicCardState(now, frameDelta);
+
         previousDownloading = activeDownload;
         lastObservedProgress = rawProgress;
 
@@ -1969,6 +2047,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         double screenWidth = RenderSystem.getLayoutWidth();
         DynamicIslandStyle style = getStyle();
         boolean bounce = style == DynamicIslandStyle.BOUNCE;
+        boolean musicCapsule = style == DynamicIslandStyle.MUSIC_CAPSULE;
         // 回弹胶囊把所有事件按行堆出来，所以先要问出本帧到底有几行；其他样式不读这个列表。
         List<BounceRow> bounceStack = bounce
                 ? bounceCollectRows(now, noticeMode, activeNoticeType, activeNoticeTitle,
@@ -2037,6 +2116,16 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     Math.max(AutomixIslandRenderer.TARGET_HEIGHT, compactHeight + 2.0));
             targetExpandedWidth = DynamicIslandMath.lerp(compactWidth, mixWidth, mixFrame.opacity);
             targetExpandedHeight = DynamicIslandMath.lerp(compactHeight, mixHeight, mixFrame.opacity);
+        }
+        if (musicCapsule && mixFrame == null && surfaceActive && !noticeMode
+                && MusicCapsuleCard.rowContentActive()) {
+            // 本款的展开态不是「通知卡」而是迷你卡：行↔卡按 cardOpen 插值，再走同一条低通
+            // 尺寸动画，展开/收起与其它款的内容变形共用同一条轨迹。
+            double rowWidth = MusicCapsuleCard.rowTargetWidth();
+            double cardWidth = MusicCapsuleCard.CARD_WIDTH * cardFittedScale;
+            double cardHeight = MusicCapsuleCard.CARD_HEIGHT * cardFittedScale;
+            targetExpandedWidth = DynamicIslandMath.lerp(rowWidth, cardWidth, cardOpen);
+            targetExpandedHeight = DynamicIslandMath.lerp(MusicCapsuleCard.ROW_HEIGHT, cardHeight, cardOpen);
         }
         double expandedWidth;
         double expandedHeight;
@@ -2129,7 +2218,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 : (systemCard ? Math.min(11.0, height * .25)
                 : (musicFocus ? Math.min(14.0, height * .31)
                 : (liquidGlass ? Math.min(16.0, height * .40)
-                : (style == DynamicIslandStyle.CARD ? Math.min(12.0, height * .30) : height * .5))));
+                : (musicCapsule ? DynamicIslandMath.lerp(height * .5,
+                        MusicCapsuleCard.CARD_RADIUS * cardFittedScale, cardOpen)
+                : (style == DynamicIslandStyle.CARD ? Math.min(12.0, height * .30) : height * .5)))));
         // 记录变换后的确切轮廓。播放器过渡必须从这个
         // 形状开始，而不是从与当前驻留灵动岛不匹配的紧凑胶囊开始。
         if (!preview) {
@@ -2167,6 +2258,15 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             GlassLook.paintFrost(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha * .64f);
             AutomixIslandRenderer.draw(SkijaGfx.canvas(), mixFrame, x, y, width, height, radius,
                     alpha * DynamicIslandMath.clamp01f(contentFade), accentColor);
+            api.getGLStateManager().popMatrix();
+            return;
+        }
+        if (musicCapsule && (preview || (ambientMix > .02f && MusicCapsuleCard.rowContentActive()))) {
+            // 本款自己的绘制路径：收起行 ↔ 悬停展开的迷你卡。通知/下载/Automix 不进这里
+            // （ambientMix≈0 时落回上面的通用路径，表面与常驻行的交叉淡入照旧）；
+            // 暂停退休后同样落回通用路径——常驻开着时接手的是标准的「正在播放」常驻行。
+            drawMusicCapsuleIsland(x, y, width, height, radius, alpha, now, preview,
+                    DynamicIslandMath.clamp01f(ambientMix));
             api.getGLStateManager().popMatrix();
             return;
         }
@@ -3320,6 +3420,151 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         api.getGLStateManager().rotate(rotation, 0, 0, 1);
         roundedRect(-width * .5, -height * .5, width, height, height * .5, color);
         api.getGLStateManager().popMatrix();
+    }
+
+    /*
+     * ============================ 音乐胶囊（MUSIC_CAPSULE）============================
+     *
+     * 收起行 + 悬停展开迷你卡。与回弹胶囊同一条分家规矩：只在 style == MUSIC_CAPSULE 时
+     * 经 drawIsland 进来，现有八款的绘制路径一行未动。内容绘制委托 {@link MusicCapsuleCard}
+     * （迷你卡的绘制与点击共用同一套 296×130 设计空间常量）；展开后的输入由全透明浮层
+     * {@code MusicCardOverlay} 承接（岛内搜索同款先例，零 mixin）。
+     */
+
+    /**
+     * 悬停/展开状态机，每帧一次（renderInternal 里推进，隐藏早退之前，收起动画在
+     * 岛不可见时也能走完）。悬停驻留 → 展开目标；移开超时 / 暂停退休 / 播放器形变 → 收起。
+     * 展开完成后第一次按下鼠标交给透明浮层。
+     */
+    private void tickMusicCardState(long now, double frameDelta) {
+        boolean capsule = HudConfig.dynamicIslandEnabled
+                && getStyle() == DynamicIslandStyle.MUSIC_CAPSULE;
+        if (!capsule) {
+            cardOpenTarget = false;
+            if (cardOpen > 0.0) {
+                cardOpen = Math.max(0.0, cardOpen - frameDelta / 200.0);
+            }
+            if (cardOpen <= 0.0) MUSIC_CARD_BOUNDS = null;
+            return;
+        }
+        MusicCapsuleCard.tick((float) DynamicIslandMath.clamp(frameDelta, 1.0, 100.0));
+        boolean customPossible = !playerSurfaceTransition && !playerAbsorbImpact
+                && MusicCapsuleCard.rowContentActive()
+                && IslandVisibilityGate.allowAmbient(IslandVisibilityGate.capture())
+                && visibility > .5f;
+        if (!customPossible) {
+            cardOpenTarget = false;
+        } else {
+            double[] bounds = getLiveAnchorBounds();
+            double[] mouse = musicMouseLayout();
+            boolean inside = mouse != null && bounds != null && bounds[2] > 1.0 && bounds[3] > 1.0
+                    && mouse[0] >= bounds[0] && mouse[0] <= bounds[0] + bounds[2]
+                    && mouse[1] >= bounds[1] && mouse[1] <= bounds[1] + bounds[3];
+            if (inside) {
+                cardLastActiveMs = now;
+                if (cardHoverSinceMs < 0L) cardHoverSinceMs = now;
+            } else if (now - cardLastActiveMs > MUSIC_CARD_LEAVE_GRACE_MS) {
+                cardHoverSinceMs = -1L;
+            }
+            cardOpenTarget = HudConfig.islandHoverExpand && cardHoverSinceMs >= 0L
+                    && now - cardHoverSinceMs >= MUSIC_CARD_HOVER_DWELL_MS;
+            boolean lmb = com.muoniumplayer.compat.lwjgl2.Mouse.isButtonDown(0);
+            if (lmb && !cardPressLatched) {
+                cardPressLatched = true;
+                if (inside && cardOpen > .90
+                        && !com.muoniumplayer.core.screens.ncm.MusicCardOverlay.isActive()) {
+                    // 展开态上的第一下按下直接作为点击送达（浮层 initGui 消费）：
+                    // 否则用户要点两次——第一次只"打开交互"，第二次才真正按到按钮。
+                    com.muoniumplayer.core.screens.ncm.MusicCardOverlay.arm(musicCardDesignPoint(mouse));
+                    com.muoniumplayer.core.screens.ncm.MusicCardOverlay.open();
+                }
+            }
+            if (!lmb) cardPressLatched = false;
+        }
+        cardOpen = DynamicIslandMath.clamp(DynamicIslandMath.clamp01(
+                Interpolations.interpolate(cardOpen, cardOpenTarget ? 1.0 : 0.0,
+                        cardOpenTarget ? .30 : .22)), 0.0, 1.0);
+        cardFittedScale = fitMusicCardScale();
+        // 展开期间的实时矩形交给透明浮层做点击换算；LIVE_ANCHOR_BOUNDS 由绘制段更新，
+        // 这里用上一帧的值——浮动一帧，换算误差小于一个物理像素。
+        if (cardOpen > .35) {
+            double[] live = getLiveAnchorBounds();
+            MUSIC_CARD_BOUNDS = live != null && live[2] > 1.0 && live[3] > 1.0 ? live : null;
+        } else if (cardOpen <= .05) {
+            MUSIC_CARD_BOUNDS = null;
+        }
+    }
+
+    /** 鼠标布局坐标 → 迷你卡 296×130 设计空间坐标（展开中才有意义）。 */
+    private static double[] musicCardDesignPoint(double[] mouseLayout) {
+        double[] bounds = MUSIC_CARD_BOUNDS;
+        if (mouseLayout == null || bounds == null || bounds[2] <= 1.0 || bounds[3] <= 1.0) return null;
+        double scale = bounds[3] / MusicCapsuleCard.CARD_HEIGHT;
+        if (scale <= 0 || !Double.isFinite(scale)) return null;
+        return new double[]{(mouseLayout[0] - bounds[0]) / scale, (mouseLayout[1] - bounds[1]) / scale};
+    }
+
+    /** 迷你卡本帧的实际缩放：用户档位再按屏幕可用宽高收口，窄窗口上宁可缩小也不裁边。 */
+    private float fitMusicCardScale() {
+        double configuredScale = DynamicIslandMath.clamp(HudConfig.dynamicIslandScale, .60, 1.35);
+        double availableWidth = Math.max(80.0, (RenderSystem.getLayoutWidth() - 24.0) / configuredScale);
+        double availableHeight = Math.max(60.0, (RenderSystem.getLayoutHeight() - 40.0) / configuredScale);
+        double fit = Math.min(availableWidth / MusicCapsuleCard.CARD_WIDTH,
+                availableHeight / MusicCapsuleCard.CARD_HEIGHT);
+        float base = MusicCapsuleCard.cardScale();
+        return (float) DynamicIslandMath.clamp(Math.min(base, fit), 0.35, base);
+    }
+
+    /**
+     * 鼠标位置换算成布局轴坐标（岛的绘制坐标轴）。
+     *
+     * <p>compat {@code Mouse} 报 framebuffer 像素（原点在下），布局轴与 framebuffer 同跨整个
+     * 窗口，按比例一换就对——不经过 GUI Scale，也就不依赖任何一棵树的屏幕 API。</p>
+     */
+    private static double[] musicMouseLayout() {
+        try {
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            if (mc == null || mc.getWindow() == null) return null;
+            int framebufferWidth = Math.max(1, mc.getWindow().getWidth());
+            int framebufferHeight = Math.max(1, mc.getWindow().getHeight());
+            double layoutWidth = RenderSystem.getLayoutWidth();
+            double layoutHeight = RenderSystem.getLayoutHeight();
+            if (layoutWidth <= 1.0 || layoutHeight <= 1.0) return null;
+            double mx = com.muoniumplayer.compat.lwjgl2.Mouse.getX() * layoutWidth / (double) framebufferWidth;
+            double my = (framebufferHeight - 1 - com.muoniumplayer.compat.lwjgl2.Mouse.getY())
+                    * layoutHeight / (double) framebufferHeight;
+            return new double[]{mx, my};
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * 本款的整体绘制：深色卡面（真玻璃配方与其它款一致）+ 收起行 ↔ 迷你卡内容交叉过渡。
+     * 行侧按 {@code (1-cardOpen)²} 退场，比尺寸动画先一步让位，避免文本被拉宽的那几帧露馅。
+     */
+    private void drawMusicCapsuleIsland(double x, double y, double width, double height, double pillRadius,
+                                        float alpha, long now, boolean preview, float ambientAlpha) {
+        int accent = NCMTheme.getAccentColor();
+        double rowFadeValue = (1.0 - cardOpen) * (1.0 - cardOpen);
+        float rowAlpha = alpha * ambientAlpha * (float) DynamicIslandMath.clamp01(rowFadeValue);
+        float cardAlpha = alpha * ambientAlpha * (float) DynamicIslandMath.clamp01(cardOpen);
+        double radius = DynamicIslandMath.lerp(pillRadius,
+                MusicCapsuleCard.CARD_RADIUS * cardFittedScale, cardOpen);
+        boolean frosted = GlassLook.paintFrost(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha);
+        float thin = frosted ? GlassLook.tintedAlpha(GlassLook.Surface.ISLAND, 1.0f) : 1.0f;
+        roundedRect(x, y, width, height, radius, hexColor(.010f, .014f, .024f, alpha * .99f * thin));
+        if (frosted) {
+            GlassLook.paintEdge(GlassLook.Surface.ISLAND, x, y, width, height, radius, alpha);
+        }
+        roundedOutline(x, y, width, height, radius, .70,
+                new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 34f)));
+        if (rowAlpha > .01f) {
+            MusicCapsuleCard.INSTANCE.drawRow(x, y, width, height, rowAlpha, accent);
+        }
+        if (cardAlpha > .01f) {
+            MusicCapsuleCard.INSTANCE.drawCard(x, y, cardFittedScale, cardAlpha, preview);
+        }
     }
 
     /*

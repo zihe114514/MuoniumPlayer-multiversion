@@ -40,7 +40,7 @@ public final class HudPresetDomain implements PresetDomain {
                     "dynamicIslandCollapseSpeed", "dynamicIslandContentSpeed", "dynamicIslandEntranceDuration", "dynamicIslandOvershoot",
                     "dynamicIslandSpinnerSpeed", "dynamicIslandAlwaysOn", "dynamicIslandAmbientFps", "dynamicIslandAmbientPing", "dynamicIslandAmbientClock",
                     "dynamicIslandAmbientNowPlaying", "dynamicIslandAmbientRotate", "dynamicIslandAmbientStatusSeconds", "dynamicIslandAmbientNowPlayingSeconds",
-                    "islandSearchEnabled")
+                    "islandSearchEnabled", "islandMiniCardScale", "islandMusicShowsLyric", "islandHoverExpand")
             .facet(Facet.PANEL, "blossomBackdropBlur", "blossomPanelOpacity", "blossomVisibleLines", "blossomRhythmBorder", "blossomBorderStrength",
                     "glassSurfacePlayer", "glassSurfaceIsland", "glassSurfaceDesktopLyric", "glassSurfaceEditors", "glassBlurSigma", "glassBlurPlayer",
                     "glassBlurIsland", "glassBlurDesktopLyric", "glassBlurEditors", "glassBloom", "glassFusion", "glassTintStrength", "glassEdgeGlow",
@@ -120,7 +120,8 @@ public final class HudPresetDomain implements PresetDomain {
             /* 153 */ "lyricX", "lyricY", "lyricScale", "lyricWidth",
             /* 157 */ "lyricHeight", "dynamicIslandY", "lyricSearchUiScale", "glassBackdropScale",
             /* 161 */ "glassRealtimeCapture", "worldLyricsQualityTier", "worldLyricsGlowTier", "worldLyricsHudDraw",
-            /* 165 */ "fullscreenLyricFluidStatic", "worldLyricsGlowMode"));
+            /* 165 */ "fullscreenLyricFluidStatic", "worldLyricsGlowMode",
+            /* 167 */ "islandMiniCardScale", "islandMusicShowsLyric", "islandHoverExpand"));
     public String id() { return ID; }
     public String displayName() { return "HUD 与歌词"; }
     public int fragmentVersion() { return 1; }
