@@ -2,8 +2,10 @@ package com.muoniumplayer.party.lan;
 
 import yun.shan.mpsync.MpParty;
 import yun.shan.mpsync.platform.MpPlatform;
+import yun.shan.mpsync.room.RoomManager;
 
 import java.nio.file.Path;
+import java.util.UUID;
 
 /**
  * 内嵌一起听房间引擎的生命周期管理：把服务端 core（{@code yun.shan.mpsync.MpParty}）
@@ -26,6 +28,12 @@ import java.nio.file.Path;
  * init 重新装配配置与线程池，两边都无静态残留假设。存档切换即引擎重置 ——
  * 与专用服务器「一次进程一个引擎」不同，这里是「一次服务器会话一个引擎」。
  *
+ * <h2>世界主人 = 服务器管理员</h2>
+ * 引擎里「服务器频道」只听服务器管理员的（拖进度、直接切歌…），而专用服务器上靠的是 {@code /mp}
+ * 指令拿到的 OP 标志 —— 集成服务端里既没注册 {@code /mp}，也就没人被登记成管理员，频道谁都
+ * 控制不了（拖进度被拦、「下一首」变成投票、不足 2 人又投不了）。这里把世界主人登记成管理员，
+ * 见 {@link #hostUuid}。
+ *
  * <h2>线程与回环</h2>
  * 主机自己作为房员的帧走真实的 localhost 连接：他的客户端发 C2S 到集成服务端，
  * 引擎的 S2C 经他自己的 ServerPlayer 连接回来。客户端已有的
@@ -41,6 +49,20 @@ public final class LanMpParty {
 
     /** 见 {@link #heldByDirect} 字段注释。 */
     private static volatile boolean heldByDirect;
+
+    /**
+     * 这个集成服务端的主人（世界主人）：本次服务器会话里第一个加入的玩家。他就是服务器管理员。
+     *
+     * <p>为什么不用 {@code MinecraftServer.isSingleplayerOwner}：它的参数在 1.21.11 从
+     * {@code GameProfile} 换成了 {@code NameAndId}，而本文件五树共用。「第一个加入的人」不依赖任何
+     * 版本 API，在集成服务端上又恒成立：单人世界是主人进世界时才启动集成服务端；开局域网也必须
+     * 先进世界，别人只能在之后加入；主人一退，集成服务端就停了。也不用客户端的
+     * {@code selfUuid()}：服务端处理加入时本机的玩家实体通常还没建好。</p>
+     *
+     * <p>登记发生在服务端的加入事件里，早于他的客户端发来的握手：握手里的 {@code serverAdmin}
+     * 因此一开始就是 true，界面上就是管理员视角。</p>
+     */
+    private static volatile UUID hostUuid;
 
     /** 引擎是否正挂在当前的集成服务端上（仅诊断/日志用）。 */
     public static boolean isActive() {
@@ -65,6 +87,7 @@ public final class LanMpParty {
      */
     public static void onServerStarting(boolean integrated, MpPlatform platform, Path configDir) {
         active = false;
+        hostUuid = null;   // 新的服务器会话：第一个加入的人才是这次的主人
         if (!integrated) {
             // 远程服务器的桥接调用：不持有任何挂载参数，把上一个世界的痕迹清掉。
             heldByDirect = false;
@@ -87,11 +110,29 @@ public final class LanMpParty {
         LanLog.info("[muonium-lan] 一起听房间引擎已挂到集成服务端（protocol v{}）", MpParty.protocol());
     }
 
-    public static void onPlayerJoin(java.util.UUID uuid) {
-        if (active && !directOwnsEngine()) MpParty.onPlayerJoin(uuid);
+    public static void onPlayerJoin(UUID uuid) {
+        // 只在集成服务端上认主人（lastPlatform 只在集成服务端挂载时才记下）。引擎正被直连持有时也要认：
+        // 直连释放后重挂引擎（onDirectReleased）要靠它把主人重新登记成管理员。
+        if (hostUuid == null && lastPlatform != null && uuid != null) hostUuid = uuid;
+        if (active && !directOwnsEngine()) {
+            MpParty.onPlayerJoin(uuid);
+            grantHostAdmin(uuid);
+        }
     }
 
-    public static void onPlayerQuit(java.util.UUID uuid) {
+    /** 这个人是世界主人就登记成服务器管理员（见 {@link #hostUuid}）。 */
+    private static void grantHostAdmin(UUID uuid) {
+        if (uuid == null || !uuid.equals(hostUuid)) return;
+        RoomManager manager = MpParty.manager();
+        if (manager != null) manager.noteOperator(uuid, true);
+    }
+
+    /** 世界主人（诊断 / 测试用）。 */
+    public static UUID hostUuid() {
+        return hostUuid;
+    }
+
+    public static void onPlayerQuit(UUID uuid) {
         if (active && !directOwnsEngine()) MpParty.onPlayerQuit(uuid);
     }
 
@@ -113,6 +154,7 @@ public final class LanMpParty {
     }
 
     public static void onServerStopped() {
+        hostUuid = null;
         if (!active) {
             // 引擎正被直连持有（或从未挂载）：这个世界的挂载参数随世界一起作废。
             // 不清的话 lastPlatform 指向已死的 server 对象，直连释放时 onDirectReleased
@@ -137,7 +179,7 @@ public final class LanMpParty {
     }
 
     /** C2S 帧入口：桥接层收到的服务端方向帧全转这里，未激活时丢弃。 */
-    public static void onC2sFrame(java.util.UUID sender, byte[] payload) {
+    public static void onC2sFrame(UUID sender, byte[] payload) {
         if (active && !directOwnsEngine()) MpParty.onPacket(sender, payload);
     }
 
@@ -178,6 +220,15 @@ public final class LanMpParty {
             MpParty.init(lastPlatform, lastConfigDir);
             active = true;
             heldByDirect = false;
+            // 重挂是一个全新的引擎，管理员登记是空的：主人还在线就把他重新登记上。
+            // 这里可能不在服务端线程（由直连的会话回收路径触发），引擎状态只许在引擎线程上改，所以经 execute 过去。
+            MpPlatform p = lastPlatform;
+            UUID host = hostUuid;
+            if (host != null && p != null) {
+                p.execute(() -> {
+                    if (p.onlinePlayers().contains(host)) grantHostAdmin(host);
+                });
+            }
             LanLog.info("[muonium-lan] 直连房间已释放，一起听引擎已重挂回集成服务端");
         } catch (Throwable t) {
             LanLog.warn("[muonium-lan] 引擎重挂失败（局域网一起听不可用，重进世界可恢复）", t);
