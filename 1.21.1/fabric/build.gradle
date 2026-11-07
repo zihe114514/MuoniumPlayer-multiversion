@@ -188,6 +188,35 @@ dependencies {
         compileOnly 'icyllis.modernui:ModernUI-Markflow:3.13.0'
     }
 
+    // ---- MuoniumConfig（HUD 设置界面）开发期依赖 ----
+    // 只为 runClient：没有它就打不开设置界面，只能等运行时下载 + 重启。
+    // 正式包不靠这条 —— 玩家侧由 MuoniumConfigDownload 按「MC 版本/加载器」拉对应的 jar。
+    //
+    // **用 -dev 那份**。它不是「另一个版本」，而是同一个 jar 的开发期形态，
+    // 与发布版的差别只有两点，且都只为开发期服务：
+    //
+    //   1. 命名空间：发布版由 fabric-loom-remap 打包，类和 AW 都是 `intermediary`
+    //      （class_2561 这种）。线上是对的 —— Fabric Loader 会先 remap。
+    //      但开发期这里直接把 jar 挂进 classpath，没有 remap 环节，
+    //      Loader 会读到 intermediary 的 AW 却发现运行时是 named，拒绝启动。
+    //      -dev 包的类与 AW 都是 named。
+    //
+    //   2. 依赖形态：发布版把 63 个库（Compose / adventure / nightconfig /
+    //      twelvemonkeys …）嵌在 META-INF/jars/ 里，由 Fabric 的 Jar-in-Jar 机制
+    //      在正式加载时展开。开发期 Loom 不会给 remap 版 mod 展开嵌套 jar，
+    //      那些类全都 NoClassDefFoundError。-dev 包把它们**平铺**成普通类。
+    //
+    // 线上产物（dist/ 里不带 -dev 那个）完全不受影响，两个包由同一套源码产出。
+    //
+    // **必须用 implementation，不能用 modImplementation**：
+    //   dev 包里的类和 AW 已经是开发期命名空间（named），本来就该直接进 classpath。
+    //   用 modImplementation 会让 Loom 再 remap 一次 —— 它拿到一个已经是 named 的
+    //   jar，却仍按「需要从 intermediary 转到 named」处理，直接报
+    //   `Failed to remap 1 mods` 让整个构建失败。
+    //
+    // 版本号必须与 MuoniumConfigDownload 的 BUILDS 表一致，否则开发期跑的是旧界面。
+    implementation 'muonium:muoniumconfig-dev:1.7.0'
+
     // 离线探针（不需要 GL / 不需要启动客户端就能跑的断言）。
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'

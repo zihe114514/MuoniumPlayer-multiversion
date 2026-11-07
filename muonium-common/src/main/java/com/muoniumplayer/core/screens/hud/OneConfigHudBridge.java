@@ -59,7 +59,13 @@ public final class OneConfigHudBridge {
 
     /** 按需注册树，并在 MuoniumPlayer 的 HUD 页面上直接打开 OneConfig。 */
     public static boolean open() {
-        if (!isAvailable()) return false;
+        if (!isAvailable()) {
+            // 明确区分「没装」和「装了但打不开」：以前两者都只返回 false，
+            // 调用方静默回退到内置界面，排查时完全看不出是哪一层的问题。
+            System.out.println("[MuoniumPlayer/OneConfigBridge] open(): isAvailable()=false，"
+                    + "OneConfig UI 栈不在类路径上（MuoniumConfig 未加载）");
+            return false;
+        }
         try {
             ensureRegistered();
             ClassLoader loader = OneConfigHudBridge.class.getClassLoader();
@@ -69,8 +75,13 @@ public final class OneConfigHudBridge {
             Class<?> ui = Class.forName(UI_CLASS, true, loader);
             Method open = ui.getMethod("open", Object.class);
             open.invoke(null, route);
+            System.out.println("[MuoniumPlayer/OneConfigBridge] open(): 已请求打开 route=" + TREE_ID);
             return true;
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            // 这里必须留日志：MuoniumConfig 装了但某个类/方法对不上时，
+            // 静默回退会让人以为是「没装」，实际是版本不匹配。
+            System.out.println("[MuoniumPlayer/OneConfigBridge] open(): 失败 —— " + t);
+            t.printStackTrace(System.out);
             return false;
         }
     }

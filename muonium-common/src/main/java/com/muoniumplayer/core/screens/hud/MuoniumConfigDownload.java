@@ -55,9 +55,36 @@ public final class MuoniumConfigDownload {
      * <p>新增发布线时在这里加一行。BUILD 是发布清单里那个子目录名，
      * 与 Stonecutter 的 {@code <版本>-<加载器>} 命名保持一致。</p>
      */
-    private static final Map<String, Build> BUILDS = Map.of(
-            "26.3/fabric", new Build("muoniumconfig-1.6.1.jar", 9937960L,
-                    "1440ef14e80804ca0fab27d82029cb035aa2246116c2abdc474a21d83dca5ad1"));
+    private static final Map<String, Build> BUILDS = Map.ofEntries(
+            Map.entry("26.3/fabric", new Build("muoniumconfig-1.7.0.jar",
+                    25872920L, "ad80e3f978cc2941008e515fa106704d80b3956fd24e54a3358216abe7c9c412")),
+            Map.entry("26.3/neoforge", new Build("muoniumconfig-1.7.0.jar",
+                    23669596L, "6c8ee4c6a8bc73425fa721ea122fc00a00a76033819109a10a4ce5cdf644014b")),
+            Map.entry("26.2/fabric", new Build("muoniumconfig-1.7.0.jar",
+                    25862728L, "0cc46dc9b7243417e4945ec694a435315a4abd3530aa36bd692204ee7a4503e9")),
+            Map.entry("26.2/neoforge", new Build("muoniumconfig-1.7.0.jar",
+                    23659514L, "bac8bd1be9cb99cef588377e9070599afda686c15a7a413ad08b7ebce7988c41")),
+            Map.entry("26.1.2/fabric", new Build("muoniumconfig-1.7.0.jar",
+                    25868073L, "99c161807bd8a96d951d4fa3164159554417a20c884813986810b56e32a4d7e3")),
+            Map.entry("26.1.2/neoforge", new Build("muoniumconfig-1.7.0.jar",
+                    23664653L, "d02c17493be43e6794b94e06ef06c0de7304466a17f9791f6034ea24b3f2a37e")),
+            Map.entry("1.21.11/fabric", new Build("muoniumconfig-1.7.0.jar",
+                    25965722L, "bee2652039939a47b8bf942d83be85fac408da1c1abdd3b176c2d36869b7b012")),
+            Map.entry("1.21.11/neoforge", new Build("muoniumconfig-1.7.0.jar",
+                    23659545L, "25c7c71273a971f321476f9b8ce6a6efe4ca96e779f7b4dca5ba755cfef2c101")),
+            Map.entry("1.21.10/fabric", new Build("muoniumconfig-1.7.0.jar",
+                    25834292L, "139ab0e0f169164b44965b103130dd3b8be682bfd45e4a73cfe89776924a7c1c")),
+            Map.entry("1.21.10/neoforge", new Build("muoniumconfig-1.7.0.jar",
+                    23531343L, "e980357ec7fec20ea2351aa5fb9c40a28c033a7c93f56153875acf6a567dd582")),
+            Map.entry("1.21.1/fabric", new Build("muoniumconfig-1.7.0.jar",
+                    25837412L, "d3b2b79b831eba039227b46183064f5b82d2b30ce5b17df6337051cc7952a40e")),
+            Map.entry("1.21.1/neoforge", new Build("muoniumconfig-1.7.0.jar",
+                    23534808L, "1603174037916d41625e098c7fca2e9e1fe9878f6f5ef9df5192bbc8b348621f")),
+            Map.entry("1.20.1/fabric", new Build("muoniumconfig-1.7.0.jar",
+                    25829626L, "a443a614b9c3d1ce9735b838673177011c6cc93882700adf592c24f84f57a488")),
+            Map.entry("1.20.1/forge", new Build("muoniumconfig-1.7.0.jar",
+                    23753928L, "e3d5483ff50e3fb24c1c2aaf4bace6a6570f256cc6b5db31c1937e63a24540f5"))
+    );
 
     /** 一个可下载的构建：文件名 + 钉死的字节数与 sha256。 */
     private static final class Build {

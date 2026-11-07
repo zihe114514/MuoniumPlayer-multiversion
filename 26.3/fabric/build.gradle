@@ -198,7 +198,7 @@ dependencies {
     //
     // 同步命令见 tools/sync-muoniumconfig.ps1；jar 更新后重跑一次，
     // 并把 MuoniumConfigDownload 里钉的 FILE_NAME / BYTES / SHA256 一起改掉。
-    implementation 'muonium:muoniumconfig:1.6.1'
+    implementation 'muonium:muoniumconfig:1.7.0'
     // Compose：编译期与开发期都要，但同样不进成品 —— 它是独立前置 mod，由玩家自装。
     compileOnly 'muonium:muonium-compose-bundle:2.1.0'
     runtimeOnly 'muonium:muonium-compose-bundle:2.1.0'

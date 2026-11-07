@@ -680,14 +680,14 @@ public final class MuoniumPlayerClient {
                 && ModernUiHudBridge.open()) {
             return;
         }
-        if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(HudConfig.hudEditorUi)
-                && OneConfigHudBridge.open()) {
+        // "oneconfig" 与 "mconfig" 都指向同一个界面：前者是玩家自己装的 OneConfig，
+        // 后者是本项目魔改并自动下载的那一份，两者 API 相同，由 OneConfigHudBridge 统一接。
+        // 所以这里不再按 hudEditorUi 分支判断 —— 只要桥能打开就用 MuoniumConfig。
+        if (OneConfigHudBridge.open()) {
             return;
         }
-        if (HudConfig.HUD_EDITOR_UI_MCONFIG.equals(HudConfig.hudEditorUi)) {
-            mc.gui.setScreen(new MConfigHudScreen());
-            return;
-        }
+        // MuoniumConfig 不在（还没下载完 / 下载失败 / 玩家自己卸了）：
+        // 兜底到自绘界面，只为了让玩家还能动 HUD。
         mc.gui.setScreen(new GuiHudEditorPro());
     }
 

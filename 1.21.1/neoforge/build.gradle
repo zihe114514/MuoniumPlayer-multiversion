@@ -283,7 +283,10 @@ def flattenEmbeddedLibs = tasks.register('flattenEmbeddedLibs', Jar) {
 
 dependencies {
     implementation files(flattenEmbeddedLibs.map { it.archiveFile })
+
 }
+
+
 
 // ==================== 开发期：把 embedded libs 提取到编译输出目录 ====================
 // 为什么不用 additionalRuntimeClasspath：

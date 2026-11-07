@@ -572,7 +572,7 @@ public final class HudConfig {
      */
     public static final String HUD_EDITOR_UI_MODERNUI = "modernui";
 
-    public static String hudEditorUi = HUD_EDITOR_UI_BUILTIN;
+    public static String hudEditorUi = HUD_EDITOR_UI_MCONFIG;
 
     /**
      * 播放态由谁供给：内部播放器，还是系统里正在播的外部播放器（Windows SMTC）。
@@ -1404,10 +1404,9 @@ public final class HudConfig {
     }
 
     private static String normalizeHudEditorUi(String value) {
-        if (HUD_EDITOR_UI_MCONFIG.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MCONFIG;
         if (HUD_EDITOR_UI_ONECONFIG.equalsIgnoreCase(value)) return HUD_EDITOR_UI_ONECONFIG;
         if (HUD_EDITOR_UI_MODERNUI.equalsIgnoreCase(value)) return HUD_EDITOR_UI_MODERNUI;
-        return HUD_EDITOR_UI_BUILTIN;
+        return HUD_EDITOR_UI_MCONFIG;
     }
 
     /**
