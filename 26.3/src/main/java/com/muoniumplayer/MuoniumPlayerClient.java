@@ -20,6 +20,7 @@ import com.muoniumplayer.core.screens.hud.ModernUiHudBridge;
 import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.screens.ncm.IslandSearchOverlay;
+import com.muoniumplayer.core.screens.ncm.MusicCardOverlay;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.update.AnnouncementChecker;
 import com.muoniumplayer.core.update.UpdateChecker;
@@ -593,7 +594,9 @@ public final class MuoniumPlayerClient {
         // 判断刻意只认白名单类名：认不出就按「不是编辑器」处理，宁可编辑器里看不到预览，
         // 也不能让 HUD 盖到背包/聊天上——后者会挡住操作，更容易被当成 bug 报上来。
         Screen open = Minecraft.getInstance().gui.screen();
-        if (open != null && !(open instanceof NCMScreen) && !isHudEditorScreen(open)) {
+        // MusicCardOverlay：音乐胶囊迷你卡的全透明输入浮层，岛在它底下照常画迷你卡。
+        if (open != null && !(open instanceof NCMScreen) && !(open instanceof MusicCardOverlay)
+                && !isHudEditorScreen(open)) {
             if (!(DownloadDynamicIsland.isDownloadActive())) return;
         }
         api.getGLStateManager().pushAttrib();

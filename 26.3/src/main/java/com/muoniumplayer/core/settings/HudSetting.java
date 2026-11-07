@@ -121,7 +121,9 @@ public enum HudSetting {
     /** 节拍最大压扁幅度：百分比，0 关闭压缩。开关与落盘在 TransparentMode，这里只出滑条。 */
     TRANSPARENT_COMPRESSION("通透模式 压缩幅度", 0.0f, 90.0f),
     /** 节拍最大变宽幅度：最大压缩时额外涨出的横向宽度百分比。 */
-    TRANSPARENT_WIDTH("通透模式 变宽幅度", 0.0f, 200.0f);
+    TRANSPARENT_WIDTH("通透模式 变宽幅度", 0.0f, 200.0f),
+    // ---- 音乐胶囊迷你卡（接在末尾：这套条目的 id 有按序号落盘的历史，插中间会让老配置错位）----
+    ISLAND_MINI_CARD_SCALE("迷你卡缩放", 0.50f, 2.00f);
 
     private final String label;
     private final float min;
@@ -222,6 +224,7 @@ public enum HudSetting {
             case WORLD_LYRICS_GLOW_SPREAD: return HudConfig.worldLyricsGlowSpread;
             case TRANSPARENT_COMPRESSION: return TransparentMode.compressionPercent();
             case TRANSPARENT_WIDTH: return TransparentMode.widthPercent();
+            case ISLAND_MINI_CARD_SCALE: return HudConfig.islandMiniCardScale;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }
@@ -308,6 +311,7 @@ public enum HudSetting {
             case WORLD_LYRICS_GLOW_SPREAD: HudConfig.worldLyricsGlowSpread = clamped; break;
             case TRANSPARENT_COMPRESSION: TransparentMode.setCompressionPercent(clamped); break;
             case TRANSPARENT_WIDTH: TransparentMode.setWidthPercent(clamped); break;
+            case ISLAND_MINI_CARD_SCALE: HudConfig.islandMiniCardScale = clamped; break;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }

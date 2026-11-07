@@ -21,7 +21,11 @@ public final class HudConfig {
     public static final float SCALE_MAX = 2.0f;
 
     /** 灵动岛样式索引上限,与 {@code DownloadDynamicIsland.DynamicIslandStyle} 的数量保持一致。 */
-    public static final int DYNAMIC_ISLAND_STYLE_MAX = 6;
+    /**
+     * {@link #dynamicIslandStyle} 的合法上限（存序号）。7 = 回弹胶囊、8 = 音乐胶囊。
+     * 历史上这里停在 6：选了回弹胶囊的存档在重载时会被钳回液态玻璃——顺手修正。
+     */
+    public static final int DYNAMIC_ISLAND_STYLE_MAX = 8;
 
     /** 全屏歌词样式索引上限,与 {@code FullscreenLyricStyle} 的数量保持一致。 */
     public static final int FULLSCREEN_LYRIC_STYLE_MAX = 10;

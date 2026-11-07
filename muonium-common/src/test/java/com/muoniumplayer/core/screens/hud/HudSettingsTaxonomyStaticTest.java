@@ -42,7 +42,7 @@ class HudSettingsTaxonomyStaticTest {
      * 只有 3D 歌词页 +1（30 → 31）；其余页不变。</p>
      */
     private static final List<Integer> COUNTS =
-            Arrays.asList(12, 22, 9, 25, 4, 33, 41, 31, 4, 3);
+            Arrays.asList(12, 22, 9, 28, 4, 33, 41, 31, 4, 3);
 
     /**
      * 「常用」页只在 26.3 起存在。
@@ -138,7 +138,7 @@ class HudSettingsTaxonomyStaticTest {
      *  现在是同一对象的引用，两个位置都可操作。
      *  分类从 8 页变 9 页，排序改由 {@code CATEGORY_ORDER} 表决定（声明顺序不再等于展示顺序）。 */
     // 独立模板预设栏目只增加四条 ACTION，不回搬各树原有分类或设置条目。
-    private static final int TOTAL = 184;
+    private static final int TOTAL = 187;
 
     @Test
     @DisplayName("分类顺序、每页条目数和独立模板栏目不许悄悄变")
@@ -197,8 +197,10 @@ class HudSettingsTaxonomyStaticTest {
         // 2026-10-24 「设置界面缩放」随 Folia 样式一起下架，54 → 53；
         // 2026-10-28 灵动岛新增「灵动岛位置」Y 偏移滑条，53 → 54。
         // 2026-11-03 通透模式新增「压缩幅度 / 变宽幅度」两条滑条（值存共享层
-        // TransparentMode 的配置文件，不经 HudConfig），54 → 56。
-        assertEquals(56, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱自定义柱数、透明度与高度都是有效设置");
+        // TransparentMode 的配置文件，不经 HudConfig），54 → 56；
+        // 2026-11-08 音乐胶囊迷你卡新增「迷你卡缩放」滑条（仅 26.3 的 HudSetting 收了
+        // 这一条，其余六树等回打），56 → 57。
+        assertEquals(hasFavoritesPage() ? 57 : 56, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱自定义柱数、透明度与高度都是有效设置");
         assertFalse(settings.contains("GLASS_BLOOM"), "退役的磨砂 bloom 不能作为无效设置暴露");
         assertFalse(settings.contains("GLASS_FUSION"), "参考透镜不使用旧融合描边");
         assertEquals(settings.size(), new HashSet<String>(settings).size(),

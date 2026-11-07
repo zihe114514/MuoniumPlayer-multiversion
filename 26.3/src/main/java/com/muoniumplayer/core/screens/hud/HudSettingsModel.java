@@ -1361,7 +1361,37 @@ public final class HudSettingsModel {
                                                 HudConfig.islandSearchEnabled = !HudConfig.islandSearchEnabled;
                                                 saveNow();
                                             }
-                                        }, () -> HudConfig.dynamicIslandEnabled)),
+                                        }, () -> HudConfig.dynamicIslandEnabled),
+                                slider(HudSetting.ISLAND_MINI_CARD_SCALE, "音乐胶囊迷你卡的整体大小。",
+                                        () -> HudConfig.dynamicIslandEnabled
+                                                && DownloadDynamicIsland.getStyle()
+                                                == DownloadDynamicIsland.DynamicIslandStyle.MUSIC_CAPSULE),
+                                toggle("音乐胶囊 · 显示歌词", "收起行与迷你卡主文本显示当前歌词行；关掉恒显歌名 - 歌手。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.islandMusicShowsLyric;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.islandMusicShowsLyric = !HudConfig.islandMusicShowsLyric;
+                                                saveNow();
+                                            }
+                                        }, () -> HudConfig.dynamicIslandEnabled
+                                                && DownloadDynamicIsland.getStyle()
+                                                == DownloadDynamicIsland.DynamicIslandStyle.MUSIC_CAPSULE),
+                                toggle("音乐胶囊 · 悬停展开", "鼠标在胶囊上停半秒展开迷你卡；移开自动收起。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.islandHoverExpand;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.islandHoverExpand = !HudConfig.islandHoverExpand;
+                                                saveNow();
+                                            }
+                                        }, () -> HudConfig.dynamicIslandEnabled
+                                                && DownloadDynamicIsland.getStyle()
+                                                == DownloadDynamicIsland.DynamicIslandStyle.MUSIC_CAPSULE)),
                         new Group("常驻内容", HudSettingsIcons.TIMER,
                                 toggle("常驻灵动岛", "没下载也没通知时胶囊也一直挂着。下面几项要先开它。",
                                         new BooleanSupplier() {
