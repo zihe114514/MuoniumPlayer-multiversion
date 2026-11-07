@@ -20,6 +20,13 @@ base {
 neoForge {
     version = project.neoforge_version
 
+    // AT 必须显式挂（MDG 不会自动扫 sourceSet 资源）。1.21.10 的
+    // RenderType$CompositeRenderType 是包私有，而 3D 歌词晕格的 @Invoker 必须按
+    // 全描述符声明它作返回类型（issue #16 的根因就在返回值上）——见
+    // src/main/resources/META-INF/accesstransformer.cfg 头注释。
+    // fabric 侧不需要：loom 的 named jar 把这个类放宽成了 public。
+    accessTransformers.from('src/main/resources/META-INF/accesstransformer.cfg')
+
     // 客户端专用 mod：只需要 client run。
     runs {
         client {
