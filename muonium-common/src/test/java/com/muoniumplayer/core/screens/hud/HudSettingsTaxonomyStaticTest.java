@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class HudSettingsTaxonomyStaticTest {
 
     private static final List<String> TITLES = Arrays.asList(
-            "常用", "歌词样式", "面板与卡片", "灵动岛", "信息栏与封面", "界面与主题", "播放", "3D 歌词", "缓存与公告");
+            "常用", "歌词样式", "面板与卡片", "灵动岛", "信息栏与封面", "界面与主题", "播放", "3D 歌词", "模板预设", "缓存与公告");
     /**
      * 3D 页条目数按树分支：26.x 的 3D 页有「封面代表色」四色板与「封面渐变」
      * （取色 8 条），1.20.1~1.21.11 的面板还没搬这组（取色只有文字色/发光色 2 条），
@@ -42,7 +42,7 @@ class HudSettingsTaxonomyStaticTest {
      * 只有 3D 歌词页 +1（30 → 31）；其余页不变。</p>
      */
     private static final List<Integer> COUNTS =
-            Arrays.asList(12, 22, 9, 25, 4, 33, 41, 31, 3);
+            Arrays.asList(12, 22, 9, 25, 4, 33, 41, 31, 4, 3);
 
     /**
      * 「常用」页只在 26.3 起存在。
@@ -60,17 +60,17 @@ class HudSettingsTaxonomyStaticTest {
                 ? TITLES
                 // 其余六树的旧结构（2026-11-06 之前）
                 : Arrays.asList("歌词样式", "3D 歌词", "面板与卡片", "灵动岛",
-                        "播放", "界面与主题", "信息栏与封面", "缓存与公告");
+                        "播放", "界面与主题", "信息栏与封面", "模板预设", "缓存与公告");
     }
 
     private static List<Integer> expectedCounts() {
         return hasFavoritesPage()
                 ? COUNTS
-                : Arrays.asList(28, 31, 9, 25, 41, 33, 6, 3);
+                : Arrays.asList(28, 31, 9, 25, 41, 33, 6, 4, 3);
     }
 
     private static int expectedTotal() {
-        return hasFavoritesPage() ? TOTAL : 176;
+        return hasFavoritesPage() ? TOTAL : 180;
     }
 
     private static String versionName() {
@@ -137,10 +137,11 @@ class HudSettingsTaxonomyStaticTest {
      *  （灵动岛 / 音乐频谱 / 3D 歌词 / 场景声学）—— 它们原先只存在于各自分类里，
      *  现在是同一对象的引用，两个位置都可操作。
      *  分类从 8 页变 9 页，排序改由 {@code CATEGORY_ORDER} 表决定（声明顺序不再等于展示顺序）。 */
-    private static final int TOTAL = 180;
+    // 独立模板预设栏目只增加四条 ACTION，不回搬各树原有分类或设置条目。
+    private static final int TOTAL = 184;
 
     @Test
-    @DisplayName("分类就是这 7 页，顺序与每页条目数都不许悄悄变")
+    @DisplayName("分类顺序、每页条目数和独立模板栏目不许悄悄变")
     void categoriesAndCountsArePinned() {
         HudSettingsModel.Category[] categories = HudSettingsModel.categories();
         List<String> titles = new ArrayList<String>();
@@ -158,10 +159,8 @@ class HudSettingsTaxonomyStaticTest {
     @Test
     @DisplayName("分类总数封顶：分类条是横排，页太多会被窗口裁掉")
     void categoryCountStaysWithinSidebarBudget() {
-        // 2026-11-06 上限 8 → 9：新开「常用」页（仅 26.3 起）。现代界面（MuoniumConfig /
-        // Classic / Folia）的分类条会换行，9 格放得下；只有 1.20.1~1.21.11 的 ModernUI 是固定横排，
-        // 而 26.x 不再带 ModernUI 面板，所以这条约束只对老树有实际意义。
-        int cap = hasFavoritesPage() ? 9 : 8;
+        // 独立「模板预设」+1：保留各树原来的分类分流，不把 26.3 的常用页倒灌到老树。
+        int cap = hasFavoritesPage() ? 10 : 9;
         assertTrue(HudSettingsModel.categories().length <= cap,
                 "分类页超过 " + cap + " 个就又开始「侧栏一半是空页」了；再加页先确认各界面分类条放得下");
     }

@@ -517,6 +517,11 @@ public final class ConfigPaths {
     public static final File VIPER_SETTINGS = new File(VIPER_DIR, "settings.json");
     public static final File VIPER_PRESETS = new File(VIPER_DIR, "presets");
 
+    /** User-created/imported template presets; builtins are read directly from the mod resources. */
+    public static final File PRESETS_DIR = new File(CONFIG_DIRECTORY, "presets");
+    /** Atomic pre-apply backups, newest ten retained. */
+    public static final File PRESETS_BACKUP_DIR = new File(PRESETS_DIR, "backups");
+
     /**
      * 凭据文件的旧→新映射表。声明顺序无关；用 LinkedHashMap 保持可读性。
      * key 是 config/muonium 下的旧文件，value 是 MuoniumPlayer/auth 下的新文件。

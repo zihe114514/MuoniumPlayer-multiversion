@@ -107,6 +107,9 @@ public final class CineSettings {
      */
     private static float minShotSeconds = MIN_SHOT_SECONDS_DEFAULT;
 
+    /** Captured after all field initializers, before any disk load. */
+    private static final JsonObject DEFAULTS = toJsonLocked();
+
     private CineSettings() {
     }
 
@@ -453,28 +456,52 @@ public final class CineSettings {
                 if (!file.isFile()) return;
                 JsonObject root = JsonConfigStorage.readObject(file, GSON);
                 if (root == null) return;
-                enabled = optBool(root, "enabled", false);
-                idleSeconds = clamp(optInt(root, "idleSeconds", idleSeconds), IDLE_SECONDS_MIN, IDLE_SECONDS_MAX);
-                shotBeats = clamp(optInt(root, "shotBeats", shotBeats), SHOT_BEATS_MIN, SHOT_BEATS_MAX);
-                speedMultiplier = clamp(optFloat(root, "speedMultiplier", speedMultiplier), SPEED_MIN, SPEED_MAX);
-                fovPunchDegrees = clamp(optFloat(root, "fovPunchDegrees", fovPunchDegrees), FOV_PUNCH_MIN, FOV_PUNCH_MAX);
-                handheldIntensity = clamp(optFloat(root, "handheldIntensity", handheldIntensity), HANDHELD_MIN, HANDHELD_MAX);
-                hideHud = optBool(root, "hideHud", hideHud);
-                showCinematicBars = optBool(root, "showCinematicBars", showCinematicBars);
-                cinematicBarPercent = clamp(optInt(root, "cinematicBarPercent", cinematicBarPercent), 0, BAR_PERCENT_MAX);
-                transitionMask = optInt(root, "transitionMask", transitionMask) & TRANSITION_MASK_ALL;
-                transitionSeconds = clamp(optFloat(root, "transitionSeconds", transitionSeconds), 0.1f, 3f);
-                enableMobFocus = optBool(root, "enableMobFocus", enableMobFocus);
-                mobFocusRange = clamp(optFloat(root, "mobFocusRange", mobFocusRange), MOB_RANGE_MIN, MOB_RANGE_MAX);
-                excludeHostileMobs = optBool(root, "excludeHostileMobs", excludeHostileMobs);
-                excludeBats = optBool(root, "excludeBats", excludeBats);
-                trackingSoftness = clamp(optFloat(root, "trackingSoftness", trackingSoftness), SOFTNESS_MIN, SOFTNESS_MAX);
-                showStatusMessages = optBool(root, "showStatusMessages", showStatusMessages);
-                minShotSeconds = clamp(optFloat(root, "minShotSeconds", minShotSeconds), MIN_SHOT_SECONDS_MIN, MIN_SHOT_SECONDS_MAX);
+                readLocked(root);
             } catch (Throwable ignored) {
                 // 配置坏了用默认值,不能影响播放。
             }
         }
+    }
+
+    public static JsonObject toJson() {
+        load();
+        synchronized (LOCK) { return toJsonLocked(); }
+    }
+
+    public static JsonObject defaultsJson() { return DEFAULTS.deepCopy(); }
+
+    /** Main-thread preset seam; original clamp/load semantics, missing keys preserve current values. */
+    public static void applyJson(JsonObject root) {
+        if (root == null) return;
+        load();
+        synchronized (LOCK) {
+            readLocked(root);
+            if (!testIoHooked) {
+                try { JsonConfigStorage.writeObject(ConfigPaths.CINE, GSON, toJsonLocked()); }
+                catch (java.io.IOException failure) { throw new IllegalStateException("运镜配置落盘失败", failure); }
+            }
+        }
+    }
+
+    private static void readLocked(JsonObject root) {
+        enabled = optBool(root, "enabled", enabled);
+        idleSeconds = clamp(optInt(root, "idleSeconds", idleSeconds), IDLE_SECONDS_MIN, IDLE_SECONDS_MAX);
+        shotBeats = clamp(optInt(root, "shotBeats", shotBeats), SHOT_BEATS_MIN, SHOT_BEATS_MAX);
+        speedMultiplier = clamp(optFloat(root, "speedMultiplier", speedMultiplier), SPEED_MIN, SPEED_MAX);
+        fovPunchDegrees = clamp(optFloat(root, "fovPunchDegrees", fovPunchDegrees), FOV_PUNCH_MIN, FOV_PUNCH_MAX);
+        handheldIntensity = clamp(optFloat(root, "handheldIntensity", handheldIntensity), HANDHELD_MIN, HANDHELD_MAX);
+        hideHud = optBool(root, "hideHud", hideHud);
+        showCinematicBars = optBool(root, "showCinematicBars", showCinematicBars);
+        cinematicBarPercent = clamp(optInt(root, "cinematicBarPercent", cinematicBarPercent), 0, BAR_PERCENT_MAX);
+        transitionMask = optInt(root, "transitionMask", transitionMask) & TRANSITION_MASK_ALL;
+        transitionSeconds = clamp(optFloat(root, "transitionSeconds", transitionSeconds), 0.1f, 3f);
+        enableMobFocus = optBool(root, "enableMobFocus", enableMobFocus);
+        mobFocusRange = clamp(optFloat(root, "mobFocusRange", mobFocusRange), MOB_RANGE_MIN, MOB_RANGE_MAX);
+        excludeHostileMobs = optBool(root, "excludeHostileMobs", excludeHostileMobs);
+        excludeBats = optBool(root, "excludeBats", excludeBats);
+        trackingSoftness = clamp(optFloat(root, "trackingSoftness", trackingSoftness), SOFTNESS_MIN, SOFTNESS_MAX);
+        showStatusMessages = optBool(root, "showStatusMessages", showStatusMessages);
+        minShotSeconds = clamp(optFloat(root, "minShotSeconds", minShotSeconds), MIN_SHOT_SECONDS_MIN, MIN_SHOT_SECONDS_MAX);
     }
 
     private static void saveLocked() {

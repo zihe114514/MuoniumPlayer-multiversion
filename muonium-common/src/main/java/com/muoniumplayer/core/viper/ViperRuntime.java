@@ -1,5 +1,7 @@
 package com.muoniumplayer.core.viper;
 
+import com.google.gson.JsonObject;
+import com.muoniumplayer.core.settings.JsonConfigStorage;
 import com.muoniumplayer.core.settings.ConfigPaths;
 
 import java.io.File;
@@ -177,6 +179,133 @@ public final class ViperRuntime {
             return "已启用，但还没有选择预设";
         }
         return "已启用 · 预设「" + preset + "」生效中";
+    }
+
+    /** Bounded, read-only preset export; never starts the audio engine. */
+    public static JsonObject exportPresetJson(String name) {
+        File file = safePresetFile(name);
+        if (file == null) return null;
+        try {
+            byte[] bytes;
+            try (java.io.InputStream in = java.nio.file.Files.newInputStream(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                byte[] buffer = new byte[8192];
+                int n;
+                while ((n = in.read(buffer)) != -1) {
+                    if ((long) out.size() + n > 2L * 1024 * 1024) return null;
+                    out.write(buffer, 0, n);
+                }
+                bytes = out.toByteArray();
+            }
+            String text = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+            if (com.muoniumplayer.core.preset.codec.PresetLimits.nestingDepth(text) > 16) return null;
+            return ViperPresetParser.parse(text, name).json().deepCopy();
+        } catch (Throwable failure) { return null; }
+    }
+
+    /** Read current settings without provisioning assets or reconfiguring an engine during preflight. */
+    public static JsonObject presetStateView() {
+        synchronized (LOCK) {
+            ViperSettings current = settings == null ? ViperSettings.load(ConfigPaths.VIPER_SETTINGS) : settings;
+            JsonObject view = new JsonObject();
+            view.addProperty("enabled", current.enabled());
+            String name = current.presetName();
+            JsonObject data = name == null ? null : exportPresetJson(name);
+            if (data != null) data.addProperty("name", name);
+            view.addProperty("preset", name);
+            view.add("presetData", data == null ? com.google.gson.JsonNull.INSTANCE : data);
+            return view;
+        }
+    }
+
+    /** New collision-safe preset, atomic JSON write; never overwrites a different existing preset. */
+    public static String importPresetJson(JsonObject json, String preferredName) {
+        if (json == null) throw new IllegalArgumentException("预设内容为空");
+        ViperPreset incoming = ViperPresetParser.parse(json.toString(), ViperPresetStore.sanitizeName(preferredName));
+        String base = ViperPresetStore.sanitizeName(incoming.name());
+        JsonObject content = withoutHeader(incoming.json());
+        for (int attempt = 1; attempt <= 20; attempt++) {
+            // Leave suffix room; truncating the complete name would repeatedly hit the same 64-char collision.
+            String stem = base.length() > 48 ? base.substring(0, 48) : base;
+            String candidate = attempt == 1 ? base : stem + "（分享" + (attempt == 2 ? "" : " " + (attempt - 1)) + "）";
+            File target = new File(ConfigPaths.VIPER_PRESETS, candidate + ".json");
+            JsonObject existing = exportPresetJson(candidate);
+            if (existing != null && withoutHeader(existing).equals(content)) return candidate;
+            if (target.exists() || new File(ConfigPaths.VIPER_PRESETS, candidate + ".xml").exists()) continue;
+            JsonObject body = incoming.json().deepCopy();
+            body.addProperty(ViperPreset.KEY_NAME, candidate);
+            try {
+                if (!target.getCanonicalFile().getParentFile().equals(ConfigPaths.VIPER_PRESETS.getCanonicalFile()))
+                    throw new IOException("预设越出目录");
+                writePresetAtomically(target, body);
+                return candidate;
+            } catch (IOException failure) { throw new IllegalStateException("蝰蛇预设落盘失败", failure); }
+        }
+        throw new IllegalArgumentException("同名预设太多，换个名字再试");
+    }
+
+    private static void writePresetAtomically(File file, JsonObject body) throws IOException {
+        java.nio.file.Path target = file.toPath().toAbsolutePath();
+        java.nio.file.Files.createDirectories(target.getParent());
+        if (java.nio.file.Files.isSymbolicLink(target)) throw new IOException("预设目标为符号链接");
+        java.nio.file.Path temp = java.nio.file.Files.createTempFile(target.getParent(), ".viper-preset-", ".tmp");
+        try {
+            java.nio.file.Files.writeString(temp, body.toString(), java.nio.charset.StandardCharsets.UTF_8);
+            try { java.nio.file.Files.move(temp, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE); }
+            catch (java.nio.file.AtomicMoveNotSupportedException fallback) { java.nio.file.Files.move(temp, target); }
+        } finally { java.nio.file.Files.deleteIfExists(temp); }
+    }
+
+    /** Control/main thread only: checked write + publish processor config, but no Engine initialization. */
+    public static void applyState(boolean enabled, String presetName) {
+        synchronized (LOCK) {
+            ViperSettings next = new ViperSettings(ConfigPaths.VIPER_SETTINGS);
+            next.setEnabled(enabled);
+            next.setPresetName(presetName);
+            ViperPreset preset = presetName == null ? null : loadPresetForState(presetName);
+            JsonObject body = new JsonObject();
+            body.addProperty("enabled", enabled);
+            if (presetName != null) body.addProperty("preset", presetName);
+            try { JsonConfigStorage.writeObject(ConfigPaths.VIPER_SETTINGS, new com.google.gson.Gson(), body); }
+            catch (IOException failure) { throw new IllegalStateException("蝰蛇设置落盘失败", failure); }
+            settings = next;
+            settingsStamp = fileStamp(ConfigPaths.VIPER_SETTINGS);
+            presetStamp = presetName == null ? 0L : STORE.stamp(presetName);
+            PROCESSOR.configure(enabled, preset);
+        }
+    }
+
+    private static ViperPreset loadPresetForState(String name) {
+        JsonObject json = exportPresetJson(name);
+        return json == null ? null : ViperPresetParser.parse(json.toString(), name);
+    }
+
+    public static boolean hasPreset(String name) { return safePresetFile(name) != null; }
+
+    private static File safePresetFile(String name) {
+        if (name == null || name.trim().isEmpty()) return null;
+        try {
+            File file = STORE.find(name);
+            return file != null && !java.nio.file.Files.isSymbolicLink(file.toPath())
+                    && file.getCanonicalFile().getParentFile().equals(ConfigPaths.VIPER_PRESETS.getCanonicalFile()) ? file : null;
+        } catch (IOException | SecurityException failure) { return null; }
+    }
+
+    /** Rollback removes only the fresh JSON imported by this transaction, never a pre-existing XML/JSON. */
+    public static void removeImportedPresetJson(String name) {
+        File target = new File(ConfigPaths.VIPER_PRESETS, ViperPresetStore.sanitizeName(name) + ".json");
+        try {
+            if (target.getCanonicalFile().getParentFile().equals(ConfigPaths.VIPER_PRESETS.getCanonicalFile())
+                    && !java.nio.file.Files.isSymbolicLink(target.toPath())) java.nio.file.Files.deleteIfExists(target.toPath());
+        } catch (IOException failure) { throw new IllegalStateException("蝰蛇导入预设回滚失败", failure); }
+    }
+
+    private static JsonObject withoutHeader(JsonObject body) {
+        JsonObject copy = body.deepCopy();
+        copy.remove(ViperPreset.KEY_SCHEMA_VERSION);
+        copy.remove(ViperPreset.KEY_NAME);
+        copy.remove(ViperPreset.KEY_CREATED_AT);
+        return copy;
     }
 
     /** 一行状态描述（日志与未来的调试界面共用）。 */

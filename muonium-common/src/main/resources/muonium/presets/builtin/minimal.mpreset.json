@@ -1,0 +1,24 @@
+{
+  "format": "muonium.preset",
+  "formatVersion": 1,
+  "base": "current",
+  "meta": {
+    "id": "builtin:minimal",
+    "name": "简约",
+    "author": "MuoniumPlayer",
+    "description": "只听歌：桌面歌词、信息卡、灵动岛、3D 歌词与 HUD 频谱全部隐藏。只动显示开关，你调好的样式都保留；想恢复就点「撤销」。"
+  },
+  "facets": ["visibility"],
+  "domains": {
+    "hud": {
+      "v": 1,
+      "values": {
+        "musicInfoEnabled": false,
+        "musicLyricsEnabled": false,
+        "spectrumInHud": false,
+        "dynamicIslandEnabled": false,
+        "worldLyricsEnabled": false
+      }
+    }
+  }
+}

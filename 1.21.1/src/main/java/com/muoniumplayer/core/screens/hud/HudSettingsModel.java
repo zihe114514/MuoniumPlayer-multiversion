@@ -341,6 +341,8 @@ public final class HudSettingsModel {
     }
 
     public static final class Category {
+        /** Stable optional host identifier; preset hosts use the same id on every version tree. */
+        public final String id;
         public final String title;
         public final String subtitle;
         /** 分类的标识色。侧边栏色点、分组标题与选中态都用它。 */
@@ -351,6 +353,12 @@ public final class HudSettingsModel {
 
         private Category(String title, String subtitle, int accent, String icon,
                          Group... groups) {
+            this("", title, subtitle, accent, icon, groups);
+        }
+
+        private Category(String id, String title, String subtitle, int accent, String icon,
+                         Group... groups) {
+            this.id = id;
             this.title = title;
             this.subtitle = subtitle;
             this.accent = accent;
@@ -2039,6 +2047,14 @@ public final class HudSettingsModel {
                                         }, tagLanguageChoices(), HudSettingsModel::setTagLanguage,
                                         new String[] {"更直观。", "胶囊里更清楚。"}))),
 
+                new Category("presets", "模板预设", "存下与分享整套外观和音效，按分面套用并随时撤销", 0xFF8C7CFF, HudSettingsIcons.PALETTE,
+                        new Group("模板管理", HudSettingsIcons.PALETTE,
+                                action("管理模板预设", "打开独立预设页：内置风格、我的模板与分享删除。", PresetSettingsActions::manage),
+                                action("保存当前为模板", "选择外观与音效分面，命名后保存当前设置。", PresetSettingsActions::save)),
+                        new Group("导入与恢复", HudSettingsIcons.RESTORE,
+                                action("撤销上次套用", "回到上一次套用前的本地备份，结果显示在预设页。", PresetSettingsActions::undo),
+                                action("导入模板", "从剪贴板分享码或 .mpreset.json 文件导入，确认后再套用。", PresetSettingsActions::importPreset))),
+
                 new Category("缓存与公告", "音乐缓存占多大盘、公告入口", 0xFFD8A657, HudSettingsIcons.STORAGE,
                         new Group("音频缓存", HudSettingsIcons.SWEEP,
                                 choice("缓存上限",
@@ -2078,6 +2094,13 @@ public final class HudSettingsModel {
      * 写一次就三处都有。公告窗是一个独立 Screen 而不是浮层：设置界面自己就是 {@code Screen}，
      * 关掉时按 {@code parent} 回到打开它的那一屏。</p>
      */
+    /** Called by PresetSettingsActions on the client main thread; only this version-local seam knows Minecraft screen APIs. */
+    public static void openPresetSettings(PresetSettingsActions.Mode mode) {
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        net.minecraft.client.gui.screens.Screen parent = client.screen;
+        client.setScreen(new GuiPresetSettings(() -> client.setScreen(parent), mode));
+    }
+
     private static void openAnnouncements() {
         GuiAnnouncements.open(net.minecraft.client.Minecraft.getInstance().screen);
     }

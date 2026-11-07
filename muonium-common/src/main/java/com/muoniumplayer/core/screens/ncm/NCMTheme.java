@@ -273,34 +273,32 @@ public final class NCMTheme {
 
     private static void readCustomColors(JsonObject root) {
         CUSTOM_BY_THEME.clear();
-        for (Map.Entry<String, com.google.gson.JsonElement> themeEntry : root.entrySet()) {
-            if (!themeEntry.getValue().isJsonObject()) {
-                continue;
-            }
-            EnumMap<NCMScreen.ColorType, Integer> map = new EnumMap<NCMScreen.ColorType, Integer>(NCMScreen.ColorType.class);
-            for (Map.Entry<String, com.google.gson.JsonElement> colorEntry
-                    : themeEntry.getValue().getAsJsonObject().entrySet()) {
-                NCMScreen.ColorType type = parseColorType(colorEntry.getKey());
-                if (type == null) {
-                    continue;
-                }
-                try {
-                    String raw = colorEntry.getValue().getAsString();
-                    if (raw == null) {
-                        continue;
-                    }
-                    raw = raw.trim();
-                    if (raw.startsWith("#")) {
-                        raw = raw.substring(1);
-                    }
-                    map.put(type, Integer.valueOf((int) (Long.parseLong(raw, 16) & 0xFFFFFFL)));
-                } catch (Throwable ignored) {
-                }
-            }
-            if (!map.isEmpty()) {
-                CUSTOM_BY_THEME.put(themeEntry.getKey(), map);
-            }
+        for (Map.Entry<String, com.google.gson.JsonElement> entry : root.entrySet()) {
+            if (!entry.getValue().isJsonObject()) continue;
+            EnumMap<NCMScreen.ColorType, Integer> map = parseColorMap(entry.getValue().getAsJsonObject());
+            if (!map.isEmpty()) CUSTOM_BY_THEME.put(entry.getKey(), map);
         }
+    }
+
+    private static EnumMap<NCMScreen.ColorType, Integer> parseColorMap(JsonObject colors) {
+        EnumMap<NCMScreen.ColorType, Integer> map = new EnumMap<NCMScreen.ColorType, Integer>(NCMScreen.ColorType.class);
+        for (Map.Entry<String, com.google.gson.JsonElement> entry : colors.entrySet()) {
+            NCMScreen.ColorType type = parseColorType(entry.getKey());
+            if (type == null) continue;
+            try {
+                String raw = entry.getValue().getAsString().trim();
+                if (raw.startsWith("#")) raw = raw.substring(1);
+                map.put(type, (int) (Long.parseLong(raw, 16) & 0xFFFFFFL));
+            } catch (Throwable ignored) {}
+        }
+        return map;
+    }
+
+    private static JsonObject writeColorMap(EnumMap<NCMScreen.ColorType, Integer> map) {
+        JsonObject colors = new JsonObject();
+        if (map != null) for (Map.Entry<NCMScreen.ColorType, Integer> entry : map.entrySet())
+            colors.addProperty(entry.getKey().name(), String.format("#%06X", entry.getValue() & 0xFFFFFF));
+        return colors;
     }
 
     private static JsonObject writeCustomColors() {
@@ -309,14 +307,120 @@ public final class NCMTheme {
             if (themeEntry.getValue() == null || themeEntry.getValue().isEmpty()) {
                 continue;
             }
-            JsonObject colors = new JsonObject();
-            for (Map.Entry<NCMScreen.ColorType, Integer> colorEntry : themeEntry.getValue().entrySet()) {
-                colors.addProperty(colorEntry.getKey().name(),
-                        String.format("#%06X", Integer.valueOf(colorEntry.getValue().intValue() & 0xFFFFFF)));
-            }
-            root.add(themeEntry.getKey(), colors);
+            root.add(themeEntry.getKey(), writeColorMap(themeEntry.getValue()));
         }
         return root;
+    }
+
+    public static ThemePreset defaultTheme() { return ThemePreset.VELVET_ROSE; }
+
+    public static ThemePreset byIdOrNull(String id) {
+        if (id != null) for (ThemePreset preset : ThemePreset.values())
+            if (preset.getId().equalsIgnoreCase(id.trim())) return preset;
+        return null;
+    }
+
+    private static JsonObject themeUnit(ThemePreset theme, EnumMap<NCMScreen.ColorType, Integer> colors) {
+        JsonObject unit = new JsonObject();
+        unit.addProperty("id", theme.getId());
+        unit.add("customColors", writeColorMap(colors));
+        return unit;
+    }
+
+    /** Shareable view: only the active theme's colors, never all other private palettes. */
+    public static synchronized JsonObject presetView() {
+        load();
+        JsonObject view = new JsonObject();
+        view.add("theme", themeUnit(current, CUSTOM_BY_THEME.get(current.getId())));
+        view.addProperty("colorSource", HudConfig.themeColorSource);
+        return view;
+    }
+
+    public static JsonObject defaultPresetView() {
+        JsonObject view = new JsonObject();
+        view.add("theme", themeUnit(defaultTheme(), null));
+        view.addProperty("colorSource", ThemeColorSource.PRESET.ordinal());
+        return view;
+    }
+
+    /** Main-thread seam, existing theme transition/color-source path and checked persistence. */
+    public static synchronized String applyPresetView(JsonObject view) {
+        load();
+        if (view == null) return null;
+        String problem = null;
+        ThemePreset target = current;
+        JsonObject unit = view.has("theme") && view.get("theme").isJsonObject() ? view.getAsJsonObject("theme") : null;
+        if (unit != null && unit.has("id") && unit.get("id").isJsonPrimitive()) {
+            String id = unit.get("id").getAsString();
+            ThemePreset found = byIdOrNull(id);
+            if (found == null) problem = "主题「" + id + "」在这个版本里没有，保留当前主题";
+            else if (!selectableLocked(found)) problem = "「" + found.getDisplayName() + "」在当前设备上不可用，保留当前主题";
+            else target = found;
+        }
+        if (unit != null && problem == null) {
+            EnumMap<NCMScreen.ColorType, Integer> colors = unit.has("customColors") && unit.get("customColors").isJsonObject()
+                    ? parseColorMap(unit.getAsJsonObject("customColors")) : null;
+            EnumMap<NCMScreen.ColorType, Integer> before = CUSTOM_BY_THEME.get(target.getId());
+            boolean colorsChange = colors != null && !colors.equals(before == null
+                    ? new EnumMap<NCMScreen.ColorType, Integer>(NCMScreen.ColorType.class) : before);
+            if (target != current || colorsChange) {
+                beginTransitionLocked();
+                if (colorsChange) {
+                    if (colors.isEmpty()) CUSTOM_BY_THEME.remove(target.getId());
+                    else CUSTOM_BY_THEME.put(target.getId(), colors);
+                }
+                current = target;
+                persistPresetTheme();
+            }
+        }
+        if (view.has("colorSource") && view.get("colorSource").isJsonPrimitive()) {
+            int source = view.get("colorSource").getAsInt();
+            if (source >= 0 && source <= HudConfig.THEME_COLOR_SOURCE_MAX) {
+                int before = HudConfig.themeColorSource;
+                setColorSource(source);
+                if (before != HudConfig.themeColorSource) HudConfig.savePresetState();
+            }
+        }
+        return problem;
+    }
+
+    private static void persistPresetTheme() {
+        JsonObject root = new JsonObject();
+        root.addProperty("theme", current.getId());
+        root.add("custom", writeCustomColors());
+        try { JsonConfigStorage.writeObject(FILE, GSON, root); }
+        catch (java.io.IOException failure) { throw new IllegalStateException("主题配置落盘失败", failure); }
+    }
+
+    /** Trusted local/Profiles snapshot: all palettes and exact transition/cache state, never share it. */
+    public static synchronized JsonObject capturePresetState() {
+        load();
+        JsonObject state = presetView();
+        state.add("custom", writeCustomColors());
+        if (transitionFromColors != null) state.add("transitionFromColors", GSON.toJsonTree(transitionFromColors));
+        if (dynamicThemeColors != null) state.add("dynamicThemeColors", GSON.toJsonTree(dynamicThemeColors));
+        state.addProperty("transitionFromGlass", transitionFromGlass);
+        state.addProperty("transitionFromTrueGlass", transitionFromTrueGlass);
+        state.addProperty("transitionStartedAt", transitionStartedAt);
+        state.addProperty("dynamicThemeVersion", dynamicThemeVersion);
+        return state;
+    }
+
+    public static synchronized void restorePresetState(JsonObject state) {
+        load();
+        ThemePreset target = state.has("theme") && state.get("theme").isJsonObject()
+                ? byIdOrNull(state.getAsJsonObject("theme").get("id").getAsString()) : current;
+        if (target != null && selectableLocked(target)) current = target;
+        if (state.has("custom") && state.get("custom").isJsonObject()) readCustomColors(state.getAsJsonObject("custom"));
+        if (state.has("colorSource")) HudConfig.themeColorSource = state.get("colorSource").getAsInt();
+        transitionFromColors = state.has("transitionFromColors") ? GSON.fromJson(state.get("transitionFromColors"), int[].class) : null;
+        dynamicThemeColors = state.has("dynamicThemeColors") ? GSON.fromJson(state.get("dynamicThemeColors"), int[].class) : null;
+        transitionFromGlass = state.has("transitionFromGlass") ? state.get("transitionFromGlass").getAsFloat() : 0;
+        transitionFromTrueGlass = state.has("transitionFromTrueGlass") ? state.get("transitionFromTrueGlass").getAsFloat() : 0;
+        transitionStartedAt = state.has("transitionStartedAt") ? state.get("transitionStartedAt").getAsLong() : -1L;
+        dynamicThemeVersion = state.has("dynamicThemeVersion") ? state.get("dynamicThemeVersion").getAsInt() : -1;
+        persistPresetTheme();
+        HudConfig.savePresetState();
     }
 
     private static NCMScreen.ColorType parseColorType(String name) {

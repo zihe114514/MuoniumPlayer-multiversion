@@ -720,6 +720,9 @@ public final class HudConfig {
      */
     public static boolean glassMobileExperimental = false;
 
+    /** Factory snapshot after all field initializers, before any load. */
+    private static final JsonObject DEFAULTS = toJson();
+
     private HudConfig() {
     }
 
@@ -874,9 +877,15 @@ public final class HudConfig {
         }
         try {
             JsonObject o = JsonConfigStorage.readObject(FILE, GSON);
-            if (o == null) {
-                return;
-            }
+            applyJson(o);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Memory-only seam with original per-tree read/migration bounds. Missing fields retain current values. */
+    public static void applyJson(JsonObject o) {
+        if (o == null) return;
+        try {
             infoX = clampPos(getFloat(o, "infoX", infoX));
             infoY = clampPos(getFloat(o, "infoY", infoY));
             infoScale = clampScale(getFloat(o, "infoScale", infoScale));
@@ -1111,6 +1120,21 @@ public final class HudConfig {
     /** 编辑器交互后持久化设置。 */
     public static void save() {
         try {
+            JsonConfigStorage.writeObject(FILE, GSON, toJson());
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Checked transaction variant; legacy save remains best-effort. */
+    public static void savePresetState() {
+        try { JsonConfigStorage.writeObject(FILE, GSON, toJson()); }
+        catch (java.io.IOException failure) { throw new IllegalStateException("HUD 配置落盘失败", failure); }
+    }
+
+    public static JsonObject defaultsJson() { return DEFAULTS.deepCopy(); }
+
+    /** Complete persisted state, pure memory, with every existing field retained. */
+    public static JsonObject toJson() {
             JsonObject o = new JsonObject();
             o.addProperty("infoX", infoX);
             o.addProperty("infoY", infoY);
@@ -1295,10 +1319,7 @@ public final class HudConfig {
 
             o.addProperty("animatedCoverEnabled", animatedCoverEnabled);
 
-            JsonConfigStorage.writeObject(FILE, GSON, o);
-
-        } catch (Throwable ignored) {
-        }
+            return o;
     }
 
     public static int clampInt(int v, int min, int max) {

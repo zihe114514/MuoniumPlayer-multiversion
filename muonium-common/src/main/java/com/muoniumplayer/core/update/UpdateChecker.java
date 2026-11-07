@@ -192,6 +192,11 @@ public final class UpdateChecker {
     private UpdateChecker() {
     }
 
+    /** Registered by the version-tree entry; diagnostic metadata, never probes a loader. */
+    public static String minecraftVersion() {
+        return mcVersion;
+    }
+
     /**
      * 启动时调用一次（在共享入口的 {@code init()} 里）。
      *
