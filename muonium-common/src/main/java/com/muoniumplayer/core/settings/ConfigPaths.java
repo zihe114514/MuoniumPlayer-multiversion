@@ -493,6 +493,16 @@ public final class ConfigPaths {
     public static final File DEV_OPEN_PLAYER = new File(CONFIG_DIRECTORY, "dev_open_player");
 
     /**
+     * 【只给开发验证】存在就在主菜单/游戏内空闲时等价于「按了一次 H」——打开 HUD 设置界面。
+     *
+     * <p>与 {@link #DEV_OPEN_PLAYER} 完全同一个套路，理由也一样：自动化环境驱动不了
+     * {@code KeyMapping}，而 HUD 设置界面（MuoniumConfig 的整套 Compose UI）只有真的
+     * 开出来才能验证「按键 → 桥 → 界面 → Skia 绘制」这条链路是通的。
+     * 文件用完即删，普通用户不会有它。</p>
+     */
+    public static final File DEV_OPEN_HUD = new File(CONFIG_DIRECTORY, "dev_open_hud");
+
+    /**
      * 【只给开发验证】存在就打开<b>背景采集探针</b>：每帧把「此刻还不含我们 HUD 的游戏画面」
      * 拷成一张纹理，并在屏幕左下角贴原图与糊过一档的对比块，日志里带采集耗时与纹理尺寸。
      * 删掉这个文件即关。

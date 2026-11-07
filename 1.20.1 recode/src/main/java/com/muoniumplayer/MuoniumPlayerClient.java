@@ -271,6 +271,11 @@ public final class MuoniumPlayerClient {
         // 走的还是同一个 OnboardingManager.openPlayerEntry()，不绕任何状态闸；文件用完即删。
         devOpenPlayerEntry(mc);
 
+        // ---- 【只给开发验证】一个文件等价于按一次 H（打开 HUD 设置界面）----
+        // 同 dev_open_player 的理由：自动化环境驱动不了 KeyMapping，而「按键 → 桥 →
+        // MuoniumConfig 界面 → Skia 绘制」这条链路只有真的开出来才算验过。
+        devOpenHudEntry(mc);
+
         // ---- 系统播放器镜像（SMTC）----
         // 主线程每 tick 问一次：换歌检测、解析结果落地、命令回执播报都在里面。真正的耗时
         // 部分（起进程、联网搜曲库）都在这个调用返回之后由后台线程做，这里只是一次内存读
@@ -605,6 +610,39 @@ public final class MuoniumPlayerClient {
     }
 
     /**
+     * 【只给开发验证】存在 {@code config/muonium/dev_open_hud} 就等价于按了一次 H。
+     *
+     * <p>走的是与真实按键完全相同的 {@code openHudEditor(mc)}，不绕任何闸门：
+     * 桥的可用性判断、MuoniumConfig 的加载状态、兜底界面的回退，全都照常生效。
+     * 文件用完即删；删不掉也不会每 tick 重开一次界面。</p>
+     */
+    private void devOpenHudEntry(Minecraft mc) {
+        if (devHudTriggerUsed) {
+            return;
+        }
+        java.io.File trigger = com.muoniumplayer.core.settings.ConfigPaths.DEV_OPEN_HUD;
+        if (!trigger.isFile()) {
+            return;
+        }
+        // 与 devOpenPlayerEntry 同一道闸：界面真的挂在屏幕上、且不在别的 Screen 里，
+        // 否则当场换屏会被原版随后的 setScreen 顶掉，触发文件白吃。
+        net.minecraft.client.gui.screens.Screen current = mc.screen;
+        boolean atMainMenu = current instanceof net.minecraft.client.gui.screens.TitleScreen;
+        boolean inGameIdle = current == null && mc.level != null && mc.player != null;
+        if (!atMainMenu && !inGameIdle) {
+            return;
+        }
+        devHudTriggerUsed = true;
+        try {
+            java.nio.file.Files.delete(trigger.toPath());
+        } catch (java.io.IOException stuck) {
+            System.out.println("[MuoniumPlayer] dev_open_hud 删不掉，本次启动不再触发: " + stuck);
+        }
+        System.out.println("[MuoniumPlayer] dev_open_hud 触发：openHudEditor()");
+        openHudEditor(mc);
+    }
+
+    /**
      * 【只给开发验证】存在 {@code config/muonium/dev_open_player} 就等价于按了一次右 Shift。
      *
      * <p>见 {@link com.muoniumplayer.core.settings.ConfigPaths#DEV_OPEN_PLAYER} 的注释：
@@ -668,6 +706,8 @@ public final class MuoniumPlayerClient {
     private boolean devTriggerUsed;
     private long devTriggerSeenAt;
     private long devTriggerDelayNanos;
+    /** dev_open_hud 的「本次启动已触发」闸，与 devTriggerUsed 分开：两者互不影响。 */
+    private boolean devHudTriggerUsed;
 
     /**
      * 按用户选择打开 HUD 设置；外部界面（ModernUI / OneConfig）不可用时自动回退到内置界面。
