@@ -42,7 +42,7 @@ class HudSettingsTaxonomyStaticTest {
      * 只有 3D 歌词页 +1（30 → 31）；其余页不变。</p>
      */
     private static final List<Integer> COUNTS =
-            Arrays.asList(12, 22, 9, 28, 4, 33, 41, 31, 4, 3);
+            Arrays.asList(12, 22, 9, 28, 4, 33, 45, 31, 4, 3);
 
     /**
      * 「常用」页只在 26.3 起存在。
@@ -66,11 +66,11 @@ class HudSettingsTaxonomyStaticTest {
     private static List<Integer> expectedCounts() {
         return hasFavoritesPage()
                 ? COUNTS
-                : Arrays.asList(28, 31, 9, 25, 41, 33, 6, 4, 3);
+                : Arrays.asList(28, 31, 9, 25, 45, 33, 6, 4, 3);
     }
 
     private static int expectedTotal() {
-        return hasFavoritesPage() ? TOTAL : 180;
+        return hasFavoritesPage() ? TOTAL : 184;
     }
 
     private static String versionName() {
@@ -136,9 +136,12 @@ class HudSettingsTaxonomyStaticTest {
      *  （6 → 4）。总数 176 → 180：净增 4 条来自新页多出来的四个总开关
      *  （灵动岛 / 音乐频谱 / 3D 歌词 / 场景声学）—— 它们原先只存在于各自分类里，
      *  现在是同一对象的引用，两个位置都可操作。
-     *  分类从 8 页变 9 页，排序改由 {@code CATEGORY_ORDER} 表决定（声明顺序不再等于展示顺序）。 */
+     *  分类从 8 页变 9 页，排序改由 {@code CATEGORY_ORDER} 表决定（声明顺序不再等于展示顺序）。
+     *  2026-11-08 「播放」页「通透模式」组新增「陀螺模式」4 条（toggle + 转给谁看/转谁
+     *  两个 choice + 每拍转角滑条；开关与档位存共享层 MusicSpin 自己的 music_spin.json，
+     *  不经 HudConfig；choice/滑条仅在开关打开时可见）—— 播放页 41 → 45 条，187 → 191。 */
     // 独立模板预设栏目只增加四条 ACTION，不回搬各树原有分类或设置条目。
-    private static final int TOTAL = 187;
+    private static final int TOTAL = 191;
 
     @Test
     @DisplayName("分类顺序、每页条目数和独立模板栏目不许悄悄变")
@@ -200,7 +203,9 @@ class HudSettingsTaxonomyStaticTest {
         // TransparentMode 的配置文件，不经 HudConfig），54 → 56；
         // 2026-11-08 音乐胶囊迷你卡新增「迷你卡缩放」滑条（仅 26.3 的 HudSetting 收了
         // 这一条，其余六树等回打），56 → 57。
-        assertEquals(hasFavoritesPage() ? 57 : 56, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱自定义柱数、透明度与高度都是有效设置");
+        // 同日「陀螺模式」新增「每拍转角」滑条（值存共享层 MusicSpin 的配置文件，不经
+        // HudConfig），57 → 58（仅 26.3 口径；其余六树按 57 起算加一）。
+        assertEquals(hasFavoritesPage() ? 58 : 57, settings.size(), "滑块条目数变了：生效设置应恰好出现一次；旧 GLASS_BLOOM / GLASS_FUSION 仅保留读档兼容；频谱自定义柱数、透明度与高度都是有效设置");
         assertFalse(settings.contains("GLASS_BLOOM"), "退役的磨砂 bloom 不能作为无效设置暴露");
         assertFalse(settings.contains("GLASS_FUSION"), "参考透镜不使用旧融合描边");
         assertEquals(settings.size(), new HashSet<String>(settings).size(),

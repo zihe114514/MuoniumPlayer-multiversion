@@ -268,6 +268,15 @@ public final class ConfigPaths {
     public static final File TRANSPARENT_MODE = new File(CONFIG_DIRECTORY, "transparent_mode.json");
 
     /**
+     * 「陀螺模式」的开关、作用面/范围档与每拍转角（随节拍甩动人物模型的整活特效）。
+     *
+     * <p>单独一个文件，理由同 {@link #SCENE_ACOUSTICS}：设置页上每颗开关/滑条都要
+     * 立即落盘，读失败的代价只是「回到关闭」，不该牵连播放器主配置。不进 {@link #HUD}
+     * 的原因也同：HudConfig 是五棵版本树各自一份的留守文件，每加一个字段要改五份。</p>
+     */
+    public static final File SPIN_MODE = new File(CONFIG_DIRECTORY, "music_spin.json");
+
+    /**
      * 「卡点运镜」（MuoniumCine）的开关与镜头/转场分项。
      *
      * <p>单独一个文件，理由同 {@link #SCENE_ACOUSTICS}：设置页上每颗开关/滑条都要

@@ -31,6 +31,8 @@ class PresetShareKeysFreezeTest {
         FROZEN.put("cine", new Frozen(18, "0f5c875bb10c950a"));
         FROZEN.put("acoustics", new Frozen(5, "a96f36ff99b93dc2"));
         FROZEN.put("viper", new Frozen(3, "3bb30cd03b42e41e"));
+        // spin 域 2026-11-08 随陀螺模式加入：enabled/mode/range/step 四键首发即冻结。
+        FROZEN.put("spin", new Frozen(4, "4fefeb9135d17b47"));
     }
     @Test void 已发布的键表前缀一个字都没动() throws Exception {
         for (PresetDomain domain : PresetDomains.all()) {

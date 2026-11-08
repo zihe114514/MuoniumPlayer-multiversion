@@ -10,6 +10,6 @@ public final class PresetDomains {
     public static List<PresetDomain> all() {
         return Collections.unmodifiableList(Arrays.<PresetDomain>asList(new HudPresetDomain(), new ThemePresetDomain(),
                 new FoliaBackgroundPresetDomain(), new FontPresetDomain(), new TransparentPresetDomain(),
-                new CinePresetDomain(), new AcousticsPresetDomain(), new ViperPresetDomain()));
+                new CinePresetDomain(), new AcousticsPresetDomain(), new ViperPresetDomain(), new SpinPresetDomain()));
     }
 }

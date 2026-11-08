@@ -14,7 +14,7 @@ public enum Facet {
     THEME(7, "theme", "主题配色", Group.APPEARANCE, false, "播放器主题、自定义配色与配色来源"),
     SPECTRUM(8, "spectrum", "频谱", Group.APPEARANCE, false, "音乐频谱的样式、柱数与配色"),
     FONT(9, "font", "界面字体", Group.APPEARANCE, false, "界面字体（本机没有的字体会跳过；冷切换策略保持不变）"),
-    MOTION(10, "motion", "动效", Group.APPEARANCE, false, "界面淡入与切换速度、通透模式"),
+    MOTION(10, "motion", "动效", Group.APPEARANCE, false, "界面淡入与切换速度、通透模式、陀螺模式"),
     CAMERA(11, "camera", "卡点运镜", Group.APPEARANCE, false, "闲置时随节拍自动运镜的节奏与镜头参数"),
     LAYOUT(12, "layout", "布局位置", Group.APPEARANCE, true, "HUD 元素的位置与尺寸——和屏幕有关，默认不套用"),
     PERFORMANCE(13, "performance", "画质性能", Group.APPEARANCE, true, "与机器性能有关的画质项，默认不套用"),
