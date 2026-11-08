@@ -213,9 +213,12 @@ public final class MuoniumConfigDownload {
     }
 
     /**
-     * 没装时起一次后台下载。
+     * 每次启动游戏都检查一遍：没装 MuoniumConfig 就自动尝试下载。
      *
-     * <p>只判断一次就走，绝不在调用线程（通常是渲染线程）上等网络。</p>
+     * <p>调用点是七树共用的 {@code UpdateChecker.beginCheck}——每个客户端 init 都会走，
+     * 所以「每次启动都查」由它天然保证；{@code attempts} 是会话内计数，下次启动自然归零。
+     * 判重在先：mods/ 里已有任意版本的 MuoniumConfig（玩家手装也算）就静默返回，绝不下一份。
+     * 只判断就走，绝不在调用线程（通常是主线程）上等网络。</p>
      *
      * @param mcVersion 当前游戏的 MC 版本，例如 {@code "26.3"}
      * @param loaderId  加载器 id，例如 {@code "fabric"}
