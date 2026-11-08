@@ -350,10 +350,33 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
         // 盖住中间），并且每字立即 endBatch —— 强制阴影单独成批，不参与墨那批
         // 的排序，顺序从此确定。每次 endBatch 是一次 draw call，但阴影只在
         // 现代档逐字走一次，且 1.20.1 的歌词行数有限，代价可接受。
+        //
+        // ---- 2026-11-07 二次修正：合批必须<b>在写阴影之前</b>收掉 ----
+        // 上面这套（阴影挪最前 + 写完阴影 endBatch）仍然发灰。原因是阴影与墨共用
+        // 同一个 RenderType，而 BufferSource.getBuffer 在「同类型 + QUADS」时
+        // （canConsolidateConsecutiveGeometry = !connectedPrimitives，javap 核对）
+        // 是<b>追加进同一批次</b>：
+        //     字 A 的墨格进批（同页 → 不 flush）
+        //  → 字 B 的阴影 getBuffer(同类型) 直接并进 A 那一批
+        //  → 此时才 endBatch，真正吐出去的是 [墨A, 影B] 一批。
+        // 这批 quad 会被 sortOnUpload 按距离重排（RenderType.end → setQuadSorting），
+        // 而 pad（minPadBake = 2×bakeScale）让相邻字的 quad 本来就重叠约 2 设计像素，
+        // 加上阴影自身 (0.5,1) 的偏移 —— 影B 一旦排到墨A 之后就压暗 A 的字身。
+        // 0.22 黑压白字 = 255×0.78 ≈ 199，与用户截图实测的中性灰 (202,203,202) 吻合。
+        // 修法：写阴影<b>之前</b>先把挂起的墨批发出去，让阴影独占一个空批次，写完
+        // 立即再收 —— 阴影与墨从此不可能同批，sortOnUpload 也就无从打乱层序。
         int shadowArgb = (int) (((argb >>> 24) & 0xFF) * SHADOW_STRENGTH) << 24;
         float shLeft = qLeft + SHADOW_OFFSET_PX, shTop = qTop + SHADOW_OFFSET_Y_PX;
         float shRight = qRight + SHADOW_OFFSET_PX, shBottom = qBottom + SHADOW_OFFSET_Y_PX;
         RenderType shadowType = currentGlyphType(inkRl);
+        // 关键：先把上一个字挂起的墨批发出去 —— 否则下面的 getBuffer 会并进那一批，
+        // 阴影就跟「上一个字的墨」同批参与 sortOnUpload 重排（见上）。
+        if (pendingGlyphPage != null) {
+            buffers.endBatch(currentGlyphType(
+                    ((LyricGlyphAtlasBridge.PageHandle) pendingGlyphPage).resourceLocation()));
+            pendingGlyphPage = null;
+            pendingGlyphCount = 0;
+        }
         VertexConsumer svc = buffers.getBuffer(shadowType);
         Matrix4f smat = poseStack.last().pose();
         putGlyphVertex(svc, smat, shLeft, shTop, cx, cy, cos, sin, s, shadowArgb,
