@@ -304,10 +304,17 @@ public final class SkijaNatives {
      * 是 {@code libskija.so}，而 {@code windows/x64} 那份叫 {@code skija.dll}——真机日志里
      * 那条「classpath 里找不到必需资源 io/github/humbleui/skija/windows/x64/libskija.so」
      * 就是把两者混起来产生的假线索，看着像在找缺失的东西，其实那个组合永远不可能成功。
+     *
+     * <p>磁盘那一档同样要过这道筛（issue #19）：{@code skija.library.path} 只决定去哪个
+     * 目录找，文件名仍是 {@code mapLibraryName("skija")} 说了算，所以一份 {@code skija.dll}
+     * 放哪儿都加载不了，只会让失败日志指向一个从未被创建过的 {@code libskija.so}。
+     * 更要紧的是它会把 {@code sources} 撑成非空 —— 于是 {@link #ensureLoaded()} 判定
+     * 「有候选」，自动下载永不出场，用户手里那份对的包一直没被要过来。
      */
     private static List<Source> collectSources(File root, String mapped, List<String> attempted,
                                                List<String> rejectedOnDisk) {
         List<Source> sources = new ArrayList<>();
+        String loadableName = System.mapLibraryName("skija");
 
         String explicitFile = property(PROP_NATIVE_FILE);
         if (explicitFile != null) {
@@ -321,7 +328,8 @@ public final class SkijaNatives {
             }
         }
 
-        SkijaNativeCatalog.Scan scan = SkijaNativeCatalog.scan(root, PINNED_SKIJA_VERSION, mapped);
+        SkijaNativeCatalog.Scan scan = SkijaNativeCatalog.scan(root, PINNED_SKIJA_VERSION, mapped,
+                loadableName);
         rejectedOnDisk.addAll(scan.rejected());
         for (SkijaNativeCatalog.Candidate candidate : scan.usable()) {
             sources.add(new Source(candidate.platform().isEmpty() ? mapped : candidate.platform(),
@@ -329,7 +337,6 @@ public final class SkijaNatives {
                     "伴生包候选 " + candidate.describe()));
         }
 
-        String loadableName = System.mapLibraryName("skija");
         for (String platform : SkijaNativeCatalog.candidatePlatforms(mapped)) {
             if (!SkijaNativeCatalog.loadableWith(platform, loadableName)) {
                 continue;

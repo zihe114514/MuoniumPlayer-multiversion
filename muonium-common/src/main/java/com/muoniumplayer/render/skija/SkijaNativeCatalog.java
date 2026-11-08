@@ -438,6 +438,31 @@ final class SkijaNativeCatalog {
      * 认不出来只是排到后面，不是丢掉——真正能不能用由加载试探决定。
      */
     static Scan scan(File root, String expectedVersion, String mapped) {
+        return scan(root, expectedVersion, mapped, null);
+    }
+
+    /**
+     * 同上，额外按「本机 JVM 只会加载这个名字」筛一遍。
+     *
+     * <h2>为什么磁盘候选也必须过这道筛</h2>
+     * {@code skija.library.path} 只是告诉 Skija「去哪个目录找」，找的文件名仍由
+     * {@code System.mapLibraryName("skija")} 决定：Linux/Android 上是 {@code libskija.so}，
+     * Windows 上才是 {@code skija.dll}。也就是说目录里放一份 {@code skija.dll} 时，
+     * 加载器连看都不会看它——错误信息却长成「{@code Can't load library: .../libskija.so}」，
+     * 而那个 {@code libskija.so} 从头到尾就没被创建过。
+     *
+     * <p>issue #19 真机日志就是这个形状：本机判定 {@code android/arm64}，候选却是
+     * {@code windows/x64 · skija.dll}，随后 19 个落点逐个报「找不到 libskija.so」。
+     * 更糟的是它把 {@code sources} 撑成非空，于是「有候选」成立、自动下载永不出场，
+     * 用户手里那份正确的 {@code android/arm64} 包始终没被要过来。
+     *
+     * <p>这一层只筛文件名，不筛 ABI：{@code linux/arm64} 与 {@code android/arm64} 同名，
+     * 谁真能在本机 {@code dlopen} 仍由试加载决定。
+     *
+     * @param thisJvmLibraryName {@code System.mapLibraryName("skija")} 的结果；
+     *                           传 null 表示不筛（老调用点与单元测试沿用）
+     */
+    static Scan scan(File root, String expectedVersion, String mapped, String thisJvmLibraryName) {
         List<Candidate> usable = new ArrayList<>();
         List<String> rejected = new ArrayList<>();
         if (root == null || !root.isDirectory()) {
@@ -459,6 +484,14 @@ final class SkijaNativeCatalog {
                 rejected.add(library.getName() + "：伴生包是 Skija " + version
                         + "，本模组要 " + expectedVersion + "，请换成同平台的 "
                         + expectedVersion + " 包");
+                continue;
+            }
+            // 本机 JVM 只会去找 mapLibraryName("skija") 这个名字（见方法头注释）：
+            // 名字不对的候选连试都不用试，留着只会把失败日志引向一个从不存在的路径。
+            if (thisJvmLibraryName != null && !library.getName().equals(thisJvmLibraryName)) {
+                rejected.add(library.getAbsolutePath() + "：本机 JVM 只加载 "
+                        + thisJvmLibraryName + "，这份叫 " + library.getName()
+                        + "，是给别的系统编译的");
                 continue;
             }
             usable.add(new Candidate(platform, library, directory, version,
