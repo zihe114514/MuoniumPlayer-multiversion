@@ -183,7 +183,9 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
                         ((LyricGlyphAtlasBridge.PageHandle) pendingGlyphPage).resourceLocation()));
             }
             if (buffers != null && pendingEffectRl != null) {
-                buffers.endBatch(currentEffectType(pendingEffectRl));
+                // 必须用取批时同一个类型收（见 flushEffectBatch 注释）：特效通道的
+                // getBuffer 走 currentGlyphType，这里若用 currentEffectType 会落空。
+                buffers.endBatch(currentGlyphType(pendingEffectRl));
             }
         } finally {
             pendingGlyphPage = null;
@@ -340,7 +342,57 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
 
         int argb = (((int) (alpha * 255f) & 0xFF) << 24) | (rgb & 0xFFFFFF);
 
-        // 晕格先画（加色 currentEffectType），墨格后进挂起合批 —— 观感上晕在字下。
+        // ---- 层序（与 1.20.1 / 26.3 标杆对齐）：阴影 → 晕（加色） → 墨 ----
+        // 1.21.1 曾按「晕 → 阴影 → 墨」画，用户实测「字上面有灰色的颜色污染」、
+        // 「已唱部分重影严重」—— 与 1.20.1 修之前的症状逐字一致。原因两层：
+        //   1. 阴影是 alpha 混合的黑（0.22），画在加色晕之上会把晕压暗；
+        //   2. 更要命的是阴影与墨共用同一个 RenderType，而原版 textSeeThrough 的
+        //      sortOnUpload=true —— 同一批次内 quad 按 VertexSorting 距离重排。
+        //      阴影 quad 与墨 quad 位置几乎重合（只差 0.5/1 设计像素），距离差
+        //      小于浮点有效位，排序结果不稳定：阴影一旦被排到墨之后，那 22% 的
+        //      黑就均匀盖在整个字身上 —— 正是「字发灰、不是纯色」的观感。
+        //      （0.22 黑压白字 = 255×0.78 ≈ 199，与实测中性灰吻合。）
+        // 修法两条一起用（照搬 1.20.1 已验证版本）：阴影改到最前（先垫在背景上，
+        // 之后被加色晕照亮、被墨盖住中间），并且每字立即 endBatch —— 强制阴影
+        // 单独成批，不参与墨那批的排序，层序从此确定。
+        //
+        // 合批必须<b>在写阴影之前</b>收掉：阴影与墨共用同一 RenderType，而
+        // BufferSource.getBuffer 在「同类型 + QUADS」时（canConsolidateConsecutiveGeometry
+        // = !connectedPrimitives，javap 核对）是<b>追加进同一批次</b>：
+        //     字 A 的墨格进批（同页 → 不 flush）
+        //  → 字 B 的阴影 getBuffer(同类型) 直接并进 A 那一批
+        //  → 此时才 endBatch，真正吐出去的是 [墨A, 影B] 一批。
+        // 这批 quad 会按距离重排，影B 一旦排到墨A 之后就压暗 A 的字身。
+        int shadowArgb = (int) (((argb >>> 24) & 0xFF) * SHADOW_STRENGTH) << 24;
+        float shLeft = qLeft + SHADOW_OFFSET_PX, shTop = qTop + SHADOW_OFFSET_Y_PX;
+        float shRight = qRight + SHADOW_OFFSET_PX, shBottom = qBottom + SHADOW_OFFSET_Y_PX;
+        RenderType shadowType = currentGlyphType(inkRl);
+        // 关键：先把上一个字挂起的墨批发出去 —— 否则下面的 getBuffer 会并进那一批，
+        // 阴影就跟「上一个字的墨」同批参与 sortOnUpload 重排。
+        if (pendingGlyphPage != null) {
+            buffers.endBatch(currentGlyphType(
+                    ((LyricGlyphAtlasBridge.PageHandle) pendingGlyphPage).resourceLocation()));
+            pendingGlyphPage = null;
+            pendingGlyphCount = 0;
+        }
+        VertexConsumer svc = buffers.getBuffer(shadowType);
+        Matrix4f smat = poseStack.last().pose();
+        putGlyphVertex(svc, smat, shLeft, shTop, cx, cy, cos, sin, s, shadowArgb,
+                cell.x / pageF + halfTexel, cell.y / pageF + halfTexel);
+        putGlyphVertex(svc, smat, shLeft, shBottom, cx, cy, cos, sin, s, shadowArgb,
+                cell.x / pageF + halfTexel, (cell.y + cell.h) / pageF - halfTexel);
+        putGlyphVertex(svc, smat, shRight, shBottom, cx, cy, cos, sin, s, shadowArgb,
+                (cell.x + cell.w) / pageF - halfTexel, (cell.y + cell.h) / pageF - halfTexel);
+        putGlyphVertex(svc, smat, shRight, shTop, cx, cy, cos, sin, s, shadowArgb,
+                (cell.x + cell.w) / pageF - halfTexel, cell.y / pageF + halfTexel);
+        // 立即收批：阴影必须早于晕格上屏，否则加色晕会被这层黑压暗。
+        // 直接按 shadowType 收（此时该批里只有阴影顶点 —— 本字墨格还没进），
+        // 不动 pendingGlyphPage：墨格随后会重新 getBuffer 开一批，
+        // 页切换判定照旧走上面的逻辑。
+        buffers.endBatch(shadowType);
+
+        // 晕格（加色）其次：光叠在阴影上（加色只增不减），把阴影「照亮」成半透暗边。
+        // 墨最后画，盖住阴影与晕的中间部分，只让阴影从字缘外露出一点点。
         if (glowRl != null) {
             float gInv = 1f / glowCell.scale;
             float gLeft = x - glowCell.inkX * gInv;
@@ -365,22 +417,7 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
             buffers.endBatch(currentEffectType(glowRl));
         }
 
-        // 阴影：墨格同格重画、右下偏移、半透明黑（游戏实测字色压暗在加色晕垫底
-        // 下读作重影）—— 同 text 类型挂起合批，画在晕上、被墨盖住，只露右下缘
-        int shadowArgb = (int) (((argb >>> 24) & 0xFF) * SHADOW_STRENGTH) << 24;
-        float shLeft = qLeft + SHADOW_OFFSET_PX, shTop = qTop + SHADOW_OFFSET_Y_PX;
-        float shRight = qRight + SHADOW_OFFSET_PX, shBottom = qBottom + SHADOW_OFFSET_Y_PX;
-        VertexConsumer svc = buffers.getBuffer(currentGlyphType(inkRl));
-        Matrix4f smat = poseStack.last().pose();
-        putGlyphVertex(svc, smat, shLeft, shTop, cx, cy, cos, sin, s, shadowArgb,
-                cell.x / pageF + halfTexel, cell.y / pageF + halfTexel);
-        putGlyphVertex(svc, smat, shLeft, shBottom, cx, cy, cos, sin, s, shadowArgb,
-                cell.x / pageF + halfTexel, (cell.y + cell.h) / pageF - halfTexel);
-        putGlyphVertex(svc, smat, shRight, shBottom, cx, cy, cos, sin, s, shadowArgb,
-                (cell.x + cell.w) / pageF - halfTexel, (cell.y + cell.h) / pageF - halfTexel);
-        putGlyphVertex(svc, smat, shRight, shTop, cx, cy, cos, sin, s, shadowArgb,
-                (cell.x + cell.w) / pageF - halfTexel, cell.y / pageF + halfTexel);
-
+        // 阴影已在晕格之前画完并单独收批（见上），这里只剩墨格本体。
         VertexConsumer vc = buffers.getBuffer(currentGlyphType(inkRl));
         Matrix4f mat = poseStack.last().pose();
         // 四顶点：左上 → 左下 → 右下 → 右上（QUADS 环绕序）
@@ -606,12 +643,24 @@ public final class WorldBillboard implements WorldLyricsRenderer.Host {
      * 贴图恒定，textSeeThrough 是 shared batch —— 同 RenderType 连续 addVertex
      * 天然累积；记录挂起贴图，切换到另一张时先收批。发射顺序即绘制顺序
      * （深度测试已关），BufferSource 跨类型自动换批保证不串纹理，零视觉变化。
+     *
+     * <h2>收批类型必须与取批类型是同一个对象</h2>
+     * <p>自 {@code ec2e14a0}（特效通道切回 alpha 混合）起，特效口全部改用
+     * {@link #currentGlyphType} 取批，但这里仍按 {@link #currentEffectType} 收 ——
+     * 两者在 1.21.1 返回<b>不同实例</b>（{@code textSeeThrough(rl)} vs 自建的
+     * {@code additiveType(rl)}）。而 {@code BufferSource.endBatch(type)} 就是
+     * {@code startedBuilders.remove(type)}（javap 核对）：键对不上时返回 null，
+     * 这批顶点<b>根本不冲刷</b>，一直挂在 textSeeThrough 的 builder 里，
+     * 直到原版在某个时点（{@code renderDebug} → {@code endLastBatch}，
+     * 1.21.1 字节码 2611–2622）替我们冲出去 —— 那时视图矩阵早已 pop 回原样，
+     * 顶点会带着错误的 ModelViewMat 上屏。</p>
      */
     private ResourceLocation pendingEffectRl;
 
     private void flushEffectBatch(ResourceLocation newRl) {
         if (pendingEffectRl != null && pendingEffectRl != newRl) {
-            buffers.endBatch(currentEffectType(pendingEffectRl));
+            // 与取批同源（见上方类注释）：特效口用 currentGlyphType 取，就必须用它收。
+            buffers.endBatch(currentGlyphType(pendingEffectRl));
         }
         pendingEffectRl = newRl;
     }
