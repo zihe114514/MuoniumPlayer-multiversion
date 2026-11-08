@@ -857,7 +857,11 @@ internal static class SmtcWatcher
                 }
                 else
                 {
-                    accepted = Await(session.TryChangePlaybackPositionAsync(ms));
+                    // 单位是 100 纳秒 ticks（1ms = 10000），不是毫秒：双进程探针实锤——
+                    // 传毫秒会被缩小一万倍，拖 3 分钟实际只跳 0.018 秒，表现就是
+                    // 「拖了没反应」。v1 从第一天起就带着这个 bug，拖动能力位是好的、
+                    // 命令也被接受，只是量小到看不见。
+                    accepted = Await(session.TryChangePlaybackPositionAsync(ms * 10000L));
                 }
             }
             else
