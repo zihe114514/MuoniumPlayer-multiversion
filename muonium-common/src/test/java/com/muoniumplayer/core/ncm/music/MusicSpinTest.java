@@ -2,6 +2,7 @@ package com.muoniumplayer.core.ncm.music;
 
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -130,5 +131,60 @@ class MusicSpinTest {
             assertTrue(Float.isFinite(value), "大步长下出现非有限值");
             assertTrue(Math.abs(value) <= 360f * 60f + 400f, "大步长下发散（value=" + value + "）");
         }
+    }
+
+    // ---------------- 头乱晃三档 ----------------
+
+    @Test
+    void 包络为零时头部完全不动() {
+        assertArrayEquals(new float[] {0f, 0f},
+                MusicSpin.headDeltasFor(MusicSpin.HEAD_WOBBLE, 0f, 123f, 200f), 1e-6f);
+        assertArrayEquals(new float[] {0f, 0f},
+                MusicSpin.headDeltasFor(MusicSpin.HEAD_DOWN, 0f, 123f, 200f), 1e-6f);
+        assertArrayEquals(new float[] {0f, 0f},
+                MusicSpin.headDeltasFor(MusicSpin.HEAD_TURN, 0f, 123f, 200f), 1e-6f);
+    }
+
+    @Test
+    void 低头档压到固定俯仰角() {
+        // 65° 是「看地面」档：yaw 不动，pitch 按包络缩放。
+        float[] full = MusicSpin.headDeltasFor(MusicSpin.HEAD_DOWN, 1f, 0f, 0f);
+        assertEquals(0f, full[0], 1e-6f, "低头档不许带 yaw");
+        assertEquals(65f, full[1], 1e-6f);
+        // 半包络 = 半幅度：缓入缓出的中间态。
+        float[] half = MusicSpin.headDeltasFor(MusicSpin.HEAD_DOWN, 0.5f, 0f, 0f);
+        assertEquals(32.5f, half[1], 1e-6f);
+    }
+
+    @Test
+    void 转头档匀速整圈且wrap语义不变() {
+        // turnAngle=200° wrap 到 -160°：同一旋转角，最短路径表示。
+        float[] turn = MusicSpin.headDeltasFor(MusicSpin.HEAD_TURN, 1f, 0f, 200f);
+        assertEquals(-160f, turn[0], 1e-4f, "360°转头按最短路径角渲染");
+        assertEquals(0f, turn[1], 1e-6f, "转头档不许带 pitch");
+        // 一整圈 = 原样回零。
+        float[] full = MusicSpin.headDeltasFor(MusicSpin.HEAD_TURN, 1f, 0f, 360f);
+        assertEquals(0f, full[0], 1e-4f);
+    }
+
+    @Test
+    void 乱晃档幅度被包络钳住() {
+        // 满包络下扫 10s：|yaw| ≤ 30+16+1、|pitch| ≤ 14+1（正弦峰值的代数和上界）。
+        float maxYaw = 0f, maxPitch = 0f;
+        for (int i = 0; i < 600; i++) {
+            float t = i * 1f / 60f;
+            float[] d = MusicSpin.headDeltasFor(MusicSpin.HEAD_WOBBLE, 1f, t, 0f);
+            maxYaw = Math.max(maxYaw, Math.abs(d[0]));
+            maxPitch = Math.max(maxPitch, Math.abs(d[1]));
+            assertTrue(Float.isFinite(d[0]) && Float.isFinite(d[1]), "乱晃出现非有限值");
+        }
+        assertTrue(maxYaw <= 47f, "yaw 幅度出圈（max=" + maxYaw + "）");
+        assertTrue(maxPitch <= 15f, "pitch 幅度出圈（max=" + maxPitch + "）");
+        assertTrue(maxYaw > 20f, "yaw 几乎没动过（max=" + maxYaw + "）：正弦是不是写死了零");
+        // 半包络 = 恰好缩半。
+        float[] half = MusicSpin.headDeltasFor(MusicSpin.HEAD_WOBBLE, 0.5f, 0.425f, 0f);
+        float[] full = MusicSpin.headDeltasFor(MusicSpin.HEAD_WOBBLE, 1f, 0.425f, 0f);
+        assertEquals(full[0] * 0.5f, half[0], 1e-4f, "包络必须是线性缩放");
+        assertEquals(full[1] * 0.5f, half[1], 1e-4f);
     }
 }

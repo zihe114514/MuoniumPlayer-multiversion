@@ -42,7 +42,7 @@ class HudSettingsTaxonomyStaticTest {
      * 只有 3D 歌词页 +1（30 → 31）；其余页不变。</p>
      */
     private static final List<Integer> COUNTS =
-            Arrays.asList(12, 22, 9, 28, 4, 33, 46, 31, 4, 3);
+            Arrays.asList(12, 22, 9, 28, 4, 33, 48, 31, 4, 3);
 
     /**
      * 「常用」页只在 26.3 起存在。
@@ -66,11 +66,11 @@ class HudSettingsTaxonomyStaticTest {
     private static List<Integer> expectedCounts() {
         return hasFavoritesPage()
                 ? COUNTS
-                : Arrays.asList(28, 31, 9, 25, 46, 33, 6, 4, 3);
+                : Arrays.asList(28, 31, 9, 25, 48, 33, 6, 4, 3);
     }
 
     private static int expectedTotal() {
-        return hasFavoritesPage() ? TOTAL : 185;
+        return hasFavoritesPage() ? TOTAL : 187;
     }
 
     private static String versionName() {
@@ -140,11 +140,13 @@ class HudSettingsTaxonomyStaticTest {
      *  2026-11-08 「播放」页「通透模式」组新增「陀螺模式」4 条（toggle + 转给谁看/转谁
      *  两个 choice + 每拍转角滑条；开关与档位存共享层 MusicSpin 自己的 music_spin.json，
      *  不经 HudConfig；choice/滑条仅在开关打开时可见）—— 播放页 41 → 45 条，187 → 191。
+     *  同日组内再添「头乱晃」toggle + 「头部动作」choice（乱晃/低头/360°转头；头部
+     *  动作仅在两个开关都打开时可见；值存同一 music_spin.json）—— 播放页 +2。
      *  同日七树「播放」页新增「语音广播」toggle（26.3 是独立组，其余六树接在
      *  「切出游戏时」组尾；状态存共享层 VoicechatBroadcast 自己的 voicechat_broadcast.json，
      *  不经 HudConfig）—— 播放页 45 → 46 条，191 → 192；其余六树旧口径 184 → 185。 */
     // 独立模板预设栏目只增加四条 ACTION，不回搬各树原有分类或设置条目。
-    private static final int TOTAL = 192;
+    private static final int TOTAL = 194;
 
     @Test
     @DisplayName("分类顺序、每页条目数和独立模板栏目不许悄悄变")

@@ -12,7 +12,8 @@
     "CineFovMixin",
     "CineHudMixin",
     "SpinEntityMixin",
-    "SpinPacketMixin"
+    "SpinPacketMixin",
+    "SpinHeadMixin"
   ],
   "injectors": {
     "defaultRequire": 1

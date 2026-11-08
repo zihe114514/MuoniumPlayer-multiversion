@@ -62,6 +62,15 @@ public final class MusicSpin {
     /** 范围档：全部生物玩家（自己+其他玩家+生物）。 */
     public static final int RANGE_ALL = 2;
 
+    /** 头部动作档：左右乱晃（双不相称正弦，节拍感但不死板）。 */
+    public static final int HEAD_WOBBLE = 0;
+    /** 头部动作档：低头旋转（头压低 ~65° 看地面，身体继续转）。 */
+    public static final int HEAD_DOWN = 1;
+    /** 头部动作档：360°转头（头相对身体匀速整圈，一圈四拍，驱魔片画风）。 */
+    public static final int HEAD_TURN = 2;
+
+    public static final int HEAD_MIN = HEAD_WOBBLE, HEAD_MAX = HEAD_TURN;
+
     /** 每拍转角的合法区间（度），与设置页滑条一致。 */
     public static final float STEP_MIN = 30f, STEP_MAX = 360f;
     /** 模式/范围的合法区间。 */
@@ -72,6 +81,8 @@ public final class MusicSpin {
     public static final int DEFAULT_MODE = MODE_LOCAL;
     public static final int DEFAULT_RANGE = RANGE_ALL;
     public static final float DEFAULT_STEP = 90f;
+    public static final boolean DEFAULT_HEAD_SHAKE = false;
+    public static final int DEFAULT_HEAD_STYLE = HEAD_WOBBLE;
 
     private static boolean loaded;
     private static boolean enabled = DEFAULT_ENABLED;
@@ -79,6 +90,15 @@ public final class MusicSpin {
     private static int range = DEFAULT_RANGE;
     /** 每个拍点步进的转角（度）：90 就是一圈四拍，120 BPM 时角速度约 180°/s。 */
     private static float stepDegrees = DEFAULT_STEP;
+    /** 头乱晃总开关：开在陀螺模式之下，本机视觉，与发包档位正交。 */
+    private static boolean headShake = DEFAULT_HEAD_SHAKE;
+    private static int headStyle = DEFAULT_HEAD_STYLE;
+
+    // ---- 头部状态（渲染线程单消费者，与弹簧同款去重纪律）----
+    /** 活性包络 0..1：开了头乱晃但刚进入/离开活性窗口时，头部角度按它缓入缓出，不瞬移。 */
+    private static float headEnvelope;
+    /** 360°转头档的累计角（度）：只在活性窗口内推进，暂停冻结、恢复无跳变。 */
+    private static float headTurnAngle;
 
     // ---- 弹簧与步进（渲染线程 + client tick 单消费者；见 advance）----
     /** 弹簧当前角（度，无界累计，消费侧各自 wrap）。 */
@@ -107,6 +127,8 @@ public final class MusicSpin {
         lastPulse = 0f;
         lastStepNanos = 0L;
         activeUntilNanos = 0L;
+        headEnvelope = 0f;
+        headTurnAngle = 0f;
     }
 
     private MusicSpin() {
@@ -122,7 +144,7 @@ public final class MusicSpin {
 
     public static void setEnabled(boolean value) {
         resetSpring(); // 开关翻转即归位：关着积累的角度不该在下次开着的首帧突然甩出来
-        write(value, null, null, null);
+        write(value, null, null, null, null, null);
     }
 
     public static int mode() {
@@ -133,7 +155,7 @@ public final class MusicSpin {
     }
 
     public static void setMode(int value) {
-        write(null, value, null, null);
+        write(null, value, null, null, null, null);
     }
 
     public static int range() {
@@ -144,7 +166,7 @@ public final class MusicSpin {
     }
 
     public static void setRange(int value) {
-        write(null, null, value, null);
+        write(null, null, value, null, null, null);
     }
 
     public static float stepDegrees() {
@@ -155,13 +177,36 @@ public final class MusicSpin {
     }
 
     public static void setStepDegrees(float value) {
-        write(null, null, null, value);
+        write(null, null, null, value, null, null);
+    }
+
+    public static boolean isHeadShakeEnabled() {
+        load();
+        synchronized (LOCK) {
+            return headShake;
+        }
+    }
+
+    public static void setHeadShakeEnabled(boolean value) {
+        write(null, null, null, null, value, null);
+    }
+
+    public static int headStyle() {
+        load();
+        synchronized (LOCK) {
+            return headStyle;
+        }
+    }
+
+    public static void setHeadStyle(int value) {
+        write(null, null, null, null, null, value);
     }
 
     // ---- 设置页的 choice 辅助（与 FocusVolumeDucker 的 choice 接线同构）----
 
     private static final String[] MODE_LABELS = {"只本机画面", "发包·视角跟着转", "发包·视角不动"};
     private static final String[] RANGE_LABELS = {"只有自己", "其他玩家", "全部生物玩家"};
+    private static final String[] HEAD_LABELS = {"左右乱晃", "低头旋转", "360°转头"};
 
     public static String[] modeLabels() {
         return MODE_LABELS.clone();
@@ -200,6 +245,27 @@ public final class MusicSpin {
         for (int i = 0; i < RANGE_LABELS.length; i++) {
             if (RANGE_LABELS[i].equals(label)) {
                 setRange(i);
+                return;
+            }
+        }
+    }
+
+    public static String[] headStyleLabels() {
+        return HEAD_LABELS.clone();
+    }
+
+    public static String headStyleLabel() {
+        return HEAD_LABELS[clampInt(headStyle(), HEAD_MIN, HEAD_MAX)];
+    }
+
+    public static void cycleHeadStyle() {
+        setHeadStyle(headStyle() >= HEAD_MAX ? HEAD_MIN : headStyle() + 1);
+    }
+
+    public static void setHeadStyleByLabel(String label) {
+        for (int i = 0; i < HEAD_LABELS.length; i++) {
+            if (HEAD_LABELS[i].equals(label)) {
+                setHeadStyle(i);
                 return;
             }
         }
@@ -333,6 +399,18 @@ public final class MusicSpin {
         }
         lastPulse = pulse;
 
+        // 头部：活性包络缓入缓出（不瞬移）+ 360°转头档的匀速累计（暂停冻结）。
+        // 与弹簧同一个 dt 口径；包络的目标位读字段不进锁（调用链上 load 已发生过）。
+        if (dt > 0f) {
+            float envTarget = enabled && headShake && now < activeUntilNanos ? 1f : 0f;
+            headEnvelope += (envTarget - headEnvelope) * Math.min(1f, dt * HEAD_ENV_RATE);
+            if (headEnvelope < 0.001f) {
+                headEnvelope = 0f;
+            } else {
+                headTurnAngle += turnDegreesPerSec() * dt * headEnvelope;
+            }
+        }
+
         if (dt <= 0f) {
             return springAngle; // 首帧：不动
         }
@@ -359,6 +437,62 @@ public final class MusicSpin {
                               long refractory) {
         return pulse > STEP_EDGE_THRESHOLD && lastPulse <= STEP_EDGE_THRESHOLD
                 && nowNanos - lastStepNanos >= refractory;
+    }
+
+    /** 360°转头档的角速度：90°/拍 = 一圈四拍，BPM 驱动；拿不到按 120 BPM 兜底。 */
+    private static float turnDegreesPerSec() {
+        float bpm = BeatPulseSource.bpm();
+        return bpm > 0f ? bpm / 60f * 90f : 180f;
+    }
+
+    /**
+     * 头乱晃是否作用于这个实体（纯判定口，树内 mixin 的门）：开关都开、活性包络
+     * 已起来、范围档命中。头乱晃是<b>纯本机视觉</b>，与发包档位正交——「视角跟着转」
+     * 档的自己身体跟着真实 yaw 转，头照样可以在本机画面里摇。
+     */
+    public static boolean headShakeActiveFor(boolean isSelf, boolean isPlayer) {
+        load();
+        if (!enabled || !headShake) {
+            return false;
+        }
+        advance();
+        return headEnvelope > 0f && appliesTo(range, isSelf, isPlayer, true);
+    }
+
+    /**
+     * 本帧头乱晃的 [yawDelta, pitchDelta]（度，已按活性包络缩放）；关着/未活跃 =
+     * {0, 0}。返回的是共享只读数组，调用方只许读不许改。每帧第一个调用推进一次
+     * 状态（同帧复用，与弹簧同款去重）。
+     */
+    public static float[] headDeltas() {
+        load();
+        if (!enabled || !headShake) {
+            return ZERO_DELTAS;
+        }
+        advance();
+        return headDeltasFor(headStyle, headEnvelope, nowNanos() / 1.0e9f, headTurnAngle);
+    }
+
+    /** 头部三种动作的纯数学：包络缩好幅度，yaw/pitch 直接进渲染态/模型头部件。 */
+    static float[] headDeltasFor(int style, float env, float wobbleTimeSec, float turnAngle) {
+        if (env <= 0f) {
+            return ZERO_DELTAS;
+        }
+        switch (style) {
+            case HEAD_DOWN:
+                // 低头旋转：头压低看地面，身体继续转——经典 derp 画风。
+                return new float[] {0f, HEAD_DOWN_PITCH * env};
+            case HEAD_TURN:
+                // 360°转头：头相对身体匀速整圈（一圈四拍）；wrap 后角度语义不变。
+                return new float[] {wrapDegrees(turnAngle) * env, 0f};
+            default:
+                // 左右乱晃：两个不相称频率的正弦叠 yaw + 一个慢正弦点头——
+                // 「乱」来自频率互质不重合，节拍感有但不死板。
+                float yaw = WOBBLE_YAW * (float) Math.sin(wobbleTimeSec * WOBBLE_F1)
+                        + WOBBLE_YAW2 * (float) Math.sin(wobbleTimeSec * WOBBLE_F2 + 1.3f);
+                float pitch = WOBBLE_PITCH * (float) Math.sin(wobbleTimeSec * WOBBLE_F3 + 0.7f);
+                return new float[] {yaw * env, pitch * env};
+        }
     }
 
     /** 半隐式欧拉积分（可切子步）；纯函数——不碰弹簧状态，commit 由调用方决定。 */
@@ -396,6 +530,20 @@ public final class MusicSpin {
     private static final float ACTIVE_PULSE_FLOOR = 0.02f;
     /** 活性窗口：最后一次看到脉冲后 2s 内，发包档仍然接管朝向（静音段落不抖）。 */
     private static final long ACTIVE_HOLD_NANOS = 2_000_000_000L;
+
+    // ---- 头乱晃常量 ----
+    /** 低头旋转的下压角（度）：65 够「看地面」又不至于翻进倒置模型的雷区。 */
+    private static final float HEAD_DOWN_PITCH = 65f;
+    /** 包络速率（1/秒）：~0.3s 缓入缓出，头部不瞬移。 */
+    private static final float HEAD_ENV_RATE = 8f;
+    private static final float WOBBLE_YAW = 30f;
+    private static final float WOBBLE_YAW2 = 16f;
+    private static final float WOBBLE_PITCH = 14f;
+    /** 三个互不相称的角频率（rad/s）：|yaw| 峰值 ~46°，节奏感有但不重合不死板。 */
+    private static final float WOBBLE_F1 = (float) (Math.PI * 2 / 1.7);
+    private static final float WOBBLE_F2 = (float) (Math.PI * 2 / 2.9);
+    private static final float WOBBLE_F3 = (float) (Math.PI * 2 / 1.1);
+    private static final float[] ZERO_DELTAS = {0f, 0f};
 
     /**
      * 测试专用：与 {@link #advance()} 同一升沿判定与积分器，但节拍脉冲、帧长、时钟与
@@ -456,7 +604,8 @@ public final class MusicSpin {
      * Main/render-thread seam, one write; preserves original bounds and resets spring only on a flip.
      * 预设域（{@code SpinPresetDomain}）的批量应用入口，与 {@link TransparentMode#applyAll} 同构。
      */
-    public static void applyAll(boolean enable, int modeValue, int rangeValue, float step) {
+    public static void applyAll(boolean enable, int modeValue, int rangeValue, float step,
+                                boolean headShakeValue, int headStyleValue) {
         load();
         synchronized (LOCK) {
             if (enabled != enable) resetSpring();
@@ -464,6 +613,8 @@ public final class MusicSpin {
             if (modeValue >= MODE_MIN && modeValue <= MODE_MAX) mode = modeValue;
             if (rangeValue >= RANGE_MIN && rangeValue <= RANGE_MAX) range = rangeValue;
             if (Float.isFinite(step)) stepDegrees = Math.max(STEP_MIN, Math.min(STEP_MAX, step));
+            headShake = headShakeValue;
+            if (headStyleValue >= HEAD_MIN && headStyleValue <= HEAD_MAX) headStyle = headStyleValue;
             try {
                 JsonConfigStorage.writeObject(ConfigPaths.SPIN_MODE, GSON, toJsonLocked());
             } catch (java.io.IOException failure) {
@@ -485,6 +636,8 @@ public final class MusicSpin {
         root.addProperty("mode", DEFAULT_MODE);
         root.addProperty("range", DEFAULT_RANGE);
         root.addProperty("step", DEFAULT_STEP);
+        root.addProperty("headShake", DEFAULT_HEAD_SHAKE);
+        root.addProperty("headStyle", DEFAULT_HEAD_STYLE);
         return root;
     }
 
@@ -494,10 +647,13 @@ public final class MusicSpin {
         root.addProperty("mode", mode);
         root.addProperty("range", range);
         root.addProperty("step", stepDegrees);
+        root.addProperty("headShake", headShake);
+        root.addProperty("headStyle", headStyle);
         return root;
     }
 
-    private static void write(Boolean enable, Integer modeValue, Integer rangeValue, Float step) {
+    private static void write(Boolean enable, Integer modeValue, Integer rangeValue, Float step,
+                              Boolean headShakeValue, Integer headStyleValue) {
         load();
         synchronized (LOCK) {
             if (enable != null && enable != enabled) resetSpring();
@@ -506,6 +662,10 @@ public final class MusicSpin {
             if (rangeValue != null && rangeValue >= RANGE_MIN && rangeValue <= RANGE_MAX) range = rangeValue;
             if (step != null && Float.isFinite(step)) {
                 stepDegrees = Math.max(STEP_MIN, Math.min(STEP_MAX, step));
+            }
+            if (headShakeValue != null) headShake = headShakeValue;
+            if (headStyleValue != null && headStyleValue >= HEAD_MIN && headStyleValue <= HEAD_MAX) {
+                headStyle = headStyleValue;
             }
             saveLocked();
         }
@@ -524,6 +684,8 @@ public final class MusicSpin {
                 mode = clampInt((int) optFloat(root, "mode", mode), MODE_MIN, MODE_MAX);
                 range = clampInt((int) optFloat(root, "range", range), RANGE_MIN, RANGE_MAX);
                 stepDegrees = clampFloat(optFloat(root, "step", stepDegrees), STEP_MIN, STEP_MAX);
+                headShake = optBool(root, "headShake", false);
+                headStyle = clampInt((int) optFloat(root, "headStyle", headStyle), HEAD_MIN, HEAD_MAX);
             } catch (Throwable ignored) {
                 // 配置坏了用默认值,不能影响播放。
             }
@@ -580,6 +742,8 @@ public final class MusicSpin {
         mode = DEFAULT_MODE;
         range = DEFAULT_RANGE;
         stepDegrees = DEFAULT_STEP;
+        headShake = DEFAULT_HEAD_SHAKE;
+        headStyle = DEFAULT_HEAD_STYLE;
         testClockHooked = false;
         testNowNanos = 1_000_000_000L;
     }

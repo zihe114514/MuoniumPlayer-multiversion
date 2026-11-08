@@ -132,6 +132,9 @@ class SharedLayoutStaticTest {
             // --- 陀螺模式·发包静默档：sendPosition 内 getYRot 读取替换，注入点逐树
             //     反汇编确认过形状（4~5 处读取点），七树同文 ---
             "com/muoniumplayer/mixin/SpinPacketMixin.java",
+            // --- 陀螺模式·头乱晃（单段式）：包住 setupAnim 给头部件叠 yaw/pitch；
+            //     双段式树不需要（头部差值直接进渲染态 yRot/xRot，见 SpinEntityMixin）---
+            "com/muoniumplayer/mixin/SpinHeadMixin.java",
             // --- 3D 歌词「永远最上层」：renderLevel RETURN 注入点各代一份。
             //     1.20.1 的 Fabric LAST 落在 renderChunkDebugInfo（renderLevel 内部、
             //     Fabulous 半透明合成之前），水/玻璃会盖住歌词；这颗 mixin 把绘制
