@@ -63,7 +63,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "2.4.2";
+    public static final String MOD_VERSION = "2.5.0";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -584,12 +584,31 @@ public final class MuoniumPlayerClient {
         return mc.screen;
     }
 
+    /**
+     * 当前屏幕是否是 HUD 设置编辑器（外部编辑器按类名认，因为它编译期不可见）。
+     */
+    private static boolean isHudEditorScreen(Screen screen) {
+        if (screen == null) return false;
+        if (screen instanceof GuiHudEditorPro || screen instanceof MConfigHudScreen) {
+            return true;
+        }
+        String name = screen.getClass().getName();
+        return name.equals("org.polyfrost.oneconfig.internal.ui.compose.impls.HudEditorUIScreen");
+    }
+
     private void onHudRenderUnguarded() {
         // HUD 设置编辑器自带两块 widget 的实时预览；真实 HUD 若照常渲染就与预览同屏各一份。
         // 背包/原版设置/聊天等任何其它界面同理：mod 的 HUD 附加层叠在上面挡操作又无意义。
         // 全屏播放器不走这条回调（自管）；下载进度灵动岛保留——它是主动触发的进度反馈。
         Screen open = currentScreen();
+        // HUD 编辑器要看到真实 HUD：编辑器的意义就是「一边拖一边看效果」。
+        // 外部编辑器（MuoniumConfig 的 HUD 设计器）尤其必要 —— 它的 Hud 对象是我们通过
+        // NormalizedHudProvider 接进去的空壳（Content() 不画东西），真正画 HUD 的仍是本方法；
+        // 不放行就是一片空白，只剩拖动框。之前这里没有这个放行，症状正是「打开了编辑器，
+        // 桌面歌词与信息卡不渲染」。判定只认类名白名单：认不出就按「不是编辑器」处理，
+        // 宁可编辑器里没预览，也不能让 HUD 叠到背包/聊天上挡住操作。
         if (open != null && !(open instanceof NCMScreen)
+                && !isHudEditorScreen(open)
                 && !DownloadDynamicIsland.isDownloadActive()) {
             return;
         }
