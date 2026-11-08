@@ -5,6 +5,7 @@ import com.muoniumplayer.core.interfaces.SharedRenderingConstants;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.GlassLook;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
+import com.muoniumplayer.core.settings.HudConfig;
 
 import java.awt.Color;
 /**
@@ -124,6 +125,17 @@ public final class PlayerIslandTransition implements SharedRenderingConstants, S
      * <p>如果上一轮收起还没播完就重新打开，状态会直接从 CLOSING 翻回 OPENING，
      * {@code t} 保留当前值 —— 也就是说界面会从当前位置继续展开，而不是跳回岛里重播。</p>
      */
+    /**
+     * 岛上音乐胶囊迷你卡的打开入口：展开速度取「播放器开关动画」同一档。
+     *
+     * <p>把 {@code HudConfig.playerFadeSpeed} 的读取收在这一个白名单文件里——探针测试
+     * （{@code PlayerFadeSpeedProbeTest}）钉住这个倍率只调播放器进出场的淡入淡出，
+     * 新消费方一律走本接缝，不许各自再读一遍配置。</p>
+     */
+    public static void openFromIslandCard() {
+        open(HudConfig.playerFadeSpeed);
+    }
+
     public static void open(float speedMultiplier) {
         speed = clampSpeed(speedMultiplier);
         // 只有全新打开才从岛开始。关闭期间重新打开必须保留当前

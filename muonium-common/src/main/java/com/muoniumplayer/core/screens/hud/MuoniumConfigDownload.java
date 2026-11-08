@@ -55,9 +55,36 @@ public final class MuoniumConfigDownload {
      * <p>新增发布线时在这里加一行。BUILD 是发布清单里那个子目录名，
      * 与 Stonecutter 的 {@code <版本>-<加载器>} 命名保持一致。</p>
      */
-    private static final Map<String, Build> BUILDS = Map.of(
-            "26.3/fabric", new Build("muoniumconfig-1.6.1.jar", 9937960L,
-                    "1440ef14e80804ca0fab27d82029cb035aa2246116c2abdc474a21d83dca5ad1"));
+    private static final Map<String, Build> BUILDS = Map.ofEntries(
+            Map.entry("26.3/fabric", new Build("muoniumconfig-1.7.0.jar",
+                    26123481L, "e13bd5458bd8d61d0ecf6fa60f534c299af067f44a7532aba41bb685f87e6dfe")),
+            Map.entry("26.3/neoforge", new Build("muoniumconfig-1.7.0.jar",
+                    25511240L, "009136f47d72dc868b4cc41f985ff039cf0e84dd8fd0759ef2404b73e20df914")),
+            Map.entry("26.2/fabric", new Build("muoniumconfig-1.7.0.jar",
+                    26113310L, "73d0cafdd79248d0e75aa252fc08c76fb635ecc980fbc26a90fa44861811b3d3")),
+            Map.entry("26.2/neoforge", new Build("muoniumconfig-1.7.0.jar",
+                    25501130L, "58331c332c85d368658b4c17e4c8cd9a7dd27011abaaf88ec9f1170719e78693")),
+            Map.entry("26.1.2/fabric", new Build("muoniumconfig-1.7.0.jar",
+                    26118948L, "16afa7539598552f129af0eac017c15ddf532152b2511dcaeec517654b8e8393")),
+            Map.entry("26.1.2/neoforge", new Build("muoniumconfig-1.7.0.jar",
+                    25506636L, "22929e1607ac5305458139bc58871b442d2baa4376c374c398f6130667fe5eff")),
+            Map.entry("1.21.11/fabric", new Build("muoniumconfig-1.7.0.jar",
+                    26219139L, "ea70fcd00d1fac07a2ad5fe0c559d6b90bc54f6dfc9b5dd637ba87bdb4d2cb77")),
+            Map.entry("1.21.11/neoforge", new Build("muoniumconfig-1.7.0.jar",
+                    25501787L, "43b6bb5fff1897ea84ffd16831a9dfa036d5851982103c710b403f49e83dbb3f")),
+            Map.entry("1.21.10/fabric", new Build("muoniumconfig-1.7.0.jar",
+                    26087741L, "2d5f95e70854c96828193e2affd7a48f74fdfc9d43b29a9176f0094d12cc4f0c")),
+            Map.entry("1.21.10/neoforge", new Build("muoniumconfig-1.7.0.jar",
+                    25372467L, "32e70ef687e3e73873319070cff14ae1ba96244649df9d90bc93f87125eb2451")),
+            Map.entry("1.21.1/fabric", new Build("muoniumconfig-1.7.0.jar",
+                    26090635L, "ed9cfe9c4091cc01d931a44390336e2049591348d37ee1953c8ff64e372ffa72")),
+            Map.entry("1.21.1/neoforge", new Build("muoniumconfig-1.7.0.jar",
+                    25375874L, "b53336903457083d6c77ff60b4706076bd4bb09fdb3dbbdfd38d8a874e5cdb0f")),
+            Map.entry("1.20.1/fabric", new Build("muoniumconfig-1.7.0.jar",
+                    25907617L, "1f25cd7dcacdee765b6c3173c90515abddb7a6b6bc834fde1b3024280ddc73a9")),
+            Map.entry("1.20.1/forge", new Build("muoniumconfig-1.7.0.jar",
+                    25740969L, "707400b207da32e093b1207be6a707ff29a8efeabcc95ea9044aef0e6cf70bbf"))
+    );
 
     /** 一个可下载的构建：文件名 + 钉死的字节数与 sha256。 */
     private static final class Build {
@@ -186,9 +213,12 @@ public final class MuoniumConfigDownload {
     }
 
     /**
-     * 没装时起一次后台下载。
+     * 每次启动游戏都检查一遍：没装 MuoniumConfig 就自动尝试下载。
      *
-     * <p>只判断一次就走，绝不在调用线程（通常是渲染线程）上等网络。</p>
+     * <p>调用点是七树共用的 {@code UpdateChecker.beginCheck}——每个客户端 init 都会走，
+     * 所以「每次启动都查」由它天然保证；{@code attempts} 是会话内计数，下次启动自然归零。
+     * 判重在先：mods/ 里已有任意版本的 MuoniumConfig（玩家手装也算）就静默返回，绝不下一份。
+     * 只判断就走，绝不在调用线程（通常是主线程）上等网络。</p>
      *
      * @param mcVersion 当前游戏的 MC 版本，例如 {@code "26.3"}
      * @param loaderId  加载器 id，例如 {@code "fabric"}
@@ -294,5 +324,54 @@ public final class MuoniumConfigDownload {
             return t.getClass().getSimpleName();
         }
         return message.length() > 160 ? message.substring(0, 160) + "…" : message;
+    }
+
+    // ==================== 提示层门面（与 Skija 的 SkijaNatives.nativeMissingLines 同一角色） ====================
+
+    /**
+     * 提示块此刻是否该常驻：下载中 / 已装好待重启，两段都必须整块挂着——
+     * 下载中缩成一行角标会被当成卡死；装好待重启时「必须重启游戏」是这一屏唯一要传达的事。
+     * 失败不在此列（那是纯外观损失，常驻会变成骚扰），失败窗由各树渲染器自己管。
+     */
+    public static boolean noticeVisible() {
+        Phase phase = state().phase();
+        return phase == Phase.DOWNLOADING || phase == Phase.DONE;
+    }
+
+    /** 下载进度（0~100）；DONE 恒为 100（绿条到头 = 「可以重启了」）。 */
+    public static int noticePercent() {
+        return state().percent();
+    }
+
+    /**
+     * 提示块的整块文案。分岔按「用户下一步动作」切——下载中什么都别做、装好了等自动重启、
+     * 失败了才知道还能怎么办；这与 {@code SkijaNatives.nativeMissingLines} 是同一条纪律。
+     */
+    public static List<String> noticeLines() {
+        State current = state();
+        List<String> lines = new ArrayList<>();
+        switch (current.phase()) {
+            case DOWNLOADING -> lines.add(current.percent() >= 0
+                    ? "正在自动下载 MuoniumConfig（HUD 设置界面）：" + current.percent() + "%"
+                    : "正在自动下载 MuoniumConfig（HUD 设置界面）…");
+            case DONE -> {
+                lines.add("MuoniumConfig 已自动装好，需要重启游戏后生效");
+                lines.add("通常马上会自动重启；等急了可手动退出重进，按 ESC 能取消自动重启");
+                String restartLine = com.muoniumplayer.core.update.GameRestart.statusLine();
+                if (restartLine != null) {
+                    lines.add(restartLine);
+                }
+            }
+            case FAILED -> {
+                lines.add("MuoniumConfig 自动下载失败：" + current.detail());
+                lines.add("不影响听歌与 HUD；下次启动游戏会自动重试");
+                String name = fileName();
+                if (name != null) {
+                    lines.add("也可以手动安装：把 " + name + " 放进 mods/ 目录");
+                }
+            }
+            default -> { }
+        }
+        return lines;
     }
 }

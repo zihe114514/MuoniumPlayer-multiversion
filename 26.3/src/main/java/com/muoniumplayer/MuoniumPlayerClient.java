@@ -20,6 +20,7 @@ import com.muoniumplayer.core.screens.hud.ModernUiHudBridge;
 import com.muoniumplayer.core.screens.hud.OneConfigHudBridge;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.screens.ncm.IslandSearchOverlay;
+import com.muoniumplayer.core.screens.ncm.MusicCardOverlay;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.update.AnnouncementChecker;
 import com.muoniumplayer.core.update.UpdateChecker;
@@ -63,7 +64,7 @@ public final class MuoniumPlayerClient {
 
     public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
-    public static final String MOD_VERSION = "2.4.2";
+    public static final String MOD_VERSION = "2.5.0";
 
     /**
      * 本工程对应的 Minecraft 版本。刻意写死而不是问原版要：共享源码不许引用加载器 API，
@@ -263,6 +264,24 @@ public final class MuoniumPlayerClient {
             }
         }
 
+        // ---- 陀螺模式（发包两档的驱动入口）----
+        // 「视角跟着转」档在这里把真实 yaw 写成旋转角（每 tick 一次，暂停/未播放返回
+        // NaN 原样不动）；「视角不动」档的包层替换在 SpinPacketMixin，本机模型旋转在
+        // SpinEntityMixin。角度推进与节拍步进在共享层按墙上时钟去重，这里只是一次
+        // 浮点比较；共享层不碰 MC 符号，yaw 的读写都留在树内。
+        float spinYaw = com.muoniumplayer.core.ncm.music.MusicSpin.onClientTick(
+                mc.player != null, mc.player == null ? 0f : mc.player.getYRot(),
+                mc.player == null ? 0f : mc.player.getXRot());
+        if (mc.player != null && !Float.isNaN(spinYaw)) {
+            mc.player.setYRot(spinYaw);
+        }
+        // 头乱晃发包在「视角跟着转」档的相机俯仰通道：真实俯仰叠上点头/压低，
+        // 其他人可见（代价是自己视角跟着点头——derp 档本意）；NaN = 原样不动。
+        float spinPitch = com.muoniumplayer.core.ncm.music.MusicSpin.cameraPitchOverride();
+        if (mc.player != null && !Float.isNaN(spinPitch)) {
+            mc.player.setXRot(spinPitch);
+        }
+
         // ---- 缺少 ffmpeg 的一次性全屏提示 ----
         // 每 tick 问一次而不是在界面切换事件里换掉主菜单：探测在后台线程上跑，主菜单出现的那一刻
         // 结论往往还没出来，换 GUI 只有一次机会，轮询则下一 tick 再问一次就行。内部自带
@@ -289,6 +308,11 @@ public final class MuoniumPlayerClient {
         // 而首启的覆盖层与引导必须真的开出来才看得到效果。这条只补「按那一下」，
         // 走的还是同一个 OnboardingManager.openPlayerEntry()，不绕任何状态闸；文件用完即删。
         devOpenPlayerEntry(mc);
+
+        // ---- 【只给开发验证】一个文件等价于按一次 H（打开 HUD 设置界面）----
+        // 同 dev_open_player 的理由：自动化环境驱动不了 KeyMapping，而「按键 → 桥 →
+        // MuoniumConfig 界面 → Skia 绘制」这条链路只有真的开出来才算验过。
+        devOpenHudEntry(mc);
 
         // ---- 系统播放器镜像（SMTC）----
         // 主线程每 tick 问一次：换歌检测、解析结果落地、命令回执播报都在里面。真正的耗时
@@ -496,6 +520,9 @@ public final class MuoniumPlayerClient {
         }
         try {
             RenderLayerNotice.draw(graphics, onScreen);
+            // MuoniumConfig 自动下载提示：同一挂点、同一代际 API；钉在左上角，
+            // 与左下角的渲染层停用提示同时出现也不叠。
+            com.muoniumplayer.core.screens.MuoniumConfigNotice.draw(graphics, onScreen);
         } catch (Throwable t) {
             noticeRenderDisabled = true;
             System.err.println("[MuoniumPlayer] 停用提示渲染已关闭：" + t);
@@ -593,7 +620,9 @@ public final class MuoniumPlayerClient {
         // 判断刻意只认白名单类名：认不出就按「不是编辑器」处理，宁可编辑器里看不到预览，
         // 也不能让 HUD 盖到背包/聊天上——后者会挡住操作，更容易被当成 bug 报上来。
         Screen open = Minecraft.getInstance().gui.screen();
-        if (open != null && !(open instanceof NCMScreen) && !isHudEditorScreen(open)) {
+        // MusicCardOverlay：音乐胶囊迷你卡的全透明输入浮层，岛在它底下照常画迷你卡。
+        if (open != null && !(open instanceof NCMScreen) && !(open instanceof MusicCardOverlay)
+                && !isHudEditorScreen(open)) {
             if (!(DownloadDynamicIsland.isDownloadActive())) return;
         }
         api.getGLStateManager().pushAttrib();
@@ -634,6 +663,39 @@ public final class MuoniumPlayerClient {
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    /**
+     * 【只给开发验证】存在 {@code config/muonium/dev_open_hud} 就等价于按了一次 H。
+     *
+     * <p>走的是与真实按键完全相同的 {@code openHudEditor(mc)}，不绕任何闸门：
+     * 桥的可用性判断、MuoniumConfig 的加载状态、兜底界面的回退，全都照常生效。
+     * 文件用完即删；删不掉也不会每 tick 重开一次界面。</p>
+     */
+    private void devOpenHudEntry(Minecraft mc) {
+        if (devHudTriggerUsed) {
+            return;
+        }
+        java.io.File trigger = com.muoniumplayer.core.settings.ConfigPaths.DEV_OPEN_HUD;
+        if (!trigger.isFile()) {
+            return;
+        }
+        // 与 devOpenPlayerEntry 同一道闸：界面真的挂在屏幕上、且不在别的 Screen 里，
+        // 否则当场换屏会被原版随后的 setScreen 顶掉，触发文件白吃。
+        net.minecraft.client.gui.screens.Screen current = mc.gui.screen();
+        boolean atMainMenu = current instanceof net.minecraft.client.gui.screens.TitleScreen;
+        boolean inGameIdle = current == null && mc.level != null && mc.player != null;
+        if (!atMainMenu && !inGameIdle) {
+            return;
+        }
+        devHudTriggerUsed = true;
+        try {
+            java.nio.file.Files.delete(trigger.toPath());
+        } catch (java.io.IOException stuck) {
+            System.out.println("[MuoniumPlayer] dev_open_hud 删不掉，本次启动不再触发: " + stuck);
+        }
+        System.out.println("[MuoniumPlayer] dev_open_hud 触发：openHudEditor()");
+        openHudEditor(mc);
     }
 
     /**
@@ -700,6 +762,8 @@ public final class MuoniumPlayerClient {
     private boolean devTriggerUsed;
     private long devTriggerSeenAt;
     private long devTriggerDelayNanos;
+    /** dev_open_hud 的「本次启动已触发」闸，与 devTriggerUsed 分开：两者互不影响。 */
+    private boolean devHudTriggerUsed;
 
     /**
      * 按用户选择打开 HUD 设置。

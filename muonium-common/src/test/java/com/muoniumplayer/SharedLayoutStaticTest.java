@@ -90,6 +90,8 @@ class SharedLayoutStaticTest {
 
     /** 只在部分树存在的（mixin 注入点、各树网络通道、光影期直画通路）。 */
     private static final Set<String> OPTIONAL_MAIN_JAVA = new LinkedHashSet<String>(Arrays.asList(
+            // --- MuoniumConfig 下载提示块：原版 GUI 绘制，暂仅 26.3（其余树等回打）---
+            "com/muoniumplayer/core/screens/MuoniumConfigNotice.java",
             "com/muoniumplayer/mixin/FramebufferMixin.java",
             "com/muoniumplayer/mixin/GlSurfaceMixin.java",
             "com/muoniumplayer/mixin/RenderTargetPresentMixin.java",
@@ -123,6 +125,21 @@ class SharedLayoutStaticTest {
             "com/muoniumplayer/mixin/CineFovMixin.java",
             "com/muoniumplayer/mixin/CineHudMixin.java",
             "com/muoniumplayer/compat/mc/CineProbe.java",
+            // --- 陀螺模式：节拍步进的人物旋转。双段式树在 extract 给
+            //     LivingEntityRenderState.bodyRot 加差值（名牌挂点纯 Y 偏移、名牌朝向
+            //     另由相机四元数决定，都不吃这字段）；单段式树走 pose 括号，两代不同形 ---
+            "com/muoniumplayer/mixin/SpinEntityMixin.java",
+            // --- 陀螺模式·发包静默档：sendPosition 内 getYRot 读取替换，注入点逐树
+            //     反汇编确认过形状（4~5 处读取点），七树同文 ---
+            "com/muoniumplayer/mixin/SpinPacketMixin.java",
+            // --- 陀螺模式·头乱晃（单段式）：包住 setupAnim 给头部件叠 yaw/pitch；
+            //     双段式树不需要（头部差值直接进渲染态 yRot/xRot，见 SpinEntityMixin）---
+            "com/muoniumplayer/mixin/SpinHeadMixin.java",
+            // --- 3D 歌词「永远最上层」：renderLevel RETURN 注入点各代一份。
+            //     1.20.1 的 Fabric LAST 落在 renderChunkDebugInfo（renderLevel 内部、
+            //     Fabulous 半透明合成之前），水/玻璃会盖住歌词；这颗 mixin 把绘制
+            //     挪到 renderLevel 真正返回之后（仅 1.20.1）---
+            "com/muoniumplayer/mixin/LevelRendererLateStageMixin.java",
             "com/muoniumplayer/party/net/MpPayloads.java"));
 
     /** 五棵树各自的版本差异测试（ProjectPaths 例外，它已经收进共享层）。 */

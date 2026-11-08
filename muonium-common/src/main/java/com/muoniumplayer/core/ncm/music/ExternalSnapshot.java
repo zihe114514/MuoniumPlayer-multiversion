@@ -1,8 +1,12 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+
+import java.util.Collections;
+import java.util.List;
 
 /**
  * 系统媒体会话（SMTC）的一次采样快照。不可变，因此可以安全地跨线程发布。
@@ -11,18 +15,25 @@ import com.google.gson.JsonParser;
  * 封面落在哪个文件上（{@link #artFile()}，见 {@link ExternalArtwork}）。歌词仍然走本模组
  * 自己的跨平台匹配链路（{@link ExternalTrackMatcher}）—— SMTC 根本没有歌词这个东西，
  * 而曲库那边的词是逐字的。</p>
+ *
+ * <p>v2 新增的元数据（subtitle / albumArtist / trackNumber / genres）主要为了喂匹配器：
+ * 浏览器源的「歌手」经常空着、频道名在 Subtitle 里，多艺人的正确头目常在 AlbumArtist。
+ * repeat / shuffle / rate 是只读徽标（SMTC 会话上没有对应的 setter，能显示已到上限）。
+ * sessions 是系统里全部会话的短摘要，供状态行与将来「手动挑哪台播放器」用。</p>
  */
 public final class ExternalSnapshot {
 
     public static final ExternalSnapshot NONE = noSession("", 0L);
 
     /**
-     * 「这一拍没有会话」。走工厂而不是就地写十七个实参：这个形状的手写字面量已经错过一次，
+     * 「这一拍没有会话」。走工厂而不是就地写二十几个实参：这个形状的手写字面量已经错过一次，
      * 少一个多空一个都编译不过，而工厂只有一处。
      */
     static ExternalSnapshot noSession(String error, long sampledAtMs) {
-        return new ExternalSnapshot(false, "", "", "", "", "", "", 0L, 0L,
-                false, false, false, false, false, false, error, sampledAtMs, -1f, 0);
+        return new ExternalSnapshot(false, "", "", "", "", "", "", 0L, "", "", 0L, 0L, 1f,
+                "None", false,
+                false, false, false, false, false, false, error, sampledAtMs, -1f, 0,
+                Collections.<String>emptyList());
     }
 
     private final boolean session;
@@ -30,11 +41,23 @@ public final class ExternalSnapshot {
     private final String title;
     private final String artist;
     private final String album;
+    /** 副标题。浏览器源常把频道名 / 站点名放在这里，Artist 为空时它是匹配的最后依靠。 */
+    private final String subtitle;
+    /** 专辑歌手。多艺人「A / B」场景下曲库检索的正确头目常在这里。 */
+    private final String albumArtist;
+    /** 曲目序号。0 表示播放器没报；只做显示与排查，不参与匹配。 */
+    private final long trackNumber;
     private final String state;
     /** 助手把这台播放器的封面图落盘后的<b>文件名</b>（不含目录）；空串表示它没给封面。 */
     private final String artFile;
     private final long positionMs;
     private final long durationMs;
+    /** 播放倍率。SMTC 没在 PlaybackInfo 里报时助手按 1 报。 */
+    private final float rate;
+    /** 循环模式：None / Track / List。只读徽标。 */
+    private final String repeat;
+    /** 随机播放。只读徽标。 */
+    private final boolean shuffle;
     private final boolean canPlay;
     private final boolean canPause;
     private final boolean canToggle;
@@ -52,21 +75,32 @@ public final class ExternalSnapshot {
     private final float volumeLevel;
     /** 音量会话所属进程；0 表示没有。只进日志，用来核对「配到的是不是同一个播放器」。 */
     private final int volumePid;
+    /** 系统里全部会话的「AUMID|状态」短摘要；永不 null，可能为空表。 */
+    private final List<String> sessions;
 
     ExternalSnapshot(boolean session, String app, String title, String artist, String album,
-                     String state, String artFile, long positionMs, long durationMs,
+                     String subtitle, String albumArtist, long trackNumber,
+                     String state, String artFile,
+                     long positionMs, long durationMs, float rate, String repeat, boolean shuffle,
                      boolean canPlay, boolean canPause, boolean canToggle,
                      boolean canNext, boolean canPrevious, boolean canSeek,
-                     String error, long sampledAtMs, float volumeLevel, int volumePid) {
+                     String error, long sampledAtMs, float volumeLevel, int volumePid,
+                     List<String> sessions) {
         this.session = session;
         this.app = app == null ? "" : app;
         this.title = title == null ? "" : title;
         this.artist = artist == null ? "" : artist;
         this.album = album == null ? "" : album;
+        this.subtitle = subtitle == null ? "" : subtitle;
+        this.albumArtist = albumArtist == null ? "" : albumArtist;
+        this.trackNumber = Math.max(0L, trackNumber);
         this.state = state == null ? "" : state;
         this.artFile = artFile == null ? "" : artFile;
         this.positionMs = Math.max(0L, positionMs);
         this.durationMs = Math.max(0L, durationMs);
+        this.rate = rate > 0f && rate < 100f ? rate : 1f;
+        this.repeat = repeat == null || repeat.trim().isEmpty() ? "None" : repeat.trim();
+        this.shuffle = shuffle;
         this.canPlay = canPlay;
         this.canPause = canPause;
         this.canToggle = canToggle;
@@ -77,6 +111,7 @@ public final class ExternalSnapshot {
         this.sampledAtMs = sampledAtMs;
         this.volumeLevel = volumeLevel < 0f || volumeLevel > 1f ? -1f : volumeLevel;
         this.volumePid = Math.max(0, volumePid);
+        this.sessions = sessions == null ? Collections.<String>emptyList() : sessions;
     }
 
     /** 解析助手输出的一行状态。解不出来返回 {@link #NONE}，绝不抛到调用方。 */
@@ -93,15 +128,55 @@ public final class ExternalSnapshot {
                     ? root.getAsJsonObject("caps") : new JsonObject();
             return new ExternalSnapshot(true,
                     text(root, "app"), text(root, "title"), text(root, "artist"),
-                    text(root, "album"), text(root, "state"), safeArtFile(text(root, "art")),
+                    text(root, "album"), text(root, "subtitle"), text(root, "albumArtist"),
+                    number(root, "track"),
+                    text(root, "state"), safeArtFile(text(root, "art")),
                     number(root, "posMs"), number(root, "durMs"),
+                    (float) decimalOr(root, "rate", 1d),
+                    text(root, "repeat"), bool(root, "shuffle"),
                     bool(caps, "play"), bool(caps, "pause"), bool(caps, "toggle"),
                     bool(caps, "next"), bool(caps, "prev"), bool(caps, "seek"),
                     text(root, "error"), nowMs,
                     bool(root, "volok") ? decimal(root, "vol") : -1f,
-                    (int) number(root, "pid"));
+                    (int) number(root, "pid"),
+                    parseSessions(root));
         } catch (Throwable failure) {
             return NONE;
+        }
+    }
+
+    /** v1 助手没有 sessions 字段：解析成空表，其余字段照常。 */
+    private static List<String> parseSessions(JsonObject root) {
+        try {
+            if (!root.has("sessions") || !root.get("sessions").isJsonArray()) {
+                return Collections.emptyList();
+            }
+            JsonArray array = root.getAsJsonArray("sessions");
+            java.util.List<String> out =
+                    new java.util.ArrayList<String>(array.size());
+            for (int i = 0; i < array.size(); i++) {
+                JsonElement item = array.get(i);
+                if (item == null || !item.isJsonObject()) continue;
+                JsonObject entry = item.getAsJsonObject();
+                String app = text(entry, "app");
+                if (app.isEmpty()) continue;
+                out.add(app + "|" + text(entry, "state"));
+            }
+            return out;
+        } catch (Throwable ignored) {
+            return Collections.emptyList();
+        }
+    }
+
+    /** v1 行没有 rate 字段：取不到按 1 倍处理，别让「没报」变成「0 倍」。 */
+    private static double decimalOr(JsonObject root, String key, double fallback) {
+        try {
+            JsonElement value = root.get(key);
+            if (value == null || value.isJsonNull()) return fallback;
+            double parsed = value.getAsDouble();
+            return parsed <= 0d ? fallback : parsed;
+        } catch (Throwable ignored) {
+            return fallback;
         }
     }
 
@@ -206,12 +281,42 @@ public final class ExternalSnapshot {
         return album;
     }
 
-    public String app() {
-        return app;
+    /** 副标题。浏览器源在 Artist 空着时常把频道名放在这里，见 {@link ExternalTrackMatcher}。 */
+    public String subtitle() {
+        return subtitle;
+    }
+
+    /** 专辑歌手。多艺人场景下比 Artist 的第一个片段更可能指向曲库里的正确头目。 */
+    public String albumArtist() {
+        return albumArtist;
+    }
+
+    /** 曲目序号（播放器没报是 0）。 */
+    public long trackNumber() {
+        return trackNumber;
     }
 
     public String state() {
         return state;
+    }
+
+    /** 播放倍率（≥0.1 的正常值；没报按 1）。 */
+    public float rate() {
+        return rate;
+    }
+
+    /** 循环模式：None / Track / List。 */
+    public String repeat() {
+        return repeat;
+    }
+
+    /** 随机播放是否开启。 */
+    public boolean isShuffle() {
+        return shuffle;
+    }
+
+    public String app() {
+        return app;
     }
 
     public long positionMs() {
@@ -252,6 +357,11 @@ public final class ExternalSnapshot {
 
     public boolean canSeek() {
         return canSeek;
+    }
+
+    /** 系统里全部会话的「AUMID|状态」摘要；永不 null。 */
+    public List<String> sessions() {
+        return sessions;
     }
 
     /** 采样是否还新鲜。超过这个窗口说明助手没在回话，界面要按「不可用」处理。 */
@@ -305,8 +415,11 @@ public final class ExternalSnapshot {
     @Override
     public String toString() {
         return "ExternalSnapshot{session=" + session + ", app='" + app + "', title='" + title
-                + "', artist='" + artist + "', posMs=" + positionMs + ", durMs=" + durationMs
-                + ", state='" + state + "', vol=" + volumeLevel + "/pid" + volumePid
+                + "', artist='" + artist + "', subtitle='" + subtitle + "', posMs=" + positionMs
+                + ", durMs=" + durationMs + ", state='" + state + "', rate=" + rate
+                + ", repeat=" + repeat + ", shuffle=" + shuffle
+                + ", vol=" + volumeLevel + "/pid" + volumePid
+                + ", sessions=" + sessions.size()
                 + ", error='" + error + "'}";
     }
 }

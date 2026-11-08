@@ -92,6 +92,37 @@ public final class BeatPulseSource {
         return energy;
     }
 
+    /**
+     * 当前节拍源的 BPM 估计；拿不到返回 0。
+     *
+     * <p>一级网格用 profile 的整曲 BPM，二级估算用中位间隔换算，能量级没有 BPM
+     * 概念。与 {@link #beat()} 的一致性约定：暂停或会话刚切换（还没走到
+     * {@link #beat()} 重建归属）时返回 0。注意本方法<b>只 peek 盘上的 profile，
+     * 不触发后台分析</b>——触发是 {@link #beat()} 的职责，取值入口不该有副作用。</p>
+     */
+    public static float bpm() {
+        CloudMusic.PlaybackSnapshot snapshot = CloudMusic.getSnapshot();
+        if (snapshot == null || !snapshot.playing) {
+            return 0f;
+        }
+        if (snapshot.sessionId != lastSessionId || snapshot.songId != lastSongId) {
+            return 0f;
+        }
+        if (FoliaModelManager.isInstalled(FoliaModelManager.Kind.BEAT_THIS)
+                && AutomixSettings.isFoliaEngine()) {
+            java.io.File source = snapshot.player == null ? null : snapshot.player.getSourceFile();
+            FoliaTrackProfile profile = source == null || !source.isFile()
+                    ? null : FoliaTrackProfiler.peek(source);
+            if (profile != null && profile.beatConfidence >= 0.5f && profile.bpm > 0f) {
+                return profile.bpm;
+            }
+        }
+        if (estimatedPeriodNanos > 0f && estimatedConfidence >= 0.55f) {
+            return (float) (60_000_000_000.0 / estimatedPeriodNanos);
+        }
+        return 0f;
+    }
+
     /** 清播放期状态：onset 窗、估算、能量升沿记忆。归属键由调用方重记。 */
     private static void resetPlaybackState() {
         onsetCount = 0;

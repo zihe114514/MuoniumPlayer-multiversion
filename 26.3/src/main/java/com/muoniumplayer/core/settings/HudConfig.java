@@ -21,7 +21,11 @@ public final class HudConfig {
     public static final float SCALE_MAX = 2.0f;
 
     /** 灵动岛样式索引上限,与 {@code DownloadDynamicIsland.DynamicIslandStyle} 的数量保持一致。 */
-    public static final int DYNAMIC_ISLAND_STYLE_MAX = 6;
+    /**
+     * {@link #dynamicIslandStyle} 的合法上限（存序号）。7 = 回弹胶囊、8 = 音乐胶囊。
+     * 历史上这里停在 6：选了回弹胶囊的存档在重载时会被钳回液态玻璃——顺手修正。
+     */
+    public static final int DYNAMIC_ISLAND_STYLE_MAX = 8;
 
     /** 全屏歌词样式索引上限,与 {@code FullscreenLyricStyle} 的数量保持一致。 */
     public static final int FULLSCREEN_LYRIC_STYLE_MAX = 10;
@@ -655,6 +659,15 @@ public final class HudConfig {
     public static boolean glassSurfaceIsland = true;
     /** 游戏内 Ctrl+F 从灵动岛长出的快捷搜索栏。关掉后快捷键不再响应。 */
     public static boolean islandSearchEnabled = true;
+    /**
+     * 音乐胶囊（灵动岛第九款）迷你卡的缩放档位。卡片按 296×130 设计空间整体缩放；
+     * 窄窗口上会再按可用宽高自动收口，不会裁边。
+     */
+    public static float islandMiniCardScale = 1.0f;
+    /** 音乐胶囊收起行与迷你卡主文本是否显示当前歌词行（关掉则恒显歌名 - 歌手）。 */
+    public static boolean islandMusicShowsLyric = true;
+    /** 音乐胶囊是否允许「鼠标悬停展开迷你卡」。关掉后卡片只能通过别的入口看到（收起行照常显示）。 */
+    public static boolean islandHoverExpand = true;
     /** 真玻璃生效在桌面歌词卡片上。 */
     public static boolean glassSurfaceDesktopLyric = true;
     /** 真玻璃生效在三套 HUD 设置界面的面板上。这几块面板平时是不透明的，所以它同时决定底色压不压薄。 */
@@ -720,6 +733,9 @@ public final class HudConfig {
      * 默认关——性能未经真机标定，用户自担。加载与改动时推入 {@code GlassMobileTier#setUserOptIn}。
      */
     public static boolean glassMobileExperimental = false;
+
+    /** Factory snapshot after all field initializers, before any load. */
+    private static final JsonObject DEFAULTS = toJson();
 
     private HudConfig() {
     }
@@ -875,9 +891,15 @@ public final class HudConfig {
         }
         try {
             JsonObject o = JsonConfigStorage.readObject(FILE, GSON);
-            if (o == null) {
-                return;
-            }
+            applyJson(o);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Memory-only seam with original per-tree read/migration bounds. Missing fields retain current values. */
+    public static void applyJson(JsonObject o) {
+        if (o == null) return;
+        try {
             infoX = clampPos(getFloat(o, "infoX", infoX));
             infoY = clampPos(getFloat(o, "infoY", infoY));
             infoScale = clampScale(getFloat(o, "infoScale", infoScale));
@@ -1054,6 +1076,9 @@ public final class HudConfig {
 
             dynamicIslandEnabled = getBoolean(o, "dynamicIslandEnabled", dynamicIslandEnabled);
             islandSearchEnabled = getBoolean(o, "islandSearchEnabled", islandSearchEnabled);
+            islandMiniCardScale = clamp(getFloat(o, "islandMiniCardScale", islandMiniCardScale), 0.5f, 2.0f);
+            islandMusicShowsLyric = getBoolean(o, "islandMusicShowsLyric", islandMusicShowsLyric);
+            islandHoverExpand = getBoolean(o, "islandHoverExpand", islandHoverExpand);
             dynamicIslandScale = clamp(getFloat(o, "dynamicIslandScale", dynamicIslandScale), 0.60f, 1.35f);
             dynamicIslandY = clamp(getFloat(o, "dynamicIslandY", dynamicIslandY), -20.0f, 400.0f);
             infoCardBackdrop = clampInt(getInt(o, "infoCardBackdrop", infoCardBackdrop), 0, INFO_CARD_BACKDROP_MAX);
@@ -1112,6 +1137,21 @@ public final class HudConfig {
     /** 编辑器交互后持久化设置。 */
     public static void save() {
         try {
+            JsonConfigStorage.writeObject(FILE, GSON, toJson());
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Checked transaction variant; legacy save remains best-effort. */
+    public static void savePresetState() {
+        try { JsonConfigStorage.writeObject(FILE, GSON, toJson()); }
+        catch (java.io.IOException failure) { throw new IllegalStateException("HUD 配置落盘失败", failure); }
+    }
+
+    public static JsonObject defaultsJson() { return DEFAULTS.deepCopy(); }
+
+    /** Complete persisted state, pure memory, with every existing field retained. */
+    public static JsonObject toJson() {
             JsonObject o = new JsonObject();
             o.addProperty("infoX", infoX);
             o.addProperty("infoY", infoY);
@@ -1259,6 +1299,9 @@ public final class HudConfig {
 
             o.addProperty("dynamicIslandEnabled", dynamicIslandEnabled);
             o.addProperty("islandSearchEnabled", islandSearchEnabled);
+            o.addProperty("islandMiniCardScale", islandMiniCardScale);
+            o.addProperty("islandMusicShowsLyric", islandMusicShowsLyric);
+            o.addProperty("islandHoverExpand", islandHoverExpand);
             o.addProperty("dynamicIslandScale", dynamicIslandScale);
             o.addProperty("dynamicIslandY", dynamicIslandY);
             o.addProperty("infoCardBackdrop", infoCardBackdrop);
@@ -1296,10 +1339,7 @@ public final class HudConfig {
 
             o.addProperty("animatedCoverEnabled", animatedCoverEnabled);
 
-            JsonConfigStorage.writeObject(FILE, GSON, o);
-
-        } catch (Throwable ignored) {
-        }
+            return o;
     }
 
     public static int clampInt(int v, int min, int max) {

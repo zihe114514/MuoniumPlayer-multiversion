@@ -140,6 +140,9 @@ public final class FoliaBackgroundConfig {
     public static String[] embedItems = new String[0];
     public static int embedSelected = -1;
 
+    /** Factory snapshot captured after every field initializer, before load. */
+    private static final JsonObject DEFAULTS = toJson();
+
     // ==================== 读写 ====================
 
     private static File file() {
@@ -152,7 +155,16 @@ public final class FoliaBackgroundConfig {
         if (!target.isFile()) return;
         try {
             JsonObject root = JsonConfigStorage.readObject(target, GSON);
-            if (root == null) return;
+            applyJson(root);
+        } catch (Throwable ignored) {
+            // Broken disk config retains the same legacy migration/fallback behavior.
+        }
+    }
+
+    /** Pure memory seam, original load bounds/migrations. Call with current complete snapshot plus patch. */
+    public static synchronized void applyJson(JsonObject root) {
+        if (root == null) return;
+        try {
             backgroundKind = clampInt(getInt(root, "backgroundKind",
                     getBoolean(root, "enabled", true) ? 2 : 0), 0, 2);
             mode = readMode(root);
@@ -218,6 +230,21 @@ public final class FoliaBackgroundConfig {
     /** 把当前值整份写回磁盘。调用点只在「松手 / 点一下开关」之后。 */
     public static synchronized void save() {
         try {
+            JsonConfigStorage.writeObject(file(), GSON, toJson());
+        } catch (Throwable ignored) {
+            // 落盘失败不阻断渲染：下一次改动会再试。
+        }
+    }
+
+    /** Checked variant for transaction commit/rollback. */
+    public static synchronized void savePresetState() {
+        try { JsonConfigStorage.writeObject(file(), GSON, toJson()); }
+        catch (java.io.IOException failure) { throw new IllegalStateException("背景配置落盘失败", failure); }
+    }
+
+    public static JsonObject defaultsJson() { return DEFAULTS.deepCopy(); }
+
+    public static synchronized JsonObject toJson() {
             JsonObject root = new JsonObject();
             root.addProperty("backgroundKind", backgroundKind);
             root.addProperty("mode", mode);
@@ -285,10 +312,7 @@ public final class FoliaBackgroundConfig {
             embed.addProperty("selected", embedSelected);
             root.add("embed", embed);
 
-            JsonConfigStorage.writeObject(file(), GSON, root);
-        } catch (Throwable ignored) {
-            // 落盘失败不阻断渲染：下一次改动会再试。
-        }
+            return root;
     }
 
     /** 把全部字段恢复出厂（folia 默认）。 */

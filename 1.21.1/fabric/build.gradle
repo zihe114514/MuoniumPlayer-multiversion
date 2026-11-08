@@ -147,7 +147,12 @@ dependencies {
     // （Gradle 自动挂任务依赖）。relocateRhino 跑完刷新 libs/ 里的拷贝。
     implementation include('muoniumplayer:rhino-relocated:1.7.15')
     compileOnly files(relocateRhino)
+    // Simple Voice Chat 客户端插件 API（语音广播：合并进麦克风上行）。纯接口 jar，
+    // 运行期类由 SVC mod 自己提供，所以只进编译类路径、不 include（嵌套）。
+    // maven.maxhenkel.de 本机不进构建体系，按 muoniumconfig 先例 vendor 进 libs/。
+    compileOnly files(rootProject.file('libs/voicechat-api-2.6.27.jar'))
     testImplementation files(relocateRhino)
+    testImplementation files(rootProject.file('libs/voicechat-api-2.6.27.jar'))
     def relocatedJarInLibs = rootProject.file('libs/rhino-relocated-1.7.15.jar')
     relocateRhino.configure {
         doLast {
@@ -187,6 +192,34 @@ dependencies {
         }
         compileOnly 'icyllis.modernui:ModernUI-Markflow:3.13.0'
     }
+
+    // ---- MuoniumConfig（HUD 设置界面）开发期加载 ----
+    // **不进 classpath，也不进成品**：与线上完全一样，作为 mods/ 里的一个 mod 加载。
+    //
+    // 为什么不用 implementation 挂 classpath（以前的做法，已废弃）：
+    //   * classpath 上的 jar 不会被 Fabric Loader 当 mod 处理 —— 嵌套 jar 不展开、
+    //     mixin 配置不注册、entrypoint 不执行。为了让那些类可见，只能把 64 个
+    //     嵌套 jar 平铺进主 jar，等于给开发期造了一个与线上不同的类图；
+    //   * 于是「开发期能跑、线上崩」这类问题被结构性地掩盖，而这正是 MuoniumConfig
+    //     最容易出问题的地方（JPMS 拆包、mixin 织入、Jar-in-Jar 展开）。
+    //
+    // 现在改成「把 -dev.jar 拷进 run/mods/」：
+    //   * 走的是与线上同一条加载路径（Loader 扫描 → 展开 Jar-in-Jar → 织 mixin）；
+    //   * 互不干扰：七树各自的 run/ 目录隔离（见 .gitignore 的 run/），
+    //     每棵树放自己那一份，不会串版本；
+    //   * 一份代码两边通用：-dev.jar 与发布版结构完全同构，只有命名空间不同。
+    //
+    // 用哪个文件：MuoniumConfig 侧 `:fabric:devJar` 产出
+    //   build/devdist/MuoniumConfig-<树>-fabric-<ver>-dev.jar
+    // 拷到 <树>/fabric/run/mods/ 即可。NeoForge/Forge 侧没有命名空间差异，
+    // 直接放发布版（build/libs 那个）。
+    //
+    // 为什么必须用 -dev 而不是发布版：发布版的类与 AW 都是 intermediary
+    // （class_2561 这种）。线上是对的 —— Fabric Loader 会先 remap —— 但开发期
+    // 的运行时是 named，Loader 读到 intermediary 的 AW 会直接拒绝启动：
+    //   Namespace (intermediary) does not match current runtime namespace (named)
+    //
+    // 版本号必须与 MuoniumConfigDownload 的 BUILDS 表一致，否则开发期跑的是旧界面。
 
     // 离线探针（不需要 GL / 不需要启动客户端就能跑的断言）。
     testImplementation platform('org.junit:junit-bom:5.10.2')

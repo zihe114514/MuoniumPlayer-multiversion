@@ -33,6 +33,40 @@ mod id 是 `muonium`。
 | `_mcref/` `_folia_ref/` | MC 反编译参考（`classes-26.3.txt` 等）与 Folia 参考检出版 | ⛔ 只读 |
 | `_trash/` `.recover-backup/` `.scratch/` `_scratch/` | 垃圾与快照 | ⛔ 别碰别提交 |
 
+## HUD 设置界面在另一个仓库
+
+按 **H** 打开的那个设置界面（Compose 那套）**不在本仓库**。
+它住在独立仓库，运行期按需下载到 `mods/`：
+
+```
+E:\oneconfig lite\MuoniumConfig-src        ← 界面代码在这里
+<树>/<加载器>/run/mods/muoniumconfig-*.jar  ← 开发期以 mod 形式加载
+```
+
+| 文档 | 内容 |
+| --- | --- |
+| `MuoniumConfig-src/docs/MAINTENANCE.md` | **维护规范**：改动流程、版本对照表、排查顺序、工具清单 |
+| `MuoniumConfig-src/docs/PITFALLS.md` | **踩坑实录 23 条**：现象 / 根因 / 修法 |
+
+改完那边的标准动作（漏第二步 = 游戏里跑的还是旧包）：
+
+```bash
+cd "E:\oneconfig lite\MuoniumConfig-src"
+python tools/build-all.py --lane 1.21.1
+python tools/sync-dev-mods.py --lane 1.21.1
+```
+
+**本仓库这边**只负责「把设置项喂给界面」，对接点是六个反射桥
+（`muonium-common/.../screens/hud/`）：`OneConfigHudBridge`、`MuoniumHudProperties`、
+`MuoniumFavorites`、`MuoniumHudProviders`、`MuoniumFontBridge`、`MuoniumConfigDownload`。
+改了其中任何反射用到的类名/方法名 = 破坏契约，表现是「界面能开、HUD 不出现」的
+静默降级。改完到 MuoniumConfig 仓库跑
+`python tools/check-music-contract.py --jar <产物>`。
+
+> 注意：`docs/oneconfig-integration.md` 里「`builtin` 是默认值」的说法已过时
+> （2026-11-08 起默认 `mconfig`）。以 `<树>/.../HudConfig.java` 的
+> `HUD_EDITOR_UI_*` 常量为准。
+
 ## 铁律（违反即返工）
 
 1. **共享层零加载器符号**：`muonium-common` 不许 import `net.fabricmc` / `net.neoforged` / `net.minecraftforge` / `cpw.mods`。

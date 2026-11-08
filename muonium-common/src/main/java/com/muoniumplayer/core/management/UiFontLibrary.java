@@ -198,13 +198,77 @@ public final class UiFontLibrary {
             return UiFont.system(family, localizedFamilyName(family));
         }
         if (savedId.startsWith("file:")) {
-            File file = new File(ConfigPaths.FONT_DIR, savedId.substring("file:".length()));
-            if (!file.isFile()) {
+            File file = fontDirFile(savedId.substring("file:".length()));
+            if (file == null || !file.isFile()) {
                 return null;
             }
             return UiFont.external(file, stripExtension(file.getName()));
         }
         return null;
+    }
+
+    /** Only a single, confined font filename is accepted from a preset id. */
+    private static File fontDirFile(String name) {
+        if (name == null || name.isEmpty() || name.equals(".") || name.equals("..")
+                || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.indexOf(':') >= 0
+                || name.indexOf('\0') >= 0) return null;
+        File file = new File(ConfigPaths.FONT_DIR, name);
+        try {
+            File parent = file.getCanonicalFile().getParentFile();
+            return parent != null && parent.equals(ConfigPaths.FONT_DIR.getCanonicalFile()) ? file : null;
+        } catch (java.io.IOException | SecurityException failure) { return null; }
+    }
+
+    public static String activeId() {
+        String pending = pendingId;
+        UiFont font = active;
+        return pending != null ? pending : font == null ? UiFont.BUILTIN.getId() : font.getId();
+    }
+
+    public static String defaultFontId() { return DEFAULT_FONT_ID; }
+
+    /** Existing asynchronous font selection, main-thread entry. Does not alter the MuoniumConfig cold-font gate. */
+    public static String selectById(String id) {
+        String wanted = id == null ? "" : id.trim();
+        String problem = unavailableReason(wanted);
+        if (problem != null || wanted.equals(activeId())) return problem;
+        UiFont font = UiFont.BUILTIN.getId().equals(wanted) ? null : resolveSaved(wanted);
+        if (font == null) restoreBuiltin();
+        else select(font);
+        return null;
+    }
+
+    /** Transactional preset/Profiles selection: synchronous completion on the main thread, not an async promise. */
+    public static String applyPresetId(String id) {
+        String wanted = id == null ? "" : id.trim();
+        String problem = unavailableReason(wanted);
+        if (problem != null) return problem;
+        if (wanted.equals(activeId()) && pendingId == null) return null;
+        pendingId = null; // discard older asynchronous selection results
+        UiFont font = UiFont.BUILTIN.getId().equals(wanted) ? null : resolveSaved(wanted);
+        if (font == null) {
+            restoreBuiltin();
+        } else {
+            if (!install(font)) throw new IllegalStateException("字体装配失败：" + wanted);
+            status = "已换成 " + font.getDisplayName();
+            statusBad = false;
+            save(font);
+        }
+        try {
+            JsonObject saved = JsonConfigStorage.readObject(ConfigPaths.UI_FONT, GSON);
+            if (saved == null || !saved.has("id") || !active.getId().equals(saved.get("id").getAsString()))
+                throw new IllegalStateException("字体配置落盘失败");
+        } catch (java.io.IOException failure) { throw new IllegalStateException("字体配置落盘失败", failure); }
+        return null;
+    }
+
+    public static String unavailableReason(String id) {
+        String wanted = id == null ? "" : id.trim();
+        if (wanted.isEmpty()) return "预设里没有写字体，保留当前字体";
+        if (UiFont.BUILTIN.getId().equals(wanted) || DEFAULT_FONT_ID.equals(wanted) || wanted.equals(activeId())) return null;
+        if (resolveSaved(wanted) != null) return null;
+        int colon = wanted.indexOf(':');
+        return "本机没有字体「" + (colon >= 0 ? wanted.substring(colon + 1) : wanted) + "」，保留当前字体";
     }
 
     // ════════════════════════════ 切换 ════════════════════════════

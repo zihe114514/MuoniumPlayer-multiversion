@@ -15,7 +15,9 @@
     "TransparentCameraMixin",
     "CineCameraMixin",
     "CineFovMixin",
-    "CineHudMixin"
+    "CineHudMixin",
+    "SpinEntityMixin",
+    "SpinPacketMixin"
   ],
   "injectors": {
     "defaultRequire": 1

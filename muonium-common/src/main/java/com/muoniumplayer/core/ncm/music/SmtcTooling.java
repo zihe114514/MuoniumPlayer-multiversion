@@ -242,11 +242,16 @@ final class SmtcTooling {
     }
 
     /**
-     * 编译需要的引用：winmd 元数据 + {@code System.Runtime} facade。
+     * 编译需要的引用：winmd 元数据 + {@code System.Runtime} facade + 事件 token 的正主。
      *
      * <p>少了 facade 会报「类型 System.Attribute 未在引用的程序中定义」——winmd 里的属性签名
      * 指向它。facade 的实际文件名带着版本号目录，所以按 glob 扫，不写死：实测把
      * {@code v4.0_4.0.0.0__b03f5f7f11d50a3a} 这一串写死会因为公钥标记不同而指错文件。</p>
+     *
+     * <p>System.Runtime.InteropServices.WindowsRuntime.dll 是 v2 新增的硬依赖：WinRT 事件
+     * （镜像侧五个事件、发布侧媒体键）的 EventRegistrationToken 由它定义。它和 mscorlib 里
+     * 那份同名类型是<b>两种类型身份</b>——引用了它，编译器才能把 winmd 事件投影成普通的
+     * {@code +=}；不带它就是一串 CS1545/CS0029。也是按 glob 扫，理由同 facade。</p>
      *
      * @return 引用列表；元数据缺失时返回 {@code null}
      */
@@ -267,7 +272,25 @@ final class SmtcTooling {
         references.add(storage.getAbsolutePath());
         String facade = findSystemRuntimeFacade(windir);
         if (facade != null) references.add(facade);
+        String windowsRuntime = findGacAssembly(windir,
+                "System.Runtime.InteropServices.WindowsRuntime",
+                "System.Runtime.InteropServices.WindowsRuntime.dll");
+        if (windowsRuntime == null) return null;   // 事件订阅编译不出来，与缺 winmd 同罪
+        references.add(windowsRuntime);
         return references;
+    }
+
+    /** 按 GAC 目录 glob 找一份程序集；机器装了多个版本时取目录名排序后的第一份。 */
+    private static String findGacAssembly(String windir, String directoryName, String fileName) {
+        File root = new File(windir + "\\Microsoft.NET\\assembly\\GAC_MSIL\\" + directoryName);
+        File[] versions = root.isDirectory() ? root.listFiles() : null;
+        if (versions == null) return null;
+        java.util.Arrays.sort(versions);
+        for (File version : versions) {
+            File assembly = new File(version, fileName);
+            if (assembly.isFile()) return assembly.getAbsolutePath();
+        }
+        return null;
     }
 
     private static String findSystemRuntimeFacade(String windir) {

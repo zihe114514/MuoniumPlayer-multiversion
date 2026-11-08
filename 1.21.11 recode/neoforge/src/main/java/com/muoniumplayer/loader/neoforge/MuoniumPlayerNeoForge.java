@@ -75,6 +75,17 @@ public final class MuoniumPlayerNeoForge {
             // 加载器 id 必须在 init() 之前登记：更新检查按「MC 版本 + 加载器」查清单。
             MuoniumPlayerClient.setLoaderId("neoforge");
             MuoniumPlayerClient.getInstance().init();
+            // ---- MuoniumConfig 接入（与 fabric 侧同一套顺序）----
+            // 把歌词卡 / 信息卡挂进 MuoniumConfig 的 HUD 编辑器（没装就静默跳过）。
+            // 时机必须在这里：HudConfig 已在 init() 里 load 过，字段有值；
+            // 再晚到进世界之后注册，首帧的 HUD 列表会缺这两块。
+            com.muoniumplayer.core.screens.hud.MuoniumHudProviders.registerAll();
+            // 「常用」页：必须在 HUD providers 之后 —— 内容依赖 MuoniumConfig 已装载。
+            com.muoniumplayer.core.screens.hud.MuoniumFavorites.register();
+            // 没装 MuoniumConfig 时起一次后台下载，装到 mods/ 下次启动生效。
+            // 带 MC 版本与加载器：装错版本会在启动期崩。
+            com.muoniumplayer.core.screens.hud.MuoniumConfigDownload.ensureDownloaded(
+                    com.muoniumplayer.MuoniumPlayerClient.MC_VERSION, "neoforge");
         });
     }
 

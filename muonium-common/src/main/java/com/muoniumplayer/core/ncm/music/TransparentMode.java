@@ -36,12 +36,23 @@ public final class TransparentMode {
     /** 变宽幅度的合法区间（百分比）：最大压缩时额外涨出的横向宽度，深度不变。 */
     public static final float WIDTH_MIN = 0f, WIDTH_MAX = 200f;
 
+    public static final boolean DEFAULT_ENABLED = false;
+    public static final float DEFAULT_COMPRESSION = 50f, DEFAULT_WIDTH = 50f;
+    /** 镜头跟随压扁默认关：模型照常压扁（第三人称/别人可见），自己的视角不上下颠。 */
+    public static final boolean DEFAULT_CAMERA_FOLLOWS = false;
+
     private static boolean loaded;
-    private static boolean enabled;
+    private static boolean enabled = DEFAULT_ENABLED;
     /** 最大压缩幅度百分比：squash=1 时模型高度压到 1-compression/100。 */
-    private static float compressionPercent = 50f;
+    private static float compressionPercent = DEFAULT_COMPRESSION;
     /** 最大变宽幅度百分比：squash=1 时模型宽度涨到 1+width/100。 */
-    private static float widthPercent = 50f;
+    private static float widthPercent = DEFAULT_WIDTH;
+    /**
+     * 镜头是否跟随压扁：开 = 自己的镜头眼高随压扁下沉（老口径，第一人称会上下颠）；
+     * 关 = 镜头纹丝不动，压扁动画只在第三人称/别人身上可见。消费方是各树的
+     * {@code TransparentCameraMixin}。
+     */
+    private static boolean cameraFollows = DEFAULT_CAMERA_FOLLOWS;
 
     // ---- 果冻弹簧（渲染线程单消费者，非线程安全；见 springSquash）----
     /** 弹簧当前位移：0 = 原样，正 = 压扁，负 = 过冲拉高。 */
@@ -91,7 +102,7 @@ public final class TransparentMode {
 
     public static void setEnabled(boolean value) {
         resetSpring(); // 开关翻转即归位：关着积累的位移不该在下次开着的首帧突然释放
-        write(value, null, null);
+        write(value, null, null, null);
     }
 
     public static float compressionPercent() {
@@ -102,7 +113,7 @@ public final class TransparentMode {
     }
 
     public static void setCompressionPercent(float value) {
-        write(null, value, null);
+        write(null, value, null, null);
     }
 
     public static float widthPercent() {
@@ -113,7 +124,18 @@ public final class TransparentMode {
     }
 
     public static void setWidthPercent(float value) {
-        write(null, null, value);
+        write(null, null, value, null);
+    }
+
+    public static boolean cameraFollows() {
+        load();
+        synchronized (LOCK) {
+            return cameraFollows;
+        }
+    }
+
+    public static void setCameraFollows(boolean value) {
+        write(null, null, null, value);
     }
 
     /**
@@ -225,12 +247,53 @@ public final class TransparentMode {
         return Math.max(-1f, Math.min(1f, value));
     }
 
-    private static void write(Boolean enable, Float compression, Float width) {
+    /** Main/render-thread seam, one write; preserves original bounds and resets spring only on a flip. */
+    public static void applyAll(boolean enable, float compression, float width,
+                                boolean cameraFollowsValue) {
+        load();
+        synchronized (LOCK) {
+            if (enabled != enable) resetSpring();
+            enabled = enable;
+            compressionPercent = Float.isFinite(compression)
+                    ? Math.max(COMPRESSION_MIN, Math.min(COMPRESSION_MAX, compression)) : compressionPercent;
+            widthPercent = Float.isFinite(width) ? Math.max(WIDTH_MIN, Math.min(WIDTH_MAX, width)) : widthPercent;
+            cameraFollows = cameraFollowsValue;
+            try { JsonConfigStorage.writeObject(ConfigPaths.TRANSPARENT_MODE, GSON, toJsonLocked()); }
+            catch (java.io.IOException failure) { throw new IllegalStateException("通透配置落盘失败", failure); }
+        }
+    }
+
+    public static JsonObject toJson() {
+        load();
+        synchronized (LOCK) { return toJsonLocked(); }
+    }
+
+    public static JsonObject defaultsJson() {
+        JsonObject root = new JsonObject();
+        root.addProperty("enabled", DEFAULT_ENABLED);
+        root.addProperty("compression", DEFAULT_COMPRESSION);
+        root.addProperty("width", DEFAULT_WIDTH);
+        root.addProperty("cameraFollows", DEFAULT_CAMERA_FOLLOWS);
+        return root;
+    }
+
+    private static JsonObject toJsonLocked() {
+        JsonObject root = new JsonObject();
+        root.addProperty("enabled", enabled);
+        root.addProperty("compression", compressionPercent);
+        root.addProperty("width", widthPercent);
+        root.addProperty("cameraFollows", cameraFollows);
+        return root;
+    }
+
+    private static void write(Boolean enable, Float compression, Float width,
+                              Boolean cameraFollowsValue) {
         load();
         synchronized (LOCK) {
             if (enable != null) enabled = enable;
             if (compression != null) compressionPercent = Math.max(COMPRESSION_MIN, Math.min(COMPRESSION_MAX, compression));
             if (width != null) widthPercent = Math.max(WIDTH_MIN, Math.min(WIDTH_MAX, width));
+            if (cameraFollowsValue != null) cameraFollows = cameraFollowsValue;
             saveLocked();
         }
     }
@@ -247,6 +310,7 @@ public final class TransparentMode {
                 enabled = optBool(root, "enabled", false);
                 compressionPercent = optFloat(root, "compression", compressionPercent);
                 widthPercent = optFloat(root, "width", widthPercent);
+                cameraFollows = optBool(root, "cameraFollows", false);
             } catch (Throwable ignored) {
                 // 配置坏了用默认值,不能影响播放。
             }

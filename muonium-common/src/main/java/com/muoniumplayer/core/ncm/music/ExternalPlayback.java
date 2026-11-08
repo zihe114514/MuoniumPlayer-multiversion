@@ -146,6 +146,11 @@ public final class ExternalPlayback {
      */
     public static void onClientTick() {
         try {
+            // 发布模式挂在这一条 tick 的最前面：它要在镜像分支提前 return 之前被喂到
+            // （镜像让位、设置关了、主菜单里都得继续跑）。发布器内部自带 Throwable 闸，
+            // 出错只影响它自己那一拍。
+            SmtcPublisher.onClientTick();
+
             // Spotify Connect 镜像接管期间 SMTC 整条路让位：不起助手、不读快照，也不把
             // 已经让出去的接管状态抢回来（用户在设置里还开着镜像模式时，tick 每拍都会
             // 尝试把它拉起来，必须在最前面拦住）。
@@ -360,6 +365,49 @@ public final class ExternalPlayback {
     public static boolean canToggle() {
         ExternalSnapshot snapshot = raw;
         return mirroring && (snapshot.canToggle() || snapshot.canPlay() || snapshot.canPause());
+    }
+
+    // ── v2 快照的只读出口 ───────────────────────────────────────────────────────
+    //
+    // HUD 徽标（循环/随机/倍速）与将来的「手动挑播放器」界面都从这里拿。
+    // 只新增方法不改旧签名：MuoniumConfig 那边按反射读这些名字，动了就是契约破坏。
+
+    /** 副标题。浏览器源把频道名放在这里；Artist 空时它是匹配与显示的最后依靠。 */
+    public static String subtitle() {
+        return raw.subtitle();
+    }
+
+    /** 专辑歌手。 */
+    public static String albumArtist() {
+        return raw.albumArtist();
+    }
+
+    /** 外部播放器的循环模式：None / Track / List。 */
+    public static String repeat() {
+        return raw.repeat();
+    }
+
+    /** 外部播放器是否开着随机。 */
+    public static boolean isShuffle() {
+        return raw.isShuffle();
+    }
+
+    /** 外部播放器的播放倍率（没报按 1）。 */
+    public static float rate() {
+        return raw.rate();
+    }
+
+    /** 系统里全部媒体会话的「AUMID|状态」摘要，给「手动挑哪台播放器」用。 */
+    public static java.util.List<String> knownSessions() {
+        return raw.sessions();
+    }
+
+    /**
+     * 钉住镜像哪支会话（按 AUMID 完整匹配）；空串回到自动挑选。
+     * 界面上还没有挑选器时，这个口子也能从聊天栏/调试命令驱动。
+     */
+    public static void useSession(String aumid) {
+        ExternalMediaService.sendUseSession(aumid);
     }
 
     public static boolean canNext() {

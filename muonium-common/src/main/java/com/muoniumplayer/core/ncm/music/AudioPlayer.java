@@ -965,6 +965,10 @@ public class AudioPlayer {
         // 场景声学：挂在主效果链之后的尾槽，看的是蝰蛇处理完的最终信号。
         // 同样的幂等语义，挂接失败不拦截本次装载。
         com.muoniumplayer.core.ncm.music.acoustics.AcousticsRuntime.ensureInstalled();
+        // 语音广播：把最终混音采集进环缓冲供 SVC 麦克风帧合并（EngineOutputTap 多路分发，
+        // 与频谱共用同一个输出观察者槽）。挂接时机同上——引擎此刻已被上面两级创建，
+        // 不改变设备选择时序。
+        VoicechatBroadcast.ensureInstalled();
 
         SoundFile candidate;
         try {

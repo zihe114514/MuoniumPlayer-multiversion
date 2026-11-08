@@ -395,7 +395,80 @@ public class ExternalMediaStaticTest {
         assertEquals(0.35f, ExternalPlayback.volumeOr(0.35f), .001f);
     }
 
+    // ── 协议 v2：扩展元数据、循环/随机徽标与多会话摘要 ─────────────────────────
+
+    @Test
+    public void v2SnapshotCarriesExtendedMetadataAndBadges() {
+        ExternalSnapshot snapshot = ExternalSnapshot.parseState(V2_PLAYING_LINE, 1_000L);
+
+        assertTrue(snapshot.hasSession());
+        assertEquals("B 站视频里的频道名", snapshot.subtitle());
+        assertEquals("专辑歌手", snapshot.albumArtist());
+        assertEquals(3L, snapshot.trackNumber());
+        assertEquals(1.25f, snapshot.rate(), .001f, "外部倍速要原样带到界面上");
+        assertEquals("Track", snapshot.repeat());
+        assertTrue(snapshot.isShuffle());
+        assertEquals(2, snapshot.sessions().size());
+        assertEquals("Chrome!Chrome|Playing", snapshot.sessions().get(0));
+    }
+
+    @Test
+    public void v1LinesStillParseWithSensibleDefaults() {
+        // 老版助手（或别的进程写的旧格式）没有 v2 字段：曲名、进度、能力位照旧，
+        // 新字段落回中性值——倍率 1、循环 None、随机关、会话表空。
+        ExternalSnapshot snapshot = ExternalSnapshot.parseState(PLAYING_LINE, 1_000L);
+
+        assertTrue(snapshot.hasSession());
+        assertEquals("", snapshot.subtitle());
+        assertEquals("", snapshot.albumArtist());
+        assertEquals(1f, snapshot.rate(), .001f);
+        assertEquals("None", snapshot.repeat());
+        assertFalse(snapshot.isShuffle());
+        assertEquals(0, snapshot.sessions().size());
+    }
+
+    @Test
+    public void zeroOrNegativeRateIsNotTakenLiterally() {
+        // 「没报」解成 0 会把进度外推冻住；只有正常的倍率值才值得信。
+        assertEquals(1f, parseStateWithRate("0").rate(), .001f);
+        assertEquals(1f, parseStateWithRate("-2").rate(), .001f);
+        assertEquals(2f, parseStateWithRate("2").rate(), .001f);
+    }
+
+    @Test
+    public void artistHintFallsBackThroughSubtitleThenAlbumArtist() {
+        // 浏览器源：Artist 空、频道名在 Subtitle——拿它当检索词，比拿空词去搜强得多。
+        assertEquals("周杰伦", ExternalTrackMatcher.artistHint(snapshotOf("晴天", "周杰伦", "Chrome!Chrome")));
+        assertEquals("频道名", ExternalTrackMatcher.artistHint(snapshotWith("", "频道名", "")));
+        assertEquals("专辑歌手", ExternalTrackMatcher.artistHint(snapshotWith("", "", "专辑歌手")));
+        assertEquals("", ExternalTrackMatcher.artistHint(snapshotWith("", "", "")));
+    }
+
     // ── 辅助 ───────────────────────────────────────────────────────────────────
+
+    private static final String V2_PLAYING_LINE = "{\"event\":\"state\",\"v\":2,\"session\":true,"
+            + "\"app\":\"Chrome!Chrome\",\"title\":\"晴天\",\"artist\":\"周杰伦\","
+            + "\"album\":\"叶惠美\",\"subtitle\":\"B 站视频里的频道名\",\"albumArtist\":\"专辑歌手\","
+            + "\"track\":3,\"genres\":\"Pop\",\"posMs\":12345,\"durMs\":269000,\"rate\":1.25,"
+            + "\"repeat\":\"Track\",\"shuffle\":true,\"state\":\"Playing\","
+            + "\"caps\":{\"play\":false,\"pause\":true,\"toggle\":true,"
+            + "\"next\":false,\"prev\":false,\"seek\":true},"
+            + "\"sessions\":[{\"app\":\"Chrome!Chrome\",\"state\":\"Playing\",\"title\":\"晴天\"},"
+            + "{\"app\":\"CloudMusic.exe\",\"state\":\"Paused\",\"title\":\"\"}]}";
+
+    private static ExternalSnapshot parseStateWithRate(String rate) {
+        return ExternalSnapshot.parseState("{\"event\":\"state\",\"session\":true,"
+                + "\"title\":\"x\",\"posMs\":1,\"durMs\":2,\"rate\":" + rate
+                + ",\"state\":\"Playing\"}", 1_000L);
+    }
+
+    /** artist 空时按 Subtitle → AlbumArtist 的顺序找检索词；三者全空返回空串。 */
+    private static ExternalSnapshot snapshotWith(String artist, String subtitle, String albumArtist) {
+        return ExternalSnapshot.parseState("{\"event\":\"state\",\"session\":true,"
+                + "\"app\":\"Chrome!Chrome\",\"title\":\"晴天\",\"artist\":\"" + artist + "\","
+                + "\"subtitle\":\"" + subtitle + "\",\"albumArtist\":\"" + albumArtist + "\","
+                + "\"posMs\":1,\"durMs\":2,\"state\":\"Playing\"}", 1_000L);
+    }
 
     /** 在一条完整的状态行尾部接上音量那几个字段（助手就是这么做到的）。 */
     private static String lineWithVolume(String volumeFields) {

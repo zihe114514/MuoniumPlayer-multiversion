@@ -32,6 +32,17 @@ public class MuoniumPlayerMod implements ClientModInitializer {
         // 加载器 id 必须在 init() 之前登记：更新检查按「MC 版本 + 加载器」查清单。
         MuoniumPlayerClient.setLoaderId("fabric");
         client.init();
+        // ---- MuoniumConfig 接入 ----
+        // 把歌词卡 / 信息卡挂进 MuoniumConfig 的 HUD 编辑器（没装就静默跳过）。
+        // 时机必须在这里：HudConfig 已在 init() 里 load 过，字段有值；
+        // 再晚到进世界之后注册，首帧的 HUD 列表会缺这两块。
+        com.muoniumplayer.core.screens.hud.MuoniumHudProviders.registerAll();
+        // 「常用」页：必须在 HUD providers 之后 —— 内容依赖 MuoniumConfig 已装载。
+        com.muoniumplayer.core.screens.hud.MuoniumFavorites.register();
+        // 没装 MuoniumConfig 时起一次后台下载，装到 mods/ 下次启动生效。
+        // 带 MC 版本与加载器：装错版本会在启动期崩。
+        com.muoniumplayer.core.screens.hud.MuoniumConfigDownload.ensureDownloaded(
+                com.muoniumplayer.MuoniumPlayerClient.MC_VERSION, "fabric");
 
         // 1.5. 3D 世界歌词：装配字形图集宿主（现代化风格的纹理通路）。
         // 漏掉这一句时图集宿主是 null，getGlyph 全部返回 null，
@@ -63,10 +74,13 @@ public class MuoniumPlayerMod implements ClientModInitializer {
             // 只有原版 GUI 这条路还能说话，而用户此刻看到的正是一片空白。
             client.onRenderLayerNotice(drawContext, false);
         });
-        // 3D 世界歌词：世界渲染的最后（Fabric LAST 事件）。矩阵与 GL 状态由
-        // WorldLyricsBridge.worldRenderEnd() 自己设，事件参数不需要。
+        // 3D 世界歌词：<b>不再挂 Fabric LAST</b>。LAST 注入在 renderChunkDebugInfo
+        // （renderLevel 内部，javap 核对 fabric-rendering-v1 3.0.9），那时 Fabulous
+        // 的半透明目标还没合成回主目标 —— 水/玻璃会盖住歌词（用户实测「字被水挡住」）。
+        // 改由树内 LevelRendererLateStageMixin 在 renderLevel RETURN 画，
+        // 那是两加载器共同的、真正的最后一刻（Forge 的 AFTER_LEVEL 也在此时点）。
+        // 音箱线框仍留在 LAST：它是世界空间参照物，应当被水/玻璃正确遮挡。
         WorldRenderEvents.LAST.register(context -> {
-            WorldLyricsBridge.worldRenderEnd();
             // 世界声源线框(有音箱才画;内部第一行判空)
             com.muoniumplayer.compat.mc.SpeakerRenderBridge.render();
         });

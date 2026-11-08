@@ -151,7 +151,7 @@ class BounceIslandMathProbeTest {
         DownloadDynamicIsland.DynamicIslandStyle[] styles =
                 DownloadDynamicIsland.DynamicIslandStyle.values();
         String[] order = {"PILL", "GLASS", "COMPACT", "CARD", "SYSTEM_CARD", "MUSIC_FOCUS",
-                "LIQUID_GLASS", "BOUNCE"};
+                "LIQUID_GLASS", "BOUNCE", "MUSIC_CAPSULE"};
         assertEquals(order.length, styles.length);
         for (int i = 0; i < order.length; i++) {
             assertEquals(order[i], styles[i].name(), "样式序号 " + i + " 变了，用户配置会串样式");

@@ -232,6 +232,15 @@ public final class ConfigPaths {
     public static final File FOCUS_VOLUME_DUCKER = new File(CONFIG_DIRECTORY, "focus_volume_ducker.json");
 
     /**
+     * 「语音广播」的开关（{@link com.muoniumplayer.core.ncm.music.VoicechatBroadcast}）。
+     *
+     * <p>单独一个文件而不是塞进 {@link #HUD}：状态全在共享层，而 HudConfig 是每棵版本树
+     * 各自一份的 FORK 文件，共享层写它编译期就过不去；这一族（ducker/声学/广播）都是
+     * 同款「共享层自带小 json」的套路。默认关：往语音通道里灌歌是个明确要用户点头的动作。</p>
+     */
+    public static final File VOICECHAT_BROADCAST = new File(CONFIG_DIRECTORY, "voicechat_broadcast.json");
+
+    /**
      * 场景声学的开关与分项。
      *
      * <p>单独一个文件而不是塞进 {@link #PLAYER}：这条链的读写频率比播放器主配置高
@@ -268,6 +277,15 @@ public final class ConfigPaths {
     public static final File TRANSPARENT_MODE = new File(CONFIG_DIRECTORY, "transparent_mode.json");
 
     /**
+     * 「陀螺模式」的开关、作用面/范围档与每拍转角（随节拍甩动人物模型的整活特效）。
+     *
+     * <p>单独一个文件，理由同 {@link #SCENE_ACOUSTICS}：设置页上每颗开关/滑条都要
+     * 立即落盘，读失败的代价只是「回到关闭」，不该牵连播放器主配置。不进 {@link #HUD}
+     * 的原因也同：HudConfig 是五棵版本树各自一份的留守文件，每加一个字段要改五份。</p>
+     */
+    public static final File SPIN_MODE = new File(CONFIG_DIRECTORY, "music_spin.json");
+
+    /**
      * 「卡点运镜」（MuoniumCine）的开关与镜头/转场分项。
      *
      * <p>单独一个文件，理由同 {@link #SCENE_ACOUSTICS}：设置页上每颗开关/滑条都要
@@ -299,6 +317,16 @@ public final class ConfigPaths {
      * 手工重编一次」这道必然被忘记的工序，也让用户机上不存在一个来路不明的可执行文件。</p>
      */
     public static final File SMTC_DIR = new File(CONFIG_DIRECTORY, "smtc");
+
+    /**
+     * 发布模式（把本模组自己的播放写成系统媒体会话）的开关文件。
+     *
+     * <p>与 HUD 设置界面（MuoniumConfig 仓库）隔开：那个界面的设置项走反射桥，
+     * 这里是纯 mod 侧的小文件，界面上还没有开关时玩家也能用启动参数
+     * {@code -Dmuonium.smtc.publish=false} 硬关。读写都在 {@code SmtcPublisher}，
+     * 别处只认常量。</p>
+     */
+    public static final File SMTC_PUBLISH = new File(CONFIG_DIRECTORY, "smtc_publish.json");
 
     /**
      * 汽水外部取码工具与模组之间的共享目录：工具写 {@code state.json}，模组写 {@code command.json}。
@@ -493,6 +521,16 @@ public final class ConfigPaths {
     public static final File DEV_OPEN_PLAYER = new File(CONFIG_DIRECTORY, "dev_open_player");
 
     /**
+     * 【只给开发验证】存在就在主菜单/游戏内空闲时等价于「按了一次 H」——打开 HUD 设置界面。
+     *
+     * <p>与 {@link #DEV_OPEN_PLAYER} 完全同一个套路，理由也一样：自动化环境驱动不了
+     * {@code KeyMapping}，而 HUD 设置界面（MuoniumConfig 的整套 Compose UI）只有真的
+     * 开出来才能验证「按键 → 桥 → 界面 → Skia 绘制」这条链路是通的。
+     * 文件用完即删，普通用户不会有它。</p>
+     */
+    public static final File DEV_OPEN_HUD = new File(CONFIG_DIRECTORY, "dev_open_hud");
+
+    /**
      * 【只给开发验证】存在就打开<b>背景采集探针</b>：每帧把「此刻还不含我们 HUD 的游戏画面」
      * 拷成一张纹理，并在屏幕左下角贴原图与糊过一档的对比块，日志里带采集耗时与纹理尺寸。
      * 删掉这个文件即关。
@@ -516,6 +554,11 @@ public final class ConfigPaths {
     public static final File VIPER_DIR = new File(CONFIG_DIRECTORY, "viper");
     public static final File VIPER_SETTINGS = new File(VIPER_DIR, "settings.json");
     public static final File VIPER_PRESETS = new File(VIPER_DIR, "presets");
+
+    /** User-created/imported template presets; builtins are read directly from the mod resources. */
+    public static final File PRESETS_DIR = new File(CONFIG_DIRECTORY, "presets");
+    /** Atomic pre-apply backups, newest ten retained. */
+    public static final File PRESETS_BACKUP_DIR = new File(PRESETS_DIR, "backups");
 
     /**
      * 凭据文件的旧→新映射表。声明顺序无关；用 LinkedHashMap 保持可读性。

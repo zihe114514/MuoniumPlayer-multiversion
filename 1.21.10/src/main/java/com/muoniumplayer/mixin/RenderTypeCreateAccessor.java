@@ -11,13 +11,20 @@ import org.spongepowered.asm.mixin.gen.Invoker;
  * RenderPipeline（beacon_beam 着色器 + BlendFunction.LIGHTNING），原版工厂
  * 没有这个组合的现成入口（beaconBeam(rl,true) 自带的是 TRANSLUCENT alpha 混合，
  * 不是加色 —— 晕格用它会在亮背景上消失）。
+ *
+ * <p><b>返回值必须是 {@code CompositeRenderType}，不能写成父类 {@code RenderType}：</b>
+ * Invoker 按 {@code MemberInfo} 全描述符匹配目标方法（返回值也参与比较），而 1.21.10
+ * 的 {@code create} 实测返回 {@code LRenderType$CompositeRenderType;}。写成 {@code RenderType}
+ * 时找不到候选，mixin apply 阶段直接抛 {@code InvalidAccessorException} ——
+ * 因为 {@code RenderType} 类一加载就校验，与晕格用没用上无关，整局启动即崩。
+ * 调用方赋给 {@code RenderType} 是向上转型，不受影响。</p>
  */
 @Mixin(RenderType.class)
 public interface RenderTypeCreateAccessor {
 
     @Invoker("create")
-    static RenderType muonium$create(String name, int bufferSize, RenderPipeline pipeline,
-                                     RenderType.CompositeState state) {
+    static RenderType.CompositeRenderType muonium$create(String name, int bufferSize, RenderPipeline pipeline,
+                                                         RenderType.CompositeState state) {
         throw new AssertionError();
     }
 }

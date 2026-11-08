@@ -159,6 +159,11 @@ dependencies {
     implementation include('muoniumplayer:rhino-relocated:1.7.15')
     compileOnly files(relocateRhino)
     testImplementation files(relocateRhino)
+    // Simple Voice Chat 客户端插件 API（语音广播：合并进麦克风上行）。纯接口 jar，
+    // 运行期类由 SVC mod 自己提供，所以只进编译类路径、不 include（嵌套）。
+    // maven.maxhenkel.de 本机不进构建体系，按 muoniumconfig 先例 vendor 进 libs/。
+    compileOnly files(rootProject.file('libs/voicechat-api-2.6.27.jar'))
+    testImplementation files(rootProject.file('libs/voicechat-api-2.6.27.jar'))
     // MC 1.20.1 自带 gson 2.10，而 Cadence 相关代码按 2.11 API 编写，必须自带 2.11。
     implementation include('com.google.code.gson:gson:2.11.0')
     // JNA：DeviceIdGenerator 读注册表 CPU 名 + CursorUtils 切光标。
@@ -193,15 +198,13 @@ dependencies {
     // 字节数/sha256 双钉 + 装好后重启生效——Fabric 只在启动阶段扫 mods/ 并织入 mixin，
     // 运行中塞进去的 jar 不会被加载，热加载没有可行性）。
     //
-    // 这里保留 implementation 只为开发期：runClient 需要一个真的 MuoniumConfig 才能
-    // 打开界面调样式，否则每次都要等下载 + 重启。
+    // 开发期同样**不走 classpath**：把 jar 放进 <树>/fabric/run/mods/，由 Loader
+    // 当 mod 加载。理由与 1.21.1 一致（详见那棵树 build.gradle 的说明）：classpath 上
+    // 的 jar 不是 mod，嵌套 jar 不展开、mixin 不织入，会造出一个与线上不同的类图，
+    // 把「开发能跑、线上崩」的问题掩盖掉。
     //
-    // 同步命令见 tools/sync-muoniumconfig.ps1；jar 更新后重跑一次，
-    // 并把 MuoniumConfigDownload 里钉的 FILE_NAME / BYTES / SHA256 一起改掉。
-    implementation 'muonium:muoniumconfig:1.6.1'
-    // Compose：编译期与开发期都要，但同样不进成品 —— 它是独立前置 mod，由玩家自装。
-    compileOnly 'muonium:muonium-compose-bundle:2.1.0'
-    runtimeOnly 'muonium:muonium-compose-bundle:2.1.0'
+    // Compose 已**内嵌在 MuoniumConfig 自己**的 META-INF/jars/ 里（64 个嵌套 jar），
+    // 所以这里不再需要 compose-bundle —— 再挂一份会让同一个类有两个来源。
     // skija-shared 的 provided 依赖，只在编译期需要（@Nullable 之类）。
     compileOnly 'org.jetbrains:annotations:20.1.0'
 
