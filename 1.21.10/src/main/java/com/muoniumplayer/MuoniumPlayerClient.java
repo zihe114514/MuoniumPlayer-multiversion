@@ -256,6 +256,16 @@ public final class MuoniumPlayerClient {
             }
         }
 
+        // ---- 陀螺模式（发包两档的驱动入口）----
+        // 「视角跟着转」档在这里把真实 yaw 写成旋转角（每 tick 一次，暂停/未播放返回
+        // NaN 原样不动）；「视角不动」档的包层替换在 SpinPacketMixin，本机模型旋转在
+        // SpinEntityMixin。角度推进与节拍步进在共享层按墙上时钟去重，这里只是一次
+        // 浮点比较；共享层不碰 MC 符号，yaw 的读写都留在树内。
+        float spinYaw = com.muoniumplayer.core.ncm.music.MusicSpin.onClientTick(
+                mc.player != null, mc.player == null ? 0f : mc.player.getYRot());
+        if (mc.player != null && !Float.isNaN(spinYaw)) {
+            mc.player.setYRot(spinYaw);
+        }
         // ---- 缺少 ffmpeg 的一次性全屏提示 ----
         // 每 tick 问一次而不是在界面切换事件里换掉主菜单：探测在后台线程上跑，主菜单出现的那一刻
         // 结论往往还没出来，换 GUI 只有一次机会，轮询则下一 tick 再问一次就行。内部自带

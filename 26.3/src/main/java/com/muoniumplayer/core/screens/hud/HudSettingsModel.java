@@ -7,6 +7,7 @@ import com.muoniumplayer.core.ncm.music.FocusVolumeDucker;
 import com.muoniumplayer.core.ncm.music.FoliaModelManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.cine.CineSettings;
+import com.muoniumplayer.core.ncm.music.MusicSpin;
 import com.muoniumplayer.core.ncm.music.TransparentMode;
 import com.muoniumplayer.core.ncm.music.MusicAudioCache;
 import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
@@ -1537,7 +1538,24 @@ public final class HudSettingsModel {
                                 slider(HudSetting.TRANSPARENT_COMPRESSION,
                                         "鼓点最响那一刻压多扁：50% 就是压到一半高。0 等于不压，只看别人变宽。"),
                                 slider(HudSetting.TRANSPARENT_WIDTH,
-                                        "压扁的同时往两边涨多少：50% 就是模型横向胖一半。深度不变。")),
+                                        "压扁的同时往两边涨多少：50% 就是模型横向胖一半。深度不变。"),
+                                toggle("陀螺模式", "整活特效：跟着正在放的音乐节拍，让人物模型每拍甩动一步（默认 90°，一圈四拍）。拍点是实时从播放信号上测的，任何歌都自动卡点；暂停时定格在当前角度。",
+                                        MusicSpin::isEnabled,
+                                        () -> MusicSpin.setEnabled(!MusicSpin.isEnabled())),
+                                choice("转给谁看", "「只本机画面」只改你屏幕上的模型，服务器和其他玩家看不到；两个发包档会把旋转写进朝向数据让所有人看到——那在服务器上等价于 spinbot，可能被反作弊盯上，风险自担。",
+                                        MusicSpin::modeLabel,
+                                        MusicSpin::cycleMode,
+                                        MusicSpin.modeLabels(),
+                                        MusicSpin::setModeByLabel,
+                                        MusicSpin::isEnabled),
+                                choice("转谁", "本机画面里谁跟着音乐转。发包档永远转你自己（那是「你」在网络上转），这一档只管你眼前看到的范围。",
+                                        MusicSpin::rangeLabel,
+                                        MusicSpin::cycleRange,
+                                        MusicSpin.rangeLabels(),
+                                        MusicSpin::setRangeByLabel,
+                                        MusicSpin::isEnabled),
+                                slider(HudSetting.SPIN_STEP,
+                                        "每个拍点甩多少度：90° 就是一圈四拍，180° 一圈两拍。转速自动跟 BPM 走，歌越快甩越急。", MusicSpin::isEnabled)),
                         new Group("卡点运镜", HudSettingsIcons.SPEED,
                                 toggle("卡点运镜", "电影化自动运镜：播放中挂机一阵后，镜头按音乐节拍在「环绕玩家 / 风景 / 移动生物」之间切换，切点压在拍点上；任何输入立即恢复你的视角。开关与全部参数存在 cine.json。",
                                         CineSettings::isEnabled,

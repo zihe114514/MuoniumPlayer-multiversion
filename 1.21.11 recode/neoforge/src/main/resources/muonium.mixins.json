@@ -5,14 +5,16 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "RenderTypeAccessors",
-"MusicManagerAccessor",
+    "MusicManagerAccessor",
     "MusicManagerDuckMixin",
     "FramebufferMixin",
     "TransparentEntityMixin",
     "TransparentCameraMixin",
     "CineCameraMixin",
     "CineFovMixin",
-    "CineHudMixin"
+    "CineHudMixin",
+    "SpinEntityMixin",
+    "SpinPacketMixin"
   ],
   "injectors": {
     "defaultRequire": 1

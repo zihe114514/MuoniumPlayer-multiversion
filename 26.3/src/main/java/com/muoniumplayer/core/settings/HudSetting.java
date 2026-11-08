@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.settings;
 
+import com.muoniumplayer.core.ncm.music.MusicSpin;
 import com.muoniumplayer.core.ncm.music.TransparentMode;
 
 /**
@@ -123,7 +124,10 @@ public enum HudSetting {
     /** 节拍最大变宽幅度：最大压缩时额外涨出的横向宽度百分比。 */
     TRANSPARENT_WIDTH("通透模式 变宽幅度", 0.0f, 200.0f),
     // ---- 音乐胶囊迷你卡（接在末尾：这套条目的 id 有按序号落盘的历史，插中间会让老配置错位）----
-    ISLAND_MINI_CARD_SCALE("迷你卡缩放", 0.50f, 2.00f);
+    ISLAND_MINI_CARD_SCALE("迷你卡缩放", 0.50f, 2.00f),
+    // ---- 陀螺模式（接在末尾：这套条目的 id 有按序号落盘的历史，插中间会让老配置错位）----
+    /** 每个拍点步进的转角（度）：90 就是一圈四拍。开关与档位存共享层 MusicSpin，这里只出滑条。 */
+    SPIN_STEP("陀螺模式 每拍转角", 30.0f, 360.0f);
 
     private final String label;
     private final float min;
@@ -225,6 +229,7 @@ public enum HudSetting {
             case TRANSPARENT_COMPRESSION: return TransparentMode.compressionPercent();
             case TRANSPARENT_WIDTH: return TransparentMode.widthPercent();
             case ISLAND_MINI_CARD_SCALE: return HudConfig.islandMiniCardScale;
+            case SPIN_STEP: return MusicSpin.stepDegrees();
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }
@@ -312,6 +317,7 @@ public enum HudSetting {
             case TRANSPARENT_COMPRESSION: TransparentMode.setCompressionPercent(clamped); break;
             case TRANSPARENT_WIDTH: TransparentMode.setWidthPercent(clamped); break;
             case ISLAND_MINI_CARD_SCALE: HudConfig.islandMiniCardScale = clamped; break;
+            case SPIN_STEP: MusicSpin.setStepDegrees(clamped); break;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }
