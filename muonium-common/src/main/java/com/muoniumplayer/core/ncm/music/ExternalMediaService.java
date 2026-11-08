@@ -55,11 +55,18 @@ public final class ExternalMediaService {
     private static Thread pollThread;
     /** 用户是否要求镜像开着。与 {@code process != null} 区分开：崩溃后仍是"要求开着"。 */
     private static boolean desired;
+    /**
+     * 发布模式（把本模组自己的播放写成一条系统媒体会话）是否需要助手活着。
+     * 镜像与发布共用同一个助手进程：两个愿望只要有一个在，进程就保持运行。
+     */
+    private static boolean publishDesired;
     private static int restartAttempts;
     private static volatile ExternalSnapshot latest = ExternalSnapshot.NONE;
     private static volatile boolean helperReady;
     private static volatile String helperFailure = "";
     private static volatile boolean probeFailed;
+    /** 助手自报的协议版本；1 = 只读的老助手（无发布、无多会话挑选），2 = 完整版。 */
+    private static volatile int helperVersion = 1;
     /** 最近一次命令结果，供界面给出「外部播放器不接受这条命令」的反馈；取一次清一次。 */
     private static volatile String pendingCommandResult;
 
@@ -67,7 +74,7 @@ public final class ExternalMediaService {
     }
 
     /**
-     * 要求启动助手。立刻返回，真正的探测/编译/起进程都在后台引导线程里做。
+     * 要求启动助手（镜像侧）。立刻返回，真正的探测/编译/起进程都在后台引导线程里做。
      *
      * @param reasonForUser 触发来源，只进日志（"设置项切换""进世界""重新探测"）
      */
@@ -88,10 +95,44 @@ public final class ExternalMediaService {
         }
     }
 
+    /**
+     * 发布侧对助手的愿望。镜像与发布共用同一进程：谁后到谁补一次引导，
+     * 两个愿望都撤掉时进程才允许被收走。
+     */
+    public static void setPublishDesired(boolean value) {
+        synchronized (LOCK) {
+            if (publishDesired == value) return;
+            publishDesired = value;
+            if (value && process == null && !desired) {
+                restartAttempts = 0;
+                probeFailed = false;
+                if (helperReady) {
+                    spawnLocked();
+                    return;
+                }
+                bootThread = new Thread(() -> boot("发布模式"),
+                        "Muonium-SMTC-Boot-" + THREAD_SEQUENCE.incrementAndGet());
+                bootThread.setDaemon(true);
+                bootThread.start();
+            }
+        }
+        if (!value) {
+            // 两个愿望都没了才真的收进程；镜像还开着时这里什么都不做。
+            if (!isMirrorDesired()) stop();
+        }
+    }
+
+    /** 镜像侧是否还要求助手活着。只给 {@link #setPublishDesired(boolean)} 的收尾用。 */
+    private static boolean isMirrorDesired() {
+        synchronized (LOCK) {
+            return desired;
+        }
+    }
+
     private static void boot(String reasonForUser) {
         SmtcTooling.Result result = SmtcTooling.ensure();
         synchronized (LOCK) {
-            if (!desired) return;
+            if (!desired && !publishDesired) return;
             if (result.isReady()) {
                 helperReady = true;
                 helperFailure = "";
@@ -175,13 +216,36 @@ public final class ExternalMediaService {
             if (parsed.hasSession() || line.contains("\"session\":false")) latest = parsed;
             return;
         }
+        if (line.contains("\"event\":\"pubcmd\"")) {
+            // 发布端媒体键/浮窗拖进度：转交发布器，主线程 tick 里才落进 CloudMusic。
+            SmtcPublisher.onHelperCommand(line);
+            return;
+        }
         if (line.contains("\"event\":\"cmd\"")) {
             pendingCommandResult = line;
             return;
         }
         if (line.contains("\"event\":\"ready\"")) {
             restartAttempts = 0;
+            helperVersion = protocolVersion(line);
+            System.out.println("[Music/SMTC] 助手协议 v" + helperVersion);
+            return;
         }
+        if (line.contains("\"event\":\"pub\"")) {
+            // 发布端只报失败；这里记日志即可，不打扰界面。
+            if (line.contains("\"ok\":false")) System.err.println("[Music/SMTC] 发布端: " + line);
+        }
+    }
+
+    /** 从 ready 行里抠出协议版本；老格式（没有 version）按 1 算。 */
+    private static int protocolVersion(String readyLine) {
+        try {
+            com.google.gson.JsonObject root = com.google.gson.JsonParser.parseString(readyLine)
+                    .getAsJsonObject();
+            if (root.has("version")) return Math.max(1, root.get("version").getAsInt());
+        } catch (Throwable ignored) {
+        }
+        return 1;
     }
 
     private static void onProcessEnded(Process ended) {
@@ -190,18 +254,20 @@ public final class ExternalMediaService {
             process = null;
             stdin = null;
             latest = ExternalSnapshot.NONE;
-            if (!desired) return;
+            // 镜像与发布共用这条命：两个愿望都撤了才让它安静地走。
+            if (!desired && !publishDesired) return;
             if (++restartAttempts > MAX_RESTARTS) {
                 probeFailed = true;
                 helperFailure = "系统媒体助手反复退出，已停止自动重启（共 " + MAX_RESTARTS + " 次）";
                 desired = false;
+                publishDesired = false;
                 System.err.println("[Music/SMTC] " + helperFailure);
                 return;
             }
         }
         sleep(RESTART_DELAY_MS);
         synchronized (LOCK) {
-            if (desired && process == null) spawnLocked();
+            if ((desired || publishDesired) && process == null) spawnLocked();
         }
     }
 
@@ -267,6 +333,72 @@ public final class ExternalMediaService {
         String value = pendingCommandResult;
         pendingCommandResult = null;
         return value;
+    }
+
+    // ── 发布通道（把本模组自己的播放写进系统媒体会话）─────────────────────────
+    //
+    // 与镜像命令同一套 stdin 串行化；助手侧由专用 STA 线程持有 WinRT 对象，
+    // stdin 主线程只更新状态仓并 PostMessage 叫醒它，所以这里发得再密也只是
+    // 一行文本的往返，不会把助手卡住。
+
+    /** 助手协议版本。1 = 老助手（发布与多会话挑选都不可用）。 */
+    public static int helperProtocolVersion() {
+        return helperVersion;
+    }
+
+    /** 打开发布会话。 */
+    public static void sendPublishOn() {
+        sendLine("pub on");
+    }
+
+    /** 收起发布会话（从系统浮窗里消失，会话本体保留以便下次秒开）。 */
+    public static void sendPublishOff() {
+        sendLine("pub off");
+    }
+
+    /** 推送曲目元数据。{@code json} 是 {@code {"title":..,"artist":..,"album":..,"albumArtist":..}} 形状。 */
+    public static void sendPublishMeta(String json) {
+        sendLine("pub meta " + json);
+    }
+
+    /** 推送播放状态：Playing / Paused / Stopped。 */
+    public static void sendPublishState(String state) {
+        sendLine("pub state " + state);
+    }
+
+    /** 推送时间轴（毫秒）。播放中建议每秒一次；助手侧只是更新状态仓，成本可忽略。 */
+    public static void sendPublishTimeline(long positionMs, long durationMs) {
+        sendLine("pub tl " + positionMs + " " + durationMs);
+    }
+
+    /** 推送封面文件路径（换歌时一次）。空串表示这一首没有封面。 */
+    public static void sendPublishArt(String absolutePath) {
+        sendLine("pub art " + jsonEscape(absolutePath == null ? "" : absolutePath));
+    }
+
+    /** 钉住镜像哪支会话（按 AUMID 完整匹配）；空串或 "-" 回到自动挑选。 */
+    public static void sendUseSession(String aumid) {
+        sendLine("use " + (aumid == null || aumid.trim().isEmpty() ? "-" : aumid.trim()));
+    }
+
+    /** 要一份系统里全部会话的快照（诊断用；结果进日志，由助手回 list 事件）。 */
+    public static void sendListSessions() {
+        sendLine("list");
+    }
+
+    private static String jsonEscape(String value) {
+        StringBuilder sb = new StringBuilder(value.length() + 8);
+        sb.append('"');
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '"' || c == '\\') sb.append('\\').append(c);
+            else if (c == '\n') sb.append("\\n");
+            else if (c == '\r') sb.append("\\r");
+            else if (c == '\t') sb.append("\\t");
+            else sb.append(c);
+        }
+        sb.append('"');
+        return sb.toString();
     }
 
     /** 当前快照。永不为 null；没有会话时 {@link ExternalSnapshot#hasSession()} 为 false。 */
@@ -349,12 +481,18 @@ public final class ExternalMediaService {
         requestStart("重新探测");
     }
 
-    /** 关闭镜像模式或游戏退出。幂等。 */
+    /**
+     * 关闭镜像模式或游戏退出。幂等。
+     *
+     * <p>发布还要求着助手时（{@code publishDesired}）进程不收：镜像关了，
+     * 媒体键还能控内部播放。两个愿望都撤了才真的退出。</p>
+     */
     public static void stop() {
         Process target;
         BufferedWriter writer;
         synchronized (LOCK) {
             desired = false;
+            if (publishDesired) return;   // 愿望还在，进程留着
             target = process;
             writer = stdin;
             process = null;

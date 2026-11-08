@@ -83,7 +83,7 @@ final class ExternalTrackMatcher {
         Entry cached = CACHE.get(key);
         if (cached != null && isStillValid(cached, now)) return cached.music;
 
-        Music matched = search(title, primaryArtist(snapshot.normalizedArtist()), snapshot.durationMs());
+        Music matched = search(title, artistHint(snapshot), snapshot.durationMs());
         if (CACHE.size() > CACHE_LIMIT) CACHE.clear();   // 缓存只是加速，宁可全丢也别无界增长
         CACHE.put(key, new Entry(matched, now));
         if (matched == null) {
@@ -95,6 +95,21 @@ final class ExternalTrackMatcher {
                     + "（" + (matchedPlatform == null ? "?" : matchedPlatform.getDisplayName()) + "）");
         }
         return matched;
+    }
+
+    /**
+     * 拿去当检索关键词的「歌手」。
+     *
+     * <p>v2 起有两级后备：SMTC 的 Artist 常在浏览器源上空着（YouTube/B 站网页播放经常
+     * 只填 Title，频道名塞在 Subtitle 里），这时用 Subtitle 顶上——它搜不准的概率远低于
+     * 拿空关键词去搜。Artist 与 Subtitle 都空时再退到 AlbumArtist。</p>
+     */
+    static String artistHint(ExternalSnapshot snapshot) {
+        String artist = primaryArtist(snapshot.normalizedArtist());
+        if (!artist.isEmpty()) return artist;
+        String subtitle = snapshot.subtitle() == null ? "" : snapshot.subtitle().trim();
+        if (!subtitle.isEmpty()) return normalize(subtitle);
+        return primaryArtist(normalize(snapshot.albumArtist()));
     }
 
     private static boolean isStillValid(Entry entry, long now) {
@@ -165,7 +180,8 @@ final class ExternalTrackMatcher {
     }
 
     private static String cacheKey(ExternalSnapshot snapshot) {
-        return snapshot.normalizedTitle() + "|" + primaryArtist(snapshot.normalizedArtist())
+        // 键与检索词同源（artistHint）：Artist 空而 Subtitle 有值的两首歌，必须各查各的。
+        return snapshot.normalizedTitle() + "|" + artistHint(snapshot)
                 + "|" + (snapshot.durationMs() / 1000L);
     }
 

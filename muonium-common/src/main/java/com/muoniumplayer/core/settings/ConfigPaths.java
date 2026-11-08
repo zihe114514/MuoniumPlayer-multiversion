@@ -310,6 +310,16 @@ public final class ConfigPaths {
     public static final File SMTC_DIR = new File(CONFIG_DIRECTORY, "smtc");
 
     /**
+     * 发布模式（把本模组自己的播放写成系统媒体会话）的开关文件。
+     *
+     * <p>与 HUD 设置界面（MuoniumConfig 仓库）隔开：那个界面的设置项走反射桥，
+     * 这里是纯 mod 侧的小文件，界面上还没有开关时玩家也能用启动参数
+     * {@code -Dmuonium.smtc.publish=false} 硬关。读写都在 {@code SmtcPublisher}，
+     * 别处只认常量。</p>
+     */
+    public static final File SMTC_PUBLISH = new File(CONFIG_DIRECTORY, "smtc_publish.json");
+
+    /**
      * 汽水外部取码工具与模组之间的共享目录：工具写 {@code state.json}，模组写 {@code command.json}。
      *
      * <p>放在 {@link #BIN_DIR} 之外：那一层是放可执行文件的，塞一个每次登录都要反复读写的

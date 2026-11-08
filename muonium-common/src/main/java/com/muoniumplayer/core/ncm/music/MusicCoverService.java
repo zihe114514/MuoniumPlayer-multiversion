@@ -683,6 +683,9 @@ final class MusicCoverService {
                 InputStream coverStream = HttpUtils.downloadStream(coverUrl(music, 320), 5,
                         music != null && music.isYouTube() ? YouTubeProxySettings.createHttpProxy() : null);
                 byte[] imageData = IOUtils.toByteArray(coverStream);
+                // 发布模式（SMTC）需要当前这首的封面文件：只 tee 正在播的这一首，
+                // 队列封面的字节留在内存就好，全落盘是无谓的 IO。
+                SmtcPublisher.offerCoverArt(music, imageData);
                 BufferedImage coverImage = DynamicTexture.readImage(new ByteArrayInputStream(imageData));
                 if (coverImage != null) {
                     loadCoverTextures(music, coverImage, musicCover, musicCoverBlur);
