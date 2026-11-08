@@ -51,7 +51,10 @@ public final class AudioSpectrumAnalyzer {
         if (unavailable) return latest;
         try {
             if (!attached) {
-                Engine.getEngine().setOutputObserver((pcm,channels,rate) -> CAPTURE.accept(pcm,channels,rate,System.nanoTime()));
+                // 输出观察者是单槽位：改走 EngineOutputTap 分发器，把槽让给多路监听
+                // （语音广播与频谱共用同一条最终混音 PCM）。
+                EngineOutputTap.install();
+                EngineOutputTap.addListener((pcm,channels,rate) -> CAPTURE.accept(pcm,channels,rate,System.nanoTime()));
                 attached=true;
             }
             CAPTURE.request(now);

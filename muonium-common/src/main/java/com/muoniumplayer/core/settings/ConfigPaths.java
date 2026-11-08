@@ -232,6 +232,15 @@ public final class ConfigPaths {
     public static final File FOCUS_VOLUME_DUCKER = new File(CONFIG_DIRECTORY, "focus_volume_ducker.json");
 
     /**
+     * 「语音广播」的开关（{@link com.muoniumplayer.core.ncm.music.VoicechatBroadcast}）。
+     *
+     * <p>单独一个文件而不是塞进 {@link #HUD}：状态全在共享层，而 HudConfig 是每棵版本树
+     * 各自一份的 FORK 文件，共享层写它编译期就过不去；这一族（ducker/声学/广播）都是
+     * 同款「共享层自带小 json」的套路。默认关：往语音通道里灌歌是个明确要用户点头的动作。</p>
+     */
+    public static final File VOICECHAT_BROADCAST = new File(CONFIG_DIRECTORY, "voicechat_broadcast.json");
+
+    /**
      * 场景声学的开关与分项。
      *
      * <p>单独一个文件而不是塞进 {@link #PLAYER}：这条链的读写频率比播放器主配置高
