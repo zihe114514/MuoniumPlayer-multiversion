@@ -164,7 +164,12 @@ dependencies {
     // （Gradle 自动挂任务依赖）。relocateRhino 跑完刷新 libs/ 里的拷贝。
     implementation include('muoniumplayer:rhino-relocated:1.7.15')
     compileOnly files(relocateRhino)
+    // Simple Voice Chat 客户端插件 API（语音广播：合并进麦克风上行）。纯接口 jar，
+    // 运行期类由 SVC mod 自己提供，所以只进编译类路径、不 include（嵌套）。
+    // maven.maxhenkel.de 本机不进构建体系，按 muoniumconfig 先例 vendor 进 libs/。
+    compileOnly files(rootProject.file('libs/voicechat-api-2.6.27.jar'))
     testImplementation files(relocateRhino)
+    testImplementation files(rootProject.file('libs/voicechat-api-2.6.27.jar'))
     def relocatedJarInLibs = rootProject.file('libs/rhino-relocated-1.7.15.jar')
     relocateRhino.configure {
         doLast {

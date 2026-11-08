@@ -179,6 +179,10 @@ dependencies {
     // 原 rhino 坐标不再出现在任何 classpath 上（防止有人手滑又引回去）。
     embeddedLibs files(relocateRhino)
     compileOnly files(relocateRhino)
+    // Simple Voice Chat 客户端插件 API（语音广播：合并进麦克风上行）。纯接口 jar，
+    // 运行期类由 SVC mod 自己提供，所以只进编译类路径、不 include（嵌套）。
+    // maven.maxhenkel.de 本机不进构建体系，按 muoniumconfig 先例 vendor 进 libs/。
+    compileOnly files(rootProject.file('libs/voicechat-api-2.6.27.jar'))
     // gson / jna / jna-platform 刻意不列：Minecraft 自带，见上面 configurations 里的排除说明。
     // 编译期用的就是 Minecraft 提供的那几个版本，所以这里也不需要 compileOnly 再声明一遍。
     // Cadence 音源 SDK 已吸收进仓（com.muoniumplayer.core.music.cadence，2026-11），

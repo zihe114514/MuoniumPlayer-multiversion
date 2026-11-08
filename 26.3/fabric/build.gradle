@@ -159,6 +159,11 @@ dependencies {
     implementation include('muoniumplayer:rhino-relocated:1.7.15')
     compileOnly files(relocateRhino)
     testImplementation files(relocateRhino)
+    // Simple Voice Chat 客户端插件 API（语音广播：合并进麦克风上行）。纯接口 jar，
+    // 运行期类由 SVC mod 自己提供，所以只进编译类路径、不 include（嵌套）。
+    // maven.maxhenkel.de 本机不进构建体系，按 muoniumconfig 先例 vendor 进 libs/。
+    compileOnly files(rootProject.file('libs/voicechat-api-2.6.27.jar'))
+    testImplementation files(rootProject.file('libs/voicechat-api-2.6.27.jar'))
     // MC 1.20.1 自带 gson 2.10，而 Cadence 相关代码按 2.11 API 编写，必须自带 2.11。
     implementation include('com.google.code.gson:gson:2.11.0')
     // JNA：DeviceIdGenerator 读注册表 CPU 名 + CursorUtils 切光标。
