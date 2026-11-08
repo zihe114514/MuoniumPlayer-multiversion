@@ -186,28 +186,20 @@ dependencies {
     // 开发期 runClient 用：只进运行时类路径，不进成品 jar（成品全平台走伴生包自动下载）
     runtimeOnly 'io.github.humbleui:skija-windows-x64:0.143.17'
 
-    // ==================== MuoniumConfig（内嵌的 HUD/设置界面库）====================
+    // ==================== MuoniumConfig（按需下载的 HUD/设置界面库）====================
     // MuoniumConfig 是 OneConfig 的精简分支（独立仓库 E:\oneconfig lite\MuoniumConfig-src），
-    // 与上游不再同步。它走 JiJ 嵌进成品，玩家只装 MuoniumPlayer 一个文件；
-    // 它仍是独立 mod（mod id: muoniumconfigv1），加载器按嵌套 jar 隔离加载。
+    // 与上游不再同步。它带整套 Compose 界面，**不进成品**：首次启动由
+    // MuoniumConfigDownload 拉取到 mods/，与 Skija 伴生包同一套做法（多镜像竞速 +
+    // 字节数/sha256 双钉 + 装好后重启生效——Fabric 只在启动阶段扫 mods/ 并织入 mixin，
+    // 运行中塞进去的 jar 不会被加载，热加载没有可行性）。
     //
-    // Compose Multiplatform 运行时**不内嵌**（约 12MB，是这里最大的单体依赖）：
-    // 它作为前置 mod 由玩家自己装，与 fabric-api / fabric-language-kotlin 同一档。
-    // 所以这里只有 compileOnly + 开发期运行时，成品里不含它。
+    // 这里保留 implementation 只为开发期：runClient 需要一个真的 MuoniumConfig 才能
+    // 打开界面调样式，否则每次都要等下载 + 重启。
     //
-    // 走 libs/ + 模块坐标而不是 include(files(...))：Loom 的 processIncludeJars 要求
-    // 被嵌套的 jar 有模块身份（variant.owner 必须是 ModuleComponentIdentifier），
-    // file 依赖没有坐标，直传会报 "not a module component and has no capabilities"。
-    // 这条坑与上面 rhino-relocated 是同一个。
-    //
-    // 同步命令见 tools/sync-muoniumconfig.ps1；jar 更新后要重新跑一次。
-    //
-    // include() 负责把 jar 嵌进成品，但它不带开发期运行时类路径 —— runClient 里
-    // 那个 mod 根本不存在，声明 depends 后会直接报 "requires muoniumconfigv1"。
-    // 因此这里保留 implementation（开发期可见），与上面 gson/jna 那几条同一个写法。
-    implementation include('muonium:muoniumconfig:1.6.1')
-    // Compose：编译期需要它的 API（MuoniumConfig 的公共类型出现在签名上），
-    // 且 runClient 没有它就起不来；但它不进成品 jar —— 作为前置 mod 由玩家自己装。
+    // 同步命令见 tools/sync-muoniumconfig.ps1；jar 更新后重跑一次，
+    // 并把 MuoniumConfigDownload 里钉的 FILE_NAME / BYTES / SHA256 一起改掉。
+    implementation 'muonium:muoniumconfig:1.6.1'
+    // Compose：编译期与开发期都要，但同样不进成品 —— 它是独立前置 mod，由玩家自装。
     compileOnly 'muonium:muonium-compose-bundle:2.1.0'
     runtimeOnly 'muonium:muonium-compose-bundle:2.1.0'
     // skija-shared 的 provided 依赖，只在编译期需要（@Nullable 之类）。

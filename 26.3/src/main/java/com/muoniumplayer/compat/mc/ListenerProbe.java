@@ -90,6 +90,22 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
     /** 站定期间每 N 次采样强制重算几何(500ms × 12 = 6s):方块可能变了。 */
     private static final int STALE_EVERY = 12;
 
+    // ---- 一阶绕射(遮挡边缘) ----
+
+    /** 边缘候选方向数:24 条覆盖球面,配合「只取最短代价」已足够 ——
+     *  再密只是多花时间在同一个墙角上找更优点。 */
+    private static final int DIFFRACTION_DIRS = 24;
+    /** 候选点相对遮挡块中心的半径 = 块对角线一半(0.866)再加一点皮肤,
+     *  保证候选点落在块面外,两段投射不会立刻命中同一块。 */
+    private static final double DIFFRACTION_SKIN = 0.08;
+    /** 候选点离源-耳直线的最短距离下限(格):太靠近直线的那是穿透不是绕射。 */
+    private static final double DIFFRACTION_MIN_OFFSET = 0.35;
+    /** 最大额外出程(格):绕太远的路径听不见,也失去指向性。8 格 ≈ 23ms
+     *  额外延迟,再远就该由晚期混响而不是直达声来表达。 */
+    private static final double DIFFRACTION_MAX_EXCESS = 8.0;
+    /** 代价函数里折角的权重(格/180°):同样额外出程时,选拐得少的那条。 */
+    private static final double DIFFRACTION_BEND_WEIGHT = 1.5;
+
     // ---- 分频带空气吸收(能量比例 @ 观察窗内典型路程):高频走得远被吃得多 ----
     /** 每米能量衰减系数(近似 26.3 标准):{低,中,高}。 */
     private static final double[] AIR_ENERGY_PER_METER = {0.9990, 0.9970, 0.9920};
@@ -182,6 +198,9 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         final float directDist;
         final float directOccl;
         final float directPan;
+        // 一阶绕射(仅当确实被实心方块挡住时才搜索 —— 开阔地零成本)
+        DiffractionPath diffraction = null;
+        float diffractionPan = 0f;
         if (hasSource) {
             directDist = (float) origin.distanceTo(eye);
             directOccl = directOcclusion(world, origin, eye);
@@ -193,11 +212,29 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
                     ? (float) Math.max(-1.0, Math.min(1.0,
                             (dx * -Math.cos(yawRad) + dz * -Math.sin(yawRad)) / horiz))
                     : 0f;
+            // 有实心遮挡才值得找绕射路径:0.15 档(栅栏/玻璃)不挡声波拐弯。
+            if (directOccl >= 1.0f) {
+                diffraction = findDiffraction(world, origin, eye);
+                if (diffraction != null) {
+                    // 绕射声像:边缘方向在右手方向上的投影 —— 人耳把绕射声
+                    // 定位在缺口/墙角处,这是「听出从哪儿绕过来」的线索。
+                    final double ex = eye.x - diffraction.edge.x;
+                    final double ez = eye.z - diffraction.edge.z;
+                    final double edgeHoriz = Math.sqrt(ex * ex + ez * ez);
+                    diffractionPan = edgeHoriz > 1e-6
+                            ? (float) Math.max(-1.0, Math.min(1.0,
+                                    (ex * -Math.cos(yawRad) + ez * -Math.sin(yawRad))
+                                            / edgeHoriz))
+                            : 0f;
+                }
+            }
         } else {
             directDist = 0f;
             directOccl = 0f;
             directPan = 0f;
         }
+        final DiffractionPath diff = diffraction;
+        final float diffPan = diffractionPan;
 
         return new ListenerSample() {
             @Override public boolean submerged() { return submerged; }
@@ -218,6 +255,26 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
             @Override public float directDistanceMeters() { return directDist; }
             @Override public float directOcclusion() { return directOccl; }
             @Override public float directPan() { return directPan; }
+            @Override public boolean hasDiffraction() { return diff != null; }
+            @Override public float diffractionPathMeters() {
+                return diff == null ? 0f : (float) diff.pathMeters;
+            }
+            @Override public float diffractionExcessMeters() {
+                return diff == null ? 0f : (float) diff.excessMeters;
+            }
+            @Override public float diffractionBendDegrees() {
+                return diff == null ? 0f : (float) diff.bendDegrees;
+            }
+            @Override public double diffractionEdgeX() {
+                return diff == null ? 0 : diff.edge.x;
+            }
+            @Override public double diffractionEdgeY() {
+                return diff == null ? 0 : diff.edge.y;
+            }
+            @Override public double diffractionEdgeZ() {
+                return diff == null ? 0 : diff.edge.z;
+            }
+            @Override public float diffractionPan() { return diffPan; }
             @Override public double speakerX() { return hasSource ? speaker.x() : 0; }
             @Override public double speakerY() { return hasSource ? speaker.y() : 0; }
             @Override public double speakerZ() { return hasSource ? speaker.z() : 0; }
@@ -516,6 +573,150 @@ public final class ListenerProbe implements AcousticsRuntime.ListenerSampler {
         }, getter -> BlockHitResult.miss(to, Direction.getApproximateNearest(
                 from.x - to.x, from.y - to.y, from.z - to.z), BlockPos.containing(to)));
         return (float) Math.min(6.0, occlusion[0]);
+    }
+
+    /**
+     * 一阶绕射路径搜索:直达被挡时,找一条「源 → 遮挡边缘 → 耳」的折线,
+     * 让声音能拐过墙角/门框继续传播。
+     *
+     * <p>做法(与 Wwise Reflect 的 diffraction、Steam Audio 的 pathing 同族):
+     * 从遮挡最重的那个方块中心作球面采样 —— 采样方向只在<b>垂直于源-耳连线</b>
+     * 的平面附近(边缘就在那个圈上)。对每个候选点验两段直线都无遮挡,
+     * 取绕射代价最小的一个。候选点落在方块棱角附近时就是物理上的「边缘」,
+     * 不需要真的去解析几何棱线(体素世界里棱线本来就是方块的边)。</p>
+     *
+     * <p>代价:候选数 {@link #DIFFRACTION_DIRS} × 2 次体素投射 ≈ 32 次,只在
+     * <b>直达确实被挡</b>时才跑,而且只在采样线程上(200ms 一次)。开阔地
+     * 完全不会进入这里。</p>
+     *
+     * @return 绕射结果;找不到合适路径返回 {@code null}(退化为纯穿透)
+     */
+
+    private static DiffractionPath findDiffraction(Level world, Vec3 source, Vec3 ear) {
+        final Vec3 straight = ear.subtract(source);
+        final double straightLen = straight.length();
+        if (straightLen < 1e-3) {
+            return null;
+        }
+        // 沿直线找出第一个实心遮挡格:边缘一定贴着它。
+        BlockPos blocker = firstBlocker(world, source, ear);
+        if (blocker == null) {
+            return null;
+        }
+        final Vec3 center = Vec3.atCenterOf(blocker);
+
+        // 围绕遮挡块采样候选边缘点:球面上的方向(斐波那契),半径取
+        // 遮挡块对角线的一半再外扩一点 —— 让候选点落在块表面之外,
+        // 避免起点仍嵌在方块里被判成遮挡。
+        final double radius = 0.5 * Math.sqrt(3.0) + DIFFRACTION_SKIN;
+        DiffractionPath best = null;
+        double bestCost = Double.MAX_VALUE;
+
+        for (int i = 0; i < DIFFRACTION_DIRS; i++) {
+            // 斐波那契球面方向
+            final double idx = i + 0.5;
+            final double longitude = GOLDEN_ANGLE * i;
+            final double latitude = Math.asin(idx / DIFFRACTION_DIRS * 2.0 - 1.0);
+            final double dx = Math.cos(latitude) * Math.cos(longitude);
+            final double dy = Math.sin(latitude);
+            final double dz = Math.cos(latitude) * Math.sin(longitude);
+            final Vec3 edge = center.add(dx * radius, dy * radius, dz * radius);
+
+            // 只在「不在源-耳直线附近」的候选上找:直线上的点当然通畅,
+            // 但那不是绕射,是穿透。
+            final double edgeToLine = distanceToSegment(edge, source, ear);
+            if (edgeToLine < DIFFRACTION_MIN_OFFSET) {
+                continue;
+            }
+            // 两段都要通畅(允许穿非实心方块:栅栏/树叶不挡绕射)
+            if (hasSolidBlocker(world, source, edge) || hasSolidBlocker(world, edge, ear)) {
+                continue;
+            }
+            final double seg1 = source.distanceTo(edge);
+            final double seg2 = edge.distanceTo(ear);
+            final double pathLen = seg1 + seg2;
+            final double excess = Math.max(0.0, pathLen - straightLen);
+            if (excess > DIFFRACTION_MAX_EXCESS) {
+                continue;   // 绕太远,听不见,也失去「从墙角过来」的指向性
+            }
+            final double bend = bendDegrees(source, edge, ear);
+            // 代价 = 额外出程 + 折角惩罚:更近、更「直」的缺口赢。
+            final double cost = excess + DIFFRACTION_BEND_WEIGHT * (bend / 180.0);
+            if (cost < bestCost) {
+                bestCost = cost;
+                best = new DiffractionPath(edge, pathLen, excess, bend);
+            }
+        }
+        return best;
+    }
+
+    /** 绕射路径的结果(不可变,采样线程内用完即弃)。 */
+    private static final class DiffractionPath {
+        final Vec3 edge;
+        final double pathMeters;
+        final double excessMeters;
+        final double bendDegrees;
+
+        DiffractionPath(Vec3 edge, double pathMeters, double excessMeters, double bendDegrees) {
+            this.edge = edge;
+            this.pathMeters = pathMeters;
+            this.excessMeters = excessMeters;
+            this.bendDegrees = bendDegrees;
+        }
+    }
+
+    /** 沿源→耳直线找到第一个实心遮挡块;没有返回 null。 */
+
+    private static BlockPos firstBlocker(Level world, Vec3 from, Vec3 to) {
+        final BlockPos[] found = {null};
+        BlockGetter.traverseBlocks(from, to, world, (getter, pos) -> {
+            final BlockState state = getter.getBlockState(pos);
+            if (!state.isAir() && state.isCollisionShapeFullBlock(getter, pos)) {
+                found[0] = pos.immutable();
+                return BlockPos.containing(to);   // 非 null = 提前终止
+            }
+            return null;
+        }, getter -> null);
+        return found[0];
+    }
+
+    /** 两段之间是否有实心整块挡住(非完整碰撞箱不算:栅栏/玻璃/树叶放行)。 */
+    private static boolean hasSolidBlocker(Level world, Vec3 from, Vec3 to) {
+        final boolean[] blocked = {false};
+        BlockGetter.traverseBlocks(from, to, world, (getter, pos) -> {
+            final BlockState state = getter.getBlockState(pos);
+            if (!state.isAir() && state.isCollisionShapeFullBlock(getter, pos)) {
+                blocked[0] = true;
+                return BlockPos.containing(to);
+            }
+            return null;
+        }, getter -> null);
+        return blocked[0];
+    }
+
+    /** 点到线段的最短距离(绕射候选点必须离直线够远,否则那是穿透不是绕射)。 */
+    private static double distanceToSegment(Vec3 p, Vec3 a, Vec3 b) {
+        final Vec3 ab = b.subtract(a);
+        final double len2 = ab.lengthSqr();
+        if (len2 < 1e-9) {
+            return p.distanceTo(a);
+        }
+        double t = p.subtract(a).dot(ab) / len2;
+        t = Math.max(0.0, Math.min(1.0, t));
+        return p.distanceTo(a.add(ab.scale(t)));
+    }
+
+    /** 折角(度):源→边缘 与 边缘→耳 两段方向的夹角。 */
+    private static double bendDegrees(Vec3 source, Vec3 edge, Vec3 ear) {
+        final Vec3 a = edge.subtract(source);
+        final Vec3 b = ear.subtract(edge);
+        final double la = a.length();
+        final double lb = b.length();
+        if (la < 1e-6 || lb < 1e-6) {
+            return 0.0;
+        }
+        final double cos = Math.max(-1.0, Math.min(1.0, a.dot(b) / (la * lb)));
+        return Math.toDegrees(Math.acos(cos));
     }
 
     /**

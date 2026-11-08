@@ -52,23 +52,28 @@ public final class MuoniumFontBridge {
     /**
      * 按播放器当前字体刷新 MuoniumConfig 的界面字体。
      *
-     * <p>在字体切换成功后调一次即可。字体没变时本方法只递增 revision（触发缓存键变化），
-     * 代价可以忽略。</p>
+     * <p>在字体切换成功后调一次即可。</p>
+     *
+     * <p><b>只在启动时接管一次，之后不再跟随热切换</b>：MuoniumConfig 是个独立的 Compose 应用，
+     * 它的字体缓存以 identity 为键，每次热切换都要把整屏文字重新栅格化；而玩家在设置界面里
+     * 换字体时，屏幕正被那个界面占着 —— 换的那一帧字体表是空的，整屏变方块，且不一定会自己
+     * 恢复（实测就是这个现象）。设置界面不跟随换字体，比换字体时界面短暂变空白要好得多。</p>
      *
      * @return 是否成功接上（MuoniumConfig 不存在时返回 false，属于正常路径）
      */
     public static boolean sync() {
         if (!isAvailable() || failed) return false;
         try {
-            UiFont active = UiFontLibrary.getActive();
-            String id = describe(active);
+            // 已经接管过就不再动：见上面的说明，热切换会让设置界面在切换那一帧失去字形。
+            if (installedSource != null) return true;
 
-            if (installedSource == null) {
-                install(active, id);
-            } else {
-                installedId = id;
-                bumpRevision();
+            UiFont active = UiFontLibrary.getActive();
+            // 没有汉字的字体不接管：设置界面里几乎全是中文，换上去就是整屏方块。
+            // 让 MuoniumConfig 保持它自带的那份（同样含 CJK），界面照常可读。
+            if (active != null && !active.hasCjk()) {
+                return false;
             }
+            install(active, describe(active));
             return true;
         } catch (Throwable t) {
             failed = true;

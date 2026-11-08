@@ -30,7 +30,7 @@ class OpenALReverbBusStaticTest {
     @DisplayName("代码里绝不许出现进程级 alcMakeContextCurrent —— MC 声音线程靠它活")
     void noProcessWideContextBinding() throws IOException {
         String bus = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music", "audio",
-                "OpenALReverbBus.java"));
+                "OpenAlReverbBus.java"));
         // 剥掉注释再查：类文档里留着「踩过什么坑」的记述不算违规。
         String code = bus.replaceAll("(?s)/\\*.*?\\*/", "").replaceAll("(?m)//.*$", "");
         assertFalse(code.contains("alcMakeContextCurrent"),
@@ -43,7 +43,7 @@ class OpenALReverbBusStaticTest {
     @DisplayName("每个 AL 入口（含 render）必须过 bind 闸、finally 里 unbind")
     void everyEntryBindsAndUnbinds() throws IOException {
         String bus = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music", "audio",
-                "OpenALReverbBus.java"));
+                "OpenAlReverbBus.java"));
         for (String entry : new String[] {"setSendGain(", "setSourcePose(", "setReverbParams(",
                 "setListener(", "setSourceRolloff(", "setSidePose(", "setSideGain(",
                 "render(short[]"}) {
@@ -59,7 +59,7 @@ class OpenALReverbBusStaticTest {
     @DisplayName("能力表必须在线程绑定之后解析：AL.createCapabilities 需要当前上下文")
     void capabilitiesAfterThreadBinding() throws IOException {
         String bus = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music", "audio",
-                "OpenALReverbBus.java"));
+                "OpenAlReverbBus.java"));
         int setThread = bus.indexOf("EXTThreadLocalContext.alcSetThreadContext(context)");
         int alCaps = bus.indexOf("AL.createCapabilities(alcCaps)");
         assertTrue(setThread >= 0 && alCaps > setThread,
@@ -73,7 +73,7 @@ class OpenALReverbBusStaticTest {
     @DisplayName("失败路径必须释放设备与上下文：半开的 loopback 设备会被反复探测")
     void failurePathReleasesDevice() throws IOException {
         String bus = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music", "audio",
-                "OpenALReverbBus.java"));
+                "OpenAlReverbBus.java"));
         for (String marker : new String[] {"releaseDevice()", "alcDestroyContext", "alcCloseDevice"}) {
             assertTrue(bus.contains(marker), "要有清理动作: " + marker);
         }
@@ -86,7 +86,7 @@ class OpenALReverbBusStaticTest {
     @DisplayName("总线要有急停开关：-Dmuonium.acoustics.eax=false 一键退自研链")
     void busHasKillSwitch() throws IOException {
         String bus = read(Paths.get("com", "muoniumplayer", "core", "ncm", "music", "audio",
-                "OpenALReverbBus.java"));
+                "OpenAlReverbBus.java"));
         assertTrue(bus.contains("muonium.acoustics.eax"),
                 "要认 -Dmuonium.acoustics.eax：哪台机器上总线另有古怪，一键退回自研湿声链不用等发版");
         int gate = bus.indexOf("muonium.acoustics.eax");

@@ -153,8 +153,12 @@ public final class GameRestart {
      */
     public static void tick(Runnable stop, boolean idle) {
         try {
-            // ① 布防检查：伴生包已装好、尚未生效 → 准备替用户重启
-            if (stage == Stage.NONE && SkijaNatives.companionRestartPending()) {
+            // ① 布防检查：有东西装好了、尚未生效 → 准备替用户重启。
+            //    两处来源：Skija 伴生包（缺了渲染层起不来），以及 MuoniumConfig
+            //    （HUD 设置界面；Fabric 只在启动阶段扫 mods/，运行中塞进去的 jar 不会被加载）。
+            if (stage == Stage.NONE
+                    && (SkijaNatives.companionRestartPending()
+                        || com.muoniumplayer.core.screens.hud.MuoniumConfigDownload.isRestartRequired())) {
                 arm();
             }
             if (stage != Stage.ARMED) {

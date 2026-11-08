@@ -839,11 +839,75 @@ public final class HudSettingsModel {
                 new String[]{"跟随主题", "封面取色"},
                 value -> { HudConfig.spectrumColorSource = "封面取色".equals(value) ? 1 : 0; saveNow(); });
 
-        return new Category[] {
+        return inPreferredOrder(new Category[] {
+                // 「常用」排第一：玩家打开设置十次有九次是来开关某块 HUD、或者换一下样式。
+                // 这些开关原本散在五个分类里，找一次的代价是翻五个标签。这里把「开/关」
+                // 与「换成什么样」两件事各成一列，样式项与原地是同一批 Entry 对象（声明在上面），
+                // 改了这一处那一处也跟着变，不会出现两个界面读出不同值。
+                new Category("常用", "每块 HUD 的开关，以及最常换的几个样式", 0xFF6FA8FF, HudSettingsIcons.VISIBILITY,
+                        new Group("显示开关", HudSettingsIcons.VISIBILITY,
+                                toggle("桌面歌词", "屏幕下方的逐字歌词。关掉后不再绘制，也不占采样。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return lyricsEnabled();
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                setLyricsEnabled(!lyricsEnabled());
+                                            }
+                                        }),
+                                toggle("歌曲信息栏", "左上角那张歌卡（封面 + 歌名）的开关。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return infoEnabled();
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                setInfoEnabled(!infoEnabled());
+                                            }
+                                        }),
+                                toggle("灵动岛", "屏幕顶部的胶囊通知：切歌、音量、下载进度。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.dynamicIslandEnabled;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.dynamicIslandEnabled = !HudConfig.dynamicIslandEnabled;
+                                                saveNow();
+                                            }
+                                        }),
+                                toggle("音乐频谱", "跟着音乐跳动的柱状频谱。隐藏时停止采样，不影响播放。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.spectrumEnabled;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.spectrumEnabled = !HudConfig.spectrumEnabled;
+                                                saveNow();
+                                            }
+                                        }),
+                                toggle("3D 歌词", "把歌词挂进游戏世界里，飘在玩家前方。",
+                                        new BooleanSupplier() {
+                                            public boolean getAsBoolean() {
+                                                return HudConfig.worldLyricsEnabled;
+                                            }
+                                        }, new Runnable() {
+                                            public void run() {
+                                                HudConfig.worldLyricsEnabled = !HudConfig.worldLyricsEnabled;
+                                                saveNow();
+                                            }
+                                        }),
+                                toggle("场景声学", "按听者所处环境实时修饰播放输出；关掉后输出直通，不付任何 DSP 成本。",
+                                        AcousticsSettings::isEnabled,
+                                        () -> AcousticsSettings.setEnabled(!AcousticsSettings.isEnabled()))),
+                        new Group("常用样式", HudSettingsIcons.SPARKLE,
+                                quickOsdStyle, quickIslandStyle, quickCardBackdrop,
+                                quickWorldEffect, quickTheme, quickSpectrumColor)),
                 new Category("歌词样式", "桌面歌词与全屏歌词的文字外观", 0xFF8C7CFF, HudSettingsIcons.MIC,
-                        new Group("常用", HudSettingsIcons.SPARKLE,
-                                quickOsdStyle, quickWorldEffect, quickIslandStyle,
-                                quickCardBackdrop, quickTheme, quickSpectrumColor),
+                        // 原先这里有个「常用」组，装的是同一批快捷档位。现在它们提升成了顶层
+                        // 的「常用」分类，组内再留一份只会让玩家在两处看到同样的六个下拉框。
                         new Group("当前行", HudSettingsIcons.MIC,
                                 color("当前歌词颜色", "当前唱到的字的颜色。", ColorTarget.CURRENT),
                                 toggle("桌面歌词取色跟随封面",
@@ -1730,9 +1794,11 @@ public final class HudSettingsModel {
                                 slider(HudSetting.SPECTRUM_HEIGHT, "仅调整频谱高度，不改变播放器或通知的尺寸。",
                                         () -> HudConfig.spectrumEnabled)),
                         new Group("设置界面", HudSettingsIcons.MODERN_UI,
-                                choice("设置界面由谁渲染", "MuoniumConfig＝本项目自绘的现代化界面；内置＝本项目自绘的经典界面；"
-                                        + "OneConfig / ModernUI＝交给已安装的外部界面。"
-                                        + "选中的外部界面不可用时自动回退内置，不报错也不弹提示，切换在下次按 H 时生效。",
+                                choice("设置界面由谁渲染",
+                                        "MuoniumConfig 是本项目魔改的 OneConfig，界面与条目都由它维护（默认）。"
+                                        + "OneConfig / ModernUI 则交给玩家各自安装的界面。"
+                                        + "选中的外部界面不可用时自动回退 MuoniumConfig，不报错也不弹提示，"
+                                        + "切换在下次按 H 时生效。",
                                         new Supplier<String>() {
                                             public String get() {
                                                 return uiLayerLabel();
@@ -1741,12 +1807,10 @@ public final class HudSettingsModel {
                                             public void run() {
                                                 cycleUiLayer();
                                             }
-                                        }, new String[] {"内置", "MuoniumConfig", "OneConfig", "ModernUI"},
+                                        }, new String[] {"MuoniumConfig", "ModernUI"},
                                                 HudSettingsModel::setUiLayerChoice,
-                                                new String[] {"自绘经典界面，不依赖任何 mod。",
-                                                        "自绘现代化界面（MuoniumConfig），同样不依赖任何 mod。",
-                                                        "OneConfig 的 MuoniumPlayer HUD 页，需已安装 OneConfig v1。",
-                                                        "ModernUI 的面板，需已安装 ModernUI 且本 Minecraft 版本有对应构件。"})),
+                                                new String[] {"本项目魔改的 OneConfig，界面与条目统一在这里维护（默认）。",
+                                                        "玩家自己装的 ModernUI，需本 Minecraft 版本有对应构件。"})),
                         new Group("外部播放器", HudSettingsIcons.NOTE,
                                 choice("播放态来源", "内置＝只播本模组自己队列里的歌（默认）。"
                                         + "系统镜像＝不发声，改由系统里正在播的外部播放器供态：曲名、进度、播放状态取自 Windows 的系统媒体控制，"
@@ -1913,28 +1977,10 @@ public final class HudSettingsModel {
                                         + "编辑器里要看的是控件本身，往低了调会更清楚。只在这一面开着时生效。",
                                         () -> HudConfig.glassSurfaceEditors))),
 
-                new Category("信息栏与封面", "左上角信息卡、桌面歌词的开关摆放和封面", 0xFFFFA971, HudSettingsIcons.ALBUM,
-                        new Group("显示与摆放", HudSettingsIcons.VISIBILITY,
-                                toggle("歌曲信息栏", "左上角那张歌卡（封面 + 歌名）的开关。",
-                                        new BooleanSupplier() {
-                                            public boolean getAsBoolean() {
-                                                return infoEnabled();
-                                            }
-                                        }, new Runnable() {
-                                            public void run() {
-                                                setInfoEnabled(!infoEnabled());
-                                            }
-                                        }),
-                                toggle("桌面歌词", "屏幕下方的逐字歌词。",
-                                        new BooleanSupplier() {
-                                            public boolean getAsBoolean() {
-                                                return lyricsEnabled();
-                                            }
-                                        }, new Runnable() {
-                                            public void run() {
-                                                setLyricsEnabled(!lyricsEnabled());
-                                            }
-                                        }),
+                new Category("信息栏与封面", "左上角信息卡的摆放和封面", 0xFFFFA971, HudSettingsIcons.ALBUM,
+                        new Group("摆放", HudSettingsIcons.VISIBILITY,
+                                // 两块 HUD 的开关已经收进「常用」，这里不再重复一份：
+                                // 同一个开关出现在两个标签里，玩家改了这边会怀疑那边没生效。
                                 action("恢复默认位置与缩放",
                                         "把信息栏放回左上、歌词放回底部中间，缩放都回到 100%。在界面外的空白处直接拖动也可以调整位置，滚轮调缩放。",
                                         new Runnable() {
@@ -2003,7 +2049,44 @@ public final class HudSettingsModel {
                                         "没读过的公告会在主菜单弹一次，看过之后就只能从这个入口进去回看。"
                                                 + "公告与更新检查读同一份远端清单，最多 30 分钟问一次。",
                                         HudSettingsModel::openAnnouncements)))
-        };
+        });
+    }
+
+    /**
+     * 标签栏的分类顺序。
+     *
+     * <p>只写在这里一张表上，不靠挪动 {@code build()} 里那几百行代码块的位置：
+     * 声明顺序按「怎么实现顺手」排，展示顺序按「玩家怎么找」排，两件事分开。</p>
+     *
+     * <p>排序规则：表里有的按表排前面；表里没有的（以后新加的分类）按原声明顺序跟在后头，
+     * 不会因为漏登记而消失。</p>
+     */
+    private static final String[] CATEGORY_ORDER = {
+            "常用",         // 开关与最常换的样式
+            "歌词样式",     // 逐字外观，改得最多
+            "面板与卡片",
+            "灵动岛",
+            "信息栏与封面",
+            "界面与主题",
+            "播放",
+            "3D 歌词",      // 开着的人少，但一找就是来细调的
+            "缓存与公告",
+    };
+
+    private static Category[] inPreferredOrder(Category[] categories) {
+        List<Category> ordered = new ArrayList<>(categories.length);
+        for (String title : CATEGORY_ORDER) {
+            for (Category category : categories) {
+                if (category.title.equals(title)) {
+                    ordered.add(category);
+                    break;
+                }
+            }
+        }
+        for (Category category : categories) {
+            if (!ordered.contains(category)) ordered.add(category);
+        }
+        return ordered.toArray(new Category[0]);
     }
 
     /**
@@ -2323,45 +2406,32 @@ public final class HudSettingsModel {
      * 这两种情况的处理办法完全不同。
      */
     public static String uiLayerLabel() {
-        if (HudConfig.HUD_EDITOR_UI_MCONFIG.equals(HudConfig.hudEditorUi)) {
-            return "MuoniumConfig";
-        }
-        if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(HudConfig.hudEditorUi)) {
-            return OneConfigHudBridge.isAvailable() ? "OneConfig" : "OneConfig（未安装·回退内置）";
-        }
         if (HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)) {
             String status = ModernUiHudBridge.statusLabel();
-            return "可用".equals(status) ? "ModernUI" : "ModernUI（" + status + "·回退内置）";
+            return "可用".equals(status) ? "ModernUI" : "ModernUI（" + status + "·回退 MuoniumConfig）";
         }
-        return "内置";
+        // MuoniumConfig 与 OneConfig 走同一套 API，由 OneConfigHudBridge 统一打开。
+        // 未安装时写清「回退自绘」——玩家得知道按 H 出来的是哪一层、为什么。
+        return OneConfigHudBridge.isAvailable() ? "MuoniumConfig" : "MuoniumConfig（未安装·回退自绘）";
     }
 
-    /** 内置 → MuoniumConfig → OneConfig → ModernUI 循环。不可用的那层照旧能选中，只是打开时回退并写明原因。 */
+    /**
+     * MuoniumConfig → ModernUI 循环。
+     *
+     * <p>没有「内置」这一档：设置界面统一由 MuoniumConfig 渲染，自绘界面只在它未安装时兜底。
+     * 不可用的那层照旧能选中，只是打开时回退并写明原因。</p>
+     */
     private static void cycleUiLayer() {
-        String current = HudConfig.hudEditorUi;
-        if (HudConfig.HUD_EDITOR_UI_BUILTIN.equals(current)) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MCONFIG;
-        } else if (HudConfig.HUD_EDITOR_UI_MCONFIG.equals(current)) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
-        } else if (HudConfig.HUD_EDITOR_UI_ONECONFIG.equals(current)) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MODERNUI;
-        } else {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_BUILTIN;
-        }
+        HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MODERNUI.equals(HudConfig.hudEditorUi)
+                ? HudConfig.HUD_EDITOR_UI_MCONFIG
+                : HudConfig.HUD_EDITOR_UI_MODERNUI;
         saveNow();
     }
 
     private static void setUiLayerChoice(String value) {
-        if (value == null) return;
-        if ("MuoniumConfig".equalsIgnoreCase(value)) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MCONFIG;
-        } else if ("OneConfig".equalsIgnoreCase(value)) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_ONECONFIG;
-        } else if ("ModernUI".equalsIgnoreCase(value)) {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_MODERNUI;
-        } else {
-            HudConfig.hudEditorUi = HudConfig.HUD_EDITOR_UI_BUILTIN;
-        }
+        HudConfig.hudEditorUi = "ModernUI".equalsIgnoreCase(value)
+                ? HudConfig.HUD_EDITOR_UI_MODERNUI
+                : HudConfig.HUD_EDITOR_UI_MCONFIG;
         saveNow();
     }
 
