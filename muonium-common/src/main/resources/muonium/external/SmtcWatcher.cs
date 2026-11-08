@@ -78,6 +78,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using Microsoft.Win32;
 using Windows.Foundation;
 using Windows.Media;
 using Windows.Media.Control;
@@ -298,6 +299,23 @@ internal static class SmtcWatcher
     }
 
     /**
+     * 本进程以发布身份注册的 AUMID（pub appid 设置的）。镜像端选台时精确排除它：
+     * 发布端创建的会话 SourceAppUserModelId 就是这个值，不排除的话 mod 会把
+     * 「自己正在播的歌」当成一台外部播放器镜像回来——自己镜像自己。
+     *
+     * <p>只认显式设置的这一个，不按进程名排除：同 exe 的另一个进程（比如另一局
+     * 游戏）的会话不该被误杀，Mutex 那一层管它们。</p>
+     */
+    private static string ownExplicitAumid;
+
+    private static bool IsOwnSession(string aumid)
+    {
+        return !string.IsNullOrEmpty(aumid)
+            && !string.IsNullOrEmpty(ownExplicitAumid)
+            && string.Equals(aumid, ownExplicitAumid, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /**
      * 多会话挑选。null 表示系统里一个媒体会话都没有。
      *
      * <p>顺序见类头注释。钉住的会话不在了（进程退了、SMTC 注销了）就静默回自动：
@@ -314,9 +332,9 @@ internal static class SmtcWatcher
             for (int i = 0; i < count; i++)
             {
                 GlobalSystemMediaTransportControlsSession candidate = sessions[i];
-                if (candidate != null
-                        && string.Equals(NullToEmpty(candidate.SourceAppUserModelId), pinnedAumid,
-                            StringComparison.Ordinal))
+                if (candidate == null || IsOwnSession(NullToEmpty(candidate.SourceAppUserModelId))) continue;
+                if (string.Equals(NullToEmpty(candidate.SourceAppUserModelId), pinnedAumid,
+                        StringComparison.Ordinal))
                 {
                     return candidate;
                 }
@@ -333,8 +351,8 @@ internal static class SmtcWatcher
         for (int i = 0; i < count; i++)
         {
             GlobalSystemMediaTransportControlsSession candidate = sessions[i];
-            if (candidate != null
-                    && StatusOf(candidate) == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
+            if (candidate == null || IsOwnSession(NullToEmpty(candidate.SourceAppUserModelId))) continue;
+            if (StatusOf(candidate) == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
             {
                 return candidate;
             }
@@ -342,8 +360,14 @@ internal static class SmtcWatcher
         GlobalSystemMediaTransportControlsSession current = null;
         try { current = manager.GetCurrentSession(); }
         catch (Exception) { current = null; }
-        if (current != null) return current;
-        return sessions[0];
+        if (current != null && !IsOwnSession(NullToEmpty(current.SourceAppUserModelId))) return current;
+        // 全是自己的会话（纯发布模式）等于没有外部播放器：null，让镜像让位。
+        for (int i = 0; i < count; i++)
+        {
+            GlobalSystemMediaTransportControlsSession fallback = sessions[i];
+            if (fallback != null && !IsOwnSession(NullToEmpty(fallback.SourceAppUserModelId))) return fallback;
+        }
+        return null;
     }
 
     private static GlobalSystemMediaTransportControlsSessionPlaybackStatus StatusOf(
@@ -614,7 +638,7 @@ internal static class SmtcWatcher
             for (int i = 0; i < sessions.Count; i++)
             {
                 GlobalSystemMediaTransportControlsSession session = sessions[i];
-                if (session == null) continue;
+                if (session == null || IsOwnSession(NullToEmpty(session.SourceAppUserModelId))) continue;
                 if (sb.Length > 1) sb.Append(',');
                 sb.Append("{\"app\":\"").Append(Esc(session.SourceAppUserModelId)).Append('"');
                 sb.Append(",\"state\":\"").Append(Esc(StatusOf(session).ToString())).Append('"');
@@ -1254,6 +1278,19 @@ internal static class SmtcWatcher
         private string appliedArtPath = null;
         private bool appliedOnce;
 
+        // 发布身份（浮窗应用名）：AUMID 经 pub appid 从 Java 侧传来，注册表
+        // HKCU\Software\Classes\AppUserModelId\<AUMID> 的 DisplayName/IconUri
+        // 决定浮窗显示「MuoniumPlayer」还是「未知应用」。
+        private string desiredAumid;
+        private string desiredDisplay;
+        private string desiredIcon;
+        private string appliedAumid;
+        // 发布独占：系统里只能有一条 mod 会话。第二个实例（双开游戏）pub on
+        // 拿不到这把锁就回 already_running，不创建第二条。
+        private Mutex publisherMutex;
+        private bool publisherMutexHeld;
+        private bool alreadyRunningReported;
+
         public void Accept(string line)
         {
             string error = Apply(line);
@@ -1281,6 +1318,17 @@ internal static class SmtcWatcher
                 {
                     wanted = false;
                     state = "Stopped";
+                }
+                return null;
+            }
+            if (line.StartsWith("pub appid ", StringComparison.Ordinal))
+            {
+                string json = line.Substring(10);
+                lock (gate)
+                {
+                    desiredAumid = JsonField(json, "aumid");
+                    desiredDisplay = JsonField(json, "display");
+                    desiredIcon = JsonField(json, "icon");
                 }
                 return null;
             }
@@ -1412,6 +1460,21 @@ internal static class SmtcWatcher
         /** 消息醒来或刚启动时把状态仓的当前值整套应用一遍。 */
         private void ApplyState()
         {
+            if (wanted)
+            {
+                // 身份必须先于会话创建定型（AUMID 在 GetForWindow 时取进程当前值），
+                // 且发布会话全系统只允许一条：拿不到独占锁就明确拒绝。
+                EnsureAppIdentity();
+                if (!AcquirePublisherMutex())
+                {
+                    if (!alreadyRunningReported)
+                    {
+                        alreadyRunningReported = true;
+                        Emit("{\"event\":\"pub\",\"ok\":false,\"error\":\"already_running\"}");
+                    }
+                    return;
+                }
+            }
             if (smtc == null)
             {
                 lock (gate)
@@ -1481,6 +1544,97 @@ internal static class SmtcWatcher
             {
                 // 元数据里有空串/非法时长都会在投影层抛；下一拍 wake 会带着新值再来。
                 Emit("{\"event\":\"pub\",\"ok\":false,\"error\":\"apply_" + Esc(e.GetType().Name) + "\"}");
+            }
+        }
+
+        /**
+         * 设置进程显式 AUMID + 注册浮窗显示名。必须在创建会话之前生效：
+         * SMTC 会话的 AUMID 在 GetForWindow 那一刻取进程当前值，之后不再变，
+         * 所以中途换身份只能把旧会话整个拆了重建。
+         */
+        private void EnsureAppIdentity()
+        {
+            string aumid = desiredAumid;
+            if (string.IsNullOrEmpty(aumid) || appliedAumid == aumid) return;
+            try
+            {
+                int hr = SetCurrentProcessExplicitAppUserModelID(aumid);
+                if (hr != 0)
+                {
+                    EmitError("pub-aumid", new Exception("0x" + hr.ToString("x8", CultureInfo.InvariantCulture)));
+                }
+                else
+                {
+                    ownExplicitAumid = aumid;
+                }
+            }
+            catch (Exception e)
+            {
+                EmitError("pub-aumid", e);
+            }
+            try
+            {
+                // 未打包应用的浮窗应用名就来自这个键；没有它显示的是「未知应用」。
+                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(
+                        "Software\\Classes\\AppUserModelId\\" + aumid))
+                {
+                    key.SetValue("DisplayName",
+                        string.IsNullOrEmpty(desiredDisplay) ? "MuoniumPlayer" : desiredDisplay);
+                    if (!string.IsNullOrEmpty(desiredIcon) && File.Exists(desiredIcon))
+                    {
+                        key.SetValue("IconUri", new Uri(desiredIcon).AbsoluteUri);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                EmitError("pub-appid-reg", e);
+            }
+            if (smtc != null) DisposeControls();   // 旧会话带着旧身份，重建才作数
+            appliedAumid = aumid;
+        }
+
+        /** 拆掉本进程的发布会话。身份重建与收起都走这里。 */
+        private void DisposeControls()
+        {
+            if (smtc == null) return;
+            try { smtc.IsEnabled = false; } catch (Exception) { }
+            try { Marshal.FinalReleaseComObject(smtc); } catch (Exception) { }
+            smtc = null;
+            appliedArtPath = null;
+        }
+
+        /**
+         * 发布独占锁。Local\ 作用域：同一登录会话内互斥（双开游戏就是同一会话），
+         * 避开 Global\ 在某些受限环境的权限坑。锁创建/打开失败时放行——
+         * 「只能一条」的目标让位于「至少能用」。
+         */
+        private bool AcquirePublisherMutex()
+        {
+            if (publisherMutexHeld) return true;
+            try
+            {
+                bool createdNew;
+                publisherMutex = new Mutex(true, "Local\\MuoniumSmtcWatcher.Publisher", out createdNew);
+                if (!createdNew)
+                {
+                    try
+                    {
+                        if (!publisherMutex.WaitOne(0)) return false;
+                    }
+                    catch (AbandonedMutexException)
+                    {
+                        // 旧实例崩了没来得及释放：锁已归零，直接接手。
+                    }
+                }
+                publisherMutexHeld = true;
+                return true;
+            }
+            catch (Exception e)
+            {
+                EmitError("pub-mutex", e);
+                publisherMutexHeld = false;
+                return true;
             }
         }
 
@@ -1755,6 +1909,10 @@ internal static class SmtcWatcher
         // Win10 起 RoInitialize 由 combase.dll 导出（roapi.dll 只是转发，有些系统上找不到）。
         [DllImport("combase.dll")]
         private static extern int RoInitialize(int initType);
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        private static extern int SetCurrentProcessExplicitAppUserModelID(
+            [MarshalAs(UnmanagedType.LPWStr)] string appid);
 
         /** ISystemMediaTransportControlsInterop::GetForWindow。挂在激活工厂上。 */
         [ComImport, Guid("DDB0472D-C911-4A1F-86D9-DC3D71A95F5A"),

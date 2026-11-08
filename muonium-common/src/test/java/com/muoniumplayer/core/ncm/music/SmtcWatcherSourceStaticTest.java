@@ -88,4 +88,22 @@ public class SmtcWatcherSourceStaticTest {
         assertTrue(source.contains("\"Windows.Media.SystemMediaTransportControls\""),
                 "激活的运行类名");
     }
+
+    @Test
+    public void mirrorNeverMirrorsItselfAndPublisherIsExclusive() throws Exception {
+        String source = source();
+        // 自己镜像自己是发布模式的天然副产物：发布会话的 AUMID 就是本进程注册的
+        // 身份，选台时必须精确排除。排除键只认显式 AUMID（pub appid），不按进程名
+        // 排除——同 exe 的另一局游戏的会话不该被误杀。
+        assertTrue(source.contains("IsOwnSession"), "选台排除自己的会话");
+        assertTrue(source.contains("ownExplicitAumid"), "排除键是显式 AUMID");
+        // 浮窗应用名来自 AppUserModelId 注册表键；没有它显示「未知应用」。
+        assertTrue(source.contains("SetCurrentProcessExplicitAppUserModelID"), "进程显式 AUMID");
+        assertTrue(source.contains("AppUserModelId\\\\") || source.contains("AppUserModelId\\"),
+                "注册表键路径");
+        assertTrue(source.contains("DisplayName"), "浮窗显示名");
+        // 发布会话全系统只能一条：命名互斥锁 + 第二实例明确拒绝。
+        assertTrue(source.contains("MuoniumSmtcWatcher.Publisher"), "发布独占锁名");
+        assertTrue(source.contains("already_running"), "第二实例的拒绝码");
+    }
 }

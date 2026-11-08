@@ -232,8 +232,13 @@ public final class ExternalMediaService {
             return;
         }
         if (line.contains("\"event\":\"pub\"")) {
-            // 发布端只报失败；这里记日志即可，不打扰界面。
-            if (line.contains("\"ok\":false")) System.err.println("[Music/SMTC] 发布端: " + line);
+            // 发布端只报失败；这里记日志，already_running 转告发布器给用户一句人话。
+            if (line.contains("\"ok\":false")) {
+                System.err.println("[Music/SMTC] 发布端: " + line);
+                if (line.contains("\"error\":\"already_running\"")) {
+                    SmtcPublisher.onPublishDenied();
+                }
+            }
         }
     }
 
@@ -344,6 +349,17 @@ public final class ExternalMediaService {
     /** 助手协议版本。1 = 老助手（发布与多会话挑选都不可用）。 */
     public static int helperProtocolVersion() {
         return helperVersion;
+    }
+
+    /**
+     * 声明发布会话的身份（AUMID + 浮窗显示名 + 图标路径），必须在 {@link #sendPublishOn()}
+     * 之前发：会话的 AUMID 在创建那一刻定型。AUMID 同时是镜像端「不镜像自己」的排除键，
+     * 也是浮窗显示「MuoniumPlayer」而不是「未知应用」的注册表键来源。
+     */
+    public static void sendPublishAppId(String aumid, String display, String iconPath) {
+        sendLine("pub appid {\"aumid\":" + jsonEscape(aumid)
+                + ",\"display\":" + jsonEscape(display == null ? "" : display)
+                + ",\"icon\":" + jsonEscape(iconPath == null ? "" : iconPath) + "}");
     }
 
     /** 打开发布会话。 */

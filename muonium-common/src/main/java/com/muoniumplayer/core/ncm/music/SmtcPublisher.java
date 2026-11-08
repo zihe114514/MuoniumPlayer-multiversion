@@ -3,6 +3,7 @@ package com.muoniumplayer.core.ncm.music;
 import com.google.gson.JsonObject;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.spotify.SpotifyConnectMirror;
+import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.settings.ConfigPaths;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
@@ -34,6 +35,14 @@ public final class SmtcPublisher {
     /** 播放中时间轴的推送间隔。与微软「约 5 秒」建议比是加密了，但一行文本的代价可以忽略。 */
     static final long TIMELINE_INTERVAL_MS = 1_000L;
 
+    /**
+     * 发布会话在系统里的身份。这个 AUMID 同时是三样东西的键：
+     * 浮窗显示名的注册表键（Software\Classes\AppUserModelId\...）、
+     * 镜像端「不镜像自己」的排除键、发布会话的全局身份。
+     */
+    public static final String PUBLISH_AUMID = "MuoniumPlayer.SMTC";
+    public static final String PUBLISH_DISPLAY = "MuoniumPlayer";
+
     private static final Object CONFIG_LOCK = new Object();
     private static boolean configLoaded;
     private static volatile boolean enabled = true;
@@ -51,6 +60,11 @@ public final class SmtcPublisher {
     private static long lastTimelinePushMs;
     /** 镜像/无播放时已经收起过一次的记号，避免每 tick 重复发 pub off。 */
     private static boolean collapsed;
+    /** 发布图标落盘后的绝对路径；null 表示还没解出来（浮窗暂时没图标，不影响显示名）。 */
+    private static volatile String iconPath;
+    private static volatile boolean iconReady;
+    /** 双开游戏的另一个实例已占用发布会话时只说一次。 */
+    private static boolean warnedAlreadyRunning;
 
     private SmtcPublisher() {
     }
@@ -107,6 +121,10 @@ public final class SmtcPublisher {
                 pushedTrackKey = trackKey;
                 pushedState = "";
                 pushedArtPath = "";
+                // 身份先行：AUMID 必须在会话创建前定型（helper 侧拿到才建会话），
+                // 同时它也是镜像端「不镜像自己」的排除键。
+                ensureIconAsync();
+                ExternalMediaService.sendPublishAppId(PUBLISH_AUMID, PUBLISH_DISPLAY, iconPath);
                 ExternalMediaService.sendPublishOn();
                 ExternalMediaService.sendPublishMeta(metaJson(track));
                 String art = coverPathFor(track);
@@ -199,6 +217,52 @@ public final class SmtcPublisher {
         } catch (Throwable ignored) {
             // 截断的行丢弃即可；媒体键下一按还会来。
         }
+    }
+
+    /**
+     * 助手回了 already_running：系统里已有另一条 mod 发布会话（双开游戏的另一个
+     * 实例，或上一个进程还没死干净）。这是设计内的行为——发布会话全系统只能一条，
+     * 本实例的发布静默让位，但要让玩家知道为什么浮窗里没有自己。
+     */
+    static void onPublishDenied() {
+        if (warnedAlreadyRunning) return;
+        warnedAlreadyRunning = true;
+        try {
+            DownloadDynamicIsland.showExternalMedia(
+                    "另一局游戏已占用系统媒体会话，本局的发布会让位", false);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 把 jar 里的 mod 图标解到 SMTC 目录，给发布浮窗当 IconUri——没有它浮窗
+     * 图标是默认的灰方块（显示名靠注册表，与图标无关）。后台线程做，只做一次。
+     */
+    private static void ensureIconAsync() {
+        if (iconReady) return;
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                File target = new File(ConfigPaths.SMTC_DIR, "muonium-icon.png");
+                if (!target.isFile() || target.length() == 0L) {
+                    java.io.InputStream in = SmtcPublisher.class
+                            .getResourceAsStream("/assets/muonium/icon.png");
+                    if (in == null) return;   // jar 打包缺资源：浮窗没图标，不算错
+                    try {
+                        Files.copy(in, target.toPath(),
+                                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    } finally {
+                        in.close();
+                    }
+                }
+                iconPath = target.getAbsolutePath();
+                iconReady = true;
+                // 首次发布时图标往往还没解出来，这里补发一次身份（带图标路径）。
+                ExternalMediaService.sendPublishAppId(PUBLISH_AUMID, PUBLISH_DISPLAY, iconPath);
+            } catch (Throwable failure) {
+                // 图标缺失只影响浮窗好看与否，不值得打扰。
+                System.out.println("[Music/SMTC] 发布图标落盘失败: " + failure);
+            }
+        });
     }
 
     /** 曲目元数据的一行 JSON。字段缺失就发空串，助手侧对空值一律照收。 */
