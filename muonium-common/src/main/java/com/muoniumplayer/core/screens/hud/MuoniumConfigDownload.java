@@ -57,7 +57,7 @@ public final class MuoniumConfigDownload {
      */
     private static final Map<String, Build> BUILDS = Map.ofEntries(
             Map.entry("26.3/fabric", new Build("muoniumconfig-1.7.0.jar",
-                    26138490L, "f4d20807b8304fa8db3af4cb9df0c7225a509ce62e7adfe71a2cd4594f8a64c7")),
+                    26123497L, "213b8ca0f9e0c269a60140f4e9f13c8f26ff3cda774fc292bf2bcab448c9e69e")),
             Map.entry("26.3/neoforge", new Build("muoniumconfig-1.7.0.jar",
                     25540420L, "79f90f07d259ffd5568cb1a383cfccd5932eae64168155b904ff46097bc213b2")),
             Map.entry("26.2/fabric", new Build("muoniumconfig-1.7.0.jar",
@@ -69,7 +69,7 @@ public final class MuoniumConfigDownload {
             Map.entry("26.1.2/neoforge", new Build("muoniumconfig-1.7.0.jar",
                     25535811L, "9da3bc7d09b7a11deece0afdac2cb2a5256ac336955a47ad9d1b5a29138b1f6d")),
             Map.entry("1.21.11/fabric", new Build("muoniumconfig-1.7.0.jar",
-                    26235162L, "dc39524ebdb7c16475cde95958e59d6953b74b15c6bd21a558928d4f3e428147")),
+                    26219158L, "4d2d06e7c5297d0a6350d58088c40f23ad32b4381a3656d858143a536728b222")),
             Map.entry("1.21.11/neoforge", new Build("muoniumconfig-1.7.0.jar",
                     25530949L, "1820df0641d60de5b161ded495d9d5ca35d3e9965df1d406a48f104c3546e6d6")),
             Map.entry("1.21.10/fabric", new Build("muoniumconfig-1.7.0.jar",
