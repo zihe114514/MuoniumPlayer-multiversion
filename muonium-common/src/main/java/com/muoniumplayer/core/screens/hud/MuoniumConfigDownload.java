@@ -325,4 +325,53 @@ public final class MuoniumConfigDownload {
         }
         return message.length() > 160 ? message.substring(0, 160) + "…" : message;
     }
+
+    // ==================== 提示层门面（与 Skija 的 SkijaNatives.nativeMissingLines 同一角色） ====================
+
+    /**
+     * 提示块此刻是否该常驻：下载中 / 已装好待重启，两段都必须整块挂着——
+     * 下载中缩成一行角标会被当成卡死；装好待重启时「必须重启游戏」是这一屏唯一要传达的事。
+     * 失败不在此列（那是纯外观损失，常驻会变成骚扰），失败窗由各树渲染器自己管。
+     */
+    public static boolean noticeVisible() {
+        Phase phase = state().phase();
+        return phase == Phase.DOWNLOADING || phase == Phase.DONE;
+    }
+
+    /** 下载进度（0~100）；DONE 恒为 100（绿条到头 = 「可以重启了」）。 */
+    public static int noticePercent() {
+        return state().percent();
+    }
+
+    /**
+     * 提示块的整块文案。分岔按「用户下一步动作」切——下载中什么都别做、装好了等自动重启、
+     * 失败了才知道还能怎么办；这与 {@code SkijaNatives.nativeMissingLines} 是同一条纪律。
+     */
+    public static List<String> noticeLines() {
+        State current = state();
+        List<String> lines = new ArrayList<>();
+        switch (current.phase()) {
+            case DOWNLOADING -> lines.add(current.percent() >= 0
+                    ? "正在自动下载 MuoniumConfig（HUD 设置界面）：" + current.percent() + "%"
+                    : "正在自动下载 MuoniumConfig（HUD 设置界面）…");
+            case DONE -> {
+                lines.add("MuoniumConfig 已自动装好，需要重启游戏后生效");
+                lines.add("通常马上会自动重启；等急了可手动退出重进，按 ESC 能取消自动重启");
+                String restartLine = com.muoniumplayer.core.update.GameRestart.statusLine();
+                if (restartLine != null) {
+                    lines.add(restartLine);
+                }
+            }
+            case FAILED -> {
+                lines.add("MuoniumConfig 自动下载失败：" + current.detail());
+                lines.add("不影响听歌与 HUD；下次启动游戏会自动重试");
+                String name = fileName();
+                if (name != null) {
+                    lines.add("也可以手动安装：把 " + name + " 放进 mods/ 目录");
+                }
+            }
+            default -> { }
+        }
+        return lines;
+    }
 }
