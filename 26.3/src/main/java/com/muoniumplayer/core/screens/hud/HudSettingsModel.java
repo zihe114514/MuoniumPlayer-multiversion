@@ -9,6 +9,7 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.cine.CineSettings;
 import com.muoniumplayer.core.ncm.music.MusicSpin;
 import com.muoniumplayer.core.ncm.music.TransparentMode;
+import com.muoniumplayer.core.ncm.music.VoicechatBroadcast;
 import com.muoniumplayer.core.ncm.music.MusicAudioCache;
 import com.muoniumplayer.core.rendering.AutomixTransitionAnimation;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
@@ -1661,6 +1662,10 @@ public final class HudSettingsModel {
                                             default -> CineSettings.TRANSITION_MASK_ALL;
                                         }),
                                         CineSettings::isEnabled)),
+                        new Group("语音广播", HudSettingsIcons.TUNE,
+                                toggle("语音广播", "开着放歌时，附近玩家会在你所在位置听到正在放的音乐（走 Simple Voice Chat 的语音通道，你还能同时正常说话）。需要你和服务器都装 Simple Voice Chat；没插麦克风时广播不出声；电台/直播流不广播。关闭只停广播，不影响你本地听歌。",
+                                        VoicechatBroadcast::isEnabled,
+                                        () -> VoicechatBroadcast.setEnabled(!VoicechatBroadcast.isEnabled()))),
                         new Group("基本设置", HudSettingsIcons.SPEED,
                                 toggle("无缝切换", "打开后提前解码下一首并交叉淡化；关掉则切歌时先停下再重新下载解码，中间有静音间隙。",
                                         new BooleanSupplier() {

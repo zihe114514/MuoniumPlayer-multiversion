@@ -5,6 +5,7 @@ import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.acoustics.AcousticsSettings;
 import com.muoniumplayer.core.ncm.music.ExternalPlayback;
 import com.muoniumplayer.core.ncm.music.FocusVolumeDucker;
+import com.muoniumplayer.core.ncm.music.VoicechatBroadcast;
 import com.muoniumplayer.core.ncm.music.FoliaModelManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.cine.CineSettings;
@@ -1452,7 +1453,10 @@ public final class HudSettingsModel {
                                         FocusVolumeDucker::cycleLevel,
                                         FocusVolumeDucker.levelLabels(),
                                         FocusVolumeDucker::setLevelByLabel,
-                                        FocusVolumeDucker::isEnabled)),
+                                        FocusVolumeDucker::isEnabled),
+                                toggle("语音广播", "开着放歌时，附近玩家会在你所在位置听到正在放的音乐（走 Simple Voice Chat 的语音通道，你还能同时正常说话）。需要你和服务器都装 Simple Voice Chat；没插麦克风时广播不出声；电台/直播流不广播。关闭只停广播，不影响你本地听歌。",
+                                        VoicechatBroadcast::isEnabled,
+                                        () -> VoicechatBroadcast.setEnabled(!VoicechatBroadcast.isEnabled()))),
                         new Group("通透模式", HudSettingsIcons.SPEED,
                                 toggle("\"通透模式\"", "整活特效：跟着正在放的音乐节拍，把视野里的生物和玩家（含自己）像果冻一样压扁再回弹。节拍是实时从播放信号上测的，任何歌都自动卡点；只在本机画面生效，不改变碰撞箱。",
                                         TransparentMode::isEnabled,
